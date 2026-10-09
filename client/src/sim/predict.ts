@@ -9,7 +9,7 @@ const SNAP_DISTANCE = 3
 /** How fast the visual error left by a correction decays, per second. */
 const ERROR_DECAY = 15
 
-const cloneState = (s: CharacterState): CharacterState => ({ ...s, position: [...s.position] })
+const cloneState = (s: CharacterState): CharacterState => ({ ...s, position: [...s.position], knock: [...s.knock] })
 
 /**
  * Client-side prediction for the local player.
@@ -41,6 +41,21 @@ export class Predictor {
     this.state = stepCharacter(this.motor, this.state, input, TICK_DT)
     this.pending.push(input)
     if (this.pending.length > MAX_PENDING) this.pending.shift()
+  }
+
+  /**
+   * Remembers an input without simulating it, while the player is in a car and the stickman does
+   * not move. If the player steps out before the server's ack catches up, these inputs are
+   * replayed over the state it reports.
+   */
+  record(input: InputFrame) {
+    this.pending.push(input)
+    if (this.pending.length > MAX_PENDING) this.pending.shift()
+  }
+
+  /** Drops inputs the server has applied, without touching the simulated state. */
+  acknowledge(ack: number) {
+    this.pending = this.pending.filter((input) => input.seq > ack)
   }
 
   /** Forgets unsent or unacknowledgeable inputs, e.g. those made while offline. */

@@ -4,6 +4,8 @@ A browser multiplayer game: goofy stickmen in a real city built from OpenStreetM
 
 - [design.md](design.md): architecture, netcode, world pipeline and roadmap
 - [NETWORKING.md](NETWORKING.md): wire protocol
+- [VEHICLES-I.md](VEHICLES-I.md): how roadmap stage 2 (cars, seats, driving) was built
+- [VEHICLES-II.md](VEHICLES-II.md): the tank, its gunner seat and the shell
 
 ## Requirements
 
@@ -26,14 +28,14 @@ cargo run -p server
 cd client && npm install && npm run dev       # http://localhost:5173
 ```
 
-Open http://localhost:5173 in two windows. Click to capture the mouse. Controls: WASD to move, Shift to run, Space to jump, Esc to release the mouse.
+Open http://localhost:5173 in two windows. Click to capture the mouse. Controls: WASD to move, Shift to run, Space to jump, Esc to release the mouse. Walk up to a car and press E to get in (the first to board drives, the next ones ride along) and E again to get out. Driving: W/S gas and brake, A/D steer, Space handbrake. Two tanks are parked among the cars: the first in drives (A/D turns it on the spot), the second takes the gun. The gunner aims with the mouse and fires with a click or F.
 
 Restart the server after regenerating the world. The page warns if its world differs from the server's.
 
 ## Test
 
 ```sh
-cargo test --workspace          # protocol fixtures, jitter buffer, physics, game loop, importer
+cargo test --workspace          # protocol fixtures, jitter buffer, physics, vehicles, game loop, importer
 cd client && npm test           # codec fixtures, interpolation, clock, prediction, WASM-vs-native physics
 cd client && npm run type-check && npm run lint
 ```

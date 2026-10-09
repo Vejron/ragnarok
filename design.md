@@ -125,7 +125,7 @@ WebTransport over HTTP/3 (QUIC):
 | Datagrams (unreliable, unordered) | Inputs, snapshots, ping/pong | Latest state wins; retransmitting stale state only adds latency |
 | Server-opened unidirectional streams (reliable) | `welcome`, `leave`, and later vehicle seat changes and chat | Rare events that must arrive |
 
-Datagrams are capped at 1200 bytes (`MAX_PACKET`), and a full 32-player snapshot fits. Larger worlds will need interest management (§14) before that limit becomes a problem.
+Datagrams are capped at 1200 bytes (`MAX_PACKET`), and a full 32-player snapshot fits. Larger worlds will need interest management (§14) before that limit becomes a problem. A full room plus cars stays below the limit, because every seated player is one stickman fewer in the snapshot.
 
 ## 7. Serialization and quantization
 
@@ -168,7 +168,7 @@ Both sides use Rapier 3D: `rapier3d` 0.36 natively and `@dimforge/rapier3d-compa
   - Controller settings: offset 2 cm, slide on, autostep 35 cm, 50° max slope.
   - Characters are shape-cast, not colliders, so players don't block each other. Prediction then never depends on where remote players really are.
 - **Movement rules** (`movement.rs` / `movement.ts`):
-  - Horizontal speed is set directly from input: walk 4 m/s, run 7.5 m/s.
+  - Horizontal speed is set directly from input (walk 4 m/s, run 7.5 m/s), plus any knockback velocity, which keeps 92% of itself per tick on the ground and 99% in the air.
   - Gravity is 20 m/s² and jump speed is 6.5 m/s.
   - The character is grounded only when not moving upward.
 - **Two-pass move:** horizontal movement, then vertical, as separate controller calls. A combined pass makes the controller stall for a tick every few seconds on flat ground, in both native and WASM, and each stall is a misprediction. Snap-to-ground is off because it sinks the capsule slowly in the two-pass setup.
@@ -177,20 +177,32 @@ Both sides use Rapier 3D: `rapier3d` 0.36 natively and `@dimforge/rapier3d-compa
   - The cross-language fixture agrees to well under 1 mm per tick and within 1 cm over 90 ticks of wall-sliding and jumping.
   - Reconciliation only ever replays about one RTT of ticks, so long-horizon drift never shows.
 
-Vehicles will be server-side dynamic rigid bodies (§10), so the physics pipeline will start stepping a dynamic world. The static scene and character code stay as they are.
+Vehicles are server-side dynamic rigid bodies (§10). The physics pipeline steps once per tick, and only does real work once a vehicle exists.
+- **Cars are solid, and hit.** The character controller treats cars as ordinary obstacles. The client's Rapier world holds a box collider per car at the pose of the newest snapshot, so a parked car blocks the predicted stickman exactly as it blocks the real one. A car moving into a stickman instead throws them (§10).
+- **Ray-cast cars.** `DynamicRayCastVehicleController` with a box chassis and four suspension rays, at 9.81 m/s² gravity (stickmen use 20).
+- Vehicle code is in `crates/server/src/physics/vehicle.rs`. [VEHICLES-I.md](VEHICLES-I.md) covers the tuning and the tests.
 
-## 10. Entities and vehicles (planned)
+## 10. Entities and vehicles
 
-- **Entities:** an entity is an id, a kind (`KIND_STICKMAN`, later `KIND_CAR`, `KIND_TANK`, `KIND_HELI`) and a kind-specific state in the snapshot. The protocol's entity array is versioned and can grow per kind.
-- **Seats:** each vehicle has a seat list. Seat 0 is the driver, and the others are passengers or gunners.
-  - `BUTTON_USE` near a vehicle sends an enter request, and the server assigns a free seat.
-  - Seat changes go out as reliable events.
-- **Input routing:** while seated, a player's input frames drive their seat's role instead of the stickman. The driver steers and accelerates; a gunner aims the turret. The stickman entity is hidden and attached to the vehicle.
-- **Prediction:** at first, vehicles are server-simulated and interpolated like remote players, and the driver sees a small input delay. Later, the driver predicts their own vehicle with the same Rapier vehicle controller (`DynamicRayCastVehicleController`) and reconciles like the stickman.
-- **Planned vehicles:**
-  - Car: ray-cast wheels.
-  - Tank: tracks approximated by wheels, plus a turret seat.
-  - Helicopter: a simplified flight model with lift, a cyclic and a tail rotor. Two seats.
+- **Entities:** players and vehicles share one id space. Stickmen are `EntityState`s. Each vehicle kind is a `VehicleState` in its own list in the snapshot (`KIND_CAR` and `KIND_TANK` now, later `KIND_HELI`). A separate list per family keeps stickmen at their 20 bytes.
+- **Seats (built):** each vehicle has a seat list. Seat 0 is the driver, and the others are passengers or gunners. A car has 4.
+  - `BUTTON_USE` boards the nearest vehicle with a free seat within `ENTER_RADIUS` (4 m), taking the lowest free seat. Pressing it again leaves.
+  - Leaving puts the stickman beside the car on the seat's side, or on the other side, the back or the front if that spot is blocked.
+  - Seat state travels in the snapshot (`VehicleState::seats`), not as reliable events. The client's view of its seat can then never disagree with the snapshots it draws. Reliable events stay for things that really are one-off, such as chat.
+- **Input routing (built):** while seated, a player's input frames drive their seat instead of the stickman. The driver's forward axis is throttle and brake, the strafe axis is steering, and jump is the handbrake. A seated player is left out of the entity list, and their position follows the car.
+- **Knockback (built):** after the cars step, any standing player whose capsule overlaps a car is thrown: a horizontal velocity of 1.1 × the car's speed (at least 2.5 m/s, at most 20), mostly along the car's heading with some outward push, plus a hop. `Character::knock` carries it. It is added to walking and bleeds off per tick (§9). It is in the snapshot, so the client's reconciliation replays it like any other state. A 12-tick cooldown makes one pass one hit. Damage is left to Combat.
+- **Riding on top (built):** a stickman standing on a car is carried by it.
+  - After each tick, `Movement` probes 6 cm below the feet for a car. The hit sets `Character::ride`.
+  - On the next tick `Vehicles` moves every rider by the car's rigid motion since the last tick (rotation included), before the rider walks.
+  - Riders are never knocked back.
+  - Jumping off, or stepping off into the air, adds the car's horizontal velocity to the stickman's knockback. They keep the car's speed instead of dropping away from it.
+  - The snapshot tells each player its own `ride`. The client predicts a rider in the frame where the car stands still at its newest snapshot pose, and draws it carried to wherever the interpolated car is. The stickman stays glued to the roof, and the walking on top is still predicted.
+- **Prediction (Vehicles I):** vehicles are server-simulated and interpolated like remote players, so the driver sees a small input delay. Later, the driver predicts their own vehicle with the same Rapier vehicle controller and reconciles like the stickman.
+- **Vehicles:**
+  - Car (built): ray-cast wheels, four seats, an open top.
+  - Tank (built): six unsteered ray-cast wheels under a 3.4 t hull, with a driver and a gunner. The physics sets the yaw rate directly, so it turns on the spot like a tracked vehicle. See [VEHICLES-II.md](VEHICLES-II.md).
+  - Gunner seat (built): seat 1 of a tank. Instead of driving, that player's input aims the turret and fires the gun. The `Gunnery` mechanic does this, apart from `Vehicles`. The turret follows the gunner's world heading at 1.4 rad/s (the barrel at 0.9 rad/s, between −7° and +29°), so turning the hull doesn't drag the aim. A shell is a hitscan from the turret ring along the barrel. It stops at the first wall, vehicle or stickman, with a 90-tick reload. The blast (7 m radius) throws stickmen and shoves vehicles. The snapshot carries `turret` angles and a shot counter.
+  - Helicopter (planned): a simplified flight model with lift, a cyclic and a tail rotor. Two seats.
 
 ## 11. Modular mechanics
 
@@ -204,8 +216,9 @@ pub trait Mechanic: Send {
 }
 ```
 
-- The room runs an ordered list. The MVP has `Spawn` (spawn points and respawning below `KILL_Y`) and `Movement` (the character controller).
-- New features are new mechanics, such as `Vehicles`, `Pickups` or `Deathmatch`. Each owns its own state and reads and changes `World`.
+- The room runs an ordered list: `Spawn` (spawn points and respawning below `KILL_Y`), `Vehicles` (boarding, seats, driving, stepping car physics), `Gunnery` (turret aim and shells for gunner seats) and `Movement` (the character controller, for standing players).
+- `on_start` runs once when the room is created. `Vehicles` uses it to park the cars.
+- New features are new mechanics, such as `Pickups` or `Deathmatch`. Each owns its own state and reads and changes `World`.
 - When mechanics need to talk to clients, `World` will gain an event outbox. The game loop will turn those events into reliable messages, so mechanics never touch sessions.
 
 ## 12. Art direction
@@ -233,8 +246,8 @@ pub trait Mechanic: Send {
 ## 14. Roadmap
 
 1. **MVP (done):** server-authoritative stickmen on an OSM block, with prediction, reconciliation, interpolation, adaptive delay, network emulation and cross-language fixtures.
-2. **Vehicles I:** a car entity, seats, enter and exit, driver input routing, server-simulated and interpolated.
-3. **Vehicles II:** driver-side prediction, then the tank (turret seat) and helicopter.
+2. **Vehicles I (done):** a car, seats, enter and exit, driver input routing, server-simulated and interpolated. See [VEHICLES-I.md](VEHICLES-I.md).
+3. **Vehicles II:** the tank with a gunner seat (done, see [VEHICLES-II.md](VEHICLES-II.md)), then driver-side prediction and the helicopter.
 4. **Combat:** a hitscan weapon with server-side lag compensation, health, respawns and the first game mode.
 5. **Scale:**
    - Delta-compressed snapshots (against the last acked snapshot).

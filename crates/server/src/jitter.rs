@@ -5,7 +5,7 @@
 //! repeats the last input on underrun (minus one-shot buttons), and drops back to `TARGET` if the
 //! queue grows past `MAX` (the client's clock is running ahead, or a burst arrived).
 
-use shared::consts::BUTTON_JUMP;
+use shared::consts::{BUTTON_FIRE, BUTTON_JUMP, BUTTON_USE};
 use shared::protocol::InputFrame;
 use std::collections::VecDeque;
 
@@ -60,13 +60,13 @@ impl JitterBuffer {
             }
             self.primed = false;
         }
-        // Underrun: keep walking the way the player was, but never re-trigger a jump. After a while,
+        // Underrun: keep walking the way the player was, but never re-trigger a jump, a use or a shot. After a while,
         // stand still.
         self.starved = self.starved.saturating_add(1);
         let mut repeat = self.last;
-        repeat.4 &= !BUTTON_JUMP;
+        repeat.4 &= !(BUTTON_JUMP | BUTTON_USE | BUTTON_FIRE);
         if self.starved > STARVE_LIMIT {
-            repeat = InputFrame(repeat.0, 0, 0, repeat.3, 0);
+            repeat = InputFrame(repeat.0, 0, 0, repeat.3, 0, repeat.5);
         }
         Consumed { input: repeat, fresh: false }
     }
@@ -82,7 +82,7 @@ mod tests {
     use super::*;
 
     fn frame(seq: u32) -> InputFrame {
-        InputFrame(seq, 0, 127, 0, BUTTON_JUMP)
+        InputFrame(seq, 0, 127, 0, BUTTON_JUMP, 0)
     }
 
     #[test]

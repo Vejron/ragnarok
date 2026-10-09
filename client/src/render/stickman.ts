@@ -8,6 +8,9 @@ const LIMB = 0.06
 /** Bright, goofy colours, picked by entity id. */
 const PALETTE = [0xff5a5f, 0x2ec4b6, 0xffbe0b, 0x8338ec, 0x3a86ff, 0xfb5607, 0x06d6a0, 0xff006e]
 
+/** The colour of entity `id`'s head, also used for the heads of passengers peeking out of cars. */
+export const colorFor = (id: number) => PALETTE[id % PALETTE.length]!
+
 function limb(length: number, material: THREE.Material) {
   // Hangs down from its pivot so rotating the pivot swings it like a joint.
   const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(LIMB, length, 4, 8), material)
@@ -28,7 +31,7 @@ export class Stickman {
   private phase = 0
 
   constructor(id: number) {
-    const color = PALETTE[id % PALETTE.length]!
+    const color = colorFor(id)
     const material = new THREE.MeshToonMaterial({ color: 0x222222 })
     const accent = new THREE.MeshToonMaterial({ color })
     const body = new THREE.Group()
@@ -82,6 +85,11 @@ export class Stickman {
     this.armR.rotation.x = swing
     this.armL.rotation.z = -0.15
     this.armR.rotation.z = 0.15
+  }
+
+  /** Hides the stickman while it sits in a car. */
+  set hidden(hidden: boolean) {
+    this.root.visible = !hidden
   }
 
   dispose() {

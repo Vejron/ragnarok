@@ -1,15 +1,21 @@
 //! Game mechanics are small modules that hook into the game loop. Adding a feature (vehicles,
 //! pickups, game modes) means adding a `Mechanic`, not editing the loop.
 
+mod gunnery;
 mod movement;
 mod spawn;
+mod vehicles;
 
+pub use gunnery::Gunnery;
 pub use movement::Movement;
 pub use spawn::Spawn;
+pub use vehicles::Vehicles;
 
 use crate::game::World;
 
 pub trait Mechanic: Send {
+    /// The room was just created, before any player joined.
+    fn on_start(&mut self, _world: &mut World) {}
     /// A player entity was just created (at the origin, with no input yet).
     fn on_join(&mut self, _world: &mut World, _id: u32) {}
     /// A player entity is about to be removed.
@@ -20,5 +26,5 @@ pub trait Mechanic: Send {
 
 /// The mechanics a room runs, in tick order.
 pub fn default_mechanics() -> Vec<Box<dyn Mechanic>> {
-    vec![Box::new(Spawn), Box::new(Movement)]
+    vec![Box::new(Spawn), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement)]
 }

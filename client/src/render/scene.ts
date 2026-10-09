@@ -1,8 +1,16 @@
 import * as THREE from 'three'
 
 /** Third-person camera distance behind the player, metres. */
-const CAMERA_DISTANCE = 5
-const CAMERA_HEIGHT = 1.2
+export const ON_FOOT_DISTANCE = 5
+export const DRIVING_DISTANCE = 9
+export const TANK_DISTANCE = 13
+/** The gunner's camera sits this far behind the turret, on the line of the barrel. */
+export const GUNNER_BACK = 6.5
+/** ...and this far above it, so the turret doesn't hide the view. */
+export const GUNNER_UP = 2.6
+/** The camera looks at the point this far along the aim line, so the screen centre is where shells land at range. */
+export const GUNNER_FOCUS = 60
+export const CAMERA_HEIGHT = 1.2
 
 export class Scene {
   readonly scene = new THREE.Scene()
@@ -51,14 +59,29 @@ export class Scene {
   }
 
   /** Orbits the camera behind `target` by yaw/pitch, and keeps the shadow frustum around it. */
-  follow(target: readonly number[], yaw: number, pitch: number) {
+  follow(target: readonly number[], yaw: number, pitch: number, distance = ON_FOOT_DISTANCE) {
     const [x, y, z] = [target[0]!, target[1]! + CAMERA_HEIGHT, target[2]!]
-    const horizontal = Math.cos(pitch) * CAMERA_DISTANCE
-    this.camera.position.set(x + Math.sin(yaw) * horizontal, y - Math.sin(pitch) * CAMERA_DISTANCE, z + Math.cos(yaw) * horizontal)
+    const horizontal = Math.cos(pitch) * distance
+    this.camera.position.set(x + Math.sin(yaw) * horizontal, y - Math.sin(pitch) * distance, z + Math.cos(yaw) * horizontal)
     this.camera.position.y = Math.max(0.3, this.camera.position.y)
     this.camera.lookAt(x, y, z)
     this.sun.target.position.set(x, 0, z)
     this.sun.position.set(x + 60, 120, z + 40)
+  }
+
+  /**
+   * A gunner's view: behind and above `origin` (the turret ring), looking along the aim direction.
+   * It focuses on a far point of the barrel's line, so the centre of the screen is where the shell
+   * lands at range even though the camera is higher than the gun.
+   */
+  aimFrom(origin: readonly number[], yaw: number, pitch: number) {
+    const dir = new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch))
+    const from = new THREE.Vector3(origin[0]!, origin[1]!, origin[2]!)
+    this.camera.position.copy(from).addScaledVector(dir, -GUNNER_BACK).add(new THREE.Vector3(0, GUNNER_UP, 0))
+    this.camera.position.y = Math.max(0.3, this.camera.position.y)
+    this.camera.lookAt(from.addScaledVector(dir, GUNNER_FOCUS))
+    this.sun.target.position.set(origin[0]!, 0, origin[2]!)
+    this.sun.position.set(origin[0]! + 60, 120, origin[2]! + 40)
   }
 
   render() {

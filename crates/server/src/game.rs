@@ -3,13 +3,13 @@
 
 use crate::jitter::JitterBuffer;
 use crate::mechanics::{Mechanic, default_mechanics};
-use crate::physics::{Character, Physics};
+use crate::physics::{CarControls, Character, Physics};
 use crate::rng::Rng;
 use anyhow::Result;
 use bytes::Bytes;
 use shared::consts::*;
 use shared::protocol::*;
-use shared::quant::{to_cm, to_cm_i16, to_mrad};
+use shared::quant::{pack_quat, to_axis, to_cm, to_cm_i16, to_mrad};
 use shared::world::WorldFile;
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -31,13 +31,54 @@ pub enum Outgoing {
     Reliable(Bytes),
 }
 
+/// Where a seated player sits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Seat {
+    pub vehicle: u32,
+    /// 0 is the driver.
+    pub index: usize,
+}
+
 pub struct Player {
     pub character: Character,
+    /// While seated the stickman is hidden and rides with the vehicle; input drives the seat.
+    pub seat: Option<Seat>,
+    /// Ticks until a car can hit this player again.
+    pub hit_cooldown: u32,
     /// The input applied this tick.
     pub input: InputFrame,
     pub inputs: JitterBuffer,
     /// Newest client input sequence already applied, echoed in snapshots for reconciliation.
     pub ack: u32,
+}
+
+/// Game-side state of a vehicle. Its rigid body lives in `Physics`, under the same id.
+pub struct Vehicle {
+    pub kind: u8,
+    /// Player in each seat. Seat 0 is the driver.
+    pub seats: [Option<u32>; CAR_SEATS],
+    pub controls: CarControls,
+    /// Where it respawns after falling out of the world.
+    pub home: ([f32; 3], f32),
+    /// Consecutive ticks spent on its side or roof and not moving.
+    pub stuck_ticks: u32,
+    /// The turret, for a vehicle that has one.
+    pub gun: Option<Gun>,
+}
+
+/// A vehicle's gun: where it points and when it can fire again. The `Gunnery` mechanic owns it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Gun {
+    /// Turret yaw relative to the hull, radians, + turns left.
+    pub yaw: f32,
+    /// Barrel elevation, radians, + is up.
+    pub pitch: f32,
+    /// Ticks until the next shell can be fired.
+    pub cooldown: u32,
+    /// Shells fired so far, modulo 256.
+    pub shots: u8,
+    /// How far the last shell flew, metres.
+    pub range: f32,
 }
 
 /// Everything mechanics may read and change.
@@ -47,26 +88,47 @@ pub struct World {
     pub physics: Physics,
     /// Ordered by id so every pass over players is deterministic.
     pub players: BTreeMap<u32, Player>,
+    /// Vehicles share the id space with players.
+    pub vehicles: BTreeMap<u32, Vehicle>,
+    next_id: u32,
     pub rng: Rng,
+}
+
+impl World {
+    pub fn alloc_id(&mut self) -> u32 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
 }
 
 pub struct Game {
     pub world: World,
     mechanics: Vec<Box<dyn Mechanic>>,
     outboxes: BTreeMap<u32, mpsc::Sender<Outgoing>>,
-    next_id: u32,
     world_hash: u32,
 }
 
 impl Game {
     pub fn new(map: WorldFile, world_hash: u32) -> Result<Self> {
-        Ok(Self {
-            world: World { tick: 0, physics: Physics::new(&map)?, map, players: BTreeMap::new(), rng: Rng::from_time() },
+        let mut game = Self {
+            world: World {
+                tick: 0,
+                physics: Physics::new(&map)?,
+                map,
+                players: BTreeMap::new(),
+                vehicles: BTreeMap::new(),
+                next_id: 1,
+                rng: Rng::from_time(),
+            },
             mechanics: default_mechanics(),
             outboxes: BTreeMap::new(),
-            next_id: 1,
             world_hash,
-        })
+        };
+        for mechanic in &mut game.mechanics {
+            mechanic.on_start(&mut game.world);
+        }
+        Ok(game)
     }
 
     pub fn handle(&mut self, command: Command) {
@@ -87,15 +149,14 @@ impl Game {
         if self.world.players.len() >= MAX_PLAYERS {
             return None;
         }
-        let id = self.next_id;
-        self.next_id += 1;
+        let id = self.world.alloc_id();
         let welcome = encode(&Welcome(S_WELCOME, PROTOCOL_VERSION, id, TICK_RATE as u8, SNAPSHOT_EVERY as u8, self.world_hash));
         if outbox.try_send(Outgoing::Reliable(welcome.into())).is_err() {
             return None;
         }
         self.world.players.insert(
             id,
-            Player { character: Character::default(), input: InputFrame::default(), inputs: JitterBuffer::default(), ack: 0 },
+            Player { character: Character::default(), seat: None, hit_cooldown: 0, input: InputFrame::default(), inputs: JitterBuffer::default(), ack: 0 },
         );
         self.outboxes.insert(id, outbox);
         for mechanic in &mut self.mechanics {
@@ -139,10 +200,12 @@ impl Game {
         }
     }
 
+    /// Standing players. Seated ones are shown by their vehicle instead.
     pub fn entity_states(&self) -> Vec<EntityState> {
         self.world
             .players
             .iter()
+            .filter(|(_, player)| player.seat.is_none())
             .map(|(&id, player)| {
                 let c = &player.character;
                 EntityState(
@@ -154,16 +217,35 @@ impl Game {
                     to_mrad(c.yaw),
                     to_cm_i16(c.vy),
                     if c.grounded { FLAG_GROUNDED } else { 0 },
+                    to_cm_i16(c.knock[0]),
+                    to_cm_i16(c.knock[1]),
                 )
+            })
+            .collect()
+    }
+
+    pub fn vehicle_states(&self) -> Vec<VehicleState> {
+        self.world
+            .vehicles
+            .iter()
+            .filter_map(|(&id, vehicle)| {
+                let pose = self.world.physics.car_pose(id)?;
+                let [x, y, z] = pose.position;
+                let [qx, qy, qz] = pack_quat(pose.rotation);
+                let seats = vehicle.seats[..seat_count(vehicle.kind)].iter().map(|seat| seat.unwrap_or(0)).collect();
+                let turret = vehicle.gun.map(|gun| Turret(to_mrad(gun.yaw), to_mrad(gun.pitch), gun.shots, (gun.range * 10.0).round().clamp(0.0, u16::MAX as f32) as u16));
+                Some(VehicleState(id, vehicle.kind, to_cm(x), to_cm(y), to_cm(z), qx, qy, qz, to_axis(pose.steer), seats, turret))
             })
             .collect()
     }
 
     fn send_snapshots(&mut self) {
         let entities = self.entity_states();
+        let vehicles = self.vehicle_states();
         for (id, outbox) in &self.outboxes {
             let ack = self.world.players.get(id).map_or(0, |player| player.ack);
-            let snapshot = encode(&Snapshot(S_SNAPSHOT, self.world.tick, ack, entities.clone()));
+            let ride = self.world.players.get(id).map_or(0, |player| player.character.ride);
+            let snapshot = encode(&Snapshot(S_SNAPSHOT, self.world.tick, ack, ride, entities.clone(), vehicles.clone()));
             // A full outbox means the session is stalled; dropping a snapshot is harmless.
             let _ = outbox.try_send(Outgoing::Datagram(snapshot.into()));
         }
@@ -215,7 +297,7 @@ mod tests {
         let Some(Outgoing::Reliable(welcome)) = drain(&mut inbox).into_iter().next() else { panic!("no welcome") };
         assert_eq!(decode::<Welcome>(&welcome).unwrap().2, id);
 
-        game.handle(Command::Input(id, vec![InputFrame(1, 0, 127, 0, 0), InputFrame(2, 0, 127, 0, 0)]));
+        game.handle(Command::Input(id, vec![InputFrame(1, 0, 127, 0, 0, 0), InputFrame(2, 0, 127, 0, 0, 0)]));
         game.step();
         game.step();
         let snapshots: Vec<Snapshot> = drain(&mut inbox)
@@ -227,8 +309,8 @@ mod tests {
             .collect();
         let last = snapshots.last().expect("a snapshot every SNAPSHOT_EVERY ticks");
         assert_eq!(last.2, 2, "both inputs acknowledged");
-        assert_eq!(last.3.len(), 1);
-        assert!(last.3[0].4 < 0, "walked towards -Z");
+        assert_eq!(last.4.len(), 1);
+        assert!(last.4[0].4 < 0, "walked towards -Z");
     }
 
     #[test]

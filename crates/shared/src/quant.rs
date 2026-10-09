@@ -42,6 +42,27 @@ pub fn from_axis(value: i8) -> f32 {
     (value as f32 / 127.0).clamp(-1.0, 1.0)
 }
 
+/// A component of a unit quaternion, `[-1, 1]`, to i16.
+pub fn to_unit(value: f32) -> i16 {
+    if value.is_finite() { (value.clamp(-1.0, 1.0) * 32767.0).round() as i16 } else { 0 }
+}
+
+pub fn from_unit(value: i16) -> f32 {
+    (value as f32 / 32767.0).clamp(-1.0, 1.0)
+}
+
+/// Packs a unit quaternion `[x, y, z, w]` as its `x, y, z` components. `q` and `-q` are the same
+/// rotation, so the sign is chosen to make `w >= 0` and `w` is rebuilt on arrival.
+pub fn pack_quat(q: [f32; 4]) -> [i16; 3] {
+    let sign = if q[3] < 0.0 { -1.0 } else { 1.0 };
+    [to_unit(q[0] * sign), to_unit(q[1] * sign), to_unit(q[2] * sign)]
+}
+
+pub fn unpack_quat(packed: [i16; 3]) -> [f32; 4] {
+    let [x, y, z] = packed.map(from_unit);
+    [x, y, z, (1.0 - x * x - y * y - z * z).max(0.0).sqrt()]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -59,5 +80,16 @@ mod tests {
         assert_eq!(to_cm(f32::NAN), 0);
         assert_eq!(to_cm_i16(f32::INFINITY), 0);
         assert_eq!(to_axis(f32::NAN), 0);
+    }
+
+    #[test]
+    fn quaternions_survive_packing() {
+        let half = 0.7_f32;
+        let q = [0.1, -half * 0.5, 0.2, -(1.0 - 0.01 - half * half * 0.25 - 0.04_f32).sqrt()];
+        let back = unpack_quat(pack_quat(q));
+        // The negated quaternion is the same rotation.
+        for (a, b) in q.iter().zip(back) {
+            assert!((-a - b).abs() < 1e-3, "{q:?} vs {back:?}");
+        }
     }
 }

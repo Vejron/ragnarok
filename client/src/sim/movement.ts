@@ -1,4 +1,7 @@
-import { BUTTON_JUMP, BUTTON_RUN, GRAVITY, JUMP_SPEED, MAX_FALL_SPEED, RUN_SPEED, WALK_SPEED } from './consts'
+import {
+  BUTTON_JUMP, BUTTON_RUN, GRAVITY, JUMP_SPEED, KNOCK_KEEP_AIR, KNOCK_KEEP_GROUND, KNOCK_MIN_SPEED, MAX_FALL_SPEED, RUN_SPEED,
+  WALK_SPEED,
+} from './consts'
 import { fromAxis, fromMrad, type InputFrame } from '@/net/codec'
 
 /** Mirrors `crates/shared/src/movement.rs`: the movement rules around the character controller. */
@@ -24,12 +27,26 @@ export function wishVelocity(input: InputFrame): [number, number] {
   return [f32(x * speed), f32(z * speed)]
 }
 
-export function desiredTranslation(vy: number, grounded: boolean, input: InputFrame, dt: number): { vy: number; desired: [number, number, number] } {
+export function desiredTranslation(
+  vy: number,
+  grounded: boolean,
+  knock: readonly [number, number],
+  input: InputFrame,
+  dt: number,
+): { vy: number; desired: [number, number, number] } {
   let next = vy
   if (grounded && input.buttons & BUTTON_JUMP) next = JUMP_SPEED
   next = f32(Math.max(next - GRAVITY * dt, -MAX_FALL_SPEED))
   const [vx, vz] = wishVelocity(input)
-  return { vy: next, desired: [f32(vx * dt), f32(next * dt), f32(vz * dt)] }
+  return { vy: next, desired: [f32(f32(vx + knock[0]) * dt), f32(next * dt), f32(f32(vz + knock[1]) * dt)] }
+}
+
+/** Knockback after one tick. Mirrors `decay_knock`. */
+export function decayKnock(knock: readonly [number, number], grounded: boolean): [number, number] {
+  const keep = f32(grounded ? KNOCK_KEEP_GROUND : KNOCK_KEEP_AIR)
+  const x = f32(knock[0] * keep)
+  const z = f32(knock[1] * keep)
+  return Math.hypot(x, z) < KNOCK_MIN_SPEED ? [0, 0] : [x, z]
 }
 
 export function settleVertical(vy: number, desiredY: number, movedY: number, grounded: boolean): number {

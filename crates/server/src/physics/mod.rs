@@ -1,4 +1,4 @@
-//! Static world collision and the stickman character controller.
+//! Static world collision, the stickman character controller and the dynamic vehicle bodies.
 //!
 //! The client builds the same scene in `client/src/sim/physics.ts` from the same world file and
 //! constants, so its prediction hits the same walls. Native and WASM Rapier are not bit-exact,
@@ -8,10 +8,13 @@ use anyhow::{Context, Result};
 use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterController};
 use rapier3d::prelude::*;
 use shared::consts::*;
-use shared::movement::{desired_translation, settle_vertical};
+use shared::movement::{decay_knock, desired_translation, settle_vertical};
 use shared::protocol::InputFrame;
 use shared::quant::from_cm;
 use shared::world::WorldFile;
+
+mod vehicle;
+pub use vehicle::{CarControls, CarPose, half_extents};
 
 /// Authoritative state of one stickman. Positions are the capsule centre, in metres.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -20,6 +23,10 @@ pub struct Character {
     pub yaw: f32,
     pub vy: f32,
     pub grounded: bool,
+    /// Leftover knockback velocity `[x, z]`, m/s. Added to walking and decaying every tick.
+    pub knock: [f32; 2],
+    /// Id of the vehicle this character stands on, or 0. Riders are carried along with it.
+    pub ride: u32,
 }
 
 pub struct Physics {
@@ -27,6 +34,15 @@ pub struct Physics {
     colliders: ColliderSet,
     broad_phase: DefaultBroadPhase,
     narrow_phase: NarrowPhase,
+    pipeline: PhysicsPipeline,
+    islands: IslandManager,
+    impulse_joints: ImpulseJointSet,
+    multibody_joints: MultibodyJointSet,
+    soft_bodies: SoftBodySet,
+    ccd: CCDSolver,
+    parameters: IntegrationParameters,
+    /// Vehicles by id.
+    cars: std::collections::BTreeMap<u32, vehicle::Car>,
     controller: KinematicCharacterController,
     character_shape: Collider,
 }
@@ -67,6 +83,14 @@ impl Physics {
             colliders: ColliderSet::new(),
             broad_phase: DefaultBroadPhase::new(),
             narrow_phase: NarrowPhase::new(),
+            pipeline: PhysicsPipeline::new(),
+            islands: IslandManager::new(),
+            impulse_joints: ImpulseJointSet::new(),
+            multibody_joints: MultibodyJointSet::new(),
+            soft_bodies: SoftBodySet::new(),
+            ccd: CCDSolver::new(),
+            parameters: IntegrationParameters { dt: TICK_DT, ..Default::default() },
+            cars: Default::default(),
             controller: KinematicCharacterController {
                 offset: CharacterLength::Absolute(CONTROLLER_OFFSET),
                 slide: true,
@@ -86,38 +110,60 @@ impl Physics {
         for collider in static_colliders(world)? {
             physics.colliders.insert(collider);
         }
-        physics.refresh_queries();
+        physics.step_pipeline();
         Ok(physics)
     }
 
-    /// Rebuilds the broad-phase after static colliders change. Characters are not colliders (they
-    /// are shape-cast on demand), so this only needs to run when the world itself changes.
-    fn refresh_queries(&mut self) {
-        PhysicsPipeline::new().step(
-            Vector::ZERO,
-            &IntegrationParameters::default(),
-            &mut IslandManager::new(),
+    /// Runs the rigid-body pipeline for one tick. Before any vehicle exists this only builds the
+    /// broad-phase over the static scene, which scene queries need.
+    fn step_pipeline(&mut self) {
+        self.pipeline.step(
+            Vector::new(0.0, -vehicle::CAR_GRAVITY, 0.0),
+            &self.parameters,
+            &mut self.islands,
             &mut self.broad_phase,
             &mut self.narrow_phase,
             &mut self.bodies,
             &mut self.colliders,
-            &mut ImpulseJointSet::new(),
-            &mut MultibodyJointSet::new(),
-            &mut SoftBodySet::new(),
-            &mut CCDSolver::new(),
+            &mut self.impulse_joints,
+            &mut self.multibody_joints,
+            &mut self.soft_bodies,
+            &mut self.ccd,
             &(),
             &(),
         );
     }
 
-    /// Advances one character by one tick of `input`. Characters do not collide with each other,
-    /// which keeps the local player's prediction independent of where remote players really are.
-    pub fn move_character(&self, character: &mut Character, input: &InputFrame, dt: f32) {
-        let (vy, desired) = desired_translation(character.vy, character.grounded, input, dt);
+    /// Whether `shape` at `pose` touches the static world. Vehicles are ignored.
+    pub fn touches_static(&self, shape: &dyn Shape, pose: Pose) -> bool {
+        self.touches(shape, pose, QueryFilter::exclude_dynamic())
+    }
+
+    fn touches(&self, shape: &dyn Shape, pose: Pose, filter: QueryFilter) -> bool {
         let queries = self.broad_phase.as_query_pipeline(
             self.narrow_phase.query_dispatcher(),
             &self.bodies,
             &self.colliders,
+            filter,
+        );
+        queries.intersect_shape(pose, shape).next().is_some()
+    }
+
+    /// Whether a standing character capsule centred at `position` fits there, among the static
+    /// world and the vehicles.
+    pub fn character_fits(&self, position: [f32; 3]) -> bool {
+        !self.touches(self.character_shape.shape(), Pose::from_translation(Vector::from(position)), QueryFilter::default())
+    }
+
+    /// Advances one character by one tick of `input`. Characters do not collide with each other,
+    /// which keeps the local player's prediction independent of where remote players really are.
+    pub fn move_character(&self, character: &mut Character, input: &InputFrame, dt: f32) {
+        let (vy, desired) = desired_translation(character.vy, character.grounded, character.knock, input, dt);
+        let queries = self.broad_phase.as_query_pipeline(
+            self.narrow_phase.query_dispatcher(),
+            &self.bodies,
+            &self.colliders,
+            // Vehicles are solid. The client mirrors them as colliders at their last snapshot pose.
             QueryFilter::default(),
         );
         // Horizontal and vertical movement are separate passes. A single combined pass makes the
@@ -134,6 +180,7 @@ impl Physics {
         let grounded = vertical.grounded && vy <= 0.0;
         character.vy = settle_vertical(vy, desired[1], end.y - start.y, grounded);
         character.grounded = grounded;
+        character.knock = decay_knock(character.knock, grounded);
         character.yaw = shared::quant::from_mrad(input.3);
     }
 }
@@ -184,7 +231,7 @@ mod tests {
     fn walks_forward_at_walk_speed() {
         let physics = Physics::new(&flat_world()).unwrap();
         let mut character = standing();
-        let forward = InputFrame(1, 0, 127, 0, 0);
+        let forward = InputFrame(1, 0, 127, 0, 0, 0);
         for _ in 0..TICK_RATE {
             physics.move_character(&mut character, &forward, TICK_DT);
         }
@@ -196,7 +243,7 @@ mod tests {
     fn jumps_and_comes_back_down() {
         let physics = Physics::new(&flat_world()).unwrap();
         let mut character = standing();
-        physics.move_character(&mut character, &InputFrame(1, 0, 0, 0, BUTTON_JUMP), TICK_DT);
+        physics.move_character(&mut character, &InputFrame(1, 0, 0, 0, BUTTON_JUMP, 0), TICK_DT);
         assert!(!character.grounded);
         let mut peak: f32 = 0.0;
         for _ in 0..120 {
@@ -212,7 +259,7 @@ mod tests {
         let physics = Physics::new(&world_with_wall()).unwrap();
         let mut character = standing();
         // Yaw -π/2 faces +X, towards the wall.
-        let toward_wall = InputFrame(1, 0, 127, -1571, BUTTON_RUN);
+        let toward_wall = InputFrame(1, 0, 127, -1571, BUTTON_RUN, 0);
         for _ in 0..TICK_RATE * 2 {
             physics.move_character(&mut character, &toward_wall, TICK_DT);
         }
@@ -224,7 +271,7 @@ mod tests {
     fn boundary_walls_keep_players_in() {
         let physics = Physics::new(&flat_world()).unwrap();
         let mut character = standing();
-        let forward = InputFrame(1, 0, 127, 0, BUTTON_RUN);
+        let forward = InputFrame(1, 0, 127, 0, BUTTON_RUN, 0);
         for _ in 0..TICK_RATE * 20 {
             physics.move_character(&mut character, &forward, TICK_DT);
         }
@@ -236,7 +283,7 @@ mod tests {
     pub fn scripted_input(seq: u32) -> InputFrame {
         let yaw = -1571 + ((seq as i32 * 13) % 1200 - 600) as i16;
         let buttons = if seq % 90 == 30 { BUTTON_JUMP } else if seq > 150 { BUTTON_RUN } else { 0 };
-        InputFrame(seq, (seq % 7) as i8 * 10 - 30, 127, yaw, buttons)
+        InputFrame(seq, (seq % 7) as i8 * 10 - 30, 127, yaw, buttons, 0)
     }
 
     /// `(tick, position)` after `scripted_input`, mirrored in `predict.spec.ts`.
@@ -267,7 +314,7 @@ mod tests {
         let run = || {
             let mut character = standing();
             for seq in 0..300u32 {
-                let input = InputFrame(seq, 90, 127, (seq as i16 * 7) % 3000, if seq % 50 == 0 { BUTTON_JUMP } else { 0 });
+                let input = InputFrame(seq, 90, 127, (seq as i16 * 7) % 3000, if seq % 50 == 0 { BUTTON_JUMP } else { 0 }, 0);
                 physics.move_character(&mut character, &input, TICK_DT);
             }
             character
