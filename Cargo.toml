@@ -1,0 +1,13 @@
+[workspace]
+resolver = "3"
+members = ["crates/shared", "crates/server", "crates/osm-import"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+anyhow = "1"
+rmp-serde = "1"
+serde = { version = "1", features = ["derive"] }
+shared = { path = "crates/shared" }

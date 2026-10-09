@@ -1,0 +1,39 @@
+import { BUTTON_JUMP, BUTTON_RUN, GRAVITY, JUMP_SPEED, MAX_FALL_SPEED, RUN_SPEED, WALK_SPEED } from './consts'
+import { fromAxis, fromMrad, type InputFrame } from '@/net/codec'
+
+/** Mirrors `crates/shared/src/movement.rs`: the movement rules around the character controller. */
+
+/** The server simulates in f32; rounding at the same points keeps prediction from drifting. */
+export const f32 = Math.fround
+
+export function wishVelocity(input: InputFrame): [number, number] {
+  const strafe = fromAxis(input.strafe)
+  const forward = fromAxis(input.forward)
+  const yaw = fromMrad(input.yaw)
+  const sin = Math.sin(yaw)
+  const cos = Math.cos(yaw)
+  // Yaw 0 faces -Z. forward = (-sin, -cos), right = (cos, -sin).
+  let x = -sin * forward + cos * strafe
+  let z = -cos * forward - sin * strafe
+  const length = Math.hypot(x, z)
+  if (length > 1) {
+    x /= length
+    z /= length
+  }
+  const speed = input.buttons & BUTTON_RUN ? RUN_SPEED : WALK_SPEED
+  return [f32(x * speed), f32(z * speed)]
+}
+
+export function desiredTranslation(vy: number, grounded: boolean, input: InputFrame, dt: number): { vy: number; desired: [number, number, number] } {
+  let next = vy
+  if (grounded && input.buttons & BUTTON_JUMP) next = JUMP_SPEED
+  next = f32(Math.max(next - GRAVITY * dt, -MAX_FALL_SPEED))
+  const [vx, vz] = wishVelocity(input)
+  return { vy: next, desired: [f32(vx * dt), f32(next * dt), f32(vz * dt)] }
+}
+
+export function settleVertical(vy: number, desiredY: number, movedY: number, grounded: boolean): number {
+  const landed = grounded && vy <= 0
+  const bumpedCeiling = desiredY > 0 && movedY < desiredY * 0.5
+  return landed || bumpedCeiling ? 0 : vy
+}
