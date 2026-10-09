@@ -55,6 +55,7 @@ async fn main() -> Result<()> {
         let cache = env("RAGNAROK_ACME_CACHE").unwrap_or_else(|| "crates/server/acme".into());
         let staging = env("RAGNAROK_ACME_STAGING").is_some();
         let mut issuer = AcmeIssuer::builder()
+            .agreed(true)
             .storage(Arc::new(FileStorage::new(&cache)))
             .http01_solver(Arc::new(Http01Solver::new(80)));
         if staging {
