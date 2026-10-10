@@ -1,32 +1,69 @@
 import * as THREE from 'three'
-import {
-  CAR_SEATS, TANK_AXLES_Z, TANK_BARREL_LENGTH, TANK_HALF_EXTENTS, TANK_HARD_POINT_Y, TANK_SUSPENSION_REST, TANK_TRACK_HALF,
-  TANK_TURRET_PIVOT, TANK_WHEEL_RADIUS,
-} from '@/sim/consts'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { CAR_SEATS, TANK_TRACK_HALF } from '@/sim/consts'
 import { wrapAngle, type Turret } from '@/net/codec'
 import { colorFor } from './character'
 import type { VehicleModel } from './car'
 
-const [HALF_X, HALF_Y, HALF_Z] = TANK_HALF_EXTENTS
+export const TANK_MODEL_URL = `${import.meta.env.BASE_URL}models/tank.glb`
+
+/** Radius of the road wheels in the model (`WHEEL_RADIUS` in build_tank.py): the tracks' speed over them is what rolls them. */
+const WHEEL_RADIUS = 0.4
 const RECOIL_STROKE = 0.5
 const RECOIL_SECONDS = 0.35
-const WHEEL_Y = TANK_HARD_POINT_Y - TANK_SUSPENSION_REST * 0.7
+/** Paint colours handed out by vehicle id, so neighbouring tanks are told apart. */
+const PAINTS = [0x6b8e23, 0x8a7f4a, 0x5f7d5a, 0x7a6f3d] as const
 /** Each seat's occupant, in the hull frame (driver) or the turret frame (gunner). */
-const DRIVER_HEAD: readonly [number, number, number] = [0, HALF_Y + 0.12, -1.5]
-const GUNNER_HEAD: readonly [number, number, number] = [-0.35, 0.62, 0.25]
+const DRIVER_HEAD: readonly [number, number, number] = [0, 0.55, -1.55]
+const GUNNER_HEAD: readonly [number, number, number] = [-0.45, 0.5, 0.3]
+
+let asset: THREE.Object3D | null = null
 
 /**
- * A chunky toy tank: a hull on two track runs with three road wheels each, and a turret that
- * swings on the hull with a barrel that nods. The driver's head shows in a hatch, the gunner's on
- * the turret. The hull is the physics box; wheels roll with the movement of each track (so turning
- * on the spot rolls them in opposite directions).
+ * Parses `tank.glb` (built by `tools/vehicles/build_tank.py`) for every `TankModel` to share. Its
+ * materials become flat toon ones to match the rest of the scene; `paint` is replaced per tank.
+ */
+export async function parseTankModel(data: ArrayBuffer) {
+  asset = await new Promise<THREE.Object3D>((resolve, reject) => {
+    new GLTFLoader().parse(
+      data,
+      '',
+      (gltf) => {
+        gltf.scene.traverse((node) => {
+          const mesh = node as THREE.Mesh
+          if (!mesh.isMesh) return
+          const source = mesh.material as THREE.MeshStandardMaterial
+          mesh.material = new THREE.MeshToonMaterial({ color: source.color, name: source.name })
+          source.dispose()
+          mesh.castShadow = true
+        })
+        resolve(gltf.scene)
+      },
+      reject,
+    )
+  })
+}
+
+export async function loadTankModel(url = TANK_MODEL_URL) {
+  const response = await fetch(url)
+  if (!response.ok) throw new Error(`could not load ${url}: ${response.status}`)
+  await parseTankModel(await response.arrayBuffer())
+}
+
+/**
+ * A T-55 in silhouette: a hull on two track runs with seven wheels each, and a turret that swings
+ * on the hull with a barrel that nods. The driver's head shows in a hatch, the gunner's in the
+ * turret's cupola. Wheels roll with the movement of each track (so turning on the spot rolls them
+ * in opposite directions).
  */
 export class TankModel implements VehicleModel {
   readonly root = new THREE.Group()
-  private readonly turret = new THREE.Group()
-  private readonly gun = new THREE.Group()
-  private readonly spinners: { group: THREE.Group; side: number }[] = []
+  private readonly turret: THREE.Object3D
+  private readonly gun: THREE.Object3D
+  private readonly gunRest: number
+  private readonly spinners: { node: THREE.Object3D; side: number }[] = []
   private readonly heads: THREE.Mesh[] = []
+  private readonly paint: THREE.MeshToonMaterial
   private roll = { left: 0, right: 0 }
   private placed = false
   /** `performance.now()` of the last shot, for the barrel's recoil stroke. */
@@ -38,51 +75,19 @@ export class TankModel implements VehicleModel {
   private readonly aim = new THREE.Vector3()
 
   constructor(id: number) {
-    const olive = new THREE.MeshToonMaterial({ color: [0x6b8e23, 0x8a7f4a, 0x5f7d5a, 0x7a6f3d][id % 4]! })
-    const dark = new THREE.MeshToonMaterial({ color: 0x2b2b2b })
-    const metal = new THREE.MeshToonMaterial({ color: 0x4d5448 })
-
-    const part = (parent: THREE.Object3D, geometry: THREE.BufferGeometry, material: THREE.Material, x: number, y: number, z: number) => {
-      const mesh = new THREE.Mesh(geometry, material)
-      mesh.position.set(x, y, z)
-      mesh.castShadow = true
-      parent.add(mesh)
-      return mesh
-    }
-    // Hull, a sloped glacis plate in front, and the two track runs.
-    part(this.root, new THREE.BoxGeometry(HALF_X * 2 - 0.5, HALF_Y * 2, HALF_Z * 2), olive, 0, 0, 0)
-    part(this.root, new THREE.BoxGeometry(HALF_X * 2 - 0.5, 0.25, 1.4), olive, 0, HALF_Y - 0.2, -HALF_Z - 0.2).rotation.x = 0.5
-    for (const side of [-1, 1]) {
-      part(this.root, new THREE.BoxGeometry(0.62, 0.9, HALF_Z * 2 + 0.5), dark, side * (TANK_TRACK_HALF + 0.05), WHEEL_Y + 0.15, 0)
-      part(this.root, new THREE.BoxGeometry(0.7, 0.12, HALF_Z * 2 + 0.7), metal, side * (TANK_TRACK_HALF + 0.05), WHEEL_Y + 0.65, 0)
-    }
-    // Road wheels, which roll with their track.
-    const wheelGeometry = new THREE.CylinderGeometry(TANK_WHEEL_RADIUS, TANK_WHEEL_RADIUS, 0.2, 14)
-    wheelGeometry.rotateZ(Math.PI / 2)
-    const hubGeometry = new THREE.BoxGeometry(0.24, TANK_WHEEL_RADIUS * 1.2, 0.09)
-    const light = new THREE.MeshToonMaterial({ color: 0xbbbbbb })
-    for (const z of TANK_AXLES_Z) {
-      for (const side of [-1, 1]) {
-        const spinner = new THREE.Group()
-        spinner.position.set(side * (TANK_TRACK_HALF + 0.38), WHEEL_Y, z)
-        spinner.add(new THREE.Mesh(wheelGeometry, metal), new THREE.Mesh(hubGeometry, light))
-        this.root.add(spinner)
-        this.spinners.push({ group: spinner, side })
-      }
-    }
-
-    // Turret ring, with the turret body turning on it and the gun nodding in the turret.
-    this.turret.position.set(...TANK_TURRET_PIVOT)
-    this.root.add(this.turret)
-    part(this.turret, new THREE.BoxGeometry(1.7, 0.7, 2.1), olive, 0, 0, 0.1)
-    part(this.turret, new THREE.BoxGeometry(1.5, 0.2, 0.5), olive, 0, 0.1, -1.1).rotation.x = -0.4
-    this.turret.add(this.gun)
-    const barrel = new THREE.CylinderGeometry(0.12, 0.14, TANK_BARREL_LENGTH - 0.5, 10)
-    barrel.rotateX(Math.PI / 2)
-    part(this.gun, barrel, metal, 0, 0, -(TANK_BARREL_LENGTH + 0.5) / 2)
-    const brake = new THREE.CylinderGeometry(0.2, 0.2, 0.35, 10)
-    brake.rotateX(Math.PI / 2)
-    part(this.gun, brake, dark, 0, 0, -TANK_BARREL_LENGTH + 0.17)
+    if (!asset) throw new Error('loadTankModel() must finish before tanks are created')
+    const model = asset.clone(true)
+    this.root.add(model)
+    this.paint = new THREE.MeshToonMaterial({ color: PAINTS[id % PAINTS.length]! })
+    model.traverse((node) => {
+      const mesh = node as THREE.Mesh
+      if (mesh.isMesh && mesh.material instanceof THREE.Material && mesh.material.name === 'paint') mesh.material = this.paint
+      const wheel = /^wheel_([LR])_/.exec(node.name)
+      if (wheel) this.spinners.push({ node, side: wheel[1] === 'L' ? -1 : 1 })
+    })
+    this.turret = model.getObjectByName('turret')!
+    this.gun = model.getObjectByName('gun')!
+    this.gunRest = this.gun.position.z
 
     const headGeometry = new THREE.SphereGeometry(0.2, 12, 10)
     for (let seat = 0; seat < CAR_SEATS; seat++) {
@@ -120,19 +125,19 @@ export class TankModel implements VehicleModel {
       const ahead = this.forward.dot(this.root.position.clone().sub(this.last))
       const turned = wrapAngle(yaw - this.lastYaw) * TANK_TRACK_HALF
       // Turning left (+yaw) holds the left track back and drives the right one on.
-      this.roll.left -= (ahead - turned) / TANK_WHEEL_RADIUS
-      this.roll.right -= (ahead + turned) / TANK_WHEEL_RADIUS
+      this.roll.left -= (ahead - turned) / WHEEL_RADIUS
+      this.roll.right -= (ahead + turned) / WHEEL_RADIUS
     }
     this.last.copy(this.root.position)
     this.lastYaw = yaw
     this.placed = true
-    for (const { group, side } of this.spinners) group.rotation.x = side < 0 ? this.roll.left : this.roll.right
+    for (const { node, side } of this.spinners) node.rotation.x = side < 0 ? this.roll.left : this.roll.right
 
     this.turret.rotation.y = turret?.yaw ?? 0
     this.gun.rotation.x = turret?.pitch ?? 0
     // The barrel slides back and eases home over a third of a second.
     const since = (performance.now() - this.firedAt) / 1000
-    this.gun.position.z = since < RECOIL_SECONDS ? RECOIL_STROKE * (1 - since / RECOIL_SECONDS) ** 2 : 0
+    this.gun.position.z = this.gunRest + (since < RECOIL_SECONDS ? RECOIL_STROKE * (1 - since / RECOIL_SECONDS) ** 2 : 0)
     this.heads.forEach((head, seat) => {
       const occupant = seats[seat] ?? 0
       head.visible = occupant !== 0
@@ -153,10 +158,13 @@ export class TankModel implements VehicleModel {
     return { origin: this.pivot.clone(), direction: this.aim.clone() }
   }
 
+  /** Frees what this tank owns; the model's geometry and other materials are shared by every tank. */
   dispose() {
-    this.root.traverse((object) => {
-      if (object instanceof THREE.Mesh) object.geometry.dispose()
-    })
+    this.paint.dispose()
+    for (const head of this.heads) {
+      ;(head.material as THREE.Material).dispose()
+    }
+    this.heads[0]?.geometry.dispose()
     this.root.removeFromParent()
   }
 }

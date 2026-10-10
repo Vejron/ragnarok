@@ -469,21 +469,21 @@ for gname, index in GROUPS.items():
 
 # Weapons: one mesh each, in the pose it is held in, and the muzzle where its barrel ends.
 weapon_objects = []
-MUZZLES = {}  # bone name -> (stance, pose-space offset)
+MUZZLES = {}  # bone name -> (stance, tip in rest space)
 for wname, wstance, parts, muzzle in WEAPONS:
     start_mesh()
     build_weapon(parts, wstance)
     obj, _ = make_object(f"weapon_{wname}", bm)
     weapon_objects.append(obj)
     if muzzle is not None:
-        MUZZLES["muzzle" if wstance == "rifle" else f"muzzle_{wstance}"] = (wstance, muzzle)
+        # The tip is found here, with the rig posed in this stance; edit mode does not re-evaluate the pose.
+        tip = pose_to_rest(wstance) @ (STANCES[wstance]["R"] + Vector(muzzle))
+        MUZZLES["muzzle" if wstance == "rifle" else f"muzzle_{wstance}"] = (wstance, tip)
 
 # Muzzle bones ride on the right hand, at the barrel tips.
 bpy.context.view_layer.objects.active = arm_obj
 bpy.ops.object.mode_set(mode="EDIT")
-for bname, (wstance, offset) in MUZZLES.items():
-    rest_from_pose = pose_to_rest(wstance)
-    tip = rest_from_pose @ (STANCES[wstance]["R"] + Vector(offset))
+for bname, (wstance, tip) in MUZZLES.items():
     eb = arm_data.edit_bones.new(bname)
     eb.head = tip
     eb.tail = tip + Vector((0, 0, -0.05))

@@ -1,75 +1,105 @@
 import * as THREE from 'three'
-import { HELI_HALF_EXTENTS, HELI_SEATS } from '@/sim/consts'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { HELI_GUN_LENGTH, HELI_SEATS } from '@/sim/consts'
 import type { Turret } from '@/net/codec'
 import { colorFor } from './character'
 import type { VehicleModel } from './car'
 
-const [HALF_X, HALF_Y, HALF_Z] = HELI_HALF_EXTENTS
+export const HELI_MODEL_URL = `${import.meta.env.BASE_URL}models/heli.glb`
+
 /** Main rotor speed with the pilot aboard, rad/s, and how fast it spins up or down, rad/s². */
 const ROTOR_SPEED = 28
 const ROTOR_ACCEL = 14
 const TAIL_ROTOR_RATIO = 1.6
-/** Each seat's occupant in the hull frame: pilot on the right, passenger on the left, as in a real cockpit. */
-const SEATS: readonly [number, number, number][] = [
-  [0.4, 0.2, -1.2],
-  [-0.4, 0.2, -1.2],
+const RECOIL_STROKE = 0.08
+const RECOIL_SECONDS = 0.06
+/** Paint colours handed out by vehicle id, so neighbouring helicopters are told apart. */
+const PAINTS = [0x6b7a4f, 0x8a8456, 0x5d6b52, 0x7a7048] as const
+const GLASS_OPACITY = 0.45
+/** Each seat's occupant in the hull frame: the pilot raised behind and above the gunner in the nose. */
+const SEATS: readonly (readonly [number, number, number])[] = [
+  [0, 0.45, -0.45],
+  [0, 0.1, -1.55],
 ]
-const BODY_COLORS = [0xd62828, 0x2a9d8f, 0x3a86ff, 0xf4a261, 0x8338ec, 0x90be6d]
+
+let asset: THREE.Object3D | null = null
 
 /**
- * A toy helicopter: a cabin under a glass bubble, a tail boom with a fin and a small rotor, skids,
- * and a main rotor that spins up while someone sits in the pilot's seat. The cabin box is the
- * physics hull; the rotors are bigger than it, as a cartoon's are.
+ * Parses `heli.glb` (built by `tools/vehicles/build_heli.py`) for every `HeliModel` to share. Its
+ * materials become flat toon ones to match the rest of the scene; `paint` is replaced per helicopter.
+ */
+export async function parseHeliModel(data: ArrayBuffer) {
+  asset = await new Promise<THREE.Object3D>((resolve, reject) => {
+    new GLTFLoader().parse(
+      data,
+      '',
+      (gltf) => {
+        gltf.scene.traverse((node) => {
+          const mesh = node as THREE.Mesh
+          if (!mesh.isMesh) return
+          const source = mesh.material as THREE.MeshStandardMaterial
+          const glass = source.name === 'glass'
+          mesh.material = new THREE.MeshToonMaterial({
+            color: source.color,
+            name: source.name,
+            transparent: glass,
+            opacity: glass ? GLASS_OPACITY : 1,
+            depthWrite: !glass,
+          })
+          source.dispose()
+          mesh.castShadow = !glass
+        })
+        resolve(gltf.scene)
+      },
+      reject,
+    )
+  })
+}
+
+export async function loadHeliModel(url = HELI_MODEL_URL) {
+  const response = await fetch(url)
+  if (!response.ok) throw new Error(`could not load ${url}: ${response.status}`)
+  await parseHeliModel(await response.arrayBuffer())
+}
+
+/**
+ * A Mi-24 in silhouette: a double cockpit with a pilot's head behind and above the gunner's, stub
+ * wings with pods, a five-blade main rotor that spins up while someone sits in the pilot's seat, and a
+ * chin gun that the gunner (seat 1) swings and nods. The airframe box is the physics hull; the rotor
+ * and the wings are bigger than it, as a cartoon's are.
  */
 export class HeliModel implements VehicleModel {
   readonly root = new THREE.Group()
-  private readonly rotor = new THREE.Group()
-  private readonly tailRotor = new THREE.Group()
+  private readonly rotor: THREE.Object3D
+  private readonly tailRotor: THREE.Object3D
+  private readonly turret: THREE.Object3D
+  private readonly gun: THREE.Object3D
+  private readonly gunRest: number
   private readonly heads: THREE.Mesh[] = []
+  private readonly paint: THREE.MeshToonMaterial
   private rotorSpeed = 0
   private lastUpdate = performance.now()
+  /** `performance.now()` of the last round, for the barrels' kick. */
+  private firedAt = -Infinity
+  /** Whoever sits at the gun, 0 for nobody. */
+  gunner = 0
+  private readonly pivot = new THREE.Vector3()
+  private readonly aim = new THREE.Vector3()
 
   constructor(id: number) {
-    const paint = new THREE.MeshToonMaterial({ color: BODY_COLORS[id % BODY_COLORS.length]! })
-    const dark = new THREE.MeshToonMaterial({ color: 0x2b2b2b })
-    const glass = new THREE.MeshToonMaterial({ color: 0xbfe9ff, transparent: true, opacity: 0.45 })
-    const part = (parent: THREE.Object3D, geometry: THREE.BufferGeometry, material: THREE.Material, x: number, y: number, z: number) => {
-      const mesh = new THREE.Mesh(geometry, material)
-      mesh.position.set(x, y, z)
-      mesh.castShadow = true
-      parent.add(mesh)
-      return mesh
-    }
-
-    // Cabin: a solid lower half and a glass bubble above it, over the front two thirds of the hull.
-    const cabinLength = HALF_Z * 2 * 0.62
-    const cabinZ = -HALF_Z + cabinLength / 2
-    part(this.root, new THREE.BoxGeometry(HALF_X * 2, HALF_Y, cabinLength), paint, 0, -HALF_Y / 2, cabinZ)
-    part(this.root, new THREE.BoxGeometry(HALF_X * 2 - 0.1, HALF_Y, cabinLength - 0.1), glass, 0, HALF_Y / 2, cabinZ)
-    part(this.root, new THREE.BoxGeometry(HALF_X * 2 - 0.1, 0.12, cabinLength - 0.1), paint, 0, HALF_Y, cabinZ)
-
-    // Tail boom, fin and tail rotor.
-    const boomLength = HALF_Z * 2 - cabinLength + 0.2
-    const boomZ = HALF_Z - boomLength / 2
-    part(this.root, new THREE.BoxGeometry(0.4, 0.4, boomLength), paint, 0, 0.0, boomZ)
-    part(this.root, new THREE.BoxGeometry(0.12, 0.9, 0.7), paint, 0, 0.45, HALF_Z - 0.2)
-    this.tailRotor.position.set(0.28, 0.5, HALF_Z - 0.2)
-    part(this.tailRotor, new THREE.BoxGeometry(0.06, 1.1, 0.14), dark, 0, 0, 0)
-    this.root.add(this.tailRotor)
-
-    // Skids on two struts each.
-    for (const side of [-1, 1]) {
-      part(this.root, new THREE.BoxGeometry(0.12, 0.1, HALF_Z * 1.7), dark, side * (HALF_X - 0.1), -HALF_Y - 0.05, -0.2)
-      for (const z of [-1.1, 0.5]) {
-        part(this.root, new THREE.BoxGeometry(0.1, 0.35, 0.1), dark, side * (HALF_X - 0.1), -HALF_Y + 0.12, z)
-      }
-    }
-
-    // Main rotor: a mast and two long blades that turn about it.
-    part(this.root, new THREE.CylinderGeometry(0.1, 0.12, 0.35, 8), dark, 0, HALF_Y + 0.2, cabinZ + 0.2)
-    this.rotor.position.set(0, HALF_Y + 0.4, cabinZ + 0.2)
-    part(this.rotor, new THREE.BoxGeometry(6.4, 0.06, 0.35), dark, 0, 0, 0)
-    this.root.add(this.rotor)
+    if (!asset) throw new Error('loadHeliModel() must finish before helicopters are created')
+    const model = asset.clone(true)
+    this.root.add(model)
+    this.paint = new THREE.MeshToonMaterial({ color: PAINTS[id % PAINTS.length]! })
+    model.traverse((node) => {
+      const mesh = node as THREE.Mesh
+      if (mesh.isMesh && mesh.material instanceof THREE.Material && mesh.material.name === 'paint') mesh.material = this.paint
+    })
+    this.rotor = model.getObjectByName('rotor')!
+    this.tailRotor = model.getObjectByName('tail_rotor')!
+    this.turret = model.getObjectByName('turret')!
+    this.gun = model.getObjectByName('gun')!
+    this.gunRest = this.gun.position.z
 
     const headGeometry = new THREE.SphereGeometry(0.2, 12, 10)
     for (let seat = 0; seat < HELI_SEATS; seat++) {
@@ -83,15 +113,15 @@ export class HeliModel implements VehicleModel {
   }
 
   /**
-   * Places the helicopter and animates it. The rotor spins up while seat 0 is taken. `steer` and
-   * `turret` are unused: its lean and turn are in the orientation itself.
+   * Places the helicopter and animates it. The rotor spins up while seat 0 is taken. `turret` is the nose
+   * gun's angles in the hull frame. `steer` is unused: its lean and turn are in the orientation itself.
    */
   update(
     position: readonly [number, number, number],
     rotation: readonly [number, number, number, number],
     _steer: number,
     seats: readonly number[],
-    _turret?: Turret | null,
+    turret?: Turret | null,
   ) {
     const now = performance.now()
     const dt = Math.min(0.1, (now - this.lastUpdate) / 1000)
@@ -103,6 +133,12 @@ export class HeliModel implements VehicleModel {
     this.rotorSpeed += Math.max(-step, Math.min(step, target - this.rotorSpeed))
     this.rotor.rotation.y += this.rotorSpeed * dt
     this.tailRotor.rotation.x += this.rotorSpeed * TAIL_ROTOR_RATIO * dt
+
+    this.turret.rotation.y = turret?.yaw ?? 0
+    this.gun.rotation.x = turret?.pitch ?? 0
+    const since = (now - this.firedAt) / 1000
+    this.gun.position.z = this.gunRest + (since < RECOIL_SECONDS ? RECOIL_STROKE * (1 - since / RECOIL_SECONDS) : 0)
+    this.gunner = seats[1] ?? 0
     this.heads.forEach((head, seat) => {
       const occupant = seats[seat] ?? 0
       head.visible = occupant !== 0
@@ -110,10 +146,32 @@ export class HeliModel implements VehicleModel {
     })
   }
 
+  /** A round was just fired: the barrels kick back. */
+  recoil() {
+    this.firedAt = performance.now()
+  }
+
+  /** The gun in world space as of the last `update`: its pivot and the unit aim direction. */
+  barrel() {
+    this.root.updateMatrixWorld(true)
+    this.gun.getWorldPosition(this.pivot)
+    this.aim.set(0, 0, -1).transformDirection(this.gun.matrixWorld)
+    return { origin: this.pivot.clone(), direction: this.aim.clone() }
+  }
+
+  /** Where rounds leave the gun in world space. */
+  muzzle() {
+    const { origin, direction } = this.barrel()
+    return origin.addScaledVector(direction, HELI_GUN_LENGTH)
+  }
+
+  /** Frees what this helicopter owns; the model's geometry and other materials are shared by every one. */
   dispose() {
-    this.root.traverse((object) => {
-      if (object instanceof THREE.Mesh) object.geometry.dispose()
-    })
+    this.paint.dispose()
+    for (const head of this.heads) {
+      ;(head.material as THREE.Material).dispose()
+    }
+    this.heads[0]?.geometry.dispose()
     this.root.removeFromParent()
   }
 }

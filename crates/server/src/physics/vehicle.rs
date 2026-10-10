@@ -187,6 +187,8 @@ pub(super) struct Car {
     spec: &'static Spec,
     body: RigidBodyHandle,
     collider: ColliderHandle,
+    /// A tank's turret, a second solid on the same body. It has no mass of its own.
+    turret: Option<ColliderHandle>,
     controller: DynamicRayCastVehicleController,
     /// Current front wheel angle, radians, + is right.
     steer: f32,
@@ -196,6 +198,13 @@ pub(super) struct Car {
     spin: f32,
     /// What a helicopter was last asked to do, applied in the next [`Physics::step_cars`].
     flight: CarControls,
+}
+
+impl Car {
+    /// Whether `collider` is one of this vehicle's solids.
+    fn owns(&self, collider: ColliderHandle) -> bool {
+        self.collider == collider || self.turret == Some(collider)
+    }
 }
 
 fn pose_of(position: [f32; 3], yaw: f32) -> Pose {
@@ -267,6 +276,12 @@ impl CarPose {
         (Rotation::from_xyzw(x, y, z, w) * Vector::from(local)).into()
     }
 
+    /// The direction in the vehicle's own frame of `world`, a world direction.
+    pub fn local_dir(&self, world: [f32; 3]) -> [f32; 3] {
+        let [x, y, z, w] = self.rotation;
+        (Rotation::from_xyzw(x, y, z, w).inverse() * Vector::from(world)).into()
+    }
+
     /// Heading of the forward axis in the stickman convention: 0 faces -Z, + turns left (towards -X).
     pub fn yaw(&self) -> f32 {
         let [x, y, z, w] = self.rotation;
@@ -298,6 +313,20 @@ impl Physics {
             body,
             &mut self.bodies,
         );
+        // The turret is a cylinder, so it needs no turning with the gun. It adds no mass, which keeps
+        // the hull's balance and the tuning that goes with it.
+        let turret = (kind == KIND_TANK).then(|| {
+            let [x, y, z] = TANK_TURRET_PIVOT;
+            self.colliders.insert_with_parent(
+                ColliderBuilder::cylinder(TANK_TURRET_HALF_HEIGHT, TANK_TURRET_RADIUS)
+                    .translation(Vector::new(x, y, z))
+                    .density(0.0)
+                    .friction(0.4)
+                    .build(),
+                body,
+                &mut self.bodies,
+            )
+        });
         // A helicopter has no wheels, so its controller is never updated.
         let mut controller = DynamicRayCastVehicleController::new(body);
         // Our forward is -Z, but the controller only uses this axis to sign its own speed estimate,
@@ -325,7 +354,7 @@ impl Physics {
                 );
             }
         }
-        self.cars.insert(id, Car { spec, body, collider, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE });
+        self.cars.insert(id, Car { spec, body, collider, turret, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE });
     }
 
     /// Puts a car back upright and at rest.
@@ -457,7 +486,7 @@ impl Physics {
             QueryFilter::only_dynamic(),
         );
         let (hit, _) = queries.intersect_shape(Pose::from_translation(Vector::from(position)), self.character_shape.shape()).next()?;
-        let (&car, body) = self.cars.iter().find(|(_, car)| car.collider == hit).and_then(|(id, car)| Some((id, self.bodies.get(car.body)?)))?;
+        let (&car, body) = self.cars.iter().find(|(_, car)| car.owns(hit)).and_then(|(id, car)| Some((id, self.bodies.get(car.body)?)))?;
         Some(CarHit { car, position: body.translation().into(), velocity: body.linvel().into() })
     }
 
@@ -476,7 +505,7 @@ impl Physics {
         let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, filter);
         let ray = Ray::new(Vector::from(origin), Vector::from(dir));
         let (collider, distance) = queries.cast_ray(&ray, max, true)?;
-        let car = self.cars.iter().find(|(_, car)| car.collider == collider).map(|(&id, _)| id);
+        let car = self.cars.iter().find(|(_, car)| car.owns(collider)).map(|(&id, _)| id);
         Some((distance, car))
     }
 
@@ -493,6 +522,17 @@ impl Physics {
         let Some(car) = self.cars.get(&id) else { return };
         if let Some(body) = self.bodies.get_mut(car.body) {
             body.apply_impulse(Vector::from(delta) * body.mass(), true);
+        }
+    }
+
+    /// Adds `spin` rad/s to vehicle `id`'s angular velocity, given in its own frame (+X right,
+    /// +Z back), so a wreck can be sent end over end or onto its side.
+    pub fn spin_car(&mut self, id: u32, spin: [f32; 3]) {
+        let Some(car) = self.cars.get(&id) else { return };
+        if let Some(body) = self.bodies.get_mut(car.body) {
+            let world = *body.rotation() * Vector::from(spin);
+            let now = body.angvel();
+            body.set_angvel(now + world, true);
         }
     }
 
@@ -946,5 +986,22 @@ mod tests {
         run(&mut far, COAST, 120);
         far.blast_cars([-30.0, 0.0, 0.0], EXPLOSION_RADIUS);
         assert!(run(&mut far, COAST, 20).velocity[0].abs() < 0.2);
+    }
+
+    #[test]
+    fn a_tanks_turret_is_solid_above_the_hull() {
+        let mut physics = with_tank(&flat());
+        let rest = run(&mut physics, COAST, 180);
+        let [px, py, pz] = TANK_TURRET_PIVOT;
+        // Above the hull's top, so only the turret can stop it. The ring sits off the hull's centre.
+        let height = rest.position[1] + py;
+        let hit = physics.cast_ray_hit([-10.0, height, rest.position[2] + pz], [1.0, 0.0, 0.0], 30.0, 99).expect("the turret is solid");
+        assert!((hit.0 - (10.0 + px - TANK_TURRET_RADIUS)).abs() < 0.2, "{hit:?}");
+        assert_eq!(hit.1, Some(1));
+        // The gun's own tank does not stop its shell.
+        assert!(physics.cast_ray([-10.0, height, rest.position[2] + pz], [1.0, 0.0, 0.0], 30.0, 1).is_none());
+        // A standing character on the roof of the turret is carried by the tank.
+        let on_top = [rest.position[0] + px, rest.position[1] + py + TANK_TURRET_HALF_HEIGHT + crate::physics::STANDING_Y - 0.05, rest.position[2] + pz];
+        assert_eq!(physics.car_under(on_top).map(|hit| hit.car), Some(1));
     }
 }

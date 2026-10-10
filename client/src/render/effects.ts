@@ -34,23 +34,14 @@ export class Effects {
     })
   }
 
-  /** A shell leaving `muzzle` and bursting at `impact` (or just ending, for a shot into the sky). */
-  shell(muzzle: THREE.Vector3, direction: THREE.Vector3, range: number, hit: boolean, blastRadius: number) {
+  /** A shell leaving the barrel: a flash and a short puff along it. The shell is drawn in flight. */
+  muzzleFlash(muzzle: THREE.Vector3, direction: THREE.Vector3) {
     this.add(this.sphere, 0xffe9a0, 0.12, (mesh) => mesh.position.copy(muzzle), (mesh, p) => mesh.scale.setScalar(0.5 + p * 0.8))
-    const end = muzzle.clone().addScaledVector(direction, range)
-    const length = muzzle.distanceTo(end)
     this.add(
-      this.beam, 0xfff2b0, 0.18,
-      (mesh) => {
-        mesh.position.copy(muzzle).lerp(end, 0.5)
-        mesh.scale.set(1, length, 1)
-        mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction)
-      },
-      () => {},
+      this.sphere, 0xffc060, 0.25,
+      (mesh) => mesh.position.copy(muzzle).addScaledVector(direction, 1.0),
+      (mesh, p) => mesh.scale.setScalar(0.3 + p * 0.9),
     )
-    if (!hit) return
-    this.add(this.sphere, 0xff9a3c, 0.45, (mesh) => mesh.position.copy(end), (mesh, p) => mesh.scale.setScalar(blastRadius * 0.15 + p * blastRadius * 0.45))
-    this.add(this.sphere, 0xfff0c0, 0.2, (mesh) => mesh.position.copy(end), (mesh, p) => mesh.scale.setScalar(blastRadius * 0.1 + p * blastRadius * 0.2))
   }
 
   /** A rifle shot: a short flash at the muzzle and, when it ended on something, a spark there. */

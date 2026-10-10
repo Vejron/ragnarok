@@ -90,6 +90,9 @@ export const TANK_TURN_RATE = 1.1
 /** Where the turret ring sits in the hull frame, and how far the muzzle is from it. */
 export const TANK_TURRET_PIVOT = [0, 0.85, 0.3] as const
 export const TANK_BARREL_LENGTH = 3.2
+/** The solid turret: a cylinder on the ring, so any heading is the same shape. Mirrors consts.rs. */
+export const TANK_TURRET_RADIUS = 1.0
+export const TANK_TURRET_HALF_HEIGHT = 0.35
 /** Barrel elevation limits, radians (+ is up). */
 export const TANK_BARREL_MIN = -0.12
 export const TANK_BARREL_MAX = 0.5
@@ -106,6 +109,14 @@ export const HELI_VERT_ACCEL = 5.0
 export const HELI_CEILING = 120.0
 export const HELI_LEVEL_GAIN = 4.0
 export const HELI_RESPONSE = 8.0
+/** The nose gun: the mount in the hull frame (X right, Y up, Z back), muzzle distance, travel and range. */
+export const HELI_GUN_PIVOT = [0.0, -0.6, -2.0] as const
+export const HELI_GUN_LENGTH = 1.3
+export const HELI_GUN_YAW_LIMIT = 1.0
+export const HELI_GUN_PITCH_MIN = -0.75
+export const HELI_GUN_PITCH_MAX = 0.2
+export const HELI_GUN_COOLDOWN_TICKS = 5
+export const HELI_GUN_RANGE = 150.0
 /** Combat. Mirrors the combat block of consts.rs. */
 export const PLAYER_MAX_HP = 100
 export const RESPAWN_TICKS = 3 * TICK_RATE
@@ -113,10 +124,12 @@ export const RESPAWN_TICKS = 3 * TICK_RATE
 export const EYE_HEIGHT = 0.6
 /** How far a crouch lowers the eye. Mirrors `CROUCH_EYE_DROP`. */
 export const CROUCH_EYE_DROP = 0.3
+/** The on-foot camera pivots this far right of and above the capsule centre. The server rebuilds the camera ray from it. Mirrors `ON_FOOT_SHOULDER`. */
+export const ON_FOOT_SHOULDER = 0.9
+export const ON_FOOT_HEIGHT = 1.5
 /** Health of a fresh vehicle of `kind`. Mirrors `vehicle_hp` in protocol.rs. */
 export const vehicleMaxHp = (kind: number) => (kind === 2 ? 250 : 100)
 export const ROCKET_BLAST_RADIUS = 5.0
 export const WRECK_BLAST_RADIUS = 8.0
 export const SHELL_COOLDOWN_TICKS = 90
 export const EXPLOSION_RADIUS = 7.0
-export const SHELL_RANGE = 300.0

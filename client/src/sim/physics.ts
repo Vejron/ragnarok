@@ -3,11 +3,12 @@ import type { TileData, WorldData } from '@/world'
 import {
   AUTOSTEP_HEIGHT, AUTOSTEP_MIN_WIDTH, CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, CONTROLLER_OFFSET,
   BUTTON_CROUCH, BUTTON_JUMP, KNOCK_MAX_SPEED, MAX_SLOPE_CLIMB_DEG, SNAP_DISTANCE,
+  TANK_TURRET_HALF_HEIGHT, TANK_TURRET_PIVOT, TANK_TURRET_RADIUS,
 } from './consts'
 import { halfExtentsOf } from './kinds'
 import type { TileGround } from './terrain'
 import { beginSlide, decayKnock, desiredTranslation, f32, settleVertical } from './movement'
-import { fromMrad, type InputFrame, type VehicleState } from '@/net/codec'
+import { fromMrad, KIND_TANK, type InputFrame, type VehicleState } from '@/net/codec'
 
 export type Vec3 = [number, number, number]
 
@@ -122,10 +123,46 @@ export function addTileCollider(world: RAPIER.World, tile: TileData, ground: Til
   return colliders
 }
 
+type PoseLike = Pick<VehicleState, 'x' | 'y' | 'z' | 'qx' | 'qy' | 'qz' | 'qw'>
+
+/**
+ * A snapshot vehicle as static solids: its hull box, and for a tank the turret cylinder on the
+ * ring. Mirrors the colliders `add_car` gives the server's body.
+ */
+export class VehicleSolids {
+  private readonly hull: RAPIER.Collider
+  private readonly turret: RAPIER.Collider | null
+
+  constructor(private readonly world: RAPIER.World, kind: number | undefined) {
+    const [hx, hy, hz] = halfExtentsOf(kind)
+    this.hull = world.createCollider(RAPIER.ColliderDesc.cuboid(hx, hy, hz))
+    this.turret = kind === KIND_TANK ? world.createCollider(RAPIER.ColliderDesc.cylinder(TANK_TURRET_HALF_HEIGHT, TANK_TURRET_RADIUS)) : null
+  }
+
+  place(pose: PoseLike) {
+    this.hull.setTranslation({ x: pose.x, y: pose.y, z: pose.z })
+    this.hull.setRotation({ x: pose.qx, y: pose.qy, z: pose.qz, w: pose.qw })
+    if (!this.turret) return
+    // The ring's offset in the hull frame, rotated into the world.
+    const [ox, oy, oz] = TANK_TURRET_PIVOT
+    const { qx: x, qy: y, qz: z, qw: w } = pose
+    const tx = ox + 2 * (w * (y * oz - z * oy) + y * (x * oy - y * ox) - z * (z * ox - x * oz))
+    const ty = oy + 2 * (w * (z * ox - x * oz) + z * (y * oz - z * oy) - x * (x * oy - y * ox))
+    const tz = oz + 2 * (w * (x * oy - y * ox) + x * (z * ox - x * oz) - y * (y * oz - z * oy))
+    this.turret.setTranslation({ x: pose.x + tx, y: pose.y + ty, z: pose.z + tz })
+    this.turret.setRotation({ x, y, z, w })
+  }
+
+  remove() {
+    this.world.removeCollider(this.hull, false)
+    if (this.turret) this.world.removeCollider(this.turret, false)
+  }
+}
+
 /** The same Rapier character controller and static scene the server simulates. */
 export class RapierMotor implements CharacterMotor {
   /** Solid stand-ins for the server's cars, by vehicle id. */
-  private readonly cars = new Map<number, RAPIER.Collider>()
+  private readonly cars = new Map<number, VehicleSolids>()
   private readonly carVelocities = new Map<number, readonly [number, number]>()
 
   private constructor(
@@ -170,24 +207,33 @@ export class RapierMotor implements CharacterMotor {
     for (const car of vehicles) {
       alive.add(car.id)
       this.carVelocities.set(car.id, [car.vx ?? 0, car.vz ?? 0])
-      let collider = this.cars.get(car.id)
-      if (!collider) {
-        const [hx, hy, hz] = halfExtentsOf(car.kind)
-        collider = this.world.createCollider(RAPIER.ColliderDesc.cuboid(hx, hy, hz))
-        this.cars.set(car.id, collider)
+      let solids = this.cars.get(car.id)
+      if (!solids) {
+        solids = new VehicleSolids(this.world, car.kind)
+        this.cars.set(car.id, solids)
       }
-      collider.setTranslation({ x: car.x, y: car.y, z: car.z })
-      collider.setRotation({ x: car.qx, y: car.qy, z: car.qz, w: car.qw })
+      solids.place(car)
     }
-    for (const [id, collider] of this.cars) {
+    for (const [id, solids] of this.cars) {
       if (!alive.has(id)) {
-        this.world.removeCollider(collider, false)
+        solids.remove()
         this.cars.delete(id)
         this.carVelocities.delete(id)
       }
     }
     // Moved colliders reach the broad-phase on the next step.
     if (vehicles.length > 0 || this.cars.size > 0) this.world.step()
+  }
+
+  /**
+   * How far a ray travels before it meets the world or a car, and the surface normal there; null
+   * when it reaches `max` clear. Used to draw where a grenade will go.
+   */
+  castRay(origin: Vec3, dir: Vec3, max: number): { t: number; normal: Vec3 } | null {
+    const ray = new RAPIER.Ray({ x: origin[0], y: origin[1], z: origin[2] }, { x: dir[0], y: dir[1], z: dir[2] })
+    const hit = this.world.castRayAndGetNormal(ray, max, true, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS)
+    if (!hit) return null
+    return { t: hit.timeOfImpact, normal: [hit.normal.x, hit.normal.y, hit.normal.z] }
   }
 
   vehicleVelocity(id: number) {

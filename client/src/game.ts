@@ -1,15 +1,16 @@
 import * as THREE from 'three'
 import {
   encodeInput, encodePing, KIND_HELI, KIND_STICKMAN, KIND_TANK, sceneStates, toAxis, toMrad, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_RIFLE,
-  WEAPON_ROCKET, WEAPON_WRECK,
+  WEAPON_CHAINGUN, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK,
   type EntityState, type InputFrame, type PickupState, type RocketState, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
 } from './net/codec'
 import { blendEntity, blendRocket, blendVehicle, Interpolator } from './net/interp'
 import { RttEstimator, ServerClock } from './net/clock'
 import { Transport, type ConnectionStatus } from './net/transport'
 import {
-  BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, SLIDE_MIN_SPEED, ENTER_RADIUS, EXPLOSION_RADIUS, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION, RESPAWN_TICKS,
-  ROCKET_BLAST_RADIUS, SHELL_COOLDOWN_TICKS, SHELL_RANGE, STANDING_Y,
+  BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, CROUCH_EYE_DROP, SLIDE_MIN_SPEED, ENTER_RADIUS, EXPLOSION_RADIUS, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION, RESPAWN_TICKS,
+  ROCKET_BLAST_RADIUS, SHELL_COOLDOWN_TICKS, STANDING_Y,
+  HELI_GUN_PITCH_MAX, HELI_GUN_PITCH_MIN, HELI_GUN_RANGE, HELI_GUN_YAW_LIMIT,
   TANK_BARREL_LENGTH, TANK_BARREL_MAX, TANK_BARREL_MIN, TICK_MS, vehicleMaxHp, WRECK_BLAST_RADIUS,
 } from './sim/consts'
 import { emptyHotbar, GRENADE_BLAST_RADIUS, HOTBAR_SLOTS, ITEM_AK5, ITEM_NONE, ITEM_REVOLVER, itemDef, PICKUP_RADIUS, type ItemSlot } from './sim/items'
@@ -22,10 +23,12 @@ import type { Vec3 } from './sim/physics'
 import { CarModel, type VehicleModel } from './render/car'
 import { Effects } from './render/effects'
 import { Pickups } from './render/pickups'
+import { TrajectoryView } from './render/trajectory'
+import { throwTrajectory } from './sim/grenade'
 import { Rockets } from './render/rockets'
-import { DRIVING_DISTANCE, HELI_DISTANCE, ON_FOOT_DISTANCE, Scene, TANK_DISTANCE } from './render/scene'
-import { HeliModel } from './render/heli'
-import { TankModel } from './render/tank'
+import { DRIVING_DISTANCE, HELI_DISTANCE, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, Scene, TANK_DISTANCE } from './render/scene'
+import { HeliModel, loadHeliModel } from './render/heli'
+import { loadTankModel, TankModel } from './render/tank'
 import { Character, Crowd } from './render/character'
 import { buildGround, buildTile, disposeTile } from './render/world'
 import { Replica } from './net/replica'
@@ -49,6 +52,8 @@ export interface HudStats {
   prompt: string | null
   /** Set while in a vehicle: the seat's role. */
   seat: 'driver' | 'pilot' | 'passenger' | 'gunner' | null
+  /** Seated with a free seat to move to: R switches to it. */
+  canSwitchSeat: boolean
   /** For a gunner: how loaded the gun is, 0 (just fired) to 1 (ready). */
   reload: number
   hp: number
@@ -150,6 +155,8 @@ export class Game {
   private pendingShots: { tick: number; shot: ShotEvent }[] = []
   private readonly smokeAt = new Map<number, number>()
   private readonly pickupModels = new Pickups()
+  /** The arc a grenade in hand would take, drawn while one is held. */
+  private readonly trajectory = new TrajectoryView()
   /** The items on the ground in the newest snapshot, for the prompt and the drawing. */
   private pickups: PickupState[] = []
   /** The local player's hotbar and reload/bandage progress, from the newest snapshot. */
@@ -199,6 +206,7 @@ export class Game {
     this.scene.scene.add(this.effects.root)
     this.scene.scene.add(this.rocketModels.root)
     this.scene.scene.add(this.pickupModels.root)
+    this.scene.scene.add(this.trajectory.root)
     this.transport = new Transport(
       (message) => this.handle(message),
       (status) => {
@@ -220,7 +228,7 @@ export class Game {
     const motor = await RapierMotor.create(world)
     this.motor = motor
     this.driver = await VehicleDriver.create(world)
-    await this.crowd.load()
+    await Promise.all([this.crowd.load(), loadTankModel(), loadHeliModel()])
     // The buildings arrive as tiles, around wherever the player is.
     this.tiles = new TileStreamer(world, { attach: (ref, tile) => this.attachTile(ref, tile) })
     // Until the server places us, walk around solo from the first spawn point.
@@ -459,23 +467,28 @@ export class Game {
     me.update(position, this.input.yaw, localVx, localVz, local.grounded, dt, this.input.pitch, this.crouching,
       this.crouching && local.grounded && Math.hypot(local.knock[0], local.knock[1]) > SLIDE_MIN_SPEED)
     const ride = seated ? cars.get(this.seat!.vehicle) : undefined
-    const gunner = ride !== undefined && ride.kind === KIND_TANK && this.seat!.index === 1
+    const gunner = ride !== undefined && (ride.kind === KIND_TANK || ride.kind === KIND_HELI) && this.seat!.index === 1
     const turret = gunner ? this.cars.get(this.seat!.vehicle) : undefined
-    if (gunner && turret instanceof TankModel) {
+    if (gunner && (turret instanceof TankModel || turret instanceof HeliModel)) {
       if (!this.wasGunner && ride.turret) {
         // Take the seat looking where the barrel points.
-        this.input.yaw = ride.yaw + ride.turret.yaw
-        this.input.pitch = ride.turret.pitch
+        if (turret instanceof TankModel) {
+          this.input.yaw = ride.yaw + ride.turret.yaw
+          this.input.pitch = ride.turret.pitch
+        } else {
+          this.lookAlong(turret, ride.turret)
+        }
       }
-      // The camera sits behind and above the turret, looking along the barrel's line.
-      this.input.clampPitch(TANK_BARREL_MIN, TANK_BARREL_MAX)
+      // The camera sits behind and above the gun, looking along the barrel's line.
+      if (turret instanceof TankModel) this.input.clampPitch(TANK_BARREL_MIN, TANK_BARREL_MAX)
+      else this.limitNoseGun(turret)
       const { origin } = turret.barrel()
       this.scene.aimFrom([origin.x, origin.y, origin.z], this.input.yaw, this.input.pitch)
     } else if (ride) {
       this.input.followYaw(ride.yaw, dt)
       this.scene.follow([ride.x, ride.y + 0.4, ride.z], this.input.yaw, this.input.pitch, cameraDistance(ride.kind))
     } else {
-      this.scene.follow(position, this.input.yaw, this.input.pitch, ON_FOOT_DISTANCE)
+      this.scene.follow(position, this.input.yaw, this.input.pitch, ON_FOOT_DISTANCE, ON_FOOT_SHOULDER, ON_FOOT_HEIGHT)
     }
 
     this.wasGunner = gunner
@@ -485,6 +498,7 @@ export class Game {
     this.drawRockets(renderTick)
     this.pickupModels.set(this.pickups)
     this.pickupModels.update(now / 1000)
+    this.aimGrenade(position, seated)
     this.effects.update(dt)
 
     const seen = new Set<number>([0])
@@ -518,8 +532,9 @@ export class Game {
       touch: this.input.coarse,
       warning: this.warning,
       prompt: this.prompt(position, cars),
-      seat: !this.seat ? null : this.seat.index === 0 ? (this.seat.kind === KIND_HELI ? 'pilot' : 'driver') : this.seat.kind === KIND_TANK ? 'gunner' : 'passenger',
-      reload: Math.min(1, (now - this.lastShotAt) / (SHELL_COOLDOWN_TICKS * TICK_MS)),
+      seat: !this.seat ? null : this.seat.index === 0 ? (this.seat.kind === KIND_HELI ? 'pilot' : 'driver') : this.seat.kind === KIND_TANK || this.seat.kind === KIND_HELI ? 'gunner' : 'passenger',
+      canSwitchSeat: this.seat !== null && (cars.get(this.seat.vehicle)?.seats.includes(0) ?? false),
+      reload: this.seat?.kind === KIND_HELI ? 1 : Math.min(1, (now - this.lastShotAt) / (SHELL_COOLDOWN_TICKS * TICK_MS)),
       hp: this.hp,
       maxHp: PLAYER_MAX_HP,
       dead: this.hp === 0,
@@ -578,8 +593,19 @@ export class Game {
       this.effects.burst(to, ROCKET_BLAST_RADIUS)
     } else if (shot.weapon === WEAPON_GRENADE) {
       this.effects.burst(to, GRENADE_BLAST_RADIUS)
+    } else if (shot.weapon === WEAPON_SHELL) {
+      this.effects.burst(to, EXPLOSION_RADIUS)
     } else if (shot.weapon === WEAPON_WRECK) {
       this.effects.burst(to, WRECK_BLAST_RADIUS)
+    } else if (shot.weapon === WEAPON_CHAINGUN) {
+      // From the muzzle of whichever helicopter has this gunner aboard.
+      for (const car of this.cars.values()) {
+        if (!(car instanceof HeliModel) || car.gunner !== shot.shooter) continue
+        const from = car.muzzle()
+        car.recoil()
+        this.effects.tracer(from, to, from.distanceTo(to) < HELI_GUN_RANGE - 1)
+        break
+      }
     } else if (shot.weapon === WEAPON_RIFLE || shot.weapon === WEAPON_REVOLVER) {
       const from = this.muzzleOf(shot.shooter)
       this.avatars.get(shot.shooter === this.localId ? 0 : shot.shooter)?.fire()
@@ -622,6 +648,18 @@ export class Game {
     for (const id of this.rocketInterp.ids()) this.rocketModels.remove(id)
     this.rocketInterp.clear()
     this.rocketEnds.clear()
+  }
+
+  /** Draws where a grenade thrown now would go, while one is in hand and the player is free to throw it. */
+  private aimGrenade(position: readonly number[], seated: boolean) {
+    const motor = this.motor
+    const item = itemDef(this.held().item)
+    if (!motor || seated || this.hp === 0 || this.localId === null || item?.kind !== 'grenade') {
+      this.trajectory.set(null)
+      return
+    }
+    const eye: [number, number, number] = [position[0]!, position[1]! + EYE_HEIGHT - (this.crouching ? CROUCH_EYE_DROP : 0), position[2]!]
+    this.trajectory.set(throwTrajectory((origin, dir, max) => motor.castRay(origin, dir, max), eye, this.input.yaw, this.input.pitch))
   }
 
   /** The slot in hand. */
@@ -713,7 +751,34 @@ export class Game {
     this.effects.smoke(new THREE.Vector3(x, y + 0.8, z), state.hp === 0)
   }
 
-  /** A change in the shot counter is a shell: flash, tracer and burst, from where the barrel is drawn. */
+  /**
+   * Points the look where the nose gun does. The gun's angles are in the hull frame, the look is in the
+   * world's, so the hull's orientation turns one into the other.
+   */
+  private lookAlong(heli: HeliModel, gun: Turret) {
+    const flat = Math.cos(gun.pitch)
+    const local = new THREE.Vector3(-Math.sin(gun.yaw) * flat, Math.sin(gun.pitch), -Math.cos(gun.yaw) * flat)
+    const world = local.applyQuaternion(heli.root.quaternion)
+    this.input.yaw = Math.atan2(-world.x, -world.z)
+    this.input.pitch = Math.asin(THREE.MathUtils.clamp(world.y, -1, 1))
+  }
+
+  /**
+   * Keeps the look within the nose gun's travel, which is in the hull's frame: the same limits the
+   * server applies, so the view never points somewhere the gun cannot follow.
+   */
+  private limitNoseGun(heli: HeliModel) {
+    const flat = Math.cos(this.input.pitch)
+    const world = new THREE.Vector3(-Math.sin(this.input.yaw) * flat, Math.sin(this.input.pitch), -Math.cos(this.input.yaw) * flat)
+    const local = world.applyQuaternion(heli.root.quaternion.clone().invert())
+    const yaw = THREE.MathUtils.clamp(Math.atan2(-local.x, -local.z), -HELI_GUN_YAW_LIMIT, HELI_GUN_YAW_LIMIT)
+    const pitch = THREE.MathUtils.clamp(Math.asin(THREE.MathUtils.clamp(local.y, -1, 1)), HELI_GUN_PITCH_MIN, HELI_GUN_PITCH_MAX)
+    const limited = new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)).applyQuaternion(heli.root.quaternion)
+    this.input.yaw = Math.atan2(-limited.x, -limited.z)
+    this.input.pitch = Math.asin(THREE.MathUtils.clamp(limited.y, -1, 1))
+  }
+
+  /** A change in the shot counter is a shell leaving: flash and recoil. The shell itself is a projectile. */
   private watchGun(id: number, tank: TankModel, turret: Turret, seats: readonly number[]) {
     const before = this.shots.get(id)
     this.shots.set(id, turret.shots)
@@ -722,7 +787,7 @@ export class Game {
     const { origin, direction } = tank.barrel()
     tank.recoil()
     const muzzle = origin.clone().addScaledVector(direction, TANK_BARREL_LENGTH)
-    this.effects.shell(muzzle, direction, Math.max(0.5, turret.range - TANK_BARREL_LENGTH), turret.range < SHELL_RANGE - 1, EXPLOSION_RADIUS)
+    this.effects.muzzleFlash(muzzle, direction)
     if (seats[1] === this.localId) this.lastShotAt = performance.now()
   }
 
@@ -756,7 +821,7 @@ export class Game {
     }
     if (!best) return null
     if (best.kind === KIND_TANK) return best.driverSeatFree ? 'E: drive the tank' : 'E: man the gun'
-    if (best.kind === KIND_HELI) return best.driverSeatFree ? 'E: fly' : 'E: ride along'
+    if (best.kind === KIND_HELI) return best.driverSeatFree ? 'E: fly' : 'E: man the nose gun'
     return best.driverSeatFree ? 'E: drive' : 'E: ride along'
   }
 
@@ -783,6 +848,7 @@ export class Game {
     this.effects.dispose()
     this.rocketModels.dispose()
     this.pickupModels.dispose()
+    this.trajectory.dispose()
     this.scene.dispose()
   }
 }

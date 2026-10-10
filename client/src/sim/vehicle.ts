@@ -2,11 +2,10 @@ import RAPIER from '@dimforge/rapier3d-compat'
 import {
   BUTTON_JUMP, TICK_DT, CAR_AXLE_Z, CAR_HALF_EXTENTS, CAR_HARD_POINT_Y, CAR_MAX_SPEED, CAR_MAX_STEER, CAR_SUSPENSION_REST, CAR_TRACK_HALF, CAR_WHEEL_RADIUS,
   TANK_AXLES_Z, TANK_HALF_EXTENTS, TANK_HARD_POINT_Y, TANK_MAX_SPEED, TANK_SUSPENSION_REST, TANK_TRACK_HALF, TANK_TURN_RATE,
-  TANK_WHEEL_RADIUS, HELI_BANK, HELI_CEILING, HELI_CLIMB_SPEED, HELI_HALF_EXTENTS, HELI_LEVEL_GAIN, HELI_RESPONSE, HELI_SINK_SPEED, HELI_TILT,
+  TANK_WHEEL_RADIUS, TANK_TURRET_HALF_HEIGHT, TANK_TURRET_PIVOT, TANK_TURRET_RADIUS, HELI_BANK, HELI_CEILING, HELI_CLIMB_SPEED, HELI_HALF_EXTENTS, HELI_LEVEL_GAIN, HELI_RESPONSE, HELI_SINK_SPEED, HELI_TILT,
   HELI_VERT_ACCEL, HELI_VERT_GAIN, HELI_YAW_RATE, BUTTON_RUN,
 } from './consts'
-import { halfExtentsOf } from './kinds'
-import { addTileCollider, buildStaticColliders } from './physics'
+import { addTileCollider, buildStaticColliders, VehicleSolids } from './physics'
 import type { TileGround } from './terrain'
 import { fromAxis, KIND_HELI, KIND_TANK, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
 import type { TileData, WorldData } from '@/world'
@@ -142,6 +141,14 @@ export class CarSim {
     )
     const [hx, hy, hz] = spec.halfExtents
     this.collider = world.createCollider(RAPIER.ColliderDesc.cuboid(hx, hy, hz).setDensity(spec.density).setFriction(0.4), this.body)
+    if (kind === KIND_TANK) {
+      // The turret is solid but weightless, like the server's.
+      const [tx, ty, tz] = TANK_TURRET_PIVOT
+      world.createCollider(
+        RAPIER.ColliderDesc.cylinder(TANK_TURRET_HALF_HEIGHT, TANK_TURRET_RADIUS).setTranslation(tx, ty, tz).setDensity(0).setFriction(0.4),
+        this.body,
+      )
+    }
     if (spec.flies) {
       // No wheels: the rotor is a force on the body.
       this.controller = null
@@ -352,7 +359,7 @@ export interface DrivenPose {
  */
 export class VehicleDriver {
   private readonly world: RAPIER.World
-  private readonly obstacles = new Map<number, RAPIER.Collider>()
+  private readonly obstacles = new Map<number, VehicleSolids>()
   private sim: CarSim | null = null
   private id = 0
   private kind = 0
@@ -402,18 +409,16 @@ export class VehicleDriver {
     for (const vehicle of vehicles) {
       if (this.sim && vehicle.id === this.id) continue
       alive.add(vehicle.id)
-      let collider = this.obstacles.get(vehicle.id)
-      if (!collider) {
-        const [hx, hy, hz] = halfExtentsOf(vehicle.kind)
-        collider = this.world.createCollider(RAPIER.ColliderDesc.cuboid(hx, hy, hz))
-        this.obstacles.set(vehicle.id, collider)
+      let solids = this.obstacles.get(vehicle.id)
+      if (!solids) {
+        solids = new VehicleSolids(this.world, vehicle.kind)
+        this.obstacles.set(vehicle.id, solids)
       }
-      collider.setTranslation({ x: vehicle.x, y: vehicle.y, z: vehicle.z })
-      collider.setRotation({ x: vehicle.qx, y: vehicle.qy, z: vehicle.qz, w: vehicle.qw })
+      solids.place(vehicle)
     }
-    for (const [id, collider] of this.obstacles) {
+    for (const [id, solids] of this.obstacles) {
       if (!alive.has(id)) {
-        this.world.removeCollider(collider, false)
+        solids.remove()
         this.obstacles.delete(id)
       }
     }
@@ -454,9 +459,9 @@ export class VehicleDriver {
     this.acknowledge(ack)
     if (!this.sim || this.id !== vehicle.id || this.kind !== vehicle.kind) {
       this.leave()
-      const collider = this.obstacles.get(vehicle.id)
-      if (collider) {
-        this.world.removeCollider(collider, false)
+      const solids = this.obstacles.get(vehicle.id)
+      if (solids) {
+        solids.remove()
         this.obstacles.delete(vehicle.id)
       }
       this.sim = new CarSim(this.world, vehicle.kind, [vehicle.x, vehicle.y, vehicle.z], 0)

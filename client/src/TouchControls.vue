@@ -3,7 +3,7 @@ import { reactive } from 'vue'
 import type { InputController } from './sim/input'
 import { BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_RELOAD, BUTTON_RUN, BUTTON_USE } from './sim/consts'
 
-const props = defineProps<{ input: InputController; seat: string | null }>()
+const props = defineProps<{ input: InputController; seat: string | null; canSwitch?: boolean }>()
 
 /** How far the thumb has to travel for a full push, in CSS pixels. */
 const STICK_RADIUS = 56
@@ -93,6 +93,7 @@ const release = (mask: number) => () => props.input.hold(mask, false)
     <button v-if="!seat" class="btn crouch" @pointerdown.prevent="press(BUTTON_CROUCH)($event)" @pointerup="release(BUTTON_CROUCH)()" @pointercancel="release(BUTTON_CROUCH)()">CROUCH</button>
     <button class="btn fire" @pointerdown.prevent="press(BUTTON_FIRE)($event)" @pointerup="release(BUTTON_FIRE)()" @pointercancel="release(BUTTON_FIRE)()">FIRE</button>
     <button v-if="!seat" class="btn reload" @pointerdown.prevent="input.tap(BUTTON_RELOAD)">RELOAD</button>
+    <button v-else-if="canSwitch" class="btn reload" @pointerdown.prevent="input.tap(BUTTON_RELOAD)">SEAT</button>
   </div>
 </template>
 

@@ -6,10 +6,11 @@ First part of roadmap stage 3 (see [design.md §14](design.md#14-roadmap)): a ta
 
 - Two tanks park on the roads next to the six cars. Walk up and press **E**: the first player in drives, the second takes the gun. A third can't board (two seats).
 - **Driver:** W/S gas and brake, **A/D turns the tank on the spot** (or while driving), Space is the handbrake. Top speed is 12 m/s; the car's is 30.
-- **Gunner:** aims with the mouse and fires with a click or **F**. The camera sits behind the turret on the line of the barrel, so the reticle at the screen centre is where the shell goes. The reticle goes dashed while the gun reloads (1.5 s).
+- **Gunner:** aims with the mouse and fires with a click or **F**. The camera sits behind the turret on the line of the barrel, so the reticle at the screen centre is where the barrel points; the shell falls from that line, so there is no aiming aid and long shots are judged by eye. The reticle goes dashed while the gun reloads (1.5 s).
 - The turret turns on the hull at 1.4 rad/s and the barrel nods at 0.9 rad/s, between −7° and +29°. It is *stabilised*: it follows the gunner's world heading, so a turning hull doesn't drag the aim.
-- A shell is an instant hit along the barrel. It stops at the first wall, building, vehicle or stickman and explodes there: a 7 m blast throws stickmen away (up to 18 m/s, with a hop) and shoves vehicles, the shooter's own tank included. Everyone sees a muzzle flash, a tracer and a ball of fire.
-- Stickmen can still stand on the tank and ride it, and it knocks them back as a car does. Tanks are solid on the client too.
+- A shell is a projectile. It leaves the muzzle at 140 m/s and falls under gravity (about 5 m of drop at 100 m, 20 m at 200 m, so long shots need the barrel raised), takes about 0.7 s to cover 100 m, and explodes at the first wall, building, vehicle or stickman it meets, or after 6 s where it is: a 7 m blast throws stickmen away (up to 18 m/s, with a hop) and shoves vehicles, the shooter's own tank included. Everyone sees a muzzle flash, the shell in flight and a ball of fire where it lands.
+- Stickmen can still stand on the tank and ride it, and it knocks them back as a car does. Tanks are solid on the client too, turret included.
+- **R switches seat** while seated: a lone crewman moves between driver and gunner, and a driver who left a gap can be replaced by the passenger. With every seat taken it does nothing.
 
 ## The gunner is a separate mechanic
 
@@ -18,7 +19,7 @@ First part of roadmap stage 3 (see [design.md §14](design.md#14-roadmap)): a ta
 Per tick, for each vehicle with a gun:
 
 1. Read the gunner's input frame. Its `yaw` is a world heading, so the target turret angle is that heading minus the hull's heading. The turret steps towards it by at most `TANK_TURRET_SLEW × dt`, taking the short way round. The barrel steps towards `pitch`, clamped to the barrel's travel.
-2. If fire is held and the reload is up: a hitscan from the turret ring along the barrel (`Physics::cast_ray`, which skips the firing tank's own body). Stickmen are not physics bodies, so the shell is also tested against each standing player: a hit if their centre passes within 0.8 m of the path before the wall.
+2. If fire is held and the reload is up: a shell is added to `world.rockets` (kind `PROJECTILE_SHELL`) at the muzzle, `TANK_BARREL_LENGTH` along the barrel from the ring, moving at `SHELL_SPEED`. If the barrel is poking into a wall (a ray from the ring to the muzzle hits something) it bursts there at once. `Gunnery` steps every shell each tick before the guns: gravity, then a ray along the step (`Physics::cast_ray`, which skips the firing tank's body) and a test against each standing player, since stickmen are not physics bodies (a hit if their centre passes within 0.8 m of the path before the wall). It bursts at the first hit with a `WEAPON_SHELL` shot event and the blast, and expires after `SHELL_TTL_TICKS`.
 3. At the impact point: `Physics::blast_cars` shoves every vehicle in range, and every standing player within 7 m gets a knockback of `18 m/s × (1 − distance / 7 m)` away from the blast, plus a hop. That is the same `Character::knock` the car uses, so the client's reconciliation already knows how to replay it.
 4. The shot counter goes up, the range of the flight is saved, and the reload restarts (90 ticks). A held trigger therefore fires once per reload; the jitter buffer strips fire from repeated inputs, so an underrun cannot add a shot.
 
@@ -53,8 +54,8 @@ Each shot gives the hull a 1.6 m/s kick backwards along the barrel (level, so it
 | `net/interp.ts` | Turrets blend by angle; the shot counter and range come from the nearer snapshot, so a shot is drawn with the turret that fired it |
 | `sim/input.ts` | `pitch` in the sample, left mouse and F as the trigger, `clampPitch` |
 | `sim/physics.ts` | A tank gets a wider collider than a car |
-| `render/tank.ts` | The tank model: hull, tracks, six wheels that roll per side (so a pivot turn spins them opposite ways), a turret and a barrel that follow the snapshot, driver and gunner heads |
-| `render/effects.ts` | Muzzle flash, tracer and explosion ball |
+| `render/tank.ts` | The tank model, loaded from `models/tank.glb`: wheels that roll per side (so a pivot turn spins them opposite ways), a turret and a barrel that follow the snapshot, driver and gunner heads |
+| `render/effects.ts` | Muzzle flash, rifle tracer and explosion ball |
 | `render/car.ts` | `VehicleModel`, the interface both models implement |
 | `render/scene.ts`, `game.ts`, `App.vue` | Gunner camera, tank follow distance, the prompts ("E: drive the tank" / "E: man the gun"), reticle and reload state |
 
@@ -62,10 +63,10 @@ On taking the gunner seat, the camera starts where the barrel already points. Wh
 
 ## Decisions worth knowing
 
-- **Hitscan, not a flying shell.** It needs no projectile entity on the wire, and nothing to rewind. The tracer is drawn fast. The rocket launcher is the real projectile (design.md §5.6).
+- **A real projectile, on the existing rocket wire.** Shells share `world.rockets` and `ProjectileState` with rockets and grenades (kind 2), so the client interpolates them like those and no protocol bump was needed. The server owns the flight and nothing is predicted. `Turret.range` stays on the wire but is always 0. Shells are not lag-compensated: they hit where the server has things now.
 - **The gun aims with the hull's yaw only.** Hull pitch and roll are ignored when the turret targets a heading, so a tank on a steep slope has its aim off by the slope. The barrel itself is drawn on the hull's true orientation.
-- **The turret has no collider.** Only the hull box is solid, and a stickman walks through the turret. Riding on the hull works as it does on a car.
-- **The muzzle sits at the turret ring for the ray.** The ray starts at the ring, so a barrel poking into a wall doesn't make the shell vanish inside it. The client draws the tracer from the muzzle.
+- **The turret is solid, as a cylinder.** A second collider on the hull body (`TANK_TURRET_RADIUS`, `TANK_TURRET_HALF_HEIGHT`, centred on the ring) with no density, so the hull's mass and balance are as before. A cylinder looks the same at any heading, so nothing has to follow the gun. It stops stickmen and shells and can be stood on like the hull; the barrel is still not solid. The client mirrors it in `VehicleSolids` (`sim/physics.ts`) and on the predicted body.
+- **The muzzle check starts at the turret ring.** A ray from the ring to the muzzle catches a barrel poking into a wall, so the shell bursts at the wall instead of starting on its far side.
 - **Gunner input is not predicted.** The turret is as laggy as any server-driven object: a round trip plus the interpolation delay. That's the same small delay as a driver's. Predicting the turret is easy later because it is a pure function of the gunner's input.
 
 ## Tests
@@ -73,7 +74,7 @@ On taking the gunner seat, the camera starts where the barrel already points. Wh
 `cargo test --workspace` and `cd client && npm test`.
 
 - `physics/vehicle.rs`: a tank settles and tops out near 12 m/s; turns on the spot without drifting; stops turning when the stick is released; turns and drives together; `cast_ray` sees walls, ignores its own hull and respects range; a blast shoves nearby cars and misses far ones.
-- `mechanics/gunnery.rs`: the turret follows the gunner and the barrel stops at its limit; slewing is rate-limited; a shell hits and throws a stickman in its path; the gun reloads between shots and misses a faraway bystander; no gunner means no shooting; the first thing in the way takes the shell.
+- `mechanics/gunnery.rs`: the turret follows the gunner and the barrel stops at its limit; slewing is rate-limited; a shell is in flight for a while, falls, and then hits and throws a stickman in its path; a raised barrel reaches further than a level one; the gun reloads between shots and misses a faraway bystander; no gunner means no shooting; the first thing in the way takes the shell.
 - `mechanics/vehicles.rs`: a tank takes two crew and refuses a third and reports its turret; all nine vehicles are placed and settle in the shipped world.
 - `protocol.rs`, `codec.spec.ts`: matching fixtures and the size bound.
 - `interp.spec.ts`: turrets blend by angle across ±π and the shot counter steps.
@@ -89,10 +90,10 @@ On taking the gunner seat, the camera starts where the barrel already points. Wh
 
 ## The helicopter
 
-One helicopter stands among the vehicles. Walk up and press **E**: the first in is the pilot, the second a passenger, and a third can't board.
+One helicopter stands among the vehicles. Walk up and press **E**: the first in is the pilot, the second takes the nose gun, and a third can't board.
 
 - **Pilot:** W/S lean the rotor forward and back, A/D turn (clockwise on D), **Space climbs**, **Shift sinks**. Let go of everything and it hovers where it is, whatever its speed. Top speed is about 25 m/s in a full lean, and it won't climb past 120 m.
-- **Passenger:** rides along in the cabin. As in a car, their stick does nothing.
+- **Gunner:** seat 1 works the chin gun of the Mi-24 (a four-barrel machine gun under the nose). The mouse aims it and a held click or **F** fires about twelve rounds a second. It swings 57° either side of the nose and from 43° down to 11° up, in the hull's frame, so the camera stops at those limits. As in a tank, their stick does nothing.
 - **Leaving:** E steps out beside the hull. In the air that is a fall; there is no fall damage yet.
 - **Empty:** with nobody in seat 0 the rotor is off and it drops like a stone, then sits where it lands.
 
@@ -114,19 +115,23 @@ Because the model keeps no state beyond the body's, the client's copy needs noth
 - `CarControls` gained `lift` (jump +1, run −1) and `powered` (a pilot is aboard). A car ignores both. The mapping from input to controls is in `Vehicles::on_tick` and `controlsOf` in `client/src/sim/vehicle.ts`.
 - `MAX_VEHICLES` went from 8 to 9, and a snapshot with the maximum is still one datagram.
 - **Prediction.** The pilot's helicopter is predicted like a car or a tank: `CarSim` has a rotor branch with no wheel controller. `scripted_flight_matches_fixture` and `WASM flies where the native server does` run the same 480-tick flight on both and agree to under a centimetre.
-- **Drawing.** `render/heli.ts`: a cabin with a glass bubble and heads in it, a tail boom, skids and a main rotor that spins up while seat 0 is taken. The camera sits 16 m behind and follows the hull's heading.
+- **Drawing.** `render/heli.ts` loads `heli.glb`, built by `tools/vehicles/build_heli.py` (a Hind in silhouette, about 2300 triangles: double cockpit, engines, stub wings with pods and missiles, tail, tricycle gear, a five-blade rotor and a three-blade tail rotor). Heads show in both cockpits. The `rotor` and `tail_rotor` nodes spin while seat 0 is taken, and `turret` and `gun` swing and nod with the `Turret` angles of the snapshot. The camera sits 16 m behind and follows the hull's heading.
+- **Nose gun.** `Gunnery` gives a helicopter a `Gun` like a tank's, and `work_chaingun` works it from seat 1. The gunner's look direction is taken in the world and expressed in the hull's frame (`CarPose::local_dir`), so the gun holds its aim while the helicopter leans and turns. It slews at `HELI_GUN_SLEW`, limited by `HELI_GUN_YAW_LIMIT` and `HELI_GUN_PITCH_MIN/MAX`. A shot is hitscan like the AK5: a ray of `HELI_GUN_RANGE` from the mount, scattered by `HELI_GUN_SPREAD`, which hurts the first stickman it meets (`HELI_GUN_DAMAGE`, with the shooter's rewind) or chips a vehicle at half that. The event is `WEAPON_CHAINGUN` (6), drawn as a tracer from the muzzle of the helicopter that has the shooter aboard.
 
 ### Tests
 
 - `physics/vehicle.rs`: it hovers exactly; without power it falls and rests; climb and sink follow the input and letting go holds altitude; leaning forward flies at 12–30 m/s without losing height; the stick turns it; it levels out after a roll; the ceiling holds.
 - `mechanics/vehicles.rs`: a pilot and one passenger lift off together, a third is refused, and it hovers when the stick is released.
+- `mechanics/gunnery.rs`: the nose gun follows the gunner within its travel, hurts what it points at, fires at its rate, and only seat 1 works it.
+- `heli.spec.ts`: the model has its nodes on the game's pivot, stays low-poly, aims with the turret angles, and spins up with a pilot.
 
 ### Limits
 
 - Rotors have no collider and no effect: the hull box is the only solid. Nothing is chopped.
 - No fall damage and no crash. A pilot can step out at 100 m.
 - There is no ground effect, autorotation or stall: the model is deliberately an arcade one.
-- The passenger and pilot have the same view. Seat 1 has no gun, but `Gun` and `Gunnery` could give it one the way the tank's seat 1 has.
+- The nose gun is hitscan with no bullet drop, no ammunition and no overheating. Its tracer is cosmetic and reaches clients with the snapshot, not at once.
+- The model was checked in Blender preview renders, not by eye in the browser.
 
 ## Driver-side prediction
 
@@ -146,3 +151,11 @@ Known limits:
 - The server holds a car at the last input on a jitter-buffer underrun but the client does not know it did. That is one tick of mismatch, corrected by the next snapshot.
 - Wheel suspension state is not on the wire, so the first replayed tick after a correction starts from whatever the client's springs were doing. It is a sub-millimetre effect in practice.
 - Boarding the vehicle shows the interpolated pose until the first snapshot with `drive` arrives (about a round trip), then jumps to the predicted pose.
+
+## The model
+
+`client/public/models/tank.glb` is built by `tools/vehicles/build_tank.py` (Blender, headless; `-- --preview DIR` renders five views). It is a T-55 in silhouette (low cast turret, long glacis, five road wheels with sprocket and idler a side, fuel drums on the tail, a 100 mm gun with a bore evacuator) in about 1 900 triangles. The game looks up `wheel_L_<n>` / `wheel_R_<n>`, `turret` and `gun` by name; the `paint` material is tinted per tank. The physics hull is unchanged, so the tracks overhang the collider by a few centimetres.
+
+```
+/Applications/Blender.app/Contents/MacOS/Blender -b -P tools/vehicles/build_tank.py
+```

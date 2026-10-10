@@ -124,13 +124,16 @@ impl Vehicle {
     }
 }
 
-/// A rocket or a grenade in flight. The `Combat` mechanic steps it and bursts it. A rocket
-/// flies straight and bursts on contact; a grenade falls, bounces, and bursts when `ttl` runs out.
+/// A rocket, a grenade or a tank shell in flight. The `Combat` mechanic steps rockets and grenades,
+/// `Gunnery` steps shells. A rocket flies straight and bursts on contact; a grenade falls, bounces,
+/// and bursts when `ttl` runs out; a shell falls in an arc and bursts on contact.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rocket {
     /// `PROJECTILE_*`.
     pub kind: u8,
     pub owner: u32,
+    /// The vehicle it left, which it flies through; 0 for none.
+    pub source: u32,
     pub position: [f32; 3],
     pub velocity: [f32; 3],
     pub ttl: u32,
@@ -147,7 +150,7 @@ pub struct Gun {
     pub cooldown: u32,
     /// Shells fired so far, modulo 256.
     pub shots: u8,
-    /// How far the last shell flew, metres.
+    /// Unused: shells fly now, so there is no distance to report. Kept so the wire does not change.
     pub range: f32,
 }
 

@@ -11,9 +11,9 @@ use std::collections::BTreeMap;
 ///
 /// `BUTTON_USE` is one press per input frame: it boards the nearest vehicle with a free seat, or
 /// leaves the one the player sits in. A driver's axes and `BUTTON_JUMP` (handbrake) steer the car;
-/// passengers only ride. A helicopter's pilot leans it with the axes and climbs on `BUTTON_JUMP`,
+/// passengers only ride, except the gunner of a tank or a helicopter (see `Gunnery`). A helicopter's pilot leans it with the axes and climbs on `BUTTON_JUMP`,
 /// sinks on `BUTTON_RUN`. Cars are dynamic bodies stepped here, once per tick, after all input
-/// is in.
+/// is in. `BUTTON_RELOAD` moves a seated player to a free seat of the same vehicle.
 pub struct Vehicles;
 
 /// Cars, tanks and helicopters placed at start. Fewer appear when the world has too few clear spawn points.
@@ -70,7 +70,7 @@ fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: f32) -> u32
             controls: CarControls::default(),
             home: (position, yaw),
             stuck_ticks: 0,
-            gun: (kind == KIND_TANK).then(Gun::default),
+            gun: (kind == KIND_TANK || kind == KIND_HELI).then(Gun::default),
             hp: vehicle_hp(kind),
             wreck_in: 0,
             last_attacker: None,
@@ -139,6 +139,21 @@ fn vacate(world: &mut World, id: u32) -> Option<Seat> {
         }
     }
     Some(seat)
+}
+
+/// Moves a seated player to the nearest free seat of the same vehicle, if there is one. Seat 0
+/// drives and a tank's seat 1 works the gun, so a lone crewman can take either job.
+fn switch_seat(world: &mut World, id: u32) {
+    let Some(seat) = world.players.get(&id).and_then(|player| player.seat) else { return };
+    let Some(vehicle) = world.vehicles.get_mut(&seat.vehicle) else { return };
+    let seats = seat_count(vehicle.kind);
+    let Some(free) = (1..seats).map(|step| (seat.index + step) % seats).find(|&index| vehicle.seats[index].is_none()) else { return };
+    vehicle.seats[seat.index] = None;
+    vehicle.seats[free] = Some(id);
+    if let Some(player) = world.players.get_mut(&id) {
+        player.seat = Some(Seat { vehicle: seat.vehicle, index: free });
+    }
+    tracing::debug!(id, vehicle = seat.vehicle, from = seat.index, to = free, "switched seat");
 }
 
 fn alight(world: &mut World, id: u32) {
@@ -221,6 +236,18 @@ impl Mechanic for Vehicles {
             } else {
                 board(world, id);
             }
+        }
+        // Reload has no use inside a vehicle, so it moves to the other seat.
+        let switching: Vec<u32> = world
+            .players
+            .iter()
+            .filter(|(_, player)| {
+                player.alive() && player.seat.is_some() && player.input.buttons() & (BUTTON_RELOAD | BUTTON_USE) == BUTTON_RELOAD
+            })
+            .map(|(&id, _)| id)
+            .collect();
+        for id in switching {
+            switch_seat(world, id);
         }
 
         // The driver's input becomes the car's controls; an empty car holds its handbrake.
@@ -667,5 +694,51 @@ mod tests {
         let state = game.vehicle_states().into_iter().find(|v| v.0 == vid).unwrap();
         assert_eq!(state.9.len(), 2);
         assert!(state.10.is_some(), "a tank reports its turret");
+    }
+
+    #[test]
+    fn a_lone_crewman_can_switch_between_driver_and_gunner() {
+        let mut game = game();
+        let vid = *game.world.vehicles.iter().find(|(_, vehicle)| vehicle.kind == KIND_TANK).unwrap().0;
+        let pose = game.world.physics.car_pose(vid).unwrap();
+        let (id, _inbox) = join(&mut game);
+        let mut seq = 0;
+        idle(&mut game, id, &mut seq, 3);
+        game.world.players.get_mut(&id).unwrap().character.position = [pose.position[0] + 2.5, STANDING_Y, pose.position[2]];
+        press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
+        idle(&mut game, id, &mut seq, 3);
+        assert_eq!(game.world.vehicles[&vid].seats[..2], [Some(id), None]);
+
+        press(&mut game, id, &mut seq, (0, 0), BUTTON_RELOAD, 1);
+        idle(&mut game, id, &mut seq, 3);
+        assert_eq!(game.world.vehicles[&vid].seats[..2], [None, Some(id)]);
+        assert_eq!(game.world.players[&id].seat, Some(Seat { vehicle: vid, index: 1 }));
+
+        press(&mut game, id, &mut seq, (0, 0), BUTTON_RELOAD, 1);
+        idle(&mut game, id, &mut seq, 3);
+        assert_eq!(game.world.vehicles[&vid].seats[..2], [Some(id), None]);
+    }
+
+    #[test]
+    fn a_full_tank_has_nowhere_to_switch_to() {
+        let mut game = game();
+        let vid = *game.world.vehicles.iter().find(|(_, vehicle)| vehicle.kind == KIND_TANK).unwrap().0;
+        let pose = game.world.physics.car_pose(vid).unwrap();
+        let mut crew = Vec::new();
+        for _ in 0..2 {
+            let (id, inbox) = join(&mut game);
+            crew.push((id, inbox, 0));
+        }
+        for (id, _, seq) in &mut crew {
+            idle(&mut game, *id, seq, 3);
+            game.world.players.get_mut(id).unwrap().character.position = [pose.position[0] + 2.5, STANDING_Y, pose.position[2]];
+            press(&mut game, *id, seq, (0, 0), BUTTON_USE, 1);
+            idle(&mut game, *id, seq, 3);
+        }
+        let (first, _, seq) = &mut crew[0];
+        press(&mut game, *first, seq, (0, 0), BUTTON_RELOAD, 1);
+        idle(&mut game, *first, seq, 3);
+        let seats = game.world.vehicles[&vid].seats;
+        assert_eq!(seats[..2], [Some(crew[0].0), Some(crew[1].0)]);
     }
 }

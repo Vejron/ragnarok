@@ -30,7 +30,7 @@ pub fn vehicle_hp(kind: u8) -> u8 {
     }
 }
 
-/// Seats in a vehicle of `kind`. Seat 0 is the driver (a helicopter's pilot); a tank's seat 1 is the gunner.
+/// Seats in a vehicle of `kind`. Seat 0 is the driver (a helicopter's pilot); seat 1 of a tank or a helicopter is the gunner.
 pub fn seat_count(kind: u8) -> usize {
     match kind {
         KIND_TANK => crate::consts::TANK_SEATS,
@@ -58,10 +58,13 @@ pub const WEAPON_ROCKET: u8 = 2;
 pub const WEAPON_WRECK: u8 = 3;
 pub const WEAPON_REVOLVER: u8 = 4;
 pub const WEAPON_GRENADE: u8 = 5;
+/// The helicopter's nose gun.
+pub const WEAPON_CHAINGUN: u8 = 6;
 
 /// `ProjectileState` kinds.
 pub const PROJECTILE_ROCKET: u8 = 0;
 pub const PROJECTILE_GRENADE: u8 = 1;
+pub const PROJECTILE_SHELL: u8 = 2;
 
 /// One simulation tick of player intent. The client predicts with exactly these quantized values,
 /// so client and server feed the simulation identical inputs.

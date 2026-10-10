@@ -44,6 +44,16 @@ export const BANDAGE_TICKS = 2 * TICK_RATE
 /** Grenades. Mirrors the grenade block of items.rs. */
 export const GRENADE_BLAST_RADIUS = 5.0
 export const GRENADE_FUSE_TICKS = 3 * TICK_RATE
+/** Throwing. Mirrors `GRENADE_*` in items.rs. */
+export const GRENADE_SPEED = 16.0
+/** A throw is aimed this far above the look direction, radians, and starts this far in front of the eye. */
+export const GRENADE_LOFT = 0.15
+export const GRENADE_MUZZLE = 0.6
+export const GRENADE_RADIUS = 0.1
+/** How much of its speed a grenade keeps when it bounces. */
+export const GRENADE_BOUNCE = 0.4
+/** The most pitch the server will accept, radians. */
+export const MAX_AIM_PITCH = 1.5
 /** A player in this many metres of an item can take it with use. */
 export const PICKUP_RADIUS = 2.0
 

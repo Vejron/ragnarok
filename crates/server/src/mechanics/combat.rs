@@ -3,7 +3,7 @@ use super::spawn;
 use crate::game::{Rocket, World};
 use shared::consts::*;
 use shared::items::*;
-use shared::protocol::{ItemSlot, Kill, PROJECTILE_GRENADE, PROJECTILE_ROCKET, S_KILL, ShotEvent, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_WRECK};
+use shared::protocol::{ItemSlot, Kill, PROJECTILE_GRENADE, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_WRECK};
 use shared::quant::{from_mrad, to_cm};
 
 /// Health, death, the items in the hotbar and what blasts do to people and vehicles.
@@ -207,7 +207,15 @@ fn wreck(world: &mut World, vid: u32) {
     let [x, y, z] = pose.position.map(to_cm);
     world.shots.push(ShotEvent(attacker.unwrap_or(0), WEAPON_WRECK, x, y, z));
     // Thrown up a little, so it is plainly not a parked car any more.
-    world.physics.kick_car(vid, [0.0, 6.0, 0.0]);
+    world.physics.kick_car(vid, [0.0, 9.0, 0.0]);
+    // ...and tumbling: a roll or a somersault, either way round, picked by the vehicle's id and
+    // where it stood so that two wrecks do not turn alike.
+    let seed = (vid as f32 * 12.9898 + pose.position[0] * 78.233 + pose.position[2] * 37.719).sin() * 43758.547;
+    let pick = seed - seed.floor();
+    let rate = WRECK_SPIN * (0.7 + 0.6 * ((pick * 7.0) - (pick * 7.0).floor()));
+    let sign = if pick < 0.5 { -1.0 } else { 1.0 };
+    let spin = if (pick * 4.0) as u32 % 2 == 0 { [0.0, 0.0, sign * rate] } else { [sign * rate, 0.0, 0.0] };
+    world.physics.spin_car(vid, spin);
     blast(
         world,
         Blast {
@@ -251,6 +259,7 @@ fn fire_rocket(world: &mut World, id: u32) {
         Rocket {
             kind: PROJECTILE_ROCKET,
             owner: id,
+            source: 0,
             position: std::array::from_fn(|i| eye[i] + dir[i] * ROCKET_MUZZLE),
             velocity: dir.map(|v| v * ROCKET_SPEED),
             ttl: ROCKET_TTL_TICKS,
@@ -265,6 +274,10 @@ fn step_rockets(world: &mut World, dt: f32) {
         let Some(rocket) = world.rockets.get(&id).copied() else { continue };
         if rocket.kind == PROJECTILE_GRENADE {
             step_grenade(world, id, dt);
+            continue;
+        }
+        // Shells are the `Gunnery` mechanic's.
+        if rocket.kind == PROJECTILE_SHELL {
             continue;
         }
         let speed = rocket.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
@@ -288,7 +301,7 @@ fn step_rockets(world: &mut World, dt: f32) {
 }
 
 /// A unit vector `spread` radians at most from `dir`, uniformly in a cone.
-fn scatter(world: &mut World, dir: [f32; 3], spread: f32) -> [f32; 3] {
+pub fn scatter(world: &mut World, dir: [f32; 3], spread: f32) -> [f32; 3] {
     if spread <= 0.0 {
         return dir;
     }
@@ -307,19 +320,40 @@ fn scatter(world: &mut World, dir: [f32; 3], spread: f32) -> [f32; 3] {
     norm(std::array::from_fn(|i| dir[i] + right[i] * a + above[i] * b))
 }
 
-/// Fires gun `item` from player `id`'s eye.
+/// The direction from `eye` to what the over-the-shoulder camera's crosshair is on: a wall or a
+/// player (as `shooter` saw them `back` ticks ago) within `range`, else the far end of its line. The camera is a function of yaw and pitch alone, so the
+/// server finds the same ray the player sees. Falls back to `look_dir` when the camera ray starts
+/// inside geometry or the point would send the shot sideways.
+fn crosshair_dir(world: &World, shooter: u32, back: u32, position: [f32; 3], eye: [f32; 3], yaw: f32, look_dir: [f32; 3], range: f32) -> [f32; 3] {
+    // The camera's pivot is to the right of the capsule, which is (cos yaw, 0, -sin yaw).
+    let pivot = [position[0] + yaw.cos() * ON_FOOT_SHOULDER, position[1] + ON_FOOT_HEIGHT, position[2] - yaw.sin() * ON_FOOT_SHOULDER];
+    let wall = world.physics.cast_ray(pivot, look_dir, range, 0).unwrap_or(range);
+    let t = first_player_hit(world, pivot, look_dir, wall, Some(shooter), back).map_or(wall, |(_, t)| t);
+    let to: [f32; 3] = std::array::from_fn(|i| pivot[i] + look_dir[i] * t - eye[i]);
+    let len = to.iter().map(|v| v * v).sum::<f32>().sqrt();
+    if len < 1e-3 {
+        return look_dir;
+    }
+    let dir = to.map(|v| v / len);
+    let along: f32 = (0..3).map(|i| dir[i] * look_dir[i]).sum();
+    if along < 0.5 { look_dir } else { dir }
+}
+
+/// Fires gun `item` from player `id`'s eye, towards what the crosshair is on.
 fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     let Some(player) = world.players.get(&id) else { return };
     let input = player.input;
     let c = player.character;
     let pitch = from_mrad(input.pitch()).clamp(-MAX_PITCH, MAX_PITCH);
-    let aim = look(from_mrad(input.3), pitch);
-    let dir = scatter(world, aim, item.spread);
+    let yaw = from_mrad(input.3);
+    let look_dir = look(yaw, pitch);
     let origin = [c.position[0], c.position[1] + eye_height(input.buttons()), c.position[2]];
+    let back = rewind_ticks(world.tick, input.view());
+    let aim = crosshair_dir(world, id, back, c.position, origin, yaw, look_dir, item.range);
+    let dir = scatter(world, aim, item.spread);
 
     let wall = world.physics.cast_ray_hit(origin, dir, item.range, 0);
     let reach = wall.map_or(item.range, |(t, _)| t);
-    let back = rewind_ticks(world.tick, input.view());
     let hit = first_player_hit(world, origin, dir, reach, Some(id), back);
     let end = hit.map_or(reach, |(_, t)| t);
     if let Some((victim, _)) = hit {
@@ -348,6 +382,7 @@ fn throw_grenade(world: &mut World, id: u32) {
         Rocket {
             kind: PROJECTILE_GRENADE,
             owner: id,
+            source: 0,
             position: std::array::from_fn(|i| eye[i] + dir[i] * reach),
             velocity: dir.map(|v| v * GRENADE_SPEED),
             ttl: GRENADE_FUSE_TICKS,
@@ -537,24 +572,36 @@ mod tests {
         (response.try_recv().unwrap().unwrap(), inbox)
     }
 
+    /// The camera is above and to the right of the eye, so a shooter aims a little down to put the
+    /// crosshair on a target 20 m away at the same height.
+    const AIM_20M: f32 = -0.075;
+
+    /// How a player aims with `slot` in hand: a gun's crosshair on a target 20 m away, anything else level.
+    fn aim_for(game: &Game, id: u32, slot: usize) -> f32 {
+        let item = game.world.players[&id].hotbar[slot].0;
+        if def(item).is_some_and(|d| d.kind == ItemKind::Gun) { AIM_20M } else { 0.0 }
+    }
+
     /// Feeds `ticks` frames of `buttons`, facing `yaw`.
     fn hold(game: &mut Game, id: u32, seq: &mut u32, yaw: f32, buttons: u8, ticks: u32) {
+        let aim = aim_for(game, id, 0);
         for _ in 0..ticks {
             *seq += 1;
-            game.handle(Command::Input(id, 0, vec![InputFrame(*seq, 0, 0, to_mrad(yaw), buttons, 0, 0, 0)]));
+            game.handle(Command::Input(id, 0, vec![InputFrame(*seq, 0, 0, to_mrad(yaw), buttons, to_mrad(aim), 0, 0)]));
             game.step();
         }
     }
 
     /// Two players 20 m apart on flat ground, clear of the car that parks on the spawn point, the
-    /// first facing the second (-Z), both settled.
+    /// first facing the second (-Z), both settled. The target stands where the shooter's shoulder
+    /// camera looks, as a player turns until the crosshair is on someone.
     fn duel() -> (Game, u32, u32, u32, u32) {
         let mut game = game();
         let (shooter, _a) = join(&mut game);
         let (target, _b) = join(&mut game);
         std::mem::forget((_a, _b));
         game.world.players.get_mut(&shooter).unwrap().character.position = [100.0, STANDING_Y, 0.0];
-        game.world.players.get_mut(&target).unwrap().character.position = [100.0, STANDING_Y, -20.0];
+        game.world.players.get_mut(&target).unwrap().character.position = [100.0 + ON_FOOT_SHOULDER, STANDING_Y, -20.0];
         // The shooter carries an AK5 in slot 0, which is where `hold` keeps the selection.
         give(&mut game, shooter, 0, ITEM_AK5, 1);
         let (mut sa, mut sb) = (0, 0);
@@ -617,6 +664,23 @@ mod tests {
         let end = game.world.shots.last().expect("a shot was recorded");
         assert!(end.3.abs() < 20, "ends on the ground, y = {} cm", end.3);
         assert!(end.4 < 0 && end.4 > -2000, "a little ahead of the shooter: z = {} cm", end.4);
+    }
+
+    #[test]
+    fn a_shot_goes_where_the_shoulder_camera_crosshair_is() {
+        let (mut game, shooter, _, _, _) = duel();
+        // The pivot is 0.9 m to the right; a target whose centre is on that line is under the crosshair,
+        // and one 5 m off to the side is not.
+        game.world.players.get_mut(&shooter).unwrap().input = InputFrame(1, 0, 0, 0, BUTTON_FIRE, 0, 0, 0);
+        let c = game.world.players[&shooter].character;
+        let pivot_y = c.position[1] + ON_FOOT_HEIGHT;
+        let eye = [c.position[0], c.position[1] + EYE_HEIGHT, c.position[2]];
+        let dir = crosshair_dir(&game.world, shooter, 0, c.position, eye, 0.0, look(0.0, 0.0), 100.0);
+        // Over 100 m the line from the eye crosses the camera's ray, which is 0.9 m to the right and 0.9 m above.
+        let at = |t: f32| [eye[0] + dir[0] * t, eye[1] + dir[1] * t];
+        assert!((at(100.0)[0] - (c.position[0] + ON_FOOT_SHOULDER)).abs() < 0.05, "x {}", at(100.0)[0]);
+        assert!((at(100.0)[1] - pivot_y).abs() < 0.1, "y {}", at(100.0)[1]);
+        assert!(dir[2] < -0.99, "still forwards: {dir:?}");
     }
 
     #[test]
@@ -685,6 +749,9 @@ mod tests {
     #[test]
     fn a_rocket_flies_and_bursts_on_the_target_and_hurts_it() {
         let (mut game, shooter, target, mut seq, _) = duel();
+        // A rocket flies along the look direction from the eye, so it is the target that stands in its line.
+        game.world.players.get_mut(&target).unwrap().character.position[0] = 100.0;
+        game.world.players.get_mut(&shooter).unwrap().input = InputFrame(0, 0, 0, 0, 0, 0, 0, 0);
         fire_rocket(&mut game.world, shooter);
         // 20 m at 45 m/s is under half a second.
         for _ in 0..40 {
@@ -747,6 +814,17 @@ mod tests {
     }
 
     #[test]
+    fn a_wreck_tumbles_as_it_is_thrown_up() {
+        let mut game = game();
+        let (vid, _driver) = driver_in_the_car(&mut game);
+        damage_vehicle(&mut game.world, vid, 255, None);
+        let motion = game.world.physics.car_motion(vid).unwrap();
+        let spin = motion.angvel.iter().map(|v| v * v).sum::<f32>().sqrt();
+        assert!(spin > 3.0, "a wreck is sent turning over, not just straight up (spin {spin})");
+        assert!(motion.linvel[1] > 5.0);
+    }
+
+    #[test]
     fn a_wreck_cannot_be_boarded_and_comes_back_whole() {
         let mut game = game();
         let (vid, _driver) = driver_in_the_car(&mut game);
@@ -773,6 +851,7 @@ mod tests {
     #[test]
     fn a_rocket_in_flight_is_in_the_snapshot() {
         let (mut game, shooter, _, mut seq, _) = duel();
+        game.world.players.get_mut(&shooter).unwrap().input = InputFrame(0, 0, 0, 0, 0, 0, 0, 0);
         fire_rocket(&mut game.world, shooter);
         hold(&mut game, shooter, &mut seq, 0.0, 0, 1);
         let rockets = game.projectile_states();
@@ -797,7 +876,7 @@ mod tests {
         let view = game.world.tick.wrapping_sub(lag);
         assert!(view <= tick_before + 8, "the test means to look at a moment around the move");
         seq += 1;
-        game.handle(Command::Input(shooter, 0, vec![InputFrame(seq, 0, 0, 0, BUTTON_FIRE, 0, view as u16, 0)]));
+        game.handle(Command::Input(shooter, 0, vec![InputFrame(seq, 0, 0, 0, BUTTON_FIRE, to_mrad(aim_for(&game, shooter, 0)), view as u16, 0)]));
         hold(&mut game, shooter, &mut seq, 0.0, 0, 3);
         game.world.players[&target].hp
     }
@@ -831,7 +910,7 @@ mod tests {
 
     fn hold_slot(game: &mut Game, id: u32, seq: &mut u32, buttons: u8, slot: u8, ticks: u32) {
         for _ in 0..ticks {
-            press(game, id, seq, buttons, slot, 0.0);
+            press(game, id, seq, buttons, slot, aim_for(game, id, slot as usize));
         }
     }
 
@@ -902,7 +981,7 @@ mod tests {
         let (mut game, shooter, target, _, _) = duel();
         let at = game.world.players[&target].character.position;
         let id = game.world.alloc_id();
-        game.world.rockets.insert(id, Rocket { kind: PROJECTILE_GRENADE, owner: shooter, position: [at[0] + 1.0, at[1], at[2]], velocity: [0.0; 3], ttl: 1 });
+        game.world.rockets.insert(id, Rocket { kind: PROJECTILE_GRENADE, owner: shooter, source: 0, position: [at[0] + 1.0, at[1], at[2]], velocity: [0.0; 3], ttl: 1 });
         game.step();
         assert!(game.world.rockets.is_empty());
         assert!(game.world.players[&target].hp < PLAYER_MAX_HP - 50, "{}", game.world.players[&target].hp);

@@ -35,9 +35,12 @@ export const WEAPON_ROCKET = 2
 export const WEAPON_WRECK = 3
 export const WEAPON_REVOLVER = 4
 export const WEAPON_GRENADE = 5
+/** The helicopter's nose gun. */
+export const WEAPON_CHAINGUN = 6
 
 export const PROJECTILE_ROCKET = 0
 export const PROJECTILE_GRENADE = 1
+export const PROJECTILE_SHELL = 2
 
 /** One tick of player intent, already quantized: what the client predicts with is what it sends. */
 export interface InputFrame {
@@ -102,7 +105,7 @@ export interface VehicleState {
   hp: number
 }
 
-/** A rocket or grenade in flight, in metres and m/s. */
+/** A rocket, grenade or tank shell in flight, in metres and m/s. */
 export interface RocketState {
   id: number
   /** `PROJECTILE_*`. */
@@ -115,7 +118,7 @@ export interface RocketState {
   vz: number
 }
 
-/** A vehicle's gun in the hull frame. `shots` counts shells modulo 256; `range` is how far the last one flew, metres. */
+/** A vehicle's gun in the hull frame. `shots` counts shells modulo 256; `range` is unused (shells fly now) and always 0. */
 export interface Turret {
   /** + turns left. */
   yaw: number

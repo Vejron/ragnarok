@@ -1,23 +1,36 @@
 import * as THREE from 'three'
 
-/** `PROJECTILE_GRENADE` in codec.ts. */
+/** `PROJECTILE_GRENADE` and `PROJECTILE_SHELL` in codec.ts. */
 const GRENADE = 1
+const SHELL = 2
 
-/** The projectiles in flight: a small glowing missile pointed along its velocity, or a tumbling grenade. */
+/** The projectiles in flight: a glowing missile or a tank shell pointed along its velocity, or a tumbling grenade. */
 export class Rockets {
   readonly root = new THREE.Group()
   private readonly body = new THREE.CylinderGeometry(0.09, 0.09, 0.8, 8)
   private readonly material = new THREE.MeshBasicMaterial({ color: 0xff8a2a })
+  /** A tank shell: a fat hot slug with a long trail, big enough to follow at 140 m/s over a distance. */
+  private readonly slug = new THREE.CylinderGeometry(0.3, 0.3, 2.4, 10)
+  private readonly slugMaterial = new THREE.MeshBasicMaterial({ color: 0xfff0b0, fog: false })
+  private readonly trail = new THREE.CylinderGeometry(0.22, 0.02, 16, 8)
+  private readonly trailMaterial = new THREE.MeshBasicMaterial({ color: 0xff9a3c, transparent: true, opacity: 0.55, fog: false, depthWrite: false })
   private readonly ball = new THREE.SphereGeometry(0.1, 10, 8)
   private readonly ballMaterial = new THREE.MeshToonMaterial({ color: 0x4f5d2e })
   private readonly meshes = new Map<number, THREE.Mesh>()
   private readonly up = new THREE.Vector3(0, 1, 0)
 
-  /** Places projectile `id`, creating it on first sight. `velocity` only gives a rocket's heading. */
+  /** Places projectile `id`, creating it on first sight. `velocity` only gives a rocket's or a shell's heading. */
   place(id: number, kind: number, position: readonly [number, number, number], velocity: readonly [number, number, number]) {
     let mesh = this.meshes.get(id)
     if (!mesh) {
-      mesh = kind === GRENADE ? new THREE.Mesh(this.ball, this.ballMaterial) : new THREE.Mesh(this.body, this.material)
+      if (kind === GRENADE) mesh = new THREE.Mesh(this.ball, this.ballMaterial)
+      else if (kind === SHELL) {
+        mesh = new THREE.Mesh(this.slug, this.slugMaterial)
+        // The trail streams out behind, along the shell's own -Y.
+        const tail = new THREE.Mesh(this.trail, this.trailMaterial)
+        tail.position.y = -(1.2 + 8)
+        mesh.add(tail)
+      } else mesh = new THREE.Mesh(this.body, this.material)
       this.meshes.set(id, mesh)
       this.root.add(mesh)
     }
@@ -45,6 +58,10 @@ export class Rockets {
     this.meshes.clear()
     this.body.dispose()
     this.material.dispose()
+    this.slug.dispose()
+    this.slugMaterial.dispose()
+    this.trail.dispose()
+    this.trailMaterial.dispose()
     this.ball.dispose()
     this.ballMaterial.dispose()
     this.root.removeFromParent()

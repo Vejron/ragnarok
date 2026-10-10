@@ -1,7 +1,11 @@
 import * as THREE from 'three'
+import { ON_FOOT_HEIGHT, ON_FOOT_SHOULDER } from '../sim/consts'
+
+// On foot the camera is over the right shoulder and a little above the head; the server shares these.
+export { ON_FOOT_HEIGHT, ON_FOOT_SHOULDER }
 
 /** Third-person camera distance behind the player, metres. */
-export const ON_FOOT_DISTANCE = 5
+export const ON_FOOT_DISTANCE = 3.2
 export const DRIVING_DISTANCE = 9
 export const TANK_DISTANCE = 13
 export const HELI_DISTANCE = 16
@@ -9,13 +13,13 @@ export const HELI_DISTANCE = 16
 export const GUNNER_BACK = 6.5
 /** ...and this far above it, so the turret doesn't hide the view. */
 export const GUNNER_UP = 2.6
-/** The camera looks at the point this far along the aim line, so the screen centre is where shells land at range. */
+/** The camera looks at the point this far along the aim line, so the screen centre is where the barrel points. */
 export const GUNNER_FOCUS = 60
 export const CAMERA_HEIGHT = 1.2
 
 export class Scene {
   readonly scene = new THREE.Scene()
-  readonly camera = new THREE.PerspectiveCamera(70, 1, 0.1, 2000)
+  readonly camera = new THREE.PerspectiveCamera(75, 1, 0.1, 2000)
   readonly renderer: THREE.WebGLRenderer
   private readonly sun = new THREE.DirectionalLight(0xffffff, 2.2)
   private readonly resizeObserver: ResizeObserver
@@ -62,22 +66,27 @@ export class Scene {
   /** Height of the ground under `(x, z)`, so the camera stays above hills. Set by the game. */
   groundAt: (x: number, z: number) => number = () => 0
 
-  /** Orbits the camera behind `target` by yaw/pitch, and keeps the shadow frustum around it. */
-  follow(target: readonly number[], yaw: number, pitch: number, distance = ON_FOOT_DISTANCE) {
-    const [x, y, z] = [target[0]!, target[1]! + CAMERA_HEIGHT, target[2]!]
+  /**
+   * Orbits the camera behind `target` by yaw/pitch, and keeps the shadow frustum around it.
+   * A `shoulder` shifts the pivot to the right of the target, so the target sits left of screen centre.
+   */
+  follow(target: readonly number[], yaw: number, pitch: number, distance = ON_FOOT_DISTANCE, shoulder = 0, height = CAMERA_HEIGHT) {
+    const x = target[0]! + Math.cos(yaw) * shoulder
+    const y = target[1]! + height
+    const z = target[2]! - Math.sin(yaw) * shoulder
     const horizontal = Math.cos(pitch) * distance
     this.camera.position.set(x + Math.sin(yaw) * horizontal, y - Math.sin(pitch) * distance, z + Math.cos(yaw) * horizontal)
     this.camera.position.y = Math.max(this.groundAt(this.camera.position.x, this.camera.position.z) + 0.3, this.camera.position.y)
     this.camera.lookAt(x, y, z)
     // The shadow frustum follows the target's height too, so it covers hills.
-    this.sun.target.position.set(x, target[1]!, z)
-    this.sun.position.set(x + 60, target[1]! + 120, z + 40)
+    this.sun.target.position.set(target[0]!, target[1]!, target[2]!)
+    this.sun.position.set(target[0]! + 60, target[1]! + 120, target[2]! + 40)
   }
 
   /**
    * A gunner's view: behind and above `origin` (the turret ring), looking along the aim direction.
-   * It focuses on a far point of the barrel's line, so the centre of the screen is where the shell
-   * lands at range even though the camera is higher than the gun.
+   * It focuses on a far point of the barrel's line, so the centre of the screen is where the barrel
+   * points even though the camera is higher than the gun. A shell falls from that line.
    */
   aimFrom(origin: readonly number[], yaw: number, pitch: number) {
     const dir = new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch))
