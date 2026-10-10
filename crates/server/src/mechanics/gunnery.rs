@@ -1,7 +1,9 @@
 use super::Mechanic;
+use super::combat::{Blast, blast, first_player_hit};
 use crate::game::World;
 use crate::physics::CarPose;
 use shared::consts::*;
+use shared::protocol::WEAPON_SHELL;
 use shared::quant::{from_mrad, wrap_angle};
 
 /// Turret guns: the gunner's look direction aims the turret, and the fire button shoots shells.
@@ -15,11 +17,6 @@ pub struct Gunnery;
 
 /// The seat that works the gun.
 const GUNNER_SEAT: usize = 1;
-/// A shell hits a stickman whose centre passes within this distance of its path.
-const PLAYER_HIT_RADIUS: f32 = 0.8;
-/// Hop given to a stickman at the centre of a blast; it fades with distance.
-const BLAST_HOP: f32 = 7.0;
-const BLAST_HOP_MIN: f32 = 3.0;
 
 fn step_toward(current: f32, target: f32, step: f32) -> f32 {
     current + (target - current).clamp(-step, step)
@@ -32,52 +29,25 @@ pub fn aim(pose: &CarPose, yaw: f32, pitch: f32) -> ([f32; 3], [f32; 3]) {
     (pose.world_point(TANK_TURRET_PIVOT), pose.world_dir(local))
 }
 
-/// Fires from vehicle `vid`: finds what the shell hits and blows it up. Returns how far it flew.
-fn shoot(world: &mut World, vid: u32, pose: &CarPose, yaw: f32, pitch: f32) -> f32 {
+/// Fires from vehicle `vid` for `gunner`: finds what the shell hits and blows it up. Returns how far it flew.
+fn shoot(world: &mut World, vid: u32, pose: &CarPose, yaw: f32, pitch: f32, gunner: Option<u32>) -> f32 {
     let (origin, dir) = aim(pose, yaw, pitch);
     let wall = world.physics.cast_ray(origin, dir, SHELL_RANGE, vid);
     let mut reach = wall.unwrap_or(SHELL_RANGE);
     let mut hit = wall.is_some();
     // Stickmen are not physics bodies, so test the shell's path against each one.
-    for player in world.players.values().filter(|player| player.seat.is_none()) {
-        let to_player: [f32; 3] = std::array::from_fn(|i| player.character.position[i] - origin[i]);
-        let along: f32 = to_player.iter().zip(dir).map(|(a, b)| a * b).sum();
-        if along <= 0.0 || along >= reach {
-            continue;
-        }
-        let miss = (0..3).map(|i| (to_player[i] - dir[i] * along).powi(2)).sum::<f32>().sqrt();
-        if miss <= PLAYER_HIT_RADIUS {
-            reach = along;
-            hit = true;
-        }
+    if let Some((_, along)) = first_player_hit(world, origin, dir, reach, None, 0) {
+        reach = along;
+        hit = true;
     }
     if hit {
-        explode(world, std::array::from_fn(|i| origin[i] + dir[i] * reach), dir);
+        let point = std::array::from_fn(|i| origin[i] + dir[i] * reach);
+        blast(
+            world,
+            Blast { point, radius: EXPLOSION_RADIUS, damage: EXPLOSION_DAMAGE, knock: EXPLOSION_KNOCK, dir, attacker: gunner, weapon: WEAPON_SHELL },
+        );
     }
     reach
-}
-
-/// A blast at `point`: stickmen within `EXPLOSION_RADIUS` are thrown away from it, vehicles shoved.
-fn explode(world: &mut World, point: [f32; 3], shell_dir: [f32; 3]) {
-    world.physics.blast_cars(point, EXPLOSION_RADIUS);
-    for player in world.players.values_mut().filter(|player| player.seat.is_none()) {
-        let c = &mut player.character;
-        let away: [f32; 3] = std::array::from_fn(|i| c.position[i] - point[i]);
-        let distance = away.iter().map(|v| v * v).sum::<f32>().sqrt();
-        if distance >= EXPLOSION_RADIUS {
-            continue;
-        }
-        let falloff = 1.0 - distance / EXPLOSION_RADIUS;
-        let flat = away[0].hypot(away[2]);
-        // Right on the blast there is no "away": follow the shell instead.
-        let (dx, dz) = if flat > 0.1 { (away[0] / flat, away[2] / flat) } else { (shell_dir[0], shell_dir[2]) };
-        let power = (EXPLOSION_KNOCK * falloff).min(KNOCK_MAX_SPEED);
-        c.knock = [dx * power, dz * power];
-        c.vy = BLAST_HOP_MIN + (BLAST_HOP - BLAST_HOP_MIN) * falloff;
-        c.grounded = false;
-        c.ride = 0;
-        tracing::debug!(distance, power, "player blasted");
-    }
 }
 
 impl Mechanic for Gunnery {
@@ -98,7 +68,8 @@ impl Mechanic for Gunnery {
                 fire = input.buttons() & BUTTON_FIRE != 0 && gun.cooldown == 0;
             }
             if fire {
-                gun.range = shoot(world, vid, &pose, gun.yaw, gun.pitch);
+                let gunner_id = world.vehicles[&vid].seats[GUNNER_SEAT];
+                gun.range = shoot(world, vid, &pose, gun.yaw, gun.pitch, gunner_id);
                 // Recoil: the hull is shoved back along the barrel (level, so it doesn't dig in).
                 let (_, dir) = aim(&pose, gun.yaw, gun.pitch);
                 world.physics.kick_car(vid, [-dir[0] * SHELL_RECOIL, 0.0, -dir[2] * SHELL_RECOIL]);
@@ -154,7 +125,7 @@ mod tests {
     fn aim_and_hold(game: &mut Game, id: u32, seq: &mut u32, yaw: f32, pitch: f32, buttons: u8, ticks: u32) {
         for _ in 0..ticks {
             *seq += 1;
-            game.handle(Command::Input(id, vec![InputFrame(*seq, 0, 0, to_mrad(yaw), buttons, to_mrad(pitch))]));
+            game.handle(Command::Input(id, 0, vec![InputFrame(*seq, 0, 0, to_mrad(yaw), buttons, to_mrad(pitch), 0)]));
             game.step();
         }
     }
@@ -215,6 +186,26 @@ mod tests {
         // Thrown away from the tank, along the shell's way.
         assert!(character.knock[0] * dir[0] + character.knock[1] * dir[2] > 0.0);
         assert!(character.vy > 3.0);
+    }
+
+    #[test]
+    fn a_direct_hit_kills_and_the_gunner_gets_the_credit() {
+        let (mut game, gunner, vid, mut seq) = crewed();
+        let (victim, _inbox) = join(&mut game);
+        let (near, _inbox2) = join(&mut game);
+        let pose = game.world.physics.car_pose(vid).unwrap();
+        let gun = game.world.vehicles[&vid].gun.unwrap();
+        let (origin, dir) = aim(&pose, gun.yaw, gun.pitch);
+        let at = |metres: f32, side: f32| std::array::from_fn::<f32, 3, _>(|i| origin[i] + dir[i] * metres + if i == 0 { side } else { 0.0 });
+        game.world.players.get_mut(&victim).unwrap().character.position = at(25.0, 0.0);
+        // Caught at the edge of the blast: hurt, not dead.
+        game.world.players.get_mut(&near).unwrap().character.position = at(25.0, 5.0);
+
+        aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, BUTTON_FIRE, 3);
+        assert!(!game.world.players[&victim].alive());
+        assert_eq!(game.world.players[&gunner].kills, 1);
+        let bystander = &game.world.players[&near];
+        assert!(bystander.alive() && bystander.hp < PLAYER_MAX_HP, "{}", bystander.hp);
     }
 
     #[test]

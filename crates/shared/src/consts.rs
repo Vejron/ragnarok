@@ -1,7 +1,7 @@
 //! Simulation and network constants. Mirrored in `client/src/sim/consts.ts`.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 5;
+pub const PROTOCOL_VERSION: u8 = 11;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -10,11 +10,21 @@ pub const TICK_DT: f32 = 1.0 / TICK_RATE as f32;
 /// A snapshot is sent every this many ticks (60 / 2 = 30 Hz).
 pub const SNAPSHOT_EVERY: u32 = 2;
 
-/// Players admitted to the single room. A full snapshot of this many entities stays under one
-/// datagram (`MAX_PACKET`), which is the bound until interest management lands.
-pub const MAX_PLAYERS: usize = 32;
+/// Players admitted to the single room. Interest management and the packet budget (`MAX_PACKET`)
+/// keep a snapshot within one datagram however many of them are in view.
+pub const MAX_PLAYERS: usize = 64;
 /// Datagrams above this size are dropped unread. Stays under a typical QUIC datagram MTU.
 pub const MAX_PACKET: usize = 1200;
+/// A player is sent the entities, vehicles and effects within this many metres of their stickman
+/// (measured on the ground plane), and keeps them until they are `INTEREST_HYSTERESIS` further out,
+/// so something at the edge does not flicker in and out.
+pub const INTEREST_RADIUS: f32 = 300.0;
+pub const INTEREST_HYSTERESIS: f32 = 40.0;
+/// Snapshots the server remembers per player to diff against, and the client remembers to
+/// rebuild from. The client keeps at least as many as the server, so any baseline the server
+/// still offers is one the client still has. At 30 Hz, 32 is about a second.
+pub const BASELINE_WINDOW: usize = 32;
+pub const BASELINE_WINDOW_CLIENT: usize = 64;
 /// Each input datagram repeats this many of the most recent frames, so a lost packet costs nothing.
 pub const INPUT_REDUNDANCY: usize = 4;
 
@@ -24,6 +34,8 @@ pub const BUTTON_RUN: u8 = 1 << 1;
 pub const BUTTON_USE: u8 = 1 << 2;
 /// Gunner's trigger. Held to keep firing; the gun's reload paces it.
 pub const BUTTON_FIRE: u8 = 1 << 3;
+/// Secondary fire: the rocket launcher, when standing.
+pub const BUTTON_ALT: u8 = 1 << 4;
 
 /// Stickman movement, in metres and seconds.
 pub const WALK_SPEED: f32 = 4.0;
@@ -59,7 +71,7 @@ pub const KILL_Y: f32 = -50.0;
 /// Body-local axes: +X right, +Y up, -Z forward (yaw 0 faces -Z, like a stickman).
 pub const CAR_SEATS: usize = 4;
 /// Vehicles in the world; bounds the vehicle list in a snapshot.
-pub const MAX_VEHICLES: usize = 8;
+pub const MAX_VEHICLES: usize = 9;
 /// A player can enter a vehicle whose centre is within this distance of their capsule centre.
 pub const ENTER_RADIUS: f32 = 4.0;
 
@@ -100,6 +112,30 @@ pub const TANK_BARREL_SLEW: f32 = 0.9;
 pub const TANK_BARREL_MIN: f32 = -0.12;
 pub const TANK_BARREL_MAX: f32 = 0.5;
 
+/// The helicopter: a hull flown by a pilot (seat 0) with one passenger (seat 1). There are no
+/// wheels; the rotor is a thrust along the hull's up axis, and the pilot leans the hull to go
+/// anywhere. Same body axes as the car.
+pub const HELI_SEATS: usize = 2;
+pub const HELI_HALF_EXTENTS: [f32; 3] = [1.0, 0.8, 2.4];
+/// How far the rotor disc leans at full stick: tangent of the angle, forward and sideways.
+pub const HELI_TILT: f32 = 0.5;
+pub const HELI_BANK: f32 = 0.35;
+/// Yaw rate at full stick, rad/s.
+pub const HELI_YAW_RATE: f32 = 1.4;
+/// Vertical speed the climb input asks for and the descent input asks for, m/s. With neither
+/// held the rotor holds altitude, whatever speed it had. `HELI_VERT_GAIN` (per second) turns the
+/// speed error into an acceleration, which never exceeds `HELI_VERT_ACCEL`, m/s².
+pub const HELI_CLIMB_SPEED: f32 = 6.0;
+pub const HELI_SINK_SPEED: f32 = 4.0;
+pub const HELI_VERT_GAIN: f32 = 1.5;
+pub const HELI_VERT_ACCEL: f32 = 5.0;
+/// Climbing fades out over the last 20 m below this height, and above it the rotor pushes down.
+pub const HELI_CEILING: f32 = 120.0;
+/// How firmly the hull levels out (rad/s of correction per unit of lean error), and how fast the
+/// angular velocity follows it, per second.
+pub const HELI_LEVEL_GAIN: f32 = 4.0;
+pub const HELI_RESPONSE: f32 = 8.0;
+
 /// The tank gun.
 pub const SHELL_COOLDOWN_TICKS: u32 = 90;
 pub const SHELL_RANGE: f32 = 300.0;
@@ -108,3 +144,45 @@ pub const SHELL_RECOIL: f32 = 1.6;
 pub const EXPLOSION_RADIUS: f32 = 7.0;
 /// Knockback speed at the centre of a blast, m/s; it fades to zero at the edge.
 pub const EXPLOSION_KNOCK: f32 = 18.0;
+
+/// Combat. Every player starts a life with `PLAYER_MAX_HP` and dies at zero.
+pub const PLAYER_MAX_HP: u8 = 100;
+/// Ticks a dead player waits before respawning.
+pub const RESPAWN_TICKS: u32 = 3 * TICK_RATE;
+/// The rifle: a hitscan fired from the eye along the look direction, held to keep firing.
+pub const RIFLE_DAMAGE: u8 = 15;
+pub const RIFLE_COOLDOWN_TICKS: u32 = 8;
+pub const RIFLE_RANGE: f32 = 200.0;
+/// Height of a stickman's eye above its capsule centre, where a rifle shot leaves.
+pub const EYE_HEIGHT: f32 = 0.6;
+/// Damage at the centre of an explosion; it falls off linearly to zero at `EXPLOSION_RADIUS`.
+/// More than a full life, so a shell that lands within about 1.4 m kills outright.
+pub const EXPLOSION_DAMAGE: f32 = 125.0;
+/// Most shot events one snapshot carries; the rest are cosmetic and dropped.
+pub const MAX_SHOT_EVENTS: usize = 8;
+
+/// The rocket launcher: a projectile that flies straight and bursts on the first thing it meets.
+pub const ROCKET_SPEED: f32 = 45.0;
+pub const ROCKET_COOLDOWN_TICKS: u32 = 90;
+pub const ROCKET_TTL_TICKS: u32 = 4 * TICK_RATE;
+/// How far in front of the eye a rocket starts.
+pub const ROCKET_MUZZLE: f32 = 1.0;
+pub const ROCKET_BLAST_RADIUS: f32 = 5.0;
+pub const ROCKET_DAMAGE: f32 = 110.0;
+/// Knockback speed at the centre of a rocket's blast, m/s.
+pub const ROCKET_KNOCK: f32 = 16.0;
+/// Rockets in flight at once, which bounds the projectile list in a snapshot.
+pub const MAX_ROCKETS: usize = 8;
+
+/// Damage a rifle bullet does to a vehicle: a nuisance, not a way to kill one.
+pub const RIFLE_VEHICLE_DAMAGE: u8 = 3;
+/// How long a destroyed vehicle burns before it is put back at its home, and the blast it goes up in.
+pub const WRECK_TICKS: u32 = 10 * TICK_RATE;
+pub const WRECK_BLAST_RADIUS: f32 = 8.0;
+pub const WRECK_BLAST_DAMAGE: f32 = 100.0;
+pub const WRECK_BLAST_KNOCK: f32 = 14.0;
+
+/// How far back the server will rewind other players to meet a shooter's view, in ticks (250 ms).
+/// A shot never reaches further into the past than this, so a laggy shooter has a cap on how far
+/// ahead of themselves they can lead their targets.
+pub const MAX_REWIND_TICKS: u32 = 15;

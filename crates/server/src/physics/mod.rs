@@ -231,7 +231,7 @@ mod tests {
     fn walks_forward_at_walk_speed() {
         let physics = Physics::new(&flat_world()).unwrap();
         let mut character = standing();
-        let forward = InputFrame(1, 0, 127, 0, 0, 0);
+        let forward = InputFrame(1, 0, 127, 0, 0, 0, 0);
         for _ in 0..TICK_RATE {
             physics.move_character(&mut character, &forward, TICK_DT);
         }
@@ -243,7 +243,7 @@ mod tests {
     fn jumps_and_comes_back_down() {
         let physics = Physics::new(&flat_world()).unwrap();
         let mut character = standing();
-        physics.move_character(&mut character, &InputFrame(1, 0, 0, 0, BUTTON_JUMP, 0), TICK_DT);
+        physics.move_character(&mut character, &InputFrame(1, 0, 0, 0, BUTTON_JUMP, 0, 0), TICK_DT);
         assert!(!character.grounded);
         let mut peak: f32 = 0.0;
         for _ in 0..120 {
@@ -259,7 +259,7 @@ mod tests {
         let physics = Physics::new(&world_with_wall()).unwrap();
         let mut character = standing();
         // Yaw -π/2 faces +X, towards the wall.
-        let toward_wall = InputFrame(1, 0, 127, -1571, BUTTON_RUN, 0);
+        let toward_wall = InputFrame(1, 0, 127, -1571, BUTTON_RUN, 0, 0);
         for _ in 0..TICK_RATE * 2 {
             physics.move_character(&mut character, &toward_wall, TICK_DT);
         }
@@ -271,7 +271,7 @@ mod tests {
     fn boundary_walls_keep_players_in() {
         let physics = Physics::new(&flat_world()).unwrap();
         let mut character = standing();
-        let forward = InputFrame(1, 0, 127, 0, BUTTON_RUN, 0);
+        let forward = InputFrame(1, 0, 127, 0, BUTTON_RUN, 0, 0);
         for _ in 0..TICK_RATE * 20 {
             physics.move_character(&mut character, &forward, TICK_DT);
         }
@@ -283,7 +283,7 @@ mod tests {
     pub fn scripted_input(seq: u32) -> InputFrame {
         let yaw = -1571 + ((seq as i32 * 13) % 1200 - 600) as i16;
         let buttons = if seq % 90 == 30 { BUTTON_JUMP } else if seq > 150 { BUTTON_RUN } else { 0 };
-        InputFrame(seq, (seq % 7) as i8 * 10 - 30, 127, yaw, buttons, 0)
+        InputFrame(seq, (seq % 7) as i8 * 10 - 30, 127, yaw, buttons, 0, 0)
     }
 
     /// `(tick, position)` after `scripted_input`, mirrored in `predict.spec.ts`.
@@ -314,7 +314,7 @@ mod tests {
         let run = || {
             let mut character = standing();
             for seq in 0..300u32 {
-                let input = InputFrame(seq, 90, 127, (seq as i16 * 7) % 3000, if seq % 50 == 0 { BUTTON_JUMP } else { 0 }, 0);
+                let input = InputFrame(seq, 90, 127, (seq as i16 * 7) % 3000, if seq % 50 == 0 { BUTTON_JUMP } else { 0 }, 0, 0);
                 physics.move_character(&mut character, &input, TICK_DT);
             }
             character

@@ -4,6 +4,7 @@
 //! `client/src/sim/consts.ts`); byte-fixture tests on both sides pin the two together.
 
 pub mod consts;
+pub mod delta;
 pub mod movement;
 pub mod protocol;
 pub mod quant;

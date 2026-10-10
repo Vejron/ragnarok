@@ -66,7 +66,7 @@ impl JitterBuffer {
         let mut repeat = self.last;
         repeat.4 &= !(BUTTON_JUMP | BUTTON_USE | BUTTON_FIRE);
         if self.starved > STARVE_LIMIT {
-            repeat = InputFrame(repeat.0, 0, 0, repeat.3, 0, repeat.5);
+            repeat = InputFrame(repeat.0, 0, 0, repeat.3, 0, repeat.5, repeat.6);
         }
         Consumed { input: repeat, fresh: false }
     }
@@ -82,7 +82,7 @@ mod tests {
     use super::*;
 
     fn frame(seq: u32) -> InputFrame {
-        InputFrame(seq, 0, 127, 0, BUTTON_JUMP, 0)
+        InputFrame(seq, 0, 127, 0, BUTTON_JUMP, 0, 0)
     }
 
     #[test]

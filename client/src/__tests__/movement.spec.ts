@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { decayKnock, desiredTranslation, wishVelocity } from '@/sim/movement'
 import { BUTTON_JUMP, BUTTON_RUN, RUN_SPEED, TICK_DT, WALK_SPEED } from '@/sim/consts'
 
-const frame = (strafe: number, forward: number, yaw: number, buttons = 0) => ({ seq: 1, strafe, forward, yaw, buttons, pitch: 0 })
+const frame = (strafe: number, forward: number, yaw: number, buttons = 0) => ({ seq: 1, strafe, forward, yaw, buttons, pitch: 0, view: 0 })
 
 describe('movement', () => {
   it('walks towards -Z at yaw 0', () => {

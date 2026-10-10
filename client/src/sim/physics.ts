@@ -1,11 +1,12 @@
 import RAPIER from '@dimforge/rapier3d-compat'
-import type { WorldData } from '@/world'
+import type { TileData, WorldData } from '@/world'
 import {
   AUTOSTEP_HEIGHT, AUTOSTEP_MIN_WIDTH, CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, CONTROLLER_OFFSET,
-  BUTTON_JUMP, CAR_HALF_EXTENTS, KNOCK_MAX_SPEED, MAX_SLOPE_CLIMB_DEG, TANK_HALF_EXTENTS,
+  BUTTON_JUMP, KNOCK_MAX_SPEED, MAX_SLOPE_CLIMB_DEG,
 } from './consts'
+import { halfExtentsOf } from './kinds'
 import { decayKnock, desiredTranslation, f32, settleVertical } from './movement'
-import { fromMrad, KIND_TANK, type InputFrame, type VehicleState } from '@/net/codec'
+import { fromMrad, type InputFrame, type VehicleState } from '@/net/codec'
 
 export type Vec3 = [number, number, number]
 
@@ -68,7 +69,7 @@ export function stepCharacter(motor: CharacterMotor, state: CharacterState, inpu
 const BOUNDARY_HEIGHT = 50
 
 /** Mirrors `static_colliders` on the server: ground slab, boundary walls, building mesh. */
-function buildStaticColliders(world: RAPIER.World, data: WorldData) {
+export function buildStaticColliders(world: RAPIER.World, data: WorldData) {
   const half = data.halfExtent
   world.createCollider(RAPIER.ColliderDesc.cuboid(half, 0.5, half).setTranslation(0, -0.5, 0))
   const wall = BOUNDARY_HEIGHT / 2
@@ -78,6 +79,16 @@ function buildStaticColliders(world: RAPIER.World, data: WorldData) {
   if (data.collision.triangles.length > 0) {
     world.createCollider(RAPIER.ColliderDesc.trimesh(data.collision.vertices, data.collision.triangles))
   }
+}
+
+/**
+ * One tile's building mesh as a static collider, or null for a tile with none. Tiles come and go
+ * as the player moves; the server holds all of them merged into one mesh, which is the same
+ * geometry, so near the player the two agree.
+ */
+export function addTileCollider(world: RAPIER.World, tile: TileData): RAPIER.Collider | null {
+  if (tile.collision.triangles.length === 0) return null
+  return world.createCollider(RAPIER.ColliderDesc.trimesh(tile.collision.vertices, tile.collision.triangles))
 }
 
 /** The same Rapier character controller and static scene the server simulates. */
@@ -122,7 +133,7 @@ export class RapierMotor implements CharacterMotor {
       this.carVelocities.set(car.id, [car.vx ?? 0, car.vz ?? 0])
       let collider = this.cars.get(car.id)
       if (!collider) {
-        const [hx, hy, hz] = car.kind === KIND_TANK ? TANK_HALF_EXTENTS : CAR_HALF_EXTENTS
+        const [hx, hy, hz] = halfExtentsOf(car.kind)
         collider = this.world.createCollider(RAPIER.ColliderDesc.cuboid(hx, hy, hz))
         this.cars.set(car.id, collider)
       }
@@ -142,6 +153,18 @@ export class RapierMotor implements CharacterMotor {
 
   vehicleVelocity(id: number) {
     return this.carVelocities.get(id) ?? [0, 0]
+  }
+
+  /** Adds a streamed tile's collision; returns what to pass to `removeTile` when it unloads. */
+  addTile(tile: TileData): RAPIER.Collider | null {
+    const collider = addTileCollider(this.world, tile)
+    // Reach the broad-phase now, so the very next move already collides with it.
+    if (collider) this.world.step()
+    return collider
+  }
+
+  removeTile(collider: RAPIER.Collider | null) {
+    if (collider) this.world.removeCollider(collider, false)
   }
 
   /** Horizontal then vertical, in two passes, exactly like `Physics::move_character`. */

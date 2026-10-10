@@ -26,16 +26,16 @@ This document describes how the game is built and why. The wire format is specif
 │ ServerClock + Interpolator       │                  │   every 2nd tick: Snapshot per player │
 │   │                              │                  └──────────────────────────────────────┘
 │   ▼                              │                         ▲
-│ Scene: world, stickmen, camera   │       world.msgpack ────┘ (same file on both sides)
+│ Scene: tiles, stickmen, camera   │  world.msgpack + tiles/ ┘ (same files on both sides)
 └──────────────────────────────────┘             ▲
-                                         osm-import (CLI): Overpass API ─► world.msgpack
+                                         osm-import (CLI): Overpass API ─► world.msgpack, tiles/
 ```
 
 | Crate or directory | Role |
 |---|---|
 | `crates/shared` | Protocol types, quantization, movement rules, world-file format, constants. Shared by the server and the tools. |
-| `crates/server` | Salvo HTTP/3 server: WebTransport sessions, the authoritative game loop, Rapier physics, mechanics. |
-| `crates/osm-import` | CLI that turns an OSM bounding box into `world.msgpack`. |
+| `crates/server` | Salvo HTTP/3 server: WebTransport sessions, the authoritative game loop, Rapier physics, mechanics, per-player replication (§5.8). |
+| `crates/osm-import` | CLI that turns an OSM bounding box into `world.msgpack` and a grid of tile files. |
 | `client` | Vue 3 + Vite + three.js app. Handles prediction, interpolation and rendering. |
 
 The TypeScript client mirrors `crates/shared` by hand. Byte-for-byte fixture tests on both sides (`protocol.rs` ↔ `codec.spec.ts`) and a physics fixture (`physics.rs` ↔ `predict.spec.ts`) fail when the two languages drift apart.
@@ -50,7 +50,7 @@ The server is fully authoritative.
 
 1. **Clients send inputs.** Each tick produces an `InputFrame`: sequence number, move axes, facing and buttons.
 2. **The server simulates.** It applies exactly one input per player per tick in a single fixed-rate loop.
-3. **The server publishes state.** Snapshots carry every entity's state. Each one also carries the receiving player's `ack`: the newest input already included.
+3. **The server publishes state.** Snapshots carry the state of the entities near the receiving player, as a change from the last snapshot they acknowledged (§5.8). Each one also carries the receiving player's `ack`: the newest input already included.
 
 Clients never report positions, hits or pickups. Mechanics such as shooting will use server-side lag compensation (§5.6) instead of trusting the client.
 
@@ -106,15 +106,49 @@ Remote entities are drawn in the past, at `renderTick = estServerTick − interp
 - **Interpolation delay:** `2 × SNAPSHOT_EVERY + 2 × jitter` ticks, clamped to 3–30. On a clean link this is about 67 ms. It grows only while the network is jittery.
 - **Resync:** a deviation over 60 ticks (server restart, sleeping tab) resets the clock.
 
-### 5.6 Planned: lag compensation
+### 5.6 Combat and lag compensation
 
-When hitscan weapons land, the shooter's input will carry the render tick it saw. The server will rewind other players' hitboxes to that tick, capped at about 250 ms, to resolve the shot. This is the Source/Overwatch model, and it fits naturally because the server already keeps per-tick state.
+The `Combat` mechanic owns health. Each player has `hp` (100), and `damage()` is the only place it goes down. At zero the player dies: the killer is credited, a `kill` goes out on a reliable stream, and the body stays where it fell (flag `dead`) until `RESPAWN_TICKS` have passed. Then `Spawn::place` puts it at a spawn point with full health. Falling below `KILL_Y` is a death with no killer. Dead players cannot fire, board a vehicle, be hit or be knocked.
+
+**Weapons.** Both are fired only while standing.
+
+- **Rifle** (`BUTTON_FIRE`, held): a hitscan from the eye along yaw and pitch, 15 damage, 7.5 shots a second. The server casts the ray against statics and vehicles (`Physics::cast_ray_hit`), then against every standing player's capsule (`ray_capsule`). Stickmen are not physics bodies, so that second test is the only way to hit one. A vehicle it meets takes 3 damage, so it is a nuisance and not a way to kill one.
+- **Rocket launcher** (`BUTTON_ALT`, right mouse): a real projectile, `World::rockets`, stepped each tick at 45 m/s. Each step is a ray over the segment it flew, against the world, vehicles and players, so it cannot tunnel. It bursts on the first hit or after four seconds, in a 5 m blast. At most 8 fly at once, which bounds the projectile list in a snapshot. The owner is not hit by their own rocket in flight, but is by its blast.
+- **Tank shell**: unchanged hitscan, now with the same blast rules.
+
+**Blasts** (`combat::blast`) throw standing players away and hurt them, and shove and hurt vehicles, all falling off linearly to the radius. The shell does 125 at its centre, which kills outright within about 1.4 m; the rocket does 110, which kills within about half a metre of a direct hit.
+
+**Vehicles** have health (car and helicopter 100, tank 250). At zero it is wrecked: everyone inside is thrown out and killed (credited to whoever last hurt it), it goes up in a blast that can take the next one with it, nobody can board it, and after `WRECK_TICKS` it is put back at its home with full health. Seated players take no direct damage: they die with the vehicle.
+
+**Lag compensation.** Every input frame carries `view`, the server tick its picture showed (modulo 65536), which the client takes from its render tick. The server records where each standing player was at the end of the last 16 ticks (`World::history`). A rifle shot tests players where they stood at `view`, at most 15 ticks (250 ms) back and never forwards, so a shooter hits what they saw. Walls and vehicles are tested in the present, and rockets are simulated forward on the server, so neither is rewound. This is the Source/Overwatch model. A shooter with a lot of lag can still be killed round a corner by the target's own view of events, which is the usual trade.
+
+**Events.** The server sends cosmetic events (tracers, bursts) in the snapshot's `shots` list. The client queues each until its render tick reaches the snapshot's tick, so a tracer leaves the shooter where the shooter is drawn.
 
 ### 5.7 Measured behaviour
 
 Measured with two headless Chrome clients and 60 ms ±30 ms latency each way plus 5% loss on both legs (about 160 ms RTT):
 - Local corrections peaked at 3.5 cm, with the 95th percentile at 1 cm.
 - The remote player's apparent speed never exceeded 8.4 m/s against a run speed of 7.5 m/s, so there were no pops.
+
+### 5.8 Interest management and delta snapshots
+
+A room of 64 can't be sent to everyone whole 30 times a second, and most of it isn't in view anyway. Each player's snapshot is built from two filters (`crates/server/src/replication.rs`).
+
+**Interest.** Only stickmen, vehicles, rockets and effects within `INTEREST_RADIUS` (300 m, on the ground plane) of the receiving player's stickman are sent. Whatever the player already holds stays until it is `INTEREST_HYSTERESIS` (40 m) further out, so something on the edge doesn't flicker. 300 m is more than a rifle (200 m) or a rocket (180 m) reaches, and the fog hides most of the rest. Out of range is not a `leave`: the server stops listing the thing, and the client drops it. Scores, kills and `leave` still go to everyone.
+
+**Deltas.** The server keeps, per player, the scenes it sent in the last `BASELINE_WINDOW` (32) snapshots. Every input datagram carries `baseline`, the tick of the newest snapshot the client has rebuilt. The next snapshot lists only the difference from that scene (`crates/shared/src/delta.rs`):
+
+- new entities and vehicles, in full;
+- changed ones, as differences in each field (position in cm, yaw in mrad), with nothing at all for something that did not change;
+- ids that are gone or out of range.
+
+The client keeps its last 64 rebuilt scenes (`client/src/net/replica.ts`), applies the delta to the one it names and acknowledges the result. The server stores the scene *it computes by applying its own delta*, with the same integer arithmetic, so both sides agree without an echo.
+
+Loss needs no extra machinery. A snapshot that is lost is never acknowledged, so the server keeps diffing against the older one and the next delta is just a little bigger. If the acknowledged snapshot has left the window (a stall of more than a second) the server sends a whole one, with `baseline` 0.
+
+**The datagram budget.** A snapshot still has to fit `MAX_PACKET`. If it doesn't, the server sheds in this order: effects, rockets, then the farthest newcomers and the farthest changes, and a thing that was shed arrives in a later snapshot, nearest first. Removals are never shed. A crowd of 64 in view therefore degrades to "the nearest N are up to date" and not to a dropped packet.
+
+**What it buys.** Thirty players running flat out take about 320 bytes a snapshot as deltas against 525 whole (`a_delta_is_a_good_deal_smaller_than_a_whole_snapshot`). Standing players cost nothing once acknowledged, and a parked vehicle likewise. The bigger win is the interest filter: bytes now depend on how many players are near, not how many are connected.
 
 ## 6. Transport mapping
 
@@ -125,7 +159,7 @@ WebTransport over HTTP/3 (QUIC):
 | Datagrams (unreliable, unordered) | Inputs, snapshots, ping/pong | Latest state wins; retransmitting stale state only adds latency |
 | Server-opened unidirectional streams (reliable) | `welcome`, `leave`, and later vehicle seat changes and chat | Rare events that must arrive |
 
-Datagrams are capped at 1200 bytes (`MAX_PACKET`), and a full 32-player snapshot fits. Larger worlds will need interest management (§14) before that limit becomes a problem. A full room plus cars stays below the limit, because every seated player is one stickman fewer in the snapshot.
+Datagrams are capped at 1200 bytes (`MAX_PACKET`). Interest management and delta compression (§5.8) keep a snapshot well inside that, and anything that still doesn't fit is trimmed farthest-first, so the cap holds for any room size.
 
 ## 7. Serialization and quantization
 
@@ -136,28 +170,42 @@ Datagrams are capped at 1200 bytes (`MAX_PACKET`), and a full 32-player snapshot
   - Vertical velocity is `i16` cm/s.
   - Move axes are `i8` in −127..127.
 - **The client predicts with the quantized input**, so the client and server feed the simulation identical values.
-- A typical snapshot entity is about 20 bytes, and a typical input datagram about 30 bytes.
+- A whole snapshot entity is about 20 bytes, and a delta for a running one about 10. A typical input datagram is about 35 bytes.
+- Deltas are differences of the same integers, so applying them is exact on both sides (§5.8).
 - `PROTOCOL_VERSION` is checked in `welcome` and in every input.
 
 ## 8. World pipeline (OpenStreetMap)
 
-`cargo run -p osm-import -- --bbox south,west,north,east`. The default is a roughly 600 m gridded block of Södermalm, Stockholm.
+`cargo run -p osm-import`. The default is a 2 km square centred on Backen, Umeå (63.832127, 20.168286). `--center lat,lon --half metres` picks another place, `--bbox south,west,north,east` an exact box, `--tile` the tile size (250 m), and `--synthetic` generates a grid city offline.
 
-1. **Fetch:** an Overpass query (`way["building"]`, `way["highway"]`, `out geom`), with a fallback mirror. `--synthetic` generates a grid city offline.
+1. **Fetch:** an Overpass query (`way["building"]`, `way["highway"]`, `out geom`), with a fallback mirror.
 2. **Project:** equirectangular projection to local metres around the bbox centre (+X east, +Z south, +Y up).
 3. **Buildings:**
    - Footprints with at least 4 m² of area, fully inside the playable square.
    - Height comes from `height`, then `building:levels × 3 + 1`, then a varied 6–12 m.
-   - Each building is extruded into a closed prism (walls, earcut roof and floor) in one static collision trimesh.
+   - Each building is extruded into a closed prism (walls, earcut roof and floor) for the collision mesh.
 4. **Roads:** highway ways are clipped to the square (Liang–Barsky) and classed as major (10 m), minor (4.5–7 m) or path (2.5–5 m).
 5. **Spawns:** points sampled along roads that are outside every footprint and at least 1.5 m from walls. Up to 64 are picked, at least 15 m apart, sorted centre-first. The server picks among the 6 most central.
-6. **Output:** `client/public/world.msgpack`, about 130 KiB for the default block. The server loads the same file. Its FNV-1a hash is sent in `welcome`, so a client with a stale world shows a warning.
+6. **Tiles:** the square is cut into a grid of `tile_size` squares.
+   - A building goes whole into the tile its centre is in, with its collision triangles, so a tile never needs its neighbour.
+   - A road is cut at tile borders, and each tile keeps its own pieces.
+   - Coordinates stay world-absolute, so a tile is drawn and collided with where it is, with no offset.
+   - Tiles with nothing in them are not written.
+7. **Output:** `client/public/world.msgpack` (the *manifest*) and `client/public/tiles/{col}_{row}.msgpack`. The manifest holds the origin, extent, tile size, the spawns, and each tile with the FNV-1a hash of its file. The default area is about 400 KiB of tiles in 61 files.
+
+The manifest's FNV-1a hash is sent in `welcome`. Since it lists each tile's hash it vouches for every tile, so a client or server with a stale file shows a warning (client) or refuses to start (server).
+
+### Streaming
+
+- **Server:** loads every tile at start and merges them into one collision mesh (`WorldFile::assemble`). The simulation needs all of it, and the mesh is small.
+- **Client** (`client/src/stream.ts`): `TileStreamer` fetches the tiles whose nearest edge is within 450 m of the camera focus, nearest first, at most four at a time, and drops those beyond 550 m. Each tile arrives as a merged-by-colour mesh group and as a trimesh collider in both Rapier worlds (the stickman's and the driven vehicle's). A tile that fails is retried after 5 s. The game waits for the tiles around the spawn before it starts.
+- The ground slab, boundary walls and grass plane belong to the whole world, not to a tile. A tile that is late means walking through a building for a moment, which the server then corrects, and never falling out of the world.
 
 Not handled yet:
 - Multipolygon relations, such as courtyard buildings.
 - Terrain elevation. The ground is flat.
 - Water and parks.
-- Streaming beyond one block.
+- terrain elevation mode from lantmäteriet (Swedish mapping, cadastral and land registration authority) https://browser.moregeo.it/external/api.lantmateriet.se/stac-hojd/v1/collections/dtm-cog  tile 708_75 (over umeå)
 
 ## 9. Physics
 
@@ -190,19 +238,23 @@ Vehicles are server-side dynamic rigid bodies (§10). The physics pipeline steps
   - Leaving puts the stickman beside the car on the seat's side, or on the other side, the back or the front if that spot is blocked.
   - Seat state travels in the snapshot (`VehicleState::seats`), not as reliable events. The client's view of its seat can then never disagree with the snapshots it draws. Reliable events stay for things that really are one-off, such as chat.
 - **Input routing (built):** while seated, a player's input frames drive their seat instead of the stickman. The driver's forward axis is throttle and brake, the strafe axis is steering, and jump is the handbrake. A seated player is left out of the entity list, and their position follows the car.
-- **Knockback (built):** after the cars step, any standing player whose capsule overlaps a car is thrown: a horizontal velocity of 1.1 × the car's speed (at least 2.5 m/s, at most 20), mostly along the car's heading with some outward push, plus a hop. `Character::knock` carries it. It is added to walking and bleeds off per tick (§9). It is in the snapshot, so the client's reconciliation replays it like any other state. A 12-tick cooldown makes one pass one hit. Damage is left to Combat.
+- **Knockback (built):** after the cars step, any standing player whose capsule overlaps a car is thrown: a horizontal velocity of 1.1 × the car's speed (at least 2.5 m/s, at most 20), mostly along the car's heading with some outward push, plus a hop. `Character::knock` carries it. It is added to walking and bleeds off per tick (§9). It is in the snapshot, so the client's reconciliation replays it like any other state. A 12-tick cooldown makes one pass one hit. Damage is combat's: see §5.6.
 - **Riding on top (built):** a stickman standing on a car is carried by it.
   - After each tick, `Movement` probes 6 cm below the feet for a car. The hit sets `Character::ride`.
   - On the next tick `Vehicles` moves every rider by the car's rigid motion since the last tick (rotation included), before the rider walks.
   - Riders are never knocked back.
   - Jumping off, or stepping off into the air, adds the car's horizontal velocity to the stickman's knockback. They keep the car's speed instead of dropping away from it.
   - The snapshot tells each player its own `ride`. The client predicts a rider in the frame where the car stands still at its newest snapshot pose, and draws it carried to wherever the interpolated car is. The stickman stays glued to the roof, and the walking on top is still predicted.
-- **Prediction (Vehicles I):** vehicles are server-simulated and interpolated like remote players, so the driver sees a small input delay. Later, the driver predicts their own vehicle with the same Rapier vehicle controller and reconciles like the stickman.
+- **Driver prediction (built):** the driver's own vehicle is predicted. Everyone else's vehicles are still server-simulated and interpolated.
+  - The client keeps a second Rapier world with the same static scene and gravity 9.81 (`VehicleDriver`, `client/src/sim/vehicle.ts`). Other vehicles are boxes in it, at the newest snapshot pose.
+  - `CarSim` mirrors `drive_car` and `step_cars` line by line. Native and WASM agree to about 0.1 mm over 8 s of driving, for the car and the tank (`vehicle.rs` ↔ `vehicle.spec.ts`).
+  - The snapshot carries the driver's `drive` motion (velocity, angular velocity, steering, spin). On each snapshot the sim is set to that state at `ack` and the pending inputs are replayed, like the stickman. The leftover is a position and rotation offset that decays (10/s). More than 3 m is a snap.
+  - The turret, seats and every other vehicle still come from interpolated snapshots.
 - **Vehicles:**
   - Car (built): ray-cast wheels, four seats, an open top.
   - Tank (built): six unsteered ray-cast wheels under a 3.4 t hull, with a driver and a gunner. The physics sets the yaw rate directly, so it turns on the spot like a tracked vehicle. See [VEHICLES-II.md](VEHICLES-II.md).
   - Gunner seat (built): seat 1 of a tank. Instead of driving, that player's input aims the turret and fires the gun. The `Gunnery` mechanic does this, apart from `Vehicles`. The turret follows the gunner's world heading at 1.4 rad/s (the barrel at 0.9 rad/s, between −7° and +29°), so turning the hull doesn't drag the aim. A shell is a hitscan from the turret ring along the barrel. It stops at the first wall, vehicle or stickman, with a 90-tick reload. The blast (7 m radius) throws stickmen and shoves vehicles. The snapshot carries `turret` angles and a shot counter.
-  - Helicopter (planned): a simplified flight model with lift, a cyclic and a tail rotor. Two seats.
+  - Helicopter (built): no wheels. The hull's attitude is driven to a lean set by the stick (angular velocity towards the wanted up axis), the yaw rate is set directly, and a force along the up axis cancels gravity and holds the vertical speed the climb input asks for. Stateless, so the pilot predicts it like a car. Two seats. See [VEHICLES-II.md](VEHICLES-II.md#the-helicopter).
 
 ## 11. Modular mechanics
 
@@ -233,26 +285,25 @@ pub trait Mechanic: Send {
   - Arms and legs swing with ground speed.
   - Airborne pose: arms up, legs tucked.
 - **Camera:** third person, about 5 m behind, mouse-look with pointer lock.
-- **Budget:** static geometry is merged by colour, so a block is about 15 draw calls. Each stickman is about 10 meshes, and instancing comes later.
+- **Budget:** static geometry is merged by colour, so a tile is a handful of draw calls and the tiles around the player are about 100. Every stickman is drawn by five instanced meshes (heads, eyes, torsos, arms, legs) in one `Crowd`, so the room costs five draw calls however full it is. A stickman is a slot in those buffers plus its animation state.
 
 ## 13. Security
 
 - **Origin checks:** in production only `https://<domain>` is accepted, and in development only the Vite origin.
 - **Packet validation:** datagrams over 1200 bytes are dropped unread. Malformed packets, wrong versions and oversized input batches are dropped.
 - **Rate limits:** inputs at most every 8 ms and pings at most every 100 ms per session.
-- **Room limits:** 32 players per room. Sessions silent for 10 s are dropped, so closed tabs don't linger as ghosts.
+- **Room limits:** 64 players per room. Sessions silent for 10 s are dropped, so closed tabs don't linger as ghosts.
 - **Authority:** clients can only express intent. Speed, collision and spawning are server-side, so speed and teleport hacks aren't possible.
 
 ## 14. Roadmap
 
 1. **MVP (done):** server-authoritative stickmen on an OSM block, with prediction, reconciliation, interpolation, adaptive delay, network emulation and cross-language fixtures.
 2. **Vehicles I (done):** a car, seats, enter and exit, driver input routing, server-simulated and interpolated. See [VEHICLES-I.md](VEHICLES-I.md).
-3. **Vehicles II:** the tank with a gunner seat (done, see [VEHICLES-II.md](VEHICLES-II.md)), then driver-side prediction and the helicopter.
-4. **Combat:** a hitscan weapon with server-side lag compensation, health, respawns and the first game mode.
-5. **Scale:**
-   - Delta-compressed snapshots (against the last acked snapshot).
-   - Interest management by distance.
-   - Instanced stickmen.
-   - Larger worlds streamed in tiles.
+3. **Vehicles II (done):** the tank with a gunner seat, driver-side prediction and the helicopter. See [VEHICLES-II.md](VEHICLES-II.md).
+4. **Combat (done):** free-for-all. Health, death and respawn, a hitscan rifle with lag compensation, a rocket launcher, vehicle damage and wrecks, kill feed and scoreboard. Game modes, pickups and teams are next.
+5. **Scale (done):** a room of 64 on a 2 km map.
+   - Delta-compressed snapshots against the last acknowledged one, and interest management by distance (§5.8).
+   - Instanced stickmen (§12).
+   - A larger world, Backen in Umeå, streamed in tiles (§8).
 6. **Reach:** touch controls (virtual stick and buttons), a quality scaler for low-end GPUs, and a Docker and deploy script ported from flax3d.
 7. **World:** OSM multipolygons, terrain elevation, water, parks and trees.

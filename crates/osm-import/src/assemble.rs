@@ -1,7 +1,9 @@
-//! Turns OSM ways (or a procedural grid) into a `WorldFile`.
+//! Turns OSM ways (or a procedural grid) into a tiled world: a manifest and one `Tile` per
+//! square of the grid that has anything in it.
 
 use crate::overpass::Way;
 use shared::world::*;
+use std::collections::BTreeMap;
 
 type P = [f64; 2];
 
@@ -56,11 +58,14 @@ fn distance_to_segment([px, pz]: P, [ax, az]: P, [bx, bz]: P) -> f64 {
     ((px - ax - t * dx).powi(2) + (pz - az - t * dz).powi(2)).sqrt()
 }
 
-/// Liang–Barsky: the part of segment `a → b` inside the square `[-half, half]²`.
-fn clip_segment(a: P, b: P, half: f64) -> Option<(P, P)> {
+/// An axis-aligned rectangle `[x0, z0, x1, z1]`, metres.
+type Rect = [f64; 4];
+
+/// Liang–Barsky: the part of segment `a → b` inside `rect`.
+fn clip_segment(a: P, b: P, [x0, z0, x1, z1]: Rect) -> Option<(P, P)> {
     let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
     let (mut t0, mut t1) = (0.0f64, 1.0f64);
-    for (p, q) in [(-dx, a[0] + half), (dx, half - a[0]), (-dz, a[1] + half), (dz, half - a[1])] {
+    for (p, q) in [(-dx, a[0] - x0), (dx, x1 - a[0]), (-dz, a[1] - z0), (dz, z1 - a[1])] {
         if p == 0.0 {
             if q < 0.0 {
                 return None;
@@ -76,12 +81,17 @@ fn clip_segment(a: P, b: P, half: f64) -> Option<(P, P)> {
     Some(([a[0] + t0 * dx, a[1] + t0 * dz], [a[0] + t1 * dx, a[1] + t1 * dz]))
 }
 
-/// Splits a polyline into the runs that lie inside the square.
+/// Splits a polyline into the runs that lie inside the square `[-half, half]²`.
 fn clip_polyline(points: &[P], half: f64) -> Vec<Vec<P>> {
+    clip_polyline_rect(points, [-half, -half, half, half])
+}
+
+/// Splits a polyline into the runs that lie inside `rect`.
+fn clip_polyline_rect(points: &[P], rect: Rect) -> Vec<Vec<P>> {
     let mut runs: Vec<Vec<P>> = Vec::new();
     let mut current: Vec<P> = Vec::new();
     for pair in points.windows(2) {
-        match clip_segment(pair[0], pair[1], half) {
+        match clip_segment(pair[0], pair[1], rect) {
             Some((start, end)) => {
                 if current.last() != Some(&start) {
                     if current.len() >= 2 {
@@ -189,10 +199,33 @@ fn pick_spawns(candidates: &[P], footprints: &[Vec<P>], half: f64) -> Vec<[i32; 
     chosen.into_iter().map(|[x, z]| [cm(x), cm(z)]).collect()
 }
 
-/// Assembles the world from building outlines (metres, any winding) and road polylines.
-fn assemble(origin: (f64, f64), half: f64, buildings: Vec<(Vec<P>, f64)>, roads: Vec<(Vec<P>, f64, u8)>) -> WorldFile {
+/// The result of an import: the manifest (without tile hashes yet) and the tiles by `(col, row)`.
+pub struct Built {
+    pub manifest: Manifest,
+    pub tiles: BTreeMap<(u16, u16), Tile>,
+}
+
+impl Built {
+    /// Encodes every tile, records its hash in the manifest and returns `(manifest bytes, [(path, bytes)])`.
+    pub fn into_files(mut self) -> (Vec<u8>, Vec<(String, Vec<u8>)>) {
+        let mut files = Vec::new();
+        self.manifest.tiles.clear();
+        for (&(col, row), tile) in &self.tiles {
+            let bytes = tile.encode();
+            let entry = TileRef { col, row, hash: world_hash(&bytes) };
+            files.push((entry.path(), bytes));
+            self.manifest.tiles.push(entry);
+        }
+        (self.manifest.encode(), files)
+    }
+}
+
+/// Assembles the world from building outlines (metres, any winding) and road polylines, and cuts
+/// it into square tiles of `tile_size` metres.
+fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P>, f64)>, roads: Vec<(Vec<P>, f64, u8)>) -> Built {
     let inner = half - EDGE_MARGIN;
-    let mut world = WorldFile { version: WORLD_VERSION, origin, half_extent: cm(half), ..Default::default() };
+    let mut manifest = Manifest { version: WORLD_VERSION, origin, half_extent: cm(half), tile_size: cm(tile_size), ..Default::default() };
+    let mut tiles: BTreeMap<(u16, u16), Tile> = BTreeMap::new();
     let mut footprints = Vec::new();
     for (mut footprint, height) in buildings {
         if footprint.len() > 1 && footprint.first() == footprint.last() {
@@ -209,11 +242,16 @@ fn assemble(origin: (f64, f64), half: f64, buildings: Vec<(Vec<P>, f64)>, roads:
         if area < 0.0 {
             footprint.reverse();
         }
-        extrude(&mut world.collision, &footprint, height);
-        world.buildings.push(Building { height: cm(height), footprint: footprint.iter().map(|&[x, z]| [cm(x), cm(z)]).collect() });
+        // A building belongs to the tile its centre is in, whole, so a tile never needs its neighbour.
+        let n = footprint.len() as f64;
+        let centre = footprint.iter().fold([0.0, 0.0], |sum, p| [sum[0] + p[0] / n, sum[1] + p[1] / n]);
+        let tile = tiles.entry(manifest.tile_at(cm(centre[0]), cm(centre[1]))).or_default();
+        extrude(&mut tile.collision, &footprint, height);
+        tile.buildings.push(Building { height: cm(height), footprint: footprint.iter().map(|&[x, z]| [cm(x), cm(z)]).collect() });
         footprints.push(footprint);
     }
     let mut candidates = Vec::new();
+    let side = tile_size;
     for (points, width, kind) in roads {
         for run in clip_polyline(&points, half) {
             // Sample along each run, not just at vertices, so long straight roads still offer spawns.
@@ -225,18 +263,39 @@ fn assemble(origin: (f64, f64), half: f64, buildings: Vec<(Vec<P>, f64)>, roads:
                     [ax + (bx - ax) * t, az + (bz - az) * t]
                 }));
             }
-            world.roads.push(Road { width: cm(width), kind, points: run.iter().map(|&[x, z]| [cm(x), cm(z)]).collect() });
+            // A road crossing tile borders is cut at them: each tile holds only its own pieces.
+            let (min, max) = run.iter().fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), p| ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]));
+            let (first, last) = (manifest.tile_at(cm(min[0]), cm(min[1])), manifest.tile_at(cm(max[0]), cm(max[1])));
+            for col in first.0..=last.0 {
+                for row in first.1..=last.1 {
+                    let rect = [-half + col as f64 * side, -half + row as f64 * side, -half + (col + 1) as f64 * side, -half + (row + 1) as f64 * side];
+                    for piece in clip_polyline_rect(&run, rect) {
+                        tiles.entry((col, row)).or_default().roads.push(Road {
+                            width: cm(width),
+                            kind,
+                            points: piece.iter().map(|&[x, z]| [cm(x), cm(z)]).collect(),
+                        });
+                    }
+                }
+            }
         }
     }
-    world.spawns = pick_spawns(&candidates, &footprints, half);
-    world
+    manifest.spawns = pick_spawns(&candidates, &footprints, half);
+    Built { manifest, tiles }
 }
 
-pub fn from_osm([south, west, north, east]: [f64; 4], ways: &[Way]) -> WorldFile {
+/// The bounding box of the `half`-metre square around `(lat, lon)`, as `[south, west, north, east]`.
+pub fn bbox_around(lat: f64, lon: f64, half: f64) -> [f64; 4] {
+    let dlat = half / METRES_PER_DEG_LAT;
+    let dlon = half / (METRES_PER_DEG_LON * lat.to_radians().cos());
+    [lat - dlat, lon - dlon, lat + dlat, lon + dlon]
+}
+
+pub fn from_osm([south, west, north, east]: [f64; 4], tile_size: f64, ways: &[Way]) -> Built {
     let origin = ((south + north) / 2.0, (west + east) / 2.0);
     let [x0, z0] = project(origin, south, west);
     let [x1, z1] = project(origin, north, east);
-    let half = ((x1 - x0).abs().min((z1 - z0).abs()) / 2.0).floor();
+    let half = ((x1 - x0).abs().min((z1 - z0).abs()) / 2.0).round();
     let mut buildings = Vec::new();
     let mut roads = Vec::new();
     for way in ways {
@@ -247,12 +306,12 @@ pub fn from_osm([south, west, north, east]: [f64; 4], ways: &[Way]) -> WorldFile
             roads.push((points, width, kind));
         }
     }
-    assemble(origin, half, buildings, roads)
+    assemble(origin, half, tile_size, buildings, roads)
 }
 
 /// An offline grid city: 48 m blocks separated by 10 m streets, each block holding a few
 /// buildings of varied height around a courtyard.
-pub fn synthetic_city(half: f64) -> WorldFile {
+pub fn synthetic_city(half: f64, tile_size: f64) -> Built {
     const PITCH: f64 = 58.0;
     const STREET: f64 = 10.0;
     let mut buildings = Vec::new();
@@ -289,7 +348,7 @@ pub fn synthetic_city(half: f64) -> WorldFile {
             }
         }
     }
-    assemble((0.0, 0.0), half, buildings, roads)
+    assemble((0.0, 0.0), half, tile_size, buildings, roads)
 }
 
 #[cfg(test)]
@@ -320,15 +379,50 @@ mod tests {
 
     #[test]
     fn spawns_avoid_buildings() {
-        let world = synthetic_city(150.0);
-        assert!(!world.spawns.is_empty());
-        for &[x, z] in &world.spawns {
+        let built = synthetic_city(150.0, 100.0);
+        assert!(!built.manifest.spawns.is_empty());
+        for &[x, z] in &built.manifest.spawns {
             let p = [x as f64 / 100.0, z as f64 / 100.0];
-            for building in &world.buildings {
+            for building in built.tiles.values().flat_map(|tile| &tile.buildings) {
                 let footprint: Vec<P> = building.footprint.iter().map(|&[x, z]| [x as f64 / 100.0, z as f64 / 100.0]).collect();
                 assert!(!point_in_polygon(p, &footprint));
             }
         }
+    }
+
+    #[test]
+    fn every_building_and_road_piece_sits_in_its_own_tile() {
+        let built = synthetic_city(300.0, 100.0);
+        assert!(built.tiles.len() > 4, "a 600 m city in 100 m tiles has many tiles");
+        for (&(col, row), tile) in &built.tiles {
+            for building in &tile.buildings {
+                let n = building.footprint.len() as i64;
+                let cx = (building.footprint.iter().map(|p| p[0] as i64).sum::<i64>() / n) as i32;
+                let cz = (building.footprint.iter().map(|p| p[1] as i64).sum::<i64>() / n) as i32;
+                assert_eq!(built.manifest.tile_at(cx, cz), (col, row));
+            }
+            let (x0, z0) = (-built.manifest.half_extent + col as i32 * built.manifest.tile_size, -built.manifest.half_extent + row as i32 * built.manifest.tile_size);
+            for road in &tile.roads {
+                for &[x, z] in &road.points {
+                    assert!((x0 - 1..=x0 + built.manifest.tile_size + 1).contains(&x), "x {x} outside tile {col}_{row}");
+                    assert!((z0 - 1..=z0 + built.manifest.tile_size + 1).contains(&z), "z {z} outside tile {col}_{row}");
+                }
+            }
+        }
+        // Tiling loses nothing: merging them back gives every building the single-tile import had.
+        let whole = synthetic_city(300.0, 1000.0);
+        let count = |b: &Built| b.tiles.values().map(|t| t.buildings.len()).sum::<usize>();
+        assert_eq!(count(&built), count(&whole));
+    }
+
+    #[test]
+    fn bbox_is_a_square_of_the_asked_half_extent() {
+        let [south, west, north, east] = bbox_around(63.832127, 20.168286, 1000.0);
+        let origin = ((south + north) / 2.0, (west + east) / 2.0);
+        let [x0, z0] = project(origin, south, west);
+        let [x1, z1] = project(origin, north, east);
+        assert!(((x1 - x0) / 2.0 - 1000.0).abs() < 0.01);
+        assert!(((z0 - z1) / 2.0 - 1000.0).abs() < 0.01);
     }
 
     #[test]

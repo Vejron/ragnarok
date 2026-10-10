@@ -18,6 +18,15 @@ pub fn from_cm_i16(cm: i16) -> f32 {
     cm as f32 / 100.0
 }
 
+/// A rate in radians per second to milliradians per second, saturating at the i16 range.
+pub fn to_milli_i16(value: f32) -> i16 {
+    if value.is_finite() { (value * 1000.0).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16 } else { 0 }
+}
+
+pub fn from_milli_i16(value: i16) -> f32 {
+    value as f32 / 1000.0
+}
+
 /// Wraps an angle to `[-π, π)`.
 pub fn wrap_angle(radians: f32) -> f32 {
     let tau = std::f32::consts::TAU;

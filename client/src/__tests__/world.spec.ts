@@ -1,21 +1,46 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { decodeWorld, worldHash } from '@/world'
+import { decodeManifest, decodeTile, worldHash } from '@/world'
 
-describe('world file', () => {
+const read = (path: string) => new Uint8Array(readFileSync(resolve(process.cwd(), 'public', path)))
+
+describe('world files', () => {
   it('hashes with FNV-1a like the server', () => {
     expect(worldHash(new Uint8Array())).toBe(0x811c9dc5)
     expect(worldHash(new TextEncoder().encode('a'))).toBe(0xe40c292c)
   })
 
-  it('decodes the generated world', () => {
-    const bytes = readFileSync(resolve(process.cwd(), 'public/world.msgpack'))
-    const world = decodeWorld(new Uint8Array(bytes))
+  it('decodes the generated manifest', () => {
+    const world = decodeManifest(read('world.msgpack'))
     expect(world.halfExtent).toBeGreaterThan(50)
-    expect(world.buildings.length).toBeGreaterThan(0)
+    expect(world.tileSize).toBeGreaterThan(10)
     expect(world.spawns.length).toBeGreaterThan(0)
-    expect(world.collision.triangles.length % 3).toBe(0)
-    expect(Math.max(...world.collision.triangles)).toBeLessThan(world.collision.vertices.length / 3)
+    expect(world.tiles.length).toBeGreaterThan(0)
+  })
+
+  it('decodes every tile, and each is the one the manifest hashes', () => {
+    const world = decodeManifest(read('world.msgpack'))
+    let buildings = 0
+    for (const ref of world.tiles) {
+      const bytes = read(`tiles/${ref.col}_${ref.row}.msgpack`)
+      expect(worldHash(bytes), `tile ${ref.col}_${ref.row}`).toBe(ref.hash)
+      const tile = decodeTile(bytes)
+      expect(tile.collision.triangles.length % 3).toBe(0)
+      if (tile.collision.triangles.length > 0) expect(Math.max(...tile.collision.triangles)).toBeLessThan(tile.collision.vertices.length / 3)
+      // Everything in a tile lies within it (roads may reach their own border).
+      const x0 = -world.halfExtent + ref.col * world.tileSize
+      const z0 = -world.halfExtent + ref.row * world.tileSize
+      for (const road of tile.roads) {
+        for (const [x, z] of road.points) {
+          expect(x).toBeGreaterThanOrEqual(x0 - 0.02)
+          expect(x).toBeLessThanOrEqual(x0 + world.tileSize + 0.02)
+          expect(z).toBeGreaterThanOrEqual(z0 - 0.02)
+          expect(z).toBeLessThanOrEqual(z0 + world.tileSize + 0.02)
+        }
+      }
+      buildings += tile.buildings.length
+    }
+    expect(buildings).toBeGreaterThan(0)
   })
 })

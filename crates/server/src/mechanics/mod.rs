@@ -1,11 +1,13 @@
 //! Game mechanics are small modules that hook into the game loop. Adding a feature (vehicles,
 //! pickups, game modes) means adding a `Mechanic`, not editing the loop.
 
+mod combat;
 mod gunnery;
 mod movement;
 mod spawn;
 mod vehicles;
 
+pub use combat::Combat;
 pub use gunnery::Gunnery;
 pub use movement::Movement;
 pub use spawn::Spawn;
@@ -26,5 +28,5 @@ pub trait Mechanic: Send {
 
 /// The mechanics a room runs, in tick order.
 pub fn default_mechanics() -> Vec<Box<dyn Mechanic>> {
-    vec![Box::new(Spawn), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement)]
+    vec![Box::new(Spawn), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement), Box::new(Combat)]
 }

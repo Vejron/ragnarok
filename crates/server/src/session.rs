@@ -120,10 +120,10 @@ impl Transport {
                 match peek_tag(&payload) {
                     Some(C_INPUT) => {
                         if last_input.elapsed() < MIN_INPUT_GAP { continue; }
-                        let Some(ClientInput(_, version, frames)) = decode(&payload) else { continue };
+                        let Some(ClientInput(_, version, baseline, frames)) = decode(&payload) else { continue };
                         if version != PROTOCOL_VERSION || frames.is_empty() || frames.len() > INPUT_REDUNDANCY { continue; }
                         last_input = Instant::now();
-                        if self.commands.send(Command::Input(id, frames)).is_err() { return Ok(()); }
+                        if self.commands.send(Command::Input(id, baseline, frames)).is_err() { return Ok(()); }
                     }
                     Some(C_PING) => {
                         if last_ping.elapsed() < MIN_PING_GAP { continue; }

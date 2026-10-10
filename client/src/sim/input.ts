@@ -1,5 +1,5 @@
 import { wrapAngle } from '@/net/codec'
-import { BUTTON_FIRE, BUTTON_JUMP, BUTTON_RUN, BUTTON_USE } from './consts'
+import { BUTTON_ALT, BUTTON_FIRE, BUTTON_JUMP, BUTTON_RUN, BUTTON_USE } from './consts'
 
 /** Mouse-look sensitivity, radians per pixel. */
 const LOOK_SPEED = 0.0025
@@ -30,6 +30,7 @@ export class InputController {
   private lastLook = -Infinity
   private held = new Set<string>()
   private firing = false
+  private alt = false
   private latched = 0
   private readonly abort = new AbortController()
 
@@ -40,21 +41,31 @@ export class InputController {
     window.addEventListener('blur', () => {
       this.held.clear()
       this.firing = false
+      this.alt = false
     }, options)
     element.addEventListener('click', () => void element.requestPointerLock?.(), options)
     // The trigger is the left mouse button, once the pointer is captured.
     document.addEventListener('mousedown', (event) => {
       if (event.button === 0 && document.pointerLockElement === element) this.firing = true
+      if (event.button === 2 && document.pointerLockElement === element) this.alt = true
     }, options)
     document.addEventListener('mouseup', (event) => {
       if (event.button === 0) this.firing = false
+      if (event.button === 2) this.alt = false
     }, options)
+    // The secondary trigger is the right button, which must not open a menu.
+    document.addEventListener('contextmenu', (event) => event.preventDefault(), options)
     document.addEventListener('mousemove', (event) => {
       if (document.pointerLockElement !== element) return
       this.lastLook = performance.now()
       this.yaw -= event.movementX * LOOK_SPEED
       this.pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, this.pitch - event.movementY * LOOK_SPEED))
     }, options)
+  }
+
+  /** Whether `code` (a `KeyboardEvent.code`) is down right now. */
+  isHeld(code: string) {
+    return this.held.has(code)
   }
 
   get locked() {
@@ -73,6 +84,8 @@ export class InputController {
   }
 
   private key(event: KeyboardEvent, down: boolean) {
+    // Tab shows the scoreboard; it must not also move the browser's focus.
+    if (event.code === 'Tab') event.preventDefault()
     if (event.repeat) return
     if (down) {
       this.held.add(event.code)
@@ -93,6 +106,7 @@ export class InputController {
     this.latched = 0
     if (this.held.has('Space')) buttons |= BUTTON_JUMP
     if (this.firing || this.held.has('KeyF')) buttons |= BUTTON_FIRE
+    if (this.alt || this.held.has('KeyG')) buttons |= BUTTON_ALT
     if (this.held.has('ShiftLeft') || this.held.has('ShiftRight')) buttons |= BUTTON_RUN
     return {
       strafe: this.axis(['KeyA', 'ArrowLeft'], ['KeyD', 'ArrowRight']),

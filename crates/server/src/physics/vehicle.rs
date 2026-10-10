@@ -6,13 +6,15 @@
 //!
 //! A car steers its front wheels. A tank has six unsteered wheels and turns on the spot: the
 //! physics sets its yaw rate directly, which is how skid steering looks from the outside.
+//! A helicopter has no wheels at all: its rotor is a push along the hull's up axis, and the hull is
+//! levelled and turned by setting its angular velocity, so it is flown by leaning (see [`fly`]).
 //! "Car" in the names below means any of these vehicles; [`Spec`] says which one.
 
 use super::Physics;
 use rapier3d::control::{DynamicRayCastVehicleController, WheelTuning};
 use rapier3d::prelude::*;
 use shared::consts::*;
-use shared::protocol::KIND_TANK;
+use shared::protocol::{KIND_HELI, KIND_TANK};
 
 /// Gravity acting on vehicle bodies. Stickmen use `GRAVITY`; the ray-cast suspension is tuned
 /// around the real-world value.
@@ -37,6 +39,9 @@ pub(super) struct Spec {
     steer_lock: f32,
     /// Yaw rate at full stick for a vehicle that turns on the spot, rad/s.
     turn_rate: f32,
+    /// Flies on a rotor instead of rolling on wheels.
+    flies: bool,
+    linear_damping: f32,
 }
 
 static CAR: Spec = Spec {
@@ -53,6 +58,8 @@ static CAR: Spec = Spec {
     max_speed: CAR_MAX_SPEED,
     steer_lock: CAR_MAX_STEER,
     turn_rate: 0.0,
+    flies: false,
+    linear_damping: 0.05,
 };
 
 static TANK: Spec = Spec {
@@ -69,11 +76,36 @@ static TANK: Spec = Spec {
     max_speed: TANK_MAX_SPEED,
     steer_lock: 0.0,
     turn_rate: TANK_TURN_RATE,
+    flies: false,
+    linear_damping: 0.05,
+};
+
+static HELI: Spec = Spec {
+    half_extents: HELI_HALF_EXTENTS,
+    // 3.8 m³ of hull is about 1.1 tonnes. Nothing below uses the wheel fields.
+    density: 300.0,
+    wheel_radius: 0.0,
+    track_half: 0.0,
+    axles: &[],
+    hard_point_y: 0.0,
+    suspension_rest: 0.0,
+    max_suspension_force: 0.0,
+    engine_force: 0.0,
+    max_speed: 0.0,
+    steer_lock: 0.0,
+    turn_rate: 0.0,
+    flies: true,
+    // Air drag is what limits the speed: the rotor's lean gives about 4.9 m/s², so about 25 m/s.
+    linear_damping: 0.2,
 };
 
 /// The spec for a vehicle kind. Unknown kinds are cars.
 pub(super) fn spec(kind: u8) -> &'static Spec {
-    if kind == KIND_TANK { &TANK } else { &CAR }
+    match kind {
+        KIND_TANK => &TANK,
+        KIND_HELI => &HELI,
+        _ => &CAR,
+    }
 }
 
 /// Half extents of the chassis box of a vehicle kind.
@@ -99,9 +131,18 @@ const STEER_FADE_SPEED: f32 = 14.0;
 pub struct CarControls {
     /// -1 (reverse) ..= 1 (forward).
     pub throttle: f32,
-    /// -1 (left) ..= 1 (right).
+    /// -1 (left) ..= 1 (right). A helicopter turns instead.
     pub steer: f32,
     pub handbrake: bool,
+    /// -1 (sink) ..= 1 (climb). Only a helicopter has it.
+    pub lift: f32,
+    /// The rotor is turning, i.e. a pilot is aboard. Only a helicopter has it.
+    pub powered: bool,
+}
+
+impl CarControls {
+    /// Nobody asks for anything.
+    pub const IDLE: CarControls = CarControls { throttle: 0.0, steer: 0.0, handbrake: false, lift: 0.0, powered: false };
 }
 
 /// A car's pose as the game loop and the wire need it.
@@ -118,6 +159,19 @@ pub struct CarPose {
     pub up_y: f32,
     /// Linear velocity, m/s.
     pub velocity: [f32; 3],
+}
+
+/// What a driver needs to resume predicting a car, beyond its pose.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CarMotion {
+    /// Linear velocity, m/s.
+    pub linvel: [f32; 3],
+    /// Angular velocity about the world axes, rad/s.
+    pub angvel: [f32; 3],
+    /// Front wheel angle, radians, + is right.
+    pub steer: f32,
+    /// Yaw rate a tank has ramped to, rad/s, + is clockwise.
+    pub spin: f32,
 }
 
 /// A car touching a character.
@@ -140,6 +194,8 @@ pub(super) struct Car {
     turn: f32,
     /// The yaw rate it is actually turning at, rad/s, + is clockwise. It ramps towards `turn`.
     spin: f32,
+    /// What a helicopter was last asked to do, applied in the next [`Physics::step_cars`].
+    flight: CarControls,
 }
 
 fn pose_of(position: [f32; 3], yaw: f32) -> Pose {
@@ -149,6 +205,44 @@ fn pose_of(position: [f32; 3], yaw: f32) -> Pose {
 /// How far below its feet a standing character probes for a car to ride. The character controller
 /// rests 2 cm above whatever it stands on, so this reaches into the roof.
 const RIDE_PROBE: f32 = 0.06;
+
+/// One tick of rotor flight for a powered helicopter body.
+///
+/// The disc leans by setting the angular velocity that carries the hull's up axis towards the
+/// wanted lean (forward with the stick, sideways with the turn), and the yaw rate is set straight
+/// from the stick, like a tank's. The rotor then pushes along the up axis hard enough to hover
+/// however it leans, and holds a vertical speed set by the climb input. Everything is a function
+/// of the body's state and the controls alone, so the client can replay it.
+fn fly(body: &mut RigidBody, controls: CarControls, dt: f32) {
+    let rotation = *body.rotation();
+    let up = rotation * Vector::Y;
+    let nose = rotation * Vector::new(0.0, 0.0, -1.0);
+    let flat = Vector::new(nose.x, 0.0, nose.z);
+    let heading = if flat.length() > 1e-3 { flat.normalize() } else { Vector::new(0.0, 0.0, -1.0) };
+    let right = heading.cross(Vector::Y);
+
+    let throttle = controls.throttle.clamp(-1.0, 1.0);
+    let steer = controls.steer.clamp(-1.0, 1.0);
+    let lean = (Vector::Y + heading * (throttle * HELI_TILT) + right * (steer * HELI_BANK)).normalize();
+    let mut wanted = up.cross(lean) * HELI_LEVEL_GAIN;
+    // Clockwise seen from above is a negative rotation about +Y.
+    wanted.y = -steer * HELI_YAW_RATE;
+    let current = body.angvel();
+    body.set_angvel(current + (wanted - current) * (HELI_RESPONSE * dt).min(1.0), true);
+
+    // The climb input asks for a vertical speed; with none held it asks for zero, so letting go of
+    // the stick holds altitude. Climbing fades out below the ceiling and reverses above it.
+    let lift = controls.lift.clamp(-1.0, 1.0);
+    let headroom = ((HELI_CEILING - body.translation().y) / 20.0).clamp(-1.0, 1.0);
+    let mut target = if lift > 0.0 { lift * HELI_CLIMB_SPEED * headroom.max(0.0) } else { lift * HELI_SINK_SPEED };
+    if headroom < 0.0 {
+        target = target.min(headroom * HELI_CLIMB_SPEED);
+    }
+    let extra = ((target - body.linvel().y) * HELI_VERT_GAIN).clamp(-HELI_VERT_ACCEL, HELI_VERT_ACCEL);
+    let accel = (CAR_GRAVITY + extra) / up.y.max(0.5);
+    // A force rather than an impulse: it is integrated together with gravity, so hovering is exact.
+    body.add_force(up * (accel * body.mass()), true);
+}
 
 impl CarPose {
     /// Where `point`, fixed to the car at `self`, ends up once the car has moved to `to`.
@@ -195,7 +289,7 @@ impl Physics {
         let [hx, hy, hz] = spec.half_extents;
         let body = RigidBodyBuilder::dynamic()
             .pose(pose_of(position, yaw))
-            .linear_damping(0.05)
+            .linear_damping(spec.linear_damping)
             .angular_damping(0.8)
             .build();
         let body = self.bodies.insert(body);
@@ -204,6 +298,7 @@ impl Physics {
             body,
             &mut self.bodies,
         );
+        // A helicopter has no wheels, so its controller is never updated.
         let mut controller = DynamicRayCastVehicleController::new(body);
         // Our forward is -Z, but the controller only uses this axis to sign its own speed estimate,
         // which we do not read.
@@ -230,7 +325,7 @@ impl Physics {
                 );
             }
         }
-        self.cars.insert(id, Car { spec, body, collider, controller, steer: 0.0, turn: 0.0, spin: 0.0 });
+        self.cars.insert(id, Car { spec, body, collider, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE });
     }
 
     /// Puts a car back upright and at rest.
@@ -260,6 +355,10 @@ impl Physics {
     /// Applies the driver's controls to the wheels for the next [`Physics::step_cars`].
     pub fn drive_car(&mut self, id: u32, controls: CarControls, dt: f32) {
         let Some(car) = self.cars.get_mut(&id) else { return };
+        if car.spec.flies {
+            car.flight = controls;
+            return;
+        }
         let Some(body) = self.bodies.get(car.body) else { return };
         let mass = body.mass();
         let forward = body.rotation() * Vector::new(0.0, 0.0, -1.0);
@@ -301,7 +400,16 @@ impl Physics {
         if self.cars.is_empty() {
             return;
         }
-        for car in self.cars.values_mut() {
+        for car in self.cars.values().filter(|car| car.spec.flies) {
+            if let Some(body) = self.bodies.get_mut(car.body) {
+                // Forces persist from step to step until reset.
+                body.reset_forces(false);
+                if car.flight.powered {
+                    fly(body, car.flight, dt);
+                }
+            }
+        }
+        for car in self.cars.values_mut().filter(|car| !car.spec.flies) {
             // Wheel rays must not hit their own chassis.
             let filter = QueryFilter::default().exclude_rigid_body(car.body);
             let queries = self.broad_phase.as_query_pipeline_mut(
@@ -314,7 +422,7 @@ impl Physics {
         }
         // A tank turns on the spot, but only while some track is on the ground. The wheels' side
         // grip fights any spin every tick, so the rate is kept here and written back each time.
-        for car in self.cars.values_mut() {
+        for car in self.cars.values_mut().filter(|car| !car.spec.flies) {
             let grounded = car.controller.wheels().iter().any(|wheel| wheel.raycast_info().is_in_contact);
             if car.turn == 0.0 || !grounded {
                 car.spin = 0.0;
@@ -356,13 +464,20 @@ impl Physics {
     /// How far a ray from `origin` along the unit vector `dir` travels before it hits the world or a
     /// vehicle other than `ignore`, up to `max`. `None` when it reaches `max` clear.
     pub fn cast_ray(&self, origin: [f32; 3], dir: [f32; 3], max: f32, ignore: u32) -> Option<f32> {
+        self.cast_ray_hit(origin, dir, max, ignore).map(|(distance, _)| distance)
+    }
+
+    /// Like [`Self::cast_ray`], and also says which vehicle it hit, if it was a vehicle and not the world.
+    pub fn cast_ray_hit(&self, origin: [f32; 3], dir: [f32; 3], max: f32, ignore: u32) -> Option<(f32, Option<u32>)> {
         let mut filter = QueryFilter::default();
         if let Some(car) = self.cars.get(&ignore) {
             filter = filter.exclude_rigid_body(car.body);
         }
         let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, filter);
         let ray = Ray::new(Vector::from(origin), Vector::from(dir));
-        queries.cast_ray(&ray, max, true).map(|(_, distance)| distance)
+        let (collider, distance) = queries.cast_ray(&ray, max, true)?;
+        let car = self.cars.iter().find(|(_, car)| car.collider == collider).map(|(&id, _)| id);
+        Some((distance, car))
     }
 
     /// Changes vehicle `id`'s velocity by `delta` m/s at once, as a gun's recoil does.
@@ -374,9 +489,11 @@ impl Physics {
     }
 
     /// Shoves every vehicle within `radius` of `point` away from it, harder the closer it is.
-    pub fn blast_cars(&mut self, point: [f32; 3], radius: f32) {
+    /// Returns each one it reached with how close it was: 1 at the point, 0 at the edge.
+    pub fn blast_cars(&mut self, point: [f32; 3], radius: f32) -> Vec<(u32, f32)> {
         let point = Vector::from(point);
-        for car in self.cars.values() {
+        let mut reached = Vec::new();
+        for (&id, car) in &self.cars {
             let Some(body) = self.bodies.get_mut(car.body) else { continue };
             let away = body.translation() - point;
             let distance = away.length();
@@ -386,7 +503,15 @@ impl Physics {
             let falloff = 1.0 - distance / radius;
             let direction = (away / distance.max(1e-3) + Vector::new(0.0, 0.4, 0.0)).normalize();
             body.apply_impulse(direction * falloff * BLAST_VELOCITY * body.mass(), true);
+            reached.push((id, falloff));
         }
+        reached
+    }
+
+    pub fn car_motion(&self, id: u32) -> Option<CarMotion> {
+        let car = self.cars.get(&id)?;
+        let body = self.bodies.get(car.body)?;
+        Some(CarMotion { linvel: body.linvel().into(), angvel: body.angvel().into(), steer: car.steer, spin: car.spin })
     }
 
     pub fn car_pose(&self, id: u32) -> Option<CarPose> {
@@ -409,7 +534,7 @@ impl Physics {
 mod tests {
     use super::*;
     use shared::consts::TICK_DT;
-    use shared::protocol::{KIND_CAR, KIND_TANK};
+    use shared::protocol::{KIND_CAR, KIND_HELI, KIND_TANK};
     use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 
     fn flat() -> WorldFile {
@@ -449,8 +574,51 @@ mod tests {
         pose.yaw()
     }
 
-    const FORWARD: CarControls = CarControls { throttle: 1.0, steer: 0.0, handbrake: false };
-    const COAST: CarControls = CarControls { throttle: 0.0, steer: 0.0, handbrake: false };
+    const FORWARD: CarControls = CarControls { throttle: 1.0, ..CarControls::IDLE };
+    const COAST: CarControls = CarControls::IDLE;
+
+    /// A scripted drive of a car and a tank on flat ground, for the fixture in `vehicle.spec.ts`.
+    fn scripted_controls(tick: u32) -> CarControls {
+        let phase = tick / 60;
+        match phase {
+            0 => COAST,
+            1 | 2 => FORWARD,
+            3 | 4 => CarControls { throttle: 1.0, steer: 0.6, ..CarControls::IDLE },
+            5 => CarControls { throttle: 1.0, steer: -1.0, ..CarControls::IDLE },
+            6 => CarControls { throttle: -1.0, ..CarControls::IDLE },
+            _ => CarControls { throttle: 0.5, handbrake: true, ..CarControls::IDLE },
+        }
+    }
+
+    /// `(kind, tick, position)` after `scripted_controls`, mirrored in `vehicle.spec.ts`.
+    const SCRIPTED_CHECKPOINTS: [(u8, u32, [f32; 3]); 8] = [
+        (KIND_CAR, 90, [0.0, 0.6574, -0.7191]),
+        (KIND_CAR, 210, [1.1072, 0.6573, -14.8450]),
+        (KIND_CAR, 300, [15.9257, 0.6572, -25.5077]),
+        (KIND_CAR, 480, [28.5726, 0.6572, -54.8037]),
+        (KIND_TANK, 90, [0.0, 0.9400, -0.7659]),
+        (KIND_TANK, 210, [0.4323, 0.9400, -13.2166]),
+        (KIND_TANK, 300, [9.7875, 0.9400, -22.8965]),
+        (KIND_TANK, 480, [22.4889, 0.9400, -32.2509]),
+    ];
+
+    #[test]
+    fn scripted_drive_matches_fixture() {
+        for kind in [KIND_CAR, KIND_TANK] {
+            let mut physics = Physics::new(&flat()).unwrap();
+            physics.add_car(1, kind, [0.0, 1.5, 0.0], 0.0);
+            for tick in 0..480 {
+                physics.drive_car(1, scripted_controls(tick), TICK_DT);
+                physics.step_cars(TICK_DT);
+                let done = tick + 1;
+                if let Some((_, _, expected)) = SCRIPTED_CHECKPOINTS.iter().find(|(k, t, _)| *k == kind && *t == done) {
+                    let position = physics.car_pose(1).unwrap().position;
+                    let close = position.iter().zip(expected).all(|(a, e)| (a - e).abs() < 0.001);
+                    assert!(close, "kind {kind} tick {done}: {position:?}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn settles_on_its_suspension() {
@@ -484,7 +652,7 @@ mod tests {
     fn steering_right_turns_the_heading_clockwise() {
         let mut physics = with_car(&flat());
         run(&mut physics, COAST, 60);
-        let pose = run(&mut physics, CarControls { throttle: 1.0, steer: 1.0, handbrake: false }, 60 * 3);
+        let pose = run(&mut physics, CarControls { throttle: 1.0, steer: 1.0, ..CarControls::IDLE }, 60 * 3);
         assert!(yaw(&pose) < -0.3, "right turn lowers the yaw: {}", yaw(&pose));
         assert!(pose.position[0] > 1.0, "ends up to the right (+X): {pose:?}");
         assert!(pose.steer > 0.0);
@@ -494,7 +662,7 @@ mod tests {
     fn steering_left_mirrors_it() {
         let mut physics = with_car(&flat());
         run(&mut physics, COAST, 60);
-        let pose = run(&mut physics, CarControls { throttle: 1.0, steer: -1.0, handbrake: false }, 60 * 3);
+        let pose = run(&mut physics, CarControls { throttle: 1.0, steer: -1.0, ..CarControls::IDLE }, 60 * 3);
         assert!(yaw(&pose) > 0.3 && pose.position[0] < -1.0, "{pose:?}");
     }
 
@@ -533,7 +701,7 @@ mod tests {
         run(&mut physics, COAST, 60);
         let mut character = Character { position: [-4.0, STANDING_Y, 0.0], grounded: true, ..Default::default() };
         // Yaw -π/2 faces +X, into the car's flank.
-        let toward_car = InputFrame(1, 0, 127, -1571, 0, 0);
+        let toward_car = InputFrame(1, 0, 127, -1571, 0, 0, 0);
         for _ in 0..180 {
             physics.move_character(&mut character, &toward_car, TICK_DT);
         }
@@ -594,8 +762,112 @@ mod tests {
     fn a_tank_can_turn_and_drive_together() {
         let mut physics = with_tank(&flat());
         run(&mut physics, COAST, 60);
-        let pose = run(&mut physics, CarControls { throttle: 1.0, steer: 1.0, handbrake: false }, 60 * 2);
+        let pose = run(&mut physics, CarControls { throttle: 1.0, steer: 1.0, ..CarControls::IDLE }, 60 * 2);
         assert!(yaw(&pose) < -1.0 && pose.position[0] > 2.0 && pose.up_y > 0.95, "{pose:?}");
+    }
+
+    fn with_heli(height: f32) -> Physics {
+        let mut physics = Physics::new(&flat()).unwrap();
+        physics.add_car(1, KIND_HELI, [0.0, height, 0.0], 0.0);
+        physics
+    }
+
+    const PILOTED: CarControls = CarControls { powered: true, ..CarControls::IDLE };
+
+    /// A scripted flight for the fixture in `vehicle.spec.ts`: hover, climb, lean forward, turn, sink.
+    fn scripted_flight(tick: u32) -> CarControls {
+        match tick / 60 {
+            0 => PILOTED,
+            1 | 2 => CarControls { lift: 1.0, ..PILOTED },
+            3 | 4 => CarControls { throttle: 1.0, ..PILOTED },
+            5 | 6 => CarControls { throttle: 1.0, steer: 0.7, ..PILOTED },
+            _ => CarControls { throttle: -0.5, steer: -1.0, lift: -1.0, ..PILOTED },
+        }
+    }
+
+    /// `(tick, position)` of a helicopter started at `[0, 3, 0]`, mirrored in `vehicle.spec.ts`.
+    const FLIGHT_CHECKPOINTS: [(u32, [f32; 3]); 4] = [
+        (90, [0.0, 3.6099, 0.0]),
+        (210, [0.0, 11.8079, -0.0842]),
+        (330, [0.1181, 13.1328, -8.3432]),
+        (480, [12.1913, 11.3589, -26.3039]),
+    ];
+
+    #[test]
+    fn scripted_flight_matches_fixture() {
+        let mut physics = with_heli(3.0);
+        for tick in 0..480 {
+            physics.drive_car(1, scripted_flight(tick), TICK_DT);
+            physics.step_cars(TICK_DT);
+            let done = tick + 1;
+            if let Some((_, expected)) = FLIGHT_CHECKPOINTS.iter().find(|(t, _)| *t == done) {
+                let position = physics.car_pose(1).unwrap().position;
+                let close = position.iter().zip(expected).all(|(a, e)| (a - e).abs() < 0.001);
+                assert!(close, "tick {done}: {position:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_powered_helicopter_hovers() {
+        let mut physics = with_heli(10.0);
+        let pose = run(&mut physics, PILOTED, 60 * 5);
+        assert!((pose.position[1] - 10.0).abs() < 0.2 && pose.up_y > 0.999, "{pose:?}");
+        assert!(pose.velocity.iter().all(|v| v.abs() < 0.1), "{pose:?}");
+    }
+
+    #[test]
+    fn an_unpowered_helicopter_falls_and_rests() {
+        let mut physics = with_heli(10.0);
+        let pose = run(&mut physics, CarControls::IDLE, 60 * 4);
+        assert!(pose.position[1] < 1.2 && pose.velocity[1].abs() < 0.5, "{pose:?}");
+    }
+
+    #[test]
+    fn it_climbs_and_sinks_on_the_lift_input() {
+        let mut physics = with_heli(10.0);
+        let up = run(&mut physics, CarControls { lift: 1.0, ..PILOTED }, 60 * 2);
+        assert!(up.position[1] > 14.0 && up.velocity[1] > 2.0, "{up:?}");
+        // It still has the speed of the climb to shed first.
+        let down = run(&mut physics, CarControls { lift: -1.0, ..PILOTED }, 60 * 6);
+        assert!(down.position[1] < up.position[1] - 3.0 && down.velocity[1] < -3.0, "{up:?} -> {down:?}");
+    }
+
+    #[test]
+    fn leaning_forward_flies_forward_at_a_sensible_speed_without_losing_height() {
+        let mut physics = with_heli(20.0);
+        let pose = run(&mut physics, CarControls { throttle: 1.0, ..PILOTED }, 60 * 8);
+        assert!(pose.position[2] < -60.0 && pose.position[0].abs() < 1.0, "flies towards -Z: {pose:?}");
+        assert!(pose.forward_speed > 12.0 && pose.forward_speed < 30.0, "{pose:?}");
+        assert!((pose.position[1] - 20.0).abs() < 2.0, "holds altitude while leaning: {pose:?}");
+        assert!(pose.up_y > 0.85, "{pose:?}");
+        let back = run(&mut physics, CarControls { throttle: -1.0, ..PILOTED }, 60 * 3);
+        assert!(back.forward_speed < pose.forward_speed - 5.0, "{pose:?} -> {back:?}");
+    }
+
+    #[test]
+    fn the_stick_turns_it_like_a_tank_clockwise_on_the_right() {
+        let mut physics = with_heli(10.0);
+        let right = run(&mut physics, CarControls { steer: 1.0, ..PILOTED }, 60 * 2);
+        assert!(yaw(&right) < -1.0, "{}", yaw(&right));
+        let left = run(&mut physics, CarControls { steer: -1.0, ..PILOTED }, 60 * 4);
+        assert!(yaw(&left) > yaw(&right) + 1.0, "{} -> {}", yaw(&right), yaw(&left));
+    }
+
+    #[test]
+    fn it_levels_out_after_a_knock() {
+        let mut physics = with_heli(15.0);
+        run(&mut physics, PILOTED, 30);
+        physics.set_car_roll(1, 0.8, [0.0, 15.0, 0.0]);
+        let pose = run(&mut physics, PILOTED, 60 * 3);
+        assert!(pose.up_y > 0.99, "{pose:?}");
+    }
+
+    #[test]
+    fn the_ceiling_stops_the_climb() {
+        let mut physics = with_heli(HELI_CEILING - 30.0);
+        let pose = run(&mut physics, CarControls { lift: 1.0, ..PILOTED }, 60 * 20);
+        assert!(pose.position[1] > HELI_CEILING - 10.0 && pose.position[1] < HELI_CEILING + 8.0, "{pose:?}");
     }
 
     #[test]

@@ -1,24 +1,41 @@
 import * as THREE from 'three'
-import { ROAD_MAJOR, ROAD_MINOR, type WorldData } from '@/world'
+import { ROAD_MAJOR, ROAD_MINOR, type TileData } from '@/world'
 
 /** Candy-coloured buildings. Picked per building so the palette stays stable between reloads. */
 const BUILDING_COLORS = [0xffd6a5, 0xfdffb6, 0xcaffbf, 0x9bf6ff, 0xa0c4ff, 0xbdb2ff, 0xffc6ff, 0xffadad]
 const ROAD_COLORS: Record<number, number> = { [ROAD_MAJOR]: 0x7d7f8c, [ROAD_MINOR]: 0x9a9caa }
 const PATH_COLOR = 0xe8d9b5
 
-/** Builds the static scene: grass, roads as flat ribbons and extruded buildings. */
-export function buildWorld(data: WorldData): THREE.Group {
-  const group = new THREE.Group()
-  const half = data.halfExtent
+/** Materials are shared by every tile, so streaming one in or out never compiles a shader. */
+const materials = new Map<string, THREE.Material>()
+function material(kind: 'road' | 'building', color: number) {
+  const key = `${kind}:${color}`
+  let found = materials.get(key)
+  if (!found) {
+    found = kind === 'road' ? new THREE.MeshLambertMaterial({ color }) : new THREE.MeshToonMaterial({ color })
+    materials.set(key, found)
+  }
+  return found
+}
 
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(half * 2, half * 2), new THREE.MeshLambertMaterial({ color: 0x8fd16a }))
+/** The grass, as one plane under the whole world. Tiles stand on it. */
+export function buildGround(halfExtent: number): THREE.Mesh {
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(halfExtent * 2, halfExtent * 2), new THREE.MeshLambertMaterial({ color: 0x8fd16a }))
   ground.rotation.x = -Math.PI / 2
   ground.receiveShadow = true
-  group.add(ground)
+  return ground
+}
+
+/**
+ * One tile's roads (flat ribbons) and buildings (extruded footprints), merged by colour so a tile
+ * is a handful of draw calls. `salt` keeps colours stable between reloads and varied across tiles.
+ */
+export function buildTile(tile: TileData, salt: number): THREE.Group {
+  const group = new THREE.Group()
 
   // Roads: one quad per segment, plus a disc per joint so corners have no gaps.
   const roadGeometries = new Map<number, THREE.BufferGeometry[]>()
-  data.roads.forEach((road, index) => {
+  tile.roads.forEach((road, index) => {
     const color = ROAD_COLORS[road.kind] ?? PATH_COLOR
     const list = roadGeometries.get(color) ?? []
     // Paths draw on top of roads, roads on top of grass; the tiny lift avoids z-fighting.
@@ -43,8 +60,7 @@ export function buildWorld(data: WorldData): THREE.Group {
     roadGeometries.set(color, list)
   })
   for (const [color, geometries] of roadGeometries) {
-    const merged = mergeGeometries(geometries)
-    const mesh = new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ color }))
+    const mesh = new THREE.Mesh(mergeGeometries(geometries), material('road', color))
     mesh.receiveShadow = true
     group.add(mesh)
   }
@@ -52,22 +68,30 @@ export function buildWorld(data: WorldData): THREE.Group {
   // Buildings: extrude each footprint upwards. Shape space is (x, -z) so the extrusion along +Z
   // becomes +Y after rotating the geometry -90° about X.
   const byColor = new Map<number, THREE.BufferGeometry[]>()
-  data.buildings.forEach((building, index) => {
+  tile.buildings.forEach((building, index) => {
     const shape = new THREE.Shape(building.footprint.map(([x, z]) => new THREE.Vector2(x, -z)))
     const geometry = new THREE.ExtrudeGeometry(shape, { depth: building.height, bevelEnabled: false })
     geometry.rotateX(-Math.PI / 2)
-    const color = BUILDING_COLORS[index % BUILDING_COLORS.length]!
+    const color = BUILDING_COLORS[(index + salt) % BUILDING_COLORS.length]!
     const list = byColor.get(color) ?? []
     list.push(geometry)
     byColor.set(color, list)
   })
   for (const [color, geometries] of byColor) {
-    const mesh = new THREE.Mesh(mergeGeometries(geometries), new THREE.MeshToonMaterial({ color }))
+    const mesh = new THREE.Mesh(mergeGeometries(geometries), material('building', color))
     mesh.castShadow = true
     mesh.receiveShadow = true
     group.add(mesh)
   }
   return group
+}
+
+/** Frees a tile's geometry. Materials are shared and stay. */
+export function disposeTile(group: THREE.Group) {
+  group.traverse((object) => {
+    if (object instanceof THREE.Mesh) object.geometry.dispose()
+  })
+  group.removeFromParent()
 }
 
 /** Concatenates non-indexed copies of geometries that share attributes (position, normal, uv). */

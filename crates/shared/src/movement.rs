@@ -56,20 +56,20 @@ mod tests {
 
     #[test]
     fn forward_at_zero_yaw_is_minus_z() {
-        let [x, z] = wish_velocity(&InputFrame(1, 0, 127, 0, 0, 0));
+        let [x, z] = wish_velocity(&InputFrame(1, 0, 127, 0, 0, 0, 0));
         assert!(x.abs() < 1e-6);
         assert!((z + WALK_SPEED).abs() < 1e-5);
     }
 
     #[test]
     fn diagonal_is_not_faster() {
-        let [x, z] = wish_velocity(&InputFrame(1, 127, 127, 0, BUTTON_RUN, 0));
+        let [x, z] = wish_velocity(&InputFrame(1, 127, 127, 0, BUTTON_RUN, 0, 0));
         assert!(((x * x + z * z).sqrt() - RUN_SPEED).abs() < 1e-4);
     }
 
     #[test]
     fn jump_only_from_ground() {
-        let jump = InputFrame(1, 0, 0, 0, BUTTON_JUMP, 0);
+        let jump = InputFrame(1, 0, 0, 0, BUTTON_JUMP, 0, 0);
         assert!(desired_translation(0.0, true, [0.0; 2], &jump, TICK_DT).0 > 0.0);
         assert!(desired_translation(0.0, false, [0.0; 2], &jump, TICK_DT).0 < 0.0);
     }

@@ -53,6 +53,49 @@ export class Effects {
     this.add(this.sphere, 0xfff0c0, 0.2, (mesh) => mesh.position.copy(end), (mesh, p) => mesh.scale.setScalar(blastRadius * 0.1 + p * blastRadius * 0.2))
   }
 
+  /** A rifle shot: a short flash at the muzzle and, when it ended on something, a spark there. */
+  tracer(from: THREE.Vector3, to: THREE.Vector3, hit: boolean) {
+    const direction = to.clone().sub(from)
+    const length = direction.length()
+    if (length < 0.01) return
+    direction.divideScalar(length)
+    this.add(this.sphere, 0xfff2b0, 0.06, (mesh) => mesh.position.copy(from).addScaledVector(direction, 0.6), (mesh, p) => mesh.scale.setScalar(0.12 + p * 0.1))
+    this.add(
+      this.beam, 0xffffff, 0.09,
+      (mesh) => {
+        mesh.position.copy(from).lerp(to, 0.5)
+        mesh.scale.set(0.5, length, 0.5)
+        mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction)
+      },
+      () => {},
+    )
+    if (hit) this.add(this.sphere, 0xffd27a, 0.15, (mesh) => mesh.position.copy(to), (mesh, p) => mesh.scale.setScalar(0.1 + p * 0.25))
+  }
+
+  /** A rocket or a wreck going up at `at`. */
+  burst(at: THREE.Vector3, radius: number) {
+    this.add(this.sphere, 0xff9a3c, 0.5, (mesh) => mesh.position.copy(at), (mesh, p) => mesh.scale.setScalar(radius * 0.15 + p * radius * 0.5))
+    this.add(this.sphere, 0xfff0c0, 0.22, (mesh) => mesh.position.copy(at), (mesh, p) => mesh.scale.setScalar(radius * 0.1 + p * radius * 0.25))
+  }
+
+  /** A puff of smoke from a damaged vehicle, drifting up. Black and bigger for a wreck. */
+  smoke(at: THREE.Vector3, wreck: boolean) {
+    const size = wreck ? 1.1 : 0.7
+    this.add(
+      this.sphere, wreck ? 0x222222 : 0x777777, wreck ? 1.4 : 1.0,
+      (mesh) => mesh.position.copy(at),
+      (mesh, p) => {
+        mesh.scale.setScalar(size * (0.5 + p))
+        mesh.position.y = at.y + p * 3
+      },
+    )
+  }
+
+  /** Just the muzzle flash, for the local player's own shot before the server confirms it. */
+  muzzle(at: THREE.Vector3) {
+    this.add(this.sphere, 0xfff2b0, 0.06, (mesh) => mesh.position.copy(at), (mesh, p) => mesh.scale.setScalar(0.12 + p * 0.1))
+  }
+
   update(dt: number) {
     for (let i = this.active.length - 1; i >= 0; i--) {
       const effect = this.active[i]!

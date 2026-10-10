@@ -23,7 +23,7 @@ fn inherit(character: &mut Character, velocity: [f32; 3]) {
 
 impl Mechanic for Movement {
     fn on_tick(&mut self, world: &mut World, dt: f32) {
-        for player in world.players.values_mut().filter(|player| player.seat.is_none()) {
+        for player in world.players.values_mut().filter(|player| player.seat.is_none() && player.alive()) {
             let character = &mut player.character;
             let was_riding = character.ride;
             let velocity = world.physics.car_pose(was_riding).map(|pose| pose.velocity);

@@ -1,4 +1,4 @@
-import type { EntityState, VehicleState } from './codec'
+import type { EntityState, RocketState, VehicleState } from './codec'
 import { wrapAngle } from './codec'
 import { TICK_RATE } from '@/sim/consts'
 
@@ -35,6 +35,19 @@ export function blendEntity(a: EntityState, b: EntityState, t: number): EntitySt
     knockX: lerp(a.knockX, b.knockX, t),
     knockZ: lerp(a.knockZ, b.knockZ, t),
     grounded: t < 0.5 ? a.grounded : b.grounded,
+    dead: t < 0.5 ? a.dead : b.dead,
+  }
+}
+
+export function blendRocket(a: RocketState, b: RocketState, t: number): RocketState {
+  return {
+    id: b.id,
+    x: lerp(a.x, b.x, t),
+    y: lerp(a.y, b.y, t),
+    z: lerp(a.z, b.z, t),
+    vx: lerp(a.vx, b.vx, t),
+    vy: lerp(a.vy, b.vy, t),
+    vz: lerp(a.vz, b.vz, t),
   }
 }
 
@@ -54,6 +67,7 @@ export function blendVehicle(a: VehicleState, b: VehicleState, t: number): Vehic
     z: lerp(a.z, b.z, t),
     qx: qx / length, qy: qy / length, qz: qz / length, qw: qw / length,
     steer: lerp(a.steer, b.steer, t),
+    hp: t < 0.5 ? a.hp : b.hp,
     turret: a.turret && b.turret
       ? {
           yaw: lerpAngle(a.turret.yaw, b.turret.yaw, t),

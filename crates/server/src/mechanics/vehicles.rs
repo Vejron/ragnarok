@@ -2,7 +2,7 @@ use super::Mechanic;
 use crate::game::{Gun, Seat, Vehicle, World};
 use crate::physics::{CarControls, CarPose, Character, half_extents};
 use shared::consts::*;
-use shared::protocol::{KIND_CAR, KIND_TANK, seat_count};
+use shared::protocol::{KIND_CAR, KIND_HELI, KIND_TANK, seat_count, vehicle_hp};
 use shared::quant::from_axis;
 use shared::world::WorldFile;
 use std::collections::BTreeMap;
@@ -11,13 +11,15 @@ use std::collections::BTreeMap;
 ///
 /// `BUTTON_USE` is one press per input frame: it boards the nearest vehicle with a free seat, or
 /// leaves the one the player sits in. A driver's axes and `BUTTON_JUMP` (handbrake) steer the car;
-/// passengers only ride. Cars are dynamic bodies stepped here, once per tick, after all input
+/// passengers only ride. A helicopter's pilot leans it with the axes and climbs on `BUTTON_JUMP`,
+/// sinks on `BUTTON_RUN`. Cars are dynamic bodies stepped here, once per tick, after all input
 /// is in.
 pub struct Vehicles;
 
-/// Cars and tanks placed at start. Fewer appear when the world has too few clear spawn points.
+/// Cars, tanks and helicopters placed at start. Fewer appear when the world has too few clear spawn points.
 const CAR_COUNT: usize = 6;
 const TANK_COUNT: usize = 2;
+const HELI_COUNT: usize = 1;
 /// Spawn points `Spawn` hands to players first; cars prefer the others.
 const PLAYER_SPAWNS: usize = 6;
 /// Spawn height of the chassis centre, a little above its resting height.
@@ -69,6 +71,9 @@ fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: f32) -> u32
             home: (position, yaw),
             stuck_ticks: 0,
             gun: (kind == KIND_TANK).then(Gun::default),
+            hp: vehicle_hp(kind),
+            wreck_in: 0,
+            last_attacker: None,
         },
     );
     id
@@ -104,6 +109,9 @@ fn board(world: &mut World, id: u32) {
     let here = player.character.position;
     let mut nearest: Option<(f32, u32, usize)> = None;
     for (&vid, vehicle) in &world.vehicles {
+        if vehicle.wrecked() {
+            continue;
+        }
         let Some(free) = vehicle.seats[..seat_count(vehicle.kind)].iter().position(Option::is_none) else { continue };
         let Some(pose) = world.physics.car_pose(vid) else { continue };
         let distance = pose.position.iter().zip(here).map(|(a, b)| (a - b) * (a - b)).sum::<f32>().sqrt();
@@ -149,7 +157,7 @@ fn alight(world: &mut World, id: u32) {
 fn knock_players(world: &mut World) {
     for player in world.players.values_mut() {
         player.hit_cooldown = player.hit_cooldown.saturating_sub(1);
-        if player.seat.is_some() || player.character.ride != 0 || player.hit_cooldown > 0 {
+        if player.seat.is_some() || !player.alive() || player.character.ride != 0 || player.hit_cooldown > 0 {
             continue;
         }
         let Some(hit) = world.physics.car_hit(player.character.position) else { continue };
@@ -179,11 +187,15 @@ impl Mechanic for Vehicles {
         let candidates = spawns[split..].iter().chain(spawns[..split].iter().rev());
         let mut placed = 0;
         for &[cx, cz] in candidates {
-            if placed == CAR_COUNT + TANK_COUNT {
+            if placed == CAR_COUNT + TANK_COUNT + HELI_COUNT {
                 break;
             }
-            // Cars first, then the tanks.
-            let kind = if placed < CAR_COUNT { KIND_CAR } else { KIND_TANK };
+            // Cars first, then the tanks, then the helicopter.
+            let kind = match placed {
+                0..CAR_COUNT => KIND_CAR,
+                _ if placed < CAR_COUNT + TANK_COUNT => KIND_TANK,
+                _ => KIND_HELI,
+            };
             let (x, z) = (cx as f32 / 100.0, cz as f32 / 100.0);
             let yaw = road_heading(&world.map, x, z);
             let position = [x, CAR_DROP_Y, z];
@@ -202,7 +214,7 @@ impl Mechanic for Vehicles {
     fn on_tick(&mut self, world: &mut World, dt: f32) {
         // Boarding and leaving.
         let pressed: Vec<u32> =
-            world.players.iter().filter(|(_, player)| player.input.buttons() & BUTTON_USE != 0).map(|(&id, _)| id).collect();
+            world.players.iter().filter(|(_, player)| player.alive() && player.input.buttons() & BUTTON_USE != 0).map(|(&id, _)| id).collect();
         for id in pressed {
             if world.players[&id].seat.is_some() {
                 alight(world, id);
@@ -216,10 +228,14 @@ impl Mechanic for Vehicles {
             vehicle.controls = match vehicle.seats[0].and_then(|driver| world.players.get(&driver)) {
                 Some(driver) => {
                     let input = &driver.input;
+                    let buttons = input.buttons();
                     CarControls {
                         steer: from_axis(input.1),
                         throttle: from_axis(input.2),
-                        handbrake: input.buttons() & BUTTON_JUMP != 0,
+                        handbrake: buttons & BUTTON_JUMP != 0,
+                        // A helicopter climbs on jump and sinks on run.
+                        lift: f32::from(buttons & BUTTON_JUMP != 0) - f32::from(buttons & BUTTON_RUN != 0),
+                        powered: true,
                     }
                 }
                 None => CarControls { handbrake: true, ..Default::default() },
@@ -243,7 +259,15 @@ impl Mechanic for Vehicles {
             let [x, y, z] = pose.position;
             let slow = pose.forward_speed.abs() < 1.5;
             vehicle.stuck_ticks = if pose.up_y < 0.2 && slow { vehicle.stuck_ticks + 1 } else { 0 };
-            if y < KILL_Y {
+            if vehicle.wrecked() {
+                // A wreck burns where it lies, then the room puts a fresh one back.
+                vehicle.wreck_in = vehicle.wreck_in.saturating_sub(1);
+                if vehicle.wreck_in == 0 {
+                    vehicle.hp = vehicle_hp(vehicle.kind);
+                    vehicle.last_attacker = None;
+                    world.physics.reset_car(vid, vehicle.home.0, vehicle.home.1);
+                }
+            } else if y < KILL_Y {
                 world.physics.reset_car(vid, vehicle.home.0, vehicle.home.1);
             } else if vehicle.stuck_ticks >= UNFLIP_TICKS {
                 world.physics.reset_car(vid, [x, y + 1.2, z], pose.yaw());
@@ -274,7 +298,7 @@ mod tests {
         let map = WorldFile {
             version: WORLD_VERSION,
             half_extent: 20_000,
-            spawns: (0..8).map(|i| [i * 3000 - 10_000, 0]).collect(),
+            spawns: (0..9).map(|i| [i * 3000 - 12_000, 0]).collect(),
             roads: vec![Road { width: 800, kind: 0, points: vec![[-20_000, 0], [20_000, 0]] }],
             ..Default::default()
         };
@@ -292,7 +316,7 @@ mod tests {
     fn press(game: &mut Game, id: u32, seq: &mut u32, axes: (i8, i8), buttons: u8, ticks: u32) {
         for _ in 0..ticks {
             *seq += 1;
-            game.handle(Command::Input(id, vec![InputFrame(*seq, axes.0, axes.1, 0, buttons, 0)]));
+            game.handle(Command::Input(id, 0, vec![InputFrame(*seq, axes.0, axes.1, 0, buttons, 0, 0)]));
             game.step();
         }
     }
@@ -313,9 +337,11 @@ mod tests {
     #[test]
     fn cars_are_placed_along_the_road() {
         let game = game();
-        assert_eq!(game.world.vehicles.len(), CAR_COUNT + TANK_COUNT);
+        assert_eq!(game.world.vehicles.len(), CAR_COUNT + TANK_COUNT + HELI_COUNT);
         let tanks = game.world.vehicles.values().filter(|vehicle| vehicle.kind == KIND_TANK).count();
         assert_eq!(tanks, TANK_COUNT);
+        let helis = game.world.vehicles.values().filter(|vehicle| vehicle.kind == KIND_HELI).count();
+        assert_eq!(helis, HELI_COUNT);
         for &vid in game.world.vehicles.keys() {
             let pose = game.world.physics.car_pose(vid).unwrap();
             // The road runs along X, so the car faces +X or -X: |yaw| is a quarter turn.
@@ -382,9 +408,9 @@ mod tests {
         for _ in 0..180 {
             seq_a += 1;
             seq_b += 1;
-            game.handle(Command::Input(driver, vec![InputFrame(seq_a, 0, 127, 0, 0, 0)]));
+            game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0)]));
             // A passenger's stick does nothing.
-            game.handle(Command::Input(rider, vec![InputFrame(seq_b, 127, -127, 0, 0, 0)]));
+            game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 127, -127, 0, 0, 0, 0)]));
             game.step();
         }
         let end = game.world.physics.car_pose(vid).unwrap();
@@ -392,6 +418,50 @@ mod tests {
         assert!(travelled > 5.0, "the car drove {travelled} m");
         let rider_at = game.world.players[&rider].character.position;
         assert_eq!(rider_at, end.position, "passengers move with the car");
+
+        // Only the driver is told the car's exact motion, so they can predict it.
+        let drive = game.drive_state(driver).expect("the driver gets the car's motion");
+        let speed_cm = (drive.0 as f32).hypot(drive.2 as f32);
+        assert!(speed_cm > 500.0, "driving at over 5 m/s: {drive:?}");
+        assert_eq!(game.drive_state(rider), None);
+    }
+
+    #[test]
+    fn a_pilot_lifts_off_with_one_passenger() {
+        let mut game = game();
+        let (pilot, _a) = join(&mut game);
+        let (rider, _b) = join(&mut game);
+        let (third, _c) = join(&mut game);
+        let (mut seq_a, mut seq_b, mut seq_c) = (0, 0, 0);
+        for (id, seq) in [(pilot, &mut seq_a), (rider, &mut seq_b), (third, &mut seq_c)] {
+            idle(&mut game, id, seq, 3);
+        }
+        let (&vid, _) = game.world.vehicles.iter().find(|(_, vehicle)| vehicle.kind == KIND_HELI).expect("a helicopter is placed");
+        let start = game.world.physics.car_pose(vid).unwrap();
+        for id in [pilot, rider, third] {
+            game.world.players.get_mut(&id).unwrap().character.position = [start.position[0] + 2.5, STANDING_Y, start.position[2]];
+        }
+        for (id, seq) in [(pilot, &mut seq_a), (rider, &mut seq_b), (third, &mut seq_c)] {
+            press(&mut game, id, seq, (0, 0), BUTTON_USE, 1);
+            idle(&mut game, id, seq, 3);
+        }
+        assert_eq!(game.world.vehicles[&vid].seats[..3], [Some(pilot), Some(rider), None], "two seats, and the pilot first");
+        assert!(game.world.players[&third].seat.is_none());
+
+        // Jump climbs: a second of rotor spin-up is not needed, the lift is immediate.
+        press(&mut game, pilot, &mut seq_a, (0, 0), BUTTON_JUMP, 120);
+        let end = game.world.physics.car_pose(vid).unwrap();
+        assert!(end.position[1] > start.position[1] + 3.0, "climbed from {} to {}", start.position[1], end.position[1]);
+        assert_eq!(game.world.players[&rider].character.position, end.position, "the passenger goes up with it");
+        let drive = game.drive_state(pilot).expect("the pilot gets the motion");
+        assert!(drive.1 > 100, "climbing at over 1 m/s: {drive:?}");
+
+        // Let go of the stick: it hovers where it is.
+        idle(&mut game, pilot, &mut seq_a, 240);
+        let hover = game.world.physics.car_pose(vid).unwrap();
+        idle(&mut game, pilot, &mut seq_a, 60);
+        let later = game.world.physics.car_pose(vid).unwrap();
+        assert!((later.position[1] - hover.position[1]).abs() < 0.5, "hovering: {} -> {}", hover.position[1], later.position[1]);
     }
 
     #[test]
@@ -446,8 +516,8 @@ mod tests {
         for _ in 0..240 {
             seq_a += 1;
             seq_b += 1;
-            game.handle(Command::Input(driver, vec![InputFrame(seq_a, 0, 127, 0, 0, 0)]));
-            game.handle(Command::Input(victim, vec![InputFrame(seq_b, 0, 0, 0, 0, 0)]));
+            game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0)]));
+            game.handle(Command::Input(victim, 0, vec![InputFrame(seq_b, 0, 0, 0, 0, 0, 0)]));
             game.step();
             let character = game.world.players[&victim].character;
             peak_knock = peak_knock.max(character.knock[0].hypot(character.knock[1]));
@@ -491,8 +561,8 @@ mod tests {
         for _ in 0..30 {
             seq_a += 1;
             seq_b += 1;
-            game.handle(Command::Input(driver, vec![InputFrame(seq_a, 0, 0, 0, 0, 0)]));
-            game.handle(Command::Input(rider, vec![InputFrame(seq_b, 0, 0, 0, 0, 0)]));
+            game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 0, 0, 0, 0, 0)]));
+            game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 0, 0, 0, 0, 0, 0)]));
             game.step();
         }
         RoofScene { vid, driver, rider, start: [pose.position[0], pose.position[2]], seqs: (seq_a, seq_b), _inboxes: (a, b) }
@@ -506,8 +576,8 @@ mod tests {
         for _ in 0..240 {
             seq_a += 1;
             seq_b += 1;
-            game.handle(Command::Input(driver, vec![InputFrame(seq_a, 0, 127, 0, 0, 0)]));
-            game.handle(Command::Input(rider, vec![InputFrame(seq_b, 0, 0, 0, 0, 0)]));
+            game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0)]));
+            game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 0, 0, 0, 0, 0, 0)]));
             game.step();
         }
         let car = game.world.physics.car_pose(vid).unwrap();
@@ -528,8 +598,8 @@ mod tests {
         for _ in 0..180 {
             seq_a += 1;
             seq_b += 1;
-            game.handle(Command::Input(driver, vec![InputFrame(seq_a, 0, 127, 0, 0, 0)]));
-            game.handle(Command::Input(rider, vec![InputFrame(seq_b, 0, 0, 0, 0, 0)]));
+            game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0)]));
+            game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 0, 0, 0, 0, 0, 0)]));
             game.step();
         }
         let speed = game.world.physics.car_pose(vid).unwrap().velocity;
@@ -537,14 +607,14 @@ mod tests {
         assert!(speed > 6.0, "the car is moving at {speed}");
         seq_a += 1;
         seq_b += 1;
-        game.handle(Command::Input(driver, vec![InputFrame(seq_a, 0, 127, 0, 0, 0)]));
-        game.handle(Command::Input(rider, vec![InputFrame(seq_b, 0, 0, 0, BUTTON_JUMP, 0)]));
+        game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0)]));
+        game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 0, 0, 0, BUTTON_JUMP, 0, 0)]));
         game.step();
         // The jitter buffer holds one frame back, so the jump is applied on the next tick.
         seq_a += 1;
         seq_b += 1;
-        game.handle(Command::Input(driver, vec![InputFrame(seq_a, 0, 127, 0, 0, 0)]));
-        game.handle(Command::Input(rider, vec![InputFrame(seq_b, 0, 0, 0, 0, 0)]));
+        game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0)]));
+        game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 0, 0, 0, 0, 0, 0)]));
         game.step();
         let left = game.world.players[&rider].character;
         assert_eq!(left.ride, 0);
@@ -555,8 +625,9 @@ mod tests {
 
     #[test]
     fn parked_cars_in_the_shipped_world_settle_and_stay_put() {
-        let bytes = include_bytes!("../../../../client/public/world.msgpack");
-        let mut game = Game::new(WorldFile::decode(bytes).unwrap(), 0).unwrap();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../client/public/world.msgpack");
+        let (world, hash) = crate::read_world(&path).unwrap();
+        let mut game = Game::new(world, hash).unwrap();
         assert!(game.world.vehicles.len() >= 3, "only {} cars fit", game.world.vehicles.len());
         let start: Vec<_> = game.world.vehicles.keys().map(|&id| (id, game.world.physics.car_pose(id).unwrap())).collect();
         for _ in 0..5 * TICK_RATE {

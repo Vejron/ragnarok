@@ -1,10 +1,9 @@
 use super::Mechanic;
 use crate::game::World;
 use crate::physics::{Character, STANDING_Y};
-use shared::consts::KILL_Y;
 use shared::quant::from_cm;
 
-/// Drops new players at a random outdoor spawn point, and respawns anyone who falls out of the world.
+/// Drops new players at a random outdoor spawn point. `Combat` calls `place` again when a dead player respawns.
 /// Spawns are sorted centre-first by `osm-import`; picking among the first few keeps players close.
 pub struct Spawn;
 
@@ -13,7 +12,7 @@ const SPAWN_DROP: f32 = 0.5;
 /// How many of the most central spawn points new players are spread over.
 const NEARBY_SPAWNS: usize = 6;
 
-fn place(world: &mut World, id: u32) {
+pub(super) fn place(world: &mut World, id: u32) {
     let point = if world.map.spawns.is_empty() {
         [0, 0]
     } else {
@@ -32,17 +31,5 @@ fn place(world: &mut World, id: u32) {
 impl Mechanic for Spawn {
     fn on_join(&mut self, world: &mut World, id: u32) {
         place(world, id);
-    }
-
-    fn on_tick(&mut self, world: &mut World, _dt: f32) {
-        let fallen: Vec<u32> = world
-            .players
-            .iter()
-            .filter(|(_, player)| player.character.position[1] < KILL_Y)
-            .map(|(&id, _)| id)
-            .collect();
-        for id in fallen {
-            place(world, id);
-        }
     }
 }

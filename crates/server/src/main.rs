@@ -3,6 +3,7 @@ mod jitter;
 mod mechanics;
 mod netem;
 mod physics;
+mod replication;
 mod rng;
 mod session;
 mod tls;
@@ -10,7 +11,7 @@ mod tls;
 use anyhow::{Context, Result};
 use certon::{AcmeIssuer, FileStorage, Http01Solver, acme_issuer::CertIssuer};
 use salvo::prelude::*;
-use shared::world::{WORLD_VERSION, WorldFile, world_hash};
+use shared::world::{Manifest, Tile, WORLD_VERSION, WorldFile, world_hash};
 use std::{path::Path, sync::Arc};
 use tokio::sync::mpsc;
 
@@ -18,13 +19,29 @@ fn env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 
+/// Reads the manifest and every tile next to it, merged into the world the server simulates. The
+/// returned hash is the manifest's, which vouches for each tile through the hashes listed in it.
 fn load_world() -> Result<(WorldFile, u32)> {
     let path = env("RAGNAROK_WORLD").unwrap_or_else(|| "client/public/world.msgpack".into());
-    let bytes = std::fs::read(&path)
-        .with_context(|| format!("reading {path}; generate it with `cargo run -p osm-import`"))?;
-    let world = WorldFile::decode(&bytes).with_context(|| format!("decoding {path}"))?;
-    anyhow::ensure!(world.version == WORLD_VERSION, "{path} is world version {}, expected {WORLD_VERSION}", world.version);
-    tracing::info!(path, buildings = world.buildings.len(), roads = world.roads.len(), "world loaded");
+    read_world(Path::new(&path))
+}
+
+fn read_world(path: &Path) -> Result<(WorldFile, u32)> {
+    let shown = path.display();
+    let bytes = std::fs::read(path)
+        .with_context(|| format!("reading {shown}; generate it with `cargo run -p osm-import`"))?;
+    let manifest = Manifest::decode(&bytes).with_context(|| format!("decoding {shown}"))?;
+    anyhow::ensure!(manifest.version == WORLD_VERSION, "{shown} is world version {}, expected {WORLD_VERSION}", manifest.version);
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let mut tiles = Vec::with_capacity(manifest.tiles.len());
+    for entry in &manifest.tiles {
+        let file = dir.join(entry.path());
+        let tile_bytes = std::fs::read(&file).with_context(|| format!("reading {}", file.display()))?;
+        anyhow::ensure!(world_hash(&tile_bytes) == entry.hash, "{} does not match the manifest; regenerate the world", file.display());
+        tiles.push(Tile::decode(&tile_bytes).with_context(|| format!("decoding {}", file.display()))?);
+    }
+    let world = WorldFile::assemble(&manifest, tiles);
+    tracing::info!(path = %shown, tiles = manifest.tiles.len(), buildings = world.buildings.len(), roads = world.roads.len(), "world loaded");
     Ok((world, world_hash(&bytes)))
 }
 

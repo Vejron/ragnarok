@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { blendEntity, blendVehicle, Interpolator } from '@/net/interp'
 import type { EntityState, VehicleState } from '@/net/codec'
 
-const at = (x: number, yaw = 0): EntityState => ({ id: 7, kind: 0, x, y: 1, z: 0, yaw, vy: 0, grounded: true, knockX: 0, knockZ: 0 })
+const at = (x: number, yaw = 0): EntityState => ({ id: 7, kind: 0, x, y: 1, z: 0, yaw, vy: 0, grounded: true, dead: false, knockX: 0, knockZ: 0 })
 
 describe('Interpolator', () => {
   it('blends between the bracketing snapshots', () => {
@@ -53,7 +53,7 @@ describe('Interpolator', () => {
 
   it('blends vehicle orientation the short way and keeps the seats of the newer snapshot', () => {
     const car = (x: number, angle: number, seats: number[]): VehicleState => ({
-      id: 9, kind: 1, x, y: 0.7, z: 0, qx: 0, qy: Math.sin(angle / 2), qz: 0, qw: Math.cos(angle / 2), steer: 0, seats, turret: null,
+      id: 9, kind: 1, x, y: 0.7, z: 0, qx: 0, qy: Math.sin(angle / 2), qz: 0, qw: Math.cos(angle / 2), steer: 0, seats, turret: null, hp: 100,
     })
     const interp = new Interpolator<VehicleState>(blendVehicle)
     // 0.2 rad and -0.2 rad about Y; the same rotation as q and -q must not spin the long way.
@@ -71,7 +71,7 @@ describe('Interpolator', () => {
 
   it('blends a turret by angle and takes the shot counter from the nearer snapshot', () => {
     const tank = (turret: VehicleState['turret']): VehicleState => ({
-      id: 3, kind: 2, x: 0, y: 1, z: 0, qx: 0, qy: 0, qz: 0, qw: 1, steer: 0, seats: [1, 2], turret,
+      id: 3, kind: 2, x: 0, y: 1, z: 0, qx: 0, qy: 0, qz: 0, qw: 1, steer: 0, seats: [1, 2], turret, hp: 250,
     })
     const interp = new Interpolator<VehicleState>(blendVehicle)
     // 3.0 to -3.0 rad is a 0.28 rad turn through ±π, not 6 rad the long way.

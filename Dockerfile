@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY --from=build /server /app/server
 COPY client/dist /app/dist
 COPY client/public/world.msgpack /app/world.msgpack
+COPY client/public/tiles /app/tiles
 ENV RAGNAROK_DIST=/app/dist \
     RAGNAROK_WORLD=/app/world.msgpack \
     RAGNAROK_ACME_CACHE=/acme
