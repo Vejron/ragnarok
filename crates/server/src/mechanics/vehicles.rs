@@ -302,7 +302,10 @@ mod tests {
             roads: vec![Road { width: 800, kind: 0, points: vec![[-20_000, 0], [20_000, 0]] }],
             ..Default::default()
         };
-        Game::new(map, 0).unwrap()
+        // Loose items would take a test's use button.
+        let mut game = Game::new(map, 0).unwrap();
+        game.world.pickups.clear();
+        game
     }
 
     fn join(game: &mut Game) -> (u32, mpsc::Receiver<Outgoing>) {
@@ -316,7 +319,7 @@ mod tests {
     fn press(game: &mut Game, id: u32, seq: &mut u32, axes: (i8, i8), buttons: u8, ticks: u32) {
         for _ in 0..ticks {
             *seq += 1;
-            game.handle(Command::Input(id, 0, vec![InputFrame(*seq, axes.0, axes.1, 0, buttons, 0, 0)]));
+            game.handle(Command::Input(id, 0, vec![InputFrame(*seq, axes.0, axes.1, 0, buttons, 0, 0, 0)]));
             game.step();
         }
     }
@@ -408,9 +411,9 @@ mod tests {
         for _ in 0..180 {
             seq_a += 1;
             seq_b += 1;
-            game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0)]));
+            game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0, 0)]));
             // A passenger's stick does nothing.
-            game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 127, -127, 0, 0, 0, 0)]));
+            game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 127, -127, 0, 0, 0, 0, 0)]));
             game.step();
         }
         let end = game.world.physics.car_pose(vid).unwrap();
@@ -516,8 +519,8 @@ mod tests {
         for _ in 0..240 {
             seq_a += 1;
             seq_b += 1;
-            game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0)]));
-            game.handle(Command::Input(victim, 0, vec![InputFrame(seq_b, 0, 0, 0, 0, 0, 0)]));
+            game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0, 0)]));
+            game.handle(Command::Input(victim, 0, vec![InputFrame(seq_b, 0, 0, 0, 0, 0, 0, 0)]));
             game.step();
             let character = game.world.players[&victim].character;
             peak_knock = peak_knock.max(character.knock[0].hypot(character.knock[1]));
@@ -561,8 +564,8 @@ mod tests {
         for _ in 0..30 {
             seq_a += 1;
             seq_b += 1;
-            game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 0, 0, 0, 0, 0)]));
-            game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 0, 0, 0, 0, 0, 0)]));
+            game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 0, 0, 0, 0, 0, 0)]));
+            game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 0, 0, 0, 0, 0, 0, 0)]));
             game.step();
         }
         RoofScene { vid, driver, rider, start: [pose.position[0], pose.position[2]], seqs: (seq_a, seq_b), _inboxes: (a, b) }
@@ -576,8 +579,8 @@ mod tests {
         for _ in 0..240 {
             seq_a += 1;
             seq_b += 1;
-            game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0)]));
-            game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 0, 0, 0, 0, 0, 0)]));
+            game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0, 0)]));
+            game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 0, 0, 0, 0, 0, 0, 0)]));
             game.step();
         }
         let car = game.world.physics.car_pose(vid).unwrap();
@@ -598,8 +601,8 @@ mod tests {
         for _ in 0..180 {
             seq_a += 1;
             seq_b += 1;
-            game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0)]));
-            game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 0, 0, 0, 0, 0, 0)]));
+            game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0, 0)]));
+            game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 0, 0, 0, 0, 0, 0, 0)]));
             game.step();
         }
         let speed = game.world.physics.car_pose(vid).unwrap().velocity;
@@ -607,14 +610,14 @@ mod tests {
         assert!(speed > 6.0, "the car is moving at {speed}");
         seq_a += 1;
         seq_b += 1;
-        game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0)]));
-        game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 0, 0, 0, BUTTON_JUMP, 0, 0)]));
+        game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0, 0)]));
+        game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 0, 0, 0, BUTTON_JUMP, 0, 0, 0)]));
         game.step();
         // The jitter buffer holds one frame back, so the jump is applied on the next tick.
         seq_a += 1;
         seq_b += 1;
-        game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0)]));
-        game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 0, 0, 0, 0, 0, 0)]));
+        game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0, 0)]));
+        game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 0, 0, 0, 0, 0, 0, 0)]));
         game.step();
         let left = game.world.players[&rider].character;
         assert_eq!(left.ride, 0);

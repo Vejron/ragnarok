@@ -43,13 +43,25 @@ pub fn seat_count(kind: u8) -> usize {
 pub const FLAG_GROUNDED: u8 = 1 << 0;
 /// Dead and waiting to respawn: lying where they fell, and neither hit nor hurt by anything.
 pub const FLAG_DEAD: u8 = 1 << 1;
+/// Holding crouch, so other clients can pose them low.
+pub const FLAG_CROUCHING: u8 = 1 << 2;
+/// Bits 3..=5 hold the item in the player's hands (`ITEM_*`), so others can draw it.
+pub const FLAG_HELD_SHIFT: u8 = 3;
+pub const FLAG_HELD_MASK: u8 = 0b111 << FLAG_HELD_SHIFT;
 
 /// Weapons, as named in shot and kill events.
+/// The AK5, and what an unarmed death (a fall) is credited to.
 pub const WEAPON_RIFLE: u8 = 0;
 pub const WEAPON_SHELL: u8 = 1;
 pub const WEAPON_ROCKET: u8 = 2;
 /// A vehicle going up. Only ever the weapon of a shot event or a kill.
 pub const WEAPON_WRECK: u8 = 3;
+pub const WEAPON_REVOLVER: u8 = 4;
+pub const WEAPON_GRENADE: u8 = 5;
+
+/// `ProjectileState` kinds.
+pub const PROJECTILE_ROCKET: u8 = 0;
+pub const PROJECTILE_GRENADE: u8 = 1;
 
 /// One simulation tick of player intent. The client predicts with exactly these quantized values,
 /// so client and server feed the simulation identical inputs.
@@ -70,6 +82,8 @@ pub struct InputFrame(
     /// The server tick this frame's picture showed, modulo 65536: the interpolated world the
     /// player was looking at when they pulled the trigger. The server rewinds other players to it.
     pub u16,
+    /// The hotbar slot the player has selected, `0..HOTBAR_SLOTS`.
+    pub u8,
 );
 
 impl InputFrame {
@@ -84,6 +98,9 @@ impl InputFrame {
     }
     pub fn view(&self) -> u16 {
         self.6
+    }
+    pub fn slot(&self) -> u8 {
+        self.7
     }
 }
 
@@ -222,21 +239,36 @@ pub struct DriveState(
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShotEvent(pub u32, pub u8, pub i32, pub i32, pub i32);
 
-/// A rocket in flight: `[id, x, y, z, vx, vy, vz]`, centimetres and cm/s. A client extrapolates
-/// nothing: it interpolates these like any entity and aims the rocket along `v`.
+/// A rocket or grenade in flight: `[id, kind, x, y, z, vx, vy, vz]`, centimetres and cm/s. A client
+/// extrapolates nothing: it interpolates these like any entity and aims the rocket along `v`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProjectileState(pub u32, pub i32, pub i32, pub i32, pub i16, pub i16, pub i16);
+pub struct ProjectileState(pub u32, pub u8, pub i32, pub i32, pub i32, pub i16, pub i16, pub i16);
+
+/// One hotbar slot: `[item, count, ammo]`. `item` is `ITEM_NONE` for an empty slot; `ammo` is the
+/// rounds left in the magazine of a gun.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ItemSlot(pub u8, pub u8, pub u8);
+
+/// What only the receiving player is told about themselves: `[hp, progress, [slot, ...]]`.
+/// `hp` is their health, `0` is dead. `progress` is how far a reload or a bandage has got, 0..=255,
+/// or 0 when neither is going on.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelfState(pub u8, pub u8, pub Vec<ItemSlot>);
+
+/// An item lying on the ground: `[id, item, x, y, z]`, centimetres. Static until taken.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PickupState(pub u32, pub u8, pub i32, pub i32, pub i32);
 
 /// `[1, server_tick, baseline, ack_input_seq, ride, [new entity, ...], [entity delta, ...],
-/// [new vehicle, ...], [vehicle delta, ...], [removed id, ...], drive, hp, [shot, ...],
-/// [rocket, ...]]`, sent as a datagram.
+/// [new vehicle, ...], [vehicle delta, ...], [removed id, ...], drive, self, [shot, ...],
+/// [projectile, ...], [pickup, ...]]`, sent as a datagram.
 /// `baseline` is the tick of the snapshot the lists are relative to, or 0 when they are not
 /// (everything in range is then listed as new). `ack_input_seq` is the newest input of the
 /// *receiving* player that the state already includes. `ride` is the id of the vehicle the
 /// receiving player stands on top of, or 0. It is carried with that vehicle, so the client must
-/// predict relative to it. `drive` is `nil` unless the receiving player is driving. `hp` is the
-/// receiving player's own health; `0` is dead. `shots` are the rifle shots since the previous
-/// snapshot, newest last, capped at `MAX_SHOT_EVENTS`.
+/// predict relative to it. `drive` is `nil` unless the receiving player is driving. `self` is the
+/// receiving player's own health and hotbar. `shots` are the gunshots since the previous
+/// snapshot, newest last, capped at `MAX_SHOT_EVENTS`. `pickups` are the items on the ground in range.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot(
     pub u8,
@@ -250,9 +282,10 @@ pub struct Snapshot(
     pub Vec<VehicleDelta>,
     pub Vec<u32>,
     pub Option<DriveState>,
-    pub u8,
+    pub SelfState,
     pub Vec<ShotEvent>,
     pub Vec<ProjectileState>,
+    pub Vec<PickupState>,
 );
 
 /// `[2, nonce]`.
@@ -294,16 +327,17 @@ pub fn decode<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Option<T> {
 mod tests {
     use super::*;
     use crate::consts::*;
+    use crate::items::*;
 
     // These fixtures are duplicated in `client/src/__tests__/codec.spec.ts`. If either side
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 11, 205, 4, 206, 146, 151, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 151, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7,
+        148, 0, 12, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[
-        158, 1, 205, 4, 210, 205, 4, 206, 42, 9, 145, 154, 7, 0, 0, 85, 206, 0, 1, 134, 160, 0, 0, 3, 0, 0, 145, 153, 1, 25, 253, 40, 208, 136, 205, 2, 138, 1, 209, 254, 212, 12, 145, 156, 10, 2, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 146, 1, 7, 148, 209, 253, 68, 204, 250, 3, 205, 4, 210, 0, 145, 155, 9, 100, 0, 208, 211, 3, 254, 0, 4, 148, 1, 0, 7, 0, 192, 100, 146, 3, 11, 152, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 73, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 151, 40, 205, 4, 176, 204, 150, 209, 252, 224, 205, 11, 184, 0, 209, 246, 60,
+        159, 1, 205, 4, 210, 205, 4, 206, 42, 9, 145, 154, 7, 0, 0, 85, 206, 0, 1, 134, 160, 0, 0, 3, 0, 0, 145, 153, 1, 25, 253, 40, 208, 136, 205, 2, 138, 1, 209, 254, 212, 12, 145, 156, 10, 2, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 146, 1, 7, 148, 209, 253, 68, 204, 250, 3, 205, 4, 210, 0, 145, 155, 9, 100, 0, 208, 211, 3, 254, 0, 4, 148, 1, 0, 7, 0, 192, 100, 146, 3, 11, 152, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 73, 204, 128, 147, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 152, 40, 1, 205, 4, 176, 204, 150, 209, 252, 224, 205, 11, 184, 0, 209, 246, 60, 145, 149, 60, 4, 209, 254, 212, 5, 205, 4, 226,
     ];
 
     fn sample_input() -> ClientInput {
@@ -312,8 +346,8 @@ mod tests {
             PROTOCOL_VERSION,
             1230,
             vec![
-                InputFrame(41, 127, 0, 1571, 0, 300, 61_000),
-                InputFrame(42, -127, 127, -1950, BUTTON_JUMP | BUTTON_RUN | BUTTON_FIRE, -150, 7),
+                InputFrame(41, 127, 0, 1571, 0, 300, 61_000, 0),
+                InputFrame(42, -127, 127, -1950, BUTTON_JUMP | BUTTON_RUN | BUTTON_FIRE, -150, 7, 3),
             ],
         )
     }
@@ -331,9 +365,10 @@ mod tests {
             vec![VehicleDelta(9, 100, 0, -45, 3, -2, 0, 4, Some(vec![1, 0, 7, 0]), None, 100)],
             vec![3, 11],
             Some(DriveState(120, -5, -2500, 30, -400, 15, 250, -600)),
-            73,
+            SelfState(73, 128, vec![ItemSlot(ITEM_AK5, 1, 17), ItemSlot(ITEM_NONE, 0, 0), ItemSlot(ITEM_GRENADE, 2, 0)]),
             vec![ShotEvent(7, WEAPON_RIFLE, 1500, 160, -4200), ShotEvent(1, WEAPON_RIFLE, -20, 90, 31_000)],
-            vec![ProjectileState(40, 1200, 150, -800, 3000, 0, -2500)],
+            vec![ProjectileState(40, PROJECTILE_GRENADE, 1200, 150, -800, 3000, 0, -2500)],
+            vec![PickupState(60, ITEM_BANDAGE, -300, 5, 1250)],
         )
     }
 

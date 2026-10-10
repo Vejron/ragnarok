@@ -1,0 +1,246 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import * as THREE from 'three'
+import { describe, expect, it } from 'vitest'
+import { Character, Crowd, parseCharacter } from '@/render/character'
+import { ITEM_AK5, ITEM_BANDAGE, ITEM_GRENADE, ITEM_NONE, ITEM_REVOLVER } from '@/sim/items'
+
+const file = resolve(process.cwd(), 'public/models/player.glb')
+
+async function crowd() {
+  const bytes = readFileSync(file)
+  // A copy made here, so it is an ArrayBuffer of the realm the loader checks against.
+  const copy = new Uint8Array(bytes.length)
+  copy.set(bytes)
+  const data = copy.buffer
+  const c = new Crowd()
+  c.asset = await parseCharacter(data)
+  return c
+}
+
+/** Runs the character for `seconds`, moving at (vx, vz) while facing `yaw`. */
+function run(person: Character, yaw: number, vx: number, vz: number, seconds = 1) {
+  for (let t = 0; t < seconds; t += 1 / 60) person.update([0, 0.85, 0], yaw, vx, vz, true, 1 / 60)
+}
+
+describe('Character holding things', () => {
+  it('has a clip set per stance and a mesh and muzzle for each weapon', async () => {
+    const c = await crowd()
+    for (const prefix of ['pistol_', 'hold_']) {
+      for (const name of ['idle', 'jump_air', 'walk_fwd', 'run_left', 'crouch_idle', 'crouch_back', 'slide']) {
+        expect(c.asset!.clips.has(prefix + name), prefix + name).toBe(true)
+      }
+    }
+    for (const name of ['weapon_ak5', 'weapon_revolver', 'weapon_grenade', 'weapon_bandage', 'muzzle', 'muzzle_pistol']) {
+      expect(c.asset!.scene.getObjectByName(name), name).toBeTruthy()
+    }
+    c.dispose()
+  })
+
+  it('shows only the weapon in hand', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    const shown = () =>
+      ['weapon_ak5', 'weapon_revolver', 'weapon_grenade', 'weapon_bandage'].filter((name) => {
+        let visible = false
+        c.root.traverse((node) => {
+          if (node.name === name) visible = node.visible
+        })
+        return visible
+      })
+    expect(shown()).toEqual(['weapon_ak5'])
+    person.held = ITEM_REVOLVER
+    expect(shown()).toEqual(['weapon_revolver'])
+    person.held = ITEM_GRENADE
+    expect(shown()).toEqual(['weapon_grenade'])
+    person.held = ITEM_BANDAGE
+    expect(shown()).toEqual(['weapon_bandage'])
+    person.held = ITEM_NONE
+    expect(shown()).toEqual([])
+    c.dispose()
+  })
+
+  it('blends into the stance of what it holds, and keeps the weights summing to one', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    run(person, 0, 0, 0)
+    expect(person.blend.get('idle')!).toBeGreaterThan(0.9)
+    person.held = ITEM_REVOLVER
+    run(person, 0, 0, 0, 1)
+    expect(person.blend.get('pistol_idle')!).toBeGreaterThan(0.9)
+    run(person, 0, 0, -3, 1)
+    expect(person.blend.get('pistol_walk_fwd')!).toBeGreaterThan(0.9)
+    person.held = ITEM_GRENADE
+    run(person, 0, 0, -7.5, 1)
+    expect(person.blend.get('hold_run_fwd')!).toBeGreaterThan(0.9)
+    let sum = 0
+    for (const w of person.blend.values()) sum += w
+    expect(sum).toBeCloseTo(1, 5)
+    c.dispose()
+  })
+
+  it('shoots from a pistol at arm\'s length in front, and from nothing in a hands-low stance', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    person.held = ITEM_REVOLVER
+    run(person, 0, 0, 0)
+    const muzzle = person.muzzle()!
+    expect(muzzle.z).toBeLessThan(-0.4)
+    expect(muzzle.y).toBeGreaterThan(0.9)
+    person.held = ITEM_AK5
+    run(person, 0, 0, 0)
+    expect(person.muzzle()).not.toBeNull()
+    person.held = ITEM_BANDAGE
+    expect(person.muzzle()).toBeNull()
+    c.dispose()
+  })
+})
+
+describe('Character', () => {
+  it('has the clips the blend expects', async () => {
+    const c = await crowd()
+    for (const name of ['idle', 'jump_air', 'death', 'walk_fwd', 'walk_back', 'walk_left', 'walk_right', 'run_fwd', 'run_back', 'run_left', 'run_right', 'crouch_idle', 'crouch_fwd', 'crouch_back', 'crouch_left', 'crouch_right', 'slide']) {
+      expect(c.asset!.clips.has(name), name).toBe(true)
+    }
+    expect(c.asset!.scene.getObjectByName('muzzle')).toBeTruthy()
+    c.dispose()
+  })
+
+  it('stands with its feet on the ground and the rifle out to its right', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    run(person, 0, 0, 0)
+    const muzzle = person.muzzle()!
+    // Yaw 0 faces -Z; the rifle points that way, on the +X (right) side, around chest height.
+    expect(muzzle.z).toBeLessThan(-0.3)
+    expect(muzzle.x).toBeGreaterThan(0.05)
+    expect(muzzle.y).toBeGreaterThan(0.8)
+    expect(muzzle.y).toBeLessThan(1.4)
+    const box = new THREE.Box3().setFromObject(c.root)
+    expect(box.min.y).toBeCloseTo(0, 1)
+    c.dispose()
+  })
+
+  it('turns with its yaw', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    run(person, Math.PI / 2, 0, 0, 0.2)
+    // Quarter turn to the left: forward is now -X.
+    expect(person.muzzle()!.x).toBeLessThan(-0.3)
+    c.dispose()
+  })
+
+  it('plays the strafe clip for sideways movement and the walk clip for forward movement', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    // Facing -Z, moving along +X is to the right.
+    run(person, 0, 3, 0)
+    expect(person.blend.get('walk_right')!).toBeGreaterThan(0.9)
+    run(person, 0, -3, 0)
+    expect(person.blend.get('walk_left')!).toBeGreaterThan(0.9)
+    run(person, 0, 0, -3)
+    expect(person.blend.get('walk_fwd')!).toBeGreaterThan(0.9)
+    run(person, 0, 0, 3)
+    expect(person.blend.get('walk_back')!).toBeGreaterThan(0.9)
+    // Turning the body turns what counts as forward.
+    run(person, Math.PI / 2, -3, 0)
+    expect(person.blend.get('walk_fwd')!).toBeGreaterThan(0.9)
+    run(person, 0, 0, -7.5)
+    expect(person.blend.get('run_fwd')!).toBeGreaterThan(0.9)
+    run(person, 0, 0, 0)
+    expect(person.blend.get('idle')!).toBeGreaterThan(0.9)
+    c.dispose()
+  })
+
+  it('keeps the blend weights summing to one', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    for (let i = 0; i < 120; i++) {
+      person.update([0, 0.85, 0], i * 0.05, Math.sin(i * 0.2) * 6, Math.cos(i * 0.13) * 6, i % 40 > 30, 1 / 60)
+      let sum = 0
+      for (const w of person.blend.values()) sum += w
+      expect(sum).toBeCloseTo(1, 5)
+    }
+    c.dispose()
+  })
+
+  it('lays a dead player down, and hides one in a car', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    run(person, 0, 0, 0, 0.2)
+    person.dead = true
+    run(person, 0, 0, 0, 1.5)
+    const head = () => {
+      c.root.updateMatrixWorld(true)
+      return c.root.getObjectByName('head')!.getWorldPosition(new THREE.Vector3()).y
+    }
+    expect(head()).toBeLessThan(0.5)
+    person.hidden = true
+    expect(person.visible).toBe(false)
+    expect(person.muzzle()).toBeNull()
+    person.hidden = false
+    person.dead = false
+    run(person, 0, 0, 0, 1)
+    expect(head()).toBeGreaterThan(1.4)
+    c.dispose()
+  })
+
+  it('counts and releases the characters it draws', async () => {
+    const c = await crowd()
+    const people = Array.from({ length: 10 }, (_, i) => new Character(c, i))
+    expect(c.size).toBe(10)
+    people.forEach((p) => p.dispose())
+    expect(c.size).toBe(0)
+    c.dispose()
+  })
+
+  it('crouches low, and shuffles sideways in the crouch strafe clips', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    const head = () => {
+      c.root.updateMatrixWorld(true)
+      return c.root.getObjectByName('head')!.getWorldPosition(new THREE.Vector3()).y
+    }
+    const crouched = (vx: number, vz: number, seconds = 1) => {
+      for (let t = 0; t < seconds; t += 1 / 60) person.update([0, 0.85, 0], 0, vx, vz, true, 1 / 60, 0, true)
+    }
+    run(person, 0, 0, 0)
+    const standing = head()
+    crouched(0, 0)
+    expect(person.blend.get('crouch_idle')!).toBeGreaterThan(0.9)
+    expect(head()).toBeLessThan(standing - 0.2)
+    crouched(2, 0)
+    expect(person.blend.get('crouch_right')!).toBeGreaterThan(0.9)
+    crouched(-2, 0)
+    expect(person.blend.get('crouch_left')!).toBeGreaterThan(0.9)
+    crouched(0, -2)
+    expect(person.blend.get('crouch_fwd')!).toBeGreaterThan(0.9)
+    // Standing up again returns to the normal clips.
+    run(person, 0, 0, 0, 1)
+    expect(person.blend.get('idle')!).toBeGreaterThan(0.9)
+    expect(head()).toBeGreaterThan(standing - 0.05)
+    c.dispose()
+  })
+
+  it('slides along its heading, whatever way the camera faces', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    for (let t = 0; t < 1; t += 1 / 60) person.update([0, 0.85, 0], 0, 6, 0, true, 1 / 60, 0, true, true)
+    expect(person.blend.get('slide')!).toBeGreaterThan(0.9)
+    // Camera faces -Z, but it is sliding towards +X: the rifle points that way.
+    expect(person.muzzle()!.x).toBeGreaterThan(0.3)
+    c.dispose()
+  })
+
+  it('tilts the rifle with the aim', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    const aim = (pitch: number) => {
+      for (let i = 0; i < 5; i++) person.update([0, 0.85, 0], 0, 0, 0, true, 1 / 60, pitch)
+      return person.muzzle()!.y
+    }
+    expect(aim(0.5)).toBeGreaterThan(aim(0))
+    expect(aim(-0.8)).toBeLessThan(aim(0))
+    c.dispose()
+  })
+})

@@ -97,7 +97,7 @@ describe('helicopter prediction', () => {
   })
 
   it('jump climbs and run sinks, as on the server', () => {
-    const frame = (buttons: number): InputFrame => ({ seq: 1, strafe: 0, forward: 0, yaw: 0, pitch: 0, buttons, view: 0 })
+    const frame = (buttons: number): InputFrame => ({ seq: 1, strafe: 0, forward: 0, yaw: 0, pitch: 0, buttons, view: 0, slot: 0 })
     expect(controlsOf(frame(1))).toMatchObject({ lift: 1, powered: true })
     expect(controlsOf(frame(2))).toMatchObject({ lift: -1 })
     expect(controlsOf(frame(3))).toMatchObject({ lift: 0 })
@@ -151,7 +151,7 @@ describe('driving a predicted vehicle', () => {
   })
   /** A driver's input that goes forward, swings left and right and brakes. */
   const input = (seq: number): InputFrame => ({
-    seq, strafe: Math.round(Math.sin(seq / 25) * 100), forward: seq < 200 ? 127 : -127, yaw: 0, pitch: 0, view: 0, buttons: seq % 150 === 0 ? 1 : 0,
+    seq, strafe: Math.round(Math.sin(seq / 25) * 100), forward: seq < 200 ? 127 : -127, yaw: 0, pitch: 0, view: 0, slot: 0, buttons: seq % 150 === 0 ? 1 : 0,
   })
 
   /** What the server would send after `ticks` of the inputs: quantized as on the wire. */

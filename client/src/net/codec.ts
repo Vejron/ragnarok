@@ -1,5 +1,6 @@
 import { decode, encode } from '@msgpack/msgpack'
 import { CAR_SEATS, MAX_PACKET, PROTOCOL_VERSION } from '@/sim/consts'
+import { HOTBAR_SLOTS, type ItemSlot } from '@/sim/items'
 
 /**
  * Wire format: MessagePack arrays with a leading tag, fixed-point integers, no field names.
@@ -22,11 +23,21 @@ export const KIND_TANK = 2
 export const KIND_HELI = 3
 export const FLAG_GROUNDED = 1 << 0
 export const FLAG_DEAD = 1 << 1
+export const FLAG_CROUCHING = 1 << 2
+/** Bits 3..=5 hold the item in the player's hands. */
+export const FLAG_HELD_SHIFT = 3
+export const FLAG_HELD_MASK = 0b111 << FLAG_HELD_SHIFT
 
+/** The AK5. */
 export const WEAPON_RIFLE = 0
 export const WEAPON_SHELL = 1
 export const WEAPON_ROCKET = 2
 export const WEAPON_WRECK = 3
+export const WEAPON_REVOLVER = 4
+export const WEAPON_GRENADE = 5
+
+export const PROJECTILE_ROCKET = 0
+export const PROJECTILE_GRENADE = 1
 
 /** One tick of player intent, already quantized: what the client predicts with is what it sends. */
 export interface InputFrame {
@@ -42,6 +53,8 @@ export interface InputFrame {
   pitch: number
   /** The server tick the picture showed, modulo 65536, so the server can rewind shots to it. */
   view: number
+  /** The hotbar slot in hand, 0..HOTBAR_SLOTS. */
+  slot: number
 }
 
 /** One entity of a snapshot, in source units (metres, radians, m/s). */
@@ -56,9 +69,13 @@ export interface EntityState {
   grounded: boolean
   /** Dead and waiting to respawn: lying where they fell. */
   dead: boolean
+  /** Holding crouch. */
+  crouching: boolean
   /** Knockback velocity from being hit by a car, m/s. */
   knockX: number
   knockZ: number
+  /** `ITEM_*` in their hands. */
+  held: number
 }
 
 /**
@@ -85,9 +102,11 @@ export interface VehicleState {
   hp: number
 }
 
-/** A rocket in flight, in metres and m/s. */
+/** A rocket or grenade in flight, in metres and m/s. */
 export interface RocketState {
   id: number
+  /** `PROJECTILE_*`. */
+  kind: number
   x: number
   y: number
   z: number
@@ -128,6 +147,15 @@ export interface DriveState {
 export interface ShotEvent {
   shooter: number
   weapon: number
+  x: number
+  y: number
+  z: number
+}
+
+/** An item lying on the ground, in metres. */
+export interface PickupState {
+  id: number
+  item: number
   x: number
   y: number
   z: number
@@ -184,8 +212,13 @@ export type ServerMessage =
       drive: DriveState | null
       /** The local player's own health; 0 is dead. */
       hp: number
+      /** How far a reload or a bandage has got, 0..255, or 0 when neither is going on. */
+      progress: number
+      /** The local player's hotbar. */
+      inventory: ItemSlot[]
       shots: ShotEvent[]
       rockets: RocketState[]
+      pickups: PickupState[]
     }
   | { type: 'pong'; nonce: number }
   | { type: 'leave'; id: number }
@@ -206,7 +239,7 @@ export const fromAxis = (value: number) => Math.max(-1, Math.min(1, value / 127)
 
 /** `baseline` is the tick of the newest snapshot rebuilt so far, or 0: the server diffs against it. */
 export function encodeInput(frames: readonly InputFrame[], baseline = 0): Uint8Array {
-  return encode([C_INPUT, PROTOCOL_VERSION, baseline, frames.map((f) => [f.seq, f.strafe, f.forward, f.yaw, f.buttons, f.pitch, f.view])])
+  return encode([C_INPUT, PROTOCOL_VERSION, baseline, frames.map((f) => [f.seq, f.strafe, f.forward, f.yaw, f.buttons, f.pitch, f.view, f.slot])])
 }
 
 export function encodePing(nonce: number): Uint8Array {
@@ -234,8 +267,10 @@ export function entityState(raw: readonly number[]): EntityState {
     vy: vy! / CM,
     grounded: (flags! & FLAG_GROUNDED) !== 0,
     dead: (flags! & FLAG_DEAD) !== 0,
+    crouching: (flags! & FLAG_CROUCHING) !== 0,
     knockX: knockX! / CM,
     knockZ: knockZ! / CM,
+    held: (flags! & FLAG_HELD_MASK) >> FLAG_HELD_SHIFT,
   }
 }
 
@@ -246,9 +281,27 @@ function decodeShot(raw: unknown): ShotEvent | null {
 }
 
 function decodeRocket(raw: unknown): RocketState | null {
-  if (!Array.isArray(raw) || raw.length !== 7 || !ints(raw)) return null
-  const [id, x, y, z, vx, vy, vz] = raw as number[]
-  return { id: id!, x: x! / CM, y: y! / CM, z: z! / CM, vx: vx! / CM, vy: vy! / CM, vz: vz! / CM }
+  if (!Array.isArray(raw) || raw.length !== 8 || !ints(raw)) return null
+  const [id, kind, x, y, z, vx, vy, vz] = raw as number[]
+  return { id: id!, kind: kind!, x: x! / CM, y: y! / CM, z: z! / CM, vx: vx! / CM, vy: vy! / CM, vz: vz! / CM }
+}
+
+function decodePickup(raw: unknown): PickupState | null {
+  if (!Array.isArray(raw) || raw.length !== 5 || !ints(raw)) return null
+  const [id, item, x, y, z] = raw as number[]
+  return { id: id!, item: item!, x: x! / CM, y: y! / CM, z: z! / CM }
+}
+
+/** `[hp, progress, [[item, count, ammo], ...]]`: what the server tells a player about themselves. */
+function decodeSelf(raw: unknown): { hp: number; progress: number; inventory: ItemSlot[] } | null {
+  if (!Array.isArray(raw) || raw.length !== 3 || !isInt(raw[0]) || !isInt(raw[1]) || !Array.isArray(raw[2])) return null
+  if (raw[2].length > HOTBAR_SLOTS) return null
+  const inventory: ItemSlot[] = []
+  for (const slot of raw[2] as unknown[]) {
+    if (!Array.isArray(slot) || slot.length !== 3 || !ints(slot)) return null
+    inventory.push({ item: slot[0] as number, count: slot[1] as number, ammo: slot[2] as number })
+  }
+  return { hp: raw[0], progress: raw[1], inventory }
 }
 
 /** A turret as four integers, `null` when the vehicle has none, `undefined` when malformed. */
@@ -359,10 +412,11 @@ export function decodeServer(bytes: Uint8Array): ServerMessage | null {
         return { type: 'welcome', version: version!, id: id!, tickRate: tickRate!, snapshotEvery: snapshotEvery!, worldHash: worldHash! }
       }
     case S_SNAPSHOT: {
-      if (raw.length !== 14 || !isInt(raw[1]) || !isInt(raw[2]) || !isInt(raw[3]) || !isInt(raw[4])) return null
+      if (raw.length !== 15 || !isInt(raw[1]) || !isInt(raw[2]) || !isInt(raw[3]) || !isInt(raw[4])) return null
       const [lists, removed] = [[raw[5], raw[6], raw[7], raw[8]], raw[9]]
       if (!lists.every(Array.isArray) || !Array.isArray(removed) || !ints(removed)) return null
-      if (!isInt(raw[11]) || !Array.isArray(raw[12]) || !Array.isArray(raw[13])) return null
+      const me = decodeSelf(raw[11])
+      if (!me || !Array.isArray(raw[12]) || !Array.isArray(raw[13]) || !Array.isArray(raw[14])) return null
       const delta: WireDelta = { newEntities: [], entities: [], newVehicles: [], vehicles: [], removed: removed as number[] }
       for (const item of raw[5] as unknown[]) {
         const entity = readEntity(item)
@@ -398,7 +452,16 @@ export function decodeServer(bytes: Uint8Array): ServerMessage | null {
         if (!rocket) return null
         rockets.push(rocket)
       }
-      return { type: 'snapshot', tick: raw[1], baseline: raw[2], ack: raw[3], ride: raw[4], delta, drive, hp: raw[11], shots, rockets }
+      const pickups: PickupState[] = []
+      for (const item of raw[14] as unknown[]) {
+        const pickup = decodePickup(item)
+        if (!pickup) return null
+        pickups.push(pickup)
+      }
+      return {
+        type: 'snapshot', tick: raw[1], baseline: raw[2], ack: raw[3], ride: raw[4], delta, drive,
+        hp: me.hp, progress: me.progress, inventory: me.inventory, shots, rockets, pickups,
+      }
     }
     case S_PONG:
       return raw.length === 2 && isInt(raw[1]) ? { type: 'pong', nonce: raw[1] } : null

@@ -42,6 +42,7 @@ export function blendEntity(a: EntityState, b: EntityState, t: number): EntitySt
 export function blendRocket(a: RocketState, b: RocketState, t: number): RocketState {
   return {
     id: b.id,
+    kind: b.kind,
     x: lerp(a.x, b.x, t),
     y: lerp(a.y, b.y, t),
     z: lerp(a.z, b.z, t),
@@ -132,19 +133,21 @@ export class Interpolator<T extends Tracked> {
   }
 
   /** The entity's state at a fractional server tick. Holds the newest state past the end. */
-  sample(id: number, tick: number): (T & { speed: number }) | null {
+  sample(id: number, tick: number): (T & { speed: number; velocity: [number, number] }) | null {
     const track = this.tracks.get(id)
     if (!track || track.length === 0) return null
     const first = track[0]!
     const last = track[track.length - 1]!
-    if (tick <= first.tick) return { ...first.state, speed: 0 }
-    if (tick >= last.tick) return { ...last.state, speed: 0 }
+    if (tick <= first.tick) return { ...first.state, speed: 0, velocity: [0, 0] }
+    if (tick >= last.tick) return { ...last.state, speed: 0, velocity: [0, 0] }
     let i = track.length - 1
     while (track[i - 1]!.tick > tick) i--
     const a = track[i - 1]!
     const b = track[i]!
     const t = (tick - a.tick) / (b.tick - a.tick)
-    const speed = Math.hypot(b.state.x - a.state.x, b.state.z - a.state.z) / ((b.tick - a.tick) / TICK_RATE)
-    return { ...this.blend(a.state, b.state, t), speed }
+    const seconds = (b.tick - a.tick) / TICK_RATE
+    const vx = (b.state.x - a.state.x) / seconds
+    const vz = (b.state.z - a.state.z) / seconds
+    return { ...this.blend(a.state, b.state, t), speed: Math.hypot(vx, vz), velocity: [vx, vz] }
   }
 }

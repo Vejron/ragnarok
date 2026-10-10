@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { HELI_HALF_EXTENTS, HELI_SEATS } from '@/sim/consts'
 import type { Turret } from '@/net/codec'
-import { colorFor } from './stickman'
+import { colorFor } from './character'
 import type { VehicleModel } from './car'
 
 const [HALF_X, HALF_Y, HALF_Z] = HELI_HALF_EXTENTS

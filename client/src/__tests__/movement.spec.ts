@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { decayKnock, desiredTranslation, wishVelocity } from '@/sim/movement'
-import { BUTTON_JUMP, BUTTON_RUN, RUN_SPEED, TICK_DT, WALK_SPEED } from '@/sim/consts'
+import { beginSlide, decayKnock, desiredTranslation, wishVelocity } from '@/sim/movement'
+import { BUTTON_CROUCH, BUTTON_JUMP, BUTTON_RUN, BUTTON_SLIDE, CROUCH_SPEED, SLIDE_SPEED, RUN_SPEED, TICK_DT, WALK_SPEED } from '@/sim/consts'
 
-const frame = (strafe: number, forward: number, yaw: number, buttons = 0) => ({ seq: 1, strafe, forward, yaw, buttons, pitch: 0, view: 0 })
+const frame = (strafe: number, forward: number, yaw: number, buttons = 0) => ({ seq: 1, strafe, forward, yaw, buttons, pitch: 0, view: 0, slot: 0 })
 
 describe('movement', () => {
   it('walks towards -Z at yaw 0', () => {
@@ -14,6 +14,27 @@ describe('movement', () => {
   it('does not run faster diagonally', () => {
     const [x, z] = wishVelocity(frame(127, 127, 0, BUTTON_RUN))
     expect(Math.hypot(x, z)).toBeCloseTo(RUN_SPEED, 4)
+  })
+
+  it('crouches slowly even while running', () => {
+    const [x, z] = wishVelocity(frame(127, 127, 0, BUTTON_CROUCH | BUTTON_RUN))
+    expect(Math.hypot(x, z)).toBeCloseTo(CROUCH_SPEED, 4)
+  })
+
+  it('slides once on a run-crouch press and keeps more speed while crouched', () => {
+    const press = frame(0, 127, 0, BUTTON_RUN | BUTTON_CROUCH | BUTTON_SLIDE)
+    const knock = beginSlide([0, 0], true, press)
+    expect(knock[0]).toBeCloseTo(0, 5)
+    expect(knock[1]).toBeCloseTo(-SLIDE_SPEED, 5)
+    expect(beginSlide(knock, true, press)).toEqual(knock)
+    expect(beginSlide([0, 0], false, press)).toEqual([0, 0])
+    let crouched: [number, number] = [...knock]
+    let standing: [number, number] = [...knock]
+    for (let i = 0; i < 30; i++) {
+      crouched = decayKnock(crouched, true, true)
+      standing = decayKnock(standing, true, false)
+    }
+    expect(Math.abs(crouched[1])).toBeGreaterThan(Math.abs(standing[1]) * 2)
   })
 
   it('jumps only from the ground', () => {

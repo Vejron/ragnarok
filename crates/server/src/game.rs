@@ -9,6 +9,7 @@ use crate::rng::Rng;
 use anyhow::Result;
 use bytes::Bytes;
 use shared::consts::*;
+use shared::items::{HOTBAR_SLOTS, ITEM_NONE};
 use shared::protocol::*;
 use shared::quant::{pack_quat, to_axis, to_cm, to_cm_i16, to_milli_i16, to_mrad};
 use shared::world::WorldFile;
@@ -55,9 +56,17 @@ pub struct Player {
     /// Health; zero means dead and waiting for `respawn_in` to run out.
     pub hp: u8,
     pub respawn_in: u32,
-    /// Ticks until the rifle can fire again.
+    /// What is in each hotbar slot: `[item, count, ammo]`.
+    pub hotbar: [ItemSlot; HOTBAR_SLOTS],
+    /// The slot in hand, as of the last tick.
+    pub selected: usize,
+    /// Ticks until the item in hand can be used again.
     pub fire_cooldown: u32,
-    pub rocket_cooldown: u32,
+    /// Ticks left of a reload, or of a bandage being applied (`channel_left`). Zero when idle.
+    pub reload_left: u32,
+    pub channel_left: u32,
+    /// Whether fire was held last tick, so a semi-automatic gun needs a fresh press.
+    pub trigger_held: bool,
     pub kills: u16,
     pub deaths: u16,
 }
@@ -66,6 +75,28 @@ impl Player {
     pub fn alive(&self) -> bool {
         self.hp > 0
     }
+
+    /// The slot in hand.
+    pub fn held(&self) -> ItemSlot {
+        self.hotbar[self.selected.min(HOTBAR_SLOTS - 1)]
+    }
+
+    /// Takes away anything half done: a reload or a bandage.
+    pub fn interrupt(&mut self) {
+        self.reload_left = 0;
+        self.channel_left = 0;
+    }
+}
+
+/// An item lying on the ground. A taken one stays in the map, out of sight, until it comes back.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pickup {
+    pub item: u8,
+    /// How many of the item taking it gives.
+    pub count: u8,
+    pub position: [f32; 3],
+    /// Ticks until it reappears; zero when it is lying there to be taken.
+    pub respawn_in: u32,
 }
 
 /// Game-side state of a vehicle. Its rigid body lives in `Physics`, under the same id.
@@ -93,9 +124,12 @@ impl Vehicle {
     }
 }
 
-/// A rocket in flight. The `Combat` mechanic steps it and bursts it.
+/// A rocket or a grenade in flight. The `Combat` mechanic steps it and bursts it. A rocket
+/// flies straight and bursts on contact; a grenade falls, bounces, and bursts when `ttl` runs out.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rocket {
+    /// `PROJECTILE_*`.
+    pub kind: u8,
     pub owner: u32,
     pub position: [f32; 3],
     pub velocity: [f32; 3],
@@ -131,6 +165,8 @@ pub struct World {
     pub vehicles: BTreeMap<u32, Vehicle>,
     /// Rockets in flight, which share the id space too.
     pub rockets: BTreeMap<u32, Rocket>,
+    /// Items on the ground, which share the id space too.
+    pub pickups: BTreeMap<u32, Pickup>,
     next_id: u32,
     pub rng: Rng,
     /// Rifle shots since the last snapshot, for drawing tracers. Drained when snapshots go out.
@@ -186,6 +222,7 @@ impl Game {
                 players: BTreeMap::new(),
                 vehicles: BTreeMap::new(),
                 rockets: BTreeMap::new(),
+                pickups: BTreeMap::new(),
                 next_id: 1,
                 rng: Rng::from_time(),
                 shots: Vec::new(),
@@ -240,8 +277,12 @@ impl Game {
                 ack: 0,
                 hp: PLAYER_MAX_HP,
                 respawn_in: 0,
+                hotbar: [ItemSlot(ITEM_NONE, 0, 0); HOTBAR_SLOTS],
+                selected: 0,
                 fire_cooldown: 0,
-                rocket_cooldown: 0,
+                reload_left: 0,
+                channel_left: 0,
+                trigger_held: false,
                 kills: 0,
                 deaths: 0,
             },
@@ -319,6 +360,10 @@ impl Game {
                 if !player.alive() {
                     flags |= FLAG_DEAD;
                 }
+                if player.input.buttons() & BUTTON_CROUCH != 0 {
+                    flags |= FLAG_CROUCHING;
+                }
+                flags |= (player.held().0 << FLAG_HELD_SHIFT) & FLAG_HELD_MASK;
                 EntityState(
                     id,
                     KIND_STICKMAN,
@@ -358,7 +403,20 @@ impl Game {
             .map(|(&id, rocket)| {
                 let [x, y, z] = rocket.position.map(to_cm);
                 let [vx, vy, vz] = rocket.velocity.map(to_cm_i16);
-                ProjectileState(id, x, y, z, vx, vy, vz)
+                ProjectileState(id, rocket.kind, x, y, z, vx, vy, vz)
+            })
+            .collect()
+    }
+
+    /// Items lying on the ground, ordered by id.
+    pub fn pickup_states(&self) -> Vec<PickupState> {
+        self.world
+            .pickups
+            .iter()
+            .filter(|(_, pickup)| pickup.respawn_in == 0)
+            .map(|(&id, pickup)| {
+                let [x, y, z] = pickup.position.map(to_cm);
+                PickupState(id, pickup.item, x, y, z)
             })
             .collect()
     }
@@ -378,13 +436,16 @@ impl Game {
         let entities = self.entity_states();
         let vehicles = self.vehicle_states();
         let rockets = self.projectile_states();
+        let pickups = self.pickup_states();
         let mut shots = std::mem::take(&mut self.world.shots);
         shots.truncate(MAX_SHOT_EVENTS);
-        let everything = Everything { entities: &entities, vehicles: &vehicles, shots: &shots, rockets: &rockets };
+        let everything = Everything { entities: &entities, vehicles: &vehicles, shots: &shots, rockets: &rockets, pickups: &pickups };
         let ids: Vec<u32> = self.outboxes.keys().copied().collect();
         for id in ids {
             let Some(player) = self.world.players.get(&id) else { continue };
-            let own = Own { tick: self.world.tick, ack: player.ack, ride: player.character.ride, drive: self.drive_state(id), hp: player.hp };
+            let own = Own { tick: self.world.tick, ack: player.ack, ride: player.character.ride, drive: self.drive_state(id),
+                me: SelfState(player.hp, progress(player), player.hotbar.to_vec()),
+            };
             // Seated players ride with their vehicle, so the vehicle's position is theirs.
             let at = [player.character.position[0], player.character.position[2]];
             let (Some(outbox), Some(replica)) = (self.outboxes.get(&id), self.replicas.get_mut(&id)) else { continue };
@@ -393,6 +454,20 @@ impl Game {
             let _ = outbox.try_send(Outgoing::Datagram(snapshot.into()));
         }
     }
+}
+
+/// How far the player's reload or bandage has got, 0..=255, or 0 when neither is going on.
+fn progress(player: &Player) -> u8 {
+    use shared::items::{BANDAGE_TICKS, def};
+    let (left, total) = if player.channel_left > 0 {
+        (player.channel_left, BANDAGE_TICKS)
+    } else if player.reload_left > 0 {
+        (player.reload_left, def(player.held().0).map_or(1, |d| d.reload_ticks.max(1)))
+    } else {
+        return 0;
+    };
+    let done = 1.0 - left as f32 / total as f32;
+    ((done * 255.0).round() as u8).max(1)
 }
 
 /// Runs the game loop until every command sender is gone.
@@ -440,7 +515,7 @@ mod tests {
         let Some(Outgoing::Reliable(welcome)) = drain(&mut inbox).into_iter().next() else { panic!("no welcome") };
         assert_eq!(decode::<Welcome>(&welcome).unwrap().2, id);
 
-        game.handle(Command::Input(id, 0, vec![InputFrame(1, 0, 127, 0, 0, 0, 0), InputFrame(2, 0, 127, 0, 0, 0, 0)]));
+        game.handle(Command::Input(id, 0, vec![InputFrame(1, 0, 127, 0, 0, 0, 0, 0), InputFrame(2, 0, 127, 0, 0, 0, 0, 0)]));
         game.step();
         game.step();
         let snapshots: Vec<Snapshot> = drain(&mut inbox)

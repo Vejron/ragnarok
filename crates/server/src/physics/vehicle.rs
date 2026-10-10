@@ -480,6 +480,14 @@ impl Physics {
         Some((distance, car))
     }
 
+    /// How far a ray travels before it meets the world or a vehicle, and the surface normal there.
+    pub fn cast_ray_normal(&self, origin: [f32; 3], dir: [f32; 3], max: f32) -> Option<(f32, [f32; 3])> {
+        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::default());
+        let ray = Ray::new(Vector::from(origin), Vector::from(dir));
+        let (_, hit) = queries.cast_ray_and_get_normal(&ray, max, true)?;
+        Some((hit.time_of_impact, hit.normal.into()))
+    }
+
     /// Changes vehicle `id`'s velocity by `delta` m/s at once, as a gun's recoil does.
     pub fn kick_car(&mut self, id: u32, delta: [f32; 3]) {
         let Some(car) = self.cars.get(&id) else { return };
@@ -743,7 +751,7 @@ mod tests {
         run(&mut physics, COAST, 60);
         let mut character = Character { position: [-4.0, STANDING_Y, 0.0], grounded: true, ..Default::default() };
         // Yaw -π/2 faces +X, into the car's flank.
-        let toward_car = InputFrame(1, 0, 127, -1571, 0, 0, 0);
+        let toward_car = InputFrame(1, 0, 127, -1571, 0, 0, 0, 0);
         for _ in 0..180 {
             physics.move_character(&mut character, &toward_car, TICK_DT);
         }

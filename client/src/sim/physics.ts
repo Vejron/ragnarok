@@ -2,11 +2,11 @@ import RAPIER from '@dimforge/rapier3d-compat'
 import type { TileData, WorldData } from '@/world'
 import {
   AUTOSTEP_HEIGHT, AUTOSTEP_MIN_WIDTH, CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, CONTROLLER_OFFSET,
-  BUTTON_JUMP, KNOCK_MAX_SPEED, MAX_SLOPE_CLIMB_DEG, SNAP_DISTANCE,
+  BUTTON_CROUCH, BUTTON_JUMP, KNOCK_MAX_SPEED, MAX_SLOPE_CLIMB_DEG, SNAP_DISTANCE,
 } from './consts'
 import { halfExtentsOf } from './kinds'
 import type { TileGround } from './terrain'
-import { decayKnock, desiredTranslation, f32, settleVertical } from './movement'
+import { beginSlide, decayKnock, desiredTranslation, f32, settleVertical } from './movement'
 import { fromMrad, type InputFrame, type VehicleState } from '@/net/codec'
 
 export type Vec3 = [number, number, number]
@@ -48,7 +48,7 @@ export function stepCharacter(motor: CharacterMotor, state: CharacterState, inpu
   // Jumping off a moving car keeps its speed, like on the server.
   const velocity = state.ride !== 0 ? motor.vehicleVelocity?.(state.ride) : undefined
   const jumped = velocity !== undefined && state.grounded && (input.buttons & BUTTON_JUMP) !== 0
-  const carried = jumped ? inherit(state.knock, velocity) : state.knock
+  const carried = beginSlide(jumped ? inherit(state.knock, velocity) : state.knock, state.grounded, input)
   const { vy, desired } = desiredTranslation(state.vy, state.grounded, carried, input, dt)
   // Standing and not jumping: stay on the ground over a slope. Mirrors the choice in `move_character`.
   const moved = motor.move(state.position, desired, state.grounded && vy <= 0)
@@ -64,7 +64,7 @@ export function stepCharacter(motor: CharacterMotor, state: CharacterState, inpu
     yaw: fromMrad(input.yaw),
     vy: settleVertical(vy, desired[1], translation[1], grounded),
     grounded,
-    knock: decayKnock(left ? inherit(carried, velocity) : carried, grounded),
+    knock: decayKnock(left ? inherit(carried, velocity) : carried, grounded, (input.buttons & BUTTON_CROUCH) !== 0),
     ride: grounded ? state.ride : 0,
   }
 }

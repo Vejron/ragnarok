@@ -9,7 +9,7 @@ use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterCo
 use rapier3d::parry::utils::Array2;
 use rapier3d::prelude::*;
 use shared::consts::*;
-use shared::movement::{decay_knock, desired_translation, settle_vertical};
+use shared::movement::{begin_slide, decay_knock, desired_translation, settle_vertical};
 use shared::protocol::InputFrame;
 use shared::quant::from_cm;
 use shared::world::WorldFile;
@@ -197,6 +197,7 @@ impl Physics {
     /// Advances one character by one tick of `input`. Characters do not collide with each other,
     /// which keeps the local player's prediction independent of where remote players really are.
     pub fn move_character(&self, character: &mut Character, input: &InputFrame, dt: f32) {
+        character.knock = begin_slide(character.knock, character.grounded, input);
         let (vy, desired) = desired_translation(character.vy, character.grounded, character.knock, input, dt);
         let queries = self.broad_phase.as_query_pipeline(
             self.narrow_phase.query_dispatcher(),
@@ -220,7 +221,7 @@ impl Physics {
         let grounded = vertical.grounded && vy <= 0.0;
         character.vy = settle_vertical(vy, desired[1], end.y - start.y, grounded);
         character.grounded = grounded;
-        character.knock = decay_knock(character.knock, grounded);
+        character.knock = decay_knock(character.knock, grounded, input.buttons() & BUTTON_CROUCH != 0);
         character.yaw = shared::quant::from_mrad(input.3);
     }
 }
@@ -282,7 +283,7 @@ mod tests {
     fn walks_forward_at_walk_speed() {
         let physics = Physics::new(&flat_world()).unwrap();
         let mut character = standing();
-        let forward = InputFrame(1, 0, 127, 0, 0, 0, 0);
+        let forward = InputFrame(1, 0, 127, 0, 0, 0, 0, 0);
         for _ in 0..TICK_RATE {
             physics.move_character(&mut character, &forward, TICK_DT);
         }
@@ -291,10 +292,26 @@ mod tests {
     }
 
     #[test]
+    fn sliding_carries_a_runner_much_further_than_crouch_walking() {
+        let physics = Physics::new(&flat_world()).unwrap();
+        let held = InputFrame(1, 0, 127, 0, BUTTON_RUN | BUTTON_CROUCH, 0, 0, 0);
+        let press = InputFrame(1, 0, 127, 0, BUTTON_RUN | BUTTON_CROUCH | BUTTON_SLIDE, 0, 0, 0);
+        let distance = |first: &InputFrame| {
+            let mut character = standing();
+            physics.move_character(&mut character, first, TICK_DT);
+            for _ in 0..TICK_RATE {
+                physics.move_character(&mut character, &held, TICK_DT);
+            }
+            -character.position[2]
+        };
+        assert!(distance(&press) > distance(&held) + 3.0, "{} vs {}", distance(&press), distance(&held));
+    }
+
+    #[test]
     fn jumps_and_comes_back_down() {
         let physics = Physics::new(&flat_world()).unwrap();
         let mut character = standing();
-        physics.move_character(&mut character, &InputFrame(1, 0, 0, 0, BUTTON_JUMP, 0, 0), TICK_DT);
+        physics.move_character(&mut character, &InputFrame(1, 0, 0, 0, BUTTON_JUMP, 0, 0, 0), TICK_DT);
         assert!(!character.grounded);
         let mut peak: f32 = 0.0;
         for _ in 0..120 {
@@ -310,7 +327,7 @@ mod tests {
         let physics = Physics::new(&world_with_wall()).unwrap();
         let mut character = standing();
         // Yaw -π/2 faces +X, towards the wall.
-        let toward_wall = InputFrame(1, 0, 127, -1571, BUTTON_RUN, 0, 0);
+        let toward_wall = InputFrame(1, 0, 127, -1571, BUTTON_RUN, 0, 0, 0);
         for _ in 0..TICK_RATE * 2 {
             physics.move_character(&mut character, &toward_wall, TICK_DT);
         }
@@ -322,7 +339,7 @@ mod tests {
     fn boundary_walls_keep_players_in() {
         let physics = Physics::new(&flat_world()).unwrap();
         let mut character = standing();
-        let forward = InputFrame(1, 0, 127, 0, BUTTON_RUN, 0, 0);
+        let forward = InputFrame(1, 0, 127, 0, BUTTON_RUN, 0, 0, 0);
         for _ in 0..TICK_RATE * 20 {
             physics.move_character(&mut character, &forward, TICK_DT);
         }
@@ -334,7 +351,7 @@ mod tests {
     pub fn scripted_input(seq: u32) -> InputFrame {
         let yaw = -1571 + ((seq as i32 * 13) % 1200 - 600) as i16;
         let buttons = if seq % 90 == 30 { BUTTON_JUMP } else if seq > 150 { BUTTON_RUN } else { 0 };
-        InputFrame(seq, (seq % 7) as i8 * 10 - 30, 127, yaw, buttons, 0, 0)
+        InputFrame(seq, (seq % 7) as i8 * 10 - 30, 127, yaw, buttons, 0, 0, 0)
     }
 
     /// `(tick, position)` after `scripted_input`, mirrored in `predict.spec.ts`.
@@ -384,7 +401,7 @@ mod tests {
             let mut character = Character { position: [0.0, ground + STANDING_Y, start_z], grounded: true, ..Default::default() };
             let mut airborne = 0;
             for seq in 0..TICK_RATE * 4 {
-                let input = InputFrame(seq, 0, input_z, 0, BUTTON_RUN, 0, 0);
+                let input = InputFrame(seq, 0, input_z, 0, BUTTON_RUN, 0, 0, 0);
                 physics.move_character(&mut character, &input, TICK_DT);
                 airborne += !character.grounded as u32;
             }
@@ -404,7 +421,7 @@ mod tests {
     /// Running downhill with strafing, a jump and a stop: `ramp_world`'s fixture input.
     pub fn ramp_input(seq: u32) -> InputFrame {
         let buttons = if seq == 50 { BUTTON_RUN | BUTTON_JUMP } else if seq < 150 { BUTTON_RUN } else { 0 };
-        InputFrame(seq, (seq % 5) as i8 * 10 - 20, if seq < 150 { 127 } else { 0 }, (seq as i16 / 3) % 200, buttons, 0, 0)
+        InputFrame(seq, (seq % 5) as i8 * 10 - 20, if seq < 150 { 127 } else { 0 }, (seq as i16 / 3) % 200, buttons, 0, 0, 0)
     }
 
     /// `(tick, position)` after `ramp_input` from `RAMP_START`, mirrored in `predict.spec.ts`.
@@ -437,7 +454,7 @@ mod tests {
         let run = || {
             let mut character = standing();
             for seq in 0..300u32 {
-                let input = InputFrame(seq, 90, 127, (seq as i16 * 7) % 3000, if seq % 50 == 0 { BUTTON_JUMP } else { 0 }, 0, 0);
+                let input = InputFrame(seq, 90, 127, (seq as i16 * 7) % 3000, if seq % 50 == 0 { BUTTON_JUMP } else { 0 }, 0, 0, 0);
                 physics.move_character(&mut character, &input, TICK_DT);
             }
             character

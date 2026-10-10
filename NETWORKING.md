@@ -26,7 +26,7 @@ All messages are MessagePack arrays whose first element is a tag. The client→s
 | 0 | `input` | `[0, version, baseline u32, [frame, …]]` | 1–4 frames, oldest first. Throttled to one per 8 ms. `baseline` is the `server_tick` of the newest snapshot the client has rebuilt, or 0 for none |
 | 1 | `ping` | `[1, nonce u32]` | Echoed as `pong`. Throttled to one per 100 ms. |
 
-`frame` is `[seq u32, strafe i8, forward i8, yaw i16, buttons u8, pitch i16, view u16]`:
+`frame` is `[seq u32, strafe i8, forward i8, yaw i16, buttons u8, pitch i16, view u16, slot u8]`:
 
 | Field | Unit | Range |
 |---|---|---|
@@ -34,9 +34,10 @@ All messages are MessagePack arrays whose first element is a tag. The client→s
 | `strafe` | axis, + is right | −127..127 |
 | `forward` | axis, + is forward | −127..127 |
 | `yaw` | milliradians, 0 faces −Z | [−3142, 3141] |
-| `buttons` | bits: 1 jump, 2 run, 4 use, 8 fire, 16 alt (rocket) | |
-| `pitch` | milliradians, + looks up. Aims a tank gunner's barrel and the rifle | about [−1200, 600] |
-| `view` | the server tick the picture on screen showed, modulo 65536. The server rewinds other players to it to resolve a rifle shot, by at most 15 ticks and never forwards | |
+| `buttons` | bits: 1 jump, 2 run, 4 use, 8 fire, 16 alt (unused on foot), 32 crouch, 64 slide, 128 reload | |
+| `pitch` | milliradians, + looks up. Aims a tank gunner's barrel and a held gun or grenade | about [−1200, 600] |
+| `view` | the server tick the picture on screen showed, modulo 65536. The server rewinds other players to it to resolve a gunshot, by at most 15 ticks and never forwards | |
+| `slot` | the hotbar slot the player has in hand. Fire, reload and use-item act on it | 0..4 |
 
 While driving, `forward` is the throttle (negative brakes, then reverses), `strafe` is the steering, `buttons` bit 1 (jump) is the handbrake, and `yaw` is ignored. A helicopter's pilot (seat 0) uses `forward` to lean forward and back, `strafe` to turn, jump to climb and run (bit 2) to sink. A passenger's axes are ignored. A tank's driver steers with `strafe`, which turns the tank on the spot, and its gunner (seat 1) aims with `yaw` and `pitch` and shoots with the fire bit. The gunner's `yaw` is a world heading: the turret turns to it at a limited rate, whatever the hull does.
 
@@ -47,7 +48,7 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 | Tag | Name | Channel | Shape |
 |---|---|---|---|
 | 0 | `welcome` | stream | `[0, version, entity_id u32, tick_rate u8, snapshot_every u8, world_hash u32]` |
-| 1 | `snapshot` | datagram | `[1, server_tick u32, baseline u32, ack u32, ride u32, [entity, …], [entity_delta, …], [vehicle, …], [vehicle_delta, …], [removed u32, …], drive, hp u8, [shot, …], [rocket, …]]` |
+| 1 | `snapshot` | datagram | `[1, server_tick u32, baseline u32, ack u32, ride u32, [entity, …], [entity_delta, …], [vehicle, …], [vehicle_delta, …], [removed u32, …], drive, self, [shot, …], [projectile, …], [pickup, …]]` |
 | 2 | `pong` | datagram | `[2, nonce u32]` |
 | 3 | `leave` | stream | `[3, entity_id u32]` |
 | 4 | `kill` | stream | `[4, killer u32, victim u32, weapon u8, killer_kills u16, victim_deaths u16]` |
@@ -57,9 +58,10 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 - `ack` is the newest input `seq` of the receiving player already applied to this state. The client drops pending inputs up to `ack` and replays the rest.
 - `ride` is the id of the vehicle the receiving player stands on top of, or 0. The server carries riders with the car, so the client predicts them in the car's frame. Only the receiver's own value is sent: other riders are plain entities whose positions already move with the car.
 - `drive` is `nil` unless the receiving player sits in a vehicle's driver seat. Then it is the exact motion of that vehicle, which its pose does not carry, so the driver can predict it (below).
-- `hp` is the receiving player's own health, 0 when dead. Other players only show dead or alive, in `flags`.
-- `shot` is `[shooter u32, weapon u8, x i32, y i32, z i32]`: something since the previous snapshot, and where it ended (cm). It is only sent to a player within 300 m of where it ended. Weapon 0 is a rifle shot (a tracer from the shooter), 2 a rocket bursting and 3 a vehicle wreck going up (both a burst at the point). It is cosmetic, so it rides the lossy datagram and is capped at 8 per snapshot, and dropped first if a snapshot would not fit.
-- `rocket` is `[id u32, x i32, y i32, z i32, vx i16, vy i16, vz i16]`, cm and cm/s: a rocket in flight. Clients interpolate it like an entity and aim it along `v`. A rocket that stops being listed has burst, and its burst arrives as a `shot` event. At most 8 are in flight. If a snapshot would not fit, shots are dropped first, then rockets.
+- `self` is `[hp u8, progress u8, [slot, …]]`, only for the receiving player. `hp` is their health, 0 when dead (other players only show dead or alive, in `flags`). `progress` is how far a reload or a bandage has got, 0..255, or 0 when neither is going on. Each `slot` is `[item u8, count u8, ammo u8]`, five of them, `item` 0 for an empty slot (`1` revolver, `2` AK5, `3` grenade, `4` bandage). The item in another player's hands is in bits 3..5 of their entity `flags`.
+- `shot` is `[shooter u32, weapon u8, x i32, y i32, z i32]`: something since the previous snapshot, and where it ended (cm). It is only sent to a player within 300 m of where it ended. Weapons 0 (AK5) and 4 (revolver) are gunshots (a tracer from the shooter); 2 a rocket, 5 a grenade and 3 a vehicle wreck going up are a burst at the point. It is cosmetic, so it rides the lossy datagram and is capped at 8 per snapshot, and dropped first if a snapshot would not fit.
+- `projectile` is `[id u32, kind u8, x i32, y i32, z i32, vx i16, vy i16, vz i16]`, cm and cm/s: a rocket (`kind` 0) or grenade (`kind` 1) in flight. Clients interpolate it like an entity and aim a rocket along `v`. One that stops being listed has burst, and its burst arrives as a `shot` event. If a snapshot would not fit, shots are dropped first, then projectiles, then pickups.
+- `pickup` is `[id u32, item u8, x i32, y i32, z i32]`, cm: an item lying on the ground within 300 m, nearest first and at most 24. They are static, so there is no delta: the list is the set, and one that is no longer listed has been taken. A player takes the nearest within 2 m by sending the use bit; the server hands it over before it considers boarding a vehicle.
 - `kill` goes to everyone when a player dies. `killer` is 0 when the world did it (a fall). The totals are the new ones, so clients keep no tally of their own. `scores` is sent once to a player who has just joined.
 - `world_hash` is FNV-1a over `world.msgpack`. A mismatch means the client loaded a different world than the server simulates.
 

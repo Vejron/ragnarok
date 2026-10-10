@@ -101,7 +101,10 @@ mod tests {
             roads: vec![Road { width: 800, kind: 0, points: vec![[-20_000, 0], [20_000, 0]] }],
             ..Default::default()
         };
-        Game::new(map, 0).unwrap()
+        // Loose items would take a test's use button.
+        let mut game = Game::new(map, 0).unwrap();
+        game.world.pickups.clear();
+        game
     }
 
     fn join(game: &mut Game) -> (u32, mpsc::Receiver<crate::game::Outgoing>) {
@@ -125,7 +128,7 @@ mod tests {
     fn aim_and_hold(game: &mut Game, id: u32, seq: &mut u32, yaw: f32, pitch: f32, buttons: u8, ticks: u32) {
         for _ in 0..ticks {
             *seq += 1;
-            game.handle(Command::Input(id, 0, vec![InputFrame(*seq, 0, 0, to_mrad(yaw), buttons, to_mrad(pitch), 0)]));
+            game.handle(Command::Input(id, 0, vec![InputFrame(*seq, 0, 0, to_mrad(yaw), buttons, to_mrad(pitch), 0, 0)]));
             game.step();
         }
     }

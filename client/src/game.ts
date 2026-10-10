@@ -1,16 +1,18 @@
 import * as THREE from 'three'
 import {
-  encodeInput, encodePing, KIND_HELI, KIND_STICKMAN, KIND_TANK, sceneStates, toAxis, toMrad, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_WRECK,
-  type EntityState, type InputFrame, type RocketState, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
+  encodeInput, encodePing, KIND_HELI, KIND_STICKMAN, KIND_TANK, sceneStates, toAxis, toMrad, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_RIFLE,
+  WEAPON_ROCKET, WEAPON_WRECK,
+  type EntityState, type InputFrame, type PickupState, type RocketState, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
 } from './net/codec'
 import { blendEntity, blendRocket, blendVehicle, Interpolator } from './net/interp'
 import { RttEstimator, ServerClock } from './net/clock'
 import { Transport, type ConnectionStatus } from './net/transport'
 import {
-  BUTTON_ALT, BUTTON_FIRE, ENTER_RADIUS, EXPLOSION_RADIUS, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION, RESPAWN_TICKS,
-  RIFLE_COOLDOWN_TICKS, RIFLE_RANGE, ROCKET_BLAST_RADIUS, ROCKET_COOLDOWN_TICKS, SHELL_COOLDOWN_TICKS, SHELL_RANGE, STANDING_Y,
+  BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, SLIDE_MIN_SPEED, ENTER_RADIUS, EXPLOSION_RADIUS, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION, RESPAWN_TICKS,
+  ROCKET_BLAST_RADIUS, SHELL_COOLDOWN_TICKS, SHELL_RANGE, STANDING_Y,
   TANK_BARREL_LENGTH, TANK_BARREL_MAX, TANK_BARREL_MIN, TICK_MS, vehicleMaxHp, WRECK_BLAST_RADIUS,
 } from './sim/consts'
+import { emptyHotbar, GRENADE_BLAST_RADIUS, HOTBAR_SLOTS, ITEM_AK5, ITEM_NONE, ITEM_REVOLVER, itemDef, PICKUP_RADIUS, type ItemSlot } from './sim/items'
 import { InputController } from './sim/input'
 import { RapierMotor } from './sim/physics'
 import { groundOf, Terrain } from './sim/terrain'
@@ -19,11 +21,12 @@ import { Predictor } from './sim/predict'
 import type { Vec3 } from './sim/physics'
 import { CarModel, type VehicleModel } from './render/car'
 import { Effects } from './render/effects'
+import { Pickups } from './render/pickups'
 import { Rockets } from './render/rockets'
 import { DRIVING_DISTANCE, HELI_DISTANCE, ON_FOOT_DISTANCE, Scene, TANK_DISTANCE } from './render/scene'
 import { HeliModel } from './render/heli'
 import { TankModel } from './render/tank'
-import { Crowd, Stickman } from './render/stickman'
+import { Character, Crowd } from './render/character'
 import { buildGround, buildTile, disposeTile } from './render/world'
 import { Replica } from './net/replica'
 import { TileStreamer } from './stream'
@@ -54,10 +57,16 @@ export interface HudStats {
   dead: boolean
   /** Seconds until respawn while dead. */
   respawnIn: number
-  /** On foot with a rifle in hand: show the crosshair. */
+  /** On foot with a gun in hand: show the crosshair. */
   armed: boolean
-  /** How loaded the rocket launcher is, 0 (just fired) to 1 (ready). */
-  rocket: number
+  /** Connected, standing and alive: the health bar and the hotbar are shown. */
+  onFoot: boolean
+  /** The five hotbar slots. */
+  hotbar: ItemSlot[]
+  /** The slot in hand. */
+  selected: number
+  /** How far a reload or a bandage has got, 0..1, or 0 when neither is going on. */
+  progress: number
   kills: number
   deaths: number
   /** Recent kills, oldest first. */
@@ -125,7 +134,7 @@ export class Game {
   private readonly vehicleInterp = new Interpolator<VehicleState>(blendVehicle)
   /** Every stickman is drawn by this one set of instanced meshes. */
   private readonly crowd = new Crowd()
-  private readonly avatars = new Map<number, Stickman>()
+  private readonly avatars = new Map<number, Character>()
   /** Rebuilds snapshots from deltas, and says which one to diff the next against. */
   private readonly replica = new Replica()
   private tiles: TileStreamer | null = null
@@ -140,7 +149,15 @@ export class Game {
   /** Shot and burst events wait here until the render tick reaches them, so they line up with what is drawn. */
   private pendingShots: { tick: number; shot: ShotEvent }[] = []
   private readonly smokeAt = new Map<number, number>()
-  private lastRocketAt = -Infinity
+  private readonly pickupModels = new Pickups()
+  /** The items on the ground in the newest snapshot, for the prompt and the drawing. */
+  private pickups: PickupState[] = []
+  /** The local player's hotbar and reload/bandage progress, from the newest snapshot. */
+  private hotbar: ItemSlot[] = emptyHotbar()
+  private progress = 0
+  private firedBefore = false
+  /** Whether the last sampled input held crouch, for the local avatar. */
+  private crouching = false
   /** The last shot counter seen for each gun, so a change is a new shell. */
   private readonly shots = new Map<number, number>()
   private lastShotAt = -Infinity
@@ -148,7 +165,7 @@ export class Game {
   private hp = PLAYER_MAX_HP
   /** `performance.now()` when the local player died, or null while alive. */
   private diedAt: number | null = null
-  private lastRifleAt = -Infinity
+  private lastFireAt = -Infinity
   /** Kills and deaths of everyone, kept up to date by the server's kill events. */
   private readonly scores = new Map<number, { kills: number; deaths: number }>()
   private feed: { killer: number; victim: number; weapon: number; at: number }[] = []
@@ -181,6 +198,7 @@ export class Game {
     this.scene.scene.add(this.crowd.root)
     this.scene.scene.add(this.effects.root)
     this.scene.scene.add(this.rocketModels.root)
+    this.scene.scene.add(this.pickupModels.root)
     this.transport = new Transport(
       (message) => this.handle(message),
       (status) => {
@@ -202,6 +220,7 @@ export class Game {
     const motor = await RapierMotor.create(world)
     this.motor = motor
     this.driver = await VehicleDriver.create(world)
+    await this.crowd.load()
     // The buildings arrive as tiles, around wherever the player is.
     this.tiles = new TileStreamer(world, { attach: (ref, tile) => this.attachTile(ref, tile) })
     // Until the server places us, walk around solo from the first spawn point.
@@ -258,6 +277,10 @@ export class Game {
     this.vehicleInterp.clear()
     this.replica.reset()
     this.clearRockets()
+    this.pickups = []
+    this.pickupModels.clear()
+    this.hotbar = emptyHotbar()
+    this.progress = 0
     this.pendingShots = []
     this.motor?.setVehicles([])
     this.clock.reset()
@@ -305,6 +328,9 @@ export class Game {
         const { entities, vehicles } = sceneStates(rebuilt.scene)
         this.clock.observe(message.tick, now)
         this.setHealth(message.hp, now)
+        this.progress = message.progress / 255
+        this.hotbar = [...message.inventory, ...emptyHotbar()].slice(0, HOTBAR_SLOTS)
+        this.pickups = message.pickups
         for (const shot of message.shots) this.pendingShots.push({ tick: message.tick, shot })
         if (this.pendingShots.length > 64) this.pendingShots.splice(0, this.pendingShots.length - 64)
         this.trackRockets(message.tick, message.rockets)
@@ -370,6 +396,7 @@ export class Game {
 
   private tick() {
     const sample = this.input.sample()
+    this.crouching = (sample.buttons & BUTTON_CROUCH) !== 0
     const frame: InputFrame = {
       seq: ++this.seq,
       strafe: toAxis(sample.strafe),
@@ -378,6 +405,7 @@ export class Game {
       buttons: sample.buttons,
       pitch: toMrad(sample.pitch),
       view: this.viewTick(),
+      slot: sample.slot,
     }
     // In a car the stickman does not walk, and nor does a dead one; the frame is kept for replay
     // in case it steps out or respawns.
@@ -421,12 +449,15 @@ export class Game {
 
     const position = this.ridden(predictor.renderPosition(this.accumulator / TICK_MS, dt), predictor.state.ride, renderTick)
     const local = predictor.state
-    const localSpeed = Math.hypot(local.position[0] - predictor.previous.position[0], local.position[2] - predictor.previous.position[2]) / (TICK_MS / 1000)
+    const localVx = (local.position[0] - predictor.previous.position[0]) / (TICK_MS / 1000)
+    const localVz = (local.position[2] - predictor.previous.position[2]) / (TICK_MS / 1000)
     const me = this.avatar(0)
     me.hidden = seated
     me.dead = this.hp === 0
+    me.held = this.hotbar[this.input.selectedSlot]?.item ?? ITEM_NONE
     // Face where the camera looks, immediately, rather than the last ticked yaw.
-    me.update(position, this.input.yaw, localSpeed, local.grounded, dt)
+    me.update(position, this.input.yaw, localVx, localVz, local.grounded, dt, this.input.pitch, this.crouching,
+      this.crouching && local.grounded && Math.hypot(local.knock[0], local.knock[1]) > SLIDE_MIN_SPEED)
     const ride = seated ? cars.get(this.seat!.vehicle) : undefined
     const gunner = ride !== undefined && ride.kind === KIND_TANK && this.seat!.index === 1
     const turret = gunner ? this.cars.get(this.seat!.vehicle) : undefined
@@ -452,6 +483,8 @@ export class Game {
     this.tiles?.update(ride ? ride.x : position[0], ride ? ride.z : position[2])
     this.playShots(renderTick)
     this.drawRockets(renderTick)
+    this.pickupModels.set(this.pickups)
+    this.pickupModels.update(now / 1000)
     this.effects.update(dt)
 
     const seen = new Set<number>([0])
@@ -461,7 +494,9 @@ export class Game {
       seen.add(id)
       const avatar = this.avatar(id)
       avatar.dead = state.dead
-      avatar.update([state.x, state.y, state.z], state.yaw, state.speed, state.grounded, dt)
+      avatar.held = state.held
+      avatar.update([state.x, state.y, state.z], state.yaw, state.velocity[0], state.velocity[1], state.grounded, dt, 0, state.crouching,
+        state.crouching && state.grounded && Math.hypot(state.knockX, state.knockZ) > SLIDE_MIN_SPEED)
     }
     for (const [id, avatar] of this.avatars) {
       if (!seen.has(id)) {
@@ -489,8 +524,11 @@ export class Game {
       maxHp: PLAYER_MAX_HP,
       dead: this.hp === 0,
       respawnIn: this.diedAt === null ? 0 : Math.max(0, (RESPAWN_TICKS * TICK_MS - (now - this.diedAt)) / 1000),
-      armed: this.localId !== null && !seated && this.hp > 0,
-      rocket: Math.min(1, (now - this.lastRocketAt) / (ROCKET_COOLDOWN_TICKS * TICK_MS)),
+      armed: this.localId !== null && !seated && this.hp > 0 && itemDef(this.held().item)?.kind === 'gun',
+      onFoot: this.localId !== null && !seated && this.hp > 0,
+      hotbar: this.hotbar,
+      selected: this.input.selectedSlot,
+      progress: this.progress,
       kills: this.localId === null ? 0 : (this.scores.get(this.localId)?.kills ?? 0),
       deaths: this.localId === null ? 0 : (this.scores.get(this.localId)?.deaths ?? 0),
       feed: this.recentFeed(now),
@@ -527,22 +565,26 @@ export class Game {
       .sort((a, b) => b.kills - a.kills || a.deaths - b.deaths || a.id - b.id)
   }
 
-  /** Where a stickman's rifle leaves: its eye, drawn from where its avatar is. */
+  /** Where a player's rifle leaves: the end of the barrel it is drawn holding, else its eye. */
   private muzzleOf(shooter: number): THREE.Vector3 | null {
     const avatar = this.avatars.get(shooter === this.localId ? 0 : shooter)
     if (!avatar || !avatar.visible) return null
-    return avatar.position.clone().add(new THREE.Vector3(0, EYE_HEIGHT, 0))
+    return avatar.muzzle() ?? avatar.position.clone().add(new THREE.Vector3(0, EYE_HEIGHT, 0))
   }
 
   private showShot(shot: ShotEvent) {
     const to = new THREE.Vector3(shot.x, shot.y, shot.z)
     if (shot.weapon === WEAPON_ROCKET) {
       this.effects.burst(to, ROCKET_BLAST_RADIUS)
+    } else if (shot.weapon === WEAPON_GRENADE) {
+      this.effects.burst(to, GRENADE_BLAST_RADIUS)
     } else if (shot.weapon === WEAPON_WRECK) {
       this.effects.burst(to, WRECK_BLAST_RADIUS)
-    } else if (shot.weapon === WEAPON_RIFLE) {
+    } else if (shot.weapon === WEAPON_RIFLE || shot.weapon === WEAPON_REVOLVER) {
       const from = this.muzzleOf(shot.shooter)
-      if (from) this.effects.tracer(from, to, from.distanceTo(to) < RIFLE_RANGE - 1)
+      this.avatars.get(shot.shooter === this.localId ? 0 : shot.shooter)?.fire()
+      const range = itemDef(shot.weapon === WEAPON_REVOLVER ? ITEM_REVOLVER : ITEM_AK5)!.range
+      if (from) this.effects.tracer(from, to, from.distanceTo(to) < range - 1)
     }
   }
 
@@ -572,7 +614,7 @@ export class Game {
         continue
       }
       const state = this.rocketInterp.sample(id, renderTick)
-      if (state) this.rocketModels.place(id, [state.x, state.y, state.z], [state.vx, state.vy, state.vz])
+      if (state) this.rocketModels.place(id, state.kind, [state.x, state.y, state.z], [state.vx, state.vy, state.vz])
     }
   }
 
@@ -582,21 +624,34 @@ export class Game {
     this.rocketEnds.clear()
   }
 
+  /** The slot in hand. */
+  private held(): ItemSlot {
+    return this.hotbar[this.input.selectedSlot] ?? { item: ITEM_NONE, count: 0, ammo: 0 }
+  }
+
   /** The local player's own muzzle flash, at once, instead of after the server's reply. */
   private fireFeedback(frame: InputFrame) {
     const now = performance.now()
+    const pressed = (frame.buttons & BUTTON_FIRE) !== 0
+    const fresh = pressed && !this.firedBefore
+    this.firedBefore = pressed
     if (this.hp === 0 || this.seat) return
-    // A local mirror of the launcher's reload, for the HUD bar.
-    if (frame.buttons & BUTTON_ALT && now - this.lastRocketAt >= ROCKET_COOLDOWN_TICKS * TICK_MS) this.lastRocketAt = now
-    if ((frame.buttons & BUTTON_FIRE) === 0) return
-    if (now - this.lastRifleAt < RIFLE_COOLDOWN_TICKS * TICK_MS) return
-    this.lastRifleAt = now
+    const slot = this.held()
+    const item = itemDef(slot.item)
+    // A local mirror of the server's rules for a shot, so the flash does not wait for its reply.
+    if (!item || item.kind !== 'gun' || !pressed || (!item.auto && !fresh)) return
+    if (slot.ammo === 0 || this.progress > 0 || (frame.buttons & BUTTON_RELOAD) !== 0) return
+    if (now - this.lastFireAt < item.cooldownTicks * TICK_MS) return
+    this.lastFireAt = now
     const [x, y, z] = this.predictor!.state.position
     const yaw = this.input.yaw
     const pitch = this.input.pitch
     const flat = Math.cos(pitch)
     const direction = new THREE.Vector3(-Math.sin(yaw) * flat, Math.sin(pitch), -Math.cos(yaw) * flat)
-    this.effects.muzzle(new THREE.Vector3(x, y + EYE_HEIGHT, z).addScaledVector(direction, 0.6))
+    const me = this.avatars.get(0)
+    me?.fire()
+    const barrel = me?.muzzle()
+    this.effects.muzzle(barrel ?? new THREE.Vector3(x, y + EYE_HEIGHT, z).addScaledVector(direction, 0.6))
   }
 
   /**
@@ -671,10 +726,28 @@ export class Game {
     if (seats[1] === this.localId) this.lastShotAt = performance.now()
   }
 
+  /** The nearest item on the ground within reach of `position`, as the server will judge it. */
+  private pickupInReach(position: readonly number[]): PickupState | null {
+    let best: PickupState | null = null
+    let bestDistance = PICKUP_RADIUS
+    for (const pickup of this.pickups) {
+      if (Math.abs(pickup.y - position[1]!) > 2.5) continue
+      const distance = Math.hypot(pickup.x - position[0]!, pickup.z - position[2]!)
+      if (distance <= bestDistance) {
+        best = pickup
+        bestDistance = distance
+      }
+    }
+    return best
+  }
+
   /** The key hint for what E does here. */
   private prompt(position: readonly number[], cars: ReadonlyMap<number, CarPlacement>): string | null {
     if (this.localId === null) return null
     if (this.seat) return 'E: get out'
+    // The server hands over an item before it boards a car, so the hint follows the same order.
+    const pickup = this.pickupInReach(position)
+    if (pickup) return `E: take ${itemDef(pickup.item)?.name ?? 'item'}`
     let best: { distance: number; driverSeatFree: boolean; kind: number } | null = null
     for (const car of cars.values()) {
       const distance = Math.hypot(car.x - position[0]!, car.y - position[1]!, car.z - position[2]!)
@@ -691,7 +764,7 @@ export class Game {
   private avatar(id: number) {
     let avatar = this.avatars.get(id)
     if (!avatar) {
-      avatar = new Stickman(this.crowd, id === 0 ? (this.localId ?? 0) : id)
+      avatar = new Character(this.crowd, id === 0 ? (this.localId ?? 0) : id)
       this.avatars.set(id, avatar)
     }
     return avatar
@@ -709,6 +782,7 @@ export class Game {
     this.crowd.dispose()
     this.effects.dispose()
     this.rocketModels.dispose()
+    this.pickupModels.dispose()
     this.scene.dispose()
   }
 }

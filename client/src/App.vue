@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { Game, type HudStats } from './game'
+import Hotbar from './Hotbar.vue'
 import TouchControls from './TouchControls.vue'
 import type { InputController } from './sim/input'
-import { colorFor } from './render/stickman'
-import { WEAPON_SHELL } from './net/codec'
+import { colorFor } from './render/character'
+import { WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK } from './net/codec'
 
 const container = ref<HTMLElement | null>(null)
 const stats = shallowRef<HudStats | null>(null)
@@ -31,6 +32,9 @@ onBeforeUnmount(() => game?.dispose())
 
 const swatch = (id: number) => `#${colorFor(id).toString(16).padStart(6, '0')}`
 const who = (id: number) => (id === 0 ? 'the fall' : `Player ${id}`)
+/** What the kill feed shows between killer and victim. */
+const mark = (weapon: number) =>
+  weapon === WEAPON_SHELL || weapon === WEAPON_ROCKET || weapon === WEAPON_GRENADE || weapon === WEAPON_WRECK ? '💥' : weapon === WEAPON_REVOLVER ? '›‹' : '›'
 </script>
 
 <template>
@@ -51,14 +55,18 @@ const who = (id: number) => (id === 0 ? 'the fall' : `Player ${id}`)
   </template>
   <div v-if="stats?.seat === 'gunner'" class="reticle" :class="{ loading: stats.reload < 1 }" />
   <div v-else-if="stats?.armed" class="reticle foot" />
-  <div v-if="stats?.armed" class="health" :class="{ low: stats.hp <= stats.maxHp / 4 }">
+  <div v-if="stats?.onFoot" class="health" :class="{ low: stats.hp <= stats.maxHp / 4 }">
     <div class="health-fill" :style="{ width: (100 * stats.hp) / stats.maxHp + '%' }" />
     <span>{{ stats.hp }}</span>
   </div>
-  <div v-if="stats?.armed" class="rocket" :class="{ ready: stats.rocket >= 1 }">
-    <div class="rocket-fill" :style="{ width: 100 * stats.rocket + '%' }" />
-    <span>ROCKET</span>
-  </div>
+  <Hotbar
+    v-if="stats?.onFoot"
+    :slots="stats.hotbar"
+    :selected="stats.selected"
+    :progress="stats.progress"
+    :touch="stats.touch"
+    @select="(slot) => input?.selectSlot(slot)"
+  />
   <div v-if="stats?.dead" class="death">
     <h2>ELIMINATED</h2>
     <p>Respawning in {{ Math.ceil(stats.respawnIn) }}</p>
@@ -67,7 +75,7 @@ const who = (id: number) => (id === 0 ? 'the fall' : `Player ${id}`)
     <li v-for="(entry, i) in stats.feed" :key="i" :class="entry.you ?? ''">
       <template v-if="entry.killer !== 0">
         <i :style="{ background: swatch(entry.killer) }" />{{ who(entry.killer) }}
-        <b>{{ entry.weapon === WEAPON_SHELL ? '💥' : '›' }}</b>
+        <b>{{ mark(entry.weapon) }}</b>
       </template>
       <i :style="{ background: swatch(entry.victim) }" />{{ who(entry.victim) }}<template v-if="entry.killer === 0"> took {{ who(0) }}</template>
     </li>
@@ -87,8 +95,8 @@ const who = (id: number) => (id === 0 ? 'the fall' : `Player ${id}`)
   <div v-if="stats && !stats.locked" class="overlay">
     <h1>RAGNAROK</h1>
     <p>{{ stats.touch ? 'Tap to play' : 'Click to play' }}</p>
-    <p v-if="stats.touch" class="keys">Left thumb moves · Drag the right side to look · Buttons jump, fire, rocket and use</p>
-    <p v-else class="keys">WASD move · Shift run · Space jump · E drive, ride or man a gun · Mouse look and aim · Click fire · Right click rocket · Tab scores · Esc release</p>
+    <p v-if="stats.touch" class="keys">Left thumb moves · Drag the right side to look · Buttons jump, crouch, fire, reload and use · Tap the slots to switch items</p>
+    <p v-else class="keys">WASD move · Shift run · Space jump · E take, drive, ride or man a gun · 1-5 or wheel pick an item · Mouse look and aim · Click fire · R reload · Tab scores · Esc release</p>
   </div>
 </template>
 
@@ -131,13 +139,6 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
   background: rgba(255, 255, 255, 0.55); box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.25);
 }
 .health-fill { height: 100%; background: #2ec4b6; transition: width 0.15s; }
-.rocket {
-  position: fixed; left: 16px; bottom: 46px; width: 220px; height: 14px; border-radius: 999px; overflow: hidden; pointer-events: none;
-  background: rgba(255, 255, 255, 0.55); box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.25);
-}
-.rocket-fill { height: 100%; background: #ffbe0b; }
-.rocket.ready .rocket-fill { background: #ff8a2a; }
-.rocket span { position: absolute; inset: 0; display: grid; place-content: center; font-size: 10px; font-weight: 800; color: #1d2b36; }
 .health.low .health-fill { background: #ff5a5f; }
 .health span { position: absolute; inset: 0; display: grid; place-content: center; font-size: 13px; font-weight: 800; color: #1d2b36; }
 .death {

@@ -4,7 +4,7 @@ import {
   CAR_WHEEL_RADIUS,
 } from '@/sim/consts'
 import type { Turret } from '@/net/codec'
-import { colorFor } from './stickman'
+import { colorFor } from './character'
 
 /** What `Game` needs from a vehicle's model, whatever the kind. */
 export interface VehicleModel {

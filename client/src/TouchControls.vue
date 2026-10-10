@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { reactive } from 'vue'
 import type { InputController } from './sim/input'
-import { BUTTON_ALT, BUTTON_FIRE, BUTTON_JUMP, BUTTON_RUN, BUTTON_USE } from './sim/consts'
+import { BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_RELOAD, BUTTON_RUN, BUTTON_USE } from './sim/consts'
 
 const props = defineProps<{ input: InputController; seat: string | null }>()
 
@@ -90,8 +90,9 @@ const release = (mask: number) => () => props.input.hold(mask, false)
       {{ seat === 'driver' ? 'BRAKE' : seat === 'pilot' ? 'UP' : 'JUMP' }}
     </button>
     <button v-if="seat === 'pilot'" class="btn sink" @pointerdown.prevent="press(BUTTON_RUN)($event)" @pointerup="release(BUTTON_RUN)()" @pointercancel="release(BUTTON_RUN)()">DOWN</button>
+    <button v-if="!seat" class="btn crouch" @pointerdown.prevent="press(BUTTON_CROUCH)($event)" @pointerup="release(BUTTON_CROUCH)()" @pointercancel="release(BUTTON_CROUCH)()">CROUCH</button>
     <button class="btn fire" @pointerdown.prevent="press(BUTTON_FIRE)($event)" @pointerup="release(BUTTON_FIRE)()" @pointercancel="release(BUTTON_FIRE)()">FIRE</button>
-    <button class="btn rocket" @pointerdown.prevent="press(BUTTON_ALT)($event)" @pointerup="release(BUTTON_ALT)()" @pointercancel="release(BUTTON_ALT)()">ROCKET</button>
+    <button v-if="!seat" class="btn reload" @pointerdown.prevent="input.tap(BUTTON_RELOAD)">RELOAD</button>
   </div>
 </template>
 
@@ -115,8 +116,9 @@ const release = (mask: number) => () => props.input.hold(mask, false)
 }
 .btn:active { background: rgba(255, 255, 255, 0.9); }
 .fire { right: max(18px, env(safe-area-inset-right)); bottom: max(24px, env(safe-area-inset-bottom)); width: 84px; height: 84px; background: rgba(255, 90, 95, 0.7); }
-.rocket { right: calc(max(18px, env(safe-area-inset-right)) + 96px); bottom: max(24px, env(safe-area-inset-bottom)); background: rgba(255, 190, 11, 0.7); font-size: 10px; }
+.reload { right: calc(max(18px, env(safe-area-inset-right)) + 96px); bottom: max(24px, env(safe-area-inset-bottom)); background: rgba(255, 190, 11, 0.7); font-size: 10px; }
 .jump { right: max(26px, env(safe-area-inset-right)); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 100px); }
 .sink { right: calc(max(26px, env(safe-area-inset-right)) + 80px); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 100px); }
+.crouch { right: calc(max(26px, env(safe-area-inset-right)) + 80px); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 100px); font-size: 10px; }
 .use { right: max(26px, env(safe-area-inset-right)); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 180px); }
 </style>

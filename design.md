@@ -110,11 +110,18 @@ Remote entities are drawn in the past, at `renderTick = estServerTick − interp
 
 The `Combat` mechanic owns health. Each player has `hp` (100), and `damage()` is the only place it goes down. At zero the player dies: the killer is credited, a `kill` goes out on a reliable stream, and the body stays where it fell (flag `dead`) until `RESPAWN_TICKS` have passed. Then `Spawn::place` puts it at a spawn point with full health. Falling below `KILL_Y` is a death with no killer. Dead players cannot fire, board a vehicle, be hit or be knocked.
 
-**Weapons.** Both are fired only while standing.
+**The hotbar.** Every player has five slots (`Player::hotbar`, `[item, count, ammo]`) and starts each life with them empty. The client says which is in hand in the `slot` field of every input; `BUTTON_FIRE` then does whatever that item does, while standing. Items are defined once, in `shared::items` (mirrored in `client/src/sim/items.ts`): a damage, a cooldown, a magazine and so on, so a new weapon is a row in a table. Dying empties the hotbar. Changing slot drops a reload or a bandage in progress.
 
-- **Rifle** (`BUTTON_FIRE`, held): a hitscan from the eye along yaw and pitch, 15 damage, 7.5 shots a second. The server casts the ray against statics and vehicles (`Physics::cast_ray_hit`), then against every standing player's capsule (`ray_capsule`). Stickmen are not physics bodies, so that second test is the only way to hit one. A vehicle it meets takes 3 damage, so it is a nuisance and not a way to kill one.
-- **Rocket launcher** (`BUTTON_ALT`, right mouse): a real projectile, `World::rockets`, stepped each tick at 45 m/s. Each step is a ray over the segment it flew, against the world, vehicles and players, so it cannot tunnel. It bursts on the first hit or after four seconds, in a 5 m blast. At most 8 fly at once, which bounds the projectile list in a snapshot. The owner is not hit by their own rocket in flight, but is by its blast.
+**Items.** Seated players use none of them: a gunner's trigger belongs to the gun.
+
+- **AK5**: automatic hitscan from the eye along yaw and pitch with a small random spread, 12 damage, 10 shots a second, 30 rounds, 2.5 s reload. The server casts the ray against statics and vehicles (`Physics::cast_ray_hit`), then against every standing player's capsule (`ray_capsule`). Stickmen are not physics bodies, so that second test is the only way to hit one. A vehicle it meets takes a quarter of the damage, so it is a nuisance and not a way to kill one.
+- **Revolver**: the same hitscan, semi-automatic (each shot is a fresh press of fire), 35 damage, 2 shots a second, 6 rounds, 2 s reload, no spread.
+- **Grenade**: thrown on a press, a little above the look direction, at 16 m/s. It is a `Rocket` of kind grenade in `World::rockets`: it falls under gravity, bounces off whatever it meets (`Physics::cast_ray_normal`, keeping 40% of its speed) and bursts in a 5 m blast when its 3 s fuse runs out, whatever it is touching. Stacks of 3.
+- **Bandage**: a press starts a 2 s application (only below full health); at the end it restores 40 and is used up. Taking damage or changing slot ruins it. Stacks of 5.
+- **Rocket launcher**: a real projectile, stepped each tick at 45 m/s. Each step is a ray over the segment it flew, against the world, vehicles and players, so it cannot tunnel. It bursts on the first hit or after four seconds, in a 5 m blast. The machinery is kept but no item launches one yet.
 - **Tank shell**: unchanged hitscan, now with the same blast rules.
+
+**Pickups** (`mechanics/pickups.rs`, `World::pickups`). `PICKUP_COUNT` items are scattered once at start around the map's spawn points, on open ground (a ray from above must meet the terrain, not a roof), weighted by `ItemDef::weight`. Pressing use within 2 m takes the nearest: it joins a stack of the same item if there is room, else the first empty slot, else swaps with the slot in hand and leaves that on the ground. A taken item comes back 30 s later. The mechanic runs before `Vehicles` and consumes the use bit, so reaching for a gun beside a car does not board it.
 
 **Blasts** (`combat::blast`) throw standing players away and hurt them, and shove and hurt vehicles, all falling off linearly to the radius. The shell does 125 at its centre, which kills outright within about 1.4 m; the rocket does 110, which kills within about half a metre of a direct hit.
 
@@ -251,6 +258,7 @@ Both sides use Rapier 3D: `rapier3d` 0.36 natively and `@dimforge/rapier3d-compa
   - Characters are shape-cast, not colliders, so players don't block each other. Prediction then never depends on where remote players really are.
 - **Movement rules** (`movement.rs` / `movement.ts`):
   - Horizontal speed is set directly from input (walk 4 m/s, run 7.5 m/s), plus any knockback velocity, which keeps 92% of itself per tick on the ground and 99% in the air.
+  - Holding `BUTTON_CROUCH` (C or Ctrl, a CROUCH button on touch) overrides run and caps speed at 2 m/s, and lowers the eye 0.3 m for rifle and rocket origins. The capsule keeps its size, so collision and hit boxes do not change. Pressing crouch while running sends `BUTTON_SLIDE` once: the server launches the player along their heading as 12 m/s of knockback (well above the 7.5 m/s run) (only grounded, and not mid-slide), which bleeds off at 4% a tick while crouch stays held instead of the usual 8%. Being crouched, grounded and above 2 m/s of knockback is what clients draw as the `slide` clip, with the body turned along its heading, so no extra state travels. The server sets `FLAG_CROUCHING` in the entity flags, so other clients play the `crouch_*` clips.
   - Gravity is 20 m/s² and jump speed is 6.5 m/s.
   - The character is grounded only when not moving upward.
 - **Two-pass move:** horizontal movement, then vertical, as separate controller calls. A combined pass makes the controller stall for a tick every few seconds on flat ground, in both native and WASM, and each stall is a misprediction.
@@ -316,12 +324,13 @@ pub trait Mechanic: Send {
   - Green grass, pale roads with a darker edge and sandy paths, painted into the terrain; blue water, darker woods.
   - A light-blue sky with distance fog.
   - One shadow-casting sun that follows the player.
-- **The stickman** is procedural: a black capsule stick body with a big coloured head (per player id) and two dot eyes that show facing.
-  - Arms and legs swing with ground speed.
-  - Airborne pose: arms up, legs tucked.
+- **The player** is a low-poly (about 460 triangle) humanoid with a helmet and goggles, a backpack, and whatever it holds in its right hand (each item is its own mesh, shown or hidden by the item in hand, with three stances for the arms: rifle, pistol and hands-low), in a rigged GLB (`client/public/models/player.glb`). The outfit is tinted per player id. `tools/character/build_character.py` builds it, rig and clips included, in Blender (`Blender -b -P tools/character/build_character.py`).
+  - Clips: `idle`, `walk_`/`run_` `fwd`/`back`/`left`/`right`, `jump_air` and `death`.
+  - The body faces the camera yaw, so velocity in the body's frame picks the clips: strafing plays the side-step clips and backpedalling the backward ones. Weights blend smoothly and the cycle advances by distance covered, so the feet keep up with the ground.
+  - The local player's torso (and so the gun) leans with the aim pitch, and every shot kicks it back. Tracers and the muzzle flash leave the tip of the gun in hand (the `muzzle` bone for the rifle, `muzzle_pistol` for the revolver). Other players' held items travel as three bits of `flags`, so everyone draws the same.
 - **Camera:** third person, about 5 m behind, mouse-look with pointer lock.
-- **Touch** (`client/src/TouchControls.vue`): when the primary pointer is coarse, tapping the canvas starts play in place of pointer lock. A floating stick appears under the left thumb (pushed past 90% it runs, except in a vehicle, where it steers). Dragging anywhere on the right looks. Buttons jump (brake in a car, climb in a helicopter), fire, rocket and use, plus a descend button for the pilot. Everything feeds `InputController` (`setStick`, `lookBy`, `hold`, `tap`), so prediction and the wire format don't know touch exists.
-- **Budget:** static geometry is merged by colour, so a tile is a handful of draw calls and the tiles around the player are about 100. Every stickman is drawn by five instanced meshes (heads, eyes, torsos, arms, legs) in one `Crowd`, so the room costs five draw calls however full it is. A stickman is a slot in those buffers plus its animation state.
+- **Touch** (`client/src/TouchControls.vue`): when the primary pointer is coarse, tapping the canvas starts play in place of pointer lock. A floating stick appears under the left thumb (pushed past 90% it runs, except in a vehicle, where it steers). Dragging anywhere on the right looks. Buttons jump (brake in a car, climb in a helicopter), fire, reload and use, plus a descend button for the pilot, and the hotbar slots along the bottom are tappable. Everything feeds `InputController` (`setStick`, `lookBy`, `hold`, `tap`), so prediction and the wire format don't know touch exists.
+- **Budget:** static geometry is merged by colour, so a tile is a handful of draw calls and the tiles around the player are about 100. A player is one skinned mesh in two materials (the tinted outfit and the fixed gear), so two draw calls and one skeleton of 19 bones. A full room of 64 adds at most about 130 draw calls, and a hidden player (in a car) costs nothing.
 
 ## 13. Security
 
@@ -336,10 +345,11 @@ pub trait Mechanic: Send {
 1. **MVP (done):** server-authoritative stickmen on an OSM block, with prediction, reconciliation, interpolation, adaptive delay, network emulation and cross-language fixtures.
 2. **Vehicles I (done):** a car, seats, enter and exit, driver input routing, server-simulated and interpolated. See [VEHICLES-I.md](VEHICLES-I.md).
 3. **Vehicles II (done):** the tank with a gunner seat, driver-side prediction and the helicopter. See [VEHICLES-II.md](VEHICLES-II.md).
-4. **Combat (done):** free-for-all. Health, death and respawn, a hitscan rifle with lag compensation, a rocket launcher, vehicle damage and wrecks, kill feed and scoreboard. Game modes, pickups and teams are next.
+4. **Combat (done):** free-for-all. Health, death and respawn, hitscan guns with lag compensation, vehicle damage and wrecks, kill feed and scoreboard.
+5. **Hotbar and pickups (done):** a five-slot hotbar with revolver, AK5, grenades and bandages, scattered around the map and taken with use. Per-item poses in the character model. Game modes and teams are next.
 5. **Scale (done):** a room of 64 on a 2 km map.
    - Delta-compressed snapshots against the last acknowledged one, and interest management by distance (§5.8).
-   - Instanced stickmen (§12).
+   - Rigged, skinned players (§12).
    - A larger world, Backen in Umeå, streamed in tiles (§8).
 6. **Reach (done):** touch controls (§12) and a Docker and deploy script ported from flax3d. A quality scaler was dropped: the art is low-poly and a frame is about a hundred draw calls.
 7. **World:**

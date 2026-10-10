@@ -1,6 +1,6 @@
 /** Mirrors `crates/shared/src/consts.rs`. Keep the two in step. */
 
-export const PROTOCOL_VERSION = 11
+export const PROTOCOL_VERSION = 12
 
 export const TICK_RATE = 60
 export const TICK_DT = 1 / TICK_RATE
@@ -21,10 +21,25 @@ export const BUTTON_JUMP = 1 << 0
 export const BUTTON_RUN = 1 << 1
 export const BUTTON_USE = 1 << 2
 export const BUTTON_FIRE = 1 << 3
+/** Secondary fire. Nothing uses it on foot now that weapons live in the hotbar. */
 export const BUTTON_ALT = 1 << 4
+/** Held to crouch: slower, and a lower eye. */
+export const BUTTON_CROUCH = 1 << 5
+/** One press, sent with run and crouch held: starts a slide. */
+export const BUTTON_SLIDE = 1 << 6
+/** One press: reload the selected gun. */
+export const BUTTON_RELOAD = 1 << 7
 
 export const WALK_SPEED = 4.0
 export const RUN_SPEED = 7.5
+/** Crouching overrides running. */
+export const CROUCH_SPEED = 2.0
+/** Mirrors the slide constants in `consts.rs`. */
+export const SLIDE_SPEED = 12.0
+export const SLIDE_KEEP = 0.96
+export const SLIDE_RETRIGGER = 1.0
+/** Above this leftover velocity a grounded crouching player is sliding. */
+export const SLIDE_MIN_SPEED = 2.0
 export const JUMP_SPEED = 6.5
 export const GRAVITY = 20.0
 export const MAX_FALL_SPEED = 50.0
@@ -94,13 +109,12 @@ export const HELI_RESPONSE = 8.0
 /** Combat. Mirrors the combat block of consts.rs. */
 export const PLAYER_MAX_HP = 100
 export const RESPAWN_TICKS = 3 * TICK_RATE
-export const RIFLE_COOLDOWN_TICKS = 8
-export const RIFLE_RANGE = 200.0
 /** Height of a stickman's eye above its capsule centre, where a rifle shot leaves. */
 export const EYE_HEIGHT = 0.6
+/** How far a crouch lowers the eye. Mirrors `CROUCH_EYE_DROP`. */
+export const CROUCH_EYE_DROP = 0.3
 /** Health of a fresh vehicle of `kind`. Mirrors `vehicle_hp` in protocol.rs. */
 export const vehicleMaxHp = (kind: number) => (kind === 2 ? 250 : 100)
-export const ROCKET_COOLDOWN_TICKS = 90
 export const ROCKET_BLAST_RADIUS = 5.0
 export const WRECK_BLAST_RADIUS = 8.0
 export const SHELL_COOLDOWN_TICKS = 90

@@ -1,22 +1,31 @@
 import * as THREE from 'three'
 
-/** The rockets in flight, one small glowing missile each, pointed along its velocity. */
+/** `PROJECTILE_GRENADE` in codec.ts. */
+const GRENADE = 1
+
+/** The projectiles in flight: a small glowing missile pointed along its velocity, or a tumbling grenade. */
 export class Rockets {
   readonly root = new THREE.Group()
   private readonly body = new THREE.CylinderGeometry(0.09, 0.09, 0.8, 8)
   private readonly material = new THREE.MeshBasicMaterial({ color: 0xff8a2a })
+  private readonly ball = new THREE.SphereGeometry(0.1, 10, 8)
+  private readonly ballMaterial = new THREE.MeshToonMaterial({ color: 0x4f5d2e })
   private readonly meshes = new Map<number, THREE.Mesh>()
   private readonly up = new THREE.Vector3(0, 1, 0)
 
-  /** Places rocket `id`, creating it on first sight. `velocity` only gives the heading. */
-  place(id: number, position: readonly [number, number, number], velocity: readonly [number, number, number]) {
+  /** Places projectile `id`, creating it on first sight. `velocity` only gives a rocket's heading. */
+  place(id: number, kind: number, position: readonly [number, number, number], velocity: readonly [number, number, number]) {
     let mesh = this.meshes.get(id)
     if (!mesh) {
-      mesh = new THREE.Mesh(this.body, this.material)
+      mesh = kind === GRENADE ? new THREE.Mesh(this.ball, this.ballMaterial) : new THREE.Mesh(this.body, this.material)
       this.meshes.set(id, mesh)
       this.root.add(mesh)
     }
     mesh.position.set(...position)
+    if (kind === GRENADE) {
+      mesh.rotation.x += 0.25
+      return
+    }
     const heading = new THREE.Vector3(...velocity)
     if (heading.lengthSq() > 1e-6) mesh.quaternion.setFromUnitVectors(this.up, heading.normalize())
   }
@@ -36,6 +45,8 @@ export class Rockets {
     this.meshes.clear()
     this.body.dispose()
     this.material.dispose()
+    this.ball.dispose()
+    this.ballMaterial.dispose()
     this.root.removeFromParent()
   }
 }

@@ -1,7 +1,7 @@
 //! Simulation and network constants. Mirrored in `client/src/sim/consts.ts`.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 11;
+pub const PROTOCOL_VERSION: u8 = 12;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -34,12 +34,27 @@ pub const BUTTON_RUN: u8 = 1 << 1;
 pub const BUTTON_USE: u8 = 1 << 2;
 /// Gunner's trigger. Held to keep firing; the gun's reload paces it.
 pub const BUTTON_FIRE: u8 = 1 << 3;
-/// Secondary fire: the rocket launcher, when standing.
+/// Secondary fire. Nothing uses it on foot now that weapons live in the hotbar.
 pub const BUTTON_ALT: u8 = 1 << 4;
+/// Held to crouch: slower, and a lower eye.
+pub const BUTTON_CROUCH: u8 = 1 << 5;
+/// One press, sent with run and crouch held: starts a slide. Like a jump it is not repeated.
+pub const BUTTON_SLIDE: u8 = 1 << 6;
+/// One press: reload the selected gun. Like a jump it is not repeated.
+pub const BUTTON_RELOAD: u8 = 1 << 7;
 
 /// Stickman movement, in metres and seconds.
 pub const WALK_SPEED: f32 = 4.0;
 pub const RUN_SPEED: f32 = 7.5;
+/// Crouching overrides running.
+pub const CROUCH_SPEED: f32 = 2.0;
+/// A slide is a burst of knockback along the run direction that bleeds off slowly while crouch is held.
+pub const SLIDE_SPEED: f32 = 12.0;
+pub const SLIDE_KEEP: f32 = 0.96;
+/// A new slide can start once the last has slowed below this, in m/s.
+pub const SLIDE_RETRIGGER: f32 = 1.0;
+/// Above this much leftover velocity, a grounded crouching player is sliding.
+pub const SLIDE_MIN_SPEED: f32 = 2.0;
 pub const JUMP_SPEED: f32 = 6.5;
 pub const GRAVITY: f32 = 20.0;
 /// Knockback (a car hitting a stickman) is a horizontal velocity added to the walking velocity.
@@ -152,12 +167,16 @@ pub const EXPLOSION_KNOCK: f32 = 18.0;
 pub const PLAYER_MAX_HP: u8 = 100;
 /// Ticks a dead player waits before respawning.
 pub const RESPAWN_TICKS: u32 = 3 * TICK_RATE;
-/// The rifle: a hitscan fired from the eye along the look direction, held to keep firing.
-pub const RIFLE_DAMAGE: u8 = 15;
-pub const RIFLE_COOLDOWN_TICKS: u32 = 8;
-pub const RIFLE_RANGE: f32 = 200.0;
+/// Guns are hitscans fired from the eye along the look direction; their stats are in `items`.
 /// Height of a stickman's eye above its capsule centre, where a rifle shot leaves.
 pub const EYE_HEIGHT: f32 = 0.6;
+/// How far a crouch lowers the eye. The capsule keeps its size, so collision is unchanged.
+pub const CROUCH_EYE_DROP: f32 = 0.3;
+
+/// Eye height above the capsule centre for a player holding `buttons`.
+pub fn eye_height(buttons: u8) -> f32 {
+    if buttons & BUTTON_CROUCH != 0 { EYE_HEIGHT - CROUCH_EYE_DROP } else { EYE_HEIGHT }
+}
 /// Damage at the centre of an explosion; it falls off linearly to zero at `EXPLOSION_RADIUS`.
 /// More than a full life, so a shell that lands within about 1.4 m kills outright.
 pub const EXPLOSION_DAMAGE: f32 = 125.0;
@@ -166,7 +185,6 @@ pub const MAX_SHOT_EVENTS: usize = 8;
 
 /// The rocket launcher: a projectile that flies straight and bursts on the first thing it meets.
 pub const ROCKET_SPEED: f32 = 45.0;
-pub const ROCKET_COOLDOWN_TICKS: u32 = 90;
 pub const ROCKET_TTL_TICKS: u32 = 4 * TICK_RATE;
 /// How far in front of the eye a rocket starts.
 pub const ROCKET_MUZZLE: f32 = 1.0;
@@ -177,8 +195,6 @@ pub const ROCKET_KNOCK: f32 = 16.0;
 /// Rockets in flight at once, which bounds the projectile list in a snapshot.
 pub const MAX_ROCKETS: usize = 8;
 
-/// Damage a rifle bullet does to a vehicle: a nuisance, not a way to kill one.
-pub const RIFLE_VEHICLE_DAMAGE: u8 = 3;
 /// How long a destroyed vehicle burns before it is put back at its home, and the blast it goes up in.
 pub const WRECK_TICKS: u32 = 10 * TICK_RATE;
 pub const WRECK_BLAST_RADIUS: f32 = 8.0;

@@ -4,7 +4,7 @@ import {
   TANK_TURRET_PIVOT, TANK_WHEEL_RADIUS,
 } from '@/sim/consts'
 import { wrapAngle, type Turret } from '@/net/codec'
-import { colorFor } from './stickman'
+import { colorFor } from './character'
 import type { VehicleModel } from './car'
 
 const [HALF_X, HALF_Y, HALF_Z] = TANK_HALF_EXTENTS

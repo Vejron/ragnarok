@@ -6,9 +6,9 @@ import { BUTTON_FIRE, BUTTON_JUMP, BUTTON_RUN } from '@/sim/consts'
 
 // Byte-for-byte copies of the fixtures in `crates/shared/src/protocol.rs`. If these break, the
 // TypeScript and Rust encoders have drifted apart.
-const INPUT_FIXTURE = [148, 0, 11, 205, 4, 206, 146, 151, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 151, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7]
+const INPUT_FIXTURE = [148, 0, 12, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3]
 const SNAPSHOT_FIXTURE = [
-  158, 1, 205, 4, 210, 205, 4, 206, 42, 9, 145, 154, 7, 0, 0, 85, 206, 0, 1, 134, 160, 0, 0, 3, 0, 0, 145, 153, 1, 25, 253, 40, 208, 136, 205, 2, 138, 1, 209, 254, 212, 12, 145, 156, 10, 2, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 146, 1, 7, 148, 209, 253, 68, 204, 250, 3, 205, 4, 210, 0, 145, 155, 9, 100, 0, 208, 211, 3, 254, 0, 4, 148, 1, 0, 7, 0, 192, 100, 146, 3, 11, 152, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 73, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 151, 40, 205, 4, 176, 204, 150, 209, 252, 224, 205, 11, 184, 0, 209, 246, 60,
+  159, 1, 205, 4, 210, 205, 4, 206, 42, 9, 145, 154, 7, 0, 0, 85, 206, 0, 1, 134, 160, 0, 0, 3, 0, 0, 145, 153, 1, 25, 253, 40, 208, 136, 205, 2, 138, 1, 209, 254, 212, 12, 145, 156, 10, 2, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 146, 1, 7, 148, 209, 253, 68, 204, 250, 3, 205, 4, 210, 0, 145, 155, 9, 100, 0, 208, 211, 3, 254, 0, 4, 148, 1, 0, 7, 0, 192, 100, 146, 3, 11, 152, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 73, 204, 128, 147, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 152, 40, 1, 205, 4, 176, 204, 150, 209, 252, 224, 205, 11, 184, 0, 209, 246, 60, 145, 149, 60, 4, 209, 254, 212, 5, 205, 4, 226,
 ]
 
 const person = (id: number, x: number): RawEntity => [id, 0, x, 90, -x, 100, 0, 1, 0, 0]
@@ -19,8 +19,8 @@ describe('codec', () => {
   it('encodes inputs exactly like the server expects', () => {
     const bytes = encodeInput(
       [
-        { seq: 41, strafe: 127, forward: 0, yaw: 1571, buttons: 0, pitch: 300, view: 61000 },
-        { seq: 42, strafe: -127, forward: 127, yaw: -1950, buttons: BUTTON_JUMP | BUTTON_RUN | BUTTON_FIRE, pitch: -150, view: 7 },
+        { seq: 41, strafe: 127, forward: 0, yaw: 1571, buttons: 0, pitch: 300, view: 61000, slot: 0 },
+        { seq: 42, strafe: -127, forward: 127, yaw: -1950, buttons: BUTTON_JUMP | BUTTON_RUN | BUTTON_FIRE, pitch: -150, view: 7, slot: 3 },
       ],
       1230,
     )
@@ -44,11 +44,18 @@ describe('codec', () => {
       },
       drive: { vx: 1.2, vy: -0.05, vz: -25, wx: 0.03, wy: -0.4, wz: 0.015, steer: 0.25, spin: -0.6 },
       hp: 73,
+      progress: 128,
+      inventory: [
+        { item: 2, count: 1, ammo: 17 },
+        { item: 0, count: 0, ammo: 0 },
+        { item: 3, count: 2, ammo: 0 },
+      ],
       shots: [
         { shooter: 7, weapon: 0, x: 15, y: 1.6, z: -42 },
         { shooter: 1, weapon: 0, x: -0.2, y: 0.9, z: 310 },
       ],
-      rockets: [{ id: 40, x: 12, y: 1.5, z: -8, vx: 30, vy: 0, vz: -25 }],
+      rockets: [{ id: 40, kind: 1, x: 12, y: 1.5, z: -8, vx: 30, vy: 0, vz: -25 }],
+      pickups: [{ id: 60, item: 4, x: -3, y: 0.05, z: 12.5 }],
     })
   })
 
@@ -62,8 +69,8 @@ describe('codec', () => {
     }
     expect(sceneStates(scene)).toEqual({
       entities: [
-        { id: 1, kind: 0, x: 12.34, y: -1234.56, z: 1.01, yaw: 1.571, vy: -5, grounded: false, dead: false, knockX: 6.5, knockZ: -3 },
-        { id: 7, kind: 0, x: 0, y: 0.85, z: 1000, yaw: 0, vy: 0, grounded: true, dead: true, knockX: 0, knockZ: 0 },
+        { id: 1, kind: 0, x: 12.34, y: -1234.56, z: 1.01, yaw: 1.571, vy: -5, grounded: false, dead: false, crouching: false, knockX: 6.5, knockZ: -3, held: 0 },
+        { id: 7, kind: 0, x: 0, y: 0.85, z: 1000, yaw: 0, vy: 0, grounded: true, dead: true, crouching: false, knockX: 0, knockZ: 0, held: 0 },
       ],
       vehicles: [
         {
@@ -86,16 +93,16 @@ describe('codec', () => {
     expect(decodeServer(new Uint8Array([0x93, 0x01, 0x01, 0x01]))).toBeNull()
     // A snapshot of an older protocol has fewer fields.
     expect(decodeServer(new Uint8Array([0x94, 1, 0, 0, 0x90]))).toBeNull()
-    expect(decodeServer(encode([1, 5, 0, 0, 0, [], [], [], [], [], null, 100, []]))).toBeNull()
+    expect(decodeServer(encode([1, 5, 0, 0, 0, [], [], [], [], [], null, [100, 0, []], [], []]))).toBeNull()
     // Wrong shapes inside the lists.
-    expect(decodeServer(encode([1, 5, 0, 0, 0, [[1, 2, 3]], [], [], [], [], null, 100, [], []]))).toBeNull()
-    expect(decodeServer(encode([1, 5, 0, 0, 0, [], [[1, 2, 3]], [], [], [], null, 100, [], []]))).toBeNull()
-    expect(decodeServer(encode([1, 5, 0, 0, 0, [], [], [], [], ['x'], null, 100, [], []]))).toBeNull()
-    expect(decodeServer(encode([1, 5, 0, 0, 0, [], [], [], [[1, 0, 0, 0, 0, 0, 0, 0, [1, 2, 3, 4, 5], null, 100]], [], null, 100, [], []]))).toBeNull()
+    expect(decodeServer(encode([1, 5, 0, 0, 0, [[1, 2, 3]], [], [], [], [], null, [100, 0, []], [], [], []]))).toBeNull()
+    expect(decodeServer(encode([1, 5, 0, 0, 0, [], [[1, 2, 3]], [], [], [], null, [100, 0, []], [], [], []]))).toBeNull()
+    expect(decodeServer(encode([1, 5, 0, 0, 0, [], [], [], [], ['x'], null, [100, 0, []], [], [], []]))).toBeNull()
+    expect(decodeServer(encode([1, 5, 0, 0, 0, [], [], [], [[1, 0, 0, 0, 0, 0, 0, 0, [1, 2, 3, 4, 5], null, 100]], [], null, [100, 0, []], [], [], []]))).toBeNull()
   })
 
   it('decodes an empty snapshot', () => {
-    const message = decodeServer(encode([1, 5, 3, 2, 0, [], [], [], [], [], null, 100, [], []]))
+    const message = decodeServer(encode([1, 5, 3, 2, 0, [], [], [], [], [], null, [100, 0, []], [], [], []]))
     expect(message).toMatchObject({ type: 'snapshot', tick: 5, baseline: 3, ack: 2, hp: 100 })
   })
 

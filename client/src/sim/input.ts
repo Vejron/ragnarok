@@ -1,5 +1,6 @@
 import { wrapAngle } from '@/net/codec'
-import { BUTTON_ALT, BUTTON_FIRE, BUTTON_JUMP, BUTTON_RUN, BUTTON_USE } from './consts'
+import { BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_RELOAD, BUTTON_RUN, BUTTON_SLIDE, BUTTON_USE } from './consts'
+import { HOTBAR_SLOTS } from './items'
 
 /** Mouse-look sensitivity, radians per pixel. */
 const LOOK_SPEED = 0.0025
@@ -17,6 +18,8 @@ export interface InputSample {
   yaw: number
   /** Look elevation, radians; + is up. */
   pitch: number
+  /** The hotbar slot in hand, 0..HOTBAR_SLOTS. */
+  slot: number
 }
 
 /**
@@ -27,11 +30,12 @@ export interface InputSample {
 export class InputController {
   yaw = 0
   pitch = -0.25
+  /** The hotbar slot in hand. Keys 1-5, the wheel and the on-screen slots change it. */
+  selectedSlot = 0
   /** `performance.now()` of the last mouse movement, so the camera does not fight the player. */
   private lastLook = -Infinity
   private held = new Set<string>()
   private firing = false
-  private alt = false
   private latched = 0
   private readonly abort = new AbortController()
   /** The primary pointer is a finger: no pointer lock, no keyboard. */
@@ -50,7 +54,6 @@ export class InputController {
       this.touchHeld = 0
       this.stick = [0, 0, false]
       this.firing = false
-      this.alt = false
     }, options)
     element.addEventListener('click', () => {
       if (this.coarse) this.touching = true
@@ -59,13 +62,16 @@ export class InputController {
     // The trigger is the left mouse button, once the pointer is captured.
     document.addEventListener('mousedown', (event) => {
       if (event.button === 0 && document.pointerLockElement === element) this.firing = true
-      if (event.button === 2 && document.pointerLockElement === element) this.alt = true
     }, options)
     document.addEventListener('mouseup', (event) => {
       if (event.button === 0) this.firing = false
-      if (event.button === 2) this.alt = false
     }, options)
-    // The secondary trigger is the right button, which must not open a menu.
+    // The wheel cycles the hotbar, one slot per notch.
+    document.addEventListener('wheel', (event) => {
+      if (document.pointerLockElement !== element || event.deltaY === 0) return
+      this.cycleSlot(event.deltaY > 0 ? 1 : -1)
+    }, { ...options, passive: true })
+    // The right button must not open a menu.
     document.addEventListener('contextmenu', (event) => event.preventDefault(), options)
     document.addEventListener('mousemove', (event) => {
       if (document.pointerLockElement !== element) return
@@ -73,6 +79,15 @@ export class InputController {
       this.yaw -= event.movementX * LOOK_SPEED
       this.pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, this.pitch - event.movementY * LOOK_SPEED))
     }, options)
+  }
+
+  /** Takes hotbar slot `slot` in hand. */
+  selectSlot(slot: number) {
+    if (Number.isInteger(slot) && slot >= 0 && slot < HOTBAR_SLOTS) this.selectedSlot = slot
+  }
+
+  private cycleSlot(by: number) {
+    this.selectedSlot = (this.selectedSlot + by + HOTBAR_SLOTS) % HOTBAR_SLOTS
   }
 
   /** Whether `code` (a `KeyboardEvent.code`) is down right now. */
@@ -99,7 +114,7 @@ export class InputController {
   /** A button held down on screen, like a key. */
   hold(mask: number, down: boolean) {
     this.touchHeld = down ? this.touchHeld | mask : this.touchHeld & ~mask
-    if (down) this.latched |= mask
+    if (down) this.latched |= mask | (mask === BUTTON_CROUCH && this.running() ? BUTTON_SLIDE : 0)
   }
 
   /** A button pressed once on screen. */
@@ -126,9 +141,19 @@ export class InputController {
       this.held.add(event.code)
       if (event.code === 'Space') this.latched |= BUTTON_JUMP
       if (event.code === 'KeyE') this.latched |= BUTTON_USE
+      if (event.code === 'KeyR') this.latched |= BUTTON_RELOAD
+      // Digit1..Digit5 pick a hotbar slot.
+      const digit = /^Digit([1-9])$/.exec(event.code)
+      if (digit) this.selectSlot(Number(digit[1]) - 1)
+      // Crouching while running is a slide.
+      if ((event.code === 'KeyC' || event.code === 'ControlLeft') && this.running()) this.latched |= BUTTON_CROUCH | BUTTON_SLIDE
     } else {
       this.held.delete(event.code)
     }
+  }
+
+  private running() {
+    return this.stick[2] || this.held.has('ShiftLeft') || this.held.has('ShiftRight')
   }
 
   private axis(negative: string[], positive: string[]) {
@@ -142,7 +167,7 @@ export class InputController {
     if (this.stick[2]) buttons |= BUTTON_RUN
     if (this.held.has('Space')) buttons |= BUTTON_JUMP
     if (this.firing || this.held.has('KeyF')) buttons |= BUTTON_FIRE
-    if (this.alt || this.held.has('KeyG')) buttons |= BUTTON_ALT
+    if (this.held.has('KeyC') || this.held.has('ControlLeft')) buttons |= BUTTON_CROUCH
     if (this.held.has('ShiftLeft') || this.held.has('ShiftRight')) buttons |= BUTTON_RUN
     return {
       strafe: Math.max(-1, Math.min(1, this.axis(['KeyA', 'ArrowLeft'], ['KeyD', 'ArrowRight']) + this.stick[0])),
@@ -150,6 +175,7 @@ export class InputController {
       buttons,
       yaw: this.yaw,
       pitch: this.pitch,
+      slot: this.selectedSlot,
     }
   }
 
