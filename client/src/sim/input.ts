@@ -20,7 +20,8 @@ export interface InputSample {
 }
 
 /**
- * Keyboard + pointer-lock mouse. The camera pitch is local only; the yaw is part of the input.
+ * Keyboard + pointer-lock mouse, or on a touch device the on-screen controls, which feed it through
+ * `setStick`, `lookBy`, `hold` and `tap`. The camera pitch is local only; the yaw is part of the input.
  * Buttons pressed between two ticks are latched so a quick tap is never missed.
  */
 export class InputController {
@@ -33,6 +34,12 @@ export class InputController {
   private alt = false
   private latched = 0
   private readonly abort = new AbortController()
+  /** The primary pointer is a finger: no pointer lock, no keyboard. */
+  readonly coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
+  /** A touch player has tapped to start, which stands in for taking the pointer lock. */
+  private touching = false
+  private stick: [number, number, boolean] = [0, 0, false]
+  private touchHeld = 0
 
   constructor(private readonly element: HTMLElement) {
     const options = { signal: this.abort.signal }
@@ -40,10 +47,15 @@ export class InputController {
     window.addEventListener('keyup', (event) => this.key(event, false), options)
     window.addEventListener('blur', () => {
       this.held.clear()
+      this.touchHeld = 0
+      this.stick = [0, 0, false]
       this.firing = false
       this.alt = false
     }, options)
-    element.addEventListener('click', () => void element.requestPointerLock?.(), options)
+    element.addEventListener('click', () => {
+      if (this.coarse) this.touching = true
+      else void element.requestPointerLock?.()
+    }, options)
     // The trigger is the left mouse button, once the pointer is captured.
     document.addEventListener('mousedown', (event) => {
       if (event.button === 0 && document.pointerLockElement === element) this.firing = true
@@ -69,7 +81,30 @@ export class InputController {
   }
 
   get locked() {
-    return document.pointerLockElement === this.element
+    return this.touching || document.pointerLockElement === this.element
+  }
+
+  /** Virtual stick: `x` right and `y` up, each −1..1. `run` is the shift key. */
+  setStick(x: number, y: number, run: boolean) {
+    this.stick = [x, y, run]
+  }
+
+  /** Camera drag in pixels, as the mouse would give. */
+  lookBy(dx: number, dy: number) {
+    this.lastLook = performance.now()
+    this.yaw -= dx * LOOK_SPEED
+    this.pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, this.pitch - dy * LOOK_SPEED))
+  }
+
+  /** A button held down on screen, like a key. */
+  hold(mask: number, down: boolean) {
+    this.touchHeld = down ? this.touchHeld | mask : this.touchHeld & ~mask
+    if (down) this.latched |= mask
+  }
+
+  /** A button pressed once on screen. */
+  tap(mask: number) {
+    this.latched |= mask
   }
 
   /** Eases the camera yaw towards `target` (e.g. behind a car) unless the mouse moved recently. */
@@ -102,15 +137,16 @@ export class InputController {
 
   /** Reads the current intent and clears latched buttons. */
   sample(): InputSample {
-    let buttons = this.latched
+    let buttons = this.latched | this.touchHeld
     this.latched = 0
+    if (this.stick[2]) buttons |= BUTTON_RUN
     if (this.held.has('Space')) buttons |= BUTTON_JUMP
     if (this.firing || this.held.has('KeyF')) buttons |= BUTTON_FIRE
     if (this.alt || this.held.has('KeyG')) buttons |= BUTTON_ALT
     if (this.held.has('ShiftLeft') || this.held.has('ShiftRight')) buttons |= BUTTON_RUN
     return {
-      strafe: this.axis(['KeyA', 'ArrowLeft'], ['KeyD', 'ArrowRight']),
-      forward: this.axis(['KeyS', 'ArrowDown'], ['KeyW', 'ArrowUp']),
+      strafe: Math.max(-1, Math.min(1, this.axis(['KeyA', 'ArrowLeft'], ['KeyD', 'ArrowRight']) + this.stick[0])),
+      forward: Math.max(-1, Math.min(1, this.axis(['KeyS', 'ArrowDown'], ['KeyW', 'ArrowUp']) + this.stick[1])),
       buttons,
       yaw: this.yaw,
       pitch: this.pitch,

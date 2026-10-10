@@ -38,6 +38,8 @@ export interface HudStats {
   correction: number
   pending: number
   locked: boolean
+  /** The player is on a touch screen. */
+  touch: boolean
   warning: string | null
   /** A hint for the key that does something right now, or null. */
   prompt: string | null
@@ -114,7 +116,7 @@ const FEED_LENGTH = 5
  */
 export class Game {
   private readonly scene: Scene
-  private readonly input: InputController
+  readonly input: InputController
   private readonly transport: Transport
   private readonly clock = new ServerClock()
   private readonly rtt = new RttEstimator()
@@ -468,6 +470,7 @@ export class Game {
       correction: this.driver?.driving ? this.driver.lastCorrection : predictor.lastCorrection,
       pending: predictor.pendingCount,
       locked: this.input.locked,
+      touch: this.input.coarse,
       warning: this.warning,
       prompt: this.prompt(position, cars),
       seat: !this.seat ? null : this.seat.index === 0 ? (this.seat.kind === KIND_HELI ? 'pilot' : 'driver') : this.seat.kind === KIND_TANK ? 'gunner' : 'passenger',

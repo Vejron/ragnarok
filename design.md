@@ -285,6 +285,7 @@ pub trait Mechanic: Send {
   - Arms and legs swing with ground speed.
   - Airborne pose: arms up, legs tucked.
 - **Camera:** third person, about 5 m behind, mouse-look with pointer lock.
+- **Touch** (`client/src/TouchControls.vue`): when the primary pointer is coarse, tapping the canvas starts play in place of pointer lock. A floating stick appears under the left thumb (pushed past 90% it runs, except in a vehicle, where it steers). Dragging anywhere on the right looks. Buttons jump (brake in a car, climb in a helicopter), fire, rocket and use, plus a descend button for the pilot. Everything feeds `InputController` (`setStick`, `lookBy`, `hold`, `tap`), so prediction and the wire format don't know touch exists.
 - **Budget:** static geometry is merged by colour, so a tile is a handful of draw calls and the tiles around the player are about 100. Every stickman is drawn by five instanced meshes (heads, eyes, torsos, arms, legs) in one `Crowd`, so the room costs five draw calls however full it is. A stickman is a slot in those buffers plus its animation state.
 
 ## 13. Security
@@ -305,5 +306,5 @@ pub trait Mechanic: Send {
    - Delta-compressed snapshots against the last acknowledged one, and interest management by distance (§5.8).
    - Instanced stickmen (§12).
    - A larger world, Backen in Umeå, streamed in tiles (§8).
-6. **Reach:** touch controls (virtual stick and buttons), a quality scaler for low-end GPUs, and a Docker and deploy script ported from flax3d.
+6. **Reach (done):** touch controls (§12) and a Docker and deploy script ported from flax3d. A quality scaler was dropped: the art is low-poly and a frame is about a hundred draw calls.
 7. **World:** OSM multipolygons, terrain elevation, water, parks and trees.

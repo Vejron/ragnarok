@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { Game, type HudStats } from './game'
+import TouchControls from './TouchControls.vue'
+import type { InputController } from './sim/input'
 import { colorFor } from './render/stickman'
 import { WEAPON_SHELL } from './net/codec'
 
 const container = ref<HTMLElement | null>(null)
 const stats = shallowRef<HudStats | null>(null)
 const error = ref<string | null>(null)
+const input = shallowRef<InputController | null>(null)
 let game: Game | null = null
 let lastHud = 0
 
@@ -18,6 +21,7 @@ onMounted(() => {
     lastHud = now
     stats.value = next
   })
+  input.value = game.input
   game.start().catch((reason: unknown) => {
     error.value = reason instanceof Error ? reason.message : String(reason)
   })
@@ -38,10 +42,13 @@ const who = (id: number) => (id === 0 ? 'the fall' : `Player ${id}`)
     <span v-if="stats.status === 'CONNECTED'">{{ stats.kills }} kills · {{ stats.deaths }} deaths</span>
     <span class="debug">tiles {{ stats.tiles }} · interp {{ Math.round(stats.interpDelayMs) }} ms · fix {{ stats.correction.toFixed(2) }} m · unacked {{ stats.pending }}</span>
   </div>
-  <div v-if="stats?.prompt" class="prompt">{{ stats.prompt }}</div>
+  <div v-if="stats?.prompt" class="prompt">{{ stats.touch ? stats.prompt.replace(/^E:/, 'USE:') : stats.prompt }}</div>
+  <TouchControls v-if="stats?.touch && stats.locked && input" :input="input" :seat="stats.seat" />
+  <template v-if="!stats?.touch">
   <div v-if="stats?.seat === 'driver'" class="drive-hint">W/S gas and brake · A/D steer or turn · Space handbrake</div>
   <div v-if="stats?.seat === 'pilot'" class="drive-hint">W/S lean forward and back · A/D turn · Space climb · Shift sink</div>
   <div v-if="stats?.seat === 'gunner'" class="drive-hint">Mouse aim · Click or F fire · {{ stats.reload < 1 ? 'reloading…' : 'loaded' }}</div>
+  </template>
   <div v-if="stats?.seat === 'gunner'" class="reticle" :class="{ loading: stats.reload < 1 }" />
   <div v-else-if="stats?.armed" class="reticle foot" />
   <div v-if="stats?.armed" class="health" :class="{ low: stats.hp <= stats.maxHp / 4 }">
@@ -79,13 +86,14 @@ const who = (id: number) => (id === 0 ? 'the fall' : `Player ${id}`)
   <div v-if="error" class="banner">{{ error }}</div>
   <div v-if="stats && !stats.locked" class="overlay">
     <h1>RAGNAROK</h1>
-    <p>Click to play</p>
-    <p class="keys">WASD move · Shift run · Space jump · E drive, ride or man a gun · Mouse look and aim · Click fire · Right click rocket · Tab scores · Esc release</p>
+    <p>{{ stats.touch ? 'Tap to play' : 'Click to play' }}</p>
+    <p v-if="stats.touch" class="keys">Left thumb moves · Drag the right side to look · Buttons jump, fire, rocket and use</p>
+    <p v-else class="keys">WASD move · Shift run · Space jump · E drive, ride or man a gun · Mouse look and aim · Click fire · Right click rocket · Tab scores · Esc release</p>
   </div>
 </template>
 
 <style>
-html, body, #app { margin: 0; height: 100%; overflow: hidden; background: #9fd3f0; }
+html, body, #app { margin: 0; height: 100%; overflow: hidden; background: #9fd3f0; touch-action: none; overscroll-behavior: none; }
 body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
 </style>
 
