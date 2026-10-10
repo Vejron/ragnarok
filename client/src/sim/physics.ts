@@ -2,9 +2,10 @@ import RAPIER from '@dimforge/rapier3d-compat'
 import type { TileData, WorldData } from '@/world'
 import {
   AUTOSTEP_HEIGHT, AUTOSTEP_MIN_WIDTH, CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, CONTROLLER_OFFSET,
-  BUTTON_JUMP, KNOCK_MAX_SPEED, MAX_SLOPE_CLIMB_DEG,
+  BUTTON_JUMP, KNOCK_MAX_SPEED, MAX_SLOPE_CLIMB_DEG, SNAP_DISTANCE,
 } from './consts'
 import { halfExtentsOf } from './kinds'
+import type { TileGround } from './terrain'
 import { decayKnock, desiredTranslation, f32, settleVertical } from './movement'
 import { fromMrad, type InputFrame, type VehicleState } from '@/net/codec'
 
@@ -24,7 +25,8 @@ export interface CharacterState {
 
 /** Moves a character shape through the static world. Abstracted so tests can use a flat floor. */
 export interface CharacterMotor {
-  move(position: Vec3, desired: Vec3): { translation: Vec3; grounded: boolean }
+  /** `snap` pulls a character that was standing back onto a slope it walks down (horizontal pass only). */
+  move(position: Vec3, desired: Vec3, snap?: boolean): { translation: Vec3; grounded: boolean }
   /** Horizontal velocity `[x, z]` of a vehicle, m/s, for characters leaving it. */
   vehicleVelocity?(id: number): readonly [number, number]
 }
@@ -48,7 +50,8 @@ export function stepCharacter(motor: CharacterMotor, state: CharacterState, inpu
   const jumped = velocity !== undefined && state.grounded && (input.buttons & BUTTON_JUMP) !== 0
   const carried = jumped ? inherit(state.knock, velocity) : state.knock
   const { vy, desired } = desiredTranslation(state.vy, state.grounded, carried, input, dt)
-  const moved = motor.move(state.position, desired)
+  // Standing and not jumping: stay on the ground over a slope. Mirrors the choice in `move_character`.
+  const moved = motor.move(state.position, desired, state.grounded && vy <= 0)
   const translation = moved.translation
   // The tick a jump starts the capsule is still touching the floor; it is not grounded.
   const grounded = moved.grounded && vy <= 0
@@ -66,9 +69,13 @@ export function stepCharacter(motor: CharacterMotor, state: CharacterState, inpu
   }
 }
 
-const BOUNDARY_HEIGHT = 50
+/** Top of the boundary walls, metres above the lowest ground. Mirrors `BOUNDARY_HEIGHT` on the server. */
+const BOUNDARY_HEIGHT = 200
 
-/** Mirrors `static_colliders` on the server: ground slab, boundary walls, building mesh. */
+/**
+ * Mirrors `static_colliders` on the server: ground slab, boundary walls, building mesh. The
+ * terrain arrives with its tiles (`addTileCollider`).
+ */
 export function buildStaticColliders(world: RAPIER.World, data: WorldData) {
   const half = data.halfExtent
   world.createCollider(RAPIER.ColliderDesc.cuboid(half, 0.5, half).setTranslation(0, -0.5, 0))
@@ -82,13 +89,29 @@ export function buildStaticColliders(world: RAPIER.World, data: WorldData) {
 }
 
 /**
- * One tile's building mesh as a static collider, or null for a tile with none. Tiles come and go
- * as the player moves; the server holds all of them merged into one mesh, which is the same
- * geometry, so near the player the two agree.
+ * One tile's building mesh and terrain as static colliders (none for an empty tile). Tiles come
+ * and go as the player moves; the server holds all of them merged, which is the same geometry, so
+ * near the player the two agree. The heightfield is laid out as the server's: centred on its
+ * square, scaled to its width, heights column-major with rows along Z.
  */
-export function addTileCollider(world: RAPIER.World, tile: TileData): RAPIER.Collider | null {
-  if (tile.collision.triangles.length === 0) return null
-  return world.createCollider(RAPIER.ColliderDesc.trimesh(tile.collision.vertices, tile.collision.triangles))
+export function addTileCollider(world: RAPIER.World, tile: TileData, ground: TileGround | null = null): RAPIER.Collider[] {
+  const colliders: RAPIER.Collider[] = []
+  if (tile.collision.triangles.length > 0) {
+    colliders.push(world.createCollider(RAPIER.ColliderDesc.trimesh(tile.collision.vertices, tile.collision.triangles)))
+  }
+  if (ground) {
+    const { side, cell, heights } = ground
+    const columnMajor = new Float32Array(side * side)
+    for (let row = 0; row < side; row++) for (let column = 0; column < side; column++) columnMajor[row + column * side] = heights[row * side + column]!
+    const width = (side - 1) * cell
+    const desc = RAPIER.ColliderDesc.heightfield(side - 1, side - 1, columnMajor, { x: width, y: 1, z: width }).setTranslation(
+      ground.x0 + width / 2,
+      0,
+      ground.z0 + width / 2,
+    )
+    colliders.push(world.createCollider(desc))
+  }
+  return colliders
 }
 
 /** The same Rapier character controller and static scene the server simulates. */
@@ -100,6 +123,7 @@ export class RapierMotor implements CharacterMotor {
   private constructor(
     private readonly world: RAPIER.World,
     private readonly controller: RAPIER.KinematicCharacterController,
+    private readonly snapping: RAPIER.KinematicCharacterController,
     private readonly body: RAPIER.Collider,
   ) {}
 
@@ -107,18 +131,25 @@ export class RapierMotor implements CharacterMotor {
     await RAPIER.init()
     const world = new RAPIER.World({ x: 0, y: 0, z: 0 })
     buildStaticColliders(world, data)
+    const controller = RapierMotor.controller(world)
+    // Snapping is only on for the horizontal pass of a standing character (see `controller()` on the server).
+    const snapping = RapierMotor.controller(world)
+    snapping.enableSnapToGround(SNAP_DISTANCE)
+    // The character's own shape. The controller excludes it from its own queries.
+    const body = world.createCollider(RAPIER.ColliderDesc.capsule(CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS).setSensor(true))
+    // One step builds the broad-phase so scene queries see the static colliders.
+    world.step()
+    return new RapierMotor(world, controller, snapping, body)
+  }
+
+  private static controller(world: RAPIER.World) {
     const controller = world.createCharacterController(CONTROLLER_OFFSET)
     controller.setSlideEnabled(true)
     controller.enableAutostep(AUTOSTEP_HEIGHT, AUTOSTEP_MIN_WIDTH, false)
     controller.setMaxSlopeClimbAngle((MAX_SLOPE_CLIMB_DEG * Math.PI) / 180)
     controller.setMinSlopeSlideAngle((MAX_SLOPE_CLIMB_DEG * Math.PI) / 180)
-    // Snapping is off, as on the server (see `Physics::new`).
     controller.disableSnapToGround()
-    // The character's own shape. The controller excludes it from its own queries.
-    const body = world.createCollider(RAPIER.ColliderDesc.capsule(CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS).setSensor(true))
-    // One step builds the broad-phase so scene queries see the static colliders.
-    world.step()
-    return new RapierMotor(world, controller, body)
+    return controller
   }
 
   /**
@@ -156,29 +187,29 @@ export class RapierMotor implements CharacterMotor {
   }
 
   /** Adds a streamed tile's collision; returns what to pass to `removeTile` when it unloads. */
-  addTile(tile: TileData): RAPIER.Collider | null {
-    const collider = addTileCollider(this.world, tile)
+  addTile(tile: TileData, ground: TileGround | null = null): RAPIER.Collider[] {
+    const colliders = addTileCollider(this.world, tile, ground)
     // Reach the broad-phase now, so the very next move already collides with it.
-    if (collider) this.world.step()
-    return collider
+    if (colliders.length > 0) this.world.step()
+    return colliders
   }
 
-  removeTile(collider: RAPIER.Collider | null) {
-    if (collider) this.world.removeCollider(collider, false)
+  removeTile(colliders: readonly RAPIER.Collider[]) {
+    for (const collider of colliders) this.world.removeCollider(collider, false)
   }
 
   /** Horizontal then vertical, in two passes, exactly like `Physics::move_character`. */
-  move(position: Vec3, desired: Vec3) {
-    const h = this.pass(position, [desired[0], 0, desired[2]])
+  move(position: Vec3, desired: Vec3, snap = false) {
+    const h = this.pass(snap ? this.snapping : this.controller, position, [desired[0], 0, desired[2]])
     const middle: Vec3 = [f32(position[0] + h.x), f32(position[1] + h.y), f32(position[2] + h.z)]
-    const v = this.pass(middle, [0, desired[1], 0])
+    const v = this.pass(this.controller, middle, [0, desired[1], 0])
     const grounded = this.controller.computedGrounded()
     return { translation: [f32(h.x + v.x), f32(h.y + v.y), f32(h.z + v.z)] as Vec3, grounded }
   }
 
-  private pass(position: Vec3, desired: Vec3) {
+  private pass(controller: RAPIER.KinematicCharacterController, position: Vec3, desired: Vec3) {
     this.body.setTranslation({ x: position[0], y: position[1], z: position[2] })
-    this.controller.computeColliderMovement(this.body, { x: desired[0], y: desired[1], z: desired[2] })
-    return this.controller.computedMovement()
+    controller.computeColliderMovement(this.body, { x: desired[0], y: desired[1], z: desired[2] })
+    return controller.computedMovement()
   }
 }

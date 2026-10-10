@@ -620,6 +620,48 @@ mod tests {
         }
     }
 
+    /// A 12° slope rising towards -Z (the way `FORWARD` drives): 5 m cells over 200 m. `vehicle.spec.ts`
+    /// builds the same heights.
+    fn ramp() -> WorldFile {
+        const SLOPE: f32 = 0.2125566;
+        let side = 41u32;
+        let heights = (0..side)
+            .flat_map(|j| (0..side).map(move |_| j))
+            .map(|j| ((100.0 - (j as f32 * 5.0 - 100.0)) * SLOPE * 100.0).round() as i16)
+            .collect();
+        WorldFile { ground: shared::terrain::Ground { origin: -10_000, cell: 500, side, heights }, ..flat() }
+    }
+
+    /// `(tick, position)` of a car driven `FORWARD` up `ramp` from [0, _, 40], mirrored in `vehicle.spec.ts`.
+    const RAMP_CHECKPOINTS: [(u32, [f32; 3]); 3] = [
+        (60, [-0.0002, 13.4981, 39.7061]),
+        (180, [-0.0014, 15.3390, 31.0135]),
+        (360, [-0.0055, 21.1910, 3.4710]),
+    ];
+
+    #[test]
+    fn a_car_climbs_a_slope_like_wasm() {
+        let world = ramp();
+        let mut physics = Physics::new(&world).unwrap();
+        let ground = world.ground.height_at(0.0, 40.0);
+        physics.add_car(1, KIND_CAR, [0.0, ground + 1.5, 40.0], 0.0);
+        for tick in 0..360 {
+            physics.drive_car(1, FORWARD, TICK_DT);
+            physics.step_cars(TICK_DT);
+            let done = tick + 1;
+            if let Some((_, expected)) = RAMP_CHECKPOINTS.iter().find(|(t, _)| *t == done) {
+                let position = physics.car_pose(1).unwrap().position;
+                let close = position.iter().zip(expected).all(|(a, e)| (a - e).abs() < 0.001);
+                assert!(close, "tick {done}: {position:?}");
+            }
+        }
+        let pose = physics.car_pose(1).unwrap();
+        let ground = world.ground.height_at(pose.position[0], pose.position[2]);
+        assert!(pose.position[2] < 20.0, "it climbs: {pose:?}");
+        assert!(pose.position[1] - ground < 1.2 && pose.position[1] - ground > 0.3, "rides on the slope: {pose:?} on {ground}");
+        assert!(pose.up_y > 0.9);
+    }
+
     #[test]
     fn settles_on_its_suspension() {
         let mut physics = with_car(&flat());

@@ -20,7 +20,12 @@ A browser multiplayer game: goofy stickmen in a real city built from OpenStreetM
 cargo run -p osm-import                       # default: 2 km square around Backen, Umeå, in 250 m tiles
 cargo run -p osm-import -- --center 59.3167,18.0613 --half 600   # any lat,lon and half-side in metres
 cargo run -p osm-import -- --bbox 59.3290,18.0600,59.3345,18.0705   # any south,west,north,east
-cargo run -p osm-import -- --synthetic        # offline grid city
+cargo run -p osm-import -- --synthetic        # offline grid city, with hills
+# Terrain comes from Lantmäteriet's 1 m height model (CC BY 4.0), read through their STAC API.
+# Downloads need a Geotorget account's credentials; the importer fetches only the blocks it needs.
+LM_USER=… LM_PASS=… cargo run -p osm-import   # elevation from Lantmäteriet
+cargo run -p osm-import -- --dem m708_75.tif  # or from a DTM GeoTIFF you already have
+cargo run -p osm-import -- --cell 0           # flat ground, no elevation (--cell is the sample spacing, 5 m)
 
 # 2. Server (WebTransport on 127.0.0.1:8698, cert hash on :8699)
 cargo run -p server

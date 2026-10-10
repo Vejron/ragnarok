@@ -59,15 +59,19 @@ export class Scene {
     this.camera.updateProjectionMatrix()
   }
 
+  /** Height of the ground under `(x, z)`, so the camera stays above hills. Set by the game. */
+  groundAt: (x: number, z: number) => number = () => 0
+
   /** Orbits the camera behind `target` by yaw/pitch, and keeps the shadow frustum around it. */
   follow(target: readonly number[], yaw: number, pitch: number, distance = ON_FOOT_DISTANCE) {
     const [x, y, z] = [target[0]!, target[1]! + CAMERA_HEIGHT, target[2]!]
     const horizontal = Math.cos(pitch) * distance
     this.camera.position.set(x + Math.sin(yaw) * horizontal, y - Math.sin(pitch) * distance, z + Math.cos(yaw) * horizontal)
-    this.camera.position.y = Math.max(0.3, this.camera.position.y)
+    this.camera.position.y = Math.max(this.groundAt(this.camera.position.x, this.camera.position.z) + 0.3, this.camera.position.y)
     this.camera.lookAt(x, y, z)
-    this.sun.target.position.set(x, 0, z)
-    this.sun.position.set(x + 60, 120, z + 40)
+    // The shadow frustum follows the target's height too, so it covers hills.
+    this.sun.target.position.set(x, target[1]!, z)
+    this.sun.position.set(x + 60, target[1]! + 120, z + 40)
   }
 
   /**
@@ -79,10 +83,10 @@ export class Scene {
     const dir = new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch))
     const from = new THREE.Vector3(origin[0]!, origin[1]!, origin[2]!)
     this.camera.position.copy(from).addScaledVector(dir, -GUNNER_BACK).add(new THREE.Vector3(0, GUNNER_UP, 0))
-    this.camera.position.y = Math.max(0.3, this.camera.position.y)
+    this.camera.position.y = Math.max(this.groundAt(this.camera.position.x, this.camera.position.z) + 0.3, this.camera.position.y)
     this.camera.lookAt(from.addScaledVector(dir, GUNNER_FOCUS))
-    this.sun.target.position.set(origin[0]!, 0, origin[2]!)
-    this.sun.position.set(origin[0]! + 60, 120, origin[2]! + 40)
+    this.sun.target.position.set(origin[0]!, origin[1]!, origin[2]!)
+    this.sun.position.set(origin[0]! + 60, origin[1]! + 120, origin[2]! + 40)
   }
 
   render() {

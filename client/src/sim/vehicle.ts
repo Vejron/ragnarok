@@ -7,6 +7,7 @@ import {
 } from './consts'
 import { halfExtentsOf } from './kinds'
 import { addTileCollider, buildStaticColliders } from './physics'
+import type { TileGround } from './terrain'
 import { fromAxis, KIND_HELI, KIND_TANK, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
 import type { TileData, WorldData } from '@/world'
 import * as THREE from 'three'
@@ -378,16 +379,16 @@ export class VehicleDriver {
   }
 
   /** Adds a streamed tile's collision; returns what to pass to `removeTile` when it unloads. */
-  addTile(tile: TileData): RAPIER.Collider | null {
-    const collider = addTileCollider(this.world, tile)
+  addTile(tile: TileData, ground: TileGround | null = null): RAPIER.Collider[] {
+    const colliders = addTileCollider(this.world, tile, ground)
     // Stepping with nothing simulated only rebuilds the broad-phase. While a vehicle is predicted
     // the next tick's step does it, and stepping here would advance that vehicle.
-    if (collider && !this.sim) this.world.step()
-    return collider
+    if (colliders.length > 0 && !this.sim) this.world.step()
+    return colliders
   }
 
-  removeTile(collider: RAPIER.Collider | null) {
-    if (collider) this.world.removeCollider(collider, false)
+  removeTile(colliders: readonly RAPIER.Collider[]) {
+    for (const collider of colliders) this.world.removeCollider(collider, false)
   }
 
   /** Whether a vehicle is being predicted, and which. */

@@ -8,4 +8,5 @@ pub mod delta;
 pub mod movement;
 pub mod protocol;
 pub mod quant;
+pub mod terrain;
 pub mod world;

@@ -4,3 +4,6 @@ dist/
 *.tsbuildinfo
 .DS_Store
 crates/server/acme/
+
+# local secrets (Lantmäteriet credentials for osm-import)
+.env.local

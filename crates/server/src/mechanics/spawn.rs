@@ -21,8 +21,10 @@ pub(super) fn place(world: &mut World, id: u32) {
         world.map.spawns[index]
     };
     if let Some(player) = world.players.get_mut(&id) {
+        let (x, z) = (from_cm(point[0]), from_cm(point[1]));
+        let ground = world.map.ground.height_at(x, z);
         player.character = Character {
-            position: [from_cm(point[0]), STANDING_Y + SPAWN_DROP, from_cm(point[1])],
+            position: [x, ground + STANDING_Y + SPAWN_DROP, z],
             ..Default::default()
         };
     }

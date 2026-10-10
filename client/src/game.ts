@@ -13,6 +13,7 @@ import {
 } from './sim/consts'
 import { InputController } from './sim/input'
 import { RapierMotor } from './sim/physics'
+import { groundOf, Terrain } from './sim/terrain'
 import { VehicleDriver, type DrivenPose } from './sim/vehicle'
 import { Predictor } from './sim/predict'
 import type { Vec3 } from './sim/physics'
@@ -26,7 +27,7 @@ import { Crowd, Stickman } from './render/stickman'
 import { buildGround, buildTile, disposeTile } from './render/world'
 import { Replica } from './net/replica'
 import { TileStreamer } from './stream'
-import { loadManifest, type TileData, type TileRef } from './world'
+import { loadManifest, type TileData, type TileRef, type WorldData } from './world'
 
 export interface HudStats {
   status: ConnectionStatus
@@ -128,6 +129,8 @@ export class Game {
   /** Rebuilds snapshots from deltas, and says which one to diff the next against. */
   private readonly replica = new Replica()
   private tiles: TileStreamer | null = null
+  private world: WorldData | null = null
+  private terrain: Terrain | null = null
   private readonly cars = new Map<number, VehicleModel>()
   private readonly effects = new Effects()
   private readonly rocketInterp = new Interpolator<RocketState>(blendRocket)
@@ -191,7 +194,11 @@ export class Game {
   async start() {
     const { world, hash } = await loadManifest()
     this.worldHash = hash
-    this.scene.scene.add(buildGround(world.halfExtent))
+    this.world = world
+    // On a hilly world the plane sits just under the terrain, so it only shows where a tile is late.
+    this.scene.scene.add(buildGround(world.halfExtent, world.groundCell > 0 ? -0.05 : 0))
+    this.terrain = new Terrain(world.halfExtent, world.tileSize)
+    this.scene.groundAt = (x, z) => this.terrain?.heightAt(x, z) ?? 0
     const motor = await RapierMotor.create(world)
     this.motor = motor
     this.driver = await VehicleDriver.create(world)
@@ -200,7 +207,7 @@ export class Game {
     // Until the server places us, walk around solo from the first spawn point.
     const [x, z] = world.spawns[0] ?? [0, 0]
     await this.tiles.prime(x, z)
-    this.predictor = new Predictor(motor, { position: [x, STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0 })
+    this.predictor = new Predictor(motor, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0 })
     this.avatar(0)
     if (this.disposed) return
     this.lastFrame = performance.now()
@@ -215,12 +222,15 @@ export class Game {
 
   /** Draws a streamed-in tile and makes it solid for both predicted simulations. Returns how to undo it. */
   private attachTile(ref: TileRef, tile: TileData) {
-    const group = buildTile(tile, ref.col * 31 + ref.row * 17)
+    const ground = this.world ? groundOf(this.world, ref, tile) : null
+    const group = buildTile(tile, ref.col * 31 + ref.row * 17, ground)
     this.scene.scene.add(group)
-    const walk = this.motor?.addTile(tile) ?? null
-    const drive = this.driver?.addTile(tile) ?? null
+    this.terrain?.set(ref, ground)
+    const walk = this.motor?.addTile(tile, ground) ?? []
+    const drive = this.driver?.addTile(tile, ground) ?? []
     return () => {
       disposeTile(group)
+      this.terrain?.delete(ref)
       this.motor?.removeTile(walk)
       this.driver?.removeTile(drive)
     }

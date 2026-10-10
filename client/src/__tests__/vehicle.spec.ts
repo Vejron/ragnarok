@@ -1,9 +1,12 @@
 import RAPIER from '@dimforge/rapier3d-compat'
 import { describe, expect, it } from 'vitest'
 import { CarSim, CAR_GRAVITY, controlsOf, VehicleDriver, type CarControls } from '@/sim/vehicle'
+import { addTileCollider } from '@/sim/physics'
+import { heightIn, type TileGround } from '@/sim/terrain'
+import { f32 } from '@/sim/movement'
 import { TICK_DT } from '@/sim/consts'
 import { KIND_CAR, KIND_HELI, KIND_TANK, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
-import type { WorldData } from '@/world'
+import type { TileData, WorldData } from '@/world'
 
 const COAST: CarControls = { throttle: 0, steer: 0, handbrake: false, lift: 0, powered: false }
 const FORWARD: CarControls = { ...COAST, throttle: 1 }
@@ -101,9 +104,49 @@ describe('helicopter prediction', () => {
   })
 })
 
+describe('vehicles on a slope', () => {
+  /** `ramp` in vehicle.rs: 12°, rising towards -Z, 5 m cells over 200 m. */
+  const SLOPE = f32(0.2125566)
+  const side = 41
+  const ramp = (): TileGround => {
+    const heights = new Float32Array(side * side)
+    for (let row = 0; row < side; row++) {
+      const metres = Math.round(f32(f32(100 - (row * 5 - 100)) * SLOPE) * 100) / 100
+      for (let column = 0; column < side; column++) heights[row * side + column] = metres
+    }
+    return { x0: -100, z0: -100, cell: 5, side, heights }
+  }
+  const tile: TileData = { buildings: [], roads: [], cover: [], collision: { vertices: new Float32Array(), triangles: new Uint32Array() }, ground: new Float32Array() }
+
+  /** `RAMP_CHECKPOINTS` in vehicle.rs. */
+  const checkpoints: [number, [number, number, number]][] = [
+    [60, [-0.0002, 13.4981, 39.7061]],
+    [180, [-0.0014, 15.339, 31.0135]],
+    [360, [-0.0055, 21.191, 3.471]],
+  ]
+
+  it('WASM car climbs where the native server does', async () => {
+    await RAPIER.init()
+    const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
+    world.timestep = TICK_DT
+    world.createCollider(RAPIER.ColliderDesc.cuboid(100, 0.5, 100).setTranslation(0, -0.5, 0))
+    addTileCollider(world, tile, ramp())
+    world.step()
+    const sim = new CarSim(world, KIND_CAR, [0, heightIn(ramp(), 0, 40) + 1.5, 40], 0)
+    for (let tick = 1; tick <= 360; tick++) {
+      sim.drive(FORWARD, TICK_DT)
+      sim.step(TICK_DT)
+      const expected = checkpoints.find(([t]) => t === tick)?.[1]
+      if (!expected) continue
+      sim.state().position.forEach((value, axis) => expect(Math.abs(value - expected[axis]!), `tick ${tick} axis ${axis}`).toBeLessThan(0.02))
+    }
+    world.free()
+  })
+})
+
 describe('driving a predicted vehicle', () => {
   const flat = (): WorldData => ({
-    origin: [0, 0], halfExtent: 200, tileSize: 100, spawns: [], tiles: [],
+    origin: [0, 0], halfExtent: 200, tileSize: 100, spawns: [], tiles: [], groundCell: 0,
     collision: { vertices: new Float32Array(), triangles: new Uint32Array() },
   })
   /** A driver's input that goes forward, swings left and right and brakes. */

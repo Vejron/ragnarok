@@ -42,6 +42,8 @@ export const CONTROLLER_OFFSET = 0.02
 export const MAX_SLOPE_CLIMB_DEG = 50.0
 export const AUTOSTEP_HEIGHT = 0.35
 export const AUTOSTEP_MIN_WIDTH = 0.2
+/** How far below its feet a standing character is pulled back onto the ground. Mirrors `SNAP_DISTANCE`. */
+export const SNAP_DISTANCE = 0.3
 
 /** Capsule-centre height when standing on y = 0. Mirrors `STANDING_Y` in `physics.rs`. */
 export const STANDING_Y = CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS + CONTROLLER_OFFSET

@@ -33,7 +33,7 @@ This document describes how the game is built and why. The wire format is specif
 
 | Crate or directory | Role |
 |---|---|
-| `crates/shared` | Protocol types, quantization, movement rules, world-file format, constants. Shared by the server and the tools. |
+| `crates/shared` | Protocol types, quantization, movement rules, world-file format, terrain sampling, constants. Shared by the server and the tools. |
 | `crates/server` | Salvo HTTP/3 server: WebTransport sessions, the authoritative game loop, Rapier physics, mechanics, per-player replication (§5.8). |
 | `crates/osm-import` | CLI that turns an OSM bounding box into `world.msgpack` and a grid of tile files. |
 | `client` | Vue 3 + Vite + three.js app. Handles prediction, interpolation and rendering. |
@@ -178,20 +178,21 @@ Datagrams are capped at 1200 bytes (`MAX_PACKET`). Interest management and delta
 
 `cargo run -p osm-import`. The default is a 2 km square centred on Backen, Umeå (63.832127, 20.168286). `--center lat,lon --half metres` picks another place, `--bbox south,west,north,east` an exact box, `--tile` the tile size (250 m), and `--synthetic` generates a grid city offline.
 
-1. **Fetch:** an Overpass query (`way["building"]`, `way["highway"]`, `out geom`), with a fallback mirror.
+1. **Fetch:** an Overpass query for buildings, highways and ground cover (`way` and multipolygon `relation` with `landuse`, `natural`, `leisure` or `waterway=riverbank`; `out geom`), with a fallback mirror and a few retry rounds, since the public servers shed load.
 2. **Project:** equirectangular projection to local metres around the bbox centre (+X east, +Z south, +Y up).
 3. **Buildings:**
    - Footprints with at least 4 m² of area, fully inside the playable square.
    - Height comes from `height`, then `building:levels × 3 + 1`, then a varied 6–12 m.
-   - Each building is extruded into a closed prism (walls, earcut roof and floor) for the collision mesh.
-4. **Roads:** highway ways are clipped to the square (Liang–Barsky) and classed as major (10 m), minor (4.5–7 m) or path (2.5–5 m).
-5. **Spawns:** points sampled along roads that are outside every footprint and at least 1.5 m from walls. Up to 64 are picked, at least 15 m apart, sorted centre-first. The server picks among the 6 most central.
+   - Each building is extruded into a closed prism (walls, earcut roof and floor) for the collision mesh. The floor is at the lowest ground under the footprint (`base`) and the roof `height` above it.
+4. **Roads:** highway ways are clipped to the square (Liang–Barsky) and classed as major (10 m), minor (4.5–7 m) or path (2.5–5 m). They stay 2D polylines. The client paints them into the terrain texture (below), and the server uses them to line parked vehicles up with the street.
+   - **Cover:** closed ways and multipolygon relations are classed as water, wood, park (grass, meadow, parks, pitches), farm, sand, urban or industrial. Relation members are joined end to end into rings, inner rings being holes (filled even-odd). Open pieces that never close are dropped. They are not simulated: water is only paint, and the ground under it is the DEM's.
+5. **Spawns:** points sampled along roads that are outside every footprint and at least 1.5 m from walls. Up to 64 are picked, at least 15 m apart, sorted centre-first. The server picks among the 6 most central. They are 2D, and the ground gives their height.
 6. **Tiles:** the square is cut into a grid of `tile_size` squares.
    - A building goes whole into the tile its centre is in, with its collision triangles, so a tile never needs its neighbour.
-   - A road is cut at tile borders, and each tile keeps its own pieces.
+   - A road is cut at tile borders, and each tile keeps its own pieces. Cover rings are clipped to the tile (Sutherland–Hodgman) and sorted so ground uses are painted first, green next and water last.
    - Coordinates stay world-absolute, so a tile is drawn and collided with where it is, with no offset.
-   - Tiles with nothing in them are not written.
-7. **Output:** `client/public/world.msgpack` (the *manifest*) and `client/public/tiles/{col}_{row}.msgpack`. The manifest holds the origin, extent, tile size, the spawns, and each tile with the FNV-1a hash of its file. The default area is about 400 KiB of tiles in 61 files.
+   - Every tile is written, even an empty one, since each carries its piece of the ground.
+7. **Output:** `client/public/world.msgpack` (the *manifest*) and `client/public/tiles/{col}_{row}.msgpack`. The manifest holds the origin, extent, tile size, the ground sample spacing, the spawns, and each tile with the FNV-1a hash of its file. The default area is about 400 KiB of tiles in 61 files, plus the ground when terrain is on.
 
 The manifest's FNV-1a hash is sent in `welcome`. Since it lists each tile's hash it vouches for every tile, so a client or server with a stale file shows a warning (client) or refuses to start (server).
 
@@ -201,17 +202,27 @@ The manifest's FNV-1a hash is sent in `welcome`. Since it lists each tile's hash
 - **Client** (`client/src/stream.ts`): `TileStreamer` fetches the tiles whose nearest edge is within 450 m of the camera focus, nearest first, at most four at a time, and drops those beyond 550 m. Each tile arrives as a merged-by-colour mesh group and as a trimesh collider in both Rapier worlds (the stickman's and the driven vehicle's). A tile that fails is retried after 5 s. The game waits for the tiles around the spawn before it starts.
 - The ground slab, boundary walls and grass plane belong to the whole world, not to a tile. A tile that is late means walking through a building for a moment, which the server then corrects, and never falling out of the world.
 
+### Terrain
+
+The ground is a grid of heights, from Lantmäteriet's *Markhöjdmodell* (1 m DTM, CC BY 4.0, `stac-hojd/v1/collections/dtm-cog`; item `708_75` covers Backen). `crates/osm-import/src/dem.rs` does the reading:
+
+- **Source:** a local GeoTIFF (`--dem`), or the STAC item for the bounding box fetched with HTTP range requests and Basic credentials from `LM_USER` / `LM_PASS`. The files are cloud-optimised GeoTIFFs in SWEREF 99 TM, so only the blocks under the world are transferred.
+- **Frame:** each sample point is turned from local metres into latitude and longitude with the same equirectangular projection OSM uses, then into SWEREF 99 TM (Krüger series, no `proj`), so buildings and ground line up.
+- **Resampling:** the mean of the 1 m cells within each sample's `--cell` square (5 m by default, must divide the tile size). Heights are `i16` centimetres above the lowest sample in the world, so the lowest ground is y = 0 and `KILL_Y` still means what it did. Gaps take the lowest ground. A relief over 100 m is refused, since the boundary walls (200 m) and the helicopter ceiling (120 m) are at fixed heights.
+- **Format:** each tile holds `tile_size / cell + 1` samples a side, the last row and column shared with its neighbour, so a tile stands alone. `WorldFile::assemble` joins them into one `Ground` for the server. `Ground::height_at` (mirrored by `heightIn` in `client/src/sim/terrain.ts`) interpolates on the same triangles as Rapier's heightfield, so a spawn, a camera or a building base agrees with what the physics will collide with.
+- **Texture:** each tile's terrain mesh has its own 512 × 512 canvas texture (2 texels per metre), painted when the tile arrives (`client/src/render/cover.ts`): grass, then the cover patches, then roads as a darker casing under a lighter fill, casings first so junctions merge. UVs run 0..1 over the tile with `flipY` off, so canvas `(0, 0)` is the tile's `(x0, z0)` corner. The texture and its material are freed with the tile. A world without terrain has no terrain mesh, so it shows the plain grass plane.
+- **Spawning:** players and vehicles are placed at the ground height under their spawn point. Buildings sit at the lowest ground under their footprint.
+
 Not handled yet:
 - Multipolygon relations, such as courtyard buildings.
-- Terrain elevation. The ground is flat.
-- Water and parks.
-- terrain elevation mode from lantmäteriet (Swedish mapping, cadastral and land registration authority) https://browser.moregeo.it/external/api.lantmateriet.se/stac-hojd/v1/collections/dtm-cog  tile 708_75 (over umeå)
+- Waterways drawn as lines (rivers mapped only as a centre line), and railways.
+- Trees.
 
 ## 9. Physics
 
 Both sides use Rapier 3D: `rapier3d` 0.36 natively and `@dimforge/rapier3d-compat` 0.21 in WASM.
 
-- **Static scene** (`static_colliders` / `buildStaticColliders`): a ground slab with its top at y = 0, four 50 m boundary walls, and the building trimesh.
+- **Static scene** (`static_colliders` / `buildStaticColliders`): a ground slab with its top at y = 0 (the lowest the terrain goes, and a safety net under it), a heightfield for the terrain (one per tile on the client, one for the whole world on the server, same surface), four boundary walls up to y = 200, and the building trimesh.
 - **Stickman:** a capsule (half-height 0.5 m, radius 0.35 m, 1.7 m tall) moved by `KinematicCharacterController`.
   - Controller settings: offset 2 cm, slide on, autostep 35 cm, 50° max slope.
   - Characters are shape-cast, not colliders, so players don't block each other. Prediction then never depends on where remote players really are.
@@ -219,7 +230,8 @@ Both sides use Rapier 3D: `rapier3d` 0.36 natively and `@dimforge/rapier3d-compa
   - Horizontal speed is set directly from input (walk 4 m/s, run 7.5 m/s), plus any knockback velocity, which keeps 92% of itself per tick on the ground and 99% in the air.
   - Gravity is 20 m/s² and jump speed is 6.5 m/s.
   - The character is grounded only when not moving upward.
-- **Two-pass move:** horizontal movement, then vertical, as separate controller calls. A combined pass makes the controller stall for a tick every few seconds on flat ground, in both native and WASM, and each stall is a misprediction. Snap-to-ground is off because it sinks the capsule slowly in the two-pass setup.
+- **Two-pass move:** horizontal movement, then vertical, as separate controller calls. A combined pass makes the controller stall for a tick every few seconds on flat ground, in both native and WASM, and each stall is a misprediction.
+- **Snap to ground** (`SNAP_DISTANCE`, 0.3 m) is on for the horizontal pass of a character that was standing and is not jumping, and off for the vertical pass, where it sinks the capsule slowly. Without it, running down a 20° slope is mostly airborne ticks, which stops jumping and slows the knockback decay. Native and WASM agree to about 1 cm on a slope run (`ramp_run_matches_fixture` ↔ `predict.spec.ts`).
 - **Native vs WASM:**
   - The two builds aren't bit-exact. The client rounds its movement math to f32 to match the server.
   - The cross-language fixture agrees to well under 1 mm per tick and within 1 cm over 90 ticks of wall-sliding and jumping.
@@ -278,7 +290,7 @@ pub trait Mechanic: Send {
 - **Goofy and readable.**
   - Flat toon shading.
   - Candy-pastel buildings.
-  - Green grass, grey roads and sandy paths.
+  - Green grass, pale roads with a darker edge and sandy paths, painted into the terrain; blue water, darker woods.
   - A light-blue sky with distance fog.
   - One shadow-casting sun that follows the player.
 - **The stickman** is procedural: a black capsule stick body with a big coloured head (per player id) and two dot eyes that show facing.
@@ -307,4 +319,7 @@ pub trait Mechanic: Send {
    - Instanced stickmen (§12).
    - A larger world, Backen in Umeå, streamed in tiles (§8).
 6. **Reach (done):** touch controls (§12) and a Docker and deploy script ported from flax3d. A quality scaler was dropped: the art is low-poly and a frame is about a hundred draw calls.
-7. **World:** OSM multipolygons, terrain elevation, water, parks and trees.
+7. **World:**
+   - Terrain elevation (done): Lantmäteriet's 1 m height model as a heightfield in the tiles, walked, driven, shot and drawn (§8, §9).
+   - Ground cover (done): roads, water, woods, parks and other landuse painted into a per-tile terrain texture (§8).
+   - Next: courtyard building multipolygons, waterways as lines, trees.

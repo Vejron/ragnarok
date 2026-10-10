@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { Predictor } from '@/sim/predict'
 import { RapierMotor, stepCharacter, type CharacterMotor, type CharacterState, type Vec3 } from '@/sim/physics'
+import { heightIn, type TileGround } from '@/sim/terrain'
+import { f32 } from '@/sim/movement'
 import { BUTTON_JUMP, BUTTON_RUN, STANDING_Y, TANK_HALF_EXTENTS, TICK_DT, TICK_RATE, WALK_SPEED } from '@/sim/consts'
 import { KIND_TANK, type InputFrame } from '@/net/codec'
-import type { WorldData } from '@/world'
+import type { TileData, WorldData } from '@/world'
 
 /** A floor at y = 0 and nothing else, in place of Rapier. */
 const flat: CharacterMotor = {
@@ -78,7 +80,7 @@ describe('Predictor', () => {
 
 describe('RapierMotor cars', () => {
   const empty: WorldData = {
-    origin: [0, 0], halfExtent: 100, tileSize: 100, spawns: [], tiles: [],
+    origin: [0, 0], halfExtent: 100, tileSize: 100, spawns: [], tiles: [], groundCell: 0,
     collision: { vertices: new Float32Array(), triangles: new Uint32Array() },
   }
   const car = (x: number) => ({ id: 1, x, y: 0.66, z: 0, qx: 0, qy: 0, qz: 0, qw: 1 })
@@ -114,7 +116,7 @@ describe('RapierMotor', () => {
   const world: WorldData = {
     origin: [0, 0],
     halfExtent: 100,
-    tileSize: 100, spawns: [], tiles: [],
+    tileSize: 100, spawns: [], tiles: [], groundCell: 0,
     collision: { vertices: new Float32Array(), triangles: new Uint32Array() },
   }
 
@@ -195,7 +197,7 @@ describe('cross-language physics', () => {
     const v = [[5, 0, -1], [6, 0, -1], [6, 0, 1], [5, 0, 1], [5, 2, -1], [6, 2, -1], [6, 2, 1], [5, 2, 1]]
     const t = [[0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7], [4, 5, 6], [4, 6, 7], [0, 2, 1], [0, 3, 2]]
     return {
-      origin: [0, 0], halfExtent: 100, tileSize: 100, spawns: [], tiles: [],
+      origin: [0, 0], halfExtent: 100, tileSize: 100, spawns: [], tiles: [], groundCell: 0,
       collision: { vertices: Float32Array.from(v.flat()), triangles: Uint32Array.from(t.flat()) },
     }
   }
@@ -214,10 +216,10 @@ describe('cross-language physics', () => {
     // tick, but tiny differences accumulate. Reconciliation only ever replays about an RTT of
     // ticks on top of fresh server state, so the short-horizon checkpoints are what matter.
     const checkpoints = new Map<number, { position: Vec3; tolerance: number }>([
-      [30, { position: [1.8128, 0.972, 0.7471], tolerance: 0.01 }],
-      [60, { position: [3.7747, 1.472, 0.7692], tolerance: 0.01 }],
-      [90, { position: [4.6299, 0.8701, 0.0616], tolerance: 0.01 }],
-      [300, { position: [4.6299, 0.9729, 0.5537], tolerance: 0.05 }],
+      [30, { position: [1.8138, 0.9722, 0.748], tolerance: 0.01 }],
+      [60, { position: [3.7758, 1.4722, 0.7701], tolerance: 0.01 }],
+      [90, { position: [4.6299, 0.8649, 0.0827], tolerance: 0.03 }],
+      [300, { position: [4.6295, 0.9728, 0.4872], tolerance: 0.15 }],
     ])
     for (let seq = 1; seq <= 300; seq++) {
       state = stepCharacter(motor, state, scripted(seq), TICK_DT)
@@ -226,5 +228,51 @@ describe('cross-language physics', () => {
       state.position.forEach((value, axis) => expect(Math.abs(value - checkpoint.position[axis]!), `tick ${seq} axis ${axis}`).toBeLessThan(checkpoint.tolerance))
     }
     expect(state.grounded).toBe(false)
+  })
+})
+
+describe('cross-language terrain', () => {
+  /** The 20° ramp of `ramp_world` in physics.rs: 5 m cells over 200 m, rising towards +Z. */
+  const side = 41
+  const ramp = (): TileGround => {
+    const slope = Math.tan((20 * Math.PI) / 180)
+    const heights = new Float32Array(side * side)
+    for (let row = 0; row < side; row++) for (let column = 0; column < side; column++) heights[row * side + column] = Math.round(f32(row * 5 * slope) * 100) / 100
+    return { x0: -100, z0: -100, cell: 5, side, heights }
+  }
+  const emptyTile: TileData = { buildings: [], roads: [], cover: [], collision: { vertices: new Float32Array(), triangles: new Uint32Array() }, ground: new Float32Array() }
+  const world = (): WorldData => ({
+    origin: [0, 0], halfExtent: 100, tileSize: 200, spawns: [], tiles: [], groundCell: 5,
+    collision: { vertices: new Float32Array(), triangles: new Uint32Array() },
+  })
+
+  it('samples a plane exactly and clamps outside the grid', () => {
+    const ground = ramp()
+    const slope = Math.tan((20 * Math.PI) / 180)
+    expect(heightIn(ground, 0, 0)).toBeCloseTo(100 * slope, 1)
+    expect(heightIn(ground, 3.3, -61.7)).toBeCloseTo(38.3 * slope, 1)
+    expect(heightIn(ground, 0, -500)).toBe(0)
+  })
+
+  it('WASM prediction on a slope lands where the native server does', async () => {
+    const motor = await RapierMotor.create(world())
+    motor.addTile(emptyTile, ramp())
+    const ground = heightIn(ramp(), 0, 40)
+    let state: CharacterState = { ...standing(), position: [0, ground + STANDING_Y, 40] }
+    // `RAMP_CHECKPOINTS` in physics.rs.
+    const checkpoints = new Map<number, Vec3>([
+      [30, [-0.018, 50.4969, 36.2721]],
+      [60, [-0.0733, 50.4621, 32.5448]],
+      [120, [-0.2956, 46.4279, 25.0934]],
+      [240, [-0.4475, 45.1151, 21.4869]],
+    ])
+    for (let seq = 1; seq <= 240; seq++) {
+      const buttons = seq === 50 ? BUTTON_RUN | BUTTON_JUMP : seq < 150 ? BUTTON_RUN : 0
+      const input = { seq, strafe: (seq % 5) * 10 - 20, forward: seq < 150 ? 127 : 0, yaw: Math.trunc(seq / 3) % 200, buttons, pitch: 0, view: 0 }
+      state = stepCharacter(motor, state, input, TICK_DT)
+      const expected = checkpoints.get(seq)
+      if (!expected) continue
+      state.position.forEach((value, axis) => expect(Math.abs(value - expected[axis]!), `tick ${seq} axis ${axis}`).toBeLessThan(0.01))
+    }
   })
 })

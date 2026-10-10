@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { LOAD_RADIUS, TileStreamer, UNLOAD_RADIUS } from '@/stream'
 import type { TileData, TileRef, WorldData } from '@/world'
 
-const empty: TileData = { buildings: [], roads: [], collision: { vertices: new Float32Array(), triangles: new Uint32Array() } }
+const empty: TileData = { buildings: [], roads: [], cover: [], collision: { vertices: new Float32Array(), triangles: new Uint32Array() }, ground: new Float32Array() }
 
 /** A 10 × 10 grid of 100 m tiles, centred on the origin. */
 function grid(): WorldData {
   const tiles: TileRef[] = []
   for (let col = 0; col < 10; col++) for (let row = 0; row < 10; row++) tiles.push({ col, row, hash: 0 })
-  return { origin: [0, 0], halfExtent: 500, tileSize: 100, spawns: [], tiles, collision: empty.collision }
+  return { origin: [0, 0], halfExtent: 500, tileSize: 100, spawns: [], tiles, groundCell: 0, collision: empty.collision }
 }
 
 function setup() {

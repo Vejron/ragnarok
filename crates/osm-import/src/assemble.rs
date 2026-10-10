@@ -1,7 +1,8 @@
 //! Turns OSM ways (or a procedural grid) into a tiled world: a manifest and one `Tile` per
 //! square of the grid that has anything in it.
 
-use crate::overpass::Way;
+use crate::overpass::{Area, LatLon, Osm, Way};
+use shared::terrain::Ground;
 use shared::world::*;
 use std::collections::BTreeMap;
 
@@ -145,15 +146,16 @@ fn road_style(highway: &str) -> Option<(f64, u8)> {
     })
 }
 
-/// Appends a closed prism (walls + roof + floor) for one building footprint to `mesh`.
-fn extrude(mesh: &mut CollisionMesh, footprint: &[P], height: f64) {
+/// Appends a closed prism (walls + roof + floor) for one building footprint to `mesh`, with its
+/// floor at `floor` metres and its roof `height` above that.
+fn extrude(mesh: &mut CollisionMesh, footprint: &[P], floor: f64, height: f64) {
     let base = mesh.vertices.len() as u32;
     let n = footprint.len() as u32;
     for &[x, z] in footprint {
-        mesh.vertices.push([cm(x), 0, cm(z)]);
+        mesh.vertices.push([cm(x), cm(floor), cm(z)]);
     }
     for &[x, z] in footprint {
-        mesh.vertices.push([cm(x), cm(height), cm(z)]);
+        mesh.vertices.push([cm(x), cm(floor + height), cm(z)]);
     }
     for i in 0..n {
         let j = (i + 1) % n;
@@ -222,9 +224,18 @@ impl Built {
 
 /// Assembles the world from building outlines (metres, any winding) and road polylines, and cuts
 /// it into square tiles of `tile_size` metres.
-fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P>, f64)>, roads: Vec<(Vec<P>, f64, u8)>) -> Built {
+///
+/// `ground` is the terrain over the whole grid of tiles (see `crate::ground`), or flat.
+fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P>, f64)>, roads: Vec<(Vec<P>, f64, u8)>, covers: Vec<(u8, Vec<Vec<P>>)>, ground: Ground) -> Built {
     let inner = half - EDGE_MARGIN;
-    let mut manifest = Manifest { version: WORLD_VERSION, origin, half_extent: cm(half), tile_size: cm(tile_size), ..Default::default() };
+    let mut manifest = Manifest {
+        version: WORLD_VERSION,
+        origin,
+        half_extent: cm(half),
+        tile_size: cm(tile_size),
+        ground_cell: ground.cell.max(0),
+        ..Default::default()
+    };
     let mut tiles: BTreeMap<(u16, u16), Tile> = BTreeMap::new();
     let mut footprints = Vec::new();
     for (mut footprint, height) in buildings {
@@ -245,9 +256,15 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P
         // A building belongs to the tile its centre is in, whole, so a tile never needs its neighbour.
         let n = footprint.len() as f64;
         let centre = footprint.iter().fold([0.0, 0.0], |sum, p| [sum[0] + p[0] / n, sum[1] + p[1] / n]);
+        // The floor is the lowest ground under the building, so no wall hangs in the air.
+        let floor = footprint.iter().chain([&centre]).map(|p| ground.height_at(p[0] as f32, p[1] as f32) as f64).fold(f64::MAX, f64::min);
         let tile = tiles.entry(manifest.tile_at(cm(centre[0]), cm(centre[1]))).or_default();
-        extrude(&mut tile.collision, &footprint, height);
-        tile.buildings.push(Building { height: cm(height), footprint: footprint.iter().map(|&[x, z]| [cm(x), cm(z)]).collect() });
+        extrude(&mut tile.collision, &footprint, floor, height);
+        tile.buildings.push(Building {
+            height: cm(height),
+            footprint: footprint.iter().map(|&[x, z]| [cm(x), cm(z)]).collect(),
+            base: cm(floor),
+        });
         footprints.push(footprint);
     }
     let mut candidates = Vec::new();
@@ -280,7 +297,42 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P
             }
         }
     }
+    // Cover is cut at tile borders like roads, so each tile's texture needs only its own file.
+    for (kind, rings) in covers {
+        let (min, max) = rings.iter().flatten().fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), p| ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]));
+        if min[0] > max[0] {
+            continue;
+        }
+        let (first, last) = (manifest.tile_at(cm(min[0]), cm(min[1])), manifest.tile_at(cm(max[0]), cm(max[1])));
+        for col in first.0..=last.0 {
+            for row in first.1..=last.1 {
+                let rect = [-half + col as f64 * side, -half + row as f64 * side, -half + (col + 1) as f64 * side, -half + (row + 1) as f64 * side];
+                let clipped: Vec<Vec<[i32; 2]>> = rings
+                    .iter()
+                    .map(|ring| clip_ring(ring, rect))
+                    .filter(|ring| ring.len() >= 3)
+                    .map(|ring| ring.iter().map(|&[x, z]| [cm(x), cm(z)]).collect())
+                    .collect();
+                if !clipped.is_empty() {
+                    tiles.entry((col, row)).or_default().cover.push(Cover { kind, rings: clipped });
+                }
+            }
+        }
+    }
+    for tile in tiles.values_mut() {
+        tile.cover.sort_by_key(|cover| cover_rank(cover.kind));
+    }
     manifest.spawns = pick_spawns(&candidates, &footprints, half);
+    // Every tile carries its piece of the ground, so every tile of the grid exists.
+    let samples = manifest.tile_samples();
+    if samples > 0 {
+        let per_tile = samples - 1;
+        for col in 0..manifest.grid() {
+            for row in 0..manifest.grid() {
+                tiles.entry((col, row)).or_default().ground = ground.block(col as u32 * per_tile, row as u32 * per_tile, samples);
+            }
+        }
+    }
     Built { manifest, tiles }
 }
 
@@ -291,31 +343,156 @@ pub fn bbox_around(lat: f64, lon: f64, half: f64) -> [f64; 4] {
     [lat - dlat, lon - dlon, lat + dlat, lon + dlon]
 }
 
-pub fn from_osm([south, west, north, east]: [f64; 4], tile_size: f64, ways: &[Way]) -> Built {
+/// The world's origin (lat, lon) and half-extent in metres for `bbox`: the largest square around
+/// its centre.
+pub fn frame([south, west, north, east]: [f64; 4]) -> ((f64, f64), f64) {
     let origin = ((south + north) / 2.0, (west + east) / 2.0);
     let [x0, z0] = project(origin, south, west);
     let [x1, z1] = project(origin, north, east);
-    let half = ((x1 - x0).abs().min((z1 - z0).abs()) / 2.0).round();
+    (origin, ((x1 - x0).abs().min((z1 - z0).abs()) / 2.0).round())
+}
+
+/// Local metres `(x, z)` to degrees `(lat, lon)`, the inverse of the projection used for OSM.
+pub fn unproject(origin: (f64, f64), x: f64, z: f64) -> (f64, f64) {
+    (origin.0 - z / METRES_PER_DEG_LAT, origin.1 + x / (METRES_PER_DEG_LON * origin.0.to_radians().cos()))
+}
+
+pub fn from_osm(bbox: [f64; 4], tile_size: f64, osm: &Osm, ground: Ground) -> Built {
+    let (origin, half) = frame(bbox);
     let mut buildings = Vec::new();
     let mut roads = Vec::new();
-    for way in ways {
-        let points: Vec<P> = way.geometry.iter().map(|g| project(origin, g.lat, g.lon)).collect();
+    let mut covers = Vec::new();
+    let line = |geometry: &[LatLon]| -> Vec<P> { geometry.iter().map(|g| project(origin, g.lat, g.lon)).collect() };
+    for Area { tags, outer, inner } in &osm.areas {
+        let Some(kind) = cover_kind(tags) else { continue };
+        let rings: Vec<Vec<P>> = join_rings(outer.iter().map(|w| line(w)).collect()).into_iter().chain(join_rings(inner.iter().map(|w| line(w)).collect())).collect();
+        if !rings.is_empty() {
+            covers.push((kind, rings));
+        }
+    }
+    for way in &osm.ways {
+        let points = line(&way.geometry);
         if way.tags.get("building").is_some_and(|value| value != "no" && value != "roof") {
             buildings.push((points, building_height(way)));
         } else if let Some((width, kind)) = way.tags.get("highway").and_then(|value| road_style(value)) {
             roads.push((points, width, kind));
+        } else if let Some(kind) = cover_kind(&way.tags) {
+            // Only closed ways are areas; an open one is a bank or a fence.
+            if points.len() >= 4 && points.first() == points.last() {
+                covers.push((kind, vec![points[..points.len() - 1].to_vec()]));
+            }
         }
     }
-    assemble(origin, half, tile_size, buildings, roads)
+    assemble(origin, half, tile_size, buildings, roads, covers, ground)
+}
+
+/// Ground cover for a way's or relation's tags, or `None` if it is not cover we draw.
+fn cover_kind(tags: &std::collections::HashMap<String, String>) -> Option<u8> {
+    let tag = |key: &str| tags.get(key).map(String::as_str);
+    if tag("waterway") == Some("riverbank") {
+        return Some(COVER_WATER);
+    }
+    if let Some(value) = tag("natural") {
+        return match value {
+            "water" => Some(COVER_WATER),
+            "wood" => Some(COVER_WOOD),
+            "scrub" | "heath" | "grassland" => Some(COVER_PARK),
+            "wetland" => Some(COVER_FARM),
+            "sand" | "beach" => Some(COVER_SAND),
+            _ => None,
+        };
+    }
+    if let Some(value) = tag("leisure") {
+        return matches!(value, "park" | "garden" | "pitch" | "playground" | "golf_course" | "recreation_ground" | "nature_reserve").then_some(COVER_PARK);
+    }
+    match tag("landuse")? {
+        "forest" => Some(COVER_WOOD),
+        "meadow" | "grass" | "village_green" | "recreation_ground" | "cemetery" | "allotments" | "greenfield" | "flowerbed" => Some(COVER_PARK),
+        "farmland" | "farmyard" | "orchard" | "vineyard" | "plant_nursery" => Some(COVER_FARM),
+        "residential" | "commercial" | "retail" | "garages" | "education" | "institutional" => Some(COVER_URBAN),
+        "industrial" | "railway" | "quarry" | "construction" | "brownfield" | "landfill" | "depot" => Some(COVER_INDUSTRIAL),
+        "basin" | "reservoir" => Some(COVER_WATER),
+        _ => None,
+    }
+}
+
+/// Draw order: ground uses first, then green, water on top. The client paints in list order.
+fn cover_rank(kind: u8) -> u8 {
+    match kind {
+        COVER_URBAN | COVER_INDUSTRIAL | COVER_FARM => 0,
+        COVER_WOOD | COVER_PARK | COVER_SAND => 1,
+        _ => 2,
+    }
+}
+
+/// Joins open polylines that share end points into closed rings; pieces that never close are dropped.
+fn join_rings(mut pieces: Vec<Vec<P>>) -> Vec<Vec<P>> {
+    let mut rings = Vec::new();
+    while let Some(mut ring) = pieces.pop() {
+        loop {
+            if ring.len() > 2 && ring.first() == ring.last() {
+                ring.pop();
+                rings.push(ring);
+                break;
+            }
+            let end = *ring.last().unwrap();
+            let Some(at) = pieces.iter().position(|p| p.first() == Some(&end) || p.last() == Some(&end)) else { break };
+            let mut next = pieces.swap_remove(at);
+            if next.first() != Some(&end) {
+                next.reverse();
+            }
+            ring.extend(next.into_iter().skip(1));
+        }
+    }
+    rings
+}
+
+/// Sutherland–Hodgman: the part of the polygon `ring` inside `rect`. May run along the rect's
+/// edges where the polygon leaves it, which is invisible under a fill.
+fn clip_ring(ring: &[P], [x0, z0, x1, z1]: Rect) -> Vec<P> {
+    // Each edge: is the point inside, and where does a segment cross it.
+    type Edge = (fn(P, Rect) -> bool, fn(P, P, Rect) -> P);
+    fn at_x(a: P, b: P, x: f64) -> P {
+        [x, a[1] + (b[1] - a[1]) * (x - a[0]) / (b[0] - a[0])]
+    }
+    fn at_z(a: P, b: P, z: f64) -> P {
+        [a[0] + (b[0] - a[0]) * (z - a[1]) / (b[1] - a[1]), z]
+    }
+    let edges: [Edge; 4] = [
+        (|p, r| p[0] >= r[0], |a, b, r| at_x(a, b, r[0])),
+        (|p, r| p[0] <= r[2], |a, b, r| at_x(a, b, r[2])),
+        (|p, r| p[1] >= r[1], |a, b, r| at_z(a, b, r[1])),
+        (|p, r| p[1] <= r[3], |a, b, r| at_z(a, b, r[3])),
+    ];
+    let rect = [x0, z0, x1, z1];
+    let mut points = ring.to_vec();
+    for (inside, cross) in edges {
+        if points.is_empty() {
+            break;
+        }
+        let input = std::mem::take(&mut points);
+        let mut previous = *input.last().unwrap();
+        for &current in &input {
+            match (inside(current, rect), inside(previous, rect)) {
+                (true, true) => points.push(current),
+                (true, false) => points.extend([cross(previous, current, rect), current]),
+                (false, true) => points.push(cross(previous, current, rect)),
+                (false, false) => {}
+            }
+            previous = current;
+        }
+    }
+    points
 }
 
 /// An offline grid city: 48 m blocks separated by 10 m streets, each block holding a few
 /// buildings of varied height around a courtyard.
-pub fn synthetic_city(half: f64, tile_size: f64) -> Built {
+pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground) -> Built {
     const PITCH: f64 = 58.0;
     const STREET: f64 = 10.0;
     let mut buildings = Vec::new();
     let mut roads = Vec::new();
+    let mut covers = Vec::new();
     let count = (half * 2.0 / PITCH).floor() as i32;
     let start = -(count as f64) * PITCH / 2.0;
     let mut seed: u64 = 0x2545_f491;
@@ -335,7 +512,9 @@ pub fn synthetic_city(half: f64, tile_size: f64) -> Built {
             let (bx, bz) = (start + i as f64 * PITCH + STREET / 2.0 + 2.0, start + j as f64 * PITCH + STREET / 2.0 + 2.0);
             let size = PITCH - STREET - 4.0;
             if next() < 0.15 {
-                continue; // a little park
+                // A little park.
+                covers.push((COVER_PARK, vec![vec![[bx, bz], [bx + size, bz], [bx + size, bz + size], [bx, bz + size]]]));
+                continue;
             }
             let half_size = size / 2.0 - 1.0;
             for (ox, oz) in [(0.0, 0.0), (size / 2.0 + 1.0, 0.0), (0.0, size / 2.0 + 1.0), (size / 2.0 + 1.0, size / 2.0 + 1.0)] {
@@ -348,7 +527,7 @@ pub fn synthetic_city(half: f64, tile_size: f64) -> Built {
             }
         }
     }
-    assemble((0.0, 0.0), half, tile_size, buildings, roads)
+    assemble((0.0, 0.0), half, tile_size, buildings, roads, covers, ground)
 }
 
 #[cfg(test)]
@@ -363,6 +542,45 @@ mod tests {
     }
 
     #[test]
+    fn joins_pieces_into_a_ring_whatever_their_direction() {
+        let rings = join_rings(vec![
+            vec![[0.0, 0.0], [4.0, 0.0], [4.0, 4.0]],
+            vec![[0.0, 4.0], [4.0, 4.0]], // runs against the others
+            vec![[0.0, 4.0], [0.0, 0.0]],
+            vec![[9.0, 9.0], [10.0, 9.0]], // never closes
+        ]);
+        assert_eq!(rings.len(), 1);
+        assert_eq!(rings[0].len(), 4);
+        assert!((signed_area(&rings[0]).abs() - 16.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn clipping_a_ring_keeps_its_part_inside() {
+        let square = [[-5.0, -5.0], [5.0, -5.0], [5.0, 5.0], [-5.0, 5.0]];
+        let part = clip_ring(&square, [0.0, 0.0, 10.0, 10.0]);
+        assert!((signed_area(&part).abs() - 25.0).abs() < 1e-9);
+        assert!(clip_ring(&square, [20.0, 20.0, 30.0, 30.0]).is_empty());
+        // A ring that swallows the rect clips to the rect.
+        let big = [[-50.0, -50.0], [50.0, -50.0], [50.0, 50.0], [-50.0, 50.0]];
+        assert!((signed_area(&clip_ring(&big, [0.0, 0.0, 10.0, 10.0])).abs() - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn cover_comes_from_tags() {
+        let tags = |pairs: &[(&str, &str)]| pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(cover_kind(&tags(&[("natural", "water")])), Some(COVER_WATER));
+        assert_eq!(cover_kind(&tags(&[("landuse", "forest")])), Some(COVER_WOOD));
+        assert_eq!(cover_kind(&tags(&[("leisure", "park")])), Some(COVER_PARK));
+        assert_eq!(cover_kind(&tags(&[("landuse", "military")])), None);
+    }
+
+    #[test]
+    fn synthetic_parks_land_in_their_tiles_water_last() {
+        let built = synthetic_city(150.0, 100.0, Ground::default());
+        assert!(built.tiles.values().any(|tile| !tile.cover.is_empty()));
+    }
+
+    #[test]
     fn clips_polylines_to_the_square() {
         let runs = clip_polyline(&[[-20.0, 0.0], [20.0, 0.0], [20.0, 30.0], [-20.0, 30.0]], 10.0);
         assert_eq!(runs, vec![vec![[-10.0, 0.0], [10.0, 0.0]]]);
@@ -371,7 +589,7 @@ mod tests {
     #[test]
     fn extrudes_closed_prism() {
         let mut mesh = CollisionMesh::default();
-        extrude(&mut mesh, &[[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0]], 3.0);
+        extrude(&mut mesh, &[[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0]], 0.0, 3.0);
         assert_eq!(mesh.vertices.len(), 8);
         // 4 walls × 2 + roof 2 + floor 2.
         assert_eq!(mesh.triangles.len(), 12);
@@ -379,7 +597,7 @@ mod tests {
 
     #[test]
     fn spawns_avoid_buildings() {
-        let built = synthetic_city(150.0, 100.0);
+        let built = synthetic_city(150.0, 100.0, Ground::default());
         assert!(!built.manifest.spawns.is_empty());
         for &[x, z] in &built.manifest.spawns {
             let p = [x as f64 / 100.0, z as f64 / 100.0];
@@ -392,7 +610,7 @@ mod tests {
 
     #[test]
     fn every_building_and_road_piece_sits_in_its_own_tile() {
-        let built = synthetic_city(300.0, 100.0);
+        let built = synthetic_city(300.0, 100.0, Ground::default());
         assert!(built.tiles.len() > 4, "a 600 m city in 100 m tiles has many tiles");
         for (&(col, row), tile) in &built.tiles {
             for building in &tile.buildings {
@@ -410,7 +628,7 @@ mod tests {
             }
         }
         // Tiling loses nothing: merging them back gives every building the single-tile import had.
-        let whole = synthetic_city(300.0, 1000.0);
+        let whole = synthetic_city(300.0, 1000.0, Ground::default());
         let count = |b: &Built| b.tiles.values().map(|t| t.buildings.len()).sum::<usize>();
         assert_eq!(count(&built), count(&whole));
     }

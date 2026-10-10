@@ -198,7 +198,7 @@ impl Mechanic for Vehicles {
             };
             let (x, z) = (cx as f32 / 100.0, cz as f32 / 100.0);
             let yaw = road_heading(&world.map, x, z);
-            let position = [x, CAR_DROP_Y, z];
+            let position = [x, world.map.ground.height_at(x, z) + CAR_DROP_Y, z];
             if world.physics.car_fits(kind, position, yaw) && world.vehicles.len() < MAX_VEHICLES {
                 add_vehicle(world, kind, position, yaw);
                 placed += 1;
@@ -636,7 +636,8 @@ mod tests {
         for (id, before) in start {
             let after = game.world.physics.car_pose(id).unwrap();
             let moved = (after.position[0] - before.position[0]).hypot(after.position[2] - before.position[2]);
-            assert!(after.up_y > 0.99 && after.position[1] < 1.0 && moved < 0.5, "car {id}: {before:?} -> {after:?}");
+            let ground = game.world.map.ground.height_at(after.position[0], after.position[2]);
+            assert!(after.up_y > 0.99 && after.position[1] < ground + 1.0 && moved < 0.5, "car {id}: {before:?} -> {after:?}");
         }
     }
 

@@ -63,6 +63,9 @@ pub const CONTROLLER_OFFSET: f32 = 0.02;
 pub const MAX_SLOPE_CLIMB_DEG: f32 = 50.0;
 pub const AUTOSTEP_HEIGHT: f32 = 0.35;
 pub const AUTOSTEP_MIN_WIDTH: f32 = 0.2;
+/// How far below its feet a standing character is pulled back onto the ground when it walks off
+/// a slope, metres. Without it, running downhill is a series of small falls.
+pub const SNAP_DISTANCE: f32 = 0.3;
 
 /// Anything that falls below this is respawned (e.g. a player squeezed through a gap in the mesh).
 pub const KILL_Y: f32 = -50.0;

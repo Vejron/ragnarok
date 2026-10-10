@@ -38,7 +38,7 @@ fn read_world(path: &Path) -> Result<(WorldFile, u32)> {
         let file = dir.join(entry.path());
         let tile_bytes = std::fs::read(&file).with_context(|| format!("reading {}", file.display()))?;
         anyhow::ensure!(world_hash(&tile_bytes) == entry.hash, "{} does not match the manifest; regenerate the world", file.display());
-        tiles.push(Tile::decode(&tile_bytes).with_context(|| format!("decoding {}", file.display()))?);
+        tiles.push((entry.col, entry.row, Tile::decode(&tile_bytes).with_context(|| format!("decoding {}", file.display()))?));
     }
     let world = WorldFile::assemble(&manifest, tiles);
     tracing::info!(path = %shown, tiles = manifest.tiles.len(), buildings = world.buildings.len(), roads = world.roads.len(), "world loaded");

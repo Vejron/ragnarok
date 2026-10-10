@@ -16,6 +16,18 @@ struct Element {
     tags: HashMap<String, String>,
     #[serde(default)]
     geometry: Vec<LatLon>,
+    #[serde(default)]
+    members: Vec<Member>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Member {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    role: String,
+    #[serde(default)]
+    geometry: Vec<LatLon>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -32,13 +44,33 @@ pub struct Way {
     pub geometry: Vec<LatLon>,
 }
 
-/// Fetches every building and highway way in `[south, west, north, east]`. Multipolygon
-/// relations (courtyard buildings) are not handled yet.
-pub fn fetch(endpoint: &str, [south, west, north, east]: [f64; 4]) -> Result<Vec<Way>> {
+/// A multipolygon relation: its tags and its member ways, outer and inner, not yet joined into rings.
+#[derive(Debug)]
+pub struct Area {
+    pub tags: HashMap<String, String>,
+    pub outer: Vec<Vec<LatLon>>,
+    pub inner: Vec<Vec<LatLon>>,
+}
+
+/// What Overpass returned for the box.
+#[derive(Debug, Default)]
+pub struct Osm {
+    pub ways: Vec<Way>,
+    pub areas: Vec<Area>,
+}
+
+/// The tags that make a way or relation ground cover, as an Overpass filter list.
+const COVER_FILTERS: &str = r#"[landuse];[natural~"^(water|wood|scrub|grassland|heath|wetland|sand|beach)$"];[leisure~"^(park|garden|pitch|playground|golf_course|recreation_ground)$"];[waterway=riverbank]"#;
+
+/// Fetches every building, highway and piece of ground cover in `[south, west, north, east]`.
+/// Multipolygon relations are returned for cover only; courtyard buildings are not handled yet.
+pub fn fetch(endpoint: &str, [south, west, north, east]: [f64; 4]) -> Result<Osm> {
     let bbox = format!("{south},{west},{north},{east}");
-    let query = format!(
-        "[out:json][timeout:90];(way[\"building\"]({bbox});way[\"highway\"]({bbox}););out geom;"
-    );
+    let mut query = format!("[out:json][timeout:120];(way[\"building\"]({bbox});way[\"highway\"]({bbox});");
+    for filter in COVER_FILTERS.split(';') {
+        query.push_str(&format!("way{filter}({bbox});relation[type=multipolygon]{filter}({bbox});"));
+    }
+    query.push_str(");out geom;");
     let client = reqwest::blocking::Client::builder()
         .user_agent(concat!("ragnarok-osm-import/", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(120))
@@ -52,10 +84,19 @@ pub fn fetch(endpoint: &str, [south, west, north, east]: [f64; 4]) -> Result<Vec
         .context("Overpass returned an error (rate limited? try again in a minute)")?
         .json()
         .context("Overpass returned invalid JSON")?;
-    Ok(response
-        .elements
-        .into_iter()
-        .filter(|element| element.kind == "way" && element.geometry.len() >= 2)
-        .map(|element| Way { id: element.id, tags: element.tags, geometry: element.geometry })
-        .collect())
+    let mut osm = Osm::default();
+    for element in response.elements {
+        match element.kind.as_str() {
+            "way" if element.geometry.len() >= 2 => osm.ways.push(Way { id: element.id, tags: element.tags, geometry: element.geometry }),
+            "relation" => {
+                let (mut outer, mut inner) = (Vec::new(), Vec::new());
+                for member in element.members.into_iter().filter(|m| m.kind == "way" && m.geometry.len() >= 2) {
+                    if member.role == "inner" { inner.push(member.geometry) } else { outer.push(member.geometry) }
+                }
+                osm.areas.push(Area { tags: element.tags, outer, inner });
+            }
+            _ => {}
+        }
+    }
+    Ok(osm)
 }

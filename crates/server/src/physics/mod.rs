@@ -6,6 +6,7 @@
 
 use anyhow::{Context, Result};
 use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterController};
+use rapier3d::parry::utils::Array2;
 use rapier3d::prelude::*;
 use shared::consts::*;
 use shared::movement::{decay_knock, desired_translation, settle_vertical};
@@ -44,20 +45,44 @@ pub struct Physics {
     /// Vehicles by id.
     cars: std::collections::BTreeMap<u32, vehicle::Car>,
     controller: KinematicCharacterController,
+    /// The same controller with snap-to-ground on, for the horizontal pass of a character that was
+    /// standing: it keeps them on a slope they walk down instead of stepping off it.
+    snapping: KinematicCharacterController,
     character_shape: Collider,
 }
 
-/// Height of the invisible boundary walls around the playable square, metres.
-const BOUNDARY_HEIGHT: f32 = 50.0;
+/// Height of the top of the invisible boundary walls around the playable square, metres above
+/// the lowest ground. Mirrored by `BOUNDARY_HEIGHT` in `client/src/sim/physics.ts`.
+const BOUNDARY_HEIGHT: f32 = 200.0;
 
-/// The static colliders every simulation of `world` uses: the ground slab, four boundary walls,
-/// and the building mesh. Mirrored by `buildStaticColliders` in `client/src/sim/physics.ts`.
+/// The static colliders every simulation of `world` uses: the ground slab, the terrain, four
+/// boundary walls, and the building mesh. Mirrored by `buildStaticColliders` in
+/// `client/src/sim/physics.ts`.
 pub fn static_colliders(world: &WorldFile) -> Result<Vec<Collider>> {
     let half = from_cm(world.half_extent);
     let mut colliders = vec![
-        // Ground: a 1 m thick slab whose top face is y = 0.
+        // Ground: a 1 m thick slab whose top face is y = 0, the lowest the terrain goes. On flat
+        // worlds it is the whole ground; elsewhere it only catches what falls through a gap.
         ColliderBuilder::cuboid(half, 0.5, half).translation(Vector::new(0.0, -0.5, 0.0)).build(),
     ];
+    let ground = &world.ground;
+    if !ground.is_flat() {
+        let side = ground.side as usize;
+        // Parry's heightfield is column-major with rows along Z: heights[(row, col)].
+        let mut heights = Vec::with_capacity(side * side);
+        for column in 0..side {
+            for row in 0..side {
+                heights.push(ground.sample(column as i64, row as i64));
+            }
+        }
+        let width = (side - 1) as f32 * from_cm(ground.cell);
+        let center = from_cm(ground.origin) + width / 2.0;
+        colliders.push(
+            ColliderBuilder::heightfield(Array2::new(side, side, heights), Vector::new(width, 1.0, width))
+                .translation(Vector::new(center, 0.0, center))
+                .build(),
+        );
+    }
     let wall = BOUNDARY_HEIGHT / 2.0;
     for (x, z, hx, hz) in [(half, 0.0, 0.5, half), (-half, 0.0, 0.5, half), (0.0, half, half, 0.5), (0.0, -half, half, 0.5)] {
         colliders.push(ColliderBuilder::cuboid(hx, wall, hz).translation(Vector::new(x, wall, z)).build());
@@ -76,6 +101,23 @@ pub fn static_colliders(world: &WorldFile) -> Result<Vec<Collider>> {
     Ok(colliders)
 }
 
+/// The stickman's character controller, without snap-to-ground.
+fn controller() -> KinematicCharacterController {
+    KinematicCharacterController {
+        offset: CharacterLength::Absolute(CONTROLLER_OFFSET),
+        slide: true,
+        autostep: Some(CharacterAutostep {
+            max_height: CharacterLength::Absolute(AUTOSTEP_HEIGHT),
+            min_width: CharacterLength::Absolute(AUTOSTEP_MIN_WIDTH),
+            include_dynamic_bodies: false,
+        }),
+        max_slope_climb_angle: MAX_SLOPE_CLIMB_DEG.to_radians(),
+        min_slope_slide_angle: MAX_SLOPE_CLIMB_DEG.to_radians(),
+        snap_to_ground: None,
+        ..Default::default()
+    }
+}
+
 impl Physics {
     pub fn new(world: &WorldFile) -> Result<Self> {
         let mut physics = Self {
@@ -91,20 +133,8 @@ impl Physics {
             ccd: CCDSolver::new(),
             parameters: IntegrationParameters { dt: TICK_DT, ..Default::default() },
             cars: Default::default(),
-            controller: KinematicCharacterController {
-                offset: CharacterLength::Absolute(CONTROLLER_OFFSET),
-                slide: true,
-                autostep: Some(CharacterAutostep {
-                    max_height: CharacterLength::Absolute(AUTOSTEP_HEIGHT),
-                    min_width: CharacterLength::Absolute(AUTOSTEP_MIN_WIDTH),
-                    include_dynamic_bodies: false,
-                }),
-                max_slope_climb_angle: MAX_SLOPE_CLIMB_DEG.to_radians(),
-                min_slope_slide_angle: MAX_SLOPE_CLIMB_DEG.to_radians(),
-                // Snapping is off: with the two-pass move below it slowly sinks the capsule into the floor.
-                snap_to_ground: None,
-                ..Default::default()
-            },
+            snapping: KinematicCharacterController { snap_to_ground: Some(CharacterLength::Absolute(SNAP_DISTANCE)), ..controller() },
+            controller: controller(),
             character_shape: ColliderBuilder::capsule_y(CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS).build(),
         };
         for collider in static_colliders(world)? {
@@ -171,7 +201,8 @@ impl Physics {
         // and WASM Rapier), and every stall would be a misprediction.
         let shape = self.character_shape.shape();
         let start = Vector::from(character.position);
-        let horizontal = self.controller.move_shape(dt, &queries, shape, &Pose::from_translation(start), Vector::new(desired[0], 0.0, desired[2]), |_| {});
+        let walker = if character.grounded && vy <= 0.0 { &self.snapping } else { &self.controller };
+        let horizontal = walker.move_shape(dt, &queries, shape, &Pose::from_translation(start), Vector::new(desired[0], 0.0, desired[2]), |_| {});
         let middle = start + horizontal.translation;
         let vertical = self.controller.move_shape(dt, &queries, shape, &Pose::from_translation(middle), Vector::new(0.0, desired[1], 0.0), |_| {});
         let end = middle + vertical.translation;
@@ -191,6 +222,7 @@ pub const STANDING_Y: f32 = CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS + CONTROLLER_OF
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shared::terrain::Ground;
     use shared::world::{CollisionMesh, WORLD_VERSION};
 
     fn flat_world() -> WorldFile {
@@ -209,6 +241,16 @@ mod tests {
             [3, 0, 4], [3, 4, 7], [4, 5, 6], [4, 6, 7], [0, 2, 1], [0, 3, 2],
         ];
         WorldFile { collision: CollisionMesh { vertices, triangles }, ..flat_world() }
+    }
+
+    /// 200 m square of 5 m cells, height `f(x, z)` metres.
+    fn terrain_world(f: impl Fn(f32, f32) -> f32) -> WorldFile {
+        let side = 41u32;
+        let heights = (0..side)
+            .flat_map(|j| (0..side).map(move |i| (i, j)))
+            .map(|(i, j)| (f(i as f32 * 5.0 - 100.0, j as f32 * 5.0 - 100.0) * 100.0).round() as i16)
+            .collect();
+        WorldFile { ground: Ground { origin: -10_000, cell: 500, side, heights }, ..flat_world() }
     }
 
     fn standing() -> Character {
@@ -288,10 +330,10 @@ mod tests {
 
     /// `(tick, position)` after `scripted_input`, mirrored in `predict.spec.ts`.
     const SCRIPTED_CHECKPOINTS: [(u32, [f32; 3]); 4] = [
-        (30, [1.8128, 0.9720, 0.7471]),
-        (60, [3.7747, 1.4720, 0.7692]),
-        (90, [4.6299, 0.8701, 0.0616]),
-        (300, [4.6299, 0.9729, 0.5537]),
+        (30, [1.8138, 0.9722, 0.7480]),
+        (60, [3.7758, 1.4722, 0.7701]),
+        (90, [4.6299, 0.8649, 0.0827]),
+        (300, [4.6295, 0.9728, 0.4872]),
     ];
 
     #[test]
@@ -306,6 +348,78 @@ mod tests {
             }
         }
         assert!(!character.grounded);
+    }
+
+    #[test]
+    fn height_at_is_the_surface_the_collider_has() {
+        let hills = |x: f32, z: f32| 8.0 + 6.0 * (x * 0.07).sin() * (z * 0.05).cos();
+        let world = terrain_world(hills);
+        let physics = Physics::new(&world).unwrap();
+        for k in 0..200 {
+            let (x, z) = (-95.0 + (k * 37 % 190) as f32 + 0.37, -95.0 + (k * 53 % 190) as f32 + 0.61);
+            let hit = physics.cast_ray([x, 100.0, z], [0.0, -1.0, 0.0], 200.0, 0).expect("terrain below");
+            let surface = 100.0 - hit;
+            let sampled = world.ground.height_at(x, z);
+            assert!((surface - sampled).abs() < 0.01, "({x}, {z}): ray {surface}, sampler {sampled}");
+        }
+    }
+
+    #[test]
+    fn walking_down_and_up_a_slope_stays_grounded() {
+        // A 20° ramp rising towards +Z.
+        let slope = 20.0f32.to_radians().tan();
+        let world = terrain_world(|_, z| (z + 100.0) * slope);
+        let physics = Physics::new(&world).unwrap();
+        for (start_z, input_z) in [(40.0, 127), (-40.0, -127)] {
+            let ground = world.ground.height_at(0.0, start_z);
+            let mut character = Character { position: [0.0, ground + STANDING_Y, start_z], grounded: true, ..Default::default() };
+            let mut airborne = 0;
+            for seq in 0..TICK_RATE * 4 {
+                let input = InputFrame(seq, 0, input_z, 0, BUTTON_RUN, 0, 0);
+                physics.move_character(&mut character, &input, TICK_DT);
+                airborne += !character.grounded as u32;
+            }
+            let ground = world.ground.height_at(character.position[0], character.position[2]);
+            assert!((character.position[1] - ground - STANDING_Y).abs() < 0.1, "{:?} on {ground}", character.position);
+            assert!(airborne <= TICK_RATE / 10, "airborne {airborne} of {} ticks from z = {start_z}", TICK_RATE * 4);
+        }
+    }
+
+    /// The slope the cross-language fixture runs on: a 20° ramp rising towards +Z, in 5 m cells.
+    /// `predict.spec.ts` builds the same heights.
+    fn ramp_world() -> WorldFile {
+        let slope = 20.0f32.to_radians().tan();
+        terrain_world(|_, z| (z + 100.0) * slope)
+    }
+
+    /// Running downhill with strafing, a jump and a stop: `ramp_world`'s fixture input.
+    pub fn ramp_input(seq: u32) -> InputFrame {
+        let buttons = if seq == 50 { BUTTON_RUN | BUTTON_JUMP } else if seq < 150 { BUTTON_RUN } else { 0 };
+        InputFrame(seq, (seq % 5) as i8 * 10 - 20, if seq < 150 { 127 } else { 0 }, (seq as i16 / 3) % 200, buttons, 0, 0)
+    }
+
+    /// `(tick, position)` after `ramp_input` from `RAMP_START`, mirrored in `predict.spec.ts`.
+    const RAMP_CHECKPOINTS: [(u32, [f32; 3]); 4] = [
+        (30, [-0.0180, 50.4969, 36.2721]),
+        (60, [-0.0733, 50.4621, 32.5448]),
+        (120, [-0.2956, 46.4279, 25.0934]),
+        (240, [-0.4475, 45.1151, 21.4869]),
+    ];
+    const RAMP_START: [f32; 2] = [0.0, 40.0];
+
+    #[test]
+    fn ramp_run_matches_fixture() {
+        let world = ramp_world();
+        let physics = Physics::new(&world).unwrap();
+        let ground = world.ground.height_at(RAMP_START[0], RAMP_START[1]);
+        let mut character = Character { position: [RAMP_START[0], ground + STANDING_Y, RAMP_START[1]], grounded: true, ..Default::default() };
+        for seq in 1..=240 {
+            physics.move_character(&mut character, &ramp_input(seq), TICK_DT);
+            if let Some((_, expected)) = RAMP_CHECKPOINTS.iter().find(|(tick, _)| *tick == seq) {
+                let close = character.position.iter().zip(expected).all(|(actual, expected)| (actual - expected).abs() < 0.001);
+                assert!(close, "tick {seq}: {:?}", character.position);
+            }
+        }
     }
 
     #[test]

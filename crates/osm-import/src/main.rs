@@ -5,9 +5,14 @@
 //!     cargo run -p osm-import                                  # Backen, Umeå, 2 km square
 //!     cargo run -p osm-import -- --center 59.3167,18.0613 --half 300
 //!     cargo run -p osm-import -- --bbox 59.3140,18.0560,59.3195,18.0665
-//!     cargo run -p osm-import -- --synthetic                   # offline grid city
+//!     cargo run -p osm-import -- --synthetic                   # offline grid city, with hills
+//!     cargo run -p osm-import -- --dem m708_75.tif             # elevation from a local DTM GeoTIFF
+//!     LM_USER=… LM_PASS=… cargo run -p osm-import              # elevation fetched from Lantmäteriet
+//!     cargo run -p osm-import -- --cell 0                      # flat ground, no elevation
 
 mod assemble;
+mod dem;
+mod ground;
 mod overpass;
 
 use anyhow::{Context, Result, bail};
@@ -29,6 +34,13 @@ struct Args {
     /// Side of a tile, metres.
     #[arg(long, default_value_t = 250.0)]
     tile: f64,
+    /// Distance between terrain height samples, metres; must divide `--tile`. 0 makes the ground flat.
+    #[arg(long, default_value_t = 5.0)]
+    cell: f64,
+    /// A Lantmäteriet DTM GeoTIFF (SWEREF 99 TM) to take elevation from. Without it, the DTM is
+    /// fetched with the credentials in LM_USER and LM_PASS.
+    #[arg(long)]
+    dem: Option<PathBuf>,
     /// Skip OpenStreetMap and generate a procedural grid city (works offline).
     #[arg(long)]
     synthetic: bool,
@@ -54,11 +66,53 @@ fn parse_center(text: &str) -> Result<(f64, f64)> {
     Ok((lat, lon))
 }
 
+/// The terrain under `bbox`'s world, from `--dem` or Lantmäteriet, or flat with `--cell 0`.
+fn terrain(args: &Args, bbox: [f64; 4]) -> Result<shared::terrain::Ground> {
+    if args.cell == 0.0 {
+        return Ok(Default::default());
+    }
+    let (origin, half) = assemble::frame(bbox);
+    // The square of tiles, which may stick out of the playable square, in SWEREF 99 TM.
+    let reach = (2.0 * half / args.tile).ceil() * args.tile / 2.0 + args.cell;
+    let corners = [(-reach, -reach), (reach, -reach), (-reach, reach), (reach, reach)].map(|(x, z)| {
+        let (lat, lon) = assemble::unproject(origin, x, z);
+        dem::sweref99tm(lat, lon)
+    });
+    let fold = |init: f64, pick: fn(f64, f64) -> f64, axis: fn(&(f64, f64)) -> f64| corners.iter().map(axis).fold(init, pick);
+    let window = [
+        fold(f64::MAX, f64::min, |c| c.0),
+        fold(f64::MAX, f64::min, |c| c.1),
+        fold(f64::MIN, f64::max, |c| c.0),
+        fold(f64::MIN, f64::max, |c| c.1),
+    ];
+    let source = match &args.dem {
+        Some(path) => dem::Dem::from_path(path, window)?,
+        None => {
+            let (Some(user), Some(password)) = (std::env::var("LM_USER").ok(), std::env::var("LM_PASS").ok()) else {
+                bail!("elevation needs --dem <file.tif>, or LM_USER and LM_PASS (Lantmäteriet credentials), or --cell 0 for flat ground");
+            };
+            dem::Dem::from_stac(bbox, window, &user, &password)?
+        }
+    };
+    let half_cell = args.cell / 2.0;
+    ground::build(half, args.tile, args.cell, |x, z| {
+        let (lat, lon) = assemble::unproject(origin, x, z);
+        let (e, n) = dem::sweref99tm(lat, lon);
+        source.mean(e, n, half_cell).map(f64::from)
+    })
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
     anyhow::ensure!(args.tile >= 20.0, "--tile must be at least 20 m");
+    anyhow::ensure!(args.cell == 0.0 || args.cell >= 0.5, "--cell must be 0 or at least 0.5 m");
     let built = if args.synthetic {
-        assemble::synthetic_city(300.0, args.tile)
+        let ground = if args.cell > 0.0 {
+            ground::build(300.0, args.tile, args.cell, |x, z| Some(ground::hills(x, z)))?
+        } else {
+            Default::default()
+        };
+        assemble::synthetic_city(300.0, args.tile, ground)
     } else {
         let bbox = match &args.bbox {
             Some(text) => parse_bbox(text)?,
@@ -67,21 +121,30 @@ fn main() -> Result<()> {
                 assemble::bbox_around(lat, lon, args.half)
             }
         };
-        let mut ways = None;
-        for endpoint in &args.overpass {
-            eprintln!("querying {endpoint} for {bbox:?}");
-            match overpass::fetch(endpoint, bbox) {
-                Ok(result) => {
-                    ways = Some(result);
-                    break;
+        // The public servers shed load with 504s; a few rounds over all of them usually get through.
+        let mut osm = None;
+        'rounds: for round in 0..4 {
+            if round > 0 {
+                eprintln!("  retrying in 15 s");
+                std::thread::sleep(std::time::Duration::from_secs(15));
+            }
+            for endpoint in &args.overpass {
+                eprintln!("querying {endpoint} for {bbox:?}");
+                match overpass::fetch(endpoint, bbox) {
+                    Ok(result) => {
+                        osm = Some(result);
+                        break 'rounds;
+                    }
+                    Err(error) => eprintln!("  failed: {error:#}"),
                 }
-                Err(error) => eprintln!("  failed: {error:#}"),
             }
         }
-        let Some(ways) = ways else { bail!("every Overpass endpoint failed; retry later or use --synthetic") };
-        assemble::from_osm(bbox, args.tile, &ways)
+        let Some(osm) = osm else { bail!("every Overpass endpoint failed; retry later or use --synthetic") };
+        let ground = terrain(&args, bbox)?;
+        assemble::from_osm(bbox, args.tile, &osm, ground)
     };
     let (buildings, roads, triangles) = built.tiles.values().fold((0, 0, 0), |(b, r, t), tile| (b + tile.buildings.len(), r + tile.roads.len(), t + tile.collision.triangles.len()));
+    let cover: usize = built.tiles.values().map(|tile| tile.cover.len()).sum();
     let (spawns, tile_count) = (built.manifest.spawns.len(), built.tiles.len());
     let (manifest, tiles) = built.into_files();
 
@@ -99,7 +162,7 @@ fn main() -> Result<()> {
     }
     std::fs::write(&args.out, &manifest).with_context(|| format!("writing {}", args.out.display()))?;
     eprintln!(
-        "wrote {} ({} KiB) and {tile_count} tiles ({} KiB): {buildings} buildings, {roads} roads, {spawns} spawns, {triangles} collision triangles, hash {:08x}",
+        "wrote {} ({} KiB) and {tile_count} tiles ({} KiB): {buildings} buildings, {roads} roads, {cover} cover patches, {spawns} spawns, {triangles} collision triangles, hash {:08x}",
         args.out.display(),
         manifest.len() / 1024,
         tile_bytes / 1024,
