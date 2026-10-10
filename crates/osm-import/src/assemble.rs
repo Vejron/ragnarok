@@ -2,6 +2,8 @@
 //! square of the grid that has anything in it.
 
 use crate::overpass::{Area, LatLon, Osm, Way};
+use crate::roof::{self, Cloud, Roof, Shape};
+use crate::trees::Planted;
 use shared::terrain::Ground;
 use shared::world::*;
 use std::collections::BTreeMap;
@@ -146,32 +148,6 @@ fn road_style(highway: &str) -> Option<(f64, u8)> {
     })
 }
 
-/// Appends a closed prism (walls + roof + floor) for one building footprint to `mesh`, with its
-/// floor at `floor` metres and its roof `height` above that.
-fn extrude(mesh: &mut CollisionMesh, footprint: &[P], floor: f64, height: f64) {
-    let base = mesh.vertices.len() as u32;
-    let n = footprint.len() as u32;
-    for &[x, z] in footprint {
-        mesh.vertices.push([cm(x), cm(floor), cm(z)]);
-    }
-    for &[x, z] in footprint {
-        mesh.vertices.push([cm(x), cm(floor + height), cm(z)]);
-    }
-    for i in 0..n {
-        let j = (i + 1) % n;
-        mesh.triangles.push([base + i, base + j, base + n + j]);
-        mesh.triangles.push([base + i, base + n + j, base + n + i]);
-    }
-    let flat: Vec<f64> = footprint.iter().flat_map(|p| [p[0], p[1]]).collect();
-    if let Ok(indices) = earcutr::earcut(&flat, &[], 2) {
-        for tri in indices.chunks_exact(3) {
-            let [a, b, c] = [tri[0] as u32, tri[1] as u32, tri[2] as u32];
-            mesh.triangles.push([base + n + a, base + n + b, base + n + c]);
-            mesh.triangles.push([base + c, base + b, base + a]);
-        }
-    }
-}
-
 /// Picks well-spread outdoor spawn points from road vertices.
 fn pick_spawns(candidates: &[P], footprints: &[Vec<P>], half: f64) -> Vec<[i32; 2]> {
     let limit = half - EDGE_MARGIN - SPAWN_CLEARANCE;
@@ -226,7 +202,10 @@ impl Built {
 /// it into square tiles of `tile_size` metres.
 ///
 /// `ground` is the terrain over the whole grid of tiles (see `crate::ground`), or flat.
-fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P>, f64)>, roads: Vec<(Vec<P>, f64, u8)>, covers: Vec<(u8, Vec<Vec<P>>)>, ground: Ground) -> Built {
+/// `trees` are `(position, TREE_*, height, crown radius)`; those that fall on a building or a
+/// road are dropped.
+#[allow(clippy::too_many_arguments)]
+fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P>, f64, Option<Roof>)>, roads: Vec<(Vec<P>, f64, u8)>, covers: Vec<(u8, Vec<Vec<P>>)>, trees: Vec<(P, u8, f64, f64)>, ground: Ground) -> Built {
     let inner = half - EDGE_MARGIN;
     let mut manifest = Manifest {
         version: WORLD_VERSION,
@@ -238,7 +217,7 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P
     };
     let mut tiles: BTreeMap<(u16, u16), Tile> = BTreeMap::new();
     let mut footprints = Vec::new();
-    for (mut footprint, height) in buildings {
+    for (mut footprint, height, fitted) in buildings {
         if footprint.len() > 1 && footprint.first() == footprint.last() {
             footprint.pop();
         }
@@ -259,18 +238,26 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P
         // The floor is the lowest ground under the building, so no wall hangs in the air.
         let floor = footprint.iter().chain([&centre]).map(|p| ground.height_at(p[0] as f32, p[1] as f32) as f64).fold(f64::MAX, f64::min);
         let tile = tiles.entry(manifest.tile_at(cm(centre[0]), cm(centre[1]))).or_default();
-        extrude(&mut tile.collision, &footprint, floor, height);
+        // Without laser data a building is a box of its tagged (or guessed) height.
+        let shape = fitted.unwrap_or(Roof::Leaf(Shape::Flat { y: floor + height }));
+        let first = tile.collision.triangles.len() as u32;
+        let parts = roof::build(&mut tile.collision, &footprint, floor, &shape);
         tile.buildings.push(Building {
-            height: cm(height),
+            height: cm(parts.top - floor),
             footprint: footprint.iter().map(|&[x, z]| [cm(x), cm(z)]).collect(),
             base: cm(floor),
+            first,
+            walls: parts.walls,
+            roof: parts.roof,
+            roof_kind: shape.kind(),
         });
         footprints.push(footprint);
     }
     let mut candidates = Vec::new();
     let side = tile_size;
-    for (points, width, kind) in roads {
-        for run in clip_polyline(&points, half) {
+    for (points, width, kind) in &roads {
+        let (width, kind) = (*width, *kind);
+        for run in clip_polyline(points, half) {
             // Sample along each run, not just at vertices, so long straight roads still offer spawns.
             for pair in run.windows(2) {
                 let ([ax, az], [bx, bz]) = (pair[0], pair[1]);
@@ -322,6 +309,29 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P
     for tile in tiles.values_mut() {
         tile.cover.sort_by_key(|cover| cover_rank(cover.kind));
     }
+    for (at, kind, height, crown) in trees {
+        if at[0].abs() > inner || at[1].abs() > inner {
+            continue;
+        }
+        let on_building = footprints.iter().any(|footprint| point_in_polygon(at, footprint));
+        let on_road = roads.iter().any(|(points, width, _)| points.windows(2).any(|pair| distance_to_segment(at, pair[0], pair[1]) < width / 2.0));
+        if on_building || on_road {
+            continue;
+        }
+        let tile = tiles.entry(manifest.tile_at(cm(at[0]), cm(at[1]))).or_default();
+        tile.trees.push(Tree {
+            x: cm(at[0]),
+            z: cm(at[1]),
+            base: cm(ground.height_at(at[0] as f32, at[1] as f32) as f64),
+            height: cm(height),
+            crown: cm(crown),
+            kind,
+        });
+    }
+    // The API gives no stable order, and tile files are hashed.
+    for tile in tiles.values_mut() {
+        tile.trees.sort_by_key(|tree| (tree.x, tree.z, tree.kind));
+    }
     manifest.spawns = pick_spawns(&candidates, &footprints, half);
     // Every tile carries its piece of the ground, so every tile of the grid exists.
     let samples = manifest.tile_samples();
@@ -357,8 +367,9 @@ pub fn unproject(origin: (f64, f64), x: f64, z: f64) -> (f64, f64) {
     (origin.0 - z / METRES_PER_DEG_LAT, origin.1 + x / (METRES_PER_DEG_LON * origin.0.to_radians().cos()))
 }
 
-pub fn from_osm(bbox: [f64; 4], tile_size: f64, osm: &Osm, ground: Ground) -> Built {
+pub fn from_osm(bbox: [f64; 4], tile_size: f64, osm: &Osm, planted: &[Planted], ground: Ground, lidar: Option<&Cloud>) -> Built {
     let (origin, half) = frame(bbox);
+    let split_roofs = std::cell::Cell::new(0);
     let mut buildings = Vec::new();
     let mut roads = Vec::new();
     let mut covers = Vec::new();
@@ -373,7 +384,20 @@ pub fn from_osm(bbox: [f64; 4], tile_size: f64, osm: &Osm, ground: Ground) -> Bu
     for way in &osm.ways {
         let points = line(&way.geometry);
         if way.tags.get("building").is_some_and(|value| value != "no" && value != "roof") {
-            buildings.push((points, building_height(way)));
+            // Roofs come from the laser returns over the footprint, where there are any.
+            let ring = if points.len() > 1 && points.first() == points.last() { &points[..points.len() - 1] } else { &points[..] };
+            let shape = lidar.and_then(|cloud| {
+                if ring.len() < 3 {
+                    return None;
+                }
+                let returns = cloud.over(ring, |x, z| unproject(origin, x, z));
+                let fitted = roof::fit(ring, &returns);
+                if matches!(fitted, Some(Roof::Cut { .. })) {
+                    split_roofs.set(split_roofs.get() + 1);
+                }
+                fitted
+            });
+            buildings.push((points, building_height(way), shape));
         } else if let Some((width, kind)) = way.tags.get("highway").and_then(|value| road_style(value)) {
             roads.push((points, width, kind));
         } else if let Some(kind) = cover_kind(&way.tags) {
@@ -383,7 +407,11 @@ pub fn from_osm(bbox: [f64; 4], tile_size: f64, osm: &Osm, ground: Ground) -> Bu
             }
         }
     }
-    assemble(origin, half, tile_size, buildings, roads, covers, ground)
+    if lidar.is_some() {
+        eprintln!("roofs: {} of {} buildings have more than one part", split_roofs.get(), buildings.len());
+    }
+    let trees = planted.iter().map(|tree| (project(origin, tree.lat, tree.lon), tree.kind, tree.height, tree.crown)).collect();
+    assemble(origin, half, tile_size, buildings, roads, covers, trees, ground)
 }
 
 /// Ground cover for a way's or relation's tags, or `None` if it is not cover we draw.
@@ -523,11 +551,34 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground) -> Built {
                 }
                 let (x, z) = (bx + ox, bz + oz);
                 let height = 5.0 + (next() * 5.0).floor() * 3.0;
-                buildings.push((vec![[x, z], [x + half_size, z], [x + half_size, z + half_size], [x, z + half_size]], height));
+                // Every other house gets a pitched roof, so the offline world has roofs to draw.
+                let roof = (next() < 0.5).then(|| {
+                    let at = [x + half_size / 2.0, z + half_size / 2.0];
+                    let eaves = ground.height_at(at[0] as f32, at[1] as f32) as f64 + height;
+                    let ridge = if next() < 0.5 { [1.0, 0.0] } else { [0.0, 1.0] };
+                    let top = eaves + half_size / 2.0 * 0.6;
+                    Roof::Leaf(if next() < 0.5 {
+                        Shape::Gable { y: top, at, ridge, pitch: 0.6 }
+                    } else {
+                        Shape::Hip { y: top, at, ridge, pitch: 0.6, half: 0.0 }
+                    })
+                });
+                buildings.push((vec![[x, z], [x + half_size, z], [x + half_size, z + half_size], [x, z + half_size]], height, roof));
             }
         }
     }
-    assemble((0.0, 0.0), half, tile_size, buildings, roads, covers, ground)
+    // A few trees in the parks and along the streets, so the offline world has some to draw.
+    let mut trees = Vec::new();
+    for i in 0..=count {
+        for j in 0..count {
+            let line = start + i as f64 * PITCH;
+            let along = start + j as f64 * PITCH + PITCH / 2.0;
+            let kind = (i + j) as u8 % 7;
+            let (height, crown) = crate::trees::size(kind, (i * 100 + j) as u64, None);
+            trees.push(([line + STREET / 2.0 + 1.5, along], kind, height, crown));
+        }
+    }
+    assemble((0.0, 0.0), half, tile_size, buildings, roads, covers, trees, ground)
 }
 
 #[cfg(test)]
@@ -581,18 +632,35 @@ mod tests {
     }
 
     #[test]
+    fn trees_stay_off_buildings_and_roads_and_sit_in_their_tile() {
+        let built = synthetic_city(300.0, 100.0, Ground::default());
+        let trees: usize = built.tiles.values().map(|tile| tile.trees.len()).sum();
+        assert!(trees > 0);
+        for (&(col, row), tile) in &built.tiles {
+            for tree in &tile.trees {
+                assert_eq!(built.manifest.tile_at(tree.x, tree.z), (col, row));
+                let p = [tree.x as f64 / 100.0, tree.z as f64 / 100.0];
+                for building in &tile.buildings {
+                    let footprint: Vec<P> = building.footprint.iter().map(|&[x, z]| [x as f64 / 100.0, z as f64 / 100.0]).collect();
+                    assert!(!point_in_polygon(p, &footprint));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn clips_polylines_to_the_square() {
         let runs = clip_polyline(&[[-20.0, 0.0], [20.0, 0.0], [20.0, 30.0], [-20.0, 30.0]], 10.0);
         assert_eq!(runs, vec![vec![[-10.0, 0.0], [10.0, 0.0]]]);
     }
 
     #[test]
-    fn extrudes_closed_prism() {
+    fn a_flat_box_is_a_closed_prism() {
         let mut mesh = CollisionMesh::default();
-        extrude(&mut mesh, &[[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0]], 0.0, 3.0);
+        let parts = roof::build(&mut mesh, &[[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0]], 0.0, &Roof::Leaf(Shape::Flat { y: 3.0 }));
         assert_eq!(mesh.vertices.len(), 8);
         // 4 walls × 2 + roof 2 + floor 2.
-        assert_eq!(mesh.triangles.len(), 12);
+        assert_eq!((parts.walls, parts.roof, mesh.triangles.len()), (8, 2, 12));
     }
 
     #[test]

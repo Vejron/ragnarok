@@ -2,7 +2,7 @@
 //!
 //! It is a *manifest* (`client/public/world.msgpack`: where the world is, its spawn points and
 //! which tiles exist) and one file per square *tile* (`client/public/tiles/{col}_{row}.msgpack`:
-//! the buildings, roads, ground heights and collision mesh inside it). The server reads every tile and merges
+//! the buildings, roads, trees, ground heights and collision mesh inside it). The server reads every tile and merges
 //! them into one `WorldFile`; the client streams the tiles around the player
 //! (`client/src/world.ts`, `client/src/stream.ts`).
 //!
@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 4;
+pub const WORLD_VERSION: u8 = 6;
 
 /// `world.msgpack`: everything about the world except the tiles' contents.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -64,6 +64,8 @@ pub struct Tile {
     /// What covers the ground here (water, woods, parks, ...), clipped to the tile. The client
     /// bakes it, with the roads, into the terrain's texture; nothing simulates it.
     pub cover: Vec<Cover>,
+    /// Individual trees (street and park trees) inside the tile.
+    pub trees: Vec<Tree>,
 }
 
 impl Manifest {
@@ -89,6 +91,8 @@ pub struct WorldFile {
     pub collision: CollisionMesh,
     /// The terrain. With no samples the ground is the plane y = 0 spanning `half_extent`.
     pub ground: Ground,
+    /// Every tree, for trunk colliders.
+    pub trees: Vec<Tree>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -99,7 +103,19 @@ pub struct Building {
     /// Height of the floor, centimetres: the lowest ground under the footprint. The roof is at
     /// `base + height`.
     pub base: i32,
+    /// This building's triangles in the tile's collision mesh: `walls` triangles of wall from
+    /// `first`, then `roof` triangles of roof, then the floor (not drawn).
+    pub first: u32,
+    pub walls: u32,
+    pub roof: u32,
+    /// `ROOF_*`: what the roof was fitted as.
+    pub roof_kind: u8,
 }
+
+pub const ROOF_FLAT: u8 = 0;
+pub const ROOF_SHED: u8 = 1;
+pub const ROOF_GABLE: u8 = 2;
+pub const ROOF_HIP: u8 = 3;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Road {
@@ -124,6 +140,51 @@ pub const COVER_FARM: u8 = 3;
 pub const COVER_SAND: u8 = 4;
 pub const COVER_URBAN: u8 = 5;
 pub const COVER_INDUSTRIAL: u8 = 6;
+
+/// One tree. All lengths are centimetres.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Tree {
+    pub x: i32,
+    pub z: i32,
+    /// Height of the ground at the foot of the trunk.
+    pub base: i32,
+    /// Total height above `base`.
+    pub height: i32,
+    /// Radius of the crown.
+    pub crown: i32,
+    /// `TREE_*`: the archetype.
+    pub kind: u8,
+}
+
+pub const TREE_BIRCH: u8 = 0;
+pub const TREE_PINE: u8 = 1;
+pub const TREE_SPRUCE: u8 = 2;
+pub const TREE_ORNAMENTAL: u8 = 3;
+pub const TREE_BROADLEAF: u8 = 4;
+pub const TREE_COLUMNAR: u8 = 5;
+pub const TREE_LOWWIDE: u8 = 6;
+
+impl Tree {
+    /// Trunk radius, centimetres, scaled with the tree's height relative to the archetype's.
+    /// Client and server both build the trunk collider from this, so it must stay in one place
+    /// (mirrored in `client/src/world.ts`).
+    pub fn trunk_radius(&self) -> i32 {
+        let (base_radius, base_height) = match self.kind {
+            TREE_PINE | TREE_SPRUCE | TREE_COLUMNAR => (20, 1600),
+            TREE_ORNAMENTAL => (10, 600),
+            TREE_BROADLEAF => (30, 1400),
+            TREE_LOWWIDE => (15, 800),
+            _ => (15, 1200),
+        };
+        (base_radius * self.height / base_height).clamp(5, 60)
+    }
+
+    /// Height of the trunk collider above `base`, centimetres: the lower half of the tree, where
+    /// the crown has not started. Mirrored in `client/src/world.ts`.
+    pub fn trunk_height(&self) -> i32 {
+        self.height / 2
+    }
+}
 
 pub const ROAD_MAJOR: u8 = 0;
 pub const ROAD_MINOR: u8 = 1;
@@ -203,6 +264,7 @@ impl WorldFile {
             world.collision.triangles.extend(tile.collision.triangles.into_iter().map(|[a, b, c]| [a + base, b + base, c + base]));
             world.buildings.extend(tile.buildings);
             world.roads.extend(tile.roads);
+            world.trees.extend(tile.trees);
         }
         world
     }
@@ -231,11 +293,12 @@ mod tests {
         };
         assert_eq!(Manifest::decode(&manifest.encode()).unwrap(), manifest);
         let tile = Tile {
-            buildings: vec![Building { height: 800, footprint: vec![[0, 0], [100, 0], [100, 100]], base: 250 }],
+            buildings: vec![Building { height: 800, footprint: vec![[0, 0], [100, 0], [100, 100]], base: 250, first: 0, walls: 6, roof: 2, roof_kind: ROOF_GABLE }],
             roads: vec![Road { width: 600, kind: ROAD_MINOR, points: vec![[0, 0], [500, 500]] }],
             collision: CollisionMesh { vertices: vec![[0, 0, 0]], triangles: vec![[0, 0, 0]] },
             ground: vec![0, 10, 20, 30],
             cover: vec![Cover { kind: COVER_WATER, rings: vec![vec![[0, 0], [100, 0], [100, 100]]] }],
+            trees: vec![Tree { x: 5, z: -7, base: 120, height: 1200, crown: 220, kind: TREE_BIRCH }],
         };
         assert_eq!(Tile::decode(&tile.encode()).unwrap(), tile);
         assert_eq!(manifest.tiles[0].path(), "tiles/1_0.msgpack");

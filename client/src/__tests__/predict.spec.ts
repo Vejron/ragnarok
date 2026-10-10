@@ -240,7 +240,7 @@ describe('cross-language terrain', () => {
     for (let row = 0; row < side; row++) for (let column = 0; column < side; column++) heights[row * side + column] = Math.round(f32(row * 5 * slope) * 100) / 100
     return { x0: -100, z0: -100, cell: 5, side, heights }
   }
-  const emptyTile: TileData = { buildings: [], roads: [], cover: [], collision: { vertices: new Float32Array(), triangles: new Uint32Array() }, ground: new Float32Array() }
+  const emptyTile: TileData = { buildings: [], roads: [], cover: [], trees: [], collision: { vertices: new Float32Array(), triangles: new Uint32Array() }, ground: new Float32Array() }
   const world = (): WorldData => ({
     origin: [0, 0], halfExtent: 100, tileSize: 200, spawns: [], tiles: [], groundCell: 5,
     collision: { vertices: new Float32Array(), triangles: new Uint32Array() },

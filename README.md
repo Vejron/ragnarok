@@ -3,6 +3,7 @@
 A browser multiplayer game: goofy stickmen in a real city built from OpenStreetMap. There's a server-authoritative Rust game server (Salvo, WebTransport, Rapier) and a Vue 3 + three.js client with client-side prediction and snapshot interpolation.
 
 - [design.md](design.md): architecture, netcode, world pipeline and roadmap
+- [WORLD.md](WORLD.md): generating the world: data sources, credentials, download cache
 - [NETWORKING.md](NETWORKING.md): wire protocol
 - [VEHICLES-I.md](VEHICLES-I.md): how roadmap stage 2 (cars, seats, driving) was built
 - [VEHICLES-II.md](VEHICLES-II.md): the tank, its gunner seat and the shell, driver prediction and the helicopter
@@ -21,9 +22,11 @@ cargo run -p osm-import                       # default: 2 km square around Back
 cargo run -p osm-import -- --center 59.3167,18.0613 --half 600   # any lat,lon and half-side in metres
 cargo run -p osm-import -- --bbox 59.3290,18.0600,59.3345,18.0705   # any south,west,north,east
 cargo run -p osm-import -- --synthetic        # offline grid city, with hills
-# Terrain comes from Lantmäteriet's 1 m height model (CC BY 4.0), read through their STAC API.
-# Downloads need a Geotorget account's credentials; the importer fetches only the blocks it needs.
-LM_USER=… LM_PASS=… cargo run -p osm-import   # elevation from Lantmäteriet
+# Terrain and roofs come from Lantmäteriet (CC BY 4.0), trees from Umeå's open data (CC0).
+# Lantmäteriet needs a Geotorget account: put LM_USER and LM_PASS in .env.local (git-ignored) and
+# load it. Downloads are cached in .cache/osm-import (--refresh, --clear-cache). See WORLD.md.
+set -a; . ./.env.local; set +a
+cargo run -p osm-import                       # terrain, roofs and trees
 cargo run -p osm-import -- --dem m708_75.tif  # or from a DTM GeoTIFF you already have
 cargo run -p osm-import -- --cell 0           # flat ground, no elevation (--cell is the sample spacing, 5 m)
 

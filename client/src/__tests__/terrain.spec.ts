@@ -39,7 +39,7 @@ describe('terrain sampling', () => {
       origin: [0, 0], halfExtent: 100, tileSize: 40, spawns: [], tiles: [], groundCell: 5,
       collision: { vertices: new Float32Array(), triangles: new Uint32Array() },
     }
-    const tile: TileData = { buildings: [], roads: [], cover: [], collision: world.collision, ground: bumpy().heights }
+    const tile: TileData = { buildings: [], roads: [], cover: [], trees: [], collision: world.collision, ground: bumpy().heights }
     expect(groundOf(world, { col: 3, row: 1, hash: 0 }, tile)).toMatchObject({ x0: 20, z0: -60, cell: 5, side: 9 })
     expect(groundOf({ ...world, groundCell: 0 }, { col: 0, row: 0, hash: 0 }, tile)).toBeNull()
   })
@@ -48,7 +48,7 @@ describe('terrain sampling', () => {
 describe('terrain mesh', () => {
   it('faces up and follows the heights', async () => {
     const { buildTile } = await import('@/render/world')
-    const tile: TileData = { buildings: [], roads: [], cover: [], collision: { vertices: new Float32Array(), triangles: new Uint32Array() }, ground: new Float32Array() }
+    const tile: TileData = { buildings: [], roads: [], cover: [], trees: [], collision: { vertices: new Float32Array(), triangles: new Uint32Array() }, ground: new Float32Array() }
     const group = buildTile(tile, 0, bumpy())
     const mesh = group.children[0] as import('three').Mesh
     const position = mesh.geometry.getAttribute('position')

@@ -178,12 +178,14 @@ Datagrams are capped at 1200 bytes (`MAX_PACKET`). Interest management and delta
 
 `cargo run -p osm-import`. The default is a 2 km square centred on Backen, Umeå (63.832127, 20.168286). `--center lat,lon --half metres` picks another place, `--bbox south,west,north,east` an exact box, `--tile` the tile size (250 m), and `--synthetic` generates a grid city offline.
 
+**The full pipeline is documented in [WORLD.md](WORLD.md)**: every data source and licence (OpenStreetMap, Lantmäteriet's height model and laser data, Umeå's tree register), where the credentials go (`.env.local`), all flags, and the download cache (`.cache/osm-import/`, git-ignored; `--refresh`, `--clear-cache`). This section covers what the output means.
+
 1. **Fetch:** an Overpass query for buildings, highways and ground cover (`way` and multipolygon `relation` with `landuse`, `natural`, `leisure` or `waterway=riverbank`; `out geom`), with a fallback mirror and a few retry rounds, since the public servers shed load.
 2. **Project:** equirectangular projection to local metres around the bbox centre (+X east, +Z south, +Y up).
 3. **Buildings:**
    - Footprints with at least 4 m² of area, fully inside the playable square.
    - Height comes from `height`, then `building:levels × 3 + 1`, then a varied 6–12 m.
-   - Each building is extruded into a closed prism (walls, earcut roof and floor) for the collision mesh. The floor is at the lowest ground under the footprint (`base`) and the roof `height` above it.
+   - Each building becomes walls, a roof and a floor in the collision mesh (`crates/osm-import/src/roof.rs`). The floor is at the lowest ground under the footprint (`base`). Without laser data the roof is flat at the tagged height; with it, see *Roofs* below.
 4. **Roads:** highway ways are clipped to the square (Liang–Barsky) and classed as major (10 m), minor (4.5–7 m) or path (2.5–5 m). They stay 2D polylines. The client paints them into the terrain texture (below), and the server uses them to line parked vehicles up with the street.
    - **Cover:** closed ways and multipolygon relations are classed as water, wood, park (grass, meadow, parks, pitches), farm, sand, urban or industrial. Relation members are joined end to end into rings, inner rings being holes (filled even-odd). Open pieces that never close are dropped. They are not simulated: water is only paint, and the ground under it is the DEM's.
 5. **Spawns:** points sampled along roads that are outside every footprint and at least 1.5 m from walls. Up to 64 are picked, at least 15 m apart, sorted centre-first. The server picks among the 6 most central. They are 2D, and the ground gives their height.
@@ -213,10 +215,29 @@ The ground is a grid of heights, from Lantmäteriet's *Markhöjdmodell* (1 m DTM
 - **Texture:** each tile's terrain mesh has its own 512 × 512 canvas texture (2 texels per metre), painted when the tile arrives (`client/src/render/cover.ts`): grass, then the cover patches, then roads as a darker casing under a lighter fill, casings first so junctions merge. UVs run 0..1 over the tile with `flipY` off, so canvas `(0, 0)` is the tile's `(x0, z0)` corner. The texture and its material are freed with the tile. A world without terrain has no terrain mesh, so it shows the plain grass plane.
 - **Spawning:** players and vehicles are placed at the ground height under their spawn point. Buildings sit at the lowest ground under their footprint.
 
+### Roofs
+
+Lantmäteriet's *Laserdata Skog* (`stac-hojd/v1/collections/dsm-skoglig-copc`, COPC, about 2 returns/m², class 1 unclassified and class 2 ground; buildings are not classified) gives each footprint a roof. `lidar.rs` reads it over range requests with a small COPC reader of its own (the public crates mis-walk this file's hierarchy; only the octree nodes touching the world are downloaded, about 17 M returns for Backen). Ground and noise are dropped, the rest is bucketed in a 25 m grid.
+
+- **Foliage:** canopy returns more than once, a roof once. The fit keeps single-return pulses (when enough are left), fits, and drops returns more than 1 m above that first fit (trees, antennas), then fits again. On Backen the single-return filter alone cut the median misfit by about 40 %.
+- **Shapes** (`roof::model`): the returns inside a footprint are fitted, in the footprint's smallest enclosing rectangle, with a flat roof, one plane (*pulpettak*, at most 35°), a gable (*sadeltak*, ridge along either axis, ridge offset searched) and a hip (*valmat tak*, ridge along the long axis). Least squares with re-weighting so chimneys do not drag it; the cost is the mean squared residual clipped at 1 m². A richer model has to cost 30 % less than the simpler one (10 % for hip over gable), pitch must be 9°–50°, and the shape has to stay within 1.5 m of the measured heights at the rectangle's corners and centre, so a plane fitted to a few returns cannot climb away from them.
+- **Parts** (`roof::tree`): a `Roof` is one shape or a straight `Cut` across the rectangle with a roof on each side (at most two levels). Only rectangles of at least 70 m² are cut; each part needs 24 returns and 4 m of width, and the parts together must cost at most 50 % of the single fit and save at least 0.04. Fewer than 10 returns, or 0.3 per m², leaves a flat roof at the OSM height.
+- **Mesh** (`roof::build`): each earcut triangle of the footprint is cut along the cuts and then the creases (ridge and hip lines) into planar pieces; walls run up to the roof and are split where a crease or a cut meets the footprint, so gable ends are filled. Where two parts meet at different heights a step wall (double-sided) closes the gap, cut wherever a crease or another cut crosses the seam so it follows the bends of the roofs either side. Heights are absolute local y, so a roof on a slope stays level.
+- **Format:** `Building` carries `first`, `walls`, `roof` (triangle ranges in the tile's collision mesh) and `roof_kind`. The client draws buildings from those triangles, so what is drawn is what is collided with; walls and roofs get separate colour palettes.
+- **Result for Backen:** of 1 075 buildings, 808 gable, 117 flat, 85 shed and 65 hip (by the most complex part); 212 have more than one part.
+- **Registration:** the footprints and the laser data only line up with a correct SWEREF 99 TM transform; the closed-form conformal latitude is pinned by a test against an independent series (an earlier series was 69 m off in northing). The same error had also shifted the DEM.
+
 Not handled yet:
-- Multipolygon relations, such as courtyard buildings.
+- Courtyard buildings (OSM multipolygons): the outer ring becomes a solid block and the courtyard's trees can bend its roof fit.
+- Dormers, chimneys, half-hips and mansards. Parts are separated by straight cuts across the footprint's rectangle, so a roof whose parts do not line up with it is approximated.
 - Waterways drawn as lines (rivers mapped only as a centre line), and railways.
-- Trees.
+- Trees outside the municipal register: woods are only a painted cover, and the register has species but no sizes.
+
+### Trees
+
+Street and park trees come from Umeå kommun's open data (`trad-som-forvaltas-av-gator-och-parker`, ~32 000 trees; fetched by `osm-import`, skip with `--no-trees`). The register has position and species only, so each species is mapped by genus to one of seven archetypes (`TREE_*` in `crates/shared/src/world.rs`): birch (≈60 %), pine, spruce/fir/larch, ornamental (rowan, cherry, apple), broadleaf (maple, lime, oak), columnar (poplar, aspen, `Fastigiata`/`Erecta` cultivars) and low-wide (willow, alder). Height and crown come from the archetype, varied ±20 % by tree id and shrunk for recently planted trees. Trees on buildings or roads are dropped.
+
+Each `Tree` is in its tile (`Tile.trees`). The client draws one instanced mesh per archetype per tile (`client/src/render/trees.ts`). Trunks are solid: an upright cylinder up to half the tree's height, built from `Tree::trunk_radius` / `trunk_height` on the server (`static_colliders`) and mirrored in `addTileCollider` and `decodeTile`.
 
 ## 9. Physics
 
@@ -322,4 +343,6 @@ pub trait Mechanic: Send {
 7. **World:**
    - Terrain elevation (done): Lantmäteriet's 1 m height model as a heightfield in the tiles, walked, driven, shot and drawn (§8, §9).
    - Ground cover (done): roads, water, woods, parks and other landuse painted into a per-tile terrain texture (§8).
-   - Next: courtyard building multipolygons, waterways as lines, trees.
+   - Roofs (done): flat, shed, gable and hip roofs, in up to four parts per building, fitted to Laserdata Skog with foliage rejected (§8).
+   - Trees (done): Umeå's street and park tree register as seven archetypes, instanced and with trunk colliders (§8).
+   - Next: courtyard building multipolygons, waterways as lines, trees in woods (the point cloud has them).

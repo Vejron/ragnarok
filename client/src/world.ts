@@ -2,7 +2,7 @@ import { decode } from '@msgpack/msgpack'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 4
+export const WORLD_VERSION = 6
 
 export const ROAD_MAJOR = 0
 export const ROAD_MINOR = 1
@@ -16,14 +16,47 @@ export const COVER_SAND = 4
 export const COVER_URBAN = 5
 export const COVER_INDUSTRIAL = 6
 
+export const TREE_BIRCH = 0
+export const TREE_PINE = 1
+export const TREE_SPRUCE = 2
+export const TREE_ORNAMENTAL = 3
+export const TREE_BROADLEAF = 4
+export const TREE_COLUMNAR = 5
+export const TREE_LOWWIDE = 6
+
 export type Point2 = [number, number]
+
+/** One tree: its foot at `(x, base, z)`, `height` tall with a crown of radius `crown`. */
+export interface Tree {
+  x: number
+  z: number
+  base: number
+  height: number
+  crown: number
+  /** `TREE_*`: the archetype. */
+  kind: number
+  /** The trunk's collider: radius, and height above `base`. Mirrors `Tree::trunk_radius` / `trunk_height`. */
+  trunkRadius: number
+  trunkHeight: number
+}
 
 export interface Building {
   height: number
   footprint: Point2[]
-  /** Height of the floor, metres. The roof is at `base + height`. */
+  /** Height of the floor, metres. The top of the roof is at `base + height`. */
   base: number
+  /** This building's triangles in the tile's collision mesh: walls, then roof (then the floor, not drawn). */
+  first: number
+  walls: number
+  roof: number
+  /** `ROOF_*`: what the laser data fitted the roof as. */
+  roofKind: number
 }
+
+export const ROOF_FLAT = 0
+export const ROOF_SHED = 1
+export const ROOF_GABLE = 2
+export const ROOF_HIP = 3
 
 export interface Road {
   width: number
@@ -69,6 +102,7 @@ export interface TileData {
   roads: Road[]
   /** Ground cover, in the order to paint it. */
   cover: Cover[]
+  trees: Tree[]
   collision: CollisionMesh
   /** Ground heights, metres, row-major (rows along +Z), `tileSize / groundCell + 1` a side. Empty on a flat world. */
   ground: Float32Array
@@ -83,6 +117,22 @@ export function worldHash(bytes: Uint8Array): number {
 
 const metres = (cm: number) => cm / 100
 const point = ([x, z]: number[]): Point2 => [metres(x!), metres(z!)]
+
+/** `Tree::trunk_radius` on the server, in centimetres with the same integer arithmetic. */
+function trunkRadiusCm(kind: number, heightCm: number): number {
+  const [radius, height] =
+    kind === TREE_PINE || kind === TREE_SPRUCE || kind === TREE_COLUMNAR
+      ? [20, 1600]
+      : kind === TREE_ORNAMENTAL
+        ? [10, 600]
+        : kind === TREE_BROADLEAF
+          ? [30, 1400]
+          : kind === TREE_LOWWIDE
+            ? [15, 800]
+            : [15, 1200]
+  return Math.min(60, Math.max(5, Math.trunc((radius * heightCm) / height)))
+}
+
 const noCollision = (): CollisionMesh => ({ vertices: new Float32Array(), triangles: new Uint32Array() })
 
 export function decodeManifest(bytes: Uint8Array): WorldData {
@@ -100,17 +150,36 @@ export function decodeManifest(bytes: Uint8Array): WorldData {
 }
 
 export function decodeTile(bytes: Uint8Array): TileData {
-  const [buildings, roads, [vertices, triangles], ground, cover] = decode(bytes) as [
-    [number, number[][], number][],
+  const [buildings, roads, [vertices, triangles], ground, cover, trees] = decode(bytes) as [
+    [number, number[][], number, number, number, number, number][],
     [number, number, number[][]][],
     [number[][], number[][]],
     number[],
     [number, number[][][]][],
+    [number, number, number, number, number, number][],
   ]
   return {
-    buildings: buildings.map(([height, footprint, base]) => ({ height: metres(height), footprint: footprint.map(point), base: metres(base) })),
+    buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind]) => ({
+      height: metres(height),
+      footprint: footprint.map(point),
+      base: metres(base),
+      first,
+      walls,
+      roof,
+      roofKind,
+    })),
     roads: roads.map(([width, kind, points]) => ({ width: metres(width), kind, points: points.map(point) })),
     cover: cover.map(([kind, rings]) => ({ kind, rings: rings.map((ring) => ring.map(point)) })),
+    trees: trees.map(([x, z, base, height, crown, kind]) => ({
+      x: metres(x),
+      z: metres(z),
+      base: metres(base),
+      height: metres(height),
+      crown: metres(crown),
+      kind,
+      trunkRadius: metres(trunkRadiusCm(kind, height)),
+      trunkHeight: metres(Math.trunc(height / 2)),
+    })),
     collision: {
       vertices: Float32Array.from(vertices.flat(), metres),
       triangles: Uint32Array.from(triangles.flat()),

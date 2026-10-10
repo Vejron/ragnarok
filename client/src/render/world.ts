@@ -1,10 +1,15 @@
 import * as THREE from 'three'
 import type { TileGround } from '@/sim/terrain'
-import type { TileData } from '@/world'
+import { ROOF_FLAT, type TileData } from '@/world'
 import { GRASS_COLOR, bakeTerrainTexture } from './cover'
+import { buildTrees } from './trees'
 
 /** Candy-coloured buildings. Picked per building so the palette stays stable between reloads. */
 const BUILDING_COLORS = [0xffd6a5, 0xfdffb6, 0xcaffbf, 0x9bf6ff, 0xa0c4ff, 0xbdb2ff, 0xffc6ff, 0xffadad]
+
+/** Roofs: slate, tile and timber for pitched ones, concrete grey for flat ones. */
+const ROOF_COLORS = [0xb5543f, 0x6d7a8c, 0x8d6e63, 0x4f5d6b, 0x9c4a3c]
+const FLAT_ROOF_COLORS = [0xb0b4ba, 0x9aa0a6, 0xc4c7cc]
 
 /** Materials are shared by every tile, so streaming one in or out never compiles a shader. */
 const materials = new Map<string, THREE.Material>()
@@ -83,33 +88,44 @@ export function buildTile(tile: TileData, salt: number, ground: TileGround | nul
   const group = new THREE.Group()
   if (ground) group.add(buildTerrain(tile, ground))
 
-  // Buildings: extrude each footprint upwards. Shape space is (x, -z) so the extrusion along +Z
-  // becomes +Y after rotating the geometry -90° about X.
-  const byColor = new Map<number, THREE.BufferGeometry[]>()
-  tile.buildings.forEach((building, index) => {
-    const shape = new THREE.Shape(building.footprint.map(([x, z]) => new THREE.Vector2(x, -z)))
-    const geometry = new THREE.ExtrudeGeometry(shape, { depth: building.height, bevelEnabled: false })
-    geometry.rotateX(-Math.PI / 2)
-    geometry.translate(0, building.base, 0)
-    const color = BUILDING_COLORS[(index + salt) % BUILDING_COLORS.length]!
+  // Buildings: the importer's own triangles (walls, then roof) out of the collision mesh, so what
+  // is drawn is what is collided with. Walls and roofs are merged by colour.
+  const byColor = new Map<number, number[]>()
+  const { vertices, triangles } = tile.collision
+  const add = (color: number, from: number, count: number) => {
     const list = byColor.get(color) ?? []
-    list.push(geometry)
+    for (let t = from; t < from + count; t++) {
+      // The importer winds footprints counter-clockwise in (x, z); seen from +Y that is clockwise, so
+      // its triangles are reversed to face outwards and up.
+      for (const k of [0, 2, 1]) {
+        const v = triangles[t * 3 + k]! * 3
+        list.push(vertices[v]!, vertices[v + 1]!, vertices[v + 2]!)
+      }
+    }
     byColor.set(color, list)
+  }
+  tile.buildings.forEach((building, index) => {
+    add(BUILDING_COLORS[(index + salt) % BUILDING_COLORS.length]!, building.first, building.walls)
+    const palette = building.roofKind === ROOF_FLAT ? FLAT_ROOF_COLORS : ROOF_COLORS
+    add(palette[(index + salt) % palette.length]!, building.first + building.walls, building.roof)
   })
-  for (const [color, geometries] of byColor) {
-    const mesh = new THREE.Mesh(mergeGeometries(geometries), material('building', color))
+  for (const [color, positions] of byColor) {
+    const mesh = new THREE.Mesh(flatGeometry(positions), material('building', color))
     mesh.castShadow = true
     mesh.receiveShadow = true
     group.add(mesh)
   }
+  group.add(...buildTrees(tile.trees))
   return group
 }
 
-/** Frees a tile's geometry and its terrain texture. The other materials are shared and stay. */
+/** Frees a tile's geometry and its terrain texture. The materials and tree prototypes are shared and stay. */
 export function disposeTile(group: THREE.Group) {
   group.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return
-    object.geometry.dispose()
+    // Tree prototypes are shared by every tile; an instanced mesh frees only its own buffers.
+    if (!object.userData.sharedGeometry) object.geometry.dispose()
+    if (object instanceof THREE.InstancedMesh) object.dispose()
     if (object.userData.ownsMaterial) {
       const material = object.material as THREE.MeshLambertMaterial
       material.map?.dispose()
@@ -119,23 +135,21 @@ export function disposeTile(group: THREE.Group) {
   group.removeFromParent()
 }
 
-/** Concatenates non-indexed copies of geometries that share attributes (position, normal, uv). */
-function mergeGeometries(geometries: THREE.BufferGeometry[]): THREE.BufferGeometry {
-  const parts = geometries.map((g) => (g.index ? g.toNonIndexed() : g))
-  const merged = new THREE.BufferGeometry()
-  for (const name of ['position', 'normal'] as const) {
-    const total = parts.reduce((sum, g) => sum + g.getAttribute(name).array.length, 0)
-    const array = new Float32Array(total)
-    let offset = 0
-    for (const g of parts) {
-      const source = g.getAttribute(name).array
-      array.set(source, offset)
-      offset += source.length
-    }
-    merged.setAttribute(name, new THREE.BufferAttribute(array, 3))
+/** A non-indexed geometry from triangle-soup positions, with one flat normal per face. */
+function flatGeometry(positions: number[]): THREE.BufferGeometry {
+  const array = Float32Array.from(positions)
+  const normals = new Float32Array(array.length)
+  const [a, b, c, n] = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]
+  for (let i = 0; i < array.length; i += 9) {
+    a.fromArray(array, i)
+    b.fromArray(array, i + 3)
+    c.fromArray(array, i + 6)
+    n.subVectors(c, b).cross(a.sub(b)).normalize()
+    for (let k = 0; k < 3; k++) n.toArray(normals, i + k * 3)
   }
-  for (const g of geometries) g.dispose()
-  for (const g of parts) g.dispose()
-  merged.computeBoundingSphere()
-  return merged
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(array, 3))
+  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
+  geometry.computeBoundingSphere()
+  return geometry
 }

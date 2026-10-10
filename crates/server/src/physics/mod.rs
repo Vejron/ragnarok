@@ -56,7 +56,7 @@ pub struct Physics {
 const BOUNDARY_HEIGHT: f32 = 200.0;
 
 /// The static colliders every simulation of `world` uses: the ground slab, the terrain, four
-/// boundary walls, and the building mesh. Mirrored by `buildStaticColliders` in
+/// boundary walls, the building mesh and the tree trunks. Mirrored by `buildStaticColliders` in
 /// `client/src/sim/physics.ts`.
 pub fn static_colliders(world: &WorldFile) -> Result<Vec<Collider>> {
     let half = from_cm(world.half_extent);
@@ -97,6 +97,15 @@ pub fn static_colliders(world: &WorldFile) -> Result<Vec<Collider>> {
         let trimesh = ColliderBuilder::trimesh(vertices, mesh.triangles.clone())
             .context("world collision mesh is invalid")?;
         colliders.push(trimesh.build());
+    }
+    // A tree is solid up to the crown: an upright cylinder on the ground at its foot.
+    for tree in &world.trees {
+        let half_height = from_cm(tree.trunk_height()) / 2.0;
+        colliders.push(
+            ColliderBuilder::cylinder(half_height, from_cm(tree.trunk_radius()))
+                .translation(Vector::new(from_cm(tree.x), from_cm(tree.base) + half_height, from_cm(tree.z)))
+                .build(),
+        );
     }
     Ok(colliders)
 }

@@ -8,9 +8,10 @@ use shared::terrain::Ground;
 /// fixed heights (`BOUNDARY_HEIGHT`, `HELI_CEILING`), so the ground has to stay well below them.
 const MAX_RELIEF: f64 = 100.0;
 
+/// Returns the ground and the elevation of its lowest sample, which is its y = 0.
 /// Samples `elevation(x, z)` (metres above any datum, local metres, `None` where unknown) at every
 /// grid point of a `grid × grid` square of `tile`-metre tiles centred on the origin.
-pub fn build(half: f64, tile: f64, cell: f64, mut elevation: impl FnMut(f64, f64) -> Option<f64>) -> Result<Ground> {
+pub fn build(half: f64, tile: f64, cell: f64, mut elevation: impl FnMut(f64, f64) -> Option<f64>) -> Result<(Ground, f64)> {
     let cm = |metres: f64| (metres * 100.0).round() as i32;
     let (tile_cm, cell_cm) = (cm(tile), cm(cell));
     if cell_cm < 50 || tile_cm % cell_cm != 0 {
@@ -41,7 +42,7 @@ pub fn build(half: f64, tile: f64, cell: f64, mut elevation: impl FnMut(f64, f64
     // Gaps (water, missing tiles) take the lowest ground, so they are flat rather than cliffs.
     let heights = metres.iter().map(|&h| (((if h.is_finite() { h } else { low }) - low) * 100.0).round() as i16).collect();
     eprintln!("terrain: {side}×{side} samples every {cell} m, {low:.1} to {high:.1} m above the datum ({:.0} m of relief)", high - low);
-    Ok(Ground { origin, cell: cell_cm, side, heights })
+    Ok((Ground { origin, cell: cell_cm, side, heights }, low))
 }
 
 /// Gentle hills for `--synthetic`, so the offline world exercises slopes: up to about 12 m.
@@ -55,7 +56,8 @@ mod tests {
 
     #[test]
     fn heights_are_relative_to_the_lowest_sample() {
-        let ground = build(100.0, 100.0, 10.0, |x, _| Some(50.0 + x / 10.0)).unwrap();
+        let (ground, datum) = build(100.0, 100.0, 10.0, |x, _| Some(50.0 + x / 10.0)).unwrap();
+        assert_eq!(datum, 40.0);
         assert_eq!((ground.side, ground.cell, ground.origin), (21, 1000, -10_000));
         assert_eq!(ground.heights[0], 0);
         assert_eq!(ground.heights[20], 2000);
@@ -64,7 +66,7 @@ mod tests {
 
     #[test]
     fn missing_samples_take_the_lowest_ground() {
-        let ground = build(50.0, 100.0, 10.0, |x, _| (x < 0.0).then_some(7.0 + x / 10.0)).unwrap();
+        let (ground, _) = build(50.0, 100.0, 10.0, |x, _| (x < 0.0).then_some(7.0 + x / 10.0)).unwrap();
         // x = -10 m is the highest known sample (6 m, 4 m over the lowest); the gap is level with the lowest.
         assert_eq!(ground.heights[4], 400);
         assert_eq!(*ground.heights.last().unwrap(), 0);

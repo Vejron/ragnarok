@@ -75,15 +75,18 @@ pub fn fetch(endpoint: &str, [south, west, north, east]: [f64; 4]) -> Result<Osm
         .user_agent(concat!("ragnarok-osm-import/", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(120))
         .build()?;
-    let response: Response = client
-        .post(endpoint)
-        .form(&[("data", query)])
-        .send()
-        .context("Overpass request failed")?
-        .error_for_status()
-        .context("Overpass returned an error (rate limited? try again in a minute)")?
-        .json()
-        .context("Overpass returned invalid JSON")?;
+    // Keyed by the query, not the endpoint: any server's answer is as good as another's.
+    let text = crate::cache::text("overpass", &query, || {
+        Ok(client
+            .post(endpoint)
+            .form(&[("data", &query)])
+            .send()
+            .context("Overpass request failed")?
+            .error_for_status()
+            .context("Overpass returned an error (rate limited? try again in a minute)")?
+            .text()?)
+    })?;
+    let response: Response = serde_json::from_str(&text).context("Overpass returned invalid JSON")?;
     let mut osm = Osm::default();
     for element in response.elements {
         match element.kind.as_str() {

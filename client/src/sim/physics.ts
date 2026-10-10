@@ -89,7 +89,7 @@ export function buildStaticColliders(world: RAPIER.World, data: WorldData) {
 }
 
 /**
- * One tile's building mesh and terrain as static colliders (none for an empty tile). Tiles come
+ * One tile's building mesh, tree trunks and terrain as static colliders (none for an empty tile). Tiles come
  * and go as the player moves; the server holds all of them merged, which is the same geometry, so
  * near the player the two agree. The heightfield is laid out as the server's: centred on its
  * square, scaled to its width, heights column-major with rows along Z.
@@ -98,6 +98,13 @@ export function addTileCollider(world: RAPIER.World, tile: TileData, ground: Til
   const colliders: RAPIER.Collider[] = []
   if (tile.collision.triangles.length > 0) {
     colliders.push(world.createCollider(RAPIER.ColliderDesc.trimesh(tile.collision.vertices, tile.collision.triangles)))
+  }
+  // Trunks, as on the server: an upright cylinder from the foot up to where the crown starts.
+  for (const tree of tile.trees) {
+    const half = tree.trunkHeight / 2
+    colliders.push(
+      world.createCollider(RAPIER.ColliderDesc.cylinder(half, tree.trunkRadius).setTranslation(tree.x, tree.base + half, tree.z)),
+    )
   }
   if (ground) {
     const { side, cell, heights } = ground

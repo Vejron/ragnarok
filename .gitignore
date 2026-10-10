@@ -7,3 +7,6 @@ crates/server/acme/
 
 # local secrets (Lantmäteriet credentials for osm-import)
 .env.local
+
+# downloads cached by osm-import (clear with: cargo run -p osm-import -- --clear-cache)
+.cache/

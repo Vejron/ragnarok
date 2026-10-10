@@ -23,10 +23,6 @@ pub fn sweref99tm(lat: f64, lon: f64) -> (f64, f64) {
     let e2 = F * (2.0 - F);
     let n = F / (2.0 - F);
     let a_hat = A / (1.0 + n) * (1.0 + n * n / 4.0 + n.powi(4) / 64.0);
-    let big_a = e2 + e2.powi(2) + e2.powi(3) + e2.powi(4);
-    let big_b = -(7.0 * e2.powi(2) + 17.0 * e2.powi(3) + 30.0 * e2.powi(4)) / 6.0;
-    let big_c = (224.0 * e2.powi(3) + 889.0 * e2.powi(4)) / 120.0;
-    let big_d = -(4279.0 * e2.powi(4)) / 1260.0;
     let beta = [
         n / 2.0 - 2.0 * n * n / 3.0 + 5.0 * n.powi(3) / 16.0 + 41.0 * n.powi(4) / 180.0,
         13.0 * n * n / 48.0 - 3.0 * n.powi(3) / 5.0 + 557.0 * n.powi(4) / 1440.0,
@@ -35,8 +31,9 @@ pub fn sweref99tm(lat: f64, lon: f64) -> (f64, f64) {
     ];
     let phi = lat.to_radians();
     let dl = (lon - LON0).to_radians();
-    let s = phi.sin();
-    let phi_star = phi - s * phi.cos() * (big_a + big_b * s.powi(2) + big_c * s.powi(4) + big_d * s.powi(6));
+    // The conformal latitude, in closed form.
+    let (e, s) = (e2.sqrt(), phi.sin());
+    let phi_star = 2.0 * ((std::f64::consts::FRAC_PI_4 + phi / 2.0).tan() * ((1.0 - e * s) / (1.0 + e * s)).powf(e / 2.0)).atan() - std::f64::consts::FRAC_PI_2;
     let xi = (phi_star.tan() / dl.cos()).atan();
     let eta = (phi_star.cos() * dl.sin()).atanh();
     let mut northing = xi;
@@ -110,7 +107,8 @@ impl Dem {
         let client = reqwest::blocking::Client::builder().build()?;
         let url = format!("{STAC_ITEMS}?bbox={west},{south},{east},{north}&limit=50");
         eprintln!("querying {url}");
-        let items: serde_json::Value = client.get(&url).send()?.error_for_status().context("STAC search")?.json()?;
+        let body = crate::cache::text("stac", &url, || Ok(client.get(&url).send()?.error_for_status().context("STAC search")?.text()?))?;
+        let items: serde_json::Value = serde_json::from_str(&body).context("STAC search returned invalid JSON")?;
         let mut rasters = Vec::new();
         for item in items["features"].as_array().map(Vec::as_slice).unwrap_or_default() {
             let (Some(id), Some(href)) = (item["id"].as_str(), item["assets"]["data"]["href"].as_str()) else { continue };
@@ -182,7 +180,7 @@ fn read_window<R: Read + Seek>(source: R, [we, wn, ee, en]: Window) -> Result<Op
 }
 
 /// `Read + Seek` over an HTTP resource, fetching 512 KiB blocks with range requests on demand.
-struct RangeReader {
+pub(crate) struct RangeReader {
     client: reqwest::blocking::Client,
     url: String,
     user: String,
@@ -195,33 +193,54 @@ struct RangeReader {
 const BLOCK: u64 = 512 * 1024;
 
 impl RangeReader {
-    fn open(client: reqwest::blocking::Client, url: &str, user: &str, password: &str) -> Result<Self> {
-        let response = client.get(url).basic_auth(user, Some(password)).header("Range", "bytes=0-0").send()?;
-        anyhow::ensure!(response.status() != reqwest::StatusCode::UNAUTHORIZED, "{url} refused the credentials in LM_USER / LM_PASS");
-        let response = response.error_for_status()?;
-        let length = response
-            .headers()
-            .get("content-range")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.rsplit('/').next())
-            .and_then(|v| v.parse::<u64>().ok())
-            .context("server does not support range requests")?;
+    pub(crate) fn open(client: reqwest::blocking::Client, url: &str, user: &str, password: &str) -> Result<Self> {
+        // The length is cached too, so a fully cached file is read without touching the network.
+        let length = crate::cache::text("length", url, || {
+            let response = client.get(url).basic_auth(user, Some(password)).header("Range", "bytes=0-0").send()?;
+            anyhow::ensure!(response.status() != reqwest::StatusCode::UNAUTHORIZED, "{url} refused the credentials in LM_USER / LM_PASS (see WORLD.md)");
+            let response = response.error_for_status()?;
+            let length = response
+                .headers()
+                .get("content-range")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.rsplit('/').next())
+                .and_then(|v| v.parse::<u64>().ok())
+                .context("server does not support range requests")?;
+            Ok(length.to_string())
+        })?
+        .parse::<u64>()
+        .context("cached file length is not a number; try --refresh")?;
         Ok(Self { client, url: url.into(), user: user.into(), password: password.into(), length, position: 0, blocks: HashMap::new() })
     }
 
     fn block(&mut self, index: u64) -> std::io::Result<&Vec<u8>> {
         if !self.blocks.contains_key(&index) {
             let (start, end) = (index * BLOCK, ((index + 1) * BLOCK).min(self.length) - 1);
-            let bytes = self
-                .client
-                .get(&self.url)
-                .basic_auth(&self.user, Some(&self.password))
-                .header("Range", format!("bytes={start}-{end}"))
-                .send()
-                .and_then(|r| r.error_for_status())
-                .and_then(|r| r.bytes())
-                .map_err(std::io::Error::other)?;
-            self.blocks.insert(index, bytes.to_vec());
+            let bytes = crate::cache::bytes("range", &format!("{}#{index}", self.url), || {
+                // Lantmäteriet's server resets connections now and then; a few tries get through.
+                let mut attempt = 0;
+                loop {
+                    let result = self
+                        .client
+                        .get(&self.url)
+                        .basic_auth(&self.user, Some(&self.password))
+                        .header("Range", format!("bytes={start}-{end}"))
+                        .send()
+                        .and_then(|r| r.error_for_status())
+                        .and_then(|r| r.bytes());
+                    match result {
+                        Ok(bytes) => break Ok(bytes.to_vec()),
+                        Err(error) if attempt < 4 => {
+                            attempt += 1;
+                            eprintln!("  range {start}-{end} failed ({error}); retry {attempt}");
+                            std::thread::sleep(std::time::Duration::from_secs(2 * attempt));
+                        }
+                        Err(error) => break Err(error.into()),
+                    }
+                }
+            })
+            .map_err(std::io::Error::other)?;
+            self.blocks.insert(index, bytes);
         }
         Ok(&self.blocks[&index])
     }
@@ -266,6 +285,13 @@ mod tests {
         let (e, n) = sweref99tm(63.832127, 20.168286);
         assert!((750_000.0..760_000.0).contains(&e), "E = {e}");
         assert!((7_080_000.0..7_090_000.0).contains(&n), "N = {n}");
+    }
+
+    #[test]
+    fn matches_an_independent_transverse_mercator() {
+        // Snyder's series (Transverse Mercator, GRS 80, k0 0.9996, lon0 15°) for Backen, Umeå.
+        let (e, n) = sweref99tm(63.832127, 20.168286);
+        assert!((e - 754_096.68).abs() < 0.1 && (n - 7_088_603.15).abs() < 0.1, "{e} {n}");
     }
 
     #[test]
