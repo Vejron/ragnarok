@@ -19,6 +19,8 @@ const MAX_SPAWNS: usize = 64;
 const SPAWN_SPACING: f64 = 15.0;
 /// Spawns keep this far from any wall, metres.
 const SPAWN_CLEARANCE: f64 = 1.5;
+/// Trees this near a road or building have trunk colliders; those deeper in the woods do not.
+const SOLID_REACH: f64 = 20.0;
 
 fn cm(metres: f64) -> i32 {
     (metres * 100.0).round() as i32
@@ -202,10 +204,11 @@ impl Built {
 /// it into square tiles of `tile_size` metres.
 ///
 /// `ground` is the terrain over the whole grid of tiles (see `crate::ground`), or flat.
-/// `trees` are `(position, TREE_*, height, crown radius)`; those that fall on a building or a
-/// road are dropped.
+/// `trees` are `(position, TREE_*, height, crown radius, planted)`; those that fall on a building or
+/// a road are dropped. A tree is solid (has a trunk collider) when it is planted, in the register,
+/// or stands within `SOLID_REACH` of a road or a building.
 #[allow(clippy::too_many_arguments)]
-fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P>, f64, Option<Roof>)>, roads: Vec<(Vec<P>, f64, u8)>, covers: Vec<(u8, Vec<Vec<P>>)>, trees: Vec<(P, u8, f64, f64)>, ground: Ground) -> Built {
+fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P>, f64, Option<Roof>)>, roads: Vec<(Vec<P>, f64, u8)>, covers: Vec<(u8, Vec<Vec<P>>)>, trees: Vec<(P, u8, f64, f64, bool)>, ground: Ground) -> Built {
     let inner = half - EDGE_MARGIN;
     let mut manifest = Manifest {
         version: WORLD_VERSION,
@@ -309,14 +312,36 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P
     for tile in tiles.values_mut() {
         tile.cover.sort_by_key(|cover| cover_rank(cover.kind));
     }
-    for (at, kind, height, crown) in trees {
+    // Roads and footprints with their bounding boxes grown by the reach, so a tree is only measured
+    // against the few that are near it.
+    let reach_box = |points: &[P], grow: f64| {
+        points.iter().fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, p| [b[0].min(p[0] - grow), b[1].min(p[1] - grow), b[2].max(p[0] + grow), b[3].max(p[1] + grow)])
+    };
+    let in_box = |b: &[f64; 4], p: P| p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3];
+    let road_boxes: Vec<[f64; 4]> = roads.iter().map(|(points, width, _)| reach_box(points, width / 2.0 + SOLID_REACH)).collect();
+    let footprint_boxes: Vec<[f64; 4]> = footprints.iter().map(|footprint| reach_box(footprint, SOLID_REACH)).collect();
+    for (at, kind, height, crown, planted) in trees {
         if at[0].abs() > inner || at[1].abs() > inner {
             continue;
         }
-        let on_building = footprints.iter().any(|footprint| point_in_polygon(at, footprint));
-        let on_road = roads.iter().any(|(points, width, _)| points.windows(2).any(|pair| distance_to_segment(at, pair[0], pair[1]) < width / 2.0));
+        let on_building = footprints.iter().zip(&footprint_boxes).any(|(footprint, b)| in_box(b, at) && point_in_polygon(at, footprint));
+        let mut on_road = false;
+        let mut near = planted;
+        for ((points, width, _), b) in roads.iter().zip(&road_boxes) {
+            if !in_box(b, at) {
+                continue;
+            }
+            let d = points.windows(2).map(|pair| distance_to_segment(at, pair[0], pair[1])).fold(f64::MAX, f64::min);
+            on_road |= d < width / 2.0;
+            near |= d < width / 2.0 + SOLID_REACH;
+        }
         if on_building || on_road {
             continue;
+        }
+        if !near {
+            near = footprints.iter().zip(&footprint_boxes).any(|(footprint, b)| {
+                in_box(b, at) && (0..footprint.len()).any(|i| distance_to_segment(at, footprint[i], footprint[(i + 1) % footprint.len()]) < SOLID_REACH)
+            });
         }
         let tile = tiles.entry(manifest.tile_at(cm(at[0]), cm(at[1]))).or_default();
         tile.trees.push(Tree {
@@ -326,6 +351,7 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P
             height: cm(height),
             crown: cm(crown),
             kind,
+            solid: near,
         });
     }
     // The API gives no stable order, and tile files are hashed.
@@ -410,7 +436,7 @@ pub fn from_osm(bbox: [f64; 4], tile_size: f64, osm: &Osm, planted: &[Planted], 
     if lidar.is_some() {
         eprintln!("roofs: {} of {} buildings have more than one part", split_roofs.get(), buildings.len());
     }
-    let trees = planted.iter().map(|tree| (project(origin, tree.lat, tree.lon), tree.kind, tree.height, tree.crown)).collect();
+    let trees = planted.iter().map(|tree| (project(origin, tree.lat, tree.lon), tree.kind, tree.height, tree.crown, tree.registered)).collect();
     assemble(origin, half, tile_size, buildings, roads, covers, trees, ground)
 }
 
@@ -575,7 +601,7 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground) -> Built {
             let along = start + j as f64 * PITCH + PITCH / 2.0;
             let kind = (i + j) as u8 % 7;
             let (height, crown) = crate::trees::size(kind, (i * 100 + j) as u64, None);
-            trees.push(([line + STREET / 2.0 + 1.5, along], kind, height, crown));
+            trees.push(([line + STREET / 2.0 + 1.5, along], kind, height, crown, true));
         }
     }
     assemble((0.0, 0.0), half, tile_size, buildings, roads, covers, trees, ground)

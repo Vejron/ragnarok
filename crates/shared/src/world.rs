@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 6;
+pub const WORLD_VERSION: u8 = 7;
 
 /// `world.msgpack`: everything about the world except the tiles' contents.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -154,6 +154,9 @@ pub struct Tree {
     pub crown: i32,
     /// `TREE_*`: the archetype.
     pub kind: u8,
+    /// Whether the trunk is a collider. Woods are many tens of thousands of trees, so only those
+    /// near roads, buildings and parks are; the rest are scenery.
+    pub solid: bool,
 }
 
 pub const TREE_BIRCH: u8 = 0;
@@ -298,7 +301,7 @@ mod tests {
             collision: CollisionMesh { vertices: vec![[0, 0, 0]], triangles: vec![[0, 0, 0]] },
             ground: vec![0, 10, 20, 30],
             cover: vec![Cover { kind: COVER_WATER, rings: vec![vec![[0, 0], [100, 0], [100, 100]]] }],
-            trees: vec![Tree { x: 5, z: -7, base: 120, height: 1200, crown: 220, kind: TREE_BIRCH }],
+            trees: vec![Tree { x: 5, z: -7, base: 120, height: 1200, crown: 220, kind: TREE_BIRCH, solid: true }],
         };
         assert_eq!(Tile::decode(&tile.encode()).unwrap(), tile);
         assert_eq!(manifest.tiles[0].path(), "tiles/1_0.msgpack");

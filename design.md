@@ -231,13 +231,15 @@ Not handled yet:
 - Courtyard buildings (OSM multipolygons): the outer ring becomes a solid block and the courtyard's trees can bend its roof fit.
 - Dormers, chimneys, half-hips and mansards. Parts are separated by straight cuts across the footprint's rectangle, so a roof whose parts do not line up with it is approximated.
 - Waterways drawn as lines (rivers mapped only as a centre line), and railways.
-- Trees outside the municipal register: woods are only a painted cover, and the register has species but no sizes.
+- Laser trees are approximate: crowns of equal height merge, species come from intensity and crown shape (see WORLD.md), and trees under 3 m are missed.
 
 ### Trees
 
 Street and park trees come from Umeå kommun's open data (`trad-som-forvaltas-av-gator-och-parker`, ~32 000 trees; fetched by `osm-import`, skip with `--no-trees`). The register has position and species only, so each species is mapped by genus to one of seven archetypes (`TREE_*` in `crates/shared/src/world.rs`): birch (≈60 %), pine, spruce/fir/larch, ornamental (rowan, cherry, apple), broadleaf (maple, lime, oak), columnar (poplar, aspen, `Fastigiata`/`Erecta` cultivars) and low-wide (willow, alder). Height and crown come from the archetype, varied ±20 % by tree id and shrunk for recently planted trees. Trees on buildings or roads are dropped.
 
-Each `Tree` is in its tile (`Tile.trees`). The client draws one instanced mesh per archetype per tile (`client/src/render/trees.ts`). Trunks are solid: an upright cylinder up to half the tree's height, built from `Tree::trunk_radius` / `trunk_height` on the server (`static_colliders`) and mirrored in `addTileCollider` and `decodeTile`.
+The register is only what was planted. **Every other tree comes from the laser point cloud** (`canopy.rs`): a canopy height model, treetops and crowns by watershed, and an archetype from the laser intensity (conifers are brighter) and the crown's shape, calibrated against the register's species. Register trees keep their species and take the laser's measured size. Details and accuracy in [WORLD.md](WORLD.md).
+
+Each `Tree` is in its tile (`Tile.trees`). The client draws one instanced mesh per archetype per tile (`client/src/render/trees.ts`). Trunks are solid where `Tree::solid` (the register's, and trees within 20 m of a road or building; woods are scenery): an upright cylinder up to half the tree's height, built from `Tree::trunk_radius` / `trunk_height` on the server (`static_colliders`) and mirrored in `addTileCollider` and `decodeTile`.
 
 ## 9. Physics
 
@@ -345,4 +347,5 @@ pub trait Mechanic: Send {
    - Ground cover (done): roads, water, woods, parks and other landuse painted into a per-tile terrain texture (§8).
    - Roofs (done): flat, shed, gable and hip roofs, in up to four parts per building, fitted to Laserdata Skog with foliage rejected (§8).
    - Trees (done): Umeå's street and park tree register as seven archetypes, instanced and with trunk colliders (§8).
-   - Next: courtyard building multipolygons, waterways as lines, trees in woods (the point cloud has them).
+   - Trees in woods (done): detected from the point cloud, `Tree::solid` limits colliders (§8).
+   - Next: courtyard building multipolygons, waterways as lines.

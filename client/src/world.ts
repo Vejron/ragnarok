@@ -2,7 +2,7 @@ import { decode } from '@msgpack/msgpack'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 6
+export const WORLD_VERSION = 7
 
 export const ROAD_MAJOR = 0
 export const ROAD_MINOR = 1
@@ -35,6 +35,8 @@ export interface Tree {
   crown: number
   /** `TREE_*`: the archetype. */
   kind: number
+  /** Whether the trunk is a collider (see `Tree::solid`). */
+  solid: boolean
   /** The trunk's collider: radius, and height above `base`. Mirrors `Tree::trunk_radius` / `trunk_height`. */
   trunkRadius: number
   trunkHeight: number
@@ -156,7 +158,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     [number[][], number[][]],
     number[],
     [number, number[][][]][],
-    [number, number, number, number, number, number][],
+    [number, number, number, number, number, number, boolean][],
   ]
   return {
     buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind]) => ({
@@ -170,13 +172,14 @@ export function decodeTile(bytes: Uint8Array): TileData {
     })),
     roads: roads.map(([width, kind, points]) => ({ width: metres(width), kind, points: points.map(point) })),
     cover: cover.map(([kind, rings]) => ({ kind, rings: rings.map((ring) => ring.map(point)) })),
-    trees: trees.map(([x, z, base, height, crown, kind]) => ({
+    trees: trees.map(([x, z, base, height, crown, kind, solid]) => ({
       x: metres(x),
       z: metres(z),
       base: metres(base),
       height: metres(height),
       crown: metres(crown),
       kind,
+      solid,
       trunkRadius: metres(trunkRadiusCm(kind, height)),
       trunkHeight: metres(Math.trunc(height / 2)),
     })),

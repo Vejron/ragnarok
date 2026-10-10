@@ -99,7 +99,7 @@ pub fn static_colliders(world: &WorldFile) -> Result<Vec<Collider>> {
         colliders.push(trimesh.build());
     }
     // A tree is solid up to the crown: an upright cylinder on the ground at its foot.
-    for tree in &world.trees {
+    for tree in world.trees.iter().filter(|tree| tree.solid) {
         let half_height = from_cm(tree.trunk_height()) / 2.0;
         colliders.push(
             ColliderBuilder::cylinder(half_height, from_cm(tree.trunk_radius()))

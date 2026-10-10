@@ -17,6 +17,7 @@
 
 mod assemble;
 mod cache;
+mod canopy;
 mod dem;
 mod ground;
 mod lidar;
@@ -56,6 +57,12 @@ struct Args {
     /// Leave out the trees from Umeå's open data.
     #[arg(long)]
     no_trees: bool,
+    /// Leave out the trees found in the laser data (only the register's remain).
+    #[arg(long)]
+    no_lidar_trees: bool,
+    /// Shortest tree to take from the laser data, metres above the terrain.
+    #[arg(long, default_value_t = canopy::MIN_HEIGHT)]
+    min_tree_height: f64,
     /// Skip OpenStreetMap and generate a procedural grid city (works offline).
     #[arg(long)]
     synthetic: bool,
@@ -113,9 +120,9 @@ fn sweref_window(args: &Args, bbox: [f64; 4]) -> dem::Window {
 
 /// The terrain under `bbox`'s world and the elevation of its y = 0, from `--dem` or Lantmäteriet,
 /// or flat with `--cell 0`.
-fn terrain(args: &Args, bbox: [f64; 4]) -> Result<(shared::terrain::Ground, f64)> {
+fn terrain(args: &Args, bbox: [f64; 4]) -> Result<(shared::terrain::Ground, f64, Option<dem::Dem>)> {
     if args.cell == 0.0 {
-        return Ok((Default::default(), 0.0));
+        return Ok((Default::default(), 0.0, None));
     }
     let (origin, half) = assemble::frame(bbox);
     let window = sweref_window(args, bbox);
@@ -129,28 +136,49 @@ fn terrain(args: &Args, bbox: [f64; 4]) -> Result<(shared::terrain::Ground, f64)
         }
     };
     let half_cell = args.cell / 2.0;
-    ground::build(half, args.tile, args.cell, |x, z| {
+    let (ground, datum) = ground::build(half, args.tile, args.cell, |x, z| {
         let (lat, lon) = assemble::unproject(origin, x, z);
         let (e, n) = dem::sweref99tm(lat, lon);
         source.mean(e, n, half_cell).map(f64::from)
-    })
+    })?;
+    Ok((ground, datum, Some(source)))
 }
 
-/// The laser returns over the world that can be roof, for fitting roofs; `None` when roofs are
-/// switched off or there are no credentials.
-fn laser(args: &Args, bbox: [f64; 4], datum: f64) -> Result<Option<roof::Cloud>> {
-    if args.no_roofs || args.cell == 0.0 {
-        return Ok(None);
+/// What the laser data gives: the returns that can be roof, and the canopy for trees. Each is
+/// `None` when switched off or without credentials (`--no-roofs`, `--no-lidar-trees`).
+fn laser(args: &Args, bbox: [f64; 4], datum: f64, osm: &overpass::Osm, dem: Option<&dem::Dem>) -> Result<(Option<roof::Cloud>, Vec<canopy::Detected>)> {
+    let want_roofs = !args.no_roofs;
+    let want_trees = !args.no_lidar_trees && dem.is_some();
+    if args.cell == 0.0 || !(want_roofs || want_trees) {
+        return Ok((None, Vec::new()));
     }
     let (Some(user), Some(password)) = (std::env::var("LM_USER").ok(), std::env::var("LM_PASS").ok()) else {
-        eprintln!("no LM_USER / LM_PASS: buildings stay boxes");
-        return Ok(None);
+        eprintln!("no LM_USER / LM_PASS: buildings stay boxes and only the register's trees are planted");
+        return Ok((None, Vec::new()));
     };
     let window = sweref_window(args, bbox);
-    let mut cloud = roof::Cloud::new(window);
-    let total = lidar::fetch(bbox, window, &user, &password, |p| cloud.add(&p, datum))?;
-    eprintln!("laser: {total} returns, {} kept for roofs", cloud.len());
-    Ok(Some(cloud))
+    let mut cloud = want_roofs.then(|| roof::Cloud::new(window));
+    let mut canopy = want_trees.then(|| canopy::Canopy::new(window));
+    let total = lidar::fetch(bbox, window, &user, &password, |p| {
+        if let Some(cloud) = &mut cloud {
+            cloud.add(&p, datum);
+        }
+        if let Some(canopy) = &mut canopy {
+            canopy.add(&p);
+        }
+    })?;
+    eprintln!("laser: {total} returns{}", cloud.as_ref().map_or(String::new(), |c| format!(", {} kept for roofs", c.len())));
+    let mut detected = Vec::new();
+    if let (Some(mut canopy), Some(dem)) = (canopy, dem) {
+        // Roofs are not trees: keep the canopy off every building outline.
+        for way in osm.ways.iter().filter(|way| way.tags.contains_key("building")) {
+            let ring: Vec<(f64, f64)> = way.geometry.iter().map(|p| dem::sweref99tm(p.lat, p.lon)).collect();
+            canopy.mask(&ring, 1.5);
+        }
+        detected = canopy.detect(|e, n| dem.mean(e, n, 0.5), args.min_tree_height);
+        eprintln!("canopy: {} trees at least {} m tall", detected.len(), args.min_tree_height);
+    }
+    Ok((cloud, detected))
 }
 
 fn main() -> Result<()> {
@@ -197,9 +225,9 @@ fn main() -> Result<()> {
             }
         }
         let Some(osm) = osm else { bail!("every Overpass endpoint failed; retry later or use --synthetic") };
-        let (ground, datum) = terrain(&args, bbox)?;
-        let cloud = laser(&args, bbox, datum)?;
-        let planted = if args.no_trees {
+        let (ground, datum, dem) = terrain(&args, bbox)?;
+        let (cloud, detected) = laser(&args, bbox, datum, &osm, dem.as_ref())?;
+        let register = if args.no_trees {
             Vec::new()
         } else {
             match trees::fetch(bbox) {
@@ -214,6 +242,8 @@ fn main() -> Result<()> {
                 }
             }
         };
+        let planted = trees::merge(register, &detected);
+        eprintln!("trees: {} from the register, {} from the laser", planted.iter().filter(|t| t.registered).count(), planted.iter().filter(|t| !t.registered).count());
         assemble::from_osm(bbox, args.tile, &osm, &planted, ground, cloud.as_ref())
     };
     let (buildings, roads, triangles) = built.tiles.values().fold((0, 0, 0), |(b, r, t), tile| (b + tile.buildings.len(), r + tile.roads.len(), t + tile.collision.triangles.len()));

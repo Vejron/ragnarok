@@ -101,6 +101,7 @@ export function addTileCollider(world: RAPIER.World, tile: TileData, ground: Til
   }
   // Trunks, as on the server: an upright cylinder from the foot up to where the crown starts.
   for (const tree of tile.trees) {
+    if (!tree.solid) continue
     const half = tree.trunkHeight / 2
     colliders.push(
       world.createCollider(RAPIER.ColliderDesc.cylinder(half, tree.trunkRadius).setTranslation(tree.x, tree.base + half, tree.z)),

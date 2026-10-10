@@ -19,11 +19,13 @@ pub struct Point {
     pub e: f64,
     pub n: f64,
     pub z: f64,
-    /// ASPRS class: 2 ground, 3–5 vegetation, 6 building, 9 water, 17 bridge, 18 noise.
+    /// ASPRS class. This product only separates 2 ground (and a few 7 low noise, 18 high noise) from
+    /// 1 unclassified, which is everything else: buildings, vegetation, cars.
     pub class: u8,
     /// 1-based return number and the number of returns of the pulse.
     pub ret: u8,
     pub returns: u8,
+    pub intensity: u16,
 }
 
 /// Every return inside `window`, from the newest scan of each file that covers `bbox`
@@ -174,7 +176,7 @@ fn read<R: Read + Seek>(mut source: R, [e0, n0, e1, n1]: Window, keep: &mut impl
             let z = f64::from(le_i32(&record, 8)) * scale[2] + offset[2];
             count += 1;
             // Format 6+: byte 14 holds the return number (low nibble) and the number of returns (high).
-            keep(Point { e, n, z, class: record[16], ret: record[14] & 0x0f, returns: record[14] >> 4 });
+            keep(Point { e, n, z, class: record[16], ret: record[14] & 0x0f, returns: record[14] >> 4, intensity: le_u16(&record, 12) });
         }
     }
     Ok(count)

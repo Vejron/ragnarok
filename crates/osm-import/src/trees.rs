@@ -43,6 +43,8 @@ pub struct Planted {
     pub height: f64,
     /// Crown radius, metres.
     pub crown: f64,
+    /// From the register of planted trees (as opposed to found in the laser data).
+    pub registered: bool,
 }
 
 /// Every tree in `[south, west, north, east]`.
@@ -73,7 +75,51 @@ fn plant(record: Record) -> Option<Planted> {
     let at = record.geo_point_2d?;
     let kind = classify(record.species.as_deref(), record.broadleaf_or_conifer.as_deref());
     let (height, crown) = size(kind, record.id.unwrap_or(0), record.planted.as_deref());
-    Some(Planted { lat: at.lat, lon: at.lon, kind, height, crown })
+    Some(Planted { lat: at.lat, lon: at.lon, kind, height, crown, registered: true })
+}
+
+/// The register's trees with the laser's: a detected tree within `max(2 m, its crown)` of a
+/// register tree is that tree, keeping the register's species and the laser's measured size; the
+/// rest of the detected trees are added, classified from the laser alone.
+pub fn merge(register: Vec<Planted>, detected: &[crate::canopy::Detected]) -> Vec<Planted> {
+    use crate::dem::{sweref99tm, sweref99tm_inverse};
+    const BIN: f64 = 8.0;
+    let bin = |e: f64, n: f64| ((e / BIN).floor() as i64, (n / BIN).floor() as i64);
+    let mut grid: std::collections::HashMap<(i64, i64), Vec<usize>> = Default::default();
+    for (i, tree) in detected.iter().enumerate() {
+        grid.entry(bin(tree.e, tree.n)).or_default().push(i);
+    }
+    let mut taken = vec![false; detected.len()];
+    let mut out = Vec::with_capacity(register.len() + detected.len());
+    for mut tree in register {
+        let (e, n) = sweref99tm(tree.lat, tree.lon);
+        let (bx, by) = bin(e, n);
+        let mut best: Option<(f64, usize)> = None;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for &i in grid.get(&(bx + dx, by + dy)).map(Vec::as_slice).unwrap_or_default() {
+                    let d = (detected[i].e - e).hypot(detected[i].n - n);
+                    if d <= detected[i].crown.max(2.0) && best.is_none_or(|(b, _)| d < b) {
+                        best = Some((d, i));
+                    }
+                }
+            }
+        }
+        if let Some((_, i)) = best {
+            // A crown the laser sees merged with neighbours is not a better size than the species'.
+            taken[i] = true;
+            tree.height = detected[i].height;
+            tree.crown = detected[i].crown;
+        }
+        out.push(tree);
+    }
+    for (found, taken) in detected.iter().zip(taken) {
+        if !taken {
+            let (lat, lon) = sweref99tm_inverse(found.e, found.n);
+            out.push(Planted { lat, lon, kind: crate::canopy::classify(found), height: found.height, crown: found.crown, registered: false });
+        }
+    }
+    out
 }
 
 /// The archetype for a scientific name (cultivar and clone suffixes included), falling back on
@@ -180,5 +226,22 @@ mod tests {
         let trees: Vec<Planted> = records.into_iter().filter_map(plant).collect();
         assert_eq!(trees.len(), 1, "a record without a position is dropped");
         assert_eq!(trees[0].kind, TREE_PINE);
+    }
+
+    #[test]
+    fn laser_trees_join_the_register_without_doubling() {
+        use crate::canopy::Detected;
+        let (lat, lon) = (63.83, 20.17);
+        let (e, n) = crate::dem::sweref99tm(lat, lon);
+        let found = |de: f64, dn: f64| Detected { e: e + de, n: n + dn, height: 17.0, crown: 3.0, multi: 0.8, intensity: 650.0, base: 0.45 };
+        let register = vec![Planted { lat, lon, kind: TREE_PINE, height: 16.0, crown: 2.5, registered: true }];
+        let merged = merge(register, &[found(1.0, 0.5), found(30.0, 0.0)]);
+        assert_eq!(merged.len(), 2);
+        // The register's species with the laser's size.
+        assert_eq!((merged[0].kind, merged[0].height, merged[0].crown), (TREE_PINE, 17.0, 3.0));
+        assert!(merged[0].registered && !merged[1].registered);
+        // The second is classified from the laser alone and lands where it was seen.
+        let (back_e, _) = crate::dem::sweref99tm(merged[1].lat, merged[1].lon);
+        assert!((back_e - (e + 30.0)).abs() < 0.01);
     }
 }

@@ -8,7 +8,8 @@ file is about the *pipeline*. The code is `crates/osm-import`.
 OpenStreetMap (Overpass) ─┐  buildings, roads, ground cover
 Lantmäteriet DTM  ────────┤  terrain heights ──► ground grid
 Lantmäteriet laser ───────┤  roof shapes ──────► buildings' roofs
-Umeå tree register ───────┘  trees ────────────► archetypes
+                          │  canopy ───────────► trees (every tree in the woods too)
+Umeå tree register ───────┘  planted trees ────► archetypes by species
                               │
                       osm-import (assemble) ─► world.msgpack + tiles/{col}_{row}.msgpack
 ```
@@ -30,8 +31,10 @@ Restart the server afterwards: it reads the whole world at start. The importer w
 | `--tile m` | Tile side, default 250 m. |
 | `--cell m` | Terrain sample spacing, default 5 m, must divide `--tile`. `0` is flat ground and needs no credentials. |
 | `--dem file.tif` | Take elevation from a local DTM GeoTIFF instead of Lantmäteriet. |
-| `--no-roofs` | Buildings stay boxes of their tagged height; skips the point cloud (the slowest and biggest download). |
+| `--no-roofs` | Buildings stay boxes of their tagged height. The point cloud (the slowest and biggest download) is then only read for trees; add `--no-lidar-trees` to skip it completely. |
 | `--no-trees` | Skip the tree register. |
+| `--no-lidar-trees` | Only the register's trees: no woods, no garden trees. |
+| `--min-tree-height m` | Shortest tree taken from the laser, default 3 m above the terrain. |
 | `--synthetic` | Offline procedural grid city with hills and a few trees. Needs no network at all. |
 | `--overpass url,url` | Overpass endpoints, tried in order (the public ones are often busy). |
 | `--cache dir`, `--no-cache`, `--refresh`, `--clear-cache` | The download cache, below. |
@@ -74,7 +77,7 @@ auth. They are never written to the cache or to the world files. OSM and Umeå's
 |---|---|---|---|
 | Buildings, roads, water, woods, parks | OpenStreetMap through [Overpass](https://overpass-api.de) | ODbL, © OpenStreetMap contributors | `Building` footprints and heights, `Road`, `Cover` |
 | Terrain | Lantmäteriet *Markhöjd grid 1 m* (DTM), STAC collection `dtm-cog`, cloud-optimised GeoTIFF | CC BY 4.0 | `Tile.ground`, building floors, tree bases |
-| Laser points | Lantmäteriet *Laserdata Skog* (COPC), STAC collection `dsm-skoglig-copc` | CC BY 4.0 | roof fitting |
+| Laser points | Lantmäteriet *Laserdata Skog* (COPC), STAC collection `dsm-skoglig-copc` | CC BY 4.0 | roof fitting, trees |
 | Street and park trees | Umeå kommun open data, [`trad-som-forvaltas-av-gator-och-parker`](https://opendata.umea.se/explore/assets/trad-som-forvaltas-av-gator-och-parker/) | CC0 | `Tile.trees` |
 
 ### OpenStreetMap
@@ -105,6 +108,52 @@ hash of the record id, scaled down for trees planted within 15 years of 2025, so
 the same forest. Trees on a building footprint or within half a road's width of a road are dropped.
 To add a species, extend the genus match in `classify`; its unit tests list the cultivar-name
 cases (`'Erecta'`, `Fastigiata-Gruppen`, `fk ULTUNA`, "Saknas").
+
+### Trees from the laser (`canopy.rs`)
+The register is only what the municipality planted. Everything else (woods, gardens, yards) comes
+from the point cloud. This product is classified only as ground (2) and *unclassified* (1), so
+there is no vegetation class: trees are told from buildings by masking every OSM building outline
+(plus 1.5 m of eaves) and from shrubs and cars by height.
+
+1. **Canopy height model:** a 1 m raster of the highest non-ground return per cell minus the DTM
+   at that cell. The cloud is ~1 return/m², so empty cells are filled from at least 3 known
+   neighbours, then smoothed 3×3.
+2. **Treetops:** local maxima at least `--min-tree-height` (3 m) tall, within a window that grows
+   with height (3×3 up to 7×7 cells).
+3. **Crowns:** a watershed from the tops, highest cells first, to cells at least half the top's
+   height and within 8 m. Radius is that of the circle with the crown's area. Segments over
+   200 m² (roofs the OSM footprints missed) or mostly interpolated are dropped.
+4. **Archetype** (`canopy::classify`), from measurements of the crown: the *near-infrared
+   intensity* separates conifers (about 800) from broadleaves (about 670); the height of the
+   crown's lowest returns separates pine (≥ 0.47 of the height) from spruce; below 9 m a tree is
+   ornamental (bright) or low-wide; the widest crowns are broadleaf and the slenderest columnar.
+   Everything else is birch.
+5. **Merge** (`trees::merge`): a detected tree within max(2 m, its crown) of a register tree *is*
+   that tree: it keeps the register's species and takes the laser's measured height and crown.
+   Unmatched register trees (saplings under 3 m) stay; unmatched detections are added.
+
+The thresholds were fitted by the ignored `canopy::tests::calibration` test, which detects trees
+over 1.2 km² and compares them with the register's species (rows register, columns rules; Umeå
+east of Backen, ~850 register trees found by the laser):
+
+| register \ rules | birch | pine | spruce | ornamental | broadleaf | columnar | low-wide |
+|---|---|---|---|---|---|---|---|
+| birch | 444 | 70 | 10 | 1 | 9 | 30 | 11 |
+| pine | 16 | 37 | 4 | 0 | 1 | 0 | 0 |
+| spruce | 4 | 5 | 14 | 1 | 1 | 4 | 0 |
+| ornamental | 1 | 7 | 0 | 27 | 0 | 0 | 2 |
+
+So about three in four birches, two in three pines, half the spruces and three in four ornamentals
+are right. Broadleaf, columnar and low-wide are barely separable from the laser (young street
+trees; the register's maples are 7 m tall) and are mostly wrong. Rerun it after changing the rules:
+`CAL_LAT=63.835 CAL_LON=20.28 cargo test --release -p osm-import calibration -- --ignored --nocapture`.
+
+Limits: the laser flight's date decides leaf-on or leaf-off; neighbouring crowns of the same height
+merge into one tree; hedges and tall shrubs over 3 m count as trees; trees under 3 m are missed.
+
+**Trunk colliders.** A real forest is tens of thousands of trees, so only trees with a collider
+(`Tree::solid`) are the register's and those within 20 m of a road or a building; the rest are
+scenery you drive through. Client and server both skip non-solid trees.
 
 ## The download cache
 

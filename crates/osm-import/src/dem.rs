@@ -46,6 +46,30 @@ pub fn sweref99tm(lat: f64, lon: f64) -> (f64, f64) {
     (FALSE_EASTING + K0 * a_hat * easting, K0 * a_hat * northing)
 }
 
+/// SWEREF 99 TM `(easting, northing)` metres to WGS 84 `(lat, lon)` degrees: Newton's method on
+/// `sweref99tm`, from a guess that is already within a few hundred metres.
+pub fn sweref99tm_inverse(e: f64, n: f64) -> (f64, f64) {
+    // Metres per degree at the guess: 111 km of latitude, 111 km · cos(lat) of longitude.
+    let mut lat = n / 111_200.0;
+    let mut lon = 15.0 + (e - 500_000.0) / (111_320.0 * lat.to_radians().cos());
+    for _ in 0..4 {
+        let (e1, n1) = sweref99tm(lat, lon);
+        let (de, dn) = (e - e1, n - n1);
+        if de.abs() < 1e-4 && dn.abs() < 1e-4 {
+            break;
+        }
+        // The Jacobian by finite differences (a 1e-5° step is about a metre).
+        let h = 1e-5;
+        let (e2, n2) = sweref99tm(lat + h, lon);
+        let (e3, n3) = sweref99tm(lat, lon + h);
+        let (a, b, c, d) = ((e2 - e1) / h, (e3 - e1) / h, (n2 - n1) / h, (n3 - n1) / h);
+        let det = a * d - b * c;
+        lat += (d * de - b * dn) / det;
+        lon += (-c * de + a * dn) / det;
+    }
+    (lat, lon)
+}
+
 /// A rectangle of elevations cut out of a DEM file. `n_top` is the northing of the top edge.
 pub struct Raster {
     e0: f64,
@@ -292,6 +316,15 @@ mod tests {
         // Snyder's series (Transverse Mercator, GRS 80, k0 0.9996, lon0 15°) for Backen, Umeå.
         let (e, n) = sweref99tm(63.832127, 20.168286);
         assert!((e - 754_096.68).abs() < 0.1 && (n - 7_088_603.15).abs() < 0.1, "{e} {n}");
+    }
+
+    #[test]
+    fn the_inverse_returns_the_degrees() {
+        for (lat, lon) in [(63.832127, 20.168286), (59.33, 18.07), (68.0, 19.0), (55.6, 13.0)] {
+            let (e, n) = sweref99tm(lat, lon);
+            let (back_lat, back_lon) = sweref99tm_inverse(e, n);
+            assert!((back_lat - lat).abs() < 1e-7 && (back_lon - lon).abs() < 1e-7, "{lat},{lon} -> {back_lat},{back_lon}");
+        }
     }
 
     #[test]
