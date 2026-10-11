@@ -10,7 +10,7 @@
 //! levelled and turned by setting its angular velocity, so it is flown by leaning (see [`fly`]).
 //! "Car" in the names below means any of these vehicles; [`Spec`] says which one.
 
-use super::Physics;
+use super::{Obj, Physics};
 use rapier3d::control::{DynamicRayCastVehicleController, WheelTuning};
 use rapier3d::prelude::*;
 use shared::consts::*;
@@ -504,6 +504,25 @@ impl Physics {
             }
         }
         self.step_pipeline();
+    }
+
+    /// Every `(car, tree)` pair in contact after the last step: what a car has driven into.
+    pub fn car_tree_contacts(&self) -> Vec<(u32, Obj)> {
+        let mut found = Vec::new();
+        for (&id, car) in &self.cars {
+            for handle in [Some(car.collider), car.turret].into_iter().flatten() {
+                for pair in self.narrow_phase.contact_pairs_with(handle) {
+                    if !pair.has_any_active_contact() {
+                        continue;
+                    }
+                    let other = if pair.collider1 == handle { pair.collider2 } else { pair.collider1 };
+                    if let Some(object @ Obj::Tree(_)) = self.objects.get(&other).copied() {
+                        found.push((id, object));
+                    }
+                }
+            }
+        }
+        found
     }
 
     /// The car, if any, overlapping a standing character capsule centred at `position`.

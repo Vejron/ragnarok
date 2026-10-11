@@ -167,6 +167,28 @@ fn alight(world: &mut World, id: u32) {
     tracing::debug!(id, vehicle = seat.vehicle, "alighted");
 }
 
+/// A car slower than this (m/s) only nudges a tree.
+const TREE_RAM_MIN_SPEED: f32 = 4.0;
+/// Tree damage per m/s of speed at the moment of impact: ten m/s fells a sapling, a broad trunk wants a run-up.
+const TREE_RAM_DAMAGE_PER_SPEED: f32 = 6.0;
+/// A tank's weight against a car's.
+const TANK_RAM_FACTOR: f32 = 3.0;
+
+/// Fells the trees a car is driving into. Speed is taken from before the step, as the impact
+/// itself has already slowed the car by now.
+fn run_down_trees(world: &mut World, before: &BTreeMap<u32, CarPose>) {
+    for (vid, object) in world.physics.car_tree_contacts() {
+        let (Some(pose), Some(vehicle)) = (before.get(&vid), world.vehicles.get(&vid)) else { continue };
+        let speed = pose.velocity[0].hypot(pose.velocity[2]);
+        if speed < TREE_RAM_MIN_SPEED || vehicle.wrecked() {
+            continue;
+        }
+        let weight = if vehicle.kind == KIND_TANK { TANK_RAM_FACTOR } else { 1.0 };
+        let amount = (speed * TREE_RAM_DAMAGE_PER_SPEED * weight) as u16;
+        super::combat::damage_object(world, object, amount, pose.position);
+    }
+}
+
 /// Throws every standing player a car overlaps. The direction leans on the car's heading with a
 /// little outward push, so a car drives a player ahead of it and off to the side.
 fn knock_players(world: &mut World) {
@@ -280,6 +302,7 @@ impl Mechanic for Vehicles {
             }
         }
         knock_players(world);
+        run_down_trees(world, &before);
 
         // Riders travel with their car; stuck or fallen cars are put right.
         for (&vid, vehicle) in &mut world.vehicles {

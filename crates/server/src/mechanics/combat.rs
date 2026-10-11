@@ -1276,6 +1276,28 @@ mod tests {
     }
 
     #[test]
+    fn a_car_at_speed_fells_the_tree_it_drives_into() {
+        use shared::world::{ObjId, TREE_PINE, Tree};
+        // The car's heading is not worth working out: trees stand 30 m off on every side.
+        let trees: Vec<Tree> = [[3000, 0], [-3000, 0], [0, 3000], [0, -3000]]
+            .into_iter()
+            .map(|[x, z]| Tree { x, z, base: 0, height: 1600, crown: 300, kind: TREE_PINE, solid: true })
+            .collect();
+        let tree_ids = (0..4).map(|index| ObjId { col: 2, row: 3, index }).collect();
+        let map = WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[0, 0]], trees, tree_ids, ..Default::default() };
+        let mut game = Game::new(map, 0).unwrap();
+        game.world.pickups.clear();
+        let (_, driver) = driver_in_the_car(&mut game);
+        let mut seq = 0;
+        for _ in 0..TICK_RATE * 6 {
+            seq += 1;
+            game.handle(Command::Input(driver, 0, vec![InputFrame(seq, 0, 127, 0, 0, 0, 0, 0)]));
+            game.step();
+        }
+        assert!(!game.world.destroyed.is_empty(), "the car drove 6 s and felled nothing");
+    }
+
+    #[test]
     fn a_blast_fells_a_tree_in_reach_and_everyone_hears_of_it() {
         let (mut game, _) = game_with_tree();
         let (id, mut inbox) = join(&mut game);
