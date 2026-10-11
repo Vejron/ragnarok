@@ -10,6 +10,7 @@ import { Transport, type ConnectionStatus } from './net/transport'
 import {
   BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, CROUCH_EYE_DROP, SLIDE_MIN_SPEED, ENTER_RADIUS, EXPLOSION_RADIUS, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION, RESPAWN_TICKS,
   ROCKET_BLAST_RADIUS, SHELL_COOLDOWN_TICKS, STANDING_Y,
+  CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS,
   HELI_GUN_COOLDOWN_TICKS, HELI_GUN_LENGTH, HELI_GUN_PITCH_MAX, HELI_GUN_PITCH_MIN, HELI_GUN_YAW_LIMIT, CANNON_RADIUS,
   TANK_BARREL_LENGTH, TANK_BARREL_MAX, TANK_BARREL_MIN, TICK_MS, vehicleMaxHp, WRECK_BLAST_RADIUS,
 } from './sim/consts'
@@ -26,6 +27,8 @@ import { Pickups } from './render/pickups'
 import { TrajectoryView } from './render/trajectory'
 import { throwTrajectory } from './sim/grenade'
 import { Rockets } from './render/rockets'
+import { saveLook, type Look } from './render/look'
+import { halfExtentsOf } from './sim/kinds'
 import { DRIVING_DISTANCE, HELI_DISTANCE, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, Scene, TANK_DISTANCE } from './render/scene'
 import { HeliModel, loadHeliModel } from './render/heli'
 import { loadTankModel, TankModel } from './render/tank'
@@ -209,6 +212,9 @@ export class Game {
     this.scene.scene.add(this.rocketModels.root)
     this.scene.scene.add(this.pickupModels.root)
     this.scene.scene.add(this.trajectory.root)
+    // Translucent smoke and flashes, and the grenade's arc, would show as solid shapes in the AO pass.
+    this.scene.excludeFromAO(this.effects.root)
+    this.scene.excludeFromAO(this.trajectory.root)
     this.transport = new Transport(
       (message) => this.handle(message),
       (status) => {
@@ -513,6 +519,15 @@ export class Game {
     this.aimGrenade(position, seated)
     this.effects.update(dt)
 
+    const blobs = this.scene.contact
+    blobs.begin()
+    if (!seated && this.hp > 0) this.blobFoot(blobs, position[0], position[1], position[2])
+    for (const car of cars.values()) {
+      const [hx, hy, hz] = halfExtentsOf(car.kind)
+      const height = car.y - hy - this.scene.groundAt(car.x, car.z)
+      blobs.add(car.x, car.z, hx * 1.2, hz * 1.1, car.yaw, Math.max(0, height))
+    }
+
     const seen = new Set<number>([0])
     for (const id of this.interp.ids()) {
       const state = this.interp.sample(id, renderTick)
@@ -521,6 +536,7 @@ export class Game {
       const avatar = this.avatar(id)
       avatar.dead = state.dead
       avatar.held = state.held
+      if (!state.dead) this.blobFoot(blobs, state.x, state.y, state.z)
       avatar.update([state.x, state.y, state.z], state.yaw, state.velocity[0], state.velocity[1], state.grounded, dt, 0, state.crouching,
         state.crouching && state.grounded && Math.hypot(state.knockX, state.knockZ) > SLIDE_MIN_SPEED)
     }
@@ -531,6 +547,7 @@ export class Game {
       }
     }
 
+    blobs.end()
     this.scene.render()
     this.onStats({
       status: this.transport.status,
@@ -710,6 +727,23 @@ export class Game {
     local.applyQuaternion(new THREE.Quaternion(ref.qx, ref.qy, ref.qz, ref.qw).invert())
     local.applyQuaternion(new THREE.Quaternion(now.qx, now.qy, now.qz, now.qw))
     return [now.x + local.x, now.y + local.y, now.z + local.z]
+  }
+
+  /** A blob under a stickman whose capsule is centred at `(x, y, z)`. */
+  private blobFoot(blobs: Scene['contact'], x: number, y: number, z: number) {
+    const height = y - (CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS) - this.scene.groundAt(x, z)
+    blobs.add(x, z, 0.6, 0.6, 0, Math.max(0, height))
+  }
+
+  /** The soft-lighting options in force. */
+  get look() {
+    return this.scene.look
+  }
+
+  /** Switches the soft-lighting options and remembers them for next time. */
+  setLook(look: Look) {
+    this.scene.setLook(look)
+    saveLook(look)
   }
 
   /** Draws every vehicle at the render tick and returns where they are, by id. */

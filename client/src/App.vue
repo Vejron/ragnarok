@@ -5,12 +5,14 @@ import Hotbar from './Hotbar.vue'
 import TouchControls from './TouchControls.vue'
 import type { InputController } from './sim/input'
 import { colorFor } from './render/character'
+import type { Look } from './render/look'
 import { WEAPON_AUTOCANNON, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK } from './net/codec'
 
 const container = ref<HTMLElement | null>(null)
 const stats = shallowRef<HudStats | null>(null)
 const error = ref<string | null>(null)
 const input = shallowRef<InputController | null>(null)
+const look = ref<Look>({ soft: true, contact: true, ao: true, far: true })
 let game: Game | null = null
 let lastHud = 0
 
@@ -23,10 +25,22 @@ onMounted(() => {
     stats.value = next
   })
   input.value = game.input
+  look.value = { ...game.look }
   game.start().catch((reason: unknown) => {
     error.value = reason instanceof Error ? reason.message : String(reason)
   })
 })
+
+const LOOKS: { key: keyof Look; label: string }[] = [
+  { key: 'soft', label: 'Soft light' },
+  { key: 'contact', label: 'Contact shadows' },
+  { key: 'ao', label: 'Ambient occlusion' },
+  { key: 'far', label: 'Far shadows' },
+]
+function toggleLook(key: keyof Look) {
+  look.value = { ...look.value, [key]: !look.value[key] }
+  game?.setLook(look.value)
+}
 
 onBeforeUnmount(() => game?.dispose())
 
@@ -92,6 +106,11 @@ const mark = (weapon: number) =>
   </table>
   <div v-if="stats?.warning" class="banner">{{ stats.warning }}</div>
   <div v-if="error" class="banner">{{ error }}</div>
+  <div v-if="stats && !stats.locked" class="look" @click.stop>
+    <label v-for="option in LOOKS" :key="option.key">
+      <input type="checkbox" :checked="look[option.key]" @change="toggleLook(option.key)" />{{ option.label }}
+    </label>
+  </div>
   <div v-if="stats && !stats.locked" class="overlay">
     <h1>RAGNAROK</h1>
     <p>{{ stats.touch ? 'Tap to play' : 'Click to play' }}</p>
@@ -164,6 +183,11 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
 .board th:first-child, .board td:first-child { text-align: left; }
 .board td { text-align: right; padding: 4px 8px; }
 .board tr.you td { color: #138a4b; }
+.look {
+  position: fixed; right: 12px; bottom: 12px; z-index: 1; display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 14px; border-radius: 14px; background: rgba(255, 255, 255, 0.92); color: #1d2b36; font-size: 13px; font-weight: 700;
+}
+.look label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .overlay {
   position: fixed; inset: 0; display: grid; place-content: center; text-align: center;
   background: rgba(20, 40, 60, 0.35); color: white; pointer-events: none;
