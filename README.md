@@ -67,3 +67,17 @@ RAGNAROK_DOMAIN=game.example.com cargo run --release -p server
 ```
 
 The first run issues the certificate and exits; start it again to load it.
+
+### Deploying
+
+`scripts/deploy.sh` builds the client and a `linux/amd64` image locally, ships it over SSH and swaps the container on the VPS, rolling back if the health check fails. The deploy target is kept in `.env.local` (git-ignored), which defines:
+
+- `SSH_USER` and `SSH_HOST`: the SSH login of the VPS.
+- `TARGET_DOMAIN`: the public hostname, passed to the script as `DOMAIN`.
+
+```sh
+set -a; . ./.env.local; set +a
+DOMAIN="$TARGET_DOMAIN" scripts/deploy.sh "$SSH_USER@$SSH_HOST"
+```
+
+Commit first: the image is tagged with the current `HEAD`. A protocol bump shows players with the old page open the "reload" banner once the new container is up.
