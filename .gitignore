@@ -14,3 +14,4 @@ crates/server/acme/
 # the generated world (cargo run -p osm-import, or scripts/world.sh); fixtures/world is the small committed one
 client/public/world.msgpack
 client/public/tiles/
+client/public/minimap.png

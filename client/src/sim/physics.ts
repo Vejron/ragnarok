@@ -45,12 +45,12 @@ function inherit(knock: readonly [number, number], velocity: readonly [number, n
 }
 
 /** One tick of movement. Mirrors `Physics::move_character` on the server. */
-export function stepCharacter(motor: CharacterMotor, state: CharacterState, input: InputFrame, dt: number): CharacterState {
+export function stepCharacter(motor: CharacterMotor, state: CharacterState, input: InputFrame, dt: number, speedScale = 1): CharacterState {
   // Jumping off a moving car keeps its speed, like on the server.
   const velocity = state.ride !== 0 ? motor.vehicleVelocity?.(state.ride) : undefined
   const jumped = velocity !== undefined && state.grounded && (input.buttons & BUTTON_JUMP) !== 0
   const carried = beginSlide(jumped ? inherit(state.knock, velocity) : state.knock, state.grounded, input)
-  const { vy, desired } = desiredTranslation(state.vy, state.grounded, carried, input, dt)
+  const { vy, desired } = desiredTranslation(state.vy, state.grounded, carried, input, dt, speedScale)
   // Standing and not jumping: stay on the ground over a slope. Mirrors the choice in `move_character`.
   const moved = motor.move(state.position, desired, state.grounded && vy <= 0)
   const translation = moved.translation
@@ -73,13 +73,17 @@ export function stepCharacter(motor: CharacterMotor, state: CharacterState, inpu
 /** Top of the boundary walls, metres above the lowest ground. Mirrors `BOUNDARY_HEIGHT` on the server. */
 const BOUNDARY_HEIGHT = 200
 
+/** Depth of the slab under a terrain, metres below y = 0 (the deepest water bed). Mirrors `BED_FLOOR` on the server. */
+const BED_FLOOR = 12
+
 /**
  * Mirrors `static_colliders` on the server: ground slab, boundary walls, building mesh. The
  * terrain arrives with its tiles (`addTileCollider`).
  */
 export function buildStaticColliders(world: RAPIER.World, data: WorldData) {
   const half = data.halfExtent
-  world.createCollider(RAPIER.ColliderDesc.cuboid(half, 0.5, half).setTranslation(0, -0.5, 0))
+  const top = data.groundCell > 0 ? -BED_FLOOR : 0
+  world.createCollider(RAPIER.ColliderDesc.cuboid(half, 0.5, half).setTranslation(0, top - 0.5, 0))
   const wall = BOUNDARY_HEIGHT / 2
   for (const [x, z, hx, hz] of [[half, 0, 0.5, half], [-half, 0, 0.5, half], [0, half, half, 0.5], [0, -half, half, 0.5]] as const) {
     world.createCollider(RAPIER.ColliderDesc.cuboid(hx, wall, hz).setTranslation(x, wall, z))

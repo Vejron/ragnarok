@@ -25,6 +25,7 @@ describe('world files', () => {
     let buildings = 0
     let watery = 0
     let streams = 0
+    let bridges = 0
     for (const ref of world.tiles) {
       const bytes = read(`tiles/${ref.col}_${ref.row}.msgpack`)
       expect(worldHash(bytes), `tile ${ref.col}_${ref.row}`).toBe(ref.hash)
@@ -44,6 +45,11 @@ describe('world files', () => {
       }
       buildings += tile.buildings.length
       streams += tile.streams.length
+      for (const bridge of tile.bridges) {
+        // A bridge's triangles lie inside the tile's mesh.
+        expect(bridge.first + bridge.deck + bridge.steel).toBeLessThanOrEqual(tile.collision.triangles.length / 3)
+        bridges++
+      }
       if (tile.water.length > 0) {
         watery++
         // Water comes with ground, sample for sample, and rises above the bed somewhere.
@@ -54,5 +60,6 @@ describe('world files', () => {
     expect(buildings).toBeGreaterThan(0)
     expect(watery).toBeGreaterThan(0)
     expect(streams).toBeGreaterThan(0)
+    expect(bridges).toBeGreaterThan(0)
   })
 })

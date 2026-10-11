@@ -21,7 +21,7 @@ export const BUTTON_JUMP = 1 << 0
 export const BUTTON_RUN = 1 << 1
 export const BUTTON_USE = 1 << 2
 export const BUTTON_FIRE = 1 << 3
-/** Secondary fire. Nothing uses it on foot now that weapons live in the hotbar. */
+/** Aim held (right mouse): looks down the scope of a gun that has one. */
 export const BUTTON_ALT = 1 << 4
 /** Held to crouch: slower, and a lower eye. */
 export const BUTTON_CROUCH = 1 << 5

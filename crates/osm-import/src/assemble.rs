@@ -1,6 +1,7 @@
 //! Turns OSM ways (or a procedural grid) into a tiled world: a manifest and one `Tile` per
 //! square of the grid that has anything in it.
 
+use crate::bridge::{self, Pylons};
 use crate::overpass::{Area, LatLon, Osm, Way};
 use crate::roof::{self, Cloud, Roof, Shape};
 use crate::trees::Planted;
@@ -22,6 +23,8 @@ const SPAWN_SPACING: f64 = 15.0;
 const SPAWN_CLEARANCE: f64 = 1.5;
 /// Trees this near a road or building have trunk colliders; those deeper in the woods do not.
 const SOLID_REACH: f64 = 20.0;
+/// No tree stands this close to the edge of a bridge, metres.
+const BRIDGE_CLEAR: f64 = 4.0;
 
 fn cm(metres: f64) -> i32 {
     (metres * 100.0).round() as i32
@@ -209,7 +212,7 @@ impl Built {
 /// a road are dropped. A tree is solid (has a trunk collider) when it is planted, in the register,
 /// or stands within `SOLID_REACH` of a road or a building.
 #[allow(clippy::too_many_arguments)]
-fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P>, f64, Option<Roof>)>, roads: Vec<(Vec<P>, f64, u8)>, covers: Vec<(u8, Vec<Vec<P>>)>, trees: Vec<(P, u8, f64, f64, bool)>, ground: Ground, water: Placed) -> Built {
+fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P>, f64, Option<Roof>)>, roads: Vec<(Vec<P>, f64, u8)>, bridges: Vec<(Vec<P>, f64, u8, Pylons)>, covers: Vec<(u8, Vec<Vec<P>>)>, trees: Vec<(P, u8, f64, f64, bool)>, ground: Ground, water: Placed) -> Built {
     let inner = half - EDGE_MARGIN;
     let mut manifest = Manifest {
         version: WORLD_VERSION,
@@ -259,11 +262,13 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P
     }
     let mut candidates = Vec::new();
     let side = tile_size;
-    for (points, width, kind) in &roads {
+    // Bridge roads are drawn like any road (and on the minimap) but never offer a spawn: the
+    // ground under them is a river bed.
+    for ((points, width, kind), spawnable) in roads.iter().map(|(points, width, kind)| ((points, width, kind), true)).chain(bridges.iter().map(|(points, width, kind, _)| ((points, width, kind), false))) {
         let (width, kind) = (*width, *kind);
         for run in clip_polyline(points, half) {
             // Sample along each run, not just at vertices, so long straight roads still offer spawns.
-            for pair in run.windows(2) {
+            for pair in run.windows(2).filter(|_| spawnable) {
                 let ([ax, az], [bx, bz]) = (pair[0], pair[1]);
                 let steps = ((bx - ax).hypot(bz - az) / 8.0).ceil().max(1.0) as usize;
                 candidates.extend((0..=steps).map(|s| {
@@ -286,6 +291,40 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P
                     }
                 }
             }
+        }
+    }
+    // Bridges are solid geometry in the collision mesh, each piece in the tile it lies in.
+    for (points, width, kind, pylons) in &bridges {
+        let pieces = bridge::build(points, *width, *kind, *pylons, &ground, &water.levels, inner);
+        let mut by_tile: BTreeMap<(u16, u16), (Vec<&bridge::Piece>, Vec<&bridge::Piece>)> = BTreeMap::new();
+        for piece in &pieces {
+            let entry = by_tile.entry(manifest.tile_at(cm(piece.at[0]), cm(piece.at[1]))).or_default();
+            if piece.steel { entry.1.push(piece) } else { entry.0.push(piece) }
+        }
+        for (key, (deck, steel)) in by_tile {
+            let tile = tiles.entry(key).or_default();
+            let first = tile.collision.triangles.len() as u32;
+            let mut shared_vertices: std::collections::HashMap<[i32; 3], u32> = std::collections::HashMap::new();
+            let mut count = [0u32; 2];
+            for (group, list) in [&deck, &steel].into_iter().enumerate() {
+                for piece in list {
+                    for tri in &piece.tris {
+                        let mut index = [0u32; 3];
+                        for (slot, v) in tri.iter().enumerate() {
+                            let at = [cm(v[0]), cm(v[1]), cm(v[2])];
+                            index[slot] = *shared_vertices.entry(at).or_insert_with(|| {
+                                tile.collision.vertices.push(at);
+                                tile.collision.vertices.len() as u32 - 1
+                            });
+                        }
+                        if index[0] != index[1] && index[1] != index[2] && index[0] != index[2] {
+                            tile.collision.triangles.push(index);
+                            count[group] += 1;
+                        }
+                    }
+                }
+            }
+            tile.bridges.push(Bridge { first, deck: count[0], steel: count[1] });
         }
     }
     // Cover is cut at tile borders like roads, so each tile's texture needs only its own file.
@@ -337,6 +376,9 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P
         points.iter().fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, p| [b[0].min(p[0] - grow), b[1].min(p[1] - grow), b[2].max(p[0] + grow), b[3].max(p[1] + grow)])
     };
     let in_box = |b: &[f64; 4], p: P| p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3];
+    // Trees near a bridge are dropped: over water they are the laser's reading of pylons, cables
+    // and railings, and elsewhere they would grow through the deck.
+    let bridge_boxes: Vec<[f64; 4]> = bridges.iter().map(|(points, width, _, _)| reach_box(points, width / 2.0 + BRIDGE_CLEAR)).collect();
     let road_boxes: Vec<[f64; 4]> = roads.iter().map(|(points, width, _)| reach_box(points, width / 2.0 + SOLID_REACH)).collect();
     let footprint_boxes: Vec<[f64; 4]> = footprints.iter().map(|footprint| reach_box(footprint, SOLID_REACH)).collect();
     for (at, kind, height, crown, planted) in trees {
@@ -354,7 +396,10 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P
             on_road |= d < width / 2.0;
             near |= d < width / 2.0 + SOLID_REACH;
         }
-        if on_building || on_road {
+        let on_bridge = bridges.iter().zip(&bridge_boxes).any(|((points, width, _, _), b)| {
+            in_box(b, at) && points.windows(2).any(|pair| distance_to_segment(at, pair[0], pair[1]) < width / 2.0 + BRIDGE_CLEAR)
+        });
+        if on_building || on_road || on_bridge {
             continue;
         }
         if !near {
@@ -429,6 +474,7 @@ pub fn from_osm(bbox: [f64; 4], tile_size: f64, osm: &Osm, planted: &[Planted], 
     let split_roofs = std::cell::Cell::new(0);
     let mut buildings = Vec::new();
     let mut roads = Vec::new();
+    let mut bridges = Vec::new();
     let mut covers = Vec::new();
     let line = |geometry: &[LatLon]| -> Vec<P> { geometry.iter().map(|g| project(origin, g.lat, g.lon)).collect() };
     for Area { tags, outer, inner, .. } in &osm.areas {
@@ -456,7 +502,12 @@ pub fn from_osm(bbox: [f64; 4], tile_size: f64, osm: &Osm, planted: &[Planted], 
             });
             buildings.push((points, building_height(way), shape));
         } else if let Some((width, kind)) = way.tags.get("highway").and_then(|value| road_style(value)) {
-            roads.push((points, width, kind));
+            if is_bridge(way) {
+                let pylons = pylons_for(origin, &points);
+                bridges.push((points, width, kind, pylons));
+            } else {
+                roads.push((points, width, kind));
+            }
         } else if let Some(kind) = cover_kind(&way.tags) {
             // Only closed ways are areas; an open one is a bank or a fence.
             if points.len() >= 4 && points.first() == points.last() {
@@ -468,7 +519,26 @@ pub fn from_osm(bbox: [f64; 4], tile_size: f64, osm: &Osm, planted: &[Planted], 
         eprintln!("roofs: {} of {} buildings have more than one part", split_roofs.get(), buildings.len());
     }
     let trees = planted.iter().map(|tree| (project(origin, tree.lat, tree.lon), tree.kind, tree.height, tree.crown, tree.registered)).collect();
-    assemble(origin, half, tile_size, buildings, roads, covers, trees, ground, water)
+    assemble(origin, half, tile_size, buildings, roads, bridges, covers, trees, ground, water)
+}
+
+/// The pylons a bridge is built with: those of the landmark it lies at, if any.
+fn pylons_for(origin: (f64, f64), points: &[P]) -> Pylons {
+    let n = points.len().max(1) as f64;
+    let mid = [points.iter().map(|p| p[0]).sum::<f64>() / n, points.iter().map(|p| p[1]).sum::<f64>() / n];
+    bridge::LANDMARKS
+        .iter()
+        .find(|(lat, lon, radius, _)| {
+            let at = project(origin, *lat, *lon);
+            (at[0] - mid[0]).hypot(at[1] - mid[1]) <= *radius
+        })
+        .map_or(Pylons::None, |landmark| landmark.3)
+}
+
+/// Whether a road way is carried on a bridge (and not, say, a tunnel with a stray bridge tag).
+fn is_bridge(way: &Way) -> bool {
+    let tag = |key: &str| way.tags.get(key).map(String::as_str);
+    tag("bridge").is_some_and(|value| value != "no") && tag("tunnel").is_none_or(|value| value == "no")
 }
 
 /// Ground cover for a way's or relation's tags, or `None` if it is not cover we draw. Water is not
@@ -652,7 +722,11 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
             trees.push(([line + STREET / 2.0 + 1.5, along], kind, height, crown, true));
         }
     }
-    assemble((0.0, 0.0), half, tile_size, buildings, roads, covers, trees, ground, water)
+    // A bridge over the pond (`synthetic_water`), so the offline world has one to draw and cross.
+    let pond_x = start + (count - 1) as f64 * PITCH + STREET / 2.0 + 2.0 + (PITCH - STREET - 4.0) / 2.0;
+    let pond_z = -half + 70.0;
+    let bridges = vec![(vec![[pond_x, pond_z - 50.0], [pond_x, pond_z + 50.0]], 7.0, ROAD_MINOR, bridge::Pylons::Middle)];
+    assemble((0.0, 0.0), half, tile_size, buildings, roads, bridges, covers, trees, ground, water)
 }
 
 #[cfg(test)]

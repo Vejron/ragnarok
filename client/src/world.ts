@@ -2,7 +2,7 @@ import { decode } from '@msgpack/msgpack'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 8
+export const WORLD_VERSION = 9
 
 export const ROAD_MAJOR = 0
 export const ROAD_MINOR = 1
@@ -53,6 +53,16 @@ export interface Building {
   roof: number
   /** `ROOF_*`: what the laser data fitted the roof as. */
   roofKind: number
+}
+
+/**
+ * One bridge's triangles in the tile's collision mesh: `deck` triangles of concrete (deck, piers,
+ * parapets) from `first`, then `steel` triangles (pylon, stay cables).
+ */
+export interface Bridge {
+  first: number
+  deck: number
+  steel: number
 }
 
 export const ROOF_FLAT = 0
@@ -127,6 +137,7 @@ export interface TileData {
   water: Float32Array
   /** Narrow watercourses, flowing along their points. */
   streams: Stream[]
+  bridges: Bridge[]
 }
 
 /** FNV-1a, matching `world_hash` on the server. */
@@ -171,7 +182,7 @@ export function decodeManifest(bytes: Uint8Array): WorldData {
 }
 
 export function decodeTile(bytes: Uint8Array): TileData {
-  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams] = decode(bytes) as [
+  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges] = decode(bytes) as [
     [number, number[][], number, number, number, number, number][],
     [number, number, number[][]][],
     [number[][], number[][]],
@@ -180,6 +191,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     [number, number, number, number, number, number, boolean][],
     number[],
     [number, number[][]][],
+    [number, number, number][] | undefined,
   ]
   return {
     buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind]) => ({
@@ -211,6 +223,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     ground: Float32Array.from(ground, metres),
     water: Float32Array.from(water, (cm) => (cm === NO_WATER_CM ? NO_WATER : metres(cm))),
     streams: streams.map(([width, points]) => ({ width: metres(width), points: points.map(point) })),
+    bridges: (bridges ?? []).map(([first, deck, steel]) => ({ first, deck, steel })),
   }
 }
 

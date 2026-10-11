@@ -11,7 +11,7 @@ const MAX_RELIEF: f64 = 100.0;
 
 /// Water beds may be cut this far below the lowest dry ground, metres, so y = 0 stays the lowest
 /// land and the relief limit is about land only.
-const MAX_BED_BELOW: f64 = 3.0;
+const MAX_BED_BELOW: f64 = 12.0;
 
 /// The sample grid `build` makes for these sizes (metres): a `grid × grid` square of `tile`-metre
 /// tiles centred on the origin, a sample every `cell` metres.
@@ -115,7 +115,7 @@ mod tests {
         let row = ground.side as usize;
         assert_eq!(ground.heights[0], 0);
         assert_eq!(ground.heights[row / 2], -100);
-        assert_eq!(ground.heights[row - 1], -300);
+        assert_eq!(ground.heights[row - 1], -1200);
     }
 
     #[test]

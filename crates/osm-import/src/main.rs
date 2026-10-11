@@ -10,6 +10,7 @@
 //!     LM_USER=… LM_PASS=… cargo run -p osm-import              # elevation fetched from Lantmäteriet
 //!     cargo run -p osm-import -- --cell 0                      # flat ground, no elevation
 //!     cargo run -p osm-import -- --no-water                    # skip Lantmäteriet's Hydrografi
+//!     cargo run -p osm-import -- --no-minimap                  # skip the pre-rendered map image
 //!     cargo run -p osm-import -- --no-trees                    # skip Umeå's tree register
 //!     cargo run -p osm-import -- --refresh                     # download everything again
 //!     cargo run -p osm-import -- --clear-cache                 # delete .cache/osm-import
@@ -17,12 +18,14 @@
 //! Credentials, data sources and the cache are described in `WORLD.md`.
 
 mod assemble;
+mod bridge;
 mod cache;
 mod canopy;
 mod dem;
 mod ground;
 mod hydro;
 mod lidar;
+mod minimap;
 mod overpass;
 mod roof;
 mod trees;
@@ -62,6 +65,9 @@ struct Args {
     /// Leave out lakes, rivers and streams (Lantmäteriet's Hydrografi Direkt).
     #[arg(long)]
     no_water: bool,
+    /// Do not render `minimap.png`, the top-down map the client shows, next to the world.
+    #[arg(long)]
+    no_minimap: bool,
     /// Leave out the trees from Umeå's open data.
     #[arg(long)]
     no_trees: bool,
@@ -307,6 +313,7 @@ fn main() -> Result<()> {
     }
     eprintln!("roofs: {} flat, {} shed, {} gable, {} hip", roofs[0], roofs[1], roofs[2], roofs[3]);
     let (spawns, tile_count) = (built.manifest.spawns.len(), built.tiles.len());
+    let map = if args.no_minimap { None } else { Some(minimap::render(&built.manifest, &built.tiles).context("rendering the minimap")?) };
     let (manifest, tiles) = built.into_files();
 
     let dir = args.out.parent().map(PathBuf::from).unwrap_or_default();
@@ -320,6 +327,9 @@ fn main() -> Result<()> {
     for (path, bytes) in &tiles {
         tile_bytes += bytes.len();
         std::fs::write(dir.join(path), bytes).with_context(|| format!("writing {path}"))?;
+    }
+    if let Some(map) = &map {
+        std::fs::write(dir.join("minimap.png"), map).context("writing minimap.png")?;
     }
     std::fs::write(&args.out, &manifest).with_context(|| format!("writing {}", args.out.display()))?;
     eprintln!(

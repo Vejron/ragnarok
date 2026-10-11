@@ -55,16 +55,20 @@ pub struct Physics {
 /// the lowest ground. Mirrored by `BOUNDARY_HEIGHT` in `client/src/sim/physics.ts`.
 const BOUNDARY_HEIGHT: f32 = 200.0;
 
+/// How far below the lowest dry ground the slab under a terrain sits, metres: the importer's
+/// `MAX_BED_BELOW`, the deepest a water bed is cut. Mirrored by `BED_FLOOR` in `client/src/sim/physics.ts`.
+const BED_FLOOR: f32 = 12.0;
+
 /// The static colliders every simulation of `world` uses: the ground slab, the terrain, four
 /// boundary walls, the building mesh and the tree trunks. Mirrored by `buildStaticColliders` in
 /// `client/src/sim/physics.ts`.
 pub fn static_colliders(world: &WorldFile) -> Result<Vec<Collider>> {
     let half = from_cm(world.half_extent);
-    let mut colliders = vec![
-        // Ground: a 1 m thick slab whose top face is y = 0, the lowest the terrain goes. On flat
-        // worlds it is the whole ground; elsewhere it only catches what falls through a gap.
-        ColliderBuilder::cuboid(half, 0.5, half).translation(Vector::new(0.0, -0.5, 0.0)).build(),
-    ];
+    // Ground: a 1 m thick slab. On flat worlds its top is y = 0 and it is the whole ground;
+    // elsewhere it sits `BED_FLOOR` below, under the lowest water bed, and only catches what
+    // falls through a gap.
+    let top = if world.ground.is_flat() { 0.0 } else { -BED_FLOOR };
+    let mut colliders = vec![ColliderBuilder::cuboid(half, 0.5, half).translation(Vector::new(0.0, top - 0.5, 0.0)).build()];
     let ground = &world.ground;
     if !ground.is_flat() {
         let side = ground.side as usize;
@@ -197,8 +201,13 @@ impl Physics {
     /// Advances one character by one tick of `input`. Characters do not collide with each other,
     /// which keeps the local player's prediction independent of where remote players really are.
     pub fn move_character(&self, character: &mut Character, input: &InputFrame, dt: f32) {
+        self.move_character_scaled(character, input, dt, 1.0);
+    }
+
+    /// `move_character` with walking speed multiplied by `speed_scale` (aiming a gun slows you).
+    pub fn move_character_scaled(&self, character: &mut Character, input: &InputFrame, dt: f32, speed_scale: f32) {
         character.knock = begin_slide(character.knock, character.grounded, input);
-        let (vy, desired) = desired_translation(character.vy, character.grounded, character.knock, input, dt);
+        let (vy, desired) = desired_translation(character.vy, character.grounded, character.knock, input, dt, speed_scale);
         let queries = self.broad_phase.as_query_pipeline(
             self.narrow_phase.query_dispatcher(),
             &self.bodies,

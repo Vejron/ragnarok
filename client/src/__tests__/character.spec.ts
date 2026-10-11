@@ -31,7 +31,7 @@ describe('Character holding things', () => {
         expect(c.asset!.clips.has(prefix + name), prefix + name).toBe(true)
       }
     }
-    for (const name of ['weapon_ak5', 'weapon_revolver', 'weapon_grenade', 'weapon_bandage', 'muzzle', 'muzzle_pistol']) {
+    for (const name of ['weapon_ak5', 'weapon_sniper', 'weapon_revolver', 'weapon_grenade', 'weapon_bandage', 'muzzle', 'muzzle_pistol']) {
       expect(c.asset!.scene.getObjectByName(name), name).toBeTruthy()
     }
     c.dispose()
@@ -41,7 +41,7 @@ describe('Character holding things', () => {
     const c = await crowd()
     const person = new Character(c, 1)
     const shown = () =>
-      ['weapon_ak5', 'weapon_revolver', 'weapon_grenade', 'weapon_bandage'].filter((name) => {
+      ['weapon_ak5', 'weapon_sniper', 'weapon_revolver', 'weapon_grenade', 'weapon_bandage'].filter((name) => {
         let visible = false
         c.root.traverse((node) => {
           if (node.name === name) visible = node.visible

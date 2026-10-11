@@ -29,6 +29,8 @@ export class Predictor {
   readonly error: Vec3 = [0, 0, 0]
   /** Size of the last correction, metres, for the HUD. */
   lastCorrection = 0
+  /** Walking speed multiplier for an input, e.g. slower aiming a gun. The game sets it from the hotbar. */
+  speedScale: (input: InputFrame) => number = () => 1
 
   constructor(private readonly motor: CharacterMotor, initial: CharacterState) {
     this.state = cloneState(initial)
@@ -38,7 +40,7 @@ export class Predictor {
   /** Applies one new input locally. */
   apply(input: InputFrame) {
     this.previous = this.state
-    this.state = stepCharacter(this.motor, this.state, input, TICK_DT)
+    this.state = stepCharacter(this.motor, this.state, input, TICK_DT, this.speedScale(input))
     this.pending.push(input)
     if (this.pending.length > MAX_PENDING) this.pending.shift()
   }
@@ -75,7 +77,7 @@ export class Predictor {
     let previous = state
     for (const input of this.pending) {
       previous = state
-      state = stepCharacter(this.motor, state, input, TICK_DT)
+      state = stepCharacter(this.motor, state, input, TICK_DT, this.speedScale(input))
     }
     const delta: Vec3 = [before[0] - state.position[0], before[1] - state.position[1], before[2] - state.position[2]]
     this.lastCorrection = Math.hypot(...delta)

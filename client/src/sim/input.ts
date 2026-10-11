@@ -1,5 +1,5 @@
 import { wrapAngle } from '@/net/codec'
-import { BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_RELOAD, BUTTON_RUN, BUTTON_SLIDE, BUTTON_USE } from './consts'
+import { BUTTON_ALT, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_RELOAD, BUTTON_RUN, BUTTON_SLIDE, BUTTON_USE } from './consts'
 import { HOTBAR_SLOTS } from './items'
 
 /** Mouse-look sensitivity, radians per pixel. */
@@ -36,6 +36,10 @@ export class InputController {
   private lastLook = -Infinity
   private held = new Set<string>()
   private firing = false
+  /** The right mouse button is down: aim, which looks down a scope when the gun has one. */
+  private aiming = false
+  /** Scales mouse-look; the game turns it down while scoped so a zoomed view is not twitchy. */
+  lookScale = 1
   private latched = 0
   private readonly abort = new AbortController()
   /** The primary pointer is a finger: no pointer lock, no keyboard. */
@@ -54,6 +58,7 @@ export class InputController {
       this.touchHeld = 0
       this.stick = [0, 0, false]
       this.firing = false
+      this.aiming = false
     }, options)
     element.addEventListener('click', () => {
       if (this.coarse) this.touching = true
@@ -61,10 +66,13 @@ export class InputController {
     }, options)
     // The trigger is the left mouse button, once the pointer is captured.
     document.addEventListener('mousedown', (event) => {
-      if (event.button === 0 && document.pointerLockElement === element) this.firing = true
+      if (document.pointerLockElement !== element) return
+      if (event.button === 0) this.firing = true
+      if (event.button === 2) this.aiming = true
     }, options)
     document.addEventListener('mouseup', (event) => {
       if (event.button === 0) this.firing = false
+      if (event.button === 2) this.aiming = false
     }, options)
     // The wheel cycles the hotbar, one slot per notch.
     document.addEventListener('wheel', (event) => {
@@ -76,8 +84,9 @@ export class InputController {
     document.addEventListener('mousemove', (event) => {
       if (document.pointerLockElement !== element) return
       this.lastLook = performance.now()
-      this.yaw -= event.movementX * LOOK_SPEED
-      this.pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, this.pitch - event.movementY * LOOK_SPEED))
+      const speed = LOOK_SPEED * this.lookScale
+      this.yaw -= event.movementX * speed
+      this.pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, this.pitch - event.movementY * speed))
     }, options)
   }
 
@@ -95,6 +104,11 @@ export class InputController {
     return this.held.has(code)
   }
 
+  /** Aim is held, by the right mouse button or on screen. */
+  get aimHeld() {
+    return this.aiming || (this.touchHeld & BUTTON_ALT) !== 0
+  }
+
   get locked() {
     return this.touching || document.pointerLockElement === this.element
   }
@@ -107,8 +121,9 @@ export class InputController {
   /** Camera drag in pixels, as the mouse would give. */
   lookBy(dx: number, dy: number) {
     this.lastLook = performance.now()
-    this.yaw -= dx * LOOK_SPEED
-    this.pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, this.pitch - dy * LOOK_SPEED))
+    const speed = LOOK_SPEED * this.lookScale
+    this.yaw -= dx * speed
+    this.pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, this.pitch - dy * speed))
   }
 
   /** A button held down on screen, like a key. */
@@ -167,6 +182,7 @@ export class InputController {
     if (this.stick[2]) buttons |= BUTTON_RUN
     if (this.held.has('Space')) buttons |= BUTTON_JUMP
     if (this.firing || this.held.has('KeyF')) buttons |= BUTTON_FIRE
+    if (this.aiming) buttons |= BUTTON_ALT
     if (this.held.has('KeyC') || this.held.has('ControlLeft')) buttons |= BUTTON_CROUCH
     if (this.held.has('ShiftLeft') || this.held.has('ShiftRight')) buttons |= BUTTON_RUN
     return {

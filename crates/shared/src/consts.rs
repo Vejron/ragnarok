@@ -34,7 +34,7 @@ pub const BUTTON_RUN: u8 = 1 << 1;
 pub const BUTTON_USE: u8 = 1 << 2;
 /// Gunner's trigger. Held to keep firing; the gun's reload paces it.
 pub const BUTTON_FIRE: u8 = 1 << 3;
-/// Secondary fire. Nothing uses it on foot now that weapons live in the hotbar.
+/// Aim held (right mouse): looks down the scope of a gun that has one, and tightens any gun's spread.
 pub const BUTTON_ALT: u8 = 1 << 4;
 /// Held to crouch: slower, and a lower eye.
 pub const BUTTON_CROUCH: u8 = 1 << 5;
@@ -200,6 +200,12 @@ pub const SHELL_COOLDOWN_TICKS: u32 = 90;
 /// Speed a shell leaves the muzzle at, m/s. It falls under `GRAVITY` from there, so at 100 m it has
 /// dropped about 5 m and at 200 m about 20.
 pub const SHELL_SPEED: f32 = 140.0;
+/// A sniper round flies at twice a tank shell's speed, m/s, and falls under a quarter of gravity, so
+/// at 200 m (0.7 s) it has dropped about 1 m.
+pub const BULLET_SPEED: f32 = 2.0 * SHELL_SPEED;
+pub const BULLET_GRAVITY_SCALE: f32 = 0.25;
+/// A gun fired with aim held scatters over this fraction of its hip-fire cone.
+pub const AIM_SPREAD_SCALE: f32 = 0.25;
 /// How long a shell flies before it bursts where it is.
 pub const SHELL_TTL_TICKS: u32 = 6 * TICK_RATE;
 /// Speed a fired shell takes from the tank, m/s, backwards along the barrel.

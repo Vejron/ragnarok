@@ -1,10 +1,23 @@
 import { describe, expect, it } from 'vitest'
 import { beginSlide, decayKnock, desiredTranslation, wishVelocity } from '@/sim/movement'
-import { BUTTON_CROUCH, BUTTON_JUMP, BUTTON_RUN, BUTTON_SLIDE, CROUCH_SPEED, SLIDE_SPEED, RUN_SPEED, TICK_DT, WALK_SPEED } from '@/sim/consts'
+import { aimSpeedScale, ITEM_AK5, ITEM_GRENADE, ITEM_SNIPER } from '@/sim/items'
+import { BUTTON_ALT, BUTTON_CROUCH, BUTTON_JUMP, BUTTON_RUN, BUTTON_SLIDE, CROUCH_SPEED, SLIDE_SPEED, RUN_SPEED, TICK_DT, WALK_SPEED } from '@/sim/consts'
 
 const frame = (strafe: number, forward: number, yaw: number, buttons = 0) => ({ seq: 1, strafe, forward, yaw, buttons, pitch: 0, view: 0, slot: 0 })
 
 describe('movement', () => {
+  it('walks slower by the speed scale', () => {
+    const [, z] = wishVelocity(frame(0, 127, 0, BUTTON_RUN), 0.5)
+    expect(z).toBeCloseTo(-RUN_SPEED * 0.5, 4)
+  })
+
+  it('only a gun with aim held slows its holder', () => {
+    expect(aimSpeedScale(ITEM_AK5, 0)).toBe(1)
+    expect(aimSpeedScale(ITEM_AK5, BUTTON_ALT)).toBeLessThan(1)
+    expect(aimSpeedScale(ITEM_SNIPER, BUTTON_ALT)).toBeLessThan(aimSpeedScale(ITEM_AK5, BUTTON_ALT))
+    expect(aimSpeedScale(ITEM_GRENADE, BUTTON_ALT)).toBe(1)
+  })
+
   it('walks towards -Z at yaw 0', () => {
     const [x, z] = wishVelocity(frame(0, 127, 0))
     expect(x).toBeCloseTo(0, 6)

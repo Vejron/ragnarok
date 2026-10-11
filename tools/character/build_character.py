@@ -397,6 +397,20 @@ WEAPONS = [
         (0, -0.56, 0.04),
     ),
     (
+        "sniper",
+        "rifle",
+        [
+            ("box", (0, -0.22, 0.035), (0.045, 0.52, 0.08), GUN_BODY),  # receiver / handguard
+            ("box", (0, 0.13, 0.02), (0.05, 0.22, 0.095), WOOD),  # stock
+            ("box", (0, 0.0, -0.065), (0.04, 0.05, 0.11), GUN_TRIM),  # pistol grip
+            ("box", (0, -0.14, -0.04), (0.035, 0.06, 0.07), GUN_TRIM),  # magazine
+            ("box", (0, -0.45, 0.04), (0.02, 0.22, 0.02), DARK),  # barrel
+            ("box", (0, -0.18, 0.115), (0.05, 0.30, 0.05), DARK),  # scope
+            ("box", (0, -0.36, 0.115), (0.07, 0.04, 0.07), DARK),  # scope lens hood
+        ],
+        None,  # shares the rifle's muzzle bone
+    ),
+    (
         "revolver",
         "pistol",
         [

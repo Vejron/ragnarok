@@ -1,7 +1,7 @@
 //! Items a player can carry in the hotbar. Mirrored in `client/src/sim/items.ts`.
 
 use crate::consts::TICK_RATE;
-use crate::protocol::{WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_RIFLE};
+use crate::protocol::{WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_RIFLE, WEAPON_SNIPER};
 
 /// Slots in the hotbar. A player picks one with the `slot` field of their input.
 pub const HOTBAR_SLOTS: usize = 5;
@@ -12,8 +12,9 @@ pub const ITEM_REVOLVER: u8 = 1;
 pub const ITEM_AK5: u8 = 2;
 pub const ITEM_GRENADE: u8 = 3;
 pub const ITEM_BANDAGE: u8 = 4;
+pub const ITEM_SNIPER: u8 = 5;
 /// One past the largest item id.
-pub const ITEM_COUNT: u8 = 5;
+pub const ITEM_COUNT: u8 = 6;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ItemKind {
@@ -41,6 +42,12 @@ pub struct ItemDef {
     pub range: f32,
     /// Random half-angle of the cone a shot is fired in, radians.
     pub spread: f32,
+    /// Fires a round that flies (`PROJECTILE_BULLET`) and hits when it arrives, instead of a hitscan.
+    pub projectile: bool,
+    /// Walking speed multiplier while aim is held (`BUTTON_ALT`) with this gun in hand.
+    pub aim_speed: f32,
+    /// Can be scoped (aim held): the shot then leaves the eye along the look direction, with no spread.
+    pub scope: bool,
     /// Most that fit in one slot.
     pub stack: u8,
     /// How it is named in shot and kill events.
@@ -58,7 +65,11 @@ const REVOLVER: ItemDef = ItemDef {
     mag: 6,
     reload_ticks: 2 * TICK_RATE,
     range: 150.0,
-    spread: 0.0,
+    // A little wild from the hip; aiming tightens it.
+    spread: 0.015,
+    projectile: false,
+    aim_speed: 0.8,
+    scope: false,
     stack: 1,
     weapon: WEAPON_REVOLVER,
     weight: 3,
@@ -74,9 +85,31 @@ const AK5: ItemDef = ItemDef {
     reload_ticks: 5 * TICK_RATE / 2,
     range: 200.0,
     spread: 0.012,
+    projectile: false,
+    aim_speed: 0.6,
+    scope: false,
     stack: 1,
     weapon: WEAPON_RIFLE,
     weight: 2,
+};
+
+const SNIPER: ItemDef = ItemDef {
+    name: "Sniper",
+    kind: ItemKind::Gun,
+    auto: false,
+    damage: 90,
+    cooldown_ticks: 2 * TICK_RATE,
+    mag: 5,
+    reload_ticks: 3 * TICK_RATE,
+    range: 400.0,
+    // Wild from the hip; scoping removes it.
+    spread: 0.05,
+    projectile: true,
+    aim_speed: 0.4,
+    scope: true,
+    stack: 1,
+    weapon: WEAPON_SNIPER,
+    weight: 3,
 };
 
 const GRENADE: ItemDef = ItemDef {
@@ -89,6 +122,9 @@ const GRENADE: ItemDef = ItemDef {
     reload_ticks: 0,
     range: 0.0,
     spread: 0.0,
+    projectile: false,
+    aim_speed: 1.0,
+    scope: false,
     stack: 3,
     weapon: WEAPON_GRENADE,
     weight: 4,
@@ -104,6 +140,9 @@ const BANDAGE: ItemDef = ItemDef {
     reload_ticks: 0,
     range: 0.0,
     spread: 0.0,
+    projectile: false,
+    aim_speed: 1.0,
+    scope: false,
     stack: 5,
     weapon: WEAPON_RIFLE,
     weight: 5,
@@ -116,7 +155,17 @@ pub fn def(item: u8) -> Option<&'static ItemDef> {
         ITEM_AK5 => Some(&AK5),
         ITEM_GRENADE => Some(&GRENADE),
         ITEM_BANDAGE => Some(&BANDAGE),
+        ITEM_SNIPER => Some(&SNIPER),
         _ => None,
+    }
+}
+
+/// How much slower the player of `item` (in hand, or 0 for none) walks with `buttons`: only a gun
+/// slows its holder, and only while aim is held. Applied to walk, run and crouch speed alike.
+pub fn aim_speed_scale(item: u8, buttons: u8) -> f32 {
+    match def(item) {
+        Some(d) if d.kind == ItemKind::Gun && buttons & crate::consts::BUTTON_ALT != 0 => d.aim_speed,
+        _ => 1.0,
     }
 }
 
@@ -153,12 +202,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_a_gun_with_aim_held_slows_its_holder() {
+        use crate::consts::BUTTON_ALT;
+        assert_eq!(aim_speed_scale(ITEM_AK5, 0), 1.0);
+        assert_eq!(aim_speed_scale(ITEM_AK5, BUTTON_ALT), AK5.aim_speed);
+        assert!(aim_speed_scale(ITEM_SNIPER, BUTTON_ALT) < aim_speed_scale(ITEM_REVOLVER, BUTTON_ALT));
+        assert_eq!(aim_speed_scale(ITEM_GRENADE, BUTTON_ALT), 1.0);
+        assert_eq!(aim_speed_scale(ITEM_NONE, BUTTON_ALT), 1.0);
+    }
+
+    #[test]
     fn every_item_id_has_a_definition() {
         assert!(def(ITEM_NONE).is_none());
         for item in 1..ITEM_COUNT {
             let d = def(item).unwrap_or_else(|| panic!("item {item} has no definition"));
             assert!(d.stack >= 1);
             assert!(d.weight > 0);
+            assert!(d.aim_speed > 0.0 && d.aim_speed <= 1.0);
         }
         assert!(def(ITEM_COUNT).is_none());
     }

@@ -4,7 +4,7 @@
 //!
 //! The data has no surface height or depth. The height model is flat over water, so the surface
 //! of a body is the median elevation of the height model inside it, and its bed is cut below that
-//! with a depth that grows with the distance from the shore.
+//! with a depth that grows with the distance from the shore and with the size of the body.
 
 use shared::terrain::Ground;
 use shared::world::NO_WATER;
@@ -26,12 +26,21 @@ pub enum Kind {
 }
 
 impl Kind {
-    /// Bed depth at `shore` metres from the bank.
-    fn depth(self, shore: f64) -> f64 {
+    /// Depth of the deepest point of water whose widest part is `radius` metres from its bank.
+    /// The data has no depths: bigger water is deeper (a pond about 2 m, a 100 m lake about 7 m).
+    fn max_depth(self, radius: f64) -> f64 {
         match self {
-            Kind::Lake => (SHORE_DEPTH + 0.2 * shore).min(2.5),
-            Kind::River => (SHORE_DEPTH + 0.15 * shore).min(1.2),
+            Kind::Lake => (1.0 + 0.6 * radius.sqrt()).clamp(1.5, 12.0),
+            Kind::River => (0.8 + 0.35 * radius.sqrt()).clamp(1.2, 6.0),
         }
+    }
+
+    /// Bed depth at `shore` metres from the bank where the water reaches `radius` metres from it:
+    /// a bowl that is `SHORE_DEPTH` at the bank and `max_depth` at `radius`.
+    fn depth(self, shore: f64, radius: f64) -> f64 {
+        let max = self.max_depth(radius);
+        let t = if radius > 0.0 { (shore / radius).min(1.0) } else { 1.0 };
+        SHORE_DEPTH + (max - SHORE_DEPTH) * (1.0 - (1.0 - t) * (1.0 - t))
     }
 }
 
@@ -155,11 +164,15 @@ impl Surface {
             }
         }
         let cell_m = grid.cell as f64 / 100.0;
+        // Metres from the bank of every wet sample (the first one is half a cell from it).
+        let shore: Vec<f32> = (0..n)
+            .map(|at| if body[at] == NONE { 0.0 } else { ((dist[at].min(FAR) as f64 / 3.0 - 0.5).max(0.0) * cell_m) as f32 })
+            .collect();
+        let width = local_radius(&body, &shore, side, cell_m);
         let depth = (0..n)
-            .map(|at| match body.get(at).copied().filter(|&b| b != NONE) {
-                // The first wet sample is half a cell from the bank.
-                Some(b) => map.bodies[b as usize].kind.depth((dist[at].min(FAR) as f64 / 3.0 - 0.5).max(0.0) * cell_m) as f32,
-                None => 0.0,
+            .map(|at| match body[at] {
+                NONE => 0.0,
+                b => map.bodies[b as usize].kind.depth(shore[at] as f64, width[at] as f64) as f32,
             })
             .collect();
         Self { grid, body, level, depth }
@@ -265,6 +278,53 @@ impl Grid {
     }
 }
 
+/// How far the water reaches from the bank in the neighbourhood of each wet sample, metres: the
+/// radius of the widest circle that is inside the body and covers the sample, or nearly (a
+/// bit more, so a bank sample at a corner is covered). A whole river is one polygon, narrow
+/// upstream and wide at its mouth, so its depth must follow the width where you are, not the
+/// body's widest part.
+fn local_radius(body: &[u32], shore: &[f32], side: usize, cell_m: f64) -> Vec<f32> {
+    let mut radius = shore.to_vec();
+    let mut covered = vec![0.0f32; shore.len()];
+    // The centres of the inscribed circles are the samples no neighbour is further from the bank than.
+    let mut centres: Vec<usize> = (0..body.len())
+        .filter(|&at| {
+            if body[at] == NONE {
+                return false;
+            }
+            let (i, j) = ((at % side) as i64, (at / side) as i64);
+            (-1i64..=1).all(|dj| {
+                (-1i64..=1).all(|di| {
+                    let (ni, nj) = (i + di, j + dj);
+                    ni < 0 || nj < 0 || ni >= side as i64 || nj >= side as i64 || shore[nj as usize * side + ni as usize] <= shore[at]
+                })
+            })
+        })
+        .collect();
+    // Widest first, so a centre inside a bigger circle is skipped.
+    centres.sort_by(|&a, &b| shore[b].total_cmp(&shore[a]));
+    for c in centres {
+        let r = shore[c];
+        if covered[c] >= r {
+            continue;
+        }
+        let reach = (r as f64 * 1.25 / cell_m).ceil() as i64 + 3;
+        let limit = (reach * reach) as f64;
+        let (ci, cj) = ((c % side) as i64, (c / side) as i64);
+        for j in (cj - reach).max(0)..=(cj + reach).min(side as i64 - 1) {
+            for i in (ci - reach).max(0)..=(ci + reach).min(side as i64 - 1) {
+                let (di, dj) = ((i - ci) as f64, (j - cj) as f64);
+                let at = j as usize * side + i as usize;
+                if di * di + dj * dj <= limit && body[at] == body[c] {
+                    radius[at] = radius[at].max(r);
+                    covered[at] = covered[at].max(r);
+                }
+            }
+        }
+    }
+    radius
+}
+
 /// Calls `set` with the index of every grid sample inside the polygon (even-odd over its rings).
 fn fill(rings: &[Vec<P>], grid: Grid, mut set: impl FnMut(usize)) {
     let (mut z_min, mut z_max) = (f64::MAX, f64::MIN);
@@ -321,11 +381,36 @@ mod tests {
         let dem = |x: f64, _z: f64| Some(if x.abs() <= 40.0 { 5.0 } else { 5.0 + (x.abs() - 40.0) / 10.0 });
         let surface = Surface::new(&lake(), grid(), dem);
         assert!(surface.is_wet(0.0, 0.0) && !surface.is_wet(60.0, 0.0));
-        let shore = surface.bed(40.0, 0.0, dem(40.0, 0.0)).unwrap();
-        let middle = surface.bed(0.0, 0.0, dem(0.0, 0.0)).unwrap();
-        assert!((5.0 - shore - SHORE_DEPTH - 0.2 * 5.0 + 0.0).abs() < 1e-6, "first wet sample is half a cell from the bank: {shore}");
-        assert!(middle < shore, "{middle} {shore}");
+        let depth = |x: f64| 5.0 - surface.bed(x, 0.0, dem(x, 0.0)).unwrap();
+        // The first wet sample is 5 m from the bank, the middle 35 m (the fill is half-open in z, so
+        // the lake's last row is z = 30 m): the body's radius.
+        assert!((depth(40.0) - Kind::Lake.depth(5.0, 35.0)).abs() < 1e-4, "{}", depth(40.0));
+        assert!((depth(0.0) - Kind::Lake.max_depth(35.0)).abs() < 1e-4, "{}", depth(0.0));
+        assert!(depth(0.0) > depth(20.0) && depth(20.0) > depth(40.0));
         assert_eq!(surface.bed(80.0, 0.0, Some(7.0)), Some(7.0), "dry ground is untouched");
+    }
+
+    #[test]
+    fn a_river_is_as_deep_as_it_is_wide_where_you_are() {
+        // One polygon: 20 m wide for the first 300 m, then a 300 m wide basin.
+        let ring = vec![[-300.0, -10.0], [0.0, -10.0], [0.0, -150.0], [300.0, -150.0], [300.0, 150.0], [0.0, 150.0], [0.0, 10.0], [-300.0, 10.0]];
+        let map = Map { bodies: vec![Body { kind: Kind::River, rings: vec![ring] }], streams: Vec::new() };
+        let grid = Grid { origin: -40_000, cell: 1_000, side: 81 };
+        let surface = Surface::new(&map, grid, |_, _| Some(0.0));
+        let depth = |x: f64, z: f64| -surface.bed(x, z, Some(0.0)).unwrap();
+        // Mid-channel upstream is as deep as a 10 m wide river is, not a basin's depth.
+        assert!(depth(-200.0, 0.0) < Kind::River.max_depth(10.0) + 1e-3, "{}", depth(-200.0, 0.0));
+        assert!(depth(150.0, 0.0) > depth(-200.0, 0.0) + 1.0, "{} {}", depth(150.0, 0.0), depth(-200.0, 0.0));
+    }
+
+    #[test]
+    fn bigger_water_is_deeper() {
+        assert!(Kind::Lake.max_depth(100.0) > Kind::Lake.max_depth(10.0));
+        assert!(Kind::River.max_depth(150.0) > Kind::River.max_depth(3.0));
+        assert!(Kind::Lake.max_depth(1e6) <= 12.0 && Kind::River.max_depth(1e6) <= 6.0);
+        assert!((Kind::Lake.depth(0.0, 50.0) - SHORE_DEPTH).abs() < 1e-9);
+        assert!((Kind::Lake.depth(50.0, 50.0) - Kind::Lake.max_depth(50.0)).abs() < 1e-9);
+        assert_eq!(Kind::Lake.depth(3.0, 0.0), Kind::Lake.max_depth(0.0), "no division by a zero radius");
     }
 
     #[test]

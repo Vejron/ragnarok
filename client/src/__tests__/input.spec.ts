@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { InputController } from '@/sim/input'
-import { BUTTON_FIRE, BUTTON_RELOAD, BUTTON_USE } from '@/sim/consts'
+import { BUTTON_ALT, BUTTON_FIRE, BUTTON_RELOAD, BUTTON_USE } from '@/sim/consts'
 
 const press = (code: string) => window.dispatchEvent(new KeyboardEvent('keydown', { code }))
 const release = (code: string) => window.dispatchEvent(new KeyboardEvent('keyup', { code }))
@@ -47,5 +47,37 @@ describe('InputController hotbar', () => {
     expect(i.sample().buttons & BUTTON_FIRE).toBeTruthy()
     release('KeyF')
     expect(i.sample().buttons & BUTTON_FIRE).toBe(0)
+  })
+})
+
+describe('InputController aim', () => {
+  it('holds aim while the right button is down, only with the pointer captured', () => {
+    const element = document.createElement('div')
+    const i = new InputController(element)
+    const mouse = (type: string, button: number) => document.dispatchEvent(new MouseEvent(type, { button }))
+    mouse('mousedown', 2)
+    expect(i.sample().buttons & BUTTON_ALT).toBe(0)
+    Object.defineProperty(document, 'pointerLockElement', { value: element, configurable: true })
+    mouse('mousedown', 2)
+    expect(i.aimHeld).toBe(true)
+    expect(i.sample().buttons & BUTTON_ALT).toBeTruthy()
+    expect(i.sample().buttons & BUTTON_ALT).toBeTruthy()
+    mouse('mouseup', 2)
+    expect(i.aimHeld).toBe(false)
+    expect(i.sample().buttons & BUTTON_ALT).toBe(0)
+    Object.defineProperty(document, 'pointerLockElement', { value: null, configurable: true })
+    i.dispose()
+  })
+
+  it('turns the camera more slowly while scoped', () => {
+    const i = new InputController(document.createElement('div'))
+    i.yaw = 0
+    i.lookBy(100, 0)
+    const full = i.yaw
+    i.yaw = 0
+    i.lookScale = 0.3
+    i.lookBy(100, 0)
+    expect(i.yaw / full).toBeCloseTo(0.3)
+    i.dispose()
   })
 })

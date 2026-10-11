@@ -4,6 +4,7 @@ import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js'
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { ContactShadows } from './contact'
+import { setWaterLight } from './water'
 import { CLASSIC, SOFT, loadLook, type Look } from './look'
 import { ON_FOOT_HEIGHT, ON_FOOT_SHOULDER } from '../sim/consts'
 
@@ -36,9 +37,18 @@ const SHADOW_FAR = { span: 300, size: 4096, near: 1, far: 450 }
 /** The AO pass renders at most this many pixels per CSS pixel; it is soft anyway and costs by area. */
 const AO_PIXEL_RATIO = 1.5
 
+/** Vertical field of view, degrees: normal, aiming a gun, and looking down a scope. */
+const DEFAULT_FOV = 75
+const AIM_FOV = 50
+const SCOPE_FOV = 18
+/** How far in the third-person camera pulls while aiming, as a fraction of its distance. */
+export const AIM_DISTANCE_SCALE = 0.7
+/** How fast the zoom eases in and out, per second. */
+const ZOOM_RATE = 14
+
 export class Scene {
   readonly scene = new THREE.Scene()
-  readonly camera = new THREE.PerspectiveCamera(75, 1, 0.25, 2000)
+  readonly camera = new THREE.PerspectiveCamera(DEFAULT_FOV, 1, 0.25, 2000)
   readonly renderer: THREE.WebGLRenderer
   private readonly sun = new THREE.DirectionalLight(0xffffff, 2.4)
   private readonly resizeObserver: ResizeObserver
@@ -93,6 +103,7 @@ export class Scene {
     this.sun.color.set(palette.sun)
     this.sun.intensity = palette.sunIntensity
     this.sun.shadow.radius = palette.shadowRadius
+    setWaterLight(palette.sky, palette.sun, new THREE.Vector3(...SUN_OFFSET))
     this.renderer.toneMapping = palette.toneMapping
     this.renderer.toneMappingExposure = palette.exposure
     this.contact.active = look.contact
@@ -199,6 +210,30 @@ export class Scene {
     this.camera.lookAt(from.addScaledVector(dir, GUNNER_FOCUS))
     this.sun.target.position.set(origin[0]!, origin[1]!, origin[2]!)
     this.sun.position.set(origin[0]! + SUN_OFFSET[0], origin[1]! + SUN_OFFSET[1], origin[2]! + SUN_OFFSET[2])
+  }
+
+  /**
+   * A first-person view from `eye` along yaw/pitch, for looking down a scope. The shot leaves the
+   * eye along this line, which is what the server fires when aim is held.
+   */
+  scopeFrom(eye: readonly number[], yaw: number, pitch: number) {
+    this.camera.position.set(eye[0]!, eye[1]!, eye[2]!)
+    this.camera.lookAt(
+      eye[0]! - Math.sin(yaw) * Math.cos(pitch),
+      eye[1]! + Math.sin(pitch),
+      eye[2]! - Math.cos(yaw) * Math.cos(pitch),
+    )
+    this.sun.target.position.set(eye[0]!, eye[1]!, eye[2]!)
+    this.sun.position.set(eye[0]! + SUN_OFFSET[0], eye[1]! + SUN_OFFSET[1], eye[2]! + SUN_OFFSET[2])
+  }
+
+  /** Eases the field of view towards the scope or aim zoom, or back, `dt` seconds on. */
+  zoomTo(zoom: 'none' | 'aim' | 'scope', dt: number) {
+    const target = zoom === 'scope' ? SCOPE_FOV : zoom === 'aim' ? AIM_FOV : DEFAULT_FOV
+    const fov = this.camera.fov + (target - this.camera.fov) * Math.min(1, dt * ZOOM_RATE)
+    if (Math.abs(fov - this.camera.fov) < 1e-3) return
+    this.camera.fov = Math.abs(fov - target) < 0.05 ? target : fov
+    this.camera.updateProjectionMatrix()
   }
 
   render() {

@@ -38,12 +38,14 @@ export const WEAPON_REVOLVER = 4
 export const WEAPON_GRENADE = 5
 /** The helicopter's nose autocannon: a shell's burst, smaller. */
 export const WEAPON_AUTOCANNON = 6
+export const WEAPON_SNIPER = 7
 
 export const PROJECTILE_ROCKET = 0
 export const PROJECTILE_GRENADE = 1
 export const PROJECTILE_SHELL = 2
 /** An autocannon round: flies like a shell, bursts smaller. */
 export const PROJECTILE_CANNON = 3
+export const PROJECTILE_BULLET = 4
 
 /** One tick of player intent, already quantized: what the client predicts with is what it sends. */
 export interface InputFrame {

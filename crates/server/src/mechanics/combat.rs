@@ -3,7 +3,7 @@ use super::spawn;
 use crate::game::{Rocket, World};
 use shared::consts::*;
 use shared::items::*;
-use shared::protocol::{ItemSlot, Kill, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_WRECK};
+use shared::protocol::{ItemSlot, Kill, PROJECTILE_BULLET, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_SNIPER, WEAPON_WRECK};
 use shared::quant::{from_mrad, to_cm};
 
 /// Health, death, the items in the hotbar and what blasts do to people and vehicles.
@@ -267,6 +267,41 @@ fn fire_rocket(world: &mut World, id: u32) {
     );
 }
 
+/// Flies one sniper round a tick: a little gravity, then along its velocity until it meets a wall, a
+/// vehicle or a stickman. A stickman takes the gun's damage; a vehicle a quarter of it.
+fn step_bullet(world: &mut World, id: u32, dt: f32) {
+    let Some(mut bullet) = world.rockets.get(&id).copied() else { return };
+    bullet.velocity[1] -= GRAVITY * BULLET_GRAVITY_SCALE * dt;
+    let speed = bullet.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
+    let dir = bullet.velocity.map(|v| v / speed);
+    let step = speed * dt;
+    let wall = world.physics.cast_ray_hit(bullet.position, dir, step, 0);
+    let reach = wall.map_or(step, |(t, _)| t);
+    let hit = first_player_hit(world, bullet.position, dir, reach, Some(bullet.owner), 0);
+    bullet.ttl = bullet.ttl.saturating_sub(1);
+    if hit.is_some() || wall.is_some() {
+        world.rockets.remove(&id);
+        let end = hit.map_or(reach, |(_, t)| t);
+        let point: [f32; 3] = std::array::from_fn(|i| bullet.position[i] + dir[i] * end);
+        let damage_dealt = def(ITEM_SNIPER).map_or(0, |d| d.damage);
+        let attacker = world.players.contains_key(&bullet.owner).then_some(bullet.owner);
+        if let Some((victim, _)) = hit {
+            damage(world, victim, damage_dealt, attacker, WEAPON_SNIPER);
+        } else if let Some((_, Some(car))) = wall {
+            damage_vehicle(world, car, (damage_dealt / 4).max(1), attacker);
+        }
+        let [x, y, z] = point.map(to_cm);
+        world.shots.push(ShotEvent(bullet.owner, WEAPON_SNIPER, x, y, z));
+        return;
+    }
+    bullet.position = std::array::from_fn(|i| bullet.position[i] + dir[i] * step);
+    if bullet.ttl == 0 || bullet.position[1] < KILL_Y {
+        world.rockets.remove(&id);
+    } else {
+        world.rockets.insert(id, bullet);
+    }
+}
+
 /// Flies every rocket one tick, and bursts the ones that meet something.
 fn step_rockets(world: &mut World, dt: f32) {
     let ids: Vec<u32> = world.rockets.keys().copied().collect();
@@ -274,6 +309,10 @@ fn step_rockets(world: &mut World, dt: f32) {
         let Some(rocket) = world.rockets.get(&id).copied() else { continue };
         if rocket.kind == PROJECTILE_GRENADE {
             step_grenade(world, id, dt);
+            continue;
+        }
+        if rocket.kind == PROJECTILE_BULLET {
+            step_bullet(world, id, dt);
             continue;
         }
         // Shells are the `Gunnery` mechanic's.
@@ -339,6 +378,11 @@ fn crosshair_dir(world: &World, shooter: u32, back: u32, position: [f32; 3], eye
     if along < 0.5 { look_dir } else { dir }
 }
 
+/// The cone a shot of `item` is scattered over: aim held (`BUTTON_ALT`) tightens it.
+fn effective_spread(item: &ItemDef, buttons: u8) -> f32 {
+    if buttons & BUTTON_ALT != 0 { item.spread * AIM_SPREAD_SCALE } else { item.spread }
+}
+
 /// Fires gun `item` from player `id`'s eye, towards what the crosshair is on.
 fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     let Some(player) = world.players.get(&id) else { return };
@@ -349,9 +393,32 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     let look_dir = look(yaw, pitch);
     let origin = [c.position[0], c.position[1] + eye_height(input.buttons()), c.position[2]];
     let back = rewind_ticks(world.tick, input.view());
-    let aim = crosshair_dir(world, id, back, c.position, origin, yaw, look_dir, item.range);
-    let dir = scatter(world, aim, item.spread);
+    // Looking down a scope the camera is the eye, so the shot goes straight along the look
+    // direction, true.
+    let scoped = item.scope && input.buttons() & BUTTON_ALT != 0;
+    let dir = if scoped {
+        look_dir
+    } else {
+        let aim = crosshair_dir(world, id, back, c.position, origin, yaw, look_dir, item.range);
+        scatter(world, aim, effective_spread(item, input.buttons()))
+    };
 
+    if item.projectile {
+        // The round leaves the eye and flies on its own, so it takes time to arrive and drops a little.
+        let bullet_id = world.alloc_id();
+        world.rockets.insert(
+            bullet_id,
+            Rocket {
+                kind: PROJECTILE_BULLET,
+                owner: id,
+                source: 0,
+                position: origin,
+                velocity: dir.map(|v| v * BULLET_SPEED),
+                ttl: (item.range / BULLET_SPEED * TICK_RATE as f32).ceil() as u32,
+            },
+        );
+        return;
+    }
     let wall = world.physics.cast_ray_hit(origin, dir, item.range, 0);
     let reach = wall.map_or(item.range, |(t, _)| t);
     let hit = first_player_hit(world, origin, dir, reach, Some(id), back);
@@ -928,6 +995,47 @@ mod tests {
         hold_slot(&mut game, shooter, &mut seq, BUTTON_FIRE, 1, 1);
         assert_eq!(game.world.players[&target].hp, PLAYER_MAX_HP - 2 * revolver.damage);
         assert!(game.world.shots.iter().all(|shot| shot.1 == WEAPON_REVOLVER) || game.world.shots.is_empty());
+    }
+
+    #[test]
+    fn a_scoped_sniper_shot_goes_true_along_the_look_direction() {
+        let (mut game, shooter, target, mut seq, _) = duel();
+        let sniper = def(ITEM_SNIPER).unwrap();
+        give(&mut game, shooter, 1, ITEM_SNIPER, 1);
+        // Straight ahead of the eye, not off to the side where the over-the-shoulder crosshair
+        // would find a target.
+        game.world.players.get_mut(&target).unwrap().character.position = [100.0, STANDING_Y, -20.0];
+        press(&mut game, shooter, &mut seq, BUTTON_ALT | BUTTON_FIRE, 1, 0.0);
+        // A round in flight, not an instant hit.
+        assert_eq!(game.world.players[&target].hp, PLAYER_MAX_HP);
+        assert!(game.world.rockets.values().any(|r| r.kind == PROJECTILE_BULLET));
+        // 20 m at twice a tank shell's speed is a handful of ticks.
+        let mut landed = false;
+        for _ in 0..TICK_RATE / 4 {
+            press(&mut game, shooter, &mut seq, BUTTON_ALT, 1, 0.0);
+            landed |= game.world.shots.iter().any(|shot| shot.1 == WEAPON_SNIPER);
+        }
+        assert!(landed);
+        assert_eq!(game.world.players[&target].hp, PLAYER_MAX_HP - sniper.damage);
+        assert_eq!(game.world.players[&shooter].hotbar[1].2, sniper.mag - 1);
+    }
+
+    #[test]
+    fn aiming_tightens_any_guns_spread() {
+        let ak = ak5();
+        assert_eq!(effective_spread(&ak, 0), ak.spread);
+        assert_eq!(effective_spread(&ak, BUTTON_ALT | BUTTON_FIRE), ak.spread * AIM_SPREAD_SCALE);
+        assert!(effective_spread(&ak, BUTTON_ALT) < effective_spread(&ak, 0));
+    }
+
+    #[test]
+    fn aim_without_a_scoped_gun_changes_nothing() {
+        let (mut game, shooter, target, mut seq, _) = duel();
+        // The AK5 has no scope: aim held leaves the over-the-shoulder crosshair, which finds the
+        // target the duel sets up to the side.
+        let pitch = aim_for(&game, shooter, 0);
+        press(&mut game, shooter, &mut seq, BUTTON_ALT | BUTTON_FIRE, 0, pitch);
+        assert!(game.world.players[&target].hp < PLAYER_MAX_HP);
     }
 
     #[test]

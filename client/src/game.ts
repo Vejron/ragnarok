@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import {
   encodeInput, encodePing, KIND_HELI, KIND_SPORTS, KIND_STICKMAN, KIND_TANK, sceneStates, toAxis, toMrad, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_RIFLE,
-  WEAPON_AUTOCANNON, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK,
+  WEAPON_AUTOCANNON, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_SNIPER, WEAPON_WRECK,
   type EntityState, type InputFrame, type PickupState, type RocketState, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
 } from './net/codec'
 import { blendEntity, blendRocket, blendVehicle, Interpolator } from './net/interp'
@@ -14,7 +14,7 @@ import {
   HELI_GUN_COOLDOWN_TICKS, HELI_GUN_LENGTH, HELI_GUN_PITCH_MAX, HELI_GUN_PITCH_MIN, HELI_GUN_YAW_LIMIT, CANNON_RADIUS,
   TANK_BARREL_LENGTH, TANK_BARREL_MAX, TANK_BARREL_MIN, TICK_MS, vehicleMaxHp, WRECK_BLAST_RADIUS,
 } from './sim/consts'
-import { emptyHotbar, GRENADE_BLAST_RADIUS, HOTBAR_SLOTS, ITEM_AK5, ITEM_NONE, ITEM_REVOLVER, itemDef, PICKUP_RADIUS, type ItemSlot } from './sim/items'
+import { aimSpeedScale, emptyHotbar, GRENADE_BLAST_RADIUS, HOTBAR_SLOTS, ITEM_AK5, ITEM_NONE, ITEM_REVOLVER, itemDef, PICKUP_RADIUS, type ItemSlot } from './sim/items'
 import { InputController } from './sim/input'
 import { RapierMotor } from './sim/physics'
 import { groundOf, Terrain } from './sim/terrain'
@@ -29,7 +29,7 @@ import { throwTrajectory } from './sim/grenade'
 import { Rockets } from './render/rockets'
 import { saveLook, type Look } from './render/look'
 import { halfExtentsOf } from './sim/kinds'
-import { DRIVING_DISTANCE, HELI_DISTANCE, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, Scene, TANK_DISTANCE } from './render/scene'
+import { AIM_DISTANCE_SCALE, DRIVING_DISTANCE, HELI_DISTANCE, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, Scene, TANK_DISTANCE } from './render/scene'
 import { HeliModel, loadHeliModel } from './render/heli'
 import { loadTankModel, TankModel } from './render/tank'
 import { Character, Crowd } from './render/character'
@@ -66,6 +66,10 @@ export interface HudStats {
   dead: boolean
   /** Seconds until respawn while dead. */
   respawnIn: number
+  /** Looking down a scope: the scope overlay replaces the crosshair. */
+  scoped: boolean
+  /** Aiming a gun over the shoulder: half zoom, tighter spread. */
+  aiming: boolean
   /** On foot with a gun in hand: show the crosshair. */
   armed: boolean
   /** Connected, standing and alive: the health bar and the hotbar are shown. */
@@ -82,6 +86,12 @@ export interface HudStats {
   feed: FeedEntry[]
   /** Every player's tally, best first; empty unless the scoreboard key is held. */
   board: ScoreRow[]
+  /** The player's place on the map, metres (x east, z south), and where they look, radians. */
+  x: number
+  z: number
+  yaw: number
+  /** Half the side of the playable square, metres; 0 before the world has loaded. */
+  halfExtent: number
 }
 
 export interface FeedEntry {
@@ -128,6 +138,10 @@ const RECONNECT_MS = 3000
 /** How long a kill stays in the feed. */
 const FEED_MS = 6000
 const FEED_LENGTH = 5
+/** Mouse-look is this much slower down a scope, to match the narrower view. */
+const SCOPE_LOOK_SCALE = 0.3
+/** And a little slower aiming a gun over the shoulder. */
+const AIM_LOOK_SCALE = 0.6
 
 /**
  * The client game loop. Fixed 60 Hz ticks sample input, predict the local player and send inputs;
@@ -171,6 +185,11 @@ export class Game {
   private firedBefore = false
   /** Whether the last sampled input held crouch, for the local avatar. */
   private crouching = false
+  /** Looking down a scope this frame. */
+  private scoped = false
+  /** Aiming a gun over the shoulder this frame, and how far the camera has eased in (0..1). */
+  private aiming = false
+  private aimBlend = 0
   /** The last shot counter seen for each gun, so a change is a new shell. */
   private readonly shots = new Map<number, number>()
   private lastShotAt = -Infinity
@@ -249,6 +268,7 @@ export class Game {
     const [x, z] = world.spawns[0] ?? [0, 0]
     await this.tiles.prime(x, z)
     this.predictor = new Predictor(motor, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0 })
+    this.predictor.speedScale = (input) => aimSpeedScale(this.hotbar[Math.min(input.slot, HOTBAR_SLOTS - 1)]?.item ?? ITEM_NONE, input.buttons)
     this.avatar(0)
     if (this.disposed) return
     this.lastFrame = performance.now()
@@ -488,7 +508,16 @@ export class Game {
     const localVx = (local.position[0] - predictor.previous.position[0]) / (TICK_MS / 1000)
     const localVz = (local.position[2] - predictor.previous.position[2]) / (TICK_MS / 1000)
     const me = this.avatar(0)
-    me.hidden = seated
+    // Aim held with a scoped gun in hand, on foot and alive: look down the scope.
+    const scoped = this.localId !== null && !seated && this.hp > 0 && this.input.aimHeld && itemDef(this.held().item)?.scope === true
+    this.scoped = scoped
+    // Aim held with any other gun: half zoom over the shoulder.
+    const aiming = !scoped && this.localId !== null && !seated && this.hp > 0 && this.input.aimHeld && itemDef(this.held().item)?.kind === 'gun'
+    this.aiming = aiming
+    this.aimBlend += ((aiming ? 1 : 0) - this.aimBlend) * Math.min(1, dt * 14)
+    this.input.lookScale = scoped ? SCOPE_LOOK_SCALE : aiming ? AIM_LOOK_SCALE : 1
+    this.scene.zoomTo(scoped ? 'scope' : aiming ? 'aim' : 'none', dt)
+    me.hidden = seated || scoped
     me.dead = this.hp === 0
     me.held = this.hotbar[this.input.selectedSlot]?.item ?? ITEM_NONE
     // Face where the camera looks, immediately, rather than the last ticked yaw.
@@ -515,8 +544,11 @@ export class Game {
     } else if (ride) {
       this.input.followYaw(ride.yaw, dt)
       this.scene.follow([ride.x, ride.y + 0.4, ride.z], this.input.yaw, this.input.pitch, cameraDistance(ride.kind))
+    } else if (scoped) {
+      this.scene.scopeFrom([position[0]!, position[1]! + EYE_HEIGHT - (this.crouching ? CROUCH_EYE_DROP : 0), position[2]!], this.input.yaw, this.input.pitch)
     } else {
-      this.scene.follow(position, this.input.yaw, this.input.pitch, ON_FOOT_DISTANCE, ON_FOOT_SHOULDER, ON_FOOT_HEIGHT)
+      // Only the distance changes: the pivot is what the server's crosshair ray is built from.
+      this.scene.follow(position, this.input.yaw, this.input.pitch, ON_FOOT_DISTANCE * (1 - (1 - AIM_DISTANCE_SCALE) * this.aimBlend), ON_FOOT_SHOULDER, ON_FOOT_HEIGHT)
     }
 
     this.wasGunner = gunner
@@ -578,6 +610,8 @@ export class Game {
       maxHp: PLAYER_MAX_HP,
       dead: this.hp === 0,
       respawnIn: this.diedAt === null ? 0 : Math.max(0, (RESPAWN_TICKS * TICK_MS - (now - this.diedAt)) / 1000),
+      scoped: this.scoped,
+      aiming: this.aiming,
       armed: this.localId !== null && !seated && this.hp > 0 && itemDef(this.held().item)?.kind === 'gun',
       onFoot: this.localId !== null && !seated && this.hp > 0,
       hotbar: this.hotbar,
@@ -587,6 +621,10 @@ export class Game {
       deaths: this.localId === null ? 0 : (this.scores.get(this.localId)?.deaths ?? 0),
       feed: this.recentFeed(now),
       board: this.input.isHeld('Tab') ? this.scoreboard() : [],
+      x: position[0],
+      z: position[2],
+      yaw: this.input.yaw,
+      halfExtent: this.world?.halfExtent ?? 0,
     })
   }
 
@@ -638,6 +676,9 @@ export class Game {
       this.effects.burst(to, WRECK_BLAST_RADIUS)
     } else if (shot.weapon === WEAPON_AUTOCANNON) {
       this.effects.burst(to, CANNON_RADIUS)
+    } else if (shot.weapon === WEAPON_SNIPER) {
+      // The round is drawn in flight; this is where it landed.
+      this.effects.burst(to, 0.8)
     } else if (shot.weapon === WEAPON_RIFLE || shot.weapon === WEAPON_REVOLVER) {
       const from = this.muzzleOf(shot.shooter)
       this.avatars.get(shot.shooter === this.localId ? 0 : shot.shooter)?.fire()

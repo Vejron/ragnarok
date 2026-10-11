@@ -9,7 +9,7 @@ import { fromAxis, fromMrad, type InputFrame } from '@/net/codec'
 /** The server simulates in f32; rounding at the same points keeps prediction from drifting. */
 export const f32 = Math.fround
 
-export function wishVelocity(input: InputFrame): [number, number] {
+export function wishVelocity(input: InputFrame, scale = 1): [number, number] {
   const strafe = fromAxis(input.strafe)
   const forward = fromAxis(input.forward)
   const yaw = fromMrad(input.yaw)
@@ -24,7 +24,7 @@ export function wishVelocity(input: InputFrame): [number, number] {
     z /= length
   }
   const speed = input.buttons & BUTTON_CROUCH ? CROUCH_SPEED : input.buttons & BUTTON_RUN ? RUN_SPEED : WALK_SPEED
-  return [f32(x * speed), f32(z * speed)]
+  return [f32(x * speed * scale), f32(z * speed * scale)]
 }
 
 export function desiredTranslation(
@@ -33,11 +33,12 @@ export function desiredTranslation(
   knock: readonly [number, number],
   input: InputFrame,
   dt: number,
+  speedScale = 1,
 ): { vy: number; desired: [number, number, number] } {
   let next = vy
   if (grounded && input.buttons & BUTTON_JUMP) next = JUMP_SPEED
   next = f32(Math.max(next - GRAVITY * dt, -MAX_FALL_SPEED))
-  const [vx, vz] = wishVelocity(input)
+  const [vx, vz] = wishVelocity(input, speedScale)
   return { vy: next, desired: [f32(f32(vx + knock[0]) * dt), f32(next * dt), f32(f32(vz + knock[1]) * dt)] }
 }
 

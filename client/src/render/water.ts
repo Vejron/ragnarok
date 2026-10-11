@@ -29,6 +29,17 @@ const uniforms = {
   uShallow: { value: new THREE.Color(0x7fd8f5) },
   uDeep: { value: new THREE.Color(0x2f8fd8) },
   uFoam: { value: new THREE.Color(0xf4fcff) },
+  uBed: { value: new THREE.Color(0xd9cf9a) },
+  uSky: { value: new THREE.Color(0xffffff) },
+  uSun: { value: new THREE.Color(0xffffff) },
+  uSunDir: { value: new THREE.Vector3(70, 80, 55).normalize() },
+}
+
+/** Points the reflection and glint at the scene's sky and sun. `direction` is towards the sun. */
+export function setWaterLight(sky: THREE.ColorRepresentation, sun: THREE.ColorRepresentation, direction: THREE.Vector3) {
+  uniforms.uSky.value.set(sky)
+  uniforms.uSun.value.set(sun)
+  uniforms.uSunDir.value.copy(direction).normalize()
 }
 
 /** Advances the ripples and flow. `seconds` is any steadily increasing clock. */
@@ -42,12 +53,14 @@ const vertexShader = /* glsl */ `
   varying float vDepth;
   varying vec3 vFlow;
   varying vec2 vWorld;
+  varying float vSurfaceY;
   #include <fog_pars_vertex>
   void main() {
     vDepth = depth;
     vFlow = flow;
     vec4 world = modelMatrix * vec4(position, 1.0);
     vWorld = world.xz;
+    vSurfaceY = world.y;
     vec4 mvPosition = viewMatrix * world;
     gl_Position = projectionMatrix * mvPosition;
     #include <fog_vertex>
@@ -59,9 +72,14 @@ const fragmentShader = /* glsl */ `
   uniform vec3 uShallow;
   uniform vec3 uDeep;
   uniform vec3 uFoam;
+  uniform vec3 uBed;
+  uniform vec3 uSky;
+  uniform vec3 uSun;
+  uniform vec3 uSunDir;
   varying float vDepth;
   varying vec3 vFlow;
   varying vec2 vWorld;
+  varying float vSurfaceY;
   #include <fog_pars_fragment>
 
   // Two crossing wave trains, stepped into three soft bands so the surface reads like toy plastic.
@@ -70,6 +88,20 @@ const fragmentShader = /* glsl */ `
     float b = sin(p.x * -0.4 + p.y * 1.1 - t * 0.7);
     float c = sin((p.x + p.y) * 0.25 + t * 0.4);
     return (a + b + 0.6 * c) / 2.6;
+  }
+
+  // Surface height from three crossing wave trains; its gradient is the ripple normal.
+  float swell(vec2 p, float t) {
+    return 0.5 * sin(p.x * 0.9 + p.y * 0.35 + t * 0.9)
+         + 0.35 * sin(p.x * -0.4 + p.y * 1.1 - t * 0.7)
+         + 0.15 * sin((p.x + p.y) * 1.7 + t * 1.3);
+  }
+
+  // Bright web of lines, the light a rippled surface focuses on the bed.
+  float caustics(vec2 p, float t) {
+    float a = abs(sin(p.x * 1.3 + sin(p.y * 0.9 + t * 0.8) * 1.5));
+    float b = abs(sin(p.y * 1.1 + sin(p.x * 1.2 - t * 0.6) * 1.5));
+    return pow(1.0 - a * b, 6.0);
   }
 
   void main() {
@@ -81,7 +113,35 @@ const fragmentShader = /* glsl */ `
 
     float deep = smoothstep(0.0, 2.2, vDepth);
     vec3 color = mix(uShallow, uDeep, deep);
-    color = mix(color, uFoam, band * 0.22);
+
+    // Where it is shallow the bed shows through, lit by a moving web of caustics.
+    float clear = 1.0 - smoothstep(0.0, 1.4, vDepth);
+    vec2 bedP = stream ? p * 0.8 : vWorld * 0.9;
+    float web = caustics(bedP, stream ? uTime : uTime * 0.8);
+    color = mix(color, uBed, clear * 0.45);
+    color += uFoam * web * clear * 0.35;
+    color = mix(color, uFoam, band * 0.12);
+
+    // Ripple normal from the swell's gradient, flipped for a viewer under the surface.
+    const float e = 0.15;
+    vec2 q = stream ? p : vWorld * 0.8;
+    float t = stream ? 0.0 : uTime;
+    float h = swell(q, t);
+    vec2 grad = vec2(swell(q + vec2(e, 0.0), t) - h, swell(q + vec2(0.0, e), t) - h) / e;
+    vec3 n = normalize(vec3(-grad.x * 0.12, 1.0, -grad.y * 0.12));
+    if (!gl_FrontFacing) n.y = -n.y;
+    vec3 view = normalize(vec3(cameraPosition.x - vWorld.x, cameraPosition.y - vSurfaceY, cameraPosition.z - vWorld.y));
+
+    // Sky creeps in at grazing angles; lit ripples step into soft bands.
+    float fresnel = pow(1.0 - clamp(abs(dot(n, view)), 0.0, 1.0), 3.0);
+    float lit = floor(clamp(dot(n, uSunDir) * 0.5 + 0.5, 0.0, 1.0) * 3.0) / 3.0;
+    color *= 0.9 + 0.2 * lit;
+    color = mix(color, uSky, fresnel * 0.55);
+
+    // A hard sparkle where a ripple mirrors the sun.
+    float glint = pow(max(dot(reflect(-uSunDir, n), view), 0.0), 90.0);
+    float spark = smoothstep(0.35, 0.6, glint);
+    color += uSun * spark * 0.8;
 
     // A foam line at the shore that breathes in and out.
     float shore = ${FOAM_DEPTH.toFixed(2)} + 0.08 * sin(uTime * 1.3 + vWorld.x * 0.6 + vWorld.y * 0.45);
@@ -91,6 +151,7 @@ const fragmentShader = /* glsl */ `
 
     // Clear at the very edge, so the shoreline is a soft line and not a polygon edge.
     float alpha = smoothstep(0.0, 0.1, vDepth) * mix(0.62, 0.9, deep);
+    alpha = clamp(alpha - clear * 0.12 + fresnel * 0.15 + spark * 0.4, 0.0, 1.0);
     gl_FragColor = vec4(color, alpha);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>

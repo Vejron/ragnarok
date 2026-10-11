@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 8;
+pub const WORLD_VERSION: u8 = 9;
 
 /// `world.msgpack`: everything about the world except the tiles' contents.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -75,6 +75,20 @@ pub struct Tile {
     /// Streams: narrow watercourses drawn as ribbons draped on the ground, clipped to the tile.
     #[serde(default)]
     pub streams: Vec<Stream>,
+    /// Bridges: ranges of this tile's collision triangles (the importer builds them there, so
+    /// they are collided with and drawn from the same mesh).
+    #[serde(default)]
+    pub bridges: Vec<Bridge>,
+}
+
+/// One bridge's triangles in a tile's collision mesh: `deck` triangles of concrete (deck, piers,
+/// parapets) from `first`, then `steel` triangles (pylon, stay cables). A bridge crossing tile
+/// borders has one entry per tile it touches.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Bridge {
+    pub first: u32,
+    pub deck: u32,
+    pub steel: u32,
 }
 
 /// `Tile::water` entry for a sample with no water.
@@ -324,6 +338,7 @@ mod tests {
             trees: vec![Tree { x: 5, z: -7, base: 120, height: 1200, crown: 220, kind: TREE_BIRCH, solid: true }],
             water: vec![NO_WATER, 40, 40, NO_WATER],
             streams: vec![Stream { width: 200, points: vec![[0, 0], [300, 100]] }],
+            bridges: vec![Bridge { first: 0, deck: 12, steel: 4 }],
         };
         assert_eq!(Tile::decode(&tile.encode()).unwrap(), tile);
         assert_eq!(manifest.tiles[0].path(), "tiles/1_0.msgpack");

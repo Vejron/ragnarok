@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { Game, type HudStats } from './game'
 import Hotbar from './Hotbar.vue'
+import Minimap from './Minimap.vue'
 import TouchControls from './TouchControls.vue'
 import type { InputController } from './sim/input'
 import { colorFor } from './render/character'
@@ -14,9 +15,15 @@ const error = ref<string | null>(null)
 const input = shallowRef<InputController | null>(null)
 const look = ref<Look>({ soft: true, contact: true, ao: true, far: true })
 let game: Game | null = null
+/** M: the minimap grows to the whole map. */
+const mapOpen = ref(false)
+const onKey = (event: KeyboardEvent) => {
+  if (event.code === 'KeyM' && !event.repeat) mapOpen.value = !mapOpen.value
+}
 let lastHud = 0
 
 onMounted(() => {
+  window.addEventListener('keydown', onKey)
   game = new Game(container.value!, (next) => {
     // The HUD only needs a few updates a second.
     const now = performance.now()
@@ -42,7 +49,10 @@ function toggleLook(key: keyof Look) {
   game?.setLook(look.value)
 }
 
-onBeforeUnmount(() => game?.dispose())
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKey)
+  game?.dispose()
+})
 
 const swatch = (id: number) => `#${colorFor(id).toString(16).padStart(6, '0')}`
 const who = (id: number) => (id === 0 ? 'the fall' : `Player ${id}`)
@@ -68,7 +78,8 @@ const mark = (weapon: number) =>
   <div v-if="stats?.seat === 'gunner'" class="drive-hint">Mouse aim · Click or F fire · {{ stats.reload < 1 ? 'reloading…' : 'loaded' }}<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   </template>
   <div v-if="stats?.seat === 'gunner'" class="reticle" :class="{ loading: stats.reload < 1 }" />
-  <div v-else-if="stats?.armed" class="reticle foot" />
+  <div v-else-if="stats?.scoped" class="scope"><i class="scope-h" /><i class="scope-v" /></div>
+  <div v-else-if="stats?.armed" class="cross" :class="{ aim: stats.aiming }"><i /><i /><i /><i /></div>
   <div v-if="stats?.onFoot" class="health" :class="{ low: stats.hp <= stats.maxHp / 4 }">
     <div class="health-fill" :style="{ width: (100 * stats.hp) / stats.maxHp + '%' }" />
     <span>{{ stats.hp }}</span>
@@ -81,6 +92,7 @@ const mark = (weapon: number) =>
     :touch="stats.touch"
     @select="(slot) => input?.selectSlot(slot)"
   />
+  <Minimap v-if="stats && stats.halfExtent > 0 && !stats.touch" :x="stats.x" :z="stats.z" :yaw="stats.yaw" :half-extent="stats.halfExtent" :open="mapOpen" />
   <div v-if="stats?.dead" class="death">
     <h2>ELIMINATED</h2>
     <p>Respawning in {{ Math.ceil(stats.respawnIn) }}</p>
@@ -115,7 +127,7 @@ const mark = (weapon: number) =>
     <h1>RAGNAROK</h1>
     <p>{{ stats.touch ? 'Tap to play' : 'Click to play' }}</p>
     <p v-if="stats.touch" class="keys">Left thumb moves · Drag the right side to look · Buttons jump, crouch, fire, reload and use · Tap the slots to switch items</p>
-    <p v-else class="keys">WASD move · Shift run · Space jump · E take, drive, ride or man a gun · 1-5 or wheel pick an item · Mouse look and aim · Click fire · R reload · Tab scores · Esc release</p>
+    <p v-else class="keys">WASD move · Shift run · Space jump · E take, drive, ride or man a gun · 1-5 or wheel pick an item · Mouse look · Click fire · Right mouse aim (scope with the sniper) · R reload · M map · Tab scores · Esc release</p>
   </div>
 </template>
 
@@ -151,7 +163,22 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
   position: fixed; top: 50%; left: 50%; width: 26px; height: 26px; margin: -13px 0 0 -13px; pointer-events: none;
   border: 3px solid rgba(255, 255, 255, 0.95); border-radius: 50%; box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.45);
 }
-.reticle.foot { width: 8px; height: 8px; margin: -4px 0 0 -4px; border-width: 2px; }
+.cross { position: fixed; top: 50%; left: 50%; width: 0; height: 0; pointer-events: none; --gap: 7px; --len: 6px; }
+.cross.aim { --gap: 3px; }
+.cross i { position: absolute; background: rgba(255, 255, 255, 0.55); box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.3); transition: transform 0.12s; }
+.cross i:nth-child(1), .cross i:nth-child(2) { width: 2px; height: var(--len); margin-left: -1px; }
+.cross i:nth-child(1) { top: calc(var(--gap) * -1 - var(--len)); }
+.cross i:nth-child(2) { top: var(--gap); }
+.cross i:nth-child(3), .cross i:nth-child(4) { height: 2px; width: var(--len); margin-top: -1px; }
+.cross i:nth-child(3) { left: calc(var(--gap) * -1 - var(--len)); }
+.cross i:nth-child(4) { left: var(--gap); }
+.scope {
+  position: fixed; inset: 0; pointer-events: none;
+  background: radial-gradient(circle at center, transparent 0, transparent 38vmin, #000 38.4vmin);
+}
+.scope i { position: absolute; background: rgba(0, 0, 0, 0.85); }
+.scope-h { top: 50%; left: calc(50% - 38vmin); width: 76vmin; height: 1px; }
+.scope-v { left: 50%; top: calc(50% - 38vmin); height: 76vmin; width: 1px; }
 .reticle.loading { border-color: rgba(255, 190, 120, 0.9); border-style: dashed; }
 .health {
   position: fixed; left: 16px; bottom: 16px; width: 220px; height: 22px; border-radius: 999px; overflow: hidden; pointer-events: none;
@@ -167,7 +194,7 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
 .death h2 { margin: 0; font-size: clamp(32px, 8vw, 72px); letter-spacing: 0.08em; }
 .death p { margin: 6px 0; font-size: 20px; font-weight: 700; }
 .feed {
-  position: fixed; top: 12px; right: 12px; margin: 0; padding: 0; list-style: none; pointer-events: none;
+  position: fixed; top: 206px; right: 12px; margin: 0; padding: 0; list-style: none; pointer-events: none;
   display: flex; flex-direction: column; align-items: flex-end; gap: 4px; font-size: 13px; font-weight: 700; color: #1d2b36;
 }
 .feed li { background: rgba(255, 255, 255, 0.85); padding: 4px 10px; border-radius: 999px; }

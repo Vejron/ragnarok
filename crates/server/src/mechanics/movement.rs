@@ -2,6 +2,7 @@ use super::Mechanic;
 use crate::game::World;
 use crate::physics::Character;
 use shared::consts::*;
+use shared::items::{aim_speed_scale, HOTBAR_SLOTS};
 
 /// Walks every standing stickman by its input through the character controller, and keeps track of
 /// the car it stands on, if any.
@@ -31,7 +32,9 @@ impl Mechanic for Movement {
             if let (true, Some(velocity)) = (jumped, velocity) {
                 inherit(character, velocity);
             }
-            world.physics.move_character(character, &player.input, dt);
+            let slot = (player.input.slot() as usize).min(HOTBAR_SLOTS - 1);
+            let scale = aim_speed_scale(player.hotbar[slot].0, player.input.buttons());
+            world.physics.move_character_scaled(character, &player.input, dt, scale);
             character.ride = if character.grounded { world.physics.car_under(character.position).map_or(0, |hit| hit.car) } else { 0 };
             if let (false, false, Some(velocity)) = (jumped, character.grounded, velocity) {
                 // Stepped off the edge of the roof.

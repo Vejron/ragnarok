@@ -9,6 +9,8 @@ import { buildTrees } from './trees'
 export type { HeightSource }
 
 /** Candy-coloured buildings. Picked per building so the palette stays stable between reloads. */
+const BRIDGE_DECK_COLOR = 0xb8b6ae
+const BRIDGE_STEEL_COLOR = 0x6d7a86
 const BUILDING_COLORS = [0xffd6a5, 0xfdffb6, 0xcaffbf, 0x9bf6ff, 0xa0c4ff, 0xbdb2ff, 0xffc6ff, 0xffadad]
 
 /** Roofs: slate, tile and timber for pitched ones, concrete grey for flat ones. */
@@ -170,6 +172,11 @@ export function buildTile(tile: TileData, salt: number, ground: TileGround | nul
     const palette = building.roofKind === ROOF_FLAT ? FLAT_ROOF_COLORS : ROOF_COLORS
     add(palette[(index + salt) % palette.length]!, building.first + building.walls, building.roof)
   })
+  // Bridges: concrete deck, piers and parapets, then steel pylon and cables.
+  for (const bridge of tile.bridges) {
+    add(BRIDGE_DECK_COLOR, bridge.first, bridge.deck)
+    add(BRIDGE_STEEL_COLOR, bridge.first + bridge.deck, bridge.steel)
+  }
   for (const [color, positions] of byColor) {
     const mesh = new THREE.Mesh(flatGeometry(positions), material('building', color))
     mesh.castShadow = true

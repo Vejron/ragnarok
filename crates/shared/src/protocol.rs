@@ -62,6 +62,7 @@ pub const WEAPON_REVOLVER: u8 = 4;
 pub const WEAPON_GRENADE: u8 = 5;
 /// The helicopter's nose autocannon: a shell's burst, smaller.
 pub const WEAPON_AUTOCANNON: u8 = 6;
+pub const WEAPON_SNIPER: u8 = 7;
 
 /// `ProjectileState` kinds.
 pub const PROJECTILE_ROCKET: u8 = 0;
@@ -69,6 +70,8 @@ pub const PROJECTILE_GRENADE: u8 = 1;
 pub const PROJECTILE_SHELL: u8 = 2;
 /// An autocannon round: flies like a shell, bursts smaller.
 pub const PROJECTILE_CANNON: u8 = 3;
+/// A sniper round: fast and nearly flat, it hurts whoever it meets and does not burst.
+pub const PROJECTILE_BULLET: u8 = 4;
 
 /// One simulation tick of player intent. The client predicts with exactly these quantized values,
 /// so client and server feed the simulation identical inputs.

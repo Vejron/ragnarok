@@ -1,6 +1,6 @@
 /** Mirrors `crates/shared/src/items.rs`. Keep the two in step. */
 
-import { TICK_RATE } from './consts'
+import { BUTTON_ALT, TICK_RATE } from './consts'
 
 export const HOTBAR_SLOTS = 5
 
@@ -9,6 +9,7 @@ export const ITEM_REVOLVER = 1
 export const ITEM_AK5 = 2
 export const ITEM_GRENADE = 3
 export const ITEM_BANDAGE = 4
+export const ITEM_SNIPER = 5
 
 export type ItemKind = 'gun' | 'grenade' | 'heal'
 
@@ -24,20 +25,31 @@ export interface ItemDef {
   mag: number
   reloadTicks: number
   range: number
+  /** Walking speed multiplier while aim is held with this gun in hand. */
+  aimSpeed: number
+  /** Can be scoped (aim held): first-person zoom, and the shot goes true along the look direction. */
+  scope: boolean
   stack: number
   /** What the player holds it as: picks the pose and the model. */
   stance: 'rifle' | 'pistol' | 'hold'
 }
 
 const DEFS: Record<number, ItemDef> = {
-  [ITEM_REVOLVER]: { name: 'Revolver', kind: 'gun', auto: false, damage: 35, cooldownTicks: 30, mag: 6, reloadTicks: 2 * TICK_RATE, range: 150, stack: 1, stance: 'pistol' },
-  [ITEM_AK5]: { name: 'AK5', kind: 'gun', auto: true, damage: 12, cooldownTicks: 6, mag: 30, reloadTicks: (5 * TICK_RATE) / 2, range: 200, stack: 1, stance: 'rifle' },
-  [ITEM_GRENADE]: { name: 'Grenade', kind: 'grenade', auto: false, damage: 0, cooldownTicks: TICK_RATE, mag: 0, reloadTicks: 0, range: 0, stack: 3, stance: 'hold' },
-  [ITEM_BANDAGE]: { name: 'Bandage', kind: 'heal', auto: false, damage: 40, cooldownTicks: 0, mag: 0, reloadTicks: 0, range: 0, stack: 5, stance: 'hold' },
+  [ITEM_REVOLVER]: { name: 'Revolver', kind: 'gun', auto: false, damage: 35, cooldownTicks: 30, mag: 6, reloadTicks: 2 * TICK_RATE, range: 150, aimSpeed: 0.8, scope: false, stack: 1, stance: 'pistol' },
+  [ITEM_AK5]: { name: 'AK5', kind: 'gun', auto: true, damage: 12, cooldownTicks: 6, mag: 30, reloadTicks: (5 * TICK_RATE) / 2, range: 200, aimSpeed: 0.6, scope: false, stack: 1, stance: 'rifle' },
+  [ITEM_SNIPER]: { name: 'Sniper', kind: 'gun', auto: false, damage: 90, cooldownTicks: 2 * TICK_RATE, mag: 5, reloadTicks: 3 * TICK_RATE, range: 400, aimSpeed: 0.4, scope: true, stack: 1, stance: 'rifle' },
+  [ITEM_GRENADE]: { name: 'Grenade', kind: 'grenade', auto: false, damage: 0, cooldownTicks: TICK_RATE, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 3, stance: 'hold' },
+  [ITEM_BANDAGE]: { name: 'Bandage', kind: 'heal', auto: false, damage: 40, cooldownTicks: 0, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 5, stance: 'hold' },
 }
 
 /** The definition of `item`; undefined for an empty slot or an unknown id. */
 export const itemDef = (item: number): ItemDef | undefined => DEFS[item]
+
+/** Walking speed multiplier for `item` in hand with `buttons`: a gun slows its holder while aim is held. Mirrors `aim_speed_scale`. */
+export const aimSpeedScale = (item: number, buttons: number): number => {
+  const d = DEFS[item]
+  return d?.kind === 'gun' && (buttons & BUTTON_ALT) !== 0 ? d.aimSpeed : 1
+}
 
 /** Ticks a bandage takes to apply. */
 export const BANDAGE_TICKS = 2 * TICK_RATE

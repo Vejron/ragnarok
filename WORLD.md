@@ -36,6 +36,7 @@ Restart the server afterwards: it reads the whole world at start. The importer c
 | `--no-water` | Leave out lakes, rivers and streams (skips the Hydrografi download). |
 | `--no-roofs` | Buildings stay boxes of their tagged height. The point cloud (the slowest and biggest download) is then only read for trees; add `--no-lidar-trees` to skip it completely. |
 | `--no-trees` | Skip the tree register. |
+| `--no-minimap` | Skip `minimap.png`, the pre-rendered top-down map (2048 px, written next to `world.msgpack`) that the client shows as minimap and map. |
 | `--no-lidar-trees` | Only the register's trees: no woods, no garden trees. |
 | `--min-tree-height m` | Shortest tree taken from the laser, default 3 m above the terrain. |
 | `--synthetic` | Offline procedural grid city with hills and a few trees. Needs no network at all. |
@@ -91,6 +92,21 @@ leisure, riverbanks) as ways with inline geometry, plus multipolygon relations f
 come from the `height` tag, else `building:levels` × 3 + 1, else a guess of 6–12 m. Overpass
 often answers 504; the importer tries every endpoint, four rounds, 15 s apart, for each square. A box larger than `--overpass-chunk` is fetched as a grid of squares; ways and relations that cross a border come back twice and are merged by id.
 
+### Bridges (`bridge.rs`)
+A highway way with `bridge=*` (and no `tunnel`) is still a road in `Tile.roads`, but it is also built
+as geometry in the tile's collision mesh, so it is drawn and collided with like a building and
+rivers no longer swallow it. OSM has no heights, so they are inferred: the deck runs between the
+ground at its two ends, is lifted to the water surface plus a clearance (7 m major, 5.5 m minor,
+3.5 m paths) where it crosses water, is limited to a 6 % grade, and carries on as a ramp down to
+the ground if an end is still above it. Piers stand under stretches more than 2 m up, parapets
+where there is a drop. OSM does not say which bridges are cable-stayed, so pylons with stay cables
+come from `LANDMARKS` in `bridge.rs` (a position and radius per bridge): Lundabron has a tower at
+each end, Kolbäcksbron one in the middle. Spans under 12 m are left to the terrain.
+Triangles go into the tile of their position, listed in `Tile.bridges` as `(first, deck, steel)`
+ranges; trees within 4 m of a bridge's edge are dropped (over water they are the laser's reading of
+the pylon and cables). Bridge roads never offer spawns. Deck heights over the Umeälven can be
+tuned by `clearance` in `bridge.rs`.
+
 ### Water (Hydrografi)
 Lakes (`StandingWater`) and wide rivers (`WatercoursePolygon`) are polygons; streams
 (`WatercourseLine`) are centre lines in the direction the water flows. The service is queried per
@@ -99,9 +115,11 @@ depth or width**, so:
 
 - a body's surface is the median of the DTM inside it (the DTM is flat over water); a body whose
   10th and 90th percentile differ by more than 1.5 m is reported, since it is drawn flat;
-- the bed is cut below the surface by `0.3 m + 0.2 m` per metre from the shore (lakes, at most
-  2.5 m; rivers `0.15`, at most 1.2 m), never more than 3 m below y = 0, which is still the lowest
-  *dry* ground;
+- the bed is a bowl cut below the surface: `0.3 m` at the bank, deepest at the body's inscribed
+  radius `R` (the largest distance from the bank of any of its samples). The deepest point depends
+  on size: lakes `1 + 0.6·√R` (1.5 to 12 m), rivers `0.8 + 0.35·√R` (1.2 to 6 m), so a pond is about
+  2 m and a 100 m lake about 7 m. The bed is never more than 12 m below y = 0, which is still the
+  lowest *dry* ground;
 - `Tile.water` holds the surface height at every ground sample (`NO_WATER` where none; samples
   next to water sit just under the bank so the drawn shoreline falls between samples). The depth
   at a sample is `water − ground`; islands are simply ground above the surface;

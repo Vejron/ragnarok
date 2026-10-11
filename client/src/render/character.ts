@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, RUN_SPEED, WALK_SPEED } from '@/sim/consts'
-import { ITEM_AK5, ITEM_BANDAGE, ITEM_GRENADE, ITEM_REVOLVER, itemDef, type ItemDef } from '@/sim/items'
+import { ITEM_AK5, ITEM_BANDAGE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SNIPER, itemDef, type ItemDef } from '@/sim/items'
 
 /** Feet sit this far below the capsule centre. */
 const FOOT_OFFSET = CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS
@@ -24,6 +24,7 @@ type Stance = ItemDef['stance']
 const PREFIX: Record<Stance, string> = { rifle: '', pistol: 'pistol_', hold: 'hold_' }
 const WEAPON_MESH: Record<number, string> = {
   [ITEM_AK5]: 'weapon_ak5',
+  [ITEM_SNIPER]: 'weapon_sniper',
   [ITEM_REVOLVER]: 'weapon_revolver',
   [ITEM_GRENADE]: 'weapon_grenade',
   [ITEM_BANDAGE]: 'weapon_bandage',

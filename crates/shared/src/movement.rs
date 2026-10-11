@@ -7,6 +7,11 @@ use crate::quant::{from_axis, from_mrad};
 
 /// Horizontal velocity requested by an input, in m/s, as `[x, z]`.
 pub fn wish_velocity(input: &InputFrame) -> [f32; 2] {
+    wish_velocity_scaled(input, 1.0)
+}
+
+/// `wish_velocity` with the speed multiplied by `scale`, e.g. for walking slower while aiming a gun.
+pub fn wish_velocity_scaled(input: &InputFrame, scale: f32) -> [f32; 2] {
     let strafe = from_axis(input.1);
     let forward = from_axis(input.2);
     let yaw = from_mrad(input.3);
@@ -27,18 +32,18 @@ pub fn wish_velocity(input: &InputFrame) -> [f32; 2] {
     } else {
         WALK_SPEED
     };
-    [x * speed, z * speed]
+    [x * speed * scale, z * speed * scale]
 }
 
 /// The first half of a movement step: the new vertical velocity and the translation to hand to
 /// the character controller. `knock` is the leftover knockback velocity, `[x, z]` in m/s.
-pub fn desired_translation(vy: f32, grounded: bool, knock: [f32; 2], input: &InputFrame, dt: f32) -> (f32, [f32; 3]) {
+pub fn desired_translation(vy: f32, grounded: bool, knock: [f32; 2], input: &InputFrame, dt: f32, speed_scale: f32) -> (f32, [f32; 3]) {
     let mut vy = vy;
     if grounded && input.buttons() & BUTTON_JUMP != 0 {
         vy = JUMP_SPEED;
     }
     vy = (vy - GRAVITY * dt).max(-MAX_FALL_SPEED);
-    let [vx, vz] = wish_velocity(input);
+    let [vx, vz] = wish_velocity_scaled(input, speed_scale);
     (vy, [(vx + knock[0]) * dt, vy * dt, (vz + knock[1]) * dt])
 }
 
@@ -89,6 +94,14 @@ mod tests {
     }
 
     #[test]
+    fn a_speed_scale_slows_every_gait() {
+        let run = InputFrame(1, 0, 127, 0, BUTTON_RUN, 0, 0, 0);
+        let [_, z] = wish_velocity_scaled(&run, 0.5);
+        assert!((z + RUN_SPEED * 0.5).abs() < 1e-4);
+        assert_eq!(wish_velocity_scaled(&run, 1.0), wish_velocity(&run));
+    }
+
+    #[test]
     fn crouching_is_slow_even_when_running() {
         let [x, z] = wish_velocity(&InputFrame(1, 127, 127, 0, BUTTON_CROUCH | BUTTON_RUN, 0, 0, 0));
         assert!(((x * x + z * z).sqrt() - CROUCH_SPEED).abs() < 1e-4);
@@ -118,14 +131,14 @@ mod tests {
     #[test]
     fn jump_only_from_ground() {
         let jump = InputFrame(1, 0, 0, 0, BUTTON_JUMP, 0, 0, 0);
-        assert!(desired_translation(0.0, true, [0.0; 2], &jump, TICK_DT).0 > 0.0);
-        assert!(desired_translation(0.0, false, [0.0; 2], &jump, TICK_DT).0 < 0.0);
+        assert!(desired_translation(0.0, true, [0.0; 2], &jump, TICK_DT, 1.0).0 > 0.0);
+        assert!(desired_translation(0.0, false, [0.0; 2], &jump, TICK_DT, 1.0).0 < 0.0);
     }
 
     #[test]
     fn knockback_adds_to_walking_and_dies_out() {
         let idle = InputFrame::default();
-        let (_, pushed) = desired_translation(0.0, true, [6.0, -3.0], &idle, TICK_DT);
+        let (_, pushed) = desired_translation(0.0, true, [6.0, -3.0], &idle, TICK_DT, 1.0);
         assert!((pushed[0] - 6.0 * TICK_DT).abs() < 1e-6 && (pushed[2] + 3.0 * TICK_DT).abs() < 1e-6);
         let mut knock = [6.0, -3.0];
         for _ in 0..TICK_RATE * 3 {
