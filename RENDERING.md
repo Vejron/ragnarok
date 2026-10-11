@@ -58,8 +58,19 @@ The style is flat, bright and few-banded, not physically based.
   faint low-frequency wobble. It is stored as vertex colours, so it costs nothing at runtime and
   hills read as hills even when the sun is high. Terrain normals are smoothed across tile seams by
   sampling the neighbouring tile (`HeightSource`).
-- **Painted ground cover.** `cover.ts` rasterises each tile's land-cover polygons (water, wood,
-  park, farm, sand, urban, industrial) into a per-tile canvas texture at 4 texels per metre.
+- **Painted ground cover.** `cover.ts` rasterises each tile's land-cover polygons (wood, park,
+  farm, sand, urban, industrial) into a per-tile canvas texture at 4 texels per metre. Water is not
+  painted: see below.
+- **Water** (`water.ts`) is translucent geometry, not paint. Lakes and rivers are carved into the
+  ground by the importer and drawn as a surface at the water level: every ground sample is a vertex,
+  only cells touching water are triangulated, and a per-vertex `depth` (`water − ground`) is
+  interpolated, so the shoreline is where depth crosses zero and islands stay dry. Streams are
+  ribbons lifted 0.1 m over the terrain with a depth profile across them. One shared
+  `ShaderMaterial` tints shallow to deep, drifts stepped light bands over the surface (along the
+  stream's length for streams), draws a breathing foam line where depth is under ~0.35 m and fades
+  alpha to nothing at the edge; it supports fog and tone mapping. It reads no depth texture, so it
+  needs no extra pass; the water sits in its own group (`Game.waterRoot`) that the AO pass hides.
+  `updateWater(seconds)` drives the animation from the frame loop.
 - **Roads** are draped ribbons that follow the ground every metre, with a casing and fill layer, and
   round discs at joints. They share the terrain's ramp.
 - **Trees** are instanced: one `InstancedMesh` per archetype per tile (at most seven draw calls per

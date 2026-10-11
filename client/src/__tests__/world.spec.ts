@@ -23,6 +23,8 @@ describe('world files', () => {
   it('decodes every tile, and each is the one the manifest hashes', () => {
     const world = decodeManifest(read('world.msgpack'))
     let buildings = 0
+    let watery = 0
+    let streams = 0
     for (const ref of world.tiles) {
       const bytes = read(`tiles/${ref.col}_${ref.row}.msgpack`)
       expect(worldHash(bytes), `tile ${ref.col}_${ref.row}`).toBe(ref.hash)
@@ -41,7 +43,16 @@ describe('world files', () => {
         }
       }
       buildings += tile.buildings.length
+      streams += tile.streams.length
+      if (tile.water.length > 0) {
+        watery++
+        // Water comes with ground, sample for sample, and rises above the bed somewhere.
+        expect(tile.water.length).toBe(tile.ground.length)
+        expect(tile.water.some((level, at) => level > tile.ground[at]!)).toBe(true)
+      }
     }
     expect(buildings).toBeGreaterThan(0)
+    expect(watery).toBeGreaterThan(0)
+    expect(streams).toBeGreaterThan(0)
   })
 })

@@ -7,6 +7,7 @@ file is about the *pipeline*. The code is `crates/osm-import`.
 ```
 OpenStreetMap (Overpass) ─┐  buildings, roads, ground cover
 Lantmäteriet DTM  ────────┤  terrain heights ──► ground grid
+Lantmäteriet Hydrografi ──┤  lakes, rivers, streams ► water surface, carved beds
 Lantmäteriet laser ───────┤  roof shapes ──────► buildings' roofs
                           │  canopy ───────────► trees (every tree in the woods too)
 Umeå tree register ───────┘  planted trees ────► archetypes by species
@@ -32,6 +33,7 @@ Restart the server afterwards: it reads the whole world at start. The importer c
 | `--tile m` | Tile side, default 250 m. |
 | `--cell m` | Terrain sample spacing, default 5 m, must divide `--tile`. `0` is flat ground and needs no credentials. |
 | `--dem file.tif` | Take elevation from a local DTM GeoTIFF instead of Lantmäteriet. |
+| `--no-water` | Leave out lakes, rivers and streams (skips the Hydrografi download). |
 | `--no-roofs` | Buildings stay boxes of their tagged height. The point cloud (the slowest and biggest download) is then only read for trees; add `--no-lidar-trees` to skip it completely. |
 | `--no-trees` | Skip the tree register. |
 | `--no-lidar-trees` | Only the register's trees: no woods, no garden trees. |
@@ -48,15 +50,15 @@ What works with which credentials:
 |---|---|---|
 | nothing | `--synthetic`, or `--cell 0` | procedural city, or OSM on flat ground, boxes for buildings |
 | nothing, but a DTM tile | `--dem m708_75.tif --no-roofs` | OSM with terrain |
-| Lantmäteriet credentials | default | terrain, fitted roofs, trees |
+| Lantmäteriet credentials | default | terrain, water, fitted roofs, trees |
 
 Without credentials the importer says so and builds buildings as boxes; terrain needs `--dem` or
 `--cell 0`.
 
 ## Credentials
 
-Lantmäteriet's height model and point cloud need a (free) Geotorget account with the *Markhöjdmodell*
-and *Laserdata Skog* services enabled. The importer reads two environment variables:
+Lantmäteriet's height model, point cloud and water need a (free) Geotorget account with the *Markhöjdmodell*,
+*Laserdata Skog* and *Hydrografi Direkt* services enabled. The importer reads two environment variables:
 
 ```
 LM_USER=...
@@ -77,7 +79,8 @@ auth. They are never written to the cache or to the world files. OSM and Umeå's
 
 | Data | Source | Licence | Used for |
 |---|---|---|---|
-| Buildings, roads, water, woods, parks | OpenStreetMap through [Overpass](https://overpass-api.de) | ODbL, © OpenStreetMap contributors | `Building` footprints and heights, `Road`, `Cover` |
+| Buildings, roads, woods, parks | OpenStreetMap through [Overpass](https://overpass-api.de) | ODbL, © OpenStreetMap contributors | `Building` footprints and heights, `Road`, `Cover` |
+| Lakes, rivers, streams | Lantmäteriet *Hydrografi Direkt*, OGC API Features `ogc-features/v1/hydrografi` (`StandingWater`, `WatercoursePolygon`, `WatercourseLine`) | check the product's terms on Geotorget | `Tile.water`, `Tile.streams`, carved ground |
 | Terrain | Lantmäteriet *Markhöjd grid 1 m* (DTM), STAC collection `dtm-cog`, cloud-optimised GeoTIFF | CC BY 4.0 | `Tile.ground`, building floors, tree bases |
 | Laser points | Lantmäteriet *Laserdata Skog* (COPC), STAC collection `dsm-skoglig-copc` | CC BY 4.0 | roof fitting, trees |
 | Street and park trees | Umeå kommun open data, [`trad-som-forvaltas-av-gator-och-parker`](https://opendata.umea.se/explore/assets/trad-som-forvaltas-av-gator-och-parker/) | CC0 | `Tile.trees` |
@@ -87,6 +90,26 @@ One Overpass query for the bounding box returns buildings, highways and cover (l
 leisure, riverbanks) as ways with inline geometry, plus multipolygon relations for cover. Heights
 come from the `height` tag, else `building:levels` × 3 + 1, else a guess of 6–12 m. Overpass
 often answers 504; the importer tries every endpoint, four rounds, 15 s apart, for each square. A box larger than `--overpass-chunk` is fetched as a grid of squares; ways and relations that cross a border come back twice and are merged by id.
+
+### Water (Hydrografi)
+Lakes (`StandingWater`) and wide rivers (`WatercoursePolygon`) are polygons; streams
+(`WatercourseLine`) are centre lines in the direction the water flows. The service is queried per
+2 km square (CRS84 bounding box, paged, cached like Overpass answers). It has **no surface height,
+depth or width**, so:
+
+- a body's surface is the median of the DTM inside it (the DTM is flat over water); a body whose
+  10th and 90th percentile differ by more than 1.5 m is reported, since it is drawn flat;
+- the bed is cut below the surface by `0.3 m + 0.2 m` per metre from the shore (lakes, at most
+  2.5 m; rivers `0.15`, at most 1.2 m), never more than 3 m below y = 0, which is still the lowest
+  *dry* ground;
+- `Tile.water` holds the surface height at every ground sample (`NO_WATER` where none; samples
+  next to water sit just under the bank so the drawn shoreline falls between samples). The depth
+  at a sample is `water − ground`; islands are simply ground above the surface;
+- streams are drawn 2.5 m wide as ribbons on the terrain (`Tile.streams`), and the stretches that
+  run through a lake or river polygon are dropped.
+
+OSM water (`natural=water`, `waterway=riverbank`, `landuse=basin|reservoir`) is no longer
+imported. Without credentials, with `--cell 0` or with `--no-water` the world has no water.
 
 ### Terrain (DTM)
 STAC finds the GeoTIFFs over the box; the importer reads only the 512 KiB blocks under the world

@@ -34,6 +34,7 @@ import { HeliModel, loadHeliModel } from './render/heli'
 import { loadTankModel, TankModel } from './render/tank'
 import { Character, Crowd } from './render/character'
 import { buildGround, buildTile, disposeTile, restitchTerrain } from './render/world'
+import { buildWater, disposeWater, updateWater } from './render/water'
 import { Replica } from './net/replica'
 import { TileStreamer } from './stream'
 import { loadManifest, type TileData, type TileRef, type WorldData } from './world'
@@ -197,6 +198,8 @@ export class Game {
   private accumulator = 0
   private lastFrame = 0
   private frameHandle = 0
+  /** Every streamed-in tile's water. */
+  private readonly waterRoot = new THREE.Group()
   private reconnectTimer = 0
   private pingTimer = 0
   private disposed = false
@@ -215,6 +218,9 @@ export class Game {
     // Translucent smoke and flashes, and the grenade's arc, would show as solid shapes in the AO pass.
     this.scene.excludeFromAO(this.effects.root)
     this.scene.excludeFromAO(this.trajectory.root)
+    // Water is translucent and drawn after everything solid; the AO pass would see it as a lid.
+    this.scene.scene.add(this.waterRoot)
+    this.scene.excludeFromAO(this.waterRoot)
     this.transport = new Transport(
       (message) => this.handle(message),
       (status) => {
@@ -260,6 +266,8 @@ export class Game {
     const ground = this.world ? groundOf(this.world, ref, tile) : null
     const group = buildTile(tile, ref.col * 31 + ref.row * 17, ground, this.terrain ?? undefined)
     this.scene.scene.add(group)
+    const water = ground ? buildWater(tile, ground, this.terrain ?? undefined) : null
+    if (water) this.waterRoot.add(water)
     this.terrain?.set(ref, ground)
     const key = ref.row * 65536 + ref.col
     this.tileGroups.set(key, group)
@@ -274,6 +282,7 @@ export class Game {
     const drive = this.driver?.addTile(tile, ground) ?? []
     return () => {
       disposeTile(group)
+      if (water) disposeWater(water)
       this.tileGroups.delete(key)
       this.terrain?.delete(ref)
       this.motor?.removeTile(walk)
@@ -458,6 +467,7 @@ export class Game {
     const dt = Math.min(0.25, (now - this.lastFrame) / 1000)
     this.lastFrame = now
 
+    updateWater(now / 1000)
     this.accumulator += dt * 1000
     let ticks = 0
     while (this.accumulator >= TICK_MS && ticks < MAX_TICKS_PER_FRAME) {

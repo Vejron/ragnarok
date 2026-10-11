@@ -61,7 +61,7 @@ pub struct Osm {
 }
 
 /// The tags that make a way or relation ground cover, as an Overpass filter list.
-const COVER_FILTERS: &str = r#"[landuse];[natural~"^(water|wood|scrub|grassland|heath|wetland|sand|beach)$"];[leisure~"^(park|garden|pitch|playground|golf_course|recreation_ground)$"];[waterway=riverbank]"#;
+const COVER_FILTERS: &str = r#"[landuse];[natural~"^(wood|scrub|grassland|heath|wetland|sand|beach)$"];[leisure~"^(park|garden|pitch|playground|golf_course|recreation_ground)$"]"#;
 
 /// Fetches the box in squares of about `chunk` metres and merges them, so a city-sized box is a
 /// handful of modest queries (each cached on its own, so an interrupted run resumes) and not one
@@ -98,7 +98,7 @@ pub fn fetch_chunked(endpoints: &[String], bbox: [f64; 4], chunk: f64, retries: 
 }
 
 /// `[south, west, north, east]` cut into a grid of equal pieces no wider than `chunk` metres.
-fn split([south, west, north, east]: [f64; 4], chunk: f64) -> Vec<[f64; 4]> {
+pub(crate) fn split([south, west, north, east]: [f64; 4], chunk: f64) -> Vec<[f64; 4]> {
     const METRES_PER_DEGREE: f64 = 111_320.0;
     let height = (north - south) * METRES_PER_DEGREE;
     let width = (east - west) * METRES_PER_DEGREE * ((south + north) / 2.0).to_radians().cos();

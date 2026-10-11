@@ -9,6 +9,7 @@
 //!     cargo run -p osm-import -- --dem m708_75.tif             # elevation from a local DTM GeoTIFF
 //!     LM_USER=… LM_PASS=… cargo run -p osm-import              # elevation fetched from Lantmäteriet
 //!     cargo run -p osm-import -- --cell 0                      # flat ground, no elevation
+//!     cargo run -p osm-import -- --no-water                    # skip Lantmäteriet's Hydrografi
 //!     cargo run -p osm-import -- --no-trees                    # skip Umeå's tree register
 //!     cargo run -p osm-import -- --refresh                     # download everything again
 //!     cargo run -p osm-import -- --clear-cache                 # delete .cache/osm-import
@@ -20,10 +21,12 @@ mod cache;
 mod canopy;
 mod dem;
 mod ground;
+mod hydro;
 mod lidar;
 mod overpass;
 mod roof;
 mod trees;
+mod water;
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -56,6 +59,9 @@ struct Args {
     /// Leave buildings as boxes of their tagged height instead of fitting roofs to the laser data.
     #[arg(long)]
     no_roofs: bool,
+    /// Leave out lakes, rivers and streams (Lantmäteriet's Hydrografi Direkt).
+    #[arg(long)]
+    no_water: bool,
     /// Leave out the trees from Umeå's open data.
     #[arg(long)]
     no_trees: bool,
@@ -124,11 +130,46 @@ fn sweref_window(args: &Args, bbox: [f64; 4]) -> dem::Window {
     ]
 }
 
-/// The terrain under `bbox`'s world and the elevation of its y = 0, from `--dem` or Lantmäteriet,
-/// or flat with `--cell 0`.
-fn terrain(args: &Args, bbox: [f64; 4]) -> Result<(shared::terrain::Ground, f64, Option<dem::Dem>)> {
+/// Lakes, rivers and streams from Lantmäteriet's Hydrografi, in local metres. Empty with
+/// `--no-water`, without credentials or on flat ground (the surface height comes from the DTM).
+fn water_map(args: &Args, bbox: [f64; 4]) -> Result<water::Map> {
+    if args.no_water || args.cell == 0.0 {
+        return Ok(water::Map::default());
+    }
+    let (Some(user), Some(password)) = (std::env::var("LM_USER").ok(), std::env::var("LM_PASS").ok()) else {
+        eprintln!("no LM_USER / LM_PASS: the world has no water");
+        return Ok(water::Map::default());
+    };
+    let (origin, half) = assemble::frame(bbox);
+    // The whole grid of tiles, which may stick out of the playable square.
+    let reach = (2.0 * half / args.tile).ceil() * args.tile / 2.0 + args.cell;
+    let (south, west) = assemble::unproject(origin, -reach, reach);
+    let (north, east) = assemble::unproject(origin, reach, -reach);
+    let found = hydro::fetch([south, west, north, east], &user, &password).context("Hydrografi failed; retry later or use --no-water")?;
+    let local = |ring: &[overpass::LatLon]| -> Vec<[f64; 2]> { ring.iter().map(|p| assemble::project(origin, p.lat, p.lon)).collect() };
+    // Rings are closed in GeoJSON: drop the repeated first point.
+    let open = |mut ring: Vec<[f64; 2]>| {
+        if ring.len() > 1 && ring.first() == ring.last() {
+            ring.pop();
+        }
+        ring
+    };
+    let mut map = water::Map::default();
+    for (polygons, kind) in [(&found.lakes, water::Kind::Lake), (&found.rivers, water::Kind::River)] {
+        for polygon in polygons {
+            map.bodies.push(water::Body { kind, rings: polygon.iter().map(|ring| open(local(ring))).filter(|ring| ring.len() >= 3).collect() });
+        }
+    }
+    map.streams = found.streams.iter().map(|line| local(line)).collect();
+    eprintln!("water: {} lakes, {} river polygons, {} stream lines from Hydrografi", found.lakes.len(), found.rivers.len(), found.streams.len());
+    Ok(map)
+}
+
+/// The terrain under `bbox`'s world, the elevation of its y = 0 and the water over it, from
+/// `--dem` or Lantmäteriet, or flat with `--cell 0`. Lakes and rivers are carved into the ground.
+fn terrain(args: &Args, bbox: [f64; 4], map: &water::Map) -> Result<(shared::terrain::Ground, f64, Option<dem::Dem>, water::Placed)> {
     if args.cell == 0.0 {
-        return Ok((Default::default(), 0.0, None));
+        return Ok((Default::default(), 0.0, None, Default::default()));
     }
     let (origin, half) = assemble::frame(bbox);
     let window = sweref_window(args, bbox);
@@ -142,12 +183,21 @@ fn terrain(args: &Args, bbox: [f64; 4]) -> Result<(shared::terrain::Ground, f64,
         }
     };
     let half_cell = args.cell / 2.0;
-    let (ground, datum) = ground::build(half, args.tile, args.cell, |x, z| {
+    let dtm = |x: f64, z: f64| {
         let (lat, lon) = assemble::unproject(origin, x, z);
         let (e, n) = dem::sweref99tm(lat, lon);
         source.mean(e, n, half_cell).map(f64::from)
-    })?;
-    Ok((ground, datum, Some(source)))
+    };
+    let surface = water::Surface::new(map, ground::grid(half, args.tile, args.cell)?, dtm);
+    let (ground, datum) = ground::build(half, args.tile, args.cell, dtm, |x, z, dem| surface.bed(x, z, dem))?;
+    let placed = water::Placed::new(map, &surface, datum, &ground);
+    report(map, &placed);
+    Ok((ground, datum, Some(source), placed))
+}
+
+fn report(map: &water::Map, placed: &water::Placed) {
+    let wet = placed.levels.iter().filter(|&&level| level != shared::world::NO_WATER).count();
+    eprintln!("water: {} bodies, {} samples under or beside water, {} stream lines kept", map.bodies.len(), wet, placed.streams.len());
 }
 
 /// What the laser data gives: the returns that can be roof, and the canopy for trees. Each is
@@ -198,12 +248,16 @@ fn main() -> Result<()> {
     anyhow::ensure!(args.tile >= 20.0, "--tile must be at least 20 m");
     anyhow::ensure!(args.cell == 0.0 || args.cell >= 0.5, "--cell must be 0 or at least 0.5 m");
     let built = if args.synthetic {
-        let ground = if args.cell > 0.0 {
-            ground::build(300.0, args.tile, args.cell, |x, z| Some(ground::hills(x, z)))?.0
+        let map = if args.no_water { water::Map::default() } else { assemble::synthetic_water(300.0) };
+        let (ground, placed) = if args.cell > 0.0 {
+            let surface = water::Surface::new(&map, ground::grid(300.0, args.tile, args.cell)?, |x, z| Some(ground::hills(x, z)));
+            let (ground, datum) = ground::build(300.0, args.tile, args.cell, |x, z| Some(ground::hills(x, z)), |x, z, dem| surface.bed(x, z, dem))?;
+            let placed = water::Placed::new(&map, &surface, datum, &ground);
+            (ground, placed)
         } else {
             Default::default()
         };
-        assemble::synthetic_city(300.0, args.tile, ground)
+        assemble::synthetic_city(300.0, args.tile, ground, placed)
     } else {
         let bbox = match &args.bbox {
             Some(text) => parse_bbox(text)?,
@@ -213,7 +267,8 @@ fn main() -> Result<()> {
             }
         };
         // Before the network-flaky step: a world that cannot fit the format should fail in seconds.
-        let (ground, datum, dem) = terrain(&args, bbox)?;
+        let map = water_map(&args, bbox)?;
+        let (ground, datum, dem, placed) = terrain(&args, bbox, &map)?;
         // The public servers shed load with 504s; a few rounds over all of them usually get through.
         let osm = overpass::fetch_chunked(&args.overpass, bbox, args.overpass_chunk, 3, 15).context("Overpass failed; retry later or use --synthetic")?;
         let (cloud, detected) = laser(&args, bbox, datum, &osm, dem.as_ref())?;
@@ -234,7 +289,7 @@ fn main() -> Result<()> {
         };
         let planted = trees::merge(register, &detected);
         eprintln!("trees: {} from the register, {} from the laser", planted.iter().filter(|t| t.registered).count(), planted.iter().filter(|t| !t.registered).count());
-        assemble::from_osm(bbox, args.tile, &osm, &planted, ground, cloud.as_ref())
+        assemble::from_osm(bbox, args.tile, &osm, &planted, ground, placed, cloud.as_ref())
     };
     let (buildings, roads, triangles) = built.tiles.values().fold((0, 0, 0), |(b, r, t), tile| (b + tile.buildings.len(), r + tile.roads.len(), t + tile.collision.triangles.len()));
     let cover: usize = built.tiles.values().map(|tile| tile.cover.len()).sum();

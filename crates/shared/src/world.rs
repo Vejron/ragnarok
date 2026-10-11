@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 7;
+pub const WORLD_VERSION: u8 = 8;
 
 /// `world.msgpack`: everything about the world except the tiles' contents.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -66,6 +66,26 @@ pub struct Tile {
     pub cover: Vec<Cover>,
     /// Individual trees (street and park trees) inside the tile.
     pub trees: Vec<Tree>,
+    /// Height of the water surface at each ground sample, centimetres (same layout as `ground`),
+    /// or `NO_WATER` where there is none. Empty when the tile has no water. Lakes and wide rivers
+    /// are carved into `ground`, so the depth under a sample is `water - ground`; the client draws
+    /// the surface wherever that is positive. Nothing simulates it.
+    #[serde(default)]
+    pub water: Vec<i16>,
+    /// Streams: narrow watercourses drawn as ribbons draped on the ground, clipped to the tile.
+    #[serde(default)]
+    pub streams: Vec<Stream>,
+}
+
+/// `Tile::water` entry for a sample with no water.
+pub const NO_WATER: i16 = i16::MIN;
+
+/// A stream's centre line, in the direction the water flows (digitised downstream).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Stream {
+    /// Width of the water, centimetres.
+    pub width: i32,
+    pub points: Vec<[i32; 2]>,
 }
 
 impl Manifest {
@@ -302,6 +322,8 @@ mod tests {
             ground: vec![0, 10, 20, 30],
             cover: vec![Cover { kind: COVER_WATER, rings: vec![vec![[0, 0], [100, 0], [100, 100]]] }],
             trees: vec![Tree { x: 5, z: -7, base: 120, height: 1200, crown: 220, kind: TREE_BIRCH, solid: true }],
+            water: vec![NO_WATER, 40, 40, NO_WATER],
+            streams: vec![Stream { width: 200, points: vec![[0, 0], [300, 100]] }],
         };
         assert_eq!(Tile::decode(&tile.encode()).unwrap(), tile);
         assert_eq!(manifest.tiles[0].path(), "tiles/1_0.msgpack");

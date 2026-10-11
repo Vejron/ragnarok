@@ -4,6 +4,7 @@
 use crate::overpass::{Area, LatLon, Osm, Way};
 use crate::roof::{self, Cloud, Roof, Shape};
 use crate::trees::Planted;
+use crate::water::{Placed, STREAM_WIDTH};
 use shared::terrain::Ground;
 use shared::world::*;
 use std::collections::BTreeMap;
@@ -27,7 +28,7 @@ fn cm(metres: f64) -> i32 {
 }
 
 /// Equirectangular projection around `origin`: +X east, +Z south.
-fn project(origin: (f64, f64), lat: f64, lon: f64) -> P {
+pub fn project(origin: (f64, f64), lat: f64, lon: f64) -> P {
     let x = (lon - origin.1) * METRES_PER_DEG_LON * origin.0.to_radians().cos();
     let z = -(lat - origin.0) * METRES_PER_DEG_LAT;
     [x, z]
@@ -208,7 +209,7 @@ impl Built {
 /// a road are dropped. A tree is solid (has a trunk collider) when it is planted, in the register,
 /// or stands within `SOLID_REACH` of a road or a building.
 #[allow(clippy::too_many_arguments)]
-fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P>, f64, Option<Roof>)>, roads: Vec<(Vec<P>, f64, u8)>, covers: Vec<(u8, Vec<Vec<P>>)>, trees: Vec<(P, u8, f64, f64, bool)>, ground: Ground) -> Built {
+fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P>, f64, Option<Roof>)>, roads: Vec<(Vec<P>, f64, u8)>, covers: Vec<(u8, Vec<Vec<P>>)>, trees: Vec<(P, u8, f64, f64, bool)>, ground: Ground, water: Placed) -> Built {
     let inner = half - EDGE_MARGIN;
     let mut manifest = Manifest {
         version: WORLD_VERSION,
@@ -309,6 +310,24 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P
             }
         }
     }
+    // Streams are cut at tile borders like roads, keeping the direction of the flow.
+    for line in &water.streams {
+        for run in clip_polyline(line, half) {
+            let (min, max) = run.iter().fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), p| ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]));
+            let (first, last) = (manifest.tile_at(cm(min[0]), cm(min[1])), manifest.tile_at(cm(max[0]), cm(max[1])));
+            for col in first.0..=last.0 {
+                for row in first.1..=last.1 {
+                    let rect = [-half + col as f64 * side, -half + row as f64 * side, -half + (col + 1) as f64 * side, -half + (row + 1) as f64 * side];
+                    for piece in clip_polyline_rect(&run, rect) {
+                        tiles.entry((col, row)).or_default().streams.push(Stream {
+                            width: cm(STREAM_WIDTH),
+                            points: piece.iter().map(|&[x, z]| [cm(x), cm(z)]).collect(),
+                        });
+                    }
+                }
+            }
+        }
+    }
     for tile in tiles.values_mut() {
         tile.cover.sort_by_key(|cover| cover_rank(cover.kind));
     }
@@ -368,6 +387,18 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P
                 tiles.entry((col, row)).or_default().ground = ground.block(col as u32 * per_tile, row as u32 * per_tile, samples);
             }
         }
+        // A tile with no water at all carries no water samples.
+        if water.levels.len() == ground.heights.len() {
+            let all = Ground { origin: ground.origin, cell: ground.cell, side: ground.side, heights: water.levels };
+            for col in 0..manifest.grid() {
+                for row in 0..manifest.grid() {
+                    let block = all.block(col as u32 * per_tile, row as u32 * per_tile, samples);
+                    if block.iter().any(|&level| level != NO_WATER) {
+                        tiles.entry((col, row)).or_default().water = block;
+                    }
+                }
+            }
+        }
     }
     Built { manifest, tiles }
 }
@@ -393,7 +424,7 @@ pub fn unproject(origin: (f64, f64), x: f64, z: f64) -> (f64, f64) {
     (origin.0 - z / METRES_PER_DEG_LAT, origin.1 + x / (METRES_PER_DEG_LON * origin.0.to_radians().cos()))
 }
 
-pub fn from_osm(bbox: [f64; 4], tile_size: f64, osm: &Osm, planted: &[Planted], ground: Ground, lidar: Option<&Cloud>) -> Built {
+pub fn from_osm(bbox: [f64; 4], tile_size: f64, osm: &Osm, planted: &[Planted], ground: Ground, water: Placed, lidar: Option<&Cloud>) -> Built {
     let (origin, half) = frame(bbox);
     let split_roofs = std::cell::Cell::new(0);
     let mut buildings = Vec::new();
@@ -437,18 +468,15 @@ pub fn from_osm(bbox: [f64; 4], tile_size: f64, osm: &Osm, planted: &[Planted], 
         eprintln!("roofs: {} of {} buildings have more than one part", split_roofs.get(), buildings.len());
     }
     let trees = planted.iter().map(|tree| (project(origin, tree.lat, tree.lon), tree.kind, tree.height, tree.crown, tree.registered)).collect();
-    assemble(origin, half, tile_size, buildings, roads, covers, trees, ground)
+    assemble(origin, half, tile_size, buildings, roads, covers, trees, ground, water)
 }
 
-/// Ground cover for a way's or relation's tags, or `None` if it is not cover we draw.
+/// Ground cover for a way's or relation's tags, or `None` if it is not cover we draw. Water is not
+/// cover: it comes from Hydrografi (`water.rs`).
 fn cover_kind(tags: &std::collections::HashMap<String, String>) -> Option<u8> {
     let tag = |key: &str| tags.get(key).map(String::as_str);
-    if tag("waterway") == Some("riverbank") {
-        return Some(COVER_WATER);
-    }
     if let Some(value) = tag("natural") {
         return match value {
-            "water" => Some(COVER_WATER),
             "wood" => Some(COVER_WOOD),
             "scrub" | "heath" | "grassland" => Some(COVER_PARK),
             "wetland" => Some(COVER_FARM),
@@ -465,7 +493,6 @@ fn cover_kind(tags: &std::collections::HashMap<String, String>) -> Option<u8> {
         "farmland" | "farmyard" | "orchard" | "vineyard" | "plant_nursery" => Some(COVER_FARM),
         "residential" | "commercial" | "retail" | "garages" | "education" | "institutional" => Some(COVER_URBAN),
         "industrial" | "railway" | "quarry" | "construction" | "brownfield" | "landfill" | "depot" => Some(COVER_INDUSTRIAL),
-        "basin" | "reservoir" => Some(COVER_WATER),
         _ => None,
     }
 }
@@ -539,11 +566,31 @@ fn clip_ring(ring: &[P], [x0, z0, x1, z1]: Rect) -> Vec<P> {
     points
 }
 
+const SYNTHETIC_PITCH: f64 = 58.0;
+const SYNTHETIC_STREET: f64 = 10.0;
+
+/// The water of `synthetic_city`: the last column of blocks is left to a pond and the stream
+/// that runs out of it, so the offline world has water to draw.
+pub fn synthetic_water(half: f64) -> crate::water::Map {
+    use crate::water::{Body, Kind, Map};
+    let count = (half * 2.0 / SYNTHETIC_PITCH).floor() as i32;
+    let start = -(count as f64) * SYNTHETIC_PITCH / 2.0;
+    let size = SYNTHETIC_PITCH - SYNTHETIC_STREET - 4.0;
+    let x = start + (count - 1) as f64 * SYNTHETIC_PITCH + SYNTHETIC_STREET / 2.0 + 2.0 + size / 2.0;
+    let top = -half + 70.0;
+    let pond: Vec<P> = (0..16).map(|k| {
+        let a = k as f64 / 16.0 * std::f64::consts::TAU;
+        [x + 20.0 * a.cos(), top + 16.0 * a.sin()]
+    }).collect();
+    let stream: Vec<P> = (0..40).map(|k| [x + 10.0 * (k as f64 * 0.5).sin(), top + 14.0 + k as f64 * 12.0]).collect();
+    Map { bodies: vec![Body { kind: Kind::Lake, rings: vec![pond] }], streams: vec![stream] }
+}
+
 /// An offline grid city: 48 m blocks separated by 10 m streets, each block holding a few
 /// buildings of varied height around a courtyard.
-pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground) -> Built {
-    const PITCH: f64 = 58.0;
-    const STREET: f64 = 10.0;
+pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) -> Built {
+    const PITCH: f64 = SYNTHETIC_PITCH;
+    const STREET: f64 = SYNTHETIC_STREET;
     let mut buildings = Vec::new();
     let mut roads = Vec::new();
     let mut covers = Vec::new();
@@ -561,7 +608,8 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground) -> Built {
         roads.push((vec![[line, -half], [line, half]], STREET, ROAD_MINOR));
         roads.push((vec![[-half, line], [half, line]], STREET, ROAD_MINOR));
     }
-    for i in 0..count {
+    // The last column of blocks is the pond and its stream (`synthetic_water`).
+    for i in 0..count - 1 {
         for j in 0..count {
             let (bx, bz) = (start + i as f64 * PITCH + STREET / 2.0 + 2.0, start + j as f64 * PITCH + STREET / 2.0 + 2.0);
             let size = PITCH - STREET - 4.0;
@@ -604,7 +652,7 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground) -> Built {
             trees.push(([line + STREET / 2.0 + 1.5, along], kind, height, crown, true));
         }
     }
-    assemble((0.0, 0.0), half, tile_size, buildings, roads, covers, trees, ground)
+    assemble((0.0, 0.0), half, tile_size, buildings, roads, covers, trees, ground, water)
 }
 
 #[cfg(test)]
@@ -645,7 +693,7 @@ mod tests {
     #[test]
     fn cover_comes_from_tags() {
         let tags = |pairs: &[(&str, &str)]| pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<std::collections::HashMap<_, _>>();
-        assert_eq!(cover_kind(&tags(&[("natural", "water")])), Some(COVER_WATER));
+        assert_eq!(cover_kind(&tags(&[("natural", "water")])), None, "water comes from Hydrografi");
         assert_eq!(cover_kind(&tags(&[("landuse", "forest")])), Some(COVER_WOOD));
         assert_eq!(cover_kind(&tags(&[("leisure", "park")])), Some(COVER_PARK));
         assert_eq!(cover_kind(&tags(&[("landuse", "military")])), None);
@@ -653,13 +701,32 @@ mod tests {
 
     #[test]
     fn synthetic_parks_land_in_their_tiles_water_last() {
-        let built = synthetic_city(150.0, 100.0, Ground::default());
+        let built = synthetic_city(150.0, 100.0, Ground::default(), Placed::default());
         assert!(built.tiles.values().any(|tile| !tile.cover.is_empty()));
     }
 
     #[test]
+    fn the_synthetic_pond_and_stream_land_in_tiles() {
+        use crate::water::{Grid, Surface};
+        let map = synthetic_water(300.0);
+        let grid = Grid { origin: -30_000, cell: 500, side: 121 };
+        let surface = Surface::new(&map, grid, |_, _| Some(3.0));
+        let heights = vec![300i16; 121 * 121];
+        let ground = Ground { origin: -30_000, cell: 500, side: 121, heights };
+        let placed = Placed::new(&map, &surface, 0.0, &ground);
+        assert!(!placed.levels.is_empty() && !placed.streams.is_empty());
+        let built = synthetic_city(300.0, 100.0, ground, placed);
+        let with_water = built.tiles.values().filter(|tile| !tile.water.is_empty()).count();
+        assert!(with_water >= 1 && with_water < built.tiles.len());
+        let samples = built.manifest.tile_samples() as usize;
+        assert!(built.tiles.values().filter(|t| !t.water.is_empty()).all(|t| t.water.len() == samples * samples));
+        assert!(built.tiles.values().any(|tile| !tile.streams.is_empty()));
+        assert!(built.tiles.values().flat_map(|t| &t.buildings).all(|b| b.footprint.iter().all(|p| p[0] < 25_000)), "the last column of blocks is left to the water");
+    }
+
+    #[test]
     fn trees_stay_off_buildings_and_roads_and_sit_in_their_tile() {
-        let built = synthetic_city(300.0, 100.0, Ground::default());
+        let built = synthetic_city(300.0, 100.0, Ground::default(), Placed::default());
         let trees: usize = built.tiles.values().map(|tile| tile.trees.len()).sum();
         assert!(trees > 0);
         for (&(col, row), tile) in &built.tiles {
@@ -691,7 +758,7 @@ mod tests {
 
     #[test]
     fn spawns_avoid_buildings() {
-        let built = synthetic_city(150.0, 100.0, Ground::default());
+        let built = synthetic_city(150.0, 100.0, Ground::default(), Placed::default());
         assert!(!built.manifest.spawns.is_empty());
         for &[x, z] in &built.manifest.spawns {
             let p = [x as f64 / 100.0, z as f64 / 100.0];
@@ -704,7 +771,7 @@ mod tests {
 
     #[test]
     fn every_building_and_road_piece_sits_in_its_own_tile() {
-        let built = synthetic_city(300.0, 100.0, Ground::default());
+        let built = synthetic_city(300.0, 100.0, Ground::default(), Placed::default());
         assert!(built.tiles.len() > 4, "a 600 m city in 100 m tiles has many tiles");
         for (&(col, row), tile) in &built.tiles {
             for building in &tile.buildings {
@@ -722,7 +789,7 @@ mod tests {
             }
         }
         // Tiling loses nothing: merging them back gives every building the single-tile import had.
-        let whole = synthetic_city(300.0, 1000.0, Ground::default());
+        let whole = synthetic_city(300.0, 1000.0, Ground::default(), Placed::default());
         let count = |b: &Built| b.tiles.values().map(|t| t.buildings.len()).sum::<usize>();
         assert_eq!(count(&built), count(&whole));
     }

@@ -2,7 +2,7 @@ import { decode } from '@msgpack/msgpack'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 7
+export const WORLD_VERSION = 8
 
 export const ROAD_MAJOR = 0
 export const ROAD_MINOR = 1
@@ -72,6 +72,18 @@ export interface Cover {
   rings: Point2[][]
 }
 
+/** A stream's centre line in the direction the water flows, drawn as a ribbon draped on the ground. */
+export interface Stream {
+  width: number
+  points: Point2[]
+}
+
+/** `Tile::water` entry (centimetres) for a ground sample with no water. */
+const NO_WATER_CM = -32768
+
+/** `TileData.water` entry for a ground sample with no water. */
+export const NO_WATER = -Infinity
+
 export interface CollisionMesh {
   vertices: Float32Array
   triangles: Uint32Array
@@ -108,6 +120,13 @@ export interface TileData {
   collision: CollisionMesh
   /** Ground heights, metres, row-major (rows along +Z), `tileSize / groundCell + 1` a side. Empty on a flat world. */
   ground: Float32Array
+  /**
+   * Height of the water surface at each ground sample, metres (same layout as `ground`), or
+   * `NO_WATER`. Empty when the tile has no water. The depth under a sample is `water - ground`.
+   */
+  water: Float32Array
+  /** Narrow watercourses, flowing along their points. */
+  streams: Stream[]
 }
 
 /** FNV-1a, matching `world_hash` on the server. */
@@ -152,13 +171,15 @@ export function decodeManifest(bytes: Uint8Array): WorldData {
 }
 
 export function decodeTile(bytes: Uint8Array): TileData {
-  const [buildings, roads, [vertices, triangles], ground, cover, trees] = decode(bytes) as [
+  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams] = decode(bytes) as [
     [number, number[][], number, number, number, number, number][],
     [number, number, number[][]][],
     [number[][], number[][]],
     number[],
     [number, number[][][]][],
     [number, number, number, number, number, number, boolean][],
+    number[],
+    [number, number[][]][],
   ]
   return {
     buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind]) => ({
@@ -188,6 +209,8 @@ export function decodeTile(bytes: Uint8Array): TileData {
       triangles: Uint32Array.from(triangles.flat()),
     },
     ground: Float32Array.from(ground, metres),
+    water: Float32Array.from(water, (cm) => (cm === NO_WATER_CM ? NO_WATER : metres(cm))),
+    streams: streams.map(([width, points]) => ({ width: metres(width), points: points.map(point) })),
   }
 }
 

@@ -187,14 +187,14 @@ Datagrams are capped at 1200 bytes (`MAX_PACKET`). Interest management and delta
 
 **The full pipeline is documented in [WORLD.md](WORLD.md)**: every data source and licence (OpenStreetMap, Lantmäteriet's height model and laser data, Umeå's tree register), where the credentials go (`.env.local`), all flags, and the download cache (`.cache/osm-import/`, git-ignored; `--refresh`, `--clear-cache`). This section covers what the output means.
 
-1. **Fetch:** an Overpass query for buildings, highways and ground cover (`way` and multipolygon `relation` with `landuse`, `natural`, `leisure` or `waterway=riverbank`; `out geom`), with a fallback mirror and a few retry rounds, since the public servers shed load.
+1. **Fetch:** an Overpass query for buildings, highways and ground cover (`way` and multipolygon `relation` with `landuse`, `natural` or `leisure`; `out geom`; water is not among them: it comes from Lantmäteriet's Hydrografi, see [WORLD.md](WORLD.md)), with a fallback mirror and a few retry rounds, since the public servers shed load.
 2. **Project:** equirectangular projection to local metres around the bbox centre (+X east, +Z south, +Y up).
 3. **Buildings:**
    - Footprints with at least 4 m² of area, fully inside the playable square.
    - Height comes from `height`, then `building:levels × 3 + 1`, then a varied 6–12 m.
    - Each building becomes walls, a roof and a floor in the collision mesh (`crates/osm-import/src/roof.rs`). The floor is at the lowest ground under the footprint (`base`). Without laser data the roof is flat at the tagged height; with it, see *Roofs* below.
 4. **Roads:** highway ways are clipped to the square (Liang–Barsky) and classed as major (10 m), minor (4.5–7 m) or path (2.5–5 m). They stay 2D polylines. The client paints them into the terrain texture (below), and the server uses them to line parked vehicles up with the street.
-   - **Cover:** closed ways and multipolygon relations are classed as water, wood, park (grass, meadow, parks, pitches), farm, sand, urban or industrial. Relation members are joined end to end into rings, inner rings being holes (filled even-odd). Open pieces that never close are dropped. They are not simulated: water is only paint, and the ground under it is the DEM's.
+   - **Cover:** closed ways and multipolygon relations are classed as water, wood, park (grass, meadow, parks, pitches), farm, sand, urban or industrial. Relation members are joined end to end into rings, inner rings being holes (filled even-odd). Open pieces that never close are dropped. They are not simulated. Water is separate (`Tile.water`, `Tile.streams`, from Hydrografi): the surface height per ground sample and stream centre lines; lakes and rivers are carved into the ground, so the physics sees their beds.
 5. **Spawns:** points sampled along roads that are outside every footprint and at least 1.5 m from walls. Up to 64 are picked, at least 15 m apart, sorted centre-first. The server picks among the 6 most central. They are 2D, and the ground gives their height.
 6. **Tiles:** the square is cut into a grid of `tile_size` squares.
    - A building goes whole into the tile its centre is in, with its collision triangles, so a tile never needs its neighbour.
@@ -239,7 +239,7 @@ Lantmäteriet's *Laserdata Skog* (`stac-hojd/v1/collections/dsm-skoglig-copc`, C
 Not handled yet:
 - Courtyard buildings (OSM multipolygons): the outer ring becomes a solid block and the courtyard's trees can bend its roof fit.
 - Dormers, chimneys, half-hips and mansards. Parts are separated by straight cuts across the footprint's rectangle, so a roof whose parts do not line up with it is approximated.
-- Waterways drawn as lines (rivers mapped only as a centre line), and railways.
+- Railways. (Waterways are done: streams are ribbons, see §8 and WORLD.md.)
 - Laser trees are approximate: crowns of equal height merge, species come from intensity and crown shape (see WORLD.md), and trees under 3 m are missed.
 
 ### Trees
@@ -360,4 +360,5 @@ pub trait Mechanic: Send {
    - Roofs (done): flat, shed, gable and hip roofs, in up to four parts per building, fitted to Laserdata Skog with foliage rejected (§8).
    - Trees (done): Umeå's street and park tree register as seven archetypes, instanced and with trunk colliders (§8).
    - Trees in woods (done): detected from the point cloud, `Tree::solid` limits colliders (§8).
-   - Next: courtyard building multipolygons, waterways as lines.
+   - Water (done): Hydrografi lakes, rivers and streams with a surface mesh and a toy-style shader.
+   - Next: courtyard building multipolygons.
