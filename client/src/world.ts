@@ -71,6 +71,21 @@ export interface Bridge {
   steel: number
 }
 
+/**
+ * Where each building's triangles are in the tile's collision mesh, as `[start, end)`: from its
+ * `first` to the start of whatever the importer wrote next (another building, a bridge, or the
+ * end), which takes in the floor that is collided with but not drawn. The server cuts the same
+ * ranges (`WorldFile::assemble`), so both sides remove the same triangles.
+ */
+export function buildingTriangleRanges(tile: TileData): [number, number][] {
+  const end = tile.collision.triangles.length / 3
+  const starts = [...tile.buildings.map((b) => b.first), ...tile.bridges.map((b) => b.first)]
+  return tile.buildings.map((building) => {
+    const next = Math.min(end, ...starts.filter((start) => start > building.first))
+    return [Math.min(building.first, next), next] as [number, number]
+  })
+}
+
 export const ROOF_FLAT = 0
 export const ROOF_SHED = 1
 export const ROOF_GABLE = 2

@@ -82,6 +82,18 @@ export class Effects {
     )
   }
 
+  /** A cloud of dust of about `size` metres across at `at`, swelling and rising as it thins. */
+  dust(at: THREE.Vector3, size: number) {
+    this.add(
+      this.sphere, 0xcbc2b0, 2.2,
+      (mesh) => mesh.position.copy(at),
+      (mesh, p) => {
+        mesh.scale.setScalar(size * (0.35 + p * 0.65))
+        mesh.position.y = at.y + p * size * 0.5
+      },
+    )
+  }
+
   /** Just the muzzle flash, for the local player's own shot before the server confirms it. */
   muzzle(at: THREE.Vector3) {
     this.add(this.sphere, 0xfff2b0, 0.06, (mesh) => mesh.position.copy(at), (mesh, p) => mesh.scale.setScalar(0.12 + p * 0.1))

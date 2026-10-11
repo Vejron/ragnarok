@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import {
-  encodeInput, encodePing, KIND_HELI, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_TANK, sceneStates, toAxis, toMrad, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_RIFLE,
+  encodeInput, encodePing, KIND_HELI, OBJ_BUILDING, OBJ_TREE, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_TANK, sceneStates, toAxis, toMrad, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_RIFLE,
   WEAPON_AUTOCANNON, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_SNIPER, WEAPON_WRECK,
   type EntityState, type InputFrame, type PickupState, type RocketState, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
 } from './net/codec'
@@ -16,7 +16,7 @@ import {
 } from './sim/consts'
 import { aimSpeedScale, emptyHotbar, GRENADE_BLAST_RADIUS, HOTBAR_SLOTS, ITEM_AK5, ITEM_NONE, ITEM_REVOLVER, itemDef, PICKUP_RADIUS, type ItemSlot } from './sim/items'
 import { InputController } from './sim/input'
-import { RapierMotor } from './sim/physics'
+import { RapierMotor, trunkColliderIndex } from './sim/physics'
 import { groundOf, Terrain } from './sim/terrain'
 import { VehicleDriver, type DrivenPose } from './sim/vehicle'
 import { Predictor } from './sim/predict'
@@ -35,11 +35,16 @@ import { loadTankModel, TankModel } from './render/tank'
 import { Character, Crowd } from './render/character'
 import { loadRoosterModel, RoosterModel } from './render/rooster'
 import { playCrow } from './audio'
-import { buildGround, buildTile, disposeTile, restitchTerrain } from './render/world'
+import { buildGround, buildTile, disposeTile, rebuildBuildings, restitchTerrain } from './render/world'
 import { buildWater, disposeWater, updateWater } from './render/water'
+import { FallingTrees } from './render/falling'
+import { Collapses } from './render/rubble'
 import { Replica } from './net/replica'
 import { TileStreamer } from './stream'
 import { loadManifest, type TileData, type TileRef, type WorldData } from './world'
+
+/** A tile's colliders in one simulation, with the ones taken out one by one (felled trunks) left `undefined`. */
+type TileSolids = (ReturnType<RapierMotor['addTile']>[number] | undefined)[]
 
 export interface HudStats {
   status: ConnectionStatus
@@ -170,6 +175,16 @@ export class Game {
   private terrain: Terrain | null = null
   /** Each streamed-in tile's drawing, by `row * 65536 + col`, so a new tile can re-shade its neighbours' seams. */
   private readonly tileGroups = new Map<number, THREE.Group>()
+  /** What each loaded tile was made from, and its colliders in both simulations, by tile key. */
+  private readonly tileSolids = new Map<number, { tile: TileData; salt: number; walk: TileSolids; drive: TileSolids }>()
+  /** Trees that have fallen, by tile key then index in the tile, with the yaw they fell at. */
+  private readonly fellTrees = new Map<number, Map<number, number>>()
+  private readonly fallingTrees = new FallingTrees()
+  /** Buildings that have collapsed, by tile key then index in the tile, with the yaw the blast came from. */
+  private readonly goneBuildings = new Map<number, Map<number, number>>()
+  private readonly collapses = new Collapses()
+  /** True from the welcome until the joiner's catch-up `destroyed` arrives: that one is state, not news. */
+  private awaitingCatchUp = false
   private readonly cars = new Map<number, VehicleModel>()
   private readonly effects = new Effects()
   private readonly rocketInterp = new Interpolator<RocketState>(blendRocket)
@@ -289,12 +304,15 @@ export class Game {
   /** Draws a streamed-in tile and makes it solid for both predicted simulations. Returns how to undo it. */
   private attachTile(ref: TileRef, tile: TileData) {
     const ground = this.world ? groundOf(this.world, ref, tile) : null
-    const group = buildTile(tile, ref.col * 31 + ref.row * 17, ground, this.terrain ?? undefined)
+    const salt = ref.col * 31 + ref.row * 17
+    const key = ref.row * 65536 + ref.col
+    // Buildings that fell before this tile streamed in (or while it was away) are not drawn.
+    const down = new Set(this.goneBuildings.get(key)?.keys())
+    const group = buildTile(tile, salt, ground, this.terrain ?? undefined, down)
     this.scene.scene.add(group)
     const water = ground ? buildWater(tile, ground, this.terrain ?? undefined) : null
     if (water) this.waterRoot.add(water)
     this.terrain?.set(ref, ground)
-    const key = ref.row * 65536 + ref.col
     this.tileGroups.set(key, group)
     // Tiles already in place were shaded without this one beside them: close the seams.
     if (this.terrain && ground) {
@@ -303,15 +321,69 @@ export class Game {
         if (next) restitchTerrain(next, this.terrain)
       }
     }
-    const walk = this.motor?.addTile(tile, ground) ?? []
-    const drive = this.driver?.addTile(tile, ground) ?? []
+    const walk: TileSolids = this.motor?.addTile(tile, ground) ?? []
+    const drive: TileSolids = this.driver?.addTile(tile, ground) ?? []
+    this.tileSolids.set(key, { tile, salt, walk, drive })
+    if (down.size > 0) {
+      this.dropBuildingColliders(key)
+      for (const index of down) Collapses.settled(group, tile, index)
+    }
+    // Trees that fell before this tile streamed in (or while it was away) are already down.
+    for (const [index, yaw] of this.fellTrees.get(key) ?? []) this.fellTree(key, index, yaw, false)
     return () => {
+      this.tileSolids.delete(key)
       disposeTile(group)
       if (water) disposeWater(water)
       this.tileGroups.delete(key)
       this.terrain?.delete(ref)
       this.motor?.removeTile(walk)
       this.driver?.removeTile(drive)
+    }
+  }
+
+  /**
+   * Fells tree number `index` of tile `key` if that tile is loaded: it leaves the tile's drawing
+   * and falls, and its trunk stops being solid in both simulations.
+   */
+  private fellTree(key: number, index: number, yaw: number, animate: boolean) {
+    const group = this.tileGroups.get(key)
+    const solids = this.tileSolids.get(key)
+    const tree = solids?.tile.trees[index]
+    if (!group || !solids || !tree) return
+    this.fallingTrees.fell(group, tree, index, yaw, animate)
+    const at = trunkColliderIndex(solids.tile, index)
+    if (at < 0) return
+    this.motor?.removeTile([solids.walk[at]])
+    this.driver?.removeTile([solids.drive[at]])
+    solids.walk[at] = undefined
+    solids.drive[at] = undefined
+  }
+
+  /** Rebuilds tile `key`'s building colliders in both simulations without the buildings that fell. */
+  private dropBuildingColliders(key: number) {
+    const solids = this.tileSolids.get(key)
+    if (!solids || solids.tile.collision.triangles.length === 0) return
+    const down = new Set(this.goneBuildings.get(key)?.keys())
+    // The building mesh is `addTile`'s first collider, when the tile has one.
+    if (this.motor) solids.walk[0] = this.motor.rebuildBuildings(solids.walk[0], solids.tile, down)
+    if (this.driver) solids.drive[0] = this.driver.rebuildBuildings(solids.drive[0], solids.tile, down)
+  }
+
+  /**
+   * Brings building `index` of tile `key` down, if that tile is loaded: it is redrawn without
+   * it, it stops being solid in both simulations, and it collapses in front of the player.
+   */
+  private fellBuilding(key: number, index: number, yaw: number, animate: boolean) {
+    const group = this.tileGroups.get(key)
+    const solids = this.tileSolids.get(key)
+    if (!group || !solids || !solids.tile.buildings[index]) return
+    const down = new Set(this.goneBuildings.get(key)?.keys())
+    rebuildBuildings(group, solids.tile, solids.salt, down)
+    this.dropBuildingColliders(key)
+    if (animate) {
+      this.collapses.start(group, solids.tile, index, solids.salt, yaw, (x, z) => this.terrain?.heightAt(x, z) ?? 0, key * 1_000_003 + index)
+    } else {
+      Collapses.settled(group, solids.tile, index)
     }
   }
 
@@ -327,6 +399,7 @@ export class Game {
 
   private onDisconnect() {
     this.localId = null
+    this.awaitingCatchUp = false
     this.seat = null
     this.scores.clear()
     this.feed = []
@@ -370,6 +443,7 @@ export class Game {
         }
         if (message.worldHash !== this.worldHash) this.warning = 'Server world differs from this page’s world.msgpack. Reload.'
         this.localId = message.id
+        this.awaitingCatchUp = true
         this.replica.reset()
         // Recreate the local stickman in this player's colour.
         this.avatars.get(0)?.dispose()
@@ -442,6 +516,27 @@ export class Game {
         this.interp.remove(message.id)
         this.scores.delete(message.id)
         break
+      case 'destroyed': {
+        const animate = !this.awaitingCatchUp
+        this.awaitingCatchUp = false
+        for (const object of message.objects) {
+          const key = object.row * 65536 + object.col
+          if (object.kind === OBJ_TREE) {
+            const fell = this.fellTrees.get(key) ?? new Map<number, number>()
+            this.fellTrees.set(key, fell)
+            if (fell.has(object.index)) continue
+            fell.set(object.index, object.yaw)
+            this.fellTree(key, object.index, object.yaw, animate)
+          } else if (object.kind === OBJ_BUILDING) {
+            const gone = this.goneBuildings.get(key) ?? new Map<number, number>()
+            this.goneBuildings.set(key, gone)
+            if (gone.has(object.index)) continue
+            gone.set(object.index, object.yaw)
+            this.fellBuilding(key, object.index, object.yaw, animate)
+          }
+        }
+        break
+      }
       case 'scores':
         this.scores.clear()
         for (const { id, kills, deaths } of message.scores) this.scores.set(id, { kills, deaths })
@@ -495,6 +590,8 @@ export class Game {
     this.lastFrame = now
 
     updateWater(now / 1000)
+    this.fallingTrees.update(dt)
+    this.collapses.update(dt, this.effects)
     this.accumulator += dt * 1000
     let ticks = 0
     while (this.accumulator >= TICK_MS && ticks < MAX_TICKS_PER_FRAME) {

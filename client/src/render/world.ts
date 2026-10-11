@@ -143,47 +143,98 @@ export function restitchTerrain(group: THREE.Group, around: HeightSource) {
  * of draw calls. `salt` keeps colours stable between reloads and varied across tiles. Roads are
  * ribbons draped on the terrain; ground cover is painted into the terrain's texture.
  */
-export function buildTile(tile: TileData, salt: number, ground: TileGround | null = null, around?: HeightSource): THREE.Group {
+export function buildTile(tile: TileData, salt: number, ground: TileGround | null = null, around?: HeightSource, destroyed: ReadonlySet<number> = NONE): THREE.Group {
   const group = new THREE.Group()
   if (ground) {
     group.add(buildTerrain(tile, ground, around))
     const size = (ground.side - 1) * ground.cell
     group.add(...buildRoads(tile.roads, heightSampler(ground, around), ground.cell, [ground.x0, ground.z0, ground.x0 + size, ground.z0 + size], TERRAIN_RAMP))
   }
+  group.add(...buildMerged(tile, salt, destroyed))
+  group.add(...buildTrees(tile.trees))
+  return group
+}
 
-  // Buildings: the importer's own triangles (walls, then roof) out of the collision mesh, so what
-  // is drawn is what is collided with. Walls and roofs are merged by colour.
-  const byColor = new Map<number, number[]>()
+const NONE: ReadonlySet<number> = new Set()
+
+/** The wall and roof colours of building `index`: stable between reloads, varied across tiles by `salt`. */
+export function buildingColors(tile: TileData, index: number, salt: number): { wall: number; roof: number } {
+  const building = tile.buildings[index]!
+  const palette = building?.roofKind === ROOF_FLAT ? FLAT_ROOF_COLORS : ROOF_COLORS
+  return { wall: BUILDING_COLORS[(index + salt) % BUILDING_COLORS.length]!, roof: palette[(index + salt) % palette.length]! }
+}
+
+/**
+ * Triangle soup for `count` triangles of the tile's collision mesh from `from`: the importer's
+ * own triangles, so what is drawn is what is collided with. The importer winds footprints
+ * counter-clockwise in (x, z); seen from +Y that is clockwise, so they are reversed to face
+ * outwards and up. `lower` is taken off every height.
+ */
+function trianglePositions(tile: TileData, from: number, count: number, out: number[], lower = 0): number[] {
   const { vertices, triangles } = tile.collision
+  for (let t = from; t < from + count; t++) {
+    for (const k of [0, 2, 1]) {
+      const v = triangles[t * 3 + k]! * 3
+      out.push(vertices[v]!, vertices[v + 1]! - lower, vertices[v + 2]!)
+    }
+  }
+  return out
+}
+
+/** The tile's buildings and bridges, merged by colour, leaving out the buildings in `destroyed`. */
+function buildMerged(tile: TileData, salt: number, destroyed: ReadonlySet<number>): THREE.Mesh[] {
+  const byColor = new Map<number, number[]>()
   const add = (color: number, from: number, count: number) => {
     const list = byColor.get(color) ?? []
-    for (let t = from; t < from + count; t++) {
-      // The importer winds footprints counter-clockwise in (x, z); seen from +Y that is clockwise, so
-      // its triangles are reversed to face outwards and up.
-      for (const k of [0, 2, 1]) {
-        const v = triangles[t * 3 + k]! * 3
-        list.push(vertices[v]!, vertices[v + 1]!, vertices[v + 2]!)
-      }
-    }
+    trianglePositions(tile, from, count, list)
     byColor.set(color, list)
   }
   tile.buildings.forEach((building, index) => {
-    add(BUILDING_COLORS[(index + salt) % BUILDING_COLORS.length]!, building.first, building.walls)
-    const palette = building.roofKind === ROOF_FLAT ? FLAT_ROOF_COLORS : ROOF_COLORS
-    add(palette[(index + salt) % palette.length]!, building.first + building.walls, building.roof)
+    if (destroyed.has(index)) return
+    const { wall, roof } = buildingColors(tile, index, salt)
+    add(wall, building.first, building.walls)
+    add(roof, building.first + building.walls, building.roof)
   })
   // Bridges: concrete deck, piers and parapets, then steel pylon and cables.
   for (const bridge of tile.bridges) {
     add(BRIDGE_DECK_COLOR, bridge.first, bridge.deck)
     add(BRIDGE_STEEL_COLOR, bridge.first + bridge.deck, bridge.steel)
   }
+  const meshes: THREE.Mesh[] = []
   for (const [color, positions] of byColor) {
     const mesh = new THREE.Mesh(flatGeometry(positions), material('building', color))
     mesh.castShadow = true
     mesh.receiveShadow = true
+    mesh.userData.merged = true
+    meshes.push(mesh)
+  }
+  return meshes
+}
+
+/** Redraws a tile's buildings without those in `destroyed` (indices into `tile.buildings`). */
+export function rebuildBuildings(group: THREE.Group, tile: TileData, salt: number, destroyed: ReadonlySet<number>) {
+  const stale = group.children.filter((child): child is THREE.Mesh => child.userData.merged === true && child instanceof THREE.Mesh)
+  for (const mesh of stale) {
+    mesh.geometry.dispose()
+    group.remove(mesh)
+  }
+  group.add(...buildMerged(tile, salt, destroyed))
+}
+
+/**
+ * Building `index` as a mesh of its own, for it to be seen collapsing: its walls and roof, with
+ * the floor at the group's origin so scaling `y` sinks it into the ground.
+ */
+export function collapsingBuilding(tile: TileData, index: number, salt: number): THREE.Group {
+  const building = tile.buildings[index]!
+  const { wall, roof } = buildingColors(tile, index, salt)
+  const group = new THREE.Group()
+  group.position.y = building.base
+  for (const [color, from, count] of [[wall, building.first, building.walls], [roof, building.first + building.walls, building.roof]] as const) {
+    const mesh = new THREE.Mesh(flatGeometry(trianglePositions(tile, from, count, [], building.base)), material('building', color))
+    mesh.castShadow = true
     group.add(mesh)
   }
-  group.add(...buildTrees(tile.trees))
   return group
 }
 

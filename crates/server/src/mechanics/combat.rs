@@ -2,10 +2,11 @@ use super::Mechanic;
 use super::npcs::{damage_rooster, first_rooster_hit};
 use super::spawn;
 use crate::game::{Rocket, World};
+use crate::physics::Obj;
 use shared::consts::*;
 use shared::items::*;
 use shared::protocol::{ItemSlot, Kill, PROJECTILE_BULLET, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_SNIPER, WEAPON_WRECK};
-use shared::quant::{from_mrad, to_cm};
+use shared::quant::{from_mrad, to_cm, to_mrad};
 
 /// Health, death, the items in the hotbar and what blasts do to people and vehicles.
 ///
@@ -185,6 +186,75 @@ pub fn blast(world: &mut World, blast: Blast) {
     for (vid, falloff) in world.physics.blast_cars(blast.point, blast.radius) {
         damage_vehicle(world, vid, (blast.damage * falloff).round().min(255.0) as u8, blast.attacker);
     }
+    for object in world.physics.objects_near(blast.point, blast.radius) {
+        let (distance, scale) = match object {
+            Obj::Tree(id) => {
+                let Some(tree) = world.tree(id) else { continue };
+                let at = [tree.x as f32 / 100.0, tree.base as f32 / 100.0 + tree.trunk_height() as f32 / 200.0, tree.z as f32 / 100.0];
+                ((0..3).map(|i| (at[i] - blast.point[i]).powi(2)).sum::<f32>().sqrt(), BLAST_TREE_SCALE)
+            }
+            // A wall takes the blast at its nearest face, not from the middle of the house.
+            Obj::Building(id) => match distance_to_building(world, id, blast.point) {
+                Some(distance) => (distance, 1.0),
+                None => continue,
+            },
+        };
+        let falloff = (1.0 - distance / blast.radius).max(0.0);
+        damage_object(world, object, (blast.damage * falloff * scale).round().min(u16::MAX as f32) as u16, blast.point);
+    }
+}
+
+/// What a blast's centre damage becomes against a tree: they are tougher than people to
+/// a rifle but not to a rocket.
+const BLAST_TREE_SCALE: f32 = 4.0;
+
+/// A bullet does this much less to a building than its damage: rifles chip walls, they don't fell them.
+const BULLET_BUILDING_DIVISOR: u16 = 3;
+
+/// Takes `amount` health off a building or tree. At zero it is destroyed: its collider goes, and
+/// everyone is told, with the way it falls (a tree: away from `from`, where the damage came from;
+/// a building: the same, for the way its rubble is thrown).
+pub fn damage_object(world: &mut World, object: Obj, amount: u16, from: [f32; 3]) {
+    if amount == 0 || world.destroyed.iter().any(|&(done, _)| done == object) {
+        return;
+    }
+    // Full health and where it stands, in metres.
+    let (full, at) = match object {
+        Obj::Tree(id) => match world.tree(id) {
+            Some(tree) => (tree.hp(), [tree.x as f32 / 100.0, tree.z as f32 / 100.0]),
+            None => return,
+        },
+        Obj::Building(id) => match world.building(id) {
+            Some(building) => {
+                let [x, z] = building.centre();
+                (building.hp(), [x as f32 / 100.0, z as f32 / 100.0])
+            }
+            None => return,
+        },
+    };
+    let left = world.object_hp.get(&object).copied().unwrap_or(full).saturating_sub(amount);
+    if left > 0 {
+        world.object_hp.insert(object, left);
+        return;
+    }
+    world.object_hp.remove(&object);
+    if !world.physics.destroy(object) {
+        return;
+    }
+    // `look`'s convention: yaw 0 faces -Z.
+    let yaw = to_mrad((-(at[0] - from[0])).atan2(-(at[1] - from[2])));
+    world.destroyed.push((object, yaw));
+    world.fresh_destroyed.push((object, yaw));
+}
+
+/// How close `point` is to building `id`'s bounding box, metres: 0 inside it.
+fn distance_to_building(world: &World, id: shared::world::ObjId, point: [f32; 3]) -> Option<f32> {
+    let building = world.building(id)?;
+    let [min_x, min_z, max_x, max_z] = building.bounds();
+    let (bottom, top) = (building.base as f32 / 100.0, (building.base + building.height) as f32 / 100.0);
+    let outside = |lo: f32, hi: f32, v: f32| (lo - v).max(v - hi).max(0.0);
+    let (dx, dy, dz) = (outside(min_x as f32 / 100.0, max_x as f32 / 100.0, point[0]), outside(bottom, top, point[1]), outside(min_z as f32 / 100.0, max_z as f32 / 100.0, point[2]));
+    Some((dx * dx + dy * dy + dz * dz).sqrt())
 }
 
 /// Takes `amount` health off vehicle `vid`, and wrecks it at zero.
@@ -306,6 +376,8 @@ fn step_bullet(world: &mut World, id: u32, dt: f32) {
             damage(world, victim, damage_dealt, attacker, WEAPON_SNIPER);
         } else if let Some((_, Some(car))) = wall {
             damage_vehicle(world, car, (damage_dealt / 4).max(1), attacker);
+        } else if wall.is_some() {
+            hit_object(world, bullet.position, dir, reach, damage_dealt);
         }
         let [x, y, z] = point.map(to_cm);
         world.shots.push(ShotEvent(bullet.owner, WEAPON_SNIPER, x, y, z));
@@ -400,6 +472,19 @@ fn effective_spread(item: &ItemDef, buttons: u8) -> f32 {
     if buttons & BUTTON_ALT != 0 { item.spread * AIM_SPREAD_SCALE } else { item.spread }
 }
 
+/// A round that ended in the world: damages the building or tree it struck, if it was one.
+fn hit_object(world: &mut World, origin: [f32; 3], dir: [f32; 3], reach: f32, damage: u8) {
+    // The ray stops at the surface; look a hair past it to be inside the collider.
+    if let Some((_, Some(object))) = world.physics.cast_ray_object(origin, dir, reach + 0.05) {
+        // Bullets only chip a wall: a third of what they do to a tree, and never nothing.
+        let amount = match object {
+            Obj::Tree(_) => damage as u16,
+            Obj::Building(_) => (damage as u16 / BULLET_BUILDING_DIVISOR).max(1),
+        };
+        damage_object(world, object, amount, origin);
+    }
+}
+
 /// Fires gun `item` from player `id`'s eye, towards what the crosshair is on.
 fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     let Some(player) = world.players.get(&id) else { return };
@@ -449,6 +534,8 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     } else if let Some((_, Some(car))) = wall {
         // A nuisance, not a way to kill a vehicle.
         damage_vehicle(world, car, (item.damage / 4).max(1), Some(id));
+    } else if wall.is_some() {
+        hit_object(world, origin, dir, reach, item.damage);
     }
     let point: [i32; 3] = std::array::from_fn(|i| to_cm(origin[i] + dir[i] * end));
     world.shots.push(ShotEvent(id, item.weapon, point[0], point[1], point[2]));
@@ -1157,5 +1244,167 @@ mod tests {
         assert!(game.world.players[&target].alive());
         assert!(game.world.players[&target].hotbar.iter().all(|slot| slot.0 == ITEM_NONE));
         let _ = &mut seq;
+    }
+    /// A game on a world with one solid pine at (10, 0), identified as tile (2, 3) index 0.
+    fn game_with_tree() -> (Game, Obj) {
+        use shared::world::{ObjId, TREE_PINE, Tree};
+        let tree = Tree { x: 1000, z: 0, base: 0, height: 1600, crown: 300, kind: TREE_PINE, solid: true };
+        let id = ObjId { col: 2, row: 3, index: 0 };
+        let map = WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[0, 0]], trees: vec![tree], tree_ids: vec![id], ..Default::default() };
+        let mut game = Game::new(map, 0).unwrap();
+        game.world.pickups.clear();
+        (game, Obj::Tree(id))
+    }
+
+    #[test]
+    fn rifle_rounds_wear_a_tree_down_until_it_falls_away_from_the_shooter() {
+        let (mut game, tree) = game_with_tree();
+        let hp = game.world.tree(match tree { Obj::Tree(id) => id, _ => unreachable!() }).unwrap().hp();
+        let rounds = hp.div_ceil(12);
+        for _ in 0..rounds - 1 {
+            damage_object(&mut game.world, tree, 12, [0.0, 1.5, 0.0]);
+        }
+        assert!(game.world.destroyed.is_empty(), "fell after {} rounds, wanted {rounds}", rounds - 1);
+        damage_object(&mut game.world, tree, 12, [0.0, 1.5, 0.0]);
+        assert_eq!(game.world.destroyed.len(), 1);
+        // The shooter is at x = 0 and the tree at x = +10, so it falls towards +X: yaw -90°.
+        let yaw = from_mrad(game.world.destroyed[0].1);
+        assert!((yaw + std::f32::consts::FRAC_PI_2).abs() < 0.01, "{yaw}");
+        // Nothing happens twice.
+        damage_object(&mut game.world, tree, 255, [0.0, 1.5, 0.0]);
+        assert_eq!(game.world.destroyed.len(), 1);
+    }
+
+    #[test]
+    fn a_blast_fells_a_tree_in_reach_and_everyone_hears_of_it() {
+        let (mut game, _) = game_with_tree();
+        let (id, mut inbox) = join(&mut game);
+        while inbox.try_recv().is_ok() {}
+        let point = [10.0, 1.0, 1.5];
+        assert_eq!(game.world.physics.cast_ray_object([10.0, 1.0, 5.0], [0.0, 0.0, -1.0], 10.0).map(|(_, o)| o.is_some()), Some(true));
+        blast(&mut game.world, Blast { point, radius: 5.0, damage: 100.0, knock: 0.0, dir: [0.0, 1.0, 0.0], attacker: Some(id), weapon: WEAPON_ROCKET });
+        game.step();
+        assert_eq!(game.world.destroyed.len(), 1);
+        let mut told = false;
+        while let Ok(Outgoing::Reliable(bytes)) = inbox.try_recv() {
+            if shared::protocol::peek_tag(&bytes) == Some(shared::protocol::S_DESTROYED) {
+                let message: shared::protocol::Destroyed = decode(&bytes).unwrap();
+                assert_eq!(message.1.len(), 1);
+                assert_eq!((message.1[0].0, message.1[0].1, message.1[0].2, message.1[0].3), (shared::protocol::OBJ_TREE, 2, 3, 0));
+                told = true;
+            }
+        }
+        assert!(told, "no Destroyed message");
+        // Its trunk no longer stops a ray, and a player who joins now is told it is gone.
+        assert!(game.world.physics.cast_ray_object([10.0, 1.0, 5.0], [0.0, 0.0, -1.0], 10.0).is_none());
+        let (_, mut late) = join(&mut game);
+        let mut late_told = false;
+        while let Ok(Outgoing::Reliable(bytes)) = late.try_recv() {
+            late_told |= shared::protocol::peek_tag(&bytes) == Some(shared::protocol::S_DESTROYED);
+        }
+        assert!(late_told, "a late joiner was not told");
+    }
+
+    #[test]
+    fn a_blast_out_of_reach_leaves_the_tree_standing() {
+        let (mut game, _) = game_with_tree();
+        blast(&mut game.world, Blast { point: [10.0, 1.0, 30.0], radius: 5.0, damage: 100.0, knock: 0.0, dir: [0.0, 1.0, 0.0], attacker: None, weapon: WEAPON_ROCKET });
+        game.step();
+        assert!(game.world.destroyed.is_empty());
+    }
+    /// A 10 x 10 m, 6 m tall house with its middle at (20, 0), as a closed box mesh, in tile (1, 1).
+    fn game_with_house() -> (Game, Obj) {
+        use shared::world::{Building, CollisionMesh, ObjId};
+        let v = |x: f32, y: f32, z: f32| [(x * 100.0) as i32, (y * 100.0) as i32, (z * 100.0) as i32];
+        let vertices = vec![
+            v(15.0, 0.0, -5.0), v(25.0, 0.0, -5.0), v(25.0, 0.0, 5.0), v(15.0, 0.0, 5.0),
+            v(15.0, 6.0, -5.0), v(25.0, 6.0, -5.0), v(25.0, 6.0, 5.0), v(15.0, 6.0, 5.0),
+        ];
+        let triangles = vec![
+            [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6],
+            [3, 0, 4], [3, 4, 7], [4, 5, 6], [4, 6, 7], [0, 2, 1], [0, 3, 2],
+        ];
+        let building = Building {
+            height: 600,
+            footprint: vec![[1500, -500], [2500, -500], [2500, 500], [1500, 500]],
+            base: 0,
+            first: 0,
+            walls: 8,
+            roof: 2,
+            ..Default::default()
+        };
+        let id = ObjId { col: 1, row: 1, index: 0 };
+        let map = WorldFile {
+            version: WORLD_VERSION,
+            half_extent: 20_000,
+            spawns: vec![[0, 0]],
+            buildings: vec![building],
+            building_ids: vec![id],
+            building_triangles: vec![[0, 12]],
+            collision: CollisionMesh { vertices, triangles },
+            ..Default::default()
+        };
+        let mut game = Game::new(map, 0).unwrap();
+        game.world.pickups.clear();
+        (game, Obj::Building(id))
+    }
+
+    fn rocket_at(game: &mut Game, point: [f32; 3]) {
+        blast(&mut game.world, Blast { point, radius: ROCKET_BLAST_RADIUS, damage: ROCKET_DAMAGE, knock: 0.0, dir: [0.0, 1.0, 0.0], attacker: None, weapon: WEAPON_ROCKET });
+    }
+
+    #[test]
+    fn a_house_survives_a_rifle_magazine_but_not_two_rockets() {
+        let (mut game, house) = game_with_house();
+        let Obj::Building(id) = house else { unreachable!() };
+        let hp = game.world.building(id).unwrap().hp();
+        assert_eq!(hp, 150, "a 10 x 10 x 6 m house");
+        // A magazine of 10 AK5 rounds, at a third of 12 each: 40 of 150.
+        for _ in 0..10 {
+            damage_object(&mut game.world, house, (12u16 / BULLET_BUILDING_DIVISOR).max(1), [0.0, 1.5, 0.0]);
+        }
+        assert!(game.world.destroyed.is_empty(), "a magazine brought it down");
+        // A rocket 1 m from the wall does 88 of the 110 left: one is not enough, two are.
+        rocket_at(&mut game, [14.0, 1.0, 0.0]);
+        assert!(game.world.destroyed.is_empty(), "one rocket after a magazine was enough");
+        rocket_at(&mut game, [14.0, 1.0, 0.0]);
+        assert_eq!(game.world.destroyed.len(), 1);
+        // The rubble flies away from the blast, which came from -X: towards +X, yaw -90 degrees.
+        let yaw = from_mrad(game.world.destroyed[0].1);
+        assert!((yaw + std::f32::consts::FRAC_PI_2).abs() < 0.2, "{yaw}");
+    }
+
+    #[test]
+    fn a_rocket_on_the_wall_hurts_but_one_across_the_street_does_not() {
+        let (mut game, house) = game_with_house();
+        rocket_at(&mut game, [30.0, 1.0, 0.0]);
+        game.step();
+        assert!(game.world.object_hp.is_empty() && game.world.destroyed.is_empty(), "5 m from the wall is out of reach: {:?}", game.world.object_hp);
+        rocket_at(&mut game, [27.0, 1.0, 0.0]);
+        assert!(game.world.object_hp.get(&house).is_some_and(|&hp| hp < 150));
+    }
+
+    #[test]
+    fn a_collapsed_house_is_open_air_and_a_joiner_is_told() {
+        let (mut game, house) = game_with_house();
+        let (_, mut told) = join(&mut game);
+        while told.try_recv().is_ok() {}
+        assert!(game.world.physics.cast_ray_object([12.0, 1.0, 0.0], [1.0, 0.0, 0.0], 40.0).is_some(), "the house is there to begin with");
+        damage_object(&mut game.world, house, 150, [0.0, 1.5, 0.0]);
+        game.step();
+        assert!(game.world.physics.cast_ray_object([12.0, 1.0, 0.0], [1.0, 0.0, 0.0], 40.0).is_none(), "the walls still stop a ray");
+        let mut kinds = Vec::new();
+        while let Ok(Outgoing::Reliable(bytes)) = told.try_recv() {
+            if shared::protocol::peek_tag(&bytes) == Some(shared::protocol::S_DESTROYED) {
+                kinds.extend(decode::<shared::protocol::Destroyed>(&bytes).unwrap().1.into_iter().map(|e| (e.0, e.1, e.2, e.3)));
+            }
+        }
+        assert_eq!(kinds, vec![(shared::protocol::OBJ_BUILDING, 1, 1, 0)]);
+        let (_, mut late) = join(&mut game);
+        let mut seen = false;
+        while let Ok(Outgoing::Reliable(bytes)) = late.try_recv() {
+            seen |= shared::protocol::peek_tag(&bytes) == Some(shared::protocol::S_DESTROYED);
+        }
+        assert!(seen, "a late joiner never heard the house fell");
     }
 }

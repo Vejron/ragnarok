@@ -6,7 +6,7 @@ import {
   TANK_WHEEL_RADIUS, TANK_TURRET_HALF_HEIGHT, TANK_TURRET_PIVOT, TANK_TURRET_RADIUS, HELI_BANK, HELI_CEILING, HELI_CLIMB_SPEED, HELI_HALF_EXTENTS, HELI_LEVEL_GAIN, HELI_RESPONSE, HELI_SINK_SPEED, HELI_TILT,
   HELI_VERT_ACCEL, HELI_VERT_GAIN, HELI_YAW_RATE, BUTTON_RUN,
 } from './consts'
-import { addTileCollider, buildStaticColliders, VehicleSolids } from './physics'
+import { addTileCollider, buildStaticColliders, rebuildBuildingCollider, VehicleSolids } from './physics'
 import type { TileGround } from './terrain'
 import { fromAxis, KIND_HELI, KIND_SPORTS, KIND_TANK, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
 import type { TileData, WorldData } from '@/world'
@@ -412,8 +412,17 @@ export class VehicleDriver {
     return colliders
   }
 
-  removeTile(colliders: readonly RAPIER.Collider[]) {
-    for (const collider of colliders) this.world.removeCollider(collider, false)
+  /** Colliders already taken out one by one (a felled tree's trunk) are `undefined`. */
+  removeTile(colliders: readonly (RAPIER.Collider | undefined)[]) {
+    for (const collider of colliders) if (collider) this.world.removeCollider(collider, false)
+  }
+
+  /** As `RapierMotor.rebuildBuildings`. */
+  rebuildBuildings(old: RAPIER.Collider | undefined, tile: TileData, destroyed: ReadonlySet<number>): RAPIER.Collider | undefined {
+    if (old) this.world.removeCollider(old, false)
+    const next = rebuildBuildingCollider(this.world, tile, destroyed) ?? undefined
+    if (next && !this.sim) this.world.step()
+    return next
   }
 
   /** Whether a vehicle is being predicted, and which. */

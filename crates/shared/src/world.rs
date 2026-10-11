@@ -139,6 +139,26 @@ pub struct WorldFile {
     pub ground: Ground,
     /// Every tree, for trunk colliders.
     pub trees: Vec<Tree>,
+    /// `buildings[i]`'s identity. Filled by `assemble`; empty for a world built by hand.
+    #[serde(skip)]
+    pub building_ids: Vec<ObjId>,
+    /// `buildings[i]`'s triangles in the merged `collision` mesh, as `[start, end)`. Filled by
+    /// `assemble`. `Building::first` is tile-local, so it cannot index the merged mesh.
+    #[serde(skip)]
+    pub building_triangles: Vec<[u32; 2]>,
+    /// `trees[i]`'s identity. Filled by `assemble`; empty for a world built by hand.
+    #[serde(skip)]
+    pub tree_ids: Vec<ObjId>,
+}
+
+/// Identity of a building or tree: its tile and its index in that tile's list. Tiles stream in
+/// one at a time on the client, so this is the one id both sides can compute without the whole
+/// world. A re-import renumbers it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ObjId {
+    pub col: u16,
+    pub row: u16,
+    pub index: u32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -156,6 +176,38 @@ pub struct Building {
     pub roof: u32,
     /// `ROOF_*`: what the roof was fitted as.
     pub roof_kind: u8,
+}
+
+impl Building {
+    /// Hit points, as `Tree::hp`: a shed falls to a rocket or two, a block takes a dozen. Follows
+    /// the volume, capped so even the biggest is a siege and not a campaign. Server only.
+    pub fn hp(&self) -> u16 {
+        let [min_x, min_z, max_x, max_z] = self.bounds();
+        // The footprint's own area, by the shoelace formula, in square metres.
+        let n = self.footprint.len();
+        let twice: i64 = (0..n)
+            .map(|i| {
+                let (a, b) = (self.footprint[i], self.footprint[(i + 1) % n]);
+                a[0] as i64 * b[1] as i64 - b[0] as i64 * a[1] as i64
+            })
+            .sum();
+        let area = (twice.abs() as f32 / 2.0) / 10_000.0;
+        // A thin or L-shaped footprint is not its bounding box, but never below a third of it.
+        let boxed = ((max_x - min_x) as f32 / 100.0) * ((max_z - min_z) as f32 / 100.0);
+        let area = area.max(boxed / 3.0);
+        (area * self.height as f32 / 100.0 / 4.0).clamp(150.0, 1200.0) as u16
+    }
+
+    /// `[min_x, min_z, max_x, max_z]` of the footprint, centimetres.
+    pub fn bounds(&self) -> [i32; 4] {
+        self.footprint.iter().fold([i32::MAX, i32::MAX, i32::MIN, i32::MIN], |b, p| [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])])
+    }
+
+    /// The middle of the footprint's bounding box `[x, z]`, centimetres.
+    pub fn centre(&self) -> [i32; 2] {
+        let [min_x, min_z, max_x, max_z] = self.bounds();
+        [(min_x + max_x) / 2, (min_z + max_z) / 2]
+    }
 }
 
 pub const ROOF_FLAT: u8 = 0;
@@ -226,6 +278,12 @@ impl Tree {
             _ => (15, 1200),
         };
         (base_radius * self.height / base_height).clamp(5, 60)
+    }
+
+    /// Hit points: a slim tree falls to a few rifle rounds, a broad trunk wants a sniper round
+    /// or a blast. Server only, but kept next to the trunk size it follows.
+    pub fn hp(&self) -> u16 {
+        (self.trunk_radius() * 4).max(30) as u16
     }
 
     /// Height of the trunk collider above `base`, centimetres: the lower half of the tree, where
@@ -309,6 +367,17 @@ impl WorldFile {
                 }
             }
             let base = world.collision.vertices.len() as u32;
+            let triangle_base = world.collision.triangles.len() as u32;
+            // A building's triangles run up to whatever the importer wrote next in the tile: the
+            // next building, or a bridge, or the end of the mesh.
+            let tile_end = tile.collision.triangles.len() as u32;
+            let starts: Vec<u32> = tile.buildings.iter().map(|b| b.first).chain(tile.bridges.iter().map(|b| b.first)).collect();
+            for (index, building) in tile.buildings.iter().enumerate() {
+                let end = starts.iter().copied().filter(|&start| start > building.first).min().unwrap_or(tile_end).min(tile_end);
+                world.building_ids.push(ObjId { col, row, index: index as u32 });
+                world.building_triangles.push([triangle_base + building.first.min(end), triangle_base + end]);
+            }
+            world.tree_ids.extend((0..tile.trees.len()).map(|index| ObjId { col, row, index: index as u32 }));
             world.collision.vertices.extend(tile.collision.vertices);
             world.collision.triangles.extend(tile.collision.triangles.into_iter().map(|[a, b, c]| [a + base, b + base, c + base]));
             world.buildings.extend(tile.buildings);
@@ -328,6 +397,28 @@ pub fn world_hash(bytes: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn assemble_names_each_building_and_its_merged_triangles() {
+        let manifest = Manifest { version: WORLD_VERSION, half_extent: 20_000, tile_size: 20_000, ..Default::default() };
+        // Tile A: two buildings (4 and 2 triangles) then a bridge (2). Tile B: one building (3).
+        let building = |first| Building { first, ..Default::default() };
+        let mesh = |triangles: usize| CollisionMesh { vertices: vec![[0, 0, 0]; 3], triangles: vec![[0, 1, 2]; triangles] };
+        let a = Tile {
+            buildings: vec![building(0), building(4)],
+            bridges: vec![Bridge { first: 6, deck: 2, steel: 0 }],
+            collision: mesh(8),
+            trees: vec![Tree::default(); 2],
+            ..Default::default()
+        };
+        let b = Tile { buildings: vec![building(0)], collision: mesh(3), trees: vec![Tree::default()], ..Default::default() };
+        let world = WorldFile::assemble(&manifest, [(0, 0, a), (1, 0, b)]);
+        assert_eq!(world.building_triangles, vec![[0, 4], [4, 6], [8, 11]]);
+        let id = |col, row, index| ObjId { col, row, index };
+        assert_eq!(world.building_ids, vec![id(0, 0, 0), id(0, 0, 1), id(1, 0, 0)]);
+        assert_eq!(world.tree_ids, vec![id(0, 0, 0), id(0, 0, 1), id(1, 0, 0)]);
+        assert_eq!(world.collision.triangles.len(), 11);
+    }
 
     #[test]
     fn manifest_and_tile_round_trip() {

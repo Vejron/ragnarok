@@ -3,7 +3,7 @@
 
 use crate::jitter::JitterBuffer;
 use crate::mechanics::{Mechanic, default_mechanics};
-use crate::physics::{CarControls, Character, Physics};
+use crate::physics::{CarControls, Character, Obj, Physics};
 use crate::replication::{Everything, Own, Replica};
 use crate::rng::Rng;
 use anyhow::Result;
@@ -12,8 +12,8 @@ use shared::consts::*;
 use shared::items::{HOTBAR_SLOTS, ITEM_NONE};
 use shared::protocol::*;
 use shared::quant::{pack_quat, to_axis, to_cm, to_cm_i16, to_milli_i16, to_mrad};
-use shared::world::WorldFile;
-use std::collections::{BTreeMap, VecDeque};
+use shared::world::{Building, ObjId, Tree, WorldFile};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{MissedTickBehavior, interval};
@@ -210,6 +210,16 @@ pub struct World {
     pub shots: Vec<ShotEvent>,
     /// Kills since the last tick. Drained and broadcast reliably by `Game::step`.
     pub kills: Vec<Kill>,
+    /// Solid trees by identity, to look their size up from a collider hit.
+    trees_by_id: HashMap<ObjId, usize>,
+    /// Buildings by identity.
+    buildings_by_id: HashMap<ObjId, usize>,
+    /// Health left on buildings and trees that have been hurt but still stand.
+    pub object_hp: HashMap<Obj, u16>,
+    /// Everything destroyed so far with the yaw it fell at, oldest first. A joiner is told all of it.
+    pub destroyed: Vec<(Obj, i16)>,
+    /// What was destroyed since the last tick. Drained and broadcast reliably by `Game::step`.
+    pub fresh_destroyed: Vec<(Obj, i16)>,
     /// Where each standing, living player was at the end of each of the last few ticks, newest
     /// last, labelled with the tick number a snapshot of that state carries. Lag compensation
     /// rewinds shots against it.
@@ -233,10 +243,28 @@ impl World {
         positions.iter().find(|(who, _)| *who == id).map(|(_, position)| *position)
     }
 
+    /// The tree `id` names, if it is one that can be hit.
+    pub fn tree(&self, id: ObjId) -> Option<&Tree> {
+        self.trees_by_id.get(&id).and_then(|&index| self.map.trees.get(index))
+    }
+
+    /// The building `id` names.
+    pub fn building(&self, id: ObjId) -> Option<&Building> {
+        self.buildings_by_id.get(&id).and_then(|&index| self.map.buildings.get(index))
+    }
+
     pub fn alloc_id(&mut self) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
         id
+    }
+}
+
+/// `object` as a `Destroyed` entry.
+fn destroyed_entry(object: Obj, yaw: i16) -> (u8, u16, u16, u32, i16) {
+    match object {
+        Obj::Tree(id) => (OBJ_TREE, id.col, id.row, id.index, yaw),
+        Obj::Building(id) => (OBJ_BUILDING, id.col, id.row, id.index, yaw),
     }
 }
 
@@ -255,6 +283,11 @@ impl Game {
             world: World {
                 tick: 0,
                 physics: Physics::new(&map)?,
+                trees_by_id: map.tree_ids.iter().enumerate().filter(|&(index, _)| map.trees[index].solid).map(|(index, &id)| (id, index)).collect(),
+                buildings_by_id: map.building_ids.iter().enumerate().map(|(index, &id)| (id, index)).collect(),
+                object_hp: HashMap::new(),
+                destroyed: Vec::new(),
+                fresh_destroyed: Vec::new(),
                 map,
                 players: BTreeMap::new(),
                 vehicles: BTreeMap::new(),
@@ -327,6 +360,10 @@ impl Game {
         );
         let scores = self.world.players.iter().map(|(&id, player)| (id, player.kills, player.deaths)).collect();
         let _ = outbox.try_send(Outgoing::Reliable(encode(&Scores(S_SCORES, scores)).into()));
+        // Always sent, even empty: the client takes the first one after the welcome as the catch-up
+        // (not news to animate), and snapshots on the datagram channel can overtake it.
+        let message = Destroyed(S_DESTROYED, self.world.destroyed.iter().map(|&(object, yaw)| destroyed_entry(object, yaw)).collect());
+        let _ = outbox.try_send(Outgoing::Reliable(encode(&message).into()));
         self.outboxes.insert(id, outbox);
         self.replicas.insert(id, Replica::default());
         for mechanic in &mut self.mechanics {
@@ -366,10 +403,23 @@ impl Game {
             mechanic.on_tick(&mut self.world, TICK_DT);
         }
         self.broadcast_kills();
+        self.broadcast_destroyed();
         self.world.tick = self.world.tick.wrapping_add(1);
         self.world.record_history();
         if self.world.tick.is_multiple_of(SNAPSHOT_EVERY) {
             self.send_snapshots();
+        }
+    }
+
+    /// Tells everyone about the buildings and trees destroyed this tick, as one message.
+    fn broadcast_destroyed(&mut self) {
+        if self.world.fresh_destroyed.is_empty() {
+            return;
+        }
+        let entries = self.world.fresh_destroyed.drain(..).map(|(object, yaw)| destroyed_entry(object, yaw)).collect();
+        let bytes = Bytes::from(encode(&Destroyed(S_DESTROYED, entries)));
+        for outbox in self.outboxes.values() {
+            let _ = outbox.try_send(Outgoing::Reliable(bytes.clone()));
         }
     }
 

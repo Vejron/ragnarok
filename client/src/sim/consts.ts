@@ -1,6 +1,6 @@
 /** Mirrors `crates/shared/src/consts.rs`. Keep the two in step. */
 
-export const PROTOCOL_VERSION = 14
+export const PROTOCOL_VERSION = 15
 
 export const TICK_RATE = 60
 export const TICK_DT = 1 / TICK_RATE

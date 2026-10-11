@@ -16,6 +16,11 @@ const S_PONG = 2
 const S_LEAVE = 3
 const S_KILL = 4
 const S_SCORES = 5
+const S_DESTROYED = 6
+
+/** `Destroyed` entry kinds: what part of the static world fell. */
+export const OBJ_TREE = 0
+export const OBJ_BUILDING = 1
 
 export const KIND_STICKMAN = 0
 export const KIND_JEEP = 1
@@ -175,6 +180,17 @@ export interface PickupState {
   z: number
 }
 
+/** A building or tree that is gone, named by its tile and index in the tile's list. */
+export interface DestroyedObject {
+  /** `OBJ_*`. */
+  kind: number
+  col: number
+  row: number
+  index: number
+  /** Radians: the way a tree falls (yaw 0 faces -Z, as everywhere), or where a blast came from. */
+  yaw: number
+}
+
 export interface Score {
   id: number
   kills: number
@@ -239,6 +255,8 @@ export type ServerMessage =
   /** `killer` is 0 when the world did it. Totals are the new ones. */
   | { type: 'kill'; killer: number; victim: number; weapon: number; killerKills: number; victimDeaths: number }
   | { type: 'scores'; scores: Score[] }
+  /** Buildings and trees destroyed since the last such message; the first one a joiner gets is all of them. */
+  | { type: 'destroyed'; objects: DestroyedObject[] }
 
 const CM = 100
 const MRAD = 1000
@@ -493,6 +511,15 @@ export function decodeServer(bytes: Uint8Array): ServerMessage | null {
         scores.push({ id: item[0] as number, kills: item[1] as number, deaths: item[2] as number })
       }
       return { type: 'scores', scores }
+    }
+    case S_DESTROYED: {
+      if (raw.length !== 2 || !Array.isArray(raw[1])) return null
+      const objects: DestroyedObject[] = []
+      for (const item of raw[1] as unknown[]) {
+        if (!Array.isArray(item) || item.length !== 5 || !ints(item)) return null
+        objects.push({ kind: item[0] as number, col: item[1] as number, row: item[2] as number, index: item[3] as number, yaw: (item[4] as number) / MRAD })
+      }
+      return { type: 'destroyed', objects }
     }
     default:
       return null

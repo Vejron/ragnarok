@@ -12,10 +12,18 @@ use shared::consts::*;
 use shared::movement::{begin_slide, decay_knock, desired_translation, settle_vertical};
 use shared::protocol::InputFrame;
 use shared::quant::from_cm;
-use shared::world::WorldFile;
+use shared::world::{ObjId, WorldFile};
+use std::collections::HashMap;
 
 mod vehicle;
 pub use vehicle::{CarControls, CarPose, half_extents};
+
+/// A destructible piece of the static world: a building or a tree, by tile and index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Obj {
+    Building(ObjId),
+    Tree(ObjId),
+}
 
 /// Authoritative state of one stickman. Positions are the capsule centre, in metres.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -49,6 +57,12 @@ pub struct Physics {
     /// standing: it keeps them on a slope they walk down instead of stepping off it.
     snapping: KinematicCharacterController,
     character_shape: Collider,
+    /// Which building or tree each destructible static collider is.
+    objects: HashMap<ColliderHandle, Obj>,
+    handles: HashMap<Obj, ColliderHandle>,
+    /// Objects destroyed since the last step. Their colliders go at the start of the next
+    /// `step_cars`, which is also what makes the broad-phase forget them.
+    removals: Vec<Obj>,
 }
 
 /// Height of the top of the invisible boundary walls around the playable square, metres above
@@ -62,13 +76,15 @@ const BED_FLOOR: f32 = 12.0;
 /// The static colliders every simulation of `world` uses: the ground slab, the terrain, four
 /// boundary walls, the building mesh and the tree trunks. Mirrored by `buildStaticColliders` in
 /// `client/src/sim/physics.ts`.
-pub fn static_colliders(world: &WorldFile) -> Result<Vec<Collider>> {
+///
+/// A building or tree comes with the [`Obj`] it is, for worlds that went through `assemble`.
+pub fn static_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)>> {
     let half = from_cm(world.half_extent);
     // Ground: a 1 m thick slab. On flat worlds its top is y = 0 and it is the whole ground;
     // elsewhere it sits `BED_FLOOR` below, under the lowest water bed, and only catches what
     // falls through a gap.
     let top = if world.ground.is_flat() { 0.0 } else { -BED_FLOOR };
-    let mut colliders = vec![ColliderBuilder::cuboid(half, 0.5, half).translation(Vector::new(0.0, top - 0.5, 0.0)).build()];
+    let mut colliders = vec![(ColliderBuilder::cuboid(half, 0.5, half).translation(Vector::new(0.0, top - 0.5, 0.0)).build(), None)];
     let ground = &world.ground;
     if !ground.is_flat() {
         let side = ground.side as usize;
@@ -81,35 +97,61 @@ pub fn static_colliders(world: &WorldFile) -> Result<Vec<Collider>> {
         }
         let width = (side - 1) as f32 * from_cm(ground.cell);
         let center = from_cm(ground.origin) + width / 2.0;
-        colliders.push(
+        colliders.push((
             ColliderBuilder::heightfield(Array2::new(side, side, heights), Vector::new(width, 1.0, width))
                 .translation(Vector::new(center, 0.0, center))
                 .build(),
-        );
+            None,
+        ));
     }
     let wall = BOUNDARY_HEIGHT / 2.0;
     for (x, z, hx, hz) in [(half, 0.0, 0.5, half), (-half, 0.0, 0.5, half), (0.0, half, half, 0.5), (0.0, -half, half, 0.5)] {
-        colliders.push(ColliderBuilder::cuboid(hx, wall, hz).translation(Vector::new(x, wall, z)).build());
+        colliders.push((ColliderBuilder::cuboid(hx, wall, hz).translation(Vector::new(x, wall, z)).build(), None));
     }
     let mesh = &world.collision;
     if !mesh.triangles.is_empty() {
-        let vertices = mesh
-            .vertices
-            .iter()
-            .map(|&[x, y, z]| Vector::new(from_cm(x), from_cm(y), from_cm(z)))
-            .collect();
-        let trimesh = ColliderBuilder::trimesh(vertices, mesh.triangles.clone())
-            .context("world collision mesh is invalid")?;
-        colliders.push(trimesh.build());
+        let vertex = |&[x, y, z]: &[i32; 3]| Vector::new(from_cm(x), from_cm(y), from_cm(z));
+        // Each building is its own trimesh so it can be taken out alone. Whatever no building
+        // claims (bridges, hand-built worlds) stays together in one.
+        let mut claimed = vec![false; mesh.triangles.len()];
+        for (index, &[start, end]) in world.building_triangles.iter().enumerate() {
+            let (start, end) = (start as usize, (end as usize).min(mesh.triangles.len()));
+            let Some(&id) = world.building_ids.get(index) else { break };
+            if start >= end {
+                continue;
+            }
+            claimed[start..end].iter_mut().for_each(|c| *c = true);
+            // Only this building's vertices, renumbered from zero.
+            let mut renumber: HashMap<u32, u32> = HashMap::new();
+            let mut vertices = Vec::new();
+            let triangles: Vec<[u32; 3]> = mesh.triangles[start..end]
+                .iter()
+                .map(|triangle| {
+                    triangle.map(|v| {
+                        *renumber.entry(v).or_insert_with(|| {
+                            vertices.push(vertex(&mesh.vertices[v as usize]));
+                            vertices.len() as u32 - 1
+                        })
+                    })
+                })
+                .collect();
+            let trimesh = ColliderBuilder::trimesh(vertices, triangles).context("a building's collision mesh is invalid")?;
+            colliders.push((trimesh.build(), Some(Obj::Building(id))));
+        }
+        let rest: Vec<[u32; 3]> = mesh.triangles.iter().zip(&claimed).filter(|&(_, &taken)| !taken).map(|(&t, _)| t).collect();
+        if !rest.is_empty() {
+            let vertices = mesh.vertices.iter().map(vertex).collect();
+            let trimesh = ColliderBuilder::trimesh(vertices, rest).context("world collision mesh is invalid")?;
+            colliders.push((trimesh.build(), None));
+        }
     }
     // A tree is solid up to the crown: an upright cylinder on the ground at its foot.
-    for tree in world.trees.iter().filter(|tree| tree.solid) {
+    for (index, tree) in world.trees.iter().enumerate().filter(|(_, tree)| tree.solid) {
         let half_height = from_cm(tree.trunk_height()) / 2.0;
-        colliders.push(
-            ColliderBuilder::cylinder(half_height, from_cm(tree.trunk_radius()))
-                .translation(Vector::new(from_cm(tree.x), from_cm(tree.base) + half_height, from_cm(tree.z)))
-                .build(),
-        );
+        let cylinder = ColliderBuilder::cylinder(half_height, from_cm(tree.trunk_radius()))
+            .translation(Vector::new(from_cm(tree.x), from_cm(tree.base) + half_height, from_cm(tree.z)))
+            .build();
+        colliders.push((cylinder, world.tree_ids.get(index).map(|&id| Obj::Tree(id))));
     }
     Ok(colliders)
 }
@@ -149,9 +191,16 @@ impl Physics {
             snapping: KinematicCharacterController { snap_to_ground: Some(CharacterLength::Absolute(SNAP_DISTANCE)), ..controller() },
             controller: controller(),
             character_shape: ColliderBuilder::capsule_y(CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS).build(),
+            objects: HashMap::new(),
+            handles: HashMap::new(),
+            removals: Vec::new(),
         };
-        for collider in static_colliders(world)? {
-            physics.colliders.insert(collider);
+        for (collider, object) in static_colliders(world)? {
+            let handle = physics.colliders.insert(collider);
+            if let Some(object) = object {
+                physics.objects.insert(handle, object);
+                physics.handles.insert(object, handle);
+            }
         }
         physics.step_pipeline();
         Ok(physics)
@@ -175,6 +224,37 @@ impl Physics {
             &(),
             &(),
         );
+    }
+
+    /// Takes a building or tree out of the world. It stops colliding at the start of the next
+    /// `step_cars`. Returns whether it was there to destroy.
+    pub fn destroy(&mut self, object: Obj) -> bool {
+        let there = self.handles.contains_key(&object) && !self.removals.contains(&object);
+        if there {
+            self.removals.push(object);
+        }
+        there
+    }
+
+    /// Every building and tree whose collider reaches within `radius` of `point`.
+    pub fn objects_near(&self, point: [f32; 3], radius: f32) -> Vec<Obj> {
+        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::exclude_dynamic());
+        let ball = Ball::new(radius);
+        let mut found: Vec<Obj> = queries
+            .intersect_shape(Pose::from_translation(Vector::from(point)), &ball)
+            .filter_map(|(handle, _)| self.objects.get(&handle).copied())
+            .collect();
+        found.sort_by_key(|object| match *object {
+            Obj::Building(id) => (0, id),
+            Obj::Tree(id) => (1, id),
+        });
+        found.dedup();
+        found
+    }
+
+    /// Which building or tree a collider is, if it is one.
+    pub fn object_of(&self, collider: ColliderHandle) -> Option<Obj> {
+        self.objects.get(&collider).copied()
     }
 
     /// Whether `shape` at `pose` touches the static world. Vehicles are ignored.
@@ -342,6 +422,46 @@ mod tests {
         }
         let x = character.position[0];
         assert!(x < 5.0 - CAPSULE_RADIUS + 0.05 && x > 4.0, "x = {x}");
+    }
+
+    #[test]
+    fn a_ray_names_the_building_and_destroying_it_opens_the_wall() {
+        let id = ObjId { col: 3, row: 4, index: 7 };
+        let mut world = world_with_wall();
+        world.building_ids = vec![id];
+        world.building_triangles = vec![[0, 12]];
+        let mut physics = Physics::new(&world).unwrap();
+        let (distance, hit) = physics.cast_ray_object([0.0, 1.0, 0.0], [1.0, 0.0, 0.0], 20.0).expect("the wall is there");
+        assert!((distance - 5.0).abs() < 1e-3, "{distance}");
+        assert_eq!(hit, Some(Obj::Building(id)));
+
+        assert!(physics.destroy(Obj::Building(id)));
+        assert!(!physics.destroy(Obj::Building(id)), "already going");
+        // Still there until the step that removes it.
+        assert!(physics.cast_ray_object([0.0, 1.0, 0.0], [1.0, 0.0, 0.0], 20.0).is_some());
+        physics.step_cars(TICK_DT);
+        assert!(physics.cast_ray_object([0.0, 1.0, 0.0], [1.0, 0.0, 0.0], 20.0).is_none());
+
+        let mut character = standing();
+        let toward_wall = InputFrame(1, 0, 127, -1571, BUTTON_RUN, 0, 0, 0);
+        for _ in 0..TICK_RATE * 2 {
+            physics.move_character(&mut character, &toward_wall, TICK_DT);
+        }
+        assert!(character.position[0] > 6.0, "walked through: x = {}", character.position[0]);
+    }
+
+    #[test]
+    fn world_triangles_no_building_claims_stay_one_collider() {
+        // Same wall, but a building claims only half of it: the other half must still block.
+        let id = ObjId { col: 0, row: 0, index: 0 };
+        let mut world = world_with_wall();
+        world.building_ids = vec![id];
+        world.building_triangles = vec![[0, 4]];
+        let mut physics = Physics::new(&world).unwrap();
+        physics.destroy(Obj::Building(id));
+        physics.step_cars(TICK_DT);
+        let still_solid = (0..20).any(|k| physics.cast_ray_object([0.0, 1.0, -0.9 + k as f32 * 0.09], [1.0, 0.0, 0.0], 20.0).is_some());
+        assert!(still_solid, "the unclaimed triangles vanished with the building");
     }
 
     #[test]

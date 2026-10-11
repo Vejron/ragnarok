@@ -14,6 +14,11 @@ pub const S_PONG: u8 = 2;
 pub const S_LEAVE: u8 = 3;
 pub const S_KILL: u8 = 4;
 pub const S_SCORES: u8 = 5;
+pub const S_DESTROYED: u8 = 6;
+
+/// `Destroyed` entry kinds: what part of the static world fell.
+pub const OBJ_TREE: u8 = 0;
+pub const OBJ_BUILDING: u8 = 1;
 
 /// Entity kinds.
 pub const KIND_STICKMAN: u8 = 0;
@@ -320,6 +325,13 @@ pub struct Kill(pub u8, pub u32, pub u32, pub u8, pub u16, pub u16);
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Scores(pub u8, pub Vec<(u32, u16, u16)>);
 
+/// `[6, [[kind, col, row, index, yaw], ...]]`, sent on a reliable stream: to everyone when
+/// buildings or trees are destroyed, and to a player who just joined with all that already are.
+/// `kind` is `OBJ_*`; `(col, row, index)` is the object's `ObjId`; `yaw` (milliradians, as
+/// elsewhere) is the way a tree falls, or the direction a blast came from for a building.
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct Destroyed(pub u8, pub Vec<(u8, u16, u16, u32, i16)>);
+
 /// Reads the tag of a `[tag, ...]` message without decoding the rest. Every message is a short
 /// array (fixarray header) whose first element is a positive fixint.
 pub fn peek_tag(bytes: &[u8]) -> Option<u8> {
@@ -347,7 +359,7 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 14, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
+        148, 0, 15, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[
@@ -384,6 +396,17 @@ mod tests {
             vec![ProjectileState(40, PROJECTILE_GRENADE, 1200, 150, -800, 3000, 0, -2500)],
             vec![PickupState(60, ITEM_BANDAGE, -300, 5, 1250)],
         )
+    }
+
+    /// `[6, [[OBJ_TREE, 2, 3, 70000, -1571]]]`, mirrored in `codec.spec.ts`.
+    pub const DESTROYED_FIXTURE: &[u8] = &[146, 6, 145, 149, 0, 2, 3, 206, 0, 1, 17, 112, 209, 249, 221];
+
+    #[test]
+    fn destroyed_matches_fixture() {
+        let message = Destroyed(S_DESTROYED, vec![(OBJ_TREE, 2, 3, 70_000, -1571)]);
+        assert_eq!(encode(&message), DESTROYED_FIXTURE);
+        assert_eq!(decode::<Destroyed>(DESTROYED_FIXTURE), Some(message));
+        assert_eq!(peek_tag(DESTROYED_FIXTURE), Some(S_DESTROYED));
     }
 
     #[test]

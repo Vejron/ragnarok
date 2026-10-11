@@ -444,8 +444,26 @@ impl Physics {
         }
     }
 
+    /// Takes destroyed buildings and trees out of the collider set. With no car the pipeline does
+    /// not run otherwise, and the broad-phase would keep pointing at colliders that are gone.
+    fn apply_removals(&mut self) {
+        if self.removals.is_empty() {
+            return;
+        }
+        for object in std::mem::take(&mut self.removals) {
+            if let Some(handle) = self.handles.remove(&object) {
+                self.objects.remove(&handle);
+                self.colliders.remove(handle, &mut self.islands, &mut self.bodies, &mut self.soft_bodies, false);
+            }
+        }
+        if self.cars.is_empty() {
+            self.step_pipeline();
+        }
+    }
+
     /// Advances every car and the rigid-body world by one tick.
     pub fn step_cars(&mut self, dt: f32) {
+        self.apply_removals();
         if self.cars.is_empty() {
             return;
         }
@@ -527,6 +545,15 @@ impl Physics {
         let (collider, distance) = queries.cast_ray(&ray, max, true)?;
         let car = self.cars.iter().find(|(_, car)| car.owns(collider)).map(|(&id, _)| id);
         Some((distance, car))
+    }
+
+    /// How far a ray travels before it hits the world, and which building or tree that was, if it
+    /// was one. Vehicles are not ignored.
+    pub fn cast_ray_object(&self, origin: [f32; 3], dir: [f32; 3], max: f32) -> Option<(f32, Option<super::Obj>)> {
+        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::default());
+        let ray = Ray::new(Vector::from(origin), Vector::from(dir));
+        let (collider, distance) = queries.cast_ray(&ray, max, true)?;
+        Some((distance, self.object_of(collider)))
     }
 
     /// How far a ray travels before it meets the world or a vehicle, and the surface normal there.

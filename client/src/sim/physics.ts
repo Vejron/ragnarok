@@ -1,5 +1,5 @@
 import RAPIER from '@dimforge/rapier3d-compat'
-import type { TileData, WorldData } from '@/world'
+import { buildingTriangleRanges, type TileData, type WorldData } from '@/world'
 import {
   AUTOSTEP_HEIGHT, AUTOSTEP_MIN_WIDTH, CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, CONTROLLER_OFFSET,
   BUTTON_CROUCH, BUTTON_JUMP, KNOCK_MAX_SPEED, MAX_SLOPE_CLIMB_DEG, SNAP_DISTANCE,
@@ -127,6 +127,36 @@ export function addTileCollider(world: RAPIER.World, tile: TileData, ground: Til
   return colliders
 }
 
+/**
+ * The tile's building mesh again, without the buildings in `destroyed`: what `addTileCollider`
+ * made for it, minus those triangles, so a collapsed building stops being a wall here as it
+ * does on the server. Returns the new collider (the caller removes the old one), or null when
+ * nothing is left of the mesh.
+ */
+export function rebuildBuildingCollider(world: RAPIER.World, tile: TileData, destroyed: ReadonlySet<number>): RAPIER.Collider | null {
+  const { triangles, vertices } = tile.collision
+  const gone = buildingTriangleRanges(tile).filter((_, index) => destroyed.has(index))
+  const kept: number[] = []
+  for (let t = 0; t < triangles.length / 3; t++) {
+    if (gone.some(([start, end]) => t >= start && t < end)) continue
+    kept.push(triangles[t * 3]!, triangles[t * 3 + 1]!, triangles[t * 3 + 2]!)
+  }
+  if (kept.length === 0) return null
+  return world.createCollider(RAPIER.ColliderDesc.trimesh(vertices, Uint32Array.from(kept)))
+}
+
+/**
+ * Where in `addTileCollider`'s result tree number `index` of `tile` has its trunk, or -1 if it
+ * has none (it is not solid). The result is the building mesh if any, then one per solid tree.
+ */
+export function trunkColliderIndex(tile: TileData, index: number): number {
+  const tree = tile.trees[index]
+  if (!tree?.solid) return -1
+  let at = tile.collision.triangles.length > 0 ? 1 : 0
+  for (let i = 0; i < index; i++) if (tile.trees[i]!.solid) at++
+  return at
+}
+
 type PoseLike = Pick<VehicleState, 'x' | 'y' | 'z' | 'qx' | 'qy' | 'qz' | 'qw'>
 
 /**
@@ -252,8 +282,20 @@ export class RapierMotor implements CharacterMotor {
     return colliders
   }
 
-  removeTile(colliders: readonly RAPIER.Collider[]) {
-    for (const collider of colliders) this.world.removeCollider(collider, false)
+  /** Colliders already taken out one by one (a felled tree's trunk) are `undefined`. */
+  removeTile(colliders: readonly (RAPIER.Collider | undefined)[]) {
+    for (const collider of colliders) if (collider) this.world.removeCollider(collider, false)
+  }
+
+  /**
+   * Swaps a tile's building collider (`addTile`'s first, when the tile has a mesh) for one
+   * without the buildings in `destroyed`. Returns the new one, or undefined if none is left.
+   */
+  rebuildBuildings(old: RAPIER.Collider | undefined, tile: TileData, destroyed: ReadonlySet<number>): RAPIER.Collider | undefined {
+    if (old) this.world.removeCollider(old, false)
+    const next = rebuildBuildingCollider(this.world, tile, destroyed) ?? undefined
+    if (next) this.world.step()
+    return next
   }
 
   /** Horizontal then vertical, in two passes, exactly like `Physics::move_character`. */

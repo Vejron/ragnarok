@@ -53,6 +53,7 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 | 3 | `leave` | stream | `[3, entity_id u32]` |
 | 4 | `kill` | stream | `[4, killer u32, victim u32, weapon u8, killer_kills u16, victim_deaths u16]` |
 | 5 | `scores` | stream | `[5, [[id u32, kills u16, deaths u16], …]]` |
+| 6 | `destroyed` | stream | `[6, [[kind u8, col u16, row u16, index u32, yaw i16], …]]` |
 
 - `baseline` is the `server_tick` of the snapshot this one is a change from, or 0 when it is not. Then every entity and vehicle in range is listed in full, in `[entity, …]` and `[vehicle, …]`. See [Delta snapshots](#delta-snapshots-and-interest).
 - `ack` is the newest input `seq` of the receiving player already applied to this state. The client drops pending inputs up to `ack` and replays the rest.
@@ -63,6 +64,7 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 - `projectile` is `[id u32, kind u8, x i32, y i32, z i32, vx i16, vy i16, vz i16]`, cm and cm/s: a rocket (`kind` 0) or grenade (`kind` 1) in flight. Clients interpolate it like an entity and aim a rocket along `v`. One that stops being listed has burst, and its burst arrives as a `shot` event. If a snapshot would not fit, shots are dropped first, then projectiles, then pickups.
 - `pickup` is `[id u32, item u8, x i32, y i32, z i32]`, cm: an item lying on the ground within 300 m, nearest first and at most 24. They are static, so there is no delta: the list is the set, and one that is no longer listed has been taken. A player takes the nearest within 2 m by sending the use bit; the server hands it over before it considers boarding a vehicle.
 - `kill` goes to everyone when a player dies. `killer` is 0 when the world did it (a fall). The totals are the new ones, so clients keep no tally of their own. `scores` is sent once to a player who has just joined.
+- `destroyed` is the only world state that changes: buildings and trees that are gone. `kind` is 0 for a tree and 1 for a building; `(col, row, index)` names it by its tile and its position in that tile's list (`ObjId`), which both sides already agree on and which a re-import renumbers. `yaw` (milliradians, 0 faces -Z) is the way a tree falls, or the direction a building's blast came from (its rubble is thrown the other way). It goes to everyone when something falls, and a player who has just joined gets one message holding everything destroyed so far, before the first snapshot. Only the fact is replicated: the fall, the rubble and the dust are drawn by each client, and the trunk or the building's walls stop colliding on both sides at once. A building falls to rockets, grenades and shells (a rifle only chips it), and a tree to anything.
 - `world_hash` is FNV-1a over `world.msgpack`. A mismatch means the client loaded a different world than the server simulates.
 
 `entity` is `[id u32, kind u8, x i32, y i32, z i32, yaw i16, vy i16, flags u8, knock_x i16, knock_z i16]`:

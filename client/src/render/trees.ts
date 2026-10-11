@@ -118,6 +118,45 @@ function prototypes() {
   return shared
 }
 
+/** A turn about the vertical, from the position, so neighbours of one kind do not all look alike. */
+function spin(tree: Tree): number {
+  return (Math.abs(Math.sin(tree.x * 12.9898 + tree.z * 78.233)) * 43758.5453) % (Math.PI * 2)
+}
+
+/**
+ * One standalone mesh of `tree`, in a pivot at its foot, for a tree that is no longer an
+ * instance: the pivot is where it turns as it falls. Geometry and material are the shared ones.
+ */
+export function standaloneTree(tree: Tree): { pivot: THREE.Group; mesh: THREE.Mesh } {
+  const { geometries, material } = prototypes()
+  const mesh = new THREE.Mesh(geometries.get(tree.kind) ?? geometries.get(TREE_BIRCH)!, material)
+  mesh.rotation.y = spin(tree)
+  mesh.scale.set(tree.crown, tree.height, tree.crown)
+  mesh.castShadow = true
+  mesh.userData.sharedGeometry = true
+  const pivot = new THREE.Group()
+  pivot.position.set(tree.x, tree.base, tree.z)
+  pivot.add(mesh)
+  return { pivot, mesh }
+}
+
+/**
+ * Takes tree number `index` of its tile (the `Destroyed` index) out of the tile's instanced
+ * meshes, by shrinking it to nothing. False if it is not there, or already gone.
+ */
+export function removeTreeInstance(group: THREE.Object3D, index: number): boolean {
+  for (const child of group.children) {
+    const slots = child.userData.treeSlots as Map<number, number> | undefined
+    const slot = slots?.get(index)
+    if (slot === undefined || !(child instanceof THREE.InstancedMesh)) continue
+    slots!.delete(index)
+    child.setMatrixAt(slot, new THREE.Matrix4().makeScale(0, 0, 0))
+    child.instanceMatrix.needsUpdate = true
+    return true
+  }
+  return false
+}
+
 /**
  * One tile's trees: one instanced mesh per archetype present, so at most seven draw calls however
  * many trees there are. The geometry and material are shared by all tiles (`disposeTile` leaves
@@ -126,12 +165,12 @@ function prototypes() {
 export function buildTrees(trees: readonly Tree[]): THREE.InstancedMesh[] {
   if (trees.length === 0) return []
   const { geometries, material } = prototypes()
-  const byKind = new Map<number, Tree[]>()
-  for (const tree of trees) {
+  const byKind = new Map<number, { tree: Tree; index: number }[]>()
+  trees.forEach((tree, index) => {
     const list = byKind.get(tree.kind) ?? []
-    list.push(tree)
+    list.push({ tree, index })
     byKind.set(tree.kind, list)
-  }
+  })
   const matrix = new THREE.Matrix4()
   const position = new THREE.Vector3()
   const scale = new THREE.Vector3()
@@ -140,9 +179,12 @@ export function buildTrees(trees: readonly Tree[]): THREE.InstancedMesh[] {
   for (const [kind, list] of byKind) {
     const geometry = geometries.get(kind) ?? geometries.get(TREE_BIRCH)!
     const mesh = new THREE.InstancedMesh(geometry, material, list.length)
-    list.forEach((tree, i) => {
-      // A turn about the vertical, from the position, so neighbours of one kind do not all look alike.
-      rotation.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, (Math.abs(Math.sin(tree.x * 12.9898 + tree.z * 78.233)) * 43758.5453) % (Math.PI * 2))
+    // Which instance is which tree of the tile, so one can be felled.
+    const slots = new Map<number, number>()
+    mesh.userData.treeSlots = slots
+    list.forEach(({ tree, index }, i) => {
+      slots.set(index, i)
+      rotation.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, spin(tree))
       position.set(tree.x, tree.base, tree.z)
       scale.set(tree.crown, tree.height, tree.crown)
       mesh.setMatrixAt(i, matrix.compose(position, rotation, scale))
