@@ -143,7 +143,9 @@ pub fn fit(footprint: &[P], points: &[[f64; 4]]) -> Option<Roof> {
             o.y - first.height(at) <= CANOPY
         })
         .collect();
-    if keep.len() >= MIN_POINTS {
+    // A few stray returns are a tree, an antenna or a chimney. A big share standing above the fit is
+    // a taller part of the building (a tower over its podium): keep it, and `tree` splits it off.
+    if keep.len() >= MIN_POINTS && (obs.len() - keep.len()) as f64 <= MAX_STRAY * obs.len() as f64 {
         obs = keep;
     }
     Some(tree(&obs, &frame, MAX_DEPTH).0)
@@ -156,43 +158,67 @@ const PART_WIDTH: f64 = 4.0;
 /// A split has to cost at most this share of the unsplit fit, and save this much, to be taken.
 const SPLIT_SHARE: f64 = 0.5;
 const SPLIT_SAVING: f64 = 0.04;
+/// Where the loss says there are levels metres apart (a tower on a podium), one cut cannot isolate
+/// a part, so a cut that merely helps is taken; the next level cuts again.
+const STEP_LOSS: f64 = 4.0;
+const STEP_SHARE: f64 = 0.85;
 /// Smallest rectangle, square metres, worth splitting: a part is at least a room.
 const SPLIT_AREA: f64 = 70.0;
 /// Parts of parts: a roof is at most `2^MAX_DEPTH` shapes.
-const MAX_DEPTH: u32 = 2;
+const MAX_DEPTH: u32 = 3;
+/// Largest miss, metres squared, that `loss` counts.
+const BIG_MISS: f64 = 100.0;
 /// Returns this far over the fitted roof, metres, are not roof.
 const CANOPY: f64 = 1.0;
+/// Most of the returns that may stand over the first fit and still be dropped as strays.
+const MAX_STRAY: f64 = 0.15;
+
+/// Mean squared miss of `shape` over `obs`, each clipped at `BIG_MISS` metres squared. Wide enough
+/// that a step of ten metres between two levels is a large cost and a cut across it pays, where
+/// `model`'s own cost (clipped at 1 m², so a stray return costs no more than a miss by a metre) cannot see it.
+fn loss(obs: &[Obs], frame: &Frame, shape: &Shape) -> f64 {
+    let at = |o: &Obs| [frame.centre[0] + frame.axes[0][0] * o.u + frame.axes[1][0] * o.v, frame.centre[1] + frame.axes[0][1] * o.u + frame.axes[1][1] * o.v];
+    obs.iter().map(|o| (shape.height(at(o)) - o.y).powi(2).min(BIG_MISS)).sum::<f64>() / obs.len().max(1) as f64
+}
 
 /// The best roof for `obs` in `frame`: one shape, or a straight cut across the frame's rectangle
-/// with a roof on each side, when that fits clearly better. Also returns the mean cost.
+/// with a roof on each side, when that fits clearly better. Also returns the mean loss.
 fn tree(obs: &[Obs], frame: &Frame, depth: u32) -> (Roof, f64) {
     let (shape, cost) = model(obs, frame);
-    let leaf = (Roof::Leaf(shape), cost);
+    let wide = loss(obs, frame, &shape);
+    let leaf = (Roof::Leaf(shape), wide);
     if depth == 0 || cost < 0.04 || 4.0 * frame.half[0] * frame.half[1] < SPLIT_AREA {
         return leaf;
     }
-    // The cut that leaves the lowest cost behind, judged by one shape per side.
-    let mut best: Option<(f64, usize, f64)> = None;
-    for axis in 0..2 {
-        for step in -4..=4 {
-            let cut = f64::from(step) * 0.15 * frame.half[axis];
-            if frame.half[axis] + cut < PART_WIDTH || frame.half[axis] - cut < PART_WIDTH {
-                continue;
-            }
-            let (low, high) = part_of(obs, frame, axis, cut);
-            if low.0.len() < PART_POINTS || high.0.len() < PART_POINTS {
-                continue;
-            }
-            let total = (model(&low.0, &low.1).1 * low.0.len() as f64 + model(&high.0, &high.1).1 * high.0.len() as f64) / obs.len() as f64;
-            if best.is_none_or(|b| total < b.0) {
-                best = Some((total, axis, cut));
+    // The cut that leaves the lowest `score` behind (mean over the returns, one shape per side).
+    let cut_by = |score: &dyn Fn(&Part) -> f64, reach: i32, spacing: f64| -> Option<(f64, usize, f64)> {
+        let mut best: Option<(f64, usize, f64)> = None;
+        for axis in 0..2 {
+            for step in -reach..=reach {
+                let cut = f64::from(step) * spacing * frame.half[axis];
+                if frame.half[axis] + cut < PART_WIDTH || frame.half[axis] - cut < PART_WIDTH {
+                    continue;
+                }
+                let (low, high) = part_of(obs, frame, axis, cut);
+                if low.0.len() < PART_POINTS || high.0.len() < PART_POINTS {
+                    continue;
+                }
+                let total = (score(&low) * low.0.len() as f64 + score(&high) * high.0.len() as f64) / obs.len() as f64;
+                if best.is_none_or(|b| total < b.0) {
+                    best = Some((total, axis, cut));
+                }
             }
         }
+        best
+    };
+    // First by the robust cost, which sees small steps and shrugs off strays. Where that finds
+    // nothing and the loss says there are levels metres apart (a tower on a podium), one cut cannot
+    // isolate a part, so by the plain loss a cut that merely helps is taken; the next level cuts again.
+    let mut chosen = cut_by(&|part| model(&part.0, &part.1).1, 4, 0.15).filter(|&(total, ..)| total <= cost * SPLIT_SHARE && cost - total >= SPLIT_SAVING);
+    if chosen.is_none() && wide > STEP_LOSS {
+        chosen = cut_by(&|part| loss(&part.0, &part.1, &model(&part.0, &part.1).0), 6, 0.12).filter(|&(total, ..)| total <= wide * STEP_SHARE);
     }
-    let Some((total, axis, cut)) = best else { return leaf };
-    if total > cost * SPLIT_SHARE || cost - total < SPLIT_SAVING {
-        return leaf;
-    }
+    let Some((_, axis, cut)) = chosen else { return leaf };
     let (low, high) = part_of(obs, frame, axis, cut);
     let (low_roof, low_cost) = tree(&low.0, &low.1, depth - 1);
     let (high_roof, high_cost) = tree(&high.0, &high.1, depth - 1);
@@ -862,6 +888,21 @@ mod tests {
         }
         let Shape::Gable { y, .. } = leaf(fit(&footprint, &points)) else { panic!("not a gable") };
         assert!(y < 10.0, "the tree pulled the ridge to {y}");
+    }
+
+    #[test]
+    fn a_tower_over_a_podium_is_not_thrown_away_as_canopy() {
+        // 40 × 20: a flat podium 9 m up, a tower 36 m up over a third of it, all single returns.
+        let footprint = rectangle(40.0, 20.0, 0.0, [0.0, 0.0]);
+        let mut points = sample(&footprint, &Shape::Flat { y: 9.0 });
+        for p in &mut points {
+            if p[0] > 6.0 {
+                p[2] = 36.0;
+            }
+        }
+        let roof = fit(&footprint, &points).unwrap();
+        assert!((roof.height([12.0, 0.0]) - 36.0).abs() < 1.0, "the tower is {} m", roof.height([12.0, 0.0]));
+        assert!((roof.height([-12.0, 0.0]) - 9.0).abs() < 1.0);
     }
 
     #[test]
