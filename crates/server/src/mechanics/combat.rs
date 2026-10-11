@@ -3,7 +3,7 @@ use super::spawn;
 use crate::game::{Rocket, World};
 use shared::consts::*;
 use shared::items::*;
-use shared::protocol::{ItemSlot, Kill, PROJECTILE_GRENADE, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_WRECK};
+use shared::protocol::{ItemSlot, Kill, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_WRECK};
 use shared::quant::{from_mrad, to_cm};
 
 /// Health, death, the items in the hotbar and what blasts do to people and vehicles.
@@ -277,7 +277,7 @@ fn step_rockets(world: &mut World, dt: f32) {
             continue;
         }
         // Shells are the `Gunnery` mechanic's.
-        if rocket.kind == PROJECTILE_SHELL {
+        if rocket.kind == PROJECTILE_SHELL || rocket.kind == PROJECTILE_CANNON {
             continue;
         }
         let speed = rocket.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();

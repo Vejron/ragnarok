@@ -93,7 +93,7 @@ On taking the gunner seat, the camera starts where the barrel already points. Wh
 One helicopter stands among the vehicles. Walk up and press **E**: the first in is the pilot, the second takes the nose gun, and a third can't board.
 
 - **Pilot:** W/S lean the rotor forward and back, A/D turn (clockwise on D), **Space climbs**, **Shift sinks**. Let go of everything and it hovers where it is, whatever its speed. Top speed is about 25 m/s in a full lean, and it won't climb past 120 m.
-- **Gunner:** seat 1 works the chin gun of the Mi-24 (a four-barrel machine gun under the nose). The mouse aims it and a held click or **F** fires about twelve rounds a second. It swings 57° either side of the nose and from 43° down to 11° up, in the hull's frame, so the camera stops at those limits. As in a tank, their stick does nothing.
+- **Gunner:** seat 1 works the chin gun of the Mi-24 (a four-barrel autocannon under the nose). The mouse aims it and a held click or **F** fires three explosive rounds a second; each flies and falls like a tank shell and bursts with a third of its radius and a third of its damage. **R** swaps between the pilot's and gunner's seats when the other is free, as in a tank. It swings 57° either side of the nose and from 43° down to 11° up, in the hull's frame, so the camera stops at those limits. As in a tank, their stick does nothing.
 - **Leaving:** E steps out beside the hull. In the air that is a fall; there is no fall damage yet.
 - **Empty:** with nobody in seat 0 the rotor is off and it drops like a stone, then sits where it lands.
 
@@ -116,13 +116,13 @@ Because the model keeps no state beyond the body's, the client's copy needs noth
 - `MAX_VEHICLES` went from 8 to 9, and a snapshot with the maximum is still one datagram.
 - **Prediction.** The pilot's helicopter is predicted like a car or a tank: `CarSim` has a rotor branch with no wheel controller. `scripted_flight_matches_fixture` and `WASM flies where the native server does` run the same 480-tick flight on both and agree to under a centimetre.
 - **Drawing.** `render/heli.ts` loads `heli.glb`, built by `tools/vehicles/build_heli.py` (a Hind in silhouette, about 2300 triangles: double cockpit, engines, stub wings with pods and missiles, tail, tricycle gear, a five-blade rotor and a three-blade tail rotor). Heads show in both cockpits. The `rotor` and `tail_rotor` nodes spin while seat 0 is taken, and `turret` and `gun` swing and nod with the `Turret` angles of the snapshot. The camera sits 16 m behind and follows the hull's heading.
-- **Nose gun.** `Gunnery` gives a helicopter a `Gun` like a tank's, and `work_chaingun` works it from seat 1. The gunner's look direction is taken in the world and expressed in the hull's frame (`CarPose::local_dir`), so the gun holds its aim while the helicopter leans and turns. It slews at `HELI_GUN_SLEW`, limited by `HELI_GUN_YAW_LIMIT` and `HELI_GUN_PITCH_MIN/MAX`. A shot is hitscan like the AK5: a ray of `HELI_GUN_RANGE` from the mount, scattered by `HELI_GUN_SPREAD`, which hurts the first stickman it meets (`HELI_GUN_DAMAGE`, with the shooter's rewind) or chips a vehicle at half that. The event is `WEAPON_CHAINGUN` (6), drawn as a tracer from the muzzle of the helicopter that has the shooter aboard.
+- **Nose gun.** `Gunnery` gives a helicopter a `Gun` like a tank's, and `work_autocannon` works it from seat 1. The gunner's look direction is taken in the world and expressed in the hull's frame (`CarPose::local_dir`), so the gun holds its aim while the helicopter leans and turns. It slews at `HELI_GUN_SLEW`, limited by `HELI_GUN_YAW_LIMIT` and `HELI_GUN_PITCH_MIN/MAX`. A round is a shell like the tank's (`PROJECTILE_CANNON`, `SHELL_SPEED`, same gravity and lifetime), fired every `HELI_GUN_COOLDOWN_TICKS` and scattered by `HELI_GUN_SPREAD`. It bursts with `CANNON_RADIUS`, `CANNON_DAMAGE` and `CANNON_KNOCK` (a third of the tank shell's radius and damage), and the burst event is `WEAPON_AUTOCANNON` (6). The client draws the rounds as small slugs and flashes and kicks the barrels when the gun's shot counter ticks, as for a tank.
 
 ### Tests
 
 - `physics/vehicle.rs`: it hovers exactly; without power it falls and rests; climb and sink follow the input and letting go holds altitude; leaning forward flies at 12–30 m/s without losing height; the stick turns it; it levels out after a roll; the ceiling holds.
 - `mechanics/vehicles.rs`: a pilot and one passenger lift off together, a third is refused, and it hovers when the stick is released.
-- `mechanics/gunnery.rs`: the nose gun follows the gunner within its travel, hurts what it points at, fires at its rate, and only seat 1 works it.
+- `mechanics/gunnery.rs`: the nose gun follows the gunner within its travel, throws small shells that burst a third as wide as a tank's, fires at its rate, and only seat 1 works it.
 - `heli.spec.ts`: the model has its nodes on the game's pivot, stays low-poly, aims with the turret angles, and spins up with a pilot.
 
 ### Limits
@@ -130,7 +130,7 @@ Because the model keeps no state beyond the body's, the client's copy needs noth
 - Rotors have no collider and no effect: the hull box is the only solid. Nothing is chopped.
 - No fall damage and no crash. A pilot can step out at 100 m.
 - There is no ground effect, autorotation or stall: the model is deliberately an arcade one.
-- The nose gun is hitscan with no bullet drop, no ammunition and no overheating. Its tracer is cosmetic and reaches clients with the snapshot, not at once.
+- The nose gun has unlimited ammunition and never overheats. Protocol version 13 added `PROJECTILE_CANNON` and renamed weapon 6 to `WEAPON_AUTOCANNON`.
 - The model was checked in Blender preview renders, not by eye in the browser.
 
 ## Driver-side prediction

@@ -58,13 +58,15 @@ pub const WEAPON_ROCKET: u8 = 2;
 pub const WEAPON_WRECK: u8 = 3;
 pub const WEAPON_REVOLVER: u8 = 4;
 pub const WEAPON_GRENADE: u8 = 5;
-/// The helicopter's nose gun.
-pub const WEAPON_CHAINGUN: u8 = 6;
+/// The helicopter's nose autocannon: a shell's burst, smaller.
+pub const WEAPON_AUTOCANNON: u8 = 6;
 
 /// `ProjectileState` kinds.
 pub const PROJECTILE_ROCKET: u8 = 0;
 pub const PROJECTILE_GRENADE: u8 = 1;
 pub const PROJECTILE_SHELL: u8 = 2;
+/// An autocannon round: flies like a shell, bursts smaller.
+pub const PROJECTILE_CANNON: u8 = 3;
 
 /// One simulation tick of player intent. The client predicts with exactly these quantized values,
 /// so client and server feed the simulation identical inputs.
@@ -336,7 +338,7 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 12, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
+        148, 0, 13, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[

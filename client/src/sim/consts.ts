@@ -1,6 +1,6 @@
 /** Mirrors `crates/shared/src/consts.rs`. Keep the two in step. */
 
-export const PROTOCOL_VERSION = 12
+export const PROTOCOL_VERSION = 13
 
 export const TICK_RATE = 60
 export const TICK_DT = 1 / TICK_RATE
@@ -115,8 +115,7 @@ export const HELI_GUN_LENGTH = 1.3
 export const HELI_GUN_YAW_LIMIT = 1.0
 export const HELI_GUN_PITCH_MIN = -0.75
 export const HELI_GUN_PITCH_MAX = 0.2
-export const HELI_GUN_COOLDOWN_TICKS = 5
-export const HELI_GUN_RANGE = 150.0
+export const HELI_GUN_COOLDOWN_TICKS = TICK_RATE / 3
 /** Combat. Mirrors the combat block of consts.rs. */
 export const PLAYER_MAX_HP = 100
 export const RESPAWN_TICKS = 3 * TICK_RATE
@@ -133,3 +132,5 @@ export const ROCKET_BLAST_RADIUS = 5.0
 export const WRECK_BLAST_RADIUS = 8.0
 export const SHELL_COOLDOWN_TICKS = 90
 export const EXPLOSION_RADIUS = 7.0
+/** An autocannon round bursts a third as wide as a tank shell. */
+export const CANNON_RADIUS = EXPLOSION_RADIUS / 3

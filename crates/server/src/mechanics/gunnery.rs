@@ -1,15 +1,15 @@
 use super::Mechanic;
-use super::combat::{Blast, blast, damage, damage_vehicle, first_player_hit, look, rewind_ticks, scatter};
+use super::combat::{Blast, blast, first_player_hit, look, scatter};
 use crate::game::{Gun, Rocket, World};
 use crate::physics::CarPose;
 use shared::consts::*;
-use shared::protocol::{KIND_HELI, PROJECTILE_SHELL, ShotEvent, WEAPON_CHAINGUN, WEAPON_SHELL};
+use shared::protocol::{KIND_HELI, PROJECTILE_CANNON, PROJECTILE_SHELL, ShotEvent, WEAPON_AUTOCANNON, WEAPON_SHELL};
 use shared::quant::{from_mrad, to_cm, wrap_angle};
 
 /// Vehicle guns: the gunner's look direction aims the gun, and the fire button shoots it.
 ///
-/// A helicopter's nose gun is a machine gun, worked from seat 1 as well (see `work_chaingun`). A
-/// tank's seat 1 is its gunner. Their input drives the turret instead of anything on foot, while
+/// A helicopter's nose gun is an autocannon, worked from seat 1 as well (see `work_autocannon`): its
+/// rounds are shells in miniature. A tank's seat 1 is its gunner. Their input drives the turret instead of anything on foot, while
 /// the driver keeps the hull. The turret is stabilised: it follows the gunner's *world* heading
 /// at a limited slew rate, so turning the hull does not drag the aim around. A shell is a
 /// projectile: it leaves the muzzle at `SHELL_SPEED`, falls under gravity, and explodes at the first
@@ -35,32 +35,37 @@ fn aim_from(pose: &CarPose, pivot: [f32; 3], yaw: f32, pitch: f32) -> ([f32; 3],
     (pose.world_point(pivot), pose.world_dir(local))
 }
 
-/// A shell going off at `point`: the burst everyone sees, and the blast.
-fn burst(world: &mut World, owner: u32, point: [f32; 3], dir: [f32; 3]) {
+/// A shell of `kind` going off at `point`: the burst everyone sees, and the blast. An autocannon round
+/// is a third of a tank shell's reach, and hits for less.
+fn burst(world: &mut World, kind: u8, owner: u32, point: [f32; 3], dir: [f32; 3]) {
+    let (weapon, radius, damage, knock) = match kind {
+        PROJECTILE_CANNON => (WEAPON_AUTOCANNON, CANNON_RADIUS, CANNON_DAMAGE, CANNON_KNOCK),
+        _ => (WEAPON_SHELL, EXPLOSION_RADIUS, EXPLOSION_DAMAGE, EXPLOSION_KNOCK),
+    };
     let [x, y, z] = point.map(to_cm);
-    world.shots.push(ShotEvent(owner, WEAPON_SHELL, x, y, z));
+    world.shots.push(ShotEvent(owner, weapon, x, y, z));
     // A gunner who has left or died still gets the blast, just not the credit.
     let attacker = world.players.contains_key(&owner).then_some(owner);
-    blast(world, Blast { point, radius: EXPLOSION_RADIUS, damage: EXPLOSION_DAMAGE, knock: EXPLOSION_KNOCK, dir, attacker, weapon: WEAPON_SHELL });
+    blast(world, Blast { point, radius, damage, knock, dir, attacker, weapon });
 }
 
-/// Fires from vehicle `vid` for `gunner`: a shell leaves the muzzle along the barrel and flies on
-/// its own from there, so it takes time to arrive and falls on the way.
-fn fire(world: &mut World, vid: u32, pose: &CarPose, yaw: f32, pitch: f32, gunner: u32) {
-    let (origin, dir) = aim(pose, yaw, pitch);
+/// Fires a shell of `kind` from vehicle `vid` for `gunner`, from `origin` along `dir` (the muzzle's
+/// root and the barrel's heading, `length` of barrel ahead): it leaves the muzzle and flies on its own
+/// from there, so it takes time to arrive and falls on the way.
+fn fire(world: &mut World, kind: u8, vid: u32, origin: [f32; 3], dir: [f32; 3], length: f32, gunner: u32) {
     // A barrel poking into a wall bursts the shell there, instead of starting it on the far side.
-    if let Some(t) = world.physics.cast_ray(origin, dir, TANK_BARREL_LENGTH, vid) {
-        burst(world, gunner, std::array::from_fn(|i| origin[i] + dir[i] * t), dir);
+    if let Some(t) = world.physics.cast_ray(origin, dir, length, vid) {
+        burst(world, kind, gunner, std::array::from_fn(|i| origin[i] + dir[i] * t), dir);
         return;
     }
     let id = world.alloc_id();
     world.rockets.insert(
         id,
         Rocket {
-            kind: PROJECTILE_SHELL,
+            kind,
             owner: gunner,
             source: vid,
-            position: std::array::from_fn(|i| origin[i] + dir[i] * TANK_BARREL_LENGTH),
+            position: std::array::from_fn(|i| origin[i] + dir[i] * length),
             velocity: dir.map(|v| v * SHELL_SPEED),
             ttl: SHELL_TTL_TICKS,
         },
@@ -70,7 +75,7 @@ fn fire(world: &mut World, vid: u32, pose: &CarPose, yaw: f32, pitch: f32, gunne
 /// Flies every shell one tick: gravity, then along its velocity until it meets a wall, a vehicle
 /// or a stickman, or its time runs out. It bursts where it stopped.
 fn step_shells(world: &mut World, dt: f32) {
-    let ids: Vec<u32> = world.rockets.iter().filter(|(_, rocket)| rocket.kind == PROJECTILE_SHELL).map(|(&id, _)| id).collect();
+    let ids: Vec<u32> = world.rockets.iter().filter(|(_, rocket)| rocket.kind == PROJECTILE_SHELL || rocket.kind == PROJECTILE_CANNON).map(|(&id, _)| id).collect();
     for id in ids {
         let Some(mut shell) = world.rockets.get(&id).copied() else { continue };
         shell.velocity[1] -= GRAVITY * dt;
@@ -83,7 +88,7 @@ fn step_shells(world: &mut World, dt: f32) {
         shell.ttl = shell.ttl.saturating_sub(1);
         if let Some(t) = player.map(|(_, t)| t).or(wall) {
             world.rockets.remove(&id);
-            burst(world, shell.owner, std::array::from_fn(|i| shell.position[i] + dir[i] * t), dir);
+            burst(world, shell.kind, shell.owner, std::array::from_fn(|i| shell.position[i] + dir[i] * t), dir);
             continue;
         }
         shell.position = std::array::from_fn(|i| shell.position[i] + dir[i] * step);
@@ -91,7 +96,7 @@ fn step_shells(world: &mut World, dt: f32) {
             world.rockets.remove(&id);
         } else if shell.ttl == 0 {
             world.rockets.remove(&id);
-            burst(world, shell.owner, shell.position, dir);
+            burst(world, shell.kind, shell.owner, shell.position, dir);
         } else {
             world.rockets.insert(id, shell);
         }
@@ -100,9 +105,9 @@ fn step_shells(world: &mut World, dt: f32) {
 
 /// One tick of a helicopter's nose gun, for the gunner in seat 1 if there is one, and the gun as it is
 /// after it. The gunner's look direction is taken in the world and expressed in the hull's frame, so the
-/// gun holds its aim while the helicopter leans and turns, until the target leaves its travel. A shot
-/// is a ray from the mount, which stickmen and vehicles in its way take damage from.
-fn work_chaingun(world: &mut World, vid: u32, mut gun: Gun, pose: &CarPose, dt: f32) -> Gun {
+/// gun holds its aim while the helicopter leans and turns, until the target leaves its travel. A round
+/// is a small shell, scattered a little: it flies, falls and bursts like a tank's.
+fn work_autocannon(world: &mut World, vid: u32, mut gun: Gun, pose: &CarPose, dt: f32) -> Gun {
     gun.cooldown = gun.cooldown.saturating_sub(1);
     let Some(gunner) = world.vehicles[&vid].seats[GUNNER_SEAT] else { return gun };
     let Some(input) = world.players.get(&gunner).map(|player| player.input) else { return gun };
@@ -118,18 +123,7 @@ fn work_chaingun(world: &mut World, vid: u32, mut gun: Gun, pose: &CarPose, dt: 
 
     let (origin, dir) = aim_from(pose, HELI_GUN_PIVOT, gun.yaw, gun.pitch);
     let dir = scatter(world, dir, HELI_GUN_SPREAD);
-    let back = rewind_ticks(world.tick, input.view());
-    let wall = world.physics.cast_ray_hit(origin, dir, HELI_GUN_RANGE, vid);
-    let reach = wall.map_or(HELI_GUN_RANGE, |(t, _)| t);
-    let hit = first_player_hit(world, origin, dir, reach, Some(gunner), back);
-    if let Some((victim, _)) = hit {
-        damage(world, victim, HELI_GUN_DAMAGE, Some(gunner), WEAPON_CHAINGUN);
-    } else if let Some((_, Some(car))) = wall {
-        damage_vehicle(world, car, (HELI_GUN_DAMAGE / 2).max(1), Some(gunner));
-    }
-    let end = hit.map_or(reach, |(_, t)| t);
-    let [x, y, z] = std::array::from_fn(|i| to_cm(origin[i] + dir[i] * end));
-    world.shots.push(ShotEvent(gunner, WEAPON_CHAINGUN, x, y, z));
+    fire(world, PROJECTILE_CANNON, vid, origin, dir, HELI_GUN_LENGTH, gunner);
     gun.shots = gun.shots.wrapping_add(1);
     gun.cooldown = HELI_GUN_COOLDOWN_TICKS;
     gun
@@ -145,7 +139,7 @@ impl Mechanic for Gunnery {
             let gunner = vehicle.seats[GUNNER_SEAT].and_then(|id| world.players.get(&id)).map(|player| player.input);
             let Some(pose) = world.physics.car_pose(vid) else { continue };
             if vehicle.kind == KIND_HELI {
-                let gun = work_chaingun(world, vid, gun, &pose, dt);
+                let gun = work_autocannon(world, vid, gun, &pose, dt);
                 if let Some(vehicle) = world.vehicles.get_mut(&vid) {
                     vehicle.gun = Some(gun);
                 }
@@ -161,9 +155,9 @@ impl Mechanic for Gunnery {
                 trigger = input.buttons() & BUTTON_FIRE != 0 && gun.cooldown == 0;
             }
             if let (true, Some(gunner_id)) = (trigger, world.vehicles[&vid].seats[GUNNER_SEAT]) {
-                fire(world, vid, &pose, gun.yaw, gun.pitch, gunner_id);
+                let (origin, dir) = aim(&pose, gun.yaw, gun.pitch);
+                fire(world, PROJECTILE_SHELL, vid, origin, dir, TANK_BARREL_LENGTH, gunner_id);
                 // Recoil: the hull is shoved back along the barrel (level, so it doesn't dig in).
-                let (_, dir) = aim(&pose, gun.yaw, gun.pitch);
                 world.physics.kick_car(vid, [-dir[0] * SHELL_RECOIL, 0.0, -dir[2] * SHELL_RECOIL]);
                 gun.shots = gun.shots.wrapping_add(1);
                 gun.cooldown = SHELL_COOLDOWN_TICKS;
@@ -436,16 +430,32 @@ mod tests {
     }
 
     #[test]
-    fn the_nose_gun_hurts_what_it_points_at() {
+    fn the_nose_gun_throws_small_shells_that_burst_a_third_as_wide() {
         let (mut game, gunner, vid, mut seq) = heli_crewed();
         let (victim, _inbox) = join(&mut game);
+        let (bystander, _inbox2) = join(&mut game);
         let pose = game.world.physics.car_pose(vid).unwrap();
         let (origin, dir) = aim_from(&pose, HELI_GUN_PIVOT, 0.0, 0.0);
-        game.world.players.get_mut(&victim).unwrap().character.position = std::array::from_fn(|i| origin[i] + dir[i] * 15.0);
+        let at: [f32; 3] = std::array::from_fn(|i| origin[i] + dir[i] * 15.0);
+        game.world.players.get_mut(&victim).unwrap().character.position = at;
+        // Three metres to the side: inside a tank shell's blast, outside this one's.
+        let mut beside = at;
+        beside[0] += 4.0;
+        game.world.players.get_mut(&bystander).unwrap().character.position = beside;
         let before = game.world.players[&victim].hp;
-        aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, BUTTON_FIRE, 6);
-        assert!(game.world.vehicles[&vid].gun.unwrap().shots >= 1);
-        assert!(game.world.players[&victim].hp < before, "hit");
+
+        aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, BUTTON_FIRE, 2);
+        assert_eq!(game.world.vehicles[&vid].gun.unwrap().shots, 1);
+        let listed = game.projectile_states();
+        assert_eq!(listed.len(), 1, "the round is in flight");
+        assert_eq!(listed[0].1, PROJECTILE_CANNON);
+        assert_eq!(game.world.players[&victim].hp, before, "and has not arrived");
+
+        aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, 0, 30);
+        assert!(game.world.rockets.is_empty(), "it has burst");
+        let hp = game.world.players[&victim].hp;
+        assert!(hp < before && before - hp < 60, "hurt, but less than a tank shell: {before} to {hp}");
+        assert_eq!(game.world.players[&bystander].hp, PLAYER_MAX_HP, "outside the small blast");
     }
 
     #[test]

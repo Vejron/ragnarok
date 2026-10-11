@@ -1,8 +1,9 @@
 import * as THREE from 'three'
 
-/** `PROJECTILE_GRENADE` and `PROJECTILE_SHELL` in codec.ts. */
+/** `PROJECTILE_GRENADE`, `PROJECTILE_SHELL` and `PROJECTILE_CANNON` in codec.ts. */
 const GRENADE = 1
 const SHELL = 2
+const CANNON = 3
 
 /** The projectiles in flight: a glowing missile or a tank shell pointed along its velocity, or a tumbling grenade. */
 export class Rockets {
@@ -14,6 +15,9 @@ export class Rockets {
   private readonly slugMaterial = new THREE.MeshBasicMaterial({ color: 0xfff0b0, fog: false })
   private readonly trail = new THREE.CylinderGeometry(0.22, 0.02, 16, 8)
   private readonly trailMaterial = new THREE.MeshBasicMaterial({ color: 0xff9a3c, transparent: true, opacity: 0.55, fog: false, depthWrite: false })
+  /** An autocannon round: the same slug and trail, a third the size. */
+  private readonly smallSlug = new THREE.CylinderGeometry(0.1, 0.1, 0.8, 8)
+  private readonly smallTrail = new THREE.CylinderGeometry(0.07, 0.01, 5, 6)
   private readonly ball = new THREE.SphereGeometry(0.1, 10, 8)
   private readonly ballMaterial = new THREE.MeshToonMaterial({ color: 0x4f5d2e })
   private readonly meshes = new Map<number, THREE.Mesh>()
@@ -24,7 +28,12 @@ export class Rockets {
     let mesh = this.meshes.get(id)
     if (!mesh) {
       if (kind === GRENADE) mesh = new THREE.Mesh(this.ball, this.ballMaterial)
-      else if (kind === SHELL) {
+      else if (kind === CANNON) {
+        mesh = new THREE.Mesh(this.smallSlug, this.slugMaterial)
+        const tail = new THREE.Mesh(this.smallTrail, this.trailMaterial)
+        tail.position.y = -(0.4 + 2.5)
+        mesh.add(tail)
+      } else if (kind === SHELL) {
         mesh = new THREE.Mesh(this.slug, this.slugMaterial)
         // The trail streams out behind, along the shell's own -Y.
         const tail = new THREE.Mesh(this.trail, this.trailMaterial)
@@ -61,6 +70,8 @@ export class Rockets {
     this.slug.dispose()
     this.slugMaterial.dispose()
     this.trail.dispose()
+    this.smallSlug.dispose()
+    this.smallTrail.dispose()
     this.trailMaterial.dispose()
     this.ball.dispose()
     this.ballMaterial.dispose()

@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import {
   encodeInput, encodePing, KIND_HELI, KIND_STICKMAN, KIND_TANK, sceneStates, toAxis, toMrad, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_RIFLE,
-  WEAPON_CHAINGUN, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK,
+  WEAPON_AUTOCANNON, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK,
   type EntityState, type InputFrame, type PickupState, type RocketState, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
 } from './net/codec'
 import { blendEntity, blendRocket, blendVehicle, Interpolator } from './net/interp'
@@ -10,7 +10,7 @@ import { Transport, type ConnectionStatus } from './net/transport'
 import {
   BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, CROUCH_EYE_DROP, SLIDE_MIN_SPEED, ENTER_RADIUS, EXPLOSION_RADIUS, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION, RESPAWN_TICKS,
   ROCKET_BLAST_RADIUS, SHELL_COOLDOWN_TICKS, STANDING_Y,
-  HELI_GUN_PITCH_MAX, HELI_GUN_PITCH_MIN, HELI_GUN_RANGE, HELI_GUN_YAW_LIMIT,
+  HELI_GUN_COOLDOWN_TICKS, HELI_GUN_LENGTH, HELI_GUN_PITCH_MAX, HELI_GUN_PITCH_MIN, HELI_GUN_YAW_LIMIT, CANNON_RADIUS,
   TANK_BARREL_LENGTH, TANK_BARREL_MAX, TANK_BARREL_MIN, TICK_MS, vehicleMaxHp, WRECK_BLAST_RADIUS,
 } from './sim/consts'
 import { emptyHotbar, GRENADE_BLAST_RADIUS, HOTBAR_SLOTS, ITEM_AK5, ITEM_NONE, ITEM_REVOLVER, itemDef, PICKUP_RADIUS, type ItemSlot } from './sim/items'
@@ -534,7 +534,7 @@ export class Game {
       prompt: this.prompt(position, cars),
       seat: !this.seat ? null : this.seat.index === 0 ? (this.seat.kind === KIND_HELI ? 'pilot' : 'driver') : this.seat.kind === KIND_TANK || this.seat.kind === KIND_HELI ? 'gunner' : 'passenger',
       canSwitchSeat: this.seat !== null && (cars.get(this.seat.vehicle)?.seats.includes(0) ?? false),
-      reload: this.seat?.kind === KIND_HELI ? 1 : Math.min(1, (now - this.lastShotAt) / (SHELL_COOLDOWN_TICKS * TICK_MS)),
+      reload: Math.min(1, (now - this.lastShotAt) / ((this.seat?.kind === KIND_HELI ? HELI_GUN_COOLDOWN_TICKS : SHELL_COOLDOWN_TICKS) * TICK_MS)),
       hp: this.hp,
       maxHp: PLAYER_MAX_HP,
       dead: this.hp === 0,
@@ -597,15 +597,8 @@ export class Game {
       this.effects.burst(to, EXPLOSION_RADIUS)
     } else if (shot.weapon === WEAPON_WRECK) {
       this.effects.burst(to, WRECK_BLAST_RADIUS)
-    } else if (shot.weapon === WEAPON_CHAINGUN) {
-      // From the muzzle of whichever helicopter has this gunner aboard.
-      for (const car of this.cars.values()) {
-        if (!(car instanceof HeliModel) || car.gunner !== shot.shooter) continue
-        const from = car.muzzle()
-        car.recoil()
-        this.effects.tracer(from, to, from.distanceTo(to) < HELI_GUN_RANGE - 1)
-        break
-      }
+    } else if (shot.weapon === WEAPON_AUTOCANNON) {
+      this.effects.burst(to, CANNON_RADIUS)
     } else if (shot.weapon === WEAPON_RIFLE || shot.weapon === WEAPON_REVOLVER) {
       const from = this.muzzleOf(shot.shooter)
       this.avatars.get(shot.shooter === this.localId ? 0 : shot.shooter)?.fire()
@@ -729,7 +722,7 @@ export class Game {
       car.update([x, y, z], [rotation[0], rotation[1], rotation[2], rotation[3]], steer, state.seats, state.turret)
       placed.set(id, { kind: state.kind, turret: state.turret, x, y, z, yaw, seats: state.seats })
       this.smoulder(id, state, [x, y, z])
-      if (car instanceof TankModel && state.turret) this.watchGun(id, car, state.turret, state.seats)
+      if ((car instanceof TankModel || car instanceof HeliModel) && state.turret) this.watchGun(id, car, state.turret, state.seats)
     }
     for (const [id, car] of this.cars) {
       if (!placed.has(id)) {
@@ -779,14 +772,14 @@ export class Game {
   }
 
   /** A change in the shot counter is a shell leaving: flash and recoil. The shell itself is a projectile. */
-  private watchGun(id: number, tank: TankModel, turret: Turret, seats: readonly number[]) {
+  private watchGun(id: number, tank: TankModel | HeliModel, turret: Turret, seats: readonly number[]) {
     const before = this.shots.get(id)
     this.shots.set(id, turret.shots)
     // The first sight of a gun is not a shot, nor is a counter that has not moved.
     if (before === undefined || before === turret.shots) return
     const { origin, direction } = tank.barrel()
     tank.recoil()
-    const muzzle = origin.clone().addScaledVector(direction, TANK_BARREL_LENGTH)
+    const muzzle = origin.clone().addScaledVector(direction, tank instanceof HeliModel ? HELI_GUN_LENGTH : TANK_BARREL_LENGTH)
     this.effects.muzzleFlash(muzzle, direction)
     if (seats[1] === this.localId) this.lastShotAt = performance.now()
   }

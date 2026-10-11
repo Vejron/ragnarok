@@ -1,7 +1,7 @@
 //! Simulation and network constants. Mirrored in `client/src/sim/consts.ts`.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 12;
+pub const PROTOCOL_VERSION: u8 = 13;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -157,21 +157,24 @@ pub const HELI_CEILING: f32 = 120.0;
 /// angular velocity follows it, per second.
 pub const HELI_LEVEL_GAIN: f32 = 4.0;
 pub const HELI_RESPONSE: f32 = 8.0;
-/// The nose gun: a four-barrel machine gun on a chin mount. `HELI_GUN_PIVOT` is the mount in the hull
+/// The nose gun: a four-barrel autocannon on a chin mount. `HELI_GUN_PIVOT` is the mount in the hull
 /// frame and `HELI_GUN_LENGTH` how far the muzzle is from it. The gunner's look direction aims it, within
 /// `HELI_GUN_YAW_LIMIT` either side of the nose and `HELI_GUN_PITCH_MIN..=HELI_GUN_PITCH_MAX` (radians, the
-/// hull's frame), at `HELI_GUN_SLEW` rad/s. It is hitscan: a shot is one ray of `HELI_GUN_RANGE` metres,
-/// scattered by up to `HELI_GUN_SPREAD` radians, one every `HELI_GUN_COOLDOWN_TICKS`.
+/// hull's frame), at `HELI_GUN_SLEW` rad/s. It fires a shell (`SHELL_SPEED`, same fall and lifetime) every
+/// `HELI_GUN_COOLDOWN_TICKS`, three a second, scattered by up to `HELI_GUN_SPREAD` radians. It bursts
+/// like a tank shell on a smaller scale: a third of the radius and a third of the damage.
 pub const HELI_GUN_PIVOT: [f32; 3] = [0.0, -0.6, -2.0];
 pub const HELI_GUN_LENGTH: f32 = 1.3;
 pub const HELI_GUN_YAW_LIMIT: f32 = 1.0;
 pub const HELI_GUN_PITCH_MIN: f32 = -0.75;
 pub const HELI_GUN_PITCH_MAX: f32 = 0.2;
 pub const HELI_GUN_SLEW: f32 = 3.0;
-pub const HELI_GUN_COOLDOWN_TICKS: u32 = 5;
-pub const HELI_GUN_RANGE: f32 = 150.0;
-pub const HELI_GUN_DAMAGE: u8 = 8;
+pub const HELI_GUN_COOLDOWN_TICKS: u32 = TICK_RATE / 3;
 pub const HELI_GUN_SPREAD: f32 = 0.01;
+/// The blast of an autocannon round: a third of a tank shell's radius, a third of its damage.
+pub const CANNON_RADIUS: f32 = EXPLOSION_RADIUS / 3.0;
+pub const CANNON_DAMAGE: f32 = EXPLOSION_DAMAGE / 3.0;
+pub const CANNON_KNOCK: f32 = EXPLOSION_KNOCK / 2.0;
 
 /// The tank gun.
 pub const SHELL_COOLDOWN_TICKS: u32 = 90;
