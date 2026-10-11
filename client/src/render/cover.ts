@@ -7,8 +7,6 @@ import {
   COVER_URBAN,
   COVER_WATER,
   COVER_WOOD,
-  ROAD_MAJOR,
-  ROAD_PATH,
   type TileData,
 } from '@/world'
 
@@ -24,25 +22,17 @@ const COVER_COLORS: Record<number, number> = {
   [COVER_INDUSTRIAL]: 0xc6c6d0,
 }
 
-/** `[casing, fill]` per road kind; paths have no casing. */
-const ROAD_COLORS: Record<number, [number | null, number]> = {
-  [ROAD_MAJOR]: [0xc9a86a, 0xfff1c9],
-  1: [0xbdbdbd, 0xffffff],
-  [ROAD_PATH]: [null, 0xd8b98a],
-}
-/** How much wider than the road its casing is, metres. */
-const CASING = 0.8
 /** Texels per metre of terrain. */
-const TEXELS_PER_METRE = 2
+const TEXELS_PER_METRE = 4
 
 const css = (color: number) => `#${color.toString(16).padStart(6, '0')}`
 
 /**
- * Paints a tile's ground cover and roads, seen from above, into a texture. Canvas `(0, 0)` is the
+ * Paints a tile's ground cover, seen from above, into a texture. Canvas `(0, 0)` is the
  * tile's `(x0, z0)` corner, which is UV `(0, 0)` with `flipY` off. Null when there is no canvas
  * (tests), in which case the terrain stays plain grass.
  */
-export function bakeTerrainTexture(tile: Pick<TileData, 'cover' | 'roads'>, x0: number, z0: number, size: number): THREE.CanvasTexture | null {
+export function bakeTerrainTexture(tile: Pick<TileData, 'cover'>, x0: number, z0: number, size: number): THREE.CanvasTexture | null {
   if (typeof document === 'undefined') return null
   const pixels = Math.min(1024, Math.max(128, 2 ** Math.round(Math.log2(size * TEXELS_PER_METRE))))
   const canvas = document.createElement('canvas')
@@ -63,22 +53,6 @@ export function bakeTerrainTexture(tile: Pick<TileData, 'cover' | 'roads'>, x0: 
       ctx.closePath()
     }
     ctx.fill('evenodd')
-  }
-
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-  // Casings first, then fills, so junctions read as one surface instead of a stack of outlines.
-  for (const pass of [0, 1] as const) {
-    for (const road of [...tile.roads].sort((a, b) => b.kind - a.kind)) {
-      const [casing, fill] = ROAD_COLORS[road.kind] ?? ROAD_COLORS[1]!
-      const color = pass === 0 ? casing : fill
-      if (color === null) continue
-      ctx.strokeStyle = css(color)
-      ctx.lineWidth = (road.width + (pass === 0 ? CASING : 0)) * scale
-      ctx.beginPath()
-      road.points.forEach((p, i) => (i === 0 ? ctx.moveTo(...at(p)) : ctx.lineTo(...at(p))))
-      ctx.stroke()
-    }
   }
 
   const texture = new THREE.CanvasTexture(canvas)

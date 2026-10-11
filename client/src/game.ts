@@ -30,7 +30,7 @@ import { DRIVING_DISTANCE, HELI_DISTANCE, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_F
 import { HeliModel, loadHeliModel } from './render/heli'
 import { loadTankModel, TankModel } from './render/tank'
 import { Character, Crowd } from './render/character'
-import { buildGround, buildTile, disposeTile } from './render/world'
+import { buildGround, buildTile, disposeTile, restitchTerrain } from './render/world'
 import { Replica } from './net/replica'
 import { TileStreamer } from './stream'
 import { loadManifest, type TileData, type TileRef, type WorldData } from './world'
@@ -145,6 +145,8 @@ export class Game {
   private tiles: TileStreamer | null = null
   private world: WorldData | null = null
   private terrain: Terrain | null = null
+  /** Each streamed-in tile's drawing, by `row * 65536 + col`, so a new tile can re-shade its neighbours' seams. */
+  private readonly tileGroups = new Map<number, THREE.Group>()
   private readonly cars = new Map<number, VehicleModel>()
   private readonly effects = new Effects()
   private readonly rocketInterp = new Interpolator<RocketState>(blendRocket)
@@ -250,13 +252,23 @@ export class Game {
   /** Draws a streamed-in tile and makes it solid for both predicted simulations. Returns how to undo it. */
   private attachTile(ref: TileRef, tile: TileData) {
     const ground = this.world ? groundOf(this.world, ref, tile) : null
-    const group = buildTile(tile, ref.col * 31 + ref.row * 17, ground)
+    const group = buildTile(tile, ref.col * 31 + ref.row * 17, ground, this.terrain ?? undefined)
     this.scene.scene.add(group)
     this.terrain?.set(ref, ground)
+    const key = ref.row * 65536 + ref.col
+    this.tileGroups.set(key, group)
+    // Tiles already in place were shaded without this one beside them: close the seams.
+    if (this.terrain && ground) {
+      for (const [dc, dr] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]] as const) {
+        const next = this.tileGroups.get((ref.row + dr) * 65536 + ref.col + dc)
+        if (next) restitchTerrain(next, this.terrain)
+      }
+    }
     const walk = this.motor?.addTile(tile, ground) ?? []
     const drive = this.driver?.addTile(tile, ground) ?? []
     return () => {
       disposeTile(group)
+      this.tileGroups.delete(key)
       this.terrain?.delete(ref)
       this.motor?.removeTile(walk)
       this.driver?.removeTile(drive)

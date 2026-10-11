@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 import {
   TREE_BIRCH,
   TREE_BROADLEAF,
@@ -70,28 +70,40 @@ const PROTOTYPES: Record<number, Part[]> = {
 function partGeometry(part: Part): THREE.BufferGeometry {
   let geometry: THREE.BufferGeometry
   if (part.shape === 'ellipsoid') {
-    geometry = new THREE.IcosahedronGeometry(1, 1)
+    // Fine enough that the silhouette reads round; welded so the normals blend across faces.
+    geometry = new THREE.IcosahedronGeometry(1, 3)
+    geometry.deleteAttribute('uv')
+    geometry.deleteAttribute('normal')
+    geometry = mergeVertices(geometry, 1e-4)
     geometry.scale(part.rx!, part.ry!, part.rx!)
     geometry.translate(part.x ?? 0, part.y0, part.z ?? 0)
+    geometry.computeVertexNormals()
   } else {
     const height = part.y1! - part.y0
     geometry =
       part.shape === 'cone'
-        ? new THREE.ConeGeometry(part.rx!, height, 7)
-        : new THREE.CylinderGeometry(part.rx! * 0.8, part.rx!, height, 6)
+        ? new THREE.ConeGeometry(part.rx!, height, 20, 1)
+        : new THREE.CylinderGeometry(part.rx! * 0.8, part.rx!, height, 10)
     geometry.translate(0, part.y0 + height / 2, 0)
+    geometry.deleteAttribute('uv')
   }
-  // Merged parts must share one attribute layout: flat-shaded, position + normal + colour.
-  const flat = geometry.index ? geometry.toNonIndexed() : geometry
-  flat.deleteAttribute('uv')
-  flat.computeVertexNormals()
+  // Merged parts must share one attribute layout: indexed, position + normal + colour.
   const color = new THREE.Color(part.color)
-  const count = flat.getAttribute('position').count
+  const count = geometry.getAttribute('position').count
   const colors = new Float32Array(count * 3)
   for (let i = 0; i < count; i++) color.toArray(colors, i * 3)
-  flat.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-  return flat
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+  return geometry
 }
+
+/** A soft stepped ramp (shade is N·L*0.5+0.5): a few bands with a lit crown, not a hard two-tone split. */
+const CROWN_RAMP = (() => {
+  const steps = [120, 150, 185, 220, 245, 255]
+  const texture = new THREE.DataTexture(new Uint8Array(steps), steps.length, 1, THREE.RedFormat)
+  texture.minFilter = texture.magFilter = THREE.LinearFilter
+  texture.needsUpdate = true
+  return texture
+})()
 
 let shared: { geometries: Map<number, THREE.BufferGeometry>; material: THREE.Material } | undefined
 
@@ -101,7 +113,7 @@ function prototypes() {
     for (const [kind, parts] of Object.entries(PROTOTYPES)) {
       geometries.set(Number(kind), mergeGeometries(parts.map(partGeometry))!)
     }
-    shared = { geometries, material: new THREE.MeshToonMaterial({ vertexColors: true }) }
+    shared = { geometries, material: new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: CROWN_RAMP }) }
   }
   return shared
 }
@@ -137,7 +149,7 @@ export function buildTrees(trees: readonly Tree[]): THREE.InstancedMesh[] {
     })
     mesh.instanceMatrix.needsUpdate = true
     mesh.castShadow = true
-    mesh.receiveShadow = true
+    mesh.receiveShadow = false
     mesh.userData.sharedGeometry = true
     meshes.push(mesh)
   }

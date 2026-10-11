@@ -69,11 +69,16 @@ export class Terrain {
     this.tiles.delete(this.key(ref.col, ref.row))
   }
 
-  /** Ground height under `(x, z)`; 0 where the tile is not loaded (the plane every world has underneath). */
-  heightAt(x: number, z: number): number {
+  /** Ground height under `(x, z)`, or null where its tile is not loaded. */
+  sample(x: number, z: number): number | null {
     const grid = Math.max(1, Math.ceil((2 * this.halfExtent) / this.tileSize))
     const cell = (v: number) => Math.min(Math.max(Math.floor((v + this.halfExtent) / this.tileSize), 0), grid - 1)
     const ground = this.tiles.get(this.key(cell(x), cell(z)))
-    return ground ? heightIn(ground, x, z) : 0
+    return ground ? heightIn(ground, x, z) : null
+  }
+
+  /** Ground height under `(x, z)`; 0 where the tile is not loaded (the plane every world has underneath). */
+  heightAt(x: number, z: number): number {
+    return this.sample(x, z) ?? 0
   }
 }

@@ -17,11 +17,17 @@ export const GUNNER_UP = 2.6
 export const GUNNER_FOCUS = 60
 export const CAMERA_HEIGHT = 1.2
 
+/**
+ * Where the sun sits relative to what it follows, metres: about 42° above the horizon. Higher and
+ * hillsides all fall in the same lit band; lower and the terrain's toon ramp shows its form.
+ */
+const SUN_OFFSET = [70, 80, 55] as const
+
 export class Scene {
   readonly scene = new THREE.Scene()
-  readonly camera = new THREE.PerspectiveCamera(75, 1, 0.1, 2000)
+  readonly camera = new THREE.PerspectiveCamera(75, 1, 0.25, 2000)
   readonly renderer: THREE.WebGLRenderer
-  private readonly sun = new THREE.DirectionalLight(0xffffff, 2.2)
+  private readonly sun = new THREE.DirectionalLight(0xffffff, 2.4)
   private readonly resizeObserver: ResizeObserver
 
   constructor(private readonly container: HTMLElement) {
@@ -33,15 +39,15 @@ export class Scene {
 
     this.scene.background = new THREE.Color(0x9fd3f0)
     this.scene.fog = new THREE.Fog(0x9fd3f0, 150, 600)
-    this.scene.add(new THREE.HemisphereLight(0xdff3ff, 0x6b8f4e, 1.4))
-    this.sun.position.set(60, 120, 40)
+    this.scene.add(new THREE.HemisphereLight(0xdff3ff, 0x6b8f4e, 1.0))
+    this.sun.position.set(...SUN_OFFSET)
     this.sun.castShadow = true
     this.sun.shadow.mapSize.set(2048, 2048)
-    this.sun.shadow.bias = -0.0005
-    this.sun.shadow.normalBias = 0.05
+    this.sun.shadow.bias = -0.001
+    this.sun.shadow.normalBias = 0.15
     const s = this.sun.shadow.camera
-    s.left = s.bottom = -60
-    s.right = s.top = 60
+    s.left = s.bottom = -50
+    s.right = s.top = 50
     s.near = 10
     s.far = 300
     this.scene.add(this.sun, this.sun.target)
@@ -80,7 +86,7 @@ export class Scene {
     this.camera.lookAt(x, y, z)
     // The shadow frustum follows the target's height too, so it covers hills.
     this.sun.target.position.set(target[0]!, target[1]!, target[2]!)
-    this.sun.position.set(target[0]! + 60, target[1]! + 120, target[2]! + 40)
+    this.sun.position.set(target[0]! + SUN_OFFSET[0], target[1]! + SUN_OFFSET[1], target[2]! + SUN_OFFSET[2])
   }
 
   /**
@@ -95,7 +101,7 @@ export class Scene {
     this.camera.position.y = Math.max(this.groundAt(this.camera.position.x, this.camera.position.z) + 0.3, this.camera.position.y)
     this.camera.lookAt(from.addScaledVector(dir, GUNNER_FOCUS))
     this.sun.target.position.set(origin[0]!, origin[1]!, origin[2]!)
-    this.sun.position.set(origin[0]! + 60, origin[1]! + 120, origin[2]! + 40)
+    this.sun.position.set(origin[0]! + SUN_OFFSET[0], origin[1]! + SUN_OFFSET[1], origin[2]! + SUN_OFFSET[2])
   }
 
   render() {
