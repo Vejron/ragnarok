@@ -12,6 +12,22 @@ Roadmap stage 2 from [design.md §14](design.md#14-roadmap): a car, seats, enter
 - Seated players show as coloured heads in the open-top car, in their own colour.
 - Cars are solid: a stickman can't walk through one, and can climb on top and ride along. A car that drives into a stickman throws them forward and up (see Knockback).
 
+## Two cars
+
+The single car was later split into two kinds that share the ray-cast physics and differ in their `Spec` (server `physics/vehicle.rs`, client `sim/vehicle.ts`). Models are built in Blender by [tools/vehicles/build_car.py](tools/vehicles/build_car.py) into `client/public/models/jeep.glb` and `sports.glb`; the three vehicles' scripts follow the same conventions.
+
+| | Jeep (`KIND_JEEP`, 1) | Sports car (`KIND_SPORTS`, 4) |
+|---|---|---|
+| Body | open tub, roll cage, spare wheel | open wedge, wing |
+| Box (half extents) | 1.0 × 0.42 × 1.95 m | 0.95 × 0.3 × 2.2 m |
+| Wheel radius | 0.55 m | 0.32 m |
+| Ground clearance | about 0.44 m | about 0.10 m |
+| Engine, top speed | 7500 N, 28 m/s | 11 000 N, 44 m/s |
+| Steering lock | 0.5 rad | 0.4 rad |
+| Seats | 4 | 2 |
+
+Half of the six parked cars are of each kind. `PROTOCOL_VERSION` is 14, because the new kind changes both the wire and what a client must simulate. Where this file says "the car" below it describes the original (now jeep-like) numbers: the fixtures in `vehicle.rs` and `vehicle.spec.ts` hold the current ones.
+
 ## Protocol changes
 
 `PROTOCOL_VERSION` is now **4** (2 added vehicles, 3 knockback, 4 riding). Old clients are refused with the existing "reload" banner.

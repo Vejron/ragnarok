@@ -801,7 +801,7 @@ mod tests {
             game.handle(Command::Input(shooter, 0, vec![InputFrame(seq, 0, 0, 0, BUTTON_FIRE, to_mrad(-0.05), 0, 0)]));
             game.step();
         }
-        let max = shared::protocol::vehicle_hp(shared::protocol::KIND_CAR);
+        let max = shared::protocol::vehicle_hp(shared::protocol::KIND_JEEP);
         assert_eq!(game.world.vehicles[&vid].hp, max - (ak5().damage / 4).max(1));
 
         damage_vehicle(&mut game.world, vid, max, Some(shooter));
@@ -845,7 +845,7 @@ mod tests {
         }
         let vehicle = &game.world.vehicles[&vid];
         assert!(!vehicle.wrecked());
-        assert_eq!(vehicle.hp, shared::protocol::vehicle_hp(shared::protocol::KIND_CAR));
+        assert_eq!(vehicle.hp, shared::protocol::vehicle_hp(shared::protocol::KIND_JEEP));
     }
 
     #[test]

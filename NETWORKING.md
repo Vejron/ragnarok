@@ -83,11 +83,11 @@ Players sitting in a vehicle are **not** listed as entities. The vehicle's `seat
 | Field | Unit |
 |---|---|
 | `id` | shares the id space with players |
-| `kind` | 1 = car, 2 = tank, 3 = helicopter |
+| `kind` | 1 = jeep, 2 = tank, 3 = helicopter, 4 = sports car |
 | `x, y, z` | centimetres, chassis centre |
 | `qx, qy, qz` | the x, y, z of the orientation quaternion, scaled by 32767. The sender negates the quaternion so that `w >= 0`, and the receiver rebuilds `w = sqrt(1 − x² − y² − z²)` |
-| `steer` | front-wheel angle as a fraction of full lock (`CAR_MAX_STEER`), −127..127, + is right |
-| `seat` | the player id in each seat, 0 when empty. Seat 0 is the driver. A car has 4 seats; a tank has 2, the second being the gunner; a helicopter has 2, the pilot and a passenger |
+| `steer` | front-wheel angle as a fraction of full lock (the kind's `*_MAX_STEER`), −127..127, + is right |
+| `seat` | the player id in each seat, 0 when empty. Seat 0 is the driver. A jeep has 4 seats and a sports car 2; a tank has 2, the second being the gunner; a helicopter has 2, the pilot and a passenger |
 | `turret` | `nil` for a vehicle without a gun, else `[yaw i16, pitch i16, shots u8, range u16]` (below) |
 
 `turret` is `[yaw, pitch, shots, range]`:

@@ -14,7 +14,7 @@ use super::Physics;
 use rapier3d::control::{DynamicRayCastVehicleController, WheelTuning};
 use rapier3d::prelude::*;
 use shared::consts::*;
-use shared::protocol::{KIND_HELI, KIND_TANK};
+use shared::protocol::{KIND_HELI, KIND_SPORTS, KIND_TANK};
 
 /// Gravity acting on vehicle bodies. Stickmen use `GRAVITY`; the ray-cast suspension is tuned
 /// around the real-world value.
@@ -44,19 +44,38 @@ pub(super) struct Spec {
     linear_damping: f32,
 }
 
-static CAR: Spec = Spec {
-    half_extents: CAR_HALF_EXTENTS,
-    // The box is 6 m³, so a car weighs about 1.2 tonnes.
+static JEEP: Spec = Spec {
+    half_extents: JEEP_HALF_EXTENTS,
+    // The box is 6.6 m³, so a jeep weighs about 1.3 tonnes. Big wheels and a soft top speed: it
+    // gets there slowly but clears kerbs the sports car would ground on.
     density: 200.0,
-    wheel_radius: CAR_WHEEL_RADIUS,
-    track_half: CAR_TRACK_HALF,
-    axles: &[-CAR_AXLE_Z, CAR_AXLE_Z],
-    hard_point_y: CAR_HARD_POINT_Y,
-    suspension_rest: CAR_SUSPENSION_REST,
+    wheel_radius: JEEP_WHEEL_RADIUS,
+    track_half: JEEP_TRACK_HALF,
+    axles: &[-JEEP_AXLE_Z, JEEP_AXLE_Z],
+    hard_point_y: JEEP_HARD_POINT_Y,
+    suspension_rest: JEEP_SUSPENSION_REST,
     max_suspension_force: 60_000.0,
-    engine_force: 7000.0,
-    max_speed: CAR_MAX_SPEED,
-    steer_lock: CAR_MAX_STEER,
+    engine_force: 7500.0,
+    max_speed: JEEP_MAX_SPEED,
+    steer_lock: JEEP_MAX_STEER,
+    turn_rate: 0.0,
+    flies: false,
+    linear_damping: 0.05,
+};
+
+static SPORTS: Spec = Spec {
+    half_extents: SPORTS_HALF_EXTENTS,
+    // 5 m³ of flat body is about a tonne, with half as much engine again to push it.
+    density: 200.0,
+    wheel_radius: SPORTS_WHEEL_RADIUS,
+    track_half: SPORTS_TRACK_HALF,
+    axles: &[-SPORTS_AXLE_Z, SPORTS_AXLE_Z],
+    hard_point_y: SPORTS_HARD_POINT_Y,
+    suspension_rest: SPORTS_SUSPENSION_REST,
+    max_suspension_force: 60_000.0,
+    engine_force: 11_000.0,
+    max_speed: SPORTS_MAX_SPEED,
+    steer_lock: SPORTS_MAX_STEER,
     turn_rate: 0.0,
     flies: false,
     linear_damping: 0.05,
@@ -99,12 +118,13 @@ static HELI: Spec = Spec {
     linear_damping: 0.2,
 };
 
-/// The spec for a vehicle kind. Unknown kinds are cars.
+/// The spec for a vehicle kind. Unknown kinds are jeeps.
 pub(super) fn spec(kind: u8) -> &'static Spec {
     match kind {
         KIND_TANK => &TANK,
         KIND_HELI => &HELI,
-        _ => &CAR,
+        KIND_SPORTS => &SPORTS,
+        _ => &JEEP,
     }
 }
 
@@ -123,7 +143,7 @@ const BRAKE_PER_KG: f32 = 0.035;
 const COAST_BRAKE_PER_KG: f32 = 0.0015;
 /// How fast the front wheels turn towards the steering input, radians per second.
 const STEER_RATE: f32 = 3.0;
-/// Steering lock shrinks with speed: `CAR_MAX_STEER / (1 + speed / STEER_FADE_SPEED)`.
+/// Steering lock shrinks with speed: `steer_lock / (1 + speed / STEER_FADE_SPEED)`.
 const STEER_FADE_SPEED: f32 = 14.0;
 
 /// What the driver asks of the car this tick.
@@ -153,7 +173,7 @@ pub struct CarPose {
     pub rotation: [f32; 4],
     /// Speed along the forward axis, m/s; negative when reversing.
     pub forward_speed: f32,
-    /// Front wheel angle as a fraction of `CAR_MAX_STEER`, + is right.
+    /// Front wheel angle as a fraction of the kind's `steer_lock`, + is right.
     pub steer: f32,
     /// Y component of the chassis' up axis: 1 upright, 0 on its side, -1 upside down.
     pub up_y: f32,
@@ -582,7 +602,7 @@ impl Physics {
 mod tests {
     use super::*;
     use shared::consts::TICK_DT;
-    use shared::protocol::{KIND_CAR, KIND_HELI, KIND_TANK};
+    use shared::protocol::{KIND_HELI, KIND_JEEP, KIND_SPORTS, KIND_TANK};
     use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 
     fn flat() -> WorldFile {
@@ -605,7 +625,7 @@ mod tests {
 
     fn with_car(world: &WorldFile) -> Physics {
         let mut physics = Physics::new(world).unwrap();
-        physics.add_car(1, KIND_CAR, [0.0, 1.0, 0.0], 0.0);
+        physics.add_car(1, KIND_JEEP, [0.0, 1.0, 0.0], 0.0);
         physics
     }
 
@@ -625,7 +645,7 @@ mod tests {
     const FORWARD: CarControls = CarControls { throttle: 1.0, ..CarControls::IDLE };
     const COAST: CarControls = CarControls::IDLE;
 
-    /// A scripted drive of a car and a tank on flat ground, for the fixture in `vehicle.spec.ts`.
+    /// A scripted drive of the cars and a tank on flat ground, for the fixture in `vehicle.spec.ts`.
     fn scripted_controls(tick: u32) -> CarControls {
         let phase = tick / 60;
         match phase {
@@ -639,11 +659,15 @@ mod tests {
     }
 
     /// `(kind, tick, position)` after `scripted_controls`, mirrored in `vehicle.spec.ts`.
-    const SCRIPTED_CHECKPOINTS: [(u8, u32, [f32; 3]); 8] = [
-        (KIND_CAR, 90, [0.0, 0.6574, -0.7191]),
-        (KIND_CAR, 210, [1.1072, 0.6573, -14.8450]),
-        (KIND_CAR, 300, [15.9257, 0.6572, -25.5077]),
-        (KIND_CAR, 480, [28.5726, 0.6572, -54.8037]),
+    const SCRIPTED_CHECKPOINTS: [(u8, u32, [f32; 3]); 12] = [
+        (KIND_JEEP, 90, [0.0, 0.8573, -0.7099]),
+        (KIND_JEEP, 210, [1.1160, 0.8571, -14.5416]),
+        (KIND_JEEP, 300, [15.9199, 0.8571, -24.0936]),
+        (KIND_JEEP, 480, [28.7793, 0.8571, -51.1131]),
+        (KIND_SPORTS, 90, [-0.0020, 0.3976, -1.3505]),
+        (KIND_SPORTS, 210, [1.7816, 0.3973, -27.0709]),
+        (KIND_SPORTS, 300, [27.2023, 0.3973, -46.9713]),
+        (KIND_SPORTS, 480, [51.4146, 0.3973, -106.4018]),
         (KIND_TANK, 90, [0.0, 0.9400, -0.7659]),
         (KIND_TANK, 210, [0.4323, 0.9400, -13.2166]),
         (KIND_TANK, 300, [9.7875, 0.9400, -22.8965]),
@@ -652,7 +676,7 @@ mod tests {
 
     #[test]
     fn scripted_drive_matches_fixture() {
-        for kind in [KIND_CAR, KIND_TANK] {
+        for kind in [KIND_JEEP, KIND_SPORTS, KIND_TANK] {
             let mut physics = Physics::new(&flat()).unwrap();
             physics.add_car(1, kind, [0.0, 1.5, 0.0], 0.0);
             for tick in 0..480 {
@@ -682,9 +706,9 @@ mod tests {
 
     /// `(tick, position)` of a car driven `FORWARD` up `ramp` from [0, _, 40], mirrored in `vehicle.spec.ts`.
     const RAMP_CHECKPOINTS: [(u32, [f32; 3]); 3] = [
-        (60, [-0.0002, 13.4981, 39.7061]),
-        (180, [-0.0014, 15.3390, 31.0135]),
-        (360, [-0.0055, 21.1910, 3.4710]),
+        (60, [0.0000, 13.7271, 39.5717]),
+        (180, [0.0000, 15.5995, 30.7484]),
+        (360, [0.0000, 21.3032, 3.9024]),
     ];
 
     #[test]
@@ -692,7 +716,7 @@ mod tests {
         let world = ramp();
         let mut physics = Physics::new(&world).unwrap();
         let ground = world.ground.height_at(0.0, 40.0);
-        physics.add_car(1, KIND_CAR, [0.0, ground + 1.5, 40.0], 0.0);
+        physics.add_car(1, KIND_JEEP, [0.0, ground + 1.5, 40.0], 0.0);
         for tick in 0..360 {
             physics.drive_car(1, FORWARD, TICK_DT);
             physics.step_cars(TICK_DT);
@@ -711,6 +735,38 @@ mod tests {
     }
 
     #[test]
+    fn ride_heights_differ_between_cars() {
+        let mut heights = vec![];
+        for (kind, ride) in [(KIND_JEEP, JEEP_RIDE_HEIGHT), (KIND_SPORTS, SPORTS_RIDE_HEIGHT)] {
+            let mut physics = Physics::new(&flat()).unwrap();
+            physics.add_car(1, kind, [0.0, 1.5, 0.0], 0.0);
+            let pose = run(&mut physics, COAST, 240);
+            assert!((pose.position[1] - ride).abs() < 0.01, "kind {kind} settles at {ride}: {pose:?}");
+            heights.push(pose.position[1] - half_extents(kind)[1]);
+        }
+        // Ground clearance under the chassis: the jeep clears at least four times what the sports car does.
+        assert!(heights[0] > 0.4 && heights[1] < 0.15 && heights[0] > 3.0 * heights[1], "{heights:?}");
+    }
+
+    #[test]
+    fn the_sports_car_is_quicker_than_the_jeep() {
+        let mut reached = vec![];
+        for kind in [KIND_JEEP, KIND_SPORTS] {
+            let mut physics = Physics::new(&flat()).unwrap();
+            physics.add_car(1, kind, [0.0, 1.5, 0.0], 0.0);
+            run(&mut physics, COAST, 60);
+            let early = run(&mut physics, FORWARD, 60 * 3);
+            let late = run(&mut physics, FORWARD, 60 * 12);
+            assert!(late.up_y > 0.98 && late.position[0].abs() < 1.0, "kind {kind} drives straight: {late:?}");
+            reached.push((early.forward_speed, late.forward_speed));
+        }
+        let [(jeep_early, jeep_top), (sports_early, sports_top)] = reached[..] else { unreachable!() };
+        assert!(sports_early > jeep_early * 1.2, "quicker off the line: {reached:?}");
+        assert!(sports_top > jeep_top * 1.3, "higher top speed: {reached:?}");
+        assert!(sports_top <= SPORTS_MAX_SPEED + 1.0 && jeep_top <= JEEP_MAX_SPEED + 1.0, "{reached:?}");
+    }
+
+    #[test]
     fn settles_on_its_suspension() {
         let mut physics = with_car(&flat());
         let pose = run(&mut physics, COAST, 180);
@@ -726,7 +782,7 @@ mod tests {
         let pose = run(&mut physics, FORWARD, 60 * 6);
         assert!(pose.position[2] < -20.0, "should drive towards -Z: {pose:?}");
         assert!(pose.position[0].abs() < 1.0, "no drift sideways: {pose:?}");
-        assert!(pose.forward_speed > 8.0 && pose.forward_speed <= CAR_MAX_SPEED + 1.0, "{pose:?}");
+        assert!(pose.forward_speed > 8.0 && pose.forward_speed <= JEEP_MAX_SPEED + 1.0, "{pose:?}");
         assert!(pose.up_y > 0.98, "{pose:?}");
     }
 
@@ -779,8 +835,8 @@ mod tests {
     #[test]
     fn spawn_checks_see_walls() {
         let physics = Physics::new(&world_with_wall()).unwrap();
-        assert!(physics.car_fits(KIND_CAR, [0.0, 1.0, 0.0], 0.0));
-        assert!(!physics.car_fits(KIND_CAR, [0.0, 1.0, -58.5], 0.0));
+        assert!(physics.car_fits(KIND_JEEP, [0.0, 1.0, 0.0], 0.0));
+        assert!(!physics.car_fits(KIND_JEEP, [0.0, 1.0, -58.5], 0.0));
     }
 
     #[test]
@@ -796,7 +852,7 @@ mod tests {
             physics.move_character(&mut character, &toward_car, TICK_DT);
         }
         let x = character.position[0];
-        assert!(x < -CAR_HALF_EXTENTS[0] - CAPSULE_RADIUS + 0.1 && x > -3.0, "stopped at the car's side: {x}");
+        assert!(x < -JEEP_HALF_EXTENTS[0] - CAPSULE_RADIUS + 0.1 && x > -3.0, "stopped at the car's side: {x}");
         assert!(physics.car_hit(character.position).is_none(), "resting against a car is not a hit");
     }
 
@@ -972,7 +1028,7 @@ mod tests {
         assert!(physics.cast_ray(origin, [0.0, 0.0, -1.0], 30.0, 1).is_none(), "out of range");
         // Aimed at the car from outside, the ray stops at its side.
         let at_car = physics.cast_ray([-10.0, 0.5, 0.0], [1.0, 0.0, 0.0], 50.0, 99).expect("the car is solid to shells");
-        assert!((at_car - (10.0 - CAR_HALF_EXTENTS[0])).abs() < 0.2, "{at_car}");
+        assert!((at_car - (10.0 - JEEP_HALF_EXTENTS[0])).abs() < 0.2, "{at_car}");
     }
 
     #[test]

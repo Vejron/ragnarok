@@ -152,14 +152,14 @@ pub fn apply(base: &Scene, delta: &Delta) -> Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{FLAG_GROUNDED, KIND_CAR, KIND_STICKMAN, KIND_TANK};
+    use crate::protocol::{FLAG_GROUNDED, KIND_JEEP, KIND_STICKMAN, KIND_TANK};
 
     fn person(id: u32, x: i32) -> EntityState {
         EntityState(id, KIND_STICKMAN, x, 90, -x, 100, 0, FLAG_GROUNDED, 0, 0)
     }
 
     fn car(id: u32, x: i32, seats: Vec<u32>) -> VehicleState {
-        VehicleState(id, KIND_CAR, x, 40, 7, 10, -20, 30, 5, seats, None, 100)
+        VehicleState(id, KIND_JEEP, x, 40, 7, 10, -20, 30, 5, seats, None, 100)
     }
 
     fn tank(id: u32, yaw: i16) -> VehicleState {

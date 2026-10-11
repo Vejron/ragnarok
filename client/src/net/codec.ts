@@ -18,9 +18,10 @@ const S_KILL = 4
 const S_SCORES = 5
 
 export const KIND_STICKMAN = 0
-export const KIND_CAR = 1
+export const KIND_JEEP = 1
 export const KIND_TANK = 2
 export const KIND_HELI = 3
+export const KIND_SPORTS = 4
 export const FLAG_GROUNDED = 1 << 0
 export const FLAG_DEAD = 1 << 1
 export const FLAG_CROUCHING = 1 << 2
@@ -98,7 +99,7 @@ export interface VehicleState {
   qy: number
   qz: number
   qw: number
-  /** Front wheel steering as a fraction of `CAR_MAX_STEER`, + is right. */
+  /** Front wheel steering as a fraction of the kind's `*_MAX_STEER`, + is right. */
   steer: number
   seats: number[]
   /** The gun, for vehicles that have one. */

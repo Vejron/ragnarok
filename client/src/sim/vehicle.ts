@@ -1,13 +1,14 @@
 import RAPIER from '@dimforge/rapier3d-compat'
 import {
-  BUTTON_JUMP, TICK_DT, CAR_AXLE_Z, CAR_HALF_EXTENTS, CAR_HARD_POINT_Y, CAR_MAX_SPEED, CAR_MAX_STEER, CAR_SUSPENSION_REST, CAR_TRACK_HALF, CAR_WHEEL_RADIUS,
+  BUTTON_JUMP, TICK_DT, JEEP_AXLE_Z, JEEP_HALF_EXTENTS, JEEP_HARD_POINT_Y, JEEP_MAX_SPEED, JEEP_MAX_STEER, JEEP_SUSPENSION_REST, JEEP_TRACK_HALF, JEEP_WHEEL_RADIUS,
+  SPORTS_AXLE_Z, SPORTS_HALF_EXTENTS, SPORTS_HARD_POINT_Y, SPORTS_MAX_SPEED, SPORTS_MAX_STEER, SPORTS_SUSPENSION_REST, SPORTS_TRACK_HALF, SPORTS_WHEEL_RADIUS,
   TANK_AXLES_Z, TANK_HALF_EXTENTS, TANK_HARD_POINT_Y, TANK_MAX_SPEED, TANK_SUSPENSION_REST, TANK_TRACK_HALF, TANK_TURN_RATE,
   TANK_WHEEL_RADIUS, TANK_TURRET_HALF_HEIGHT, TANK_TURRET_PIVOT, TANK_TURRET_RADIUS, HELI_BANK, HELI_CEILING, HELI_CLIMB_SPEED, HELI_HALF_EXTENTS, HELI_LEVEL_GAIN, HELI_RESPONSE, HELI_SINK_SPEED, HELI_TILT,
   HELI_VERT_ACCEL, HELI_VERT_GAIN, HELI_YAW_RATE, BUTTON_RUN,
 } from './consts'
 import { addTileCollider, buildStaticColliders, VehicleSolids } from './physics'
 import type { TileGround } from './terrain'
-import { fromAxis, KIND_HELI, KIND_TANK, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
+import { fromAxis, KIND_HELI, KIND_SPORTS, KIND_TANK, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
 import type { TileData, WorldData } from '@/world'
 import * as THREE from 'three'
 
@@ -36,18 +37,35 @@ interface Spec {
   linearDamping: number
 }
 
-const CAR: Spec = {
-  halfExtents: CAR_HALF_EXTENTS,
+const JEEP: Spec = {
+  halfExtents: JEEP_HALF_EXTENTS,
   density: 200,
-  wheelRadius: CAR_WHEEL_RADIUS,
-  trackHalf: CAR_TRACK_HALF,
-  axles: [-CAR_AXLE_Z, CAR_AXLE_Z],
-  hardPointY: CAR_HARD_POINT_Y,
-  suspensionRest: CAR_SUSPENSION_REST,
+  wheelRadius: JEEP_WHEEL_RADIUS,
+  trackHalf: JEEP_TRACK_HALF,
+  axles: [-JEEP_AXLE_Z, JEEP_AXLE_Z],
+  hardPointY: JEEP_HARD_POINT_Y,
+  suspensionRest: JEEP_SUSPENSION_REST,
   maxSuspensionForce: 60_000,
-  engineForce: 7000,
-  maxSpeed: CAR_MAX_SPEED,
-  steerLock: CAR_MAX_STEER,
+  engineForce: 7500,
+  maxSpeed: JEEP_MAX_SPEED,
+  steerLock: JEEP_MAX_STEER,
+  turnRate: 0,
+  flies: false,
+  linearDamping: 0.05,
+}
+
+const SPORTS: Spec = {
+  halfExtents: SPORTS_HALF_EXTENTS,
+  density: 200,
+  wheelRadius: SPORTS_WHEEL_RADIUS,
+  trackHalf: SPORTS_TRACK_HALF,
+  axles: [-SPORTS_AXLE_Z, SPORTS_AXLE_Z],
+  hardPointY: SPORTS_HARD_POINT_Y,
+  suspensionRest: SPORTS_SUSPENSION_REST,
+  maxSuspensionForce: 60_000,
+  engineForce: 11_000,
+  maxSpeed: SPORTS_MAX_SPEED,
+  steerLock: SPORTS_MAX_STEER,
   turnRate: 0,
   flies: false,
   linearDamping: 0.05,
@@ -130,7 +148,7 @@ export class CarSim {
   private spin = 0
 
   constructor(private readonly world: RAPIER.World, kind: number, position: [number, number, number], yaw: number) {
-    this.spec = kind === KIND_TANK ? TANK : kind === KIND_HELI ? HELI : CAR
+    this.spec = kind === KIND_TANK ? TANK : kind === KIND_HELI ? HELI : kind === KIND_SPORTS ? SPORTS : JEEP
     const spec = this.spec
     this.body = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()

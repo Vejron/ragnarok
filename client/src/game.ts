@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import {
-  encodeInput, encodePing, KIND_HELI, KIND_STICKMAN, KIND_TANK, sceneStates, toAxis, toMrad, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_RIFLE,
+  encodeInput, encodePing, KIND_HELI, KIND_SPORTS, KIND_STICKMAN, KIND_TANK, sceneStates, toAxis, toMrad, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_RIFLE,
   WEAPON_AUTOCANNON, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK,
   type EntityState, type InputFrame, type PickupState, type RocketState, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
 } from './net/codec'
@@ -20,7 +20,7 @@ import { groundOf, Terrain } from './sim/terrain'
 import { VehicleDriver, type DrivenPose } from './sim/vehicle'
 import { Predictor } from './sim/predict'
 import type { Vec3 } from './sim/physics'
-import { CarModel, type VehicleModel } from './render/car'
+import { CarModel, loadCarModels, type VehicleModel } from './render/car'
 import { Effects } from './render/effects'
 import { Pickups } from './render/pickups'
 import { TrajectoryView } from './render/trajectory'
@@ -230,7 +230,7 @@ export class Game {
     const motor = await RapierMotor.create(world)
     this.motor = motor
     this.driver = await VehicleDriver.create(world)
-    await Promise.all([this.crowd.load(), loadTankModel(), loadHeliModel()])
+    await Promise.all([this.crowd.load(), loadCarModels(), loadTankModel(), loadHeliModel()])
     // The buildings arrive as tiles, around wherever the player is.
     this.tiles = new TileStreamer(world, { attach: (ref, tile) => this.attachTile(ref, tile) })
     // Until the server places us, walk around solo from the first spawn point.
@@ -720,7 +720,7 @@ export class Game {
       if (!state) continue
       let car = this.cars.get(id)
       if (!car) {
-        car = state.kind === KIND_TANK ? new TankModel(id) : state.kind === KIND_HELI ? new HeliModel(id) : new CarModel(id)
+        car = state.kind === KIND_TANK ? new TankModel(id) : state.kind === KIND_HELI ? new HeliModel(id) : new CarModel(state.kind, id)
         this.cars.set(id, car)
         this.scene.scene.add(car.root)
       }
@@ -827,7 +827,8 @@ export class Game {
     if (!best) return null
     if (best.kind === KIND_TANK) return best.driverSeatFree ? 'E: drive the tank' : 'E: man the gun'
     if (best.kind === KIND_HELI) return best.driverSeatFree ? 'E: fly' : 'E: man the nose gun'
-    return best.driverSeatFree ? 'E: drive' : 'E: ride along'
+    if (best.kind === KIND_SPORTS) return best.driverSeatFree ? 'E: drive the sports car' : 'E: ride along'
+    return best.driverSeatFree ? 'E: drive the jeep' : 'E: ride along'
   }
 
   /** The stickman for an entity; id 0 is the local player. */

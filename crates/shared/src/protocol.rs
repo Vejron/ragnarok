@@ -18,9 +18,10 @@ pub const S_SCORES: u8 = 5;
 /// Entity kinds.
 pub const KIND_STICKMAN: u8 = 0;
 /// Vehicle kinds. These appear in `VehicleState`, not in `EntityState`.
-pub const KIND_CAR: u8 = 1;
+pub const KIND_JEEP: u8 = 1;
 pub const KIND_TANK: u8 = 2;
 pub const KIND_HELI: u8 = 3;
+pub const KIND_SPORTS: u8 = 4;
 
 /// Health of a fresh vehicle of `kind`. Zero on the wire means wrecked.
 pub fn vehicle_hp(kind: u8) -> u8 {
@@ -35,6 +36,7 @@ pub fn seat_count(kind: u8) -> usize {
     match kind {
         KIND_TANK => crate::consts::TANK_SEATS,
         KIND_HELI => crate::consts::HELI_SEATS,
+        KIND_SPORTS => crate::consts::SPORTS_SEATS,
         _ => crate::consts::CAR_SEATS,
     }
 }
@@ -162,7 +164,7 @@ pub struct VehicleState(
     pub i16,
     pub i16,
     pub i16,
-    /// Front wheel steering as a fraction of `CAR_MAX_STEER`, -127..=127 (+ is right).
+    /// Front wheel steering as a fraction of its kind's `*_MAX_STEER`, -127..=127 (+ is right).
     pub i8,
     /// Player id in each seat, or 0 for an empty one. Seat 0 is the driver.
     pub Vec<u32>,
@@ -338,7 +340,7 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 13, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
+        148, 0, 14, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[

@@ -1,6 +1,6 @@
 /** Mirrors `crates/shared/src/consts.rs`. Keep the two in step. */
 
-export const PROTOCOL_VERSION = 13
+export const PROTOCOL_VERSION = 14
 
 export const TICK_RATE = 60
 export const TICK_DT = 1 / TICK_RATE
@@ -66,15 +66,31 @@ export const STANDING_Y = CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS + CONTROLLER_OFFS
 /** Vehicles. Body-local axes: +X right, +Y up, -Z forward. */
 export const CAR_SEATS = 4
 export const ENTER_RADIUS = 4.0
-/** Half extents of the chassis box. */
-export const CAR_HALF_EXTENTS = [0.9, 0.4, 2.1] as const
-export const CAR_WHEEL_RADIUS = 0.35
-export const CAR_TRACK_HALF = 0.85
-export const CAR_AXLE_Z = 1.35
-export const CAR_HARD_POINT_Y = -0.1
-export const CAR_SUSPENSION_REST = 0.3
-export const CAR_MAX_STEER = 0.5
-export const CAR_MAX_SPEED = 30.0
+/**
+ * The jeep: tall on big wheels with plenty of ground clearance. Half extents of the chassis box;
+ * `*_RIDE_HEIGHT` is the chassis centre above flat ground once the suspension has settled.
+ */
+export const JEEP_HALF_EXTENTS = [1.0, 0.42, 1.95] as const
+export const JEEP_WHEEL_RADIUS = 0.55
+export const JEEP_TRACK_HALF = 0.9
+export const JEEP_AXLE_Z = 1.25
+export const JEEP_HARD_POINT_Y = 0.0
+export const JEEP_SUSPENSION_REST = 0.4
+export const JEEP_RIDE_HEIGHT = 0.857
+export const JEEP_MAX_STEER = 0.5
+export const JEEP_MAX_SPEED = 28.0
+
+/** The sports car: a low two-seater with small wheels, a big engine and a high top speed. */
+export const SPORTS_SEATS = 2
+export const SPORTS_HALF_EXTENTS = [0.95, 0.3, 2.2] as const
+export const SPORTS_WHEEL_RADIUS = 0.32
+export const SPORTS_TRACK_HALF = 0.82
+export const SPORTS_AXLE_Z = 1.45
+export const SPORTS_HARD_POINT_Y = 0.05
+export const SPORTS_SUSPENSION_REST = 0.22
+export const SPORTS_RIDE_HEIGHT = 0.397
+export const SPORTS_MAX_STEER = 0.4
+export const SPORTS_MAX_SPEED = 44.0
 
 /** The tank. Mirrors `TANK_*` in consts.rs. Same body axes as the car. */
 export const TANK_SEATS = 2

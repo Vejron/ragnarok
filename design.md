@@ -277,7 +277,7 @@ Vehicles are server-side dynamic rigid bodies (§10). The physics pipeline steps
 
 ## 10. Entities and vehicles
 
-- **Entities:** players and vehicles share one id space. Stickmen are `EntityState`s. Each vehicle kind is a `VehicleState` in its own list in the snapshot (`KIND_CAR` and `KIND_TANK` now, later `KIND_HELI`). A separate list per family keeps stickmen at their 20 bytes.
+- **Entities:** players and vehicles share one id space. Stickmen are `EntityState`s. Each vehicle kind is a `VehicleState` in its own list in the snapshot (`KIND_JEEP` and `KIND_TANK` now, later `KIND_HELI`). A separate list per family keeps stickmen at their 20 bytes.
 - **Seats (built):** each vehicle has a seat list. Seat 0 is the driver, and the others are passengers or gunners. A car has 4.
   - `BUTTON_USE` boards the nearest vehicle with a free seat within `ENTER_RADIUS` (4 m), taking the lowest free seat. Pressing it again leaves.
   - Leaving puts the stickman beside the car on the seat's side, or on the other side, the back or the front if that spot is blocked.

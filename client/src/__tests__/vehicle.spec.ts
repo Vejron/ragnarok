@@ -5,7 +5,7 @@ import { addTileCollider } from '@/sim/physics'
 import { heightIn, type TileGround } from '@/sim/terrain'
 import { f32 } from '@/sim/movement'
 import { TICK_DT } from '@/sim/consts'
-import { KIND_CAR, KIND_HELI, KIND_TANK, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
+import { KIND_HELI, KIND_JEEP, KIND_SPORTS, KIND_TANK, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
 import type { TileData, WorldData } from '@/world'
 
 const COAST: CarControls = { throttle: 0, steer: 0, handbrake: false, lift: 0, powered: false }
@@ -25,10 +25,14 @@ const scripted = (tick: number): CarControls => {
 
 /** `SCRIPTED_CHECKPOINTS` in vehicle.rs. */
 const checkpoints: [number, number, [number, number, number]][] = [
-  [KIND_CAR, 90, [0, 0.6574, -0.7191]],
-  [KIND_CAR, 210, [1.1072, 0.6573, -14.845]],
-  [KIND_CAR, 300, [15.9257, 0.6572, -25.5077]],
-  [KIND_CAR, 480, [28.5726, 0.6572, -54.8037]],
+  [KIND_JEEP, 90, [0, 0.8573, -0.7099]],
+  [KIND_JEEP, 210, [1.116, 0.8571, -14.5416]],
+  [KIND_JEEP, 300, [15.9199, 0.8571, -24.0936]],
+  [KIND_JEEP, 480, [28.7793, 0.8571, -51.1131]],
+  [KIND_SPORTS, 90, [-0.002, 0.3976, -1.3505]],
+  [KIND_SPORTS, 210, [1.7816, 0.3973, -27.0709]],
+  [KIND_SPORTS, 300, [27.2023, 0.3973, -46.9713]],
+  [KIND_SPORTS, 480, [51.4146, 0.3973, -106.4018]],
   [KIND_TANK, 90, [0, 0.94, -0.7659]],
   [KIND_TANK, 210, [0.4323, 0.94, -13.2166]],
   [KIND_TANK, 300, [9.7875, 0.94, -22.8965]],
@@ -58,7 +62,7 @@ const flightCheckpoints: [number, [number, number, number]][] = [
 describe('vehicle prediction', () => {
   it('WASM vehicles drive where the native server does', async () => {
     await RAPIER.init()
-    for (const kind of [KIND_CAR, KIND_TANK]) {
+    for (const kind of [KIND_JEEP, KIND_SPORTS, KIND_TANK]) {
       const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
       world.timestep = TICK_DT
       world.createCollider(RAPIER.ColliderDesc.cuboid(200, 0.5, 200).setTranslation(0, -0.5, 0))
@@ -120,9 +124,9 @@ describe('vehicles on a slope', () => {
 
   /** `RAMP_CHECKPOINTS` in vehicle.rs. */
   const checkpoints: [number, [number, number, number]][] = [
-    [60, [-0.0002, 13.4981, 39.7061]],
-    [180, [-0.0014, 15.339, 31.0135]],
-    [360, [-0.0055, 21.191, 3.471]],
+    [60, [0, 13.7271, 39.5717]],
+    [180, [0, 15.5995, 30.7484]],
+    [360, [0, 21.3032, 3.9024]],
   ]
 
   it('WASM car climbs where the native server does', async () => {
@@ -132,7 +136,7 @@ describe('vehicles on a slope', () => {
     world.createCollider(RAPIER.ColliderDesc.cuboid(100, 0.5, 100).setTranslation(0, -0.5, 0))
     addTileCollider(world, tile, ramp())
     world.step()
-    const sim = new CarSim(world, KIND_CAR, [0, heightIn(ramp(), 0, 40) + 1.5, 40], 0)
+    const sim = new CarSim(world, KIND_JEEP, [0, heightIn(ramp(), 0, 40) + 1.5, 40], 0)
     for (let tick = 1; tick <= 360; tick++) {
       sim.drive(FORWARD, TICK_DT)
       sim.step(TICK_DT)
@@ -193,7 +197,7 @@ describe('driving a predicted vehicle', () => {
   }
 
   it('replaying over the server state lands where an uninterrupted run does', async () => {
-    for (const kind of [KIND_CAR, KIND_TANK, KIND_HELI]) {
+    for (const kind of [KIND_JEEP, KIND_TANK, KIND_HELI]) {
       // The client is 20 ticks ahead of the last state the server has told it about.
       const driver = await VehicleDriver.create(flat())
       const early = await serverState(kind, 0)
@@ -213,7 +217,7 @@ describe('driving a predicted vehicle', () => {
 
   it('stops predicting when the player leaves the seat', async () => {
     const driver = await VehicleDriver.create(flat())
-    const state = await serverState(KIND_CAR, 0)
+    const state = await serverState(KIND_JEEP, 0)
     driver.reconcile(0, state.vehicle, state.drive)
     expect(driver.driving).toBe(3)
     driver.leave()

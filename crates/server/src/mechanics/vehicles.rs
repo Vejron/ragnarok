@@ -2,7 +2,7 @@ use super::Mechanic;
 use crate::game::{Gun, Seat, Vehicle, World};
 use crate::physics::{CarControls, CarPose, Character, half_extents};
 use shared::consts::*;
-use shared::protocol::{KIND_CAR, KIND_HELI, KIND_TANK, seat_count, vehicle_hp};
+use shared::protocol::{KIND_HELI, KIND_JEEP, KIND_SPORTS, KIND_TANK, seat_count, vehicle_hp};
 use shared::quant::from_axis;
 use shared::world::WorldFile;
 use std::collections::BTreeMap;
@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 /// is in. `BUTTON_RELOAD` moves a seated player to a free seat of the same vehicle.
 pub struct Vehicles;
 
-/// Cars, tanks and helicopters placed at start. Fewer appear when the world has too few clear spawn points.
+/// Cars (half jeeps, half sports cars), tanks and helicopters placed at start. Fewer appear when the world has too few clear spawn points.
 const CAR_COUNT: usize = 6;
 const TANK_COUNT: usize = 2;
 const HELI_COUNT: usize = 1;
@@ -159,7 +159,7 @@ fn switch_seat(world: &mut World, id: u32) {
 fn alight(world: &mut World, id: u32) {
     let Some(seat) = vacate(world, id) else { return };
     let Some(pose) = world.physics.car_pose(seat.vehicle) else { return };
-    let kind = world.vehicles.get(&seat.vehicle).map_or(KIND_CAR, |vehicle| vehicle.kind);
+    let kind = world.vehicles.get(&seat.vehicle).map_or(KIND_JEEP, |vehicle| vehicle.kind);
     let position = exit_position(world, kind, &pose, seat.index);
     if let Some(player) = world.players.get_mut(&id) {
         player.character = Character { position, yaw: pose.yaw(), ..Default::default() };
@@ -205,9 +205,10 @@ impl Mechanic for Vehicles {
             if placed == CAR_COUNT + TANK_COUNT + HELI_COUNT {
                 break;
             }
-            // Cars first, then the tanks, then the helicopter.
+            // Cars first (jeeps and sports cars take turns), then the tanks, then the helicopter.
             let kind = match placed {
-                0..CAR_COUNT => KIND_CAR,
+                0..CAR_COUNT if placed % 2 == 0 => KIND_JEEP,
+                0..CAR_COUNT => KIND_SPORTS,
                 _ if placed < CAR_COUNT + TANK_COUNT => KIND_TANK,
                 _ => KIND_HELI,
             };
@@ -372,6 +373,9 @@ mod tests {
         assert_eq!(tanks, TANK_COUNT);
         let helis = game.world.vehicles.values().filter(|vehicle| vehicle.kind == KIND_HELI).count();
         assert_eq!(helis, HELI_COUNT);
+        let count = |kind| game.world.vehicles.values().filter(|vehicle| vehicle.kind == kind).count();
+        assert_eq!(count(KIND_JEEP), CAR_COUNT / 2, "half the cars are jeeps");
+        assert_eq!(count(KIND_SPORTS), CAR_COUNT / 2, "and half are sports cars");
         for &vid in game.world.vehicles.keys() {
             let pose = game.world.physics.car_pose(vid).unwrap();
             // The road runs along X, so the car faces +X or -X: |yaw| is a quarter turn.
@@ -586,7 +590,7 @@ mod tests {
         idle(game, driver, &mut seq_a, 3);
         let pose = game.world.physics.car_pose(vid).unwrap();
         // Drop the rider on the roof; it settles a tick or two later.
-        let top = pose.position[1] + CAR_HALF_EXTENTS[1] + STANDING_Y + 0.05;
+        let top = pose.position[1] + JEEP_HALF_EXTENTS[1] + STANDING_Y + 0.05;
         game.world.players.get_mut(&rider).unwrap().character.position = [pose.position[0], top, pose.position[2]];
         for _ in 0..30 {
             seq_a += 1;

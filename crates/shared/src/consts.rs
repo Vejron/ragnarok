@@ -1,7 +1,7 @@
 //! Simulation and network constants. Mirrored in `client/src/sim/consts.ts`.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 13;
+pub const PROTOCOL_VERSION: u8 = 14;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -87,25 +87,44 @@ pub const KILL_Y: f32 = -50.0;
 
 /// Vehicles. Chassis and wheel geometry are shared with the client, which draws the car from them.
 /// Body-local axes: +X right, +Y up, -Z forward (yaw 0 faces -Z, like a stickman).
+/// Seats in the roomiest car (the jeep); bounds the seat list of any vehicle.
 pub const CAR_SEATS: usize = 4;
 /// Vehicles in the world; bounds the vehicle list in a snapshot.
 pub const MAX_VEHICLES: usize = 9;
 /// A player can enter a vehicle whose centre is within this distance of their capsule centre.
 pub const ENTER_RADIUS: f32 = 4.0;
 
-/// Half extents of the chassis box, metres.
-pub const CAR_HALF_EXTENTS: [f32; 3] = [0.9, 0.4, 2.1];
-pub const CAR_WHEEL_RADIUS: f32 = 0.35;
+/// Cars come in two kinds, which share the ray-cast wheel physics and differ in these numbers.
+/// The jeep (`KIND_JEEP`) is tall on big wheels with plenty of ground clearance: slower, but it
+/// rides over kerbs and rough ground. Half extents of the chassis box, metres.
+pub const JEEP_HALF_EXTENTS: [f32; 3] = [1.0, 0.42, 1.95];
+pub const JEEP_WHEEL_RADIUS: f32 = 0.55;
 /// Wheel hard points relative to the chassis centre: half the track, and the distance of the
 /// axles from the centre along Z. Front axle is at -Z.
-pub const CAR_TRACK_HALF: f32 = 0.85;
-pub const CAR_AXLE_Z: f32 = 1.35;
-pub const CAR_HARD_POINT_Y: f32 = -0.1;
-pub const CAR_SUSPENSION_REST: f32 = 0.3;
+pub const JEEP_TRACK_HALF: f32 = 0.9;
+pub const JEEP_AXLE_Z: f32 = 1.25;
+pub const JEEP_HARD_POINT_Y: f32 = 0.0;
+pub const JEEP_SUSPENSION_REST: f32 = 0.4;
+/// Height of the chassis centre above flat ground once the suspension has settled (measured by
+/// `ride_heights_differ_between_cars` in vehicle.rs). The clearance under the box is this minus the half height.
+pub const JEEP_RIDE_HEIGHT: f32 = 0.857;
 /// Largest steering angle of the front wheels, radians. The wire carries it as -127..=127.
-pub const CAR_MAX_STEER: f32 = 0.5;
+pub const JEEP_MAX_STEER: f32 = 0.5;
 /// Forward speed above which engine force fades to zero, m/s.
-pub const CAR_MAX_SPEED: f32 = 30.0;
+pub const JEEP_MAX_SPEED: f32 = 28.0;
+
+/// The sports car (`KIND_SPORTS`): a low two-seater with small wheels and a big engine. Quick in a
+/// straight line, with the chassis only about 12 cm off the ground.
+pub const SPORTS_SEATS: usize = 2;
+pub const SPORTS_HALF_EXTENTS: [f32; 3] = [0.95, 0.3, 2.2];
+pub const SPORTS_WHEEL_RADIUS: f32 = 0.32;
+pub const SPORTS_TRACK_HALF: f32 = 0.82;
+pub const SPORTS_AXLE_Z: f32 = 1.45;
+pub const SPORTS_HARD_POINT_Y: f32 = 0.05;
+pub const SPORTS_SUSPENSION_REST: f32 = 0.22;
+pub const SPORTS_RIDE_HEIGHT: f32 = 0.397;
+pub const SPORTS_MAX_STEER: f32 = 0.4;
+pub const SPORTS_MAX_SPEED: f32 = 44.0;
 
 /// The tank: a heavy six-wheel hull that turns on the spot, with a driver (seat 0) and a gunner
 /// (seat 1) who aims the turret and fires. Same body axes as the car.
