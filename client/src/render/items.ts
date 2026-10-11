@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { ITEM_AK5, ITEM_BANDAGE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SNIPER } from '@/sim/items'
+import { ITEM_AK5, ITEM_BANDAGE, ITEM_GOLDEN_EGG, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SNIPER } from '@/sim/items'
 
 const GUN_METAL = 0x3b3f47
 const GUN_TRIM = 0xf2a33a
@@ -7,10 +7,12 @@ const WOOD = 0x7a4a2a
 const OLIVE = 0x4f5d2e
 const CLOTH = 0xf2f2ee
 const CROSS = 0xd93a3a
+const GOLD = 0xffc933
 
 const materials = new Map<number, THREE.MeshToonMaterial>()
 const boxes = new Map<string, THREE.BoxGeometry>()
 let sphere: THREE.SphereGeometry | null = null
+let shiny: THREE.MeshToonMaterial | null = null
 
 /** One shared toon material per colour: items are small and many. */
 const material = (color: number) => {
@@ -69,6 +71,15 @@ export function buildItem(item: number): THREE.Group {
       box(group, [0.1, 0.075, 0.025], [0, 0, 0], CROSS)
       box(group, [0.025, 0.075, 0.07], [0, 0, 0], CROSS)
       break
+    case ITEM_GOLDEN_EGG: {
+      sphere ??= new THREE.SphereGeometry(0.06, 10, 8)
+      // Shiny and a little glowing, so it is seen across a field.
+      shiny ??= new THREE.MeshToonMaterial({ color: GOLD, emissive: 0x8a5a00 })
+      const egg = new THREE.Mesh(sphere, shiny)
+      egg.scale.set(0.9, 1.25, 0.9)
+      group.add(egg)
+      break
+    }
   }
   group.traverse((node) => {
     node.castShadow = true
@@ -80,6 +91,8 @@ export function disposeItems() {
   for (const m of materials.values()) m.dispose()
   for (const g of boxes.values()) g.dispose()
   sphere?.dispose()
+  shiny?.dispose()
+  shiny = null
   materials.clear()
   boxes.clear()
   sphere = null

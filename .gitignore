@@ -15,3 +15,5 @@ crates/server/acme/
 client/public/world.msgpack
 client/public/tiles/
 client/public/minimap.png
+# the small dev world (scripts/world-dev.sh)
+client/public/dev/

@@ -17,6 +17,8 @@ pub const S_SCORES: u8 = 5;
 
 /// Entity kinds.
 pub const KIND_STICKMAN: u8 = 0;
+/// A Hedemora rooster, an NPC. Appears in `EntityState`, like a stickman, with its own model.
+pub const KIND_ROOSTER: u8 = 5;
 /// Vehicle kinds. These appear in `VehicleState`, not in `EntityState`.
 pub const KIND_JEEP: u8 = 1;
 pub const KIND_TANK: u8 = 2;
@@ -50,6 +52,8 @@ pub const FLAG_CROUCHING: u8 = 1 << 2;
 /// Bits 3..=5 hold the item in the player's hands (`ITEM_*`), so others can draw it.
 pub const FLAG_HELD_SHIFT: u8 = 3;
 pub const FLAG_HELD_MASK: u8 = 0b111 << FLAG_HELD_SHIFT;
+/// A rooster is mid-crow, so clients play its crow animation and sound.
+pub const FLAG_CROWING: u8 = 1 << 6;
 
 /// Weapons, as named in shot and kill events.
 /// The AK5, and what an unarmed death (a fall) is credited to.

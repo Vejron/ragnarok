@@ -12,9 +12,7 @@ use std::collections::BTreeMap;
 
 type P = [f64; 2];
 
-/// Metres per degree of latitude; longitude is scaled by cos(latitude).
-const METRES_PER_DEG_LAT: f64 = 110_540.0;
-const METRES_PER_DEG_LON: f64 = 111_320.0;
+use shared::world::{METRES_PER_DEG_LAT, METRES_PER_DEG_LON};
 /// Buildings and spawns keep this far inside the boundary walls, metres.
 const EDGE_MARGIN: f64 = 2.0;
 const MAX_SPAWNS: usize = 64;
@@ -32,9 +30,7 @@ fn cm(metres: f64) -> i32 {
 
 /// Equirectangular projection around `origin`: +X east, +Z south.
 pub fn project(origin: (f64, f64), lat: f64, lon: f64) -> P {
-    let x = (lon - origin.1) * METRES_PER_DEG_LON * origin.0.to_radians().cos();
-    let z = -(lat - origin.0) * METRES_PER_DEG_LAT;
-    [x, z]
+    shared::world::project(origin, lat, lon)
 }
 
 fn signed_area(points: &[P]) -> f64 {

@@ -13,8 +13,10 @@ pub const ITEM_AK5: u8 = 2;
 pub const ITEM_GRENADE: u8 = 3;
 pub const ITEM_BANDAGE: u8 = 4;
 pub const ITEM_SNIPER: u8 = 5;
+/// Dropped by a rooster, never scattered. Heals to full.
+pub const ITEM_GOLDEN_EGG: u8 = 6;
 /// One past the largest item id.
-pub const ITEM_COUNT: u8 = 6;
+pub const ITEM_COUNT: u8 = 7;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ItemKind {
@@ -148,6 +150,26 @@ const BANDAGE: ItemDef = ItemDef {
     weight: 5,
 };
 
+const GOLDEN_EGG: ItemDef = ItemDef {
+    name: "Golden egg",
+    kind: ItemKind::Heal,
+    auto: false,
+    // Saturates at `PLAYER_MAX_HP`: a full heal.
+    damage: u8::MAX,
+    cooldown_ticks: 0,
+    mag: 0,
+    reload_ticks: 0,
+    range: 0.0,
+    spread: 0.0,
+    projectile: false,
+    aim_speed: 1.0,
+    scope: false,
+    stack: 1,
+    weapon: WEAPON_RIFLE,
+    // Only roosters drop it.
+    weight: 0,
+};
+
 /// The definition of `item`; `None` for an empty slot or an unknown id.
 pub fn def(item: u8) -> Option<&'static ItemDef> {
     match item {
@@ -156,6 +178,7 @@ pub fn def(item: u8) -> Option<&'static ItemDef> {
         ITEM_GRENADE => Some(&GRENADE),
         ITEM_BANDAGE => Some(&BANDAGE),
         ITEM_SNIPER => Some(&SNIPER),
+        ITEM_GOLDEN_EGG => Some(&GOLDEN_EGG),
         _ => None,
     }
 }
@@ -212,12 +235,19 @@ mod tests {
     }
 
     #[test]
+    fn the_golden_egg_heals_to_full() {
+        let egg = def(ITEM_GOLDEN_EGG).unwrap();
+        assert_eq!(egg.kind, ItemKind::Heal);
+        assert!(egg.damage >= crate::consts::PLAYER_MAX_HP);
+    }
+
+    #[test]
     fn every_item_id_has_a_definition() {
         assert!(def(ITEM_NONE).is_none());
         for item in 1..ITEM_COUNT {
             let d = def(item).unwrap_or_else(|| panic!("item {item} has no definition"));
             assert!(d.stack >= 1);
-            assert!(d.weight > 0);
+            assert!(d.weight > 0 || item == ITEM_GOLDEN_EGG);
             assert!(d.aim_speed > 0.0 && d.aim_speed <= 1.0);
         }
         assert!(def(ITEM_COUNT).is_none());

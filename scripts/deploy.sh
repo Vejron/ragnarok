@@ -37,6 +37,7 @@ PREFLIGHT
 
 echo "==> building client"
 (cd client && npm ci && npm run build)
+rm -rf client/dist/dev   # the dev world (scripts/world-dev.sh) is copied from public/; never ship it
 
 echo "==> building image $IMAGE ($PLATFORM)"
 docker buildx build --platform "$PLATFORM" --load --build-arg "CARGO_BUILD_JOBS=$CARGO_JOBS" -t "$IMAGE" -t "$NAME:latest" .

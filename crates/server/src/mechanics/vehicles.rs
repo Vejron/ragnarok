@@ -394,13 +394,13 @@ mod tests {
         press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
         idle(&mut game, id, &mut seq, 3);
         assert_eq!(game.world.vehicles[&vid].seats[0], Some(id));
-        assert!(game.entity_states().is_empty(), "a seated player is not a stickman entity");
+        assert!(game.entity_states().iter().all(|e| e.1 != shared::protocol::KIND_STICKMAN), "a seated player is not a stickman entity");
         assert_eq!(game.vehicle_states().iter().find(|v| v.0 == vid).unwrap().9[0], id);
 
         press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
         idle(&mut game, id, &mut seq, 3);
         assert_eq!(game.world.vehicles[&vid].seats, [None; CAR_SEATS]);
-        let states = game.entity_states();
+        let states: Vec<_> = game.entity_states().into_iter().filter(|e| e.1 == shared::protocol::KIND_STICKMAN).collect();
         assert_eq!(states.len(), 1);
         // The stickman stands beside the car, not inside it.
         let pose = game.world.physics.car_pose(vid).unwrap();

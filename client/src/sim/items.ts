@@ -10,6 +10,8 @@ export const ITEM_AK5 = 2
 export const ITEM_GRENADE = 3
 export const ITEM_BANDAGE = 4
 export const ITEM_SNIPER = 5
+/** Dropped by a rooster; heals to full. */
+export const ITEM_GOLDEN_EGG = 6
 
 export type ItemKind = 'gun' | 'grenade' | 'heal'
 
@@ -40,6 +42,7 @@ const DEFS: Record<number, ItemDef> = {
   [ITEM_SNIPER]: { name: 'Sniper', kind: 'gun', auto: false, damage: 90, cooldownTicks: 2 * TICK_RATE, mag: 5, reloadTicks: 3 * TICK_RATE, range: 400, aimSpeed: 0.4, scope: true, stack: 1, stance: 'rifle' },
   [ITEM_GRENADE]: { name: 'Grenade', kind: 'grenade', auto: false, damage: 0, cooldownTicks: TICK_RATE, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 3, stance: 'hold' },
   [ITEM_BANDAGE]: { name: 'Bandage', kind: 'heal', auto: false, damage: 40, cooldownTicks: 0, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 5, stance: 'hold' },
+  [ITEM_GOLDEN_EGG]: { name: 'Golden egg', kind: 'heal', auto: false, damage: 255, cooldownTicks: 0, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 1, stance: 'hold' },
 }
 
 /** The definition of `item`; undefined for an empty slot or an unknown id. */

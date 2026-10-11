@@ -16,6 +16,18 @@ use crate::terrain::Ground;
 
 pub const WORLD_VERSION: u8 = 9;
 
+/// Metres per degree of latitude; longitude is scaled by cos(latitude).
+pub const METRES_PER_DEG_LAT: f64 = 110_540.0;
+pub const METRES_PER_DEG_LON: f64 = 111_320.0;
+
+/// Equirectangular projection of `lat`, `lon` around `origin` (a latitude/longitude): `[x, z]` in
+/// metres, +X east, +Z south. The importer places everything with this.
+pub fn project(origin: (f64, f64), lat: f64, lon: f64) -> [f64; 2] {
+    let x = (lon - origin.1) * METRES_PER_DEG_LON * origin.0.to_radians().cos();
+    let z = -(lat - origin.0) * METRES_PER_DEG_LAT;
+    [x, z]
+}
+
 /// `world.msgpack`: everything about the world except the tiles' contents.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Manifest {

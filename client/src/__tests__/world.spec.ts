@@ -1,12 +1,16 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { decodeManifest, decodeTile, worldHash } from '@/world'
+import { WORLD_BASE, decodeManifest, decodeTile, worldHash } from '@/world'
 
 // The committed synthetic world (`fixtures/world/`); the real one is generated and git-ignored.
 const read = (path: string) => new Uint8Array(readFileSync(resolve(process.cwd(), '../fixtures/world', path)))
 
 describe('world files', () => {
+  it('is served from the site root unless VITE_WORLD_BASE says otherwise', () => {
+    expect(WORLD_BASE).toBe('/')
+  })
+
   it('hashes with FNV-1a like the server', () => {
     expect(worldHash(new Uint8Array())).toBe(0x811c9dc5)
     expect(worldHash(new TextEncoder().encode('a'))).toBe(0xe40c292c)

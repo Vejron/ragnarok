@@ -1,4 +1,5 @@
 use super::Mechanic;
+use super::npcs::{damage_rooster, first_rooster_hit};
 use super::spawn;
 use crate::game::{Rocket, World};
 use shared::consts::*;
@@ -168,6 +169,19 @@ pub fn blast(world: &mut World, blast: Blast) {
     for (id, amount) in hurt {
         damage(world, id, amount, blast.attacker, blast.weapon);
     }
+    let roosters: Vec<(u32, u8)> = world
+        .roosters
+        .iter()
+        .filter(|(_, r)| r.alive())
+        .filter_map(|(&id, r)| {
+            let centre = [r.position[0], r.position[1] + ROOSTER_CAPSULE_CENTRE, r.position[2]];
+            let distance = (0..3).map(|i| (centre[i] - blast.point[i]).powi(2)).sum::<f32>().sqrt();
+            (distance < blast.radius).then(|| (id, (blast.damage * (1.0 - distance / blast.radius)).round().min(255.0) as u8))
+        })
+        .collect();
+    for (id, amount) in roosters {
+        damage_rooster(world, id, amount);
+    }
     for (vid, falloff) in world.physics.blast_cars(blast.point, blast.radius) {
         damage_vehicle(world, vid, (blast.damage * falloff).round().min(255.0) as u8, blast.attacker);
     }
@@ -278,14 +292,17 @@ fn step_bullet(world: &mut World, id: u32, dt: f32) {
     let wall = world.physics.cast_ray_hit(bullet.position, dir, step, 0);
     let reach = wall.map_or(step, |(t, _)| t);
     let hit = first_player_hit(world, bullet.position, dir, reach, Some(bullet.owner), 0);
+    let rooster = first_rooster_hit(world, bullet.position, dir, hit.map_or(reach, |(_, t)| t));
     bullet.ttl = bullet.ttl.saturating_sub(1);
-    if hit.is_some() || wall.is_some() {
+    if hit.is_some() || rooster.is_some() || wall.is_some() {
         world.rockets.remove(&id);
-        let end = hit.map_or(reach, |(_, t)| t);
+        let end = rooster.map(|(_, t)| t).or(hit.map(|(_, t)| t)).unwrap_or(reach);
         let point: [f32; 3] = std::array::from_fn(|i| bullet.position[i] + dir[i] * end);
         let damage_dealt = def(ITEM_SNIPER).map_or(0, |d| d.damage);
         let attacker = world.players.contains_key(&bullet.owner).then_some(bullet.owner);
-        if let Some((victim, _)) = hit {
+        if let Some((target, _)) = rooster {
+            damage_rooster(world, target, damage_dealt);
+        } else if let Some((victim, _)) = hit {
             damage(world, victim, damage_dealt, attacker, WEAPON_SNIPER);
         } else if let Some((_, Some(car))) = wall {
             damage_vehicle(world, car, (damage_dealt / 4).max(1), attacker);
@@ -422,8 +439,12 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     let wall = world.physics.cast_ray_hit(origin, dir, item.range, 0);
     let reach = wall.map_or(item.range, |(t, _)| t);
     let hit = first_player_hit(world, origin, dir, reach, Some(id), back);
-    let end = hit.map_or(reach, |(_, t)| t);
-    if let Some((victim, _)) = hit {
+    // A rooster nearer than the player (or with no player behind it) takes the shot.
+    let rooster = first_rooster_hit(world, origin, dir, hit.map_or(reach, |(_, t)| t));
+    let end = rooster.map(|(_, t)| t).or(hit.map(|(_, t)| t)).unwrap_or(reach);
+    if let Some((target, _)) = rooster {
+        damage_rooster(world, target, item.damage);
+    } else if let Some((victim, _)) = hit {
         damage(world, victim, item.damage, Some(id), item.weapon);
     } else if let Some((_, Some(car))) = wall {
         // A nuisance, not a way to kill a vehicle.

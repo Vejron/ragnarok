@@ -264,3 +264,21 @@ pub const WRECK_BLAST_KNOCK: f32 = 14.0;
 /// A shot never reaches further into the past than this, so a laggy shooter has a cap on how far
 /// ahead of themselves they can lead their targets.
 pub const MAX_REWIND_TICKS: u32 = 15;
+
+/// The Hedemora rooster NPC. It meanders around `ROOSTER_HOME` (latitude, longitude), stops to crow
+/// now and then, and drops a golden egg when killed. If the home is outside the world it lives at the first spawn.
+pub const ROOSTER_HOME: (f64, f64) = (63.840784, 20.326410);
+/// How far from home it wanders, metres.
+pub const ROOSTER_WANDER_RADIUS: f32 = 8.0;
+/// Walking speed, m/s, and how fast it turns, rad/s.
+pub const ROOSTER_SPEED: f32 = 1.2;
+pub const ROOSTER_TURN_RATE: f32 = 4.0;
+pub const ROOSTER_HP: u8 = 30;
+/// A killed rooster is back at home after this long.
+pub const ROOSTER_RESPAWN_TICKS: u32 = 60 * TICK_RATE;
+/// Length of a crow; the client's `crow` clip is the same length.
+pub const ROOSTER_CROW_TICKS: u32 = 100;
+/// Hit capsule: centre this high above its feet, metres.
+pub const ROOSTER_CAPSULE_CENTRE: f32 = 0.4;
+pub const ROOSTER_CAPSULE_HALF_HEIGHT: f32 = 0.1;
+pub const ROOSTER_CAPSULE_RADIUS: f32 = 0.3;

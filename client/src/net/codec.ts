@@ -22,12 +22,16 @@ export const KIND_JEEP = 1
 export const KIND_TANK = 2
 export const KIND_HELI = 3
 export const KIND_SPORTS = 4
+/** A Hedemora rooster, an NPC. */
+export const KIND_ROOSTER = 5
 export const FLAG_GROUNDED = 1 << 0
 export const FLAG_DEAD = 1 << 1
 export const FLAG_CROUCHING = 1 << 2
 /** Bits 3..=5 hold the item in the player's hands. */
 export const FLAG_HELD_SHIFT = 3
 export const FLAG_HELD_MASK = 0b111 << FLAG_HELD_SHIFT
+/** A rooster is mid-crow. */
+export const FLAG_CROWING = 1 << 6
 
 /** The AK5. */
 export const WEAPON_RIFLE = 0
@@ -84,6 +88,8 @@ export interface EntityState {
   knockZ: number
   /** `ITEM_*` in their hands. */
   held: number
+  /** A rooster mid-crow. */
+  crowing: boolean
 }
 
 /**
@@ -279,6 +285,7 @@ export function entityState(raw: readonly number[]): EntityState {
     knockX: knockX! / CM,
     knockZ: knockZ! / CM,
     held: (flags! & FLAG_HELD_MASK) >> FLAG_HELD_SHIFT,
+    crowing: (flags! & FLAG_CROWING) !== 0,
   }
 }
 

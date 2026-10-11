@@ -4,6 +4,12 @@ import { decode } from '@msgpack/msgpack'
 
 export const WORLD_VERSION = 9
 
+/** Where `world.msgpack`, `tiles/` and `minimap.png` are served from: `/` normally, `/dev/` for the dev world. */
+export const WORLD_BASE: string = (() => {
+  const base = import.meta.env.VITE_WORLD_BASE || '/'
+  return base.endsWith('/') ? base : `${base}/`
+})()
+
 export const ROAD_MAJOR = 0
 export const ROAD_MINOR = 1
 export const ROAD_PATH = 2
@@ -228,7 +234,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
 }
 
 /** Loads the manifest. `hash` is what the server reports in `welcome` if the worlds match. */
-export async function loadManifest(url = '/world.msgpack'): Promise<{ world: WorldData; hash: number }> {
+export async function loadManifest(url = `${WORLD_BASE}world.msgpack`): Promise<{ world: WorldData; hash: number }> {
   const response = await fetch(url)
   if (!response.ok) throw new Error(`${url}: ${response.status}; run \`cargo run -p osm-import\``)
   const bytes = new Uint8Array(await response.arrayBuffer())
@@ -236,7 +242,7 @@ export async function loadManifest(url = '/world.msgpack'): Promise<{ world: Wor
 }
 
 /** Fetches one tile and checks it is the one the manifest names. */
-export async function fetchTile(ref: TileRef, base = '/'): Promise<TileData> {
+export async function fetchTile(ref: TileRef, base = WORLD_BASE): Promise<TileData> {
   const url = `${base}tiles/${ref.col}_${ref.row}.msgpack`
   const response = await fetch(url)
   if (!response.ok) throw new Error(`${url}: ${response.status}`)

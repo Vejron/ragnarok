@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import {
-  encodeInput, encodePing, KIND_HELI, KIND_SPORTS, KIND_STICKMAN, KIND_TANK, sceneStates, toAxis, toMrad, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_RIFLE,
+  encodeInput, encodePing, KIND_HELI, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_TANK, sceneStates, toAxis, toMrad, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_RIFLE,
   WEAPON_AUTOCANNON, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_SNIPER, WEAPON_WRECK,
   type EntityState, type InputFrame, type PickupState, type RocketState, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
 } from './net/codec'
@@ -33,6 +33,8 @@ import { AIM_DISTANCE_SCALE, DRIVING_DISTANCE, HELI_DISTANCE, ON_FOOT_DISTANCE, 
 import { HeliModel, loadHeliModel } from './render/heli'
 import { loadTankModel, TankModel } from './render/tank'
 import { Character, Crowd } from './render/character'
+import { loadRoosterModel, RoosterModel } from './render/rooster'
+import { playCrow } from './audio'
 import { buildGround, buildTile, disposeTile, restitchTerrain } from './render/world'
 import { buildWater, disposeWater, updateWater } from './render/water'
 import { Replica } from './net/replica'
@@ -135,6 +137,8 @@ const riders = (cars: ReadonlyMap<number, CarPlacement>) => {
 const MAX_TICKS_PER_FRAME = 8
 const PING_INTERVAL_MS = 1000
 const RECONNECT_MS = 3000
+/** A crow can be heard this far off, metres. */
+const ROOSTER_HEARING = 45
 /** How long a kill stays in the feed. */
 const FEED_MS = 6000
 const FEED_LENGTH = 5
@@ -158,6 +162,7 @@ export class Game {
   /** Every stickman is drawn by this one set of instanced meshes. */
   private readonly crowd = new Crowd()
   private readonly avatars = new Map<number, Character>()
+  private readonly roosters = new Map<number, RoosterModel>()
   /** Rebuilds snapshots from deltas, and says which one to diff the next against. */
   private readonly replica = new Replica()
   private tiles: TileStreamer | null = null
@@ -261,7 +266,7 @@ export class Game {
     const motor = await RapierMotor.create(world)
     this.motor = motor
     this.driver = await VehicleDriver.create(world)
-    await Promise.all([this.crowd.load(), loadCarModels(), loadTankModel(), loadHeliModel()])
+    await Promise.all([this.crowd.load(), loadCarModels(), loadTankModel(), loadHeliModel(), loadRoosterModel()])
     // The buildings arrive as tiles, around wherever the player is.
     this.tiles = new TileStreamer(world, { attach: (ref, tile) => this.attachTile(ref, tile) })
     // Until the server places us, walk around solo from the first spawn point.
@@ -345,6 +350,8 @@ export class Game {
         this.avatars.delete(id)
       }
     }
+    for (const model of this.roosters.values()) model.dispose()
+    this.roosters.clear()
     if (!this.disposed && !this.halted) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = window.setTimeout(() => void this.connect(), RECONNECT_MS)
@@ -571,8 +578,15 @@ export class Game {
     }
 
     const seen = new Set<number>([0])
+    const roosters = new Set<number>()
     for (const id of this.interp.ids()) {
       const state = this.interp.sample(id, renderTick)
+      if (state?.kind === KIND_ROOSTER) {
+        roosters.add(id)
+        this.rooster(id, state, dt, position)
+        if (!state.dead) this.blobFoot(blobs, state.x, state.y + CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS, state.z)
+        continue
+      }
       if (!state || state.kind !== KIND_STICKMAN) continue
       seen.add(id)
       const avatar = this.avatar(id)
@@ -586,6 +600,13 @@ export class Game {
       if (!seen.has(id)) {
         avatar.dispose()
         this.avatars.delete(id)
+      }
+    }
+
+    for (const [id, model] of this.roosters) {
+      if (!roosters.has(id)) {
+        model.dispose()
+        this.roosters.delete(id)
       }
     }
 
@@ -916,6 +937,20 @@ export class Game {
     return best.driverSeatFree ? 'E: drive the jeep' : 'E: ride along'
   }
 
+  /** Places and animates rooster `id`, and lets it be heard when it crows: louder the nearer it is. */
+  private rooster(id: number, state: { x: number; y: number; z: number; yaw: number; crowing: boolean }, dt: number, listener: readonly number[]) {
+    let model = this.roosters.get(id)
+    if (!model) {
+      model = new RoosterModel()
+      this.roosters.set(id, model)
+      this.scene.scene.add(model.root)
+    }
+    if (model.update([state.x, state.y, state.z], state.yaw, state.crowing, dt)) {
+      const distance = Math.hypot(state.x - listener[0]!, state.z - listener[2]!)
+      playCrow((1 - Math.min(1, distance / ROOSTER_HEARING)) ** 2)
+    }
+  }
+
   /** The stickman for an entity; id 0 is the local player. */
   private avatar(id: number) {
     let avatar = this.avatars.get(id)
@@ -939,6 +974,7 @@ export class Game {
     this.effects.dispose()
     this.rocketModels.dispose()
     this.pickupModels.dispose()
+    for (const model of this.roosters.values()) model.dispose()
     this.trajectory.dispose()
     this.scene.dispose()
   }

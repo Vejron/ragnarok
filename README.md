@@ -32,11 +32,21 @@ cargo run -p osm-import                       # terrain, roofs and trees
 cargo run -p osm-import -- --dem m708_75.tif  # or from a DTM GeoTIFF you already have
 cargo run -p osm-import -- --cell 0           # flat ground, no elevation (--cell is the sample spacing, 5 m)
 
+# 1b. Or the small dev world (~5 km² around Mariehem, much faster; written to client/public/dev/)
+scripts/world-dev.sh                          # --synthetic works here too; see WORLD.md, "Dev world"
+
 # 2. Server (WebTransport on 127.0.0.1:8698, cert hash on :8699)
 cargo run -p server
 
 # 3. Client
 cd client && npm install && npm run dev       # http://localhost:5173
+```
+
+Against the dev world, point both at it (unset both to go back to the big world):
+
+```sh
+RAGNAROK_WORLD=client/public/dev/world.msgpack cargo run -p server
+cd client && VITE_WORLD_BASE=/dev/ npm run dev
 ```
 
 Open http://localhost:5173 in two windows. Click to capture the mouse. Controls: WASD to move, Shift to run, Space to jump, Esc to release the mouse. Walk up to a car and press E to get in (the first to board drives, the next ones ride along) and E again to get out. Driving: W/S gas and brake, A/D steer, Space handbrake. Two tanks are parked among the cars: the first in drives (A/D turns it on the spot), the second takes the gun. The gunner aims with the mouse and fires with a click or F. On foot you start with empty hands: walk up to an item on the ground (revolver, AK5, grenade, bandage) and press E to take it. 1-5 or the mouse wheel pick a hotbar slot, a click (or F) uses what is in hand, R reloads; Tab shows the scores. It is a free-for-all: you die at zero health and respawn after three seconds. Grenades and tank shells also wreck vehicles. One helicopter is parked there too: its pilot leans with W/S, turns with A/D, climbs with Space and sinks with Shift, and one passenger takes the nose autocannon, aiming with the mouse and firing explosive rounds with a click or F. R swaps seats in vehicles, tank or helicopter.

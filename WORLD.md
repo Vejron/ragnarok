@@ -56,6 +56,80 @@ What works with which credentials:
 Without credentials the importer says so and builds buildings as boxes; terrain needs `--dem` or
 `--cell 0`.
 
+## Which world, and when
+
+| World | Where | Size | Made by | Used for |
+|---|---|---|---|---|
+| **Dev** | `client/public/dev/` (git-ignored) | ~5 km², 2.25 km square around Mariehem, Umeå (63.8372, 20.3261), 81 tiles | `scripts/world-dev.sh` | day-to-day development: quick to import, load and stream |
+| **Big** | `client/public/world.msgpack` + `tiles/` + `minimap.png` (git-ignored) | 8.6 km square, Backen to Nydala | `scripts/world.sh` | production (what `Dockerfile` and `scripts/deploy.sh` ship), and checking things at full scale |
+| **Fixture** | `fixtures/world/` (committed) | small synthetic city | `--synthetic --out fixtures/world/world.msgpack` | server and client tests only |
+
+They never touch each other's files: the dev world lives in its own directory, and all of them share
+the download cache (below), which they only ever add to.
+
+### Developing against the dev world
+
+```sh
+scripts/world-dev.sh                  # once (needs LM_USER/LM_PASS in .env.local; --synthetic for offline)
+RAGNAROK_WORLD=client/public/dev/world.msgpack cargo run -p server
+cd client && VITE_WORLD_BASE=/dev/ npm run dev
+```
+
+- The server and the client are pointed at the world independently: `RAGNAROK_WORLD` (a path to a
+  manifest; the tiles are read from `tiles/` next to it) and `VITE_WORLD_BASE` (the URL prefix the
+  browser fetches `world.msgpack`, `tiles/` and `minimap.png` from; the dev server serves
+  `client/public/` at `/`). Set both or neither. If they disagree the page warns that its world
+  differs from the server's.
+- To go back to the big world, unset both and restart the server and `npm run dev`.
+- Restart the server after regenerating a world: it reads the whole world at start.
+- The first run downloads what the big world's cache doesn't already hold (Mariehem is on the east
+  edge of the big world, so some terrain and laser blocks are new, and the Overpass, tree and water
+  queries are new for this area). Later runs read everything from disk.
+- Flags after the script name go to the importer, and a later `--center`/`--half` wins, so
+  `scripts/world-dev.sh --center 63.8225,20.235 --half 750` is a smaller world somewhere else, still
+  in `client/public/dev/`.
+
+### Generating the big world (production)
+
+```sh
+scripts/world.sh                      # defaults: Backen to Nydala, into client/public/
+scripts/deploy.sh                     # builds the client, bakes world + tiles into the image
+```
+
+`scripts/world.sh` loads `.env.local`, then runs the importer in release mode with the defaults
+(`--center 63.8225,20.235 --half 4300`, 250 m tiles, 5 m terrain cells). The output is
+`client/public/world.msgpack`, `client/public/tiles/` and `client/public/minimap.png`. The world is
+not committed, so it must exist before a build: `Dockerfile` copies `world.msgpack` and `tiles/`
+into the image and sets `RAGNAROK_WORLD=/app/world.msgpack`, and `scripts/deploy.sh` stops if they
+are missing. Generate it on the machine that has the cache (see below) and don't `--refresh`
+casually: a re-import is only byte-identical given the same cache. `scripts/deploy.sh` removes
+`client/dist/dev` after the build so the dev world is never shipped.
+
+### Making another world
+
+Any other area is the same command with `--out` pointing at a **dedicated** directory: the importer
+deletes `<out dir>/tiles` before writing, and the default `--out` is the big world's location.
+
+```sh
+scripts/world.sh --center 63.8372,20.3261 --half 1125 --out client/public/dev/world.msgpack
+```
+
+- `--half` is half the side in metres, so the world is `2 × half` square. `--tile` must divide that
+  side (250 m tiles: 2250 m is 9 tiles); `--cell` must divide `--tile`. Relief is limited to 100 m
+  across the world.
+- Run the server and client against it as above (`VITE_WORLD_BASE` is the directory under
+  `client/public/`, with slashes: `/mine/`).
+
+### Troubleshooting
+
+| Symptom | Cause |
+|---|---|
+| The big world's tiles vanished | an import ran with the default `--out` (or a `--out` in `client/public/`); regenerate it with `scripts/world.sh` (cached, so it is quick) |
+| Page warns the world differs from the server's | `RAGNAROK_WORLD` and `VITE_WORLD_BASE` name different worlds, or the world was regenerated and the server not restarted |
+| `/dev/world.msgpack: 404` in the browser | the dev world isn't generated yet, or `VITE_WORLD_BASE` has no matching directory under `client/public/` |
+| `LM_USER and LM_PASS are not set` | put them in `.env.local`, or add `--synthetic` |
+| World version mismatch | the world was made by an older importer; regenerate it |
+
 ## Credentials
 
 Lantmäteriet's height model, point cloud and water need a (free) Geotorget account with the *Markhöjdmodell*,

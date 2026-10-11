@@ -58,7 +58,7 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 - `ack` is the newest input `seq` of the receiving player already applied to this state. The client drops pending inputs up to `ack` and replays the rest.
 - `ride` is the id of the vehicle the receiving player stands on top of, or 0. The server carries riders with the car, so the client predicts them in the car's frame. Only the receiver's own value is sent: other riders are plain entities whose positions already move with the car.
 - `drive` is `nil` unless the receiving player sits in a vehicle's driver seat. Then it is the exact motion of that vehicle, which its pose does not carry, so the driver can predict it (below).
-- `self` is `[hp u8, progress u8, [slot, …]]`, only for the receiving player. `hp` is their health, 0 when dead (other players only show dead or alive, in `flags`). `progress` is how far a reload or a bandage has got, 0..255, or 0 when neither is going on. Each `slot` is `[item u8, count u8, ammo u8]`, five of them, `item` 0 for an empty slot (`1` revolver, `2` AK5, `3` grenade, `4` bandage). The item in another player's hands is in bits 3..5 of their entity `flags`.
+- `self` is `[hp u8, progress u8, [slot, …]]`, only for the receiving player. `hp` is their health, 0 when dead (other players only show dead or alive, in `flags`). `progress` is how far a reload or a bandage has got, 0..255, or 0 when neither is going on. Each `slot` is `[item u8, count u8, ammo u8]`, five of them, `item` 0 for an empty slot (`1` revolver, `2` AK5, `3` grenade, `4` bandage, `5` sniper, `6` golden egg, dropped by a rooster and healing to full). The item in another player's hands is in bits 3..5 of their entity `flags`.
 - `shot` is `[shooter u32, weapon u8, x i32, y i32, z i32]`: something since the previous snapshot, and where it ended (cm). It is only sent to a player within 300 m of where it ended. Weapons 0 (AK5) and 4 (revolver) are gunshots (a tracer from the shooter), 1 (a tank shell), 6 (a helicopter autocannon round), 2 a rocket, 5 a grenade and 3 a vehicle wreck going up are a burst at the point. It is cosmetic, so it rides the lossy datagram and is capped at 8 per snapshot, and dropped first if a snapshot would not fit.
 - `projectile` is `[id u32, kind u8, x i32, y i32, z i32, vx i16, vy i16, vz i16]`, cm and cm/s: a rocket (`kind` 0) or grenade (`kind` 1) in flight. Clients interpolate it like an entity and aim a rocket along `v`. One that stops being listed has burst, and its burst arrives as a `shot` event. If a snapshot would not fit, shots are dropped first, then projectiles, then pickups.
 - `pickup` is `[id u32, item u8, x i32, y i32, z i32]`, cm: an item lying on the ground within 300 m, nearest first and at most 24. They are static, so there is no delta: the list is the set, and one that is no longer listed has been taken. A player takes the nearest within 2 m by sending the use bit; the server hands it over before it considers boarding a vehicle.
@@ -69,7 +69,7 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 
 | Field | Unit |
 |---|---|
-| `kind` | 0 = stickman |
+| `kind` | 0 = stickman, 5 = Hedemora rooster (an NPC: `yaw` is its heading, `flags` bit 6 is crowing) |
 | `x, y, z` | centimetres, capsule centre (+X east, +Z south, +Y up) |
 | `yaw` | milliradians |
 | `vy` | vertical velocity, cm/s (needed to resume a predicted jump) |

@@ -97,6 +97,38 @@ pub struct Pickup {
     pub position: [f32; 3],
     /// Ticks until it reappears; zero when it is lying there to be taken.
     pub respawn_in: u32,
+    /// Dropped by something that died (a rooster's egg): gone once taken, instead of coming back.
+    pub dropped: bool,
+}
+
+/// What a rooster is doing. Its `mode_left` counts ticks down to the next decision.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RoosterMode {
+    Idle,
+    Wander,
+    Crow,
+}
+
+/// A Hedemora rooster: an NPC that meanders around `home`, crows, and drops a golden egg when it
+/// dies. It shares the id space with players. At zero `hp` it is dead and `respawn_in` counts down.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rooster {
+    /// Feet.
+    pub position: [f32; 3],
+    pub yaw: f32,
+    pub hp: u8,
+    pub mode: RoosterMode,
+    pub mode_left: u32,
+    /// Where it is walking to, `[x, z]`.
+    pub target: [f32; 2],
+    pub home: [f32; 2],
+    pub respawn_in: u32,
+}
+
+impl Rooster {
+    pub fn alive(&self) -> bool {
+        self.hp > 0
+    }
 }
 
 /// Game-side state of a vehicle. Its rigid body lives in `Physics`, under the same id.
@@ -170,6 +202,8 @@ pub struct World {
     pub rockets: BTreeMap<u32, Rocket>,
     /// Items on the ground, which share the id space too.
     pub pickups: BTreeMap<u32, Pickup>,
+    /// Roosters, which share the id space too.
+    pub roosters: BTreeMap<u32, Rooster>,
     next_id: u32,
     pub rng: Rng,
     /// Rifle shots since the last snapshot, for drawing tracers. Drained when snapshots go out.
@@ -226,6 +260,7 @@ impl Game {
                 vehicles: BTreeMap::new(),
                 rockets: BTreeMap::new(),
                 pickups: BTreeMap::new(),
+                roosters: BTreeMap::new(),
                 next_id: 1,
                 rng: Rng::from_time(),
                 shots: Vec::new(),
@@ -348,8 +383,16 @@ impl Game {
         }
     }
 
-    /// Standing players. Seated ones are shown by their vehicle instead.
+    /// Standing players, then the living roosters. Seated players are shown by their vehicle instead.
     pub fn entity_states(&self) -> Vec<EntityState> {
+        let roosters = self.world.roosters.iter().filter(|(_, rooster)| rooster.alive()).map(|(&id, rooster)| {
+            let [x, y, z] = rooster.position;
+            let mut flags = FLAG_GROUNDED;
+            if rooster.mode == RoosterMode::Crow {
+                flags |= FLAG_CROWING;
+            }
+            EntityState(id, KIND_ROOSTER, to_cm(x), to_cm(y), to_cm(z), to_mrad(rooster.yaw), 0, flags, 0, 0)
+        });
         self.world
             .players
             .iter()
@@ -380,6 +423,7 @@ impl Game {
                     to_cm_i16(c.knock[1]),
                 )
             })
+            .chain(roosters)
             .collect()
     }
 
@@ -530,8 +574,9 @@ mod tests {
             .collect();
         let last = snapshots.last().expect("a snapshot every SNAPSHOT_EVERY ticks");
         assert_eq!(last.3, 2, "both inputs acknowledged");
-        assert_eq!(last.5.len(), 1);
-        assert!(last.5[0].4 < 0, "walked towards -Z");
+        let stickmen: Vec<_> = last.5.iter().filter(|e| e.1 == KIND_STICKMAN).collect();
+        assert_eq!(stickmen.len(), 1);
+        assert!(stickmen[0].4 < 0, "walked towards -Z");
     }
 
     #[test]
@@ -554,6 +599,6 @@ mod tests {
         game.handle(Command::Leave(first));
         let Some(Outgoing::Reliable(leave)) = drain(&mut b).into_iter().next() else { panic!("no leave") };
         assert_eq!(decode::<Leave>(&leave), Some(Leave(S_LEAVE, first)));
-        assert_eq!(game.entity_states().len(), 1);
+        assert_eq!(game.entity_states().iter().filter(|e| e.1 == KIND_STICKMAN).count(), 1);
     }
 }

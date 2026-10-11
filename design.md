@@ -125,6 +125,8 @@ The `Combat` mechanic owns health. Each player has `hp` (100), and `damage()` is
 
 **Pickups** (`mechanics/pickups.rs`, `World::pickups`). `PICKUP_COUNT` items are scattered once at start around the map's spawn points, on open ground (a ray from above must meet the terrain, not a roof), weighted by `ItemDef::weight`. Pressing use within 2 m takes the nearest: it joins a stack of the same item if there is room, else the first empty slot, else swaps with the slot in hand and leaves that on the ground. A taken item comes back 30 s later. The mechanic runs before `Vehicles` and consumes the use bit, so reaching for a gun beside a car does not board it.
 
+**Rooster** (`mechanics/npcs.rs`, `World::roosters`). A Hedemora rooster, the first NPC. It lives at `ROOSTER_HOME` (a latitude/longitude, projected with the world's origin; the first spawn if that is outside the world), and cycles standing about, walking to a random spot within `ROOSTER_WANDER_RADIUS`, and now and then crowing (`FLAG_CROWING` in its entity `flags`, which the client turns into the `crow` clip and a synthesised "kokoo!"). It is hit by shots, sniper rounds and blasts like a player, in `combat.rs` through `first_rooster_hit` and `damage_rooster`. At zero health it leaves a golden egg (`ITEM_GOLDEN_EGG`, a `Pickup` with `dropped` set, gone once taken) and is back at home after `ROOSTER_RESPAWN_TICKS`. The egg is a heal item with `damage: 255`: used from the hotbar it channels like a bandage and restores full health. Its model is built by `tools/npc/build_rooster.py`.
+
 **Blasts** (`combat::blast`) throw standing players away and hurt them, and shove and hurt vehicles, all falling off linearly to the radius. The shell does 125 at its centre, which kills outright within about 1.4 m; the rocket does 110, which kills within about half a metre of a direct hit.
 
 **Vehicles** have health (car and helicopter 100, tank 250). At zero it is wrecked: everyone inside is thrown out and killed (credited to whoever last hurt it), it goes up in a blast that can take the next one with it, nobody can board it, and after `WRECK_TICKS` it is put back at its home with full health. Seated players take no direct damage: they die with the vehicle.
@@ -185,7 +187,7 @@ Datagrams are capped at 1200 bytes (`MAX_PACKET`). Interest management and delta
 
 ## 8. World pipeline (OpenStreetMap)
 
-`cargo run -p osm-import`. The default is a 2 km square centred on Backen, Umeå (63.832127, 20.168286). `--center lat,lon --half metres` picks another place, `--bbox south,west,north,east` an exact box, `--tile` the tile size (250 m), and `--synthetic` generates a grid city offline.
+`cargo run -p osm-import`. The default is an 8.6 km square of central Umeå, Backen to Nydala (63.8225, 20.235, half-side 4300 m); `scripts/world-dev.sh` makes a ~5 km² dev world around Mariehem instead. `--center lat,lon --half metres` picks another place, `--bbox south,west,north,east` an exact box, `--tile` the tile size (250 m), and `--synthetic` generates a grid city offline.
 
 **The full pipeline is documented in [WORLD.md](WORLD.md)**: every data source and licence (OpenStreetMap, Lantmäteriet's height model and laser data, Umeå's tree register), where the credentials go (`.env.local`), all flags, and the download cache (`.cache/osm-import/`, git-ignored; `--refresh`, `--clear-cache`). This section covers what the output means.
 

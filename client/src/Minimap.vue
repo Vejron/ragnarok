@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { viewWindow, worldToMap } from './sim/minimap'
+import { WORLD_BASE } from './world'
 
 const props = defineProps<{ x: number; z: number; yaw: number; halfExtent: number; open: boolean }>()
 
-const url = `${import.meta.env.BASE_URL}minimap.png`
+const url = `${WORLD_BASE}minimap.png`
 /** The image is generated with the world; an older world has none, and then nothing is shown. */
 const missing = ref(false)
 

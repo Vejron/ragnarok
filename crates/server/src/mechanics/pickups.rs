@@ -80,7 +80,7 @@ impl Mechanic for Pickups {
                 let item = pick_item(world);
                 let count = def(item).map_or(1, |d| if d.kind == ItemKind::Gun { 1 } else { d.stack.min(2) });
                 let id = world.alloc_id();
-                world.pickups.insert(id, Pickup { item, count, position, respawn_in: 0 });
+                world.pickups.insert(id, Pickup { item, count, position, respawn_in: 0, dropped: false });
                 placed += 1;
                 break;
             }
@@ -113,6 +113,11 @@ impl Mechanic for Pickups {
             // The reach is spent: the car beside the gun stays unboarded.
             player.input.4 &= !BUTTON_USE;
             let left = store(&mut player.hotbar, pickup.item, pickup.count);
+            if left == 0 && pickup.dropped {
+                // A dropped item is spent for good.
+                world.pickups.remove(&pid);
+                continue;
+            }
             let entry = world.pickups.get_mut(&pid).expect("found above");
             if left == 0 {
                 entry.respawn_in = PICKUP_RESPAWN_TICKS;
@@ -129,6 +134,7 @@ impl Mechanic for Pickups {
                     player.interrupt();
                     entry.item = slot.0;
                     entry.count = slot.1;
+                    entry.dropped = false;
                 }
             }
         }
@@ -168,7 +174,7 @@ mod tests {
     fn drop_at_feet(game: &mut Game, id: u32, item: u8, count: u8) -> u32 {
         let at = game.world.players[&id].character.position;
         let pid = game.world.alloc_id();
-        game.world.pickups.insert(pid, Pickup { item, count, position: at, respawn_in: 0 });
+        game.world.pickups.insert(pid, Pickup { item, count, position: at, respawn_in: 0, dropped: false });
         pid
     }
 

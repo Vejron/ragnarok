@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { encode } from '@msgpack/msgpack'
-import { applyDelta, decodeServer, encodeInput, encodePing, sceneStates, toMrad, type RawEntity, type RawVehicle, type WireScene } from '@/net/codec'
+import { applyDelta, decodeServer, encodeInput, encodePing, entityState, FLAG_CROWING, FLAG_GROUNDED, KIND_ROOSTER, sceneStates, toMrad, type RawEntity, type RawVehicle, type WireScene } from '@/net/codec'
 import { Replica } from '@/net/replica'
 import { BUTTON_FIRE, BUTTON_JUMP, BUTTON_RUN } from '@/sim/consts'
 
@@ -59,6 +59,12 @@ describe('codec', () => {
     })
   })
 
+  it('reads a crowing rooster from its kind and flags', () => {
+    const raw = [12, KIND_ROOSTER, 100, 50, -200, 1571, 0, FLAG_GROUNDED | FLAG_CROWING, 0, 0]
+    expect(entityState(raw)).toMatchObject({ id: 12, kind: 5, grounded: true, crowing: true, dead: false, held: 0 })
+    expect(entityState([12, KIND_ROOSTER, 0, 0, 0, 0, 0, FLAG_GROUNDED, 0, 0]).crowing).toBe(false)
+  })
+
   it('converts a rebuilt scene to game units', () => {
     const scene: WireScene = {
       entities: [[1, 0, 1234, -123456, 101, 1571, -500, 0, 650, -300], [7, 0, 0, 85, 100000, 0, 0, 3, 0, 0]],
@@ -69,8 +75,8 @@ describe('codec', () => {
     }
     expect(sceneStates(scene)).toEqual({
       entities: [
-        { id: 1, kind: 0, x: 12.34, y: -1234.56, z: 1.01, yaw: 1.571, vy: -5, grounded: false, dead: false, crouching: false, knockX: 6.5, knockZ: -3, held: 0 },
-        { id: 7, kind: 0, x: 0, y: 0.85, z: 1000, yaw: 0, vy: 0, grounded: true, dead: true, crouching: false, knockX: 0, knockZ: 0, held: 0 },
+        { id: 1, kind: 0, x: 12.34, y: -1234.56, z: 1.01, yaw: 1.571, vy: -5, grounded: false, dead: false, crouching: false, knockX: 6.5, knockZ: -3, held: 0, crowing: false },
+        { id: 7, kind: 0, x: 0, y: 0.85, z: 1000, yaw: 0, vy: 0, grounded: true, dead: true, crouching: false, knockX: 0, knockZ: 0, held: 0, crowing: false },
       ],
       vehicles: [
         {
