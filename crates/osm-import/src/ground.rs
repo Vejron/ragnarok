@@ -37,7 +37,17 @@ pub fn build(half: f64, tile: f64, cell: f64, mut elevation: impl FnMut(f64, f64
         bail!("the elevation data has no samples inside the world");
     }
     if high - low > MAX_RELIEF {
-        bail!("relief of {:.0} m does not fit the format (at most {MAX_RELIEF} m)", high - low);
+        // Say where the extremes are, so the box can be moved or shrunk away from them.
+        let place = |target: f64| {
+            let index = metres.iter().position(|&h| h == target).unwrap_or(0) as u32;
+            format!("({:.0}, {:.0})", at(index % side), at(index / side))
+        };
+        bail!(
+            "relief of {:.0} m does not fit the format (at most {MAX_RELIEF} m): lowest {low:.1} m at (x, z) = {}, highest {high:.1} m at {}, in metres from the centre; shrink --half or move the box",
+            high - low,
+            place(low),
+            place(high)
+        );
     }
     // Gaps (water, missing tiles) take the lowest ground, so they are flat rather than cliffs.
     let heights = metres.iter().map(|&h| (((if h.is_finite() { h } else { low }) - low) * 100.0).round() as i16).collect();

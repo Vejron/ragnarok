@@ -67,8 +67,12 @@ struct Args {
     #[arg(long)]
     synthetic: bool,
     /// Overpass API endpoints, tried in order (the public servers are often busy).
-    #[arg(long, value_delimiter = ',', default_value = "https://overpass-api.de/api/interpreter,https://overpass.private.coffee/api/interpreter")]
+    #[arg(long, value_delimiter = ',', default_value = "https://overpass-api.de/api/interpreter,https://overpass.kumi.systems/api/interpreter,https://overpass.private.coffee/api/interpreter,https://maps.mail.ru/osm/tools/overpass/api/interpreter")]
     overpass: Vec<String>,
+    /// Overpass is asked for squares of about this many metres and the answers merged, so a big
+    /// box does not time out. Finished squares are cached.
+    #[arg(long, default_value_t = 2000.0)]
+    overpass_chunk: f64,
     #[arg(long, default_value = "client/public/world.msgpack")]
     out: PathBuf,
     /// Where downloads are kept between runs (git-ignored). See WORLD.md.
@@ -206,26 +210,10 @@ fn main() -> Result<()> {
                 assemble::bbox_around(lat, lon, args.half)
             }
         };
-        // The public servers shed load with 504s; a few rounds over all of them usually get through.
-        let mut osm = None;
-        'rounds: for round in 0..4 {
-            if round > 0 {
-                eprintln!("  retrying in 15 s");
-                std::thread::sleep(std::time::Duration::from_secs(15));
-            }
-            for endpoint in &args.overpass {
-                eprintln!("querying {endpoint} for {bbox:?}");
-                match overpass::fetch(endpoint, bbox) {
-                    Ok(result) => {
-                        osm = Some(result);
-                        break 'rounds;
-                    }
-                    Err(error) => eprintln!("  failed: {error:#}"),
-                }
-            }
-        }
-        let Some(osm) = osm else { bail!("every Overpass endpoint failed; retry later or use --synthetic") };
+        // Before the network-flaky step: a world that cannot fit the format should fail in seconds.
         let (ground, datum, dem) = terrain(&args, bbox)?;
+        // The public servers shed load with 504s; a few rounds over all of them usually get through.
+        let osm = overpass::fetch_chunked(&args.overpass, bbox, args.overpass_chunk, 3, 15).context("Overpass failed; retry later or use --synthetic")?;
         let (cloud, detected) = laser(&args, bbox, datum, &osm, dem.as_ref())?;
         let register = if args.no_trees {
             Vec::new()

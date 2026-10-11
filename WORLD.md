@@ -21,12 +21,12 @@ set -a; . ./.env.local; set +a        # credentials, see below
 cargo run -p osm-import               # 2 km square around Backen, Umeå, 250 m tiles
 ```
 
-Restart the server afterwards: it reads the whole world at start. The importer wipes
-`client/public/tiles/` first and writes the manifest last.
+Restart the server afterwards: it reads the whole world at start. The importer checks the terrain first (relief is limited to 100 m, and the error says where the extremes are), then fetches. It wipes
+`client/public/tiles/` and writes the manifest last.
 
 | Flag | Meaning |
 |---|---|
-| `--center lat,lon --half m` | Square around a point (default Backen, Umeå, 1000 m). |
+| `--center lat,lon --half m` | Square around a point (default Backen, Umeå, 1000 m). The world is always a square: `--bbox` uses the largest one around its centre. |
 | `--bbox s,w,n,e` | An exact box; overrides `--center`/`--half`. |
 | `--tile m` | Tile side, default 250 m. |
 | `--cell m` | Terrain sample spacing, default 5 m, must divide `--tile`. `0` is flat ground and needs no credentials. |
@@ -36,7 +36,8 @@ Restart the server afterwards: it reads the whole world at start. The importer w
 | `--no-lidar-trees` | Only the register's trees: no woods, no garden trees. |
 | `--min-tree-height m` | Shortest tree taken from the laser, default 3 m above the terrain. |
 | `--synthetic` | Offline procedural grid city with hills and a few trees. Needs no network at all. |
-| `--overpass url,url` | Overpass endpoints, tried in order (the public ones are often busy). |
+| `--overpass url,url` | Overpass endpoints, tried in order (the public ones are often busy; four mirrors by default, since city-sized boxes failed on two). |
+| `--overpass-chunk m` | Ask Overpass for squares of about this many metres (default 2000) and merge, so a city-sized box doesn't time out. Each square is cached, so an interrupted run resumes. |
 | `--cache dir`, `--no-cache`, `--refresh`, `--clear-cache` | The download cache, below. |
 | `--out file` | Where `world.msgpack` goes; `tiles/` is created next to it. |
 
@@ -84,7 +85,7 @@ auth. They are never written to the cache or to the world files. OSM and Umeå's
 One Overpass query for the bounding box returns buildings, highways and cover (landuse, natural,
 leisure, riverbanks) as ways with inline geometry, plus multipolygon relations for cover. Heights
 come from the `height` tag, else `building:levels` × 3 + 1, else a guess of 6–12 m. Overpass
-often answers 504; the importer tries every endpoint, four rounds, 15 s apart.
+often answers 504; the importer tries every endpoint, four rounds, 15 s apart, for each square. A box larger than `--overpass-chunk` is fetched as a grid of squares; ways and relations that cross a border come back twice and are merged by id.
 
 ### Terrain (DTM)
 STAC finds the GeoTIFFs over the box; the importer reads only the 512 KiB blocks under the world

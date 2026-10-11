@@ -400,7 +400,7 @@ pub fn from_osm(bbox: [f64; 4], tile_size: f64, osm: &Osm, planted: &[Planted], 
     let mut roads = Vec::new();
     let mut covers = Vec::new();
     let line = |geometry: &[LatLon]| -> Vec<P> { geometry.iter().map(|g| project(origin, g.lat, g.lon)).collect() };
-    for Area { tags, outer, inner } in &osm.areas {
+    for Area { tags, outer, inner, .. } in &osm.areas {
         let Some(kind) = cover_kind(tags) else { continue };
         let rings: Vec<Vec<P>> = join_rings(outer.iter().map(|w| line(w)).collect()).into_iter().chain(join_rings(inner.iter().map(|w| line(w)).collect())).collect();
         if !rings.is_empty() {
