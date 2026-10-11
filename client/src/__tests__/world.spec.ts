@@ -3,7 +3,8 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { decodeManifest, decodeTile, worldHash } from '@/world'
 
-const read = (path: string) => new Uint8Array(readFileSync(resolve(process.cwd(), 'public', path)))
+// The committed synthetic world (`fixtures/world/`); the real one is generated and git-ignored.
+const read = (path: string) => new Uint8Array(readFileSync(resolve(process.cwd(), '../fixtures/world', path)))
 
 describe('world files', () => {
   it('hashes with FNV-1a like the server', () => {

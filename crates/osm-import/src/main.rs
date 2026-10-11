@@ -32,11 +32,13 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(about = "Generate a Ragnarok world file from OpenStreetMap")]
 struct Args {
-    /// lat,lon of the world's centre, in degrees. Default: Backen, Umeå.
-    #[arg(long, default_value = "63.832127,20.168286")]
+    /// lat,lon of the world's centre, in degrees. Default: central Umeå, so that with the default
+    /// `--half` the world reaches from Backen in the west to Nydala in the east.
+    #[arg(long, default_value = "63.8225,20.235")]
     center: String,
-    /// Half the side of the square around `--center`, metres.
-    #[arg(long, default_value_t = 1000.0)]
+    /// Half the side of the square around `--center`, metres. The default is as large as the
+    /// terrain allows here: a bigger square takes in a hill that breaks the 100 m relief limit.
+    #[arg(long, default_value_t = 4300.0)]
     half: f64,
     /// south,west,north,east in degrees. Overrides `--center` and `--half`.
     #[arg(long)]

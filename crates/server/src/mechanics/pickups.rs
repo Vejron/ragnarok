@@ -182,8 +182,8 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_world_gets_its_items_on_open_ground() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../client/public/world.msgpack");
+    fn the_fixture_world_gets_its_items_on_open_ground() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/world/world.msgpack");
         let (world, hash) = crate::read_world(&path).unwrap();
         let game = Game::new(world, hash).unwrap();
         let placed = game.world.pickups.len();

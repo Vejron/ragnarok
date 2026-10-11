@@ -10,3 +10,7 @@ crates/server/acme/
 
 # downloads cached by osm-import (clear with: cargo run -p osm-import -- --clear-cache)
 .cache/
+
+# the generated world (cargo run -p osm-import, or scripts/world.sh); fixtures/world is the small committed one
+client/public/world.msgpack
+client/public/tiles/

@@ -18,7 +18,8 @@ Umeå tree register ───────┘  planted trees ────► arch
 
 ```sh
 set -a; . ./.env.local; set +a        # credentials, see below
-cargo run -p osm-import               # 2 km square around Backen, Umeå, 250 m tiles
+cargo run -p osm-import               # 8.6 km square of central Umeå, Backen to Nydala, 250 m tiles
+scripts/world.sh                      # the same: loads .env.local, builds in release mode
 ```
 
 Restart the server afterwards: it reads the whole world at start. The importer checks the terrain first (relief is limited to 100 m, and the error says where the extremes are), then fetches. It wipes
@@ -26,7 +27,7 @@ Restart the server afterwards: it reads the whole world at start. The importer c
 
 | Flag | Meaning |
 |---|---|
-| `--center lat,lon --half m` | Square around a point (default Backen, Umeå, 1000 m). The world is always a square: `--bbox` uses the largest one around its centre. |
+| `--center lat,lon --half m` | Square around a point (default 63.8225,20.235, 4300 m: Backen to Nydala; any more takes in a hill over the 100 m relief limit). The world is always a square: `--bbox` uses the largest one around its centre. |
 | `--bbox s,w,n,e` | An exact box; overrides `--center`/`--half`. |
 | `--tile m` | Tile side, default 250 m. |
 | `--cell m` | Terrain sample spacing, default 5 m, must divide `--tile`. `0` is flat ground and needs no credentials. |
@@ -186,16 +187,21 @@ Notes:
   resumes where it stopped.
 - A different bounding box reuses whatever blocks overlap; only new blocks are fetched.
 - Credentials are not part of any key or entry.
-- `.cache/` is not shared between machines or CI; the generated world is what is committed.
+- `.cache/` is not shared between machines or CI. The generated world is **not** committed (it is
+  git-ignored): given the cache a re-import is byte-identical, but without it OSM edits and new
+  flights change the result, so keep the deploy machine's cache and don't `--refresh` casually.
 
 ## Output and tests
 
 `world.msgpack` is the manifest (origin, extent, spawns, tile list with hashes); each tile is
 buildings, roads, collision mesh, ground heights, cover and trees, in world-absolute centimetres.
 Both sides check `WORLD_VERSION`; bump it in `crates/shared/src/world.rs` **and**
-`client/src/world.ts` when the layout changes. The server test
-`parked_cars_in_the_shipped_world_settle_and_stay_put` and client `world.spec.ts` read the
-committed files, so regenerate and commit them with any format change.
+`client/src/world.ts` when the layout changes. The server tests
+`parked_cars_in_the_fixture_world_settle_and_stay_put` and
+`the_fixture_world_gets_its_items_on_open_ground` and client `world.spec.ts` read the small
+synthetic world committed in `fixtures/world/`, so with any format change regenerate and commit it:
+`cargo run -p osm-import -- --synthetic --out fixtures/world/world.msgpack`. The real world in
+`client/public` is generated and git-ignored.
 
 ```sh
 cargo test -p osm-import        # classification, roofs, tiling, cache

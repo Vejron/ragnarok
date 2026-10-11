@@ -20,6 +20,10 @@ STAMP="$(date +%Y%m%d%H%M%S)"
 [[ "$HEALTH_TIMEOUT" =~ ^[0-9]+$ && "$CARGO_JOBS" =~ ^[0-9]+$ ]] || { echo "bad numeric option" >&2; exit 1; }
 for tool in npm docker ssh gzip; do command -v "$tool" >/dev/null || { echo "missing $tool" >&2; exit 1; }; done
 
+# The world is generated, not committed (scripts/world.sh); the image would be built without it.
+[[ -f client/public/world.msgpack && -d client/public/tiles ]] || { echo "no world in client/public; run scripts/world.sh first" >&2; exit 1; }
+echo "==> world: $(ls client/public/tiles | wc -l | tr -d ' ') tiles, $(du -sh client/public/tiles | cut -f1), manifest fnv/cksum $(cksum < client/public/world.msgpack | cut -d' ' -f1)"
+
 # shellcheck disable=SC2086
 remote() { ssh $SSH_OPTS "$HOST" "$@"; }
 

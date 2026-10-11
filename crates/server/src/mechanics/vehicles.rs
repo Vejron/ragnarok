@@ -658,8 +658,8 @@ mod tests {
     }
 
     #[test]
-    fn parked_cars_in_the_shipped_world_settle_and_stay_put() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../client/public/world.msgpack");
+    fn parked_cars_in_the_fixture_world_settle_and_stay_put() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/world/world.msgpack");
         let (world, hash) = crate::read_world(&path).unwrap();
         let mut game = Game::new(world, hash).unwrap();
         assert!(game.world.vehicles.len() >= 3, "only {} cars fit", game.world.vehicles.len());
