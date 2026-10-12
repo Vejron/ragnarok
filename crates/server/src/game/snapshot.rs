@@ -12,7 +12,7 @@ impl Game {
             if rooster.mode == RoosterMode::Crow {
                 flags |= FLAG_CROWING;
             }
-            EntityState(id, KIND_ROOSTER, to_cm(x), to_cm(y), to_cm(z), to_mrad(rooster.yaw), 0, flags, 0, 0)
+            EntityState { id, kind: KIND_ROOSTER, x: to_cm(x), y: to_cm(y), z: to_cm(z), yaw: to_mrad(rooster.yaw), vy: 0, flags, knock_x: 0, knock_z: 0 }
         });
         self.world
             .players
@@ -30,19 +30,8 @@ impl Game {
                 if player.input.buttons() & BUTTON_CROUCH != 0 {
                     flags |= FLAG_CROUCHING;
                 }
-                flags |= (player.held().0 << FLAG_HELD_SHIFT) & FLAG_HELD_MASK;
-                EntityState(
-                    id,
-                    KIND_STICKMAN,
-                    to_cm(c.position[0]),
-                    to_cm(c.position[1]),
-                    to_cm(c.position[2]),
-                    to_mrad(c.yaw),
-                    to_cm_i16(c.vy),
-                    flags,
-                    to_cm_i16(c.knock[0]),
-                    to_cm_i16(c.knock[1]),
-                )
+                flags |= (player.held().item << FLAG_HELD_SHIFT) & FLAG_HELD_MASK;
+                EntityState { id, kind: KIND_STICKMAN, x: to_cm(c.position[0]), y: to_cm(c.position[1]), z: to_cm(c.position[2]), yaw: to_mrad(c.yaw), vy: to_cm_i16(c.vy), flags, knock_x: to_cm_i16(c.knock[0]), knock_z: to_cm_i16(c.knock[1]) }
             })
             .chain(roosters)
             .collect()
@@ -57,7 +46,7 @@ impl Game {
                 let [x, y, z] = pose.position;
                 let [qx, qy, qz] = pack_quat(pose.rotation);
                 let seats = vehicle.seats[..seat_count(vehicle.kind)].iter().map(|seat| seat.unwrap_or(0)).collect();
-                let turret = vehicle.gun.map(|gun| Turret(to_mrad(gun.yaw), to_mrad(gun.pitch), gun.shots, (gun.range * 10.0).round().clamp(0.0, u16::MAX as f32) as u16));
+                let turret = vehicle.gun.map(|gun| Turret { yaw: to_mrad(gun.yaw), pitch: to_mrad(gun.pitch), shots: gun.shots, range: (gun.range * 10.0).round().clamp(0.0, u16::MAX as f32) as u16 });
                 let damage = (vehicle.damage != [0; 8]).then_some(vehicle.damage);
                 let arms = vehicle.arms.map(|arms| {
                     let rear = vehicle.gun.unwrap_or_default();
@@ -71,9 +60,9 @@ impl Game {
                     if rear.jammed {
                         flags |= ARMS_REAR_JAMMED;
                     }
-                    Arms(arms.shots, heat_byte(arms.heat), heat_byte(rear.heat), arms.bombs, flags)
+                    Arms { shots: arms.shots, heat: heat_byte(arms.heat), rear_heat: heat_byte(rear.heat), bombs: arms.bombs, flags }
                 });
-                Some(VehicleState(id, vehicle.kind, to_cm(x), to_cm(y), to_cm(z), qx, qy, qz, to_axis(pose.steer), seats, turret, vehicle.hp, damage, arms))
+                Some(VehicleState { id, kind: vehicle.kind, x: to_cm(x), y: to_cm(y), z: to_cm(z), qx, qy, qz, steer: to_axis(pose.steer), seats, turret, hp: vehicle.hp, damage, arms })
             })
             .collect()
     }
@@ -86,7 +75,7 @@ impl Game {
             .map(|(&id, rocket)| {
                 let [x, y, z] = rocket.position.map(to_cm);
                 let [vx, vy, vz] = rocket.velocity.map(to_cm_i16);
-                ProjectileState(id, rocket.kind, x, y, z, vx, vy, vz)
+                ProjectileState { id, kind: rocket.kind, x, y, z, vx, vy, vz }
             })
             .collect()
     }
@@ -99,7 +88,7 @@ impl Game {
             .filter(|(_, pickup)| pickup.respawn_in == 0)
             .map(|(&id, pickup)| {
                 let [x, y, z] = pickup.position.map(to_cm);
-                PickupState(id, pickup.item, x, y, z)
+                PickupState { id, item: pickup.item, x, y, z }
             })
             .collect()
     }
@@ -112,7 +101,7 @@ impl Game {
         let motion = self.world.physics.car_motion(seat.vehicle)?;
         let [vx, vy, vz] = motion.linvel.map(to_cm_i16);
         let [wx, wy, wz] = motion.angvel.map(to_milli_i16);
-        Some(DriveState(vx, vy, vz, wx, wy, wz, to_milli_i16(motion.steer), to_milli_i16(motion.spin)))
+        Some(DriveState { vx, vy, vz, wx, wy, wz, steer: to_milli_i16(motion.steer), spin: to_milli_i16(motion.spin) })
     }
 
     pub(super) fn send_snapshots(&mut self) {
@@ -127,7 +116,7 @@ impl Game {
         for id in ids {
             let Some(player) = self.world.players.get(&id) else { continue };
             let own = Own { tick: self.world.tick, ack: player.ack, ride: player.character.ride, drive: self.drive_state(id),
-                me: SelfState(player.hp, progress(player), player.hotbar.to_vec()),
+                me: SelfState { hp: player.hp, progress: progress(player), slots: player.hotbar.to_vec() },
             };
             // Seated players ride with their vehicle, so the vehicle's position is theirs.
             let at = [player.character.position[0], player.character.position[2]];
@@ -145,7 +134,7 @@ fn progress(player: &Player) -> u8 {
     let (left, total) = if player.channel_left > 0 {
         (player.channel_left, BANDAGE_TICKS)
     } else if player.reload_left > 0 {
-        (player.reload_left, def(player.held().0).map_or(1, |d| d.reload_ticks.max(1)))
+        (player.reload_left, def(player.held().item).map_or(1, |d| d.reload_ticks.max(1)))
     } else {
         return 0;
     };

@@ -33,7 +33,7 @@ fn join(game: &mut Game) -> (u32, mpsc::Receiver<Outgoing>) {
 fn press(game: &mut Game, id: u32, seq: &mut u32, axes: (i8, i8), buttons: u8, ticks: u32) {
     for _ in 0..ticks {
         *seq += 1;
-        game.handle(Command::Input(id, 0, vec![InputFrame(*seq, axes.0, axes.1, 0, buttons, 0, 0, 0)]));
+        game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: axes.0, forward: axes.1, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 }]));
         game.step();
     }
 }
@@ -82,17 +82,17 @@ fn use_boards_the_nearest_car_and_use_again_leaves() {
     press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
     idle(&mut game, id, &mut seq, 3);
     assert_eq!(game.world.vehicles[&vid].seats[0], Some(id));
-    assert!(game.entity_states().iter().all(|e| e.1 != shared::protocol::KIND_STICKMAN), "a seated player is not a stickman entity");
-    assert_eq!(game.vehicle_states().iter().find(|v| v.0 == vid).unwrap().9[0], id);
+    assert!(game.entity_states().iter().all(|e| e.kind != shared::protocol::KIND_STICKMAN), "a seated player is not a stickman entity");
+    assert_eq!(game.vehicle_states().iter().find(|v| v.id == vid).unwrap().seats[0], id);
 
     press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
     idle(&mut game, id, &mut seq, 3);
     assert_eq!(game.world.vehicles[&vid].seats, [None; CAR_SEATS]);
-    let states: Vec<_> = game.entity_states().into_iter().filter(|e| e.1 == shared::protocol::KIND_STICKMAN).collect();
+    let states: Vec<_> = game.entity_states().into_iter().filter(|e| e.kind == shared::protocol::KIND_STICKMAN).collect();
     assert_eq!(states.len(), 1);
     // The stickman stands beside the car, not inside it.
     let pose = game.world.physics.car_pose(vid).unwrap();
-    let (dx, dz) = (states[0].2 as f32 / 100.0 - pose.position[0], states[0].4 as f32 / 100.0 - pose.position[2]);
+    let (dx, dz) = (states[0].x as f32 / 100.0 - pose.position[0], states[0].z as f32 / 100.0 - pose.position[2]);
     assert!(dx.hypot(dz) > 1.5, "{dx} {dz}");
 }
 
@@ -130,9 +130,9 @@ fn the_driver_steers_and_passengers_ride_along() {
     for _ in 0..180 {
         seq_a += 1;
         seq_b += 1;
-        game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0, 0)]));
+        game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
         // A passenger's stick does nothing.
-        game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 127, -127, 0, 0, 0, 0, 0)]));
+        game.handle(Command::Input(rider, 0, vec![InputFrame { seq: seq_b, strafe: 127, forward: -127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
         game.step();
     }
     let end = game.world.physics.car_pose(vid).unwrap();
@@ -143,7 +143,7 @@ fn the_driver_steers_and_passengers_ride_along() {
 
     // Only the driver is told the car's exact motion, so they can predict it.
     let drive = game.drive_state(driver).expect("the driver gets the car's motion");
-    let speed_cm = (drive.0 as f32).hypot(drive.2 as f32);
+    let speed_cm = (drive.vx as f32).hypot(drive.vz as f32);
     assert!(speed_cm > 500.0, "driving at over 5 m/s: {drive:?}");
     assert_eq!(game.drive_state(rider), None);
 }
@@ -176,7 +176,7 @@ fn a_pilot_lifts_off_with_one_passenger() {
     assert!(end.position[1] > start.position[1] + 3.0, "climbed from {} to {}", start.position[1], end.position[1]);
     assert_eq!(game.world.players[&rider].character.position, end.position, "the passenger goes up with it");
     let drive = game.drive_state(pilot).expect("the pilot gets the motion");
-    assert!(drive.1 > 100, "climbing at over 1 m/s: {drive:?}");
+    assert!(drive.vy > 100, "climbing at over 1 m/s: {drive:?}");
 
     // Let go of the stick: it hovers where it is.
     idle(&mut game, pilot, &mut seq_a, 240);
@@ -239,8 +239,8 @@ fn a_driven_car_knocks_back_a_player_in_its_way() {
     for _ in 0..240 {
         seq_a += 1;
         seq_b += 1;
-        game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0, 0)]));
-        game.handle(Command::Input(victim, 0, vec![InputFrame(seq_b, 0, 0, 0, 0, 0, 0, 0)]));
+        game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
+        game.handle(Command::Input(victim, 0, vec![InputFrame { seq: seq_b, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
         game.step();
         let character = game.world.players[&victim].character;
         peak_knock = peak_knock.max(character.knock[0].hypot(character.knock[1]));
@@ -255,7 +255,7 @@ fn a_driven_car_knocks_back_a_player_in_its_way() {
     assert!(moved > 2.0, "thrown {moved} m along the car's heading");
     assert!(game.world.players[&victim].seat.is_none());
     // And it shows on the wire.
-    assert!(game.entity_states().iter().any(|e| e.0 == victim));
+    assert!(game.entity_states().iter().any(|e| e.id == victim));
 }
 
 /// A driver in a car and a second player standing on its roof.
@@ -286,8 +286,8 @@ fn driver_and_roof_rider(game: &mut Game) -> RoofScene {
     for _ in 0..30 {
         seq_a += 1;
         seq_b += 1;
-        game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 0, 0, 0, 0, 0, 0)]));
-        game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 0, 0, 0, 0, 0, 0, 0)]));
+        game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
+        game.handle(Command::Input(rider, 0, vec![InputFrame { seq: seq_b, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
         game.step();
     }
     RoofScene { vid, driver, rider, start: [pose.position[0], pose.position[2]], seqs: (seq_a, seq_b), _inboxes: (a, b) }
@@ -301,8 +301,8 @@ fn a_player_on_the_roof_rides_along() {
     for _ in 0..240 {
         seq_a += 1;
         seq_b += 1;
-        game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0, 0)]));
-        game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 0, 0, 0, 0, 0, 0, 0)]));
+        game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
+        game.handle(Command::Input(rider, 0, vec![InputFrame { seq: seq_b, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
         game.step();
     }
     let car = game.world.physics.car_pose(vid).unwrap();
@@ -323,8 +323,8 @@ fn jumping_off_a_moving_car_keeps_its_speed() {
     for _ in 0..180 {
         seq_a += 1;
         seq_b += 1;
-        game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0, 0)]));
-        game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 0, 0, 0, 0, 0, 0, 0)]));
+        game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
+        game.handle(Command::Input(rider, 0, vec![InputFrame { seq: seq_b, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
         game.step();
     }
     let speed = game.world.physics.car_pose(vid).unwrap().velocity;
@@ -332,14 +332,14 @@ fn jumping_off_a_moving_car_keeps_its_speed() {
     assert!(speed > 6.0, "the car is moving at {speed}");
     seq_a += 1;
     seq_b += 1;
-    game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0, 0)]));
-    game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 0, 0, 0, BUTTON_JUMP, 0, 0, 0)]));
+    game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
+    game.handle(Command::Input(rider, 0, vec![InputFrame { seq: seq_b, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_JUMP, pitch: 0, view: 0, slot: 0 }]));
     game.step();
     // The jitter buffer holds one frame back, so the jump is applied on the next tick.
     seq_a += 1;
     seq_b += 1;
-    game.handle(Command::Input(driver, 0, vec![InputFrame(seq_a, 0, 127, 0, 0, 0, 0, 0)]));
-    game.handle(Command::Input(rider, 0, vec![InputFrame(seq_b, 0, 0, 0, 0, 0, 0, 0)]));
+    game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
+    game.handle(Command::Input(rider, 0, vec![InputFrame { seq: seq_b, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
     game.step();
     let left = game.world.players[&rider].character;
     assert_eq!(left.ride, 0);
@@ -395,9 +395,9 @@ fn a_tank_has_a_driver_and_a_gunner_and_no_third_seat() {
     }
     let seated: Vec<_> = crew.iter().map(|(id, ..)| game.world.players[id].seat.map(|seat| (seat.vehicle, seat.index))).collect();
     assert_eq!(seated, [Some((vid, 0)), Some((vid, 1)), None], "two seats, the third stays outside");
-    let state = game.vehicle_states().into_iter().find(|v| v.0 == vid).unwrap();
-    assert_eq!(state.9.len(), 2);
-    assert!(state.10.is_some(), "a tank reports its turret");
+    let state = game.vehicle_states().into_iter().find(|v| v.id == vid).unwrap();
+    assert_eq!(state.seats.len(), 2);
+    assert!(state.turret.is_some(), "a tank reports its turret");
 }
 
 #[test]
@@ -463,7 +463,7 @@ fn crash_events(game: &mut Game, ticks: u32) -> Vec<ShotEvent> {
     let mut seen = vec![];
     for _ in 0..ticks {
         Vehicles.on_tick(&mut game.world, TICK_DT);
-        seen.extend(game.world.shots.drain(..).filter(|shot| shot.1 == WEAPON_CRASH || shot.1 == WEAPON_SCRAPE));
+        seen.extend(game.world.shots.drain(..).filter(|shot| shot.weapon == WEAPON_CRASH || shot.weapon == WEAPON_SCRAPE));
     }
     seen
 }
@@ -483,9 +483,9 @@ fn ramming_a_car_hurts_both_and_blames_the_driver() {
     // `b` faces -X, so its left side faces +Z, where `a` came from.
     assert!(rammed.damage[DAMAGE_LEFT] > 50 && rammed.damage[DAMAGE_RIGHT] == 0, "the rammed car's flank: {:?}", rammed.damage);
     assert_eq!(rammed.last_attacker, Some(id));
-    assert!(events.iter().any(|shot| shot.0 == a && shot.1 == WEAPON_CRASH), "{events:?}");
-    let hit = events.iter().find(|shot| shot.1 == WEAPON_CRASH).unwrap();
-    assert!((hit.4 as f32 / 100.0 - 19.0).abs() < 2.0, "where they met: {hit:?}");
+    assert!(events.iter().any(|shot| shot.shooter == a && shot.weapon == WEAPON_CRASH), "{events:?}");
+    let hit = events.iter().find(|shot| shot.weapon == WEAPON_CRASH).unwrap();
+    assert!((hit.z as f32 / 100.0 - 19.0).abs() < 2.0, "where they met: {hit:?}");
 }
 
 #[test]
@@ -496,7 +496,7 @@ fn a_nudge_does_no_harm() {
     let events = crash_events(&mut game, 300);
     assert_eq!((game.world.vehicles[&a].hp, game.world.vehicles[&b].hp), (vehicle_hp(KIND_JEEP), vehicle_hp(KIND_JEEP)));
     assert_eq!(game.world.vehicles[&b].damage, [0; 8]);
-    assert!(events.iter().all(|shot| shot.1 != WEAPON_CRASH), "{events:?}");
+    assert!(events.iter().all(|shot| shot.weapon != WEAPON_CRASH), "{events:?}");
 }
 
 #[test]
@@ -581,15 +581,15 @@ fn a_pilot_and_a_gunner_take_a_plane_off_and_a_third_stays_behind() {
     }
     let seated: Vec<_> = crew.iter().map(|(id, ..)| game.world.players[id].seat.map(|seat| seat.index)).collect();
     assert_eq!(seated, [Some(0), Some(1), None], "a pilot, a gunner, and nobody else");
-    let state = game.vehicle_states().into_iter().find(|v| v.0 == vid).unwrap();
-    assert_eq!(state.13, Some(shared::protocol::Arms(0, 0, 0, PLANE_BOMBS, 0)), "the plane reports its weapons");
+    let state = game.vehicle_states().into_iter().find(|v| v.id == vid).unwrap();
+    assert_eq!(state.arms, Some(shared::protocol::Arms { shots: 0, heat: 0, rear_heat: 0, bombs: PLANE_BOMBS, flags: 0 }), "the plane reports its weapons");
 
     // Space for full throttle and a little back stick (S) to lift off, along the road.
     let (pilot, gunner, mut seq) = (crew[0].0, crew[1].0, crew[0].2);
     let yaw = shared::quant::to_mrad(start.yaw());
     for _ in 0..60 * 7 {
         seq += 1;
-        game.handle(Command::Input(pilot, 0, vec![InputFrame(seq, 0, -60, yaw, BUTTON_JUMP, 0, 0, 0)]));
+        game.handle(Command::Input(pilot, 0, vec![InputFrame { seq, strafe: 0, forward: -60, yaw, buttons: BUTTON_JUMP, pitch: 0, view: 0, slot: 0 }]));
         game.step();
     }
     let flying = game.world.physics.car_pose(vid).unwrap();

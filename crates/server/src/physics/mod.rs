@@ -317,7 +317,7 @@ impl Physics {
         character.vy = settle_vertical(vy, desired[1], end.y - start.y, grounded);
         character.grounded = grounded;
         character.knock = decay_knock(character.knock, grounded, input.buttons() & BUTTON_CROUCH != 0);
-        character.yaw = shared::quant::from_mrad(input.3);
+        character.yaw = shared::quant::from_mrad(input.yaw);
     }
 }
 

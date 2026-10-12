@@ -12,9 +12,9 @@ pub fn wish_velocity(input: &InputFrame) -> [f32; 2] {
 
 /// `wish_velocity` with the speed multiplied by `scale`, e.g. for walking slower while aiming a gun.
 pub fn wish_velocity_scaled(input: &InputFrame, scale: f32) -> [f32; 2] {
-    let strafe = from_axis(input.1);
-    let forward = from_axis(input.2);
-    let yaw = from_mrad(input.3);
+    let strafe = from_axis(input.strafe);
+    let forward = from_axis(input.forward);
+    let yaw = from_mrad(input.yaw);
     let (sin, cos) = yaw.sin_cos();
     // Yaw 0 faces -Z. forward = (-sin, -cos), right = (cos, -sin).
     let mut x = -sin * forward + cos * strafe;
@@ -88,14 +88,14 @@ mod tests {
 
     #[test]
     fn forward_at_zero_yaw_is_minus_z() {
-        let [x, z] = wish_velocity(&InputFrame(1, 0, 127, 0, 0, 0, 0, 0));
+        let [x, z] = wish_velocity(&InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 });
         assert!(x.abs() < 1e-6);
         assert!((z + WALK_SPEED).abs() < 1e-5);
     }
 
     #[test]
     fn a_speed_scale_slows_every_gait() {
-        let run = InputFrame(1, 0, 127, 0, BUTTON_RUN, 0, 0, 0);
+        let run = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0 };
         let [_, z] = wish_velocity_scaled(&run, 0.5);
         assert!((z + RUN_SPEED * 0.5).abs() < 1e-4);
         assert_eq!(wish_velocity_scaled(&run, 1.0), wish_velocity(&run));
@@ -103,19 +103,19 @@ mod tests {
 
     #[test]
     fn crouching_is_slow_even_when_running() {
-        let [x, z] = wish_velocity(&InputFrame(1, 127, 127, 0, BUTTON_CROUCH | BUTTON_RUN, 0, 0, 0));
+        let [x, z] = wish_velocity(&InputFrame { seq: 1, strafe: 127, forward: 127, yaw: 0, buttons: BUTTON_CROUCH | BUTTON_RUN, pitch: 0, view: 0, slot: 0 });
         assert!(((x * x + z * z).sqrt() - CROUCH_SPEED).abs() < 1e-4);
     }
 
     #[test]
     fn slide_starts_once_along_the_run_and_lasts_while_crouched() {
-        let press = InputFrame(1, 0, 127, 0, BUTTON_RUN | BUTTON_CROUCH | BUTTON_SLIDE, 0, 0, 0);
+        let press = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: BUTTON_RUN | BUTTON_CROUCH | BUTTON_SLIDE, pitch: 0, view: 0, slot: 0 };
         let knock = begin_slide([0.0; 2], true, &press);
         assert!((knock[1] + SLIDE_SPEED).abs() < 1e-4 && knock[0].abs() < 1e-4);
         // Mid-slide, or in the air, or without the press, nothing happens.
         assert_eq!(begin_slide(knock, true, &press), knock);
         assert_eq!(begin_slide([0.0; 2], false, &press), [0.0; 2]);
-        let held = InputFrame(1, 0, 127, 0, BUTTON_RUN | BUTTON_CROUCH, 0, 0, 0);
+        let held = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: BUTTON_RUN | BUTTON_CROUCH, pitch: 0, view: 0, slot: 0 };
         assert_eq!(begin_slide([0.0; 2], true, &held), [0.0; 2]);
         let crouched = (0..30).fold(knock, |k, _| decay_knock(k, true, true));
         let standing = (0..30).fold(knock, |k, _| decay_knock(k, true, false));
@@ -124,13 +124,13 @@ mod tests {
 
     #[test]
     fn diagonal_is_not_faster() {
-        let [x, z] = wish_velocity(&InputFrame(1, 127, 127, 0, BUTTON_RUN, 0, 0, 0));
+        let [x, z] = wish_velocity(&InputFrame { seq: 1, strafe: 127, forward: 127, yaw: 0, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0 });
         assert!(((x * x + z * z).sqrt() - RUN_SPEED).abs() < 1e-4);
     }
 
     #[test]
     fn jump_only_from_ground() {
-        let jump = InputFrame(1, 0, 0, 0, BUTTON_JUMP, 0, 0, 0);
+        let jump = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_JUMP, pitch: 0, view: 0, slot: 0 };
         assert!(desired_translation(0.0, true, [0.0; 2], &jump, TICK_DT, 1.0).0 > 0.0);
         assert!(desired_translation(0.0, false, [0.0; 2], &jump, TICK_DT, 1.0).0 < 0.0);
     }

@@ -279,13 +279,13 @@ mod tests {
         assert_eq!(eggs.len(), 1);
         assert!(eggs[0].dropped);
         assert!(first_rooster_hit(&game.world, [centre[0], centre[1], centre[2] + 5.0], [0.0, 0.0, -1.0], 20.0).is_none(), "dead is not hit");
-        assert!(game.entity_states().iter().all(|e| e.1 != shared::protocol::KIND_ROOSTER));
+        assert!(game.entity_states().iter().all(|e| e.kind != shared::protocol::KIND_ROOSTER));
 
         for _ in 0..ROOSTER_RESPAWN_TICKS {
             game.step();
         }
         assert!(game.world.roosters[&id].alive());
-        assert!(game.entity_states().iter().any(|e| e.1 == shared::protocol::KIND_ROOSTER));
+        assert!(game.entity_states().iter().any(|e| e.kind == shared::protocol::KIND_ROOSTER));
     }
 
     #[test]

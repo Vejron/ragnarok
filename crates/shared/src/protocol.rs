@@ -1,4 +1,8 @@
 //! Wire protocol: MessagePack arrays with a leading tag byte. Field names are never sent.
+//!
+//! The structs have named fields for the code's sake, but `rmp_serde::to_vec` writes a struct as an
+//! array of its fields in declaration order, so **the order of the fields is the wire format**:
+//! never reorder or insert one without bumping `PROTOCOL_VERSION` and the byte fixtures below.
 //! See NETWORKING.md for the full table; `client/src/net/codec.ts` mirrors this file.
 
 use serde::{Deserialize, Serialize};
@@ -123,41 +127,40 @@ pub const PROJECTILE_BOMB: u8 = 5;
 /// One simulation tick of player intent. The client predicts with exactly these quantized values,
 /// so client and server feed the simulation identical inputs.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InputFrame(
+pub struct InputFrame {
     /// Monotonic per-connection sequence number, starting at 1. One frame per client tick.
-    pub u32,
+    pub seq: u32,
     /// Strafe axis, -127 (left) ..= 127 (right).
-    pub i8,
+    pub strafe: i8,
     /// Forward axis, -127 (back) ..= 127 (forward).
-    pub i8,
+    pub forward: i8,
     /// Facing in milliradians, `[-π, π)`. 0 faces -Z.
-    pub i16,
+    pub yaw: i16,
     /// `BUTTON_*` bits.
-    pub u8,
+    pub buttons: u8,
     /// Where the player looks up or down, milliradians (+ is up). Used by a tank gunner and the rifle.
-    pub i16,
-    /// The server tick this frame's picture showed, modulo 65536: the interpolated world the
-    /// player was looking at when they pulled the trigger. The server rewinds other players to it.
-    pub u16,
+    pub pitch: i16,
+    /// The server tick this frame's picture showed, modulo 65536: the interpolated world the player was looking at when they pulled the trigger. The server rewinds other players to it.
+    pub view: u16,
     /// The hotbar slot the player has selected, `0..HOTBAR_SLOTS`.
-    pub u8,
-);
+    pub slot: u8,
+}
 
 impl InputFrame {
     pub fn seq(&self) -> u32 {
-        self.0
+        self.seq
     }
     pub fn buttons(&self) -> u8 {
-        self.4
+        self.buttons
     }
     pub fn pitch(&self) -> i16 {
-        self.5
+        self.pitch
     }
     pub fn view(&self) -> u16 {
-        self.6
+        self.view
     }
     pub fn slot(&self) -> u8 {
-        self.7
+        self.slot
     }
 }
 
@@ -173,98 +176,103 @@ pub struct Ping(pub u8, pub u32);
 
 /// `[0, version, entity_id, tick_rate, snapshot_every, world_hash]`, sent once on a reliable stream.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Welcome(pub u8, pub u8, pub u32, pub u8, pub u8, pub u32);
+pub struct Welcome {
+    pub tag: u8,
+    pub version: u8,
+    pub id: u32,
+    pub tick_rate: u8,
+    pub snapshot_every: u8,
+    pub world_hash: u32,
+}
 
 /// One entity in a snapshot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EntityState(
+pub struct EntityState {
     /// Entity id.
-    pub u32,
+    pub id: u32,
     /// `KIND_*`.
-    pub u8,
+    pub kind: u8,
     /// Position of the body origin, centimetres.
-    pub i32,
-    pub i32,
-    pub i32,
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
     /// Facing, milliradians.
-    pub i16,
+    pub yaw: i16,
     /// Vertical velocity, cm/s. Needed to resume a predicted jump from the authoritative state.
-    pub i16,
+    pub vy: i16,
     /// `FLAG_*` bits.
-    pub u8,
-    /// Knockback velocity (a car hit them), cm/s along X and Z. Needed to resume a predicted
-    /// slide from the authoritative state.
-    pub i16,
-    pub i16,
-);
+    pub flags: u8,
+    /// Knockback velocity (a car hit them), cm/s along X and Z. Needed to resume a predicted slide from the authoritative state.
+    pub knock_x: i16,
+    pub knock_z: i16,
+}
 
 /// One vehicle in a snapshot. Players sitting in a vehicle are not listed as entities: the vehicle's
 /// seats say who is in it, and the client draws them from that.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VehicleState(
+pub struct VehicleState {
     /// Vehicle id. Shares the id space with players.
-    pub u32,
+    pub id: u32,
     /// `KIND_*`.
-    pub u8,
+    pub kind: u8,
     /// Position of the chassis centre, centimetres.
-    pub i32,
-    pub i32,
-    pub i32,
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
     /// Chassis orientation as the `x, y, z` of a unit quaternion scaled by 32767, with `w >= 0`.
-    pub i16,
-    pub i16,
-    pub i16,
+    pub qx: i16,
+    pub qy: i16,
+    pub qz: i16,
     /// Front wheel steering as a fraction of its kind's `*_MAX_STEER`, -127..=127 (+ is right).
-    pub i8,
+    pub steer: i8,
     /// Player id in each seat, or 0 for an empty one. Seat 0 is the driver.
-    pub Vec<u32>,
+    pub seats: Vec<u32>,
     /// The gun, for vehicles that have one; `nil` otherwise.
-    pub Option<Turret>,
+    pub turret: Option<Turret>,
     /// Health; 0 is a burning wreck nobody can board.
-    pub u8,
-    /// Crash damage, `nil` while there is none: `[front, rear, left, right, wheel FL, FR, RL, RR]`,
-    /// each 0..=255. A wheel at 255 has come off. See `DAMAGE_*`.
-    pub Option<[u8; 8]>,
+    pub hp: u8,
+    /// Crash damage, `nil` while there is none: `[front, rear, left, right, wheel FL, FR, RL, RR]`, each 0..=255. A wheel at 255 has come off. See `DAMAGE_*`.
+    pub damage: Option<[u8; 8]>,
     /// A plane's pilot weapons and engine, `nil` for anything else.
-    pub Option<Arms>,
-);
+    pub arms: Option<Arms>,
+}
 
 /// What changed in a standing entity since the baseline: `[id, dx, dy, dz, dyaw, dvy, flags,
 /// dknock_x, dknock_z]`. Every field but `id` and `flags` is the new value minus the old one.
 /// Entities that did not change at all are not listed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EntityDelta(
-    pub u32,
-    pub i32,
-    pub i32,
-    pub i32,
-    pub i32,
-    pub i32,
+pub struct EntityDelta {
+    pub id: u32,
+    pub dx: i32,
+    pub dy: i32,
+    pub dz: i32,
+    pub dyaw: i32,
+    pub dvy: i32,
     /// `FLAG_*` bits, the new value.
-    pub u8,
-    pub i32,
-    pub i32,
-);
+    pub flags: u8,
+    pub dknock_x: i32,
+    pub dknock_z: i32,
+}
 
 /// What changed in a vehicle since the baseline: `[id, dx, dy, dz, dqx, dqy, dqz, dsteer, seats,
 /// turret, hp, damage, arms]`. The first eight are differences; `seats`, `turret`, `damage` and `arms`
 /// are `nil` when unchanged (a repaired vehicle's `damage` is all zeros), and `hp` is the new value.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VehicleDelta(
-    pub u32,
-    pub i32,
-    pub i32,
-    pub i32,
-    pub i32,
-    pub i32,
-    pub i32,
-    pub i32,
-    pub Option<Vec<u32>>,
-    pub Option<Turret>,
-    pub u8,
-    pub Option<[u8; 8]>,
-    pub Option<Arms>,
-);
+pub struct VehicleDelta {
+    pub id: u32,
+    pub dx: i32,
+    pub dy: i32,
+    pub dz: i32,
+    pub dqx: i32,
+    pub dqy: i32,
+    pub dqz: i32,
+    pub dsteer: i32,
+    pub seats: Option<Vec<u32>>,
+    pub turret: Option<Turret>,
+    pub hp: u8,
+    pub damage: Option<[u8; 8]>,
+    pub arms: Option<Arms>,
+}
 
 /// Indices into a vehicle's damage: the four sides of the body, then the wheels front left,
 /// front right, rear left, rear right (a tank's and a helicopter's wheels are never hurt).
@@ -280,21 +288,27 @@ pub const WHEEL_GONE: u8 = 255;
 /// shot. `shots` counts shots modulo 256, so a client sees a new shot as a change in the counter;
 /// `range` is how far that shell flew before it hit something, in decimetres.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Turret(
+pub struct Turret {
     /// Turret yaw relative to the hull, milliradians (+ turns left).
-    pub i16,
+    pub yaw: i16,
     /// Barrel elevation, milliradians (+ is up).
-    pub i16,
-    pub u8,
-    pub u16,
-);
+    pub pitch: i16,
+    pub shots: u8,
+    pub range: u16,
+}
 
 /// A plane's weapons and engine, as they are drawn and shown on the crew's gauges:
 /// `[shots, heat, rear_heat, bombs, flags]`. `shots` counts the forward guns' rounds modulo 256, as
 /// `Turret::shots` does the rear gun's (the left gun fires the even ones); the heats are 0..=255 and
 /// jam the guns at 255; `bombs` are left on the rack; `flags` are `ARMS_*`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Arms(pub u8, pub u8, pub u8, pub u8, pub u8);
+pub struct Arms {
+    pub shots: u8,
+    pub heat: u8,
+    pub rear_heat: u8,
+    pub bombs: u8,
+    pub flags: u8,
+}
 
 /// `Arms` flags: the blip switch is cutting the engine, and either set of guns is jammed.
 pub const ARMS_CUT: u8 = 1 << 0;
@@ -304,46 +318,75 @@ pub const ARMS_REAR_JAMMED: u8 = 1 << 2;
 /// The motion a driver needs to predict their own vehicle, which the vehicle's pose does not
 /// carry. Sent only to the player in the driver seat: `[vx, vy, vz, wx, wy, wz, steer, spin]`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DriveState(
+pub struct DriveState {
     /// Linear velocity, cm/s.
-    pub i16,
-    pub i16,
-    pub i16,
+    pub vx: i16,
+    pub vy: i16,
+    pub vz: i16,
     /// Angular velocity about the world axes, milliradians per second.
-    pub i16,
-    pub i16,
-    pub i16,
+    pub wx: i16,
+    pub wy: i16,
+    pub wz: i16,
     /// Front wheel angle, milliradians, + is right.
-    pub i16,
+    pub steer: i16,
     /// Yaw rate a tank has ramped to, milliradians per second, + is clockwise.
-    pub i16,
-);
+    pub spin: i16,
+}
 
 /// Something that just happened, for drawing: `[shooter, weapon, x, y, z]`, where `x, y, z` is
 /// where it ended, in centimetres. A rifle shot is a tracer from the shooter's own position to
 /// there; a rocket or a wreck is a burst at there (the shooter is 0 for a wreck with no culprit).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ShotEvent(pub u32, pub u8, pub i32, pub i32, pub i32);
+pub struct ShotEvent {
+    pub shooter: u32,
+    pub weapon: u8,
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+}
 
 /// A rocket or grenade in flight: `[id, kind, x, y, z, vx, vy, vz]`, centimetres and cm/s. A client
 /// extrapolates nothing: it interpolates these like any entity and aims the rocket along `v`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProjectileState(pub u32, pub u8, pub i32, pub i32, pub i32, pub i16, pub i16, pub i16);
+pub struct ProjectileState {
+    pub id: u32,
+    pub kind: u8,
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+    pub vx: i16,
+    pub vy: i16,
+    pub vz: i16,
+}
 
 /// One hotbar slot: `[item, count, ammo]`. `item` is `ITEM_NONE` for an empty slot; `ammo` is the
 /// rounds left in the magazine of a gun.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ItemSlot(pub u8, pub u8, pub u8);
+pub struct ItemSlot {
+    pub item: u8,
+    pub count: u8,
+    pub ammo: u8,
+}
 
 /// What only the receiving player is told about themselves: `[hp, progress, [slot, ...]]`.
 /// `hp` is their health, `0` is dead. `progress` is how far a reload or a bandage has got, 0..=255,
 /// or 0 when neither is going on.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SelfState(pub u8, pub u8, pub Vec<ItemSlot>);
+pub struct SelfState {
+    pub hp: u8,
+    pub progress: u8,
+    pub slots: Vec<ItemSlot>,
+}
 
 /// An item lying on the ground: `[id, item, x, y, z]`, centimetres. Static until taken.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PickupState(pub u32, pub u8, pub i32, pub i32, pub i32);
+pub struct PickupState {
+    pub id: u32,
+    pub item: u8,
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+}
 
 /// `[1, server_tick, baseline, ack_input_seq, ride, [new entity, ...], [entity delta, ...],
 /// [new vehicle, ...], [vehicle delta, ...], [removed id, ...], drive, self, [shot, ...],
@@ -356,23 +399,23 @@ pub struct PickupState(pub u32, pub u8, pub i32, pub i32, pub i32);
 /// receiving player's own health and hotbar. `shots` are the gunshots since the previous
 /// snapshot, newest last, capped at `MAX_SHOT_EVENTS`. `pickups` are the items on the ground in range.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Snapshot(
-    pub u8,
-    pub u32,
-    pub u32,
-    pub u32,
-    pub u32,
-    pub Vec<EntityState>,
-    pub Vec<EntityDelta>,
-    pub Vec<VehicleState>,
-    pub Vec<VehicleDelta>,
-    pub Vec<u32>,
-    pub Option<DriveState>,
-    pub SelfState,
-    pub Vec<ShotEvent>,
-    pub Vec<ProjectileState>,
-    pub Vec<PickupState>,
-);
+pub struct Snapshot {
+    pub tag: u8,
+    pub tick: u32,
+    pub baseline: u32,
+    pub ack: u32,
+    pub ride: u32,
+    pub new_entities: Vec<EntityState>,
+    pub entities: Vec<EntityDelta>,
+    pub new_vehicles: Vec<VehicleState>,
+    pub vehicles: Vec<VehicleDelta>,
+    pub removed: Vec<u32>,
+    pub drive: Option<DriveState>,
+    pub me: SelfState,
+    pub shots: Vec<ShotEvent>,
+    pub rockets: Vec<ProjectileState>,
+    pub pickups: Vec<PickupState>,
+}
 
 /// `[2, nonce]`.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -387,7 +430,17 @@ pub struct Leave(pub u8, pub u32);
 /// clients keep no tally of their own. `style` is `DEATH_*`; `yaw` (milliradians, 0 faces -Z, as for
 /// a look) is the way the body is thrown and `power` how hard, in units of 0.2 m/s.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Kill(pub u8, pub u32, pub u32, pub u8, pub u16, pub u16, pub u8, pub i16, pub u8);
+pub struct Kill {
+    pub tag: u8,
+    pub killer: u32,
+    pub victim: u32,
+    pub weapon: u8,
+    pub killer_kills: u16,
+    pub victim_deaths: u16,
+    pub style: u8,
+    pub yaw: i16,
+    pub power: u8,
+}
 
 /// `[5, [[id, kills, deaths], ...]]`, sent on a reliable stream to a player who just joined.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -419,7 +472,18 @@ pub type DamagedEntry = (u16, u16, u32, u8, u8, i32, i32, i32);
 /// (cm, as in `ShotEvent`) is about where the thing hit is, chest height for a stickman, and
 /// `target` is its id, so clients can show a number and a flash on it.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Hit(pub u8, pub u8, pub u8, pub u8, pub u8, pub i16, pub i32, pub i32, pub i32, pub u32);
+pub struct Hit {
+    pub tag: u8,
+    pub role: u8,
+    pub kind: u8,
+    pub amount: u8,
+    pub weapon: u8,
+    pub bearing: i16,
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+    pub target: u32,
+}
 
 /// Reads the tag of a `[tag, ...]` message without decoding the rest. Every message is a short
 /// array (fixarray header) whose first element is a positive fixint.
@@ -461,30 +525,14 @@ mod tests {
             PROTOCOL_VERSION,
             1230,
             vec![
-                InputFrame(41, 127, 0, 1571, 0, 300, 61_000, 0),
-                InputFrame(42, -127, 127, -1950, BUTTON_JUMP | BUTTON_RUN | BUTTON_FIRE, -150, 7, 3),
+                InputFrame { seq: 41, strafe: 127, forward: 0, yaw: 1571, buttons: 0, pitch: 300, view: 61_000, slot: 0 },
+                InputFrame { seq: 42, strafe: -127, forward: 127, yaw: -1950, buttons: BUTTON_JUMP | BUTTON_RUN | BUTTON_FIRE, pitch: -150, view: 7, slot: 3 },
             ],
         )
     }
 
     fn sample_snapshot() -> Snapshot {
-        Snapshot(
-            S_SNAPSHOT,
-            1234,
-            1230,
-            42,
-            9,
-            vec![EntityState(7, KIND_STICKMAN, 0, 85, 100_000, 0, 0, FLAG_GROUNDED | FLAG_DEAD, 0, 0)],
-            vec![EntityDelta(1, 25, -3, 40, -120, 650, FLAG_GROUNDED, -300, 12)],
-            vec![VehicleState(10, KIND_TANK, 300, 90, -2000, 0, 700, 0, 32, vec![1, 7], Some(Turret(-700, 250, 3, 1234)), 0, None, None), VehicleState(12, KIND_PLANE, -500, 300, 800, 10, -20, 30, 0, vec![4, 0], Some(Turret(3000, 200, 9, 0)), 70, None, Some(Arms(17, 200, 0, 3, ARMS_CUT | ARMS_JAMMED)))],
-            vec![VehicleDelta(9, 100, 0, -45, 3, -2, 0, 4, Some(vec![1, 0, 7, 0]), None, 100, Some([0, 0, 40, 0, 0, 0, 255, 3]), None)],
-            vec![3, 11],
-            Some(DriveState(120, -5, -2500, 30, -400, 15, 250, -600)),
-            SelfState(73, 128, vec![ItemSlot(ITEM_AK5, 1, 17), ItemSlot(ITEM_NONE, 0, 0), ItemSlot(ITEM_GRENADE, 2, 0)]),
-            vec![ShotEvent(7, WEAPON_RIFLE, 1500, 160, -4200), ShotEvent(1, WEAPON_RIFLE, -20, 90, 31_000)],
-            vec![ProjectileState(40, PROJECTILE_GRENADE, 1200, 150, -800, 3000, 0, -2500)],
-            vec![PickupState(60, ITEM_BANDAGE, -300, 5, 1250)],
-        )
+        Snapshot { tag: S_SNAPSHOT, tick: 1234, baseline: 1230, ack: 42, ride: 9, new_entities: vec![EntityState { id: 7, kind: KIND_STICKMAN, x: 0, y: 85, z: 100_000, yaw: 0, vy: 0, flags: FLAG_GROUNDED | FLAG_DEAD, knock_x: 0, knock_z: 0 }], entities: vec![EntityDelta { id: 1, dx: 25, dy: -3, dz: 40, dyaw: -120, dvy: 650, flags: FLAG_GROUNDED, dknock_x: -300, dknock_z: 12 }], new_vehicles: vec![VehicleState { id: 10, kind: KIND_TANK, x: 300, y: 90, z: -2000, qx: 0, qy: 700, qz: 0, steer: 32, seats: vec![1, 7], turret: Some(Turret { yaw: -700, pitch: 250, shots: 3, range: 1234 }), hp: 0, damage: None, arms: None }, VehicleState { id: 12, kind: KIND_PLANE, x: -500, y: 300, z: 800, qx: 10, qy: -20, qz: 30, steer: 0, seats: vec![4, 0], turret: Some(Turret { yaw: 3000, pitch: 200, shots: 9, range: 0 }), hp: 70, damage: None, arms: Some(Arms { shots: 17, heat: 200, rear_heat: 0, bombs: 3, flags: ARMS_CUT | ARMS_JAMMED }) }], vehicles: vec![VehicleDelta { id: 9, dx: 100, dy: 0, dz: -45, dqx: 3, dqy: -2, dqz: 0, dsteer: 4, seats: Some(vec![1, 0, 7, 0]), turret: None, hp: 100, damage: Some([0, 0, 40, 0, 0, 0, 255, 3]), arms: None }], removed: vec![3, 11], drive: Some(DriveState { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }), me: SelfState { hp: 73, progress: 128, slots: vec![ItemSlot { item: ITEM_AK5, count: 1, ammo: 17 }, ItemSlot { item: ITEM_NONE, count: 0, ammo: 0 }, ItemSlot { item: ITEM_GRENADE, count: 2, ammo: 0 }] }, shots: vec![ShotEvent { shooter: 7, weapon: WEAPON_RIFLE, x: 1500, y: 160, z: -4200 }, ShotEvent { shooter: 1, weapon: WEAPON_RIFLE, x: -20, y: 90, z: 31_000 }], rockets: vec![ProjectileState { id: 40, kind: PROJECTILE_GRENADE, x: 1200, y: 150, z: -800, vx: 3000, vy: 0, vz: -2500 }], pickups: vec![PickupState { id: 60, item: ITEM_BANDAGE, x: -300, y: 5, z: 1250 }] }
     }
 
     /// `[6, [[OBJ_TREE, 2, 3, 70000, -1571]]]`, mirrored in `codec.spec.ts`.
@@ -503,9 +551,9 @@ mod tests {
 
     #[test]
     fn hit_round_trips() {
-        let message = Hit(S_HIT, HIT_TAKEN, HIT_BODY, 25, WEAPON_RIFLE, -1571, 100, 90, -250, 7);
+        let message = Hit { tag: S_HIT, role: HIT_TAKEN, kind: HIT_BODY, amount: 25, weapon: WEAPON_RIFLE, bearing: -1571, x: 100, y: 90, z: -250, target: 7 };
         assert_eq!(decode::<Hit>(&encode(&message)), Some(message));
-        assert_eq!(peek_tag(&encode(&Hit(S_HIT, HIT_DEALT, HIT_KILL, 100, WEAPON_SNIPER, BEARING_NONE, 0, 0, 0, 0))), Some(S_HIT));
+        assert_eq!(peek_tag(&encode(&Hit { tag: S_HIT, role: HIT_DEALT, kind: HIT_KILL, amount: 100, weapon: WEAPON_SNIPER, bearing: BEARING_NONE, x: 0, y: 0, z: 0, target: 0 })), Some(S_HIT));
     }
 
     #[test]

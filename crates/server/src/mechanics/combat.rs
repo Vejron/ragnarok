@@ -117,7 +117,7 @@ fn position_of(world: &World, id: u32) -> Option<[f32; 3]> {
 /// A `Hit` for `target`, which is about `at`.
 fn hit_at(role: u8, kind: u8, amount: u8, weapon: u8, bearing: i16, at: [f32; 3], target: u32) -> Hit {
     let [x, y, z] = at.map(to_cm);
-    Hit(S_HIT, role, kind, amount, weapon, bearing, x, y, z, target)
+    Hit { tag: S_HIT, role, kind, amount, weapon, bearing, x, y, z, target }
 }
 
 /// Yaw (0 faces -Z, as for a look) from `at` towards `from`, in milliradians.
@@ -203,7 +203,7 @@ pub fn damage_hit(world: &mut World, victim: u32, amount: u8, attacker: Option<u
         (toward.wrapping_add(3142), BULLET_DEATH_PUSH)
     };
     let power = (power * 5.0).round().min(255.0) as u8;
-    world.kills.push(Kill(S_KILL, killer_id, victim, weapon, killer_kills, deaths, style, yaw, power));
+    world.kills.push(Kill { tag: S_KILL, killer: killer_id, victim, weapon, killer_kills, victim_deaths: deaths, style, yaw, power });
     tracing::debug!(victim, killer = killer_id, weapon, "player killed");
 }
 
@@ -390,7 +390,7 @@ fn wreck(world: &mut World, vid: u32) {
         damage(world, id, PLAYER_MAX_HP, attacker, WEAPON_WRECK);
     }
     let [x, y, z] = pose.position.map(to_cm);
-    world.shots.push(ShotEvent(attacker.unwrap_or(0), WEAPON_WRECK, x, y, z));
+    world.shots.push(ShotEvent { shooter: attacker.unwrap_or(0), weapon: WEAPON_WRECK, x, y, z });
     // Thrown up a little, so it is plainly not a parked car any more.
     world.physics.kick_car(vid, [0.0, 9.0, 0.0]);
     // ...and tumbling: a roll or a somersault, either way round, picked by the vehicle's id and
@@ -418,7 +418,7 @@ fn wreck(world: &mut World, vid: u32) {
 
 fn burst_rocket(world: &mut World, owner: u32, point: [f32; 3], dir: [f32; 3]) {
     let [x, y, z] = point.map(to_cm);
-    world.shots.push(ShotEvent(owner, WEAPON_ROCKET, x, y, z));
+    world.shots.push(ShotEvent { shooter: owner, weapon: WEAPON_ROCKET, x, y, z });
     // A dead or departed owner still gets the blast, just not the credit.
     let attacker = world.players.contains_key(&owner).then_some(owner);
     blast(world, Blast { point, radius: ROCKET_BLAST_RADIUS, damage: ROCKET_DAMAGE, knock: ROCKET_KNOCK, dir, attacker, weapon: WEAPON_ROCKET });
@@ -431,7 +431,7 @@ fn fire_rocket(world: &mut World, id: u32) {
     let input = player.input;
     let c = player.character;
     let pitch = from_mrad(input.pitch()).clamp(-MAX_PITCH, MAX_PITCH);
-    let dir = look(from_mrad(input.3), pitch);
+    let dir = look(from_mrad(input.yaw), pitch);
     let eye = [c.position[0], c.position[1] + eye_height(input.buttons()), c.position[2]];
     // Up against a wall it bursts right there instead of starting on its far side.
     if let Some(t) = world.physics.cast_ray(eye, dir, ROCKET_MUZZLE, 0) {
@@ -487,7 +487,7 @@ fn step_bullet(world: &mut World, id: u32, dt: f32) {
             hit_object(world, bullet.position, dir, reach, damage_dealt);
         }
         let [x, y, z] = point.map(to_cm);
-        world.shots.push(ShotEvent(bullet.owner, WEAPON_SNIPER, x, y, z));
+        world.shots.push(ShotEvent { shooter: bullet.owner, weapon: WEAPON_SNIPER, x, y, z });
         return;
     }
     bullet.position = std::array::from_fn(|i| bullet.position[i] + dir[i] * step);
@@ -599,7 +599,7 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     let input = player.input;
     let c = player.character;
     let pitch = from_mrad(input.pitch()).clamp(-MAX_PITCH, MAX_PITCH);
-    let yaw = from_mrad(input.3);
+    let yaw = from_mrad(input.yaw);
     let look_dir = look(yaw, pitch);
     let origin = [c.position[0], c.position[1] + eye_height(input.buttons()), c.position[2]];
     let back = rewind_ticks(world.tick, input.view());
@@ -634,7 +634,7 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     let round = Round { damage: item.damage, vehicle: chip, plane: chip, weapon: item.weapon, range: item.range };
     let (end, _) = hitscan(world, id, origin, dir, &round, 0, back);
     let point: [i32; 3] = std::array::from_fn(|i| to_cm(origin[i] + dir[i] * end));
-    world.shots.push(ShotEvent(id, item.weapon, point[0], point[1], point[2]));
+    world.shots.push(ShotEvent { shooter: id, weapon: item.weapon, x: point[0], y: point[1], z: point[2] });
 }
 
 /// What one hitscan round does: to a stickman or a rooster, to a vehicle, and to a plane, which is all
@@ -682,7 +682,7 @@ fn throw_grenade(world: &mut World, id: u32) {
     let input = player.input;
     let c = player.character;
     let pitch = (from_mrad(input.pitch()) + GRENADE_LOFT).clamp(-MAX_PITCH, MAX_PITCH);
-    let dir = look(from_mrad(input.3), pitch);
+    let dir = look(from_mrad(input.yaw), pitch);
     let eye = [c.position[0], c.position[1] + eye_height(input.buttons()), c.position[2]];
     // Up against a wall it starts at the wall instead of on its far side.
     let reach = world.physics.cast_ray(eye, dir, GRENADE_MUZZLE + GRENADE_RADIUS, 0).map_or(GRENADE_MUZZLE, |t| (t - GRENADE_RADIUS).max(0.0));
@@ -702,7 +702,7 @@ fn throw_grenade(world: &mut World, id: u32) {
 
 fn burst_grenade(world: &mut World, grenade: &Rocket) {
     let [x, y, z] = grenade.position.map(to_cm);
-    world.shots.push(ShotEvent(grenade.owner, WEAPON_GRENADE, x, y, z));
+    world.shots.push(ShotEvent { shooter: grenade.owner, weapon: WEAPON_GRENADE, x, y, z });
     let attacker = world.players.contains_key(&grenade.owner).then_some(grenade.owner);
     blast(
         world,
@@ -760,9 +760,9 @@ fn step_grenade(world: &mut World, id: u32, dt: f32) {
 
 /// The slot in hand after it has been used once: one fewer, and empty when none are left.
 fn spend(slot: &mut ItemSlot) {
-    slot.1 = slot.1.saturating_sub(1);
-    if slot.1 == 0 {
-        *slot = ItemSlot(ITEM_NONE, 0, 0);
+    slot.count = slot.count.saturating_sub(1);
+    if slot.count == 0 {
+        *slot = ItemSlot { item: ITEM_NONE, count: 0, ammo: 0 };
     }
 }
 
@@ -783,7 +783,7 @@ fn use_item(world: &mut World, id: u32) {
         return;
     }
     let held = player.held();
-    let Some(item) = def(held.0).copied() else {
+    let Some(item) = def(held.item).copied() else {
         player.interrupt();
         return;
     };
@@ -792,20 +792,20 @@ fn use_item(world: &mut World, id: u32) {
             if player.reload_left > 0 {
                 player.reload_left -= 1;
                 if player.reload_left == 0 {
-                    player.hotbar[slot].2 = item.mag;
+                    player.hotbar[slot].ammo = item.mag;
                 }
                 return;
             }
-            let empty = held.2 == 0;
+            let empty = held.ammo == 0;
             let wants_reload = buttons & BUTTON_RELOAD != 0 || (empty && (pressed));
-            if wants_reload && held.2 < item.mag {
+            if wants_reload && held.ammo < item.mag {
                 player.reload_left = item.reload_ticks;
                 return;
             }
             let trigger = if item.auto { pressed } else { fresh };
             if trigger && player.fire_cooldown == 0 && !empty {
                 player.fire_cooldown = item.cooldown_ticks;
-                player.hotbar[slot].2 -= 1;
+                player.hotbar[slot].ammo -= 1;
                 fire_gun(world, id, &item);
             }
         }

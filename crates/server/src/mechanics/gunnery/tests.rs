@@ -47,7 +47,7 @@ fn heli(game: &Game) -> u32 {
 fn aim_and_hold(game: &mut Game, id: u32, seq: &mut u32, yaw: f32, pitch: f32, buttons: u8, ticks: u32) {
     for _ in 0..ticks {
         *seq += 1;
-        game.handle(Command::Input(id, 0, vec![InputFrame(*seq, 0, 0, to_mrad(yaw), buttons, to_mrad(pitch), 0, 0)]));
+        game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: to_mrad(yaw), buttons, pitch: to_mrad(pitch), view: 0, slot: 0 }]));
         game.step();
     }
 }
@@ -225,7 +225,7 @@ fn a_shell_in_flight_is_in_the_snapshot_and_falls() {
     aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, BUTTON_FIRE, 3);
     let listed = game.projectile_states();
     assert_eq!(listed.len(), 1);
-    assert_eq!(listed[0].1, PROJECTILE_SHELL);
+    assert_eq!(listed[0].kind, PROJECTILE_SHELL);
     let before = game.world.rockets.values().next().unwrap().velocity;
     aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, 0, 5);
     let after = game.world.rockets.values().next().unwrap().velocity;
@@ -277,7 +277,7 @@ fn the_nose_gun_throws_small_shells_that_burst_a_third_as_wide() {
     assert_eq!(game.world.vehicles[&vid].gun.unwrap().shots, 1);
     let listed = game.projectile_states();
     assert_eq!(listed.len(), 1, "the round is in flight");
-    assert_eq!(listed[0].1, PROJECTILE_CANNON);
+    assert_eq!(listed[0].kind, PROJECTILE_CANNON);
     assert_eq!(game.world.players[&victim].hp, before, "and has not arrived");
 
     aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, 0, 30);
@@ -327,7 +327,7 @@ fn hold_watching(game: &mut Game, id: u32, seq: &mut u32, yaw: f32, buttons: u8,
     let mut seen = vec![];
     for _ in 0..ticks {
         aim_and_hold(game, id, seq, yaw, 0.0, buttons, 1);
-        seen.extend(game.world.shots.drain(..).filter(|shot| shot.1 == weapon));
+        seen.extend(game.world.shots.drain(..).filter(|shot| shot.weapon == weapon));
     }
     seen
 }
@@ -346,7 +346,7 @@ fn the_forward_guns_take_turns_and_hit_what_is_ahead_of_the_nose() {
     let expected = (30 / PLANE_GUN_COOLDOWN_TICKS) as u8;
     assert!(arms.shots.abs_diff(expected) <= 1, "{} rounds in half a second, expected about {expected}", arms.shots);
     assert!(game.world.players[&victim].hp < PLAYER_MAX_HP, "the stickman ahead is hit");
-    assert!(!hits.is_empty() && hits.iter().all(|shot| shot.0 == pilot), "{hits:?}");
+    assert!(!hits.is_empty() && hits.iter().all(|shot| shot.shooter == pilot), "{hits:?}");
     assert_eq!(game.world.vehicles[&vid].hp, hp, "its own guns never hurt the plane");
     assert!(game.world.rockets.is_empty(), "rounds are hitscans, not projectiles");
 }
@@ -368,7 +368,7 @@ fn the_forward_guns_jam_when_hot_and_clear_when_cool() {
     let shots = game.world.vehicles[&vid].arms.unwrap().shots;
     aim_and_hold(&mut game, pilot, &mut seq, yaw, 0.0, BUTTON_FIRE, 60);
     assert_eq!(game.world.vehicles[&vid].arms.unwrap().shots, shots, "a jammed gun does not fire");
-    assert!(game.vehicle_states().iter().find(|v| v.0 == vid).unwrap().13.unwrap().4 & shared::protocol::ARMS_JAMMED != 0);
+    assert!(game.vehicle_states().iter().find(|v| v.id == vid).unwrap().arms.unwrap().flags & shared::protocol::ARMS_JAMMED != 0);
     aim_and_hold(&mut game, pilot, &mut seq, yaw, 0.0, 0, 60 * 3);
     assert!(!game.world.vehicles[&vid].arms.unwrap().jammed, "cool again");
     aim_and_hold(&mut game, pilot, &mut seq, yaw, 0.0, BUTTON_FIRE, 20);
@@ -394,7 +394,7 @@ fn a_bomb_leaves_with_the_planes_speed_and_bursts_where_it_lands() {
 
     let bursts = hold_watching(&mut game, pilot, &mut seq, pose.yaw(), 0, 120, WEAPON_BOMB);
     assert_eq!(bursts.len(), 1, "it lands and bursts");
-    let at = [bursts[0].2, bursts[0].3, bursts[0].4].map(|cm| cm as f32 / 100.0);
+    let at = [bursts[0].x, bursts[0].y, bursts[0].z].map(|cm| cm as f32 / 100.0);
     let ahead = -sin * (at[0] - dropped_at[0]) - cos * (at[2] - dropped_at[2]);
     assert!(ahead > 20.0 && at[1] < 2.0, "well ahead of where it was let go, on the ground: {at:?}");
 }

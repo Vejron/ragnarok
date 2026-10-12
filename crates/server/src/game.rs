@@ -117,7 +117,7 @@ impl Game {
             return None;
         }
         let id = self.world.alloc_id();
-        let welcome = encode(&Welcome(S_WELCOME, PROTOCOL_VERSION, id, TICK_RATE as u8, SNAPSHOT_EVERY as u8, self.world_hash));
+        let welcome = encode(&Welcome { tag: S_WELCOME, version: PROTOCOL_VERSION, id, tick_rate: TICK_RATE as u8, snapshot_every: SNAPSHOT_EVERY as u8, world_hash: self.world_hash });
         if outbox.try_send(Outgoing::Reliable(welcome.into())).is_err() {
             return None;
         }
@@ -244,8 +244,8 @@ impl Game {
     fn send_hits(&mut self) {
         let mut merged: Vec<(u32, Hit)> = Vec::new();
         for (to, hit) in self.world.hits.drain(..) {
-            match merged.iter_mut().find(|(t, h)| *t == to && h.1 == hit.1 && h.2 == hit.2 && h.9 == hit.9) {
-                Some((_, sum)) => sum.3 = sum.3.saturating_add(hit.3),
+            match merged.iter_mut().find(|(t, h)| *t == to && h.role == hit.role && h.kind == hit.kind && h.target == hit.target) {
+                Some((_, sum)) => sum.amount = sum.amount.saturating_add(hit.amount),
                 None => merged.push((to, hit)),
             }
         }
@@ -312,9 +312,9 @@ mod tests {
         let mut game = game();
         let (id, mut inbox) = join(&mut game);
         let Some(Outgoing::Reliable(welcome)) = drain(&mut inbox).into_iter().next() else { panic!("no welcome") };
-        assert_eq!(decode::<Welcome>(&welcome).unwrap().2, id);
+        assert_eq!(decode::<Welcome>(&welcome).unwrap().id, id);
 
-        game.handle(Command::Input(id, 0, vec![InputFrame(1, 0, 127, 0, 0, 0, 0, 0), InputFrame(2, 0, 127, 0, 0, 0, 0, 0)]));
+        game.handle(Command::Input(id, 0, vec![InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }, InputFrame { seq: 2, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
         game.step();
         game.step();
         let snapshots: Vec<Snapshot> = drain(&mut inbox)
@@ -325,10 +325,10 @@ mod tests {
             })
             .collect();
         let last = snapshots.last().expect("a snapshot every SNAPSHOT_EVERY ticks");
-        assert_eq!(last.3, 2, "both inputs acknowledged");
-        let stickmen: Vec<_> = last.5.iter().filter(|e| e.1 == KIND_STICKMAN).collect();
+        assert_eq!(last.ack, 2, "both inputs acknowledged");
+        let stickmen: Vec<_> = last.new_entities.iter().filter(|e| e.kind == KIND_STICKMAN).collect();
         assert_eq!(stickmen.len(), 1);
-        assert!(stickmen[0].4 < 0, "walked towards -Z");
+        assert!(stickmen[0].z < 0, "walked towards -Z");
     }
 
     #[test]
@@ -364,7 +364,7 @@ mod tests {
         game.handle(Command::Leave(first));
         let Some(Outgoing::Reliable(leave)) = drain(&mut b).into_iter().next() else { panic!("no leave") };
         assert_eq!(decode::<Leave>(&leave), Some(Leave(S_LEAVE, first)));
-        assert_eq!(game.entity_states().iter().filter(|e| e.1 == KIND_STICKMAN).count(), 1);
+        assert_eq!(game.entity_states().iter().filter(|e| e.kind == KIND_STICKMAN).count(), 1);
     }
 
     /// Not a regression test: a rough cost of one tick with a full room, to aim optimisation at. Players
@@ -420,7 +420,7 @@ mod tests {
         for t in 1..=ticks {
             for (n, id) in ids.iter().enumerate() {
                 let fire = if (t as usize + n).is_multiple_of(30) { BUTTON_FIRE } else { 0 };
-                let frame = InputFrame(t, if n % 2 == 0 { 100 } else { -100 }, 127, (t as i16 * 7 + n as i16 * 50) % 3000, BUTTON_RUN | fire, 0, t as u16, 0);
+                let frame = InputFrame { seq: t, strafe: if n % 2 == 0 { 100 } else { -100 }, forward: 127, yaw: (t as i16 * 7 + n as i16 * 50) % 3000, buttons: BUTTON_RUN | fire, pitch: 0, view: t as u16, slot: 0 };
                 game.handle(Command::Input(*id, t.saturating_sub(2), vec![frame]));
             }
             let started = Instant::now();

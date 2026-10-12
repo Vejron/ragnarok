@@ -33,7 +33,7 @@ impl Mechanic for Movement {
                 inherit(character, velocity);
             }
             let slot = (player.input.slot() as usize).min(HOTBAR_SLOTS - 1);
-            let scale = aim_speed_scale(player.hotbar[slot].0, player.input.buttons());
+            let scale = aim_speed_scale(player.hotbar[slot].item, player.input.buttons());
             world.physics.move_character_scaled(character, &player.input, dt, scale);
             character.ride = if character.grounded { world.physics.car_under(character.position).map_or(0, |hit| hit.car) } else { 0 };
             if let (false, false, Some(velocity)) = (jumped, character.grounded, velocity) {

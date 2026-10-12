@@ -67,9 +67,9 @@ impl JitterBuffer {
         // stand still.
         self.starved = self.starved.saturating_add(1);
         let mut repeat = self.last;
-        repeat.4 &= !(BUTTON_JUMP | BUTTON_USE | BUTTON_FIRE | BUTTON_SLIDE | BUTTON_RELOAD);
+        repeat.buttons &= !(BUTTON_JUMP | BUTTON_USE | BUTTON_FIRE | BUTTON_SLIDE | BUTTON_RELOAD);
         if self.starved > STARVE_LIMIT {
-            repeat = InputFrame(repeat.0, 0, 0, repeat.3, 0, repeat.5, repeat.6, repeat.7);
+            repeat = InputFrame { seq: repeat.seq, strafe: 0, forward: 0, yaw: repeat.yaw, buttons: 0, pitch: repeat.pitch, view: repeat.view, slot: repeat.slot };
         }
         Consumed { input: repeat, fresh: false }
     }
@@ -85,7 +85,7 @@ mod tests {
     use super::*;
 
     fn frame(seq: u32) -> InputFrame {
-        InputFrame(seq, 0, 127, 0, BUTTON_JUMP, 0, 0, 0)
+        InputFrame { seq, strafe: 0, forward: 127, yaw: 0, buttons: BUTTON_JUMP, pitch: 0, view: 0, slot: 0 }
     }
 
     #[test]
@@ -114,8 +114,8 @@ mod tests {
         buffer.pop();
         let repeat = buffer.pop();
         assert!(!repeat.fresh);
-        assert_eq!(repeat.input.2, 127);
-        assert_eq!(repeat.input.4 & BUTTON_JUMP, 0);
+        assert_eq!(repeat.input.forward, 127);
+        assert_eq!(repeat.input.buttons & BUTTON_JUMP, 0);
         // After an underrun it re-buffers to TARGET before consuming again.
         buffer.push(&[frame(3)]);
         assert!(!buffer.pop().fresh);
@@ -130,10 +130,10 @@ mod tests {
         buffer.pop();
         buffer.pop();
         for _ in 0..STARVE_LIMIT {
-            assert_eq!(buffer.pop().input.2, 127);
+            assert_eq!(buffer.pop().input.forward, 127);
         }
         let stopped = buffer.pop().input;
-        assert_eq!((stopped.1, stopped.2), (0, 0));
+        assert_eq!((stopped.strafe, stopped.forward), (0, 0));
     }
 
     #[test]

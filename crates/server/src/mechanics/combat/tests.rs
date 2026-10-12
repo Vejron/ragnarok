@@ -27,7 +27,7 @@ const AIM_20M: f32 = -0.075;
 
 /// How a player aims with `slot` in hand: a gun's crosshair on a target 20 m away, anything else level.
 fn aim_for(game: &Game, id: u32, slot: usize) -> f32 {
-    let item = game.world.players[&id].hotbar[slot].0;
+    let item = game.world.players[&id].hotbar[slot].item;
     if def(item).is_some_and(|d| d.kind == ItemKind::Gun) { AIM_20M } else { 0.0 }
 }
 
@@ -36,7 +36,7 @@ fn hold(game: &mut Game, id: u32, seq: &mut u32, yaw: f32, buttons: u8, ticks: u
     let aim = aim_for(game, id, 0);
     for _ in 0..ticks {
         *seq += 1;
-        game.handle(Command::Input(id, 0, vec![InputFrame(*seq, 0, 0, to_mrad(yaw), buttons, to_mrad(aim), 0, 0)]));
+        game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: to_mrad(yaw), buttons, pitch: to_mrad(aim), view: 0, slot: 0 }]));
         game.step();
     }
 }
@@ -61,13 +61,13 @@ fn duel() -> (Game, u32, u32, u32, u32) {
 
 fn give(game: &mut Game, id: u32, slot: usize, item: u8, count: u8) {
     let mag = def(item).map_or(0, |d| d.mag);
-    game.world.players.get_mut(&id).unwrap().hotbar[slot] = ItemSlot(item, count, mag);
+    game.world.players.get_mut(&id).unwrap().hotbar[slot] = ItemSlot { item, count, ammo: mag };
 }
 
 /// One tick of `buttons` with `slot` selected, looking `pitch` radians up.
 fn press(game: &mut Game, id: u32, seq: &mut u32, buttons: u8, slot: u8, pitch: f32) {
     *seq += 1;
-    game.handle(Command::Input(id, 0, vec![InputFrame(*seq, 0, 0, 0, buttons, to_mrad(pitch), 0, slot)]));
+    game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: 0, buttons, pitch: to_mrad(pitch), view: 0, slot }]));
     game.step();
 }
 
@@ -106,13 +106,13 @@ fn the_ak5_hurts_what_it_points_at_and_credits_the_shooter() {
 #[test]
 fn a_shot_at_the_ground_hits_nobody_and_ends_on_it() {
     let (mut game, shooter, target, _, _) = duel();
-    game.world.players.get_mut(&shooter).unwrap().input = InputFrame(1, 0, 0, 0, BUTTON_FIRE, to_mrad(-0.8), 0, 0);
+    game.world.players.get_mut(&shooter).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: to_mrad(-0.8), view: 0, slot: 0 };
     game.world.shots.clear();
     fire_gun(&mut game.world, shooter, ak5());
     assert_eq!(game.world.players[&target].hp, PLAYER_MAX_HP);
     let end = game.world.shots.last().expect("a shot was recorded");
-    assert!(end.3.abs() < 20, "ends on the ground, y = {} cm", end.3);
-    assert!(end.4 < 0 && end.4 > -2000, "a little ahead of the shooter: z = {} cm", end.4);
+    assert!(end.y.abs() < 20, "ends on the ground, y = {} cm", end.y);
+    assert!(end.z < 0 && end.z > -2000, "a little ahead of the shooter: z = {} cm", end.z);
 }
 
 #[test]
@@ -120,7 +120,7 @@ fn a_shot_goes_where_the_shoulder_camera_crosshair_is() {
     let (mut game, shooter, _, _, _) = duel();
     // The pivot is 0.9 m to the right; a target whose centre is on that line is under the crosshair,
     // and one 5 m off to the side is not.
-    game.world.players.get_mut(&shooter).unwrap().input = InputFrame(1, 0, 0, 0, BUTTON_FIRE, 0, 0, 0);
+    game.world.players.get_mut(&shooter).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: 0, view: 0, slot: 0 };
     let c = game.world.players[&shooter].character;
     let pivot_y = c.position[1] + ON_FOOT_HEIGHT;
     let eye = [c.position[0], c.position[1] + EYE_HEIGHT, c.position[2]];
@@ -142,15 +142,15 @@ fn a_hit_is_reported_to_the_shooter_and_the_victim_with_a_bearing() {
     let hits = &game.world.hits;
     assert_eq!(hits.len(), 2);
     // The shooter is straight ahead of nobody: from the victim at -20 the shooter is at +z.
-    assert_eq!((hits[0].0, hits[0].1.1, hits[0].1.2, hits[0].1.3, hits[0].1.5, hits[0].1.9), (target, HIT_TAKEN, HIT_BODY, 30, to_mrad(std::f32::consts::PI), target));
-    assert_eq!((hits[1].0, hits[1].1.1, hits[1].1.3, hits[1].1.5, hits[1].1.9), (shooter, HIT_DEALT, 30, BEARING_NONE, target));
+    assert_eq!((hits[0].0, hits[0].1.role, hits[0].1.kind, hits[0].1.amount, hits[0].1.bearing, hits[0].1.target), (target, HIT_TAKEN, HIT_BODY, 30, to_mrad(std::f32::consts::PI), target));
+    assert_eq!((hits[1].0, hits[1].1.role, hits[1].1.amount, hits[1].1.bearing, hits[1].1.target), (shooter, HIT_DEALT, 30, BEARING_NONE, target));
     // The number belongs at the target's chest.
-    assert_eq!(hits[1].1.8, to_cm(-20.0));
+    assert_eq!(hits[1].1.z, to_cm(-20.0));
     // The finishing blow is a kill, and amounts are what was actually lost.
     game.world.hits.clear();
     damage(&mut game.world, target, 255, Some(shooter), WEAPON_RIFLE);
     let last = &game.world.hits[1].1;
-    assert_eq!((last.1, last.2, last.3), (HIT_DEALT, HIT_KILL, PLAYER_MAX_HP - 30));
+    assert_eq!((last.role, last.kind, last.amount), (HIT_DEALT, HIT_KILL, PLAYER_MAX_HP - 30));
 }
 
 #[test]
@@ -159,8 +159,8 @@ fn hurting_yourself_reports_no_dealt_hit() {
     game.world.hits.clear();
     damage(&mut game.world, shooter, 5, Some(shooter), WEAPON_RIFLE);
     assert_eq!(game.world.hits.len(), 1);
-    assert_eq!(game.world.hits[0].1.1, HIT_TAKEN);
-    assert_eq!(game.world.hits[0].1.5, BEARING_NONE);
+    assert_eq!(game.world.hits[0].1.role, HIT_TAKEN);
+    assert_eq!(game.world.hits[0].1.bearing, BEARING_NONE);
 }
 
 #[test]
@@ -168,7 +168,7 @@ fn dead_players_do_not_fire_and_cannot_be_hit_until_they_respawn() {
     let (mut game, shooter, target, mut seq, mut seq_t) = duel();
     damage(&mut game.world, target, PLAYER_MAX_HP, Some(shooter), WEAPON_RIFLE);
     assert_eq!(game.world.kills.len(), 1);
-    assert_eq!(game.world.kills[0].1, shooter);
+    assert_eq!(game.world.kills[0].killer, shooter);
     // The dead hold fire at the shooter; nothing happens.
     hold(&mut game, target, &mut seq_t, std::f32::consts::PI, BUTTON_FIRE, 30);
     assert_eq!(game.world.players[&shooter].hp, PLAYER_MAX_HP);
@@ -208,12 +208,12 @@ fn snapshots_carry_own_health_and_shot_events() {
         })
         .collect();
     assert!(!snapshots.is_empty());
-    assert!(snapshots.iter().all(|s| s.11.0 == PLAYER_MAX_HP));
+    assert!(snapshots.iter().all(|s| s.me.hp == PLAYER_MAX_HP));
     let last = snapshots.last().unwrap();
-    assert_eq!(last.11.2[0], ItemSlot(ITEM_AK5, 1, ak5().mag - 1), "own hotbar, with a round fired");
-    let shots: Vec<_> = snapshots.iter().flat_map(|s| s.12.iter()).collect();
+    assert_eq!(last.me.slots[0], ItemSlot { item: ITEM_AK5, count: 1, ammo: ak5().mag - 1 }, "own hotbar, with a round fired");
+    let shots: Vec<_> = snapshots.iter().flat_map(|s| s.shots.iter()).collect();
     assert_eq!(shots.len(), 1, "one shot in six ticks at this cooldown");
-    assert_eq!(shots[0].0, shooter);
+    assert_eq!(shots[0].shooter, shooter);
 }
 
 /// The one car in the test world, and a player sitting in its driver seat.
@@ -231,12 +231,12 @@ fn a_rocket_flies_and_bursts_on_the_target_and_hurts_it() {
     let (mut game, shooter, target, mut seq, _) = duel();
     // A rocket flies along the look direction from the eye, so it is the target that stands in its line.
     game.world.players.get_mut(&target).unwrap().character.position[0] = 100.0;
-    game.world.players.get_mut(&shooter).unwrap().input = InputFrame(0, 0, 0, 0, 0, 0, 0, 0);
+    game.world.players.get_mut(&shooter).unwrap().input = InputFrame { seq: 0, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 };
     fire_rocket(&mut game.world, shooter);
     // 20 m at 45 m/s is under half a second.
     for _ in 0..40 {
         seq += 1;
-        game.handle(Command::Input(shooter, 0, vec![InputFrame(seq, 0, 0, 0, 0, 0, 0, 0)]));
+        game.handle(Command::Input(shooter, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
         game.step();
         if game.world.players[&target].hp < PLAYER_MAX_HP {
             break;
@@ -253,11 +253,11 @@ fn a_rocket_flies_and_bursts_on_the_target_and_hurts_it() {
 fn a_rocket_into_a_wall_next_to_you_hurts_you_and_credits_nobody() {
     let (mut game, shooter, _, mut seq, _) = duel();
     // Straight down at the feet: bursts a metre or so away.
-    game.world.players.get_mut(&shooter).unwrap().input = InputFrame(1, 0, 0, 0, 0, to_mrad(-1.4), 0, 0);
+    game.world.players.get_mut(&shooter).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: to_mrad(-1.4), view: 0, slot: 0 };
     fire_rocket(&mut game.world, shooter);
     for _ in 0..4 {
         seq += 1;
-        game.handle(Command::Input(shooter, 0, vec![InputFrame(seq, 0, 0, 0, 0, to_mrad(-1.4), 0, 0)]));
+        game.handle(Command::Input(shooter, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: to_mrad(-1.4), view: 0, slot: 0 }]));
         game.step();
     }
     assert!(game.world.players[&shooter].hp < PLAYER_MAX_HP, "hit by your own blast");
@@ -278,7 +278,7 @@ fn the_ak5_chips_a_vehicle_and_a_wreck_kills_the_crew() {
     // The eye is above the roof; look a little down at the car.
     for _ in 0..3 {
         seq += 1;
-        game.handle(Command::Input(shooter, 0, vec![InputFrame(seq, 0, 0, 0, BUTTON_FIRE, to_mrad(-0.05), 0, 0)]));
+        game.handle(Command::Input(shooter, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: to_mrad(-0.05), view: 0, slot: 0 }]));
         game.step();
     }
     let max = shared::protocol::vehicle_hp(shared::protocol::KIND_JEEP);
@@ -290,7 +290,7 @@ fn the_ak5_chips_a_vehicle_and_a_wreck_kills_the_crew() {
     assert_eq!(vehicle.seats, [None; CAR_SEATS], "the crew is out of their seats");
     assert!(!game.world.players[&driver].alive(), "and dead");
     assert_eq!(game.world.players[&shooter].kills, 1, "the credit goes to whoever wrecked it");
-    assert!(game.world.shots.iter().any(|shot| shot.1 == WEAPON_WRECK));
+    assert!(game.world.shots.iter().any(|shot| shot.weapon == WEAPON_WRECK));
 }
 
 #[test]
@@ -331,12 +331,12 @@ fn a_wreck_cannot_be_boarded_and_comes_back_whole() {
 #[test]
 fn a_rocket_in_flight_is_in_the_snapshot() {
     let (mut game, shooter, _, mut seq, _) = duel();
-    game.world.players.get_mut(&shooter).unwrap().input = InputFrame(0, 0, 0, 0, 0, 0, 0, 0);
+    game.world.players.get_mut(&shooter).unwrap().input = InputFrame { seq: 0, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 };
     fire_rocket(&mut game.world, shooter);
     hold(&mut game, shooter, &mut seq, 0.0, 0, 1);
     let rockets = game.projectile_states();
     assert_eq!(rockets.len(), 1);
-    let shared::protocol::ProjectileState(_, kind, _, _, z, _, _, vz) = rockets[0];
+    let shared::protocol::ProjectileState { kind, z, vz, .. } = rockets[0];
     assert_eq!(kind, PROJECTILE_ROCKET);
     assert!(z < 0, "flying towards -Z from the shooter at z = 0: {z}");
     assert!((vz as f32 / 100.0 + ROCKET_SPEED).abs() < 0.1, "{vz}");
@@ -356,7 +356,7 @@ fn shoot_at_a_target_that_has_moved(lag: u32) -> u8 {
     let view = game.world.tick.wrapping_sub(lag);
     assert!(view <= tick_before + 8, "the test means to look at a moment around the move");
     seq += 1;
-    game.handle(Command::Input(shooter, 0, vec![InputFrame(seq, 0, 0, 0, BUTTON_FIRE, to_mrad(aim_for(&game, shooter, 0)), view as u16, 0)]));
+    game.handle(Command::Input(shooter, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: to_mrad(aim_for(&game, shooter, 0)), view: view as u16, slot: 0 }]));
     hold(&mut game, shooter, &mut seq, 0.0, 0, 3);
     game.world.players[&target].hp
 }
@@ -402,12 +402,12 @@ fn the_revolver_needs_a_press_per_shot_and_hits_hard() {
     // Held down for a second: still one shot.
     hold_slot(&mut game, shooter, &mut seq, BUTTON_FIRE, 1, TICK_RATE);
     assert_eq!(game.world.players[&target].hp, PLAYER_MAX_HP - revolver.damage);
-    assert_eq!(game.world.players[&shooter].hotbar[1].2, revolver.mag - 1);
+    assert_eq!(game.world.players[&shooter].hotbar[1].ammo, revolver.mag - 1);
     // Let go and press again once the hammer is back.
     hold_slot(&mut game, shooter, &mut seq, 0, 1, revolver.cooldown_ticks);
     hold_slot(&mut game, shooter, &mut seq, BUTTON_FIRE, 1, 1);
     assert_eq!(game.world.players[&target].hp, PLAYER_MAX_HP - 2 * revolver.damage);
-    assert!(game.world.shots.iter().all(|shot| shot.1 == WEAPON_REVOLVER) || game.world.shots.is_empty());
+    assert!(game.world.shots.iter().all(|shot| shot.weapon == WEAPON_REVOLVER) || game.world.shots.is_empty());
 }
 
 #[test]
@@ -426,13 +426,13 @@ fn a_scoped_sniper_shot_goes_true_along_the_look_direction() {
     let mut landed = false;
     for _ in 0..TICK_RATE / 4 {
         press(&mut game, shooter, &mut seq, BUTTON_ALT, 1, 0.0);
-        landed |= game.world.shots.iter().any(|shot| shot.1 == WEAPON_SNIPER);
+        landed |= game.world.shots.iter().any(|shot| shot.weapon == WEAPON_SNIPER);
     }
     assert!(landed);
     // Straight ahead of the eye is the head: double damage, and a headshot kill.
     let expected = PLAYER_MAX_HP.saturating_sub(sniper.damage * 2);
     assert_eq!(game.world.players[&target].hp, expected);
-    assert_eq!(game.world.players[&shooter].hotbar[1].2, sniper.mag - 1);
+    assert_eq!(game.world.players[&shooter].hotbar[1].ammo, sniper.mag - 1);
 }
 
 #[test]
@@ -456,16 +456,16 @@ fn aim_without_a_scoped_gun_changes_nothing() {
 #[test]
 fn a_gun_runs_dry_reloads_and_fires_again() {
     let (mut game, shooter, target, mut seq, _) = duel();
-    game.world.players.get_mut(&shooter).unwrap().hotbar[0].2 = 1;
+    game.world.players.get_mut(&shooter).unwrap().hotbar[0].ammo = 1;
     hold(&mut game, shooter, &mut seq, 0.0, BUTTON_FIRE, 1);
-    assert_eq!(game.world.players[&shooter].hotbar[0].2, 0);
+    assert_eq!(game.world.players[&shooter].hotbar[0].ammo, 0);
     let hp = game.world.players[&target].hp;
     // Dry: pulling the trigger starts a reload instead of a shot.
     hold(&mut game, shooter, &mut seq, 0.0, BUTTON_FIRE, ak5().cooldown_ticks + 1);
     assert_eq!(game.world.players[&target].hp, hp);
     assert!(game.world.players[&shooter].reload_left > 0);
     hold(&mut game, shooter, &mut seq, 0.0, 0, ak5().reload_ticks + 1);
-    assert_eq!(game.world.players[&shooter].hotbar[0].2, ak5().mag);
+    assert_eq!(game.world.players[&shooter].hotbar[0].ammo, ak5().mag);
     hold(&mut game, shooter, &mut seq, 0.0, BUTTON_FIRE, 1);
     assert_eq!(game.world.players[&target].hp, hp - ak5().damage);
 }
@@ -473,12 +473,12 @@ fn a_gun_runs_dry_reloads_and_fires_again() {
 #[test]
 fn switching_slots_drops_a_reload() {
     let (mut game, shooter, _, mut seq, _) = duel();
-    game.world.players.get_mut(&shooter).unwrap().hotbar[0].2 = 3;
+    game.world.players.get_mut(&shooter).unwrap().hotbar[0].ammo = 3;
     hold_slot(&mut game, shooter, &mut seq, BUTTON_RELOAD, 0, 2);
     assert!(game.world.players[&shooter].reload_left > 0);
     hold_slot(&mut game, shooter, &mut seq, 0, 3, 1);
     assert_eq!(game.world.players[&shooter].reload_left, 0);
-    assert_eq!(game.world.players[&shooter].hotbar[0].2, 3, "it never finished");
+    assert_eq!(game.world.players[&shooter].hotbar[0].ammo, 3, "it never finished");
 }
 
 #[test]
@@ -487,7 +487,7 @@ fn a_grenade_arcs_falls_and_bursts_when_the_fuse_is_out() {
     give(&mut game, shooter, 2, ITEM_GRENADE, 2);
     // Thrown level at a target 20 m away: it lands short of them, then the fuse takes it.
     hold_slot(&mut game, shooter, &mut seq, BUTTON_FIRE, 2, 1);
-    assert_eq!(game.world.players[&shooter].hotbar[2].1, 1, "one thrown");
+    assert_eq!(game.world.players[&shooter].hotbar[2].count, 1, "one thrown");
     assert_eq!(game.world.rockets.len(), 1);
     let grenade = *game.world.rockets.values().next().unwrap();
     assert_eq!(grenade.kind, PROJECTILE_GRENADE);
@@ -496,7 +496,7 @@ fn a_grenade_arcs_falls_and_bursts_when_the_fuse_is_out() {
     assert!(grenade.position[1] < 3.0, "gravity pulls it down: y = {}", grenade.position[1]);
     hold_slot(&mut game, shooter, &mut seq, 0, 2, GRENADE_FUSE_TICKS);
     assert!(game.world.rockets.is_empty(), "burst");
-    assert!(game.world.shots.iter().any(|s| s.1 == WEAPON_GRENADE) || game.world.players[&target].hp <= PLAYER_MAX_HP);
+    assert!(game.world.shots.iter().any(|s| s.weapon == WEAPON_GRENADE) || game.world.players[&target].hp <= PLAYER_MAX_HP);
 }
 
 #[test]
@@ -521,7 +521,7 @@ fn a_bandage_heals_after_a_pause_and_is_used_up() {
     assert!(game.world.players[&shooter].channel_left > 0);
     hold_slot(&mut game, shooter, &mut seq, 0, 3, BANDAGE_TICKS + 1);
     assert_eq!(game.world.players[&shooter].hp, 30 + def(ITEM_BANDAGE).unwrap().damage);
-    assert_eq!(game.world.players[&shooter].hotbar[3], ItemSlot(ITEM_NONE, 0, 0));
+    assert_eq!(game.world.players[&shooter].hotbar[3], ItemSlot { item: ITEM_NONE, count: 0, ammo: 0 });
 }
 
 #[test]
@@ -539,7 +539,7 @@ fn being_hit_spoils_a_bandage_and_full_health_does_not_start_one() {
     assert_eq!(game.world.players[&shooter].channel_left, 0);
     hold_slot(&mut game, shooter, &mut seq, 0, 3, BANDAGE_TICKS + 1);
     assert_eq!(game.world.players[&shooter].hp, 45);
-    assert_eq!(game.world.players[&shooter].hotbar[3].1, 2, "not spent");
+    assert_eq!(game.world.players[&shooter].hotbar[3].count, 2, "not spent");
 }
 
 #[test]
@@ -551,9 +551,9 @@ fn a_new_life_starts_with_the_standard_loadout() {
     assert!(game.world.players[&target].alive());
     let hotbar = game.world.players[&target].hotbar;
     assert_eq!(hotbar, starting_hotbar());
-    let items: Vec<u8> = hotbar.iter().map(|slot| slot.0).collect();
+    let items: Vec<u8> = hotbar.iter().map(|slot| slot.item).collect();
     assert_eq!(items, [ITEM_REVOLVER, ITEM_AK5, ITEM_SNIPER, ITEM_GRENADE, ITEM_NONE]);
-    assert_eq!(hotbar[1].2, def(ITEM_AK5).unwrap().mag, "magazines are full");
+    assert_eq!(hotbar[1].ammo, def(ITEM_AK5).unwrap().mag, "magazines are full");
     let _ = &mut seq;
 }
 /// A game on a world with one solid pine at (10, 0), identified as tile (2, 3) index 0.
@@ -617,10 +617,8 @@ fn a_car_at_speed_fells_the_tree_it_drives_into() {
     let mut game = Game::new(map, 0).unwrap();
     game.world.pickups.clear();
     let (_, driver) = driver_in_the_car(&mut game);
-    let mut seq = 0;
-    for _ in 0..TICK_RATE * 6 {
-        seq += 1;
-        game.handle(Command::Input(driver, 0, vec![InputFrame(seq, 0, 127, 0, 0, 0, 0, 0)]));
+    for seq in 1..=TICK_RATE * 6 {
+        game.handle(Command::Input(driver, 0, vec![InputFrame { seq, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
         game.step();
     }
     assert!(!game.world.destroyed.is_empty(), "the car drove 6 s and felled nothing");

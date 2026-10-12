@@ -30,12 +30,12 @@ pub struct Seat {
 /// What a player holds at the start of every life: the revolver, the AK5 and the sniper rifle with full
 /// magazines, a full stack of grenades, and one empty slot for whatever turns up.
 pub fn starting_hotbar() -> [ItemSlot; HOTBAR_SLOTS] {
-    let full = |item: u8| ItemSlot(item, 1, def(item).map_or(0, |d| d.mag));
-    let mut hotbar = [ItemSlot(ITEM_NONE, 0, 0); HOTBAR_SLOTS];
+    let full = |item: u8| ItemSlot { item, count: 1, ammo: def(item).map_or(0, |d| d.mag) };
+    let mut hotbar = [ItemSlot { item: ITEM_NONE, count: 0, ammo: 0 }; HOTBAR_SLOTS];
     hotbar[0] = full(ITEM_REVOLVER);
     hotbar[1] = full(ITEM_AK5);
     hotbar[2] = full(ITEM_SNIPER);
-    hotbar[3] = ItemSlot(ITEM_GRENADE, def(ITEM_GRENADE).map_or(1, |d| d.stack), 0);
+    hotbar[3] = ItemSlot { item: ITEM_GRENADE, count: def(ITEM_GRENADE).map_or(1, |d| d.stack), ammo: 0 };
     hotbar
 }
 

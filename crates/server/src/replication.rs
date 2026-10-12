@@ -69,8 +69,8 @@ impl Replica {
             Some((tick, scene)) => (*tick, scene),
             None => (0, &empty),
         };
-        let held_entity = |id: u32| baseline.entities.binary_search_by_key(&id, |e| e.0).is_ok();
-        let held_vehicle = |id: u32| baseline.vehicles.binary_search_by_key(&id, |v| v.0).is_ok();
+        let held_entity = |id: u32| baseline.entities.binary_search_by_key(&id, |e| e.id).is_ok();
+        let held_vehicle = |id: u32| baseline.vehicles.binary_search_by_key(&id, |v| v.id).is_ok();
         let distance = |x: i32, z: i32| ((x as f32 / 100.0 - at[0]).powi(2) + (z as f32 / 100.0 - at[1]).powi(2)).sqrt();
         let within = |held: bool, d: f32| d <= INTEREST_RADIUS + if held { INTEREST_HYSTERESIS } else { 0.0 };
 
@@ -78,77 +78,61 @@ impl Replica {
         let mut entities: Vec<(f32, EntityState)> = world
             .entities
             .iter()
-            .map(|e| (distance(e.2, e.4), *e))
-            .filter(|(d, e)| within(held_entity(e.0), *d))
+            .map(|e| (distance(e.x, e.z), *e))
+            .filter(|(d, e)| within(held_entity(e.id), *d))
             .collect();
         let mut vehicles: Vec<(f32, VehicleState)> = world
             .vehicles
             .iter()
-            .map(|v| (distance(v.2, v.4), v.clone()))
-            .filter(|(d, v)| within(held_vehicle(v.0), *d))
+            .map(|v| (distance(v.x, v.z), v.clone()))
+            .filter(|(d, v)| within(held_vehicle(v.id), *d))
             .collect();
         entities.sort_by(|a, b| a.0.total_cmp(&b.0));
         vehicles.sort_by(|a, b| a.0.total_cmp(&b.0));
 
-        let mut shots: Vec<ShotEvent> = world.shots.iter().filter(|s| distance(s.2, s.4) <= INTEREST_RADIUS).copied().collect();
+        let mut shots: Vec<ShotEvent> = world.shots.iter().filter(|s| distance(s.x, s.z) <= INTEREST_RADIUS).copied().collect();
         shots.truncate(MAX_SHOT_EVENTS);
-        let mut rockets: Vec<ProjectileState> = world.rockets.iter().filter(|r| distance(r.2, r.4) <= INTEREST_RADIUS).copied().collect();
+        let mut rockets: Vec<ProjectileState> = world.rockets.iter().filter(|r| distance(r.x, r.z) <= INTEREST_RADIUS).copied().collect();
         // Items on the ground are static, so only the nearest few are listed: the rest arrive as the player walks up.
-        let mut pickups: Vec<(f32, PickupState)> = world.pickups.iter().map(|p| (distance(p.2, p.4), *p)).filter(|(d, _)| *d <= INTEREST_RADIUS).collect();
+        let mut pickups: Vec<(f32, PickupState)> = world.pickups.iter().map(|p| (distance(p.x, p.z), *p)).filter(|(d, _)| *d <= INTEREST_RADIUS).collect();
         pickups.sort_by(|a, b| a.0.total_cmp(&b.0));
         pickups.truncate(MAX_PICKUPS_PER_SNAPSHOT);
         let mut pickups: Vec<PickupState> = pickups.into_iter().map(|(_, p)| p).collect();
 
         let by_id = |entities: &[(f32, EntityState)]| {
             let mut list: Vec<EntityState> = entities.iter().map(|(_, e)| *e).collect();
-            list.sort_by_key(|e| e.0);
+            list.sort_by_key(|e| e.id);
             list
         };
         let scene_of = |entities: &[(f32, EntityState)], vehicles: &[(f32, VehicleState)]| {
             let mut v: Vec<VehicleState> = vehicles.iter().map(|(_, v)| v.clone()).collect();
-            v.sort_by_key(|v| v.0);
+            v.sort_by_key(|v| v.id);
             Scene { entities: by_id(entities), vehicles: v }
         };
 
         let mut delta = diff(baseline, &scene_of(&entities, &vehicles));
         // Distances by id, to order the delta lists nearest-first.
-        let entity_distances: HashMap<u32, f32> = entities.iter().map(|(d, e)| (e.0, *d)).collect();
-        let vehicle_distances: HashMap<u32, f32> = vehicles.iter().map(|(d, v)| (v.0, *d)).collect();
+        let entity_distances: HashMap<u32, f32> = entities.iter().map(|(d, e)| (e.id, *d)).collect();
+        let vehicle_distances: HashMap<u32, f32> = vehicles.iter().map(|(d, v)| (v.id, *d)).collect();
         let entity_distance = |id: u32| entity_distances.get(&id).copied().unwrap_or(0.0);
         let vehicle_distance = |id: u32| vehicle_distances.get(&id).copied().unwrap_or(0.0);
-        delta.new_entities.sort_by(|a, b| entity_distance(a.0).total_cmp(&entity_distance(b.0)));
-        delta.entities.sort_by(|a, b| entity_distance(a.0).total_cmp(&entity_distance(b.0)));
-        delta.new_vehicles.sort_by(|a, b| vehicle_distance(a.0).total_cmp(&vehicle_distance(b.0)));
-        delta.vehicles.sort_by(|a, b| vehicle_distance(a.0).total_cmp(&vehicle_distance(b.0)));
+        delta.new_entities.sort_by(|a, b| entity_distance(a.id).total_cmp(&entity_distance(b.id)));
+        delta.entities.sort_by(|a, b| entity_distance(a.id).total_cmp(&entity_distance(b.id)));
+        delta.new_vehicles.sort_by(|a, b| vehicle_distance(a.id).total_cmp(&vehicle_distance(b.id)));
+        delta.vehicles.sort_by(|a, b| vehicle_distance(a.id).total_cmp(&vehicle_distance(b.id)));
 
         let encode_with = |delta: &Delta, shots: &[ShotEvent], rockets: &[ProjectileState], pickups: &[PickupState]| {
-            encode(&Snapshot(
-                S_SNAPSHOT,
-                own.tick,
-                baseline_tick,
-                own.ack,
-                own.ride,
-                delta.new_entities.clone(),
-                delta.entities.clone(),
-                delta.new_vehicles.clone(),
-                delta.vehicles.clone(),
-                delta.removed.clone(),
-                own.drive,
-                own.me.clone(),
-                shots.to_vec(),
-                rockets.to_vec(),
-                pickups.to_vec(),
-            ))
+            encode(&Snapshot { tag: S_SNAPSHOT, tick: own.tick, baseline: baseline_tick, ack: own.ack, ride: own.ride, new_entities: delta.new_entities.clone(), entities: delta.entities.clone(), new_vehicles: delta.new_vehicles.clone(), vehicles: delta.vehicles.clone(), removed: delta.removed.clone(), drive: own.drive, me: own.me.clone(), shots: shots.to_vec(), rockets: rockets.to_vec(), pickups: pickups.to_vec() })
         };
         let mut bytes = encode_with(&delta, &shots, &rockets, &pickups);
         // Shed what can be shed: effects (cosmetic) first, then rockets, then the farthest
         // newcomers and changes. `removed` is never shed: stale things would linger.
         while bytes.len() > MAX_PACKET {
             let candidates = [
-                delta.new_entities.last().map(|e| (entity_distance(e.0), 0)),
-                delta.entities.last().map(|e| (entity_distance(e.0), 1)),
-                delta.new_vehicles.last().map(|v| (vehicle_distance(v.0), 2)),
-                delta.vehicles.last().map(|v| (vehicle_distance(v.0), 3)),
+                delta.new_entities.last().map(|e| (entity_distance(e.id), 0)),
+                delta.entities.last().map(|e| (entity_distance(e.id), 1)),
+                delta.new_vehicles.last().map(|v| (vehicle_distance(v.id), 2)),
+                delta.vehicles.last().map(|v| (vehicle_distance(v.id), 3)),
             ];
             if shots.pop().is_some() || rockets.pop().is_some() || pickups.pop().is_some() {
             } else if let Some((_, which)) = candidates.into_iter().flatten().max_by(|a, b| a.0.total_cmp(&b.0)) {
@@ -179,7 +163,7 @@ mod tests {
     use super::*;
 
     fn person(id: u32, x_m: f32, z_m: f32) -> EntityState {
-        EntityState(id, KIND_STICKMAN, (x_m * 100.0) as i32, 90, (z_m * 100.0) as i32, 0, 0, FLAG_GROUNDED, 0, 0)
+        EntityState { id, kind: KIND_STICKMAN, x: (x_m * 100.0) as i32, y: 90, z: (z_m * 100.0) as i32, yaw: 0, vy: 0, flags: FLAG_GROUNDED, knock_x: 0, knock_z: 0 }
     }
 
     fn snapshot(replica: &mut Replica, tick: u32, entities: &[EntityState]) -> Snapshot {
@@ -191,16 +175,16 @@ mod tests {
 
     /// What a client rebuilds from `snapshot`, given the scenes it holds.
     fn rebuild(held: &mut Vec<(u32, Scene)>, snapshot: &Snapshot) -> Scene {
-        let base = held.iter().find(|(tick, _)| *tick == snapshot.2).map(|(_, s)| s.clone()).unwrap_or_default();
+        let base = held.iter().find(|(tick, _)| *tick == snapshot.baseline).map(|(_, s)| s.clone()).unwrap_or_default();
         let delta = Delta {
-            new_entities: snapshot.5.clone(),
-            entities: snapshot.6.clone(),
-            new_vehicles: snapshot.7.clone(),
-            vehicles: snapshot.8.clone(),
-            removed: snapshot.9.clone(),
+            new_entities: snapshot.new_entities.clone(),
+            entities: snapshot.entities.clone(),
+            new_vehicles: snapshot.new_vehicles.clone(),
+            vehicles: snapshot.vehicles.clone(),
+            removed: snapshot.removed.clone(),
         };
         let scene = apply(&base, &delta);
-        held.push((snapshot.1, scene.clone()));
+        held.push((snapshot.tick, scene.clone()));
         scene
     }
 
@@ -217,7 +201,7 @@ mod tests {
         replica.acknowledge(2);
         let closer = person(2, INTEREST_RADIUS - 10.0, 0.0);
         let second = snapshot(&mut replica, 4, &[near, closer]);
-        assert_eq!(second.2, 2, "diffed against the acknowledged snapshot");
+        assert_eq!(second.baseline, 2, "diffed against the acknowledged snapshot");
         assert_eq!(rebuild(&mut held, &second).entities, vec![near, closer]);
 
         replica.acknowledge(4);
@@ -228,7 +212,7 @@ mod tests {
         replica.acknowledge(6);
         let gone = person(2, INTEREST_RADIUS + INTEREST_HYSTERESIS + 10.0, 0.0);
         let fourth = snapshot(&mut replica, 8, &[near, gone]);
-        assert_eq!(fourth.9, vec![2]);
+        assert_eq!(fourth.removed, vec![2]);
         assert_eq!(rebuild(&mut held, &fourth).entities, vec![near]);
     }
 
@@ -237,11 +221,11 @@ mod tests {
         let mut replica = Replica::default();
         let people: Vec<EntityState> = (1..=20).map(|id| person(id, id as f32, 0.0)).collect();
         let full = snapshot(&mut replica, 2, &people);
-        assert_eq!(full.5.len(), 20);
+        assert_eq!(full.new_entities.len(), 20);
         replica.acknowledge(2);
         let again = snapshot(&mut replica, 4, &people);
-        assert_eq!(again.2, 2);
-        assert!(again.5.is_empty() && again.6.is_empty() && again.9.is_empty());
+        assert_eq!(again.baseline, 2);
+        assert!(again.new_entities.is_empty() && again.entities.is_empty() && again.removed.is_empty());
     }
 
     #[test]
@@ -250,8 +234,8 @@ mod tests {
         let people = [person(1, 1.0, 0.0), person(2, 2.0, 0.0)];
         snapshot(&mut replica, 2, &people);
         let second = snapshot(&mut replica, 4, &people);
-        assert_eq!(second.2, 0);
-        assert_eq!(second.5.len(), 2);
+        assert_eq!(second.baseline, 0);
+        assert_eq!(second.new_entities.len(), 2);
     }
 
     #[test]
@@ -259,7 +243,7 @@ mod tests {
         let mut replica = Replica::default();
         replica.acknowledge(999);
         let snap = snapshot(&mut replica, 2, &[person(1, 1.0, 0.0)]);
-        assert_eq!(snap.2, 0);
+        assert_eq!(snap.baseline, 0);
     }
 
     #[test]
@@ -272,7 +256,7 @@ mod tests {
             snapshot(&mut replica, 4 + i * 2, &people);
         }
         let late = snapshot(&mut replica, 1000, &people);
-        assert_eq!(late.2, 0, "the acknowledged snapshot is long gone: start over");
+        assert_eq!(late.baseline, 0, "the acknowledged snapshot is long gone: start over");
     }
 
     #[test]
@@ -282,16 +266,16 @@ mod tests {
         let people: Vec<EntityState> = (1..=MAX_PLAYERS as u32)
             .map(|id| {
                 let mut e = person(id, id as f32 * 3.0, -(id as f32));
-                e.5 = -2000;
-                e.6 = -650;
-                e.8 = 700;
-                e.9 = -700;
+                e.yaw = -2000;
+                e.vy = -650;
+                e.knock_x = 700;
+                e.knock_z = -700;
                 e
             })
             .collect();
         let first = snapshot(&mut replica, 2, &people);
-        assert!(first.5.len() < MAX_PLAYERS, "a packet cannot hold {MAX_PLAYERS} whole entities");
-        let ids: Vec<u32> = first.5.iter().map(|e| e.0).collect();
+        assert!(first.new_entities.len() < MAX_PLAYERS, "a packet cannot hold {MAX_PLAYERS} whole entities");
+        let ids: Vec<u32> = first.new_entities.iter().map(|e| e.id).collect();
         assert!(ids.contains(&1), "the nearest got in");
         // The rest follow, each acknowledged snapshot bringing the next nearest.
         let mut held = Vec::new();
@@ -309,12 +293,12 @@ mod tests {
     #[test]
     fn effects_out_of_range_are_not_sent() {
         let mut replica = Replica::default();
-        let near = ShotEvent(3, WEAPON_RIFLE, 500, 90, 0);
-        let far = ShotEvent(3, WEAPON_RIFLE, 90_000, 90, 0);
+        let near = ShotEvent { shooter: 3, weapon: WEAPON_RIFLE, x: 500, y: 90, z: 0 };
+        let far = ShotEvent { shooter: 3, weapon: WEAPON_RIFLE, x: 90_000, y: 90, z: 0 };
         let world = Everything { entities: &[], vehicles: &[], shots: &[near, far], rockets: &[], pickups: &[] };
         let bytes = replica.snapshot([0.0, 0.0], &world, Own { tick: 2, ..Default::default() });
         let snap: Snapshot = decode(&bytes).unwrap();
-        assert_eq!(snap.12, vec![near]);
+        assert_eq!(snap.shots, vec![near]);
     }
 
     /// Thirty players running about, snapshot after acknowledged snapshot.
@@ -327,7 +311,7 @@ mod tests {
                 .map(|id| {
                     let phase = id as i32 * 37;
                     // About 7.5 m/s at 30 snapshots a second is 25 cm a snapshot.
-                    EntityState(id, KIND_STICKMAN, 5_000 + phase * 20 + step * 25, 87, -3_000 + phase * 10 - step * 9, ((step + phase) % 6000 - 3000) as i16, 0, FLAG_GROUNDED, 0, 0)
+                    EntityState { id, kind: KIND_STICKMAN, x: 5_000 + phase * 20 + step * 25, y: 87, z: -3_000 + phase * 10 - step * 9, yaw: ((step + phase) % 6000 - 3000) as i16, vy: 0, flags: FLAG_GROUNDED, knock_x: 0, knock_z: 0 }
                 })
                 .collect()
         };

@@ -31,79 +31,29 @@ impl Delta {
 }
 
 fn entity_delta(base: &EntityState, now: &EntityState) -> Option<EntityDelta> {
-    let delta = EntityDelta(
-        now.0,
-        now.2 - base.2,
-        now.3 - base.3,
-        now.4 - base.4,
-        now.5 as i32 - base.5 as i32,
-        now.6 as i32 - base.6 as i32,
-        now.7,
-        now.8 as i32 - base.8 as i32,
-        now.9 as i32 - base.9 as i32,
-    );
-    let unchanged = delta.1 == 0 && delta.2 == 0 && delta.3 == 0 && delta.4 == 0 && delta.5 == 0 && delta.6 == base.7 && delta.7 == 0 && delta.8 == 0;
+    let delta = EntityDelta { id: now.id, dx: now.x - base.x, dy: now.y - base.y, dz: now.z - base.z, dyaw: now.yaw as i32 - base.yaw as i32, dvy: now.vy as i32 - base.vy as i32, flags: now.flags, dknock_x: now.knock_x as i32 - base.knock_x as i32, dknock_z: now.knock_z as i32 - base.knock_z as i32 };
+    let unchanged = delta.dx == 0 && delta.dy == 0 && delta.dz == 0 && delta.dyaw == 0 && delta.dvy == 0 && delta.flags == base.flags && delta.dknock_x == 0 && delta.dknock_z == 0;
     (!unchanged).then_some(delta)
 }
 
 fn apply_entity(base: &EntityState, delta: &EntityDelta) -> EntityState {
-    EntityState(
-        base.0,
-        base.1,
-        base.2 + delta.1,
-        base.3 + delta.2,
-        base.4 + delta.3,
-        (base.5 as i32 + delta.4) as i16,
-        (base.6 as i32 + delta.5) as i16,
-        delta.6,
-        (base.8 as i32 + delta.7) as i16,
-        (base.9 as i32 + delta.8) as i16,
-    )
+    EntityState { id: base.id, kind: base.kind, x: base.x + delta.dx, y: base.y + delta.dy, z: base.z + delta.dz, yaw: (base.yaw as i32 + delta.dyaw) as i16, vy: (base.vy as i32 + delta.dvy) as i16, flags: delta.flags, knock_x: (base.knock_x as i32 + delta.dknock_x) as i16, knock_z: (base.knock_z as i32 + delta.dknock_z) as i16 }
 }
 
 fn vehicle_delta(base: &VehicleState, now: &VehicleState) -> Option<VehicleDelta> {
-    let seats = (now.9 != base.9).then(|| now.9.clone());
-    let turret: Option<Turret> = if now.10 != base.10 { now.10 } else { None };
-    let delta = VehicleDelta(
-        now.0,
-        now.2 - base.2,
-        now.3 - base.3,
-        now.4 - base.4,
-        now.5 as i32 - base.5 as i32,
-        now.6 as i32 - base.6 as i32,
-        now.7 as i32 - base.7 as i32,
-        now.8 as i32 - base.8 as i32,
-        seats,
-        turret,
-        now.11,
-        (now.12 != base.12).then(|| now.12.unwrap_or_default()),
-        if now.13 != base.13 { now.13 } else { None },
-    );
-    let unchanged = delta.1 == 0 && delta.2 == 0 && delta.3 == 0 && delta.4 == 0 && delta.5 == 0 && delta.6 == 0 && delta.7 == 0
-        && delta.8.is_none() && delta.9.is_none() && now.11 == base.11 && delta.11.is_none() && delta.12.is_none();
+    let seats = (now.seats != base.seats).then(|| now.seats.clone());
+    let turret: Option<Turret> = if now.turret != base.turret { now.turret } else { None };
+    let delta = VehicleDelta { id: now.id, dx: now.x - base.x, dy: now.y - base.y, dz: now.z - base.z, dqx: now.qx as i32 - base.qx as i32, dqy: now.qy as i32 - base.qy as i32, dqz: now.qz as i32 - base.qz as i32, dsteer: now.steer as i32 - base.steer as i32, seats, turret, hp: now.hp, damage: (now.damage != base.damage).then(|| now.damage.unwrap_or_default()), arms: if now.arms != base.arms { now.arms } else { None } };
+    let unchanged = delta.dx == 0 && delta.dy == 0 && delta.dz == 0 && delta.dqx == 0 && delta.dqy == 0 && delta.dqz == 0 && delta.dsteer == 0
+        && delta.seats.is_none() && delta.turret.is_none() && now.hp == base.hp && delta.damage.is_none() && delta.arms.is_none();
     (!unchanged).then_some(delta)
 }
 
 fn apply_vehicle(base: &VehicleState, delta: &VehicleDelta) -> VehicleState {
-    VehicleState(
-        base.0,
-        base.1,
-        base.2 + delta.1,
-        base.3 + delta.2,
-        base.4 + delta.3,
-        (base.5 as i32 + delta.4) as i16,
-        (base.6 as i32 + delta.5) as i16,
-        (base.7 as i32 + delta.6) as i16,
-        (base.8 as i32 + delta.7) as i8,
-        delta.8.clone().unwrap_or_else(|| base.9.clone()),
-        delta.9.or(base.10),
-        delta.10,
-        match delta.11 {
+    VehicleState { id: base.id, kind: base.kind, x: base.x + delta.dx, y: base.y + delta.dy, z: base.z + delta.dz, qx: (base.qx as i32 + delta.dqx) as i16, qy: (base.qy as i32 + delta.dqy) as i16, qz: (base.qz as i32 + delta.dqz) as i16, steer: (base.steer as i32 + delta.dsteer) as i8, seats: delta.seats.clone().unwrap_or_else(|| base.seats.clone()), turret: delta.turret.or(base.turret), hp: delta.hp, damage: match delta.damage {
             Some(damage) => (damage != [0; 8]).then_some(damage),
-            None => base.12,
-        },
-        delta.12.or(base.13),
-    )
+            None => base.damage,
+        }, arms: delta.arms.or(base.arms) }
 }
 
 /// What to send so that a client holding `base` ends up holding `now`. Both scenes must be
@@ -112,19 +62,19 @@ fn apply_vehicle(base: &VehicleState, delta: &VehicleDelta) -> VehicleState {
 pub fn diff(base: &Scene, now: &Scene) -> Delta {
     let mut delta = Delta::default();
     for entity in &now.entities {
-        match base.entities.binary_search_by_key(&entity.0, |e| e.0) {
+        match base.entities.binary_search_by_key(&entity.id, |e| e.id) {
             Ok(i) => delta.entities.extend(entity_delta(&base.entities[i], entity)),
             Err(_) => delta.new_entities.push(*entity),
         }
     }
     for vehicle in &now.vehicles {
-        match base.vehicles.binary_search_by_key(&vehicle.0, |v| v.0) {
+        match base.vehicles.binary_search_by_key(&vehicle.id, |v| v.id) {
             Ok(i) => delta.vehicles.extend(vehicle_delta(&base.vehicles[i], vehicle)),
             Err(_) => delta.new_vehicles.push(vehicle.clone()),
         }
     }
-    delta.removed.extend(base.entities.iter().map(|e| e.0).filter(|id| now.entities.binary_search_by_key(id, |e| e.0).is_err()));
-    delta.removed.extend(base.vehicles.iter().map(|v| v.0).filter(|id| now.vehicles.binary_search_by_key(id, |v| v.0).is_err()));
+    delta.removed.extend(base.entities.iter().map(|e| e.id).filter(|id| now.entities.binary_search_by_key(id, |e| e.id).is_err()));
+    delta.removed.extend(base.vehicles.iter().map(|v| v.id).filter(|id| now.vehicles.binary_search_by_key(id, |v| v.id).is_err()));
     delta
 }
 
@@ -134,25 +84,25 @@ pub fn apply(base: &Scene, delta: &Delta) -> Scene {
     let mut entities: Vec<EntityState> = base
         .entities
         .iter()
-        .filter(|e| !delta.removed.contains(&e.0))
-        .map(|e| match delta.entities.iter().find(|d| d.0 == e.0) {
+        .filter(|e| !delta.removed.contains(&e.id))
+        .map(|e| match delta.entities.iter().find(|d| d.id == e.id) {
             Some(d) => apply_entity(e, d),
             None => *e,
         })
         .collect();
     entities.extend(delta.new_entities.iter().copied());
-    entities.sort_by_key(|e| e.0);
+    entities.sort_by_key(|e| e.id);
     let mut vehicles: Vec<VehicleState> = base
         .vehicles
         .iter()
-        .filter(|v| !delta.removed.contains(&v.0))
-        .map(|v| match delta.vehicles.iter().find(|d| d.0 == v.0) {
+        .filter(|v| !delta.removed.contains(&v.id))
+        .map(|v| match delta.vehicles.iter().find(|d| d.id == v.id) {
             Some(d) => apply_vehicle(v, d),
             None => v.clone(),
         })
         .collect();
     vehicles.extend(delta.new_vehicles.iter().cloned());
-    vehicles.sort_by_key(|v| v.0);
+    vehicles.sort_by_key(|v| v.id);
     Scene { entities, vehicles }
 }
 
@@ -162,28 +112,28 @@ mod tests {
     use crate::protocol::{ARMS_CUT, Arms, FLAG_GROUNDED, KIND_JEEP, KIND_PLANE, KIND_STICKMAN, KIND_TANK};
 
     fn person(id: u32, x: i32) -> EntityState {
-        EntityState(id, KIND_STICKMAN, x, 90, -x, 100, 0, FLAG_GROUNDED, 0, 0)
+        EntityState { id, kind: KIND_STICKMAN, x, y: 90, z: -x, yaw: 100, vy: 0, flags: FLAG_GROUNDED, knock_x: 0, knock_z: 0 }
     }
 
     fn car(id: u32, x: i32, seats: Vec<u32>) -> VehicleState {
-        VehicleState(id, KIND_JEEP, x, 40, 7, 10, -20, 30, 5, seats, None, 100, None, None)
+        VehicleState { id, kind: KIND_JEEP, x, y: 40, z: 7, qx: 10, qy: -20, qz: 30, steer: 5, seats, turret: None, hp: 100, damage: None, arms: None }
     }
 
     fn tank(id: u32, yaw: i16) -> VehicleState {
-        VehicleState(id, KIND_TANK, 0, 40, 0, 0, 0, 0, 0, vec![0, 0], Some(Turret(yaw, 100, 1, 500)), 250, None, None)
+        VehicleState { id, kind: KIND_TANK, x: 0, y: 40, z: 0, qx: 0, qy: 0, qz: 0, steer: 0, seats: vec![0, 0], turret: Some(Turret { yaw, pitch: 100, shots: 1, range: 500 }), hp: 250, damage: None, arms: None }
     }
 
     fn plane(id: u32, arms: Arms) -> VehicleState {
-        VehicleState(id, KIND_PLANE, 0, 140, 0, 0, 0, 0, 0, vec![0, 0], Some(Turret(0, 0, 0, 0)), 70, None, Some(arms))
+        VehicleState { id, kind: KIND_PLANE, x: 0, y: 140, z: 0, qx: 0, qy: 0, qz: 0, steer: 0, seats: vec![0, 0], turret: Some(Turret { yaw: 0, pitch: 0, shots: 0, range: 0 }), hp: 70, damage: None, arms: Some(arms) }
     }
 
     #[test]
     fn apply_reproduces_the_new_scene() {
         let base = Scene { entities: vec![person(1, 100), person(2, 200), person(5, 300)], vehicles: vec![car(9, 0, vec![0; 4]), tank(10, 0)] };
         let mut moved = person(2, 230);
-        moved.5 = -3000;
-        moved.6 = 650;
-        moved.8 = -400;
+        moved.yaw = -3000;
+        moved.vy = 650;
+        moved.knock_x = -400;
         let now = Scene {
             entities: vec![person(1, 100), moved, person(7, 50)],
             vehicles: vec![car(9, 120, vec![1, 0, 0, 0]), tank(10, -700)],
@@ -213,10 +163,10 @@ mod tests {
     fn a_turret_that_did_not_move_is_not_resent() {
         let a = tank(10, 300);
         let mut b = a.clone();
-        b.2 = 400;
+        b.x = 400;
         let delta = diff(&Scene { entities: vec![], vehicles: vec![a] }, &Scene { entities: vec![], vehicles: vec![b.clone()] });
-        assert_eq!(delta.vehicles[0].8, None);
-        assert_eq!(delta.vehicles[0].9, None);
+        assert_eq!(delta.vehicles[0].seats, None);
+        assert_eq!(delta.vehicles[0].turret, None);
         assert_eq!(apply(&Scene { entities: vec![], vehicles: vec![tank(10, 300)] }, &delta).vehicles, vec![b]);
     }
 
@@ -224,33 +174,33 @@ mod tests {
     fn damage_is_sent_when_it_changes_and_a_repair_clears_it() {
         let clean = Scene { entities: vec![], vehicles: vec![car(9, 0, vec![0; 4])] };
         let mut hurt = clean.clone();
-        hurt.vehicles[0].12 = Some([90, 0, 0, 20, 0, 0, 0, 255]);
+        hurt.vehicles[0].damage = Some([90, 0, 0, 20, 0, 0, 0, 255]);
         let delta = diff(&clean, &hurt);
-        assert_eq!(delta.vehicles[0].11, Some([90, 0, 0, 20, 0, 0, 0, 255]));
+        assert_eq!(delta.vehicles[0].damage, Some([90, 0, 0, 20, 0, 0, 0, 255]));
         assert_eq!(apply(&clean, &delta), hurt);
         // Moving on without new damage does not resend it.
         let mut moved = hurt.clone();
-        moved.vehicles[0].2 = 50;
-        assert_eq!(diff(&hurt, &moved).vehicles[0].11, None);
+        moved.vehicles[0].x = 50;
+        assert_eq!(diff(&hurt, &moved).vehicles[0].damage, None);
         assert_eq!(apply(&hurt, &diff(&hurt, &moved)), moved);
         // A fresh vehicle at home has none.
         let delta = diff(&hurt, &clean);
-        assert_eq!(delta.vehicles[0].11, Some([0; 8]));
+        assert_eq!(delta.vehicles[0].damage, Some([0; 8]));
         assert_eq!(apply(&hurt, &delta), clean);
     }
 
     #[test]
     fn arms_are_sent_only_when_they_change() {
-        let base = Scene { entities: vec![], vehicles: vec![plane(12, Arms(0, 0, 0, 4, 0))] };
+        let base = Scene { entities: vec![], vehicles: vec![plane(12, Arms { shots: 0, heat: 0, rear_heat: 0, bombs: 4, flags: 0 })] };
         let mut fired = base.clone();
-        fired.vehicles[0].13 = Some(Arms(3, 31, 0, 4, ARMS_CUT));
+        fired.vehicles[0].arms = Some(Arms { shots: 3, heat: 31, rear_heat: 0, bombs: 4, flags: ARMS_CUT });
         let delta = diff(&base, &fired);
-        assert_eq!(delta.vehicles[0].12, Some(Arms(3, 31, 0, 4, ARMS_CUT)));
+        assert_eq!(delta.vehicles[0].arms, Some(Arms { shots: 3, heat: 31, rear_heat: 0, bombs: 4, flags: ARMS_CUT }));
         assert_eq!(apply(&base, &delta), fired);
         let mut moved = fired.clone();
-        moved.vehicles[0].2 = 900;
+        moved.vehicles[0].x = 900;
         let delta = diff(&fired, &moved);
-        assert_eq!(delta.vehicles[0].12, None, "unchanged arms are not resent");
+        assert_eq!(delta.vehicles[0].arms, None, "unchanged arms are not resent");
         assert_eq!(apply(&fired, &delta), moved);
         assert!(diff(&moved, &moved).is_empty());
     }

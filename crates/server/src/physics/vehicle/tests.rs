@@ -360,7 +360,7 @@ fn cars_are_solid_to_characters() {
     run(&mut physics, COAST, 60);
     let mut character = Character { position: [-4.0, STANDING_Y, 0.0], grounded: true, ..Default::default() };
     // Yaw -π/2 faces +X, into the car's flank.
-    let toward_car = InputFrame(1, 0, 127, -1571, 0, 0, 0, 0);
+    let toward_car = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: -1571, buttons: 0, pitch: 0, view: 0, slot: 0 };
     for _ in 0..180 {
         physics.move_character(&mut character, &toward_car, TICK_DT);
     }

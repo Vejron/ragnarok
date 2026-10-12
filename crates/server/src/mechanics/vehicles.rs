@@ -367,7 +367,7 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
             let speed = before.get(&vid).map_or(0.0, |pose| pose.velocity.iter().map(|v| v * v).sum::<f32>().sqrt());
             if impact.dv > SCRAPE_MIN_DV && speed > SCRAPE_SPEED && vehicle.scrape_in == 0 {
                 vehicle.scrape_in = SCRAPE_EVERY;
-                world.shots.push(ShotEvent(vid, WEAPON_SCRAPE, x, y, z));
+                world.shots.push(ShotEvent { shooter: vid, weapon: WEAPON_SCRAPE, x, y, z });
             }
             continue;
         }
@@ -383,7 +383,7 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
         dent(vehicle.kind, &mut vehicle.damage, impact.local, over);
         // Whoever drove the other vehicle into it is to blame, should it go up.
         let attacker = impact.other_car.and_then(|other| world.vehicles.get(&other)?.seats[0]);
-        world.shots.push(ShotEvent(vid, WEAPON_CRASH, x, y, z));
+        world.shots.push(ShotEvent { shooter: vid, weapon: WEAPON_CRASH, x, y, z });
         super::combat::damage_vehicle(world, vid, (over * CRASH_HP_PER_DV).round().min(255.0) as u8, attacker);
     }
 }
@@ -492,14 +492,14 @@ impl Mechanic for Vehicles {
                     let input = &driver.input;
                     let buttons = input.buttons();
                     CarControls {
-                        steer: from_axis(input.1),
-                        throttle: from_axis(input.2),
+                        steer: from_axis(input.strafe),
+                        throttle: from_axis(input.forward),
                         handbrake: buttons & BUTTON_JUMP != 0,
                         // A helicopter climbs on jump and sinks on run.
                         lift: f32::from(buttons & BUTTON_JUMP != 0) - f32::from(buttons & BUTTON_RUN != 0),
                         powered: true,
                         // A plane flies towards where its pilot looks.
-                        aim: (vehicle.kind == KIND_PLANE).then(|| [shared::quant::from_mrad(input.3), shared::quant::from_mrad(input.pitch())]),
+                        aim: (vehicle.kind == KIND_PLANE).then(|| [shared::quant::from_mrad(input.yaw), shared::quant::from_mrad(input.pitch())]),
                     }
                 }
                 None => CarControls { handbrake: true, ..Default::default() },

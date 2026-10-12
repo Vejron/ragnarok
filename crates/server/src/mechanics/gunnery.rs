@@ -45,7 +45,7 @@ fn burst(world: &mut World, kind: u8, owner: u32, point: [f32; 3], dir: [f32; 3]
         _ => (WEAPON_SHELL, EXPLOSION_RADIUS, EXPLOSION_DAMAGE, EXPLOSION_KNOCK),
     };
     let [x, y, z] = point.map(to_cm);
-    world.shots.push(ShotEvent(owner, weapon, x, y, z));
+    world.shots.push(ShotEvent { shooter: owner, weapon, x, y, z });
     // A gunner who has left or died still gets the blast, just not the credit.
     let attacker = world.players.contains_key(&owner).then_some(owner);
     blast(world, Blast { point, radius, damage, knock, dir, attacker, weapon });
@@ -115,7 +115,7 @@ fn work_autocannon(world: &mut World, vid: u32, mut gun: Gun, pose: &CarPose, dt
     let Some(gunner) = world.vehicles[&vid].seats[GUNNER_SEAT] else { return gun };
     let Some(input) = world.players.get(&gunner).map(|player| player.input) else { return gun };
 
-    let local = pose.local_dir(look(from_mrad(input.3), from_mrad(input.pitch())));
+    let local = pose.local_dir(look(from_mrad(input.yaw), from_mrad(input.pitch())));
     let yaw = (-local[0]).atan2(-local[2]).clamp(-HELI_GUN_YAW_LIMIT, HELI_GUN_YAW_LIMIT);
     let pitch = local[1].clamp(-1.0, 1.0).asin().clamp(HELI_GUN_PITCH_MIN, HELI_GUN_PITCH_MAX);
     gun.yaw = step_toward(gun.yaw, yaw, HELI_GUN_SLEW * dt);
@@ -156,7 +156,7 @@ fn machine_gun(world: &mut World, shooter: u32, vid: u32, muzzle: [f32; 3], dir:
     let (end, struck) = hitscan(world, shooter, muzzle, dir, &round, vid, back);
     if struck {
         let [x, y, z] = std::array::from_fn(|i| to_cm(muzzle[i] + dir[i] * end));
-        world.shots.push(ShotEvent(shooter, WEAPON_MG, x, y, z));
+        world.shots.push(ShotEvent { shooter, weapon: WEAPON_MG, x, y, z });
     }
 }
 
@@ -209,7 +209,7 @@ fn work_ring(world: &mut World, vid: u32, mut gun: Gun, pose: &CarPose, dt: f32)
     let Some(gunner) = world.vehicles[&vid].seats[GUNNER_SEAT] else { return gun };
     let Some(input) = world.players.get(&gunner).map(|player| player.input) else { return gun };
 
-    let local = pose.local_dir(look(from_mrad(input.3), from_mrad(input.pitch())));
+    let local = pose.local_dir(look(from_mrad(input.yaw), from_mrad(input.pitch())));
     let yaw = (-local[0]).atan2(-local[2]);
     let pitch = local[1].clamp(-1.0, 1.0).asin().clamp(PLANE_REAR_PITCH_MIN, PLANE_REAR_PITCH_MAX);
     gun.yaw = wrap_angle(step_toward(gun.yaw, gun.yaw + wrap_angle(yaw - gun.yaw), PLANE_REAR_SLEW * dt));
@@ -257,9 +257,9 @@ impl Mechanic for Gunnery {
             gun.cooldown = gun.cooldown.saturating_sub(1);
             let mut trigger = false;
             if let Some(input) = gunner {
-                let wanted = wrap_angle(from_mrad(input.3) - pose.yaw());
+                let wanted = wrap_angle(from_mrad(input.yaw) - pose.yaw());
                 gun.yaw = wrap_angle(step_toward(gun.yaw, gun.yaw + wrap_angle(wanted - gun.yaw), TANK_TURRET_SLEW * dt));
-                gun.pitch = step_toward(gun.pitch, from_mrad(input.5).clamp(TANK_BARREL_MIN, TANK_BARREL_MAX), TANK_BARREL_SLEW * dt);
+                gun.pitch = step_toward(gun.pitch, from_mrad(input.pitch).clamp(TANK_BARREL_MIN, TANK_BARREL_MAX), TANK_BARREL_SLEW * dt);
                 trigger = input.buttons() & BUTTON_FIRE != 0 && gun.cooldown == 0;
             }
             if let (true, Some(gunner_id)) = (trigger, world.vehicles[&vid].seats[GUNNER_SEAT]) {
