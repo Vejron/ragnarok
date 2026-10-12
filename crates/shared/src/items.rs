@@ -243,6 +243,16 @@ mod tests {
                 )
             })
             .collect();
+        let vehicles: Vec<String> = crate::vehicles::VEHICLES
+            .iter()
+            .map(|d| {
+                let [hx, hy, hz] = d.half_extents;
+                format!(
+                    "    \"{}\": {{\"name\": \"{}\", \"hp\": {}, \"seats\": {}, \"halfExtents\": [{hx}, {hy}, {hz}], \"gun\": {}, \"arms\": {}, \"carWheels\": {}, \"trackHalf\": {}, \"axleZ\": {}}}",
+                    d.kind, d.name, d.hp, d.seats, d.gun, d.arms, d.car_wheels, d.track_half, d.axle_z
+                )
+            })
+            .collect();
         // Each value is printed from its own type, so an f32 0.15 stays 0.15 rather than 0.15000000596.
         let consts = [
             ("TICK_RATE", TICK_RATE.to_string()),
@@ -258,7 +268,12 @@ mod tests {
             ("PICKUP_RADIUS", PICKUP_RADIUS.to_string()),
         ];
         let lines: Vec<String> = consts.iter().map(|(name, value)| format!("    \"{name}\": {value}")).collect();
-        format!("{{\n  \"items\": {{\n{}\n  }},\n  \"consts\": {{\n{}\n  }}\n}}\n", items.join(",\n"), lines.join(",\n"))
+        format!(
+            "{{\n  \"items\": {{\n{}\n  }},\n  \"vehicles\": {{\n{}\n  }},\n  \"consts\": {{\n{}\n  }}\n}}\n",
+            items.join(",\n"),
+            vehicles.join(",\n"),
+            lines.join(",\n")
+        )
     }
 
     #[test]

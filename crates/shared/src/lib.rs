@@ -10,4 +10,5 @@ pub mod movement;
 pub mod protocol;
 pub mod quant;
 pub mod terrain;
+pub mod vehicles;
 pub mod world;

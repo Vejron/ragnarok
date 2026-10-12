@@ -52,23 +52,13 @@ pub const KIND_PLANE: u8 = 6;
 
 /// Health of a fresh vehicle of `kind`. Zero on the wire means wrecked.
 pub fn vehicle_hp(kind: u8) -> u8 {
-    match kind {
-        KIND_TANK => 250,
-        KIND_PLANE => 70,
-        _ => 100,
-    }
+    crate::vehicles::vehicle_def(kind).hp
 }
 
 /// Seats in a vehicle of `kind`. Seat 0 is the driver (a helicopter's or a plane's pilot); seat 1 of a tank, a
 /// helicopter or a plane is the gunner.
 pub fn seat_count(kind: u8) -> usize {
-    match kind {
-        KIND_TANK => crate::consts::TANK_SEATS,
-        KIND_HELI => crate::consts::HELI_SEATS,
-        KIND_SPORTS => crate::consts::SPORTS_SEATS,
-        KIND_PLANE => crate::consts::PLANE_SEATS,
-        _ => crate::consts::CAR_SEATS,
-    }
+    crate::vehicles::vehicle_def(kind).seats
 }
 
 /// `EntityState::flags` bits.

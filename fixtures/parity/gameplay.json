@@ -7,6 +7,13 @@
     "5": {"name": "Sniper", "kind": "gun", "auto": false, "damage": 90, "cooldownTicks": 120, "mag": 5, "reloadTicks": 180, "range": 400, "aimSpeed": 0.4, "scope": true, "stack": 1, "weapon": 7, "projectile": true},
     "6": {"name": "Golden egg", "kind": "heal", "auto": false, "damage": 255, "cooldownTicks": 0, "mag": 0, "reloadTicks": 0, "range": 0, "aimSpeed": 1, "scope": false, "stack": 1, "weapon": 0, "projectile": false}
   },
+  "vehicles": {
+    "1": {"name": "Jeep", "hp": 100, "seats": 4, "halfExtents": [1, 0.42, 1.95], "gun": false, "arms": false, "carWheels": true, "trackHalf": 0.9, "axleZ": 1.25},
+    "2": {"name": "Tank", "hp": 250, "seats": 2, "halfExtents": [1.3, 0.5, 2.6], "gun": true, "arms": false, "carWheels": false, "trackHalf": 0, "axleZ": 0},
+    "3": {"name": "Helicopter", "hp": 100, "seats": 2, "halfExtents": [1, 0.8, 2.4], "gun": true, "arms": false, "carWheels": false, "trackHalf": 0, "axleZ": 0},
+    "4": {"name": "Sports car", "hp": 100, "seats": 2, "halfExtents": [0.95, 0.3, 2.2], "gun": false, "arms": false, "carWheels": true, "trackHalf": 0.82, "axleZ": 1.45},
+    "6": {"name": "Triplane", "hp": 70, "seats": 2, "halfExtents": [0.5, 0.6, 2.8], "gun": true, "arms": true, "carWheels": false, "trackHalf": 0, "axleZ": 0}
+  },
   "consts": {
     "TICK_RATE": 60,
     "HOTBAR_SLOTS": 5,

@@ -2,6 +2,7 @@ use super::Mechanic;
 use crate::game::{Gun, PlaneArms, Seat, Vehicle, World};
 use crate::physics::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_extents};
 use shared::consts::*;
+use shared::vehicles::{VehicleDef, vehicle_def};
 use shared::protocol::{
     DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_TANK, ShotEvent, WEAPON_CRASH,
     WEAPON_ROADKILL, WEAPON_SCRAPE, seat_count, vehicle_hp,
@@ -139,8 +140,8 @@ fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: f32) -> u32
             controls: CarControls::default(),
             home: (position, yaw),
             stuck_ticks: 0,
-            gun: (kind == KIND_TANK || kind == KIND_HELI || kind == KIND_PLANE).then(Gun::default),
-            arms: (kind == KIND_PLANE).then(PlaneArms::default),
+            gun: vehicle_def(kind).gun.then(Gun::default),
+            arms: vehicle_def(kind).arms.then(PlaneArms::default),
             hp: vehicle_hp(kind),
             wreck_in: 0,
             last_attacker: None,
@@ -288,12 +289,12 @@ const SCRAPE_EVERY: u8 = 4;
 
 /// Whether a vehicle of `kind` has a car's four wheels, which can be bent and lost.
 fn has_car_wheels(kind: u8) -> bool {
-    kind == KIND_JEEP || kind == KIND_SPORTS
+    vehicle_def(kind).car_wheels
 }
 
 /// Where a car's wheels touch, in its own frame (`x`, `z`): front left, front right, rear left, rear right.
 fn wheel_spots(kind: u8) -> [[f32; 2]; 4] {
-    let (track, axle) = if kind == KIND_SPORTS { (SPORTS_TRACK_HALF, SPORTS_AXLE_Z) } else { (JEEP_TRACK_HALF, JEEP_AXLE_Z) };
+    let VehicleDef { track_half: track, axle_z: axle, .. } = *vehicle_def(kind);
     [[-track, -axle], [track, -axle], [-track, axle], [track, axle]]
 }
 
