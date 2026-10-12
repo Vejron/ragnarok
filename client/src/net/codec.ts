@@ -61,6 +61,15 @@ export const WEAPON_SCRAPE = 9
 /** A plane's machine guns. Shot events only for a round that hit something; every round's tracer is drawn from the gun's counter. */
 export const WEAPON_MG = 10
 export const WEAPON_BOMB = 11
+/** A vehicle running a stickman down; only ever a kill's weapon. */
+export const WEAPON_ROADKILL = 12
+
+/** How a stickman died, as in a `Kill`. Mirrors `DEATH_*`. */
+export const DEATH_BODY = 0
+export const DEATH_HEAD = 1
+export const DEATH_BLAST = 2
+export const DEATH_ROADKILL = 3
+export const DEATH_OVERKILL = 4
 
 /** Indices into `VehicleState.damage`: the body's sides, then the wheels FL, FR, RL, RR. Mirrors `DAMAGE_*`. */
 export const DAMAGE_FRONT = 0
@@ -309,8 +318,11 @@ export type ServerMessage =
     }
   | { type: 'pong'; nonce: number }
   | { type: 'leave'; id: number }
-  /** `killer` is 0 when the world did it. Totals are the new ones. */
-  | { type: 'kill'; killer: number; victim: number; weapon: number; killerKills: number; victimDeaths: number }
+  /**
+   * `killer` is 0 when the world did it. Totals are the new ones. `style` is `DEATH_*`; `yaw` is the way
+   * the body is thrown (0 faces -Z, as for a look) and `power` how fast, m/s.
+   */
+  | { type: 'kill'; killer: number; victim: number; weapon: number; killerKills: number; victimDeaths: number; style: number; yaw: number; power: number }
   | { type: 'scores'; scores: Score[] }
   /** Buildings and trees destroyed since the last such message; the first one a joiner gets is all of them. */
   | { type: 'destroyed'; objects: DestroyedObject[] }
@@ -581,8 +593,11 @@ export function decodeServer(bytes: Uint8Array): ServerMessage | null {
     case S_LEAVE:
       return raw.length === 2 && isInt(raw[1]) ? { type: 'leave', id: raw[1] } : null
     case S_KILL:
-      if (raw.length !== 6 || !ints(raw)) return null
-      return { type: 'kill', killer: raw[1] as number, victim: raw[2] as number, weapon: raw[3] as number, killerKills: raw[4] as number, victimDeaths: raw[5] as number }
+      if (raw.length !== 9 || !ints(raw)) return null
+      return {
+        type: 'kill', killer: raw[1] as number, victim: raw[2] as number, weapon: raw[3] as number, killerKills: raw[4] as number, victimDeaths: raw[5] as number,
+        style: raw[6] as number, yaw: (raw[7] as number) / MRAD, power: (raw[8] as number) / 5,
+      }
     case S_SCORES: {
       if (raw.length !== 2 || !Array.isArray(raw[1])) return null
       const scores: Score[] = []

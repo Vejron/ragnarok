@@ -5,7 +5,8 @@ use crate::game::{Rocket, World, starting_hotbar};
 use crate::physics::Obj;
 use shared::consts::*;
 use shared::items::*;
-use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, KIND_PLANE, Kill, S_HIT, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_SNIPER, WEAPON_WRECK};
+use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, KIND_PLANE, Kill, S_HIT, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_ROADKILL, WEAPON_SNIPER, WEAPON_WRECK,
+    DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_SHELL};
 use shared::quant::{from_mrad, to_cm, to_mrad};
 
 /// Health, death, the items in the hotbar and what blasts do to people and vehicles.
@@ -19,6 +20,8 @@ use shared::quant::{from_mrad, to_cm, to_mrad};
 /// players never use items: a gunner's trigger belongs to the gun.
 pub struct Combat;
 
+/// How hard (m/s) a bullet's killing blow throws the body, when nothing else was pushing it.
+const BULLET_DEATH_PUSH: f32 = 4.0;
 /// Hop given to a stickman at the centre of a blast; it fades with distance.
 const BLAST_HOP: f32 = 7.0;
 const BLAST_HOP_MIN: f32 = 3.0;
@@ -132,6 +135,21 @@ pub fn damage(world: &mut World, victim: u32, amount: u8, attacker: Option<u32>,
 /// `damage`, for harm that came from `source` (a blast's centre) rather than from the attacker's
 /// own position, which is what the victim's hit direction points at when `source` is `None`.
 pub fn damage_from(world: &mut World, victim: u32, amount: u8, attacker: Option<u32>, weapon: u8, source: Option<[f32; 3]>) {
+    damage_hit(world, victim, amount, attacker, weapon, source, false);
+}
+
+/// Whether a round that reaches `t` along `dir` from `origin` hits `victim` (where they stood `back`
+/// ticks ago) in the head.
+fn is_headshot(world: &World, victim: u32, origin: [f32; 3], dir: [f32; 3], t: f32, back: u32) -> bool {
+    let Some(player) = world.players.get(&victim) else { return false };
+    let at = if back == 0 { player.character.position } else { world.position_at(victim, back).unwrap_or(player.character.position) };
+    origin[1] + dir[1] * t - at[1] > HEAD_ZONE_Y
+}
+
+/// `damage_from`, for a round that hit the head when `head`: it does `HEADSHOT_MULT` times the
+/// damage, and the kill is staged as a headshot.
+pub fn damage_hit(world: &mut World, victim: u32, amount: u8, attacker: Option<u32>, weapon: u8, source: Option<[f32; 3]>, head: bool) {
+    let amount = if head { (f32::from(amount) * HEADSHOT_MULT).min(255.0) as u8 } else { amount };
     let other = attacker.filter(|&id| id != victim);
     let from = source.or_else(|| other.and_then(|id| position_of(world, id)));
     let Some(player) = world.players.get_mut(&victim) else { return };
@@ -159,6 +177,7 @@ pub fn damage_from(world: &mut World, victim: u32, amount: u8, attacker: Option<
     player.fire_cooldown = 0;
     player.interrupt();
     let deaths = player.deaths;
+    let (knock, died_at) = (player.character.knock, player.character.position);
     let mut killer_kills = 0;
     let mut killer_id = 0;
     if let Some(killer) = attacker.filter(|&id| id != victim).and_then(|id| world.players.get_mut(&id).map(|p| (id, p))) {
@@ -166,7 +185,25 @@ pub fn damage_from(world: &mut World, victim: u32, amount: u8, attacker: Option<
         killer_kills = killer.1.kills;
         killer_id = killer.0;
     }
-    world.kills.push(Kill(S_KILL, killer_id, victim, weapon, killer_kills, deaths));
+    let style = match weapon {
+        WEAPON_ROADKILL => DEATH_ROADKILL,
+        WEAPON_ROCKET | WEAPON_SHELL | WEAPON_WRECK | WEAPON_GRENADE | WEAPON_AUTOCANNON | WEAPON_BOMB => DEATH_BLAST,
+        _ if head => DEATH_HEAD,
+        _ if lost > 0 && amount > before.saturating_mul(2) => DEATH_OVERKILL,
+        _ => DEATH_BODY,
+    };
+    // A shove already on the body (a blast, a car) is the way it is thrown; a bullet pushes it away
+    // from where it came from.
+    let [kx, kz] = knock;
+    let pushed = kx.hypot(kz);
+    let (yaw, power) = if pushed > 0.5 {
+        (to_mrad((-kx).atan2(-kz)), pushed)
+    } else {
+        let toward = from.map_or(0, |from| bearing(died_at, from));
+        (toward.wrapping_add(3142), BULLET_DEATH_PUSH)
+    };
+    let power = (power * 5.0).round().min(255.0) as u8;
+    world.kills.push(Kill(S_KILL, killer_id, victim, weapon, killer_kills, deaths, style, yaw, power));
     tracing::debug!(victim, killer = killer_id, weapon, "player killed");
 }
 
@@ -441,7 +478,8 @@ fn step_bullet(world: &mut World, id: u32, dt: f32) {
                 world.hits.push((owner, hit_at(HIT_DEALT, HIT_ROOSTER, damage_dealt, WEAPON_SNIPER, BEARING_NONE, at, target)));
             }
         } else if let Some((victim, _)) = hit {
-            damage(world, victim, damage_dealt, attacker, WEAPON_SNIPER);
+            let head = hit.is_some_and(|(_, t)| is_headshot(world, victim, bullet.position, dir, t, 0));
+            damage_hit(world, victim, damage_dealt, attacker, WEAPON_SNIPER, None, head);
         } else if let Some((_, Some(car))) = wall {
             damage_vehicle(world, car, (damage_dealt / 4).max(1), attacker);
             super::vehicles::shoot_wheels(world, car, point, f32::from(damage_dealt), super::vehicles::BULLET_WHEEL_REACH);
@@ -624,7 +662,8 @@ pub fn hitscan(world: &mut World, shooter: u32, origin: [f32; 3], dir: [f32; 3],
         let at = world.roosters.get(&target).map_or([0.0; 3], |r| [r.position[0], r.position[1] + 0.5, r.position[2]]);
         world.hits.push((shooter, hit_at(HIT_DEALT, HIT_ROOSTER, round.damage, round.weapon, BEARING_NONE, at, target)));
     } else if let Some((victim, _)) = hit {
-        damage(world, victim, round.damage, Some(shooter), round.weapon);
+        let head = hit.is_some_and(|(_, t)| is_headshot(world, victim, origin, dir, t, back));
+        damage_hit(world, victim, round.damage, Some(shooter), round.weapon, None, head);
     } else if let Some((_, Some(car))) = wall {
         let plane = world.vehicles.get(&car).is_some_and(|vehicle| vehicle.kind == KIND_PLANE);
         damage_vehicle(world, car, if plane { round.plane } else { round.vehicle }, Some(shooter));
@@ -1250,7 +1289,9 @@ mod tests {
             landed |= game.world.shots.iter().any(|shot| shot.1 == WEAPON_SNIPER);
         }
         assert!(landed);
-        assert_eq!(game.world.players[&target].hp, PLAYER_MAX_HP - sniper.damage);
+        // Straight ahead of the eye is the head: double damage, and a headshot kill.
+        let expected = PLAYER_MAX_HP.saturating_sub(sniper.damage * 2);
+        assert_eq!(game.world.players[&target].hp, expected);
         assert_eq!(game.world.players[&shooter].hotbar[1].2, sniper.mag - 1);
     }
 

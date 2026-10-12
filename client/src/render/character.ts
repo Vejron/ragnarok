@@ -3,7 +3,10 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, RUN_SPEED, WALK_SPEED } from '@/sim/consts'
 import { ITEM_AK5, ITEM_BANDAGE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SNIPER, itemDef, type ItemDef } from '@/sim/items'
+import { type Limb, poseLimb, splitLimbs } from './gibs'
 
+/** Gravity on a thrown body, m/s². */
+const FLING_GRAVITY = 14
 /** Feet sit this far below the capsule centre. */
 const FOOT_OFFSET = CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS
 
@@ -111,6 +114,8 @@ export class Crowd {
   asset: CharacterAsset | null = null
   /** Outfit materials of live characters, so `dispose` can free them. */
   readonly outfits = new Set<THREE.Material>()
+  /** Each skinned mesh's limbs, cut once, for gibs. */
+  readonly limbs = new Map<THREE.BufferGeometry, Limb[]>()
   private count = 0
 
   async load(url = MODEL_URL) {
@@ -130,6 +135,8 @@ export class Crowd {
   dispose() {
     for (const material of this.outfits) material.dispose()
     this.outfits.clear()
+    for (const limbs of this.limbs.values()) for (const limb of limbs) limb.geometry.dispose()
+    this.limbs.clear()
     this.asset?.scene.traverse((node) => {
       const mesh = node as THREE.Mesh
       if (!mesh.isMesh) return
@@ -190,6 +197,13 @@ export class Character {
   private recoil = 0
   /** Seconds of hit flash left, which whitens the outfit. */
   private flashLeft = 0
+  /** Blown to pieces: the body is gone, only gibs remain. */
+  private gibbed = false
+  private readonly head: THREE.Object3D | null
+  private headless = false
+  /** A body thrown by its killing blow: where it has got to, relative to where it died. */
+  private fling: { velocity: THREE.Vector3; spin: THREE.Vector3; offset: THREE.Vector3; groundAt: (x: number, z: number) => number } | null = null
+  private readonly tumble = new THREE.Quaternion()
 
   constructor(private readonly crowd: Crowd, id: number) {
     const asset = crowd.asset
@@ -206,6 +220,7 @@ export class Character {
 
     this.chest = this.object.getObjectByName('chest') ?? null
     this.spine = this.object.getObjectByName('spine') ?? null
+    this.head = this.object.getObjectByName('head') ?? null
     for (const stance of Object.keys(MUZZLE_BONE) as Stance[]) {
       const bone = MUZZLE_BONE[stance] ? this.object.getObjectByName(MUZZLE_BONE[stance]!) : null
       if (bone) this.muzzleBones.set(stance, bone)
@@ -263,7 +278,8 @@ export class Character {
       this.flashLeft = Math.max(0, this.flashLeft - dt)
       this.outfit.emissive.setScalar((this.flashLeft / HIT_FLASH) * 0.9)
     }
-    if (!this.shown) return
+    this.flingStep(dt)
+    if (!this.shown || this.gibbed) return
 
     // Velocity in the body's frame: forward is -Z at yaw 0, right is +X.
     const sin = Math.sin(yaw)
@@ -350,6 +366,7 @@ export class Character {
     if (dying) dying.timeScale = this.down ? 1 : 0
 
     this.mixer.update(dt)
+    this.head?.scale.setScalar(this.headless ? 0.001 : 1)
     this.recoil = chase(this.recoil, 0, RECOIL_DECAY, dt)
     this.aim()
     // A slide carries the body along its heading, rifle and all, rather than where the camera looks.
@@ -361,9 +378,78 @@ export class Character {
   private place(yaw: number) {
     this.object.position.set(this.position.x, this.position.y - FOOT_OFFSET, this.position.z)
     // The model faces +Z; the game's yaw 0 faces -Z.
-    this.object.rotation.y = yaw + Math.PI
+    // Set all three: a tumble leaves its pitch and roll in the Euler angles, and `rotation.y` alone
+    // would keep them, leaving a respawned player tilted.
+    this.object.rotation.set(0, yaw + Math.PI, 0)
+    if (this.fling) {
+      // Tumble about the middle of the body, not the feet.
+      const middle = SCRATCH.axis.set(0, FOOT_OFFSET, 0)
+      this.object.quaternion.premultiply(this.tumble)
+      this.object.position.add(this.fling.offset).add(middle).sub(middle.applyQuaternion(this.tumble))
+    }
     this.placed = true
-    this.object.visible = this.shown
+    this.object.visible = this.shown && !this.gibbed
+  }
+
+  /** Flies a thrown body: gravity, a bounce, and a tumble that settles into the death pose. */
+  private flingStep(dt: number) {
+    const fling = this.fling
+    if (!fling) return
+    const { velocity, spin, offset } = fling
+    velocity.y -= FLING_GRAVITY * dt
+    offset.addScaledVector(velocity, dt)
+    const rate = spin.length()
+    const floor = fling.groundAt(this.position.x + offset.x, this.position.z + offset.z) + 0.1 + 0.6 * Math.min(1, rate / 6)
+    if (this.position.y - FOOT_OFFSET + offset.y < floor) {
+      offset.y = floor - (this.position.y - FOOT_OFFSET)
+      velocity.y = Math.abs(velocity.y) > 2 ? Math.abs(velocity.y) * 0.3 : 0
+      velocity.x *= 0.75
+      velocity.z *= 0.75
+      spin.multiplyScalar(0.7)
+    }
+    if (rate > 1e-3) this.tumble.premultiply(SCRATCH.q.setFromAxisAngle(SCRATCH.axis.copy(spin).divideScalar(rate), rate * dt))
+    // Once it has stopped bouncing, lie down the way the death clip lays it.
+    if (velocity.y === 0 && rate < 3) this.tumble.slerp(SCRATCH.q.identity(), 1 - Math.exp(-6 * dt))
+    this.tumble.normalize()
+  }
+
+  /**
+   * Throws the body along `velocity`, tumbling with `spin` (rad/s about world axes): the killing blow
+   * carried it off. It lands and lies as a death does.
+   */
+  launch(velocity: THREE.Vector3, spin: THREE.Vector3, groundAt: (x: number, z: number) => number) {
+    this.fling = { velocity: velocity.clone(), spin: spin.clone(), offset: new THREE.Vector3(), groundAt }
+    this.tumble.identity()
+  }
+
+  /** The head is gone (it is thrown separately, see `shatter`). */
+  decapitate() {
+    this.headless = true
+  }
+
+  /**
+   * Blows the body apart: hides it and returns its limbs where they are now, ready to throw. With
+   * `only`, just those limbs come off (a head), and the body stays.
+   */
+  shatter(only?: readonly string[]): { key: string; object: THREE.Group }[] {
+    const pieces: { key: string; object: THREE.Group }[] = []
+    this.object.updateWorldMatrix(true, true)
+    this.object.traverse((node) => {
+      const mesh = node as THREE.SkinnedMesh
+      if (!mesh.isSkinnedMesh || mesh.name.startsWith('weapon_')) return
+      let limbs = this.crowd.limbs.get(mesh.geometry)
+      if (!limbs) this.crowd.limbs.set(mesh.geometry, (limbs = splitLimbs(mesh)))
+      for (const limb of limbs) {
+        if (only && !only.includes(limb.key)) continue
+        const object = poseLimb(mesh, limb)
+        if (object) pieces.push({ key: limb.key, object })
+      }
+    })
+    if (!only) {
+      this.gibbed = true
+      this.object.visible = false
+    }
+    return pieces
   }
 
   /** Leans the torso (and the rifle it carries) with the camera pitch and the last shot's kick. */
@@ -423,6 +509,15 @@ export class Character {
   set dead(dead: boolean) {
     if (this.down === dead) return
     this.down = dead
+    if (!dead) {
+      // Respawned: whole again, upright and drawn.
+      this.gibbed = false
+      this.headless = false
+      this.fling = null
+      this.tumble.identity()
+      this.head?.scale.setScalar(1)
+      this.object.visible = this.shown && this.placed
+    }
     const action = this.actions.get('death')
     if (!action) return
     if (dead) {
@@ -439,7 +534,7 @@ export class Character {
   /** Hides the character while it sits in a car. */
   set hidden(hidden: boolean) {
     this.shown = !hidden
-    this.object.visible = this.shown && this.placed
+    this.object.visible = this.shown && this.placed && !this.gibbed
   }
 
   dispose() {

@@ -29,6 +29,7 @@ import { Particles } from './render/particles'
 import { Skidmarks } from './render/skidmarks'
 import { crashBurst, scrapeSparks, VehicleFx, type FxWorld } from './render/tyres'
 import { Debris } from './render/debris'
+import { Gore } from './render/gore'
 import { Surfaces, SURFACE_GRASS } from './sim/surface'
 import { Pickups } from './render/pickups'
 import { TrajectoryView } from './render/trajectory'
@@ -232,7 +233,8 @@ export class Game {
   /** Engines, tyres, crashes and guns. */
   private readonly sounds = new VehicleSounds()
   /** Bumpers, doors and wheels that came off. */
-  private readonly debris = new Debris()
+  private readonly debris = new Debris(160)
+  private readonly gore = new Gore(this.debris, this.smoke, this.effects)
   /** Seconds since the last frame, for what is drawn per vehicle. */
   private frameDt = 0
   private readonly rocketInterp = new Interpolator<RocketState>(blendRocket)
@@ -651,6 +653,8 @@ export class Game {
       case 'kill': {
         if (message.killer !== 0) this.score(message.killer).kills = message.killerKills
         this.score(message.victim).deaths = message.victimDeaths
+        const body = this.avatars.get(message.victim === this.localId ? 0 : message.victim)
+        if (body?.visible) this.gore.die(body, message.style, message.yaw, message.power, (x, z) => this.scene.groundAt(x, z))
         this.feed.push({ killer: message.killer, victim: message.victim, weapon: message.weapon, at: now })
         if (this.feed.length > FEED_LENGTH) this.feed.shift()
         break
@@ -807,6 +811,7 @@ export class Game {
     this.glow.update(dt)
     this.skids.update(dt)
     this.debris.update(dt)
+    this.gore.update(dt)
 
     const blobs = this.scene.contact
     blobs.begin()

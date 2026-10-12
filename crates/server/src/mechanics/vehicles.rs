@@ -4,7 +4,7 @@ use crate::physics::{CarCondition, CarControls, CarImpact, CarPose, Character, O
 use shared::consts::*;
 use shared::protocol::{
     DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_TANK, ShotEvent, WEAPON_CRASH,
-    WEAPON_SCRAPE, seat_count, vehicle_hp,
+    WEAPON_ROADKILL, WEAPON_SCRAPE, seat_count, vehicle_hp,
 };
 use shared::quant::{from_axis, to_cm, wrap_angle};
 use shared::world::WorldFile;
@@ -40,6 +40,9 @@ const KNOCK_MIN_PUSH: f32 = 2.5;
 const KNOCK_HOP: f32 = 2.0;
 const KNOCK_HOP_PER_SPEED: f32 = 0.25;
 const KNOCK_HOP_MAX: f32 = 8.0;
+/// A car slower than this (m/s) only shoves a stickman. Faster, it hurts by this much per m/s over.
+const ROADKILL_MIN_SPEED: f32 = 3.0;
+const ROADKILL_DAMAGE_PER_SPEED: f32 = 8.0;
 /// Ticks before the same player can be hit again, so one pass is one hit.
 const HIT_COOLDOWN: u32 = 12;
 /// A car on its side or roof this long, and not moving, is set back on its wheels.
@@ -387,7 +390,8 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
 /// Throws every standing player a car overlaps. The direction leans on the car's heading with a
 /// little outward push, so a car drives a player ahead of it and off to the side.
 fn knock_players(world: &mut World) {
-    for player in world.players.values_mut() {
+    let mut run_down = Vec::new();
+    for (&id, player) in world.players.iter_mut() {
         player.hit_cooldown = player.hit_cooldown.saturating_sub(1);
         if player.seat.is_some() || !player.alive() || player.character.ride != 0 || player.hit_cooldown > 0 {
             continue;
@@ -408,6 +412,15 @@ fn knock_players(world: &mut World) {
         character.grounded = false;
         player.hit_cooldown = HIT_COOLDOWN;
         tracing::debug!(player = ?player.character.position, car = hit.car, speed, "player knocked");
+        if speed > ROADKILL_MIN_SPEED {
+            let amount = ((speed - ROADKILL_MIN_SPEED) * ROADKILL_DAMAGE_PER_SPEED).min(f32::from(PLAYER_MAX_HP)).round() as u8;
+            run_down.push((id, amount, hit.car, hit.position));
+        }
+    }
+    // Whoever is driving is to blame.
+    for (id, amount, car, at) in run_down {
+        let driver = world.vehicles.get(&car).and_then(|vehicle| vehicle.seats[0]);
+        super::combat::damage_from(world, id, amount, driver, WEAPON_ROADKILL, Some(at));
     }
 }
 
@@ -782,6 +795,7 @@ mod tests {
 
         let mut peak_knock: f32 = 0.0;
         let mut hopped = false;
+        let mut lowest_hp = PLAYER_MAX_HP;
         for _ in 0..240 {
             seq_a += 1;
             seq_b += 1;
@@ -791,7 +805,9 @@ mod tests {
             let character = game.world.players[&victim].character;
             peak_knock = peak_knock.max(character.knock[0].hypot(character.knock[1]));
             hopped |= character.position[1] > STANDING_Y + 0.3;
+            lowest_hp = lowest_hp.min(game.world.players[&victim].hp);
         }
+        assert!(lowest_hp < PLAYER_MAX_HP, "a car at speed hurts: lowest hp {lowest_hp}");
         assert!(peak_knock > KNOCK_MIN_PUSH, "peak knockback {peak_knock}");
         assert!(hopped, "a hit sends the player up");
         let character = game.world.players[&victim].character;

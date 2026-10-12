@@ -51,7 +51,7 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 | 1 | `snapshot` | datagram | `[1, server_tick u32, baseline u32, ack u32, ride u32, [entity, …], [entity_delta, …], [vehicle, …], [vehicle_delta, …], [removed u32, …], drive, self, [shot, …], [projectile, …], [pickup, …]]` |
 | 2 | `pong` | datagram | `[2, nonce u32]` |
 | 3 | `leave` | stream | `[3, entity_id u32]` |
-| 4 | `kill` | stream | `[4, killer u32, victim u32, weapon u8, killer_kills u16, victim_deaths u16]` |
+| 4 | `kill` | stream | `[4, killer u32, victim u32, weapon u8, killer_kills u16, victim_deaths u16, style u8, yaw i16 mrad, power u8 (0.2 m/s)]`; `style` is `DEATH_*` (body, head, blast, roadkill, overkill) and `yaw`/`power` are the way and how hard the body is thrown, so every client stages the death alike |
 | 5 | `scores` | stream | `[5, [[id u32, kills u16, deaths u16], …]]` |
 | 6 | `destroyed` | stream | `[6, [[kind u8, col u16, row u16, index u32, yaw i16], …]]` |
 | 7 | `damaged` | stream | `[7, [[col u16, row u16, index u32, stage u8, marked u8, x i32, y i32, z i32], …]]` |

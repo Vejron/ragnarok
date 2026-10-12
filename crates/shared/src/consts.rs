@@ -1,7 +1,7 @@
 //! Simulation and network constants. Mirrored in `client/src/sim/consts.ts`.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 18;
+pub const PROTOCOL_VERSION: u8 = 19;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -72,6 +72,10 @@ pub const MAX_FALL_SPEED: f32 = 50.0;
 /// body origin at the capsule centre.
 pub const CAPSULE_HALF_HEIGHT: f32 = 0.5;
 pub const CAPSULE_RADIUS: f32 = 0.35;
+/// A round that hits above this height over the capsule centre hit the head.
+pub const HEAD_ZONE_Y: f32 = 0.45;
+/// What a headshot does to the damage.
+pub const HEADSHOT_MULT: f32 = 2.0;
 
 /// Character controller tuning. The client builds its Rapier controller from the same values.
 pub const CONTROLLER_OFFSET: f32 = 0.02;

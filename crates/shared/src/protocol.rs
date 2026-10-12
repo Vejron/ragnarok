@@ -103,6 +103,16 @@ pub const WEAPON_SCRAPE: u8 = 9;
 /// client draws every round's tracer itself, from the gun's shot counter.
 pub const WEAPON_MG: u8 = 10;
 pub const WEAPON_BOMB: u8 = 11;
+/// A vehicle running a stickman down. Only ever the weapon of a kill.
+pub const WEAPON_ROADKILL: u8 = 12;
+
+/// How a stickman died, as sent in a `Kill`, so every client can stage the death to match.
+pub const DEATH_BODY: u8 = 0;
+pub const DEATH_HEAD: u8 = 1;
+pub const DEATH_BLAST: u8 = 2;
+pub const DEATH_ROADKILL: u8 = 3;
+/// Far more damage than was left to take.
+pub const DEATH_OVERKILL: u8 = 4;
 
 /// `ProjectileState` kinds.
 pub const PROJECTILE_ROCKET: u8 = 0;
@@ -377,11 +387,12 @@ pub struct Pong(pub u8, pub u32);
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Leave(pub u8, pub u32);
 
-/// `[4, killer, victim, weapon, killer_kills, victim_deaths]`, sent on a reliable stream to everyone.
-/// `killer` is 0 when the world did it (a fall); the totals are the new ones, so clients keep no
-/// tally of their own.
+/// `[4, killer, victim, weapon, killer_kills, victim_deaths, style, yaw, power]`, sent on a reliable
+/// stream to everyone. `killer` is 0 when the world did it (a fall); the totals are the new ones, so
+/// clients keep no tally of their own. `style` is `DEATH_*`; `yaw` (milliradians, 0 faces -Z, as for
+/// a look) is the way the body is thrown and `power` how hard, in units of 0.2 m/s.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Kill(pub u8, pub u32, pub u32, pub u8, pub u16, pub u16);
+pub struct Kill(pub u8, pub u32, pub u32, pub u8, pub u16, pub u16, pub u8, pub i16, pub u8);
 
 /// `[5, [[id, kills, deaths], ...]]`, sent on a reliable stream to a player who just joined.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -442,7 +453,7 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 18, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
+        148, 0, 19, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[
