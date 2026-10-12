@@ -15,12 +15,15 @@ use tokio::sync::{mpsc, oneshot};
 const MIN_INPUT_GAP: Duration = Duration::from_millis(8);
 const MIN_PING_GAP: Duration = Duration::from_millis(100);
 const OUTBOX_CAPACITY: usize = 64;
+/// Commands waiting for the next tick. 64 players at the input rate cap fill about 130 a tick, so
+/// this is a few dozen ticks of backlog: past it the game loop is stalled and inputs are shed.
+pub const COMMAND_CAPACITY: usize = 4096;
 /// A session that sends nothing (not even the once-a-second ping) for this long is dropped. A tab
 /// closed without a clean QUIC close would otherwise linger as a ghost until the QUIC idle timeout.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct Transport {
-    pub commands: mpsc::UnboundedSender<Command>,
+    pub commands: mpsc::Sender<Command>,
     /// Production domain; `None` in development, where the Vite dev server origin is allowed.
     pub domain: Option<String>,
     pub netem: NetemConfig,
@@ -28,13 +31,19 @@ pub struct Transport {
 
 /// Removes the player from the game however the session ends.
 struct PlayerGuard {
-    commands: mpsc::UnboundedSender<Command>,
+    commands: mpsc::Sender<Command>,
     id: u32,
 }
 
 impl Drop for PlayerGuard {
     fn drop(&mut self) {
-        let _ = self.commands.send(Command::Leave(self.id));
+        // A full queue must not leave a ghost player behind, so the leave waits for room.
+        if let Err(mpsc::error::TrySendError::Full(command)) = self.commands.try_send(Command::Leave(self.id)) {
+            let commands = self.commands.clone();
+            tokio::spawn(async move {
+                let _ = commands.send(command).await;
+            });
+        }
     }
 }
 
@@ -58,7 +67,7 @@ impl Transport {
 
         let (outbox, mut inbox) = mpsc::channel(OUTBOX_CAPACITY);
         let (reply, response) = oneshot::channel();
-        self.commands.send(Command::Join { outbox, reply }).map_err(salvo::Error::other)?;
+        self.commands.send(Command::Join { outbox, reply }).await.map_err(salvo::Error::other)?;
         let Ok(Some(id)) = response.await else {
             return Err(salvo::Error::other("Room full"));
         };
@@ -121,9 +130,17 @@ impl Transport {
                     Some(C_INPUT) => {
                         if last_input.elapsed() < MIN_INPUT_GAP { continue; }
                         let Some(ClientInput(_, version, baseline, frames)) = decode(&payload) else { continue };
-                        if version != PROTOCOL_VERSION || frames.is_empty() || frames.len() > INPUT_REDUNDANCY { continue; }
+                        if version != PROTOCOL_VERSION {
+                            tracing::info!(id, version, "client speaks another protocol version, dropping");
+                            return Ok(());
+                        }
+                        if frames.is_empty() || frames.len() > INPUT_REDUNDANCY { continue; }
                         last_input = Instant::now();
-                        if self.commands.send(Command::Input(id, baseline, frames)).is_err() { return Ok(()); }
+                        // A full queue means the game loop is behind: shed the input, the next one repeats it.
+                        match self.commands.try_send(Command::Input(id, baseline, frames)) {
+                            Err(mpsc::error::TrySendError::Closed(_)) => return Ok(()),
+                            Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => {}
+                        }
                     }
                     Some(C_PING) => {
                         if last_ping.elapsed() < MIN_PING_GAP { continue; }

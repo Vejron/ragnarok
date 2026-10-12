@@ -76,7 +76,7 @@ fn stand_about(world: &mut World, id: u32) {
 fn place(world: &mut World, id: u32) {
     let Some(home) = world.roosters.get(&id).map(|r| r.home) else { return };
     let y = open_ground(world, home[0], home[1]).unwrap_or_else(|| world.map.ground.height_at(home[0], home[1]));
-    let rooster = world.roosters.get_mut(&id).expect("looked up above");
+    let Some(rooster) = world.roosters.get_mut(&id) else { return };
     rooster.position = [home[0], y, home[1]];
     rooster.hp = ROOSTER_HP;
     rooster.respawn_in = 0;

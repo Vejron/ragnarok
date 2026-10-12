@@ -99,7 +99,7 @@ impl Mechanic for Pickups {
             .map(|(&id, _)| id)
             .collect();
         for id in reaching {
-            let at = world.players[&id].character.position;
+            let Some(at) = world.players.get(&id).map(|player| player.character.position) else { continue };
             let nearest = world
                 .pickups
                 .iter()
@@ -108,8 +108,8 @@ impl Mechanic for Pickups {
                 .filter(|(_, d)| *d <= PICKUP_RADIUS)
                 .min_by(|a, b| a.1.total_cmp(&b.1));
             let Some((pid, _)) = nearest else { continue };
-            let pickup = world.pickups[&pid];
-            let player = world.players.get_mut(&id).expect("listed above");
+            let Some(pickup) = world.pickups.get(&pid).copied() else { continue };
+            let Some(player) = world.players.get_mut(&id) else { continue };
             // The reach is spent: the car beside the gun stays unboarded.
             player.input.4 &= !BUTTON_USE;
             let left = store(&mut player.hotbar, pickup.item, pickup.count);
@@ -118,7 +118,7 @@ impl Mechanic for Pickups {
                 world.pickups.remove(&pid);
                 continue;
             }
-            let entry = world.pickups.get_mut(&pid).expect("found above");
+            let Some(entry) = world.pickups.get_mut(&pid) else { continue };
             if left == 0 {
                 entry.respawn_in = PICKUP_RESPAWN_TICKS;
             } else if left < pickup.count {
@@ -128,8 +128,8 @@ impl Mechanic for Pickups {
                 // Combat has not yet seen this tick's selection, so read it from the input.
                 let held = (player.input.slot() as usize).min(HOTBAR_SLOTS - 1);
                 let slot = player.hotbar[held];
-                if slot.0 != ITEM_NONE && slot.0 != pickup.item {
-                    let item_def = def(pickup.item).expect("scattered items are real");
+                let item_def = def(pickup.item);
+                if let (true, Some(item_def)) = (slot.0 != ITEM_NONE && slot.0 != pickup.item, item_def) {
                     player.hotbar[held] = ItemSlot(pickup.item, pickup.count, item_def.mag);
                     player.interrupt();
                     entry.item = slot.0;

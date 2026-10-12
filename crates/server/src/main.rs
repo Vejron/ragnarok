@@ -52,8 +52,15 @@ async fn main() -> Result<()> {
         .init();
 
     let (world, hash) = load_world()?;
-    let (commands, receiver) = mpsc::unbounded_channel();
-    tokio::spawn(game::run(game::Game::new(world, hash)?, receiver));
+    let (commands, receiver) = mpsc::channel(session::COMMAND_CAPACITY);
+    let game_task = tokio::spawn(game::run(game::Game::new(world, hash)?, receiver));
+    // The sessions would keep accepting players into a dead simulation, so end the process and let
+    // the supervisor restart it.
+    tokio::spawn(async move {
+        let outcome = game_task.await;
+        tracing::error!(?outcome, "game loop ended, exiting");
+        std::process::exit(1);
+    });
 
     let netem = netem::NetemConfig::from_env();
     if netem.enabled() {

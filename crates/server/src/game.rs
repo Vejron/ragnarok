@@ -346,7 +346,19 @@ pub struct Game {
     outboxes: BTreeMap<u32, mpsc::Sender<Outgoing>>,
     /// What each player has been sent, to diff their next snapshot against.
     replicas: BTreeMap<u32, Replica>,
+    /// Players whose outbox rejected a reliable message this tick. Reliable messages carry state
+    /// that is never repeated (kills, destroyed, damaged), so a client that missed one is out of
+    /// sync for good; it is disconnected and rejoins with the catch-up instead.
+    stalled: Vec<u32>,
     world_hash: u32,
+}
+
+/// Queues a reliable message, noting the player as stalled when the outbox is full. A closed one
+/// needs no note: its session is ending and removes the player itself.
+fn send_reliable(outbox: &mpsc::Sender<Outgoing>, id: u32, bytes: &Bytes, stalled: &mut Vec<u32>) {
+    if let Err(mpsc::error::TrySendError::Full(_)) = outbox.try_send(Outgoing::Reliable(bytes.clone())) {
+        stalled.push(id);
+    }
 }
 
 impl Game {
@@ -376,6 +388,7 @@ impl Game {
             },
             mechanics: default_mechanics(),
             outboxes: BTreeMap::new(),
+            stalled: Vec::new(),
             replicas: BTreeMap::new(),
             world_hash,
         };
@@ -466,8 +479,8 @@ impl Game {
         self.outboxes.remove(&id);
         self.replicas.remove(&id);
         let leave = Bytes::from(encode(&Leave(S_LEAVE, id)));
-        for outbox in self.outboxes.values() {
-            let _ = outbox.try_send(Outgoing::Reliable(leave.clone()));
+        for (&to, outbox) in &self.outboxes {
+            send_reliable(outbox, to, &leave, &mut self.stalled);
         }
         tracing::info!(id, players = self.world.players.len(), "player left");
     }
@@ -488,10 +501,21 @@ impl Game {
         self.send_hits();
         self.broadcast_destroyed();
         self.broadcast_damaged();
+        self.drop_stalled();
         self.world.tick = self.world.tick.wrapping_add(1);
         self.world.record_history();
         if self.world.tick.is_multiple_of(SNAPSHOT_EVERY) {
             self.send_snapshots();
+        }
+    }
+
+    /// Disconnects players that missed a reliable message; dropping the outbox ends their session.
+    fn drop_stalled(&mut self) {
+        for id in std::mem::take(&mut self.stalled) {
+            if self.outboxes.contains_key(&id) {
+                tracing::warn!(id, "outbox full, dropping player");
+                self.leave(id);
+            }
         }
     }
 
@@ -502,8 +526,8 @@ impl Game {
         }
         let entries = self.world.fresh_destroyed.drain(..).map(|(object, yaw)| destroyed_entry(object, yaw)).collect();
         let bytes = Bytes::from(encode(&Destroyed(S_DESTROYED, entries)));
-        for outbox in self.outboxes.values() {
-            let _ = outbox.try_send(Outgoing::Reliable(bytes.clone()));
+        for (&to, outbox) in &self.outboxes {
+            send_reliable(outbox, to, &bytes, &mut self.stalled);
         }
     }
 
@@ -514,8 +538,8 @@ impl Game {
         }
         let entries = self.world.fresh_damaged.drain(..).map(|(id, stage, mark)| damaged_entry(id, stage, mark)).collect();
         let bytes = Bytes::from(encode(&Damaged(S_DAMAGED, entries)));
-        for outbox in self.outboxes.values() {
-            let _ = outbox.try_send(Outgoing::Reliable(bytes.clone()));
+        for (&to, outbox) in &self.outboxes {
+            send_reliable(outbox, to, &bytes, &mut self.stalled);
         }
     }
 
@@ -530,7 +554,7 @@ impl Game {
         }
         for (to, hit) in merged {
             if let Some(outbox) = self.outboxes.get(&to) {
-                let _ = outbox.try_send(Outgoing::Reliable(Bytes::from(encode(&hit))));
+                send_reliable(outbox, to, &Bytes::from(encode(&hit)), &mut self.stalled);
             }
         }
     }
@@ -539,8 +563,8 @@ impl Game {
     fn broadcast_kills(&mut self) {
         for kill in self.world.kills.drain(..) {
             let bytes = Bytes::from(encode(&kill));
-            for outbox in self.outboxes.values() {
-                let _ = outbox.try_send(Outgoing::Reliable(bytes.clone()));
+            for (&to, outbox) in &self.outboxes {
+                send_reliable(outbox, to, &bytes, &mut self.stalled);
             }
         }
     }
@@ -695,7 +719,7 @@ fn progress(player: &Player) -> u8 {
 }
 
 /// Runs the game loop until every command sender is gone.
-pub async fn run(mut game: Game, mut commands: mpsc::UnboundedReceiver<Command>) {
+pub async fn run(mut game: Game, mut commands: mpsc::Receiver<Command>) {
     let mut ticker = interval(Duration::from_secs_f64(1.0 / TICK_RATE as f64));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Burst);
     loop {
@@ -765,6 +789,19 @@ mod tests {
         game.handle(Command::Join { outbox, reply });
         assert_eq!(response.try_recv().unwrap(), None);
         drop(inboxes);
+    }
+
+    #[test]
+    fn a_player_whose_outbox_is_full_is_dropped_instead_of_missing_a_reliable() {
+        let mut game = game();
+        let (outbox, _inbox) = mpsc::channel(1);
+        let (reply, mut response) = oneshot::channel();
+        game.handle(Command::Join { outbox, reply });
+        let id = response.try_recv().unwrap().unwrap();
+        // The welcome already fills the one slot, so the next reliable message cannot be queued.
+        game.world.fresh_destroyed.push((Obj::Tree(Default::default()), 0));
+        game.step();
+        assert!(!game.world.players.contains_key(&id));
     }
 
     #[test]

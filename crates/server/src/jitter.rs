@@ -14,6 +14,9 @@ const MAX: usize = 8;
 /// After this many ticks without input (a backgrounded tab, a stalled connection) the player stops
 /// instead of running on in the last direction forever.
 const STARVE_LIMIT: u32 = 15;
+/// A frame this far past the newest one seen (a minute of ticks) is not a client that kept counting;
+/// accepting it would make every real frame after it look old.
+const MAX_SEQ_JUMP: u32 = 3600;
 
 #[derive(Default)]
 pub struct JitterBuffer {
@@ -36,7 +39,7 @@ impl JitterBuffer {
     /// Accepts the redundant frames of one datagram, keeping only those not seen before.
     pub fn push(&mut self, frames: &[InputFrame]) {
         for frame in frames {
-            if frame.seq() <= self.newest {
+            if frame.seq() <= self.newest || (self.newest != 0 && frame.seq() - self.newest > MAX_SEQ_JUMP) {
                 continue;
             }
             self.newest = frame.seq();
@@ -131,6 +134,15 @@ mod tests {
         }
         let stopped = buffer.pop().input;
         assert_eq!((stopped.1, stopped.2), (0, 0));
+    }
+
+    #[test]
+    fn a_forged_far_future_seq_does_not_lock_out_real_frames() {
+        let mut buffer = JitterBuffer::default();
+        buffer.push(&[frame(1), frame(2)]);
+        buffer.push(&[frame(u32::MAX - 5)]);
+        buffer.push(&[frame(3)]);
+        assert_eq!(buffer.len(), 3);
     }
 
     #[test]
