@@ -284,7 +284,7 @@ describe('a hurt building', () => {
     damage.hurtBuilding(key, 0, 2, null)
     const effects = new Effects()
     const group = damage.root.children[0]!
-    const pieces = group.children.filter((c) => c instanceof THREE.Mesh && c.geometry.getAttribute('color') && c.material instanceof THREE.MeshToonMaterial && c.material.side === THREE.DoubleSide)
+    const pieces = group.children.filter((c) => c instanceof THREE.Mesh && c.geometry.getAttribute('color') && c.material instanceof THREE.MeshToonMaterial && c.material.side === THREE.DoubleSide && c.castShadow)
     expect(pieces.length).toBeGreaterThan(0)
     for (let i = 0; i < 300; i++) damage.update(0.05, effects, new THREE.Vector3(500, 0, 0))
     expect(group.children.some((c) => pieces.includes(c))).toBe(false)

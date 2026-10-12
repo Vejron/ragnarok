@@ -109,7 +109,7 @@ function scorchTexture() {
 let scorchMaterial: THREE.MeshBasicMaterial | null = null
 const bodyMaterial = new THREE.MeshToonMaterial({ vertexColors: true })
 const pieceMaterial = new THREE.MeshToonMaterial({ vertexColors: true, side: THREE.DoubleSide })
-const coreMaterial = new THREE.MeshBasicMaterial({ color: 0x17120f, side: THREE.DoubleSide })
+const coreMaterial = new THREE.MeshToonMaterial({ vertexColors: true, side: THREE.DoubleSide })
 
 function decalMaterial(map: THREE.Texture | null, fallback: number) {
   return new THREE.MeshBasicMaterial({
@@ -280,7 +280,7 @@ export class BuildingDamage {
     const building = loaded.tile.buildings[index]!
     if (!drawn.fracture) {
       drawn.fracture = new Fracture(loaded.tile, index, key * 1_000_003 + index, loaded.salt)
-      drawn.core = new THREE.Mesh(shardGeometry(drawn.fracture.core(), new Float32Array(drawn.fracture.core().length)), coreMaterial)
+      drawn.core = new THREE.Mesh(shardGeometry(drawn.fracture.core(), drawn.fracture.coreColors()), coreMaterial)
       drawn.group.add(drawn.core)
       for (const scorch of drawn.scorches) scorch.shard = drawn.fracture.nearest(scorch.at).shard
     }

@@ -9,6 +9,8 @@ const CELL = 2.4
 const SHARD_AREA = 8
 /** How far behind the wall the dark inside of the building sits, metres. */
 const INSET = 0.4
+/** How much of the wall's brightness the inside keeps. */
+const INSIDE = 0.6
 /** The share of shards knocked out of true, and the share broken out entirely, at each damage stage. */
 const DISPLACED = [0, 0.3, 0.55, 0.8]
 const GONE = [0, 0, 0.1, 0.28]
@@ -162,6 +164,17 @@ export class Fracture {
       const reach = toward.length()
       if (reach > 1e-3) p.addScaledVector(toward.divideScalar(reach), Math.min(INSET, reach))
       p.toArray(out, i)
+    }
+    return out
+  }
+
+  /** The inside's colour per vertex of `core()`: the wall's own, a little dimmer, so a hole shows a room and not a void. */
+  coreColors(): Float32Array {
+    const out = new Float32Array(this.small.length)
+    for (let i = 0; i < out.length; i += 3) {
+      out[i] = this.wall.r * INSIDE
+      out[i + 1] = this.wall.g * INSIDE
+      out[i + 2] = this.wall.b * INSIDE
     }
     return out
   }
