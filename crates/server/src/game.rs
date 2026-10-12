@@ -405,8 +405,10 @@ mod tests {
                 player.character.position[0] = (n % 8) as f32 * 70.0 - 250.0;
                 player.character.position[2] = (n / 8) as f32 * 70.0 - 250.0;
             } else {
-                let [sx, sz] = spawns[(n / 8 * 7) % spawns.len()];
-                player.character.position[0] = sx + (n % 8) as f32 * 0.8;
+                // `SPREAD=1`: one player per spawn point, as far apart as the world allows.
+                let spread = std::env::var_os("SPREAD").is_some();
+                let [sx, sz] = spawns[if spread { n * spawns.len() / MAX_PLAYERS } else { n / 8 * 7 } % spawns.len()];
+                player.character.position[0] = sx + if spread { 0.0 } else { (n % 8) as f32 * 0.8 };
                 player.character.position[2] = sz;
             }
             let (x, z) = (player.character.position[0], player.character.position[2]);
