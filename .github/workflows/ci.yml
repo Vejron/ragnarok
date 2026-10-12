@@ -40,6 +40,6 @@ jobs:
         run: npm run type-check
       - name: Lint
         run: npm run lint
-      # Includes parity.spec.ts, which checks the TS item tables against fixtures/parity/gameplay.json.
+      # Includes parity.spec.ts and consts-parity.spec.ts, which check the TS mirrors against the Rust tables.
       - name: Test
         run: npx vitest run
