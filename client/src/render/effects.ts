@@ -184,10 +184,10 @@ export class Effects {
     this.add(this.sphere, 0xffffff, 0.09, (mesh) => mesh.position.copy(at), (mesh, p) => mesh.scale.setScalar(0.12 + p * 0.3), true)
   }
 
-  /** A rocket or a wreck going up at `at`. */
+  /** The white-hot flash of a blast at `at`; the fire, smoke and debris around it come from `explosion`. */
   burst(at: THREE.Vector3, radius: number) {
-    this.add(this.sphere, 0xff9a3c, 0.5, (mesh) => mesh.position.copy(at), (mesh, p) => mesh.scale.setScalar(radius * 0.15 + p * radius * 0.5))
-    this.add(this.sphere, 0xfff0c0, 0.22, (mesh) => mesh.position.copy(at), (mesh, p) => mesh.scale.setScalar(radius * 0.1 + p * radius * 0.25))
+    this.add(this.sphere, 0xff9a3c, 0.25, (mesh) => mesh.position.copy(at), (mesh, p) => mesh.scale.setScalar(radius * 0.12 + p * radius * 0.3), true)
+    this.add(this.sphere, 0xfff0c0, 0.12, (mesh) => mesh.position.copy(at), (mesh, p) => mesh.scale.setScalar(radius * 0.1 + p * radius * 0.2), true)
   }
 
   /** A puff of smoke from a damaged vehicle, drifting up. Black and bigger for a wreck. */

@@ -31,6 +31,7 @@ import { Particles } from './render/particles'
 import { Skidmarks } from './render/skidmarks'
 import { crashBurst, scrapeSparks, VehicleFx, type FxWorld } from './render/tyres'
 import { Debris } from './render/debris'
+import { BLASTS, explosion, type ExplosionProfile } from './render/explosion'
 import { Gore } from './render/gore'
 import { Surfaces, SURFACE_GRASS } from './sim/surface'
 import { Pickups } from './render/pickups'
@@ -147,7 +148,7 @@ export class Game {
   private readonly damageNumbers = new DamageNumbers()
   /** Tyre smoke, dust, gravel and spray; sparks and flames glow on their own pool. */
   private readonly smoke = new Particles(3000)
-  private readonly glow = new Particles(600, true)
+  private readonly glow = new Particles(1200, true)
   private readonly skids = new Skidmarks()
   private readonly vehicleFx = new Map<number, VehicleFx>()
   /** Engines, tyres, crashes and guns. */
@@ -720,19 +721,19 @@ export class Game {
     let gun: ItemDef | undefined
     const to = new THREE.Vector3(shot.x, shot.y, shot.z)
     if (shot.weapon === WEAPON_ROCKET) {
-      this.effects.burst(to, ROCKET_BLAST_RADIUS)
+      this.blast(to, ROCKET_BLAST_RADIUS, BLASTS.rocket)
       this.sounds.blast([to.x, to.y, to.z], 'small')
     } else if (shot.weapon === WEAPON_GRENADE) {
-      this.effects.burst(to, GRENADE_BLAST_RADIUS)
+      this.blast(to, GRENADE_BLAST_RADIUS, BLASTS.grenade)
       this.sounds.blast([to.x, to.y, to.z], 'small')
     } else if (shot.weapon === WEAPON_SHELL) {
-      this.effects.burst(to, EXPLOSION_RADIUS)
+      this.blast(to, EXPLOSION_RADIUS, BLASTS.shell)
       this.sounds.blast([to.x, to.y, to.z], 'big')
     } else if (shot.weapon === WEAPON_WRECK) {
-      this.effects.burst(to, WRECK_BLAST_RADIUS)
+      this.blast(to, WRECK_BLAST_RADIUS, BLASTS.wreck)
       this.sounds.explosion([to.x, to.y, to.z])
     } else if (shot.weapon === WEAPON_AUTOCANNON) {
-      this.effects.burst(to, CANNON_RADIUS)
+      this.blast(to, CANNON_RADIUS, BLASTS.cannon)
       this.sounds.blast([to.x, to.y, to.z], 'small')
     } else if (shot.weapon === WEAPON_BULLET) {
       // A bullet ended here; `shooter` is its id. It is drawn until it gets there.
@@ -750,9 +751,8 @@ export class Game {
       if (!gun || (from && from.distanceTo(to) >= gun.range - 1)) return
       this.effects.pelletStrike(to)
     } else if (shot.weapon === WEAPON_BOMB) {
-      this.effects.burst(to, BOMB_RADIUS)
+      this.blast(to, BOMB_RADIUS, BLASTS.bomb)
       this.sounds.explosion([to.x, to.y, to.z])
-      if (to.distanceTo(this.scene.camera.position) < 40) this.chase.kick(0.3)
     } else if (shot.weapon === WEAPON_CRASH) {
       const car = this.cars.get(shot.shooter)
       const velocity = this.vehicleFx.get(shot.shooter)?.velocity ?? STILL
@@ -784,6 +784,14 @@ export class Game {
       const at = from ?? to
       this.sounds.gunshot([at.x, at.y, at.z], gun.sound)
     }
+  }
+
+  /** A heavy blast: the layered fire, sparks, dust and debris, a flash, and a shove of the camera if it is close. */
+  private blast(at: THREE.Vector3, radius: number, profile: ExplosionProfile) {
+    this.effects.burst(at, radius)
+    explosion(this.fxWorld, this.debris, at, radius, profile)
+    const distance = at.distanceTo(this.scene.camera.position)
+    if (distance < radius * 8) this.chase.kick(Math.min(0.6, (radius / 8) * (1 - distance / (radius * 8))))
   }
 
   /** What a hit you landed looks like in the world: a number, flying debris and a flash on the target. */
