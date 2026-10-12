@@ -1,12 +1,12 @@
 import * as THREE from 'three'
 import {
-  ARMS_CUT, ARMS_JAMMED, ARMS_REAR_JAMMED, DAMAGE_WHEELS, encodeInput, encodePing, KIND_HELI, KIND_PLANE, OBJ_BUILDING, OBJ_TREE, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_TANK, sceneStates, toAxis, toMrad, WEAPON_GRENADE,
+  ARMS_CUT, ARMS_JAMMED, ARMS_REAR_JAMMED, DAMAGE_WHEELS, encodeInput, encodePing, KIND_HELI, KIND_PLANE, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_TANK, sceneStates, toAxis, toMrad, WEAPON_GRENADE,
   PROJECTILE_BULLET, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_CRASH, WEAPON_MG, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SNIPER, WEAPON_WRECK,
   type Arms, type EntityState, type InputFrame, type PickupState, type RocketState, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
 } from './net/codec'
 import { blendEntity, blendRocket, blendVehicle, Interpolator } from './net/interp'
 import { RttEstimator, ServerClock } from './net/clock'
-import { Transport, type ConnectionStatus } from './net/transport'
+import { Transport } from './net/transport'
 import {
   BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, CROUCH_EYE_DROP, SLIDE_MIN_SPEED, ENTER_RADIUS, EXPLOSION_RADIUS, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION, RESPAWN_TICKS,
   ROCKET_BLAST_RADIUS, SHELL_COOLDOWN_TICKS, STANDING_Y,
@@ -18,12 +18,12 @@ import {
 import { vehicleDef } from './sim/vehicles'
 import { aimSpeedScale, emptyHotbar, GRENADE_BLAST_RADIUS, HOTBAR_SLOTS, hitscanGunFor, ITEM_NONE, itemDef, PICKUP_RADIUS, type ItemDef, type ItemSlot } from './sim/items'
 import { InputController } from './sim/input'
-import { RapierMotor, trunkColliderIndex } from './sim/physics'
-import { groundOf, Terrain } from './sim/terrain'
+import { RapierMotor } from './sim/physics'
+import { Terrain } from './sim/terrain'
 import { VehicleDriver, type DrivenPose } from './sim/vehicle'
 import { Predictor } from './sim/predict'
 import type { Vec3 } from './sim/physics'
-import { CarModel, loadCarModels, type VehicleModel } from './render/car'
+import { CarModel, type VehicleModel } from './render/car'
 import { Effects } from './render/effects'
 import { DamageNumbers } from './render/damagenumbers'
 import { Particles } from './render/particles'
@@ -38,112 +38,30 @@ import { dropTrajectory, throwTrajectory } from './sim/grenade'
 import { Rockets } from './render/rockets'
 import { saveLook, type Look } from './render/look'
 import { halfExtentsOf } from './sim/kinds'
-import { AIM_DISTANCE_SCALE, CAMERA_HEIGHT, DRIVING_DISTANCE, HELI_DISTANCE, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, PLANE_CAMERA_HEIGHT, PLANE_DISTANCE, Scene, TANK_DISTANCE } from './render/scene'
+import { AIM_DISTANCE_SCALE, CAMERA_HEIGHT, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, PLANE_CAMERA_HEIGHT, PLANE_DISTANCE, Scene } from './render/scene'
 import { ChaseCam } from './render/chase'
-import { HeliModel, loadHeliModel } from './render/heli'
+import { HeliModel } from './render/heli'
 import { wrapAngle } from './net/codec'
-import { loadPlaneModel, PlaneModel } from './render/plane'
-import { loadTankModel, TankModel } from './render/tank'
+import { PlaneModel } from './render/plane'
+import { TankModel } from './render/tank'
+import { cameraDistance, createVehicleModel, loadVehicleModels } from './render/vehicles'
 import { Character, Crowd } from './render/character'
 import { loadRoosterModel, RoosterModel } from './render/rooster'
 import { playCrow } from './audio'
 import { VehicleSounds } from './vehicleaudio'
-import { type ArcView, HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, HitFeedback, type MarkerView } from './feedback'
-import { buildGround, buildTile, disposeTile, rebuildBuildings, restitchTerrain } from './render/world'
-import { buildWater, disposeWater, updateWater } from './render/water'
-import { FallingTrees } from './render/falling'
-import { Collapses } from './render/rubble'
-import { BuildingDamage } from './render/damage'
+import { HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, HitFeedback } from './feedback'
+import { buildGround } from './render/world'
+import { updateWater } from './render/water'
 import { Replica } from './net/replica'
 import { TileStreamer } from './stream'
-import { loadManifest, type TileData, type TileRef, type WorldData } from './world'
+import { loadManifest, type WorldData } from './world'
+import { WorldView } from './worldview'
+import type { HudStats } from './hud'
+import { Scoreboard } from './scoreboard'
 
-/** A tile's colliders in one simulation, with the ones taken out one by one (felled trunks) left `undefined`. */
-type TileSolids = (ReturnType<RapierMotor['addTile']>[number] | undefined)[]
-
-export interface HudStats {
-  status: ConnectionStatus
-  rtt: number | null
-  players: number
-  interpDelayMs: number
-  /** Map tiles loaded around the player. */
-  tiles: number
-  correction: number
-  pending: number
-  locked: boolean
-  /** The player is on a touch screen. */
-  touch: boolean
-  warning: string | null
-  /** A hint for the key that does something right now, or null. */
-  prompt: string | null
-  /** Set while in a vehicle: the seat's role. A plane's pilot is an aviator; a helicopter's, a pilot. */
-  seat: 'driver' | 'pilot' | 'aviator' | 'passenger' | 'gunner' | null
-  /** Seated with a free seat to move to: R switches to it. */
-  canSwitchSeat: boolean
-  /** For a gunner: how loaded the gun is, 0 (just fired) to 1 (ready). */
-  reload: number
-  /** In a plane: the heat of the guns in hand, 0..1 (they jam at 1), and whether they have; null elsewhere. */
-  heat: number | null
-  jammed: boolean
-  /** A plane's pilot: bombs left on the rack, or null elsewhere. */
-  bombs: number | null
-  /** A plane's pilot: flying too slowly for the wings. */
-  stall: boolean
-  hp: number
-  maxHp: number
-  /** Dead and waiting to respawn. */
-  dead: boolean
-  /** Seconds until respawn while dead. */
-  respawnIn: number
-  /** Looking down a scope: the scope overlay replaces the crosshair. */
-  scoped: boolean
-  /** Aiming a gun over the shoulder: half zoom, tighter spread. */
-  aiming: boolean
-  /** On foot with a gun in hand: show the crosshair. */
-  armed: boolean
-  /** Connected, standing and alive: the health bar and the hotbar are shown. */
-  onFoot: boolean
-  /** The five hotbar slots. */
-  hotbar: ItemSlot[]
-  /** The slot in hand. */
-  selected: number
-  /** How far a reload or a bandage has got, 0..1, or 0 when neither is going on. */
-  progress: number
-  kills: number
-  deaths: number
-  /** Recent kills, oldest first. */
-  feed: FeedEntry[]
-  /** Every player's tally, best first; empty unless the scoreboard key is held. */
-  board: ScoreRow[]
-  /** The marker for a hit just landed, or null. */
-  hitMarker: MarkerView | null
-  /** Strength 0..1 of the red flash for harm just taken. */
-  hurt: number
-  /** Where recent harm came from, as screen angles. */
-  hurtArcs: ArcView[]
-  /** The player's place on the map, metres (x east, z south), and where they look, radians. */
-  x: number
-  z: number
-  yaw: number
-  /** Half the side of the playable square, metres; 0 before the world has loaded. */
-  halfExtent: number
-}
-
-export interface FeedEntry {
-  /** 0 when the world did it. */
-  killer: number
-  victim: number
-  weapon: number
-  /** Whether the local player is the killer or the victim. */
-  you: 'killer' | 'victim' | null
-}
-
-export interface ScoreRow {
-  id: number
-  kills: number
-  deaths: number
-  you: boolean
-}
+// The overlay and its tests import these from here.
+export type { HudStats } from './hud'
+export type { FeedEntry, ScoreRow } from './scoreboard'
 
 interface CarPlacement {
   kind: number
@@ -164,7 +82,6 @@ const PLANE_VIEW_EASE = 5
 const PLANE_PULLBACK = 3
 const PLANE_VIEW_ROLL = 0.3
 const clamp01 = (value: number) => Math.min(0.94, Math.max(0.06, value))
-const cameraDistance = (kind: number) => (kind === KIND_TANK ? TANK_DISTANCE : kind === KIND_HELI ? HELI_DISTANCE : kind === KIND_PLANE ? PLANE_DISTANCE : DRIVING_DISTANCE)
 /** A vehicle with no motion on record. */
 const STILL = new THREE.Vector3()
 
@@ -181,8 +98,6 @@ const RECONNECT_MS = 3000
 /** A crow can be heard this far off, metres. */
 const ROOSTER_HEARING = 45
 /** How long a kill stays in the feed. */
-const FEED_MS = 6000
-const FEED_LENGTH = 5
 /** Mouse-look is this much slower down a scope, to match the narrower view. */
 const SCOPE_LOOK_SCALE = 0.3
 /** And a little slower aiming a gun over the shoulder. */
@@ -207,20 +122,11 @@ export class Game {
   /** Rebuilds snapshots from deltas, and says which one to diff the next against. */
   private readonly replica = new Replica()
   private tiles: TileStreamer | null = null
+  /** The streamed tiles, what is solid in them, and what the server has brought down. */
+  private readonly view: WorldView
   private world: WorldData | null = null
   private terrain: Terrain | null = null
   private surfaces: Surfaces | null = null
-  /** Each streamed-in tile's drawing, by `row * 65536 + col`, so a new tile can re-shade its neighbours' seams. */
-  private readonly tileGroups = new Map<number, THREE.Group>()
-  /** What each loaded tile was made from, and its colliders in both simulations, by tile key. */
-  private readonly tileSolids = new Map<number, { tile: TileData; salt: number; walk: TileSolids; drive: TileSolids }>()
-  /** Trees that have fallen, by tile key then index in the tile, with the yaw they fell at. */
-  private readonly fellTrees = new Map<number, Map<number, number>>()
-  private readonly fallingTrees = new FallingTrees()
-  /** Buildings that have collapsed, by tile key then index in the tile, with the yaw the blast came from. */
-  private readonly goneBuildings = new Map<number, Map<number, number>>()
-  private readonly collapses = new Collapses()
-  private readonly damage = new BuildingDamage()
   /** True from the welcome until the joiner's catch-up `destroyed` arrives: that one is state, not news. */
   private awaitingCatchUp = false
   private readonly cars = new Map<number, VehicleModel>()
@@ -275,8 +181,7 @@ export class Game {
   private diedAt: number | null = null
   private lastFireAt = -Infinity
   /** Kills and deaths of everyone, kept up to date by the server's kill events. */
-  private readonly scores = new Map<number, { kills: number; deaths: number }>()
-  private feed: { killer: number; victim: number; weapon: number; at: number }[] = []
+  private readonly board = new Scoreboard()
   /** Hits dealt and taken, for the crosshair marker, the screen flash and the direction arcs. */
   private readonly hits = new HitFeedback()
   /** The vehicle seat the server says the local player sits in; null when on foot. */
@@ -298,8 +203,6 @@ export class Game {
   private accumulator = 0
   private lastFrame = 0
   private frameHandle = 0
-  /** Every streamed-in tile's water. */
-  private readonly waterRoot = new THREE.Group()
   private reconnectTimer = 0
   private pingTimer = 0
   private disposed = false
@@ -313,8 +216,9 @@ export class Game {
   constructor(container: HTMLElement, private readonly onStats: (stats: HudStats) => void) {
     this.scene = new Scene(container)
     this.input = new InputController(this.scene.canvas)
+    this.view = new WorldView(this.scene.scene)
     this.scene.scene.add(this.crowd.root)
-    this.scene.scene.add(this.effects.root, this.damage.root, this.damageNumbers.root)
+    this.scene.scene.add(this.effects.root, this.view.damage.root, this.damageNumbers.root)
     this.scene.scene.add(this.rocketModels.root)
     this.scene.scene.add(this.pickupModels.root)
     this.scene.scene.add(this.trajectory.root)
@@ -325,11 +229,11 @@ export class Game {
     this.smoke.groundAt = (x, z) => this.scene.groundAt(x, z)
     this.scene.scene.add(this.debris.root)
     this.debris.groundAt = (x, z) => this.scene.groundAt(x, z)
-    this.scene.excludeFromAO(this.damage.root)
+    this.scene.excludeFromAO(this.view.damage.root)
     this.scene.excludeFromAO(this.trajectory.root)
     // Water is translucent and drawn after everything solid; the AO pass would see it as a lid.
-    this.scene.scene.add(this.waterRoot)
-    this.scene.excludeFromAO(this.waterRoot)
+    this.scene.scene.add(this.view.waterRoot)
+    this.scene.excludeFromAO(this.view.waterRoot)
     this.transport = new Transport(
       (message) => this.handle(message),
       (status) => {
@@ -344,17 +248,18 @@ export class Game {
     const { world, hash } = await loadManifest()
     this.worldHash = hash
     this.world = world
+    this.view.world = world
     // On a hilly world the plane sits just under the terrain, so it only shows where a tile is late.
     this.scene.scene.add(buildGround(world.halfExtent, world.groundCell > 0 ? -0.05 : 0))
-    this.terrain = new Terrain(world.halfExtent, world.tileSize)
-    this.surfaces = new Surfaces(world.halfExtent, world.tileSize)
+    this.terrain = this.view.terrain = new Terrain(world.halfExtent, world.tileSize)
+    this.surfaces = this.view.surfaces = new Surfaces(world.halfExtent, world.tileSize)
     this.scene.groundAt = (x, z) => this.terrain?.heightAt(x, z) ?? 0
     const motor = await RapierMotor.create(world)
-    this.motor = motor
-    this.driver = await VehicleDriver.create(world)
-    await Promise.all([this.crowd.load(), loadCarModels(), loadTankModel(), loadHeliModel(), loadPlaneModel(), loadRoosterModel()])
+    this.motor = this.view.motor = motor
+    this.driver = this.view.driver = await VehicleDriver.create(world)
+    await Promise.all([this.crowd.load(), loadVehicleModels(), loadRoosterModel()])
     // The buildings arrive as tiles, around wherever the player is.
-    this.tiles = new TileStreamer(world, { attach: (ref, tile) => this.attachTile(ref, tile) })
+    this.tiles = new TileStreamer(world, { attach: (ref, tile) => this.view.attachTile(ref, tile) })
     // Until the server places us, walk around solo from the first spawn point.
     const [x, z] = world.spawns[0] ?? [0, 0]
     await this.tiles.prime(x, z)
@@ -372,103 +277,6 @@ export class Game {
     void this.connect()
   }
 
-  /** Draws a streamed-in tile and makes it solid for both predicted simulations. Returns how to undo it. */
-  private attachTile(ref: TileRef, tile: TileData) {
-    const ground = this.world ? groundOf(this.world, ref, tile) : null
-    const salt = ref.col * 31 + ref.row * 17
-    const key = ref.row * 65536 + ref.col
-    // Buildings that fell before this tile streamed in (or while it was away) are not drawn.
-    const down = new Set(this.goneBuildings.get(key)?.keys())
-    // Buildings that are hurt are drawn by `damage`, as shards, not with the tile.
-    const group = buildTile(tile, salt, ground, this.terrain ?? undefined, this.undrawnBuildings(key))
-    this.scene.scene.add(group)
-    const water = ground ? buildWater(tile, ground, this.terrain ?? undefined) : null
-    if (water) this.waterRoot.add(water)
-    this.terrain?.set(ref, ground)
-    this.surfaces?.add(ref, tile, ground)
-    this.tileGroups.set(key, group)
-    // Tiles already in place were shaded without this one beside them: close the seams.
-    if (this.terrain && ground) {
-      for (const [dc, dr] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]] as const) {
-        const next = this.tileGroups.get((ref.row + dr) * 65536 + ref.col + dc)
-        if (next) restitchTerrain(next, this.terrain)
-      }
-    }
-    const walk: TileSolids = this.motor?.addTile(tile, ground) ?? []
-    const drive: TileSolids = this.driver?.addTile(tile, ground) ?? []
-    this.tileSolids.set(key, { tile, salt, walk, drive })
-    this.damage.attach(key, tile, salt)
-    if (down.size > 0) {
-      this.dropBuildingColliders(key)
-      for (const index of down) Collapses.settled(group, tile, index)
-    }
-    // Trees that fell before this tile streamed in (or while it was away) are already down.
-    for (const [index, yaw] of this.fellTrees.get(key) ?? []) this.fellTree(key, index, yaw, false)
-    return () => {
-      this.tileSolids.delete(key)
-      this.damage.detach(key)
-      disposeTile(group)
-      if (water) disposeWater(water)
-      this.tileGroups.delete(key)
-      this.terrain?.delete(ref)
-      this.surfaces?.delete(ref)
-      this.motor?.removeTile(walk)
-      this.driver?.removeTile(drive)
-    }
-  }
-
-  /**
-   * Fells tree number `index` of tile `key` if that tile is loaded: it leaves the tile's drawing
-   * and falls, and its trunk stops being solid in both simulations.
-   */
-  private fellTree(key: number, index: number, yaw: number, animate: boolean) {
-    const group = this.tileGroups.get(key)
-    const solids = this.tileSolids.get(key)
-    const tree = solids?.tile.trees[index]
-    if (!group || !solids || !tree) return
-    this.fallingTrees.fell(group, tree, index, yaw, animate)
-    const at = trunkColliderIndex(solids.tile, index)
-    if (at < 0) return
-    this.motor?.removeTile([solids.walk[at]])
-    this.driver?.removeTile([solids.drive[at]])
-    solids.walk[at] = undefined
-    solids.drive[at] = undefined
-  }
-
-  /** The buildings of tile `key` its own drawing leaves out: those that fell, and those drawn as shards instead. */
-  private undrawnBuildings(key: number): Set<number> {
-    const out = new Set(this.goneBuildings.get(key)?.keys())
-    for (const index of this.damage.fractured(key)) out.add(index)
-    return out
-  }
-
-  /** Rebuilds tile `key`'s building colliders in both simulations without the buildings that fell. */
-  private dropBuildingColliders(key: number) {
-    const solids = this.tileSolids.get(key)
-    if (!solids || solids.tile.collision.triangles.length === 0) return
-    const down = new Set(this.goneBuildings.get(key)?.keys())
-    // The building mesh is `addTile`'s first collider, when the tile has one.
-    if (this.motor) solids.walk[0] = this.motor.rebuildBuildings(solids.walk[0], solids.tile, down)
-    if (this.driver) solids.drive[0] = this.driver.rebuildBuildings(solids.drive[0], solids.tile, down)
-  }
-
-  /**
-   * Brings building `index` of tile `key` down, if that tile is loaded: it is redrawn without
-   * it, it stops being solid in both simulations, and it collapses in front of the player.
-   */
-  private fellBuilding(key: number, index: number, yaw: number, animate: boolean) {
-    const group = this.tileGroups.get(key)
-    const solids = this.tileSolids.get(key)
-    if (!group || !solids || !solids.tile.buildings[index]) return
-    rebuildBuildings(group, solids.tile, solids.salt, this.undrawnBuildings(key))
-    this.dropBuildingColliders(key)
-    if (animate) {
-      this.collapses.start(group, solids.tile, index, solids.salt, yaw, (x, z) => this.terrain?.heightAt(x, z) ?? 0, key * 1_000_003 + index)
-    } else {
-      Collapses.settled(group, solids.tile, index)
-    }
-  }
-
   private async connect() {
     if (this.disposed) return
     try {
@@ -483,8 +291,7 @@ export class Game {
     this.localId = null
     this.awaitingCatchUp = false
     this.seat = null
-    this.scores.clear()
-    this.feed = []
+    this.board.clear()
     this.hits.clear()
     this.hp = PLAYER_MAX_HP
     this.diedAt = null
@@ -600,44 +407,19 @@ export class Game {
         break
       case 'leave':
         this.interp.remove(message.id)
-        this.scores.delete(message.id)
+        this.board.forget(message.id)
         break
       case 'destroyed': {
         const animate = !this.awaitingCatchUp
         this.awaitingCatchUp = false
-        for (const object of message.objects) {
-          const key = object.row * 65536 + object.col
-          if (object.kind === OBJ_TREE) {
-            const fell = this.fellTrees.get(key) ?? new Map<number, number>()
-            this.fellTrees.set(key, fell)
-            if (fell.has(object.index)) continue
-            fell.set(object.index, object.yaw)
-            this.fellTree(key, object.index, object.yaw, animate)
-          } else if (object.kind === OBJ_BUILDING) {
-            const gone = this.goneBuildings.get(key) ?? new Map<number, number>()
-            this.goneBuildings.set(key, gone)
-            if (gone.has(object.index)) continue
-            gone.set(object.index, object.yaw)
-            this.damage.fell(key, object.index)
-            this.fellBuilding(key, object.index, object.yaw, animate)
-          }
-        }
+        this.view.destroyed(message.objects, animate)
         break
       }
       case 'damaged':
-        for (const b of message.buildings) {
-          const key = b.row * 65536 + b.col
-          if (this.goneBuildings.get(key)?.has(b.index)) continue
-          // The first real damage swaps the whole building in the tile for its shards.
-          if (!this.damage.hurtBuilding(key, b.index, b.stage, b.mark)) continue
-          const group = this.tileGroups.get(key)
-          const solids = this.tileSolids.get(key)
-          if (group && solids) rebuildBuildings(group, solids.tile, solids.salt, this.undrawnBuildings(key))
-        }
+        this.view.damaged(message.buildings)
         break
       case 'scores':
-        this.scores.clear()
-        for (const { id, kills, deaths } of message.scores) this.scores.set(id, { kills, deaths })
+        this.board.replace(message.scores)
         break
       case 'hit': {
         this.hits.receive(message, now)
@@ -652,12 +434,9 @@ export class Game {
         break
       }
       case 'kill': {
-        if (message.killer !== 0) this.score(message.killer).kills = message.killerKills
-        this.score(message.victim).deaths = message.victimDeaths
         const body = this.avatars.get(message.victim === this.localId ? 0 : message.victim)
         if (body?.visible) this.gore.die(body, message.style, message.yaw, message.power, (x, z) => this.scene.groundAt(x, z))
-        this.feed.push({ killer: message.killer, victim: message.victim, weapon: message.weapon, at: now })
-        if (this.feed.length > FEED_LENGTH) this.feed.shift()
+        this.board.kill(message, now)
         break
       }
     }
@@ -703,9 +482,7 @@ export class Game {
     this.lastFrame = now
 
     updateWater(now / 1000)
-    this.fallingTrees.update(dt)
-    this.collapses.update(dt, this.effects)
-    this.damage.update(dt, this.effects, this.scene.camera.position)
+    this.view.update(dt, this.effects, this.scene.camera.position)
     this.accumulator += dt * 1000
     let ticks = 0
     while (this.accumulator >= TICK_MS && ticks < MAX_TICKS_PER_FRAME) {
@@ -891,10 +668,10 @@ export class Game {
       hotbar: this.hotbar,
       selected: this.input.selectedSlot,
       progress: this.progress,
-      kills: this.localId === null ? 0 : (this.scores.get(this.localId)?.kills ?? 0),
-      deaths: this.localId === null ? 0 : (this.scores.get(this.localId)?.deaths ?? 0),
-      feed: this.recentFeed(now),
-      board: this.input.isHeld('Tab') ? this.scoreboard() : [],
+      kills: this.board.kills(this.localId),
+      deaths: this.board.deaths(this.localId),
+      feed: this.board.recent(now, this.localId),
+      board: this.input.isHeld('Tab') ? this.board.rows(this.localId, this.interp.ids()) : [],
       hitMarker: hitView.marker,
       hurt: hitView.vignette,
       hurtArcs: hitView.arcs,
@@ -905,33 +682,10 @@ export class Game {
     })
   }
 
-  private score(id: number) {
-    let score = this.scores.get(id)
-    if (!score) this.scores.set(id, (score = { kills: 0, deaths: 0 }))
-    return score
-  }
-
   private setHealth(hp: number, now: number) {
     if (hp === 0 && this.hp > 0) this.diedAt = now
     else if (hp > 0) this.diedAt = null
     this.hp = hp
-  }
-
-  private recentFeed(now: number): FeedEntry[] {
-    this.feed = this.feed.filter((entry) => now - entry.at < FEED_MS)
-    return this.feed.map(({ killer, victim, weapon }) => ({
-      killer, victim, weapon,
-      you: killer === this.localId ? 'killer' : victim === this.localId ? 'victim' : null,
-    }))
-  }
-
-  private scoreboard(): ScoreRow[] {
-    const ids = new Set<number>(this.scores.keys())
-    if (this.localId !== null) ids.add(this.localId)
-    for (const id of this.interp.ids()) ids.add(id)
-    return [...ids]
-      .map((id) => ({ id, kills: this.scores.get(id)?.kills ?? 0, deaths: this.scores.get(id)?.deaths ?? 0, you: id === this.localId }))
-      .sort((a, b) => b.kills - a.kills || a.deaths - b.deaths || a.id - b.id)
   }
 
   /** Where a player's rifle leaves: the end of the barrel it is drawn holding, else its eye. */
@@ -1144,7 +898,7 @@ export class Game {
       if (!state) continue
       let car = this.cars.get(id)
       if (!car) {
-        car = state.kind === KIND_TANK ? new TankModel(id) : state.kind === KIND_HELI ? new HeliModel(id) : state.kind === KIND_PLANE ? new PlaneModel(id) : new CarModel(state.kind, id)
+        car = createVehicleModel(state.kind, id)
         this.cars.set(id, car)
         this.scene.scene.add(car.root)
       }
@@ -1441,7 +1195,7 @@ export class Game {
     this.skids.dispose()
     this.sounds.dispose()
     this.debris.dispose()
-    this.damage.dispose()
+    this.view.dispose()
     this.rocketModels.dispose()
     this.pickupModels.dispose()
     for (const model of this.roosters.values()) model.dispose()

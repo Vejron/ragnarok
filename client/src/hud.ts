@@ -1,0 +1,73 @@
+import type { ArcView, MarkerView } from './feedback'
+import type { ItemSlot } from './sim/items'
+import type { ConnectionStatus } from './net/transport'
+import type { FeedEntry, ScoreRow } from './scoreboard'
+
+/** Everything the overlay draws, assembled by the game once a frame. */
+export interface HudStats {
+  status: ConnectionStatus
+  rtt: number | null
+  players: number
+  interpDelayMs: number
+  /** Map tiles loaded around the player. */
+  tiles: number
+  correction: number
+  pending: number
+  locked: boolean
+  /** The player is on a touch screen. */
+  touch: boolean
+  warning: string | null
+  /** A hint for the key that does something right now, or null. */
+  prompt: string | null
+  /** Set while in a vehicle: the seat's role. A plane's pilot is an aviator; a helicopter's, a pilot. */
+  seat: 'driver' | 'pilot' | 'aviator' | 'passenger' | 'gunner' | null
+  /** Seated with a free seat to move to: R switches to it. */
+  canSwitchSeat: boolean
+  /** For a gunner: how loaded the gun is, 0 (just fired) to 1 (ready). */
+  reload: number
+  /** In a plane: the heat of the guns in hand, 0..1 (they jam at 1), and whether they have; null elsewhere. */
+  heat: number | null
+  jammed: boolean
+  /** A plane's pilot: bombs left on the rack, or null elsewhere. */
+  bombs: number | null
+  /** A plane's pilot: flying too slowly for the wings. */
+  stall: boolean
+  hp: number
+  maxHp: number
+  /** Dead and waiting to respawn. */
+  dead: boolean
+  /** Seconds until respawn while dead. */
+  respawnIn: number
+  /** Looking down a scope: the scope overlay replaces the crosshair. */
+  scoped: boolean
+  /** Aiming a gun over the shoulder: half zoom, tighter spread. */
+  aiming: boolean
+  /** On foot with a gun in hand: show the crosshair. */
+  armed: boolean
+  /** Connected, standing and alive: the health bar and the hotbar are shown. */
+  onFoot: boolean
+  /** The five hotbar slots. */
+  hotbar: ItemSlot[]
+  /** The slot in hand. */
+  selected: number
+  /** How far a reload or a bandage has got, 0..1, or 0 when neither is going on. */
+  progress: number
+  kills: number
+  deaths: number
+  /** Recent kills, oldest first. */
+  feed: FeedEntry[]
+  /** Every player's tally, best first; empty unless the scoreboard key is held. */
+  board: ScoreRow[]
+  /** The marker for a hit just landed, or null. */
+  hitMarker: MarkerView | null
+  /** Strength 0..1 of the red flash for harm just taken. */
+  hurt: number
+  /** Where recent harm came from, as screen angles. */
+  hurtArcs: ArcView[]
+  /** The player's place on the map, metres (x east, z south), and where they look, radians. */
+  x: number
+  z: number
+  yaw: number
+  /** Half the side of the playable square, metres; 0 before the world has loaded. */
+  halfExtent: number
+}
