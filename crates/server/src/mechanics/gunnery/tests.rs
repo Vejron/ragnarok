@@ -1,6 +1,7 @@
 use super::*;
 use crate::game::{Command, Game, Seat};
 use crate::physics::STANDING_Y;
+use shared::items::Falloff;
 use shared::protocol::{InputFrame, KIND_HELI, KIND_TANK, PROJECTILE_BOMB, WEAPON_BOMB, WEAPON_MG};
 use shared::quant::to_mrad;
 use shared::world::{Road, WORLD_VERSION, WorldFile};
@@ -467,7 +468,7 @@ fn machine_gun_rounds_hurt_a_plane_more_than_a_car() {
     let car = *game.world.vehicles.iter().find(|(_, v)| v.kind == shared::protocol::KIND_JEEP).unwrap().0;
     // The broad-phase learns of the vehicles in the first step.
     game.step();
-    let round = Round { damage: PLANE_GUN_DAMAGE, vehicle: PLANE_GUN_VEHICLE_DAMAGE, plane: PLANE_GUN_PLANE_DAMAGE, weapon: WEAPON_MG, range: 50.0 };
+    let round = Round { damage: PLANE_GUN_DAMAGE, vehicle: PLANE_GUN_VEHICLE_DAMAGE, plane: PLANE_GUN_PLANE_DAMAGE, weapon: WEAPON_MG, range: 50.0, falloff: Falloff::NONE };
     for vid in [target, car] {
         let at = game.world.physics.car_pose(vid).unwrap().position;
         let origin = [at[0], at[1] + 20.0, at[2]];

@@ -142,3 +142,18 @@ In order of expected return:
 4. Only then, parallelise snapshot building (the replicas are independent per player).
 
 None of these is worth doing before the unmeasured cases above show a problem.
+
+## Bullets
+
+Guns (AK5, revolver, sniper) fire real, flying bullets. Measured with the same full-room test, every
+player firing an AK5 ten times a second (about 120 bullets in the air at once), fixture city:
+
+| How bullets reach clients | Snapshots per call, whole room |
+|---|---|
+| Hitscan (before) | about 1.0 ms |
+| Listed as projectiles in every snapshot, every tick of flight | 45 to 75 ms (3 to 4 ticks of budget) |
+| Announced once as a spawn, flown by the clients (built) | about 2.2 ms |
+
+Stepping a bullet is cheap, one segment cast and one player test a tick; the cost was the wire. The
+shed loop also now drops effects in bulk, by the excess over the packet limit, instead of one
+re-encode per item. A synthetic room with every player firing full-auto is the worst case.

@@ -63,6 +63,12 @@ export const WEAPON_MG = 10
 export const WEAPON_BOMB = 11
 /** A vehicle running a stickman down; only ever a kill's weapon. */
 export const WEAPON_ROADKILL = 12
+/** Ten pellets in one pull; the shot event is where the middle of the spread ended. */
+export const WEAPON_SHOTGUN = 13
+/** Each further pellet of a multi-ray pull: only where it landed is drawn. */
+export const WEAPON_PELLET = 14
+/** A flying bullet ended here: the shot event's `shooter` is the bullet's id (`BulletSpawn.id`). */
+export const WEAPON_BULLET = 15
 
 /** How a stickman died, as in a `Kill`. Mirrors `DEATH_*`. */
 export const DEATH_BODY = 0
@@ -174,6 +180,24 @@ export interface Arms {
   bombs: number
   /** `ARMS_*`. */
   flags: number
+}
+
+/**
+ * A bullet leaving a gun, in metres and m/s. It is announced once and flown by the client from this
+ * (`sim/ballistics.ts`); `tick` is the server tick it was fired on.
+ */
+export interface BulletSpawn {
+  id: number
+  shooter: number
+  /** The gun, `ITEM_*`. */
+  item: number
+  x: number
+  y: number
+  z: number
+  vx: number
+  vy: number
+  vz: number
+  tick: number
 }
 
 /** A rocket, grenade or tank shell in flight, in metres and m/s. */
@@ -315,6 +339,7 @@ export type ServerMessage =
       shots: ShotEvent[]
       rockets: RocketState[]
       pickups: PickupState[]
+      bullets: BulletSpawn[]
     }
   | { type: 'pong'; nonce: number }
   | { type: 'leave'; id: number }
@@ -390,6 +415,12 @@ function decodeRocket(raw: unknown): RocketState | null {
   if (!Array.isArray(raw) || raw.length !== 8 || !ints(raw)) return null
   const [id, kind, x, y, z, vx, vy, vz] = raw as number[]
   return { id: id!, kind: kind!, x: x! / CM, y: y! / CM, z: z! / CM, vx: vx! / CM, vy: vy! / CM, vz: vz! / CM }
+}
+
+function decodeBullet(raw: unknown): BulletSpawn | null {
+  if (!Array.isArray(raw) || raw.length !== 10 || !ints(raw)) return null
+  const [id, shooter, item, x, y, z, vx, vy, vz, tick] = raw as number[]
+  return { id: id!, shooter: shooter!, item: item!, x: x! / CM, y: y! / CM, z: z! / CM, vx: vx! / CM, vy: vy! / CM, vz: vz! / CM, tick: tick! }
 }
 
 function decodePickup(raw: unknown): PickupState | null {
@@ -537,11 +568,11 @@ export function decodeServer(bytes: Uint8Array): ServerMessage | null {
         return { type: 'welcome', version: version!, id: id!, tickRate: tickRate!, snapshotEvery: snapshotEvery!, worldHash: worldHash! }
       }
     case S_SNAPSHOT: {
-      if (raw.length !== 15 || !isInt(raw[1]) || !isInt(raw[2]) || !isInt(raw[3]) || !isInt(raw[4])) return null
+      if (raw.length !== 16 || !isInt(raw[1]) || !isInt(raw[2]) || !isInt(raw[3]) || !isInt(raw[4])) return null
       const [lists, removed] = [[raw[5], raw[6], raw[7], raw[8]], raw[9]]
       if (!lists.every(Array.isArray) || !Array.isArray(removed) || !ints(removed)) return null
       const me = decodeSelf(raw[11])
-      if (!me || !Array.isArray(raw[12]) || !Array.isArray(raw[13]) || !Array.isArray(raw[14])) return null
+      if (!me || !Array.isArray(raw[12]) || !Array.isArray(raw[13]) || !Array.isArray(raw[14]) || !Array.isArray(raw[15])) return null
       const delta: WireDelta = { newEntities: [], entities: [], newVehicles: [], vehicles: [], removed: removed as number[] }
       for (const item of raw[5] as unknown[]) {
         const entity = readEntity(item)
@@ -583,9 +614,15 @@ export function decodeServer(bytes: Uint8Array): ServerMessage | null {
         if (!pickup) return null
         pickups.push(pickup)
       }
+      const bullets: BulletSpawn[] = []
+      for (const item of raw[15] as unknown[]) {
+        const bullet = decodeBullet(item)
+        if (!bullet) return null
+        bullets.push(bullet)
+      }
       return {
         type: 'snapshot', tick: raw[1], baseline: raw[2], ack: raw[3], ride: raw[4], delta, drive,
-        hp: me.hp, progress: me.progress, inventory: me.inventory, shots, rockets, pickups,
+        hp: me.hp, progress: me.progress, inventory: me.inventory, shots, rockets, pickups, bullets,
       }
     }
     case S_PONG:

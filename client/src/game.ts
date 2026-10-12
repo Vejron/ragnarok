@@ -1,8 +1,8 @@
 import * as THREE from 'three'
 import {
   ARMS_CUT, ARMS_JAMMED, ARMS_REAR_JAMMED, DAMAGE_WHEELS, encodeInput, encodePing, KIND_HELI, KIND_PLANE, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_TANK, sceneStates, toAxis, toMrad, WEAPON_GRENADE,
-  PROJECTILE_BULLET, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_CRASH, WEAPON_MG, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SNIPER, WEAPON_WRECK,
-  type Arms, type EntityState, type InputFrame, type PickupState, type RocketState, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
+  PROJECTILE_BULLET, WEAPON_BULLET, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_CRASH, WEAPON_MG, WEAPON_PELLET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_WRECK,
+  type Arms, type BulletSpawn, type EntityState, type InputFrame, type PickupState, type RocketState, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
 } from './net/codec'
 import { blendEntity, blendRocket, blendVehicle, Interpolator } from './net/interp'
 import { Backoff } from './net/backoff'
@@ -13,11 +13,11 @@ import {
   ROCKET_BLAST_RADIUS, SHELL_COOLDOWN_TICKS, STANDING_Y,
   CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS,
   HELI_GUN_COOLDOWN_TICKS, HELI_GUN_LENGTH, HELI_GUN_PITCH_MAX, HELI_GUN_PITCH_MIN, HELI_GUN_YAW_LIMIT, CANNON_RADIUS,
-  TANK_BARREL_LENGTH, TANK_BARREL_MAX, TANK_BARREL_MIN, TICK_MS, vehicleMaxHp, WRECK_BLAST_RADIUS,
+  TANK_BARREL_LENGTH, TANK_BARREL_MAX, TANK_BARREL_MIN, TICK_MS, TICK_RATE, vehicleMaxHp, WRECK_BLAST_RADIUS,
   BOMB_RADIUS, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, PLANE_BOMB_MIN_HEIGHT, PLANE_BOMB_PIVOT, PLANE_GUN_RANGE, PLANE_REAR_PITCH_MAX, PLANE_REAR_PITCH_MIN, PLANE_STALL_SPEED,
 } from './sim/consts'
 import { vehicleDef } from './sim/vehicles'
-import { aimSpeedScale, emptyHotbar, GRENADE_BLAST_RADIUS, HOTBAR_SLOTS, hitscanGunFor, ITEM_NONE, itemDef, PICKUP_RADIUS, type ItemDef, type ItemSlot } from './sim/items'
+import { aimSpeedScale, emptyHotbar, GRENADE_BLAST_RADIUS, HOTBAR_SLOTS, hitscanGunFor, ITEM_NONE, ITEM_SNIPER, itemDef, PICKUP_RADIUS, type ItemDef, type ItemSlot } from './sim/items'
 import { InputController } from './sim/input'
 import { RapierMotor } from './sim/physics'
 import { Terrain } from './sim/terrain'
@@ -37,6 +37,7 @@ import { Pickups } from './render/pickups'
 import { TrajectoryView } from './render/trajectory'
 import { dropTrajectory, throwTrajectory } from './sim/grenade'
 import { Rockets } from './render/rockets'
+import { bulletLifeTicks, bulletPosition, bulletTicksTo, bulletVelocity } from './sim/ballistics'
 import { saveLook, type Look } from './render/look'
 import { halfExtentsOf } from './sim/kinds'
 import { AIM_DISTANCE_SCALE, CAMERA_HEIGHT, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, PLANE_CAMERA_HEIGHT, PLANE_DISTANCE, Scene } from './render/scene'
@@ -97,6 +98,19 @@ const MAX_TICKS_PER_FRAME = 8
 const PING_INTERVAL_MS = 1000
 /** A crow can be heard this far off, metres. */
 const ROOSTER_HEARING = 45
+/** A bullet in flight on this client. */
+interface LiveBullet {
+  spawn: BulletSpawn
+  /** Ticks it flies before it gives up. */
+  life: number
+  /** Ticks after firing at which its end event says it stopped, once known. */
+  endTicks: number | null
+  /** Its first frame has played: arm, flash and sound. */
+  shown: boolean
+  /** Muzzle minus eye, closing as it flies. */
+  offset: THREE.Vector3 | null
+}
+
 /** Mouse-look is this much slower down a scope, to match the narrower view. */
 const SCOPE_LOOK_SCALE = 0.3
 /** And a little slower aiming a gun over the shoulder. */
@@ -149,6 +163,10 @@ export class Game {
   private readonly rocketEnds = new Map<number, number>()
   /** Shot and burst events wait here until the render tick reaches them, so they line up with what is drawn. */
   private pendingShots: { tick: number; shot: ShotEvent }[] = []
+  /** Bullets in flight, flown from their spawn alone (`sim/ballistics.ts`); the server lists none after announcing them. */
+  private readonly bullets = new Map<number, LiveBullet>()
+  /** Bullets already seen, with the tick they were fired on: a spawn is sent twice and must not start a second round. */
+  private readonly seenBullets = new Map<number, number>()
   private readonly smokeAt = new Map<number, number>()
   private readonly chase = new ChaseCam()
   private readonly pickupModels = new Pickups()
@@ -361,6 +379,7 @@ export class Game {
         for (const shot of message.shots) this.pendingShots.push({ tick: message.tick, shot })
         if (this.pendingShots.length > 64) this.pendingShots.splice(0, this.pendingShots.length - 64)
         this.trackRockets(message.tick, message.rockets)
+        this.noteBullets(message.tick, message.bullets)
         const remote = entities.filter((e) => e.id !== this.localId)
         this.interp.push(message.tick, remote)
         this.vehicleInterp.push(message.tick, vehicles)
@@ -581,6 +600,7 @@ export class Game {
     this.tiles?.update(ride ? ride.x : position[0], ride ? ride.z : position[2])
     this.playShots(renderTick)
     this.drawRockets(renderTick)
+    this.drawBullets(renderTick)
     this.pickupModels.set(this.pickups)
     this.pickupModels.update(now / 1000)
     this.aimGrenade(position, seated)
@@ -714,9 +734,21 @@ export class Game {
     } else if (shot.weapon === WEAPON_AUTOCANNON) {
       this.effects.burst(to, CANNON_RADIUS)
       this.sounds.blast([to.x, to.y, to.z], 'small')
+    } else if (shot.weapon === WEAPON_BULLET) {
+      // A bullet ended here; `shooter` is its id. It is drawn until it gets there.
+      const bullet = this.bullets.get(shot.shooter)
+      if (bullet) bullet.endTicks = bulletTicksTo(bullet.spawn, [shot.x, shot.y, shot.z])
+      if (bullet?.spawn.item === ITEM_SNIPER) this.effects.burst(to, 0.8)
+      else this.effects.pelletStrike(to)
     } else if (shot.weapon === WEAPON_MG) {
       // The tracer was drawn when the gun fired; this is a round striking something.
       this.effects.strike(to)
+    } else if (shot.weapon === WEAPON_PELLET) {
+      // A further pellet of a spread: the blast and the sound came with the first.
+      const gun = hitscanGunFor(WEAPON_SHOTGUN)
+      const from = this.muzzleOf(shot.shooter)
+      if (!gun || (from && from.distanceTo(to) >= gun.range - 1)) return
+      this.effects.pelletStrike(to)
     } else if (shot.weapon === WEAPON_BOMB) {
       this.effects.burst(to, BOMB_RADIUS)
       this.sounds.explosion([to.x, to.y, to.z])
@@ -739,7 +771,16 @@ export class Game {
     } else if ((gun = hitscanGunFor(shot.weapon))) {
       const from = this.muzzleOf(shot.shooter)
       this.avatars.get(shot.shooter === this.localId ? 0 : shot.shooter)?.fire()
-      if (from) this.effects.tracer(from, to, from.distanceTo(to) < gun.range - 1)
+      if (from) {
+        const landed = from.distanceTo(to) < gun.range - 1
+        if (gun.pellets > 1) {
+          // No rays for a spread: a blast at the muzzle, then each pellet is drawn where it landed.
+          this.effects.blast(from, to.clone().sub(from).normalize())
+          if (landed) this.effects.pelletStrike(to)
+        } else {
+          this.effects.tracer(from, to, landed)
+        }
+      }
       const at = from ?? to
       this.sounds.gunshot([at.x, at.y, at.z], gun.sound)
     }
@@ -765,11 +806,6 @@ export class Game {
 
   /** Buffers the rockets of a snapshot, and notes the ones it no longer lists as burst at that tick. */
   private trackRockets(tick: number, rockets: readonly RocketState[]) {
-    // A sniper round's crack is heard as it leaves, not where it lands (it may never land).
-    const known = new Set(this.rocketInterp.ids())
-    for (const rocket of rockets) {
-      if (rocket.kind === PROJECTILE_BULLET && !known.has(rocket.id)) this.sounds.gunshot([rocket.x, rocket.y, rocket.z], 'sniper')
-    }
     this.rocketInterp.push(tick, rockets)
     const listed = new Set(rockets.map((rocket) => rocket.id))
     for (const id of this.rocketInterp.ids()) {
@@ -791,7 +827,62 @@ export class Game {
     }
   }
 
+  /** Starts the bullets of a snapshot that are new; each is sent in two, in case one is lost. */
+  private noteBullets(tick: number, spawns: readonly BulletSpawn[]) {
+    for (const spawn of spawns) {
+      if (this.seenBullets.has(spawn.id)) continue
+      this.seenBullets.set(spawn.id, spawn.tick)
+      this.bullets.set(spawn.id, { spawn, life: bulletLifeTicks(spawn), endTicks: null, shown: false, offset: null })
+    }
+    if (this.seenBullets.size > 256) {
+      for (const [id, fired] of this.seenBullets) if (tick - fired > 300) this.seenBullets.delete(id)
+    }
+  }
+
+  /** Draws every bullet where it has got to by `renderTick`, and ends the ones that have arrived. */
+  private drawBullets(renderTick: number) {
+    for (const [id, bullet] of this.bullets) {
+      const n = renderTick - bullet.spawn.tick
+      if (n < 0) continue
+      if (n >= Math.min(bullet.life, bullet.endTicks ?? Infinity)) {
+        this.rocketModels.remove(id)
+        this.bullets.delete(id)
+        continue
+      }
+      const at = bulletPosition(bullet.spawn, n)
+      if (!bullet.shown) {
+        bullet.shown = true
+        this.bulletLeft(bullet, at)
+      }
+      // It leaves the eye, but is drawn leaving the barrel: the difference closes over the first 25 m.
+      if (bullet.offset) {
+        const flown = n * Math.hypot(bullet.spawn.vx, bullet.spawn.vy, bullet.spawn.vz) / TICK_RATE
+        const keep = Math.max(0, 1 - flown / 25)
+        at[0] += bullet.offset.x * keep
+        at[1] += bullet.offset.y * keep
+        at[2] += bullet.offset.z * keep
+      }
+      this.rocketModels.place(id, PROJECTILE_BULLET, at, bulletVelocity(bullet.spawn, n))
+    }
+  }
+
+  /** The moment a bullet is first drawn: the shooter's arm, a flash at the muzzle and the shot's sound. */
+  private bulletLeft(bullet: LiveBullet, at: readonly number[]) {
+    const { shooter, item } = bullet.spawn
+    const gun = itemDef(item)
+    this.avatars.get(shooter === this.localId ? 0 : shooter)?.fire()
+    const muzzle = this.muzzleOf(shooter)
+    if (muzzle) {
+      bullet.offset = muzzle.clone().sub(new THREE.Vector3(at[0], at[1], at[2]))
+      this.effects.muzzle(muzzle)
+    }
+    const heard = muzzle ?? new THREE.Vector3(at[0], at[1], at[2])
+    this.sounds.gunshot([heard.x, heard.y, heard.z], gun?.sound ?? 'rifle')
+  }
+
   private clearRockets() {
+    this.bullets.clear()
+    this.seenBullets.clear()
     for (const id of this.rocketInterp.ids()) this.rocketModels.remove(id)
     this.rocketInterp.clear()
     this.rocketEnds.clear()

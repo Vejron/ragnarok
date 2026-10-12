@@ -1,11 +1,12 @@
 {
   "items": {
-    "1": {"name": "Revolver", "kind": "gun", "auto": false, "damage": 35, "cooldownTicks": 30, "mag": 6, "reloadTicks": 120, "range": 150, "aimSpeed": 0.8, "scope": false, "stack": 1, "weapon": 4, "projectile": false},
-    "2": {"name": "AK5", "kind": "gun", "auto": true, "damage": 12, "cooldownTicks": 6, "mag": 30, "reloadTicks": 150, "range": 200, "aimSpeed": 0.6, "scope": false, "stack": 1, "weapon": 0, "projectile": false},
-    "3": {"name": "Grenade", "kind": "grenade", "auto": false, "damage": 0, "cooldownTicks": 60, "mag": 0, "reloadTicks": 0, "range": 0, "aimSpeed": 1, "scope": false, "stack": 3, "weapon": 5, "projectile": false},
-    "4": {"name": "Bandage", "kind": "heal", "auto": false, "damage": 40, "cooldownTicks": 0, "mag": 0, "reloadTicks": 0, "range": 0, "aimSpeed": 1, "scope": false, "stack": 5, "weapon": 0, "projectile": false},
-    "5": {"name": "Sniper", "kind": "gun", "auto": false, "damage": 90, "cooldownTicks": 120, "mag": 5, "reloadTicks": 180, "range": 400, "aimSpeed": 0.4, "scope": true, "stack": 1, "weapon": 7, "projectile": true},
-    "6": {"name": "Golden egg", "kind": "heal", "auto": false, "damage": 255, "cooldownTicks": 0, "mag": 0, "reloadTicks": 0, "range": 0, "aimSpeed": 1, "scope": false, "stack": 1, "weapon": 0, "projectile": false}
+    "1": {"name": "Revolver", "kind": "gun", "auto": false, "damage": 35, "cooldownTicks": 30, "mag": 6, "reloadTicks": 120, "range": 150, "aimSpeed": 0.8, "scope": false, "stack": 1, "weapon": 4, "projectile": true, "pellets": 1, "falloffStart": 30, "falloffEnd": 150, "falloffMin": 0.6},
+    "2": {"name": "AK5", "kind": "gun", "auto": true, "damage": 12, "cooldownTicks": 6, "mag": 30, "reloadTicks": 150, "range": 200, "aimSpeed": 0.6, "scope": false, "stack": 1, "weapon": 0, "projectile": true, "pellets": 1, "falloffStart": 25, "falloffEnd": 200, "falloffMin": 0.5},
+    "3": {"name": "Grenade", "kind": "grenade", "auto": false, "damage": 0, "cooldownTicks": 60, "mag": 0, "reloadTicks": 0, "range": 0, "aimSpeed": 1, "scope": false, "stack": 3, "weapon": 5, "projectile": false, "pellets": 1, "falloffStart": 0, "falloffEnd": 0, "falloffMin": 1},
+    "4": {"name": "Bandage", "kind": "heal", "auto": false, "damage": 40, "cooldownTicks": 0, "mag": 0, "reloadTicks": 0, "range": 0, "aimSpeed": 1, "scope": false, "stack": 5, "weapon": 0, "projectile": false, "pellets": 1, "falloffStart": 0, "falloffEnd": 0, "falloffMin": 1},
+    "5": {"name": "Sniper", "kind": "gun", "auto": false, "damage": 90, "cooldownTicks": 120, "mag": 5, "reloadTicks": 180, "range": 400, "aimSpeed": 0.4, "scope": true, "stack": 1, "weapon": 7, "projectile": true, "pellets": 1, "falloffStart": 0, "falloffEnd": 0, "falloffMin": 1},
+    "6": {"name": "Golden egg", "kind": "heal", "auto": false, "damage": 255, "cooldownTicks": 0, "mag": 0, "reloadTicks": 0, "range": 0, "aimSpeed": 1, "scope": false, "stack": 1, "weapon": 0, "projectile": false, "pellets": 1, "falloffStart": 0, "falloffEnd": 0, "falloffMin": 1},
+    "7": {"name": "Shotgun", "kind": "gun", "auto": false, "damage": 12, "cooldownTicks": 60, "mag": 5, "reloadTicks": 180, "range": 40, "aimSpeed": 0.7, "scope": false, "stack": 1, "weapon": 13, "projectile": false, "pellets": 10, "falloffStart": 8, "falloffEnd": 40, "falloffMin": 0.25}
   },
   "vehicles": {
     "1": {"name": "Jeep", "hp": 100, "seats": 4, "halfExtents": [1, 0.42, 1.95], "gun": false, "arms": false, "carWheels": true, "trackHalf": 0.9, "axleZ": 1.25},

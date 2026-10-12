@@ -22,7 +22,7 @@ export class Effects {
    * `bright` effects (tracers, sparks) ignore fog and tone mapping, so they keep their colour against
    * a pale sky and at range, where fog would otherwise melt them into it.
    */
-  private add(geometry: THREE.BufferGeometry, color: number, life: number, place: (mesh: THREE.Mesh) => void, animate: (mesh: THREE.Mesh, progress: number) => void, bright = false) {
+  private add(geometry: THREE.BufferGeometry, color: number, life: number, place: (mesh: THREE.Mesh) => void, animate: (mesh: THREE.Mesh, progress: number) => void, bright = false, fade = true) {
     const material = new THREE.MeshBasicMaterial({ color, transparent: true, depthWrite: false, ...(bright ? { fog: false, toneMapped: false } : {}) })
     const mesh = new THREE.Mesh(geometry, material)
     place(mesh)
@@ -32,7 +32,7 @@ export class Effects {
       age: 0,
       life,
       animate: (progress) => {
-        material.opacity = 1 - progress
+        material.opacity = fade ? 1 - progress : 1 - progress * progress * progress
         animate(mesh, progress)
       },
     })
@@ -48,25 +48,89 @@ export class Effects {
     )
   }
 
-  /** A rifle shot: a short flash at the muzzle and, when it ended on something, a spark there. */
+  /** A rifle shot: a short streak flies from the muzzle to `to` and, when it ended on something, sparks there. */
   tracer(from: THREE.Vector3, to: THREE.Vector3, hit: boolean) {
     const direction = to.clone().sub(from)
     const length = direction.length()
     if (length < 0.01) return
     direction.divideScalar(length)
-    this.add(this.sphere, 0xfff2b0, 0.06, (mesh) => mesh.position.copy(from).addScaledVector(direction, 0.6), (mesh, p) => mesh.scale.setScalar(0.12 + p * 0.1))
-    // A hot core inside a wider orange glow: the white alone vanished against sky and pale roofs.
-    const lay = (mesh: THREE.Mesh, width: number) => {
-      mesh.position.copy(from).lerp(to, 0.5)
-      mesh.scale.set(width, length, width)
-      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction)
+    this.add(this.sphere, 0xfff2b0, 0.06, (mesh) => mesh.position.copy(from).addScaledVector(direction, 0.6), (mesh, p) => mesh.scale.setScalar(0.1 + p * 0.1), true)
+    // Thin, and a short segment on the move rather than a rod drawn the whole way: it reads as speed.
+    const start = Math.min(1.5, length)
+    const run = length - start
+    if (run > 1) {
+      const streak = Math.min(5, run)
+      const life = Math.min(0.4, Math.max(0.05, run / 350))
+      const fly = (mesh: THREE.Mesh, p: number) => mesh.position.copy(from).addScaledVector(direction, start + streak / 2 + (run - streak) * p)
+      const lay = (width: number) => (mesh: THREE.Mesh) => {
+        mesh.scale.set(width, streak, width)
+        mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction)
+      }
+      this.add(this.beam, 0xfff6d8, life, lay(0.2), fly, true, false)
+      this.add(this.beam, 0xff9a2e, life, lay(0.55), fly, true, false)
     }
-    this.add(this.beam, 0xffffff, 0.16, (mesh) => lay(mesh, 1.1), () => {}, true)
-    this.add(this.beam, 0xff8a1f, 0.16, (mesh) => lay(mesh, 3.2), () => {}, true)
-    if (hit) {
-      this.add(this.sphere, 0xffffff, 0.1, (mesh) => mesh.position.copy(to), (mesh, p) => mesh.scale.setScalar(0.15 + p * 0.2), true)
-      this.add(this.sphere, 0xff9a1f, 0.28, (mesh) => mesh.position.copy(to), (mesh, p) => mesh.scale.setScalar(0.2 + p * 0.55), true)
+    if (hit) this.sparks(to, 5, 0.9)
+  }
+
+  /** A flash and a spray of `count` bright specks thrown from `at`, drawn for `scale` of the usual reach. */
+  private sparks(at: THREE.Vector3, count: number, scale: number) {
+    this.add(this.sphere, 0xffffff, 0.08, (mesh) => mesh.position.copy(at), (mesh, p) => mesh.scale.setScalar(0.08 + p * 0.14), true)
+    for (let i = 0; i < count; i++) {
+      const direction = new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.9 + 0.1, Math.random() - 0.5).normalize()
+      const speed = (3 + Math.random() * 4) * scale
+      const size = 0.015 + Math.random() * 0.02
+      this.add(
+        this.sphere, i % 2 ? 0xffd070 : 0xff8a1f, 0.18 + Math.random() * 0.14,
+        (mesh) => mesh.position.copy(at),
+        (mesh, p) => {
+          mesh.position.copy(at).addScaledVector(direction, speed * p * 0.3)
+          mesh.position.y -= 6 * p * p * 0.3
+          mesh.scale.setScalar(size * (1 - p * 0.6))
+        },
+        true,
+      )
     }
+  }
+
+  /** A shotgun going off: a fat flash, flame thrown forward in a cone and a wisp of smoke. No rays. */
+  blast(muzzle: THREE.Vector3, direction: THREE.Vector3) {
+    this.add(this.sphere, 0xfff0b8, 0.1, (mesh) => mesh.position.copy(muzzle).addScaledVector(direction, 0.5), (mesh, p) => mesh.scale.setScalar(0.35 + p * 0.35), true)
+    for (let i = 0; i < 7; i++) {
+      const jet = direction.clone().add(new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(0.5)).normalize()
+      const reach = 1.5 + Math.random() * 2
+      const size = 0.08 + Math.random() * 0.1
+      this.add(
+        this.sphere, i % 2 ? 0xffb347 : 0xff7a1a, 0.1 + Math.random() * 0.08,
+        (mesh) => mesh.position.copy(muzzle),
+        (mesh, p) => {
+          mesh.position.copy(muzzle).addScaledVector(jet, reach * Math.sqrt(p))
+          mesh.scale.setScalar(size * (1 - p * 0.5))
+        },
+        true,
+      )
+    }
+    this.add(
+      this.sphere, 0x8a8a8a, 0.5,
+      (mesh) => mesh.position.copy(muzzle),
+      (mesh, p) => {
+        mesh.position.copy(muzzle).addScaledVector(direction, 0.8 + p * 1.2)
+        mesh.position.y += p * 0.4
+        mesh.scale.setScalar(0.15 + p * 0.35)
+      },
+    )
+  }
+
+  /** One shotgun pellet landing: a few sparks and a small puff of dust. */
+  pelletStrike(at: THREE.Vector3) {
+    this.sparks(at, 3, 0.7)
+    this.add(
+      this.sphere, 0xb8ad98, 0.4,
+      (mesh) => mesh.position.copy(at),
+      (mesh, p) => {
+        mesh.scale.setScalar(0.1 + p * 0.3)
+        mesh.position.y = at.y + p * 0.3
+      },
+    )
   }
 
   /**

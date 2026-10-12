@@ -1,7 +1,7 @@
 //! Items a player can carry in the hotbar. Mirrored in `client/src/sim/items.ts`.
 
 use crate::consts::TICK_RATE;
-use crate::protocol::{WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_RIFLE, WEAPON_SNIPER};
+use crate::protocol::{WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_RIFLE, WEAPON_SHOTGUN, WEAPON_SNIPER};
 
 /// Slots in the hotbar. A player picks one with the `slot` field of their input.
 pub const HOTBAR_SLOTS: usize = 5;
@@ -15,8 +15,9 @@ pub const ITEM_BANDAGE: u8 = 4;
 pub const ITEM_SNIPER: u8 = 5;
 /// Dropped by a rooster, never scattered. Heals to full.
 pub const ITEM_GOLDEN_EGG: u8 = 6;
+pub const ITEM_SHOTGUN: u8 = 7;
 /// One past the largest item id.
-pub const ITEM_COUNT: u8 = 7;
+pub const ITEM_COUNT: u8 = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ItemKind {
@@ -26,6 +27,37 @@ pub enum ItemKind {
     Grenade,
     /// Used over time to restore health.
     Heal,
+}
+
+/// How a hitscan round loses damage with distance: all of it up to `start` metres, then a straight
+/// line down to `min` (a fraction) at `end`, and `min` beyond.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Falloff {
+    pub start: f32,
+    pub end: f32,
+    pub min: f32,
+}
+
+impl Falloff {
+    /// Full damage at any distance.
+    pub const NONE: Falloff = Falloff { start: 0.0, end: 0.0, min: 1.0 };
+
+    /// The fraction of its damage a round keeps after `dist` metres.
+    pub fn scale(&self, dist: f32) -> f32 {
+        if dist <= self.start {
+            return 1.0;
+        }
+        let along = if self.end > self.start { ((dist - self.start) / (self.end - self.start)).min(1.0) } else { 1.0 };
+        1.0 - (1.0 - self.min) * along
+    }
+
+    /// `damage` after `dist` metres: never less than 1, or a far hit would do nothing at all.
+    pub fn apply(&self, damage: u8, dist: f32) -> u8 {
+        if damage == 0 {
+            return 0;
+        }
+        ((f32::from(damage) * self.scale(dist)).round() as u8).max(1)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -44,8 +76,12 @@ pub struct ItemDef {
     pub range: f32,
     /// Random half-angle of the cone a shot is fired in, radians.
     pub spread: f32,
-    /// Fires a round that flies (`PROJECTILE_BULLET`) and hits when it arrives, instead of a hitscan.
+    /// Fires a round that flies (`PROJECTILE_BULLET`: speed `BULLET_SPEED`, a little drop) and hits when it arrives, instead of a hitscan.
     pub projectile: bool,
+    /// Hitscan rays one trigger pull fires, each doing `damage`, each scattered on its own.
+    pub pellets: u8,
+    /// How `damage` falls off with the distance a ray travelled before it hit.
+    pub falloff: Falloff,
     /// Walking speed multiplier while aim is held (`BUTTON_ALT`) with this gun in hand.
     pub aim_speed: f32,
     /// Can be scoped (aim held): the shot then leaves the eye along the look direction, with no spread.
@@ -69,7 +105,9 @@ const REVOLVER: ItemDef = ItemDef {
     range: 150.0,
     // A little wild from the hip; aiming tightens it.
     spread: 0.015,
-    projectile: false,
+    projectile: true,
+    pellets: 1,
+    falloff: Falloff { start: 30.0, end: 150.0, min: 0.6 },
     aim_speed: 0.8,
     scope: false,
     stack: 1,
@@ -87,7 +125,9 @@ const AK5: ItemDef = ItemDef {
     reload_ticks: 5 * TICK_RATE / 2,
     range: 200.0,
     spread: 0.012,
-    projectile: false,
+    projectile: true,
+    pellets: 1,
+    falloff: Falloff { start: 25.0, end: 200.0, min: 0.5 },
     aim_speed: 0.6,
     scope: false,
     stack: 1,
@@ -107,10 +147,34 @@ const SNIPER: ItemDef = ItemDef {
     // Wild from the hip; scoping removes it.
     spread: 0.05,
     projectile: true,
+    pellets: 1,
+    falloff: Falloff::NONE,
     aim_speed: 0.4,
     scope: true,
     stack: 1,
     weapon: WEAPON_SNIPER,
+    weight: 3,
+};
+
+const SHOTGUN: ItemDef = ItemDef {
+    name: "Shotgun",
+    kind: ItemKind::Gun,
+    auto: false,
+    // Per pellet: ten of them at point blank are more than a full health bar.
+    damage: 12,
+    cooldown_ticks: TICK_RATE,
+    mag: 5,
+    reload_ticks: 3 * TICK_RATE,
+    range: 40.0,
+    // A wide cone from the hip; aiming tightens it.
+    spread: 0.06,
+    projectile: false,
+    pellets: 10,
+    falloff: Falloff { start: 8.0, end: 40.0, min: 0.25 },
+    aim_speed: 0.7,
+    scope: false,
+    stack: 1,
+    weapon: WEAPON_SHOTGUN,
     weight: 3,
 };
 
@@ -125,6 +189,8 @@ const GRENADE: ItemDef = ItemDef {
     range: 0.0,
     spread: 0.0,
     projectile: false,
+    pellets: 1,
+    falloff: Falloff::NONE,
     aim_speed: 1.0,
     scope: false,
     stack: 3,
@@ -143,6 +209,8 @@ const BANDAGE: ItemDef = ItemDef {
     range: 0.0,
     spread: 0.0,
     projectile: false,
+    pellets: 1,
+    falloff: Falloff::NONE,
     aim_speed: 1.0,
     scope: false,
     stack: 5,
@@ -162,6 +230,8 @@ const GOLDEN_EGG: ItemDef = ItemDef {
     range: 0.0,
     spread: 0.0,
     projectile: false,
+    pellets: 1,
+    falloff: Falloff::NONE,
     aim_speed: 1.0,
     scope: false,
     stack: 1,
@@ -178,9 +248,15 @@ pub fn def(item: u8) -> Option<&'static ItemDef> {
         ITEM_GRENADE => Some(&GRENADE),
         ITEM_BANDAGE => Some(&BANDAGE),
         ITEM_SNIPER => Some(&SNIPER),
+        ITEM_SHOTGUN => Some(&SHOTGUN),
         ITEM_GOLDEN_EGG => Some(&GOLDEN_EGG),
         _ => None,
     }
+}
+
+/// The gun a shot event of `weapon` came from, or `ITEM_NONE`.
+pub fn gun_for_weapon(weapon: u8) -> u8 {
+    (1..ITEM_COUNT).find(|&i| def(i).is_some_and(|d| d.kind == ItemKind::Gun && d.weapon == weapon)).unwrap_or(ITEM_NONE)
 }
 
 /// How much slower the player of `item` (in hand, or 0 for none) walks with `buttons`: only a gun
@@ -238,8 +314,8 @@ mod tests {
                     ItemKind::Heal => "heal",
                 };
                 format!(
-                    "    \"{id}\": {{\"name\": \"{}\", \"kind\": \"{kind}\", \"auto\": {}, \"damage\": {}, \"cooldownTicks\": {}, \"mag\": {}, \"reloadTicks\": {}, \"range\": {}, \"aimSpeed\": {}, \"scope\": {}, \"stack\": {}, \"weapon\": {}, \"projectile\": {}}}",
-                    d.name, d.auto, d.damage, d.cooldown_ticks, d.mag, d.reload_ticks, d.range, d.aim_speed, d.scope, d.stack, d.weapon, d.projectile
+                    "    \"{id}\": {{\"name\": \"{}\", \"kind\": \"{kind}\", \"auto\": {}, \"damage\": {}, \"cooldownTicks\": {}, \"mag\": {}, \"reloadTicks\": {}, \"range\": {}, \"aimSpeed\": {}, \"scope\": {}, \"stack\": {}, \"weapon\": {}, \"projectile\": {}, \"pellets\": {}, \"falloffStart\": {}, \"falloffEnd\": {}, \"falloffMin\": {}}}",
+                    d.name, d.auto, d.damage, d.cooldown_ticks, d.mag, d.reload_ticks, d.range, d.aim_speed, d.scope, d.stack, d.weapon, d.projectile, d.pellets, d.falloff.start, d.falloff.end, d.falloff.min
                 )
             })
             .collect();
@@ -306,6 +382,26 @@ mod tests {
         assert!(aim_speed_scale(ITEM_SNIPER, BUTTON_ALT) < aim_speed_scale(ITEM_REVOLVER, BUTTON_ALT));
         assert_eq!(aim_speed_scale(ITEM_GRENADE, BUTTON_ALT), 1.0);
         assert_eq!(aim_speed_scale(ITEM_NONE, BUTTON_ALT), 1.0);
+    }
+
+    #[test]
+    fn damage_falls_off_with_distance_but_never_to_nothing() {
+        let f = Falloff { start: 10.0, end: 50.0, min: 0.5 };
+        assert_eq!(f.scale(0.0), 1.0);
+        assert_eq!(f.scale(10.0), 1.0);
+        assert!((f.scale(30.0) - 0.75).abs() < 1e-6);
+        assert_eq!(f.scale(50.0), 0.5);
+        assert_eq!(f.scale(500.0), 0.5);
+        assert_eq!(Falloff::NONE.scale(1000.0), 1.0);
+        assert_eq!(f.apply(100, 50.0), 50);
+        assert_eq!(f.apply(1, 50.0), 1);
+        assert_eq!(f.apply(0, 50.0), 0);
+        // Ten close-range pellets are lethal; ten from beyond the edge of the range are not.
+        let gun = def(ITEM_SHOTGUN).unwrap();
+        let close = u32::from(gun.damage) * u32::from(gun.pellets);
+        assert!(close >= u32::from(crate::consts::PLAYER_MAX_HP));
+        let far = u32::from(gun.falloff.apply(gun.damage, gun.range)) * u32::from(gun.pellets);
+        assert!(far < u32::from(crate::consts::PLAYER_MAX_HP) / 2);
     }
 
     #[test]

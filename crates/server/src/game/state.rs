@@ -27,8 +27,8 @@ pub struct Seat {
     pub index: usize,
 }
 
-/// What a player holds at the start of every life: the revolver, the AK5 and the sniper rifle with full
-/// magazines, a full stack of grenades, and one empty slot for whatever turns up.
+/// What a player holds at the start of every life: the revolver, the AK5, the sniper rifle and the shotgun
+/// with full magazines, and a full stack of grenades.
 pub fn starting_hotbar() -> [ItemSlot; HOTBAR_SLOTS] {
     let full = |item: u8| ItemSlot { item, count: 1, ammo: def(item).map_or(0, |d| d.mag) };
     let mut hotbar = [ItemSlot { item: ITEM_NONE, count: 0, ammo: 0 }; HOTBAR_SLOTS];
@@ -36,6 +36,7 @@ pub fn starting_hotbar() -> [ItemSlot; HOTBAR_SLOTS] {
     hotbar[1] = full(ITEM_AK5);
     hotbar[2] = full(ITEM_SNIPER);
     hotbar[3] = ItemSlot { item: ITEM_GRENADE, count: def(ITEM_GRENADE).map_or(1, |d| d.stack), ammo: 0 };
+    hotbar[4] = full(ITEM_SHOTGUN);
     hotbar
 }
 
@@ -172,6 +173,14 @@ pub struct Rocket {
     pub position: [f32; 3],
     pub velocity: [f32; 3],
     pub ttl: u32,
+    /// For a `PROJECTILE_BULLET`: the gun it came from (`ITEM_*`), whose damage, falloff and weapon id it
+    /// carries; 0 otherwise.
+    pub item: u8,
+    /// For a bullet: how many ticks back the shooter saw the world, so it meets stickmen where they
+    /// were in the picture it was aimed in.
+    pub back: u32,
+    /// For a bullet: metres flown, which its damage falls off with.
+    pub flown: f32,
 }
 
 /// A vehicle's gun: where it points and when it can fire again. The `Gunnery` mechanic owns it.
@@ -242,6 +251,8 @@ pub struct World {
     pub rng: Rng,
     /// Rifle shots since the last snapshot, for drawing tracers. Drained when snapshots go out.
     pub shots: Vec<ShotEvent>,
+    /// Bullets fired in the last few ticks, each sent to the clients near it in a couple of snapshots.
+    pub bullets: Vec<BulletSpawn>,
     /// Kills since the last tick. Drained and broadcast reliably by `Game::step`.
     pub kills: Vec<Kill>,
     /// Hits since the last tick, each with the player it is for. Drained, summed and sent

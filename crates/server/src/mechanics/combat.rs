@@ -5,9 +5,9 @@ use crate::game::{Rocket, World, starting_hotbar};
 use crate::physics::Obj;
 use shared::consts::*;
 use shared::items::*;
-use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, KIND_PLANE, Kill, S_HIT, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_ROADKILL, WEAPON_SNIPER, WEAPON_WRECK,
+use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, KIND_PLANE, Kill, S_HIT, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, BulletSpawn, WEAPON_BULLET, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_PELLET, WEAPON_ROADKILL, WEAPON_WRECK,
     DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_SHELL};
-use shared::quant::{from_mrad, to_cm, to_mrad};
+use shared::quant::{from_mrad, to_cm, to_cm_i16, to_mrad};
 
 /// Health, death, the items in the hotbar and what blasts do to people and vehicles.
 ///
@@ -448,48 +448,58 @@ fn fire_rocket(world: &mut World, id: u32) {
             position: std::array::from_fn(|i| eye[i] + dir[i] * ROCKET_MUZZLE),
             velocity: dir.map(|v| v * ROCKET_SPEED),
             ttl: ROCKET_TTL_TICKS,
+            item: 0,
+            back: 0,
+            flown: 0.0,
         },
     );
 }
 
-/// Flies one sniper round a tick: a little gravity, then along its velocity until it meets a wall, a
-/// vehicle or a stickman. A stickman takes the gun's damage; a vehicle a quarter of it.
+/// Flies one bullet a tick: a little gravity, then along its velocity until it meets a wall, a vehicle
+/// or a stickman. A stickman takes the gun's damage, less the longer it flew; a vehicle a quarter of it.
+/// Stickmen are met where they were when the shooter fired (`back` ticks ago), so a shot that was on
+/// target on the shooter's screen is on target here. Clients fly it themselves (`BulletSpawn`); the
+/// shot event at its end says where it stopped.
 fn step_bullet(world: &mut World, id: u32, dt: f32) {
     let Some(mut bullet) = world.rockets.get(&id).copied() else { return };
+    let item = def(bullet.item).copied();
     bullet.velocity[1] -= GRAVITY * BULLET_GRAVITY_SCALE * dt;
     let speed = bullet.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
     let dir = bullet.velocity.map(|v| v / speed);
     let step = speed * dt;
     let wall = world.physics.cast_ray_hit(bullet.position, dir, step, 0);
     let reach = wall.map_or(step, |(t, _)| t);
-    let hit = first_player_hit(world, bullet.position, dir, reach, Some(bullet.owner), 0);
+    let hit = first_player_hit(world, bullet.position, dir, reach, Some(bullet.owner), bullet.back);
     let rooster = first_rooster_hit(world, bullet.position, dir, hit.map_or(reach, |(_, t)| t));
     bullet.ttl = bullet.ttl.saturating_sub(1);
     if hit.is_some() || rooster.is_some() || wall.is_some() {
         world.rockets.remove(&id);
         let end = rooster.map(|(_, t)| t).or(hit.map(|(_, t)| t)).unwrap_or(reach);
         let point: [f32; 3] = std::array::from_fn(|i| bullet.position[i] + dir[i] * end);
-        let damage_dealt = def(ITEM_SNIPER).map_or(0, |d| d.damage);
+        let (base, falloff, weapon) = item.map_or((0, Falloff::NONE, WEAPON_RIFLE), |d| (d.damage, d.falloff, d.weapon));
+        let damage_dealt = falloff.apply(base, bullet.flown + end);
         let attacker = world.players.contains_key(&bullet.owner).then_some(bullet.owner);
         if let Some((target, _)) = rooster {
             damage_rooster(world, target, damage_dealt);
             if let Some(owner) = attacker {
                 let at = world.roosters.get(&target).map_or([0.0; 3], |r| [r.position[0], r.position[1] + 0.5, r.position[2]]);
-                world.hits.push((owner, hit_at(HIT_DEALT, HIT_ROOSTER, damage_dealt, WEAPON_SNIPER, BEARING_NONE, at, target)));
+                world.hits.push((owner, hit_at(HIT_DEALT, HIT_ROOSTER, damage_dealt, weapon, BEARING_NONE, at, target)));
             }
         } else if let Some((victim, _)) = hit {
-            let head = hit.is_some_and(|(_, t)| is_headshot(world, victim, bullet.position, dir, t, 0));
-            damage_hit(world, victim, damage_dealt, attacker, WEAPON_SNIPER, None, head);
+            let head = hit.is_some_and(|(_, t)| is_headshot(world, victim, bullet.position, dir, t, bullet.back));
+            damage_hit(world, victim, damage_dealt, attacker, weapon, None, head);
         } else if let Some((_, Some(car))) = wall {
-            damage_vehicle(world, car, (damage_dealt / 4).max(1), attacker);
-            super::vehicles::shoot_wheels(world, car, point, f32::from(damage_dealt), super::vehicles::BULLET_WHEEL_REACH);
+            let chip = (base / 4).max(1);
+            damage_vehicle(world, car, chip, attacker);
+            super::vehicles::shoot_wheels(world, car, point, f32::from(base), super::vehicles::BULLET_WHEEL_REACH);
         } else if wall.is_some() {
-            hit_object(world, bullet.position, dir, reach, damage_dealt);
+            hit_object(world, bullet.position, dir, reach, base);
         }
         let [x, y, z] = point.map(to_cm);
-        world.shots.push(ShotEvent { shooter: bullet.owner, weapon: WEAPON_SNIPER, x, y, z });
+        world.shots.push(ShotEvent { shooter: id, weapon: WEAPON_BULLET, x, y, z });
         return;
     }
+    bullet.flown += step;
     bullet.position = std::array::from_fn(|i| bullet.position[i] + dir[i] * step);
     if bullet.ttl == 0 || bullet.position[1] < KILL_Y {
         world.rockets.remove(&id);
@@ -616,6 +626,8 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     if item.projectile {
         // The round leaves the eye and flies on its own, so it takes time to arrive and drops a little.
         let bullet_id = world.alloc_id();
+        let velocity = dir.map(|v| v * BULLET_SPEED);
+        let gun = gun_for_weapon(item.weapon);
         world.rockets.insert(
             bullet_id,
             Rocket {
@@ -623,18 +635,33 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
                 owner: id,
                 source: 0,
                 position: origin,
-                velocity: dir.map(|v| v * BULLET_SPEED),
+                velocity,
                 ttl: (item.range / BULLET_SPEED * TICK_RATE as f32).ceil() as u32,
+                item: gun,
+                back,
+                flown: 0.0,
             },
         );
+        // Clients fly it themselves from this: where, which way, how fast, and when.
+        let [x, y, z] = origin.map(to_cm);
+        let [vx, vy, vz] = velocity.map(to_cm_i16);
+        world.bullets.push(BulletSpawn { id: bullet_id, shooter: id, item: gun, x, y, z, vx, vy, vz, tick: world.tick });
         return;
     }
     // A nuisance to a vehicle, not a way to kill one.
     let chip = (item.damage / 4).max(1);
-    let round = Round { damage: item.damage, vehicle: chip, plane: chip, weapon: item.weapon, range: item.range };
-    let (end, _) = hitscan(world, id, origin, dir, &round, 0, back);
-    let point: [i32; 3] = std::array::from_fn(|i| to_cm(origin[i] + dir[i] * end));
-    world.shots.push(ShotEvent { shooter: id, weapon: item.weapon, x: point[0], y: point[1], z: point[2] });
+    let round = Round { damage: item.damage, vehicle: chip, plane: chip, weapon: item.weapon, range: item.range, falloff: item.falloff };
+    // Every pellet is its own ray through the same rewound world. The first goes along the aim as it
+    // is (scattered once, above), the rest are scattered around it. Each is announced where it ended,
+    // so a client can show where a spread landed; only the first carries the gun's own weapon id.
+    let spread = effective_spread(item, input.buttons());
+    for pellet in 0..item.pellets {
+        let ray = if pellet == 0 { dir } else { scatter(world, dir, spread) };
+        let (end, _) = hitscan(world, id, origin, ray, &round, 0, back);
+        let point: [i32; 3] = std::array::from_fn(|i| to_cm(origin[i] + ray[i] * end));
+        let weapon = if pellet == 0 { item.weapon } else { WEAPON_PELLET };
+        world.shots.push(ShotEvent { shooter: id, weapon, x: point[0], y: point[1], z: point[2] });
+    }
 }
 
 /// What one hitscan round does: to a stickman or a rooster, to a vehicle, and to a plane, which is all
@@ -645,6 +672,8 @@ pub struct Round {
     pub plane: u8,
     pub weapon: u8,
     pub range: f32,
+    /// How the damage of a hit on a stickman or a rooster shrinks with how far the round flew.
+    pub falloff: Falloff,
 }
 
 /// Fires one round for `shooter` from `origin` along the unit `dir`, through vehicle `ignore` (the one
@@ -659,12 +688,13 @@ pub fn hitscan(world: &mut World, shooter: u32, origin: [f32; 3], dir: [f32; 3],
     let rooster = first_rooster_hit(world, origin, dir, hit.map_or(reach, |(_, t)| t));
     let end = rooster.map(|(_, t)| t).or(hit.map(|(_, t)| t)).unwrap_or(reach);
     if let Some((target, _)) = rooster {
-        damage_rooster(world, target, round.damage);
+        let dealt = round.falloff.apply(round.damage, end);
+        damage_rooster(world, target, dealt);
         let at = world.roosters.get(&target).map_or([0.0; 3], |r| [r.position[0], r.position[1] + 0.5, r.position[2]]);
-        world.hits.push((shooter, hit_at(HIT_DEALT, HIT_ROOSTER, round.damage, round.weapon, BEARING_NONE, at, target)));
+        world.hits.push((shooter, hit_at(HIT_DEALT, HIT_ROOSTER, dealt, round.weapon, BEARING_NONE, at, target)));
     } else if let Some((victim, _)) = hit {
         let head = hit.is_some_and(|(_, t)| is_headshot(world, victim, origin, dir, t, back));
-        damage_hit(world, victim, round.damage, Some(shooter), round.weapon, None, head);
+        damage_hit(world, victim, round.falloff.apply(round.damage, end), Some(shooter), round.weapon, None, head);
     } else if let Some((_, Some(car))) = wall {
         let plane = world.vehicles.get(&car).is_some_and(|vehicle| vehicle.kind == KIND_PLANE);
         damage_vehicle(world, car, if plane { round.plane } else { round.vehicle }, Some(shooter));
@@ -696,6 +726,9 @@ fn throw_grenade(world: &mut World, id: u32) {
             position: std::array::from_fn(|i| eye[i] + dir[i] * reach),
             velocity: dir.map(|v| v * GRENADE_SPEED),
             ttl: GRENADE_FUSE_TICKS,
+            item: 0,
+            back: 0,
+            flown: 0.0,
         },
     );
 }

@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, RUN_SPEED, WALK_SPEED } from '@/sim/consts'
-import { ITEM_AK5, ITEM_BANDAGE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SNIPER, itemDef, type ItemDef } from '@/sim/items'
+import { ITEM_AK5, ITEM_BANDAGE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, itemDef, type ItemDef } from '@/sim/items'
 import { type Limb, poseLimb, splitLimbs } from './gibs'
 
 /** Gravity on a thrown body, m/s². */
@@ -29,6 +29,8 @@ const WEAPON_MESH: Record<number, string> = {
   [ITEM_AK5]: 'weapon_ak5',
   [ITEM_SNIPER]: 'weapon_sniper',
   [ITEM_REVOLVER]: 'weapon_revolver',
+  // No model of its own yet: it borrows the AK5's in hand.
+  [ITEM_SHOTGUN]: 'weapon_ak5',
   [ITEM_GRENADE]: 'weapon_grenade',
   [ITEM_BANDAGE]: 'weapon_bandage',
 }
@@ -482,7 +484,10 @@ export class Character {
 
   /** Shows the weapon in hand and hides the rest. */
   private showWeapon() {
-    for (const [item, mesh] of this.weapons) mesh.visible = item === this.item
+    // Two items may share a mesh, so hide them all before showing the one in hand.
+    for (const mesh of this.weapons.values()) mesh.visible = false
+    const mesh = this.weapons.get(this.item)
+    if (mesh) mesh.visible = true
   }
 
   /** The item in hand (`ITEM_*`, 0 for none): picks the weapon drawn and how the arms hold it. */

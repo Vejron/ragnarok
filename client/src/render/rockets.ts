@@ -20,9 +20,11 @@ export class Rockets {
   /** An autocannon round: the same slug and trail, a third the size. */
   private readonly smallSlug = new THREE.CylinderGeometry(0.15, 0.15, 1, 8)
   private readonly smallTrail = new THREE.CylinderGeometry(0.13, 0.01, 6, 6)
-  /** A sniper round: a thin hot streak with a short trail, thick enough to pick out at range. */
-  private readonly bullet = new THREE.CylinderGeometry(0.09, 0.09, 1.4, 6)
-  private readonly bulletTrail = new THREE.CylinderGeometry(0.08, 0.005, 10, 6)
+  /** A gun's round: a thin white-hot core with a fine orange tail, a streak rather than a rod. */
+  private readonly bullet = new THREE.CylinderGeometry(0.014, 0.014, 1.2, 5)
+  private readonly bulletTrail = new THREE.CylinderGeometry(0.035, 0.002, 7, 5)
+  private readonly bulletMaterial = new THREE.MeshBasicMaterial({ color: 0xfff6dc, fog: false, toneMapped: false })
+  private readonly bulletTrailMaterial = new THREE.MeshBasicMaterial({ color: 0xff9a2e, transparent: true, opacity: 0.85, fog: false, toneMapped: false, depthWrite: false })
   private readonly ball = new THREE.SphereGeometry(0.1, 10, 8)
   /** A plane's bomb: a dark finned body that noses over as it falls. */
   private readonly bomb = new THREE.CylinderGeometry(0.075, 0.05, 0.6, 8)
@@ -46,9 +48,9 @@ export class Rockets {
           mesh.add(fin)
         }
       } else if (kind === BULLET) {
-        mesh = new THREE.Mesh(this.bullet, this.slugMaterial)
-        const tail = new THREE.Mesh(this.bulletTrail, this.trailMaterial)
-        tail.position.y = -(0.6 + 4.5)
+        mesh = new THREE.Mesh(this.bullet, this.bulletMaterial)
+        const tail = new THREE.Mesh(this.bulletTrail, this.bulletTrailMaterial)
+        tail.position.y = -(0.6 + 3.5)
         mesh.add(tail)
       } else if (kind === CANNON) {
         mesh = new THREE.Mesh(this.smallSlug, this.slugMaterial)
@@ -96,6 +98,8 @@ export class Rockets {
     this.smallTrail.dispose()
     this.bullet.dispose()
     this.bulletTrail.dispose()
+    this.bulletMaterial.dispose()
+    this.bulletTrailMaterial.dispose()
     this.trailMaterial.dispose()
     this.ball.dispose()
     this.ballMaterial.dispose()

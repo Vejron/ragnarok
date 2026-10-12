@@ -104,6 +104,13 @@ pub const WEAPON_MG: u8 = 10;
 pub const WEAPON_BOMB: u8 = 11;
 /// A vehicle running a stickman down. Only ever the weapon of a kill.
 pub const WEAPON_ROADKILL: u8 = 12;
+/// Ten pellets in one pull; this event is the first of them (muzzle flash and sound) and marks where it ended.
+pub const WEAPON_SHOTGUN: u8 = 13;
+/// Each further pellet of a multi-ray pull: only where it landed is drawn.
+pub const WEAPON_PELLET: u8 = 14;
+/// A flying bullet ended here (hit something, or the ground). Its shot event's `shooter` is the
+/// bullet's id, as in `BulletSpawn`, not a player.
+pub const WEAPON_BULLET: u8 = 15;
 
 /// How a stickman died, as sent in a `Kill`, so every client can stage the death to match.
 pub const DEATH_BODY: u8 = 0;
@@ -123,6 +130,27 @@ pub const PROJECTILE_CANNON: u8 = 3;
 pub const PROJECTILE_BULLET: u8 = 4;
 /// A bomb dropped from a plane: it falls from the plane's speed and bursts on the first thing it meets.
 pub const PROJECTILE_BOMB: u8 = 5;
+
+/// A bullet leaving a gun: `[id, shooter, item, x, y, z, vx, vy, vz, tick]`, centimetres and cm/s.
+/// Sent once (in two snapshots, in case one is lost) and not listed again: the path is
+/// deterministic, so a client works out where the bullet is from `tick` on. It moves `v * dt` a
+/// tick and then `v.y` loses `GRAVITY * BULLET_GRAVITY_SCALE * dt`, so after `n` ticks it is at
+/// `p + v * n * dt - (0, g * dt^2 * n * (n + 1) / 2, 0)` with `g = GRAVITY * BULLET_GRAVITY_SCALE`.
+/// It ends with a `ShotEvent` of `WEAPON_BULLET` carrying `id`, or when `item`'s range runs out.
+/// `item` is the gun, so a client knows its range and look. `tick` is the server tick it was fired on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BulletSpawn {
+    pub id: u32,
+    pub shooter: u32,
+    pub item: u8,
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+    pub vx: i16,
+    pub vy: i16,
+    pub vz: i16,
+    pub tick: u32,
+}
 
 /// One simulation tick of player intent. The client predicts with exactly these quantized values,
 /// so client and server feed the simulation identical inputs.
@@ -390,7 +418,7 @@ pub struct PickupState {
 
 /// `[1, server_tick, baseline, ack_input_seq, ride, [new entity, ...], [entity delta, ...],
 /// [new vehicle, ...], [vehicle delta, ...], [removed id, ...], drive, self, [shot, ...],
-/// [projectile, ...], [pickup, ...]]`, sent as a datagram.
+/// [projectile, ...], [pickup, ...], [bullet spawn, ...]]`, sent as a datagram.
 /// `baseline` is the tick of the snapshot the lists are relative to, or 0 when they are not
 /// (everything in range is then listed as new). `ack_input_seq` is the newest input of the
 /// *receiving* player that the state already includes. `ride` is the id of the vehicle the
@@ -415,6 +443,8 @@ pub struct Snapshot {
     pub shots: Vec<ShotEvent>,
     pub rockets: Vec<ProjectileState>,
     pub pickups: Vec<PickupState>,
+    /// Bullets fired since a few snapshots ago, which the client then flies itself.
+    pub bullets: Vec<BulletSpawn>,
 }
 
 /// `[2, nonce]`.
@@ -485,11 +515,12 @@ pub struct Hit {
     pub target: u32,
 }
 
-/// Reads the tag of a `[tag, ...]` message without decoding the rest. Every message is a short
-/// array (fixarray header) whose first element is a positive fixint.
+/// Reads the tag of a `[tag, ...]` message without decoding the rest. Every message is an array
+/// (a fixarray header, or array16 once there are more than 15 fields, as a snapshot has) whose
+/// first element is a positive fixint.
 pub fn peek_tag(bytes: &[u8]) -> Option<u8> {
     match bytes {
-        [0x91..=0x9f, tag @ 0x00..=0x7f, ..] => Some(*tag),
+        [0x91..=0x9f, tag @ 0x00..=0x7f, ..] | [0xdc, _, _, tag @ 0x00..=0x7f, ..] => Some(*tag),
         _ => None,
     }
 }
@@ -512,11 +543,11 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 21, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
+        148, 0, 22, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[
-        159, 1, 205, 4, 210, 205, 4, 206, 42, 9, 145, 154, 7, 0, 0, 85, 206, 0, 1, 134, 160, 0, 0, 3, 0, 0, 145, 153, 1, 25, 253, 40, 208, 136, 205, 2, 138, 1, 209, 254, 212, 12, 146, 158, 10, 2, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 146, 1, 7, 148, 209, 253, 68, 204, 250, 3, 205, 4, 210, 0, 192, 192, 158, 12, 6, 209, 254, 12, 205, 1, 44, 205, 3, 32, 10, 236, 30, 0, 146, 4, 0, 148, 205, 11, 184, 204, 200, 9, 0, 70, 192, 149, 17, 204, 200, 0, 3, 3, 145, 157, 9, 100, 0, 208, 211, 3, 254, 0, 4, 148, 1, 0, 7, 0, 192, 100, 152, 0, 0, 40, 0, 0, 0, 204, 255, 3, 192, 146, 3, 11, 152, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 73, 204, 128, 147, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 152, 40, 1, 205, 4, 176, 204, 150, 209, 252, 224, 205, 11, 184, 0, 209, 246, 60, 145, 149, 60, 4, 209, 254, 212, 5, 205, 4, 226,
+        220, 0, 16, 1, 205, 4, 210, 205, 4, 206, 42, 9, 145, 154, 7, 0, 0, 85, 206, 0, 1, 134, 160, 0, 0, 3, 0, 0, 145, 153, 1, 25, 253, 40, 208, 136, 205, 2, 138, 1, 209, 254, 212, 12, 146, 158, 10, 2, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 146, 1, 7, 148, 209, 253, 68, 204, 250, 3, 205, 4, 210, 0, 192, 192, 158, 12, 6, 209, 254, 12, 205, 1, 44, 205, 3, 32, 10, 236, 30, 0, 146, 4, 0, 148, 205, 11, 184, 204, 200, 9, 0, 70, 192, 149, 17, 204, 200, 0, 3, 3, 145, 157, 9, 100, 0, 208, 211, 3, 254, 0, 4, 148, 1, 0, 7, 0, 192, 100, 152, 0, 0, 40, 0, 0, 0, 204, 255, 3, 192, 146, 3, 11, 152, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 73, 204, 128, 147, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 152, 40, 1, 205, 4, 176, 204, 150, 209, 252, 224, 205, 11, 184, 0, 209, 246, 60, 145, 149, 60, 4, 209, 254, 212, 5, 205, 4, 226, 145, 154, 77, 7, 2, 120, 204, 165, 209, 244, 72, 205, 5, 220, 236, 209, 150, 136, 205, 4, 209
     ];
 
     fn sample_input() -> ClientInput {
@@ -532,7 +563,7 @@ mod tests {
     }
 
     fn sample_snapshot() -> Snapshot {
-        Snapshot { tag: S_SNAPSHOT, tick: 1234, baseline: 1230, ack: 42, ride: 9, new_entities: vec![EntityState { id: 7, kind: KIND_STICKMAN, x: 0, y: 85, z: 100_000, yaw: 0, vy: 0, flags: FLAG_GROUNDED | FLAG_DEAD, knock_x: 0, knock_z: 0 }], entities: vec![EntityDelta { id: 1, dx: 25, dy: -3, dz: 40, dyaw: -120, dvy: 650, flags: FLAG_GROUNDED, dknock_x: -300, dknock_z: 12 }], new_vehicles: vec![VehicleState { id: 10, kind: KIND_TANK, x: 300, y: 90, z: -2000, qx: 0, qy: 700, qz: 0, steer: 32, seats: vec![1, 7], turret: Some(Turret { yaw: -700, pitch: 250, shots: 3, range: 1234 }), hp: 0, damage: None, arms: None }, VehicleState { id: 12, kind: KIND_PLANE, x: -500, y: 300, z: 800, qx: 10, qy: -20, qz: 30, steer: 0, seats: vec![4, 0], turret: Some(Turret { yaw: 3000, pitch: 200, shots: 9, range: 0 }), hp: 70, damage: None, arms: Some(Arms { shots: 17, heat: 200, rear_heat: 0, bombs: 3, flags: ARMS_CUT | ARMS_JAMMED }) }], vehicles: vec![VehicleDelta { id: 9, dx: 100, dy: 0, dz: -45, dqx: 3, dqy: -2, dqz: 0, dsteer: 4, seats: Some(vec![1, 0, 7, 0]), turret: None, hp: 100, damage: Some([0, 0, 40, 0, 0, 0, 255, 3]), arms: None }], removed: vec![3, 11], drive: Some(DriveState { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }), me: SelfState { hp: 73, progress: 128, slots: vec![ItemSlot { item: ITEM_AK5, count: 1, ammo: 17 }, ItemSlot { item: ITEM_NONE, count: 0, ammo: 0 }, ItemSlot { item: ITEM_GRENADE, count: 2, ammo: 0 }] }, shots: vec![ShotEvent { shooter: 7, weapon: WEAPON_RIFLE, x: 1500, y: 160, z: -4200 }, ShotEvent { shooter: 1, weapon: WEAPON_RIFLE, x: -20, y: 90, z: 31_000 }], rockets: vec![ProjectileState { id: 40, kind: PROJECTILE_GRENADE, x: 1200, y: 150, z: -800, vx: 3000, vy: 0, vz: -2500 }], pickups: vec![PickupState { id: 60, item: ITEM_BANDAGE, x: -300, y: 5, z: 1250 }] }
+        Snapshot { tag: S_SNAPSHOT, tick: 1234, baseline: 1230, ack: 42, ride: 9, new_entities: vec![EntityState { id: 7, kind: KIND_STICKMAN, x: 0, y: 85, z: 100_000, yaw: 0, vy: 0, flags: FLAG_GROUNDED | FLAG_DEAD, knock_x: 0, knock_z: 0 }], entities: vec![EntityDelta { id: 1, dx: 25, dy: -3, dz: 40, dyaw: -120, dvy: 650, flags: FLAG_GROUNDED, dknock_x: -300, dknock_z: 12 }], new_vehicles: vec![VehicleState { id: 10, kind: KIND_TANK, x: 300, y: 90, z: -2000, qx: 0, qy: 700, qz: 0, steer: 32, seats: vec![1, 7], turret: Some(Turret { yaw: -700, pitch: 250, shots: 3, range: 1234 }), hp: 0, damage: None, arms: None }, VehicleState { id: 12, kind: KIND_PLANE, x: -500, y: 300, z: 800, qx: 10, qy: -20, qz: 30, steer: 0, seats: vec![4, 0], turret: Some(Turret { yaw: 3000, pitch: 200, shots: 9, range: 0 }), hp: 70, damage: None, arms: Some(Arms { shots: 17, heat: 200, rear_heat: 0, bombs: 3, flags: ARMS_CUT | ARMS_JAMMED }) }], vehicles: vec![VehicleDelta { id: 9, dx: 100, dy: 0, dz: -45, dqx: 3, dqy: -2, dqz: 0, dsteer: 4, seats: Some(vec![1, 0, 7, 0]), turret: None, hp: 100, damage: Some([0, 0, 40, 0, 0, 0, 255, 3]), arms: None }], removed: vec![3, 11], drive: Some(DriveState { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }), me: SelfState { hp: 73, progress: 128, slots: vec![ItemSlot { item: ITEM_AK5, count: 1, ammo: 17 }, ItemSlot { item: ITEM_NONE, count: 0, ammo: 0 }, ItemSlot { item: ITEM_GRENADE, count: 2, ammo: 0 }] }, shots: vec![ShotEvent { shooter: 7, weapon: WEAPON_RIFLE, x: 1500, y: 160, z: -4200 }, ShotEvent { shooter: 1, weapon: WEAPON_RIFLE, x: -20, y: 90, z: 31_000 }], rockets: vec![ProjectileState { id: 40, kind: PROJECTILE_GRENADE, x: 1200, y: 150, z: -800, vx: 3000, vy: 0, vz: -2500 }], pickups: vec![PickupState { id: 60, item: ITEM_BANDAGE, x: -300, y: 5, z: 1250 }], bullets: vec![BulletSpawn { id: 77, shooter: 7, item: ITEM_AK5, x: 120, y: 165, z: -3000, vx: 1500, vy: -20, vz: -27000, tick: 1233 }] }
     }
 
     /// `[6, [[OBJ_TREE, 2, 3, 70000, -1571]]]`, mirrored in `codec.spec.ts`.

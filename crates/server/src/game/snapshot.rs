@@ -72,6 +72,7 @@ impl Game {
         self.world
             .rockets
             .iter()
+            .filter(|(_, rocket)| rocket.kind != PROJECTILE_BULLET)
             .map(|(&id, rocket)| {
                 let [x, y, z] = rocket.position.map(to_cm);
                 let [vx, vy, vz] = rocket.velocity.map(to_cm_i16);
@@ -111,7 +112,11 @@ impl Game {
         let pickups = self.pickup_states();
         let mut shots = std::mem::take(&mut self.world.shots);
         shots.truncate(MAX_SHOT_EVENTS);
-        let everything = Everything { entities: &entities, vehicles: &vehicles, shots: &shots, rockets: &rockets, pickups: &pickups };
+        // Each bullet goes out in a couple of snapshots, so a lost datagram does not lose it.
+        let now = self.world.tick;
+        self.world.bullets.retain(|b| now.wrapping_sub(b.tick) <= 2 * SNAPSHOT_EVERY);
+        let bullets = self.world.bullets.clone();
+        let everything = Everything { entities: &entities, vehicles: &vehicles, shots: &shots, rockets: &rockets, pickups: &pickups, bullets: &bullets };
         let ids: Vec<u32> = self.outboxes.keys().copied().collect();
         for id in ids {
             let Some(player) = self.world.players.get(&id) else { continue };

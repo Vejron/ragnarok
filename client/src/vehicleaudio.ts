@@ -441,10 +441,11 @@ export class VehicleSounds {
     source.start(t + delay + Math.min(0.6, distance / SPEED_OF_SOUND))
   }
 
-  /** A rifle (`kind` 'rifle'), revolver or sniper rifle fired from `at`. */
-  gunshot(at: Vec3, kind: 'rifle' | 'revolver' | 'sniper') {
-    if (this.play(kind, at, kind === 'sniper' ? 1 : 0.85)) return
+  /** A rifle (`kind` 'rifle'), revolver, sniper rifle or shotgun fired from `at`. The shotgun has no sample yet, so it is always synthesised. */
+  gunshot(at: Vec3, kind: 'rifle' | 'revolver' | 'sniper' | 'shotgun') {
+    if (kind !== 'shotgun' && this.play(kind, at, kind === 'sniper' ? 1 : 0.85)) return
     this.emit(at, 0.6, (ctx, out, t) => {
+      if (kind === 'shotgun') VehicleSounds.burst(ctx, out, t, 'lowpass', 2200, 200, 0.28, 0.9)
       VehicleSounds.burst(ctx, out, t, 'lowpass', kind === 'sniper' ? 4500 : 3200, 300, kind === 'sniper' ? 0.3 : 0.14, 0.7)
       VehicleSounds.ping(ctx, out, t, 'sine', kind === 'revolver' ? 200 : 140, 50, 0.08, 0.5)
     })

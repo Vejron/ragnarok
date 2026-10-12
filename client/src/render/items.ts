@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { ITEM_AK5, ITEM_BANDAGE, ITEM_GOLDEN_EGG, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SNIPER } from '@/sim/items'
+import { ITEM_AK5, ITEM_BANDAGE, ITEM_GOLDEN_EGG, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER } from '@/sim/items'
 
 const GUN_METAL = 0x3b3f47
 const GUN_TRIM = 0xf2a33a
@@ -56,6 +56,13 @@ export function buildItem(item: number): THREE.Group {
       box(group, [0.05, 0.05, 0.3], [0, 0.12, -0.22], GUN_TRIM)
       box(group, [0.05, 0.11, 0.05], [0, -0.05, 0.05], WOOD).rotation.x = -0.3
       box(group, [0.05, 0.1, 0.24], [0, 0.0, 0.32], WOOD)
+      break
+    case ITEM_SHOTGUN:
+      // A fat double barrel and a long wooden fore-end under it.
+      box(group, [0.06, 0.06, 0.62], [0, 0.04, -0.28], GUN_METAL)
+      box(group, [0.07, 0.05, 0.3], [0, -0.02, -0.34], WOOD)
+      box(group, [0.05, 0.11, 0.05], [0, -0.05, 0.05], WOOD).rotation.x = -0.3
+      box(group, [0.045, 0.1, 0.26], [0, 0.0, 0.3], WOOD)
       break
     case ITEM_GRENADE: {
       sphere ??= new THREE.SphereGeometry(0.06, 10, 8)

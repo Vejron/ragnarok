@@ -3,6 +3,7 @@ use super::combat::{Blast, Round, blast, first_player_hit, hitscan, look, rewind
 use crate::game::{Gun, PlaneArms, Rocket, World};
 use crate::physics::CarPose;
 use shared::consts::*;
+use shared::items::Falloff;
 use shared::protocol::{KIND_HELI, KIND_PLANE, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_SHELL, ShotEvent, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_MG, WEAPON_SHELL};
 use shared::quant::{from_mrad, to_cm, wrap_angle};
 
@@ -70,6 +71,9 @@ fn fire(world: &mut World, kind: u8, vid: u32, origin: [f32; 3], dir: [f32; 3], 
             position: std::array::from_fn(|i| origin[i] + dir[i] * length),
             velocity: dir.map(|v| v * SHELL_SPEED),
             ttl: SHELL_TTL_TICKS,
+            item: 0,
+            back: 0,
+            flown: 0.0,
         },
     );
 }
@@ -152,7 +156,7 @@ fn heat_up(heat: &mut f32, jammed: &mut bool, by: f32) {
 /// drawn by the client from the gun's counter; only one that hit something is announced, for the spark.
 fn machine_gun(world: &mut World, shooter: u32, vid: u32, muzzle: [f32; 3], dir: [f32; 3]) {
     let back = world.players.get(&shooter).map_or(0, |player| rewind_ticks(world.tick, player.input.view()));
-    let round = Round { damage: PLANE_GUN_DAMAGE, vehicle: PLANE_GUN_VEHICLE_DAMAGE, plane: PLANE_GUN_PLANE_DAMAGE, weapon: WEAPON_MG, range: PLANE_GUN_RANGE };
+    let round = Round { damage: PLANE_GUN_DAMAGE, vehicle: PLANE_GUN_VEHICLE_DAMAGE, plane: PLANE_GUN_PLANE_DAMAGE, weapon: WEAPON_MG, range: PLANE_GUN_RANGE, falloff: Falloff::NONE };
     let (end, struck) = hitscan(world, shooter, muzzle, dir, &round, vid, back);
     if struck {
         let [x, y, z] = std::array::from_fn(|i| to_cm(muzzle[i] + dir[i] * end));
@@ -193,7 +197,7 @@ fn work_cockpit(world: &mut World, vid: u32, mut arms: PlaneArms, pose: &CarPose
     if buttons & BUTTON_CROUCH != 0 && arms.bomb_cooldown == 0 && arms.bombs > 0 && height > PLANE_BOMB_MIN_HEIGHT {
         let id = world.alloc_id();
         let ttl = SHELL_TTL_TICKS * 2;
-        world.rockets.insert(id, Rocket { kind: PROJECTILE_BOMB, owner: pilot, source: vid, position: pose.world_point(PLANE_BOMB_PIVOT), velocity: pose.velocity, ttl });
+        world.rockets.insert(id, Rocket { kind: PROJECTILE_BOMB, owner: pilot, source: vid, position: pose.world_point(PLANE_BOMB_PIVOT), velocity: pose.velocity, ttl, item: 0, back: 0, flown: 0.0 });
         arms.bombs -= 1;
         arms.bomb_cooldown = PLANE_BOMB_COOLDOWN_TICKS;
     }

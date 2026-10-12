@@ -63,3 +63,14 @@ describe('gameplay tables match the server', () => {
     }
   })
 })
+
+describe('falloff', () => {
+  it('keeps full damage up close, thins out with range and never reaches zero', () => {
+    const ak5 = items.itemDef(items.ITEM_AK5)!
+    expect(items.falloffDamage(ak5, 10)).toBe(ak5.damage)
+    expect(items.falloffDamage(ak5, ak5.range)).toBe(ak5.damage * ak5.falloffMin)
+    const shotgun = items.itemDef(items.ITEM_SHOTGUN)!
+    expect(shotgun.pellets * items.falloffDamage(shotgun, 3)).toBeGreaterThanOrEqual(100)
+    expect(items.falloffDamage(shotgun, 1000)).toBeGreaterThanOrEqual(1)
+  })
+})

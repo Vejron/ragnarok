@@ -6,9 +6,9 @@ import { BUTTON_FIRE, BUTTON_JUMP, BUTTON_RUN } from '@/sim/consts'
 
 // Byte-for-byte copies of the fixtures in `crates/shared/src/protocol.rs`. If these break, the
 // TypeScript and Rust encoders have drifted apart.
-const INPUT_FIXTURE = [148, 0, 21, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3]
+const INPUT_FIXTURE = [148, 0, 22, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3]
 const SNAPSHOT_FIXTURE = [
-  159, 1, 205, 4, 210, 205, 4, 206, 42, 9, 145, 154, 7, 0, 0, 85, 206, 0, 1, 134, 160, 0, 0, 3, 0, 0, 145, 153, 1, 25, 253, 40, 208, 136, 205, 2, 138, 1, 209, 254, 212, 12, 146, 158, 10, 2, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 146, 1, 7, 148, 209, 253, 68, 204, 250, 3, 205, 4, 210, 0, 192, 192, 158, 12, 6, 209, 254, 12, 205, 1, 44, 205, 3, 32, 10, 236, 30, 0, 146, 4, 0, 148, 205, 11, 184, 204, 200, 9, 0, 70, 192, 149, 17, 204, 200, 0, 3, 3, 145, 157, 9, 100, 0, 208, 211, 3, 254, 0, 4, 148, 1, 0, 7, 0, 192, 100, 152, 0, 0, 40, 0, 0, 0, 204, 255, 3, 192, 146, 3, 11, 152, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 73, 204, 128, 147, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 152, 40, 1, 205, 4, 176, 204, 150, 209, 252, 224, 205, 11, 184, 0, 209, 246, 60, 145, 149, 60, 4, 209, 254, 212, 5, 205, 4, 226,
+  220, 0, 16, 1, 205, 4, 210, 205, 4, 206, 42, 9, 145, 154, 7, 0, 0, 85, 206, 0, 1, 134, 160, 0, 0, 3, 0, 0, 145, 153, 1, 25, 253, 40, 208, 136, 205, 2, 138, 1, 209, 254, 212, 12, 146, 158, 10, 2, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 146, 1, 7, 148, 209, 253, 68, 204, 250, 3, 205, 4, 210, 0, 192, 192, 158, 12, 6, 209, 254, 12, 205, 1, 44, 205, 3, 32, 10, 236, 30, 0, 146, 4, 0, 148, 205, 11, 184, 204, 200, 9, 0, 70, 192, 149, 17, 204, 200, 0, 3, 3, 145, 157, 9, 100, 0, 208, 211, 3, 254, 0, 4, 148, 1, 0, 7, 0, 192, 100, 152, 0, 0, 40, 0, 0, 0, 204, 255, 3, 192, 146, 3, 11, 152, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 73, 204, 128, 147, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 152, 40, 1, 205, 4, 176, 204, 150, 209, 252, 224, 205, 11, 184, 0, 209, 246, 60, 145, 149, 60, 4, 209, 254, 212, 5, 205, 4, 226, 145, 154, 77, 7, 2, 120, 204, 165, 209, 244, 72, 205, 5, 220, 236, 209, 150, 136, 205, 4, 209,
 ]
 
 const person = (id: number, x: number): RawEntity => [id, 0, x, 90, -x, 100, 0, 1, 0, 0]
@@ -61,6 +61,7 @@ describe('codec', () => {
       ],
       rockets: [{ id: 40, kind: 1, x: 12, y: 1.5, z: -8, vx: 30, vy: 0, vz: -25 }],
       pickups: [{ id: 60, item: 4, x: -3, y: 0.05, z: 12.5 }],
+      bullets: [{ id: 77, shooter: 7, item: 2, x: 1.2, y: 1.65, z: -30, vx: 15, vy: -0.2, vz: -270, tick: 1233 }],
     })
   })
 
@@ -112,16 +113,16 @@ describe('codec', () => {
     expect(decodeServer(new Uint8Array([0x94, 1, 0, 0, 0x90]))).toBeNull()
     expect(decodeServer(encode([1, 5, 0, 0, 0, [], [], [], [], [], null, [100, 0, []], [], []]))).toBeNull()
     // Wrong shapes inside the lists.
-    expect(decodeServer(encode([1, 5, 0, 0, 0, [[1, 2, 3]], [], [], [], [], null, [100, 0, []], [], [], []]))).toBeNull()
-    expect(decodeServer(encode([1, 5, 0, 0, 0, [], [[1, 2, 3]], [], [], [], null, [100, 0, []], [], [], []]))).toBeNull()
-    expect(decodeServer(encode([1, 5, 0, 0, 0, [], [], [], [], ['x'], null, [100, 0, []], [], [], []]))).toBeNull()
-    expect(decodeServer(encode([1, 5, 0, 0, 0, [], [], [], [[1, 0, 0, 0, 0, 0, 0, 0, [1, 2, 3, 4, 5], null, 100, null, null]], [], null, [100, 0, []], [], [], []]))).toBeNull()
+    expect(decodeServer(encode([1, 5, 0, 0, 0, [[1, 2, 3]], [], [], [], [], null, [100, 0, []], [], [], [], []]))).toBeNull()
+    expect(decodeServer(encode([1, 5, 0, 0, 0, [], [[1, 2, 3]], [], [], [], null, [100, 0, []], [], [], [], []]))).toBeNull()
+    expect(decodeServer(encode([1, 5, 0, 0, 0, [], [], [], [], ['x'], null, [100, 0, []], [], [], [], []]))).toBeNull()
+    expect(decodeServer(encode([1, 5, 0, 0, 0, [], [], [], [[1, 0, 0, 0, 0, 0, 0, 0, [1, 2, 3, 4, 5], null, 100, null, null]], [], null, [100, 0, []], [], [], [], []]))).toBeNull()
     // A vehicle of the old protocol, without arms.
-    expect(decodeServer(encode([1, 5, 0, 0, 0, [], [], [[9, 1, 0, 0, 0, 0, 0, 0, 0, [0, 0, 0, 0], null, 100, null]], [], [], null, [100, 0, []], [], [], []]))).toBeNull()
+    expect(decodeServer(encode([1, 5, 0, 0, 0, [], [], [[9, 1, 0, 0, 0, 0, 0, 0, 0, [0, 0, 0, 0], null, 100, null]], [], [], null, [100, 0, []], [], [], [], []]))).toBeNull()
   })
 
   it('rejects a vehicle with damage of the wrong shape', () => {
-    const vehicle = (damage: unknown) => [1, 5, 0, 0, 0, [], [], [[9, 1, 0, 0, 0, 0, 0, 0, 0, [0, 0, 0, 0], null, 100, damage, null]], [], [], null, [100, 0, []], [], [], []]
+    const vehicle = (damage: unknown) => [1, 5, 0, 0, 0, [], [], [[9, 1, 0, 0, 0, 0, 0, 0, 0, [0, 0, 0, 0], null, 100, damage, null]], [], [], null, [100, 0, []], [], [], [], []]
     expect(decodeServer(encode(vehicle(null)))).not.toBeNull()
     expect(decodeServer(encode(vehicle([1, 2, 3, 4, 5, 6, 7, 8])))).not.toBeNull()
     expect(decodeServer(encode(vehicle([1, 2, 3])))).toBeNull()
@@ -129,7 +130,7 @@ describe('codec', () => {
   })
 
   it('rejects arms of the wrong shape', () => {
-    const vehicle = (arms: unknown) => [1, 5, 0, 0, 0, [], [], [[12, KIND_PLANE, 0, 0, 0, 0, 0, 0, 0, [0, 0], [0, 0, 0, 0], 70, null, arms]], [], [], null, [100, 0, []], [], [], []]
+    const vehicle = (arms: unknown) => [1, 5, 0, 0, 0, [], [], [[12, KIND_PLANE, 0, 0, 0, 0, 0, 0, 0, [0, 0], [0, 0, 0, 0], 70, null, arms]], [], [], null, [100, 0, []], [], [], [], []]
     expect(decodeServer(encode(vehicle([1, 2, 3, 4, 5])))).not.toBeNull()
     expect(decodeServer(encode(vehicle([1, 2, 3])))).toBeNull()
     expect(decodeServer(encode(vehicle(7)))).toBeNull()
@@ -153,7 +154,7 @@ describe('codec', () => {
   })
 
   it('decodes an empty snapshot', () => {
-    const message = decodeServer(encode([1, 5, 3, 2, 0, [], [], [], [], [], null, [100, 0, []], [], [], []]))
+    const message = decodeServer(encode([1, 5, 3, 2, 0, [], [], [], [], [], null, [100, 0, []], [], [], [], []]))
     expect(message).toMatchObject({ type: 'snapshot', tick: 5, baseline: 3, ack: 2, hp: 100 })
   })
 

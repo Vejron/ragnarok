@@ -1,7 +1,7 @@
 //! Simulation and network constants. Mirrored in `client/src/sim/consts.ts`.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 21;
+pub const PROTOCOL_VERSION: u8 = 22;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -347,8 +347,10 @@ pub const DAMAGE_MARK_MIN: u16 = 5;
 /// Damage at the centre of an explosion; it falls off linearly to zero at `EXPLOSION_RADIUS`.
 /// More than a full life, so a shell that lands within about 1.4 m kills outright.
 pub const EXPLOSION_DAMAGE: f32 = 125.0;
-/// Most shot events one snapshot carries; the rest are cosmetic and dropped.
-pub const MAX_SHOT_EVENTS: usize = 8;
+/// Most shot events one snapshot carries; the rest are cosmetic and dropped. A shotgun pull is ten.
+pub const MAX_SHOT_EVENTS: usize = 24;
+/// Most bullet spawns one snapshot carries (nearest first); they are cheap, and are sent twice.
+pub const MAX_BULLET_SPAWNS: usize = 32;
 
 /// The rocket launcher: a projectile that flies straight and bursts on the first thing it meets.
 pub const ROCKET_SPEED: f32 = 45.0;

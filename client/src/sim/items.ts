@@ -12,6 +12,7 @@ export const ITEM_BANDAGE = 4
 export const ITEM_SNIPER = 5
 /** Dropped by a rooster; heals to full. */
 export const ITEM_GOLDEN_EGG = 6
+export const ITEM_SHOTGUN = 7
 
 export type ItemKind = 'gun' | 'grenade' | 'heal'
 
@@ -39,16 +40,23 @@ export interface ItemDef {
   /** Fires a round that flies and hits on arrival, rather than a hitscan. */
   projectile: boolean
   /** Which gunshot sample a shot of it plays. */
-  sound: 'rifle' | 'revolver' | 'sniper'
+  sound: 'rifle' | 'revolver' | 'sniper' | 'shotgun'
+  /** Hitscan rays one trigger pull fires; each does `damage`. */
+  pellets: number
+  /** Full damage up to `falloffStart` metres, then down to `falloffMin` (a fraction) at `falloffEnd`. Mirrors `Falloff`. */
+  falloffStart: number
+  falloffEnd: number
+  falloffMin: number
 }
 
 const DEFS: Record<number, ItemDef> = {
-  [ITEM_REVOLVER]: { name: 'Revolver', kind: 'gun', auto: false, damage: 35, cooldownTicks: 30, mag: 6, reloadTicks: 2 * TICK_RATE, range: 150, aimSpeed: 0.8, scope: false, stack: 1, stance: 'pistol', weapon: 4, projectile: false, sound: 'revolver' },
-  [ITEM_AK5]: { name: 'AK5', kind: 'gun', auto: true, damage: 12, cooldownTicks: 6, mag: 30, reloadTicks: (5 * TICK_RATE) / 2, range: 200, aimSpeed: 0.6, scope: false, stack: 1, stance: 'rifle', weapon: 0, projectile: false, sound: 'rifle' },
-  [ITEM_SNIPER]: { name: 'Sniper', kind: 'gun', auto: false, damage: 90, cooldownTicks: 2 * TICK_RATE, mag: 5, reloadTicks: 3 * TICK_RATE, range: 400, aimSpeed: 0.4, scope: true, stack: 1, stance: 'rifle', weapon: 7, projectile: true, sound: 'sniper' },
-  [ITEM_GRENADE]: { name: 'Grenade', kind: 'grenade', auto: false, damage: 0, cooldownTicks: TICK_RATE, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 3, stance: 'hold', weapon: 5, projectile: false, sound: 'rifle' },
-  [ITEM_BANDAGE]: { name: 'Bandage', kind: 'heal', auto: false, damage: 40, cooldownTicks: 0, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 5, stance: 'hold', weapon: 0, projectile: false, sound: 'rifle' },
-  [ITEM_GOLDEN_EGG]: { name: 'Golden egg', kind: 'heal', auto: false, damage: 255, cooldownTicks: 0, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 1, stance: 'hold', weapon: 0, projectile: false, sound: 'rifle' },
+  [ITEM_REVOLVER]: { name: 'Revolver', kind: 'gun', auto: false, damage: 35, cooldownTicks: 30, mag: 6, reloadTicks: 2 * TICK_RATE, range: 150, aimSpeed: 0.8, scope: false, stack: 1, stance: 'pistol', weapon: 4, projectile: true, sound: 'revolver', pellets: 1, falloffStart: 30, falloffEnd: 150, falloffMin: 0.6 },
+  [ITEM_AK5]: { name: 'AK5', kind: 'gun', auto: true, damage: 12, cooldownTicks: 6, mag: 30, reloadTicks: (5 * TICK_RATE) / 2, range: 200, aimSpeed: 0.6, scope: false, stack: 1, stance: 'rifle', weapon: 0, projectile: true, sound: 'rifle', pellets: 1, falloffStart: 25, falloffEnd: 200, falloffMin: 0.5 },
+  [ITEM_SNIPER]: { name: 'Sniper', kind: 'gun', auto: false, damage: 90, cooldownTicks: 2 * TICK_RATE, mag: 5, reloadTicks: 3 * TICK_RATE, range: 400, aimSpeed: 0.4, scope: true, stack: 1, stance: 'rifle', weapon: 7, projectile: true, sound: 'sniper', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
+  [ITEM_SHOTGUN]: { name: 'Shotgun', kind: 'gun', auto: false, damage: 12, cooldownTicks: TICK_RATE, mag: 5, reloadTicks: 3 * TICK_RATE, range: 40, aimSpeed: 0.7, scope: false, stack: 1, stance: 'rifle', weapon: 13, projectile: false, sound: 'shotgun', pellets: 10, falloffStart: 8, falloffEnd: 40, falloffMin: 0.25 },
+  [ITEM_GRENADE]: { name: 'Grenade', kind: 'grenade', auto: false, damage: 0, cooldownTicks: TICK_RATE, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 3, stance: 'hold', weapon: 5, projectile: false, sound: 'rifle', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
+  [ITEM_BANDAGE]: { name: 'Bandage', kind: 'heal', auto: false, damage: 40, cooldownTicks: 0, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 5, stance: 'hold', weapon: 0, projectile: false, sound: 'rifle', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
+  [ITEM_GOLDEN_EGG]: { name: 'Golden egg', kind: 'heal', auto: false, damage: 255, cooldownTicks: 0, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 1, stance: 'hold', weapon: 0, projectile: false, sound: 'rifle', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
 }
 
 /** The definition of `item`; undefined for an empty slot or an unknown id. */
@@ -57,6 +65,14 @@ export const itemDef = (item: number): ItemDef | undefined => DEFS[item]
 /** The hitscan gun whose shots carry `weapon` in a shot event, or undefined (a tank shell, a rocket, a sniper round in flight...). */
 export const hitscanGunFor = (weapon: number): ItemDef | undefined =>
   Object.values(DEFS).find((d) => d.kind === 'gun' && !d.projectile && d.weapon === weapon)
+
+/** The damage of one round of `def` after it flew `distance` metres. Mirrors `Falloff::apply`: never under 1. */
+export const falloffDamage = (def: ItemDef, distance: number): number => {
+  if (def.damage === 0) return 0
+  const span = def.falloffEnd - def.falloffStart
+  const along = distance <= def.falloffStart ? 0 : span > 0 ? Math.min(1, (distance - def.falloffStart) / span) : 1
+  return Math.max(1, Math.round(def.damage * (1 - (1 - def.falloffMin) * along)))
+}
 
 /** Walking speed multiplier for `item` in hand with `buttons`: a gun slows its holder while aim is held. Mirrors `aim_speed_scale`. */
 export const aimSpeedScale = (item: number, buttons: number): number => {

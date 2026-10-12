@@ -9,7 +9,7 @@ use crate::rng::Rng;
 use anyhow::Result;
 use bytes::Bytes;
 use shared::consts::*;
-use shared::items::{HOTBAR_SLOTS, ITEM_AK5, ITEM_GRENADE, ITEM_NONE, ITEM_REVOLVER, ITEM_SNIPER, def};
+use shared::items::{HOTBAR_SLOTS, ITEM_AK5, ITEM_GRENADE, ITEM_NONE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, def};
 use shared::protocol::*;
 use shared::quant::{pack_quat, to_axis, to_cm, to_cm_i16, to_milli_i16, to_mrad};
 use shared::world::{Building, ObjId, Tree, WorldFile};
@@ -79,6 +79,7 @@ impl Game {
                 next_id: 1,
                 rng: Rng::from_time(),
                 shots: Vec::new(),
+                bullets: Vec::new(),
                 kills: Vec::new(),
                 hits: Vec::new(),
                 history: VecDeque::new(),

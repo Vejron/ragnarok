@@ -212,7 +212,7 @@ impl Mechanic for Npcs {
 mod tests {
     use super::*;
     use crate::game::Game;
-    use shared::items::{ITEM_COUNT, def};
+    use shared::items::def;
     use shared::world::{WORLD_VERSION, WorldFile};
 
     fn game() -> Game {
@@ -291,6 +291,5 @@ mod tests {
     #[test]
     fn the_egg_is_never_scattered() {
         assert!(def(ITEM_GOLDEN_EGG).is_some_and(|d| d.weight == 0));
-        assert_eq!(ITEM_COUNT, ITEM_GOLDEN_EGG + 1);
     }
 }
