@@ -1,6 +1,9 @@
 /** Mirrors `crates/shared/src/consts.rs`. Keep the two in step. */
 
-export const PROTOCOL_VERSION = 15
+export const PROTOCOL_VERSION = 16
+
+/** A hurt building is drawn in this many worse states; the last is about to collapse. Mirrors `DAMAGE_STAGES`. */
+export const DAMAGE_STAGES = 3
 
 export const TICK_RATE = 60
 export const TICK_DT = 1 / TICK_RATE

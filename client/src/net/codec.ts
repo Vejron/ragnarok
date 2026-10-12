@@ -17,6 +17,7 @@ const S_LEAVE = 3
 const S_KILL = 4
 const S_SCORES = 5
 const S_DESTROYED = 6
+const S_DAMAGED = 7
 
 /** `Destroyed` entry kinds: what part of the static world fell. */
 export const OBJ_TREE = 0
@@ -191,6 +192,17 @@ export interface DestroyedObject {
   yaw: number
 }
 
+/** A building that is hurt but stands: how badly, and where a blast marked it. */
+export interface DamagedBuilding {
+  col: number
+  row: number
+  index: number
+  /** 0 (untouched) to `DAMAGE_STAGES`; the last is about to collapse. */
+  stage: number
+  /** Where a blast landed, in metres, when it leaves a scorch mark. */
+  mark: [number, number, number] | null
+}
+
 export interface Score {
   id: number
   kills: number
@@ -257,6 +269,8 @@ export type ServerMessage =
   | { type: 'scores'; scores: Score[] }
   /** Buildings and trees destroyed since the last such message; the first one a joiner gets is all of them. */
   | { type: 'destroyed'; objects: DestroyedObject[] }
+  /** Buildings hurt since the last such message; the first one a joiner gets is every hurt one. */
+  | { type: 'damaged'; buildings: DamagedBuilding[] }
 
 const CM = 100
 const MRAD = 1000
@@ -520,6 +534,16 @@ export function decodeServer(bytes: Uint8Array): ServerMessage | null {
         objects.push({ kind: item[0] as number, col: item[1] as number, row: item[2] as number, index: item[3] as number, yaw: (item[4] as number) / MRAD })
       }
       return { type: 'destroyed', objects }
+    }
+    case S_DAMAGED: {
+      if (raw.length !== 2 || !Array.isArray(raw[1])) return null
+      const buildings: DamagedBuilding[] = []
+      for (const item of raw[1] as unknown[]) {
+        if (!Array.isArray(item) || item.length !== 8 || !ints(item)) return null
+        const [col, row, index, stage, marked, x, y, z] = item as number[]
+        buildings.push({ col: col!, row: row!, index: index!, stage: stage!, mark: marked ? [x! / CM, y! / CM, z! / CM] : null })
+      }
+      return { type: 'damaged', buildings }
     }
     default:
       return null

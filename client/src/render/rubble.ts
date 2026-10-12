@@ -18,7 +18,7 @@ const chunkGeometry = new THREE.BoxGeometry(1, 1, 1)
 chunkGeometry.userData.shared = true
 
 /** A small deterministic generator, so every client throws the same pieces the same way. */
-function random(seed: number) {
+export function random(seed: number) {
   let a = seed >>> 0
   return () => {
     a = (a + 0x6d2b79f5) >>> 0

@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import * as THREE from 'three'
 import { decodeServer, OBJ_TREE } from '@/net/codec'
+import { BuildingDamage } from '@/render/damage'
 import { buildTrees } from '@/render/trees'
 import { FallingTrees } from '@/render/falling'
 import { trunkColliderIndex } from '@/sim/physics'
@@ -201,5 +202,135 @@ describe('a building collapsing', () => {
     Collapses.settled(group, twoHouses(), 1)
     expect(group.children.length).toBe(1)
     expect(group.children[0]!.position.x).toBeCloseTo(35)
+  })
+})
+
+// A copy of `DAMAGED_FIXTURE` in `crates/shared/src/protocol.rs`.
+const DAMAGED_FIXTURE = [146, 7, 145, 152, 2, 3, 206, 0, 1, 17, 112, 3, 1, 205, 3, 232, 20, 209, 252, 24]
+
+describe('damaged message', () => {
+  it('decodes the bytes the server sends', () => {
+    expect(decodeServer(new Uint8Array(DAMAGED_FIXTURE))).toEqual({
+      type: 'damaged',
+      buildings: [{ col: 2, row: 3, index: 70000, stage: 3, mark: [10, 0.2, -10] }],
+    })
+  })
+
+  it('has no mark when the flag is clear', () => {
+    // [7, [[2, 3, 4, 1, 0, 0, 0, 0]]]
+    expect(decodeServer(new Uint8Array([146, 7, 145, 152, 2, 3, 4, 1, 0, 0, 0, 0]))).toEqual({
+      type: 'damaged',
+      buildings: [{ col: 2, row: 3, index: 4, stage: 1, mark: null }],
+    })
+  })
+})
+
+describe('a hurt building', () => {
+  const key = 5
+  const tileWith = () => twoHouses()
+  const vertices = (damage: BuildingDamage, index = 0) =>
+    (damage.root.children[0]!.children.find((c) => c instanceof THREE.Mesh && c.castShadow && !c.userData.decal && c.geometry.getAttribute('color')) as THREE.Mesh | undefined)?.geometry.getAttribute('position').count ?? 0
+
+  it('shows a scorch on the wall nearest the blast', () => {
+    const damage = new BuildingDamage()
+    damage.attach(key, tileWith())
+    // 2 m off the west wall of the house spanning x 0..10.
+    expect(damage.hurtBuilding(key, 0, 0, [-2, 2, 0])).toBe(false)
+    expect(damage.shown(key, 0).scorches).toBe(1)
+    const scorch = damage.root.children[0]!.children.find((c) => c.userData.decal)!
+    expect(scorch.position.x).toBeCloseTo(-0.1, 1)
+    expect(scorch.position.y).toBeCloseTo(2)
+  })
+
+  it('is cut into shards once hurt, and says so only the first time', () => {
+    const damage = new BuildingDamage()
+    damage.attach(key, tileWith())
+    expect(damage.fractured(key)).toEqual([])
+    expect(damage.shown(key, 0).shards).toBe(0)
+    expect(damage.hurtBuilding(key, 0, 1, null)).toBe(true)
+    expect(damage.hurtBuilding(key, 0, 2, null)).toBe(false)
+    expect(damage.fractured(key)).toEqual([0])
+    expect(damage.shown(key, 0).shards).toBeGreaterThanOrEqual(4)
+    // More triangles than the 8 wall and 2 roof ones it started with.
+    expect(vertices(damage)).toBeGreaterThan(10 * 3)
+  })
+
+  it('loses shards as it weakens and never gets them back', () => {
+    const damage = new BuildingDamage()
+    damage.attach(key, tileWith())
+    damage.hurtBuilding(key, 0, 1, null)
+    expect(damage.shown(key, 0).missing).toBe(0)
+    damage.hurtBuilding(key, 0, 3, null)
+    const missing = damage.shown(key, 0).missing
+    expect(missing).toBeGreaterThan(0)
+    damage.hurtBuilding(key, 0, 3, [-2, 2, 0])
+    expect(damage.shown(key, 0).missing).toBeGreaterThanOrEqual(missing)
+  })
+
+  it('breaks the wall out where a shell hit it, taking the scorch with it', () => {
+    const damage = new BuildingDamage()
+    damage.attach(key, tileWith())
+    damage.hurtBuilding(key, 0, 0, [-1, 2, 0])
+    expect(damage.shown(key, 0).scorches).toBe(1)
+    damage.hurtBuilding(key, 0, 2, null)
+    expect(damage.shown(key, 0).missing).toBeGreaterThan(0)
+    expect(damage.shown(key, 0).scorches).toBe(0)
+  })
+
+  it('throws the pieces that break away, and they come to rest and go', () => {
+    const damage = new BuildingDamage()
+    damage.attach(key, tileWith())
+    damage.hurtBuilding(key, 0, 0, [-1, 2, 0])
+    damage.hurtBuilding(key, 0, 2, null)
+    const effects = new Effects()
+    const group = damage.root.children[0]!
+    const pieces = group.children.filter((c) => c instanceof THREE.Mesh && c.geometry.getAttribute('color') && c.material instanceof THREE.MeshToonMaterial && c.material.side === THREE.DoubleSide)
+    expect(pieces.length).toBeGreaterThan(0)
+    for (let i = 0; i < 300; i++) damage.update(0.05, effects, new THREE.Vector3(500, 0, 0))
+    expect(group.children.some((c) => pieces.includes(c))).toBe(false)
+    effects.dispose()
+  })
+
+  it('has the same shards in the same places for everyone', () => {
+    const positions = () => {
+      const damage = new BuildingDamage()
+      damage.attach(key, tileWith())
+      damage.hurtBuilding(key, 1, 3, [28, 2, 0])
+      const body = damage.root.children[0]!.children.find((c) => c instanceof THREE.Mesh && !c.userData.decal && c.castShadow) as THREE.Mesh
+      return Array.from(body.geometry.getAttribute('position').array)
+    }
+    expect(positions()).toEqual(positions())
+  })
+
+  it('is cleared when it collapses, and not drawn again when the tile returns', () => {
+    const damage = new BuildingDamage()
+    damage.attach(key, tileWith())
+    damage.hurtBuilding(key, 0, 2, [-2, 2, 0])
+    damage.fell(key, 0)
+    expect(damage.root.children.length).toBe(0)
+    expect(damage.fractured(key)).toEqual([])
+    damage.detach(key)
+    damage.attach(key, tileWith())
+    expect(damage.shown(key, 0)).toEqual({ scorches: 0, shards: 0, missing: 0 })
+  })
+
+  it('is hurt as it was when its tile streams back in', () => {
+    const damage = new BuildingDamage()
+    damage.attach(key, tileWith())
+    damage.hurtBuilding(key, 0, 2, [-1, 2, 0])
+    const before = damage.shown(key, 0)
+    damage.detach(key)
+    expect(damage.root.children.length).toBe(0)
+    expect(damage.fractured(key)).toEqual([0])
+    damage.attach(key, tileWith())
+    expect(damage.shown(key, 0)).toEqual(before)
+  })
+
+  it('remembers damage that came before its tile did', () => {
+    const damage = new BuildingDamage()
+    expect(damage.hurtBuilding(key, 1, 1, null)).toBe(true)
+    expect(damage.root.children.length).toBe(0)
+    damage.attach(key, tileWith())
+    expect(damage.shown(key, 1).shards).toBeGreaterThanOrEqual(4)
   })
 })

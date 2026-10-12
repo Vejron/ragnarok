@@ -220,6 +220,9 @@ pub struct World {
     pub destroyed: Vec<(Obj, i16)>,
     /// What was destroyed since the last tick. Drained and broadcast reliably by `Game::step`.
     pub fresh_destroyed: Vec<(Obj, i16)>,
+    /// Buildings hurt since the last tick that need telling about: the damage stage they are in,
+    /// and where a blast landed if it leaves a mark. Drained and broadcast reliably by `Game::step`.
+    pub fresh_damaged: Vec<FreshDamage>,
     /// Where each standing, living player was at the end of each of the last few ticks, newest
     /// last, labelled with the tick number a snapshot of that state carries. Lag compensation
     /// rewinds shots against it.
@@ -248,6 +251,14 @@ impl World {
         self.trees_by_id.get(&id).and_then(|&index| self.map.trees.get(index))
     }
 
+    /// How badly the standing building `object` is hurt: 0 (not at all) to `DAMAGE_STAGES`.
+    pub fn damage_stage(&self, object: Obj) -> Option<u8> {
+        let Obj::Building(id) = object else { return None };
+        let full = self.building(id)?.hp() as u32;
+        let left = self.object_hp.get(&object).copied().map_or(full, u32::from);
+        Some(DAMAGE_STAGE_HEALTH.iter().filter(|&&percent| left * 100 <= full * percent).count() as u8)
+    }
+
     /// The building `id` names.
     pub fn building(&self, id: ObjId) -> Option<&Building> {
         self.buildings_by_id.get(&id).and_then(|&index| self.map.buildings.get(index))
@@ -260,12 +271,21 @@ impl World {
     }
 }
 
+/// A building hurt: its identity, its damage stage and where a blast marked it.
+pub type FreshDamage = (ObjId, u8, Option<[f32; 3]>);
+
 /// `object` as a `Destroyed` entry.
 fn destroyed_entry(object: Obj, yaw: i16) -> (u8, u16, u16, u32, i16) {
     match object {
         Obj::Tree(id) => (OBJ_TREE, id.col, id.row, id.index, yaw),
         Obj::Building(id) => (OBJ_BUILDING, id.col, id.row, id.index, yaw),
     }
+}
+
+/// Building `id`'s damage `stage`, and where a blast marked it, as a `Damaged` entry.
+fn damaged_entry(id: ObjId, stage: u8, mark: Option<[f32; 3]>) -> DamagedEntry {
+    let [x, y, z] = mark.map(|p| p.map(|v| (v * 100.0).round() as i32)).unwrap_or([0; 3]);
+    (id.col, id.row, id.index, stage, mark.is_some() as u8, x, y, z)
 }
 
 pub struct Game {
@@ -288,6 +308,7 @@ impl Game {
                 object_hp: HashMap::new(),
                 destroyed: Vec::new(),
                 fresh_destroyed: Vec::new(),
+                fresh_damaged: Vec::new(),
                 map,
                 players: BTreeMap::new(),
                 vehicles: BTreeMap::new(),
@@ -364,6 +385,14 @@ impl Game {
         // (not news to animate), and snapshots on the datagram channel can overtake it.
         let message = Destroyed(S_DESTROYED, self.world.destroyed.iter().map(|&(object, yaw)| destroyed_entry(object, yaw)).collect());
         let _ = outbox.try_send(Outgoing::Reliable(encode(&message).into()));
+        let hurt: Vec<_> = self.world.object_hp.keys().filter_map(|&object| self.world.damage_stage(object).map(|stage| (object, stage))).collect();
+        let hurt: Vec<_> = hurt.into_iter().filter_map(|(object, stage)| match object {
+            Obj::Building(object_id) if stage > 0 => Some(damaged_entry(object_id, stage, None)),
+            _ => None,
+        }).collect();
+        if !hurt.is_empty() {
+            let _ = outbox.try_send(Outgoing::Reliable(encode(&Damaged(S_DAMAGED, hurt)).into()));
+        }
         self.outboxes.insert(id, outbox);
         self.replicas.insert(id, Replica::default());
         for mechanic in &mut self.mechanics {
@@ -404,6 +433,7 @@ impl Game {
         }
         self.broadcast_kills();
         self.broadcast_destroyed();
+        self.broadcast_damaged();
         self.world.tick = self.world.tick.wrapping_add(1);
         self.world.record_history();
         if self.world.tick.is_multiple_of(SNAPSHOT_EVERY) {
@@ -418,6 +448,18 @@ impl Game {
         }
         let entries = self.world.fresh_destroyed.drain(..).map(|(object, yaw)| destroyed_entry(object, yaw)).collect();
         let bytes = Bytes::from(encode(&Destroyed(S_DESTROYED, entries)));
+        for outbox in self.outboxes.values() {
+            let _ = outbox.try_send(Outgoing::Reliable(bytes.clone()));
+        }
+    }
+
+    /// Tells everyone about the buildings hurt this tick, as one message.
+    fn broadcast_damaged(&mut self) {
+        if self.world.fresh_damaged.is_empty() {
+            return;
+        }
+        let entries = self.world.fresh_damaged.drain(..).map(|(id, stage, mark)| damaged_entry(id, stage, mark)).collect();
+        let bytes = Bytes::from(encode(&Damaged(S_DAMAGED, entries)));
         for outbox in self.outboxes.values() {
             let _ = outbox.try_send(Outgoing::Reliable(bytes.clone()));
         }

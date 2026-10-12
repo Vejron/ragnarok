@@ -15,6 +15,7 @@ pub const S_LEAVE: u8 = 3;
 pub const S_KILL: u8 = 4;
 pub const S_SCORES: u8 = 5;
 pub const S_DESTROYED: u8 = 6;
+pub const S_DAMAGED: u8 = 7;
 
 /// `Destroyed` entry kinds: what part of the static world fell.
 pub const OBJ_TREE: u8 = 0;
@@ -332,6 +333,17 @@ pub struct Scores(pub u8, pub Vec<(u32, u16, u16)>);
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Destroyed(pub u8, pub Vec<(u8, u16, u16, u32, i16)>);
 
+/// `[7, [[col, row, index, stage, marked, x, y, z], ...]]`, sent on a reliable stream: to everyone
+/// when buildings are hurt but still stand, and to a player who just joined with every hurt one.
+/// `(col, row, index)` is the building's `ObjId`; `stage` is `0..=DAMAGE_STAGES` (higher is worse,
+/// the last is about to collapse). When `marked` is 1, a blast landed at `(x, y, z)` (cm, as in
+/// `ShotEvent`) and leaves a scorch mark there; otherwise the position is zero.
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct Damaged(pub u8, pub Vec<DamagedEntry>);
+
+/// One `Damaged` entry: `(col, row, index, stage, marked, x, y, z)`.
+pub type DamagedEntry = (u16, u16, u32, u8, u8, i32, i32, i32);
+
 /// Reads the tag of a `[tag, ...]` message without decoding the rest. Every message is a short
 /// array (fixarray header) whose first element is a positive fixint.
 pub fn peek_tag(bytes: &[u8]) -> Option<u8> {
@@ -359,7 +371,7 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 15, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
+        148, 0, 16, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[
@@ -400,6 +412,17 @@ mod tests {
 
     /// `[6, [[OBJ_TREE, 2, 3, 70000, -1571]]]`, mirrored in `codec.spec.ts`.
     pub const DESTROYED_FIXTURE: &[u8] = &[146, 6, 145, 149, 0, 2, 3, 206, 0, 1, 17, 112, 209, 249, 221];
+
+    /// `[7, [[2, 3, 70000, 3, 1, 1000, 20, -1000]]]`, mirrored in `destruction.spec.ts`.
+    pub const DAMAGED_FIXTURE: &[u8] = &[146, 7, 145, 152, 2, 3, 206, 0, 1, 17, 112, 3, 1, 205, 3, 232, 20, 209, 252, 24];
+
+    #[test]
+    fn damaged_message_matches_the_fixture() {
+        let message = Damaged(S_DAMAGED, vec![(2, 3, 70_000, 3, 1, 1000, 20, -1000)]);
+        assert_eq!(encode(&message), DAMAGED_FIXTURE);
+        assert_eq!(decode::<Damaged>(DAMAGED_FIXTURE), Some(message));
+        assert_eq!(peek_tag(DAMAGED_FIXTURE), Some(S_DAMAGED));
+    }
 
     #[test]
     fn destroyed_matches_fixture() {

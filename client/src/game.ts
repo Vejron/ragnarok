@@ -39,6 +39,7 @@ import { buildGround, buildTile, disposeTile, rebuildBuildings, restitchTerrain 
 import { buildWater, disposeWater, updateWater } from './render/water'
 import { FallingTrees } from './render/falling'
 import { Collapses } from './render/rubble'
+import { BuildingDamage } from './render/damage'
 import { Replica } from './net/replica'
 import { TileStreamer } from './stream'
 import { loadManifest, type TileData, type TileRef, type WorldData } from './world'
@@ -183,6 +184,7 @@ export class Game {
   /** Buildings that have collapsed, by tile key then index in the tile, with the yaw the blast came from. */
   private readonly goneBuildings = new Map<number, Map<number, number>>()
   private readonly collapses = new Collapses()
+  private readonly damage = new BuildingDamage()
   /** True from the welcome until the joiner's catch-up `destroyed` arrives: that one is state, not news. */
   private awaitingCatchUp = false
   private readonly cars = new Map<number, VehicleModel>()
@@ -250,12 +252,13 @@ export class Game {
     this.scene = new Scene(container)
     this.input = new InputController(this.scene.canvas)
     this.scene.scene.add(this.crowd.root)
-    this.scene.scene.add(this.effects.root)
+    this.scene.scene.add(this.effects.root, this.damage.root)
     this.scene.scene.add(this.rocketModels.root)
     this.scene.scene.add(this.pickupModels.root)
     this.scene.scene.add(this.trajectory.root)
     // Translucent smoke and flashes, and the grenade's arc, would show as solid shapes in the AO pass.
     this.scene.excludeFromAO(this.effects.root)
+    this.scene.excludeFromAO(this.damage.root)
     this.scene.excludeFromAO(this.trajectory.root)
     // Water is translucent and drawn after everything solid; the AO pass would see it as a lid.
     this.scene.scene.add(this.waterRoot)
@@ -308,7 +311,8 @@ export class Game {
     const key = ref.row * 65536 + ref.col
     // Buildings that fell before this tile streamed in (or while it was away) are not drawn.
     const down = new Set(this.goneBuildings.get(key)?.keys())
-    const group = buildTile(tile, salt, ground, this.terrain ?? undefined, down)
+    // Buildings that are hurt are drawn by `damage`, as shards, not with the tile.
+    const group = buildTile(tile, salt, ground, this.terrain ?? undefined, this.undrawnBuildings(key))
     this.scene.scene.add(group)
     const water = ground ? buildWater(tile, ground, this.terrain ?? undefined) : null
     if (water) this.waterRoot.add(water)
@@ -324,6 +328,7 @@ export class Game {
     const walk: TileSolids = this.motor?.addTile(tile, ground) ?? []
     const drive: TileSolids = this.driver?.addTile(tile, ground) ?? []
     this.tileSolids.set(key, { tile, salt, walk, drive })
+    this.damage.attach(key, tile, salt)
     if (down.size > 0) {
       this.dropBuildingColliders(key)
       for (const index of down) Collapses.settled(group, tile, index)
@@ -332,6 +337,7 @@ export class Game {
     for (const [index, yaw] of this.fellTrees.get(key) ?? []) this.fellTree(key, index, yaw, false)
     return () => {
       this.tileSolids.delete(key)
+      this.damage.detach(key)
       disposeTile(group)
       if (water) disposeWater(water)
       this.tileGroups.delete(key)
@@ -359,6 +365,13 @@ export class Game {
     solids.drive[at] = undefined
   }
 
+  /** The buildings of tile `key` its own drawing leaves out: those that fell, and those drawn as shards instead. */
+  private undrawnBuildings(key: number): Set<number> {
+    const out = new Set(this.goneBuildings.get(key)?.keys())
+    for (const index of this.damage.fractured(key)) out.add(index)
+    return out
+  }
+
   /** Rebuilds tile `key`'s building colliders in both simulations without the buildings that fell. */
   private dropBuildingColliders(key: number) {
     const solids = this.tileSolids.get(key)
@@ -377,8 +390,7 @@ export class Game {
     const group = this.tileGroups.get(key)
     const solids = this.tileSolids.get(key)
     if (!group || !solids || !solids.tile.buildings[index]) return
-    const down = new Set(this.goneBuildings.get(key)?.keys())
-    rebuildBuildings(group, solids.tile, solids.salt, down)
+    rebuildBuildings(group, solids.tile, solids.salt, this.undrawnBuildings(key))
     this.dropBuildingColliders(key)
     if (animate) {
       this.collapses.start(group, solids.tile, index, solids.salt, yaw, (x, z) => this.terrain?.heightAt(x, z) ?? 0, key * 1_000_003 + index)
@@ -532,11 +544,23 @@ export class Game {
             this.goneBuildings.set(key, gone)
             if (gone.has(object.index)) continue
             gone.set(object.index, object.yaw)
+            this.damage.fell(key, object.index)
             this.fellBuilding(key, object.index, object.yaw, animate)
           }
         }
         break
       }
+      case 'damaged':
+        for (const b of message.buildings) {
+          const key = b.row * 65536 + b.col
+          if (this.goneBuildings.get(key)?.has(b.index)) continue
+          // The first real damage swaps the whole building in the tile for its shards.
+          if (!this.damage.hurtBuilding(key, b.index, b.stage, b.mark)) continue
+          const group = this.tileGroups.get(key)
+          const solids = this.tileSolids.get(key)
+          if (group && solids) rebuildBuildings(group, solids.tile, solids.salt, this.undrawnBuildings(key))
+        }
+        break
       case 'scores':
         this.scores.clear()
         for (const { id, kills, deaths } of message.scores) this.scores.set(id, { kills, deaths })
@@ -592,6 +616,7 @@ export class Game {
     updateWater(now / 1000)
     this.fallingTrees.update(dt)
     this.collapses.update(dt, this.effects)
+    this.damage.update(dt, this.effects, this.scene.camera.position)
     this.accumulator += dt * 1000
     let ticks = 0
     while (this.accumulator >= TICK_MS && ticks < MAX_TICKS_PER_FRAME) {
@@ -1069,6 +1094,7 @@ export class Game {
     this.tiles?.dispose()
     this.crowd.dispose()
     this.effects.dispose()
+    this.damage.dispose()
     this.rocketModels.dispose()
     this.pickupModels.dispose()
     for (const model of this.roosters.values()) model.dispose()

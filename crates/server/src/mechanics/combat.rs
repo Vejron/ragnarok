@@ -232,9 +232,19 @@ pub fn damage_object(world: &mut World, object: Obj, amount: u16, from: [f32; 3]
             None => return,
         },
     };
+    let before = world.damage_stage(object);
     let left = world.object_hp.get(&object).copied().unwrap_or(full).saturating_sub(amount);
     if left > 0 {
         world.object_hp.insert(object, left);
+        // Buildings show it: a worse stage, or a blast big enough to leave a mark.
+        if let Obj::Building(id) = object {
+            let stage = world.damage_stage(object).unwrap_or(0);
+            let worse = before.is_some_and(|before| stage > before);
+            let marked = amount >= DAMAGE_MARK_MIN;
+            if worse || marked {
+                world.fresh_damaged.push((id, stage, marked.then_some(from)));
+            }
+        }
         return;
     }
     world.object_hp.remove(&object);
@@ -1428,5 +1438,53 @@ mod tests {
             seen |= shared::protocol::peek_tag(&bytes) == Some(shared::protocol::S_DESTROYED);
         }
         assert!(seen, "a late joiner never heard the house fell");
+    }
+
+    /// What `Damaged` entries (stage, marked, x, y, z in cm) `inbox` has been sent.
+    fn damaged_told(inbox: &mut mpsc::Receiver<Outgoing>) -> Vec<(u8, u8, i32, i32, i32)> {
+        let mut out = Vec::new();
+        while let Ok(Outgoing::Reliable(bytes)) = inbox.try_recv() {
+            if shared::protocol::peek_tag(&bytes) == Some(shared::protocol::S_DAMAGED) {
+                out.extend(decode::<shared::protocol::Damaged>(&bytes).unwrap().1.into_iter().map(|e| (e.3, e.4, e.5, e.6, e.7)));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_shell_leaves_a_mark_and_each_stage_is_announced_once() {
+        let (mut game, house) = game_with_house();
+        let (_, mut inbox) = join(&mut game);
+        while inbox.try_recv().is_ok() {}
+        // 150 HP: stages begin at 99, 49.5 and 22.5 left. A 30-damage blast leaves a mark but no stage.
+        damage_object(&mut game.world, house, 30, [14.0, 1.0, 0.0]);
+        game.step();
+        assert_eq!(damaged_told(&mut inbox), vec![(0, 1, 1400, 100, 0)]);
+        // 30 more: 90 left, stage 1; a mark too.
+        damage_object(&mut game.world, house, 30, [14.0, 1.0, 0.0]);
+        game.step();
+        assert_eq!(damaged_told(&mut inbox), vec![(1, 1, 1400, 100, 0)]);
+        // Rifle chips of 4 leave no mark, and say nothing until they cross into stage 2 (46 left).
+        for _ in 0..11 {
+            damage_object(&mut game.world, house, 4, [0.0, 1.5, 0.0]);
+        }
+        game.step();
+        assert_eq!(damaged_told(&mut inbox), vec![(2, 0, 0, 0, 0)]);
+    }
+
+    #[test]
+    fn a_joiner_is_told_how_hurt_a_standing_house_is() {
+        let (mut game, house) = game_with_house();
+        damage_object(&mut game.world, house, 140, [14.0, 1.0, 0.0]);
+        let (_, mut late) = join(&mut game);
+        assert_eq!(damaged_told(&mut late), vec![(3, 0, 0, 0, 0)]);
+    }
+
+    #[test]
+    fn a_collapse_announces_no_damage() {
+        let (mut game, house) = game_with_house();
+        game.world.fresh_damaged.clear();
+        damage_object(&mut game.world, house, 150, [14.0, 1.0, 0.0]);
+        assert!(game.world.fresh_damaged.is_empty());
     }
 }
