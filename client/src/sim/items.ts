@@ -1,4 +1,4 @@
-/** Mirrors `crates/shared/src/items.rs`. Keep the two in step. */
+/** Mirrors `crates/shared/src/items.rs`. Keep the two in step: `parity.spec.ts` checks this file against `fixtures/parity/gameplay.json`, which the Rust tests generate. */
 
 import { BUTTON_ALT, TICK_RATE } from './consts'
 

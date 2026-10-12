@@ -224,6 +224,55 @@ pub const MAX_PICKUPS_PER_SNAPSHOT: usize = 24;
 mod tests {
     use super::*;
 
+    /// The item table and the scalar constants the client mirrors, as JSON. `fixtures/parity/
+    /// gameplay.json` holds the committed copy, which `client/src/__tests__/parity.spec.ts` checks the
+    /// TypeScript tables against. After an intended change, regenerate it with `UPDATE_PARITY=1 cargo
+    /// test -p shared parity` and update `client/src/sim/items.ts` to match.
+    fn parity_json() -> String {
+        let items: Vec<String> = (1..ITEM_COUNT)
+            .map(|id| {
+                let d = def(id).expect("every id below ITEM_COUNT is defined");
+                let kind = match d.kind {
+                    ItemKind::Gun => "gun",
+                    ItemKind::Grenade => "grenade",
+                    ItemKind::Heal => "heal",
+                };
+                format!(
+                    "    \"{id}\": {{\"name\": \"{}\", \"kind\": \"{kind}\", \"auto\": {}, \"damage\": {}, \"cooldownTicks\": {}, \"mag\": {}, \"reloadTicks\": {}, \"range\": {}, \"aimSpeed\": {}, \"scope\": {}, \"stack\": {}}}",
+                    d.name, d.auto, d.damage, d.cooldown_ticks, d.mag, d.reload_ticks, d.range, d.aim_speed, d.scope, d.stack
+                )
+            })
+            .collect();
+        // Each value is printed from its own type, so an f32 0.15 stays 0.15 rather than 0.15000000596.
+        let consts = [
+            ("TICK_RATE", TICK_RATE.to_string()),
+            ("HOTBAR_SLOTS", HOTBAR_SLOTS.to_string()),
+            ("BANDAGE_TICKS", BANDAGE_TICKS.to_string()),
+            ("GRENADE_SPEED", GRENADE_SPEED.to_string()),
+            ("GRENADE_FUSE_TICKS", GRENADE_FUSE_TICKS.to_string()),
+            ("GRENADE_BLAST_RADIUS", GRENADE_BLAST_RADIUS.to_string()),
+            ("GRENADE_LOFT", GRENADE_LOFT.to_string()),
+            ("GRENADE_MUZZLE", GRENADE_MUZZLE.to_string()),
+            ("GRENADE_RADIUS", GRENADE_RADIUS.to_string()),
+            ("GRENADE_BOUNCE", GRENADE_BOUNCE.to_string()),
+            ("PICKUP_RADIUS", PICKUP_RADIUS.to_string()),
+        ];
+        let lines: Vec<String> = consts.iter().map(|(name, value)| format!("    \"{name}\": {value}")).collect();
+        format!("{{\n  \"items\": {{\n{}\n  }},\n  \"consts\": {{\n{}\n  }}\n}}\n", items.join(",\n"), lines.join(",\n"))
+    }
+
+    #[test]
+    fn parity_fixture_matches_the_tables() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/parity/gameplay.json");
+        let actual = parity_json();
+        if std::env::var_os("UPDATE_PARITY").is_some() {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, &actual).unwrap();
+        }
+        let committed = std::fs::read_to_string(&path).expect("fixtures/parity/gameplay.json; regenerate with UPDATE_PARITY=1");
+        assert_eq!(committed, actual, "gameplay tables changed: regenerate the fixture and update client/src/sim/items.ts");
+    }
+
     #[test]
     fn only_a_gun_with_aim_held_slows_its_holder() {
         use crate::consts::BUTTON_ALT;
