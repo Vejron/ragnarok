@@ -6,7 +6,7 @@ import { Skidmarks, SKID_LIFE } from '@/render/skidmarks'
 import { Particles } from '@/render/particles'
 import { VehicleFx, type FxWorld } from '@/render/tyres'
 import { COVER_FARM, COVER_WATER, ROAD_MINOR, ROAD_PATH, NO_WATER } from '@/world'
-import { KIND_HELI, KIND_JEEP, KIND_SPORTS, KIND_TANK } from '@/net/codec'
+import { KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_TANK } from '@/net/codec'
 
 describe('tyreSlip', () => {
   it('grips on a straight cruise and in a gentle turn', () => {
@@ -33,6 +33,9 @@ describe('tyreSlip', () => {
     expect(wheelLayout(KIND_SPORTS)!.steered).toBe(2)
     expect(wheelLayout(KIND_TANK)!.steered).toBe(0)
     expect(wheelLayout(KIND_HELI)).toBeNull()
+    // A plane steers its main wheels and drags its tail skid.
+    expect(wheelLayout(KIND_PLANE)!.steered).toBe(2)
+    expect(wheelLayout(KIND_PLANE)!.contacts[2]![2]).toBeGreaterThan(2)
     // Front first: the front pair is towards -Z.
     expect(wheelLayout(KIND_JEEP)!.contacts[0]![2]).toBeLessThan(0)
   })

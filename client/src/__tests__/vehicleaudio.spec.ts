@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { VehicleSounds } from '@/vehicleaudio'
 import type { SoundInput } from '@/sim/engine'
-import { KIND_HELI, KIND_JEEP, KIND_TANK } from '@/net/codec'
+import { KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_TANK } from '@/net/codec'
 import { SURFACE_ASPHALT } from '@/sim/surface'
 
 class Param {
@@ -114,16 +114,16 @@ describe('VehicleSounds', () => {
 
   it('stops every node of a voice that goes away, and leaks none', () => {
     const { ctx, sounds: s } = sounds()
-    frame(s, [{ id: 1, at: [20, 0, 0], input: { kind: KIND_JEEP } }, { id: 2, at: [30, 0, 0], input: { kind: KIND_TANK } }, { id: 3, at: [40, 0, 0], input: { kind: KIND_HELI } }])
-    expect(s.voiceCount).toBe(3)
+    frame(s, [{ id: 1, at: [20, 0, 0], input: { kind: KIND_JEEP } }, { id: 2, at: [30, 0, 0], input: { kind: KIND_TANK } }, { id: 3, at: [40, 0, 0], input: { kind: KIND_HELI } }, { id: 4, at: [50, 0, 0], input: { kind: KIND_PLANE, grounded: false, cut: true } }])
+    expect(s.voiceCount).toBe(4)
     const made = ctx.log.sources.length
     expect(made).toBeGreaterThan(9)
     // Re-reporting makes nothing new.
-    frame(s, [{ id: 1, at: [21, 0, 0] }, { id: 2, at: [31, 0, 0], input: { kind: KIND_TANK } }, { id: 3, at: [41, 0, 0], input: { kind: KIND_HELI } }])
+    frame(s, [{ id: 1, at: [21, 0, 0] }, { id: 2, at: [31, 0, 0], input: { kind: KIND_TANK } }, { id: 3, at: [41, 0, 0], input: { kind: KIND_HELI } }, { id: 4, at: [51, 0, 0], input: { kind: KIND_PLANE, grounded: false } }])
     expect(ctx.log.sources.length).toBe(made)
     s.drop(2)
-    frame(s, [{ id: 1, at: [21, 0, 0] }, { id: 3, at: [41, 0, 0], input: { kind: KIND_HELI } }])
-    expect(s.voiceCount).toBe(2)
+    frame(s, [{ id: 1, at: [21, 0, 0] }, { id: 3, at: [41, 0, 0], input: { kind: KIND_HELI } }, { id: 4, at: [51, 0, 0], input: { kind: KIND_PLANE, grounded: false, cut: true } }])
+    expect(s.voiceCount).toBe(3)
     s.dispose()
     expect(s.voiceCount).toBe(0)
     expect(ctx.log.sources.every((node) => node.started === 1 && node.stopped === 1)).toBe(true)
@@ -156,6 +156,24 @@ describe('VehicleSounds', () => {
     s.door()
     expect(ctx.log.sources.length).toBe(before)
     ctx.currentTime = 10
+    s.explosion([5, 0, 0])
+    expect(ctx.log.sources.length).toBeGreaterThan(before)
+  })
+
+  it('rattles a machine gun a round at a time, in one slot', () => {
+    const { ctx, sounds: s } = sounds()
+    s.machineGun([400, 0, 0], 2)
+    expect(ctx.log.sources.length).toBe(0)
+    s.machineGun([10, 0, 0], 3)
+    expect(ctx.log.sources.length).toBe(6)
+    s.machineGun([10, 0, 0], 0)
+    expect(ctx.log.sources.length).toBe(6)
+    // Twelve rounds a second for a second never crowd out more than a few slots at a time.
+    for (let k = 0; k < 12; k++) {
+      ctx.currentTime += 1 / 12
+      s.machineGun([10, 0, 0], 1, k % 2 === 0)
+    }
+    const before = ctx.log.sources.length
     s.explosion([5, 0, 0])
     expect(ctx.log.sources.length).toBeGreaterThan(before)
   })

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build locally, ship the image over SSH and swap the container on the VPS.
 # Usage: DOMAIN=game.example.com scripts/deploy.sh user@host
-# Optional: REMOTE_ACME_DIR, PLATFORM, HEALTH_TIMEOUT, CARGO_JOBS, SSH_OPTS, ACME_STAGING=1
+# Optional: WORLD_DIR (a world directory to ship instead of client/public, e.g. client/public/dev), REMOTE_ACME_DIR, PLATFORM, HEALTH_TIMEOUT, CARGO_JOBS, SSH_OPTS, ACME_STAGING=1
 set -euo pipefail
 
 HOST="${1:-${DEPLOY_HOST:-}}"
@@ -14,6 +14,7 @@ SSH_OPTS="${SSH_OPTS:-}"
 NAME=ragnarok
 IMAGE="$NAME:$(git rev-parse --short HEAD)"
 STAMP="$(date +%Y%m%d%H%M%S)"
+WORLD_DIR="${WORLD_DIR:-client/public}"
 
 [[ -n "$HOST" ]] || { echo "usage: DOMAIN=... $0 user@host" >&2; exit 1; }
 [[ "$DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "set DOMAIN to a valid hostname" >&2; exit 1; }
@@ -21,8 +22,8 @@ STAMP="$(date +%Y%m%d%H%M%S)"
 for tool in npm docker ssh gzip; do command -v "$tool" >/dev/null || { echo "missing $tool" >&2; exit 1; }; done
 
 # The world is generated, not committed (scripts/world.sh); the image would be built without it.
-[[ -f client/public/world.msgpack && -d client/public/tiles ]] || { echo "no world in client/public; run scripts/world.sh first" >&2; exit 1; }
-echo "==> world: $(ls client/public/tiles | wc -l | tr -d ' ') tiles, $(du -sh client/public/tiles | cut -f1), manifest fnv/cksum $(cksum < client/public/world.msgpack | cut -d' ' -f1)"
+[[ -f "$WORLD_DIR/world.msgpack" && -d "$WORLD_DIR/tiles" ]] || { echo "no world in $WORLD_DIR; run scripts/world.sh first" >&2; exit 1; }
+echo "==> world ($WORLD_DIR): $(ls "$WORLD_DIR/tiles" | wc -l | tr -d ' ') tiles, $(du -sh "$WORLD_DIR/tiles" | cut -f1), manifest cksum $(cksum < "$WORLD_DIR/world.msgpack" | cut -d' ' -f1)"
 
 # shellcheck disable=SC2086
 remote() { ssh $SSH_OPTS "$HOST" "$@"; }
@@ -37,7 +38,15 @@ PREFLIGHT
 
 echo "==> building client"
 (cd client && npm ci && npm run build)
-rm -rf client/dist/dev   # the dev world (scripts/world-dev.sh) is copied from public/; never ship it
+rm -rf client/dist/dev   # the dev world (scripts/world-dev.sh) is copied from public/; never ship it as a subdirectory
+if [[ "$WORLD_DIR" != client/public ]]; then
+  # Serve WORLD_DIR's world at the root instead: the client fetches /world.msgpack, /tiles/ and /minimap.png.
+  echo "==> using world from $WORLD_DIR"
+  rm -rf client/dist/tiles client/dist/world.msgpack client/dist/minimap.png
+  cp -R "$WORLD_DIR/tiles" client/dist/tiles
+  cp "$WORLD_DIR/world.msgpack" client/dist/world.msgpack
+  [[ -f "$WORLD_DIR/minimap.png" ]] && cp "$WORLD_DIR/minimap.png" client/dist/minimap.png
+fi
 
 echo "==> building image $IMAGE ($PLATFORM)"
 docker buildx build --platform "$PLATFORM" --load --build-arg "CARGO_BUILD_JOBS=$CARGO_JOBS" -t "$IMAGE" -t "$NAME:latest" .

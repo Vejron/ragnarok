@@ -18,8 +18,12 @@ export class Effects {
   private readonly sphere = new THREE.SphereGeometry(1, 12, 8)
   private readonly beam = new THREE.CylinderGeometry(0.06, 0.06, 1, 6)
 
-  private add(geometry: THREE.BufferGeometry, color: number, life: number, place: (mesh: THREE.Mesh) => void, animate: (mesh: THREE.Mesh, progress: number) => void) {
-    const material = new THREE.MeshBasicMaterial({ color, transparent: true, depthWrite: false })
+  /**
+   * `bright` effects (tracers, sparks) ignore fog and tone mapping, so they keep their colour against
+   * a pale sky and at range, where fog would otherwise melt them into it.
+   */
+  private add(geometry: THREE.BufferGeometry, color: number, life: number, place: (mesh: THREE.Mesh) => void, animate: (mesh: THREE.Mesh, progress: number) => void, bright = false) {
+    const material = new THREE.MeshBasicMaterial({ color, transparent: true, depthWrite: false, ...(bright ? { fog: false, toneMapped: false } : {}) })
     const mesh = new THREE.Mesh(geometry, material)
     place(mesh)
     this.root.add(mesh)
@@ -51,16 +55,69 @@ export class Effects {
     if (length < 0.01) return
     direction.divideScalar(length)
     this.add(this.sphere, 0xfff2b0, 0.06, (mesh) => mesh.position.copy(from).addScaledVector(direction, 0.6), (mesh, p) => mesh.scale.setScalar(0.12 + p * 0.1))
-    this.add(
-      this.beam, 0xffffff, 0.09,
-      (mesh) => {
-        mesh.position.copy(from).lerp(to, 0.5)
-        mesh.scale.set(0.5, length, 0.5)
-        mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction)
-      },
-      () => {},
-    )
-    if (hit) this.add(this.sphere, 0xffd27a, 0.15, (mesh) => mesh.position.copy(to), (mesh, p) => mesh.scale.setScalar(0.1 + p * 0.25))
+    // A hot core inside a wider orange glow: the white alone vanished against sky and pale roofs.
+    const lay = (mesh: THREE.Mesh, width: number) => {
+      mesh.position.copy(from).lerp(to, 0.5)
+      mesh.scale.set(width, length, width)
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction)
+    }
+    this.add(this.beam, 0xffffff, 0.16, (mesh) => lay(mesh, 1.1), () => {}, true)
+    this.add(this.beam, 0xff8a1f, 0.16, (mesh) => lay(mesh, 3.2), () => {}, true)
+    if (hit) {
+      this.add(this.sphere, 0xffffff, 0.1, (mesh) => mesh.position.copy(to), (mesh, p) => mesh.scale.setScalar(0.15 + p * 0.2), true)
+      this.add(this.sphere, 0xff9a1f, 0.28, (mesh) => mesh.position.copy(to), (mesh, p) => mesh.scale.setScalar(0.2 + p * 0.55), true)
+    }
+  }
+
+  /**
+   * A machine gun round with a tracer: a small flash at the muzzle and a short bright streak that flies
+   * from `from` to `to` at `speed` m/s. Where it ends on something, the server's hit event sparks.
+   */
+  round(from: THREE.Vector3, to: THREE.Vector3, speed = 700) {
+    const direction = to.clone().sub(from)
+    const length = direction.length()
+    if (length < 0.01) return
+    direction.divideScalar(length)
+    this.add(this.sphere, 0xffe9a0, 0.06, (mesh) => mesh.position.copy(from), (mesh, p) => mesh.scale.setScalar(0.22 + p * 0.15), true)
+    const streak = Math.min(7, length)
+    const fly = (mesh: THREE.Mesh, p: number) => mesh.position.copy(from).addScaledVector(direction, streak / 2 + (length - streak) * p)
+    const lay = (width: number) => (mesh: THREE.Mesh) => {
+      mesh.scale.set(width, streak, width)
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction)
+    }
+    this.add(this.beam, 0xfff4cc, length / speed, lay(1.2), fly, true)
+    this.add(this.beam, 0xff7a1a, length / speed, lay(3), fly, true)
+  }
+
+  /** A round striking something: a spark and a puff. */
+  strike(at: THREE.Vector3) {
+    this.add(this.sphere, 0xffa21f, 0.22, (mesh) => mesh.position.copy(at), (mesh, p) => mesh.scale.setScalar(0.15 + p * 0.4), true)
+  }
+
+  /**
+   * Debris flung from where a round hit: red flecks off a body, sparks off a vehicle. A kill throws
+   * more, harder.
+   */
+  impact(at: THREE.Vector3, kind: 'body' | 'vehicle' | 'kill', away: THREE.Vector3 | null = null) {
+    const count = kind === 'kill' ? 12 : 6
+    const color = kind === 'vehicle' ? 0xffc040 : 0xff2a22
+    for (let i = 0; i < count; i++) {
+      const direction = new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.8, Math.random() - 0.5).normalize()
+      if (away) direction.addScaledVector(away, 0.8).normalize()
+      const speed = (kind === 'kill' ? 4.5 : 3) * (0.5 + Math.random())
+      const size = (kind === 'vehicle' ? 0.05 : 0.08) * (0.7 + Math.random() * 0.8) * (kind === 'kill' ? 1.4 : 1)
+      this.add(
+        this.sphere, color, 0.28 + Math.random() * 0.2,
+        (mesh) => mesh.position.copy(at),
+        (mesh, p) => {
+          mesh.position.copy(at).addScaledVector(direction, speed * p * 0.5)
+          mesh.position.y -= 4 * p * p * 0.5
+          mesh.scale.setScalar(size * (1 - p * 0.5))
+        },
+        true,
+      )
+    }
+    this.add(this.sphere, 0xffffff, 0.09, (mesh) => mesh.position.copy(at), (mesh, p) => mesh.scale.setScalar(0.12 + p * 0.3), true)
   }
 
   /** A rocket or a wreck going up at `at`. */

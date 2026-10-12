@@ -1,4 +1,4 @@
-import { KIND_HELI, KIND_SPORTS, KIND_TANK } from '@/net/codec'
+import { KIND_HELI, KIND_PLANE, KIND_SPORTS, KIND_TANK } from '@/net/codec'
 import { JEEP_MAX_SPEED, SPORTS_MAX_SPEED, TANK_MAX_SPEED } from './consts'
 import { SURFACE_ASPHALT, SURFACE_GRASS, SURFACE_WATER } from './surface'
 
@@ -15,7 +15,7 @@ const SHIFTS: Record<number, readonly number[]> = {
 const JEEP_SHIFTS = [0, 0.22, 0.45, 0.7]
 
 /** Fundamental of the engine at idle revs, Hz, and how far it climbs to the redline. */
-const BASE_HZ: Record<number, number> = { [KIND_SPORTS]: 62, [KIND_TANK]: 30, [KIND_HELI]: 40 }
+const BASE_HZ: Record<number, number> = { [KIND_SPORTS]: 62, [KIND_TANK]: 30, [KIND_HELI]: 40, [KIND_PLANE]: 85 }
 const JEEP_HZ = 44
 /** Revs just after a shift, as a fraction of the range (idle is 0.25). */
 const AFTER_SHIFT = 0.5
@@ -65,6 +65,8 @@ export interface SoundInput {
   grounded: boolean
   /** Per-wheel damage (FL, FR, RL, RR), or null while the vehicle is whole. */
   wheels: readonly number[] | null
+  /** A plane's blip switch is cutting the engine. */
+  cut?: boolean
 }
 
 export interface SoundMix {
@@ -91,9 +93,15 @@ export interface SoundMix {
   rattle: number
   /** A wreck is burning. */
   fire: boolean
+  /** A plane's ignition is cut: the engine falls silent but for the odd blip. */
+  cut: boolean
 }
 
-const BASE_LEVEL: Record<number, number> = { [KIND_SPORTS]: 0.2, [KIND_TANK]: 0.3, [KIND_HELI]: 0.3 }
+const BASE_LEVEL: Record<number, number> = { [KIND_SPORTS]: 0.2, [KIND_TANK]: 0.3, [KIND_HELI]: 0.3, [KIND_PLANE]: 0.28 }
+/** A plane's top speed, m/s, for the pitch of its engine and the rush of the wind. */
+const PLANE_TOP = 45
+/** A propeller's two blades pass this many times per firing stroke of the nine-cylinder rotary. */
+const PROP_BEAT = 2 / 4.5
 
 const clamp = (value: number, low = 0, high = 1) => Math.min(high, Math.max(low, value))
 
@@ -127,7 +135,7 @@ export function mixOf(input: SoundInput): SoundMix {
   const { kind, speed, accel, climb, powered, hp, maxHp } = input
   const alive = hp > 0
   const quiet: SoundMix = {
-    pitch: 40, engine: 0, tone: 400, chop: 0, chopLevel: 0, stutter: 0, squeal: 0, squealHz: 1200, ground: 0, groundHz: 600, hiss: 0, rattle: 0, fire: !alive,
+    pitch: 40, engine: 0, tone: 400, chop: 0, chopLevel: 0, stutter: 0, squeal: 0, squealHz: 1200, ground: 0, groundHz: 600, hiss: 0, rattle: 0, fire: !alive, cut: false,
   }
   if (!alive) return quiet
   const lost = input.wheels ? input.wheels.filter((wear) => wear >= 255).length : 0
@@ -141,10 +149,27 @@ export function mixOf(input: SoundInput): SoundMix {
     mix.ground = input.grounded ? groundGain(speed, input.surface) : 0
     mix.groundHz = input.surface === SURFACE_ASPHALT ? 400 : 900 + 40 * Math.abs(speed)
   }
+  if (kind === KIND_PLANE && !input.grounded) {
+    // In the air the wind in the wires takes the place of the ground under the wheels.
+    mix.ground = 0.6 * clamp(Math.abs(speed) / PLANE_TOP) ** 1.5
+    mix.groundHz = 250 + 30 * Math.abs(speed)
+  }
   if (!powered) return mix
 
   const health = maxHp > 0 ? hp / maxHp : 1
-  if (kind === KIND_HELI) {
+  if (kind === KIND_PLANE) {
+    // A rotary has no gears: its note rises with the airspeed and the throttle, and sags when the blip
+    // switch cuts it and the propeller windmills.
+    const cut = input.cut === true
+    const air = clamp(Math.abs(speed) / PLANE_TOP)
+    const load = cut ? 0 : clamp(0.55 + accel / 6 + climb / 20)
+    mix.pitch = BASE_HZ[KIND_PLANE]! * (0.7 + 0.35 * air + 0.2 * load) * (cut ? 0.85 : 1)
+    mix.chop = mix.pitch * PROP_BEAT
+    mix.chopLevel = 0.35
+    mix.engine = BASE_LEVEL[KIND_PLANE]! * (0.5 + 0.5 * load)
+    mix.tone = 900 + 1800 * load
+    mix.cut = cut
+  } else if (kind === KIND_HELI) {
     const load = clamp(0.35 + Math.abs(climb) / 6 + Math.abs(speed) / 40)
     mix.pitch = BASE_HZ[KIND_HELI]! * (0.85 + 0.5 * load)
     mix.chop = 9 + 6 * load

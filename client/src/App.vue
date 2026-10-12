@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { Game, type HudStats } from './game'
 import Hotbar from './Hotbar.vue'
 import Minimap from './Minimap.vue'
@@ -7,10 +7,12 @@ import TouchControls from './TouchControls.vue'
 import type { InputController } from './sim/input'
 import { colorFor } from './render/character'
 import type { Look } from './render/look'
-import { WEAPON_AUTOCANNON, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK } from './net/codec'
+import { WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK } from './net/codec'
 
 const container = ref<HTMLElement | null>(null)
 const stats = shallowRef<HudStats | null>(null)
+const noseMark = ref<HTMLElement | null>(null)
+const aimMark = ref<HTMLElement | null>(null)
 const error = ref<string | null>(null)
 const input = shallowRef<InputController | null>(null)
 const look = ref<Look>({ soft: true, contact: true, ao: true, far: true })
@@ -31,6 +33,16 @@ onMounted(() => {
     lastHud = now
     stats.value = next
   })
+  // The markers follow the frame rate, so they are placed directly instead of through the throttled stats.
+  const place = (element: HTMLElement | null, at: [number, number] | null) => {
+    if (!element) return
+    element.style.display = at ? '' : 'none'
+    if (at) element.style.transform = `translate(${at[0] * window.innerWidth}px, ${at[1] * window.innerHeight}px)`
+  }
+  game.onSights = (nose, aim) => {
+    place(noseMark.value, nose)
+    place(aimMark.value, aim)
+  }
   input.value = game.input
   look.value = { ...game.look }
   game.start().catch((reason: unknown) => {
@@ -58,7 +70,68 @@ const swatch = (id: number) => `#${colorFor(id).toString(16).padStart(6, '0')}`
 const who = (id: number) => (id === 0 ? 'the fall' : `Player ${id}`)
 /** What the kill feed shows between killer and victim. */
 const mark = (weapon: number) =>
-  weapon === WEAPON_SHELL || weapon === WEAPON_AUTOCANNON || weapon === WEAPON_ROCKET || weapon === WEAPON_GRENADE || weapon === WEAPON_WRECK ? '💥' : weapon === WEAPON_REVOLVER ? '›‹' : '›'
+  weapon === WEAPON_SHELL || weapon === WEAPON_AUTOCANNON || weapon === WEAPON_ROCKET || weapon === WEAPON_GRENADE || weapon === WEAPON_WRECK || weapon === WEAPON_BOMB
+    ? '💥'
+    : weapon === WEAPON_REVOLVER ? '›‹' : '›'
+
+const markCanvas = ref<HTMLCanvasElement | null>(null)
+const backOut = (t: number) => 1 + 2.70158 * (t - 1) ** 3 + 1.70158 * (t - 1) ** 2
+
+/** Draws the hit marker: four tapered ticks that punch out and settle, and for a kill a red X and a ring. */
+function drawMarker(m: { progress: number; kill: boolean } | null | undefined) {
+  const g = markCanvas.value?.getContext('2d')
+  if (!g) return
+  g.clearRect(0, 0, 200, 200)
+  if (!m) return
+  const p = m.progress
+  const fade = 1 - p * p * p
+  const punch = 0.55 + 0.45 * backOut(Math.min(1, p * 3.5))
+  const colour = m.kill ? '#ff3030' : '#ffffff'
+  g.save()
+  g.translate(100, 100)
+  g.globalAlpha = fade
+  g.lineJoin = 'round'
+  const reach = (m.kill ? 15 : 10) + 8 * p
+  const length = (m.kill ? 15 : 11) * punch
+  for (let k = 0; k < 4; k++) {
+    g.save()
+    g.rotate(Math.PI / 4 + (k * Math.PI) / 2)
+    g.beginPath()
+    g.moveTo(reach, -1)
+    g.lineTo(reach + length, -(m.kill ? 4.5 : 3))
+    g.lineTo(reach + length, m.kill ? 4.5 : 3)
+    g.lineTo(reach, 1)
+    g.closePath()
+    g.lineWidth = 3
+    g.strokeStyle = 'rgba(0,0,0,0.75)'
+    g.stroke()
+    g.fillStyle = colour
+    g.fill()
+    g.restore()
+  }
+  if (m.kill) {
+    const r = 9 + 22 * backOut(Math.min(1, p * 3)) * 0.9
+    g.lineCap = 'round'
+    for (const [stroke, width] of [['rgba(0,0,0,0.7)', 8], ['#ff3030', 4.5]] as const) {
+      g.strokeStyle = stroke
+      g.lineWidth = width
+      g.beginPath()
+      g.moveTo(-r, -r)
+      g.lineTo(r, r)
+      g.moveTo(r, -r)
+      g.lineTo(-r, r)
+      g.stroke()
+    }
+    g.globalAlpha = Math.max(0, 1 - p * 1.6)
+    g.strokeStyle = '#ff6040'
+    g.lineWidth = 3 * (1 - p) + 1
+    g.beginPath()
+    g.arc(0, 0, 18 + 70 * p, 0, Math.PI * 2)
+    g.stroke()
+  }
+  g.restore()
+}
+watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
 </script>
 
 <template>
@@ -75,12 +148,28 @@ const mark = (weapon: number) =>
   <template v-if="!stats?.touch">
   <div v-if="stats?.seat === 'driver'" class="drive-hint">W/S gas and brake · A/D steer or turn · Space handbrake<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   <div v-if="stats?.seat === 'pilot'" class="drive-hint">W/S lean forward and back · A/D turn · Space climb · Shift sink<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
-  <div v-if="stats?.seat === 'gunner'" class="drive-hint">Mouse aim · Click or F fire · {{ stats.reload < 1 ? 'reloading…' : 'loaded' }}<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
+  <div v-if="stats?.seat === 'aviator'" class="drive-hint">Mouse steer (the plane turns to where you look) · Space throttle up · Shift throttle down · W/S/A/D by hand · Click or F fire · C bomb<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
+  <div v-if="stats?.seat === 'gunner'" class="drive-hint">Mouse aim · Click or F fire · {{ stats.jammed ? 'jammed!' : stats.heat !== null ? 'firing' : stats.reload < 1 ? 'reloading…' : 'loaded' }}<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   </template>
-  <div v-if="stats?.seat === 'gunner'" class="reticle" :class="{ loading: stats.reload < 1 }" />
+  <div v-if="stats?.seat === 'gunner'" class="reticle" :class="{ loading: stats.reload < 1 || stats.jammed }" />
+  <template v-if="stats?.seat === 'aviator'">
+    <div ref="noseMark" class="sight"><i /><i /></div>
+    <div ref="aimMark" class="aim-circle" />
+    <div v-if="stats.stall" class="stall">STALL</div>
+  </template>
+  <div v-if="stats && stats.heat !== null" class="gauges">
+    <div class="heat" :class="{ jammed: stats.jammed }"><div :style="{ width: stats.heat * 100 + '%' }" /><span>{{ stats.jammed ? 'JAMMED' : 'GUNS' }}</span></div>
+    <div v-if="stats.bombs !== null" class="bombs"><i v-for="k in 4" :key="k" :class="{ gone: k > (stats.bombs ?? 0) }" /></div>
+  </div>
   <div v-else-if="stats?.scoped" class="scope"><i class="scope-h" /><i class="scope-v" /></div>
-  <div v-else-if="stats?.armed" class="cross" :class="{ aim: stats.aiming }"><i /><i /><i /><i /></div>
-  <div v-if="stats?.onFoot" class="health" :class="{ low: stats.hp <= stats.maxHp / 4 }">
+  <div v-else-if="stats?.armed" class="cross" :class="{ aim: stats.aiming }" :style="stats.hitMarker ? { '--gap': (stats.aiming ? 3 : 7) + 6 * (1 - stats.hitMarker.progress) ** 2 + 'px' } : undefined"><i /><i /><i /><i /></div>
+  <div v-if="stats?.onFoot && stats.hp <= stats.maxHp / 4" class="vignette low-hp" />
+  <div v-if="stats && stats.hurt > 0.01" class="vignette" :style="{ opacity: stats.hurt }" />
+  <div v-if="stats?.hurtArcs.length" class="arcs">
+    <i v-for="(arc, i) in stats.hurtArcs" :key="i" :style="{ transform: `rotate(${arc.angle}rad)`, opacity: arc.alpha }" />
+  </div>
+  <canvas ref="markCanvas" class="hitcanvas" width="200" height="200" />
+  <div v-if="stats?.onFoot" class="health" :class="{ low: stats.hp <= stats.maxHp / 4, hurt: stats.hurt > 0.3 }">
     <div class="health-fill" :style="{ width: (100 * stats.hp) / stats.maxHp + '%' }" />
     <span>{{ stats.hp }}</span>
   </div>
@@ -180,10 +269,47 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
 .scope-h { top: 50%; left: calc(50% - 38vmin); width: 76vmin; height: 1px; }
 .scope-v { left: 50%; top: calc(50% - 38vmin); height: 76vmin; width: 1px; }
 .reticle.loading { border-color: rgba(255, 190, 120, 0.9); border-style: dashed; }
+/* A plane's pilot: where the guns point. */
+.sight { position: fixed; left: 0; top: 0; width: 0; height: 0; pointer-events: none; will-change: transform; }
+.aim-circle { position: fixed; left: -17px; top: -17px; width: 34px; height: 34px; box-sizing: border-box; border: 2px solid rgba(255, 255, 255, 0.9); border-radius: 50%; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4); pointer-events: none; will-change: transform; }
+.sight i { position: absolute; background: rgba(255, 236, 160, 0.95); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4); }
+.sight i:nth-child(1) { width: 22px; height: 2px; left: -11px; top: -1px; }
+.sight i:nth-child(2) { width: 2px; height: 22px; left: -1px; top: -11px; }
+.stall {
+  position: fixed; top: 30%; left: 50%; transform: translateX(-50%); pointer-events: none;
+  font-size: 28px; font-weight: 900; letter-spacing: 0.2em; color: #ff5a5f; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.4);
+  animation: blink 0.5s steps(2) infinite;
+}
+@keyframes blink { 50% { opacity: 0.2; } }
+.gauges { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; pointer-events: none; }
+.heat {
+  position: relative; width: 160px; height: 18px; border-radius: 999px; overflow: hidden;
+  background: rgba(255, 255, 255, 0.55); box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.25);
+}
+.heat div { height: 100%; background: linear-gradient(90deg, #f3c94b, #ff5a5f); }
+.heat.jammed div { background: #ff5a5f; }
+.heat span { position: absolute; inset: 0; display: grid; place-content: center; font-size: 11px; font-weight: 800; color: #1d2b36; }
+.bombs { display: flex; gap: 5px; }
+.bombs i { width: 10px; height: 22px; border-radius: 5px 5px 2px 2px; background: #2b2b26; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.7); }
+.bombs i.gone { opacity: 0.2; }
 .health {
   position: fixed; left: 16px; bottom: 16px; width: 220px; height: 22px; border-radius: 999px; overflow: hidden; pointer-events: none;
   background: rgba(255, 255, 255, 0.55); box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.25);
 }
+.health.hurt { box-shadow: 0 0 0 2px #ff5a5f, 0 0 12px rgba(255, 90, 95, 0.8); }
+.vignette {
+  position: fixed; inset: 0; pointer-events: none;
+  background: radial-gradient(ellipse at center, rgba(200, 0, 0, 0) 45%, rgba(200, 0, 0, 0.55) 80%, rgba(160, 0, 0, 0.85) 100%);
+}
+.vignette.low-hp { opacity: 0.35; animation: heartbeat 1.1s ease-in-out infinite; }
+@keyframes heartbeat { 0%, 100% { opacity: 0.2; } 30% { opacity: 0.5; } }
+.arcs { position: fixed; top: 50%; left: 50%; width: 0; height: 0; pointer-events: none; }
+.arcs i {
+  position: absolute; left: -80px; top: -200px; width: 160px; height: 16px; border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+  background: linear-gradient(to bottom, rgba(255, 40, 40, 0.95), rgba(255, 40, 40, 0));
+  transform-origin: 80px 200px;
+}
+.hitcanvas { position: fixed; top: 50%; left: 50%; width: 200px; height: 200px; margin: -100px 0 0 -100px; pointer-events: none; }
 .health-fill { height: 100%; background: #2ec4b6; transition: width 0.15s; }
 .health.low .health-fill { background: #ff5a5f; }
 .health span { position: absolute; inset: 0; display: grid; place-content: center; font-size: 13px; font-weight: 800; color: #1d2b36; }

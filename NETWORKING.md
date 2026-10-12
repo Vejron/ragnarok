@@ -55,17 +55,19 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 | 5 | `scores` | stream | `[5, [[id u32, kills u16, deaths u16], …]]` |
 | 6 | `destroyed` | stream | `[6, [[kind u8, col u16, row u16, index u32, yaw i16], …]]` |
 | 7 | `damaged` | stream | `[7, [[col u16, row u16, index u32, stage u8, marked u8, x i32, y i32, z i32], …]]` |
+| 8 | `hit` | stream | `[8, role u8, kind u8, amount u8, weapon u8, bearing i16, x i32, y i32, z i32, target u32]` |
 
 - `baseline` is the `server_tick` of the snapshot this one is a change from, or 0 when it is not. Then every entity and vehicle in range is listed in full, in `[entity, …]` and `[vehicle, …]`. See [Delta snapshots](#delta-snapshots-and-interest).
 - `ack` is the newest input `seq` of the receiving player already applied to this state. The client drops pending inputs up to `ack` and replays the rest.
 - `ride` is the id of the vehicle the receiving player stands on top of, or 0. The server carries riders with the car, so the client predicts them in the car's frame. Only the receiver's own value is sent: other riders are plain entities whose positions already move with the car.
 - `drive` is `nil` unless the receiving player sits in a vehicle's driver seat. Then it is the exact motion of that vehicle, which its pose does not carry, so the driver can predict it (below).
 - `self` is `[hp u8, progress u8, [slot, …]]`, only for the receiving player. `hp` is their health, 0 when dead (other players only show dead or alive, in `flags`). `progress` is how far a reload or a bandage has got, 0..255, or 0 when neither is going on. Each `slot` is `[item u8, count u8, ammo u8]`, five of them, `item` 0 for an empty slot (`1` revolver, `2` AK5, `3` grenade, `4` bandage, `5` sniper, `6` golden egg, dropped by a rooster and healing to full). The item in another player's hands is in bits 3..5 of their entity `flags`.
-- `shot` is `[shooter u32, weapon u8, x i32, y i32, z i32]`: something since the previous snapshot, and where it ended (cm). It is only sent to a player within 300 m of where it ended. Weapons 0 (AK5) and 4 (revolver) are gunshots (a tracer from the shooter), 1 (a tank shell), 6 (a helicopter autocannon round), 2 a rocket, 5 a grenade and 3 a vehicle wreck going up are a burst at the point. It is cosmetic, so it rides the lossy datagram and is capped at 8 per snapshot, and dropped first if a snapshot would not fit.
-- `projectile` is `[id u32, kind u8, x i32, y i32, z i32, vx i16, vy i16, vz i16]`, cm and cm/s: a rocket (`kind` 0) or grenade (`kind` 1) in flight. Clients interpolate it like an entity and aim a rocket along `v`. One that stops being listed has burst, and its burst arrives as a `shot` event. If a snapshot would not fit, shots are dropped first, then projectiles, then pickups.
+- `shot` is `[shooter u32, weapon u8, x i32, y i32, z i32]`: something since the previous snapshot, and where it ended (cm). It is only sent to a player within 300 m of where it ended. Weapons 0 (AK5) and 4 (revolver) are gunshots (a tracer from the shooter), 1 (a tank shell), 6 (a helicopter autocannon round), 2 a rocket, 5 a grenade, 11 a plane's bomb and 3 a vehicle wreck going up are a burst at the point. 10 is a plane's machine-gun round that hit something, a spark at the point: every round's tracer is drawn by the clients from the gun's shot counter, so a round that hits nothing sends no event at all. It is cosmetic, so it rides the lossy datagram and is capped at 8 per snapshot, and dropped first if a snapshot would not fit.
+- `projectile` is `[id u32, kind u8, x i32, y i32, z i32, vx i16, vy i16, vz i16]`, cm and cm/s: a rocket (`kind` 0), grenade (1), tank shell (2), autocannon round (3), sniper round (4) or plane's bomb (5) in flight. Clients interpolate it like an entity and aim a rocket along `v`. One that stops being listed has burst, and its burst arrives as a `shot` event. If a snapshot would not fit, shots are dropped first, then projectiles, then pickups.
 - `pickup` is `[id u32, item u8, x i32, y i32, z i32]`, cm: an item lying on the ground within 300 m, nearest first and at most 24. They are static, so there is no delta: the list is the set, and one that is no longer listed has been taken. A player takes the nearest within 2 m by sending the use bit; the server hands it over before it considers boarding a vehicle.
 - `kill` goes to everyone when a player dies. `killer` is 0 when the world did it (a fall). The totals are the new ones, so clients keep no tally of their own. `scores` is sent once to a player who has just joined.
 - `destroyed` is the only world state that changes: buildings and trees that are gone. `kind` is 0 for a tree and 1 for a building; `(col, row, index)` names it by its tile and its position in that tile's list (`ObjId`), which both sides already agree on and which a re-import renumbers. `yaw` (milliradians, 0 faces -Z) is the way a tree falls, or the direction a building's blast came from (its rubble is thrown the other way). It goes to everyone when something falls, and a player who has just joined gets one message holding everything destroyed so far, before the first snapshot. Only the fact is replicated: the fall, the rubble and the dust are drawn by each client, and the trunk or the building's walls stop colliding on both sides at once. A building falls to rockets, grenades and shells (a rifle only chips it), and a tree to anything.
+- `hit` is sent to one player only, once per tick per `(role, kind)` with `amount` (hp lost) summed. `role` 0 is *dealt* (you hurt something: kind 0 stickman, 1 vehicle, 2 a stickman this finished, 3 rooster) and 1 is *taken* (something hurt you, or the vehicle you sit in). For a taken hit `bearing` is the yaw in milliradians (0 faces -Z, as a look) from you towards the attacker or blast; -32768 means no direction (a fall, a crash). `weapon` is 0 for vehicle hits. `(x, y, z)` (cm) is where the thing hit is (chest height) and `target` is its id, for the damage number, debris and flash. It drives the hit marker, hit sound, screen flash and direction arcs; non-lethal damage otherwise reaches a victim only as a lower `hp`.
 - `damaged` tells everyone that standing buildings are hurt, so they can look it. `stage` is 0 (whole) to 3 (about to collapse), entered at 66%, 33% and 15% of the building's health. An entry is sent when a building enters a worse stage, or when a blast of at least 5 damage hits it; then `marked` is 1 and `(x, y, z)` (cm) is where the blast landed, which clients scorch onto the nearest wall. Rifle chips send nothing until they cross into a worse stage. A player who has just joined gets one message with the stage of every hurt building (never marked). Scorch marks and the broken-up walls (shards that tilt, sink and fall away where shells hit) are drawn by each client; trees are not reported.
 - `world_hash` is FNV-1a over `world.msgpack`. A mismatch means the client loaded a different world than the server simulates.
 
@@ -82,17 +84,20 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 
 Players sitting in a vehicle are **not** listed as entities. The vehicle's `seats` say where they are.
 
-`vehicle` is `[id u32, kind u8, x i32, y i32, z i32, qx i16, qy i16, qz i16, steer i8, [seat u32, …], turret]`:
+`vehicle` is `[id u32, kind u8, x i32, y i32, z i32, qx i16, qy i16, qz i16, steer i8, [seat u32, …], turret, hp u8, damage, arms]`:
 
 | Field | Unit |
 |---|---|
 | `id` | shares the id space with players |
-| `kind` | 1 = jeep, 2 = tank, 3 = helicopter, 4 = sports car |
+| `kind` | 1 = jeep, 2 = tank, 3 = helicopter, 4 = sports car, 6 = plane (5 is the rooster, an entity) |
 | `x, y, z` | centimetres, chassis centre |
 | `qx, qy, qz` | the x, y, z of the orientation quaternion, scaled by 32767. The sender negates the quaternion so that `w >= 0`, and the receiver rebuilds `w = sqrt(1 − x² − y² − z²)` |
 | `steer` | front-wheel angle as a fraction of full lock (the kind's `*_MAX_STEER`), −127..127, + is right |
-| `seat` | the player id in each seat, 0 when empty. Seat 0 is the driver. A jeep has 4 seats and a sports car 2; a tank has 2, the second being the gunner; a helicopter has 2, the pilot and a passenger |
-| `turret` | `nil` for a vehicle without a gun, else `[yaw i16, pitch i16, shots u8, range u16]` (below) |
+| `seat` | the player id in each seat, 0 when empty. Seat 0 is the driver. A jeep has 4 seats and a sports car 2; a tank has 2, the second being the gunner; a helicopter has 2, the pilot and the nose gunner; a plane has 2, the pilot (who fires the forward guns and drops the bombs) and the rear gunner |
+| `turret` | `nil` for a vehicle without a gun, else `[yaw i16, pitch i16, shots u8, range u16]` (below). A plane's is the rear gunner's ring |
+| `hp` | health, 0 is a burning wreck nobody can board |
+| `damage` | `nil` while unhurt, else eight bytes: front, rear, left, right, then wheels FL, FR, RL, RR, each 0..255 (a wheel at 255 is gone) |
+| `arms` | `nil` for anything but a plane, else `[shots u8, heat u8, rear_heat u8, bombs u8, flags u8]` (below) |
 
 `turret` is `[yaw, pitch, shots, range]`:
 
@@ -103,14 +108,23 @@ Players sitting in a vehicle are **not** listed as entities. The vehicle's `seat
 | `shots` | shells fired so far, modulo 256. A client sees a shot as a change in this counter, and draws the flash from the barrel it is drawing |
 | `range` | decimetres: how far the last shell flew before it hit something (3000 means it hit nothing) |
 
+`arms` is a plane's pilot weapons and engine, `[shots, heat, rear_heat, bombs, flags]`:
+
+| Field | Unit |
+|---|---|
+| `shots` | forward rounds fired so far, modulo 256; the left gun fires the even ones. Clients draw a tracer from the right gun for each step of the counter |
+| `heat`, `rear_heat` | the forward guns' and the ring gun's heat, 0..255. At 255 they jam until they have cooled to 77 |
+| `bombs` | bombs left on the rack, 0..4 |
+| `flags` | bit 0: the blip switch is cutting the engine; bit 1: the forward guns are jammed; bit 2: the ring gun is jammed |
+
 `drive` is `[vx i16, vy i16, vz i16, wx i16, wy i16, wz i16, steer i16, spin i16]`:
 
 | Field | Unit |
 |---|---|
 | `vx, vy, vz` | linear velocity of the chassis, cm/s (world axes) |
 | `wx, wy, wz` | angular velocity, milliradians per second (world axes), saturating |
-| `steer` | front-wheel angle in milliradians, + is right. Not the `steer` fraction of the vehicle, which is too coarse to resume from. Zero for a tank and a helicopter |
-| `spin` | the yaw rate a tank has ramped to, milliradians per second, + is clockwise. Zero for a helicopter, whose yaw rate is in `wy` |
+| `steer` | front-wheel angle in milliradians, + is right. Not the `steer` fraction of the vehicle, which is too coarse to resume from. Zero for a tank and a helicopter; a plane's is its main wheels' |
+| `spin` | the yaw rate a tank has ramped to, milliradians per second, + is clockwise. Zero for a helicopter and a plane, whose yaw rates are in `wy` |
 
 The vehicle's `x, y, z` and `q*` give the rest of the state. Together they are everything the client's Rapier vehicle needs to continue the simulation from the server's state as of `ack`.
 
@@ -132,7 +146,7 @@ A snapshot is built per player from what is within `INTEREST_RADIUS` (300 m on t
 
 `entity_delta` is `[id u32, dx i32, dy i32, dz i32, dyaw i32, dvy i32, flags u8, dknock_x i32, dknock_z i32]`. Each field but `id` and `flags` is the new value minus the baseline's, in the same units as `entity`. `flags` is the new value. A change in the same entity's `kind` never happens.
 
-`vehicle_delta` is `[id u32, dx i32, dy i32, dz i32, dqx i32, dqy i32, dqz i32, dsteer i32, seats, turret, hp u8]`. The first eight are differences of the `vehicle` fields of the same name. `seats` is `nil` when unchanged, else the new list. `turret` is `nil` when unchanged, else the new `[yaw, pitch, shots, range]`. `hp` is the new value.
+`vehicle_delta` is `[id u32, dx i32, dy i32, dz i32, dqx i32, dqy i32, dqz i32, dsteer i32, seats, turret, hp u8, damage, arms]`. The first eight are differences of the `vehicle` fields of the same name. `seats` is `nil` when unchanged, else the new list. `turret` is `nil` when unchanged, else the new `[yaw, pitch, shots, range]`. `hp` is the new value. `damage` is `nil` when unchanged, else the new eight bytes (all zeros is a repair). `arms` is `nil` when unchanged, else the new five bytes.
 
 The client's scene after a snapshot is:
 

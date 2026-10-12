@@ -1,8 +1,8 @@
 import {
   JEEP_AXLE_Z, JEEP_MAX_STEER, JEEP_RIDE_HEIGHT, JEEP_TRACK_HALF, SPORTS_AXLE_Z, SPORTS_MAX_STEER, SPORTS_RIDE_HEIGHT, SPORTS_TRACK_HALF,
-  TANK_AXLES_Z, TANK_TRACK_HALF,
+  TANK_AXLES_Z, TANK_TRACK_HALF, PLANE_AXLES_Z, PLANE_MAX_STEER, PLANE_TRACK_HALF,
 } from './consts'
-import { KIND_HELI, KIND_SPORTS, KIND_TANK } from '@/net/codec'
+import { KIND_HELI, KIND_PLANE, KIND_SPORTS, KIND_TANK } from '@/net/codec'
 
 /**
  * Where a vehicle's tyres meet the ground and how hard they are sliding, worked out from where the
@@ -32,9 +32,20 @@ const SPORTS = { contacts: corners(SPORTS_TRACK_HALF, -SPORTS_AXLE_Z, SPORTS_AXL
 // A track lays its mark from end to end; the corners stand in for it.
 const TANK = { contacts: corners(TANK_TRACK_HALF, TANK_AXLES_Z[0], TANK_AXLES_Z[2], TANK_RIDE_HEIGHT), steered: 0, maxSteer: 0, width: 0.55 }
 
+/** Chassis centre above the ground of a parked plane, metres (`build_plane.py`'s `GROUND`). */
+const PLANE_RIDE_HEIGHT = 1.05
+// Two wheels on the axle, and the tail skid dragging a narrow mark behind.
+const PLANE = {
+  contacts: [[-PLANE_TRACK_HALF, -PLANE_RIDE_HEIGHT, PLANE_AXLES_Z[0]], [PLANE_TRACK_HALF, -PLANE_RIDE_HEIGHT, PLANE_AXLES_Z[0]], [-0.05, -PLANE_RIDE_HEIGHT, PLANE_AXLES_Z[1]], [0.05, -PLANE_RIDE_HEIGHT, PLANE_AXLES_Z[1]]] as const,
+  steered: 2,
+  maxSteer: PLANE_MAX_STEER,
+  width: 0.14,
+}
+
 /** The tyres of a vehicle kind, or null for one that has none (the helicopter). */
 export function wheelLayout(kind: number): WheelLayout | null {
   if (kind === KIND_HELI) return null
+  if (kind === KIND_PLANE) return PLANE
   if (kind === KIND_TANK) return TANK
   if (kind === KIND_SPORTS) return SPORTS
   return JEEP

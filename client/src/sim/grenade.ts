@@ -70,3 +70,32 @@ export function throwTrajectory(cast: RayCaster, eye: Vec3, yaw: number, pitch: 
   }
   return { points, firstImpact, flying: flying === -1 ? points.length : flying, burst: position }
 }
+
+/** How long a dropped bomb is followed, ticks: the server's `SHELL_TTL_TICKS * 2`. */
+const BOMB_TTL_TICKS = 12 * 60
+
+/**
+ * Where a bomb let go at `start` with the plane's `velocity` falls, stepped exactly like the server's
+ * `step_shells`: gravity, then a ray along the step, and it bursts at the first thing it meets.
+ */
+export function dropTrajectory(cast: RayCaster, start: Vec3, velocity: Vec3, every = 3): Trajectory {
+  let position: Vec3 = [...start]
+  let v: Vec3 = [...velocity]
+  const points: Vec3[] = [position]
+  for (let tick = 1; tick <= BOMB_TTL_TICKS; tick++) {
+    v = [v[0], v[1] - GRAVITY * TICK_DT, v[2]]
+    const speed = Math.hypot(v[0], v[1], v[2])
+    const unit: Vec3 = [v[0] / speed, v[1] / speed, v[2] / speed]
+    const step = speed * TICK_DT
+    const hit = cast(position, unit, step)
+    if (hit) {
+      const impact: Vec3 = [position[0] + unit[0] * hit.t, position[1] + unit[1] * hit.t, position[2] + unit[2] * hit.t]
+      points.push(impact)
+      return { points, firstImpact: impact, flying: points.length, burst: impact }
+    }
+    position = [position[0] + unit[0] * step, position[1] + unit[1] * step, position[2] + unit[2] * step]
+    if (tick % every === 0) points.push(position)
+    if (position[1] < KILL_Y) break
+  }
+  return { points, firstImpact: null, flying: points.length, burst: position }
+}

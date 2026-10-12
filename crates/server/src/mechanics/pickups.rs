@@ -158,6 +158,8 @@ mod tests {
         game.handle(Command::Join { outbox, reply });
         let id = response.try_recv().unwrap().unwrap();
         game.world.pickups.clear();
+        // These tests are about taking things, so they start with room to take them.
+        game.world.players.get_mut(&id).unwrap().hotbar = Default::default();
         (game, id, inbox)
     }
 

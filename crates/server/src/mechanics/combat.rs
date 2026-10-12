@@ -1,11 +1,11 @@
 use super::Mechanic;
 use super::npcs::{damage_rooster, first_rooster_hit};
 use super::spawn;
-use crate::game::{Rocket, World};
+use crate::game::{Rocket, World, starting_hotbar};
 use crate::physics::Obj;
 use shared::consts::*;
 use shared::items::*;
-use shared::protocol::{ItemSlot, Kill, PROJECTILE_BULLET, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_SNIPER, WEAPON_WRECK};
+use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, KIND_PLANE, Kill, S_HIT, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_SNIPER, WEAPON_WRECK};
 use shared::quant::{from_mrad, to_cm, to_mrad};
 
 /// Health, death, the items in the hotbar and what blasts do to people and vehicles.
@@ -102,16 +102,55 @@ pub fn first_player_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f32
     best
 }
 
+/// Where player `id` is: on foot where they stand, seated where their vehicle is.
+fn position_of(world: &World, id: u32) -> Option<[f32; 3]> {
+    let player = world.players.get(&id)?;
+    match player.seat {
+        Some(seat) => world.physics.car_pose(seat.vehicle).map(|pose| pose.position),
+        None => Some(player.character.position),
+    }
+}
+
+/// A `Hit` for `target`, which is about `at`.
+fn hit_at(role: u8, kind: u8, amount: u8, weapon: u8, bearing: i16, at: [f32; 3], target: u32) -> Hit {
+    let [x, y, z] = at.map(to_cm);
+    Hit(S_HIT, role, kind, amount, weapon, bearing, x, y, z, target)
+}
+
+/// Yaw (0 faces -Z, as for a look) from `at` towards `from`, in milliradians.
+fn bearing(at: [f32; 3], from: [f32; 3]) -> i16 {
+    to_mrad((-(from[0] - at[0])).atan2(-(from[2] - at[2])))
+}
+
 /// Takes `amount` health off `victim`. At zero they die: the attacker (a player id, if any other
-/// than the victim) is credited and a kill is queued. Does nothing to the dead.
+/// than the victim) is credited and a kill is queued. Does nothing to the dead. The victim and the
+/// attacker are each sent a `Hit`.
 pub fn damage(world: &mut World, victim: u32, amount: u8, attacker: Option<u32>, weapon: u8) {
+    damage_from(world, victim, amount, attacker, weapon, None);
+}
+
+/// `damage`, for harm that came from `source` (a blast's centre) rather than from the attacker's
+/// own position, which is what the victim's hit direction points at when `source` is `None`.
+pub fn damage_from(world: &mut World, victim: u32, amount: u8, attacker: Option<u32>, weapon: u8, source: Option<[f32; 3]>) {
+    let other = attacker.filter(|&id| id != victim);
+    let from = source.or_else(|| other.and_then(|id| position_of(world, id)));
     let Some(player) = world.players.get_mut(&victim) else { return };
     if !player.alive() || amount == 0 {
         return;
     }
+    let before = player.hp;
     player.hp = player.hp.saturating_sub(amount);
     // A bandage needs a steady hand.
     player.channel_left = 0;
+    let kind = if player.hp == 0 { HIT_KILL } else { HIT_BODY };
+    let direction = from.map_or(BEARING_NONE, |from| bearing(player.character.position, from));
+    let lost = before - player.hp;
+    // Chest height, where a number or a flash belongs.
+    let chest = [player.character.position[0], player.character.position[1] + 0.9, player.character.position[2]];
+    world.hits.push((victim, hit_at(HIT_TAKEN, kind, lost, weapon, direction, chest, victim)));
+    if let Some(id) = other {
+        world.hits.push((id, hit_at(HIT_DEALT, kind, lost, weapon, BEARING_NONE, chest, victim)));
+    }
     if player.hp > 0 {
         return;
     }
@@ -168,7 +207,7 @@ pub fn blast(world: &mut World, blast: Blast) {
         tracing::debug!(distance, power, "player blasted");
     }
     for (id, amount) in hurt {
-        damage(world, id, amount, blast.attacker, blast.weapon);
+        damage_from(world, id, amount, blast.attacker, blast.weapon, Some(blast.point));
     }
     let roosters: Vec<(u32, u8)> = world
         .roosters
@@ -277,8 +316,22 @@ pub fn damage_vehicle(world: &mut World, vid: u32, amount: u8, attacker: Option<
     if attacker.is_some() {
         vehicle.last_attacker = attacker;
     }
+    let before = vehicle.hp;
     vehicle.hp = vehicle.hp.saturating_sub(amount);
-    if vehicle.hp == 0 {
+    let lost = before - vehicle.hp;
+    let wrecked = vehicle.hp == 0;
+    let seated: Vec<u32> = vehicle.seats.iter().flatten().copied().collect();
+    let at = world.physics.car_pose(vid).map(|pose| pose.position);
+    let from = attacker.and_then(|id| position_of(world, id));
+    let direction = at.zip(from).map_or(BEARING_NONE, |(at, from)| bearing(at, from));
+    let centre = at.map_or([0.0; 3], |p| [p[0], p[1] + 0.8, p[2]]);
+    for &id in &seated {
+        world.hits.push((id, hit_at(HIT_TAKEN, HIT_VEHICLE, lost, 0, direction, centre, vid)));
+    }
+    if let Some(id) = attacker.filter(|id| !seated.contains(id) && world.players.contains_key(id)) {
+        world.hits.push((id, hit_at(HIT_DEALT, HIT_VEHICLE, lost, 0, BEARING_NONE, centre, vid)));
+    }
+    if wrecked {
         wreck(world, vid);
     }
 }
@@ -383,6 +436,10 @@ fn step_bullet(world: &mut World, id: u32, dt: f32) {
         let attacker = world.players.contains_key(&bullet.owner).then_some(bullet.owner);
         if let Some((target, _)) = rooster {
             damage_rooster(world, target, damage_dealt);
+            if let Some(owner) = attacker {
+                let at = world.roosters.get(&target).map_or([0.0; 3], |r| [r.position[0], r.position[1] + 0.5, r.position[2]]);
+                world.hits.push((owner, hit_at(HIT_DEALT, HIT_ROOSTER, damage_dealt, WEAPON_SNIPER, BEARING_NONE, at, target)));
+            }
         } else if let Some((victim, _)) = hit {
             damage(world, victim, damage_dealt, attacker, WEAPON_SNIPER);
         } else if let Some((_, Some(car))) = wall {
@@ -416,8 +473,8 @@ fn step_rockets(world: &mut World, dt: f32) {
             step_bullet(world, id, dt);
             continue;
         }
-        // Shells are the `Gunnery` mechanic's.
-        if rocket.kind == PROJECTILE_SHELL || rocket.kind == PROJECTILE_CANNON {
+        // Shells and bombs are the `Gunnery` mechanic's.
+        if rocket.kind == PROJECTILE_SHELL || rocket.kind == PROJECTILE_CANNON || rocket.kind == PROJECTILE_BOMB {
             continue;
         }
         let speed = rocket.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
@@ -533,26 +590,50 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
         );
         return;
     }
-    let wall = world.physics.cast_ray_hit(origin, dir, item.range, 0);
-    let reach = wall.map_or(item.range, |(t, _)| t);
-    let hit = first_player_hit(world, origin, dir, reach, Some(id), back);
+    // A nuisance to a vehicle, not a way to kill one.
+    let chip = (item.damage / 4).max(1);
+    let round = Round { damage: item.damage, vehicle: chip, plane: chip, weapon: item.weapon, range: item.range };
+    let (end, _) = hitscan(world, id, origin, dir, &round, 0, back);
+    let point: [i32; 3] = std::array::from_fn(|i| to_cm(origin[i] + dir[i] * end));
+    world.shots.push(ShotEvent(id, item.weapon, point[0], point[1], point[2]));
+}
+
+/// What one hitscan round does: to a stickman or a rooster, to a vehicle, and to a plane, which is all
+/// wood and canvas.
+pub struct Round {
+    pub damage: u8,
+    pub vehicle: u8,
+    pub plane: u8,
+    pub weapon: u8,
+    pub range: f32,
+}
+
+/// Fires one round for `shooter` from `origin` along the unit `dir`, through vehicle `ignore` (the one
+/// it is fired from, or 0), at stickmen where they stood `back` ticks ago. It hurts the first thing it
+/// meets: a stickman, a rooster, a vehicle, or a building or a tree. Returns how far it went, and
+/// whether it met anything at all before the end of its range.
+pub fn hitscan(world: &mut World, shooter: u32, origin: [f32; 3], dir: [f32; 3], round: &Round, ignore: u32, back: u32) -> (f32, bool) {
+    let wall = world.physics.cast_ray_hit(origin, dir, round.range, ignore);
+    let reach = wall.map_or(round.range, |(t, _)| t);
+    let hit = first_player_hit(world, origin, dir, reach, Some(shooter), back);
     // A rooster nearer than the player (or with no player behind it) takes the shot.
     let rooster = first_rooster_hit(world, origin, dir, hit.map_or(reach, |(_, t)| t));
     let end = rooster.map(|(_, t)| t).or(hit.map(|(_, t)| t)).unwrap_or(reach);
     if let Some((target, _)) = rooster {
-        damage_rooster(world, target, item.damage);
+        damage_rooster(world, target, round.damage);
+        let at = world.roosters.get(&target).map_or([0.0; 3], |r| [r.position[0], r.position[1] + 0.5, r.position[2]]);
+        world.hits.push((shooter, hit_at(HIT_DEALT, HIT_ROOSTER, round.damage, round.weapon, BEARING_NONE, at, target)));
     } else if let Some((victim, _)) = hit {
-        damage(world, victim, item.damage, Some(id), item.weapon);
+        damage(world, victim, round.damage, Some(shooter), round.weapon);
     } else if let Some((_, Some(car))) = wall {
-        // A nuisance, not a way to kill a vehicle.
-        damage_vehicle(world, car, (item.damage / 4).max(1), Some(id));
+        let plane = world.vehicles.get(&car).is_some_and(|vehicle| vehicle.kind == KIND_PLANE);
+        damage_vehicle(world, car, if plane { round.plane } else { round.vehicle }, Some(shooter));
         let point = std::array::from_fn(|i| origin[i] + dir[i] * reach);
-        super::vehicles::shoot_wheels(world, car, point, f32::from(item.damage), super::vehicles::BULLET_WHEEL_REACH);
+        super::vehicles::shoot_wheels(world, car, point, f32::from(round.damage), super::vehicles::BULLET_WHEEL_REACH);
     } else if wall.is_some() {
-        hit_object(world, origin, dir, reach, item.damage);
+        hit_object(world, origin, dir, reach, round.damage);
     }
-    let point: [i32; 3] = std::array::from_fn(|i| to_cm(origin[i] + dir[i] * end));
-    world.shots.push(ShotEvent(id, item.weapon, point[0], point[1], point[2]));
+    (end, rooster.is_some() || hit.is_some() || wall.is_some())
 }
 
 /// Throws a grenade from player `id`'s eye, a little above where they look so it arcs.
@@ -719,8 +800,8 @@ impl Mechanic for Combat {
                 player.respawn_in = player.respawn_in.saturating_sub(1);
                 if player.respawn_in == 0 {
                     player.hp = PLAYER_MAX_HP;
-                    // A fresh life starts empty-handed.
-                    player.hotbar = Default::default();
+                    // A fresh life starts with the standard loadout.
+                    player.hotbar = starting_hotbar();
                     player.interrupt();
                     spawn::place(world, id);
                 }
@@ -870,6 +951,37 @@ mod tests {
         assert!((at(100.0)[0] - (c.position[0] + ON_FOOT_SHOULDER)).abs() < 0.05, "x {}", at(100.0)[0]);
         assert!((at(100.0)[1] - pivot_y).abs() < 0.1, "y {}", at(100.0)[1]);
         assert!(dir[2] < -0.99, "still forwards: {dir:?}");
+    }
+
+    #[test]
+    fn a_hit_is_reported_to_the_shooter_and_the_victim_with_a_bearing() {
+        let (mut game, shooter, target, _, _) = duel();
+        game.world.players.get_mut(&shooter).unwrap().character.position = [0.0, STANDING_Y, 0.0];
+        game.world.players.get_mut(&target).unwrap().character.position = [0.0, STANDING_Y, -20.0];
+        game.world.hits.clear();
+        damage(&mut game.world, target, 30, Some(shooter), WEAPON_RIFLE);
+        let hits = &game.world.hits;
+        assert_eq!(hits.len(), 2);
+        // The shooter is straight ahead of nobody: from the victim at -20 the shooter is at +z.
+        assert_eq!((hits[0].0, hits[0].1.1, hits[0].1.2, hits[0].1.3, hits[0].1.5, hits[0].1.9), (target, HIT_TAKEN, HIT_BODY, 30, to_mrad(std::f32::consts::PI), target));
+        assert_eq!((hits[1].0, hits[1].1.1, hits[1].1.3, hits[1].1.5, hits[1].1.9), (shooter, HIT_DEALT, 30, BEARING_NONE, target));
+        // The number belongs at the target's chest.
+        assert_eq!(hits[1].1.8, to_cm(-20.0));
+        // The finishing blow is a kill, and amounts are what was actually lost.
+        game.world.hits.clear();
+        damage(&mut game.world, target, 255, Some(shooter), WEAPON_RIFLE);
+        let last = &game.world.hits[1].1;
+        assert_eq!((last.1, last.2, last.3), (HIT_DEALT, HIT_KILL, PLAYER_MAX_HP - 30));
+    }
+
+    #[test]
+    fn hurting_yourself_reports_no_dealt_hit() {
+        let (mut game, shooter, _, _, _) = duel();
+        game.world.hits.clear();
+        damage(&mut game.world, shooter, 5, Some(shooter), WEAPON_RIFLE);
+        assert_eq!(game.world.hits.len(), 1);
+        assert_eq!(game.world.hits[0].1.1, HIT_TAKEN);
+        assert_eq!(game.world.hits[0].1.5, BEARING_NONE);
     }
 
     #[test]
@@ -1250,13 +1362,17 @@ mod tests {
     }
 
     #[test]
-    fn a_new_life_starts_empty_handed() {
+    fn a_new_life_starts_with_the_standard_loadout() {
         let (mut game, shooter, target, mut seq, mut seq_t) = duel();
-        give(&mut game, target, 0, ITEM_REVOLVER, 1);
+        give(&mut game, target, 4, ITEM_BANDAGE, 2);
         damage(&mut game.world, target, PLAYER_MAX_HP, Some(shooter), WEAPON_RIFLE);
         hold(&mut game, target, &mut seq_t, 0.0, 0, RESPAWN_TICKS);
         assert!(game.world.players[&target].alive());
-        assert!(game.world.players[&target].hotbar.iter().all(|slot| slot.0 == ITEM_NONE));
+        let hotbar = game.world.players[&target].hotbar;
+        assert_eq!(hotbar, starting_hotbar());
+        let items: Vec<u8> = hotbar.iter().map(|slot| slot.0).collect();
+        assert_eq!(items, [ITEM_REVOLVER, ITEM_AK5, ITEM_SNIPER, ITEM_GRENADE, ITEM_NONE]);
+        assert_eq!(hotbar[1].2, def(ITEM_AK5).unwrap().mag, "magazines are full");
         let _ = &mut seq;
     }
     /// A game on a world with one solid pine at (10, 0), identified as tile (2, 3) index 0.

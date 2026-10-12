@@ -18,6 +18,9 @@ const S_KILL = 4
 const S_SCORES = 5
 const S_DESTROYED = 6
 const S_DAMAGED = 7
+const S_HIT = 8
+/** A `Hit` bearing for harm with no direction. */
+const BEARING_NONE = -32768
 
 /** `Destroyed` entry kinds: what part of the static world fell. */
 export const OBJ_TREE = 0
@@ -30,6 +33,8 @@ export const KIND_HELI = 3
 export const KIND_SPORTS = 4
 /** A Hedemora rooster, an NPC. */
 export const KIND_ROOSTER = 5
+/** The triplane. */
+export const KIND_PLANE = 6
 export const FLAG_GROUNDED = 1 << 0
 export const FLAG_DEAD = 1 << 1
 export const FLAG_CROUCHING = 1 << 2
@@ -53,6 +58,9 @@ export const WEAPON_SNIPER = 7
 export const WEAPON_CRASH = 8
 /** Shot events only: vehicle `shooter` is scraping along something there, throwing sparks. */
 export const WEAPON_SCRAPE = 9
+/** A plane's machine guns. Shot events only for a round that hit something; every round's tracer is drawn from the gun's counter. */
+export const WEAPON_MG = 10
+export const WEAPON_BOMB = 11
 
 /** Indices into `VehicleState.damage`: the body's sides, then the wheels FL, FR, RL, RR. Mirrors `DAMAGE_*`. */
 export const DAMAGE_FRONT = 0
@@ -70,6 +78,13 @@ export const PROJECTILE_SHELL = 2
 /** An autocannon round: flies like a shell, bursts smaller. */
 export const PROJECTILE_CANNON = 3
 export const PROJECTILE_BULLET = 4
+/** A bomb dropped from a plane. */
+export const PROJECTILE_BOMB = 5
+
+/** `Arms.flags`: the blip switch is cutting the engine, and either set of guns is jammed. Mirrors `ARMS_*`. */
+export const ARMS_CUT = 1 << 0
+export const ARMS_JAMMED = 1 << 1
+export const ARMS_REAR_JAMMED = 1 << 2
 
 /** One tick of player intent, already quantized: what the client predicts with is what it sends. */
 export interface InputFrame {
@@ -136,6 +151,20 @@ export interface VehicleState {
   hp: number
   /** Crash damage, 0..255 each, indexed by `DAMAGE_*`; all zeros when unhurt. */
   damage: readonly number[]
+  /** A plane's pilot weapons and engine; `null` for anything else. */
+  arms: Arms | null
+}
+
+/** A plane's forward guns, the heat of both sets of guns, its bombs and its engine. */
+export interface Arms {
+  /** Forward rounds fired, modulo 256; the left gun fires the even ones. */
+  shots: number
+  /** 0..1; the guns jam at 1. */
+  heat: number
+  rearHeat: number
+  bombs: number
+  /** `ARMS_*`. */
+  flags: number
 }
 
 /** A rocket, grenade or tank shell in flight, in metres and m/s. */
@@ -232,14 +261,14 @@ export interface Score {
  */
 export type RawEntity = number[]
 
-/** A vehicle as it travels: `[id, kind, x, y, z, qx, qy, qz, steer, seats, turret | null, hp, damage | null]`. */
-export type RawVehicle = [number, number, number, number, number, number, number, number, number, number[], number[] | null, number, number[] | null]
+/** A vehicle as it travels: `[id, kind, x, y, z, qx, qy, qz, steer, seats, turret | null, hp, damage | null, arms | null]`. */
+export type RawVehicle = [number, number, number, number, number, number, number, number, number, number[], number[] | null, number, number[] | null, number[] | null]
 
 /** `[id, dx, dy, dz, dyaw, dvy, flags, dknockX, dknockZ]`: differences, except `id` and `flags`. */
 export type RawEntityDelta = number[]
 
-/** `[id, dx, dy, dz, dqx, dqy, dqz, dsteer, seats | null, turret | null, hp, damage | null]`. */
-export type RawVehicleDelta = [number, number, number, number, number, number, number, number, number[] | null, number[] | null, number, number[] | null]
+/** `[id, dx, dy, dz, dqx, dqy, dqz, dsteer, seats | null, turret | null, hp, damage | null, arms | null]`. */
+export type RawVehicleDelta = [number, number, number, number, number, number, number, number, number[] | null, number[] | null, number, number[] | null, number[] | null]
 
 /** Everything a client knows of the world at one snapshot, each list ordered by id. */
 export interface WireScene {
@@ -287,6 +316,8 @@ export type ServerMessage =
   | { type: 'destroyed'; objects: DestroyedObject[] }
   /** Buildings hurt since the last such message; the first one a joiner gets is every hurt one. */
   | { type: 'damaged'; buildings: DamagedBuilding[] }
+  /** Damage you dealt (role 0) or took (role 1); `bearing` is where a taken hit came from, null if nowhere. */
+  | { type: 'hit'; role: number; kind: number; amount: number; weapon: number; bearing: number | null; x: number; y: number; z: number; target: number }
 
 const CM = 100
 const MRAD = 1000
@@ -394,8 +425,13 @@ function isDamage(raw: unknown): boolean {
   return raw === null || (Array.isArray(raw) && raw.length === 8 && ints(raw))
 }
 
+/** `arms`: `null`, or five bytes. */
+function isArms(raw: unknown): boolean {
+  return raw === null || (Array.isArray(raw) && raw.length === 5 && ints(raw))
+}
+
 function readVehicle(raw: unknown): RawVehicle | null {
-  if (!Array.isArray(raw) || raw.length !== 13 || !isInt(raw[11]) || !ints(raw.slice(0, 9)) || !isDamage(raw[12])) return null
+  if (!Array.isArray(raw) || raw.length !== 14 || !isInt(raw[11]) || !ints(raw.slice(0, 9)) || !isDamage(raw[12]) || !isArms(raw[13])) return null
   const seats = readSeats(raw[9])
   const turret = readTurret(raw[10])
   if (!seats || turret === undefined) return null
@@ -403,15 +439,20 @@ function readVehicle(raw: unknown): RawVehicle | null {
 }
 
 function readVehicleDelta(raw: unknown): RawVehicleDelta | null {
-  if (!Array.isArray(raw) || raw.length !== 12 || !isInt(raw[10]) || !ints(raw.slice(0, 8)) || !isDamage(raw[11])) return null
+  if (!Array.isArray(raw) || raw.length !== 13 || !isInt(raw[10]) || !ints(raw.slice(0, 8)) || !isDamage(raw[11]) || !isArms(raw[12])) return null
   if (raw[8] !== null && !readSeats(raw[8])) return null
   if (raw[9] !== null && !readTurret(raw[9])) return null
   return raw as RawVehicleDelta
 }
 
+function armsState(raw: readonly number[]): Arms {
+  const [shots, heat, rearHeat, bombs, flags] = raw as number[]
+  return { shots: shots!, heat: heat! / 255, rearHeat: rearHeat! / 255, bombs: bombs!, flags: flags! }
+}
+
 /** Converts a validated raw vehicle to source units. */
 export function vehicleState(raw: RawVehicle): VehicleState {
-  const [id, kind, x, y, z, qx, qy, qz, steer, seats, turret, hp, damage] = raw
+  const [id, kind, x, y, z, qx, qy, qz, steer, seats, turret, hp, damage, arms] = raw
   const [fx, fy, fz] = [qx / QUAT, qy / QUAT, qz / QUAT]
   return {
     id, kind,
@@ -422,6 +463,7 @@ export function vehicleState(raw: RawVehicle): VehicleState {
     turret: turret ? turretState(turret) : null,
     hp,
     damage: damage ?? NO_DAMAGE,
+    arms: arms ? armsState(arms) : null,
   }
 }
 
@@ -459,7 +501,7 @@ export function applyDelta(base: WireScene, delta: WireDelta): WireScene {
     }
     // A damage of all zeros is a repair: the vehicle is as if it was never hurt.
     const damage = d[11] === null ? v[12] : d[11].some((value) => value !== 0) ? d[11] : null
-    vehicles.push([v[0], v[1], v[2] + d[1], v[3] + d[2], v[4] + d[3], v[5] + d[4], v[6] + d[5], v[7] + d[6], v[8] + d[7], d[8] ?? v[9], d[9] ?? v[10], d[10], damage])
+    vehicles.push([v[0], v[1], v[2] + d[1], v[3] + d[2], v[4] + d[3], v[5] + d[4], v[6] + d[5], v[7] + d[6], v[8] + d[7], d[8] ?? v[9], d[9] ?? v[10], d[10], damage, d[12] ?? v[13]])
   }
   vehicles.push(...delta.newVehicles)
   return { entities: entities.sort((a, b) => a[0]! - b[0]!), vehicles: vehicles.sort((a, b) => a[0] - b[0]) }
@@ -569,6 +611,13 @@ export function decodeServer(bytes: Uint8Array): ServerMessage | null {
       }
       return { type: 'damaged', buildings }
     }
+    case S_HIT:
+      if (raw.length !== 10 || !ints(raw)) return null
+      return {
+        type: 'hit', role: raw[1] as number, kind: raw[2] as number, amount: raw[3] as number, weapon: raw[4] as number,
+        bearing: raw[5] === BEARING_NONE ? null : (raw[5] as number) / MRAD,
+        x: (raw[6] as number) / CM, y: (raw[7] as number) / CM, z: (raw[8] as number) / CM, target: raw[9] as number,
+      }
     default:
       return null
   }

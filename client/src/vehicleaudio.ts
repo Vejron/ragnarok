@@ -1,5 +1,6 @@
 import { audioContext } from './audio'
-import { KIND_HELI, KIND_SPORTS, KIND_TANK } from '@/net/codec'
+import { SampleBank } from './sfx'
+import { KIND_HELI, KIND_PLANE, KIND_SPORTS, KIND_TANK } from '@/net/codec'
 import { crashSize, landingThud, mixOf, type SoundInput, type SoundMix } from '@/sim/engine'
 
 /**
@@ -19,6 +20,9 @@ const MAX_SHOTS = 14
 const SPEED_OF_SOUND = 343
 /** Seconds a voice takes to fade out before its nodes stop. */
 const FADE = 0.25
+/** What is left of a plane's engine with the blip switch in, and how often it fires through it, s. */
+const CUT_LEVEL = 0.05
+const BLIP_EVERY = 0.2
 
 const noises = new WeakMap<BaseAudioContext, AudioBuffer>()
 
@@ -71,6 +75,9 @@ class Voice {
   private readonly grind: GainNode
   private readonly fire: GainNode
   private stopped = false
+  /** A plane's ignition is cut, and when it next blips. */
+  private cut = false
+  private nextBlip = 0
 
   constructor(
     private readonly ctx: BaseAudioContext,
@@ -90,11 +97,13 @@ class Voice {
     this.engine.connect(this.stutter)
     this.tone = ctx.createBiquadFilter()
     this.tone.type = 'lowpass'
-    this.tone.Q.value = 1.2
+    // A rotary's buzz is in its harmonics, with a nasal peak on them.
+    this.tone.Q.value = kind === KIND_PLANE ? 2.5 : 1.2
     this.tone.frequency.value = 400
     this.tone.connect(this.engine)
     const parts: [OscillatorType, number, number][] =
       kind === KIND_HELI ? [['sawtooth', 1, 0.5], ['square', 0.5, 0.3]]
+      : kind === KIND_PLANE ? [['square', 1, 0.4], ['sawtooth', 2, 0.22], ['square', 0.5, 0.3], ['sawtooth', 4.02, 0.08]]
       : kind === KIND_TANK ? [['sawtooth', 1, 0.5], ['square', 0.5, 0.4], ['sawtooth', 1.51, 0.12]]
       : kind === KIND_SPORTS ? [['sawtooth', 1, 0.42], ['square', 0.5, 0.25], ['triangle', 3.02, 0.2]]
       : [['sawtooth', 1, 0.5], ['square', 0.5, 0.35], ['sawtooth', 1.5, 0.15]]
@@ -133,8 +142,8 @@ class Voice {
     const chopped = ctx.createGain()
     chopped.gain.value = 0
     const chopFilter = ctx.createBiquadFilter()
-    chopFilter.type = kind === KIND_TANK ? 'bandpass' : 'lowpass'
-    chopFilter.frequency.value = kind === KIND_TANK ? 650 : 260
+    chopFilter.type = kind === KIND_TANK || kind === KIND_PLANE ? 'bandpass' : 'lowpass'
+    chopFilter.frequency.value = kind === KIND_TANK ? 650 : kind === KIND_PLANE ? 220 : 260
     noise.connect(chopFilter).connect(chopped).connect(this.tone)
     this.beat = ctx.createOscillator()
     this.beat.frequency.value = 10
@@ -179,7 +188,19 @@ class Voice {
     this.ground.filter.frequency.setTargetAtTime(mix.groundHz, t, 0.1)
     this.hiss.gain.setTargetAtTime(mix.hiss, t, 0.2)
     this.grind.gain.setTargetAtTime(Math.max(mix.rattle * 0.25, scraping ? 0.35 : 0), t, 0.03)
-    if (mix.stutter > 0 && Math.random() < mix.stutter * dt) {
+    if (mix.cut !== this.cut) {
+      // The blip switch: the engine cuts out at once and catches again as quickly.
+      this.cut = mix.cut
+      this.stutter.gain.cancelScheduledValues(t)
+      this.stutter.gain.setTargetAtTime(mix.cut ? CUT_LEVEL : 1, t, mix.cut ? 0.01 : 0.03)
+      this.nextBlip = t + BLIP_EVERY
+    } else if (mix.cut && t >= this.nextBlip) {
+      // Held in, it still fires a cylinder or two now and then: the rotary's "brrp".
+      this.stutter.gain.cancelScheduledValues(t)
+      this.stutter.gain.setValueAtTime(0.75, t)
+      this.stutter.gain.setTargetAtTime(CUT_LEVEL, t + 0.05, 0.012)
+      this.nextBlip = t + BLIP_EVERY + Math.random() * 0.12
+    } else if (!mix.cut && mix.stutter > 0 && Math.random() < mix.stutter * dt) {
       this.stutter.gain.cancelScheduledValues(t)
       this.stutter.gain.setValueAtTime(0.1, t)
       this.stutter.gain.linearRampToValueAtTime(1, t + 0.15)
@@ -223,6 +244,7 @@ interface Candidate {
 export class VehicleSounds {
   private ctx: BaseAudioContext | null = null
   private master: GainNode | null = null
+  private bank: SampleBank | null = null
   private readonly voices = new Map<number, Voice>()
   private readonly candidates: Candidate[] = []
   private readonly scrapes = new Map<number, number>()
@@ -248,6 +270,8 @@ export class VehicleSounds {
     this.master.gain.value = 0.7
     this.master.connect(compressor)
     this.ctx = ctx
+    this.bank = new SampleBank(ctx)
+    this.bank.load()
     this.setListener(this.listener, [0, 0, -1], this.listenerVelocity)
     return ctx
   }
@@ -390,6 +414,52 @@ export class VehicleSounds {
     osc.stop(t + delay + length + 0.05)
   }
 
+  /**
+   * Plays a recording of `name` at `at` (null: in the listener's head), if one has loaded. Far shots arrive
+   * late, at the speed of sound, and dull: air takes the highs first. Returns false when there is none, so
+   * the caller can play its synthesised sound instead.
+   */
+  private play(name: string, at: Vec3 | null, level = 1, rate = 1): boolean {
+    const buffer = this.ready() && this.bank ? this.bank.pick(name) : null
+    if (!buffer) return false
+    const distance = at ? this.distanceTo(at) : 0
+    // Slots are for sounds that matter in the mix; a long tail is not one.
+    this.emit(at, Math.min(buffer.duration, 0.8), (ctx, out, t) => VehicleSounds.sample(ctx, out, t, buffer, level, rate, distance))
+    return true
+  }
+
+  private static sample(ctx: BaseAudioContext, out: AudioNode, t: number, buffer: AudioBuffer, level: number, rate: number, distance: number, delay = 0) {
+    const source = ctx.createBufferSource()
+    source.buffer = buffer
+    source.playbackRate.value = rate * (0.95 + Math.random() * 0.1)
+    const gain = ctx.createGain()
+    gain.gain.value = level
+    const filter = ctx.createBiquadFilter()
+    filter.type = 'lowpass'
+    filter.frequency.value = Math.max(1500, 18000 / (1 + distance / 50))
+    source.connect(filter).connect(gain).connect(out)
+    source.start(t + delay + Math.min(0.6, distance / SPEED_OF_SOUND))
+  }
+
+  /** A rifle (`kind` 'rifle'), revolver or sniper rifle fired from `at`. */
+  gunshot(at: Vec3, kind: 'rifle' | 'revolver' | 'sniper') {
+    if (this.play(kind, at, kind === 'sniper' ? 1 : 0.85)) return
+    this.emit(at, 0.6, (ctx, out, t) => {
+      VehicleSounds.burst(ctx, out, t, 'lowpass', kind === 'sniper' ? 4500 : 3200, 300, kind === 'sniper' ? 0.3 : 0.14, 0.7)
+      VehicleSounds.ping(ctx, out, t, 'sine', kind === 'revolver' ? 200 : 140, 50, 0.08, 0.5)
+    })
+  }
+
+  /** A blast at `at`: 'big' for a wreck or bomb, 'small' for a grenade, rocket or round. */
+  blast(at: Vec3, size: 'small' | 'big') {
+    if (size === 'big') return this.explosion(at)
+    if (this.play('blast', at, 0.9)) return
+    this.emit(at, 1, (ctx, out, t) => {
+      VehicleSounds.burst(ctx, out, t, 'lowpass', 1800, 100, 0.7, 0.8)
+      VehicleSounds.ping(ctx, out, t, 'sine', 90, 35, 0.4, 0.8)
+    })
+  }
+
   /** A collision at `at` that took `speed` m/s out of the vehicle: a bump, a crunch or a smash with glass. */
   crash(at: Vec3, speed: number) {
     const size = crashSize(speed)
@@ -421,6 +491,7 @@ export class VehicleSounds {
 
   /** A vehicle blowing up. */
   explosion(at: Vec3) {
+    if (this.play('boom', at, 1)) return
     this.emit(at, 2, (ctx, out, t) => {
       VehicleSounds.burst(ctx, out, t, 'lowpass', 2200, 80, 1.6, 1)
       VehicleSounds.ping(ctx, out, t, 'sine', 80, 28, 0.9, 1)
@@ -430,6 +501,7 @@ export class VehicleSounds {
 
   /** A tank's or helicopter's gun, and the casing clanking after it. */
   cannon(at: Vec3, heavy: boolean) {
+    if (this.play('cannon', at, heavy ? 1 : 0.7, heavy ? 1 : 1.35)) return
     this.emit(at, 1.2, (ctx, out, t) => {
       VehicleSounds.burst(ctx, out, t, 'lowpass', heavy ? 1400 : 3000, 150, heavy ? 0.4 : 0.12, heavy ? 0.9 : 0.5)
       VehicleSounds.ping(ctx, out, t, 'sine', heavy ? 95 : 160, 38, heavy ? 0.35 : 0.1, heavy ? 0.9 : 0.4)
@@ -440,11 +512,54 @@ export class VehicleSounds {
     })
   }
 
+  /**
+   * `rounds` from a machine gun at `at`, a twelfth of a second apart: a crack and a thump each. A
+   * plane's ring gun (`rear`) is a lighter, higher one than the pair on its cowling. One slot covers them.
+   */
+  machineGun(at: Vec3, rounds: number, rear = false) {
+    if (rounds <= 0) return
+    const spacing = 1 / 12
+    const recorded = this.ready() && this.bank ? this.bank.pick('mg') : null
+    this.emit(at, 0.2 + rounds * spacing, (ctx, out, t) => {
+      for (let k = 0; k < rounds; k++) {
+        const delay = k * spacing
+        if (recorded) {
+          const buffer = this.bank?.pick('mg') ?? recorded
+          VehicleSounds.sample(ctx, out, t, buffer, rear ? 0.55 : 0.75, rear ? 1.25 : 1, this.distanceTo(at), delay)
+          continue
+        }
+        VehicleSounds.burst(ctx, out, t, 'bandpass', rear ? 3400 : 2600, 700, 0.06, rear ? 0.45 : 0.55, delay)
+        VehicleSounds.ping(ctx, out, t, 'sine', rear ? 220 : 170, 60, 0.05, rear ? 0.35 : 0.5, delay)
+      }
+    })
+  }
+
   /** A door closing, heard in the listener's own head. */
   door() {
     this.emit(null, 0.4, (ctx, out, t) => {
       VehicleSounds.ping(ctx, out, t, 'sine', 140, 60, 0.12, 0.5)
       VehicleSounds.burst(ctx, out, t, 'bandpass', 1800, 900, 0.05, 0.3, 0.02)
+    })
+  }
+
+  /** A hit you landed, heard in your own head: a bright tick, and a low thump under it if it finished them. */
+  hit(kill: boolean) {
+    this.emit(null, 0.5, (ctx, out, t) => {
+      VehicleSounds.ping(ctx, out, t, 'square', 1900, 1500, 0.05, 0.16)
+      VehicleSounds.burst(ctx, out, t, 'highpass', 3500, 2500, 0.04, 0.18)
+      if (kill) {
+        VehicleSounds.ping(ctx, out, t, 'sine', 160, 60, 0.28, 0.6, 0.03)
+        VehicleSounds.ping(ctx, out, t, 'square', 1300, 1000, 0.08, 0.14, 0.07)
+      }
+    })
+  }
+
+  /** `amount` hp of harm taken, heard in your own head: a dull thump, harder the more it hurt. */
+  hurt(amount: number) {
+    const level = Math.min(1, 0.35 + amount / 50)
+    this.emit(null, 0.5, (ctx, out, t) => {
+      VehicleSounds.ping(ctx, out, t, 'sine', 130, 50, 0.22, 0.8 * level)
+      VehicleSounds.burst(ctx, out, t, 'lowpass', 1100, 250, 0.16, 0.55 * level)
     })
   }
 

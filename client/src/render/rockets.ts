@@ -5,24 +5,29 @@ const GRENADE = 1
 const SHELL = 2
 const CANNON = 3
 const BULLET = 4
+const BOMB = 5
 
 /** The projectiles in flight: a glowing missile or a tank shell pointed along its velocity, or a tumbling grenade. */
 export class Rockets {
   readonly root = new THREE.Group()
   private readonly body = new THREE.CylinderGeometry(0.09, 0.09, 0.8, 8)
-  private readonly material = new THREE.MeshBasicMaterial({ color: 0xff8a2a })
+  private readonly material = new THREE.MeshBasicMaterial({ color: 0xff8a2a, fog: false, toneMapped: false })
   /** A tank shell: a fat hot slug with a long trail, big enough to follow at 140 m/s over a distance. */
   private readonly slug = new THREE.CylinderGeometry(0.3, 0.3, 2.4, 10)
-  private readonly slugMaterial = new THREE.MeshBasicMaterial({ color: 0xfff0b0, fog: false })
+  private readonly slugMaterial = new THREE.MeshBasicMaterial({ color: 0xffb020, fog: false, toneMapped: false })
   private readonly trail = new THREE.CylinderGeometry(0.22, 0.02, 16, 8)
-  private readonly trailMaterial = new THREE.MeshBasicMaterial({ color: 0xff9a3c, transparent: true, opacity: 0.55, fog: false, depthWrite: false })
+  private readonly trailMaterial = new THREE.MeshBasicMaterial({ color: 0xff6a10, transparent: true, opacity: 0.75, fog: false, toneMapped: false, depthWrite: false })
   /** An autocannon round: the same slug and trail, a third the size. */
-  private readonly smallSlug = new THREE.CylinderGeometry(0.1, 0.1, 0.8, 8)
-  private readonly smallTrail = new THREE.CylinderGeometry(0.07, 0.01, 5, 6)
-  /** A sniper round: a thin white-hot streak with a short trail. */
-  private readonly bullet = new THREE.CylinderGeometry(0.04, 0.04, 1.2, 6)
-  private readonly bulletTrail = new THREE.CylinderGeometry(0.035, 0.005, 9, 6)
+  private readonly smallSlug = new THREE.CylinderGeometry(0.15, 0.15, 1, 8)
+  private readonly smallTrail = new THREE.CylinderGeometry(0.13, 0.01, 6, 6)
+  /** A sniper round: a thin hot streak with a short trail, thick enough to pick out at range. */
+  private readonly bullet = new THREE.CylinderGeometry(0.09, 0.09, 1.4, 6)
+  private readonly bulletTrail = new THREE.CylinderGeometry(0.08, 0.005, 10, 6)
   private readonly ball = new THREE.SphereGeometry(0.1, 10, 8)
+  /** A plane's bomb: a dark finned body that noses over as it falls. */
+  private readonly bomb = new THREE.CylinderGeometry(0.075, 0.05, 0.6, 8)
+  private readonly fins = new THREE.BoxGeometry(0.2, 0.1, 0.02)
+  private readonly bombMaterial = new THREE.MeshToonMaterial({ color: 0x2b2b26 })
   private readonly ballMaterial = new THREE.MeshToonMaterial({ color: 0x4f5d2e })
   private readonly meshes = new Map<number, THREE.Mesh>()
   private readonly up = new THREE.Vector3(0, 1, 0)
@@ -32,7 +37,15 @@ export class Rockets {
     let mesh = this.meshes.get(id)
     if (!mesh) {
       if (kind === GRENADE) mesh = new THREE.Mesh(this.ball, this.ballMaterial)
-      else if (kind === BULLET) {
+      else if (kind === BOMB) {
+        mesh = new THREE.Mesh(this.bomb, this.bombMaterial)
+        for (const turn of [0, Math.PI / 2]) {
+          const fin = new THREE.Mesh(this.fins, this.bombMaterial)
+          fin.position.y = -0.3
+          fin.rotation.y = turn
+          mesh.add(fin)
+        }
+      } else if (kind === BULLET) {
         mesh = new THREE.Mesh(this.bullet, this.slugMaterial)
         const tail = new THREE.Mesh(this.bulletTrail, this.trailMaterial)
         tail.position.y = -(0.6 + 4.5)
@@ -86,6 +99,9 @@ export class Rockets {
     this.trailMaterial.dispose()
     this.ball.dispose()
     this.ballMaterial.dispose()
+    this.bomb.dispose()
+    this.fins.dispose()
+    this.bombMaterial.dispose()
     this.root.removeFromParent()
   }
 }

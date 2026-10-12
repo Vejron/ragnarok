@@ -16,8 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && mkdir -p /app /acme && chown 10001:10001 /acme
 COPY --from=build /server /app/server
 COPY client/dist /app/dist
-COPY client/public/world.msgpack /app/world.msgpack
-COPY client/public/tiles /app/tiles
+# The built client holds the world (copied from client/public, or WORLD_DIR via scripts/deploy.sh).
+COPY client/dist/world.msgpack /app/world.msgpack
+COPY client/dist/tiles /app/tiles
 ENV RAGNAROK_DIST=/app/dist \
     RAGNAROK_WORLD=/app/world.msgpack \
     RAGNAROK_ACME_CACHE=/acme

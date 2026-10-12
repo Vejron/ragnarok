@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { throwTrajectory, type RayCaster } from '@/sim/grenade'
+import { dropTrajectory, throwTrajectory, type RayCaster } from '@/sim/grenade'
+import { GRAVITY } from '@/sim/consts'
 import { GRENADE_FUSE_TICKS } from '@/sim/items'
 
 /** A flat floor at y = 0 and nothing else. */
@@ -58,5 +59,23 @@ describe('throwTrajectory', () => {
     }
     const t = throwTrajectory(wall, [0, 1.5, 0], 0, 0)
     expect(t.points[0]![2]).toBeGreaterThan(-0.2)
+  })
+})
+
+describe('dropTrajectory', () => {
+  it('carries a bomb on with the plane and lands it where it falls to', () => {
+    const t = dropTrajectory(floor, [0, 50, 0], [0, 0, -30])
+    const impact = t.firstImpact!
+    // It falls 50 m in √(2·50/g) seconds, all the while moving on at the plane's 30 m/s.
+    const fall = Math.sqrt((2 * 50) / GRAVITY)
+    expect(impact[1]).toBeCloseTo(0, 3)
+    expect(impact[2]).toBeCloseTo(-30 * fall, 0)
+    expect(Math.abs(impact[0])).toBeLessThan(1e-6)
+    expect(t.burst).toEqual(impact)
+    expect(t.points[t.points.length - 1]).toEqual(impact)
+  })
+
+  it('never lands in an open sky', () => {
+    expect(dropTrajectory(open, [0, 50, 0], [10, 0, 0]).firstImpact).toBeNull()
   })
 })

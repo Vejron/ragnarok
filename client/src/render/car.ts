@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { JEEP_MAX_STEER, JEEP_WHEEL_RADIUS, SPORTS_MAX_STEER, SPORTS_SEATS, SPORTS_WHEEL_RADIUS, CAR_SEATS } from '@/sim/consts'
-import { KIND_SPORTS, type Turret } from '@/net/codec'
+import { KIND_SPORTS, type Arms, type Turret } from '@/net/codec'
 import { colorFor } from './character'
 import { CarWear } from './carwear'
 import type { Debris } from './debris'
@@ -16,6 +16,7 @@ export interface VehicleModel {
     steer: number,
     seats: readonly number[],
     turret?: Turret | null,
+    arms?: Arms | null,
   ): void
   dispose(): void
 }

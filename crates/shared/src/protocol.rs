@@ -16,6 +16,23 @@ pub const S_KILL: u8 = 4;
 pub const S_SCORES: u8 = 5;
 pub const S_DESTROYED: u8 = 6;
 pub const S_DAMAGED: u8 = 7;
+pub const S_HIT: u8 = 8;
+
+/// `Hit` roles: whose feedback it is.
+/// You hurt something.
+pub const HIT_DEALT: u8 = 0;
+/// Something hurt you (or the vehicle you sit in).
+pub const HIT_TAKEN: u8 = 1;
+
+/// `Hit` kinds: what took the damage.
+pub const HIT_BODY: u8 = 0;
+pub const HIT_VEHICLE: u8 = 1;
+/// A stickman or rooster that this hit finished.
+pub const HIT_KILL: u8 = 2;
+pub const HIT_ROOSTER: u8 = 3;
+
+/// A `Hit` bearing for damage with no direction: a fall, a crash.
+pub const BEARING_NONE: i16 = i16::MIN;
 
 /// `Destroyed` entry kinds: what part of the static world fell.
 pub const OBJ_TREE: u8 = 0;
@@ -30,21 +47,26 @@ pub const KIND_JEEP: u8 = 1;
 pub const KIND_TANK: u8 = 2;
 pub const KIND_HELI: u8 = 3;
 pub const KIND_SPORTS: u8 = 4;
+/// The triplane. 5 is the rooster's.
+pub const KIND_PLANE: u8 = 6;
 
 /// Health of a fresh vehicle of `kind`. Zero on the wire means wrecked.
 pub fn vehicle_hp(kind: u8) -> u8 {
     match kind {
         KIND_TANK => 250,
+        KIND_PLANE => 70,
         _ => 100,
     }
 }
 
-/// Seats in a vehicle of `kind`. Seat 0 is the driver (a helicopter's pilot); seat 1 of a tank or a helicopter is the gunner.
+/// Seats in a vehicle of `kind`. Seat 0 is the driver (a helicopter's or a plane's pilot); seat 1 of a tank, a
+/// helicopter or a plane is the gunner.
 pub fn seat_count(kind: u8) -> usize {
     match kind {
         KIND_TANK => crate::consts::TANK_SEATS,
         KIND_HELI => crate::consts::HELI_SEATS,
         KIND_SPORTS => crate::consts::SPORTS_SEATS,
+        KIND_PLANE => crate::consts::PLANE_SEATS,
         _ => crate::consts::CAR_SEATS,
     }
 }
@@ -77,6 +99,10 @@ pub const WEAPON_SNIPER: u8 = 7;
 pub const WEAPON_CRASH: u8 = 8;
 /// Shot events only: vehicle `shooter` is scraping along something at `x, y, z`, throwing sparks.
 pub const WEAPON_SCRAPE: u8 = 9;
+/// A plane's machine guns, forward or rear. Shot events only for a round that hit something: the
+/// client draws every round's tracer itself, from the gun's shot counter.
+pub const WEAPON_MG: u8 = 10;
+pub const WEAPON_BOMB: u8 = 11;
 
 /// `ProjectileState` kinds.
 pub const PROJECTILE_ROCKET: u8 = 0;
@@ -86,6 +112,8 @@ pub const PROJECTILE_SHELL: u8 = 2;
 pub const PROJECTILE_CANNON: u8 = 3;
 /// A sniper round: fast and nearly flat, it hurts whoever it meets and does not burst.
 pub const PROJECTILE_BULLET: u8 = 4;
+/// A bomb dropped from a plane: it falls from the plane's speed and bursts on the first thing it meets.
+pub const PROJECTILE_BOMB: u8 = 5;
 
 /// One simulation tick of player intent. The client predicts with exactly these quantized values,
 /// so client and server feed the simulation identical inputs.
@@ -192,6 +220,8 @@ pub struct VehicleState(
     /// Crash damage, `nil` while there is none: `[front, rear, left, right, wheel FL, FR, RL, RR]`,
     /// each 0..=255. A wheel at 255 has come off. See `DAMAGE_*`.
     pub Option<[u8; 8]>,
+    /// A plane's pilot weapons and engine, `nil` for anything else.
+    pub Option<Arms>,
 );
 
 /// What changed in a standing entity since the baseline: `[id, dx, dy, dz, dyaw, dvy, flags,
@@ -212,8 +242,8 @@ pub struct EntityDelta(
 );
 
 /// What changed in a vehicle since the baseline: `[id, dx, dy, dz, dqx, dqy, dqz, dsteer, seats,
-/// turret, hp, damage]`. The first eight are differences; `seats`, `turret` and `damage` are `nil`
-/// when unchanged (a repaired vehicle's `damage` is all zeros), and `hp` is the new value.
+/// turret, hp, damage, arms]`. The first eight are differences; `seats`, `turret`, `damage` and `arms`
+/// are `nil` when unchanged (a repaired vehicle's `damage` is all zeros), and `hp` is the new value.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VehicleDelta(
     pub u32,
@@ -228,6 +258,7 @@ pub struct VehicleDelta(
     pub Option<Turret>,
     pub u8,
     pub Option<[u8; 8]>,
+    pub Option<Arms>,
 );
 
 /// Indices into a vehicle's damage: the four sides of the body, then the wheels front left,
@@ -252,6 +283,18 @@ pub struct Turret(
     pub u8,
     pub u16,
 );
+
+/// A plane's weapons and engine, as they are drawn and shown on the crew's gauges:
+/// `[shots, heat, rear_heat, bombs, flags]`. `shots` counts the forward guns' rounds modulo 256, as
+/// `Turret::shots` does the rear gun's (the left gun fires the even ones); the heats are 0..=255 and
+/// jam the guns at 255; `bombs` are left on the rack; `flags` are `ARMS_*`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Arms(pub u8, pub u8, pub u8, pub u8, pub u8);
+
+/// `Arms` flags: the blip switch is cutting the engine, and either set of guns is jammed.
+pub const ARMS_CUT: u8 = 1 << 0;
+pub const ARMS_JAMMED: u8 = 1 << 1;
+pub const ARMS_REAR_JAMMED: u8 = 1 << 2;
 
 /// The motion a driver needs to predict their own vehicle, which the vehicle's pose does not
 /// carry. Sent only to the player in the driver seat: `[vx, vy, vz, wx, wy, wz, steer, spin]`.
@@ -362,6 +405,16 @@ pub struct Damaged(pub u8, pub Vec<DamagedEntry>);
 /// One `Damaged` entry: `(col, row, index, stage, marked, x, y, z)`.
 pub type DamagedEntry = (u16, u16, u32, u8, u8, i32, i32, i32);
 
+/// `[8, role, kind, amount, weapon, bearing, x, y, z, target]`, sent on a reliable stream to the one player it is
+/// about, once per tick per `(role, kind)` with the amounts summed. `role` is `HIT_*`: dealt (you
+/// hurt something) or taken (something hurt you or your vehicle); `kind` is `HIT_*` too; `amount`
+/// is the health lost; `weapon` is `WEAPON_*`. For a taken hit `bearing` is the yaw (milliradians,
+/// 0 faces -Z, as for a look) from you towards where it came from, or `BEARING_NONE`. `(x, y, z)`
+/// (cm, as in `ShotEvent`) is about where the thing hit is, chest height for a stickman, and
+/// `target` is its id, so clients can show a number and a flash on it.
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Hit(pub u8, pub u8, pub u8, pub u8, pub u8, pub i16, pub i32, pub i32, pub i32, pub u32);
+
 /// Reads the tag of a `[tag, ...]` message without decoding the rest. Every message is a short
 /// array (fixarray header) whose first element is a positive fixint.
 pub fn peek_tag(bytes: &[u8]) -> Option<u8> {
@@ -389,11 +442,11 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 17, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
+        148, 0, 18, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[
-        159, 1, 205, 4, 210, 205, 4, 206, 42, 9, 145, 154, 7, 0, 0, 85, 206, 0, 1, 134, 160, 0, 0, 3, 0, 0, 145, 153, 1, 25, 253, 40, 208, 136, 205, 2, 138, 1, 209, 254, 212, 12, 145, 157, 10, 2, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 146, 1, 7, 148, 209, 253, 68, 204, 250, 3, 205, 4, 210, 0, 192, 145, 156, 9, 100, 0, 208, 211, 3, 254, 0, 4, 148, 1, 0, 7, 0, 192, 100, 152, 0, 0, 40, 0, 0, 0, 204, 255, 3, 146, 3, 11, 152, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 73, 204, 128, 147, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 152, 40, 1, 205, 4, 176, 204, 150, 209, 252, 224, 205, 11, 184, 0, 209, 246, 60, 145, 149, 60, 4, 209, 254, 212, 5, 205, 4, 226,
+        159, 1, 205, 4, 210, 205, 4, 206, 42, 9, 145, 154, 7, 0, 0, 85, 206, 0, 1, 134, 160, 0, 0, 3, 0, 0, 145, 153, 1, 25, 253, 40, 208, 136, 205, 2, 138, 1, 209, 254, 212, 12, 146, 158, 10, 2, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 146, 1, 7, 148, 209, 253, 68, 204, 250, 3, 205, 4, 210, 0, 192, 192, 158, 12, 6, 209, 254, 12, 205, 1, 44, 205, 3, 32, 10, 236, 30, 0, 146, 4, 0, 148, 205, 11, 184, 204, 200, 9, 0, 70, 192, 149, 17, 204, 200, 0, 3, 3, 145, 157, 9, 100, 0, 208, 211, 3, 254, 0, 4, 148, 1, 0, 7, 0, 192, 100, 152, 0, 0, 40, 0, 0, 0, 204, 255, 3, 192, 146, 3, 11, 152, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 73, 204, 128, 147, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 152, 40, 1, 205, 4, 176, 204, 150, 209, 252, 224, 205, 11, 184, 0, 209, 246, 60, 145, 149, 60, 4, 209, 254, 212, 5, 205, 4, 226,
     ];
 
     fn sample_input() -> ClientInput {
@@ -417,8 +470,8 @@ mod tests {
             9,
             vec![EntityState(7, KIND_STICKMAN, 0, 85, 100_000, 0, 0, FLAG_GROUNDED | FLAG_DEAD, 0, 0)],
             vec![EntityDelta(1, 25, -3, 40, -120, 650, FLAG_GROUNDED, -300, 12)],
-            vec![VehicleState(10, KIND_TANK, 300, 90, -2000, 0, 700, 0, 32, vec![1, 7], Some(Turret(-700, 250, 3, 1234)), 0, None)],
-            vec![VehicleDelta(9, 100, 0, -45, 3, -2, 0, 4, Some(vec![1, 0, 7, 0]), None, 100, Some([0, 0, 40, 0, 0, 0, 255, 3]))],
+            vec![VehicleState(10, KIND_TANK, 300, 90, -2000, 0, 700, 0, 32, vec![1, 7], Some(Turret(-700, 250, 3, 1234)), 0, None, None), VehicleState(12, KIND_PLANE, -500, 300, 800, 10, -20, 30, 0, vec![4, 0], Some(Turret(3000, 200, 9, 0)), 70, None, Some(Arms(17, 200, 0, 3, ARMS_CUT | ARMS_JAMMED)))],
+            vec![VehicleDelta(9, 100, 0, -45, 3, -2, 0, 4, Some(vec![1, 0, 7, 0]), None, 100, Some([0, 0, 40, 0, 0, 0, 255, 3]), None)],
             vec![3, 11],
             Some(DriveState(120, -5, -2500, 30, -400, 15, 250, -600)),
             SelfState(73, 128, vec![ItemSlot(ITEM_AK5, 1, 17), ItemSlot(ITEM_NONE, 0, 0), ItemSlot(ITEM_GRENADE, 2, 0)]),
@@ -440,6 +493,13 @@ mod tests {
         assert_eq!(encode(&message), DAMAGED_FIXTURE);
         assert_eq!(decode::<Damaged>(DAMAGED_FIXTURE), Some(message));
         assert_eq!(peek_tag(DAMAGED_FIXTURE), Some(S_DAMAGED));
+    }
+
+    #[test]
+    fn hit_round_trips() {
+        let message = Hit(S_HIT, HIT_TAKEN, HIT_BODY, 25, WEAPON_RIFLE, -1571, 100, 90, -250, 7);
+        assert_eq!(decode::<Hit>(&encode(&message)), Some(message));
+        assert_eq!(peek_tag(&encode(&Hit(S_HIT, HIT_DEALT, HIT_KILL, 100, WEAPON_SNIPER, BEARING_NONE, 0, 0, 0, 0))), Some(S_HIT));
     }
 
     #[test]

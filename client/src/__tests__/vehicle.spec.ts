@@ -5,7 +5,7 @@ import { addTileCollider } from '@/sim/physics'
 import { heightIn, type TileGround } from '@/sim/terrain'
 import { f32 } from '@/sim/movement'
 import { TICK_DT, vehicleMaxHp } from '@/sim/consts'
-import { KIND_HELI, KIND_JEEP, KIND_SPORTS, KIND_TANK, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
+import { KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_TANK, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
 import type { TileData, WorldData } from '@/world'
 
 const COAST: CarControls = { throttle: 0, steer: 0, handbrake: false, lift: 0, powered: false }
@@ -141,6 +141,55 @@ describe('helicopter prediction', () => {
   })
 })
 
+/** `pilot` in vehicle.rs: the throttle at `lift` (Space +1, Shift -1), the stick pulled `pull` (S +1) and rolled `roll` (D +1). */
+const pilot = (lift: number, pull: number, roll: number): CarControls => ({ ...COAST, lift, throttle: -pull, steer: roll, powered: true })
+
+/** `scripted_plane` in vehicle.rs. */
+const planeFlight = (tick: number): CarControls => {
+  const second = Math.floor(tick / 60)
+  if (second === 0) return pilot(0, 0, 0)
+  if (second < 7) return pilot(1, 0.3, 0)
+  if (second < 9) return pilot(0, 0, 0.8)
+  if (second < 11) return pilot(-1, 0.5, 0.8)
+  return pilot(1, 0.1, -0.5)
+}
+
+/** `PLANE_CHECKPOINTS` in vehicle.rs: a plane started at [0, 1.5, 600] on a field 3 km from the middle to each edge. */
+const planeCheckpoints: [number, [number, number, number]][] = [
+  [120, [0.0000, 1.0504, 595.1553]],
+  [420, [0.0000, 12.9997, 500.8397]],
+  [660, [17.7795, 11.9774, 408.6677]],
+  [900, [78.6062, 2.9332, 305.7454]],
+]
+
+describe('plane prediction', () => {
+  it('WASM flies a plane where the native server does', async () => {
+    await RAPIER.init()
+    const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
+    world.timestep = TICK_DT
+    world.createCollider(RAPIER.ColliderDesc.cuboid(3000, 0.5, 3000).setTranslation(0, -0.5, 0))
+    const plane = new CarSim(world, KIND_PLANE, [0, 1.5, 600], 0, 3000)
+    for (let tick = 0; tick < 900; tick++) {
+      plane.drive(planeFlight(tick), TICK_DT)
+      plane.step(TICK_DT)
+      const expected = planeCheckpoints.find(([t]) => t === tick + 1)
+      if (!expected) continue
+      plane.state().position.forEach((value, axis) => {
+        expect(Math.abs(value - expected[1][axis]!), `tick ${tick + 1} axis ${axis}`).toBeLessThan(0.01)
+      })
+    }
+    world.free()
+  })
+
+  it('reads the stick and throttle off the keys and the aim off where the mouse looks', () => {
+    // W is forward on the stick (nose down), Space the throttle up, Shift the throttle down.
+    const frame = (forward: number, strafe: number, buttons: number, yaw = 1200): InputFrame => ({ seq: 1, strafe, forward, yaw, pitch: -300, buttons, view: 0, slot: 0 })
+    expect(controlsOf(frame(127, 0, 1))).toMatchObject({ throttle: 1, lift: 1, powered: true })
+    expect(controlsOf(frame(-127, 127, 2))).toMatchObject({ throttle: -1, steer: 1, lift: -1 })
+    expect(controlsOf(frame(0, 0, 0, 1200)).aim).toEqual([1.2, -0.3])
+  })
+})
+
 describe('vehicles on a slope', () => {
   /** `ramp` in vehicle.rs: 12°, rising towards -Z, 5 m cells over 200 m. */
   const SLOPE = f32(0.2125566)
@@ -197,7 +246,7 @@ describe('driving a predicted vehicle', () => {
     const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
     world.timestep = TICK_DT
     world.createCollider(RAPIER.ColliderDesc.cuboid(200, 0.5, 200).setTranslation(0, -0.5, 0))
-    const sim = new CarSim(world, kind, [0, 1, 0], 0)
+    const sim = new CarSim(world, kind, [0, 1, 0], 0, 200)
     // Settle first, the way a parked car has before anyone boards it.
     for (let tick = 0; tick < 120; tick++) {
       sim.drive({ ...COAST, handbrake: true }, TICK_DT)
@@ -219,7 +268,7 @@ describe('driving a predicted vehicle', () => {
     return {
       vehicle: {
         id: 3, kind, x: cm(s.position[0]), y: cm(s.position[1]), z: cm(s.position[2]),
-        qx, qy, qz, qw: Math.sqrt(1 - qx * qx - qy * qy - qz * qz), steer: 0, seats: [1, 0, 0, 0], turret: null, hp: vehicleMaxHp(kind), damage: [0, 0, 0, 0, 0, 0, 0, 0],
+        qx, qy, qz, qw: Math.sqrt(1 - qx * qx - qy * qy - qz * qz), steer: 0, seats: [1, 0, 0, 0], turret: null, hp: vehicleMaxHp(kind), damage: [0, 0, 0, 0, 0, 0, 0, 0], arms: null,
       },
       drive: {
         vx: cm(s.linvel[0]), vy: cm(s.linvel[1]), vz: cm(s.linvel[2]),
@@ -230,7 +279,7 @@ describe('driving a predicted vehicle', () => {
   }
 
   it('replaying over the server state lands where an uninterrupted run does', async () => {
-    for (const kind of [KIND_JEEP, KIND_TANK, KIND_HELI]) {
+    for (const kind of [KIND_JEEP, KIND_TANK, KIND_HELI, KIND_PLANE]) {
       // The client is 20 ticks ahead of the last state the server has told it about.
       const driver = await VehicleDriver.create(flat())
       const early = await serverState(kind, 0)

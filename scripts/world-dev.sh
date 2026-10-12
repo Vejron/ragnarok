@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate the small dev world: ~5 km² (2.25 km square) around Mariehem, Umeå, into
+# Generate the small dev world: ~7.6 km² (2.75 km square) around 63.83976, 20.31514 in Umeå, into
 # client/public/dev/ so the big world in client/public/ is left alone. Much faster to import,
 # load and iterate on. Extra arguments go to the importer (a later --center/--half wins).
 #   scripts/world-dev.sh                 real data; needs LM_USER and LM_PASS in .env.local
@@ -11,5 +11,5 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# 2250 m = nine 250 m tiles. Mariehem is the OSM suburb node (63.8372, 20.3261).
-exec scripts/world.sh --center 63.8372,20.3261 --half 1125 --out client/public/dev/world.msgpack "$@"
+# 2750 m = eleven 250 m tiles.
+exec scripts/world.sh --center 63.83976,20.31514 --half 1375 --out client/public/dev/world.msgpack "$@"

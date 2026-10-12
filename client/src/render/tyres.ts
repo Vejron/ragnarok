@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { KIND_HELI, KIND_SPORTS, KIND_TANK } from '@/net/codec'
+import { KIND_HELI, KIND_PLANE, KIND_SPORTS, KIND_TANK } from '@/net/codec'
 import { halfExtentsOf } from '@/sim/kinds'
 import { tyreSlip, wheelLayout, type WheelLayout } from '@/sim/slip'
 import { SURFACE_ASPHALT, SURFACE_DIRT, SURFACE_GRASS, SURFACE_SAND, SURFACE_WATER } from '@/sim/surface'
@@ -146,7 +146,27 @@ export class VehicleFx {
       return
     }
     this.wheels(world, steer, particles, dt)
-    if (powered && particles) this.exhaust(world, here, dt)
+    if (powered && particles) {
+      if (this.kind === KIND_PLANE) this.castorOil(world, here, dt)
+      else this.exhaust(world, here, dt)
+    }
+  }
+
+  /** A rotary engine throws out burnt castor oil: a thin blue-grey trail from under the cowling. */
+  private castorOil(world: FxWorld, here: THREE.Vector3, dt: number) {
+    if (Math.random() > dt * 24) return
+    const cowl = new THREE.Vector3(rand(-0.3, 0.3), -0.3, -2.4).applyQuaternion(this.q).add(here)
+    world.smoke.spawn({
+      position: cowl,
+      // Left behind by the plane as it flies on, drifting a little.
+      velocity: [this.velocity.x * 0.15 + rand(-0.3, 0.3), rand(-0.1, 0.3), this.velocity.z * 0.15 + rand(-0.3, 0.3)],
+      life: rand(0.9, 1.6),
+      size: [0.25, 1.4],
+      color: 0x8a9096,
+      alpha: 0.18,
+      gravity: 0,
+      drag: 1,
+    })
   }
 
   private wheels(world: FxWorld, steer: number, particles: boolean, dt: number) {
@@ -162,8 +182,8 @@ export class VehicleFx {
       const before = this.last[wheel]
       const sideways = before ? contact.clone().sub(before).divideScalar(dt).dot(this.side) : 0
       this.last[wheel] = contact.clone()
-      // Every wheel of a jeep and a tank is driven; a sports car pushes with its rear pair.
-      const driven = this.kind !== KIND_SPORTS || wheel >= 2
+      // Every wheel of a jeep and a tank is driven; a sports car pushes with its rear pair, and a plane with its propeller.
+      const driven = this.kind !== KIND_PLANE && (this.kind !== KIND_SPORTS || wheel >= 2)
       const wanted = tyreSlip(sideways, this.speed, this.accel, driven)
       const slip = (this.slips[wheel] ?? 0) + (wanted - (this.slips[wheel] ?? 0)) * Math.min(1, dt * SMOOTHING)
       this.slips[wheel] = slip

@@ -16,6 +16,9 @@ export const ON_FOOT_DISTANCE = 3.2
 export const DRIVING_DISTANCE = 9
 export const TANK_DISTANCE = 13
 export const HELI_DISTANCE = 16
+/** A plane's pilot looks where they fly, from behind and above, so the plane sits below the middle of the screen. */
+export const PLANE_DISTANCE = 12
+export const PLANE_CAMERA_HEIGHT = 2.4
 /** The gunner's camera sits this far behind the turret, on the line of the barrel. */
 export const GUNNER_BACK = 6.5
 /** ...and this far above it, so the turret doesn't hide the view. */

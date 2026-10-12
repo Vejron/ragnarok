@@ -9,7 +9,7 @@ use crate::rng::Rng;
 use anyhow::Result;
 use bytes::Bytes;
 use shared::consts::*;
-use shared::items::{HOTBAR_SLOTS, ITEM_NONE};
+use shared::items::{HOTBAR_SLOTS, ITEM_AK5, ITEM_GRENADE, ITEM_NONE, ITEM_REVOLVER, ITEM_SNIPER, def};
 use shared::protocol::*;
 use shared::quant::{pack_quat, to_axis, to_cm, to_cm_i16, to_milli_i16, to_mrad};
 use shared::world::{Building, ObjId, Tree, WorldFile};
@@ -40,6 +40,18 @@ pub struct Seat {
     pub vehicle: u32,
     /// 0 is the driver.
     pub index: usize,
+}
+
+/// What a player holds at the start of every life: the revolver, the AK5 and the sniper rifle with full
+/// magazines, a full stack of grenades, and one empty slot for whatever turns up.
+pub fn starting_hotbar() -> [ItemSlot; HOTBAR_SLOTS] {
+    let full = |item: u8| ItemSlot(item, 1, def(item).map_or(0, |d| d.mag));
+    let mut hotbar = [ItemSlot(ITEM_NONE, 0, 0); HOTBAR_SLOTS];
+    hotbar[0] = full(ITEM_REVOLVER);
+    hotbar[1] = full(ITEM_AK5);
+    hotbar[2] = full(ITEM_SNIPER);
+    hotbar[3] = ItemSlot(ITEM_GRENADE, def(ITEM_GRENADE).map_or(1, |d| d.stack), 0);
+    hotbar
 }
 
 pub struct Player {
@@ -141,8 +153,10 @@ pub struct Vehicle {
     pub home: ([f32; 3], f32),
     /// Consecutive ticks spent on its side or roof and not moving.
     pub stuck_ticks: u32,
-    /// The turret, for a vehicle that has one.
+    /// The turret, for a vehicle that has one (a plane's is the gunner's ring mount).
     pub gun: Option<Gun>,
+    /// A plane's forward guns and bombs.
+    pub arms: Option<PlaneArms>,
     /// Health. At zero it is a wreck for `WRECK_TICKS`, then it is put back at `home`.
     pub hp: u8,
     pub wreck_in: u32,
@@ -188,6 +202,37 @@ pub struct Gun {
     pub shots: u8,
     /// Unused: shells fly now, so there is no distance to report. Kept so the wire does not change.
     pub range: f32,
+    /// A machine gun's heat, 0..=255: at 255 it jams until it has cooled to `GUN_UNJAM`.
+    pub heat: f32,
+    pub jammed: bool,
+}
+
+/// What a plane's pilot fires: the two forward guns, which take turns, and the bomb rack. The
+/// `Gunnery` mechanic owns it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlaneArms {
+    /// Ticks until the next round.
+    pub cooldown: u32,
+    /// Rounds fired so far, modulo 256; the left gun fires the even ones.
+    pub shots: u8,
+    pub heat: f32,
+    pub jammed: bool,
+    pub bombs: u8,
+    /// Ticks until the next bomb can drop.
+    pub bomb_cooldown: u32,
+    /// Ticks the plane has stood still on the ground, towards a full rack.
+    pub rearm: u32,
+}
+
+impl Default for PlaneArms {
+    fn default() -> Self {
+        PlaneArms { cooldown: 0, shots: 0, heat: 0.0, jammed: false, bombs: PLANE_BOMBS, bomb_cooldown: 0, rearm: 0 }
+    }
+}
+
+/// A gun's heat as the wire carries it.
+fn heat_byte(heat: f32) -> u8 {
+    heat.round().clamp(0.0, 255.0) as u8
 }
 
 /// Where the standing, living players were at the end of one tick: `(tick, [(id, position)])`.
@@ -214,6 +259,9 @@ pub struct World {
     pub shots: Vec<ShotEvent>,
     /// Kills since the last tick. Drained and broadcast reliably by `Game::step`.
     pub kills: Vec<Kill>,
+    /// Hits since the last tick, each with the player it is for. Drained, summed and sent
+    /// reliably to that player by `Game::step`.
+    pub hits: Vec<(u32, Hit)>,
     /// Solid trees by identity, to look their size up from a collider hit.
     trees_by_id: HashMap<ObjId, usize>,
     /// Buildings by identity.
@@ -323,6 +371,7 @@ impl Game {
                 rng: Rng::from_time(),
                 shots: Vec::new(),
                 kills: Vec::new(),
+                hits: Vec::new(),
                 history: VecDeque::new(),
             },
             mechanics: default_mechanics(),
@@ -373,7 +422,7 @@ impl Game {
                 ack: 0,
                 hp: PLAYER_MAX_HP,
                 respawn_in: 0,
-                hotbar: [ItemSlot(ITEM_NONE, 0, 0); HOTBAR_SLOTS],
+                hotbar: starting_hotbar(),
                 selected: 0,
                 fire_cooldown: 0,
                 reload_left: 0,
@@ -436,6 +485,7 @@ impl Game {
             mechanic.on_tick(&mut self.world, TICK_DT);
         }
         self.broadcast_kills();
+        self.send_hits();
         self.broadcast_destroyed();
         self.broadcast_damaged();
         self.world.tick = self.world.tick.wrapping_add(1);
@@ -466,6 +516,22 @@ impl Game {
         let bytes = Bytes::from(encode(&Damaged(S_DAMAGED, entries)));
         for outbox in self.outboxes.values() {
             let _ = outbox.try_send(Outgoing::Reliable(bytes.clone()));
+        }
+    }
+
+    /// Tells each player about the hits they dealt or took this tick, amounts summed per kind.
+    fn send_hits(&mut self) {
+        let mut merged: Vec<(u32, Hit)> = Vec::new();
+        for (to, hit) in self.world.hits.drain(..) {
+            match merged.iter_mut().find(|(t, h)| *t == to && h.1 == hit.1 && h.2 == hit.2 && h.9 == hit.9) {
+                Some((_, sum)) => sum.3 = sum.3.saturating_add(hit.3),
+                None => merged.push((to, hit)),
+            }
+        }
+        for (to, hit) in merged {
+            if let Some(outbox) = self.outboxes.get(&to) {
+                let _ = outbox.try_send(Outgoing::Reliable(Bytes::from(encode(&hit))));
+            }
         }
     }
 
@@ -534,7 +600,21 @@ impl Game {
                 let seats = vehicle.seats[..seat_count(vehicle.kind)].iter().map(|seat| seat.unwrap_or(0)).collect();
                 let turret = vehicle.gun.map(|gun| Turret(to_mrad(gun.yaw), to_mrad(gun.pitch), gun.shots, (gun.range * 10.0).round().clamp(0.0, u16::MAX as f32) as u16));
                 let damage = (vehicle.damage != [0; 8]).then_some(vehicle.damage);
-                Some(VehicleState(id, vehicle.kind, to_cm(x), to_cm(y), to_cm(z), qx, qy, qz, to_axis(pose.steer), seats, turret, vehicle.hp, damage))
+                let arms = vehicle.arms.map(|arms| {
+                    let rear = vehicle.gun.unwrap_or_default();
+                    let mut flags = 0;
+                    if vehicle.controls.powered && vehicle.controls.lift < -0.5 {
+                        flags |= ARMS_CUT;
+                    }
+                    if arms.jammed {
+                        flags |= ARMS_JAMMED;
+                    }
+                    if rear.jammed {
+                        flags |= ARMS_REAR_JAMMED;
+                    }
+                    Arms(arms.shots, heat_byte(arms.heat), heat_byte(rear.heat), arms.bombs, flags)
+                });
+                Some(VehicleState(id, vehicle.kind, to_cm(x), to_cm(y), to_cm(z), qx, qy, qz, to_axis(pose.steer), seats, turret, vehicle.hp, damage, arms))
             })
             .collect()
     }

@@ -3,12 +3,12 @@ import { buildingTriangleRanges, type TileData, type WorldData } from '@/world'
 import {
   AUTOSTEP_HEIGHT, AUTOSTEP_MIN_WIDTH, CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, CONTROLLER_OFFSET,
   BUTTON_CROUCH, BUTTON_JUMP, KNOCK_MAX_SPEED, MAX_SLOPE_CLIMB_DEG, SNAP_DISTANCE,
-  TANK_TURRET_HALF_HEIGHT, TANK_TURRET_PIVOT, TANK_TURRET_RADIUS,
+  TANK_TURRET_HALF_HEIGHT, TANK_TURRET_PIVOT, TANK_TURRET_RADIUS, PLANE_WING_CENTRE, PLANE_WING_HALF_EXTENTS,
 } from './consts'
 import { halfExtentsOf } from './kinds'
 import type { TileGround } from './terrain'
 import { beginSlide, decayKnock, desiredTranslation, f32, settleVertical } from './movement'
-import { fromMrad, KIND_TANK, type InputFrame, type VehicleState } from '@/net/codec'
+import { fromMrad, KIND_PLANE, KIND_TANK, type InputFrame, type VehicleState } from '@/net/codec'
 
 export type Vec3 = [number, number, number]
 
@@ -165,32 +165,46 @@ type PoseLike = Pick<VehicleState, 'x' | 'y' | 'z' | 'qx' | 'qy' | 'qz' | 'qw'>
  */
 export class VehicleSolids {
   private readonly hull: RAPIER.Collider
-  private readonly turret: RAPIER.Collider | null
+  /** A tank's turret or a plane's wings, and where it sits in the hull frame. */
+  private readonly extra: RAPIER.Collider | null
+  private readonly offset: readonly [number, number, number] = [0, 0, 0]
 
   constructor(private readonly world: RAPIER.World, kind: number | undefined) {
     const [hx, hy, hz] = halfExtentsOf(kind)
     this.hull = world.createCollider(RAPIER.ColliderDesc.cuboid(hx, hy, hz))
-    this.turret = kind === KIND_TANK ? world.createCollider(RAPIER.ColliderDesc.cylinder(TANK_TURRET_HALF_HEIGHT, TANK_TURRET_RADIUS)) : null
+    const extra = extraSolid(kind)
+    this.extra = extra ? world.createCollider(extra.desc) : null
+    if (extra) this.offset = extra.offset
   }
 
   place(pose: PoseLike) {
     this.hull.setTranslation({ x: pose.x, y: pose.y, z: pose.z })
     this.hull.setRotation({ x: pose.qx, y: pose.qy, z: pose.qz, w: pose.qw })
-    if (!this.turret) return
-    // The ring's offset in the hull frame, rotated into the world.
-    const [ox, oy, oz] = TANK_TURRET_PIVOT
+    if (!this.extra) return
+    // The offset in the hull frame, rotated into the world.
+    const [ox, oy, oz] = this.offset
     const { qx: x, qy: y, qz: z, qw: w } = pose
     const tx = ox + 2 * (w * (y * oz - z * oy) + y * (x * oy - y * ox) - z * (z * ox - x * oz))
     const ty = oy + 2 * (w * (z * ox - x * oz) + z * (y * oz - z * oy) - x * (x * oy - y * ox))
     const tz = oz + 2 * (w * (x * oy - y * ox) + x * (z * ox - x * oz) - y * (y * oz - z * oy))
-    this.turret.setTranslation({ x: pose.x + tx, y: pose.y + ty, z: pose.z + tz })
-    this.turret.setRotation({ x, y, z, w })
+    this.extra.setTranslation({ x: pose.x + tx, y: pose.y + ty, z: pose.z + tz })
+    this.extra.setRotation({ x, y, z, w })
   }
 
   remove() {
     this.world.removeCollider(this.hull, false)
-    if (this.turret) this.world.removeCollider(this.turret, false)
+    if (this.extra) this.world.removeCollider(this.extra, false)
   }
+}
+
+/** The second solid of a vehicle kind and its place in the hull frame: a tank's turret, a plane's wings. */
+export function extraSolid(kind: number | undefined): { desc: RAPIER.ColliderDesc; offset: readonly [number, number, number] } | null {
+  if (kind === KIND_TANK) return { desc: RAPIER.ColliderDesc.cylinder(TANK_TURRET_HALF_HEIGHT, TANK_TURRET_RADIUS), offset: TANK_TURRET_PIVOT }
+  if (kind === KIND_PLANE) {
+    const [x, y, z] = PLANE_WING_HALF_EXTENTS
+    return { desc: RAPIER.ColliderDesc.cuboid(x, y, z), offset: PLANE_WING_CENTRE }
+  }
+  return null
 }
 
 /** The same Rapier character controller and static scene the server simulates. */

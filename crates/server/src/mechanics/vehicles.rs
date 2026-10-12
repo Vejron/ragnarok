@@ -1,13 +1,12 @@
 use super::Mechanic;
-use crate::game::{Gun, Seat, Vehicle, World};
+use crate::game::{Gun, PlaneArms, Seat, Vehicle, World};
 use crate::physics::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_extents};
 use shared::consts::*;
 use shared::protocol::{
-    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_JEEP, KIND_SPORTS, KIND_TANK, ShotEvent, WEAPON_CRASH,
+    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_TANK, ShotEvent, WEAPON_CRASH,
     WEAPON_SCRAPE, seat_count, vehicle_hp,
 };
-use shared::quant::to_cm;
-use shared::quant::from_axis;
+use shared::quant::{from_axis, to_cm, wrap_angle};
 use shared::world::WorldFile;
 use std::collections::BTreeMap;
 
@@ -24,10 +23,15 @@ pub struct Vehicles;
 const CAR_COUNT: usize = 6;
 const TANK_COUNT: usize = 2;
 const HELI_COUNT: usize = 1;
+/// Planes, placed after everything else where they have room to take off.
+const PLANE_COUNT: usize = 2;
+/// The longest runway worth looking for, metres: a plane is off the ground in about 40.
+const RUNWAY_SEARCH: f32 = 150.0;
 /// Spawn points `Spawn` hands to players first; cars prefer the others.
 const PLAYER_SPAWNS: usize = 6;
 /// Spawn height of the chassis centre, a little above its resting height.
 const CAR_DROP_Y: f32 = 1.0;
+const PLANE_DROP_Y: f32 = 1.5;
 /// Cars at least this fast (or any overlap at all) hurl a standing player away.
 /// Knockback speed is the car's speed times this, within the limits below.
 const KNOCK_SPEED_FACTOR: f32 = 1.1;
@@ -63,6 +67,64 @@ fn road_heading(map: &WorldFile, x: f32, z: f32) -> f32 {
     best.1
 }
 
+/// Whether `point` (`[x, z]`) lies on the strip a plane at `start` facing `yaw` would take off along.
+fn on_runway(start: [f32; 3], yaw: f32, length: f32, point: [f32; 3]) -> bool {
+    let (sin, cos) = yaw.sin_cos();
+    let (dx, dz) = (point[0] - start[0], point[2] - start[2]);
+    let along = -sin * dx - cos * dz;
+    let across = cos * dx - sin * dz;
+    along > -PLANE_HALF_EXTENTS[2] && along < length && across.abs() < PLANE_WING_HALF_EXTENTS[0] + 2.0
+}
+
+/// Parks the planes at the spawn points nothing else took, facing along the road whichever way
+/// has the longer clear run, longest first. A plane is never parked on another one's runway. If no
+/// spot has a full `PLANE_RUNWAY`, the best there is will do. Returns how many were placed.
+fn place_planes(world: &mut World, candidates: &[[i32; 2]], used: &[bool]) -> usize {
+    // Vehicles already parked are in the way as much as walls are.
+    let parked_vehicles: Vec<[f32; 3]> = world.vehicles.keys().filter_map(|&vid| world.physics.car_pose(vid)).map(|pose| pose.position).collect();
+    let clear_of_vehicles = |position: [f32; 3], yaw: f32, run: f32| {
+        let (sin, cos) = yaw.sin_cos();
+        parked_vehicles
+            .iter()
+            .filter(|&&other| on_runway(position, yaw, run, other))
+            .map(|other| (-sin * (other[0] - position[0]) - cos * (other[2] - position[2]) - 3.0).max(0.0))
+            .fold(run, f32::min)
+    };
+    let mut spots: Vec<(f32, [f32; 3], f32)> = Vec::new();
+    for (&[cx, cz], _) in candidates.iter().zip(used).filter(|(_, used)| !**used) {
+        let (x, z) = (cx as f32 / 100.0, cz as f32 / 100.0);
+        let road = road_heading(&world.map, x, z);
+        let position = [x, world.map.ground.height_at(x, z) + PLANE_DROP_Y, z];
+        let best = [road, wrap_angle(road + std::f32::consts::PI)]
+            .into_iter()
+            .filter(|&yaw| world.physics.car_fits(KIND_PLANE, position, yaw))
+            .map(|yaw| (clear_of_vehicles(position, yaw, world.physics.runway(&world.map.ground, position, yaw, RUNWAY_SEARCH)), yaw))
+            .max_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some((run, yaw)) = best {
+            spots.push((run, position, yaw));
+        }
+    }
+    spots.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let mut parked: Vec<([f32; 3], f32, f32)> = Vec::new();
+    for (run, position, yaw) in spots {
+        if parked.len() == PLANE_COUNT || world.vehicles.len() >= MAX_VEHICLES {
+            break;
+        }
+        // Only the stretch each needs to get off the ground has to be clear of the other.
+        let need = |run: f32| run.min(PLANE_RUNWAY);
+        let crossing = parked.iter().any(|&(other, other_yaw, other_run)| on_runway(other, other_yaw, need(other_run), position) || on_runway(position, yaw, need(run), other));
+        if crossing {
+            continue;
+        }
+        if run < PLANE_RUNWAY {
+            tracing::warn!(run, "no full runway for a plane; parking it on the best there is");
+        }
+        add_vehicle(world, KIND_PLANE, position, yaw);
+        parked.push((position, yaw, run));
+    }
+    parked.len()
+}
+
 fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: f32) -> u32 {
     let id = world.alloc_id();
     world.physics.add_car(id, kind, position, yaw);
@@ -74,7 +136,8 @@ fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: f32) -> u32
             controls: CarControls::default(),
             home: (position, yaw),
             stuck_ticks: 0,
-            gun: (kind == KIND_TANK || kind == KIND_HELI).then(Gun::default),
+            gun: (kind == KIND_TANK || kind == KIND_HELI || kind == KIND_PLANE).then(Gun::default),
+            arms: (kind == KIND_PLANE).then(PlaneArms::default),
             hp: vehicle_hp(kind),
             wreck_in: 0,
             last_attacker: None,
@@ -211,12 +274,19 @@ const SHOT_WHEEL_PER_DAMAGE: f32 = 1.8;
 pub const BULLET_WHEEL_REACH: f32 = 1.0;
 /// A tank's armour takes this share of what a car would.
 const TANK_CRASH_FACTOR: f32 = 0.2;
+/// A plane is wood and canvas: it takes this much more, so flying it into anything at speed is the end of it.
+const PLANE_CRASH_FACTOR: f32 = 2.0;
 /// A tree gives way, so hitting one hurts half as much.
 const TREE_CRASH_FACTOR: f32 = 0.5;
 /// A lighter contact than a crash throws sparks if the vehicle is this fast (m/s), at most every few ticks.
 const SCRAPE_MIN_DV: f32 = 0.03;
 const SCRAPE_SPEED: f32 = 4.0;
 const SCRAPE_EVERY: u8 = 4;
+
+/// Whether a vehicle of `kind` has a car's four wheels, which can be bent and lost.
+fn has_car_wheels(kind: u8) -> bool {
+    kind == KIND_JEEP || kind == KIND_SPORTS
+}
 
 /// Where a car's wheels touch, in its own frame (`x`, `z`): front left, front right, rear left, rear right.
 fn wheel_spots(kind: u8) -> [[f32; 2]; 4] {
@@ -237,16 +307,16 @@ fn dent(kind: u8, damage: &mut [u8; 8], local: [f32; 3], over: f32) {
             add(&mut damage[side], over * CRASH_DENT_PER_DV * weight / total);
         }
     }
-    if kind == KIND_TANK || kind == KIND_HELI {
+    if !has_car_wheels(kind) {
         return;
     }
     hurt_wheels(kind, damage, local, over * CRASH_WHEEL_PER_DV, WHEEL_REACH);
 }
 
 /// Adds up to `amount` damage to each wheel within `reach` metres of `local` (the vehicle's frame),
-/// scaled by how close it is. A tank and a helicopter have no wheels to lose.
+/// scaled by how close it is. A tank, a helicopter and a plane have no wheels to lose.
 fn hurt_wheels(kind: u8, damage: &mut [u8; 8], local: [f32; 3], amount: f32, reach: f32) {
-    if kind == KIND_TANK || kind == KIND_HELI {
+    if !has_car_wheels(kind) {
         return;
     }
     for (wheel, [x, z]) in wheel_spots(kind).into_iter().enumerate() {
@@ -300,6 +370,9 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
         if vehicle.kind == KIND_TANK {
             over *= TANK_CRASH_FACTOR;
         }
+        if vehicle.kind == KIND_PLANE {
+            over *= PLANE_CRASH_FACTOR;
+        }
         if matches!(impact.object, Some(Obj::Tree(_))) {
             over *= TREE_CRASH_FACTOR;
         }
@@ -343,9 +416,10 @@ impl Mechanic for Vehicles {
         let spawns = world.map.spawns.clone();
         // Prefer spawn points players do not start on, then fall back to those.
         let split = PLAYER_SPAWNS.min(spawns.len());
-        let candidates = spawns[split..].iter().chain(spawns[..split].iter().rev());
+        let candidates: Vec<[i32; 2]> = spawns[split..].iter().chain(spawns[..split].iter().rev()).copied().collect();
+        let mut used = vec![false; candidates.len()];
         let mut placed = 0;
-        for &[cx, cz] in candidates {
+        for (index, &[cx, cz]) in candidates.iter().enumerate() {
             if placed == CAR_COUNT + TANK_COUNT + HELI_COUNT {
                 break;
             }
@@ -361,9 +435,11 @@ impl Mechanic for Vehicles {
             let position = [x, world.map.ground.height_at(x, z) + CAR_DROP_Y, z];
             if world.physics.car_fits(kind, position, yaw) && world.vehicles.len() < MAX_VEHICLES {
                 add_vehicle(world, kind, position, yaw);
+                used[index] = true;
                 placed += 1;
             }
         }
+        placed += place_planes(world, &candidates, &used);
         tracing::info!(vehicles = placed, "vehicles placed");
     }
 
@@ -408,6 +484,8 @@ impl Mechanic for Vehicles {
                         // A helicopter climbs on jump and sinks on run.
                         lift: f32::from(buttons & BUTTON_JUMP != 0) - f32::from(buttons & BUTTON_RUN != 0),
                         powered: true,
+                        // A plane flies towards where its pilot looks.
+                        aim: (vehicle.kind == KIND_PLANE).then(|| [shared::quant::from_mrad(input.3), shared::quant::from_mrad(input.pitch())]),
                     }
                 }
                 None => CarControls { handbrake: true, ..Default::default() },
@@ -441,12 +519,14 @@ impl Mechanic for Vehicles {
                     vehicle.hp = vehicle_hp(vehicle.kind);
                     vehicle.damage = [0; 8];
                     vehicle.last_attacker = None;
+                    vehicle.arms = vehicle.arms.map(|_| PlaneArms::default());
                     world.physics.reset_car(vid, vehicle.home.0, vehicle.home.1);
                 }
             } else if y < KILL_Y {
                 // Fallen out of the world: a fresh one at home.
                 vehicle.hp = vehicle_hp(vehicle.kind);
                 vehicle.damage = [0; 8];
+                vehicle.arms = vehicle.arms.map(|_| PlaneArms::default());
                 world.physics.reset_car(vid, vehicle.home.0, vehicle.home.1);
             } else if vehicle.stuck_ticks >= UNFLIP_TICKS {
                 world.physics.reset_car(vid, [x, y + 1.2, z], pose.yaw());
@@ -476,9 +556,11 @@ mod tests {
     fn game() -> Game {
         let map = WorldFile {
             version: WORLD_VERSION,
-            half_extent: 20_000,
-            spawns: (0..9).map(|i| [i * 3000 - 12_000, 0]).collect(),
-            roads: vec![Road { width: 800, kind: 0, points: vec![[-20_000, 0], [20_000, 0]] }],
+            half_extent: 30_000,
+            // Nine spots in the middle for the cars, tanks and helicopter, and one far out at each end
+            // for the planes. Players start on the first six.
+            spawns: [[-25_000, 0], [25_000, 0]].into_iter().chain((0..9).map(|i| [i * 3000 - 12_000, 0])).collect(),
+            roads: vec![Road { width: 800, kind: 0, points: vec![[-30_000, 0], [30_000, 0]] }],
             ..Default::default()
         };
         // Loose items would take a test's use button.
@@ -519,7 +601,9 @@ mod tests {
     #[test]
     fn cars_are_placed_along_the_road() {
         let game = game();
-        assert_eq!(game.world.vehicles.len(), CAR_COUNT + TANK_COUNT + HELI_COUNT);
+        assert_eq!(game.world.vehicles.len(), CAR_COUNT + TANK_COUNT + HELI_COUNT + PLANE_COUNT);
+        let planes = game.world.vehicles.values().filter(|vehicle| vehicle.kind == KIND_PLANE).count();
+        assert_eq!(planes, PLANE_COUNT);
         let tanks = game.world.vehicles.values().filter(|vehicle| vehicle.kind == KIND_TANK).count();
         assert_eq!(tanks, TANK_COUNT);
         let helis = game.world.vehicles.values().filter(|vehicle| vehicle.kind == KIND_HELI).count();
@@ -822,7 +906,16 @@ mod tests {
             let after = game.world.physics.car_pose(id).unwrap();
             let moved = (after.position[0] - before.position[0]).hypot(after.position[2] - before.position[2]);
             let ground = game.world.map.ground.height_at(after.position[0], after.position[2]);
-            assert!(after.up_y > 0.99 && after.position[1] < ground + 1.0 && moved < 0.5, "car {id}: {before:?} -> {after:?}");
+            // A plane stands taller on its undercarriage than any car.
+            let ride = if game.world.vehicles[&id].kind == KIND_PLANE { 1.3 } else { 1.0 };
+            assert!(after.up_y > 0.99 && after.position[1] < ground + ride && moved < 0.5, "car {id}: {before:?} -> {after:?}");
+        }
+        let planes = game.world.vehicles.values().filter(|vehicle| vehicle.kind == KIND_PLANE).count();
+        assert_eq!(planes, PLANE_COUNT, "both planes find somewhere to stand");
+        for (&id, _) in game.world.vehicles.iter().filter(|(_, vehicle)| vehicle.kind == KIND_PLANE) {
+            let pose = game.world.physics.car_pose(id).unwrap();
+            let runway = game.world.physics.runway(&game.world.map.ground, pose.position, pose.yaw(), RUNWAY_SEARCH);
+            assert!(runway >= PLANE_RUNWAY, "plane {id} has {runway} m to take off in");
         }
     }
 
@@ -992,5 +1085,87 @@ mod tests {
         let middle = game.world.physics.car_pose(b).unwrap().position;
         shoot_wheels(&mut game.world, b, middle, 90.0, BULLET_WHEEL_REACH);
         assert_eq!(game.world.vehicles[&b].damage[DAMAGE_WHEELS..], [0; 4]);
+    }
+
+    #[test]
+    fn a_plane_is_never_parked_on_another_ones_runway() {
+        let game = game();
+        let planes: Vec<CarPose> = game.world.vehicles.iter().filter(|(_, v)| v.kind == KIND_PLANE).map(|(&id, _)| game.world.physics.car_pose(id).unwrap()).collect();
+        let [a, b] = &planes[..] else { panic!("two planes: {planes:?}") };
+        assert!(!on_runway(a.position, a.yaw(), PLANE_RUNWAY, b.position) && !on_runway(b.position, b.yaw(), PLANE_RUNWAY, a.position), "{a:?} {b:?}");
+        // Each faces in along the road, towards the middle, where it has room.
+        assert!(a.position[0] * b.position[0] < 0.0, "one at each end: {a:?} {b:?}");
+        for pose in [a, b] {
+            let inward = -pose.position[0].signum();
+            let (sin, _) = pose.yaw().sin_cos();
+            assert!(-sin * inward > 0.99, "{pose:?}");
+        }
+        // Nothing parked in the way either.
+        for (&vid, _) in game.world.vehicles.iter().filter(|(_, v)| v.kind != KIND_PLANE) {
+            let other = game.world.physics.car_pose(vid).unwrap().position;
+            assert!(!on_runway(a.position, a.yaw(), PLANE_RUNWAY, other) && !on_runway(b.position, b.yaw(), PLANE_RUNWAY, other), "{other:?}");
+        }
+    }
+
+    #[test]
+    fn a_pilot_and_a_gunner_take_a_plane_off_and_a_third_stays_behind() {
+        let mut game = game();
+        let (&vid, _) = game.world.vehicles.iter().find(|(_, vehicle)| vehicle.kind == KIND_PLANE).expect("a plane is placed");
+        let start = game.world.physics.car_pose(vid).unwrap();
+        let mut crew = Vec::new();
+        for _ in 0..3 {
+            let (id, inbox) = join(&mut game);
+            crew.push((id, inbox, 0));
+        }
+        for (id, _, seq) in &mut crew {
+            idle(&mut game, *id, seq, 3);
+            game.world.players.get_mut(id).unwrap().character.position = [start.position[0], STANDING_Y, start.position[2] + 3.0];
+            press(&mut game, *id, seq, (0, 0), BUTTON_USE, 1);
+            idle(&mut game, *id, seq, 3);
+        }
+        let seated: Vec<_> = crew.iter().map(|(id, ..)| game.world.players[id].seat.map(|seat| seat.index)).collect();
+        assert_eq!(seated, [Some(0), Some(1), None], "a pilot, a gunner, and nobody else");
+        let state = game.vehicle_states().into_iter().find(|v| v.0 == vid).unwrap();
+        assert_eq!(state.13, Some(shared::protocol::Arms(0, 0, 0, PLANE_BOMBS, 0)), "the plane reports its weapons");
+
+        // Space for full throttle and a little back stick (S) to lift off, along the road.
+        let (pilot, gunner, mut seq) = (crew[0].0, crew[1].0, crew[0].2);
+        let yaw = shared::quant::to_mrad(start.yaw());
+        for _ in 0..60 * 7 {
+            seq += 1;
+            game.handle(Command::Input(pilot, 0, vec![InputFrame(seq, 0, -60, yaw, BUTTON_JUMP, 0, 0, 0)]));
+            game.step();
+        }
+        let flying = game.world.physics.car_pose(vid).unwrap();
+        assert!(flying.position[1] > start.position[1] + 5.0 && flying.forward_speed > PLANE_STALL_SPEED, "{start:?} -> {flying:?}");
+        assert_eq!(game.world.players[&gunner].character.position, flying.position, "the gunner goes up with it");
+        assert!(game.drive_state(pilot).is_some(), "the pilot predicts the plane");
+    }
+
+    #[test]
+    fn a_gentle_landing_does_no_harm() {
+        let mut game = game();
+        let (&vid, _) = game.world.vehicles.iter().find(|(_, vehicle)| vehicle.kind == KIND_PLANE).unwrap();
+        let pose = game.world.physics.car_pose(vid).unwrap();
+        // Coming in at 22 m/s and sinking at a metre and a half a second.
+        game.world.physics.set_car_dive(vid, [pose.position[0], 3.0, pose.position[2]], pose.yaw(), -0.07, 22.0);
+        let events = crash_events(&mut game, 180);
+        let vehicle = &game.world.vehicles[&vid];
+        assert_eq!(vehicle.hp, vehicle_hp(KIND_PLANE), "{events:?}");
+        let landed = game.world.physics.car_pose(vid).unwrap();
+        assert!(landed.up_y > 0.95 && landed.position[1] < 1.5, "{landed:?}");
+    }
+
+    #[test]
+    fn flying_a_plane_into_the_ground_wrecks_it() {
+        let mut game = game();
+        let (&vid, _) = game.world.vehicles.iter().find(|(_, vehicle)| vehicle.kind == KIND_PLANE).unwrap();
+        let pose = game.world.physics.car_pose(vid).unwrap();
+        // Diving at 45° and 30 m/s, a few metres up.
+        game.world.physics.set_car_dive(vid, [pose.position[0], 6.0, pose.position[2]], pose.yaw(), -0.8, 30.0);
+        for _ in 0..120 {
+            Vehicles.on_tick(&mut game.world, TICK_DT);
+        }
+        assert!(game.world.vehicles[&vid].wrecked(), "hp {}", game.world.vehicles[&vid].hp);
     }
 }

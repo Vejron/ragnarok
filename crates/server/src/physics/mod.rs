@@ -63,6 +63,8 @@ pub struct Physics {
     /// Objects destroyed since the last step. Their colliders go at the start of the next
     /// `step_cars`, which is also what makes the broad-phase forget them.
     removals: Vec<Obj>,
+    /// How far the playable square reaches from the centre to each side, metres. Planes turn back near it.
+    bound: f32,
 }
 
 /// Height of the top of the invisible boundary walls around the playable square, metres above
@@ -194,6 +196,7 @@ impl Physics {
             objects: HashMap::new(),
             handles: HashMap::new(),
             removals: Vec::new(),
+            bound: from_cm(world.half_extent),
         };
         for (collider, object) in static_colliders(world)? {
             let handle = physics.colliders.insert(collider);

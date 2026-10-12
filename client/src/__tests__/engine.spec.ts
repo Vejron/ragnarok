@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { crashSize, gearing, groundGain, landingThud, mixOf, squealGain, type SoundInput } from '@/sim/engine'
 import { SPORTS_MAX_SPEED } from '@/sim/consts'
-import { KIND_HELI, KIND_JEEP, KIND_SPORTS, KIND_TANK } from '@/net/codec'
+import { KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_TANK } from '@/net/codec'
 import { SURFACE_ASPHALT, SURFACE_DIRT, SURFACE_WATER } from '@/sim/surface'
 
 const running = (over: Partial<SoundInput> = {}): SoundInput => ({
@@ -115,5 +115,34 @@ describe('sound levels', () => {
 
   it('picks a crash size by speed', () => {
     expect([crashSize(3), crashSize(10), crashSize(25)]).toEqual([0, 1, 2])
+  })
+})
+
+describe('a plane’s rotary', () => {
+  const flying = (over: Partial<SoundInput> = {}) => running({ kind: KIND_PLANE, grounded: false, accel: 0, ...over })
+
+  it('has no gears: its note only rises with the airspeed', () => {
+    let last = mixOf(flying({ speed: 0 })).pitch
+    for (let v = 1; v <= 45; v++) {
+      const now = mixOf(flying({ speed: v })).pitch
+      expect(now).toBeGreaterThan(last)
+      last = now
+    }
+    expect(mixOf(flying({ speed: 35 })).chop).toBeGreaterThan(20)
+  })
+
+  it('falls nearly silent and drops its note on the blip switch', () => {
+    const open = mixOf(flying({ speed: 35 }))
+    const cut = mixOf(flying({ speed: 35, cut: true }))
+    expect(cut.cut).toBe(true)
+    expect(open.cut).toBe(false)
+    expect(cut.engine).toBeLessThan(open.engine)
+    expect(cut.pitch).toBeLessThan(open.pitch)
+  })
+
+  it('whistles in the wind in the air, louder the faster, even without a pilot', () => {
+    expect(mixOf(flying({ speed: 40 })).ground).toBeGreaterThan(mixOf(flying({ speed: 20 })).ground)
+    expect(mixOf(flying({ speed: 40, powered: false })).ground).toBeGreaterThan(0.2)
+    expect(mixOf(running({ kind: KIND_PLANE, speed: 0, grounded: true })).ground).toBe(0)
   })
 })

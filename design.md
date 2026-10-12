@@ -110,7 +110,7 @@ Remote entities are drawn in the past, at `renderTick = estServerTick − interp
 
 The `Combat` mechanic owns health. Each player has `hp` (100), and `damage()` is the only place it goes down. At zero the player dies: the killer is credited, a `kill` goes out on a reliable stream, and the body stays where it fell (flag `dead`) until `RESPAWN_TICKS` have passed. Then `Spawn::place` puts it at a spawn point with full health. Falling below `KILL_Y` is a death with no killer. Dead players cannot fire, board a vehicle, be hit or be knocked.
 
-**The hotbar.** Every player has five slots (`Player::hotbar`, `[item, count, ammo]`) and starts each life with them empty. The client says which is in hand in the `slot` field of every input; `BUTTON_FIRE` then does whatever that item does, while standing. Items are defined once, in `shared::items` (mirrored in `client/src/sim/items.ts`): a damage, a cooldown, a magazine and so on, so a new weapon is a row in a table. Dying empties the hotbar. Changing slot drops a reload or a bandage in progress.
+**The hotbar.** Every player has five slots (`Player::hotbar`, `[item, count, ammo]`) and starts each life with the revolver, AK5 and sniper (full magazines), a stack of three grenades and one empty slot (`game::starting_hotbar`). The client says which is in hand in the `slot` field of every input; `BUTTON_FIRE` then does whatever that item does, while standing. Items are defined once, in `shared::items` (mirrored in `client/src/sim/items.ts`): a damage, a cooldown, a magazine and so on, so a new weapon is a row in a table. Dying drops the lot; the next life starts from the standard loadout again. Changing slot drops a reload or a bandage in progress.
 
 **Items.** Seated players use none of them: a gunner's trigger belongs to the gun.
 
@@ -129,7 +129,7 @@ The `Combat` mechanic owns health. Each player has `hp` (100), and `damage()` is
 
 **Blasts** (`combat::blast`) throw standing players away and hurt them, and shove and hurt vehicles, all falling off linearly to the radius. The shell does 125 at its centre, which kills outright within about 1.4 m; the rocket does 110, which kills within about half a metre of a direct hit.
 
-**Vehicles** have health (car and helicopter 100, tank 250). At zero it is wrecked: everyone inside is thrown out and killed (credited to whoever last hurt it), it goes up in a blast that can take the next one with it, nobody can board it, and after `WRECK_TICKS` it is put back at its home with full health. Seated players take no direct damage: they die with the vehicle.
+**Vehicles** have health (car and helicopter 100, tank 250, plane 70). At zero it is wrecked: everyone inside is thrown out and killed (credited to whoever last hurt it), it goes up in a blast that can take the next one with it, nobody can board it, and after `WRECK_TICKS` it is put back at its home with full health. Seated players take no direct damage: they die with the vehicle.
 
 **Lag compensation.** Every input frame carries `view`, the server tick its picture showed (modulo 65536), which the client takes from its render tick. The server records where each standing player was at the end of the last 16 ticks (`World::history`). A rifle shot tests players where they stood at `view`, at most 15 ticks (250 ms) back and never forwards, so a shooter hits what they saw. Walls and vehicles are tested in the present, and rockets are simulated forward on the server, so neither is rewound. This is the Source/Overwatch model. A shooter with a lot of lag can still be killed round a corner by the target's own view of events, which is the usual trade.
 
@@ -187,7 +187,7 @@ Datagrams are capped at 1200 bytes (`MAX_PACKET`). Interest management and delta
 
 ## 8. World pipeline (OpenStreetMap)
 
-`cargo run -p osm-import`. The default is an 8.6 km square of central Umeå, Backen to Nydala (63.8225, 20.235, half-side 4300 m); `scripts/world-dev.sh` makes a ~5 km² dev world around Mariehem instead. `--center lat,lon --half metres` picks another place, `--bbox south,west,north,east` an exact box, `--tile` the tile size (250 m), and `--synthetic` generates a grid city offline.
+`cargo run -p osm-import`. The default is an 8.6 km square of central Umeå, Backen to Nydala (63.8225, 20.235, half-side 4300 m); `scripts/world-dev.sh` makes a ~7.6 km² dev world around Mariehem instead. `--center lat,lon --half metres` picks another place, `--bbox south,west,north,east` an exact box, `--tile` the tile size (250 m), and `--synthetic` generates a grid city offline.
 
 **The full pipeline is documented in [WORLD.md](WORLD.md)**: every data source and licence (OpenStreetMap, Lantmäteriet's height model and laser data, Umeå's tree register), where the credentials go (`.env.local`), all flags, and the download cache (`.cache/osm-import/`, git-ignored; `--refresh`, `--clear-cache`). This section covers what the output means.
 
@@ -304,6 +304,7 @@ Vehicles are server-side dynamic rigid bodies (§10). The physics pipeline steps
   - Tank (built): six unsteered ray-cast wheels under a 3.4 t hull, with a driver and a gunner. The physics sets the yaw rate directly, so it turns on the spot like a tracked vehicle. See [VEHICLES-II.md](VEHICLES-II.md).
   - Gunner seat (built): seat 1 of a tank. Instead of driving, that player's input aims the turret and fires the gun. The `Gunnery` mechanic does this, apart from `Vehicles`. The turret follows the gunner's world heading at 1.4 rad/s (the barrel at 0.9 rad/s, between −7° and +29°), so turning the hull doesn't drag the aim. A shell is a projectile that leaves the muzzle at 140 m/s, falls under gravity and bursts on the first wall, vehicle or stickman it meets, with a 90-tick reload. The blast (7 m radius) throws stickmen and shoves vehicles. The snapshot carries `turret` angles and a shot counter.
   - Helicopter (built): no wheels. The hull's attitude is driven to a lean set by the stick (angular velocity towards the wanted up axis), the yaw rate is set directly, and a force along the up axis cancels gravity and holds the vertical speed the climb input asks for. Stateless, so the pilot predicts it like a car. Two seats: the pilot, and a gunner on an autocannon nose gun that fires small explosive shells. See [VEHICLES-II.md](VEHICLES-II.md#the-helicopter).
+  - Plane (built): a Fokker Dr.I triplane stretched into a two-seater. Ray-cast wheels on the ground; in the air a stateless wing model (thrust, lift that fades below the stall speed, drag, a fin) and mouse-aim controls that fly it where the pilot looks. The pilot fires two forward machine guns (hitscan, with overheating) and drops bombs; the gunner works a ring-mounted gun behind. See [VEHICLES-IV.md](VEHICLES-IV.md).
 
 ## 11. Modular mechanics
 
@@ -350,8 +351,8 @@ pub trait Mechanic: Send {
 
 1. **MVP (done):** server-authoritative stickmen on an OSM block, with prediction, reconciliation, interpolation, adaptive delay, network emulation and cross-language fixtures.
 2. **Vehicles I (done):** a car, seats, enter and exit, driver input routing, server-simulated and interpolated. See [VEHICLES-I.md](VEHICLES-I.md).
-3. **Vehicles II (done):** the tank with a gunner seat, driver-side prediction and the helicopter. See [VEHICLES-II.md](VEHICLES-II.md).
-4. **Combat (done):** free-for-all. Health, death and respawn, hitscan guns with lag compensation, vehicle damage and wrecks, kill feed and scoreboard.
+3. **Vehicles II (done):** the tank with a gunner seat, driver-side prediction and the helicopter. See [VEHICLES-II.md](VEHICLES-II.md). Later: handling, crashes and sound ([VEHICLES-III.md](VEHICLES-III.md)), and the triplane ([VEHICLES-IV.md](VEHICLES-IV.md)).
+4. **Combat (done):** free-for-all. Health, death and respawn, hitscan guns with lag compensation, vehicle damage and wrecks, kill feed and scoreboard. Hit feedback: the server sends each shooter and victim a targeted `hit` event (see NETWORKING.md); the client draws a crosshair marker, hit and hurt sounds, a screen-edge flash and arcs towards the attacker.
 5. **Hotbar and pickups (done):** a five-slot hotbar with revolver, AK5, grenades and bandages, scattered around the map and taken with use. Per-item poses in the character model. Game modes and teams are next.
 5. **Scale (done):** a room of 64 on a 2 km map.
    - Delta-compressed snapshots against the last acknowledged one, and interest management by distance (§5.8).

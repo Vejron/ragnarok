@@ -8,17 +8,30 @@
 //! physics sets its yaw rate directly, which is how skid steering looks from the outside.
 //! A helicopter has no wheels at all: its rotor is a push along the hull's up axis, and the hull is
 //! levelled and turned by setting its angular velocity, so it is flown by leaning (see [`fly`]).
+//! A plane rolls on wheels like a car, with no engine on them: its propeller pushes the body along the
+//! nose, and its wings hold it up once it is fast enough (see [`wing`]).
 //! "Car" in the names below means any of these vehicles; [`Spec`] says which one.
 
 use super::{Obj, Physics};
 use rapier3d::control::{DynamicRayCastVehicleController, WheelTuning};
 use rapier3d::prelude::*;
 use shared::consts::*;
-use shared::protocol::{DAMAGE_WHEELS, KIND_HELI, KIND_SPORTS, KIND_TANK, WHEEL_GONE, vehicle_hp};
+use shared::protocol::{DAMAGE_WHEELS, KIND_HELI, KIND_PLANE, KIND_SPORTS, KIND_TANK, WHEEL_GONE, vehicle_hp};
 
 /// Gravity acting on vehicle bodies. Stickmen use `GRAVITY`; the ray-cast suspension is tuned
 /// around the real-world value.
 pub const CAR_GRAVITY: f32 = 9.81;
+
+/// What holds a vehicle up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Lift {
+    /// Its wheels, and nothing else.
+    Wheels,
+    /// A rotor, with no wheels at all.
+    Rotor,
+    /// Wheels on the ground and wings in the air, with a propeller to push it.
+    Wing,
+}
 
 /// What differs between vehicle kinds.
 pub(super) struct Spec {
@@ -39,8 +52,7 @@ pub(super) struct Spec {
     steer_lock: f32,
     /// Yaw rate at full stick for a vehicle that turns on the spot, rad/s.
     turn_rate: f32,
-    /// Flies on a rotor instead of rolling on wheels.
-    flies: bool,
+    lift: Lift,
     linear_damping: f32,
     /// How far below the box's centre the centre of mass sits, metres. A low one keeps a car on its
     /// wheels through hard corners; zero leaves the box's own.
@@ -62,7 +74,7 @@ static JEEP: Spec = Spec {
     max_speed: JEEP_MAX_SPEED,
     steer_lock: JEEP_MAX_STEER,
     turn_rate: 0.0,
-    flies: false,
+    lift: Lift::Wheels,
     linear_damping: 0.05,
     com_drop: 0.15,
 };
@@ -81,7 +93,7 @@ static SPORTS: Spec = Spec {
     max_speed: SPORTS_MAX_SPEED,
     steer_lock: SPORTS_MAX_STEER,
     turn_rate: 0.0,
-    flies: false,
+    lift: Lift::Wheels,
     linear_damping: 0.05,
     com_drop: 0.02,
 };
@@ -100,7 +112,7 @@ static TANK: Spec = Spec {
     max_speed: TANK_MAX_SPEED,
     steer_lock: 0.0,
     turn_rate: TANK_TURN_RATE,
-    flies: false,
+    lift: Lift::Wheels,
     linear_damping: 0.05,
     com_drop: 0.0,
 };
@@ -119,9 +131,30 @@ static HELI: Spec = Spec {
     max_speed: 0.0,
     steer_lock: 0.0,
     turn_rate: 0.0,
-    flies: true,
+    lift: Lift::Rotor,
     // Air drag is what limits the speed: the rotor's lean gives about 4.9 m/s², so about 25 m/s.
     linear_damping: 0.2,
+    com_drop: 0.0,
+};
+
+static PLANE: Spec = Spec {
+    half_extents: PLANE_HALF_EXTENTS,
+    // 6.7 m³ of fuselage is about 600 kg, a Dr.I fully loaded. The wings are a weightless second box.
+    density: 90.0,
+    wheel_radius: PLANE_WHEEL_RADIUS,
+    track_half: PLANE_TRACK_HALF,
+    axles: &PLANE_AXLES_Z,
+    hard_point_y: PLANE_HARD_POINT_Y,
+    suspension_rest: PLANE_SUSPENSION_REST,
+    max_suspension_force: 30_000.0,
+    // The wheels only roll and steer; the propeller is a force on the body.
+    engine_force: 0.0,
+    max_speed: 0.0,
+    steer_lock: PLANE_MAX_STEER,
+    turn_rate: 0.0,
+    lift: Lift::Wing,
+    // Drag is `PLANE_DRAG`, by the square of the speed.
+    linear_damping: 0.0,
     com_drop: 0.0,
 };
 
@@ -130,6 +163,7 @@ pub(super) fn spec(kind: u8) -> &'static Spec {
     match kind {
         KIND_TANK => &TANK,
         KIND_HELI => &HELI,
+        KIND_PLANE => &PLANE,
         KIND_SPORTS => &SPORTS,
         _ => &JEEP,
     }
@@ -178,15 +212,18 @@ const LOST_WHEEL_RADIUS: f32 = 0.05;
 /// What the driver asks of the car this tick.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct CarControls {
-    /// -1 (reverse) ..= 1 (forward).
+    /// -1 (reverse) ..= 1 (forward). A plane's throttle: full ahead, cruising at 0, the blip switch behind.
     pub throttle: f32,
-    /// -1 (left) ..= 1 (right). A helicopter turns instead.
+    /// -1 (left) ..= 1 (right). A helicopter turns instead, and a plane rolls.
     pub steer: f32,
     pub handbrake: bool,
     /// -1 (sink) ..= 1 (climb). Only a helicopter has it.
     pub lift: f32,
-    /// The rotor is turning, i.e. a pilot is aboard. Only a helicopter has it.
+    /// The rotor or the propeller is turning, i.e. a pilot is aboard. Only a helicopter and a plane have it.
     pub powered: bool,
+    /// Where a plane's pilot points the mouse, `[yaw, pitch]` in radians (yaw 0 faces -Z, + turns left):
+    /// the plane turns towards it, banking into the turn. `None` flies on in a straight line.
+    pub aim: Option<[f32; 2]>,
 }
 
 /// How worn a vehicle is, which both ends' physics apply: the engine's power and the state of a
@@ -212,7 +249,7 @@ impl CarCondition {
 
 impl CarControls {
     /// Nobody asks for anything.
-    pub const IDLE: CarControls = CarControls { throttle: 0.0, steer: 0.0, handbrake: false, lift: 0.0, powered: false };
+    pub const IDLE: CarControls = CarControls { throttle: 0.0, steer: 0.0, handbrake: false, lift: 0.0, powered: false, aim: None };
 }
 
 /// A car's pose as the game loop and the wire need it.
@@ -273,8 +310,8 @@ pub(super) struct Car {
     spec: &'static Spec,
     body: RigidBodyHandle,
     collider: ColliderHandle,
-    /// A tank's turret, a second solid on the same body. It has no mass of its own.
-    turret: Option<ColliderHandle>,
+    /// A tank's turret or a plane's wings, a second solid on the same body. It has no mass of its own.
+    extra: Option<ColliderHandle>,
     controller: DynamicRayCastVehicleController,
     /// Current front wheel angle, radians, + is right.
     steer: f32,
@@ -282,7 +319,7 @@ pub(super) struct Car {
     turn: f32,
     /// The yaw rate it is actually turning at, rad/s, + is clockwise. It ramps towards `turn`.
     spin: f32,
-    /// What a helicopter was last asked to do, applied in the next [`Physics::step_cars`].
+    /// What a helicopter or a plane was last asked to do, applied in the next [`Physics::step_cars`].
     flight: CarControls,
     /// Throttle and steering of a car, which tilt it while it is in the air.
     air: (f32, f32),
@@ -292,7 +329,7 @@ pub(super) struct Car {
 impl Car {
     /// Whether `collider` is one of this vehicle's solids.
     fn owns(&self, collider: ColliderHandle) -> bool {
-        self.collider == collider || self.turret == Some(collider)
+        self.collider == collider || self.extra == Some(collider)
     }
 }
 
@@ -308,6 +345,26 @@ const RIDE_PROBE: f32 = 0.06;
 /// of the way, then less and less until none at `max`.
 fn pull(speed: f32, max: f32) -> f32 {
     ((max - speed.abs()) / (max * (1.0 - FULL_POWER))).clamp(0.0, 1.0)
+}
+
+/// A plane's wheels for one tick: no engine, the front pair steered towards where the pilot looks
+/// (and by A/D), and braked while the stick is pulled back or nobody is aboard.
+fn roll_plane(car: &mut Car, controls: CarControls, body: &RigidBody, speed: f32, mass: f32, dt: f32) {
+    let _ = body;
+    let wanted = if controls.powered { controls.steer.clamp(-1.0, 1.0) } else { 0.0 };
+    let lock = car.spec.steer_lock / (1.0 + speed.abs() / STEER_FADE_SPEED);
+    let target = wanted * lock;
+    let returning = target.abs() < car.steer.abs() || target * car.steer < 0.0;
+    let step = STEER_RATE * if returning { STEER_RETURN } else { 1.0 } * dt;
+    car.steer += (target - car.steer).clamp(-step, step);
+    let braking = !controls.powered || controls.lift < -0.5;
+    let brake = if braking { 0.5 * BRAKE_PER_KG * mass } else { COAST_BRAKE_PER_KG * mass };
+    let steer = car.steer;
+    for (index, wheel) in car.controller.wheels_mut().iter_mut().enumerate() {
+        wheel.steering = if index < 2 { -steer } else { 0.0 };
+        wheel.engine_force = 0.0;
+        wheel.brake = brake;
+    }
 }
 
 /// Keeps a car planted and lets it be steered in the air: downforce while any wheel is down, and a
@@ -362,6 +419,169 @@ fn fly(body: &mut RigidBody, controls: CarControls, dt: f32) {
     body.add_force(up * (accel * body.mass()), true);
 }
 
+/// The share of a plane's thrust its throttle asks for. With the stick released it cruises in the
+/// air but idles on the ground, so a pilot who climbs in does not roll off at once.
+fn throttle_setting(throttle: f32, grounded: bool) -> f32 {
+    let throttle = throttle.clamp(-1.0, 1.0);
+    if throttle > 0.0 {
+        PLANE_CRUISE_THROTTLE + throttle * (1.0 - PLANE_CRUISE_THROTTLE)
+    } else if throttle < 0.0 {
+        PLANE_CRUISE_THROTTLE + throttle * (PLANE_CRUISE_THROTTLE - PLANE_IDLE_THROTTLE)
+    } else if grounded {
+        PLANE_IDLE_THROTTLE
+    } else {
+        PLANE_CRUISE_THROTTLE
+    }
+}
+
+/// The unit direction a pilot looking at `[yaw, pitch]` wants to fly, turned back towards the middle
+/// near the edge of a world `bound` metres from its centre to each side.
+fn aim_direction(aim: [f32; 2], position: Vector, bound: f32) -> Vector {
+    let [yaw, pitch] = aim;
+    let direction = Vector::new(-yaw.sin() * pitch.cos(), pitch.sin(), -yaw.cos() * pitch.cos());
+    // How far into the margin it is along each axis, 0 to 1, towards the side it is on.
+    let into = |coordinate: f32| ((coordinate.abs() - (bound - PLANE_EDGE_MARGIN)) / PLANE_EDGE_MARGIN).clamp(0.0, 1.0) * coordinate.signum();
+    let (x, z) = (into(position.x), into(position.z));
+    let near = x.abs().max(z.abs());
+    if near == 0.0 {
+        return direction;
+    }
+    // Inwards and level, blended in the deeper it goes.
+    let inward = Vector::new(-x, 0.0, -z).normalize();
+    let blended = direction * (1.0 - near) + inward * near;
+    if blended.length() > 1e-3 { blended.normalize() } else { inward }
+}
+
+/// How deep into the edge margin `position` is, 0 (outside it) to 1 (at the wall).
+fn edge_depth(position: Vector, bound: f32) -> f32 {
+    let into = |coordinate: f32| ((coordinate.abs() - (bound - PLANE_EDGE_MARGIN)) / PLANE_EDGE_MARGIN).clamp(0.0, 1.0);
+    into(position.x).max(into(position.z))
+}
+
+/// What a plane flies itself to do to head for `target`, a world direction: `[pitch, yaw, roll]`, each
+/// -1..=1 as a share of the full rate. It banks into the turn and pulls once banked, takes the turn
+/// level when the target is behind, and levels its wings when the target is nearly ahead. The pilot
+/// uses it near the edge of the world and an empty plane to glide.
+fn autopilot(rotation: Rotation, target: Vector, airspeed: f32) -> [f32; 3] {
+    let up = rotation * Vector::Y;
+    let right = rotation * Vector::X;
+    let local = rotation.inverse() * target;
+    // How far off the nose the target is, and which way round it lies seen from the cockpit:
+    // `across` right and `above` up, a unit pair.
+    let off = (-local.z).clamp(-1.0, 1.0).acos();
+    let lateral = local.x.hypot(local.y);
+    let (mut across, mut above) = if lateral > 1e-3 { (local.x / lateral, local.y / lateral) } else { (1.0, 0.0) };
+    let bank = (-right.y).atan2(up.y);
+    // Anywhere behind, a level turn to whichever side it is on, rather than a loop over the top or a
+    // dive: the target is taken to be level off that wing, which the bank brings overhead.
+    if off > std::f32::consts::FRAC_PI_2 {
+        // Nearly dead astern, keep turning the way it already leans, so it does not dither.
+        let lean = if across.abs() < 0.5 && bank.abs() > 0.2 { bank } else { across };
+        let side = if lean < 0.0 { -1.0 } else { 1.0 };
+        (across, above) = (side * bank.cos(), bank.sin().abs());
+    }
+    let mut pitch = (above * off * PLANE_AIM_GAIN).clamp(-1.0, 1.0);
+    if pitch > 0.0 {
+        // A wide turn waits for the bank before it pulls, and nobody pulls hard near the stall.
+        let banked = if off > 1.2 { (bank.abs() / PLANE_MAX_BANK).clamp(0.25, 1.0) } else { 1.0 };
+        let margin = ((airspeed - PLANE_STALL_SPEED) / (0.4 * PLANE_STALL_SPEED)).clamp(0.2, 1.0);
+        pitch *= banked * margin;
+    }
+    let yaw = (across * off * PLANE_AIM_GAIN).clamp(-1.0, 1.0);
+    let level = (-bank * 2.0).clamp(-1.0, 1.0);
+    let into = (across * off * 3.0).clamp(-1.0, 1.0);
+    let blend = (off / PLANE_BANK_ANGLE).min(1.0);
+    let roll = (level + (into - level) * blend).clamp((-PLANE_MAX_BANK - bank) * 3.0, (PLANE_MAX_BANK - bank) * 3.0);
+    [pitch, yaw, roll.clamp(-1.0, 1.0)]
+}
+
+/// One tick of a plane's flight, applied before the rigid-body step on top of its wheels.
+///
+/// The propeller pushes along the nose. Above the stall speed the wings hold the plane up, turn its
+/// flight path towards where the nose points (lift grows with the angle between them) and the fin
+/// kills sideslip; below it the lift fades away and the nose drops towards where the plane is going.
+/// Drag grows with the square of the speed.
+///
+/// The mouse sets a heading: the plane turns towards `aim` as the autopilot would, banking into the turn
+/// and levelling when it arrives; W/S and A/D take pitch and roll over by hand while they are held.
+/// The controls are a stick and a throttle. Throttle: `lift` is Space (+1, full) and Shift (-1, cut),
+/// with cruise when neither is held. Stick: `throttle` is the forward axis, W (+1) pushes the nose down and
+/// S pulls it up; with the stick centred the nose settles back to the horizon. A/D (`steer`) roll the
+/// wings, which level again when released, and a banked plane turns of its own accord with a little
+/// rudder from the stick. Authority is lost at low speed. Near the edge of the world the plane turns itself
+/// back, and with nobody aboard it glides. Everything is a function of the body's state and the controls
+/// alone, so the client can replay it.
+fn wing(body: &mut RigidBody, controls: CarControls, power: f32, grounded: bool, bound: f32, dt: f32) {
+    let rotation = *body.rotation();
+    let nose = rotation * Vector::new(0.0, 0.0, -1.0);
+    let up = rotation * Vector::Y;
+    let right = rotation * Vector::X;
+    let velocity = body.linvel();
+    let position = body.translation();
+    let airspeed = velocity.dot(nose).max(0.0);
+    let speed = velocity.length();
+
+    // How much the wings fly, 0 (stalled) to 1.
+    let flying = ((airspeed - 0.7 * PLANE_STALL_SPEED) / (0.3 * PLANE_STALL_SPEED)).clamp(0.0, 1.0);
+    // Level flight needs no angle of attack above `PLANE_LEVEL_SPEED`; slower, the wings carry less and
+    // the plane sinks unless the nose comes up.
+    // Close to the ground they carry it all (ground effect), so it lifts off at the stall speed.
+    let carried = if grounded { 1.0 } else { (airspeed / PLANE_LEVEL_SPEED).powi(2).min(1.0) };
+    let lift = (flying * (CAR_GRAVITY * carried - PLANE_AOA_GAIN * velocity.dot(up))).clamp(-PLANE_MAX_LIFT, PLANE_MAX_LIFT);
+    let side = -PLANE_SIDE_GAIN * velocity.dot(right) * (airspeed / PLANE_STALL_SPEED).min(1.0);
+    let headroom = ((PLANE_CEILING - position.y) / 20.0).clamp(0.0, 1.0);
+    let thrust = if controls.powered { throttle_setting(controls.lift, grounded) * PLANE_THRUST * power * headroom } else { 0.0 };
+    let accel = nose * thrust + up * lift + right * side - velocity * (speed * PLANE_DRAG);
+    // A force rather than an impulse, integrated together with gravity.
+    body.add_force(accel * body.mass(), true);
+
+    // A stalled plane noses over towards where it is going.
+    let stalled = if grounded || speed < 2.0 { Vector::ZERO } else { nose.cross(velocity / speed) * (PLANE_STALL_DROP * (1.0 - flying)) };
+    let current = body.angvel();
+    let wanted = if controls.powered || !grounded {
+        let heading = (-nose.x).atan2(-nose.z);
+        let near = edge_depth(position, bound);
+        // What the plane flies itself to do: glide on level (a little nose down with nobody aboard) and,
+        // near the edge, turn back to the middle.
+        let hold = aim_direction([heading, if controls.powered { 0.0 } else { PLANE_GLIDE_PITCH }], position, bound);
+        let auto = autopilot(rotation, hold, airspeed);
+        let [pitch, yaw, roll] = if controls.powered {
+            let bank = (-right.y).atan2(up.y);
+            let steer = controls.steer.clamp(-1.0, 1.0);
+            let pull = (-controls.throttle).clamp(-1.0, 1.0);
+            // With the mouse the plane flies itself towards where it points, as the autopilot does; the
+            // keys then take an axis over while they are held, and with neither it flies level.
+            let mouse = controls.aim.map(|[yaw, pitch]| {
+                let aim = aim_direction([yaw, pitch.clamp(-PLANE_AIM_MAX_PITCH, PLANE_AIM_MAX_PITCH)], position, bound);
+                autopilot(rotation, aim, airspeed)
+            });
+            let level_pitch = (-nose.y.clamp(-1.0, 1.0).asin() * PLANE_LEVEL_GAIN).clamp(-1.0, 1.0);
+            let pitch = if pull.abs() > 0.05 { pull } else { mouse.map_or(level_pitch, |m| m[0]) };
+            let roll = if steer.abs() > 0.05 { steer } else { mouse.map_or((-bank * 2.0).clamp(-1.0, 1.0), |m| m[2]) };
+            let roll = roll.clamp((-PLANE_MAX_BANK - bank) * 3.0, (PLANE_MAX_BANK - bank) * 3.0).clamp(-1.0, 1.0);
+            let yaw = match mouse {
+                Some(m) if steer.abs() <= 0.05 => m[1],
+                _ => (steer * 0.3 + bank.sin() * 0.8).clamp(-1.0, 1.0),
+            };
+            let own = [pitch, yaw, roll];
+            // The autopilot takes over completely by a third of the way in.
+            let taken = (near * 3.0).min(1.0);
+            std::array::from_fn(|i| own[i] * (1.0 - taken) + auto[i] * taken)
+        } else {
+            auto
+        };
+        let authority = (airspeed / PLANE_CRUISE_SPEED).powi(2).min(1.3);
+        // + about X lifts the nose, + about Y turns left and + about Z lifts the right wing.
+        let turn = Vector::new(pitch * PLANE_PITCH_RATE, -yaw * PLANE_YAW_RATE, -roll * PLANE_ROLL_RATE) * authority;
+        rotation * turn + stalled
+    } else {
+        current
+    };
+    // On the ground the wheels steer, so the controls only take over as the plane lifts off.
+    let response = (PLANE_RESPONSE * dt).min(1.0) * if grounded { flying } else { 1.0 };
+    body.set_angvel(current + (wanted - current) * response, true);
+}
+
 impl CarPose {
     /// Where `point`, fixed to the car at `self`, ends up once the car has moved to `to`.
     pub fn carry(&self, to: &CarPose, point: [f32; 3]) -> [f32; 3] {
@@ -404,7 +624,49 @@ impl Physics {
         let [hx, hy, hz] = spec(kind).half_extents;
         // Slightly inflated, so a car never starts touching a wall.
         let shape = SharedShape::cuboid(hx + 0.1, hy + 0.1, hz + 0.1);
-        !self.touches_static(shape.as_ref(), pose_of(position, yaw))
+        if self.touches_static(shape.as_ref(), pose_of(position, yaw)) {
+            return false;
+        }
+        if kind != KIND_PLANE {
+            return true;
+        }
+        let [wx, wy, wz] = PLANE_WING_HALF_EXTENTS;
+        let wings = SharedShape::cuboid(wx + 0.1, wy + 0.1, wz + 0.1);
+        let at = pose_of(position, yaw) * Vector::from(PLANE_WING_CENTRE);
+        !self.touches_static(wings.as_ref(), Pose::from_parts(at, Rotation::from_rotation_y(yaw)))
+    }
+
+    /// How far a plane parked at `position` facing `yaw` could run straight ahead before a building,
+    /// a tree or a wall gets in the way of its fuselage or wingtips, or the ground rises or falls away
+    /// more than a little, up to `max` metres. Only the static world counts: cars move.
+    pub fn runway(&self, ground: &shared::terrain::Ground, position: [f32; 3], yaw: f32, max: f32) -> f32 {
+        let (sin, cos) = yaw.sin_cos();
+        let ahead = [-sin, 0.0, -cos];
+        let right = [cos, 0.0, -sin];
+        let start = ground.height_at(position[0], position[2]);
+        let mut clear = max;
+        // The ground along the way, every few metres.
+        let mut travelled = 0.0;
+        while travelled < max {
+            travelled += 4.0;
+            let height = ground.height_at(position[0] + ahead[0] * travelled, position[2] + ahead[2] * travelled);
+            if (height - start).abs() > 1.5 {
+                clear = clear.min(travelled - 4.0);
+                break;
+            }
+        }
+        // Rays along the middle and out at each wingtip, low and at the top wing.
+        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::exclude_dynamic());
+        for offset in [0.0, -PLANE_WING_HALF_EXTENTS[0], PLANE_WING_HALF_EXTENTS[0]] {
+            for height in [0.6, 2.4] {
+                let origin = Vector::new(position[0] + right[0] * offset, start + height, position[2] + right[2] * offset);
+                let ray = Ray::new(origin, Vector::from(ahead));
+                if let Some((_, distance)) = queries.cast_ray(&ray, max, true) {
+                    clear = clear.min(distance);
+                }
+            }
+        }
+        clear.max(0.0)
     }
 
     /// Adds a vehicle of `kind` under `id`; read it back with [`Physics::car_pose`].
@@ -428,19 +690,17 @@ impl Physics {
         };
         let collider = self.colliders.insert_with_parent(chassis.build(), body, &mut self.bodies);
         // The turret is a cylinder, so it needs no turning with the gun. It adds no mass, which keeps
-        // the hull's balance and the tuning that goes with it.
-        let turret = (kind == KIND_TANK).then(|| {
-            let [x, y, z] = TANK_TURRET_PIVOT;
-            self.colliders.insert_with_parent(
-                ColliderBuilder::cylinder(TANK_TURRET_HALF_HEIGHT, TANK_TURRET_RADIUS)
-                    .translation(Vector::new(x, y, z))
-                    .density(0.0)
-                    .friction(0.4)
-                    .build(),
-                body,
-                &mut self.bodies,
-            )
-        });
+        // the hull's balance and the tuning that goes with it. A plane's wings are a weightless box
+        // the same way.
+        let extra = match kind {
+            KIND_TANK => Some(ColliderBuilder::cylinder(TANK_TURRET_HALF_HEIGHT, TANK_TURRET_RADIUS).translation(Vector::from(TANK_TURRET_PIVOT))),
+            KIND_PLANE => {
+                let [x, y, z] = PLANE_WING_HALF_EXTENTS;
+                Some(ColliderBuilder::cuboid(x, y, z).translation(Vector::from(PLANE_WING_CENTRE)))
+            }
+            _ => None,
+        }
+        .map(|collider| self.colliders.insert_with_parent(collider.density(0.0).friction(0.4).build(), body, &mut self.bodies));
         // A helicopter has no wheels, so its controller is never updated.
         let mut controller = DynamicRayCastVehicleController::new(body);
         // Our forward is -Z, but the controller only uses this axis to sign its own speed estimate,
@@ -468,7 +728,7 @@ impl Physics {
                 );
             }
         }
-        self.cars.insert(id, Car { spec, body, collider, turret, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW });
+        self.cars.insert(id, Car { spec, body, collider, extra, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW });
     }
 
     /// Puts a car back upright and at rest.
@@ -495,6 +755,19 @@ impl Physics {
         }
     }
 
+    /// Test helper: points vehicle `id` `pitch` radians up from level at `yaw`, at `position`, moving
+    /// along its nose at `speed`.
+    #[cfg(test)]
+    pub fn set_car_dive(&mut self, id: u32, position: [f32; 3], yaw: f32, pitch: f32, speed: f32) {
+        let Some(car) = self.cars.get(&id) else { return };
+        if let Some(body) = self.bodies.get_mut(car.body) {
+            let rotation = Rotation::from_rotation_y(yaw) * Rotation::from_rotation_x(pitch);
+            body.set_position(Pose::from_parts(Vector::from(position), rotation), true);
+            body.set_linvel(rotation * Vector::new(0.0, 0.0, -speed), true);
+            body.set_angvel(Vector::ZERO, true);
+        }
+    }
+
     /// How worn vehicle `id` is from now on; applied by [`Physics::drive_car`].
     pub fn set_car_condition(&mut self, id: u32, condition: CarCondition) {
         if let Some(car) = self.cars.get_mut(&id) {
@@ -505,7 +778,7 @@ impl Physics {
     /// Applies the driver's controls to the wheels for the next [`Physics::step_cars`].
     pub fn drive_car(&mut self, id: u32, controls: CarControls, dt: f32) {
         let Some(car) = self.cars.get_mut(&id) else { return };
-        if car.spec.flies {
+        if car.spec.lift == Lift::Rotor {
             car.flight = controls;
             return;
         }
@@ -513,6 +786,11 @@ impl Physics {
         let mass = body.mass();
         let forward = body.rotation() * Vector::new(0.0, 0.0, -1.0);
         let speed = forward.dot(body.linvel());
+        if car.spec.lift == Lift::Wing {
+            car.flight = controls;
+            roll_plane(car, controls, body, speed, mass, dt);
+            return;
+        }
 
         // Steering eases towards its target, and the lock narrows at speed.
         let lock = car.spec.steer_lock / (1.0 + speed.abs() / STEER_FADE_SPEED);
@@ -581,7 +859,7 @@ impl Physics {
         if self.cars.is_empty() {
             return;
         }
-        for car in self.cars.values().filter(|car| car.spec.flies) {
+        for car in self.cars.values().filter(|car| car.spec.lift == Lift::Rotor) {
             if let Some(body) = self.bodies.get_mut(car.body) {
                 // Forces persist from step to step until reset.
                 body.reset_forces(false);
@@ -590,7 +868,7 @@ impl Physics {
                 }
             }
         }
-        for car in self.cars.values_mut().filter(|car| !car.spec.flies) {
+        for car in self.cars.values_mut().filter(|car| car.spec.lift != Lift::Rotor) {
             // Wheel rays must not hit their own chassis.
             let filter = QueryFilter::default().exclude_rigid_body(car.body);
             let queries = self.broad_phase.as_query_pipeline_mut(
@@ -604,9 +882,14 @@ impl Physics {
         // A car is pressed down or tilted in the air. A tank turns on the spot, but only while some
         // track is on the ground. The wheels' side grip fights any spin every tick, so the rate is
         // kept here and written back each time.
-        for car in self.cars.values_mut().filter(|car| !car.spec.flies) {
+        for car in self.cars.values_mut().filter(|car| car.spec.lift != Lift::Rotor) {
             let grounded = car.controller.wheels().iter().any(|wheel| wheel.raycast_info().is_in_contact);
             let Some(body) = self.bodies.get_mut(car.body) else { continue };
+            if car.spec.lift == Lift::Wing {
+                body.reset_forces(false);
+                wing(body, car.flight, car.condition.power, grounded, self.bound, dt);
+                continue;
+            }
             if car.spec.steer_lock > 0.0 {
                 assist(body, car.air, grounded, dt);
             }
@@ -627,7 +910,7 @@ impl Physics {
     pub fn car_tree_contacts(&self) -> Vec<(u32, Obj)> {
         let mut found = Vec::new();
         for (&id, car) in &self.cars {
-            for handle in [Some(car.collider), car.turret].into_iter().flatten() {
+            for handle in [Some(car.collider), car.extra].into_iter().flatten() {
                 for pair in self.narrow_phase.contact_pairs_with(handle) {
                     if !pair.has_any_active_contact() {
                         continue;
@@ -647,7 +930,7 @@ impl Physics {
         let mut found = Vec::new();
         for (&id, car) in &self.cars {
             let Some(body) = self.bodies.get(car.body) else { continue };
-            for handle in [Some(car.collider), car.turret].into_iter().flatten() {
+            for handle in [Some(car.collider), car.extra].into_iter().flatten() {
                 let Some(collider) = self.colliders.get(handle) else { continue };
                 // A contact point is in the collider's frame, which for the turret is off the body's.
                 let offset = collider.position_wrt_parent().copied().unwrap_or(Pose::IDENTITY);
@@ -807,7 +1090,7 @@ impl Physics {
 mod tests {
     use super::*;
     use shared::consts::TICK_DT;
-    use shared::protocol::{KIND_HELI, KIND_JEEP, KIND_SPORTS, KIND_TANK};
+    use shared::protocol::{KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_TANK};
     use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 
     fn flat() -> WorldFile {
@@ -1334,6 +1617,255 @@ mod tests {
         let mut physics = with_heli(HELI_CEILING - 30.0);
         let pose = run(&mut physics, CarControls { lift: 1.0, ..PILOTED }, 60 * 20);
         assert!(pose.position[1] > HELI_CEILING - 10.0 && pose.position[1] < HELI_CEILING + 8.0, "{pose:?}");
+    }
+
+    /// Flat ground six kilometres across, so a plane has room.
+    fn airfield() -> WorldFile {
+        WorldFile { version: WORLD_VERSION, half_extent: 300_000, ..Default::default() }
+    }
+
+    fn with_plane() -> Physics {
+        let mut physics = Physics::new(&airfield()).unwrap();
+        physics.add_car(1, KIND_PLANE, [0.0, 1.5, 600.0], 0.0);
+        physics
+    }
+
+    /// A pilot with the throttle at `lift` (Space +1, Shift -1), the stick pulled `pull` (S is +1, nose
+    /// up; W is -1) and rolled `roll` (D is +1, right wing down).
+    fn pilot(lift: f32, pull: f32, roll: f32) -> CarControls {
+        CarControls { lift, throttle: -pull, steer: roll, powered: true, ..CarControls::IDLE }
+    }
+
+    /// Takes off on full throttle with a little back stick, climbs to about `height` metres, and lets go.
+    fn airborne(physics: &mut Physics, height: f32) -> CarPose {
+        let mut pose = run(physics, pilot(1.0, 0.3, 0.0), 60);
+        while pose.position[1] < height {
+            pose = run(physics, pilot(1.0, 0.3, 0.0), 30);
+        }
+        run(physics, pilot(0.0, 0.0, 0.0), 60 * 6)
+    }
+
+    /// Pitch of the nose, radians: + is up.
+    fn nose_pitch(pose: &CarPose) -> f32 {
+        let [x, y, z, w] = pose.rotation;
+        let nose = Rotation::from_xyzw(x, y, z, w) * Vector::new(0.0, 0.0, -1.0);
+        nose.y.clamp(-1.0, 1.0).asin()
+    }
+
+    #[test]
+    fn a_parked_plane_sits_on_its_wheels_and_idles_when_a_pilot_climbs_in() {
+        let mut physics = with_plane();
+        let rest = run(&mut physics, CarControls { handbrake: true, ..CarControls::IDLE }, 120);
+        assert!(rest.up_y > 0.99 && rest.position[1] > 0.9 && rest.position[1] < 1.4, "{rest:?}");
+        assert!(rest.velocity.iter().all(|v| v.abs() < 0.1), "{rest:?}");
+        // With the stick released it idles on the ground, creeping at most.
+        let idle = run(&mut physics, pilot(0.0, 0.0, 0.0), 120);
+        assert!(idle.forward_speed < 3.0 && (600.0 - idle.position[2]) < 4.0, "{idle:?}");
+    }
+
+    #[test]
+    fn full_throttle_lifts_it_off_within_the_runway() {
+        let mut physics = with_plane();
+        let rest = run(&mut physics, CarControls { handbrake: true, ..CarControls::IDLE }, 60);
+        let mut ticks = 0;
+        let pose = loop {
+            let pose = run(&mut physics, pilot(1.0, 0.25, 0.0), 1);
+            ticks += 1;
+            if pose.position[1] > rest.position[1] + 1.0 || ticks > 600 {
+                break pose;
+            }
+        };
+        let run_length = rest.position[2] - pose.position[2];
+        assert!(run_length < PLANE_RUNWAY, "off the ground after {run_length} m: {pose:?}");
+        assert!(pose.forward_speed > PLANE_STALL_SPEED * 0.9 && pose.position[0].abs() < 0.5, "{pose:?}");
+    }
+
+    #[test]
+    fn it_cruises_level_and_tops_out_on_full_throttle() {
+        let mut physics = with_plane();
+        airborne(&mut physics, 40.0);
+        let before = run(&mut physics, pilot(0.0, 0.0, 0.0), 60 * 10);
+        let cruise = run(&mut physics, pilot(0.0, 0.0, 0.0), 60 * 3);
+        assert!((cruise.forward_speed - PLANE_CRUISE_SPEED).abs() < 3.0, "{cruise:?}");
+        assert!((cruise.position[1] - before.position[1]).abs() < 1.0 && cruise.up_y > 0.99, "level: {before:?} -> {cruise:?}");
+        assert!(cruise.position[0].abs() < 1.0, "straight: {cruise:?}");
+        let flat_out = run(&mut physics, pilot(1.0, 0.0, 0.0), 60 * 20);
+        assert!(flat_out.forward_speed > 42.0 && flat_out.forward_speed < 46.0, "{flat_out:?}");
+    }
+
+    #[test]
+    fn pulled_up_with_the_throttle_cut_it_stalls_drops_its_nose_and_recovers() {
+        let mut physics = with_plane();
+        airborne(&mut physics, 80.0);
+        let (mut slowest, mut dropped) = (f32::MAX, false);
+        for _ in 0..60 * 8 {
+            let pose = run(&mut physics, pilot(-1.0, 1.0, 0.0), 1);
+            slowest = slowest.min(pose.forward_speed);
+            // The stick is still back, but the nose falls through the horizon.
+            dropped |= slowest < PLANE_STALL_SPEED && nose_pitch(&pose) < -0.2;
+        }
+        assert!(slowest < PLANE_STALL_SPEED * 0.7, "it stalls: {slowest}");
+        assert!(dropped, "and the nose drops");
+        let recovered = run(&mut physics, pilot(1.0, 0.0, 0.0), 60 * 8);
+        assert!(recovered.forward_speed > 25.0 && recovered.up_y > 0.9 && recovered.position[1] > 10.0, "{recovered:?}");
+    }
+
+    #[test]
+    fn s_pulls_the_nose_up_and_w_pushes_it_down_and_letting_go_levels_it() {
+        let mut physics = with_plane();
+        let level = airborne(&mut physics, 60.0);
+        let up = run(&mut physics, pilot(0.0, 1.0, 0.0), 45);
+        assert!(nose_pitch(&up) > nose_pitch(&level) + 0.3, "{} -> {}", nose_pitch(&level), nose_pitch(&up));
+        // Let go and the nose settles back to the horizon.
+        let settled = run(&mut physics, pilot(1.0, 0.0, 0.0), 60 * 6);
+        assert!(nose_pitch(&settled).abs() < 0.1, "{}", nose_pitch(&settled));
+        let down = run(&mut physics, pilot(0.0, -1.0, 0.0), 45);
+        assert!(nose_pitch(&down) < nose_pitch(&settled) - 0.3, "{} -> {}", nose_pitch(&settled), nose_pitch(&down));
+    }
+
+    #[test]
+    fn space_and_shift_are_the_throttle() {
+        let mut speeds = vec![];
+        for lift in [-1.0, 0.0, 1.0] {
+            let mut physics = with_plane();
+            airborne(&mut physics, 40.0);
+            speeds.push(run(&mut physics, pilot(lift, 0.0, 0.0), 60 * 8).forward_speed);
+        }
+        assert!(speeds[0] < speeds[1] - 5.0 && speeds[1] < speeds[2] - 3.0, "Shift slows, nothing cruises, Space speeds up: {speeds:?}");
+    }
+
+    #[test]
+    fn rolling_banks_and_turns_it_and_letting_go_levels_the_wings() {
+        for (roll, side) in [(1.0, -1.0), (-1.0, 1.0)] {
+            let mut physics = with_plane();
+            let start = airborne(&mut physics, 50.0);
+            // Holding D rolls right, until the bank stops at its limit, and a banked plane turns.
+            let banked = run(&mut physics, pilot(1.0, 0.0, roll), 90);
+            assert!(banked.up_y < 0.7 && banked.up_y > 0.1, "banked: {banked:?}");
+            let turning = run(&mut physics, pilot(1.0, 0.0, roll), 60 * 3);
+            assert!(turning.yaw() * side > 0.5 || (turning.yaw() - start.yaw()) * side > 0.5, "turns to the {side} side: {}", turning.yaw());
+            let released = run(&mut physics, pilot(1.0, 0.0, 0.0), 60 * 4);
+            assert!(released.up_y > 0.97, "wings level again: {released:?}");
+        }
+    }
+
+    #[test]
+    fn the_mouse_turns_it_towards_where_the_pilot_points_banking_into_the_turn() {
+        for turn in [1.2_f32, -1.2] {
+            let mut physics = with_plane();
+            let start = airborne(&mut physics, 60.0);
+            let aim = Some([shared::quant::wrap_angle(start.yaw() + turn), 0.0]);
+            let mouse = CarControls { aim, ..pilot(0.0, 0.0, 0.0) };
+            let banking = run(&mut physics, mouse, 60);
+            assert!(banking.up_y < 0.95, "it banks into the turn: {banking:?}");
+            let arrived = run(&mut physics, mouse, 60 * 8);
+            let error = shared::quant::wrap_angle(arrived.yaw() - shared::quant::wrap_angle(start.yaw() + turn)).abs();
+            assert!(error < 0.2, "it points where the mouse does: {error} {arrived:?}");
+            assert!(arrived.up_y > 0.97, "and levels its wings there: {arrived:?}");
+        }
+    }
+
+    #[test]
+    fn the_mouse_climbs_and_dives_it() {
+        let mut physics = with_plane();
+        let start = airborne(&mut physics, 80.0);
+        let up = run(&mut physics, CarControls { aim: Some([start.yaw(), 0.4]), ..pilot(1.0, 0.0, 0.0) }, 60 * 4);
+        assert!(up.position[1] > start.position[1] + 10.0, "climbs: {start:?} -> {up:?}");
+        let down = run(&mut physics, CarControls { aim: Some([up.yaw(), -0.4]), ..pilot(0.0, 0.0, 0.0) }, 60 * 4);
+        assert!(down.position[1] < up.position[1] - 10.0, "dives: {up:?} -> {down:?}");
+    }
+
+    #[test]
+    fn without_a_pilot_it_comes_down() {
+        let mut physics = with_plane();
+        let flying = airborne(&mut physics, 60.0);
+        let falling = run(&mut physics, CarControls::IDLE, 60 * 6);
+        assert!(falling.position[1] < flying.position[1] - 10.0, "{flying:?} -> {falling:?}");
+    }
+
+    #[test]
+    fn the_ceiling_stops_a_climbing_plane() {
+        let mut physics = with_plane();
+        run(&mut physics, pilot(1.0, 0.4, 0.0), 60 * 60);
+        let pose = run(&mut physics, pilot(1.0, 0.4, 0.0), 60 * 20);
+        assert!(pose.position[1] < PLANE_CEILING + 10.0 && pose.position[1] > PLANE_CEILING - 40.0, "{pose:?}");
+    }
+
+    #[test]
+    fn it_turns_back_before_the_edge_of_the_world() {
+        // Facing east, the wall 3 km out. The pilot just holds full throttle.
+        let mut physics = Physics::new(&airfield()).unwrap();
+        physics.add_car(1, KIND_PLANE, [0.0, 1.5, 600.0], -std::f32::consts::FRAC_PI_2);
+        airborne(&mut physics, 40.0);
+        let mut furthest: f32 = 0.0;
+        for _ in 0..60 * 120 {
+            let pose = run(&mut physics, pilot(1.0, 0.0, 0.0), 1);
+            furthest = furthest.max(pose.position[0]);
+            assert!(pose.position[1] > 5.0, "it does not fly into the ground: {pose:?}");
+        }
+        assert!(furthest > 2900.0 && furthest < 3000.0 - PLANE_WING_HALF_EXTENTS[0] - 1.0, "{furthest}");
+    }
+
+    #[test]
+    fn the_wings_are_solid_out_to_their_tips() {
+        let mut physics = with_plane();
+        let rest = run(&mut physics, CarControls { handbrake: true, ..CarControls::IDLE }, 120);
+        let [_, wy, wz] = PLANE_WING_CENTRE;
+        let at = [rest.position[0] - 10.0, rest.position[1] + wy, rest.position[2] + wz];
+        let hit = physics.cast_ray_hit(at, [1.0, 0.0, 0.0], 20.0, 99).expect("the wing stops it");
+        assert!((hit.0 - (10.0 - PLANE_WING_HALF_EXTENTS[0])).abs() < 0.1 && hit.1 == Some(1), "{hit:?}");
+    }
+
+    #[test]
+    fn the_runway_ends_at_a_wall() {
+        let world = world_with_wall();
+        let physics = Physics::new(&world).unwrap();
+        // The wall is 58 m ahead (-Z) and nothing is behind, all the way to the world's edge.
+        let ahead = physics.runway(&world.ground, [0.0, 1.5, 0.0], 0.0, 150.0);
+        let behind = physics.runway(&world.ground, [0.0, 1.5, 0.0], std::f32::consts::PI, 150.0);
+        assert!((ahead - 58.0).abs() < 0.5, "{ahead}");
+        assert_eq!(behind, 150.0);
+        let edge = physics.runway(&world.ground, [0.0, 1.5, 0.0], std::f32::consts::PI, 250.0);
+        assert!((edge - 200.0).abs() < 1.0, "the boundary wall: {edge}");
+        // Past the end of the wall, the wingtip still clips it.
+        let beside = physics.runway(&world.ground, [7.0, 1.5, 0.0], 0.0, 150.0);
+        assert!((beside - 58.0).abs() < 0.5, "{beside}");
+        assert!(physics.runway(&world.ground, [9.5, 1.5, 0.0], 0.0, 150.0) > 99.0);
+    }
+
+    /// A scripted flight for the fixture in `vehicle.spec.ts`: parked, a take-off, a climbing turn,
+    /// the blip switch in a turn, and a roll on the stick.
+    fn scripted_plane(tick: u32) -> CarControls {
+        match tick / 60 {
+            0 => pilot(0.0, 0.0, 0.0),
+            1..7 => pilot(1.0, 0.3, 0.0),
+            7..9 => pilot(0.0, 0.0, 0.8),
+            9 | 10 => pilot(-1.0, 0.5, 0.8),
+            _ => pilot(1.0, 0.1, -0.5),
+        }
+    }
+
+    /// `(tick, position)` of a plane started at `[0, 1.5, 600]` on the airfield, mirrored in `vehicle.spec.ts`.
+    const PLANE_CHECKPOINTS: [(u32, [f32; 3]); 4] = [
+        (120, [0.0000, 1.0504, 595.1553]),
+        (420, [0.0000, 12.9997, 500.8397]),
+        (660, [17.7795, 11.9774, 408.6677]),
+        (900, [78.6062, 2.9332, 305.7454]),
+    ];
+
+    #[test]
+    fn scripted_plane_flight_matches_fixture() {
+        let mut physics = with_plane();
+        for tick in 0..900 {
+            physics.drive_car(1, scripted_plane(tick), TICK_DT);
+            physics.step_cars(TICK_DT);
+            let done = tick + 1;
+            if let Some((_, expected)) = PLANE_CHECKPOINTS.iter().find(|(t, _)| *t == done) {
+                let position = physics.car_pose(1).unwrap().position;
+                let close = position.iter().zip(expected).all(|(a, e)| (a - e).abs() < 0.001);
+                assert!(close, "tick {done}: {position:?}");
+            }
+        }
     }
 
     #[test]

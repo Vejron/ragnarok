@@ -60,7 +60,7 @@ Without credentials the importer says so and builds buildings as boxes; terrain 
 
 | World | Where | Size | Made by | Used for |
 |---|---|---|---|---|
-| **Dev** | `client/public/dev/` (git-ignored) | ~5 km², 2.25 km square around Mariehem, Umeå (63.8372, 20.3261), 81 tiles | `scripts/world-dev.sh` | day-to-day development: quick to import, load and stream |
+| **Dev** | `client/public/dev/` (git-ignored) | ~7.6 km², 2.75 km square around 63.83976, 20.31514 (Mariehem, Umeå), 121 tiles | `scripts/world-dev.sh` | day-to-day development: quick to import, load and stream |
 | **Big** | `client/public/world.msgpack` + `tiles/` + `minimap.png` (git-ignored) | 8.6 km square, Backen to Nydala | `scripts/world.sh` | production (what `Dockerfile` and `scripts/deploy.sh` ship), and checking things at full scale |
 | **Fixture** | `fixtures/world/` (committed) | small synthetic city | `--synthetic --out fixtures/world/world.msgpack` | server and client tests only |
 
@@ -82,7 +82,7 @@ cd client && VITE_WORLD_BASE=/dev/ npm run dev
   differs from the server's.
 - To go back to the big world, unset both and restart the server and `npm run dev`.
 - Restart the server after regenerating a world: it reads the whole world at start.
-- The first run downloads what the big world's cache doesn't already hold (Mariehem is on the east
+- The first run downloads what the big world's cache doesn't already hold (the dev area is on the east
   edge of the big world, so some terrain and laser blocks are new, and the Overpass, tree and water
   queries are new for this area). Later runs read everything from disk.
 - Flags after the script name go to the importer, and a later `--center`/`--half` wins, so
@@ -94,6 +94,7 @@ cd client && VITE_WORLD_BASE=/dev/ npm run dev
 ```sh
 scripts/world.sh                      # defaults: Backen to Nydala, into client/public/
 scripts/deploy.sh                     # builds the client, bakes world + tiles into the image
+WORLD_DIR=client/public/dev scripts/deploy.sh   # ship another world (e.g. the dev world) instead
 ```
 
 `scripts/world.sh` loads `.env.local`, then runs the importer in release mode with the defaults
@@ -111,11 +112,11 @@ Any other area is the same command with `--out` pointing at a **dedicated** dire
 deletes `<out dir>/tiles` before writing, and the default `--out` is the big world's location.
 
 ```sh
-scripts/world.sh --center 63.8372,20.3261 --half 1125 --out client/public/dev/world.msgpack
+scripts/world.sh --center 63.83976,20.31514 --half 1375 --out client/public/dev/world.msgpack
 ```
 
 - `--half` is half the side in metres, so the world is `2 × half` square. `--tile` must divide that
-  side (250 m tiles: 2250 m is 9 tiles); `--cell` must divide `--tile`. Relief is limited to 100 m
+  side (250 m tiles: 2750 m is 11 tiles); `--cell` must divide `--tile`. Relief is limited to 100 m
   across the world.
 - Run the server and client against it as above (`VITE_WORLD_BASE` is the directory under
   `client/public/`, with slashes: `/mine/`).

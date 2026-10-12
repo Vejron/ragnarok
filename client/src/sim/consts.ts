@@ -1,6 +1,6 @@
 /** Mirrors `crates/shared/src/consts.rs`. Keep the two in step. */
 
-export const PROTOCOL_VERSION = 17
+export const PROTOCOL_VERSION = 18
 
 /** A hurt building is drawn in this many worse states; the last is about to collapse. Mirrors `DAMAGE_STAGES`. */
 export const DAMAGE_STAGES = 3
@@ -135,6 +135,56 @@ export const HELI_GUN_YAW_LIMIT = 1.0
 export const HELI_GUN_PITCH_MIN = -0.75
 export const HELI_GUN_PITCH_MAX = 0.2
 export const HELI_GUN_COOLDOWN_TICKS = TICK_RATE / 3
+/** The triplane. Mirrors `PLANE_*` in consts.rs: see there for what each means. */
+export const PLANE_SEATS = 2
+export const PLANE_HALF_EXTENTS = [0.5, 0.6, 2.8] as const
+export const PLANE_WING_CENTRE = [0.0, 0.45, -1.1] as const
+export const PLANE_WING_HALF_EXTENTS = [3.6, 0.85, 0.55] as const
+export const PLANE_WHEEL_RADIUS = 0.35
+export const PLANE_TRACK_HALF = 0.8
+export const PLANE_AXLES_Z = [-1.5, 2.4] as const
+export const PLANE_HARD_POINT_Y = -0.5
+export const PLANE_SUSPENSION_REST = 0.3
+export const PLANE_MAX_STEER = 0.5
+export const PLANE_THRUST = 6.5
+export const PLANE_CRUISE_THROTTLE = 0.6
+export const PLANE_IDLE_THROTTLE = 0.03
+export const PLANE_DRAG = PLANE_THRUST / (45.0 * 45.0)
+export const PLANE_STALL_SPEED = 17.0
+export const PLANE_LEVEL_SPEED = 28.0
+export const PLANE_CRUISE_SPEED = 35.0
+export const PLANE_AOA_GAIN = 4.0
+export const PLANE_SIDE_GAIN = 3.0
+export const PLANE_MAX_LIFT = 40.0
+export const PLANE_PITCH_RATE = 1.4
+export const PLANE_ROLL_RATE = 3.0
+export const PLANE_YAW_RATE = 0.5
+export const PLANE_RESPONSE = 6.0
+export const PLANE_STALL_DROP = 1.5
+export const PLANE_GLIDE_PITCH = -0.2
+export const PLANE_BANK_ANGLE = 0.2
+export const PLANE_MAX_BANK = 1.3
+export const PLANE_AIM_GAIN = 2.0
+/** How steeply the mouse can ask the plane to climb or dive, radians (75 degrees). */
+export const PLANE_AIM_MAX_PITCH = 1.3
+export const PLANE_LEVEL_GAIN = 1.5
+export const PLANE_CEILING = 160.0
+export const PLANE_EDGE_MARGIN = 120.0
+/** The forward guns' muzzles in the hull frame, left then right; they fire in turn. */
+export const PLANE_GUN_PIVOTS = [[-0.16, 0.72, -2.0], [0.16, 0.72, -2.0]] as const
+export const PLANE_GUN_COOLDOWN_TICKS = 5
+export const PLANE_GUN_RANGE = 300.0
+/** The gunner's ring: pivot in the hull frame, barrel length, travel, and the cone over the pilot it holds fire in. */
+export const PLANE_REAR_PIVOT = [0.0, 0.85, 0.7] as const
+export const PLANE_REAR_LENGTH = 0.9
+export const PLANE_REAR_PITCH_MIN = -0.35
+export const PLANE_REAR_PITCH_MAX = 1.0
+export const PLANE_REAR_DEAD_ZONE = 0.6
+export const PLANE_REAR_COOLDOWN_TICKS = 8
+export const PLANE_BOMBS = 4
+export const PLANE_BOMB_PIVOT = [0.0, -0.85, -0.3] as const
+export const PLANE_BOMB_MIN_HEIGHT = 4.0
+export const BOMB_RADIUS = 6.0
 /** Combat. Mirrors the combat block of consts.rs. */
 export const PLAYER_MAX_HP = 100
 export const RESPAWN_TICKS = 3 * TICK_RATE
@@ -146,7 +196,7 @@ export const CROUCH_EYE_DROP = 0.3
 export const ON_FOOT_SHOULDER = 0.9
 export const ON_FOOT_HEIGHT = 1.5
 /** Health of a fresh vehicle of `kind`. Mirrors `vehicle_hp` in protocol.rs. */
-export const vehicleMaxHp = (kind: number) => (kind === 2 ? 250 : 100)
+export const vehicleMaxHp = (kind: number) => (kind === 2 ? 250 : kind === 6 ? 70 : 100)
 export const ROCKET_BLAST_RADIUS = 5.0
 export const WRECK_BLAST_RADIUS = 8.0
 export const SHELL_COOLDOWN_TICKS = 90

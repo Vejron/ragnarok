@@ -157,6 +157,9 @@ const SCRATCH = {
  * One player: a skinned clone of the model, placed at its capsule centre and animated from where it
  * is moving relative to where it faces, so strafing and backpedalling play their own clips.
  */
+/** How long a hit whitens a character, seconds. */
+const HIT_FLASH = 0.14
+
 export class Character {
   /** The capsule centre, as last placed. */
   readonly position = new THREE.Vector3()
@@ -185,6 +188,8 @@ export class Character {
   private placed = false
   private pitch = 0
   private recoil = 0
+  /** Seconds of hit flash left, which whitens the outfit. */
+  private flashLeft = 0
 
   constructor(private readonly crowd: Crowd, id: number) {
     const asset = crowd.asset
@@ -244,11 +249,20 @@ export class Character {
    * Places the character at its capsule centre and animates it. `vx`/`vz` is its horizontal velocity
    * in the world, `yaw` where it faces (0 faces -Z), `pitch` where it aims (up is positive).
    */
+  /** Whitens the outfit for a moment: it was just hit. */
+  flash() {
+    this.flashLeft = HIT_FLASH
+  }
+
   update(
     position: readonly number[], yaw: number, vx: number, vz: number, grounded: boolean, dt: number, pitch = 0, crouching = false, sliding = false,
   ) {
     this.position.set(position[0]!, position[1]!, position[2]!)
     this.pitch = pitch
+    if (this.flashLeft > 0) {
+      this.flashLeft = Math.max(0, this.flashLeft - dt)
+      this.outfit.emissive.setScalar((this.flashLeft / HIT_FLASH) * 0.9)
+    }
     if (!this.shown) return
 
     // Velocity in the body's frame: forward is -Z at yaw 0, right is +X.

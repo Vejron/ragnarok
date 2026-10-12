@@ -77,9 +77,10 @@ fn vehicle_delta(base: &VehicleState, now: &VehicleState) -> Option<VehicleDelta
         turret,
         now.11,
         (now.12 != base.12).then(|| now.12.unwrap_or_default()),
+        if now.13 != base.13 { now.13 } else { None },
     );
     let unchanged = delta.1 == 0 && delta.2 == 0 && delta.3 == 0 && delta.4 == 0 && delta.5 == 0 && delta.6 == 0 && delta.7 == 0
-        && delta.8.is_none() && delta.9.is_none() && now.11 == base.11 && delta.11.is_none();
+        && delta.8.is_none() && delta.9.is_none() && now.11 == base.11 && delta.11.is_none() && delta.12.is_none();
     (!unchanged).then_some(delta)
 }
 
@@ -101,12 +102,13 @@ fn apply_vehicle(base: &VehicleState, delta: &VehicleDelta) -> VehicleState {
             Some(damage) => (damage != [0; 8]).then_some(damage),
             None => base.12,
         },
+        delta.12.or(base.13),
     )
 }
 
 /// What to send so that a client holding `base` ends up holding `now`. Both scenes must be
-/// ordered by id. A vehicle with a turret whose turret did not change sends `None`: the client
-/// keeps its old one.
+/// ordered by id. A vehicle with a turret or arms that did not change sends `None` for them: the
+/// client keeps its old ones. (A vehicle never loses its turret or arms, so `None` is never news.)
 pub fn diff(base: &Scene, now: &Scene) -> Delta {
     let mut delta = Delta::default();
     for entity in &now.entities {
@@ -157,18 +159,22 @@ pub fn apply(base: &Scene, delta: &Delta) -> Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{FLAG_GROUNDED, KIND_JEEP, KIND_STICKMAN, KIND_TANK};
+    use crate::protocol::{ARMS_CUT, Arms, FLAG_GROUNDED, KIND_JEEP, KIND_PLANE, KIND_STICKMAN, KIND_TANK};
 
     fn person(id: u32, x: i32) -> EntityState {
         EntityState(id, KIND_STICKMAN, x, 90, -x, 100, 0, FLAG_GROUNDED, 0, 0)
     }
 
     fn car(id: u32, x: i32, seats: Vec<u32>) -> VehicleState {
-        VehicleState(id, KIND_JEEP, x, 40, 7, 10, -20, 30, 5, seats, None, 100, None)
+        VehicleState(id, KIND_JEEP, x, 40, 7, 10, -20, 30, 5, seats, None, 100, None, None)
     }
 
     fn tank(id: u32, yaw: i16) -> VehicleState {
-        VehicleState(id, KIND_TANK, 0, 40, 0, 0, 0, 0, 0, vec![0, 0], Some(Turret(yaw, 100, 1, 500)), 250, None)
+        VehicleState(id, KIND_TANK, 0, 40, 0, 0, 0, 0, 0, vec![0, 0], Some(Turret(yaw, 100, 1, 500)), 250, None, None)
+    }
+
+    fn plane(id: u32, arms: Arms) -> VehicleState {
+        VehicleState(id, KIND_PLANE, 0, 140, 0, 0, 0, 0, 0, vec![0, 0], Some(Turret(0, 0, 0, 0)), 70, None, Some(arms))
     }
 
     #[test]
@@ -231,5 +237,21 @@ mod tests {
         let delta = diff(&hurt, &clean);
         assert_eq!(delta.vehicles[0].11, Some([0; 8]));
         assert_eq!(apply(&hurt, &delta), clean);
+    }
+
+    #[test]
+    fn arms_are_sent_only_when_they_change() {
+        let base = Scene { entities: vec![], vehicles: vec![plane(12, Arms(0, 0, 0, 4, 0))] };
+        let mut fired = base.clone();
+        fired.vehicles[0].13 = Some(Arms(3, 31, 0, 4, ARMS_CUT));
+        let delta = diff(&base, &fired);
+        assert_eq!(delta.vehicles[0].12, Some(Arms(3, 31, 0, 4, ARMS_CUT)));
+        assert_eq!(apply(&base, &delta), fired);
+        let mut moved = fired.clone();
+        moved.vehicles[0].2 = 900;
+        let delta = diff(&fired, &moved);
+        assert_eq!(delta.vehicles[0].12, None, "unchanged arms are not resent");
+        assert_eq!(apply(&fired, &delta), moved);
+        assert!(diff(&moved, &moved).is_empty());
     }
 }

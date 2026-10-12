@@ -79,6 +79,8 @@ export function blendVehicle(a: VehicleState, b: VehicleState, t: number): Vehic
           range: t < 0.5 ? a.turret.range : b.turret.range,
         }
       : b.turret,
+    // Counters and gauges, like the turret's shot counter, come from the nearer snapshot.
+    arms: t < 0.5 ? a.arms : b.arms,
   }
 }
 
