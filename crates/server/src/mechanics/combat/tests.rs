@@ -438,9 +438,9 @@ fn a_scoped_sniper_shot_goes_true_along_the_look_direction() {
 #[test]
 fn aiming_tightens_any_guns_spread() {
     let ak = ak5();
-    assert_eq!(effective_spread(&ak, 0), ak.spread);
-    assert_eq!(effective_spread(&ak, BUTTON_ALT | BUTTON_FIRE), ak.spread * AIM_SPREAD_SCALE);
-    assert!(effective_spread(&ak, BUTTON_ALT) < effective_spread(&ak, 0));
+    assert_eq!(effective_spread(ak, 0), ak.spread);
+    assert_eq!(effective_spread(ak, BUTTON_ALT | BUTTON_FIRE), ak.spread * AIM_SPREAD_SCALE);
+    assert!(effective_spread(ak, BUTTON_ALT) < effective_spread(ak, 0));
 }
 
 #[test]

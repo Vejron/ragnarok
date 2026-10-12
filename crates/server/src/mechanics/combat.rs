@@ -399,7 +399,7 @@ fn wreck(world: &mut World, vid: u32) {
     let pick = seed - seed.floor();
     let rate = WRECK_SPIN * (0.7 + 0.6 * ((pick * 7.0) - (pick * 7.0).floor()));
     let sign = if pick < 0.5 { -1.0 } else { 1.0 };
-    let spin = if (pick * 4.0) as u32 % 2 == 0 { [0.0, 0.0, sign * rate] } else { [sign * rate, 0.0, 0.0] };
+    let spin = if ((pick * 4.0) as u32).is_multiple_of(2) { [0.0, 0.0, sign * rate] } else { [sign * rate, 0.0, 0.0] };
     world.physics.spin_car(vid, spin);
     blast(
         world,
@@ -559,6 +559,7 @@ pub fn scatter(world: &mut World, dir: [f32; 3], spread: f32) -> [f32; 3] {
 /// player (as `shooter` saw them `back` ticks ago) within `range`, else the far end of its line. The camera is a function of yaw and pitch alone, so the
 /// server finds the same ray the player sees. Falls back to `look_dir` when the camera ray starts
 /// inside geometry or the point would send the shot sideways.
+#[allow(clippy::too_many_arguments)]
 fn crosshair_dir(world: &World, shooter: u32, back: u32, position: [f32; 3], eye: [f32; 3], yaw: f32, look_dir: [f32; 3], range: f32) -> [f32; 3] {
     // The camera's pivot is to the right of the capsule, which is (cos yaw, 0, -sin yaw).
     let pivot = [position[0] + yaw.cos() * ON_FOOT_SHOULDER, position[1] + ON_FOOT_HEIGHT, position[2] - yaw.sin() * ON_FOOT_SHOULDER];

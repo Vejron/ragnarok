@@ -285,6 +285,7 @@ impl Physics {
 
     /// Advances one character by one tick of `input`. Characters do not collide with each other,
     /// which keeps the local player's prediction independent of where remote players really are.
+    #[cfg(test)]
     pub fn move_character(&self, character: &mut Character, input: &InputFrame, dt: f32) {
         self.move_character_scaled(character, input, dt, 1.0);
     }

@@ -61,11 +61,9 @@ pub fn bytes(kind: &str, key: &str, download: impl FnOnce() -> Result<Vec<u8>>) 
         return download();
     };
     let path = cache.dir.join(format!("{kind}-{:016x}", hash(key)));
-    if !cache.refresh {
-        if let Ok(found) = std::fs::read(&path) {
-            HITS.fetch_add(1, Ordering::Relaxed);
-            return Ok(found);
-        }
+    if let (false, Ok(found)) = (cache.refresh, std::fs::read(&path)) {
+        HITS.fetch_add(1, Ordering::Relaxed);
+        return Ok(found);
     }
     MISSES.fetch_add(1, Ordering::Relaxed);
     let fresh = download()?;

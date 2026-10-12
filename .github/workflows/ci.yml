@@ -21,7 +21,7 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   client:
     runs-on: ubuntu-latest

@@ -1,11 +1,12 @@
 import { MAX_PACKET } from '@/sim/consts'
 import { decodeServer, type ServerMessage } from './codec'
+import { FrameReader } from './frames'
 
 export type ConnectionStatus = 'OFFLINE' | 'CONNECTING' | 'CONNECTED'
 
 /**
- * WebTransport session to the game server: datagrams for snapshots, inputs and pings, and
- * server-opened unidirectional streams for reliable events (welcome, leave).
+ * WebTransport session to the game server: datagrams for snapshots, inputs and pings, and one
+ * server-opened unidirectional stream, in order, for reliable events (welcome, leave, kills...).
  */
 export class Transport {
   private session: WebTransport | null = null
@@ -76,23 +77,45 @@ export class Transport {
         const message = decodeServer(value)
         if (message) this.onMessage(message)
       }
-    } catch {
+    } catch (error) {
+      if (this.session === session) console.warn('datagrams ended', error)
     } finally {
       reader.releaseLock()
     }
   }
 
+  /** The server writes every reliable message down one stream, length-prefixed, so they arrive in order. */
   private async readStreams(session: WebTransport) {
-    const reader = session.incomingUnidirectionalStreams.getReader()
+    const streams = session.incomingUnidirectionalStreams.getReader()
+    try {
+      while (this.session === session) {
+        const { value, done } = await streams.read()
+        if (done) break
+        void this.readFramed(session, value)
+      }
+    } catch (error) {
+      if (this.session === session) console.warn('reliable streams ended', error)
+    } finally {
+      streams.releaseLock()
+    }
+  }
+
+  private async readFramed(session: WebTransport, stream: ReadableStream<Uint8Array>) {
+    const reader = stream.getReader()
+    const frames = new FrameReader()
     try {
       while (this.session === session) {
         const { value, done } = await reader.read()
         if (done) break
-        const bytes = new Uint8Array(await new Response(value).arrayBuffer())
-        const message = decodeServer(bytes)
-        if (message) this.onMessage(message)
+        for (const bytes of frames.push(value)) {
+          const message = decodeServer(bytes)
+          if (message) this.onMessage(message)
+        }
       }
-    } catch {
+    } catch (error) {
+      // A malformed stream cannot be resynchronised: drop the session and let the game reconnect.
+      console.warn('reliable stream failed', error)
+      if (this.session === session) this.close()
     } finally {
       reader.releaseLock()
     }

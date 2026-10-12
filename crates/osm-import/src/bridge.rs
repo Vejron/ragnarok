@@ -172,6 +172,7 @@ impl Mesh {
     }
 
     /// A box from `from` to `to` with the cross section spanned by unit axes `u` and `v`.
+    #[allow(clippy::too_many_arguments)]
     fn prism(&mut self, at: P, steel: bool, from: V3, to: V3, u: V3, v: V3, hu: f64, hv: f64) {
         let ring = |c: V3| {
             [

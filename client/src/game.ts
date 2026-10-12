@@ -5,6 +5,7 @@ import {
   type Arms, type EntityState, type InputFrame, type PickupState, type RocketState, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
 } from './net/codec'
 import { blendEntity, blendRocket, blendVehicle, Interpolator } from './net/interp'
+import { Backoff } from './net/backoff'
 import { RttEstimator, ServerClock } from './net/clock'
 import { Transport } from './net/transport'
 import {
@@ -94,10 +95,8 @@ const riders = (cars: ReadonlyMap<number, CarPlacement>) => {
 /** Fixed ticks run per animation frame at most, so a backgrounded tab does not spiral. */
 const MAX_TICKS_PER_FRAME = 8
 const PING_INTERVAL_MS = 1000
-const RECONNECT_MS = 3000
 /** A crow can be heard this far off, metres. */
 const ROOSTER_HEARING = 45
-/** How long a kill stays in the feed. */
 /** Mouse-look is this much slower down a scope, to match the narrower view. */
 const SCOPE_LOOK_SCALE = 0.3
 /** And a little slower aiming a gun over the shoulder. */
@@ -204,6 +203,7 @@ export class Game {
   private lastFrame = 0
   private frameHandle = 0
   private reconnectTimer = 0
+  private readonly backoff = new Backoff()
   private pingTimer = 0
   private disposed = false
   /** Set when reconnecting cannot help (protocol mismatch); only a reload can. */
@@ -317,7 +317,7 @@ export class Game {
     this.roosters.clear()
     if (!this.disposed && !this.halted) {
       clearTimeout(this.reconnectTimer)
-      this.reconnectTimer = window.setTimeout(() => void this.connect(), RECONNECT_MS)
+      this.reconnectTimer = window.setTimeout(() => void this.connect(), this.backoff.next())
     }
   }
 
@@ -332,6 +332,7 @@ export class Game {
           return
         }
         if (message.worldHash !== this.worldHash) this.warning = 'Server world differs from this page’s world.msgpack. Reload.'
+        this.backoff.reset()
         this.localId = message.id
         this.awaitingCatchUp = true
         this.replica.reset()

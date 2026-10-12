@@ -11,7 +11,7 @@ This is the wire protocol between the browser client and the game server. Rust i
    - Production: `https://<host>/transport` with an ACME certificate. UDP 443 carries HTTP/3.
 2. **Origin check:** the server rejects any other origin. In production only `https://$RAGNAROK_DOMAIN` is allowed, and in development only `http://localhost:5173` and `http://127.0.0.1:5173`.
 3. **Admission:** at 64 players the room is full and the session is refused.
-4. **Welcome:** the server sends `welcome` on a unidirectional stream. The client ignores snapshots until it has one.
+4. **Welcome:** the server sends `welcome` first on its reliable stream (below). The client ignores snapshots until it has one.
 5. **Play:** the client sends `input` datagrams every tick and a `ping` every second. The server sends a `snapshot` datagram every 2 ticks, holding what changed near that player since the snapshot they last acknowledged (below).
 6. **End:** the session ends on close, error, or after 10 s without any datagram. The server then removes the player and sends `leave` to everyone else.
 
@@ -45,17 +45,20 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 
 ### Server → client
 
+**Reliable stream.** The server opens one unidirectional stream per session, when it has its first reliable message (`welcome`), and writes every reliable message to it, in order. Each message is a 4-byte big-endian length and then that many bytes of MessagePack. Messages therefore arrive in the order they were sent: a `kill` never overtakes the `leave` of its victim, and the joiner's `scores`, `destroyed` and `damaged` catch-up come right behind the `welcome`. The client refuses a length over 4 MiB and drops the session on a malformed stream. The server drops a session whose stream accepts nothing for 5 s, or whose outgoing queue (64 messages, shared with snapshots) is full when a reliable message is due, rather than let it miss one: it reconnects and gets the catch-up.
+
+
 | Tag | Name | Channel | Shape |
 |---|---|---|---|
-| 0 | `welcome` | stream | `[0, version, entity_id u32, tick_rate u8, snapshot_every u8, world_hash u32]` |
+| 0 | `welcome` | reliable stream | `[0, version, entity_id u32, tick_rate u8, snapshot_every u8, world_hash u32]` |
 | 1 | `snapshot` | datagram | `[1, server_tick u32, baseline u32, ack u32, ride u32, [entity, …], [entity_delta, …], [vehicle, …], [vehicle_delta, …], [removed u32, …], drive, self, [shot, …], [projectile, …], [pickup, …]]` |
 | 2 | `pong` | datagram | `[2, nonce u32]` |
-| 3 | `leave` | stream | `[3, entity_id u32]` |
-| 4 | `kill` | stream | `[4, killer u32, victim u32, weapon u8, killer_kills u16, victim_deaths u16, style u8, yaw i16 mrad, power u8 (0.2 m/s)]`; `style` is `DEATH_*` (body, head, blast, roadkill, overkill) and `yaw`/`power` are the way and how hard the body is thrown, so every client stages the death alike |
-| 5 | `scores` | stream | `[5, [[id u32, kills u16, deaths u16], …]]` |
-| 6 | `destroyed` | stream | `[6, [[kind u8, col u16, row u16, index u32, yaw i16], …]]` |
-| 7 | `damaged` | stream | `[7, [[col u16, row u16, index u32, stage u8, marked u8, x i32, y i32, z i32], …]]` |
-| 8 | `hit` | stream | `[8, role u8, kind u8, amount u8, weapon u8, bearing i16, x i32, y i32, z i32, target u32]` |
+| 3 | `leave` | reliable stream | `[3, entity_id u32]` |
+| 4 | `kill` | reliable stream | `[4, killer u32, victim u32, weapon u8, killer_kills u16, victim_deaths u16, style u8, yaw i16 mrad, power u8 (0.2 m/s)]`; `style` is `DEATH_*` (body, head, blast, roadkill, overkill) and `yaw`/`power` are the way and how hard the body is thrown, so every client stages the death alike |
+| 5 | `scores` | reliable stream | `[5, [[id u32, kills u16, deaths u16], …]]` |
+| 6 | `destroyed` | reliable stream | `[6, [[kind u8, col u16, row u16, index u32, yaw i16], …]]` |
+| 7 | `damaged` | reliable stream | `[7, [[col u16, row u16, index u32, stage u8, marked u8, x i32, y i32, z i32], …]]` |
+| 8 | `hit` | reliable stream | `[8, role u8, kind u8, amount u8, weapon u8, bearing i16, x i32, y i32, z i32, target u32]` |
 
 - `baseline` is the `server_tick` of the snapshot this one is a change from, or 0 when it is not. Then every entity and vehicle in range is listed in full, in `[entity, …]` and `[vehicle, …]`. See [Delta snapshots](#delta-snapshots-and-interest).
 - `ack` is the newest input `seq` of the receiving player already applied to this state. The client drops pending inputs up to `ack` and replays the rest.

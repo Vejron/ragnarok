@@ -419,7 +419,7 @@ mod tests {
         let mut per_mechanic = [Duration::ZERO; 7];
         for t in 1..=ticks {
             for (n, id) in ids.iter().enumerate() {
-                let fire = if (t as usize + n) % 30 == 0 { BUTTON_FIRE } else { 0 };
+                let fire = if (t as usize + n).is_multiple_of(30) { BUTTON_FIRE } else { 0 };
                 let frame = InputFrame(t, if n % 2 == 0 { 100 } else { -100 }, 127, (t as i16 * 7 + n as i16 * 50) % 3000, BUTTON_RUN | fire, 0, t as u16, 0);
                 game.handle(Command::Input(*id, t.saturating_sub(2), vec![frame]));
             }

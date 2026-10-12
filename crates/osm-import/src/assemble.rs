@@ -292,7 +292,9 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P
     // Bridges are solid geometry in the collision mesh, each piece in the tile it lies in.
     for (points, width, kind, pylons) in &bridges {
         let pieces = bridge::build(points, *width, *kind, *pylons, &ground, &water.levels, inner);
-        let mut by_tile: BTreeMap<(u16, u16), (Vec<&bridge::Piece>, Vec<&bridge::Piece>)> = BTreeMap::new();
+        // Per tile: the deck pieces and the steel pieces that fall in it.
+        type TilePieces<'a> = (Vec<&'a bridge::Piece>, Vec<&'a bridge::Piece>);
+        let mut by_tile: BTreeMap<(u16, u16), TilePieces> = BTreeMap::new();
         for piece in &pieces {
             let entry = by_tile.entry(manifest.tile_at(cm(piece.at[0]), cm(piece.at[1]))).or_default();
             if piece.steel { entry.1.push(piece) } else { entry.0.push(piece) }

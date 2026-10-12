@@ -21,6 +21,8 @@ pub const COMMAND_CAPACITY: usize = 4096;
 /// A session that sends nothing (not even the once-a-second ping) for this long is dropped. A tab
 /// closed without a clean QUIC close would otherwise linger as a ghost until the QUIC idle timeout.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
+/// A reliable write that has not completed after this long means the client has stopped reading.
+const RELIABLE_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct Transport {
     pub commands: mpsc::Sender<Command>,
@@ -83,6 +85,9 @@ impl Transport {
         let mut last_input = Instant::now() - Duration::from_secs(1);
         let mut last_ping = Instant::now() - Duration::from_secs(1);
         let mut last_heard = Instant::now();
+        // Every reliable message goes down this one stream, in order, each behind a 4-byte length.
+        // Separate streams could arrive in any order, and a kill could overtake its victim's leave.
+        let mut reliable = None;
 
         loop {
             let wake = [delayed_in.next_due(), delayed_out.next_due()].into_iter().flatten().fold(last_heard + IDLE_TIMEOUT, Instant::min);
@@ -105,9 +110,20 @@ impl Transport {
                         }
                     }
                     Some(Outgoing::Reliable(bytes)) => {
-                        let mut stream = session.open_uni(session_id).await?;
-                        stream.write_all(&bytes).await?;
-                        stream.shutdown().await?;
+                        if reliable.is_none() {
+                            reliable = Some(session.open_uni(session_id).await?);
+                        }
+                        let stream = reliable.as_mut().expect("opened above");
+                        let mut framed = Vec::with_capacity(4 + bytes.len());
+                        framed.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+                        framed.extend_from_slice(&bytes);
+                        match tokio::time::timeout(RELIABLE_WRITE_TIMEOUT, stream.write_all(&framed)).await {
+                            Ok(Ok(())) => {}
+                            _ => {
+                                tracing::info!(id, "reliable stream stalled or closed, dropping");
+                                break;
+                            }
+                        }
                     }
                     None => break,
                 },

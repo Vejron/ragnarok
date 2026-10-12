@@ -253,7 +253,6 @@ fn part_of(obs: &[Obs], frame: &Frame, axis: usize, cut: f64) -> (Part, Part) {
 /// The best roof shape for returns `obs` laid out in `frame` (u along its long side), and its cost.
 fn model(obs: &[Obs], frame: &Frame) -> (Shape, f64) {
     let swapped: Vec<Obs> = obs.iter().map(|o| Obs { u: o.v, v: o.u, y: o.y }).collect();
-    let obs = obs;
     let (hu, hv) = (frame.half[0], frame.half[1]);
     let (axis_u, axis_v) = (frame.axes[0], frame.axes[1]);
     let at = |across_axis: P, v0: f64| -> P { [frame.centre[0] + across_axis[0] * v0, frame.centre[1] + across_axis[1] * v0] };
@@ -302,10 +301,8 @@ fn model(obs: &[Obs], frame: &Frame) -> (Shape, f64) {
             }
         }
     }
-    if let Some((shape, cost)) = gable {
-        if improves(cost, best.1) {
-            best = (shape, cost);
-        }
+    if let Some((shape, cost)) = gable.filter(|&(_, cost)| improves(cost, best.1)) {
+        best = (shape, cost);
     }
 
     // Hip: only along the long axis, where the ridge is what is left of it.
@@ -395,8 +392,9 @@ fn solve3(mut a: [[f64; 3]; 3], mut b: [f64; 3]) -> [f64; 3] {
                 continue;
             }
             let k = a[row][col] / d;
-            for c in col..3 {
-                a[row][c] -= k * a[col][c];
+            let pivot_row = a[col];
+            for (value, pivot) in a[row].iter_mut().zip(pivot_row).skip(col) {
+                *value -= k * pivot;
             }
             b[row] -= k * b[col];
         }
@@ -541,10 +539,8 @@ fn pieces<'a>(roof: &'a Roof, polygon: Vec<P>, out: &mut Vec<Piece<'a>>, seams: 
                 }
             }
             let (left, right) = split(&polygon, *o, d);
-            if let (Some(a), Some(b)) = (s0, s1) {
-                if left.len() >= 3 && right.len() >= 3 && a != b {
-                    seams.push((a, b, low, high));
-                }
+            if let (Some(a), Some(b), true) = (s0, s1, left.len() >= 3 && right.len() >= 3 && s0 != s1) {
+                seams.push((a, b, low, high));
             }
             if left.len() >= 3 {
                 pieces(low, left, out, seams);
