@@ -375,7 +375,10 @@ mod tests {
     fn full_room_tick_cost() {
         use std::time::Instant;
         // The committed city if it is there, so buildings and trees cost what they do in play.
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/world/world.msgpack");
+        // `RAGNAROK_WORLD` picks another, as for the server (the dev world, or the big one).
+        let fixture = std::env::var_os("RAGNAROK_WORLD")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/world/world.msgpack"));
         let map = match crate::read_world(&fixture) {
             Ok((map, _)) => map,
             Err(_) => WorldFile { version: WORLD_VERSION, half_extent: 200_000, spawns: vec![[0, 0]], ..Default::default() },
@@ -392,11 +395,20 @@ mod tests {
             ids.push(response.try_recv().unwrap().unwrap());
             inboxes.push(inbox);
         }
-        // Spread over a 500 m square, so interest radii overlap without everyone seeing everyone.
+        // On the world's open ground (its spawn points, in groups of eight a few metres apart) when it has
+        // some, so interest radii overlap without everyone seeing everyone; else in a grid.
+        let spawns: Vec<[f32; 2]> = game.world.map.spawns.iter().map(|s| [s[0] as f32 / 100.0, s[1] as f32 / 100.0]).collect();
+        println!("{} spawn points", spawns.len());
         for (n, id) in ids.iter().enumerate() {
             let player = game.world.players.get_mut(id).unwrap();
-            player.character.position[0] = (n % 8) as f32 * 70.0 - 250.0;
-            player.character.position[2] = (n / 8) as f32 * 70.0 - 250.0;
+            if spawns.is_empty() {
+                player.character.position[0] = (n % 8) as f32 * 70.0 - 250.0;
+                player.character.position[2] = (n / 8) as f32 * 70.0 - 250.0;
+            } else {
+                let [sx, sz] = spawns[(n / 8 * 7) % spawns.len()];
+                player.character.position[0] = sx + (n % 8) as f32 * 0.8;
+                player.character.position[2] = sz;
+            }
             let (x, z) = (player.character.position[0], player.character.position[2]);
             player.character.position[1] = game.world.map.ground.height_at(x, z) + crate::physics::STANDING_Y + 0.5;
         }
