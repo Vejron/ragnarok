@@ -5,6 +5,7 @@ A browser multiplayer game: goofy stickmen in a real city built from OpenStreetM
 - [design.md](design.md): architecture, netcode, world pipeline and roadmap
 - [WORLD.md](WORLD.md): generating the world: data sources, credentials, download cache
 - [NETWORKING.md](NETWORKING.md): wire protocol
+- [SERVER-PERFORMANCE.md](SERVER-PERFORMANCE.md): what a full room costs per tick, how it is measured, what is and is not worth optimising
 - [RENDERING.md](RENDERING.md): the client renderer: toon shading, light, contact shadows, ambient occlusion, far shadows
 - [VEHICLES-I.md](VEHICLES-I.md): how roadmap stage 2 (cars, seats, driving) was built
 - [VEHICLES-II.md](VEHICLES-II.md): the tank, its gunner seat and the shell, driver prediction and the helicopter
