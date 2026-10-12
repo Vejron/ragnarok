@@ -76,9 +76,10 @@ fn vehicle_delta(base: &VehicleState, now: &VehicleState) -> Option<VehicleDelta
         seats,
         turret,
         now.11,
+        (now.12 != base.12).then(|| now.12.unwrap_or_default()),
     );
     let unchanged = delta.1 == 0 && delta.2 == 0 && delta.3 == 0 && delta.4 == 0 && delta.5 == 0 && delta.6 == 0 && delta.7 == 0
-        && delta.8.is_none() && delta.9.is_none() && now.11 == base.11;
+        && delta.8.is_none() && delta.9.is_none() && now.11 == base.11 && delta.11.is_none();
     (!unchanged).then_some(delta)
 }
 
@@ -96,6 +97,10 @@ fn apply_vehicle(base: &VehicleState, delta: &VehicleDelta) -> VehicleState {
         delta.8.clone().unwrap_or_else(|| base.9.clone()),
         delta.9.or(base.10),
         delta.10,
+        match delta.11 {
+            Some(damage) => (damage != [0; 8]).then_some(damage),
+            None => base.12,
+        },
     )
 }
 
@@ -159,11 +164,11 @@ mod tests {
     }
 
     fn car(id: u32, x: i32, seats: Vec<u32>) -> VehicleState {
-        VehicleState(id, KIND_JEEP, x, 40, 7, 10, -20, 30, 5, seats, None, 100)
+        VehicleState(id, KIND_JEEP, x, 40, 7, 10, -20, 30, 5, seats, None, 100, None)
     }
 
     fn tank(id: u32, yaw: i16) -> VehicleState {
-        VehicleState(id, KIND_TANK, 0, 40, 0, 0, 0, 0, 0, vec![0, 0], Some(Turret(yaw, 100, 1, 500)), 250)
+        VehicleState(id, KIND_TANK, 0, 40, 0, 0, 0, 0, 0, vec![0, 0], Some(Turret(yaw, 100, 1, 500)), 250, None)
     }
 
     #[test]
@@ -207,5 +212,24 @@ mod tests {
         assert_eq!(delta.vehicles[0].8, None);
         assert_eq!(delta.vehicles[0].9, None);
         assert_eq!(apply(&Scene { entities: vec![], vehicles: vec![tank(10, 300)] }, &delta).vehicles, vec![b]);
+    }
+
+    #[test]
+    fn damage_is_sent_when_it_changes_and_a_repair_clears_it() {
+        let clean = Scene { entities: vec![], vehicles: vec![car(9, 0, vec![0; 4])] };
+        let mut hurt = clean.clone();
+        hurt.vehicles[0].12 = Some([90, 0, 0, 20, 0, 0, 0, 255]);
+        let delta = diff(&clean, &hurt);
+        assert_eq!(delta.vehicles[0].11, Some([90, 0, 0, 20, 0, 0, 0, 255]));
+        assert_eq!(apply(&clean, &delta), hurt);
+        // Moving on without new damage does not resend it.
+        let mut moved = hurt.clone();
+        moved.vehicles[0].2 = 50;
+        assert_eq!(diff(&hurt, &moved).vehicles[0].11, None);
+        assert_eq!(apply(&hurt, &diff(&hurt, &moved)), moved);
+        // A fresh vehicle at home has none.
+        let delta = diff(&hurt, &clean);
+        assert_eq!(delta.vehicles[0].11, Some([0; 8]));
+        assert_eq!(apply(&hurt, &delta), clean);
     }
 }

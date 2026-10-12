@@ -1,6 +1,6 @@
 /** Mirrors `crates/shared/src/consts.rs`. Keep the two in step. */
 
-export const PROTOCOL_VERSION = 16
+export const PROTOCOL_VERSION = 17
 
 /** A hurt building is drawn in this many worse states; the last is about to collapse. Mirrors `DAMAGE_STAGES`. */
 export const DAMAGE_STAGES = 3
@@ -81,7 +81,7 @@ export const JEEP_HARD_POINT_Y = 0.0
 export const JEEP_SUSPENSION_REST = 0.4
 export const JEEP_RIDE_HEIGHT = 0.857
 export const JEEP_MAX_STEER = 0.5
-export const JEEP_MAX_SPEED = 28.0
+export const JEEP_MAX_SPEED = 32.0
 
 /** The sports car: a low two-seater with small wheels, a big engine and a high top speed. */
 export const SPORTS_SEATS = 2
@@ -93,7 +93,7 @@ export const SPORTS_HARD_POINT_Y = 0.05
 export const SPORTS_SUSPENSION_REST = 0.22
 export const SPORTS_RIDE_HEIGHT = 0.397
 export const SPORTS_MAX_STEER = 0.4
-export const SPORTS_MAX_SPEED = 44.0
+export const SPORTS_MAX_SPEED = 50.0
 
 /** The tank. Mirrors `TANK_*` in consts.rs. Same body axes as the car. */
 export const TANK_SEATS = 2

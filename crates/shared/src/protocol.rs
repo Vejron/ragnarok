@@ -73,6 +73,10 @@ pub const WEAPON_GRENADE: u8 = 5;
 /// The helicopter's nose autocannon: a shell's burst, smaller.
 pub const WEAPON_AUTOCANNON: u8 = 6;
 pub const WEAPON_SNIPER: u8 = 7;
+/// Shot events only, never a kill: vehicle `shooter` crashed into something at `x, y, z`.
+pub const WEAPON_CRASH: u8 = 8;
+/// Shot events only: vehicle `shooter` is scraping along something at `x, y, z`, throwing sparks.
+pub const WEAPON_SCRAPE: u8 = 9;
 
 /// `ProjectileState` kinds.
 pub const PROJECTILE_ROCKET: u8 = 0;
@@ -185,6 +189,9 @@ pub struct VehicleState(
     pub Option<Turret>,
     /// Health; 0 is a burning wreck nobody can board.
     pub u8,
+    /// Crash damage, `nil` while there is none: `[front, rear, left, right, wheel FL, FR, RL, RR]`,
+    /// each 0..=255. A wheel at 255 has come off. See `DAMAGE_*`.
+    pub Option<[u8; 8]>,
 );
 
 /// What changed in a standing entity since the baseline: `[id, dx, dy, dz, dyaw, dvy, flags,
@@ -205,8 +212,8 @@ pub struct EntityDelta(
 );
 
 /// What changed in a vehicle since the baseline: `[id, dx, dy, dz, dqx, dqy, dqz, dsteer, seats,
-/// turret, hp]`. The first eight are differences; `seats` and `turret` are `nil` when unchanged,
-/// and `hp` is the new value.
+/// turret, hp, damage]`. The first eight are differences; `seats`, `turret` and `damage` are `nil`
+/// when unchanged (a repaired vehicle's `damage` is all zeros), and `hp` is the new value.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VehicleDelta(
     pub u32,
@@ -220,7 +227,18 @@ pub struct VehicleDelta(
     pub Option<Vec<u32>>,
     pub Option<Turret>,
     pub u8,
+    pub Option<[u8; 8]>,
 );
+
+/// Indices into a vehicle's damage: the four sides of the body, then the wheels front left,
+/// front right, rear left, rear right (a tank's and a helicopter's wheels are never hurt).
+pub const DAMAGE_FRONT: usize = 0;
+pub const DAMAGE_REAR: usize = 1;
+pub const DAMAGE_LEFT: usize = 2;
+pub const DAMAGE_RIGHT: usize = 3;
+pub const DAMAGE_WHEELS: usize = 4;
+/// A wheel damaged this much has come off.
+pub const WHEEL_GONE: u8 = 255;
 
 /// A vehicle's gun, as it is drawn: the turret and barrel angles in the hull frame, and the last
 /// shot. `shots` counts shots modulo 256, so a client sees a new shot as a change in the counter;
@@ -371,11 +389,11 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 16, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
+        148, 0, 17, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[
-        159, 1, 205, 4, 210, 205, 4, 206, 42, 9, 145, 154, 7, 0, 0, 85, 206, 0, 1, 134, 160, 0, 0, 3, 0, 0, 145, 153, 1, 25, 253, 40, 208, 136, 205, 2, 138, 1, 209, 254, 212, 12, 145, 156, 10, 2, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 146, 1, 7, 148, 209, 253, 68, 204, 250, 3, 205, 4, 210, 0, 145, 155, 9, 100, 0, 208, 211, 3, 254, 0, 4, 148, 1, 0, 7, 0, 192, 100, 146, 3, 11, 152, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 73, 204, 128, 147, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 152, 40, 1, 205, 4, 176, 204, 150, 209, 252, 224, 205, 11, 184, 0, 209, 246, 60, 145, 149, 60, 4, 209, 254, 212, 5, 205, 4, 226,
+        159, 1, 205, 4, 210, 205, 4, 206, 42, 9, 145, 154, 7, 0, 0, 85, 206, 0, 1, 134, 160, 0, 0, 3, 0, 0, 145, 153, 1, 25, 253, 40, 208, 136, 205, 2, 138, 1, 209, 254, 212, 12, 145, 157, 10, 2, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 146, 1, 7, 148, 209, 253, 68, 204, 250, 3, 205, 4, 210, 0, 192, 145, 156, 9, 100, 0, 208, 211, 3, 254, 0, 4, 148, 1, 0, 7, 0, 192, 100, 152, 0, 0, 40, 0, 0, 0, 204, 255, 3, 146, 3, 11, 152, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 73, 204, 128, 147, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 152, 40, 1, 205, 4, 176, 204, 150, 209, 252, 224, 205, 11, 184, 0, 209, 246, 60, 145, 149, 60, 4, 209, 254, 212, 5, 205, 4, 226,
     ];
 
     fn sample_input() -> ClientInput {
@@ -399,8 +417,8 @@ mod tests {
             9,
             vec![EntityState(7, KIND_STICKMAN, 0, 85, 100_000, 0, 0, FLAG_GROUNDED | FLAG_DEAD, 0, 0)],
             vec![EntityDelta(1, 25, -3, 40, -120, 650, FLAG_GROUNDED, -300, 12)],
-            vec![VehicleState(10, KIND_TANK, 300, 90, -2000, 0, 700, 0, 32, vec![1, 7], Some(Turret(-700, 250, 3, 1234)), 0)],
-            vec![VehicleDelta(9, 100, 0, -45, 3, -2, 0, 4, Some(vec![1, 0, 7, 0]), None, 100)],
+            vec![VehicleState(10, KIND_TANK, 300, 90, -2000, 0, 700, 0, 32, vec![1, 7], Some(Turret(-700, 250, 3, 1234)), 0, None)],
+            vec![VehicleDelta(9, 100, 0, -45, 3, -2, 0, 4, Some(vec![1, 0, 7, 0]), None, 100, Some([0, 0, 40, 0, 0, 0, 255, 3]))],
             vec![3, 11],
             Some(DriveState(120, -5, -2500, 30, -400, 15, 250, -600)),
             SelfState(73, 128, vec![ItemSlot(ITEM_AK5, 1, 17), ItemSlot(ITEM_NONE, 0, 0), ItemSlot(ITEM_GRENADE, 2, 0)]),

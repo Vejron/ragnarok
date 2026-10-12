@@ -3,7 +3,7 @@
 let context: AudioContext | null = null
 
 /** The shared context, or null where the browser has none (or has not allowed one yet). */
-function audio(): AudioContext | null {
+export function audioContext(): AudioContext | null {
   try {
     context ??= new AudioContext()
     if (context.state === 'suspended') void context.resume()
@@ -44,7 +44,7 @@ function note(ctx: AudioContext, at: number, length: number, from: number, to: n
 /** A rooster's "ko-ko-koo-koooo!", over about as long as the crow animation. `volume` is 0..1. */
 export function playCrow(volume: number) {
   if (volume < 0.02) return
-  const ctx = audio()
+  const ctx = audioContext()
   if (!ctx) return
   const t = ctx.currentTime + 0.02
   const v = 0.25 * Math.min(1, volume)

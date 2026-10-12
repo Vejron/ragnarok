@@ -1,10 +1,10 @@
 import RAPIER from '@dimforge/rapier3d-compat'
 import { describe, expect, it } from 'vitest'
-import { CarSim, CAR_GRAVITY, controlsOf, VehicleDriver, type CarControls } from '@/sim/vehicle'
+import { CarSim, CAR_GRAVITY, conditionOf, controlsOf, VehicleDriver, type CarControls } from '@/sim/vehicle'
 import { addTileCollider } from '@/sim/physics'
 import { heightIn, type TileGround } from '@/sim/terrain'
 import { f32 } from '@/sim/movement'
-import { TICK_DT } from '@/sim/consts'
+import { TICK_DT, vehicleMaxHp } from '@/sim/consts'
 import { KIND_HELI, KIND_JEEP, KIND_SPORTS, KIND_TANK, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
 import type { TileData, WorldData } from '@/world'
 
@@ -25,18 +25,18 @@ const scripted = (tick: number): CarControls => {
 
 /** `SCRIPTED_CHECKPOINTS` in vehicle.rs. */
 const checkpoints: [number, number, [number, number, number]][] = [
-  [KIND_JEEP, 90, [0, 0.8573, -0.7099]],
-  [KIND_JEEP, 210, [1.116, 0.8571, -14.5416]],
-  [KIND_JEEP, 300, [15.9199, 0.8571, -24.0936]],
-  [KIND_JEEP, 480, [28.7793, 0.8571, -51.1131]],
-  [KIND_SPORTS, 90, [-0.002, 0.3976, -1.3505]],
-  [KIND_SPORTS, 210, [1.7816, 0.3973, -27.0709]],
-  [KIND_SPORTS, 300, [27.2023, 0.3973, -46.9713]],
-  [KIND_SPORTS, 480, [51.4146, 0.3973, -106.4018]],
-  [KIND_TANK, 90, [0, 0.94, -0.7659]],
-  [KIND_TANK, 210, [0.4323, 0.94, -13.2166]],
-  [KIND_TANK, 300, [9.7875, 0.94, -22.8965]],
-  [KIND_TANK, 480, [22.4889, 0.94, -32.251]],
+  [KIND_JEEP, 90, [0, 0.8572, -0.9723]],
+  [KIND_JEEP, 210, [2.5239, 0.8564, -22.4112]],
+  [KIND_JEEP, 300, [30.9153, 0.856, -23.3722]],
+  [KIND_JEEP, 480, [64.3589, 0.8568, -59.5452]],
+  [KIND_SPORTS, 90, [-0.0019, 0.3975, -1.9154]],
+  [KIND_SPORTS, 210, [4.3494, 0.3961, -44.2191]],
+  [KIND_SPORTS, 300, [56.9594, 0.3953, -54.7882]],
+  [KIND_SPORTS, 480, [125.6157, 0.3959, -128.6126]],
+  [KIND_TANK, 90, [0, 0.94, -0.834]],
+  [KIND_TANK, 210, [0.5739, 0.94, -17.5632]],
+  [KIND_TANK, 300, [11.9063, 0.94, -29.5214]],
+  [KIND_TANK, 480, [26.5903, 0.94, -40.3629]],
 ]
 
 /** Same as `scripted_flight` in vehicle.rs. */
@@ -78,6 +78,39 @@ describe('vehicle prediction', () => {
       }
       world.free()
     }
+  })
+
+  /** `DAMAGED_CHECKPOINTS` in vehicle.rs: a jeep with a bent front left wheel and no rear right one. */
+  const damagedCheckpoints: [number, [number, number, number]][] = [
+    [90, [0.1147, 0.7626, -0.3659]],
+    [300, [9.175, 0.7638, -15.2648]],
+    [480, [13.0374, 0.7641, -30.9333]],
+  ]
+
+  it('WASM drives a damaged jeep where the native server does', async () => {
+    await RAPIER.init()
+    const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
+    world.timestep = TICK_DT
+    world.createCollider(RAPIER.ColliderDesc.cuboid(200, 0.5, 200).setTranslation(0, -0.5, 0))
+    const car = new CarSim(world, KIND_JEEP, [0, 1.5, 0], 0)
+    car.condition = { power: 0.8, wheels: [180, 0, 0, 255] }
+    for (let tick = 0; tick < 480; tick++) {
+      car.drive(scripted(tick), TICK_DT)
+      car.step(TICK_DT)
+      const expected = damagedCheckpoints.find(([t]) => t === tick + 1)
+      if (!expected) continue
+      car.state().position.forEach((value, axis) => {
+        expect(Math.abs(value - expected[1][axis]!), `tick ${tick + 1} axis ${axis}`).toBeLessThan(0.01)
+      })
+    }
+    world.free()
+  })
+
+  it('reads a vehicle’s condition off the snapshot like the server', () => {
+    expect(conditionOf(KIND_JEEP, 100, [9, 9, 9, 9, 1, 2, 3, 4])).toEqual({ power: 1, wheels: [1, 2, 3, 4] })
+    expect(conditionOf(KIND_JEEP, 60, [0, 0, 0, 0, 0, 0, 0, 0]).power).toBe(1)
+    expect(conditionOf(KIND_JEEP, 10, [0, 0, 0, 0, 0, 0, 0, 0]).power).toBeCloseTo(0.6)
+    expect(conditionOf(KIND_TANK, 125, [0, 0, 0, 0, 0, 0, 0, 0]).power).toBe(1)
   })
 })
 
@@ -124,9 +157,9 @@ describe('vehicles on a slope', () => {
 
   /** `RAMP_CHECKPOINTS` in vehicle.rs. */
   const checkpoints: [number, [number, number, number]][] = [
-    [60, [0, 13.7271, 39.5717]],
-    [180, [0, 15.5995, 30.7484]],
-    [360, [0, 21.3032, 3.9024]],
+    [60, [0, 13.8145, 39.1671]],
+    [180, [0, 17.2683, 22.8746]],
+    [360, [0, 29.7911, -36.0072]],
   ]
 
   it('WASM car climbs where the native server does', async () => {
@@ -186,7 +219,7 @@ describe('driving a predicted vehicle', () => {
     return {
       vehicle: {
         id: 3, kind, x: cm(s.position[0]), y: cm(s.position[1]), z: cm(s.position[2]),
-        qx, qy, qz, qw: Math.sqrt(1 - qx * qx - qy * qy - qz * qz), steer: 0, seats: [1, 0, 0, 0], turret: null, hp: 100,
+        qx, qy, qz, qw: Math.sqrt(1 - qx * qx - qy * qy - qz * qz), steer: 0, seats: [1, 0, 0, 0], turret: null, hp: vehicleMaxHp(kind), damage: [0, 0, 0, 0, 0, 0, 0, 0],
       },
       drive: {
         vx: cm(s.linvel[0]), vy: cm(s.linvel[1]), vz: cm(s.linvel[2]),

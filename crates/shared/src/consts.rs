@@ -1,7 +1,7 @@
 //! Simulation and network constants. Mirrored in `client/src/sim/consts.ts`.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 16;
+pub const PROTOCOL_VERSION: u8 = 17;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -111,7 +111,7 @@ pub const JEEP_RIDE_HEIGHT: f32 = 0.857;
 /// Largest steering angle of the front wheels, radians. The wire carries it as -127..=127.
 pub const JEEP_MAX_STEER: f32 = 0.5;
 /// Forward speed above which engine force fades to zero, m/s.
-pub const JEEP_MAX_SPEED: f32 = 28.0;
+pub const JEEP_MAX_SPEED: f32 = 32.0;
 
 /// The sports car (`KIND_SPORTS`): a low two-seater with small wheels and a big engine. Quick in a
 /// straight line, with the chassis only about 12 cm off the ground.
@@ -124,7 +124,7 @@ pub const SPORTS_HARD_POINT_Y: f32 = 0.05;
 pub const SPORTS_SUSPENSION_REST: f32 = 0.22;
 pub const SPORTS_RIDE_HEIGHT: f32 = 0.397;
 pub const SPORTS_MAX_STEER: f32 = 0.4;
-pub const SPORTS_MAX_SPEED: f32 = 44.0;
+pub const SPORTS_MAX_SPEED: f32 = 50.0;
 
 /// The tank: a heavy six-wheel hull that turns on the spot, with a driver (seat 0) and a gunner
 /// (seat 1) who aims the turret and fires. Same body axes as the car.

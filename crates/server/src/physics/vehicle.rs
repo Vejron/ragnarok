@@ -14,7 +14,7 @@ use super::{Obj, Physics};
 use rapier3d::control::{DynamicRayCastVehicleController, WheelTuning};
 use rapier3d::prelude::*;
 use shared::consts::*;
-use shared::protocol::{KIND_HELI, KIND_SPORTS, KIND_TANK};
+use shared::protocol::{DAMAGE_WHEELS, KIND_HELI, KIND_SPORTS, KIND_TANK, WHEEL_GONE, vehicle_hp};
 
 /// Gravity acting on vehicle bodies. Stickmen use `GRAVITY`; the ray-cast suspension is tuned
 /// around the real-world value.
@@ -42,6 +42,9 @@ pub(super) struct Spec {
     /// Flies on a rotor instead of rolling on wheels.
     flies: bool,
     linear_damping: f32,
+    /// How far below the box's centre the centre of mass sits, metres. A low one keeps a car on its
+    /// wheels through hard corners; zero leaves the box's own.
+    com_drop: f32,
 }
 
 static JEEP: Spec = Spec {
@@ -55,12 +58,13 @@ static JEEP: Spec = Spec {
     hard_point_y: JEEP_HARD_POINT_Y,
     suspension_rest: JEEP_SUSPENSION_REST,
     max_suspension_force: 60_000.0,
-    engine_force: 7500.0,
+    engine_force: 10_000.0,
     max_speed: JEEP_MAX_SPEED,
     steer_lock: JEEP_MAX_STEER,
     turn_rate: 0.0,
     flies: false,
     linear_damping: 0.05,
+    com_drop: 0.15,
 };
 
 static SPORTS: Spec = Spec {
@@ -73,12 +77,13 @@ static SPORTS: Spec = Spec {
     hard_point_y: SPORTS_HARD_POINT_Y,
     suspension_rest: SPORTS_SUSPENSION_REST,
     max_suspension_force: 60_000.0,
-    engine_force: 11_000.0,
+    engine_force: 15_000.0,
     max_speed: SPORTS_MAX_SPEED,
     steer_lock: SPORTS_MAX_STEER,
     turn_rate: 0.0,
     flies: false,
     linear_damping: 0.05,
+    com_drop: 0.02,
 };
 
 static TANK: Spec = Spec {
@@ -97,6 +102,7 @@ static TANK: Spec = Spec {
     turn_rate: TANK_TURN_RATE,
     flies: false,
     linear_damping: 0.05,
+    com_drop: 0.0,
 };
 
 static HELI: Spec = Spec {
@@ -116,6 +122,7 @@ static HELI: Spec = Spec {
     flies: true,
     // Air drag is what limits the speed: the rotor's lean gives about 4.9 m/s², so about 25 m/s.
     linear_damping: 0.2,
+    com_drop: 0.0,
 };
 
 /// The spec for a vehicle kind. Unknown kinds are jeeps.
@@ -138,13 +145,35 @@ const TURN_ACCEL: f32 = 3.0;
 /// Speed change a blast gives a vehicle at its centre, m/s.
 const BLAST_VELOCITY: f32 = 5.0;
 /// Impulse each wheel may use for braking per tick, per kilogram of chassis.
-const BRAKE_PER_KG: f32 = 0.035;
+const BRAKE_PER_KG: f32 = 0.045;
 /// Light brake that stands in for rolling resistance when the driver is off the pedals.
 const COAST_BRAKE_PER_KG: f32 = 0.0015;
 /// How fast the front wheels turn towards the steering input, radians per second.
-const STEER_RATE: f32 = 3.0;
+const STEER_RATE: f32 = 7.0;
+/// Wheels straighten this much faster than they turn in.
+const STEER_RETURN: f32 = 1.5;
 /// Steering lock shrinks with speed: `steer_lock / (1 + speed / STEER_FADE_SPEED)`.
-const STEER_FADE_SPEED: f32 = 14.0;
+const STEER_FADE_SPEED: f32 = 20.0;
+/// The engine pulls with full force up to this fraction of the top speed, then fades to nothing at it.
+const FULL_POWER: f32 = 0.65;
+/// Side grip of a car's rear wheels while the handbrake is held, against 1 normally. Grip is the share
+/// of the wheel's sideways slip cancelled each tick, so even 0.3 holds firm; this lets the tail slide out.
+const DRIFT_GRIP: f32 = 0.05;
+/// Downforce on a car with a wheel down, per kilogram, per (m/s)²: a third of its weight again at 40 m/s.
+const DOWNFORCE_PER_KG: f32 = 0.0001;
+/// How quickly the throttle pitches and the steering rolls a car with no wheel down, rad/s².
+const AIR_PITCH: f32 = 3.0;
+const AIR_ROLL: f32 = 3.0;
+/// Side grip of the rear wheels and the tyres' friction, as `WheelTuning` sets them.
+const SIDE_GRIP: f32 = 1.0;
+const FRICTION_SLIP: f32 = 12.0;
+/// How far a wrecked wheel points off straight, radians: a left wheel turns left, a right one right.
+const TOE_MAX: f32 = 0.12;
+/// Share of its side grip and friction a wrecked wheel loses.
+const WHEEL_GRIP_LOSS: f32 = 0.85;
+const WHEEL_SLIP_LOSS: f32 = 0.6;
+/// A wheel that has come off: a stub that never reaches the ground.
+const LOST_WHEEL_RADIUS: f32 = 0.05;
 
 /// What the driver asks of the car this tick.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -158,6 +187,27 @@ pub struct CarControls {
     pub lift: f32,
     /// The rotor is turning, i.e. a pilot is aboard. Only a helicopter has it.
     pub powered: bool,
+}
+
+/// How worn a vehicle is, which both ends' physics apply: the engine's power and the state of a
+/// car's four wheels (front left, front right, rear left, rear right; 0 sound, 255 come off).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CarCondition {
+    pub power: f32,
+    pub wheels: [u8; 4],
+}
+
+impl CarCondition {
+    pub const NEW: CarCondition = CarCondition { power: 1.0, wheels: [0; 4] };
+
+    /// From a vehicle's health and damage as the snapshot carries them. The engine keeps full power
+    /// down to half health and loses up to half of it below. Mirrored by `conditionOf` in `vehicle.ts`.
+    pub fn of(kind: u8, hp: u8, damage: [u8; 8]) -> CarCondition {
+        let health = f32::from(hp) / f32::from(vehicle_hp(kind));
+        let mut wheels = [0; 4];
+        wheels.copy_from_slice(&damage[DAMAGE_WHEELS..DAMAGE_WHEELS + 4]);
+        CarCondition { power: (0.5 + health).min(1.0), wheels }
+    }
 }
 
 impl CarControls {
@@ -194,6 +244,22 @@ pub struct CarMotion {
     pub spin: f32,
 }
 
+/// Something a vehicle's solids pushed against during the last step.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CarImpact {
+    pub car: u32,
+    /// The vehicle on the other side, if it was one.
+    pub other_car: Option<u32>,
+    /// The building or tree on the other side, if it was one.
+    pub object: Option<Obj>,
+    /// Where they touched, in the vehicle's own frame (+X right, +Y up, -Z forward).
+    pub local: [f32; 3],
+    /// Where they touched, in the world.
+    pub point: [f32; 3],
+    /// Speed the contact took out of the vehicle this step, m/s: its impulse over the vehicle's mass.
+    pub dv: f32,
+}
+
 /// A car touching a character.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CarHit {
@@ -218,6 +284,9 @@ pub(super) struct Car {
     spin: f32,
     /// What a helicopter was last asked to do, applied in the next [`Physics::step_cars`].
     flight: CarControls,
+    /// Throttle and steering of a car, which tilt it while it is in the air.
+    air: (f32, f32),
+    condition: CarCondition,
 }
 
 impl Car {
@@ -234,6 +303,26 @@ fn pose_of(position: [f32; 3], yaw: f32) -> Pose {
 /// How far below its feet a standing character probes for a car to ride. The character controller
 /// rests 2 cm above whatever it stands on, so this reaches into the roof.
 const RIDE_PROBE: f32 = 0.06;
+
+/// Share of full engine force at `speed` for a top speed of `max`: all of it up to [`FULL_POWER`]
+/// of the way, then less and less until none at `max`.
+fn pull(speed: f32, max: f32) -> f32 {
+    ((max - speed.abs()) / (max * (1.0 - FULL_POWER))).clamp(0.0, 1.0)
+}
+
+/// Keeps a car planted and lets it be steered in the air: downforce while any wheel is down, and a
+/// nudge of pitch (throttle) and roll (steering) while none is.
+fn assist(body: &mut RigidBody, (throttle, steer): (f32, f32), grounded: bool, dt: f32) {
+    let rotation = *body.rotation();
+    if grounded {
+        let push = DOWNFORCE_PER_KG * body.mass() * body.linvel().length_squared() * dt;
+        body.apply_impulse(rotation * Vector::new(0.0, -push, 0.0), true);
+    } else {
+        // + about X lifts the nose and + about Z lifts the right side, so forward and right are negative.
+        let nudge = rotation * Vector::new(-throttle * AIR_PITCH * dt, 0.0, -steer * AIR_ROLL * dt);
+        body.set_angvel(body.angvel() + nudge, true);
+    }
+}
 
 /// One tick of rotor flight for a powered helicopter body.
 ///
@@ -328,11 +417,16 @@ impl Physics {
             .angular_damping(0.8)
             .build();
         let body = self.bodies.insert(body);
-        let collider = self.colliders.insert_with_parent(
-            ColliderBuilder::cuboid(hx, hy, hz).density(spec.density).friction(0.4).build(),
-            body,
-            &mut self.bodies,
-        );
+        let mut chassis = ColliderBuilder::cuboid(hx, hy, hz).friction(0.4);
+        chassis = if spec.com_drop > 0.0 {
+            // The box's own mass and inertia, with the centre of mass lowered.
+            let mass = spec.density * 8.0 * hx * hy * hz;
+            let inertia = Vector::new(hy * hy + hz * hz, hx * hx + hz * hz, hx * hx + hy * hy) * (mass / 3.0);
+            chassis.mass_properties(MassProperties::new(Vector::new(0.0, -spec.com_drop, 0.0), mass, inertia))
+        } else {
+            chassis.density(spec.density)
+        };
+        let collider = self.colliders.insert_with_parent(chassis.build(), body, &mut self.bodies);
         // The turret is a cylinder, so it needs no turning with the gun. It adds no mass, which keeps
         // the hull's balance and the tuning that goes with it.
         let turret = (kind == KIND_TANK).then(|| {
@@ -357,8 +451,8 @@ impl Physics {
             suspension_compression: 2.2,
             suspension_damping: 3.0,
             max_suspension_travel: 0.3,
-            side_friction_stiffness: 1.0,
-            friction_slip: 12.0,
+            side_friction_stiffness: SIDE_GRIP,
+            friction_slip: FRICTION_SLIP,
             max_suspension_force: spec.max_suspension_force,
         };
         for &z in spec.axles {
@@ -374,7 +468,7 @@ impl Physics {
                 );
             }
         }
-        self.cars.insert(id, Car { spec, body, collider, turret, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE });
+        self.cars.insert(id, Car { spec, body, collider, turret, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW });
     }
 
     /// Puts a car back upright and at rest.
@@ -401,6 +495,13 @@ impl Physics {
         }
     }
 
+    /// How worn vehicle `id` is from now on; applied by [`Physics::drive_car`].
+    pub fn set_car_condition(&mut self, id: u32, condition: CarCondition) {
+        if let Some(car) = self.cars.get_mut(&id) {
+            car.condition = condition;
+        }
+    }
+
     /// Applies the driver's controls to the wheels for the next [`Physics::step_cars`].
     pub fn drive_car(&mut self, id: u32, controls: CarControls, dt: f32) {
         let Some(car) = self.cars.get_mut(&id) else { return };
@@ -416,9 +517,11 @@ impl Physics {
         // Steering eases towards its target, and the lock narrows at speed.
         let lock = car.spec.steer_lock / (1.0 + speed.abs() / STEER_FADE_SPEED);
         let target = controls.steer.clamp(-1.0, 1.0) * lock;
-        let step = STEER_RATE * dt;
+        let returning = target.abs() < car.steer.abs() || target * car.steer < 0.0;
+        let step = STEER_RATE * if returning { STEER_RETURN } else { 1.0 } * dt;
         car.steer += (target - car.steer).clamp(-step, step);
         car.turn = controls.steer.clamp(-1.0, 1.0) * car.spec.turn_rate;
+        car.air = (controls.throttle.clamp(-1.0, 1.0), controls.steer.clamp(-1.0, 1.0));
 
         // Pushing against the direction of travel brakes instead of reversing the engine.
         let against = controls.throttle * speed < -1.0;
@@ -427,20 +530,31 @@ impl Physics {
         } else if against {
             (0.0, BRAKE_PER_KG * mass)
         } else {
-            let headroom = if controls.throttle > 0.0 { (1.0 - speed.abs() / car.spec.max_speed).max(0.0) } else { 0.5 };
-            (controls.throttle * car.spec.engine_force / car.controller.wheels().len() as f32 * headroom, 0.0)
+            let headroom = if controls.throttle > 0.0 { pull(speed, car.spec.max_speed) } else { 0.5 };
+            (controls.throttle * car.spec.engine_force / car.controller.wheels().len() as f32 * headroom * car.condition.power, 0.0)
         };
         let handbrake = if controls.handbrake { BRAKE_PER_KG * mass } else { 0.0 };
 
-        // Only a car's first axle steers and is spared the handbrake.
+        // Only a car's first axle steers and is spared the handbrake, which also lets its tail slide.
         let front_wheels = if car.spec.steer_lock > 0.0 { 2 } else { 0 };
+        let drift = controls.handbrake && front_wheels > 0;
+        let (spec, condition, steer) = (car.spec, car.condition, car.steer);
         for (index, wheel) in car.controller.wheels_mut().iter_mut().enumerate() {
             let front = index < front_wheels;
-            // Wheels are added front pair first. The steering angle is negated: +angle turns the
-            // wheel about the controller's up axis, which turns the car left.
-            wheel.steering = if front { -car.steer } else { 0.0 };
-            wheel.engine_force = engine;
-            wheel.brake = if front { brake } else { brake.max(handbrake) };
+            // Only a car's four wheels take damage. A wrecked one points off to its own side and grips less.
+            let hurt = if front_wheels > 0 { condition.wheels.get(index).copied().unwrap_or(0) } else { 0 };
+            let wear = f32::from(hurt) / f32::from(WHEEL_GONE);
+            let gone = hurt == WHEEL_GONE;
+            let toe = if index % 2 == 0 { TOE_MAX } else { -TOE_MAX } * wear;
+            // Wheels are added front pair first, left before right. The steering angle is negated:
+            // +angle turns the wheel about the controller's up axis, which turns the car left.
+            wheel.steering = if front { -steer } else { 0.0 } + toe;
+            wheel.engine_force = if gone { 0.0 } else { engine };
+            wheel.brake = if gone { 0.0 } else if front { brake } else { brake.max(handbrake) };
+            wheel.side_friction_stiffness = if drift && !front { DRIFT_GRIP } else { SIDE_GRIP } * (1.0 - WHEEL_GRIP_LOSS * wear);
+            wheel.friction_slip = FRICTION_SLIP * (1.0 - WHEEL_SLIP_LOSS * wear);
+            wheel.radius = if gone { LOST_WHEEL_RADIUS } else { spec.wheel_radius };
+            wheel.suspension_rest_length = if gone { 0.0 } else { spec.suspension_rest };
         }
     }
 
@@ -487,21 +601,24 @@ impl Physics {
             );
             car.controller.update_vehicle(dt, queries);
         }
-        // A tank turns on the spot, but only while some track is on the ground. The wheels' side
-        // grip fights any spin every tick, so the rate is kept here and written back each time.
+        // A car is pressed down or tilted in the air. A tank turns on the spot, but only while some
+        // track is on the ground. The wheels' side grip fights any spin every tick, so the rate is
+        // kept here and written back each time.
         for car in self.cars.values_mut().filter(|car| !car.spec.flies) {
             let grounded = car.controller.wheels().iter().any(|wheel| wheel.raycast_info().is_in_contact);
+            let Some(body) = self.bodies.get_mut(car.body) else { continue };
+            if car.spec.steer_lock > 0.0 {
+                assist(body, car.air, grounded, dt);
+            }
             if car.turn == 0.0 || !grounded {
                 car.spin = 0.0;
                 continue;
             }
             car.spin += (car.turn - car.spin).clamp(-TURN_ACCEL * dt, TURN_ACCEL * dt);
-            if let Some(body) = self.bodies.get_mut(car.body) {
-                let mut spin = body.angvel();
-                // Clockwise seen from above is a negative rotation about +Y.
-                spin.y = -car.spin;
-                body.set_angvel(spin, true);
-            }
+            let mut spin = body.angvel();
+            // Clockwise seen from above is a negative rotation about +Y.
+            spin.y = -car.spin;
+            body.set_angvel(spin, true);
         }
         self.step_pipeline();
     }
@@ -519,6 +636,48 @@ impl Physics {
                     if let Some(object @ Obj::Tree(_)) = self.objects.get(&other).copied() {
                         found.push((id, object));
                     }
+                }
+            }
+        }
+        found
+    }
+
+    /// Every contact of a vehicle's solids with anything after the last step, with how hard it pushed.
+    pub fn car_impacts(&self) -> Vec<CarImpact> {
+        let mut found = Vec::new();
+        for (&id, car) in &self.cars {
+            let Some(body) = self.bodies.get(car.body) else { continue };
+            for handle in [Some(car.collider), car.turret].into_iter().flatten() {
+                let Some(collider) = self.colliders.get(handle) else { continue };
+                // A contact point is in the collider's frame, which for the turret is off the body's.
+                let offset = collider.position_wrt_parent().copied().unwrap_or(Pose::IDENTITY);
+                for pair in self.narrow_phase.contact_pairs_with(handle) {
+                    if !pair.has_any_active_contact() {
+                        continue;
+                    }
+                    // The middle of the touching points: a flat hit lands mid-face, not on a corner.
+                    let ours = pair.collider1 == handle;
+                    let other = if ours { pair.collider2 } else { pair.collider1 };
+                    let (mut sum, mut count) = (Vector::ZERO, 0.0);
+                    for manifold in pair.manifolds() {
+                        for contact in manifold.points.iter().filter(|contact| contact.dist < 0.02) {
+                            sum += if ours { contact.local_p1 } else { contact.local_p2 };
+                            count += 1.0;
+                        }
+                    }
+                    if count == 0.0 {
+                        continue;
+                    }
+                    let local = offset * (sum / count);
+                    let other_car = self.cars.iter().find(|(_, car)| car.owns(other)).map(|(&other, _)| other);
+                    found.push(CarImpact {
+                        car: id,
+                        other_car,
+                        object: self.objects.get(&other).copied(),
+                        local: local.into(),
+                        point: (body.position() * local).into(),
+                        dv: pair.total_impulse_magnitude() / body.mass(),
+                    });
                 }
             }
         }
@@ -706,18 +865,18 @@ mod tests {
 
     /// `(kind, tick, position)` after `scripted_controls`, mirrored in `vehicle.spec.ts`.
     const SCRIPTED_CHECKPOINTS: [(u8, u32, [f32; 3]); 12] = [
-        (KIND_JEEP, 90, [0.0, 0.8573, -0.7099]),
-        (KIND_JEEP, 210, [1.1160, 0.8571, -14.5416]),
-        (KIND_JEEP, 300, [15.9199, 0.8571, -24.0936]),
-        (KIND_JEEP, 480, [28.7793, 0.8571, -51.1131]),
-        (KIND_SPORTS, 90, [-0.0020, 0.3976, -1.3505]),
-        (KIND_SPORTS, 210, [1.7816, 0.3973, -27.0709]),
-        (KIND_SPORTS, 300, [27.2023, 0.3973, -46.9713]),
-        (KIND_SPORTS, 480, [51.4146, 0.3973, -106.4018]),
-        (KIND_TANK, 90, [0.0, 0.9400, -0.7659]),
-        (KIND_TANK, 210, [0.4323, 0.9400, -13.2166]),
-        (KIND_TANK, 300, [9.7875, 0.9400, -22.8965]),
-        (KIND_TANK, 480, [22.4889, 0.9400, -32.2509]),
+        (KIND_JEEP, 90, [0.0, 0.8572, -0.9723]),
+        (KIND_JEEP, 210, [2.5239, 0.8564, -22.4112]),
+        (KIND_JEEP, 300, [30.9153, 0.8560, -23.3722]),
+        (KIND_JEEP, 480, [64.3589, 0.8568, -59.5452]),
+        (KIND_SPORTS, 90, [-0.0019, 0.3975, -1.9154]),
+        (KIND_SPORTS, 210, [4.3494, 0.3961, -44.2191]),
+        (KIND_SPORTS, 300, [56.9594, 0.3953, -54.7882]),
+        (KIND_SPORTS, 480, [125.6157, 0.3959, -128.6126]),
+        (KIND_TANK, 90, [0.0, 0.9400, -0.8340]),
+        (KIND_TANK, 210, [0.5739, 0.9400, -17.5632]),
+        (KIND_TANK, 300, [11.9063, 0.9400, -29.5214]),
+        (KIND_TANK, 480, [26.5903, 0.9400, -40.3629]),
     ];
 
     #[test]
@@ -752,9 +911,9 @@ mod tests {
 
     /// `(tick, position)` of a car driven `FORWARD` up `ramp` from [0, _, 40], mirrored in `vehicle.spec.ts`.
     const RAMP_CHECKPOINTS: [(u32, [f32; 3]); 3] = [
-        (60, [0.0000, 13.7271, 39.5717]),
-        (180, [0.0000, 15.5995, 30.7484]),
-        (360, [0.0000, 21.3032, 3.9024]),
+        (60, [0.0000, 13.8145, 39.1671]),
+        (180, [0.0000, 17.2683, 22.8746]),
+        (360, [0.0000, 29.7911, -36.0072]),
     ];
 
     #[test]
@@ -844,7 +1003,8 @@ mod tests {
     fn steering_right_turns_the_heading_clockwise() {
         let mut physics = with_car(&flat());
         run(&mut physics, COAST, 60);
-        let pose = run(&mut physics, CarControls { throttle: 1.0, steer: 1.0, ..CarControls::IDLE }, 60 * 3);
+        // Short of a half turn, so the yaw doesn't wrap.
+        let pose = run(&mut physics, CarControls { throttle: 1.0, steer: 1.0, ..CarControls::IDLE }, 60 * 2);
         assert!(yaw(&pose) < -0.3, "right turn lowers the yaw: {}", yaw(&pose));
         assert!(pose.position[0] > 1.0, "ends up to the right (+X): {pose:?}");
         assert!(pose.steer > 0.0);
@@ -854,8 +1014,122 @@ mod tests {
     fn steering_left_mirrors_it() {
         let mut physics = with_car(&flat());
         run(&mut physics, COAST, 60);
-        let pose = run(&mut physics, CarControls { throttle: 1.0, steer: -1.0, ..CarControls::IDLE }, 60 * 3);
+        let pose = run(&mut physics, CarControls { throttle: 1.0, steer: -1.0, ..CarControls::IDLE }, 60 * 2);
         assert!(yaw(&pose) > 0.3 && pose.position[0] < -1.0, "{pose:?}");
+    }
+
+    /// Angle between where the car points and where it is going, radians.
+    fn slip_angle(pose: &CarPose) -> f32 {
+        let heading = pose.yaw();
+        let [vx, _, vz] = pose.velocity;
+        let travel = (-vx).atan2(-vz);
+        let mut angle = (travel - heading).abs();
+        if angle > std::f32::consts::PI {
+            angle = 2.0 * std::f32::consts::PI - angle;
+        }
+        angle
+    }
+
+    #[test]
+    fn the_handbrake_swings_the_tail_out() {
+        let mut slips = vec![];
+        for handbrake in [false, true] {
+            let mut physics = with_car(&flat());
+            run(&mut physics, COAST, 60);
+            run(&mut physics, FORWARD, 60 * 2);
+            let pose = run(&mut physics, CarControls { throttle: 1.0, steer: 1.0, handbrake, ..CarControls::IDLE }, 40);
+            assert!(pose.up_y > 0.9, "stays on its wheels: {pose:?}");
+            slips.push(slip_angle(&pose));
+        }
+        assert!(slips[1] > slips[0] + 0.15 && slips[1] > 0.3, "slides with the handbrake: {slips:?}");
+    }
+
+    #[test]
+    fn a_hard_corner_at_speed_rolls_it_but_a_firm_one_does_not() {
+        for kind in [KIND_JEEP, KIND_SPORTS] {
+            let mut worst = [1.0_f32; 2];
+            for (i, steer) in [0.35_f32, 1.0].into_iter().enumerate() {
+                let mut physics = Physics::new(&flat()).unwrap();
+                // Back from the middle, so the run-up stays inside the 200 m world.
+                physics.add_car(1, kind, [0.0, 1.5, 190.0], 0.0);
+                run(&mut physics, COAST, 60);
+                let fast = run(&mut physics, FORWARD, 60 * 6);
+                assert!(fast.forward_speed > 20.0, "kind {kind}: {fast:?}");
+                for _ in 0..60 * 3 {
+                    let pose = run(&mut physics, CarControls { throttle: 1.0, steer, ..CarControls::IDLE }, 1);
+                    worst[i] = worst[i].min(pose.up_y);
+                }
+            }
+            assert!(worst[0] > 0.8, "kind {kind} rolls in a firm corner: {worst:?}");
+            assert!(worst[1] < 0.3, "kind {kind} stays up at full lock: {worst:?}");
+        }
+    }
+
+    #[test]
+    fn a_wrecked_front_wheel_pulls_the_car_to_its_side() {
+        for (wheels, side) in [([220, 0, 0, 0], -1.0), ([0, 220, 0, 0], 1.0)] {
+            let mut physics = with_car(&flat());
+            physics.set_car_condition(1, CarCondition { power: 1.0, wheels });
+            run(&mut physics, COAST, 60);
+            let pose = run(&mut physics, FORWARD, 60 * 3);
+            assert!(pose.position[0] * side > 2.0, "{wheels:?} pulls towards {side}: {pose:?}");
+            assert!(pose.up_y > 0.95, "{pose:?}");
+        }
+        let mut sound = with_car(&flat());
+        run(&mut sound, COAST, 60);
+        assert!(run(&mut sound, FORWARD, 60 * 3).position[0].abs() < 0.3, "a sound car runs straight");
+    }
+
+    #[test]
+    fn a_lost_wheel_drops_its_corner_and_drags() {
+        let mut sound = with_car(&flat());
+        run(&mut sound, COAST, 60);
+        let sound = run(&mut sound, FORWARD, 60 * 3);
+        let mut physics = with_car(&flat());
+        physics.set_car_condition(1, CarCondition { power: 1.0, wheels: [0, 0, 0, WHEEL_GONE] });
+        let rest = run(&mut physics, COAST, 90);
+        // The right rear corner is down: rolled right (the right side lower) and nose up.
+        let rotation = Rotation::from_xyzw(rest.rotation[0], rest.rotation[1], rest.rotation[2], rest.rotation[3]);
+        let right = rotation * Vector::X;
+        let nose = rotation * Vector::new(0.0, 0.0, -1.0);
+        assert!(right.y < -0.05 && nose.y > 0.02, "tilted onto the lost wheel: right {right:?} nose {nose:?}");
+        let pose = run(&mut physics, FORWARD, 60 * 3);
+        assert!(pose.forward_speed < sound.forward_speed * 0.8, "drags: {} against {}", pose.forward_speed, sound.forward_speed);
+    }
+
+    #[test]
+    fn a_battered_engine_is_slower() {
+        let mut speeds = vec![];
+        for health in [100, 10] {
+            let mut physics = with_car(&flat());
+            physics.set_car_condition(1, CarCondition::of(KIND_JEEP, health, [0; 8]));
+            run(&mut physics, COAST, 60);
+            speeds.push(run(&mut physics, FORWARD, 60 * 2).forward_speed);
+        }
+        assert!(speeds[1] < speeds[0] * 0.75, "{speeds:?}");
+        assert_eq!(CarCondition::of(KIND_JEEP, 60, [0; 8]).power, 1.0, "full power down to half health");
+    }
+
+    /// `(tick, position)` of a jeep with a bent front left wheel and no rear right one, driven by
+    /// `scripted_controls`, mirrored in `vehicle.spec.ts`.
+    const DAMAGED_CHECKPOINTS: [(u32, [f32; 3]); 3] = [(90, [0.1147, 0.7626, -0.3659]), (300, [9.1750, 0.7638, -15.2648]), (480, [13.0374, 0.7641, -30.9333])];
+    const DAMAGED_CONDITION: CarCondition = CarCondition { power: 0.8, wheels: [180, 0, 0, WHEEL_GONE] };
+
+    #[test]
+    fn a_damaged_drive_matches_fixture() {
+        let mut physics = Physics::new(&flat()).unwrap();
+        physics.add_car(1, KIND_JEEP, [0.0, 1.5, 0.0], 0.0);
+        physics.set_car_condition(1, DAMAGED_CONDITION);
+        for tick in 0..480 {
+            physics.drive_car(1, scripted_controls(tick), TICK_DT);
+            physics.step_cars(TICK_DT);
+            let done = tick + 1;
+            if let Some((_, expected)) = DAMAGED_CHECKPOINTS.iter().find(|(t, _)| *t == done) {
+                let position = physics.car_pose(1).unwrap().position;
+                let close = position.iter().zip(expected).all(|(a, e)| (a - e).abs() < 0.001);
+                assert!(close, "tick {done}: {position:?}");
+            }
+        }
     }
 
     #[test]
@@ -1082,7 +1356,8 @@ mod tests {
         let mut physics = with_car(&flat());
         run(&mut physics, COAST, 120);
         physics.blast_cars([-3.0, 0.0, 0.0], EXPLOSION_RADIUS);
-        let after = run(&mut physics, COAST, 20);
+        // Measured in the hop it gives: once down, the tyres' side grip soon stops the slide.
+        let after = run(&mut physics, COAST, 5);
         assert!(after.velocity[0] > 1.0, "pushed towards +X: {:?}", after.velocity);
         let mut far = with_car(&flat());
         run(&mut far, COAST, 120);

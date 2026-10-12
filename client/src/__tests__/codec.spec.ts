@@ -1,21 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import { encode } from '@msgpack/msgpack'
-import { applyDelta, decodeServer, encodeInput, encodePing, entityState, FLAG_CROWING, FLAG_GROUNDED, KIND_ROOSTER, sceneStates, toMrad, type RawEntity, type RawVehicle, type WireScene } from '@/net/codec'
+import { applyDelta, decodeServer, encodeInput, encodePing, entityState, FLAG_CROWING, FLAG_GROUNDED, KIND_ROOSTER, sceneStates, toMrad, type RawEntity, type RawVehicle, type RawVehicleDelta, type WireScene } from '@/net/codec'
 import { Replica } from '@/net/replica'
 import { BUTTON_FIRE, BUTTON_JUMP, BUTTON_RUN } from '@/sim/consts'
 
 // Byte-for-byte copies of the fixtures in `crates/shared/src/protocol.rs`. If these break, the
 // TypeScript and Rust encoders have drifted apart.
-const INPUT_FIXTURE = [148, 0, 16, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3]
+const INPUT_FIXTURE = [148, 0, 17, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3]
 const SNAPSHOT_FIXTURE = [
-  159, 1, 205, 4, 210, 205, 4, 206, 42, 9, 145, 154, 7, 0, 0, 85, 206, 0, 1, 134, 160, 0, 0, 3, 0, 0, 145, 153, 1, 25, 253, 40, 208, 136, 205, 2, 138, 1, 209, 254, 212, 12, 145, 156, 10, 2, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 146, 1, 7, 148, 209, 253, 68, 204, 250, 3, 205, 4, 210, 0, 145, 155, 9, 100, 0, 208, 211, 3, 254, 0, 4, 148, 1, 0, 7, 0, 192, 100, 146, 3, 11, 152, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 73, 204, 128, 147, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 152, 40, 1, 205, 4, 176, 204, 150, 209, 252, 224, 205, 11, 184, 0, 209, 246, 60, 145, 149, 60, 4, 209, 254, 212, 5, 205, 4, 226,
+  159, 1, 205, 4, 210, 205, 4, 206, 42, 9, 145, 154, 7, 0, 0, 85, 206, 0, 1, 134, 160, 0, 0, 3, 0, 0, 145, 153, 1, 25, 253, 40, 208, 136, 205, 2, 138, 1, 209, 254, 212, 12, 145, 157, 10, 2, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 146, 1, 7, 148, 209, 253, 68, 204, 250, 3, 205, 4, 210, 0, 192, 145, 156, 9, 100, 0, 208, 211, 3, 254, 0, 4, 148, 1, 0, 7, 0, 192, 100, 152, 0, 0, 40, 0, 0, 0, 204, 255, 3, 146, 3, 11, 152, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 73, 204, 128, 147, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 152, 40, 1, 205, 4, 176, 204, 150, 209, 252, 224, 205, 11, 184, 0, 209, 246, 60, 145, 149, 60, 4, 209, 254, 212, 5, 205, 4, 226,
 ]
 
 const person = (id: number, x: number): RawEntity => [id, 0, x, 90, -x, 100, 0, 1, 0, 0]
-const car = (id: number, x: number, seats: number[]): RawVehicle => [id, 1, x, 40, 7, 10, -20, 30, 5, seats, null, 100]
-const tank = (id: number, yaw: number): RawVehicle => [id, 2, 0, 40, 0, 0, 0, 0, 0, [0, 0], [yaw, 100, 1, 500], 250]
+const car = (id: number, x: number, seats: number[]): RawVehicle => [id, 1, x, 40, 7, 10, -20, 30, 5, seats, null, 100, null]
+const tank = (id: number, yaw: number): RawVehicle => [id, 2, 0, 40, 0, 0, 0, 0, 0, [0, 0], [yaw, 100, 1, 500], 250, null]
 
 describe('codec', () => {
+  const empty = { newEntities: [], entities: [], newVehicles: [], vehicles: [], removed: [] }
   it('encodes inputs exactly like the server expects', () => {
     const bytes = encodeInput(
       [
@@ -38,8 +39,8 @@ describe('codec', () => {
       delta: {
         newEntities: [[7, 0, 0, 85, 100000, 0, 0, 3, 0, 0]],
         entities: [[1, 25, -3, 40, -120, 650, 1, -300, 12]],
-        newVehicles: [[10, 2, 300, 90, -2000, 0, 700, 0, 32, [1, 7], [-700, 250, 3, 1234], 0]],
-        vehicles: [[9, 100, 0, -45, 3, -2, 0, 4, [1, 0, 7, 0], null, 100]],
+        newVehicles: [[10, 2, 300, 90, -2000, 0, 700, 0, 32, [1, 7], [-700, 250, 3, 1234], 0, null]],
+        vehicles: [[9, 100, 0, -45, 3, -2, 0, 4, [1, 0, 7, 0], null, 100, [0, 0, 40, 0, 0, 0, 255, 3]]],
         removed: [3, 11],
       },
       drive: { vx: 1.2, vy: -0.05, vz: -25, wx: 0.03, wy: -0.4, wz: 0.015, steer: 0.25, spin: -0.6 },
@@ -69,8 +70,8 @@ describe('codec', () => {
     const scene: WireScene = {
       entities: [[1, 0, 1234, -123456, 101, 1571, -500, 0, 650, -300], [7, 0, 0, 85, 100000, 0, 0, 3, 0, 0]],
       vehicles: [
-        [9, 1, -250, 80, 4100, 1200, -3000, 15, -64, [1, 0, 7, 0], null, 100],
-        [10, 2, 300, 90, -2000, 0, 700, 0, 32, [1, 7], [-700, 250, 3, 1234], 0],
+        [9, 1, -250, 80, 4100, 1200, -3000, 15, -64, [1, 0, 7, 0], null, 100, [0, 0, 40, 0, 0, 0, 255, 3]],
+        [10, 2, 300, 90, -2000, 0, 700, 0, 32, [1, 7], [-700, 250, 3, 1234], 0, null],
       ],
     }
     expect(sceneStates(scene)).toEqual({
@@ -82,12 +83,12 @@ describe('codec', () => {
         {
           id: 9, kind: 1, x: -2.5, y: 0.8, z: 41,
           qx: 1200 / 32767, qy: -3000 / 32767, qz: 15 / 32767, qw: expect.closeTo(Math.sqrt(1 - (1200 ** 2 + 3000 ** 2 + 15 ** 2) / 32767 ** 2), 6),
-          steer: -64 / 127, seats: [1, 0, 7, 0], turret: null, hp: 100,
+          steer: -64 / 127, seats: [1, 0, 7, 0], turret: null, hp: 100, damage: [0, 0, 40, 0, 0, 0, 255, 3],
         },
         {
           id: 10, kind: 2, x: 3, y: 0.9, z: -20,
           qx: 0, qy: 700 / 32767, qz: 0, qw: expect.closeTo(Math.sqrt(1 - (700 / 32767) ** 2), 6),
-          steer: 32 / 127, seats: [1, 7], turret: { yaw: -0.7, pitch: 0.25, shots: 3, range: 123.4 }, hp: 0,
+          steer: 32 / 127, seats: [1, 7], turret: { yaw: -0.7, pitch: 0.25, shots: 3, range: 123.4 }, hp: 0, damage: [0, 0, 0, 0, 0, 0, 0, 0],
         },
       ],
     })
@@ -104,7 +105,24 @@ describe('codec', () => {
     expect(decodeServer(encode([1, 5, 0, 0, 0, [[1, 2, 3]], [], [], [], [], null, [100, 0, []], [], [], []]))).toBeNull()
     expect(decodeServer(encode([1, 5, 0, 0, 0, [], [[1, 2, 3]], [], [], [], null, [100, 0, []], [], [], []]))).toBeNull()
     expect(decodeServer(encode([1, 5, 0, 0, 0, [], [], [], [], ['x'], null, [100, 0, []], [], [], []]))).toBeNull()
-    expect(decodeServer(encode([1, 5, 0, 0, 0, [], [], [], [[1, 0, 0, 0, 0, 0, 0, 0, [1, 2, 3, 4, 5], null, 100]], [], null, [100, 0, []], [], [], []]))).toBeNull()
+    expect(decodeServer(encode([1, 5, 0, 0, 0, [], [], [], [[1, 0, 0, 0, 0, 0, 0, 0, [1, 2, 3, 4, 5], null, 100, null]], [], null, [100, 0, []], [], [], []]))).toBeNull()
+  })
+
+  it('rejects a vehicle with damage of the wrong shape', () => {
+    const vehicle = (damage: unknown) => [1, 5, 0, 0, 0, [], [], [[9, 1, 0, 0, 0, 0, 0, 0, 0, [0, 0, 0, 0], null, 100, damage]], [], [], null, [100, 0, []], [], [], []]
+    expect(decodeServer(encode(vehicle(null)))).not.toBeNull()
+    expect(decodeServer(encode(vehicle([1, 2, 3, 4, 5, 6, 7, 8])))).not.toBeNull()
+    expect(decodeServer(encode(vehicle([1, 2, 3])))).toBeNull()
+    expect(decodeServer(encode(vehicle('x')))).toBeNull()
+  })
+
+  it('applies damage from a delta and clears it on a repair', () => {
+    const base: WireScene = { entities: [], vehicles: [car(9, 0, [0, 0, 0, 0])] }
+    const delta = (damage: number[] | null) => ({ ...empty, vehicles: [[9, 0, 0, 0, 0, 0, 0, 0, null, null, 100, damage] as RawVehicleDelta] })
+    const hurt = applyDelta(base, delta([90, 0, 0, 20, 0, 0, 0, 255]))
+    expect(hurt.vehicles[0]![12]).toEqual([90, 0, 0, 20, 0, 0, 0, 255])
+    expect(applyDelta(hurt, delta(null)).vehicles[0]![12]).toEqual([90, 0, 0, 20, 0, 0, 0, 255])
+    expect(applyDelta(hurt, delta([0, 0, 0, 0, 0, 0, 0, 0])).vehicles[0]![12]).toBeNull()
   })
 
   it('decodes an empty snapshot', () => {
@@ -140,7 +158,7 @@ describe('delta snapshots', () => {
       newEntities: [person(7, 50)],
       entities: [[2, 30, 0, -30, -3000, 650, 1, -400, 0]],
       newVehicles: [],
-      vehicles: [[9, 120, 0, 0, 0, 0, 0, 0, [1, 0, 0, 0], null, 100], [10, 0, 0, 0, 0, 0, 0, 0, null, [-700, 100, 1, 500], 250]],
+      vehicles: [[9, 120, 0, 0, 0, 0, 0, 0, [1, 0, 0, 0], null, 100, null], [10, 0, 0, 0, 0, 0, 0, 0, null, [-700, 100, 1, 500], 250, null]],
       removed: [5],
     })
     expect(scene.entities).toEqual([person(1, 100), moved, person(7, 50)])

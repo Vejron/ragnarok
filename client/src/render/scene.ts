@@ -183,13 +183,15 @@ export class Scene {
   /**
    * Orbits the camera behind `target` by yaw/pitch, and keeps the shadow frustum around it.
    * A `shoulder` shifts the pivot to the right of the target, so the target sits left of screen centre.
+   * A `shake` moves the camera but not where it looks, so the view jolts.
    */
-  follow(target: readonly number[], yaw: number, pitch: number, distance = ON_FOOT_DISTANCE, shoulder = 0, height = CAMERA_HEIGHT) {
+  follow(target: readonly number[], yaw: number, pitch: number, distance = ON_FOOT_DISTANCE, shoulder = 0, height = CAMERA_HEIGHT, shake?: readonly number[]) {
     const x = target[0]! + Math.cos(yaw) * shoulder
     const y = target[1]! + height
     const z = target[2]! - Math.sin(yaw) * shoulder
     const horizontal = Math.cos(pitch) * distance
     this.camera.position.set(x + Math.sin(yaw) * horizontal, y - Math.sin(pitch) * distance, z + Math.cos(yaw) * horizontal)
+    if (shake) this.camera.position.add(new THREE.Vector3(shake[0], shake[1], shake[2]))
     this.camera.position.y = Math.max(this.groundAt(this.camera.position.x, this.camera.position.z) + 0.3, this.camera.position.y)
     this.camera.lookAt(x, y, z)
     // The shadow frustum follows the target's height too, so it covers hills.
@@ -227,9 +229,9 @@ export class Scene {
     this.sun.position.set(eye[0]! + SUN_OFFSET[0], eye[1]! + SUN_OFFSET[1], eye[2]! + SUN_OFFSET[2])
   }
 
-  /** Eases the field of view towards the scope or aim zoom, or back, `dt` seconds on. */
-  zoomTo(zoom: 'none' | 'aim' | 'scope', dt: number) {
-    const target = zoom === 'scope' ? SCOPE_FOV : zoom === 'aim' ? AIM_FOV : DEFAULT_FOV
+  /** Eases the field of view towards the scope or aim zoom, or back, `dt` seconds on. `boost` widens the plain view, e.g. with speed. */
+  zoomTo(zoom: 'none' | 'aim' | 'scope', dt: number, boost = 0) {
+    const target = zoom === 'scope' ? SCOPE_FOV : zoom === 'aim' ? AIM_FOV : DEFAULT_FOV + boost
     const fov = this.camera.fov + (target - this.camera.fov) * Math.min(1, dt * ZOOM_RATE)
     if (Math.abs(fov - this.camera.fov) < 1e-3) return
     this.camera.fov = Math.abs(fov - target) < 0.05 ? target : fov

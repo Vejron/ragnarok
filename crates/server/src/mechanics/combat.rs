@@ -185,6 +185,7 @@ pub fn blast(world: &mut World, blast: Blast) {
     }
     for (vid, falloff) in world.physics.blast_cars(blast.point, blast.radius) {
         damage_vehicle(world, vid, (blast.damage * falloff).round().min(255.0) as u8, blast.attacker);
+        super::vehicles::shoot_wheels(world, vid, blast.point, blast.damage * falloff, super::vehicles::WHEEL_REACH);
     }
     for object in world.physics.objects_near(blast.point, blast.radius) {
         let (distance, scale) = match object {
@@ -386,6 +387,7 @@ fn step_bullet(world: &mut World, id: u32, dt: f32) {
             damage(world, victim, damage_dealt, attacker, WEAPON_SNIPER);
         } else if let Some((_, Some(car))) = wall {
             damage_vehicle(world, car, (damage_dealt / 4).max(1), attacker);
+            super::vehicles::shoot_wheels(world, car, point, f32::from(damage_dealt), super::vehicles::BULLET_WHEEL_REACH);
         } else if wall.is_some() {
             hit_object(world, bullet.position, dir, reach, damage_dealt);
         }
@@ -544,6 +546,8 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     } else if let Some((_, Some(car))) = wall {
         // A nuisance, not a way to kill a vehicle.
         damage_vehicle(world, car, (item.damage / 4).max(1), Some(id));
+        let point = std::array::from_fn(|i| origin[i] + dir[i] * reach);
+        super::vehicles::shoot_wheels(world, car, point, f32::from(item.damage), super::vehicles::BULLET_WHEEL_REACH);
     } else if wall.is_some() {
         hit_object(world, origin, dir, reach, item.damage);
     }

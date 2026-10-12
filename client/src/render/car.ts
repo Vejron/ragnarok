@@ -3,6 +3,9 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { JEEP_MAX_STEER, JEEP_WHEEL_RADIUS, SPORTS_MAX_STEER, SPORTS_SEATS, SPORTS_WHEEL_RADIUS, CAR_SEATS } from '@/sim/consts'
 import { KIND_SPORTS, type Turret } from '@/net/codec'
 import { colorFor } from './character'
+import { CarWear } from './carwear'
+import type { Debris } from './debris'
+import { halfExtentsOf } from '@/sim/kinds'
 
 /** What `Game` needs from a vehicle's model, whatever the kind. */
 export interface VehicleModel {
@@ -87,6 +90,7 @@ export class CarModel implements VehicleModel {
   private placed = false
   private readonly last = new THREE.Vector3()
   private readonly forward = new THREE.Vector3()
+  private readonly damage: CarWear
 
   /** `kind` is a vehicle kind off the wire; anything but the sports car is a jeep. */
   constructor(kind: number, id: number) {
@@ -105,6 +109,8 @@ export class CarModel implements VehicleModel {
       if (/^wheel_[FR][LR]$/.test(node.name)) this.spinners.push(node)
       if (/^pivot_F[LR]$/.test(node.name)) this.frontPivots.push(node)
     })
+
+    this.damage = new CarWear(this.root, model, halfExtentsOf(kind), wheelRadius, paint)
 
     const headGeometry = new THREE.SphereGeometry(0.2, 12, 10)
     for (let seat = 0; seat < seats; seat++) {
@@ -144,8 +150,24 @@ export class CarModel implements VehicleModel {
     })
   }
 
+  /** The colour it was painted, for flying chips of it. */
+  get paintColor(): number {
+    return this.paint.color.getHex()
+  }
+
+  /** A crash at `world` (from the server's event): the dent it makes goes there. */
+  noteImpact(world: THREE.Vector3) {
+    this.damage.noteImpact(world)
+  }
+
+  /** Shows crash `damage` and `hp` as the snapshot has them; parts that come off go into `debris`. */
+  wear(damage: readonly number[], hp: number, debris: Debris | null, velocity: THREE.Vector3) {
+    this.damage.update(damage, hp, debris, velocity)
+  }
+
   /** Frees what this car owns; the model's geometry and other materials are shared by every car of its kind. */
   dispose() {
+    this.damage.dispose()
     this.paint.dispose()
     for (const head of this.heads) (head.material as THREE.Material).dispose()
     this.heads[0]?.geometry.dispose()

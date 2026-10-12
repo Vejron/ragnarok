@@ -69,6 +69,7 @@ export function blendVehicle(a: VehicleState, b: VehicleState, t: number): Vehic
     qx: qx / length, qy: qy / length, qz: qz / length, qw: qw / length,
     steer: lerp(a.steer, b.steer, t),
     hp: t < 0.5 ? a.hp : b.hp,
+    damage: t < 0.5 ? a.damage : b.damage,
     turret: a.turret && b.turret
       ? {
           yaw: lerpAngle(a.turret.yaw, b.turret.yaw, t),

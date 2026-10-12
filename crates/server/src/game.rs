@@ -148,6 +148,10 @@ pub struct Vehicle {
     pub wreck_in: u32,
     /// Whoever last hurt it, who is credited with the deaths when it blows up.
     pub last_attacker: Option<u32>,
+    /// Crash damage as the snapshot carries it (`DAMAGE_*`); all zeros when unhurt.
+    pub damage: [u8; 8],
+    /// Ticks before it may throw sparks again.
+    pub scrape_in: u8,
 }
 
 impl Vehicle {
@@ -529,7 +533,8 @@ impl Game {
                 let [qx, qy, qz] = pack_quat(pose.rotation);
                 let seats = vehicle.seats[..seat_count(vehicle.kind)].iter().map(|seat| seat.unwrap_or(0)).collect();
                 let turret = vehicle.gun.map(|gun| Turret(to_mrad(gun.yaw), to_mrad(gun.pitch), gun.shots, (gun.range * 10.0).round().clamp(0.0, u16::MAX as f32) as u16));
-                Some(VehicleState(id, vehicle.kind, to_cm(x), to_cm(y), to_cm(z), qx, qy, qz, to_axis(pose.steer), seats, turret, vehicle.hp))
+                let damage = (vehicle.damage != [0; 8]).then_some(vehicle.damage);
+                Some(VehicleState(id, vehicle.kind, to_cm(x), to_cm(y), to_cm(z), qx, qy, qz, to_axis(pose.steer), seats, turret, vehicle.hp, damage))
             })
             .collect()
     }

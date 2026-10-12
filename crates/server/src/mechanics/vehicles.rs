@@ -1,8 +1,12 @@
 use super::Mechanic;
 use crate::game::{Gun, Seat, Vehicle, World};
-use crate::physics::{CarControls, CarPose, Character, half_extents};
+use crate::physics::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_extents};
 use shared::consts::*;
-use shared::protocol::{KIND_HELI, KIND_JEEP, KIND_SPORTS, KIND_TANK, seat_count, vehicle_hp};
+use shared::protocol::{
+    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_JEEP, KIND_SPORTS, KIND_TANK, ShotEvent, WEAPON_CRASH,
+    WEAPON_SCRAPE, seat_count, vehicle_hp,
+};
+use shared::quant::to_cm;
 use shared::quant::from_axis;
 use shared::world::WorldFile;
 use std::collections::BTreeMap;
@@ -74,6 +78,8 @@ fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: f32) -> u32
             hp: vehicle_hp(kind),
             wreck_in: 0,
             last_attacker: None,
+            damage: [0; 8],
+            scrape_in: 0,
         },
     );
     id
@@ -189,6 +195,122 @@ fn run_down_trees(world: &mut World, before: &BTreeMap<u32, CarPose>) {
     }
 }
 
+/// Speed (m/s) a contact must take out of a vehicle in one tick to hurt it.
+const CRASH_MIN_DV: f32 = 5.0;
+/// Health lost per m/s over that: a head-on hit into a wall at 25 m/s wrecks a jeep.
+const CRASH_HP_PER_DV: f32 = 5.0;
+/// Damage to the side that took the hit, and to a wheel right at it, per m/s over the threshold.
+const CRASH_DENT_PER_DV: f32 = 12.0;
+const CRASH_WHEEL_PER_DV: f32 = 28.0;
+/// How near (metres) a hit must be to a wheel to hurt it.
+pub const WHEEL_REACH: f32 = 1.8;
+/// Wheel damage per point of weapon damage, right on the wheel: a few revolver rounds or two
+/// sniper rounds take one off.
+const SHOT_WHEEL_PER_DAMAGE: f32 = 1.8;
+/// How near a bullet must land to a wheel to hurt it; a blast uses `WHEEL_REACH`.
+pub const BULLET_WHEEL_REACH: f32 = 1.0;
+/// A tank's armour takes this share of what a car would.
+const TANK_CRASH_FACTOR: f32 = 0.2;
+/// A tree gives way, so hitting one hurts half as much.
+const TREE_CRASH_FACTOR: f32 = 0.5;
+/// A lighter contact than a crash throws sparks if the vehicle is this fast (m/s), at most every few ticks.
+const SCRAPE_MIN_DV: f32 = 0.03;
+const SCRAPE_SPEED: f32 = 4.0;
+const SCRAPE_EVERY: u8 = 4;
+
+/// Where a car's wheels touch, in its own frame (`x`, `z`): front left, front right, rear left, rear right.
+fn wheel_spots(kind: u8) -> [[f32; 2]; 4] {
+    let (track, axle) = if kind == KIND_SPORTS { (SPORTS_TRACK_HALF, SPORTS_AXLE_Z) } else { (JEEP_TRACK_HALF, JEEP_AXLE_Z) };
+    [[-track, -axle], [track, -axle], [-track, axle], [track, axle]]
+}
+
+/// Adds the damage of a hit `over` m/s past the threshold at `local` (the vehicle's frame) to
+/// `damage`: mostly to the side it came from, shared at a corner, and to any wheel near it.
+fn dent(kind: u8, damage: &mut [u8; 8], local: [f32; 3], over: f32) {
+    let [hx, _, hz] = half_extents(kind);
+    let (nx, nz) = (local[0] / hx, local[2] / hz);
+    let sides = [(DAMAGE_FRONT, -nz), (DAMAGE_REAR, nz), (DAMAGE_LEFT, -nx), (DAMAGE_RIGHT, nx)].map(|(side, toward)| (side, toward.max(0.0).powi(2)));
+    let total: f32 = sides.iter().map(|(_, weight)| weight).sum();
+    let add = |value: &mut u8, amount: f32| *value = (f32::from(*value) + amount).round().min(255.0) as u8;
+    if total > 0.0 {
+        for (side, weight) in sides {
+            add(&mut damage[side], over * CRASH_DENT_PER_DV * weight / total);
+        }
+    }
+    if kind == KIND_TANK || kind == KIND_HELI {
+        return;
+    }
+    hurt_wheels(kind, damage, local, over * CRASH_WHEEL_PER_DV, WHEEL_REACH);
+}
+
+/// Adds up to `amount` damage to each wheel within `reach` metres of `local` (the vehicle's frame),
+/// scaled by how close it is. A tank and a helicopter have no wheels to lose.
+fn hurt_wheels(kind: u8, damage: &mut [u8; 8], local: [f32; 3], amount: f32, reach: f32) {
+    if kind == KIND_TANK || kind == KIND_HELI {
+        return;
+    }
+    for (wheel, [x, z]) in wheel_spots(kind).into_iter().enumerate() {
+        let near = 1.0 - (local[0] - x).hypot(local[2] - z) / reach;
+        if near > 0.0 {
+            let value = &mut damage[DAMAGE_WHEELS + wheel];
+            *value = (f32::from(*value) + amount * near).round().min(255.0) as u8;
+        }
+    }
+}
+
+/// Weapons fire at vehicle `vid` that hit at `point` (world) for `damage` points of weapon damage:
+/// bends or knocks off a wheel it landed near. The hull's own health is handled by the caller.
+pub fn shoot_wheels(world: &mut World, vid: u32, point: [f32; 3], damage: f32, reach: f32) {
+    let Some(pose) = world.physics.car_pose(vid) else { return };
+    let Some(vehicle) = world.vehicles.get_mut(&vid) else { return };
+    if vehicle.wrecked() {
+        return;
+    }
+    let offset = std::array::from_fn(|i| point[i] - pose.position[i]);
+    hurt_wheels(vehicle.kind, &mut vehicle.damage, pose.local_dir(offset), damage * SHOT_WHEEL_PER_DAMAGE, reach);
+}
+
+/// Hurts every vehicle that hit something hard in the last step, and makes sparks fly from those
+/// grinding along something. Each vehicle counts its hardest contact.
+fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
+    let mut hardest: BTreeMap<u32, CarImpact> = BTreeMap::new();
+    for impact in world.physics.car_impacts() {
+        if hardest.get(&impact.car).is_none_or(|known| impact.dv > known.dv) {
+            hardest.insert(impact.car, impact);
+        }
+    }
+    for vehicle in world.vehicles.values_mut() {
+        vehicle.scrape_in = vehicle.scrape_in.saturating_sub(1);
+    }
+    for (vid, impact) in hardest {
+        let Some(vehicle) = world.vehicles.get_mut(&vid) else { continue };
+        if vehicle.wrecked() {
+            continue;
+        }
+        let [x, y, z] = impact.point.map(to_cm);
+        let mut over = impact.dv - CRASH_MIN_DV;
+        if over <= 0.0 {
+            let speed = before.get(&vid).map_or(0.0, |pose| pose.velocity.iter().map(|v| v * v).sum::<f32>().sqrt());
+            if impact.dv > SCRAPE_MIN_DV && speed > SCRAPE_SPEED && vehicle.scrape_in == 0 {
+                vehicle.scrape_in = SCRAPE_EVERY;
+                world.shots.push(ShotEvent(vid, WEAPON_SCRAPE, x, y, z));
+            }
+            continue;
+        }
+        if vehicle.kind == KIND_TANK {
+            over *= TANK_CRASH_FACTOR;
+        }
+        if matches!(impact.object, Some(Obj::Tree(_))) {
+            over *= TREE_CRASH_FACTOR;
+        }
+        dent(vehicle.kind, &mut vehicle.damage, impact.local, over);
+        // Whoever drove the other vehicle into it is to blame, should it go up.
+        let attacker = impact.other_car.and_then(|other| world.vehicles.get(&other)?.seats[0]);
+        world.shots.push(ShotEvent(vid, WEAPON_CRASH, x, y, z));
+        super::combat::damage_vehicle(world, vid, (over * CRASH_HP_PER_DV).round().min(255.0) as u8, attacker);
+    }
+}
+
 /// Throws every standing player a car overlaps. The direction leans on the car's heading with a
 /// little outward push, so a car drives a player ahead of it and off to the side.
 fn knock_players(world: &mut World) {
@@ -290,6 +412,7 @@ impl Mechanic for Vehicles {
                 }
                 None => CarControls { handbrake: true, ..Default::default() },
             };
+            world.physics.set_car_condition(vid, CarCondition::of(vehicle.kind, vehicle.hp, vehicle.damage));
             world.physics.drive_car(vid, vehicle.controls, dt);
         }
         let before: BTreeMap<u32, CarPose> = world.vehicles.keys().filter_map(|&vid| Some((vid, world.physics.car_pose(vid)?))).collect();
@@ -303,6 +426,7 @@ impl Mechanic for Vehicles {
         }
         knock_players(world);
         run_down_trees(world, &before);
+        crash(world, &before);
 
         // Riders travel with their car; stuck or fallen cars are put right.
         for (&vid, vehicle) in &mut world.vehicles {
@@ -315,10 +439,14 @@ impl Mechanic for Vehicles {
                 vehicle.wreck_in = vehicle.wreck_in.saturating_sub(1);
                 if vehicle.wreck_in == 0 {
                     vehicle.hp = vehicle_hp(vehicle.kind);
+                    vehicle.damage = [0; 8];
                     vehicle.last_attacker = None;
                     world.physics.reset_car(vid, vehicle.home.0, vehicle.home.1);
                 }
             } else if y < KILL_Y {
+                // Fallen out of the world: a fresh one at home.
+                vehicle.hp = vehicle_hp(vehicle.kind);
+                vehicle.damage = [0; 8];
                 world.physics.reset_car(vid, vehicle.home.0, vehicle.home.1);
             } else if vehicle.stuck_ticks >= UNFLIP_TICKS {
                 world.physics.reset_car(vid, [x, y + 1.2, z], pose.yaw());
@@ -767,5 +895,102 @@ mod tests {
         idle(&mut game, *first, seq, 3);
         let seats = game.world.vehicles[&vid].seats;
         assert_eq!(seats[..2], [Some(crew[0].0), Some(crew[1].0)]);
+    }
+
+    /// Two cars off the road, `a` facing -Z towards the flank of `b` 12 m ahead, settled.
+    fn two_cars(game: &mut Game) -> (u32, u32) {
+        let mut cars = game.world.vehicles.iter().filter(|(_, v)| v.kind == KIND_JEEP).map(|(&id, _)| id);
+        let (a, b) = (cars.next().unwrap(), cars.next().unwrap());
+        game.world.physics.reset_car(a, [15.0, 1.0, 30.0], 0.0);
+        game.world.physics.reset_car(b, [15.0, 1.0, 18.0], std::f32::consts::FRAC_PI_2);
+        for _ in 0..60 {
+            Vehicles.on_tick(&mut game.world, TICK_DT);
+        }
+        (a, b)
+    }
+
+    /// Steps the vehicles until `ticks` have passed, and returns the crash and scrape events seen.
+    fn crash_events(game: &mut Game, ticks: u32) -> Vec<ShotEvent> {
+        let mut seen = vec![];
+        for _ in 0..ticks {
+            Vehicles.on_tick(&mut game.world, TICK_DT);
+            seen.extend(game.world.shots.drain(..).filter(|shot| shot.1 == WEAPON_CRASH || shot.1 == WEAPON_SCRAPE));
+        }
+        seen
+    }
+
+    #[test]
+    fn ramming_a_car_hurts_both_and_blames_the_driver() {
+        let mut game = game();
+        let (id, _inbox) = join(&mut game);
+        let (a, b) = two_cars(&mut game);
+        game.world.vehicles.get_mut(&a).unwrap().seats[0] = Some(id);
+        game.world.players.get_mut(&id).unwrap().seat = Some(Seat { vehicle: a, index: 0 });
+        game.world.physics.kick_car(a, [0.0, 0.0, -22.0]);
+        let events = crash_events(&mut game, 60);
+        let (rammer, rammed) = (&game.world.vehicles[&a], &game.world.vehicles[&b]);
+        assert!(rammer.hp < vehicle_hp(KIND_JEEP) && rammed.hp < vehicle_hp(KIND_JEEP), "{} {}", rammer.hp, rammed.hp);
+        assert!(rammer.damage[DAMAGE_FRONT] > 50, "the rammer's nose: {:?}", rammer.damage);
+        // `b` faces -X, so its left side faces +Z, where `a` came from.
+        assert!(rammed.damage[DAMAGE_LEFT] > 50 && rammed.damage[DAMAGE_RIGHT] == 0, "the rammed car's flank: {:?}", rammed.damage);
+        assert_eq!(rammed.last_attacker, Some(id));
+        assert!(events.iter().any(|shot| shot.0 == a && shot.1 == WEAPON_CRASH), "{events:?}");
+        let hit = events.iter().find(|shot| shot.1 == WEAPON_CRASH).unwrap();
+        assert!((hit.4 as f32 / 100.0 - 19.0).abs() < 2.0, "where they met: {hit:?}");
+    }
+
+    #[test]
+    fn a_nudge_does_no_harm() {
+        let mut game = game();
+        let (a, b) = two_cars(&mut game);
+        game.world.physics.kick_car(a, [0.0, 0.0, -3.0]);
+        let events = crash_events(&mut game, 300);
+        assert_eq!((game.world.vehicles[&a].hp, game.world.vehicles[&b].hp), (vehicle_hp(KIND_JEEP), vehicle_hp(KIND_JEEP)));
+        assert_eq!(game.world.vehicles[&b].damage, [0; 8]);
+        assert!(events.iter().all(|shot| shot.1 != WEAPON_CRASH), "{events:?}");
+    }
+
+    #[test]
+    fn a_wheel_takes_a_hit_beside_it_and_a_wreck_comes_back_whole() {
+        let mut damage = [0; 8];
+        // Just behind the front left wheel, on the left side.
+        dent(KIND_JEEP, &mut damage, [-JEEP_HALF_EXTENTS[0], 0.0, -JEEP_AXLE_Z + 0.4], 15.0);
+        assert!(damage[DAMAGE_LEFT] > 100 && damage[DAMAGE_RIGHT] == 0, "{damage:?}");
+        assert!(damage[DAMAGE_WHEELS] > 100, "the front left wheel: {damage:?}");
+        assert_eq!(damage[DAMAGE_WHEELS + 3], 0, "the far rear wheel is untouched: {damage:?}");
+        dent(KIND_JEEP, &mut damage, [-JEEP_HALF_EXTENTS[0], 0.0, -JEEP_AXLE_Z], 30.0);
+        assert_eq!(damage[DAMAGE_WHEELS], shared::protocol::WHEEL_GONE, "a second hit takes it off: {damage:?}");
+
+        let mut game = game();
+        let (a, _) = two_cars(&mut game);
+        game.world.vehicles.get_mut(&a).unwrap().damage = damage;
+        super::super::combat::damage_vehicle(&mut game.world, a, 255, None);
+        for _ in 0..WRECK_TICKS + 2 {
+            Vehicles.on_tick(&mut game.world, TICK_DT);
+        }
+        let vehicle = &game.world.vehicles[&a];
+        assert_eq!((vehicle.hp, vehicle.damage), (vehicle_hp(KIND_JEEP), [0; 8]));
+    }
+
+    #[test]
+    fn gunfire_at_a_wheel_bends_it_and_a_second_round_takes_it_off_but_the_middle_is_safe() {
+        let mut game = game();
+        let (a, b) = two_cars(&mut game);
+        let pose = game.world.physics.car_pose(a).unwrap();
+        let kind = game.world.vehicles[&a].kind;
+        let front_left = wheel_spots(kind)[0];
+        // A revolver round (35) on the front left wheel bends it; two sniper rounds (90) take it off.
+        let at = pose.world_point([front_left[0], 0.0, front_left[1]]);
+        shoot_wheels(&mut game.world, a, at, 35.0, BULLET_WHEEL_REACH);
+        let first = game.world.vehicles[&a].damage[DAMAGE_WHEELS];
+        assert!(first > 40, "one round bends it: {first}");
+        assert_eq!(game.world.vehicles[&a].damage[DAMAGE_WHEELS + 3], 0);
+        shoot_wheels(&mut game.world, a, at, 90.0, BULLET_WHEEL_REACH);
+        shoot_wheels(&mut game.world, a, at, 90.0, BULLET_WHEEL_REACH);
+        assert_eq!(game.world.vehicles[&a].damage[DAMAGE_WHEELS], shared::protocol::WHEEL_GONE);
+        // Fire into the middle of the car: no wheel is within a bullet's reach.
+        let middle = game.world.physics.car_pose(b).unwrap().position;
+        shoot_wheels(&mut game.world, b, middle, 90.0, BULLET_WHEEL_REACH);
+        assert_eq!(game.world.vehicles[&b].damage[DAMAGE_WHEELS..], [0; 4]);
     }
 }

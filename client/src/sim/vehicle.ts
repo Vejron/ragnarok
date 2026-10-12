@@ -4,11 +4,11 @@ import {
   SPORTS_AXLE_Z, SPORTS_HALF_EXTENTS, SPORTS_HARD_POINT_Y, SPORTS_MAX_SPEED, SPORTS_MAX_STEER, SPORTS_SUSPENSION_REST, SPORTS_TRACK_HALF, SPORTS_WHEEL_RADIUS,
   TANK_AXLES_Z, TANK_HALF_EXTENTS, TANK_HARD_POINT_Y, TANK_MAX_SPEED, TANK_SUSPENSION_REST, TANK_TRACK_HALF, TANK_TURN_RATE,
   TANK_WHEEL_RADIUS, TANK_TURRET_HALF_HEIGHT, TANK_TURRET_PIVOT, TANK_TURRET_RADIUS, HELI_BANK, HELI_CEILING, HELI_CLIMB_SPEED, HELI_HALF_EXTENTS, HELI_LEVEL_GAIN, HELI_RESPONSE, HELI_SINK_SPEED, HELI_TILT,
-  HELI_VERT_ACCEL, HELI_VERT_GAIN, HELI_YAW_RATE, BUTTON_RUN,
+  HELI_VERT_ACCEL, HELI_VERT_GAIN, HELI_YAW_RATE, BUTTON_RUN, vehicleMaxHp,
 } from './consts'
 import { addTileCollider, buildStaticColliders, rebuildBuildingCollider, VehicleSolids } from './physics'
 import type { TileGround } from './terrain'
-import { fromAxis, KIND_HELI, KIND_SPORTS, KIND_TANK, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
+import { DAMAGE_WHEELS, fromAxis, KIND_HELI, KIND_SPORTS, KIND_TANK, WHEEL_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
 import type { TileData, WorldData } from '@/world'
 import * as THREE from 'three'
 
@@ -35,6 +35,8 @@ interface Spec {
   turnRate: number
   flies: boolean
   linearDamping: number
+  /** How far below the box's centre the centre of mass sits, metres; zero leaves the box's own. */
+  comDrop: number
 }
 
 const JEEP: Spec = {
@@ -46,12 +48,13 @@ const JEEP: Spec = {
   hardPointY: JEEP_HARD_POINT_Y,
   suspensionRest: JEEP_SUSPENSION_REST,
   maxSuspensionForce: 60_000,
-  engineForce: 7500,
+  engineForce: 10_000,
   maxSpeed: JEEP_MAX_SPEED,
   steerLock: JEEP_MAX_STEER,
   turnRate: 0,
   flies: false,
   linearDamping: 0.05,
+  comDrop: 0.15,
 }
 
 const SPORTS: Spec = {
@@ -63,12 +66,13 @@ const SPORTS: Spec = {
   hardPointY: SPORTS_HARD_POINT_Y,
   suspensionRest: SPORTS_SUSPENSION_REST,
   maxSuspensionForce: 60_000,
-  engineForce: 11_000,
+  engineForce: 15_000,
   maxSpeed: SPORTS_MAX_SPEED,
   steerLock: SPORTS_MAX_STEER,
   turnRate: 0,
   flies: false,
   linearDamping: 0.05,
+  comDrop: 0.02,
 }
 
 const TANK: Spec = {
@@ -86,6 +90,7 @@ const TANK: Spec = {
   turnRate: TANK_TURN_RATE,
   flies: false,
   linearDamping: 0.05,
+  comDrop: 0,
 }
 
 const HELI: Spec = {
@@ -103,13 +108,40 @@ const HELI: Spec = {
   turnRate: 0,
   flies: true,
   linearDamping: 0.2,
+  comDrop: 0,
 }
 
 const TURN_ACCEL = 3.0
-const BRAKE_PER_KG = 0.035
+const BRAKE_PER_KG = 0.045
 const COAST_BRAKE_PER_KG = 0.0015
-const STEER_RATE = 3.0
-const STEER_FADE_SPEED = 14.0
+const STEER_RATE = 7.0
+const STEER_RETURN = 1.5
+const STEER_FADE_SPEED = 20.0
+const FULL_POWER = 0.65
+const DRIFT_GRIP = 0.05
+const DOWNFORCE_PER_KG = 0.0001
+const AIR_PITCH = 3.0
+const AIR_ROLL = 3.0
+const SIDE_GRIP = 1.0
+const FRICTION_SLIP = 12.0
+const TOE_MAX = 0.12
+const WHEEL_GRIP_LOSS = 0.85
+const WHEEL_SLIP_LOSS = 0.6
+const LOST_WHEEL_RADIUS = 0.05
+
+/** Mirrors `CarCondition`: engine power and the damage of a car's four wheels (255 is gone). */
+export interface CarCondition {
+  power: number
+  wheels: readonly number[]
+}
+
+export const NEW_CONDITION: CarCondition = { power: 1, wheels: [0, 0, 0, 0] }
+
+/** Mirrors `CarCondition::of`: full power down to half health, and up to half of it lost below. */
+export function conditionOf(kind: number, hp: number, damage: readonly number[]): CarCondition {
+  const health = Math.fround(hp / vehicleMaxHp(kind))
+  return { power: Math.min(1, Math.fround(0.5 + health)), wheels: damage.slice(DAMAGE_WHEELS, DAMAGE_WHEELS + 4) }
+}
 
 export interface CarControls {
   /** -1 (reverse) ..= 1 (forward). */
@@ -133,6 +165,19 @@ export interface CarBodyState {
 
 const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value))
 
+/** Mirrors `pull`: share of full engine force at `speed` for a top speed of `max`. */
+const pull = (speed: number, max: number) => clamp((max - Math.abs(speed)) / (max * (1 - FULL_POWER)), 0, 1)
+
+/** Mirrors the chassis mass properties of `add_car`: the box's own, in f32 like the server's, with the centre of mass lowered. */
+function lowered(desc: RAPIER.ColliderDesc, spec: Spec): RAPIER.ColliderDesc {
+  const f = Math.fround
+  const [hx, hy, hz] = spec.halfExtents.map(f) as [number, number, number]
+  const mass = f(f(f(f(f(spec.density) * 8) * hx) * hy) * hz)
+  const third = f(mass / 3)
+  const inertia = { x: f(f(f(hy * hy) + f(hz * hz)) * third), y: f(f(f(hx * hx) + f(hz * hz)) * third), z: f(f(f(hx * hx) + f(hy * hy)) * third) }
+  return desc.setMassProperties(mass, { x: 0, y: -spec.comDrop, z: 0 }, inertia, { x: 0, y: 0, z: 0, w: 1 })
+}
+
 /** One vehicle's body and wheels in a Rapier world. */
 export class CarSim {
   private readonly spec: Spec
@@ -146,6 +191,10 @@ export class CarSim {
   steer = 0
   private turn = 0
   private spin = 0
+  /** Throttle and steering of a car, which tilt it in the air. */
+  private air: [number, number] = [0, 0]
+  /** How worn it is, from the last snapshot. */
+  condition: CarCondition = NEW_CONDITION
 
   constructor(private readonly world: RAPIER.World, kind: number, position: [number, number, number], yaw: number) {
     this.spec = kind === KIND_TANK ? TANK : kind === KIND_HELI ? HELI : kind === KIND_SPORTS ? SPORTS : JEEP
@@ -158,7 +207,8 @@ export class CarSim {
         .setAngularDamping(0.8),
     )
     const [hx, hy, hz] = spec.halfExtents
-    this.collider = world.createCollider(RAPIER.ColliderDesc.cuboid(hx, hy, hz).setDensity(spec.density).setFriction(0.4), this.body)
+    const chassis = RAPIER.ColliderDesc.cuboid(hx, hy, hz).setFriction(0.4)
+    this.collider = world.createCollider(spec.comDrop > 0 ? lowered(chassis, spec) : chassis.setDensity(spec.density), this.body)
     if (kind === KIND_TANK) {
       // The turret is solid but weightless, like the server's.
       const [tx, ty, tz] = TANK_TURRET_PIVOT
@@ -193,8 +243,8 @@ export class CarSim {
       controller.setWheelSuspensionCompression(i, 2.2)
       controller.setWheelSuspensionRelaxation(i, 3)
       controller.setWheelMaxSuspensionTravel(i, 0.3)
-      controller.setWheelSideFrictionStiffness(i, 1)
-      controller.setWheelFrictionSlip(i, 12)
+      controller.setWheelSideFrictionStiffness(i, SIDE_GRIP)
+      controller.setWheelFrictionSlip(i, FRICTION_SLIP)
       controller.setWheelMaxSuspensionForce(i, spec.maxSuspensionForce)
     }
   }
@@ -238,9 +288,11 @@ export class CarSim {
     const lock = spec.steerLock / (1 + Math.abs(speed) / STEER_FADE_SPEED)
     const steerInput = clamp(controls.steer, -1, 1)
     const target = steerInput * lock
-    const step = STEER_RATE * dt
+    const returning = Math.abs(target) < Math.abs(this.steer) || target * this.steer < 0
+    const step = STEER_RATE * (returning ? STEER_RETURN : 1) * dt
     this.steer += clamp(target - this.steer, -step, step)
     this.turn = steerInput * spec.turnRate
+    this.air = [clamp(controls.throttle, -1, 1), steerInput]
 
     const against = controls.throttle * speed < -1
     let engine = 0
@@ -248,16 +300,25 @@ export class CarSim {
     if (controls.throttle === 0) brake = COAST_BRAKE_PER_KG * mass
     else if (against) brake = BRAKE_PER_KG * mass
     else {
-      const headroom = controls.throttle > 0 ? Math.max(0, 1 - Math.abs(speed) / spec.maxSpeed) : 0.5
-      engine = ((controls.throttle * spec.engineForce) / this.wheels) * headroom
+      const headroom = controls.throttle > 0 ? pull(speed, spec.maxSpeed) : 0.5
+      engine = ((controls.throttle * spec.engineForce) / this.wheels) * headroom * this.condition.power
     }
     const handbrake = controls.handbrake ? BRAKE_PER_KG * mass : 0
     const frontWheels = spec.steerLock > 0 ? 2 : 0
+    const drift = controls.handbrake && frontWheels > 0
     for (let i = 0; i < this.wheels; i++) {
       const front = i < frontWheels
-      controller.setWheelSteering(i, front ? -this.steer : 0)
-      controller.setWheelEngineForce(i, engine)
-      controller.setWheelBrake(i, front ? brake : Math.max(brake, handbrake))
+      const hurt = frontWheels > 0 ? (this.condition.wheels[i] ?? 0) : 0
+      const wear = Math.fround(hurt / WHEEL_GONE)
+      const gone = hurt === WHEEL_GONE
+      const toe = (i % 2 === 0 ? TOE_MAX : -TOE_MAX) * wear
+      controller.setWheelSteering(i, (front ? -this.steer : 0) + toe)
+      controller.setWheelEngineForce(i, gone ? 0 : engine)
+      controller.setWheelBrake(i, gone ? 0 : front ? brake : Math.max(brake, handbrake))
+      controller.setWheelSideFrictionStiffness(i, (drift && !front ? DRIFT_GRIP : SIDE_GRIP) * (1 - WHEEL_GRIP_LOSS * wear))
+      controller.setWheelFrictionSlip(i, FRICTION_SLIP * (1 - WHEEL_SLIP_LOSS * wear))
+      controller.setWheelRadius(i, gone ? LOST_WHEEL_RADIUS : spec.wheelRadius)
+      controller.setWheelSuspensionRestLength(i, gone ? 0 : spec.suspensionRest)
     }
   }
 
@@ -274,6 +335,7 @@ export class CarSim {
     controller.updateVehicle(dt)
     let grounded = false
     for (let i = 0; i < this.wheels; i++) grounded ||= controller.wheelIsInContact(i)
+    if (this.spec.steerLock > 0) this.assist(grounded, dt)
     if (this.turn === 0 || !grounded) this.spin = 0
     else {
       this.spin += clamp(this.turn - this.spin, -TURN_ACCEL * dt, TURN_ACCEL * dt)
@@ -281,6 +343,23 @@ export class CarSim {
       this.body.setAngvel({ x: w.x, y: -this.spin, z: w.z }, true)
     }
     this.world.step()
+  }
+
+  /** Mirrors `assist` in `physics/vehicle.rs`: downforce with a wheel down, pitch and roll from the controls in the air. */
+  private assist(grounded: boolean, dt: number) {
+    const body = this.body
+    const q = body.rotation()
+    if (grounded) {
+      const v = body.linvel()
+      const push = DOWNFORCE_PER_KG * body.mass() * (v.x * v.x + v.y * v.y + v.z * v.z) * dt
+      const [x, y, z] = rotate(q, 0, -push, 0)
+      body.applyImpulse({ x, y, z }, true)
+    } else {
+      const [throttle, steer] = this.air
+      const [x, y, z] = rotate(q, -throttle * AIR_PITCH * dt, 0, -steer * AIR_ROLL * dt)
+      const w = body.angvel()
+      body.setAngvel({ x: w.x + x, y: w.y + y, z: w.z + z }, true)
+    }
   }
 
   /** Mirrors `fly` in `physics/vehicle.rs`: lean the hull, turn it, and push along its up axis. */
@@ -497,6 +576,7 @@ export class VehicleDriver {
     }
     const sim = this.sim
     const before = this.current
+    sim.condition = conditionOf(vehicle.kind, vehicle.hp, vehicle.damage)
     sim.setState(
       [vehicle.x, vehicle.y, vehicle.z],
       [vehicle.qx, vehicle.qy, vehicle.qz, vehicle.qw],
