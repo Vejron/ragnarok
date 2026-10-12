@@ -366,4 +366,77 @@ mod tests {
         assert_eq!(decode::<Leave>(&leave), Some(Leave(S_LEAVE, first)));
         assert_eq!(game.entity_states().iter().filter(|e| e.1 == KIND_STICKMAN).count(), 1);
     }
+
+    /// Not a regression test: a rough cost of one tick with a full room, to aim optimisation at. Players
+    /// are stood on the ground: one buried in it makes the controller depenetrate, which costs five times as much.
+    /// `cargo test --release -p server -- --ignored --nocapture full_room`
+    #[test]
+    #[ignore]
+    fn full_room_tick_cost() {
+        use std::time::Instant;
+        // The committed city if it is there, so buildings and trees cost what they do in play.
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/world/world.msgpack");
+        let map = match crate::read_world(&fixture) {
+            Ok((map, _)) => map,
+            Err(_) => WorldFile { version: WORLD_VERSION, half_extent: 200_000, spawns: vec![[0, 0]], ..Default::default() },
+        };
+        println!("world half extent {} m, {} buildings, {} trees", map.half_extent / 100, map.buildings.len(), map.trees.len());
+        let mut game = Game::new(map, 0).unwrap();
+        game.world.pickups.clear();
+        let mut inboxes = Vec::new();
+        let mut ids = Vec::new();
+        for _ in 0..MAX_PLAYERS {
+            let (outbox, inbox) = mpsc::channel(4096);
+            let (reply, mut response) = oneshot::channel();
+            game.handle(Command::Join { outbox, reply });
+            ids.push(response.try_recv().unwrap().unwrap());
+            inboxes.push(inbox);
+        }
+        // Spread over a 500 m square, so interest radii overlap without everyone seeing everyone.
+        for (n, id) in ids.iter().enumerate() {
+            let player = game.world.players.get_mut(id).unwrap();
+            player.character.position[0] = (n % 8) as f32 * 70.0 - 250.0;
+            player.character.position[2] = (n / 8) as f32 * 70.0 - 250.0;
+            let (x, z) = (player.character.position[0], player.character.position[2]);
+            player.character.position[1] = game.world.map.ground.height_at(x, z) + crate::physics::STANDING_Y + 0.5;
+        }
+        let (mut step_total, mut step_max, mut snap_total) = (Duration::ZERO, Duration::ZERO, Duration::ZERO);
+        let ticks = 600u32;
+        let mut per_mechanic = [Duration::ZERO; 7];
+        for t in 1..=ticks {
+            for (n, id) in ids.iter().enumerate() {
+                let fire = if (t as usize + n) % 30 == 0 { BUTTON_FIRE } else { 0 };
+                let frame = InputFrame(t, if n % 2 == 0 { 100 } else { -100 }, 127, (t as i16 * 7 + n as i16 * 50) % 3000, BUTTON_RUN | fire, 0, t as u16, 0);
+                game.handle(Command::Input(*id, t.saturating_sub(2), vec![frame]));
+            }
+            let started = Instant::now();
+            for player in game.world.players.values_mut() {
+                let consumed = player.inputs.pop();
+                player.input = consumed.input;
+                if consumed.fresh {
+                    player.ack = consumed.input.seq();
+                }
+            }
+            for (index, mechanic) in game.mechanics.iter_mut().enumerate() {
+                let at = Instant::now();
+                mechanic.on_tick(&mut game.world, TICK_DT);
+                per_mechanic[index] += at.elapsed();
+            }
+            game.world.tick = game.world.tick.wrapping_add(1);
+            let took = started.elapsed();
+            step_total += took;
+            step_max = step_max.max(took);
+            if t % SNAPSHOT_EVERY == 0 {
+                let started = Instant::now();
+                game.send_snapshots();
+                snap_total += started.elapsed();
+            }
+            for inbox in &mut inboxes {
+                while inbox.try_recv().is_ok() {}
+            }
+        }
+        let budget = Duration::from_secs_f64(1.0 / TICK_RATE as f64);
+        println!("per mechanic per tick (Spawn, Pickups, Vehicles, Gunnery, Movement, Npcs, Combat): {:?}", per_mechanic.map(|d| d / ticks));
+        println!("mechanics: avg {:?}, worst {:?}; snapshots for the room: avg {:?} per call (every {SNAPSHOT_EVERY} ticks); budget {budget:?}", step_total / ticks, step_max, snap_total / (ticks / SNAPSHOT_EVERY));
+    }
 }
