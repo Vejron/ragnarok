@@ -14,6 +14,18 @@
     "4": {"name": "Sports car", "hp": 100, "seats": 2, "halfExtents": [0.95, 0.3, 2.2], "gun": false, "arms": false, "carWheels": true, "trackHalf": 0.82, "axleZ": 1.45},
     "6": {"name": "Triplane", "hp": 70, "seats": 2, "halfExtents": [0.5, 0.6, 2.8], "gun": true, "arms": true, "carWheels": false, "trackHalf": 0, "axleZ": 0}
   },
+  "treeKinds": {
+    "0": {"name": "Birch", "radius": 15, "refHeight": 1200, "radiusPctOfCrown": 0, "maxRadius": 60, "colliderHeightPct": 50, "destructible": true},
+    "1": {"name": "Pine", "radius": 20, "refHeight": 1600, "radiusPctOfCrown": 0, "maxRadius": 60, "colliderHeightPct": 50, "destructible": true},
+    "2": {"name": "Spruce", "radius": 20, "refHeight": 1600, "radiusPctOfCrown": 0, "maxRadius": 60, "colliderHeightPct": 50, "destructible": true},
+    "3": {"name": "Ornamental", "radius": 10, "refHeight": 600, "radiusPctOfCrown": 0, "maxRadius": 60, "colliderHeightPct": 50, "destructible": true},
+    "4": {"name": "Broadleaf", "radius": 30, "refHeight": 1400, "radiusPctOfCrown": 0, "maxRadius": 60, "colliderHeightPct": 50, "destructible": true},
+    "5": {"name": "Columnar", "radius": 20, "refHeight": 1600, "radiusPctOfCrown": 0, "maxRadius": 60, "colliderHeightPct": 50, "destructible": true},
+    "6": {"name": "Low and wide", "radius": 15, "refHeight": 800, "radiusPctOfCrown": 0, "maxRadius": 60, "colliderHeightPct": 50, "destructible": true},
+    "7": {"name": "Boulder", "radius": 0, "refHeight": 1, "radiusPctOfCrown": 80, "maxRadius": 200, "colliderHeightPct": 80, "destructible": false},
+    "8": {"name": "Rock slab", "radius": 0, "refHeight": 1, "radiusPctOfCrown": 85, "maxRadius": 250, "colliderHeightPct": 85, "destructible": false},
+    "9": {"name": "Bush", "radius": 10, "refHeight": 100, "radiusPctOfCrown": 0, "maxRadius": 60, "colliderHeightPct": 50, "destructible": true}
+  },
   "consts": {
     "TICK_RATE": 60,
     "HOTBAR_SLOTS": 5,

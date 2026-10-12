@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { TICK_RATE } from '../sim/consts'
 import * as items from '../sim/items'
 import { VEHICLES } from '../sim/vehicles'
+import { TREE_BIRCH, TREE_BUSH, TREE_KINDS, TREE_PINE, TREE_ROCK_BOULDER, TREE_ROCK_SLAB, trunkRadiusCm } from '../world'
 
 // `fixtures/parity/gameplay.json` is generated from the Rust tables by `cargo test -p shared parity`
 // (`UPDATE_PARITY=1` rewrites it). A failure here means `client/src/sim/items.ts` drifted from
@@ -11,6 +12,7 @@ import { VEHICLES } from '../sim/vehicles'
 const fixture = JSON.parse(readFileSync(resolve(process.cwd(), '../fixtures/parity/gameplay.json'), 'utf8')) as {
   items: Record<string, Record<string, unknown>>
   vehicles: Record<string, Record<string, unknown>>
+  treeKinds: Record<string, Record<string, unknown>>
   consts: Record<string, number>
 }
 
@@ -34,6 +36,24 @@ describe('gameplay tables match the server', () => {
       const mirrored = VEHICLES.find((def) => def.kind === Number(kind))
       expect(mirrored, `vehicle kind ${kind}`).toEqual(expect.objectContaining(expected))
     }
+  })
+
+  it('defines every tree and rock archetype the server does, with the same collider rules', () => {
+    expect(TREE_KINDS.length).toBe(Object.keys(fixture.treeKinds).length)
+    for (const [kind, expected] of Object.entries(fixture.treeKinds)) {
+      expect(TREE_KINDS.find((def) => def.kind === Number(kind)), `tree kind ${kind}`).toEqual(expect.objectContaining(expected))
+    }
+  })
+
+  it('sizes colliders like Tree::trunk_radius: trees by height, rocks by their crown', () => {
+    // The same cases are asserted in crates/shared/src/world.rs.
+    expect(trunkRadiusCm(TREE_PINE, 1600, 300)).toBe(20)
+    expect(trunkRadiusCm(TREE_PINE, 4000, 300)).toBe(50)
+    expect(trunkRadiusCm(TREE_BIRCH, 100, 100)).toBe(5)
+    expect(trunkRadiusCm(TREE_ROCK_BOULDER, 150, 100)).toBe(80)
+    expect(trunkRadiusCm(TREE_ROCK_SLAB, 60, 200)).toBe(170)
+    expect(trunkRadiusCm(TREE_ROCK_BOULDER, 150, 1000)).toBe(200)
+    expect(trunkRadiusCm(TREE_BUSH, 100, 80)).toBe(10)
   })
 
   it('shares the scalar constants', () => {

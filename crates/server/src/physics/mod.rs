@@ -153,7 +153,9 @@ pub fn static_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)
         let cylinder = ColliderBuilder::cylinder(half_height, from_cm(tree.trunk_radius()))
             .translation(Vector::new(from_cm(tree.x), from_cm(tree.base) + half_height, from_cm(tree.z)))
             .build();
-        colliders.push((cylinder, world.tree_ids.get(index).map(|&id| Obj::Tree(id))));
+        // A rock is solid but is no `Obj`: nothing damages or fells it.
+        let object = if tree.destructible() { world.tree_ids.get(index).map(|&id| Obj::Tree(id)) } else { None };
+        colliders.push((cylinder, object));
     }
     Ok(colliders)
 }

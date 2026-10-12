@@ -29,6 +29,48 @@ export const TREE_ORNAMENTAL = 3
 export const TREE_BROADLEAF = 4
 export const TREE_COLUMNAR = 5
 export const TREE_LOWWIDE = 6
+export const TREE_ROCK_BOULDER = 7
+export const TREE_ROCK_SLAB = 8
+export const TREE_BUSH = 9
+
+/**
+ * How an archetype's collider is sized and whether it can fall. Mirrors `TREE_KINDS` in
+ * `crates/shared/src/world.rs`; `parity.spec.ts` checks it against the server's table.
+ */
+export interface TreeKindDef {
+  kind: number
+  name: string
+  /** Collider radius, centimetres, at `refHeight`, scaled with the object's height. */
+  radius: number
+  refHeight: number
+  /** When non-zero the radius is this percentage of the crown radius instead (rocks). */
+  radiusPctOfCrown: number
+  maxRadius: number
+  /** Collider height as a percentage of the object's height. */
+  colliderHeightPct: number
+  /** Whether shots, blasts and vehicles can fell it. Rocks cannot. */
+  destructible: boolean
+}
+
+const treeKind = (kind: number, name: string, radius: number, refHeight: number): TreeKindDef => ({
+  kind, name, radius, refHeight, radiusPctOfCrown: 0, maxRadius: 60, colliderHeightPct: 50, destructible: true,
+})
+
+export const TREE_KINDS: readonly TreeKindDef[] = [
+  treeKind(TREE_BIRCH, 'Birch', 15, 1200),
+  treeKind(TREE_PINE, 'Pine', 20, 1600),
+  treeKind(TREE_SPRUCE, 'Spruce', 20, 1600),
+  treeKind(TREE_ORNAMENTAL, 'Ornamental', 10, 600),
+  treeKind(TREE_BROADLEAF, 'Broadleaf', 30, 1400),
+  treeKind(TREE_COLUMNAR, 'Columnar', 20, 1600),
+  treeKind(TREE_LOWWIDE, 'Low and wide', 15, 800),
+  { ...treeKind(TREE_ROCK_BOULDER, 'Boulder', 0, 1), radiusPctOfCrown: 80, maxRadius: 200, colliderHeightPct: 80, destructible: false },
+  { ...treeKind(TREE_ROCK_SLAB, 'Rock slab', 0, 1), radiusPctOfCrown: 85, maxRadius: 250, colliderHeightPct: 85, destructible: false },
+  treeKind(TREE_BUSH, 'Bush', 10, 100),
+]
+
+/** The definition of an archetype. Unknown kinds are birches, as they are drawn. */
+export const treeKindDef = (kind: number): TreeKindDef => TREE_KINDS.find((def) => def.kind === kind) ?? TREE_KINDS[0]!
 
 export type Point2 = [number, number]
 
@@ -172,18 +214,10 @@ const metres = (cm: number) => cm / 100
 const point = ([x, z]: number[]): Point2 => [metres(x!), metres(z!)]
 
 /** `Tree::trunk_radius` on the server, in centimetres with the same integer arithmetic. */
-function trunkRadiusCm(kind: number, heightCm: number): number {
-  const [radius, height] =
-    kind === TREE_PINE || kind === TREE_SPRUCE || kind === TREE_COLUMNAR
-      ? [20, 1600]
-      : kind === TREE_ORNAMENTAL
-        ? [10, 600]
-        : kind === TREE_BROADLEAF
-          ? [30, 1400]
-          : kind === TREE_LOWWIDE
-            ? [15, 800]
-            : [15, 1200]
-  return Math.min(60, Math.max(5, Math.trunc((radius * heightCm) / height)))
+export function trunkRadiusCm(kind: number, heightCm: number, crownCm: number): number {
+  const def = treeKindDef(kind)
+  const radius = def.radiusPctOfCrown > 0 ? Math.trunc((crownCm * def.radiusPctOfCrown) / 100) : Math.trunc((def.radius * heightCm) / def.refHeight)
+  return Math.min(def.maxRadius, Math.max(5, radius))
 }
 
 const noCollision = (): CollisionMesh => ({ vertices: new Float32Array(), triangles: new Uint32Array() })
@@ -234,8 +268,8 @@ export function decodeTile(bytes: Uint8Array): TileData {
       crown: metres(crown),
       kind,
       solid,
-      trunkRadius: metres(trunkRadiusCm(kind, height)),
-      trunkHeight: metres(Math.trunc(height / 2)),
+      trunkRadius: metres(trunkRadiusCm(kind, height, crown)),
+      trunkHeight: metres(Math.trunc((height * treeKindDef(kind).colliderHeightPct) / 100)),
     })),
     collision: {
       vertices: Float32Array.from(vertices.flat(), metres),

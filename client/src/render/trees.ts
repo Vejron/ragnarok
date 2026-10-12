@@ -3,10 +3,13 @@ import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometr
 import {
   TREE_BIRCH,
   TREE_BROADLEAF,
+  TREE_BUSH,
   TREE_COLUMNAR,
   TREE_LOWWIDE,
   TREE_ORNAMENTAL,
   TREE_PINE,
+  TREE_ROCK_BOULDER,
+  TREE_ROCK_SLAB,
   TREE_SPRUCE,
   type Tree,
 } from '@/world'
@@ -64,6 +67,19 @@ const PROTOTYPES: Record<number, Part[]> = {
   [TREE_LOWWIDE]: [
     { shape: 'trunk', color: TRUNK_BARK, y0: 0, y1: 0.35, rx: 0.045 },
     { shape: 'ellipsoid', color: 0x9bbf7a, y0: 0.58, rx: 1, ry: 0.45 },
+  ],
+  // Rocks are scaled by (radius, height, radius) like a crown, and sunk a little into the ground.
+  [TREE_ROCK_BOULDER]: [
+    { shape: 'ellipsoid', color: 0x8d8f91, y0: 0.4, rx: 1, ry: 0.62 },
+    { shape: 'ellipsoid', color: 0x7b7d80, y0: 0.22, rx: 0.55, ry: 0.4, x: 0.62, z: 0.25 },
+  ],
+  [TREE_ROCK_SLAB]: [
+    { shape: 'ellipsoid', color: 0x9a9b97, y0: 0.3, rx: 1, ry: 0.42 },
+    { shape: 'ellipsoid', color: 0x85878a, y0: 0.5, rx: 0.6, ry: 0.4, x: -0.2, z: -0.1 },
+  ],
+  [TREE_BUSH]: [
+    { shape: 'ellipsoid', color: 0x3f8f45, y0: 0.4, rx: 1, ry: 0.45 },
+    { shape: 'ellipsoid', color: 0x4fa352, y0: 0.62, rx: 0.65, ry: 0.35, x: 0.15, z: -0.1 },
   ],
 }
 
@@ -158,7 +174,7 @@ export function removeTreeInstance(group: THREE.Object3D, index: number): boolea
 }
 
 /**
- * One tile's trees: one instanced mesh per archetype present, so at most seven draw calls however
+ * One tile's trees: one instanced mesh per archetype present, so at most ten draw calls however
  * many trees there are. The geometry and material are shared by all tiles (`disposeTile` leaves
  * them), only the instance buffers belong to the tile.
  */

@@ -253,6 +253,15 @@ mod tests {
                 )
             })
             .collect();
+        let tree_kinds: Vec<String> = crate::world::TREE_KINDS
+            .iter()
+            .map(|d| {
+                format!(
+                    "    \"{}\": {{\"name\": \"{}\", \"radius\": {}, \"refHeight\": {}, \"radiusPctOfCrown\": {}, \"maxRadius\": {}, \"colliderHeightPct\": {}, \"destructible\": {}}}",
+                    d.kind, d.name, d.radius, d.ref_height, d.radius_pct_of_crown, d.max_radius, d.collider_height_pct, d.destructible
+                )
+            })
+            .collect();
         // Each value is printed from its own type, so an f32 0.15 stays 0.15 rather than 0.15000000596.
         let consts = [
             ("TICK_RATE", TICK_RATE.to_string()),
@@ -269,9 +278,10 @@ mod tests {
         ];
         let lines: Vec<String> = consts.iter().map(|(name, value)| format!("    \"{name}\": {value}")).collect();
         format!(
-            "{{\n  \"items\": {{\n{}\n  }},\n  \"vehicles\": {{\n{}\n  }},\n  \"consts\": {{\n{}\n  }}\n}}\n",
+            "{{\n  \"items\": {{\n{}\n  }},\n  \"vehicles\": {{\n{}\n  }},\n  \"treeKinds\": {{\n{}\n  }},\n  \"consts\": {{\n{}\n  }}\n}}\n",
             items.join(",\n"),
             vehicles.join(",\n"),
+            tree_kinds.join(",\n"),
             lines.join(",\n")
         )
     }

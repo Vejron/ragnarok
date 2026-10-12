@@ -1428,6 +1428,24 @@ mod tests {
     }
 
     #[test]
+    fn a_rock_blocks_bullets_but_cannot_be_felled() {
+        use shared::world::{ObjId, TREE_ROCK_BOULDER, Tree};
+        let rock = Tree { x: 1000, z: 0, base: 0, height: 150, crown: 100, kind: TREE_ROCK_BOULDER, solid: true };
+        let id = ObjId { col: 0, row: 0, index: 0 };
+        let map = WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[0, 0]], trees: vec![rock], tree_ids: vec![id], ..Default::default() };
+        let mut game = Game::new(map, 0).unwrap();
+        // The rock is in the way of a shot along the ground, so there is a collider...
+        let hit = game.world.physics.cast_ray_object([0.0, 0.5, 0.0], [1.0, 0.0, 0.0], 30.0);
+        let (distance, object) = hit.expect("the rock is solid");
+        assert!((distance - 9.2).abs() < 0.1, "{distance}");
+        // ...but it is no object, so a shot, a blast or a car cannot fell it.
+        assert_eq!(object, None);
+        assert!(game.world.physics.objects_near([10.0, 0.5, 0.0], 5.0).is_empty());
+        hit_object(&mut game.world, [0.0, 0.5, 0.0], [1.0, 0.0, 0.0], 30.0, 255);
+        assert!(game.world.destroyed.is_empty());
+    }
+
+    #[test]
     fn rifle_rounds_wear_a_tree_down_until_it_falls_away_from_the_shooter() {
         let (mut game, tree) = game_with_tree();
         let hp = game.world.tree(match tree { Obj::Tree(id) => id, _ => unreachable!() }).unwrap().hp();

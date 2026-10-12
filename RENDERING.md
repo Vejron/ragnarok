@@ -73,7 +73,7 @@ The style is flat, bright and few-banded, not physically based.
   `updateWater(seconds)` drives the animation from the frame loop.
 - **Roads** are draped ribbons that follow the ground every metre, with a casing and fill layer, and
   round discs at joints. They share the terrain's ramp.
-- **Trees** are instanced: one `InstancedMesh` per archetype per tile (at most seven draw calls per
+- **Trees** are instanced: one `InstancedMesh` per archetype per tile (at most ten draw calls per
   tile), built from merged unit-space parts with vertex colours.
 - **Materials are shared** where they can be (per colour for buildings and terrain), so streaming a
   tile in never compiles a shader; only a tile's own cover texture and instance buffers are

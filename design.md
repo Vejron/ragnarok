@@ -254,6 +254,8 @@ The register is only what was planted. **Every other tree comes from the laser p
 
 Each `Tree` is in its tile (`Tile.trees`). The client draws one instanced mesh per archetype per tile (`client/src/render/trees.ts`). Trunks are solid where `Tree::solid` (the register's, and trees within 20 m of a road or building; woods are scenery): an upright cylinder up to half the tree's height, built from `Tree::trunk_radius` / `trunk_height` on the server (`static_colliders`) and mirrored in `addTileCollider` and `decodeTile`.
 
+The archetypes are rows of `TREE_KINDS` (`crates/shared/src/world.rs`), mirrored in `client/src/world.ts` and checked by `parity.spec.ts`. Besides the seven trees there are two **rocks** (boulder, slab) and a **bush**. A rock is solid to four fifths of its height with a radius from its crown, and is not an `Obj`: it blocks people, cars and bullets, but nothing damages or fells it, so it costs no `destroyed` traffic. A bush is never solid. The importer scatters both deterministically over wood, park and sand covers (`props.rs`; never in water, and through the same rejection near buildings and roads as every tree), so no new tile fields or `WORLD_VERSION` bump; they appear when the world is next generated. To add an archetype: a `TREE_KINDS` row on both sides, a prototype in `render/trees.ts`, and optionally a source in `props.rs`.
+
 ## 9. Physics
 
 Both sides use Rapier 3D: `rapier3d` 0.36 natively and `@dimforge/rapier3d-compat` 0.21 in WASM.

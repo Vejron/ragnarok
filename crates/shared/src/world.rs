@@ -264,20 +264,64 @@ pub const TREE_ORNAMENTAL: u8 = 3;
 pub const TREE_BROADLEAF: u8 = 4;
 pub const TREE_COLUMNAR: u8 = 5;
 pub const TREE_LOWWIDE: u8 = 6;
+/// A rounded boulder. `height` is its height and `crown` its radius.
+pub const TREE_ROCK_BOULDER: u8 = 7;
+/// A low, wide slab of rock.
+pub const TREE_ROCK_SLAB: u8 = 8;
+/// A shrub, never solid: something to walk through and hide behind.
+pub const TREE_BUSH: u8 = 9;
+
+/// What an archetype is: how its collider is sized and what can break it. One table for server and
+/// client (`client/src/sim/` reads the same numbers from `fixtures/parity/gameplay.json`), so a new
+/// kind of standing object is a row here, a prototype in `client/src/render/trees.ts`, and a
+/// number in `TREE_KINDS`'s length.
+#[derive(Clone, Copy, Debug)]
+pub struct TreeKindDef {
+    pub kind: u8,
+    pub name: &'static str,
+    /// Collider radius, centimetres, at `ref_height`; scales with the object's height.
+    pub radius: i32,
+    pub ref_height: i32,
+    /// When non-zero the collider radius is this percentage of `crown` instead (rocks are as wide as
+    /// they look).
+    pub radius_pct_of_crown: i32,
+    pub max_radius: i32,
+    /// Height of the collider as a percentage of `height`: a tree is solid up to where the crown
+    /// starts, a rock all the way up.
+    pub collider_height_pct: i32,
+    /// Whether shots, blasts and vehicles can fell it. Rocks never fall: they stay as cover.
+    pub destructible: bool,
+}
+
+const fn tree_kind(kind: u8, name: &'static str, radius: i32, ref_height: i32) -> TreeKindDef {
+    TreeKindDef { kind, name, radius, ref_height, radius_pct_of_crown: 0, max_radius: 60, collider_height_pct: 50, destructible: true }
+}
+
+pub const TREE_KINDS: [TreeKindDef; 10] = [
+    tree_kind(TREE_BIRCH, "Birch", 15, 1200),
+    tree_kind(TREE_PINE, "Pine", 20, 1600),
+    tree_kind(TREE_SPRUCE, "Spruce", 20, 1600),
+    tree_kind(TREE_ORNAMENTAL, "Ornamental", 10, 600),
+    tree_kind(TREE_BROADLEAF, "Broadleaf", 30, 1400),
+    tree_kind(TREE_COLUMNAR, "Columnar", 20, 1600),
+    tree_kind(TREE_LOWWIDE, "Low and wide", 15, 800),
+    TreeKindDef { radius_pct_of_crown: 80, max_radius: 200, collider_height_pct: 80, destructible: false, ..tree_kind(TREE_ROCK_BOULDER, "Boulder", 0, 1) },
+    TreeKindDef { radius_pct_of_crown: 85, max_radius: 250, collider_height_pct: 85, destructible: false, ..tree_kind(TREE_ROCK_SLAB, "Rock slab", 0, 1) },
+    tree_kind(TREE_BUSH, "Bush", 10, 100),
+];
+
+/// The definition of an archetype. Unknown kinds are birches, as they are drawn.
+pub fn tree_kind_def(kind: u8) -> &'static TreeKindDef {
+    TREE_KINDS.iter().find(|def| def.kind == kind).unwrap_or(&TREE_KINDS[0])
+}
 
 impl Tree {
-    /// Trunk radius, centimetres, scaled with the tree's height relative to the archetype's.
-    /// Client and server both build the trunk collider from this, so it must stay in one place
-    /// (mirrored in `client/src/world.ts`).
+    /// Collider radius, centimetres, from the archetype's table. Client and server both build the
+    /// collider from this, so it must stay in one place (mirrored in `client/src/world.ts`).
     pub fn trunk_radius(&self) -> i32 {
-        let (base_radius, base_height) = match self.kind {
-            TREE_PINE | TREE_SPRUCE | TREE_COLUMNAR => (20, 1600),
-            TREE_ORNAMENTAL => (10, 600),
-            TREE_BROADLEAF => (30, 1400),
-            TREE_LOWWIDE => (15, 800),
-            _ => (15, 1200),
-        };
-        (base_radius * self.height / base_height).clamp(5, 60)
+        let def = tree_kind_def(self.kind);
+        let radius = if def.radius_pct_of_crown > 0 { self.crown * def.radius_pct_of_crown / 100 } else { def.radius * self.height / def.ref_height };
+        radius.clamp(5, def.max_radius)
     }
 
     /// Hit points: a slim tree falls to a few rifle rounds, a broad trunk wants a sniper round
@@ -286,10 +330,15 @@ impl Tree {
         (self.trunk_radius() * 4).max(30) as u16
     }
 
-    /// Height of the trunk collider above `base`, centimetres: the lower half of the tree, where
-    /// the crown has not started. Mirrored in `client/src/world.ts`.
+    /// Height of the collider above `base`, centimetres: the lower half of a tree, where the crown
+    /// has not started. Mirrored in `client/src/world.ts`.
     pub fn trunk_height(&self) -> i32 {
-        self.height / 2
+        self.height * tree_kind_def(self.kind).collider_height_pct / 100
+    }
+
+    /// Whether it can be felled; a rock cannot.
+    pub fn destructible(&self) -> bool {
+        tree_kind_def(self.kind).destructible
     }
 }
 
@@ -397,6 +446,33 @@ pub fn world_hash(bytes: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn object(kind: u8, height: i32, crown: i32) -> Tree {
+        Tree { x: 0, z: 0, base: 0, height, crown, kind, solid: true }
+    }
+
+    /// The same cases are asserted in `client/src/__tests__/parity.spec.ts`.
+    #[test]
+    fn colliders_are_sized_by_height_for_trees_and_by_crown_for_rocks() {
+        assert_eq!(object(TREE_PINE, 1600, 300).trunk_radius(), 20);
+        assert_eq!(object(TREE_PINE, 4000, 300).trunk_radius(), 50);
+        assert_eq!(object(TREE_BIRCH, 100, 100).trunk_radius(), 5);
+        assert_eq!(object(TREE_ROCK_BOULDER, 150, 100).trunk_radius(), 80);
+        assert_eq!(object(TREE_ROCK_SLAB, 60, 200).trunk_radius(), 170);
+        assert_eq!(object(TREE_ROCK_BOULDER, 150, 1000).trunk_radius(), 200);
+        assert_eq!(object(TREE_BUSH, 100, 80).trunk_radius(), 10);
+        // A tree is solid to half its height, a boulder to four fifths.
+        assert_eq!(object(TREE_PINE, 1600, 300).trunk_height(), 800);
+        assert_eq!(object(TREE_ROCK_BOULDER, 150, 100).trunk_height(), 120);
+    }
+
+    #[test]
+    fn only_rocks_are_indestructible_and_every_kind_is_in_the_table() {
+        for (index, def) in TREE_KINDS.iter().enumerate() {
+            assert_eq!(def.kind as usize, index, "{} sits at its own id", def.name);
+            assert_eq!(object(def.kind, 500, 100).destructible(), def.kind != TREE_ROCK_BOULDER && def.kind != TREE_ROCK_SLAB);
+        }
+    }
 
     #[test]
     fn assemble_names_each_building_and_its_merged_triangles() {

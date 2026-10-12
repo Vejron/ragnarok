@@ -42,7 +42,7 @@ fn signed_area(points: &[P]) -> f64 {
     }).sum::<f64>() / 2.0
 }
 
-fn point_in_polygon([x, z]: P, polygon: &[P]) -> bool {
+pub(crate) fn point_in_polygon([x, z]: P, polygon: &[P]) -> bool {
     let mut inside = false;
     let mut j = polygon.len() - 1;
     for i in 0..polygon.len() {
@@ -324,6 +324,8 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P
         }
     }
     // Cover is cut at tile borders like roads, so each tile's texture needs only its own file.
+    // Rocks and shrubs the map does not record go through the same rejection as every tree.
+    let props = crate::props::scatter(&covers, inner);
     for (kind, rings) in covers {
         let (min, max) = rings.iter().flatten().fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), p| ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]));
         if min[0] > max[0] {
@@ -377,7 +379,7 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P
     let bridge_boxes: Vec<[f64; 4]> = bridges.iter().map(|(points, width, _, _)| reach_box(points, width / 2.0 + BRIDGE_CLEAR)).collect();
     let road_boxes: Vec<[f64; 4]> = roads.iter().map(|(points, width, _)| reach_box(points, width / 2.0 + SOLID_REACH)).collect();
     let footprint_boxes: Vec<[f64; 4]> = footprints.iter().map(|footprint| reach_box(footprint, SOLID_REACH)).collect();
-    for (at, kind, height, crown, planted) in trees {
+    for (at, kind, height, crown, planted) in trees.into_iter().chain(props) {
         if at[0].abs() > inner || at[1].abs() > inner {
             continue;
         }
@@ -411,7 +413,8 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P
             height: cm(height),
             crown: cm(crown),
             kind,
-            solid: near,
+            // A shrub is something to walk through, wherever it stands.
+            solid: near && kind != TREE_BUSH,
         });
     }
     // The API gives no stable order, and tile files are hashed.

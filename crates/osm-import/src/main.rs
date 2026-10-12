@@ -27,6 +27,7 @@ mod hydro;
 mod lidar;
 mod minimap;
 mod overpass;
+mod props;
 mod roof;
 mod trees;
 mod water;
