@@ -1,11 +1,11 @@
 {
   "items": {
-    "1": {"name": "Revolver", "kind": "gun", "auto": false, "damage": 35, "cooldownTicks": 30, "mag": 6, "reloadTicks": 120, "range": 150, "aimSpeed": 0.8, "scope": false, "stack": 1},
-    "2": {"name": "AK5", "kind": "gun", "auto": true, "damage": 12, "cooldownTicks": 6, "mag": 30, "reloadTicks": 150, "range": 200, "aimSpeed": 0.6, "scope": false, "stack": 1},
-    "3": {"name": "Grenade", "kind": "grenade", "auto": false, "damage": 0, "cooldownTicks": 60, "mag": 0, "reloadTicks": 0, "range": 0, "aimSpeed": 1, "scope": false, "stack": 3},
-    "4": {"name": "Bandage", "kind": "heal", "auto": false, "damage": 40, "cooldownTicks": 0, "mag": 0, "reloadTicks": 0, "range": 0, "aimSpeed": 1, "scope": false, "stack": 5},
-    "5": {"name": "Sniper", "kind": "gun", "auto": false, "damage": 90, "cooldownTicks": 120, "mag": 5, "reloadTicks": 180, "range": 400, "aimSpeed": 0.4, "scope": true, "stack": 1},
-    "6": {"name": "Golden egg", "kind": "heal", "auto": false, "damage": 255, "cooldownTicks": 0, "mag": 0, "reloadTicks": 0, "range": 0, "aimSpeed": 1, "scope": false, "stack": 1}
+    "1": {"name": "Revolver", "kind": "gun", "auto": false, "damage": 35, "cooldownTicks": 30, "mag": 6, "reloadTicks": 120, "range": 150, "aimSpeed": 0.8, "scope": false, "stack": 1, "weapon": 4, "projectile": false},
+    "2": {"name": "AK5", "kind": "gun", "auto": true, "damage": 12, "cooldownTicks": 6, "mag": 30, "reloadTicks": 150, "range": 200, "aimSpeed": 0.6, "scope": false, "stack": 1, "weapon": 0, "projectile": false},
+    "3": {"name": "Grenade", "kind": "grenade", "auto": false, "damage": 0, "cooldownTicks": 60, "mag": 0, "reloadTicks": 0, "range": 0, "aimSpeed": 1, "scope": false, "stack": 3, "weapon": 5, "projectile": false},
+    "4": {"name": "Bandage", "kind": "heal", "auto": false, "damage": 40, "cooldownTicks": 0, "mag": 0, "reloadTicks": 0, "range": 0, "aimSpeed": 1, "scope": false, "stack": 5, "weapon": 0, "projectile": false},
+    "5": {"name": "Sniper", "kind": "gun", "auto": false, "damage": 90, "cooldownTicks": 120, "mag": 5, "reloadTicks": 180, "range": 400, "aimSpeed": 0.4, "scope": true, "stack": 1, "weapon": 7, "projectile": true},
+    "6": {"name": "Golden egg", "kind": "heal", "auto": false, "damage": 255, "cooldownTicks": 0, "mag": 0, "reloadTicks": 0, "range": 0, "aimSpeed": 1, "scope": false, "stack": 1, "weapon": 0, "projectile": false}
   },
   "consts": {
     "TICK_RATE": 60,

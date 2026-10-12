@@ -75,11 +75,11 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 
 | Field | Unit |
 |---|---|
-| `kind` | 0 = stickman, 5 = Hedemora rooster (an NPC: `yaw` is its heading, `flags` bit 6 is crowing) |
+| `kind` | 0 = stickman, 5 = Hedemora rooster (an NPC: `yaw` is its heading, `flags` bit 7 is crowing) |
 | `x, y, z` | centimetres, capsule centre (+X east, +Z south, +Y up) |
 | `yaw` | milliradians |
 | `vy` | vertical velocity, cm/s (needed to resume a predicted jump) |
-| `flags` | bit 0: grounded, bit 1: dead (lying where it fell until it respawns) |
+| `flags` | bit 0: grounded, bit 1: dead (lying where it fell until it respawns), bit 2: crouching, bits 3..6: the item in hand (`ITEM_*`, 0 for none), bit 7: crowing (a rooster) |
 | `knock_x, knock_z` | knockback velocity, cm/s: the push a car gave the player, still sliding them. Needed to resume a predicted slide |
 
 Players sitting in a vehicle are **not** listed as entities. The vehicle's `seats` say where they are.

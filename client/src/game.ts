@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import {
-  ARMS_CUT, ARMS_JAMMED, ARMS_REAR_JAMMED, DAMAGE_WHEELS, encodeInput, encodePing, KIND_HELI, KIND_PLANE, OBJ_BUILDING, OBJ_TREE, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_TANK, sceneStates, toAxis, toMrad, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_RIFLE,
+  ARMS_CUT, ARMS_JAMMED, ARMS_REAR_JAMMED, DAMAGE_WHEELS, encodeInput, encodePing, KIND_HELI, KIND_PLANE, OBJ_BUILDING, OBJ_TREE, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_TANK, sceneStates, toAxis, toMrad, WEAPON_GRENADE,
   PROJECTILE_BULLET, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_CRASH, WEAPON_MG, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SNIPER, WEAPON_WRECK,
   type Arms, type EntityState, type InputFrame, type PickupState, type RocketState, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
 } from './net/codec'
@@ -15,7 +15,7 @@ import {
   TANK_BARREL_LENGTH, TANK_BARREL_MAX, TANK_BARREL_MIN, TICK_MS, vehicleMaxHp, WRECK_BLAST_RADIUS,
   BOMB_RADIUS, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, PLANE_BOMB_MIN_HEIGHT, PLANE_BOMB_PIVOT, PLANE_GUN_RANGE, PLANE_REAR_PITCH_MAX, PLANE_REAR_PITCH_MIN, PLANE_STALL_SPEED,
 } from './sim/consts'
-import { aimSpeedScale, emptyHotbar, GRENADE_BLAST_RADIUS, HOTBAR_SLOTS, ITEM_AK5, ITEM_NONE, ITEM_REVOLVER, itemDef, PICKUP_RADIUS, type ItemSlot } from './sim/items'
+import { aimSpeedScale, emptyHotbar, GRENADE_BLAST_RADIUS, HOTBAR_SLOTS, hitscanGunFor, ITEM_NONE, itemDef, PICKUP_RADIUS, type ItemDef, type ItemSlot } from './sim/items'
 import { InputController } from './sim/input'
 import { RapierMotor, trunkColliderIndex } from './sim/physics'
 import { groundOf, Terrain } from './sim/terrain'
@@ -941,6 +941,7 @@ export class Game {
   }
 
   private showShot(shot: ShotEvent) {
+    let gun: ItemDef | undefined
     const to = new THREE.Vector3(shot.x, shot.y, shot.z)
     if (shot.weapon === WEAPON_ROCKET) {
       this.effects.burst(to, ROCKET_BLAST_RADIUS)
@@ -979,13 +980,12 @@ export class Game {
     } else if (shot.weapon === WEAPON_SNIPER) {
       // The round is drawn in flight; this is where it landed.
       this.effects.burst(to, 0.8)
-    } else if (shot.weapon === WEAPON_RIFLE || shot.weapon === WEAPON_REVOLVER) {
+    } else if ((gun = hitscanGunFor(shot.weapon))) {
       const from = this.muzzleOf(shot.shooter)
       this.avatars.get(shot.shooter === this.localId ? 0 : shot.shooter)?.fire()
-      const range = itemDef(shot.weapon === WEAPON_REVOLVER ? ITEM_REVOLVER : ITEM_AK5)!.range
-      if (from) this.effects.tracer(from, to, from.distanceTo(to) < range - 1)
+      if (from) this.effects.tracer(from, to, from.distanceTo(to) < gun.range - 1)
       const at = from ?? to
-      this.sounds.gunshot([at.x, at.y, at.z], shot.weapon === WEAPON_REVOLVER ? 'revolver' : 'rifle')
+      this.sounds.gunshot([at.x, at.y, at.z], gun.sound)
     }
   }
 

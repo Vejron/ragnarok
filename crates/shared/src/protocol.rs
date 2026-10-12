@@ -77,11 +77,16 @@ pub const FLAG_GROUNDED: u8 = 1 << 0;
 pub const FLAG_DEAD: u8 = 1 << 1;
 /// Holding crouch, so other clients can pose them low.
 pub const FLAG_CROUCHING: u8 = 1 << 2;
-/// Bits 3..=5 hold the item in the player's hands (`ITEM_*`), so others can draw it.
+/// Bits 3..=6 hold the item in the player's hands (`ITEM_*`), so others can draw it: up to 15 items.
 pub const FLAG_HELD_SHIFT: u8 = 3;
-pub const FLAG_HELD_MASK: u8 = 0b111 << FLAG_HELD_SHIFT;
+pub const FLAG_HELD_MASK: u8 = 0b1111 << FLAG_HELD_SHIFT;
 /// A rooster is mid-crow, so clients play its crow animation and sound.
-pub const FLAG_CROWING: u8 = 1 << 6;
+pub const FLAG_CROWING: u8 = 1 << 7;
+
+const _: () = assert!(
+    crate::items::ITEM_COUNT as u16 <= (FLAG_HELD_MASK >> FLAG_HELD_SHIFT) as u16 + 1,
+    "an item id no longer fits the held bits of the entity flags"
+);
 
 /// Weapons, as named in shot and kill events.
 /// The AK5, and what an unarmed death (a fall) is credited to.
@@ -453,7 +458,7 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 19, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
+        148, 0, 20, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[

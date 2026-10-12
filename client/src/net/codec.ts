@@ -38,11 +38,11 @@ export const KIND_PLANE = 6
 export const FLAG_GROUNDED = 1 << 0
 export const FLAG_DEAD = 1 << 1
 export const FLAG_CROUCHING = 1 << 2
-/** Bits 3..=5 hold the item in the player's hands. */
+/** Bits 3..=6 hold the item in the player's hands. */
 export const FLAG_HELD_SHIFT = 3
-export const FLAG_HELD_MASK = 0b111 << FLAG_HELD_SHIFT
+export const FLAG_HELD_MASK = 0b1111 << FLAG_HELD_SHIFT
 /** A rooster is mid-crow. */
-export const FLAG_CROWING = 1 << 6
+export const FLAG_CROWING = 1 << 7
 
 /** The AK5. */
 export const WEAPON_RIFLE = 0

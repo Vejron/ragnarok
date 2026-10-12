@@ -49,7 +49,7 @@ const readRustConsts = (): Map<string, Value> => {
   for (const file of files) {
     const text = readFileSync(resolve(SHARED, file), 'utf8').replace(/\/\/.*$/gm, '')
     for (const match of text.matchAll(/^\s*pub const ([A-Z][A-Z0-9_]*):\s*([^=]+?)\s*=\s*([^;]+);/gm)) {
-      declarations.push([match[1], match[3].replace(/\s+/g, ' ')])
+      declarations.push([match[1]!, match[3]!.replace(/\s+/g, ' ')])
     }
   }
   // Constants refer to earlier and later ones alike, so settle in passes.
@@ -97,7 +97,7 @@ describe('shared constants match the server', () => {
       const same =
         typeof a === 'number' && typeof b === 'number'
           ? close(a, b)
-          : Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => close(v, b[i]))
+          : Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => close(v, b[i]!))
       if (!same) drifted.push(`${name}: rust ${JSON.stringify(a)} != client ${JSON.stringify(b)}`)
     }
     expect(drifted).toEqual([])
