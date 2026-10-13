@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import {
   ARMS_CUT, ARMS_JAMMED, ARMS_REAR_JAMMED, DAMAGE_WHEELS, encodeInput, encodePing, KIND_HELI, KIND_PLANE, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_TANK, sceneStates, toAxis, toMrad, WEAPON_GRENADE,
   PROJECTILE_BULLET, WEAPON_BULLET, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_CRASH, WEAPON_MG, WEAPON_PELLET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_WRECK,
-  type Arms, type BulletSpawn, type EntityState, type InputFrame, type PickupState, type RocketState, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
+  type Arms, type BulletSpawn, type DriveState, type EntityState, type InputFrame, type PickupState, type RocketState, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
 } from './net/codec'
 import { blendEntity, blendRocket, blendVehicle, Interpolator } from './net/interp'
 import { Backoff } from './net/backoff'
@@ -219,6 +219,8 @@ export class Game {
   private motor: RapierMotor | null = null
   /** Predicts the vehicle the local player drives. */
   private driver: VehicleDriver | null = null
+  /** The newest snapshot of the driven vehicle, waiting for the next frame to be reconciled with. */
+  private driverSnapshot: { ack: number; vehicle: VehicleState; drive: DriveState } | null = null
   /** Vehicle poses of the newest snapshot, which the predicted stickman's frame is fixed to while riding. */
   private readonly refPoses = new Map<number, VehicleState>()
   private localId: number | null = null
@@ -321,6 +323,7 @@ export class Game {
     this.hits.clear()
     this.hp = PLAYER_MAX_HP
     this.diedAt = null
+    this.driverSnapshot = null
     this.driver?.leave()
     this.interp.clear()
     this.vehicleInterp.clear()
@@ -417,8 +420,14 @@ export class Game {
         for (const vehicle of vehicles) for (const rider of vehicle.seats) if (rider !== 0) this.interp.remove(rider)
         const own = entities.find((e) => e.id === this.localId)
         this.driver?.setObstacles(vehicles)
-        if (mount && this.seat?.index === 0 && message.drive) this.driver?.reconcile(message.ack, mount, message.drive)
-        else {
+        if (mount && this.seat?.index === 0 && message.drive) {
+          // Replaying the unacknowledged inputs steps the whole physics world once each, so it waits
+          // for the next frame: a backlog of snapshots (a busy main thread) is then one replay, not
+          // one per snapshot, which would only make the thread busier.
+          this.driver?.acknowledge(message.ack)
+          this.driverSnapshot = { ack: message.ack, vehicle: mount, drive: message.drive }
+        } else {
+          this.driverSnapshot = null
           this.driver?.leave()
           this.driver?.acknowledge(message.ack)
         }
@@ -514,6 +523,11 @@ export class Game {
     this.lastFrame = now
 
     updateWater(now / 1000)
+    if (this.driverSnapshot) {
+      const { ack, vehicle, drive } = this.driverSnapshot
+      this.driverSnapshot = null
+      this.driver?.reconcile(ack, vehicle, drive)
+    }
     this.view.update(dt, this.effects, this.scene.camera.position)
     this.accumulator += dt * 1000
     let ticks = 0
