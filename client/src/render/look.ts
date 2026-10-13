@@ -14,17 +14,26 @@ export interface Look {
 
 const KEY = 'ragnarok.look'
 
-/** Phones and tablets skip the AO and the long shadows by default; they cost fill rate and memory. */
+/**
+ * Bump this when a default changes for existing players. A saved look from an older version drops
+ * the flags in `RESET_ON_BUMP`, so they fall back to the new default until the player turns them on.
+ */
+const LOOK_VERSION = 2
+const RESET_ON_BUMP: (keyof Look)[] = ['ao']
+
+/** AO is off by default everywhere; the long shadows are off on phones and tablets, where they cost fill rate and memory. */
 export function defaultLook(): Look {
   const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
-  return { soft: true, contact: true, ao: !coarse, far: !coarse }
+  return { soft: true, contact: true, ao: false, far: !coarse }
 }
 
 export function loadLook(): Look {
   const look = defaultLook()
   try {
-    const saved = JSON.parse(localStorage.getItem(KEY) ?? 'null') as Partial<Look> | null
+    const saved = JSON.parse(localStorage.getItem(KEY) ?? 'null') as (Partial<Look> & { version?: number }) | null
+    const current = saved?.version === LOOK_VERSION
     for (const name of Object.keys(look) as (keyof Look)[]) {
+      if (!current && RESET_ON_BUMP.includes(name)) continue
       if (typeof saved?.[name] === 'boolean') look[name] = saved[name]
     }
   } catch {
@@ -35,7 +44,7 @@ export function loadLook(): Look {
 
 export function saveLook(look: Look) {
   try {
-    localStorage.setItem(KEY, JSON.stringify(look))
+    localStorage.setItem(KEY, JSON.stringify({ ...look, version: LOOK_VERSION }))
   } catch {
     // Private mode and the like: the choice just lasts the session.
   }

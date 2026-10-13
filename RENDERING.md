@@ -93,8 +93,12 @@ the edge softness is a runtime uniform, not a recompile.
 
 Four independent switches, in `render/look.ts` (`Look`). The HUD panel in `App.vue` shows them while
 the pointer is not captured; `Game.setLook` applies and saves them to `localStorage`
-(`ragnarok.look`). Defaults are all on, except on coarse-pointer (touch) devices, where AO and far
-shadows start off.
+(`ragnarok.look`). Defaults are on, except AO, which starts off everywhere, and far shadows, which
+start off on coarse-pointer (touch) devices.
+
+The saved choice carries a version (`LOOK_VERSION` in `look.ts`). When a default changes for existing
+players, bump it and list the flag in `RESET_ON_BUMP`: older saves then drop that flag, so players
+who never chose it get the new default. AO is listed for version 2.
 
 ### Soft light (`soft`)
 
