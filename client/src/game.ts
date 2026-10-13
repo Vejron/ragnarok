@@ -31,6 +31,7 @@ import { Particles } from './render/particles'
 import { Skidmarks } from './render/skidmarks'
 import { crashBurst, scrapeSparks, VehicleFx, type FxWorld } from './render/tyres'
 import { Debris } from './render/debris'
+import { damageSmoke } from './render/vehiclesmoke'
 import { BLASTS, explosion, type ExplosionProfile } from './render/explosion'
 import { Gore } from './render/gore'
 import { Surfaces, SURFACE_GRASS } from './sim/surface'
@@ -110,6 +111,8 @@ interface LiveBullet {
   shown: boolean
   /** Muzzle minus eye, closing as it flies. */
   offset: THREE.Vector3 | null
+  /** Metres it had flown when first drawn, where its streak starts from. */
+  drawnFrom?: number
 }
 
 /** Mouse-look is this much slower down a scope, to match the narrower view. */
@@ -168,7 +171,8 @@ export class Game {
   private readonly bullets = new Map<number, LiveBullet>()
   /** Bullets already seen, with the tick they were fired on: a spawn is sent twice and must not start a second round. */
   private readonly seenBullets = new Map<number, number>()
-  private readonly smokeAt = new Map<number, number>()
+  /** Fraction of a smoke puff each damaged vehicle owes, carried between frames. */
+  private readonly smokeOwed = new Map<number, number>()
   private readonly chase = new ChaseCam()
   private readonly pickupModels = new Pickups()
   /** The arc a grenade in hand would take, drawn while one is held. */
@@ -865,12 +869,15 @@ export class Game {
       // It leaves the eye, but is drawn leaving the barrel: the difference closes over the first 25 m.
       if (bullet.offset) {
         const flown = n * Math.hypot(bullet.spawn.vx, bullet.spawn.vy, bullet.spawn.vz) / TICK_RATE
+        bullet.drawnFrom ??= flown
         const keep = Math.max(0, 1 - flown / 25)
         at[0] += bullet.offset.x * keep
         at[1] += bullet.offset.y * keep
         at[2] += bullet.offset.z * keep
       }
-      this.rocketModels.place(id, PROJECTILE_BULLET, at, bulletVelocity(bullet.spawn, n))
+      // The streak grows out of the barrel: drawn whole from the first frame it would trail through the shooter.
+      const trail = n * Math.hypot(bullet.spawn.vx, bullet.spawn.vy, bullet.spawn.vz) / TICK_RATE - (bullet.drawnFrom ?? 0)
+      this.rocketModels.place(id, PROJECTILE_BULLET, at, bulletVelocity(bullet.spawn, n), trail)
     }
   }
 
@@ -1011,7 +1018,7 @@ export class Game {
       const yaw = Math.atan2(-forward.x, -forward.z)
       car.update([x, y, z], [rotation[0], rotation[1], rotation[2], rotation[3]], steer, state.seats, state.turret, state.arms)
       placed.set(id, { kind: state.kind, turret: state.turret, arms: state.arms, x, y, z, yaw, seats: state.seats })
-      this.smoulder(id, state, [x, y, z])
+      this.smoulder(id, state, [x, y, z], rotation)
       this.tyres(id, state, [x, y, z], rotation, steer)
       if (car instanceof CarModel) car.wear(state.damage, state.hp, this.debris, this.vehicleFx.get(id)?.velocity ?? STILL)
       if ((car instanceof TankModel || car instanceof HeliModel) && state.turret) this.watchGun(id, car, state.turret, state.seats)
@@ -1025,7 +1032,7 @@ export class Game {
         this.shots.delete(id)
         this.forwardShots.delete(id)
         this.lastArms.delete(id)
-        this.smokeAt.delete(id)
+        this.smokeOwed.delete(id)
         this.vehicleFx.get(id)?.lift(this.fxWorld)
         this.vehicleFx.delete(id)
         this.sounds.drop(id)
@@ -1096,13 +1103,25 @@ export class Game {
     )
   }
 
-  /** Smoke from a damaged vehicle: a little under 40% health, a lot when it is a wreck. */
-  private smoulder(id: number, state: VehicleState, [x, y, z]: readonly [number, number, number]) {
-    if (state.hp >= vehicleMaxHp(state.kind) * 0.4) return
-    const now = performance.now()
-    if (now < (this.smokeAt.get(id) ?? 0)) return
-    this.smokeAt.set(id, now + (state.hp === 0 ? 90 : 220))
-    this.effects.smoke(new THREE.Vector3(x, y + 0.8, z), state.hp === 0)
+  /** A plume from a damaged vehicle: thin steam under 40% health, black smoke and flame as it dies, a burning column once a wreck. */
+  private smoulder(id: number, state: VehicleState, position: readonly [number, number, number], rotation: readonly [number, number, number, number]) {
+    const limit = vehicleMaxHp(state.kind) * 0.4
+    if (state.hp >= limit) {
+      this.smokeOwed.delete(id)
+      return
+    }
+    const owed = damageSmoke(
+      this.fxWorld,
+      state.kind,
+      position,
+      new THREE.Quaternion(...rotation),
+      this.vehicleFx.get(id)?.velocity ?? STILL,
+      1 - state.hp / limit,
+      state.hp === 0,
+      this.frameDt,
+      this.smokeOwed.get(id) ?? 0,
+    )
+    this.smokeOwed.set(id, owed)
   }
 
   /**

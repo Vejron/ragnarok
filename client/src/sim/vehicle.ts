@@ -84,14 +84,14 @@ const SPORTS: Spec = {
 
 const TANK: Spec = {
   halfExtents: TANK_HALF_EXTENTS,
-  density: 250,
+  density: 1000,
   wheelRadius: TANK_WHEEL_RADIUS,
   trackHalf: TANK_TRACK_HALF,
   axles: TANK_AXLES_Z,
   hardPointY: TANK_HARD_POINT_Y,
   suspensionRest: TANK_SUSPENSION_REST,
-  maxSuspensionForce: 200_000,
-  engineForce: 22_000,
+  maxSuspensionForce: 800_000,
+  engineForce: 88_000,
   maxSpeed: TANK_MAX_SPEED,
   steerLock: 0,
   turnRate: TANK_TURN_RATE,

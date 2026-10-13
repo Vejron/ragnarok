@@ -34,8 +34,8 @@ export class Rockets {
   private readonly meshes = new Map<number, THREE.Mesh>()
   private readonly up = new THREE.Vector3(0, 1, 0)
 
-  /** Places projectile `id`, creating it on first sight. `velocity` only gives a rocket's or a shell's heading. */
-  place(id: number, kind: number, position: readonly [number, number, number], velocity: readonly [number, number, number]) {
+  /** Places projectile `id`, creating it on first sight. `velocity` only gives a rocket's or a shell's heading; `flown` is how far a bullet has come, which is as long as its streak may be. */
+  place(id: number, kind: number, position: readonly [number, number, number], velocity: readonly [number, number, number], flown = Infinity) {
     let mesh = this.meshes.get(id)
     if (!mesh) {
       if (kind === GRENADE) mesh = new THREE.Mesh(this.ball, this.ballMaterial)
@@ -68,6 +68,13 @@ export class Rockets {
       this.root.add(mesh)
     }
     mesh.position.set(...position)
+    if (kind === BULLET) {
+      // Only as much streak as the round has flown since it left the barrel.
+      const tail = mesh.children[0]!
+      const length = Math.min(1, Math.max(0.01, flown / 7))
+      tail.scale.y = length
+      tail.position.y = -(0.6 + 3.5 * length)
+    }
     if (kind === GRENADE) {
       mesh.rotation.x += 0.25
       return

@@ -33,7 +33,7 @@ Each shot gives the hull a 1.6 m/s kick backwards along the barrel (level, so it
 
 `physics/vehicle.rs` now describes a vehicle by a `Spec` (box size, wheel layout, density, engine, steering). The car's numbers are unchanged. The tank:
 
-- A 2.6 × 1.0 × 5.2 m hull at 250 kg/m³ (3.4 t), six wheels on three axles (the suspension tuning scales with mass), 22 kN of engine over all wheels, top speed 12 m/s.
+- A 2.6 × 1.0 × 5.2 m hull at 1000 kg/m³ (13.5 t, ten times a jeep, so it throws cars aside), six wheels on three axles (the suspension tuning scales with mass), 88 kN of engine over all wheels, top speed 12 m/s.
 - **No steered wheels.** Skid steering is done by setting the yaw rate directly: it ramps towards `±1.1 rad/s × stick` at 3 rad/s², but only while at least one wheel touches the ground. The wheels' side grip fights any spin every tick, so the rate is kept in the car's state and written back each time, rather than nudged from whatever grip left. With the stick released, grip and damping stop the turn.
 - The handbrake and brake act on all six wheels (a car only brakes its rear wheels with the handbrake).
 

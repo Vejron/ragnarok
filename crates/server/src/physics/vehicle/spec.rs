@@ -81,15 +81,16 @@ pub(super) static SPORTS: Spec = Spec {
 
 pub(super) static TANK: Spec = Spec {
     half_extents: TANK_HALF_EXTENTS,
-    // 13.5 m³ of hull is about 3.4 tonnes: three times the car, with a stronger engine to match.
-    density: 250.0,
+    // 13.5 m³ of hull is about 13.5 tonnes: ten times the car, so ramming one throws it aside. The
+    // engine and suspension cap scale with it, which keeps the acceleration and the ride as they were.
+    density: 1000.0,
     wheel_radius: TANK_WHEEL_RADIUS,
     track_half: TANK_TRACK_HALF,
     axles: &TANK_AXLES_Z,
     hard_point_y: TANK_HARD_POINT_Y,
     suspension_rest: TANK_SUSPENSION_REST,
-    max_suspension_force: 200_000.0,
-    engine_force: 22_000.0,
+    max_suspension_force: 800_000.0,
+    engine_force: 88_000.0,
     max_speed: TANK_MAX_SPEED,
     steer_lock: 0.0,
     turn_rate: TANK_TURN_RATE,
