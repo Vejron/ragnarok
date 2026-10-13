@@ -91,7 +91,16 @@ pub struct Tile {
     /// they are collided with and drawn from the same mesh).
     #[serde(default)]
     pub bridges: Vec<Bridge>,
+    /// Fine ground relief for the client's lighting: for each texel of a square grid over the tile
+    /// (row-major, rows along +Z, `n × n` with `n = sqrt(len / 2)`), the slope `(dh/dx, dh/dz)` of the
+    /// ground there, each in units of `1 / DETAIL_SLOPE_SCALE`. Finer than `ground`; nothing
+    /// simulates it. Empty when the tile has no relief finer than its ground or none was baked.
+    #[serde(default)]
+    pub detail: Vec<i8>,
 }
+
+/// Units per unit of slope in `Tile::detail`: a slope of 2 (63°) is 127.
+pub const DETAIL_SLOPE_SCALE: f32 = 63.5;
 
 /// One bridge's triangles in a tile's collision mesh: `deck` triangles of concrete (deck, piers,
 /// parapets) from `first`, then `steel` triangles (pylon, stay cables). A bridge crossing tile
@@ -518,6 +527,7 @@ mod tests {
             water: vec![NO_WATER, 40, 40, NO_WATER],
             streams: vec![Stream { width: 200, points: vec![[0, 0], [300, 100]] }],
             bridges: vec![Bridge { first: 0, deck: 12, steel: 4 }],
+            detail: vec![0, -3, 127, -127],
         };
         assert_eq!(Tile::decode(&tile.encode()).unwrap(), tile);
         assert_eq!(manifest.tiles[0].path(), "tiles/1_0.msgpack");

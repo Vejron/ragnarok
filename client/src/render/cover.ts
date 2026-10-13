@@ -7,6 +7,7 @@ import {
   COVER_URBAN,
   COVER_WATER,
   COVER_WOOD,
+  DETAIL_SLOPE_SCALE,
   type TileData,
 } from '@/world'
 
@@ -60,5 +61,35 @@ export function bakeTerrainTexture(tile: Pick<TileData, 'cover'>, x0: number, z0
   texture.colorSpace = THREE.SRGBColorSpace
   texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping
   texture.anisotropy = 4
+  return texture
+}
+
+/**
+ * The tile's fine relief as an object-space normal map, or null when it has none. Texel `k` of a
+ * row covers `[k, k + 1]` of the `n` texels over the tile, which UV `0..1` spans with `flipY` off.
+ * Object space is world space here: the terrain mesh is built in world coordinates.
+ */
+export function bakeNormalMap(detail: Int8Array | undefined): THREE.DataTexture | null {
+  if (!detail || detail.length === 0) return null
+  const n = Math.round(Math.sqrt(detail.length / 2))
+  if (n * n * 2 !== detail.length) return null
+  const data = new Uint8Array(n * n * 4)
+  for (let k = 0; k < n * n; k++) {
+    const sx = detail[k * 2]! / DETAIL_SLOPE_SCALE
+    const sz = detail[k * 2 + 1]! / DETAIL_SLOPE_SCALE
+    const length = Math.hypot(sx, 1, sz)
+    data[k * 4] = Math.round((-sx / length) * 127.5 + 127.5)
+    data[k * 4 + 1] = Math.round((1 / length) * 127.5 + 127.5)
+    data[k * 4 + 2] = Math.round((-sz / length) * 127.5 + 127.5)
+    data[k * 4 + 3] = 255
+  }
+  const texture = new THREE.DataTexture(data, n, n, THREE.RGBAFormat)
+  texture.flipY = false
+  texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping
+  texture.magFilter = THREE.LinearFilter
+  texture.minFilter = THREE.LinearMipmapLinearFilter
+  texture.generateMipmaps = true
+  texture.anisotropy = 4
+  texture.needsUpdate = true
   return texture
 }

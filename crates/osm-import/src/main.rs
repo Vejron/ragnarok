@@ -22,6 +22,7 @@ mod bridge;
 mod cache;
 mod canopy;
 mod dem;
+mod detail;
 mod ground;
 mod hydro;
 mod lidar;
@@ -56,6 +57,11 @@ struct Args {
     /// Distance between terrain height samples, metres; must divide `--tile`. 0 makes the ground flat.
     #[arg(long, default_value_t = 5.0)]
     cell: f64,
+    /// Spacing of the slope map baked into each tile for the client's lighting, metres; must
+    /// divide `--tile`. Finer than `--cell`, so a coarse ground can still be shaded by the 1 m height
+    /// model. 0 leaves it out.
+    #[arg(long, default_value_t = 0.0)]
+    detail: f64,
     /// A Lantmäteriet DTM GeoTIFF (SWEREF 99 TM) to take elevation from. Without it, the DTM is
     /// fetched with the credentials in LM_USER and LM_PASS.
     #[arg(long)]
@@ -256,15 +262,22 @@ fn main() -> Result<()> {
     anyhow::ensure!(args.cell == 0.0 || args.cell >= 0.5, "--cell must be 0 or at least 0.5 m");
     let built = if args.synthetic {
         let map = if args.no_water { water::Map::default() } else { assemble::synthetic_water(300.0) };
-        let (ground, placed) = if args.cell > 0.0 {
+        let (ground, datum, placed) = if args.cell > 0.0 {
             let surface = water::Surface::new(&map, ground::grid(300.0, args.tile, args.cell)?, |x, z| Some(ground::hills(x, z)));
             let (ground, datum) = ground::build(300.0, args.tile, args.cell, |x, z| Some(ground::hills(x, z)), |x, z, dem| surface.bed(x, z, dem))?;
             let placed = water::Placed::new(&map, &surface, datum, &ground);
-            (ground, placed)
+            (ground, datum, placed)
         } else {
             Default::default()
         };
-        assemble::synthetic_city(300.0, args.tile, ground, placed)
+        let coarse = ground.clone();
+        let mut built = assemble::synthetic_city(300.0, args.tile, ground, placed);
+        if args.detail > 0.0 && args.cell > 0.0 {
+            // The hills are continuous, so the detail is what the coarse triangles leave out.
+            let hills = |x: f64, z: f64| Some(ground::hills(x, z));
+            detail::bake(&mut built, &coarse, datum, args.detail, hills, hills);
+        }
+        built
     } else {
         let bbox = match &args.bbox {
             Some(text) => parse_bbox(text)?,
@@ -296,7 +309,20 @@ fn main() -> Result<()> {
         };
         let planted = trees::merge(register, &detected);
         eprintln!("trees: {} from the register, {} from the laser", planted.iter().filter(|t| t.registered).count(), planted.iter().filter(|t| !t.registered).count());
-        assemble::from_osm(bbox, args.tile, &osm, &planted, ground, placed, cloud.as_ref())
+        let coarse = (args.detail > 0.0).then(|| ground.clone());
+        let mut built = assemble::from_osm(bbox, args.tile, &osm, &planted, ground, placed, cloud.as_ref());
+        if let (Some(coarse), Some(source)) = (coarse, dem.as_ref()) {
+            let (origin, _) = assemble::frame(bbox);
+            let model = |half: f64| {
+                move |x: f64, z: f64| {
+                    let (lat, lon) = assemble::unproject(origin, x, z);
+                    let (e, n) = dem::sweref99tm(lat, lon);
+                    source.mean(e, n, half).map(f64::from)
+                }
+            };
+            detail::bake(&mut built, &coarse, datum, args.detail, model(args.cell / 2.0), model(args.detail / 2.0));
+        }
+        built
     };
     let (buildings, roads, triangles) = built.tiles.values().fold((0, 0, 0), |(b, r, t), tile| (b + tile.buildings.len(), r + tile.roads.len(), t + tile.collision.triangles.len()));
     let cover: usize = built.tiles.values().map(|tile| tile.cover.len()).sum();

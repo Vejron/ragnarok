@@ -151,6 +151,9 @@ export interface Stream {
   points: Point2[]
 }
 
+/** Units per unit of slope in `TileData.detail` (`DETAIL_SLOPE_SCALE` in `crates/shared`). */
+export const DETAIL_SLOPE_SCALE = 63.5
+
 /** `Tile::water` entry (centimetres) for a ground sample with no water. */
 const NO_WATER_CM = -32768
 
@@ -198,6 +201,12 @@ export interface TileData {
    * `NO_WATER`. Empty when the tile has no water. The depth under a sample is `water - ground`.
    */
   water: Float32Array
+  /**
+   * Slopes `(dh/dx, dh/dz)` of the ground on a finer grid than `ground`, `n × n` with
+   * `n = sqrt(length / 2)`, in units of `1 / DETAIL_SLOPE_SCALE`; for lighting only. Absent or empty
+   * when the tile has none.
+   */
+  detail?: Int8Array
   /** Narrow watercourses, flowing along their points. */
   streams: Stream[]
   bridges: Bridge[]
@@ -237,7 +246,7 @@ export function decodeManifest(bytes: Uint8Array): WorldData {
 }
 
 export function decodeTile(bytes: Uint8Array): TileData {
-  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges] = decode(bytes) as [
+  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges, detail] = decode(bytes) as [
     [number, number[][], number, number, number, number, number][],
     [number, number, number[][]][],
     [number[][], number[][]],
@@ -247,6 +256,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     number[],
     [number, number[][]][],
     [number, number, number][] | undefined,
+    number[] | undefined,
   ]
   return {
     buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind]) => ({
@@ -279,6 +289,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     water: Float32Array.from(water, (cm) => (cm === NO_WATER_CM ? NO_WATER : metres(cm))),
     streams: streams.map(([width, points]) => ({ width: metres(width), points: points.map(point) })),
     bridges: (bridges ?? []).map(([first, deck, steel]) => ({ first, deck, steel })),
+    detail: detail && detail.length > 0 ? Int8Array.from(detail) : undefined,
   }
 }
 

@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import type { TileGround } from '@/sim/terrain'
 import { ROOF_FLAT, type TileData } from '@/world'
-import { GRASS_COLOR, bakeTerrainTexture } from './cover'
+import { GRASS_COLOR, bakeNormalMap, bakeTerrainTexture } from './cover'
 import { buildRoads } from './roads'
 import { heightSampler, normalAt, toneAt, type HeightSource } from './shade'
 import { buildTrees } from './trees'
@@ -60,7 +60,7 @@ export function buildGround(halfExtent: number, y = 0): THREE.Mesh {
  * One tile's terrain, as indexed triangles split the way the collider's are (each cell along its
  * `(x0, z1)`–`(x1, z0)` diagonal). UVs run 0..1 over the tile, for a texture baked per tile later.
  */
-function buildTerrain(tile: Pick<TileData, 'cover'>, ground: TileGround, around?: HeightSource): THREE.Mesh {
+function buildTerrain(tile: Pick<TileData, 'cover' | 'detail'>, ground: TileGround, around?: HeightSource): THREE.Mesh {
   const { x0, z0, cell, side, heights } = ground
   const positions = new Float32Array(side * side * 3)
   const uvs = new Float32Array(side * side * 2)
@@ -94,8 +94,21 @@ function buildTerrain(tile: Pick<TileData, 'cover'>, ground: TileGround, around?
   geometry.computeBoundingSphere()
   // The cover is painted into this tile's own texture; the material is the tile's too.
   const map = bakeTerrainTexture(tile, x0, z0, cell * (side - 1))
-  const mesh = new THREE.Mesh(geometry, map ? new THREE.MeshToonMaterial({ map, gradientMap: TERRAIN_RAMP, vertexColors: true }) : material('terrain', GRASS_COLOR))
-  mesh.userData.ownsMaterial = map !== null
+  // Finer relief than the mesh has, as lighting only.
+  const normalMap = bakeNormalMap(tile.detail)
+  const owned = map !== null || normalMap !== null
+  const mesh = new THREE.Mesh(
+    geometry,
+    owned
+      ? new THREE.MeshToonMaterial({
+          ...(map ? { map } : { color: GRASS_COLOR }),
+          ...(normalMap ? { normalMap, normalMapType: THREE.ObjectSpaceNormalMap } : {}),
+          gradientMap: TERRAIN_RAMP,
+          vertexColors: true,
+        })
+      : material('terrain', GRASS_COLOR),
+  )
+  mesh.userData.ownsMaterial = owned
   mesh.userData.ground = ground
   mesh.receiveShadow = true
   return mesh
@@ -246,8 +259,9 @@ export function disposeTile(group: THREE.Group) {
     if (!object.userData.sharedGeometry) object.geometry.dispose()
     if (object instanceof THREE.InstancedMesh) object.dispose()
     if (object.userData.ownsMaterial) {
-      const material = object.material as THREE.MeshLambertMaterial
+      const material = object.material as THREE.MeshToonMaterial
       material.map?.dispose()
+      material.normalMap?.dispose()
       material.dispose()
     }
   })

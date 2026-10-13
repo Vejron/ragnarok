@@ -60,7 +60,7 @@ Without credentials the importer says so and builds buildings as boxes; terrain 
 
 | World | Where | Size | Made by | Used for |
 |---|---|---|---|---|
-| **Dev** | `client/public/dev/` (git-ignored) | ~7.6 km², 2.75 km square around 63.83976, 20.31514 (Mariehem, Umeå), 121 tiles | `scripts/world-dev.sh` | day-to-day development: quick to import, load and stream |
+| **Dev** | `client/public/dev/` (git-ignored) | ~7.9 km², 2.8 km square around 63.83976, 20.31514 (Mariehem, Umeå), 121 tiles of 256 m, ground every 4 m plus a 1 m slope map (`--cell 4 --detail 1`) | `scripts/world-dev.sh` | day-to-day development: quick to import, load and stream |
 | **Big** | `client/public/world.msgpack` + `tiles/` + `minimap.png` (git-ignored) | 8.6 km square, Backen to Nydala | `scripts/world.sh` | production (what `Dockerfile` and `scripts/deploy.sh` ship), and checking things at full scale |
 | **Fixture** | `fixtures/world/` (committed) | small synthetic city | `--synthetic --out fixtures/world/world.msgpack` | server and client tests only |
 
