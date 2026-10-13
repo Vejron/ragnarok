@@ -76,7 +76,7 @@ interface Peer {
 export class VoiceChat {
   private readonly peers = new Map<number, Peer>()
   private mic: MediaStreamTrack | null = null
-  private micState: MicState = typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia ? 'idle' : 'unavailable'
+  private micState: MicState = typeof navigator !== 'undefined' && typeof navigator.mediaDevices?.getUserMedia === 'function' ? 'idle' : 'unavailable'
   private talking = false
   private self: number | null = null
   /** Last known distance of each player in range, for deciding whether to answer an offer. */
