@@ -13,9 +13,18 @@ const RECOIL_STROKE = 0.5
 const RECOIL_SECONDS = 0.35
 /** Paint colours handed out by vehicle id, so neighbouring tanks are told apart. */
 const PAINTS = [0x6b8e23, 0x8a7f4a, 0x5f7d5a, 0x7a6f3d] as const
-/** Each seat's occupant, in the hull frame (driver) or the turret frame (gunner). */
-const DRIVER_HEAD: readonly [number, number, number] = [0, 0.55, -1.55]
-const GUNNER_HEAD: readonly [number, number, number] = [-0.45, 0.5, 0.3]
+
+/** What differs between the tanks this model draws: where each seat's head shows and how the tracks turn the wheels. */
+export interface TankLayout {
+  /** The driver's head in the hull frame. */
+  driverHead: readonly [number, number, number]
+  /** The gunner's head in the turret frame; none where the driver fires the gun. */
+  gunnerHead: readonly [number, number, number] | null
+  wheelRadius: number
+  trackHalf: number
+}
+
+const TANK_LAYOUT: TankLayout = { driverHead: [0, 0.55, -1.55], gunnerHead: [-0.45, 0.5, 0.3], wheelRadius: WHEEL_RADIUS, trackHalf: TANK_TRACK_HALF }
 
 let asset: THREE.Object3D | null = null
 
@@ -24,7 +33,12 @@ let asset: THREE.Object3D | null = null
  * materials become flat toon ones to match the rest of the scene; `paint` is replaced per tank.
  */
 export async function parseTankModel(data: ArrayBuffer) {
-  asset = await new Promise<THREE.Object3D>((resolve, reject) => {
+  asset = await parseTankAsset(data)
+}
+
+/** Parses a tank-family `.glb` into toon materials, for `TankModel` and its kin to share. */
+export function parseTankAsset(data: ArrayBuffer): Promise<THREE.Object3D> {
+  return new Promise<THREE.Object3D>((resolve, reject) => {
     new GLTFLoader().parse(
       data,
       '',
@@ -58,7 +72,8 @@ export async function loadTankModel(url = TANK_MODEL_URL) {
  */
 export class TankModel implements VehicleModel {
   readonly root = new THREE.Group()
-  private readonly turret: THREE.Object3D
+  /** The turret node; a turretless tank (the Strv S) has none. */
+  private readonly turret: THREE.Object3D | null
   private readonly gun: THREE.Object3D
   private readonly gunRest: number
   private readonly spinners: { node: THREE.Object3D; side: number }[] = []
@@ -74,9 +89,9 @@ export class TankModel implements VehicleModel {
   private readonly pivot = new THREE.Vector3()
   private readonly aim = new THREE.Vector3()
 
-  constructor(id: number) {
-    if (!asset) throw new Error('loadTankModel() must finish before tanks are created')
-    const model = asset.clone(true)
+  constructor(id: number, source: THREE.Object3D | null = asset, private readonly layout: TankLayout = TANK_LAYOUT) {
+    if (!source) throw new Error('loadTankModel() must finish before tanks are created')
+    const model = source.clone(true)
     this.root.add(model)
     this.paint = new THREE.MeshToonMaterial({ color: PAINTS[id % PAINTS.length]! })
     model.traverse((node) => {
@@ -85,7 +100,7 @@ export class TankModel implements VehicleModel {
       const wheel = /^wheel_([LR])_/.exec(node.name)
       if (wheel) this.spinners.push({ node, side: wheel[1] === 'L' ? -1 : 1 })
     })
-    this.turret = model.getObjectByName('turret')!
+    this.turret = model.getObjectByName('turret') ?? null
     this.gun = model.getObjectByName('gun')!
     this.gunRest = this.gun.position.z
 
@@ -96,10 +111,10 @@ export class TankModel implements VehicleModel {
       head.castShadow = true
       this.heads.push(head)
       if (seat === 0) {
-        head.position.set(...DRIVER_HEAD)
+        head.position.set(...layout.driverHead)
         this.root.add(head)
-      } else if (seat === 1) {
-        head.position.set(...GUNNER_HEAD)
+      } else if (seat === 1 && this.turret && layout.gunnerHead) {
+        head.position.set(...layout.gunnerHead)
         this.turret.add(head)
       }
     }
@@ -123,17 +138,18 @@ export class TankModel implements VehicleModel {
     const yaw = Math.atan2(-this.forward.x, -this.forward.z)
     if (this.placed) {
       const ahead = this.forward.dot(this.root.position.clone().sub(this.last))
-      const turned = wrapAngle(yaw - this.lastYaw) * TANK_TRACK_HALF
+      const turned = wrapAngle(yaw - this.lastYaw) * this.layout.trackHalf
       // Turning left (+yaw) holds the left track back and drives the right one on.
-      this.roll.left -= (ahead - turned) / WHEEL_RADIUS
-      this.roll.right -= (ahead + turned) / WHEEL_RADIUS
+      this.roll.left -= (ahead - turned) / this.layout.wheelRadius
+      this.roll.right -= (ahead + turned) / this.layout.wheelRadius
     }
     this.last.copy(this.root.position)
     this.lastYaw = yaw
     this.placed = true
     for (const { node, side } of this.spinners) node.rotation.x = side < 0 ? this.roll.left : this.roll.right
 
-    this.turret.rotation.y = turret?.yaw ?? 0
+    // A turretless tank's gun is fixed in the hull, whatever yaw it is sent.
+    if (this.turret) this.turret.rotation.y = turret?.yaw ?? 0
     this.gun.rotation.x = turret?.pitch ?? 0
     // The barrel slides back and eases home over a third of a second.
     const since = (performance.now() - this.firedAt) / 1000
@@ -143,6 +159,32 @@ export class TankModel implements VehicleModel {
       head.visible = occupant !== 0
       if (occupant !== 0) (head.material as THREE.MeshToonMaterial).color.setHex(colorFor(occupant))
     })
+  }
+
+  /** Whether the turret is on, for a tank that has one. */
+  get turretOn() {
+    return this.turret?.visible ?? false
+  }
+
+  /** Shows the turret, or hides it once it has been shot off. */
+  setTurret(on: boolean) {
+    if (this.turret) this.turret.visible = on
+  }
+
+  /**
+   * A copy of the turret, with the gun, as it stands now in the world, for flying off as debris; null
+   * for a tank with none or one that is already off. Add the copy to the scene and throw it.
+   */
+  turretCopy(): THREE.Object3D | null {
+    if (!this.turret?.visible) return null
+    this.root.updateMatrixWorld(true)
+    const copy = this.turret.clone(true)
+    // The gunner's head stays with the crew who died with it.
+    copy.traverse((node) => {
+      if ((node as THREE.Mesh).isMesh && (node as THREE.Mesh).geometry instanceof THREE.SphereGeometry) node.visible = false
+    })
+    this.turret.matrixWorld.decompose(copy.position, copy.quaternion, copy.scale)
+    return copy
   }
 
   /** A shell was just fired: the barrel kicks back. */

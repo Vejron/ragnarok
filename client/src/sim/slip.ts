@@ -2,7 +2,8 @@ import {
   JEEP_AXLE_Z, JEEP_MAX_STEER, JEEP_RIDE_HEIGHT, JEEP_TRACK_HALF, SPORTS_AXLE_Z, SPORTS_MAX_STEER, SPORTS_RIDE_HEIGHT, SPORTS_TRACK_HALF,
   TANK_AXLES_Z, TANK_TRACK_HALF, PLANE_AXLES_Z, PLANE_MAX_STEER, PLANE_TRACK_HALF,
 } from './consts'
-import { KIND_HELI, KIND_PLANE, KIND_SPORTS, KIND_TANK } from '@/net/codec'
+import { KIND_HELI, KIND_PLANE, KIND_SPORTS } from '@/net/codec'
+import { isTracked } from './vehicles'
 
 /**
  * Where a vehicle's tyres meet the ground and how hard they are sliding, worked out from where the
@@ -46,7 +47,7 @@ const PLANE = {
 export function wheelLayout(kind: number): WheelLayout | null {
   if (kind === KIND_HELI) return null
   if (kind === KIND_PLANE) return PLANE
-  if (kind === KIND_TANK) return TANK
+  if (isTracked(kind)) return TANK
   if (kind === KIND_SPORTS) return SPORTS
   return JEEP
 }

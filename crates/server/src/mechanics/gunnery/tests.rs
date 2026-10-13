@@ -2,7 +2,7 @@ use super::*;
 use crate::game::{Command, Game, Seat};
 use crate::physics::STANDING_Y;
 use shared::items::Falloff;
-use shared::protocol::{InputFrame, KIND_HELI, KIND_TANK, PROJECTILE_BOMB, WEAPON_BOMB, WEAPON_MG};
+use shared::protocol::{InputFrame, KIND_HELI, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, WEAPON_BOMB, WEAPON_MG};
 use shared::quant::to_mrad;
 use shared::world::{Road, WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
@@ -11,9 +11,9 @@ fn game() -> Game {
     let map = WorldFile {
         version: WORLD_VERSION,
         half_extent: 30_000,
-        // Nine spots in the middle for the cars, tanks and helicopter, and one far out at each end
+        // Eleven spots in the middle for the cars, tanks, walker and helicopter, and one far out at each end
         // for the planes. Players start on the first six.
-        spawns: [[-25_000, 0], [25_000, 0]].into_iter().chain((0..9).map(|i| [i * 3000 - 12_000, 0])).collect(),
+        spawns: [[-25_000, 0], [25_000, 0]].into_iter().chain((0..11).map(|i| [i * 3000 - 12_000, 0])).collect(),
         roads: vec![Road { width: 800, kind: 0, points: vec![[-30_000, 0], [30_000, 0]] }],
         ..Default::default()
     };
@@ -305,6 +305,70 @@ fn the_nose_gun_fires_a_burst_at_its_rate_and_only_for_the_gunner() {
     let mut seq = 0;
     aim_and_hold(&mut alone, pilot, &mut seq, 0.0, 0.0, BUTTON_FIRE, 30);
     assert_eq!(alone.world.vehicles[&vid].gun.unwrap().shots, 0);
+}
+
+#[test]
+fn the_walkers_driver_aims_with_the_upper_body_within_thirty_degrees_and_fires() {
+    let mut game = game();
+    let (driver, _inbox) = join(&mut game);
+    let vid = *game.world.vehicles.iter().find(|(_, vehicle)| vehicle.kind == KIND_WALKER).expect("a walker is placed").0;
+    seat(&mut game, driver, vid, 0);
+    let mut seq = 0;
+    let hull = game.world.physics.car_pose(vid).unwrap().yaw();
+    aim_and_hold(&mut game, driver, &mut seq, hull, 0.0, 0, 90);
+    // A look inside its travel is followed, whichever way the legs face.
+    aim_and_hold(&mut game, driver, &mut seq, hull + 0.3, 0.1, 0, 90);
+    let gun = game.world.vehicles[&vid].gun.unwrap();
+    assert!((gun.yaw - 0.3).abs() < 0.03 && (gun.pitch - 0.1).abs() < 0.03, "{gun:?}");
+    // And one beyond it stops at the limit.
+    aim_and_hold(&mut game, driver, &mut seq, hull + 1.5, 0.0, 0, 120);
+    let gun = game.world.vehicles[&vid].gun.unwrap();
+    assert!((gun.yaw - WALKER_TORSO_LIMIT).abs() < 0.01, "{gun:?}");
+    // The driver's trigger fires the guns, at their rate, and a round is in the air.
+    aim_and_hold(&mut game, driver, &mut seq, hull + 0.3, 0.0, BUTTON_FIRE, 60);
+    let fired = game.world.vehicles[&vid].gun.unwrap().shots;
+    let expected = (60 / WALKER_GUN_COOLDOWN_TICKS) as u8;
+    assert!(fired.abs_diff(expected) <= 2, "{fired} rounds in a second, expected about {expected}");
+}
+
+fn strv(game: &Game) -> u32 {
+    *game.world.vehicles.iter().find(|(_, vehicle)| vehicle.kind == KIND_STRV).expect("a Strv S is placed").0
+}
+
+#[test]
+fn a_strv_driver_fires_the_hull_gun_and_only_elevation_follows_the_look() {
+    let mut game = game();
+    let (driver, _inbox) = join(&mut game);
+    let vid = strv(&game);
+    assert_eq!(game.world.vehicles[&vid].seats.iter().flatten().count(), 0);
+    seat(&mut game, driver, vid, 0);
+    let mut seq = 0;
+    let hull = game.world.physics.car_pose(vid).unwrap().yaw();
+    aim_and_hold(&mut game, driver, &mut seq, hull, 0.0, 0, 90);
+    // Looking sideways does nothing to the gun, and looking up lifts the barrel to its limit.
+    aim_and_hold(&mut game, driver, &mut seq, hull + 1.0, 1.2, 0, 120);
+    let gun = game.world.vehicles[&vid].gun.unwrap();
+    assert!(gun.yaw.abs() < 1e-6, "{gun:?}");
+    assert!((gun.pitch - STRV_BARREL_MAX).abs() < 0.01, "{gun:?}");
+    aim_and_hold(&mut game, driver, &mut seq, hull, -1.0, 0, 120);
+    let gun = game.world.vehicles[&vid].gun.unwrap();
+    assert!((gun.pitch - STRV_BARREL_MIN).abs() < 0.01, "{gun:?}");
+    // The driver's trigger fires a shell, at the shell's cooldown, and kicks the hull back.
+    aim_and_hold(&mut game, driver, &mut seq, hull, 0.0, BUTTON_FIRE, 3);
+    assert_eq!(game.world.vehicles[&vid].gun.unwrap().shots, 1);
+    assert!(game.world.physics.car_pose(vid).unwrap().forward_speed < -0.5);
+    aim_and_hold(&mut game, driver, &mut seq, hull, 0.0, BUTTON_FIRE, SHELL_COOLDOWN_TICKS);
+    assert_eq!(game.world.vehicles[&vid].gun.unwrap().shots, 2);
+}
+
+#[test]
+fn an_empty_strv_does_not_fire() {
+    let mut game = game();
+    let vid = strv(&game);
+    for _ in 0..60 {
+        game.step();
+    }
+    assert_eq!(game.world.vehicles[&vid].gun.unwrap().shots, 0);
 }
 
 fn plane(game: &Game) -> u32 {

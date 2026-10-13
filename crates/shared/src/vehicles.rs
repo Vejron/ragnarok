@@ -7,7 +7,7 @@
 //! gameplay.json` fails until the two tables agree.
 
 use crate::consts::*;
-use crate::protocol::{KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_TANK};
+use crate::protocol::{KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER};
 
 #[derive(Clone, Copy, Debug)]
 pub struct VehicleDef {
@@ -15,8 +15,8 @@ pub struct VehicleDef {
     pub name: &'static str,
     /// Health of a fresh one. Zero on the wire means wrecked.
     pub hp: u8,
-    /// Seat 0 is the driver (a helicopter's or a plane's pilot); a tank's, helicopter's and plane's
-    /// seat 1 is the gunner.
+    /// Seat 0 is the driver (a helicopter's or a plane's pilot, and a walker's, who also aims its guns);
+    /// a tank's, helicopter's and plane's seat 1 is the gunner.
     pub seats: usize,
     /// Half extents of the chassis box, metres.
     pub half_extents: [f32; 3],
@@ -95,8 +95,40 @@ const PLANE: VehicleDef = VehicleDef {
     axle_z: 0.0,
 };
 
+const WALKER: VehicleDef = VehicleDef {
+    kind: KIND_WALKER,
+    name: "Walker",
+    hp: 200,
+    seats: WALKER_SEATS,
+    half_extents: WALKER_HALF_EXTENTS,
+    gun: true,
+    arms: false,
+    car_wheels: false,
+    track_half: 0.0,
+    axle_z: 0.0,
+};
+
+const STRV: VehicleDef = VehicleDef {
+    kind: KIND_STRV,
+    name: "Strv S",
+    hp: 220,
+    seats: STRV_SEATS,
+    half_extents: STRV_HALF_EXTENTS,
+    gun: true,
+    arms: false,
+    car_wheels: false,
+    track_half: 0.0,
+    axle_z: 0.0,
+};
+
 /// Every vehicle kind, in id order.
-pub const VEHICLES: [VehicleDef; 5] = [JEEP, TANK, HELI, SPORTS, PLANE];
+pub const VEHICLES: [VehicleDef; 7] = [JEEP, TANK, HELI, SPORTS, PLANE, WALKER, STRV];
+
+/// The seat whose occupant aims and fires `kind`'s gun: a tank's, helicopter's and plane's seat 1, but
+/// the driver's seat 0 where the vehicle has only one (a walker, a Strv S).
+pub fn gun_seat(kind: u8) -> usize {
+    if vehicle_def(kind).seats == 1 { 0 } else { 1 }
+}
 
 /// The definition of a vehicle `kind`. Unknown kinds are jeeps.
 pub fn vehicle_def(kind: u8) -> &'static VehicleDef {
@@ -120,7 +152,7 @@ mod tests {
     #[test]
     fn only_armed_kinds_have_a_gun_and_only_the_plane_has_pilot_arms() {
         assert!(vehicle_def(KIND_PLANE).arms && !vehicle_def(KIND_TANK).arms);
-        assert!(vehicle_def(KIND_TANK).gun && vehicle_def(KIND_HELI).gun && vehicle_def(KIND_PLANE).gun);
+        assert!(vehicle_def(KIND_TANK).gun && vehicle_def(KIND_HELI).gun && vehicle_def(KIND_PLANE).gun && vehicle_def(KIND_WALKER).gun && vehicle_def(KIND_STRV).gun);
         assert!(!vehicle_def(KIND_JEEP).gun && !vehicle_def(KIND_SPORTS).gun);
     }
 }

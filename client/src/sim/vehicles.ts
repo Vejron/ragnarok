@@ -4,10 +4,10 @@
  * and models in `render/`.
  */
 
-import { KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_TANK } from '@/net/codec'
+import { KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
 import {
   CAR_SEATS, HELI_HALF_EXTENTS, HELI_SEATS, JEEP_AXLE_Z, JEEP_HALF_EXTENTS, JEEP_TRACK_HALF, PLANE_HALF_EXTENTS, PLANE_SEATS,
-  SPORTS_AXLE_Z, SPORTS_HALF_EXTENTS, SPORTS_SEATS, SPORTS_TRACK_HALF, TANK_HALF_EXTENTS, TANK_SEATS,
+  SPORTS_AXLE_Z, SPORTS_HALF_EXTENTS, SPORTS_SEATS, SPORTS_TRACK_HALF, STRV_HALF_EXTENTS, STRV_SEATS, TANK_HALF_EXTENTS, TANK_SEATS, WALKER_HALF_EXTENTS, WALKER_SEATS,
 } from './consts'
 
 export interface VehicleDef {
@@ -37,7 +37,15 @@ export const VEHICLES: readonly VehicleDef[] = [
   { kind: KIND_HELI, name: 'Helicopter', hp: 100, seats: HELI_SEATS, halfExtents: HELI_HALF_EXTENTS, ...none, gun: true },
   { kind: KIND_SPORTS, name: 'Sports car', hp: 100, seats: SPORTS_SEATS, halfExtents: SPORTS_HALF_EXTENTS, ...none, carWheels: true, trackHalf: SPORTS_TRACK_HALF, axleZ: SPORTS_AXLE_Z },
   { kind: KIND_PLANE, name: 'Triplane', hp: 70, seats: PLANE_SEATS, halfExtents: PLANE_HALF_EXTENTS, ...none, gun: true, arms: true },
+  { kind: KIND_WALKER, name: 'Walker', hp: 200, seats: WALKER_SEATS, halfExtents: WALKER_HALF_EXTENTS, ...none, gun: true },
+  { kind: KIND_STRV, name: 'Strv S', hp: 220, seats: STRV_SEATS, halfExtents: STRV_HALF_EXTENTS, ...none, gun: true },
 ]
 
 /** The definition of a vehicle `kind`. Unknown kinds are jeeps. */
 export const vehicleDef = (kind: number | undefined): VehicleDef => VEHICLES.find((def) => def.kind === kind) ?? VEHICLES[0]!
+
+/** The seat whose occupant aims and fires `kind`'s gun: seat 1, or the driver's seat 0 where there is only one. Mirrors `gun_seat`. */
+export const gunSeat = (kind: number | undefined): number => (vehicleDef(kind).seats === 1 ? 0 : 1)
+
+/** A tracked tank: the tank or the Strv S, which turn on the spot, rut soft ground and rumble alike. */
+export const isTracked = (kind: number | undefined): boolean => kind === KIND_TANK || kind === KIND_STRV

@@ -16,6 +16,14 @@ export const ON_FOOT_DISTANCE = 3.2
 export const DRIVING_DISTANCE = 9
 export const TANK_DISTANCE = 13
 export const HELI_DISTANCE = 16
+export const WALKER_DISTANCE = 15
+/** The Strv S driver's camera: behind the gun's trunnion on the aim line and a little above it, as a gunner's, a bit further back. */
+export const STRV_DISTANCE = 12
+export const STRV_AIM_BACK = 9
+export const STRV_AIM_UP = 3.2
+/** The walker's aim camera: behind the guns' pivot on the aim line, and this far above it, to see over the cab. */
+export const WALKER_AIM_BACK = 12
+export const WALKER_AIM_UP = 5
 /** A plane's pilot looks where they fly, from behind and above, so the plane sits below the middle of the screen. */
 export const PLANE_DISTANCE = 12
 export const PLANE_CAMERA_HEIGHT = 2.4
@@ -207,10 +215,10 @@ export class Scene {
    * It focuses on a far point of the barrel's line, so the centre of the screen is where the barrel
    * points even though the camera is higher than the gun. A shell falls from that line.
    */
-  aimFrom(origin: readonly number[], yaw: number, pitch: number) {
+  aimFrom(origin: readonly number[], yaw: number, pitch: number, back = GUNNER_BACK, up = GUNNER_UP) {
     const dir = new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch))
     const from = new THREE.Vector3(origin[0]!, origin[1]!, origin[2]!)
-    this.camera.position.copy(from).addScaledVector(dir, -GUNNER_BACK).add(new THREE.Vector3(0, GUNNER_UP, 0))
+    this.camera.position.copy(from).addScaledVector(dir, -back).add(new THREE.Vector3(0, up, 0))
     this.camera.position.y = Math.max(this.groundAt(this.camera.position.x, this.camera.position.z) + 0.3, this.camera.position.y)
     this.camera.lookAt(from.addScaledVector(dir, GUNNER_FOCUS))
     this.sun.target.position.set(origin[0]!, origin[1]!, origin[2]!)

@@ -16,7 +16,7 @@ use super::{Obj, Physics};
 use rapier3d::control::{DynamicRayCastVehicleController, WheelTuning};
 use rapier3d::prelude::*;
 use shared::consts::*;
-use shared::protocol::{DAMAGE_WHEELS, KIND_HELI, KIND_PLANE, KIND_SPORTS, KIND_TANK, WHEEL_GONE, vehicle_hp};
+use shared::protocol::{DAMAGE_WHEELS, KIND_HELI, KIND_PLANE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, WHEEL_GONE, vehicle_hp};
 
 /// Gravity acting on vehicle bodies. Stickmen use `GRAVITY`; the ray-cast suspension is tuned
 /// around the real-world value.
@@ -25,7 +25,7 @@ pub const CAR_GRAVITY: f32 = 9.81;
 mod flight;
 mod spec;
 
-use flight::{assist, fly, pull, roll_plane, wing};
+use flight::{assist, fly, pull, roll_plane, walk, wing};
 pub use spec::half_extents;
 pub(super) use spec::{Lift, Spec, spec};
 
@@ -97,8 +97,11 @@ impl CarCondition {
     /// down to half health and loses up to half of it below. Mirrored by `conditionOf` in `vehicle.ts`.
     pub fn of(kind: u8, hp: u8, damage: [u8; 8]) -> CarCondition {
         let health = f32::from(hp) / f32::from(vehicle_hp(kind));
+        // Only a car has wheels to hurt: a tank's first wheel slot says whether its turret is on.
         let mut wheels = [0; 4];
-        wheels.copy_from_slice(&damage[DAMAGE_WHEELS..DAMAGE_WHEELS + 4]);
+        if shared::vehicles::vehicle_def(kind).car_wheels {
+            wheels.copy_from_slice(&damage[DAMAGE_WHEELS..DAMAGE_WHEELS + 4]);
+        }
         CarCondition { power: (0.5 + health).min(1.0), wheels }
     }
 }
@@ -122,6 +125,18 @@ pub struct CarPose {
     pub up_y: f32,
     /// Linear velocity, m/s.
     pub velocity: [f32; 3],
+}
+
+/// Where a shot met a vehicle, for armor: see [`Physics::armor_strike`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Strike {
+    pub distance: f32,
+    /// It hit the turret, not the hull.
+    pub turret: bool,
+    /// Outward surface normal, in the vehicle's frame (+X right, +Y up, -Z forward).
+    pub normal: [f32; 3],
+    /// The point, in the vehicle's frame.
+    pub point: [f32; 3],
 }
 
 /// What a driver needs to resume predicting a car, beyond its pose.
@@ -166,8 +181,8 @@ pub(super) struct Car {
     spec: &'static Spec,
     body: RigidBodyHandle,
     collider: ColliderHandle,
-    /// A tank's turret or a plane's wings, a second solid on the same body. It has no mass of its own.
-    extra: Option<ColliderHandle>,
+    /// A tank's turret, a plane's wings or a walker's legs: more solids on the same body. They have no mass of their own.
+    extra: Vec<ColliderHandle>,
     controller: DynamicRayCastVehicleController,
     /// Current front wheel angle, radians, + is right.
     steer: f32,
@@ -185,7 +200,7 @@ pub(super) struct Car {
 impl Car {
     /// Whether `collider` is one of this vehicle's solids.
     fn owns(&self, collider: ColliderHandle) -> bool {
-        self.collider == collider || self.extra == Some(collider)
+        self.collider == collider || self.extra.contains(&collider)
     }
 }
 
@@ -307,15 +322,28 @@ impl Physics {
         // The turret is a cylinder, so it needs no turning with the gun. It adds no mass, which keeps
         // the hull's balance and the tuning that goes with it. A plane's wings are a weightless box
         // the same way.
-        let extra = match kind {
-            KIND_TANK => Some(ColliderBuilder::cylinder(TANK_TURRET_HALF_HEIGHT, TANK_TURRET_RADIUS).translation(Vector::from(TANK_TURRET_PIVOT))),
+        let solids: Vec<ColliderBuilder> = match kind {
+            KIND_TANK => vec![ColliderBuilder::cylinder(TANK_TURRET_HALF_HEIGHT, TANK_TURRET_RADIUS).translation(Vector::from(TANK_TURRET_PIVOT))],
+            KIND_STRV => {
+                let [x, y, z] = STRV_CASEMATE_HALF;
+                vec![ColliderBuilder::cuboid(x, y, z).translation(Vector::from(STRV_CASEMATE_CENTRE))]
+            }
             KIND_PLANE => {
                 let [x, y, z] = PLANE_WING_HALF_EXTENTS;
-                Some(ColliderBuilder::cuboid(x, y, z).translation(Vector::from(PLANE_WING_CENTRE)))
+                vec![ColliderBuilder::cuboid(x, y, z).translation(Vector::from(PLANE_WING_CENTRE))]
             }
-            _ => None,
-        }
-        .map(|collider| self.colliders.insert_with_parent(collider.density(0.0).friction(0.4).build(), body, &mut self.bodies));
+            // The legs hang from the bottom of the hull and stop short of the ground, so a car or a shell
+            // hits them but the springs, not the boxes, carry the walker.
+            KIND_WALKER => {
+                let half = (WALKER_LEG_LENGTH - WALKER_LEG_CLEARANCE) / 2.0;
+                [-1.0, 1.0]
+                    .map(|side| ColliderBuilder::cuboid(WALKER_LEG_HALF_WIDTH, half, WALKER_LEG_HALF_DEPTH).translation(Vector::new(side * WALKER_FOOT_HALF, -hy - half, 0.0)))
+                    .into()
+            }
+            _ => Vec::new(),
+        };
+        let extra: Vec<ColliderHandle> =
+            solids.into_iter().map(|collider| self.colliders.insert_with_parent(collider.density(0.0).friction(0.4).build(), body, &mut self.bodies)).collect();
         // A helicopter has no wheels, so its controller is never updated.
         let mut controller = DynamicRayCastVehicleController::new(body);
         // Our forward is -Z, but the controller only uses this axis to sign its own speed estimate,
@@ -352,10 +380,29 @@ impl Physics {
         car.steer = 0.0;
         car.turn = 0.0;
         car.spin = 0.0;
+        // A turret shot off comes back with the tank.
+        for &handle in &car.extra {
+            if let Some(collider) = self.colliders.get_mut(handle) {
+                collider.set_enabled(true);
+            }
+        }
         if let Some(body) = self.bodies.get_mut(car.body) {
             body.set_position(pose_of(position, yaw), true);
             body.set_linvel(Vector::ZERO, true);
             body.set_angvel(Vector::ZERO, true);
+        }
+    }
+
+    /// Puts a tank's turret solid back (`true`) or takes it away (`false`): it comes off when shot off.
+    pub fn set_turret(&mut self, id: u32, present: bool) {
+        let Some(car) = self.cars.get(&id) else { return };
+        if !std::ptr::eq(car.spec, &spec::TANK) {
+            return;
+        }
+        for &handle in &car.extra {
+            if let Some(collider) = self.colliders.get_mut(handle) {
+                collider.set_enabled(present);
+            }
         }
     }
 
@@ -393,7 +440,7 @@ impl Physics {
     /// Applies the driver's controls to the wheels for the next [`Physics::step_cars`].
     pub fn drive_car(&mut self, id: u32, controls: CarControls, dt: f32) {
         let Some(car) = self.cars.get_mut(&id) else { return };
-        if car.spec.lift == Lift::Rotor {
+        if matches!(car.spec.lift, Lift::Rotor | Lift::Walker) {
             car.flight = controls;
             return;
         }
@@ -483,7 +530,26 @@ impl Physics {
                 }
             }
         }
-        for car in self.cars.values_mut().filter(|car| car.spec.lift != Lift::Rotor) {
+        // A walker's feet: how far below each hip the ground is.
+        let mut stances = Vec::new();
+        for (&id, car) in self.cars.iter().filter(|(_, car)| car.spec.lift == Lift::Walker) {
+            let Some(body) = self.bodies.get(car.body) else { continue };
+            let [_, hy, _] = car.spec.half_extents;
+            let filter = QueryFilter::default().exclude_rigid_body(car.body);
+            let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, filter);
+            let feet = [-1.0, 1.0].map(|side| {
+                let hip = body.translation() + *body.rotation() * Vector::new(side * WALKER_FOOT_HALF, -hy, 0.0);
+                queries.cast_ray(&Ray::new(hip, Vector::new(0.0, -1.0, 0.0)), WALKER_LEG_LENGTH, true).map(|(_, distance)| distance)
+            });
+            stances.push((id, feet));
+        }
+        for (id, feet) in stances {
+            let Some(car) = self.cars.get(&id) else { continue };
+            let Some(body) = self.bodies.get_mut(car.body) else { continue };
+            // A wreck (no health, which is exactly half power) has let go.
+            walk(body, car.flight, car.condition.power > 0.5, feet);
+        }
+        for car in self.cars.values_mut().filter(|car| car.spec.lift.wheeled()) {
             // Wheel rays must not hit their own chassis.
             let filter = QueryFilter::default().exclude_rigid_body(car.body);
             let queries = self.broad_phase.as_query_pipeline_mut(
@@ -497,7 +563,7 @@ impl Physics {
         // A car is pressed down or tilted in the air. A tank turns on the spot, but only while some
         // track is on the ground. The wheels' side grip fights any spin every tick, so the rate is
         // kept here and written back each time.
-        for car in self.cars.values_mut().filter(|car| car.spec.lift != Lift::Rotor) {
+        for car in self.cars.values_mut().filter(|car| car.spec.lift.wheeled()) {
             let grounded = car.controller.wheels().iter().any(|wheel| wheel.raycast_info().is_in_contact);
             let Some(body) = self.bodies.get_mut(car.body) else { continue };
             if car.spec.lift == Lift::Wing {
@@ -525,7 +591,7 @@ impl Physics {
     pub fn car_tree_contacts(&self) -> Vec<(u32, Obj)> {
         let mut found = Vec::new();
         for (&id, car) in &self.cars {
-            for handle in [Some(car.collider), car.extra].into_iter().flatten() {
+            for &handle in std::iter::once(&car.collider).chain(&car.extra) {
                 for pair in self.narrow_phase.contact_pairs_with(handle) {
                     if !pair.has_any_active_contact() {
                         continue;
@@ -545,7 +611,7 @@ impl Physics {
         let mut found = Vec::new();
         for (&id, car) in &self.cars {
             let Some(body) = self.bodies.get(car.body) else { continue };
-            for handle in [Some(car.collider), car.extra].into_iter().flatten() {
+            for &handle in std::iter::once(&car.collider).chain(&car.extra) {
                 let Some(collider) = self.colliders.get(handle) else { continue };
                 // A contact point is in the collider's frame, which for the turret is off the body's.
                 let offset = collider.position_wrt_parent().copied().unwrap_or(Pose::IDENTITY);
@@ -623,6 +689,27 @@ impl Physics {
         Some((distance, car))
     }
 
+    /// Where a ray from `origin` along the unit `dir` meets vehicle `id`'s own solids within `max`, for armor
+    /// to judge: how far, whether it was the turret and not the hull, and the surface normal and the point in
+    /// the vehicle's frame. A ray that starts inside a solid has a zero normal.
+    pub fn armor_strike(&self, origin: [f32; 3], dir: [f32; 3], max: f32, id: u32) -> Option<Strike> {
+        let car = self.cars.get(&id)?;
+        let body = self.bodies.get(car.body)?;
+        let mine = |handle: ColliderHandle, _: &Collider| car.owns(handle);
+        let filter = QueryFilter::default().predicate(&mine);
+        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, filter);
+        let ray = Ray::new(Vector::from(origin), Vector::from(dir));
+        let (collider, hit) = queries.cast_ray_and_get_normal(&ray, max, true)?;
+        let to_local = body.rotation().inverse();
+        let point = Vector::from(origin) + Vector::from(dir) * hit.time_of_impact;
+        Some(Strike {
+            distance: hit.time_of_impact,
+            turret: std::ptr::eq(car.spec, &spec::TANK) && car.extra.contains(&collider),
+            normal: (to_local * hit.normal).into(),
+            point: (to_local * (point - body.translation())).into(),
+        })
+    }
+
     /// How far a ray travels before it hits the world, and which building or tree that was, if it
     /// was one. Vehicles are not ignored.
     pub fn cast_ray_object(&self, origin: [f32; 3], dir: [f32; 3], max: f32) -> Option<(f32, Option<super::Obj>)> {
@@ -673,7 +760,14 @@ impl Physics {
             }
             let falloff = 1.0 - distance / radius;
             let direction = (away / distance.max(1e-3) + Vector::new(0.0, 0.4, 0.0)).normalize();
-            body.apply_impulse(direction * falloff * BLAST_VELOCITY * body.mass(), true);
+            let impulse = direction * falloff * BLAST_VELOCITY * body.mass();
+            if car.spec.lift == Lift::Walker {
+                // A tall hull catches it high up, which tips it as much as it pushes it.
+                let shoulders = body.translation() + *body.rotation() * Vector::new(0.0, WALKER_BLAST_LEVER, 0.0);
+                body.apply_impulse_at_point(impulse, shoulders, true);
+            } else {
+                body.apply_impulse(impulse, true);
+            }
             reached.push((id, falloff));
         }
         reached

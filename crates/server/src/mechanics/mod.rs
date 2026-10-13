@@ -1,6 +1,7 @@
 //! Game mechanics are small modules that hook into the game loop. Adding a feature (vehicles,
 //! pickups, game modes) means adding a `Mechanic`, not editing the loop.
 
+mod armor;
 mod combat;
 mod gunnery;
 mod movement;

@@ -12,6 +12,15 @@ pub(in crate::physics) enum Lift {
     Rotor,
     /// Wheels on the ground and wings in the air, with a propeller to push it.
     Wing,
+    /// Two spring legs that are ray casts, and a torque that keeps the hull upright.
+    Walker,
+}
+
+impl Lift {
+    /// Whether the kind has a wheel controller to update.
+    pub(in crate::physics) fn wheeled(self) -> bool {
+        matches!(self, Lift::Wheels | Lift::Wing)
+    }
 }
 
 /// What differs between vehicle kinds.
@@ -99,6 +108,27 @@ pub(super) static TANK: Spec = Spec {
     com_drop: 0.0,
 };
 
+/// The Strv S: a tank with a fixed gun in a casemate (a weightless solid, see `add_car`), and quicker: more engine for a little less hull,
+/// and a faster pivot.
+pub(super) static STRV: Spec = Spec {
+    half_extents: STRV_HALF_EXTENTS,
+    // 12.6 m³ of hull, about 12.6 tonnes. The engine and suspension cap scale with it.
+    density: 1000.0,
+    wheel_radius: STRV_WHEEL_RADIUS,
+    track_half: STRV_TRACK_HALF,
+    axles: &STRV_AXLES_Z,
+    hard_point_y: STRV_HARD_POINT_Y,
+    suspension_rest: STRV_SUSPENSION_REST,
+    max_suspension_force: 750_000.0,
+    engine_force: 112_000.0,
+    max_speed: STRV_MAX_SPEED,
+    steer_lock: 0.0,
+    turn_rate: STRV_TURN_RATE,
+    lift: Lift::Wheels,
+    linear_damping: 0.05,
+    com_drop: 0.0,
+};
+
 pub(super) static HELI: Spec = Spec {
     half_extents: HELI_HALF_EXTENTS,
     // 3.8 m³ of hull is about 1.1 tonnes. Nothing below uses the wheel fields.
@@ -140,10 +170,32 @@ pub(super) static PLANE: Spec = Spec {
     com_drop: 0.0,
 };
 
+pub(super) static WALKER: Spec = Spec {
+    half_extents: WALKER_HALF_EXTENTS,
+    // 22.5 m³ of hull at this density is about 5.6 tonnes. Nothing below uses the wheel fields; the legs
+    // are the `WALKER_*` constants.
+    density: 250.0,
+    wheel_radius: 0.0,
+    track_half: 0.0,
+    axles: &[],
+    hard_point_y: 0.0,
+    suspension_rest: 0.0,
+    max_suspension_force: 0.0,
+    engine_force: 0.0,
+    max_speed: WALKER_MAX_SPEED,
+    steer_lock: 0.0,
+    turn_rate: WALKER_TURN_RATE,
+    lift: Lift::Walker,
+    linear_damping: 0.05,
+    com_drop: 0.0,
+};
+
 /// The spec for a vehicle kind. Unknown kinds are jeeps.
 pub(in crate::physics) fn spec(kind: u8) -> &'static Spec {
     match kind {
+        KIND_WALKER => &WALKER,
         KIND_TANK => &TANK,
+        KIND_STRV => &STRV,
         KIND_HELI => &HELI,
         KIND_PLANE => &PLANE,
         KIND_SPORTS => &SPORTS,

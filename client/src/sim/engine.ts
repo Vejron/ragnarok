@@ -1,5 +1,5 @@
-import { KIND_HELI, KIND_PLANE, KIND_SPORTS, KIND_TANK } from '@/net/codec'
-import { JEEP_MAX_SPEED, SPORTS_MAX_SPEED, TANK_MAX_SPEED } from './consts'
+import { KIND_HELI, KIND_PLANE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
+import { JEEP_MAX_SPEED, SPORTS_MAX_SPEED, STRV_MAX_SPEED, TANK_MAX_SPEED } from './consts'
 import { SURFACE_ASPHALT, SURFACE_GRASS, SURFACE_WATER } from './surface'
 
 /**
@@ -11,17 +11,18 @@ import { SURFACE_ASPHALT, SURFACE_GRASS, SURFACE_WATER } from './surface'
 const SHIFTS: Record<number, readonly number[]> = {
   [KIND_SPORTS]: [0, 0.16, 0.32, 0.5, 0.72],
   [KIND_TANK]: [0],
+  [KIND_STRV]: [0],
 }
 const JEEP_SHIFTS = [0, 0.22, 0.45, 0.7]
 
 /** Fundamental of the engine at idle revs, Hz, and how far it climbs to the redline. */
-const BASE_HZ: Record<number, number> = { [KIND_SPORTS]: 62, [KIND_TANK]: 30, [KIND_HELI]: 40, [KIND_PLANE]: 85 }
+const BASE_HZ: Record<number, number> = { [KIND_SPORTS]: 62, [KIND_TANK]: 30, [KIND_STRV]: 36, [KIND_HELI]: 40, [KIND_PLANE]: 85 }
 const JEEP_HZ = 44
 /** Revs just after a shift, as a fraction of the range (idle is 0.25). */
 const AFTER_SHIFT = 0.5
 
 function topSpeed(kind: number) {
-  return kind === KIND_SPORTS ? SPORTS_MAX_SPEED : kind === KIND_TANK ? TANK_MAX_SPEED : JEEP_MAX_SPEED
+  return kind === KIND_SPORTS ? SPORTS_MAX_SPEED : kind === KIND_TANK ? TANK_MAX_SPEED : kind === KIND_STRV ? STRV_MAX_SPEED : JEEP_MAX_SPEED
 }
 
 export interface Gearing {
@@ -97,7 +98,7 @@ export interface SoundMix {
   cut: boolean
 }
 
-const BASE_LEVEL: Record<number, number> = { [KIND_SPORTS]: 0.2, [KIND_TANK]: 0.3, [KIND_HELI]: 0.3, [KIND_PLANE]: 0.28 }
+const BASE_LEVEL: Record<number, number> = { [KIND_SPORTS]: 0.2, [KIND_TANK]: 0.3, [KIND_STRV]: 0.3, [KIND_HELI]: 0.3, [KIND_PLANE]: 0.28 }
 /** A plane's top speed, m/s, for the pitch of its engine and the rush of the wind. */
 const PLANE_TOP = 45
 /** A propeller's two blades pass this many times per firing stroke of the nine-cylinder rotary. */
@@ -138,6 +139,8 @@ export function mixOf(input: SoundInput): SoundMix {
     pitch: 40, engine: 0, tone: 400, chop: 0, chopLevel: 0, stutter: 0, squeal: 0, squealHz: 1200, ground: 0, groundHz: 600, hiss: 0, rattle: 0, fire: !alive, cut: false,
   }
   if (!alive) return quiet
+  // A walker has no engine to hum, no tyres on the ground: its feet are heard by the footfalls.
+  if (kind === KIND_WALKER) return quiet
   const lost = input.wheels ? input.wheels.filter((wear) => wear >= 255).length : 0
   const bent = input.wheels ? input.wheels.filter((wear) => wear >= 128 && wear < 255).length : 0
   const mix: SoundMix = { ...quiet }
@@ -180,11 +183,11 @@ export function mixOf(input: SoundInput): SoundMix {
     const { revs } = gearing(kind, speed)
     // Gas held when accelerating or holding speed, off when braking hard or lifting.
     const load = accel < -2 ? 0.05 : clamp(0.3 + accel / 4)
-    const base = kind === KIND_SPORTS || kind === KIND_TANK ? BASE_HZ[kind]! : JEEP_HZ
+    const base = BASE_HZ[kind] ?? JEEP_HZ
     mix.pitch = base * (0.7 + 1.9 * revs)
     mix.engine = (BASE_LEVEL[kind] ?? 0.22) * (0.4 + 0.6 * load)
     mix.tone = 350 + 1500 * load + 700 * revs
-    if (kind === KIND_TANK) {
+    if (kind === KIND_TANK || kind === KIND_STRV) {
       mix.chop = 5 + 1.5 * Math.abs(speed)
       mix.chopLevel = 0.9 * clamp(Math.abs(speed) / 4)
     }

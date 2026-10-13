@@ -5,7 +5,7 @@ import { addTileCollider } from '@/sim/physics'
 import { heightIn, type TileGround } from '@/sim/terrain'
 import { f32 } from '@/sim/movement'
 import { TICK_DT, vehicleMaxHp } from '@/sim/consts'
-import { KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_TANK, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
+import { DAMAGE_TURRET, KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
 import type { TileData, WorldData } from '@/world'
 
 const COAST: CarControls = { throttle: 0, steer: 0, handbrake: false, lift: 0, powered: false }
@@ -37,6 +37,10 @@ const checkpoints: [number, number, [number, number, number]][] = [
   [KIND_TANK, 210, [0.5739, 0.94, -17.5632]],
   [KIND_TANK, 300, [11.9063, 0.94, -29.5214]],
   [KIND_TANK, 480, [26.5903, 0.94, -40.3629]],
+  [KIND_STRV, 90, [0, 0.9099, -1.1357]],
+  [KIND_STRV, 210, [0.8788, 0.91, -23.693]],
+  [KIND_STRV, 300, [18.6727, 0.91, -35.1969]],
+  [KIND_STRV, 480, [45.5444, 0.91, -40.3198]],
 ]
 
 /** Same as `scripted_flight` in vehicle.rs. */
@@ -59,10 +63,47 @@ const flightCheckpoints: [number, [number, number, number]][] = [
   [480, [12.1913, 11.3589, -26.3039]],
 ]
 
+/** Same as `scripted_walk` in vehicle.rs. */
+const WALKING: CarControls = { ...COAST, powered: true }
+const walked = (tick: number): CarControls => {
+  switch (Math.floor(tick / 60)) {
+    case 0: return WALKING
+    case 1: case 2: case 3: return { ...WALKING, throttle: 1 }
+    case 4: case 5: return { ...WALKING, throttle: 1, steer: 0.7 }
+    default: return { ...WALKING, throttle: -1 }
+  }
+}
+
+/** `WALK_CHECKPOINTS` in vehicle.rs: a walker started at [0, 4.9, 0]. */
+const walkCheckpoints: [number, [number, number, number]][] = [
+  [90, [0, 5.2644, -0.5608]],
+  [210, [0, 5.2194, -14.715]],
+  [330, [3.3595, 5.2467, -32.3642]],
+  [480, [9.8452, 5.1868, -36.6408]],
+]
+
 describe('vehicle prediction', () => {
+  it('a WASM walker walks where the native server does', async () => {
+    await RAPIER.init()
+    const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
+    world.timestep = TICK_DT
+    world.createCollider(RAPIER.ColliderDesc.cuboid(200, 0.5, 200).setTranslation(0, -0.5, 0))
+    const walker = new CarSim(world, KIND_WALKER, [0, 4.9, 0], 0)
+    for (let tick = 0; tick < 480; tick++) {
+      walker.drive(walked(tick), TICK_DT)
+      walker.step(TICK_DT)
+      const expected = walkCheckpoints.find(([t]) => t === tick + 1)
+      if (!expected) continue
+      walker.state().position.forEach((value, axis) => {
+        expect(Math.abs(value - expected[1][axis]!), `tick ${tick + 1} axis ${axis}`).toBeLessThan(0.05)
+      })
+    }
+    world.free()
+  })
+
   it('WASM vehicles drive where the native server does', async () => {
     await RAPIER.init()
-    for (const kind of [KIND_JEEP, KIND_SPORTS, KIND_TANK]) {
+    for (const kind of [KIND_JEEP, KIND_SPORTS, KIND_TANK, KIND_STRV]) {
       const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
       world.timestep = TICK_DT
       world.createCollider(RAPIER.ColliderDesc.cuboid(200, 0.5, 200).setTranslation(0, -0.5, 0))
@@ -306,5 +347,33 @@ describe('driving a predicted vehicle', () => {
     expect(driver.driving).toBeNull()
     expect(driver.pose(0, 0)).toBeNull()
     driver.dispose()
+  })
+})
+
+describe('a tank’s turret flag', () => {
+  it('is not mistaken for a lost wheel', () => {
+    const damage = [0, 0, 0, 0, TURRET_GONE, 0, 0, 0]
+    expect(conditionOf(KIND_TANK, 250, damage).wheels).toEqual([0, 0, 0, 0])
+    // A car's four wheels are in the same slots.
+    expect(conditionOf(KIND_JEEP, 100, damage).wheels).toEqual([TURRET_GONE, 0, 0, 0])
+    expect(DAMAGE_TURRET).toBe(4)
+  })
+
+  it('drops the turret solid for a predicted tank and puts it back', async () => {
+    await RAPIER.init()
+    const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
+    world.timestep = TICK_DT
+    const ray = (from: number) => world.castRay(new RAPIER.Ray({ x: 0, y: 1.7, z: 0.3 + from }, { x: 0, y: 0, z: -1 }), 20, true)
+    const car = new CarSim(world, KIND_TANK, [0, 0.94, 0], 0)
+    world.step()
+    expect(ray(5)).not.toBeNull()
+    car.setTurret(false)
+    world.step()
+    // The turret ring is at y 0.85 above the centre; the ray at 0.76 above the hull's top meets only it.
+    expect(ray(5)).toBeNull()
+    car.setTurret(true)
+    world.step()
+    expect(ray(5)).not.toBeNull()
+    world.free()
   })
 })

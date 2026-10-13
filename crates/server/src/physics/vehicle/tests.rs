@@ -1,6 +1,6 @@
 use super::*;
 use shared::consts::TICK_DT;
-use shared::protocol::{KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_TANK};
+use shared::protocol::{KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_TANK, KIND_WALKER};
 use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 
 fn flat() -> WorldFile {
@@ -57,7 +57,7 @@ fn scripted_controls(tick: u32) -> CarControls {
 }
 
 /// `(kind, tick, position)` after `scripted_controls`, mirrored in `vehicle.spec.ts`.
-const SCRIPTED_CHECKPOINTS: [(u8, u32, [f32; 3]); 12] = [
+const SCRIPTED_CHECKPOINTS: [(u8, u32, [f32; 3]); 16] = [
     (KIND_JEEP, 90, [0.0, 0.8572, -0.9723]),
     (KIND_JEEP, 210, [2.5239, 0.8564, -22.4112]),
     (KIND_JEEP, 300, [30.9153, 0.8560, -23.3722]),
@@ -70,11 +70,15 @@ const SCRIPTED_CHECKPOINTS: [(u8, u32, [f32; 3]); 12] = [
     (KIND_TANK, 210, [0.5739, 0.9400, -17.5632]),
     (KIND_TANK, 300, [11.9063, 0.9400, -29.5214]),
     (KIND_TANK, 480, [26.5903, 0.9400, -40.3629]),
+    (KIND_STRV, 90, [0.0000, 0.9099, -1.1357]),
+    (KIND_STRV, 210, [0.8788, 0.9100, -23.6930]),
+    (KIND_STRV, 300, [18.6727, 0.9100, -35.1969]),
+    (KIND_STRV, 480, [45.5444, 0.9100, -40.3198]),
 ];
 
 #[test]
 fn scripted_drive_matches_fixture() {
-    for kind in [KIND_JEEP, KIND_SPORTS, KIND_TANK] {
+    for kind in [KIND_JEEP, KIND_SPORTS, KIND_TANK, KIND_STRV] {
         let mut physics = Physics::new(&flat()).unwrap();
         physics.add_car(1, kind, [0.0, 1.5, 0.0], 0.0);
         for tick in 0..480 {
@@ -415,6 +419,24 @@ fn a_tank_turns_on_the_spot() {
     // Let go and it stops turning.
     let held = run(&mut physics, COAST, 90);
     assert!((yaw(&run(&mut physics, COAST, 30)) - yaw(&held)).abs() < 0.05);
+}
+
+#[test]
+fn a_strv_is_quicker_than_a_tank_and_pivots_faster() {
+    let mut tank = with_tank(&flat());
+    let mut strv = Physics::new(&flat()).unwrap();
+    strv.add_car(1, KIND_STRV, [0.0, 1.2, 0.0], 0.0);
+    run(&mut tank, COAST, 120);
+    run(&mut strv, COAST, 120);
+    let (tank_pose, strv_pose) = (run(&mut tank, FORWARD, 60 * 6), run(&mut strv, FORWARD, 60 * 6));
+    assert!(strv_pose.forward_speed > tank_pose.forward_speed + 2.0, "{} vs {}", strv_pose.forward_speed, tank_pose.forward_speed);
+    assert!(strv_pose.forward_speed <= STRV_MAX_SPEED + 0.5, "{strv_pose:?}");
+    let spin = |physics: &mut Physics| yaw(&run(physics, CarControls { steer: 1.0, ..COAST }, 120));
+    let (mut tank, mut strv) = (with_tank(&flat()), Physics::new(&flat()).unwrap());
+    strv.add_car(1, KIND_STRV, [0.0, 1.2, 0.0], 0.0);
+    run(&mut tank, COAST, 120);
+    run(&mut strv, COAST, 120);
+    assert!(spin(&mut strv) < spin(&mut tank) - 0.3);
 }
 
 #[test]
@@ -823,3 +845,139 @@ fn a_tanks_turret_is_solid_above_the_hull() {
     let on_top = [rest.position[0] + px, rest.position[1] + py + TANK_TURRET_HALF_HEIGHT + crate::physics::STANDING_Y - 0.05, rest.position[2] + pz];
     assert_eq!(physics.car_under(on_top).map(|hit| hit.car), Some(1));
 }
+
+fn walker() -> Physics {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_WALKER, [0.0, 4.9, 0.0], 0.0);
+    physics
+}
+
+const DRIVEN: CarControls = CarControls { powered: true, ..CarControls::IDLE };
+
+#[test]
+fn a_walker_stands_on_its_legs_and_stays_upright() {
+    let mut physics = walker();
+    let pose = run(&mut physics, COAST, 240);
+    let stand = WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1];
+    assert!(pose.up_y > 0.99, "upright: {pose:?}");
+    assert!((pose.position[1] - stand).abs() < 0.6, "hull rides about {stand} m up: {pose:?}");
+    assert!(pose.velocity.iter().all(|v| v.abs() < 0.2), "at rest: {pose:?}");
+}
+
+#[test]
+fn a_walker_walks_and_turns_under_a_driver() {
+    let mut physics = walker();
+    run(&mut physics, COAST, 120);
+    let pose = run(&mut physics, CarControls { throttle: 1.0, ..DRIVEN }, 420);
+    assert!(pose.forward_speed > 0.8 * WALKER_MAX_SPEED, "up to speed: {pose:?}");
+    assert!(-pose.position[2] > 15.0, "went forward: {pose:?}");
+    assert!(pose.up_y > 0.97, "stays upright walking: {pose:?}");
+    let before = pose.yaw();
+    let turned = run(&mut physics, CarControls { steer: -1.0, ..DRIVEN }, 120);
+    assert!((turned.yaw() - before).abs() > 0.5, "turns: {before} -> {}", turned.yaw());
+}
+
+#[test]
+fn a_walker_shrugs_off_a_nudge_but_a_close_blast_tips_it_over() {
+    let mut physics = walker();
+    run(&mut physics, COAST, 120);
+    physics.spin_car(1, [0.0, 0.0, 0.4]);
+    let pose = run(&mut physics, COAST, 240);
+    assert!(pose.up_y > 0.99, "recovers from a nudge: {pose:?}");
+
+    // A shell bursting at its side, a few metres off, is a shove it can stay on its feet through.
+    let reached = physics.blast_cars([-9.0, 4.5, 0.0], 12.0);
+    assert_eq!(reached.len(), 1);
+    let pose = run(&mut physics, COAST, 240);
+    assert!(pose.up_y > 0.9, "a far blast does not tip it: {pose:?}");
+
+    // One right beside it goes over, and a fallen walker cannot be driven off.
+    let at = physics.car_pose(1).unwrap().position;
+    physics.blast_cars([at[0] - 1.2, at[1] - 0.8, at[2]], 12.0);
+    let pose = run(&mut physics, COAST, 90);
+    assert!(pose.up_y < WALKER_FALLEN_UP, "tipped over: {pose:?}");
+    let fallen = run(&mut physics, CarControls { throttle: 1.0, ..DRIVEN }, 30);
+    assert!(fallen.forward_speed.abs() < 2.0, "does not walk when down: {fallen:?}");
+}
+
+#[test]
+fn a_walker_catches_itself_when_it_tips_forwards_or_back() {
+    // The lowest `up_y` over `ticks` ticks.
+    fn lowest(physics: &mut Physics, controls: CarControls, ticks: u32) -> f32 {
+        (0..ticks).map(|_| run(physics, controls, 1).up_y).fold(1.0, f32::min)
+    }
+    // Standing, shoved hard forwards and then back about its hip axis (x is the hull's right).
+    for spin in [1.0_f32, -1.0] {
+        let mut physics = walker();
+        run(&mut physics, COAST, 120);
+        physics.spin_car(1, [spin, 0.0, 0.0]);
+        let low = lowest(&mut physics, COAST, 180);
+        assert!(low > 0.8, "a {spin} rad/s pitch shove does not take it over: {low}");
+        let pose = run(&mut physics, COAST, 180);
+        assert!(pose.up_y > 0.99, "and it stands again: {pose:?}");
+    }
+    // Walking, then pitched forwards as if by something in the way: it stays up.
+    let mut physics = walker();
+    run(&mut physics, CarControls { throttle: 1.0, ..DRIVEN }, 240);
+    physics.spin_car(1, [-1.0, 0.0, 0.0]);
+    let low = lowest(&mut physics, CarControls { throttle: 1.0, ..DRIVEN }, 120);
+    assert!(low > 0.8, "pitched forwards at a walk: {low}");
+}
+
+#[test]
+fn a_walkers_legs_are_solid() {
+    let mut physics = walker();
+    physics.add_car(2, KIND_TANK, [-14.0, 1.0, 0.0], -std::f32::consts::FRAC_PI_2);
+    let tank = CarControls { throttle: 1.0, ..DRIVEN };
+    for _ in 0..300 {
+        physics.drive_car(1, COAST, TICK_DT);
+        physics.drive_car(2, tank, TICK_DT);
+        physics.step_cars(TICK_DT);
+    }
+    // The walker's hull is higher than a tank, so only its legs can have been hit. It is shoved (and
+    // the tank may well ride under it), so it is no longer where it stood.
+    let walker = physics.car_pose(1).unwrap();
+    assert!(walker.position[0] > 1.0, "the walker was shoved: {walker:?}");
+}
+
+#[test]
+fn a_wrecked_walker_does_not_stand() {
+    let mut physics = walker();
+    physics.set_car_condition(1, CarCondition { power: 0.5, wheels: [0; 4] });
+    let pose = run(&mut physics, COAST, 120);
+    // It slumps onto the boxes of its legs, which stop short of the ground when it stands.
+    assert!(pose.position[1] < WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1] - 0.2, "sagged onto its legs: {pose:?}");
+}
+
+/// Same as `walked` in `vehicle.spec.ts`.
+fn scripted_walk(tick: u32) -> CarControls {
+    match tick / 60 {
+        0 => DRIVEN,
+        1..=3 => CarControls { throttle: 1.0, ..DRIVEN },
+        4 | 5 => CarControls { throttle: 1.0, steer: 0.7, ..DRIVEN },
+        _ => CarControls { throttle: -1.0, ..DRIVEN },
+    }
+}
+
+/// `(tick, position)` of a walker started at [0, 4.9, 0] under `scripted_walk`, mirrored in `vehicle.spec.ts`.
+const WALK_CHECKPOINTS: [(u32, [f32; 3]); 4] = [
+    (90, [0.0, 5.2644, -0.5608]),
+    (210, [0.0, 5.2194, -14.7150]),
+    (330, [3.3595, 5.2467, -32.3642]),
+    (480, [9.8452, 5.1868, -36.6408]),
+];
+
+#[test]
+fn scripted_walk_matches_fixture() {
+    let mut physics = walker();
+    for tick in 0..480 {
+        physics.drive_car(1, scripted_walk(tick), TICK_DT);
+        physics.step_cars(TICK_DT);
+        if let Some((_, expected)) = WALK_CHECKPOINTS.iter().find(|(t, _)| *t == tick + 1) {
+            let position = physics.car_pose(1).unwrap().position;
+            let close = position.iter().zip(expected).all(|(a, e)| (a - e).abs() < 0.001);
+            assert!(close, "tick {}: {position:?}", tick + 1);
+        }
+    }
+}
+

@@ -2,6 +2,7 @@ import RAPIER from '@dimforge/rapier3d-compat'
 import {
   BUTTON_JUMP, TICK_DT, JEEP_AXLE_Z, JEEP_HALF_EXTENTS, JEEP_HARD_POINT_Y, JEEP_MAX_SPEED, JEEP_MAX_STEER, JEEP_SUSPENSION_REST, JEEP_TRACK_HALF, JEEP_WHEEL_RADIUS,
   SPORTS_AXLE_Z, SPORTS_HALF_EXTENTS, SPORTS_HARD_POINT_Y, SPORTS_MAX_SPEED, SPORTS_MAX_STEER, SPORTS_SUSPENSION_REST, SPORTS_TRACK_HALF, SPORTS_WHEEL_RADIUS,
+  STRV_AXLES_Z, STRV_HALF_EXTENTS, STRV_HARD_POINT_Y, STRV_MAX_SPEED, STRV_SUSPENSION_REST, STRV_TRACK_HALF, STRV_TURN_RATE, STRV_WHEEL_RADIUS,
   TANK_AXLES_Z, TANK_HALF_EXTENTS, TANK_HARD_POINT_Y, TANK_MAX_SPEED, TANK_SUSPENSION_REST, TANK_TRACK_HALF, TANK_TURN_RATE,
   TANK_WHEEL_RADIUS, HELI_BANK, HELI_CEILING, HELI_CLIMB_SPEED, HELI_HALF_EXTENTS, HELI_LEVEL_GAIN, HELI_RESPONSE, HELI_SINK_SPEED, HELI_TILT,
   HELI_VERT_ACCEL, HELI_VERT_GAIN, HELI_YAW_RATE, BUTTON_RUN, vehicleMaxHp,
@@ -9,10 +10,13 @@ import {
   PLANE_EDGE_MARGIN, PLANE_GLIDE_PITCH, PLANE_HALF_EXTENTS, PLANE_HARD_POINT_Y, PLANE_IDLE_THROTTLE, PLANE_LEVEL_SPEED, PLANE_MAX_BANK,
   PLANE_MAX_LIFT, PLANE_MAX_STEER, PLANE_PITCH_RATE, PLANE_RESPONSE, PLANE_ROLL_RATE, PLANE_SIDE_GAIN, PLANE_STALL_DROP, PLANE_STALL_SPEED,
   PLANE_SUSPENSION_REST, PLANE_THRUST, PLANE_TRACK_HALF, PLANE_WHEEL_RADIUS, PLANE_YAW_RATE,
+  WALKER_ACCEL, WALKER_BRAKE, WALKER_BALANCE_DAMP, WALKER_BALANCE_GAIN, WALKER_BALANCE_MAX, WALKER_BALANCE_MAX_PITCH, WALKER_CATCH_DAMP, WALKER_CATCH_FALL_MARGIN, WALKER_CATCH_GAIN, WALKER_CATCH_LEAN_MARGIN, WALKER_CATCH_MAX, WALKER_ACCEL_LEAN, WALKER_CRUISE_LEAN, WALKER_FALLEN_UP, WALKER_FOOT_HALF, WALKER_GRIP, WALKER_GRIP_GAIN, WALKER_GETUP_SHARE, WALKER_HALF_EXTENTS,
+  WALKER_LEG_DAMPING, WALKER_LEG_LENGTH, WALKER_LEG_SPRING, WALKER_MAX_SPEED, WALKER_REVERSE_SHARE, WALKER_TURN_ACCEL, WALKER_TURN_RATE,
 } from './consts'
-import { addTileCollider, buildStaticColliders, extraSolid, rebuildBuildingCollider, VehicleSolids } from './physics'
+import { addTileCollider, buildStaticColliders, extraSolids, rebuildBuildingCollider, VehicleSolids } from './physics'
 import type { TileGround } from './terrain'
-import { DAMAGE_WHEELS, fromAxis, fromMrad, KIND_HELI, KIND_PLANE, KIND_SPORTS, KIND_TANK, WHEEL_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
+import { vehicleDef } from './vehicles'
+import { DAMAGE_TURRET, DAMAGE_WHEELS, fromAxis, fromMrad, KIND_HELI, KIND_PLANE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, WHEEL_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
 import type { TileData, WorldData } from '@/world'
 import * as THREE from 'three'
 
@@ -24,8 +28,8 @@ import * as THREE from 'three'
 /** Gravity on vehicle bodies. */
 export const CAR_GRAVITY = 9.81
 
-/** What holds a vehicle up: its wheels; a rotor, with no wheels; or wheels on the ground and wings in the air. */
-type Lift = 'wheels' | 'rotor' | 'wing'
+/** What holds a vehicle up: its wheels; a rotor, with no wheels; wheels on the ground and wings in the air; or two spring legs. */
+type Lift = 'wheels' | 'rotor' | 'wing' | 'walker'
 
 interface Spec {
   halfExtents: readonly [number, number, number]
@@ -100,6 +104,25 @@ const TANK: Spec = {
   comDrop: 0,
 }
 
+/** The Strv S: a tank with no turret and more engine. Mirrors `STRV` in spec.rs. */
+const STRV: Spec = {
+  halfExtents: STRV_HALF_EXTENTS,
+  density: 1000,
+  wheelRadius: STRV_WHEEL_RADIUS,
+  trackHalf: STRV_TRACK_HALF,
+  axles: STRV_AXLES_Z,
+  hardPointY: STRV_HARD_POINT_Y,
+  suspensionRest: STRV_SUSPENSION_REST,
+  maxSuspensionForce: 750_000,
+  engineForce: 112_000,
+  maxSpeed: STRV_MAX_SPEED,
+  steerLock: 0,
+  turnRate: STRV_TURN_RATE,
+  lift: 'wheels',
+  linearDamping: 0.05,
+  comDrop: 0,
+}
+
 const HELI: Spec = {
   halfExtents: HELI_HALF_EXTENTS,
   density: 300,
@@ -136,6 +159,24 @@ const PLANE: Spec = {
   comDrop: 0,
 }
 
+const WALKER: Spec = {
+  halfExtents: WALKER_HALF_EXTENTS,
+  density: 250,
+  wheelRadius: 0,
+  trackHalf: 0,
+  axles: [],
+  hardPointY: 0,
+  suspensionRest: 0,
+  maxSuspensionForce: 0,
+  engineForce: 0,
+  maxSpeed: WALKER_MAX_SPEED,
+  steerLock: 0,
+  turnRate: WALKER_TURN_RATE,
+  lift: 'walker',
+  linearDamping: 0.05,
+  comDrop: 0,
+}
+
 const TURN_ACCEL = 3.0
 const BRAKE_PER_KG = 0.045
 const COAST_BRAKE_PER_KG = 0.0015
@@ -165,7 +206,9 @@ export const NEW_CONDITION: CarCondition = { power: 1, wheels: [0, 0, 0, 0] }
 /** Mirrors `CarCondition::of`: full power down to half health, and up to half of it lost below. */
 export function conditionOf(kind: number, hp: number, damage: readonly number[]): CarCondition {
   const health = Math.fround(hp / vehicleMaxHp(kind))
-  return { power: Math.min(1, Math.fround(0.5 + health)), wheels: damage.slice(DAMAGE_WHEELS, DAMAGE_WHEELS + 4) }
+  // Only a car has wheels to hurt: a tank's first wheel slot says whether its turret is on.
+  const wheels = vehicleDef(kind).carWheels ? damage.slice(DAMAGE_WHEELS, DAMAGE_WHEELS + 4) : NEW_CONDITION.wheels
+  return { power: Math.min(1, Math.fround(0.5 + health)), wheels }
 }
 
 export interface CarControls {
@@ -210,6 +253,8 @@ export class CarSim {
   private readonly spec: Spec
   private readonly body: RAPIER.RigidBody
   private readonly collider: RAPIER.Collider
+  /** The weightless extra solids: a tank's turret, a plane's wings, a walker's legs. */
+  private readonly extras: RAPIER.Collider[] = []
   private readonly controller: RAPIER.DynamicRayCastVehicleController | null
   private readonly wheels: number
   /** What a helicopter or a plane was last asked to do, applied in the next `step`. */
@@ -227,8 +272,8 @@ export class CarSim {
    * `bound` is how far the playable square reaches from the centre to each side, metres: a plane turns
    * back near it, as on the server.
    */
-  constructor(private readonly world: RAPIER.World, kind: number, position: [number, number, number], yaw: number, private readonly bound = Infinity) {
-    this.spec = kind === KIND_TANK ? TANK : kind === KIND_HELI ? HELI : kind === KIND_SPORTS ? SPORTS : kind === KIND_PLANE ? PLANE : JEEP
+  constructor(private readonly world: RAPIER.World, private readonly kind: number, position: [number, number, number], yaw: number, private readonly bound = Infinity) {
+    this.spec = kind === KIND_TANK ? TANK : kind === KIND_STRV ? STRV : kind === KIND_HELI ? HELI : kind === KIND_SPORTS ? SPORTS : kind === KIND_PLANE ? PLANE : kind === KIND_WALKER ? WALKER : JEEP
     const spec = this.spec
     this.body = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
@@ -240,14 +285,13 @@ export class CarSim {
     const [hx, hy, hz] = spec.halfExtents
     const chassis = RAPIER.ColliderDesc.cuboid(hx, hy, hz).setFriction(0.4)
     this.collider = world.createCollider(spec.comDrop > 0 ? lowered(chassis, spec) : chassis.setDensity(spec.density), this.body)
-    // A tank's turret and a plane's wings are solid but weightless, like the server's.
-    const extra = extraSolid(kind)
-    if (extra) {
+    // A tank's turret, a plane's wings and a walker's legs are solid but weightless, like the server's.
+    for (const extra of extraSolids(kind)) {
       const [tx, ty, tz] = extra.offset
-      world.createCollider(extra.desc.setTranslation(tx, ty, tz).setDensity(0).setFriction(0.4), this.body)
+      this.extras.push(world.createCollider(extra.desc.setTranslation(tx, ty, tz).setDensity(0).setFriction(0.4), this.body))
     }
-    if (spec.lift === 'rotor') {
-      // No wheels: the rotor is a force on the body.
+    if (spec.lift === 'rotor' || spec.lift === 'walker') {
+      // No wheels: the rotor, or the legs, are forces on the body.
       this.controller = null
       this.wheels = 0
       return
@@ -294,6 +338,11 @@ export class CarSim {
   }
 
   /** Removes the body and its wheels from the world. */
+  /** Puts a tank's turret solid on or takes it away, as the server does when the turret is shot off. */
+  setTurret(present: boolean) {
+    if (this.kind === KIND_TANK) for (const extra of this.extras) extra.setEnabled(present)
+  }
+
   dispose() {
     if (this.controller) this.world.removeVehicleController(this.controller)
     this.world.removeRigidBody(this.body)
@@ -362,7 +411,8 @@ export class CarSim {
     if (!controller) {
       // Forces persist from step to step until reset.
       this.body.resetForces(false)
-      if (this.flight.powered) this.fly(this.flight, dt)
+      if (this.spec.lift === 'walker') this.walk(this.flight, dt)
+      else if (this.flight.powered) this.fly(this.flight, dt)
       this.world.step()
       return
     }
@@ -439,6 +489,139 @@ export class CarSim {
     const accel = (CAR_GRAVITY + extra) / Math.max(up[1], 0.5)
     const push = accel * body.mass()
     body.addForce({ x: up[0] * push, y: up[1] * push, z: up[2] * push }, true)
+  }
+
+  /** Mirrors `walk` in `physics/vehicle/flight.rs`: spring legs, a capped balance torque, and walking at the hip. */
+  private walk(controls: CarControls, _dt: number) {
+    const body = this.body
+    body.resetTorques(false)
+    const q = body.rotation()
+    const up = rotate(q, 0, 1, 0)
+    const mass = body.mass()
+    const [hx, hy, hz] = WALKER_HALF_EXTENTS
+    // A wreck (no health, which is exactly half power) has let go.
+    const standing = this.condition.power > 0.5
+    const position = body.translation()
+    const lv = body.linvel()
+    const av = body.angvel()
+
+    // How far below each hip the ground is, if within reach of the leg.
+    const feet = [-1, 1].map((side) => {
+      const [ox, oy, oz] = rotate(q, side * WALKER_FOOT_HALF, -hy, 0)
+      const ray = new RAPIER.Ray({ x: position.x + ox, y: position.y + oy, z: position.z + oz }, { x: 0, y: -1, z: 0 })
+      const hit = this.world.castRay(ray, WALKER_LEG_LENGTH, true, undefined, undefined, undefined, this.body)
+      return hit ? hit.timeOfImpact : null
+    })
+
+    const upright = clamp((up[1] - WALKER_FALLEN_UP) / (1 - WALKER_FALLEN_UP), 0, 1)
+    const fallen = up[1] < WALKER_FALLEN_UP
+
+    let grounded = 0
+    if (standing && !fallen) {
+      const spring = (WALKER_LEG_SPRING * mass) / 2
+      const damper = (WALKER_LEG_DAMPING * mass) / 2
+      feet.forEach((distance, index) => {
+        if (distance === null || distance >= WALKER_LEG_LENGTH) return
+        grounded++
+        const side = index === 0 ? -1 : 1
+        const hip = rotate(q, side * WALKER_FOOT_HALF, -hy, 0)
+        // (linvel + angvel × hip).y
+        const rate = lv.y + (av.z * hip[0] - av.x * hip[2])
+        const push = Math.max(0, spring * (WALKER_LEG_LENGTH - distance) - damper * rate) * Math.sqrt(upright)
+        body.addForceAtPoint({ x: 0, y: push, z: 0 }, { x: position.x + hip[0], y: position.y + hip[1], z: position.z + hip[2] }, true)
+      })
+    }
+
+    const nose = rotate(q, 0, 0, -1)
+    const flat = Math.hypot(nose[0], nose[2])
+    const heading: Vec = flat > 1e-3 ? [nose[0] / flat, 0, nose[2] / flat] : [0, 0, -1]
+    // heading × (0, 1, 0)
+    const right: Vec = [-heading[2], 0, heading[0]]
+    const alongHeading = lv.x * heading[0] + lv.z * heading[2]
+    const alongRight = lv.x * right[0] + lv.z * right[2]
+    const share = upright * (grounded / 2)
+    const driven = controls.powered && grounded > 0 && !fallen
+    let pushX = 0
+    let pushZ = 0
+    // Planted feet hold it still when nobody drives: it stops where it stands.
+    if (grounded > 0 && !fallen) {
+      const throttle = driven ? clamp(controls.throttle, -1, 1) : 0
+      const top = throttle >= 0 ? WALKER_MAX_SPEED : WALKER_MAX_SPEED * WALKER_REVERSE_SHARE
+      const wanted = throttle * top
+      // Slowing down is quicker than speeding up.
+      const limit = Math.abs(wanted) < Math.abs(alongHeading) || wanted * alongHeading < 0 ? WALKER_BRAKE : WALKER_ACCEL
+      const ahead = clamp(wanted - alongHeading, -limit, limit)
+      const sideways = clamp(-alongRight * WALKER_GRIP_GAIN, -WALKER_GRIP, WALKER_GRIP)
+      pushX = (heading[0] * ahead + right[0] * sideways) * share
+      pushZ = (heading[2] * ahead + right[2] * sideways) * share
+    }
+
+    // Falling forwards or back it takes a catching step: a push under the top, as the server does.
+    let catchX = 0
+    let catchZ = 0
+    if (standing) {
+      const balance = fallen ? WALKER_GETUP_SHARE : grounded > 0 ? 1 : 0
+      const cruise = clamp(alongHeading / WALKER_MAX_SPEED, -1, 1) * WALKER_CRUISE_LEAN
+      let tx = pushX * WALKER_ACCEL_LEAN / CAR_GRAVITY + heading[0] * cruise
+      let ty = 1
+      let tz = pushZ * WALKER_ACCEL_LEAN / CAR_GRAVITY + heading[2] * cruise
+      const tl = Math.hypot(tx, ty, tz)
+      tx /= tl
+      ty /= tl
+      tz /= tl
+      // up × target
+      const error: Vec = [up[1] * tz - up[2] * ty, up[2] * tx - up[0] * tz, up[0] * ty - up[1] * tx]
+      const rx = error[0] * WALKER_BALANCE_GAIN - av.x * WALKER_BALANCE_DAMP
+      const ry = error[1] * WALKER_BALANCE_GAIN
+      const rz = error[2] * WALKER_BALANCE_GAIN - av.z * WALKER_BALANCE_DAMP
+      // Pitching (about the right axis) has more authority than the rest.
+      const pitch = rx * right[0] + ry * right[1] + rz * right[2]
+      let wx = rx - right[0] * pitch
+      let wy = ry - right[1] * pitch
+      let wz = rz - right[2] * pitch
+      const length = Math.hypot(wx, wy, wz)
+      if (length > WALKER_BALANCE_MAX) {
+        const k = WALKER_BALANCE_MAX / length
+        wx *= k
+        wy *= k
+        wz *= k
+      }
+      const pitched = clamp(pitch, -WALKER_BALANCE_MAX_PITCH, WALKER_BALANCE_MAX_PITCH)
+      wx += right[0] * pitched
+      wy += right[1] * pitched
+      wz += right[2] * pitched
+      const inertia = (mass * (hx * hx + hy * hy + hz * hz)) / 3
+      body.addTorque({ x: wx * balance * inertia, y: wy * balance * inertia, z: wz * balance * inertia }, true)
+
+      if (grounded > 0 && !fallen) {
+        // How far along its heading the top has gone past the lean it walks with, and how fast it is
+        // falling that way, each beyond a margin the walking lean and tilt rate itself uses.
+        const lean = (up[0] * heading[0] + up[2] * heading[2] - cruise) * (1 / Math.max(up[1], 0.3))
+        // (angvel × up), horizontal, along the heading
+        const fallX = av.y * up[2] - av.z * up[1]
+        const fallZ = av.x * up[1] - av.y * up[0]
+        const fall = fallX * heading[0] + fallZ * heading[2]
+        const dead = (x: number, margin: number) => Math.sign(x) * Math.max(Math.abs(x) - margin, 0)
+        const step = clamp(
+          dead(lean, WALKER_CATCH_LEAN_MARGIN) * WALKER_CATCH_GAIN + dead(fall, WALKER_CATCH_FALL_MARGIN) * WALKER_CATCH_DAMP,
+          -WALKER_CATCH_MAX,
+          WALKER_CATCH_MAX,
+        )
+        catchX = heading[0] * step * (grounded / 2)
+        catchZ = heading[2] * step * (grounded / 2)
+      }
+    }
+
+    // The push goes through the middle of the hull: the lean comes from the balance, not from a torque.
+    const totalX = pushX + catchX
+    const totalZ = pushZ + catchZ
+    if (totalX !== 0 || totalZ !== 0) body.addForceAtPoint({ x: totalX * mass, y: 0, z: totalZ * mass }, position, true)
+    if (!driven) return
+    // It turns slower the faster it walks, so its feet can keep up with the heading.
+    const turnRate = WALKER_TURN_RATE / (1 + Math.abs(alongHeading) / WALKER_MAX_SPEED)
+    const yaw = (-clamp(controls.steer, -1, 1) * turnRate - av.y) * 4
+    const yawInertia = (mass * (hx * hx + hz * hz)) / 3
+    body.addTorque({ x: 0, y: clamp(yaw, -WALKER_TURN_ACCEL, WALKER_TURN_ACCEL) * yawInertia * share, z: 0 }, true)
   }
 
   /** Mirrors `roll_plane`: no engine on the wheels, the front pair steered by A/D, brakes on Shift or with nobody aboard. */
@@ -691,7 +874,7 @@ export class VehicleDriver {
   }
 
   /** Other vehicles block the predicted one at the poses of the newest snapshot. */
-  setObstacles(vehicles: readonly (Pose & { id: number; kind: number })[]) {
+  setObstacles(vehicles: readonly (Pose & { id: number; kind: number; damage?: readonly number[] })[]) {
     const alive = new Set<number>()
     for (const vehicle of vehicles) {
       if (this.sim && vehicle.id === this.id) continue
@@ -758,6 +941,7 @@ export class VehicleDriver {
     const sim = this.sim
     const before = this.current
     sim.condition = conditionOf(vehicle.kind, vehicle.hp, vehicle.damage)
+    sim.setTurret(vehicle.damage[DAMAGE_TURRET] !== TURRET_GONE)
     sim.setState(
       [vehicle.x, vehicle.y, vehicle.z],
       [vehicle.qx, vehicle.qy, vehicle.qz, vehicle.qw],

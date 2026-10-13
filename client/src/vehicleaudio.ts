@@ -1,6 +1,6 @@
 import { audioContext } from './audio'
 import { SampleBank } from './sfx'
-import { KIND_HELI, KIND_PLANE, KIND_SPORTS, KIND_TANK } from '@/net/codec'
+import { KIND_HELI, KIND_PLANE, KIND_SPORTS, KIND_STRV, KIND_TANK } from '@/net/codec'
 import { crashSize, landingThud, mixOf, type SoundInput, type SoundMix } from '@/sim/engine'
 
 /**
@@ -105,6 +105,7 @@ class Voice {
       kind === KIND_HELI ? [['sawtooth', 1, 0.5], ['square', 0.5, 0.3]]
       : kind === KIND_PLANE ? [['square', 1, 0.4], ['sawtooth', 2, 0.22], ['square', 0.5, 0.3], ['sawtooth', 4.02, 0.08]]
       : kind === KIND_TANK ? [['sawtooth', 1, 0.5], ['square', 0.5, 0.4], ['sawtooth', 1.51, 0.12]]
+      : kind === KIND_STRV ? [['sawtooth', 1, 0.5], ['square', 0.5, 0.3], ['sawtooth', 2.01, 0.15]]
       : kind === KIND_SPORTS ? [['sawtooth', 1, 0.42], ['square', 0.5, 0.25], ['triangle', 3.02, 0.2]]
       : [['sawtooth', 1, 0.5], ['square', 0.5, 0.35], ['sawtooth', 1.5, 0.15]]
     for (const [type, ratio, level] of parts) {
@@ -142,8 +143,8 @@ class Voice {
     const chopped = ctx.createGain()
     chopped.gain.value = 0
     const chopFilter = ctx.createBiquadFilter()
-    chopFilter.type = kind === KIND_TANK || kind === KIND_PLANE ? 'bandpass' : 'lowpass'
-    chopFilter.frequency.value = kind === KIND_TANK ? 650 : kind === KIND_PLANE ? 220 : 260
+    chopFilter.type = kind === KIND_TANK || kind === KIND_STRV || kind === KIND_PLANE ? 'bandpass' : 'lowpass'
+    chopFilter.frequency.value = kind === KIND_TANK || kind === KIND_STRV ? 650 : kind === KIND_PLANE ? 220 : 260
     noise.connect(chopFilter).connect(chopped).connect(this.tone)
     this.beat = ctx.createOscillator()
     this.beat.frequency.value = 10
@@ -510,6 +511,47 @@ export class VehicleSounds {
         VehicleSounds.ping(ctx, out, t, 'square', 1700, 1500, 0.05, 0.06, 0.35)
         VehicleSounds.ping(ctx, out, t, 'square', 2300, 2000, 0.04, 0.05, 0.4)
       }
+    })
+  }
+
+  /** A shell glancing off armor: a ringing metallic ping with a short scrape of sparks under it. */
+  ricochet(at: Vec3) {
+    this.emit(at, 0.9, (ctx, out, t) => {
+      VehicleSounds.ping(ctx, out, t, 'triangle', 2400, 1500, 0.5, 0.5)
+      VehicleSounds.ping(ctx, out, t, 'sine', 3700, 3000, 0.35, 0.3, 0.01)
+      VehicleSounds.burst(ctx, out, t, 'highpass', 3500, 2500, 0.12, 0.35)
+    })
+  }
+
+  /** A turret ripped off its ring: a deep metallic bang and a long groan as it comes away. */
+  turretOff(at: Vec3) {
+    this.emit(at, 1.4, (ctx, out, t) => {
+      VehicleSounds.ping(ctx, out, t, 'sine', 70, 28, 0.7, 1.0)
+      VehicleSounds.burst(ctx, out, t, 'lowpass', 900, 120, 0.5, 0.9)
+      VehicleSounds.ping(ctx, out, t, 'sawtooth', 220, 90, 0.6, 0.3, 0.05)
+      VehicleSounds.ping(ctx, out, t, 'square', 1300, 600, 0.2, 0.2, 0.03)
+    })
+  }
+
+  /** A walker's foot coming down: a heavy thump under a dull metal clank. `weight` is 0..1. */
+  footstep(at: Vec3, weight: number) {
+    const level = 0.5 + 0.5 * weight
+    this.emit(at, 0.8, (ctx, out, t) => {
+      VehicleSounds.ping(ctx, out, t, 'sine', 85, 30, 0.45, 1.0 * level)
+      VehicleSounds.burst(ctx, out, t, 'lowpass', 400, 60, 0.3, 0.9 * level)
+      VehicleSounds.ping(ctx, out, t, 'triangle', 190, 90, 0.12, 0.35 * level, 0.01)
+      VehicleSounds.burst(ctx, out, t, 'bandpass', 1500, 600, 0.06, 0.22 * level, 0.01)
+    })
+  }
+
+  /** A blaster bolt: a bright zap that falls steeply in pitch, with a crack at the front and a low thrum. */
+  laser(at: Vec3) {
+    this.emit(at, 0.8, (ctx, out, t) => {
+      VehicleSounds.ping(ctx, out, t, 'sawtooth', 2600, 260, 0.22, 0.4)
+      VehicleSounds.ping(ctx, out, t, 'square', 1300, 140, 0.26, 0.3, 0.005)
+      VehicleSounds.ping(ctx, out, t, 'sine', 5200, 900, 0.1, 0.25)
+      VehicleSounds.burst(ctx, out, t, 'highpass', 4000, 2000, 0.05, 0.3)
+      VehicleSounds.ping(ctx, out, t, 'sine', 120, 50, 0.3, 0.5, 0.02)
     })
   }
 

@@ -1,5 +1,6 @@
 import * as THREE from 'three'
-import { KIND_HELI, KIND_PLANE, KIND_SPORTS, KIND_TANK } from '@/net/codec'
+import { KIND_HELI, KIND_PLANE, KIND_SPORTS } from '@/net/codec'
+import { isTracked } from '@/sim/vehicles'
 import { halfExtentsOf } from '@/sim/kinds'
 import { tyreSlip, wheelLayout, type WheelLayout } from '@/sim/slip'
 import { SURFACE_ASPHALT, SURFACE_DIRT, SURFACE_GRASS, SURFACE_SAND, SURFACE_WATER } from '@/sim/surface'
@@ -207,7 +208,7 @@ export class VehicleFx {
       const look = MARKS[surface] ?? MARKS[SURFACE_GRASS]!
       const soft = surface !== SURFACE_ASPHALT
       // Soft ground takes a faint rut from any wheel rolling over it; a tank's tracks always mark it.
-      const rut = soft && (this.kind === KIND_TANK ? moving > 0.5 : moving > 8) ? 0.35 : 0
+      const rut = soft && (isTracked(this.kind) ? moving > 0.5 : moving > 8) ? 0.35 : 0
       const strength = Math.max(slip, rut)
       if (strength > 0.12) world.skids.mark(track, contact, this.side, layout.width, look.mark, look.alpha * Math.min(1, strength + 0.2))
       else world.skids.lift(track)
@@ -279,7 +280,7 @@ export class VehicleFx {
   private exhaust(world: FxWorld, here: THREE.Vector3, dt: number) {
     const [hx, hy, hz] = halfExtentsOf(this.kind)
     const pipe = new THREE.Vector3(hx * 0.45, -hy * 0.5, hz + 0.05).applyQuaternion(this.q).add(here)
-    const tank = this.kind === KIND_TANK
+    const tank = isTracked(this.kind)
     const pulling = this.accel > (tank ? 0.8 : 2.0)
     if ((pulling && Math.random() < dt * 30) || Math.random() < dt * 1.5) {
       world.smoke.spawn({

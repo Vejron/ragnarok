@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { KIND_HELI, KIND_PLANE, KIND_TANK } from '@/net/codec'
+import { KIND_HELI, KIND_PLANE, KIND_STRV, KIND_TANK } from '@/net/codec'
 import type { FxWorld } from './tyres'
 
 /** Past this the plume is not drawn at all, metres; past HALF_RANGE it is thinned. */
@@ -14,6 +14,7 @@ const pick = <T>(items: readonly T[]) => items[Math.floor(Math.random() * items.
 /** Where the engine sits in the hull's frame: the front of a car, the rear of a tank, the top of a heli. */
 function engineBay(kind: number): [number, number, number] {
   if (kind === KIND_TANK) return [0, 1.3, 1.6]
+  if (kind === KIND_STRV) return [0, 1.1, 1.8]
   if (kind === KIND_HELI) return [0, 1.6, 0.4]
   if (kind === KIND_PLANE) return [0, 0.5, -1.8]
   return [0, 0.75, -1.35]

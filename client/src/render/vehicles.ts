@@ -1,9 +1,11 @@
-import { KIND_HELI, KIND_PLANE, KIND_TANK } from '@/net/codec'
+import { KIND_HELI, KIND_PLANE, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
 import { CarModel, loadCarModels, type VehicleModel } from './car'
 import { HeliModel, loadHeliModel } from './heli'
 import { loadPlaneModel, PlaneModel } from './plane'
-import { DRIVING_DISTANCE, HELI_DISTANCE, PLANE_DISTANCE, TANK_DISTANCE } from './scene'
+import { DRIVING_DISTANCE, HELI_DISTANCE, PLANE_DISTANCE, STRV_DISTANCE, TANK_DISTANCE, WALKER_DISTANCE } from './scene'
+import { loadStrvModel, StrvModel } from './strvs'
 import { loadTankModel, TankModel } from './tank'
+import { loadWalkerModel, WalkerModel } from './walker'
 
 /**
  * Where each vehicle kind gets its model and its chase-camera distance. A new kind adds a branch
@@ -11,13 +13,15 @@ import { loadTankModel, TankModel } from './tank'
  */
 
 /** Fetches the models every kind is built from. */
-export const loadVehicleModels = () => Promise.all([loadCarModels(), loadTankModel(), loadHeliModel(), loadPlaneModel()])
+export const loadVehicleModels = () => Promise.all([loadCarModels(), loadTankModel(), loadHeliModel(), loadPlaneModel(), loadWalkerModel(), loadStrvModel()])
 
 /** The drawn vehicle for `kind`. Unknown kinds are drawn as cars. */
 export function createVehicleModel(kind: number, id: number): VehicleModel {
   if (kind === KIND_TANK) return new TankModel(id)
   if (kind === KIND_HELI) return new HeliModel(id)
   if (kind === KIND_PLANE) return new PlaneModel(id)
+  if (kind === KIND_WALKER) return new WalkerModel(id)
+  if (kind === KIND_STRV) return new StrvModel(id)
   return new CarModel(kind, id)
 }
 
@@ -26,5 +30,7 @@ export function cameraDistance(kind: number): number {
   if (kind === KIND_TANK) return TANK_DISTANCE
   if (kind === KIND_HELI) return HELI_DISTANCE
   if (kind === KIND_PLANE) return PLANE_DISTANCE
+  if (kind === KIND_WALKER) return WALKER_DISTANCE
+  if (kind === KIND_STRV) return STRV_DISTANCE
   return DRIVING_DISTANCE
 }

@@ -3,12 +3,13 @@ import { buildingTriangleRanges, type TileData, type WorldData } from '@/world'
 import {
   AUTOSTEP_HEIGHT, AUTOSTEP_MIN_WIDTH, CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, CONTROLLER_OFFSET,
   BUTTON_CROUCH, BUTTON_JUMP, KNOCK_MAX_SPEED, MAX_SLOPE_CLIMB_DEG, SNAP_DISTANCE,
-  TANK_TURRET_HALF_HEIGHT, TANK_TURRET_PIVOT, TANK_TURRET_RADIUS, PLANE_WING_CENTRE, PLANE_WING_HALF_EXTENTS,
+  STRV_CASEMATE_CENTRE, STRV_CASEMATE_HALF, TANK_TURRET_HALF_HEIGHT, TANK_TURRET_PIVOT, TANK_TURRET_RADIUS, PLANE_WING_CENTRE, PLANE_WING_HALF_EXTENTS,
+  WALKER_FOOT_HALF, WALKER_HALF_EXTENTS, WALKER_LEG_CLEARANCE, WALKER_LEG_HALF_DEPTH, WALKER_LEG_HALF_WIDTH, WALKER_LEG_LENGTH,
 } from './consts'
 import { halfExtentsOf } from './kinds'
 import type { TileGround } from './terrain'
 import { beginSlide, decayKnock, desiredTranslation, f32, settleVertical } from './movement'
-import { fromMrad, KIND_PLANE, KIND_TANK, type InputFrame, type VehicleState } from '@/net/codec'
+import { DAMAGE_TURRET, fromMrad, KIND_PLANE, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, type InputFrame, type VehicleState } from '@/net/codec'
 
 export type Vec3 = [number, number, number]
 
@@ -157,7 +158,7 @@ export function trunkColliderIndex(tile: TileData, index: number): number {
   return at
 }
 
-type PoseLike = Pick<VehicleState, 'x' | 'y' | 'z' | 'qx' | 'qy' | 'qz' | 'qw'>
+type PoseLike = Pick<VehicleState, 'x' | 'y' | 'z' | 'qx' | 'qy' | 'qz' | 'qw'> & { damage?: readonly number[] }
 
 /**
  * A snapshot vehicle as static solids: its hull box, and for a tank the turret cylinder on the
@@ -165,46 +166,61 @@ type PoseLike = Pick<VehicleState, 'x' | 'y' | 'z' | 'qx' | 'qy' | 'qz' | 'qw'>
  */
 export class VehicleSolids {
   private readonly hull: RAPIER.Collider
-  /** A tank's turret or a plane's wings, and where it sits in the hull frame. */
-  private readonly extra: RAPIER.Collider | null
-  private readonly offset: readonly [number, number, number] = [0, 0, 0]
+  /** A tank's turret, a plane's wings or a walker's legs, and where each sits in the hull frame. */
+  private readonly extras: { collider: RAPIER.Collider; offset: readonly [number, number, number] }[]
 
-  constructor(private readonly world: RAPIER.World, kind: number | undefined) {
+  constructor(private readonly world: RAPIER.World, private readonly kind: number | undefined) {
     const [hx, hy, hz] = halfExtentsOf(kind)
     this.hull = world.createCollider(RAPIER.ColliderDesc.cuboid(hx, hy, hz))
-    const extra = extraSolid(kind)
-    this.extra = extra ? world.createCollider(extra.desc) : null
-    if (extra) this.offset = extra.offset
+    this.extras = extraSolids(kind).map((extra) => ({ collider: world.createCollider(extra.desc), offset: extra.offset }))
   }
 
   place(pose: PoseLike) {
+    // A tank whose turret was shot off has no turret solid.
+    if (this.kind === KIND_TANK) {
+      const present = pose.damage?.[DAMAGE_TURRET] !== TURRET_GONE
+      for (const { collider } of this.extras) collider.setEnabled(present)
+    }
     this.hull.setTranslation({ x: pose.x, y: pose.y, z: pose.z })
     this.hull.setRotation({ x: pose.qx, y: pose.qy, z: pose.qz, w: pose.qw })
-    if (!this.extra) return
-    // The offset in the hull frame, rotated into the world.
-    const [ox, oy, oz] = this.offset
-    const { qx: x, qy: y, qz: z, qw: w } = pose
-    const tx = ox + 2 * (w * (y * oz - z * oy) + y * (x * oy - y * ox) - z * (z * ox - x * oz))
-    const ty = oy + 2 * (w * (z * ox - x * oz) + z * (y * oz - z * oy) - x * (x * oy - y * ox))
-    const tz = oz + 2 * (w * (x * oy - y * ox) + x * (z * ox - x * oz) - y * (y * oz - z * oy))
-    this.extra.setTranslation({ x: pose.x + tx, y: pose.y + ty, z: pose.z + tz })
-    this.extra.setRotation({ x, y, z, w })
+    for (const { collider, offset } of this.extras) {
+      // The offset in the hull frame, rotated into the world.
+      const [ox, oy, oz] = offset
+      const { qx: x, qy: y, qz: z, qw: w } = pose
+      const tx = ox + 2 * (w * (y * oz - z * oy) + y * (x * oy - y * ox) - z * (z * ox - x * oz))
+      const ty = oy + 2 * (w * (z * ox - x * oz) + z * (y * oz - z * oy) - x * (x * oy - y * ox))
+      const tz = oz + 2 * (w * (x * oy - y * ox) + x * (z * ox - x * oz) - y * (y * oz - z * oy))
+      collider.setTranslation({ x: pose.x + tx, y: pose.y + ty, z: pose.z + tz })
+      collider.setRotation({ x, y, z, w })
+    }
   }
 
   remove() {
     this.world.removeCollider(this.hull, false)
-    if (this.extra) this.world.removeCollider(this.extra, false)
+    for (const { collider } of this.extras) this.world.removeCollider(collider, false)
   }
 }
 
-/** The second solid of a vehicle kind and its place in the hull frame: a tank's turret, a plane's wings. */
-export function extraSolid(kind: number | undefined): { desc: RAPIER.ColliderDesc; offset: readonly [number, number, number] } | null {
-  if (kind === KIND_TANK) return { desc: RAPIER.ColliderDesc.cylinder(TANK_TURRET_HALF_HEIGHT, TANK_TURRET_RADIUS), offset: TANK_TURRET_PIVOT }
+/** The extra solids of a vehicle kind and their place in the hull frame: a tank's turret, a plane's wings, a walker's legs. */
+export function extraSolids(kind: number | undefined): { desc: RAPIER.ColliderDesc; offset: readonly [number, number, number] }[] {
+  if (kind === KIND_TANK) return [{ desc: RAPIER.ColliderDesc.cylinder(TANK_TURRET_HALF_HEIGHT, TANK_TURRET_RADIUS), offset: TANK_TURRET_PIVOT }]
+  if (kind === KIND_STRV) {
+    const [x, y, z] = STRV_CASEMATE_HALF
+    return [{ desc: RAPIER.ColliderDesc.cuboid(x, y, z), offset: STRV_CASEMATE_CENTRE }]
+  }
   if (kind === KIND_PLANE) {
     const [x, y, z] = PLANE_WING_HALF_EXTENTS
-    return { desc: RAPIER.ColliderDesc.cuboid(x, y, z), offset: PLANE_WING_CENTRE }
+    return [{ desc: RAPIER.ColliderDesc.cuboid(x, y, z), offset: PLANE_WING_CENTRE }]
   }
-  return null
+  if (kind === KIND_WALKER) {
+    const half = (WALKER_LEG_LENGTH - WALKER_LEG_CLEARANCE) / 2
+    const hy = WALKER_HALF_EXTENTS[1]
+    return [-1, 1].map((side) => ({
+      desc: RAPIER.ColliderDesc.cuboid(WALKER_LEG_HALF_WIDTH, half, WALKER_LEG_HALF_DEPTH),
+      offset: [side * WALKER_FOOT_HALF, -hy - half, 0] as const,
+    }))
+  }
+  return []
 }
 
 /** The same Rapier character controller and static scene the server simulates. */
@@ -250,7 +266,7 @@ export class RapierMotor implements CharacterMotor {
    * them as dynamic bodies; here they only need to block the predicted stickman like they block
    * the real one. Cars missing from `vehicles` are removed.
    */
-  setVehicles(vehicles: readonly (Pick<VehicleState, 'id' | 'x' | 'y' | 'z' | 'qx' | 'qy' | 'qz' | 'qw'> & { kind?: number; vx?: number; vz?: number })[]) {
+  setVehicles(vehicles: readonly (Pick<VehicleState, 'id' | 'x' | 'y' | 'z' | 'qx' | 'qy' | 'qz' | 'qw'> & { kind?: number; vx?: number; vz?: number; damage?: readonly number[] })[]) {
     const alive = new Set<number>()
     for (const car of vehicles) {
       alive.add(car.id)

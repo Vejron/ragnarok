@@ -16,7 +16,7 @@ use shared::world::{ObjId, WorldFile};
 use std::collections::HashMap;
 
 mod vehicle;
-pub use vehicle::{CarCondition, CarControls, CarImpact, CarPose, half_extents};
+pub use vehicle::{CarCondition, CarControls, CarImpact, CarPose, Strike, half_extents};
 
 /// A destructible piece of the static world: a building or a tree, by tile and index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

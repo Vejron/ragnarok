@@ -8,6 +8,7 @@ A browser multiplayer game: goofy stickmen in a real city built from OpenStreetM
 - [SERVER-PERFORMANCE.md](SERVER-PERFORMANCE.md): what a full room costs per tick, how it is measured, what is and is not worth optimising
 - [RENDERING.md](RENDERING.md): the client renderer: toon shading, light, contact shadows, ambient occlusion, far shadows
 - [VEHICLES-I.md](VEHICLES-I.md): how roadmap stage 2 (cars, seats, driving) was built
+- [ARMOR.md](ARMOR.md): armor zones, ricochets, weak spots, turret loss and the Strv S
 - [VEHICLES-II.md](VEHICLES-II.md): the tank, its gunner seat and the shell, driver prediction and the helicopter
 - [VEHICLES-III.md](VEHICLES-III.md): handling, tyre effects, crash damage and vehicle sound
 - [VEHICLES-IV.md](VEHICLES-IV.md): the Fokker triplane: flight, guns, bombs, model and sound

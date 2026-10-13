@@ -1,4 +1,5 @@
 use super::Mechanic;
+use super::armor::Outcome;
 use super::npcs::{damage_rooster, first_rooster_hit};
 use super::spawn;
 use crate::game::{Rocket, World, starting_hotbar};
@@ -221,8 +222,23 @@ pub struct Blast {
     pub weapon: u8,
 }
 
+/// A vehicle the blast's shell struck directly: it takes `DIRECT_SHARE` of the damage times `scale`
+/// (what its armor made of the angle) instead of the damage its distance from the centre would give, and
+/// the turret takes it too if that was what was hit.
+#[derive(Clone, Copy)]
+pub struct Direct {
+    pub vehicle: u32,
+    pub scale: f32,
+    pub turret: bool,
+}
+
 /// Throws and hurts the standing players within `blast.radius`, and shoves and hurts the vehicles.
 pub fn blast(world: &mut World, blast: Blast) {
+    blast_at(world, blast, None);
+}
+
+/// [`blast`], for a shell that struck vehicle `direct.vehicle` itself.
+pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
     let mut hurt = Vec::new();
     for (&id, player) in world.players.iter_mut().filter(|(_, player)| player.seat.is_none() && player.alive()) {
         let c = &mut player.character;
@@ -259,9 +275,23 @@ pub fn blast(world: &mut World, blast: Blast) {
     for (id, amount) in roosters {
         damage_rooster(world, id, amount);
     }
-    for (vid, falloff) in world.physics.blast_cars(blast.point, blast.radius) {
-        damage_vehicle(world, vid, (blast.damage * falloff).round().min(255.0) as u8, blast.attacker);
-        super::vehicles::shoot_wheels(world, vid, blast.point, blast.damage * falloff, super::vehicles::WHEEL_REACH);
+    let mut reached = world.physics.blast_cars(blast.point, blast.radius);
+    // A shell that struck a vehicle's edge may burst further from its centre than the blast reaches.
+    if let Some(direct) = direct.filter(|direct| !reached.iter().any(|&(vid, _)| vid == direct.vehicle)) {
+        reached.push((direct.vehicle, 0.0));
+    }
+    for (vid, falloff) in reached {
+        let direct = direct.filter(|direct| direct.vehicle == vid);
+        let dealt = match direct {
+            Some(direct) => blast.damage * super::armor::DIRECT_SHARE * direct.scale,
+            None => blast.damage * falloff,
+        };
+        let amount = dealt.round().min(255.0) as u8;
+        damage_vehicle(world, vid, amount, blast.attacker);
+        if direct.is_some_and(|direct| direct.turret) {
+            super::armor::damage_turret(world, vid, amount, blast.attacker);
+        }
+        super::vehicles::shoot_wheels(world, vid, blast.point, dealt, super::vehicles::WHEEL_REACH);
     }
     for object in world.physics.objects_near(blast.point, blast.radius) {
         let (distance, scale) = match object {
@@ -489,9 +519,15 @@ fn step_bullet(world: &mut World, id: u32, dt: f32) {
             let head = hit.is_some_and(|(_, t)| is_headshot(world, victim, bullet.position, dir, t, bullet.back));
             damage_hit(world, victim, damage_dealt, attacker, weapon, None, head);
         } else if let Some((_, Some(car))) = wall {
-            let chip = (base / 4).max(1);
-            damage_vehicle(world, car, chip, attacker);
-            super::vehicles::shoot_wheels(world, car, point, f32::from(base), super::vehicles::BULLET_WHEEL_REACH);
+            match super::armor::armor_of(world, car, bullet.position, dir, reach) {
+                Some(Outcome::Ricochet { .. }) => super::armor::announce_ricochet(world, car, point),
+                struck => {
+                    let scale = if let Some(Outcome::Hit { scale, .. }) = struck { scale } else { 1.0 };
+                    let chip = (f32::from((base / 4).max(1)) * scale).round().max(1.0) as u8;
+                    damage_vehicle(world, car, chip, attacker);
+                    super::vehicles::shoot_wheels(world, car, point, f32::from(base), super::vehicles::BULLET_WHEEL_REACH);
+                }
+            }
         } else if wall.is_some() {
             hit_object(world, bullet.position, dir, reach, base);
         }
@@ -697,9 +733,16 @@ pub fn hitscan(world: &mut World, shooter: u32, origin: [f32; 3], dir: [f32; 3],
         damage_hit(world, victim, round.falloff.apply(round.damage, end), Some(shooter), round.weapon, None, head);
     } else if let Some((_, Some(car))) = wall {
         let plane = world.vehicles.get(&car).is_some_and(|vehicle| vehicle.kind == KIND_PLANE);
-        damage_vehicle(world, car, if plane { round.plane } else { round.vehicle }, Some(shooter));
         let point = std::array::from_fn(|i| origin[i] + dir[i] * reach);
-        super::vehicles::shoot_wheels(world, car, point, f32::from(round.damage), super::vehicles::BULLET_WHEEL_REACH);
+        match super::armor::armor_of(world, car, origin, dir, reach) {
+            Some(Outcome::Ricochet { .. }) => super::armor::announce_ricochet(world, car, point),
+            struck => {
+                let scale = if let Some(Outcome::Hit { scale, .. }) = struck { scale } else { 1.0 };
+                let base = if plane { round.plane } else { round.vehicle };
+                damage_vehicle(world, car, (f32::from(base) * scale).round().max(1.0) as u8, Some(shooter));
+                super::vehicles::shoot_wheels(world, car, point, f32::from(round.damage), super::vehicles::BULLET_WHEEL_REACH);
+            }
+        }
     } else if wall.is_some() {
         hit_object(world, origin, dir, reach, round.damage);
     }

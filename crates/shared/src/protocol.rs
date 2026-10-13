@@ -56,6 +56,10 @@ pub const KIND_HELI: u8 = 3;
 pub const KIND_SPORTS: u8 = 4;
 /// The triplane. 5 is the rooster's.
 pub const KIND_PLANE: u8 = 6;
+/// The two-legged walker. 5 is the rooster's.
+pub const KIND_WALKER: u8 = 7;
+/// The turretless Strv S tank, one seat.
+pub const KIND_STRV: u8 = 8;
 
 /// Health of a fresh vehicle of `kind`. Zero on the wire means wrecked.
 pub fn vehicle_hp(kind: u8) -> u8 {
@@ -114,6 +118,10 @@ pub const WEAPON_PELLET: u8 = 14;
 /// A flying bullet ended here (hit something, or the ground). Its shot event's `shooter` is the
 /// bullet's id, as in `BulletSpawn`, not a player.
 pub const WEAPON_BULLET: u8 = 15;
+/// Shot events only: a shot glanced off vehicle `shooter` at `x, y, z`, for a spark and a ping.
+pub const WEAPON_RICOCHET: u8 = 16;
+/// Shot events only: the turret of tank `shooter` was shot off at `x, y, z`.
+pub const WEAPON_TURRET: u8 = 17;
 
 /// How a stickman died, as sent in a `Kill`, so every client can stage the death to match.
 pub const DEATH_BODY: u8 = 0;
@@ -312,6 +320,9 @@ pub const DAMAGE_REAR: usize = 1;
 pub const DAMAGE_LEFT: usize = 2;
 pub const DAMAGE_RIGHT: usize = 3;
 pub const DAMAGE_WHEELS: usize = 4;
+/// A tank's slot 4 (its wheels are never hurt): `TURRET_GONE` once the turret has been shot off.
+pub const DAMAGE_TURRET: usize = 4;
+pub const TURRET_GONE: u8 = 255;
 /// A wheel damaged this much has come off.
 pub const WHEEL_GONE: u8 = 255;
 
@@ -561,7 +572,7 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 23, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
+        148, 0, 24, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[

@@ -1,6 +1,6 @@
 /** Mirrors `crates/shared/src/consts.rs`. Keep the two in step. */
 
-export const PROTOCOL_VERSION = 23
+export const PROTOCOL_VERSION = 24
 
 /** A hurt building is drawn in this many worse states; the last is about to collapse. Mirrors `DAMAGE_STAGES`. */
 export const DAMAGE_STAGES = 3
@@ -115,6 +115,69 @@ export const TANK_TURRET_HALF_HEIGHT = 0.35
 /** Barrel elevation limits, radians (+ is up). */
 export const TANK_BARREL_MIN = -0.12
 export const TANK_BARREL_MAX = 0.5
+/** What it takes to knock a tank's turret off. Mirrors `TANK_TURRET_HP`. */
+export const TANK_TURRET_HP = 90
+/** The Strv S: a turretless tank, the gun fixed in the hull. Mirrors `STRV_*` in consts.rs. */
+export const STRV_SEATS = 1
+export const STRV_HALF_EXTENTS = [1.3, 0.45, 2.7] as const
+export const STRV_WHEEL_RADIUS = 0.42
+export const STRV_TRACK_HALF = 1.2
+export const STRV_AXLES_Z = [-1.9, 0, 1.9] as const
+export const STRV_HARD_POINT_Y = -0.2
+export const STRV_SUSPENSION_REST = 0.35
+export const STRV_MAX_SPEED = 16.0
+/** Yaw rate at full stick, rad/s. */
+export const STRV_TURN_RATE = 1.5
+/** The casemate the gun sits in: a weightless solid box on the roof, in the hull frame. */
+export const STRV_CASEMATE_HALF = [0.85, 0.3, 1.3] as const
+export const STRV_CASEMATE_CENTRE = [0.0, 0.75, 0.15] as const
+/** Where the gun's trunnion is in the hull frame, how far the muzzle is from it, and its elevation limits (radians, + is up). */
+export const STRV_GUN_PIVOT = [0.0, 0.75, -1.0] as const
+export const STRV_BARREL_LENGTH = 3.4
+export const STRV_BARREL_SLEW = 1.2
+export const STRV_BARREL_MIN = -0.15
+export const STRV_BARREL_MAX = 0.3
+/** The walker. Mirrors `WALKER_*` in consts.rs. */
+export const WALKER_SEATS = 1
+export const WALKER_HALF_EXTENTS = [1.0, 1.2, 1.8] as const
+export const WALKER_FOOT_HALF = 1.7
+export const WALKER_LEG_LENGTH = 4.2
+export const WALKER_LEG_HALF_WIDTH = 0.25
+export const WALKER_LEG_HALF_DEPTH = 0.3
+export const WALKER_LEG_CLEARANCE = 0.5
+export const WALKER_MAX_SPEED = 9.0
+export const WALKER_REVERSE_SHARE = 0.5
+export const WALKER_GRIP_GAIN = 8.0
+export const WALKER_TORSO_LIMIT = 0.52
+export const WALKER_GUN_PITCH_MIN = -0.5
+export const WALKER_GUN_PITCH_MAX = 0.4
+export const WALKER_GUN_SLEW = 2.5
+export const WALKER_GUN_PIVOT = [0.0, 0.1, 0.0] as const
+export const WALKER_GUN_LENGTH = 3.7
+export const WALKER_GUN_BARREL_X = 0.3
+export const WALKER_GUN_BARREL_DROP = 1.0
+export const WALKER_GUN_COOLDOWN_TICKS = TICK_RATE / 4
+export const WALKER_GRIP = 8.0
+export const WALKER_ACCEL = 4.5
+export const WALKER_BRAKE = 6.0
+export const WALKER_TURN_RATE = 1.7
+export const WALKER_TURN_ACCEL = 8.0
+export const WALKER_LEG_SPRING = 80.0
+export const WALKER_LEG_DAMPING = 14.0
+export const WALKER_BALANCE_GAIN = 10.0
+export const WALKER_BALANCE_DAMP = 4.0
+export const WALKER_BALANCE_MAX = 3.0
+export const WALKER_BALANCE_MAX_PITCH = 6.0
+export const WALKER_CATCH_GAIN = 20.0
+export const WALKER_CATCH_DAMP = 3.0
+export const WALKER_CATCH_MAX = 8.0
+export const WALKER_CATCH_LEAN_MARGIN = 0.15
+export const WALKER_CATCH_FALL_MARGIN = 0.5
+export const WALKER_ACCEL_LEAN = 0.5
+export const WALKER_CRUISE_LEAN = 0.08
+export const WALKER_BLAST_LEVER = 3.0
+export const WALKER_FALLEN_UP = 0.6
+export const WALKER_GETUP_SHARE = 0.25
 /** The helicopter. Mirrors `HELI_*` in consts.rs. */
 export const HELI_SEATS = 2
 export const HELI_HALF_EXTENTS = [1.0, 0.8, 2.4] as const
@@ -196,7 +259,7 @@ export const CROUCH_EYE_DROP = 0.3
 export const ON_FOOT_SHOULDER = 0.9
 export const ON_FOOT_HEIGHT = 1.5
 /** Health of a fresh vehicle of `kind`. Mirrors `vehicle_hp` in protocol.rs. */
-export const vehicleMaxHp = (kind: number) => (kind === 2 ? 250 : kind === 6 ? 70 : 100)
+export const vehicleMaxHp = (kind: number) => (kind === 2 ? 250 : kind === 6 ? 70 : kind === 7 ? 200 : kind === 8 ? 220 : 100)
 export const ROCKET_BLAST_RADIUS = 5.0
 export const WRECK_BLAST_RADIUS = 8.0
 export const SHELL_COOLDOWN_TICKS = 90

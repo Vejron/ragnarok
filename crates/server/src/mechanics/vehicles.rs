@@ -4,7 +4,7 @@ use crate::physics::{CarCondition, CarControls, CarImpact, CarPose, Character, O
 use shared::consts::*;
 use shared::vehicles::{VehicleDef, vehicle_def};
 use shared::protocol::{
-    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_TANK, ShotEvent, WEAPON_CRASH,
+    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, ShotEvent, WEAPON_CRASH,
     WEAPON_ROADKILL, WEAPON_SCRAPE, seat_count, vehicle_hp,
 };
 use shared::quant::{from_axis, to_cm, wrap_angle};
@@ -24,6 +24,10 @@ pub struct Vehicles;
 const CAR_COUNT: usize = 6;
 const TANK_COUNT: usize = 2;
 const HELI_COUNT: usize = 1;
+/// Strv S tanks, placed with the other tanks.
+const STRV_COUNT: usize = 1;
+/// Walkers, placed with the tanks and the helicopter on the road's spawn points.
+const WALKER_COUNT: usize = 1;
 /// Planes, placed after everything else where they have room to take off.
 const PLANE_COUNT: usize = 2;
 /// The longest runway worth looking for, metres: a plane is off the ground in about 40.
@@ -145,6 +149,7 @@ fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: f32) -> u32
             hp: vehicle_hp(kind),
             wreck_in: 0,
             last_attacker: None,
+            turret_hp: TANK_TURRET_HP,
             damage: [0; 8],
             scrape_in: 0,
         },
@@ -256,7 +261,7 @@ fn run_down_trees(world: &mut World, before: &BTreeMap<u32, CarPose>) {
         if speed < TREE_RAM_MIN_SPEED || vehicle.wrecked() {
             continue;
         }
-        let weight = if vehicle.kind == KIND_TANK { TANK_RAM_FACTOR } else { 1.0 };
+        let weight = if matches!(vehicle.kind, KIND_TANK | KIND_STRV) { TANK_RAM_FACTOR } else { 1.0 };
         let amount = (speed * TREE_RAM_DAMAGE_PER_SPEED * weight) as u16;
         super::combat::damage_object(world, object, amount, pose.position);
     }
@@ -371,7 +376,7 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
             }
             continue;
         }
-        if vehicle.kind == KIND_TANK {
+        if matches!(vehicle.kind, KIND_TANK | KIND_STRV) {
             over *= TANK_CRASH_FACTOR;
         }
         if vehicle.kind == KIND_PLANE {
@@ -434,7 +439,7 @@ impl Mechanic for Vehicles {
         let mut used = vec![false; candidates.len()];
         let mut placed = 0;
         for (index, &[cx, cz]) in candidates.iter().enumerate() {
-            if placed == CAR_COUNT + TANK_COUNT + HELI_COUNT {
+            if placed == CAR_COUNT + TANK_COUNT + STRV_COUNT + HELI_COUNT + WALKER_COUNT {
                 break;
             }
             // Cars first (jeeps and sports cars take turns), then the tanks, then the helicopter.
@@ -442,11 +447,15 @@ impl Mechanic for Vehicles {
                 0..CAR_COUNT if placed % 2 == 0 => KIND_JEEP,
                 0..CAR_COUNT => KIND_SPORTS,
                 _ if placed < CAR_COUNT + TANK_COUNT => KIND_TANK,
-                _ => KIND_HELI,
+                _ if placed < CAR_COUNT + TANK_COUNT + STRV_COUNT => KIND_STRV,
+                _ if placed < CAR_COUNT + TANK_COUNT + STRV_COUNT + HELI_COUNT => KIND_HELI,
+                _ => KIND_WALKER,
             };
             let (x, z) = (cx as f32 / 100.0, cz as f32 / 100.0);
             let yaw = road_heading(&world.map, x, z);
-            let position = [x, world.map.ground.height_at(x, z) + CAR_DROP_Y, z];
+            // A walker's hull starts at the height its legs hold it up at.
+            let drop = if kind == KIND_WALKER { WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1] } else { CAR_DROP_Y };
+            let position = [x, world.map.ground.height_at(x, z) + drop, z];
             if world.physics.car_fits(kind, position, yaw) && world.vehicles.len() < MAX_VEHICLES {
                 add_vehicle(world, kind, position, yaw);
                 used[index] = true;
@@ -532,6 +541,8 @@ impl Mechanic for Vehicles {
                 if vehicle.wreck_in == 0 {
                     vehicle.hp = vehicle_hp(vehicle.kind);
                     vehicle.damage = [0; 8];
+                vehicle.turret_hp = TANK_TURRET_HP;
+                    vehicle.turret_hp = TANK_TURRET_HP;
                     vehicle.last_attacker = None;
                     vehicle.arms = vehicle.arms.map(|_| PlaneArms::default());
                     world.physics.reset_car(vid, vehicle.home.0, vehicle.home.1);
@@ -540,10 +551,18 @@ impl Mechanic for Vehicles {
                 // Fallen out of the world: a fresh one at home.
                 vehicle.hp = vehicle_hp(vehicle.kind);
                 vehicle.damage = [0; 8];
+                vehicle.turret_hp = TANK_TURRET_HP;
                 vehicle.arms = vehicle.arms.map(|_| PlaneArms::default());
                 world.physics.reset_car(vid, vehicle.home.0, vehicle.home.1);
             } else if vehicle.stuck_ticks >= UNFLIP_TICKS {
-                world.physics.reset_car(vid, [x, y + 1.2, z], pose.yaw());
+                // A walker is put back on its feet: its hull is as high as its legs, and its leg boxes
+                // would be buried if it were set down a car's height above where it lies.
+                let rise = if vehicle.kind == KIND_WALKER {
+                    world.map.ground.height_at(x, z) + WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1] - y
+                } else {
+                    1.2
+                };
+                world.physics.reset_car(vid, [x, y + rise, z], pose.yaw());
                 vehicle.stuck_ticks = 0;
             }
             for rider in vehicle.seats.iter().flatten() {

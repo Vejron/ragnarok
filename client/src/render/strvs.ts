@@ -1,0 +1,34 @@
+import * as THREE from 'three'
+import { TankModel, parseTankAsset, type TankLayout } from './tank'
+import { STRV_TRACK_HALF } from '@/sim/consts'
+
+export const STRV_MODEL_URL = `${import.meta.env.BASE_URL}models/strvs.glb`
+
+/** Radius of the road wheels in the model (`WHEEL_RADIUS` in build_strvs.py). */
+const WHEEL_RADIUS = 0.37
+/** The driver sits in the hull at the front right, under a hatch in the casemate's roof. */
+const LAYOUT: TankLayout = { driverHead: [0.35, 0.95, -0.35], gunnerHead: null, wheelRadius: WHEEL_RADIUS, trackHalf: STRV_TRACK_HALF }
+
+let asset: THREE.Object3D | null = null
+
+/** Parses `strvs.glb` (built by `tools/vehicles/build_strvs.py`) for every `StrvModel` to share. */
+export async function parseStrvModel(data: ArrayBuffer) {
+  asset = await parseTankAsset(data)
+}
+
+export async function loadStrvModel(url = STRV_MODEL_URL) {
+  const response = await fetch(url)
+  if (!response.ok) throw new Error(`could not load ${url}: ${response.status}`)
+  await parseStrvModel(await response.arrayBuffer())
+}
+
+/**
+ * The Strv S: a turretless tank with its gun fixed in a casemate on the hull. It is a `TankModel` with
+ * no turret node: the gun node nods, and the whole tank turns to aim sideways. The one head shown is
+ * the driver's, who also fires.
+ */
+export class StrvModel extends TankModel {
+  constructor(id: number) {
+    super(id, asset, LAYOUT)
+  }
+}

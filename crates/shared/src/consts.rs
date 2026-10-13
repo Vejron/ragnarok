@@ -1,7 +1,7 @@
 //! Simulation and network constants. Mirrored in `client/src/sim/consts.ts`.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 23;
+pub const PROTOCOL_VERSION: u8 = 24;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -94,7 +94,7 @@ pub const KILL_Y: f32 = -50.0;
 /// Seats in the roomiest car (the jeep); bounds the seat list of any vehicle.
 pub const CAR_SEATS: usize = 4;
 /// Vehicles in the world; bounds the vehicle list in a snapshot.
-pub const MAX_VEHICLES: usize = 11;
+pub const MAX_VEHICLES: usize = 13;
 /// A player can enter a vehicle whose centre is within this distance of their capsule centre.
 pub const ENTER_RADIUS: f32 = 4.0;
 
@@ -156,6 +156,114 @@ pub const TANK_BARREL_SLEW: f32 = 0.9;
 /// Barrel elevation limits, radians (+ is up).
 pub const TANK_BARREL_MIN: f32 = -0.12;
 pub const TANK_BARREL_MAX: f32 = 0.5;
+/// What it takes to knock the turret off: damage from hits on the turret and the hull's roof, which a
+/// hull hit never adds to. Past it `DAMAGE_TURRET` is set, the gunner dies and the gun is gone until the
+/// tank respawns. Mirrors `TANK_TURRET_HP` in `sim/consts.ts`.
+pub const TANK_TURRET_HP: u8 = 90;
+
+/// The Strv S (`KIND_STRV`): a turretless tank with the gun fixed in the hull. One seat: the driver steers
+/// by pivoting the hull and fires the main gun, which only the barrel's elevation can aim. Quicker and
+/// lower than the tank, with a steeply sloped glacis. Same body axes as the tank; mirrors `STRV_*` in
+/// `sim/consts.ts`.
+pub const STRV_SEATS: usize = 1;
+pub const STRV_HALF_EXTENTS: [f32; 3] = [1.3, 0.45, 2.7];
+pub const STRV_WHEEL_RADIUS: f32 = 0.42;
+pub const STRV_TRACK_HALF: f32 = 1.2;
+/// Z of the three axles, front first.
+pub const STRV_AXLES_Z: [f32; 3] = [-1.9, 0.0, 1.9];
+pub const STRV_HARD_POINT_Y: f32 = -0.2;
+pub const STRV_SUSPENSION_REST: f32 = 0.35;
+pub const STRV_MAX_SPEED: f32 = 16.0;
+/// Yaw rate at full stick, rad/s.
+pub const STRV_TURN_RATE: f32 = 1.5;
+/// The casemate the gun sits in is a solid box on the hull's roof, weightless like the tank's turret:
+/// its half extents and centre in the hull frame.
+pub const STRV_CASEMATE_HALF: [f32; 3] = [0.85, 0.3, 1.3];
+pub const STRV_CASEMATE_CENTRE: [f32; 3] = [0.0, 0.75, 0.15];
+/// Where the gun's trunnion is in the hull frame, how far the muzzle is from it, how fast the barrel
+/// elevates (rad/s) and its limits, radians (+ is up). The gun points where the hull does.
+pub const STRV_GUN_PIVOT: [f32; 3] = [0.0, 0.75, -1.0];
+pub const STRV_BARREL_LENGTH: f32 = 3.4;
+pub const STRV_BARREL_SLEW: f32 = 1.2;
+pub const STRV_BARREL_MIN: f32 = -0.15;
+pub const STRV_BARREL_MAX: f32 = 0.3;
+
+/// The walker (`KIND_WALKER`): a two-legged assault walker, one driver in the head. Its body is a single
+/// box held up by two spring legs that are ray casts to the ground, and kept upright by a torque that a
+/// big enough blow overpowers. Mirrors `WALKER_*` in `sim/consts.ts`.
+pub const WALKER_SEATS: usize = 1;
+pub const WALKER_HALF_EXTENTS: [f32; 3] = [1.0, 1.2, 1.8];
+/// Distance of each foot from the middle of the hull, sideways, metres, and how long a leg is from the
+/// bottom of the hull to the ground when it stands.
+pub const WALKER_FOOT_HALF: f32 = 1.7;
+pub const WALKER_LEG_LENGTH: f32 = 4.2;
+/// The legs are solid, so a car or a shell can hit them: a box on each hip, this wide and deep (half
+/// extents, metres), ending this far above the ground when it stands so the feet's own springs carry it.
+pub const WALKER_LEG_HALF_WIDTH: f32 = 0.25;
+pub const WALKER_LEG_HALF_DEPTH: f32 = 0.3;
+pub const WALKER_LEG_CLEARANCE: f32 = 0.5;
+/// Top speed forwards, backwards (a share of it), m/s, and the acceleration towards it, m/s².
+pub const WALKER_MAX_SPEED: f32 = 9.0;
+pub const WALKER_REVERSE_SHARE: f32 = 0.5;
+pub const WALKER_ACCEL: f32 = 4.5;
+/// Deceleration, m/s², when it slows or reverses: it plants its feet and leans back.
+pub const WALKER_BRAKE: f32 = 6.0;
+/// Planted feet do not slide sideways: the push against it, per m/s of sideways speed, and its cap, m/s².
+pub const WALKER_GRIP_GAIN: f32 = 8.0;
+pub const WALKER_GRIP: f32 = 8.0;
+/// Yaw rate at full stick, rad/s, and the angular acceleration towards it, rad/s².
+pub const WALKER_TURN_RATE: f32 = 1.7;
+pub const WALKER_TURN_ACCEL: f32 = 8.0;
+/// Leg spring and damper, per kilogram of the whole body for the pair: the spring settles at
+/// `CAR_GRAVITY / WALKER_LEG_SPRING` of compression.
+pub const WALKER_LEG_SPRING: f32 = 80.0;
+pub const WALKER_LEG_DAMPING: f32 = 14.0;
+/// How hard the hull is pulled upright, rad/s² per radian of tilt, and the damping on its tilt rate, per
+/// second. The pull never exceeds `WALKER_BALANCE_MAX` rad/s²: a blow that tips it further than that
+/// can undo goes over.
+pub const WALKER_BALANCE_GAIN: f32 = 10.0;
+pub const WALKER_BALANCE_DAMP: f32 = 4.0;
+pub const WALKER_BALANCE_MAX: f32 = 3.0;
+/// Pitching (forwards and backwards) is the axis a walker can fight best: its feet are in line with the
+/// tilt, so the pull is up to this, and it also takes a catching step. The step is a push towards where
+/// the top is falling, by `WALKER_CATCH_GAIN` m/s² per unit of lean from where it should be and
+/// `WALKER_CATCH_DAMP` per rad/s of fall, at most `WALKER_CATCH_MAX`.
+pub const WALKER_BALANCE_MAX_PITCH: f32 = 6.0;
+pub const WALKER_CATCH_GAIN: f32 = 20.0;
+pub const WALKER_CATCH_DAMP: f32 = 3.0;
+pub const WALKER_CATCH_MAX: f32 = 8.0;
+/// Lean (up's horizontal part along the heading beyond its walking lean) and fall rate (rad/s) it
+/// tolerates before it takes a step, so a walk's own lean and its pushes are left alone.
+pub const WALKER_CATCH_LEAN_MARGIN: f32 = 0.15;
+pub const WALKER_CATCH_FALL_MARGIN: f32 = 0.5;
+/// Extra lean into its heading at top speed, as a tilt: the walker walks a little forward of its feet.
+pub const WALKER_CRUISE_LEAN: f32 = 0.08;
+/// How much of the tilt that would match its push it leans by: the push goes through the middle of
+/// the hull, so the lean is for show and for how it handles.
+pub const WALKER_ACCEL_LEAN: f32 = 0.5;
+/// A blast pushes a walker at its shoulders, this far above the middle of the hull, so it tips it.
+pub const WALKER_BLAST_LEVER: f32 = 3.0;
+/// Below this `up_y` it has fallen: the legs no longer push or drive, and only a weak pull
+/// (`WALKER_GETUP_SHARE` of the full one) stands it up again.
+pub const WALKER_FALLEN_UP: f32 = 0.6;
+pub const WALKER_GETUP_SHARE: f32 = 0.25;
+/// The chin guns: the driver aims them with the look, and the upper body turns to point them, up to
+/// `WALKER_TORSO_LIMIT` either side of the way the legs face (and `WALKER_GUN_PITCH_MIN..=_MAX` up and
+/// down, radians, hull frame), at `WALKER_GUN_SLEW` rad/s. `WALKER_GUN_PIVOT` is where the upper body turns
+/// in the hull frame and `WALKER_GUN_LENGTH` how far the muzzle is from it. A round is a cannon shell, as
+/// in a helicopter's nose gun, fired every `WALKER_GUN_COOLDOWN_TICKS` and scattered by up to `WALKER_GUN_SPREAD`.
+pub const WALKER_TORSO_LIMIT: f32 = 0.52;
+pub const WALKER_GUN_PITCH_MIN: f32 = -0.5;
+pub const WALKER_GUN_PITCH_MAX: f32 = 0.4;
+pub const WALKER_GUN_SLEW: f32 = 2.5;
+pub const WALKER_GUN_PIVOT: [f32; 3] = [0.0, 0.1, 0.0];
+pub const WALKER_GUN_LENGTH: f32 = 3.7;
+/// The two barrels hang `WALKER_GUN_BARREL_DROP` below the pivot, `WALKER_GUN_BARREL_X` either side of
+/// it, and fire in turn.
+pub const WALKER_GUN_BARREL_X: f32 = 0.3;
+pub const WALKER_GUN_BARREL_DROP: f32 = 1.0;
+pub const WALKER_GUN_COOLDOWN_TICKS: u32 = TICK_RATE / 4;
+pub const WALKER_GUN_SPREAD: f32 = 0.01;
 
 /// The helicopter: a hull flown by a pilot (seat 0) with a gunner (seat 1) on the nose gun. There are no
 /// wheels; the rotor is a thrust along the hull's up axis, and the pilot leans the hull to go

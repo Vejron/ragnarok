@@ -150,6 +150,8 @@ pub struct Vehicle {
     pub wreck_in: u32,
     /// Whoever last hurt it, who is credited with the deaths when it blows up.
     pub last_attacker: Option<u32>,
+    /// What a tank's turret has left before it comes off (`TANK_TURRET_HP` when whole).
+    pub turret_hp: u8,
     /// Crash damage as the snapshot carries it (`DAMAGE_*`); all zeros when unhurt.
     pub damage: [u8; 8],
     /// Ticks before it may throw sparks again.

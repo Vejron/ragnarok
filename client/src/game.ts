@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import {
-  ARMS_CUT, ARMS_JAMMED, ARMS_REAR_JAMMED, DAMAGE_WHEELS, encodeInput, encodePing, KIND_HELI, KIND_PLANE, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_TANK, sceneStates, toAxis, toMrad, WEAPON_GRENADE,
+  ARMS_CUT, ARMS_JAMMED, ARMS_REAR_JAMMED, DAMAGE_TURRET, DAMAGE_WHEELS, encodeInput, encodePing, KIND_HELI, KIND_PLANE, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_STRV, KIND_TANK, KIND_WALKER, sceneStates, toAxis, toMrad, TURRET_GONE, WEAPON_GRENADE, WEAPON_RICOCHET, WEAPON_TURRET,
   PROJECTILE_BULLET, WEAPON_BULLET, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_CRASH, WEAPON_MG, WEAPON_PELLET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_WRECK,
   type Arms, type BulletSpawn, type DriveState, type EntityState, type InputFrame, type PickupState, type RocketState, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
 } from './net/codec'
@@ -13,7 +13,7 @@ import {
   ROCKET_BLAST_RADIUS, SHELL_COOLDOWN_TICKS, STANDING_Y,
   CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS,
   HELI_GUN_COOLDOWN_TICKS, HELI_GUN_LENGTH, HELI_GUN_PITCH_MAX, HELI_GUN_PITCH_MIN, HELI_GUN_YAW_LIMIT, CANNON_RADIUS,
-  TANK_BARREL_LENGTH, TANK_BARREL_MAX, TANK_BARREL_MIN, TICK_MS, TICK_RATE, vehicleMaxHp, WRECK_BLAST_RADIUS,
+  STRV_BARREL_LENGTH, STRV_BARREL_MAX, STRV_BARREL_MIN, TANK_BARREL_LENGTH, TANK_BARREL_MAX, TANK_BARREL_MIN, WALKER_GUN_COOLDOWN_TICKS, WALKER_GUN_LENGTH, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT, TICK_MS, TICK_RATE, vehicleMaxHp, WRECK_BLAST_RADIUS,
   BOMB_RADIUS, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, PLANE_BOMB_MIN_HEIGHT, PLANE_BOMB_PIVOT, PLANE_GUN_RANGE, PLANE_REAR_PITCH_MAX, PLANE_REAR_PITCH_MIN, PLANE_STALL_SPEED,
 } from './sim/consts'
 import { vehicleDef } from './sim/vehicles'
@@ -42,13 +42,15 @@ import { Rockets } from './render/rockets'
 import { bulletLifeTicks, bulletPosition, bulletTicksTo, bulletVelocity } from './sim/ballistics'
 import { saveLook, type Look } from './render/look'
 import { halfExtentsOf } from './sim/kinds'
-import { AIM_DISTANCE_SCALE, CAMERA_HEIGHT, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, PLANE_CAMERA_HEIGHT, PLANE_DISTANCE, Scene } from './render/scene'
+import { AIM_DISTANCE_SCALE, CAMERA_HEIGHT, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, PLANE_CAMERA_HEIGHT, PLANE_DISTANCE, Scene, STRV_AIM_BACK, STRV_AIM_UP, WALKER_AIM_BACK, WALKER_AIM_UP } from './render/scene'
 import { ChaseCam } from './render/chase'
 import { HeliModel } from './render/heli'
 import { encodeRtc, wrapAngle } from './net/codec'
 import { VoiceChat } from './voice'
 import { PlaneModel } from './render/plane'
+import { StrvModel } from './render/strvs'
 import { TankModel } from './render/tank'
+import { WalkerModel } from './render/walker'
 import { cameraDistance, createVehicleModel, loadVehicleModels } from './render/vehicles'
 import { Character, Crowd } from './render/character'
 import { loadRoosterModel, RoosterModel } from './render/rooster'
@@ -200,6 +202,8 @@ export class Game {
   /** A plane's arms as last drawn, by vehicle. */
   private readonly lastArms = new Map<number, Arms>()
   private lastShotAt = -Infinity
+  /** Tanks whose turret has already been sent flying, so it is thrown once. */
+  private readonly turretsShed = new Set<number>()
   /** The local player's health, from the newest snapshot. Zero is dead. */
   private hp = PLAYER_MAX_HP
   /** `performance.now()` when the local player died, or null while alive. */
@@ -213,6 +217,7 @@ export class Game {
   private seat: { vehicle: number; kind: number; index: number } | null = null
   private wasGunner = false
   private wasAviator = false
+  private wasWalking = false
   /** The yaw and pitch a plane's camera has eased to, behind the mouse's aim. */
   private planeView: [number, number] = [0, 0]
   private predictor: Predictor | null = null
@@ -569,8 +574,11 @@ export class Game {
       this.crouching && local.grounded && Math.hypot(local.knock[0], local.knock[1]) > SLIDE_MIN_SPEED)
     const ride = seated ? cars.get(this.seat!.vehicle) : undefined
     const gunner = ride !== undefined && vehicleDef(ride.kind).gun && this.seat!.index === 1
+    // A Strv S's driver fires the gun, which only the barrel's elevation aims: the hull turns to aim sideways.
+    const tanker = ride?.kind === KIND_STRV && this.seat!.index === 0
     const turret = gunner ? this.cars.get(this.seat!.vehicle) : undefined
     const aviator = ride?.kind === KIND_PLANE && this.seat!.index === 0
+    const walking = ride?.kind === KIND_WALKER && this.seat!.index === 0
     if (gunner && (turret instanceof TankModel || turret instanceof HeliModel || turret instanceof PlaneModel)) {
       if (!this.wasGunner && ride.turret) {
         // Take the seat looking where the barrel points.
@@ -609,6 +617,33 @@ export class Game {
         const top = new THREE.Vector3(0, 1, 0).applyQuaternion(model.root.quaternion)
         this.scene.camera.rotateZ(-Math.atan2(-right.y, top.y) * PLANE_VIEW_ROLL)
       }
+    } else if (tanker) {
+      // Sideways is the hull's: the look is locked to its heading and only the elevation is free, so
+      // the middle of the screen is where the gun points.
+      this.input.yaw = ride.yaw
+      this.input.clampPitch(STRV_BARREL_MIN, STRV_BARREL_MAX)
+      const strv = this.cars.get(this.seat!.vehicle)
+      if (strv instanceof StrvModel) {
+        const { origin } = strv.barrel()
+        this.scene.aimFrom([origin.x, origin.y, origin.z], this.input.yaw, this.input.pitch, STRV_AIM_BACK, STRV_AIM_UP)
+      } else {
+        this.scene.follow([ride.x, ride.y + 0.4, ride.z], this.input.yaw, this.input.pitch, cameraDistance(ride.kind), 0, CAMERA_HEIGHT)
+      }
+    } else if (walking) {
+      // The look is the aim: free of the legs' heading, within the upper body's travel of it.
+      if (!this.wasWalking) {
+        this.input.yaw = ride.yaw
+        this.input.pitch = 0
+      }
+      const walker = this.cars.get(this.seat!.vehicle)
+      if (walker instanceof WalkerModel) {
+        this.limitGun(walker, WALKER_TORSO_LIMIT, WALKER_GUN_PITCH_MIN, WALKER_GUN_PITCH_MAX)
+        // Behind and above the guns, looking along their line, so the middle of the screen is where they point.
+        const { origin } = walker.barrel()
+        this.scene.aimFrom([origin.x, origin.y, origin.z], this.input.yaw, this.input.pitch, WALKER_AIM_BACK, WALKER_AIM_UP)
+      } else {
+        this.scene.follow([ride.x, ride.y + 0.4, ride.z], this.input.yaw, this.input.pitch, cameraDistance(ride.kind), 0, CAMERA_HEIGHT)
+      }
     } else if (ride) {
       this.input.followYaw(ride.yaw, dt)
       const yaw = this.input.yaw + (chase?.lean ?? 0)
@@ -622,6 +657,7 @@ export class Game {
 
     this.wasGunner = gunner
     this.wasAviator = aviator
+    this.wasWalking = walking
     // Streaming follows what the camera is on: the car when seated, else the stickman.
     this.tiles?.update(ride ? ride.x : position[0], ride ? ride.z : position[2])
     this.playShots(renderTick)
@@ -704,10 +740,10 @@ export class Game {
       seat: !this.seat
         ? null
         : this.seat.index === 0
-          ? this.seat.kind === KIND_HELI ? 'pilot' : this.seat.kind === KIND_PLANE ? 'aviator' : 'driver'
+          ? this.seat.kind === KIND_HELI ? 'pilot' : this.seat.kind === KIND_PLANE ? 'aviator' : this.seat.kind === KIND_WALKER ? 'walker' : this.seat.kind === KIND_STRV ? 'strv' : 'driver'
           : vehicleDef(this.seat.kind).gun ? 'gunner' : 'passenger',
       canSwitchSeat: this.seat !== null && (cars.get(this.seat.vehicle)?.seats.includes(0) ?? false),
-      reload: this.seat?.kind === KIND_PLANE ? 1 : Math.min(1, (now - this.lastShotAt) / ((this.seat?.kind === KIND_HELI ? HELI_GUN_COOLDOWN_TICKS : SHELL_COOLDOWN_TICKS) * TICK_MS)),
+      reload: this.seat?.kind === KIND_PLANE ? 1 : Math.min(1, (now - this.lastShotAt) / ((this.seat?.kind === KIND_HELI ? HELI_GUN_COOLDOWN_TICKS : this.seat?.kind === KIND_WALKER ? WALKER_GUN_COOLDOWN_TICKS : SHELL_COOLDOWN_TICKS) * TICK_MS)),
       ...this.cockpit(ride, aviator),
       hp: this.hp,
       maxHp: PLAYER_MAX_HP,
@@ -784,6 +820,15 @@ export class Game {
     } else if (shot.weapon === WEAPON_BOMB) {
       this.blast(to, BOMB_RADIUS, BLASTS.bomb)
       this.sounds.explosion([to.x, to.y, to.z])
+    } else if (shot.weapon === WEAPON_RICOCHET) {
+      // A shell or round glanced off armor: sparks and a ping, and no blast.
+      this.effects.strike(to)
+      this.sounds.ricochet([to.x, to.y, to.z])
+    } else if (shot.weapon === WEAPON_TURRET) {
+      const tank = this.cars.get(shot.shooter)
+      if (tank instanceof TankModel) this.shedTurret(shot.shooter, tank)
+      this.blast(to, CANNON_RADIUS, BLASTS.cannon)
+      this.sounds.turretOff([to.x, to.y, to.z])
     } else if (shot.weapon === WEAPON_CRASH) {
       const car = this.cars.get(shot.shooter)
       const velocity = this.vehicleFx.get(shot.shooter)?.velocity ?? STILL
@@ -1044,11 +1089,16 @@ export class Game {
       const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion(...rotation))
       const yaw = Math.atan2(-forward.x, -forward.z)
       car.update([x, y, z], [rotation[0], rotation[1], rotation[2], rotation[3]], steer, state.seats, state.turret, state.arms)
+      if (car instanceof WalkerModel) for (const step of car.takeSteps()) this.sounds.footstep(step.at, step.weight)
       placed.set(id, { kind: state.kind, turret: state.turret, arms: state.arms, x, y, z, yaw, seats: state.seats })
       this.smoulder(id, state, [x, y, z], rotation)
       this.tyres(id, state, [x, y, z], rotation, steer)
       if (car instanceof CarModel) car.wear(state.damage, state.hp, this.debris, this.vehicleFx.get(id)?.velocity ?? STILL)
-      if ((car instanceof TankModel || car instanceof HeliModel) && state.turret) this.watchGun(id, car, state.turret, state.seats)
+      if (car instanceof TankModel && state.kind === KIND_TANK) {
+        if (state.damage[DAMAGE_TURRET] === TURRET_GONE) this.shedTurret(id, car)
+        else if (this.turretsShed.delete(id)) car.setTurret(true)
+      }
+      if ((car instanceof TankModel || car instanceof HeliModel || car instanceof WalkerModel) && state.turret) this.watchGun(id, car, state.turret, state.seats)
       if (car instanceof PlaneModel) this.watchPlaneGuns(id, car, state)
       if (state.arms) this.lastArms.set(id, state.arms)
     }
@@ -1060,6 +1110,7 @@ export class Game {
         this.forwardShots.delete(id)
         this.lastArms.delete(id)
         this.smokeOwed.delete(id)
+        this.turretsShed.delete(id)
         this.vehicleFx.get(id)?.lift(this.fxWorld)
         this.vehicleFx.delete(id)
         this.sounds.drop(id)
@@ -1178,18 +1229,32 @@ export class Game {
     this.input.pitch = Math.asin(THREE.MathUtils.clamp(limited.y, -1, 1))
   }
 
+  /** Sends tank `id`'s turret flying, once: a copy of it tumbles off as debris and the tank is left with the bare ring. */
+  private shedTurret(id: number, tank: TankModel) {
+    if (this.turretsShed.has(id)) return
+    this.turretsShed.add(id)
+    const copy = tank.turretCopy()
+    tank.setTurret(false)
+    if (!copy) return
+    const spread = () => (Math.random() - 0.5) * 8
+    this.debris.throw(copy, new THREE.Vector3(spread(), 9 + Math.random() * 3, spread()), new THREE.Vector3(spread() / 2, spread() / 3, spread() / 2), 0.5, 25)
+  }
+
   /** A change in the shot counter is a shell leaving: flash and recoil. The shell itself is a projectile. */
-  private watchGun(id: number, tank: TankModel | HeliModel, turret: Turret, seats: readonly number[]) {
+  private watchGun(id: number, tank: TankModel | HeliModel | WalkerModel, turret: Turret, seats: readonly number[]) {
     const before = this.shots.get(id)
     this.shots.set(id, turret.shots)
     // The first sight of a gun is not a shot, nor is a counter that has not moved.
     if (before === undefined || before === turret.shots) return
-    const { origin, direction } = tank.barrel()
+    // A walker's barrels fire in turn: the counter has already gone up for this shot.
+    const { origin, direction } = tank instanceof WalkerModel ? tank.barrel((turret.shots - 1) % 2 === 0 ? -1 : 1) : tank.barrel()
     tank.recoil()
-    const muzzle = origin.clone().addScaledVector(direction, tank instanceof HeliModel ? HELI_GUN_LENGTH : TANK_BARREL_LENGTH)
+    const length = tank instanceof HeliModel ? HELI_GUN_LENGTH : tank instanceof WalkerModel ? WALKER_GUN_LENGTH : tank instanceof StrvModel ? STRV_BARREL_LENGTH : TANK_BARREL_LENGTH
+    const muzzle = origin.clone().addScaledVector(direction, length)
     this.effects.muzzleFlash(muzzle, direction)
-    this.sounds.cannon([muzzle.x, muzzle.y, muzzle.z], tank instanceof TankModel)
-    if (seats[1] === this.localId) this.lastShotAt = performance.now()
+    if (tank instanceof WalkerModel) this.sounds.laser([muzzle.x, muzzle.y, muzzle.z])
+    else this.sounds.cannon([muzzle.x, muzzle.y, muzzle.z], tank instanceof TankModel)
+    if (seats[tank instanceof WalkerModel || tank instanceof StrvModel ? 0 : 1] === this.localId) this.lastShotAt = performance.now()
   }
 
   /**
@@ -1295,6 +1360,7 @@ export class Game {
     }
     if (!best) return null
     if (best.kind === KIND_TANK) return best.driverSeatFree ? 'E: drive the tank' : 'E: man the gun'
+    if (best.kind === KIND_STRV) return 'E: drive the Strv S'
     if (best.kind === KIND_HELI) return best.driverSeatFree ? 'E: fly' : 'E: man the nose gun'
     if (best.kind === KIND_PLANE) return best.driverSeatFree ? 'E: fly the triplane' : 'E: man the rear gun'
     if (best.kind === KIND_SPORTS) return best.driverSeatFree ? 'E: drive the sports car' : 'E: ride along'

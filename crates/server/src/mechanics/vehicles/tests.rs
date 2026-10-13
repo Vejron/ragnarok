@@ -10,9 +10,9 @@ fn game() -> Game {
     let map = WorldFile {
         version: WORLD_VERSION,
         half_extent: 30_000,
-        // Nine spots in the middle for the cars, tanks and helicopter, and one far out at each end
+        // Ten spots in the middle for the cars, tanks, helicopter and walker, and one far out at each end
         // for the planes. Players start on the first six.
-        spawns: [[-25_000, 0], [25_000, 0]].into_iter().chain((0..9).map(|i| [i * 3000 - 12_000, 0])).collect(),
+        spawns: [[-25_000, 0], [25_000, 0]].into_iter().chain((0..11).map(|i| [i * 2700 - 12_000, 0])).collect(),
         roads: vec![Road { width: 800, kind: 0, points: vec![[-30_000, 0], [30_000, 0]] }],
         ..Default::default()
     };
@@ -54,13 +54,17 @@ fn move_player_next_to_a_car(game: &mut Game, id: u32) -> u32 {
 #[test]
 fn cars_are_placed_along_the_road() {
     let game = game();
-    assert_eq!(game.world.vehicles.len(), CAR_COUNT + TANK_COUNT + HELI_COUNT + PLANE_COUNT);
+    assert_eq!(game.world.vehicles.len(), CAR_COUNT + TANK_COUNT + STRV_COUNT + HELI_COUNT + WALKER_COUNT + PLANE_COUNT);
     let planes = game.world.vehicles.values().filter(|vehicle| vehicle.kind == KIND_PLANE).count();
     assert_eq!(planes, PLANE_COUNT);
     let tanks = game.world.vehicles.values().filter(|vehicle| vehicle.kind == KIND_TANK).count();
     assert_eq!(tanks, TANK_COUNT);
+    let strvs = game.world.vehicles.values().filter(|vehicle| vehicle.kind == KIND_STRV).count();
+    assert_eq!(strvs, STRV_COUNT);
     let helis = game.world.vehicles.values().filter(|vehicle| vehicle.kind == KIND_HELI).count();
     assert_eq!(helis, HELI_COUNT);
+    let walkers = game.world.vehicles.values().filter(|vehicle| vehicle.kind == KIND_WALKER).count();
+    assert_eq!(walkers, WALKER_COUNT);
     let count = |kind| game.world.vehicles.values().filter(|vehicle| vehicle.kind == kind).count();
     assert_eq!(count(KIND_JEEP), CAR_COUNT / 2, "half the cars are jeeps");
     assert_eq!(count(KIND_SPORTS), CAR_COUNT / 2, "and half are sports cars");
@@ -214,6 +218,24 @@ fn a_car_on_its_roof_is_put_back_on_its_wheels() {
 }
 
 #[test]
+fn a_fallen_walker_is_stood_on_its_feet_and_unhurt() {
+    let mut game = game();
+    let vid = *game.world.vehicles.iter().find(|(_, vehicle)| vehicle.kind == KIND_WALKER).unwrap().0;
+    let hp = game.world.vehicles[&vid].hp;
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    // On its back, its hull on the ground, where its get-up pull cannot turn it.
+    game.world.physics.set_car_roll(vid, std::f32::consts::PI, [pose.position[0], 1.3, pose.position[2]]);
+    for _ in 0..(UNFLIP_TICKS + 5 * TICK_RATE) {
+        game.step();
+    }
+    let after = game.world.physics.car_pose(vid).unwrap();
+    let ground = game.world.map.ground.height_at(after.position[0], after.position[2]);
+    assert!(after.up_y > 0.95, "back on its feet: {after:?}");
+    assert!(after.position[1] > ground + WALKER_LEG_LENGTH - 1.0, "standing, not sunk: {after:?}");
+    assert!(game.world.vehicles[&vid].hp + 10 >= hp, "standing up did not hurt it: {} of {hp}", game.world.vehicles[&vid].hp);
+}
+
+#[test]
 fn a_driven_car_knocks_back_a_player_in_its_way() {
     let mut game = game();
     let (driver, _a) = join(&mut game);
@@ -362,8 +384,12 @@ fn parked_cars_in_the_fixture_world_settle_and_stay_put() {
         let after = game.world.physics.car_pose(id).unwrap();
         let moved = (after.position[0] - before.position[0]).hypot(after.position[2] - before.position[2]);
         let ground = game.world.map.ground.height_at(after.position[0], after.position[2]);
-        // A plane stands taller on its undercarriage than any car.
-        let ride = if game.world.vehicles[&id].kind == KIND_PLANE { 1.3 } else { 1.0 };
+        // A plane stands taller on its undercarriage than any car, and a walker's hull is up on its legs.
+        let ride = match game.world.vehicles[&id].kind {
+            KIND_PLANE => 1.3,
+            KIND_WALKER => WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1],
+            _ => 1.0,
+        };
         assert!(after.up_y > 0.99 && after.position[1] < ground + ride && moved < 0.5, "car {id}: {before:?} -> {after:?}");
     }
     let planes = game.world.vehicles.values().filter(|vehicle| vehicle.kind == KIND_PLANE).count();

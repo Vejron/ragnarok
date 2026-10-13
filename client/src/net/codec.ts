@@ -37,6 +37,10 @@ export const KIND_SPORTS = 4
 export const KIND_ROOSTER = 5
 /** The triplane. */
 export const KIND_PLANE = 6
+/** The two-legged walker. */
+export const KIND_WALKER = 7
+/** The turretless Strv S tank, one seat. */
+export const KIND_STRV = 8
 export const FLAG_GROUNDED = 1 << 0
 export const FLAG_DEAD = 1 << 1
 export const FLAG_CROUCHING = 1 << 2
@@ -71,6 +75,10 @@ export const WEAPON_SHOTGUN = 13
 export const WEAPON_PELLET = 14
 /** A flying bullet ended here: the shot event's `shooter` is the bullet's id (`BulletSpawn.id`). */
 export const WEAPON_BULLET = 15
+/** A shot glanced off vehicle `shooter` at the event's point: a spark and a ping. */
+export const WEAPON_RICOCHET = 16
+/** The turret of tank `shooter` was shot off at the event's point. */
+export const WEAPON_TURRET = 17
 
 /** How a stickman died, as in a `Kill`. Mirrors `DEATH_*`. */
 export const DEATH_BODY = 0
@@ -85,6 +93,9 @@ export const DAMAGE_REAR = 1
 export const DAMAGE_LEFT = 2
 export const DAMAGE_RIGHT = 3
 export const DAMAGE_WHEELS = 4
+/** A tank's slot 4 (its wheels are never hurt): `TURRET_GONE` once the turret has been shot off. */
+export const DAMAGE_TURRET = 4
+export const TURRET_GONE = 255
 /** A wheel damaged this much has come off. */
 export const WHEEL_GONE = 255
 const NO_DAMAGE: readonly number[] = [0, 0, 0, 0, 0, 0, 0, 0]
