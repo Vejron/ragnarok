@@ -701,8 +701,9 @@ export class Game {
       hitMarker: hitView.marker,
       hurt: hitView.vignette,
       hurtArcs: hitView.arcs,
-      x: position[0],
-      z: position[2],
+      // Seated, the on-foot body stays where it got in; the map follows the vehicle.
+      x: ride?.x ?? position[0],
+      z: ride?.z ?? position[2],
       yaw: this.input.yaw,
       halfExtent: this.world?.halfExtent ?? 0,
     })
