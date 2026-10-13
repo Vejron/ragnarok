@@ -2,12 +2,15 @@ import type { ArcView, MarkerView } from './feedback'
 import type { ItemSlot } from './sim/items'
 import type { ConnectionStatus } from './net/transport'
 import type { FeedEntry, ScoreRow } from './scoreboard'
+import type { VoiceStatus } from './voice'
 
 /** Everything the overlay draws, assembled by the game once a frame. */
 export interface HudStats {
   status: ConnectionStatus
   rtt: number | null
   players: number
+  /** Proximity voice: the microphone, whether it is open, and the voices in range. */
+  voice: VoiceStatus
   interpDelayMs: number
   /** Map tiles loaded around the player. */
   tiles: number

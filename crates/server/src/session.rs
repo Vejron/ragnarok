@@ -8,7 +8,7 @@ use salvo::prelude::*;
 use shared::consts::*;
 use shared::protocol::*;
 use std::time::{Duration, Instant};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 
 /// Input datagrams arrive at the client tick rate; anything much faster is dropped.
@@ -23,6 +23,39 @@ pub const COMMAND_CAPACITY: usize = 4096;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
 /// A reliable write that has not completed after this long means the client has stopped reading.
 const RELIABLE_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Signaling messages a player may send per second: an offer, an answer and a burst of ICE candidates
+/// for each of the few peers in earshot.
+const MAX_RTC_PER_SECOND: u32 = 64;
+/// Largest frame the signaling stream may announce: a payload and its MessagePack framing.
+const MAX_RTC_FRAME: usize = RTC_MAX_PAYLOAD + 64;
+
+/// Reads from the signaling stream if the client has opened one, and waits forever otherwise.
+async fn read_signal<R: AsyncRead + Unpin>(stream: &mut Option<R>, chunk: &mut [u8]) -> std::io::Result<usize> {
+    match stream {
+        Some(stream) => stream.read(chunk).await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Takes the complete `[u32 length][MessagePack]` frames off the front of `buffer`. `None` means a
+/// frame announced a length no honest client sends.
+fn take_frames(buffer: &mut Vec<u8>) -> Option<Vec<Vec<u8>>> {
+    let mut frames = Vec::new();
+    let mut at = 0;
+    while buffer.len() >= at + 4 {
+        let length = u32::from_be_bytes(buffer[at..at + 4].try_into().expect("four bytes")) as usize;
+        if length > MAX_RTC_FRAME {
+            return None;
+        }
+        if buffer.len() < at + 4 + length {
+            break;
+        }
+        frames.push(buffer[at + 4..at + 4 + length].to_vec());
+        at += 4 + length;
+    }
+    buffer.drain(..at);
+    Some(frames)
+}
 
 pub struct Transport {
     pub commands: mpsc::Sender<Command>,
@@ -88,6 +121,11 @@ impl Transport {
         // Every reliable message goes down this one stream, in order, each behind a 4-byte length.
         // Separate streams could arrive in any order, and a kill could overtake its victim's leave.
         let mut reliable = None;
+        // The one stream the client opens for voice signaling, with the bytes read so far.
+        let mut signaling = None;
+        let mut signal_buffer: Vec<u8> = Vec::new();
+        let mut rtc_window = (Instant::now(), 0u32);
+        let mut chunk = [0u8; 2048];
 
         loop {
             let wake = [delayed_in.next_due(), delayed_out.next_due()].into_iter().flatten().fold(last_heard + IDLE_TIMEOUT, Instant::min);
@@ -100,6 +138,45 @@ impl Transport {
                     last_heard = Instant::now();
                     if payload.len() > MAX_PACKET { continue; }
                     if netem { delayed_in.push(payload, Instant::now()); } else { incoming.push(payload); }
+                }
+                accepted = session.accept_uni(), if signaling.is_none() => {
+                    match accepted {
+                        Ok(Some((_, stream))) => {
+                            signaling = Some(stream);
+                            signal_buffer.clear();
+                        }
+                        _ => break,
+                    }
+                }
+                read = read_signal(&mut signaling, &mut chunk) => {
+                    match read {
+                        Ok(count) if count > 0 => {
+                            last_heard = Instant::now();
+                            signal_buffer.extend_from_slice(&chunk[..count]);
+                            let Some(frames) = take_frames(&mut signal_buffer) else {
+                                tracing::info!(id, "oversized signaling frame, dropping");
+                                break;
+                            };
+                            for frame in frames {
+                                if rtc_window.0.elapsed() >= Duration::from_secs(1) {
+                                    rtc_window = (Instant::now(), 0);
+                                }
+                                rtc_window.1 += 1;
+                                if rtc_window.1 > MAX_RTC_PER_SECOND { continue; }
+                                let Some(Rtc(tag, to, kind, json)) = decode(&frame) else { continue };
+                                if tag != C_RTC || kind > RTC_ICE || json.len() > RTC_MAX_PAYLOAD { continue; }
+                                match self.commands.try_send(Command::Rtc { from: id, to, kind, json }) {
+                                    Err(mpsc::error::TrySendError::Closed(_)) => return Ok(()),
+                                    Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => {}
+                                }
+                            }
+                        }
+                        // The client closed or reset it: it may open another.
+                        _ => {
+                            signaling = None;
+                            signal_buffer.clear();
+                        }
+                    }
                 }
                 outgoing = inbox.recv() => match outgoing {
                     Some(Outgoing::Datagram(bytes)) => {
@@ -174,5 +251,34 @@ impl Transport {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn framed(payload: &[u8]) -> Vec<u8> {
+        let mut bytes = (payload.len() as u32).to_be_bytes().to_vec();
+        bytes.extend_from_slice(payload);
+        bytes
+    }
+
+    #[test]
+    fn frames_are_taken_whole_and_partial_ones_wait() {
+        let mut buffer = framed(b"ab");
+        buffer.extend(framed(b"cde"));
+        let rest = framed(b"fg");
+        buffer.extend_from_slice(&rest[..5]);
+        assert_eq!(take_frames(&mut buffer), Some(vec![b"ab".to_vec(), b"cde".to_vec()]));
+        buffer.extend_from_slice(&rest[5..]);
+        assert_eq!(take_frames(&mut buffer), Some(vec![b"fg".to_vec()]));
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn an_oversized_frame_is_refused() {
+        let mut buffer = ((MAX_RTC_FRAME + 1) as u32).to_be_bytes().to_vec();
+        assert_eq!(take_frames(&mut buffer), None);
     }
 }

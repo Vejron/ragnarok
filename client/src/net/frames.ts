@@ -32,3 +32,11 @@ export class FrameReader {
     return messages
   }
 }
+
+/** One message behind its 4-byte big-endian length: the framing `FrameReader` undoes, in the other direction. */
+export function frame(message: Uint8Array): Uint8Array {
+  const framed = new Uint8Array(4 + message.byteLength)
+  new DataView(framed.buffer).setUint32(0, message.byteLength, false)
+  framed.set(message, 4)
+  return framed
+}

@@ -9,6 +9,8 @@ pub enum Command {
     Leave(u32),
     /// Input frames, with the tick of the newest snapshot the client says it holds.
     Input(u32, u32, Vec<InputFrame>),
+    /// Voice signaling from the first player for the second, relayed as is.
+    Rtc { from: u32, to: u32, kind: u8, json: String },
 }
 
 #[derive(Clone, Debug)]

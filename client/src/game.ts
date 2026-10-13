@@ -45,7 +45,8 @@ import { halfExtentsOf } from './sim/kinds'
 import { AIM_DISTANCE_SCALE, CAMERA_HEIGHT, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, PLANE_CAMERA_HEIGHT, PLANE_DISTANCE, Scene } from './render/scene'
 import { ChaseCam } from './render/chase'
 import { HeliModel } from './render/heli'
-import { wrapAngle } from './net/codec'
+import { encodeRtc, wrapAngle } from './net/codec'
+import { VoiceChat } from './voice'
 import { PlaneModel } from './render/plane'
 import { TankModel } from './render/tank'
 import { cameraDistance, createVehicleModel, loadVehicleModels } from './render/vehicles'
@@ -128,6 +129,8 @@ export class Game {
   private readonly scene: Scene
   readonly input: InputController
   private readonly transport: Transport
+  /** Proximity voice chat, peer to peer; the server only relays its signaling. */
+  private readonly voice = new VoiceChat((peer, kind, json) => this.transport.sendReliable(encodeRtc(peer, kind, json)))
   private readonly clock = new ServerClock()
   private readonly rtt = new RttEstimator()
   private readonly interp = new Interpolator<EntityState>(blendEntity)
@@ -430,7 +433,11 @@ export class Game {
       case 'pong':
         this.rtt.pong(message.nonce, now)
         break
+      case 'rtc':
+        void this.voice.receive(message.from, message.kind, message.json)
+        break
       case 'leave':
+        this.voice.forget(message.id)
         this.interp.remove(message.id)
         this.board.forget(message.id)
         break
@@ -627,6 +634,7 @@ export class Game {
     }
 
     const seen = new Set<number>([0])
+    const nearby: Array<{ id: number; x: number; y: number; z: number }> = []
     const roosters = new Set<number>()
     for (const id of this.interp.ids()) {
       const state = this.interp.sample(id, renderTick)
@@ -638,6 +646,7 @@ export class Game {
       }
       if (!state || state.kind !== KIND_STICKMAN) continue
       seen.add(id)
+      nearby.push({ id, x: state.x, y: state.y, z: state.z })
       const avatar = this.avatar(id)
       avatar.dead = state.dead
       avatar.held = state.held
@@ -659,6 +668,8 @@ export class Game {
       }
     }
 
+    this.voice.setTalking(this.localId !== null && this.hp > 0 && this.input.isHeld('KeyV'))
+    this.voice.update(this.localId, position, nearby)
     blobs.end()
     this.scene.render()
     this.sights(aviator)
@@ -666,6 +677,7 @@ export class Game {
     this.onStats({
       status: this.transport.status,
       rtt: this.rtt.rtt,
+      voice: this.voice.status,
       players: this.localId === null ? 1 : seen.size + riders(cars) - (seated ? 1 : 0),
       interpDelayMs: (this.clock.interpDelay * TICK_MS),
       tiles: this.tiles?.loaded ?? 0,
@@ -1305,6 +1317,7 @@ export class Game {
     clearTimeout(this.reconnectTimer)
     clearInterval(this.pingTimer)
     this.transport.close()
+    this.voice.dispose()
     this.input.dispose()
     this.driver?.dispose()
     this.tiles?.dispose()

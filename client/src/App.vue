@@ -140,6 +140,9 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
     <span :class="['status', stats.status.toLowerCase()]">{{ stats.status === 'CONNECTED' ? 'ONLINE' : stats.status === 'CONNECTING' ? 'CONNECTING' : 'SOLO' }}</span>
     <span v-if="stats.rtt !== null">{{ Math.round(stats.rtt) }} ms</span>
     <span>{{ stats.players }} {{ stats.players === 1 ? 'player' : 'players' }} in view</span>
+    <span v-if="stats.status === 'CONNECTED' && stats.voice.mic !== 'unavailable'" :class="['voice', { talking: stats.voice.talking }]">
+      {{ stats.voice.mic === 'denied' ? 'mic blocked' : stats.voice.talking ? 'talking' : 'V to talk' }}<template v-if="stats.voice.peers > 0"> · {{ stats.voice.peers }} in earshot</template>
+    </span>
     <span v-if="stats.status === 'CONNECTED'">{{ stats.kills }} kills · {{ stats.deaths }} deaths</span>
     <span class="debug">tiles {{ stats.tiles }} · interp {{ Math.round(stats.interpDelayMs) }} ms · fix {{ stats.correction.toFixed(2) }} m · unacked {{ stats.pending }}</span>
   </div>
@@ -216,7 +219,7 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
     <h1>RAGNAROK</h1>
     <p>{{ stats.touch ? 'Tap to play' : 'Click to play' }}</p>
     <p v-if="stats.touch" class="keys">Left thumb moves · Drag the right side to look · Buttons jump, crouch, fire, reload and use · Tap the slots to switch items</p>
-    <p v-else class="keys">WASD move · Shift run · Space jump · E take, drive, ride or man a gun · 1-5 or wheel pick an item · Mouse look · Click fire · Right mouse aim (scope with the sniper) · R reload · M map · Tab scores · Esc release</p>
+    <p v-else class="keys">WASD move · Shift run · Space jump · E take, drive, ride or man a gun · 1-5 or wheel pick an item · Mouse look · Click fire · Right mouse aim (scope with the sniper) · R reload · V talk · M map · Tab scores · Esc release</p>
   </div>
 </template>
 
@@ -235,6 +238,7 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
 .status.connected { color: #138a4b; }
 .status.connecting { color: #b26b00; }
 .status.offline { color: #b3261e; }
+.voice.talking { color: #138a4b; font-weight: 600; }
 .debug { font-weight: 500; opacity: 0.8; }
 .banner {
   position: fixed; top: 52px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 32px);

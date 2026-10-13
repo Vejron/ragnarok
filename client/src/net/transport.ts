@@ -1,6 +1,6 @@
 import { MAX_PACKET } from '@/sim/consts'
 import { decodeServer, type ServerMessage } from './codec'
-import { FrameReader } from './frames'
+import { frame, FrameReader } from './frames'
 
 export type ConnectionStatus = 'OFFLINE' | 'CONNECTING' | 'CONNECTED'
 
@@ -11,6 +11,8 @@ export type ConnectionStatus = 'OFFLINE' | 'CONNECTING' | 'CONNECTED'
 export class Transport {
   private session: WebTransport | null = null
   private writer: WritableStreamDefaultWriter<Uint8Array> | null = null
+  /** The one reliable stream to the server, for voice signaling: opened on first use. */
+  private signaling: Promise<WritableStreamDefaultWriter<Uint8Array> | null> | null = null
   status: ConnectionStatus = 'OFFLINE'
 
   constructor(
@@ -52,10 +54,26 @@ export class Transport {
     this.writer?.write(bytes).catch(() => {})
   }
 
+  /**
+   * Sends a signaling message reliably and in order, on a stream of its own: an SDP offer does not
+   * fit a datagram and must not be lost. Dropped silently when offline.
+   */
+  sendReliable(bytes: Uint8Array) {
+    const session = this.session
+    if (!session) return
+    this.signaling ??= session.createUnidirectionalStream().then(
+      (stream) => stream.getWriter(),
+      () => null,
+    )
+    const framed = frame(bytes)
+    void this.signaling.then((writer) => writer?.write(framed).catch(() => {}))
+  }
+
   close() {
     const session = this.session
     this.session = null
     this.writer = null
+    this.signaling = null
     try {
       session?.close()
     } catch {}

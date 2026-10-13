@@ -102,6 +102,15 @@ impl Game {
                 let _ = reply.send(self.join(outbox));
             }
             Command::Leave(id) => self.leave(id),
+            Command::Rtc { from, to, kind, json } => {
+                // Signaling is retried by WebRTC itself, so a full outbox just sheds it: unlike
+                // game state it must not cost the receiver their session.
+                if from != to && self.world.players.contains_key(&from) {
+                    if let Some(outbox) = self.outboxes.get(&to) {
+                        let _ = outbox.try_send(Outgoing::Reliable(encode(&Rtc(S_RTC, from, kind, json)).into()));
+                    }
+                }
+            }
             Command::Input(id, baseline, frames) => {
                 if let Some(player) = self.world.players.get_mut(&id) {
                     player.inputs.push(&frames);
@@ -354,6 +363,21 @@ mod tests {
         game.world.fresh_destroyed.push((Obj::Tree(Default::default()), 0));
         game.step();
         assert!(!game.world.players.contains_key(&id));
+    }
+
+    #[test]
+    fn rtc_is_relayed_with_the_sender_filled_in() {
+        let mut game = game();
+        let (a, _a) = join(&mut game);
+        let (b, mut inbox_b) = join(&mut game);
+        drain(&mut inbox_b);
+        game.handle(Command::Rtc { from: a, to: b, kind: RTC_OFFER, json: "{}".into() });
+        let Some(Outgoing::Reliable(bytes)) = drain(&mut inbox_b).into_iter().next() else { panic!("no rtc") };
+        assert_eq!(decode::<Rtc>(&bytes), Some(Rtc(S_RTC, a, RTC_OFFER, "{}".into())));
+        // Nobody to relay to, and to oneself, is a no-op.
+        game.handle(Command::Rtc { from: a, to: 9999, kind: RTC_ICE, json: String::new() });
+        game.handle(Command::Rtc { from: b, to: b, kind: RTC_ICE, json: String::new() });
+        assert!(drain(&mut inbox_b).is_empty());
     }
 
     #[test]

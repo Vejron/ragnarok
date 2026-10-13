@@ -9,6 +9,7 @@ import { HOTBAR_SLOTS, type ItemSlot } from '@/sim/items'
 
 const C_INPUT = 0
 const C_PING = 1
+const C_RTC = 2
 
 const S_WELCOME = 0
 const S_SNAPSHOT = 1
@@ -19,6 +20,7 @@ const S_SCORES = 5
 const S_DESTROYED = 6
 const S_DAMAGED = 7
 const S_HIT = 8
+const S_RTC = 9
 /** A `Hit` bearing for harm with no direction. */
 const BEARING_NONE = -32768
 
@@ -354,6 +356,8 @@ export type ServerMessage =
   /** Buildings hurt since the last such message; the first one a joiner gets is every hurt one. */
   | { type: 'damaged'; buildings: DamagedBuilding[] }
   /** Damage you dealt (role 0) or took (role 1); `bearing` is where a taken hit came from, null if nowhere. */
+  /** Voice signaling from player `from`, relayed by the server: a session description or ICE candidate as JSON. */
+  | { type: 'rtc'; from: number; kind: number; json: string }
   | { type: 'hit'; role: number; kind: number; amount: number; weapon: number; bearing: number | null; x: number; y: number; z: number; target: number }
 
 const CM = 100
@@ -370,6 +374,16 @@ export const fromAxis = (value: number) => Math.max(-1, Math.min(1, value / 127)
 /** `baseline` is the tick of the newest snapshot rebuilt so far, or 0: the server diffs against it. */
 export function encodeInput(frames: readonly InputFrame[], baseline = 0): Uint8Array {
   return encode([C_INPUT, PROTOCOL_VERSION, baseline, frames.map((f) => [f.seq, f.strafe, f.forward, f.yaw, f.buttons, f.pitch, f.view, f.slot])])
+}
+
+/** `Rtc` kinds. */
+export const RTC_OFFER = 0
+export const RTC_ANSWER = 1
+export const RTC_ICE = 2
+
+/** Voice signaling for player `peer`. Goes down the signaling stream, not as a datagram. */
+export function encodeRtc(peer: number, kind: number, json: string): Uint8Array {
+  return encode([C_RTC, peer, kind, json])
 }
 
 export function encodePing(nonce: number): Uint8Array {
@@ -663,6 +677,9 @@ export function decodeServer(bytes: Uint8Array): ServerMessage | null {
       }
       return { type: 'damaged', buildings }
     }
+    case S_RTC:
+      if (raw.length !== 4 || !isInt(raw[1]) || !isInt(raw[2]) || typeof raw[3] !== 'string') return null
+      return { type: 'rtc', from: raw[1], kind: raw[2], json: raw[3] }
     case S_HIT:
       if (raw.length !== 10 || !ints(raw)) return null
       return {

@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 /// Client → server tags.
 pub const C_INPUT: u8 = 0;
 pub const C_PING: u8 = 1;
+/// Voice signaling, sent on a client-opened reliable stream rather than as a datagram.
+pub const C_RTC: u8 = 2;
 
 /// Server → client tags.
 pub const S_WELCOME: u8 = 0;
@@ -21,6 +23,7 @@ pub const S_SCORES: u8 = 5;
 pub const S_DESTROYED: u8 = 6;
 pub const S_DAMAGED: u8 = 7;
 pub const S_HIT: u8 = 8;
+pub const S_RTC: u8 = 9;
 
 /// `Hit` roles: whose feedback it is.
 /// You hurt something.
@@ -515,6 +518,21 @@ pub struct Hit {
     pub target: u32,
 }
 
+/// `RTC_*` kinds: what an `Rtc` payload is.
+pub const RTC_OFFER: u8 = 0;
+pub const RTC_ANSWER: u8 = 1;
+pub const RTC_ICE: u8 = 2;
+/// Longest `Rtc` payload the server relays, bytes. A voice-only SDP is under 2 KiB.
+pub const RTC_MAX_PAYLOAD: usize = 8192;
+
+/// `[2 | 9, peer, kind, json]`: WebRTC signaling for proximity voice, relayed by the server and never
+/// interpreted. Client → server (tag `C_RTC`, on a reliable stream) `peer` is the player it is for;
+/// server → client (tag `S_RTC`, on the reliable stream) `peer` is the player it is from, which the
+/// server fills in, so it cannot be forged. `kind` is `RTC_*` and `json` the session description or
+/// ICE candidate as a JSON string. The voice itself goes peer to peer.
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Rtc(pub u8, pub u32, pub u8, pub String);
+
 /// Reads the tag of a `[tag, ...]` message without decoding the rest. Every message is an array
 /// (a fixarray header, or array16 once there are more than 15 fields, as a snapshot has) whose
 /// first element is a positive fixint.
@@ -543,7 +561,7 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 22, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
+        148, 0, 23, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3,
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[
@@ -593,6 +611,13 @@ mod tests {
         assert_eq!(encode(&message), DESTROYED_FIXTURE);
         assert_eq!(decode::<Destroyed>(DESTROYED_FIXTURE), Some(message));
         assert_eq!(peek_tag(DESTROYED_FIXTURE), Some(S_DESTROYED));
+    }
+
+    #[test]
+    fn rtc_matches_fixture() {
+        // Copied byte for byte in `client/src/__tests__/codec.spec.ts`.
+        assert_eq!(encode(&Rtc(S_RTC, 5, RTC_ICE, "x".into())), [148, 9, 5, 2, 161, 120]);
+        assert_eq!(decode::<Rtc>(&[148, 2, 5, 2, 161, 120]), Some(Rtc(C_RTC, 5, RTC_ICE, "x".into())));
     }
 
     #[test]
