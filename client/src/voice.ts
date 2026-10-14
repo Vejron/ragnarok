@@ -9,15 +9,17 @@ import { audioContext } from './audio'
  */
 
 /** Silent beyond this many metres. The panner's `maxDistance`. */
-export const HEAR_RADIUS = 40
+export const HEAR_RADIUS = 100
 /** A connection is opened to a player closer than this... */
-export const CONNECT_RADIUS = 35
+export const CONNECT_RADIUS = 85
 /** ...and closed again beyond this, so standing at the edge does not thrash. */
-export const DROP_RADIUS = 50
+export const DROP_RADIUS = 110
 /** Connections held at once. Each is a full duplex Opus stream, so this bounds upload. */
 export const MAX_PEERS = 8
 /** Inside this distance a voice is at full volume. */
 const FULL_VOLUME_RADIUS = 2
+/** A connection not up after this long is torn down and tried again. */
+const STALL_MS = 12000
 
 export interface Candidate {
   id: number
@@ -71,6 +73,7 @@ interface Peer {
   /** ICE candidates that arrived before the offer they belong to. */
   queued: RTCIceCandidateInit[]
   remoteSet: boolean
+  openedAt: number
 }
 
 export class VoiceChat {
@@ -110,6 +113,9 @@ export class VoiceChat {
       this.distances.set(other.id, distance)
       candidates.push({ id: other.id, distance })
     }
+    // A handshake that never completes (the other side could not see us, a lost offer) is retried from scratch.
+    const now = Date.now()
+    for (const peer of [...this.peers.values()]) if (peer.connection.connectionState !== 'connected' && now - peer.openedAt > STALL_MS) this.close(peer.id)
     const { connect, drop } = choosePeers(candidates, new Set(this.peers.keys()))
     for (const id of drop) this.close(id)
     for (const id of connect) this.open(id, self < id)
@@ -218,7 +224,7 @@ export class VoiceChat {
     panner.maxDistance = HEAR_RADIUS
     panner.rolloffFactor = 1
     panner.connect(ctx.destination)
-    const peer: Peer = { id, connection, sender: transceiver.sender, panner, source: null, element: null, queued: [], remoteSet: false }
+    const peer: Peer = { id, connection, sender: transceiver.sender, panner, source: null, element: null, queued: [], remoteSet: false, openedAt: Date.now() }
     this.peers.set(id, peer)
 
     connection.onicecandidate = (event) => {
@@ -230,6 +236,7 @@ export class VoiceChat {
       element.srcObject = stream
       element.muted = true
       peer.element = element
+      void element.play().catch(() => {})
       peer.source = ctx.createMediaStreamSource(stream)
       peer.source.connect(panner)
     }

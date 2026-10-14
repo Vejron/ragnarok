@@ -281,7 +281,8 @@ export class VehicleSounds {
   setListener(position: Vec3, forward: Vec3, velocity: Vec3 = [0, 0, 0]) {
     this.listener = position
     this.listenerVelocity = velocity
-    const l = this.ctx?.listener
+    // The listener is shared with voice chat, so it must move even before any vehicle has sounded.
+    const l = (this.ctx ?? this.provided ?? audioContext())?.listener
     if (!l) return
     if (l.positionX) {
       l.positionX.value = position[0]
