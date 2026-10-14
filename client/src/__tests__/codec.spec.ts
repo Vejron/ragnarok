@@ -6,12 +6,10 @@ import { BUTTON_FIRE, BUTTON_JUMP, BUTTON_RUN } from '@/sim/consts'
 
 // Byte-for-byte copies of the fixtures in `crates/shared/src/protocol.rs`. If these break, the
 // TypeScript and Rust encoders have drifted apart.
-const INPUT_FIXTURE = [148, 0, 24, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3]
-const SNAPSHOT_FIXTURE = [
-  220, 0, 16, 1, 205, 4, 210, 205, 4, 206, 42, 9, 145, 154, 7, 0, 0, 85, 206, 0, 1, 134, 160, 0, 0, 3, 0, 0, 145, 153, 1, 25, 253, 40, 208, 136, 205, 2, 138, 1, 209, 254, 212, 12, 146, 158, 10, 2, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 146, 1, 7, 148, 209, 253, 68, 204, 250, 3, 205, 4, 210, 0, 192, 192, 158, 12, 6, 209, 254, 12, 205, 1, 44, 205, 3, 32, 10, 236, 30, 0, 146, 4, 0, 148, 205, 11, 184, 204, 200, 9, 0, 70, 192, 149, 17, 204, 200, 0, 3, 3, 145, 157, 9, 100, 0, 208, 211, 3, 254, 0, 4, 148, 1, 0, 7, 0, 192, 100, 152, 0, 0, 40, 0, 0, 0, 204, 255, 3, 192, 146, 3, 11, 152, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 73, 204, 128, 147, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 152, 40, 1, 205, 4, 176, 204, 150, 209, 252, 224, 205, 11, 184, 0, 209, 246, 60, 145, 149, 60, 4, 209, 254, 212, 5, 205, 4, 226, 145, 154, 77, 7, 2, 120, 204, 165, 209, 244, 72, 205, 5, 220, 236, 209, 150, 136, 205, 4, 209,
-]
+const INPUT_FIXTURE = [148, 0, 25, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3]
+const SNAPSHOT_FIXTURE = [220, 0, 16, 1, 205, 4, 210, 205, 4, 206, 42, 9, 145, 155, 7, 0, 0, 85, 206, 0, 1, 134, 160, 0, 0, 3, 0, 0, 0, 145, 154, 1, 25, 253, 40, 208, 136, 205, 2, 138, 1, 0, 209, 254, 212, 12, 146, 158, 10, 2, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 146, 1, 7, 148, 209, 253, 68, 204, 250, 3, 205, 4, 210, 0, 192, 192, 158, 12, 6, 209, 254, 12, 205, 1, 44, 205, 3, 32, 10, 236, 30, 0, 146, 4, 0, 148, 205, 11, 184, 204, 200, 9, 0, 70, 192, 149, 17, 204, 200, 0, 3, 3, 145, 157, 9, 100, 0, 208, 211, 3, 254, 0, 4, 148, 1, 0, 7, 0, 192, 100, 152, 0, 0, 40, 0, 0, 0, 204, 255, 3, 192, 146, 3, 11, 152, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 73, 204, 128, 147, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 152, 40, 1, 205, 4, 176, 204, 150, 209, 252, 224, 205, 11, 184, 0, 209, 246, 60, 145, 149, 60, 4, 209, 254, 212, 5, 205, 4, 226, 145, 154, 77, 7, 2, 120, 204, 165, 209, 244, 72, 205, 5, 220, 236, 209, 150, 136, 205, 4, 209]
 
-const person = (id: number, x: number): RawEntity => [id, 0, x, 90, -x, 100, 0, 1, 0, 0]
+const person = (id: number, x: number): RawEntity => [id, 0, x, 90, -x, 100, 0, 1, 0, 0, 0]
 const car = (id: number, x: number, seats: number[]): RawVehicle => [id, 1, x, 40, 7, 10, -20, 30, 5, seats, null, 100, null, null]
 const tank = (id: number, yaw: number): RawVehicle => [id, 2, 0, 40, 0, 0, 0, 0, 0, [0, 0], [yaw, 100, 1, 500], 250, null, null]
 const plane = (id: number, arms: number[]): RawVehicle => [id, KIND_PLANE, 0, 140, 0, 0, 0, 0, 0, [0, 0], [0, 0, 0, 0], 70, null, arms]
@@ -46,8 +44,8 @@ describe('codec', () => {
       ack: 42,
       ride: 9,
       delta: {
-        newEntities: [[7, 0, 0, 85, 100000, 0, 0, 3, 0, 0]],
-        entities: [[1, 25, -3, 40, -120, 650, 1, -300, 12]],
+        newEntities: [[7, 0, 0, 85, 100000, 0, 0, 3, 0, 0, 0]],
+        entities: [[1, 25, -3, 40, -120, 650, 1, 0, -300, 12]],
         newVehicles: [
           [10, 2, 300, 90, -2000, 0, 700, 0, 32, [1, 7], [-700, 250, 3, 1234], 0, null, null],
           [12, KIND_PLANE, -500, 300, 800, 10, -20, 30, 0, [4, 0], [3000, 200, 9, 0], 70, null, [17, 200, 0, 3, ARMS_CUT | ARMS_JAMMED]],
@@ -81,7 +79,7 @@ describe('codec', () => {
 
   it('converts a rebuilt scene to game units', () => {
     const scene: WireScene = {
-      entities: [[1, 0, 1234, -123456, 101, 1571, -500, 0, 650, -300], [7, 0, 0, 85, 100000, 0, 0, 3, 0, 0]],
+      entities: [[1, 0, 1234, -123456, 101, 1571, -500, 0, 0, 650, -300], [7, 0, 0, 85, 100000, 0, 0, 3, 0, 0, 0]],
       vehicles: [
         [9, 1, -250, 80, 4100, 1200, -3000, 15, -64, [1, 0, 7, 0], null, 100, [0, 0, 40, 0, 0, 0, 255, 3], null],
         [10, 2, 300, 90, -2000, 0, 700, 0, 32, [1, 7], [-700, 250, 3, 1234], 0, null, null],
@@ -90,8 +88,8 @@ describe('codec', () => {
     }
     expect(sceneStates(scene)).toEqual({
       entities: [
-        { id: 1, kind: 0, x: 12.34, y: -1234.56, z: 1.01, yaw: 1.571, vy: -5, grounded: false, dead: false, crouching: false, knockX: 6.5, knockZ: -3, held: 0, crowing: false },
-        { id: 7, kind: 0, x: 0, y: 0.85, z: 1000, yaw: 0, vy: 0, grounded: true, dead: true, crouching: false, knockX: 0, knockZ: 0, held: 0, crowing: false },
+        { id: 1, kind: 0, x: 12.34, y: -1234.56, z: 1.01, yaw: 1.571, vy: -5, grounded: false, dead: false, crouching: false, prone: false, knockX: 6.5, knockZ: -3, held: 0, crowing: false },
+        { id: 7, kind: 0, x: 0, y: 0.85, z: 1000, yaw: 0, vy: 0, grounded: true, dead: true, crouching: false, prone: false, knockX: 0, knockZ: 0, held: 0, crowing: false },
       ],
       vehicles: [
         {
@@ -191,10 +189,10 @@ describe('delta snapshots', () => {
   // The same scene and changes as `apply_reproduces_the_new_scene` in `crates/shared/src/delta.rs`.
   it('applies a delta like the server does', () => {
     const base: WireScene = { entities: [person(1, 100), person(2, 200), person(5, 300)], vehicles: [car(9, 0, [0, 0, 0, 0]), tank(10, 0)] }
-    const moved: RawEntity = [2, 0, 230, 90, -230, -3000 + 100, 650, 1, -400, 0]
+    const moved: RawEntity = [2, 0, 230, 90, -230, -3000 + 100, 650, 1, 0, -400, 0]
     const scene = applyDelta(base, {
       newEntities: [person(7, 50)],
-      entities: [[2, 30, 0, -30, -3000, 650, 1, -400, 0]],
+      entities: [[2, 30, 0, -30, -3000, 650, 1, 0, -400, 0]],
       newVehicles: [],
       vehicles: [[9, 120, 0, 0, 0, 0, 0, 0, [1, 0, 0, 0], null, 100, null, null], [10, 0, 0, 0, 0, 0, 0, 0, null, [-700, 100, 1, 500], 250, null, null]],
       removed: [5],
@@ -219,7 +217,7 @@ describe('Replica', () => {
     const first = replica.receive(2, 0, { ...empty, newEntities: [person(1, 100), person(2, 200)] })!
     expect(first.latest).toBe(true)
     expect(replica.baseline).toBe(2)
-    const second = replica.receive(4, 2, { ...empty, entities: [[1, 10, 0, -10, 0, 0, 1, 0, 0]] })!
+    const second = replica.receive(4, 2, { ...empty, entities: [[1, 10, 0, -10, 0, 0, 1, 0, 0, 0]] })!
     expect(second.scene.entities[0]![2]).toBe(110)
     expect(second.scene.entities[1]).toEqual(person(2, 200))
     expect(replica.baseline).toBe(4)

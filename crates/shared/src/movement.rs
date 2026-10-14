@@ -25,7 +25,9 @@ pub fn wish_velocity_scaled(input: &InputFrame, scale: f32) -> [f32; 2] {
         z /= length;
     }
     let buttons = input.buttons();
-    let speed = if buttons & BUTTON_CROUCH != 0 {
+    let speed = if buttons & BUTTON_PRONE != 0 {
+        PRONE_SPEED
+    } else if buttons & BUTTON_CROUCH != 0 {
         CROUCH_SPEED
     } else if buttons & BUTTON_RUN != 0 {
         RUN_SPEED

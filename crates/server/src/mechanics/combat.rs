@@ -462,7 +462,7 @@ fn fire_rocket(world: &mut World, id: u32) {
     let c = player.character;
     let pitch = from_mrad(input.pitch()).clamp(-MAX_PITCH, MAX_PITCH);
     let dir = look(from_mrad(input.yaw), pitch);
-    let eye = [c.position[0], c.position[1] + eye_height(input.buttons()), c.position[2]];
+    let eye = [c.position[0], c.position[1] + eye_height(input.buttons(), c.prone), c.position[2]];
     // Up against a wall it bursts right there instead of starting on its far side.
     if let Some(t) = world.physics.cast_ray(eye, dir, ROCKET_MUZZLE, 0) {
         burst_rocket(world, id, std::array::from_fn(|i| eye[i] + dir[i] * t), dir);
@@ -627,7 +627,7 @@ fn crosshair_dir(world: &World, shooter: u32, back: u32, position: [f32; 3], eye
 }
 
 /// The cone a shot of `item` is scattered over: aim held (`BUTTON_ALT`) tightens it.
-fn effective_spread(item: &ItemDef, buttons: u8) -> f32 {
+fn effective_spread(item: &ItemDef, buttons: u16) -> f32 {
     if buttons & BUTTON_ALT != 0 { item.spread * AIM_SPREAD_SCALE } else { item.spread }
 }
 
@@ -652,7 +652,7 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     let pitch = from_mrad(input.pitch()).clamp(-MAX_PITCH, MAX_PITCH);
     let yaw = from_mrad(input.yaw);
     let look_dir = look(yaw, pitch);
-    let origin = [c.position[0], c.position[1] + eye_height(input.buttons()), c.position[2]];
+    let origin = [c.position[0], c.position[1] + eye_height(input.buttons(), c.prone), c.position[2]];
     let back = rewind_ticks(world.tick, input.view());
     // Looking down a scope the camera is the eye, so the shot goes straight along the look
     // direction, true.
@@ -761,7 +761,7 @@ fn throw_grenade(world: &mut World, id: u32) {
     let c = player.character;
     let pitch = (from_mrad(input.pitch()) + GRENADE_LOFT).clamp(-MAX_PITCH, MAX_PITCH);
     let dir = look(from_mrad(input.yaw), pitch);
-    let eye = [c.position[0], c.position[1] + eye_height(input.buttons()), c.position[2]];
+    let eye = [c.position[0], c.position[1] + eye_height(input.buttons(), c.prone), c.position[2]];
     // Up against a wall it starts at the wall instead of on its far side.
     let reach = world.physics.cast_ray(eye, dir, GRENADE_MUZZLE + GRENADE_RADIUS, 0).map_or(GRENADE_MUZZLE, |t| (t - GRENADE_RADIUS).max(0.0));
     let grenade_id = world.alloc_id();

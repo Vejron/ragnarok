@@ -31,13 +31,13 @@ impl Delta {
 }
 
 fn entity_delta(base: &EntityState, now: &EntityState) -> Option<EntityDelta> {
-    let delta = EntityDelta { id: now.id, dx: now.x - base.x, dy: now.y - base.y, dz: now.z - base.z, dyaw: now.yaw as i32 - base.yaw as i32, dvy: now.vy as i32 - base.vy as i32, flags: now.flags, dknock_x: now.knock_x as i32 - base.knock_x as i32, dknock_z: now.knock_z as i32 - base.knock_z as i32 };
+    let delta = EntityDelta { id: now.id, dx: now.x - base.x, dy: now.y - base.y, dz: now.z - base.z, dyaw: now.yaw as i32 - base.yaw as i32, dvy: now.vy as i32 - base.vy as i32, flags: now.flags, stance: now.stance, dknock_x: now.knock_x as i32 - base.knock_x as i32, dknock_z: now.knock_z as i32 - base.knock_z as i32 };
     let unchanged = delta.dx == 0 && delta.dy == 0 && delta.dz == 0 && delta.dyaw == 0 && delta.dvy == 0 && delta.flags == base.flags && delta.dknock_x == 0 && delta.dknock_z == 0;
     (!unchanged).then_some(delta)
 }
 
 fn apply_entity(base: &EntityState, delta: &EntityDelta) -> EntityState {
-    EntityState { id: base.id, kind: base.kind, x: base.x + delta.dx, y: base.y + delta.dy, z: base.z + delta.dz, yaw: (base.yaw as i32 + delta.dyaw) as i16, vy: (base.vy as i32 + delta.dvy) as i16, flags: delta.flags, knock_x: (base.knock_x as i32 + delta.dknock_x) as i16, knock_z: (base.knock_z as i32 + delta.dknock_z) as i16 }
+    EntityState { id: base.id, kind: base.kind, x: base.x + delta.dx, y: base.y + delta.dy, z: base.z + delta.dz, yaw: (base.yaw as i32 + delta.dyaw) as i16, vy: (base.vy as i32 + delta.dvy) as i16, flags: delta.flags, stance: delta.stance, knock_x: (base.knock_x as i32 + delta.dknock_x) as i16, knock_z: (base.knock_z as i32 + delta.dknock_z) as i16 }
 }
 
 fn vehicle_delta(base: &VehicleState, now: &VehicleState) -> Option<VehicleDelta> {
@@ -112,7 +112,7 @@ mod tests {
     use crate::protocol::{ARMS_CUT, Arms, FLAG_GROUNDED, KIND_JEEP, KIND_PLANE, KIND_STICKMAN, KIND_TANK};
 
     fn person(id: u32, x: i32) -> EntityState {
-        EntityState { id, kind: KIND_STICKMAN, x, y: 90, z: -x, yaw: 100, vy: 0, flags: FLAG_GROUNDED, knock_x: 0, knock_z: 0 }
+        EntityState { id, kind: KIND_STICKMAN, x, y: 90, z: -x, yaw: 100, vy: 0, flags: FLAG_GROUNDED, stance: 0, knock_x: 0, knock_z: 0 }
     }
 
     fn car(id: u32, x: i32, seats: Vec<u32>) -> VehicleState {

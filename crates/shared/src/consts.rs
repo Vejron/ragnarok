@@ -1,7 +1,7 @@
 //! Simulation and network constants. Mirrored in `client/src/sim/consts.ts`.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 24;
+pub const PROTOCOL_VERSION: u8 = 25;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -29,25 +29,29 @@ pub const BASELINE_WINDOW_CLIENT: usize = 64;
 pub const INPUT_REDUNDANCY: usize = 4;
 
 /// Input buttons, as bits of `InputFrame::buttons`.
-pub const BUTTON_JUMP: u8 = 1 << 0;
-pub const BUTTON_RUN: u8 = 1 << 1;
-pub const BUTTON_USE: u8 = 1 << 2;
+pub const BUTTON_JUMP: u16 = 1 << 0;
+pub const BUTTON_RUN: u16 = 1 << 1;
+pub const BUTTON_USE: u16 = 1 << 2;
 /// Gunner's trigger. Held to keep firing; the gun's reload paces it.
-pub const BUTTON_FIRE: u8 = 1 << 3;
+pub const BUTTON_FIRE: u16 = 1 << 3;
 /// Aim held (right mouse): looks down the scope of a gun that has one, and tightens any gun's spread.
-pub const BUTTON_ALT: u8 = 1 << 4;
+pub const BUTTON_ALT: u16 = 1 << 4;
 /// Held to crouch: slower, and a lower eye.
-pub const BUTTON_CROUCH: u8 = 1 << 5;
+pub const BUTTON_CROUCH: u16 = 1 << 5;
 /// One press, sent with run and crouch held: starts a slide. Like a jump it is not repeated.
-pub const BUTTON_SLIDE: u8 = 1 << 6;
+pub const BUTTON_SLIDE: u16 = 1 << 6;
 /// One press: reload the selected gun. Like a jump it is not repeated.
-pub const BUTTON_RELOAD: u8 = 1 << 7;
+pub const BUTTON_RELOAD: u16 = 1 << 7;
+/// Held to lie down: slower, and a low eye. Lets go to stand again, if there is room overhead.
+pub const BUTTON_PRONE: u16 = 1 << 8;
 
 /// Stickman movement, in metres and seconds.
 pub const WALK_SPEED: f32 = 4.0;
 pub const RUN_SPEED: f32 = 7.5;
 /// Crouching overrides running.
 pub const CROUCH_SPEED: f32 = 2.0;
+/// Lying down overrides both: crawling.
+pub const PRONE_SPEED: f32 = 1.0;
 /// A slide is a burst of knockback along the run direction that bleeds off slowly while crouch is held.
 pub const SLIDE_SPEED: f32 = 12.0;
 pub const SLIDE_KEEP: f32 = 0.96;
@@ -72,6 +76,15 @@ pub const MAX_FALL_SPEED: f32 = 50.0;
 /// body origin at the capsule centre.
 pub const CAPSULE_HALF_HEIGHT: f32 = 0.5;
 pub const CAPSULE_RADIUS: f32 = 0.35;
+/// Lying down, the body is a ball of this radius (0.6 m across) resting on the ground. Its bottom is
+/// where the standing capsule's is, so going prone drops the centre by `STAND_CENTRE - PRONE_CENTRE`.
+pub const PRONE_RADIUS: f32 = 0.3;
+/// Capsule-centre height above the feet, standing and prone.
+pub const STAND_CENTRE: f32 = CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS;
+pub const PRONE_CENTRE: f32 = PRONE_RADIUS;
+/// Stance, as `EntityState::stance` on the wire. Crouching is a held button, not a stance.
+pub const STANCE_STANDING: u8 = 0;
+pub const STANCE_PRONE: u8 = 1;
 /// A round that hits above this height over the capsule centre hit the head.
 pub const HEAD_ZONE_Y: f32 = 0.45;
 /// What a headshot does to the damage.
@@ -445,6 +458,8 @@ pub const RESPAWN_TICKS: u32 = 3 * TICK_RATE;
 pub const EYE_HEIGHT: f32 = 0.6;
 /// How far a crouch lowers the eye. The capsule keeps its size, so collision is unchanged.
 pub const CROUCH_EYE_DROP: f32 = 0.3;
+/// A prone stickman's eye is 0.2 m above its feet, so this is relative to the capsule centre.
+pub const PRONE_EYE_HEIGHT: f32 = 0.2 - PRONE_CENTRE;
 
 /// The on-foot camera sits behind a pivot this far to the right of the capsule centre and this far
 /// above it. The server rebuilds the camera ray from it, so a shot lands where the crosshair is.
@@ -452,9 +467,15 @@ pub const CROUCH_EYE_DROP: f32 = 0.3;
 pub const ON_FOOT_SHOULDER: f32 = 0.9;
 pub const ON_FOOT_HEIGHT: f32 = 1.5;
 
-/// Eye height above the capsule centre for a player holding `buttons`.
-pub fn eye_height(buttons: u8) -> f32 {
-    if buttons & BUTTON_CROUCH != 0 { EYE_HEIGHT - CROUCH_EYE_DROP } else { EYE_HEIGHT }
+/// Eye height above the capsule centre for a player holding `buttons`, lying down or not.
+pub fn eye_height(buttons: u16, prone: bool) -> f32 {
+    if prone {
+        PRONE_EYE_HEIGHT
+    } else if buttons & BUTTON_CROUCH != 0 {
+        EYE_HEIGHT - CROUCH_EYE_DROP
+    } else {
+        EYE_HEIGHT
+    }
 }
 /// A hurt building is drawn in this many worse states. Stage `n` begins when its health falls to
 /// `DAMAGE_STAGE_HEALTH[n - 1]` of full (percent); the last is about to collapse.

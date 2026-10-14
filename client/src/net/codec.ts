@@ -1,5 +1,5 @@
 import { decode, encode } from '@msgpack/msgpack'
-import { CAR_SEATS, MAX_PACKET, PROTOCOL_VERSION } from '@/sim/consts'
+import { CAR_SEATS, MAX_PACKET, PROTOCOL_VERSION, STANCE_PRONE } from '@/sim/consts'
 import { HOTBAR_SLOTS, type ItemSlot } from '@/sim/items'
 
 /**
@@ -146,6 +146,8 @@ export interface EntityState {
   dead: boolean
   /** Holding crouch. */
   crouching: boolean
+  /** Lying down. */
+  prone: boolean
   /** Knockback velocity from being hit by a car, m/s. */
   knockX: number
   knockZ: number
@@ -301,7 +303,7 @@ export interface Score {
 }
 
 /**
- * A standing entity as it travels: `[id, kind, x, y, z, yaw, vy, flags, knockX, knockZ]`, all
+ * A standing entity as it travels: `[id, kind, x, y, z, yaw, vy, flags, stance, knockX, knockZ]`, all
  * integers (centimetres, milliradians, cm/s). Scenes are kept in this form so delta arithmetic is
  * exact; `entityState` converts one for the game.
  */
@@ -310,7 +312,7 @@ export type RawEntity = number[]
 /** A vehicle as it travels: `[id, kind, x, y, z, qx, qy, qz, steer, seats, turret | null, hp, damage | null, arms | null]`. */
 export type RawVehicle = [number, number, number, number, number, number, number, number, number, number[], number[] | null, number, number[] | null, number[] | null]
 
-/** `[id, dx, dy, dz, dyaw, dvy, flags, dknockX, dknockZ]`: differences, except `id` and `flags`. */
+/** `[id, dx, dy, dz, dyaw, dvy, flags, stance, dknockX, dknockZ]`: differences, except `id`, `flags` and `stance`. */
 export type RawEntityDelta = number[]
 
 /** `[id, dx, dy, dz, dqx, dqy, dqz, dsteer, seats | null, turret | null, hp, damage | null, arms | null]`. */
@@ -405,16 +407,16 @@ const isInt = (value: unknown): value is number => typeof value === 'number' && 
 const ints = (values: unknown[]) => values.every(isInt)
 
 function readEntity(raw: unknown): RawEntity | null {
-  return Array.isArray(raw) && raw.length === 10 && ints(raw) ? (raw as number[]) : null
+  return Array.isArray(raw) && raw.length === 11 && ints(raw) ? (raw as number[]) : null
 }
 
 function readEntityDelta(raw: unknown): RawEntityDelta | null {
-  return Array.isArray(raw) && raw.length === 9 && ints(raw) ? (raw as number[]) : null
+  return Array.isArray(raw) && raw.length === 10 && ints(raw) ? (raw as number[]) : null
 }
 
 /** Converts a validated raw entity to source units. */
 export function entityState(raw: readonly number[]): EntityState {
-  const [id, kind, x, y, z, yaw, vy, flags, knockX, knockZ] = raw as number[]
+  const [id, kind, x, y, z, yaw, vy, flags, stance, knockX, knockZ] = raw as number[]
   return {
     id: id!, kind: kind!,
     x: x! / CM, y: y! / CM, z: z! / CM,
@@ -423,6 +425,7 @@ export function entityState(raw: readonly number[]): EntityState {
     grounded: (flags! & FLAG_GROUNDED) !== 0,
     dead: (flags! & FLAG_DEAD) !== 0,
     crouching: (flags! & FLAG_CROUCHING) !== 0,
+    prone: stance === STANCE_PRONE,
     knockX: knockX! / CM,
     knockZ: knockZ! / CM,
     held: (flags! & FLAG_HELD_MASK) >> FLAG_HELD_SHIFT,
@@ -556,7 +559,7 @@ export function applyDelta(base: WireScene, delta: WireDelta): WireScene {
       entities.push(e)
       continue
     }
-    entities.push([e[0]!, e[1]!, e[2]! + d[1]!, e[3]! + d[2]!, e[4]! + d[3]!, e[5]! + d[4]!, e[6]! + d[5]!, d[6]!, e[8]! + d[7]!, e[9]! + d[8]!])
+    entities.push([e[0]!, e[1]!, e[2]! + d[1]!, e[3]! + d[2]!, e[4]! + d[3]!, e[5]! + d[4]!, e[6]! + d[5]!, d[6]!, d[7]!, e[9]! + d[8]!, e[10]! + d[9]!])
   }
   entities.push(...delta.newEntities)
   const vehicles: RawVehicle[] = []

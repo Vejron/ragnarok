@@ -9,7 +9,7 @@ import { Backoff } from './net/backoff'
 import { RttEstimator, ServerClock } from './net/clock'
 import { Transport } from './net/transport'
 import {
-  BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, CROUCH_EYE_DROP, SLIDE_MIN_SPEED, ENTER_RADIUS, EXPLOSION_RADIUS, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION, RESPAWN_TICKS,
+  BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, ENTER_RADIUS, EXPLOSION_RADIUS, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION, RESPAWN_TICKS,
   ROCKET_BLAST_RADIUS, SHELL_COOLDOWN_TICKS, STANDING_Y,
   CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS,
   HELI_GUN_COOLDOWN_TICKS, HELI_GUN_LENGTH, HELI_GUN_PITCH_MAX, HELI_GUN_PITCH_MIN, HELI_GUN_YAW_LIMIT, CANNON_RADIUS,
@@ -306,7 +306,7 @@ export class Game {
     // Until the server places us, walk around solo from the first spawn point.
     const [x, z] = world.spawns[0] ?? [0, 0]
     await this.tiles.prime(x, z)
-    this.predictor = new Predictor(motor, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0 })
+    this.predictor = new Predictor(motor, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false })
     this.predictor.speedScale = (input) => aimSpeedScale(this.hotbar[Math.min(input.slot, HOTBAR_SLOTS - 1)]?.item ?? ITEM_NONE, input.buttons)
     this.avatar(0)
     if (this.disposed) return
@@ -450,7 +450,7 @@ export class Game {
           // The stickman is parked inside the car. Inputs still go out; the server just applies them to the car.
           this.predictor?.acknowledge(message.ack)
         } else if (own && this.predictor) {
-          this.predictor.reconcile(message.ack, { position: [own.x, own.y, own.z], yaw: own.yaw, vy: own.vy, grounded: own.grounded, knock: [own.knockX, own.knockZ], ride: message.ride })
+          this.predictor.reconcile(message.ack, { position: [own.x, own.y, own.z], yaw: own.yaw, vy: own.vy, grounded: own.grounded, knock: [own.knockX, own.knockZ], ride: message.ride, prone: own.prone })
         }
         break
       }
@@ -584,7 +584,7 @@ export class Game {
     me.held = this.hotbar[this.input.selectedSlot]?.item ?? ITEM_NONE
     // Face where the camera looks, immediately, rather than the last ticked yaw.
     me.update(position, this.input.yaw, localVx, localVz, local.grounded, dt, this.input.pitch, this.crouching,
-      this.crouching && local.grounded && Math.hypot(local.knock[0], local.knock[1]) > SLIDE_MIN_SPEED)
+      this.crouching && local.grounded && Math.hypot(local.knock[0], local.knock[1]) > SLIDE_MIN_SPEED, local.prone)
     const ride = seated ? cars.get(this.seat!.vehicle) : undefined
     const gunner = ride !== undefined && vehicleDef(ride.kind).gun && this.seat!.index === 1
     // A Strv S's driver fires the gun, which only the barrel's elevation aims: the hull turns to aim sideways.
@@ -667,7 +667,7 @@ export class Game {
       const yaw = this.input.yaw + (chase?.lean ?? 0)
       this.scene.follow([ride.x, ride.y + 0.4, ride.z], yaw, this.input.pitch, cameraDistance(ride.kind) + (chase?.distance ?? 0), 0, CAMERA_HEIGHT, chase?.shake)
     } else if (scoped) {
-      this.scene.scopeFrom([position[0]!, position[1]! + EYE_HEIGHT - (this.crouching ? CROUCH_EYE_DROP : 0), position[2]!], this.input.yaw, this.input.pitch)
+      this.scene.scopeFrom([position[0]!, position[1]! + this.eyeHeight(), position[2]!], this.input.yaw, this.input.pitch)
     } else {
       // Only the distance changes: the pivot is what the server's crosshair ray is built from.
       this.scene.follow(position, this.input.yaw, this.input.pitch, ON_FOOT_DISTANCE * (1 - (1 - AIM_DISTANCE_SCALE) * this.aimBlend), ON_FOOT_SHOULDER, ON_FOOT_HEIGHT)
@@ -721,7 +721,7 @@ export class Game {
       avatar.held = state.held
       if (!state.dead) this.blobFoot(blobs, state.x, state.y, state.z)
       avatar.update([state.x, state.y, state.z], state.yaw, state.velocity[0], state.velocity[1], state.grounded, dt, 0, state.crouching,
-        state.crouching && state.grounded && Math.hypot(state.knockX, state.knockZ) > SLIDE_MIN_SPEED)
+        state.crouching && state.grounded && Math.hypot(state.knockX, state.knockZ) > SLIDE_MIN_SPEED, state.prone)
     }
     for (const [id, avatar] of this.avatars) {
       if (!seen.has(id)) {
@@ -1017,7 +1017,7 @@ export class Game {
       this.trajectory.set(null)
       return
     }
-    const eye: [number, number, number] = [position[0]!, position[1]! + EYE_HEIGHT - (this.crouching ? CROUCH_EYE_DROP : 0), position[2]!]
+    const eye: [number, number, number] = [position[0]!, position[1]! + this.eyeHeight(), position[2]!]
     this.trajectory.set(throwTrajectory((origin, dir, max) => motor.castRay(origin, dir, max), eye, this.input.yaw, this.input.pitch))
   }
 
@@ -1070,6 +1070,12 @@ export class Game {
    * snapshot left it. This carries that position along to wherever the car is drawn now, so the
    * stickman stays glued to the roof and still moves on it.
    */
+  /** Height of the local player's eye above the capsule centre, for the stance they are in. */
+  private eyeHeight(): number {
+    if (this.predictor?.state.prone) return PRONE_EYE_HEIGHT
+    return EYE_HEIGHT - (this.crouching ? CROUCH_EYE_DROP : 0)
+  }
+
   private ridden(position: Vec3, ride: number, renderTick: number): Vec3 {
     const ref = this.refPoses.get(ride)
     const now = ride === 0 ? null : this.vehicleInterp.sample(ride, renderTick)

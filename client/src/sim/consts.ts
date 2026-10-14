@@ -1,6 +1,6 @@
 /** Mirrors `crates/shared/src/consts.rs`. Keep the two in step. */
 
-export const PROTOCOL_VERSION = 24
+export const PROTOCOL_VERSION = 25
 
 /** A hurt building is drawn in this many worse states; the last is about to collapse. Mirrors `DAMAGE_STAGES`. */
 export const DAMAGE_STAGES = 3
@@ -32,11 +32,15 @@ export const BUTTON_CROUCH = 1 << 5
 export const BUTTON_SLIDE = 1 << 6
 /** One press: reload the selected gun. */
 export const BUTTON_RELOAD = 1 << 7
+/** Held to lie down: slower, and a low eye. */
+export const BUTTON_PRONE = 1 << 8
 
 export const WALK_SPEED = 4.0
 export const RUN_SPEED = 7.5
 /** Crouching overrides running. */
 export const CROUCH_SPEED = 2.0
+/** Lying down overrides both: crawling. */
+export const PRONE_SPEED = 1.0
 /** Mirrors the slide constants in `consts.rs`. */
 export const SLIDE_SPEED = 12.0
 export const SLIDE_KEEP = 0.96
@@ -55,6 +59,14 @@ export const KNOCK_MAX_SPEED = 20.0
 
 export const CAPSULE_HALF_HEIGHT = 0.5
 export const CAPSULE_RADIUS = 0.35
+/** Lying down, the body is a ball of this radius. Mirrors `PRONE_RADIUS`. */
+export const PRONE_RADIUS = 0.3
+/** Capsule-centre height above the feet, standing and prone. */
+export const STAND_CENTRE = CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS
+export const PRONE_CENTRE = PRONE_RADIUS
+/** Stance, as the entity stance byte on the wire. */
+export const STANCE_STANDING = 0
+export const STANCE_PRONE = 1
 
 export const CONTROLLER_OFFSET = 0.02
 export const MAX_SLOPE_CLIMB_DEG = 50.0
@@ -255,6 +267,8 @@ export const RESPAWN_TICKS = 3 * TICK_RATE
 export const EYE_HEIGHT = 0.6
 /** How far a crouch lowers the eye. Mirrors `CROUCH_EYE_DROP`. */
 export const CROUCH_EYE_DROP = 0.3
+/** A prone eye is 0.2 m above the feet, relative to the capsule centre. Mirrors `PRONE_EYE_HEIGHT`. */
+export const PRONE_EYE_HEIGHT = 0.2 - PRONE_CENTRE
 /** The on-foot camera pivots this far right of and above the capsule centre. The server rebuilds the camera ray from it. Mirrors `ON_FOOT_SHOULDER`. */
 export const ON_FOOT_SHOULDER = 0.9
 export const ON_FOOT_HEIGHT = 1.5

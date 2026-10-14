@@ -1,5 +1,5 @@
 import { wrapAngle } from '@/net/codec'
-import { BUTTON_ALT, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_RELOAD, BUTTON_RUN, BUTTON_SLIDE, BUTTON_USE } from './consts'
+import { BUTTON_ALT, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_PRONE, BUTTON_RELOAD, BUTTON_RUN, BUTTON_SLIDE, BUTTON_USE } from './consts'
 import { HOTBAR_SLOTS } from './items'
 
 /** Mouse-look sensitivity, radians per pixel. */
@@ -184,6 +184,7 @@ export class InputController {
     if (this.firing || this.held.has('KeyF')) buttons |= BUTTON_FIRE
     if (this.aiming) buttons |= BUTTON_ALT
     if (this.held.has('KeyC') || this.held.has('ControlLeft')) buttons |= BUTTON_CROUCH
+    if (this.held.has('KeyZ')) buttons |= BUTTON_PRONE
     if (this.held.has('ShiftLeft') || this.held.has('ShiftRight')) buttons |= BUTTON_RUN
     return {
       strafe: Math.max(-1, Math.min(1, this.axis(['KeyA', 'ArrowLeft'], ['KeyD', 'ArrowRight']) + this.stick[0])),

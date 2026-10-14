@@ -32,7 +32,7 @@ fn aim_for(game: &Game, id: u32, slot: usize) -> f32 {
 }
 
 /// Feeds `ticks` frames of `buttons`, facing `yaw`.
-fn hold(game: &mut Game, id: u32, seq: &mut u32, yaw: f32, buttons: u8, ticks: u32) {
+fn hold(game: &mut Game, id: u32, seq: &mut u32, yaw: f32, buttons: u16, ticks: u32) {
     let aim = aim_for(game, id, 0);
     for _ in 0..ticks {
         *seq += 1;
@@ -70,7 +70,7 @@ fn give(game: &mut Game, id: u32, slot: usize, item: u8, count: u8) {
 }
 
 /// One tick of `buttons` with `slot` selected, looking `pitch` radians up.
-fn press(game: &mut Game, id: u32, seq: &mut u32, buttons: u8, slot: u8, pitch: f32) {
+fn press(game: &mut Game, id: u32, seq: &mut u32, buttons: u16, slot: u8, pitch: f32) {
     *seq += 1;
     game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: 0, buttons, pitch: to_mrad(pitch), view: 0, slot }]));
     game.step();
@@ -408,7 +408,7 @@ fn an_empty_hand_does_nothing() {
     assert!(game.world.shots.is_empty());
 }
 
-fn hold_slot(game: &mut Game, id: u32, seq: &mut u32, buttons: u8, slot: u8, ticks: u32) {
+fn hold_slot(game: &mut Game, id: u32, seq: &mut u32, buttons: u16, slot: u8, ticks: u32) {
     for _ in 0..ticks {
         press(game, id, seq, buttons, slot, aim_for(game, id, slot as usize));
     }

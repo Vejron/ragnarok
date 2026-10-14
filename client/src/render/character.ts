@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
-import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, RUN_SPEED, WALK_SPEED } from '@/sim/consts'
+import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, PRONE_CENTRE, RUN_SPEED, STAND_CENTRE, WALK_SPEED } from '@/sim/consts'
 import { ITEM_AK5, ITEM_BANDAGE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, itemDef, type ItemDef } from '@/sim/items'
 import { type Limb, poseLimb, splitLimbs } from './gibs'
 
@@ -66,6 +66,8 @@ const BLEND_RATE = 12
 const AIR_RATE = 10
 const DEATH_RATE = 9
 const CROUCH_RATE = 10
+/** The lying-down placeholder tips the whole model forward onto its front, a quarter turn, until there is a prone clip. */
+const LIE_PITCH = Math.PI / 2
 const SLIDE_RATE = 14
 /** Torso lean for aiming: how much of the camera pitch the chest and spine take. */
 const AIM_CHEST = 0.4
@@ -190,6 +192,8 @@ export class Character {
   private air = 0
   private death = 0
   private crouch = 0
+  /** How far lying down, 0 standing to 1 prone. */
+  private lie = 0
   private slide = 0
   private down = false
   private shown = true
@@ -272,7 +276,7 @@ export class Character {
   }
 
   update(
-    position: readonly number[], yaw: number, vx: number, vz: number, grounded: boolean, dt: number, pitch = 0, crouching = false, sliding = false,
+    position: readonly number[], yaw: number, vx: number, vz: number, grounded: boolean, dt: number, pitch = 0, crouching = false, sliding = false, prone = false,
   ) {
     this.position.set(position[0]!, position[1]!, position[2]!)
     this.pitch = pitch
@@ -293,6 +297,7 @@ export class Character {
     this.air = chase(this.air, !grounded && !this.down ? 1 : 0, AIR_RATE, dt)
     this.death = chase(this.death, this.down ? 1 : 0, DEATH_RATE, dt)
     this.crouch = chase(this.crouch, crouching ? 1 : 0, CROUCH_RATE, dt)
+    this.lie = chase(this.lie, prone ? 1 : 0, CROUCH_RATE, dt)
     const alive = 1 - this.death
     const ground = alive * (1 - this.air)
     this.slide = chase(this.slide, sliding && crouching ? 1 : 0, SLIDE_RATE, dt)
@@ -378,11 +383,12 @@ export class Character {
   }
 
   private place(yaw: number) {
-    this.object.position.set(this.position.x, this.position.y - FOOT_OFFSET, this.position.z)
+    // Lying down, the centre is already lower; the pivot goes back up to the ground the feet stand on.
+    this.object.position.set(this.position.x, this.position.y - FOOT_OFFSET + (STAND_CENTRE - PRONE_CENTRE) * this.lie, this.position.z)
     // The model faces +Z; the game's yaw 0 faces -Z.
     // Set all three: a tumble leaves its pitch and roll in the Euler angles, and `rotation.y` alone
     // would keep them, leaving a respawned player tilted.
-    this.object.rotation.set(0, yaw + Math.PI, 0)
+    this.object.rotation.set(LIE_PITCH * this.lie, yaw + Math.PI, 0, 'YXZ')
     if (this.fling) {
       // Tumble about the middle of the body, not the feet.
       const middle = SCRATCH.axis.set(0, FOOT_OFFSET, 0)

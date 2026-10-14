@@ -268,3 +268,56 @@ fn simulation_is_deterministic() {
     };
     assert_eq!(run(), run());
 }
+
+/// A slab over the origin, 1 m off the ground: too low to stand under, high enough to lie under.
+fn world_with_low_roof() -> WorldFile {
+    let v = |x: f32, y: f32, z: f32| [(x * 100.0) as i32, (y * 100.0) as i32, (z * 100.0) as i32];
+    let (lo, hi) = ([-1.0, 1.0, -1.0], [1.0, 1.2, 1.0]);
+    let vertices = vec![
+        v(lo[0], lo[1], lo[2]), v(hi[0], lo[1], lo[2]), v(hi[0], lo[1], hi[2]), v(lo[0], lo[1], hi[2]),
+        v(lo[0], hi[1], lo[2]), v(hi[0], hi[1], lo[2]), v(hi[0], hi[1], hi[2]), v(lo[0], hi[1], hi[2]),
+    ];
+    let triangles = vec![
+        [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6],
+        [3, 0, 4], [3, 4, 7], [4, 5, 6], [4, 6, 7], [0, 2, 1], [0, 3, 2],
+    ];
+    WorldFile { collision: CollisionMesh { vertices, triangles }, ..flat_world() }
+}
+
+fn held(buttons: u16, forward: i8) -> InputFrame {
+    InputFrame { seq: 1, strafe: 0, forward, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 }
+}
+
+#[test]
+fn lying_down_keeps_the_feet_on_the_ground() {
+    let physics = Physics::new(&flat_world()).unwrap();
+    let mut character = standing();
+    for _ in 0..30 {
+        physics.move_character(&mut character, &held(BUTTON_PRONE, 0), TICK_DT);
+    }
+    assert!(character.prone && character.grounded);
+    assert!((character.position[1] - PRONE_CENTRE).abs() < 0.05, "{:?}", character.position);
+}
+
+#[test]
+fn crawling_is_slower_than_walking() {
+    let physics = Physics::new(&flat_world()).unwrap();
+    let mut character = standing();
+    physics.move_character(&mut character, &held(BUTTON_PRONE, 127), TICK_DT);
+    let start = character.position[2];
+    for _ in 0..TICK_RATE {
+        physics.move_character(&mut character, &held(BUTTON_PRONE, 127), TICK_DT);
+    }
+    assert!(((start - character.position[2]) - PRONE_SPEED).abs() < 0.1, "{:?}", character.position);
+}
+
+#[test]
+fn getting_up_is_refused_under_a_low_roof() {
+    let physics = Physics::new(&world_with_low_roof()).unwrap();
+    let mut character = Character { position: [0.0, PRONE_CENTRE, 0.0], grounded: true, prone: true, ..Default::default() };
+    for _ in 0..30 {
+        physics.move_character(&mut character, &held(0, 0), TICK_DT);
+    }
+    assert!(character.prone, "stood up into the roof: {:?}", character.position);
+    assert!(character.position[1] < 1.0, "rose through the roof: {:?}", character.position);
+}

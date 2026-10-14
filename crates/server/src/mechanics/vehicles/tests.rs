@@ -30,7 +30,7 @@ fn join(game: &mut Game) -> (u32, mpsc::Receiver<Outgoing>) {
 }
 
 /// Feeds one frame per tick, with the frame counter owned by the caller.
-fn press(game: &mut Game, id: u32, seq: &mut u32, axes: (i8, i8), buttons: u8, ticks: u32) {
+fn press(game: &mut Game, id: u32, seq: &mut u32, axes: (i8, i8), buttons: u16, ticks: u32) {
     for _ in 0..ticks {
         *seq += 1;
         game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: axes.0, forward: axes.1, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 }]));

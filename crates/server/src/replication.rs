@@ -195,7 +195,7 @@ mod tests {
     use super::*;
 
     fn person(id: u32, x_m: f32, z_m: f32) -> EntityState {
-        EntityState { id, kind: KIND_STICKMAN, x: (x_m * 100.0) as i32, y: 90, z: (z_m * 100.0) as i32, yaw: 0, vy: 0, flags: FLAG_GROUNDED, knock_x: 0, knock_z: 0 }
+        EntityState { id, kind: KIND_STICKMAN, x: (x_m * 100.0) as i32, y: 90, z: (z_m * 100.0) as i32, yaw: 0, vy: 0, flags: FLAG_GROUNDED, stance: 0, knock_x: 0, knock_z: 0 }
     }
 
     fn snapshot(replica: &mut Replica, tick: u32, entities: &[EntityState]) -> Snapshot {
@@ -363,7 +363,7 @@ mod tests {
                 .map(|id| {
                     let phase = id as i32 * 37;
                     // About 7.5 m/s at 30 snapshots a second is 25 cm a snapshot.
-                    EntityState { id, kind: KIND_STICKMAN, x: 5_000 + phase * 20 + step * 25, y: 87, z: -3_000 + phase * 10 - step * 9, yaw: ((step + phase) % 6000 - 3000) as i16, vy: 0, flags: FLAG_GROUNDED, knock_x: 0, knock_z: 0 }
+                    EntityState { id, kind: KIND_STICKMAN, x: 5_000 + phase * 20 + step * 25, y: 87, z: -3_000 + phase * 10 - step * 9, yaw: ((step + phase) % 6000 - 3000) as i16, vy: 0, flags: FLAG_GROUNDED, stance: 0, knock_x: 0, knock_z: 0 }
                 })
                 .collect()
         };

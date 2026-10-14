@@ -261,7 +261,7 @@ pub fn gun_for_weapon(weapon: u8) -> u8 {
 
 /// How much slower the player of `item` (in hand, or 0 for none) walks with `buttons`: only a gun
 /// slows its holder, and only while aim is held. Applied to walk, run and crouch speed alike.
-pub fn aim_speed_scale(item: u8, buttons: u8) -> f32 {
+pub fn aim_speed_scale(item: u8, buttons: u16) -> f32 {
     match def(item) {
         Some(d) if d.kind == ItemKind::Gun && buttons & crate::consts::BUTTON_ALT != 0 => d.aim_speed,
         _ => 1.0,

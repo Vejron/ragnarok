@@ -12,7 +12,7 @@ impl Game {
             if rooster.mode == RoosterMode::Crow {
                 flags |= FLAG_CROWING;
             }
-            EntityState { id, kind: KIND_ROOSTER, x: to_cm(x), y: to_cm(y), z: to_cm(z), yaw: to_mrad(rooster.yaw), vy: 0, flags, knock_x: 0, knock_z: 0 }
+            EntityState { id, kind: KIND_ROOSTER, x: to_cm(x), y: to_cm(y), z: to_cm(z), yaw: to_mrad(rooster.yaw), vy: 0, flags, stance: STANCE_STANDING, knock_x: 0, knock_z: 0 }
         });
         self.world
             .players
@@ -31,7 +31,7 @@ impl Game {
                     flags |= FLAG_CROUCHING;
                 }
                 flags |= (player.held().item << FLAG_HELD_SHIFT) & FLAG_HELD_MASK;
-                EntityState { id, kind: KIND_STICKMAN, x: to_cm(c.position[0]), y: to_cm(c.position[1]), z: to_cm(c.position[2]), yaw: to_mrad(c.yaw), vy: to_cm_i16(c.vy), flags, knock_x: to_cm_i16(c.knock[0]), knock_z: to_cm_i16(c.knock[1]) }
+                EntityState { id, kind: KIND_STICKMAN, x: to_cm(c.position[0]), y: to_cm(c.position[1]), z: to_cm(c.position[2]), yaw: to_mrad(c.yaw), vy: to_cm_i16(c.vy), flags, stance: if c.prone { STANCE_PRONE } else { STANCE_STANDING }, knock_x: to_cm_i16(c.knock[0]), knock_z: to_cm_i16(c.knock[1]) }
             })
             .chain(roosters)
             .collect()

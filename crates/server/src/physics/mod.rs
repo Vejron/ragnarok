@@ -36,6 +36,8 @@ pub struct Character {
     pub knock: [f32; 2],
     /// Id of the vehicle this character stands on, or 0. Riders are carried along with it.
     pub ride: u32,
+    /// Lying down. The capsule is then the prone ball, with the feet where they were standing.
+    pub prone: bool,
 }
 
 pub struct Physics {
@@ -57,6 +59,8 @@ pub struct Physics {
     /// standing: it keeps them on a slope they walk down instead of stepping off it.
     snapping: KinematicCharacterController,
     character_shape: Collider,
+    /// The shape of a character lying down. Same controller; only the collider differs.
+    prone_shape: Collider,
     /// Which building or tree each destructible static collider is.
     objects: HashMap<ColliderHandle, Obj>,
     handles: HashMap<Obj, ColliderHandle>,
@@ -195,6 +199,7 @@ impl Physics {
             snapping: KinematicCharacterController { snap_to_ground: Some(CharacterLength::Absolute(SNAP_DISTANCE)), ..controller() },
             controller: controller(),
             character_shape: ColliderBuilder::capsule_y(CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS).build(),
+            prone_shape: ColliderBuilder::ball(PRONE_RADIUS).build(),
             objects: HashMap::new(),
             handles: HashMap::new(),
             removals: Vec::new(),
@@ -280,7 +285,16 @@ impl Physics {
     /// Whether a standing character capsule centred at `position` fits there, among the static
     /// world and the vehicles.
     pub fn character_fits(&self, position: [f32; 3]) -> bool {
-        !self.touches(self.character_shape.shape(), Pose::from_translation(Vector::from(position)), QueryFilter::default())
+        self.fits(position, false)
+    }
+
+    /// Whether the character's body, standing or prone, centred at `position` fits there.
+    fn fits(&self, position: [f32; 3], prone: bool) -> bool {
+        !self.touches(self.shape(prone).shape(), Pose::from_translation(Vector::from(position)), QueryFilter::default())
+    }
+
+    fn shape(&self, prone: bool) -> &Collider {
+        if prone { &self.prone_shape } else { &self.character_shape }
     }
 
     /// Advances one character by one tick of `input`. Characters do not collide with each other,
@@ -292,6 +306,7 @@ impl Physics {
 
     /// `move_character` with walking speed multiplied by `speed_scale` (aiming a gun slows you).
     pub fn move_character_scaled(&self, character: &mut Character, input: &InputFrame, dt: f32, speed_scale: f32) {
+        self.change_stance(character, input.buttons() & BUTTON_PRONE != 0);
         character.knock = begin_slide(character.knock, character.grounded, input);
         let (vy, desired) = desired_translation(character.vy, character.grounded, character.knock, input, dt, speed_scale);
         let queries = self.broad_phase.as_query_pipeline(
@@ -304,7 +319,7 @@ impl Physics {
         // Horizontal and vertical movement are separate passes. A single combined pass makes the
         // controller stall for a tick every few seconds while walking on flat ground (both native
         // and WASM Rapier), and every stall would be a misprediction.
-        let shape = self.character_shape.shape();
+        let shape = self.shape(character.prone).shape();
         let start = Vector::from(character.position);
         let walker = if character.grounded && vy <= 0.0 { &self.snapping } else { &self.controller };
         let horizontal = walker.move_shape(dt, &queries, shape, &Pose::from_translation(start), Vector::new(desired[0], 0.0, desired[2]), |_| {});
@@ -318,6 +333,21 @@ impl Physics {
         character.grounded = grounded;
         character.knock = decay_knock(character.knock, grounded, input.buttons() & BUTTON_CROUCH != 0);
         character.yaw = shared::quant::from_mrad(input.yaw);
+    }
+
+    /// Lies down or gets up, keeping the feet where they are. Getting up is refused while the
+    /// standing body would not fit, so the player stays low until there is room.
+    fn change_stance(&self, character: &mut Character, wants_prone: bool) {
+        if wants_prone == character.prone {
+            return;
+        }
+        let drop = STAND_CENTRE - PRONE_CENTRE;
+        let mut raised = character.position;
+        raised[1] += if wants_prone { -drop } else { drop };
+        if wants_prone || self.fits(raised, false) {
+            character.position = raised;
+            character.prone = wants_prone;
+        }
     }
 }
 

@@ -45,7 +45,7 @@ fn heli(game: &Game) -> u32 {
 }
 
 /// Feeds the gunner's look and trigger for `ticks` ticks.
-fn aim_and_hold(game: &mut Game, id: u32, seq: &mut u32, yaw: f32, pitch: f32, buttons: u8, ticks: u32) {
+fn aim_and_hold(game: &mut Game, id: u32, seq: &mut u32, yaw: f32, pitch: f32, buttons: u16, ticks: u32) {
     for _ in 0..ticks {
         *seq += 1;
         game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: to_mrad(yaw), buttons, pitch: to_mrad(pitch), view: 0, slot: 0 }]));
@@ -411,7 +411,7 @@ fn plane_crewed(index: usize) -> (Game, u32, u32, u32) {
 }
 
 /// The shot events of `weapon` seen while looking level along `yaw` and holding `buttons` for `ticks`.
-fn hold_watching(game: &mut Game, id: u32, seq: &mut u32, yaw: f32, buttons: u8, ticks: u32, weapon: u8) -> Vec<ShotEvent> {
+fn hold_watching(game: &mut Game, id: u32, seq: &mut u32, yaw: f32, buttons: u16, ticks: u32, weapon: u8) -> Vec<ShotEvent> {
     let mut seen = vec![];
     for _ in 0..ticks {
         aim_and_hold(game, id, seq, yaw, 0.0, buttons, 1);

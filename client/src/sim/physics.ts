@@ -2,7 +2,7 @@ import RAPIER from '@dimforge/rapier3d-compat'
 import { buildingTriangleRanges, type TileData, type WorldData } from '@/world'
 import {
   AUTOSTEP_HEIGHT, AUTOSTEP_MIN_WIDTH, CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, CONTROLLER_OFFSET,
-  BUTTON_CROUCH, BUTTON_JUMP, KNOCK_MAX_SPEED, MAX_SLOPE_CLIMB_DEG, SNAP_DISTANCE,
+  BUTTON_CROUCH, BUTTON_JUMP, BUTTON_PRONE, KNOCK_MAX_SPEED, MAX_SLOPE_CLIMB_DEG, PRONE_CENTRE, PRONE_RADIUS, SNAP_DISTANCE, STAND_CENTRE,
   STRV_CASEMATE_CENTRE, STRV_CASEMATE_HALF, TANK_TURRET_HALF_HEIGHT, TANK_TURRET_PIVOT, TANK_TURRET_RADIUS, PLANE_WING_CENTRE, PLANE_WING_HALF_EXTENTS,
   WALKER_FOOT_HALF, WALKER_HALF_EXTENTS, WALKER_LEG_CLEARANCE, WALKER_LEG_HALF_DEPTH, WALKER_LEG_HALF_WIDTH, WALKER_LEG_LENGTH,
 } from './consts'
@@ -23,12 +23,16 @@ export interface CharacterState {
   knock: [number, number]
   /** Id of the vehicle stood on, or 0. The predicted frame is then the one where that vehicle is still. */
   ride: number
+  /** Lying down. Mirrors `Character::prone`. */
+  prone: boolean
 }
 
 /** Moves a character shape through the static world. Abstracted so tests can use a flat floor. */
 export interface CharacterMotor {
-  /** `snap` pulls a character that was standing back onto a slope it walks down (horizontal pass only). */
-  move(position: Vec3, desired: Vec3, snap?: boolean): { translation: Vec3; grounded: boolean }
+  /** `snap` pulls a character that was standing back onto a slope it walks down (horizontal pass only). `prone` moves the lying-down body. */
+  move(position: Vec3, desired: Vec3, snap?: boolean, prone?: boolean): { translation: Vec3; grounded: boolean }
+  /** Whether the standing or lying-down body fits at `position`, among the static world and the cars. Defaults to yes. */
+  fits?(position: Vec3, prone: boolean): boolean
   /** Horizontal velocity `[x, z]` of a vehicle, m/s, for characters leaving it. */
   vehicleVelocity?(id: number): readonly [number, number]
 }
@@ -46,18 +50,32 @@ function inherit(knock: readonly [number, number], velocity: readonly [number, n
 }
 
 /** One tick of movement. Mirrors `Physics::move_character` on the server. */
+/** How far the centre drops between standing and lying down, metres. Mirrors `change_stance` on the server. */
+const STANCE_DROP = STAND_CENTRE - PRONE_CENTRE
+
+/** Lies down or gets up, keeping the feet where they are. Mirrors `Physics::change_stance`. */
+function changeStance(motor: CharacterMotor, position: Vec3, prone: boolean, wantsProne: boolean): { position: Vec3; prone: boolean } {
+  if (wantsProne === prone) return { position, prone }
+  const [x, y, z] = position
+  const raised: Vec3 = [x, f32(y + (wantsProne ? -STANCE_DROP : STANCE_DROP)), z]
+  // Getting up is refused while the standing body would not fit.
+  if (wantsProne || motor.fits?.(raised, false) !== false) return { position: raised, prone: wantsProne }
+  return { position, prone }
+}
+
 export function stepCharacter(motor: CharacterMotor, state: CharacterState, input: InputFrame, dt: number, speedScale = 1): CharacterState {
+  const stance = changeStance(motor, state.position, state.prone, (input.buttons & BUTTON_PRONE) !== 0)
   // Jumping off a moving car keeps its speed, like on the server.
   const velocity = state.ride !== 0 ? motor.vehicleVelocity?.(state.ride) : undefined
   const jumped = velocity !== undefined && state.grounded && (input.buttons & BUTTON_JUMP) !== 0
   const carried = beginSlide(jumped ? inherit(state.knock, velocity) : state.knock, state.grounded, input)
   const { vy, desired } = desiredTranslation(state.vy, state.grounded, carried, input, dt, speedScale)
   // Standing and not jumping: stay on the ground over a slope. Mirrors the choice in `move_character`.
-  const moved = motor.move(state.position, desired, state.grounded && vy <= 0)
+  const moved = motor.move(stance.position, desired, state.grounded && vy <= 0, stance.prone)
   const translation = moved.translation
   // The tick a jump starts the capsule is still touching the floor; it is not grounded.
   const grounded = moved.grounded && vy <= 0
-  const [x, y, z] = state.position
+  const [x, y, z] = stance.position
   // Walking off the roof into the air does the same. The client cannot tell a step down onto the
   // ground from a step down onto the car, so `ride` stays until the next snapshot says otherwise.
   const left = velocity !== undefined && !grounded && !jumped
@@ -68,6 +86,7 @@ export function stepCharacter(motor: CharacterMotor, state: CharacterState, inpu
     grounded,
     knock: decayKnock(left ? inherit(carried, velocity) : carried, grounded, (input.buttons & BUTTON_CROUCH) !== 0),
     ride: grounded ? state.ride : 0,
+    prone: stance.prone,
   }
 }
 
@@ -234,6 +253,7 @@ export class RapierMotor implements CharacterMotor {
     private readonly controller: RAPIER.KinematicCharacterController,
     private readonly snapping: RAPIER.KinematicCharacterController,
     private readonly body: RAPIER.Collider,
+    private readonly proneBody: RAPIER.Collider,
   ) {}
 
   static async create(data: WorldData): Promise<RapierMotor> {
@@ -246,9 +266,11 @@ export class RapierMotor implements CharacterMotor {
     snapping.enableSnapToGround(SNAP_DISTANCE)
     // The character's own shape. The controller excludes it from its own queries.
     const body = world.createCollider(RAPIER.ColliderDesc.capsule(CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS).setSensor(true))
+    // The same body lying down, a ball resting on the ground.
+    const proneBody = world.createCollider(RAPIER.ColliderDesc.ball(PRONE_RADIUS).setSensor(true))
     // One step builds the broad-phase so scene queries see the static colliders.
     world.step()
-    return new RapierMotor(world, controller, snapping, body)
+    return new RapierMotor(world, controller, snapping, body, proneBody)
   }
 
   private static controller(world: RAPIER.World) {
@@ -329,17 +351,36 @@ export class RapierMotor implements CharacterMotor {
   }
 
   /** Horizontal then vertical, in two passes, exactly like `Physics::move_character`. */
-  move(position: Vec3, desired: Vec3, snap = false) {
-    const h = this.pass(snap ? this.snapping : this.controller, position, [desired[0], 0, desired[2]])
+  move(position: Vec3, desired: Vec3, snap = false, prone = false) {
+    const body = prone ? this.proneBody : this.body
+    const h = this.pass(body, snap ? this.snapping : this.controller, position, [desired[0], 0, desired[2]])
     const middle: Vec3 = [f32(position[0] + h.x), f32(position[1] + h.y), f32(position[2] + h.z)]
-    const v = this.pass(this.controller, middle, [0, desired[1], 0])
+    const v = this.pass(body, this.controller, middle, [0, desired[1], 0])
     const grounded = this.controller.computedGrounded()
     return { translation: [f32(h.x + v.x), f32(h.y + v.y), f32(h.z + v.z)] as Vec3, grounded }
   }
 
-  private pass(controller: RAPIER.KinematicCharacterController, position: Vec3, desired: Vec3) {
-    this.body.setTranslation({ x: position[0], y: position[1], z: position[2] })
-    controller.computeColliderMovement(this.body, { x: desired[0], y: desired[1], z: desired[2] })
+  /** Whether the standing or lying-down body fits at `position`. Mirrors `Physics::fits`. */
+  fits(position: Vec3, prone: boolean): boolean {
+    const body = prone ? this.proneBody : this.body
+    const hit = this.world.intersectionWithShape(
+      { x: position[0], y: position[1], z: position[2] },
+      { x: 0, y: 0, z: 0, w: 1 },
+      body.shape,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      // The character's own bodies are not part of the world it must fit in.
+      (collider) => collider !== this.body && collider !== this.proneBody,
+    )
+    return hit === null
+  }
+
+  private pass(body: RAPIER.Collider, controller: RAPIER.KinematicCharacterController, position: Vec3, desired: Vec3) {
+    body.setTranslation({ x: position[0], y: position[1], z: position[2] })
+    // Both bodies are sensors in the world: the character must not collide with the one it is not using.
+    controller.computeColliderMovement(body, { x: desired[0], y: desired[1], z: desired[2] }, undefined, undefined, (collider) => collider !== this.body && collider !== this.proneBody)
     return controller.computedMovement()
   }
 }
