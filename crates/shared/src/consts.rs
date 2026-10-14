@@ -1,7 +1,7 @@
 //! Simulation and network constants. Mirrored in `client/src/sim/consts.ts`.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 25;
+pub const PROTOCOL_VERSION: u8 = 26;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -44,6 +44,11 @@ pub const BUTTON_SLIDE: u16 = 1 << 6;
 pub const BUTTON_RELOAD: u16 = 1 << 7;
 /// Held to lie down: slower, and a low eye. Lets go to stand again, if there is room overhead.
 pub const BUTTON_PRONE: u16 = 1 << 8;
+/// One press: hitch a free mortar to the car in front of you, or unhitch the one it tows. Like a jump it is not repeated.
+pub const BUTTON_HITCH: u16 = 1 << 9;
+/// Held by a mortar's gunner to walk the range dial out and in (W and S).
+pub const BUTTON_RANGE_UP: u16 = 1 << 10;
+pub const BUTTON_RANGE_DOWN: u16 = 1 << 11;
 
 /// Stickman movement, in metres and seconds.
 pub const WALK_SPEED: f32 = 4.0;
@@ -107,7 +112,7 @@ pub const KILL_Y: f32 = -50.0;
 /// Seats in the roomiest car (the jeep); bounds the seat list of any vehicle.
 pub const CAR_SEATS: usize = 4;
 /// Vehicles in the world; bounds the vehicle list in a snapshot.
-pub const MAX_VEHICLES: usize = 13;
+pub const MAX_VEHICLES: usize = 14;
 /// A player can enter a vehicle whose centre is within this distance of their capsule centre.
 pub const ENTER_RADIUS: f32 = 4.0;
 
@@ -445,6 +450,46 @@ pub const AIM_SPREAD_SCALE: f32 = 0.25;
 pub const SHELL_TTL_TICKS: u32 = 6 * TICK_RATE;
 /// Speed a fired shell takes from the tank, m/s, backwards along the barrel.
 pub const SHELL_RECOIL: f32 = 1.6;
+
+/// The field mortar (`KIND_MORTAR`): a towed, unpowered two-wheeler with one gunner, who aims its bearing
+/// with the look and its range with the dial. It is towed by a car's rear tow point through a spherical joint.
+pub const MORTAR_SEATS: usize = 1;
+pub const MORTAR_HALF_EXTENTS: [f32; 3] = [1.0, 0.5, 1.5];
+pub const MORTAR_WHEEL_RADIUS: f32 = 0.45;
+pub const MORTAR_TRACK_HALF: f32 = 0.85;
+/// Where the mount sits in the hull frame, and the barrel's length from it.
+pub const MORTAR_GUN_PIVOT: [f32; 3] = [0.0, 0.7, -0.2];
+pub const MORTAR_BARREL_LENGTH: f32 = 1.6;
+/// Elevation travel, radians: a high lob at the bottom, nearly vertical at the top. The gunner never sets
+/// it by hand: the range dial does (`lob_pitch` in gunnery).
+pub const MORTAR_PITCH_MIN: f32 = 0.785;
+pub const MORTAR_PITCH_MAX: f32 = 1.484;
+/// The range dial, metres: W and S walk it at `MORTAR_RANGE_RATE` while `BUTTON_RANGE_UP` /
+/// `BUTTON_RANGE_DOWN` are held. The longest lob is 245 m (`GRAVITY` and the muzzle speed at 45 degrees),
+/// the shortest the high lob reaches is about 42 m, so the dial stops at 50.
+pub const MORTAR_RANGE_START: f32 = 120.0;
+pub const MORTAR_RANGE_MIN: f32 = 50.0;
+pub const MORTAR_RANGE_MAX: f32 = 245.0;
+pub const MORTAR_RANGE_RATE: f32 = 60.0;
+/// How fast the mount follows the gunner's look, rad/s. Quick enough that the barrel stays on the crosshair.
+pub const MORTAR_TRAVERSE_SLEW: f32 = 3.0;
+/// Muzzle speed of a mortar bomb, m/s. Under `GRAVITY` it reaches about 245 m at 45 degrees and 40 m at 85.
+pub const MORTAR_SHELL_SPEED: f32 = 70.0;
+/// A reload is long: the gunner waits between bombs.
+pub const MORTAR_COOLDOWN_TICKS: u32 = 7 * TICK_RATE;
+pub const MORTAR_SHELL_TTL_TICKS: u32 = 10 * TICK_RATE;
+/// Speed the mortar is shoved back at when it fires, m/s, along the barrel's horizontal heading.
+pub const MORTAR_RECOIL: f32 = 3.0;
+/// Blast of a mortar bomb: wider and harder than a tank shell.
+pub const MORTAR_RADIUS: f32 = 11.0;
+pub const MORTAR_DAMAGE: f32 = 260.0;
+pub const MORTAR_KNOCK: f32 = 30.0;
+/// The tow point sits this far behind a car's rear face, metres.
+pub const TOW_BACK: f32 = 0.25;
+/// How close a mortar's tongue must be to a car's tow point to hitch, metres.
+pub const HITCH_REACH: f32 = 2.5;
+/// A hitch or an unhitch needs the car at a near standstill, m/s.
+pub const HITCH_MAX_SPEED: f32 = 1.5;
 pub const EXPLOSION_RADIUS: f32 = 7.0;
 /// Knockback speed at the centre of a blast, m/s; it fades to zero at the edge.
 pub const EXPLOSION_KNOCK: f32 = 18.0;

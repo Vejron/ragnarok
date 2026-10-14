@@ -1,6 +1,6 @@
 use super::*;
 use shared::consts::TICK_DT;
-use shared::protocol::{KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_TANK, KIND_WALKER};
+use shared::protocol::{KIND_HELI, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_SPORTS, KIND_TANK, KIND_WALKER};
 use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 
 fn flat() -> WorldFile {
@@ -1014,5 +1014,31 @@ fn scripted_walk_matches_fixture() {
             assert!(close, "tick {}: {position:?}", tick + 1);
         }
     }
+}
+
+#[test]
+fn a_hitched_mortar_is_pulled_along_behind_the_jeep_until_it_is_let_go() {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_JEEP, [0.0, 1.0, 0.0], 0.0);
+    // Parked just behind the jeep, facing the same way, with its tongue almost at the tow point.
+    physics.add_car(2, KIND_MORTAR, [0.0, 1.0, 4.0], 0.0);
+    assert!(physics.tow_reach(1, 2).unwrap() < HITCH_REACH, "the tongue starts in reach");
+    physics.hitch(1, 2);
+    assert_eq!(physics.towing(1), Some(2));
+    assert_eq!(physics.towed_by(2), Some(1));
+
+    let start = physics.car_pose(2).unwrap().position[2];
+    for _ in 0..3 * 60 {
+        physics.drive_car(1, FORWARD, TICK_DT);
+        physics.drive_car(2, COAST, TICK_DT);
+        physics.step_cars(TICK_DT);
+    }
+    let towed = physics.car_pose(2).unwrap().position[2];
+    assert!(towed < start - 5.0, "the mortar came along behind: {start} -> {towed}");
+    assert!(physics.tow_reach(1, 2).unwrap() < HITCH_REACH, "and it stayed hitched");
+
+    physics.unhitch(2);
+    assert_eq!(physics.towing(1), None);
+    assert_eq!(physics.towed_by(2), None);
 }
 

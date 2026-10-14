@@ -13,7 +13,7 @@ import {
   WALKER_ACCEL, WALKER_BRAKE, WALKER_BALANCE_DAMP, WALKER_BALANCE_GAIN, WALKER_BALANCE_MAX, WALKER_BALANCE_MAX_PITCH, WALKER_CATCH_DAMP, WALKER_CATCH_FALL_MARGIN, WALKER_CATCH_GAIN, WALKER_CATCH_LEAN_MARGIN, WALKER_CATCH_MAX, WALKER_ACCEL_LEAN, WALKER_CRUISE_LEAN, WALKER_FALLEN_UP, WALKER_FOOT_HALF, WALKER_GRIP, WALKER_GRIP_GAIN, WALKER_GETUP_SHARE, WALKER_HALF_EXTENTS,
   WALKER_LEG_DAMPING, WALKER_LEG_LENGTH, WALKER_LEG_SPRING, WALKER_MAX_SPEED, WALKER_REVERSE_SHARE, WALKER_TURN_ACCEL, WALKER_TURN_RATE,
 } from './consts'
-import { addTileCollider, buildStaticColliders, extraSolids, rebuildBuildingCollider, VehicleSolids } from './physics'
+import { addTileCollider, buildStaticColliders, extraSolids, rebuildBuildingCollider, timedPhysics, VehicleSolids } from './physics'
 import type { TileGround } from './terrain'
 import { vehicleDef } from './vehicles'
 import { DAMAGE_TURRET, DAMAGE_WHEELS, fromAxis, fromMrad, KIND_HELI, KIND_PLANE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, WHEEL_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
@@ -919,7 +919,7 @@ export class VehicleDriver {
 
   private stepWith(input: InputFrame): CarBodyState {
     this.sim!.drive(controlsOf(input), TICK_DT)
-    this.sim!.step(TICK_DT)
+    timedPhysics(() => this.sim!.step(TICK_DT))
     this.steer = this.sim!.steerFraction
     return this.sim!.state()
   }

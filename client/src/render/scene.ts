@@ -18,6 +18,8 @@ export const DRIVING_DISTANCE = 9
 export const TANK_DISTANCE = 13
 export const HELI_DISTANCE = 16
 export const WALKER_DISTANCE = 15
+/** Behind the field mortar, which is low and wide. */
+export const MORTAR_DISTANCE = 9
 /** The Strv S driver's camera: behind the gun's trunnion on the aim line and a little above it, as a gunner's, a bit further back. */
 export const STRV_DISTANCE = 12
 export const STRV_AIM_BACK = 9

@@ -4,9 +4,9 @@
  * and models in `render/`.
  */
 
-import { KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
+import { KIND_HELI, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
 import {
-  CAR_SEATS, HELI_HALF_EXTENTS, HELI_SEATS, JEEP_AXLE_Z, JEEP_HALF_EXTENTS, JEEP_TRACK_HALF, PLANE_HALF_EXTENTS, PLANE_SEATS,
+  CAR_SEATS, HELI_HALF_EXTENTS, HELI_SEATS, JEEP_AXLE_Z, JEEP_HALF_EXTENTS, JEEP_TRACK_HALF, MORTAR_HALF_EXTENTS, MORTAR_SEATS, PLANE_HALF_EXTENTS, PLANE_SEATS,
   SPORTS_AXLE_Z, SPORTS_HALF_EXTENTS, SPORTS_SEATS, SPORTS_TRACK_HALF, STRV_HALF_EXTENTS, STRV_SEATS, TANK_HALF_EXTENTS, TANK_SEATS, WALKER_HALF_EXTENTS, WALKER_SEATS,
 } from './consts'
 
@@ -39,6 +39,7 @@ export const VEHICLES: readonly VehicleDef[] = [
   { kind: KIND_PLANE, name: 'Triplane', hp: 70, seats: PLANE_SEATS, halfExtents: PLANE_HALF_EXTENTS, ...none, gun: true, arms: true },
   { kind: KIND_WALKER, name: 'Walker', hp: 200, seats: WALKER_SEATS, halfExtents: WALKER_HALF_EXTENTS, ...none, gun: true },
   { kind: KIND_STRV, name: 'Strv S', hp: 220, seats: STRV_SEATS, halfExtents: STRV_HALF_EXTENTS, ...none, gun: true },
+  { kind: KIND_MORTAR, name: 'Field mortar', hp: 150, seats: MORTAR_SEATS, halfExtents: MORTAR_HALF_EXTENTS, ...none, gun: true },
 ]
 
 /** The definition of a vehicle `kind`. Unknown kinds are jeeps. */

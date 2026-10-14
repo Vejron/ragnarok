@@ -1,6 +1,6 @@
 /** Mirrors `crates/shared/src/consts.rs`. Keep the two in step. */
 
-export const PROTOCOL_VERSION = 25
+export const PROTOCOL_VERSION = 26
 
 /** A hurt building is drawn in this many worse states; the last is about to collapse. Mirrors `DAMAGE_STAGES`. */
 export const DAMAGE_STAGES = 3
@@ -34,6 +34,11 @@ export const BUTTON_SLIDE = 1 << 6
 export const BUTTON_RELOAD = 1 << 7
 /** Held to lie down: slower, and a low eye. */
 export const BUTTON_PRONE = 1 << 8
+/** One press: hitch or unhitch the mortar behind the car. Mirrors `BUTTON_HITCH`. */
+export const BUTTON_HITCH = 1 << 9
+/** Held by a mortar's gunner: walk the range dial out (W) and in (S). Mirror `BUTTON_RANGE_*`. */
+export const BUTTON_RANGE_UP = 1 << 10
+export const BUTTON_RANGE_DOWN = 1 << 11
 
 export const WALK_SPEED = 4.0
 export const RUN_SPEED = 7.5
@@ -146,6 +151,27 @@ export const STRV_CASEMATE_CENTRE = [0.0, 0.62, -0.25] as const
 /** Where the gun's trunnion is in the hull frame, how far the muzzle is from it, and its elevation limits (radians, + is up). */
 export const STRV_GUN_PIVOT = [0.0, 0.72, -1.3] as const
 export const STRV_BARREL_LENGTH = 4.4
+
+/** The field mortar (`KIND_MORTAR`). Mirrors the `MORTAR_*` constants in `consts.rs`. */
+export const MORTAR_SEATS = 1
+export const MORTAR_HALF_EXTENTS = [1.0, 0.5, 1.5] as const
+export const MORTAR_WHEEL_RADIUS = 0.45
+export const MORTAR_TRACK_HALF = 0.85
+export const MORTAR_GUN_PIVOT = [0.0, 0.7, -0.2] as const
+export const MORTAR_BARREL_LENGTH = 1.6
+export const MORTAR_PITCH_MIN = 0.785
+export const MORTAR_PITCH_MAX = 1.484
+/** The range dial, metres. Mirrors `MORTAR_RANGE_*`. */
+export const MORTAR_RANGE_START = 120
+export const MORTAR_RANGE_MIN = 50
+export const MORTAR_RANGE_MAX = 245
+export const MORTAR_RANGE_RATE = 60
+export const MORTAR_SHELL_SPEED = 70.0
+export const MORTAR_COOLDOWN_TICKS = 420
+export const MORTAR_SHELL_TTL_TICKS = 600
+export const MORTAR_RADIUS = 11.0
+export const MORTAR_DAMAGE = 260.0
+export const MORTAR_KNOCK = 30.0
 export const STRV_BARREL_SLEW = 1.2
 export const STRV_BARREL_MIN = -0.15
 export const STRV_BARREL_MAX = 0.3

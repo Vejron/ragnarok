@@ -69,6 +69,28 @@ pub(super) static JEEP: Spec = Spec {
     com_drop: 0.15,
 };
 
+/// The field mortar: a towed gun on two wheels. Nothing drives it, so it has no engine; its wheels only
+/// roll it, and the brake holds it once it is unhitched.
+pub(super) static MORTAR: Spec = Spec {
+    half_extents: MORTAR_HALF_EXTENTS,
+    // 6 m³ of steel, about 900 kg: a jeep can pull it, a sports car struggles.
+    density: 150.0,
+    wheel_radius: MORTAR_WHEEL_RADIUS,
+    track_half: MORTAR_TRACK_HALF,
+    // Two axles, one fore and one aft, so it stands on four wheels and does not teeter on a pair at its middle.
+    axles: &[-0.9, 0.9],
+    hard_point_y: -0.25,
+    suspension_rest: 0.3,
+    max_suspension_force: 30_000.0,
+    engine_force: 0.0,
+    max_speed: 1.0,
+    steer_lock: 0.0,
+    turn_rate: 0.0,
+    lift: Lift::Wheels,
+    linear_damping: 0.05,
+    com_drop: 0.0,
+};
+
 pub(super) static SPORTS: Spec = Spec {
     half_extents: SPORTS_HALF_EXTENTS,
     // 5 m³ of flat body is about a tonne, with half as much engine again to push it.
@@ -199,6 +221,7 @@ pub(in crate::physics) fn spec(kind: u8) -> &'static Spec {
         KIND_HELI => &HELI,
         KIND_PLANE => &PLANE,
         KIND_SPORTS => &SPORTS,
+        KIND_MORTAR => &MORTAR,
         _ => &JEEP,
     }
 }

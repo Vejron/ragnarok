@@ -3,6 +3,8 @@ import * as THREE from 'three'
 /** `PROJECTILE_GRENADE`, `PROJECTILE_SHELL` and `PROJECTILE_CANNON` in codec.ts. */
 const GRENADE = 1
 const SHELL = 2
+/** A mortar bomb, drawn as a shell. */
+const MORTAR = 6
 const CANNON = 3
 const BULLET = 4
 const BOMB = 5
@@ -57,7 +59,7 @@ export class Rockets {
         const tail = new THREE.Mesh(this.smallTrail, this.trailMaterial)
         tail.position.y = -(0.4 + 2.5)
         mesh.add(tail)
-      } else if (kind === SHELL) {
+      } else if (kind === SHELL || kind === MORTAR) {
         mesh = new THREE.Mesh(this.slug, this.slugMaterial)
         // The trail streams out behind, along the shell's own -Y.
         const tail = new THREE.Mesh(this.trail, this.trailMaterial)

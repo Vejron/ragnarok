@@ -78,11 +78,11 @@ const BOMB_TTL_TICKS = 12 * 60
  * Where a bomb let go at `start` with the plane's `velocity` falls, stepped exactly like the server's
  * `step_shells`: gravity, then a ray along the step, and it bursts at the first thing it meets.
  */
-export function dropTrajectory(cast: RayCaster, start: Vec3, velocity: Vec3, every = 3): Trajectory {
+export function dropTrajectory(cast: RayCaster, start: Vec3, velocity: Vec3, every = 3, ttl = BOMB_TTL_TICKS): Trajectory {
   let position: Vec3 = [...start]
   let v: Vec3 = [...velocity]
   const points: Vec3[] = [position]
-  for (let tick = 1; tick <= BOMB_TTL_TICKS; tick++) {
+  for (let tick = 1; tick <= ttl; tick++) {
     v = [v[0], v[1] - GRAVITY * TICK_DT, v[2]]
     const speed = Math.hypot(v[0], v[1], v[2])
     const unit: Vec3 = [v[0] / speed, v[1] / speed, v[2] / speed]

@@ -2,7 +2,7 @@ use super::*;
 use crate::game::{Command, Game, Seat};
 use crate::physics::STANDING_Y;
 use shared::items::Falloff;
-use shared::protocol::{InputFrame, KIND_HELI, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, WEAPON_BOMB, WEAPON_MG};
+use shared::protocol::{InputFrame, KIND_HELI, KIND_MORTAR, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, WEAPON_BOMB, WEAPON_MG};
 use shared::quant::to_mrad;
 use shared::world::{Road, WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
@@ -564,4 +564,53 @@ fn machine_gun_rounds_hurt_a_plane_more_than_a_car() {
     }
     assert_eq!(game.world.vehicles[&target].hp, shared::protocol::vehicle_hp(KIND_PLANE) - PLANE_GUN_PLANE_DAMAGE);
     assert_eq!(game.world.vehicles[&car].hp, 100 - PLANE_GUN_VEHICLE_DAMAGE);
+}
+
+#[test]
+fn a_mortar_bomb_arcs_up_and_lands_on_the_range_it_was_dialled_to() {
+    let mut game = game();
+    let (gunner, _inbox) = join(&mut game);
+    let vid = crate::mechanics::vehicles::add_vehicle(&mut game.world, KIND_MORTAR, [0.0, 1.0, 20.0], 0.0);
+    seat(&mut game, gunner, vid, 0);
+    let mut seq = 0;
+    // Straight ahead, and the dial left where it starts.
+    aim_and_hold(&mut game, gunner, &mut seq, 0.0, 0.0, BUTTON_FIRE, 2);
+    assert_eq!(game.world.vehicles[&vid].gun.unwrap().shots, 1, "one bomb away");
+    // It bursts where it meets the ground, and is gone the tick after. Track it until then.
+    let (mut apex, mut last) = (0.0_f32, None);
+    for _ in 0..900 {
+        aim_and_hold(&mut game, gunner, &mut seq, 0.0, 0.0, 0, 1);
+        match game.world.rockets.values().next() {
+            Some(rocket) => {
+                apex = apex.max(rocket.position[1]);
+                last = Some(rocket.position);
+            }
+            None => break,
+        }
+    }
+    let [x, y, z] = last.expect("the bomb was in flight");
+    assert!(game.world.rockets.is_empty(), "and it has burst");
+    assert!(apex > 10.0 && apex < 120.0, "it lobs high, to {apex} m");
+    assert!(y < 3.0, "and bursts on the ground, not in the sky: {y} m up");
+    let range = x.hypot(z - 20.0);
+    assert!((range - MORTAR_RANGE_START).abs() < 10.0, "it was dialled to {MORTAR_RANGE_START} m and lands {range} m out");
+}
+
+#[test]
+fn the_range_dial_walks_the_lob_and_the_elevation_follows_it() {
+    let mut game = game();
+    let (gunner, _inbox) = join(&mut game);
+    let vid = crate::mechanics::vehicles::add_vehicle(&mut game.world, KIND_MORTAR, [0.0, 1.0, 20.0], 0.0);
+    seat(&mut game, gunner, vid, 0);
+    let mut seq = 0;
+    // Dialled all the way out, the longest lob is the lowest elevation.
+    aim_and_hold(&mut game, gunner, &mut seq, 0.0, 0.0, BUTTON_RANGE_UP, 600);
+    let gun = game.world.vehicles[&vid].gun.unwrap();
+    assert_eq!(gun.range, MORTAR_RANGE_MAX);
+    assert!((gun.pitch - MORTAR_PITCH_MIN).abs() < 0.01, "45 degrees at the longest range: {}", gun.pitch);
+    // And all the way in, it is nearly vertical, but never past the top of the travel.
+    aim_and_hold(&mut game, gunner, &mut seq, 0.0, 0.0, BUTTON_RANGE_DOWN, 600);
+    let gun = game.world.vehicles[&vid].gun.unwrap();
+    assert_eq!(gun.range, MORTAR_RANGE_MIN);
+    assert!(gun.pitch > 1.4 && gun.pitch <= MORTAR_PITCH_MAX, "nearly vertical at the shortest: {}", gun.pitch);
 }

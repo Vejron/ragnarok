@@ -54,7 +54,10 @@ fn move_player_next_to_a_car(game: &mut Game, id: u32) -> u32 {
 #[test]
 fn cars_are_placed_along_the_road() {
     let game = game();
-    assert_eq!(game.world.vehicles.len(), CAR_COUNT + TANK_COUNT + STRV_COUNT + HELI_COUNT + WALKER_COUNT + PLANE_COUNT);
+    assert_eq!(game.world.vehicles.len(), CAR_COUNT + TANK_COUNT + STRV_COUNT + HELI_COUNT + WALKER_COUNT + PLANE_COUNT + game.world.vehicles.values().filter(|vehicle| vehicle.kind == KIND_MORTAR).count());
+    // The mortar only takes a spawn the others left, and this world has none spare.
+    let mortars = game.world.vehicles.values().filter(|vehicle| vehicle.kind == KIND_MORTAR).count();
+    assert!(mortars <= MORTAR_COUNT, "{mortars} mortars");
     let planes = game.world.vehicles.values().filter(|vehicle| vehicle.kind == KIND_PLANE).count();
     assert_eq!(planes, PLANE_COUNT);
     let tanks = game.world.vehicles.values().filter(|vehicle| vehicle.kind == KIND_TANK).count();

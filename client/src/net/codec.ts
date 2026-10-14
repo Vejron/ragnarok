@@ -41,6 +41,8 @@ export const KIND_PLANE = 6
 export const KIND_WALKER = 7
 /** The turretless Strv S tank, one seat. */
 export const KIND_STRV = 8
+/** The towed field mortar, one seat for its gunner. */
+export const KIND_MORTAR = 9
 export const FLAG_GROUNDED = 1 << 0
 export const FLAG_DEAD = 1 << 1
 export const FLAG_CROUCHING = 1 << 2
@@ -79,6 +81,8 @@ export const WEAPON_BULLET = 15
 export const WEAPON_RICOCHET = 16
 /** The turret of tank `shooter` was shot off at the event's point. */
 export const WEAPON_TURRET = 17
+/** A mortar bomb going off. */
+export const WEAPON_MORTAR = 18
 
 /** How a stickman died, as in a `Kill`. Mirrors `DEATH_*`. */
 export const DEATH_BODY = 0
@@ -108,6 +112,8 @@ export const PROJECTILE_CANNON = 3
 export const PROJECTILE_BULLET = 4
 /** A bomb dropped from a plane. */
 export const PROJECTILE_BOMB = 5
+/** A mortar bomb in flight. */
+export const PROJECTILE_MORTAR = 6
 
 /** `Arms.flags`: the blip switch is cutting the engine, and either set of guns is jammed. Mirrors `ARMS_*`. */
 export const ARMS_CUT = 1 << 0

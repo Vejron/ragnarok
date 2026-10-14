@@ -1,5 +1,5 @@
 import { wrapAngle } from '@/net/codec'
-import { BUTTON_ALT, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_PRONE, BUTTON_RELOAD, BUTTON_RUN, BUTTON_SLIDE, BUTTON_USE } from './consts'
+import { BUTTON_ALT, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_HITCH, BUTTON_JUMP, BUTTON_PRONE, BUTTON_RANGE_DOWN, BUTTON_RANGE_UP, BUTTON_RELOAD, BUTTON_RUN, BUTTON_SLIDE, BUTTON_USE } from './consts'
 import { HOTBAR_SLOTS } from './items'
 
 /** Mouse-look sensitivity, radians per pixel. */
@@ -156,6 +156,7 @@ export class InputController {
       this.held.add(event.code)
       if (event.code === 'Space') this.latched |= BUTTON_JUMP
       if (event.code === 'KeyE') this.latched |= BUTTON_USE
+      if (event.code === 'KeyH') this.latched |= BUTTON_HITCH
       if (event.code === 'KeyR') this.latched |= BUTTON_RELOAD
       // Digit1..Digit5 pick a hotbar slot.
       const digit = /^Digit([1-9])$/.exec(event.code)
@@ -185,6 +186,9 @@ export class InputController {
     if (this.aiming) buttons |= BUTTON_ALT
     if (this.held.has('KeyC') || this.held.has('ControlLeft')) buttons |= BUTTON_CROUCH
     if (this.held.has('KeyZ')) buttons |= BUTTON_PRONE
+    // W and S walk a mortar's range dial; nobody on foot or driving needs them for anything else here.
+    if (this.held.has('KeyW')) buttons |= BUTTON_RANGE_UP
+    if (this.held.has('KeyS')) buttons |= BUTTON_RANGE_DOWN
     if (this.held.has('ShiftLeft') || this.held.has('ShiftRight')) buttons |= BUTTON_RUN
     return {
       strafe: Math.max(-1, Math.min(1, this.axis(['KeyA', 'ArrowLeft'], ['KeyD', 'ArrowRight']) + this.stick[0])),

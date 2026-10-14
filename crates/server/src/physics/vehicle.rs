@@ -16,7 +16,7 @@ use super::{Obj, Physics};
 use rapier3d::control::{DynamicRayCastVehicleController, WheelTuning};
 use rapier3d::prelude::*;
 use shared::consts::*;
-use shared::protocol::{DAMAGE_WHEELS, KIND_HELI, KIND_PLANE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, WHEEL_GONE, vehicle_hp};
+use shared::protocol::{DAMAGE_WHEELS, KIND_HELI, KIND_MORTAR, KIND_PLANE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, WHEEL_GONE, vehicle_hp};
 
 /// Gravity acting on vehicle bodies. Stickmen use `GRAVITY`; the ray-cast suspension is tuned
 /// around the real-world value.
@@ -195,6 +195,8 @@ pub(super) struct Car {
     /// Throttle and steering of a car, which tilt it while it is in the air.
     air: (f32, f32),
     condition: CarCondition,
+    /// A mortar's tow: the car it is hitched to, and the joint that holds it there.
+    towed_by: Option<(u32, ImpulseJointHandle)>,
 }
 
 impl Car {
@@ -371,11 +373,77 @@ impl Physics {
                 );
             }
         }
-        self.cars.insert(id, Car { spec, body, collider, extra, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW });
+        self.cars.insert(id, Car { spec, body, collider, extra, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW, towed_by: None });
     }
 
-    /// Puts a car back upright and at rest.
+    /// Where a car's tow hitch is, in its own frame: just behind its rear face.
+    fn tow_anchor(spec: &Spec) -> [f32; 3] {
+        let [_, hy, hz] = spec.half_extents;
+        [0.0, -hy * 0.5, hz + TOW_BACK]
+    }
+
+    /// Where a mortar's tongue is, in its own frame: its front face, which points back at the car.
+    fn tongue_anchor(spec: &Spec) -> [f32; 3] {
+        let [_, _, hz] = spec.half_extents;
+        [0.0, 0.0, -(hz + TOW_BACK)]
+    }
+
+    /// Hitches mortar `mortar` to car `car`'s tow point, with a spherical joint. Does nothing if the
+    /// mortar is already towed. Whether it is in reach is for the caller to check ([`Physics::tow_reach`]).
+    pub fn hitch(&mut self, car: u32, mortar: u32) {
+        let (Some(towing), Some(towed)) = (self.cars.get(&car), self.cars.get(&mortar)) else { return };
+        if towed.towed_by.is_some() {
+            return;
+        }
+        let joint = SphericalJointBuilder::new()
+            .local_anchor1(Vector::from(Self::tow_anchor(towing.spec)))
+            .local_anchor2(Vector::from(Self::tongue_anchor(towed.spec)))
+            .contacts_enabled(false)
+            .build();
+        let handle = self.impulse_joints.insert(towing.body, towed.body, joint, true);
+        if let Some(towed) = self.cars.get_mut(&mortar) {
+            towed.towed_by = Some((car, handle));
+        }
+    }
+
+    /// Lets mortar `mortar` go, if a car is towing it.
+    pub fn unhitch(&mut self, mortar: u32) {
+        let Some(towed) = self.cars.get_mut(&mortar) else { return };
+        if let Some((_, handle)) = towed.towed_by.take() {
+            self.impulse_joints.remove(handle, true);
+        }
+    }
+
+    /// Takes off whatever is hitched to or from vehicle `id`: its own tow, and any mortar it is towing.
+    pub fn detach(&mut self, id: u32) {
+        let towed: Vec<u32> = self.cars.iter().filter(|(_, car)| car.towed_by.is_some_and(|(towing, _)| towing == id)).map(|(&mortar, _)| mortar).collect();
+        for mortar in towed {
+            self.unhitch(mortar);
+        }
+        self.unhitch(id);
+    }
+
+    /// The car that `mortar` is towed by, if any.
+    pub fn towed_by(&self, mortar: u32) -> Option<u32> {
+        self.cars.get(&mortar)?.towed_by.map(|(car, _)| car)
+    }
+
+    /// The mortar that car `car` is towing, if any.
+    pub fn towing(&self, car: u32) -> Option<u32> {
+        self.cars.iter().find(|(_, towed)| towed.towed_by.is_some_and(|(towing, _)| towing == car)).map(|(&mortar, _)| mortar)
+    }
+
+    /// How far apart car `car`'s tow point and mortar `mortar`'s tongue are right now, metres.
+    pub fn tow_reach(&self, car: u32, mortar: u32) -> Option<f32> {
+        let (towing, towed) = (self.cars.get(&car)?, self.cars.get(&mortar)?);
+        let hitch = self.car_pose(car)?.world_point(Self::tow_anchor(towing.spec));
+        let tongue = self.car_pose(mortar)?.world_point(Self::tongue_anchor(towed.spec));
+        Some((0..3).map(|i| (hitch[i] - tongue[i]).powi(2)).sum::<f32>().sqrt())
+    }
+
+    /// Puts a car back upright and at rest. Anything hitched to it lets go.
     pub fn reset_car(&mut self, id: u32, position: [f32; 3], yaw: f32) {
+        self.detach(id);
         let Some(car) = self.cars.get_mut(&id) else { return };
         car.steer = 0.0;
         car.turn = 0.0;

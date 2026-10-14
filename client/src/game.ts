@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import {
-  ARMS_CUT, ARMS_JAMMED, ARMS_REAR_JAMMED, DAMAGE_TURRET, DAMAGE_WHEELS, encodeInput, encodePing, KIND_HELI, KIND_PLANE, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_STRV, KIND_TANK, KIND_WALKER, sceneStates, toAxis, toMrad, TURRET_GONE, WEAPON_GRENADE, WEAPON_RICOCHET, WEAPON_TURRET,
+  ARMS_CUT, ARMS_JAMMED, ARMS_REAR_JAMMED, DAMAGE_TURRET, DAMAGE_WHEELS, encodeInput, encodePing, KIND_HELI, KIND_PLANE, KIND_MORTAR, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_STRV, KIND_TANK, KIND_WALKER, sceneStates, toAxis, toMrad, TURRET_GONE, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RICOCHET, WEAPON_TURRET,
   PROJECTILE_BULLET, WEAPON_BULLET, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_CRASH, WEAPON_MG, WEAPON_PELLET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_WRECK,
   type Arms, type BulletSpawn, type DriveState, type EntityState, type InputFrame, type PickupState, type RocketState, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
 } from './net/codec'
@@ -13,7 +13,7 @@ import {
   ROCKET_BLAST_RADIUS, SHELL_COOLDOWN_TICKS, STANDING_Y,
   CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS,
   HELI_GUN_COOLDOWN_TICKS, HELI_GUN_LENGTH, HELI_GUN_PITCH_MAX, HELI_GUN_PITCH_MIN, HELI_GUN_YAW_LIMIT, CANNON_RADIUS,
-  SHELL_SPEED, GRAVITY, STRV_BARREL_LENGTH, STRV_BARREL_MAX, STRV_BARREL_MIN, TANK_BARREL_LENGTH, TANK_BARREL_MAX, TANK_BARREL_MIN, WALKER_GUN_COOLDOWN_TICKS, WALKER_GUN_LENGTH, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT, TICK_MS, TICK_RATE, vehicleMaxHp, WRECK_BLAST_RADIUS,
+  SHELL_SPEED, GRAVITY, MORTAR_BARREL_LENGTH, MORTAR_COOLDOWN_TICKS, MORTAR_RADIUS, MORTAR_SHELL_SPEED, MORTAR_SHELL_TTL_TICKS, STRV_BARREL_LENGTH, STRV_BARREL_MAX, STRV_BARREL_MIN, TANK_BARREL_LENGTH, TANK_BARREL_MAX, TANK_BARREL_MIN, WALKER_GUN_COOLDOWN_TICKS, WALKER_GUN_LENGTH, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT, TICK_MS, TICK_RATE, vehicleMaxHp, WRECK_BLAST_RADIUS,
   BOMB_RADIUS, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, PLANE_BOMB_MIN_HEIGHT, PLANE_BOMB_PIVOT, PLANE_GUN_RANGE, PLANE_REAR_PITCH_MAX, PLANE_REAR_PITCH_MIN, PLANE_STALL_SPEED,
 } from './sim/consts'
 import { vehicleDef } from './sim/vehicles'
@@ -37,6 +37,7 @@ import { Gore } from './render/gore'
 import { Surfaces, SURFACE_GRASS } from './sim/surface'
 import { Pickups } from './render/pickups'
 import { TrajectoryView } from './render/trajectory'
+import { MortarArc } from './render/mortar-arc'
 import { dropTrajectory, throwTrajectory } from './sim/grenade'
 import { Rockets } from './render/rockets'
 import { bulletLifeTicks, bulletPosition, bulletTicksTo, bulletVelocity } from './sim/ballistics'
@@ -44,11 +45,13 @@ import { saveLook, type Look } from './render/look'
 import { halfExtentsOf } from './sim/kinds'
 import { AIM_DISTANCE_SCALE, CAMERA_HEIGHT, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, PLANE_CAMERA_HEIGHT, PLANE_DISTANCE, Scene, STRV_AIM_BACK, STRV_AIM_UP, WALKER_AIM_BACK, WALKER_AIM_UP } from './render/scene'
 import { ChaseCam } from './render/chase'
+import { PerfReadout } from './render/perf'
 import { HeliModel } from './render/heli'
 import { encodeRtc, wrapAngle } from './net/codec'
 import { VoiceChat } from './voice'
 import { PlaneModel } from './render/plane'
 import { StrvModel } from './render/strvs'
+import { MortarModel } from './render/mortar'
 import type { Mark } from './render/gunsight'
 import { TankModel } from './render/tank'
 import { WalkerModel } from './render/walker'
@@ -191,6 +194,7 @@ export class Game {
   private readonly pickupModels = new Pickups()
   /** The arc a grenade in hand would take, drawn while one is held. */
   private readonly trajectory = new TrajectoryView()
+  private readonly mortarArc = new MortarArc()
   /** The items on the ground in the newest snapshot, for the prompt and the drawing. */
   private pickups: PickupState[] = []
   /** The local player's hotbar and reload/bandage progress, from the newest snapshot. */
@@ -228,6 +232,7 @@ export class Game {
   private wasAviator = false
   private wasWalking = false
   private wasTanker = false
+  private wasMortar = false
   /** The yaw and pitch a plane's camera has eased to, behind the mouse's aim. */
   private planeView: [number, number] = [0, 0]
   private predictor: Predictor | null = null
@@ -245,6 +250,8 @@ export class Game {
   private accumulator = 0
   private lastFrame = 0
   private frameHandle = 0
+  /** Frame-cost overlay, F3 or `?perf`. */
+  private readonly perf: PerfReadout
   private reconnectTimer = 0
   private readonly backoff = new Backoff()
   private pingTimer = 0
@@ -258,13 +265,14 @@ export class Game {
 
   constructor(container: HTMLElement, private readonly onStats: (stats: HudStats) => void) {
     this.scene = new Scene(container)
+    this.perf = new PerfReadout(this.scene.renderer)
     this.input = new InputController(this.scene.canvas)
     this.view = new WorldView(this.scene.scene)
     this.scene.scene.add(this.crowd.root)
     this.scene.scene.add(this.effects.root, this.view.damage.root, this.damageNumbers.root)
     this.scene.scene.add(this.rocketModels.root)
     this.scene.scene.add(this.pickupModels.root)
-    this.scene.scene.add(this.trajectory.root)
+    this.scene.scene.add(this.trajectory.root, this.mortarArc.root)
     // Translucent smoke and flashes, and the grenade's arc, would show as solid shapes in the AO pass.
     this.scene.excludeFromAO(this.effects.root)
     this.scene.scene.add(this.smoke.root, this.glow.root, this.skids.root)
@@ -274,6 +282,7 @@ export class Game {
     this.debris.groundAt = (x, z) => this.scene.groundAt(x, z)
     this.scene.excludeFromAO(this.view.damage.root)
     this.scene.excludeFromAO(this.trajectory.root)
+    this.scene.excludeFromAO(this.mortarArc.root)
     // Water is translucent and drawn after everything solid; the AO pass would see it as a lid.
     this.scene.scene.add(this.view.waterRoot)
     this.scene.excludeFromAO(this.view.waterRoot)
@@ -435,7 +444,7 @@ export class Game {
         for (const vehicle of vehicles) for (const rider of vehicle.seats) if (rider !== 0) this.interp.remove(rider)
         const own = entities.find((e) => e.id === this.localId)
         this.driver?.setObstacles(vehicles)
-        if (mount && this.seat?.index === 0 && message.drive) {
+        if (mount && this.seat?.index === 0 && mount.kind !== KIND_MORTAR && message.drive) {
           // Replaying the unacknowledged inputs steps the whole physics world once each, so it waits
           // for the next frame: a backlog of snapshots (a busy main thread) is then one replay, not
           // one per snapshot, which would only make the thread busier.
@@ -533,6 +542,7 @@ export class Game {
   private frame(now: number) {
     if (this.disposed) return
     this.frameHandle = requestAnimationFrame((t) => this.frame(t))
+    this.perf.begin(now)
     const dt = Math.min(0.25, (now - this.lastFrame) / 1000)
     this.frameDt = dt
     this.lastFrame = now
@@ -576,7 +586,7 @@ export class Game {
     const sighted = this.hp > 0 && this.input.aimHeld && driving !== undefined
       && (driving.kind === KIND_TANK ? this.seat!.index === 1 : driving.kind === KIND_STRV && this.seat!.index === 0)
     this.input.lookScale = sighted ? SIGHT_LOOK_SCALE : scoped ? SCOPE_LOOK_SCALE : aiming ? AIM_LOOK_SCALE : 1
-    const chase = driving && this.seat!.index === 0 && driving.kind !== KIND_HELI && driving.kind !== KIND_PLANE ? this.chase.update([driving.x, driving.y, driving.z], driving.yaw, dt, cameraDistance(driving.kind)) : null
+    const chase = driving && this.seat!.index === 0 && driving.kind !== KIND_HELI && driving.kind !== KIND_PLANE && driving.kind !== KIND_MORTAR ? this.chase.update([driving.x, driving.y, driving.z], driving.yaw, dt, cameraDistance(driving.kind)) : null
     if (!chase) this.chase.reset()
     this.scene.zoomTo(sighted ? 'sight' : scoped ? 'scope' : aiming ? 'aim' : 'none', dt, chase?.fovBoost ?? 0)
     me.hidden = seated || scoped
@@ -589,6 +599,7 @@ export class Game {
     const gunner = ride !== undefined && vehicleDef(ride.kind).gun && this.seat!.index === 1
     // A Strv S's driver fires the gun, which only the barrel's elevation aims: the hull turns to aim sideways.
     const tanker = ride?.kind === KIND_STRV && this.seat!.index === 0
+    const mortar = ride?.kind === KIND_MORTAR && this.seat!.index === 0
     const turret = gunner ? this.cars.get(this.seat!.vehicle) : undefined
     const aviator = ride?.kind === KIND_PLANE && this.seat!.index === 0
     const walking = ride?.kind === KIND_WALKER && this.seat!.index === 0
@@ -662,6 +673,10 @@ export class Game {
       } else {
         this.scene.follow([ride.x, ride.y + 0.4, ride.z], this.input.yaw, this.input.pitch, cameraDistance(ride.kind), 0, CAMERA_HEIGHT)
       }
+    } else if (mortar) {
+      // The mouse sets the bearing: the mount turns to face it, and the view sits behind the mount looking where it points. W and S set the range.
+      if (!this.wasMortar && ride.turret) this.input.yaw = ride.yaw + ride.turret.yaw
+      this.scene.follow([ride.x, ride.y + 0.4, ride.z], this.input.yaw, this.input.pitch, cameraDistance(ride.kind), 0, CAMERA_HEIGHT)
     } else if (ride) {
       this.input.followYaw(ride.yaw, dt)
       const yaw = this.input.yaw + (chase?.lean ?? 0)
@@ -677,6 +692,7 @@ export class Game {
     this.wasAviator = aviator
     this.wasWalking = walking
     this.wasTanker = tanker
+    this.wasMortar = mortar
     // Streaming follows what the camera is on: the car when seated, else the stickman.
     this.tiles?.update(ride ? ride.x : position[0], ride ? ride.z : position[2])
     this.playShots(renderTick)
@@ -740,7 +756,9 @@ export class Game {
     this.voice.setTalking(this.localId !== null && this.hp > 0 && this.input.isHeld('KeyV'))
     this.voice.update(this.localId, position, nearby)
     blobs.end()
+    this.perf.beforeRender()
     this.scene.render()
+    this.perf.end(ticks)
     this.sights(aviator)
     const hitView = this.hits.view(now, this.input.yaw)
     this.onStats({
@@ -759,10 +777,11 @@ export class Game {
       seat: !this.seat
         ? null
         : this.seat.index === 0
-          ? this.seat.kind === KIND_HELI ? 'pilot' : this.seat.kind === KIND_PLANE ? 'aviator' : this.seat.kind === KIND_WALKER ? 'walker' : this.seat.kind === KIND_STRV ? 'strv' : 'driver'
+          ? this.seat.kind === KIND_HELI ? 'pilot' : this.seat.kind === KIND_PLANE ? 'aviator' : this.seat.kind === KIND_WALKER ? 'walker' : this.seat.kind === KIND_STRV ? 'strv' : this.seat.kind === KIND_MORTAR ? 'mortar' : 'driver'
           : vehicleDef(this.seat.kind).gun ? 'gunner' : 'passenger',
       canSwitchSeat: this.seat !== null && (cars.get(this.seat.vehicle)?.seats.includes(0) ?? false),
-      reload: this.seat?.kind === KIND_PLANE ? 1 : Math.min(1, (now - this.lastShotAt) / ((this.seat?.kind === KIND_HELI ? HELI_GUN_COOLDOWN_TICKS : this.seat?.kind === KIND_WALKER ? WALKER_GUN_COOLDOWN_TICKS : SHELL_COOLDOWN_TICKS) * TICK_MS)),
+      range: this.seat?.kind === KIND_MORTAR ? (ride?.turret?.range ?? 0) : 0,
+      reload: this.seat?.kind === KIND_PLANE ? 1 : Math.min(1, (now - this.lastShotAt) / ((this.seat?.kind === KIND_HELI ? HELI_GUN_COOLDOWN_TICKS : this.seat?.kind === KIND_WALKER ? WALKER_GUN_COOLDOWN_TICKS : this.seat?.kind === KIND_MORTAR ? MORTAR_COOLDOWN_TICKS : SHELL_COOLDOWN_TICKS) * TICK_MS)),
       ...this.cockpit(ride, aviator),
       hp: this.hp,
       maxHp: PLAYER_MAX_HP,
@@ -815,6 +834,9 @@ export class Game {
       this.sounds.blast([to.x, to.y, to.z], 'small')
     } else if (shot.weapon === WEAPON_SHELL) {
       this.blast(to, EXPLOSION_RADIUS, BLASTS.shell)
+      this.sounds.blast([to.x, to.y, to.z], 'big')
+    } else if (shot.weapon === WEAPON_MORTAR) {
+      this.blast(to, MORTAR_RADIUS, BLASTS.shell)
       this.sounds.blast([to.x, to.y, to.z], 'big')
     } else if (shot.weapon === WEAPON_WRECK) {
       this.blast(to, WRECK_BLAST_RADIUS, BLASTS.wreck)
@@ -1009,6 +1031,12 @@ export class Game {
   private aimGrenade(position: readonly number[], seated: boolean) {
     const motor = this.motor
     const item = itemDef(this.held().item)
+    this.mortarArc.set(null)
+    if (motor && seated && this.seat?.index === 0 && this.seat.kind === KIND_MORTAR) {
+      this.trajectory.set(null)
+      this.mortarArc.set(this.mortarPath(motor))
+      return
+    }
     if (motor && seated && this.seat?.index === 0 && this.seat.kind === KIND_PLANE) {
       this.trajectory.set(this.bombPath(motor))
       return
@@ -1019,6 +1047,17 @@ export class Game {
     }
     const eye: [number, number, number] = [position[0]!, position[1]! + this.eyeHeight(), position[2]!]
     this.trajectory.set(throwTrajectory((origin, dir, max) => motor.castRay(origin, dir, max), eye, this.input.yaw, this.input.pitch))
+  }
+
+  /** For a field mortar's gunner: where a bomb fired now would land, from the tube's muzzle at the mortar's muzzle speed. */
+  private mortarPath(motor: RapierMotor) {
+    const mount = this.cars.get(this.seat!.vehicle)
+    if (!(mount instanceof MortarModel)) return null
+    const { origin, direction } = mount.barrel()
+    const start = origin.clone().addScaledVector(direction, MORTAR_BARREL_LENGTH)
+    const velocity = direction.clone().multiplyScalar(MORTAR_SHELL_SPEED)
+    // Only where it first lands matters: the bomb flies its whole lifetime, as the real one does.
+    return dropTrajectory((from, dir, max) => motor.castRay(from, dir, max), [start.x, start.y, start.z], [velocity.x, velocity.y, velocity.z], 3, MORTAR_SHELL_TTL_TICKS)
   }
 
   /** For a plane's pilot with bombs on the rack and room under them: where one let go now would land. */
@@ -1134,7 +1173,7 @@ export class Game {
         if (state.damage[DAMAGE_TURRET] === TURRET_GONE) this.shedTurret(id, car)
         else if (this.turretsShed.delete(id)) car.setTurret(true)
       }
-      if ((car instanceof TankModel || car instanceof HeliModel || car instanceof WalkerModel) && state.turret) this.watchGun(id, car, state.turret, state.seats)
+      if ((car instanceof TankModel || car instanceof HeliModel || car instanceof WalkerModel || car instanceof MortarModel) && state.turret) this.watchGun(id, car, state.turret, state.seats)
       if (car instanceof PlaneModel) this.watchPlaneGuns(id, car, state)
       if (state.arms) this.lastArms.set(id, state.arms)
     }
@@ -1189,7 +1228,7 @@ export class Game {
       fx = new VehicleFx(id, state.kind)
       this.vehicleFx.set(id, fx)
     }
-    const powered = (state.seats[0] ?? 0) !== 0 && state.hp > 0
+    const powered = (state.seats[0] ?? 0) !== 0 && state.hp > 0 && state.kind !== KIND_MORTAR
     fx.update(this.fxWorld, position, rotation, steer, powered, this.frameDt)
     // The driver's own car is drawn from its prediction, so what is heard follows the wheel at once.
     const landing = fx.takeLanding()
@@ -1277,7 +1316,7 @@ export class Game {
   }
 
   /** A change in the shot counter is a shell leaving: flash and recoil. The shell itself is a projectile. */
-  private watchGun(id: number, tank: TankModel | HeliModel | WalkerModel, turret: Turret, seats: readonly number[]) {
+  private watchGun(id: number, tank: TankModel | HeliModel | WalkerModel | MortarModel, turret: Turret, seats: readonly number[]) {
     const before = this.shots.get(id)
     this.shots.set(id, turret.shots)
     // The first sight of a gun is not a shot, nor is a counter that has not moved.
@@ -1285,12 +1324,12 @@ export class Game {
     // A walker's barrels fire in turn: the counter has already gone up for this shot.
     const { origin, direction } = tank instanceof WalkerModel ? tank.barrel((turret.shots - 1) % 2 === 0 ? -1 : 1) : tank.barrel()
     tank.recoil()
-    const length = tank instanceof HeliModel ? HELI_GUN_LENGTH : tank instanceof WalkerModel ? WALKER_GUN_LENGTH : tank instanceof StrvModel ? STRV_BARREL_LENGTH : TANK_BARREL_LENGTH
+    const length = tank instanceof HeliModel ? HELI_GUN_LENGTH : tank instanceof WalkerModel ? WALKER_GUN_LENGTH : tank instanceof StrvModel ? STRV_BARREL_LENGTH : tank instanceof MortarModel ? MORTAR_BARREL_LENGTH : TANK_BARREL_LENGTH
     const muzzle = origin.clone().addScaledVector(direction, length)
     this.effects.muzzleFlash(muzzle, direction)
     if (tank instanceof WalkerModel) this.sounds.laser([muzzle.x, muzzle.y, muzzle.z])
     else this.sounds.cannon([muzzle.x, muzzle.y, muzzle.z], tank instanceof TankModel)
-    if (seats[tank instanceof WalkerModel || tank instanceof StrvModel ? 0 : 1] === this.localId) this.lastShotAt = performance.now()
+    if (seats[tank instanceof WalkerModel || tank instanceof StrvModel || tank instanceof MortarModel ? 0 : 1] === this.localId) this.lastShotAt = performance.now()
   }
 
   /**
@@ -1431,6 +1470,7 @@ export class Game {
       if (hasFreeSeat && distance <= ENTER_RADIUS && (!best || distance < best.distance)) best = { distance, driverSeatFree: car.seats[0] === 0, kind: car.kind }
     }
     if (!best) return null
+    if (best.kind === KIND_MORTAR) return 'E: man the mortar'
     if (best.kind === KIND_TANK) return best.driverSeatFree ? 'E: drive the tank' : 'E: man the gun'
     if (best.kind === KIND_STRV) return 'E: drive the Strv S'
     if (best.kind === KIND_HELI) return best.driverSeatFree ? 'E: fly' : 'E: man the nose gun'
@@ -1465,6 +1505,7 @@ export class Game {
 
   dispose() {
     this.disposed = true
+    this.perf.dispose()
     cancelAnimationFrame(this.frameHandle)
     clearTimeout(this.reconnectTimer)
     clearInterval(this.pingTimer)
@@ -1485,6 +1526,7 @@ export class Game {
     this.pickupModels.dispose()
     for (const model of this.roosters.values()) model.dispose()
     this.trajectory.dispose()
+    this.mortarArc.dispose()
     this.scene.dispose()
   }
 }

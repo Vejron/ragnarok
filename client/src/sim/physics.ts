@@ -242,6 +242,20 @@ export function extraSolids(kind: number | undefined): { desc: RAPIER.ColliderDe
   return []
 }
 
+/** Rapier time on this client since the debug readout last reset it (see `render/perf.ts`). */
+export const physicsClock = { ms: 0, calls: 0 }
+
+/** Runs `work` and adds its time to `physicsClock`. */
+export function timedPhysics<T>(work: () => T): T {
+  const started = performance.now()
+  try {
+    return work()
+  } finally {
+    physicsClock.ms += performance.now() - started
+    physicsClock.calls++
+  }
+}
+
 /** The same Rapier character controller and static scene the server simulates. */
 export class RapierMotor implements CharacterMotor {
   /** Solid stand-ins for the server's cars, by vehicle id. */
@@ -289,6 +303,10 @@ export class RapierMotor implements CharacterMotor {
    * the real one. Cars missing from `vehicles` are removed.
    */
   setVehicles(vehicles: readonly (Pick<VehicleState, 'id' | 'x' | 'y' | 'z' | 'qx' | 'qy' | 'qz' | 'qw'> & { kind?: number; vx?: number; vz?: number; damage?: readonly number[] })[]) {
+    timedPhysics(() => this.placeVehicles(vehicles))
+  }
+
+  private placeVehicles(vehicles: readonly (Pick<VehicleState, 'id' | 'x' | 'y' | 'z' | 'qx' | 'qy' | 'qz' | 'qw'> & { kind?: number; vx?: number; vz?: number; damage?: readonly number[] })[]) {
     const alive = new Set<number>()
     for (const car of vehicles) {
       alive.add(car.id)
@@ -328,10 +346,12 @@ export class RapierMotor implements CharacterMotor {
 
   /** Adds a streamed tile's collision; returns what to pass to `removeTile` when it unloads. */
   addTile(tile: TileData, ground: TileGround | null = null): RAPIER.Collider[] {
-    const colliders = addTileCollider(this.world, tile, ground)
-    // Reach the broad-phase now, so the very next move already collides with it.
-    if (colliders.length > 0) this.world.step()
-    return colliders
+    return timedPhysics(() => {
+      const colliders = addTileCollider(this.world, tile, ground)
+      // Reach the broad-phase now, so the very next move already collides with it.
+      if (colliders.length > 0) this.world.step()
+      return colliders
+    })
   }
 
   /** Colliders already taken out one by one (a felled tree's trunk) are `undefined`. */
@@ -352,6 +372,10 @@ export class RapierMotor implements CharacterMotor {
 
   /** Horizontal then vertical, in two passes, exactly like `Physics::move_character`. */
   move(position: Vec3, desired: Vec3, snap = false, prone = false) {
+    return timedPhysics(() => this.moveOnce(position, desired, snap, prone))
+  }
+
+  private moveOnce(position: Vec3, desired: Vec3, snap: boolean, prone: boolean) {
     const body = prone ? this.proneBody : this.body
     const h = this.pass(body, snap ? this.snapping : this.controller, position, [desired[0], 0, desired[2]])
     const middle: Vec3 = [f32(position[0] + h.x), f32(position[1] + h.y), f32(position[2] + h.z)]

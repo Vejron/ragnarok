@@ -60,6 +60,8 @@ pub const KIND_PLANE: u8 = 6;
 pub const KIND_WALKER: u8 = 7;
 /// The turretless Strv S tank, one seat.
 pub const KIND_STRV: u8 = 8;
+/// The towed field mortar, one seat for its gunner.
+pub const KIND_MORTAR: u8 = 9;
 
 /// Health of a fresh vehicle of `kind`. Zero on the wire means wrecked.
 pub fn vehicle_hp(kind: u8) -> u8 {
@@ -122,6 +124,8 @@ pub const WEAPON_BULLET: u8 = 15;
 pub const WEAPON_RICOCHET: u8 = 16;
 /// Shot events only: the turret of tank `shooter` was shot off at `x, y, z`.
 pub const WEAPON_TURRET: u8 = 17;
+/// A mortar bomb going off.
+pub const WEAPON_MORTAR: u8 = 18;
 
 /// How a stickman died, as sent in a `Kill`, so every client can stage the death to match.
 pub const DEATH_BODY: u8 = 0;
@@ -141,6 +145,8 @@ pub const PROJECTILE_CANNON: u8 = 3;
 pub const PROJECTILE_BULLET: u8 = 4;
 /// A bomb dropped from a plane: it falls from the plane's speed and bursts on the first thing it meets.
 pub const PROJECTILE_BOMB: u8 = 5;
+/// A mortar bomb: a high lob that falls steeply and bursts on the first thing it meets.
+pub const PROJECTILE_MORTAR: u8 = 6;
 
 /// A bullet leaving a gun: `[id, shooter, item, x, y, z, vx, vy, vz, tick]`, centimetres and cm/s.
 /// Sent once (in two snapshots, in case one is lost) and not listed again: the path is
@@ -576,7 +582,7 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 25, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
+        148, 0, 26, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[

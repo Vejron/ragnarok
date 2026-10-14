@@ -4,7 +4,7 @@ use crate::physics::{CarCondition, CarControls, CarImpact, CarPose, Character, O
 use shared::consts::*;
 use shared::vehicles::{VehicleDef, vehicle_def};
 use shared::protocol::{
-    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, ShotEvent, WEAPON_CRASH,
+    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, ShotEvent, WEAPON_CRASH,
     WEAPON_ROADKILL, WEAPON_SCRAPE, seat_count, vehicle_hp,
 };
 use shared::quant::{from_axis, to_cm, wrap_angle};
@@ -28,6 +28,8 @@ const HELI_COUNT: usize = 1;
 const STRV_COUNT: usize = 1;
 /// Walkers, placed with the tanks and the helicopter on the road's spawn points.
 const WALKER_COUNT: usize = 1;
+/// Field mortars, placed after the planes on whichever spawn points are left. A car hitches one (see `hitch`).
+const MORTAR_COUNT: usize = 1;
 /// Planes, placed after everything else where they have room to take off.
 const PLANE_COUNT: usize = 2;
 /// The longest runway worth looking for, metres: a plane is off the ground in about 40.
@@ -133,7 +135,7 @@ fn place_planes(world: &mut World, candidates: &[[i32; 2]], used: &[bool]) -> us
     parked.len()
 }
 
-fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: f32) -> u32 {
+pub(super) fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: f32) -> u32 {
     let id = world.alloc_id();
     world.physics.add_car(id, kind, position, yaw);
     world.vehicles.insert(
@@ -182,12 +184,44 @@ fn exit_position(world: &World, kind: u8, pose: &CarPose, seat: usize) -> [f32; 
     [pose.position[0], pose.position[1] + 2.5, pose.position[2]]
 }
 
+/// Hitches the free mortar within `HITCH_REACH` of the car its driver drives, or lets go of the one that car
+/// tows. Both need the car at a near standstill, and a mortar with no one aboard it.
+fn hitch(world: &mut World, id: u32) {
+    let Some(seat) = world.players.get(&id).and_then(|player| player.seat) else { return };
+    let car = seat.vehicle;
+    if seat.index != 0 || world.vehicles.get(&car).is_none_or(|vehicle| vehicle.wrecked() || !vehicle_def(vehicle.kind).car_wheels) {
+        return;
+    }
+    let Some(pose) = world.physics.car_pose(car) else { return };
+    let speed = pose.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
+    if speed > HITCH_MAX_SPEED {
+        return;
+    }
+    if let Some(mortar) = world.physics.towing(car) {
+        world.physics.unhitch(mortar);
+        tracing::debug!(id, car, mortar, "unhitched");
+        return;
+    }
+    let nearest = world
+        .vehicles
+        .iter()
+        .filter(|(_, vehicle)| vehicle.kind == KIND_MORTAR && !vehicle.wrecked() && vehicle.seats.iter().all(Option::is_none))
+        .filter_map(|(&mortar, _)| world.physics.tow_reach(car, mortar).map(|reach| (reach, mortar)))
+        .filter(|&(reach, mortar)| reach <= HITCH_REACH && world.physics.towed_by(mortar).is_none())
+        .min_by(|a, b| a.0.total_cmp(&b.0));
+    if let Some((_, mortar)) = nearest {
+        world.physics.hitch(car, mortar);
+        tracing::debug!(id, car, mortar, "hitched");
+    }
+}
+
 fn board(world: &mut World, id: u32) {
     let Some(player) = world.players.get(&id) else { return };
     let here = player.character.position;
     let mut nearest: Option<(f32, u32, usize)> = None;
     for (&vid, vehicle) in &world.vehicles {
-        if vehicle.wrecked() {
+        // A towed mortar is being pulled, and no one climbs on while it is.
+        if vehicle.wrecked() || world.physics.towed_by(vid).is_some() {
             continue;
         }
         let Some(free) = vehicle.seats[..seat_count(vehicle.kind)].iter().position(Option::is_none) else { continue };
@@ -463,6 +497,27 @@ impl Mechanic for Vehicles {
             }
         }
         placed += place_planes(world, &candidates, &used);
+        // The mortars take whichever spawn points the planes left, so they never push a plane off one.
+        let runways: Vec<CarPose> = world.vehicles.iter().filter(|(_, v)| v.kind == KIND_PLANE).filter_map(|(&id, _)| world.physics.car_pose(id)).collect();
+        let mut mortars = 0;
+        for (index, &[cx, cz]) in candidates.iter().enumerate() {
+            if mortars == MORTAR_COUNT {
+                break;
+            }
+            if used[index] {
+                continue;
+            }
+            let (x, z) = (cx as f32 / 100.0, cz as f32 / 100.0);
+            let yaw = road_heading(&world.map, x, z);
+            let position = [x, world.map.ground.height_at(x, z) + CAR_DROP_Y, z];
+            // Not on a plane's runway either: a plane needs the strip clear to take off.
+            let on_a_runway = runways.iter().any(|plane| on_runway(plane.position, plane.yaw(), PLANE_RUNWAY, position));
+            if !on_a_runway && world.physics.car_fits(KIND_MORTAR, position, yaw) && world.vehicles.len() < MAX_VEHICLES {
+                add_vehicle(world, KIND_MORTAR, position, yaw);
+                mortars += 1;
+                placed += 1;
+            }
+        }
         tracing::info!(vehicles = placed, "vehicles placed");
     }
 
@@ -481,6 +536,11 @@ impl Mechanic for Vehicles {
                 board(world, id);
             }
         }
+        // A driver hitches or unhitches the mortar behind the car.
+        let hitching: Vec<u32> = world.players.iter().filter(|(_, player)| player.alive() && player.input.buttons() & BUTTON_HITCH != 0).map(|(&id, _)| id).collect();
+        for id in hitching {
+            hitch(world, id);
+        }
         // Reload has no use inside a vehicle, so it moves to the other seat.
         let switching: Vec<u32> = world
             .players
@@ -496,22 +556,28 @@ impl Mechanic for Vehicles {
 
         // The driver's input becomes the car's controls; an empty car holds its handbrake.
         for (&vid, vehicle) in &mut world.vehicles {
-            vehicle.controls = match vehicle.seats[0].and_then(|driver| world.players.get(&driver)) {
-                Some(driver) => {
-                    let input = &driver.input;
-                    let buttons = input.buttons();
-                    CarControls {
-                        steer: from_axis(input.strafe),
-                        throttle: from_axis(input.forward),
-                        handbrake: buttons & BUTTON_JUMP != 0,
-                        // A helicopter climbs on jump and sinks on run.
-                        lift: f32::from(buttons & BUTTON_JUMP != 0) - f32::from(buttons & BUTTON_RUN != 0),
-                        powered: true,
-                        // A plane flies towards where its pilot looks.
-                        aim: (vehicle.kind == KIND_PLANE).then(|| [shared::quant::from_mrad(input.yaw), shared::quant::from_mrad(input.pitch())]),
+            let towed = world.physics.towed_by(vid).is_some();
+            vehicle.controls = if vehicle.kind == KIND_MORTAR {
+                // Nothing drives a mortar: it rolls when towed, and holds its brake when it is not.
+                CarControls { handbrake: !towed, ..Default::default() }
+            } else {
+                match vehicle.seats[0].and_then(|driver| world.players.get(&driver)) {
+                    Some(driver) => {
+                        let input = &driver.input;
+                        let buttons = input.buttons();
+                        CarControls {
+                            steer: from_axis(input.strafe),
+                            throttle: from_axis(input.forward),
+                            handbrake: buttons & BUTTON_JUMP != 0,
+                            // A helicopter climbs on jump and sinks on run.
+                            lift: f32::from(buttons & BUTTON_JUMP != 0) - f32::from(buttons & BUTTON_RUN != 0),
+                            powered: true,
+                            // A plane flies towards where its pilot looks.
+                            aim: (vehicle.kind == KIND_PLANE).then(|| [shared::quant::from_mrad(input.yaw), shared::quant::from_mrad(input.pitch())]),
+                        }
                     }
+                    None => CarControls { handbrake: true, ..Default::default() },
                 }
-                None => CarControls { handbrake: true, ..Default::default() },
             };
             world.physics.set_car_condition(vid, CarCondition::of(vehicle.kind, vehicle.hp, vehicle.damage));
             world.physics.drive_car(vid, vehicle.controls, dt);
@@ -536,6 +602,8 @@ impl Mechanic for Vehicles {
             let slow = pose.forward_speed.abs() < 1.5;
             vehicle.stuck_ticks = if pose.up_y < 0.2 && slow { vehicle.stuck_ticks + 1 } else { 0 };
             if vehicle.wrecked() {
+                // A wreck lets go of whatever it tows, and whatever tows it.
+                world.physics.detach(vid);
                 // A wreck burns where it lies, then the room puts a fresh one back.
                 vehicle.wreck_in = vehicle.wreck_in.saturating_sub(1);
                 if vehicle.wreck_in == 0 {

@@ -5,7 +5,7 @@ use crate::game::{Gun, PlaneArms, Rocket, World};
 use crate::physics::CarPose;
 use shared::consts::*;
 use shared::items::Falloff;
-use shared::protocol::{DAMAGE_TURRET, TURRET_GONE, KIND_HELI, KIND_PLANE, KIND_STRV, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_ROCKET, PROJECTILE_SHELL, ShotEvent, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_MG, WEAPON_SHELL};
+use shared::protocol::{DAMAGE_TURRET, TURRET_GONE, KIND_HELI, KIND_MORTAR, KIND_PLANE, KIND_STRV, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, ShotEvent, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_MG, WEAPON_MORTAR, WEAPON_SHELL};
 use shared::quant::{from_mrad, to_cm, wrap_angle};
 
 /// Vehicle guns: the gunner's look direction aims the gun, and the fire button shoots it.
@@ -40,12 +40,23 @@ fn aim_from(pose: &CarPose, pivot: [f32; 3], yaw: f32, pitch: f32) -> ([f32; 3],
     (pose.world_point(pivot), pose.world_dir(local))
 }
 
+/// How fast a shell of `kind` leaves its muzzle, m/s. A mortar bomb is slower and lobs high.
+fn muzzle_speed(kind: u8) -> f32 {
+    if kind == PROJECTILE_MORTAR { MORTAR_SHELL_SPEED } else { SHELL_SPEED }
+}
+
+/// How long a shell of `kind` flies before it bursts on its own.
+fn shell_ttl(kind: u8) -> u32 {
+    if kind == PROJECTILE_MORTAR { MORTAR_SHELL_TTL_TICKS } else { SHELL_TTL_TICKS }
+}
+
 /// A shell of `kind` going off at `point`: the burst everyone sees, and the blast. An autocannon round
 /// is a third of a tank shell's reach, and hits for less.
 fn burst(world: &mut World, kind: u8, owner: u32, point: [f32; 3], dir: [f32; 3], direct: Option<Direct>) {
     let (weapon, radius, damage, knock) = match kind {
         PROJECTILE_CANNON => (WEAPON_AUTOCANNON, CANNON_RADIUS, CANNON_DAMAGE, CANNON_KNOCK),
         PROJECTILE_BOMB => (WEAPON_BOMB, BOMB_RADIUS, BOMB_DAMAGE, BOMB_KNOCK),
+        PROJECTILE_MORTAR => (WEAPON_MORTAR, MORTAR_RADIUS, MORTAR_DAMAGE, MORTAR_KNOCK),
         _ => (WEAPON_SHELL, EXPLOSION_RADIUS, EXPLOSION_DAMAGE, EXPLOSION_KNOCK),
     };
     let [x, y, z] = point.map(to_cm);
@@ -72,8 +83,8 @@ fn fire(world: &mut World, kind: u8, vid: u32, origin: [f32; 3], dir: [f32; 3], 
             owner: gunner,
             source: vid,
             position: std::array::from_fn(|i| origin[i] + dir[i] * length),
-            velocity: dir.map(|v| v * SHELL_SPEED),
-            ttl: SHELL_TTL_TICKS,
+            velocity: dir.map(|v| v * muzzle_speed(kind)),
+            ttl: shell_ttl(kind),
             item: 0,
             back: 0,
             flown: 0.0,
@@ -84,7 +95,7 @@ fn fire(world: &mut World, kind: u8, vid: u32, origin: [f32; 3], dir: [f32; 3], 
 /// Flies every shell one tick: gravity, then along its velocity until it meets a wall, a vehicle
 /// or a stickman, or its time runs out. It bursts where it stopped.
 fn step_shells(world: &mut World, dt: f32) {
-    let falls = |kind| kind == PROJECTILE_SHELL || kind == PROJECTILE_CANNON || kind == PROJECTILE_BOMB;
+    let falls = |kind| kind == PROJECTILE_SHELL || kind == PROJECTILE_CANNON || kind == PROJECTILE_BOMB || kind == PROJECTILE_MORTAR;
     let ids: Vec<u32> = world.rockets.iter().filter(|(_, rocket)| falls(rocket.kind)).map(|(&id, _)| id).collect();
     for id in ids {
         let Some(mut shell) = world.rockets.get(&id).copied() else { continue };
@@ -232,6 +243,43 @@ fn work_walker_guns(world: &mut World, vid: u32, mut gun: Gun, pose: &CarPose, d
     gun
 }
 
+/// One tick of a field mortar, for its gunner in seat 0. The gunner's look turns the mount to face where they
+/// look, and the range dial (W and S) sets how far the bomb flies. The barrel's elevation is the lob that
+/// lands it there, so the tube always points where the bomb will go. The bomb leaves at `MORTAR_SHELL_SPEED`,
+/// and the mortar is shoved back on its wheels. A towed mortar cannot fire: it is being pulled.
+fn work_mortar(world: &mut World, vid: u32, mut gun: Gun, pose: &CarPose, dt: f32) -> Gun {
+    gun.cooldown = gun.cooldown.saturating_sub(1);
+    let Some(gunner) = world.vehicles[&vid].seats[0] else { return gun };
+    let Some(input) = world.players.get(&gunner).map(|player| player.input) else { return gun };
+
+    let wanted = wrap_angle(from_mrad(input.yaw) - pose.yaw());
+    gun.yaw = wrap_angle(step_toward(gun.yaw, gun.yaw + wrap_angle(wanted - gun.yaw), MORTAR_TRAVERSE_SLEW * dt));
+    // A gun that has never been dialled starts at the middle of the range, not at zero.
+    let range = if gun.range == 0.0 { MORTAR_RANGE_START } else { gun.range };
+    let buttons = input.buttons();
+    let dial = f32::from(buttons & BUTTON_RANGE_UP != 0) - f32::from(buttons & BUTTON_RANGE_DOWN != 0);
+    gun.range = (range + dial * MORTAR_RANGE_RATE * dt).clamp(MORTAR_RANGE_MIN, MORTAR_RANGE_MAX);
+    gun.pitch = lob_pitch(gun.range);
+    if buttons & BUTTON_FIRE == 0 || gun.cooldown > 0 || world.physics.towed_by(vid).is_some() {
+        return gun;
+    }
+
+    let (origin, dir) = aim_from(pose, MORTAR_GUN_PIVOT, gun.yaw, gun.pitch);
+    fire(world, PROJECTILE_MORTAR, vid, origin, dir, MORTAR_BARREL_LENGTH, gunner);
+    world.physics.kick_car(vid, [-dir[0] * MORTAR_RECOIL, 0.0, -dir[2] * MORTAR_RECOIL]);
+    gun.shots = gun.shots.wrapping_add(1);
+    gun.cooldown = MORTAR_COOLDOWN_TICKS;
+    gun
+}
+
+/// The elevation of the high lob that lands a bomb `range` metres out on level ground, from `MORTAR_SHELL_SPEED`
+/// and `GRAVITY`: the steeper of the two angles that reach it, so the shorter the range the closer to vertical.
+/// Clamped to the mortar's elevation travel.
+pub fn lob_pitch(range: f32) -> f32 {
+    let sine = (GRAVITY * range / (MORTAR_SHELL_SPEED * MORTAR_SHELL_SPEED)).min(1.0);
+    (0.5 * (std::f32::consts::PI - sine.asin())).clamp(MORTAR_PITCH_MIN, MORTAR_PITCH_MAX)
+}
+
 /// One tick of a Strv S's main gun, for its driver in seat 0. The gun is fixed in the hull, so it points
 /// where the hull does (the yaw stays 0: the driver aims sideways by turning the tank) and the driver's
 /// look pitch only elevates the barrel, within its travel, at `STRV_BARREL_SLEW`. It kicks the hull back
@@ -370,6 +418,13 @@ impl Mechanic for Gunnery {
             }
             if vehicle.kind == KIND_WALKER {
                 let gun = work_walker_guns(world, vid, gun, &pose, dt);
+                if let Some(vehicle) = world.vehicles.get_mut(&vid) {
+                    vehicle.gun = Some(gun);
+                }
+                continue;
+            }
+            if vehicle.kind == KIND_MORTAR {
+                let gun = work_mortar(world, vid, gun, &pose, dt);
                 if let Some(vehicle) = world.vehicles.get_mut(&vid) {
                     vehicle.gun = Some(gun);
                 }

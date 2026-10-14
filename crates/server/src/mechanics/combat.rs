@@ -6,7 +6,7 @@ use crate::game::{Rocket, World, starting_hotbar};
 use crate::physics::Obj;
 use shared::consts::*;
 use shared::items::*;
-use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, KIND_PLANE, Kill, S_HIT, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, BulletSpawn, WEAPON_BULLET, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_PELLET, WEAPON_ROADKILL, WEAPON_WRECK,
+use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, KIND_PLANE, Kill, S_HIT, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, BulletSpawn, WEAPON_BULLET, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_PELLET, WEAPON_ROADKILL, WEAPON_WRECK,
     DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_SHELL};
 use shared::quant::{from_mrad, to_cm, to_cm_i16, to_mrad};
 
@@ -558,7 +558,7 @@ fn step_rockets(world: &mut World, dt: f32) {
             continue;
         }
         // Shells and bombs are the `Gunnery` mechanic's.
-        if rocket.kind == PROJECTILE_SHELL || rocket.kind == PROJECTILE_CANNON || rocket.kind == PROJECTILE_BOMB {
+        if rocket.kind == PROJECTILE_SHELL || rocket.kind == PROJECTILE_CANNON || rocket.kind == PROJECTILE_BOMB || rocket.kind == PROJECTILE_MORTAR {
             continue;
         }
         // A rocket's motor keeps pushing it along its heading, up to its top speed.
