@@ -373,3 +373,19 @@ pub trait Mechanic: Send {
    - Trees in woods (done): detected from the point cloud, `Tree::solid` limits colliders (§8).
    - Water (done): Hydrografi lakes, rivers and streams with a surface mesh and a toy-style shader.
    - Next: courtyard building multipolygons.
+
+## 15. Ideas
+
+### Restructuring, refactoring, embetterment
+
+Make the project more modular and maintainable, with clear separation of concerns between rendering, networking, and game logic.
+Consider breaking the codebase into smaller, self-contained modules with well-defined interfaces, and adopting a consistent coding style and documentation standard.
+Do this without negatively impacting the existing functionality or introducing unnecessary complexity or performance degradation.
+
+### Editor
+
+Adding and removing weapons, vehicles, and other game entities should be straightforward, with minimal impact on unrelated systems. base engine should have a clear entity-component system, allowing for flexible composition and easy extension of game objects.
+Generating terrain and game worlds should be flexible and data-driven, allowing for world generation from external data sources, procedural algorithms, and manual additions. This should probably be handled by a dedicated world generation module that can be easily extended and configured.
+Probably built as a separate module that can be easily integrated with the rest of the engine, allowing for flexible world generation and easy updates to terrain and game content. Also consider providing tools for visualizing and editing the generated worlds within the engine. this editor should have a user-friendly interface and support common operations like adding, removing, and modifying terrain features and game objects.
+It will be designed as an integrated part of the engine, leveraging the same rendering and entity systems as the main game, ensuring consistency and reducing duplication of effort. It should also support hot-reloading of assets and game logic to facilitate rapid iteration during development. it should provide a seamless experience for developers, allowing them to see changes in real-time and quickly test new features and content.
+Change and tweak constants in a centralized configuration file or module, allowing for easy adjustments and experimentation without modifying the core engine code. This approach promotes maintainability and reduces the risk of introducing bugs when fine-tuning the game's behavior or performance.
