@@ -387,6 +387,7 @@ fn parked_cars_in_the_fixture_world_settle_and_stay_put() {
         // A plane stands taller on its undercarriage than any car, and a walker's hull is up on its legs.
         let ride = match game.world.vehicles[&id].kind {
             KIND_PLANE => 1.3,
+            KIND_STRV => 1.2,
             KIND_WALKER => WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1],
             _ => 1.0,
         };

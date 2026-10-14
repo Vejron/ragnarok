@@ -151,12 +151,12 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
   <template v-if="!stats?.touch">
   <div v-if="stats?.seat === 'driver'" class="drive-hint">W/S gas and brake · A/D steer or turn · Space handbrake<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   <div v-if="stats?.seat === 'walker'" class="drive-hint">W/S walk · A/D turn · Mouse aim the guns (the body follows within 30°) · Click or F fire<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
-  <div v-if="stats?.seat === 'strv'" class="drive-hint">W/S gas and brake · A/D turn the tank to aim · Mouse up/down elevate the gun · Click or F fire · {{ stats.reload < 1 ? 'reloading…' : 'loaded' }}</div>
+  <div v-if="stats?.seat === 'strv'" class="drive-hint">W/S gas and brake · A/D turn the tank to aim · Mouse look · Hold right mouse for the gun sight · Click or F fire · {{ stats.reload < 1 ? 'reloading…' : 'loaded' }}</div>
   <div v-if="stats?.seat === 'pilot'" class="drive-hint">W/S lean forward and back · A/D turn · Space climb · Shift sink<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   <div v-if="stats?.seat === 'aviator'" class="drive-hint">Mouse steer (the plane turns to where you look) · Space throttle up · Shift throttle down · W/S/A/D by hand · Click or F fire · C bomb<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
-  <div v-if="stats?.seat === 'gunner'" class="drive-hint">Mouse aim · Click or F fire · {{ stats.jammed ? 'jammed!' : stats.heat !== null ? 'firing' : stats.reload < 1 ? 'reloading…' : 'loaded' }}<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
+  <div v-if="stats?.seat === 'gunner'" class="drive-hint">Mouse aim · Hold right mouse for the gun sight · Click or F fire · {{ stats.jammed ? 'jammed!' : stats.heat !== null ? 'firing' : stats.reload < 1 ? 'reloading…' : 'loaded' }}<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   </template>
-  <div v-if="stats?.seat === 'gunner' || stats?.seat === 'walker' || stats?.seat === 'strv'" class="reticle" :class="{ loading: stats.reload < 1 || stats.jammed }" />
+  <div v-if="(stats?.seat === 'gunner' || stats?.seat === 'walker' || stats?.seat === 'strv') && !stats.sight" class="reticle" :class="{ loading: stats.reload < 1 || stats.jammed }" />
   <template v-if="stats?.seat === 'aviator'">
     <div ref="noseMark" class="sight"><i /><i /></div>
     <div ref="aimMark" class="aim-circle" />

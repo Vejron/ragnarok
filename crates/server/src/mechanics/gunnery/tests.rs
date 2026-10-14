@@ -308,6 +308,29 @@ fn the_nose_gun_fires_a_burst_at_its_rate_and_only_for_the_gunner() {
 }
 
 #[test]
+fn the_pilot_fires_rockets_that_accelerate_straight_ahead() {
+    let mut game = game();
+    let (pilot, _inbox) = join(&mut game);
+    let vid = heli(&game);
+    seat(&mut game, pilot, vid, 0);
+    let mut seq = 0;
+    aim_and_hold(&mut game, pilot, &mut seq, 0.0, 0.0, BUTTON_FIRE, 6);
+    let fired = game.world.vehicles[&vid].gun.unwrap().pod_shots;
+    assert!(fired >= 1, "the pilot's trigger fires the pods");
+    assert_eq!(game.world.vehicles[&vid].gun.unwrap().shots, 0, "the nose gun is the gunner's");
+    let speed = |game: &Game| {
+        game.world.rockets.values().filter(|r| r.kind == PROJECTILE_ROCKET).map(|r| r.velocity.iter().map(|v| v * v).sum::<f32>().sqrt()).fold(0.0, f32::max)
+    };
+    let early = speed(&game);
+    aim_and_hold(&mut game, pilot, &mut seq, 0.0, 0.0, 0, 10);
+    let later = speed(&game);
+    assert!(early > 0.0 && later > early, "{early} then {later}");
+    for rocket in game.world.rockets.values().filter(|r| r.kind == PROJECTILE_ROCKET) {
+        assert!(rocket.velocity[1].abs() < rocket.velocity[0].abs().max(rocket.velocity[2].abs()), "no arc: {rocket:?}");
+    }
+}
+
+#[test]
 fn the_walkers_driver_aims_with_the_upper_body_within_thirty_degrees_and_fires() {
     let mut game = game();
     let (driver, _inbox) = join(&mut game);

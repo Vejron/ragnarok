@@ -102,3 +102,53 @@ export function damageSmoke(
   }
   return owed - puffs
 }
+
+/**
+ * The exhaust of a rocket in flight for the `dt` seconds just passed: a white-hot flame at the nozzle and a
+ * grey-white smoke trail that hangs in the air where the rocket has been, thinning and drifting with the
+ * wind. Puffs are spread along this frame's travel so a fast rocket lays a line, not a string of blobs.
+ * Returns the unspent fraction of a puff, which the caller carries to the next frame.
+ */
+export function rocketTrail(
+  world: FxWorld,
+  position: readonly [number, number, number],
+  velocity: readonly [number, number, number],
+  dt: number,
+  carried: number,
+): number {
+  const distance = Math.hypot(position[0] - world.camera.x, position[1] - world.camera.y, position[2] - world.camera.z)
+  if (distance > RANGE * 2) return 0
+  const owed = carried + dt * (distance > RANGE ? 40 : 70)
+  const puffs = Math.floor(owed)
+  const speed = Math.hypot(velocity[0], velocity[1], velocity[2]) || 1
+  const back = [-velocity[0] / speed, -velocity[1] / speed, -velocity[2] / speed] as const
+  for (let i = 0; i < puffs; i++) {
+    // Somewhere along the stretch flown this frame, plus the nozzle's offset behind the body.
+    const along = 0.5 + rand(0, speed * dt)
+    world.smoke.spawn({
+      position: [position[0] + back[0] * along + rand(-0.05, 0.05), position[1] + back[1] * along + rand(-0.05, 0.05), position[2] + back[2] * along + rand(-0.05, 0.05)],
+      velocity: [WIND.x * rand(0.3, 1) + rand(-0.3, 0.3), rand(0.2, 0.7), WIND.z * rand(0.3, 1) + rand(-0.3, 0.3)],
+      life: rand(1.8, 2.8),
+      size: [rand(0.2, 0.3), rand(1.0, 1.6)],
+      color: pick(WHITE),
+      alpha: 0.5,
+      gravity: -0.2,
+      drag: 0.8,
+    })
+  }
+  const flames = Math.floor(dt * 40 + Math.random())
+  for (let i = 0; i < flames; i++) {
+    const along = 0.5 + rand(0, 0.8)
+    world.glow.spawn({
+      position: [position[0] + back[0] * along, position[1] + back[1] * along, position[2] + back[2] * along],
+      velocity: [velocity[0] * 0.1 + rand(-0.5, 0.5), velocity[1] * 0.1 + rand(-0.5, 0.5), velocity[2] * 0.1 + rand(-0.5, 0.5)],
+      life: rand(0.08, 0.18),
+      size: [rand(0.35, 0.55), 0.05],
+      color: i % 2 === 0 ? 0xffe9a0 : 0xff9a2e,
+      alpha: 0.9,
+      gravity: 0,
+      drag: 2,
+    })
+  }
+  return owed - puffs
+}

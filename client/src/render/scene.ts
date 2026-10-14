@@ -1,3 +1,4 @@
+import { GunSightView } from './gunsight'
 import * as THREE from 'three'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js'
@@ -52,6 +53,8 @@ const AO_PIXEL_RATIO = 1.5
 const DEFAULT_FOV = 75
 const AIM_FOV = 50
 const SCOPE_FOV = 18
+/** A gunner's sight: a tank gun's optic, wide enough to hold a range ladder out to 400 m. */
+const SIGHT_FOV = 20
 /** How far in the third-person camera pulls while aiming, as a fraction of its distance. */
 export const AIM_DISTANCE_SCALE = 0.7
 /** How fast the zoom eases in and out, per second. */
@@ -61,6 +64,8 @@ export class Scene {
   readonly scene = new THREE.Scene()
   readonly camera = new THREE.PerspectiveCamera(DEFAULT_FOV, 1, 0.25, 2000)
   readonly renderer: THREE.WebGLRenderer
+  /** A tank gunner's reticle, drawn over the finished frame. */
+  readonly gunsight = new GunSightView()
   private readonly sun = new THREE.DirectionalLight(0xffffff, 2.4)
   private readonly resizeObserver: ResizeObserver
   private readonly hemisphere = new THREE.HemisphereLight()
@@ -241,8 +246,8 @@ export class Scene {
   }
 
   /** Eases the field of view towards the scope or aim zoom, or back, `dt` seconds on. `boost` widens the plain view, e.g. with speed. */
-  zoomTo(zoom: 'none' | 'aim' | 'scope', dt: number, boost = 0) {
-    const target = zoom === 'scope' ? SCOPE_FOV : zoom === 'aim' ? AIM_FOV : DEFAULT_FOV + boost
+  zoomTo(zoom: 'none' | 'aim' | 'scope' | 'sight', dt: number, boost = 0) {
+    const target = zoom === 'scope' ? SCOPE_FOV : zoom === 'sight' ? SIGHT_FOV : zoom === 'aim' ? AIM_FOV : DEFAULT_FOV + boost
     const fov = this.camera.fov + (target - this.camera.fov) * Math.min(1, dt * ZOOM_RATE)
     if (Math.abs(fov - this.camera.fov) < 1e-3) return
     this.camera.fov = Math.abs(fov - target) < 0.05 ? target : fov
@@ -252,10 +257,19 @@ export class Scene {
   render() {
     if (this.currentLook.ao && this.composer) this.composer.render()
     else this.renderer.render(this.scene, this.camera)
+    if (this.gunsight.visible) {
+      // Over the frame, never behind a wall: its own pass with a cleared depth buffer.
+      const clear = this.renderer.autoClear
+      this.renderer.autoClear = false
+      this.renderer.clearDepth()
+      this.renderer.render(this.gunsight.scene, this.gunsight.camera)
+      this.renderer.autoClear = clear
+    }
   }
 
   dispose() {
     this.resizeObserver.disconnect()
+    this.gunsight.dispose()
     this.gtao?.dispose()
     this.composer?.dispose()
     this.contact.dispose()

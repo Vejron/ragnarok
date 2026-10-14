@@ -41,6 +41,8 @@ export interface HudStats {
   dead: boolean
   /** Seconds until respawn while dead. */
   respawnIn: number
+  /** Looking down a gun sight: the reticle is drawn in the scene, and the on-screen aim marks are hidden. */
+  sight: boolean
   /** Looking down a scope: the scope overlay replaces the crosshair. */
   scoped: boolean
   /** Aiming a gun over the shoulder: half zoom, tighter spread. */

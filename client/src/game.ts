@@ -13,7 +13,7 @@ import {
   ROCKET_BLAST_RADIUS, SHELL_COOLDOWN_TICKS, STANDING_Y,
   CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS,
   HELI_GUN_COOLDOWN_TICKS, HELI_GUN_LENGTH, HELI_GUN_PITCH_MAX, HELI_GUN_PITCH_MIN, HELI_GUN_YAW_LIMIT, CANNON_RADIUS,
-  STRV_BARREL_LENGTH, STRV_BARREL_MAX, STRV_BARREL_MIN, TANK_BARREL_LENGTH, TANK_BARREL_MAX, TANK_BARREL_MIN, WALKER_GUN_COOLDOWN_TICKS, WALKER_GUN_LENGTH, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT, TICK_MS, TICK_RATE, vehicleMaxHp, WRECK_BLAST_RADIUS,
+  SHELL_SPEED, GRAVITY, STRV_BARREL_LENGTH, STRV_BARREL_MAX, STRV_BARREL_MIN, TANK_BARREL_LENGTH, TANK_BARREL_MAX, TANK_BARREL_MIN, WALKER_GUN_COOLDOWN_TICKS, WALKER_GUN_LENGTH, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT, TICK_MS, TICK_RATE, vehicleMaxHp, WRECK_BLAST_RADIUS,
   BOMB_RADIUS, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, PLANE_BOMB_MIN_HEIGHT, PLANE_BOMB_PIVOT, PLANE_GUN_RANGE, PLANE_REAR_PITCH_MAX, PLANE_REAR_PITCH_MIN, PLANE_STALL_SPEED,
 } from './sim/consts'
 import { vehicleDef } from './sim/vehicles'
@@ -31,7 +31,7 @@ import { Particles } from './render/particles'
 import { Skidmarks } from './render/skidmarks'
 import { crashBurst, scrapeSparks, VehicleFx, type FxWorld } from './render/tyres'
 import { Debris } from './render/debris'
-import { damageSmoke } from './render/vehiclesmoke'
+import { damageSmoke, rocketTrail } from './render/vehiclesmoke'
 import { BLASTS, explosion, type ExplosionProfile } from './render/explosion'
 import { Gore } from './render/gore'
 import { Surfaces, SURFACE_GRASS } from './sim/surface'
@@ -49,6 +49,7 @@ import { encodeRtc, wrapAngle } from './net/codec'
 import { VoiceChat } from './voice'
 import { PlaneModel } from './render/plane'
 import { StrvModel } from './render/strvs'
+import type { Mark } from './render/gunsight'
 import { TankModel } from './render/tank'
 import { WalkerModel } from './render/walker'
 import { cameraDistance, createVehicleModel, loadVehicleModels } from './render/vehicles'
@@ -120,6 +121,14 @@ interface LiveBullet {
 
 /** Mouse-look is this much slower down a scope, to match the narrower view. */
 const SCOPE_LOOK_SCALE = 0.3
+/** Looking down a tank's sight is as slow as a rifle scope. */
+const SIGHT_LOOK_SCALE = 0.35
+/** The sight sits this far above the gun's pivot, on the mantlet. */
+const SIGHT_EYE_UP = 0.5
+/** Ranges (m) the sight's ladder is marked at. */
+const SIGHT_RANGES = [100, 150, 200, 250, 300, 350, 400, 450, 500]
+const SIGHT_RAY_START = 6
+const SIGHT_RANGE_MAX = 1500
 /** And a little slower aiming a gun over the shoulder. */
 const AIM_LOOK_SCALE = 0.6
 
@@ -218,6 +227,7 @@ export class Game {
   private wasGunner = false
   private wasAviator = false
   private wasWalking = false
+  private wasTanker = false
   /** The yaw and pitch a plane's camera has eased to, behind the mouse's aim. */
   private planeView: [number, number] = [0, 0]
   private predictor: Predictor | null = null
@@ -561,11 +571,14 @@ export class Game {
     const aiming = !scoped && this.localId !== null && !seated && this.hp > 0 && this.input.aimHeld && itemDef(this.held().item)?.kind === 'gun'
     this.aiming = aiming
     this.aimBlend += ((aiming ? 1 : 0) - this.aimBlend) * Math.min(1, dt * 14)
-    this.input.lookScale = scoped ? SCOPE_LOOK_SCALE : aiming ? AIM_LOOK_SCALE : 1
     const driving = seated ? cars.get(this.seat!.vehicle) : undefined
+    // Aim held at a tank's gun, or a Strv S's: look down its sight, which shows where the barrel really points.
+    const sighted = this.hp > 0 && this.input.aimHeld && driving !== undefined
+      && (driving.kind === KIND_TANK ? this.seat!.index === 1 : driving.kind === KIND_STRV && this.seat!.index === 0)
+    this.input.lookScale = sighted ? SIGHT_LOOK_SCALE : scoped ? SCOPE_LOOK_SCALE : aiming ? AIM_LOOK_SCALE : 1
     const chase = driving && this.seat!.index === 0 && driving.kind !== KIND_HELI && driving.kind !== KIND_PLANE ? this.chase.update([driving.x, driving.y, driving.z], driving.yaw, dt, cameraDistance(driving.kind)) : null
     if (!chase) this.chase.reset()
-    this.scene.zoomTo(scoped ? 'scope' : aiming ? 'aim' : 'none', dt, chase?.fovBoost ?? 0)
+    this.scene.zoomTo(sighted ? 'sight' : scoped ? 'scope' : aiming ? 'aim' : 'none', dt, chase?.fovBoost ?? 0)
     me.hidden = seated || scoped
     me.dead = this.hp === 0
     me.held = this.hotbar[this.input.selectedSlot]?.item ?? ITEM_NONE
@@ -579,6 +592,7 @@ export class Game {
     const turret = gunner ? this.cars.get(this.seat!.vehicle) : undefined
     const aviator = ride?.kind === KIND_PLANE && this.seat!.index === 0
     const walking = ride?.kind === KIND_WALKER && this.seat!.index === 0
+    this.scene.gunsight.hide()
     if (gunner && (turret instanceof TankModel || turret instanceof HeliModel || turret instanceof PlaneModel)) {
       if (!this.wasGunner && ride.turret) {
         // Take the seat looking where the barrel points.
@@ -594,7 +608,8 @@ export class Game {
       else if (turret instanceof HeliModel) this.limitGun(turret, HELI_GUN_YAW_LIMIT, HELI_GUN_PITCH_MIN, HELI_GUN_PITCH_MAX)
       else this.limitGun(turret, Math.PI, PLANE_REAR_PITCH_MIN, PLANE_REAR_PITCH_MAX)
       const { origin } = turret.barrel()
-      this.scene.aimFrom([origin.x, origin.y, origin.z], this.input.yaw, this.input.pitch)
+      if (sighted && turret instanceof TankModel) this.lookDownBarrel(turret)
+      else this.scene.aimFrom([origin.x, origin.y, origin.z], this.input.yaw, this.input.pitch)
     } else if (aviator) {
       // The mouse is the aim and moves at once; the plane turns to follow it, and the camera follows
       // the aim at an easy pace, so the circle drifts across the screen as it catches up.
@@ -618,14 +633,17 @@ export class Game {
         this.scene.camera.rotateZ(-Math.atan2(-right.y, top.y) * PLANE_VIEW_ROLL)
       }
     } else if (tanker) {
-      // Sideways is the hull's: the look is locked to its heading and only the elevation is free, so
-      // the middle of the screen is where the gun points.
-      this.input.yaw = ride.yaw
+      // The gun points along the hull, which A/D turn. The mouse looks freely around it and the view
+      // eases back behind the barrel when it rests, so the middle of the screen is where the gun points
+      // again.
+      if (!this.wasTanker) this.input.yaw = ride.yaw
+      else if (!sighted) this.input.followYaw(ride.yaw, dt)
       this.input.clampPitch(STRV_BARREL_MIN, STRV_BARREL_MAX)
       const strv = this.cars.get(this.seat!.vehicle)
       if (strv instanceof StrvModel) {
         const { origin } = strv.barrel()
-        this.scene.aimFrom([origin.x, origin.y, origin.z], this.input.yaw, this.input.pitch, STRV_AIM_BACK, STRV_AIM_UP)
+        if (sighted) this.input.yaw = this.lookDownBarrel(strv)
+        else this.scene.aimFrom([origin.x, origin.y, origin.z], this.input.yaw, this.input.pitch, STRV_AIM_BACK, STRV_AIM_UP)
       } else {
         this.scene.follow([ride.x, ride.y + 0.4, ride.z], this.input.yaw, this.input.pitch, cameraDistance(ride.kind), 0, CAMERA_HEIGHT)
       }
@@ -658,6 +676,7 @@ export class Game {
     this.wasGunner = gunner
     this.wasAviator = aviator
     this.wasWalking = walking
+    this.wasTanker = tanker
     // Streaming follows what the camera is on: the car when seated, else the stickman.
     this.tiles?.update(ride ? ride.x : position[0], ride ? ride.z : position[2])
     this.playShots(renderTick)
@@ -749,6 +768,7 @@ export class Game {
       maxHp: PLAYER_MAX_HP,
       dead: this.hp === 0,
       respawnIn: this.diedAt === null ? 0 : Math.max(0, (RESPAWN_TICKS * TICK_MS - (now - this.diedAt)) / 1000),
+      sight: sighted,
       scoped: this.scoped,
       aiming: this.aiming,
       armed: this.localId !== null && !seated && this.hp > 0 && itemDef(this.held().item)?.kind === 'gun',
@@ -904,10 +924,16 @@ export class Game {
         this.rocketInterp.remove(id)
         this.rocketEnds.delete(id)
         this.rocketModels.remove(id)
+        this.trailOwed.delete(id)
         continue
       }
       const state = this.rocketInterp.sample(id, renderTick)
-      if (state) this.rocketModels.place(id, state.kind, [state.x, state.y, state.z], [state.vx, state.vy, state.vz])
+      if (!state) continue
+      this.rocketModels.place(id, state.kind, [state.x, state.y, state.z], [state.vx, state.vy, state.vz])
+      // Only a motor-driven rocket (kind 0) leaves a flame and a smoke trail.
+      if (state.kind === 0) {
+        this.trailOwed.set(id, rocketTrail(this.fxWorld, [state.x, state.y, state.z], [state.vx, state.vy, state.vz], this.frameDt, this.trailOwed.get(id) ?? 0))
+      }
     }
   }
 
@@ -967,7 +993,11 @@ export class Game {
     this.sounds.gunshot([heard.x, heard.y, heard.z], gun?.sound ?? 'rifle')
   }
 
+  /** The unspent fraction of a smoke puff, per rocket in flight. */
+  private readonly trailOwed = new Map<number, number>()
+
   private clearRockets() {
+    this.trailOwed.clear()
     this.bullets.clear()
     this.seenBullets.clear()
     for (const id of this.rocketInterp.ids()) this.rocketModels.remove(id)
@@ -1310,6 +1340,42 @@ export class Game {
    * the nose, which is where the guns point a little way out, and the aim, the heading the mouse asks for.
    * They are given apart from the HUD stats, which are throttled, so they move smoothly.
    */
+  /**
+   * Puts the camera on the barrel's line, looking exactly where a shell leaves, and lays out the
+   * reticle over it: the crosshair is the barrel's line and the marks below it are where a shell lands
+   * at each range. A shell leaves at `SHELL_SPEED` and falls under gravity, so `s` metres out it is
+   * `g (s / v)² / 2` below the line. Returns the barrel's heading.
+   */
+  private lookDownBarrel(model: TankModel | StrvModel): number {
+    const { origin, direction } = model.barrel()
+    const yaw = Math.atan2(-direction.x, -direction.z)
+    const pitch = Math.asin(Math.max(-1, Math.min(1, direction.y)))
+    const eye = new THREE.Vector3(origin.x, origin.y + SIGHT_EYE_UP, origin.z)
+    this.scene.scopeFrom([eye.x, eye.y, eye.z], yaw, pitch)
+    const camera = this.scene.camera
+    const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw))
+    const up = new THREE.Vector3().crossVectors(right, direction)
+    const reach = Math.tan((camera.fov * Math.PI) / 360)
+    const level = Math.hypot(direction.x, direction.z)
+    const marks: Mark[] = []
+    for (const range of SIGHT_RANGES) {
+      if (level < 1e-3) break
+      const along = range / level
+      const fall = 0.5 * GRAVITY * (along / SHELL_SPEED) ** 2
+      // From the eye, which sits a little above the muzzle's start.
+      const to = direction.clone().multiplyScalar(along).add(new THREE.Vector3(0, -fall - SIGHT_EYE_UP, 0))
+      const depth = to.dot(direction)
+      if (depth <= 0) continue
+      const y = to.dot(up) / depth
+      if (y > -reach * 0.9) marks.push({ range, y })
+    }
+    // The ray starts past the muzzle, so it does not find the gun's own hull.
+    const start = eye.clone().addScaledVector(direction, SIGHT_RAY_START)
+    const hit = this.motor?.castRay([start.x, start.y, start.z], [direction.x, direction.y, direction.z], SIGHT_RANGE_MAX)
+    this.scene.gunsight.show(camera.fov, camera.aspect, marks, hit ? hit.t + SIGHT_RAY_START : null)
+    return yaw
+  }
+
   private sights(aviator: boolean) {
     let nose: [number, number] | null = null
     let aim: [number, number] | null = null

@@ -167,23 +167,25 @@ pub const TANK_TURRET_HP: u8 = 90;
 /// `sim/consts.ts`.
 pub const STRV_SEATS: usize = 1;
 pub const STRV_HALF_EXTENTS: [f32; 3] = [1.3, 0.45, 2.7];
-pub const STRV_WHEEL_RADIUS: f32 = 0.42;
+/// Bigger wheels and a longer suspension than the tank's, with the hull higher on them: it steps over
+/// obstacles the tank has to go around.
+pub const STRV_WHEEL_RADIUS: f32 = 0.52;
 pub const STRV_TRACK_HALF: f32 = 1.2;
 /// Z of the three axles, front first.
 pub const STRV_AXLES_Z: [f32; 3] = [-1.9, 0.0, 1.9];
 pub const STRV_HARD_POINT_Y: f32 = -0.2;
-pub const STRV_SUSPENSION_REST: f32 = 0.35;
+pub const STRV_SUSPENSION_REST: f32 = 0.42;
 pub const STRV_MAX_SPEED: f32 = 16.0;
 /// Yaw rate at full stick, rad/s.
 pub const STRV_TURN_RATE: f32 = 1.5;
 /// The casemate the gun sits in is a solid box on the hull's roof, weightless like the tank's turret:
 /// its half extents and centre in the hull frame.
-pub const STRV_CASEMATE_HALF: [f32; 3] = [0.85, 0.3, 1.3];
-pub const STRV_CASEMATE_CENTRE: [f32; 3] = [0.0, 0.75, 0.15];
+pub const STRV_CASEMATE_HALF: [f32; 3] = [0.9, 0.17, 1.25];
+pub const STRV_CASEMATE_CENTRE: [f32; 3] = [0.0, 0.62, -0.25];
 /// Where the gun's trunnion is in the hull frame, how far the muzzle is from it, how fast the barrel
 /// elevates (rad/s) and its limits, radians (+ is up). The gun points where the hull does.
-pub const STRV_GUN_PIVOT: [f32; 3] = [0.0, 0.75, -1.0];
-pub const STRV_BARREL_LENGTH: f32 = 3.4;
+pub const STRV_GUN_PIVOT: [f32; 3] = [0.0, 0.72, -1.3];
+pub const STRV_BARREL_LENGTH: f32 = 4.4;
 pub const STRV_BARREL_SLEW: f32 = 1.2;
 pub const STRV_BARREL_MIN: f32 = -0.15;
 pub const STRV_BARREL_MAX: f32 = 0.3;
@@ -302,6 +304,15 @@ pub const HELI_GUN_PITCH_MAX: f32 = 0.2;
 pub const HELI_GUN_SLEW: f32 = 3.0;
 pub const HELI_GUN_COOLDOWN_TICKS: u32 = TICK_RATE / 3;
 pub const HELI_GUN_SPREAD: f32 = 0.01;
+/// The rocket pods under the stub wings, fired by the pilot (seat 0) on the fire button. `HELI_POD_PIVOTS`
+/// are the four tube mouths in the hull frame, used in turn, one rocket every `HELI_ROCKET_COOLDOWN_TICKS`.
+/// A rocket leaves at `HELI_ROCKET_LAUNCH_SPEED` over the helicopter's own velocity, along the nose, and
+/// is driven at `ROCKET_ACCEL` m/s² up to `ROCKET_MAX_SPEED`: it flies straight, no gravity.
+pub const HELI_POD_PIVOTS: [[f32; 3]; 4] = [[-1.0, -0.39, -0.3], [1.0, -0.39, -0.3], [-1.75, -0.525, -0.3], [1.75, -0.525, -0.3]];
+pub const HELI_ROCKET_COOLDOWN_TICKS: u32 = TICK_RATE / 5;
+pub const HELI_ROCKET_LAUNCH_SPEED: f32 = 20.0;
+pub const ROCKET_ACCEL: f32 = 110.0;
+pub const ROCKET_MAX_SPEED: f32 = 170.0;
 /// The blast of an autocannon round: a third of a tank shell's radius, a third of its damage.
 pub const CANNON_RADIUS: f32 = EXPLOSION_RADIUS / 3.0;
 pub const CANNON_DAMAGE: f32 = EXPLOSION_DAMAGE / 3.0;

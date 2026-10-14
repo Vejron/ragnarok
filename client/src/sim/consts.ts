@@ -120,20 +120,20 @@ export const TANK_TURRET_HP = 90
 /** The Strv S: a turretless tank, the gun fixed in the hull. Mirrors `STRV_*` in consts.rs. */
 export const STRV_SEATS = 1
 export const STRV_HALF_EXTENTS = [1.3, 0.45, 2.7] as const
-export const STRV_WHEEL_RADIUS = 0.42
+export const STRV_WHEEL_RADIUS = 0.52
 export const STRV_TRACK_HALF = 1.2
 export const STRV_AXLES_Z = [-1.9, 0, 1.9] as const
 export const STRV_HARD_POINT_Y = -0.2
-export const STRV_SUSPENSION_REST = 0.35
+export const STRV_SUSPENSION_REST = 0.42
 export const STRV_MAX_SPEED = 16.0
 /** Yaw rate at full stick, rad/s. */
 export const STRV_TURN_RATE = 1.5
 /** The casemate the gun sits in: a weightless solid box on the roof, in the hull frame. */
-export const STRV_CASEMATE_HALF = [0.85, 0.3, 1.3] as const
-export const STRV_CASEMATE_CENTRE = [0.0, 0.75, 0.15] as const
+export const STRV_CASEMATE_HALF = [0.9, 0.17, 1.25] as const
+export const STRV_CASEMATE_CENTRE = [0.0, 0.62, -0.25] as const
 /** Where the gun's trunnion is in the hull frame, how far the muzzle is from it, and its elevation limits (radians, + is up). */
-export const STRV_GUN_PIVOT = [0.0, 0.75, -1.0] as const
-export const STRV_BARREL_LENGTH = 3.4
+export const STRV_GUN_PIVOT = [0.0, 0.72, -1.3] as const
+export const STRV_BARREL_LENGTH = 4.4
 export const STRV_BARREL_SLEW = 1.2
 export const STRV_BARREL_MIN = -0.15
 export const STRV_BARREL_MAX = 0.3
@@ -263,6 +263,8 @@ export const vehicleMaxHp = (kind: number) => (kind === 2 ? 250 : kind === 6 ? 7
 export const ROCKET_BLAST_RADIUS = 5.0
 export const WRECK_BLAST_RADIUS = 8.0
 export const SHELL_COOLDOWN_TICKS = 90
+/** Speed a shell leaves the muzzle at, m/s; it falls under `GRAVITY` from there. */
+export const SHELL_SPEED = 140.0
 export const EXPLOSION_RADIUS = 7.0
 /** An autocannon round bursts a third as wide as a tank shell. */
 export const CANNON_RADIUS = EXPLOSION_RADIUS / 3

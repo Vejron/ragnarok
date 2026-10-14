@@ -59,7 +59,7 @@ const NONE: [WeakSpot; 0] = [];
 /// A tank's engine deck, over the back of the hull.
 const TANK_WEAK: [WeakSpot; 1] = [WeakSpot { centre: [0.0, 0.3, 2.0], half: [1.1, 0.4, 0.6], mult: 1.5 }];
 /// The Strv S carries its engine at the back too, under a thin deck.
-const STRV_WEAK: [WeakSpot; 2] = [WeakSpot { centre: [0.0, 0.2, 2.0], half: [1.1, 0.4, 0.7], mult: 1.6 }, WeakSpot { centre: [0.0, 0.4, -0.9], half: [0.5, 0.3, 0.5], mult: 1.3 }];
+const STRV_WEAK: [WeakSpot; 2] = [WeakSpot { centre: [0.0, 0.2, 2.0], half: [1.1, 0.4, 0.7], mult: 1.6 }, WeakSpot { centre: [0.0, 0.6, -0.3], half: [0.7, 0.2, 0.9], mult: 1.3 }];
 
 const STRV: Profile = Profile { front_slope: 0.96, ricochet: [58.0, 72.0, 75.0, 78.0], mult: [1.0, 1.0, 1.4, 1.3], weak: &STRV_WEAK };
 const TANK: Profile = Profile { front_slope: 0.35, ricochet: [66.0, 74.0, 78.0, 80.0], mult: [1.0, 1.0, 1.35, 1.3], weak: &TANK_WEAK };

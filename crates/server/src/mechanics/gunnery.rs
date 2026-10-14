@@ -5,7 +5,7 @@ use crate::game::{Gun, PlaneArms, Rocket, World};
 use crate::physics::CarPose;
 use shared::consts::*;
 use shared::items::Falloff;
-use shared::protocol::{DAMAGE_TURRET, TURRET_GONE, KIND_HELI, KIND_PLANE, KIND_STRV, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_SHELL, ShotEvent, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_MG, WEAPON_SHELL};
+use shared::protocol::{DAMAGE_TURRET, TURRET_GONE, KIND_HELI, KIND_PLANE, KIND_STRV, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_ROCKET, PROJECTILE_SHELL, ShotEvent, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_MG, WEAPON_SHELL};
 use shared::quant::{from_mrad, to_cm, wrap_angle};
 
 /// Vehicle guns: the gunner's look direction aims the gun, and the fire button shoots it.
@@ -156,6 +156,41 @@ fn work_autocannon(world: &mut World, vid: u32, mut gun: Gun, pose: &CarPose, dt
     fire(world, PROJECTILE_CANNON, vid, origin, dir, HELI_GUN_LENGTH, gunner);
     gun.shots = gun.shots.wrapping_add(1);
     gun.cooldown = HELI_GUN_COOLDOWN_TICKS;
+    gun
+}
+
+/// One tick of a helicopter's rocket pods, for the pilot in seat 0 if there is one. Holding fire sends a
+/// rocket from the next tube along the nose every `HELI_ROCKET_COOLDOWN_TICKS`. The rocket starts at the
+/// helicopter's speed along the nose plus a small push and accelerates from there (see `step_rockets`).
+fn work_pods(world: &mut World, vid: u32, mut gun: Gun, pose: &CarPose) -> Gun {
+    gun.pod_cooldown = gun.pod_cooldown.saturating_sub(1);
+    let Some(pilot) = world.vehicles[&vid].seats[0] else { return gun };
+    let Some(buttons) = world.players.get(&pilot).map(|player| player.input.buttons()) else { return gun };
+    if buttons & BUTTON_FIRE == 0 || gun.pod_cooldown > 0 {
+        return gun;
+    }
+    let pivot = HELI_POD_PIVOTS[usize::from(gun.pod_shots) % HELI_POD_PIVOTS.len()];
+    let (origin, dir) = aim_from(pose, pivot, 0.0, 0.0);
+    // It flies where the nose points, not where the helicopter is drifting: only the helicopter's speed
+    // along the nose is carried over, so a sideways slide does not bend the rocket's heading.
+    let along: f32 = (0..3).map(|i| pose.velocity[i] * dir[i]).sum::<f32>().max(0.0);
+    let id = world.alloc_id();
+    world.rockets.insert(
+        id,
+        Rocket {
+            kind: PROJECTILE_ROCKET,
+            owner: pilot,
+            source: vid,
+            position: origin,
+            velocity: dir.map(|d| d * (HELI_ROCKET_LAUNCH_SPEED + along)),
+            ttl: ROCKET_TTL_TICKS,
+            item: 0,
+            back: 0,
+            flown: 0.0,
+        },
+    );
+    gun.pod_shots = gun.pod_shots.wrapping_add(1);
+    gun.pod_cooldown = HELI_ROCKET_COOLDOWN_TICKS;
     gun
 }
 
@@ -349,6 +384,7 @@ impl Mechanic for Gunnery {
             }
             if vehicle.kind == KIND_HELI {
                 let gun = work_autocannon(world, vid, gun, &pose, dt);
+                let gun = work_pods(world, vid, gun, &pose);
                 if let Some(vehicle) = world.vehicles.get_mut(&vid) {
                     vehicle.gun = Some(gun);
                 }

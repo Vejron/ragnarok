@@ -21,6 +21,21 @@ fn world_with_wall() -> WorldFile {
     WorldFile { collision: CollisionMesh { vertices, triangles }, ..flat() }
 }
 
+/// A `height` m tall slab from x = -8..8 and z = -40..-20, straight ahead of a vehicle at the origin
+/// (a kerb, a low wall, a crate): wide and deep enough to drive up onto.
+fn world_with_step(height: f32) -> WorldFile {
+    let v = |x: f32, y: f32, z: f32| [(x * 100.0) as i32, (y * 100.0) as i32, (z * 100.0) as i32];
+    let vertices = vec![
+        v(-8.0, 0.0, -40.0), v(8.0, 0.0, -40.0), v(8.0, 0.0, -20.0), v(-8.0, 0.0, -20.0),
+        v(-8.0, height, -40.0), v(8.0, height, -40.0), v(8.0, height, -20.0), v(-8.0, height, -20.0),
+    ];
+    let triangles = vec![
+        [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6],
+        [3, 0, 4], [3, 4, 7], [4, 5, 6], [4, 6, 7], [0, 2, 1], [0, 3, 2],
+    ];
+    WorldFile { collision: CollisionMesh { vertices, triangles }, ..flat() }
+}
+
 fn with_car(world: &WorldFile) -> Physics {
     let mut physics = Physics::new(world).unwrap();
     physics.add_car(1, KIND_JEEP, [0.0, 1.0, 0.0], 0.0);
@@ -70,10 +85,10 @@ const SCRIPTED_CHECKPOINTS: [(u8, u32, [f32; 3]); 16] = [
     (KIND_TANK, 210, [0.5739, 0.9400, -17.5632]),
     (KIND_TANK, 300, [11.9063, 0.9400, -29.5214]),
     (KIND_TANK, 480, [26.5903, 0.9400, -40.3629]),
-    (KIND_STRV, 90, [0.0000, 0.9099, -1.1357]),
-    (KIND_STRV, 210, [0.8788, 0.9100, -23.6930]),
-    (KIND_STRV, 300, [18.6727, 0.9100, -35.1969]),
-    (KIND_STRV, 480, [45.5444, 0.9100, -40.3198]),
+    (KIND_STRV, 90, [0.0000, 1.0798, -1.1357]),
+    (KIND_STRV, 210, [0.8855, 1.0800, -23.6921]),
+    (KIND_STRV, 300, [18.7068, 1.0800, -35.1709]),
+    (KIND_STRV, 480, [47.1117, 1.0799, -41.0568]),
 ];
 
 #[test]
@@ -437,6 +452,26 @@ fn a_strv_is_quicker_than_a_tank_and_pivots_faster() {
     run(&mut tank, COAST, 120);
     run(&mut strv, COAST, 120);
     assert!(spin(&mut strv) < spin(&mut tank) - 0.3);
+}
+
+/// How far past the slab's near edge (z = -20) a `kind` driven `FORWARD` from the origin gets in 20 s
+/// over a `height` m step, in metres. Negative while it is still stuck in front of it.
+fn over_the_step(kind: u8, height: f32) -> f32 {
+    let mut physics = Physics::new(&world_with_step(height)).unwrap();
+    physics.add_car(1, kind, [0.0, 1.2, 0.0], 0.0);
+    run(&mut physics, COAST, 120);
+    let pose = run(&mut physics, FORWARD, 60 * 20);
+    -20.0 - pose.position[2]
+}
+
+#[test]
+fn a_strv_climbs_a_step_that_stops_a_tank() {
+    // Both take a kerb.
+    assert!(over_the_step(KIND_TANK, 0.3) > 100.0);
+    assert!(over_the_step(KIND_STRV, 0.3) > 100.0);
+    // A 0.6 m wall: the bigger wheels and the higher belly get the Strv S over, the tank sits against it.
+    assert!(over_the_step(KIND_STRV, 0.6) > 100.0, "{}", over_the_step(KIND_STRV, 0.6));
+    assert!(over_the_step(KIND_TANK, 0.6) < 0.0, "{}", over_the_step(KIND_TANK, 0.6));
 }
 
 #[test]

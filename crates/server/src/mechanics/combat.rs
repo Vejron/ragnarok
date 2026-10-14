@@ -561,10 +561,15 @@ fn step_rockets(world: &mut World, dt: f32) {
         if rocket.kind == PROJECTILE_SHELL || rocket.kind == PROJECTILE_CANNON || rocket.kind == PROJECTILE_BOMB {
             continue;
         }
+        // A rocket's motor keeps pushing it along its heading, up to its top speed.
         let speed = rocket.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
         let dir = rocket.velocity.map(|v| v / speed);
+        let speed = (speed + ROCKET_ACCEL * dt).min(ROCKET_MAX_SPEED.max(speed));
+        if let Some(r) = world.rockets.get_mut(&id) {
+            r.velocity = dir.map(|v| v * speed);
+        }
         let step = speed * dt;
-        let wall = world.physics.cast_ray(rocket.position, dir, step, 0);
+        let wall = world.physics.cast_ray(rocket.position, dir, step, rocket.source);
         let player = first_player_hit(world, rocket.position, dir, wall.unwrap_or(step), Some(rocket.owner), 0);
         let end = player.map(|(_, t)| t).or(wall);
         let ttl = rocket.ttl.saturating_sub(1);

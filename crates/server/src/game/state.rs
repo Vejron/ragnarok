@@ -203,6 +203,9 @@ pub struct Gun {
     /// A machine gun's heat, 0..=255: at 255 it jams until it has cooled to `GUN_UNJAM`.
     pub heat: f32,
     pub jammed: bool,
+    /// A helicopter's rocket pods: ticks until the next rocket, and rockets fired (which tube is next).
+    pub pod_cooldown: u32,
+    pub pod_shots: u8,
 }
 
 /// What a plane's pilot fires: the two forward guns, which take turns, and the bomb rack. The

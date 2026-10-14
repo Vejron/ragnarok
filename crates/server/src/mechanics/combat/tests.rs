@@ -355,7 +355,9 @@ fn a_rocket_in_flight_is_in_the_snapshot() {
     let shared::protocol::ProjectileState { kind, z, vz, .. } = rockets[0];
     assert_eq!(kind, PROJECTILE_ROCKET);
     assert!(z < 0, "flying towards -Z from the shooter at z = 0: {z}");
-    assert!((vz as f32 / 100.0 + ROCKET_SPEED).abs() < 0.1, "{vz}");
+    // The motor has pushed it past its launch speed, straight ahead, and no further than its top speed.
+    let speed = -(vz as f32) / 100.0;
+    assert!(speed > ROCKET_SPEED && speed <= ROCKET_MAX_SPEED, "{vz}");
 }
 
 /// The target steps 5 m aside, then the shooter fires a frame whose picture was `lag` ticks old.
