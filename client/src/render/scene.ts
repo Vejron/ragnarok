@@ -79,6 +79,8 @@ export class Scene {
   private composer: EffectComposer | null = null
   private gtao: GTAOPass | null = null
   private ink: InkPass | null = null
+  /** The pixel ratio the composer renders at, set by `resize`. */
+  private composerRatio = 1
   /** Parts of the scene the AO pass must not see: translucent effects, decals and lines. */
   private readonly aoHidden: THREE.Object3D[] = []
 
@@ -162,7 +164,7 @@ export class Scene {
     target.depthTexture = new THREE.DepthTexture(1, 1)
     const composer = new EffectComposer(this.renderer, target)
     composer.addPass(new RenderPass(this.scene, this.camera))
-    const ink = new InkPass(this.camera)
+    const ink = new InkPass(this.camera, () => this.composerRatio)
     composer.addPass(ink)
     const gtao = new GTAOPass(this.scene, this.camera, 1, 1)
     // Tight and gentle: it should seat things into the ground and darken creases, not outline them.
@@ -197,7 +199,9 @@ export class Scene {
     if (width === 0 || height === 0) return
     this.renderer.setSize(width, height)
     if (this.composer) {
-      this.composer.setPixelRatio(Math.min(this.renderer.getPixelRatio(), AO_PIXEL_RATIO))
+      // Full resolution for the outlines, which need it to stay crisp; AO's cost is what the cap is for.
+      this.composerRatio = this.currentLook.ao ? Math.min(this.renderer.getPixelRatio(), AO_PIXEL_RATIO) : this.renderer.getPixelRatio()
+      this.composer.setPixelRatio(this.composerRatio)
       this.composer.setSize(width, height)
     }
     this.camera.aspect = width / height

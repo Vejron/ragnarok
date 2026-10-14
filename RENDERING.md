@@ -105,7 +105,8 @@ start off on coarse-pointer (touch) devices.
 
 The saved choice carries a version (`LOOK_VERSION` in `look.ts`). When a default changes for existing
 players, bump it and list the flag in `RESET_ON_BUMP`: older saves then drop that flag, so players
-who never chose it get the new default. AO is listed for version 2.
+who never chose it get the new default. AO is listed for version 2; ink for version 3, so everyone
+starts with outlines on, including players who had turned them off.
 
 ### Soft light (`soft`)
 
@@ -150,7 +151,8 @@ The test is the second difference, `l + r − 2c` and `d + u − 2c`, relative t
 against a threshold of 0.05. A smooth surface, even a long slope of ground seen at a low angle,
 changes its rate but does not bend, so it stays clear of ink. An earlier version compared each pixel
 with its neighbour directly, and turned the grazing ground nearly black. The line colour is
-`0x2a2521`, a dark ink rather than black.
+the line darkens whatever it is drawn over (to 30% of its brightness, blended at 60%) rather than
+painting a fixed colour, so the outline keeps the hue of what it outlines.
 
 The pass needs the scene's depth. The composer's target carries a `DepthTexture`, and `InkPass` runs
 straight after `RenderPass`, before any pass that swaps the buffers, so the depth it reads is the

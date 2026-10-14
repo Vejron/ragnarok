@@ -20,8 +20,8 @@ const KEY = 'ragnarok.look'
  * Bump this when a default changes for existing players. A saved look from an older version drops
  * the flags in `RESET_ON_BUMP`, so they fall back to the new default until the player turns them on.
  */
-const LOOK_VERSION = 2
-const RESET_ON_BUMP: (keyof Look)[] = ['ao']
+const LOOK_VERSION = 3
+const RESET_ON_BUMP: (keyof Look)[] = ['ao', 'ink']
 
 /** AO is off by default everywhere; the long shadows are off on phones and tablets, where they cost fill rate and memory. */
 export function defaultLook(): Look {

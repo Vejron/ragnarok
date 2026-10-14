@@ -1,8 +1,6 @@
 import * as THREE from 'three'
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js'
 
-/** The outline colour: a dark ink rather than black, so it sits in the palette. */
-const INK = 0x2a2521
 
 const SHADER = {
   uniforms: {
@@ -11,10 +9,13 @@ const SHADER = {
     resolution: { value: new THREE.Vector2(1, 1) },
     cameraNear: { value: 0.25 },
     cameraFar: { value: 2000 },
-    ink: { value: new THREE.Color(INK) },
+    /** What the line keeps of the colour under it: 0.3 leaves a third of its brightness at the darkest. */
+    darken: { value: 0.3 },
+    /** How much of the line shows, 0 for none and 1 for the full darkening. */
+    strength: { value: 0.6 },
     /** How far depth may jump between neighbours, as a share of the nearer one, before it counts as an edge. */
     threshold: { value: 0.05 },
-    /** How far apart the samples are, in pixels: the line's width. */
+    /** How far apart the samples are, in buffer pixels: the line's width, set from the pixel ratio. */
     width: { value: 1.5 },
   },
   vertexShader: /* glsl */ `
@@ -30,7 +31,8 @@ const SHADER = {
     uniform vec2 resolution;
     uniform float cameraNear;
     uniform float cameraFar;
-    uniform vec3 ink;
+    uniform float darken;
+    uniform float strength;
     uniform float threshold;
     uniform float width;
     varying vec2 vUv;
@@ -52,10 +54,16 @@ const SHADER = {
       // long slope of ground seen at a low angle, only changes its rate, so it stays clear of the ink.
       float jump = max(abs(l + r - 2.0 * c), abs(d + u - 2.0 * c)) / c;
       vec4 color = texture2D(tDiffuse, vUv);
-      gl_FragColor = vec4(mix(color.rgb, ink, step(threshold, jump)), color.a);
+      // A short ramp instead of a hard step: the edge's stair steps fade into the picture.
+      float edge = smoothstep(threshold, threshold * 1.6, jump);
+      // The line darkens what it is drawn over rather than painting a fixed colour, so the hue carries through.
+      gl_FragColor = vec4(mix(color.rgb, color.rgb * darken, edge * strength), color.a);
     }
   `,
 }
+
+/** The line's width in CSS pixels, so it looks the same whatever the screen's pixel ratio. */
+const LINE_WIDTH = 1.2
 
 /**
  * Ink outlines: a line wherever depth jumps, so every silhouette (a tree against the sky, a car against
@@ -63,7 +71,8 @@ const SHADER = {
  * after the scene is rendered, before anything that writes to the buffers.
  */
 export class InkPass extends ShaderPass {
-  constructor(private readonly camera: THREE.PerspectiveCamera) {
+  /** `pixelRatio` is the ratio the composer renders at: buffer pixels per CSS pixel. */
+  constructor(private readonly camera: THREE.PerspectiveCamera, private readonly pixelRatio: () => number) {
     super(SHADER)
   }
 
@@ -76,6 +85,7 @@ export class InkPass extends ShaderPass {
     this.uniforms.tDepth!.value = readBuffer.depthTexture
     this.uniforms.cameraNear!.value = this.camera.near
     this.uniforms.cameraFar!.value = this.camera.far
+    this.uniforms.width!.value = LINE_WIDTH * this.pixelRatio()
     super.render(renderer, writeBuffer, readBuffer, deltaTime, maskActive)
   }
 }
