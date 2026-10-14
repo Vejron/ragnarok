@@ -27,7 +27,7 @@ describe('Character holding things', () => {
   it('has a clip set per stance and a mesh and muzzle for each weapon', async () => {
     const c = await crowd()
     for (const prefix of ['pistol_', 'hold_']) {
-      for (const name of ['idle', 'jump_air', 'walk_fwd', 'run_left', 'crouch_idle', 'crouch_back', 'slide']) {
+      for (const name of ['idle', 'jump_air', 'walk_fwd', 'run_left', 'crouch_idle', 'crouch_back', 'crawl_idle', 'crawl_fwd', 'slide']) {
         expect(c.asset!.clips.has(prefix + name), prefix + name).toBe(true)
       }
     }
@@ -99,7 +99,7 @@ describe('Character holding things', () => {
 describe('Character', () => {
   it('has the clips the blend expects', async () => {
     const c = await crowd()
-    for (const name of ['idle', 'jump_air', 'death', 'walk_fwd', 'walk_back', 'walk_left', 'walk_right', 'run_fwd', 'run_back', 'run_left', 'run_right', 'crouch_idle', 'crouch_fwd', 'crouch_back', 'crouch_left', 'crouch_right', 'slide']) {
+    for (const name of ['idle', 'jump_air', 'death', 'walk_fwd', 'walk_back', 'walk_left', 'walk_right', 'run_fwd', 'run_back', 'run_left', 'run_right', 'crouch_idle', 'crouch_fwd', 'crouch_back', 'crouch_left', 'crouch_right', 'crawl_idle', 'crawl_fwd', 'crawl_back', 'crawl_left', 'crawl_right', 'slide']) {
       expect(c.asset!.clips.has(name), name).toBe(true)
     }
     expect(c.asset!.scene.getObjectByName('muzzle')).toBeTruthy()
@@ -219,6 +219,26 @@ describe('Character', () => {
     run(person, 0, 0, 0, 1)
     expect(person.blend.get('idle')!).toBeGreaterThan(0.9)
     expect(head()).toBeGreaterThan(standing - 0.05)
+    c.dispose()
+  })
+
+  it('lies down into the crawl clips and crawls in them', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    const lying = (vx: number, vz: number, seconds = 1) => {
+      for (let t = 0; t < seconds; t += 1 / 60) person.update([0, 0.3, 0], 0, vx, vz, true, 1 / 60, 0, false, false, true)
+    }
+    run(person, 0, 0, 0)
+    lying(0, 0)
+    expect(person.blend.get('crawl_idle')!).toBeGreaterThan(0.9)
+    expect(person.blend.get('idle')!).toBeLessThan(0.05)
+    lying(0, -1.5)
+    expect(person.blend.get('crawl_fwd')!).toBeGreaterThan(0.9)
+    expect(person.blend.get('crouch_fwd')!).toBeLessThan(0.05)
+    // Getting up hands back to the standing clips.
+    run(person, 0, 0, 0, 1)
+    expect(person.blend.get('idle')!).toBeGreaterThan(0.9)
+    expect(person.blend.get('crawl_idle')!).toBeLessThan(0.05)
     c.dispose()
   })
 

@@ -55,6 +55,11 @@ const SPEED_OF: Record<string, number> = {
   crouch_back: 1.8,
   crouch_left: 1.5,
   crouch_right: 1.5,
+  // Crawling covers a stride every 0.8 s, so it cycles at the rate the body actually moves.
+  crawl_fwd: 1.0,
+  crawl_back: 1.0,
+  crawl_left: 0.9,
+  crawl_right: 0.9,
 }
 const LOCOMOTION = Object.keys(SPEED_OF)
 
@@ -66,8 +71,6 @@ const BLEND_RATE = 12
 const AIR_RATE = 10
 const DEATH_RATE = 9
 const CROUCH_RATE = 10
-/** The lying-down placeholder tips the whole model forward onto its front, a quarter turn, until there is a prone clip. */
-const LIE_PITCH = Math.PI / 2
 const SLIDE_RATE = 14
 /** Torso lean for aiming: how much of the camera pitch the chest and spine take. */
 const AIM_CHEST = 0.4
@@ -301,9 +304,11 @@ export class Character {
     const alive = 1 - this.death
     const ground = alive * (1 - this.air)
     this.slide = chase(this.slide, sliding && crouching ? 1 : 0, SLIDE_RATE, dt)
-    const standing = ground * (1 - this.crouch)
-    const low = ground * this.crouch * (1 - this.slide)
-    const sliding_ = ground * this.crouch * this.slide
+    // Lying down is its own stance: the crouch and slide clips give way to the crawl clips.
+    const standing = ground * (1 - this.crouch) * (1 - this.lie)
+    const low = ground * this.crouch * (1 - this.slide) * (1 - this.lie)
+    const crawl = ground * this.lie
+    const sliding_ = ground * this.crouch * this.slide * (1 - this.lie)
 
     // How much of the standing weight is locomotion, and how much of that is a run.
     const moving = smooth(STILL_SPEED, FULL_STEP, speed)
@@ -324,9 +329,11 @@ export class Character {
       set(`walk_${dir}`, standing * moving * (1 - running) * share)
       set(`run_${dir}`, standing * moving * running * share)
       set(`crouch_${dir}`, low * moving * share)
+      set(`crawl_${dir}`, crawl * moving * share)
     }
     set('idle', standing * (1 - moving))
     set('crouch_idle', low * (1 - moving))
+    set('crawl_idle', crawl * (1 - moving))
     set('slide', sliding_)
     set('jump_air', alive * this.air)
     targets.set('death', this.death)
@@ -364,7 +371,7 @@ export class Character {
       const base = name.replace(/^(pistol_|hold_)/, '')
       action.enabled = w > 0.0005 || name === current
       action.setEffectiveWeight(w)
-      if (base === 'idle' || base === 'crouch_idle' || base === 'slide') action.time = this.idleTime
+      if (base === 'idle' || base === 'crouch_idle' || base === 'crawl_idle' || base === 'slide') action.time = this.idleTime
       else if (base === 'jump_air') action.time = (this.idleTime / (idle?.getClip().duration ?? 1)) * action.getClip().duration
       else if (base !== 'death') action.time = this.phase * action.getClip().duration
     }
@@ -388,7 +395,7 @@ export class Character {
     // The model faces +Z; the game's yaw 0 faces -Z.
     // Set all three: a tumble leaves its pitch and roll in the Euler angles, and `rotation.y` alone
     // would keep them, leaving a respawned player tilted.
-    this.object.rotation.set(LIE_PITCH * this.lie, yaw + Math.PI, 0, 'YXZ')
+    this.object.rotation.set(0, yaw + Math.PI, 0, 'YXZ')
     if (this.fling) {
       // Tumble about the middle of the body, not the feet.
       const middle = SCRATCH.axis.set(0, FOOT_OFFSET, 0)

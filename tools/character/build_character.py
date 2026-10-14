@@ -19,7 +19,7 @@ Conventions
     `hold` (hands low, in front). Clips are baked per stance: the rifle's are named plainly (`idle`,
     `walk_fwd`, ...), the others carry a `pistol_` / `hold_` prefix. `death` is shared.
   * Clips: idle, walk_fwd/back/left/right, run_fwd/back/left/right, crouch_idle, crouch_fwd/back/left/
-    right, slide, jump_air, death. Clips loop with a duplicated last key so the mixer wraps without a hitch.
+    right, crawl_idle, crawl_fwd/back/left/right, slide, jump_air, death. Clips loop with a duplicated last key so the mixer wraps without a hitch.
 """
 
 import math
@@ -672,6 +672,58 @@ def crouch_idle(t):
         pose_rot(f"foot_{side}", -0.95, 0, 0)
 
 
+# Lying face down: the root turns a quarter about the feet so the body lies along the ground, the
+# head forward. The root is then lifted so the chest, not its front, rests on the floor.
+CRAWL_LIFT = 0.20
+# Toes angled up off the floor: the foot bone points down at rest, so without this they sink into it.
+CRAWL_FOOT = 0.5
+
+
+def crawl_pose(breath=0.0):
+    pose_rot("root", math.pi / 2, 0, 0)
+    pose_loc("root", (0, 0, CRAWL_LIFT + 0.004 * breath))
+    pose_rot("hips", 0.0, 0, 0)
+    pose_rot("spine", 0.0, 0, 0)
+    pose_rot("chest", 0.05 + 0.01 * breath, 0, 0)
+    pose_rot("head", -0.25, 0, 0)
+    # Elbows out, forearms forward along the floor: the hands take the weight.
+    for side, sx in (("L", 1), ("R", -1)):
+        arm_obj.pose.bones[f"upper_arm_{side}"].rotation_euler = (0.0, -sx * math.pi / 2, 0)
+        arm_obj.pose.bones[f"forearm_{side}"].rotation_euler = (-math.pi / 2, -math.pi / 2, -math.pi / 2)
+        arm_obj.pose.bones[f"hand_{side}"].rotation_euler = (0, 0, 0)
+
+
+def crawl_gait(direction, amp, lat_amp, knee):
+    """Crawl along `direction` = (right, forward): the legs take turns pushing and the body rolls with them."""
+    dr, df = direction
+
+    def fn(t):
+        phi = TAU * t
+        crawl_pose(math.sin(phi))
+        # The torso rolls about its length with each push, the way a crawler pulls along.
+        arm_obj.pose.bones["hips"].rotation_euler = (0, 0, 0.08 * math.sin(phi) * (abs(df) + 0.2))
+        for side, offset in (("L", 0.0), ("R", math.pi)):
+            p = phi + offset
+            s = math.sin(p)
+            lift = max(0.0, math.cos(p))
+            thigh_x = amp * s * df
+            thigh_y = lat_amp * s * dr + (0.1 if side == "L" else -0.1)
+            shin_x = knee * lift**1.2
+            pose_rot(f"thigh_{side}", thigh_x, thigh_y, 0)
+            pose_rot(f"shin_{side}", shin_x, 0, 0)
+            pose_rot(f"foot_{side}", CRAWL_FOOT + shin_x * 0.5 - thigh_x * 0.5, 0, 0)
+
+    return fn
+
+
+def crawl_idle(t):
+    crawl_pose(math.sin(TAU * t))
+    for side in ("L", "R"):
+        pose_rot(f"thigh_{side}", 0.0, 0.1 if side == "L" else -0.1, 0)
+        pose_rot(f"shin_{side}", 0.05, 0, 0)
+        pose_rot(f"foot_{side}", CRAWL_FOOT, 0, 0)
+
+
 def slide(t):
     """Knee-slide: sat back, lead leg out in front, trailing knee down, rifle held up."""
     breath = math.sin(TAU * t)
@@ -712,6 +764,9 @@ def build_actions():
         bake(f"{prefix}crouch_idle", 120, crouch_idle)
         for name, d in dirs.items():
             bake(f"{prefix}crouch_{name}", 36, crouch_gait(d, 0.3, 0.26, 0.5))
+        bake(f"{prefix}crawl_idle", 120, crawl_idle)
+        for name, d in dirs.items():
+            bake(f"{prefix}crawl_{name}", 48, crawl_gait(d, 0.15, 0.1, 0.9))
         bake(f"{prefix}slide", 120, slide)
         bake(f"{prefix}jump_air", 60, jump_air)
     # Dying lets go of everything, so one clip serves every stance.
@@ -788,6 +843,9 @@ def preview(directory):
         "side": (Vector((6, 0, 0.9)), Vector((0, 0, 0.9))),
         "front": (Vector((0, -6, 0.9)), Vector((0, 0, 0.9))),
         "three": (Vector((-4, -5, 3.0)), Vector((0, 0, 0.85))),
+        # Lying down, the body runs along -Y from the feet: frame it from above and from the side.
+        "lie_top": (Vector((0, -0.85, 6.0)), Vector((0, -0.85, 0.0))),
+        "lie_side": (Vector((6, -0.85, 0.4)), Vector((0, -0.85, 0.2))),
     }
 
     def shoot(name, view):
@@ -808,7 +866,7 @@ def preview(directory):
         for i in range(4):
             at(clip, i * frames // 4)
             shoot(f"{clip}_{i}", "side" if clip.endswith("fwd") else "front")
-    for clip, view in (("slide", "side"), ("slide", "front"), ("crouch_idle", "side"), ("crouch_idle", "three"), ("crouch_fwd", "side"), ("crouch_right", "front")):
+    for clip, view in (("slide", "side"), ("slide", "front"), ("crouch_idle", "side"), ("crouch_idle", "three"), ("crouch_fwd", "side"), ("crouch_right", "front"), ("crawl_idle", "lie_side"), ("crawl_idle", "lie_top"), ("crawl_fwd", "lie_side"), ("crawl_fwd", "lie_top"), ("crawl_left", "lie_top")):
         for i in range(2):
             at(clip, i * (18 if "fwd" in clip or "right" in clip else 60))
             shoot(f"{clip}_{view}_{i}", view)
