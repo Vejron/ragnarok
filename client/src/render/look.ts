@@ -10,6 +10,8 @@ export interface Look {
   ao: boolean
   /** The sun's shadows reach further from the player, at a slightly coarser grain. */
   far: boolean
+  /** Dark outlines wherever one thing meets another: a cartoon's ink. */
+  ink: boolean
 }
 
 const KEY = 'ragnarok.look'
@@ -24,7 +26,7 @@ const RESET_ON_BUMP: (keyof Look)[] = ['ao']
 /** AO is off by default everywhere; the long shadows are off on phones and tablets, where they cost fill rate and memory. */
 export function defaultLook(): Look {
   const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
-  return { soft: true, contact: true, ao: false, far: !coarse }
+  return { soft: true, contact: true, ao: false, far: !coarse, ink: true }
 }
 
 export function loadLook(): Look {

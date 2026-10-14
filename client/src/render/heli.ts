@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { toonMaterial } from './toon'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { HELI_GUN_LENGTH, HELI_SEATS } from '@/sim/consts'
 import type { Turret } from '@/net/codec'
@@ -39,7 +40,7 @@ export async function parseHeliModel(data: ArrayBuffer) {
           if (!mesh.isMesh) return
           const source = mesh.material as THREE.MeshStandardMaterial
           const glass = source.name === 'glass'
-          mesh.material = new THREE.MeshToonMaterial({
+          mesh.material = toonMaterial({
             color: source.color,
             name: source.name,
             transparent: glass,
@@ -90,7 +91,7 @@ export class HeliModel implements VehicleModel {
     if (!asset) throw new Error('loadHeliModel() must finish before helicopters are created')
     const model = asset.clone(true)
     this.root.add(model)
-    this.paint = new THREE.MeshToonMaterial({ color: PAINTS[id % PAINTS.length]! })
+    this.paint = toonMaterial({ color: PAINTS[id % PAINTS.length]! })
     model.traverse((node) => {
       const mesh = node as THREE.Mesh
       if (mesh.isMesh && mesh.material instanceof THREE.Material && mesh.material.name === 'paint') mesh.material = this.paint
@@ -103,7 +104,7 @@ export class HeliModel implements VehicleModel {
 
     const headGeometry = new THREE.SphereGeometry(0.2, 12, 10)
     for (let seat = 0; seat < HELI_SEATS; seat++) {
-      const head = new THREE.Mesh(headGeometry, new THREE.MeshToonMaterial({ color: 0xffffff }))
+      const head = new THREE.Mesh(headGeometry, toonMaterial({ color: 0xffffff }))
       head.position.set(...SEATS[seat]!)
       head.castShadow = true
       head.visible = false

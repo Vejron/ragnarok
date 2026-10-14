@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { toonMaterial } from './toon'
 import { SURFACE_ASPHALT, SURFACE_DIRT, SURFACE_SAND, SURFACE_WATER } from '@/sim/surface'
 import type { Debris } from './debris'
 import type { FxWorld } from './tyres'
@@ -170,7 +171,7 @@ export function explosion(world: FxWorld, debris: Debris, at: THREE.Vector3, rad
     const heading = rand(0, Math.PI * 2)
     const out = rand(2, 7) * Math.sqrt(scale)
     const size = rand(0.12, 0.35)
-    const material = new THREE.MeshLambertMaterial({ color: profile.wreck && i % 2 ? 0x555a60 : earth })
+    const material = toonMaterial({ color: profile.wreck && i % 2 ? 0x555a60 : earth })
     const chunk = new THREE.Mesh(chunkGeometry, material)
     chunk.scale.set(size * rand(0.8, 1.6), size * rand(0.5, 1), size * rand(0.8, 1.6))
     chunk.position.copy(at)

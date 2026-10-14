@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { toonMaterial } from './toon'
 import { ROAD_MAJOR, ROAD_MINOR, ROAD_PATH, type Road } from '@/world'
 import { normalAt, toneAt, type Height } from './shade'
 
@@ -27,7 +28,7 @@ function layerMaterial(color: number, offset: number, ramp: THREE.Texture) {
     // Each layer pulls further towards the camera, so overlapping roads settle in a fixed order and
     // clear the terrain at any distance; the lift alone covers the near field, where depth is fine.
     // A flat quad between samples cuts the terrain's kinks, so the lift must exceed that chord error.
-    found = new THREE.MeshToonMaterial({ color, gradientMap: ramp, vertexColors: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -offset })
+    found = toonMaterial({ color, gradientMap: ramp, vertexColors: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -offset })
     materials.set(key, found)
   }
   return found

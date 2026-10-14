@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { toonMaterial } from './toon'
 import { colorFor } from './character'
 import type { VehicleModel } from './car'
 import type { Turret } from '@/net/codec'
@@ -48,9 +49,9 @@ export class MortarModel implements VehicleModel {
   private readonly tube: THREE.Mesh
   private readonly head: THREE.Mesh
   private readonly spinners: THREE.Object3D[] = []
-  private readonly paint = new THREE.MeshToonMaterial({ color: PAINT })
-  private readonly steel = new THREE.MeshToonMaterial({ color: STEEL })
-  private readonly headMaterial = new THREE.MeshToonMaterial({ color: 0xffffff })
+  private readonly paint = toonMaterial({ color: PAINT })
+  private readonly steel = toonMaterial({ color: STEEL })
+  private readonly headMaterial = toonMaterial({ color: 0xffffff })
   private roll = 0
   private placed = false
   /** `performance.now()` of the last shot, for the barrel's recoil stroke. */

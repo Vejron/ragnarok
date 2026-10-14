@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { toonMaterial } from './toon'
 import { DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, WHEEL_GONE } from '@/net/codec'
 import type { Debris } from './debris'
 
@@ -25,8 +26,8 @@ const IMPACT_WAIT_MS = 150
 /** How long a crash event's point stays the place to dent, ms. */
 const IMPACT_KEEP_MS = 1500
 
-const BROKEN = new THREE.MeshToonMaterial({ color: 0x262626, name: 'broken' })
-const CRACKED = new THREE.MeshToonMaterial({ color: 0xd9e3e8, name: 'cracked' })
+const BROKEN = toonMaterial({ color: 0x262626, name: 'broken' })
+const CRACKED = toonMaterial({ color: 0xd9e3e8, name: 'cracked' })
 const DULL = new THREE.Color(0x4a4744)
 const CHARRED = new THREE.Color(0x1a1817)
 

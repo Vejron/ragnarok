@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { toonMaterial } from './toon'
 import type { TileGround } from '@/sim/terrain'
 import { ROOF_FLAT, type TileData } from '@/world'
 import { GRASS_COLOR, bakeNormalMap, bakeTerrainTexture } from './cover'
@@ -37,8 +38,8 @@ function material(kind: 'terrain' | 'building', color: number) {
   if (!found) {
     found =
       kind === 'terrain'
-        ? new THREE.MeshToonMaterial({ color, gradientMap: TERRAIN_RAMP, vertexColors: true })
-        : new THREE.MeshToonMaterial({ color })
+        ? toonMaterial({ color, gradientMap: TERRAIN_RAMP, vertexColors: true })
+        : toonMaterial({ color })
     materials.set(key, found)
   }
   return found
@@ -49,7 +50,7 @@ function material(kind: 'terrain' | 'building', color: number) {
  * what shows through where a tile has not streamed in yet. `y` sits it just under the terrain.
  */
 export function buildGround(halfExtent: number, y = 0): THREE.Mesh {
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(halfExtent * 2, halfExtent * 2), new THREE.MeshLambertMaterial({ color: GRASS_COLOR }))
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(halfExtent * 2, halfExtent * 2), toonMaterial({ color: GRASS_COLOR }))
   ground.rotation.x = -Math.PI / 2
   ground.position.y = y
   ground.receiveShadow = true
@@ -100,7 +101,7 @@ function buildTerrain(tile: Pick<TileData, 'cover' | 'detail'>, ground: TileGrou
   const mesh = new THREE.Mesh(
     geometry,
     owned
-      ? new THREE.MeshToonMaterial({
+      ? toonMaterial({
           ...(map ? { map } : { color: GRASS_COLOR }),
           ...(normalMap ? { normalMap, normalMapType: THREE.ObjectSpaceNormalMap } : {}),
           gradientMap: TERRAIN_RAMP,

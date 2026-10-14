@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { toonMaterial } from './toon'
 
 /** `PROJECTILE_GRENADE`, `PROJECTILE_SHELL` and `PROJECTILE_CANNON` in codec.ts. */
 const GRENADE = 1
@@ -31,8 +32,8 @@ export class Rockets {
   /** A plane's bomb: a dark finned body that noses over as it falls. */
   private readonly bomb = new THREE.CylinderGeometry(0.075, 0.05, 0.6, 8)
   private readonly fins = new THREE.BoxGeometry(0.2, 0.1, 0.02)
-  private readonly bombMaterial = new THREE.MeshToonMaterial({ color: 0x2b2b26 })
-  private readonly ballMaterial = new THREE.MeshToonMaterial({ color: 0x4f5d2e })
+  private readonly bombMaterial = toonMaterial({ color: 0x2b2b26 })
+  private readonly ballMaterial = toonMaterial({ color: 0x4f5d2e })
   private readonly meshes = new Map<number, THREE.Mesh>()
   private readonly up = new THREE.Vector3(0, 1, 0)
 

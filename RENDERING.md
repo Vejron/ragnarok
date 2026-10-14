@@ -14,10 +14,11 @@ game.frame()
   ├─ tiles, effects, pickups, rockets     streamed in / animated
   ├─ contact.begin() … add() … end()      blob shadows for this frame's poses
   └─ scene.render()
-        ├─ soft light + AO off:  renderer.render()                       → canvas
-        └─ AO on:  EffectComposer
-                     RenderPass     scene → 4× MSAA half-float target
-                     GTAOPass       depth + normals → AO → multiplied in
+        ├─ AO and ink both off:  renderer.render()                      → canvas
+        └─ AO or ink on:  EffectComposer
+                     RenderPass     scene → 4× MSAA half-float target + depth texture
+                     InkPass        depth bends sharply → dark outline   (if ink)
+                     GTAOPass       depth + normals → AO → multiplied in (if AO)
                      OutputPass     tone mapping + sRGB                    → canvas
 ```
 
@@ -35,6 +36,7 @@ adds a `root` group to it:
 | Items, pickups, rockets | `items.ts`, `pickups.ts`, `rockets.ts` | Small hand-built meshes. |
 | Effects | `effects.ts` | Muzzle flashes, tracers, fireballs, smoke: translucent `MeshBasicMaterial`s that fade out. |
 | Trajectory | `trajectory.ts` | The arc a held grenade would take. |
+| Field mortar | `mortar.ts`, `mortar-arc.ts` | A hand-built gun (no glTF), and the landing marker its gunner aims by. See [VEHICLES-V.md](VEHICLES-V.md). |
 | Contact shadows | `contact.ts` | Blob shadows, below. |
 
 The camera is a 75° perspective camera, near 0.25 m, far 2000 m. `Scene.follow` orbits it behind a
@@ -46,11 +48,13 @@ sun so the shadow map stays centred on what the camera follows.
 
 The style is flat, bright and few-banded, not physically based.
 
-- **Toon materials.** Almost everything is `MeshToonMaterial` with a small *gradient ramp*: a 1×N
-  texture that quantises the lighting into steps. Terrain and roads use an eight-step ramp
-  (`TERRAIN_RAMP` in `world.ts`, dark and coarse in shade, fine near the light); tree crowns use a
-  softer six-step one (`CROWN_RAMP` in `trees.ts`). Buildings and vehicles use the default two-tone.
-  Lamps (headlights) are `MeshBasicMaterial`, so they stay bright.
+- **Toon materials.** Almost everything is `MeshToonMaterial`, made through `toonMaterial()` in
+  `toon.ts`. That gives it the *cel ramp* (`CEL_RAMP`): a 1×4 texture of four light levels, 96, 150,
+  205 and 255, with nearest filtering, so each band is hard-edged and nothing is blended between
+  them. A material that brings its own ramp keeps it: terrain and roads use an eight-step ramp
+  (`TERRAIN_RAMP` in `world.ts`, dark and coarse in shade, fine near the light). Buildings, vehicles,
+  characters and tree crowns all use the cel ramp. Lamps (headlights) are `MeshBasicMaterial`, so they
+  stay bright.
 - **Candy palette.** Building colours, roof colours, cover colours (`cover.ts`) and player outfits
   (`character.ts` `PALETTE`) are fixed lists, picked by index so they are stable between reloads.
 - **Baked terrain tone.** `shade.ts` computes a brightness multiplier per terrain vertex: hillshade
@@ -74,7 +78,10 @@ The style is flat, bright and few-banded, not physically based.
 - **Roads** are draped ribbons that follow the ground every metre, with a casing and fill layer, and
   round discs at joints. They share the terrain's ramp.
 - **Trees** are instanced: one `InstancedMesh` per archetype per tile (at most ten draw calls per
-  tile), built from merged unit-space parts with vertex colours.
+  tile), built from merged unit-space parts with vertex colours. The parts are low-poly: a crown
+  sphere is welded to 57 vertices and 80 triangles (was 183 and 320), a cone to 31 vertices (was 83),
+  trunks have six sides. Normals are smoothed per vertex, so the faces read as bold shapes rather than
+  a faceted mesh.
 - **Materials are shared** where they can be (per colour for buildings and terrain), so streaming a
   tile in never compiles a shader; only a tile's own cover texture and instance buffers are
   per-tile and are freed with it (`disposeTile`).
@@ -91,7 +98,7 @@ the edge softness is a runtime uniform, not a recompile.
 
 ## Soft-lighting options
 
-Four independent switches, in `render/look.ts` (`Look`). The HUD panel in `App.vue` shows them while
+Five independent switches, in `render/look.ts` (`Look`). The HUD panel in `App.vue` shows them while
 the pointer is not captured; `Game.setLook` applies and saves them to `localStorage`
 (`ragnarok.look`). Defaults are on, except AO, which starts off everywhere, and far shadows, which
 start off on coarse-pointer (touch) devices.
@@ -134,17 +141,45 @@ It only knows the terrain height, so someone on a roof gets their blob on the gr
 It is a separate thing from the sun's shadow: the shadow map is too coarse and offset to ground small
 objects, the blob darkens the spot right under them.
 
+### Ink outlines (`ink`)
+
+`InkPass` in `render/ink.ts`, a `ShaderPass`, draws a dark line wherever the picture's depth bends
+sharply: a silhouette (a tree against the sky, a car against the grass) or an edge where one thing
+sits in front of another. Each pixel's view depth is compared with its four neighbours, 1.5 px away.
+The test is the second difference, `l + r − 2c` and `d + u − 2c`, relative to the pixel's own depth,
+against a threshold of 0.05. A smooth surface, even a long slope of ground seen at a low angle,
+changes its rate but does not bend, so it stays clear of ink. An earlier version compared each pixel
+with its neighbour directly, and turned the grazing ground nearly black. The line colour is
+`0x2a2521`, a dark ink rather than black.
+
+The pass needs the scene's depth. The composer's target carries a `DepthTexture`, and `InkPass` runs
+straight after `RenderPass`, before any pass that swaps the buffers, so the depth it reads is the
+scene's own. It linearises depth with the camera's near and far. `threshold` and `width` are uniforms
+in `ink.ts` for tuning.
+
+Things to know:
+
+- **It needs the depth of a multisampled target.** The target has 4× MSAA with a depth texture, which
+  depends on the driver resolving depth when the buffers are read. If outlines are missing or the
+  frame goes black on some GPU, check the console for a shader compile error first. A GLSL local
+  named like a built-in (`step`, say) stops the shader compiling, and a failed shader draws nothing.
+- **Only silhouettes and depth jumps are outlined.** Creases with no depth change, such as the seam
+  of a box, are not, so the lines come from geometry, not from normals.
+
 ### Ambient occlusion (`ao`)
 
-Three's `GTAOPass`, run in an `EffectComposer` chain built the first time AO is switched on
-(`Scene.buildComposer`):
+Three's `GTAOPass`, run in the same `EffectComposer` chain as ink. The chain is built the first time
+either is switched on (`Scene.buildComposer`):
 
-1. `RenderPass` draws the scene into a half-float target with 4× MSAA. The canvas's own
-   `antialias` does not apply once rendering goes through a target, hence the explicit samples.
-2. `GTAOPass` re-renders the scene with a normal-material override for depth and normals, computes
+1. `RenderPass` draws the scene into a half-float target with 4× MSAA and a depth texture. The
+   canvas's own `antialias` does not apply once rendering goes through a target, hence the explicit
+   samples.
+2. `InkPass` draws the outlines from that depth (see above). It runs only when ink is on.
+3. `GTAOPass` re-renders the scene with a normal-material override for depth and normals, computes
    AO, denoises it and multiplies it into the image. Radius 1.1 m, `scale 1.2`, 12 samples,
-   blend 0.85: it is meant to seat things and darken creases, not outline them.
-3. `OutputPass` applies the renderer's tone mapping and the sRGB encode, because the passes work in
+   blend 0.85: it is meant to seat things and darken creases, not outline them. It runs only when AO
+   is on (`gtao.enabled`).
+4. `OutputPass` applies the renderer's tone mapping and the sRGB encode, because the passes work in
    linear light.
 
 Things to know:
@@ -158,7 +193,8 @@ Things to know:
   here. (Three already hides `Points` and `Line`s itself.)
 - **Depth precision.** Near 0.25 / far 2000 is poor for distant depth; AO only matters nearby, so it
   is not visible.
-- Toggling AO off keeps the composer built (cheap to re-enable) but skips it in `render()`.
+- Toggling AO and ink off keeps the composer built (cheap to re-enable), and `render()` goes back to
+  drawing straight to the canvas once both are off.
 
 ### Far shadows (`far`)
 
@@ -178,16 +214,18 @@ one-frame hitch. The far setting is about four times the shadow memory and fill 
 
 - Draw calls are kept down by instancing (trees, blobs) and sharing materials; characters and
   vehicles are the main per-object draws.
-- Pixel ratio is capped at 2 for the canvas, 1.5 for the AO composer.
+- Pixel ratio is capped at 2 for the canvas, 1.5 for the composer (AO and ink).
 - The expensive options are AO (second geometry pass + MSAA target) and far shadows (4096 map).
-  Both are off by default on touch devices.
+  Both are off by default on touch devices. Ink is on by default: it adds one full-screen pass over
+  the composer's MSAA target, which is most of its cost.
 - Everything here is a rendering concern only: none of it touches the simulation, so options can be
   changed at any time without affecting prediction or the server.
 
 ## Adding to the pipeline
 
 - **A new model or effect:** add its root to the scene in `Game`'s constructor. If it is
-  translucent, add it to `excludeFromAO`. Use `MeshToonMaterial` (with a ramp) to match, and set
+  translucent, add it to `excludeFromAO`. Make its materials with `toonMaterial()` from `toon.ts` to
+  match, and set
   `castShadow` on anything that should cast.
 - **A new look option:** add a field to `Look` and `defaultLook`, apply it in `Scene.setLook`, and add
   a row to `LOOKS` in `App.vue`. Options that change a material's program (tone mapping does) are

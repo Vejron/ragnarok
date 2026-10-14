@@ -7,6 +7,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { ContactShadows } from './contact'
 import { setWaterLight } from './water'
 import { CLASSIC, SOFT, loadLook, type Look } from './look'
+import { InkPass } from './ink'
 import { ON_FOOT_HEIGHT, ON_FOOT_SHOULDER } from '../sim/consts'
 
 // On foot the camera is over the right shoulder and a little above the head; the server shares these.
@@ -77,6 +78,7 @@ export class Scene {
   /** Built the first time AO is switched on. */
   private composer: EffectComposer | null = null
   private gtao: GTAOPass | null = null
+  private ink: InkPass | null = null
   /** Parts of the scene the AO pass must not see: translucent effects, decals and lines. */
   private readonly aoHidden: THREE.Object3D[] = []
 
@@ -126,7 +128,9 @@ export class Scene {
     this.renderer.toneMappingExposure = palette.exposure
     this.contact.active = look.contact
     this.setShadowReach(look.far)
-    if (look.ao && !this.composer) this.buildComposer()
+    if ((look.ao || look.ink) && !this.composer) this.buildComposer()
+    if (this.gtao) this.gtao.enabled = look.ao
+    if (this.ink) this.ink.enabled = look.ink
     this.resize()
   }
 
@@ -154,8 +158,12 @@ export class Scene {
 
   private buildComposer() {
     const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 })
+    // The ink pass reads depth from the frame the scene was drawn into.
+    target.depthTexture = new THREE.DepthTexture(1, 1)
     const composer = new EffectComposer(this.renderer, target)
     composer.addPass(new RenderPass(this.scene, this.camera))
+    const ink = new InkPass(this.camera)
+    composer.addPass(ink)
     const gtao = new GTAOPass(this.scene, this.camera, 1, 1)
     // Tight and gentle: it should seat things into the ground and darken creases, not outline them.
     gtao.updateGtaoMaterial({ radius: 1.1, distanceExponent: 1.5, thickness: 2, scale: 1.2, samples: 12, distanceFallOff: 1, screenSpaceRadius: false })
@@ -177,6 +185,7 @@ export class Scene {
     composer.addPass(new OutputPass())
     this.composer = composer
     this.gtao = gtao
+    this.ink = ink
   }
 
   get canvas() {
@@ -257,7 +266,7 @@ export class Scene {
   }
 
   render() {
-    if (this.currentLook.ao && this.composer) this.composer.render()
+    if ((this.currentLook.ao || this.currentLook.ink) && this.composer) this.composer.render()
     else this.renderer.render(this.scene, this.camera)
     if (this.gunsight.visible) {
       // Over the frame, never behind a wall: its own pass with a cleared depth buffer.

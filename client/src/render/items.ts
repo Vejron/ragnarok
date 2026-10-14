@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { toonMaterial } from './toon'
 import { ITEM_AK5, ITEM_BANDAGE, ITEM_GOLDEN_EGG, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER } from '@/sim/items'
 
 const GUN_METAL = 0x3b3f47
@@ -17,7 +18,7 @@ let shiny: THREE.MeshToonMaterial | null = null
 /** One shared toon material per colour: items are small and many. */
 const material = (color: number) => {
   let m = materials.get(color)
-  if (!m) materials.set(color, (m = new THREE.MeshToonMaterial({ color })))
+  if (!m) materials.set(color, (m = toonMaterial({ color })))
   return m
 }
 
@@ -81,7 +82,7 @@ export function buildItem(item: number): THREE.Group {
     case ITEM_GOLDEN_EGG: {
       sphere ??= new THREE.SphereGeometry(0.06, 10, 8)
       // Shiny and a little glowing, so it is seen across a field.
-      shiny ??= new THREE.MeshToonMaterial({ color: GOLD, emissive: 0x8a5a00 })
+      shiny ??= toonMaterial({ color: GOLD, emissive: 0x8a5a00 })
       const egg = new THREE.Mesh(sphere, shiny)
       egg.scale.set(0.9, 1.25, 0.9)
       group.add(egg)

@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { toonMaterial } from './toon'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { WALKER_FOOT_HALF, WALKER_GUN_BARREL_DROP, WALKER_GUN_BARREL_X, WALKER_HALF_EXTENTS, WALKER_LEG_LENGTH, WALKER_LEG_SPRING } from '@/sim/consts'
 import { CAR_GRAVITY } from '@/sim/vehicle'
@@ -50,7 +51,7 @@ export async function parseWalkerModel(data: ArrayBuffer) {
           mesh.material =
             source.name === 'lamp'
               ? new THREE.MeshBasicMaterial({ color: source.color, name: source.name })
-              : new THREE.MeshToonMaterial({ color: source.color, name: source.name })
+              : toonMaterial({ color: source.color, name: source.name })
           source.dispose()
           mesh.castShadow = true
         })
@@ -77,7 +78,7 @@ export async function loadWalkerModel(url = WALKER_MODEL_URL) {
 export class WalkerModel implements VehicleModel {
   readonly root = new THREE.Group()
   private readonly paint: THREE.MeshToonMaterial
-  private readonly head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 10), new THREE.MeshToonMaterial({ color: 0xffffff }))
+  private readonly head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 10), toonMaterial({ color: 0xffffff }))
   /** The upper body, which turns with the aim, and the guns in it, which lift. */
   private readonly torso: THREE.Object3D
   private readonly gun: THREE.Object3D
@@ -102,7 +103,7 @@ export class WalkerModel implements VehicleModel {
     if (!asset) throw new Error('loadWalkerModel() must finish before walkers are created')
     const model = asset.clone(true)
     this.root.add(model)
-    this.paint = new THREE.MeshToonMaterial({ color: PAINTS[id % PAINTS.length]! })
+    this.paint = toonMaterial({ color: PAINTS[id % PAINTS.length]! })
     model.traverse((node) => {
       const mesh = node as THREE.Mesh
       if (mesh.isMesh && mesh.material instanceof THREE.Material && mesh.material.name === 'paint') mesh.material = this.paint

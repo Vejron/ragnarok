@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { toonMaterial } from './toon'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, PRONE_CENTRE, RUN_SPEED, STAND_CENTRE, WALK_SPEED } from '@/sim/consts'
@@ -94,7 +95,7 @@ export function parseCharacter(data: ArrayBuffer): Promise<CharacterAsset> {
           const mesh = node as THREE.Mesh
           if (!mesh.isMesh) return
           const source = mesh.material as THREE.MeshStandardMaterial
-          const toon = new THREE.MeshToonMaterial({ vertexColors: true, name: source.name })
+          const toon = toonMaterial({ vertexColors: true, name: source.name })
           source.dispose()
           mesh.material = toon
           mesh.castShadow = true
@@ -218,7 +219,7 @@ export class Character {
     const asset = crowd.asset
     if (!asset) throw new Error('Crowd.load() must finish before characters are created')
     this.object = cloneSkinned(asset.scene)
-    this.outfit = new THREE.MeshToonMaterial({ vertexColors: true, color: colorFor(id) })
+    this.outfit = toonMaterial({ vertexColors: true, color: colorFor(id) })
     this.object.traverse((node) => {
       const mesh = node as THREE.Mesh
       if (mesh.isMesh && (mesh.material as THREE.Material).name === 'outfit') mesh.material = this.outfit

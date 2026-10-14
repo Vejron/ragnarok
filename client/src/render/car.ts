@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { toonMaterial } from './toon'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { JEEP_MAX_STEER, JEEP_WHEEL_RADIUS, SPORTS_MAX_STEER, SPORTS_SEATS, SPORTS_WHEEL_RADIUS, CAR_SEATS } from '@/sim/consts'
 import { KIND_SPORTS, type Arms, type Turret } from '@/net/codec'
@@ -51,7 +52,7 @@ export async function parseCarModel(kind: CarKind, data: ArrayBuffer) {
           mesh.material =
             source.name === 'lamp'
               ? new THREE.MeshBasicMaterial({ color: source.color, name: source.name })
-              : new THREE.MeshToonMaterial({ color: source.color, name: source.name })
+              : toonMaterial({ color: source.color, name: source.name })
           source.dispose()
           mesh.castShadow = true
         })
@@ -103,7 +104,7 @@ export class CarModel implements VehicleModel {
     this.maxSteer = maxSteer
     const model = asset.clone(true)
     this.root.add(model)
-    const paint = (this.paint = new THREE.MeshToonMaterial({ color: BODY_COLORS[id % BODY_COLORS.length]! }))
+    const paint = (this.paint = toonMaterial({ color: BODY_COLORS[id % BODY_COLORS.length]! }))
     model.traverse((node) => {
       const mesh = node as THREE.Mesh
       if (mesh.isMesh && mesh.material instanceof THREE.Material && mesh.material.name === 'paint') mesh.material = paint
@@ -115,7 +116,7 @@ export class CarModel implements VehicleModel {
 
     const headGeometry = new THREE.SphereGeometry(0.2, 12, 10)
     for (let seat = 0; seat < seats; seat++) {
-      const head = new THREE.Mesh(headGeometry, new THREE.MeshToonMaterial({ color: 0xffffff }))
+      const head = new THREE.Mesh(headGeometry, toonMaterial({ color: 0xffffff }))
       head.position.copy(model.getObjectByName(`seat_${seat}`)!.position)
       head.castShadow = true
       head.visible = false

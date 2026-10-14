@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { toonMaterial } from './toon'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
 
@@ -28,7 +29,7 @@ export async function parseRoosterModel(data: ArrayBuffer) {
     const mesh = node as THREE.Mesh
     if (!mesh.isMesh) return
     const source = mesh.material as THREE.MeshStandardMaterial
-    mesh.material = new THREE.MeshToonMaterial({ color: source.color, name: source.name })
+    mesh.material = toonMaterial({ color: source.color, name: source.name })
     source.dispose()
     mesh.castShadow = true
     // A skinned mesh's bounds are those of its rest pose: it would be culled while crowing.

@@ -15,7 +15,7 @@ const noseMark = ref<HTMLElement | null>(null)
 const aimMark = ref<HTMLElement | null>(null)
 const error = ref<string | null>(null)
 const input = shallowRef<InputController | null>(null)
-const look = ref<Look>({ soft: true, contact: true, ao: false, far: true })
+const look = ref<Look>({ soft: true, contact: true, ao: false, far: true, ink: true })
 let game: Game | null = null
 /** M: the minimap grows to the whole map. */
 const mapOpen = ref(false)
@@ -55,6 +55,7 @@ const LOOKS: { key: keyof Look; label: string }[] = [
   { key: 'contact', label: 'Contact shadows' },
   { key: 'ao', label: 'Ambient occlusion' },
   { key: 'far', label: 'Far shadows' },
+  { key: 'ink', label: 'Ink outlines' },
 ]
 function toggleLook(key: keyof Look) {
   look.value = { ...look.value, [key]: !look.value[key] }

@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { toonMaterial } from './toon'
 import type { TileData } from '@/world'
 import type { Effects } from './effects'
 import { buildingColors, collapsingBuilding } from './world'
@@ -12,8 +13,15 @@ const GRAVITY = 9.8
 /** The pile left behind: no taller than this, metres, however tall the building was. */
 const HEAP_MAX_HEIGHT = 3
 
-const heapMaterial = new THREE.MeshLambertMaterial({ color: 0x8d8478, flatShading: true })
-const chunkMaterial = new THREE.MeshLambertMaterial()
+const heapMaterial = toonMaterial({ color: 0x8d8478 })
+// Flat faces, as the heap was before: each triangle gets its own normal. Shared by every heap, never disposed.
+const heapGeometry = (() => {
+  const geometry = new THREE.IcosahedronGeometry(1, 1).toNonIndexed()
+  geometry.deleteAttribute('normal')
+  geometry.computeVertexNormals()
+  return geometry
+})()
+const chunkMaterial = toonMaterial()
 const chunkGeometry = new THREE.BoxGeometry(1, 1, 1)
 chunkGeometry.userData.shared = true
 
@@ -58,7 +66,7 @@ function heapOf(tile: TileData, index: number, scale: number): { heap: THREE.Mes
   const zs = building.footprint.map((p) => p[1])
   const [minX, maxX, minZ, maxZ] = [Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs)]
   const height = Math.min(HEAP_MAX_HEIGHT, Math.max(1, building.height * 0.2))
-  const heap = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 1), heapMaterial)
+  const heap = new THREE.Mesh(heapGeometry, heapMaterial)
   heap.position.set((minX + maxX) / 2, building.base, (minZ + maxZ) / 2)
   heap.scale.set(Math.max(1, (maxX - minX) * 0.46), Math.max(0.01, height * scale), Math.max(1, (maxZ - minZ) * 0.46))
   heap.castShadow = true

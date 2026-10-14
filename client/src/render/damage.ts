@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { toonMaterial } from './toon'
 import { DAMAGE_STAGES } from '@/sim/consts'
 import type { TileData } from '@/world'
 import type { Effects } from './effects'
@@ -107,9 +108,9 @@ function scorchTexture() {
 }
 
 let scorchMaterial: THREE.MeshBasicMaterial | null = null
-const bodyMaterial = new THREE.MeshToonMaterial({ vertexColors: true })
-const pieceMaterial = new THREE.MeshToonMaterial({ vertexColors: true, side: THREE.DoubleSide })
-const coreMaterial = new THREE.MeshToonMaterial({ vertexColors: true, side: THREE.DoubleSide })
+const bodyMaterial = toonMaterial({ vertexColors: true })
+const pieceMaterial = toonMaterial({ vertexColors: true, side: THREE.DoubleSide })
+const coreMaterial = toonMaterial({ vertexColors: true, side: THREE.DoubleSide })
 
 function decalMaterial(map: THREE.Texture | null, fallback: number) {
   return new THREE.MeshBasicMaterial({
