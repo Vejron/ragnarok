@@ -10,3 +10,5 @@ export { boxGeometry, sphereGeometry, planeGeometry, cylinderGeometry } from './
 export { Vec3, Quat, Color, srgbToLinear } from './math/vec'
 export { Frustum } from './math/frustum'
 export * as mat4 from './math/mat4'
+export { Effect, type EffectContext } from './fx/effect'
+export { ParticleSystem, type ParticleSpec, type EmitSpec } from './fx/particles'

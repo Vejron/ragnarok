@@ -22,6 +22,8 @@ struct Frame {
   shadowMatrix: mat4x4f,
   // texel size, blur radius in texels, on (0 or 1), unused.
   shadow: vec4f,
+  // camera near, camera far, seconds since the last frame, unused.
+  clip: vec4f,
 }
 
 struct Object {

@@ -1,3 +1,4 @@
+import { Effect, type EffectContext } from './fx/effect'
 import { GeometryArena, VERTEX_LAYOUT, type GeometrySlot } from './gpu/arena'
 import { MaterialTable } from './gpu/materials'
 import { ObjectTable } from './gpu/objects'
@@ -131,6 +132,9 @@ export class Renderer {
   private readonly opaque: DrawItem[] = []
   private readonly transparent: DrawItem[] = []
   private readonly casters: DrawItem[] = []
+  private readonly effects: Effect[] = []
+  /** Bumped when the render targets are recreated, for effects holding views of them. */
+  private targetsVersion = 0
   private readonly mainBatches: Batch[] = []
   private readonly shadowBatches: Batch[] = []
   private camX = 0
@@ -240,6 +244,7 @@ export class Renderer {
       sampleCount: this.sampleCount,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     })
+    this.targetsVersion++
     this.hdrTarget = this.device.createTexture({
       label: 'hdr',
       size,
@@ -272,7 +277,9 @@ export class Renderer {
     this.opaque.length = 0
     this.transparent.length = 0
     this.casters.length = 0
+    this.effects.length = 0
     this.collect(scene)
+    this.effects.sort((a, b) => a.renderOrder - b.renderOrder)
     this.opaque.sort(byStateThenGeometry)
     this.transparent.sort(byOrderThenFarToNear)
     this.casters.sort(byStateThenGeometry)
@@ -295,12 +302,16 @@ export class Renderer {
     stats.drawCalls = 0
     stats.triangles = 0
     stats.shadowDraws = 0
+    const effects = this.effectContext()
+    for (const effect of this.effects) effect.prepare(effects, encoder)
     if (this.shadowsOn) this.shadowPass(encoder)
     this.mainPass(encoder, scene)
+    if (this.effects.length) this.effectsPass(encoder, effects)
     this.outputPass(encoder, scene)
     this.timer.resolve(encoder)
     this.device.queue.submit([encoder.finish()])
     this.timer.read()
+    for (const effect of this.effects) effect.afterSubmit()
     this.materials.collect()
     this.objects.sweep(this.frameNumber)
     this.resources.sweep()
@@ -325,6 +336,7 @@ export class Renderer {
       const node = stack.pop()!
       if (!node.visible) continue
       if (node instanceof Mesh) this.consider(node)
+      else if (node instanceof Effect) this.effects.push(node)
       const children = node.children
       for (let i = 0; i < children.length; i++) stack.push(children[i]!)
     }
@@ -532,6 +544,8 @@ export class Renderer {
     f[80] = shadow.span / shadow.mapSize
     f[81] = shadow.radius
     f[82] = this.shadowsOn ? 1 : 0
+    f[84] = camera.near
+    f[85] = camera.far
     this.device.queue.writeBuffer(this.frameBuffer, 0, f)
   }
 
@@ -597,17 +611,32 @@ export class Renderer {
     pass.end()
   }
 
+  private effectContext(): EffectContext {
+    return {
+      device: this.device,
+      sceneLayout: this.sceneLayout,
+      sceneGroup: this.sceneGroup!,
+      depthView: this.depthTarget!.createView(),
+      sampleCount: this.sampleCount,
+      colorFormat: HDR_FORMAT,
+      depthFormat: DEPTH_FORMAT,
+      targetsVersion: this.targetsVersion,
+    }
+  }
+
   private mainPass(encoder: GPUCommandEncoder, scene: Scene) {
     const bg = scene.background
     const msaa = this.colorTarget !== null
+    // With effects to come the multisampled image is kept for them and resolved at their pass's end.
+    const resolveHere = msaa && !this.effects.length
     const pass = encoder.beginRenderPass({
       label: 'main',
       colorAttachments: [{
         view: msaa ? this.colorTarget!.createView() : this.hdrTarget!.createView(),
-        resolveTarget: msaa ? this.hdrTarget!.createView() : undefined,
+        resolveTarget: resolveHere ? this.hdrTarget!.createView() : undefined,
         clearValue: { r: bg.r, g: bg.g, b: bg.b, a: 1 },
         loadOp: 'clear',
-        storeOp: msaa ? 'discard' : 'store',
+        storeOp: resolveHere ? 'discard' : 'store',
       }],
       depthStencilAttachment: { view: this.depthTarget!.createView(), depthClearValue: 0, depthLoadOp: 'clear', depthStoreOp: 'store' },
       timestampWrites: this.timer.pass('main'),
@@ -643,6 +672,24 @@ export class Renderer {
       this.stats.drawCalls++
       this.stats.triangles += (batch.slot.indexCount / 3) * batch.count
     }
+    pass.end()
+  }
+
+  /** Particles and other effects, over everything else, with the scene's depth bound read-only. */
+  private effectsPass(encoder: GPUCommandEncoder, ctx: EffectContext) {
+    const msaa = this.colorTarget !== null
+    const pass = encoder.beginRenderPass({
+      label: 'effects',
+      colorAttachments: [{
+        view: msaa ? this.colorTarget!.createView() : this.hdrTarget!.createView(),
+        resolveTarget: msaa ? this.hdrTarget!.createView() : undefined,
+        loadOp: 'load',
+        storeOp: msaa ? 'discard' : 'store',
+      }],
+      depthStencilAttachment: { view: ctx.depthView, depthReadOnly: true },
+      timestampWrites: this.timer.pass('effects'),
+    })
+    for (const effect of this.effects) this.stats.drawCalls += effect.draw(ctx, pass)
     pass.end()
   }
 
