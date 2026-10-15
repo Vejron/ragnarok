@@ -1,4 +1,4 @@
-import { Animator, Fog, loadGlb, Material, Mesh, Node, planeGeometry, Ramp, Scene, SkinnedMesh } from '../../src'
+import { Animator, Fog, Ink, loadGlb, Material, Mesh, Node, planeGeometry, Ramp, Scene, SkinnedMesh } from '../../src'
 import { orbit, setup, statsOverlay } from '../common'
 import { CEL_BANDS, SKY } from '../shared/layout'
 
@@ -18,6 +18,7 @@ scene.sun.position.set(70, 80, 55)
 scene.sun.shadow.enabled = true
 scene.sun.shadow.span = 90
 scene.toneMapping = 'neutral'
+if (params.get('ink') !== '0') scene.ink = new Ink()
 const cel = new Ramp(new Uint8Array(CEL_BANDS))
 
 const ground = new Mesh(planeGeometry(200, 200), new Material({ color: 0x7fa65a, ramp: cel }))

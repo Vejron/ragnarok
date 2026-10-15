@@ -37,12 +37,25 @@ export class Fog {
 
 export type ToneMapping = 'none' | 'neutral'
 
+/** Dark outlines wherever depth jumps: every silhouette gets an ink line that darkens what it crosses. */
+export class Ink {
+  /** What the line keeps of the colour under it at full strength. */
+  darken = 0.3
+  /** How much of the line shows, 0 to 1. */
+  strength = 0.6
+  /** How far depth may bend between neighbours, as a share of the depth, before it counts as an edge. */
+  threshold = 0.05
+  /** Line width in CSS pixels. */
+  width = 1.2
+}
+
 /** The root of what is drawn, with the lighting and atmosphere that apply to all of it. */
 export class Scene extends Node {
   readonly background = new Color(0, 0, 0)
   readonly sun = new Sun()
   readonly hemisphere = new Hemisphere()
   fog: Fog | null = null
+  ink: Ink | null = null
   toneMapping: ToneMapping = 'none'
   exposure = 1
 }

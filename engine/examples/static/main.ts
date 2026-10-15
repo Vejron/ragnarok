@@ -1,5 +1,5 @@
 import {
-  boxGeometry, Color, cylinderGeometry, Fog, InstancedMesh, Material, Mesh, mat4, planeGeometry, Ramp, Scene, sphereGeometry,
+  boxGeometry, Color, cylinderGeometry, Fog, Ink, InstancedMesh, Material, Mesh, mat4, planeGeometry, Ramp, Scene, sphereGeometry,
 } from '../../src'
 import { orbit, setup, statsOverlay } from '../common'
 import { CEL_BANDS, GROUND, LEAVES, layout, SKY } from '../shared/layout'
@@ -23,6 +23,7 @@ scene.sun.shadow.enabled = params.get('shadows') !== '0'
 scene.sun.shadow.span = 160
 scene.sun.shadow.mapSize = 2048
 scene.toneMapping = 'neutral'
+if (params.get('ink') !== '0') scene.ink = new Ink()
 
 const cel = new Ramp(new Uint8Array(CEL_BANDS))
 const ground = new Mesh(planeGeometry(400, 400), new Material({ color: GROUND, ramp: cel }))
