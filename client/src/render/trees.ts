@@ -71,19 +71,19 @@ function limbs(n: number, y0: number, length: number, tilt: number, radius: numb
 
 /** A tier of conifer: a cone of many sides, so its rim is rounder and the tiers read apart. */
 function tier(y0: number, y1: number, rx: number, color: number): Part {
-  return { shape: 'cone', color, y0, y1, rx, sides: 9 }
+  return { shape: 'cone', color, y0, y1, rx, sides: 7 }
 }
 
 const PROTOTYPES: Record<number, Part[]> = {
   [TREE_BIRCH]: [
     { shape: 'trunk', color: TRUNK_BIRCH, y0: 0, y1: 0.78, rx: 0.07 },
-    ...limbs(4, 0.48, 0.3, 0.7, 0.03, TRUNK_BIRCH, 1),
-    ...crown(0.62, 1, 0.4, 9, 0.46, 0x9bd36b, 0x86c45a, 11),
+    ...limbs(3, 0.48, 0.3, 0.7, 0.03, TRUNK_BIRCH, 1),
+    ...crown(0.62, 1, 0.4, 7, 0.5, 0x9bd36b, 0x86c45a, 11),
   ],
   [TREE_PINE]: [
     { shape: 'trunk', color: TRUNK_BARK, y0: 0, y1: 0.95, rx: 0.07 },
-    ...limbs(5, 0.55, 0.38, 1.0, 0.025, TRUNK_BARK, 2),
-    ...crown(0.82, 0.95, 0.2, 7, 0.4, 0x4f8f4a, 0x5a9a50, 23),
+    ...limbs(3, 0.55, 0.38, 1.0, 0.025, TRUNK_BARK, 2),
+    ...crown(0.82, 0.95, 0.2, 5, 0.42, 0x4f8f4a, 0x5a9a50, 23),
   ],
   [TREE_SPRUCE]: [
     { shape: 'trunk', color: TRUNK_BARK, y0: 0, y1: 0.4, rx: 0.07 },
@@ -95,22 +95,22 @@ const PROTOTYPES: Record<number, Part[]> = {
   ],
   [TREE_ORNAMENTAL]: [
     { shape: 'trunk', color: TRUNK_BARK, y0: 0, y1: 0.6, rx: 0.05 },
-    ...limbs(4, 0.4, 0.3, 0.8, 0.025, TRUNK_BARK, 3),
-    ...crown(0.7, 1, 0.34, 8, 0.48, 0xa7d65c, 0x92c44c, 37),
+    ...limbs(3, 0.4, 0.3, 0.8, 0.025, TRUNK_BARK, 3),
+    ...crown(0.7, 1, 0.34, 6, 0.52, 0xa7d65c, 0x92c44c, 37),
   ],
   [TREE_BROADLEAF]: [
     { shape: 'trunk', color: TRUNK_BARK, y0: 0, y1: 0.6, rx: 0.06 },
-    ...limbs(5, 0.4, 0.34, 0.8, 0.03, TRUNK_BARK, 4),
-    ...crown(0.72, 1, 0.34, 11, 0.5, 0x4fae4a, 0x5cbc54, 41),
+    ...limbs(3, 0.4, 0.34, 0.8, 0.03, TRUNK_BARK, 4),
+    ...crown(0.72, 1, 0.34, 8, 0.55, 0x4fae4a, 0x5cbc54, 41),
   ],
   [TREE_COLUMNAR]: [
     { shape: 'trunk', color: TRUNK_BARK, y0: 0, y1: 0.35, rx: 0.12 },
-    ...crown(0.62, 0.9, 0.42, 9, 0.5, 0x6fbf5a, 0x5fae4e, 53),
+    ...crown(0.62, 0.9, 0.42, 7, 0.52, 0x6fbf5a, 0x5fae4e, 53),
   ],
   [TREE_LOWWIDE]: [
     { shape: 'trunk', color: TRUNK_BARK, y0: 0, y1: 0.4, rx: 0.045 },
-    ...limbs(5, 0.22, 0.3, 1.0, 0.025, TRUNK_BARK, 5),
-    ...crown(0.58, 1, 0.45, 10, 0.5, 0x9bbf7a, 0x88ad69, 61),
+    ...limbs(3, 0.22, 0.3, 1.0, 0.025, TRUNK_BARK, 5),
+    ...crown(0.58, 1, 0.45, 7, 0.54, 0x9bbf7a, 0x88ad69, 61),
   ],
   // Rocks are scaled by (radius, height, radius) like a crown, and sunk a little into the ground.
   [TREE_ROCK_BOULDER]: [
@@ -157,7 +157,8 @@ function partGeometries(part: Part): Geometry[] {
       const distance = Math.sqrt(0.25 + 0.75 * next()) * (1 - r * 0.5)
       const rise = (next() * 2 - 1) * (1 - distance * distance) ** 0.5
       const size = r * (0.7 + 0.5 * next())
-      const clump = icosphereGeometry(1, 1)
+      // Detail 0: 12 vertices and 20 triangles, a faceted lump; smoothed normals and the cel ramp round it off.
+      const clump = icosphereGeometry(1, 0)
         .scale(size, size * flat * 1.3, size)
         .translate(Math.cos(angle) * distance * part.rx!, part.y0 + rise * part.ry!, Math.sin(angle) * distance * part.rx!)
       out.push(paint(clump, i % 2 ? (part.color2 ?? part.color) : part.color))
@@ -166,7 +167,7 @@ function partGeometries(part: Part): Geometry[] {
   }
   if (part.shape === 'limb') {
     const length = part.length!
-    const limb = cylinderGeometry(part.rx! * 0.5, part.rx!, length, 5)
+    const limb = cylinderGeometry(part.rx! * 0.5, part.rx!, length, 4)
       .translate(0, length / 2, 0)
       .rotateZ(-(part.tilt ?? 0.8))
       .rotateY(part.yaw ?? 0)

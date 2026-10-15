@@ -126,7 +126,7 @@ The style is flat, bright and few-banded, not physically based.
   round discs at joints. They share the terrain's ramp and sit over it by a depth bias per layer.
 - **Trees** are instanced: one `InstancedMesh` per archetype per tile (at most ten draw calls per
   tile), built from merged unit-space parts with vertex colours. A broadleaf crown is a loose scatter
-  of 6 to 11 icosphere clumps (42 vertices each, seeded so it is the same every load) over a few slim
+  of 5 to 8 icosphere clumps (12 vertices and 20 triangles each, seeded so it is the same every load) over a few slim
   limbs, so there are gaps to see into and a person standing in or under one can be spotted; a spruce
   is five separate tiers. Normals are smoothed per vertex, so the faces read as bold shapes rather
   than a faceted mesh. The tree material has `nearFade` set: surfaces within 2.5 m of the eye dissolve
