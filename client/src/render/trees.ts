@@ -23,8 +23,13 @@ const TRUNK_BARK = 0x8a5a3c
 const TRUNK_BIRCH = 0xe9e5d9
 
 interface Part {
-  /** `ellipsoid`: a low-poly sphere scaled by `(rx, ry, rz)`; `cone` and `trunk` span `y0..y1`. */
-  shape: 'ellipsoid' | 'cone' | 'trunk'
+  /**
+   * `ellipsoid`: a low-poly sphere scaled by `(rx, ry, rz)`; `cone` and `trunk` span `y0..y1`;
+   * `clumps`: `count` small ellipsoids scattered through the ellipsoid `(rx, ry)` about `y0`, which
+   * leaves gaps to see through; `limb`: a slim branch of `length` from `(x, y0, z)`, `tilt` off
+   * vertical, towards `yaw`.
+   */
+  shape: 'ellipsoid' | 'cone' | 'trunk' | 'clumps' | 'limb'
   color: number
   y0: number
   y1?: number
@@ -33,40 +38,79 @@ interface Part {
   ry?: number
   x?: number
   z?: number
+  count?: number
+  /** Clump radius in crown radii. */
+  clump?: number
+  /** A second shade the clumps alternate to. */
+  color2?: number
+  seed?: number
+  length?: number
+  tilt?: number
+  yaw?: number
+  /** Sides of a cone. */
+  sides?: number
+}
+
+/** A crown of loose clumps with a limb or two under it: see-through enough to spot someone in the gaps. */
+function crown(y0: number, rx: number, ry: number, count: number, clump: number, color: number, color2: number, seed: number): Part[] {
+  return [{ shape: 'clumps', color, color2, y0, rx, ry, count, clump, seed }]
+}
+
+/** `n` limbs fanning out of the trunk from `y0`, each reaching `reach` crown radii out. */
+function limbs(n: number, y0: number, length: number, tilt: number, radius: number, color: number, seed = 1): Part[] {
+  return Array.from({ length: n }, (_, i) => ({
+    shape: 'limb' as const,
+    color,
+    y0: y0 + (i % 3) * length * 0.12,
+    rx: radius,
+    length: length * (0.8 + 0.2 * ((i * 7 + seed) % 3) / 2),
+    tilt: tilt + ((i * 5 + seed) % 3) * 0.12,
+    yaw: (i / n) * Math.PI * 2 + seed,
+  }))
+}
+
+/** A tier of conifer: a cone of many sides, so its rim is rounder and the tiers read apart. */
+function tier(y0: number, y1: number, rx: number, color: number): Part {
+  return { shape: 'cone', color, y0, y1, rx, sides: 9 }
 }
 
 const PROTOTYPES: Record<number, Part[]> = {
   [TREE_BIRCH]: [
-    { shape: 'trunk', color: TRUNK_BIRCH, y0: 0, y1: 0.7, rx: 0.07 },
-    { shape: 'ellipsoid', color: 0x9bd36b, y0: 0.64, rx: 1, ry: 0.38 },
+    { shape: 'trunk', color: TRUNK_BIRCH, y0: 0, y1: 0.78, rx: 0.07 },
+    ...limbs(4, 0.48, 0.3, 0.7, 0.03, TRUNK_BIRCH, 1),
+    ...crown(0.62, 1, 0.4, 9, 0.46, 0x9bd36b, 0x86c45a, 11),
   ],
   [TREE_PINE]: [
-    { shape: 'trunk', color: TRUNK_BARK, y0: 0, y1: 0.85, rx: 0.08 },
-    { shape: 'ellipsoid', color: 0x4f8f4a, y0: 0.74, rx: 0.9, ry: 0.12 },
-    { shape: 'ellipsoid', color: 0x5a9a50, y0: 0.9, rx: 0.6, ry: 0.1, x: 0.15 },
+    { shape: 'trunk', color: TRUNK_BARK, y0: 0, y1: 0.95, rx: 0.07 },
+    ...limbs(5, 0.55, 0.38, 1.0, 0.025, TRUNK_BARK, 2),
+    ...crown(0.82, 0.95, 0.2, 7, 0.4, 0x4f8f4a, 0x5a9a50, 23),
   ],
   [TREE_SPRUCE]: [
-    { shape: 'trunk', color: TRUNK_BARK, y0: 0, y1: 0.2, rx: 0.09 },
-    { shape: 'cone', color: 0x2f6b4a, y0: 0.12, y1: 0.5, rx: 1 },
-    { shape: 'cone', color: 0x2f6b4a, y0: 0.4, y1: 0.75, rx: 0.75 },
-    { shape: 'cone', color: 0x35764f, y0: 0.65, y1: 1, rx: 0.5 },
+    { shape: 'trunk', color: TRUNK_BARK, y0: 0, y1: 0.4, rx: 0.07 },
+    tier(0.1, 0.34, 1, 0x2f6b4a),
+    tier(0.26, 0.5, 0.82, 0x2f6b4a),
+    tier(0.42, 0.66, 0.64, 0x35764f),
+    tier(0.58, 0.82, 0.44, 0x35764f),
+    tier(0.74, 1, 0.26, 0x3a7d54),
   ],
   [TREE_ORNAMENTAL]: [
-    { shape: 'trunk', color: TRUNK_BARK, y0: 0, y1: 0.55, rx: 0.05 },
-    { shape: 'ellipsoid', color: 0xa7d65c, y0: 0.68, rx: 1, ry: 0.32 },
+    { shape: 'trunk', color: TRUNK_BARK, y0: 0, y1: 0.6, rx: 0.05 },
+    ...limbs(4, 0.4, 0.3, 0.8, 0.025, TRUNK_BARK, 3),
+    ...crown(0.7, 1, 0.34, 8, 0.48, 0xa7d65c, 0x92c44c, 37),
   ],
   [TREE_BROADLEAF]: [
-    { shape: 'trunk', color: TRUNK_BARK, y0: 0, y1: 0.55, rx: 0.06 },
-    { shape: 'ellipsoid', color: 0x4fae4a, y0: 0.68, rx: 1, ry: 0.32 },
-    { shape: 'ellipsoid', color: 0x5cbc54, y0: 0.82, rx: 0.65, ry: 0.2, x: 0.2, z: 0.1 },
+    { shape: 'trunk', color: TRUNK_BARK, y0: 0, y1: 0.6, rx: 0.06 },
+    ...limbs(5, 0.4, 0.34, 0.8, 0.03, TRUNK_BARK, 4),
+    ...crown(0.72, 1, 0.34, 11, 0.5, 0x4fae4a, 0x5cbc54, 41),
   ],
   [TREE_COLUMNAR]: [
-    { shape: 'trunk', color: TRUNK_BARK, y0: 0, y1: 0.3, rx: 0.13 },
-    { shape: 'ellipsoid', color: 0x6fbf5a, y0: 0.6, rx: 1, ry: 0.4 },
+    { shape: 'trunk', color: TRUNK_BARK, y0: 0, y1: 0.35, rx: 0.12 },
+    ...crown(0.62, 0.9, 0.42, 9, 0.5, 0x6fbf5a, 0x5fae4e, 53),
   ],
   [TREE_LOWWIDE]: [
-    { shape: 'trunk', color: TRUNK_BARK, y0: 0, y1: 0.35, rx: 0.045 },
-    { shape: 'ellipsoid', color: 0x9bbf7a, y0: 0.58, rx: 1, ry: 0.45 },
+    { shape: 'trunk', color: TRUNK_BARK, y0: 0, y1: 0.4, rx: 0.045 },
+    ...limbs(5, 0.22, 0.3, 1.0, 0.025, TRUNK_BARK, 5),
+    ...crown(0.58, 1, 0.45, 10, 0.5, 0x9bbf7a, 0x88ad69, 61),
   ],
   // Rocks are scaled by (radius, height, radius) like a crown, and sunk a little into the ground.
   [TREE_ROCK_BOULDER]: [
@@ -77,13 +121,58 @@ const PROTOTYPES: Record<number, Part[]> = {
     { shape: 'ellipsoid', color: 0x9a9b97, y0: 0.3, rx: 1, ry: 0.42 },
     { shape: 'ellipsoid', color: 0x85878a, y0: 0.5, rx: 0.6, ry: 0.4, x: -0.2, z: -0.1 },
   ],
-  [TREE_BUSH]: [
-    { shape: 'ellipsoid', color: 0x3f8f45, y0: 0.4, rx: 1, ry: 0.45 },
-    { shape: 'ellipsoid', color: 0x4fa352, y0: 0.62, rx: 0.65, ry: 0.35, x: 0.15, z: -0.1 },
-  ],
+  [TREE_BUSH]: crown(0.42, 0.85, 0.35, 6, 0.5, 0x3f8f45, 0x4fa352, 71),
 }
 
-function partGeometry(part: Part): Geometry {
+/** A deterministic 0..1 sequence, so a re-import or a reload draws the same tree. */
+function sequence(seed: number) {
+  let state = (seed * 2654435761) >>> 0
+  return () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0
+    return state / 4294967296
+  }
+}
+
+function paint(geometry: Geometry, color: number): Geometry {
+  // Indexed and welded, so the parts merge and each vertex is shared: position + normal + colour.
+  geometry.uvs = undefined
+  geometry.computeNormals()
+  const c = Color.hex(color)
+  const count = geometry.vertexCount
+  const colors = new Float32Array(count * 3)
+  for (let i = 0; i < count; i++) colors.set([c.r, c.g, c.b], i * 3)
+  geometry.colors = colors
+  return geometry
+}
+
+function partGeometries(part: Part): Geometry[] {
+  if (part.shape === 'clumps') {
+    const next = sequence(part.seed ?? 1)
+    const out: Geometry[] = []
+    const r = part.clump ?? 0.5
+    const flat = part.ry! / part.rx!
+    for (let i = 0; i < part.count!; i++) {
+      // Inside the ellipsoid, a little biased to the rim so the middle is hollow enough to see into.
+      const angle = next() * Math.PI * 2
+      const distance = Math.sqrt(0.25 + 0.75 * next()) * (1 - r * 0.5)
+      const rise = (next() * 2 - 1) * (1 - distance * distance) ** 0.5
+      const size = r * (0.7 + 0.5 * next())
+      const clump = icosphereGeometry(1, 1)
+        .scale(size, size * flat * 1.3, size)
+        .translate(Math.cos(angle) * distance * part.rx!, part.y0 + rise * part.ry!, Math.sin(angle) * distance * part.rx!)
+      out.push(paint(clump, i % 2 ? (part.color2 ?? part.color) : part.color))
+    }
+    return out
+  }
+  if (part.shape === 'limb') {
+    const length = part.length!
+    const limb = cylinderGeometry(part.rx! * 0.5, part.rx!, length, 5)
+      .translate(0, length / 2, 0)
+      .rotateZ(-(part.tilt ?? 0.8))
+      .rotateY(part.yaw ?? 0)
+      .translate(part.x ?? 0, part.y0, part.z ?? 0)
+    return [paint(limb, part.color)]
+  }
   let geometry: Geometry
   if (part.shape === 'ellipsoid') {
     // A low-poly sphere: 42 welded vertices and 80 triangles, so the crown reads as a few bold shapes.
@@ -91,17 +180,9 @@ function partGeometry(part: Part): Geometry {
   } else {
     const height = part.y1! - part.y0
     // A cone is a cylinder that closes to a point at the top.
-    geometry = (part.shape === 'cone' ? cylinderGeometry(0, part.rx!, height, 7) : cylinderGeometry(part.rx! * 0.8, part.rx!, height, 6)).translate(0, part.y0 + height / 2, 0)
+    geometry = (part.shape === 'cone' ? cylinderGeometry(0, part.rx!, height, part.sides ?? 7) : cylinderGeometry(part.rx! * 0.8, part.rx!, height, 6)).translate(0, part.y0 + height / 2, 0)
   }
-  // Indexed and welded, so the parts merge and each vertex is shared: position + normal + colour.
-  geometry.uvs = undefined
-  geometry.computeNormals()
-  const color = Color.hex(part.color)
-  const count = geometry.vertexCount
-  const colors = new Float32Array(count * 3)
-  for (let i = 0; i < count; i++) colors.set([color.r, color.g, color.b], i * 3)
-  geometry.colors = colors
-  return geometry
+  return [paint(geometry, part.color)]
 }
 
 let shared: { geometries: Map<number, Geometry>; material: Material } | undefined
@@ -110,9 +191,9 @@ function prototypes() {
   if (!shared) {
     const geometries = new Map<number, Geometry>()
     for (const [kind, parts] of Object.entries(PROTOTYPES)) {
-      geometries.set(Number(kind), Geometry.merge(parts.map(partGeometry)))
+      geometries.set(Number(kind), Geometry.merge(parts.flatMap(partGeometries)))
     }
-    shared = { geometries, material: toonMaterial({ vertexColors: true }) }
+    shared = { geometries, material: toonMaterial({ vertexColors: true, nearFade: 2.5 }) }
   }
   return shared
 }

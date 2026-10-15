@@ -107,7 +107,7 @@ export class MaterialTable {
     this.data[f + 4] = m.emissive.r
     this.data[f + 5] = m.emissive.g
     this.data[f + 6] = m.emissive.b
-    this.data[f + 7] = 0
+    this.data[f + 7] = m.nearFade
     this.words[f + 8] = (m.lit ? MAT_LIT : 0) | (m.vertexColors ? MAT_VERTEX_COLORS : 0) | (m.fog ? MAT_FOG : 0) | (m.normalMap ? MAT_NORMAL_MAP : 0)
     this.words[f + 9] = m.ramp ? this.rampRow(m.ramp) : 0
     this.words[f + 10] = 0
