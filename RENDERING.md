@@ -4,7 +4,8 @@ How the client turns the simulation into a picture: the scene, the light, the sh
 optional soft-lighting passes and what each one costs. It is all three.js (WebGL) in
 `client/src/render/`; `client/src/game.ts` drives it once per animation frame. Networking and
 prediction are in [NETWORKING.md](NETWORKING.md), where the world comes from is in
-[WORLD.md](WORLD.md).
+[WORLD.md](WORLD.md). A port of all of this to three's WebGPURenderer exists on the
+`webgpu-renderer` branch and is described under [The WebGPU port](#the-webgpu-port-reference-branch).
 
 ```
 game.frame()
@@ -222,6 +223,66 @@ one-frame hitch. The far setting is about four times the shadow memory and fill 
   the composer's MSAA target, which is most of its cost.
 - Everything here is a rendering concern only: none of it touches the simulation, so options can be
   changed at any time without affecting prediction or the server.
+
+## The WebGPU port (reference branch)
+
+The branch `webgpu-renderer` (commit `77673b6`) is the whole client ported to three's
+`WebGPURenderer` through `three/webgpu` and TSL. It is kept as a reference, not as the way
+forward: it works and passes the tests, but it is not faster. The plan is a renderer designed for
+WebGPU from the start, not a three.js port.
+
+**What the port did**
+
+- `vite.config.ts` aliases `three` to `three/webgpu`, so every `import … from 'three'` resolves to
+  the WebGPU build. All materials are node materials.
+- `EffectComposer` is replaced by a `RenderPipeline`: a scene pass with MRT, GTAO and denoise for
+  AO, and ink as a TSL node reading depth with `load` (texel reads, which work on a multisampled
+  depth target, where `sample` does not).
+- A second, non-multisampled pass produces depth and normals for AO. It runs only while AO is on.
+- The perf readout (`?perf` / F3) shows the active backend. three falls back to WebGL2 silently,
+  so check that line before trusting a measurement.
+
+**What it measured**, against master on the same scene, connected to the server, in Chrome on a
+real GPU (Metal, 60 fps, ink on, AO off):
+
+| | master (WebGL) | branch (WebGPU) |
+|---|---|---|
+| draw calls | 840 | 831 |
+| triangles | 941k | 940k |
+| renderer CPU time | 1.25 ms/frame | 2.5 ms/frame |
+| of which sun shadow pass | 0.6 ms | 1.3 ms |
+| of which main pass | 0.64 ms | 1.1 ms |
+
+Frame time is the same (vsync-bound), so nothing the player sees is slower; the cost is main-thread
+time. It is a flat 2x per draw across the shadow and main passes, with no single hot spot: three's
+WebGPURenderer walks the scene graph every frame and does cache-key checks, binding updates and
+several native calls (`setPipeline`, `setBindGroup`, `setVertexBuffer`, `setIndexBuffer`,
+`writeBuffer`) for every object. WebGPU's lower overhead comes from replaying recorded work
+(render bundles), instancing and indirect draws, none of which a straight port uses.
+
+**Where the cost is, for the next renderer**
+
+- The shadow pass is half of the renderer's CPU time. It re-draws every caster each frame.
+- About one toon material per mesh (900 materials for 940 meshes), so pipelines and bind groups are
+  not shared.
+- Static geometry (terrain, buildings, trees) is re-submitted every frame although it rarely
+  changes. Render bundles per tile are the natural fit.
+- The AO prepass no longer leaves translucent effects out (master hid them with `aoHidden`), so
+  AO costs a little more than it should.
+
+**Measuring, and traps**
+
+- `renderer.info.render.calls` on WebGPU counts `render()` calls and is not cleared by `reset()`.
+  The readout uses `render.drawCalls`.
+- Compare builds on the same scene. Tile streaming follows the player, whose spawn comes from the
+  server, so a client with no server connection draws different content and its numbers mean
+  nothing. The server only accepts the dev origins `localhost:5173` and `127.0.0.1:5173`, so two
+  builds can run at once only by binding one to IPv4 and the other to IPv6.
+- Headless Chrome with software GL is about 100x too slow for timings. Use a full Chrome with a
+  real GPU, and the DevTools Profiler (`Profiler.start` / `stop`) over a few seconds to see where
+  `render` goes.
+- Native `setIndexBuffer`, `setVertexBuffer` and `writeBuffer` show as measurable self time on
+  WebGPU: many small native calls are not free.
 
 ## Adding to the pipeline
 
