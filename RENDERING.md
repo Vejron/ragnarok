@@ -196,7 +196,7 @@ shadow; meshes outside the sun's frustum are skipped.
 Five independent switches, in `render/look.ts` (`Look`). The HUD panel in `App.vue` shows them while
 the pointer is not captured; `Game.setLook` applies and saves them to `localStorage`
 (`ragnarok.look`). Defaults are on, except far shadows, which start off on coarse-pointer (touch)
-devices (bloom likewise). (Ambient occlusion, was removed with the move to the engine: it added little to a
+devices (bloom likewise). (Ambient occlusion was removed with the move to the engine: it added little to a
 flat-shaded look and cost a second geometry pass.)
 
 The saved choice carries a version (`LOOK_VERSION` in `look.ts`). When a default changes for existing
