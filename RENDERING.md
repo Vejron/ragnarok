@@ -130,7 +130,10 @@ The style is flat, bright and few-banded, not physically based.
   per vertex, so the faces read as bold shapes rather than a faceted mesh. Trees have their own small shader (`FOLIAGE_WGSL` in `trees.ts`): the same four cel
   bands, plus a 4×4 ordered dither that removes pixels within 2.5 m of the eye, so standing in a crown,
   or behind a felled one, you still see what you aim at. Trees take no shadow. A felled tree's instance
-  is scaled to nothing in place.
+  is scaled to nothing in place. Every archetype also has a far mesh (20-triangle crowns, fewer
+  sides, no shadow casting); `WorldView.update` shows it for a tile whose box is more than
+  `FAR_TREES` (110 m) from the camera, and the near one otherwise, so no tree near you is ever
+  the cheap one.
 - **Materials are shared** where they can be (per colour for buildings and terrain). Materials cost no
   shader compile in this engine (only the render state picks a pipeline), but sharing keeps the table
   small; only a tile's own cover texture and instance buffers are per-tile and are freed with it
