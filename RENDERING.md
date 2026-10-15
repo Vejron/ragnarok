@@ -243,7 +243,7 @@ WebGPU from the start, not a three.js port.
   so check that line before trusting a measurement.
 
 **What it measured**, against master on the same scene, connected to the server, in Chrome on a
-real GPU (Metal, 60 fps, ink on, AO off):
+real GPU (Metal, 60 fps, default look: soft, contact, far shadows and ink on, AO off):
 
 | | master (WebGL) | branch (WebGPU) |
 |---|---|---|
