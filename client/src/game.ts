@@ -40,6 +40,7 @@ import { Pickups } from './render/pickups'
 import { TrajectoryView } from './render/trajectory'
 import { MortarArc } from './render/mortar-arc'
 import { dropTrajectory, throwTrajectory } from './sim/grenade'
+import { ProjectileTrails } from './render/trails'
 import { Rockets } from './render/rockets'
 import { bulletLifeTicks, bulletPosition, bulletTicksTo, bulletVelocity } from './sim/ballistics'
 import { saveLook, type Look } from './render/look'
@@ -118,8 +119,6 @@ interface LiveBullet {
   shown: boolean
   /** Muzzle minus eye, closing as it flies. */
   offset: THREE.Vector3 | null
-  /** Metres it had flown when first drawn, where its streak starts from. */
-  drawnFrom?: number
 }
 
 /** Mouse-look is this much slower down a scope, to match the narrower view. */
@@ -167,8 +166,8 @@ export class Game {
   private readonly effects = new Effects()
   private readonly damageNumbers = new DamageNumbers()
   /** Tyre smoke, dust, gravel and spray; sparks and flames glow on their own pool. */
-  private readonly smoke = new Particles(3000)
-  private readonly glow = new Particles(1200, true)
+  private readonly smoke = new Particles(4096)
+  private readonly glow = new Particles(2048, true)
   private readonly skids = new Skidmarks()
   private readonly vehicleFx = new Map<number, VehicleFx>()
   /** Engines, tyres, crashes and guns. */
@@ -180,6 +179,8 @@ export class Game {
   private frameDt = 0
   private readonly rocketInterp = new Interpolator<RocketState>(blendRocket)
   private readonly rocketModels = new Rockets()
+  /** Ribbons behind rockets, shells and bullets in flight. */
+  private readonly trails = new ProjectileTrails()
   /** The tick a rocket was last listed in, once it stops being listed: it bursts then. */
   private readonly rocketEnds = new Map<number, number>()
   /** Shot and burst events wait here until the render tick reaches them, so they line up with what is drawn. */
@@ -270,7 +271,7 @@ export class Game {
     this.view = new WorldView(this.scene.scene)
     this.scene.scene.add(this.crowd.root)
     this.scene.scene.add(this.effects.root, this.view.damage.root, this.damageNumbers.root)
-    this.scene.scene.add(this.rocketModels.root)
+    this.scene.scene.add(this.rocketModels.root, this.trails.root)
     this.scene.scene.add(this.pickupModels.root)
     this.scene.scene.add(this.trajectory.root, this.mortarArc.root)
     this.scene.scene.add(this.smoke.root, this.glow.root, this.skids.root)
@@ -695,6 +696,8 @@ export class Game {
     this.pickupModels.update(now / 1000)
     this.aimGrenade(position, seated)
     this.effects.update(dt)
+    this.trails.update(dt)
+    this.scene.scene.lights.update(dt)
     this.damageNumbers.update(dt, this.scene.camera)
     const eye = this.scene.camera.position
     this.smoke.follow(eye.x, eye.z)
@@ -904,6 +907,11 @@ export class Game {
   private blast(at: THREE.Vector3, radius: number, profile: ExplosionProfile) {
     this.effects.burst(at, radius)
     explosion(this.fxWorld, this.debris, at, radius, profile)
+    // A flash that lights the ground and what stands on it, and a shockwave racing out over the ground.
+    const reach = Math.min(2, Math.max(0.6, radius / 5))
+    this.scene.scene.lights.flash(at.x, at.y + 1.5, at.z, { color: 0xffa040, intensity: 5 * reach, radius: radius * 8, life: 0.6 })
+    const ground = this.scene.groundAt(at.x, at.z)
+    if (at.y - ground < radius) this.effects.shockwave({ x: at.x, y: ground + 0.25, z: at.z }, radius)
     const distance = at.distanceTo(this.scene.camera.position)
     if (distance < radius * 8) this.chase.kick(Math.min(0.6, (radius / 8) * (1 - distance / (radius * 8))))
   }
@@ -942,12 +950,14 @@ export class Game {
         this.rocketInterp.remove(id)
         this.rocketEnds.delete(id)
         this.rocketModels.remove(id)
+        this.trails.end('r', id)
         this.trailOwed.delete(id)
         continue
       }
       const state = this.rocketInterp.sample(id, renderTick)
       if (!state) continue
       this.rocketModels.place(id, state.kind, [state.x, state.y, state.z], [state.vx, state.vy, state.vz])
+      this.trails.follow('r', id, state.kind, state.x, state.y, state.z)
       // Only a motor-driven rocket (kind 0) leaves a flame and a smoke trail.
       if (state.kind === 0) {
         this.trailOwed.set(id, rocketTrail(this.fxWorld, [state.x, state.y, state.z], [state.vx, state.vy, state.vz], this.frameDt, this.trailOwed.get(id) ?? 0))
@@ -974,6 +984,7 @@ export class Game {
       if (n < 0) continue
       if (n >= Math.min(bullet.life, bullet.endTicks ?? Infinity)) {
         this.rocketModels.remove(id)
+        this.trails.end('b', id)
         this.bullets.delete(id)
         continue
       }
@@ -985,15 +996,14 @@ export class Game {
       // It leaves the eye, but is drawn leaving the barrel: the difference closes over the first 25 m.
       if (bullet.offset) {
         const flown = n * Math.hypot(bullet.spawn.vx, bullet.spawn.vy, bullet.spawn.vz) / TICK_RATE
-        bullet.drawnFrom ??= flown
         const keep = Math.max(0, 1 - flown / 25)
         at[0] += bullet.offset.x * keep
         at[1] += bullet.offset.y * keep
         at[2] += bullet.offset.z * keep
       }
-      // The streak grows out of the barrel: drawn whole from the first frame it would trail through the shooter.
-      const trail = n * Math.hypot(bullet.spawn.vx, bullet.spawn.vy, bullet.spawn.vz) / TICK_RATE - (bullet.drawnFrom ?? 0)
-      this.rocketModels.place(id, PROJECTILE_BULLET, at, bulletVelocity(bullet.spawn, n), trail)
+      this.rocketModels.place(id, PROJECTILE_BULLET, at, bulletVelocity(bullet.spawn, n))
+      // The ribbon starts where the round is first drawn, so it grows out of the barrel.
+      this.trails.follow('b', id, PROJECTILE_BULLET, at[0], at[1], at[2])
     }
   }
 

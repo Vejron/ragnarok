@@ -17,6 +17,16 @@ export interface ParticleSpec {
   drag?: number
   /** Bounces off the ground (a stone) instead of passing through it. */
   bounce?: boolean
+  /** The colour it has cooled or aged to by the end of its life. */
+  colorEnd?: number
+  /** Radians per second it turns, or a [min, max] range. */
+  spin?: number | readonly [number, number]
+  /** Metres of extra length per m/s of speed, along its motion (sparks). */
+  stretch?: number
+  /** Multiplies the colour past 1 so it blooms. */
+  glow?: number
+  /** `puff` gives smoke a billowy edge. */
+  shape?: 'round' | 'puff'
 }
 
 /** The height field particles bounce on is sampled this far to a side of the camera, metres, at `CELL` spacing. */
@@ -78,6 +88,11 @@ export class Particles {
       drag: spec.drag,
       bounce: spec.bounce,
       blend: this.blend,
+      colorEnd: spec.colorEnd,
+      spin: spec.spin,
+      stretch: spec.stretch,
+      glow: spec.glow,
+      shape: spec.shape,
     }
     this.root.spawn(engine)
   }

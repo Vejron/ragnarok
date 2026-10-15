@@ -125,6 +125,13 @@ export class Effects {
     this.root.spawn({ at, life: 0.12, size: radius * 0.1, grow: radius * 0.2, color: 0xfff0c0, bright: true })
   }
 
+  /** A ring of pale light racing out over the ground from a blast at `at` (already on the ground) to ~7 radii. */
+  shockwave(at: V, radius: number) {
+    this.root.spawn({ at, ring: true, life: 0.45 + radius * 0.04, size: radius * 0.3, grow: radius * 6, length: radius * 1.1, color: 0xffe9c0, opacity: 0.7, bright: true })
+    // A fainter, slower echo of dust behind it.
+    this.root.spawn({ at, ring: true, life: 0.8 + radius * 0.05, size: radius * 0.2, grow: radius * 4, length: radius * 1.6, color: 0xcbbf9f, opacity: 0.35 })
+  }
+
   /** A puff of smoke from a damaged vehicle, drifting up. Black and bigger for a wreck. */
   smoke(at: V, wreck: boolean) {
     const size = wreck ? 1.1 : 0.7

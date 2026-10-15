@@ -62,19 +62,24 @@ export function explosion(world: FxWorld, debris: Debris, at: THREE.Vector3, rad
   const water = surface === SURFACE_WATER
   const earth = profile.wreck ? 0x2b2b2b : water ? 0xdfeaf0 : DIRT[surface] ?? 0x5a4a30
 
-  // Fireball: a few fat orange puffs that swell fast and float up, with a white-hot core.
-  for (let i = 0; i < count(12, profile.fire); i++) {
+  // Fireball: fat, billowing puffs that swell fast and float up, cooling from white-yellow to a dark ember red
+  // (HDR, so the hottest of it blooms), with a white-hot core.
+  for (let i = 0; i < count(14, profile.fire); i++) {
     const heading = rand(0, Math.PI * 2)
     const out = rand(0, radius * 0.5)
     world.smoke.spawn({
       position: [at.x + Math.cos(heading) * out * 0.4, at.y + rand(0, 0.5), at.z + Math.sin(heading) * out * 0.4],
       velocity: [Math.cos(heading) * out * 1.2, rand(1.5, 5) * scale, Math.sin(heading) * out * 1.2],
       life: rand(0.5, 0.95),
-      size: [radius * 0.25, radius * rand(0.7, 1.1)],
-      color: i % 3 === 0 ? 0xffb347 : i % 3 === 1 ? 0xff7a1a : 0xc4400f,
-      alpha: 0.9,
-      gravity: -2,
-      drag: 2,
+      size: [radius * 0.3, radius * rand(0.9, 1.5)],
+      color: i % 3 === 0 ? 0xffeaa0 : i % 3 === 1 ? 0xffb347 : 0xff8a2a,
+      colorEnd: profile.wreck ? 0x2a1208 : 0x5a1a05,
+      glow: 3,
+      shape: 'puff',
+      spin: [-2, 2],
+      alpha: 0.95,
+      gravity: -3,
+      drag: 2.5,
     })
   }
   for (let i = 0; i < count(8, profile.fire); i++) {
@@ -83,7 +88,9 @@ export function explosion(world: FxWorld, debris: Debris, at: THREE.Vector3, rad
       velocity: [rand(-1, 1) * radius * 0.6, rand(0.5, 3) * scale, rand(-1, 1) * radius * 0.6],
       life: rand(0.18, 0.4),
       size: [radius * 0.45, radius * 0.9],
-      color: i % 2 ? 0xfff0c0 : 0xffd27a,
+      color: i % 2 ? 0xfff6d8 : 0xffd27a,
+      colorEnd: 0xff9a30,
+      glow: 8,
       alpha: 0.9,
       drag: 3,
     })
@@ -98,8 +105,11 @@ export function explosion(world: FxWorld, debris: Debris, at: THREE.Vector3, rad
       position: at,
       velocity: [Math.cos(heading) * speed * (1 - lift * 0.5), speed * lift, Math.sin(heading) * speed * (1 - lift * 0.5)],
       life: rand(0.4, 1.3),
-      size: [rand(0.08, 0.16), 0.02],
+      size: [rand(0.07, 0.13), 0.02],
       color: i % 4 === 0 ? 0xffffff : i % 4 === 1 ? 0xffe08a : i % 4 === 2 ? 0xffa23a : 0xff6a1a,
+      colorEnd: 0xff3a05,
+      glow: 6,
+      stretch: 0.045,
       alpha: 1,
       gravity: 9.8,
       drag: 0.5,
@@ -113,7 +123,10 @@ export function explosion(world: FxWorld, debris: Debris, at: THREE.Vector3, rad
       velocity: [rand(-2, 2), rand(2, 6) * scale, rand(-2, 2)],
       life: rand(1.2, 2.4),
       size: [0.12, 0.03],
-      color: 0xff8a2a,
+      color: 0xffb04a,
+      colorEnd: 0xff2a00,
+      glow: 4,
+      spin: [-6, 6],
       alpha: 0.9,
       gravity: -0.6,
       drag: 1,
@@ -130,6 +143,8 @@ export function explosion(world: FxWorld, debris: Debris, at: THREE.Vector3, rad
       life: rand(1.2, 2.2),
       size: [radius * 0.2, radius * rand(0.5, 0.8)],
       color: profile.wreck ? 0x4a4540 : water ? 0xffffff : earth,
+      shape: 'puff',
+      spin: [-0.8, 0.8],
       alpha: 0.5,
       drag: 1.8,
       gravity: -0.15,
@@ -153,15 +168,19 @@ export function explosion(world: FxWorld, debris: Debris, at: THREE.Vector3, rad
   }
 
   // Smoke column: dark, slow, standing well after the flash has gone.
-  for (let i = 0; i < count(8, profile.smoke); i++) {
+  for (let i = 0; i < count(10, profile.smoke); i++) {
     world.smoke.spawn({
       position: [at.x + rand(-1, 1) * scale, at.y + rand(0, 1.5), at.z + rand(-1, 1) * scale],
       velocity: [rand(-0.8, 0.8), rand(2, 4.5) * Math.sqrt(scale), rand(-0.8, 0.8)],
       life: rand(2.5, 4.5),
-      size: [radius * 0.3, radius * rand(0.9, 1.4)],
-      color: profile.wreck ? 0x151515 : i % 2 ? 0x3a3a3a : 0x555555,
-      alpha: 0.45,
-      gravity: -0.5,
+      size: [radius * 0.4, radius * rand(1.2, 1.9)],
+      // Sooty while hot, greying as it spreads and cools.
+      color: profile.wreck ? 0x101010 : i % 2 ? 0x2a2a2a : 0x3a3a3a,
+      colorEnd: profile.wreck ? 0x4a4a4a : 0x7a7a7a,
+      shape: 'puff',
+      spin: [-0.6, 0.6],
+      alpha: 0.55,
+      gravity: -0.8,
       drag: 0.8,
     })
   }

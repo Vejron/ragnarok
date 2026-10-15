@@ -21,9 +21,10 @@ game.frame()
         ├─ effect prepare   compute: particle emit + simulate
         ├─ shadow pass      sun depth map
         ├─ main pass        4× MSAA, rgba16float, reversed depth
-        ├─ effects pass     particles + flashes, depth read-only
+        ├─ effects pass     particles, ribbons + flashes, depth read-only
         ├─ overlay pass     the gunsight, over everything
-        └─ output pass      ink from depth, tone mapping, sRGB     → canvas
+        ├─ bloom            bright extract → mip chain → add back (when `scene.bloom`)
+        └─ output pass      ink from depth, bloom, tone mapping, sRGB     → canvas
 ```
 
 ## The engine and the game's side of it
@@ -144,7 +145,10 @@ after the solid scene, with the scene's depth bound read-only so they can be sof
   draws instead of 60 meshes with 60 materials. A "ball" is a flat disc; a tracer is a camera-facing
   strip. `bright` pieces ignore fog.
 - **`Particles`** (`particles.ts`, over the engine's `ParticleSystem`): smoke, dust, gravel, spray,
-  sparks and flames, 3000 alpha-blended and 1200 additive. The CPU only writes a 128-byte emit command
+  sparks and flames, 4096 alpha-blended and 2048 additive. A particle can change colour over its life
+  (`colorEnd`: fire cooling to ember red, soot greying), spin, stretch along its velocity (`stretch`:
+  sparks), be multiplied past 1 (`glow`, so it blooms) and have a billowy noise-eaten edge
+  (`shape: 'puff'`) instead of a smooth disc. The CPU only writes a 160-byte emit command
   per `spawn`; a compute pass expands commands into a pool and another integrates every live particle
   (drag, gravity, bounce on a ground height field, size, fade), and each blend class draws with one
   indirect call whose instance count the GPU wrote. When the pool is full, new particles are dropped.
@@ -152,6 +156,21 @@ after the solid scene, with the scene's depth bound read-only so they can be sof
   heights: the wrapper samples `groundAt` into a 256 m, 2 m grid around the camera and re-sends it
   after 32 m of travel (only once something has asked to bounce). `alive` is a tally kept on the CPU,
   for the explosion's budget, and does not need a read-back.
+- **`ProjectileTrails`** (`trails.ts`, over the engine's `Ribbons`): smooth camera-facing ribbons
+  behind rockets, shells, bombs and bullets, in a `RibbonStyle` per projectile kind (a hot additive
+  core and a pale smoke line for a rocket, a bright tracer for a bullet). The CPU lays a point down
+  each half metre or so; `update`/`extend` are CPU only and `prepare` writes this frame's segments as
+  one storage buffer drawn instanced. A trail whose owner is gone (or stops being extended for half a
+  second) is kept and fades; its segments' ages are written fresh each frame, so nothing is rebased.
+- **Blast lights and shockwaves:** `scene.lights` (the engine's `PointLights`) takes short-lived point
+  lights; `Game.blast` flashes one per explosion. The standard shader adds the strongest eight (by
+  strength over distance from the camera) to lit surfaces, without shadows. The shockwave is a `Flash`
+  with `ring: true`: a flat ring on the ground whose band is `length` metres thick.
+- **Bloom** is an engine pass chain, not a mesh: `Scene.bloom` (`Bloom`: `strength`, `threshold`,
+  `knee`, `radius`) extracts what is brighter than the threshold from the resolved HDR image at half
+  size, blurs it down a mip chain (13-tap downsample, 3×3 tent upsample added back) and the output pass
+  adds the result before exposure and tone mapping. HDR colours over 1 (`glow`) are what feed it. It
+  is the `bloom` look option, off by default on touch devices.
 - **Skidmarks** are an ordinary `Geometry` + WGSL `ShaderMaterial` with a ring of quads; a new quad is
   written with `needsUpdateRange` (four vertices go to the GPU) and fades by `now − birth` in the
   fragment shader.
@@ -174,10 +193,10 @@ shadow; meshes outside the sun's frustum are skipped.
 
 ## Soft-lighting options
 
-Four independent switches, in `render/look.ts` (`Look`). The HUD panel in `App.vue` shows them while
+Five independent switches, in `render/look.ts` (`Look`). The HUD panel in `App.vue` shows them while
 the pointer is not captured; `Game.setLook` applies and saves them to `localStorage`
 (`ragnarok.look`). Defaults are on, except far shadows, which start off on coarse-pointer (touch)
-devices. (A fifth, ambient occlusion, was removed with the move to the engine: it added little to a
+devices (bloom likewise). (Ambient occlusion, was removed with the move to the engine: it added little to a
 flat-shaded look and cost a second geometry pass.)
 
 The saved choice carries a version (`LOOK_VERSION` in `look.ts`). When a default changes for existing
@@ -328,8 +347,9 @@ Its own examples (`engine/examples`) benchmark the same scene against three's tw
   call `material.needsUpdate()` after changing a material's colour or opacity. A glTF goes through
   `parseToonModel` (`models.ts`), which swaps in toon materials and keeps their names.
 - **A new short-lived effect:** a `Flash` (`FlashEffects.spawn`) if it is a pure function of its age
-  (flash, spark, puff, streak); a `Particles.spawn` if it needs drag, gravity or bounce. Avoid
-  spawning meshes per event.
+  (flash, spark, puff, streak, ground ring); a `Particles.spawn` if it needs drag, gravity, bounce or
+  to change colour as it ages; a ribbon (`ProjectileTrails.follow`) for a trail behind something that
+  moves; `scene.lights.flash` to light the surroundings. Avoid spawning meshes per event.
 - **Something that must never be hidden** (a reticle, a marker): a mesh with `overlay = true` and a
   `blend: 'alpha'` material. It ignores depth and sorts by `renderOrder`.
 - **A new look option:** add a field to `Look` and `defaultLook`, apply it in `Scene.setLook`, and add
