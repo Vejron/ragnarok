@@ -26,6 +26,16 @@ export interface ParticleSpec {
   blend?: 'alpha' | 'additive'
   /** Fogged with distance like everything else; off for things that should glow through haze. */
   fog?: boolean
+  /** The colour it has reached at the end of its life (mixed linearly from `color`): fire cooling to smoke. */
+  colorEnd?: number | Color
+  /** Radians per second it turns, or a [min, max] range (each particle also starts at a random angle). */
+  spin?: number | readonly [number, number]
+  /** Metres of extra length per m/s of speed: the billboard stretches along its motion, for sparks and streaks. */
+  stretch?: number
+  /** Multiplies the colour (HDR), so values over 1 bloom. */
+  glow?: number
+  /** `puff` gives alpha-blended smoke a billowy, noise-eaten edge instead of a smooth disc. */
+  shape?: 'round' | 'puff'
 }
 
 /** A burst: `count` particles from one spec, each with its own random values, rolled on the GPU. */
@@ -46,17 +56,18 @@ export interface EmitSpec extends Omit<ParticleSpec, 'life'> {
 }
 
 /** Floats per emit command; matches `Command` in particles.wgsl. */
-const COMMAND_FLOATS = 32
+const COMMAND_FLOATS = 40
 /** Bytes in a particle; matches `Particle`. */
-const PARTICLE_BYTES = 80
+const PARTICLE_BYTES = 112
 const PF_BOUNCE = 1
 const PF_ADDITIVE = 2
 const PF_NO_FOG = 4
+const PF_PUFF = 8
 /** Frames between reads of the live count. */
 const COUNT_EVERY = 10
 
 /**
- * Particles simulated entirely on the GPU. The CPU only records emit commands (32 floats per call, however
+ * Particles simulated entirely on the GPU. The CPU only records emit commands (40 floats per call, however
  * many particles it makes); a compute pass expands them into a fixed pool and another integrates every
  * live particle, then each blend class draws with one indirect call whose instance count the GPU wrote.
  * When the pool is full, new particles are dropped.
@@ -74,6 +85,7 @@ export class ParticleSystem extends Effect {
   private seed = 1
   private readonly color = new Color()
   private readonly color2 = new Color()
+  private readonly colorEnd = new Color()
   private ground: { data: Float32Array<ArrayBuffer>; width: number; height: number; x0: number; z0: number; cell: number; version: number } | null = null
   private groundVersion = 0
   private gpu: ParticleGpu | null = null
@@ -144,11 +156,18 @@ export class ParticleSystem extends Effect {
     w[o + 20] = count
     w[o + 21] = this.spawnCount
     w[o + 22] = this.seed = (this.seed * 1664525 + 1013904223) >>> 0
-    w[o + 23] = (spec.bounce ? PF_BOUNCE : 0) | (spec.blend === 'additive' ? PF_ADDITIVE : 0) | (spec.fog === false ? PF_NO_FOG : 0)
+    w[o + 23] = (spec.bounce ? PF_BOUNCE : 0) | (spec.blend === 'additive' ? PF_ADDITIVE : 0) | (spec.fog === false ? PF_NO_FOG : 0) | (spec.shape === 'puff' ? PF_PUFF : 0)
     const a = toLinear(spec.color, this.color)
     const b = toLinear(color2, this.color2)
     c[o + 24] = a.r; c[o + 25] = a.g; c[o + 26] = a.b
     c[o + 28] = b.r; c[o + 29] = b.g; c[o + 30] = b.b
+    const e = toLinear(spec.colorEnd ?? spec.color, this.colorEnd)
+    c[o + 32] = e.r; c[o + 33] = e.g; c[o + 34] = e.b
+    c[o + 35] = spec.glow ?? 1
+    const spin = spec.spin ?? 0
+    c[o + 36] = typeof spin === 'number' ? spin : spin[0]
+    c[o + 37] = typeof spin === 'number' ? spin : spin[1]
+    c[o + 38] = spec.stretch ?? 0
     this.commandCount++
     this.spawnCount += count
   }

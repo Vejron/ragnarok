@@ -11,13 +11,18 @@ struct Particle {
   color: vec4f,
   // size at birth, size at death, gravity, drag.
   size: vec4f,
-  // alive (0 or 1), flags (PF_*), unused, unused.
+  // alive (0 or 1), flags (PF_*), spin in radians per second (f32 bits), rotation at birth (f32 bits).
   state: vec4u,
+  // linear rgb at death, unused.
+  colorEnd: vec4f,
+  // stretch (metres of length per m/s of speed), HDR glow multiplier, unused, unused.
+  look: vec4f,
 }
 
 const PF_BOUNCE = 1u;
 const PF_ADDITIVE = 2u;
 const PF_NO_FOG = 4u;
+const PF_PUFF = 8u;
 `
 
 /**
@@ -45,6 +50,10 @@ struct Command {
   f: vec4u,
   colorA: vec4f,
   colorB: vec4f,
+  // colour at death, HDR glow multiplier.
+  g: vec4f,
+  // spin min, spin max (radians per second), stretch, unused.
+  h: vec4f,
 }
 
 struct Sim {
@@ -124,7 +133,11 @@ fn emit(@builtin(global_invocation_id) id: vec3u) {
   p.velLife = vec4f(velocity, max(life, 0.001));
   p.color = vec4f(color, c.e.z);
   p.size = vec4f(c.d.z * scale, c.d.w * scale, c.e.w, c.c.w);
-  p.state = vec4u(1u, c.f.w, 0u, 0u);
+  let spin = mix(c.h.x, c.h.y, random(seed, k, 12u));
+  let rotation = random(seed, k, 13u) * 6.2831853;
+  p.state = vec4u(1u, c.f.w, bitcast<u32>(spin), bitcast<u32>(rotation));
+  p.colorEnd = vec4f(c.g.rgb, 0.0);
+  p.look = vec4f(c.h.z, c.g.w, 0.0, 0.0);
   particles[slot] = p;
 }
 
@@ -203,6 +216,8 @@ struct Out {
   @location(2) viewDepth: f32,
   @location(3) @interpolate(flat) flags: u32,
   @location(4) size: f32,
+  @location(5) @interpolate(flat) seed: f32,
+  @location(6) rot: vec2f,
 }
 
 @vertex
@@ -215,12 +230,34 @@ fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) instance: u32) -> 
   // Camera right and up are the view matrix's first two rows.
   let right = vec3f(frame.view[0].x, frame.view[1].x, frame.view[2].x);
   let up = vec3f(frame.view[0].y, frame.view[1].y, frame.view[2].y);
-  let world = p.posAge.xyz + (right * corner.x + up * corner.y) * size;
+  let angle = bitcast<f32>(p.state.w) + bitcast<f32>(p.state.z) * p.posAge.w;
+  var local = corner * size;
+  var rot = vec2f(cos(angle), sin(angle));
+  let stretch = p.look.x;
+  if (stretch > 0.0) {
+    // Velocity-aligned: long along the particle's motion across the screen, size wide.
+    let vv = (frame.view * vec4f(p.velLife.xyz, 0.0)).xy;
+    let speed = length(p.velLife.xyz);
+    let l = length(vv);
+    if (l > 1e-4) {
+      let axis = vv / l;
+      let side = vec2f(-axis.y, axis.x);
+      let len = size + stretch * speed;
+      local = axis * (corner.x * len) + side * (corner.y * size);
+      rot = vec2f(1.0, 0.0);
+    }
+  } else {
+    local = vec2f(corner.x * rot.x - corner.y * rot.y, corner.x * rot.y + corner.y * rot.x) * size;
+  }
+  let world = p.posAge.xyz + right * local.x + up * local.y;
   var out: Out;
   out.clip = frame.viewProj * vec4f(world, 1.0);
   out.uv = corner + 0.5;
   // Fades in over the first tenth of its life and out over the rest.
-  out.color = vec4f(p.color.rgb, p.color.a * min(1.0, t * 10.0) * (1.0 - t));
+  let rgb = mix(p.color.rgb, p.colorEnd.rgb, t) * p.look.y;
+  out.color = vec4f(rgb, p.color.a * min(1.0, t * 10.0) * (1.0 - t));
+  out.seed = f32(alive[instance] % 97u);
+  out.rot = rot;
   out.viewDepth = -(frame.view * vec4f(p.posAge.xyz, 1.0)).z;
   out.flags = p.state.y;
   out.size = size;
@@ -234,9 +271,28 @@ fn linearDepth(d: f32) -> f32 {
   return near * far / (d * (far - near) + near);
 }
 
+fn hash(p: vec2f) -> f32 {
+  let h = dot(p, vec2f(127.1, 311.7));
+  return fract(sin(h) * 43758.5453);
+}
+
+fn noise(p: vec2f) -> f32 {
+  let i = floor(p);
+  let f = fract(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2f(1.0, 0.0)), u.x), mix(hash(i + vec2f(0.0, 1.0)), hash(i + vec2f(1.0, 1.0)), u.x), u.y);
+}
+
 @fragment
 fn fs(in: Out) -> @location(0) vec4f {
-  let edge = smoothstep(0.5, 0.15, length(in.uv - 0.5));
+  var edge = smoothstep(0.5, 0.15, length(in.uv - 0.5));
+  if ((in.flags & PF_PUFF) != 0u) {
+    // Billowy edge: noise in the particle's own (spinning) frame, so each puff is a different cloud.
+    let q = in.uv - 0.5;
+    let r = vec2f(q.x * in.rot.x + q.y * in.rot.y, -q.x * in.rot.y + q.y * in.rot.x);
+    let n = noise(r * 5.0 + in.seed) * 0.6 + noise(r * 11.0 + in.seed * 1.7) * 0.4;
+    edge = smoothstep(0.5, 0.12, length(q) + (n - 0.5) * 0.34);
+  }
   var alpha = in.color.a * edge;
   if (alpha < 0.01) {
     discard;

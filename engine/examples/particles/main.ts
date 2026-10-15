@@ -59,14 +59,25 @@ scene.add(shots.flashes)
 function explosion(x: number, z: number, radius = 3) {
   const y = height(x, z)
   const at = [x, y + 0.3, z] as const
-  particles.emit({ count: 12, position: at, spread: radius * 0.2, velocity: [0, 3, 0], jitter: [radius * 0.6, 1.75, radius * 0.6],
-    life: [0.5, 0.95], size: [radius * 0.25, radius * 0.9], color: 0xff7a1a, color2: 0xffb347, alpha: 0.9, gravity: -2, drag: 2 })
-  particles.emit({ count: 8, position: at, velocity: [0, 1.75, 0], jitter: [radius * 0.6, 1.25, radius * 0.6], blend: 'additive',
-    life: [0.18, 0.4], size: [radius * 0.45, radius * 0.9], color: 0xfff0c0, color2: 0xffd27a, alpha: 0.9, drag: 3 })
-  particles.emit({ count: 32, position: at, velocity: [0, 4, 0], burst: 20, blend: 'additive', fog: false, bounce: true,
-    life: [0.4, 1.3], size: [0.14, 0.02], color: 0xffe08a, color2: 0xff6a1a, alpha: 1, gravity: 9.8, drag: 0.5 })
-  particles.emit({ count: 10, position: at, spread: radius * 0.4, velocity: [0, 2.5, 0], jitter: [1.2, 0.8, 1.2],
-    life: [2.5, 4.5], size: [radius * 0.5, radius * 2.2], color: 0x2e2e2e, color2: 0x6a6a6a, alpha: 0.55, gravity: -1.2, drag: 0.8 })
+  // Fireball: hot billows that cool from white-yellow through orange to dark as they rise.
+  particles.emit({ count: 30, position: at, spread: radius * 0.3, velocity: [0, 2, 0], burst: radius * 2.2, shape: 'puff',
+    life: [0.5, 1.2], size: [radius * 0.5, radius * 1.7], color: 0xffeaa0, color2: 0xffb347, colorEnd: 0x6a1d04, glow: 3,
+    alpha: 0.95, gravity: -3, drag: 2.5, spin: [-2, 2] })
+  // White-hot core flash.
+  particles.emit({ count: 6, position: at, spread: radius * 0.2, velocity: [0, 1.5, 0], burst: radius * 0.6, blend: 'additive',
+    life: [0.12, 0.28], size: [radius * 1, radius * 1.8], color: 0xfff6d8, colorEnd: 0xff9a30, glow: 8, alpha: 0.9, drag: 3 })
+  // Sparks: stretched along their flight, bright enough to bloom, bouncing on the ground.
+  particles.emit({ count: 90, position: at, velocity: [0, 5, 0], burst: radius * 9, blend: 'additive', fog: false, bounce: true,
+    life: [0.5, 1.6], size: [0.09, 0.02], color: 0xffe08a, color2: 0xff7a22, colorEnd: 0xff3a05, glow: 6, stretch: 0.05,
+    alpha: 1, gravity: 9.8, drag: 0.5 })
+  // Embers that drift up and gutter out.
+  particles.emit({ count: 30, position: at, spread: radius * 0.5, velocity: [0, 3, 0], jitter: [radius * 0.8, 1.5, radius * 0.8],
+    blend: 'additive', fog: false, life: [1.5, 3.5], size: [0.12, 0.03], color: 0xffb04a, colorEnd: 0xff2a00, glow: 4,
+    alpha: 1, gravity: -1.5, drag: 1.2, spin: [-6, 6] })
+  // Sooty smoke column: black while hot, greying as it spreads.
+  particles.emit({ count: 26, position: at, spread: radius * 0.5, velocity: [0, 4.5, 0], jitter: [radius * 0.5, 1.5, radius * 0.5],
+    shape: 'puff', life: [3, 6], size: [radius * 0.6, radius * 2.8], color: 0x1c1c1c, color2: 0x3a3a3a, colorEnd: 0x7a7a7a,
+    alpha: 0.65, gravity: -1.5, drag: 0.9, spin: [-0.6, 0.6] })
   particles.emit({ count: 14, position: at, velocity: [0, 0.6, 0], jitter: [7, 0.3, 7],
     life: [1.2, 2.2], size: [1, 3.5], color: 0xb59a6a, color2: 0x8f7a52, alpha: 0.5, drag: 2.2 })
   particles.emit({ count: 10, position: at, velocity: [0, 6, 0], burst: 8, bounce: true,
