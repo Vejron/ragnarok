@@ -1,6 +1,7 @@
 /**
  * Declarations shared by every scene shader: the per-frame uniforms and the object and material records.
- * The layouts must match the writers in `renderer.ts` (FRAME_FLOATS, OBJECT_FLOATS, MATERIAL_FLOATS).
+ * The layouts must match their writers: FRAME_FLOATS in renderer.ts, OBJECT_FLOATS in gpu/objects.ts and
+ * MATERIAL_FLOATS in gpu/materials.ts.
  */
 export const COMMON_WGSL = /* wgsl */ `
 struct Frame {
@@ -47,6 +48,8 @@ const PI = 3.141592653589793;
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var<storage, read> objects: array<Object>;
 @group(0) @binding(2) var<storage, read> materials: array<Material>;
+// This frame's draws, in draw order: instance_index picks an entry, the entry picks the object record.
+@group(0) @binding(3) var<storage, read> drawList: array<u32>;
 
 // The inverse-transpose of the model's upper 3×3, up to scale: the cofactor matrix. Normals only need
 // direction, so this handles non-uniform scale without a per-object normal matrix.

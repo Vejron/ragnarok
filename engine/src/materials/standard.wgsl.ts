@@ -33,7 +33,7 @@ struct VertexOut {
 
 @vertex
 fn vs(in: VertexIn) -> VertexOut {
-  let object = objects[in.instance];
+  let object = objects[drawList[in.instance]];
   let material = materials[object.misc.x];
   let world = object.model * vec4f(in.position, 1.0);
   var out: VertexOut;

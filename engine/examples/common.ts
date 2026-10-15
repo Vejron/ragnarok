@@ -42,7 +42,8 @@ export function statsOverlay(renderer: Renderer, extra: () => string = () => '')
     const gpu = Object.entries(s.gpuMs).map(([k, v]) => `${k} ${v.toFixed(2)}`).join('  ')
     el.textContent = [
       `fps ${((frames * 1000) / (now - last)).toFixed(0)}   render cpu ${(cpu / frames).toFixed(3)} ms`,
-      `draws ${s.drawCalls} (shadow ${s.shadowDraws})   tris ${(s.triangles / 1000).toFixed(1)}k   objects ${s.objects}`,
+      `draws ${s.drawCalls} (shadow ${s.shadowDraws})   tris ${(s.triangles / 1000).toFixed(1)}k   instances ${s.instances}`,
+      `records ${s.records}   rewritten ${s.recordsWritten}`,
       `pipelines ${s.pipelines}   materials ${s.materials}   geometry ${(s.geometryBytes / 1048576).toFixed(1)} MB`,
       gpu ? `gpu ms  ${gpu}` : 'gpu ms  (no timestamp-query)',
       extra(),

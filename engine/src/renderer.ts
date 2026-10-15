@@ -1,5 +1,6 @@
 import { GeometryArena, VERTEX_LAYOUT, type GeometrySlot } from './gpu/arena'
 import { MaterialTable } from './gpu/materials'
+import { ObjectTable } from './gpu/objects'
 import { GpuTimer } from './gpu/timer'
 import { SHADOW_WGSL } from './materials/shadow.wgsl'
 import { STANDARD_WGSL } from './materials/standard.wgsl'
@@ -14,9 +15,6 @@ import type { Scene } from './scene/scene'
 
 /** Floats in the frame uniform block. Matches `Frame` in common.wgsl (padded to 384 bytes). */
 const FRAME_FLOATS = 96
-/** Floats per object record: model mat4, tint vec4, misc vec4u. Matches `Object` in common.wgsl. */
-const OBJECT_FLOATS = 24
-const OBJ_RECEIVE_SHADOW = 1
 const HDR_FORMAT: GPUTextureFormat = 'rgba16float'
 const DEPTH_FORMAT: GPUTextureFormat = 'depth32float'
 
@@ -33,8 +31,11 @@ export class RenderStats {
   drawCalls = 0
   /** Triangles in all passes. */
   triangles = 0
-  /** Object records written (an instanced mesh writes one per instance). */
-  objects = 0
+  /** Instances drawn in all passes (an instanced mesh counts each instance). */
+  instances = 0
+  /** Object records alive, and how many were rewritten this frame (moved, retinted, new). */
+  records = 0
+  recordsWritten = 0
   shadowDraws = 0
   /** CPU time inside `render`, ms. */
   cpuMs = 0
@@ -49,13 +50,15 @@ export class RenderStats {
 interface DrawItem {
   mesh: Mesh
   slot: GeometrySlot
-  material: number
+  /** First object record and how many (instances). */
+  record: number
+  count: number
   pipeline: number
   order: number
   depth: number
 }
 
-/** A run of consecutive object records drawn with one call. */
+/** A run of consecutive draw-list entries drawn with one call. */
 interface Batch {
   pipeline: number
   slot: GeometrySlot
@@ -82,9 +85,11 @@ export class Renderer {
   private readonly timer: GpuTimer
   private readonly frameData = new Float32Array(FRAME_FLOATS)
   private readonly frameBuffer: GPUBuffer
-  private objectData = new Float32Array(1024 * OBJECT_FLOATS)
-  private objectWords = new Uint32Array(this.objectData.buffer)
-  private objectBuffer: GPUBuffer
+  private readonly objects: ObjectTable
+  private drawList = new Uint32Array(4096)
+  private drawListBuffer: GPUBuffer
+  private drawCount = 0
+  private frameNumber = 0
   private readonly sceneLayout: GPUBindGroupLayout
   private readonly lightingLayout: GPUBindGroupLayout
   private readonly mainLayout: GPUPipelineLayout
@@ -119,8 +124,6 @@ export class Renderer {
   private readonly casters: DrawItem[] = []
   private readonly mainBatches: Batch[] = []
   private readonly shadowBatches: Batch[] = []
-  private recordCount = 0
-  private readonly tmp = mat4.create()
   private camX = 0
   private camY = 0
   private camZ = 0
@@ -154,7 +157,8 @@ export class Renderer {
     this.materials = new MaterialTable(device)
     this.timer = new GpuTimer(device)
     this.frameBuffer = device.createBuffer({ label: 'frame', size: FRAME_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
-    this.objectBuffer = this.makeObjectBuffer(1024)
+    this.objects = new ObjectTable(device)
+    this.drawListBuffer = this.makeDrawListBuffer(this.drawList.length)
     this.comparisonSampler = device.createSampler({ compare: 'less-equal', magFilter: 'linear', minFilter: 'linear' })
     this.shadowMap = this.makeShadowMap(1)
 
@@ -165,6 +169,7 @@ export class Renderer {
         { binding: 0, visibility: both, buffer: { type: 'uniform' } },
         { binding: 1, visibility: both, buffer: { type: 'read-only-storage' } },
         { binding: 2, visibility: both, buffer: { type: 'read-only-storage' } },
+        { binding: 3, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
       ],
     })
     this.lightingLayout = device.createBindGroupLayout({
@@ -242,6 +247,7 @@ export class Renderer {
   render(scene: Scene, camera: PerspectiveCamera) {
     const start = performance.now()
     const stats = this.stats
+    this.frameNumber++
     scene.updateWorld()
     if (!camera.parent) camera.updateWorld()
     camera.updateMatrices()
@@ -260,7 +266,7 @@ export class Renderer {
     this.transparent.sort(byOrderThenFarToNear)
     this.casters.sort(byStateThenGeometry)
 
-    this.recordCount = 0
+    this.drawCount = 0
     this.mainBatches.length = 0
     this.shadowBatches.length = 0
     this.writeBatches(this.opaque, this.mainBatches, true)
@@ -269,7 +275,8 @@ export class Renderer {
 
     this.writeFrame(scene, camera)
     this.materials.flush()
-    this.uploadObjects()
+    this.objects.flush()
+    this.uploadDrawList()
     this.bindScene()
 
     const encoder = this.device.createCommandEncoder()
@@ -284,8 +291,11 @@ export class Renderer {
     this.device.queue.submit([encoder.finish()])
     this.timer.read()
     this.materials.collect()
+    this.objects.sweep(this.frameNumber)
 
-    stats.objects = this.recordCount
+    stats.instances = this.drawCount
+    stats.records = this.objects.count
+    stats.recordsWritten = this.objects.written
     stats.pipelines = this.pipelines.length + this.shadowPipelines.length + 1
     stats.materials = this.materials.count
     stats.geometryBytes = this.arena.usedBytes
@@ -326,49 +336,53 @@ export class Renderer {
     const cz = m[2]! * bx + m[6]! * by + m[10]! * bz + m[14]!
     const radius = br * mat4.maxScale(m)
     const material = mesh.material
-    const materialIndex = this.materials.sync(material)
-
-    if (!mesh.frustumCulled || this.frustum.intersectsSphere(cx, cy, cz, radius)) {
-      const item = this.item(mesh, slot, materialIndex, this.pipelineFor(material))
+    const inView = !mesh.frustumCulled || this.frustum.intersectsSphere(cx, cy, cz, radius)
+    const inShadow = this.shadowsOn && mesh.castShadow && !material.transparent &&
+      (!mesh.frustumCulled || this.shadowFrustum.intersectsSphere(cx, cy, cz, radius))
+    if (!inView && !inShadow) return
+    const record = this.objects.sync(mesh, this.materials.sync(material), this.frameNumber)
+    const count = mesh instanceof InstancedMesh ? mesh.count : 1
+    if (inView) {
+      const item = this.item(mesh, slot, record, count, this.pipelineFor(material))
       const dx = cx - this.camX, dy = cy - this.camY, dz = cz - this.camZ
       item.depth = dx * dx + dy * dy + dz * dz
       ;(material.transparent ? this.transparent : this.opaque).push(item)
     }
-    if (this.shadowsOn && mesh.castShadow && !material.transparent && (!mesh.frustumCulled || this.shadowFrustum.intersectsSphere(cx, cy, cz, radius))) {
-      this.casters.push(this.item(mesh, slot, materialIndex, material.side === 'front' ? 0 : 1))
-    }
+    if (inShadow) this.casters.push(this.item(mesh, slot, record, count, material.side === 'front' ? 0 : 1))
   }
 
-  private item(mesh: Mesh, slot: GeometrySlot, material: number, pipeline: number): DrawItem {
+  private item(mesh: Mesh, slot: GeometrySlot, record: number, count: number, pipeline: number): DrawItem {
     let item = this.pool[this.poolUsed]
     if (!item) {
-      item = { mesh, slot, material, pipeline, order: 0, depth: 0 }
+      item = { mesh, slot, record, count, pipeline, order: 0, depth: 0 }
       this.pool.push(item)
     }
     this.poolUsed++
     item.mesh = mesh
     item.slot = slot
-    item.material = material
+    item.record = record
+    item.count = count
     item.pipeline = pipeline
     item.order = mesh.renderOrder
     item.depth = 0
     return item
   }
 
-  /** Writes the records for `items` in order, merging runs that can share one draw when `merge` is set. */
+  /** Appends `items` to the draw list in order, merging runs that can share one draw when `merge` is set. */
   private writeBatches(items: DrawItem[], batches: Batch[], merge: boolean) {
     for (const item of items) {
-      const first = this.recordCount
-      const mesh = item.mesh
-      const flags = mesh.receiveShadow ? OBJ_RECEIVE_SHADOW : 0
-      if (mesh instanceof InstancedMesh) {
-        this.reserve(mesh.count)
-        for (let i = 0; i < mesh.count; i++) this.writeInstance(mesh, i, item.material, flags)
-      } else {
-        this.reserve(1)
-        this.writeRecord(mesh.matrixWorld, 0, mesh.tint, 0, item.material, flags)
+      const first = this.drawCount
+      const count = item.count
+      if (first + count > this.drawList.length) {
+        let size = this.drawList.length
+        while (size < first + count) size *= 2
+        const list = new Uint32Array(size)
+        list.set(this.drawList)
+        this.drawList = list
       }
-      const count = this.recordCount - first
+      const list = this.drawList
+      for (let i = 0; i < count; i++) list[first + i] = item.record + i
+      this.drawCount += count
       const last = batches[batches.length - 1]
       if (merge && last && last.pipeline === item.pipeline && last.slot === item.slot && last.first + last.count === first) {
         last.count += count
@@ -376,54 +390,6 @@ export class Renderer {
         batches.push({ pipeline: item.pipeline, slot: item.slot, first, count })
       }
     }
-  }
-
-  private reserve(n: number) {
-    const needed = (this.recordCount + n) * OBJECT_FLOATS
-    if (needed <= this.objectData.length) return
-    let size = this.objectData.length
-    while (size < needed) size *= 2
-    const data = new Float32Array(size)
-    data.set(this.objectData)
-    this.objectData = data
-    this.objectWords = new Uint32Array(data.buffer)
-  }
-
-  private writeRecord(model: Float32Array, modelOffset: number, tint: Float32Array, tintOffset: number, material: number, flags: number) {
-    const o = this.recordCount * OBJECT_FLOATS
-    const d = this.objectData
-    for (let k = 0; k < 16; k++) d[o + k] = model[modelOffset + k]!
-    d[o + 16] = tint[tintOffset]!
-    d[o + 17] = tint[tintOffset + 1]!
-    d[o + 18] = tint[tintOffset + 2]!
-    d[o + 19] = tint[tintOffset + 3]!
-    this.objectWords[o + 20] = material
-    this.objectWords[o + 21] = flags
-    this.recordCount++
-  }
-
-  private writeInstance(mesh: InstancedMesh, i: number, material: number, flags: number) {
-    const o = this.recordCount * OBJECT_FLOATS
-    const d = this.objectData
-    const a = mesh.matrixWorld
-    const b = mesh.matrices
-    const bo = i * 16
-    for (let c = 0; c < 4; c++) {
-      const b0 = b[bo + c * 4]!, b1 = b[bo + c * 4 + 1]!, b2 = b[bo + c * 4 + 2]!, b3 = b[bo + c * 4 + 3]!
-      d[o + c * 4] = a[0]! * b0 + a[4]! * b1 + a[8]! * b2 + a[12]! * b3
-      d[o + c * 4 + 1] = a[1]! * b0 + a[5]! * b1 + a[9]! * b2 + a[13]! * b3
-      d[o + c * 4 + 2] = a[2]! * b0 + a[6]! * b1 + a[10]! * b2 + a[14]! * b3
-      d[o + c * 4 + 3] = a[3]! * b0 + a[7]! * b1 + a[11]! * b2 + a[15]! * b3
-    }
-    const t = mesh.tint
-    const col = mesh.colors
-    d[o + 16] = t[0]! * col[i * 4]!
-    d[o + 17] = t[1]! * col[i * 4 + 1]!
-    d[o + 18] = t[2]! * col[i * 4 + 2]!
-    d[o + 19] = t[3]! * col[i * 4 + 3]!
-    this.objectWords[o + 20] = material
-    this.objectWords[o + 21] = flags
-    this.recordCount++
   }
 
   // ---- pipelines ----
@@ -549,17 +515,16 @@ export class Renderer {
     this.device.queue.writeBuffer(this.frameBuffer, 0, f)
   }
 
-  private uploadObjects() {
-    const bytes = this.recordCount * OBJECT_FLOATS * 4
-    if (bytes > this.objectBuffer.size) {
-      this.objectBuffer.destroy()
-      this.objectBuffer = this.makeObjectBuffer(this.objectData.length / OBJECT_FLOATS)
+  private uploadDrawList() {
+    if (this.drawList.length * 4 > this.drawListBuffer.size) {
+      this.drawListBuffer.destroy()
+      this.drawListBuffer = this.makeDrawListBuffer(this.drawList.length)
     }
-    if (bytes) this.device.queue.writeBuffer(this.objectBuffer, 0, this.objectData, 0, this.recordCount * OBJECT_FLOATS)
+    if (this.drawCount) this.device.queue.writeBuffer(this.drawListBuffer, 0, this.drawList, 0, this.drawCount)
   }
 
   private bindScene() {
-    const key = `${this.objectBuffer.label}:${this.objectBuffer.size}:${this.materials.generation}`
+    const key = `${this.objects.generation}:${this.materials.generation}:${this.drawListBuffer.size}`
     if (!this.sceneGroup || key !== this.sceneGroupKey) {
       this.sceneGroupKey = key
       this.sceneGroup = this.device.createBindGroup({
@@ -567,8 +532,9 @@ export class Renderer {
         layout: this.sceneLayout,
         entries: [
           { binding: 0, resource: { buffer: this.frameBuffer } },
-          { binding: 1, resource: { buffer: this.objectBuffer } },
+          { binding: 1, resource: { buffer: this.objects.buffer } },
           { binding: 2, resource: { buffer: this.materials.buffer } },
+          { binding: 3, resource: { buffer: this.drawListBuffer } },
         ],
       })
     }
@@ -656,10 +622,10 @@ export class Renderer {
     pass.end()
   }
 
-  private makeObjectBuffer(records: number) {
+  private makeDrawListBuffer(entries: number) {
     return this.device.createBuffer({
-      label: `objects ${records}`,
-      size: records * OBJECT_FLOATS * 4,
+      label: 'draw list',
+      size: entries * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     })
   }
