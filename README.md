@@ -1,12 +1,13 @@
 # Ragnarok
 
-A browser multiplayer game: goofy stickmen in a real city built from OpenStreetMap. There's a server-authoritative Rust game server (Salvo, WebTransport, Rapier) and a Vue 3 + three.js client with client-side prediction and snapshot interpolation.
+A browser multiplayer game: goofy stickmen in a real city built from OpenStreetMap. There's a server-authoritative Rust game server (Salvo, WebTransport, Rapier) and a Vue 3 + WebGPU client (drawn by the [engine](engine/README.md)) with client-side prediction and snapshot interpolation.
 
 - [design.md](design.md): architecture, netcode, world pipeline and roadmap
 - [WORLD.md](WORLD.md): generating the world: data sources, credentials, download cache
 - [NETWORKING.md](NETWORKING.md): wire protocol
 - [SERVER-PERFORMANCE.md](SERVER-PERFORMANCE.md): what a full room costs per tick, how it is measured, what is and is not worth optimising
-- [RENDERING.md](RENDERING.md): the client renderer: toon shading, light, contact shadows, ambient occlusion, far shadows
+- [RENDERING.md](RENDERING.md): the client renderer: toon shading, light, effects, contact shadows, ink, far shadows
+- [engine/README.md](engine/README.md): the WebGPU render engine the client draws with, a package of its own
 - [VEHICLES-I.md](VEHICLES-I.md): how roadmap stage 2 (cars, seats, driving) was built
 - [ARMOR.md](ARMOR.md): armor zones, ricochets, weak spots, turret loss and the Strv S
 - [VEHICLES-II.md](VEHICLES-II.md): the tank, its gunner seat and the shell, driver prediction and the helicopter

@@ -61,6 +61,22 @@ The difference comes from how GPU state is organised, not from per-call speed:
   - `FlashEffects` holds short-lived flashes, specks, puffs and tracer streaks, each one evaluated in the vertex shader from its spawn record.
 - **Stats:** `renderer.stats` reports draw calls, triangles, instances, record churn, pipelines, CPU time and per-pass GPU time (when the device supports `timestamp-query`).
 
+## Using it from a game
+
+The engine has its own small math (`Vec3`, `Quat`, `Euler`, `Color`, `mat4`), and nodes take anything
+with `x`, `y`, `z` where a vector is expected, so a game can keep another maths library for its logic
+(the ragnarok client keeps three's) and write results into `node.position.set(...)`.
+
+- **Rotation** is a quaternion and an Euler (`node.rotation`, with an order), kept in step.
+- **Hierarchy:** `attach` re-parents without moving, `localToWorld` / `worldToLocal`, `getWorldPosition`
+  / `getWorldQuaternion` (bringing stale ancestors up to date first), `updateWorldMatrix(parents, children)`.
+- **Geometry:** `clone`, `translate`, `scale`, `rotateX/Y/Z`, `Geometry.merge`, `toNonIndexed`; shapes
+  `boxGeometry`, `sphereGeometry`, `planeGeometry`, `quadGeometry`, `ringGeometry`, `icosphereGeometry`,
+  `cylinderGeometry`.
+- **Overlay:** a mesh with `overlay = true` is drawn after everything including effects, ignoring depth
+  (reticles, markers); use an alpha-blended material.
+- **Camera:** `lookAt`, `getWorldDirection`, `project(point)` for a point's place on screen.
+
 ## Frame
 
 1. **Effect prepare:** compute passes such as particle emission and simulation.
@@ -68,8 +84,9 @@ The difference comes from how GPU state is organised, not from per-call speed:
 3. **Main pass:** 4× MSAA into `rgba16float`, with reversed depth.
    - Opaque draws are sorted by pipeline, then textures, then geometry, and merged into instanced batches.
    - Transparent draws follow, sorted far to near.
-4. **Effects pass:** the same targets, with depth bound read-only so effects can sample it; it resolves the MSAA image.
-5. **Output pass:** ink outlines from depth, then exposure, tone mapping (none or Neutral) and the sRGB encode to the canvas.
+4. **Effects pass:** the same targets, with depth bound read-only so effects can sample it.
+5. **Overlay pass:** meshes marked `overlay`, over the effects, with the depth ignored; it resolves the MSAA image.
+6. **Output pass:** ink outlines from depth, then exposure, tone mapping (none or Neutral) and the sRGB encode to the canvas.
 
 ## Working on it
 

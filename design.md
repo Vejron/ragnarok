@@ -15,7 +15,7 @@ This document describes how the game is built and why. The wire format is specif
 ## 2. Architecture
 
 ```
- Browser (Vue 3 + three.js)                         Server (Rust, single process)
+ Browser (Vue 3 + WebGPU)                         Server (Rust, single process)
 ┌──────────────────────────────────┐   WebTransport   ┌──────────────────────────────────────┐
 │ InputController ─► Predictor     │  (HTTP/3, QUIC)  │ session task (one per player)        │
 │   60 Hz fixed tick   │ Rapier WASM│ ── datagrams ──► │   decode, rate-limit, netem           │
@@ -36,7 +36,7 @@ This document describes how the game is built and why. The wire format is specif
 | `crates/shared` | Protocol types, quantization, movement rules, world-file format, terrain sampling, constants. Shared by the server and the tools. |
 | `crates/server` | Salvo HTTP/3 server: WebTransport sessions, the authoritative game loop, Rapier physics, mechanics, per-player replication (§5.8). |
 | `crates/osm-import` | CLI that turns an OSM bounding box into `world.msgpack` and a grid of tile files. |
-| `client` | Vue 3 + Vite + three.js app. Handles prediction, interpolation and rendering. |
+| `client` | Vue 3 + Vite app. Handles prediction and interpolation; draws with the WebGPU engine (`engine`). |
 
 The TypeScript client mirrors `crates/shared` by hand. Byte-for-byte fixture tests on both sides (`protocol.rs` ↔ `codec.spec.ts`) and a physics fixture (`physics.rs` ↔ `predict.spec.ts`) fail when the two languages drift apart.
 

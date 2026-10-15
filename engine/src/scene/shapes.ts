@@ -136,13 +136,16 @@ export function cylinderGeometry(radiusTop = 1, radiusBottom = 1, height = 1, se
   return new Geometry({ positions: new Float32Array(positions), normals: new Float32Array(normals), indices: new Uint32Array(indices) })
 }
 
-/** A flat rectangle in the XY plane facing +Z, centred on the origin: a billboard or a decal. */
+/**
+ * A flat rectangle in the XY plane facing +Z, centred on the origin: a billboard or a decal. Its uv
+ * origin is the top left, as an image's is, so a canvas drawn on reads the right way up.
+ */
 export function quadGeometry(width = 1, height = 1): Geometry {
   const x = width / 2, y = height / 2
   return new Geometry({
     positions: new Float32Array([-x, -y, 0, x, -y, 0, x, y, 0, -x, y, 0]),
     normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]),
-    uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+    uvs: new Float32Array([0, 1, 1, 1, 1, 0, 0, 0]),
     indices: new Uint16Array([0, 1, 2, 0, 2, 3]),
   })
 }
