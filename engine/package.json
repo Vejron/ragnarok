@@ -13,6 +13,7 @@
     "type-check": "tsc --noEmit"
   },
   "devDependencies": {
+    "@types/node": "^24.19.2",
     "@types/three": "^0.186.0",
     "@webgpu/types": "^0.1.60",
     "three": "^0.186.1",

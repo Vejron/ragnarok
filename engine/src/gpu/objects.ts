@@ -13,6 +13,7 @@ interface Records {
   instanceVersion: number
   material: number
   flags: number
+  bones: number
   tint: Float32Array
   /** Frame the mesh was last drawn in; meshes unseen for a while give their records back. */
   seen: number
@@ -48,7 +49,7 @@ export class ObjectTable {
   }
 
   /** The first record of `mesh`, rewriting its records if anything they hold has changed. */
-  sync(mesh: Mesh, material: number, frame: number): number {
+  sync(mesh: Mesh, material: number, frame: number, bones = 0): number {
     const instanced = mesh instanceof InstancedMesh
     const count = instanced ? mesh.count : 1
     const flags = mesh.receiveShadow ? OBJ_RECEIVE_SHADOW : 0
@@ -66,6 +67,7 @@ export class ObjectTable {
         instanceVersion: -1,
         material: -1,
         flags: -1,
+        bones: -1,
         tint: new Float32Array(4),
         seen: frame,
       }
@@ -76,16 +78,17 @@ export class ObjectTable {
     const tint = r.tint
     const instanceVersion = instanced ? mesh.version : 0
     if (
-      r.worldVersion !== mesh.worldVersion || r.instanceVersion !== instanceVersion || r.material !== material || r.flags !== flags ||
+      r.worldVersion !== mesh.worldVersion || r.instanceVersion !== instanceVersion || r.material !== material || r.flags !== flags || r.bones !== bones ||
       tint[0] !== t[0] || tint[1] !== t[1] || tint[2] !== t[2] || tint[3] !== t[3]
     ) {
       r.worldVersion = mesh.worldVersion
       r.instanceVersion = instanceVersion
       r.material = material
       r.flags = flags
+      r.bones = bones
       tint.set(t)
       if (instanced) for (let i = 0; i < count; i++) this.writeInstance(r.first + i, mesh, i, material, flags)
-      else this.write(r.first, mesh.matrixWorld, t, material, flags)
+      else this.write(r.first, mesh.matrixWorld, t, material, flags, bones)
       this.dirtyMin = Math.min(this.dirtyMin, r.first)
       this.dirtyMax = Math.max(this.dirtyMax, r.first + count - 1)
       this.writing += count
@@ -139,7 +142,7 @@ export class ObjectTable {
     return first
   }
 
-  private write(index: number, model: Float32Array, tint: Float32Array, material: number, flags: number) {
+  private write(index: number, model: Float32Array, tint: Float32Array, material: number, flags: number, bones: number) {
     const o = index * OBJECT_FLOATS
     const d = this.data
     for (let k = 0; k < 16; k++) d[o + k] = model[k]!
@@ -149,6 +152,7 @@ export class ObjectTable {
     d[o + 19] = tint[3]!
     this.words[o + 20] = material
     this.words[o + 21] = flags
+    this.words[o + 22] = bones
   }
 
   private writeInstance(index: number, mesh: InstancedMesh, i: number, material: number, flags: number) {
@@ -172,6 +176,7 @@ export class ObjectTable {
     d[o + 19] = t[3]! * col[i * 4 + 3]!
     this.words[o + 20] = material
     this.words[o + 21] = flags
+    this.words[o + 22] = 0
   }
 
   private makeBuffer(capacity: number) {

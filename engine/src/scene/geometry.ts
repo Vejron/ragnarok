@@ -16,6 +16,9 @@ export interface GeometryData {
   colors?: Float32Array
   /** Four free floats per vertex, read by ShaderMaterials as `custom`. */
   custom?: Float32Array
+  /** Skinning: four bone indices per vertex (into the skeleton's bones) and their four weights. */
+  joints?: Uint8Array | Uint16Array
+  weights?: Float32Array
   /** Without indices the vertices are drawn as a triangle list in order. */
   indices?: Uint16Array | Uint32Array
 }
@@ -32,10 +35,14 @@ export class Geometry {
   uvs: Float32Array | undefined
   colors: Float32Array | undefined
   custom: Float32Array | undefined
+  joints: Uint8Array | Uint16Array | undefined
+  weights: Float32Array | undefined
   indices: Uint16Array | Uint32Array | undefined
   bounds: Sphere = { x: 0, y: 0, z: 0, radius: 0 }
   /** Bumped by `needsUpdate`; the renderer re-uploads when it differs from what it has. */
   version = 0
+  /** @internal vertex ranges (first, count pairs) changed in place since the last upload. */
+  dirtyRanges: number[] = []
   /** @internal the renderer's handle to the uploaded copy. */
   gpu: unknown = undefined
   disposed = false
@@ -46,6 +53,8 @@ export class Geometry {
     this.uvs = data.uvs
     this.colors = data.colors
     this.custom = data.custom
+    this.joints = data.joints
+    this.weights = data.weights
     this.indices = data.indices
     this.computeBounds()
   }
@@ -58,8 +67,17 @@ export class Geometry {
     return this.indices ? this.indices.length : this.vertexCount
   }
 
+  /**
+   * Call after changing vertices `first` to `first + count - 1` in place: only they are re-sent. Indices
+   * and array sizes must not have changed (use `needsUpdate` for that). Bounds are not recomputed.
+   */
+  needsUpdateRange(first: number, count: number) {
+    this.dirtyRanges.push(first, count)
+  }
+
   /** Call after changing any of the arrays (in place or by replacing them). */
   needsUpdate() {
+    this.dirtyRanges.length = 0
     this.version++
     this.computeBounds()
   }

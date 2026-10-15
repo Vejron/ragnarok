@@ -46,6 +46,7 @@ export interface MaterialParams {
  */
 export class Material {
   readonly id = nextId++
+  name = ''
   lit: boolean
   readonly color: Color
   opacity: number

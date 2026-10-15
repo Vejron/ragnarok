@@ -112,9 +112,20 @@ export class Node {
     return out
   }
 
-  /** Copies the node with its subtree. Meshes share geometry and material with the original. */
+  /**
+   * Copies the node with its subtree. Meshes share geometry and material with the original; skinned
+   * meshes in the subtree are rebound to the copied bones.
+   */
   clone(): Node {
+    const map = new Map<Node, Node>()
+    const copy = this.cloneTree(map)
+    copy.traverse((node) => node.afterClone(map))
+    return copy
+  }
+
+  private cloneTree(map: Map<Node, Node>): Node {
     const copy = this.cloneSelf()
+    map.set(this, copy)
     copy.name = this.name
     copy.visible = this.visible
     copy.userData = { ...this.userData }
@@ -122,9 +133,12 @@ export class Node {
     copy.quaternion.copy(this.quaternion)
     copy.scale.copy(this.scale)
     if (!this.matrixFromTRS) copy.setMatrix(this.matrix)
-    for (const child of this.children) copy.add(child.clone())
+    for (const child of this.children) copy.add(child.cloneTree(map))
     return copy
   }
+
+  /** Lets a copy re-point references into the original subtree (`map` takes originals to copies). */
+  protected afterClone(_map: Map<Node, Node>) {}
 
   /** Subclasses return a fresh instance carrying their own fields. */
   protected cloneSelf(): Node {

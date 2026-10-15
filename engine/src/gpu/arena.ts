@@ -3,10 +3,10 @@ import { RangeAllocator } from './allocator'
 
 /**
  * One vertex layout for every mesh: position f32×3, normal f32×3, uv f32×2, colour unorm16×4 (linear,
- * so 8 bits would band in the darks), and a free f32×4 for custom shaders. Missing attributes are filled
- * with defaults (up, 0, white, 0).
+ * so 8 bits would band in the darks), a free f32×4 for custom shaders, and skinning joints uint8×4 and
+ * weights unorm8×4. Missing attributes are filled with defaults (up, 0, white, 0, unskinned).
  */
-export const VERTEX_STRIDE = 56
+export const VERTEX_STRIDE = 64
 export const VERTEX_LAYOUT: GPUVertexBufferLayout = {
   arrayStride: VERTEX_STRIDE,
   attributes: [
@@ -15,6 +15,8 @@ export const VERTEX_LAYOUT: GPUVertexBufferLayout = {
     { shaderLocation: 2, offset: 24, format: 'float32x2' },
     { shaderLocation: 3, offset: 32, format: 'unorm16x4' },
     { shaderLocation: 4, offset: 40, format: 'float32x4' },
+    { shaderLocation: 5, offset: 56, format: 'uint8x4' },
+    { shaderLocation: 6, offset: 60, format: 'unorm8x4' },
   ],
 }
 
@@ -50,7 +52,13 @@ export class GeometryArena {
   /** Uploads `geometry` if it is new or changed; returns its slot, or null once disposed. */
   sync(geometry: Geometry): GeometrySlot | null {
     let slot = geometry.gpu as GeometrySlot | undefined
-    if (slot && slot.version === geometry.version) return slot
+    if (slot && slot.version === geometry.version) {
+      const ranges = geometry.dirtyRanges
+      for (let i = 0; i < ranges.length; i += 2) this.writeVertices(geometry, slot, ranges[i]!, ranges[i + 1]!)
+      ranges.length = 0
+      return slot
+    }
+    geometry.dirtyRanges.length = 0
     if (geometry.disposed) {
       if (slot) this.release(slot)
       geometry.gpu = undefined
@@ -87,14 +95,28 @@ export class GeometryArena {
   }
 
   private write(geometry: Geometry, slot: GeometrySlot) {
-    const n = slot.vertexCount
-    const data = new ArrayBuffer(n * VERTEX_STRIDE)
+    this.writeVertices(geometry, slot, 0, slot.vertexCount)
+    // Indices are stored relative to the geometry; draws add baseVertex.
+    const indices = new Uint32Array(slot.indexCount)
+    if (geometry.indices) indices.set(geometry.indices)
+    else for (let i = 0; i < indices.length; i++) indices[i] = i
+    this.device.queue.writeBuffer(this.indexBuffer, slot.firstIndex * 4, indices)
+  }
+
+  /** Interleaves and uploads vertices `first` to `first + count - 1`. */
+  private writeVertices(geometry: Geometry, slot: GeometrySlot, first: number, count: number) {
+    first = Math.max(0, first)
+    count = Math.min(count, slot.vertexCount - first)
+    if (count <= 0) return
+    const data = new ArrayBuffer(count * VERTEX_STRIDE)
     const f32 = new Float32Array(data)
     const u16 = new Uint16Array(data)
-    const { positions, normals, uvs, colors, custom } = geometry
-    const colorSize = colors ? colors.length / n : 0
-    for (let i = 0; i < n; i++) {
-      const f = i * 14
+    const u8 = new Uint8Array(data)
+    const { positions, normals, uvs, colors, custom, joints, weights } = geometry
+    const colorSize = colors ? colors.length / slot.vertexCount : 0
+    for (let k = 0; k < count; k++) {
+      const i = first + k
+      const f = k * 16
       f32[f] = positions[i * 3]!
       f32[f + 1] = positions[i * 3 + 1]!
       f32[f + 2] = positions[i * 3 + 2]!
@@ -115,7 +137,14 @@ export class GeometryArena {
         f32[f + 12] = custom[i * 4 + 2]!
         f32[f + 13] = custom[i * 4 + 3]!
       }
-      const c = i * 28 + 16
+      if (joints && weights) {
+        const b = k * 64 + 56
+        for (let j = 0; j < 4; j++) {
+          u8[b + j] = joints[i * 4 + j]!
+          u8[b + 4 + j] = Math.round(Math.min(1, Math.max(0, weights[i * 4 + j]!)) * 255)
+        }
+      }
+      const c = k * 32 + 16
       if (colors) {
         u16[c] = unorm16(colors[i * colorSize]!)
         u16[c + 1] = unorm16(colors[i * colorSize + 1]!)
@@ -125,12 +154,7 @@ export class GeometryArena {
         u16[c] = u16[c + 1] = u16[c + 2] = u16[c + 3] = 65535
       }
     }
-    this.device.queue.writeBuffer(this.vertexBuffer, slot.baseVertex * VERTEX_STRIDE, data)
-    // Indices are stored relative to the geometry; draws add baseVertex.
-    const indices = new Uint32Array(slot.indexCount)
-    if (geometry.indices) indices.set(geometry.indices)
-    else for (let i = 0; i < indices.length; i++) indices[i] = i
-    this.device.queue.writeBuffer(this.indexBuffer, slot.firstIndex * 4, indices)
+    this.device.queue.writeBuffer(this.vertexBuffer, (slot.baseVertex + first) * VERTEX_STRIDE, data)
   }
 
   private allocVertices(count: number): number {

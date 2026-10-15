@@ -10,6 +10,8 @@ struct VertexIn {
   @location(2) uv: vec2f,
   @location(3) color: vec4f,
   @location(4) custom: vec4f,
+  @location(5) joints: vec4u,
+  @location(6) weights: vec4f,
   @builtin(instance_index) instance: u32,
 }
 
@@ -30,11 +32,12 @@ fn vs(in: VertexIn) -> VertexOut {
   let record = drawList[in.instance];
   let object = objects[record];
   let material = materials[object.misc.x];
-  let world = object.model * vec4f(in.position, 1.0);
+  let model = modelMatrix(object, in.joints, in.weights);
+  let world = model * vec4f(in.position, 1.0);
   var out: VertexOut;
   out.clip = frame.viewProj * world;
   out.world = world.xyz;
-  out.normal = normalMatrix(object.model) * in.normal;
+  out.normal = normalMatrix(model) * in.normal;
   var color = material.color * object.tint;
   if ((material.params.x & MAT_VERTEX_COLORS) != 0u) {
     color *= in.color;

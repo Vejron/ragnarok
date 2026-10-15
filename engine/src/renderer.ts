@@ -1,5 +1,6 @@
 import { Effect, type EffectContext } from './fx/effect'
 import { GeometryArena, VERTEX_LAYOUT, type GeometrySlot } from './gpu/arena'
+import { BoneTable } from './gpu/bones'
 import { MaterialTable } from './gpu/materials'
 import { ObjectTable } from './gpu/objects'
 import { MaterialResources } from './gpu/resources'
@@ -15,6 +16,7 @@ import { ShaderMaterial, type Material } from './scene/material'
 import { InstancedMesh, Mesh } from './scene/mesh'
 import type { Node } from './scene/node'
 import type { Scene } from './scene/scene'
+import { SkinnedMesh } from './scene/skin'
 
 /** Floats in the frame uniform block. Matches `Frame` in common.wgsl (padded to 384 bytes). */
 const FRAME_FLOATS = 96
@@ -92,6 +94,7 @@ export class Renderer {
   private readonly frameData = new Float32Array(FRAME_FLOATS)
   private readonly frameBuffer: GPUBuffer
   private readonly objects: ObjectTable
+  private readonly bones: BoneTable
   private drawList = new Uint32Array(4096)
   private drawListBuffer: GPUBuffer
   private drawCount = 0
@@ -173,6 +176,7 @@ export class Renderer {
     this.timer = new GpuTimer(device)
     this.frameBuffer = device.createBuffer({ label: 'frame', size: FRAME_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.objects = new ObjectTable(device)
+    this.bones = new BoneTable(device)
     this.drawListBuffer = this.makeDrawListBuffer(this.drawList.length)
     this.comparisonSampler = device.createSampler({ compare: 'less-equal', magFilter: 'linear', minFilter: 'linear' })
     this.shadowMap = this.makeShadowMap(1)
@@ -185,6 +189,7 @@ export class Renderer {
         { binding: 1, visibility: both, buffer: { type: 'read-only-storage' } },
         { binding: 2, visibility: both, buffer: { type: 'read-only-storage' } },
         { binding: 3, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 4, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
       ],
     })
     this.lightingLayout = device.createBindGroupLayout({
@@ -294,6 +299,7 @@ export class Renderer {
     this.writeFrame(scene, camera)
     this.materials.flush()
     this.objects.flush()
+    this.bones.flush()
     this.uploadDrawList()
     this.bindScene()
 
@@ -314,6 +320,7 @@ export class Renderer {
     for (const effect of this.effects) effect.afterSubmit()
     this.materials.collect()
     this.objects.sweep(this.frameNumber)
+    this.bones.sweep(this.frameNumber)
     this.resources.sweep()
 
     stats.instances = this.drawCount
@@ -346,9 +353,15 @@ export class Renderer {
     if (mesh instanceof InstancedMesh && mesh.count <= 0) return
     const slot = this.arena.sync(mesh.geometry)
     if (!slot || !slot.indexCount) return
-    const m = mesh.matrixWorld
+    let m = mesh.matrixWorld
     let bx: number, by: number, bz: number, br: number
-    if (mesh instanceof InstancedMesh) {
+    if (mesh instanceof SkinnedMesh) {
+      // The bones place a skinned mesh: centre the bind-pose bounds on its root bone, with room to move.
+      const root = mesh.skeleton.bones[0]
+      if (root) m = root.matrixWorld
+      const b = mesh.geometry.bounds
+      bx = 0; by = 0; bz = 0; br = b.radius * 1.5 + Math.hypot(b.x, b.y, b.z)
+    } else if (mesh instanceof InstancedMesh) {
       const b = instanceBounds(mesh)
       bx = b.x; by = b.y; bz = b.z; br = b.radius
     } else {
@@ -364,7 +377,8 @@ export class Renderer {
     const inShadow = this.shadowsOn && mesh.castShadow && !material.transparent &&
       (!mesh.frustumCulled || this.shadowFrustum.intersectsSphere(cx, cy, cz, radius))
     if (!inView && !inShadow) return
-    const record = this.objects.sync(mesh, this.materials.sync(material), this.frameNumber)
+    const bones = mesh instanceof SkinnedMesh ? this.bones.sync(mesh, this.frameNumber) + 1 : 0
+    const record = this.objects.sync(mesh, this.materials.sync(material), this.frameNumber, bones)
     const count = mesh instanceof InstancedMesh ? mesh.count : 1
     if (inView) {
       const group = material instanceof ShaderMaterial ? this.resources.custom(material) : this.resources.standard(material)
@@ -558,7 +572,7 @@ export class Renderer {
   }
 
   private bindScene() {
-    const key = `${this.objects.generation}:${this.materials.generation}:${this.drawListBuffer.size}`
+    const key = `${this.objects.generation}:${this.materials.generation}:${this.bones.generation}:${this.drawListBuffer.size}`
     if (!this.sceneGroup || key !== this.sceneGroupKey) {
       this.sceneGroupKey = key
       this.sceneGroup = this.device.createBindGroup({
@@ -569,6 +583,7 @@ export class Renderer {
           { binding: 1, resource: { buffer: this.objects.buffer } },
           { binding: 2, resource: { buffer: this.materials.buffer } },
           { binding: 3, resource: { buffer: this.drawListBuffer } },
+          { binding: 4, resource: { buffer: this.bones.buffer } },
         ],
       })
     }

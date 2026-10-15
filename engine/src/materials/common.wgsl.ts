@@ -29,7 +29,7 @@ struct Frame {
 struct Object {
   model: mat4x4f,
   tint: vec4f,
-  // material index, flags (OBJ_*), unused, unused.
+  // material index, flags (OBJ_*), first bone + 1 (0 when not skinned), unused.
   misc: vec4u,
 }
 
@@ -53,6 +53,17 @@ const PI = 3.141592653589793;
 @group(0) @binding(2) var<storage, read> materials: array<Material>;
 // This frame's draws, in draw order: instance_index picks an entry, the entry picks the object record.
 @group(0) @binding(3) var<storage, read> drawList: array<u32>;
+// Skinning matrices (bone world × inverse bind) of every skinned mesh drawn this frame.
+@group(0) @binding(4) var<storage, read> bones: array<mat4x4f>;
+
+// The object's model matrix, or for a skinned object the weighted blend of its vertex's bones.
+fn modelMatrix(object: Object, joints: vec4u, weights: vec4f) -> mat4x4f {
+  if (object.misc.z == 0u) {
+    return object.model;
+  }
+  let b = object.misc.z - 1u;
+  return bones[b + joints.x] * weights.x + bones[b + joints.y] * weights.y + bones[b + joints.z] * weights.z + bones[b + joints.w] * weights.w;
+}
 
 // The inverse-transpose of the model's upper 3×3, up to scale: the cofactor matrix. Normals only need
 // direction, so this handles non-uniform scale without a per-object normal matrix.
