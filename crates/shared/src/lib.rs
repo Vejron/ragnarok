@@ -3,6 +3,7 @@
 //! The browser client mirrors everything in here by hand (`client/src/net/codec.ts`,
 //! `client/src/sim/consts.ts`); byte-fixture tests on both sides pin the two together.
 
+pub mod carve;
 pub mod consts;
 pub mod delta;
 pub mod items;

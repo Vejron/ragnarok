@@ -1,5 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat'
 import { buildingTriangleRanges, type TileData, type WorldData } from '@/world'
+import { shellOf, type Tri } from './carve'
 import {
   AUTOSTEP_HEIGHT, AUTOSTEP_MIN_WIDTH, CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, CONTROLLER_OFFSET,
   BUTTON_CROUCH, BUTTON_JUMP, BUTTON_PRONE, KNOCK_MAX_SPEED, MAX_SLOPE_CLIMB_DEG, PRONE_CENTRE, PRONE_RADIUS, SNAP_DISTANCE, STAND_CENTRE,
@@ -185,16 +186,52 @@ export function addTileCollider(world: RAPIER.World, tile: TileData, ground: Til
  * does on the server. Returns the new collider (the caller removes the old one), or null when
  * nothing is left of the mesh.
  */
-export function rebuildBuildingCollider(world: RAPIER.World, tile: TileData, destroyed: ReadonlySet<number>): RAPIER.Collider | null {
+export function rebuildBuildingCollider(
+  world: RAPIER.World,
+  tile: TileData,
+  destroyed: ReadonlySet<number>,
+  carved: ReadonlyMap<number, ReadonlySet<number>> = new Map(),
+): RAPIER.Collider | null {
   const { triangles, vertices } = tile.collision
-  const gone = buildingTriangleRanges(tile).filter((_, index) => destroyed.has(index))
+  const ranges = buildingTriangleRanges(tile)
+  const gone = ranges.filter((_, index) => destroyed.has(index))
+  // A bitten building's walls and roof are its small triangles that are left; its floor stays as it was.
+  const bitten: { from: number; to: number; standing: Tri[] }[] = []
+  for (const [index, removed] of carved) {
+    const building = tile.buildings[index]
+    const shell = shellOf(tile, index)
+    if (!building || !shell || destroyed.has(index)) continue
+    bitten.push({ from: building.first, to: building.first + building.walls + building.roof, standing: shell.standing(removed) })
+  }
   const kept: number[] = []
   for (let t = 0; t < triangles.length / 3; t++) {
     if (gone.some(([start, end]) => t >= start && t < end)) continue
+    if (bitten.some((b) => t >= b.from && t < b.to)) continue
     kept.push(triangles[t * 3]!, triangles[t * 3 + 1]!, triangles[t * 3 + 2]!)
   }
-  if (kept.length === 0) return null
-  return world.createCollider(RAPIER.ColliderDesc.trimesh(vertices, Uint32Array.from(kept)))
+  const extra = bitten.reduce((n, b) => n + b.standing.length, 0)
+  if (kept.length === 0 && extra === 0) return null
+  if (extra === 0) return world.createCollider(RAPIER.ColliderDesc.trimesh(vertices, Uint32Array.from(kept)))
+  // The small triangles go after the tile's own vertices, three corners each, in metres.
+  const all = new Float32Array(vertices.length + extra * 9)
+  all.set(vertices)
+  const indices = Uint32Array.from(kept)
+  const next = new Uint32Array(indices.length + extra * 3)
+  next.set(indices)
+  let vertex = vertices.length / 3
+  let at = vertices.length
+  let slot = indices.length
+  for (const b of bitten) {
+    for (const tri of b.standing) {
+      for (let k = 0; k < 3; k++) {
+        all[at++] = tri[k * 3]! / 100
+        all[at++] = tri[k * 3 + 1]! / 100
+        all[at++] = tri[k * 3 + 2]! / 100
+        next[slot++] = vertex++
+      }
+    }
+  }
+  return world.createCollider(RAPIER.ColliderDesc.trimesh(all, next))
 }
 
 /**
@@ -395,9 +432,14 @@ export class RapierMotor implements CharacterMotor {
    * Swaps a tile's building collider (`addTile`'s first, when the tile has a mesh) for one
    * without the buildings in `destroyed`. Returns the new one, or undefined if none is left.
    */
-  rebuildBuildings(old: RAPIER.Collider | undefined, tile: TileData, destroyed: ReadonlySet<number>): RAPIER.Collider | undefined {
+  rebuildBuildings(
+    old: RAPIER.Collider | undefined,
+    tile: TileData,
+    destroyed: ReadonlySet<number>,
+    carved: ReadonlyMap<number, ReadonlySet<number>> = new Map(),
+  ): RAPIER.Collider | undefined {
     if (old) this.world.removeCollider(old, false)
-    const next = rebuildBuildingCollider(this.world, tile, destroyed) ?? undefined
+    const next = rebuildBuildingCollider(this.world, tile, destroyed, carved) ?? undefined
     if (next) this.world.step()
     return next
   }

@@ -89,6 +89,7 @@ import { Effects } from '@/render/effects'
 import { Collapses } from '@/render/rubble'
 import { buildTile, rebuildBuildings } from '@/render/world'
 import { rebuildBuildingCollider } from '@/sim/physics'
+import { shellOf } from '@/sim/carve'
 import { buildingTriangleRanges, ROOF_FLAT, type Building } from '@/world'
 
 /** A closed box mesh from `x0` to `x0 + 10` metres, 6 m tall: 12 triangles, 8 of them walls. */
@@ -164,6 +165,21 @@ describe('the building collider without a fallen building', () => {
     // Rays start 2 m before each house's west wall.
     expect(solid(world, -2)).toBe(false)
     expect(solid(world, 28)).toBe(true)
+  })
+
+  it('opens the wall where cells were blasted out and leaves the rest of that wall', () => {
+    const tile = twoHouses()
+    const shell = shellOf(tile, 0)!
+    const hole = new Set<number>()
+    for (let y = 0; y <= 2.5; y += 0.5) for (let z = -1.5; z <= 1.5; z += 0.5) hole.add(shell.cellAt(0, y, z))
+    const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 })
+    expect(rebuildBuildingCollider(world, tile, new Set(), new Map([[0, hole]]))).not.toBeNull()
+    world.step()
+    const ray = (x: number, y: number, z: number) => world.castRay(new RAPIER.Ray({ x, y, z }, { x: 1, y: 0, z: 0 }), 5, true)
+    expect(ray(-2, 1, 0)).toBeNull()
+    expect(ray(-2, 1, 4)).not.toBeNull()
+    // The other house and this one's floor are as they were.
+    expect(ray(28, 1, 0)).not.toBeNull()
   })
 
   it('is nothing at all once every building is gone', () => {
@@ -281,10 +297,12 @@ describe('a hurt building', () => {
     const damage = new BuildingDamage()
     damage.attach(key, tileWith())
     damage.hurtBuilding(key, 0, 0, [-1, 2, 0])
-    damage.hurtBuilding(key, 0, 2, null)
+    damage.hurtBuilding(key, 0, 1, null)
     const effects = new Effects()
     const group = damage.root.children[0]!
-    const pieces = group.children.filter((c) => c instanceof Mesh && c.geometry.colors && c.material.side === 'double' && c.castShadow)
+    const before = new Set(group.children)
+    damage.hurtBuilding(key, 0, 2, null)
+    const pieces = group.children.filter((c) => !before.has(c) && c instanceof Mesh && c.geometry.colors && c.castShadow)
     expect(pieces.length).toBeGreaterThan(0)
     for (let i = 0; i < 300; i++) damage.update(0.05, effects, new THREE.Vector3(500, 0, 0))
     expect(group.children.some((c) => pieces.includes(c))).toBe(false)
@@ -332,5 +350,77 @@ describe('a hurt building', () => {
     expect(damage.root.children.length).toBe(0)
     damage.attach(key, tileWith())
     expect(damage.shown(key, 1).shards).toBeGreaterThanOrEqual(4)
+  })
+})
+
+// A copy of `CARVED_FIXTURE` in `crates/shared/src/protocol.rs`.
+const CARVED_FIXTURE = [147, 10, 1, 145, 152, 2, 3, 206, 0, 1, 17, 112, 205, 3, 232, 20, 209, 252, 24, 146, 5, 205, 1, 44, 145, 9]
+
+describe('carved message', () => {
+  it('decodes the bytes the server sends', () => {
+    expect(decodeServer(new Uint8Array(CARVED_FIXTURE))).toEqual({
+      type: 'carved',
+      live: true,
+      buildings: [{ col: 2, row: 3, index: 70000, point: [10, 0.2, -10], blasted: [5, 300], fell: [9] }],
+    })
+  })
+
+  it('refuses a cell list that is not numbers', () => {
+    // [10, 1, [[1, 2, 3, 0, 0, 0, ["x"], []]]]
+    expect(decodeServer(new Uint8Array([147, 10, 1, 145, 152, 1, 2, 3, 0, 0, 0, 145, 161, 120, 144]))).toBeNull()
+  })
+})
+
+describe('a building with cells blasted out of it', () => {
+  const key = 5
+  const bodyOf = (damage: BuildingDamage) => damage.root.children[0]!.children.find((c) => c instanceof Mesh && c.castShadow && !c.userData.decal && c.geometry.colors) as Mesh
+  const effects = () => new Effects()
+
+  it('is drawn as pieces from the first bite, and says so only once', () => {
+    const damage = new BuildingDamage()
+    damage.attach(key, twoHouses())
+    expect(damage.carve(key, 0, [1, 2, 3], [], [-1, 2, 0], true)).toBe(true)
+    expect(damage.carve(key, 0, [4], [], [-1, 2, 0], true)).toBe(false)
+    expect(damage.fractured(key)).toEqual([0])
+    expect(Array.from(damage.carved(key).get(0)!).sort()).toEqual([1, 2, 3, 4])
+  })
+
+  it('leaves out the triangles of the cells that went', () => {
+    const damage = new BuildingDamage()
+    damage.attach(key, twoHouses())
+    damage.hurtBuilding(key, 0, 1, null)
+    const whole = bodyOf(damage).geometry.vertexCount
+    // Every cell of the house: nothing of its walls is drawn.
+    const all = Array.from({ length: 4000 }, (_, i) => i)
+    damage.carve(key, 0, all, [], [-1, 2, 0], true)
+    expect(bodyOf(damage).geometry.vertexCount).toBeLessThan(whole)
+  })
+
+  it('throws what was blasted out, and drops what was left hanging', () => {
+    const damage = new BuildingDamage()
+    damage.attach(key, twoHouses())
+    damage.hurtBuilding(key, 0, 1, null)
+    const group = damage.root.children[0]!
+    const before = group.children.length
+    const all = Array.from({ length: 4000 }, (_, i) => i)
+    damage.carve(key, 0, all.slice(0, 20), all.slice(20, 60), [-1, 2, 0], true)
+    expect(group.children.length).toBeGreaterThan(before)
+    const e = effects()
+    for (let i = 0; i < 400; i++) damage.update(0.05, e, new THREE.Vector3(500, 0, 0))
+    expect(group.children.length).toBeLessThanOrEqual(before)
+    e.dispose()
+  })
+
+  it('is as it was when its tile streams back in, and throws nothing for a catch-up', () => {
+    const damage = new BuildingDamage()
+    damage.attach(key, twoHouses())
+    damage.carve(key, 0, [1, 2, 3, 4, 5, 6], [], null, false)
+    const group = damage.root.children[0]!
+    const pieces = group.children.filter((c) => c instanceof Mesh && c.castShadow && c !== bodyOf(damage))
+    expect(pieces.length).toBe(0)
+    const before = bodyOf(damage).geometry.vertexCount
+    damage.detach(key)
+    damage.attach(key, twoHouses())
+    expect(bodyOf(damage).geometry.vertexCount).toBe(before)
   })
 })

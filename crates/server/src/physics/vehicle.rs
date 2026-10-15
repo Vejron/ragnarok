@@ -16,6 +16,7 @@ use super::{Obj, Physics};
 use rapier3d::control::{DynamicRayCastVehicleController, WheelTuning};
 use rapier3d::prelude::*;
 use shared::consts::*;
+use shared::quant::from_cm;
 use shared::protocol::{DAMAGE_WHEELS, KIND_HELI, KIND_MORTAR, KIND_PLANE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, WHEEL_GONE, vehicle_hp};
 
 /// Gravity acting on vehicle bodies. Stickmen use `GRAVITY`; the ray-cast suspension is tuned
@@ -569,8 +570,29 @@ impl Physics {
     /// Takes destroyed buildings and trees out of the collider set. With no car the pipeline does
     /// not run otherwise, and the broad-phase would keep pointing at colliders that are gone.
     fn apply_removals(&mut self) {
-        if self.removals.is_empty() {
+        if self.removals.is_empty() && self.replacements.is_empty() {
             return;
+        }
+        // Bitten buildings get their new shape first; one that is also coming down just goes.
+        for (object, triangles) in std::mem::take(&mut self.replacements) {
+            if self.removals.contains(&object) {
+                continue;
+            }
+            let Some(&old) = self.handles.get(&object) else { continue };
+            // A building with nothing left is not a collider at all.
+            if triangles.is_empty() {
+                self.removals.push(object);
+                continue;
+            }
+            let corner = |t: &shared::carve::Tri, k: usize| Vector::new(from_cm(t[k * 3]), from_cm(t[k * 3 + 1]), from_cm(t[k * 3 + 2]));
+            let vertices: Vec<Vector> = triangles.iter().flat_map(|t| (0..3).map(move |k| corner(t, k))).collect();
+            let indices: Vec<[u32; 3]> = (0..triangles.len() as u32).map(|i| [i * 3, i * 3 + 1, i * 3 + 2]).collect();
+            let Ok(builder) = ColliderBuilder::trimesh(vertices, indices) else { continue };
+            self.objects.remove(&old);
+            self.colliders.remove(old, &mut self.islands, &mut self.bodies, &mut self.soft_bodies, false);
+            let handle = self.colliders.insert(builder.build());
+            self.objects.insert(handle, object);
+            self.handles.insert(object, handle);
         }
         for object in std::mem::take(&mut self.removals) {
             if let Some(handle) = self.handles.remove(&object) {

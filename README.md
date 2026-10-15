@@ -28,8 +28,8 @@ cargo run -p osm-import                       # default: 8.6 km square of centra
 cargo run -p osm-import -- --center 59.3167,18.0613 --half 600   # any lat,lon and half-side in metres
 cargo run -p osm-import -- --bbox 59.3290,18.0600,59.3345,18.0705   # any south,west,north,east
 cargo run -p osm-import -- --synthetic        # offline grid city, with hills
-# Terrain and roofs come from Lantmäteriet (CC BY 4.0), water (lakes, rivers, the sea) from
-# OpenStreetMap, trees from Umeå's open data (CC0).
+# Terrain, water and roofs come from Lantmäteriet (CC BY 4.0; water needs the Hydrografi Direkt
+# service enabled), trees from Umeå's open data (CC0). `--osm-water` takes the water from OpenStreetMap instead.
 # Lantmäteriet needs a Geotorget account: put LM_USER and LM_PASS in .env.local (git-ignored) and
 # load it. Downloads are cached in .cache/osm-import (--refresh, --clear-cache). See WORLD.md.
 set -a; . ./.env.local; set +a

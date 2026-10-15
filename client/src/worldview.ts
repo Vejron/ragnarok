@@ -1,6 +1,6 @@
 import { Group, type Scene } from '@ragnarok/engine'
 import type * as THREE from 'three'
-import { OBJ_BUILDING, OBJ_TREE, type DamagedBuilding, type DestroyedObject } from './net/codec'
+import { OBJ_BUILDING, OBJ_TREE, type CarvedBuilding, type DamagedBuilding, type DestroyedObject } from './net/codec'
 import type { Effects } from './render/effects'
 import { FallingTrees } from './render/falling'
 import { BuildingDamage } from './render/damage'
@@ -78,7 +78,7 @@ export class WorldView {
     const drive: TileSolids = this.driver?.addTile(tile, ground) ?? []
     this.solids.set(key, { tile, salt, walk, drive })
     this.damage.attach(key, tile, salt)
-    if (down.size > 0) {
+    if (down.size > 0 || this.damage.carved(key).size > 0) {
       this.dropBuildingColliders(key)
       for (const index of down) Collapses.settled(group, tile, index)
     }
@@ -116,6 +116,26 @@ export class WorldView {
         this.fellBuilding(key, object.index, object.yaw, animate)
       }
     }
+  }
+
+  /**
+   * The server says blasts took these cells out of standing buildings. The building is redrawn
+   * without them, they fly or fall, and the walls stop being solid there in both simulations.
+   * `live` is false for the catch-up on joining.
+   */
+  carved(buildings: readonly CarvedBuilding[], live: boolean) {
+    const touched = new Set<number>()
+    for (const b of buildings) {
+      const key = tileKey(b.col, b.row)
+      if (this.goneBuildings.get(key)?.has(b.index)) continue
+      const first = this.damage.carve(key, b.index, b.blasted, b.fell, live ? b.point : null, live)
+      touched.add(key)
+      if (!first) continue
+      const group = this.groups.get(key)
+      const solids = this.solids.get(key)
+      if (group && solids) rebuildBuildings(group, solids.tile, solids.salt, this.undrawnBuildings(key))
+    }
+    for (const key of touched) this.dropBuildingColliders(key)
   }
 
   /** The server says these standing buildings are hurt. */
@@ -165,9 +185,10 @@ export class WorldView {
     const solids = this.solids.get(key)
     if (!solids || solids.tile.collision.triangles.length === 0) return
     const down = new Set(this.goneBuildings.get(key)?.keys())
+    const carved = this.damage.carved(key)
     // The building mesh is `addTile`'s first collider, when the tile has one.
-    if (this.motor) solids.walk[0] = this.motor.rebuildBuildings(solids.walk[0], solids.tile, down)
-    if (this.driver) solids.drive[0] = this.driver.rebuildBuildings(solids.drive[0], solids.tile, down)
+    if (this.motor) solids.walk[0] = this.motor.rebuildBuildings(solids.walk[0], solids.tile, down, carved)
+    if (this.driver) solids.drive[0] = this.driver.rebuildBuildings(solids.drive[0], solids.tile, down, carved)
   }
 
   /**

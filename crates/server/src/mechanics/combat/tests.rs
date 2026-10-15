@@ -955,3 +955,83 @@ fn a_round_that_has_flown_far_hits_for_less() {
         assert!(game.world.shots.iter().any(|s| s.weapon == WEAPON_BULLET && s.shooter == id), "its end names the bullet");
     }
 }
+
+/// What `Carved` entries `(live, blasted, fell)` `inbox` has been sent.
+fn carved_told(inbox: &mut mpsc::Receiver<Outgoing>) -> Vec<(u8, usize, usize)> {
+    let mut out = Vec::new();
+    while let Ok(Outgoing::Reliable(bytes)) = inbox.try_recv() {
+        if shared::protocol::peek_tag(&bytes) == Some(shared::protocol::S_CARVED) {
+            let message = decode::<shared::protocol::Carved>(&bytes).unwrap();
+            out.extend(message.2.into_iter().map(|e| (message.1, e.6.len(), e.7.len())));
+        }
+    }
+    out
+}
+
+#[test]
+fn a_rocket_bites_a_hole_in_the_wall_that_a_ray_goes_through() {
+    let (mut game, house) = game_with_house();
+    let (_, mut inbox) = join(&mut game);
+    while inbox.try_recv().is_ok() {}
+    let (hit, _) = game.world.physics.cast_ray_object([12.0, 1.0, 0.0], [1.0, 0.0, 0.0], 40.0).unwrap();
+    assert!((hit - 3.0).abs() < 0.1, "the near wall is at x = 15: {hit}");
+    rocket_at(&mut game, [14.5, 1.0, 0.0]);
+    game.step();
+    // The wall is open at the hole, and the ray carries on to the far wall at x = 25.
+    let (hit, _) = game.world.physics.cast_ray_object([12.0, 1.0, 0.0], [1.0, 0.0, 0.0], 40.0).unwrap();
+    assert!((hit - 13.0).abs() < 0.1, "the bite did not open the wall: {hit}");
+    assert!(game.world.destroyed.is_empty(), "a bite is not a collapse");
+    assert!(game.world.object_hp.get(&house).is_some_and(|&hp| hp < 150), "and it still hurts");
+    let told = carved_told(&mut inbox);
+    assert_eq!(told.len(), 1);
+    assert_eq!(told[0].0, 1, "it is news");
+    assert!(told[0].1 > 5, "{told:?}");
+    // Next to it the wall is still there.
+    let (hit, _) = game.world.physics.cast_ray_object([12.0, 1.0, 4.0], [1.0, 0.0, 0.0], 40.0).unwrap();
+    assert!((hit - 3.0).abs() < 0.1, "the wall beside the hole went too: {hit}");
+}
+
+#[test]
+fn a_joiner_is_told_which_cells_are_gone() {
+    let (mut game, _) = game_with_house();
+    rocket_at(&mut game, [14.5, 1.0, 0.0]);
+    game.step();
+    let (_, mut late) = join(&mut game);
+    let told = carved_told(&mut late);
+    assert_eq!(told.len(), 1);
+    assert_eq!(told[0].0, 0, "it is state, not news");
+    assert!(told[0].1 > 5 && told[0].2 == 0);
+}
+
+#[test]
+fn cutting_the_foot_of_a_house_drops_what_stood_on_it() {
+    let (mut game, house) = game_with_house();
+    let Obj::Building(id) = house else { unreachable!() };
+    let mut fell = 0;
+    // A band of blasts a metre up, all the way round the walls.
+    for step in 0..=10 {
+        let t = step as f32;
+        for point in [[15.0 + t, 0.5, -5.0], [15.0 + t, 0.5, 5.0], [15.0, 0.5, -5.0 + t], [25.0, 0.5, -5.0 + t]] {
+            if let Some((cut, _)) = game.world.carve(id, point, 1.4) {
+                fell += cut.fell.len();
+            }
+        }
+    }
+    assert!(fell > 0, "nothing came down");
+}
+
+#[test]
+fn a_bullet_makes_a_small_hole_in_the_wall() {
+    let (mut game, _) = game_with_house();
+    let before = game.world.physics.cast_ray_object([12.0, 1.3, 0.2], [1.0, 0.0, 0.0], 40.0).unwrap().0;
+    assert!((before - 3.0).abs() < 0.1);
+    // A round from the west at the wall, 3 m away.
+    hit_object(&mut game.world, [12.0, 1.3, 0.2], [1.0, 0.0, 0.0], 3.0, 12);
+    game.step();
+    let after = game.world.physics.cast_ray_object([12.0, 1.3, 0.2], [1.0, 0.0, 0.0], 40.0).unwrap().0;
+    assert!(after > 12.0, "the round left no hole: {after}");
+    // It is a small one: a metre to the side the wall stands.
+    let beside = game.world.physics.cast_ray_object([12.0, 1.3, 2.2], [1.0, 0.0, 0.0], 40.0).unwrap().0;
+    assert!((beside - 3.0).abs() < 0.1, "{beside}");
+    assert!(game.world.destroyed.is_empty());
+}

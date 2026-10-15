@@ -10,7 +10,7 @@ import { random } from './rubble'
 /** Most scorch marks a building keeps; the oldest go first. */
 const MAX_MARKS = 12
 /** Most pieces thrown from a building at once, and how long they lie where they land, seconds. */
-const MAX_FALLING = 14
+const MAX_FALLING = 32
 const FALLEN_SECONDS = 10
 const GRAVITY = 9.8
 /** How far a mark floats off the wall so it does not z-fight with it, metres. */
@@ -25,7 +25,22 @@ type Mark = readonly [number, number, number]
 interface Hurt {
   stage: number
   marks: Mark[]
+  /** The cells a blast took out of it, by `Shell` number: gone for good. */
+  removed: Set<number>
 }
+
+/** A bite that just happened: what to throw, and from where. */
+interface Burst {
+  blasted: number[]
+  fell: number[]
+  point: Mark | null
+}
+
+/** The most cells in one piece thrown from a blast, and in one chunk that falls whole. */
+const THROWN_CELLS = 5
+const FALLEN_CELLS = 40
+/** How hard a broken piece is thrown from the blast, m/s. */
+const THROW = 3
 
 /** A scorch decal, and the shard of wall it is on (once the wall is cut into shards), `-1` before. */
 interface Scorch {
@@ -107,8 +122,9 @@ function scorchTexture() {
 }
 
 let scorchMaterial: Material | null = null
-const bodyMaterial = toonMaterial({ vertexColors: true })
 const pieceMaterial = toonMaterial({ vertexColors: true, side: 'double' })
+// Double-sided: through a hole you see the inside of the far wall and the underside of the roof.
+const hurtMaterial = toonMaterial({ vertexColors: true, side: 'double' })
 const coreMaterial = toonMaterial({ vertexColors: true, side: 'double' })
 
 function decalMaterial(map: Texture | null, fallback: number) {
@@ -175,7 +191,7 @@ export class BuildingDamage {
   hurtBuilding(key: number, index: number, stage: number, mark: Mark | null): boolean {
     const buildings = this.hurt.get(key) ?? new Map<number, Hurt>()
     this.hurt.set(key, buildings)
-    const state = buildings.get(index) ?? { stage: 0, marks: [] }
+    const state = buildings.get(index) ?? { stage: 0, marks: [], removed: new Set<number>() }
     buildings.set(index, state)
     const before = state.stage
     state.stage = Math.max(state.stage, Math.min(stage, DAMAGE_STAGES))
@@ -184,14 +200,39 @@ export class BuildingDamage {
       if (state.marks.length > MAX_MARKS) state.marks.shift()
     }
     const loaded = this.loaded.get(key)
-    if (loaded) this.draw(key, index, loaded, state, mark, true)
-    return before === 0 && state.stage > 0
+    if (loaded) this.draw(key, index, loaded, state, mark, true, null)
+    return before === 0 && state.stage > 0 && state.removed.size === 0
+  }
+
+  /**
+   * A blast took the cells `blasted` out of building `index` of tile `key`, and left `fell` with
+   * nothing under them. `live` is false for the catch-up on joining. True when this is the first time
+   * the building is drawn as pieces, so the tile has to stop drawing it whole.
+   */
+  carve(key: number, index: number, blasted: readonly number[], fell: readonly number[], point: Mark | null, live: boolean): boolean {
+    const buildings = this.hurt.get(key) ?? new Map<number, Hurt>()
+    this.hurt.set(key, buildings)
+    const state = buildings.get(index) ?? { stage: 0, marks: [], removed: new Set<number>() }
+    buildings.set(index, state)
+    const wasWhole = state.stage === 0 && state.removed.size === 0
+    const fresh = { blasted: blasted.filter((c) => !state.removed.has(c)), fell: fell.filter((c) => !state.removed.has(c)), point }
+    for (const cell of [...blasted, ...fell]) state.removed.add(cell)
+    const loaded = this.loaded.get(key)
+    if (loaded) this.draw(key, index, loaded, state, null, live, fresh)
+    return wasWhole && state.removed.size > 0
+  }
+
+  /** The cells of each hurt building of tile `key` that are gone, by building index. */
+  carved(key: number): Map<number, ReadonlySet<number>> {
+    const out = new Map<number, ReadonlySet<number>>()
+    for (const [index, state] of this.hurt.get(key) ?? []) if (state.removed.size > 0) out.set(index, state.removed)
+    return out
   }
 
   /** The buildings of tile `key` that are drawn here as shards and so are not to be drawn whole. */
   fractured(key: number): number[] {
     const out: number[] = []
-    for (const [index, state] of this.hurt.get(key) ?? []) if (state.stage > 0) out.push(index)
+    for (const [index, state] of this.hurt.get(key) ?? []) if (state.stage > 0 || state.removed.size > 0) out.push(index)
     return out
   }
 
@@ -199,7 +240,7 @@ export class BuildingDamage {
   attach(key: number, tile: TileData, salt = 0) {
     const loaded = { tile, salt }
     this.loaded.set(key, loaded)
-    for (const [index, state] of this.hurt.get(key) ?? []) this.draw(key, index, loaded, state, null, false)
+    for (const [index, state] of this.hurt.get(key) ?? []) this.draw(key, index, loaded, state, null, false, null)
   }
 
   /** Tile `key` was unloaded. What was done to its buildings is remembered. */
@@ -259,7 +300,7 @@ export class BuildingDamage {
   }
 
   /** Brings tile `key`'s building `index` up to `state`; `live` when it is happening now, to be seen. */
-  private draw(key: number, index: number, loaded: Loaded, state: Hurt, fresh: Mark | null, live: boolean) {
+  private draw(key: number, index: number, loaded: Loaded, state: Hurt, fresh: Mark | null, live: boolean, burst: Burst | null) {
     const buildings = this.drawn.get(key) ?? new Map<number, Drawn>()
     this.drawn.set(key, buildings)
     let drawn = buildings.get(index)
@@ -273,21 +314,27 @@ export class BuildingDamage {
       for (const mark of state.marks) if (mark !== fresh) this.scorch(drawn, walls, mark)
     }
     if (fresh) this.scorch(drawn, walls, fresh)
-    if (state.stage > 0) this.shatter(drawn, key, index, loaded, state, live)
+    if (state.stage > 0 || state.removed.size > 0) this.shatter(drawn, key, index, loaded, state, live, burst)
   }
 
   /** Redraws the building as shards at its stage, dropping those that have broken away. */
-  private shatter(drawn: Drawn, key: number, index: number, loaded: Loaded, state: Hurt, live: boolean) {
+  private shatter(drawn: Drawn, key: number, index: number, loaded: Loaded, state: Hurt, live: boolean, burst: Burst | null) {
     const building = loaded.tile.buildings[index]!
+    const core = (fracture: Fracture) => fracture.core(state.removed)
     if (!drawn.fracture) {
       drawn.fracture = new Fracture(loaded.tile, index, key * 1_000_003 + index, loaded.salt)
-      drawn.core = new Mesh(shardGeometry(drawn.fracture.core(), drawn.fracture.coreColors()), coreMaterial)
+      const inside = core(drawn.fracture)
+      drawn.core = new Mesh(shardGeometry(inside.positions, inside.colors), coreMaterial)
       drawn.group.add(drawn.core)
       for (const scorch of drawn.scorches) scorch.shard = drawn.fracture.nearest(scorch.at).shard
+    } else if (drawn.core && burst) {
+      const inside = core(drawn.fracture)
+      drawn.core.geometry.dispose()
+      drawn.core.geometry = shardGeometry(inside.positions, inside.colors)
     }
-    const built = drawn.fracture.build(state.stage, state.marks, drawn.gone)
+    const built = drawn.fracture.build(state.stage, state.marks, drawn.gone, state.removed)
     if (!drawn.body) {
-      drawn.body = new Mesh(shardGeometry(built.positions, built.colors), bodyMaterial)
+      drawn.body = new Mesh(shardGeometry(built.positions, built.colors), hurtMaterial)
       drawn.body.castShadow = true
       drawn.body.receiveShadow = true
       drawn.group.add(drawn.body)
@@ -295,8 +342,17 @@ export class BuildingDamage {
       drawn.body.geometry.dispose()
       drawn.body.geometry = shardGeometry(built.positions, built.colors)
     }
-    for (const scorch of drawn.scorches) scorch.mesh.visible = !drawn.gone.has(scorch.shard)
+    const shell = drawn.fracture.shell
+    for (const scorch of drawn.scorches) {
+      // A mark is gone with the piece of wall it was on, whether that broke away or was blasted out.
+      const cell = shell ? shell.cellAt(scorch.at.x, scorch.at.y, scorch.at.z) : -1
+      scorch.mesh.visible = !drawn.gone.has(scorch.shard) && !state.removed.has(cell)
+    }
     if (!live) return
+    if (burst && shell) {
+      this.throwCells(drawn, drawn.fracture, shell, building.base, burst.blasted, burst.point, false)
+      this.throwCells(drawn, drawn.fracture, shell, building.base, burst.fell, burst.point, true)
+    }
     for (const id of built.fresh) {
       const piece = drawn.fracture.piece(id)
       this.puffs.push({ at: piece.pivot.clone().addScaledVector(piece.normal, 0.5), size: 1.5 + this.rand() * 1.5 })
@@ -312,6 +368,37 @@ export class BuildingDamage {
         spin: new THREE.Vector3((this.rand() - 0.5) * 5, (this.rand() - 0.5) * 5, (this.rand() - 0.5) * 5),
         age: 0,
         resting: mesh.position.y <= building.base + 0.15,
+      })
+    }
+  }
+
+  /**
+   * Throws the wall and roof in `cells` out of the building as chunks: blasted ones fly away from
+   * `point`, ones that were left hanging (`falls`) drop where they were.
+   */
+  private throwCells(drawn: Drawn, fracture: Fracture, shell: NonNullable<Fracture['shell']>, floor: number, cells: readonly number[], point: Mark | null, falls: boolean) {
+    for (const group of shell.clusters(cells, falls ? FALLEN_CELLS : THROWN_CELLS)) {
+      const chunk = fracture.chunk(new Set(group))
+      if (!chunk) continue
+      this.puffs.push({ at: chunk.pivot.clone(), size: falls ? 3 + this.rand() * 2 : 1.4 + this.rand() * 1.4 })
+      if (drawn.falling.length >= MAX_FALLING) continue
+      const mesh = new Mesh(shardGeometry(chunk.positions, chunk.colors), pieceMaterial)
+      mesh.position.copy(chunk.pivot)
+      mesh.castShadow = true
+      drawn.group.add(mesh)
+      const velocity = new THREE.Vector3()
+      if (!falls && point) {
+        velocity.set(chunk.pivot.x - point[0], chunk.pivot.y - point[1], chunk.pivot.z - point[2])
+        if (velocity.lengthSq() < 1e-4) velocity.set(0, 1, 0)
+        velocity.normalize().multiplyScalar(THROW * (0.5 + this.rand())).y += 1 + this.rand() * 2
+      }
+      const tumble = falls ? 0.6 : 5
+      drawn.falling.push({
+        mesh,
+        velocity,
+        spin: new THREE.Vector3((this.rand() - 0.5) * tumble, (this.rand() - 0.5) * tumble, (this.rand() - 0.5) * tumble),
+        age: 0,
+        resting: mesh.position.y <= floor + 0.15,
       })
     }
   }

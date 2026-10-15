@@ -1,11 +1,10 @@
 import { Geometry } from '@ragnarok/engine'
 import * as THREE from 'three'
 import type { TileData } from '@/world'
+import { shellOf, type Shell, type Tri } from '@/sim/carve'
 import { random } from './rubble'
 import { buildingColors } from './world'
 
-/** The longest edge of a wall piece before it is cut in two, metres. */
-const CELL = 2.4
 /** About how much wall one shard covers, square metres. */
 const SHARD_AREA = 8
 /** How far behind the wall the dark inside of the building sits, metres. */
@@ -65,23 +64,34 @@ export class Fracture {
   /** The shard each small triangle belongs to. */
   private readonly owner: number[] = []
   private readonly roof: number[] = []
+  /** The cell of each small wall triangle, and of each roof triangle. */
+  private readonly wallCell: number[] = []
+  private readonly roofCell: number[] = []
   private readonly wall: THREE.Color
   private readonly roofColor: THREE.Color
   private readonly middle = new THREE.Vector3()
 
+  /** The building's cells, the same as the server cuts them, or null when it has no walls. */
+  readonly shell: Shell | null
+
   constructor(tile: TileData, index: number, seed: number, salt: number) {
     const building = tile.buildings[index]!
-    const { vertices, triangles } = tile.collision
     const colors = buildingColors(tile, index, salt)
     this.wall = new THREE.Color(colors.wall)
     this.roofColor = new THREE.Color(colors.roof)
     const rand = random(seed)
-    const corner = (t: number, k: number) => new THREE.Vector3().fromArray(vertices, triangles[t * 3 + k]! * 3)
+    this.shell = shellOf(tile, index)
     // The collision mesh is wound inwards and drawn reversed (a, c, b), so that is the order kept.
-    for (let t = building.first; t < building.first + building.walls; t++) this.cut(corner(t, 0), corner(t, 2), corner(t, 1))
-    for (let t = building.first + building.walls; t < building.first + building.walls + building.roof; t++) {
-      this.roof.push(...corner(t, 0).toArray(), ...corner(t, 2).toArray(), ...corner(t, 1).toArray())
-    }
+    const outward = (t: Tri) => [t[0] / 100, t[1] / 100, t[2] / 100, t[6] / 100, t[7] / 100, t[8] / 100, t[3] / 100, t[4] / 100, t[5] / 100]
+    this.shell?.triangles.forEach(({ tri, cell }, i) => {
+      if (i < this.shell!.walls) {
+        this.small.push(...outward(tri))
+        this.wallCell.push(cell)
+      } else {
+        this.roof.push(...outward(tri))
+        this.roofCell.push(cell)
+      }
+    })
     for (const p of building.footprint) this.middle.x += p[0]
     for (const p of building.footprint) this.middle.z += p[1]
     this.middle.divideScalar(Math.max(1, building.footprint.length))
@@ -113,7 +123,7 @@ export class Fracture {
    * The building as it looks at damage `stage` after the blasts at `marks`, leaving out the shards
    * in `gone` and adding to it any that break away now.
    */
-  build(stage: number, marks: readonly (readonly [number, number, number])[], gone: Set<number>): Fractured {
+  build(stage: number, marks: readonly (readonly [number, number, number])[], gone: Set<number>, removed: ReadonlySet<number> = new Set()): Fractured {
     const level = Math.min(stage, GONE.length - 1)
     const fresh: number[] = []
     const rank = this.ranks(level, marks)
@@ -131,7 +141,7 @@ export class Fracture {
     const severity = level / (DISPLACED.length - 1)
     for (let t = 0; t < this.owner.length; t++) {
       const id = this.owner[t]!
-      if (gone.has(id)) continue
+      if (gone.has(id) || removed.has(this.wallCell[t]!)) continue
       const shard = this.shards[id]!
       const loose = rank[id]! < DISPLACED[level]!
       if (loose) q.setFromAxisAngle(shard.axis, shard.spin * (0.25 + 0.75 * severity))
@@ -148,36 +158,64 @@ export class Fracture {
       }
     }
     for (let i = 0; i < this.roof.length; i += 3) {
+      if (removed.has(this.roofCell[Math.floor(i / 9)]!)) continue
       positions.push(this.roof[i]!, this.roof[i + 1]!, this.roof[i + 2]!)
       colors.push(this.roofColor.r, this.roofColor.g, this.roofColor.b)
     }
     return { positions: Float32Array.from(positions), colors: Float32Array.from(colors), fresh }
   }
 
-  /** What is inside the walls: the same walls drawn a little way in, dark, for the seams and holes to show. */
-  core(): Float32Array {
-    const out = new Float32Array(this.small.length)
+  /**
+   * What is inside the walls: the same walls drawn a little way in, dark, for the seams and holes to
+   * show, without the cells that are gone. Its colour per vertex is the wall's own, a little dimmer,
+   * so a hole shows a room and not a void.
+   */
+  core(removed: ReadonlySet<number> = new Set()): { positions: Float32Array; colors: Float32Array } {
+    const positions: number[] = []
+    const colors: number[] = []
     const p = new THREE.Vector3()
     const toward = new THREE.Vector3()
-    for (let i = 0; i < this.small.length; i += 3) {
-      p.fromArray(this.small, i)
-      toward.set(this.middle.x - p.x, 0, this.middle.z - p.z)
-      const reach = toward.length()
-      if (reach > 1e-3) p.addScaledVector(toward.divideScalar(reach), Math.min(INSET, reach))
-      p.toArray(out, i)
+    for (let t = 0; t < this.wallCell.length; t++) {
+      if (removed.has(this.wallCell[t]!)) continue
+      for (let k = 0; k < 3; k++) {
+        p.fromArray(this.small, t * 9 + k * 3)
+        toward.set(this.middle.x - p.x, 0, this.middle.z - p.z)
+        const reach = toward.length()
+        if (reach > 1e-3) p.addScaledVector(toward.divideScalar(reach), Math.min(INSET, reach))
+        positions.push(p.x, p.y, p.z)
+        colors.push(this.wall.r * INSIDE, this.wall.g * INSIDE, this.wall.b * INSIDE)
+      }
     }
-    return out
+    return { positions: Float32Array.from(positions), colors: Float32Array.from(colors) }
   }
 
-  /** The inside's colour per vertex of `core()`: the wall's own, a little dimmer, so a hole shows a room and not a void. */
-  coreColors(): Float32Array {
-    const out = new Float32Array(this.small.length)
-    for (let i = 0; i < out.length; i += 3) {
-      out[i] = this.wall.r * INSIDE
-      out[i + 1] = this.wall.g * INSIDE
-      out[i + 2] = this.wall.b * INSIDE
+  /**
+   * The wall and roof in `cells` on their own, to be thrown: triangle soup around its centre, which
+   * is `pivot`. Null when those cells hold nothing.
+   */
+  chunk(cells: ReadonlySet<number>): { positions: Float32Array; colors: Float32Array; pivot: THREE.Vector3 } | null {
+    const pieces: { source: number[]; at: number; color: THREE.Color }[] = []
+    this.wallCell.forEach((cell, t) => cells.has(cell) && pieces.push({ source: this.small, at: t * 9, color: this.wall }))
+    this.roofCell.forEach((cell, t) => cells.has(cell) && pieces.push({ source: this.roof, at: t * 9, color: this.roofColor }))
+    if (pieces.length === 0) return null
+    const pivot = new THREE.Vector3()
+    for (const { source, at } of pieces) {
+      for (let k = 0; k < 3; k++) {
+        pivot.x += source[at + k * 3]!
+        pivot.y += source[at + k * 3 + 1]!
+        pivot.z += source[at + k * 3 + 2]!
+      }
     }
-    return out
+    pivot.divideScalar(pieces.length * 3)
+    const positions: number[] = []
+    const colors: number[] = []
+    for (const { source, at, color } of pieces) {
+      for (let k = 0; k < 3; k++) {
+        positions.push(source[at + k * 3]! - pivot.x, source[at + k * 3 + 1]! - pivot.y, source[at + k * 3 + 2]! - pivot.z)
+        colors.push(color.r * 0.9, color.g * 0.9, color.b * 0.9)
+      }
+    }
+    return { positions: Float32Array.from(positions), colors: Float32Array.from(colors), pivot }
   }
 
   /** Shard `id` on its own, to be thrown, with its centre at the origin. */
@@ -209,27 +247,6 @@ export class Fracture {
       if (level >= BREAKS_AT_STAGE && hit.shard >= 0 && hit.distance < BLAST_REACH) out[hit.shard] = 0
     }
     return out
-  }
-
-  /** Cuts one wall triangle into pieces no longer than `CELL`, keeping its winding. */
-  private cut(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3) {
-    const stack: THREE.Vector3[][] = [[a, b, c]]
-    while (stack.length > 0 && this.small.length < 9 * 4000) {
-      const tri = stack.pop()!
-      let longest = 0
-      let length = 0
-      for (let i = 0; i < 3; i++) {
-        const l = tri[i]!.distanceTo(tri[(i + 1) % 3]!)
-        if (l > length) [longest, length] = [i, l]
-      }
-      const [p, q, r] = [tri[longest]!, tri[(longest + 1) % 3]!, tri[(longest + 2) % 3]!]
-      if (length <= CELL) {
-        if (new THREE.Triangle(p, q, r).getArea() > 1e-4) this.small.push(...p.toArray(), ...q.toArray(), ...r.toArray())
-        continue
-      }
-      const m = p.clone().add(q).multiplyScalar(0.5)
-      stack.push([p, m, r], [m, q, r])
-    }
   }
 
   /** Groups the small triangles into ragged shards around randomly chosen seeds. */

@@ -308,6 +308,40 @@ pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
         };
         let falloff = (1.0 - distance / blast.radius).max(0.0);
         damage_object(world, object, (blast.damage * falloff * scale).round().min(u16::MAX as f32) as u16, blast.point);
+        if let Obj::Building(id) = object {
+            bite_building(world, id, &blast, falloff);
+        }
+    }
+}
+
+/// How much of a blast's radius is a bite out of a wall: the rest is heat and noise.
+const CARVE_REACH: f32 = 0.6;
+/// A bite smaller than this, metres, is not worth a collider: splash from far away.
+const CARVE_MIN_RADIUS: f32 = 0.8;
+
+/// Takes a bite out of standing building `id` where `blast` landed, and brings the building down
+/// if so little is left. A blast that was weak by the time it reached the wall bites less.
+fn bite_building(world: &mut World, id: shared::world::ObjId, blast: &Blast, falloff: f32) {
+    if world.destroyed.iter().any(|&(done, _)| done == Obj::Building(id)) {
+        return;
+    }
+    let radius = blast.radius * CARVE_REACH * (0.5 + 0.5 * falloff);
+    if radius < CARVE_MIN_RADIUS {
+        return;
+    }
+    take_bite(world, id, blast.point, radius);
+}
+
+/// Cuts `radius` metres of standing building `id` away around `point`, and has the building come
+/// down if that leaves too little of it.
+fn take_bite(world: &mut World, id: shared::world::ObjId, point: [f32; 3], radius: f32) {
+    if world.destroyed.iter().any(|&(done, _)| done == Obj::Building(id)) {
+        return;
+    }
+    let Some((_, ruin)) = world.carve(id, point, radius) else { return };
+    if ruin {
+        damage_object(world, Obj::Building(id), u16::MAX, point);
+        world.carves.remove(&id);
     }
 }
 
@@ -641,8 +675,18 @@ fn hit_object(world: &mut World, origin: [f32; 3], dir: [f32; 3], reach: f32, da
             Obj::Building(_) => (damage as u16 / BULLET_BUILDING_DIVISOR).max(1),
         };
         damage_object(world, object, amount, origin);
+        if let Obj::Building(id) = object {
+            // A round makes a hole about as wide as a bullet is hard, a cell at least.
+            let radius = BULLET_BITE_BASE + damage as f32 * BULLET_BITE_PER_DAMAGE;
+            let point = [0, 1, 2].map(|i| origin[i] + dir[i] * (reach + 0.1));
+            take_bite(world, id, point, radius);
+        }
     }
 }
+
+/// A bullet's bite out of a wall, metres: this and so much more for each point of its damage.
+const BULLET_BITE_BASE: f32 = 0.2;
+const BULLET_BITE_PER_DAMAGE: f32 = 0.004;
 
 /// Fires gun `item` from player `id`'s eye, towards what the crosshair is on.
 fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {

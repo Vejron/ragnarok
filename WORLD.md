@@ -7,7 +7,7 @@ file is about the *pipeline*. The code is `crates/osm-import`.
 ```
 OpenStreetMap (Overpass) ─┐  buildings, roads, ground cover
 Lantmäteriet DTM  ────────┤  terrain heights ──► ground grid
-OpenStreetMap water ──────┤  lakes, rivers, streams, sea ► water surface, carved beds
+Lantmäteriet Hydrografi ──┤  lakes, rivers, streams ► water surface, carved beds
 Lantmäteriet laser ───────┤  roof shapes ──────► buildings' roofs
                           │  canopy ───────────► trees (every tree in the woods too)
 Umeå tree register ───────┘  planted trees ────► archetypes by species
@@ -33,8 +33,8 @@ Restart the server afterwards: it reads the whole world at start. The importer c
 | `--tile m` | Tile side, default 250 m. |
 | `--cell m` | Terrain sample spacing, default 5 m, must divide `--tile`. `0` is flat ground and needs no credentials. |
 | `--dem file.tif` | Take elevation from a local DTM GeoTIFF instead of Lantmäteriet. |
-| `--no-water` | Leave out lakes, rivers, streams and the sea (skips the water download). |
-| `--hydrografi` | Take lakes, rivers and streams from Lantmäteriet's Hydrografi Direkt instead of OpenStreetMap (needs `LM_USER` / `LM_PASS`). It has no sea. |
+| `--no-water` | Leave out lakes, rivers and streams (skips the water download). |
+| `--osm-water` | Take lakes, rivers, streams and the sea from OpenStreetMap instead of Hydrografi. Slower (Overpass, one query per block), but it has the sea. |
 | `--no-roofs` | Buildings stay boxes of their tagged height. The point cloud (the slowest and biggest download) is then only read for trees; add `--no-lidar-trees` to skip it completely. |
 | `--no-trees` | Skip the tree register. |
 | `--no-minimap` | Skip `minimap.png`, the pre-rendered top-down map (2048 px, written next to `world.msgpack`) that the client shows as minimap and map. |
@@ -214,17 +214,8 @@ ranges; trees within 4 m of a bridge's edge are dropped (over water they are the
 the pylon and cables). Bridge roads never offer spawns. Deck heights over the Umeälven can be
 tuned by `clearance` in `bridge.rs`.
 
-### Water (OpenStreetMap)
-By default water comes from Overpass, one extra query per 2 km block (cached like the others):
-`natural=water`, `waterway=riverbank` and `landuse=reservoir` ways and multipolygons are lakes
-(rivers when tagged `water=river|canal` or riverbank); `waterway=river|stream|canal` ways are
-stream centre lines. **The sea** has no polygon in OSM: coastline ways (land on the left) are
-joined, cut at the edge of the world's grid and closed clockwise along it (`osm_water::sea`);
-islands become holes. The height model leaves the sea out, so its surface is fixed at 0 m.
-A world lying entirely in the sea (no coastline crossing it) gets no sea. The Hydrografi
-description below applies to `--hydrografi`.
-
 ### Water (Hydrografi)
+The default. `--osm-water` takes it from OpenStreetMap instead (see the end of this section).
 Lakes (`StandingWater`) and wide rivers (`WatercoursePolygon`) are polygons; streams
 (`WatercourseLine`) are centre lines in the direction the water flows. The service is queried per
 2 km square (CRS84 bounding box, paged, cached like Overpass answers). It has **no surface height,
@@ -366,3 +357,10 @@ cargo test -p osm-import        # classification, roofs, tiling, cache
 # exploration (needs credentials, network): lidar_probe prints class and height statistics
 cargo test -p osm-import lidar_probe -- --ignored --nocapture
 ```
+
+### Water from OpenStreetMap (`--osm-water`)
+Lakes (`natural=water`, riverbanks, reservoirs), rivers and streams come from Overpass, one query per
+2 km block. **The sea** has no polygon in OSM: coastline ways (land on the left) are joined, cut at the
+edge of the world's grid and closed clockwise along it (`osm_water::sea`); islands become holes. The
+height model leaves the sea out, so its surface is fixed at 0 m. A world lying entirely in the sea
+(no coastline crossing it) gets no sea.

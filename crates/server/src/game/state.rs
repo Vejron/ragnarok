@@ -278,6 +278,11 @@ pub struct World {
     /// Buildings hurt since the last tick that need telling about: the damage stage they are in,
     /// and where a blast landed if it leaves a mark. Drained and broadcast reliably by `Game::step`.
     pub fresh_damaged: Vec<FreshDamage>,
+    /// Buildings that have had cells blasted out of them: how they are cut and what is gone.
+    pub carves: HashMap<ObjId, Carving>,
+    /// Bites taken since the last tick, for `Game::step` to broadcast: the building, where the
+    /// blast was (centimetres) and the cells it broke and left hanging.
+    pub fresh_carved: Vec<FreshCarve>,
     /// Where each standing, living player was at the end of each of the last few ticks, newest
     /// last, labelled with the tick number a snapshot of that state carries. Lag compensation
     /// rewinds shots against it.
@@ -314,6 +319,53 @@ impl World {
         Some(DAMAGE_STAGE_HEALTH.iter().filter(|&&percent| left * 100 <= full * percent).count() as u8)
     }
 
+    /// Takes the cells within `radius` metres of `point` out of standing building `id`, and every
+    /// cell that leaves with nothing under it, and swaps its collider for what is left. Returns what
+    /// was cut and whether so little is left that the building should come down. `None` when it
+    /// is not a building that can be carved, or the blast broke nothing.
+    pub fn carve(&mut self, id: ObjId, point: [f32; 3], radius: f32) -> Option<(Cut, bool)> {
+        if !self.carves.contains_key(&id) {
+            let carving = self.cut_building(id)?;
+            self.carves.insert(id, carving);
+        }
+        let carving = self.carves.get_mut(&id)?;
+        let at = point.map(|v| (v * 100.0).round() as i32);
+        let cut = carving.shell.blast(&mut carving.removed, at, (radius * 100.0).round() as i32);
+        if cut.is_empty() {
+            return None;
+        }
+        let ruin = carving.shell.is_ruin(&carving.removed);
+        if !ruin {
+            let mut standing = carving.shell.standing_triangles(&carving.removed);
+            standing.extend_from_slice(&carving.floor);
+            self.physics.replace_building(Obj::Building(id), standing);
+        }
+        self.fresh_carved.push((id, at, cut.clone()));
+        Some((cut, ruin))
+    }
+
+    /// Building `id`'s walls and roof cut into cells, from its triangles in the merged mesh.
+    fn cut_building(&self, id: ObjId) -> Option<Carving> {
+        let index = *self.buildings_by_id.get(&id)?;
+        let building = self.map.buildings.get(index)?;
+        let [start, end] = *self.map.building_triangles.get(index)?;
+        let mesh = &self.map.collision;
+        let end = (end as usize).min(mesh.triangles.len());
+        let start = (start as usize).min(end);
+        let tri = |t: usize| -> Tri {
+            let [a, b, c] = mesh.triangles[t].map(|v| mesh.vertices[v as usize]);
+            [a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]]
+        };
+        let split = |from: usize, count: usize| (from.min(end)..(from + count).min(end)).map(tri).collect::<Vec<_>>();
+        let walls = split(start, building.walls as usize);
+        let roof = split(start + building.walls as usize, building.roof as usize);
+        let floor = (start + building.walls as usize + building.roof as usize).min(end)..end;
+        let floor = floor.map(tri).collect();
+        let shell = Shell::new(&walls, &roof)?;
+        let removed = shell.untouched();
+        Some(Carving { shell, removed, floor })
+    }
+
     /// The building `id` names.
     pub fn building(&self, id: ObjId) -> Option<&Building> {
         self.buildings_by_id.get(&id).and_then(|&index| self.map.buildings.get(index))
@@ -328,3 +380,15 @@ impl World {
 
 /// A building hurt: its identity, its damage stage and where a blast marked it.
 pub type FreshDamage = (ObjId, u8, Option<[f32; 3]>);
+
+/// A building's cells and which of them are gone. Made the first time a blast reaches it.
+pub struct Carving {
+    pub shell: Shell,
+    /// One flag per cell: taken out, by a blast or by having nothing under it.
+    pub removed: Vec<bool>,
+    /// The floor's triangles, which are never carved but stay in the building's collider.
+    pub floor: Vec<Tri>,
+}
+
+/// A building bitten: its identity, where the blast was (cm) and the cells it took.
+pub type FreshCarve = (ObjId, [i32; 3], Cut);

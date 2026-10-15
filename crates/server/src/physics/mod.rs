@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterController};
 use rapier3d::parry::utils::Array2;
 use rapier3d::prelude::*;
+use shared::carve::Tri;
 use shared::consts::*;
 use shared::movement::{begin_slide, decay_knock, desired_translation, settle_vertical};
 use shared::protocol::InputFrame;
@@ -67,6 +68,9 @@ pub struct Physics {
     /// Objects destroyed since the last step. Their colliders go at the start of the next
     /// `step_cars`, which is also what makes the broad-phase forget them.
     removals: Vec<Obj>,
+    /// Buildings to be given a new shape, with its triangles in centimetres, at the start of the
+    /// next step.
+    replacements: Vec<(Obj, Vec<Tri>)>,
     /// How far the playable square reaches from the centre to each side, metres. Planes turn back near it.
     bound: f32,
 }
@@ -241,6 +245,7 @@ impl Physics {
             objects: HashMap::new(),
             handles: HashMap::new(),
             removals: Vec::new(),
+            replacements: Vec::new(),
             bound: from_cm(world.half_extent),
         };
         for (collider, object) in static_colliders(world)? {
@@ -282,6 +287,17 @@ impl Physics {
             self.removals.push(object);
         }
         there
+    }
+
+    /// Gives building `object` a new collider of just `triangles` (centimetres), in place of
+    /// the one it has: a bitten building is a different shape. Like `destroy`, it takes effect
+    /// at the start of the next `step_cars`. Does nothing for an object that is not there.
+    pub fn replace_building(&mut self, object: Obj, triangles: Vec<Tri>) {
+        if !self.handles.contains_key(&object) {
+            return;
+        }
+        self.replacements.retain(|(queued, _)| *queued != object);
+        self.replacements.push((object, triangles));
     }
 
     /// Every building and tree whose collider reaches within `radius` of `point`.

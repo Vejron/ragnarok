@@ -861,9 +861,14 @@ export class VehicleDriver {
   }
 
   /** As `RapierMotor.rebuildBuildings`. */
-  rebuildBuildings(old: RAPIER.Collider | undefined, tile: TileData, destroyed: ReadonlySet<number>): RAPIER.Collider | undefined {
+  rebuildBuildings(
+    old: RAPIER.Collider | undefined,
+    tile: TileData,
+    destroyed: ReadonlySet<number>,
+    carved: ReadonlyMap<number, ReadonlySet<number>> = new Map(),
+  ): RAPIER.Collider | undefined {
     if (old) this.world.removeCollider(old, false)
-    const next = rebuildBuildingCollider(this.world, tile, destroyed) ?? undefined
+    const next = rebuildBuildingCollider(this.world, tile, destroyed, carved) ?? undefined
     if (next && !this.sim) this.world.step()
     return next
   }

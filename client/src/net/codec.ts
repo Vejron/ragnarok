@@ -21,6 +21,7 @@ const S_DESTROYED = 6
 const S_DAMAGED = 7
 const S_HIT = 8
 const S_RTC = 9
+const S_CARVED = 10
 /** A `Hit` bearing for harm with no direction. */
 const BEARING_NONE = -32768
 
@@ -302,6 +303,19 @@ export interface DamagedBuilding {
   mark: [number, number, number] | null
 }
 
+/** Cells a blast took out of a standing building, by `Shell` cell number (`sim/carve.ts`). */
+export interface CarvedBuilding {
+  col: number
+  row: number
+  index: number
+  /** Where the blast landed, metres. */
+  point: [number, number, number]
+  /** The cells it broke. */
+  blasted: number[]
+  /** The cells it left with nothing under them, which came down. */
+  fell: number[]
+}
+
 export interface Score {
   id: number
   kills: number
@@ -374,6 +388,8 @@ export type ServerMessage =
   | { type: 'destroyed'; objects: DestroyedObject[] }
   /** Buildings hurt since the last such message; the first one a joiner gets is every hurt one. */
   | { type: 'damaged'; buildings: DamagedBuilding[] }
+  /** Cells blasted out of standing buildings. `live` is false for the joiner's catch-up: state, not news. */
+  | { type: 'carved'; live: boolean; buildings: CarvedBuilding[] }
   /** Damage you dealt (role 0) or took (role 1); `bearing` is where a taken hit came from, null if nowhere. */
   /** Voice signaling from player `from`, relayed by the server: a session description or ICE candidate as JSON. */
   | { type: 'rtc'; from: number; kind: number; json: string }
@@ -696,6 +712,17 @@ export function decodeServer(bytes: Uint8Array): ServerMessage | null {
         buildings.push({ col: col!, row: row!, index: index!, stage: stage!, mark: marked ? [x! / CM, y! / CM, z! / CM] : null })
       }
       return { type: 'damaged', buildings }
+    }
+    case S_CARVED: {
+      if (raw.length !== 3 || !isInt(raw[1]) || !Array.isArray(raw[2])) return null
+      const buildings: CarvedBuilding[] = []
+      for (const item of raw[2] as unknown[]) {
+        if (!Array.isArray(item) || item.length !== 8) return null
+        const [col, row, index, x, y, z, blasted, fell] = item as [number, number, number, number, number, number, unknown, unknown]
+        if (!ints([col, row, index, x, y, z]) || !Array.isArray(blasted) || !Array.isArray(fell) || !ints(blasted) || !ints(fell)) return null
+        buildings.push({ col, row, index, point: [x / CM, y / CM, z / CM], blasted: blasted as number[], fell: fell as number[] })
+      }
+      return { type: 'carved', live: raw[1] !== 0, buildings }
     }
     case S_RTC:
       if (raw.length !== 4 || !isInt(raw[1]) || !isInt(raw[2]) || typeof raw[3] !== 'string') return null

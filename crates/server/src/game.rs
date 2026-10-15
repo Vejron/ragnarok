@@ -8,6 +8,7 @@ use crate::replication::{Everything, Own, Replica};
 use crate::rng::Rng;
 use anyhow::Result;
 use bytes::Bytes;
+use shared::carve::{Cut, Shell, Tri};
 use shared::consts::*;
 use shared::items::{HOTBAR_SLOTS, ITEM_AK5, ITEM_GRENADE, ITEM_NONE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, def};
 use shared::protocol::*;
@@ -70,6 +71,8 @@ impl Game {
                 destroyed: Vec::new(),
                 fresh_destroyed: Vec::new(),
                 fresh_damaged: Vec::new(),
+                carves: HashMap::new(),
+                fresh_carved: Vec::new(),
                 map,
                 players: BTreeMap::new(),
                 vehicles: BTreeMap::new(),
@@ -166,6 +169,20 @@ impl Game {
         if !hurt.is_empty() {
             let _ = outbox.try_send(Outgoing::Reliable(encode(&Damaged(S_DAMAGED, hurt)).into()));
         }
+        // Cells already gone, as state: the building they were taken from is still standing.
+        let carved: Vec<_> = self
+            .world
+            .carves
+            .iter()
+            .filter(|(object_id, _)| !self.world.destroyed.iter().any(|&(done, _)| done == Obj::Building(**object_id)))
+            .filter_map(|(object_id, carving)| {
+                let gone: Vec<u16> = (0..carving.removed.len()).filter(|&i| carving.removed[i]).map(|i| i as u16).collect();
+                (!gone.is_empty()).then(|| (object_id.col, object_id.row, object_id.index, 0, 0, 0, gone, Vec::new()))
+            })
+            .collect();
+        if !carved.is_empty() {
+            let _ = outbox.try_send(Outgoing::Reliable(encode(&Carved(S_CARVED, 0, carved)).into()));
+        }
         self.outboxes.insert(id, outbox);
         self.replicas.insert(id, Replica::default());
         for mechanic in &mut self.mechanics {
@@ -208,6 +225,7 @@ impl Game {
         self.send_hits();
         self.broadcast_destroyed();
         self.broadcast_damaged();
+        self.broadcast_carved();
         self.drop_stalled();
         self.world.tick = self.world.tick.wrapping_add(1);
         self.world.record_history();
@@ -233,6 +251,18 @@ impl Game {
         }
         let entries = self.world.fresh_destroyed.drain(..).map(|(object, yaw)| destroyed_entry(object, yaw)).collect();
         let bytes = Bytes::from(encode(&Destroyed(S_DESTROYED, entries)));
+        for (&to, outbox) in &self.outboxes {
+            send_reliable(outbox, to, &bytes, &mut self.stalled);
+        }
+    }
+
+    /// Tells everyone which cells blasts took out of buildings this tick, as one message.
+    fn broadcast_carved(&mut self) {
+        if self.world.fresh_carved.is_empty() {
+            return;
+        }
+        let entries = self.world.fresh_carved.drain(..).map(|(id, at, cut)| (id.col, id.row, id.index, at[0], at[1], at[2], cut.blasted, cut.fell)).collect();
+        let bytes = Bytes::from(encode(&Carved(S_CARVED, 1, entries)));
         for (&to, outbox) in &self.outboxes {
             send_reliable(outbox, to, &bytes, &mut self.stalled);
         }

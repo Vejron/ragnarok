@@ -478,6 +478,9 @@ export class Game {
       case 'damaged':
         this.view.damaged(message.buildings)
         break
+      case 'carved':
+        this.view.carved(message.buildings, message.live)
+        break
       case 'scores':
         this.board.replace(message.scores)
         break

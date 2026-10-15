@@ -58,13 +58,13 @@ struct Args {
     /// Leave buildings as boxes of their tagged height instead of fitting roofs to the laser data.
     #[arg(long)]
     no_roofs: bool,
-    /// Leave out lakes, rivers, streams and the sea.
+    /// Leave out lakes, rivers and streams.
     #[arg(long)]
     no_water: bool,
-    /// Take lakes, rivers and streams from Lantmäteriet's Hydrografi Direkt instead of
-    /// OpenStreetMap. It has no sea.
+    /// Take lakes, rivers, streams and the sea from OpenStreetMap instead of Lantmäteriet's
+    /// Hydrografi Direkt. Slower (Overpass), but it has the sea.
     #[arg(long)]
-    hydrografi: bool,
+    osm_water: bool,
     /// Do not render `minimap.png`, the top-down map the client shows, next to the world.
     #[arg(long)]
     no_minimap: bool,
@@ -161,16 +161,16 @@ fn water_map(args: &Args, bbox: [f64; 4], pieces: Option<&[[f64; 4]]>) -> Result
             map.bodies.push(water::Body { kind, rings: polygon.iter().map(|ring| open(local(ring))).filter(|ring| ring.len() >= 3).collect(), level: None });
         }
     };
-    if args.hydrografi {
+    if !args.osm_water {
         let (Some(user), Some(password)) = (std::env::var("LM_USER").ok(), std::env::var("LM_PASS").ok()) else {
-            eprintln!("no LM_USER / LM_PASS: the world has no water");
+            eprintln!("no LM_USER / LM_PASS: the world has no water (or pass --osm-water)");
             return Ok(map);
         };
         let found = match pieces {
             Some(pieces) => hydro::fetch_pieces(pieces, &user, &password),
             None => hydro::fetch([south, west, north, east], &user, &password),
         }
-        .context("Hydrografi failed; retry later or use --no-water")?;
+        .context("Hydrografi failed; retry later, use --osm-water or --no-water")?;
         polygons(&found.lakes, water::Kind::Lake, &mut map);
         polygons(&found.rivers, water::Kind::River, &mut map);
         map.streams = found.streams.iter().map(|line| local(line)).collect();
@@ -181,7 +181,7 @@ fn water_map(args: &Args, bbox: [f64; 4], pieces: Option<&[[f64; 4]]>) -> Result
         Some(pieces) => osm_import::osm_water::fetch_pieces(&args.overpass, pieces, 3, 15),
         None => osm_import::osm_water::fetch_pieces(&args.overpass, &overpass::split([south, west, north, east], args.overpass_chunk), 3, 15),
     }
-    .context("OpenStreetMap water failed; retry later or use --no-water")?;
+    .context("OpenStreetMap water failed; retry later, use Hydrografi or --no-water")?;
     polygons(&found.lakes, water::Kind::Lake, &mut map);
     polygons(&found.rivers, water::Kind::River, &mut map);
     map.streams = found.streams.iter().map(|line| local(line)).collect();

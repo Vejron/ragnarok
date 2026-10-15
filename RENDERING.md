@@ -74,7 +74,7 @@ scene:
 | Effects | `effects.ts` | Muzzle flashes, tracers, sparks, fireballs: `FlashEffects`, below. |
 | Particles | `particles.ts` | Smoke, dust, gravel, sparks and flames: GPU particles, below. |
 | Skidmarks | `skidmarks.ts` | A ring of quads with a birth time, faded in the shader. |
-| Damage | `damage.ts`, `fracture.ts`, `rubble.ts` | Scorch decals, a hurt building's shards, collapses. |
+| Damage | `damage.ts`, `fracture.ts`, `rubble.ts` | Scorch decals, a hurt building's shards, holes blasted through walls and roofs, thrown and falling chunks, collapses. |
 | Trajectory | `trajectory.ts` | The arc a held grenade would take. |
 | Field mortar | `mortar.ts`, `mortar-arc.ts` | A hand-built gun, and the landing marker its gunner aims by. See [VEHICLES-V.md](VEHICLES-V.md). |
 | Contact shadows | `contact.ts` | Blob shadows, below. |

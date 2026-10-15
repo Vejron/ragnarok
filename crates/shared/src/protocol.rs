@@ -24,6 +24,7 @@ pub const S_DESTROYED: u8 = 6;
 pub const S_DAMAGED: u8 = 7;
 pub const S_HIT: u8 = 8;
 pub const S_RTC: u8 = 9;
+pub const S_CARVED: u8 = 10;
 
 /// `Hit` roles: whose feedback it is.
 /// You hurt something.
@@ -518,6 +519,18 @@ pub struct Damaged(pub u8, pub Vec<DamagedEntry>);
 /// One `Damaged` entry: `(col, row, index, stage, marked, x, y, z)`.
 pub type DamagedEntry = (u16, u16, u32, u8, u8, i32, i32, i32);
 
+/// `[10, live, [[col, row, index, x, y, z, [blasted, ...], [fell, ...]], ...]]`, sent on a reliable
+/// stream: to everyone when a blast takes cells out of a standing building, and to a player who just
+/// joined with every cell already gone (`live` 0, so it is state and not news). `(col, row, index)`
+/// is the building's `ObjId`; `(x, y, z)` (cm) is where the blast landed; `blasted` are the cells it
+/// broke and `fell` the cells it left unsupported (`carve::Shell::index`). A joiner's catch-up lists
+/// every removed cell under `blasted`.
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct Carved(pub u8, pub u8, pub Vec<CarvedEntry>);
+
+/// One `Carved` entry.
+pub type CarvedEntry = (u16, u16, u32, i32, i32, i32, Vec<u16>, Vec<u16>);
+
 /// `[8, role, kind, amount, weapon, bearing, x, y, z, target]`, sent on a reliable stream to the one player it is
 /// about, once per tick per `(role, kind)` with the amounts summed. `role` is `HIT_*`: dealt (you
 /// hurt something) or taken (something hurt you or your vehicle); `kind` is `HIT_*` too; `amount`
@@ -617,6 +630,17 @@ mod tests {
         assert_eq!(encode(&message), DAMAGED_FIXTURE);
         assert_eq!(decode::<Damaged>(DAMAGED_FIXTURE), Some(message));
         assert_eq!(peek_tag(DAMAGED_FIXTURE), Some(S_DAMAGED));
+    }
+
+    /// `[10, 1, [[2, 3, 70000, 1000, 20, -1000, [5, 300], [9]]]]`, mirrored in `destruction.spec.ts`.
+    pub const CARVED_FIXTURE: &[u8] = &[147, 10, 1, 145, 152, 2, 3, 206, 0, 1, 17, 112, 205, 3, 232, 20, 209, 252, 24, 146, 5, 205, 1, 44, 145, 9];
+
+    #[test]
+    fn carved_message_matches_the_fixture() {
+        let message = Carved(S_CARVED, 1, vec![(2, 3, 70_000, 1000, 20, -1000, vec![5, 300], vec![9])]);
+        assert_eq!(encode(&message), CARVED_FIXTURE);
+        assert_eq!(decode::<Carved>(CARVED_FIXTURE), Some(message));
+        assert_eq!(peek_tag(CARVED_FIXTURE), Some(S_CARVED));
     }
 
     #[test]
