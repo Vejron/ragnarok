@@ -1,6 +1,7 @@
 import { Fog, Geometry, Material, Mesh, ParticleSystem, Ramp, Scene } from '../../src'
 import { orbit, setup, statsOverlay } from '../common'
 import { CEL_BANDS, SKY } from '../shared/layout'
+import { Shots } from '../shared/shots'
 
 // GPU particles: explosions modelled on the game's (fireball, white core, sparks that bounce on the
 // terrain, smoke column, dust ring, thrown dirt), drifting smoke columns, and `?stress=N` to keep about
@@ -50,6 +51,9 @@ scene.add(ground)
 const particles = new ParticleSystem(Math.max(65536, Math.ceil((stress * 1.3) / 64) * 64))
 particles.setGround(heights, side, side, x0, z0, cell)
 scene.add(particles)
+// Gunfire: the game's shot effects as GPU flash records.
+const shots = new Shots()
+scene.add(shots.flashes)
 
 function explosion(x: number, z: number, radius = 3) {
   const y = height(x, z)
@@ -68,7 +72,7 @@ function explosion(x: number, z: number, radius = 3) {
     life: [1.5, 2.5], size: [0.35, 0.25], color: 0x5a4a30, color2: 0x3a2e1e, alpha: 1, gravity: 9.8, drag: 0.3 })
 }
 
-const tick = statsOverlay(renderer, () => `particles alive ${particles.alive}${stress ? `  (stress ${stress})` : ''}`)
+const tick = statsOverlay(renderer, () => `particles alive ${particles.alive}${stress ? `  (stress ${stress})` : ''}   flashes ${shots.flashes.count}`)
 const move = orbit(canvas, camera, 55, 22)
 let last = performance.now()
 let nextBlast = 0
@@ -80,7 +84,25 @@ const frame = (now: number) => {
   const t = now / 1000
   if (t > nextBlast) {
     nextBlast = t + 0.5
-    explosion((Math.random() - 0.5) * 60, (Math.random() - 0.5) * 60)
+    const x = (Math.random() - 0.5) * 60, z = (Math.random() - 0.5) * 60
+    explosion(x, z)
+    shots.burst({ x, y: height(x, z) + 0.5, z }, 3)
+  }
+  // A machine gun sweeping across the field, and a shotgun going off now and then.
+  if (Math.random() < 0.3) {
+    const from = { x: -40, y: height(-40, 0) + 1.5, z: 0 }
+    const tx = 30, tz = Math.sin(t * 0.7) * 30
+    const to = { x: tx, y: height(tx, tz) + 0.3, z: tz }
+    shots.round(from, to)
+    shots.tracer(from, to, true)
+  }
+  if (Math.random() < 0.03) {
+    const muzzle = { x: 0, y: height(0, 30) + 1.5, z: 30 }
+    shots.blast(muzzle, { x: 0, y: 0.05, z: -1 })
+    for (let i = 0; i < 10; i++) {
+      const px = (Math.random() - 0.5) * 6, pz = 20 + Math.random() * 4
+      shots.pelletStrike({ x: px, y: height(px, pz) + 0.1, z: pz })
+    }
   }
   // Two smoke columns at 30 puffs a second, the fraction carried between frames as the game's burning wrecks do.
   smokeCarry += 30 * dt
@@ -100,6 +122,7 @@ const frame = (now: number) => {
       life: [1, 3], size: [0.3, 0.1], color: 0x66ccff, color2: 0xff66cc, alpha: 0.8, gravity: 0.5 })
   }
   particles.update(dt)
+  shots.flashes.update(dt)
   move(params.has('still') ? 0 : 0.0015)
   renderer.render(scene, camera)
   tick()
