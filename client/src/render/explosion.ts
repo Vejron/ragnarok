@@ -54,8 +54,10 @@ const chunkGeometry = boxGeometry(1, 1, 1)
 export function explosion(world: FxWorld, debris: Debris, at: THREE.Vector3, radius: number, profile: ExplosionProfile) {
   const distance = world.camera.distanceTo(at)
   if (distance > FAR) return
-  // A crowded room thins its blasts before the pools start evicting each other.
-  const budget = world.smoke.alive > 2000 ? 0.5 : 1
+  // A crowded room thins its blasts before the pools start evicting each other. Smoke is drawn blended and
+  // overlaps itself, so what it costs is the pixels it covers, and a few hundred big puffs is already a lot.
+  const alive = world.smoke.alive
+  const budget = alive > 1500 ? 0.4 : alive > 800 ? 0.65 : 1
   const count = (n: number, weight: number) => Math.max(1, Math.round(n * weight * budget))
   const scale = radius / 5
   const surface = world.surfaceAt(at.x, at.z)
@@ -173,7 +175,7 @@ export function explosion(world: FxWorld, debris: Debris, at: THREE.Vector3, rad
       position: [at.x + rand(-1, 1) * scale, at.y + rand(0, 1.5), at.z + rand(-1, 1) * scale],
       velocity: [rand(-0.8, 0.8), rand(2, 4.5) * Math.sqrt(scale), rand(-0.8, 0.8)],
       life: rand(2.5, 4.5),
-      size: [radius * 0.4, radius * rand(1.2, 1.9)],
+      size: [radius * 0.4, radius * rand(1.0, 1.5)],
       // Sooty while hot, greying as it spreads and cools.
       color: profile.wreck ? 0x101010 : i % 2 ? 0x2a2a2a : 0x3a3a3a,
       colorEnd: profile.wreck ? 0x4a4a4a : 0x7a7a7a,

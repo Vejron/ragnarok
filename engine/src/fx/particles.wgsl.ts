@@ -255,7 +255,12 @@ fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) instance: u32) -> 
   out.uv = corner + 0.5;
   // Fades in over the first tenth of its life and out over the rest.
   let rgb = mix(p.color.rgb, p.colorEnd.rgb, t) * p.look.y;
-  out.color = vec4f(rgb, p.color.a * min(1.0, t * 10.0) * (1.0 - t));
+  // A puff that has swallowed the screen is all overdraw and no picture: fade it out as it nears doing so.
+  let centre = frame.viewProj * vec4f(p.posAge.xyz, 1.0);
+  let top = frame.viewProj * vec4f(p.posAge.xyz + up * size * 0.5, 1.0);
+  let cover = abs(top.y - centre.y) / max(centre.w, 0.01);
+  let near = 1.0 - smoothstep(0.7, 1.4, cover);
+  out.color = vec4f(rgb, p.color.a * min(1.0, t * 10.0) * (1.0 - t) * near);
   out.seed = f32(alive[instance] % 97u);
   out.rot = rot;
   out.viewDepth = -(frame.view * vec4f(p.posAge.xyz, 1.0)).z;
@@ -271,9 +276,11 @@ fn linearDepth(d: f32) -> f32 {
   return near * far / (d * (far - near) + near);
 }
 
+// A hash without sin: a puff evaluates this eight times a pixel, and sin made smoke the most expensive thing on screen.
 fn hash(p: vec2f) -> f32 {
-  let h = dot(p, vec2f(127.1, 311.7));
-  return fract(sin(h) * 43758.5453);
+  var q = fract(vec3f(p.x, p.y, p.x) * 0.1031);
+  q += dot(q, q.yzx + 33.33);
+  return fract((q.x + q.y) * q.z);
 }
 
 fn noise(p: vec2f) -> f32 {
@@ -290,8 +297,13 @@ fn fs(in: Out) -> @location(0) vec4f {
     // Billowy edge: noise in the particle's own (spinning) frame, so each puff is a different cloud.
     let q = in.uv - 0.5;
     let r = vec2f(q.x * in.rot.x + q.y * in.rot.y, -q.x * in.rot.y + q.y * in.rot.x);
-    let n = noise(r * 5.0 + in.seed) * 0.6 + noise(r * 11.0 + in.seed * 1.7) * 0.4;
-    edge = smoothstep(0.5, 0.12, length(q) + (n - 0.5) * 0.34);
+    // Past 0.67 the noise cannot bring the edge back, so the corners of the quad skip it.
+    let d = length(q);
+    if (d > 0.67) {
+      discard;
+    }
+    let n = noise(r * 7.0 + in.seed);
+    edge = smoothstep(0.5, 0.12, d + (n - 0.5) * 0.34);
   }
   var alpha = in.color.a * edge;
   if (alpha < 0.01) {
