@@ -125,14 +125,10 @@ The style is flat, bright and few-banded, not physically based.
 - **Roads** are draped ribbons that follow the ground every metre, with a casing and fill layer, and
   round discs at joints. They share the terrain's ramp and sit over it by a depth bias per layer.
 - **Trees** are instanced: one `InstancedMesh` per archetype per tile (at most ten draw calls per
-  tile), built from merged unit-space parts with vertex colours. A broadleaf crown is a loose scatter
-  of 5 to 8 icosphere clumps (12 vertices and 20 triangles each, seeded so it is the same every load) over a few slim
-  limbs, so there are gaps to see into and a person standing in or under one can be spotted; a spruce
-  is five separate tiers. Normals are smoothed per vertex, so the faces read as bold shapes rather
-  than a faceted mesh. The tree material has `nearFade` set: surfaces within 2.5 m of the eye dissolve
-  in a 4×4 ordered dither (`standard.wgsl.ts`), so standing in a crown, or behind a felled one, you
-  still see what you aim at. The shadow pass ignores it. A felled tree's instance is scaled to nothing
-  in place and a standalone copy tips over (`falling.ts`) and stays as cover.
+  tile), built from merged unit-space parts with vertex colours. The parts are low-poly: a crown
+  sphere is a 42-vertex icosphere, a cone is seven-sided, trunks have six sides. Normals are smoothed
+  per vertex, so the faces read as bold shapes rather than a faceted mesh. A felled tree's instance
+  is scaled to nothing in place.
 - **Materials are shared** where they can be (per colour for buildings and terrain). Materials cost no
   shader compile in this engine (only the render state picks a pipeline), but sharing keeps the table
   small; only a tile's own cover texture and instance buffers are per-tile and are freed with it
