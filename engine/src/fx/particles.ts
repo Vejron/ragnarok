@@ -313,12 +313,13 @@ class ParticleGpu {
   }
 
   ensureRender(ctx: EffectContext) {
-    const key = `${ctx.targetsVersion}|${ctx.sampleCount}`
+    const key = `${ctx.targetsVersion}|${ctx.sampleCount}|${ctx.depthSamples}|${ctx.half}`
     if (key === this.renderKey) return
     this.renderKey = key
     const device = this.device
-    const multisampled = ctx.sampleCount > 1
-    if (this.renderMultisampled !== multisampled) {
+    const multisampled = ctx.depthSamples > 1
+    const modeKey = `${multisampled}|${ctx.half}|${ctx.sampleCount}`
+    if (this.renderMode !== modeKey) {
       const layout = device.createBindGroupLayout({
         label: 'particles render',
         entries: [
@@ -327,11 +328,16 @@ class ParticleGpu {
           { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth', multisampled } },
         ],
       })
-      const module = device.createShaderModule({ label: 'particles render', code: particleRenderWgsl(multisampled) })
+      const module = device.createShaderModule({ label: 'particles render', code: particleRenderWgsl(multisampled, ctx.half) })
       const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [ctx.sceneLayout, layout] })
+      // The half-resolution target collects premultiplied colour and coverage (it starts clear), so additive
+      // light must leave coverage alone: the composite then adds it without dimming what is under it.
       const blends: GPUBlendState[] = [
         { color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha' }, alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' } },
-        { color: { srcFactor: 'src-alpha', dstFactor: 'one' }, alpha: { srcFactor: 'src-alpha', dstFactor: 'one' } },
+        {
+          color: { srcFactor: 'src-alpha', dstFactor: 'one' },
+          alpha: ctx.half ? { srcFactor: 'zero', dstFactor: 'one' } : { srcFactor: 'src-alpha', dstFactor: 'one' },
+        },
       ]
       this.renderPipelines = blends.map((blend, i) => device.createRenderPipeline({
         label: i ? 'particles additive' : 'particles alpha',
@@ -340,10 +346,10 @@ class ParticleGpu {
         fragment: { module, entryPoint: 'fs', targets: [{ format: ctx.colorFormat, blend }] },
         primitive: { topology: 'triangle-list' },
         // Tested against the scene's depth (reversed: nearer is larger), never written.
-        depthStencil: { format: ctx.depthFormat, depthWriteEnabled: false, depthCompare: 'greater-equal' },
+        depthStencil: ctx.half ? undefined : { format: ctx.depthFormat, depthWriteEnabled: false, depthCompare: 'greater-equal' },
         multisample: { count: ctx.sampleCount },
       }))
-      this.renderMultisampled = multisampled
+      this.renderMode = modeKey
       this.renderLayout = layout
     }
     this.renderGroups = [0, 1].map((blend) => device.createBindGroup({
@@ -358,7 +364,7 @@ class ParticleGpu {
   }
 
   private renderLayout: GPUBindGroupLayout | null = null
-  private renderMultisampled: boolean | null = null
+  private renderMode: string | null = null
 
   /** Every few frames, copies the dead count out for `alive`; the read completes after the submit. */
   readCount(encoder: GPUCommandEncoder, done: (dead: number) => void) {

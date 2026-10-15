@@ -8,7 +8,12 @@ export interface EffectContext {
   sceneGroup: GPUBindGroup
   /** The scene's depth, readable while effects draw (the effects pass holds it read-only). */
   depthView: GPUTextureView
+  /** Samples per pixel of the target being drawn into (1 for the half-resolution target). */
   sampleCount: number
+  /** Samples per pixel of `depthView`, which is always the full-resolution scene depth. */
+  depthSamples: number
+  /** True while drawing into the half-resolution target: no depth attachment, depth is only sampled. */
+  half: boolean
   colorFormat: GPUTextureFormat
   depthFormat: GPUTextureFormat
   /** Changes when the render targets are recreated (a resize): bind groups holding `depthView` must be rebuilt. */
@@ -23,6 +28,11 @@ export interface EffectContext {
  */
 export abstract class Effect extends Node {
   renderOrder = 0
+  /**
+   * Draw at half the screen's width and height and blend the result over the image, for effects that are
+   * mostly large soft overdraw (smoke), where cost goes with the pixels covered. Drawn before the others.
+   */
+  halfResolution = false
 
   abstract prepare(ctx: EffectContext, encoder: GPUCommandEncoder): void
 

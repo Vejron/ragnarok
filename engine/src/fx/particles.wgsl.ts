@@ -199,7 +199,15 @@ fn simulate(@builtin(global_invocation_id) id: vec3u) {
 `
 
 /** Billboards built from the particle buffer: no vertex attributes, six vertices per particle. */
-export function particleRenderWgsl(multisampled: boolean) {
+export function particleRenderWgsl(multisampled: boolean, half = false) {
+  // At half resolution one pixel stands for four of the scene's: the nearest depth of the four, so smoke is
+  // hidden a little too much at an edge rather than drawn over the thing in front of it.
+  const sceneDepth = half
+    ? `let c = vec2i(in.clip.xy) * 2;
+  let d = max(max(textureLoad(sceneDepth, c, 0), textureLoad(sceneDepth, c + vec2i(1, 0), 0)),
+    max(textureLoad(sceneDepth, c + vec2i(0, 1), 0), textureLoad(sceneDepth, c + vec2i(1, 1), 0)));
+  let scene = linearDepth(d);`
+    : 'let scene = linearDepth(textureLoad(sceneDepth, vec2i(in.clip.xy), 0));'
   return /* wgsl */ `
 ${COMMON_WGSL}
 ${PARTICLE_STRUCT}
@@ -310,7 +318,7 @@ fn fs(in: Out) -> @location(0) vec4f {
     discard;
   }
   // Soft particles: fade out where the billboard nears what is behind it instead of cutting into it.
-  let scene = linearDepth(textureLoad(sceneDepth, vec2i(in.clip.xy), 0));
+  ${sceneDepth}
   alpha *= clamp((scene - in.viewDepth) / max(in.size * 0.5, 0.05), 0.0, 1.0);
   var rgb = in.color.rgb;
   if ((in.flags & PF_NO_FOG) == 0u && frame.fog.z > 0.0) {

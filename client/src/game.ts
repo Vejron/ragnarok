@@ -166,7 +166,7 @@ export class Game {
   private readonly effects = new Effects()
   private readonly damageNumbers = new DamageNumbers()
   /** Tyre smoke, dust, gravel and spray; sparks and flames glow on their own pool. */
-  private readonly smoke = new Particles(4096)
+  private readonly smoke = new Particles(4096, false, true)
   private readonly glow = new Particles(2048, true)
   private readonly skids = new Skidmarks()
   private readonly vehicleFx = new Map<number, VehicleFx>()

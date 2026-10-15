@@ -57,13 +57,15 @@ export class Particles {
   private fieldAt = { x: Infinity, z: Infinity, time: -Infinity }
   private focus = { x: 0, z: 0 }
 
-  constructor(capacity = 3000, additive = false) {
+  constructor(capacity = 3000, additive = false, halfResolution = false) {
     this.capacity = capacity
     this.blend = additive ? 'additive' : 'alpha'
     // The GPU pool is sized in blocks of 64.
     this.root = new ParticleSystem(Math.ceil(capacity / 64) * 64)
     // The particles are anywhere in the world, so there is no bounding sphere to cull by; effects draw after meshes.
     this.root.renderOrder = additive ? 3 : 2
+    // Smoke is big soft overdraw; drawn at half the screen's size it costs a quarter and looks the same.
+    this.root.halfResolution = halfResolution
   }
 
   /** How many particles are alive. */

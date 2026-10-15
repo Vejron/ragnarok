@@ -11,6 +11,7 @@ import { STANDARD_WGSL } from './materials/standard.wgsl'
 import { Frustum } from './math/frustum'
 import * as mat4 from './math/mat4'
 import { Bloom } from './passes/bloom'
+import { HalfResolution } from './passes/halfres'
 import { MAX_POINT_LIGHTS, PointLights } from './scene/lights'
 import { outputWgsl } from './passes/output.wgsl'
 import type { PerspectiveCamera } from './scene/camera'
@@ -149,6 +150,7 @@ export class Renderer {
   private readonly effects: Effect[] = []
   /** Bumped when the render targets are recreated, for effects holding views of them. */
   private targetsVersion = 0
+  private readonly halfResolution: HalfResolution
   private readonly mainBatches: Batch[] = []
   private readonly shadowBatches: Batch[] = []
   private camX = 0
@@ -234,6 +236,7 @@ export class Renderer {
       primitive: { topology: 'triangle-list' },
     })
     this.bloom = new Bloom(device)
+    this.halfResolution = new HalfResolution(device, HDR_FORMAT)
     this.bloomSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' })
     this.outputUniform = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.setSize(canvas.clientWidth || 1, canvas.clientHeight || 1, 1)
@@ -271,6 +274,7 @@ export class Renderer {
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     })
     this.bloom.resize(w, h, this.hdrTarget)
+    this.halfResolution.release()
     this.outputGroup = this.device.createBindGroup({
       layout: this.outputPipeline.getBindGroupLayout(0),
       entries: [
@@ -334,7 +338,11 @@ export class Renderer {
     for (const effect of this.effects) effect.prepare(effects, encoder)
     if (this.shadowsOn) this.shadowPass(encoder)
     this.mainPass(encoder, scene)
-    if (this.effects.length) this.effectsPass(encoder, effects)
+    if (this.effects.length) {
+      const half = this.effects.some((e) => e.halfResolution)
+      if (half) this.halfResolutionPass(encoder, effects)
+      this.effectsPass(encoder, effects, half)
+    }
     if (this.overlay.length) this.overlayPass(encoder)
     const bloom = scene.bloom
     if (bloom && bloom.strength > 0) this.bloom.encode(encoder, bloom.threshold, bloom.knee, bloom.radius)
@@ -684,6 +692,8 @@ export class Renderer {
       sceneGroup: this.sceneGroup!,
       depthView: this.depthTarget!.createView(),
       sampleCount: this.sampleCount,
+      depthSamples: this.sampleCount,
+      half: false,
       colorFormat: HDR_FORMAT,
       depthFormat: DEPTH_FORMAT,
       targetsVersion: this.targetsVersion,
@@ -748,7 +758,7 @@ export class Renderer {
   }
 
   /** Particles and other effects, over everything else, with the scene's depth bound read-only. */
-  private effectsPass(encoder: GPUCommandEncoder, ctx: EffectContext) {
+  private effectsPass(encoder: GPUCommandEncoder, ctx: EffectContext, composite: boolean) {
     const msaa = this.colorTarget !== null
     const pass = encoder.beginRenderPass({
       label: 'effects',
@@ -761,7 +771,24 @@ export class Renderer {
       depthStencilAttachment: { view: ctx.depthView, depthReadOnly: true },
       timestampWrites: this.timer.pass('effects'),
     })
-    for (const effect of this.effects) this.stats.drawCalls += effect.draw(ctx, pass)
+    if (composite) {
+      this.halfResolution.composite(pass, this.sampleCount, DEPTH_FORMAT)
+      this.stats.drawCalls++
+    }
+    for (const effect of this.effects) if (!effect.halfResolution) this.stats.drawCalls += effect.draw(ctx, pass)
+    pass.end()
+  }
+
+  /** The effects that ask for it, at half the screen's size, into a target cleared to nothing. */
+  private halfResolutionPass(encoder: GPUCommandEncoder, ctx: EffectContext) {
+    this.halfResolution.ensure(this.width, this.height)
+    const pass = encoder.beginRenderPass({
+      label: 'effects half',
+      colorAttachments: [{ view: this.halfResolution.view!, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
+      timestampWrites: this.timer.pass('effectsHalf'),
+    })
+    const half: EffectContext = { ...ctx, sampleCount: 1, half: true }
+    for (const effect of this.effects) if (effect.halfResolution) this.stats.drawCalls += effect.draw(half, pass)
     pass.end()
   }
 

@@ -21,7 +21,8 @@ game.frame()
         ├─ effect prepare   compute: particle emit + simulate
         ├─ shadow pass      sun depth map
         ├─ main pass        4× MSAA, rgba16float, reversed depth
-        ├─ effects pass     particles, ribbons + flashes, depth read-only
+        ├─ effects half     smoke at half resolution into its own target (`halfResolution` effects)
+        ├─ effects pass     that target laid over, then particles, ribbons + flashes, depth read-only
         ├─ overlay pass     the gunsight, over everything
         ├─ bloom            bright extract → mip chain → add back (when `scene.bloom`)
         └─ output pass      ink from depth, bloom, tone mapping, sRGB     → canvas
@@ -144,6 +145,14 @@ after the solid scene, with the scene's depth bound read-only so they can be sof
   that the vertex shader evaluates, so nothing is touched per frame and a shotgun blast is one or two
   draws instead of 60 meshes with 60 materials. A "ball" is a flat disc; a tracer is a camera-facing
   strip. `bright` pieces ignore fog.
+- **Half resolution.** An effect with `halfResolution = true` (the alpha smoke pool) draws into a
+  half-width, half-height target, cleared to nothing, with no depth attachment: its soft-particle
+  fade reads the nearest of the four full-resolution depths each pixel covers, so smoke errs towards
+  hiding at an edge rather than painting over what is in front. The target holds premultiplied colour
+  and coverage and is blended over the image at the start of the effects pass. Smoke is big, soft
+  overdraw whose cost goes with pixels covered, so this quarters it (the barrage of a dozen overlapping
+  wrecks and shells at 2560×1600 went from about 35 ms to about 12 ms of GPU time). Small hard
+  particles (sparks, gravel) are in the full-resolution additive pool and stay sharp.
 - **`Particles`** (`particles.ts`, over the engine's `ParticleSystem`): smoke, dust, gravel, spray,
   sparks and flames, 4096 alpha-blended and 2048 additive. A particle can change colour over its life
   (`colorEnd`: fire cooling to ember red, soot greying), spin, stretch along its velocity (`stretch`:
