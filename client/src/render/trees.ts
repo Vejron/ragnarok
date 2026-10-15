@@ -112,7 +112,7 @@ function prototypes() {
     for (const [kind, parts] of Object.entries(PROTOTYPES)) {
       geometries.set(Number(kind), Geometry.merge(parts.map(partGeometry)))
     }
-    shared = { geometries, material: toonMaterial({ vertexColors: true }) }
+    shared = { geometries, material: toonMaterial({ vertexColors: true, nearFade: 2.5 }) }
   }
   return shared
 }
