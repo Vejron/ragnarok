@@ -897,10 +897,16 @@ export class Game {
         } else {
           this.effects.tracer(from, to, landed)
         }
+        this.muzzleLight(from, 0xffd890, 1.6, 6)
       }
       const at = from ?? to
       this.sounds.gunshot([at.x, at.y, at.z], gun.sound)
     }
+  }
+
+  /** A short flash of light at a gun's muzzle: it lights the barrel, the hull and the ground in front of it. */
+  private muzzleLight(at: THREE.Vector3, color: number, intensity: number, radius: number) {
+    this.scene.scene.lights.flash(at.x, at.y, at.z, { color, intensity, radius, life: 0.09 })
   }
 
   /** A heavy blast: the layered fire, sparks, dust and debris, a flash, and a shove of the camera if it is close. */
@@ -1282,6 +1288,11 @@ export class Game {
       this.smokeOwed.get(id) ?? 0,
     )
     this.smokeOwed.set(id, owed)
+    // A burning wreck lights its surroundings with a flicker. Each light lives a fraction of a second, so one per frame holds it.
+    if (state.hp === 0) {
+      const flicker = 0.7 + 0.3 * Math.sin(performance.now() * 0.021 + id * 1.7) * Math.sin(performance.now() * 0.0073 + id)
+      this.scene.scene.lights.flash(position[0], position[1] + 1.5, position[2], { color: 0xff7a24, intensity: 2.2 * flicker, radius: 16, life: 0.08 })
+    }
   }
 
   /**
@@ -1334,6 +1345,7 @@ export class Game {
     const length = tank instanceof HeliModel ? HELI_GUN_LENGTH : tank instanceof WalkerModel ? WALKER_GUN_LENGTH : tank instanceof StrvModel ? STRV_BARREL_LENGTH : tank instanceof MortarModel ? MORTAR_BARREL_LENGTH : TANK_BARREL_LENGTH
     const muzzle = origin.clone().addScaledVector(direction, length)
     this.effects.muzzleFlash(muzzle, direction)
+    this.muzzleLight(muzzle, 0xffc060, 4, 14)
     if (tank instanceof WalkerModel) this.sounds.laser([muzzle.x, muzzle.y, muzzle.z])
     else this.sounds.cannon([muzzle.x, muzzle.y, muzzle.z], tank instanceof TankModel)
     if (seats[tank instanceof WalkerModel || tank instanceof StrvModel || tank instanceof MortarModel ? 0 : 1] === this.localId) this.lastShotAt = performance.now()
