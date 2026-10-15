@@ -1,0 +1,21 @@
+{
+  "name": "@ragnarok/engine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A small WebGPU-only renderer: one storage buffer of objects, few pipelines, GPU particles.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "vite",
+    "test": "vitest",
+    "type-check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@webgpu/types": "^0.1.60",
+    "typescript": "~5.9.3",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.3"
+  }
+}

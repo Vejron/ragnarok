@@ -1,0 +1,60 @@
+/**
+ * Declarations shared by every scene shader: the per-frame uniforms and the object and material records.
+ * The layouts must match the writers in `renderer.ts` (FRAME_FLOATS, OBJECT_FLOATS, MATERIAL_FLOATS).
+ */
+export const COMMON_WGSL = /* wgsl */ `
+struct Frame {
+  viewProj: mat4x4f,
+  view: mat4x4f,
+  cameraPos: vec4f,
+  // Unit vector toward the sun.
+  sunDir: vec4f,
+  // Colour times intensity.
+  sunColor: vec4f,
+  hemiSky: vec4f,
+  hemiGround: vec4f,
+  fogColor: vec4f,
+  // near, far, on (0 or 1), time in seconds.
+  fog: vec4f,
+  // width, height, 1/width, 1/height in pixels.
+  viewport: vec4f,
+  shadowMatrix: mat4x4f,
+  // texel size, blur radius in texels, on (0 or 1), unused.
+  shadow: vec4f,
+}
+
+struct Object {
+  model: mat4x4f,
+  tint: vec4f,
+  // material index, flags (OBJ_*), unused, unused.
+  misc: vec4u,
+}
+
+struct Material {
+  // linear rgb, opacity.
+  color: vec4f,
+  emissive: vec4f,
+  // flags (MAT_*), ramp row, unused, unused.
+  params: vec4u,
+}
+
+const MAT_LIT = 1u;
+const MAT_VERTEX_COLORS = 2u;
+const MAT_FOG = 4u;
+const OBJ_RECEIVE_SHADOW = 1u;
+const PI = 3.141592653589793;
+
+@group(0) @binding(0) var<uniform> frame: Frame;
+@group(0) @binding(1) var<storage, read> objects: array<Object>;
+@group(0) @binding(2) var<storage, read> materials: array<Material>;
+
+// The inverse-transpose of the model's upper 3×3, up to scale: the cofactor matrix. Normals only need
+// direction, so this handles non-uniform scale without a per-object normal matrix.
+fn normalMatrix(m: mat4x4f) -> mat3x3f {
+  let c0 = m[0].xyz;
+  let c1 = m[1].xyz;
+  let c2 = m[2].xyz;
+  let cof = mat3x3f(cross(c1, c2), cross(c2, c0), cross(c0, c1));
+  return cof * sign(dot(c0, cof[0]));
+}
+`

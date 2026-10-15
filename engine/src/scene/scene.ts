@@ -1,0 +1,48 @@
+import { Color, Vec3 } from '../math/vec'
+import { Node } from './node'
+
+/** The sun: a directional light shining from `position` toward `target`, both in world space. */
+export class Sun {
+  readonly color = new Color(1, 1, 1)
+  intensity = 1
+  readonly position = new Vec3(0, 1, 0)
+  readonly target = new Vec3(0, 0, 0)
+  readonly shadow = new SunShadow()
+}
+
+/** The sun's shadow: a square of `span` metres around the sun's target, rendered from the sun. */
+export class SunShadow {
+  enabled = false
+  /** Texels along each side of the map. */
+  mapSize = 2048
+  span = 100
+  /** How far casters may be from the target along the sun's direction, metres. */
+  depth = 200
+  /** Blur of the shadow edge, in texels. */
+  radius = 1
+}
+
+/** Sky light from above blending to bounce light from below, by how much a surface faces up. */
+export class Hemisphere {
+  readonly sky = new Color(1, 1, 1)
+  readonly ground = new Color(0.5, 0.5, 0.5)
+  intensity = 1
+}
+
+/** Linear distance fog, from no fog at `near` to all fog at `far` (view depth, metres). */
+export class Fog {
+  readonly color = new Color(1, 1, 1)
+  constructor(public near = 100, public far = 1000) {}
+}
+
+export type ToneMapping = 'none' | 'neutral'
+
+/** The root of what is drawn, with the lighting and atmosphere that apply to all of it. */
+export class Scene extends Node {
+  readonly background = new Color(0, 0, 0)
+  readonly sun = new Sun()
+  readonly hemisphere = new Hemisphere()
+  fog: Fog | null = null
+  toneMapping: ToneMapping = 'none'
+  exposure = 1
+}
