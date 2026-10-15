@@ -7,7 +7,7 @@ file is about the *pipeline*. The code is `crates/osm-import`.
 ```
 OpenStreetMap (Overpass) ─┐  buildings, roads, ground cover
 Lantmäteriet DTM  ────────┤  terrain heights ──► ground grid
-Lantmäteriet Hydrografi ──┤  lakes, rivers, streams ► water surface, carved beds
+OpenStreetMap water ──────┤  lakes, rivers, streams, sea ► water surface, carved beds
 Lantmäteriet laser ───────┤  roof shapes ──────► buildings' roofs
                           │  canopy ───────────► trees (every tree in the woods too)
 Umeå tree register ───────┘  planted trees ────► archetypes by species
@@ -33,7 +33,8 @@ Restart the server afterwards: it reads the whole world at start. The importer c
 | `--tile m` | Tile side, default 250 m. |
 | `--cell m` | Terrain sample spacing, default 5 m, must divide `--tile`. `0` is flat ground and needs no credentials. |
 | `--dem file.tif` | Take elevation from a local DTM GeoTIFF instead of Lantmäteriet. |
-| `--no-water` | Leave out lakes, rivers and streams (skips the Hydrografi download). |
+| `--no-water` | Leave out lakes, rivers, streams and the sea (skips the water download). |
+| `--hydrografi` | Take lakes, rivers and streams from Lantmäteriet's Hydrografi Direkt instead of OpenStreetMap (needs `LM_USER` / `LM_PASS`). It has no sea. |
 | `--no-roofs` | Buildings stay boxes of their tagged height. The point cloud (the slowest and biggest download) is then only read for trees; add `--no-lidar-trees` to skip it completely. |
 | `--no-trees` | Skip the tree register. |
 | `--no-minimap` | Skip `minimap.png`, the pre-rendered top-down map (2048 px, written next to `world.msgpack`) that the client shows as minimap and map. |
@@ -62,6 +63,7 @@ Without credentials the importer says so and builds buildings as boxes; terrain 
 |---|---|---|---|---|
 | **Dev** | `client/public/dev/` (git-ignored) | ~7.9 km², 2.8 km square around 63.83976, 20.31514 (Mariehem, Umeå), 121 tiles of 256 m, ground every 4 m plus a 1 m slope map (`--cell 4 --detail 1`) | `scripts/world-dev.sh` | day-to-day development: quick to import, load and stream |
 | **Big** | `client/public/world.msgpack` + `tiles/` + `minimap.png` (git-ignored) | 8.6 km square, Backen to Nydala | `scripts/world.sh` | production (what `Dockerfile` and `scripts/deploy.sh` ship), and checking things at full scale |
+| **Editor worlds** | `worlds/<name>/` (`area.json` is committed, the generated files are git-ignored) | any shape: the painted 250 m tiles of the global grid | the map editor (below), or `osm-import --area worlds/<name>/area.json --out worlds/<name>/world.msgpack` | playing a chosen part of the map |
 | **Fixture** | `fixtures/world/` (committed) | small synthetic city | `--synthetic --out fixtures/world/world.msgpack` | server and client tests only |
 
 They never touch each other's files: the dev world lives in its own directory, and all of them share
@@ -105,6 +107,36 @@ into the image and sets `RAGNAROK_WORLD=/app/world.msgpack`, and `scripts/deploy
 are missing. Generate it on the machine that has the cache (see below) and don't `--refresh`
 casually: a re-import is only byte-identical given the same cache. `scripts/deploy.sh` removes
 `client/dist/dev` after the build so the dev world is never shipped.
+
+### Painting a world (map editor)
+
+```sh
+cargo run -p editor                 # API on :8700 (reads LM_USER/LM_PASS from .env.local)
+cd client && npm run dev            # open http://localhost:5173/editor.html
+```
+
+Paint 250 m tiles on OpenStreetMap, name the world and save it (`worlds/<name>/area.json`, a list of
+`{gx, gy}` tiles of the global grid). **Download** fills the importer's cache for the blocks the
+tiles lie in, **Generate world** runs `osm-import --area` on it, and **use** makes it the active
+world: restart the server (it reads `worlds/active.json`, unless `RAGNAROK_WORLD` is set) and reload the
+game (in dev the client reads the same file; `VITE_WORLD_BASE` overrides).
+
+How it works:
+
+- **One global grid.** Tiles are indexed `(gx, gy)` from a fixed anchor (`grid::ORIGIN`, central
+  Umeå) and longitude is scaled at one fixed latitude for every world (`shared::world::SCALE_LATITUDE`),
+  so a tile is the same ground whichever world it is in.
+- **Downloads are per 2 km block of that grid** (8 x 8 tiles). The cache key of a block's Overpass,
+  Hydrografi and tree requests depends on the block only, so worlds share entries, and the editor
+  can tell which blocks are cached from the keys without downloading (`grid::Block::status`). The
+  height model and laser blocks were already shared.
+- **The world is the smallest square of tiles that holds the painted ones**, centred on it, with
+  only the painted tiles in the manifest. A tile not listed is outside the world: it has no ground,
+  nothing is generated there (and no elevation is downloaded for it), spawns and pickups avoid it, and
+  the server and client put boundary walls along its edge (`boundary_walls` / `boundaryWalls`).
+- **Not done yet:** the laser data is read for the whole bounding square, not only the painted
+  tiles; the client's ground plane and minimap still cover the square; planes still turn back at
+  the square's edge, not the shape's.
 
 ### Making another world
 
@@ -181,6 +213,16 @@ Triangles go into the tile of their position, listed in `Tile.bridges` as `(firs
 ranges; trees within 4 m of a bridge's edge are dropped (over water they are the laser's reading of
 the pylon and cables). Bridge roads never offer spawns. Deck heights over the Umeälven can be
 tuned by `clearance` in `bridge.rs`.
+
+### Water (OpenStreetMap)
+By default water comes from Overpass, one extra query per 2 km block (cached like the others):
+`natural=water`, `waterway=riverbank` and `landuse=reservoir` ways and multipolygons are lakes
+(rivers when tagged `water=river|canal` or riverbank); `waterway=river|stream|canal` ways are
+stream centre lines. **The sea** has no polygon in OSM: coastline ways (land on the left) are
+joined, cut at the edge of the world's grid and closed clockwise along it (`osm_water::sea`);
+islands become holes. The height model leaves the sea out, so its surface is fixed at 0 m.
+A world lying entirely in the sea (no coastline crossing it) gets no sea. The Hydrografi
+description below applies to `--hydrografi`.
 
 ### Water (Hydrografi)
 Lakes (`StandingWater`) and wide rivers (`WatercoursePolygon`) are polygons; streams

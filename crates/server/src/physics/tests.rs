@@ -321,3 +321,38 @@ fn getting_up_is_refused_under_a_low_roof() {
     assert!(character.prone, "stood up into the roof: {:?}", character.position);
     assert!(character.position[1] < 1.0, "rose through the roof: {:?}", character.position);
 }
+
+/// A 2 × 2 grid of 100 m tiles where the south-east tile is not part of the world (an L).
+fn l_shaped_world() -> WorldFile {
+    WorldFile { version: WORLD_VERSION, half_extent: 10_000, tile_size: 10_000, inside: vec![true, true, true, false], ..Default::default() }
+}
+
+#[test]
+fn the_world_can_be_any_shape() {
+    let world = l_shaped_world();
+    assert!(world.is_inside(-5_000, -5_000));
+    assert!(world.is_inside(5_000, -5_000), "north-east tile");
+    assert!(world.is_inside(-5_000, 5_000), "south-west tile");
+    assert!(!world.is_inside(5_000, 5_000), "the missing tile");
+    assert!(!world.is_inside(10_001, 0), "beyond the square");
+}
+
+#[test]
+fn walls_follow_the_edge_of_an_l_shaped_world() {
+    // Standing in the south-west tile and walking east (+X) reaches the notch's wall at x = 0.
+    let physics = Physics::new(&l_shaped_world()).unwrap();
+    let mut character = standing();
+    character.position = [-50.0, 1.0, 50.0];
+    let east = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: -1571, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0 };
+    for _ in 0..TICK_RATE * 20 {
+        physics.move_character(&mut character, &east, TICK_DT);
+    }
+    assert!(character.position[0] < 0.0, "walked into the missing tile: {:?}", character.position);
+    // Walking east in the north row is free until the outer wall at x = 100.
+    let mut character = standing();
+    character.position = [-50.0, 1.0, -50.0];
+    for _ in 0..TICK_RATE * 20 {
+        physics.move_character(&mut character, &east, TICK_DT);
+    }
+    assert!(character.position[0] > 50.0 && character.position[0] < 100.0, "{:?}", character.position);
+}

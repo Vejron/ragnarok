@@ -28,8 +28,18 @@ pub struct Hydro {
     pub streams: Vec<Vec<LatLon>>,
 }
 
+/// The first page's URL for a collection and box: the cache key of that request.
+pub fn first_url(collection: &str, [south, west, north, east]: [f64; 4]) -> String {
+    format!("{ITEMS}/{collection}/items?f=json&limit={PAGE}&bbox={west},{south},{east},{north}")
+}
+
 /// Fetches the water inside `bbox` (`[south, west, north, east]`).
 pub fn fetch(bbox: [f64; 4], user: &str, password: &str) -> Result<Hydro> {
+    fetch_pieces(&split(bbox, CHUNK), user, password)
+}
+
+/// Fetches the water in each of `pieces`; the pieces are the cache's unit.
+pub fn fetch_pieces(pieces: &[[f64; 4]], user: &str, password: &str) -> Result<Hydro> {
     let client = reqwest::blocking::Client::builder()
         .user_agent(concat!("ragnarok-osm-import/", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(120))
@@ -37,8 +47,8 @@ pub fn fetch(bbox: [f64; 4], user: &str, password: &str) -> Result<Hydro> {
     let mut hydro = Hydro::default();
     for collection in ["StandingWater", "WatercoursePolygon", "WatercourseLine"] {
         let mut seen = HashSet::new();
-        for [south, west, north, east] in split(bbox, CHUNK) {
-            let mut url = Some(format!("{ITEMS}/{collection}/items?f=json&limit={PAGE}&bbox={west},{south},{east},{north}"));
+        for &[south, west, north, east] in pieces {
+            let mut url = Some(first_url(collection, [south, west, north, east]));
             while let Some(current) = url.take() {
                 let text = get(&client, &current, user, password).with_context(|| format!("Hydrografi {collection}"))?;
                 let page: Value = serde_json::from_str(&text).context("Hydrografi returned invalid JSON")?;

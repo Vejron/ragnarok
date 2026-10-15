@@ -31,6 +31,9 @@ const ARRIVED: f32 = 0.3;
 
 /// Ground height at `x`, `z` if it is open ground (nothing, such as a roof, above it).
 fn open_ground(world: &World, x: f32, z: f32) -> Option<f32> {
+    if !world.map.is_inside((x * 100.0) as i32, (z * 100.0) as i32) {
+        return None;
+    }
     let ground = world.map.ground.height_at(x, z);
     let top = ground + 40.0;
     let floor = world.physics.cast_ray([x, top, z], [0.0, -1.0, 0.0], 80.0, 0).map(|t| top - t)?;
@@ -41,7 +44,7 @@ fn open_ground(world: &World, x: f32, z: f32) -> Option<f32> {
 pub fn home(world: &World) -> [f32; 2] {
     let [x, z] = project(world.map.origin, ROOSTER_HOME.0, ROOSTER_HOME.1);
     let half = from_cm(world.map.half_extent) as f64 - 10.0;
-    if x.abs() < half && z.abs() < half {
+    if x.abs() < half && z.abs() < half && world.map.is_inside((x * 100.0) as i32, (z * 100.0) as i32) {
         return [x as f32, z as f32];
     }
     world.map.spawns.first().map_or([0.0, 0.0], |s| [from_cm(s[0]), from_cm(s[1])])

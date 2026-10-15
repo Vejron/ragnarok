@@ -14,16 +14,25 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 9;
+pub const WORLD_VERSION: u8 = 10;
 
 /// Metres per degree of latitude; longitude is scaled by cos(latitude).
 pub const METRES_PER_DEG_LAT: f64 = 110_540.0;
 pub const METRES_PER_DEG_LON: f64 = 111_320.0;
+/// The latitude longitude is scaled at, for every world: one fixed scale, not the origin's, so
+/// worlds cut from the same global tile grid (`osm-import`'s `grid.rs`) agree on where a tile is
+/// wherever their origins are.
+pub const SCALE_LATITUDE: f64 = 63.8225;
+
+/// Metres per degree of longitude, everywhere.
+pub fn metres_per_deg_lon() -> f64 {
+    METRES_PER_DEG_LON * SCALE_LATITUDE.to_radians().cos()
+}
 
 /// Equirectangular projection of `lat`, `lon` around `origin` (a latitude/longitude): `[x, z]` in
 /// metres, +X east, +Z south. The importer places everything with this.
 pub fn project(origin: (f64, f64), lat: f64, lon: f64) -> [f64; 2] {
-    let x = (lon - origin.1) * METRES_PER_DEG_LON * origin.0.to_radians().cos();
+    let x = (lon - origin.1) * metres_per_deg_lon();
     let z = -(lat - origin.0) * METRES_PER_DEG_LAT;
     [x, z]
 }
@@ -41,7 +50,9 @@ pub struct Manifest {
     pub tile_size: i32,
     /// Outdoor spawn points `[x, z]`, centimetres, centre first. Their height is the ground's.
     pub spawns: Vec<[i32; 2]>,
-    /// The tiles that have anything in them. Others are open ground.
+    /// The tiles of the world. A tile of the square grid that is not listed is outside the world:
+    /// there is no ground there, and nothing can enter it. The grid is the smallest square that
+    /// holds the world, so the world can be any shape.
     pub tiles: Vec<TileRef>,
     /// Distance between ground samples, centimetres. Zero when the world has no terrain and the
     /// ground is the plane y = 0. It divides `tile_size`.
@@ -142,6 +153,13 @@ pub struct WorldFile {
     pub roads: Vec<Road>,
     /// Outdoor spawn points `[x, z]`, centimetres. Their height is the ground's.
     pub spawns: Vec<[i32; 2]>,
+    /// Side of a tile, centimetres.
+    #[serde(default)]
+    pub tile_size: i32,
+    /// Which tiles of the square grid belong to the world, `grid × grid`, row-major (`row * grid
+    /// + col`). Empty means every tile does (a world built by hand).
+    #[serde(default)]
+    pub inside: Vec<bool>,
     /// Static collision mesh for everything above ground (buildings).
     pub collision: CollisionMesh,
     /// The terrain. With no samples the ground is the plane y = 0 spanning `half_extent`.
@@ -394,6 +412,26 @@ impl Tile {
 }
 
 impl WorldFile {
+    /// Tiles per side of the square grid, as `Manifest::grid`.
+    pub fn grid(&self) -> u16 {
+        ((2 * self.half_extent as i64 + self.tile_size as i64 - 1) / self.tile_size.max(1) as i64).max(1) as u16
+    }
+
+    /// Whether local point `(x, z)`, centimetres, is inside the world: in the square and on a tile
+    /// that belongs to it.
+    pub fn is_inside(&self, x: i32, z: i32) -> bool {
+        let half = self.half_extent as i64;
+        if (x as i64).abs() > half || (z as i64).abs() > half {
+            return false;
+        }
+        if self.inside.is_empty() || self.tile_size <= 0 {
+            return true;
+        }
+        let grid = self.grid() as i64;
+        let cell = |v: i32| ((v as i64 + half) / self.tile_size as i64).clamp(0, grid - 1);
+        self.inside.get((cell(z) * grid + cell(x)) as usize).copied().unwrap_or(false)
+    }
+
     /// Merges tiles, given with their `(col, row)`, into one world. Collision meshes are
     /// concatenated with their indices shifted, and the tiles' ground samples are joined into one grid.
     pub fn assemble(manifest: &Manifest, tiles: impl IntoIterator<Item = (u16, u16, Tile)>) -> Self {
@@ -402,8 +440,18 @@ impl WorldFile {
             origin: manifest.origin,
             half_extent: manifest.half_extent,
             spawns: manifest.spawns.clone(),
+            tile_size: manifest.tile_size,
             ..Default::default()
         };
+        let grid = manifest.grid() as usize;
+        if !manifest.tiles.is_empty() && manifest.tiles.len() < grid * grid {
+            world.inside = vec![false; grid * grid];
+            for tile in &manifest.tiles {
+                if let Some(slot) = world.inside.get_mut(tile.row as usize * grid + tile.col as usize) {
+                    *slot = true;
+                }
+            }
+        }
         let n = manifest.tile_samples();
         if n > 0 {
             let per_tile = n - 1;

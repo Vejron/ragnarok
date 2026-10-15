@@ -97,6 +97,38 @@ const BOUNDARY_HEIGHT = 200
 const BED_FLOOR = 12
 
 /**
+ * The boundary walls as `[x, z, half width, half depth]`: the square's four sides for a world that
+ * fills it, else a wall along every edge between a tile of the world and one that is not, merged into
+ * runs. Mirrors `boundary_walls` on the server.
+ */
+export function boundaryWalls(data: Pick<WorldData, 'halfExtent' | 'tileSize' | 'inside'>): [number, number, number, number][] {
+  const half = data.halfExtent
+  const { inside } = data
+  if (!inside || data.tileSize <= 0) return [[half, 0, 0.5, half], [-half, 0, 0.5, half], [0, half, half, 0.5], [0, -half, half, 0.5]]
+  const grid = Math.max(1, Math.ceil((2 * half) / data.tileSize))
+  const has = (col: number, row: number) => col >= 0 && row >= 0 && col < grid && row < grid && inside[row * grid + col] === true
+  const at = (i: number) => -half + i * data.tileSize
+  const walls: [number, number, number, number][] = []
+  for (const alongX of [true, false]) {
+    for (let line = 0; line <= grid; line++) {
+      let start = -1
+      for (let i = 0; i <= grid; i++) {
+        const edge = i < grid && (alongX ? has(i, line - 1) !== has(i, line) : has(line - 1, i) !== has(line, i))
+        if (edge && start < 0) {
+          start = i
+        } else if (!edge && start >= 0) {
+          const mid = (at(start) + at(i)) / 2
+          const reach = (at(i) - at(start)) / 2
+          walls.push(alongX ? [mid, at(line), reach, 0.5] : [at(line), mid, 0.5, reach])
+          start = -1
+        }
+      }
+    }
+  }
+  return walls
+}
+
+/**
  * Mirrors `static_colliders` on the server: ground slab, boundary walls, building mesh. The
  * terrain arrives with its tiles (`addTileCollider`).
  */
@@ -105,7 +137,7 @@ export function buildStaticColliders(world: RAPIER.World, data: WorldData) {
   const top = data.groundCell > 0 ? -BED_FLOOR : 0
   world.createCollider(RAPIER.ColliderDesc.cuboid(half, 0.5, half).setTranslation(0, top - 0.5, 0))
   const wall = BOUNDARY_HEIGHT / 2
-  for (const [x, z, hx, hz] of [[half, 0, 0.5, half], [-half, 0, 0.5, half], [0, half, half, 0.5], [0, -half, half, 0.5]] as const) {
+  for (const [x, z, hx, hz] of boundaryWalls(data)) {
     world.createCollider(RAPIER.ColliderDesc.cuboid(hx, wall, hz).setTranslation(x, wall, z))
   }
   if (data.collision.triangles.length > 0) {

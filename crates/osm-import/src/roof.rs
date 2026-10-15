@@ -749,6 +749,10 @@ impl Cloud {
         self.cells.iter().map(Vec::len).sum()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.cells.iter().all(Vec::is_empty)
+    }
+
     /// The returns inside `footprint`, a local-metre polygon, as `[x, z, y]`. `origin` is the world
     /// frame's origin in degrees (lat, lon) and `unproject` maps local metres to degrees.
     pub fn over(&self, footprint: &[P], unproject: impl Fn(f64, f64) -> (f64, f64)) -> Vec<[f64; 4]> {

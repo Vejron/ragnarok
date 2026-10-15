@@ -19,11 +19,32 @@ fn env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 
+/// Which `world.msgpack` to load: `RAGNAROK_WORLD`, else the world the map editor activated
+/// (`worlds/active.json`), else the generated `client/public` one.
+fn world_path() -> String {
+    if let Some(path) = env("RAGNAROK_WORLD") {
+        return path;
+    }
+    let active = std::fs::read_to_string("worlds/active.json")
+        .ok()
+        .and_then(|text| text.split("\"name\":\"").nth(1).and_then(|rest| rest.split('"').next().map(String::from)));
+    match active {
+        Some(name) if name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_') && !name.is_empty() => {
+            let path = format!("worlds/{name}/world.msgpack");
+            if Path::new(&path).exists() {
+                return path;
+            }
+            tracing::warn!(%name, "the active world has not been generated; using the default");
+            "client/public/world.msgpack".into()
+        }
+        _ => "client/public/world.msgpack".into(),
+    }
+}
+
 /// Reads the manifest and every tile next to it, merged into the world the server simulates. The
 /// returned hash is the manifest's, which vouches for each tile through the hashes listed in it.
 fn load_world() -> Result<(WorldFile, u32)> {
-    let path = env("RAGNAROK_WORLD").unwrap_or_else(|| "client/public/world.msgpack".into());
-    read_world(Path::new(&path))
+    read_world(Path::new(&world_path()))
 }
 
 fn read_world(path: &Path) -> Result<(WorldFile, u32)> {

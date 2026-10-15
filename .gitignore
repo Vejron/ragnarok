@@ -17,3 +17,9 @@ client/public/tiles/
 client/public/minimap.png
 # the small dev world (scripts/world-dev.sh)
 client/public/dev/
+
+# worlds painted in the map editor (cargo run -p editor): area.json is kept, the generated files are not
+worlds/*/world.msgpack
+worlds/*/tiles/
+worlds/*/minimap.png
+worlds/active.json

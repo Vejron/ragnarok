@@ -46,6 +46,9 @@ fn pick_spot(world: &mut World) -> Option<[f32; 3]> {
     };
     let mut offset = || (world.rng.next_f64() as f32 * 2.0 - 1.0) * SCATTER;
     let (x, z) = (centre[0] + offset(), centre[1] + offset());
+    if !world.map.is_inside((x * 100.0) as i32, (z * 100.0) as i32) {
+        return None;
+    }
     let ground = world.map.ground.height_at(x, z);
     // Straight down from well above: if the first thing it meets is not the ground, this is under a roof.
     let top = ground + 40.0;

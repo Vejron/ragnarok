@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 
 type P = [f64; 2];
 
-use shared::world::{METRES_PER_DEG_LAT, METRES_PER_DEG_LON};
+use shared::world::METRES_PER_DEG_LAT;
 /// Buildings and spawns keep this far inside the boundary walls, metres.
 const EDGE_MARGIN: f64 = 2.0;
 const MAX_SPAWNS: usize = 64;
@@ -208,7 +208,7 @@ impl Built {
 /// a road are dropped. A tree is solid (has a trunk collider) when it is planted, in the register,
 /// or stands within `SOLID_REACH` of a road or a building.
 #[allow(clippy::too_many_arguments)]
-fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P>, f64, Option<Roof>)>, roads: Vec<(Vec<P>, f64, u8)>, bridges: Vec<(Vec<P>, f64, u8, Pylons)>, covers: Vec<(u8, Vec<Vec<P>>)>, trees: Vec<(P, u8, f64, f64, bool)>, ground: Ground, water: Placed) -> Built {
+fn assemble(origin: (f64, f64), half: f64, tile_size: f64, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, buildings: Vec<(Vec<P>, f64, Option<Roof>)>, roads: Vec<(Vec<P>, f64, u8)>, bridges: Vec<(Vec<P>, f64, u8, Pylons)>, covers: Vec<(u8, Vec<Vec<P>>)>, trees: Vec<(P, u8, f64, f64, bool)>, ground: Ground, water: Placed) -> Built {
     let inner = half - EDGE_MARGIN;
     let mut manifest = Manifest {
         version: WORLD_VERSION,
@@ -423,13 +423,29 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P
     for tile in tiles.values_mut() {
         tile.trees.sort_by_key(|tree| (tree.x, tree.z, tree.kind));
     }
+    // Only the world's own tiles are kept, and only they offer spawns.
+    let inside = |col: u16, row: u16| mask.is_none_or(|mask| mask.contains(&(col, row)));
+    if mask.is_some() {
+        candidates.retain(|p| {
+            let (col, row) = manifest.tile_at(cm(p[0]), cm(p[1]));
+            inside(col, row)
+        });
+    }
     manifest.spawns = pick_spawns(&candidates, &footprints, half);
+    if manifest.spawns.is_empty()
+        && let Some(mask) = mask
+        && let Some(&(col, row)) = mask.iter().next()
+    {
+        // No road to spawn on: the middle of the first tile.
+        let at = |i: u16| -half + (f64::from(i) + 0.5) * tile_size;
+        manifest.spawns.push([cm(at(col)), cm(at(row))]);
+    }
     // Every tile carries its piece of the ground, so every tile of the grid exists.
     let samples = manifest.tile_samples();
     if samples > 0 {
         let per_tile = samples - 1;
         for col in 0..manifest.grid() {
-            for row in 0..manifest.grid() {
+            for row in (0..manifest.grid()).filter(|&row| inside(col, row)) {
                 tiles.entry((col, row)).or_default().ground = ground.block(col as u32 * per_tile, row as u32 * per_tile, samples);
             }
         }
@@ -437,7 +453,7 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P
         if water.levels.len() == ground.heights.len() {
             let all = Ground { origin: ground.origin, cell: ground.cell, side: ground.side, heights: water.levels };
             for col in 0..manifest.grid() {
-                for row in 0..manifest.grid() {
+                for row in (0..manifest.grid()).filter(|&row| inside(col, row)) {
                     let block = all.block(col as u32 * per_tile, row as u32 * per_tile, samples);
                     if block.iter().any(|&level| level != NO_WATER) {
                         tiles.entry((col, row)).or_default().water = block;
@@ -446,13 +462,21 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, buildings: Vec<(Vec<P
             }
         }
     }
+    if let Some(mask) = mask {
+        tiles.retain(|key, _| mask.contains(key));
+        // A painted tile with nothing in it, on flat ground, still exists.
+        for &(col, row) in mask {
+            tiles.entry((col, row)).or_default();
+        }
+    }
     Built { manifest, tiles }
 }
 
 /// The bounding box of the `half`-metre square around `(lat, lon)`, as `[south, west, north, east]`.
 pub fn bbox_around(lat: f64, lon: f64, half: f64) -> [f64; 4] {
     let dlat = half / METRES_PER_DEG_LAT;
-    let dlon = half / (METRES_PER_DEG_LON * lat.to_radians().cos());
+    let _ = lat;
+    let dlon = half / shared::world::metres_per_deg_lon();
     [lat - dlat, lon - dlon, lat + dlat, lon + dlon]
 }
 
@@ -467,10 +491,11 @@ pub fn frame([south, west, north, east]: [f64; 4]) -> ((f64, f64), f64) {
 
 /// Local metres `(x, z)` to degrees `(lat, lon)`, the inverse of the projection used for OSM.
 pub fn unproject(origin: (f64, f64), x: f64, z: f64) -> (f64, f64) {
-    (origin.0 - z / METRES_PER_DEG_LAT, origin.1 + x / (METRES_PER_DEG_LON * origin.0.to_radians().cos()))
+    (origin.0 - z / METRES_PER_DEG_LAT, origin.1 + x / shared::world::metres_per_deg_lon())
 }
 
-pub fn from_osm(bbox: [f64; 4], tile_size: f64, osm: &Osm, planted: &[Planted], ground: Ground, water: Placed, lidar: Option<&Cloud>) -> Built {
+#[allow(clippy::too_many_arguments)]
+pub fn from_osm(bbox: [f64; 4], tile_size: f64, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, osm: &Osm, planted: &[Planted], ground: Ground, water: Placed, lidar: Option<&Cloud>) -> Built {
     let (origin, half) = frame(bbox);
     let split_roofs = std::cell::Cell::new(0);
     let mut buildings = Vec::new();
@@ -520,7 +545,7 @@ pub fn from_osm(bbox: [f64; 4], tile_size: f64, osm: &Osm, planted: &[Planted], 
         eprintln!("roofs: {} of {} buildings have more than one part", split_roofs.get(), buildings.len());
     }
     let trees = planted.iter().map(|tree| (project(origin, tree.lat, tree.lon), tree.kind, tree.height, tree.crown, tree.registered)).collect();
-    assemble(origin, half, tile_size, buildings, roads, bridges, covers, trees, ground, water)
+    assemble(origin, half, tile_size, mask, buildings, roads, bridges, covers, trees, ground, water)
 }
 
 /// The pylons a bridge is built with: those of the landmark it lies at, if any.
@@ -654,7 +679,7 @@ pub fn synthetic_water(half: f64) -> crate::water::Map {
         [x + 20.0 * a.cos(), top + 16.0 * a.sin()]
     }).collect();
     let stream: Vec<P> = (0..40).map(|k| [x + 10.0 * (k as f64 * 0.5).sin(), top + 14.0 + k as f64 * 12.0]).collect();
-    Map { bodies: vec![Body { kind: Kind::Lake, rings: vec![pond] }], streams: vec![stream] }
+    Map { bodies: vec![Body { kind: Kind::Lake, rings: vec![pond], level: None }], streams: vec![stream] }
 }
 
 /// An offline grid city: 48 m blocks separated by 10 m streets, each block holding a few
@@ -727,7 +752,7 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
     let pond_x = start + (count - 1) as f64 * PITCH + STREET / 2.0 + 2.0 + (PITCH - STREET - 4.0) / 2.0;
     let pond_z = -half + 70.0;
     let bridges = vec![(vec![[pond_x, pond_z - 50.0], [pond_x, pond_z + 50.0]], 7.0, ROAD_MINOR, bridge::Pylons::Middle)];
-    assemble((0.0, 0.0), half, tile_size, buildings, roads, bridges, covers, trees, ground, water)
+    assemble((0.0, 0.0), half, tile_size, None, buildings, roads, bridges, covers, trees, ground, water)
 }
 
 #[cfg(test)]
@@ -736,8 +761,11 @@ mod tests {
 
     #[test]
     fn projection_is_metric() {
+        // 0.002 degrees of longitude at the fixed scale latitude (63.82), wherever the origin is.
+        let expected = 0.002 * shared::world::metres_per_deg_lon();
         let [x, z] = project((60.0, 18.0), 60.001, 18.002);
-        assert!((x - 111.32).abs() < 0.5, "x = {x}");
+        assert!((x - expected).abs() < 0.01, "x = {x}");
+        assert!((expected - 0.002 * 111_320.0 * 63.8225f64.to_radians().cos()).abs() < 1e-9);
         assert!((z + 110.54).abs() < 0.5, "z = {z}");
     }
 

@@ -47,9 +47,24 @@ pub struct Planted {
     pub registered: bool,
 }
 
+/// The register's query for a box: also the cache key.
+pub fn filter([south, west, north, east]: [f64; 4]) -> String {
+    format!("in_bbox(geo_point_2d, {south}, {west}, {north}, {east})")
+}
+
+/// The trees in each of `pieces`, merged: a tree on a shared border is kept once.
+pub fn fetch_pieces(pieces: &[[f64; 4]]) -> Result<Vec<Planted>> {
+    let mut seen = std::collections::HashSet::new();
+    let mut all = Vec::new();
+    for &piece in pieces {
+        all.extend(fetch(piece)?.into_iter().filter(|t| seen.insert((t.lat.to_bits(), t.lon.to_bits(), t.kind))));
+    }
+    Ok(all)
+}
+
 /// Every tree in `[south, west, north, east]`.
-pub fn fetch([south, west, north, east]: [f64; 4]) -> Result<Vec<Planted>> {
-    let filter = format!("in_bbox(geo_point_2d, {south}, {west}, {north}, {east})");
+pub fn fetch(bbox: [f64; 4]) -> Result<Vec<Planted>> {
+    let filter = filter(bbox);
     let text = crate::cache::text("trees", &filter, || {
         let client = reqwest::blocking::Client::builder()
             .user_agent(concat!("ragnarok-osm-import/", env!("CARGO_PKG_VERSION")))

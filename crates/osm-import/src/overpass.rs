@@ -53,6 +53,14 @@ pub struct Area {
     pub inner: Vec<Vec<LatLon>>,
 }
 
+/// The public Overpass servers, tried in order.
+pub const DEFAULT_ENDPOINTS: [&str; 4] = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+];
+
 /// What Overpass returned for the box.
 #[derive(Debug, Default)]
 pub struct Osm {
@@ -68,7 +76,12 @@ const COVER_FILTERS: &str = r#"[landuse];[natural~"^(wood|scrub|grassland|heath|
 /// that the public servers time out on. A box no bigger than a chunk is one query, as before.
 /// `retries` is how many extra rounds over `endpoints` each chunk gets, `pause` seconds apart.
 pub fn fetch_chunked(endpoints: &[String], bbox: [f64; 4], chunk: f64, retries: usize, pause: u64) -> Result<Osm> {
-    let pieces = split(bbox, chunk);
+    fetch_pieces(endpoints, &split(bbox, chunk), retries, pause)
+}
+
+/// Fetches each of `pieces` (`[south, west, north, east]`) and merges the answers. The pieces are
+/// the cache's unit: pass the same boxes and the same entries are reused.
+pub fn fetch_pieces(endpoints: &[String], pieces: &[[f64; 4]], retries: usize, pause: u64) -> Result<Osm> {
     let mut merged = Osm::default();
     let (mut ways, mut areas) = (HashSet::new(), HashSet::new());
     for (index, piece) in pieces.iter().enumerate() {
@@ -97,8 +110,33 @@ pub fn fetch_chunked(endpoints: &[String], bbox: [f64; 4], chunk: f64, retries: 
     Ok(merged)
 }
 
+/// Runs `query` on the first of `endpoints` that answers, trying them all `retries` more times,
+/// `pause` seconds apart. The answer is cached by the query.
+pub(crate) fn run(endpoints: &[String], query: &str, retries: usize, pause: u64) -> Result<String> {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent(concat!("ragnarok-osm-import/", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(120))
+        .build()?;
+    for round in 0..=retries {
+        if round > 0 {
+            eprintln!("  retrying in {pause} s");
+            std::thread::sleep(std::time::Duration::from_secs(pause));
+        }
+        for endpoint in endpoints {
+            let text = crate::cache::text("overpass", query, || {
+                Ok(client.post(endpoint).form(&[("data", query)]).send().context("Overpass request failed")?.error_for_status().context("Overpass returned an error")?.text()?)
+            });
+            match text {
+                Ok(text) => return Ok(text),
+                Err(error) => eprintln!("  {endpoint} failed: {error:#}"),
+            }
+        }
+    }
+    anyhow::bail!("every Overpass endpoint failed; retry later (finished parts are cached)")
+}
+
 /// `[south, west, north, east]` cut into a grid of equal pieces no wider than `chunk` metres.
-pub(crate) fn split([south, west, north, east]: [f64; 4], chunk: f64) -> Vec<[f64; 4]> {
+pub fn split([south, west, north, east]: [f64; 4], chunk: f64) -> Vec<[f64; 4]> {
     const METRES_PER_DEGREE: f64 = 111_320.0;
     let height = (north - south) * METRES_PER_DEGREE;
     let width = (east - west) * METRES_PER_DEGREE * ((south + north) / 2.0).to_radians().cos();
@@ -120,15 +158,21 @@ pub(crate) fn split([south, west, north, east]: [f64; 4], chunk: f64) -> Vec<[f6
     pieces
 }
 
-/// Fetches every building, highway and piece of ground cover in `[south, west, north, east]`.
-/// Multipolygon relations are returned for cover only; courtyard buildings are not handled yet.
-fn fetch(endpoint: &str, [south, west, north, east]: [f64; 4]) -> Result<Osm> {
+/// The Overpass QL for a box: also the cache key, so it is the one place that spells it.
+pub fn query([south, west, north, east]: [f64; 4]) -> String {
     let bbox = format!("{south},{west},{north},{east}");
     let mut query = format!("[out:json][timeout:120];(way[\"building\"]({bbox});way[\"highway\"]({bbox});");
     for filter in COVER_FILTERS.split(';') {
         query.push_str(&format!("way{filter}({bbox});relation[type=multipolygon]{filter}({bbox});"));
     }
     query.push_str(");out geom;");
+    query
+}
+
+/// Fetches every building, highway and piece of ground cover in `[south, west, north, east]`.
+/// Multipolygon relations are returned for cover only; courtyard buildings are not handled yet.
+fn fetch(endpoint: &str, bbox: [f64; 4]) -> Result<Osm> {
+    let query = query(bbox);
     let client = reqwest::blocking::Client::builder()
         .user_agent(concat!("ragnarok-osm-import/", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(120))

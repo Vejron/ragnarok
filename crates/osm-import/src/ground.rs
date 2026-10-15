@@ -35,6 +35,19 @@ pub fn build(
     half: f64,
     tile: f64,
     cell: f64,
+    elevation: impl FnMut(f64, f64) -> Option<f64>,
+    bed: impl Fn(f64, f64, Option<f64>) -> Option<f64>,
+) -> Result<(Ground, f64)> {
+    build_where(half, tile, cell, |_, _| true, elevation, bed)
+}
+
+/// As `build`, but only samples where `wanted(x, z)` are read from `elevation`: the rest are gaps,
+/// so ground outside the world is neither downloaded nor counted against the relief limit.
+pub fn build_where(
+    half: f64,
+    tile: f64,
+    cell: f64,
+    wanted: impl Fn(f64, f64) -> bool,
     mut elevation: impl FnMut(f64, f64) -> Option<f64>,
     bed: impl Fn(f64, f64, Option<f64>) -> Option<f64>,
 ) -> Result<(Ground, f64)> {
@@ -44,6 +57,9 @@ pub fn build(
     let mut metres = vec![f64::NAN; (side * side) as usize];
     for j in 0..side {
         for i in 0..side {
+            if !wanted(at(i), at(j)) {
+                continue;
+            }
             if let Some(h) = elevation(at(i), at(j)) {
                 metres[(j * side + i) as usize] = h;
             }

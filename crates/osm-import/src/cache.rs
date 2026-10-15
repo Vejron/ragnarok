@@ -81,6 +81,13 @@ pub fn bytes(kind: &str, key: &str, download: impl FnOnce() -> Result<Vec<u8>>) 
     Ok(fresh)
 }
 
+/// Whether `(kind, key)` is in the cache, without reading it or downloading anything. Always
+/// false with the cache off. The same name `bytes` would use, so it answers for exactly that call.
+pub fn has(kind: &str, key: &str) -> bool {
+    let Some(Some(cache)) = CACHE.get() else { return false };
+    cache.dir.join(format!("{kind}-{:016x}", hash(key))).is_file()
+}
+
 /// `bytes` for UTF-8 answers (JSON).
 pub fn text(kind: &str, key: &str, download: impl FnOnce() -> Result<String>) -> Result<String> {
     let raw = bytes(kind, key, || download().map(String::into_bytes))?;

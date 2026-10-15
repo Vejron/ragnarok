@@ -2,13 +2,34 @@ import { decode } from '@msgpack/msgpack'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 9
+export const WORLD_VERSION = 10
 
 /** Where `world.msgpack`, `tiles/` and `minimap.png` are served from: `/` normally, `/dev/` for the dev world. */
-export const WORLD_BASE: string = (() => {
-  const base = import.meta.env.VITE_WORLD_BASE || '/'
+export let WORLD_BASE: string = withSlash(import.meta.env.VITE_WORLD_BASE || '/')
+
+function withSlash(base: string): string {
   return base.endsWith('/') ? base : `${base}/`
-})()
+}
+
+/**
+ * In dev, with no `VITE_WORLD_BASE`, the world the map editor activated (`worlds/active.json`,
+ * served by Vite at `/worlds/`), else the generated world at the site root. Sets `WORLD_BASE`.
+ */
+export async function resolveWorldBase(): Promise<string> {
+  if (import.meta.env.VITE_WORLD_BASE || !import.meta.env.DEV) return WORLD_BASE
+  try {
+    const response = await fetch('/worlds/active.json')
+    if (response.ok) {
+      const { name } = (await response.json()) as { name?: string }
+      if (name && /^[a-z0-9_-]+$/.test(name) && (await fetch(`/worlds/${name}/world.msgpack`, { method: 'HEAD' })).ok) {
+        WORLD_BASE = withSlash(`/worlds/${name}`)
+      }
+    }
+  } catch {
+    // No editor worlds: the default stands.
+  }
+  return WORLD_BASE
+}
 
 export const ROAD_MAJOR = 0
 export const ROAD_MINOR = 1
@@ -182,6 +203,11 @@ export interface WorldData {
   tiles: TileRef[]
   /** Distance between ground samples, metres; 0 when the ground is the plane y = 0. */
   groundCell: number
+  /**
+   * Which tiles of the square grid are part of the world, `grid × grid` row-major, or `null` when
+   * every one is. Tiles outside it have no ground and are walled off.
+   */
+  inside?: boolean[] | null
   /** Collision that is not part of any tile. Empty in a generated world; tests fill it in. */
   collision: CollisionMesh
 }
@@ -234,13 +260,21 @@ const noCollision = (): CollisionMesh => ({ vertices: new Float32Array(), triang
 export function decodeManifest(bytes: Uint8Array): WorldData {
   const [version, origin, halfExtent, tileSize, spawns, tiles, groundCell] = decode(bytes) as [number, [number, number], number, number, number[][], number[][], number]
   if (version !== WORLD_VERSION) throw new Error(`world version ${version}, expected ${WORLD_VERSION}`)
+  const refs = tiles.map(([col, row, hash]) => ({ col: col!, row: row!, hash: hash! }))
+  const grid = Math.max(1, Math.ceil((2 * halfExtent) / Math.max(tileSize, 1)))
+  let inside: boolean[] | null = null
+  if (refs.length > 0 && refs.length < grid * grid) {
+    inside = new Array<boolean>(grid * grid).fill(false)
+    for (const { col, row } of refs) inside[row * grid + col] = true
+  }
   return {
     origin,
     halfExtent: metres(halfExtent),
     tileSize: metres(tileSize),
     spawns: spawns.map(point),
-    tiles: tiles.map(([col, row, hash]) => ({ col: col!, row: row!, hash: hash! })),
+    tiles: refs,
     groundCell: metres(groundCell),
+    inside,
     collision: noCollision(),
   }
 }
@@ -294,7 +328,11 @@ export function decodeTile(bytes: Uint8Array): TileData {
 }
 
 /** Loads the manifest. `hash` is what the server reports in `welcome` if the worlds match. */
-export async function loadManifest(url = `${WORLD_BASE}world.msgpack`): Promise<{ world: WorldData; hash: number }> {
+export async function loadManifest(url?: string): Promise<{ world: WorldData; hash: number }> {
+  if (url === undefined) {
+    await resolveWorldBase()
+    url = `${WORLD_BASE}world.msgpack`
+  }
   const response = await fetch(url)
   if (!response.ok) throw new Error(`${url}: ${response.status}; run \`cargo run -p osm-import\``)
   const bytes = new Uint8Array(await response.arrayBuffer())

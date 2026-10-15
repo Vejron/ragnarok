@@ -49,6 +49,8 @@ impl Kind {
 pub struct Body {
     pub kind: Kind,
     pub rings: Vec<Vec<P>>,
+    /// Surface elevation, metres, when the height model cannot tell (the sea, which it leaves out).
+    pub level: Option<f64>,
 }
 
 /// All the water in the world, in local metres.
@@ -105,6 +107,13 @@ impl Surface {
         for (index, b) in map.bodies.iter().enumerate() {
             let mut cells = Vec::new();
             fill(&b.rings, grid, |cell| cells.push(cell));
+            if let Some(fixed) = b.level {
+                level.push(fixed);
+                for cell in cells {
+                    body[cell] = index as u32;
+                }
+                continue;
+            }
             let mut heights: Vec<f64> = cells.iter().filter_map(|&c| elevation(grid.x(c as u32 % grid.side), grid.x(c as u32 / grid.side))).collect();
             if heights.is_empty() {
                 level.push(f64::NAN);
@@ -372,7 +381,7 @@ mod tests {
 
     fn lake() -> Map {
         let ring = vec![[-40.0, -40.0], [40.0, -40.0], [40.0, 40.0], [-40.0, 40.0]];
-        Map { bodies: vec![Body { kind: Kind::Lake, rings: vec![ring] }], streams: Vec::new() }
+        Map { bodies: vec![Body { kind: Kind::Lake, rings: vec![ring], level: None }], streams: Vec::new() }
     }
 
     #[test]
@@ -394,7 +403,7 @@ mod tests {
     fn a_river_is_as_deep_as_it_is_wide_where_you_are() {
         // One polygon: 20 m wide for the first 300 m, then a 300 m wide basin.
         let ring = vec![[-300.0, -10.0], [0.0, -10.0], [0.0, -150.0], [300.0, -150.0], [300.0, 150.0], [0.0, 150.0], [0.0, 10.0], [-300.0, 10.0]];
-        let map = Map { bodies: vec![Body { kind: Kind::River, rings: vec![ring] }], streams: Vec::new() };
+        let map = Map { bodies: vec![Body { kind: Kind::River, rings: vec![ring], level: None }], streams: Vec::new() };
         let grid = Grid { origin: -40_000, cell: 1_000, side: 81 };
         let surface = Surface::new(&map, grid, |_, _| Some(0.0));
         let depth = |x: f64, z: f64| -surface.bed(x, z, Some(0.0)).unwrap();
@@ -439,7 +448,7 @@ mod tests {
     fn holes_stay_dry() {
         let outer = vec![[-80.0, -80.0], [80.0, -80.0], [80.0, 80.0], [-80.0, 80.0]];
         let island = vec![[-20.0, -20.0], [20.0, -20.0], [20.0, 20.0], [-20.0, 20.0]];
-        let map = Map { bodies: vec![Body { kind: Kind::Lake, rings: vec![outer, island] }], streams: Vec::new() };
+        let map = Map { bodies: vec![Body { kind: Kind::Lake, rings: vec![outer, island], level: None }], streams: Vec::new() };
         let surface = Surface::new(&map, grid(), |_, _| Some(0.0));
         assert!(surface.is_wet(50.0, 0.0));
         assert!(!surface.is_wet(0.0, 0.0));

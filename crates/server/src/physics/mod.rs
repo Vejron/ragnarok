@@ -111,7 +111,7 @@ pub fn static_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)
         ));
     }
     let wall = BOUNDARY_HEIGHT / 2.0;
-    for (x, z, hx, hz) in [(half, 0.0, 0.5, half), (-half, 0.0, 0.5, half), (0.0, half, half, 0.5), (0.0, -half, half, 0.5)] {
+    for (x, z, hx, hz) in boundary_walls(world) {
         colliders.push((ColliderBuilder::cuboid(hx, wall, hz).translation(Vector::new(x, wall, z)).build(), None));
     }
     let mesh = &world.collision;
@@ -162,6 +162,44 @@ pub fn static_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)
         colliders.push((cylinder, object));
     }
     Ok(colliders)
+}
+
+/// The boundary walls as `(x, z, half width, half depth)`, metres: the four sides of the square
+/// for a world that fills it, else a wall along every edge between a tile of the world and one that
+/// is not (or the edge of the square), merged into runs. Mirrored by `boundaryWalls` in
+/// `client/src/sim/physics.ts`.
+fn boundary_walls(world: &WorldFile) -> Vec<(f32, f32, f32, f32)> {
+    let half = from_cm(world.half_extent);
+    let grid = world.grid() as i64;
+    if world.inside.is_empty() || world.tile_size <= 0 {
+        return vec![(half, 0.0, 0.5, half), (-half, 0.0, 0.5, half), (0.0, half, half, 0.5), (0.0, -half, half, 0.5)];
+    }
+    let side = from_cm(world.tile_size);
+    let inside = |col: i64, row: i64| col >= 0 && row >= 0 && col < grid && row < grid && world.inside[(row * grid + col) as usize];
+    let at = |i: i64| -half + i as f32 * side;
+    let mut walls = Vec::new();
+    // Edges along X sit between rows `line - 1` and `line`; edges along Z between columns.
+    for along_x in [true, false] {
+        for line in 0..=grid {
+            let mut start: Option<i64> = None;
+            for i in 0..=grid {
+                let edge = i < grid && {
+                    let (before, after) = if along_x { (inside(i, line - 1), inside(i, line)) } else { (inside(line - 1, i), inside(line, i)) };
+                    before != after
+                };
+                match (edge, start) {
+                    (true, None) => start = Some(i),
+                    (false, Some(first)) => {
+                        let (mid, reach) = ((at(first) + at(i)) / 2.0, (at(i) - at(first)) / 2.0);
+                        walls.push(if along_x { (mid, at(line), reach, 0.5) } else { (at(line), mid, 0.5, reach) });
+                        start = None;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    walls
 }
 
 /// The stickman's character controller, without snap-to-ground.
