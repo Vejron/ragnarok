@@ -27,6 +27,9 @@ const FLAT_ROOF_COLORS = [0xb0b4ba, 0x9aa0a6, 0xc4c7cc]
  */
 const TERRAIN_RAMP = new Ramp(new Uint8Array([90, 100, 115, 140, 180, 208, 235, 255]))
 
+/** Every tile's buildings share this one; each vertex carries its colour. */
+const buildingMaterial = toonMaterial({ vertexColors: true })
+
 /** Materials are shared by every tile, so streaming one in or out never compiles a shader. */
 const materials = new Map<string, Material>()
 function material(kind: 'terrain' | 'building', color: number) {
@@ -184,13 +187,19 @@ function trianglePositions(tile: TileData, from: number, count: number, out: num
   return out
 }
 
-/** The tile's buildings and bridges, merged by colour, leaving out the buildings in `destroyed`. */
+/**
+ * The tile's buildings and bridges as one mesh with a colour per vertex, leaving out the buildings in
+ * `destroyed`. One draw per tile (and one shadow draw) however many colours it holds.
+ */
 function buildMerged(tile: TileData, salt: number, destroyed: ReadonlySet<number>): Mesh[] {
-  const byColor = new Map<number, number[]>()
+  const positions: number[] = []
+  const colors: number[] = []
+  const tint = new THREE.Color()
   const add = (color: number, from: number, count: number) => {
-    const list = byColor.get(color) ?? []
-    trianglePositions(tile, from, count, list)
-    byColor.set(color, list)
+    const before = positions.length
+    trianglePositions(tile, from, count, positions)
+    tint.set(color)
+    for (let i = before; i < positions.length; i += 3) colors.push(tint.r, tint.g, tint.b)
   }
   tile.buildings.forEach((building, index) => {
     if (destroyed.has(index)) return
@@ -203,15 +212,12 @@ function buildMerged(tile: TileData, salt: number, destroyed: ReadonlySet<number
     add(BRIDGE_DECK_COLOR, bridge.first, bridge.deck)
     add(BRIDGE_STEEL_COLOR, bridge.first + bridge.deck, bridge.steel)
   }
-  const meshes: Mesh[] = []
-  for (const [color, positions] of byColor) {
-    const mesh = new Mesh(flatGeometry(positions), material('building', color))
-    mesh.castShadow = true
-    mesh.receiveShadow = true
-    mesh.userData.merged = true
-    meshes.push(mesh)
-  }
-  return meshes
+  if (positions.length === 0) return []
+  const mesh = new Mesh(flatGeometry(positions, colors), buildingMaterial)
+  mesh.castShadow = true
+  mesh.receiveShadow = true
+  mesh.userData.merged = true
+  return [mesh]
 }
 
 /** Redraws a tile's buildings without those in `destroyed` (indices into `tile.buildings`). */
@@ -258,7 +264,7 @@ export function disposeTile(group: Group) {
 }
 
 /** A non-indexed geometry from triangle-soup positions, with one flat normal per face. */
-function flatGeometry(positions: number[]): Geometry {
+function flatGeometry(positions: number[], colors?: number[]): Geometry {
   const array = Float32Array.from(positions)
   const normals = new Float32Array(array.length)
   const [a, b, c, n] = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]
@@ -269,5 +275,5 @@ function flatGeometry(positions: number[]): Geometry {
     n.subVectors(c, b).cross(a.sub(b)).normalize()
     for (let k = 0; k < 3; k++) n.toArray(normals, i + k * 3)
   }
-  return new Geometry({ positions: array, normals })
+  return new Geometry({ positions: array, normals, colors: colors ? Float32Array.from(colors) : undefined })
 }

@@ -269,9 +269,9 @@ shadows and ink on), the same spot of the same world with no server connected, `
 
 | | master (three, WebGL) | engine |
 |---|---|---|
-| draw calls | 315 | 220 (106 of them the shadow pass) |
+| draw calls | 315 | 70 (18 of them the shadow pass) |
 | triangles | 927k | 936k |
-| renderer CPU time | 0.76 ms/frame | 0.27 ms/frame |
+| renderer CPU time | 0.76 ms/frame | 0.29 ms/frame |
 | GPU time by pass | n/a | shadow 0.8, main 1.1, effects 0.7, output 0.9 ms |
 
 With a server and a crowd master measured about 840 draws and 1.25 ms (see the notes on the WebGPU
@@ -279,10 +279,12 @@ port, below); the engine's cost scales with the number of changed objects, not d
 readout (F3, or `?perf`) shows draw calls, triangles, object records and how many were rewritten that
 frame, materials, pipelines, and GPU milliseconds per pass when the browser exposes timestamp queries.
 
-- Draw calls are kept down by instancing (trees, blobs, characters of one model, tile meshes by
-  colour). The next savings, not done: merging a vehicle's fixed parts by material (a jeep is dozens
-  of single-use geometries), render bundles per tile for static content, a cached shadow map for
-  static casters, and GPU culling.
+- Draw calls are kept down by instancing (trees, blobs, characters of one model) and by building each
+  tile's buildings as one mesh with a colour per vertex, so a tile is one main and one shadow draw
+  however many colours it holds (that took the shadow pass from 106 draws to 18). The next savings,
+  not done: render bundles per tile for static content, a cached shadow map for static casters, and
+  GPU culling. Vehicle parts are left alone on purpose: panels and dents are cut out of the body at
+  runtime (`carwear.ts`), and in a typical view vehicles are a handful of draws.
 - Pixel ratio is capped at 2.
 - The expensive options are far shadows (4096 map) and ink (one full-screen depth read, most of the
   output pass). Far shadows are off by default on touch devices.
