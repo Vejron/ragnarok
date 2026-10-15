@@ -40,7 +40,7 @@ let asset: Node | null = null
  * replaced per walker.
  */
 export async function parseWalkerModel(data: ArrayBuffer) {
-  asset = parseToonModel(data, (source) => (source.name === 'lamp' ? unlitMaterial(source) : null))
+  asset = parseToonModel(data, (source) => (source.name === 'lamp' ? unlitMaterial(source) : null), { merge: true })
 }
 
 export async function loadWalkerModel(url = WALKER_MODEL_URL) {

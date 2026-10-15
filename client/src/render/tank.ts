@@ -40,7 +40,7 @@ export async function parseTankModel(data: ArrayBuffer) {
 
 /** Parses a tank-family `.glb` into toon materials, for `TankModel` and its kin to share. */
 export async function parseTankAsset(data: ArrayBuffer): Promise<Node> {
-  return parseToonModel(data)
+  return parseToonModel(data, undefined, { merge: true })
 }
 
 export async function loadTankModel(url = TANK_MODEL_URL) {

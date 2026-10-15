@@ -279,12 +279,16 @@ port, below); the engine's cost scales with the number of changed objects, not d
 readout (F3, or `?perf`) shows draw calls, triangles, object records and how many were rewritten that
 frame, materials, pipelines, and GPU milliseconds per pass when the browser exposes timestamp queries.
 
-- Draw calls are kept down by instancing (trees, blobs, characters of one model) and by building each
-  tile's buildings as one mesh with a colour per vertex, so a tile is one main and one shadow draw
-  however many colours it holds (that took the shadow pass from 106 draws to 18). The next savings,
-  not done: render bundles per tile for static content, a cached shadow map for static casters, and
-  GPU culling. Vehicle parts are left alone on purpose: panels and dents are cut out of the body at
-  runtime (`carwear.ts`), and in a typical view vehicles are a handful of draws.
+- Draw calls are kept down by instancing (trees, blobs, characters of one model), by building each
+  tile's buildings as one mesh with a colour per vertex (a solo view went from 197 draws to 70, the
+  shadow pass from 106 to 18), and by `parseToonModel(..., { merge: true })` for the tanks, walker,
+  helicopter and planes. A node's lit, opaque pieces are joined into one vertex-coloured mesh, and
+  parts with identical geometry (a tank's fourteen wheels) share one copy so they instance across
+  every vehicle of the type. `paint`, glass and lamps stay separate, and the nodes stay, so the parts
+  the game moves by name still move. With a server and a full set of vehicles in view that took the
+  dev world from about 390 draws (250 of them shadow) to about 240 (120 shadow). Cars are not merged:
+  `carwear.ts` dents and cuts their body parts by material. Not done: render bundles per tile, a
+  cached shadow map for static casters, and GPU culling.
 - Pixel ratio is capped at 2.
 - The expensive options are far shadows (4096 map) and ink (one full-screen depth read, most of the
   output pass). Far shadows are off by default on touch devices.

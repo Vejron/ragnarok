@@ -44,7 +44,7 @@ export async function parsePlaneModel(data: ArrayBuffer) {
   asset = parseToonModel(data, (source) => {
     if (source.name !== 'glass') return null
     return toonMaterial({ color: source.color, name: source.name, blend: 'alpha', opacity: GLASS_OPACITY, depthWrite: false })
-  })
+  }, { merge: true })
 }
 
 export async function loadPlaneModel(url = PLANE_MODEL_URL) {
