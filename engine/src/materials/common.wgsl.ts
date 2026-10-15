@@ -24,6 +24,10 @@ struct Frame {
   shadow: vec4f,
   // camera near, camera far, seconds since the last frame, unused.
   clip: vec4f,
+  // Number of point lights, unused, unused, unused.
+  lightCount: vec4f,
+  // Per light, two vec4s: xyz position and radius, then linear rgb times intensity.
+  lights: array<vec4f, 16>,
 }
 
 struct Object {
@@ -55,6 +59,23 @@ const PI = 3.141592653589793;
 @group(0) @binding(3) var<storage, read> drawList: array<u32>;
 // Skinning matrices (bone world × inverse bind) of every skinned mesh drawn this frame.
 @group(0) @binding(4) var<storage, read> bones: array<mat4x4f>;
+
+// Light from this frame's point lights on a surface at \`world\` facing \`n\` (wrapped, so it still reads on the far side).
+fn pointLight(world: vec3f, n: vec3f) -> vec3f {
+  var sum = vec3f(0.0);
+  let count = u32(frame.lightCount.x);
+  for (var i = 0u; i < count; i++) {
+    let to = frame.lights[i * 2u].xyz - world;
+    let d = length(to);
+    let radius = frame.lights[i * 2u].w;
+    if (d < radius) {
+      let fall = 1.0 - d / radius;
+      let facing = dot(n, to / max(d, 1e-3)) * 0.6 + 0.4;
+      sum += frame.lights[i * 2u + 1u].rgb * fall * fall * max(facing, 0.0);
+    }
+  }
+  return sum;
+}
 
 // The object's model matrix, or for a skinned object the weighted blend of its vertex's bones.
 fn modelMatrix(object: Object, joints: vec4u, weights: vec4f) -> mat4x4f {

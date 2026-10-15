@@ -61,6 +61,10 @@ scene.add(shots.flashes)
 function explosion(x: number, z: number, radius = 3) {
   const y = height(x, z)
   const at = [x, y + 0.3, z] as const
+  // A flash that lights the ground and a shockwave ring racing out over it.
+  scene.lights.flash(x, y + 2, z, { color: 0xffa04a, intensity: 6, radius: radius * 9, life: 0.7 })
+  shots.flashes.spawn({ at: [x, y + 0.25, z], ring: true, life: 0.55, size: radius * 0.3, grow: radius * 7, length: radius * 1.2,
+    color: 0xffe6b0, opacity: 0.8, bright: true })
   // Fireball: hot billows that cool from white-yellow through orange to dark as they rise.
   particles.emit({ count: 30, position: at, spread: radius * 0.3, velocity: [0, 2, 0], burst: radius * 2.2, shape: 'puff',
     life: [0.5, 1.2], size: [radius * 0.5, radius * 1.7], color: 0xffeaa0, color2: 0xffb347, colorEnd: 0x6a1d04, glow: 3,
@@ -104,6 +108,7 @@ const frame = (now: number) => {
   }
   // Two missiles looping over the field, each leaving a hot core and a smoke ribbon.
   ribbons.update(dt)
+  scene.lights.update(dt)
   for (let m = 0; m < 2; m++) {
     const a = t * 1.1 + m * Math.PI
     const x = Math.cos(a) * 28, z = Math.sin(a) * 28, y = height(x, z) + 9 + Math.sin(a * 2.3) * 4

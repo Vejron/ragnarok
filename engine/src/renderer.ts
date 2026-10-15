@@ -11,6 +11,7 @@ import { STANDARD_WGSL } from './materials/standard.wgsl'
 import { Frustum } from './math/frustum'
 import * as mat4 from './math/mat4'
 import { Bloom } from './passes/bloom'
+import { MAX_POINT_LIGHTS, PointLights } from './scene/lights'
 import { outputWgsl } from './passes/output.wgsl'
 import type { PerspectiveCamera } from './scene/camera'
 import { ShaderMaterial, type Material } from './scene/material'
@@ -20,7 +21,7 @@ import type { Scene } from './scene/scene'
 import { SkinnedMesh } from './scene/skin'
 
 /** Floats in the frame uniform block. Matches `Frame` in common.wgsl (padded to 384 bytes). */
-const FRAME_FLOATS = 96
+const FRAME_FLOATS = 160
 const HDR_FORMAT: GPUTextureFormat = 'rgba16float'
 const DEPTH_FORMAT: GPUTextureFormat = 'depth32float'
 
@@ -89,6 +90,7 @@ export class Renderer {
   height = 1
   /** Drawing-buffer pixels per CSS pixel, from the last `setSize`. */
   pixelRatio = 1
+  private readonly pickedLights: { l: PointLights['live'][number]; strength: number }[] = []
   private readonly outputData = new Float32Array(16)
 
   private readonly context: GPUCanvasContext
@@ -586,7 +588,30 @@ export class Renderer {
     f[82] = this.shadowsOn ? 1 : 0
     f[84] = camera.near
     f[85] = camera.far
+    this.writeLights(scene, f)
     this.device.queue.writeBuffer(this.frameBuffer, 0, f)
+  }
+
+  /** The strongest point lights as seen from the camera, up to the shader's limit. */
+  private writeLights(scene: Scene, f: Float32Array) {
+    const live = scene.lights.live
+    const picked = this.pickedLights
+    picked.length = 0
+    for (const l of live) {
+      const d2 = (l.x - this.camX) ** 2 + (l.y - this.camY) ** 2 + (l.z - this.camZ) ** 2
+      const strength = (l.intensity * PointLights.decay(l)) / (1 + d2 * 0.002)
+      picked.push({ l, strength })
+    }
+    picked.sort((a, b) => b.strength - a.strength)
+    const n = Math.min(picked.length, MAX_POINT_LIGHTS)
+    f[88] = n
+    for (let i = 0; i < n; i++) {
+      const { l } = picked[i]!
+      const o = 92 + i * 8
+      const k = l.intensity * PointLights.decay(l)
+      f[o] = l.x; f[o + 1] = l.y; f[o + 2] = l.z; f[o + 3] = l.radius
+      f[o + 4] = l.r * k; f[o + 5] = l.g * k; f[o + 6] = l.b * k; f[o + 7] = 0
+    }
   }
 
   private uploadDrawList() {

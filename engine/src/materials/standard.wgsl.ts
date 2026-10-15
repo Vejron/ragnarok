@@ -68,7 +68,7 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
       shadow = sunShadow(in.world, n);
     }
     let hemi = mix(frame.hemiGround.rgb, frame.hemiSky.rgb, 0.5 * n.y + 0.5);
-    rgb = rgb / PI * (frame.sunColor.rgb * ramp * shadow + hemi) + material.emissive.rgb;
+    rgb = rgb / PI * (frame.sunColor.rgb * ramp * shadow + hemi + pointLight(in.world, n)) + material.emissive.rgb;
   }
   return vec4f(applyFog(rgb, flags, in.viewDepth), in.color.a * texel.a);
 }

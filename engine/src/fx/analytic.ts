@@ -31,6 +31,11 @@ export interface Flash {
   color: number | Color
   opacity?: number
   fade?: 'linear' | 'late'
+  /**
+   * A ring lying flat on the ground (a shockwave) of radius `size + grow × p`, whose band is `length`
+   * metres thick at its outer edge, brightest there and fading inward.
+   */
+  ring?: boolean
   /** Ignores fog, so it keeps its colour at range and against a pale sky. */
   bright?: boolean
 }
@@ -40,6 +45,7 @@ const RECORD_FLOATS = 20
 const FLAG_LATE = 1
 const FLAG_BRIGHT = 2
 const FLAG_STREAK = 4
+const FLAG_RING = 8
 
 const WGSL = /* wgsl */ `
 ${COMMON_WGSL}
@@ -70,6 +76,7 @@ struct Out {
   @location(1) color: vec4f,
   @location(2) viewDepth: f32,
   @location(3) @interpolate(flat) flags: u32,
+  @location(4) thick: f32,
 }
 
 @vertex
@@ -88,7 +95,13 @@ fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) i: u32) -> Out {
   let centre = f.at.xyz + f.dir.xyz * (f.motion.x * p + f.motion.y * sqrt(p)) + vec3f(0.0, f.motion.z * p - f.motion.w * p * p, 0.0);
   let radius = max(f.shape.x + f.shape.y * p, 0.0);
   var world: vec3f;
-  if ((flags & 4u) != 0u) {
+  out.thick = 1.0;
+  if ((flags & 8u) != 0u) {
+    // A ring on the ground: the quad lies flat, the fragment shader cuts the band out of it.
+    world = centre + vec3f(corner.x, 0.0, corner.y) * radius;
+    out.uv = corner;
+    out.thick = clamp(f.shape.z / max(radius, 1e-3), 0.02, 1.0);
+  } else if ((flags & 4u) != 0u) {
     // A streak: long along its direction, as wide as its radius across the view.
     let toCamera = normalize(frame.cameraPos.xyz - centre);
     var side = cross(f.dir.xyz, toCamera);
@@ -113,7 +126,13 @@ fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) i: u32) -> Out {
 fn fs(in: Out) -> @location(0) vec4f {
   // A ball is a flat disc, as an unlit sphere looks; its edge is smoothed over about a pixel.
   let r = length(in.uv);
-  let edge = 1.0 - smoothstep(1.0 - fwidth(r) * 1.5, 1.0, r);
+  let w = fwidth(r);
+  var edge = 1.0 - smoothstep(1.0 - w * 1.5, 1.0, r);
+  if ((in.flags & 8u) != 0u) {
+    let inner = 1.0 - in.thick;
+    let band = smoothstep(inner, 1.0 - in.thick * 0.1, r);
+    edge = band * band * (1.0 - smoothstep(1.0 - max(w * 2.0, 0.03), 1.0, r));
+  }
   var rgb = in.color.rgb;
   if ((in.flags & 2u) == 0u && frame.fog.z > 0.0) {
     rgb = mix(rgb, frame.fogColor.rgb, smoothstep(frame.fog.x, frame.fog.y, in.viewDepth));
@@ -185,7 +204,7 @@ export class FlashEffects extends Effect {
     d[o + 12] = flash.size
     d[o + 13] = flash.grow ?? 0
     d[o + 14] = flash.length ?? 0
-    d[o + 15] = (flash.fade === 'late' ? FLAG_LATE : 0) | (flash.bright ? FLAG_BRIGHT : 0) | (flash.length ? FLAG_STREAK : 0)
+    d[o + 15] = (flash.fade === 'late' ? FLAG_LATE : 0) | (flash.bright ? FLAG_BRIGHT : 0) | (flash.length && !flash.ring ? FLAG_STREAK : 0) | (flash.ring ? FLAG_RING : 0)
     const c = typeof flash.color === 'number' ? this.color.setHex(flash.color) : flash.color
     d[o + 16] = c.r; d[o + 17] = c.g; d[o + 18] = c.b
     d[o + 19] = flash.opacity ?? 1

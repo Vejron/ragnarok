@@ -1,3 +1,4 @@
+import { PointLights } from './lights'
 import { Color, Vec3 } from '../math/vec'
 import { Node } from './node'
 
@@ -69,6 +70,8 @@ export class Scene extends Node {
   fog: Fog | null = null
   ink: Ink | null = null
   bloom: Bloom | null = null
+  /** Short-lived point lights (blasts, flashes); call `lights.update(dt)` each frame. */
+  readonly lights = new PointLights()
   toneMapping: ToneMapping = 'none'
   exposure = 1
 }
