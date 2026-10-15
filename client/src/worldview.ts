@@ -1,4 +1,5 @@
-import * as THREE from 'three'
+import { Group, type Scene } from '@ragnarok/engine'
+import type * as THREE from 'three'
 import { OBJ_BUILDING, OBJ_TREE, type DamagedBuilding, type DestroyedObject } from './net/codec'
 import type { Effects } from './render/effects'
 import { FallingTrees } from './render/falling'
@@ -32,9 +33,9 @@ export class WorldView {
 
   readonly damage = new BuildingDamage()
   /** Water of every tile, drawn after everything solid. */
-  readonly waterRoot = new THREE.Group()
+  readonly waterRoot = new Group()
 
-  private readonly groups = new Map<number, THREE.Group>()
+  private readonly groups = new Map<number, Group>()
   private readonly solids = new Map<number, { tile: TileData; salt: number; walk: TileSolids; drive: TileSolids }>()
   /** Trees that fell, by tile then index, with the way they fell: replayed onto tiles that stream in later. */
   private readonly fellTrees = new Map<number, Map<number, number>>()
@@ -42,7 +43,7 @@ export class WorldView {
   private readonly goneBuildings = new Map<number, Map<number, number>>()
   private readonly collapses = new Collapses()
 
-  constructor(private readonly scene: THREE.Scene) {}
+  constructor(private readonly scene: Scene) {}
 
   /** Advances the falling trees, collapsing buildings and shards. */
   update(dt: number, effects: Effects, camera: THREE.Vector3) {

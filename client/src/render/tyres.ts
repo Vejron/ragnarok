@@ -1,3 +1,4 @@
+import type { Vec3 } from '@ragnarok/engine'
 import * as THREE from 'three'
 import { KIND_HELI, KIND_PLANE, KIND_SPORTS } from '@/net/codec'
 import { isTracked } from '@/sim/vehicles'
@@ -16,7 +17,7 @@ export interface FxWorld {
   groundAt(x: number, z: number): number
   surfaceAt(x: number, z: number): number
   /** Where the camera is, so far-away vehicles can skip the particles. */
-  camera: THREE.Vector3
+  camera: Vec3
 }
 
 /** Particles are skipped for vehicles further from the camera than this, metres; marks reach a little further. */
@@ -123,7 +124,7 @@ export class VehicleFx {
       return
     }
     const here = new THREE.Vector3(...position)
-    const distance = here.distanceTo(world.camera)
+    const distance = world.camera.distanceTo(here)
     this.q.set(...rotation)
     this.forward.set(0, 0, -1).applyQuaternion(this.q)
     if (this.lastPosition) {

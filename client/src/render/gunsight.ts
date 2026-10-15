@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import { Group, Material, Mesh, Texture, quadGeometry, ringGeometry, type Node, type PerspectiveCamera } from '@ragnarok/engine'
 
 /** How far in front of the sight camera the reticle is drawn; only its angular size matters. */
 const DISTANCE = 1
@@ -20,33 +20,33 @@ export interface Mark {
 }
 
 /**
- * A tank gunner's reticle, drawn in its own pass over the scene rather than as page elements: a
- * crosshair along the barrel's line with a ladder of range marks below it. The sight's camera looks
- * exactly down the barrel, so the centre is where a shell leaves; the marks are where it lands at
- * 100, 150, ... m, and the numbers are hundreds of metres.
+ * A tank gunner's reticle, drawn over the frame rather than as page elements: a crosshair along the
+ * barrel's line with a ladder of range marks below it. The sight's camera looks exactly down the
+ * barrel, so the centre is where a shell leaves; the marks are where it lands at 100, 150, ... m, and
+ * the numbers are hundreds of metres. The parts are overlay meshes laid out in view space, in a group
+ * that `follow` keeps on the camera, so they are drawn after everything else and never hidden by it.
  */
 export class GunSightView {
-  readonly scene = new THREE.Scene()
-  /** Draws the reticle with the main camera's field of view. */
-  readonly camera = new THREE.PerspectiveCamera(20, 1, 0.1, 10)
-  visible = false
-  private readonly quad = new THREE.PlaneGeometry(1, 1)
-  private readonly line = new THREE.MeshBasicMaterial({ color: YELLOW, depthTest: false, depthWrite: false })
-  private readonly shade = new THREE.MeshBasicMaterial({ color: 0x000000, depthTest: false, depthWrite: false })
-  private readonly ladder = new THREE.Group()
-  private readonly rim: THREE.Mesh
-  private readonly labels = new Map<number, THREE.Sprite>()
-  private readonly rangeSprite: THREE.Sprite
+  /** Add this to the scene; `follow` keeps it in front of the camera. */
+  readonly root = new Group()
+  private shown = false
+  private readonly quad = quadGeometry(1, 1)
+  private readonly line = new Material({ color: YELLOW, lit: false, blend: 'alpha', fog: false })
+  private readonly shade = new Material({ color: 0x000000, lit: false, blend: 'alpha', fog: false })
+  private readonly ladder = new Group()
+  private readonly rim: Mesh
+  private readonly labels = new Map<number, Mesh>()
+  private readonly rangeSprite: Mesh
+  private readonly rangeTexture: Texture
   private readonly rangeCanvas = document.createElement('canvas')
   private rangeText = ''
-  private readonly textures: THREE.Texture[] = []
+  private readonly textures: Texture[] = []
+  private readonly materials: Material[] = []
 
   constructor() {
-    const ring = new THREE.RingGeometry(1, 6, 64)
-    this.rim = new THREE.Mesh(ring, this.shade)
-    this.rim.renderOrder = 1
-    this.scene.add(this.rim)
-    this.scene.add(this.ladder)
+    this.rim = this.overlay(new Mesh(ringGeometry(1, 6, 64), this.shade), 1)
+    this.root.add(this.rim)
+    this.root.add(this.ladder)
     // The crosshair: two arms that stop short of the centre, so the target stays in view.
     this.bar(-0.05, 0, 0.03, THICKNESS * 1.6)
     this.bar(0.05, 0, 0.03, THICKNESS * 1.6)
@@ -55,28 +55,55 @@ export class GunSightView {
     this.bar(0, 0, THICKNESS * 3, THICKNESS * 3)
     this.rangeCanvas.width = 128
     this.rangeCanvas.height = 32
-    this.rangeSprite = this.sprite(this.rangeCanvas, LABEL_SIZE * 3.2, LABEL_SIZE * 0.8)
+    this.rangeTexture = new Texture(this.rangeCanvas, { srgb: true, wrap: 'clamp' })
+    this.textures.push(this.rangeTexture)
+    this.rangeSprite = this.sprite(this.rangeTexture, LABEL_SIZE * 3.2, LABEL_SIZE * 0.8)
     this.rangeSprite.position.set(0, -0.35 * DISTANCE, -DISTANCE)
-    this.scene.add(this.rangeSprite)
+    this.root.add(this.rangeSprite)
+    this.root.visible = false
+  }
+
+  get visible() {
+    return this.shown
+  }
+
+  private overlay(mesh: Mesh, order: number) {
+    mesh.overlay = true
+    mesh.renderOrder = order
+    mesh.frustumCulled = false
+    return mesh
   }
 
   /** A flat rectangle `w` by `h` (rad) centred `x`, `y` (tangent) from the view's centre. */
-  private bar(x: number, y: number, w: number, h: number, parent: THREE.Object3D = this.scene) {
-    const mesh = new THREE.Mesh(this.quad, this.line)
+  private bar(x: number, y: number, w: number, h: number, parent: Node = this.root) {
+    const mesh = this.overlay(new Mesh(this.quad, this.line), 2)
     mesh.scale.set(w * DISTANCE, h * DISTANCE, 1)
     mesh.position.set(x * DISTANCE, y * DISTANCE, -DISTANCE)
-    mesh.renderOrder = 2
     parent.add(mesh)
     return mesh
   }
 
-  private sprite(source: HTMLCanvasElement, w: number, h: number) {
-    const texture = new THREE.CanvasTexture(source)
-    texture.colorSpace = THREE.SRGBColorSpace
-    this.textures.push(texture)
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false, depthWrite: false, transparent: true }))
+  private readonly pool: Mesh[] = []
+  private barsUsed = 0
+
+  /** A bar of the ladder, reused from frame to frame. */
+  private ladderBar(x: number, y: number, w: number, h: number) {
+    let mesh = this.pool[this.barsUsed++]
+    if (!mesh) {
+      mesh = this.overlay(new Mesh(this.quad, this.line), 2)
+      this.pool.push(mesh)
+    }
+    mesh.scale.set(w * DISTANCE, h * DISTANCE, 1)
+    mesh.position.set(x * DISTANCE, y * DISTANCE, -DISTANCE)
+    this.ladder.add(mesh)
+    return mesh
+  }
+
+  private sprite(texture: Texture, w: number, h: number) {
+    const material = new Material({ map: texture, lit: false, blend: 'alpha', fog: false })
+    this.materials.push(material)
+    const sprite = this.overlay(new Mesh(this.quad, material), 3)
     sprite.scale.set(w * DISTANCE, h * DISTANCE, 1)
-    sprite.renderOrder = 3
     return sprite
   }
 
@@ -95,33 +122,41 @@ export class GunSightView {
         context.shadowBlur = 3
         context.fillText(String(hundreds), 16, 17)
       }
-      sprite = this.sprite(canvas, LABEL_SIZE, LABEL_SIZE)
+      const texture = new Texture(canvas, { srgb: true, wrap: 'clamp' })
+      this.textures.push(texture)
+      sprite = this.sprite(texture, LABEL_SIZE, LABEL_SIZE)
       this.labels.set(hundreds, sprite)
     }
     return sprite
   }
 
+  /** Puts the reticle where `camera` looks. Call once a frame, before rendering. */
+  follow(camera: PerspectiveCamera) {
+    this.root.position.copy(camera.position)
+    this.root.quaternion.copy(camera.quaternion)
+  }
+
   /**
-   * Lays the ladder out and shows the reticle. `fov` is the sight camera's vertical field of view,
+   * Lays the ladder out and shows the reticle. `fov` is the camera's vertical field of view,
    * degrees; `marks` are in view-plane tangents; `range` is the distance to what the centre is on.
    */
-  show(fov: number, aspect: number, marks: readonly Mark[], range: number | null) {
-    this.visible = true
-    this.camera.fov = fov
-    this.camera.aspect = aspect
-    this.camera.updateProjectionMatrix()
+  show(fov: number, marks: readonly Mark[], range: number | null) {
+    this.shown = true
+    this.root.visible = true
     const half = Math.tan((fov * Math.PI) / 360)
     this.rim.scale.setScalar(half * RIM * DISTANCE)
+    // The ladder's bars come from a pool, so a frame makes no new meshes (each would be a new object record).
     for (const child of [...this.ladder.children]) this.ladder.remove(child)
+    this.barsUsed = 0
     if (marks.length > 0) {
       // A stem from the crosshair down to the last mark.
       const last = marks[marks.length - 1]!.y
-      this.bar(0, last / 2, THICKNESS * 1.2, -last, this.ladder)
+      this.ladderBar(0, last / 2, THICKNESS * 1.2, -last)
     }
     for (const mark of marks) {
       const major = mark.range % 100 === 0
       const width = major ? MAJOR : MINOR
-      this.bar(0, mark.y, width * 2, THICKNESS * 1.6, this.ladder)
+      this.ladderBar(0, mark.y, width * 2, THICKNESS * 1.6)
       if (major) {
         const sprite = this.label(mark.range / 100)
         sprite.position.set((MAJOR + LABEL_SIZE * 0.9) * DISTANCE, mark.y * DISTANCE, -DISTANCE)
@@ -141,13 +176,14 @@ export class GunSightView {
         context.shadowColor = '#000'
         context.shadowBlur = 3
         context.fillText(text, 64, 17)
-        ;(this.rangeSprite.material.map as THREE.Texture).needsUpdate = true
+        this.rangeTexture.needsUpdate()
       }
     }
   }
 
   hide() {
-    this.visible = false
+    this.shown = false
+    this.root.visible = false
   }
 
   dispose() {
@@ -155,6 +191,8 @@ export class GunSightView {
     this.line.dispose()
     this.shade.dispose()
     this.rim.geometry.dispose()
+    for (const material of this.materials) material.dispose()
     for (const texture of this.textures) texture.dispose()
+    this.root.removeFromParent()
   }
 }

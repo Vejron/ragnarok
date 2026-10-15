@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import { Geometry, Material, Mesh, type Ramp } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
 import { ROAD_MAJOR, ROAD_MINOR, ROAD_PATH, type Road } from '@/world'
 import { normalAt, toneAt, type Height } from './shade'
@@ -20,15 +20,15 @@ const DISC = 12
 /** Paths first, so the wider roads are drawn over them at junctions. */
 const RANK: Record<number, number> = { [ROAD_PATH]: 0, [ROAD_MINOR]: 1, [ROAD_MAJOR]: 2 }
 
-const materials = new Map<string, THREE.MeshToonMaterial>()
-function layerMaterial(color: number, offset: number, ramp: THREE.Texture) {
+const materials = new Map<string, Material>()
+function layerMaterial(color: number, offset: number, ramp: Ramp) {
   const key = `${color}:${offset}`
   let found = materials.get(key)
   if (!found) {
     // Each layer pulls further towards the camera, so overlapping roads settle in a fixed order and
     // clear the terrain at any distance; the lift alone covers the near field, where depth is fine.
     // A flat quad between samples cuts the terrain's kinks, so the lift must exceed that chord error.
-    found = toonMaterial({ color, gradientMap: ramp, vertexColors: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -offset })
+    found = toonMaterial({ color, ramp, vertexColors: true, depthBias: offset, depthBiasSlope: 2 })
     materials.set(key, found)
   }
   return found
@@ -116,15 +116,15 @@ class Layer {
     }
   }
 
-  mesh(material: THREE.Material): THREE.Mesh | null {
+  mesh(material: Material): Mesh | null {
     if (this.indices.length === 0) return null
-    const geometry = new THREE.BufferGeometry()
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(this.positions, 3))
-    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(this.normals, 3))
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(this.colors, 3))
-    geometry.setIndex(this.indices)
-    geometry.computeBoundingSphere()
-    const mesh = new THREE.Mesh(geometry, material)
+    const geometry = new Geometry({
+      positions: Float32Array.from(this.positions),
+      normals: Float32Array.from(this.normals),
+      colors: Float32Array.from(this.colors),
+      indices: Uint32Array.from(this.indices),
+    })
+    const mesh = new Mesh(geometry, material)
     mesh.receiveShadow = true
     return mesh
   }
@@ -137,8 +137,8 @@ class Layer {
  * `border` is the tile's `[x0, z0, x1, z1]`; a road ending on it gets no round cap, since its
  * neighbour tile carries on from there.
  */
-export function buildRoads(roads: readonly Road[], height: Height, step: number, border: readonly [number, number, number, number], ramp: THREE.Texture): THREE.Mesh[] {
-  const meshes: THREE.Mesh[] = []
+export function buildRoads(roads: readonly Road[], height: Height, step: number, border: readonly [number, number, number, number], ramp: Ramp): Mesh[] {
+  const meshes: Mesh[] = []
   for (const pass of [0, 1] as const) {
     for (const kind of [ROAD_PATH, ROAD_MINOR, ROAD_MAJOR]) {
       const colors = ROAD_COLORS[kind]!

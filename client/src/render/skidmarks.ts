@@ -1,4 +1,5 @@
-import * as THREE from 'three'
+import { Color, Geometry, Mesh, ShaderMaterial } from '@ragnarok/engine'
+import type * as THREE from 'three'
 
 /** Seconds a mark takes to fade away. */
 export const SKID_LIFE = 15
@@ -9,24 +10,11 @@ const MAX_STEP = 4
 /** Height of the mark above the ground it is laid on, metres. */
 const LIFT = 0.03
 
-const VERTEX = /* glsl */ `
-attribute vec4 tint;
-attribute float birth;
-uniform float now;
-uniform float life;
-varying vec4 vTint;
-void main() {
-  float age = clamp((now - birth) / life, 0.0, 1.0);
-  vTint = vec4(tint.rgb, tint.a * (1.0 - age));
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
-`
-
-const FRAGMENT = /* glsl */ `
-varying vec4 vTint;
-void main() {
-  if (vTint.a < 0.005) discard;
-  gl_FragColor = vTint;
+// Each vertex carries its tint (colour and alpha) as a vertex colour and its birth time in `custom.x`.
+const WGSL = /* wgsl */ `
+fn surface(s: Surface) -> vec4f {
+  let age = clamp((params.now - s.custom.x) / params.life, 0.0, 1.0);
+  return vec4f(s.color.rgb, s.color.a * (1.0 - age));
 }
 `
 
@@ -42,46 +30,45 @@ interface Track {
  * frame) and its quad is reused once the ring comes round again.
  */
 export class Skidmarks {
-  readonly root: THREE.Mesh
-  private readonly geometry = new THREE.BufferGeometry()
-  private readonly material: THREE.ShaderMaterial
-  private readonly positions: THREE.BufferAttribute
-  private readonly tints: THREE.BufferAttribute
-  private readonly births: THREE.BufferAttribute
+  readonly root: Mesh
+  private readonly geometry: Geometry
+  private readonly material: ShaderMaterial
+  private readonly positions: Float32Array
+  private readonly tints: Float32Array
+  private readonly births: Float32Array
   private readonly tracks = new Map<string, Track>()
-  private readonly color = new THREE.Color()
+  private readonly color = new Color()
   private next = 0
   private written = 0
   private time = 0
 
   constructor(readonly capacity = 4000) {
-    this.positions = new THREE.BufferAttribute(new Float32Array(capacity * 4 * 3), 3).setUsage(THREE.DynamicDrawUsage)
-    this.tints = new THREE.BufferAttribute(new Float32Array(capacity * 4 * 4), 4).setUsage(THREE.DynamicDrawUsage)
+    this.positions = new Float32Array(capacity * 4 * 3)
+    this.tints = new Float32Array(capacity * 4 * 4)
     // Born long ago, so unused quads are fully faded.
-    this.births = new THREE.BufferAttribute(new Float32Array(capacity * 4).fill(-1e6), 1).setUsage(THREE.DynamicDrawUsage)
+    this.births = new Float32Array(capacity * 4).fill(-1e6)
     const index = new Uint32Array(capacity * 6)
     for (let quad = 0; quad < capacity; quad++) {
       const v = quad * 4
       index.set([v, v + 1, v + 2, v + 2, v + 1, v + 3], quad * 6)
     }
-    this.geometry.setIndex(new THREE.BufferAttribute(index, 1))
-    this.geometry.setAttribute('position', this.positions)
-    this.geometry.setAttribute('tint', this.tints)
-    this.geometry.setAttribute('birth', this.births)
-    this.material = new THREE.ShaderMaterial({
-      vertexShader: VERTEX,
-      fragmentShader: FRAGMENT,
-      uniforms: { now: { value: 0 }, life: { value: SKID_LIFE } },
-      transparent: true,
+    // The geometry's custom attribute is four floats per vertex; the birth time is its x.
+    this.geometry = new Geometry({ positions: this.positions, colors: this.tints, custom: new Float32Array(capacity * 4 * 4), indices: index })
+    this.material = new ShaderMaterial({
+      wgsl: WGSL,
+      uniforms: { now: 0, life: SKID_LIFE },
+      vertexColors: true,
+      blend: 'alpha',
       depthWrite: false,
-      polygonOffset: true,
-      polygonOffsetFactor: -2,
-      polygonOffsetUnits: -4,
-      side: THREE.DoubleSide,
+      // Lifted off the ground it is laid on, in depth as well as in height.
+      depthBias: 4,
+      depthBiasSlope: 2,
+      side: 'double',
     })
-    this.root = new THREE.Mesh(this.geometry, this.material)
+    this.root = new Mesh(this.geometry, this.material)
     this.root.frustumCulled = false
     this.root.renderOrder = 1
+    for (let v = 0; v < capacity * 4; v++) this.geometry.custom![v * 4] = this.births[v]!
   }
 
   /** Quads laid so far, for tests; at most `capacity` are visible at once. */
@@ -118,26 +105,27 @@ export class Skidmarks {
     this.written++
     this.color.setHex(color)
     const corners = [a, b, c, d]
+    const custom = this.geometry.custom!
     for (let k = 0; k < 4; k++) {
       const v = quad * 4 + k
-      this.positions.setXYZ(v, corners[k]!.x, corners[k]!.y, corners[k]!.z)
-      this.tints.setXYZW(v, this.color.r, this.color.g, this.color.b, alpha)
-      this.births.setX(v, this.time)
+      this.positions.set([corners[k]!.x, corners[k]!.y, corners[k]!.z], v * 3)
+      this.tints.set([this.color.r, this.color.g, this.color.b, alpha], v * 4)
+      this.births[v] = this.time
+      custom[v * 4] = this.time
     }
-    for (const attribute of [this.positions, this.tints, this.births]) {
-      attribute.addUpdateRange(quad * 4 * attribute.itemSize, 4 * attribute.itemSize)
-      attribute.needsUpdate = true
-    }
+    // Only this quad's four vertices go to the GPU.
+    this.geometry.needsUpdateRange(quad * 4, 4)
   }
 
   /** How faded quad `index` is now, 0 fresh to 1 gone, for tests. */
   ageOf(index: number) {
-    return Math.min(1, Math.max(0, (this.time - this.births.getX(index * 4)) / SKID_LIFE))
+    return Math.min(1, Math.max(0, (this.time - this.births[index * 4]!) / SKID_LIFE))
   }
 
   update(dt: number) {
     this.time += dt
-    this.material.uniforms.now!.value = this.time
+    this.material.uniforms.now = this.time
+    this.material.needsUpdate()
   }
 
   dispose() {

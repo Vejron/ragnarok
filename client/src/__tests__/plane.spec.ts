@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import * as THREE from 'three'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { boxOf, triangleCount } from './helpers'
 import { parsePlaneModel, PlaneModel } from '@/render/plane'
 import { PLANE_BOMBS, PLANE_GUN_PIVOTS, PLANE_REAR_LENGTH, PLANE_REAR_PIVOT } from '@/sim/consts'
 import { ARMS_CUT, type Arms } from '@/net/codec'
@@ -45,11 +46,7 @@ describe('PlaneModel', () => {
 
   it('stays low-poly', () => {
     const plane = new PlaneModel(1)
-    let triangles = 0
-    plane.root.traverse((node) => {
-      const mesh = node as THREE.Mesh
-      if (mesh.isMesh) triangles += (mesh.geometry.index?.count ?? mesh.geometry.attributes.position!.count) / 3
-    })
+    const triangles = triangleCount(plane.root)
     expect(triangles).toBeLessThan(3000)
     plane.dispose()
   })
@@ -74,7 +71,7 @@ describe('PlaneModel', () => {
     expect(direction.z).toBeGreaterThan(0.8)
     expect(direction.y).toBeCloseTo(Math.sin(0.5), 3)
     expect(plane.muzzle().distanceTo(origin)).toBeCloseTo(PLANE_REAR_LENGTH, 4)
-    const bounds = new THREE.Box3().setFromObject(named(plane, 'gun'))
+    const bounds = boxOf(named(plane, 'gun'))
     expect(bounds.max.z).toBeCloseTo(plane.muzzle().z, 1)
     expect(plane.gunner).toBe(4)
     plane.dispose()

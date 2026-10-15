@@ -1,3 +1,4 @@
+import { Group, type Node } from '@ragnarok/engine'
 import * as THREE from 'three'
 import type { Tree } from '@/world'
 import { removeTreeInstance, standaloneTree } from './trees'
@@ -6,7 +7,7 @@ import { removeTreeInstance, standaloneTree } from './trees'
 const LANDED = Math.PI / 2 - 0.08
 
 interface Falling {
-  pivot: THREE.Group
+  pivot: Group
   axis: THREE.Vector3
   duration: number
   elapsed: number
@@ -26,7 +27,7 @@ export class FallingTrees {
    * -Z); `animate` false puts it straight on the ground, for a tile that streams in after the fact.
    * Returns false if it was not standing in `group`.
    */
-  fell(group: THREE.Object3D, tree: Tree, index: number, yaw: number, animate: boolean): boolean {
+  fell(group: Node, tree: Tree, index: number, yaw: number, animate: boolean): boolean {
     if (!removeTreeInstance(group, index)) return false
     const { pivot } = standaloneTree(tree)
     group.add(pivot)

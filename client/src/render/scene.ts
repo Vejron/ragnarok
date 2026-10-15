@@ -1,13 +1,8 @@
+import { Fog, Ink, PerspectiveCamera, Renderer, Scene as EngineScene } from '@ragnarok/engine'
 import { GunSightView } from './gunsight'
-import * as THREE from 'three'
-import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
-import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js'
-import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
-import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { ContactShadows } from './contact'
 import { setWaterLight } from './water'
 import { CLASSIC, SOFT, loadLook, type Look } from './look'
-import { InkPass } from './ink'
 import { ON_FOOT_HEIGHT, ON_FOOT_SHOULDER } from '../sim/consts'
 
 // On foot the camera is over the right shoulder and a little above the head; the server shares these.
@@ -45,12 +40,12 @@ export const CAMERA_HEIGHT = 1.2
  */
 const SUN_OFFSET = [70, 80, 55] as const
 
-/** The sun's shadow map covers a square this many metres to a side around the player, and its resolution. */
-const SHADOW_NEAR = { span: 100, size: 2048, near: 10, far: 300 }
-const SHADOW_FAR = { span: 300, size: 4096, near: 1, far: 450 }
-
-/** The AO pass renders at most this many pixels per CSS pixel; it is soft anyway and costs by area. */
-const AO_PIXEL_RATIO = 1.5
+/**
+ * The sun's shadow map covers a square this many metres to a side around the player, at this resolution,
+ * with casters taken from this far either side of the player along the sun's direction.
+ */
+const SHADOW_NEAR = { span: 100, size: 2048, depth: 200 }
+const SHADOW_FAR = { span: 300, size: 4096, depth: 300 }
 
 /** Vertical field of view, degrees: normal, aiming a gun, and looking down a scope. */
 const DEFAULT_FOV = 75
@@ -63,50 +58,47 @@ export const AIM_DISTANCE_SCALE = 0.7
 /** How fast the zoom eases in and out, per second. */
 const ZOOM_RATE = 14
 
+/** The pixel ratio the picture renders at: the screen's, to at most this. */
+const MAX_PIXEL_RATIO = 2
+
+/**
+ * The picture: the engine's scene, the camera, the renderer and the lights. Everything else adds a
+ * `root` node to `scene`. The renderer needs the GPU, which is asked for asynchronously, so `init`
+ * must finish before the first `render`; until then `render` does nothing.
+ */
 export class Scene {
-  readonly scene = new THREE.Scene()
-  readonly camera = new THREE.PerspectiveCamera(DEFAULT_FOV, 1, 0.25, 2000)
-  readonly renderer: THREE.WebGLRenderer
+  readonly scene = new EngineScene()
+  readonly camera = new PerspectiveCamera(DEFAULT_FOV, 1, 0.25, 2000)
+  readonly canvas = document.createElement('canvas')
+  renderer: Renderer | null = null
   /** A tank gunner's reticle, drawn over the finished frame. */
   readonly gunsight = new GunSightView()
-  private readonly sun = new THREE.DirectionalLight(0xffffff, 2.4)
   private readonly resizeObserver: ResizeObserver
-  private readonly hemisphere = new THREE.HemisphereLight()
   /** Blob shadows; the game fills them in each frame. */
   readonly contact: ContactShadows
   private currentLook: Look = loadLook()
-  /** Built the first time AO is switched on. */
-  private composer: EffectComposer | null = null
-  private gtao: GTAOPass | null = null
-  private ink: InkPass | null = null
-  /** The pixel ratio the composer renders at, set by `resize`. */
-  private composerRatio = 1
-  /** Parts of the scene the AO pass must not see: translucent effects, decals and lines. */
-  private readonly aoHidden: THREE.Object3D[] = []
 
   constructor(private readonly container: HTMLElement) {
-    this.renderer = new THREE.WebGLRenderer({ antialias: true })
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-    this.renderer.shadowMap.enabled = true
-    this.renderer.shadowMap.type = THREE.PCFShadowMap
-    container.appendChild(this.renderer.domElement)
+    this.canvas.style.cssText = 'display:block;width:100%;height:100%'
+    container.appendChild(this.canvas)
 
-    this.scene.background = new THREE.Color()
-    this.scene.fog = new THREE.Fog(0xffffff, 150, 600)
-    this.scene.add(this.hemisphere)
+    this.scene.fog = new Fog(150, 600)
+    this.scene.sun.position.set(...SUN_OFFSET)
+    this.scene.sun.shadow.enabled = true
     this.contact = new ContactShadows((x, z) => this.groundAt(x, z))
-    this.scene.add(this.contact.root)
-    this.excludeFromAO(this.contact.root)
-    this.sun.position.set(...SUN_OFFSET)
-    this.sun.castShadow = true
-    this.sun.shadow.bias = -0.001
-    this.sun.shadow.normalBias = 0.15
-    this.scene.add(this.sun, this.sun.target)
+    this.scene.add(this.contact.root, this.gunsight.root)
 
     this.resizeObserver = new ResizeObserver(() => this.resize())
     this.resizeObserver.observe(container)
-    this.resize()
     this.setLook(this.currentLook)
+  }
+
+  /** Gets the GPU and sizes the picture. Rejects where WebGPU is missing. */
+  async init() {
+    this.renderer = await Renderer.create(this.canvas, {
+      onDeviceLost: (info) => console.error(`The graphics device was lost: ${info.message}`),
+    })
+    this.resize()
   }
 
   get look(): Readonly<Look> {
@@ -117,95 +109,36 @@ export class Scene {
   setLook(look: Look) {
     this.currentLook = { ...look }
     const palette = look.soft ? SOFT : CLASSIC
-    ;(this.scene.background as THREE.Color).set(palette.sky)
-    this.scene.fog!.color.set(palette.sky)
-    this.hemisphere.color.set(palette.hemiSky)
-    this.hemisphere.groundColor.set(palette.hemiGround)
-    this.hemisphere.intensity = palette.hemiIntensity
-    this.sun.color.set(palette.sun)
-    this.sun.intensity = palette.sunIntensity
-    this.sun.shadow.radius = palette.shadowRadius
-    setWaterLight(palette.sky, palette.sun, new THREE.Vector3(...SUN_OFFSET))
-    this.renderer.toneMapping = palette.toneMapping
-    this.renderer.toneMappingExposure = palette.exposure
+    const scene = this.scene
+    scene.background.setHex(palette.sky)
+    scene.fog!.color.setHex(palette.sky)
+    scene.hemisphere.sky.setHex(palette.hemiSky)
+    scene.hemisphere.ground.setHex(palette.hemiGround)
+    scene.hemisphere.intensity = palette.hemiIntensity
+    scene.sun.color.setHex(palette.sun)
+    scene.sun.intensity = palette.sunIntensity
+    scene.sun.shadow.radius = palette.shadowRadius
+    scene.toneMapping = palette.toneMapping
+    scene.exposure = palette.exposure
+    setWaterLight(palette.sky, palette.sun)
     this.contact.active = look.contact
     this.setShadowReach(look.far)
-    if ((look.ao || look.ink) && !this.composer) this.buildComposer()
-    if (this.gtao) this.gtao.enabled = look.ao
-    if (this.ink) this.ink.enabled = look.ink
-    this.resize()
+    scene.ink = look.ink ? (scene.ink ?? new Ink()) : null
   }
 
   private setShadowReach(far: boolean) {
-    const { span, size, near, far: depth } = far ? SHADOW_FAR : SHADOW_NEAR
-    const shadow = this.sun.shadow
-    const camera = shadow.camera
-    camera.left = camera.bottom = -span / 2
-    camera.right = camera.top = span / 2
-    camera.near = near
-    camera.far = depth
-    camera.updateProjectionMatrix()
-    if (shadow.mapSize.x !== size) {
-      shadow.mapSize.set(size, size)
-      // The old map is the wrong size; the renderer makes a new one on the next frame.
-      shadow.map?.dispose()
-      shadow.map = null
-    }
-  }
-
-  /** Keeps `object` out of the AO pass's depth and normal picture, though it is still drawn. */
-  excludeFromAO(object: THREE.Object3D) {
-    this.aoHidden.push(object)
-  }
-
-  private buildComposer() {
-    const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 })
-    // The ink pass reads depth from the frame the scene was drawn into.
-    target.depthTexture = new THREE.DepthTexture(1, 1)
-    const composer = new EffectComposer(this.renderer, target)
-    composer.addPass(new RenderPass(this.scene, this.camera))
-    const ink = new InkPass(this.camera, () => this.composerRatio)
-    composer.addPass(ink)
-    const gtao = new GTAOPass(this.scene, this.camera, 1, 1)
-    // Tight and gentle: it should seat things into the ground and darken creases, not outline them.
-    gtao.updateGtaoMaterial({ radius: 1.1, distanceExponent: 1.5, thickness: 2, scale: 1.2, samples: 12, distanceFallOff: 1, screenSpaceRadius: false })
-    gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 })
-    gtao.blendIntensity = 0.85
-    // The pass renders the whole scene again for depth and normals; keep translucent things out of it.
-    const render = gtao.render.bind(gtao)
-    gtao.render = (...args: Parameters<GTAOPass['render']>) => {
-      const hidden = this.aoHidden.filter((object) => object.visible)
-      for (const object of hidden) object.visible = false
-      try {
-        render(...args)
-      } finally {
-        for (const object of hidden) object.visible = true
-      }
-    }
-    composer.addPass(gtao)
-    // Tone mapping and the sRGB encode happen here, since the passes work in linear light.
-    composer.addPass(new OutputPass())
-    this.composer = composer
-    this.gtao = gtao
-    this.ink = ink
-  }
-
-  get canvas() {
-    return this.renderer.domElement
+    const { span, size, depth } = far ? SHADOW_FAR : SHADOW_NEAR
+    const shadow = this.scene.sun.shadow
+    shadow.span = span
+    shadow.mapSize = size
+    shadow.depth = depth
   }
 
   private resize() {
     const { clientWidth: width, clientHeight: height } = this.container
     if (width === 0 || height === 0) return
-    this.renderer.setSize(width, height)
-    if (this.composer) {
-      // Full resolution for the outlines, which need it to stay crisp; AO's cost is what the cap is for.
-      this.composerRatio = this.currentLook.ao ? Math.min(this.renderer.getPixelRatio(), AO_PIXEL_RATIO) : this.renderer.getPixelRatio()
-      this.composer.setPixelRatio(this.composerRatio)
-      this.composer.setSize(width, height)
-    }
+    this.renderer?.setSize(width, height, Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO))
     this.camera.aspect = width / height
-    this.camera.updateProjectionMatrix()
   }
 
   /** Height of the ground under `(x, z)`, so the camera stays above hills. Set by the game. */
@@ -221,13 +154,13 @@ export class Scene {
     const y = target[1]! + height
     const z = target[2]! - Math.sin(yaw) * shoulder
     const horizontal = Math.cos(pitch) * distance
-    this.camera.position.set(x + Math.sin(yaw) * horizontal, y - Math.sin(pitch) * distance, z + Math.cos(yaw) * horizontal)
-    if (shake) this.camera.position.add(new THREE.Vector3(shake[0], shake[1], shake[2]))
-    this.camera.position.y = Math.max(this.groundAt(this.camera.position.x, this.camera.position.z) + 0.3, this.camera.position.y)
-    this.camera.lookAt(x, y, z)
+    const camera = this.camera
+    camera.position.set(x + Math.sin(yaw) * horizontal, y - Math.sin(pitch) * distance, z + Math.cos(yaw) * horizontal)
+    if (shake) camera.position.set(camera.position.x + shake[0]!, camera.position.y + shake[1]!, camera.position.z + shake[2]!)
+    camera.position.y = Math.max(this.groundAt(camera.position.x, camera.position.z) + 0.3, camera.position.y)
+    camera.lookAt(x, y, z)
     // The shadow frustum follows the target's height too, so it covers hills.
-    this.sun.target.position.set(target[0]!, target[1]!, target[2]!)
-    this.sun.position.set(target[0]! + SUN_OFFSET[0], target[1]! + SUN_OFFSET[1], target[2]! + SUN_OFFSET[2])
+    this.sunOver(target[0]!, target[1]!, target[2]!)
   }
 
   /**
@@ -236,13 +169,14 @@ export class Scene {
    * points even though the camera is higher than the gun. A shell falls from that line.
    */
   aimFrom(origin: readonly number[], yaw: number, pitch: number, back = GUNNER_BACK, up = GUNNER_UP) {
-    const dir = new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch))
-    const from = new THREE.Vector3(origin[0]!, origin[1]!, origin[2]!)
-    this.camera.position.copy(from).addScaledVector(dir, -back).add(new THREE.Vector3(0, up, 0))
-    this.camera.position.y = Math.max(this.groundAt(this.camera.position.x, this.camera.position.z) + 0.3, this.camera.position.y)
-    this.camera.lookAt(from.addScaledVector(dir, GUNNER_FOCUS))
-    this.sun.target.position.set(origin[0]!, origin[1]!, origin[2]!)
-    this.sun.position.set(origin[0]! + SUN_OFFSET[0], origin[1]! + SUN_OFFSET[1], origin[2]! + SUN_OFFSET[2])
+    const dx = -Math.sin(yaw) * Math.cos(pitch)
+    const dy = Math.sin(pitch)
+    const dz = -Math.cos(yaw) * Math.cos(pitch)
+    const camera = this.camera
+    camera.position.set(origin[0]! - dx * back, origin[1]! - dy * back + up, origin[2]! - dz * back)
+    camera.position.y = Math.max(this.groundAt(camera.position.x, camera.position.z) + 0.3, camera.position.y)
+    camera.lookAt(origin[0]! + dx * GUNNER_FOCUS, origin[1]! + dy * GUNNER_FOCUS, origin[2]! + dz * GUNNER_FOCUS)
+    this.sunOver(origin[0]!, origin[1]!, origin[2]!)
   }
 
   /**
@@ -256,8 +190,14 @@ export class Scene {
       eye[1]! + Math.sin(pitch),
       eye[2]! - Math.cos(yaw) * Math.cos(pitch),
     )
-    this.sun.target.position.set(eye[0]!, eye[1]!, eye[2]!)
-    this.sun.position.set(eye[0]! + SUN_OFFSET[0], eye[1]! + SUN_OFFSET[1], eye[2]! + SUN_OFFSET[2])
+    this.sunOver(eye[0]!, eye[1]!, eye[2]!)
+  }
+
+  /** Centres the sun's shadow on `(x, y, z)`. */
+  private sunOver(x: number, y: number, z: number) {
+    const sun = this.scene.sun
+    sun.target.set(x, y, z)
+    sun.position.set(x + SUN_OFFSET[0], y + SUN_OFFSET[1], z + SUN_OFFSET[2])
   }
 
   /** Eases the field of view towards the scope or aim zoom, or back, `dt` seconds on. `boost` widens the plain view, e.g. with speed. */
@@ -266,29 +206,21 @@ export class Scene {
     const fov = this.camera.fov + (target - this.camera.fov) * Math.min(1, dt * ZOOM_RATE)
     if (Math.abs(fov - this.camera.fov) < 1e-3) return
     this.camera.fov = Math.abs(fov - target) < 0.05 ? target : fov
-    this.camera.updateProjectionMatrix()
   }
 
   render() {
-    if ((this.currentLook.ao || this.currentLook.ink) && this.composer) this.composer.render()
-    else this.renderer.render(this.scene, this.camera)
-    if (this.gunsight.visible) {
-      // Over the frame, never behind a wall: its own pass with a cleared depth buffer.
-      const clear = this.renderer.autoClear
-      this.renderer.autoClear = false
-      this.renderer.clearDepth()
-      this.renderer.render(this.gunsight.scene, this.gunsight.camera)
-      this.renderer.autoClear = clear
-    }
+    if (!this.renderer) return
+    // The reticle is laid out in view space; it goes where the camera is, just before drawing.
+    this.camera.updateWorld()
+    this.gunsight.follow(this.camera)
+    this.renderer.render(this.scene, this.camera)
   }
 
   dispose() {
     this.resizeObserver.disconnect()
     this.gunsight.dispose()
-    this.gtao?.dispose()
-    this.composer?.dispose()
     this.contact.dispose()
-    this.renderer.dispose()
-    this.renderer.domElement.remove()
+    this.renderer?.destroy()
+    this.canvas.remove()
   }
 }

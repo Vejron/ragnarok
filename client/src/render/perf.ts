@@ -1,4 +1,4 @@
-import type * as THREE from 'three'
+import type { Renderer } from '@ragnarok/engine'
 import { physicsClock } from '../sim/physics'
 
 /** Samples kept for the averages: about two seconds at 60 fps. */
@@ -39,9 +39,8 @@ export class PerfReadout {
     this.lastRefresh = 0
   }
 
-  constructor(private readonly renderer: THREE.WebGLRenderer) {
-    // Counts are read per frame, so they are summed over every render pass in it (the AO composer has several).
-    renderer.info.autoReset = false
+  /** `renderer` is read each frame, since the GPU is asked for after the game is built. */
+  constructor(private readonly renderer: () => Renderer | null) {
     this.el = document.createElement('div')
     this.el.setAttribute('aria-hidden', 'true')
     this.el.style.cssText = [
@@ -56,7 +55,6 @@ export class PerfReadout {
   /** Call first thing in each animation frame. Resets the per-frame counters. */
   begin(now: number) {
     this.frameStart = performance.now()
-    this.renderer.info.reset()
     physicsClock.ms = 0
     physicsClock.calls = 0
     this.lastFrame = this.lastFrame ?? now
@@ -93,14 +91,15 @@ export class PerfReadout {
     const avg = (pick: (s: Sample) => number) => this.samples.reduce((sum, s) => sum + pick(s), 0) / n
     const interval = avg((s) => s.interval)
     const worst = this.samples.reduce((max, s) => Math.max(max, s.interval), 0)
-    const { info } = this.renderer
-    const triangles = info.render.triangles
+    const stats = this.renderer()?.stats
+    const gpu = Object.entries(stats?.gpuMs ?? {}).map(([pass, ms]) => `${pass} ${ms.toFixed(2)}`).join('  ')
     return [
       `fps ${interval > 0 ? (1000 / interval).toFixed(0) : '-'}   frame ${interval.toFixed(1)} ms  (worst ${worst.toFixed(1)})`,
       `game ${avg((s) => s.update).toFixed(2)} ms   render ${avg((s) => s.render).toFixed(2)} ms`,
       `physics ${avg((s) => s.physics).toFixed(2)} ms   ${avg((s) => s.calls).toFixed(0)} calls   ticks/frame ${avg((s) => s.ticks).toFixed(2)}`,
-      `draw calls ${info.render.calls}   triangles ${(triangles / 1000).toFixed(1)}k`,
-      `geometries ${info.memory.geometries}   textures ${info.memory.textures}   programs ${info.programs?.length ?? 0}`,
+      `draw calls ${stats?.drawCalls ?? 0}   triangles ${((stats?.triangles ?? 0) / 1000).toFixed(1)}k   shadow draws ${stats?.shadowDraws ?? 0}`,
+      `objects ${stats?.records ?? 0}  rewritten ${stats?.recordsWritten ?? 0}   materials ${stats?.materials ?? 0}   pipelines ${stats?.pipelines ?? 0}`,
+      `gpu ms  ${gpu || 'n/a'}`,
     ].join('\n')
   }
 

@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import { Texture } from '@ragnarok/engine'
 import {
   COVER_FARM,
   COVER_INDUSTRIAL,
@@ -33,7 +33,7 @@ const css = (color: number) => `#${color.toString(16).padStart(6, '0')}`
  * tile's `(x0, z0)` corner, which is UV `(0, 0)` with `flipY` off. Null when there is no canvas
  * (tests), in which case the terrain stays plain grass.
  */
-export function bakeTerrainTexture(tile: Pick<TileData, 'cover'>, x0: number, z0: number, size: number): THREE.CanvasTexture | null {
+export function bakeTerrainTexture(tile: Pick<TileData, 'cover'>, x0: number, z0: number, size: number): Texture | null {
   if (typeof document === 'undefined') return null
   const pixels = Math.min(1024, Math.max(128, 2 ** Math.round(Math.log2(size * TEXELS_PER_METRE))))
   const canvas = document.createElement('canvas')
@@ -56,12 +56,7 @@ export function bakeTerrainTexture(tile: Pick<TileData, 'cover'>, x0: number, z0
     ctx.fill('evenodd')
   }
 
-  const texture = new THREE.CanvasTexture(canvas)
-  texture.flipY = false
-  texture.colorSpace = THREE.SRGBColorSpace
-  texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping
-  texture.anisotropy = 4
-  return texture
+  return new Texture(canvas, { srgb: true, wrap: 'clamp', anisotropy: 4 })
 }
 
 /**
@@ -69,7 +64,7 @@ export function bakeTerrainTexture(tile: Pick<TileData, 'cover'>, x0: number, z0
  * row covers `[k, k + 1]` of the `n` texels over the tile, which UV `0..1` spans with `flipY` off.
  * Object space is world space here: the terrain mesh is built in world coordinates.
  */
-export function bakeNormalMap(detail: Int8Array | undefined): THREE.DataTexture | null {
+export function bakeNormalMap(detail: Int8Array | undefined): Texture | null {
   if (!detail || detail.length === 0) return null
   const n = Math.round(Math.sqrt(detail.length / 2))
   if (n * n * 2 !== detail.length) return null
@@ -83,13 +78,6 @@ export function bakeNormalMap(detail: Int8Array | undefined): THREE.DataTexture 
     data[k * 4 + 2] = Math.round((-sz / length) * 127.5 + 127.5)
     data[k * 4 + 3] = 255
   }
-  const texture = new THREE.DataTexture(data, n, n, THREE.RGBAFormat)
-  texture.flipY = false
-  texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping
-  texture.magFilter = THREE.LinearFilter
-  texture.minFilter = THREE.LinearMipmapLinearFilter
-  texture.generateMipmaps = true
-  texture.anisotropy = 4
-  texture.needsUpdate = true
-  return texture
+  // Data, not colour: sampled as is, with mipmaps.
+  return new Texture({ data, width: n, height: n }, { srgb: false, wrap: 'clamp', mipmaps: true, anisotropy: 4 })
 }

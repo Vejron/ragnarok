@@ -1,3 +1,4 @@
+import type { Node } from '@ragnarok/engine'
 import * as THREE from 'three'
 import {
   ARMS_CUT, ARMS_JAMMED, ARMS_REAR_JAMMED, DAMAGE_TURRET, DAMAGE_WHEELS, encodeInput, encodePing, KIND_HELI, KIND_PLANE, KIND_MORTAR, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_STRV, KIND_TANK, KIND_WALKER, sceneStates, toAxis, toMrad, TURRET_GONE, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RICOCHET, WEAPON_TURRET,
@@ -62,7 +63,6 @@ import { playCrow } from './audio'
 import { VehicleSounds } from './vehicleaudio'
 import { HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, HitFeedback } from './feedback'
 import { buildGround } from './render/world'
-import { updateWater } from './render/water'
 import { Replica } from './net/replica'
 import { TileStreamer } from './stream'
 import { loadManifest, type WorldData } from './world'
@@ -265,7 +265,7 @@ export class Game {
 
   constructor(container: HTMLElement, private readonly onStats: (stats: HudStats) => void) {
     this.scene = new Scene(container)
-    this.perf = new PerfReadout(this.scene.renderer)
+    this.perf = new PerfReadout(() => this.scene.renderer)
     this.input = new InputController(this.scene.canvas)
     this.view = new WorldView(this.scene.scene)
     this.scene.scene.add(this.crowd.root)
@@ -273,19 +273,11 @@ export class Game {
     this.scene.scene.add(this.rocketModels.root)
     this.scene.scene.add(this.pickupModels.root)
     this.scene.scene.add(this.trajectory.root, this.mortarArc.root)
-    // Translucent smoke and flashes, and the grenade's arc, would show as solid shapes in the AO pass.
-    this.scene.excludeFromAO(this.effects.root)
     this.scene.scene.add(this.smoke.root, this.glow.root, this.skids.root)
-    for (const root of [this.smoke.root, this.glow.root, this.skids.root]) this.scene.excludeFromAO(root)
     this.smoke.groundAt = (x, z) => this.scene.groundAt(x, z)
     this.scene.scene.add(this.debris.root)
     this.debris.groundAt = (x, z) => this.scene.groundAt(x, z)
-    this.scene.excludeFromAO(this.view.damage.root)
-    this.scene.excludeFromAO(this.trajectory.root)
-    this.scene.excludeFromAO(this.mortarArc.root)
-    // Water is translucent and drawn after everything solid; the AO pass would see it as a lid.
     this.scene.scene.add(this.view.waterRoot)
-    this.scene.excludeFromAO(this.view.waterRoot)
     this.transport = new Transport(
       (message) => this.handle(message),
       (status) => {
@@ -297,6 +289,8 @@ export class Game {
   }
 
   async start() {
+    // The GPU first: with no WebGPU there is nothing to draw, and the error says so.
+    await this.scene.init()
     const { world, hash } = await loadManifest()
     this.worldHash = hash
     this.world = world
@@ -547,13 +541,12 @@ export class Game {
     this.frameDt = dt
     this.lastFrame = now
 
-    updateWater(now / 1000)
     if (this.driverSnapshot) {
       const { ack, vehicle, drive } = this.driverSnapshot
       this.driverSnapshot = null
       this.driver?.reconcile(ack, vehicle, drive)
     }
-    this.view.update(dt, this.effects, this.scene.camera.position)
+    this.view.update(dt, this.effects, this.cameraAt.set(this.scene.camera.position.x, this.scene.camera.position.y, this.scene.camera.position.z))
     this.accumulator += dt * 1000
     let ticks = 0
     while (this.accumulator >= TICK_MS && ticks < MAX_TICKS_PER_FRAME) {
@@ -702,7 +695,10 @@ export class Game {
     this.pickupModels.update(now / 1000)
     this.aimGrenade(position, seated)
     this.effects.update(dt)
-    this.damageNumbers.update(dt)
+    this.damageNumbers.update(dt, this.scene.camera)
+    const eye = this.scene.camera.position
+    this.smoke.follow(eye.x, eye.z)
+    this.glow.follow(eye.x, eye.z)
     this.smoke.update(dt)
     this.glow.update(dt)
     this.skids.update(dt)
@@ -1068,7 +1064,7 @@ export class Game {
     const fx = this.vehicleFx.get(id)
     if (!(plane instanceof PlaneModel) || !fx || !state || state.bombs === 0) return null
     plane.root.updateMatrixWorld(true)
-    const start = new THREE.Vector3(...PLANE_BOMB_PIVOT).applyMatrix4(plane.root.matrixWorld)
+    const start = new THREE.Vector3(...PLANE_BOMB_PIVOT).applyMatrix4(new THREE.Matrix4().fromArray(plane.root.matrixWorld))
     if (start.y - this.scene.groundAt(start.x, start.z) < PLANE_BOMB_MIN_HEIGHT) return null
     const velocity = fx.velocity
     return dropTrajectory((origin, dir, max) => motor.castRay(origin, dir, max), [start.x, start.y, start.z], [velocity.x, velocity.y, velocity.z])
@@ -1205,6 +1201,7 @@ export class Game {
   }
 
   private readonly listenForward = new THREE.Vector3()
+  private readonly cameraAt = new THREE.Vector3()
 
   private fxWorldMade: FxWorld | null = null
 
@@ -1281,7 +1278,7 @@ export class Game {
    * Points the look where the nose gun does. The gun's angles are in the hull frame, the look is in the
    * world's, so the hull's orientation turns one into the other.
    */
-  private lookAlong(heli: { root: THREE.Object3D }, gun: Turret) {
+  private lookAlong(heli: { root: Node }, gun: Turret) {
     const flat = Math.cos(gun.pitch)
     const local = new THREE.Vector3(-Math.sin(gun.yaw) * flat, Math.sin(gun.pitch), -Math.cos(gun.yaw) * flat)
     const world = local.applyQuaternion(heli.root.quaternion)
@@ -1293,10 +1290,10 @@ export class Game {
    * Keeps the look within a mounted gun's travel, which is in the hull's frame: the same limits the
    * server applies, so the view never points somewhere the gun cannot follow.
    */
-  private limitGun(mount: { root: THREE.Object3D }, yawLimit: number, pitchMin: number, pitchMax: number) {
+  private limitGun(mount: { root: Node }, yawLimit: number, pitchMin: number, pitchMax: number) {
     const flat = Math.cos(this.input.pitch)
     const world = new THREE.Vector3(-Math.sin(this.input.yaw) * flat, Math.sin(this.input.pitch), -Math.cos(this.input.yaw) * flat)
-    const local = world.applyQuaternion(mount.root.quaternion.clone().invert())
+    const local = world.applyQuaternion(new THREE.Quaternion().copy(mount.root.quaternion).invert())
     const yaw = THREE.MathUtils.clamp(Math.atan2(-local.x, -local.z), -yawLimit, yawLimit)
     const pitch = THREE.MathUtils.clamp(Math.asin(THREE.MathUtils.clamp(local.y, -1, 1)), pitchMin, pitchMax)
     const limited = new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)).applyQuaternion(mount.root.quaternion)
@@ -1417,7 +1414,7 @@ export class Game {
     // The ray starts past the muzzle, so it does not find the gun's own hull.
     const start = eye.clone().addScaledVector(direction, SIGHT_RAY_START)
     const hit = this.motor?.castRay([start.x, start.y, start.z], [direction.x, direction.y, direction.z], SIGHT_RANGE_MAX)
-    this.scene.gunsight.show(camera.fov, camera.aspect, marks, hit ? hit.t + SIGHT_RAY_START : null)
+    this.scene.gunsight.show(camera.fov, marks, hit ? hit.t + SIGHT_RAY_START : null)
     return yaw
   }
 
@@ -1428,15 +1425,15 @@ export class Game {
     if (plane instanceof PlaneModel) {
       const { origin, direction } = plane.forwardGun(0)
       const toScreen = (point: THREE.Vector3): [number, number] | null => {
-        point.project(this.scene.camera)
         // Kept on the screen: the view may be a way behind the aim.
-        return point.z < 1 ? [clamp01((point.x + 1) / 2), clamp01((1 - point.y) / 2)] : null
+        if (!this.scene.camera.project(point)) return null
+        return [clamp01((point.x + 1) / 2), clamp01((1 - point.y) / 2)]
       }
       nose = toScreen(origin.clone().addScaledVector(direction, 150))
       const { yaw, pitch } = this.input
       const flat = Math.cos(pitch)
       const wanted = new THREE.Vector3(-Math.sin(yaw) * flat, Math.sin(pitch), -Math.cos(yaw) * flat)
-      aim = toScreen(plane.root.position.clone().addScaledVector(wanted, 150))
+      aim = toScreen(new THREE.Vector3().copy(plane.root.position).addScaledVector(wanted, 150))
     }
     this.onSights?.(nose, aim)
   }

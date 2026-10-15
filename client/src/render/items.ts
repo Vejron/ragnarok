@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import { Group, Material, Mesh, boxGeometry, sphereGeometry, type Geometry } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
 import { ITEM_AK5, ITEM_BANDAGE, ITEM_GOLDEN_EGG, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER } from '@/sim/items'
 
@@ -10,10 +10,10 @@ const CLOTH = 0xf2f2ee
 const CROSS = 0xd93a3a
 const GOLD = 0xffc933
 
-const materials = new Map<number, THREE.MeshToonMaterial>()
-const boxes = new Map<string, THREE.BoxGeometry>()
-let sphere: THREE.SphereGeometry | null = null
-let shiny: THREE.MeshToonMaterial | null = null
+const materials = new Map<number, Material>()
+const boxes = new Map<string, Geometry>()
+let sphere: Geometry | null = null
+let shiny: Material | null = null
 
 /** One shared toon material per colour: items are small and many. */
 const material = (color: number) => {
@@ -22,11 +22,11 @@ const material = (color: number) => {
   return m
 }
 
-const box = (group: THREE.Group, size: [number, number, number], at: [number, number, number], color: number) => {
+const box = (group: Group, size: [number, number, number], at: [number, number, number], color: number) => {
   const key = size.join(',')
   let geometry = boxes.get(key)
-  if (!geometry) boxes.set(key, (geometry = new THREE.BoxGeometry(...size)))
-  const mesh = new THREE.Mesh(geometry, material(color))
+  if (!geometry) boxes.set(key, (geometry = boxGeometry(...size)))
+  const mesh = new Mesh(geometry, material(color))
   mesh.position.set(...at)
   group.add(mesh)
   return mesh
@@ -36,8 +36,8 @@ const box = (group: THREE.Group, size: [number, number, number], at: [number, nu
  * A low-poly model of `item`, about as long as it is in the player's hands, lying along -Z with
  * its grip at the origin: the same pose whether it sits on the ground or sits in a hand.
  */
-export function buildItem(item: number): THREE.Group {
-  const group = new THREE.Group()
+export function buildItem(item: number): Group {
+  const group = new Group()
   switch (item) {
     case ITEM_REVOLVER:
       box(group, [0.04, 0.05, 0.2], [0, 0.04, -0.1], GUN_METAL)
@@ -66,8 +66,8 @@ export function buildItem(item: number): THREE.Group {
       box(group, [0.045, 0.1, 0.26], [0, 0.0, 0.3], WOOD)
       break
     case ITEM_GRENADE: {
-      sphere ??= new THREE.SphereGeometry(0.06, 10, 8)
-      const body = new THREE.Mesh(sphere, material(OLIVE))
+      sphere ??= sphereGeometry(0.06, 10, 8)
+      const body = new Mesh(sphere, material(OLIVE))
       body.scale.set(1, 1.15, 1)
       group.add(body)
       box(group, [0.03, 0.025, 0.05], [0, 0.07, 0], GUN_METAL)
@@ -80,17 +80,17 @@ export function buildItem(item: number): THREE.Group {
       box(group, [0.025, 0.075, 0.07], [0, 0, 0], CROSS)
       break
     case ITEM_GOLDEN_EGG: {
-      sphere ??= new THREE.SphereGeometry(0.06, 10, 8)
+      sphere ??= sphereGeometry(0.06, 10, 8)
       // Shiny and a little glowing, so it is seen across a field.
       shiny ??= toonMaterial({ color: GOLD, emissive: 0x8a5a00 })
-      const egg = new THREE.Mesh(sphere, shiny)
+      const egg = new Mesh(sphere, shiny)
       egg.scale.set(0.9, 1.25, 0.9)
       group.add(egg)
       break
     }
   }
   group.traverse((node) => {
-    node.castShadow = true
+    if (node instanceof Mesh) node.castShadow = true
   })
   return group
 }

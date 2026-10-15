@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import type { Node } from '@ragnarok/engine'
 import { TankModel, parseTankAsset, type TankLayout } from './tank'
 import { STRV_TRACK_HALF } from '@/sim/consts'
 
@@ -9,7 +9,7 @@ const WHEEL_RADIUS = 0.44
 /** The driver sits in the hull at the front right, under a flat hatch in the roof, left of the gun. */
 const LAYOUT: TankLayout = { driverHead: [-0.4, 0.9, -0.1], gunnerHead: null, wheelRadius: WHEEL_RADIUS, trackHalf: STRV_TRACK_HALF }
 
-let asset: THREE.Object3D | null = null
+let asset: Node | null = null
 
 /** Parses `strvs.glb` (built by `tools/vehicles/build_strvs.py`) for every `StrvModel` to share. */
 export async function parseStrvModel(data: ArrayBuffer) {

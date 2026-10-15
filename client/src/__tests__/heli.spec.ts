@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import * as THREE from 'three'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { boxOf, triangleCount } from './helpers'
 import { HeliModel, parseHeliModel } from '@/render/heli'
 import { HELI_GUN_LENGTH, HELI_GUN_PIVOT } from '@/sim/consts'
 
@@ -32,11 +32,7 @@ describe('HeliModel', () => {
 
   it('stays low-poly', () => {
     const heli = new HeliModel(1)
-    let triangles = 0
-    heli.root.traverse((node) => {
-      const mesh = node as THREE.Mesh
-      if (mesh.isMesh) triangles += (mesh.geometry.index?.count ?? mesh.geometry.attributes.position!.count) / 3
-    })
+    const triangles = triangleCount(heli.root)
     expect(triangles).toBeLessThan(3000)
     heli.dispose()
   })
@@ -47,7 +43,7 @@ describe('HeliModel', () => {
     const level = heli.barrel()
     expect(level.direction.z).toBeCloseTo(-1, 3)
     expect(level.origin.y).toBeCloseTo(2 + HELI_GUN_PIVOT[1], 3)
-    const bounds = new THREE.Box3().setFromObject(named(heli, 'gun'))
+    const bounds = boxOf(named(heli, 'gun'))
     expect(bounds.min.z).toBeCloseTo(5 + HELI_GUN_PIVOT[2] - HELI_GUN_LENGTH, 1)
     expect(heli.muzzle().z).toBeCloseTo(5 + HELI_GUN_PIVOT[2] - HELI_GUN_LENGTH, 3)
 

@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest'
+import { Group, InstancedMesh, Mesh } from '@ragnarok/engine'
 import * as THREE from 'three'
 import { decodeServer, OBJ_TREE } from '@/net/codec'
 import { BuildingDamage } from '@/render/damage'
@@ -43,7 +44,7 @@ describe('trunkColliderIndex', () => {
 
 describe('felling a tree', () => {
   const scene = () => {
-    const group = new THREE.Group()
+    const group = new Group()
     group.add(...buildTrees([tree(0, true), tree(10, true)]))
     return group
   }
@@ -53,12 +54,10 @@ describe('felling a tree', () => {
     const falling = new FallingTrees()
     expect(falling.fell(group, tree(0, true), 0, 0, false)).toBe(true)
     expect(falling.fell(group, tree(0, true), 0, 0, false)).toBe(false)
-    const mesh = group.children[0] as THREE.InstancedMesh
-    const m = new THREE.Matrix4()
-    mesh.getMatrixAt(0, m)
-    expect(m.elements[0]).toBe(0)
-    mesh.getMatrixAt(1, m)
-    expect(m.elements[0]).not.toBe(0)
+    const mesh = group.children[0] as InstancedMesh
+    // A felled instance is scaled to nothing: its x axis has no length.
+    expect(mesh.matrices[0]).toBe(0)
+    expect(mesh.matrices[16]).not.toBe(0)
   })
 
   it('tips the crown towards the way it falls', () => {
@@ -132,8 +131,8 @@ describe('building triangle ranges', () => {
 })
 
 describe('redrawing a tile without a building', () => {
-  const vertexCount = (group: THREE.Group) =>
-    group.children.reduce((n, c) => n + (c instanceof THREE.Mesh && c.userData.merged ? c.geometry.getAttribute('position').count : 0), 0)
+  const vertexCount = (group: Group) =>
+    group.children.reduce((n, c) => n + (c instanceof Mesh && c.userData.merged ? c.geometry.vertexCount : 0), 0)
 
   it('drops that building\'s triangles from the merged meshes and no others', () => {
     const tile = twoHouses()
@@ -176,8 +175,9 @@ describe('the building collider without a fallen building', () => {
 describe('a building collapsing', () => {
   it('sinks its walls, leaves a pile of rubble in the tile, and clears away its pieces', () => {
     const tile = twoHouses()
-    const group = new THREE.Group()
-    new THREE.Scene().add(group)
+    const group = new Group()
+    // A tile's group hangs in the world; the collapse stops when it is taken out.
+    new Group().add(group)
     const effects = new Effects()
     const collapses = new Collapses()
     collapses.start(group, tile, 0, 0, 0, () => 0, 7)
@@ -191,14 +191,14 @@ describe('a building collapsing', () => {
     for (let i = 0; i < 300; i++) collapses.update(0.05, effects)
     // Only the pile is left.
     expect(group.children.length).toBe(1)
-    const heap = group.children[0] as THREE.Mesh
+    const heap = group.children[0] as Mesh
     expect(heap.scale.y).toBeGreaterThanOrEqual(1)
     expect(heap.scale.y).toBeLessThanOrEqual(3)
     effects.dispose()
   })
 
   it('is just the pile when the tile came in after it fell', () => {
-    const group = new THREE.Group()
+    const group = new Group()
     Collapses.settled(group, twoHouses(), 1)
     expect(group.children.length).toBe(1)
     expect(group.children[0]!.position.x).toBeCloseTo(35)
@@ -229,7 +229,7 @@ describe('a hurt building', () => {
   const key = 5
   const tileWith = () => twoHouses()
   const vertices = (damage: BuildingDamage, index = 0) =>
-    (damage.root.children[0]!.children.find((c) => c instanceof THREE.Mesh && c.castShadow && !c.userData.decal && c.geometry.getAttribute('color')) as THREE.Mesh | undefined)?.geometry.getAttribute('position').count ?? 0
+    (damage.root.children[0]!.children.find((c) => c instanceof Mesh && c.castShadow && !c.userData.decal && c.geometry.colors) as Mesh | undefined)?.geometry.vertexCount ?? 0
 
   it('shows a scorch on the wall nearest the blast', () => {
     const damage = new BuildingDamage()
@@ -284,7 +284,7 @@ describe('a hurt building', () => {
     damage.hurtBuilding(key, 0, 2, null)
     const effects = new Effects()
     const group = damage.root.children[0]!
-    const pieces = group.children.filter((c) => c instanceof THREE.Mesh && c.geometry.getAttribute('color') && c.material instanceof THREE.MeshToonMaterial && c.material.side === THREE.DoubleSide && c.castShadow)
+    const pieces = group.children.filter((c) => c instanceof Mesh && c.geometry.colors && c.material.side === 'double' && c.castShadow)
     expect(pieces.length).toBeGreaterThan(0)
     for (let i = 0; i < 300; i++) damage.update(0.05, effects, new THREE.Vector3(500, 0, 0))
     expect(group.children.some((c) => pieces.includes(c))).toBe(false)
@@ -296,8 +296,8 @@ describe('a hurt building', () => {
       const damage = new BuildingDamage()
       damage.attach(key, tileWith())
       damage.hurtBuilding(key, 1, 3, [28, 2, 0])
-      const body = damage.root.children[0]!.children.find((c) => c instanceof THREE.Mesh && !c.userData.decal && c.castShadow) as THREE.Mesh
-      return Array.from(body.geometry.getAttribute('position').array)
+      const body = damage.root.children[0]!.children.find((c) => c instanceof Mesh && !c.userData.decal && c.castShadow) as Mesh
+      return Array.from(body.geometry.positions)
     }
     expect(positions()).toEqual(positions())
   })

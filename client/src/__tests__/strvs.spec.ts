@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import * as THREE from 'three'
+import { Mesh } from '@ragnarok/engine'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { boxOf, triangleCount } from './helpers'
 import { parseStrvModel, StrvModel } from '@/render/strvs'
 import { STRV_BARREL_LENGTH, STRV_GUN_PIVOT } from '@/sim/consts'
 
@@ -29,11 +30,7 @@ describe('StrvModel', () => {
 
   it('stays low-poly', () => {
     const tank = new StrvModel(1)
-    let triangles = 0
-    tank.root.traverse((node) => {
-      const mesh = node as THREE.Mesh
-      if (mesh.isMesh) triangles += (mesh.geometry.index?.count ?? mesh.geometry.attributes.position!.count) / 3
-    })
+    const triangles = triangleCount(tank.root)
     expect(triangles).toBeLessThan(3000)
     tank.dispose()
   })
@@ -46,14 +43,14 @@ describe('StrvModel', () => {
     expect(direction.y).toBeCloseTo(Math.sin(0.25), 3)
     // A turret yaw from the wire is ignored: the gun is fixed in the hull.
     expect(direction.x).toBeCloseTo(0, 3)
-    const bounds = new THREE.Box3().setFromObject(named(tank, 'gun'))
+    const bounds = boxOf(named(tank, 'gun'))
     expect(bounds.min.z).toBeLessThan(STRV_GUN_PIVOT[2] - STRV_BARREL_LENGTH * 0.9 * Math.cos(0.25))
     tank.dispose()
   })
 
   it('shows the driver only', () => {
     const tank = new StrvModel(1)
-    const heads = () => tank.root.children.filter((c) => (c as THREE.Mesh).isMesh && c.visible).length
+    const heads = () => tank.root.children.filter((c) => c instanceof Mesh && c.visible).length
     tank.update([0, 1, 0], IDENTITY, 0, [0])
     expect(heads()).toBe(0)
     tank.update([0, 1, 0], IDENTITY, 0, [5])

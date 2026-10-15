@@ -1,7 +1,6 @@
+import { Animator, Color, Group, Mesh, parseGlb, type AnimationClip, type Node } from '@ragnarok/engine'
 import * as THREE from 'three'
 import { toonMaterial } from './toon'
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
-import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
 
 export const ROOSTER_URL = `${import.meta.env.BASE_URL}models/rooster.glb`
 
@@ -11,8 +10,8 @@ const WALK_MIN_SPEED = 0.15
 const BLEND_RATE = 8
 
 interface Asset {
-  scene: THREE.Object3D
-  clips: Map<string, THREE.AnimationClip>
+  scene: Node
+  clips: Map<string, AnimationClip>
 }
 
 let asset: Asset | null = null
@@ -22,20 +21,16 @@ let asset: Asset | null = null
  * Materials become flat toon ones to match the rest of the scene.
  */
 export async function parseRoosterModel(data: ArrayBuffer) {
-  const gltf = await new Promise<{ scene: THREE.Object3D; animations: THREE.AnimationClip[] }>((resolve, reject) => {
-    new GLTFLoader().parse(data, '', (g) => resolve(g), reject)
-  })
+  const gltf = parseGlb(data)
   gltf.scene.traverse((node) => {
-    const mesh = node as THREE.Mesh
-    if (!mesh.isMesh) return
-    const source = mesh.material as THREE.MeshStandardMaterial
-    mesh.material = toonMaterial({ color: source.color, name: source.name })
-    source.dispose()
-    mesh.castShadow = true
+    if (!(node instanceof Mesh)) return
+    const source = node.material
+    node.material = toonMaterial({ color: new Color(source.color.r, source.color.g, source.color.b), name: source.name })
+    node.castShadow = true
     // A skinned mesh's bounds are those of its rest pose: it would be culled while crowing.
-    mesh.frustumCulled = false
+    node.frustumCulled = false
   })
-  asset = { scene: gltf.scene, clips: new Map(gltf.animations.map((clip) => [clip.name, clip])) }
+  asset = { scene: gltf.scene, clips: new Map(gltf.clips.map((clip) => [clip.name, clip])) }
 }
 
 export async function loadRoosterModel() {
@@ -49,9 +44,8 @@ export async function loadRoosterModel() {
  * on the speed the interpolator reports; the crow plays once each time the server raises its crowing flag.
  */
 export class RoosterModel {
-  readonly root = new THREE.Group()
-  private readonly mixer: THREE.AnimationMixer
-  private readonly actions = new Map<string, THREE.AnimationAction>()
+  readonly root = new Group()
+  private readonly animator: Animator
   private readonly weights = { idle: 1, walk: 0, crow: 0 }
   private readonly last = new THREE.Vector3()
   private placed = false
@@ -60,18 +54,13 @@ export class RoosterModel {
 
   constructor() {
     if (!asset) throw new Error('loadRoosterModel() must finish before roosters are created')
-    const model = cloneSkinned(asset.scene)
+    const model = asset.scene.clone()
     this.root.add(model)
-    this.mixer = new THREE.AnimationMixer(model)
-    for (const [name, clip] of asset.clips) {
-      const action = this.mixer.clipAction(clip)
-      action.play()
-      action.setEffectiveWeight(name === 'idle' ? 1 : 0)
-      if (name === 'crow') {
-        action.setLoop(THREE.LoopOnce, 1)
-        action.clampWhenFinished = true
-      }
-      this.actions.set(name, action)
+    this.animator = new Animator(model, [...asset.clips.values()])
+    for (const [name, action] of this.animator.actions) {
+      action.weight = name === 'idle' ? 1 : 0
+      // The crow plays once and holds its last frame.
+      if (name === 'crow') action.loop = 'once'
     }
   }
 
@@ -92,9 +81,11 @@ export class RoosterModel {
 
     const started = crowing && !this.crowing
     if (started) {
-      const action = this.actions.get('crow')
-      action?.reset()
-      action?.play()
+      const action = this.animator.actions.get('crow')
+      if (action) {
+        action.time = 0
+        action.enabled = true
+      }
     }
     this.crowing = crowing
 
@@ -103,18 +94,17 @@ export class RoosterModel {
     const k = Math.min(1, dt * BLEND_RATE)
     for (const name of ['idle', 'walk', 'crow'] as const) {
       this.weights[name] += (target[name] - this.weights[name]) * k
-      this.actions.get(name)?.setEffectiveWeight(this.weights[name])
+      const action = this.animator.actions.get(name)
+      if (action) action.weight = this.weights[name]
     }
-    this.mixer.update(dt)
+    this.animator.update(dt)
     return started
   }
 
   dispose() {
-    this.mixer.stopAllAction()
     this.root.removeFromParent()
     this.root.traverse((node) => {
-      const mesh = node as THREE.Mesh
-      if (mesh.isMesh) (mesh.material as THREE.Material).dispose()
+      if (node instanceof Mesh) node.material.dispose()
     })
   }
 }

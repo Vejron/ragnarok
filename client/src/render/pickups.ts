@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import { Group, Material, Mesh, ringGeometry } from '@ragnarok/engine'
 import { buildItem } from './items'
 
 /** Items bob this high and spin this fast, so they catch the eye. */
@@ -9,7 +9,7 @@ const SCALE = 1.7
 
 interface Placed {
   item: number
-  group: THREE.Group
+  group: Group
   /** Phase, so a field of them does not bob in step. */
   phase: number
   base: number
@@ -17,10 +17,10 @@ interface Placed {
 
 /** The items lying on the ground, redrawn from each snapshot's list. */
 export class Pickups {
-  readonly root = new THREE.Group()
+  readonly root = new Group()
   private readonly placed = new Map<number, Placed>()
-  private readonly ring = new THREE.RingGeometry(0.35, 0.45, 20)
-  private readonly ringMaterial = new THREE.MeshBasicMaterial({ color: 0xffe9a0, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
+  private readonly ring = ringGeometry(0.35, 0.45, 20)
+  private readonly ringMaterial = new Material({ color: 0xffe9a0, lit: false, blend: 'alpha', opacity: 0.55, side: 'double' })
 
   /** Makes the drawn set exactly `items`: `{ id, item, x, y, z }`. */
   set(items: readonly { id: number; item: number; x: number; y: number; z: number }[]) {
@@ -33,11 +33,11 @@ export class Pickups {
         p = undefined
       }
       if (!p) {
-        const group = new THREE.Group()
+        const group = new Group()
         const model = buildItem(item)
         model.scale.setScalar(SCALE)
         group.add(model)
-        const ring = new THREE.Mesh(this.ring, this.ringMaterial)
+        const ring = new Mesh(this.ring, this.ringMaterial)
         ring.rotation.x = -Math.PI / 2
         ring.position.y = -0.4
         group.add(ring)

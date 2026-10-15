@@ -1,7 +1,6 @@
+import { Animator, Group, Mesh, SkinnedMesh, parseGlb, type AnimationClip, type Geometry, type Material, type Node } from '@ragnarok/engine'
 import * as THREE from 'three'
 import { toonMaterial } from './toon'
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
-import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, PRONE_CENTRE, RUN_SPEED, STAND_CENTRE, WALK_SPEED } from '@/sim/consts'
 import { ITEM_AK5, ITEM_BANDAGE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, itemDef, type ItemDef } from '@/sim/items'
 import { type Limb, poseLimb, splitLimbs } from './gibs'
@@ -80,31 +79,19 @@ const RECOIL_KICK = 0.09
 const RECOIL_DECAY = 14
 
 export interface CharacterAsset {
-  scene: THREE.Object3D
-  clips: Map<string, THREE.AnimationClip>
+  scene: Node
+  clips: Map<string, AnimationClip>
 }
 
 /** Parses a GLB of the player. Materials become flat toon ones to match the rest of the scene. */
-export function parseCharacter(data: ArrayBuffer): Promise<CharacterAsset> {
-  return new Promise((resolve, reject) => {
-    new GLTFLoader().parse(
-      data,
-      '',
-      (gltf) => {
-        gltf.scene.traverse((node) => {
-          const mesh = node as THREE.Mesh
-          if (!mesh.isMesh) return
-          const source = mesh.material as THREE.MeshStandardMaterial
-          const toon = toonMaterial({ vertexColors: true, name: source.name })
-          source.dispose()
-          mesh.material = toon
-          mesh.castShadow = true
-        })
-        resolve({ scene: gltf.scene, clips: new Map(gltf.animations.map((clip) => [clip.name, clip])) })
-      },
-      reject,
-    )
+export async function parseCharacter(data: ArrayBuffer): Promise<CharacterAsset> {
+  const gltf = parseGlb(data)
+  gltf.scene.traverse((node) => {
+    if (!(node instanceof Mesh)) return
+    node.material = toonMaterial({ vertexColors: true, name: node.material.name })
+    node.castShadow = true
   })
+  return { scene: gltf.scene, clips: new Map(gltf.clips.map((clip) => [clip.name, clip])) }
 }
 
 export async function loadCharacter(url = MODEL_URL): Promise<CharacterAsset> {
@@ -118,12 +105,12 @@ export async function loadCharacter(url = MODEL_URL): Promise<CharacterAsset> {
  * skinned clone of it.
  */
 export class Crowd {
-  readonly root = new THREE.Group()
+  readonly root = new Group()
   asset: CharacterAsset | null = null
   /** Outfit materials of live characters, so `dispose` can free them. */
-  readonly outfits = new Set<THREE.Material>()
+  readonly outfits = new Set<Material>()
   /** Each skinned mesh's limbs, cut once, for gibs. */
-  readonly limbs = new Map<THREE.BufferGeometry, Limb[]>()
+  readonly limbs = new Map<Geometry, Limb[]>()
   private count = 0
 
   async load(url = MODEL_URL) {
@@ -146,10 +133,9 @@ export class Crowd {
     for (const limbs of this.limbs.values()) for (const limb of limbs) limb.geometry.dispose()
     this.limbs.clear()
     this.asset?.scene.traverse((node) => {
-      const mesh = node as THREE.Mesh
-      if (!mesh.isMesh) return
-      mesh.geometry.dispose()
-      ;(mesh.material as THREE.Material).dispose()
+      if (!(node instanceof Mesh)) return
+      node.geometry.dispose()
+      node.material.dispose()
     })
     this.root.removeFromParent()
   }
@@ -178,16 +164,16 @@ const HIT_FLASH = 0.14
 export class Character {
   /** The capsule centre, as last placed. */
   readonly position = new THREE.Vector3()
-  private readonly object: THREE.Object3D
-  private readonly mixer: THREE.AnimationMixer
-  private readonly actions = new Map<string, THREE.AnimationAction>()
+  private readonly object: Node
+  private readonly animator: Animator
+  private readonly actions: Animator['actions']
   private readonly weights = new Map<string, number>()
-  private readonly outfit: THREE.MeshToonMaterial
-  private readonly chest: THREE.Object3D | null
-  private readonly spine: THREE.Object3D | null
-  private readonly muzzleBones = new Map<Stance, THREE.Object3D>()
+  private readonly outfit: Material
+  private readonly chest: Node | null
+  private readonly spine: Node | null
+  private readonly muzzleBones = new Map<Stance, Node>()
   /** Each weapon's mesh, by item id; only the one in hand is shown. */
-  private readonly weapons = new Map<number, THREE.Object3D>()
+  private readonly weapons = new Map<number, Node>()
   private stance: Stance = 'rifle'
   private item = ITEM_AK5
   /** Walk/run cycle position, 0..1, shared by every locomotion clip so blends stay in step. */
@@ -209,7 +195,7 @@ export class Character {
   private flashLeft = 0
   /** Blown to pieces: the body is gone, only gibs remain. */
   private gibbed = false
-  private readonly head: THREE.Object3D | null
+  private readonly head: Node | null
   private headless = false
   /** A body thrown by its killing blow: where it has got to, relative to where it died. */
   private fling: { velocity: THREE.Vector3; spin: THREE.Vector3; offset: THREE.Vector3; groundAt: (x: number, z: number) => number } | null = null
@@ -218,11 +204,10 @@ export class Character {
   constructor(private readonly crowd: Crowd, id: number) {
     const asset = crowd.asset
     if (!asset) throw new Error('Crowd.load() must finish before characters are created')
-    this.object = cloneSkinned(asset.scene)
+    this.object = asset.scene.clone()
     this.outfit = toonMaterial({ vertexColors: true, color: colorFor(id) })
     this.object.traverse((node) => {
-      const mesh = node as THREE.Mesh
-      if (mesh.isMesh && (mesh.material as THREE.Material).name === 'outfit') mesh.material = this.outfit
+      if (node instanceof Mesh && node.material.name === 'outfit') node.material = this.outfit
     })
     crowd.outfits.add(this.outfit)
     crowd.root.add(this.object)
@@ -241,22 +226,19 @@ export class Character {
     }
     this.showWeapon()
 
-    this.mixer = new THREE.AnimationMixer(this.object)
-    for (const [name, clip] of asset.clips) {
-      const action = this.mixer.clipAction(clip)
-      action.play()
-      // Weights and time are driven by hand, so the mixer only has to sample.
+    this.animator = new Animator(this.object, [...asset.clips.values()])
+    this.actions = this.animator.actions
+    for (const [name, action] of this.actions) {
+      // Weights and time are driven by hand, so the animator only has to sample.
       action.timeScale = 0
-      action.setEffectiveWeight(0)
-      if (name === 'death') {
-        action.setLoop(THREE.LoopOnce, 1)
-        action.clampWhenFinished = true
-      }
-      this.actions.set(name, action)
+      action.weight = 0
+      // The death clip plays once and holds its last frame.
+      if (name === 'death') action.loop = 'once'
       this.weights.set(name, 0)
     }
     this.weights.set(this.clip('idle'), 1)
-    this.actions.get(this.clip('idle'))?.setEffectiveWeight(1)
+    const idle = this.actions.get(this.clip('idle'))
+    if (idle) idle.weight = 1
     this.object.visible = false
   }
 
@@ -286,7 +268,9 @@ export class Character {
     this.pitch = pitch
     if (this.flashLeft > 0) {
       this.flashLeft = Math.max(0, this.flashLeft - dt)
-      this.outfit.emissive.setScalar((this.flashLeft / HIT_FLASH) * 0.9)
+      const glow = (this.flashLeft / HIT_FLASH) * 0.9
+      this.outfit.emissive.set(glow, glow, glow)
+      this.outfit.needsUpdate()
     }
     this.flingStep(dt)
     if (!this.shown || this.gibbed) return
@@ -358,29 +342,29 @@ export class Character {
         const w = this.weights.get(name) ?? 0
         const action = this.actions.get(name)
         if (!action || w <= 0) continue
-        stride += w * SPEED_OF[base]! * action.getClip().duration
+        stride += w * SPEED_OF[base]! * action.clip.duration
         weightSum += w
       }
     }
     if (weightSum > 0 && stride > 0) this.phase = (this.phase + (dt * speed * weightSum) / stride) % 1
     const idle = this.actions.get('idle')
-    if (idle) this.idleTime = (this.idleTime + dt) % idle.getClip().duration
+    if (idle) this.idleTime = (this.idleTime + dt) % idle.clip.duration
 
     const current = this.clip('idle')
     for (const [name, action] of this.actions) {
       const w = this.weights.get(name)!
       const base = name.replace(/^(pistol_|hold_)/, '')
       action.enabled = w > 0.0005 || name === current
-      action.setEffectiveWeight(w)
+      action.weight = w
       if (base === 'idle' || base === 'crouch_idle' || base === 'crawl_idle' || base === 'slide') action.time = this.idleTime
-      else if (base === 'jump_air') action.time = (this.idleTime / (idle?.getClip().duration ?? 1)) * action.getClip().duration
-      else if (base !== 'death') action.time = this.phase * action.getClip().duration
+      else if (base === 'jump_air') action.time = (this.idleTime / (idle?.clip.duration ?? 1)) * action.clip.duration
+      else if (base !== 'death') action.time = this.phase * action.clip.duration
     }
-    // The death clip plays out on the mixer's clock once it starts.
+    // The death clip plays out on the animator's clock once it starts.
     const dying = this.actions.get('death')
     if (dying) dying.timeScale = this.down ? 1 : 0
 
-    this.mixer.update(dt)
+    this.animator.update(dt)
     this.head?.scale.setScalar(this.headless ? 0.001 : 1)
     this.recoil = chase(this.recoil, 0, RECOIL_DECAY, dt)
     this.aim()
@@ -447,12 +431,12 @@ export class Character {
    * Blows the body apart: hides it and returns its limbs where they are now, ready to throw. With
    * `only`, just those limbs come off (a head), and the body stays.
    */
-  shatter(only?: readonly string[]): { key: string; object: THREE.Group }[] {
-    const pieces: { key: string; object: THREE.Group }[] = []
+  shatter(only?: readonly string[]): { key: string; object: Group }[] {
+    const pieces: { key: string; object: Group }[] = []
     this.object.updateWorldMatrix(true, true)
     this.object.traverse((node) => {
-      const mesh = node as THREE.SkinnedMesh
-      if (!mesh.isSkinnedMesh || mesh.name.startsWith('weapon_')) return
+      if (!(node instanceof SkinnedMesh) || node.name.startsWith('weapon_')) return
+      const mesh = node
       let limbs = this.crowd.limbs.get(mesh.geometry)
       if (!limbs) this.crowd.limbs.set(mesh.geometry, (limbs = splitLimbs(mesh)))
       for (const limb of limbs) {
@@ -477,11 +461,13 @@ export class Character {
   }
 
   /** Rotates a bone about the body's left-right axis, in model space. */
-  private bend(bone: THREE.Object3D | null, angle: number) {
+  private bend(bone: Node | null, angle: number) {
     if (!bone || Math.abs(angle) < 1e-4) return
     // The bone's parent frame relative to the model root, to carry the model-space axis down into it.
     const parent = SCRATCH.parent.identity()
-    for (let node = bone.parent; node && node !== this.object; node = node.parent) parent.premultiply(node.quaternion)
+    for (let node = bone.parent; node && node !== this.object; node = node.parent) {
+      parent.premultiply(SCRATCH.q.set(node.quaternion.x, node.quaternion.y, node.quaternion.z, node.quaternion.w))
+    }
     SCRATCH.axis.copy(AXIS_X).applyQuaternion(parent.invert())
     bone.quaternion.premultiply(SCRATCH.q.setFromAxisAngle(SCRATCH.axis, angle))
   }
@@ -539,15 +525,9 @@ export class Character {
     }
     const action = this.actions.get('death')
     if (!action) return
-    if (dead) {
-      action.reset()
-      action.play()
-      action.timeScale = 1
-    } else {
-      action.stop()
-      action.play()
-      action.timeScale = 0
-    }
+    // Dying plays the clip from its start; a respawn winds it back and holds it there.
+    action.time = 0
+    action.timeScale = dead ? 1 : 0
   }
 
   /** Hides the character while it sits in a car. */
@@ -557,7 +537,6 @@ export class Character {
   }
 
   dispose() {
-    this.mixer.stopAllAction()
     this.object.removeFromParent()
     this.crowd.outfits.delete(this.outfit)
     this.outfit.dispose()

@@ -1,6 +1,7 @@
+import { Group, Mesh, sphereGeometry, type Material, type Node } from '@ragnarok/engine'
 import * as THREE from 'three'
+import { parseToonModel, unlitMaterial } from './models'
 import { toonMaterial } from './toon'
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { JEEP_MAX_STEER, JEEP_WHEEL_RADIUS, SPORTS_MAX_STEER, SPORTS_SEATS, SPORTS_WHEEL_RADIUS, CAR_SEATS } from '@/sim/consts'
 import { KIND_SPORTS, type Arms, type Turret } from '@/net/codec'
 import { colorFor } from './character'
@@ -10,7 +11,7 @@ import { halfExtentsOf } from '@/sim/kinds'
 
 /** What `Game` needs from a vehicle's model, whatever the kind. */
 export interface VehicleModel {
-  readonly root: THREE.Object3D
+  readonly root: Node
   update(
     position: readonly [number, number, number],
     rotation: readonly [number, number, number, number],
@@ -32,7 +33,7 @@ const KINDS: Record<CarKind, { url: string; wheelRadius: number; maxSteer: numbe
 
 const BODY_COLORS = [0xff9f1c, 0x2ec4b6, 0xe71d36, 0x5aa9e6, 0xb5e48c, 0xf15bb5, 0xffd23f, 0x9d4edd]
 
-const assets = new Map<CarKind, THREE.Object3D>()
+const assets = new Map<CarKind, Node>()
 
 /**
  * Parses `jeep.glb` or `sports.glb` (built by `tools/vehicles/build_car.py`) for every `CarModel` of
@@ -40,28 +41,7 @@ const assets = new Map<CarKind, THREE.Object3D>()
  * unlit, like a headlight); `paint` is replaced per car.
  */
 export async function parseCarModel(kind: CarKind, data: ArrayBuffer) {
-  const scene = await new Promise<THREE.Object3D>((resolve, reject) => {
-    new GLTFLoader().parse(
-      data,
-      '',
-      (gltf) => {
-        gltf.scene.traverse((node) => {
-          const mesh = node as THREE.Mesh
-          if (!mesh.isMesh) return
-          const source = mesh.material as THREE.MeshStandardMaterial
-          mesh.material =
-            source.name === 'lamp'
-              ? new THREE.MeshBasicMaterial({ color: source.color, name: source.name })
-              : toonMaterial({ color: source.color, name: source.name })
-          source.dispose()
-          mesh.castShadow = true
-        })
-        resolve(gltf.scene)
-      },
-      reject,
-    )
-  })
-  assets.set(kind, scene)
+  assets.set(kind, parseToonModel(data, (source) => (source.name === 'lamp' ? unlitMaterial(source) : null)))
 }
 
 export async function loadCarModels() {
@@ -81,11 +61,11 @@ export async function loadCarModels() {
  * per seat, at the `seat_N` markers of the model.
  */
 export class CarModel implements VehicleModel {
-  readonly root = new THREE.Group()
-  private readonly frontPivots: THREE.Object3D[] = []
-  private readonly spinners: THREE.Object3D[] = []
-  private readonly heads: THREE.Mesh[] = []
-  private readonly paint: THREE.MeshToonMaterial
+  readonly root = new Group()
+  private readonly frontPivots: Node[] = []
+  private readonly spinners: Node[] = []
+  private readonly heads: Mesh[] = []
+  private readonly paint: Material
   private readonly wheelRadius: number
   private readonly maxSteer: number
   private roll = 0
@@ -102,21 +82,21 @@ export class CarModel implements VehicleModel {
     const { wheelRadius, maxSteer, seats } = KINDS[name]
     this.wheelRadius = wheelRadius
     this.maxSteer = maxSteer
-    const model = asset.clone(true)
+    const model = asset.clone()
     this.root.add(model)
     const paint = (this.paint = toonMaterial({ color: BODY_COLORS[id % BODY_COLORS.length]! }))
     model.traverse((node) => {
-      const mesh = node as THREE.Mesh
-      if (mesh.isMesh && mesh.material instanceof THREE.Material && mesh.material.name === 'paint') mesh.material = paint
+      if (node instanceof Mesh && node.material.name === 'paint') node.material = paint
       if (/^wheel_[FR][LR]$/.test(node.name)) this.spinners.push(node)
       if (/^pivot_F[LR]$/.test(node.name)) this.frontPivots.push(node)
     })
 
     this.damage = new CarWear(this.root, model, halfExtentsOf(kind), wheelRadius, paint)
 
-    const headGeometry = new THREE.SphereGeometry(0.2, 12, 10)
+    const headGeometry = sphereGeometry(0.2, 12, 10)
     for (let seat = 0; seat < seats; seat++) {
-      const head = new THREE.Mesh(headGeometry, toonMaterial({ color: 0xffffff }))
+      const head = new Mesh(headGeometry, toonMaterial({ color: 0xffffff }))
+      head.userData.head = true
       head.position.copy(model.getObjectByName(`seat_${seat}`)!.position)
       head.castShadow = true
       head.visible = false
@@ -139,8 +119,8 @@ export class CarModel implements VehicleModel {
     this.root.position.set(...position)
     this.root.quaternion.set(...rotation)
     this.forward.set(0, 0, -1).applyQuaternion(this.root.quaternion)
-    if (this.placed) this.roll -= this.forward.dot(this.root.position.clone().sub(this.last)) / this.wheelRadius
-    this.last.copy(this.root.position)
+    if (this.placed) this.roll -= (this.forward.x * (position[0] - this.last.x) + this.forward.y * (position[1] - this.last.y) + this.forward.z * (position[2] - this.last.z)) / this.wheelRadius
+    this.last.set(position[0], position[1], position[2])
     this.placed = true
     for (const spinner of this.spinners) spinner.rotation.x = this.roll
     // Turning right (positive) is a clockwise yaw, which is a negative rotation about +Y.
@@ -148,7 +128,10 @@ export class CarModel implements VehicleModel {
     this.heads.forEach((head, seat) => {
       const occupant = seats[seat] ?? 0
       head.visible = occupant !== 0
-      if (occupant !== 0) (head.material as THREE.MeshToonMaterial).color.setHex(colorFor(occupant))
+      if (occupant !== 0) {
+        head.material.color.setHex(colorFor(occupant))
+        head.material.needsUpdate()
+      }
     })
   }
 
@@ -171,7 +154,7 @@ export class CarModel implements VehicleModel {
   dispose() {
     this.damage.dispose()
     this.paint.dispose()
-    for (const head of this.heads) (head.material as THREE.Material).dispose()
+    for (const head of this.heads) head.material.dispose()
     this.heads[0]?.geometry.dispose()
     this.root.removeFromParent()
   }

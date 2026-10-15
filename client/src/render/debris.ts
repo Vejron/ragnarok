@@ -1,7 +1,8 @@
+import { Group, type Geometry, type Material, type Node } from '@ragnarok/engine'
 import * as THREE from 'three'
 
 interface Piece {
-  object: THREE.Object3D
+  object: Node
   velocity: THREE.Vector3
   /** Angular velocity, rad/s, about world axes. */
   spin: THREE.Vector3
@@ -10,8 +11,8 @@ interface Piece {
   age: number
   life: number
   /** Geometry and materials made for this piece alone, freed with it. */
-  owned: readonly (THREE.BufferGeometry | THREE.Material)[]
-  scale: THREE.Vector3
+  owned: readonly (Geometry | Material)[]
+  scale: { x: number; y: number; z: number }
 }
 
 /** Seconds a piece takes to shrink away at the end of its life. */
@@ -24,7 +25,7 @@ const GRAVITY = 9.8
  * drawn.
  */
 export class Debris {
-  readonly root = new THREE.Group()
+  readonly root = new Group()
   private readonly pieces: Piece[] = []
   private readonly turn = new THREE.Quaternion()
   private readonly axis = new THREE.Vector3()
@@ -42,10 +43,10 @@ export class Debris {
    * Throws `object` (already placed in world space) with `velocity` and `spin`, for `life` seconds.
    * `owned` is geometry and materials made for it alone, freed when it goes.
    */
-  throw(object: THREE.Object3D, velocity: THREE.Vector3, spin: THREE.Vector3, rest: number, life = 8, owned: readonly (THREE.BufferGeometry | THREE.Material)[] = []) {
+  throw(object: Node, velocity: THREE.Vector3, spin: THREE.Vector3, rest: number, life = 8, owned: readonly (Geometry | Material)[] = []) {
     if (this.pieces.length >= this.capacity) this.drop(0)
     this.root.add(object)
-    this.pieces.push({ object, velocity: velocity.clone(), spin: spin.clone(), rest, age: 0, life, owned, scale: object.scale.clone() })
+    this.pieces.push({ object, velocity: velocity.clone(), spin: spin.clone(), rest, age: 0, life, owned, scale: { x: object.scale.x, y: object.scale.y, z: object.scale.z } })
   }
 
   private drop(index: number) {
@@ -79,7 +80,7 @@ export class Debris {
         object.quaternion.premultiply(this.turn)
       }
       const left = piece.life - piece.age
-      if (left < SHRINK) object.scale.copy(piece.scale).multiplyScalar(Math.max(0.01, left / SHRINK))
+      if (left < SHRINK) object.scale.set(piece.scale.x, piece.scale.y, piece.scale.z).multiplyScalar(Math.max(0.01, left / SHRINK))
     }
   }
 

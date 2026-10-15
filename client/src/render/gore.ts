@@ -13,7 +13,7 @@ const BLOOD = [0x9a0b0b, 0xb81414, 0x6e0808]
 
 /** A thing that bleeds as it moves, for a while. */
 interface Trail {
-  at: () => THREE.Vector3
+  at: () => { x: number; y: number; z: number }
   left: number
   /** Droplets a second. */
   rate: number
@@ -77,7 +77,7 @@ export class Gore {
   private burst(avatar: Character, dir: THREE.Vector3, power: number, style: number) {
     const heavy = style === DEATH_BLAST || style === DEATH_ROADKILL ? 1 : 0.6
     for (const { key, object } of avatar.shatter()) {
-      const away = object.position.clone().sub(avatar.position)
+      const away = new THREE.Vector3().copy(object.position).sub(avatar.position)
       away.y *= 0.5
       if (away.lengthSq() > 1e-4) away.normalize()
       const torso = key === 'torso' ? 0.6 : 1
@@ -123,7 +123,7 @@ export class Gore {
   }
 
   /** Makes `at` bleed for `seconds`, `rate` droplets a second, thrown up to `force` m/s. */
-  private bleed(at: () => THREE.Vector3, seconds: number, rate: number, force = 1.5) {
+  private bleed(at: () => { x: number; y: number; z: number }, seconds: number, rate: number, force = 1.5) {
     this.trails.push({ at, left: seconds, rate, force })
   }
 

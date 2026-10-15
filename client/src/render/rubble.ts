@@ -1,3 +1,4 @@
+import { Color, Group, InstancedMesh, Mesh, boxGeometry, icosphereGeometry, mat4 } from '@ragnarok/engine'
 import * as THREE from 'three'
 import { toonMaterial } from './toon'
 import type { TileData } from '@/world'
@@ -16,14 +17,12 @@ const HEAP_MAX_HEIGHT = 3
 const heapMaterial = toonMaterial({ color: 0x8d8478 })
 // Flat faces, as the heap was before: each triangle gets its own normal. Shared by every heap, never disposed.
 const heapGeometry = (() => {
-  const geometry = new THREE.IcosahedronGeometry(1, 1).toNonIndexed()
-  geometry.deleteAttribute('normal')
-  geometry.computeVertexNormals()
+  const geometry = icosphereGeometry(1, 1).toNonIndexed()
+  geometry.computeNormals()
   return geometry
 })()
 const chunkMaterial = toonMaterial()
-const chunkGeometry = new THREE.BoxGeometry(1, 1, 1)
-chunkGeometry.userData.shared = true
+const chunkGeometry = boxGeometry(1, 1, 1)
 
 /** A small deterministic generator, so every client throws the same pieces the same way. */
 export function random(seed: number) {
@@ -47,10 +46,10 @@ interface Chunk {
 }
 
 interface Collapse {
-  body: THREE.Group
-  heap: THREE.Mesh
+  body: Group
+  heap: Mesh
   heapHeight: number
-  chunks: THREE.InstancedMesh
+  chunks: InstancedMesh
   pieces: Chunk[]
   ground: (x: number, z: number) => number
   age: number
@@ -60,13 +59,13 @@ interface Collapse {
 }
 
 /** The pile a building leaves, at full height (or `0` high, to be grown): flat-shaded and low. */
-function heapOf(tile: TileData, index: number, scale: number): { heap: THREE.Mesh; height: number } {
+function heapOf(tile: TileData, index: number, scale: number): { heap: Mesh; height: number } {
   const building = tile.buildings[index]!
   const xs = building.footprint.map((p) => p[0])
   const zs = building.footprint.map((p) => p[1])
   const [minX, maxX, minZ, maxZ] = [Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs)]
   const height = Math.min(HEAP_MAX_HEIGHT, Math.max(1, building.height * 0.2))
-  const heap = new THREE.Mesh(heapGeometry, heapMaterial)
+  const heap = new Mesh(heapGeometry, heapMaterial)
   heap.position.set((minX + maxX) / 2, building.base, (minZ + maxZ) / 2)
   heap.scale.set(Math.max(1, (maxX - minX) * 0.46), Math.max(0.01, height * scale), Math.max(1, (maxZ - minZ) * 0.46))
   heap.castShadow = true
@@ -88,7 +87,7 @@ export class Collapses {
    * Starts building `index` of `tile` (drawn in `group`) coming down. `yaw` is the way the
    * blast came from, as the server says (0 faces -Z): pieces fly the other way.
    */
-  start(group: THREE.Group, tile: TileData, index: number, salt: number, yaw: number, ground: (x: number, z: number) => number, seed: number) {
+  start(group: Group, tile: TileData, index: number, salt: number, yaw: number, ground: (x: number, z: number) => number, seed: number) {
     const building = tile.buildings[index]!
     const body = collapsingBuilding(tile, index, salt)
     group.add(body)
@@ -104,12 +103,12 @@ export class Collapses {
     // The way the pieces are thrown: yaw 0 faces -Z, and the blast came from there.
     const away = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw))
     const { wall, roof } = buildingColors(tile, index, salt)
-    const chunks = new THREE.InstancedMesh(chunkGeometry, chunkMaterial, count)
+    const chunks = new InstancedMesh(chunkGeometry, chunkMaterial, count)
     chunks.userData.sharedGeometry = true
     chunks.castShadow = true
     chunks.frustumCulled = false
     const pieces: Chunk[] = []
-    const color = new THREE.Color()
+    const color = new Color()
     for (let i = 0; i < count; i++) {
       const size = 0.4 + random_() * 0.9
       const start = new THREE.Vector3(minX + random_() * (maxX - minX), building.base + random_() * building.height, minZ + random_() * (maxZ - minZ))
@@ -126,7 +125,8 @@ export class Collapses {
         rotation: new THREE.Euler(random_() * 3, random_() * 3, random_() * 3),
         resting: false,
       })
-      chunks.setColorAt(i, color.setHex(random_() < 0.7 ? wall : roof))
+      color.setHex(random_() < 0.7 ? wall : roof)
+      chunks.setColorAt(i, color.r, color.g, color.b)
     }
     group.add(chunks)
     this.active.push({
@@ -145,7 +145,7 @@ export class Collapses {
   }
 
   /** The pile alone, at full size, for a building that was already gone when its tile came in. */
-  static settled(group: THREE.Group, tile: TileData, index: number) {
+  static settled(group: Group, tile: TileData, index: number) {
     group.add(heapOf(tile, index, 1).heap)
   }
 
@@ -173,13 +173,12 @@ export class Collapses {
         }
       } else if (c.body.parent) {
         c.heap.scale.y = c.heapHeight
-        c.body.traverse((o) => o instanceof THREE.Mesh && o.geometry.dispose())
+        c.body.traverse((o) => o instanceof Mesh && o.geometry.dispose())
         c.body.removeFromParent()
       }
       this.step(c, dt)
       if (c.age >= CHUNK_SECONDS + CHUNK_FADE_SECONDS && !c.body.parent) {
         c.chunks.removeFromParent()
-        c.chunks.dispose()
         this.active.splice(i, 1)
       }
     }
@@ -212,13 +211,13 @@ export class Collapses {
   }
 
   private place(c: Collapse, fade = 1) {
-    const matrix = new THREE.Matrix4()
+    const matrix = mat4.create()
     const quaternion = new THREE.Quaternion()
-    const scale = new THREE.Vector3()
     c.pieces.forEach((piece, i) => {
-      scale.copy(piece.size).multiplyScalar(fade)
-      c.chunks.setMatrixAt(i, matrix.compose(piece.position, quaternion.setFromEuler(piece.rotation), scale))
+      quaternion.setFromEuler(piece.rotation)
+      const { position: p, size } = piece
+      c.chunks.setMatrixAt(i, mat4.compose(matrix, p.x, p.y, p.z, quaternion.x, quaternion.y, quaternion.z, quaternion.w, size.x * fade, size.y * fade, size.z * fade))
     })
-    c.chunks.instanceMatrix.needsUpdate = true
+    c.chunks.needsUpdate()
   }
 }

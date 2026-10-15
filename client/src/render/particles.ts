@@ -1,8 +1,8 @@
-import * as THREE from 'three'
+import { ParticleSystem, type ParticleSpec as EngineSpec } from '@ragnarok/engine'
 
 /** How one particle moves and looks over its life. */
 export interface ParticleSpec {
-  position: THREE.Vector3 | readonly [number, number, number]
+  position: { x: number; y: number; z: number } | readonly [number, number, number]
   velocity: readonly [number, number, number]
   /** Seconds. */
   life: number
@@ -19,172 +19,103 @@ export interface ParticleSpec {
   bounce?: boolean
 }
 
-const VERTEX = /* glsl */ `
-attribute vec3 offset;
-attribute vec4 tint;
-attribute float size;
-varying vec4 vTint;
-varying vec2 vUv;
-void main() {
-  vTint = tint;
-  vUv = uv;
-  // A billboard: the quad is laid out in view space around the particle's centre.
-  vec4 centre = modelViewMatrix * vec4(offset, 1.0);
-  centre.xy += position.xy * size;
-  gl_Position = projectionMatrix * centre;
-}
-`
-
-const FRAGMENT = /* glsl */ `
-varying vec4 vTint;
-varying vec2 vUv;
-void main() {
-  float edge = smoothstep(0.5, 0.15, length(vUv - 0.5));
-  float alpha = vTint.a * edge;
-  if (alpha < 0.01) discard;
-  gl_FragColor = vec4(vTint.rgb, alpha);
-}
-`
+/** The height field particles bounce on is sampled this far to a side of the camera, metres, at `CELL` spacing. */
+const REACH = 128
+const CELL = 2
+const FIELD = (REACH * 2) / CELL
+/** The field is resampled once the camera has moved this far from its centre, metres, or this often, seconds. */
+const RESAMPLE_DISTANCE = 32
+const RESAMPLE_SECONDS = 3
 
 /**
- * A pool of soft round billboards in world space: tyre smoke, dust, gravel, spray and sparks. One
- * draw call for all of them. Particles are simulated on the CPU (a few thousand at most); when the
- * pool is full a new one replaces an old one.
+ * A pool of soft round billboards in world space: tyre smoke, dust, gravel, spray and sparks. They are
+ * simulated and drawn on the GPU (`ParticleSystem`): spawning one writes a 128-byte command, however
+ * many are alive. When the pool is full new ones are dropped. The ground a bouncing particle lands on is
+ * a height field sampled from `groundAt` around `focus`.
  */
 export class Particles {
-  readonly root: THREE.Mesh
-  private readonly geometry = new THREE.InstancedBufferGeometry()
-  private readonly material: THREE.ShaderMaterial
-  private readonly offsets: THREE.InstancedBufferAttribute
-  private readonly tints: THREE.InstancedBufferAttribute
-  private readonly sizes: THREE.InstancedBufferAttribute
-  private count = 0
-  // Per particle: position (3), velocity (3), age, life, size from, size to, colour (3), alpha, gravity, drag, bounce.
-  private static readonly STRIDE = 17
-  private readonly state: Float32Array
-  private readonly color = new THREE.Color()
-
+  readonly root: ParticleSystem
+  readonly capacity: number
   /** Ground height under a point, for particles that bounce. */
   groundAt: (x: number, z: number) => number = () => 0
+  private readonly blend: 'alpha' | 'additive'
+  /** When each live particle dies, by the clock below: a tally of what the GPU is holding, for budgets and tests. */
+  private readonly deaths: number[] = []
+  private clock = 0
+  private bounces = false
+  private field: Float32Array | null = null
+  private fieldAt = { x: Infinity, z: Infinity, time: -Infinity }
+  private focus = { x: 0, z: 0 }
 
-  constructor(
-    readonly capacity = 3000,
-    additive = false,
-  ) {
-    const quad = new THREE.PlaneGeometry(1, 1)
-    this.geometry.index = quad.index
-    this.geometry.setAttribute('position', quad.getAttribute('position'))
-    this.geometry.setAttribute('uv', quad.getAttribute('uv'))
-    this.offsets = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3).setUsage(THREE.DynamicDrawUsage)
-    this.tints = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4).setUsage(THREE.DynamicDrawUsage)
-    this.sizes = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1).setUsage(THREE.DynamicDrawUsage)
-    this.geometry.setAttribute('offset', this.offsets)
-    this.geometry.setAttribute('tint', this.tints)
-    this.geometry.setAttribute('size', this.sizes)
-    this.geometry.instanceCount = 0
-    this.material = new THREE.ShaderMaterial({
-      vertexShader: VERTEX,
-      fragmentShader: FRAGMENT,
-      transparent: true,
-      depthWrite: false,
-      blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
-    })
-    this.root = new THREE.Mesh(this.geometry, this.material)
-    // The particles are anywhere in the world, so the mesh's own bounds mean nothing.
-    this.root.frustumCulled = false
-    this.root.renderOrder = 2
-    this.state = new Float32Array(capacity * Particles.STRIDE)
+  constructor(capacity = 3000, additive = false) {
+    this.capacity = capacity
+    this.blend = additive ? 'additive' : 'alpha'
+    // The GPU pool is sized in blocks of 64.
+    this.root = new ParticleSystem(Math.ceil(capacity / 64) * 64)
+    // The particles are anywhere in the world, so there is no bounding sphere to cull by; effects draw after meshes.
+    this.root.renderOrder = additive ? 3 : 2
   }
 
   /** How many particles are alive. */
   get alive() {
-    return this.count
+    this.reap()
+    return this.deaths.length
   }
 
   spawn(spec: ParticleSpec) {
-    if (this.count === this.capacity) this.remove(0)
-    const s = this.state
-    const at = this.count++ * Particles.STRIDE
-    const p = spec.position
-    const [x, y, z] = p instanceof THREE.Vector3 ? [p.x, p.y, p.z] : p
-    this.color.setHex(spec.color)
-    s[at] = x; s[at + 1] = y; s[at + 2] = z
-    s[at + 3] = spec.velocity[0]; s[at + 4] = spec.velocity[1]; s[at + 5] = spec.velocity[2]
-    s[at + 6] = 0; s[at + 7] = spec.life
-    s[at + 8] = spec.size[0]; s[at + 9] = spec.size[1]
-    s[at + 10] = this.color.r; s[at + 11] = this.color.g; s[at + 12] = this.color.b
-    s[at + 13] = spec.alpha
-    s[at + 14] = spec.gravity ?? 0
-    s[at + 15] = spec.drag ?? 0
-    s[at + 16] = spec.bounce ? 1 : 0
+    this.reap()
+    if (this.deaths.length >= this.capacity) return
+    this.deaths.push(this.clock + spec.life)
+    if (spec.bounce) this.bounces = true
+    const engine: EngineSpec = {
+      position: spec.position,
+      velocity: spec.velocity,
+      life: spec.life,
+      size: spec.size,
+      color: spec.color,
+      alpha: spec.alpha,
+      gravity: spec.gravity,
+      drag: spec.drag,
+      bounce: spec.bounce,
+      blend: this.blend,
+    }
+    this.root.spawn(engine)
   }
 
-  /** Moves the last particle into slot `index`. */
-  private remove(index: number) {
-    const last = --this.count
-    if (index !== last) this.state.copyWithin(index * Particles.STRIDE, last * Particles.STRIDE, (last + 1) * Particles.STRIDE)
+  /** Where the camera is: the ground field for bouncing particles is kept around it. */
+  follow(x: number, z: number) {
+    this.focus.x = x
+    this.focus.z = z
   }
 
   update(dt: number) {
-    const s = this.state
-    for (let i = this.count - 1; i >= 0; i--) {
-      const at = i * Particles.STRIDE
-      const age = s[at + 6]! + dt
-      if (age >= s[at + 7]!) {
-        this.remove(i)
-        continue
-      }
-      s[at + 6] = age
-      const keep = Math.max(0, 1 - s[at + 15]! * dt)
-      let vx = s[at + 3]! * keep
-      let vy = s[at + 4]! * keep - s[at + 14]! * dt
-      let vz = s[at + 5]! * keep
-      const x = s[at]! + vx * dt
-      let y = s[at + 1]! + vy * dt
-      const z = s[at + 2]! + vz * dt
-      if (s[at + 16]) {
-        const ground = this.groundAt(x, z) + 0.02
-        if (y < ground) {
-          y = ground
-          vy = Math.abs(vy) * 0.3
-          vx *= 0.5
-          vz *= 0.5
-        }
-      }
-      s[at] = x; s[at + 1] = y; s[at + 2] = z
-      s[at + 3] = vx; s[at + 4] = vy; s[at + 5] = vz
-    }
-    const offsets = this.offsets.array as Float32Array
-    const tints = this.tints.array as Float32Array
-    const sizes = this.sizes.array as Float32Array
-    for (let i = 0; i < this.count; i++) {
-      const at = i * Particles.STRIDE
-      const t = s[at + 6]! / s[at + 7]!
-      offsets[i * 3] = s[at]!
-      offsets[i * 3 + 1] = s[at + 1]!
-      offsets[i * 3 + 2] = s[at + 2]!
-      sizes[i] = s[at + 8]! + (s[at + 9]! - s[at + 8]!) * t
-      tints[i * 4] = s[at + 10]!
-      tints[i * 4 + 1] = s[at + 11]!
-      tints[i * 4 + 2] = s[at + 12]!
-      // Fades in over the first tenth, out over the rest.
-      tints[i * 4 + 3] = s[at + 13]! * Math.min(1, t * 10) * (1 - t)
-    }
-    this.geometry.instanceCount = this.count
-    this.offsets.needsUpdate = true
-    this.tints.needsUpdate = true
-    this.sizes.needsUpdate = true
+    this.clock += dt
+    this.root.update(dt)
+    if (this.bounces) this.resample()
   }
 
-  /** Where particle `index` is, for tests. */
-  positionOf(index: number): [number, number, number] {
-    const at = index * Particles.STRIDE
-    return [this.state[at]!, this.state[at + 1]!, this.state[at + 2]!]
+  private reap() {
+    // Deaths are not in order; a pool of a few thousand is cheap to filter when it is asked about.
+    if (this.deaths.length === 0) return
+    let kept = 0
+    for (const death of this.deaths) if (death > this.clock) this.deaths[kept++] = death
+    this.deaths.length = kept
+  }
+
+  private resample() {
+    const moved = Math.hypot(this.focus.x - this.fieldAt.x, this.focus.z - this.fieldAt.z)
+    if (moved < RESAMPLE_DISTANCE && this.clock - this.fieldAt.time < RESAMPLE_SECONDS) return
+    const field = (this.field ??= new Float32Array(FIELD * FIELD))
+    const x0 = Math.round((this.focus.x - REACH) / CELL) * CELL
+    const z0 = Math.round((this.focus.z - REACH) / CELL) * CELL
+    for (let row = 0; row < FIELD; row++) {
+      for (let column = 0; column < FIELD; column++) field[row * FIELD + column] = this.groundAt(x0 + column * CELL, z0 + row * CELL) + 0.02
+    }
+    this.root.setGround(field, FIELD, FIELD, x0, z0, CELL)
+    this.fieldAt = { x: this.focus.x, z: this.focus.z, time: this.clock }
   }
 
   dispose() {
-    this.geometry.dispose()
-    this.material.dispose()
     this.root.removeFromParent()
   }
 }

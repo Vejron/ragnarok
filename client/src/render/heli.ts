@@ -1,6 +1,7 @@
+import { Group, Mesh, sphereGeometry, type Material, type Node } from '@ragnarok/engine'
 import * as THREE from 'three'
+import { parseToonModel } from './models'
 import { toonMaterial } from './toon'
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { HELI_GUN_LENGTH, HELI_SEATS } from '@/sim/consts'
 import type { Turret } from '@/net/codec'
 import { colorFor } from './character'
@@ -23,37 +24,16 @@ const SEATS: readonly (readonly [number, number, number])[] = [
   [0, 0.1, -1.55],
 ]
 
-let asset: THREE.Object3D | null = null
+let asset: Node | null = null
 
 /**
  * Parses `heli.glb` (built by `tools/vehicles/build_heli.py`) for every `HeliModel` to share. Its
  * materials become flat toon ones to match the rest of the scene; `paint` is replaced per helicopter.
  */
 export async function parseHeliModel(data: ArrayBuffer) {
-  asset = await new Promise<THREE.Object3D>((resolve, reject) => {
-    new GLTFLoader().parse(
-      data,
-      '',
-      (gltf) => {
-        gltf.scene.traverse((node) => {
-          const mesh = node as THREE.Mesh
-          if (!mesh.isMesh) return
-          const source = mesh.material as THREE.MeshStandardMaterial
-          const glass = source.name === 'glass'
-          mesh.material = toonMaterial({
-            color: source.color,
-            name: source.name,
-            transparent: glass,
-            opacity: glass ? GLASS_OPACITY : 1,
-            depthWrite: !glass,
-          })
-          source.dispose()
-          mesh.castShadow = !glass
-        })
-        resolve(gltf.scene)
-      },
-      reject,
-    )
+  asset = parseToonModel(data, (source) => {
+    if (source.name !== 'glass') return null
+    return toonMaterial({ color: source.color, name: source.name, blend: 'alpha', opacity: GLASS_OPACITY, depthWrite: false })
   })
 }
 
@@ -70,14 +50,14 @@ export async function loadHeliModel(url = HELI_MODEL_URL) {
  * and the wings are bigger than it, as a cartoon's are.
  */
 export class HeliModel implements VehicleModel {
-  readonly root = new THREE.Group()
-  private readonly rotor: THREE.Object3D
-  private readonly tailRotor: THREE.Object3D
-  private readonly turret: THREE.Object3D
-  private readonly gun: THREE.Object3D
+  readonly root = new Group()
+  private readonly rotor: Node
+  private readonly tailRotor: Node
+  private readonly turret: Node
+  private readonly gun: Node
   private readonly gunRest: number
-  private readonly heads: THREE.Mesh[] = []
-  private readonly paint: THREE.MeshToonMaterial
+  private readonly heads: Mesh[] = []
+  private readonly paint: Material
   private rotorSpeed = 0
   private lastUpdate = performance.now()
   /** `performance.now()` of the last round, for the barrels' kick. */
@@ -86,15 +66,15 @@ export class HeliModel implements VehicleModel {
   gunner = 0
   private readonly pivot = new THREE.Vector3()
   private readonly aim = new THREE.Vector3()
+  private readonly matrix = new THREE.Matrix4()
 
   constructor(id: number) {
     if (!asset) throw new Error('loadHeliModel() must finish before helicopters are created')
-    const model = asset.clone(true)
+    const model = asset.clone()
     this.root.add(model)
     this.paint = toonMaterial({ color: PAINTS[id % PAINTS.length]! })
     model.traverse((node) => {
-      const mesh = node as THREE.Mesh
-      if (mesh.isMesh && mesh.material instanceof THREE.Material && mesh.material.name === 'paint') mesh.material = this.paint
+      if (node instanceof Mesh && node.material.name === 'paint') node.material = this.paint
     })
     this.rotor = model.getObjectByName('rotor')!
     this.tailRotor = model.getObjectByName('tail_rotor')!
@@ -102,9 +82,10 @@ export class HeliModel implements VehicleModel {
     this.gun = model.getObjectByName('gun')!
     this.gunRest = this.gun.position.z
 
-    const headGeometry = new THREE.SphereGeometry(0.2, 12, 10)
+    const headGeometry = sphereGeometry(0.2, 12, 10)
     for (let seat = 0; seat < HELI_SEATS; seat++) {
-      const head = new THREE.Mesh(headGeometry, toonMaterial({ color: 0xffffff }))
+      const head = new Mesh(headGeometry, toonMaterial({ color: 0xffffff }))
+      head.userData.head = true
       head.position.set(...SEATS[seat]!)
       head.castShadow = true
       head.visible = false
@@ -143,7 +124,10 @@ export class HeliModel implements VehicleModel {
     this.heads.forEach((head, seat) => {
       const occupant = seats[seat] ?? 0
       head.visible = occupant !== 0
-      if (occupant !== 0) (head.material as THREE.MeshToonMaterial).color.setHex(colorFor(occupant))
+      if (occupant !== 0) {
+        head.material.color.setHex(colorFor(occupant))
+        head.material.needsUpdate()
+      }
     })
   }
 
@@ -156,7 +140,7 @@ export class HeliModel implements VehicleModel {
   barrel() {
     this.root.updateMatrixWorld(true)
     this.gun.getWorldPosition(this.pivot)
-    this.aim.set(0, 0, -1).transformDirection(this.gun.matrixWorld)
+    this.aim.set(0, 0, -1).transformDirection(this.matrix.fromArray(this.gun.matrixWorld))
     return { origin: this.pivot.clone(), direction: this.aim.clone() }
   }
 
@@ -169,9 +153,7 @@ export class HeliModel implements VehicleModel {
   /** Frees what this helicopter owns; the model's geometry and other materials are shared by every one. */
   dispose() {
     this.paint.dispose()
-    for (const head of this.heads) {
-      ;(head.material as THREE.Material).dispose()
-    }
+    for (const head of this.heads) head.material.dispose()
     this.heads[0]?.geometry.dispose()
     this.root.removeFromParent()
   }

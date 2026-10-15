@@ -1,3 +1,4 @@
+import { Mesh } from '@ragnarok/engine'
 import { describe, expect, it } from 'vitest'
 import { groundOf, heightIn, Terrain, type TileGround } from '@/sim/terrain'
 import type { TileData, WorldData } from '@/world'
@@ -50,14 +51,15 @@ describe('terrain mesh', () => {
     const { buildTile } = await import('@/render/world')
     const tile: TileData = { buildings: [], roads: [], cover: [], trees: [], collision: { vertices: new Float32Array(), triangles: new Uint32Array() }, ground: new Float32Array(), water: new Float32Array(), streams: [], bridges: [] }
     const group = buildTile(tile, 0, bumpy())
-    const mesh = group.children[0] as import('three').Mesh
-    const position = mesh.geometry.getAttribute('position')
-    const normal = mesh.geometry.getAttribute('normal')
-    expect(position.count).toBe(81)
-    for (let i = 0; i < position.count; i++) expect(normal.getY(i), `vertex ${i}`).toBeGreaterThan(0)
+    const { geometry } = group.children[0] as Mesh
+    const position = geometry.positions
+    const normal = geometry.normals!
+    expect(geometry.vertexCount).toBe(81)
+    for (let i = 0; i < geometry.vertexCount; i++) expect(normal[i * 3 + 1], `vertex ${i}`).toBeGreaterThan(0)
     // Vertex (column 2, row 3) sits at x = 10, z = 15 with that sample's height.
-    expect(position.getX(3 * 9 + 2)).toBe(10)
-    expect(position.getZ(3 * 9 + 2)).toBe(15)
-    expect(position.getY(3 * 9 + 2)).toBeCloseTo(bumpy().heights[3 * 9 + 2]!, 5)
+    const v = 3 * 9 + 2
+    expect(position[v * 3]).toBe(10)
+    expect(position[v * 3 + 2]).toBe(15)
+    expect(position[v * 3 + 1]).toBeCloseTo(bumpy().heights[v]!, 5)
   })
 })

@@ -1,14 +1,18 @@
 {
   "extends": "@vue/tsconfig/tsconfig.dom.json",
-  "include": ["env.d.ts", "src/**/*", "src/**/*.vue"],
+  "include": ["env.d.ts", "src/**/*", "src/**/*.vue", "../engine/src/**/*"],
   "exclude": ["src/**/__tests__/*"],
   "compilerOptions": {
     // Extra safety for array and object lookups, but may have false positives.
     "noUncheckedIndexedAccess": true,
 
+    // The engine's WebGPU types.
+    "types": ["@webgpu/types", "vite/client"],
+
     // Path mapping for cleaner imports.
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@ragnarok/engine": ["../engine/src/index.ts"]
     },
 
     // `vue-tsc --build` produces a .tsbuildinfo file for incremental type-checking.

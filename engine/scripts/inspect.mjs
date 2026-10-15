@@ -3,6 +3,9 @@
 //
 //   node scripts/inspect.mjs <url> [waitMs=5000] [screenshot.png]
 //
+// EVAL="js" runs that script in the page once it has loaded, and AFTER=ms (default 1500) waits before the
+// screenshot, so a scene can be poked into a state first. Its value is printed.
+//
 // Set CHROME to the browser binary if it is not the macOS default.
 import { spawn } from 'node:child_process'
 import { mkdtempSync, writeFileSync } from 'node:fs'
@@ -54,6 +57,11 @@ await send('Runtime.enable')
 await send('Page.enable')
 await send('Page.navigate', { url })
 await sleep(Number(waitMs))
+if (process.env.EVAL) {
+  const out = await send('Runtime.evaluate', { expression: process.env.EVAL, returnByValue: true, awaitPromise: true })
+  console.log('eval:', JSON.stringify(out.result?.result?.value ?? out.result?.exceptionDetails?.exception?.description))
+  await sleep(Number(process.env.AFTER ?? 1500))
+}
 console.log(await evaluate(`document.getElementById('stats')?.textContent ?? document.body.innerText.slice(0, 300)`))
 if (shot) {
   const { result } = await send('Page.captureScreenshot', { format: 'png' })

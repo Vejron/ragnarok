@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import * as THREE from 'three'
+import { SkinnedMesh, type Action } from '@ragnarok/engine'
 import { describe, expect, it } from 'vitest'
 import { parseRoosterModel, RoosterModel } from '@/render/rooster'
 
@@ -20,13 +20,13 @@ describe('rooster model', () => {
     const rooster = new RoosterModel()
     let skinned = 0
     rooster.root.traverse((node) => {
-      if ((node as THREE.SkinnedMesh).isSkinnedMesh) skinned++
+      if (node instanceof SkinnedMesh) skinned++
     })
     expect(skinned).toBeGreaterThan(0)
     // The clip lengths are what the server's timings assume: a 50-frame crow at 30 fps is 100 ticks at 60 Hz.
     const clips = new Map<string, number>()
-    const mixer = (rooster as unknown as { actions: Map<string, THREE.AnimationAction> }).actions
-    for (const [name, action] of mixer) clips.set(name, action.getClip().duration)
+    const animator = (rooster as unknown as { animator: { actions: Map<string, Action> } }).animator
+    for (const [name, action] of animator.actions) clips.set(name, action.clip.duration)
     expect([...clips.keys()].sort()).toEqual(['crow', 'idle', 'walk'])
     expect(clips.get('crow')).toBeCloseTo(100 / 60, 1)
   })

@@ -168,3 +168,53 @@ export function maxScale(m: Mat4): number {
   const sz = m[8]! * m[8]! + m[9]! * m[9]! + m[10]! * m[10]!
   return Math.sqrt(Math.max(sx, sy, sz))
 }
+
+/**
+ * Splits `m` into translation, unit rotation quaternion and scale (assuming no shear). Each output is an
+ * array-like of 3, 4 and 3 numbers.
+ */
+export function decompose(m: ArrayLike<number>, position: { [i: number]: number }, rotation: { [i: number]: number }, scale: { [i: number]: number }) {
+  let sx = Math.hypot(m[0]!, m[1]!, m[2]!)
+  const sy = Math.hypot(m[4]!, m[5]!, m[6]!)
+  const sz = Math.hypot(m[8]!, m[9]!, m[10]!)
+  // A mirrored basis shows as a negative determinant; fold it into x.
+  const det = m[0]! * (m[5]! * m[10]! - m[6]! * m[9]!) - m[4]! * (m[1]! * m[10]! - m[2]! * m[9]!) + m[8]! * (m[1]! * m[6]! - m[2]! * m[5]!)
+  if (det < 0) sx = -sx
+  position[0] = m[12]!
+  position[1] = m[13]!
+  position[2] = m[14]!
+  scale[0] = sx
+  scale[1] = sy
+  scale[2] = sz
+  const ix = 1 / sx, iy = 1 / sy, iz = 1 / sz
+  const r = [m[0]! * ix, m[1]! * ix, m[2]! * ix, 0, m[4]! * iy, m[5]! * iy, m[6]! * iy, 0, m[8]! * iz, m[9]! * iz, m[10]! * iz, 0]
+  const m11 = r[0]!, m12 = r[4]!, m13 = r[8]!
+  const m21 = r[1]!, m22 = r[5]!, m23 = r[9]!
+  const m31 = r[2]!, m32 = r[6]!, m33 = r[10]!
+  const trace = m11 + m22 + m33
+  if (trace > 0) {
+    const s = 0.5 / Math.sqrt(trace + 1)
+    rotation[0] = (m32 - m23) * s
+    rotation[1] = (m13 - m31) * s
+    rotation[2] = (m21 - m12) * s
+    rotation[3] = 0.25 / s
+  } else if (m11 > m22 && m11 > m33) {
+    const s = 2 * Math.sqrt(1 + m11 - m22 - m33)
+    rotation[0] = 0.25 * s
+    rotation[1] = (m12 + m21) / s
+    rotation[2] = (m13 + m31) / s
+    rotation[3] = (m32 - m23) / s
+  } else if (m22 > m33) {
+    const s = 2 * Math.sqrt(1 + m22 - m11 - m33)
+    rotation[0] = (m12 + m21) / s
+    rotation[1] = 0.25 * s
+    rotation[2] = (m23 + m32) / s
+    rotation[3] = (m13 - m31) / s
+  } else {
+    const s = 2 * Math.sqrt(1 + m33 - m11 - m22)
+    rotation[0] = (m13 + m31) / s
+    rotation[1] = (m23 + m32) / s
+    rotation[2] = 0.25 * s
+    rotation[3] = (m21 - m12) / s
+  }
+}

@@ -137,6 +137,134 @@ export class Geometry {
     this.version++
   }
 
+  /** An independent copy: its own arrays, not yet uploaded. */
+  clone(): Geometry {
+    return new Geometry({
+      positions: this.positions.slice(),
+      normals: this.normals?.slice(),
+      uvs: this.uvs?.slice(),
+      colors: this.colors?.slice(),
+      custom: this.custom?.slice(),
+      joints: this.joints?.slice(),
+      weights: this.weights?.slice(),
+      indices: this.indices?.slice(),
+    })
+  }
+
+  /** The same triangles with each corner its own vertex, so `computeNormals` gives flat faces. */
+  toNonIndexed(): Geometry {
+    const idx = this.indices
+    if (!idx) return this.clone()
+    const take = (a: Float32Array | undefined, size: number) => {
+      if (!a) return undefined
+      const out = new Float32Array(idx.length * size)
+      for (let i = 0; i < idx.length; i++) for (let c = 0; c < size; c++) out[i * size + c] = a[idx[i]! * size + c]!
+      return out
+    }
+    const colorSize = this.colors ? this.colors.length / this.vertexCount : 0
+    return new Geometry({
+      positions: take(this.positions, 3)!,
+      normals: take(this.normals, 3),
+      uvs: take(this.uvs, 2),
+      colors: take(this.colors, colorSize),
+      custom: take(this.custom, 4),
+    })
+  }
+
+  /** Moves every vertex by (x, y, z). Call `needsUpdate()` after, if it was already drawn. */
+  translate(x: number, y: number, z: number): this {
+    const p = this.positions
+    for (let i = 0; i < p.length; i += 3) {
+      p[i] = p[i]! + x
+      p[i + 1] = p[i + 1]! + y
+      p[i + 2] = p[i + 2]! + z
+    }
+    this.computeBounds()
+    return this
+  }
+
+  /** Scales every vertex about the origin; normals follow for a uniform scale or a non-uniform one alike. */
+  scale(x: number, y: number, z: number): this {
+    const p = this.positions
+    for (let i = 0; i < p.length; i += 3) {
+      p[i] = p[i]! * x
+      p[i + 1] = p[i + 1]! * y
+      p[i + 2] = p[i + 2]! * z
+    }
+    const n = this.normals
+    if (n) {
+      for (let i = 0; i < n.length; i += 3) {
+        let nx = n[i]! / x, ny = n[i + 1]! / y, nz = n[i + 2]! / z
+        const l = Math.hypot(nx, ny, nz) || 1
+        nx /= l; ny /= l; nz /= l
+        n[i] = nx; n[i + 1] = ny; n[i + 2] = nz
+      }
+    }
+    this.computeBounds()
+    return this
+  }
+
+  /** Turns every vertex (and normal) about the X axis. */
+  rotateX(angle: number): this {
+    return this.rotateAbout(0, angle)
+  }
+
+  rotateY(angle: number): this {
+    return this.rotateAbout(1, angle)
+  }
+
+  rotateZ(angle: number): this {
+    return this.rotateAbout(2, angle)
+  }
+
+  private rotateAbout(axis: 0 | 1 | 2, angle: number): this {
+    const c = Math.cos(angle), s = Math.sin(angle)
+    // The two axes the rotation mixes, in right-handed order.
+    const a = (axis + 1) % 3, b = (axis + 2) % 3
+    for (const array of [this.positions, this.normals]) {
+      if (!array) continue
+      for (let i = 0; i < array.length; i += 3) {
+        const u = array[i + a]!, v = array[i + b]!
+        array[i + a] = u * c - v * s
+        array[i + b] = u * s + v * c
+      }
+    }
+    this.computeBounds()
+    return this
+  }
+
+  /**
+   * One geometry from several, in order. Attributes that only some have are zero-filled for the rest
+   * (colours default to white). Indices are offset; a mix of indexed and plain geometry is made indexed.
+   */
+  static merge(list: readonly Geometry[]): Geometry {
+    const vertices = list.reduce((n, g) => n + g.vertexCount, 0)
+    const withNormals = list.some((g) => g.normals)
+    const withUvs = list.some((g) => g.uvs)
+    const colorSize = list.some((g) => g.colors && g.colors.length === g.vertexCount * 4) ? 4 : list.some((g) => g.colors) ? 3 : 0
+    const positions = new Float32Array(vertices * 3)
+    const normals = withNormals ? new Float32Array(vertices * 3) : undefined
+    const uvs = withUvs ? new Float32Array(vertices * 2) : undefined
+    const colors = colorSize ? new Float32Array(vertices * colorSize).fill(1) : undefined
+    const indices = vertices > 65535 ? new Uint32Array(list.reduce((n, g) => n + g.indexCount, 0)) : new Uint16Array(list.reduce((n, g) => n + g.indexCount, 0))
+    let v = 0
+    let i = 0
+    for (const g of list) {
+      positions.set(g.positions, v * 3)
+      if (normals && g.normals) normals.set(g.normals, v * 3)
+      if (uvs && g.uvs) uvs.set(g.uvs, v * 2)
+      if (colors && g.colors) {
+        const size = g.colors.length / g.vertexCount
+        if (size === colorSize) colors.set(g.colors, v * colorSize)
+        else for (let k = 0; k < g.vertexCount; k++) for (let c = 0; c < 3; c++) colors[(v + k) * colorSize + c] = g.colors[k * size + c]!
+      }
+      if (g.indices) for (let k = 0; k < g.indices.length; k++) indices[i++] = g.indices[k]! + v
+      else for (let k = 0; k < g.vertexCount; k++) indices[i++] = v + k
+      v += g.vertexCount
+    }
+    return new Geometry({ positions, normals, uvs, colors, indices })
+  }
+
   /** Frees the GPU copy. Meshes still using it stop drawing. */
   dispose() {
     this.disposed = true

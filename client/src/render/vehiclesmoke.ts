@@ -43,7 +43,7 @@ export function damageSmoke(
   carried: number,
 ): number {
   const at = new THREE.Vector3(...position)
-  const distance = at.distanceTo(world.camera)
+  const distance = world.camera.distanceTo(at)
   if (distance > RANGE) return 0
   const level = wreck ? 1 : Math.min(1, Math.max(0, severity))
   const thin = distance > HALF_RANGE ? 0.5 : 1

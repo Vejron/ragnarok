@@ -17,6 +17,7 @@ export class Ramp {
 }
 
 export interface MaterialParams {
+  name?: string
   /** Toon-lit by the sun and hemisphere, or plain colour. */
   lit?: boolean
   color?: Color | number
@@ -46,7 +47,7 @@ export interface MaterialParams {
  */
 export class Material {
   readonly id = nextId++
-  name = ''
+  name: string
   lit: boolean
   readonly color: Color
   opacity: number
@@ -69,6 +70,7 @@ export class Material {
   disposed = false
 
   constructor(params: MaterialParams = {}) {
+    this.name = params.name ?? ''
     this.lit = params.lit ?? true
     this.color = toColor(params.color ?? 0xffffff)
     this.opacity = params.opacity ?? 1
@@ -84,6 +86,34 @@ export class Material {
     this.depthBias = params.depthBias ?? 0
     this.depthBiasSlope = params.depthBiasSlope ?? 0
     this.fog = params.fog ?? true
+  }
+
+  /** A material with the same settings, which changes independently. */
+  clone(): Material {
+    const copy = new Material(this.params())
+    copy.name = this.name
+    return copy
+  }
+
+  /** @internal this material's settings in constructor form. */
+  protected params(): MaterialParams {
+    return {
+      lit: this.lit,
+      color: this.color,
+      opacity: this.opacity,
+      emissive: this.emissive,
+      vertexColors: this.vertexColors,
+      map: this.map,
+      normalMap: this.normalMap,
+      ramp: this.ramp,
+      blend: this.blend,
+      side: this.side,
+      depthTest: this.depthTest,
+      depthWrite: this.depthWrite,
+      depthBias: this.depthBias,
+      depthBiasSlope: this.depthBiasSlope,
+      fog: this.fog,
+    }
   }
 
   get transparent() {

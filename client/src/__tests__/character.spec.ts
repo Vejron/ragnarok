@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import * as THREE from 'three'
 import { describe, expect, it } from 'vitest'
 import { Character, Crowd, parseCharacter } from '@/render/character'
+import { boxOf } from './helpers'
 import { ITEM_AK5, ITEM_BANDAGE, ITEM_GRENADE, ITEM_NONE, ITEM_REVOLVER } from '@/sim/items'
 
 const file = resolve(process.cwd(), 'public/models/player.glb')
@@ -116,7 +117,7 @@ describe('Character', () => {
     expect(muzzle.x).toBeGreaterThan(0.05)
     expect(muzzle.y).toBeGreaterThan(0.8)
     expect(muzzle.y).toBeLessThan(1.4)
-    const box = new THREE.Box3().setFromObject(c.root)
+    const box = boxOf(c.root)
     expect(box.min.y).toBeCloseTo(0, 1)
     c.dispose()
   })

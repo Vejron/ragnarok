@@ -1,6 +1,7 @@
+import { Group, Mesh, sphereGeometry, type Material, type Node } from '@ragnarok/engine'
 import * as THREE from 'three'
+import { parseToonModel } from './models'
 import { toonMaterial } from './toon'
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { CAR_SEATS, TANK_TRACK_HALF } from '@/sim/consts'
 import { wrapAngle, type Turret } from '@/net/codec'
 import { colorFor } from './character'
@@ -27,7 +28,7 @@ export interface TankLayout {
 
 const TANK_LAYOUT: TankLayout = { driverHead: [0, 0.55, -1.55], gunnerHead: [-0.45, 0.5, 0.3], wheelRadius: WHEEL_RADIUS, trackHalf: TANK_TRACK_HALF }
 
-let asset: THREE.Object3D | null = null
+let asset: Node | null = null
 
 /**
  * Parses `tank.glb` (built by `tools/vehicles/build_tank.py`) for every `TankModel` to share. Its
@@ -38,25 +39,8 @@ export async function parseTankModel(data: ArrayBuffer) {
 }
 
 /** Parses a tank-family `.glb` into toon materials, for `TankModel` and its kin to share. */
-export function parseTankAsset(data: ArrayBuffer): Promise<THREE.Object3D> {
-  return new Promise<THREE.Object3D>((resolve, reject) => {
-    new GLTFLoader().parse(
-      data,
-      '',
-      (gltf) => {
-        gltf.scene.traverse((node) => {
-          const mesh = node as THREE.Mesh
-          if (!mesh.isMesh) return
-          const source = mesh.material as THREE.MeshStandardMaterial
-          mesh.material = toonMaterial({ color: source.color, name: source.name })
-          source.dispose()
-          mesh.castShadow = true
-        })
-        resolve(gltf.scene)
-      },
-      reject,
-    )
-  })
+export async function parseTankAsset(data: ArrayBuffer): Promise<Node> {
+  return parseToonModel(data)
 }
 
 export async function loadTankModel(url = TANK_MODEL_URL) {
@@ -72,14 +56,14 @@ export async function loadTankModel(url = TANK_MODEL_URL) {
  * in opposite directions).
  */
 export class TankModel implements VehicleModel {
-  readonly root = new THREE.Group()
+  readonly root = new Group()
   /** The turret node; a turretless tank (the Strv S) has none. */
-  private readonly turret: THREE.Object3D | null
-  private readonly gun: THREE.Object3D
+  private readonly turret: Node | null
+  private readonly gun: Node
   private readonly gunRest: number
-  private readonly spinners: { node: THREE.Object3D; side: number }[] = []
-  private readonly heads: THREE.Mesh[] = []
-  private readonly paint: THREE.MeshToonMaterial
+  private readonly spinners: { node: Node; side: number }[] = []
+  private readonly heads: Mesh[] = []
+  private readonly paint: Material
   private roll = { left: 0, right: 0 }
   private placed = false
   /** `performance.now()` of the last shot, for the barrel's recoil stroke. */
@@ -89,15 +73,15 @@ export class TankModel implements VehicleModel {
   private readonly forward = new THREE.Vector3()
   private readonly pivot = new THREE.Vector3()
   private readonly aim = new THREE.Vector3()
+  private readonly matrix = new THREE.Matrix4()
 
-  constructor(id: number, source: THREE.Object3D | null = asset, private readonly layout: TankLayout = TANK_LAYOUT) {
+  constructor(id: number, source: Node | null = asset, private readonly layout: TankLayout = TANK_LAYOUT) {
     if (!source) throw new Error('loadTankModel() must finish before tanks are created')
-    const model = source.clone(true)
+    const model = source.clone()
     this.root.add(model)
     this.paint = toonMaterial({ color: PAINTS[id % PAINTS.length]! })
     model.traverse((node) => {
-      const mesh = node as THREE.Mesh
-      if (mesh.isMesh && mesh.material instanceof THREE.Material && mesh.material.name === 'paint') mesh.material = this.paint
+      if (node instanceof Mesh && node.material.name === 'paint') node.material = this.paint
       const wheel = /^wheel_([LR])_/.exec(node.name)
       if (wheel) this.spinners.push({ node, side: wheel[1] === 'L' ? -1 : 1 })
     })
@@ -105,9 +89,10 @@ export class TankModel implements VehicleModel {
     this.gun = model.getObjectByName('gun')!
     this.gunRest = this.gun.position.z
 
-    const headGeometry = new THREE.SphereGeometry(0.2, 12, 10)
+    const headGeometry = sphereGeometry(0.2, 12, 10)
     for (let seat = 0; seat < CAR_SEATS; seat++) {
-      const head = new THREE.Mesh(headGeometry, toonMaterial({ color: 0xffffff }))
+      const head = new Mesh(headGeometry, toonMaterial({ color: 0xffffff }))
+      head.userData.head = true
       head.visible = false
       head.castShadow = true
       this.heads.push(head)
@@ -138,13 +123,13 @@ export class TankModel implements VehicleModel {
     this.forward.set(0, 0, -1).applyQuaternion(this.root.quaternion)
     const yaw = Math.atan2(-this.forward.x, -this.forward.z)
     if (this.placed) {
-      const ahead = this.forward.dot(this.root.position.clone().sub(this.last))
+      const ahead = this.forward.x * (position[0] - this.last.x) + this.forward.y * (position[1] - this.last.y) + this.forward.z * (position[2] - this.last.z)
       const turned = wrapAngle(yaw - this.lastYaw) * this.layout.trackHalf
       // Turning left (+yaw) holds the left track back and drives the right one on.
       this.roll.left -= (ahead - turned) / this.layout.wheelRadius
       this.roll.right -= (ahead + turned) / this.layout.wheelRadius
     }
-    this.last.copy(this.root.position)
+    this.last.set(position[0], position[1], position[2])
     this.lastYaw = yaw
     this.placed = true
     for (const { node, side } of this.spinners) node.rotation.x = side < 0 ? this.roll.left : this.roll.right
@@ -158,7 +143,10 @@ export class TankModel implements VehicleModel {
     this.heads.forEach((head, seat) => {
       const occupant = seats[seat] ?? 0
       head.visible = occupant !== 0
-      if (occupant !== 0) (head.material as THREE.MeshToonMaterial).color.setHex(colorFor(occupant))
+      if (occupant !== 0) {
+        head.material.color.setHex(colorFor(occupant))
+        head.material.needsUpdate()
+      }
     })
   }
 
@@ -176,15 +164,15 @@ export class TankModel implements VehicleModel {
    * A copy of the turret, with the gun, as it stands now in the world, for flying off as debris; null
    * for a tank with none or one that is already off. Add the copy to the scene and throw it.
    */
-  turretCopy(): THREE.Object3D | null {
+  turretCopy(): Node | null {
     if (!this.turret?.visible) return null
     this.root.updateMatrixWorld(true)
-    const copy = this.turret.clone(true)
+    const copy = this.turret.clone()
     // The gunner's head stays with the crew who died with it.
     copy.traverse((node) => {
-      if ((node as THREE.Mesh).isMesh && (node as THREE.Mesh).geometry instanceof THREE.SphereGeometry) node.visible = false
+      if (node.userData.head) node.visible = false
     })
-    this.turret.matrixWorld.decompose(copy.position, copy.quaternion, copy.scale)
+    copy.setFromMatrix(this.turret.matrixWorld)
     return copy
   }
 
@@ -197,16 +185,14 @@ export class TankModel implements VehicleModel {
   barrel() {
     this.root.updateMatrixWorld(true)
     this.gun.getWorldPosition(this.pivot)
-    this.aim.set(0, 0, -1).transformDirection(this.gun.matrixWorld)
+    this.aim.set(0, 0, -1).transformDirection(this.matrix.fromArray(this.gun.matrixWorld))
     return { origin: this.pivot.clone(), direction: this.aim.clone() }
   }
 
   /** Frees what this tank owns; the model's geometry and other materials are shared by every tank. */
   dispose() {
     this.paint.dispose()
-    for (const head of this.heads) {
-      ;(head.material as THREE.Material).dispose()
-    }
+    for (const head of this.heads) head.material.dispose()
     this.heads[0]?.geometry.dispose()
     this.root.removeFromParent()
   }

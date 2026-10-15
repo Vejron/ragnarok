@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { Mesh } from '@ragnarok/engine'
 import * as THREE from 'three'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { CarModel, parseCarModel } from '@/render/car'
@@ -8,6 +9,7 @@ import {
   SPORTS_WHEEL_RADIUS,
 } from '@/sim/consts'
 import { KIND_JEEP, KIND_SPORTS } from '@/net/codec'
+import { triangleCount } from './helpers'
 
 const IDENTITY: [number, number, number, number] = [0, 0, 0, 1]
 
@@ -24,14 +26,7 @@ beforeAll(async () => {
   await load('sports')
 })
 
-const triangles = (car: CarModel) => {
-  let count = 0
-  car.root.traverse((node) => {
-    const mesh = node as THREE.Mesh
-    if (mesh.isMesh) count += (mesh.geometry.index?.count ?? mesh.geometry.attributes.position!.count) / 3
-  })
-  return count
-}
+const triangles = (car: CarModel) => triangleCount(car.root)
 
 describe.each([
   ['jeep', KIND_JEEP, JEEP_TRACK_HALF, JEEP_AXLE_Z, JEEP_WHEEL_RADIUS, JEEP_RIDE_HEIGHT, 4],
@@ -54,7 +49,7 @@ describe.each([
 
   it('shows one head per seat, and no more', () => {
     const car = new CarModel(kind, 1)
-    const heads = car.root.children.filter((child) => (child as THREE.Mesh).isMesh && (child as THREE.Mesh).geometry.type === 'SphereGeometry')
+    const heads = car.root.children.filter((child) => child instanceof Mesh && child.userData.head)
     expect(heads).toHaveLength(seats)
     car.update([0, 0, 0], IDENTITY, 0, Array(seats).fill(7))
     expect(heads.every((head) => head.visible)).toBe(true)

@@ -1,3 +1,4 @@
+import { Geometry, Group, Material, Mesh, Ramp, planeGeometry, type Node } from '@ragnarok/engine'
 import * as THREE from 'three'
 import { toonMaterial } from './toon'
 import type { TileGround } from '@/sim/terrain'
@@ -6,6 +7,7 @@ import { GRASS_COLOR, bakeNormalMap, bakeTerrainTexture } from './cover'
 import { buildRoads } from './roads'
 import { heightSampler, normalAt, toneAt, type HeightSource } from './shade'
 import { buildTrees } from './trees'
+
 
 export type { HeightSource }
 
@@ -23,22 +25,17 @@ const FLAT_ROOF_COLORS = [0xb0b4ba, 0x9aa0a6, 0xc4c7cc]
  * dark and coarse in shade and fine near the light. Flat ground under the sun (about 0.83) sits
  * in the middle of step 6, so a few degrees of slope tip it one step either way instead of flickering.
  */
-const TERRAIN_RAMP = (() => {
-  const texture = new THREE.DataTexture(new Uint8Array([90, 100, 115, 140, 180, 208, 235, 255]), 8, 1, THREE.RedFormat)
-  texture.minFilter = texture.magFilter = THREE.NearestFilter
-  texture.needsUpdate = true
-  return texture
-})()
+const TERRAIN_RAMP = new Ramp(new Uint8Array([90, 100, 115, 140, 180, 208, 235, 255]))
 
 /** Materials are shared by every tile, so streaming one in or out never compiles a shader. */
-const materials = new Map<string, THREE.Material>()
+const materials = new Map<string, Material>()
 function material(kind: 'terrain' | 'building', color: number) {
   const key = `${kind}:${color}`
   let found = materials.get(key)
   if (!found) {
     found =
       kind === 'terrain'
-        ? toonMaterial({ color, gradientMap: TERRAIN_RAMP, vertexColors: true })
+        ? toonMaterial({ color, ramp: TERRAIN_RAMP, vertexColors: true })
         : toonMaterial({ color })
     materials.set(key, found)
   }
@@ -49,9 +46,8 @@ function material(kind: 'terrain' | 'building', color: number) {
  * The grass, as one plane under the whole world: the ground of a flat world, and on a hilly one
  * what shows through where a tile has not streamed in yet. `y` sits it just under the terrain.
  */
-export function buildGround(halfExtent: number, y = 0): THREE.Mesh {
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(halfExtent * 2, halfExtent * 2), toonMaterial({ color: GRASS_COLOR }))
-  ground.rotation.x = -Math.PI / 2
+export function buildGround(halfExtent: number, y = 0): Mesh {
+  const ground = new Mesh(planeGeometry(halfExtent * 2, halfExtent * 2), toonMaterial({ color: GRASS_COLOR }))
   ground.position.y = y
   ground.receiveShadow = true
   return ground
@@ -61,7 +57,7 @@ export function buildGround(halfExtent: number, y = 0): THREE.Mesh {
  * One tile's terrain, as indexed triangles split the way the collider's are (each cell along its
  * `(x0, z1)`–`(x1, z0)` diagonal). UVs run 0..1 over the tile, for a texture baked per tile later.
  */
-function buildTerrain(tile: Pick<TileData, 'cover' | 'detail'>, ground: TileGround, around?: HeightSource): THREE.Mesh {
+function buildTerrain(tile: Pick<TileData, 'cover' | 'detail'>, ground: TileGround, around?: HeightSource): Mesh {
   const { x0, z0, cell, side, heights } = ground
   const positions = new Float32Array(side * side * 3)
   const uvs = new Float32Array(side * side * 2)
@@ -85,26 +81,20 @@ function buildTerrain(tile: Pick<TileData, 'cover' | 'detail'>, ground: TileGrou
       n += 6
     }
   }
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
-  geometry.setIndex(new THREE.BufferAttribute(indices, 1))
   const shading = terrainShading(ground, around)
-  geometry.setAttribute('normal', new THREE.BufferAttribute(shading.normals, 3))
-  geometry.setAttribute('color', new THREE.BufferAttribute(shading.colors, 3))
-  geometry.computeBoundingSphere()
+  const geometry = new Geometry({ positions, uvs, normals: shading.normals, colors: shading.colors, indices })
   // The cover is painted into this tile's own texture; the material is the tile's too.
   const map = bakeTerrainTexture(tile, x0, z0, cell * (side - 1))
   // Finer relief than the mesh has, as lighting only.
   const normalMap = bakeNormalMap(tile.detail)
   const owned = map !== null || normalMap !== null
-  const mesh = new THREE.Mesh(
+  const mesh = new Mesh(
     geometry,
     owned
       ? toonMaterial({
           ...(map ? { map } : { color: GRASS_COLOR }),
-          ...(normalMap ? { normalMap, normalMapType: THREE.ObjectSpaceNormalMap } : {}),
-          gradientMap: TERRAIN_RAMP,
+          ...(normalMap ? { normalMap } : {}),
+          ramp: TERRAIN_RAMP,
           vertexColors: true,
         })
       : material('terrain', GRASS_COLOR),
@@ -139,16 +129,15 @@ function terrainShading(ground: TileGround, around?: HeightSource) {
 }
 
 /** Recomputes a terrain mesh's normals once a neighbouring tile has arrived, so the seam closes. */
-export function restitchTerrain(group: THREE.Group, around: HeightSource) {
+export function restitchTerrain(group: Group, around: HeightSource) {
   for (const child of group.children) {
     const ground = child.userData.ground as TileGround | undefined
-    if (!ground || !(child instanceof THREE.Mesh)) continue
+    if (!ground || !(child instanceof Mesh)) continue
     const { normals, colors } = terrainShading(ground, around)
-    for (const [name, values] of [['normal', normals], ['color', colors]] as const) {
-      const attribute = child.geometry.getAttribute(name) as THREE.BufferAttribute
-      attribute.array.set(values)
-      attribute.needsUpdate = true
-    }
+    child.geometry.normals!.set(normals)
+    child.geometry.colors!.set(colors)
+    // Only the shading changed, not the shape, so the vertices go up again but the bounds stand.
+    child.geometry.needsUpdateRange(0, child.geometry.vertexCount)
   }
 }
 
@@ -157,8 +146,8 @@ export function restitchTerrain(group: THREE.Group, around: HeightSource) {
  * of draw calls. `salt` keeps colours stable between reloads and varied across tiles. Roads are
  * ribbons draped on the terrain; ground cover is painted into the terrain's texture.
  */
-export function buildTile(tile: TileData, salt: number, ground: TileGround | null = null, around?: HeightSource, destroyed: ReadonlySet<number> = NONE): THREE.Group {
-  const group = new THREE.Group()
+export function buildTile(tile: TileData, salt: number, ground: TileGround | null = null, around?: HeightSource, destroyed: ReadonlySet<number> = NONE): Group {
+  const group = new Group()
   if (ground) {
     group.add(buildTerrain(tile, ground, around))
     const size = (ground.side - 1) * ground.cell
@@ -196,7 +185,7 @@ function trianglePositions(tile: TileData, from: number, count: number, out: num
 }
 
 /** The tile's buildings and bridges, merged by colour, leaving out the buildings in `destroyed`. */
-function buildMerged(tile: TileData, salt: number, destroyed: ReadonlySet<number>): THREE.Mesh[] {
+function buildMerged(tile: TileData, salt: number, destroyed: ReadonlySet<number>): Mesh[] {
   const byColor = new Map<number, number[]>()
   const add = (color: number, from: number, count: number) => {
     const list = byColor.get(color) ?? []
@@ -214,9 +203,9 @@ function buildMerged(tile: TileData, salt: number, destroyed: ReadonlySet<number
     add(BRIDGE_DECK_COLOR, bridge.first, bridge.deck)
     add(BRIDGE_STEEL_COLOR, bridge.first + bridge.deck, bridge.steel)
   }
-  const meshes: THREE.Mesh[] = []
+  const meshes: Mesh[] = []
   for (const [color, positions] of byColor) {
-    const mesh = new THREE.Mesh(flatGeometry(positions), material('building', color))
+    const mesh = new Mesh(flatGeometry(positions), material('building', color))
     mesh.castShadow = true
     mesh.receiveShadow = true
     mesh.userData.merged = true
@@ -226,8 +215,8 @@ function buildMerged(tile: TileData, salt: number, destroyed: ReadonlySet<number
 }
 
 /** Redraws a tile's buildings without those in `destroyed` (indices into `tile.buildings`). */
-export function rebuildBuildings(group: THREE.Group, tile: TileData, salt: number, destroyed: ReadonlySet<number>) {
-  const stale = group.children.filter((child): child is THREE.Mesh => child.userData.merged === true && child instanceof THREE.Mesh)
+export function rebuildBuildings(group: Group, tile: TileData, salt: number, destroyed: ReadonlySet<number>) {
+  const stale = group.children.filter((child): child is Mesh => child.userData.merged === true && child instanceof Mesh)
   for (const mesh of stale) {
     mesh.geometry.dispose()
     group.remove(mesh)
@@ -239,13 +228,13 @@ export function rebuildBuildings(group: THREE.Group, tile: TileData, salt: numbe
  * Building `index` as a mesh of its own, for it to be seen collapsing: its walls and roof, with
  * the floor at the group's origin so scaling `y` sinks it into the ground.
  */
-export function collapsingBuilding(tile: TileData, index: number, salt: number): THREE.Group {
+export function collapsingBuilding(tile: TileData, index: number, salt: number): Group {
   const building = tile.buildings[index]!
   const { wall, roof } = buildingColors(tile, index, salt)
-  const group = new THREE.Group()
+  const group = new Group()
   group.position.y = building.base
   for (const [color, from, count] of [[wall, building.first, building.walls], [roof, building.first + building.walls, building.roof]] as const) {
-    const mesh = new THREE.Mesh(flatGeometry(trianglePositions(tile, from, count, [], building.base)), material('building', color))
+    const mesh = new Mesh(flatGeometry(trianglePositions(tile, from, count, [], building.base)), material('building', color))
     mesh.castShadow = true
     group.add(mesh)
   }
@@ -253,14 +242,13 @@ export function collapsingBuilding(tile: TileData, index: number, salt: number):
 }
 
 /** Frees a tile's geometry and its terrain texture. The materials and tree prototypes are shared and stay. */
-export function disposeTile(group: THREE.Group) {
-  group.traverse((object) => {
-    if (!(object instanceof THREE.Mesh)) return
-    // Tree prototypes are shared by every tile; an instanced mesh frees only its own buffers.
+export function disposeTile(group: Group) {
+  group.traverse((object: Node) => {
+    if (!(object instanceof Mesh)) return
+    // Tree prototypes are shared by every tile; an instanced mesh has no buffers of its own.
     if (!object.userData.sharedGeometry) object.geometry.dispose()
-    if (object instanceof THREE.InstancedMesh) object.dispose()
     if (object.userData.ownsMaterial) {
-      const material = object.material as THREE.MeshToonMaterial
+      const material = object.material
       material.map?.dispose()
       material.normalMap?.dispose()
       material.dispose()
@@ -270,7 +258,7 @@ export function disposeTile(group: THREE.Group) {
 }
 
 /** A non-indexed geometry from triangle-soup positions, with one flat normal per face. */
-function flatGeometry(positions: number[]): THREE.BufferGeometry {
+function flatGeometry(positions: number[]): Geometry {
   const array = Float32Array.from(positions)
   const normals = new Float32Array(array.length)
   const [a, b, c, n] = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]
@@ -281,9 +269,5 @@ function flatGeometry(positions: number[]): THREE.BufferGeometry {
     n.subVectors(c, b).cross(a.sub(b)).normalize()
     for (let k = 0; k < 3; k++) n.toArray(normals, i + k * 3)
   }
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.BufferAttribute(array, 3))
-  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
-  geometry.computeBoundingSphere()
-  return geometry
+  return new Geometry({ positions: array, normals })
 }

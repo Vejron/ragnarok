@@ -1,23 +1,33 @@
+import { Geometry, Group, Material, Node, Skeleton, SkinnedMesh, mat4 } from '@ragnarok/engine'
 import * as THREE from 'three'
 import { describe, expect, it } from 'vitest'
 import { limbOf, poseLimb, splitLimbs } from '@/render/gibs'
 
 /** Two triangles bound to different bones: one to the head, one to a thigh. */
 function skinned() {
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 1, 0, 1, 1, 0, 0, 2, 0, 0, 0, 0, 1, 0, 0, 0, -1, 0], 3))
-  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(new Array(18).fill(0), 3))
-  const joints = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]
-  geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(joints.map((j, i) => (i < 12 ? 0 : j)), 4))
-  geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(new Array(6).fill([1, 0, 0, 0]).flat(), 4))
-  const head = new THREE.Bone()
+  const joints = new Uint8Array(6 * 4)
+  // The first triangle follows bone 0 (the head), the second bone 1 (the thigh).
+  for (let v = 3; v < 6; v++) joints[v * 4] = 1
+  const weights = new Float32Array(6 * 4)
+  for (let v = 0; v < 6; v++) weights[v * 4] = 1
+  const geometry = new Geometry({
+    positions: new Float32Array([0, 1, 0, 1, 1, 0, 0, 2, 0, 0, 0, 0, 1, 0, 0, 0, -1, 0]),
+    normals: new Float32Array(18),
+    joints,
+    weights,
+  })
+  const root = new Group()
+  const head = new Node()
   head.name = 'head'
-  const thigh = new THREE.Bone()
+  const thigh = new Node()
   thigh.name = 'thigh_L'
-  const mesh = new THREE.SkinnedMesh(geometry, new THREE.MeshBasicMaterial())
-  mesh.add(head, thigh)
-  mesh.bind(new THREE.Skeleton([head, thigh]))
-  return mesh
+  root.add(head, thigh)
+  const inverse = new Float32Array(32)
+  mat4.identity(inverse.subarray(0, 16) as never)
+  mat4.identity(inverse.subarray(16, 32) as never)
+  const mesh = new SkinnedMesh(geometry, new Material(), new Skeleton([head, thigh], inverse))
+  root.add(mesh)
+  return { root, mesh }
 }
 
 describe('gibs', () => {
@@ -29,20 +39,23 @@ describe('gibs', () => {
   })
 
   it('cuts every triangle into exactly one limb, centred on itself', () => {
-    const mesh = skinned()
+    const { mesh } = skinned()
     const limbs = splitLimbs(mesh)
     expect(limbs.map((limb) => limb.key).sort()).toEqual(['head', 'thigh_L'])
-    expect(limbs.reduce((sum, limb) => sum + limb.geometry.getAttribute('position').count, 0)).toBe(6)
+    expect(limbs.reduce((sum, limb) => sum + limb.geometry.vertexCount, 0)).toBe(6)
     for (const limb of limbs) {
-      limb.geometry.computeBoundingBox()
-      expect(limb.geometry.boundingBox!.getCenter(new THREE.Vector3()).length()).toBeLessThan(1e-6)
+      // Centred: the middle of its box is the origin.
+      const p = limb.geometry.positions
+      const box = new THREE.Box3()
+      for (let i = 0; i < p.length; i += 3) box.expandByPoint(new THREE.Vector3(p[i], p[i + 1], p[i + 2]))
+      expect(box.getCenter(new THREE.Vector3()).length()).toBeLessThan(1e-6)
     }
   })
 
   it('poses a limb where its bone has it', () => {
-    const mesh = skinned()
+    const { root, mesh } = skinned()
     mesh.skeleton.bones[0]!.position.set(0, 0, 5)
-    mesh.updateWorldMatrix(true, true)
+    root.updateMatrixWorld(true)
     const head = splitLimbs(mesh).find((limb) => limb.key === 'head')!
     const group = poseLimb(mesh, head)!
     // The bone moved 5 m along z from its bind pose, so the limb is 5 m off its bind-pose centre.

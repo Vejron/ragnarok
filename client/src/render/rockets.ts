@@ -1,3 +1,4 @@
+import { Group, Material, Mesh, boxGeometry, cylinderGeometry, sphereGeometry } from '@ragnarok/engine'
 import * as THREE from 'three'
 import { toonMaterial } from './toon'
 
@@ -12,61 +13,61 @@ const BOMB = 5
 
 /** The projectiles in flight: a glowing missile or a tank shell pointed along its velocity, or a tumbling grenade. */
 export class Rockets {
-  readonly root = new THREE.Group()
-  private readonly body = new THREE.CylinderGeometry(0.09, 0.09, 0.8, 8)
-  private readonly material = new THREE.MeshBasicMaterial({ color: 0xff8a2a, fog: false, toneMapped: false })
+  readonly root = new Group()
+  private readonly body = cylinderGeometry(0.09, 0.09, 0.8, 8)
+  private readonly material = new Material({ color: 0xff8a2a, lit: false, fog: false })
   /** A tank shell: a fat hot slug with a long trail, big enough to follow at 140 m/s over a distance. */
-  private readonly slug = new THREE.CylinderGeometry(0.3, 0.3, 2.4, 10)
-  private readonly slugMaterial = new THREE.MeshBasicMaterial({ color: 0xffb020, fog: false, toneMapped: false })
-  private readonly trail = new THREE.CylinderGeometry(0.22, 0.02, 16, 8)
-  private readonly trailMaterial = new THREE.MeshBasicMaterial({ color: 0xff6a10, transparent: true, opacity: 0.75, fog: false, toneMapped: false, depthWrite: false })
+  private readonly slug = cylinderGeometry(0.3, 0.3, 2.4, 10)
+  private readonly slugMaterial = new Material({ color: 0xffb020, lit: false, fog: false })
+  private readonly trail = cylinderGeometry(0.22, 0.02, 16, 8)
+  private readonly trailMaterial = new Material({ color: 0xff6a10, lit: false, blend: 'alpha', opacity: 0.75, fog: false, depthWrite: false })
   /** An autocannon round: the same slug and trail, a third the size. */
-  private readonly smallSlug = new THREE.CylinderGeometry(0.15, 0.15, 1, 8)
-  private readonly smallTrail = new THREE.CylinderGeometry(0.13, 0.01, 6, 6)
+  private readonly smallSlug = cylinderGeometry(0.15, 0.15, 1, 8)
+  private readonly smallTrail = cylinderGeometry(0.13, 0.01, 6, 6)
   /** A gun's round: a thin white-hot core with a fine orange tail, a streak rather than a rod. */
-  private readonly bullet = new THREE.CylinderGeometry(0.014, 0.014, 1.2, 5)
-  private readonly bulletTrail = new THREE.CylinderGeometry(0.035, 0.002, 7, 5)
-  private readonly bulletMaterial = new THREE.MeshBasicMaterial({ color: 0xfff6dc, fog: false, toneMapped: false })
-  private readonly bulletTrailMaterial = new THREE.MeshBasicMaterial({ color: 0xff9a2e, transparent: true, opacity: 0.85, fog: false, toneMapped: false, depthWrite: false })
-  private readonly ball = new THREE.SphereGeometry(0.1, 10, 8)
+  private readonly bullet = cylinderGeometry(0.014, 0.014, 1.2, 5)
+  private readonly bulletTrail = cylinderGeometry(0.035, 0.002, 7, 5)
+  private readonly bulletMaterial = new Material({ color: 0xfff6dc, lit: false, fog: false })
+  private readonly bulletTrailMaterial = new Material({ color: 0xff9a2e, lit: false, blend: 'alpha', opacity: 0.85, fog: false, depthWrite: false })
+  private readonly ball = sphereGeometry(0.1, 10, 8)
   /** A plane's bomb: a dark finned body that noses over as it falls. */
-  private readonly bomb = new THREE.CylinderGeometry(0.075, 0.05, 0.6, 8)
-  private readonly fins = new THREE.BoxGeometry(0.2, 0.1, 0.02)
+  private readonly bomb = cylinderGeometry(0.075, 0.05, 0.6, 8)
+  private readonly fins = boxGeometry(0.2, 0.1, 0.02)
   private readonly bombMaterial = toonMaterial({ color: 0x2b2b26 })
   private readonly ballMaterial = toonMaterial({ color: 0x4f5d2e })
-  private readonly meshes = new Map<number, THREE.Mesh>()
+  private readonly meshes = new Map<number, Mesh>()
   private readonly up = new THREE.Vector3(0, 1, 0)
 
   /** Places projectile `id`, creating it on first sight. `velocity` only gives a rocket's or a shell's heading; `flown` is how far a bullet has come, which is as long as its streak may be. */
   place(id: number, kind: number, position: readonly [number, number, number], velocity: readonly [number, number, number], flown = Infinity) {
     let mesh = this.meshes.get(id)
     if (!mesh) {
-      if (kind === GRENADE) mesh = new THREE.Mesh(this.ball, this.ballMaterial)
+      if (kind === GRENADE) mesh = new Mesh(this.ball, this.ballMaterial)
       else if (kind === BOMB) {
-        mesh = new THREE.Mesh(this.bomb, this.bombMaterial)
+        mesh = new Mesh(this.bomb, this.bombMaterial)
         for (const turn of [0, Math.PI / 2]) {
-          const fin = new THREE.Mesh(this.fins, this.bombMaterial)
+          const fin = new Mesh(this.fins, this.bombMaterial)
           fin.position.y = -0.3
           fin.rotation.y = turn
           mesh.add(fin)
         }
       } else if (kind === BULLET) {
-        mesh = new THREE.Mesh(this.bullet, this.bulletMaterial)
-        const tail = new THREE.Mesh(this.bulletTrail, this.bulletTrailMaterial)
+        mesh = new Mesh(this.bullet, this.bulletMaterial)
+        const tail = new Mesh(this.bulletTrail, this.bulletTrailMaterial)
         tail.position.y = -(0.6 + 3.5)
         mesh.add(tail)
       } else if (kind === CANNON) {
-        mesh = new THREE.Mesh(this.smallSlug, this.slugMaterial)
-        const tail = new THREE.Mesh(this.smallTrail, this.trailMaterial)
+        mesh = new Mesh(this.smallSlug, this.slugMaterial)
+        const tail = new Mesh(this.smallTrail, this.trailMaterial)
         tail.position.y = -(0.4 + 2.5)
         mesh.add(tail)
       } else if (kind === SHELL || kind === MORTAR) {
-        mesh = new THREE.Mesh(this.slug, this.slugMaterial)
+        mesh = new Mesh(this.slug, this.slugMaterial)
         // The trail streams out behind, along the shell's own -Y.
-        const tail = new THREE.Mesh(this.trail, this.trailMaterial)
+        const tail = new Mesh(this.trail, this.trailMaterial)
         tail.position.y = -(1.2 + 8)
         mesh.add(tail)
-      } else mesh = new THREE.Mesh(this.body, this.material)
+      } else mesh = new Mesh(this.body, this.material)
       this.meshes.set(id, mesh)
       this.root.add(mesh)
     }

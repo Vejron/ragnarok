@@ -1,3 +1,4 @@
+import { Geometry, Group, Mesh, type Color, type Material, type Node } from '@ragnarok/engine'
 import * as THREE from 'three'
 import { toonMaterial } from './toon'
 import { DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, WHEEL_GONE } from '@/net/codec'
@@ -34,15 +35,15 @@ const CHARRED = new THREE.Color(0x1a1817)
 const WHEELS = ['wheel_FL', 'wheel_FR', 'wheel_RL', 'wheel_RR'] as const
 
 interface BodyPart {
-  mesh: THREE.Mesh
+  mesh: Mesh
   /** The geometry every car of the kind shares; put back on a repair. */
-  shared: THREE.BufferGeometry
+  shared: Geometry
   /** This car's own copy, made on the first dent. */
-  own: THREE.BufferGeometry | null
+  own: Geometry | null
   toRoot: THREE.Matrix4
   fromRoot: THREE.Matrix4
   /** What it was drawn with before a light broke or the glass cracked. */
-  material: THREE.Material
+  material: Material
 }
 
 /** A piece of the body that comes off, as a box in the car's frame. */
@@ -65,7 +66,7 @@ export function sideOf(point: THREE.Vector3, half: readonly [number, number, num
 
 export class CarWear {
   private readonly parts: BodyPart[] = []
-  private readonly wheels: (THREE.Object3D | null)[]
+  private readonly wheels: (Node | null)[]
   private readonly wheelRadius: number
   private readonly panels: Panel[]
   private readonly applied = [0, 0, 0, 0]
@@ -73,26 +74,25 @@ export class CarWear {
   private readonly impacts: { point: THREE.Vector3; at: number }[] = []
   private readonly gone = new Set<string>()
   private readonly wheelGone = [false, false, false, false]
-  private readonly baseColor: THREE.Color
+  private readonly baseColor: Color
   private hurt = false
 
   constructor(
-    private readonly root: THREE.Object3D,
-    model: THREE.Object3D,
+    private readonly root: Node,
+    model: Node,
     private readonly half: readonly [number, number, number],
     wheelRadius: number,
-    private readonly paint: THREE.MeshToonMaterial,
+    private readonly paint: Material,
   ) {
     this.wheelRadius = wheelRadius
     this.baseColor = paint.color.clone()
     model.updateMatrixWorld(true)
-    const toModel = new THREE.Matrix4().copy(model.matrixWorld).invert()
+    const toModel = new THREE.Matrix4().fromArray(model.matrixWorld).invert()
     model.getObjectByName('body')?.traverse((node) => {
-      const mesh = node as THREE.Mesh
-      if (!mesh.isMesh) return
+      if (!(node instanceof Mesh)) return
       // The model sits at the root's origin, so its frame is the car's.
-      const toRoot = new THREE.Matrix4().multiplyMatrices(toModel, mesh.matrixWorld)
-      this.parts.push({ mesh, shared: mesh.geometry, own: null, toRoot, fromRoot: toRoot.clone().invert(), material: mesh.material as THREE.Material })
+      const toRoot = new THREE.Matrix4().multiplyMatrices(toModel, new THREE.Matrix4().fromArray(node.matrixWorld))
+      this.parts.push({ mesh: node, shared: node.geometry, own: null, toRoot, fromRoot: toRoot.clone().invert(), material: node.material })
     })
     this.wheels = WHEELS.map((name) => model.getObjectByName(name) ?? null)
     const [hx, hy, hz] = half
@@ -174,10 +174,10 @@ export class CarWear {
   }
 
   /** This car's own copy of a body part's geometry, to bend or cut. */
-  private own(part: BodyPart): THREE.BufferGeometry {
+  private own(part: BodyPart): Geometry {
     if (!part.own) {
       part.own = part.shared.clone()
-      if (!part.own.index) part.own.setIndex([...Array(part.own.getAttribute('position').count).keys()])
+      if (!part.own.indices) part.own.indices = Uint32Array.from({ length: part.own.vertexCount }, (_, i) => i)
       part.mesh.geometry = part.own
     }
     return part.own
@@ -193,23 +193,25 @@ export class CarWear {
     const v = new THREE.Vector3()
     for (const part of this.parts) {
       const geometry = this.own(part)
-      const positions = geometry.getAttribute('position') as THREE.BufferAttribute
+      const positions = geometry.positions
       let moved = false
-      for (let i = 0; i < positions.count; i++) {
-        v.fromBufferAttribute(positions, i).applyMatrix4(part.toRoot)
+      for (let i = 0; i < geometry.vertexCount; i++) {
+        v.fromArray(positions, i * 3).applyMatrix4(part.toRoot)
         const distance = v.distanceTo(point)
         if (distance >= DENT_REACH) continue
         const falloff = (1 - distance / DENT_REACH) ** 2
         // A little crumple, the same for a vertex every time, so shared corners stay together.
         const crumple = 0.75 + 0.5 * Math.abs(Math.sin(v.x * 12.9898 + v.y * 78.233 + v.z * 37.719))
         v.addScaledVector(inward, depth * falloff * crumple).applyMatrix4(part.fromRoot)
-        positions.setXYZ(i, v.x, v.y, v.z)
+        positions[i * 3] = v.x
+        positions[i * 3 + 1] = v.y
+        positions[i * 3 + 2] = v.z
         moved = true
       }
       if (moved) {
-        positions.needsUpdate = true
-        geometry.computeVertexNormals()
-        geometry.computeBoundingSphere()
+        // New normals re-send the whole geometry, bounds included.
+        geometry.computeNormals()
+        geometry.computeBounds()
       }
     }
   }
@@ -217,40 +219,40 @@ export class CarWear {
   /** Cuts `panel` out of the body and throws it. */
   private detach(panel: Panel, debris: Debris | null, velocity: THREE.Vector3) {
     this.gone.add(panel.name)
-    const piece = new THREE.Group()
-    const owned: (THREE.BufferGeometry | THREE.Material)[] = []
+    const piece = new Group()
+    const owned: (Geometry | Material)[] = []
     const a = new THREE.Vector3()
     const b = new THREE.Vector3()
     const c = new THREE.Vector3()
     const centroid = new THREE.Vector3()
     for (const part of this.parts) {
       const geometry = this.own(part)
-      const positions = geometry.getAttribute('position') as THREE.BufferAttribute
-      const index = geometry.index!
+      const positions = geometry.positions
+      const index = geometry.indices!
       const kept: number[] = []
       const cut: number[] = []
-      for (let t = 0; t + 2 < index.count; t += 3) {
-        const [i, j, k] = [index.getX(t), index.getX(t + 1), index.getX(t + 2)]
-        a.fromBufferAttribute(positions, i).applyMatrix4(part.toRoot)
-        b.fromBufferAttribute(positions, j).applyMatrix4(part.toRoot)
-        c.fromBufferAttribute(positions, k).applyMatrix4(part.toRoot)
+      for (let t = 0; t + 2 < index.length; t += 3) {
+        const [i, j, k] = [index[t]!, index[t + 1]!, index[t + 2]!]
+        a.fromArray(positions, i * 3).applyMatrix4(part.toRoot)
+        b.fromArray(positions, j * 3).applyMatrix4(part.toRoot)
+        c.fromArray(positions, k * 3).applyMatrix4(part.toRoot)
         centroid.copy(a).add(b).add(c).divideScalar(3)
         if (panel.inside(centroid)) cut.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z)
         else kept.push(i, j, k)
       }
       if (cut.length === 0) continue
-      geometry.setIndex(kept)
-      const loose = new THREE.BufferGeometry()
-      loose.setAttribute('position', new THREE.Float32BufferAttribute(cut, 3))
-      loose.computeVertexNormals()
+      geometry.indices = Uint32Array.from(kept)
+      geometry.needsUpdate()
+      const loose = new Geometry({ positions: Float32Array.from(cut) })
+      loose.computeNormals()
       owned.push(loose)
       // The car's own paint goes when the car does; the piece keeps a copy.
-      let material = part.mesh.material as THREE.Material
+      let material = part.mesh.material
       if (material === this.paint) {
         material = this.paint.clone()
         owned.push(material)
       }
-      piece.add(new THREE.Mesh(loose, material))
+      piece.add(new Mesh(loose, material))
     }
     if (piece.children.length === 0 || !debris) {
       for (const thing of owned) thing.dispose()
@@ -267,26 +269,27 @@ export class CarWear {
     if (!debris) return
     const loose = wheel.clone()
     loose.visible = true
-    const holder = new THREE.Group()
+    const holder = new Group()
     wheel.updateWorldMatrix(true, false)
     // In the car's frame, so `throwPiece` can place it with the car.
     holder.add(loose)
-    loose.position.copy(this.root.worldToLocal(wheel.getWorldPosition(new THREE.Vector3())))
+    const at = this.root.worldToLocal(wheel.getWorldPosition(new THREE.Vector3()))
+    loose.position.set(at.x, at.y, at.z)
     loose.quaternion.copy(this.root.quaternion).invert().multiply(wheel.getWorldQuaternion(new THREE.Quaternion()))
     const away = new THREE.Vector3(index % 2 === 0 ? -1 : 1, 0.6, 0)
     this.throwPiece(holder, away, debris, velocity, this.wheelRadius, [])
   }
 
   /** Places `piece` (built in the car's frame) where the car is and throws it towards `away`. */
-  private throwPiece(piece: THREE.Object3D, away: THREE.Vector3, debris: Debris, velocity: THREE.Vector3, rest: number, owned: (THREE.BufferGeometry | THREE.Material)[]) {
+  private throwPiece(piece: Node, away: THREE.Vector3, debris: Debris, velocity: THREE.Vector3, rest: number, owned: (Geometry | Material)[]) {
     this.root.updateMatrixWorld()
     // Recentre on its own middle, so it tumbles about itself.
-    const box = new THREE.Box3().setFromObject(piece)
-    const middle = box.getCenter(new THREE.Vector3())
+    const middle = centreOf(piece)
     for (const child of piece.children) child.position.sub(middle)
-    const holder = new THREE.Group()
+    const holder = new Group()
     holder.add(piece)
-    holder.position.copy(middle).applyMatrix4(this.root.matrixWorld)
+    const at = middle.applyMatrix4(new THREE.Matrix4().fromArray(this.root.matrixWorld))
+    holder.position.set(at.x, at.y, at.z)
     holder.quaternion.copy(this.root.quaternion)
     const throwDir = away.clone().applyQuaternion(this.root.quaternion)
     const fling = velocity.clone().multiplyScalar(0.7).addScaledVector(throwDir, 2.5 + Math.random() * 2)
@@ -298,6 +301,7 @@ export class CarWear {
   private tint(hp: number, worn: number) {
     this.paint.color.copy(this.baseColor).lerp(DULL, Math.min(0.5, worn * 0.9))
     if (hp === 0) this.paint.color.lerp(CHARRED, 0.85)
+    this.paint.needsUpdate()
   }
 
   /** Back to a fresh car, as a respawn brings. */
@@ -329,4 +333,24 @@ export class CarWear {
   dispose() {
     for (const part of this.parts) part.own?.dispose()
   }
+}
+
+/** The middle of the box around every vertex under `root`, in `root`'s own frame. */
+function centreOf(root: Node): THREE.Vector3 {
+  root.updateMatrixWorld(true)
+  const min = new THREE.Vector3(Infinity, Infinity, Infinity)
+  const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity)
+  const v = new THREE.Vector3()
+  const m = new THREE.Matrix4()
+  root.traverse((node) => {
+    if (!(node instanceof Mesh)) return
+    m.fromArray(node.matrixWorld)
+    const p = node.geometry.positions
+    for (let i = 0; i < p.length; i += 3) {
+      v.fromArray(p, i).applyMatrix4(m)
+      min.min(v)
+      max.max(v)
+    }
+  })
+  return min.add(max).multiplyScalar(0.5)
 }

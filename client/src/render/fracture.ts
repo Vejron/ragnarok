@@ -1,3 +1,4 @@
+import { Geometry } from '@ragnarok/engine'
 import * as THREE from 'three'
 import type { TileData } from '@/world'
 import { random } from './rubble'
@@ -298,11 +299,9 @@ export class Fracture {
 }
 
 /** A flat-shaded geometry from triangle soup with a colour per vertex. */
-export function shardGeometry(positions: Float32Array, colors: Float32Array): THREE.BufferGeometry {
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-  geometry.computeVertexNormals()
-  geometry.computeBoundingSphere()
+export function shardGeometry(positions: Float32Array, colors: Float32Array): Geometry {
+  // Not indexed, so every face has its own normal: flat shading.
+  const geometry = new Geometry({ positions, colors })
+  geometry.computeNormals()
   return geometry
 }

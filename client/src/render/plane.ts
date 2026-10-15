@@ -1,6 +1,7 @@
+import { Group, Mesh, sphereGeometry, type Material, type Node } from '@ragnarok/engine'
 import * as THREE from 'three'
+import { parseToonModel } from './models'
 import { toonMaterial } from './toon'
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { PLANE_BOMBS, PLANE_REAR_LENGTH, PLANE_SEATS } from '@/sim/consts'
 import { ARMS_CUT, type Arms, type Turret } from '@/net/codec'
 import { colorFor } from './character'
@@ -33,37 +34,16 @@ const SEATS: readonly (readonly [number, number, number])[] = [
   [0, 1.15, 0.7],
 ]
 
-let asset: THREE.Object3D | null = null
+let asset: Node | null = null
 
 /**
  * Parses `plane.glb` (built by `tools/vehicles/build_plane.py`) for every `PlaneModel` to share. Its
  * materials become flat toon ones to match the rest of the scene; `paint` is replaced per plane.
  */
 export async function parsePlaneModel(data: ArrayBuffer) {
-  asset = await new Promise<THREE.Object3D>((resolve, reject) => {
-    new GLTFLoader().parse(
-      data,
-      '',
-      (gltf) => {
-        gltf.scene.traverse((node) => {
-          const mesh = node as THREE.Mesh
-          if (!mesh.isMesh) return
-          const source = mesh.material as THREE.MeshStandardMaterial
-          const glass = source.name === 'glass'
-          mesh.material = toonMaterial({
-            color: source.color,
-            name: source.name,
-            transparent: glass,
-            opacity: glass ? GLASS_OPACITY : 1,
-            depthWrite: !glass,
-          })
-          source.dispose()
-          mesh.castShadow = !glass
-        })
-        resolve(gltf.scene)
-      },
-      reject,
-    )
+  asset = parseToonModel(data, (source) => {
+    if (source.name !== 'glass') return null
+    return toonMaterial({ color: source.color, name: source.name, blend: 'alpha', opacity: GLASS_OPACITY, depthWrite: false })
   })
 }
 
@@ -80,19 +60,19 @@ export async function loadPlaneModel(url = PLANE_MODEL_URL) {
  * `Turret`; the control surfaces swing with how the plane is turning, so everyone sees them work.
  */
 export class PlaneModel implements VehicleModel {
-  readonly root = new THREE.Group()
-  private readonly prop: THREE.Object3D
-  private readonly guns: THREE.Object3D[]
+  readonly root = new Group()
+  private readonly prop: Node
+  private readonly guns: Node[]
   private readonly gunRests: number[]
-  private readonly ring: THREE.Object3D
-  private readonly ringGun: THREE.Object3D
+  private readonly ring: Node
+  private readonly ringGun: Node
   private readonly ringGunRest: number
-  private readonly elevator: THREE.Object3D
-  private readonly rudder: THREE.Object3D
-  private readonly ailerons: [THREE.Object3D, THREE.Object3D]
-  private readonly bombs: THREE.Object3D[]
-  private readonly heads: THREE.Mesh[] = []
-  private readonly paint: THREE.MeshToonMaterial
+  private readonly elevator: Node
+  private readonly rudder: Node
+  private readonly ailerons: [Node, Node]
+  private readonly bombs: Node[]
+  private readonly heads: Mesh[] = []
+  private readonly paint: Material
   private propSpeed = 0
   private lastUpdate = performance.now()
   /** `performance.now()` of each forward gun's last round, and the ring gun's. */
@@ -107,15 +87,15 @@ export class PlaneModel implements VehicleModel {
   gunner = 0
   private readonly pivot = new THREE.Vector3()
   private readonly aim = new THREE.Vector3()
+  private readonly matrix = new THREE.Matrix4()
 
   constructor(id: number) {
     if (!asset) throw new Error('loadPlaneModel() must finish before planes are created')
-    const model = asset.clone(true)
+    const model = asset.clone()
     this.root.add(model)
     this.paint = toonMaterial({ color: PAINTS[id % PAINTS.length]! })
     model.traverse((node) => {
-      const mesh = node as THREE.Mesh
-      if (mesh.isMesh && mesh.material instanceof THREE.Material && mesh.material.name === 'paint') mesh.material = this.paint
+      if (node instanceof Mesh && node.material.name === 'paint') node.material = this.paint
     })
     const part = (name: string) => model.getObjectByName(name)!
     this.prop = part('prop')
@@ -129,9 +109,10 @@ export class PlaneModel implements VehicleModel {
     this.ailerons = [part('aileron_L'), part('aileron_R')]
     this.bombs = Array.from({ length: PLANE_BOMBS }, (_, k) => part(`bomb_${k + 1}`))
 
-    const headGeometry = new THREE.SphereGeometry(0.2, 12, 10)
+    const headGeometry = sphereGeometry(0.2, 12, 10)
     for (let seat = 0; seat < PLANE_SEATS; seat++) {
-      const head = new THREE.Mesh(headGeometry, toonMaterial({ color: 0xffffff }))
+      const head = new Mesh(headGeometry, toonMaterial({ color: 0xffffff }))
+      head.userData.head = true
       head.position.set(...SEATS[seat]!)
       head.castShadow = true
       head.visible = false
@@ -189,7 +170,10 @@ export class PlaneModel implements VehicleModel {
     this.heads.forEach((head, seat) => {
       const occupant = seats[seat] ?? 0
       head.visible = occupant !== 0
-      if (occupant !== 0) (head.material as THREE.MeshToonMaterial).color.setHex(colorFor(occupant))
+      if (occupant !== 0) {
+        head.material.color.setHex(colorFor(occupant))
+        head.material.needsUpdate()
+      }
     })
   }
 
@@ -198,14 +182,14 @@ export class PlaneModel implements VehicleModel {
     const now = this.root.quaternion
     if (this.hasRotation && dt > 1e-4) {
       // The change in the plane's own frame: last⁻¹ · now, as an axis and angle.
-      const delta = this.lastRotation.clone().invert().multiply(now)
+      const delta = this.lastRotation.clone().invert().multiply(new THREE.Quaternion(now.x, now.y, now.z, now.w))
       if (delta.w < 0) delta.set(-delta.x, -delta.y, -delta.z, -delta.w)
       const angle = 2 * Math.acos(Math.min(1, delta.w))
       const sin = Math.sqrt(Math.max(0, 1 - delta.w * delta.w))
       const measured = sin > 1e-6 ? new THREE.Vector3(delta.x, delta.y, delta.z).multiplyScalar(angle / sin / dt) : new THREE.Vector3()
       this.rates.lerp(measured, Math.min(1, dt * 8))
     }
-    this.lastRotation.copy(now)
+    this.lastRotation.set(now.x, now.y, now.z, now.w)
     this.hasRotation = true
   }
 
@@ -224,7 +208,7 @@ export class PlaneModel implements VehicleModel {
     this.root.updateMatrixWorld(true)
     const gun = this.guns[side % 2]!
     gun.getWorldPosition(this.pivot)
-    this.aim.set(0, 0, -1).transformDirection(this.root.matrixWorld)
+    this.aim.set(0, 0, -1).transformDirection(this.matrix.fromArray(this.root.matrixWorld))
     return { origin: this.pivot.clone(), direction: this.aim.clone() }
   }
 
@@ -232,7 +216,7 @@ export class PlaneModel implements VehicleModel {
   barrel() {
     this.root.updateMatrixWorld(true)
     this.ringGun.getWorldPosition(this.pivot)
-    this.aim.set(0, 0, -1).transformDirection(this.ringGun.matrixWorld)
+    this.aim.set(0, 0, -1).transformDirection(this.matrix.fromArray(this.ringGun.matrixWorld))
     return { origin: this.pivot.clone(), direction: this.aim.clone() }
   }
 
@@ -245,9 +229,7 @@ export class PlaneModel implements VehicleModel {
   /** Frees what this plane owns; the model's geometry and other materials are shared by every one. */
   dispose() {
     this.paint.dispose()
-    for (const head of this.heads) {
-      ;(head.material as THREE.Material).dispose()
-    }
+    for (const head of this.heads) head.material.dispose()
     this.heads[0]?.geometry.dispose()
     this.root.removeFromParent()
   }

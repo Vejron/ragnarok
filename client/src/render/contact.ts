@@ -1,3 +1,4 @@
+import { Group, InstancedMesh, Material, Texture, mat4, planeGeometry } from '@ragnarok/engine'
 import * as THREE from 'three'
 
 /** Most blobs drawn in one frame; the rest are dropped. */
@@ -21,9 +22,7 @@ function falloff() {
   gradient.addColorStop(1, 'rgba(0,0,0,0)')
   g.fillStyle = gradient
   g.fillRect(0, 0, size, size)
-  const texture = new THREE.CanvasTexture(canvas)
-  texture.colorSpace = THREE.SRGBColorSpace
-  return texture
+  return new Texture(canvas, { srgb: true, wrap: 'clamp' })
 }
 
 /**
@@ -32,12 +31,12 @@ function falloff() {
  * thing; this darkens the spot right under it. Call `begin`, `add` for each thing, then `end`.
  */
 export class ContactShadows {
-  readonly root = new THREE.Group()
-  private readonly mesh: THREE.InstancedMesh
+  readonly root = new Group()
+  private readonly mesh: InstancedMesh
   private readonly texture = falloff()
   private count = 0
   private enabled = true
-  private readonly matrix = new THREE.Matrix4()
+  private readonly matrix = mat4.create()
   private readonly position = new THREE.Vector3()
   private readonly rotation = new THREE.Quaternion()
   private readonly tilt = new THREE.Quaternion()
@@ -47,19 +46,9 @@ export class ContactShadows {
   private static readonly UP = new THREE.Vector3(0, 1, 0)
 
   constructor(private readonly groundAt: (x: number, z: number) => number) {
-    const geometry = new THREE.PlaneGeometry(2, 2)
-    geometry.rotateX(-Math.PI / 2)
-    const material = new THREE.MeshBasicMaterial({
-      map: this.texture,
-      color: 0x10200c,
-      transparent: true,
-      opacity: 0.5,
-      depthWrite: false,
-      polygonOffset: true,
-      polygonOffsetFactor: -2,
-      polygonOffsetUnits: -2,
-    })
-    this.mesh = new THREE.InstancedMesh(geometry, material, CAPACITY)
+    // Flat on the ground, facing up; unlit, drawn over the ground it lies on by a depth bias.
+    const material = new Material({ map: this.texture, color: 0x10200c, lit: false, blend: 'alpha', opacity: 0.5, depthWrite: false, depthBias: 2, depthBiasSlope: 2 })
+    this.mesh = new InstancedMesh(planeGeometry(2, 2), material, CAPACITY)
     this.mesh.frustumCulled = false
     this.mesh.count = 0
     this.mesh.renderOrder = 1
@@ -96,19 +85,24 @@ export class ContactShadows {
     this.rotation.copy(this.tilt).multiply(this.turn)
     this.position.set(x, y + LIFT, z)
     this.scale.set(halfWidth * fade, 1, halfLength * fade)
-    this.matrix.compose(this.position, this.rotation, this.scale)
+    mat4.compose(
+      this.matrix,
+      this.position.x, this.position.y, this.position.z,
+      this.rotation.x, this.rotation.y, this.rotation.z, this.rotation.w,
+      this.scale.x, this.scale.y, this.scale.z,
+    )
     this.mesh.setMatrixAt(this.count++, this.matrix)
   }
 
   end() {
     this.mesh.count = this.count
-    this.mesh.instanceMatrix.needsUpdate = true
+    this.mesh.needsUpdate()
   }
 
   dispose() {
     this.mesh.geometry.dispose()
-    ;(this.mesh.material as THREE.Material).dispose()
+    this.mesh.material.dispose()
     this.texture.dispose()
-    this.mesh.dispose()
+    this.root.removeFromParent()
   }
 }

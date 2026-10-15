@@ -1,6 +1,5 @@
-import * as THREE from 'three'
+import { Color, Geometry, Group, InstancedMesh, Mesh, type Material, type Node, cylinderGeometry, icosphereGeometry, mat4 } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
-import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 import {
   TREE_BIRCH,
   TREE_BROADLEAF,
@@ -84,42 +83,34 @@ const PROTOTYPES: Record<number, Part[]> = {
   ],
 }
 
-function partGeometry(part: Part): THREE.BufferGeometry {
-  let geometry: THREE.BufferGeometry
+function partGeometry(part: Part): Geometry {
+  let geometry: Geometry
   if (part.shape === 'ellipsoid') {
     // A low-poly sphere: 42 welded vertices and 80 triangles, so the crown reads as a few bold shapes.
-    geometry = mergeVertices(new THREE.IcosahedronGeometry(1, 1), 1e-4)
-    geometry.deleteAttribute('uv')
-    geometry.deleteAttribute('normal')
-    geometry.scale(part.rx!, part.ry!, part.rx!)
-    geometry.translate(part.x ?? 0, part.y0, part.z ?? 0)
+    geometry = icosphereGeometry(1, 1).scale(part.rx!, part.ry!, part.rx!).translate(part.x ?? 0, part.y0, part.z ?? 0)
   } else {
     const height = part.y1! - part.y0
-    geometry =
-      part.shape === 'cone'
-        ? new THREE.ConeGeometry(part.rx!, height, 7, 1)
-        : new THREE.CylinderGeometry(part.rx! * 0.8, part.rx!, height, 6)
-    geometry.translate(0, part.y0 + height / 2, 0)
-    geometry.deleteAttribute('uv')
-    geometry.deleteAttribute('normal')
+    // A cone is a cylinder that closes to a point at the top.
+    geometry = (part.shape === 'cone' ? cylinderGeometry(0, part.rx!, height, 7) : cylinderGeometry(part.rx! * 0.8, part.rx!, height, 6)).translate(0, part.y0 + height / 2, 0)
   }
   // Indexed and welded, so the parts merge and each vertex is shared: position + normal + colour.
-  geometry.computeVertexNormals()
-  const color = new THREE.Color(part.color)
-  const count = geometry.getAttribute('position').count
+  geometry.uvs = undefined
+  geometry.computeNormals()
+  const color = Color.hex(part.color)
+  const count = geometry.vertexCount
   const colors = new Float32Array(count * 3)
-  for (let i = 0; i < count; i++) color.toArray(colors, i * 3)
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+  for (let i = 0; i < count; i++) colors.set([color.r, color.g, color.b], i * 3)
+  geometry.colors = colors
   return geometry
 }
 
-let shared: { geometries: Map<number, THREE.BufferGeometry>; material: THREE.Material } | undefined
+let shared: { geometries: Map<number, Geometry>; material: Material } | undefined
 
 function prototypes() {
   if (!shared) {
-    const geometries = new Map<number, THREE.BufferGeometry>()
+    const geometries = new Map<number, Geometry>()
     for (const [kind, parts] of Object.entries(PROTOTYPES)) {
-      geometries.set(Number(kind), mergeGeometries(parts.map(partGeometry))!)
+      geometries.set(Number(kind), Geometry.merge(parts.map(partGeometry)))
     }
     shared = { geometries, material: toonMaterial({ vertexColors: true }) }
   }
@@ -135,14 +126,14 @@ function spin(tree: Tree): number {
  * One standalone mesh of `tree`, in a pivot at its foot, for a tree that is no longer an
  * instance: the pivot is where it turns as it falls. Geometry and material are the shared ones.
  */
-export function standaloneTree(tree: Tree): { pivot: THREE.Group; mesh: THREE.Mesh } {
+export function standaloneTree(tree: Tree): { pivot: Group; mesh: Mesh } {
   const { geometries, material } = prototypes()
-  const mesh = new THREE.Mesh(geometries.get(tree.kind) ?? geometries.get(TREE_BIRCH)!, material)
-  mesh.rotation.y = spin(tree)
+  const mesh = new Mesh(geometries.get(tree.kind) ?? geometries.get(TREE_BIRCH)!, material)
+  mesh.quaternion.setFromAxisAngle(0, 1, 0, spin(tree))
   mesh.scale.set(tree.crown, tree.height, tree.crown)
   mesh.castShadow = true
   mesh.userData.sharedGeometry = true
-  const pivot = new THREE.Group()
+  const pivot = new Group()
   pivot.position.set(tree.x, tree.base, tree.z)
   pivot.add(mesh)
   return { pivot, mesh }
@@ -152,14 +143,16 @@ export function standaloneTree(tree: Tree): { pivot: THREE.Group; mesh: THREE.Me
  * Takes tree number `index` of its tile (the `Destroyed` index) out of the tile's instanced
  * meshes, by shrinking it to nothing. False if it is not there, or already gone.
  */
-export function removeTreeInstance(group: THREE.Object3D, index: number): boolean {
+export function removeTreeInstance(group: Node, index: number): boolean {
   for (const child of group.children) {
     const slots = child.userData.treeSlots as Map<number, number> | undefined
     const slot = slots?.get(index)
-    if (slot === undefined || !(child instanceof THREE.InstancedMesh)) continue
+    if (slot === undefined || !(child instanceof InstancedMesh)) continue
     slots!.delete(index)
-    child.setMatrixAt(slot, new THREE.Matrix4().makeScale(0, 0, 0))
-    child.instanceMatrix.needsUpdate = true
+    // Scaled to nothing where it stood, so the mesh's bounds do not stretch to the origin.
+    const at = child.matrices
+    child.setMatrixAt(slot, mat4.compose(mat4.create(), at[slot * 16 + 12]!, at[slot * 16 + 13]!, at[slot * 16 + 14]!, 0, 0, 0, 1, 0, 0, 0))
+    child.needsUpdate()
     return true
   }
   return false
@@ -170,7 +163,7 @@ export function removeTreeInstance(group: THREE.Object3D, index: number): boolea
  * many trees there are. The geometry and material are shared by all tiles (`disposeTile` leaves
  * them), only the instance buffers belong to the tile.
  */
-export function buildTrees(trees: readonly Tree[]): THREE.InstancedMesh[] {
+export function buildTrees(trees: readonly Tree[]): InstancedMesh[] {
   if (trees.length === 0) return []
   const { geometries, material } = prototypes()
   const byKind = new Map<number, { tree: Tree; index: number }[]>()
@@ -179,25 +172,20 @@ export function buildTrees(trees: readonly Tree[]): THREE.InstancedMesh[] {
     list.push({ tree, index })
     byKind.set(tree.kind, list)
   })
-  const matrix = new THREE.Matrix4()
-  const position = new THREE.Vector3()
-  const scale = new THREE.Vector3()
-  const rotation = new THREE.Quaternion()
-  const meshes: THREE.InstancedMesh[] = []
+  const matrix = mat4.create()
+  const meshes: InstancedMesh[] = []
   for (const [kind, list] of byKind) {
     const geometry = geometries.get(kind) ?? geometries.get(TREE_BIRCH)!
-    const mesh = new THREE.InstancedMesh(geometry, material, list.length)
+    const mesh = new InstancedMesh(geometry, material, list.length)
     // Which instance is which tree of the tile, so one can be felled.
     const slots = new Map<number, number>()
     mesh.userData.treeSlots = slots
     list.forEach(({ tree, index }, i) => {
       slots.set(index, i)
-      rotation.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, spin(tree))
-      position.set(tree.x, tree.base, tree.z)
-      scale.set(tree.crown, tree.height, tree.crown)
-      mesh.setMatrixAt(i, matrix.compose(position, rotation, scale))
+      const half = spin(tree) / 2
+      mesh.setMatrixAt(i, mat4.compose(matrix, tree.x, tree.base, tree.z, 0, Math.sin(half), 0, Math.cos(half), tree.crown, tree.height, tree.crown))
     })
-    mesh.instanceMatrix.needsUpdate = true
+    mesh.needsUpdate()
     mesh.castShadow = true
     mesh.receiveShadow = false
     mesh.userData.sharedGeometry = true

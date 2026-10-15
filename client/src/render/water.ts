@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import { Color, Geometry, Group, Mesh, ShaderMaterial } from '@ragnarok/engine'
 import type { TileGround } from '@/sim/terrain'
 import { NO_WATER, type Stream, type TileData } from '@/world'
 import { heightSampler, type Height, type HeightSource } from './shade'
@@ -8,7 +8,7 @@ import { heightSampler, type Height, type HeightSource } from './shade'
  * ribbons draped on the ground. Both share one toy-style shader: a tint that deepens with depth,
  * soft light bands drifting over the surface, a foam line along the shore, and a flow along a
  * stream's length. Depth is a vertex attribute (`level - ground`), not a depth-texture read, so the
- * look needs no extra pass and stays out of the way of the AO pass.
+ * look needs no extra pass.
  */
 
 /** Shore foam reaches this deep, metres. */
@@ -24,160 +24,111 @@ const STREAM_DEPTH = 0.45
 /** Along-stream speed of the flow, metres per second. */
 const FLOW_SPEED = 1.4
 
-const uniforms = {
-  uTime: { value: 0 },
-  uShallow: { value: new THREE.Color(0x7fd8f5) },
-  uDeep: { value: new THREE.Color(0x2f8fd8) },
-  uFoam: { value: new THREE.Color(0xf4fcff) },
-  uBed: { value: new THREE.Color(0xd9cf9a) },
-  uSky: { value: new THREE.Color(0xffffff) },
-  uSun: { value: new THREE.Color(0xffffff) },
-  uSunDir: { value: new THREE.Vector3(70, 80, 55).normalize() },
+const WGSL = /* wgsl */ `
+fn bands(p: vec2f, t: f32) -> f32 {
+  let a = sin(p.x * 0.9 + p.y * 0.35 + t * 0.9);
+  let b = sin(p.x * -0.4 + p.y * 1.1 - t * 0.7);
+  let c = sin((p.x + p.y) * 0.25 + t * 0.4);
+  return (a + b + 0.6 * c) / 2.6;
 }
 
-/** Points the reflection and glint at the scene's sky and sun. `direction` is towards the sun. */
-export function setWaterLight(sky: THREE.ColorRepresentation, sun: THREE.ColorRepresentation, direction: THREE.Vector3) {
-  uniforms.uSky.value.set(sky)
-  uniforms.uSun.value.set(sun)
-  uniforms.uSunDir.value.copy(direction).normalize()
+fn swell(p: vec2f, t: f32) -> f32 {
+  return 0.5 * sin(p.x * 0.9 + p.y * 0.35 + t * 0.9)
+       + 0.35 * sin(p.x * -0.4 + p.y * 1.1 - t * 0.7)
+       + 0.15 * sin((p.x + p.y) * 1.7 + t * 1.3);
 }
 
-/** Advances the ripples and flow. `seconds` is any steadily increasing clock. */
-export function updateWater(seconds: number) {
-  uniforms.uTime.value = seconds
+fn caustics(p: vec2f, t: f32) -> f32 {
+  let a = abs(sin(p.x * 1.3 + sin(p.y * 0.9 + t * 0.8) * 1.5));
+  let b = abs(sin(p.y * 1.1 + sin(p.x * 1.2 - t * 0.6) * 1.5));
+  return pow(1.0 - a * b, 6.0);
 }
 
-const vertexShader = /* glsl */ `
-  attribute float depth;
-  attribute vec3 flow;
-  varying float vDepth;
-  varying vec3 vFlow;
-  varying vec2 vWorld;
-  varying float vSurfaceY;
-  #include <fog_pars_vertex>
-  void main() {
-    vDepth = depth;
-    vFlow = flow;
-    vec4 world = modelMatrix * vec4(position, 1.0);
-    vWorld = world.xz;
-    vSurfaceY = world.y;
-    vec4 mvPosition = viewMatrix * world;
-    gl_Position = projectionMatrix * mvPosition;
-    #include <fog_vertex>
+fn surface(s: Surface) -> vec4f {
+  let time = frame.fog.w;
+  let depth = s.custom.x;
+  let flow = s.custom.yzw;
+  let world = s.world.xz;
+  let stream = flow.z > 0.5;
+  var p = world * 0.7;
+  if (stream) {
+    p = vec2f(flow.x - time * ${FLOW_SPEED.toFixed(2)}, flow.y * 3.0) * 2.2;
   }
+  let wave = bands(p, select(time, 0.0, stream));
+  let band = smoothstep(0.35, 0.5, wave) * 0.5 + smoothstep(0.6, 0.7, wave) * 0.5;
+
+  let deep = smoothstep(0.0, 2.2, depth);
+  var color = mix(params.shallow, params.deep, deep);
+
+  let clear = 1.0 - smoothstep(0.0, 1.4, depth);
+  let bedP = select(world * 0.9, p * 0.8, stream);
+  let web = caustics(bedP, select(time * 0.8, time, stream));
+  color = mix(color, params.bed, clear * 0.45);
+  color += params.foam * web * clear * 0.35;
+  color = mix(color, params.foam, band * 0.12);
+
+  let e = 0.15;
+  let q = select(world * 0.8, p, stream);
+  let t = select(time, 0.0, stream);
+  let h = swell(q, t);
+  let grad = vec2f(swell(q + vec2f(e, 0.0), t) - h, swell(q + vec2f(0.0, e), t) - h) / e;
+  var n = normalize(vec3f(-grad.x * 0.12, 1.0, -grad.y * 0.12));
+  if (!s.front) {
+    n.y = -n.y;
+  }
+  let view = normalize(frame.cameraPos.xyz - s.world);
+
+  let fresnel = pow(1.0 - clamp(abs(dot(n, view)), 0.0, 1.0), 3.0);
+  let lit = floor(clamp(dot(n, frame.sunDir.xyz) * 0.5 + 0.5, 0.0, 1.0) * 3.0) / 3.0;
+  color *= 0.9 + 0.2 * lit;
+  color = mix(color, params.sky, fresnel * 0.55);
+
+  let glint = pow(max(dot(reflect(-frame.sunDir.xyz, n), view), 0.0), 90.0);
+  let spark = smoothstep(0.35, 0.6, glint);
+  color += params.sun * spark * 0.8;
+
+  let shore = ${FOAM_DEPTH.toFixed(2)} + 0.08 * sin(time * 1.3 + world.x * 0.6 + world.y * 0.45);
+  let foam = 1.0 - smoothstep(shore * 0.55, shore, depth);
+  let lace = smoothstep(0.1, 0.55, bands(world * 2.1, time * 1.6) * 0.5 + 0.5);
+  color = mix(color, params.foam, foam * mix(0.55, 1.0, lace));
+
+  var alpha = smoothstep(0.0, 0.1, depth) * mix(0.62, 0.9, deep);
+  alpha = clamp(alpha - clear * 0.12 + fresnel * 0.15 + spark * 0.4, 0.0, 1.0);
+  return vec4f(color, alpha);
+}
 `
 
-const fragmentShader = /* glsl */ `
-  uniform float uTime;
-  uniform vec3 uShallow;
-  uniform vec3 uDeep;
-  uniform vec3 uFoam;
-  uniform vec3 uBed;
-  uniform vec3 uSky;
-  uniform vec3 uSun;
-  uniform vec3 uSunDir;
-  varying float vDepth;
-  varying vec3 vFlow;
-  varying vec2 vWorld;
-  varying float vSurfaceY;
-  #include <fog_pars_fragment>
 
-  // Two crossing wave trains, stepped into three soft bands so the surface reads like toy plastic.
-  float bands(vec2 p, float t) {
-    float a = sin(p.x * 0.9 + p.y * 0.35 + t * 0.9);
-    float b = sin(p.x * -0.4 + p.y * 1.1 - t * 0.7);
-    float c = sin((p.x + p.y) * 0.25 + t * 0.4);
-    return (a + b + 0.6 * c) / 2.6;
-  }
-
-  // Surface height from three crossing wave trains; its gradient is the ripple normal.
-  float swell(vec2 p, float t) {
-    return 0.5 * sin(p.x * 0.9 + p.y * 0.35 + t * 0.9)
-         + 0.35 * sin(p.x * -0.4 + p.y * 1.1 - t * 0.7)
-         + 0.15 * sin((p.x + p.y) * 1.7 + t * 1.3);
-  }
-
-  // Bright web of lines, the light a rippled surface focuses on the bed.
-  float caustics(vec2 p, float t) {
-    float a = abs(sin(p.x * 1.3 + sin(p.y * 0.9 + t * 0.8) * 1.5));
-    float b = abs(sin(p.y * 1.1 + sin(p.x * 1.2 - t * 0.6) * 1.5));
-    return pow(1.0 - a * b, 6.0);
-  }
-
-  void main() {
-    // Streams scroll along their own length; lakes drift over the world.
-    bool stream = vFlow.z > 0.5;
-    vec2 p = stream ? vec2(vFlow.x - uTime * ${FLOW_SPEED.toFixed(2)}, vFlow.y * 3.0) * 2.2 : vWorld * 0.7;
-    float wave = bands(p, stream ? 0.0 : uTime);
-    float band = smoothstep(0.35, 0.5, wave) * 0.5 + smoothstep(0.6, 0.7, wave) * 0.5;
-
-    float deep = smoothstep(0.0, 2.2, vDepth);
-    vec3 color = mix(uShallow, uDeep, deep);
-
-    // Where it is shallow the bed shows through, lit by a moving web of caustics.
-    float clear = 1.0 - smoothstep(0.0, 1.4, vDepth);
-    vec2 bedP = stream ? p * 0.8 : vWorld * 0.9;
-    float web = caustics(bedP, stream ? uTime : uTime * 0.8);
-    color = mix(color, uBed, clear * 0.45);
-    color += uFoam * web * clear * 0.35;
-    color = mix(color, uFoam, band * 0.12);
-
-    // Ripple normal from the swell's gradient, flipped for a viewer under the surface.
-    const float e = 0.15;
-    vec2 q = stream ? p : vWorld * 0.8;
-    float t = stream ? 0.0 : uTime;
-    float h = swell(q, t);
-    vec2 grad = vec2(swell(q + vec2(e, 0.0), t) - h, swell(q + vec2(0.0, e), t) - h) / e;
-    vec3 n = normalize(vec3(-grad.x * 0.12, 1.0, -grad.y * 0.12));
-    if (!gl_FrontFacing) n.y = -n.y;
-    vec3 view = normalize(vec3(cameraPosition.x - vWorld.x, cameraPosition.y - vSurfaceY, cameraPosition.z - vWorld.y));
-
-    // Sky creeps in at grazing angles; lit ripples step into soft bands.
-    float fresnel = pow(1.0 - clamp(abs(dot(n, view)), 0.0, 1.0), 3.0);
-    float lit = floor(clamp(dot(n, uSunDir) * 0.5 + 0.5, 0.0, 1.0) * 3.0) / 3.0;
-    color *= 0.9 + 0.2 * lit;
-    color = mix(color, uSky, fresnel * 0.55);
-
-    // A hard sparkle where a ripple mirrors the sun.
-    float glint = pow(max(dot(reflect(-uSunDir, n), view), 0.0), 90.0);
-    float spark = smoothstep(0.35, 0.6, glint);
-    color += uSun * spark * 0.8;
-
-    // A foam line at the shore that breathes in and out.
-    float shore = ${FOAM_DEPTH.toFixed(2)} + 0.08 * sin(uTime * 1.3 + vWorld.x * 0.6 + vWorld.y * 0.45);
-    float foam = 1.0 - smoothstep(shore * 0.55, shore, vDepth);
-    float lace = smoothstep(0.1, 0.55, bands(vWorld * 2.1, uTime * 1.6) * 0.5 + 0.5);
-    color = mix(color, uFoam, foam * mix(0.55, 1.0, lace));
-
-    // Clear at the very edge, so the shoreline is a soft line and not a polygon edge.
-    float alpha = smoothstep(0.0, 0.1, vDepth) * mix(0.62, 0.9, deep);
-    alpha = clamp(alpha - clear * 0.12 + fresnel * 0.15 + spark * 0.4, 0.0, 1.0);
-    gl_FragColor = vec4(color, alpha);
-    #include <tonemapping_fragment>
-    #include <colorspace_fragment>
-    #include <fog_fragment>
-  }
-`
-
-let shared: THREE.ShaderMaterial | null = null
-function material(): THREE.ShaderMaterial {
-  shared ??= new THREE.ShaderMaterial({
-    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, uniforms]),
-    vertexShader,
-    fragmentShader,
-    transparent: true,
+/** One shared material, so every tile draws with the same pipeline and a sky change reaches them all. */
+let shared: ShaderMaterial | null = null
+function material(): ShaderMaterial {
+  shared ??= new ShaderMaterial({
+    wgsl: WGSL,
+    uniforms: {
+      shallow: Color.hex(0x7fd8f5),
+      deep: Color.hex(0x2f8fd8),
+      foam: Color.hex(0xf4fcff),
+      bed: Color.hex(0xd9cf9a),
+      sky: Color.hex(0xffffff),
+      sun: Color.hex(0xffffff),
+    },
+    blend: 'alpha',
     depthWrite: false,
     // Seen from below too: a swimmer (or anyone on the bed) looks up at it.
-    side: THREE.DoubleSide,
-    fog: true,
+    side: 'double',
     // Streams float centimetres over the terrain; a bias keeps their far end from sinking into it.
-    polygonOffset: true,
-    polygonOffsetFactor: -2,
-    polygonOffsetUnits: -12,
+    depthBias: 12,
+    depthBiasSlope: 2,
   })
-  // `merge` copies the values, so the shared ones are re-pointed to keep every tile in step.
-  for (const name of Object.keys(uniforms) as (keyof typeof uniforms)[]) shared.uniforms[name] = uniforms[name]
   return shared
+}
+
+/** Points the reflection and glint at the scene's sky and sun colours (sRGB hex). */
+export function setWaterLight(sky: number, sun: number) {
+  const uniforms = material().uniforms
+  ;(uniforms.sky as Color).setHex(sky)
+  ;(uniforms.sun as Color).setHex(sun)
+  material().needsUpdate()
 }
 
 /**
@@ -186,7 +137,7 @@ function material(): THREE.ShaderMaterial {
  * a cell, so the shoreline (depth 0) falls between a wet and a dry sample, and islands stay dry
  * because their ground is above the level. Null when the tile has no water.
  */
-function buildSurface(water: Float32Array, ground: TileGround): THREE.Mesh | null {
+function buildSurface(water: Float32Array, ground: TileGround): Mesh | null {
   const { x0, z0, cell, side, heights } = ground
   if (water.length !== side * side) return null
   const positions = new Float32Array(side * side * 3)
@@ -219,15 +170,22 @@ function buildSurface(water: Float32Array, ground: TileGround): THREE.Mesh | nul
     }
   }
   if (indices.length === 0) return null
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  geometry.setAttribute('depth', new THREE.BufferAttribute(depths, 1))
-  geometry.setAttribute('flow', new THREE.BufferAttribute(flows, 3))
-  geometry.setIndex(indices)
-  geometry.computeBoundingSphere()
-  const mesh = new THREE.Mesh(geometry, material())
+  const geometry = new Geometry({ positions, custom: surfaceCustom(depths, flows), indices: Uint32Array.from(indices) })
+  const mesh = new Mesh(geometry, material())
   mesh.renderOrder = 1
   return mesh
+}
+
+/** The vertex attribute the shader reads: depth in x and the stream flow (along, across, is-stream) in yzw. */
+function surfaceCustom(depths: Float32Array, flows: Float32Array): Float32Array {
+  const out = new Float32Array(depths.length * 4)
+  for (let i = 0; i < depths.length; i++) {
+    out[i * 4] = depths[i]!
+    out[i * 4 + 1] = flows[i * 3]!
+    out[i * 4 + 2] = flows[i * 3 + 1]!
+    out[i * 4 + 3] = flows[i * 3 + 2]!
+  }
+  return out
 }
 
 /**
@@ -235,7 +193,7 @@ function buildSurface(water: Float32Array, ground: TileGround): THREE.Mesh | nul
  * vertices wide, each lifted a hair over the terrain. Depth is deepest in the middle and zero at
  * the banks; `flow` carries the distance along the stream and the offset across it.
  */
-function buildStreams(streams: readonly Stream[], height: Height): THREE.Mesh | null {
+function buildStreams(streams: readonly Stream[], height: Height): Mesh | null {
   const positions: number[] = []
   const depths: number[] = []
   const flows: number[] = []
@@ -280,33 +238,32 @@ function buildStreams(streams: readonly Stream[], height: Height): THREE.Mesh | 
     }
   }
   if (indices.length === 0) return null
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-  geometry.setAttribute('depth', new THREE.Float32BufferAttribute(depths, 1))
-  geometry.setAttribute('flow', new THREE.Float32BufferAttribute(flows, 3))
-  geometry.setIndex(indices)
-  geometry.computeBoundingSphere()
-  const mesh = new THREE.Mesh(geometry, material())
+  const geometry = new Geometry({
+    positions: Float32Array.from(positions),
+    custom: surfaceCustom(Float32Array.from(depths), Float32Array.from(flows)),
+    indices: Uint32Array.from(indices),
+  })
+  const mesh = new Mesh(geometry, material())
   mesh.renderOrder = 1
   return mesh
 }
 
 /**
  * One tile's water, or null if it has none. It is translucent and added apart from the tile's
- * group so the game can keep it out of the AO pass (`Scene.excludeFromAO`) in one place.
+ * group so the game can place it in the world apart from the tile.
  */
-export function buildWater(tile: Pick<TileData, 'water' | 'streams'>, ground: TileGround, around?: HeightSource): THREE.Group | null {
-  const meshes = [tile.water.length > 0 ? buildSurface(tile.water, ground) : null, buildStreams(tile.streams, heightSampler(ground, around))].filter((m): m is THREE.Mesh => m !== null)
+export function buildWater(tile: Pick<TileData, 'water' | 'streams'>, ground: TileGround, around?: HeightSource): Group | null {
+  const meshes = [tile.water.length > 0 ? buildSurface(tile.water, ground) : null, buildStreams(tile.streams, heightSampler(ground, around))].filter((m): m is Mesh => m !== null)
   if (meshes.length === 0) return null
-  const group = new THREE.Group()
+  const group = new Group()
   group.add(...meshes)
   return group
 }
 
 /** Frees a tile's water geometry. The material is shared and stays. */
-export function disposeWater(group: THREE.Group) {
+export function disposeWater(group: Group) {
   group.traverse((object) => {
-    if (object instanceof THREE.Mesh) object.geometry.dispose()
+    if (object instanceof Mesh) object.geometry.dispose()
   })
   group.removeFromParent()
 }

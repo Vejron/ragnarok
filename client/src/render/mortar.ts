@@ -1,3 +1,4 @@
+import { Group, Mesh, boxGeometry, cylinderGeometry, sphereGeometry, type Node } from '@ragnarok/engine'
 import * as THREE from 'three'
 import { toonMaterial } from './toon'
 import { colorFor } from './character'
@@ -16,17 +17,17 @@ const PAINT = 0x5d6b3c
 const STEEL = 0x4a4d50
 
 // Shared by every mortar: parts only ever move, so none of these is disposed.
-const HULL = new THREE.BoxGeometry(2.0, 1.0, 3.0)
-const TONGUE = new THREE.BoxGeometry(0.2, 0.2, 1.2)
-const BASE = new THREE.CylinderGeometry(0.42, 0.5, 0.25, 14)
-const BARREL = new THREE.CylinderGeometry(0.09, 0.12, MORTAR_BARREL_LENGTH, 10)
+const HULL = boxGeometry(2.0, 1.0, 3.0)
+const TONGUE = boxGeometry(0.2, 0.2, 1.2)
+const BASE = cylinderGeometry(0.42, 0.5, 0.25, 14)
+const BARREL = cylinderGeometry(0.09, 0.12, MORTAR_BARREL_LENGTH, 10)
 // The barrel's own axis runs along -Z from the mount, so it lies along the gun's aim at zero angles.
 BARREL.rotateX(-Math.PI / 2)
 BARREL.translate(0, 0, -MORTAR_BARREL_LENGTH / 2)
-const WHEEL = new THREE.CylinderGeometry(MORTAR_WHEEL_RADIUS, MORTAR_WHEEL_RADIUS, 0.3, 14)
+const WHEEL = cylinderGeometry(MORTAR_WHEEL_RADIUS, MORTAR_WHEEL_RADIUS, 0.3, 14)
 // Turned onto its axle, which runs across the mortar, so the wheel spins about X.
 WHEEL.rotateZ(Math.PI / 2)
-const HEAD = new THREE.SphereGeometry(0.2, 12, 10)
+const HEAD = sphereGeometry(0.2, 12, 10)
 
 const WHEEL_SPOTS: [number, number][] = [
   [-MORTAR_TRACK_HALF, -AXLE_Z],
@@ -41,14 +42,14 @@ const WHEEL_SPOTS: [number, number][] = [
  * the tube lifts with its elevation, so the barrel's line is the server's aim.
  */
 export class MortarModel implements VehicleModel {
-  readonly root = new THREE.Group()
+  readonly root = new Group()
   /** Turns with the traverse: the hull-relative yaw. */
-  private readonly mount = new THREE.Group()
+  private readonly mount = new Group()
   /** Lifts with the elevation, about the mount's trunnions. */
-  private readonly elevation = new THREE.Group()
-  private readonly tube: THREE.Mesh
-  private readonly head: THREE.Mesh
-  private readonly spinners: THREE.Object3D[] = []
+  private readonly elevation = new Group()
+  private readonly tube: Mesh
+  private readonly head: Mesh
+  private readonly spinners: Node[] = []
   private readonly paint = toonMaterial({ color: PAINT })
   private readonly steel = toonMaterial({ color: STEEL })
   private readonly headMaterial = toonMaterial({ color: 0xffffff })
@@ -60,17 +61,18 @@ export class MortarModel implements VehicleModel {
   private readonly forward = new THREE.Vector3()
   private readonly pivot = new THREE.Vector3()
   private readonly aim = new THREE.Vector3()
+  private readonly matrix = new THREE.Matrix4()
 
   constructor(_id: number) {
-    const hull = new THREE.Mesh(HULL, this.paint)
+    const hull = new Mesh(HULL, this.paint)
     hull.castShadow = true
     this.root.add(hull)
-    const tongue = new THREE.Mesh(TONGUE, this.steel)
+    const tongue = new Mesh(TONGUE, this.steel)
     tongue.position.set(0, -0.1, -2.1)
     this.root.add(tongue)
 
     for (const [x, z] of WHEEL_SPOTS) {
-      const wheel = new THREE.Mesh(WHEEL, this.steel)
+      const wheel = new Mesh(WHEEL, this.steel)
       wheel.position.set(x, WHEEL_Y, z)
       wheel.castShadow = true
       this.spinners.push(wheel)
@@ -78,16 +80,16 @@ export class MortarModel implements VehicleModel {
     }
 
     this.mount.position.set(...MORTAR_GUN_PIVOT)
-    const base = new THREE.Mesh(BASE, this.steel)
+    const base = new Mesh(BASE, this.steel)
     base.position.set(0, -0.6, 0)
     this.root.add(base)
     this.root.add(this.mount)
     this.mount.add(this.elevation)
-    this.tube = new THREE.Mesh(BARREL, this.paint)
+    this.tube = new Mesh(BARREL, this.paint)
     this.tube.castShadow = true
     this.elevation.add(this.tube)
 
-    this.head = new THREE.Mesh(HEAD, this.headMaterial)
+    this.head = new Mesh(HEAD, this.headMaterial)
     this.head.position.set(0, 1.2, 0.6)
     this.head.castShadow = true
     this.head.visible = false
@@ -110,10 +112,10 @@ export class MortarModel implements VehicleModel {
     this.forward.set(0, 0, -1).applyQuaternion(this.root.quaternion)
     if (this.placed) {
       // Wheels turn with the ground they roll over.
-      const ahead = this.forward.dot(this.root.position.clone().sub(this.last))
+      const ahead = this.forward.x * (position[0] - this.last.x) + this.forward.y * (position[1] - this.last.y) + this.forward.z * (position[2] - this.last.z)
       this.roll -= ahead / MORTAR_WHEEL_RADIUS
     }
-    this.last.copy(this.root.position)
+    this.last.set(position[0], position[1], position[2])
     this.placed = true
     for (const wheel of this.spinners) wheel.rotation.x = this.roll
 
@@ -137,7 +139,7 @@ export class MortarModel implements VehicleModel {
   barrel() {
     this.root.updateMatrixWorld(true)
     this.elevation.getWorldPosition(this.pivot)
-    this.aim.set(0, 0, -1).transformDirection(this.elevation.matrixWorld)
+    this.aim.set(0, 0, -1).transformDirection(this.matrix.fromArray(this.elevation.matrixWorld))
     return { origin: this.pivot.clone(), direction: this.aim.clone() }
   }
 

@@ -1,6 +1,7 @@
+import { Group, Mesh, sphereGeometry, type Material, type Node } from '@ragnarok/engine'
 import * as THREE from 'three'
+import { parseToonModel, unlitMaterial } from './models'
 import { toonMaterial } from './toon'
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { WALKER_FOOT_HALF, WALKER_GUN_BARREL_DROP, WALKER_GUN_BARREL_X, WALKER_HALF_EXTENTS, WALKER_LEG_LENGTH, WALKER_LEG_SPRING } from '@/sim/consts'
 import { CAR_GRAVITY } from '@/sim/vehicle'
 import type { Turret } from '@/net/codec'
@@ -31,7 +32,7 @@ const PAD = 0.3
 /** How far the hips sit above the ground when it stands: the leg's reach less its spring's sag. */
 const STAND = WALKER_LEG_LENGTH - CAR_GRAVITY / WALKER_LEG_SPRING
 
-let asset: THREE.Object3D | null = null
+let asset: Node | null = null
 
 /**
  * Parses `walker.glb` (built by `tools/vehicles/build_walker.py`) for every `WalkerModel` to share. Its
@@ -39,27 +40,7 @@ let asset: THREE.Object3D | null = null
  * replaced per walker.
  */
 export async function parseWalkerModel(data: ArrayBuffer) {
-  asset = await new Promise<THREE.Object3D>((resolve, reject) => {
-    new GLTFLoader().parse(
-      data,
-      '',
-      (gltf) => {
-        gltf.scene.traverse((node) => {
-          const mesh = node as THREE.Mesh
-          if (!mesh.isMesh) return
-          const source = mesh.material as THREE.MeshStandardMaterial
-          mesh.material =
-            source.name === 'lamp'
-              ? new THREE.MeshBasicMaterial({ color: source.color, name: source.name })
-              : toonMaterial({ color: source.color, name: source.name })
-          source.dispose()
-          mesh.castShadow = true
-        })
-        resolve(gltf.scene)
-      },
-      reject,
-    )
-  })
+  asset = parseToonModel(data, (source) => (source.name === 'lamp' ? unlitMaterial(source) : null))
 }
 
 export async function loadWalkerModel(url = WALKER_MODEL_URL) {
@@ -76,18 +57,18 @@ export async function loadWalkerModel(url = WALKER_MODEL_URL) {
  * speed. The mesh is `walker.glb`; its nodes are named in `build_walker.py`.
  */
 export class WalkerModel implements VehicleModel {
-  readonly root = new THREE.Group()
-  private readonly paint: THREE.MeshToonMaterial
-  private readonly head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 10), toonMaterial({ color: 0xffffff }))
+  readonly root = new Group()
+  private readonly paint: Material
+  private readonly head = new Mesh(sphereGeometry(0.22, 12, 10), toonMaterial({ color: 0xffffff }))
   /** The upper body, which turns with the aim, and the guns in it, which lift. */
-  private readonly torso: THREE.Object3D
-  private readonly gun: THREE.Object3D
+  private readonly torso: Node
+  private readonly gun: Node
   private readonly gunRest: number
   private kick = 0
   /** Hip pivots, left then right, each holding the thigh, then a knee pivot holding the shin, then the ankle. */
-  private readonly hips: THREE.Object3D[] = []
-  private readonly knees: THREE.Object3D[] = []
-  private readonly ankles: THREE.Object3D[] = []
+  private readonly hips: Node[] = []
+  private readonly knees: Node[] = []
+  private readonly ankles: Node[] = []
   private stamp = 0
   private readonly last = new THREE.Vector3()
   private yaw = 0
@@ -101,12 +82,11 @@ export class WalkerModel implements VehicleModel {
 
   constructor(id: number) {
     if (!asset) throw new Error('loadWalkerModel() must finish before walkers are created')
-    const model = asset.clone(true)
+    const model = asset.clone()
     this.root.add(model)
     this.paint = toonMaterial({ color: PAINTS[id % PAINTS.length]! })
     model.traverse((node) => {
-      const mesh = node as THREE.Mesh
-      if (mesh.isMesh && mesh.material instanceof THREE.Material && mesh.material.name === 'paint') mesh.material = this.paint
+      if (node instanceof Mesh && node.material.name === 'paint') node.material = this.paint
     })
     this.torso = model.getObjectByName('torso')!
     this.gun = model.getObjectByName('gun')!
@@ -126,8 +106,9 @@ export class WalkerModel implements VehicleModel {
   barrel(side = 0) {
     this.gun.updateWorldMatrix(true, false)
     // `side` -1 or 1 is one of the two barrels, which hang under the chin; 0 is the pivot between them.
-    const origin = side === 0 ? new THREE.Vector3().setFromMatrixPosition(this.gun.matrixWorld) : this.gun.localToWorld(new THREE.Vector3(side * WALKER_GUN_BARREL_X, -WALKER_GUN_BARREL_DROP, 0))
-    const direction = new THREE.Vector3(0, 0, -1).transformDirection(this.gun.matrixWorld)
+    const matrix = new THREE.Matrix4().fromArray(this.gun.matrixWorld)
+    const origin = new THREE.Vector3(side * WALKER_GUN_BARREL_X, side === 0 ? 0 : -WALKER_GUN_BARREL_DROP, 0).applyMatrix4(matrix)
+    const direction = new THREE.Vector3(0, 0, -1).transformDirection(matrix)
     return { origin, direction }
   }
 
@@ -260,12 +241,15 @@ export class WalkerModel implements VehicleModel {
 
     const driver = seats[0] ?? 0
     this.head.visible = driver !== 0
-    if (driver !== 0) (this.head.material as THREE.MeshToonMaterial).color.setHex(colorFor(driver))
+    if (driver !== 0) {
+      this.head.material.color.setHex(colorFor(driver))
+      this.head.material.needsUpdate()
+    }
   }
 
   dispose() {
     this.paint.dispose()
-    ;(this.head.material as THREE.Material).dispose()
+    this.head.material.dispose()
     this.head.geometry.dispose()
     this.root.removeFromParent()
   }

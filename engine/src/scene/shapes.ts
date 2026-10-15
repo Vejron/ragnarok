@@ -135,3 +135,82 @@ export function cylinderGeometry(radiusTop = 1, radiusBottom = 1, height = 1, se
   }
   return new Geometry({ positions: new Float32Array(positions), normals: new Float32Array(normals), indices: new Uint32Array(indices) })
 }
+
+/** A flat rectangle in the XY plane facing +Z, centred on the origin: a billboard or a decal. */
+export function quadGeometry(width = 1, height = 1): Geometry {
+  const x = width / 2, y = height / 2
+  return new Geometry({
+    positions: new Float32Array([-x, -y, 0, x, -y, 0, x, y, 0, -x, y, 0]),
+    normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+    indices: new Uint16Array([0, 1, 2, 0, 2, 3]),
+  })
+}
+
+/** A flat ring in the XY plane facing +Z, between `inner` and `outer` radius. */
+export function ringGeometry(inner = 0.5, outer = 1, segments = 24): Geometry {
+  const positions: number[] = []
+  const normals: number[] = []
+  const uvs: number[] = []
+  const indices: number[] = []
+  for (let i = 0; i <= segments; i++) {
+    const t = (i / segments) * Math.PI * 2
+    const c = Math.cos(t), s = Math.sin(t)
+    positions.push(inner * c, inner * s, 0, outer * c, outer * s, 0)
+    normals.push(0, 0, 1, 0, 0, 1)
+    uvs.push((c * inner / outer + 1) / 2, (s * inner / outer + 1) / 2, (c + 1) / 2, (s + 1) / 2)
+  }
+  for (let i = 0; i < segments; i++) {
+    const a = i * 2
+    indices.push(a, a + 1, a + 3, a, a + 3, a + 2)
+  }
+  return new Geometry({ positions: new Float32Array(positions), normals: new Float32Array(normals), uvs: new Float32Array(uvs), indices: new Uint32Array(indices) })
+}
+
+/**
+ * A sphere of triangles from subdividing an icosahedron `detail` times, with shared vertices: 12 at
+ * detail 0, 42 at 1. Low detail gives a faceted, gem-like ball. No normals or uvs are produced; call
+ * `computeNormals()` for smooth shading.
+ */
+export function icosphereGeometry(radius = 1, detail = 1): Geometry {
+  const t = (1 + Math.sqrt(5)) / 2
+  const vertices: number[][] = [
+    [-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0],
+    [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t],
+    [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1],
+  ].map((v) => {
+    const l = Math.hypot(v[0]!, v[1]!, v[2]!)
+    return [v[0]! / l, v[1]! / l, v[2]! / l]
+  })
+  let faces: number[][] = [
+    [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
+    [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
+    [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
+    [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1],
+  ]
+  const middle = new Map<number, number>()
+  const midpoint = (a: number, b: number) => {
+    const key = Math.min(a, b) * 65536 + Math.max(a, b)
+    let found = middle.get(key)
+    if (found === undefined) {
+      const m = [(vertices[a]![0]! + vertices[b]![0]!) / 2, (vertices[a]![1]! + vertices[b]![1]!) / 2, (vertices[a]![2]! + vertices[b]![2]!) / 2]
+      const l = Math.hypot(m[0]!, m[1]!, m[2]!)
+      vertices.push([m[0]! / l, m[1]! / l, m[2]! / l])
+      found = vertices.length - 1
+      middle.set(key, found)
+    }
+    return found
+  }
+  for (let d = 0; d < detail; d++) {
+    const next: number[][] = []
+    for (const [a, b, c] of faces) {
+      const ab = midpoint(a!, b!), bc = midpoint(b!, c!), ca = midpoint(c!, a!)
+      next.push([a!, ab, ca], [b!, bc, ab], [c!, ca, bc], [ab, bc, ca])
+    }
+    faces = next
+  }
+  return new Geometry({
+    positions: new Float32Array(vertices.flatMap((v) => [v[0]! * radius, v[1]! * radius, v[2]! * radius])),
+    indices: new Uint16Array(faces.flat()),
+  })
+}

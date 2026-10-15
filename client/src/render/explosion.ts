@@ -1,3 +1,4 @@
+import { Mesh, boxGeometry } from '@ragnarok/engine'
 import * as THREE from 'three'
 import { toonMaterial } from './toon'
 import { SURFACE_ASPHALT, SURFACE_DIRT, SURFACE_SAND, SURFACE_WATER } from '@/sim/surface'
@@ -43,7 +44,7 @@ const DIRT: Record<number, number> = {
   [SURFACE_SAND]: 0xd2bd88,
 }
 
-const chunkGeometry = new THREE.BoxGeometry(1, 1, 1)
+const chunkGeometry = boxGeometry(1, 1, 1)
 
 /**
  * A blast of `radius` metres at `at`, in layers: a fireball, sparks and embers on ballistic arcs, a
@@ -51,7 +52,7 @@ const chunkGeometry = new THREE.BoxGeometry(1, 1, 1)
  * after the fire is gone. Everything is particles or `debris`, so there is nothing to clean up.
  */
 export function explosion(world: FxWorld, debris: Debris, at: THREE.Vector3, radius: number, profile: ExplosionProfile) {
-  const distance = at.distanceTo(world.camera)
+  const distance = world.camera.distanceTo(at)
   if (distance > FAR) return
   // A crowded room thins its blasts before the pools start evicting each other.
   const budget = world.smoke.alive > 2000 ? 0.5 : 1
@@ -172,7 +173,7 @@ export function explosion(world: FxWorld, debris: Debris, at: THREE.Vector3, rad
     const out = rand(2, 7) * Math.sqrt(scale)
     const size = rand(0.12, 0.35)
     const material = toonMaterial({ color: profile.wreck && i % 2 ? 0x555a60 : earth })
-    const chunk = new THREE.Mesh(chunkGeometry, material)
+    const chunk = new Mesh(chunkGeometry, material)
     chunk.scale.set(size * rand(0.8, 1.6), size * rand(0.5, 1), size * rand(0.8, 1.6))
     chunk.position.copy(at)
     debris.throw(

@@ -10,6 +10,11 @@ export class Mesh extends Node {
   renderOrder = 0
   /** Skip the frustum test (for things whose vertices move outside their bounds, like billboards). */
   frustumCulled = true
+  /**
+   * Drawn after everything else, effects included, ignoring depth: a reticle or a marker that must never be
+   * hidden. Overlay meshes sort by `renderOrder`, then far to near, and are not batched or shadowed.
+   */
+  overlay = false
   /** Multiplies the material colour and opacity for this mesh alone: per-object tint without a new material. */
   readonly tint = new Float32Array([1, 1, 1, 1])
 
@@ -23,6 +28,7 @@ export class Mesh extends Node {
     copy.receiveShadow = this.receiveShadow
     copy.renderOrder = this.renderOrder
     copy.frustumCulled = this.frustumCulled
+    copy.overlay = this.overlay
     copy.tint.set(this.tint)
     return copy
   }

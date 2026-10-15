@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import * as THREE from 'three'
+import { Mesh } from '@ragnarok/engine'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { boxOf, triangleCount } from './helpers'
 import { parseTankModel, TankModel } from '@/render/tank'
 import { TANK_BARREL_LENGTH, TANK_TURRET_PIVOT } from '@/sim/consts'
 
@@ -31,11 +32,7 @@ describe('TankModel', () => {
 
   it('stays low-poly', () => {
     const tank = new TankModel(1)
-    let triangles = 0
-    tank.root.traverse((node) => {
-      const mesh = node as THREE.Mesh
-      if (mesh.isMesh) triangles += (mesh.geometry.index?.count ?? mesh.geometry.attributes.position!.count) / 3
-    })
+    const triangles = triangleCount(tank.root)
     expect(triangles).toBeLessThan(2500)
     tank.dispose()
   })
@@ -46,7 +43,7 @@ describe('TankModel', () => {
     const level = tank.barrel()
     expect(level.direction.z).toBeCloseTo(-1, 3)
     expect(level.origin.y).toBeCloseTo(2 + TANK_TURRET_PIVOT[1], 3)
-    const bounds = new THREE.Box3().setFromObject(named(tank, 'gun'))
+    const bounds = boxOf(named(tank, 'gun'))
     expect(bounds.min.z).toBeCloseTo(5 + TANK_TURRET_PIVOT[2] - TANK_BARREL_LENGTH, 1)
 
     tank.update([10, 2, 5], IDENTITY, 0, [0, 0], { yaw: Math.PI / 2, pitch: 0.3, shots: 0, range: 0 })
@@ -77,14 +74,14 @@ describe('TankModel', () => {
 
   it('shows a head for each occupied seat, tinted by player', () => {
     const tank = new TankModel(1)
-    const visible = () => tank.root.children.filter((c) => (c as THREE.Mesh).isMesh && c.visible).length
+    const visible = () => tank.root.children.filter((c) => c instanceof Mesh && c.visible).length
     tank.update([0, 1, 0], IDENTITY, 0, [0, 0])
     expect(visible()).toBe(0)
     tank.update([0, 1, 0], IDENTITY, 0, [7, 0])
     expect(visible()).toBe(1)
     tank.update([0, 1, 0], IDENTITY, 0, [7, 9])
     expect(visible()).toBe(1)
-    expect(named(tank, 'turret').children.some((c) => (c as THREE.Mesh).isMesh && c.visible)).toBe(true)
+    expect(named(tank, 'turret').children.some((c) => c instanceof Mesh && c.visible)).toBe(true)
     tank.dispose()
   })
 })

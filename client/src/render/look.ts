@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import type { ToneMapping } from '@ragnarok/engine'
 
 /** The soft-lighting options a player can switch on and off. Each is independent. */
 export interface Look {
@@ -6,8 +6,6 @@ export interface Look {
   soft: boolean
   /** A dark blob under every character and vehicle, so they sit on the ground. */
   contact: boolean
-  /** Screen-space ambient occlusion: creases, undersides and wall bases darken. */
-  ao: boolean
   /** The sun's shadows reach further from the player, at a slightly coarser grain. */
   far: boolean
   /** Dark outlines wherever one thing meets another: a cartoon's ink. */
@@ -20,13 +18,13 @@ const KEY = 'ragnarok.look'
  * Bump this when a default changes for existing players. A saved look from an older version drops
  * the flags in `RESET_ON_BUMP`, so they fall back to the new default until the player turns them on.
  */
-const LOOK_VERSION = 3
-const RESET_ON_BUMP: (keyof Look)[] = ['ao', 'ink']
+const LOOK_VERSION = 4
+const RESET_ON_BUMP: (keyof Look)[] = ['ink']
 
-/** AO is off by default everywhere; the long shadows are off on phones and tablets, where they cost fill rate and memory. */
+/** The long shadows are off on phones and tablets, where they cost fill rate and memory. */
 export function defaultLook(): Look {
   const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
-  return { soft: true, contact: true, ao: false, far: !coarse, ink: true }
+  return { soft: true, contact: true, far: !coarse, ink: true }
 }
 
 export function loadLook(): Look {
@@ -60,7 +58,7 @@ export interface Palette {
   hemiIntensity: number
   sun: number
   sunIntensity: number
-  toneMapping: THREE.ToneMapping
+  toneMapping: ToneMapping
   exposure: number
   /** Blur of the sun's shadow edge, in shadow-map texels. */
   shadowRadius: number
@@ -74,7 +72,7 @@ export const CLASSIC: Palette = {
   hemiIntensity: 1.0,
   sun: 0xffffff,
   sunIntensity: 2.4,
-  toneMapping: THREE.NoToneMapping,
+  toneMapping: 'none',
   exposure: 1,
   shadowRadius: 1,
 }
@@ -92,7 +90,7 @@ export const SOFT: Palette = {
   hemiIntensity: 1.5,
   sun: 0xfff0d6,
   sunIntensity: 1.8,
-  toneMapping: THREE.NeutralToneMapping,
+  toneMapping: 'neutral',
   exposure: 1,
   shadowRadius: 4,
 }

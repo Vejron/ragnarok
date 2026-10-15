@@ -18,6 +18,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // The render engine is a sibling package consumed as source: no build step.
+      '@ragnarok/engine': fileURLToPath(new URL('../engine/src/index.ts', import.meta.url)),
     },
   },
 })

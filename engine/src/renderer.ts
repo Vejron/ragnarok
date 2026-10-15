@@ -114,7 +114,7 @@ export class Renderer {
   /** Per pipeline: true for ShaderMaterial pipelines, whose group 1 is the material's own. */
   private readonly customPipeline: boolean[] = []
   private readonly pipelineKeys = new Map<string, number>()
-  private readonly materialPipelines = new Map<number, { version: number; pipeline: number }>()
+  private readonly materialPipelines = new Map<number, { version: number; overlay: boolean; pipeline: number }>()
   private readonly shadowPipelines: GPURenderPipeline[]
   private readonly outputPipeline: GPURenderPipeline
   private readonly outputUniform: GPUBuffer
@@ -137,6 +137,9 @@ export class Renderer {
   private poolUsed = 0
   private readonly opaque: DrawItem[] = []
   private readonly transparent: DrawItem[] = []
+  private readonly overlay: DrawItem[] = []
+  /** Where in `mainBatches` the overlay's draws start. */
+  private overlayFrom = 0
   private readonly casters: DrawItem[] = []
   private readonly effects: Effect[] = []
   /** Bumped when the render targets are recreated, for effects holding views of them. */
@@ -286,12 +289,14 @@ export class Renderer {
     this.poolUsed = 0
     this.opaque.length = 0
     this.transparent.length = 0
+    this.overlay.length = 0
     this.casters.length = 0
     this.effects.length = 0
     this.collect(scene)
     this.effects.sort((a, b) => a.renderOrder - b.renderOrder)
     this.opaque.sort(byStateThenGeometry)
     this.transparent.sort(byOrderThenFarToNear)
+    this.overlay.sort(byOrderThenFarToNear)
     this.casters.sort(byStateThenGeometry)
 
     this.drawCount = 0
@@ -299,6 +304,8 @@ export class Renderer {
     this.shadowBatches.length = 0
     this.writeBatches(this.opaque, this.mainBatches, true)
     this.writeBatches(this.transparent, this.mainBatches, false)
+    this.overlayFrom = this.mainBatches.length
+    this.writeBatches(this.overlay, this.mainBatches, false)
     this.writeBatches(this.casters, this.shadowBatches, true)
 
     this.writeFrame(scene, camera)
@@ -318,6 +325,7 @@ export class Renderer {
     if (this.shadowsOn) this.shadowPass(encoder)
     this.mainPass(encoder, scene)
     if (this.effects.length) this.effectsPass(encoder, effects)
+    if (this.overlay.length) this.overlayPass(encoder)
     this.outputPass(encoder, scene, camera)
     this.timer.resolve(encoder)
     this.device.queue.submit([encoder.finish()])
@@ -379,7 +387,7 @@ export class Renderer {
     const radius = br * mat4.maxScale(m)
     const material = mesh.material
     const inView = !mesh.frustumCulled || this.frustum.intersectsSphere(cx, cy, cz, radius)
-    const inShadow = this.shadowsOn && mesh.castShadow && !material.transparent &&
+    const inShadow = this.shadowsOn && mesh.castShadow && !material.transparent && !mesh.overlay &&
       (!mesh.frustumCulled || this.shadowFrustum.intersectsSphere(cx, cy, cz, radius))
     if (!inView && !inShadow) return
     const bones = mesh instanceof SkinnedMesh ? this.bones.sync(mesh, this.frameNumber) + 1 : 0
@@ -387,10 +395,10 @@ export class Renderer {
     const count = mesh instanceof InstancedMesh ? mesh.count : 1
     if (inView) {
       const group = material instanceof ShaderMaterial ? this.resources.custom(material) : this.resources.standard(material)
-      const item = this.item(mesh, slot, record, count, this.pipelineFor(material), group)
+      const item = this.item(mesh, slot, record, count, this.pipelineFor(material, mesh.overlay), group)
       const dx = cx - this.camX, dy = cy - this.camY, dz = cz - this.camZ
       item.depth = dx * dx + dy * dy + dz * dz
-      ;(material.transparent ? this.transparent : this.opaque).push(item)
+      ;(mesh.overlay ? this.overlay : material.transparent ? this.transparent : this.opaque).push(item)
     }
     if (inShadow) this.casters.push(this.item(mesh, slot, record, count, material.side === 'front' ? 0 : 1, 0))
   }
@@ -439,11 +447,14 @@ export class Renderer {
 
   // ---- pipelines ----
 
-  private pipelineFor(material: Material): number {
+  private pipelineFor(material: Material, overlay: boolean): number {
     const cached = this.materialPipelines.get(material.id)
-    if (cached && cached.version === material.version) return cached.pipeline
+    if (cached && cached.version === material.version && cached.overlay === overlay) return cached.pipeline
     const program = material instanceof ShaderMaterial ? this.resources.program(material) : null
-    const state = `${material.blend}|${material.side}|${material.depthTest}|${material.depthWrite}|${material.depthBias}|${material.depthBiasSlope}`
+    // An overlay ignores depth: it neither tests nor writes, which also lets it draw against a read-only depth.
+    const state = overlay
+      ? `${material.blend}|${material.side}|overlay`
+      : `${material.blend}|${material.side}|${material.depthTest}|${material.depthWrite}|${material.depthBias}|${material.depthBiasSlope}`
     const key = program ? `${program.shader.key}|${state}` : state
     let pipeline = this.pipelineKeys.get(key)
     if (pipeline === undefined) {
@@ -451,15 +462,15 @@ export class Renderer {
       const layout = program
         ? this.device.createPipelineLayout({ bindGroupLayouts: [this.sceneLayout, program.groupLayout] })
         : this.mainLayout
-      this.pipelines.push(this.makePipeline(material, program ? 'shader material' : state, program?.module ?? this.standardModule, layout))
+      this.pipelines.push(this.makePipeline(material, overlay, program ? 'shader material' : state, program?.module ?? this.standardModule, layout))
       this.customPipeline.push(program !== null)
       this.pipelineKeys.set(key, pipeline)
     }
-    this.materialPipelines.set(material.id, { version: material.version, pipeline })
+    this.materialPipelines.set(material.id, { version: material.version, overlay, pipeline })
     return pipeline
   }
 
-  private makePipeline(m: Material, label: string, module: GPUShaderModule, layout: GPUPipelineLayout): GPURenderPipeline {
+  private makePipeline(m: Material, overlay: boolean, label: string, module: GPUShaderModule, layout: GPUPipelineLayout): GPURenderPipeline {
     let blend: GPUBlendState | undefined
     if (m.blend === 'alpha') {
       blend = {
@@ -480,12 +491,12 @@ export class Renderer {
       primitive: { topology: 'triangle-list', cullMode: m.side === 'front' ? 'back' : m.side === 'back' ? 'front' : 'none' },
       depthStencil: {
         format: DEPTH_FORMAT,
-        depthWriteEnabled: m.depthWrite,
+        depthWriteEnabled: m.depthWrite && !overlay,
         // Reversed depth: nearer is larger.
-        depthCompare: m.depthTest ? 'greater-equal' : 'always',
+        depthCompare: m.depthTest && !overlay ? 'greater-equal' : 'always',
         // Positive bias pulls toward the camera, which with reversed depth means a larger value.
-        depthBias: Math.round(m.depthBias),
-        depthBiasSlopeScale: m.depthBiasSlope,
+        depthBias: overlay ? 0 : Math.round(m.depthBias),
+        depthBiasSlopeScale: overlay ? 0 : m.depthBiasSlope,
       },
       multisample: { count: this.sampleCount },
     })
@@ -647,8 +658,8 @@ export class Renderer {
   private mainPass(encoder: GPUCommandEncoder, scene: Scene) {
     const bg = scene.background
     const msaa = this.colorTarget !== null
-    // With effects to come the multisampled image is kept for them and resolved at their pass's end.
-    const resolveHere = msaa && !this.effects.length
+    // With effects or an overlay to come the multisampled image is kept for them and resolved at the last pass's end.
+    const resolveHere = msaa && !this.effects.length && !this.overlay.length
     const pass = encoder.beginRenderPass({
       label: 'main',
       colorAttachments: [{
@@ -661,6 +672,12 @@ export class Renderer {
       depthStencilAttachment: { view: this.depthTarget!.createView(), depthClearValue: 0, depthLoadOp: 'clear', depthStoreOp: 'store' },
       timestampWrites: this.timer.pass('main'),
     })
+    this.drawBatches(pass, 0, this.overlayFrom)
+    pass.end()
+  }
+
+  /** Draws `mainBatches[from..to)` into `pass`, binding only what changes between them. */
+  private drawBatches(pass: GPURenderPassEncoder, from: number, to: number) {
     pass.setBindGroup(0, this.sceneGroup!)
     pass.setVertexBuffer(0, this.arena.vertexBuffer)
     pass.setIndexBuffer(this.arena.indexBuffer, 'uint32')
@@ -668,7 +685,8 @@ export class Renderer {
     // What is bound at groups 1 and 2: -1 for the lighting group at 1, else a resource group id.
     let group1 = -2
     let group2 = -2
-    for (const batch of this.mainBatches) {
+    for (let i = from; i < to; i++) {
+      const batch = this.mainBatches[i]!
       if (batch.pipeline !== current) {
         pass.setPipeline(this.pipelines[batch.pipeline]!)
         current = batch.pipeline
@@ -692,7 +710,6 @@ export class Renderer {
       this.stats.drawCalls++
       this.stats.triangles += (batch.slot.indexCount / 3) * batch.count
     }
-    pass.end()
   }
 
   /** Particles and other effects, over everything else, with the scene's depth bound read-only. */
@@ -702,14 +719,32 @@ export class Renderer {
       label: 'effects',
       colorAttachments: [{
         view: msaa ? this.colorTarget!.createView() : this.hdrTarget!.createView(),
-        resolveTarget: msaa ? this.hdrTarget!.createView() : undefined,
+        resolveTarget: msaa && !this.overlay.length ? this.hdrTarget!.createView() : undefined,
         loadOp: 'load',
-        storeOp: msaa ? 'discard' : 'store',
+        storeOp: msaa && !this.overlay.length ? 'discard' : 'store',
       }],
       depthStencilAttachment: { view: ctx.depthView, depthReadOnly: true },
       timestampWrites: this.timer.pass('effects'),
     })
     for (const effect of this.effects) this.stats.drawCalls += effect.draw(ctx, pass)
+    pass.end()
+  }
+
+  /** Overlay meshes: over everything including effects, depth ignored, then the image resolves. */
+  private overlayPass(encoder: GPUCommandEncoder) {
+    const msaa = this.colorTarget !== null
+    const pass = encoder.beginRenderPass({
+      label: 'overlay',
+      colorAttachments: [{
+        view: msaa ? this.colorTarget!.createView() : this.hdrTarget!.createView(),
+        resolveTarget: msaa ? this.hdrTarget!.createView() : undefined,
+        loadOp: 'load',
+        storeOp: msaa ? 'discard' : 'store',
+      }],
+      depthStencilAttachment: { view: this.depthTarget!.createView(), depthReadOnly: true },
+      timestampWrites: this.timer.pass('overlay'),
+    })
+    this.drawBatches(pass, this.overlayFrom, this.mainBatches.length)
     pass.end()
   }
 

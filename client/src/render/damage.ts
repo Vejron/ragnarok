@@ -1,3 +1,4 @@
+import { Group, Material, Mesh, Texture, quadGeometry } from '@ragnarok/engine'
 import * as THREE from 'three'
 import { toonMaterial } from './toon'
 import { DAMAGE_STAGES } from '@/sim/consts'
@@ -28,14 +29,14 @@ interface Hurt {
 
 /** A scorch decal, and the shard of wall it is on (once the wall is cut into shards), `-1` before. */
 interface Scorch {
-  mesh: THREE.Mesh
+  mesh: Mesh
   at: THREE.Vector3
   shard: number
 }
 
 /** A shard that broke away, on its way down or lying where it fell. */
 interface Falling {
-  mesh: THREE.Mesh
+  mesh: Mesh
   velocity: THREE.Vector3
   spin: THREE.Vector3
   age: number
@@ -43,13 +44,13 @@ interface Falling {
 }
 
 interface Drawn {
-  group: THREE.Group
+  group: Group
   /** Scorch decals, oldest first. */
   scorches: Scorch[]
   /** The building's walls cut into shards, once it is hurt, and what is drawn of them. */
   fracture: Fracture | null
-  body: THREE.Mesh | null
-  core: THREE.Mesh | null
+  body: Mesh | null
+  core: Mesh | null
   /** Shards that have broken away for good. */
   gone: Set<number>
   falling: Falling[]
@@ -67,18 +68,16 @@ interface Puff {
   size: number
 }
 
-const planeGeometry = new THREE.PlaneGeometry(1, 1)
+const planeGeometry = quadGeometry(1, 1)
 
-function paint(size: number, draw: (g: CanvasRenderingContext2D, size: number) => void): THREE.CanvasTexture | null {
+function paint(size: number, draw: (g: CanvasRenderingContext2D, size: number) => void): Texture | null {
   if (typeof document === 'undefined') return null
   const canvas = document.createElement('canvas')
   canvas.width = canvas.height = size
   const g = canvas.getContext('2d')
   if (!g) return null
   draw(g, size)
-  const texture = new THREE.CanvasTexture(canvas)
-  texture.colorSpace = THREE.SRGBColorSpace
-  return texture
+  return new Texture(canvas, { srgb: true, wrap: 'clamp' })
 }
 
 /** A ragged black blotch, darkest at the middle, with soot thrown off it. */
@@ -107,22 +106,23 @@ function scorchTexture() {
   })
 }
 
-let scorchMaterial: THREE.MeshBasicMaterial | null = null
+let scorchMaterial: Material | null = null
 const bodyMaterial = toonMaterial({ vertexColors: true })
-const pieceMaterial = toonMaterial({ vertexColors: true, side: THREE.DoubleSide })
-const coreMaterial = toonMaterial({ vertexColors: true, side: THREE.DoubleSide })
+const pieceMaterial = toonMaterial({ vertexColors: true, side: 'double' })
+const coreMaterial = toonMaterial({ vertexColors: true, side: 'double' })
 
-function decalMaterial(map: THREE.Texture | null, fallback: number) {
-  return new THREE.MeshBasicMaterial({
+function decalMaterial(map: Texture | null, fallback: number) {
+  // Unlit, translucent, and pulled toward the camera in depth so it sits on the wall it is laid on.
+  return new Material({
     map,
     color: map ? 0xffffff : fallback,
-    transparent: true,
+    lit: false,
+    blend: 'alpha',
     opacity: map ? 1 : 0.5,
     depthWrite: false,
-    side: THREE.DoubleSide,
-    polygonOffset: true,
-    polygonOffsetFactor: -2,
-    polygonOffsetUnits: -2,
+    side: 'double',
+    depthBias: 2,
+    depthBiasSlope: 2,
   })
 }
 
@@ -160,7 +160,7 @@ function wallsOf(tile: TileData, index: number): Wall[] {
  * back in is hurt as it was. Hurt buildings are to be left out of the tile's own drawing (`fractured`).
  */
 export class BuildingDamage {
-  readonly root = new THREE.Group()
+  readonly root = new Group()
   private readonly hurt = new Map<number, Map<number, Hurt>>()
   private readonly drawn = new Map<number, Map<number, Drawn>>()
   private readonly loaded = new Map<number, Loaded>()
@@ -266,7 +266,7 @@ export class BuildingDamage {
     const walls = wallsOf(loaded.tile, index)
     if (walls.length === 0) return
     if (!drawn) {
-      drawn = { group: new THREE.Group(), scorches: [], fracture: null, body: null, core: null, gone: new Set(), falling: [], shed: SHED_SECONDS }
+      drawn = { group: new Group(), scorches: [], fracture: null, body: null, core: null, gone: new Set(), falling: [], shed: SHED_SECONDS }
       buildings.set(index, drawn)
       this.root.add(drawn.group)
       // A tile coming back in draws every mark it remembers.
@@ -281,13 +281,13 @@ export class BuildingDamage {
     const building = loaded.tile.buildings[index]!
     if (!drawn.fracture) {
       drawn.fracture = new Fracture(loaded.tile, index, key * 1_000_003 + index, loaded.salt)
-      drawn.core = new THREE.Mesh(shardGeometry(drawn.fracture.core(), drawn.fracture.coreColors()), coreMaterial)
+      drawn.core = new Mesh(shardGeometry(drawn.fracture.core(), drawn.fracture.coreColors()), coreMaterial)
       drawn.group.add(drawn.core)
       for (const scorch of drawn.scorches) scorch.shard = drawn.fracture.nearest(scorch.at).shard
     }
     const built = drawn.fracture.build(state.stage, state.marks, drawn.gone)
     if (!drawn.body) {
-      drawn.body = new THREE.Mesh(shardGeometry(built.positions, built.colors), bodyMaterial)
+      drawn.body = new Mesh(shardGeometry(built.positions, built.colors), bodyMaterial)
       drawn.body.castShadow = true
       drawn.body.receiveShadow = true
       drawn.group.add(drawn.body)
@@ -301,7 +301,7 @@ export class BuildingDamage {
       const piece = drawn.fracture.piece(id)
       this.puffs.push({ at: piece.pivot.clone().addScaledVector(piece.normal, 0.5), size: 1.5 + this.rand() * 1.5 })
       if (drawn.falling.length >= MAX_FALLING) continue
-      const mesh = new THREE.Mesh(shardGeometry(piece.positions, piece.colors), pieceMaterial)
+      const mesh = new Mesh(shardGeometry(piece.positions, piece.colors), pieceMaterial)
       mesh.position.copy(piece.pivot)
       mesh.castShadow = true
       drawn.group.add(mesh)
@@ -366,10 +366,10 @@ export class BuildingDamage {
   }
 
   /** A flat square `size` metres across lying on a wall at `at`, facing out along `normal`. */
-  private decal(material: THREE.Material, at: THREE.Vector3, normal: THREE.Vector3, size: number, roll: number) {
-    const mesh = new THREE.Mesh(planeGeometry, material)
+  private decal(material: Material, at: THREE.Vector3, normal: THREE.Vector3, size: number, roll: number) {
+    const mesh = new Mesh(planeGeometry, material)
     mesh.position.copy(at).addScaledVector(normal, LIFT)
-    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal)
+    mesh.quaternion.setFromUnitVectors({ x: 0, y: 0, z: 1 }, normal)
     mesh.rotateZ(roll)
     mesh.scale.setScalar(size)
     mesh.userData.sharedGeometry = true

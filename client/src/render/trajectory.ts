@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import { Group, Material, Mesh, ringGeometry, sphereGeometry } from '@ragnarok/engine'
 import type { Trajectory } from '@/sim/grenade'
 
 /** Dots a path can have: the fuse in ticks over the sampling stride, with room to spare. */
@@ -11,25 +11,25 @@ const ON_TOP = 999
  * lands, a ring there, and fainter dots for the bounce and roll after it.
  */
 export class TrajectoryView {
-  readonly root = new THREE.Group()
-  private readonly dot = new THREE.SphereGeometry(1, 8, 6)
-  private readonly ring = new THREE.RingGeometry(0.28, 0.42, 24)
+  readonly root = new Group()
+  private readonly dot = sphereGeometry(1, 8, 6)
+  private readonly ring = ringGeometry(0.28, 0.42, 24)
   private readonly flightMaterial = this.material(0xffffff, 0.95)
   private readonly rollMaterial = this.material(0xffffff, 0.35)
   private readonly ringMaterial = this.material(0xffd54a, 1)
-  private readonly dots: THREE.Mesh[] = []
-  private readonly landing: THREE.Mesh
+  private readonly dots: Mesh[] = []
+  private readonly landing: Mesh
 
   constructor() {
     for (let i = 0; i < MAX_DOTS; i++) {
-      const mesh = new THREE.Mesh(this.dot, this.flightMaterial)
+      const mesh = new Mesh(this.dot, this.flightMaterial)
       mesh.renderOrder = ON_TOP
       mesh.visible = false
       mesh.frustumCulled = false
       this.dots.push(mesh)
       this.root.add(mesh)
     }
-    this.landing = new THREE.Mesh(this.ring, this.ringMaterial)
+    this.landing = new Mesh(this.ring, this.ringMaterial)
     this.landing.rotation.x = -Math.PI / 2
     this.landing.renderOrder = ON_TOP
     this.landing.frustumCulled = false
@@ -39,7 +39,7 @@ export class TrajectoryView {
   }
 
   private material(color: number, opacity: number) {
-    return new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthTest: false, depthWrite: false, fog: false, side: THREE.DoubleSide })
+    return new Material({ color, lit: false, blend: 'alpha', opacity, depthTest: false, depthWrite: false, fog: false, side: 'double' })
   }
 
   /** Shows `path`, or hides the view when it is null. */
