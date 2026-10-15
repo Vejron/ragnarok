@@ -20,6 +20,10 @@ pub const MAX_TRIANGLES: usize = 6_000;
 /// A building left with less than this percent of its cells is not worth keeping: it collapses.
 pub const COLLAPSE_BELOW_PERCENT: usize = 30;
 
+/// Health of one cell against bullets: a rifle needs a few rounds to break out a piece of wall.
+/// Blasts take cells outright.
+pub const CELL_HP: u8 = 40;
+
 /// A triangle: three corners `[x, y, z]`, centimetres, flattened.
 pub type Tri = [i32; 9];
 
@@ -289,6 +293,51 @@ impl Shell {
         cut
     }
 
+    /// A round of `amount` damage lands at `at` (centimetres): the standing cell nearest it, if it
+    /// is within a cell's reach, loses that much of its `hp` (one number per cell) and breaks out
+    /// at zero, taking with it whatever that leaves unsupported. A cell that is only hurt cuts
+    /// nothing, and the result is empty.
+    pub fn chip(&self, removed: &mut [bool], hp: &mut [u8], at: [i32; 3], amount: u8) -> Cut {
+        let mut cut = Cut::default();
+        let range = |a: usize| {
+            let lo = ((at[a] as i64 - self.cell as i64 - self.origin[a] as i64).div_euclid(self.cell as i64)).clamp(0, self.dims[a] as i64 - 1);
+            let hi = ((at[a] as i64 + self.cell as i64 - self.origin[a] as i64).div_euclid(self.cell as i64)).clamp(0, self.dims[a] as i64 - 1);
+            lo as usize..=hi as usize
+        };
+        let mut nearest: Option<(i64, u16)> = None;
+        for y in range(1) {
+            for z in range(2) {
+                for x in range(0) {
+                    let id = self.index(x, y, z);
+                    if !self.solid[id as usize] || removed[id as usize] {
+                        continue;
+                    }
+                    let c = self.centre(id);
+                    let d = (0..3).map(|a| (c[a] as i64 - at[a] as i64).pow(2)).sum::<i64>();
+                    if nearest.is_none_or(|(best, _)| d < best) {
+                        nearest = Some((d, id));
+                    }
+                }
+            }
+        }
+        let Some((d, id)) = nearest else { return cut };
+        if d > (self.cell as i64) * (self.cell as i64) * 3 / 2 {
+            return cut;
+        }
+        let left = hp[id as usize].saturating_sub(amount);
+        hp[id as usize] = left;
+        if left > 0 {
+            return cut;
+        }
+        removed[id as usize] = true;
+        cut.blasted.push(id);
+        cut.fell = self.unsupported(removed);
+        for &lost in &cut.fell {
+            removed[lost as usize] = true;
+        }
+        cut
+    }
+
     /// The standing cells that no chain of standing cells joins to an anchor.
     fn unsupported(&self, removed: &[bool]) -> Vec<u16> {
         let n = self.solid.len();
@@ -326,6 +375,11 @@ impl Shell {
     /// `removed`, as corner triples in centimetres.
     pub fn standing_triangles(&self, removed: &[bool]) -> Vec<Tri> {
         self.triangles.iter().filter(|&&(_, id)| !removed[id as usize]).map(|&(tri, _)| tri).collect()
+    }
+
+    /// A fresh `hp`: every cell whole.
+    pub fn fresh_hp(&self) -> Vec<u8> {
+        vec![CELL_HP; self.solid.len()]
     }
 
     /// A fresh `removed`: nothing taken out.
@@ -413,6 +467,24 @@ mod tests {
         }
         assert!(fell > 0, "the top should have come down");
         assert!(shell.is_ruin(&removed) || shell.standing(&removed) < shell.solid_count() / 2);
+    }
+
+    #[test]
+    fn a_cell_takes_a_few_rounds_before_it_breaks() {
+        let shell = Shell::new(&boxed(10, 8, 6), &roof(10, 8, 6)).unwrap();
+        let (mut removed, mut hp) = (shell.untouched(), shell.fresh_hp());
+        let mut rounds = 0;
+        loop {
+            rounds += 1;
+            let cut = shell.chip(&mut removed, &mut hp, [500, 300, 0], 12);
+            if !cut.is_empty() {
+                assert_eq!(cut.blasted.len(), 1);
+                break;
+            }
+            assert!(rounds < 20);
+        }
+        assert_eq!(rounds, 4, "40 health, 12 a round");
+        assert!(shell.chip(&mut removed, &mut hp, [500, 300, 0], 12).is_empty() || shell.standing(&removed) < shell.solid_count());
     }
 
     #[test]

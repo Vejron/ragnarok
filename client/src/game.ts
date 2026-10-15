@@ -852,6 +852,7 @@ export class Game {
       if (bullet) bullet.endTicks = bulletTicksTo(bullet.spawn, [shot.x, shot.y, shot.z])
       if (bullet?.spawn.item === ITEM_SNIPER) this.effects.burst(to, 0.8)
       else this.effects.pelletStrike(to)
+      if (bullet?.spawn.shooter === this.localId) this.view.chipped(to.x, to.y, to.z, itemDef(bullet.spawn.item)?.damage ?? 0)
     } else if (shot.weapon === WEAPON_MG) {
       // The tracer was drawn when the gun fired; this is a round striking something.
       this.effects.strike(to)
@@ -861,6 +862,7 @@ export class Game {
       const from = this.muzzleOf(shot.shooter)
       if (!gun || (from && from.distanceTo(to) >= gun.range - 1)) return
       this.effects.pelletStrike(to)
+      if (shot.shooter === this.localId) this.view.chipped(to.x, to.y, to.z, gun.damage)
     } else if (shot.weapon === WEAPON_BOMB) {
       this.blast(to, BOMB_RADIUS, BLASTS.bomb)
       this.sounds.explosion([to.x, to.y, to.z])
@@ -904,6 +906,7 @@ export class Game {
       }
       const at = from ?? to
       this.sounds.gunshot([at.x, at.y, at.z], gun.sound)
+      if (shot.shooter === this.localId && from && from.distanceTo(to) < gun.range - 1) this.view.chipped(to.x, to.y, to.z, gun.damage)
     }
   }
 

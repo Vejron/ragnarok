@@ -301,6 +301,8 @@ fn run_down_trees(world: &mut World, before: &BTreeMap<u32, CarPose>) {
     }
 }
 
+/// Speed (m/s) a contact must take out of a vehicle in one tick to break a wall.
+const RAM_MIN_DV: f32 = 2.5;
 /// Speed (m/s) a contact must take out of a vehicle in one tick to hurt it.
 const CRASH_MIN_DV: f32 = 5.0;
 /// Health lost per m/s over that: a head-on hit into a wall at 25 m/s wrecks a jeep.
@@ -394,6 +396,17 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
     }
     for vehicle in world.vehicles.values_mut() {
         vehicle.scrape_in = vehicle.scrape_in.saturating_sub(1);
+    }
+    // Every wall it hit gives way, not just the hardest contact.
+    let rams: Vec<_> = world.physics.car_impacts().into_iter().filter(|i| i.dv > RAM_MIN_DV).collect();
+    for impact in rams {
+        let Some(Obj::Building(id)) = impact.object else { continue };
+        let Some(vehicle) = world.vehicles.get(&impact.car) else { continue };
+        if vehicle.wrecked() {
+            continue;
+        }
+        let weight = if matches!(vehicle.kind, KIND_TANK | KIND_STRV) { TANK_RAM_FACTOR } else { 1.0 };
+        super::combat::ram_building(world, id, impact.point, impact.dv, weight);
     }
     for (vid, impact) in hardest {
         let Some(vehicle) = world.vehicles.get_mut(&vid) else { continue };

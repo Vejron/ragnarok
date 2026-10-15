@@ -331,9 +331,28 @@ impl World {
         let carving = self.carves.get_mut(&id)?;
         let at = point.map(|v| (v * 100.0).round() as i32);
         let cut = carving.shell.blast(&mut carving.removed, at, (radius * 100.0).round() as i32);
+        self.finish_cut(id, at, cut)
+    }
+
+    /// A round of `damage` hits standing building `id` at `point`: the piece of wall there loses
+    /// that much health and breaks out when it has none. As `carve` for what it returns.
+    pub fn chip(&mut self, id: ObjId, point: [f32; 3], damage: u8) -> Option<(Cut, bool)> {
+        if !self.carves.contains_key(&id) {
+            let carving = self.cut_building(id)?;
+            self.carves.insert(id, carving);
+        }
+        let carving = self.carves.get_mut(&id)?;
+        let at = point.map(|v| (v * 100.0).round() as i32);
+        let cut = carving.shell.chip(&mut carving.removed, &mut carving.hp, at, damage);
+        self.finish_cut(id, at, cut)
+    }
+
+    /// Swaps the collider and queues the news for a cut that took something.
+    fn finish_cut(&mut self, id: ObjId, at: [i32; 3], cut: Cut) -> Option<(Cut, bool)> {
         if cut.is_empty() {
             return None;
         }
+        let carving = self.carves.get(&id)?;
         let ruin = carving.shell.is_ruin(&carving.removed);
         if !ruin {
             let mut standing = carving.shell.standing_triangles(&carving.removed);
@@ -363,7 +382,8 @@ impl World {
         let floor = floor.map(tri).collect();
         let shell = Shell::new(&walls, &roof)?;
         let removed = shell.untouched();
-        Some(Carving { shell, removed, floor })
+        let hp = shell.fresh_hp();
+        Some(Carving { shell, removed, hp, floor })
     }
 
     /// The building `id` names.
@@ -386,6 +406,8 @@ pub struct Carving {
     pub shell: Shell,
     /// One flag per cell: taken out, by a blast or by having nothing under it.
     pub removed: Vec<bool>,
+    /// Health left in each cell against bullets; a blast does not read it.
+    pub hp: Vec<u8>,
     /// The floor's triangles, which are never carved but stay in the building's collider.
     pub floor: Vec<Tri>,
 }

@@ -244,78 +244,45 @@ describe('damaged message', () => {
 describe('a hurt building', () => {
   const key = 5
   const tileWith = () => twoHouses()
-  const vertices = (damage: BuildingDamage, index = 0) =>
-    (damage.root.children[0]!.children.find((c) => c instanceof Mesh && c.castShadow && !c.userData.decal && c.geometry.colors) as Mesh | undefined)?.geometry.vertexCount ?? 0
+  const bodyOf = (damage: BuildingDamage) =>
+    damage.root.children[0]!.children.find((c) => c instanceof Mesh && c.castShadow && c.geometry.colors) as Mesh | undefined
+  const cellAt = (index: number, x: number, y: number, z: number) => shellOf(tileWith(), index)!.cellAt(x, y, z)
 
-  it('shows a scorch on the wall nearest the blast', () => {
+  it('keeps the tile drawing a building that is only hurt', () => {
     const damage = new BuildingDamage()
     damage.attach(key, tileWith())
-    // 2 m off the west wall of the house spanning x 0..10.
-    expect(damage.hurtBuilding(key, 0, 0, [-2, 2, 0])).toBe(false)
-    expect(damage.shown(key, 0).scorches).toBe(1)
-    const scorch = damage.root.children[0]!.children.find((c) => c.userData.decal)!
-    expect(scorch.position.x).toBeCloseTo(-0.1, 1)
-    expect(scorch.position.y).toBeCloseTo(2)
-  })
-
-  it('is cut into shards once hurt, and says so only the first time', () => {
-    const damage = new BuildingDamage()
-    damage.attach(key, tileWith())
+    damage.hurtBuilding(key, 0, 3)
     expect(damage.fractured(key)).toEqual([])
-    expect(damage.shown(key, 0).shards).toBe(0)
-    expect(damage.hurtBuilding(key, 0, 1, null)).toBe(true)
-    expect(damage.hurtBuilding(key, 0, 2, null)).toBe(false)
-    expect(damage.fractured(key)).toEqual([0])
-    expect(damage.shown(key, 0).shards).toBeGreaterThanOrEqual(4)
-    // More triangles than the 8 wall and 2 roof ones it started with.
-    expect(vertices(damage)).toBeGreaterThan(10 * 3)
+    expect(bodyOf(damage)).toBeUndefined()
   })
 
-  it('loses shards as it weakens and never gets them back', () => {
+  it('burns the wall around a hole darker than the rest', () => {
     const damage = new BuildingDamage()
     damage.attach(key, tileWith())
-    damage.hurtBuilding(key, 0, 1, null)
-    expect(damage.shown(key, 0).missing).toBe(0)
-    damage.hurtBuilding(key, 0, 3, null)
-    const missing = damage.shown(key, 0).missing
-    expect(missing).toBeGreaterThan(0)
-    damage.hurtBuilding(key, 0, 3, [-2, 2, 0])
-    expect(damage.shown(key, 0).missing).toBeGreaterThanOrEqual(missing)
+    damage.carve(key, 0, [cellAt(0, 0, 2, 0)], [], [-1, 2, 0], false)
+    const colors = Array.from(bodyOf(damage)!.geometry.colors!)
+    const brightness = (i: number) => colors[i * 3]! + colors[i * 3 + 1]! + colors[i * 3 + 2]!
+    const all = Array.from({ length: colors.length / 3 }, (_, i) => brightness(i))
+    expect(Math.min(...all)).toBeLessThan(Math.max(...all) * 0.6)
   })
 
-  it('breaks the wall out where a shell hit it, taking the scorch with it', () => {
-    const damage = new BuildingDamage()
-    damage.attach(key, tileWith())
-    damage.hurtBuilding(key, 0, 0, [-1, 2, 0])
-    expect(damage.shown(key, 0).scorches).toBe(1)
-    damage.hurtBuilding(key, 0, 2, null)
-    expect(damage.shown(key, 0).missing).toBeGreaterThan(0)
-    expect(damage.shown(key, 0).scorches).toBe(0)
+  it('burns a joiner’s walls the same, from the removed cells alone', () => {
+    const colors = (live: boolean) => {
+      const damage = new BuildingDamage()
+      damage.attach(key, tileWith())
+      damage.carve(key, 0, [cellAt(0, 0, 2, 0)], [], live ? [-1, 2, 0] : null, live)
+      return Array.from(bodyOf(damage)!.geometry.colors!)
+    }
+    expect(colors(true)).toEqual(colors(false))
   })
 
-  it('throws the pieces that break away, and they come to rest and go', () => {
-    const damage = new BuildingDamage()
-    damage.attach(key, tileWith())
-    damage.hurtBuilding(key, 0, 0, [-1, 2, 0])
-    damage.hurtBuilding(key, 0, 1, null)
-    const effects = new Effects()
-    const group = damage.root.children[0]!
-    const before = new Set(group.children)
-    damage.hurtBuilding(key, 0, 2, null)
-    const pieces = group.children.filter((c) => !before.has(c) && c instanceof Mesh && c.geometry.colors && c.castShadow)
-    expect(pieces.length).toBeGreaterThan(0)
-    for (let i = 0; i < 300; i++) damage.update(0.05, effects, new THREE.Vector3(500, 0, 0))
-    expect(group.children.some((c) => pieces.includes(c))).toBe(false)
-    effects.dispose()
-  })
-
-  it('has the same shards in the same places for everyone', () => {
+  it('has the same walls in the same places for everyone', () => {
     const positions = () => {
       const damage = new BuildingDamage()
       damage.attach(key, tileWith())
-      damage.hurtBuilding(key, 1, 3, [28, 2, 0])
-      const body = damage.root.children[0]!.children.find((c) => c instanceof Mesh && !c.userData.decal && c.castShadow) as Mesh
-      return Array.from(body.geometry.positions)
+      damage.carve(key, 1, [cellAt(1, 30, 2, 0), cellAt(1, 30, 3, 1)], [], [28, 2, 0], false)
+      damage.dent(key, 1, cellAt(1, 40, 2, 0), 24)
+      return Array.from(bodyOf(damage)!.geometry.positions)
     }
     expect(positions()).toEqual(positions())
   })
@@ -323,33 +290,38 @@ describe('a hurt building', () => {
   it('is cleared when it collapses, and not drawn again when the tile returns', () => {
     const damage = new BuildingDamage()
     damage.attach(key, tileWith())
-    damage.hurtBuilding(key, 0, 2, [-2, 2, 0])
+    damage.hurtBuilding(key, 0, 2)
+    damage.carve(key, 0, [cellAt(0, 0, 2, 0)], [], [-2, 2, 0], true)
     damage.fell(key, 0)
     expect(damage.root.children.length).toBe(0)
     expect(damage.fractured(key)).toEqual([])
     damage.detach(key)
     damage.attach(key, tileWith())
-    expect(damage.shown(key, 0)).toEqual({ scorches: 0, shards: 0, missing: 0 })
+    expect(damage.shown(key, 0)).toEqual({ cells: 0 })
   })
 
   it('is hurt as it was when its tile streams back in', () => {
     const damage = new BuildingDamage()
     damage.attach(key, tileWith())
-    damage.hurtBuilding(key, 0, 2, [-1, 2, 0])
+    damage.hurtBuilding(key, 0, 2)
+    damage.carve(key, 0, [cellAt(0, 0, 2, 0)], [], [-1, 2, 0], true)
     const before = damage.shown(key, 0)
+    const body = Array.from(bodyOf(damage)!.geometry.positions)
     damage.detach(key)
     expect(damage.root.children.length).toBe(0)
     expect(damage.fractured(key)).toEqual([0])
     damage.attach(key, tileWith())
     expect(damage.shown(key, 0)).toEqual(before)
+    expect(Array.from(bodyOf(damage)!.geometry.positions)).toEqual(body)
   })
 
   it('remembers damage that came before its tile did', () => {
     const damage = new BuildingDamage()
-    expect(damage.hurtBuilding(key, 1, 1, null)).toBe(true)
+    expect(damage.carve(key, 1, [cellAt(1, 30, 2, 0)], [], null, false)).toBe(true)
     expect(damage.root.children.length).toBe(0)
     damage.attach(key, tileWith())
-    expect(damage.shown(key, 1).shards).toBeGreaterThanOrEqual(4)
+    expect(damage.shown(key, 1).cells).toBe(1)
+    expect(bodyOf(damage)).toBeDefined()
   })
 })
 
@@ -373,7 +345,7 @@ describe('carved message', () => {
 
 describe('a building with cells blasted out of it', () => {
   const key = 5
-  const bodyOf = (damage: BuildingDamage) => damage.root.children[0]!.children.find((c) => c instanceof Mesh && c.castShadow && !c.userData.decal && c.geometry.colors) as Mesh
+  const bodyOf = (damage: BuildingDamage) => damage.root.children[0]!.children.find((c) => c instanceof Mesh && c.castShadow && c.geometry.colors) as Mesh
   const effects = () => new Effects()
 
   it('is drawn as pieces from the first bite, and says so only once', () => {
@@ -388,7 +360,7 @@ describe('a building with cells blasted out of it', () => {
   it('leaves out the triangles of the cells that went', () => {
     const damage = new BuildingDamage()
     damage.attach(key, twoHouses())
-    damage.hurtBuilding(key, 0, 1, null)
+    damage.dent(key, 0, 0, 1)
     const whole = bodyOf(damage).geometry.vertexCount
     // Every cell of the house: nothing of its walls is drawn.
     const all = Array.from({ length: 4000 }, (_, i) => i)
@@ -399,7 +371,7 @@ describe('a building with cells blasted out of it', () => {
   it('throws what was blasted out, and drops what was left hanging', () => {
     const damage = new BuildingDamage()
     damage.attach(key, twoHouses())
-    damage.hurtBuilding(key, 0, 1, null)
+    damage.dent(key, 0, 0, 1)
     const group = damage.root.children[0]!
     const before = group.children.length
     const all = Array.from({ length: 4000 }, (_, i) => i)
@@ -409,6 +381,24 @@ describe('a building with cells blasted out of it', () => {
     for (let i = 0; i < 400; i++) damage.update(0.05, e, new THREE.Vector3(500, 0, 0))
     expect(group.children.length).toBeLessThanOrEqual(before)
     e.dispose()
+  })
+
+  it('pushes a piece of wall in as it takes rounds, and drops the dent when it breaks out', () => {
+    const damage = new BuildingDamage()
+    damage.attach(key, twoHouses())
+    const shell = shellOf(twoHouses(), 0)!
+    const cell = shell.cellAt(0, 1.5, 0)
+    expect(damage.dent(key, 0, cell, 12)).toBe(true)
+    expect(damage.fractured(key)).toEqual([0])
+    const once = Array.from(bodyOf(damage).geometry.positions)
+    expect(damage.dent(key, 0, cell, 12)).toBe(false)
+    const twice = Array.from(bodyOf(damage).geometry.positions)
+    expect(twice.length).toBe(once.length)
+    expect(twice).not.toEqual(once)
+    // The wall breaks out: the dent is gone with the cell, and nothing is left to push.
+    damage.carve(key, 0, [cell], [], [-1, 1.5, 0], true)
+    expect(damage.dent(key, 0, cell, 12)).toBe(false)
+    expect(bodyOf(damage).geometry.positions.length).toBeLessThan(twice.length)
   })
 
   it('is as it was when its tile streams back in, and throws nothing for a catch-up', () => {

@@ -332,6 +332,18 @@ fn bite_building(world: &mut World, id: shared::world::ObjId, blast: &Blast, fal
     take_bite(world, id, blast.point, radius);
 }
 
+/// A round of `damage` lands on standing building `id` at `point`.
+fn chip_building(world: &mut World, id: shared::world::ObjId, point: [f32; 3], damage: u8) {
+    if world.destroyed.iter().any(|&(done, _)| done == Obj::Building(id)) {
+        return;
+    }
+    let Some((_, ruin)) = world.chip(id, point, damage) else { return };
+    if ruin {
+        damage_object(world, Obj::Building(id), u16::MAX, point);
+        world.carves.remove(&id);
+    }
+}
+
 /// Cuts `radius` metres of standing building `id` away around `point`, and has the building come
 /// down if that leaves too little of it.
 fn take_bite(world: &mut World, id: shared::world::ObjId, point: [f32; 3], radius: f32) {
@@ -344,6 +356,28 @@ fn take_bite(world: &mut World, id: shared::world::ObjId, point: [f32; 3], radiu
         world.carves.remove(&id);
     }
 }
+
+/// A vehicle drives into standing building `id` at `point`, `dv` m/s of speed taken out of it in
+/// one step: the piece of wall it hit breaks out, and a hard enough hit takes a bite as well.
+pub fn ram_building(world: &mut World, id: shared::world::ObjId, point: [f32; 3], dv: f32, weight: f32) {
+    let dv = dv * weight;
+    chip_building(world, id, point, (dv * RAM_CHIP_PER_DV).min(255.0) as u8);
+    let radius = ((dv - RAM_BITE_MIN_DV) * RAM_BITE_PER_DV).min(RAM_BITE_MAX);
+    if radius >= CARVE_MIN_RADIUS {
+        take_bite(world, id, point, radius);
+    }
+    damage_object(world, Obj::Building(id), (dv * RAM_HP_PER_DV) as u16, point);
+}
+
+/// Cell damage per m/s a vehicle loses to a wall: a cell has 40, so a hit of 5 m/s breaks one out.
+const RAM_CHIP_PER_DV: f32 = 8.0;
+/// A hit has to take this much speed (m/s) out of the vehicle before it bites, and bites this many
+/// metres of radius per m/s beyond, up to the largest.
+const RAM_BITE_MIN_DV: f32 = 6.0;
+const RAM_BITE_PER_DV: f32 = 0.3;
+const RAM_BITE_MAX: f32 = 3.0;
+/// Building health taken per m/s.
+const RAM_HP_PER_DV: f32 = 12.0;
 
 /// What a blast's centre damage becomes against a tree: they are tougher than people to
 /// a rifle but not to a rocket.
@@ -676,17 +710,12 @@ fn hit_object(world: &mut World, origin: [f32; 3], dir: [f32; 3], reach: f32, da
         };
         damage_object(world, object, amount, origin);
         if let Obj::Building(id) = object {
-            // A round makes a hole about as wide as a bullet is hard, a cell at least.
-            let radius = BULLET_BITE_BASE + damage as f32 * BULLET_BITE_PER_DAMAGE;
+            // The piece of wall it struck takes the round's full damage and breaks out at zero.
             let point = [0, 1, 2].map(|i| origin[i] + dir[i] * (reach + 0.1));
-            take_bite(world, id, point, radius);
+            chip_building(world, id, point, damage);
         }
     }
 }
-
-/// A bullet's bite out of a wall, metres: this and so much more for each point of its damage.
-const BULLET_BITE_BASE: f32 = 0.2;
-const BULLET_BITE_PER_DAMAGE: f32 = 0.004;
 
 /// Fires gun `item` from player `id`'s eye, towards what the crosshair is on.
 fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {

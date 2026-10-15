@@ -1021,17 +1021,19 @@ fn cutting_the_foot_of_a_house_drops_what_stood_on_it() {
 }
 
 #[test]
-fn a_bullet_makes_a_small_hole_in_the_wall() {
+fn a_piece_of_wall_takes_a_few_rounds_and_then_breaks_out() {
     let (mut game, _) = game_with_house();
-    let before = game.world.physics.cast_ray_object([12.0, 1.3, 0.2], [1.0, 0.0, 0.0], 40.0).unwrap().0;
-    assert!((before - 3.0).abs() < 0.1);
-    // A round from the west at the wall, 3 m away.
+    let ray = |game: &Game, z: f32| game.world.physics.cast_ray_object([12.0, 1.3, z], [1.0, 0.0, 0.0], 40.0).unwrap().0;
+    // Rounds from the west at the wall, 3 m away.
+    for round in 1..=3 {
+        hit_object(&mut game.world, [12.0, 1.3, 0.2], [1.0, 0.0, 0.0], 3.0, 12);
+        game.step();
+        assert!((ray(&game, 0.2) - 3.0).abs() < 0.1, "round {round} already broke it");
+    }
     hit_object(&mut game.world, [12.0, 1.3, 0.2], [1.0, 0.0, 0.0], 3.0, 12);
     game.step();
-    let after = game.world.physics.cast_ray_object([12.0, 1.3, 0.2], [1.0, 0.0, 0.0], 40.0).unwrap().0;
-    assert!(after > 12.0, "the round left no hole: {after}");
-    // It is a small one: a metre to the side the wall stands.
-    let beside = game.world.physics.cast_ray_object([12.0, 1.3, 2.2], [1.0, 0.0, 0.0], 40.0).unwrap().0;
-    assert!((beside - 3.0).abs() < 0.1, "{beside}");
+    assert!(ray(&game, 0.2) > 12.0, "the fourth round left no hole");
+    // It is a small one: two metres to the side the wall stands.
+    assert!((ray(&game, 2.4) - 3.0).abs() < 0.1);
     assert!(game.world.destroyed.is_empty());
 }

@@ -7,6 +7,7 @@ import { BuildingDamage } from './render/damage'
 import { Collapses } from './render/rubble'
 import { buildTile, disposeTile, rebuildBuildings, restitchTerrain } from './render/world'
 import { buildWater, disposeWater } from './render/water'
+import { shellOf } from './sim/carve'
 import { RapierMotor, trunkColliderIndex } from './sim/physics'
 import type { Surfaces } from './sim/surface'
 import { groundOf, type Terrain } from './sim/terrain'
@@ -138,16 +139,48 @@ export class WorldView {
     for (const key of touched) this.dropBuildingColliders(key)
   }
 
+  /**
+   * A round of `damage` from this player ended at `(x, y, z)`. If it struck a standing building,
+   * the piece of wall there is drawn pushed in by what it has taken, until the server breaks it out.
+   * Only the player's own rounds do this, and only on their screen.
+   */
+  chipped(x: number, y: number, z: number, damage: number) {
+    const world = this.world
+    if (!world) return
+    const key = tileKey(Math.floor((x + world.halfExtent) / world.tileSize), Math.floor((z + world.halfExtent) / world.tileSize))
+    const solids = this.solids.get(key)
+    if (!solids) return
+    const { tile } = solids
+    const carved = this.damage.carved(key)
+    let best: { index: number; cell: number; distance: number } | null = null
+    tile.buildings.forEach((building, index) => {
+      if (this.goneBuildings.get(key)?.has(index)) return
+      // Only a building the round ended within a metre or two of is worth cutting into cells.
+      const xs = building.footprint.map((p) => p[0])
+      const zs = building.footprint.map((p) => p[1])
+      const margin = 1.6
+      if (x < Math.min(...xs) - margin || x > Math.max(...xs) + margin || z < Math.min(...zs) - margin || z > Math.max(...zs) + margin) return
+      if (y < building.base - margin || y > building.base + building.height + margin) return
+      const shell = shellOf(tile, index)
+      const cell = shell?.nearestCell(x, y, z, carved.get(index)) ?? null
+      if (!shell || cell === null) return
+      const c = shell.centre(cell)
+      const distance = (c[0] / 100 - x) ** 2 + (c[1] / 100 - y) ** 2 + (c[2] / 100 - z) ** 2
+      if (!best || distance < best.distance) best = { index, cell, distance }
+    })
+    if (!best) return
+    const { index, cell } = best as { index: number; cell: number }
+    if (!this.damage.dent(key, index, cell, damage)) return
+    const group = this.groups.get(key)
+    if (group) rebuildBuildings(group, tile, solids.salt, this.undrawnBuildings(key))
+  }
+
   /** The server says these standing buildings are hurt. */
   damaged(buildings: readonly DamagedBuilding[]) {
     for (const b of buildings) {
       const key = tileKey(b.col, b.row)
       if (this.goneBuildings.get(key)?.has(b.index)) continue
-      // The first real damage swaps the whole building in the tile for its shards.
-      if (!this.damage.hurtBuilding(key, b.index, b.stage, b.mark)) continue
-      const group = this.groups.get(key)
-      const solids = this.solids.get(key)
-      if (group && solids) rebuildBuildings(group, solids.tile, solids.salt, this.undrawnBuildings(key))
+      this.damage.hurtBuilding(key, b.index, b.stage)
     }
   }
 

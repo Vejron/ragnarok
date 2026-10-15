@@ -6,6 +6,8 @@
 
 /** Smallest cell, centimetres. Mirrors `CELL_MIN`. */
 export const CELL_MIN = 100
+/** Health of a cell against bullets. Mirrors `CELL_HP`. */
+export const CELL_HP = 40
 /** Mirrors `MAX_CELLS` and `MAX_TRIANGLES`. */
 export const MAX_CELLS = 60_000
 export const MAX_TRIANGLES = 6_000
@@ -137,6 +139,35 @@ export class Shell {
   cellAt(x: number, y: number, z: number): number {
     const at = (axis: number, v: number) => Math.min(this.dims[axis]! - 1, Math.max(0, Math.floor((v * 100 - this.origin[axis]!) / this.cell)))
     return this.index(at(0, x), at(1, y), at(2, z))
+  }
+
+  /**
+   * The standing cell (not in `removed`) nearest the point, metres, if its middle is within a
+   * cell's reach of it: where a round that landed there struck. Mirrors `chip`.
+   */
+  nearestCell(x: number, y: number, z: number, removed: ReadonlySet<number> | undefined): number | null {
+    const at = [x * 100, y * 100, z * 100]
+    const around = (axis: number) => {
+      const i = Math.floor((at[axis]! - this.origin[axis]!) / this.cell)
+      return [Math.max(0, i - 1), Math.min(this.dims[axis]! - 1, i + 1)] as const
+    }
+    const [x0, x1] = around(0)
+    const [y0, y1] = around(1)
+    const [z0, z1] = around(2)
+    let best: number | null = null
+    let nearest = Infinity
+    for (let yi = y0; yi <= y1; yi++) {
+      for (let zi = z0; zi <= z1; zi++) {
+        for (let xi = x0; xi <= x1; xi++) {
+          const id = this.index(xi, yi, zi)
+          if (!this.solid[id] || removed?.has(id)) continue
+          const c = this.centre(id)
+          const d = (c[0] - at[0]!) ** 2 + (c[1] - at[1]!) ** 2 + (c[2] - at[2]!) ** 2
+          if (d < nearest) [best, nearest] = [id, d]
+        }
+      }
+    }
+    return nearest <= this.cell * this.cell * 1.5 ? best : null
   }
 
   /**
