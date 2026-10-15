@@ -1,4 +1,4 @@
-import { Bloom, Fog, Geometry, Material, Mesh, ParticleSystem, Ramp, Scene } from '../../src'
+import { Bloom, Fog, Geometry, Material, Mesh, ParticleSystem, Ramp, Ribbons, Scene } from '../../src'
 import { orbit, setup, statsOverlay } from '../common'
 import { CEL_BANDS, SKY } from '../shared/layout'
 import { Shots } from '../shared/shots'
@@ -52,6 +52,8 @@ scene.add(ground)
 const particles = new ParticleSystem(Math.max(65536, Math.ceil((stress * 1.3) / 64) * 64))
 particles.setGround(heights, side, side, x0, z0, cell)
 scene.add(particles)
+const ribbons = new Ribbons()
+scene.add(ribbons)
 // Gunfire: the game's shot effects as GPU flash records.
 const shots = new Shots()
 scene.add(shots.flashes)
@@ -99,6 +101,14 @@ const frame = (now: number) => {
     const x = (Math.random() - 0.5) * 60, z = (Math.random() - 0.5) * 60
     explosion(x, z)
     shots.burst({ x, y: height(x, z) + 0.5, z }, 3)
+  }
+  // Two missiles looping over the field, each leaving a hot core and a smoke ribbon.
+  ribbons.update(dt)
+  for (let m = 0; m < 2; m++) {
+    const a = t * 1.1 + m * Math.PI
+    const x = Math.cos(a) * 28, z = Math.sin(a) * 28, y = height(x, z) + 9 + Math.sin(a * 2.3) * 4
+    ribbons.extend(`smoke${m}`, x, y, z, { color: 0x555555, colorEnd: 0x999999, alpha: 0.5, life: 2.6, width: 0.9, taper: 2.5, step: 0.4 })
+    ribbons.extend(`fire${m}`, x, y, z, { color: 0xfff2c0, colorEnd: 0xff4a08, glow: 6, alpha: 1, life: 0.35, width: 0.5, blend: 'additive', fog: false, step: 0.3 })
   }
   // A machine gun sweeping across the field, and a shotgun going off now and then.
   if (Math.random() < 0.3) {
