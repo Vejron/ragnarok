@@ -1,5 +1,4 @@
-import { Color, Geometry, Group, InstancedMesh, Mesh, type Material, type Node, cylinderGeometry, icosphereGeometry, mat4 } from '@ragnarok/engine'
-import { toonMaterial } from './toon'
+import { Color, Geometry, Group, InstancedMesh, Mesh, ShaderMaterial, type Material, type Node, cylinderGeometry, icosphereGeometry, mat4 } from '@ragnarok/engine'
 import {
   TREE_BIRCH,
   TREE_BROADLEAF,
@@ -104,6 +103,38 @@ function partGeometry(part: Part): Geometry {
   return geometry
 }
 
+/** Metres from the eye inside which foliage dissolves, so a view from inside a crown stays clear. */
+const NEAR_FADE = 2.5
+
+/**
+ * The foliage's own shader: the cel look of the standard one (four bands, sun and hemisphere), plus
+ * a 4×4 ordered dither that removes pixels within `NEAR_FADE` of the camera. It is a material of its
+ * own so the shared mesh shader, and every other material, stays as it was. Trees take no shadow.
+ */
+const FOLIAGE_WGSL = /* wgsl */ `
+const BANDS_AT = array<f32, 4>(0.376, 0.588, 0.804, 1.0);
+const BAYER_AT = array<f32, 16>(0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+
+fn surface(s: Surface) -> vec4f {
+  let eye = distance(s.world, frame.cameraPos.xyz) / ${NEAR_FADE.toFixed(1)};
+  if (eye < 1.0) {
+    let clip = frame.viewProj * vec4f(s.world, 1.0);
+    let pixel = vec2u((clip.xy / clip.w * 0.5 + 0.5) * frame.viewport.xy);
+    let at = (pixel.y & 3u) * 4u + (pixel.x & 3u);
+    // Copied to a variable first: WGSL only indexes a constant array with a constant.
+    var bayer = BAYER_AT;
+    if (eye < (bayer[at] + 0.5) / 16.0) {
+      discard;
+    }
+  }
+  let band = u32(clamp(dot(s.normal, frame.sunDir.xyz) * 0.5 + 0.5, 0.0, 0.999) * 4.0);
+  let hemi = mix(frame.hemiGround.rgb, frame.hemiSky.rgb, 0.5 * s.normal.y + 0.5);
+  var bands = BANDS_AT;
+  let lit = frame.sunColor.rgb * bands[band] + hemi + pointLight(s.world, s.normal);
+  return vec4f(s.color.rgb / PI * lit, s.color.a);
+}
+`
+
 let shared: { geometries: Map<number, Geometry>; material: Material } | undefined
 
 function prototypes() {
@@ -112,7 +143,7 @@ function prototypes() {
     for (const [kind, parts] of Object.entries(PROTOTYPES)) {
       geometries.set(Number(kind), Geometry.merge(parts.map(partGeometry)))
     }
-    shared = { geometries, material: toonMaterial({ vertexColors: true, nearFade: 2.5 }) }
+    shared = { geometries, material: new ShaderMaterial({ wgsl: FOLIAGE_WGSL, vertexColors: true }) }
   }
   return shared
 }

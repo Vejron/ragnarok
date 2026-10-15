@@ -127,9 +127,9 @@ The style is flat, bright and few-banded, not physically based.
 - **Trees** are instanced: one `InstancedMesh` per archetype per tile (at most ten draw calls per
   tile), built from merged unit-space parts with vertex colours. The parts are low-poly: a crown
   sphere is a 42-vertex icosphere, a cone is seven-sided, trunks have six sides. Normals are smoothed
-  per vertex, so the faces read as bold shapes rather than a faceted mesh. The tree material has `nearFade` set: surfaces within 2.5 m of
-  the eye dissolve in a 4×4 ordered dither (`standard.wgsl.ts`), so standing in a crown, or behind a
-  felled one, you still see what you aim at; the shadow pass ignores it. A felled tree's instance
+  per vertex, so the faces read as bold shapes rather than a faceted mesh. Trees have their own small shader (`FOLIAGE_WGSL` in `trees.ts`): the same four cel
+  bands, plus a 4×4 ordered dither that removes pixels within 2.5 m of the eye, so standing in a crown,
+  or behind a felled one, you still see what you aim at. Trees take no shadow. A felled tree's instance
   is scaled to nothing in place.
 - **Materials are shared** where they can be (per colour for buildings and terrain). Materials cost no
   shader compile in this engine (only the render state picks a pipeline), but sharing keeps the table

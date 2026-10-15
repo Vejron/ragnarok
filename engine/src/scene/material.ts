@@ -37,8 +37,6 @@ export interface MaterialParams {
   depthBias?: number
   depthBiasSlope?: number
   fog?: boolean
-  /** Metres from the camera inside which the surface dissolves in a dither, so a view from inside foliage stays clear. 0 is off. */
-  nearFade?: number
 }
 
 /**
@@ -65,7 +63,6 @@ export class Material {
   depthBias: number
   depthBiasSlope: number
   fog: boolean
-  nearFade: number
   /** Bumped by `needsUpdate`. */
   version = 0
   /** @internal the renderer's slot in the material buffer. */
@@ -89,7 +86,6 @@ export class Material {
     this.depthBias = params.depthBias ?? 0
     this.depthBiasSlope = params.depthBiasSlope ?? 0
     this.fog = params.fog ?? true
-    this.nearFade = params.nearFade ?? 0
   }
 
   /** A material with the same settings, which changes independently. */

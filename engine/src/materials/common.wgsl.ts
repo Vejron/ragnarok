@@ -40,7 +40,6 @@ struct Object {
 struct Material {
   // linear rgb, opacity.
   color: vec4f,
-  // rgb emissive, then the near-fade distance in metres (0 is off).
   emissive: vec4f,
   // flags (MAT_*), ramp row, unused, unused.
   params: vec4u,

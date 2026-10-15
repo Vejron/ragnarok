@@ -51,19 +51,6 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   let mapped = textureSample(normalMap, mapSampler, in.uv).xyz * 2.0 - 1.0;
   let material = materials[in.ids.x];
   let flags = material.params.x;
-  let fade = material.emissive.a;
-  if (fade > 0.0) {
-    // Dissolves within \`fade\` metres of the eye in a 4x4 ordered dither (a Bayer matrix by pixel).
-    let near = distance(in.world, frame.cameraPos.xyz) / fade;
-    if (near < 1.0) {
-      let px = vec2u(in.clip.xy) & vec2u(3u);
-      var bayer = array<f32, 16>(0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
-      let threshold = (bayer[px.y * 4u + px.x] + 0.5) / 16.0;
-      if (near < threshold) {
-        discard;
-      }
-    }
-  }
   var rgb = in.color.rgb * texel.rgb;
   if ((flags & MAT_LIT) != 0u) {
     var n = normalize(in.normal);
