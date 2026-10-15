@@ -14,6 +14,8 @@ export interface GeometryData {
   uvs?: Float32Array
   /** Linear RGB (3 per vertex) or RGBA (4 per vertex) colours. */
   colors?: Float32Array
+  /** Four free floats per vertex, read by ShaderMaterials as `custom`. */
+  custom?: Float32Array
   /** Without indices the vertices are drawn as a triangle list in order. */
   indices?: Uint16Array | Uint32Array
 }
@@ -29,6 +31,7 @@ export class Geometry {
   normals: Float32Array | undefined
   uvs: Float32Array | undefined
   colors: Float32Array | undefined
+  custom: Float32Array | undefined
   indices: Uint16Array | Uint32Array | undefined
   bounds: Sphere = { x: 0, y: 0, z: 0, radius: 0 }
   /** Bumped by `needsUpdate`; the renderer re-uploads when it differs from what it has. */
@@ -42,6 +45,7 @@ export class Geometry {
     this.normals = data.normals
     this.uvs = data.uvs
     this.colors = data.colors
+    this.custom = data.custom
     this.indices = data.indices
     this.computeBounds()
   }

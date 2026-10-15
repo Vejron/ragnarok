@@ -1,4 +1,5 @@
 import { Color } from '../math/vec'
+import type { Texture } from './texture'
 
 let nextId = 1
 
@@ -22,6 +23,10 @@ export interface MaterialParams {
   opacity?: number
   emissive?: Color | number
   vertexColors?: boolean
+  /** Multiplies the colour; sampled at the geometry's uv. */
+  map?: Texture | null
+  /** An object-space normal map (as three's ObjectSpaceNormalMap): the texel is the normal in the mesh's own space. */
+  normalMap?: Texture | null
   ramp?: Ramp | null
   blend?: Blend
   side?: Side
@@ -46,6 +51,8 @@ export class Material {
   opacity: number
   readonly emissive: Color
   vertexColors: boolean
+  map: Texture | null
+  normalMap: Texture | null
   ramp: Ramp | null
   blend: Blend
   side: Side
@@ -66,6 +73,8 @@ export class Material {
     this.opacity = params.opacity ?? 1
     this.emissive = toColor(params.emissive ?? 0x000000)
     this.vertexColors = params.vertexColors ?? false
+    this.map = params.map ?? null
+    this.normalMap = params.normalMap ?? null
     this.ramp = params.ramp ?? null
     this.blend = params.blend ?? 'opaque'
     this.side = params.side ?? 'front'
@@ -92,4 +101,38 @@ export class Material {
 
 function toColor(c: Color | number): Color {
   return typeof c === 'number' ? Color.hex(c) : new Color(c.r, c.g, c.b)
+}
+
+/** A uniform value of a ShaderMaterial: a number is an f32, a Color a vec3f, an array of 2 to 4 numbers a vecNf. */
+export type UniformValue = number | Color | [number, number] | [number, number, number] | [number, number, number, number]
+
+export interface ShaderMaterialParams extends Omit<MaterialParams, 'lit' | 'map' | 'normalMap' | 'ramp'> {
+  /**
+   * WGSL defining `fn surface(s: Surface) -> vec4f`, the fragment's linear colour and alpha before fog.
+   * `Surface` has `world`, `normal` (unit, facing the viewer), `color` (material colour × tint × vertex
+   * colour), `uv`, `custom` (the geometry's custom attribute), `front` and `viewDepth`. Uniforms are
+   * fields of `params`; textures are bound by their names, with `materialSampler` to sample them. The
+   * frame's `frame.cameraPos`, `frame.sunDir`, `frame.fog.w` (seconds) and the rest are in scope too.
+   */
+  wgsl: string
+  uniforms?: Record<string, UniformValue>
+  textures?: Record<string, Texture>
+}
+
+/**
+ * A material with its own fragment code. It draws with its own pipeline, so it does not batch with
+ * standard materials, but meshes sharing one ShaderMaterial and geometry still draw as one call.
+ * Change `uniforms` values freely and call `needsUpdate()` to send them.
+ */
+export class ShaderMaterial extends Material {
+  readonly wgsl: string
+  readonly uniforms: Record<string, UniformValue>
+  readonly textures: Record<string, Texture>
+
+  constructor(params: ShaderMaterialParams) {
+    super({ ...params, lit: false })
+    this.wgsl = params.wgsl
+    this.uniforms = { ...params.uniforms }
+    this.textures = { ...params.textures }
+  }
 }

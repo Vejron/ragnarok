@@ -3,9 +3,10 @@ import { RangeAllocator } from './allocator'
 
 /**
  * One vertex layout for every mesh: position f32×3, normal f32×3, uv f32×2, colour unorm16×4 (linear,
- * so 8 bits would band in the darks). Missing attributes are filled with defaults (up, 0, white).
+ * so 8 bits would band in the darks), and a free f32×4 for custom shaders. Missing attributes are filled
+ * with defaults (up, 0, white, 0).
  */
-export const VERTEX_STRIDE = 40
+export const VERTEX_STRIDE = 56
 export const VERTEX_LAYOUT: GPUVertexBufferLayout = {
   arrayStride: VERTEX_STRIDE,
   attributes: [
@@ -13,6 +14,7 @@ export const VERTEX_LAYOUT: GPUVertexBufferLayout = {
     { shaderLocation: 1, offset: 12, format: 'float32x3' },
     { shaderLocation: 2, offset: 24, format: 'float32x2' },
     { shaderLocation: 3, offset: 32, format: 'unorm16x4' },
+    { shaderLocation: 4, offset: 40, format: 'float32x4' },
   ],
 }
 
@@ -89,10 +91,10 @@ export class GeometryArena {
     const data = new ArrayBuffer(n * VERTEX_STRIDE)
     const f32 = new Float32Array(data)
     const u16 = new Uint16Array(data)
-    const { positions, normals, uvs, colors } = geometry
+    const { positions, normals, uvs, colors, custom } = geometry
     const colorSize = colors ? colors.length / n : 0
     for (let i = 0; i < n; i++) {
-      const f = i * 10
+      const f = i * 14
       f32[f] = positions[i * 3]!
       f32[f + 1] = positions[i * 3 + 1]!
       f32[f + 2] = positions[i * 3 + 2]!
@@ -107,7 +109,13 @@ export class GeometryArena {
         f32[f + 6] = uvs[i * 2]!
         f32[f + 7] = uvs[i * 2 + 1]!
       }
-      const c = i * 20 + 16
+      if (custom) {
+        f32[f + 10] = custom[i * 4]!
+        f32[f + 11] = custom[i * 4 + 1]!
+        f32[f + 12] = custom[i * 4 + 2]!
+        f32[f + 13] = custom[i * 4 + 3]!
+      }
+      const c = i * 28 + 16
       if (colors) {
         u16[c] = unorm16(colors[i * colorSize]!)
         u16[c + 1] = unorm16(colors[i * colorSize + 1]!)

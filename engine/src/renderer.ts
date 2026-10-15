@@ -1,6 +1,8 @@
 import { GeometryArena, VERTEX_LAYOUT, type GeometrySlot } from './gpu/arena'
 import { MaterialTable } from './gpu/materials'
 import { ObjectTable } from './gpu/objects'
+import { MaterialResources } from './gpu/resources'
+import { TextureStore } from './gpu/textures'
 import { GpuTimer } from './gpu/timer'
 import { SHADOW_WGSL } from './materials/shadow.wgsl'
 import { STANDARD_WGSL } from './materials/standard.wgsl'
@@ -8,7 +10,7 @@ import { Frustum } from './math/frustum'
 import * as mat4 from './math/mat4'
 import { OUTPUT_WGSL } from './passes/output.wgsl'
 import type { PerspectiveCamera } from './scene/camera'
-import type { Material } from './scene/material'
+import { ShaderMaterial, type Material } from './scene/material'
 import { InstancedMesh, Mesh } from './scene/mesh'
 import type { Node } from './scene/node'
 import type { Scene } from './scene/scene'
@@ -54,6 +56,8 @@ interface DrawItem {
   record: number
   count: number
   pipeline: number
+  /** The material's resource bind group (textures, or a ShaderMaterial's uniforms). */
+  group: number
   order: number
   depth: number
 }
@@ -61,6 +65,7 @@ interface DrawItem {
 /** A run of consecutive draw-list entries drawn with one call. */
 interface Batch {
   pipeline: number
+  group: number
   slot: GeometrySlot
   first: number
   count: number
@@ -96,7 +101,11 @@ export class Renderer {
   private readonly shadowLayout: GPUPipelineLayout
   private readonly standardModule: GPUShaderModule
   private readonly shadowModule: GPUShaderModule
+  private readonly textures: TextureStore
+  private readonly resources: MaterialResources
   private readonly pipelines: GPURenderPipeline[] = []
+  /** Per pipeline: true for ShaderMaterial pipelines, whose group 1 is the material's own. */
+  private readonly customPipeline: boolean[] = []
   private readonly pipelineKeys = new Map<string, number>()
   private readonly materialPipelines = new Map<number, { version: number; pipeline: number }>()
   private readonly shadowPipelines: GPURenderPipeline[]
@@ -155,6 +164,8 @@ export class Renderer {
 
     this.arena = new GeometryArena(device)
     this.materials = new MaterialTable(device)
+    this.textures = new TextureStore(device)
+    this.resources = new MaterialResources(device, this.textures)
     this.timer = new GpuTimer(device)
     this.frameBuffer = device.createBuffer({ label: 'frame', size: FRAME_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.objects = new ObjectTable(device)
@@ -180,7 +191,7 @@ export class Renderer {
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'comparison' } },
       ],
     })
-    this.mainLayout = device.createPipelineLayout({ bindGroupLayouts: [this.sceneLayout, this.lightingLayout] })
+    this.mainLayout = device.createPipelineLayout({ bindGroupLayouts: [this.sceneLayout, this.lightingLayout, this.resources.texturesLayout] })
     this.shadowLayout = device.createPipelineLayout({ bindGroupLayouts: [this.sceneLayout] })
     this.standardModule = device.createShaderModule({ label: 'standard', code: STANDARD_WGSL })
     this.shadowModule = device.createShaderModule({ label: 'shadow', code: SHADOW_WGSL })
@@ -292,6 +303,7 @@ export class Renderer {
     this.timer.read()
     this.materials.collect()
     this.objects.sweep(this.frameNumber)
+    this.resources.sweep()
 
     stats.instances = this.drawCount
     stats.records = this.objects.count
@@ -343,18 +355,19 @@ export class Renderer {
     const record = this.objects.sync(mesh, this.materials.sync(material), this.frameNumber)
     const count = mesh instanceof InstancedMesh ? mesh.count : 1
     if (inView) {
-      const item = this.item(mesh, slot, record, count, this.pipelineFor(material))
+      const group = material instanceof ShaderMaterial ? this.resources.custom(material) : this.resources.standard(material)
+      const item = this.item(mesh, slot, record, count, this.pipelineFor(material), group)
       const dx = cx - this.camX, dy = cy - this.camY, dz = cz - this.camZ
       item.depth = dx * dx + dy * dy + dz * dz
       ;(material.transparent ? this.transparent : this.opaque).push(item)
     }
-    if (inShadow) this.casters.push(this.item(mesh, slot, record, count, material.side === 'front' ? 0 : 1))
+    if (inShadow) this.casters.push(this.item(mesh, slot, record, count, material.side === 'front' ? 0 : 1, 0))
   }
 
-  private item(mesh: Mesh, slot: GeometrySlot, record: number, count: number, pipeline: number): DrawItem {
+  private item(mesh: Mesh, slot: GeometrySlot, record: number, count: number, pipeline: number, group: number): DrawItem {
     let item = this.pool[this.poolUsed]
     if (!item) {
-      item = { mesh, slot, record, count, pipeline, order: 0, depth: 0 }
+      item = { mesh, slot, record, count, pipeline, group, order: 0, depth: 0 }
       this.pool.push(item)
     }
     this.poolUsed++
@@ -363,6 +376,7 @@ export class Renderer {
     item.record = record
     item.count = count
     item.pipeline = pipeline
+    item.group = group
     item.order = mesh.renderOrder
     item.depth = 0
     return item
@@ -384,10 +398,10 @@ export class Renderer {
       for (let i = 0; i < count; i++) list[first + i] = item.record + i
       this.drawCount += count
       const last = batches[batches.length - 1]
-      if (merge && last && last.pipeline === item.pipeline && last.slot === item.slot && last.first + last.count === first) {
+      if (merge && last && last.pipeline === item.pipeline && last.group === item.group && last.slot === item.slot && last.first + last.count === first) {
         last.count += count
       } else {
-        batches.push({ pipeline: item.pipeline, slot: item.slot, first, count })
+        batches.push({ pipeline: item.pipeline, group: item.group, slot: item.slot, first, count })
       }
     }
   }
@@ -397,18 +411,24 @@ export class Renderer {
   private pipelineFor(material: Material): number {
     const cached = this.materialPipelines.get(material.id)
     if (cached && cached.version === material.version) return cached.pipeline
-    const key = `${material.blend}|${material.side}|${material.depthTest}|${material.depthWrite}|${material.depthBias}|${material.depthBiasSlope}`
+    const program = material instanceof ShaderMaterial ? this.resources.program(material) : null
+    const state = `${material.blend}|${material.side}|${material.depthTest}|${material.depthWrite}|${material.depthBias}|${material.depthBiasSlope}`
+    const key = program ? `${program.shader.key}|${state}` : state
     let pipeline = this.pipelineKeys.get(key)
     if (pipeline === undefined) {
       pipeline = this.pipelines.length
-      this.pipelines.push(this.makePipeline(material, key))
+      const layout = program
+        ? this.device.createPipelineLayout({ bindGroupLayouts: [this.sceneLayout, program.groupLayout] })
+        : this.mainLayout
+      this.pipelines.push(this.makePipeline(material, program ? 'shader material' : state, program?.module ?? this.standardModule, layout))
+      this.customPipeline.push(program !== null)
       this.pipelineKeys.set(key, pipeline)
     }
     this.materialPipelines.set(material.id, { version: material.version, pipeline })
     return pipeline
   }
 
-  private makePipeline(m: Material, label: string): GPURenderPipeline {
+  private makePipeline(m: Material, label: string, module: GPUShaderModule, layout: GPUPipelineLayout): GPURenderPipeline {
     let blend: GPUBlendState | undefined
     if (m.blend === 'alpha') {
       blend = {
@@ -423,9 +443,9 @@ export class Renderer {
     }
     return this.device.createRenderPipeline({
       label,
-      layout: this.mainLayout,
-      vertex: { module: this.standardModule, entryPoint: 'vs', buffers: [VERTEX_LAYOUT] },
-      fragment: { module: this.standardModule, entryPoint: 'fs', targets: [{ format: HDR_FORMAT, blend }] },
+      layout,
+      vertex: { module, entryPoint: 'vs', buffers: [VERTEX_LAYOUT] },
+      fragment: { module, entryPoint: 'fs', targets: [{ format: HDR_FORMAT, blend }] },
       primitive: { topology: 'triangle-list', cullMode: m.side === 'front' ? 'back' : m.side === 'back' ? 'front' : 'none' },
       depthStencil: {
         format: DEPTH_FORMAT,
@@ -593,14 +613,31 @@ export class Renderer {
       timestampWrites: this.timer.pass('main'),
     })
     pass.setBindGroup(0, this.sceneGroup!)
-    pass.setBindGroup(1, this.lightingGroup!)
     pass.setVertexBuffer(0, this.arena.vertexBuffer)
     pass.setIndexBuffer(this.arena.indexBuffer, 'uint32')
     let current = -1
+    // What is bound at groups 1 and 2: -1 for the lighting group at 1, else a resource group id.
+    let group1 = -2
+    let group2 = -2
     for (const batch of this.mainBatches) {
       if (batch.pipeline !== current) {
         pass.setPipeline(this.pipelines[batch.pipeline]!)
         current = batch.pipeline
+      }
+      if (this.customPipeline[batch.pipeline]) {
+        if (group1 !== batch.group) {
+          pass.setBindGroup(1, this.resources.group(batch.group))
+          group1 = batch.group
+        }
+      } else {
+        if (group1 !== -1) {
+          pass.setBindGroup(1, this.lightingGroup!)
+          group1 = -1
+        }
+        if (group2 !== batch.group) {
+          pass.setBindGroup(2, this.resources.group(batch.group))
+          group2 = batch.group
+        }
       }
       pass.drawIndexed(batch.slot.indexCount, batch.count, batch.slot.firstIndex, batch.slot.baseVertex, batch.first)
       this.stats.drawCalls++
@@ -645,7 +682,7 @@ export class Renderer {
 }
 
 function byStateThenGeometry(a: DrawItem, b: DrawItem) {
-  return a.order - b.order || a.pipeline - b.pipeline || a.slot.firstIndex - b.slot.firstIndex
+  return a.order - b.order || a.pipeline - b.pipeline || a.group - b.group || a.slot.firstIndex - b.slot.firstIndex
 }
 
 function byOrderThenFarToNear(a: DrawItem, b: DrawItem) {

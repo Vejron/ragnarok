@@ -1,4 +1,5 @@
 import { COMMON_WGSL } from './common.wgsl'
+import { VERTEX_WGSL } from './vertex.wgsl'
 
 /**
  * The shader for every ordinary mesh. Toon lighting matches three's MeshToonMaterial with a gradient
@@ -7,49 +8,17 @@ import { COMMON_WGSL } from './common.wgsl'
  */
 export const STANDARD_WGSL = /* wgsl */ `
 ${COMMON_WGSL}
+${VERTEX_WGSL}
 
 // Group 1 holds what the shadow pass must not see bound: it renders into the shadow map.
 @group(1) @binding(0) var ramps: texture_2d<f32>;
 @group(1) @binding(1) var shadowMap: texture_depth_2d;
 @group(1) @binding(2) var shadowSampler: sampler_comparison;
 
-struct VertexIn {
-  @location(0) position: vec3f,
-  @location(1) normal: vec3f,
-  @location(2) uv: vec2f,
-  @location(3) color: vec4f,
-  @builtin(instance_index) instance: u32,
-}
-
-struct VertexOut {
-  @builtin(position) clip: vec4f,
-  @location(0) world: vec3f,
-  @location(1) normal: vec3f,
-  @location(2) color: vec4f,
-  @location(3) uv: vec2f,
-  @location(4) viewDepth: f32,
-  @location(5) @interpolate(flat) ids: vec2u,
-}
-
-@vertex
-fn vs(in: VertexIn) -> VertexOut {
-  let object = objects[drawList[in.instance]];
-  let material = materials[object.misc.x];
-  let world = object.model * vec4f(in.position, 1.0);
-  var out: VertexOut;
-  out.clip = frame.viewProj * world;
-  out.world = world.xyz;
-  out.normal = normalMatrix(object.model) * in.normal;
-  var color = material.color * object.tint;
-  if ((material.params.x & MAT_VERTEX_COLORS) != 0u) {
-    color *= in.color;
-  }
-  out.color = color;
-  out.uv = in.uv;
-  out.viewDepth = -(frame.view * world).z;
-  out.ids = vec2u(object.misc.x, object.misc.y);
-  return out;
-}
+// Group 2 is the material's textures; materials without them share a white map and a flat normal map.
+@group(2) @binding(0) var colorMap: texture_2d<f32>;
+@group(2) @binding(1) var normalMap: texture_2d<f32>;
+@group(2) @binding(2) var mapSampler: sampler;
 
 fn sunShadow(world: vec3f, normal: vec3f) -> f32 {
   if (frame.shadow.z == 0.0) {
@@ -77,11 +46,17 @@ fn sunShadow(world: vec3f, normal: vec3f) -> f32 {
 
 @fragment
 fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
+  // Sampled before any branching: implicit-derivative sampling must be in uniform control flow.
+  let texel = textureSample(colorMap, mapSampler, in.uv);
+  let mapped = textureSample(normalMap, mapSampler, in.uv).xyz * 2.0 - 1.0;
   let material = materials[in.ids.x];
   let flags = material.params.x;
-  var rgb = in.color.rgb;
+  var rgb = in.color.rgb * texel.rgb;
   if ((flags & MAT_LIT) != 0u) {
     var n = normalize(in.normal);
+    if ((flags & MAT_NORMAL_MAP) != 0u) {
+      n = normalize(normalMatrix(objects[in.ids.z].model) * mapped);
+    }
     if (!front) {
       n = -n;
     }
@@ -95,9 +70,6 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
     let hemi = mix(frame.hemiGround.rgb, frame.hemiSky.rgb, 0.5 * n.y + 0.5);
     rgb = rgb / PI * (frame.sunColor.rgb * ramp * shadow + hemi) + material.emissive.rgb;
   }
-  if ((flags & MAT_FOG) != 0u && frame.fog.z > 0.0) {
-    rgb = mix(rgb, frame.fogColor.rgb, smoothstep(frame.fog.x, frame.fog.y, in.viewDepth));
-  }
-  return vec4f(rgb, in.color.a);
+  return vec4f(applyFog(rgb, flags, in.viewDepth), in.color.a * texel.a);
 }
 `
