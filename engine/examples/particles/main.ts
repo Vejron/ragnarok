@@ -1,4 +1,4 @@
-import { Fog, Geometry, Material, Mesh, ParticleSystem, Ramp, Scene } from '../../src'
+import { Bloom, Fog, Geometry, Material, Mesh, ParticleSystem, Ramp, Scene } from '../../src'
 import { orbit, setup, statsOverlay } from '../common'
 import { CEL_BANDS, SKY } from '../shared/layout'
 import { Shots } from '../shared/shots'
@@ -20,6 +20,7 @@ scene.sun.position.set(70, 80, 55)
 scene.sun.shadow.enabled = true
 scene.sun.shadow.span = 120
 scene.toneMapping = 'neutral'
+scene.bloom = new Bloom()
 
 // Rolling ground, and the same heights as the particles' bounce field.
 const side = 161, cell = 1, x0 = -80, z0 = -80

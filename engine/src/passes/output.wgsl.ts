@@ -11,11 +11,15 @@ struct Output {
   ink: vec4f,
   // camera near, camera far, unused, unused.
   clip: vec4f,
+  // bloom strength, unused, unused, unused.
+  bloom: vec4f,
 }
 
 @group(0) @binding(0) var<uniform> output: Output;
 @group(0) @binding(1) var hdr: texture_2d<f32>;
 @group(0) @binding(2) var depth: ${multisampled ? 'texture_depth_multisampled_2d' : 'texture_depth_2d'};
+@group(0) @binding(3) var bloom: texture_2d<f32>;
+@group(0) @binding(4) var bloomSampler: sampler;
 
 @vertex
 fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
@@ -75,6 +79,10 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
     let edge = smoothstep(threshold, threshold * 1.6, jump);
     // The line darkens what it is drawn over, so the hue carries through.
     c = mix(c, c * output.ink.x, edge * output.ink.y);
+  }
+  if (output.bloom.x > 0.0) {
+    let uv = (vec2f(p) + 0.5) / vec2f(textureDimensions(hdr));
+    c += textureSampleLevel(bloom, bloomSampler, uv, 0.0).rgb * output.bloom.x;
   }
   c *= output.params.y;
   if (output.params.x == 1.0) {

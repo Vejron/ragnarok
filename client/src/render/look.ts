@@ -10,6 +10,8 @@ export interface Look {
   far: boolean
   /** Dark outlines wherever one thing meets another: a cartoon's ink. */
   ink: boolean
+  /** A glow around fire, tracers and flashes. */
+  bloom: boolean
 }
 
 const KEY = 'ragnarok.look'
@@ -24,7 +26,7 @@ const RESET_ON_BUMP: (keyof Look)[] = ['ink']
 /** The long shadows are off on phones and tablets, where they cost fill rate and memory. */
 export function defaultLook(): Look {
   const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
-  return { soft: true, contact: true, far: !coarse, ink: true }
+  return { soft: true, contact: true, far: !coarse, ink: true, bloom: !coarse }
 }
 
 export function loadLook(): Look {

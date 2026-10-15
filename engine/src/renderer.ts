@@ -10,6 +10,7 @@ import { SHADOW_WGSL } from './materials/shadow.wgsl'
 import { STANDARD_WGSL } from './materials/standard.wgsl'
 import { Frustum } from './math/frustum'
 import * as mat4 from './math/mat4'
+import { Bloom } from './passes/bloom'
 import { outputWgsl } from './passes/output.wgsl'
 import type { PerspectiveCamera } from './scene/camera'
 import { ShaderMaterial, type Material } from './scene/material'
@@ -88,7 +89,7 @@ export class Renderer {
   height = 1
   /** Drawing-buffer pixels per CSS pixel, from the last `setSize`. */
   pixelRatio = 1
-  private readonly outputData = new Float32Array(12)
+  private readonly outputData = new Float32Array(16)
 
   private readonly context: GPUCanvasContext
   private readonly arena: GeometryArena
@@ -118,6 +119,8 @@ export class Renderer {
   private readonly shadowPipelines: GPURenderPipeline[]
   private readonly outputPipeline: GPURenderPipeline
   private readonly outputUniform: GPUBuffer
+  private readonly bloom: Bloom
+  private readonly bloomSampler: GPUSampler
   private readonly comparisonSampler: GPUSampler
   private sceneGroup: GPUBindGroup | null = null
   private sceneGroupKey = ''
@@ -228,7 +231,9 @@ export class Renderer {
       fragment: { module: outputModule, entryPoint: 'fs', targets: [{ format: this.format }] },
       primitive: { topology: 'triangle-list' },
     })
-    this.outputUniform = device.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    this.bloom = new Bloom(device)
+    this.bloomSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' })
+    this.outputUniform = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.setSize(canvas.clientWidth || 1, canvas.clientHeight || 1, 1)
   }
 
@@ -263,12 +268,15 @@ export class Renderer {
       format: HDR_FORMAT,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     })
+    this.bloom.resize(w, h, this.hdrTarget)
     this.outputGroup = this.device.createBindGroup({
       layout: this.outputPipeline.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: { buffer: this.outputUniform } },
         { binding: 1, resource: this.hdrTarget.createView() },
         { binding: 2, resource: this.depthTarget.createView() },
+        { binding: 3, resource: this.bloom.view },
+        { binding: 4, resource: this.bloomSampler },
       ],
     })
   }
@@ -326,6 +334,8 @@ export class Renderer {
     this.mainPass(encoder, scene)
     if (this.effects.length) this.effectsPass(encoder, effects)
     if (this.overlay.length) this.overlayPass(encoder)
+    const bloom = scene.bloom
+    if (bloom && bloom.strength > 0) this.bloom.encode(encoder, bloom.threshold, bloom.knee, bloom.radius)
     this.outputPass(encoder, scene, camera)
     this.timer.resolve(encoder)
     this.device.queue.submit([encoder.finish()])
@@ -760,6 +770,7 @@ export class Renderer {
     o[6] = ink?.threshold ?? 0
     o[8] = camera.near
     o[9] = camera.far
+    o[12] = scene.bloom?.strength ?? 0
     this.device.queue.writeBuffer(this.outputUniform, 0, o)
     const pass = encoder.beginRenderPass({
       label: 'output',

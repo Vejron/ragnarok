@@ -1,4 +1,4 @@
-import { Fog, Ink, PerspectiveCamera, Renderer, Scene as EngineScene } from '@ragnarok/engine'
+import { Bloom, Fog, Ink, PerspectiveCamera, Renderer, Scene as EngineScene } from '@ragnarok/engine'
 import { GunSightView } from './gunsight'
 import { ContactShadows } from './contact'
 import { setWaterLight } from './water'
@@ -124,6 +124,7 @@ export class Scene {
     this.contact.active = look.contact
     this.setShadowReach(look.far)
     scene.ink = look.ink ? (scene.ink ?? new Ink()) : null
+    scene.bloom = look.bloom ? (scene.bloom ?? new Bloom()) : null
   }
 
   private setShadowReach(far: boolean) {

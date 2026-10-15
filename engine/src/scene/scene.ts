@@ -49,6 +49,18 @@ export class Ink {
   width = 1.2
 }
 
+/** Glow around anything brighter than `threshold` in the HDR image (fire, tracers, muzzle flashes). */
+export class Bloom {
+  /** How much of the blurred glow is added back. */
+  strength = 0.6
+  /** Linear HDR brightness where the glow starts. */
+  threshold = 1
+  /** Softness of that start, in the same units. */
+  knee = 0.5
+  /** How wide the glow spreads; 1 is the default tent. */
+  radius = 1
+}
+
 /** The root of what is drawn, with the lighting and atmosphere that apply to all of it. */
 export class Scene extends Node {
   readonly background = new Color(0, 0, 0)
@@ -56,6 +68,7 @@ export class Scene extends Node {
   readonly hemisphere = new Hemisphere()
   fog: Fog | null = null
   ink: Ink | null = null
+  bloom: Bloom | null = null
   toneMapping: ToneMapping = 'none'
   exposure = 1
 }
