@@ -6,7 +6,6 @@ import { FallingTrees } from './render/falling'
 import { BuildingDamage } from './render/damage'
 import { Collapses } from './render/rubble'
 import { buildTile, disposeTile, rebuildBuildings, restitchTerrain } from './render/world'
-import { setTreeDetail } from './render/trees'
 import { buildWater, disposeWater } from './render/water'
 import { RapierMotor, trunkColliderIndex } from './sim/physics'
 import type { Surfaces } from './sim/surface'
@@ -37,8 +36,6 @@ export class WorldView {
   readonly waterRoot = new Group()
 
   private readonly groups = new Map<number, Group>()
-  /** Each tile's footprint `[x0, z0, x1, z1]`, for the distance its trees are drawn at. */
-  private readonly boxes = new Map<number, number[]>()
   private readonly solids = new Map<number, { tile: TileData; salt: number; walk: TileSolids; drive: TileSolids }>()
   /** Trees that fell, by tile then index, with the way they fell: replayed onto tiles that stream in later. */
   private readonly fellTrees = new Map<number, Map<number, number>>()
@@ -53,10 +50,6 @@ export class WorldView {
     this.fallingTrees.update(dt)
     this.collapses.update(dt, effects)
     this.damage.update(dt, effects, camera)
-    for (const [key, group] of this.groups) {
-      const box = this.boxes.get(key)
-      if (box) setTreeDetail(group, box, camera.x, camera.z)
-    }
   }
 
   /** Draws a streamed-in tile and makes it solid for both predicted simulations. Returns how to undo it. */
@@ -74,11 +67,6 @@ export class WorldView {
     this.terrain?.set(ref, ground)
     this.surfaces?.add(ref, tile, ground)
     this.groups.set(key, group)
-    if (this.world) {
-      const x0 = -this.world.halfExtent + ref.col * this.world.tileSize
-      const z0 = -this.world.halfExtent + ref.row * this.world.tileSize
-      this.boxes.set(key, [x0, z0, x0 + this.world.tileSize, z0 + this.world.tileSize])
-    }
     // Tiles already in place were shaded without this one beside them: close the seams.
     if (this.terrain && ground) {
       for (const [dc, dr] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]] as const) {
@@ -102,7 +90,6 @@ export class WorldView {
       disposeTile(group)
       if (water) disposeWater(water)
       this.groups.delete(key)
-      this.boxes.delete(key)
       this.terrain?.delete(ref)
       this.surfaces?.delete(ref)
       this.motor?.removeTile(walk)

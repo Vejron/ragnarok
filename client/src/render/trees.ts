@@ -82,20 +82,15 @@ const PROTOTYPES: Record<number, Part[]> = {
   ],
 }
 
-/** Metres from a tile's edge beyond which its trees are drawn with the cheaper `far` prototypes and cast no shadow. */
-export const FAR_TREES = 110
-
-function partGeometry(part: Part, far: boolean): Geometry {
+function partGeometry(part: Part): Geometry {
   let geometry: Geometry
   if (part.shape === 'ellipsoid') {
     // A low-poly sphere: 42 welded vertices and 80 triangles, so the crown reads as a few bold shapes.
-    // Far away it is the bare icosahedron, 20 triangles.
-    geometry = icosphereGeometry(1, far ? 0 : 1).scale(part.rx!, part.ry!, part.rx!).translate(part.x ?? 0, part.y0, part.z ?? 0)
+    geometry = icosphereGeometry(1, 1).scale(part.rx!, part.ry!, part.rx!).translate(part.x ?? 0, part.y0, part.z ?? 0)
   } else {
     const height = part.y1! - part.y0
-    const sides = far ? [5, 4] : [7, 6]
     // A cone is a cylinder that closes to a point at the top.
-    geometry = (part.shape === 'cone' ? cylinderGeometry(0, part.rx!, height, sides[0]!) : cylinderGeometry(part.rx! * 0.8, part.rx!, height, sides[1]!)).translate(0, part.y0 + height / 2, 0)
+    geometry = (part.shape === 'cone' ? cylinderGeometry(0, part.rx!, height, 7) : cylinderGeometry(part.rx! * 0.8, part.rx!, height, 6)).translate(0, part.y0 + height / 2, 0)
   }
   // Indexed and welded, so the parts merge and each vertex is shared: position + normal + colour.
   geometry.uvs = undefined
@@ -140,17 +135,15 @@ fn surface(s: Surface) -> vec4f {
 }
 `
 
-let shared: { geometries: Map<number, Geometry>; far: Map<number, Geometry>; material: Material } | undefined
+let shared: { geometries: Map<number, Geometry>; material: Material } | undefined
 
 function prototypes() {
   if (!shared) {
     const geometries = new Map<number, Geometry>()
-    const far = new Map<number, Geometry>()
     for (const [kind, parts] of Object.entries(PROTOTYPES)) {
-      geometries.set(Number(kind), Geometry.merge(parts.map((part) => partGeometry(part, false))))
-      far.set(Number(kind), Geometry.merge(parts.map((part) => partGeometry(part, true))))
+      geometries.set(Number(kind), Geometry.merge(parts.map(partGeometry)))
     }
-    shared = { geometries, far, material: new ShaderMaterial({ wgsl: FOLIAGE_WGSL, vertexColors: true }) }
+    shared = { geometries, material: new ShaderMaterial({ wgsl: FOLIAGE_WGSL, vertexColors: true }) }
   }
   return shared
 }
@@ -182,8 +175,6 @@ export function standaloneTree(tree: Tree): { pivot: Group; mesh: Mesh } {
  * meshes, by shrinking it to nothing. False if it is not there, or already gone.
  */
 export function removeTreeInstance(group: Node, index: number): boolean {
-  let removed = false
-  // Both the near and the far mesh of the tree's archetype hold it.
   for (const child of group.children) {
     const slots = child.userData.treeSlots as Map<number, number> | undefined
     const slot = slots?.get(index)
@@ -193,33 +184,19 @@ export function removeTreeInstance(group: Node, index: number): boolean {
     const at = child.matrices
     child.setMatrixAt(slot, mat4.compose(mat4.create(), at[slot * 16 + 12]!, at[slot * 16 + 13]!, at[slot * 16 + 14]!, 0, 0, 0, 1, 0, 0, 0))
     child.needsUpdate()
-    removed = true
+    return true
   }
-  return removed
+  return false
 }
 
 /**
- * Swaps a tile's trees between the near and far meshes: `far` when the camera is more than
- * `FAR_TREES` from the tile's box `[x0, z0, x1, z1]`, so every tree of a far tile is past it.
- */
-export function setTreeDetail(group: Node, box: readonly number[], x: number, z: number) {
-  const dx = Math.max(box[0]! - x, 0, x - box[2]!)
-  const dz = Math.max(box[1]! - z, 0, z - box[3]!)
-  const far = dx * dx + dz * dz > FAR_TREES * FAR_TREES
-  for (const child of group.children) {
-    const lod = child.userData.treeLod as 'near' | 'far' | undefined
-    if (lod) child.visible = (lod === 'far') === far
-  }
-}
-
-/**
- * One tile's trees: one instanced mesh per archetype present and per detail (near, far; one of
- * them drawn), so at most ten draw calls however many trees there are. The geometry and material are shared by all tiles (`disposeTile` leaves
+ * One tile's trees: one instanced mesh per archetype present, so at most ten draw calls however
+ * many trees there are. The geometry and material are shared by all tiles (`disposeTile` leaves
  * them), only the instance buffers belong to the tile.
  */
 export function buildTrees(trees: readonly Tree[]): InstancedMesh[] {
   if (trees.length === 0) return []
-  const { geometries, far, material } = prototypes()
+  const { geometries, material } = prototypes()
   const byKind = new Map<number, { tree: Tree; index: number }[]>()
   trees.forEach((tree, index) => {
     const list = byKind.get(tree.kind) ?? []
@@ -229,27 +206,21 @@ export function buildTrees(trees: readonly Tree[]): InstancedMesh[] {
   const matrix = mat4.create()
   const meshes: InstancedMesh[] = []
   for (const [kind, list] of byKind) {
-    for (const lod of ['near', 'far'] as const) {
-      const set = lod === 'far' ? far : geometries
-      const geometry = set.get(kind) ?? set.get(TREE_BIRCH)!
-      const mesh = new InstancedMesh(geometry, material, list.length)
-      // Which instance is which tree of the tile, so one can be felled.
-      const slots = new Map<number, number>()
-      mesh.userData.treeSlots = slots
-      mesh.userData.treeLod = lod
-      list.forEach(({ tree, index }, i) => {
-        slots.set(index, i)
-        const half = spin(tree) / 2
-        mesh.setMatrixAt(i, mat4.compose(matrix, tree.x, tree.base, tree.z, 0, Math.sin(half), 0, Math.cos(half), tree.crown, tree.height, tree.crown))
-      })
-      mesh.needsUpdate()
-      // Far trees are too small to shadow anything worth the draw.
-      mesh.castShadow = lod === 'near'
-      mesh.visible = lod === 'near'
-      mesh.receiveShadow = false
-      mesh.userData.sharedGeometry = true
-      meshes.push(mesh)
-    }
+    const geometry = geometries.get(kind) ?? geometries.get(TREE_BIRCH)!
+    const mesh = new InstancedMesh(geometry, material, list.length)
+    // Which instance is which tree of the tile, so one can be felled.
+    const slots = new Map<number, number>()
+    mesh.userData.treeSlots = slots
+    list.forEach(({ tree, index }, i) => {
+      slots.set(index, i)
+      const half = spin(tree) / 2
+      mesh.setMatrixAt(i, mat4.compose(matrix, tree.x, tree.base, tree.z, 0, Math.sin(half), 0, Math.cos(half), tree.crown, tree.height, tree.crown))
+    })
+    mesh.needsUpdate()
+    mesh.castShadow = true
+    mesh.receiveShadow = false
+    mesh.userData.sharedGeometry = true
+    meshes.push(mesh)
   }
   return meshes
 }
