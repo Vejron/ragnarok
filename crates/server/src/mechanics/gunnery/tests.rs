@@ -33,7 +33,7 @@ fn join(game: &mut Game) -> (u32, mpsc::Receiver<crate::game::Outgoing>) {
 /// Puts `id` straight into a seat of vehicle `vid`.
 fn seat(game: &mut Game, id: u32, vid: u32, index: usize) {
     game.world.vehicles.get_mut(&vid).unwrap().seats[index] = Some(id);
-    game.world.players.get_mut(&id).unwrap().seat = Some(Seat { vehicle: vid, index });
+    game.world.players.get_mut(&id).unwrap().seat = Some(Seat { vehicle: vid, index, remote: false });
 }
 
 fn tank(game: &Game) -> u32 {

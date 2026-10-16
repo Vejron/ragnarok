@@ -133,6 +133,51 @@ pub(in crate::physics) fn fly(body: &mut RigidBody, controls: CarControls, dt: f
     body.add_force(up * (accel * body.mass()), true);
 }
 
+/// One tick of an FPV drone with its motors running. It is flown by velocity: the stick and the look
+/// ask for one (see `DRONE_SPEED`), and the rotors push towards it as hard as `DRONE_MAX_ACCEL` lets them,
+/// on top of holding the drone up. The hull leans the way they push and turns towards where its pilot
+/// looks. Everything is a function of the body's state and the controls alone, so the client can replay it.
+pub(in crate::physics) fn fly_drone(body: &mut RigidBody, controls: CarControls, dt: f32) {
+    let rotation = *body.rotation();
+    let up = rotation * Vector::Y;
+    let nose = rotation * Vector::new(0.0, 0.0, -1.0);
+    let flat = Vector::new(nose.x, 0.0, nose.z);
+    let heading = if flat.length() > 1e-3 { flat.normalize() } else { Vector::new(0.0, 0.0, -1.0) };
+    let right = heading.cross(Vector::Y);
+    let facing = (-heading.x).atan2(-heading.z);
+
+    let throttle = controls.throttle.clamp(-1.0, 1.0);
+    let steer = controls.steer.clamp(-1.0, 1.0);
+    let lift = controls.lift.clamp(-1.0, 1.0);
+    let [aim_yaw, aim_pitch] = controls.aim.unwrap_or([facing, 0.0]);
+    // Forward follows the look up and down; backing off stays level.
+    let (rise, level) = if throttle > 0.0 { aim_pitch.sin_cos() } else { (0.0, 1.0) };
+    let mut wanted = heading * (throttle * level * DRONE_SPEED) + right * (steer * DRONE_STRAFE_SPEED);
+    wanted.y = throttle.max(0.0) * rise * DRONE_SPEED + if lift > 0.0 { lift * DRONE_CLIMB_SPEED } else { lift * DRONE_SINK_SPEED };
+    let headroom = ((DRONE_CEILING - body.translation().y) / 20.0).clamp(-1.0, 1.0);
+    if wanted.y > 0.0 {
+        wanted.y *= headroom.max(0.0);
+    }
+    if headroom < 0.0 {
+        wanted.y = wanted.y.min(headroom * DRONE_CLIMB_SPEED);
+    }
+    let mut push = (wanted - body.linvel()) * DRONE_ACCEL_GAIN;
+    let size = push.length();
+    if size > DRONE_MAX_ACCEL {
+        push *= DRONE_MAX_ACCEL / size;
+    }
+    // A force rather than an impulse: it is integrated together with gravity, so hovering is exact.
+    body.add_force((push + Vector::Y * CAR_GRAVITY) * body.mass(), true);
+
+    // The rotors tilt along what they push, never more than about 60 degrees over.
+    let lean = Vector::new(push.x, (push.y + CAR_GRAVITY).max(CAR_GRAVITY * 0.5), push.z).normalize();
+    let mut turn = up.cross(lean) * DRONE_LEVEL_GAIN;
+    // + about Y turns left, as + yaw does.
+    turn.y = (shared::quant::wrap_angle(aim_yaw - facing) * DRONE_YAW_GAIN).clamp(-DRONE_YAW_RATE, DRONE_YAW_RATE);
+    let current = body.angvel();
+    body.set_angvel(current + (turn - current) * (DRONE_RESPONSE * dt).min(1.0), true);
+}
+
 /// One tick of a walker: its two legs push the hull up from the ground, a torque keeps it upright and
 /// the driver walks and turns it. `feet` is how far below each hip the ground is, `None` where it is
 /// out of reach; a leg is a spring that pushes only while the foot is within `WALKER_LEG_LENGTH`.

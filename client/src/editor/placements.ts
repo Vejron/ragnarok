@@ -44,6 +44,7 @@ export const ITEM_KINDS: { item: number; name: string; count: number }[] = [
   { item: 3, name: 'Grenade', count: 2 },
   { item: 4, name: 'Bandage', count: 2 },
   { item: 6, name: 'Golden egg', count: 1 },
+  { item: 8, name: 'FPV drone', count: 1 },
 ]
 
 export const HEADINGS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'] as const

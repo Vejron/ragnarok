@@ -66,6 +66,8 @@ pub const KIND_STRV: u8 = 8;
 pub const KIND_MORTAR: u8 = 9;
 /// The Tesla Roadster, a sports car with cold-gas thrusters: boost, hop and hover. Two seats.
 pub const KIND_ROADSTER: u8 = 10;
+/// An FPV drone, flown from afar by the player who launched it. Gone once it blows up or its pilot lets go.
+pub const KIND_DRONE: u8 = 11;
 
 /// Health of a fresh vehicle of `kind`. Zero on the wire means wrecked.
 pub fn vehicle_hp(kind: u8) -> u8 {
@@ -130,6 +132,8 @@ pub const WEAPON_RICOCHET: u8 = 16;
 pub const WEAPON_TURRET: u8 = 17;
 /// A mortar bomb going off.
 pub const WEAPON_MORTAR: u8 = 18;
+/// An FPV drone's charge going off; a shot-down one's pop too.
+pub const WEAPON_DRONE: u8 = 19;
 
 /// How a stickman died, as sent in a `Kill`, so every client can stage the death to match.
 pub const DEATH_BODY: u8 = 0;
@@ -286,7 +290,7 @@ pub struct VehicleState {
     pub damage: Option<[u8; 8]>,
     /// A plane's pilot weapons and engine, `nil` for anything else.
     pub arms: Option<Arms>,
-    /// A Roadster's air tank and which nozzles are firing, `nil` for anything else.
+    /// A Roadster's air tank and which nozzles are firing, or a drone's battery in `air`; `nil` for anything else.
     pub thrust: Option<Thrust>,
 }
 
@@ -375,7 +379,8 @@ pub const ARMS_JAMMED: u8 = 1 << 1;
 pub const ARMS_REAR_JAMMED: u8 = 1 << 2;
 
 /// A Roadster's thrusters: `[air, flags]`. `air` is what is left in the tank, 0..=255 of full;
-/// `flags` are `THRUST_*`, the nozzles firing this tick.
+/// `flags` are `THRUST_*`, the nozzles firing this tick. A drone sends its battery as `air`, with
+/// `THRUST_LINKED` set while its pilot still flies it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Thrust {
     pub air: u8,
@@ -385,6 +390,8 @@ pub struct Thrust {
 /// `Thrust` flags: the rear (boost) nozzles and the lift (hop and hover) nozzles.
 pub const THRUST_BOOST: u8 = 1 << 0;
 pub const THRUST_LIFT: u8 = 1 << 1;
+/// A drone's: its pilot is still flying it, rather than it falling with the link lost.
+pub const THRUST_LINKED: u8 = 1 << 2;
 
 /// The motion a driver needs to predict their own vehicle, which the vehicle's pose does not
 /// carry. Sent only to the player in the driver seat: `[vx, vy, vz, wx, wy, wz, steer, spin]`.
@@ -618,7 +625,7 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 28, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
+        148, 0, 29, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[

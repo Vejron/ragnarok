@@ -17,7 +17,7 @@ use rapier3d::control::{DynamicRayCastVehicleController, WheelTuning};
 use rapier3d::prelude::*;
 use shared::consts::*;
 use shared::quant::from_cm;
-use shared::protocol::{DAMAGE_WHEELS, THRUST_BOOST, THRUST_LIFT, KIND_HELI, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, WHEEL_GONE, vehicle_hp};
+use shared::protocol::{DAMAGE_WHEELS, THRUST_BOOST, THRUST_LIFT, KIND_DRONE, KIND_HELI, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, WHEEL_GONE, vehicle_hp};
 
 /// Gravity acting on vehicle bodies. Stickmen use `GRAVITY`; the ray-cast suspension is tuned
 /// around the real-world value.
@@ -26,7 +26,7 @@ pub const CAR_GRAVITY: f32 = 9.81;
 mod flight;
 mod spec;
 
-use flight::{assist, fly, pull, roll_plane, thrust, walk, wing};
+use flight::{assist, fly, fly_drone, pull, roll_plane, thrust, walk, wing};
 pub use spec::half_extents;
 pub(super) use spec::{Lift, Spec, spec};
 
@@ -318,6 +318,8 @@ impl Physics {
             .pose(pose_of(position, yaw))
             .linear_damping(spec.linear_damping)
             .angular_damping(0.8)
+            // A drone covers more than its own size in a tick, and would fly through a wall without it.
+            .ccd_enabled(kind == KIND_DRONE)
             .build();
         let body = self.bodies.insert(body);
         let mut chassis = ColliderBuilder::cuboid(hx, hy, hz).friction(0.4);
@@ -383,6 +385,13 @@ impl Physics {
             }
         }
         self.cars.insert(id, Car { spec, body, collider, extra, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW, towed_by: None, tank: (kind == KIND_ROADSTER).then_some(ROADSTER_AIR), firing: 0 });
+    }
+
+    /// Takes vehicle `id` out of the world, with everything hitched to it.
+    pub fn remove_car(&mut self, id: u32) {
+        self.detach(id);
+        let Some(car) = self.cars.remove(&id) else { return };
+        self.bodies.remove(car.body, &mut self.islands, &mut self.colliders, &mut self.impulse_joints, &mut self.multibody_joints, &mut self.soft_bodies, true);
     }
 
     /// Where a car's tow hitch is, in its own frame: just behind its rear face.
@@ -521,7 +530,7 @@ impl Physics {
     /// Applies the driver's controls to the wheels for the next [`Physics::step_cars`].
     pub fn drive_car(&mut self, id: u32, controls: CarControls, dt: f32) {
         let Some(car) = self.cars.get_mut(&id) else { return };
-        if matches!(car.spec.lift, Lift::Rotor | Lift::Walker) {
+        if matches!(car.spec.lift, Lift::Rotor | Lift::Walker | Lift::Drone) {
             car.flight = controls;
             return;
         }
@@ -624,11 +633,16 @@ impl Physics {
         if self.cars.is_empty() {
             return;
         }
-        for car in self.cars.values().filter(|car| car.spec.lift == Lift::Rotor) {
+        for car in self.cars.values().filter(|car| matches!(car.spec.lift, Lift::Rotor | Lift::Drone)) {
             if let Some(body) = self.bodies.get_mut(car.body) {
                 // Forces persist from step to step until reset.
                 body.reset_forces(false);
-                if car.flight.powered {
+                if !car.flight.powered {
+                    continue;
+                }
+                if car.spec.lift == Lift::Drone {
+                    fly_drone(body, car.flight, dt);
+                } else {
                     fly(body, car.flight, dt);
                 }
             }

@@ -237,7 +237,7 @@ fn driver_in_the_car(game: &mut Game) -> (u32, u32) {
     let (id, inbox) = join(game);
     std::mem::forget(inbox);
     game.world.vehicles.get_mut(&vid).unwrap().seats[0] = Some(id);
-    game.world.players.get_mut(&id).unwrap().seat = Some(crate::game::Seat { vehicle: vid, index: 0 });
+    game.world.players.get_mut(&id).unwrap().seat = Some(crate::game::Seat { vehicle: vid, index: 0, remote: false });
     (vid, id)
 }
 

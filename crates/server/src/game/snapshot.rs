@@ -4,7 +4,8 @@
 use super::*;
 
 impl Game {
-    /// Standing players, then the living roosters. Seated players are shown by their vehicle instead.
+    /// Standing players (and those flying a drone, who kneel where they stood), then the living
+    /// roosters. Seated players are shown by their vehicle instead.
     pub fn entity_states(&self) -> Vec<EntityState> {
         let roosters = self.world.roosters.iter().filter(|(_, rooster)| rooster.alive()).map(|(&id, rooster)| {
             let [x, y, z] = rooster.position;
@@ -17,7 +18,7 @@ impl Game {
         self.world
             .players
             .iter()
-            .filter(|(_, player)| player.seat.is_none())
+            .filter(|(_, player)| player.embodied())
             .map(|(&id, player)| {
                 let c = &player.character;
                 let mut flags = 0;
@@ -27,7 +28,8 @@ impl Game {
                 if !player.alive() {
                     flags |= FLAG_DEAD;
                 }
-                if player.input.buttons() & BUTTON_CROUCH != 0 {
+                // Flying a drone, the body kneels over the controls.
+                if player.input.buttons() & BUTTON_CROUCH != 0 || player.seat.is_some() {
                     flags |= FLAG_CROUCHING;
                 }
                 flags |= (player.held().item << FLAG_HELD_SHIFT) & FLAG_HELD_MASK;
@@ -62,7 +64,10 @@ impl Game {
                     }
                     Arms { shots: arms.shots, heat: heat_byte(arms.heat), rear_heat: heat_byte(rear.heat), bombs: arms.bombs, flags }
                 });
-                let thrust = self.world.physics.car_thrust(id).map(|(tank, flags)| Thrust { air: air_byte(tank), flags });
+                let thrust = match vehicle.drone {
+                    Some(drone) => Some(Thrust { air: battery_byte(drone.energy), flags: if drone.linked { THRUST_LINKED } else { 0 } }),
+                    None => self.world.physics.car_thrust(id).map(|(tank, flags)| Thrust { air: air_byte(tank), flags }),
+                };
                 Some(VehicleState { id, kind: vehicle.kind, x: to_cm(x), y: to_cm(y), z: to_cm(z), qx, qy, qz, steer: to_axis(pose.steer), seats, turret, hp: vehicle.hp, damage, arms, thrust })
             })
             .collect()
@@ -124,8 +129,11 @@ impl Game {
             let own = Own { tick: self.world.tick, ack: player.ack, ride: player.character.ride, drive: self.drive_state(id),
                 me: SelfState { hp: player.hp, progress: progress(player), slots: player.hotbar.to_vec() },
             };
-            // Seated players ride with their vehicle, so the vehicle's position is theirs.
-            let at = [player.character.position[0], player.character.position[2]];
+            // Seated players ride with their vehicle, so the vehicle's position is theirs. A drone's
+            // pilot sees what it sees; `DRONE_RANGE` keeps their body in the picture too.
+            let remote = player.seat.filter(|seat| seat.remote).and_then(|seat| self.world.physics.car_pose(seat.vehicle));
+            let here = remote.map_or(player.character.position, |pose| pose.position);
+            let at = [here[0], here[2]];
             let (Some(outbox), Some(replica)) = (self.outboxes.get(&id), self.replicas.get_mut(&id)) else { continue };
             let snapshot = replica.snapshot(at, &everything, own);
             // A full outbox means the session is stalled; dropping a snapshot is harmless.

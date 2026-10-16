@@ -3,6 +3,7 @@
 
 mod armor;
 mod combat;
+mod drones;
 mod gunnery;
 mod movement;
 mod npcs;
@@ -11,6 +12,7 @@ mod spawn;
 mod vehicles;
 
 pub use combat::Combat;
+pub use drones::Drones;
 pub use gunnery::Gunnery;
 pub use movement::Movement;
 pub use npcs::Npcs;
@@ -33,5 +35,5 @@ pub trait Mechanic: Send {
 
 /// The mechanics a room runs, in tick order.
 pub fn default_mechanics() -> Vec<Box<dyn Mechanic>> {
-    vec![Box::new(Spawn), Box::new(Pickups), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement), Box::new(Npcs), Box::new(Combat)]
+    vec![Box::new(Spawn), Box::new(Pickups), Box::new(Drones), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement), Box::new(Npcs), Box::new(Combat)]
 }

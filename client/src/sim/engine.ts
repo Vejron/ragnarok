@@ -1,4 +1,4 @@
-import { KIND_HELI, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
+import { KIND_DRONE, KIND_HELI, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
 import { JEEP_MAX_SPEED, ROADSTER_MAX_SPEED, SPORTS_MAX_SPEED, STRV_MAX_SPEED, TANK_MAX_SPEED } from './consts'
 import { SURFACE_ASPHALT, SURFACE_GRASS, SURFACE_WATER } from './surface'
 
@@ -101,6 +101,8 @@ export interface SoundMix {
   cut: boolean
 }
 
+/** A drone's props at hover, Hz. */
+const DRONE_HZ = 190
 const BASE_LEVEL: Record<number, number> = { [KIND_SPORTS]: 0.2, [KIND_ROADSTER]: 0.1, [KIND_TANK]: 0.3, [KIND_STRV]: 0.3, [KIND_HELI]: 0.3, [KIND_PLANE]: 0.28 }
 /** A plane's top speed, m/s, for the pitch of its engine and the rush of the wind. */
 const PLANE_TOP = 45
@@ -149,7 +151,7 @@ export function mixOf(input: SoundInput): SoundMix {
   const mix: SoundMix = { ...quiet }
   const rolling = input.grounded ? clamp(Math.abs(speed) / 10) : 0
   mix.rattle = Math.min(0.8, lost * 0.4 * rolling + bent * 0.1 * rolling)
-  if (kind !== KIND_HELI) {
+  if (kind !== KIND_HELI && kind !== KIND_DRONE) {
     mix.squeal = input.grounded ? squealGain(input.slip, input.surface, speed) : 0
     mix.squealHz = 900 + 700 * clamp(input.slip) + 4 * Math.abs(speed)
     mix.ground = input.grounded ? groundGain(speed, input.surface) : 0
@@ -175,6 +177,12 @@ export function mixOf(input: SoundInput): SoundMix {
     mix.engine = BASE_LEVEL[KIND_PLANE]! * (0.5 + 0.5 * load)
     mix.tone = 900 + 1800 * load
     mix.cut = cut
+  } else if (kind === KIND_DRONE) {
+    // Four small props: a thin, high whine that climbs with the work they do.
+    const load = clamp(0.3 + Math.abs(climb) / 10 + Math.abs(speed) / 30)
+    mix.pitch = DRONE_HZ * (0.85 + 0.6 * load)
+    mix.engine = 0.14 * (0.6 + 0.4 * load)
+    mix.tone = 2200 + 2000 * load
   } else if (kind === KIND_HELI) {
     const load = clamp(0.35 + Math.abs(climb) / 6 + Math.abs(speed) / 40)
     mix.pitch = BASE_HZ[KIND_HELI]! * (0.85 + 0.5 * load)

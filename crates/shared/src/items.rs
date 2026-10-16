@@ -1,7 +1,7 @@
 //! Items a player can carry in the hotbar. Mirrored in `client/src/sim/items.ts`.
 
 use crate::consts::TICK_RATE;
-use crate::protocol::{WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_RIFLE, WEAPON_SHOTGUN, WEAPON_SNIPER};
+use crate::protocol::{WEAPON_DRONE, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_RIFLE, WEAPON_SHOTGUN, WEAPON_SNIPER};
 
 /// Slots in the hotbar. A player picks one with the `slot` field of their input.
 pub const HOTBAR_SLOTS: usize = 5;
@@ -16,8 +16,10 @@ pub const ITEM_SNIPER: u8 = 5;
 /// Dropped by a rooster, never scattered. Heals to full.
 pub const ITEM_GOLDEN_EGG: u8 = 6;
 pub const ITEM_SHOTGUN: u8 = 7;
+/// An FPV drone: launched from the hand and flown in its owner's place until it blows up.
+pub const ITEM_DRONE: u8 = 8;
 /// One past the largest item id.
-pub const ITEM_COUNT: u8 = 8;
+pub const ITEM_COUNT: u8 = 9;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ItemKind {
@@ -27,6 +29,8 @@ pub enum ItemKind {
     Grenade,
     /// Used over time to restore health.
     Heal,
+    /// Launched, then flown by its owner as a vehicle of `KIND_DRONE` (see the `Drones` mechanic).
+    Drone,
 }
 
 /// How a hitscan round loses damage with distance: all of it up to `start` metres, then a straight
@@ -240,6 +244,27 @@ const GOLDEN_EGG: ItemDef = ItemDef {
     weight: 0,
 };
 
+const DRONE: ItemDef = ItemDef {
+    name: "FPV drone",
+    kind: ItemKind::Drone,
+    auto: false,
+    // The blast's is `DRONE_DAMAGE`.
+    damage: 0,
+    cooldown_ticks: TICK_RATE,
+    mag: 0,
+    reload_ticks: 0,
+    range: 0.0,
+    spread: 0.0,
+    projectile: false,
+    pellets: 1,
+    falloff: Falloff::NONE,
+    aim_speed: 1.0,
+    scope: false,
+    stack: 1,
+    weapon: WEAPON_DRONE,
+    weight: 2,
+};
+
 /// The definition of `item`; `None` for an empty slot or an unknown id.
 pub fn def(item: u8) -> Option<&'static ItemDef> {
     match item {
@@ -250,6 +275,7 @@ pub fn def(item: u8) -> Option<&'static ItemDef> {
         ITEM_SNIPER => Some(&SNIPER),
         ITEM_SHOTGUN => Some(&SHOTGUN),
         ITEM_GOLDEN_EGG => Some(&GOLDEN_EGG),
+        ITEM_DRONE => Some(&DRONE),
         _ => None,
     }
 }
@@ -288,6 +314,27 @@ pub const GRENADE_RADIUS: f32 = 0.1;
 /// Grenades in flight at once, which bounds the projectile list.
 pub const MAX_GRENADES: usize = 16;
 
+/// FPV drones. One flies for `DRONE_ENERGY_TICKS` and no further than
+/// `DRONE_RANGE` metres from its pilot's body, which keeps both inside one `INTEREST_RADIUS`. It is
+/// launched `DRONE_LAUNCH_AHEAD` metres in front of the eye and `DRONE_LAUNCH_UP` above it.
+pub const DRONE_ENERGY_TICKS: u32 = 25 * TICK_RATE;
+pub const DRONE_RANGE: f32 = 250.0;
+pub const DRONE_LAUNCH_AHEAD: f32 = 1.0;
+pub const DRONE_LAUNCH_UP: f32 = 0.5;
+/// What its charge does when it goes off: on fire, on a hard hit, or on the ground after the link is lost.
+pub const DRONE_BLAST_RADIUS: f32 = 4.0;
+pub const DRONE_DAMAGE: f32 = 120.0;
+pub const DRONE_KNOCK: f32 = 10.0;
+/// Shot down, it only pops.
+pub const DRONE_POP_RADIUS: f32 = 1.5;
+pub const DRONE_POP_DAMAGE: f32 = 20.0;
+/// A contact that takes this much speed (m/s) out of a flown drone sets it off; a falling one goes off on any.
+pub const DRONE_IMPACT_DV: f32 = 4.0;
+/// A drone this close (metres) to the axis of a stickman's capsule sets itself off.
+pub const DRONE_PROXIMITY: f32 = 0.7;
+/// Ticks a drone that lost its link falls before it goes off by itself.
+pub const DRONE_FALL_TICKS: u32 = 5 * TICK_RATE;
+
 /// Ground pickups. A player in `PICKUP_RADIUS` of one who presses use takes it.
 pub const PICKUP_RADIUS: f32 = 2.0;
 /// Pickups in the world, and how long a taken one stays away.
@@ -312,6 +359,7 @@ mod tests {
                     ItemKind::Gun => "gun",
                     ItemKind::Grenade => "grenade",
                     ItemKind::Heal => "heal",
+                    ItemKind::Drone => "drone",
                 };
                 format!(
                     "    \"{id}\": {{\"name\": \"{}\", \"kind\": \"{kind}\", \"auto\": {}, \"damage\": {}, \"cooldownTicks\": {}, \"mag\": {}, \"reloadTicks\": {}, \"range\": {}, \"aimSpeed\": {}, \"scope\": {}, \"stack\": {}, \"weapon\": {}, \"projectile\": {}, \"pellets\": {}, \"falloffStart\": {}, \"falloffEnd\": {}, \"falloffMin\": {}}}",

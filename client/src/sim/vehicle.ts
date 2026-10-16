@@ -9,6 +9,8 @@ import {
   TANK_AXLES_Z, TANK_HALF_EXTENTS, TANK_HARD_POINT_Y, TANK_MAX_SPEED, TANK_SUSPENSION_REST, TANK_TRACK_HALF, TANK_TURN_RATE,
   TANK_WHEEL_RADIUS, HELI_BANK, HELI_CEILING, HELI_CLIMB_SPEED, HELI_HALF_EXTENTS, HELI_LEVEL_GAIN, HELI_RESPONSE, HELI_SINK_SPEED, HELI_TILT,
   HELI_VERT_ACCEL, HELI_VERT_GAIN, HELI_YAW_RATE, BUTTON_RUN, vehicleMaxHp,
+  DRONE_ACCEL_GAIN, DRONE_CEILING, DRONE_CLIMB_SPEED, DRONE_DAMPING, DRONE_HALF_EXTENTS, DRONE_LEVEL_GAIN, DRONE_MAX_ACCEL, DRONE_RESPONSE, DRONE_SINK_SPEED, DRONE_SPEED,
+  DRONE_STRAFE_SPEED, DRONE_YAW_GAIN, DRONE_YAW_RATE,
   PLANE_AIM_GAIN, PLANE_AIM_MAX_PITCH, PLANE_AOA_GAIN, PLANE_LEVEL_GAIN, PLANE_AXLES_Z, PLANE_BANK_ANGLE, PLANE_CEILING, PLANE_CRUISE_SPEED, PLANE_CRUISE_THROTTLE, PLANE_DRAG,
   PLANE_EDGE_MARGIN, PLANE_GLIDE_PITCH, PLANE_HALF_EXTENTS, PLANE_HARD_POINT_Y, PLANE_IDLE_THROTTLE, PLANE_LEVEL_SPEED, PLANE_MAX_BANK,
   PLANE_MAX_LIFT, PLANE_MAX_STEER, PLANE_PITCH_RATE, PLANE_RESPONSE, PLANE_ROLL_RATE, PLANE_SIDE_GAIN, PLANE_STALL_DROP, PLANE_STALL_SPEED,
@@ -19,7 +21,7 @@ import {
 import { addTileCollider, buildStaticColliders, extraSolids, rebuildBuildingCollider, timedPhysics, VehicleSolids } from './physics'
 import type { TileGround } from './terrain'
 import { vehicleDef } from './vehicles'
-import { DAMAGE_TURRET, DAMAGE_WHEELS, fromAxis, fromMrad, KIND_HELI, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, THRUST_BOOST, THRUST_LIFT, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, WHEEL_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
+import { DAMAGE_TURRET, DAMAGE_WHEELS, fromAxis, fromMrad, KIND_DRONE, KIND_HELI, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, THRUST_BOOST, THRUST_LIFT, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, WHEEL_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
 import type { TileData, WorldData } from '@/world'
 import * as THREE from 'three'
 
@@ -31,8 +33,8 @@ import * as THREE from 'three'
 /** Gravity on vehicle bodies. */
 export const CAR_GRAVITY = 9.81
 
-/** What holds a vehicle up: its wheels; a rotor, with no wheels; wheels on the ground and wings in the air; or two spring legs. */
-type Lift = 'wheels' | 'rotor' | 'wing' | 'walker'
+/** What holds a vehicle up: its wheels; a rotor, with no wheels; wheels on the ground and wings in the air; two spring legs; or a drone's four rotors. */
+type Lift = 'wheels' | 'rotor' | 'wing' | 'walker' | 'drone'
 
 interface Spec {
   halfExtents: readonly [number, number, number]
@@ -160,6 +162,24 @@ const HELI: Spec = {
   turnRate: 0,
   lift: 'rotor',
   linearDamping: 0.2,
+  comDrop: 0,
+}
+
+const DRONE: Spec = {
+  halfExtents: DRONE_HALF_EXTENTS,
+  density: 60,
+  wheelRadius: 0,
+  trackHalf: 0,
+  axles: [],
+  hardPointY: 0,
+  suspensionRest: 0,
+  maxSuspensionForce: 0,
+  engineForce: 0,
+  maxSpeed: 0,
+  steerLock: 0,
+  turnRate: 0,
+  lift: 'drone',
+  linearDamping: DRONE_DAMPING,
   comDrop: 0,
 }
 
@@ -303,7 +323,7 @@ export class CarSim {
    * back near it, as on the server.
    */
   constructor(private readonly world: RAPIER.World, private readonly kind: number, position: [number, number, number], yaw: number, private readonly bound = Infinity) {
-    this.spec = kind === KIND_TANK ? TANK : kind === KIND_STRV ? STRV : kind === KIND_HELI ? HELI : kind === KIND_SPORTS ? SPORTS : kind === KIND_ROADSTER ? ROADSTER : kind === KIND_PLANE ? PLANE : kind === KIND_WALKER ? WALKER : JEEP
+    this.spec = kind === KIND_TANK ? TANK : kind === KIND_STRV ? STRV : kind === KIND_HELI ? HELI : kind === KIND_SPORTS ? SPORTS : kind === KIND_ROADSTER ? ROADSTER : kind === KIND_PLANE ? PLANE : kind === KIND_WALKER ? WALKER : kind === KIND_DRONE ? DRONE : JEEP
     this.tank = kind === KIND_ROADSTER ? ROADSTER_AIR : null
     const spec = this.spec
     this.body = world.createRigidBody(
@@ -311,7 +331,8 @@ export class CarSim {
         .setTranslation(position[0], position[1], position[2])
         .setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) })
         .setLinearDamping(spec.linearDamping)
-        .setAngularDamping(0.8),
+        .setAngularDamping(0.8)
+        .setCcdEnabled(kind === KIND_DRONE),
     )
     const [hx, hy, hz] = spec.halfExtents
     const chassis = RAPIER.ColliderDesc.cuboid(hx, hy, hz).setFriction(0.4)
@@ -321,8 +342,8 @@ export class CarSim {
       const [tx, ty, tz] = extra.offset
       this.extras.push(world.createCollider(extra.desc.setTranslation(tx, ty, tz).setDensity(0).setFriction(0.4), this.body))
     }
-    if (spec.lift === 'rotor' || spec.lift === 'walker') {
-      // No wheels: the rotor, or the legs, are forces on the body.
+    if (spec.lift === 'rotor' || spec.lift === 'walker' || spec.lift === 'drone') {
+      // No wheels: the rotors, or the legs, are forces on the body.
       this.controller = null
       this.wheels = 0
       return
@@ -444,6 +465,7 @@ export class CarSim {
       // Forces persist from step to step until reset.
       this.body.resetForces(false)
       if (this.spec.lift === 'walker') this.walk(this.flight, dt)
+      else if (this.flight.powered && this.spec.lift === 'drone') this.flyDrone(this.flight, dt)
       else if (this.flight.powered) this.fly(this.flight, dt)
       this.world.step()
       return
@@ -577,6 +599,58 @@ export class CarSim {
     const accel = (CAR_GRAVITY + extra) / Math.max(up[1], 0.5)
     const push = accel * body.mass()
     body.addForce({ x: up[0] * push, y: up[1] * push, z: up[2] * push }, true)
+  }
+
+  /** Mirrors `fly_drone` in `physics/vehicle/flight.rs`: push towards the velocity the stick and the look ask for, lean along the push, turn to the look. */
+  private flyDrone(controls: CarControls, dt: number) {
+    const body = this.body
+    const q = body.rotation()
+    const up = rotate(q, 0, 1, 0)
+    const nose = rotate(q, 0, 0, -1)
+    const flatLength = Math.hypot(nose[0], nose[2])
+    const heading: [number, number, number] = flatLength > 1e-3 ? [nose[0] / flatLength, 0, nose[2] / flatLength] : [0, 0, -1]
+    // heading × (0, 1, 0)
+    const right: [number, number, number] = [-heading[2], 0, heading[0]]
+    const facing = Math.atan2(-heading[0], -heading[2])
+
+    const throttle = clamp(controls.throttle, -1, 1)
+    const steer = clamp(controls.steer, -1, 1)
+    const lift = clamp(controls.lift, -1, 1)
+    const [aimYaw, aimPitch] = controls.aim ?? [facing, 0]
+    const [rise, level] = throttle > 0 ? [Math.sin(aimPitch), Math.cos(aimPitch)] : [0, 1]
+    const ahead = throttle * level * DRONE_SPEED
+    const aside = steer * DRONE_STRAFE_SPEED
+    const wanted: [number, number, number] = [
+      heading[0] * ahead + right[0] * aside,
+      Math.max(0, throttle) * rise * DRONE_SPEED + (lift > 0 ? lift * DRONE_CLIMB_SPEED : lift * DRONE_SINK_SPEED),
+      heading[2] * ahead + right[2] * aside,
+    ]
+    const headroom = clamp((DRONE_CEILING - body.translation().y) / 20, -1, 1)
+    if (wanted[1] > 0) wanted[1] *= Math.max(0, headroom)
+    if (headroom < 0) wanted[1] = Math.min(wanted[1], headroom * DRONE_CLIMB_SPEED)
+    const v = body.linvel()
+    let push = [(wanted[0] - v.x) * DRONE_ACCEL_GAIN, (wanted[1] - v.y) * DRONE_ACCEL_GAIN, (wanted[2] - v.z) * DRONE_ACCEL_GAIN] as [number, number, number]
+    const size = Math.hypot(...push)
+    if (size > DRONE_MAX_ACCEL) push = scale(push, DRONE_MAX_ACCEL / size)
+    const mass = body.mass()
+    body.addForce({ x: push[0] * mass, y: (push[1] + CAR_GRAVITY) * mass, z: push[2] * mass }, true)
+
+    const lx = push[0]
+    const ly = Math.max(push[1] + CAR_GRAVITY, CAR_GRAVITY * 0.5)
+    const lz = push[2]
+    const length = Math.hypot(lx, ly, lz)
+    const [wx, wy, wz] = [lx / length, ly / length, lz / length]
+    let off = aimYaw - facing
+    off = Math.atan2(Math.sin(off), Math.cos(off))
+    // up × lean
+    const turn = [
+      (up[1] * wz - up[2] * wy) * DRONE_LEVEL_GAIN,
+      clamp(off * DRONE_YAW_GAIN, -DRONE_YAW_RATE, DRONE_YAW_RATE),
+      (up[0] * wy - up[1] * wx) * DRONE_LEVEL_GAIN,
+    ]
+    const w = body.angvel()
+    const blend = Math.min(1, DRONE_RESPONSE * dt)
+    body.setAngvel({ x: w.x + (turn[0]! - w.x) * blend, y: w.y + (turn[1]! - w.y) * blend, z: w.z + (turn[2]! - w.z) * blend }, true)
   }
 
   /** Mirrors `walk` in `physics/vehicle/flight.rs`: spring legs, a capped balance torque, and walking at the hip. */

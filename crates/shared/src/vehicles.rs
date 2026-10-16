@@ -7,7 +7,7 @@
 //! gameplay.json` fails until the two tables agree.
 
 use crate::consts::*;
-use crate::protocol::{KIND_HELI, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER};
+use crate::protocol::{KIND_DRONE, KIND_HELI, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER};
 
 #[derive(Clone, Copy, Debug)]
 pub struct VehicleDef {
@@ -147,8 +147,22 @@ const ROADSTER: VehicleDef = VehicleDef {
     axle_z: ROADSTER_AXLE_Z,
 };
 
+/// One hit brings it down.
+const DRONE: VehicleDef = VehicleDef {
+    kind: KIND_DRONE,
+    name: "FPV drone",
+    hp: 1,
+    seats: DRONE_SEATS,
+    half_extents: DRONE_HALF_EXTENTS,
+    gun: false,
+    arms: false,
+    car_wheels: false,
+    track_half: 0.0,
+    axle_z: 0.0,
+};
+
 /// Every vehicle kind, in id order.
-pub const VEHICLES: [VehicleDef; 9] = [JEEP, TANK, HELI, SPORTS, PLANE, WALKER, STRV, MORTAR, ROADSTER];
+pub const VEHICLES: [VehicleDef; 10] = [JEEP, TANK, HELI, SPORTS, PLANE, WALKER, STRV, MORTAR, ROADSTER, DRONE];
 
 /// The seat whose occupant aims and fires `kind`'s gun: a tank's, helicopter's and plane's seat 1, but
 /// the driver's seat 0 where the vehicle has only one (a walker, a Strv S).

@@ -1,6 +1,6 @@
 /** Mirrors `crates/shared/src/consts.rs`. Keep the two in step. */
 
-export const PROTOCOL_VERSION = 28
+export const PROTOCOL_VERSION = 29
 
 /** A hurt building is drawn in this many worse states; the last is about to collapse. Mirrors `DAMAGE_STAGES`. */
 export const DAMAGE_STAGES = 3
@@ -248,6 +248,22 @@ export const WALKER_CRUISE_LEAN = 0.08
 export const WALKER_BLAST_LEVER = 3.0
 export const WALKER_FALLEN_UP = 0.6
 export const WALKER_GETUP_SHARE = 0.25
+/** The FPV drone, flown by velocity. Mirrors `DRONE_*` in consts.rs. */
+export const DRONE_SEATS = 1
+export const DRONE_HALF_EXTENTS = [0.22, 0.06, 0.22] as const
+export const DRONE_SPEED = 30.0
+export const DRONE_STRAFE_SPEED = 12.0
+export const DRONE_CLIMB_SPEED = 10.0
+export const DRONE_SINK_SPEED = 10.0
+export const DRONE_ACCEL_GAIN = 2.0
+export const DRONE_MAX_ACCEL = 18.0
+export const DRONE_YAW_GAIN = 6.0
+export const DRONE_YAW_RATE = 4.0
+export const DRONE_CEILING = 150.0
+export const DRONE_LEVEL_GAIN = 8.0
+export const DRONE_RESPONSE = 14.0
+export const DRONE_DAMPING = 0.1
+
 /** The helicopter. Mirrors `HELI_*` in consts.rs. */
 export const HELI_SEATS = 2
 export const HELI_HALF_EXTENTS = [1.0, 0.8, 2.4] as const

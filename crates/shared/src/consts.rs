@@ -1,7 +1,7 @@
 //! Simulation and network constants. Mirrored in `client/src/sim/consts.ts`.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 28;
+pub const PROTOCOL_VERSION: u8 = 29;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -356,6 +356,31 @@ pub const HELI_CEILING: f32 = 120.0;
 /// angular velocity follows it, per second.
 pub const HELI_LEVEL_GAIN: f32 = 4.0;
 pub const HELI_RESPONSE: f32 = 8.0;
+/// The FPV drone: a quadcopter the size of a dinner plate. It is flown by velocity: forward stick asks
+/// for `DRONE_SPEED` along where its pilot looks (diving or climbing with the look's pitch), strafe for
+/// `DRONE_STRAFE_SPEED` sideways, jump and run for `DRONE_CLIMB_SPEED` / `DRONE_SINK_SPEED` straight up
+/// or down, and nothing held for a hover. The rotors close the gap at `DRONE_ACCEL_GAIN` per second, never
+/// pushing harder than `DRONE_MAX_ACCEL` m/s² beyond holding it up, and the hull leans the way they push.
+/// The look turns it: `DRONE_YAW_GAIN` rad/s per radian off, at most `DRONE_YAW_RATE`.
+pub const DRONE_SEATS: usize = 1;
+pub const DRONE_HALF_EXTENTS: [f32; 3] = [0.22, 0.06, 0.22];
+pub const DRONE_SPEED: f32 = 30.0;
+pub const DRONE_STRAFE_SPEED: f32 = 12.0;
+pub const DRONE_CLIMB_SPEED: f32 = 10.0;
+pub const DRONE_SINK_SPEED: f32 = 10.0;
+pub const DRONE_ACCEL_GAIN: f32 = 2.0;
+pub const DRONE_MAX_ACCEL: f32 = 18.0;
+pub const DRONE_YAW_GAIN: f32 = 6.0;
+pub const DRONE_YAW_RATE: f32 = 4.0;
+/// Climbing fades out over the last 20 m below this height, and above it the rotors push down.
+pub const DRONE_CEILING: f32 = 150.0;
+/// How firmly the hull follows its lean (rad/s per unit of error), and how fast the angular velocity
+/// follows that, per second.
+pub const DRONE_LEVEL_GAIN: f32 = 8.0;
+pub const DRONE_RESPONSE: f32 = 14.0;
+/// Air drag on the body, which is all that slows a drone whose motors are off.
+pub const DRONE_DAMPING: f32 = 0.1;
+
 /// The nose gun: a four-barrel autocannon on a chin mount. `HELI_GUN_PIVOT` is the mount in the hull
 /// frame and `HELI_GUN_LENGTH` how far the muzzle is from it. The gunner's look direction aims it, within
 /// `HELI_GUN_YAW_LIMIT` either side of the nose and `HELI_GUN_PITCH_MIN..=HELI_GUN_PITCH_MAX` (radians, the

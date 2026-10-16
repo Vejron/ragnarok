@@ -13,8 +13,10 @@ export const ITEM_SNIPER = 5
 /** Dropped by a rooster; heals to full. */
 export const ITEM_GOLDEN_EGG = 6
 export const ITEM_SHOTGUN = 7
+/** Launched from the hand and flown in its owner's place until it blows up. */
+export const ITEM_DRONE = 8
 
-export type ItemKind = 'gun' | 'grenade' | 'heal'
+export type ItemKind = 'gun' | 'grenade' | 'heal' | 'drone'
 
 export interface ItemDef {
   name: string
@@ -56,6 +58,7 @@ const DEFS: Record<number, ItemDef> = {
   [ITEM_SHOTGUN]: { name: 'Shotgun', kind: 'gun', auto: false, damage: 12, cooldownTicks: TICK_RATE, mag: 5, reloadTicks: 3 * TICK_RATE, range: 40, aimSpeed: 0.7, scope: false, stack: 1, stance: 'rifle', weapon: 13, projectile: false, sound: 'shotgun', pellets: 10, falloffStart: 8, falloffEnd: 40, falloffMin: 0.25 },
   [ITEM_GRENADE]: { name: 'Grenade', kind: 'grenade', auto: false, damage: 0, cooldownTicks: TICK_RATE, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 3, stance: 'hold', weapon: 5, projectile: false, sound: 'rifle', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
   [ITEM_BANDAGE]: { name: 'Bandage', kind: 'heal', auto: false, damage: 40, cooldownTicks: 0, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 5, stance: 'hold', weapon: 0, projectile: false, sound: 'rifle', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
+  [ITEM_DRONE]: { name: 'FPV drone', kind: 'drone', auto: false, damage: 0, cooldownTicks: TICK_RATE, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 1, stance: 'hold', weapon: 19, projectile: false, sound: 'rifle', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
   [ITEM_GOLDEN_EGG]: { name: 'Golden egg', kind: 'heal', auto: false, damage: 255, cooldownTicks: 0, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 1, stance: 'hold', weapon: 0, projectile: false, sound: 'rifle', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
 }
 
@@ -93,6 +96,10 @@ export const GRENADE_MUZZLE = 0.6
 export const GRENADE_RADIUS = 0.1
 /** How much of its speed a grenade keeps when it bounces. */
 export const GRENADE_BOUNCE = 0.4
+/** FPV drones: how long one flies, how far from its pilot, and what its charge does. Mirrors `DRONE_*` in items.rs. */
+export const DRONE_ENERGY_TICKS = 25 * TICK_RATE
+export const DRONE_RANGE = 250.0
+export const DRONE_BLAST_RADIUS = 4.0
 /** The most pitch the server will accept, radians. */
 export const MAX_AIM_PITCH = 1.5
 /** A player in this many metres of an item can take it with use. */

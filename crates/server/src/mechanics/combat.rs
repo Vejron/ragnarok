@@ -7,7 +7,7 @@ use crate::physics::Obj;
 use shared::consts::*;
 use shared::items::*;
 use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, KIND_PLANE, Kill, S_HIT, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, BulletSpawn, WEAPON_BULLET, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_PELLET, WEAPON_ROADKILL, WEAPON_WRECK,
-    DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_SHELL};
+    DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_SHELL};
 use shared::quant::{from_mrad, to_cm, to_cm_i16, to_mrad};
 
 /// Health, death, the items in the hotbar and what blasts do to people and vehicles.
@@ -94,7 +94,7 @@ pub fn rewind_ticks(now: u32, view: u16) -> u32 {
 pub fn first_player_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f32, ignore: Option<u32>, back: u32) -> Option<(u32, f32)> {
     let mut best: Option<(u32, f32)> = None;
     for (&id, player) in &world.players {
-        if Some(id) == ignore || player.seat.is_some() || !player.alive() {
+        if Some(id) == ignore || !player.embodied() || !player.alive() {
             continue;
         }
         let limit = best.map_or(max, |(_, t)| t);
@@ -106,12 +106,12 @@ pub fn first_player_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f32
     best
 }
 
-/// Where player `id` is: on foot where they stand, seated where their vehicle is.
+/// Where player `id` is: on foot (or flying a drone) where they stand, seated where their vehicle is.
 fn position_of(world: &World, id: u32) -> Option<[f32; 3]> {
     let player = world.players.get(&id)?;
     match player.seat {
-        Some(seat) => world.physics.car_pose(seat.vehicle).map(|pose| pose.position),
-        None => Some(player.character.position),
+        Some(seat) if !seat.remote => world.physics.car_pose(seat.vehicle).map(|pose| pose.position),
+        _ => Some(player.character.position),
     }
 }
 
@@ -188,7 +188,7 @@ pub fn damage_hit(world: &mut World, victim: u32, amount: u8, attacker: Option<u
     }
     let style = match weapon {
         WEAPON_ROADKILL => DEATH_ROADKILL,
-        WEAPON_ROCKET | WEAPON_SHELL | WEAPON_WRECK | WEAPON_GRENADE | WEAPON_AUTOCANNON | WEAPON_BOMB => DEATH_BLAST,
+        WEAPON_ROCKET | WEAPON_SHELL | WEAPON_WRECK | WEAPON_GRENADE | WEAPON_AUTOCANNON | WEAPON_BOMB | WEAPON_DRONE => DEATH_BLAST,
         _ if head => DEATH_HEAD,
         _ if lost > 0 && amount > before.saturating_mul(2) => DEATH_OVERKILL,
         _ => DEATH_BODY,
@@ -240,7 +240,7 @@ pub fn blast(world: &mut World, blast: Blast) {
 /// [`blast`], for a shell that struck vehicle `direct.vehicle` itself.
 pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
     let mut hurt = Vec::new();
-    for (&id, player) in world.players.iter_mut().filter(|(_, player)| player.seat.is_none() && player.alive()) {
+    for (&id, player) in world.players.iter_mut().filter(|(_, player)| player.embodied() && player.alive()) {
         let c = &mut player.character;
         let away: [f32; 3] = std::array::from_fn(|i| c.position[i] - blast.point[i]);
         let distance = away.iter().map(|v| v * v).sum::<f32>().sqrt();
@@ -474,6 +474,11 @@ pub fn damage_vehicle(world: &mut World, vid: u32, amount: u8, attacker: Option<
 /// A vehicle's last moment: everyone inside dies, and it goes up in a blast that can take the
 /// next one with it.
 fn wreck(world: &mut World, vid: u32) {
+    // A drone shot down only pops, and its pilot is back in their own body.
+    if world.vehicles.get(&vid).is_some_and(|vehicle| vehicle.drone.is_some()) {
+        super::drones::pop(world, vid);
+        return;
+    }
     let Some(pose) = world.physics.car_pose(vid) else { return };
     let Some(vehicle) = world.vehicles.get_mut(&vid) else { return };
     vehicle.wreck_in = WRECK_TICKS;
@@ -968,6 +973,13 @@ fn use_item(world: &mut World, id: u32) {
                 player.fire_cooldown = item.cooldown_ticks;
                 spend(&mut player.hotbar[slot]);
                 throw_grenade(world, id);
+            }
+        }
+        ItemKind::Drone => {
+            if fresh && player.fire_cooldown == 0 && super::drones::launch(world, id) {
+                let player = world.players.get_mut(&id).expect("checked above");
+                player.fire_cooldown = item.cooldown_ticks;
+                spend(&mut player.hotbar[slot]);
             }
         }
         ItemKind::Heal => {

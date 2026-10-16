@@ -156,6 +156,7 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
   <div v-if="stats?.seat === 'walker'" class="drive-hint">W/S walk · A/D turn · Mouse aim the guns (the body follows within 30°) · Click or F fire<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   <div v-if="stats?.seat === 'strv'" class="drive-hint">W/S gas and brake · A/D turn the tank to aim · Mouse look · Hold right mouse for the gun sight · Click or F fire · {{ stats.reload < 1 ? 'reloading…' : 'loaded' }}</div>
   <div v-if="stats?.seat === 'mortar'" class="drive-hint">Mouse aim sets the bearing · W/S range {{ Math.round(stats.range) }} m · Click or F fire · {{ stats.reload < 1 ? 'reloading…' : 'loaded' }}</div>
+  <div v-if="stats?.seat === 'drone'" class="drive-hint">Mouse look and steer · W fly where you look · S back off · A/D strafe · Space climb · Shift sink · Click or F detonate · E recall</div>
   <div v-if="stats?.seat === 'pilot'" class="drive-hint">W/S lean forward and back · A/D turn · Space climb · Shift sink<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   <div v-if="stats?.seat === 'aviator'" class="drive-hint">Mouse steer (the plane turns to where you look) · Space throttle up · Shift throttle down · W/S/A/D by hand · Click or F fire · C bomb<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   <div v-if="stats?.seat === 'gunner'" class="drive-hint">Mouse aim · Hold right mouse for the gun sight · Click or F fire · {{ stats.jammed ? 'jammed!' : stats.heat !== null ? 'firing' : stats.reload < 1 ? 'reloading…' : 'loaded' }}<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
@@ -166,6 +167,17 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
     <div ref="aimMark" class="aim-circle" />
     <div v-if="stats.stall" class="stall">STALL</div>
   </template>
+  <template v-if="stats?.drone">
+    <div class="fpv" />
+    <div class="fpv-noise" :style="{ opacity: 0.06 + 0.6 * (1 - stats.drone.signal) ** 2 }" />
+    <div class="fpv-cross"><i /><i /></div>
+    <div class="fpv-live">● LIVE</div>
+    <div class="gauges">
+      <div class="heat air" :class="{ jammed: stats.drone.battery < 0.2 }"><div :style="{ width: stats.drone.battery * 100 + '%' }" /><span>{{ stats.drone.battery < 0.2 ? 'BATTERY LOW' : 'BATTERY' }}</span></div>
+      <div class="heat air" :class="{ jammed: stats.drone.signal < 0.2 }"><div :style="{ width: stats.drone.signal * 100 + '%' }" /><span>{{ stats.drone.signal < 0.2 ? 'SIGNAL WEAK' : 'SIGNAL' }}</span></div>
+    </div>
+  </template>
+  <div v-if="stats && stats.feedLost > 0.01" class="fpv-lost" :style="{ opacity: stats.feedLost }"><span>SIGNAL LOST</span></div>
   <div v-if="stats && stats.air !== null" class="gauges">
     <div class="heat air" :class="{ jammed: stats.air < 0.15 }"><div :style="{ width: stats.air * 100 + '%' }" /><span>{{ stats.air < 0.15 ? 'AIR LOW' : 'AIR' }}</span></div>
   </div>
@@ -295,6 +307,28 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
   animation: blink 0.5s steps(2) infinite;
 }
 @keyframes blink { 50% { opacity: 0.2; } }
+/* Flying a drone: its camera's feed, with scanlines, a dark lens edge and static that grows as the link weakens. */
+.fpv {
+  position: fixed; inset: 0; pointer-events: none;
+  background:
+    repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.12) 0, rgba(0, 0, 0, 0.12) 1px, transparent 1px, transparent 3px),
+    radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.55) 100%);
+}
+.fpv-noise, .fpv-lost {
+  position: fixed; inset: -50%; pointer-events: none;
+  background:
+    repeating-radial-gradient(circle at 17% 33%, rgba(255, 255, 255, 0.5) 0, rgba(0, 0, 0, 0.5) 1px, rgba(255, 255, 255, 0.2) 2px, transparent 3px),
+    repeating-radial-gradient(circle at 71% 64%, rgba(0, 0, 0, 0.5) 0, rgba(255, 255, 255, 0.4) 1px, transparent 2px, transparent 4px);
+  animation: static 0.25s steps(4) infinite;
+}
+.fpv-lost { background-color: #333; display: grid; place-content: center; }
+.fpv-lost span { font-size: 28px; font-weight: 900; letter-spacing: 0.2em; color: #fff; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.6); }
+@keyframes static { 0% { transform: translate(0, 0); } 25% { transform: translate(-7%, 4%); } 50% { transform: translate(5%, -6%); } 75% { transform: translate(-3%, -2%); } }
+.fpv-cross { position: fixed; top: 50%; left: 50%; width: 0; height: 0; pointer-events: none; }
+.fpv-cross i { position: absolute; background: rgba(255, 255, 255, 0.85); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4); }
+.fpv-cross i:nth-child(1) { width: 18px; height: 2px; left: -9px; top: -1px; }
+.fpv-cross i:nth-child(2) { width: 2px; height: 18px; left: -1px; top: -9px; }
+.fpv-live { position: fixed; top: 14px; right: 16px; pointer-events: none; font-size: 13px; font-weight: 800; color: #ff5a5f; letter-spacing: 0.1em; animation: blink 1s steps(2) infinite; }
 .gauges { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; pointer-events: none; }
 .heat {
   position: relative; width: 160px; height: 18px; border-radius: 999px; overflow: hidden;

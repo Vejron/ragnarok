@@ -1,0 +1,234 @@
+use super::*;
+use crate::game::{Command, Game, Outgoing};
+use crate::physics::STANDING_Y;
+use shared::protocol::{InputFrame, ItemSlot, THRUST_LINKED, WEAPON_RIFLE};
+use shared::world::{WORLD_VERSION, WorldFile};
+use tokio::sync::{mpsc, oneshot};
+
+fn game() -> Game {
+    let map = WorldFile { version: WORLD_VERSION, half_extent: 40_000, spawns: vec![[0, 0]], ..Default::default() };
+    // Loose items would take a test's use button.
+    let mut game = Game::new(map, 0).unwrap();
+    game.world.pickups.clear();
+    game
+}
+
+fn join(game: &mut Game) -> u32 {
+    let (outbox, inbox): (_, mpsc::Receiver<Outgoing>) = mpsc::channel(4096);
+    std::mem::forget(inbox);
+    let (reply, mut response) = oneshot::channel();
+    game.handle(Command::Join { outbox, reply, profile: Default::default() });
+    response.try_recv().unwrap().unwrap()
+}
+
+/// Feeds `ticks` frames of `buttons` and the forward axis, facing -Z and looking `pitch` up.
+fn fly(game: &mut Game, id: u32, seq: &mut u32, forward: i8, pitch: f32, buttons: u16, ticks: u32) {
+    for _ in 0..ticks {
+        *seq += 1;
+        let frame = InputFrame { seq: *seq, strafe: 0, forward, yaw: 0, buttons, pitch: shared::quant::to_mrad(pitch), view: 0, slot: 0 };
+        game.handle(Command::Input(id, 0, vec![frame]));
+        game.step();
+    }
+}
+
+fn idle(game: &mut Game, id: u32, seq: &mut u32, ticks: u32) {
+    fly(game, id, seq, 0, 0.0, 0, ticks);
+}
+
+/// A pilot on open ground away from the parked car, holding a drone in slot 0, and settled.
+fn pilot(game: &mut Game) -> (u32, u32) {
+    let id = join(game);
+    let player = game.world.players.get_mut(&id).unwrap();
+    player.character.position = [100.0, STANDING_Y, 0.0];
+    player.hotbar[0] = ItemSlot { item: ITEM_DRONE, count: 1, ammo: 0 };
+    let mut seq = 0;
+    idle(game, id, &mut seq, 10);
+    (id, seq)
+}
+
+/// Launches the pilot's drone and lets go of fire; returns the drone's id.
+fn launch_drone(game: &mut Game, id: u32, seq: &mut u32) -> u32 {
+    fly(game, id, seq, 0, 0.0, BUTTON_FIRE, 3);
+    idle(game, id, seq, 3);
+    game.world.players[&id].seat.expect("the pilot is at the drone's controls").vehicle
+}
+
+fn drone(game: &Game, vid: u32) -> Option<Drone> {
+    game.world.vehicles.get(&vid).and_then(|vehicle| vehicle.drone)
+}
+
+#[test]
+fn a_launch_spends_the_drone_and_puts_the_player_at_its_controls() {
+    let mut game = game();
+    let (id, mut seq) = pilot(&mut game);
+    let vid = launch_drone(&mut game, id, &mut seq);
+    let player = &game.world.players[&id];
+    assert_eq!(player.seat, Some(Seat { vehicle: vid, index: 0, remote: true }));
+    assert_eq!(player.hotbar[0].item, ITEM_NONE, "the drone left the hand");
+    assert_eq!(game.world.vehicles[&vid].kind, KIND_DRONE);
+    assert!(drone(&game, vid).is_some_and(|drone| drone.linked && drone.owner == id));
+    // The body is still out there, kneeling, and its drone is listed with a full, linked battery.
+    let body = game.entity_states().into_iter().find(|entity| entity.id == id).expect("the pilot's body is listed");
+    assert_ne!(body.flags & shared::protocol::FLAG_CROUCHING, 0);
+    let listed = game.vehicle_states().into_iter().find(|vehicle| vehicle.id == vid).unwrap();
+    let thrust = listed.thrust.expect("a drone sends its battery");
+    assert!(thrust.air > 250 && thrust.flags & THRUST_LINKED != 0, "{thrust:?}");
+}
+
+#[test]
+fn a_drone_left_alone_hovers() {
+    let mut game = game();
+    let (id, mut seq) = pilot(&mut game);
+    let vid = launch_drone(&mut game, id, &mut seq);
+    let start = game.world.physics.car_pose(vid).unwrap().position;
+    idle(&mut game, id, &mut seq, 120);
+    let now = game.world.physics.car_pose(vid).unwrap().position;
+    assert!((now[1] - start[1]).abs() < 0.5, "held its height: {start:?} -> {now:?}");
+    assert!(drone(&game, vid).is_some_and(|drone| drone.linked));
+}
+
+#[test]
+fn the_stick_flies_the_drone_and_the_body_stays_put() {
+    let mut game = game();
+    let (id, mut seq) = pilot(&mut game);
+    let body = game.world.players[&id].character.position;
+    let vid = launch_drone(&mut game, id, &mut seq);
+    let start = game.world.physics.car_pose(vid).unwrap().position;
+    fly(&mut game, id, &mut seq, 127, 0.0, 0, 120);
+    let now = game.world.physics.car_pose(vid).unwrap();
+    assert!(start[2] - now.position[2] > 15.0, "flew ahead (-Z): {start:?} -> {:?}", now.position);
+    let speed = now.velocity[0].hypot(now.velocity[2]);
+    assert!(speed > 12.0, "and fast: {speed}");
+    let still = game.world.players[&id].character.position;
+    assert!((0..3).all(|i| (still[i] - body[i]).abs() < 0.05), "the body stayed: {body:?} -> {still:?}");
+}
+
+#[test]
+fn looking_down_with_the_stick_forward_dives() {
+    let mut game = game();
+    let (id, mut seq) = pilot(&mut game);
+    let vid = launch_drone(&mut game, id, &mut seq);
+    fly(&mut game, id, &mut seq, 0, 0.0, BUTTON_JUMP, 120);
+    idle(&mut game, id, &mut seq, 90);
+    let high = game.world.physics.car_pose(vid).unwrap().position;
+    fly(&mut game, id, &mut seq, 127, -0.6, 0, 60);
+    let low = game.world.physics.car_pose(vid).unwrap();
+    assert!(low.velocity[1] < -5.0, "diving: {:?}", low.velocity);
+    assert!(low.position[1] < high[1] - 3.0 && low.position[2] < high[2] - 5.0, "down and ahead: {high:?} -> {:?}", low.position);
+}
+
+#[test]
+fn fire_sets_the_charge_off_and_hurts_who_is_near() {
+    let mut game = game();
+    let (id, mut seq) = pilot(&mut game);
+    let target = join(&mut game);
+    let vid = launch_drone(&mut game, id, &mut seq);
+    let at = game.world.physics.car_pose(vid).unwrap().position;
+    // Beside the drone, out of its proximity fuse.
+    game.world.players.get_mut(&target).unwrap().character.position = [at[0] + 2.0, STANDING_Y, at[2]];
+    fly(&mut game, id, &mut seq, 0, 0.0, BUTTON_FIRE, 3);
+    assert!(!game.world.vehicles.contains_key(&vid), "the drone is gone");
+    assert_eq!(game.world.players[&id].seat, None, "the pilot is back in their body");
+    assert!(game.world.players[&target].hp < PLAYER_MAX_HP, "the blast reached the bystander");
+}
+
+#[test]
+fn flying_into_someone_kills_them_and_credits_the_pilot() {
+    let mut game = game();
+    let (id, mut seq) = pilot(&mut game);
+    let target = join(&mut game);
+    let vid = launch_drone(&mut game, id, &mut seq);
+    let at = game.world.physics.car_pose(vid).unwrap().position;
+    game.world.players.get_mut(&target).unwrap().character.position = [at[0], STANDING_Y, at[2] - 15.0];
+    // Down to head height, then straight at them.
+    for _ in 0..240 {
+        if !game.world.vehicles.contains_key(&vid) {
+            break;
+        }
+        let y = game.world.physics.car_pose(vid).unwrap().position[1];
+        let pitch = if y > STANDING_Y + 0.6 { -0.15 } else { 0.0 };
+        fly(&mut game, id, &mut seq, 127, pitch, 0, 1);
+    }
+    assert!(!game.world.vehicles.contains_key(&vid), "it went off");
+    assert_eq!(game.world.players[&target].hp, 0, "right on them, the blast kills");
+    assert_eq!(game.world.players[&id].kills, 1);
+}
+
+#[test]
+fn use_recalls_the_drone_without_a_blast() {
+    let mut game = game();
+    let (id, mut seq) = pilot(&mut game);
+    let vid = launch_drone(&mut game, id, &mut seq);
+    let vehicles = game.world.vehicles.len();
+    fly(&mut game, id, &mut seq, 0, 0.0, BUTTON_USE, 1);
+    idle(&mut game, id, &mut seq, 3);
+    assert!(!game.world.vehicles.contains_key(&vid));
+    assert_eq!(game.world.vehicles.len(), vehicles - 1);
+    let player = &game.world.players[&id];
+    assert_eq!(player.seat, None, "back in the body, and not in some other vehicle");
+    assert_eq!(player.hp, PLAYER_MAX_HP);
+    assert!(!game.vehicle_states().iter().any(|vehicle| vehicle.id == vid), "no longer listed");
+}
+
+#[test]
+fn a_flat_battery_drops_the_drone_which_goes_off_where_it_lands() {
+    let mut game = game();
+    let (id, mut seq) = pilot(&mut game);
+    let vid = launch_drone(&mut game, id, &mut seq);
+    // Well away from the pilot first, and up a little.
+    fly(&mut game, id, &mut seq, 127, 0.1, 0, 90);
+    game.world.vehicles.get_mut(&vid).unwrap().drone.as_mut().unwrap().energy = 2;
+    idle(&mut game, id, &mut seq, 3);
+    assert_eq!(game.world.players[&id].seat, None, "control is back with the pilot");
+    assert!(drone(&game, vid).is_some_and(|drone| !drone.linked), "and the drone falls");
+    idle(&mut game, id, &mut seq, DRONE_FALL_TICKS + 10);
+    assert!(!game.world.vehicles.contains_key(&vid), "it went off");
+    assert_eq!(game.world.players[&id].hp, PLAYER_MAX_HP, "far from the pilot");
+}
+
+#[test]
+fn one_hit_pops_the_drone_and_frees_the_pilot() {
+    let mut game = game();
+    let (id, mut seq) = pilot(&mut game);
+    let shooter = join(&mut game);
+    let vid = launch_drone(&mut game, id, &mut seq);
+    fly(&mut game, id, &mut seq, 127, 0.0, 0, 60);
+    super::super::combat::damage_vehicle(&mut game.world, vid, 1, Some(shooter));
+    assert!(!game.world.vehicles.contains_key(&vid));
+    assert_eq!(game.world.players[&id].seat, None);
+    assert_eq!(game.world.players[&id].hp, PLAYER_MAX_HP, "nobody in the drone died with it");
+}
+
+#[test]
+fn a_hurt_pilot_loses_the_link() {
+    let mut game = game();
+    let (id, mut seq) = pilot(&mut game);
+    let vid = launch_drone(&mut game, id, &mut seq);
+    super::super::combat::damage(&mut game.world, id, 10, None, WEAPON_RIFLE);
+    idle(&mut game, id, &mut seq, 1);
+    assert_eq!(game.world.players[&id].seat, None);
+    assert!(drone(&game, vid).is_some_and(|drone| !drone.linked));
+}
+
+#[test]
+fn the_link_does_not_reach_past_the_range() {
+    let mut game = game();
+    let (id, mut seq) = pilot(&mut game);
+    let vid = launch_drone(&mut game, id, &mut seq);
+    let body = game.world.players[&id].character.position;
+    game.world.physics.reset_car(vid, [body[0], 20.0, body[2] - DRONE_RANGE - 5.0], 0.0);
+    idle(&mut game, id, &mut seq, 1);
+    assert_eq!(game.world.players[&id].seat, None);
+    assert!(drone(&game, vid).is_some_and(|drone| !drone.linked));
+}
+
+#[test]
+fn a_pilot_who_leaves_takes_the_drone_with_them() {
+    let mut game = game();
+    let (id, mut seq) = pilot(&mut game);
+    let vid = launch_drone(&mut game, id, &mut seq);
+    game.handle(Command::Leave(id));
+    game.step();
+    assert!(!game.world.vehicles.contains_key(&vid));
+}
+

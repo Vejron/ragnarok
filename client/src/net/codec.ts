@@ -47,6 +47,8 @@ export const KIND_STRV = 8
 export const KIND_MORTAR = 9
 /** The Tesla Roadster: a sports car with cold-gas thrusters (boost, hop and hover). Two seats. */
 export const KIND_ROADSTER = 10
+/** An FPV drone, flown from afar by the player who launched it. */
+export const KIND_DRONE = 11
 export const FLAG_GROUNDED = 1 << 0
 export const FLAG_DEAD = 1 << 1
 export const FLAG_CROUCHING = 1 << 2
@@ -87,6 +89,8 @@ export const WEAPON_RICOCHET = 16
 export const WEAPON_TURRET = 17
 /** A mortar bomb going off. */
 export const WEAPON_MORTAR = 18
+/** An FPV drone's charge going off. */
+export const WEAPON_DRONE = 19
 
 /** How a stickman died, as in a `Kill`. Mirrors `DEATH_*`. */
 export const DEATH_BODY = 0
@@ -127,6 +131,8 @@ export const ARMS_REAR_JAMMED = 1 << 2
 /** `Thrust.flags`: the rear (boost) nozzles and the lift (hop and hover) nozzles are firing. Mirrors `THRUST_*`. */
 export const THRUST_BOOST = 1 << 0
 export const THRUST_LIFT = 1 << 1
+/** A drone's: its pilot still flies it. A drone sends its battery as `air`. */
+export const THRUST_LINKED = 1 << 2
 
 /** One tick of player intent, already quantized: what the client predicts with is what it sends. */
 export interface InputFrame {

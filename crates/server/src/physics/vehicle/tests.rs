@@ -524,6 +524,51 @@ fn scripted_flight_matches_fixture() {
     }
 }
 
+/// A scripted drone flight for the fixture in `vehicle.spec.ts`: hover, climb, fly ahead and down the
+/// look, turn towards a new look while strafing, then back off and sink.
+fn scripted_drone(tick: u32) -> CarControls {
+    let looking = |yaw: f32, pitch: f32| CarControls { aim: Some([yaw, pitch]), ..PILOTED };
+    match tick / 60 {
+        0 => looking(0.0, 0.0),
+        1 | 2 => CarControls { lift: 1.0, ..looking(0.0, 0.0) },
+        3 | 4 => CarControls { throttle: 1.0, ..looking(0.0, -0.2) },
+        5 | 6 => CarControls { throttle: 1.0, steer: 0.5, ..looking(1.0, 0.0) },
+        _ => CarControls { throttle: -0.5, lift: -1.0, ..looking(1.0, 0.0) },
+    }
+}
+
+/// `(tick, position)` of a drone started at `[0, 3, 0]`, mirrored in `vehicle.spec.ts`.
+const DRONE_CHECKPOINTS: [(u32, [f32; 3]); 4] = [
+    (90, [0.0, 4.8267, 0.0]),
+    (210, [0.0, 21.2060, -1.9828]),
+    (330, [-0.9514, 18.6062, -42.9446]),
+    (480, [-38.1789, 15.5587, -89.1635]),
+];
+
+#[test]
+fn scripted_drone_matches_fixture() {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_DRONE, [0.0, 3.0, 0.0], 0.0);
+    for tick in 0..480 {
+        physics.drive_car(1, scripted_drone(tick), TICK_DT);
+        physics.step_cars(TICK_DT);
+        let done = tick + 1;
+        if let Some((_, expected)) = DRONE_CHECKPOINTS.iter().find(|(t, _)| *t == done) {
+            let position = physics.car_pose(1).unwrap().position;
+            let close = position.iter().zip(expected).all(|(a, e)| (a - e).abs() < 0.001);
+            assert!(close, "tick {done}: {position:?}");
+        }
+    }
+}
+
+#[test]
+fn a_drone_with_its_motors_off_falls() {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_DRONE, [0.0, 10.0, 0.0], 0.0);
+    let pose = run(&mut physics, CarControls::IDLE, 60 * 3);
+    assert!(pose.position[1] < 0.5, "{pose:?}");
+}
+
 #[test]
 fn a_powered_helicopter_hovers() {
     let mut physics = with_heli(10.0);

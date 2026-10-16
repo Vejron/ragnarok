@@ -29,6 +29,8 @@ pub struct Seat {
     pub vehicle: u32,
     /// 0 is the driver.
     pub index: usize,
+    /// Flown from afar (a drone): the body stays where it stood, frozen but in the world.
+    pub remote: bool,
 }
 
 /// What a player holds at the start of every life: the revolver, the AK5, the sniper rifle and the shotgun
@@ -85,6 +87,12 @@ pub struct Player {
 impl Player {
     pub fn alive(&self) -> bool {
         self.hp > 0
+    }
+
+    /// Whether the stickman is out in the world, to be seen, hit and blasted: on foot, or standing
+    /// still while flying a drone.
+    pub fn embodied(&self) -> bool {
+        self.seat.is_none_or(|seat| seat.remote)
     }
 
     /// The slot in hand.
@@ -167,6 +175,23 @@ pub struct Vehicle {
     pub damage: [u8; 8],
     /// Ticks before it may throw sparks again.
     pub scrape_in: u8,
+    /// A drone's link to its pilot and its battery; `None` for anything else.
+    pub drone: Option<Drone>,
+}
+
+/// What a drone carries beyond being a vehicle. The `Drones` mechanic owns it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Drone {
+    /// Who launched it, credited with what it blows up.
+    pub owner: u32,
+    /// Ticks of flight left in the battery.
+    pub energy: u32,
+    /// Its owner is flying it. Once the link is lost it falls, and goes off on whatever it lands on.
+    pub linked: bool,
+    /// The owner's health at launch: losing any of it breaks their concentration, and the link.
+    pub pilot_hp: u8,
+    /// Ticks a falling drone has left before it goes off by itself.
+    pub fall_left: u32,
 }
 
 impl Vehicle {
@@ -252,6 +277,11 @@ pub(super) fn air_byte(tank: f32) -> u8 {
     (tank / ROADSTER_AIR * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
+/// A drone's battery on the wire: 0..=255 of full. Mirrored by the client's drone gauge.
+pub(super) fn battery_byte(energy: u32) -> u8 {
+    (energy as f32 / shared::items::DRONE_ENERGY_TICKS as f32 * 255.0).round().clamp(0.0, 255.0) as u8
+}
+
 /// Where the standing, living players were at the end of one tick: `(tick, [(id, position)])`.
 type Frame = (u32, Vec<(u32, [f32; 3])>);
 
@@ -308,7 +338,7 @@ pub struct World {
 impl World {
     /// Notes where everyone stands, once a tick has finished.
     pub(super) fn record_history(&mut self) {
-        let positions = self.players.iter().filter(|(_, p)| p.seat.is_none() && p.alive()).map(|(&id, p)| (id, p.character.position)).collect();
+        let positions = self.players.iter().filter(|(_, p)| p.embodied() && p.alive()).map(|(&id, p)| (id, p.character.position)).collect();
         if self.history.len() > MAX_REWIND_TICKS as usize {
             self.history.pop_front();
         }

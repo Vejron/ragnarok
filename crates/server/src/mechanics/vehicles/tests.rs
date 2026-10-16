@@ -447,7 +447,7 @@ fn a_lone_crewman_can_switch_between_driver_and_gunner() {
     press(&mut game, id, &mut seq, (0, 0), BUTTON_RELOAD, 1);
     idle(&mut game, id, &mut seq, 3);
     assert_eq!(game.world.vehicles[&vid].seats[..2], [None, Some(id)]);
-    assert_eq!(game.world.players[&id].seat, Some(Seat { vehicle: vid, index: 1 }));
+    assert_eq!(game.world.players[&id].seat, Some(Seat { vehicle: vid, index: 1, remote: false }));
 
     press(&mut game, id, &mut seq, (0, 0), BUTTON_RELOAD, 1);
     idle(&mut game, id, &mut seq, 3);
@@ -505,7 +505,7 @@ fn ramming_a_car_hurts_both_and_blames_the_driver() {
     let (id, _inbox) = join(&mut game);
     let (a, b) = two_cars(&mut game);
     game.world.vehicles.get_mut(&a).unwrap().seats[0] = Some(id);
-    game.world.players.get_mut(&id).unwrap().seat = Some(Seat { vehicle: a, index: 0 });
+    game.world.players.get_mut(&id).unwrap().seat = Some(Seat { vehicle: a, index: 0, remote: false });
     game.world.physics.kick_car(a, [0.0, 0.0, -22.0]);
     let events = crash_events(&mut game, 60);
     let (rammer, rammed) = (&game.world.vehicles[&a], &game.world.vehicles[&b]);

@@ -85,14 +85,14 @@ const release = (mask: number) => () => props.input.hold(mask, false)
     <div v-if="stick.active" class="base" :style="{ left: stick.x + 'px', top: stick.y + 'px' }">
       <div class="knob" :style="{ transform: `translate(${stick.dx}px, ${stick.dy}px)` }" />
     </div>
-    <button class="btn use" @pointerdown.prevent="input.tap(BUTTON_USE)">USE</button>
+    <button class="btn use" @pointerdown.prevent="input.tap(BUTTON_USE)">{{ seat === 'drone' ? 'RECALL' : 'USE' }}</button>
     <button class="btn jump" @pointerdown.prevent="press(BUTTON_JUMP)($event)" @pointerup="release(BUTTON_JUMP)()" @pointercancel="release(BUTTON_JUMP)()">
-      {{ seat === 'driver' ? 'BRAKE' : seat === 'roadster' ? 'HOP' : seat === 'aviator' ? 'FASTER' : seat === 'pilot' ? 'UP' : 'JUMP' }}
+      {{ seat === 'driver' ? 'BRAKE' : seat === 'roadster' ? 'HOP' : seat === 'aviator' ? 'FASTER' : seat === 'pilot' || seat === 'drone' ? 'UP' : 'JUMP' }}
     </button>
-    <button v-if="seat === 'pilot' || seat === 'aviator' || seat === 'roadster'" class="btn sink" @pointerdown.prevent="press(BUTTON_RUN)($event)" @pointerup="release(BUTTON_RUN)()" @pointercancel="release(BUTTON_RUN)()">{{ seat === 'aviator' ? 'SLOWER' : seat === 'roadster' ? 'BOOST' : 'DOWN' }}</button>
+    <button v-if="seat === 'pilot' || seat === 'drone' || seat === 'aviator' || seat === 'roadster'" class="btn sink" @pointerdown.prevent="press(BUTTON_RUN)($event)" @pointerup="release(BUTTON_RUN)()" @pointercancel="release(BUTTON_RUN)()">{{ seat === 'aviator' ? 'SLOWER' : seat === 'roadster' ? 'BOOST' : 'DOWN' }}</button>
     <button v-if="!seat" class="btn crouch" @pointerdown.prevent="press(BUTTON_CROUCH)($event)" @pointerup="release(BUTTON_CROUCH)()" @pointercancel="release(BUTTON_CROUCH)()">CROUCH</button>
     <button v-if="seat === 'aviator' || seat === 'roadster'" class="btn crouch" @pointerdown.prevent="press(BUTTON_CROUCH)($event)" @pointerup="release(BUTTON_CROUCH)()" @pointercancel="release(BUTTON_CROUCH)()">{{ seat === 'roadster' ? 'BRAKE' : 'BOMB' }}</button>
-    <button class="btn fire" @pointerdown.prevent="press(BUTTON_FIRE)($event)" @pointerup="release(BUTTON_FIRE)()" @pointercancel="release(BUTTON_FIRE)()">FIRE</button>
+    <button class="btn fire" @pointerdown.prevent="press(BUTTON_FIRE)($event)" @pointerup="release(BUTTON_FIRE)()" @pointercancel="release(BUTTON_FIRE)()">{{ seat === 'drone' ? 'BOOM' : 'FIRE' }}</button>
     <button v-if="!seat" class="btn reload" @pointerdown.prevent="input.tap(BUTTON_RELOAD)">RELOAD</button>
     <button v-else-if="canSwitch" class="btn reload" @pointerdown.prevent="input.tap(BUTTON_RELOAD)">SEAT</button>
   </div>

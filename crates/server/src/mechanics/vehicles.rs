@@ -4,7 +4,7 @@ use crate::physics::{CarCondition, CarControls, CarImpact, CarPose, Character, O
 use shared::consts::*;
 use shared::vehicles::{VehicleDef, vehicle_def};
 use shared::protocol::{
-    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, ShotEvent, WEAPON_CRASH,
+    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_DRONE, KIND_HELI, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, ShotEvent, WEAPON_CRASH,
     WEAPON_ROADKILL, WEAPON_SCRAPE, seat_count, vehicle_hp,
 };
 use shared::quant::{from_axis, to_cm, wrap_angle};
@@ -156,6 +156,7 @@ pub(super) fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: 
             turret_hp: TANK_TURRET_HP,
             damage: [0; 8],
             scrape_in: 0,
+            drone: None,
         },
     );
     id
@@ -222,8 +223,8 @@ fn board(world: &mut World, id: u32) {
     let here = player.character.position;
     let mut nearest: Option<(f32, u32, usize)> = None;
     for (&vid, vehicle) in &world.vehicles {
-        // A towed mortar is being pulled, and no one climbs on while it is.
-        if vehicle.wrecked() || world.physics.towed_by(vid).is_some() {
+        // A towed mortar is being pulled, and no one climbs on while it is. A drone is flown from afar.
+        if vehicle.wrecked() || world.physics.towed_by(vid).is_some() || vehicle.kind == KIND_DRONE {
             continue;
         }
         let Some(free) = vehicle.seats[..seat_count(vehicle.kind)].iter().position(Option::is_none) else { continue };
@@ -236,7 +237,7 @@ fn board(world: &mut World, id: u32) {
     if let Some((_, vehicle, index)) = nearest {
         world.vehicles.get_mut(&vehicle).expect("found above").seats[index] = Some(id);
         let player = world.players.get_mut(&id).expect("checked above");
-        player.seat = Some(Seat { vehicle, index });
+        player.seat = Some(Seat { vehicle, index, remote: false });
         player.character.vy = 0.0;
         player.character.ride = 0;
         tracing::debug!(id, vehicle, index, "boarded");
@@ -265,7 +266,7 @@ fn switch_seat(world: &mut World, id: u32) {
     vehicle.seats[seat.index] = None;
     vehicle.seats[free] = Some(id);
     if let Some(player) = world.players.get_mut(&id) {
-        player.seat = Some(Seat { vehicle: seat.vehicle, index: free });
+        player.seat = Some(Seat { vehicle: seat.vehicle, index: free, remote: false });
     }
     tracing::debug!(id, vehicle = seat.vehicle, from = seat.index, to = free, "switched seat");
 }
@@ -294,7 +295,7 @@ fn run_down_trees(world: &mut World, before: &BTreeMap<u32, CarPose>) {
     for (vid, object) in world.physics.car_tree_contacts() {
         let (Some(pose), Some(vehicle)) = (before.get(&vid), world.vehicles.get(&vid)) else { continue };
         let speed = pose.velocity[0].hypot(pose.velocity[2]);
-        if speed < TREE_RAM_MIN_SPEED || vehicle.wrecked() {
+        if speed < TREE_RAM_MIN_SPEED || vehicle.wrecked() || vehicle.kind == KIND_DRONE {
             continue;
         }
         let weight = if matches!(vehicle.kind, KIND_TANK | KIND_STRV) { TANK_RAM_FACTOR } else { 1.0 };
@@ -404,7 +405,7 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
     for impact in rams {
         let Some(Obj::Building(id)) = impact.object else { continue };
         let Some(vehicle) = world.vehicles.get(&impact.car) else { continue };
-        if vehicle.wrecked() {
+        if vehicle.wrecked() || vehicle.kind == KIND_DRONE {
             continue;
         }
         let weight = if matches!(vehicle.kind, KIND_TANK | KIND_STRV) { TANK_RAM_FACTOR } else { 1.0 };
@@ -412,7 +413,8 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
     }
     for (vid, impact) in hardest {
         let Some(vehicle) = world.vehicles.get_mut(&vid) else { continue };
-        if vehicle.wrecked() {
+        // A drone's own collisions are what set it off (see `Drones`).
+        if vehicle.wrecked() || vehicle.kind == KIND_DRONE {
             continue;
         }
         let [x, y, z] = impact.point.map(to_cm);
@@ -448,10 +450,14 @@ fn knock_players(world: &mut World) {
     let mut run_down = Vec::new();
     for (&id, player) in world.players.iter_mut() {
         player.hit_cooldown = player.hit_cooldown.saturating_sub(1);
-        if player.seat.is_some() || !player.alive() || player.character.ride != 0 || player.hit_cooldown > 0 {
+        if !player.embodied() || !player.alive() || player.character.ride != 0 || player.hit_cooldown > 0 {
             continue;
         }
         let Some(hit) = world.physics.car_hit(player.character.position) else { continue };
+        // A drone is too light to throw anyone; it goes off instead (see `Drones`).
+        if world.vehicles.get(&hit.car).is_some_and(|vehicle| vehicle.kind == KIND_DRONE) {
+            continue;
+        }
         let speed = hit.velocity[0].hypot(hit.velocity[2]);
         let outward = [player.character.position[0] - hit.position[0], player.character.position[2] - hit.position[2]];
         let unit = |v: [f32; 2]| {
@@ -615,8 +621,8 @@ impl Mechanic for Vehicles {
                             // A helicopter climbs on jump and sinks on run.
                             lift: if roadster { 0.0 } else { f32::from(held(BUTTON_JUMP)) - f32::from(held(BUTTON_RUN)) },
                             powered: true,
-                            // A plane flies towards where its pilot looks.
-                            aim: (vehicle.kind == KIND_PLANE).then(|| [shared::quant::from_mrad(input.yaw), shared::quant::from_mrad(input.pitch())]),
+                            // A plane and a drone fly towards where their pilot looks.
+                            aim: matches!(vehicle.kind, KIND_PLANE | KIND_DRONE).then(|| [shared::quant::from_mrad(input.yaw), shared::quant::from_mrad(input.pitch())]),
                             boost: roadster && held(BUTTON_RUN),
                             hop: roadster && held(BUTTON_JUMP),
                         }
@@ -679,6 +685,10 @@ impl Mechanic for Vehicles {
                 vehicle.stuck_ticks = 0;
             }
             for rider in vehicle.seats.iter().flatten() {
+                // A drone's pilot stays where they stood.
+                if vehicle.kind == KIND_DRONE {
+                    break;
+                }
                 if let Some(player) = world.players.get_mut(rider) {
                     player.character.position = [x, y, z];
                     player.character.yaw = pose.yaw();

@@ -177,7 +177,7 @@ fn enough_damage_to_the_turret_takes_it_off_and_kills_the_gunner() {
     let vid = of_kind(&game, KIND_TANK);
     let gunner = join(&mut game);
     game.world.vehicles.get_mut(&vid).unwrap().seats[1] = Some(gunner);
-    game.world.players.get_mut(&gunner).unwrap().seat = Some(Seat { vehicle: vid, index: 1 });
+    game.world.players.get_mut(&gunner).unwrap().seat = Some(Seat { vehicle: vid, index: 1, remote: false });
     damage_turret(&mut game.world, vid, TANK_TURRET_HP / 2, None);
     assert_eq!(game.world.vehicles[&vid].damage[DAMAGE_TURRET], 0, "still on");
     assert_eq!(game.world.vehicles[&vid].seats[1], Some(gunner));
