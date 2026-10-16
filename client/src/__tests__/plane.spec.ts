@@ -64,9 +64,9 @@ describe('PlaneModel', () => {
 
   it('swings the ring gun all the way round and ends its barrel at the muzzle', () => {
     const plane = new PlaneModel(1)
-    plane.update([0, 0, 0], IDENTITY, 0, [0, 4], { yaw: 0, pitch: 0, shots: 0, range: 0 }, ARMS)
+    plane.update([0, 0, 0], IDENTITY, 0, [0, 4], { yaw: 0, pitch: 0, shots: 0, range: 0, stowed: false }, ARMS)
     expect(plane.barrel().direction.z).toBeCloseTo(-1, 3)
-    plane.update([0, 0, 0], IDENTITY, 0, [0, 4], { yaw: Math.PI, pitch: 0.5, shots: 0, range: 0 }, ARMS)
+    plane.update([0, 0, 0], IDENTITY, 0, [0, 4], { yaw: Math.PI, pitch: 0.5, shots: 0, range: 0, stowed: false }, ARMS)
     const { origin, direction } = plane.barrel()
     expect(direction.z).toBeGreaterThan(0.8)
     expect(direction.y).toBeCloseTo(Math.sin(0.5), 3)

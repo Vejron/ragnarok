@@ -1,6 +1,6 @@
 /** Mirrors `crates/shared/src/consts.rs`. Keep the two in step. */
 
-export const PROTOCOL_VERSION = 29
+export const PROTOCOL_VERSION = 30
 
 /** A hurt building is drawn in this many worse states; the last is about to collapse. Mirrors `DAMAGE_STAGES`. */
 export const DAMAGE_STAGES = 3
@@ -190,7 +190,7 @@ export const MORTAR_HALF_EXTENTS = [1.0, 0.5, 1.5] as const
 export const MORTAR_WHEEL_RADIUS = 0.45
 export const MORTAR_TRACK_HALF = 0.85
 export const MORTAR_GUN_PIVOT = [0.0, 0.7, -0.2] as const
-export const MORTAR_BARREL_LENGTH = 1.6
+export const MORTAR_BARREL_LENGTH = 3.2
 export const MORTAR_PITCH_MIN = 0.785
 export const MORTAR_PITCH_MAX = 1.484
 /** The range dial, metres. Mirrors `MORTAR_RANGE_*`. */

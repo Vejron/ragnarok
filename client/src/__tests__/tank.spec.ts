@@ -39,14 +39,14 @@ describe('TankModel', () => {
 
   it('points the barrel where the turret says, and ends it at the shell’s range', () => {
     const tank = new TankModel(1)
-    tank.update([10, 2, 5], IDENTITY, 0, [0, 0], { yaw: 0, pitch: 0, shots: 0, range: 0 })
+    tank.update([10, 2, 5], IDENTITY, 0, [0, 0], { yaw: 0, pitch: 0, shots: 0, range: 0, stowed: false })
     const level = tank.barrel()
     expect(level.direction.z).toBeCloseTo(-1, 3)
     expect(level.origin.y).toBeCloseTo(2 + TANK_TURRET_PIVOT[1], 3)
     const bounds = boxOf(named(tank, 'gun'))
     expect(bounds.min.z).toBeCloseTo(5 + TANK_TURRET_PIVOT[2] - TANK_BARREL_LENGTH, 1)
 
-    tank.update([10, 2, 5], IDENTITY, 0, [0, 0], { yaw: Math.PI / 2, pitch: 0.3, shots: 0, range: 0 })
+    tank.update([10, 2, 5], IDENTITY, 0, [0, 0], { yaw: Math.PI / 2, pitch: 0.3, shots: 0, range: 0, stowed: false })
     const turned = tank.barrel().direction
     // A quarter turn to the left points at -X, and the nod lifts it.
     expect(turned.x).toBeLessThan(-0.9)

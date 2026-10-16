@@ -120,11 +120,11 @@ mod tests {
     }
 
     fn tank(id: u32, yaw: i16) -> VehicleState {
-        VehicleState { id, kind: KIND_TANK, x: 0, y: 40, z: 0, qx: 0, qy: 0, qz: 0, steer: 0, seats: vec![0, 0], turret: Some(Turret { yaw, pitch: 100, shots: 1, range: 500 }), hp: 250, damage: None, arms: None, thrust: None }
+        VehicleState { id, kind: KIND_TANK, x: 0, y: 40, z: 0, qx: 0, qy: 0, qz: 0, steer: 0, seats: vec![0, 0], turret: Some(Turret { yaw, pitch: 100, shots: 1, range: 500, flags: 0 }), hp: 250, damage: None, arms: None, thrust: None }
     }
 
     fn plane(id: u32, arms: Arms) -> VehicleState {
-        VehicleState { id, kind: KIND_PLANE, x: 0, y: 140, z: 0, qx: 0, qy: 0, qz: 0, steer: 0, seats: vec![0, 0], turret: Some(Turret { yaw: 0, pitch: 0, shots: 0, range: 0 }), hp: 70, damage: None, arms: Some(arms), thrust: None }
+        VehicleState { id, kind: KIND_PLANE, x: 0, y: 140, z: 0, qx: 0, qy: 0, qz: 0, steer: 0, seats: vec![0, 0], turret: Some(Turret { yaw: 0, pitch: 0, shots: 0, range: 0, flags: 0 }), hp: 70, damage: None, arms: Some(arms), thrust: None }
     }
 
     #[test]

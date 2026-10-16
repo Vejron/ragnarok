@@ -1,7 +1,7 @@
 //! Simulation and network constants. Mirrored in `client/src/sim/consts.ts`.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 29;
+pub const PROTOCOL_VERSION: u8 = 30;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -532,7 +532,7 @@ pub const MORTAR_WHEEL_RADIUS: f32 = 0.45;
 pub const MORTAR_TRACK_HALF: f32 = 0.85;
 /// Where the mount sits in the hull frame, and the barrel's length from it.
 pub const MORTAR_GUN_PIVOT: [f32; 3] = [0.0, 0.7, -0.2];
-pub const MORTAR_BARREL_LENGTH: f32 = 1.6;
+pub const MORTAR_BARREL_LENGTH: f32 = 3.2;
 /// Elevation travel, radians: a high lob at the bottom, nearly vertical at the top. The gunner never sets
 /// it by hand: the range dial does (`lob_pitch` in gunnery).
 pub const MORTAR_PITCH_MIN: f32 = 0.785;

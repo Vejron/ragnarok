@@ -123,6 +123,9 @@ export const PROJECTILE_BOMB = 5
 /** A mortar bomb in flight. */
 export const PROJECTILE_MORTAR = 6
 
+/** `Turret`'s flags: a field mortar is hitched to a car, so it is drawn folded up for travel. Mirrors `TURRET_STOWED`. */
+export const TURRET_STOWED = 1 << 0
+
 /** `Arms.flags`: the blip switch is cutting the engine, and either set of guns is jammed. Mirrors `ARMS_*`. */
 export const ARMS_CUT = 1 << 0
 export const ARMS_JAMMED = 1 << 1
@@ -258,7 +261,7 @@ export interface RocketState {
   vz: number
 }
 
-/** A vehicle's gun in the hull frame. `shots` counts shells modulo 256; `range` is unused (shells fly now) and always 0. */
+/** A vehicle's gun in the hull frame. `shots` counts shells modulo 256; `range` is a field mortar's range dial, metres. */
 export interface Turret {
   /** + turns left. */
   yaw: number
@@ -266,6 +269,8 @@ export interface Turret {
   pitch: number
   shots: number
   range: number
+  /** A hitched field mortar, folded up for travel. */
+  stowed: boolean
 }
 
 /**
@@ -516,15 +521,15 @@ function decodeSelf(raw: unknown): { hp: number; progress: number; inventory: It
   return { hp: raw[0], progress: raw[1], inventory }
 }
 
-/** A turret as four integers, `null` when the vehicle has none, `undefined` when malformed. */
+/** A turret as five integers, `null` when the vehicle has none, `undefined` when malformed. */
 function readTurret(raw: unknown): number[] | null | undefined {
   if (raw === null) return null
-  return Array.isArray(raw) && raw.length === 4 && ints(raw) ? (raw as number[]) : undefined
+  return Array.isArray(raw) && raw.length === 5 && ints(raw) ? (raw as number[]) : undefined
 }
 
 function turretState(raw: readonly number[]): Turret {
-  const [yaw, pitch, shots, range] = raw as number[]
-  return { yaw: yaw! / MRAD, pitch: pitch! / MRAD, shots: shots!, range: range! / 10 }
+  const [yaw, pitch, shots, range, flags] = raw as number[]
+  return { yaw: yaw! / MRAD, pitch: pitch! / MRAD, shots: shots!, range: range! / 10, stowed: (flags! & TURRET_STOWED) !== 0 }
 }
 
 function decodeDrive(raw: unknown): DriveState | null | undefined {

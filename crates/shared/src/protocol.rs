@@ -349,7 +349,7 @@ pub const WHEEL_GONE: u8 = 255;
 
 /// A vehicle's gun, as it is drawn: the turret and barrel angles in the hull frame, and the last
 /// shot. `shots` counts shots modulo 256, so a client sees a new shot as a change in the counter;
-/// `range` is how far that shell flew before it hit something, in decimetres.
+/// `range` is a field mortar's range dial, in decimetres; `flags` are `TURRET_*`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Turret {
     /// Turret yaw relative to the hull, milliradians (+ turns left).
@@ -358,7 +358,11 @@ pub struct Turret {
     pub pitch: i16,
     pub shots: u8,
     pub range: u16,
+    pub flags: u8,
 }
+
+/// `Turret::flags`: a field mortar is hitched to a car, so it is drawn folded up for travel.
+pub const TURRET_STOWED: u8 = 1;
 
 /// A plane's weapons and engine, as they are drawn and shown on the crew's gauges:
 /// `[shots, heat, rear_heat, bombs, flags]`. `shots` counts the forward guns' rounds modulo 256, as
@@ -625,11 +629,11 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 29, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
+        148, 0, 30, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[
-        220, 0, 16, 1, 205, 4, 210, 205, 4, 206, 42, 9, 145, 155, 7, 0, 0, 85, 206, 0, 1, 134, 160, 0, 0, 3, 0, 0, 0, 145, 154, 1, 25, 253, 40, 208, 136, 205, 2, 138, 1, 0, 209, 254, 212, 12, 146, 159, 10, 2, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 146, 1, 7, 148, 209, 253, 68, 204, 250, 3, 205, 4, 210, 0, 192, 192, 192, 159, 12, 6, 209, 254, 12, 205, 1, 44, 205, 3, 32, 10, 236, 30, 0, 146, 4, 0, 148, 205, 11, 184, 204, 200, 9, 0, 70, 192, 149, 17, 204, 200, 0, 3, 3, 192, 145, 158, 9, 100, 0, 208, 211, 3, 254, 0, 4, 148, 1, 0, 7, 0, 192, 100, 152, 0, 0, 40, 0, 0, 0, 204, 255, 3, 192, 146, 204, 200, 3, 146, 3, 11, 152, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 73, 204, 128, 147, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 152, 40, 1, 205, 4, 176, 204, 150, 209, 252, 224, 205, 11, 184, 0, 209, 246, 60, 145, 149, 60, 4, 209, 254, 212, 5, 205, 4, 226, 145, 154, 77, 7, 2, 120, 204, 165, 209, 244, 72, 205, 5, 220, 236, 209, 150, 136, 205, 4, 209
+        220, 0, 16, 1, 205, 4, 210, 205, 4, 206, 42, 9, 145, 155, 7, 0, 0, 85, 206, 0, 1, 134, 160, 0, 0, 3, 0, 0, 0, 145, 154, 1, 25, 253, 40, 208, 136, 205, 2, 138, 1, 0, 209, 254, 212, 12, 146, 159, 10, 2, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 146, 1, 7, 149, 209, 253, 68, 204, 250, 3, 205, 4, 210, 1, 0, 192, 192, 192, 159, 12, 6, 209, 254, 12, 205, 1, 44, 205, 3, 32, 10, 236, 30, 0, 146, 4, 0, 149, 205, 11, 184, 204, 200, 9, 0, 0, 70, 192, 149, 17, 204, 200, 0, 3, 3, 192, 145, 158, 9, 100, 0, 208, 211, 3, 254, 0, 4, 148, 1, 0, 7, 0, 192, 100, 152, 0, 0, 40, 0, 0, 0, 204, 255, 3, 192, 146, 204, 200, 3, 146, 3, 11, 152, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 73, 204, 128, 147, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 152, 40, 1, 205, 4, 176, 204, 150, 209, 252, 224, 205, 11, 184, 0, 209, 246, 60, 145, 149, 60, 4, 209, 254, 212, 5, 205, 4, 226, 145, 154, 77, 7, 2, 120, 204, 165, 209, 244, 72, 205, 5, 220, 236, 209, 150, 136, 205, 4, 209
     ];
 
     fn sample_input() -> ClientInput {
@@ -645,7 +649,7 @@ mod tests {
     }
 
     fn sample_snapshot() -> Snapshot {
-        Snapshot { tag: S_SNAPSHOT, tick: 1234, baseline: 1230, ack: 42, ride: 9, new_entities: vec![EntityState { id: 7, kind: KIND_STICKMAN, x: 0, y: 85, z: 100_000, yaw: 0, vy: 0, flags: FLAG_GROUNDED | FLAG_DEAD, stance: 0, knock_x: 0, knock_z: 0 }], entities: vec![EntityDelta { id: 1, dx: 25, dy: -3, dz: 40, dyaw: -120, dvy: 650, flags: FLAG_GROUNDED, stance: 0, dknock_x: -300, dknock_z: 12 }], new_vehicles: vec![VehicleState { id: 10, kind: KIND_TANK, x: 300, y: 90, z: -2000, qx: 0, qy: 700, qz: 0, steer: 32, seats: vec![1, 7], turret: Some(Turret { yaw: -700, pitch: 250, shots: 3, range: 1234 }), hp: 0, damage: None, arms: None, thrust: None }, VehicleState { id: 12, kind: KIND_PLANE, x: -500, y: 300, z: 800, qx: 10, qy: -20, qz: 30, steer: 0, seats: vec![4, 0], turret: Some(Turret { yaw: 3000, pitch: 200, shots: 9, range: 0 }), hp: 70, damage: None, arms: Some(Arms { shots: 17, heat: 200, rear_heat: 0, bombs: 3, flags: ARMS_CUT | ARMS_JAMMED }), thrust: None }], vehicles: vec![VehicleDelta { id: 9, dx: 100, dy: 0, dz: -45, dqx: 3, dqy: -2, dqz: 0, dsteer: 4, seats: Some(vec![1, 0, 7, 0]), turret: None, hp: 100, damage: Some([0, 0, 40, 0, 0, 0, 255, 3]), arms: None, thrust: Some(Thrust { air: 200, flags: THRUST_BOOST | THRUST_LIFT }) }], removed: vec![3, 11], drive: Some(DriveState { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }), me: SelfState { hp: 73, progress: 128, slots: vec![ItemSlot { item: ITEM_AK5, count: 1, ammo: 17 }, ItemSlot { item: ITEM_NONE, count: 0, ammo: 0 }, ItemSlot { item: ITEM_GRENADE, count: 2, ammo: 0 }] }, shots: vec![ShotEvent { shooter: 7, weapon: WEAPON_RIFLE, x: 1500, y: 160, z: -4200 }, ShotEvent { shooter: 1, weapon: WEAPON_RIFLE, x: -20, y: 90, z: 31_000 }], rockets: vec![ProjectileState { id: 40, kind: PROJECTILE_GRENADE, x: 1200, y: 150, z: -800, vx: 3000, vy: 0, vz: -2500 }], pickups: vec![PickupState { id: 60, item: ITEM_BANDAGE, x: -300, y: 5, z: 1250 }], bullets: vec![BulletSpawn { id: 77, shooter: 7, item: ITEM_AK5, x: 120, y: 165, z: -3000, vx: 1500, vy: -20, vz: -27000, tick: 1233 }] }
+        Snapshot { tag: S_SNAPSHOT, tick: 1234, baseline: 1230, ack: 42, ride: 9, new_entities: vec![EntityState { id: 7, kind: KIND_STICKMAN, x: 0, y: 85, z: 100_000, yaw: 0, vy: 0, flags: FLAG_GROUNDED | FLAG_DEAD, stance: 0, knock_x: 0, knock_z: 0 }], entities: vec![EntityDelta { id: 1, dx: 25, dy: -3, dz: 40, dyaw: -120, dvy: 650, flags: FLAG_GROUNDED, stance: 0, dknock_x: -300, dknock_z: 12 }], new_vehicles: vec![VehicleState { id: 10, kind: KIND_TANK, x: 300, y: 90, z: -2000, qx: 0, qy: 700, qz: 0, steer: 32, seats: vec![1, 7], turret: Some(Turret { yaw: -700, pitch: 250, shots: 3, range: 1234, flags: TURRET_STOWED }), hp: 0, damage: None, arms: None, thrust: None }, VehicleState { id: 12, kind: KIND_PLANE, x: -500, y: 300, z: 800, qx: 10, qy: -20, qz: 30, steer: 0, seats: vec![4, 0], turret: Some(Turret { yaw: 3000, pitch: 200, shots: 9, range: 0, flags: 0 }), hp: 70, damage: None, arms: Some(Arms { shots: 17, heat: 200, rear_heat: 0, bombs: 3, flags: ARMS_CUT | ARMS_JAMMED }), thrust: None }], vehicles: vec![VehicleDelta { id: 9, dx: 100, dy: 0, dz: -45, dqx: 3, dqy: -2, dqz: 0, dsteer: 4, seats: Some(vec![1, 0, 7, 0]), turret: None, hp: 100, damage: Some([0, 0, 40, 0, 0, 0, 255, 3]), arms: None, thrust: Some(Thrust { air: 200, flags: THRUST_BOOST | THRUST_LIFT }) }], removed: vec![3, 11], drive: Some(DriveState { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }), me: SelfState { hp: 73, progress: 128, slots: vec![ItemSlot { item: ITEM_AK5, count: 1, ammo: 17 }, ItemSlot { item: ITEM_NONE, count: 0, ammo: 0 }, ItemSlot { item: ITEM_GRENADE, count: 2, ammo: 0 }] }, shots: vec![ShotEvent { shooter: 7, weapon: WEAPON_RIFLE, x: 1500, y: 160, z: -4200 }, ShotEvent { shooter: 1, weapon: WEAPON_RIFLE, x: -20, y: 90, z: 31_000 }], rockets: vec![ProjectileState { id: 40, kind: PROJECTILE_GRENADE, x: 1200, y: 150, z: -800, vx: 3000, vy: 0, vz: -2500 }], pickups: vec![PickupState { id: 60, item: ITEM_BANDAGE, x: -300, y: 5, z: 1250 }], bullets: vec![BulletSpawn { id: 77, shooter: 7, item: ITEM_AK5, x: 120, y: 165, z: -3000, vx: 1500, vy: -20, vz: -27000, tick: 1233 }] }
     }
 
     /// `[6, [[OBJ_TREE, 2, 3, 70000, -1571]]]`, mirrored in `codec.spec.ts`.
@@ -712,6 +716,7 @@ mod tests {
         assert_eq!(decode::<ClientInput>(INPUT_FIXTURE), Some(sample_input()));
         assert_eq!(peek_tag(INPUT_FIXTURE), Some(C_INPUT));
     }
+
 
     #[test]
     fn snapshot_matches_fixture() {

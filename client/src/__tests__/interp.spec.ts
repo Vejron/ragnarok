@@ -75,8 +75,8 @@ describe('Interpolator', () => {
     })
     const interp = new Interpolator<VehicleState>(blendVehicle)
     // 3.0 to -3.0 rad is a 0.28 rad turn through ±π, not 6 rad the long way.
-    interp.push(10, [tank({ yaw: 3.0, pitch: 0, shots: 4, range: 10 })])
-    interp.push(12, [tank({ yaw: -3.0, pitch: 0.4, shots: 5, range: 90 })])
+    interp.push(10, [tank({ yaw: 3.0, pitch: 0, shots: 4, range: 10, stowed: false })])
+    interp.push(12, [tank({ yaw: -3.0, pitch: 0.4, shots: 5, range: 90, stowed: false })])
     const mid = interp.sample(3, 11)!.turret!
     expect(Math.abs(Math.abs(mid.yaw) - Math.PI)).toBeLessThan(0.01)
     expect(mid.pitch).toBeCloseTo(0.2)

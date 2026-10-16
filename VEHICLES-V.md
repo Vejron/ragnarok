@@ -8,7 +8,7 @@ A towed heavy mortar: a two-axle gun carriage with a steel tongue, one gunner, a
 - **Hitching.** Stop a car and press **H** with its driver in seat 0: a free mortar within 2.5 m of the car's rear tow point is hitched to it. Press **H** again to let it go. Hitching needs the car at 1.5 m/s or less, and the mortar must be empty. A towed mortar cannot be boarded and cannot fire.
 - **Towing.** The mortar follows the car through a Rapier spherical joint, so it swings on corners and pulls on the car's rear. A wrecked car, or a respawn, lets it go.
 - **Aiming.** The mouse sets the bearing: the mount follows the look at 3 rad/s, so the barrel stays on the crosshair. **W** and **S** walk a **range dial** from 50 m to 245 m (60 m/s, starting at 120 m). The barrel's elevation is the lob that puts the bomb on that range, so the barrel always points where the bomb will go.
-- **Firing.** Click or **F**. A bomb leaves at 70 m/s and falls at `GRAVITY` 20, so the range runs from about 42 m (nearly vertical) to 245 m (45°). The mortar is shoved back 3 m/s and its tube kicks back for 0.6 s. Reload is 7 s.
+- **Firing.** Click or **F**. A bomb leaves at 70 m/s and falls at `GRAVITY` 20, so the range runs from about 42 m (nearly vertical) to 245 m (45°). The mortar is shoved back 3 m/s and its 3.2 m barrel kicks back for 0.6 s. Reload is 7 s.
 - **Blast.** 11 m radius, 260 damage at the centre, 30 knock. Wider and harder than a tank shell, and it bursts on the ground, not in the air: the bomb's lifetime is 10 s.
 - **Landing marker.** A ring the size of the blast sits on the ground where the bomb would first land, pulsing, with an orange beam over it that is solid at the ground and fades out towards the sky. The HUD shows the dialled range in metres.
 
@@ -48,14 +48,15 @@ Protocol **26**:
 - `KIND_MORTAR` (9), one seat, 150 hp. `MAX_VEHICLES` is 14.
 - `PROJECTILE_MORTAR` (6), `WEAPON_MORTAR` (18), for the falling bomb and its blast.
 - `BUTTON_HITCH` (`1 << 9`), `BUTTON_RANGE_UP` (`1 << 10`), `BUTTON_RANGE_DOWN` (`1 << 11`).
-- A mortar's `Turret` is its mount: `yaw` is the traverse, `pitch` the elevation the barrel is at, and `range` (decimetres) the dialled range, which the HUD reads.
+- A mortar's `Turret` is its mount: `yaw` is the traverse, `pitch` the elevation the barrel is at, `range` (decimetres) the dialled range, which the HUD reads.
+- Protocol **30** added `Turret::flags` as a fifth field: `TURRET_STOWED` (bit 0) while the mortar is hitched, so clients draw it folded for travel.
 - The byte fixtures in `protocol.rs` and `codec.spec.ts` were regenerated, and `fixtures/parity/gameplay.json` gained the mortar's row. [NETWORKING.md](NETWORKING.md) has the fields.
 
 ## Client
 
 | File | What it does |
 |---|---|
-| `render/mortar.ts` | `MortarModel`: hand-built from primitives (no glTF). Hull, steel tongue, wheels that roll with the ground, a base plate, a mount that turns with the traverse and an elevation group that lifts the tube, and a gunner's head when someone works it. A 0.6 s recoil on each shot. |
+| `render/mortar.ts` | `MortarModel`: hand-built from primitives (no glTF), after the Haubits 77. A low carriage on tandem wheels that roll with the ground, two split trails forward to the tow end with spades, a firing pad, an upper carriage with its power unit that turns with the traverse, and a cradle that lifts the long barrel (recuperators, fume extractor, muzzle brake, breech). A gunner's head when someone works it, and a 0.6 s recoil on each shot. On `turret.stowed` it folds over `STOW_SECONDS` (1.8 s): the barrel swings onto the travel lock over the rear, then the trails close into the tow bar and the pad lifts. Unhitched, it unfolds the same way backwards. A mortar first seen hitched is drawn folded straight away. |
 | `render/mortar-arc.ts` | `MortarArc`: the landing marker (ring and gradient beam), pulsing with `performance.now()`. |
 | `sim/grenade.ts` | `dropTrajectory` takes the TTL, so the preview stops when the bomb would. |
 | `game.ts` | The gunner's camera (behind the mount, looking where the mouse points), the `mortarPath` preview from the tube's real pose, `watchGun` for the recoil, the blast on `WEAPON_MORTAR`, prompts, the range in the HUD. |

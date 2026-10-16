@@ -105,20 +105,21 @@ Players sitting in a vehicle are **not** listed as entities. The vehicle's `seat
 | `qx, qy, qz` | the x, y, z of the orientation quaternion, scaled by 32767. The sender negates the quaternion so that `w >= 0`, and the receiver rebuilds `w = sqrt(1 − x² − y² − z²)` |
 | `steer` | front-wheel angle as a fraction of full lock (the kind's `*_MAX_STEER`), −127..127, + is right |
 | `seat` | the player id in each seat, 0 when empty. Seat 0 is the driver. A jeep has 4 seats, and a sports car and a Roadster 2; a tank has 2, the second being the gunner; a helicopter has 2, the pilot and the nose gunner; a plane has 2, the pilot (who fires the forward guns and drops the bombs) and the rear gunner; a walker and a Strv S have 1, the driver, who also fires (the Strv S's gun is fixed in the hull, so its `turret.yaw` is always 0 and only `pitch` moves) |
-| `turret` | `nil` for a vehicle without a gun, else `[yaw i16, pitch i16, shots u8, range u16]` (below). A plane's is the rear gunner's ring |
+| `turret` | `nil` for a vehicle without a gun, else `[yaw i16, pitch i16, shots u8, range u16, flags u8]` (below). A plane's is the rear gunner's ring |
 | `hp` | health, 0 is a burning wreck nobody can board |
 | `damage` | `nil` while unhurt, else eight bytes: front, rear, left, right, then wheels FL, FR, RL, RR, each 0..255 (a wheel at 255 is gone). A tank has no wheels to hurt, so its byte 4 (`DAMAGE_TURRET`) is 255 (`TURRET_GONE`) once its turret has been shot off |
 | `arms` | `nil` for anything but a plane, else `[shots u8, heat u8, rear_heat u8, bombs u8, flags u8]` (below) |
 | `thrust` | `nil` for anything but a Roadster or a drone, else `[air u8, flags u8]`: the air left in its tank, 0..255 of full, and the nozzles firing (bit 0 the rear boost nozzles, bit 1 the lift nozzles). Other clients draw the jets from `flags`; the driver's prediction resumes from `air`. A drone sends its battery as `air` and sets bit 2 while its pilot still flies it |
 
-`turret` is `[yaw, pitch, shots, range]`:
+`turret` is `[yaw, pitch, shots, range, flags]`:
 
 | Field | Unit |
 |---|---|
 | `yaw` | milliradians, turret angle relative to the hull, + turns left |
 | `pitch` | milliradians, barrel elevation, + is up |
 | `shots` | shells fired so far, modulo 256. A client sees a shot as a change in this counter, and draws the flash from the barrel it is drawing |
-| `range` | decimetres: how far the last shell flew before it hit something (3000 means it hit nothing) |
+| `range` | decimetres: how far the last shell flew before it hit something (3000 means it hit nothing). A field mortar's is its range dial |
+| `flags` | `TURRET_*`: bit 0 (`TURRET_STOWED`) is set while a field mortar is hitched to a car, and clients draw it folded for travel |
 
 `arms` is a plane's pilot weapons and engine, `[shots, heat, rear_heat, bombs, flags]`:
 
@@ -158,7 +159,7 @@ A snapshot is built per player from what is within `INTEREST_RADIUS` (300 m on t
 
 `entity_delta` is `[id u32, dx i32, dy i32, dz i32, dyaw i32, dvy i32, flags u8, dknock_x i32, dknock_z i32]`. Each field but `id` and `flags` is the new value minus the baseline's, in the same units as `entity`. `flags` is the new value. A change in the same entity's `kind` never happens.
 
-`vehicle_delta` is `[id u32, dx i32, dy i32, dz i32, dqx i32, dqy i32, dqz i32, dsteer i32, seats, turret, hp u8, damage, arms, thrust]`. The first eight are differences of the `vehicle` fields of the same name. `seats` is `nil` when unchanged, else the new list. `turret` is `nil` when unchanged, else the new `[yaw, pitch, shots, range]`. `hp` is the new value. `damage` is `nil` when unchanged, else the new eight bytes (all zeros is a repair). `arms` is `nil` when unchanged, else the new five bytes. `thrust` is `nil` when unchanged, else the new two bytes.
+`vehicle_delta` is `[id u32, dx i32, dy i32, dz i32, dqx i32, dqy i32, dqz i32, dsteer i32, seats, turret, hp u8, damage, arms, thrust]`. The first eight are differences of the `vehicle` fields of the same name. `seats` is `nil` when unchanged, else the new list. `turret` is `nil` when unchanged, else the new `[yaw, pitch, shots, range, flags]`. `hp` is the new value. `damage` is `nil` when unchanged, else the new eight bytes (all zeros is a repair). `arms` is `nil` when unchanged, else the new five bytes. `thrust` is `nil` when unchanged, else the new two bytes.
 
 The client's scene after a snapshot is:
 

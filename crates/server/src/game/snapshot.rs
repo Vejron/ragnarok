@@ -48,7 +48,9 @@ impl Game {
                 let [x, y, z] = pose.position;
                 let [qx, qy, qz] = pack_quat(pose.rotation);
                 let seats = vehicle.seats[..seat_count(vehicle.kind)].iter().map(|seat| seat.unwrap_or(0)).collect();
-                let turret = vehicle.gun.map(|gun| Turret { yaw: to_mrad(gun.yaw), pitch: to_mrad(gun.pitch), shots: gun.shots, range: (gun.range * 10.0).round().clamp(0.0, u16::MAX as f32) as u16 });
+                // A hitched mortar is drawn folded up for travel.
+                let flags = if self.world.physics.towed_by(id).is_some() { TURRET_STOWED } else { 0 };
+                let turret = vehicle.gun.map(|gun| Turret { yaw: to_mrad(gun.yaw), pitch: to_mrad(gun.pitch), shots: gun.shots, range: (gun.range * 10.0).round().clamp(0.0, u16::MAX as f32) as u16, flags });
                 let damage = (vehicle.damage != [0; 8]).then_some(vehicle.damage);
                 let arms = vehicle.arms.map(|arms| {
                     let rear = vehicle.gun.unwrap_or_default();

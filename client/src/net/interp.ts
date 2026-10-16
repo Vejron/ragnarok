@@ -77,6 +77,7 @@ export function blendVehicle(a: VehicleState, b: VehicleState, t: number): Vehic
           // A shot is an event, not a quantity: take the nearer snapshot's counter.
           shots: t < 0.5 ? a.turret.shots : b.turret.shots,
           range: t < 0.5 ? a.turret.range : b.turret.range,
+          stowed: t < 0.5 ? a.turret.stowed : b.turret.stowed,
         }
       : b.turret,
     // Counters and gauges, like the turret's shot counter, come from the nearer snapshot.
