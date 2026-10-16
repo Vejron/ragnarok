@@ -89,7 +89,7 @@ pub fn fetch_pieces(endpoints: &[String], pieces: &[[f64; 4]], retries: usize, p
         'rounds: for round in 0..=retries {
             if round > 0 {
                 eprintln!("  retrying in {pause} s");
-                std::thread::sleep(std::time::Duration::from_secs(pause));
+                crate::progress::retry(pause);
             }
             for endpoint in endpoints {
                 eprintln!("querying {endpoint} for {piece:?} (part {} of {})", index + 1, pieces.len());
@@ -106,6 +106,7 @@ pub fn fetch_pieces(endpoints: &[String], pieces: &[[f64; 4]], retries: usize, p
         // A way or relation that crosses a border comes back from both sides; keep the first.
         merged.ways.extend(osm.ways.into_iter().filter(|way| ways.insert(way.id)));
         merged.areas.extend(osm.areas.into_iter().filter(|area| areas.insert(area.id)));
+        crate::progress::steps(index + 1, pieces.len());
     }
     Ok(merged)
 }
@@ -120,7 +121,7 @@ pub(crate) fn run(endpoints: &[String], query: &str, retries: usize, pause: u64)
     for round in 0..=retries {
         if round > 0 {
             eprintln!("  retrying in {pause} s");
-            std::thread::sleep(std::time::Duration::from_secs(pause));
+            crate::progress::retry(pause);
         }
         for endpoint in endpoints {
             let text = crate::cache::text("overpass", query, || {

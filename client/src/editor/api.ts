@@ -7,12 +7,26 @@ export interface WorldSummary {
   generated: boolean
 }
 
+/** What the importer is doing: the stage, its steps, and the bytes and rate so far. */
+export interface Progress {
+  stage: string
+  step: number
+  steps: number
+  bytes: number
+  bytesPerSecond: number
+  cached: number
+  cachedPerSecond: number
+}
+
 export interface Job {
   world: string
   kind: 'download' | 'generate'
   state: 'idle' | 'running' | 'done' | 'failed'
+  /** Blocks downloaded, or 0 and 1 for a generate. */
   done: number
   total: number
+  progress: Progress
+  elapsedMs: number
   messages: string[]
 }
 

@@ -53,6 +53,7 @@ pub fn fetch_pieces(endpoints: &[String], pieces: &[[f64; 4]], retries: usize, p
             }
             read(element, &mut found, &mut coast);
         }
+        crate::progress::steps(index + 1, pieces.len());
     }
     let (closed, open) = join(coast, true);
     found.coast = open.into_iter().chain(closed).collect();

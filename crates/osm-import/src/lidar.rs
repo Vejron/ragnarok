@@ -50,7 +50,9 @@ pub fn fetch(bbox: [f64; 4], window: Window, user: &str, password: &str, mut kee
         }
     }
     let mut total = 0;
-    for (_, id, href) in newest.into_values() {
+    let files = newest.len();
+    for (index, (_, id, href)) in newest.into_values().enumerate() {
+        crate::progress::stage(&format!("laser, file {} of {files}", index + 1));
         eprintln!("reading {id}: {href}");
         let reader = RangeReader::open(client.clone(), &href, user, password)?;
         let count = read(reader, window, &mut keep).with_context(|| format!("reading {href}"))?;
@@ -162,7 +164,9 @@ fn read<R: Read + Seek>(mut source: R, [e0, n0, e1, n1]: Window, keep: &mut impl
 
     let mut record = vec![0u8; record_length];
     let mut count = 0;
-    for node in nodes {
+    let node_count = nodes.len();
+    for (index, node) in nodes.into_iter().enumerate() {
+        crate::progress::steps(index, node_count);
         let chunk = bytes_at(&mut source, node.offset, node.size as usize)?;
         let mut decompressor = LayeredPointRecordDecompressor::new(Cursor::new(chunk));
         decompressor.set_fields_from(laz.items()).context("laz fields")?;

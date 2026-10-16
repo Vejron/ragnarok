@@ -2,6 +2,7 @@
 import L from 'leaflet'
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { api, type Job, type WorldSummary } from './api'
+import { formatBytes, formatDuration, formatRate, percent, remaining, stageWidth } from './format'
 import { blockKey, blockOf, rectBounds, tileAt, tileKey, type BlockStatus, type GridInfo, type TileId } from './grid'
 
 type Tool = 'pan' | 'paint' | 'erase'
@@ -270,7 +271,7 @@ async function poll() {
     return
   }
   if (job.value.state === 'running') {
-    pollTimer = window.setTimeout(poll, 1500)
+    pollTimer = window.setTimeout(poll, 600)
   } else {
     refreshCache()
   }
@@ -381,13 +382,37 @@ onBeforeUnmount(() => {
             Generate world
           </button>
         </div>
-        <p v-if="job && job.state !== 'idle'" class="stat">
-          {{ job.kind === 'generate' ? 'generate' : 'download' }} {{ job.world }}: {{ job.state
-          }}<span v-if="job.kind === 'download'">, {{ job.done }} / {{ job.total }} blocks</span>
-        </p>
-        <ul v-if="job?.messages.length" class="notes">
-          <li v-for="(m, i) in job.messages" :key="i">{{ m }}</li>
-        </ul>
+        <section v-if="job && job.state !== 'idle'" class="job" :class="job.state">
+          <p class="stat">
+            <strong>{{ job.kind === 'generate' ? 'Generate' : 'Download' }} {{ job.world }}</strong>: {{ job.state }}
+          </p>
+          <template v-if="job.kind === 'download'">
+            <div class="bar"><span :style="{ width: percent(job.done, job.total) }"></span></div>
+            <p class="stat">block {{ job.done }} of {{ job.total }}</p>
+          </template>
+          <p class="stat">
+            {{ job.progress.stage || 'starting' }}<span v-if="job.progress.steps">, {{ job.progress.step }} of {{ job.progress.steps }}</span>
+          </p>
+          <div class="bar" :class="{ busy: job.state === 'running' && !job.progress.steps }">
+            <span :style="{ width: stageWidth(job.progress.step, job.progress.steps, job.state) }"></span>
+          </div>
+          <p class="stat numbers">
+            downloaded {{ formatBytes(job.progress.bytes) }}<span v-if="job.state === 'running'">, {{ formatRate(job.progress.bytesPerSecond) }}</span>
+          </p>
+          <p v-if="job.progress.cached" class="stat numbers">
+            from cache {{ formatBytes(job.progress.cached) }}<span v-if="job.state === 'running'">, {{ formatRate(job.progress.cachedPerSecond) }}</span>
+          </p>
+          <p class="stat numbers">
+            elapsed {{ formatDuration(job.elapsedMs) }}<span v-if="job.state === 'running' && job.kind === 'download' && job.done">,
+            about {{ formatDuration(remaining(job.elapsedMs, job.done, job.total)) }} left</span>
+          </p>
+          <details v-if="job.messages.length" class="log" :open="job.state === 'failed'">
+            <summary>Log ({{ job.messages.length }})</summary>
+            <ul class="notes">
+              <li v-for="(m, i) in job.messages" :key="i">{{ m }}</li>
+            </ul>
+          </details>
+        </section>
         <p v-if="zoom < MIN_CACHE_ZOOM" class="hint">Zoom in to see which blocks are cached.</p>
         <p class="legend">
           <span class="sw ok"></span> cached <span class="sw miss"></span> needs download
@@ -519,6 +544,51 @@ button.link {
   font-size: 12px;
   color: #a05a00;
   padding-left: 16px;
+}
+.job {
+  margin: 6px 0;
+}
+.job.failed {
+  color: #a00;
+}
+.job .stat {
+  margin: 2px 0;
+}
+.numbers {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+.bar {
+  position: relative;
+  height: 6px;
+  margin: 4px 0;
+  background: #dde3ea;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.bar span {
+  display: block;
+  height: 100%;
+  background: #4a7fd0;
+  transition: width 0.4s;
+}
+.bar.busy span {
+  width: 30%;
+  position: absolute;
+  animation: slide 1.2s linear infinite;
+}
+@keyframes slide {
+  from {
+    left: -30%;
+  }
+  to {
+    left: 100%;
+  }
+}
+.log summary {
+  font-size: 12px;
+  color: #777;
+  cursor: pointer;
 }
 .message {
   color: #a00;

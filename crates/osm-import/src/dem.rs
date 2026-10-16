@@ -134,11 +134,13 @@ impl Dem {
         let body = crate::cache::text("stac", &url, || Ok(client.get(&url).send()?.error_for_status().context("STAC search")?.text()?))?;
         let items: serde_json::Value = serde_json::from_str(&body).context("STAC search returned invalid JSON")?;
         let mut rasters = Vec::new();
-        for item in items["features"].as_array().map(Vec::as_slice).unwrap_or_default() {
+        let features = items["features"].as_array().map(Vec::as_slice).unwrap_or_default();
+        for (index, item) in features.iter().enumerate() {
             let (Some(id), Some(href)) = (item["id"].as_str(), item["assets"]["data"]["href"].as_str()) else { continue };
             eprintln!("reading {id}: {href}");
             let reader = RangeReader::open(client.clone(), href, user, password)?;
             rasters.extend(read_window(reader, window)?);
+            crate::progress::steps(index + 1, features.len());
         }
         if rasters.is_empty() {
             bail!("no elevation data covers {bbox:?}");
@@ -257,7 +259,7 @@ impl RangeReader {
                         Err(error) if attempt < 4 => {
                             attempt += 1;
                             eprintln!("  range {start}-{end} failed ({error}); retry {attempt}");
-                            std::thread::sleep(std::time::Duration::from_secs(2 * attempt));
+                            crate::progress::retry(2 * attempt);
                         }
                         Err(error) => break Err(error.into()),
                     }

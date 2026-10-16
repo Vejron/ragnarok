@@ -510,7 +510,9 @@ pub fn from_osm(bbox: [f64; 4], tile_size: f64, mask: Option<&std::collections::
             covers.push((kind, rings));
         }
     }
-    for way in &osm.ways {
+    crate::progress::stage("buildings and roads");
+    for (index, way) in osm.ways.iter().enumerate() {
+        crate::progress::steps(index, osm.ways.len());
         let points = line(&way.geometry);
         if way.tags.get("building").is_some_and(|value| value != "no" && value != "roof") {
             // Roofs come from the laser returns over the footprint, where there are any.
@@ -545,6 +547,7 @@ pub fn from_osm(bbox: [f64; 4], tile_size: f64, mask: Option<&std::collections::
         eprintln!("roofs: {} of {} buildings have more than one part", split_roofs.get(), buildings.len());
     }
     let trees = planted.iter().map(|tree| (project(origin, tree.lat, tree.lon), tree.kind, tree.height, tree.crown, tree.registered)).collect();
+    crate::progress::stage("tiles");
     assemble(origin, half, tile_size, mask, buildings, roads, bridges, covers, trees, ground, water)
 }
 

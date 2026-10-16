@@ -46,8 +46,9 @@ pub fn fetch_pieces(pieces: &[[f64; 4]], user: &str, password: &str) -> Result<H
         .build()?;
     let mut hydro = Hydro::default();
     for collection in ["StandingWater", "WatercoursePolygon", "WatercourseLine"] {
+        crate::progress::stage(&format!("water, {collection}"));
         let mut seen = HashSet::new();
-        for &[south, west, north, east] in pieces {
+        for (index, &[south, west, north, east]) in pieces.iter().enumerate() {
             let mut url = Some(first_url(collection, [south, west, north, east]));
             while let Some(current) = url.take() {
                 let text = get(&client, &current, user, password).with_context(|| format!("Hydrografi {collection}"))?;
@@ -71,6 +72,7 @@ pub fn fetch_pieces(pieces: &[[f64; 4]], user: &str, password: &str) -> Result<H
                     .and_then(|link| link["href"].as_str())
                     .map(String::from);
             }
+            crate::progress::steps(index + 1, pieces.len());
         }
     }
     Ok(hydro)
@@ -82,7 +84,7 @@ fn get(client: &reqwest::blocking::Client, url: &str, user: &str, password: &str
         let mut last = None;
         for attempt in 0..4 {
             if attempt > 0 {
-                std::thread::sleep(std::time::Duration::from_secs(2 * attempt));
+                crate::progress::retry(2 * attempt);
             }
             match client.get(url).basic_auth(user, Some(password)).send() {
                 Ok(response) if response.status() == 401 || response.status() == 403 => {

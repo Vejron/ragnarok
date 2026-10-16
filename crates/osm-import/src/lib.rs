@@ -13,6 +13,7 @@ pub mod lidar;
 pub mod minimap;
 pub mod osm_water;
 pub mod overpass;
+pub mod progress;
 pub mod props;
 pub mod roof;
 pub mod trees;

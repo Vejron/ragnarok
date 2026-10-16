@@ -8,6 +8,7 @@
 //!
 //! The cache is process-wide, set once by `init`; until then (and in tests) it is off.
 
+use crate::progress;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -22,7 +23,6 @@ struct Cache {
 static CACHE: OnceLock<Option<Cache>> = OnceLock::new();
 static HITS: AtomicU64 = AtomicU64::new(0);
 static MISSES: AtomicU64 = AtomicU64::new(0);
-static BYTES_DOWNLOADED: AtomicU64 = AtomicU64::new(0);
 
 /// Turns the cache on in `dir`, or leaves it off with `None`. Call once, before any download.
 pub fn init(dir: Option<PathBuf>, refresh: bool) {
@@ -58,16 +58,19 @@ fn hash(text: &str) -> u64 {
 /// request unique, and must not contain credentials.
 pub fn bytes(kind: &str, key: &str, download: impl FnOnce() -> Result<Vec<u8>>) -> Result<Vec<u8>> {
     let Some(Some(cache)) = CACHE.get() else {
-        return download();
+        let fresh = download()?;
+        progress::received(fresh.len());
+        return Ok(fresh);
     };
     let path = cache.dir.join(format!("{kind}-{:016x}", hash(key)));
     if let (false, Ok(found)) = (cache.refresh, std::fs::read(&path)) {
         HITS.fetch_add(1, Ordering::Relaxed);
+        progress::reused(found.len());
         return Ok(found);
     }
     MISSES.fetch_add(1, Ordering::Relaxed);
     let fresh = download()?;
-    BYTES_DOWNLOADED.fetch_add(fresh.len() as u64, Ordering::Relaxed);
+    progress::received(fresh.len());
     // Written under another name and renamed, so an interrupted run never leaves a short entry.
     let store = || -> std::io::Result<()> {
         std::fs::create_dir_all(&cache.dir)?;
@@ -98,12 +101,8 @@ pub fn text(kind: &str, key: &str, download: impl FnOnce() -> Result<String>) ->
 pub fn summary() -> Option<String> {
     let Some(Some(cache)) = CACHE.get() else { return None };
     let (hits, misses) = (HITS.load(Ordering::Relaxed), MISSES.load(Ordering::Relaxed));
-    let downloaded = BYTES_DOWNLOADED.load(Ordering::Relaxed);
-    Some(format!(
-        "cache {}: {hits} reused, {misses} downloaded ({} MiB)",
-        cache.dir.display(),
-        downloaded / (1024 * 1024)
-    ))
+    let downloaded = progress::snapshot().bytes;
+    Some(format!("cache {}: {hits} reused, {misses} downloaded ({} MiB)", cache.dir.display(), downloaded / (1024 * 1024)))
 }
 
 #[cfg(test)]

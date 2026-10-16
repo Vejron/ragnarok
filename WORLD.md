@@ -45,6 +45,7 @@ Restart the server afterwards: it reads the whole world at start. The importer c
 | `--overpass-chunk m` | Ask Overpass for squares of about this many metres (default 2000) and merge, so a city-sized box doesn't time out. Each square is cached, so an interrupted run resumes. |
 | `--cache dir`, `--no-cache`, `--refresh`, `--clear-cache` | The download cache, below. |
 | `--out file` | Where `world.msgpack` goes; `tiles/` is created next to it. |
+| `--progress` | Print a `@progress {json}` line on stderr as the stage, its steps, and the download and cache rates change. The map editor runs with this, so its job panel can show them. |
 
 What works with which credentials:
 

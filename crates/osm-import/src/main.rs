@@ -17,7 +17,7 @@
 //!
 //! Credentials, data sources and the cache are described in `WORLD.md`.
 
-use osm_import::{assemble, cache, canopy, dem, detail, grid, ground, hydro, lidar, minimap, overpass, roof, trees, water};
+use osm_import::{assemble, cache, canopy, dem, detail, grid, ground, hydro, lidar, minimap, overpass, progress, roof, trees, water};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use std::path::PathBuf;
@@ -101,6 +101,10 @@ struct Args {
     /// Delete the download cache and exit.
     #[arg(long)]
     clear_cache: bool,
+    /// Print a `@progress {json}` line on stderr as the stage, its steps and the download rate
+    /// change. The map editor runs the importer with this.
+    #[arg(long)]
+    progress: bool,
 }
 
 fn parse_bbox(text: &str) -> Result<[f64; 4]> {
@@ -204,6 +208,7 @@ fn terrain(args: &Args, bbox: [f64; 4], mask: Option<&std::collections::BTreeSet
     }
     let (origin, half) = assemble::frame(bbox);
     let window = sweref_window(args, bbox);
+    progress::stage("elevation");
     let source = match &args.dem {
         Some(path) => dem::Dem::from_path(path, window)?,
         None => {
@@ -219,6 +224,7 @@ fn terrain(args: &Args, bbox: [f64; 4], mask: Option<&std::collections::BTreeSet
         let (e, n) = dem::sweref99tm(lat, lon);
         source.mean(e, n, half_cell).map(f64::from)
     };
+    progress::stage("ground");
     let surface = water::Surface::new(map, ground::grid(half, args.tile, args.cell)?, dtm);
     // Samples on or inside a painted tile; everywhere else is not read, so it costs no download.
     let (tile_cm, half_cm) = ((args.tile * 100.0).round() as i64, (half * 100.0).round() as i64);
@@ -258,6 +264,7 @@ fn laser(args: &Args, bbox: [f64; 4], datum: f64, osm: &overpass::Osm, dem: Opti
     let window = sweref_window(args, bbox);
     let mut cloud = want_roofs.then(|| roof::Cloud::new(window));
     let mut canopy = want_trees.then(|| canopy::Canopy::new(window));
+    progress::stage("laser");
     let total = lidar::fetch(bbox, window, &user, &password, |p| {
         if let Some(cloud) = &mut cloud {
             cloud.add(&p, datum);
@@ -274,6 +281,7 @@ fn laser(args: &Args, bbox: [f64; 4], datum: f64, osm: &overpass::Osm, dem: Opti
             let ring: Vec<(f64, f64)> = way.geometry.iter().map(|p| dem::sweref99tm(p.lat, p.lon)).collect();
             canopy.mask(&ring, 1.5);
         }
+        progress::stage("canopy");
         detected = canopy.detect(|e, n| dem.mean(e, n, 0.5), args.min_tree_height);
         eprintln!("canopy: {} trees at least {} m tall", detected.len(), args.min_tree_height);
     }
@@ -288,6 +296,9 @@ fn main() -> Result<()> {
         return Ok(());
     }
     cache::init((!args.no_cache).then(|| args.cache.clone()), args.refresh);
+    if args.progress {
+        progress::events();
+    }
     anyhow::ensure!(args.tile >= 20.0, "--tile must be at least 20 m");
     anyhow::ensure!(args.cell == 0.0 || args.cell >= 0.5, "--cell must be 0 or at least 0.5 m");
     let built = if args.synthetic {
@@ -335,15 +346,18 @@ fn main() -> Result<()> {
             }
         };
         // Before the network-flaky step: a world that cannot fit the format should fail in seconds.
+        progress::stage("water");
         let map = water_map(&args, bbox, pieces)?;
         let (ground, datum, dem, placed) = terrain(&args, bbox, mask, &map)?;
         // The public servers shed load with 504s; a few rounds over all of them usually get through.
+        progress::stage("overpass");
         let osm = match pieces {
             Some(pieces) => overpass::fetch_pieces(&args.overpass, pieces, 3, 15),
             None => overpass::fetch_chunked(&args.overpass, bbox, args.overpass_chunk, 3, 15),
         }
         .context("Overpass failed; retry later or use --synthetic")?;
         let (cloud, detected) = laser(&args, bbox, datum, &osm, dem.as_ref())?;
+        progress::stage("trees");
         let register = if args.no_trees {
             Vec::new()
         } else {
@@ -362,8 +376,10 @@ fn main() -> Result<()> {
         let planted = trees::merge(register, &detected);
         eprintln!("trees: {} from the register, {} from the laser", planted.iter().filter(|t| t.registered).count(), planted.iter().filter(|t| !t.registered).count());
         let coarse = (args.detail > 0.0).then(|| ground.clone());
+        progress::stage("assemble");
         let mut built = assemble::from_osm(bbox, args.tile, mask, &osm, &planted, ground, placed, cloud.as_ref());
         if let (Some(coarse), Some(source)) = (coarse, dem.as_ref()) {
+            progress::stage("detail");
             let (origin, _) = assemble::frame(bbox);
             let model = |half: f64| {
                 move |x: f64, z: f64| {
@@ -392,8 +408,10 @@ fn main() -> Result<()> {
     }
     eprintln!("roofs: {} flat, {} shed, {} gable, {} hip", roofs[0], roofs[1], roofs[2], roofs[3]);
     let (spawns, tile_count) = (built.manifest.spawns.len(), built.tiles.len());
+    progress::stage("minimap");
     let map = if args.no_minimap { None } else { Some(minimap::render(&built.manifest, &built.tiles).context("rendering the minimap")?) };
     let (manifest, tiles) = built.into_files();
+    progress::stage("write");
 
     let dir = args.out.parent().map(PathBuf::from).unwrap_or_default();
     // Start from an empty tile directory, so tiles of an earlier, different world do not linger.

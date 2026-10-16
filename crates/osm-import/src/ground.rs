@@ -56,6 +56,7 @@ pub fn build_where(
 
     let mut metres = vec![f64::NAN; (side * side) as usize];
     for j in 0..side {
+        crate::progress::steps(j as usize, side as usize);
         for i in 0..side {
             if !wanted(at(i), at(j)) {
                 continue;

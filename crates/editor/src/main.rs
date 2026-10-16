@@ -8,11 +8,12 @@
 //! `osm-import` reuses. Credentials come from `.env.local`, as for the importer.
 
 use osm_import::grid::{self, BLOCK_TILES, Block, Tile};
-use osm_import::{cache, hydro, overpass, trees};
+use osm_import::{cache, hydro, overpass, progress, trees};
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::Instant;
 
 /// The most blocks one cache query answers: a window of about 40 km.
 const MAX_BLOCKS: i64 = 400;
@@ -150,19 +151,40 @@ async fn cache_state(req: &mut Request, res: &mut Response) {
 }
 
 #[derive(Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Job {
     world: String,
     /// `download` (fill the cache) or `generate` (build the world files).
     kind: &'static str,
     /// `idle`, `running`, `done` or `failed`.
     state: &'static str,
+    /// Blocks downloaded (a download), or 0 and 1 (a generate).
     done: usize,
     total: usize,
+    /// The stage now running, its steps, and the bytes and rate so far.
+    progress: progress::Snapshot,
+    /// Milliseconds from the start to now, or to the end once the job has ended.
+    elapsed_ms: u64,
+    #[serde(skip)]
+    started: Option<Instant>,
+    #[serde(skip)]
+    ended: Option<Instant>,
     /// What went wrong, or notes (a block without water, for example).
     messages: Vec<String>,
 }
 
-static JOB: Mutex<Job> = Mutex::new(Job { world: String::new(), kind: "download", state: "idle", done: 0, total: 0, messages: Vec::new() });
+static JOB: Mutex<Job> = Mutex::new(Job {
+    world: String::new(),
+    kind: "download",
+    state: "idle",
+    done: 0,
+    total: 0,
+    progress: progress::Snapshot { stage: String::new(), step: 0, steps: 0, bytes: 0, bytes_per_second: 0.0, cached: 0, cached_per_second: 0.0 },
+    elapsed_ms: 0,
+    started: None,
+    ended: None,
+    messages: Vec::new(),
+});
 
 fn job() -> std::sync::MutexGuard<'static, Job> {
     JOB.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -173,19 +195,23 @@ fn run(blocks: Vec<Block>, credentials: Option<(String, String)>) {
     let endpoints: Vec<String> = overpass::DEFAULT_ENDPOINTS.iter().map(|e| e.to_string()).collect();
     for block in blocks {
         let bbox = block.bbox();
+        progress::stage("overpass");
         if let Err(error) = overpass::fetch_pieces(&endpoints, &[bbox], 3, 15) {
             let mut job = job();
             job.state = "failed";
+            job.ended = Some(Instant::now());
             job.messages.push(format!("block ({}, {}): {error:#}", block.bx, block.by));
             return;
         }
         // Water and trees are extras: note what is missing and carry on.
         let mut notes = Vec::new();
-        if let Some((user, password)) = &credentials
-            && let Err(error) = hydro::fetch_pieces(&[bbox], user, password)
-        {
-            notes.push(format!("block ({}, {}) has no water: {error:#}", block.bx, block.by));
+        if let Some((user, password)) = &credentials {
+            progress::stage("water");
+            if let Err(error) = hydro::fetch_pieces(&[bbox], user, password) {
+                notes.push(format!("block ({}, {}) has no water: {error:#}", block.bx, block.by));
+            }
         }
+        progress::stage("trees");
         if let Err(error) = trees::fetch(bbox) {
             notes.push(format!("block ({}, {}) has no trees: {error:#}", block.bx, block.by));
         }
@@ -193,7 +219,9 @@ fn run(blocks: Vec<Block>, credentials: Option<(String, String)>) {
         job.done += 1;
         job.messages.extend(notes);
     }
-    job().state = "done";
+    let mut job = job();
+    job.state = "done";
+    job.ended = Some(Instant::now());
 }
 
 #[handler]
@@ -206,16 +234,18 @@ async fn start_fetch(req: &mut Request, res: &mut Response) {
         if current.state == "running" {
             return fail(res, StatusCode::CONFLICT, "a download is already running");
         }
-        *current = Job { world: name, kind: "download", state: "running", total: blocks.len(), ..Job::default() };
+        *current = Job { world: name, kind: "download", state: "running", total: blocks.len(), started: Some(Instant::now()), ..Job::default() };
         if blocks.is_empty() {
             current.state = "done";
+            current.ended = Some(Instant::now());
         }
     }
+    progress::reset();
     if !blocks.is_empty() {
         let credentials = credential("LM_USER").zip(credential("LM_PASS"));
         std::thread::spawn(move || run(blocks, credentials));
     }
-    res.render(Json(job().clone()));
+    res.render(Json(current()));
 }
 
 /// Builds the world's files by running the importer on its `area.json`: the same program and the
@@ -241,11 +271,12 @@ fn generate(name: String) {
     if credential("LM_USER").is_none() {
         command.env_remove("LM_USER");
     }
-    command.arg("--cache").arg(std::env::var("RAGNAROK_CACHE").unwrap_or_else(|_| ".cache/osm-import".into()));
+    command.arg("--cache").arg(std::env::var("RAGNAROK_CACHE").unwrap_or_else(|_| ".cache/osm-import".into())).arg("--progress");
     let finish = |state: &'static str, note: String| {
         let mut job = job();
         job.state = state;
         job.done = usize::from(state == "done");
+        job.ended = Some(Instant::now());
         job.messages.push(note);
     };
     let mut child = match command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn() {
@@ -254,6 +285,12 @@ fn generate(name: String) {
     };
     if let Some(stderr) = child.stderr.take() {
         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            if let Some(json) = line.strip_prefix(progress::PREFIX) {
+                if let Ok(snapshot) = serde_json::from_str(json) {
+                    job().progress = snapshot;
+                }
+                continue;
+            }
             let mut job = job();
             job.messages.push(line);
             let excess = job.messages.len().saturating_sub(30);
@@ -278,15 +315,27 @@ async fn start_generate(req: &mut Request, res: &mut Response) {
         if current.state == "running" {
             return fail(res, StatusCode::CONFLICT, "a job is already running");
         }
-        *current = Job { world: name.clone(), kind: "generate", state: "running", total: 1, ..Job::default() };
+        *current = Job { world: name.clone(), kind: "generate", state: "running", total: 1, started: Some(Instant::now()), ..Job::default() };
     }
     std::thread::spawn(move || generate(name));
-    res.render(Json(job().clone()));
+    res.render(Json(current()));
 }
 
 #[handler]
 async fn job_state(res: &mut Response) {
-    res.render(Json(job().clone()));
+    res.render(Json(current()));
+}
+
+/// The job as the API reports it. A download's progress is read live from this process; a
+/// generate's arrives as `@progress` lines from the importer, and is already in the job.
+fn current() -> Job {
+    let mut job = job().clone();
+    if job.kind == "download" && job.state == "running" {
+        job.progress = progress::snapshot();
+    }
+    let now = Instant::now();
+    job.elapsed_ms = job.started.map_or(0, |started| job.ended.unwrap_or(now).duration_since(started).as_millis() as u64);
+    job
 }
 
 /// A credential from the environment, else from `.env.local` (as the importer's script does).
