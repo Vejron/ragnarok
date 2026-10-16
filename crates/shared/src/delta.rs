@@ -43,9 +43,9 @@ fn apply_entity(base: &EntityState, delta: &EntityDelta) -> EntityState {
 fn vehicle_delta(base: &VehicleState, now: &VehicleState) -> Option<VehicleDelta> {
     let seats = (now.seats != base.seats).then(|| now.seats.clone());
     let turret: Option<Turret> = if now.turret != base.turret { now.turret } else { None };
-    let delta = VehicleDelta { id: now.id, dx: now.x - base.x, dy: now.y - base.y, dz: now.z - base.z, dqx: now.qx as i32 - base.qx as i32, dqy: now.qy as i32 - base.qy as i32, dqz: now.qz as i32 - base.qz as i32, dsteer: now.steer as i32 - base.steer as i32, seats, turret, hp: now.hp, damage: (now.damage != base.damage).then(|| now.damage.unwrap_or_default()), arms: if now.arms != base.arms { now.arms } else { None } };
+    let delta = VehicleDelta { id: now.id, dx: now.x - base.x, dy: now.y - base.y, dz: now.z - base.z, dqx: now.qx as i32 - base.qx as i32, dqy: now.qy as i32 - base.qy as i32, dqz: now.qz as i32 - base.qz as i32, dsteer: now.steer as i32 - base.steer as i32, seats, turret, hp: now.hp, damage: (now.damage != base.damage).then(|| now.damage.unwrap_or_default()), arms: if now.arms != base.arms { now.arms } else { None }, thrust: if now.thrust != base.thrust { now.thrust } else { None } };
     let unchanged = delta.dx == 0 && delta.dy == 0 && delta.dz == 0 && delta.dqx == 0 && delta.dqy == 0 && delta.dqz == 0 && delta.dsteer == 0
-        && delta.seats.is_none() && delta.turret.is_none() && now.hp == base.hp && delta.damage.is_none() && delta.arms.is_none();
+        && delta.seats.is_none() && delta.turret.is_none() && now.hp == base.hp && delta.damage.is_none() && delta.arms.is_none() && delta.thrust.is_none();
     (!unchanged).then_some(delta)
 }
 
@@ -53,7 +53,7 @@ fn apply_vehicle(base: &VehicleState, delta: &VehicleDelta) -> VehicleState {
     VehicleState { id: base.id, kind: base.kind, x: base.x + delta.dx, y: base.y + delta.dy, z: base.z + delta.dz, qx: (base.qx as i32 + delta.dqx) as i16, qy: (base.qy as i32 + delta.dqy) as i16, qz: (base.qz as i32 + delta.dqz) as i16, steer: (base.steer as i32 + delta.dsteer) as i8, seats: delta.seats.clone().unwrap_or_else(|| base.seats.clone()), turret: delta.turret.or(base.turret), hp: delta.hp, damage: match delta.damage {
             Some(damage) => (damage != [0; 8]).then_some(damage),
             None => base.damage,
-        }, arms: delta.arms.or(base.arms) }
+        }, arms: delta.arms.or(base.arms), thrust: delta.thrust.or(base.thrust) }
 }
 
 /// What to send so that a client holding `base` ends up holding `now`. Both scenes must be
@@ -116,15 +116,15 @@ mod tests {
     }
 
     fn car(id: u32, x: i32, seats: Vec<u32>) -> VehicleState {
-        VehicleState { id, kind: KIND_JEEP, x, y: 40, z: 7, qx: 10, qy: -20, qz: 30, steer: 5, seats, turret: None, hp: 100, damage: None, arms: None }
+        VehicleState { id, kind: KIND_JEEP, x, y: 40, z: 7, qx: 10, qy: -20, qz: 30, steer: 5, seats, turret: None, hp: 100, damage: None, arms: None, thrust: None }
     }
 
     fn tank(id: u32, yaw: i16) -> VehicleState {
-        VehicleState { id, kind: KIND_TANK, x: 0, y: 40, z: 0, qx: 0, qy: 0, qz: 0, steer: 0, seats: vec![0, 0], turret: Some(Turret { yaw, pitch: 100, shots: 1, range: 500 }), hp: 250, damage: None, arms: None }
+        VehicleState { id, kind: KIND_TANK, x: 0, y: 40, z: 0, qx: 0, qy: 0, qz: 0, steer: 0, seats: vec![0, 0], turret: Some(Turret { yaw, pitch: 100, shots: 1, range: 500 }), hp: 250, damage: None, arms: None, thrust: None }
     }
 
     fn plane(id: u32, arms: Arms) -> VehicleState {
-        VehicleState { id, kind: KIND_PLANE, x: 0, y: 140, z: 0, qx: 0, qy: 0, qz: 0, steer: 0, seats: vec![0, 0], turret: Some(Turret { yaw: 0, pitch: 0, shots: 0, range: 0 }), hp: 70, damage: None, arms: Some(arms) }
+        VehicleState { id, kind: KIND_PLANE, x: 0, y: 140, z: 0, qx: 0, qy: 0, qz: 0, steer: 0, seats: vec![0, 0], turret: Some(Turret { yaw: 0, pitch: 0, shots: 0, range: 0 }), hp: 70, damage: None, arms: Some(arms), thrust: None }
     }
 
     #[test]

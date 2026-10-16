@@ -166,6 +166,10 @@ pub struct WorldFile {
     pub ground: Ground,
     /// Every tree, for trunk colliders.
     pub trees: Vec<Tree>,
+    /// Height of the water surface at each `ground` sample, centimetres, or `NO_WATER`. Filled by
+    /// `assemble`; empty when no tile has water.
+    #[serde(skip)]
+    pub water: Vec<i16>,
     /// `buildings[i]`'s identity. Filled by `assemble`; empty for a world built by hand.
     #[serde(skip)]
     pub building_ids: Vec<ObjId>,
@@ -454,6 +458,19 @@ impl WorldFile {
         self.inside.get((cell(z) * grid + cell(x)) as usize).copied().unwrap_or(false)
     }
 
+    /// Whether local point `(x, z)`, centimetres, is under water: the nearest ground sample has a
+    /// water surface above the ground.
+    pub fn wet(&self, x: i32, z: i32) -> bool {
+        let ground = &self.ground;
+        if self.water.len() != ground.heights.len() || ground.cell <= 0 {
+            return false;
+        }
+        let last = ground.side as i64 - 1;
+        let sample = |v: i32| ((v as i64 - ground.origin as i64 + ground.cell as i64 / 2) / ground.cell as i64).clamp(0, last);
+        let at = (sample(z) * ground.side as i64 + sample(x)) as usize;
+        self.water[at] != NO_WATER && self.water[at] > ground.heights[at]
+    }
+
     /// Merges tiles, given with their `(col, row)`, into one world. Collision meshes are
     /// concatenated with their indices shifted, and the tiles' ground samples are joined into one grid.
     pub fn assemble(manifest: &Manifest, tiles: impl IntoIterator<Item = (u16, u16, Tile)>) -> Self {
@@ -492,6 +509,15 @@ impl WorldFile {
                 for j in 0..n {
                     let at = ((j0 + j) * ground.side + i0) as usize;
                     ground.heights[at..at + n as usize].copy_from_slice(&tile.ground[(j * n) as usize..((j + 1) * n) as usize]);
+                }
+                if tile.water.len() == tile.ground.len() {
+                    if world.water.is_empty() {
+                        world.water = vec![NO_WATER; ground.heights.len()];
+                    }
+                    for j in 0..n {
+                        let at = ((j0 + j) * ground.side + i0) as usize;
+                        world.water[at..at + n as usize].copy_from_slice(&tile.water[(j * n) as usize..((j + 1) * n) as usize]);
+                    }
                 }
             }
             let base = world.collision.vertices.len() as u32;
@@ -616,6 +642,22 @@ mod tests {
         let world = WorldFile::assemble(&manifest, [(0, 0, a), (1, 0, b)]);
         assert_eq!(world.collision.vertices.len(), 6);
         assert_eq!(world.collision.triangles, vec![[0, 1, 2], [3, 4, 5]]);
+    }
+
+    #[test]
+    fn tile_water_is_joined_and_wet_finds_it() {
+        let manifest = Manifest { version: WORLD_VERSION, half_extent: 2_000, tile_size: 2_000, ground_cell: 1_000, ..Default::default() };
+        let dry = Tile { ground: vec![0; 9], ..Default::default() };
+        // A pond over the right tile's middle sample, the grid's (3, 1) at x = 1000, z = -1000.
+        let mut pond = vec![NO_WATER; 9];
+        pond[4] = 50;
+        let wet = Tile { ground: vec![0; 9], water: pond, ..Default::default() };
+        let world = WorldFile::assemble(&manifest, [(0, 0, dry.clone()), (1, 0, wet), (0, 1, dry.clone()), (1, 1, dry)]);
+        assert_eq!(world.water.len(), 25);
+        assert!(world.wet(1_000, -1_000));
+        assert!(world.wet(1_300, -800), "the nearest sample decides");
+        assert!(!world.wet(-1_000, -1_000));
+        assert!(!WorldFile::default().wet(0, 0), "a world without water is dry everywhere");
     }
 
     #[test]

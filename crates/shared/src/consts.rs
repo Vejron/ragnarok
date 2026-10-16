@@ -1,7 +1,7 @@
 //! Simulation and network constants. Mirrored in `client/src/sim/consts.ts`.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 26;
+pub const PROTOCOL_VERSION: u8 = 28;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -13,6 +13,12 @@ pub const SNAPSHOT_EVERY: u32 = 2;
 /// Players admitted to the single room. Interest management and the packet budget (`MAX_PACKET`)
 /// keep a snapshot within one datagram however many of them are in view.
 pub const MAX_PLAYERS: usize = 64;
+/// Outfit colours a player can pick from (`client/src/profile.ts` holds the colours themselves).
+pub const PLAYER_COLOR_COUNT: u8 = 12;
+/// Spawn points a player may choose, used in turn each time they spawn.
+pub const MAX_SPAWNS: usize = 5;
+/// Longest player name, in characters.
+pub const MAX_NAME_CHARS: usize = 16;
 /// Datagrams above this size are dropped unread. Stays under a typical QUIC datagram MTU.
 pub const MAX_PACKET: usize = 1200;
 /// A player is sent the entities, vehicles and effects within this many metres of their stickman
@@ -112,7 +118,7 @@ pub const KILL_Y: f32 = -50.0;
 /// Seats in the roomiest car (the jeep); bounds the seat list of any vehicle.
 pub const CAR_SEATS: usize = 4;
 /// Vehicles in the world; bounds the vehicle list in a snapshot.
-pub const MAX_VEHICLES: usize = 14;
+pub const MAX_VEHICLES: usize = 32;
 /// A player can enter a vehicle whose centre is within this distance of their capsule centre.
 pub const ENTER_RADIUS: f32 = 4.0;
 
@@ -147,6 +153,48 @@ pub const SPORTS_SUSPENSION_REST: f32 = 0.22;
 pub const SPORTS_RIDE_HEIGHT: f32 = 0.397;
 pub const SPORTS_MAX_STEER: f32 = 0.4;
 pub const SPORTS_MAX_SPEED: f32 = 50.0;
+
+/// The Roadster (`KIND_ROADSTER`): Tesla's 2026 two-seater with SpaceX cold-gas thrusters fed from a
+/// tank of compressed air. Same chassis and wheels as the sports car, a stronger motor, and three
+/// tricks: rear nozzles that push it far past what the tyres could (Shift), a hop straight up off the
+/// ground (Space), and lift nozzles that hold it in the air while Space stays held. Thrust drains
+/// the tank, which refills while it sits on its wheels.
+pub const ROADSTER_SEATS: usize = 2;
+pub const ROADSTER_HALF_EXTENTS: [f32; 3] = SPORTS_HALF_EXTENTS;
+pub const ROADSTER_WHEEL_RADIUS: f32 = SPORTS_WHEEL_RADIUS;
+pub const ROADSTER_TRACK_HALF: f32 = SPORTS_TRACK_HALF;
+pub const ROADSTER_AXLE_Z: f32 = SPORTS_AXLE_Z;
+pub const ROADSTER_HARD_POINT_Y: f32 = SPORTS_HARD_POINT_Y;
+pub const ROADSTER_SUSPENSION_REST: f32 = SPORTS_SUSPENSION_REST;
+pub const ROADSTER_RIDE_HEIGHT: f32 = SPORTS_RIDE_HEIGHT;
+pub const ROADSTER_MAX_STEER: f32 = 0.4;
+pub const ROADSTER_MAX_SPEED: f32 = 62.0;
+/// The air tank, as a share of full.
+pub const ROADSTER_AIR: f32 = 1.0;
+/// The rear nozzles' push along the nose, m/s²: well past the tyres' grip.
+pub const ROADSTER_BOOST_ACCEL: f32 = 24.0;
+/// Air the rear nozzles use, share of the tank per second: about three seconds of boost.
+pub const ROADSTER_BOOST_DRAIN: f32 = 0.33;
+/// Upward speed a hop adds, m/s: enough to clear a row of cars.
+pub const ROADSTER_HOP_SPEED: f32 = 9.0;
+/// Air a hop uses, share of the tank.
+pub const ROADSTER_HOP_COST: f32 = 0.15;
+/// While hovering, the lift nozzles hold this upward speed, m/s, and use this share of the tank per second.
+pub const ROADSTER_HOVER_CLIMB: f32 = 1.0;
+pub const ROADSTER_HOVER_DRAIN: f32 = 0.25;
+/// How hard the lift nozzles chase that speed, per second, and the most they add to gravity's worth, m/s².
+pub const ROADSTER_HOVER_GAIN: f32 = 3.0;
+pub const ROADSTER_HOVER_ACCEL: f32 = 6.0;
+/// While hovering, the lift nozzles lean the car this far (radians, roughly) with the stick, level
+/// it this hard and this fast (per second), and turn it at this yaw rate, rad/s.
+pub const ROADSTER_HOVER_TILT: f32 = 0.2;
+pub const ROADSTER_HOVER_LEVEL: f32 = 4.0;
+pub const ROADSTER_HOVER_RESPONSE: f32 = 6.0;
+pub const ROADSTER_HOVER_YAW: f32 = 1.2;
+/// The lift nozzles fade out over 20 m below this height.
+pub const ROADSTER_CEILING: f32 = 40.0;
+/// Refill rate on the ground with no nozzle firing, share of the tank per second.
+pub const ROADSTER_AIR_REFILL: f32 = 0.2;
 
 /// The tank: a heavy six-wheel hull that turns on the spot, with a driver (seat 0) and a gunner
 /// (seat 1) who aims the turret and fires. Same body axes as the car.

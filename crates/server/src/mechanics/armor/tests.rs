@@ -166,7 +166,7 @@ fn a_hit_from_behind_costs_more_than_one_into_the_nose() {
 fn join(game: &mut Game) -> u32 {
     let (outbox, _inbox) = mpsc::channel(4096);
     let (reply, mut response) = oneshot::channel();
-    game.handle(Command::Join { outbox, reply });
+    game.handle(Command::Join { outbox, reply, profile: Default::default() });
     std::mem::forget(_inbox);
     response.try_recv().unwrap().unwrap()
 }

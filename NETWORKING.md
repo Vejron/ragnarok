@@ -6,7 +6,7 @@ This is the wire protocol between the browser client and the game server. Rust i
 
 ## Session
 
-1. **Connect:** the client opens WebTransport to `/transport`.
+1. **Connect:** the client opens WebTransport to `/transport`, with the player's settings from `/settings.html` as query parameters: `?name=Åsa&color=3&spawn=x,z&spawn=x,z`. All are optional. `name` is cut to 16 characters with control and direction-changing characters removed, and an empty one becomes `Player <id>`. `color` indexes the 12 outfit colours (`PLAYER_COLORS` in `client/src/profile.ts`). Each `spawn` is a point in centimetres in the world's local frame; the server keeps up to 5, drops any outside the world, in water or within 1 m of a building, and uses the rest in turn, one per spawn. Unknown parameters are ignored, so later settings (a class, a loadout) can be added the same way.
    - Development: `https://127.0.0.1:8698/transport`. The browser pins the self-signed certificate through `serverCertificateHashes`. The client fetches the hash from `/local-certificate-hash`, which Vite proxies to the server's `:8699/certificate-hash`.
    - Production: `https://<host>/transport` with an ACME certificate. UDP 443 carries HTTP/3.
 2. **Origin check:** the server rejects any other origin. In production only `https://$RAGNAROK_DOMAIN` is allowed, and in development only `http://localhost:5173` and `http://127.0.0.1:5173`.
@@ -40,13 +40,13 @@ All messages are MessagePack arrays whose first element is a tag. The client→s
 | `view` | the server tick the picture on screen showed, modulo 65536. The server rewinds other players to it to resolve a gunshot, by at most 15 ticks and never forwards | |
 | `slot` | the hotbar slot the player has in hand. Fire, reload and use-item act on it | 0..4 |
 
-While driving, `forward` is the throttle (negative brakes, then reverses), `strafe` is the steering, `buttons` bit 1 (jump) is the handbrake, and `yaw` is ignored. A helicopter's pilot (seat 0) uses `forward` to lean forward and back, `strafe` to turn, jump to climb and run (bit 2) to sink. A passenger's axes are ignored. A tank's driver steers with `strafe`, which turns the tank on the spot, and its gunner (seat 1) aims with `yaw` and `pitch` and shoots with the fire bit. The gunner's `yaw` is a world heading: the turret turns to it at a limited rate, whatever the hull does.
+While driving, `forward` is the throttle (negative brakes, then reverses), `strafe` is the steering, `buttons` bit 1 (jump) is the handbrake, and `yaw` is ignored. A Roadster's driver boosts with run (bit 2), hops with jump (held in the air, it hovers) and pulls the handbrake with crouch (bit 32). A helicopter's pilot (seat 0) uses `forward` to lean forward and back, `strafe` to turn, jump to climb and run (bit 2) to sink. A passenger's axes are ignored. A tank's driver steers with `strafe`, which turns the tank on the spot, and its gunner (seat 1) aims with `yaw` and `pitch` and shoots with the fire bit. The gunner's `yaw` is a world heading: the turret turns to it at a limited rate, whatever the hull does.
 
 Each datagram repeats the newest 4 frames, so a single lost datagram loses nothing. The server ignores frames it has already seen.
 
 ### Server → client
 
-**Reliable stream.** The server opens one unidirectional stream per session, when it has its first reliable message (`welcome`), and writes every reliable message to it, in order. Each message is a 4-byte big-endian length and then that many bytes of MessagePack. Messages therefore arrive in the order they were sent: a `kill` never overtakes the `leave` of its victim, and the joiner's `scores`, `destroyed` and `damaged` catch-up come right behind the `welcome`. The client refuses a length over 4 MiB and drops the session on a malformed stream. The server drops a session whose stream accepts nothing for 5 s, or whose outgoing queue (64 messages, shared with snapshots) is full when a reliable message is due, rather than let it miss one: it reconnects and gets the catch-up.
+**Reliable stream.** The server opens one unidirectional stream per session, when it has its first reliable message (`welcome`), and writes every reliable message to it, in order. Each message is a 4-byte big-endian length and then that many bytes of MessagePack. Messages therefore arrive in the order they were sent: a `kill` never overtakes the `leave` of its victim, and the joiner's `profiles`, `scores`, `destroyed` and `damaged` catch-up come right behind the `welcome`. The client refuses a length over 4 MiB and drops the session on a malformed stream. The server drops a session whose stream accepts nothing for 5 s, or whose outgoing queue (64 messages, shared with snapshots) is full when a reliable message is due, rather than let it miss one: it reconnects and gets the catch-up.
 
 
 | Tag | Name | Channel | Shape |
@@ -62,6 +62,7 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 | 8 | `hit` | reliable stream | `[8, role u8, kind u8, amount u8, weapon u8, bearing i16, x i32, y i32, z i32, target u32]` |
 | 9 | `rtc` | reliable stream | `[9, from u32, kind u8, json string]` |
 | 10 | `carved` | reliable stream | `[10, live u8, [[col u16, row u16, index u32, x i32, y i32, z i32, [blasted u16, …], [fell u16, …]], …]]` |
+| 11 | `profiles` | reliable stream | `[11, [[id u32, name string, color u8], …]]` |
 
 - `baseline` is the `server_tick` of the snapshot this one is a change from, or 0 when it is not. Then every entity and vehicle in range is listed in full, in `[entity, …]` and `[vehicle, …]`. See [Delta snapshots](#delta-snapshots-and-interest).
 - `ack` is the newest input `seq` of the receiving player already applied to this state. The client drops pending inputs up to `ack` and replays the rest.
@@ -73,6 +74,7 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 - `bullet` is `[id u32, shooter u32, item u8, x i32, y i32, z i32, vx i16, vy i16, vz i16, tick u32]`, cm and cm/s: a gun round that left the muzzle on server tick `tick`, sent once (in two consecutive snapshots, so a lost datagram does not lose it, and clients ignore an id they have seen) to every player within 300 m of its line out to its gun's range, nearest first, at most 32. It is not listed again: it moves `v*dt` a tick and then `v.y` loses `20 * 0.25 * dt`, so a client works out `p + v*n*dt - (0, 20*0.25*dt^2*n(n+1)/2, 0)` for `n` ticks after `tick`. It ends with a `shot` of weapon 15 and `id` in `shooter`, or when its gun's range is flown. Bullets are shed after pickups when a snapshot would not fit.
 - `pickup` is `[id u32, item u8, x i32, y i32, z i32]`, cm: an item lying on the ground within 300 m, nearest first and at most 24. They are static, so there is no delta: the list is the set, and one that is no longer listed has been taken. A player takes the nearest within 2 m by sending the use bit; the server hands it over before it considers boarding a vehicle.
 - `kill` goes to everyone when a player dies. `killer` is 0 when the world did it (a fall). The totals are the new ones, so clients keep no tally of their own. `scores` is sent once to a player who has just joined.
+- `profiles` names players and gives their outfit colour. A player who has just joined gets everyone's, right after `welcome`; everyone else gets the joiner's. Snapshots can arrive before it, so a client draws a stickman in a colour chosen by id until its profile arrives.
 - `destroyed` is the only world state that changes: buildings and trees that are gone. `kind` is 0 for a tree and 1 for a building; `(col, row, index)` names it by its tile and its position in that tile's list (`ObjId`), which both sides already agree on and which a re-import renumbers. `yaw` (milliradians, 0 faces -Z) is the way a tree falls, or the direction a building's blast came from (its rubble is thrown the other way). It goes to everyone when something falls, and a player who has just joined gets one message holding everything destroyed so far, before the first snapshot. Only the fact is replicated: the fall, the rubble and the dust are drawn by each client, and the trunk or the building's walls stop colliding on both sides at once. A building falls to rockets, grenades and shells (a rifle only chips it), and a tree to anything.
 - `hit` is sent to one player only, once per tick per `(role, kind)` with `amount` (hp lost) summed. `role` 0 is *dealt* (you hurt something: kind 0 stickman, 1 vehicle, 2 a stickman this finished, 3 rooster) and 1 is *taken* (something hurt you, or the vehicle you sit in). For a taken hit `bearing` is the yaw in milliradians (0 faces -Z, as a look) from you towards the attacker or blast; -32768 means no direction (a fall, a crash). `weapon` is 0 for vehicle hits. `(x, y, z)` (cm) is where the thing hit is (chest height) and `target` is its id, for the damage number, debris and flash. It drives the hit marker, hit sound, screen flash and direction arcs; non-lethal damage otherwise reaches a victim only as a lower `hp`.
 - `damaged` tells everyone that standing buildings are hurt, so they can look it. `stage` is 0 (whole) to 3 (about to collapse), entered at 66%, 33% and 15% of the building's health. An entry is sent when a building enters a worse stage, or when a blast of at least 5 damage hits it; then `marked` is 1 and `(x, y, z)` (cm) is where the blast landed (clients no longer use it: charring comes from the removed cells). Rifle chips send nothing until they cross into a worse stage. A player who has just joined gets one message with the stage of every hurt building (never marked). The dust a building about to fall sheds is drawn by each client, and the burn around a hole is worked out from the `carved` cells; the holes themselves come from `carved`. Trees are not reported.
@@ -93,20 +95,21 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 
 Players sitting in a vehicle are **not** listed as entities. The vehicle's `seats` say where they are.
 
-`vehicle` is `[id u32, kind u8, x i32, y i32, z i32, qx i16, qy i16, qz i16, steer i8, [seat u32, …], turret, hp u8, damage, arms]`:
+`vehicle` is `[id u32, kind u8, x i32, y i32, z i32, qx i16, qy i16, qz i16, steer i8, [seat u32, …], turret, hp u8, damage, arms, thrust]`:
 
 | Field | Unit |
 |---|---|
 | `id` | shares the id space with players |
-| `kind` | 1 = jeep, 2 = tank, 3 = helicopter, 4 = sports car, 6 = plane, 7 = walker, 8 = Strv S (5 is the rooster, an entity) |
+| `kind` | 1 = jeep, 2 = tank, 3 = helicopter, 4 = sports car, 6 = plane, 7 = walker, 8 = Strv S, 9 = field mortar, 10 = Roadster (5 is the rooster, an entity) |
 | `x, y, z` | centimetres, chassis centre |
 | `qx, qy, qz` | the x, y, z of the orientation quaternion, scaled by 32767. The sender negates the quaternion so that `w >= 0`, and the receiver rebuilds `w = sqrt(1 − x² − y² − z²)` |
 | `steer` | front-wheel angle as a fraction of full lock (the kind's `*_MAX_STEER`), −127..127, + is right |
-| `seat` | the player id in each seat, 0 when empty. Seat 0 is the driver. A jeep has 4 seats and a sports car 2; a tank has 2, the second being the gunner; a helicopter has 2, the pilot and the nose gunner; a plane has 2, the pilot (who fires the forward guns and drops the bombs) and the rear gunner; a walker and a Strv S have 1, the driver, who also fires (the Strv S's gun is fixed in the hull, so its `turret.yaw` is always 0 and only `pitch` moves) |
+| `seat` | the player id in each seat, 0 when empty. Seat 0 is the driver. A jeep has 4 seats, and a sports car and a Roadster 2; a tank has 2, the second being the gunner; a helicopter has 2, the pilot and the nose gunner; a plane has 2, the pilot (who fires the forward guns and drops the bombs) and the rear gunner; a walker and a Strv S have 1, the driver, who also fires (the Strv S's gun is fixed in the hull, so its `turret.yaw` is always 0 and only `pitch` moves) |
 | `turret` | `nil` for a vehicle without a gun, else `[yaw i16, pitch i16, shots u8, range u16]` (below). A plane's is the rear gunner's ring |
 | `hp` | health, 0 is a burning wreck nobody can board |
 | `damage` | `nil` while unhurt, else eight bytes: front, rear, left, right, then wheels FL, FR, RL, RR, each 0..255 (a wheel at 255 is gone). A tank has no wheels to hurt, so its byte 4 (`DAMAGE_TURRET`) is 255 (`TURRET_GONE`) once its turret has been shot off |
 | `arms` | `nil` for anything but a plane, else `[shots u8, heat u8, rear_heat u8, bombs u8, flags u8]` (below) |
+| `thrust` | `nil` for anything but a Roadster, else `[air u8, flags u8]`: the air left in its tank, 0..255 of full, and the nozzles firing (bit 0 the rear boost nozzles, bit 1 the lift nozzles). Other clients draw the jets from `flags`; the driver's prediction resumes from `air` |
 
 `turret` is `[yaw, pitch, shots, range]`:
 
@@ -155,7 +158,7 @@ A snapshot is built per player from what is within `INTEREST_RADIUS` (300 m on t
 
 `entity_delta` is `[id u32, dx i32, dy i32, dz i32, dyaw i32, dvy i32, flags u8, dknock_x i32, dknock_z i32]`. Each field but `id` and `flags` is the new value minus the baseline's, in the same units as `entity`. `flags` is the new value. A change in the same entity's `kind` never happens.
 
-`vehicle_delta` is `[id u32, dx i32, dy i32, dz i32, dqx i32, dqy i32, dqz i32, dsteer i32, seats, turret, hp u8, damage, arms]`. The first eight are differences of the `vehicle` fields of the same name. `seats` is `nil` when unchanged, else the new list. `turret` is `nil` when unchanged, else the new `[yaw, pitch, shots, range]`. `hp` is the new value. `damage` is `nil` when unchanged, else the new eight bytes (all zeros is a repair). `arms` is `nil` when unchanged, else the new five bytes.
+`vehicle_delta` is `[id u32, dx i32, dy i32, dz i32, dqx i32, dqy i32, dqz i32, dsteer i32, seats, turret, hp u8, damage, arms, thrust]`. The first eight are differences of the `vehicle` fields of the same name. `seats` is `nil` when unchanged, else the new list. `turret` is `nil` when unchanged, else the new `[yaw, pitch, shots, range]`. `hp` is the new value. `damage` is `nil` when unchanged, else the new eight bytes (all zeros is a repair). `arms` is `nil` when unchanged, else the new five bytes. `thrust` is `nil` when unchanged, else the new two bytes.
 
 The client's scene after a snapshot is:
 

@@ -1,6 +1,6 @@
 import type { Vec3 } from '@ragnarok/engine'
 import * as THREE from 'three'
-import { KIND_HELI, KIND_PLANE, KIND_SPORTS } from '@/net/codec'
+import { KIND_HELI, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS } from '@/net/codec'
 import { isTracked } from '@/sim/vehicles'
 import { halfExtentsOf } from '@/sim/kinds'
 import { tyreSlip, wheelLayout, type WheelLayout } from '@/sim/slip'
@@ -150,7 +150,8 @@ export class VehicleFx {
     this.wheels(world, steer, particles, dt)
     if (powered && particles) {
       if (this.kind === KIND_PLANE) this.castorOil(world, here, dt)
-      else this.exhaust(world, here, dt)
+      // The Roadster is electric: nothing comes out of it but its thrusters' air.
+      else if (this.kind !== KIND_ROADSTER) this.exhaust(world, here, dt)
     }
   }
 
@@ -400,5 +401,49 @@ export function scrapeSparks(world: FxWorld, at: THREE.Vector3, velocity: THREE.
       gravity: 9.8,
       drag: 1.5,
     })
+  }
+}
+
+/** Jets per nozzle per second while a Roadster's thrusters fire. */
+const JET_RATE = 90
+
+/**
+ * A Roadster's cold-gas jets for one frame: white mist blasting out of each nozzle and spreading,
+ * carried on with the car's `velocity`. Compressed air does not burn, so there is no flame, only
+ * a cold, fast plume that a lift jet also kicks up off the ground below.
+ */
+export function coldGas(world: FxWorld, jets: readonly { at: THREE.Vector3; direction: THREE.Vector3 }[], velocity: THREE.Vector3, dt: number) {
+  const count = Math.max(1, Math.round(JET_RATE * dt))
+  for (const { at, direction } of jets) {
+    for (let i = 0; i < count; i++) {
+      const speed = rand(14, 22)
+      world.smoke.spawn({
+        position: [at.x + direction.x * 0.1, at.y + direction.y * 0.1, at.z + direction.z * 0.1],
+        velocity: [velocity.x + direction.x * speed + rand(-1.5, 1.5), velocity.y + direction.y * speed + rand(-1.5, 1.5), velocity.z + direction.z * speed + rand(-1.5, 1.5)],
+        life: rand(0.25, 0.45),
+        size: [0.18, rand(1.0, 1.6)],
+        color: 0xf4f9ff,
+        colorEnd: 0xd8e4ee,
+        alpha: 0.55,
+        drag: 4,
+        gravity: -0.5,
+        shape: 'puff',
+      })
+    }
+    // A lift jet near the ground blows a ring of dust out from under the car.
+    const ground = world.groundAt(at.x, at.z)
+    if (direction.y < -0.5 && at.y - ground < 3) {
+      const angle = rand(0, Math.PI * 2)
+      world.smoke.spawn({
+        position: [at.x, ground + 0.15, at.z],
+        velocity: [Math.cos(angle) * rand(5, 9), rand(0.2, 0.8), Math.sin(angle) * rand(5, 9)],
+        life: rand(0.5, 0.9),
+        size: [0.4, 1.8],
+        color: 0xc9bfa8,
+        alpha: 0.35,
+        drag: 2.5,
+        shape: 'puff',
+      })
+    }
   }
 }

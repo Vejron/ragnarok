@@ -3,6 +3,7 @@
 
 use crate::game::{Command, Outgoing};
 use crate::netem::{DelayQueue, NetemConfig};
+use crate::profile::Profile;
 use bytes::Bytes;
 use salvo::prelude::*;
 use shared::consts::*;
@@ -98,11 +99,12 @@ impl Transport {
         if !self.origin_allowed(origin) {
             return Err(salvo::Error::other("Invalid origin"));
         }
+        let profile = Profile::from_query(req.queries().iter_all().flat_map(|(key, values)| values.iter().map(move |value| (key.as_str(), value.as_str()))));
         let session = req.web_transport_mut().await?;
 
         let (outbox, mut inbox) = mpsc::channel(OUTBOX_CAPACITY);
         let (reply, response) = oneshot::channel();
-        self.commands.send(Command::Join { outbox, reply }).await.map_err(salvo::Error::other)?;
+        self.commands.send(Command::Join { outbox, reply, profile }).await.map_err(salvo::Error::other)?;
         let Ok(Some(id)) = response.await else {
             return Err(salvo::Error::other("Room full"));
         };

@@ -17,7 +17,7 @@ fn game() -> Game {
 fn join(game: &mut Game) -> (u32, mpsc::Receiver<Outgoing>) {
     let (outbox, inbox) = mpsc::channel(4096);
     let (reply, mut response) = oneshot::channel();
-    game.handle(Command::Join { outbox, reply });
+    game.handle(Command::Join { outbox, reply, profile: Default::default() });
     (response.try_recv().unwrap().unwrap(), inbox)
 }
 

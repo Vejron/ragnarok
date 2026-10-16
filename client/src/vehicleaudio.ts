@@ -1,6 +1,6 @@
 import { audioContext } from './audio'
 import { SampleBank } from './sfx'
-import { KIND_HELI, KIND_PLANE, KIND_SPORTS, KIND_STRV, KIND_TANK } from '@/net/codec'
+import { KIND_HELI, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK } from '@/net/codec'
 import { crashSize, landingThud, mixOf, type SoundInput, type SoundMix } from '@/sim/engine'
 
 /**
@@ -107,6 +107,8 @@ class Voice {
       : kind === KIND_TANK ? [['sawtooth', 1, 0.5], ['square', 0.5, 0.4], ['sawtooth', 1.51, 0.12]]
       : kind === KIND_STRV ? [['sawtooth', 1, 0.5], ['square', 0.5, 0.3], ['sawtooth', 2.01, 0.15]]
       : kind === KIND_SPORTS ? [['sawtooth', 1, 0.42], ['square', 0.5, 0.25], ['triangle', 3.02, 0.2]]
+      // An electric motor: a clean whine and its inverter's harmonic, no combustion.
+      : kind === KIND_ROADSTER ? [['sine', 1, 0.5], ['triangle', 2, 0.25], ['sine', 7.03, 0.06]]
       : [['sawtooth', 1, 0.5], ['square', 0.5, 0.35], ['sawtooth', 1.5, 0.15]]
     for (const [type, ratio, level] of parts) {
       const node = ctx.createOscillator()

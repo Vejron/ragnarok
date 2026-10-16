@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { viewWindow, worldToMap } from '@/sim/minimap'
+import { insideWorld, mapToWorld, viewWindow, worldToMap } from '@/sim/minimap'
 
 describe('minimap', () => {
   it('maps the world corners and centre onto the image', () => {
@@ -14,5 +14,20 @@ describe('minimap', () => {
     expect(w.size).toBeCloseTo(1720)
     expect(w.left).toBeCloseTo(100 - 860)
     expect(w.top).toBeCloseTo(100 - 860)
+  })
+
+  it('maps image fractions back to the world', () => {
+    expect(mapToWorld(0.5, 0.5, 4300)).toEqual([0, 0])
+    expect(mapToWorld(...worldToMap(-1200, 3000, 4300), 4300)).toEqual([-1200, 3000])
+  })
+
+  it('knows which points are in the world', () => {
+    // A 2 × 2 grid of 100 m tiles; only the top-left and bottom-right belong.
+    const world = { halfExtent: 100, tileSize: 100, inside: [true, false, false, true] }
+    expect(insideWorld(-50, -50, world)).toBe(true)
+    expect(insideWorld(50, -50, world)).toBe(false)
+    expect(insideWorld(50, 50, world)).toBe(true)
+    expect(insideWorld(101, 0, world)).toBe(false)
+    expect(insideWorld(50, -50, { ...world, inside: null })).toBe(true)
   })
 })

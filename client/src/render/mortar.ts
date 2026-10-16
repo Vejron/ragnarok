@@ -1,7 +1,7 @@
 import { Group, Mesh, boxGeometry, cylinderGeometry, sphereGeometry, type Node } from '@ragnarok/engine'
 import * as THREE from 'three'
 import { toonMaterial } from './toon'
-import { colorFor } from './character'
+import { colorFor } from '@/profile'
 import type { VehicleModel } from './car'
 import type { Turret } from '@/net/codec'
 import { MORTAR_BARREL_LENGTH, MORTAR_GUN_PIVOT, MORTAR_TRACK_HALF, MORTAR_WHEEL_RADIUS } from '@/sim/consts'

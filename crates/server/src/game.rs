@@ -101,8 +101,8 @@ impl Game {
 
     pub fn handle(&mut self, command: Command) {
         match command {
-            Command::Join { outbox, reply } => {
-                let _ = reply.send(self.join(outbox));
+            Command::Join { outbox, reply, profile } => {
+                let _ = reply.send(self.join(outbox, profile));
             }
             Command::Leave(id) => self.leave(id),
             Command::Rtc { from, to, kind, json } => {
@@ -125,7 +125,7 @@ impl Game {
         }
     }
 
-    fn join(&mut self, outbox: mpsc::Sender<Outgoing>) -> Option<u32> {
+    fn join(&mut self, outbox: mpsc::Sender<Outgoing>, profile: Profile) -> Option<u32> {
         if self.world.players.len() >= MAX_PLAYERS {
             return None;
         }
@@ -153,8 +153,19 @@ impl Game {
                 trigger_held: false,
                 kills: 0,
                 deaths: 0,
+                name: if profile.name.is_empty() { format!("Player {id}") } else { profile.name },
+                color: profile.color.unwrap_or((id % PLAYER_COLOR_COUNT as u32) as u8),
+                spawns: profile.spawns.into_iter().filter(|&point| crate::mechanics::spawn_usable(&self.world.map, point)).collect(),
+                next_spawn: 0,
             },
         );
+        let player = &self.world.players[&id];
+        let profiles = self.world.players.iter().map(|(&id, player)| (id, player.name.clone(), player.color)).collect();
+        let _ = outbox.try_send(Outgoing::Reliable(encode(&Profiles(S_PROFILES, profiles)).into()));
+        let joiner = Bytes::from(encode(&Profiles(S_PROFILES, vec![(id, player.name.clone(), player.color)])));
+        for (&to, other) in &self.outboxes {
+            send_reliable(other, to, &joiner, &mut self.stalled);
+        }
         let scores = self.world.players.iter().map(|(&id, player)| (id, player.kills, player.deaths)).collect();
         let _ = outbox.try_send(Outgoing::Reliable(encode(&Scores(S_SCORES, scores)).into()));
         // Always sent, even empty: the client takes the first one after the welcome as the catch-up
@@ -188,7 +199,8 @@ impl Game {
         for mechanic in &mut self.mechanics {
             mechanic.on_join(&mut self.world, id);
         }
-        tracing::info!(id, players = self.world.players.len(), "player joined");
+        let player = &self.world.players[&id];
+        tracing::info!(id, name = %player.name, spawns = player.spawns.len(), players = self.world.players.len(), "player joined");
         Some(id)
     }
 
@@ -339,7 +351,7 @@ mod tests {
     fn join(game: &mut Game) -> (u32, mpsc::Receiver<Outgoing>) {
         let (outbox, inbox) = mpsc::channel(256);
         let (reply, mut response) = oneshot::channel();
-        game.handle(Command::Join { outbox, reply });
+        game.handle(Command::Join { outbox, reply, profile: Default::default() });
         (response.try_recv().unwrap().unwrap(), inbox)
     }
 
@@ -371,13 +383,36 @@ mod tests {
         assert!(stickmen[0].z < 0, "walked towards -Z");
     }
 
+    fn profiles(outgoing: Vec<Outgoing>) -> Vec<Vec<(u32, String, u8)>> {
+        outgoing
+            .into_iter()
+            .filter_map(|out| match out {
+                Outgoing::Reliable(bytes) if peek_tag(&bytes) == Some(S_PROFILES) => decode::<Profiles>(&bytes).map(|Profiles(_, list)| list),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_joiner_gets_everyones_profile_and_everyone_gets_theirs() {
+        let mut game = game();
+        let (first, mut first_inbox) = join(&mut game);
+        let (outbox, mut inbox) = mpsc::channel(256);
+        let (reply, mut response) = oneshot::channel();
+        game.handle(Command::Join { outbox, reply, profile: Profile { name: "Åsa".into(), color: Some(5), spawns: vec![] } });
+        let second = response.try_recv().unwrap().unwrap();
+        let first_colour = (first % PLAYER_COLOR_COUNT as u32) as u8;
+        assert_eq!(profiles(drain(&mut inbox)), vec![vec![(first, format!("Player {first}"), first_colour), (second, "Åsa".into(), 5)]]);
+        assert_eq!(profiles(drain(&mut first_inbox)).last(), Some(&vec![(second, "Åsa".into(), 5)]));
+    }
+
     #[test]
     fn room_rejects_players_beyond_capacity() {
         let mut game = game();
         let inboxes: Vec<_> = (0..MAX_PLAYERS).map(|_| join(&mut game)).collect();
         let (outbox, _inbox) = mpsc::channel(4);
         let (reply, mut response) = oneshot::channel();
-        game.handle(Command::Join { outbox, reply });
+        game.handle(Command::Join { outbox, reply, profile: Default::default() });
         assert_eq!(response.try_recv().unwrap(), None);
         drop(inboxes);
     }
@@ -387,7 +422,7 @@ mod tests {
         let mut game = game();
         let (outbox, _inbox) = mpsc::channel(1);
         let (reply, mut response) = oneshot::channel();
-        game.handle(Command::Join { outbox, reply });
+        game.handle(Command::Join { outbox, reply, profile: Default::default() });
         let id = response.try_recv().unwrap().unwrap();
         // The welcome already fills the one slot, so the next reliable message cannot be queued.
         game.world.fresh_destroyed.push((Obj::Tree(Default::default()), 0));
@@ -446,7 +481,7 @@ mod tests {
         for _ in 0..MAX_PLAYERS {
             let (outbox, inbox) = mpsc::channel(4096);
             let (reply, mut response) = oneshot::channel();
-            game.handle(Command::Join { outbox, reply });
+            game.handle(Command::Join { outbox, reply, profile: Default::default() });
             ids.push(response.try_recv().unwrap().unwrap());
             inboxes.push(inbox);
         }

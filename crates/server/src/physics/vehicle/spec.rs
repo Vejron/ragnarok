@@ -110,6 +110,25 @@ pub(super) static SPORTS: Spec = Spec {
     com_drop: 0.02,
 };
 
+pub(super) static ROADSTER: Spec = Spec {
+    half_extents: ROADSTER_HALF_EXTENTS,
+    // The sports car's body with a bigger motor; its thrusters are forces of their own (see `thrust`).
+    density: 200.0,
+    wheel_radius: ROADSTER_WHEEL_RADIUS,
+    track_half: ROADSTER_TRACK_HALF,
+    axles: &[-ROADSTER_AXLE_Z, ROADSTER_AXLE_Z],
+    hard_point_y: ROADSTER_HARD_POINT_Y,
+    suspension_rest: ROADSTER_SUSPENSION_REST,
+    max_suspension_force: 60_000.0,
+    engine_force: 18_000.0,
+    max_speed: ROADSTER_MAX_SPEED,
+    steer_lock: ROADSTER_MAX_STEER,
+    turn_rate: 0.0,
+    lift: Lift::Wheels,
+    linear_damping: 0.05,
+    com_drop: 0.02,
+};
+
 pub(super) static TANK: Spec = Spec {
     half_extents: TANK_HALF_EXTENTS,
     // 13.5 m³ of hull is about 13.5 tonnes: ten times the car, so ramming one throws it aside. The
@@ -221,6 +240,7 @@ pub(in crate::physics) fn spec(kind: u8) -> &'static Spec {
         KIND_HELI => &HELI,
         KIND_PLANE => &PLANE,
         KIND_SPORTS => &SPORTS,
+        KIND_ROADSTER => &ROADSTER,
         KIND_MORTAR => &MORTAR,
         _ => &JEEP,
     }

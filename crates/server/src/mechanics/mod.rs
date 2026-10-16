@@ -15,7 +15,7 @@ pub use gunnery::Gunnery;
 pub use movement::Movement;
 pub use npcs::Npcs;
 pub use pickups::Pickups;
-pub use spawn::Spawn;
+pub use spawn::{Spawn, usable as spawn_usable};
 pub use vehicles::Vehicles;
 
 use crate::game::World;

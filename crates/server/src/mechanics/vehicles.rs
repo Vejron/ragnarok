@@ -4,7 +4,7 @@ use crate::physics::{CarCondition, CarControls, CarImpact, CarPose, Character, O
 use shared::consts::*;
 use shared::vehicles::{VehicleDef, vehicle_def};
 use shared::protocol::{
-    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, ShotEvent, WEAPON_CRASH,
+    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, ShotEvent, WEAPON_CRASH,
     WEAPON_ROADKILL, WEAPON_SCRAPE, seat_count, vehicle_hp,
 };
 use shared::quant::{from_axis, to_cm, wrap_angle};
@@ -24,6 +24,8 @@ pub struct Vehicles;
 const CAR_COUNT: usize = 6;
 const TANK_COUNT: usize = 2;
 const HELI_COUNT: usize = 1;
+/// Roadsters, placed right after the other cars.
+const ROADSTER_COUNT: usize = 1;
 /// Strv S tanks, placed with the other tanks.
 const STRV_COUNT: usize = 1;
 /// Walkers, placed with the tanks and the helicopter on the road's spawn points.
@@ -490,7 +492,9 @@ impl Mechanic for Vehicles {
                     _ => CAR_DROP_Y,
                 };
                 let position = [x, world.map.ground.height_at(x, z) + drop, z];
-                if world.vehicles.len() < MAX_VEHICLES && world.physics.car_fits(spot.kind, position, spot.yaw) {
+                if world.vehicles.len() >= MAX_VEHICLES {
+                    tracing::warn!(kind = spot.kind, x, z, max = MAX_VEHICLES, "too many placed vehicles; skipped");
+                } else if world.physics.car_fits(spot.kind, position, spot.yaw) {
                     add_vehicle(world, spot.kind, position, spot.yaw);
                     placed += 1;
                 } else {
@@ -507,16 +511,18 @@ impl Mechanic for Vehicles {
         let mut used = vec![false; candidates.len()];
         let mut placed = 0;
         for (index, &[cx, cz]) in candidates.iter().enumerate() {
-            if placed == CAR_COUNT + TANK_COUNT + STRV_COUNT + HELI_COUNT + WALKER_COUNT {
+            const CARS: usize = CAR_COUNT + ROADSTER_COUNT;
+            if placed == CARS + TANK_COUNT + STRV_COUNT + HELI_COUNT + WALKER_COUNT {
                 break;
             }
-            // Cars first (jeeps and sports cars take turns), then the tanks, then the helicopter.
+            // Cars first (jeeps and sports cars take turns, then the Roadster), then the tanks, then the helicopter.
             let kind = match placed {
                 0..CAR_COUNT if placed % 2 == 0 => KIND_JEEP,
                 0..CAR_COUNT => KIND_SPORTS,
-                _ if placed < CAR_COUNT + TANK_COUNT => KIND_TANK,
-                _ if placed < CAR_COUNT + TANK_COUNT + STRV_COUNT => KIND_STRV,
-                _ if placed < CAR_COUNT + TANK_COUNT + STRV_COUNT + HELI_COUNT => KIND_HELI,
+                _ if placed < CARS => KIND_ROADSTER,
+                _ if placed < CARS + TANK_COUNT => KIND_TANK,
+                _ if placed < CARS + TANK_COUNT + STRV_COUNT => KIND_STRV,
+                _ if placed < CARS + TANK_COUNT + STRV_COUNT + HELI_COUNT => KIND_HELI,
                 _ => KIND_WALKER,
             };
             let (x, z) = (cx as f32 / 100.0, cz as f32 / 100.0);
@@ -599,15 +605,20 @@ impl Mechanic for Vehicles {
                     Some(driver) => {
                         let input = &driver.input;
                         let buttons = input.buttons();
+                        let held = |button: u16| buttons & button != 0;
+                        // A Roadster boosts on run and hops (then hovers) on jump, so its handbrake is on crouch.
+                        let roadster = vehicle.kind == KIND_ROADSTER;
                         CarControls {
                             steer: from_axis(input.strafe),
                             throttle: from_axis(input.forward),
-                            handbrake: buttons & BUTTON_JUMP != 0,
+                            handbrake: if roadster { held(BUTTON_CROUCH) } else { held(BUTTON_JUMP) },
                             // A helicopter climbs on jump and sinks on run.
-                            lift: f32::from(buttons & BUTTON_JUMP != 0) - f32::from(buttons & BUTTON_RUN != 0),
+                            lift: if roadster { 0.0 } else { f32::from(held(BUTTON_JUMP)) - f32::from(held(BUTTON_RUN)) },
                             powered: true,
                             // A plane flies towards where its pilot looks.
                             aim: (vehicle.kind == KIND_PLANE).then(|| [shared::quant::from_mrad(input.yaw), shared::quant::from_mrad(input.pitch())]),
+                            boost: roadster && held(BUTTON_RUN),
+                            hop: roadster && held(BUTTON_JUMP),
                         }
                     }
                     None => CarControls { handbrake: true, ..Default::default() },

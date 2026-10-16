@@ -1,7 +1,7 @@
 use super::*;
 use crate::game::{Command, Game, Outgoing};
 use crate::physics::STANDING_Y;
-use shared::protocol::InputFrame;
+use shared::protocol::{InputFrame, THRUST_BOOST};
 use shared::world::{Road, WORLD_VERSION};
 use tokio::sync::{mpsc, oneshot};
 
@@ -10,9 +10,9 @@ fn game() -> Game {
     let map = WorldFile {
         version: WORLD_VERSION,
         half_extent: 30_000,
-        // Ten spots in the middle for the cars, tanks, helicopter and walker, and one far out at each end
+        // Twelve spots in the middle for the cars, tanks, helicopter and walker, and one far out at each end
         // for the planes. Players start on the first six.
-        spawns: [[-25_000, 0], [25_000, 0]].into_iter().chain((0..11).map(|i| [i * 2700 - 12_000, 0])).collect(),
+        spawns: [[-25_000, 0], [25_000, 0]].into_iter().chain((0..12).map(|i| [i * 2500 - 13_750, 0])).collect(),
         roads: vec![Road { width: 800, kind: 0, points: vec![[-30_000, 0], [30_000, 0]] }],
         ..Default::default()
     };
@@ -25,7 +25,7 @@ fn game() -> Game {
 fn join(game: &mut Game) -> (u32, mpsc::Receiver<Outgoing>) {
     let (outbox, inbox) = mpsc::channel(4096);
     let (reply, mut response) = oneshot::channel();
-    game.handle(Command::Join { outbox, reply });
+    game.handle(Command::Join { outbox, reply, profile: Default::default() });
     (response.try_recv().unwrap().unwrap(), inbox)
 }
 
@@ -54,7 +54,7 @@ fn move_player_next_to_a_car(game: &mut Game, id: u32) -> u32 {
 #[test]
 fn cars_are_placed_along_the_road() {
     let game = game();
-    assert_eq!(game.world.vehicles.len(), CAR_COUNT + TANK_COUNT + STRV_COUNT + HELI_COUNT + WALKER_COUNT + PLANE_COUNT + game.world.vehicles.values().filter(|vehicle| vehicle.kind == KIND_MORTAR).count());
+    assert_eq!(game.world.vehicles.len(), CAR_COUNT + ROADSTER_COUNT + TANK_COUNT + STRV_COUNT + HELI_COUNT + WALKER_COUNT + PLANE_COUNT + game.world.vehicles.values().filter(|vehicle| vehicle.kind == KIND_MORTAR).count());
     // The mortar only takes a spawn the others left, and this world has none spare.
     let mortars = game.world.vehicles.values().filter(|vehicle| vehicle.kind == KIND_MORTAR).count();
     assert!(mortars <= MORTAR_COUNT, "{mortars} mortars");
@@ -71,6 +71,7 @@ fn cars_are_placed_along_the_road() {
     let count = |kind| game.world.vehicles.values().filter(|vehicle| vehicle.kind == kind).count();
     assert_eq!(count(KIND_JEEP), CAR_COUNT / 2, "half the cars are jeeps");
     assert_eq!(count(KIND_SPORTS), CAR_COUNT / 2, "and half are sports cars");
+    assert_eq!(count(KIND_ROADSTER), ROADSTER_COUNT);
     for &vid in game.world.vehicles.keys() {
         let pose = game.world.physics.car_pose(vid).unwrap();
         // The road runs along X, so the car faces +X or -X: |yaw| is a quarter turn.
@@ -653,4 +654,36 @@ fn flying_a_plane_into_the_ground_wrecks_it() {
         Vehicles.on_tick(&mut game.world, TICK_DT);
     }
     assert!(game.world.vehicles[&vid].wrecked(), "hp {}", game.world.vehicles[&vid].hp);
+}
+
+#[test]
+fn a_roadster_driver_boosts_on_run_hops_on_jump_and_brakes_on_crouch() {
+    let mut game = game();
+    let (id, _inbox) = join(&mut game);
+    let mut seq = 0;
+    idle(&mut game, id, &mut seq, 30);
+    let (&vid, _) = game.world.vehicles.iter().find(|(_, vehicle)| vehicle.kind == KIND_ROADSTER).expect("a roadster is placed");
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    game.world.players.get_mut(&id).unwrap().character.position = [pose.position[0], STANDING_Y, pose.position[2] + 2.0];
+    press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
+    idle(&mut game, id, &mut seq, 3);
+    assert_eq!(game.world.vehicles[&vid].seats[0], Some(id));
+
+    press(&mut game, id, &mut seq, (0, 0), BUTTON_RUN, 30);
+    let controls = game.world.vehicles[&vid].controls;
+    assert!(controls.boost && !controls.hop && !controls.handbrake && controls.lift == 0.0, "{controls:?}");
+    let thrust = game.vehicle_states().into_iter().find(|v| v.id == vid).unwrap().thrust.expect("a roadster sends its tank");
+    assert_eq!(thrust.flags, THRUST_BOOST);
+    assert!(thrust.air < 255, "boosting drains the tank: {}", thrust.air);
+    assert!(game.world.physics.car_pose(vid).unwrap().velocity.iter().map(|v| v * v).sum::<f32>().sqrt() > 5.0);
+
+    let ground = game.world.physics.car_pose(vid).unwrap().position[1];
+    press(&mut game, id, &mut seq, (0, 0), BUTTON_JUMP, 30);
+    assert!(game.world.vehicles[&vid].controls.hop && !game.world.vehicles[&vid].controls.handbrake);
+    assert!(game.world.physics.car_pose(vid).unwrap().position[1] > ground + 2.0, "it hopped");
+
+    press(&mut game, id, &mut seq, (0, 0), BUTTON_CROUCH, 3);
+    assert!(game.world.vehicles[&vid].controls.handbrake);
+    // Nothing else carries a tank.
+    assert!(game.vehicle_states().iter().filter(|v| v.kind != KIND_ROADSTER).all(|v| v.thrust.is_none()));
 }

@@ -17,7 +17,7 @@ use rapier3d::control::{DynamicRayCastVehicleController, WheelTuning};
 use rapier3d::prelude::*;
 use shared::consts::*;
 use shared::quant::from_cm;
-use shared::protocol::{DAMAGE_WHEELS, KIND_HELI, KIND_MORTAR, KIND_PLANE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, WHEEL_GONE, vehicle_hp};
+use shared::protocol::{DAMAGE_WHEELS, THRUST_BOOST, THRUST_LIFT, KIND_HELI, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, WHEEL_GONE, vehicle_hp};
 
 /// Gravity acting on vehicle bodies. Stickmen use `GRAVITY`; the ray-cast suspension is tuned
 /// around the real-world value.
@@ -26,7 +26,7 @@ pub const CAR_GRAVITY: f32 = 9.81;
 mod flight;
 mod spec;
 
-use flight::{assist, fly, pull, roll_plane, walk, wing};
+use flight::{assist, fly, pull, roll_plane, thrust, walk, wing};
 pub use spec::half_extents;
 pub(super) use spec::{Lift, Spec, spec};
 
@@ -81,6 +81,10 @@ pub struct CarControls {
     /// Where a plane's pilot points the mouse, `[yaw, pitch]` in radians (yaw 0 faces -Z, + turns left):
     /// the plane turns towards it, banking into the turn. `None` flies on in a straight line.
     pub aim: Option<[f32; 2]>,
+    /// A Roadster's rear nozzles are held open. Only a Roadster has it.
+    pub boost: bool,
+    /// A Roadster hops off the ground, then holds itself up in the air. Only a Roadster has it.
+    pub hop: bool,
 }
 
 /// How worn a vehicle is, which both ends' physics apply: the engine's power and the state of a
@@ -109,7 +113,7 @@ impl CarCondition {
 
 impl CarControls {
     /// Nobody asks for anything.
-    pub const IDLE: CarControls = CarControls { throttle: 0.0, steer: 0.0, handbrake: false, lift: 0.0, powered: false, aim: None };
+    pub const IDLE: CarControls = CarControls { throttle: 0.0, steer: 0.0, handbrake: false, lift: 0.0, powered: false, aim: None, boost: false, hop: false };
 }
 
 /// A car's pose as the game loop and the wire need it.
@@ -198,6 +202,10 @@ pub(super) struct Car {
     condition: CarCondition,
     /// A mortar's tow: the car it is hitched to, and the joint that holds it there.
     towed_by: Option<(u32, ImpulseJointHandle)>,
+    /// A Roadster's air tank, 0..=`ROADSTER_AIR`; `None` for anything without thrusters.
+    tank: Option<f32>,
+    /// The `THRUST_*` nozzles that fired in the last step.
+    firing: u8,
 }
 
 impl Car {
@@ -374,7 +382,7 @@ impl Physics {
                 );
             }
         }
-        self.cars.insert(id, Car { spec, body, collider, extra, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW, towed_by: None });
+        self.cars.insert(id, Car { spec, body, collider, extra, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW, towed_by: None, tank: (kind == KIND_ROADSTER).then_some(ROADSTER_AIR), firing: 0 });
     }
 
     /// Where a car's tow hitch is, in its own frame: just behind its rear face.
@@ -449,6 +457,10 @@ impl Physics {
         car.steer = 0.0;
         car.turn = 0.0;
         car.spin = 0.0;
+        car.firing = 0;
+        if let Some(tank) = &mut car.tank {
+            *tank = ROADSTER_AIR;
+        }
         // A turret shot off comes back with the tank.
         for &handle in &car.extra {
             if let Some(collider) = self.colliders.get_mut(handle) {
@@ -531,6 +543,7 @@ impl Physics {
         car.steer += (target - car.steer).clamp(-step, step);
         car.turn = controls.steer.clamp(-1.0, 1.0) * car.spec.turn_rate;
         car.air = (controls.throttle.clamp(-1.0, 1.0), controls.steer.clamp(-1.0, 1.0));
+        car.flight = controls;
 
         // Pushing against the direction of travel brakes instead of reversing the engine.
         let against = controls.throttle * speed < -1.0;
@@ -663,6 +676,10 @@ impl Physics {
             }
             if car.spec.steer_lock > 0.0 {
                 assist(body, car.air, grounded, dt);
+            }
+            if let Some(tank) = &mut car.tank {
+                body.reset_forces(false);
+                car.firing = thrust(body, car.flight, tank, grounded, dt);
             }
             if car.turn == 0.0 || !grounded {
                 car.spin = 0.0;
@@ -867,6 +884,12 @@ impl Physics {
         let car = self.cars.get(&id)?;
         let body = self.bodies.get(car.body)?;
         Some(CarMotion { linvel: body.linvel().into(), angvel: body.angvel().into(), steer: car.steer, spin: car.spin })
+    }
+
+    /// A Roadster's air tank (share of full) and the `THRUST_*` nozzles that fired in the last step.
+    pub fn car_thrust(&self, id: u32) -> Option<(f32, u8)> {
+        let car = self.cars.get(&id)?;
+        Some((car.tank?, car.firing))
     }
 
     pub fn car_pose(&self, id: u32) -> Option<CarPose> {

@@ -15,3 +15,22 @@ export function viewWindow(x: number, z: number, halfExtent: number, metres: num
   const [u, v] = worldToMap(x, z, halfExtent)
   return { size: imagePx, left: view / 2 - u * imagePx, top: view / 2 - v * imagePx }
 }
+
+/** The inverse of `worldToMap`: a fraction across and down the image to world metres. */
+export function mapToWorld(u: number, v: number, halfExtent: number): [number, number] {
+  const side = 2 * halfExtent
+  return [u * side - halfExtent, v * side - halfExtent]
+}
+
+/**
+ * Whether world point `(x, z)`, metres, is in the playable square and on one of its tiles. Mirrors
+ * `WorldFile::is_inside`.
+ */
+export function insideWorld(x: number, z: number, world: { halfExtent: number; tileSize: number; inside?: boolean[] | null }): boolean {
+  const half = world.halfExtent
+  if (Math.abs(x) > half || Math.abs(z) > half) return false
+  if (!world.inside || world.tileSize <= 0) return true
+  const grid = Math.max(1, Math.ceil((2 * half) / world.tileSize))
+  const cell = (v: number) => Math.min(grid - 1, Math.max(0, Math.floor((v + half) / world.tileSize)))
+  return world.inside[cell(z) * grid + cell(x)] === true
+}

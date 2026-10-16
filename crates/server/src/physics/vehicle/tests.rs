@@ -1,6 +1,6 @@
 use super::*;
 use shared::consts::TICK_DT;
-use shared::protocol::{KIND_HELI, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_SPORTS, KIND_TANK, KIND_WALKER};
+use shared::protocol::{KIND_HELI, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_TANK, KIND_WALKER};
 use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 
 fn flat() -> WorldFile {
@@ -1042,3 +1042,114 @@ fn a_hitched_mortar_is_pulled_along_behind_the_jeep_until_it_is_let_go() {
     assert_eq!(physics.towed_by(2), None);
 }
 
+
+fn roadster() -> Physics {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_ROADSTER, [0.0, 1.5, 0.0], 0.0);
+    run(&mut physics, COAST, 60);
+    physics
+}
+
+fn tank(physics: &Physics) -> f32 {
+    physics.car_thrust(1).unwrap().0
+}
+
+#[test]
+fn only_a_roadster_has_thrusters() {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_SPORTS, [0.0, 1.5, 0.0], 0.0);
+    assert_eq!(physics.car_thrust(1), None);
+    assert_eq!(roadster().car_thrust(1), Some((ROADSTER_AIR, 0)));
+}
+
+#[test]
+fn the_roadster_boosts_past_a_sports_car() {
+    let mut sports = Physics::new(&flat()).unwrap();
+    sports.add_car(1, KIND_SPORTS, [0.0, 1.5, 0.0], 0.0);
+    run(&mut sports, COAST, 60);
+    let plain = run(&mut sports, FORWARD, 90).forward_speed;
+    let mut physics = roadster();
+    let boosted = run(&mut physics, CarControls { boost: true, ..FORWARD }, 90).forward_speed;
+    assert!(boosted > plain + 15.0, "boost {boosted} vs {plain}");
+    assert_eq!(physics.car_thrust(1).unwrap().1, THRUST_BOOST);
+    assert!(tank(&physics) < 0.6, "boosting drains the tank: {}", tank(&physics));
+}
+
+#[test]
+fn a_hop_clears_a_row_of_cars_and_costs_air() {
+    let mut physics = roadster();
+    let start = physics.car_pose(1).unwrap().position[1];
+    let mut top = start;
+    // One tick of jump, then let go: a single hop, no hover.
+    run(&mut physics, CarControls { hop: true, ..COAST }, 1);
+    assert!((tank(&physics) - (ROADSTER_AIR - ROADSTER_HOP_COST)).abs() < 1e-4);
+    for _ in 0..120 {
+        top = top.max(run(&mut physics, COAST, 1).position[1]);
+    }
+    assert!(top > start + 3.0, "hopped to {top} from {start}");
+    let landed = physics.car_pose(1).unwrap().position[1];
+    assert!((landed - start).abs() < 0.1, "landed at {landed}");
+}
+
+#[test]
+fn holding_jump_hovers_until_the_tank_runs_dry() {
+    let mut physics = roadster();
+    let start = physics.car_pose(1).unwrap().position[1];
+    let hold = CarControls { hop: true, ..COAST };
+    // Up, then holding a slow climb on the lift nozzles.
+    let up = run(&mut physics, hold, 120).position[1];
+    let later = run(&mut physics, hold, 60).position[1];
+    assert!(up > start + 3.0 && later > up - 0.5, "hovering at {up} then {later}");
+    assert_eq!(physics.car_thrust(1).unwrap().1, THRUST_LIFT);
+    // The tank lasts about four seconds; then it falls and lands.
+    run(&mut physics, hold, 60 * 5);
+    assert!(tank(&physics) < 0.01);
+    let landed = physics.car_pose(1).unwrap().position[1];
+    assert!((landed - start).abs() < 0.2, "fell back to {landed}");
+}
+
+#[test]
+fn the_tank_refills_on_the_ground() {
+    let mut physics = roadster();
+    run(&mut physics, CarControls { boost: true, ..CarControls::IDLE }, 60);
+    let drained = tank(&physics);
+    run(&mut physics, CarControls { handbrake: true, ..CarControls::IDLE }, 60 * 2);
+    assert!(tank(&physics) > drained + 0.3, "refilled from {drained} to {}", tank(&physics));
+    physics.reset_car(1, [0.0, 1.5, 0.0], 0.0);
+    assert_eq!(tank(&physics), ROADSTER_AIR);
+}
+
+/// A scripted Roadster run with every nozzle, for the fixture in `vehicle.spec.ts`.
+fn scripted_thrust(tick: u32) -> CarControls {
+    match tick / 60 {
+        0 => COAST,
+        1 => FORWARD,
+        2 => CarControls { boost: true, ..FORWARD },
+        3 => CarControls { hop: true, steer: 0.5, ..FORWARD },
+        _ => CarControls { handbrake: true, ..CarControls::IDLE },
+    }
+}
+
+/// `(tick, position, tank)` after `scripted_thrust`, mirrored in `vehicle.spec.ts`.
+const THRUST_CHECKPOINTS: [(u32, [f32; 3], f32); 4] = [
+    (120, [-0.0019, 0.3968, -8.9728], 1.0000),
+    (180, [-0.0019, 0.3992, -46.4509], 0.6700),
+    (240, [0.8576, 4.5892, -100.0672], 0.2742),
+    (420, [13.2106, 0.3972, -179.1133], 0.6742),
+];
+
+#[test]
+fn scripted_thrust_matches_fixture() {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_ROADSTER, [0.0, 1.5, 0.0], 0.0);
+    for tick in 0..420 {
+        physics.drive_car(1, scripted_thrust(tick), TICK_DT);
+        physics.step_cars(TICK_DT);
+        let done = tick + 1;
+        if let Some((_, expected, air)) = THRUST_CHECKPOINTS.iter().find(|(t, _, _)| *t == done) {
+            let position = physics.car_pose(1).unwrap().position;
+            let close = position.iter().zip(expected).all(|(a, e)| (a - e).abs() < 0.001) && (tank(&physics) - air).abs() < 0.001;
+            assert!(close, "tick {done}: {position:?} tank {}", tank(&physics));
+        }
+    }
+}

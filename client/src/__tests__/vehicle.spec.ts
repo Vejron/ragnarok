@@ -4,8 +4,8 @@ import { CarSim, CAR_GRAVITY, conditionOf, controlsOf, VehicleDriver, type CarCo
 import { addTileCollider } from '@/sim/physics'
 import { heightIn, type TileGround } from '@/sim/terrain'
 import { f32 } from '@/sim/movement'
-import { TICK_DT, vehicleMaxHp } from '@/sim/consts'
-import { DAMAGE_TURRET, KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
+import { BUTTON_CROUCH, BUTTON_JUMP, BUTTON_RUN, TICK_DT, vehicleMaxHp } from '@/sim/consts'
+import { DAMAGE_TURRET, KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
 import type { TileData, WorldData } from '@/world'
 
 const COAST: CarControls = { throttle: 0, steer: 0, handbrake: false, lift: 0, powered: false }
@@ -152,6 +152,54 @@ describe('vehicle prediction', () => {
     expect(conditionOf(KIND_JEEP, 60, [0, 0, 0, 0, 0, 0, 0, 0]).power).toBe(1)
     expect(conditionOf(KIND_JEEP, 10, [0, 0, 0, 0, 0, 0, 0, 0]).power).toBeCloseTo(0.6)
     expect(conditionOf(KIND_TANK, 125, [0, 0, 0, 0, 0, 0, 0, 0]).power).toBe(1)
+  })
+})
+
+/** Same as `scripted_thrust` in vehicle.rs. */
+const thrusted = (tick: number): CarControls => {
+  switch (Math.floor(tick / 60)) {
+    case 0: return COAST
+    case 1: return FORWARD
+    case 2: return { ...FORWARD, boost: true }
+    case 3: return { ...FORWARD, hop: true, steer: 0.5 }
+    default: return { ...COAST, handbrake: true }
+  }
+}
+
+/** `THRUST_CHECKPOINTS` in vehicle.rs: `[tick, position, tank]`. */
+const thrustCheckpoints: [number, [number, number, number], number][] = [
+  [120, [-0.0019, 0.3968, -8.9728], 1.0],
+  [180, [-0.0019, 0.3992, -46.4509], 0.67],
+  [240, [0.8576, 4.5892, -100.0672], 0.2742],
+  [420, [13.2106, 0.3972, -179.1133], 0.6742],
+]
+
+describe('roadster prediction', () => {
+  it('WASM boosts, hops and hovers where the native server does', async () => {
+    await RAPIER.init()
+    const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
+    world.timestep = TICK_DT
+    world.createCollider(RAPIER.ColliderDesc.cuboid(200, 0.5, 200).setTranslation(0, -0.5, 0))
+    const car = new CarSim(world, KIND_ROADSTER, [0, 1.5, 0], 0)
+    for (let tick = 0; tick < 420; tick++) {
+      car.drive(thrusted(tick), TICK_DT)
+      car.step(TICK_DT)
+      const expected = thrustCheckpoints.find(([t]) => t === tick + 1)
+      if (!expected) continue
+      car.state().position.forEach((value, axis) => {
+        expect(Math.abs(value - expected[1][axis]!), `tick ${tick + 1} axis ${axis}`).toBeLessThan(0.01)
+      })
+      expect(car.tank!).toBeCloseTo(expected[2], 3)
+    }
+    world.free()
+  })
+
+  it('maps run, jump and crouch to boost, hop and handbrake for a Roadster only', () => {
+    const frame = (buttons: number): InputFrame => ({ seq: 1, strafe: 0, forward: 0, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 })
+    expect(controlsOf(frame(BUTTON_RUN), KIND_ROADSTER)).toMatchObject({ boost: true, hop: false, handbrake: false, lift: 0 })
+    expect(controlsOf(frame(BUTTON_JUMP), KIND_ROADSTER)).toMatchObject({ boost: false, hop: true, handbrake: false, lift: 0 })
+    expect(controlsOf(frame(BUTTON_CROUCH), KIND_ROADSTER)).toMatchObject({ handbrake: true })
+    expect(controlsOf(frame(BUTTON_JUMP), KIND_SPORTS)).toMatchObject({ boost: false, hop: false, handbrake: true })
   })
 })
 
@@ -309,7 +357,7 @@ describe('driving a predicted vehicle', () => {
     return {
       vehicle: {
         id: 3, kind, x: cm(s.position[0]), y: cm(s.position[1]), z: cm(s.position[2]),
-        qx, qy, qz, qw: Math.sqrt(1 - qx * qx - qy * qy - qz * qz), steer: 0, seats: [1, 0, 0, 0], turret: null, hp: vehicleMaxHp(kind), damage: [0, 0, 0, 0, 0, 0, 0, 0], arms: null,
+        qx, qy, qz, qw: Math.sqrt(1 - qx * qx - qy * qy - qz * qz), steer: 0, seats: [1, 0, 0, 0], turret: null, hp: vehicleMaxHp(kind), damage: [0, 0, 0, 0, 0, 0, 0, 0], arms: null, thrust: null,
       },
       drive: {
         vx: cm(s.linvel[0]), vy: cm(s.linvel[1]), vz: cm(s.linvel[2]),

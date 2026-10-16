@@ -4,7 +4,7 @@ import { parseToonModel } from './models'
 import { toonMaterial } from './toon'
 import { CAR_SEATS, TANK_TRACK_HALF } from '@/sim/consts'
 import { wrapAngle, type Turret } from '@/net/codec'
-import { colorFor } from './character'
+import { colorFor } from '@/profile'
 import type { VehicleModel } from './car'
 
 export const TANK_MODEL_URL = `${import.meta.env.BASE_URL}models/tank.glb`

@@ -2,10 +2,12 @@
 //! and the `Command`/`Outgoing` messages the sessions exchange with it.
 
 use super::*;
+pub use crate::profile::Profile;
 
 pub enum Command {
-    /// Admit a player. Replies with its entity id, or `None` when the room is full.
-    Join { outbox: mpsc::Sender<Outgoing>, reply: oneshot::Sender<Option<u32>> },
+    /// Admit a player with their chosen settings. Replies with its entity id, or `None` when the
+    /// room is full.
+    Join { outbox: mpsc::Sender<Outgoing>, reply: oneshot::Sender<Option<u32>>, profile: Profile },
     Leave(u32),
     /// Input frames, with the tick of the newest snapshot the client says it holds.
     Input(u32, u32, Vec<InputFrame>),
@@ -69,6 +71,15 @@ pub struct Player {
     pub trigger_held: bool,
     pub kills: u16,
     pub deaths: u16,
+    /// Shown to everyone in place of the id.
+    pub name: String,
+    /// Outfit colour, below `PLAYER_COLOR_COUNT`.
+    pub color: u8,
+    /// The player's own spawn points `[x, z]`, centimetres, all usable when they joined. Empty means
+    /// a random one of the world's.
+    pub spawns: Vec<[i32; 2]>,
+    /// Which of `spawns` the next spawn uses; counts up forever and wraps by `spawns.len()`.
+    pub next_spawn: usize,
 }
 
 impl Player {
@@ -234,6 +245,11 @@ impl Default for PlaneArms {
 /// A gun's heat as the wire carries it.
 pub(super) fn heat_byte(heat: f32) -> u8 {
     heat.round().clamp(0.0, 255.0) as u8
+}
+
+/// A Roadster's air tank on the wire: 0..=255 of full. Mirrored by `airOf` in `vehicle.ts`.
+pub(super) fn air_byte(tank: f32) -> u8 {
+    (tank / ROADSTER_AIR * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
 /// Where the standing, living players were at the end of one tick: `(tick, [(id, position)])`.

@@ -1,7 +1,7 @@
 import type { Node } from '@ragnarok/engine'
 import * as THREE from 'three'
 import {
-  ARMS_CUT, ARMS_JAMMED, ARMS_REAR_JAMMED, DAMAGE_TURRET, DAMAGE_WHEELS, encodeInput, encodePing, KIND_HELI, KIND_PLANE, KIND_MORTAR, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_STRV, KIND_TANK, KIND_WALKER, sceneStates, toAxis, toMrad, TURRET_GONE, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RICOCHET, WEAPON_TURRET,
+  ARMS_CUT, ARMS_JAMMED, ARMS_REAR_JAMMED, DAMAGE_TURRET, DAMAGE_WHEELS, encodeInput, encodePing, KIND_HELI, KIND_PLANE, KIND_MORTAR, KIND_ROADSTER, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_STRV, KIND_TANK, KIND_WALKER, sceneStates, toAxis, toMrad, TURRET_GONE, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RICOCHET, WEAPON_TURRET,
   PROJECTILE_BULLET, WEAPON_BULLET, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_CRASH, WEAPON_MG, WEAPON_PELLET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_WRECK,
   type Arms, type BulletSpawn, type DriveState, type EntityState, type InputFrame, type PickupState, type RocketState, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
 } from './net/codec'
@@ -30,7 +30,7 @@ import { Effects } from './render/effects'
 import { DamageNumbers } from './render/damagenumbers'
 import { Particles } from './render/particles'
 import { Skidmarks } from './render/skidmarks'
-import { crashBurst, scrapeSparks, VehicleFx, type FxWorld } from './render/tyres'
+import { coldGas, crashBurst, scrapeSparks, VehicleFx, type FxWorld } from './render/tyres'
 import { Debris } from './render/debris'
 import { damageSmoke, rocketTrail } from './render/vehiclesmoke'
 import { BLASTS, explosion, type ExplosionProfile } from './render/explosion'
@@ -70,6 +70,7 @@ import { loadManifest, type WorldData } from './world'
 import { WorldView } from './worldview'
 import type { HudStats } from './hud'
 import { Scoreboard } from './scoreboard'
+import { colorFor, forgetAllPlayers, forgetPlayer, loadProfile, profileQuery, setPlayer } from './profile'
 
 // The overlay and its tests import these from here.
 export type { HudStats } from './hud'
@@ -327,7 +328,7 @@ export class Game {
   private async connect() {
     if (this.disposed) return
     try {
-      await this.transport.connect()
+      await this.transport.connect(profileQuery(loadProfile(), this.worldHash))
     } catch (error) {
       console.warn('connect failed', error)
       this.transport.close()
@@ -339,6 +340,7 @@ export class Game {
     this.awaitingCatchUp = false
     this.seat = null
     this.board.clear()
+    forgetAllPlayers()
     this.hits.clear()
     this.hp = PLAYER_MAX_HP
     this.diedAt = null
@@ -468,6 +470,7 @@ export class Game {
         this.voice.forget(message.id)
         this.interp.remove(message.id)
         this.board.forget(message.id)
+        forgetPlayer(message.id)
         break
       case 'destroyed': {
         const animate = !this.awaitingCatchUp
@@ -483,6 +486,13 @@ export class Game {
         break
       case 'scores':
         this.board.replace(message.scores)
+        break
+      case 'profiles':
+        for (const { id, name, color } of message.players) {
+          setPlayer(id, name, color)
+          // Snapshots come by datagram and can overtake this, so a stickman may already be drawn.
+          this.avatars.get(id === this.localId ? 0 : id)?.setColor(colorFor(id))
+        }
         break
       case 'hit': {
         this.hits.receive(message, now)
@@ -779,12 +789,13 @@ export class Game {
       seat: !this.seat
         ? null
         : this.seat.index === 0
-          ? this.seat.kind === KIND_HELI ? 'pilot' : this.seat.kind === KIND_PLANE ? 'aviator' : this.seat.kind === KIND_WALKER ? 'walker' : this.seat.kind === KIND_STRV ? 'strv' : this.seat.kind === KIND_MORTAR ? 'mortar' : 'driver'
+          ? this.seat.kind === KIND_HELI ? 'pilot' : this.seat.kind === KIND_PLANE ? 'aviator' : this.seat.kind === KIND_WALKER ? 'walker' : this.seat.kind === KIND_STRV ? 'strv' : this.seat.kind === KIND_MORTAR ? 'mortar' : this.seat.kind === KIND_ROADSTER ? 'roadster' : 'driver'
           : vehicleDef(this.seat.kind).gun ? 'gunner' : 'passenger',
       canSwitchSeat: this.seat !== null && (cars.get(this.seat.vehicle)?.seats.includes(0) ?? false),
       range: this.seat?.kind === KIND_MORTAR ? (ride?.turret?.range ?? 0) : 0,
       reload: this.seat?.kind === KIND_PLANE ? 1 : Math.min(1, (now - this.lastShotAt) / ((this.seat?.kind === KIND_HELI ? HELI_GUN_COOLDOWN_TICKS : this.seat?.kind === KIND_WALKER ? WALKER_GUN_COOLDOWN_TICKS : this.seat?.kind === KIND_MORTAR ? MORTAR_COOLDOWN_TICKS : SHELL_COOLDOWN_TICKS) * TICK_MS)),
       ...this.cockpit(ride, aviator),
+      air: this.seat?.index === 0 && this.seat.kind === KIND_ROADSTER ? (this.driver?.thrust?.air ?? null) : null,
       hp: this.hp,
       maxHp: PLAYER_MAX_HP,
       dead: this.hp === 0,
@@ -1187,6 +1198,11 @@ export class Game {
       this.smoulder(id, state, [x, y, z], rotation)
       this.tyres(id, state, [x, y, z], rotation, steer)
       if (car instanceof CarModel) car.wear(state.damage, state.hp, this.debris, this.vehicleFx.get(id)?.velocity ?? STILL)
+      if (car instanceof CarModel && state.thrust) {
+        // The driver sees their own nozzles fire as predicted, at once.
+        const flags = mine ? (this.driver?.thrust?.flags ?? 0) : state.thrust.flags
+        if (flags) coldGas(this.fxWorld, car.jets(flags), this.vehicleFx.get(id)?.velocity ?? STILL, this.frameDt)
+      }
       if (car instanceof TankModel && state.kind === KIND_TANK) {
         if (state.damage[DAMAGE_TURRET] === TURRET_GONE) this.shedTurret(id, car)
         else if (this.turretsShed.delete(id)) car.setTurret(true)
@@ -1268,6 +1284,7 @@ export class Game {
         grounded: fx.grounded,
         wheels: hurt ? state.damage.slice(DAMAGE_WHEELS, DAMAGE_WHEELS + 4) : null,
         cut: ((state.arms?.flags ?? 0) & ARMS_CUT) !== 0,
+        jets: this.driver?.driving === id ? this.driver.thrust?.flags : state.thrust?.flags,
       },
       [position[0], position[1], position[2]],
       [fx.velocity.x, fx.velocity.y, fx.velocity.z],
@@ -1501,6 +1518,7 @@ export class Game {
     if (best.kind === KIND_HELI) return best.driverSeatFree ? 'E: fly' : 'E: man the nose gun'
     if (best.kind === KIND_PLANE) return best.driverSeatFree ? 'E: fly the triplane' : 'E: man the rear gun'
     if (best.kind === KIND_SPORTS) return best.driverSeatFree ? 'E: drive the sports car' : 'E: ride along'
+    if (best.kind === KIND_ROADSTER) return best.driverSeatFree ? 'E: drive the Roadster' : 'E: ride along'
     return best.driverSeatFree ? 'E: drive the jeep' : 'E: ride along'
   }
 

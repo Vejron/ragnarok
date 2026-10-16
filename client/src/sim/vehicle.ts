@@ -1,6 +1,9 @@
 import RAPIER from '@dimforge/rapier3d-compat'
 import {
-  BUTTON_JUMP, TICK_DT, JEEP_AXLE_Z, JEEP_HALF_EXTENTS, JEEP_HARD_POINT_Y, JEEP_MAX_SPEED, JEEP_MAX_STEER, JEEP_SUSPENSION_REST, JEEP_TRACK_HALF, JEEP_WHEEL_RADIUS,
+  BUTTON_CROUCH, BUTTON_JUMP, TICK_DT,
+  ROADSTER_AIR, ROADSTER_AIR_REFILL, ROADSTER_AXLE_Z, ROADSTER_BOOST_ACCEL, ROADSTER_BOOST_DRAIN, ROADSTER_CEILING, ROADSTER_HALF_EXTENTS, ROADSTER_HARD_POINT_Y,
+  ROADSTER_HOP_COST, ROADSTER_HOP_SPEED, ROADSTER_HOVER_ACCEL, ROADSTER_HOVER_CLIMB, ROADSTER_HOVER_DRAIN, ROADSTER_HOVER_GAIN, ROADSTER_HOVER_LEVEL,
+  ROADSTER_HOVER_RESPONSE, ROADSTER_HOVER_TILT, ROADSTER_HOVER_YAW, ROADSTER_MAX_SPEED, ROADSTER_MAX_STEER, ROADSTER_SUSPENSION_REST, ROADSTER_TRACK_HALF, ROADSTER_WHEEL_RADIUS, JEEP_AXLE_Z, JEEP_HALF_EXTENTS, JEEP_HARD_POINT_Y, JEEP_MAX_SPEED, JEEP_MAX_STEER, JEEP_SUSPENSION_REST, JEEP_TRACK_HALF, JEEP_WHEEL_RADIUS,
   SPORTS_AXLE_Z, SPORTS_HALF_EXTENTS, SPORTS_HARD_POINT_Y, SPORTS_MAX_SPEED, SPORTS_MAX_STEER, SPORTS_SUSPENSION_REST, SPORTS_TRACK_HALF, SPORTS_WHEEL_RADIUS,
   STRV_AXLES_Z, STRV_HALF_EXTENTS, STRV_HARD_POINT_Y, STRV_MAX_SPEED, STRV_SUSPENSION_REST, STRV_TRACK_HALF, STRV_TURN_RATE, STRV_WHEEL_RADIUS,
   TANK_AXLES_Z, TANK_HALF_EXTENTS, TANK_HARD_POINT_Y, TANK_MAX_SPEED, TANK_SUSPENSION_REST, TANK_TRACK_HALF, TANK_TURN_RATE,
@@ -16,7 +19,7 @@ import {
 import { addTileCollider, buildStaticColliders, extraSolids, rebuildBuildingCollider, timedPhysics, VehicleSolids } from './physics'
 import type { TileGround } from './terrain'
 import { vehicleDef } from './vehicles'
-import { DAMAGE_TURRET, DAMAGE_WHEELS, fromAxis, fromMrad, KIND_HELI, KIND_PLANE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, WHEEL_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
+import { DAMAGE_TURRET, DAMAGE_WHEELS, fromAxis, fromMrad, KIND_HELI, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, THRUST_BOOST, THRUST_LIFT, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, WHEEL_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
 import type { TileData, WorldData } from '@/world'
 import * as THREE from 'three'
 
@@ -80,6 +83,25 @@ const SPORTS: Spec = {
   engineForce: 15_000,
   maxSpeed: SPORTS_MAX_SPEED,
   steerLock: SPORTS_MAX_STEER,
+  turnRate: 0,
+  lift: 'wheels',
+  linearDamping: 0.05,
+  comDrop: 0.02,
+}
+
+/** The sports car's body with a bigger motor; its thrusters are forces of their own. Mirrors `ROADSTER` in spec.rs. */
+const ROADSTER: Spec = {
+  halfExtents: ROADSTER_HALF_EXTENTS,
+  density: 200,
+  wheelRadius: ROADSTER_WHEEL_RADIUS,
+  trackHalf: ROADSTER_TRACK_HALF,
+  axles: [-ROADSTER_AXLE_Z, ROADSTER_AXLE_Z],
+  hardPointY: ROADSTER_HARD_POINT_Y,
+  suspensionRest: ROADSTER_SUSPENSION_REST,
+  maxSuspensionForce: 60_000,
+  engineForce: 18_000,
+  maxSpeed: ROADSTER_MAX_SPEED,
+  steerLock: ROADSTER_MAX_STEER,
   turnRate: 0,
   lift: 'wheels',
   linearDamping: 0.05,
@@ -223,6 +245,10 @@ export interface CarControls {
   powered: boolean
   /** Where a plane's pilot points the mouse, `[yaw, pitch]`: it turns towards it. Null flies straight on. */
   aim?: [number, number] | null
+  /** A Roadster's rear nozzles are held open. */
+  boost?: boolean
+  /** A Roadster hops off the ground, then holds itself up in the air. */
+  hop?: boolean
 }
 
 export interface CarBodyState {
@@ -267,13 +293,18 @@ export class CarSim {
   private air: [number, number] = [0, 0]
   /** How worn it is, from the last snapshot. */
   condition: CarCondition = NEW_CONDITION
+  /** A Roadster's air tank, 0..`ROADSTER_AIR`; null for anything without thrusters. */
+  tank: number | null
+  /** The `THRUST_*` nozzles that fired in the last step. */
+  firing = 0
 
   /**
    * `bound` is how far the playable square reaches from the centre to each side, metres: a plane turns
    * back near it, as on the server.
    */
   constructor(private readonly world: RAPIER.World, private readonly kind: number, position: [number, number, number], yaw: number, private readonly bound = Infinity) {
-    this.spec = kind === KIND_TANK ? TANK : kind === KIND_STRV ? STRV : kind === KIND_HELI ? HELI : kind === KIND_SPORTS ? SPORTS : kind === KIND_PLANE ? PLANE : kind === KIND_WALKER ? WALKER : JEEP
+    this.spec = kind === KIND_TANK ? TANK : kind === KIND_STRV ? STRV : kind === KIND_HELI ? HELI : kind === KIND_SPORTS ? SPORTS : kind === KIND_ROADSTER ? ROADSTER : kind === KIND_PLANE ? PLANE : kind === KIND_WALKER ? WALKER : JEEP
+    this.tank = kind === KIND_ROADSTER ? ROADSTER_AIR : null
     const spec = this.spec
     this.body = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
@@ -376,6 +407,7 @@ export class CarSim {
     this.steer += clamp(target - this.steer, -step, step)
     this.turn = steerInput * spec.turnRate
     this.air = [clamp(controls.throttle, -1, 1), steerInput]
+    this.flight = controls
 
     const against = controls.throttle * speed < -1
     let engine = 0
@@ -426,6 +458,10 @@ export class CarSim {
       return
     }
     if (this.spec.steerLock > 0) this.assist(grounded, dt)
+    if (this.tank !== null) {
+      this.body.resetForces(false)
+      this.firing = this.thrust(this.flight, grounded, dt)
+    }
     if (this.turn === 0 || !grounded) this.spin = 0
     else {
       this.spin += clamp(this.turn - this.spin, -TURN_ACCEL * dt, TURN_ACCEL * dt)
@@ -450,6 +486,58 @@ export class CarSim {
       const w = body.angvel()
       body.setAngvel({ x: w.x + x, y: w.y + y, z: w.z + z }, true)
     }
+  }
+
+  /** Mirrors `thrust` in `physics/vehicle/flight.rs`: boost along the nose, hop, hover; returns the `THRUST_*` nozzles that fired. */
+  private thrust(controls: CarControls, grounded: boolean, dt: number): number {
+    const body = this.body
+    const q = body.rotation()
+    const mass = body.mass()
+    let tank = this.tank!
+    let firing = 0
+    if (controls.boost && tank > 0) {
+      const [x, y, z] = rotate(q, 0, 0, -ROADSTER_BOOST_ACCEL * mass)
+      body.addForce({ x, y, z }, true)
+      tank -= ROADSTER_BOOST_DRAIN * dt
+      firing |= THRUST_BOOST
+    }
+    const v = body.linvel()
+    const rising = v.y
+    if (controls.hop && grounded && tank >= ROADSTER_HOP_COST && rising < ROADSTER_HOP_SPEED * 0.5) {
+      body.setLinvel({ x: v.x, y: v.y + ROADSTER_HOP_SPEED, z: v.z }, true)
+      tank -= ROADSTER_HOP_COST
+      firing |= THRUST_LIFT
+    } else if (controls.hop && !grounded && tank > 0) {
+      // Level the car, leaning it a little with the stick, and turn it with the steering.
+      const up = rotate(q, 0, 1, 0)
+      const nose = rotate(q, 0, 0, -1)
+      const flatLength = Math.hypot(nose[0], nose[2])
+      const heading: Vec = flatLength > 1e-3 ? [nose[0] / flatLength, 0, nose[2] / flatLength] : [0, 0, -1]
+      // heading × (0, 1, 0)
+      const right: Vec = [-heading[2], 0, heading[0]]
+      const throttle = clamp(controls.throttle, -1, 1)
+      const steer = clamp(controls.steer, -1, 1)
+      const lx = heading[0] * throttle * ROADSTER_HOVER_TILT + right[0] * steer * ROADSTER_HOVER_TILT
+      const lz = heading[2] * throttle * ROADSTER_HOVER_TILT + right[2] * steer * ROADSTER_HOVER_TILT
+      const length = Math.hypot(lx, 1, lz)
+      const [wx, wy, wz] = [lx / length, 1 / length, lz / length]
+      // up × lean
+      const turn = [(up[1] * wz - up[2] * wy) * ROADSTER_HOVER_LEVEL, -steer * ROADSTER_HOVER_YAW, (up[0] * wy - up[1] * wx) * ROADSTER_HOVER_LEVEL]
+      const w = body.angvel()
+      const blend = Math.min(1, ROADSTER_HOVER_RESPONSE * dt)
+      body.setAngvel({ x: w.x + (turn[0]! - w.x) * blend, y: w.y + (turn[1]! - w.y) * blend, z: w.z + (turn[2]! - w.z) * blend }, true)
+      if (rising <= ROADSTER_HOVER_CLIMB) {
+        const target = ROADSTER_HOVER_CLIMB * clamp((ROADSTER_CEILING - body.translation().y) / 20, -1, 1)
+        const extra = clamp((target - rising) * ROADSTER_HOVER_GAIN, -ROADSTER_HOVER_ACCEL, ROADSTER_HOVER_ACCEL)
+        const push = ((CAR_GRAVITY + extra) / Math.max(up[1], 0.5)) * mass
+        body.addForce({ x: up[0] * push, y: up[1] * push, z: up[2] * push }, true)
+      }
+      tank -= ROADSTER_HOVER_DRAIN * dt
+      firing |= THRUST_LIFT
+    }
+    if (grounded && !controls.boost && !controls.hop) tank += ROADSTER_AIR_REFILL * dt
+    this.tank = clamp(tank, 0, ROADSTER_AIR)
+    return firing
   }
 
   /** Mirrors `fly` in `physics/vehicle.rs`: lean the hull, turn it, and push along its up axis. */
@@ -781,19 +869,23 @@ function rotate(q: { x: number; y: number; z: number; w: number }, x: number, y:
 }
 
 
-/** What the driver's input asks of the vehicle. Mirrors `Vehicles::on_tick` on the server. */
-export function controlsOf(input: InputFrame): CarControls {
+/** What the driver's input asks of a vehicle of `kind`. Mirrors `Vehicles::on_tick` on the server. */
+export function controlsOf(input: InputFrame, kind = 0): CarControls {
   const jump = (input.buttons & BUTTON_JUMP) !== 0
   const run = (input.buttons & BUTTON_RUN) !== 0
+  // A Roadster boosts on run and hops (then hovers) on jump, so its handbrake is on crouch.
+  const roadster = kind === KIND_ROADSTER
   return {
     steer: fromAxis(input.strafe),
     throttle: fromAxis(input.forward),
-    handbrake: jump,
+    handbrake: roadster ? (input.buttons & BUTTON_CROUCH) !== 0 : jump,
     // A helicopter climbs on jump and sinks on run.
-    lift: Number(jump) - Number(run),
+    lift: roadster ? 0 : Number(jump) - Number(run),
     powered: true,
     // Whoever flies a plane turns it towards where they look; only a plane reads it.
     aim: [fromMrad(input.yaw), fromMrad(input.pitch)],
+    boost: roadster && run,
+    hop: roadster && jump,
   }
 }
 
@@ -878,6 +970,12 @@ export class VehicleDriver {
     return this.sim ? this.id : null
   }
 
+  /** The predicted vehicle's air tank (0..1) and the `THRUST_*` nozzles firing; null without thrusters. */
+  get thrust(): { air: number; flags: number } | null {
+    const sim = this.sim
+    return sim && sim.tank !== null ? { air: sim.tank / ROADSTER_AIR, flags: sim.firing } : null
+  }
+
   /** Other vehicles block the predicted one at the poses of the newest snapshot. */
   setObstacles(vehicles: readonly (Pose & { id: number; kind: number; damage?: readonly number[] })[]) {
     const alive = new Set<number>()
@@ -923,7 +1021,7 @@ export class VehicleDriver {
   }
 
   private stepWith(input: InputFrame): CarBodyState {
-    this.sim!.drive(controlsOf(input), TICK_DT)
+    this.sim!.drive(controlsOf(input, this.kind), TICK_DT)
     timedPhysics(() => this.sim!.step(TICK_DT))
     this.steer = this.sim!.steerFraction
     return this.sim!.state()
@@ -947,6 +1045,7 @@ export class VehicleDriver {
     const before = this.current
     sim.condition = conditionOf(vehicle.kind, vehicle.hp, vehicle.damage)
     sim.setTurret(vehicle.damage[DAMAGE_TURRET] !== TURRET_GONE)
+    if (sim.tank !== null && vehicle.thrust) sim.tank = vehicle.thrust.air * ROADSTER_AIR
     sim.setState(
       [vehicle.x, vehicle.y, vehicle.z],
       [vehicle.qx, vehicle.qy, vehicle.qz, vehicle.qw],

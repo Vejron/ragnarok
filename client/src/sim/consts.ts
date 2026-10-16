@@ -1,6 +1,6 @@
 /** Mirrors `crates/shared/src/consts.rs`. Keep the two in step. */
 
-export const PROTOCOL_VERSION = 26
+export const PROTOCOL_VERSION = 28
 
 /** A hurt building is drawn in this many worse states; the last is about to collapse. Mirrors `DAMAGE_STAGES`. */
 export const DAMAGE_STAGES = 3
@@ -12,6 +12,12 @@ export const SNAPSHOT_EVERY = 2
 
 /** Mirrors `MAX_PLAYERS` in consts.rs: the room's capacity, and so the most stickmen there can be to draw. */
 export const MAX_PLAYERS = 64
+/** Outfit colours a player can pick from (`PLAYER_COLORS` in profile.ts); mirrors consts.rs. */
+export const PLAYER_COLOR_COUNT = 12
+/** Spawn points a player may choose, used in turn; mirrors consts.rs. */
+export const MAX_SPAWNS = 5
+/** Longest player name, in characters; mirrors consts.rs. */
+export const MAX_NAME_CHARS = 16
 export const MAX_PACKET = 1200
 /** Things farther than this from the player are not sent; mirrors consts.rs. */
 export const INTEREST_RADIUS = 300
@@ -111,6 +117,32 @@ export const SPORTS_SUSPENSION_REST = 0.22
 export const SPORTS_RIDE_HEIGHT = 0.397
 export const SPORTS_MAX_STEER = 0.4
 export const SPORTS_MAX_SPEED = 50.0
+/** The Roadster: the sports car's chassis with cold-gas thrusters fed from an air tank. Mirrors `ROADSTER_*`. */
+export const ROADSTER_SEATS = 2
+export const ROADSTER_HALF_EXTENTS = SPORTS_HALF_EXTENTS
+export const ROADSTER_WHEEL_RADIUS = SPORTS_WHEEL_RADIUS
+export const ROADSTER_TRACK_HALF = SPORTS_TRACK_HALF
+export const ROADSTER_AXLE_Z = SPORTS_AXLE_Z
+export const ROADSTER_HARD_POINT_Y = SPORTS_HARD_POINT_Y
+export const ROADSTER_SUSPENSION_REST = SPORTS_SUSPENSION_REST
+export const ROADSTER_RIDE_HEIGHT = SPORTS_RIDE_HEIGHT
+export const ROADSTER_MAX_STEER = 0.4
+export const ROADSTER_MAX_SPEED = 62.0
+export const ROADSTER_AIR = 1.0
+export const ROADSTER_BOOST_ACCEL = 24.0
+export const ROADSTER_BOOST_DRAIN = 0.33
+export const ROADSTER_HOP_SPEED = 9.0
+export const ROADSTER_HOP_COST = 0.15
+export const ROADSTER_HOVER_CLIMB = 1.0
+export const ROADSTER_HOVER_DRAIN = 0.25
+export const ROADSTER_HOVER_GAIN = 3.0
+export const ROADSTER_HOVER_ACCEL = 6.0
+export const ROADSTER_HOVER_TILT = 0.2
+export const ROADSTER_HOVER_LEVEL = 4.0
+export const ROADSTER_HOVER_RESPONSE = 6.0
+export const ROADSTER_HOVER_YAW = 1.2
+export const ROADSTER_CEILING = 40.0
+export const ROADSTER_AIR_REFILL = 0.2
 
 /** The tank. Mirrors `TANK_*` in consts.rs. Same body axes as the car. */
 export const TANK_SEATS = 2
@@ -299,7 +331,7 @@ export const PRONE_EYE_HEIGHT = 0.2 - PRONE_CENTRE
 export const ON_FOOT_SHOULDER = 0.9
 export const ON_FOOT_HEIGHT = 1.5
 /** Health of a fresh vehicle of `kind`. Mirrors `vehicle_hp` in protocol.rs. */
-export const vehicleMaxHp = (kind: number) => (kind === 2 ? 250 : kind === 6 ? 70 : kind === 7 ? 200 : kind === 8 ? 220 : 100)
+export const vehicleMaxHp = (kind: number) => (kind === 2 ? 250 : kind === 6 ? 70 : kind === 7 ? 200 : kind === 8 ? 220 : kind === 9 ? 150 : 100)
 export const ROCKET_BLAST_RADIUS = 5.0
 export const WRECK_BLAST_RADIUS = 8.0
 export const SHELL_COOLDOWN_TICKS = 90

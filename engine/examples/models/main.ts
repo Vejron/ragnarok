@@ -58,7 +58,7 @@ for (let i = 0; i < players; i++) {
   crowd.push({ animator, root, speed: (i % 5) / 4, heading: 0 })
 }
 
-const vehicles = ['jeep', 'sports', 'tank', 'strvs', 'heli', 'plane', 'walker']
+const vehicles = ['jeep', 'sports', 'roadster', 'tank', 'strvs', 'heli', 'plane', 'walker']
 await Promise.all(vehicles.map(async (name, i) => {
   const { scene: model } = await loadGlb(`/models/${name}.glb`)
   prepare(model)

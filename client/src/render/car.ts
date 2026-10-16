@@ -2,9 +2,9 @@ import { Group, Mesh, sphereGeometry, type Material, type Node } from '@ragnarok
 import * as THREE from 'three'
 import { parseToonModel, unlitMaterial } from './models'
 import { toonMaterial } from './toon'
-import { JEEP_MAX_STEER, JEEP_WHEEL_RADIUS, SPORTS_MAX_STEER, SPORTS_SEATS, SPORTS_WHEEL_RADIUS, CAR_SEATS } from '@/sim/consts'
-import { KIND_SPORTS, type Arms, type Turret } from '@/net/codec'
-import { colorFor } from './character'
+import { JEEP_MAX_STEER, JEEP_WHEEL_RADIUS, ROADSTER_MAX_STEER, ROADSTER_SEATS, ROADSTER_WHEEL_RADIUS, SPORTS_MAX_STEER, SPORTS_SEATS, SPORTS_WHEEL_RADIUS, CAR_SEATS } from '@/sim/consts'
+import { KIND_ROADSTER, KIND_SPORTS, THRUST_BOOST, THRUST_LIFT, type Arms, type Turret } from '@/net/codec'
+import { colorFor } from '@/profile'
 import { CarWear } from './carwear'
 import type { Debris } from './debris'
 import { halfExtentsOf } from '@/sim/kinds'
@@ -23,12 +23,13 @@ export interface VehicleModel {
   dispose(): void
 }
 
-type CarKind = 'jeep' | 'sports'
+type CarKind = 'jeep' | 'sports' | 'roadster'
 
 /** Per-kind facts the model needs: where its mesh is, how big its wheels are and how far they steer. */
 const KINDS: Record<CarKind, { url: string; wheelRadius: number; maxSteer: number; seats: number }> = {
   jeep: { url: `${import.meta.env.BASE_URL}models/jeep.glb`, wheelRadius: JEEP_WHEEL_RADIUS, maxSteer: JEEP_MAX_STEER, seats: CAR_SEATS },
   sports: { url: `${import.meta.env.BASE_URL}models/sports.glb`, wheelRadius: SPORTS_WHEEL_RADIUS, maxSteer: SPORTS_MAX_STEER, seats: SPORTS_SEATS },
+  roadster: { url: `${import.meta.env.BASE_URL}models/roadster.glb`, wheelRadius: ROADSTER_WHEEL_RADIUS, maxSteer: ROADSTER_MAX_STEER, seats: ROADSTER_SEATS },
 }
 
 const BODY_COLORS = [0xff9f1c, 0x2ec4b6, 0xe71d36, 0x5aa9e6, 0xb5e48c, 0xf15bb5, 0xffd23f, 0x9d4edd]
@@ -36,7 +37,7 @@ const BODY_COLORS = [0xff9f1c, 0x2ec4b6, 0xe71d36, 0x5aa9e6, 0xb5e48c, 0xf15bb5,
 const assets = new Map<CarKind, Node>()
 
 /**
- * Parses `jeep.glb` or `sports.glb` (built by `tools/vehicles/build_car.py`) for every `CarModel` of
+ * Parses `jeep.glb`, `sports.glb` or `roadster.glb` (built by `tools/vehicles/build_car.py`) for every `CarModel` of
  * that kind to share. Materials become flat toon ones to match the rest of the scene (`lamp` ones are
  * unlit, like a headlight); `paint` is replaced per car.
  */
@@ -55,8 +56,14 @@ export async function loadCarModels() {
   )
 }
 
+/** A cold-gas jet leaving one of a Roadster's nozzles: where, and which way it blows, in world space. */
+export interface Jet {
+  at: THREE.Vector3
+  direction: THREE.Vector3
+}
+
 /**
- * An open jeep or a low sports car, from the glTF the Blender script builds. Wheels roll with the
+ * An open jeep, a low sports car or a Roadster, from the glTF the Blender script builds. Wheels roll with the
  * speed the interpolator reports and the front pair steers. Passengers show as coloured heads, one
  * per seat, at the `seat_N` markers of the model.
  */
@@ -73,10 +80,12 @@ export class CarModel implements VehicleModel {
   private readonly last = new THREE.Vector3()
   private readonly forward = new THREE.Vector3()
   private readonly damage: CarWear
+  /** A Roadster's nozzles in the car's frame (`nozzle_rear_N` push it forward, `nozzle_lift_N` up). */
+  private readonly nozzles: { at: THREE.Vector3; lift: boolean }[] = []
 
-  /** `kind` is a vehicle kind off the wire; anything but the sports car is a jeep. */
+  /** `kind` is a vehicle kind off the wire; anything but the sports car and the Roadster is a jeep. */
   constructor(kind: number, id: number) {
-    const name: CarKind = kind === KIND_SPORTS ? 'sports' : 'jeep'
+    const name: CarKind = kind === KIND_SPORTS ? 'sports' : kind === KIND_ROADSTER ? 'roadster' : 'jeep'
     const asset = assets.get(name)
     if (!asset) throw new Error('loadCarModels() must finish before cars are created')
     const { wheelRadius, maxSteer, seats } = KINDS[name]
@@ -89,6 +98,8 @@ export class CarModel implements VehicleModel {
       if (node instanceof Mesh && node.material.name === 'paint') node.material = paint
       if (/^wheel_[FR][LR]$/.test(node.name)) this.spinners.push(node)
       if (/^pivot_F[LR]$/.test(node.name)) this.frontPivots.push(node)
+      const nozzle = /^nozzle_(rear|lift)_\d+$/.exec(node.name)
+      if (nozzle) this.nozzles.push({ at: new THREE.Vector3(node.position.x, node.position.y, node.position.z), lift: nozzle[1] === 'lift' })
     })
 
     this.damage = new CarWear(this.root, model, halfExtentsOf(kind), wheelRadius, paint)
@@ -133,6 +144,21 @@ export class CarModel implements VehicleModel {
         head.material.needsUpdate()
       }
     })
+  }
+
+  /**
+   * The jets of the nozzles firing for `flags` (`THRUST_*`), where the car was last placed: the rear
+   * ones blow out behind it, the lift ones straight down.
+   */
+  jets(flags: number): Jet[] {
+    const jets: Jet[] = []
+    for (const nozzle of this.nozzles) {
+      if (!(flags & (nozzle.lift ? THRUST_LIFT : THRUST_BOOST))) continue
+      const at = nozzle.at.clone().applyQuaternion(this.root.quaternion).add(this.root.position)
+      const direction = new THREE.Vector3(0, nozzle.lift ? -1 : 0, nozzle.lift ? 0 : 1).applyQuaternion(this.root.quaternion)
+      jets.push({ at, direction })
+    }
+    return jets
   }
 
   /** The colour it was painted, for flying chips of it. */

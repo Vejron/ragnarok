@@ -172,7 +172,7 @@ mod tests {
         let mut game = Game::new(map, 0).unwrap();
         let (outbox, inbox) = mpsc::channel(256);
         let (reply, mut response) = oneshot::channel();
-        game.handle(Command::Join { outbox, reply });
+        game.handle(Command::Join { outbox, reply, profile: Default::default() });
         let id = response.try_recv().unwrap().unwrap();
         game.world.pickups.clear();
         // These tests are about taking things, so they start with room to take them.

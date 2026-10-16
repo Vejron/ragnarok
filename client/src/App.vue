@@ -5,7 +5,7 @@ import Hotbar from './Hotbar.vue'
 import Minimap from './Minimap.vue'
 import TouchControls from './TouchControls.vue'
 import type { InputController } from './sim/input'
-import { colorFor } from './render/character'
+import { colorFor, cssColor, nameFor } from './profile'
 import type { Look } from './render/look'
 import { WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK } from './net/codec'
 
@@ -67,8 +67,9 @@ onBeforeUnmount(() => {
   game?.dispose()
 })
 
-const swatch = (id: number) => `#${colorFor(id).toString(16).padStart(6, '0')}`
-const who = (id: number) => (id === 0 ? 'the fall' : `Player ${id}`)
+const swatch = (id: number) => cssColor(colorFor(id))
+const who = (id: number) => (id === 0 ? 'the fall' : nameFor(id))
+const settingsUrl = `${import.meta.env.BASE_URL}settings.html`
 /** What the kill feed shows between killer and victim. */
 const mark = (weapon: number) =>
   weapon === WEAPON_SHELL || weapon === WEAPON_AUTOCANNON || weapon === WEAPON_ROCKET || weapon === WEAPON_GRENADE || weapon === WEAPON_WRECK || weapon === WEAPON_BOMB
@@ -151,6 +152,7 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
   <TouchControls v-if="stats?.touch && stats.locked && input" :input="input" :seat="stats.seat" :can-switch="stats.canSwitchSeat" />
   <template v-if="!stats?.touch">
   <div v-if="stats?.seat === 'driver'" class="drive-hint">W/S gas and brake · A/D steer or turn · Space handbrake · H hitch a mortar<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
+  <div v-if="stats?.seat === 'roadster'" class="drive-hint">W/S gas and brake · A/D steer · Shift boost · Space hop, hold to hover · C handbrake · H hitch a mortar<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   <div v-if="stats?.seat === 'walker'" class="drive-hint">W/S walk · A/D turn · Mouse aim the guns (the body follows within 30°) · Click or F fire<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   <div v-if="stats?.seat === 'strv'" class="drive-hint">W/S gas and brake · A/D turn the tank to aim · Mouse look · Hold right mouse for the gun sight · Click or F fire · {{ stats.reload < 1 ? 'reloading…' : 'loaded' }}</div>
   <div v-if="stats?.seat === 'mortar'" class="drive-hint">Mouse aim sets the bearing · W/S range {{ Math.round(stats.range) }} m · Click or F fire · {{ stats.reload < 1 ? 'reloading…' : 'loaded' }}</div>
@@ -164,6 +166,9 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
     <div ref="aimMark" class="aim-circle" />
     <div v-if="stats.stall" class="stall">STALL</div>
   </template>
+  <div v-if="stats && stats.air !== null" class="gauges">
+    <div class="heat air" :class="{ jammed: stats.air < 0.15 }"><div :style="{ width: stats.air * 100 + '%' }" /><span>{{ stats.air < 0.15 ? 'AIR LOW' : 'AIR' }}</span></div>
+  </div>
   <div v-if="stats && stats.heat !== null" class="gauges">
     <div class="heat" :class="{ jammed: stats.jammed }"><div :style="{ width: stats.heat * 100 + '%' }" /><span>{{ stats.jammed ? 'JAMMED' : 'GUNS' }}</span></div>
     <div v-if="stats.bombs !== null" class="bombs"><i v-for="k in 4" :key="k" :class="{ gone: k > (stats.bombs ?? 0) }" /></div>
@@ -206,7 +211,7 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
     <thead><tr><th>Player</th><th>Kills</th><th>Deaths</th></tr></thead>
     <tbody>
       <tr v-for="row in stats.board" :key="row.id" :class="{ you: row.you }">
-        <td><i :style="{ background: swatch(row.id) }" />{{ row.you ? 'You' : `Player ${row.id}` }}</td>
+        <td><i :style="{ background: swatch(row.id) }" />{{ row.you ? `${nameFor(row.id)} (you)` : nameFor(row.id) }}</td>
         <td>{{ row.kills }}</td>
         <td>{{ row.deaths }}</td>
       </tr>
@@ -222,6 +227,7 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
   <div v-if="stats && !stats.locked" class="overlay">
     <h1>RAGNAROK</h1>
     <p>{{ stats.touch ? 'Tap to play' : 'Click to play' }}</p>
+    <p><a class="settings" :href="settingsUrl" @click.stop>Name, colour and spawn points</a></p>
     <p v-if="stats.touch" class="keys">Left thumb moves · Drag the right side to look · Buttons jump, crouch, fire, reload and use · Tap the slots to switch items</p>
     <p v-else class="keys">WASD move · Shift run · Space jump · E take, drive, ride or man a gun · 1-5 or wheel pick an item · Mouse look · Click fire · Right mouse aim (scope with the sniper) · R reload · V talk · M map · Tab scores · Esc release</p>
   </div>
@@ -296,6 +302,8 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
 }
 .heat div { height: 100%; background: linear-gradient(90deg, #f3c94b, #ff5a5f); }
 .heat.jammed div { background: #ff5a5f; }
+.heat.air div { background: linear-gradient(90deg, #9fd8ff, #e8f6ff); }
+.heat.air.jammed div { background: #ff5a5f; }
 .heat span { position: absolute; inset: 0; display: grid; place-content: center; font-size: 11px; font-weight: 800; color: #1d2b36; }
 .bombs { display: flex; gap: 5px; }
 .bombs i { width: 10px; height: 22px; border-radius: 5px 5px 2px 2px; background: #2b2b26; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.7); }
@@ -357,4 +365,9 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
 .overlay h1 { margin: 0; font-size: clamp(40px, 10vw, 88px); letter-spacing: 0.08em; transform: rotate(-3deg); }
 .overlay p { margin: 6px 0; font-size: 20px; font-weight: 700; }
 .overlay .keys { font-size: 14px; font-weight: 500; opacity: 0.9; }
+.overlay .settings {
+  pointer-events: auto; display: inline-block; padding: 6px 16px; border-radius: 999px; font-size: 15px;
+  background: rgba(255, 255, 255, 0.92); color: #1d2b36; text-decoration: none; text-shadow: none;
+}
+.overlay .settings:hover { background: white; }
 </style>

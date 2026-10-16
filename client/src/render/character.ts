@@ -4,17 +4,12 @@ import { toonMaterial } from './toon'
 import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, PRONE_CENTRE, RUN_SPEED, STAND_CENTRE, WALK_SPEED } from '@/sim/consts'
 import { ITEM_AK5, ITEM_BANDAGE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, itemDef, type ItemDef } from '@/sim/items'
 import { type Limb, poseLimb, splitLimbs } from './gibs'
+import { colorFor } from '@/profile'
 
 /** Gravity on a thrown body, m/s². */
 const FLING_GRAVITY = 14
 /** Feet sit this far below the capsule centre. */
 const FOOT_OFFSET = CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS
-
-/** Bright, goofy colours, picked by entity id. */
-const PALETTE = [0xff5a5f, 0x2ec4b6, 0xffbe0b, 0x8338ec, 0x3a86ff, 0xfb5607, 0x06d6a0, 0xff006e]
-
-/** The outfit colour of entity `id`, also used for the heads of passengers peeking out of cars. */
-export const colorFor = (id: number) => PALETTE[id % PALETTE.length]!
 
 export const MODEL_URL = `${import.meta.env.BASE_URL}models/player.glb`
 
@@ -259,6 +254,12 @@ export class Character {
   /** Whitens the outfit for a moment: it was just hit. */
   flash() {
     this.flashLeft = HIT_FLASH
+  }
+
+  /** Repaints the outfit: the player's chosen colour can arrive after their stickman. */
+  setColor(hex: number) {
+    this.outfit.color.setHex(hex)
+    this.outfit.needsUpdate()
   }
 
   update(

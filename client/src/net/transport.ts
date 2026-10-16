@@ -20,7 +20,8 @@ export class Transport {
     private readonly onStatus: (status: ConnectionStatus) => void,
   ) {}
 
-  async connect() {
+  /** `query` goes on the session URL: the player's profile (`profileQuery`). */
+  async connect(query = '') {
     if (this.session) return
     if (typeof WebTransport === 'undefined') throw new Error('This browser does not support WebTransport')
     this.setStatus('CONNECTING')
@@ -30,7 +31,8 @@ export class Transport {
       const hash = (await (await fetch('/local-certificate-hash')).json()) as number[]
       options = { serverCertificateHashes: [{ algorithm: 'sha-256', value: new Uint8Array(hash) }] }
     }
-    const url = import.meta.env.DEV ? 'https://127.0.0.1:8698/transport' : `https://${location.hostname}:${location.port || '443'}/transport`
+    const base = import.meta.env.DEV ? 'https://127.0.0.1:8698/transport' : `https://${location.hostname}:${location.port || '443'}/transport`
+    const url = query ? `${base}?${query}` : base
     const session = new WebTransport(url, options)
     this.session = session
     try {

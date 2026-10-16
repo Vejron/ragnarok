@@ -5,7 +5,7 @@ import { toonMaterial } from './toon'
 import { WALKER_FOOT_HALF, WALKER_GUN_BARREL_DROP, WALKER_GUN_BARREL_X, WALKER_HALF_EXTENTS, WALKER_LEG_LENGTH, WALKER_LEG_SPRING } from '@/sim/consts'
 import { CAR_GRAVITY } from '@/sim/vehicle'
 import type { Turret } from '@/net/codec'
-import { colorFor } from './character'
+import { colorFor } from '@/profile'
 import type { VehicleModel } from './car'
 
 /** Paint colours handed out by vehicle id, so neighbouring walkers are told apart. */

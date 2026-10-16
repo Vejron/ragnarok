@@ -1,8 +1,9 @@
 """
-Builds the two cars, an open jeep and a low sports car, and exports them to client/public/models/.
+Builds the three cars, an open jeep, a low sports car and the thruster Roadster, and exports them
+to client/public/models/.
 
     /Applications/Blender.app/Contents/MacOS/Blender -b -P tools/vehicles/build_car.py -- \
-        [--out DIR] [--only jeep|sports] [--preview DIR]
+        [--out DIR] [--only jeep|sports|roadster] [--preview DIR]
 
 Everything is procedural and flat-shaded: about a thousand triangles each.
 
@@ -15,6 +16,7 @@ Conventions
       `pivot_FL`, `pivot_FR`, `pivot_RL`, `pivot_RR`  empties on each wheel's hub; the game steers the front ones about Y
       `wheel_FL` ... `wheel_RR`                        the wheels, children of the pivots, origin on the axle: the game rolls them about X
       `seat_0` ... `seat_N`                            empties where a seated player's head is drawn, driver first
+      `nozzle_rear_N`, `nozzle_lift_N`                the Roadster's thruster mouths: the rear ones blow backwards, the lift ones down
   * Materials: `paint` is tinted per car at runtime; `lamp` is drawn unlit; `dark` (tyres, trim, seats),
     `glass`, `steel` (rims, bars), `red` and `white` keep their colours.
 """
@@ -48,6 +50,8 @@ PREVIEW = arg("--preview")
 SPECS = {
     "jeep": dict(half=(1.0, 0.42, 1.95), wheel_radius=0.55, wheel_width=0.3, track=0.9, axle=1.25, ride=0.857),
     "sports": dict(half=(0.95, 0.3, 2.2), wheel_radius=0.32, wheel_width=0.26, track=0.82, axle=1.45, ride=0.397),
+    # ROADSTER_*: the sports car's chassis and wheels under a different body.
+    "roadster": dict(half=(0.95, 0.3, 2.2), wheel_radius=0.32, wheel_width=0.28, track=0.82, axle=1.45, ride=0.397),
 }
 
 MATERIAL_COLORS = {
@@ -268,7 +272,59 @@ def build_sports():
     return [body_obj, *wheels]
 
 
-BUILDERS = {"jeep": build_jeep, "sports": build_sports}
+# --------------------------------------------------------------------------------------------------
+# The Roadster (2026): a smooth, low two-seater wedge with a glass canopy under a black targa roof, a
+# full-width light bar at the back and ten cold-gas nozzles: four in the rear diffuser that push it
+# forward, and six along the underside (nose corners, sills, tail corners) that lift it.
+# --------------------------------------------------------------------------------------------------
+REAR_NOZZLES = [(-0.5, -2.24, -0.1), (-0.18, -2.24, -0.1), (0.18, -2.24, -0.1), (0.5, -2.24, -0.1)]
+LIFT_NOZZLES = [(-0.62, 1.95, -0.21), (0.62, 1.95, -0.21), (-0.86, 0.0, -0.21), (0.86, 0.0, -0.21), (-0.62, -1.95, -0.21), (0.62, -1.95, -0.21)]
+
+
+def build_roadster():
+    spec = SPECS["roadster"]
+    body = Part("body")
+    body.box((0.0, 0.0, -0.17), (1.56, 4.3, 0.1), DARK)
+    # One flowing side profile, (y, z), nose to tail: a long low bonnet rising to the cowl, then
+    # the rear deck falling away to a short cut-off tail.
+    body.prism(
+        [(2.22, -0.18), (2.24, -0.04), (1.95, 0.06), (1.3, 0.14), (0.75, 0.22), (-0.6, 0.27), (-1.6, 0.26), (-2.12, 0.16), (-2.2, 0.0), (-2.2, -0.18)],
+        -0.86, 0.86, PAINT,
+    )
+    # Wide haunches over the rear wheels and softer swells over the front ones.
+    for y, size in ((-1.45, (0.16, 1.15, 0.2)), (1.45, (0.12, 0.95, 0.14))):
+        mirrored(body, 0.86, y, 0.06, size, PAINT)
+    # The canopy: a glass bubble over both seats, with the black targa panel on top of it.
+    body.prism([(0.75, 0.22), (0.2, 0.52), (-0.45, 0.56), (-1.15, 0.32), (-1.15, 0.26), (0.75, 0.2)], -0.64, 0.64, GLASS)
+    body.box((0.0, -0.15, 0.565), (1.18, 0.62, 0.035), DARK)
+    # Slim headlamps and a black intake under the nose; a full-width light bar and a diffuser at the back.
+    for side in (-1, 1):
+        body.box((side * 0.55, 1.98, 0.05), (0.42, 0.08, 0.04), LAMP, rx=-0.2)
+        # The side intakes that feed the air tanks.
+        body.box((side * 0.86, -0.75, 0.05), (0.04, 0.5, 0.12), DARK)
+    body.box((0.0, 2.22, -0.11), (1.1, 0.06, 0.08), DARK)
+    body.box((0.0, -2.2, 0.11), (1.62, 0.04, 0.05), RED)
+    body.box((0.0, -2.16, -0.1), (1.5, 0.14, 0.14), DARK)
+    # The nozzles: steel mouths, the rear ones facing back, the lift ones facing down.
+    for x, y, z in REAR_NOZZLES:
+        body.cylinder((x, y, z), 0.06, 0.12, STEEL, axis="Y", segments=8, radius2=0.045)
+    for x, y, z in LIFT_NOZZLES:
+        body.cylinder((x, y, z), 0.07, 0.08, STEEL, axis="Z", segments=8)
+    # Two low bucket seats in the cockpit.
+    for side in (-1, 1):
+        body.box((side * 0.33, -0.15, 0.22), (0.44, 0.5, 0.06), DARK)
+        body.box((side * 0.33, -0.45, 0.36), (0.44, 0.08, 0.3), DARK, rx=0.25)
+    body_obj = body.build()
+    wheels = add_wheels(spec, lugs=0, rim_ratio=0.72)
+    add_seats([(-0.33, -0.12, 0.42), (0.33, -0.12, 0.42)])
+    for index, (x, y, z) in enumerate(REAR_NOZZLES):
+        empty(f"nozzle_rear_{index}", (x, y - 0.07, z))
+    for index, (x, y, z) in enumerate(LIFT_NOZZLES):
+        empty(f"nozzle_lift_{index}", (x, y, z - 0.05))
+    return [body_obj, *wheels]
+
+
+BUILDERS = {"jeep": build_jeep, "sports": build_sports, "roadster": build_roadster}
 
 
 # --------------------------------------------------------------------------------------------------

@@ -7,7 +7,7 @@
 //! gameplay.json` fails until the two tables agree.
 
 use crate::consts::*;
-use crate::protocol::{KIND_HELI, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER};
+use crate::protocol::{KIND_HELI, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER};
 
 #[derive(Clone, Copy, Debug)]
 pub struct VehicleDef {
@@ -134,8 +134,21 @@ const MORTAR: VehicleDef = VehicleDef {
     axle_z: 0.0,
 };
 
+const ROADSTER: VehicleDef = VehicleDef {
+    kind: KIND_ROADSTER,
+    name: "Roadster",
+    hp: 100,
+    seats: ROADSTER_SEATS,
+    half_extents: ROADSTER_HALF_EXTENTS,
+    gun: false,
+    arms: false,
+    car_wheels: true,
+    track_half: ROADSTER_TRACK_HALF,
+    axle_z: ROADSTER_AXLE_Z,
+};
+
 /// Every vehicle kind, in id order.
-pub const VEHICLES: [VehicleDef; 8] = [JEEP, TANK, HELI, SPORTS, PLANE, WALKER, STRV, MORTAR];
+pub const VEHICLES: [VehicleDef; 9] = [JEEP, TANK, HELI, SPORTS, PLANE, WALKER, STRV, MORTAR, ROADSTER];
 
 /// The seat whose occupant aims and fires `kind`'s gun: a tank's, helicopter's and plane's seat 1, but
 /// the driver's seat 0 where the vehicle has only one (a walker, a Strv S).
@@ -166,6 +179,6 @@ mod tests {
     fn only_armed_kinds_have_a_gun_and_only_the_plane_has_pilot_arms() {
         assert!(vehicle_def(KIND_PLANE).arms && !vehicle_def(KIND_TANK).arms);
         assert!(vehicle_def(KIND_TANK).gun && vehicle_def(KIND_HELI).gun && vehicle_def(KIND_PLANE).gun && vehicle_def(KIND_WALKER).gun && vehicle_def(KIND_STRV).gun);
-        assert!(!vehicle_def(KIND_JEEP).gun && !vehicle_def(KIND_SPORTS).gun);
+        assert!(!vehicle_def(KIND_JEEP).gun && !vehicle_def(KIND_SPORTS).gun && !vehicle_def(KIND_ROADSTER).gun);
     }
 }

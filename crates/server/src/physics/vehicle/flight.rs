@@ -43,6 +43,58 @@ pub(in crate::physics) fn assist(body: &mut RigidBody, (throttle, steer): (f32, 
     }
 }
 
+/// One tick of a Roadster's cold-gas thrusters; returns the `THRUST_*` nozzles that fired.
+///
+/// Boost pushes along the nose, past what the tyres could. Hop, with a wheel down, adds a burst of
+/// upward speed; a car already rising that fast does not hop again, so one press is one hop. Held
+/// in the air, the lift nozzles keep the car level (leaning it with the stick) and, once the hop
+/// has topped out, hold a slow climb that fades out below the ceiling. Both drain `tank`, which refills while the car sits on its wheels with both controls let go.
+/// Everything is a function of the body's state, the tank and the controls, so the client can replay it.
+pub(in crate::physics) fn thrust(body: &mut RigidBody, controls: CarControls, tank: &mut f32, grounded: bool, dt: f32) -> u8 {
+    let rotation = *body.rotation();
+    let mass = body.mass();
+    let mut firing = 0;
+    if controls.boost && *tank > 0.0 {
+        body.add_force(rotation * Vector::new(0.0, 0.0, -ROADSTER_BOOST_ACCEL * mass), true);
+        *tank -= ROADSTER_BOOST_DRAIN * dt;
+        firing |= THRUST_BOOST;
+    }
+    let rising = body.linvel().y;
+    if controls.hop && grounded && *tank >= ROADSTER_HOP_COST && rising < ROADSTER_HOP_SPEED * 0.5 {
+        body.set_linvel(body.linvel() + Vector::new(0.0, ROADSTER_HOP_SPEED, 0.0), true);
+        *tank -= ROADSTER_HOP_COST;
+        firing |= THRUST_LIFT;
+    } else if controls.hop && !grounded && *tank > 0.0 {
+        // The lift nozzles trim the car level, leaning it a little with the stick like a helicopter,
+        // and turn it with the steering.
+        let up = rotation * Vector::Y;
+        let nose = rotation * Vector::new(0.0, 0.0, -1.0);
+        let flat = Vector::new(nose.x, 0.0, nose.z);
+        let heading = if flat.length() > 1e-3 { flat.normalize() } else { Vector::new(0.0, 0.0, -1.0) };
+        let (throttle, steer) = (controls.throttle.clamp(-1.0, 1.0), controls.steer.clamp(-1.0, 1.0));
+        let lean = (Vector::Y + heading * (throttle * ROADSTER_HOVER_TILT) + heading.cross(Vector::Y) * (steer * ROADSTER_HOVER_TILT)).normalize();
+        let mut wanted = up.cross(lean) * ROADSTER_HOVER_LEVEL;
+        wanted.y = -steer * ROADSTER_HOVER_YAW;
+        let current = body.angvel();
+        body.set_angvel(current + (wanted - current) * (ROADSTER_HOVER_RESPONSE * dt).min(1.0), true);
+        // Once the hop tops out they hold a slow climb. They push along the hull's down axis, so a
+        // leaning car drifts the way it leans.
+        if rising <= ROADSTER_HOVER_CLIMB {
+            let target = ROADSTER_HOVER_CLIMB * ((ROADSTER_CEILING - body.translation().y) / 20.0).clamp(-1.0, 1.0);
+            let extra = ((target - rising) * ROADSTER_HOVER_GAIN).clamp(-ROADSTER_HOVER_ACCEL, ROADSTER_HOVER_ACCEL);
+            body.add_force(up * ((CAR_GRAVITY + extra) / up.y.max(0.5) * mass), true);
+        }
+        *tank -= ROADSTER_HOVER_DRAIN * dt;
+        firing |= THRUST_LIFT;
+    }
+    // Holding either control keeps the valves open, so an empty tank does not hop again by itself.
+    if grounded && !controls.boost && !controls.hop {
+        *tank += ROADSTER_AIR_REFILL * dt;
+    }
+    *tank = tank.clamp(0.0, ROADSTER_AIR);
+    firing
+}
+
 /// One tick of rotor flight for a powered helicopter body.
 ///
 /// The disc leans by setting the angular velocity that carries the hull's up axis towards the

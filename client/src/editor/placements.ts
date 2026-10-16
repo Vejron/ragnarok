@@ -26,6 +26,7 @@ export interface Placements {
 export const VEHICLE_KINDS: { kind: number; name: string; icon: string }[] = [
   { kind: 1, name: 'Jeep', icon: 'J' },
   { kind: 4, name: 'Sports car', icon: 'S' },
+  { kind: 10, name: 'Roadster', icon: 'R' },
   { kind: 2, name: 'Tank', icon: 'T' },
   { kind: 8, name: 'Strv', icon: 'V' },
   { kind: 3, name: 'Helicopter', icon: 'H' },

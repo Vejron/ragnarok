@@ -22,6 +22,7 @@ const S_DAMAGED = 7
 const S_HIT = 8
 const S_RTC = 9
 const S_CARVED = 10
+const S_PROFILES = 11
 /** A `Hit` bearing for harm with no direction. */
 const BEARING_NONE = -32768
 
@@ -44,6 +45,8 @@ export const KIND_WALKER = 7
 export const KIND_STRV = 8
 /** The towed field mortar, one seat for its gunner. */
 export const KIND_MORTAR = 9
+/** The Tesla Roadster: a sports car with cold-gas thrusters (boost, hop and hover). Two seats. */
+export const KIND_ROADSTER = 10
 export const FLAG_GROUNDED = 1 << 0
 export const FLAG_DEAD = 1 << 1
 export const FLAG_CROUCHING = 1 << 2
@@ -121,6 +124,10 @@ export const ARMS_CUT = 1 << 0
 export const ARMS_JAMMED = 1 << 1
 export const ARMS_REAR_JAMMED = 1 << 2
 
+/** `Thrust.flags`: the rear (boost) nozzles and the lift (hop and hover) nozzles are firing. Mirrors `THRUST_*`. */
+export const THRUST_BOOST = 1 << 0
+export const THRUST_LIFT = 1 << 1
+
 /** One tick of player intent, already quantized: what the client predicts with is what it sends. */
 export interface InputFrame {
   seq: number
@@ -190,6 +197,16 @@ export interface VehicleState {
   damage: readonly number[]
   /** A plane's pilot weapons and engine; `null` for anything else. */
   arms: Arms | null
+  /** A Roadster's air tank and nozzles; `null` for anything else. */
+  thrust: Thrust | null
+}
+
+/** A Roadster's thrusters. */
+export interface Thrust {
+  /** What is left in the tank, 0..1 of full. */
+  air: number
+  /** `THRUST_*`: the nozzles firing this tick. */
+  flags: number
 }
 
 /** A plane's forward guns, the heat of both sets of guns, its bombs and its engine. */
@@ -329,14 +346,14 @@ export interface Score {
  */
 export type RawEntity = number[]
 
-/** A vehicle as it travels: `[id, kind, x, y, z, qx, qy, qz, steer, seats, turret | null, hp, damage | null, arms | null]`. */
-export type RawVehicle = [number, number, number, number, number, number, number, number, number, number[], number[] | null, number, number[] | null, number[] | null]
+/** A vehicle as it travels: `[id, kind, x, y, z, qx, qy, qz, steer, seats, turret | null, hp, damage | null, arms | null, thrust | null]`. */
+export type RawVehicle = [number, number, number, number, number, number, number, number, number, number[], number[] | null, number, number[] | null, number[] | null, number[] | null]
 
 /** `[id, dx, dy, dz, dyaw, dvy, flags, stance, dknockX, dknockZ]`: differences, except `id`, `flags` and `stance`. */
 export type RawEntityDelta = number[]
 
-/** `[id, dx, dy, dz, dqx, dqy, dqz, dsteer, seats | null, turret | null, hp, damage | null, arms | null]`. */
-export type RawVehicleDelta = [number, number, number, number, number, number, number, number, number[] | null, number[] | null, number, number[] | null, number[] | null]
+/** `[id, dx, dy, dz, dqx, dqy, dqz, dsteer, seats | null, turret | null, hp, damage | null, arms | null, thrust | null]`. */
+export type RawVehicleDelta = [number, number, number, number, number, number, number, number, number[] | null, number[] | null, number, number[] | null, number[] | null, number[] | null]
 
 /** Everything a client knows of the world at one snapshot, each list ordered by id. */
 export interface WireScene {
@@ -384,6 +401,8 @@ export type ServerMessage =
    */
   | { type: 'kill'; killer: number; victim: number; weapon: number; killerKills: number; victimDeaths: number; style: number; yaw: number; power: number }
   | { type: 'scores'; scores: Score[] }
+  /** What players chose: everyone's for a joiner, then each new player's. `color` indexes `PLAYER_COLORS`. */
+  | { type: 'profiles'; players: { id: number; name: string; color: number }[] }
   /** Buildings and trees destroyed since the last such message; the first one a joiner gets is all of them. */
   | { type: 'destroyed'; objects: DestroyedObject[] }
   /** Buildings hurt since the last such message; the first one a joiner gets is every hurt one. */
@@ -523,8 +542,13 @@ function isArms(raw: unknown): boolean {
   return raw === null || (Array.isArray(raw) && raw.length === 5 && ints(raw))
 }
 
+/** `thrust`: `null`, or two bytes. */
+function isThrust(raw: unknown): boolean {
+  return raw === null || (Array.isArray(raw) && raw.length === 2 && ints(raw))
+}
+
 function readVehicle(raw: unknown): RawVehicle | null {
-  if (!Array.isArray(raw) || raw.length !== 14 || !isInt(raw[11]) || !ints(raw.slice(0, 9)) || !isDamage(raw[12]) || !isArms(raw[13])) return null
+  if (!Array.isArray(raw) || raw.length !== 15 || !isInt(raw[11]) || !ints(raw.slice(0, 9)) || !isDamage(raw[12]) || !isArms(raw[13]) || !isThrust(raw[14])) return null
   const seats = readSeats(raw[9])
   const turret = readTurret(raw[10])
   if (!seats || turret === undefined) return null
@@ -532,7 +556,7 @@ function readVehicle(raw: unknown): RawVehicle | null {
 }
 
 function readVehicleDelta(raw: unknown): RawVehicleDelta | null {
-  if (!Array.isArray(raw) || raw.length !== 13 || !isInt(raw[10]) || !ints(raw.slice(0, 8)) || !isDamage(raw[11]) || !isArms(raw[12])) return null
+  if (!Array.isArray(raw) || raw.length !== 14 || !isInt(raw[10]) || !ints(raw.slice(0, 8)) || !isDamage(raw[11]) || !isArms(raw[12]) || !isThrust(raw[13])) return null
   if (raw[8] !== null && !readSeats(raw[8])) return null
   if (raw[9] !== null && !readTurret(raw[9])) return null
   return raw as RawVehicleDelta
@@ -545,7 +569,7 @@ function armsState(raw: readonly number[]): Arms {
 
 /** Converts a validated raw vehicle to source units. */
 export function vehicleState(raw: RawVehicle): VehicleState {
-  const [id, kind, x, y, z, qx, qy, qz, steer, seats, turret, hp, damage, arms] = raw
+  const [id, kind, x, y, z, qx, qy, qz, steer, seats, turret, hp, damage, arms, thrust] = raw
   const [fx, fy, fz] = [qx / QUAT, qy / QUAT, qz / QUAT]
   return {
     id, kind,
@@ -557,6 +581,7 @@ export function vehicleState(raw: RawVehicle): VehicleState {
     hp,
     damage: damage ?? NO_DAMAGE,
     arms: arms ? armsState(arms) : null,
+    thrust: thrust ? { air: thrust[0]! / 255, flags: thrust[1]! } : null,
   }
 }
 
@@ -594,7 +619,7 @@ export function applyDelta(base: WireScene, delta: WireDelta): WireScene {
     }
     // A damage of all zeros is a repair: the vehicle is as if it was never hurt.
     const damage = d[11] === null ? v[12] : d[11].some((value) => value !== 0) ? d[11] : null
-    vehicles.push([v[0], v[1], v[2] + d[1], v[3] + d[2], v[4] + d[3], v[5] + d[4], v[6] + d[5], v[7] + d[6], v[8] + d[7], d[8] ?? v[9], d[9] ?? v[10], d[10], damage, d[12] ?? v[13]])
+    vehicles.push([v[0], v[1], v[2] + d[1], v[3] + d[2], v[4] + d[3], v[5] + d[4], v[6] + d[5], v[7] + d[6], v[8] + d[7], d[8] ?? v[9], d[9] ?? v[10], d[10], damage, d[12] ?? v[13], d[13] ?? v[14]])
   }
   vehicles.push(...delta.newVehicles)
   return { entities: entities.sort((a, b) => a[0]! - b[0]!), vehicles: vehicles.sort((a, b) => a[0] - b[0]) }
@@ -693,6 +718,15 @@ export function decodeServer(bytes: Uint8Array): ServerMessage | null {
         scores.push({ id: item[0] as number, kills: item[1] as number, deaths: item[2] as number })
       }
       return { type: 'scores', scores }
+    }
+    case S_PROFILES: {
+      if (raw.length !== 2 || !Array.isArray(raw[1])) return null
+      const players: { id: number; name: string; color: number }[] = []
+      for (const item of raw[1] as unknown[]) {
+        if (!Array.isArray(item) || item.length !== 3 || !isInt(item[0]) || typeof item[1] !== 'string' || !isInt(item[2])) return null
+        players.push({ id: item[0], name: item[1], color: item[2] })
+      }
+      return { type: 'profiles', players }
     }
     case S_DESTROYED: {
       if (raw.length !== 2 || !Array.isArray(raw[1])) return null

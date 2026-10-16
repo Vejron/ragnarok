@@ -3,6 +3,7 @@ mod jitter;
 mod mechanics;
 mod netem;
 mod physics;
+mod profile;
 mod replication;
 mod rng;
 mod session;
