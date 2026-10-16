@@ -3,9 +3,18 @@ import L from 'leaflet'
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { api, type Job, type WorldSummary } from './api'
 import { formatBytes, formatDuration, formatRate, percent, remaining, stageWidth } from './format'
+import {
+  emptyPlacements,
+  HEADINGS,
+  ITEM_KINDS,
+  nearest,
+  VEHICLE_KINDS,
+  yawOf,
+  type Placements,
+} from './placements'
 import { blockKey, blockOf, rectBounds, tileAt, tileKey, type BlockStatus, type GridInfo, type TileId } from './grid'
 
-type Tool = 'pan' | 'paint' | 'erase'
+type Tool = 'pan' | 'paint' | 'erase' | 'spawn' | 'vehicle' | 'item'
 
 /** Below this zoom the cache window is too big to ask for. */
 const MIN_CACHE_ZOOM = 12
@@ -21,6 +30,13 @@ const painted = shallowRef(new Map<string, TileId>())
 const blocks = shallowRef(new Map<string, BlockStatus>())
 const tool = ref<Tool>('paint')
 const brush = ref(1)
+const placements = shallowRef<Placements>(emptyPlacements())
+const vehicleKind = ref(VEHICLE_KINDS[0]!.kind)
+const heading = ref(0)
+const itemKind = ref(ITEM_KINDS[0]!.item)
+let markers: L.LayerGroup | undefined
+/** How close a click must be to a marker to pick it, in pixels. */
+const PICK_REACH = 16
 const worlds = ref<WorldSummary[]>([])
 const name = ref('')
 const dirty = ref(false)
@@ -133,6 +149,65 @@ function setTiles(next: Map<string, TileId>) {
   redraw()
 }
 
+const isPlacing = (t: Tool) => t === 'spawn' || t === 'vehicle' || t === 'item'
+
+function drawMarkers() {
+  if (!markers) return
+  markers.clearLayers()
+  const icon = (text: string, cls: string, rotate = 0) =>
+    L.divIcon({
+      className: '',
+      iconSize: [22, 22],
+      iconAnchor: [11, 11],
+      html: `<div class="marker ${cls}"><span style="transform:rotate(${-rotate}rad)">${text}</span>${cls === 'vehicle' ? `<i style="transform:rotate(${-rotate}rad)"></i>` : ''}</div>`,
+    })
+  const p = placements.value
+  for (const s of p.spawns) L.marker([s.lat, s.lon], { icon: icon('●', 'spawn'), interactive: false }).addTo(markers)
+  for (const v of p.vehicles) {
+    const info = VEHICLE_KINDS.find((k) => k.kind === v.kind)
+    L.marker([v.lat, v.lon], { icon: icon(info?.icon ?? '?', 'vehicle', v.yaw), interactive: false }).addTo(markers)
+  }
+  for (const i of p.items) L.marker([i.lat, i.lon], { icon: icon('◆', 'item'), interactive: false }).addTo(markers)
+}
+
+function setPlacements(next: Placements) {
+  placements.value = next
+  dirty.value = true
+  drawMarkers()
+}
+
+function placeAt(event: PointerEvent) {
+  const g = grid.value
+  if (!map || !g) return
+  const box = map.getContainer().getBoundingClientRect()
+  const px = [event.clientX - box.left, event.clientY - box.top] as const
+  const at = map.containerPointToLatLng([px[0], px[1]])
+  const current = placements.value
+  const kind = tool.value as 'spawn' | 'vehicle' | 'item'
+  const list = kind === 'spawn' ? current.spawns : kind === 'vehicle' ? current.vehicles : current.items
+  if (event.shiftKey || event.buttons === 2 || event.button === 2) {
+    const points = list.map((m) => map!.latLngToContainerPoint([m.lat, m.lon]))
+    const index = nearest(points, px[0], px[1], PICK_REACH)
+    if (index < 0) return
+    const rest = list.filter((_, i) => i !== index)
+    setPlacements({ ...current, [kind === 'spawn' ? 'spawns' : kind === 'vehicle' ? 'vehicles' : 'items']: rest })
+    return
+  }
+  const tile = tileAt(g, at.lat, at.lng)
+  if (!painted.value.has(tileKey(tile.gx, tile.gy))) {
+    message.value = 'Place things on painted tiles only.'
+    return
+  }
+  const where = { lat: at.lat, lon: at.lng }
+  if (kind === 'spawn') setPlacements({ ...current, spawns: [...current.spawns, where] })
+  else if (kind === 'vehicle')
+    setPlacements({ ...current, vehicles: [...current.vehicles, { kind: vehicleKind.value, yaw: yawOf(heading.value), ...where }] })
+  else {
+    const count = ITEM_KINDS.find((k) => k.item === itemKind.value)?.count ?? 1
+    setPlacements({ ...current, items: [...current.items, { item: itemKind.value, count, ...where }] })
+  }
+}
+
 let last: string | undefined
 
 function paintAt(event: PointerEvent) {
@@ -163,6 +238,10 @@ function onDown(event: PointerEvent) {
   if (event.button > 2) return
   event.preventDefault()
   event.stopPropagation()
+  if (isPlacing(tool.value)) {
+    placeAt(event)
+    return
+  }
   mapEl.value?.setPointerCapture(event.pointerId)
   last = undefined
   dragging = true
@@ -200,8 +279,11 @@ async function loadWorlds() {
 }
 
 async function openWorld(world: string) {
-  const tiles = await api.world(world)
+  const loaded = await api.world(world)
+  const tiles = loaded.tiles
   name.value = world
+  placements.value = { spawns: loaded.spawns ?? [], vehicles: loaded.vehicles ?? [], items: loaded.items ?? [] }
+  drawMarkers()
   setTiles(new Map(tiles.map((t) => [tileKey(t.gx, t.gy), t])))
   dirty.value = false
   const first = tiles[0]
@@ -224,7 +306,7 @@ async function save(): Promise<boolean> {
   }
   name.value = world
   try {
-    await api.save(world, [...painted.value.values()])
+    await api.save(world, [...painted.value.values()], placements.value)
     dirty.value = false
     message.value = `Saved ${world}.`
     await loadWorlds()
@@ -241,6 +323,8 @@ async function remove(world: string) {
   if (name.value === world) {
     name.value = ''
     setTiles(new Map())
+    placements.value = emptyPlacements()
+    drawMarkers()
   }
   await loadWorlds()
 }
@@ -253,6 +337,8 @@ async function activate(world: string) {
 
 function newWorld() {
   name.value = ''
+  placements.value = emptyPlacements()
+  drawMarkers()
   setTiles(new Map())
   dirty.value = false
 }
@@ -308,6 +394,7 @@ onMounted(async () => {
   canvas = document.createElement('canvas')
   Object.assign(canvas.style, { position: 'absolute', left: '0', top: '0', pointerEvents: 'none', zIndex: '450' })
   map.getContainer().appendChild(canvas)
+  markers = L.layerGroup().addTo(map)
   zoom.value = map.getZoom()
   map.on('move zoom resize', redraw)
   map.on('zoomend', () => (zoom.value = map!.getZoom()))
@@ -355,6 +442,34 @@ onBeforeUnmount(() => {
           <button :class="{ on: tool === 'paint' }" @click="setTool('paint')">Paint</button>
           <button :class="{ on: tool === 'erase' }" @click="setTool('erase')">Erase</button>
         </div>
+        <div class="row">
+          <button :class="{ on: tool === 'spawn' }" @click="setTool('spawn')">Spawn</button>
+          <button :class="{ on: tool === 'vehicle' }" @click="setTool('vehicle')">Vehicle</button>
+          <button :class="{ on: tool === 'item' }" @click="setTool('item')">Item</button>
+        </div>
+        <label v-if="tool === 'vehicle'">
+          Vehicle
+          <select v-model.number="vehicleKind">
+            <option v-for="k in VEHICLE_KINDS" :key="k.kind" :value="k.kind">{{ k.name }}</option>
+          </select>
+        </label>
+        <label v-if="tool === 'vehicle'">
+          Facing
+          <select v-model.number="heading">
+            <option v-for="(h, i) in HEADINGS" :key="h" :value="i">{{ h }}</option>
+          </select>
+        </label>
+        <label v-if="tool === 'item'">
+          Item
+          <select v-model.number="itemKind">
+            <option v-for="k in ITEM_KINDS" :key="k.item" :value="k.item">{{ k.name }}</option>
+          </select>
+        </label>
+        <p v-if="isPlacing(tool)" class="hint">Click a painted tile to place; Shift or right-click removes the nearest.</p>
+        <p class="stat">
+          {{ placements.spawns.length }} spawns, {{ placements.vehicles.length }} vehicles, {{ placements.items.length }} items.
+          Placing any of a kind replaces the random ones in the game.
+        </p>
         <label>
           Brush
           <select v-model.number="brush">
@@ -441,6 +556,42 @@ onBeforeUnmount(() => {
 </template>
 
 <style>
+.marker {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.7);
+  color: #fff;
+  font: bold 11px/18px system-ui, sans-serif;
+  text-align: center;
+  box-sizing: border-box;
+}
+.marker span {
+  display: block;
+}
+.marker.spawn {
+  background: #1a73e8;
+}
+.marker.vehicle {
+  background: #c5221f;
+}
+.marker.item {
+  background: #e8a200;
+  border-radius: 4px;
+}
+.marker i {
+  position: absolute;
+  left: 4px;
+  top: -9px;
+  width: 0;
+  height: 0;
+  border: 5px solid transparent;
+  border-bottom: 8px solid #c5221f;
+  border-top: 0;
+  transform-origin: 50% 20px;
+}
 html,
 body {
   margin: 0;

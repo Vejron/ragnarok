@@ -479,6 +479,27 @@ fn knock_players(world: &mut World) {
 
 impl Mechanic for Vehicles {
     fn on_start(&mut self, world: &mut World) {
+        // Vehicles placed in the map editor replace the scatter over the spawn points.
+        if !world.map.placed_vehicles.is_empty() {
+            let mut placed = 0;
+            for spot in world.map.placed_vehicles.clone() {
+                let (x, z) = (spot.at[0] as f32 / 100.0, spot.at[1] as f32 / 100.0);
+                let drop = match spot.kind {
+                    KIND_WALKER => WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1],
+                    KIND_PLANE => PLANE_DROP_Y,
+                    _ => CAR_DROP_Y,
+                };
+                let position = [x, world.map.ground.height_at(x, z) + drop, z];
+                if world.vehicles.len() < MAX_VEHICLES && world.physics.car_fits(spot.kind, position, spot.yaw) {
+                    add_vehicle(world, spot.kind, position, spot.yaw);
+                    placed += 1;
+                } else {
+                    tracing::warn!(kind = spot.kind, x, z, "placed vehicle does not fit; skipped");
+                }
+            }
+            tracing::info!(vehicles = placed, "vehicles placed from the editor");
+            return;
+        }
         let spawns = world.map.spawns.clone();
         // Prefer spawn points players do not start on, then fall back to those.
         let split = PLAYER_SPAWNS.min(spawns.len());

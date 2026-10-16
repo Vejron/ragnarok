@@ -23,3 +23,4 @@ worlds/*/world.msgpack
 worlds/*/tiles/
 worlds/*/minimap.png
 worlds/active.json
+.deploy/

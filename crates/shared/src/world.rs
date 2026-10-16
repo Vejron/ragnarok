@@ -176,6 +176,28 @@ pub struct WorldFile {
     /// `trees[i]`'s identity. Filled by `assemble`; empty for a world built by hand.
     #[serde(skip)]
     pub tree_ids: Vec<ObjId>,
+    /// Vehicles the map editor placed by hand. Empty means the server scatters its own.
+    #[serde(skip)]
+    pub placed_vehicles: Vec<PlacedVehicle>,
+    /// Items the map editor placed by hand. Empty means the server scatters its own.
+    #[serde(skip)]
+    pub placed_items: Vec<PlacedItem>,
+}
+
+/// A vehicle placed in the map editor: its kind, `[x, z]` in centimetres and heading in radians.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PlacedVehicle {
+    pub kind: u8,
+    pub at: [i32; 2],
+    pub yaw: f32,
+}
+
+/// An item placed in the map editor: `[x, z]` in centimetres.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PlacedItem {
+    pub item: u8,
+    pub count: u8,
+    pub at: [i32; 2],
 }
 
 /// Identity of a building or tree: its tile and its index in that tile's list. Tiles stream in

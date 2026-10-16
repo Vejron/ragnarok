@@ -61,9 +61,77 @@ fn read_world(path: &Path) -> Result<(WorldFile, u32)> {
         anyhow::ensure!(world_hash(&tile_bytes) == entry.hash, "{} does not match the manifest; regenerate the world", file.display());
         tiles.push((entry.col, entry.row, Tile::decode(&tile_bytes).with_context(|| format!("decoding {}", file.display()))?));
     }
-    let world = WorldFile::assemble(&manifest, tiles);
+    let mut world = WorldFile::assemble(&manifest, tiles);
+    apply_placements(&mut world, &dir.join("area.json"));
     tracing::info!(path = %shown, tiles = manifest.tiles.len(), buildings = world.buildings.len(), roads = world.roads.len(), "world loaded");
     Ok((world, world_hash(&bytes)))
+}
+
+/// What the map editor placed by hand, saved in the world's `area.json` as latitude/longitude so
+/// it survives the world being re-centred. Missing or unreadable means nothing was placed.
+#[derive(serde::Deserialize, Default)]
+struct Placements {
+    #[serde(default)]
+    spawns: Vec<Spot>,
+    #[serde(default)]
+    vehicles: Vec<PlacedVehicleSpot>,
+    #[serde(default)]
+    items: Vec<PlacedItemSpot>,
+}
+
+#[derive(serde::Deserialize)]
+struct Spot {
+    lat: f64,
+    lon: f64,
+}
+
+#[derive(serde::Deserialize)]
+struct PlacedVehicleSpot {
+    kind: u8,
+    lat: f64,
+    lon: f64,
+    #[serde(default)]
+    yaw: f32,
+}
+
+#[derive(serde::Deserialize)]
+struct PlacedItemSpot {
+    item: u8,
+    #[serde(default = "one")]
+    count: u8,
+    lat: f64,
+    lon: f64,
+}
+
+fn one() -> u8 {
+    1
+}
+
+/// Replaces the world's spawn points with the editor's, if it placed any, and records the placed
+/// vehicles and items for the mechanics. Anything outside the world's tiles is dropped.
+fn apply_placements(world: &mut WorldFile, path: &Path) {
+    let Some(placed) = std::fs::read_to_string(path).ok().and_then(|text| serde_json::from_str::<Placements>(&text).ok()) else { return };
+    let origin = world.origin;
+    let locate = |world: &WorldFile, lat: f64, lon: f64| {
+        let [x, z] = shared::world::project(origin, lat, lon);
+        let at = [(x * 100.0).round() as i32, (z * 100.0).round() as i32];
+        world.is_inside(at[0], at[1]).then_some(at)
+    };
+    let spawns: Vec<[i32; 2]> = placed.spawns.iter().filter_map(|s| locate(world, s.lat, s.lon)).collect();
+    if !spawns.is_empty() {
+        world.spawns = spawns;
+    }
+    world.placed_vehicles = placed
+        .vehicles
+        .iter()
+        .filter_map(|v| locate(world, v.lat, v.lon).map(|at| shared::world::PlacedVehicle { kind: v.kind, at, yaw: v.yaw }))
+        .collect();
+    world.placed_items = placed
+        .items
+        .iter()
+        .filter_map(|i| locate(world, i.lat, i.lon).map(|at| shared::world::PlacedItem { item: i.item, count: i.count.max(1), at }))
+        .collect();
+    tracing::info!(spawns = world.spawns.len(), vehicles = world.placed_vehicles.len(), items = world.placed_items.len(), "editor placements applied");
 }
 
 #[tokio::main]

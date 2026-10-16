@@ -497,7 +497,6 @@ pub fn unproject(origin: (f64, f64), x: f64, z: f64) -> (f64, f64) {
 #[allow(clippy::too_many_arguments)]
 pub fn from_osm(bbox: [f64; 4], tile_size: f64, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, osm: &Osm, planted: &[Planted], ground: Ground, water: Placed, lidar: Option<&Cloud>) -> Built {
     let (origin, half) = frame(bbox);
-    let split_roofs = std::cell::Cell::new(0);
     let mut buildings = Vec::new();
     let mut roads = Vec::new();
     let mut bridges = Vec::new();
@@ -510,24 +509,15 @@ pub fn from_osm(bbox: [f64; 4], tile_size: f64, mask: Option<&std::collections::
             covers.push((kind, rings));
         }
     }
+    let is_building = |way: &crate::overpass::Way| way.tags.get("building").is_some_and(|value| value != "no" && value != "roof");
+    let mut shapes = lidar.map(|cloud| fit_roofs(cloud, origin, half, tile_size, mask, osm, &line, is_building)).unwrap_or_default().into_iter();
     crate::progress::stage("buildings and roads");
     for (index, way) in osm.ways.iter().enumerate() {
         crate::progress::steps(index, osm.ways.len());
         let points = line(&way.geometry);
-        if way.tags.get("building").is_some_and(|value| value != "no" && value != "roof") {
+        if is_building(way) {
             // Roofs come from the laser returns over the footprint, where there are any.
-            let ring = if points.len() > 1 && points.first() == points.last() { &points[..points.len() - 1] } else { &points[..] };
-            let shape = lidar.and_then(|cloud| {
-                if ring.len() < 3 {
-                    return None;
-                }
-                let returns = cloud.over(ring, |x, z| unproject(origin, x, z));
-                let fitted = roof::fit(ring, &returns);
-                if matches!(fitted, Some(Roof::Cut { .. })) {
-                    split_roofs.set(split_roofs.get() + 1);
-                }
-                fitted
-            });
+            let shape = shapes.next().flatten();
             buildings.push((points, building_height(way), shape));
         } else if let Some((width, kind)) = way.tags.get("highway").and_then(|value| road_style(value)) {
             if is_bridge(way) {
@@ -544,11 +534,62 @@ pub fn from_osm(bbox: [f64; 4], tile_size: f64, mask: Option<&std::collections::
         }
     }
     if lidar.is_some() {
-        eprintln!("roofs: {} of {} buildings have more than one part", split_roofs.get(), buildings.len());
+        let split = buildings.iter().filter(|(.., shape)| matches!(shape, Some(Roof::Cut { .. }))).count();
+        eprintln!("roofs: {split} of {} buildings have more than one part", buildings.len());
     }
     let trees = planted.iter().map(|tree| (project(origin, tree.lat, tree.lon), tree.kind, tree.height, tree.crown, tree.registered)).collect();
     crate::progress::stage("tiles");
     assemble(origin, half, tile_size, mask, buildings, roads, bridges, covers, trees, ground, water)
+}
+
+/// The fitted roof of every building way, in the order of the ways. Buildings are independent, so
+/// they are fitted on all cores; one that lies wholly outside the painted tiles is not fitted, as
+/// the tiles drop it anyway.
+#[allow(clippy::too_many_arguments)]
+fn fit_roofs(
+    cloud: &Cloud,
+    origin: (f64, f64),
+    half: f64,
+    tile_size: f64,
+    mask: Option<&std::collections::BTreeSet<(u16, u16)>>,
+    osm: &Osm,
+    line: &(impl Fn(&[LatLon]) -> Vec<P> + Sync),
+    is_building: impl Fn(&crate::overpass::Way) -> bool,
+) -> Vec<Option<Roof>> {
+    crate::progress::stage("roofs");
+    let ways: Vec<&crate::overpass::Way> = osm.ways.iter().filter(|way| is_building(way)).collect();
+    let painted = |ring: &[P]| {
+        let Some(mask) = mask else { return true };
+        let (lo, hi) = ring.iter().fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), p| ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]));
+        let span = |a: f64, b: f64| ((a + half) / tile_size).floor() as i64..=((b + half) / tile_size).floor() as i64;
+        span(lo[0], hi[0]).any(|c| span(lo[1], hi[1]).any(|r| c >= 0 && r >= 0 && mask.contains(&(c as u16, r as u16))))
+    };
+    let fit = |way: &&crate::overpass::Way| {
+        let points = line(&way.geometry);
+        let ring = if points.len() > 1 && points.first() == points.last() { &points[..points.len() - 1] } else { &points[..] };
+        if ring.len() < 3 || !painted(ring) {
+            return None;
+        }
+        let returns = cloud.over(ring, |x, z| unproject(origin, x, z));
+        roof::fit(ring, &returns)
+    };
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let done = std::sync::atomic::AtomicUsize::new(0);
+    let slots: Vec<std::sync::Mutex<Option<Option<Roof>>>> = ways.iter().map(|_| Default::default()).collect();
+    std::thread::scope(|scope| {
+        for _ in 0..threads {
+            scope.spawn(|| {
+                loop {
+                    let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(way) = ways.get(at) else { break };
+                    *slots[at].lock().unwrap() = Some(fit(way));
+                    crate::progress::steps(done.fetch_add(1, std::sync::atomic::Ordering::Relaxed), ways.len());
+                }
+            });
+        }
+    });
+    slots.into_iter().map(|slot| slot.into_inner().unwrap().expect("every building was taken")).collect()
 }
 
 /// The pylons a bridge is built with: those of the landmark it lies at, if any.

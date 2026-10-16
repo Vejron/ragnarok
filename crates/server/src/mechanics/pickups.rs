@@ -77,6 +77,20 @@ fn store(hotbar: &mut [ItemSlot], item: u8, count: u8) -> u8 {
 impl Mechanic for Pickups {
     fn on_start(&mut self, world: &mut World) {
         let mut placed = 0;
+        // Items placed in the map editor replace the random scatter.
+        if !world.map.placed_items.is_empty() {
+            for spot in world.map.placed_items.clone() {
+                let (x, z) = (from_cm(spot.at[0]), from_cm(spot.at[1]));
+                let ground = world.map.ground.height_at(x, z);
+                let top = ground + 40.0;
+                let floor = world.physics.cast_ray([x, top, z], [0.0, -1.0, 0.0], 80.0, 0).map_or(ground, |t| top - t);
+                let id = world.alloc_id();
+                world.pickups.insert(id, Pickup { item: spot.item, count: spot.count, position: [x, floor + FLOAT, z], respawn_in: 0, dropped: false });
+                placed += 1;
+            }
+            tracing::info!(pickups = placed, "pickups placed from the editor");
+            return;
+        }
         for _ in 0..PICKUP_COUNT {
             for _ in 0..ATTEMPTS {
                 let Some(position) = pick_spot(world) else { continue };

@@ -3403,6 +3403,8 @@ dependencies = [
  "rcgen",
  "rmp-serde",
  "salvo",
+ "serde",
+ "serde_json",
  "sha2 0.10.9",
  "shared",
  "time",

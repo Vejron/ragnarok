@@ -30,6 +30,14 @@ fn valid(name: &str) -> bool {
 #[derive(Deserialize, Serialize)]
 struct Area {
     tiles: Vec<Tile>,
+    /// Hand-placed spawn points, vehicles and items (latitude/longitude). The server reads these
+    /// from the same file; the importer ignores them.
+    #[serde(default)]
+    spawns: Vec<serde_json::Value>,
+    #[serde(default)]
+    vehicles: Vec<serde_json::Value>,
+    #[serde(default)]
+    items: Vec<serde_json::Value>,
 }
 
 fn read_area(name: &str) -> Option<Area> {
@@ -85,7 +93,7 @@ async fn list_worlds(res: &mut Response) {
 async fn get_world(req: &mut Request, res: &mut Response) {
     let Some(name) = name_of(req, res) else { return };
     match read_area(&name) {
-        Some(area) => res.render(Json(serde_json::json!({ "name": name, "tiles": area.tiles }))),
+        Some(area) => res.render(Json(serde_json::json!({ "name": name, "tiles": area.tiles, "spawns": area.spawns, "vehicles": area.vehicles, "items": area.items }))),
         None => fail(res, StatusCode::NOT_FOUND, "no such world"),
     }
 }
@@ -255,8 +263,10 @@ fn generate(name: String) {
     use std::process::{Command, Stdio};
     let dir = worlds_dir().join(&name);
     let (area, out) = (dir.join("area.json"), dir.join("world.msgpack"));
-    let sibling = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|dir| dir.join("osm-import"))).filter(|path| path.exists());
-    let mut command = match sibling {
+    // Never a sibling binary: next to a debug editor that is an unoptimised, possibly stale importer,
+    // and decoding the laser data that way is many times slower. Cargo rebuilds the release one only
+    // when the source changed.
+    let mut command = match std::env::var("RAGNAROK_IMPORTER").ok().filter(|path| !path.is_empty()) {
         Some(binary) => Command::new(binary),
         None => {
             let mut command = Command::new("cargo");

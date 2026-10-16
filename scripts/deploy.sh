@@ -48,6 +48,12 @@ if [[ "$WORLD_DIR" != client/public ]]; then
   [[ -f "$WORLD_DIR/minimap.png" ]] && cp "$WORLD_DIR/minimap.png" client/dist/minimap.png
 fi
 
+# The hand-placed spawns, vehicles and items live in the world's area.json, which the server reads
+# next to world.msgpack. It is not served, so it goes in through its own path, never client/dist.
+mkdir -p .deploy
+if [[ -f "$WORLD_DIR/area.json" ]]; then cp "$WORLD_DIR/area.json" .deploy/area.json; else echo '{}' > .deploy/area.json; fi
+echo "==> placements: $(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(", ".join(f"{len(d.get(k,[]))} {k}" for k in ("spawns","vehicles","items")))' .deploy/area.json 2>/dev/null || echo unknown)"
+
 echo "==> building image $IMAGE ($PLATFORM)"
 docker buildx build --platform "$PLATFORM" --load --build-arg "CARGO_BUILD_JOBS=$CARGO_JOBS" -t "$IMAGE" -t "$NAME:latest" .
 

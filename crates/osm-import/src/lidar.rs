@@ -29,8 +29,9 @@ pub struct Point {
 }
 
 /// Every return inside `window`, from the newest scan of each file that covers `bbox`
-/// (`[south, west, north, east]`).
-pub fn fetch(bbox: [f64; 4], window: Window, user: &str, password: &str, mut keep: impl FnMut(Point)) -> Result<usize> {
+/// (`[south, west, north, east]`). With `only`, octree nodes that touch none of those rectangles
+/// are not read, so a sparse world does not pay for the empty parts of its bounding square.
+pub fn fetch(bbox: [f64; 4], window: Window, only: Option<&[Window]>, user: &str, password: &str, mut keep: impl FnMut(Point)) -> Result<usize> {
     let [south, west, north, east] = bbox;
     let client = reqwest::blocking::Client::builder().build()?;
     let url = format!("{STAC_ITEMS}?bbox={west},{south},{east},{north}&limit=50");
@@ -54,8 +55,8 @@ pub fn fetch(bbox: [f64; 4], window: Window, user: &str, password: &str, mut kee
     for (index, (_, id, href)) in newest.into_values().enumerate() {
         crate::progress::stage(&format!("laser, file {} of {files}", index + 1));
         eprintln!("reading {id}: {href}");
-        let reader = RangeReader::open(client.clone(), &href, user, password)?;
-        let count = read(reader, window, &mut keep).with_context(|| format!("reading {href}"))?;
+        let open = || RangeReader::open(client.clone(), &href, user, password);
+        let count = read(open, window, only, &mut keep).with_context(|| format!("reading {href}"))?;
         eprintln!("  {count} points");
         total += count;
     }
@@ -106,7 +107,16 @@ fn parse_page(bytes: &[u8]) -> Vec<Entry> {
         .collect()
 }
 
-fn read<R: Read + Seek>(mut source: R, [e0, n0, e1, n1]: Window, keep: &mut impl FnMut(Point)) -> Result<usize> {
+/// Decoder threads, and how many nodes are decoded before their points are handed on, which bounds
+/// the memory held in between.
+const WORKERS: usize = 8;
+const BATCH: usize = 64;
+
+/// Reads the file `open` gives, one reader for the header and the hierarchy and one per worker for the
+/// nodes: each node is an independently compressed chunk, so they decode in parallel. Points reach
+/// `keep` in node order, so the result does not depend on the threads' timing.
+fn read<R: Read + Seek + Send>(open: impl Fn() -> Result<R> + Sync, [e0, n0, e1, n1]: Window, only: Option<&[Window]>, keep: &mut impl FnMut(Point)) -> Result<usize> {
+    let mut source = open()?;
     // LAS 1.4 header (375 bytes), then the VLRs.
     let header = bytes_at(&mut source, 0, 375)?;
     ensure!(&header[0..4] == b"LASF", "not a LAS file");
@@ -141,7 +151,8 @@ fn read<R: Read + Seek>(mut source: R, [e0, n0, e1, n1]: Window, keep: &mut impl
     let touches = |e: &Entry| {
         let size = 2.0 * halfsize / f64::from(1u32 << e.level.clamp(0, 30));
         let (min_e, min_n) = (center[0] - halfsize + f64::from(e.x) * size, center[1] - halfsize + f64::from(e.y) * size);
-        min_e <= e1 && min_e + size >= e0 && min_n <= n1 && min_n + size >= n0
+        let meets = |[a0, b0, a1, b1]: Window| min_e <= a1 && min_e + size >= a0 && min_n <= b1 && min_n + size >= b0;
+        meets([e0, n0, e1, n1]) && only.is_none_or(|rects| rects.iter().any(|&rect| meets(rect)))
     };
 
     // Walk the hierarchy pages, skipping the subtrees that miss the window.
@@ -162,28 +173,66 @@ fn read<R: Read + Seek>(mut source: R, [e0, n0, e1, n1]: Window, keep: &mut impl
     nodes.sort_by_key(|n| n.offset);
     eprintln!("  {} nodes touch the window", nodes.len());
 
-    let mut record = vec![0u8; record_length];
-    let mut count = 0;
     let node_count = nodes.len();
-    for (index, node) in nodes.into_iter().enumerate() {
-        crate::progress::steps(index, node_count);
-        let chunk = bytes_at(&mut source, node.offset, node.size as usize)?;
-        let mut decompressor = LayeredPointRecordDecompressor::new(Cursor::new(chunk));
-        decompressor.set_fields_from(laz.items()).context("laz fields")?;
-        for _ in 0..node.count {
-            decompressor.decompress_next(&mut record).context("decompressing a node")?;
-            let e = f64::from(le_i32(&record, 0)) * scale[0] + offset[0];
-            let n = f64::from(le_i32(&record, 4)) * scale[1] + offset[1];
-            if e < e0 || e > e1 || n < n0 || n > n1 {
-                continue;
+    let mut count = 0;
+    let mut done = 0;
+    let mut sources: Vec<Option<R>> = (0..WORKERS).map(|_| None).collect();
+    for batch in nodes.chunks(BATCH) {
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let slots: Vec<std::sync::Mutex<Option<Result<Vec<Point>>>>> = batch.iter().map(|_| Default::default()).collect();
+        std::thread::scope(|scope| {
+            for slot in sources.iter_mut() {
+                scope.spawn(|| {
+                    loop {
+                        let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(node) = batch.get(at) else { break };
+                        let result = (|| {
+                            if slot.is_none() {
+                                *slot = Some(open()?);
+                            }
+                            let source = slot.as_mut().expect("opened above");
+                            decode(source, node, &laz, record_length, scale, offset, [e0, n0, e1, n1])
+                        })();
+                        *slots[at].lock().unwrap() = Some(result);
+                    }
+                });
             }
-            let z = f64::from(le_i32(&record, 8)) * scale[2] + offset[2];
-            count += 1;
-            // Format 6+: byte 14 holds the return number (low nibble) and the number of returns (high).
-            keep(Point { e, n, z, class: record[16], ret: record[14] & 0x0f, returns: record[14] >> 4, intensity: le_u16(&record, 12) });
+        });
+        for slot in slots {
+            let points = slot.into_inner().unwrap().expect("every node of the batch was taken")?;
+            crate::progress::steps(done, node_count);
+            done += 1;
+            count += points.len();
+            points.into_iter().for_each(&mut *keep);
         }
     }
     Ok(count)
+}
+
+/// The returns of one node that lie in the window and can be something other than ground or noise
+/// (classes 2, 7 and 18, which neither the roofs nor the canopy use).
+fn decode<R: Read + Seek>(source: &mut R, node: &Entry, laz: &LazVlr, record_length: usize, scale: [f64; 3], offset: [f64; 3], [e0, n0, e1, n1]: Window) -> Result<Vec<Point>> {
+    let chunk = bytes_at(source, node.offset, node.size as usize)?;
+    let mut decompressor = LayeredPointRecordDecompressor::new(Cursor::new(chunk));
+    decompressor.set_fields_from(laz.items()).context("laz fields")?;
+    let mut record = vec![0u8; record_length];
+    let mut points = Vec::new();
+    for _ in 0..node.count {
+        decompressor.decompress_next(&mut record).context("decompressing a node")?;
+        // Format 6+: the class is at byte 16.
+        if matches!(record[16], 2 | 7 | 18) {
+            continue;
+        }
+        let e = f64::from(le_i32(&record, 0)) * scale[0] + offset[0];
+        let n = f64::from(le_i32(&record, 4)) * scale[1] + offset[1];
+        if e < e0 || e > e1 || n < n0 || n > n1 {
+            continue;
+        }
+        let z = f64::from(le_i32(&record, 8)) * scale[2] + offset[2];
+        // Byte 14 holds the return number (low nibble) and the number of returns (high).
+        points.push(Point { e, n, z, class: record[16], ret: record[14] & 0x0f, returns: record[14] >> 4, intensity: le_u16(&record, 12) });
+    }
+    Ok(points)
 }
 
 #[cfg(test)]
@@ -199,7 +248,7 @@ mod tests {
         let window = [e - 150.0, n - 150.0, e + 150.0, n + 150.0];
         let started = std::time::Instant::now();
         let mut points = Vec::new();
-        fetch([63.83, 20.16, 63.834, 20.176], window, &user, &password, |p| points.push(p)).unwrap();
+        fetch([63.83, 20.16, 63.834, 20.176], window, None, &user, &password, |p| points.push(p)).unwrap();
         eprintln!("{} points in {:?}", points.len(), started.elapsed());
         let mut classes = std::collections::BTreeMap::new();
         for p in &points {

@@ -1,4 +1,5 @@
 import type { BlockStatus, TileId } from './grid'
+import type { Placements } from './placements'
 
 export interface WorldSummary {
   name: string
@@ -46,8 +47,8 @@ const json = (method: string, body: unknown): RequestInit => ({
 export const api = {
   grid: () => call<import('./grid').GridInfo>('/grid'),
   worlds: async () => (await call<{ worlds: WorldSummary[] }>('/worlds')).worlds,
-  world: async (name: string) => (await call<{ tiles: TileId[] }>(`/worlds/${name}`)).tiles,
-  save: (name: string, tiles: TileId[]) => call(`/worlds/${name}`, json('PUT', { tiles })),
+  world: (name: string) => call<{ tiles: TileId[] } & Partial<Placements>>(`/worlds/${name}`),
+  save: (name: string, tiles: TileId[], placements: Placements) => call(`/worlds/${name}`, json('PUT', { tiles, ...placements })),
   remove: (name: string) => call(`/worlds/${name}`, { method: 'DELETE' }),
   activate: (name: string) => call(`/worlds/${name}/activate`, { method: 'POST' }),
   generate: (name: string) => call<Job>(`/worlds/${name}/generate`, { method: 'POST' }),

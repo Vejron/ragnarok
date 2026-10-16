@@ -435,7 +435,7 @@ mod tests {
         let window = [e - 600.0, n - 600.0, e + 600.0, n + 600.0];
         let dem = crate::dem::Dem::from_stac(bbox, window, &user, &password).unwrap();
         let mut canopy = Canopy::new(window);
-        crate::lidar::fetch(bbox, window, &user, &password, |p| canopy.add(&p)).unwrap();
+        crate::lidar::fetch(bbox, window, None, &user, &password, |p| canopy.add(&p)).unwrap();
         let detected = canopy.detect(|e, n| dem.mean(e, n, 0.5), MIN_HEIGHT);
         let register = crate::trees::fetch(bbox).unwrap();
         eprintln!("{} detected, {} in the register", detected.len(), register.len());

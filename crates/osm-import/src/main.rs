@@ -140,6 +140,26 @@ fn sweref_window(args: &Args, bbox: [f64; 4]) -> dem::Window {
     ]
 }
 
+/// The painted tiles as SWEREF 99 TM rectangles, each grown by `CANOPY_REACH` so a crown or a roof
+/// just over a tile's edge is still read. The tile grid is not aligned with SWEREF's, so each is
+/// the box around its four projected corners.
+fn painted_rects(args: &Args, bbox: [f64; 4], mask: &std::collections::BTreeSet<(u16, u16)>) -> Vec<dem::Window> {
+    const CANOPY_REACH: f64 = 30.0;
+    let (origin, half) = assemble::frame(bbox);
+    mask.iter()
+        .map(|&(col, row)| {
+            let (x0, z0) = (-half + f64::from(col) * args.tile, -half + f64::from(row) * args.tile);
+            let corners = [(x0, z0), (x0 + args.tile, z0), (x0, z0 + args.tile), (x0 + args.tile, z0 + args.tile)].map(|(x, z)| {
+                let (lat, lon) = assemble::unproject(origin, x, z);
+                dem::sweref99tm(lat, lon)
+            });
+            let low = |axis: fn(&(f64, f64)) -> f64| corners.iter().map(axis).fold(f64::MAX, f64::min);
+            let high = |axis: fn(&(f64, f64)) -> f64| corners.iter().map(axis).fold(f64::MIN, f64::max);
+            [low(|c| c.0) - CANOPY_REACH, low(|c| c.1) - CANOPY_REACH, high(|c| c.0) + CANOPY_REACH, high(|c| c.1) + CANOPY_REACH]
+        })
+        .collect()
+}
+
 /// Lakes, rivers and streams from Lantmäteriet's Hydrografi, in local metres. Empty with
 /// `--no-water`, without credentials or on flat ground (the surface height comes from the DTM).
 fn water_map(args: &Args, bbox: [f64; 4], pieces: Option<&[[f64; 4]]>) -> Result<water::Map> {
@@ -251,7 +271,7 @@ fn report(map: &water::Map, placed: &water::Placed) {
 
 /// What the laser data gives: the returns that can be roof, and the canopy for trees. Each is
 /// `None` when switched off or without credentials (`--no-roofs`, `--no-lidar-trees`).
-fn laser(args: &Args, bbox: [f64; 4], datum: f64, osm: &overpass::Osm, dem: Option<&dem::Dem>) -> Result<(Option<roof::Cloud>, Vec<canopy::Detected>)> {
+fn laser(args: &Args, bbox: [f64; 4], mask: Option<&std::collections::BTreeSet<(u16, u16)>>, datum: f64, osm: &overpass::Osm, dem: Option<&dem::Dem>) -> Result<(Option<roof::Cloud>, Vec<canopy::Detected>)> {
     let want_roofs = !args.no_roofs;
     let want_trees = !args.no_lidar_trees && dem.is_some();
     if args.cell == 0.0 || !(want_roofs || want_trees) {
@@ -264,8 +284,9 @@ fn laser(args: &Args, bbox: [f64; 4], datum: f64, osm: &overpass::Osm, dem: Opti
     let window = sweref_window(args, bbox);
     let mut cloud = want_roofs.then(|| roof::Cloud::new(window));
     let mut canopy = want_trees.then(|| canopy::Canopy::new(window));
+    let painted = mask.map(|mask| painted_rects(args, bbox, mask));
     progress::stage("laser");
-    let total = lidar::fetch(bbox, window, &user, &password, |p| {
+    let total = lidar::fetch(bbox, window, painted.as_deref(), &user, &password, |p| {
         if let Some(cloud) = &mut cloud {
             cloud.add(&p, datum);
         }
@@ -356,7 +377,7 @@ fn main() -> Result<()> {
             None => overpass::fetch_chunked(&args.overpass, bbox, args.overpass_chunk, 3, 15),
         }
         .context("Overpass failed; retry later or use --synthetic")?;
-        let (cloud, detected) = laser(&args, bbox, datum, &osm, dem.as_ref())?;
+        let (cloud, detected) = laser(&args, bbox, mask, datum, &osm, dem.as_ref())?;
         progress::stage("trees");
         let register = if args.no_trees {
             Vec::new()

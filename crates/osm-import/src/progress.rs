@@ -45,6 +45,8 @@ struct State {
     samples: VecDeque<(Instant, u64)>,
     cached_samples: VecDeque<(Instant, u64)>,
     last_print: Option<Instant>,
+    /// When the stage now running began, for the time line printed when it ends.
+    began: Option<Instant>,
 }
 
 static STATE: Mutex<State> = Mutex::new(State {
@@ -54,6 +56,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     samples: VecDeque::new(),
     cached_samples: VecDeque::new(),
     last_print: None,
+    began: None,
 });
 static EVENTS: AtomicBool = AtomicBool::new(false);
 static BYTES: AtomicU64 = AtomicU64::new(0);
@@ -89,6 +92,10 @@ pub fn reset() {
 /// Names the stage now running (`water`, `laser`, ...) and clears its step count.
 pub fn stage(name: &str) {
     let mut state = state();
+    if let (Some(began), false) = (state.began, state.stage.is_empty()) {
+        eprintln!("  [{}: {:.1} s]", state.stage, began.elapsed().as_secs_f64());
+    }
+    state.began = Some(Instant::now());
     state.done = 0;
     state.total = 0;
     name.clone_into(&mut state.stage);

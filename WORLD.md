@@ -109,6 +109,17 @@ are missing. Generate it on the machine that has the cache (see below) and don't
 casually: a re-import is only byte-identical given the same cache. `scripts/deploy.sh` removes
 `client/dist/dev` after the build so the dev world is never shipped.
 
+### Deploying an editor-made world
+
+```sh
+WORLD_DIR=worlds/<name> DOMAIN=game.example.com scripts/deploy.sh user@host
+```
+
+Generate the world first (**Generate world** in the editor) and **Save** your placements. The script
+ships `world.msgpack`, `tiles/` and `minimap.png`, and also the world's `area.json` as
+`/app/area.json`, which the server reads for the hand-placed spawns, vehicles and items. Without it
+the deployed server would pick them at random. It prints the placement counts before building.
+
 ### Painting a world (map editor)
 
 ```sh
@@ -135,8 +146,7 @@ How it works:
   only the painted tiles in the manifest. A tile not listed is outside the world: it has no ground,
   nothing is generated there (and no elevation is downloaded for it), spawns and pickups avoid it, and
   the server and client put boundary walls along its edge (`boundary_walls` / `boundaryWalls`).
-- **Not done yet:** the laser data is read for the whole bounding square, not only the painted
-  tiles; the client's ground plane and minimap still cover the square; planes still turn back at
+- **Not done yet:** the client's ground plane and minimap still cover the square; planes still turn back at
   the square's edge, not the shape's.
 
 ### Making another world
@@ -250,7 +260,11 @@ A small COPC reader of our own (`lidar.rs`) walks the octree and decompresses on
 the world, from the newest flight of each square. Returns are bucketed in a 25 m grid; roofs are
 fitted per building as flat, shed, gable or hip, up to four parts (`roof.rs`). The data is
 Lantmäteriet's class 1 "unclassified" for most returns, so foliage is rejected by shape, not by
-class. A 2 km square is ~17 million points; reading them dominates the run time.
+class. A 2 km square is ~17 million points; reading them dominates the run time, so only the
+octree nodes that touch a painted tile (plus 30 m) are read, eight nodes are decoded at a time, and
+roofs are fitted on all cores, only for buildings on a painted tile. The importer prints how long
+each stage took (`[laser: 41.2 s]`). The editor always runs the release importer: a debug one is
+several times slower.
 
 ### Trees
 The register has position, scientific and Swedish name, broadleaf/conifer and sometimes a planting
@@ -365,3 +379,7 @@ Lakes (`natural=water`, riverbanks, reservoirs), rivers and streams come from Ov
 edge of the world's grid and closed clockwise along it (`osm_water::sea`); islands become holes. The
 height model leaves the sea out, so its surface is fixed at 0 m. A world lying entirely in the sea
 (no coastline crossing it) gets no sea.
+
+## Hand-placed spawns, vehicles and items
+
+The map editor's Spawn, Vehicle and Item tools write `spawns`, `vehicles` and `items` (latitude/longitude, plus `kind`/`yaw` or `item`/`count`) into the world's `area.json`. They are not part of `world.msgpack`, so changing them needs a save and a server restart but no "Generate world". The server reads `area.json` next to the manifest on start. Placing any of a kind replaces the random ones: placed spawns replace the generated spawn points, placed vehicles replace the scattered vehicles, placed items replace the scattered pickups. Anything outside the painted tiles is dropped. Vehicle `yaw` is in radians as the simulation counts it (0 faces north, positive turns left).

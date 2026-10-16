@@ -19,6 +19,8 @@ COPY client/dist /app/dist
 # The built client holds the world (copied from client/public, or WORLD_DIR via scripts/deploy.sh).
 COPY client/dist/world.msgpack /app/world.msgpack
 COPY client/dist/tiles /app/tiles
+# Hand-placed spawns, vehicles and items (scripts/deploy.sh writes it), read next to world.msgpack.
+COPY .deploy/area.json /app/area.json
 ENV RAGNAROK_DIST=/app/dist \
     RAGNAROK_WORLD=/app/world.msgpack \
     RAGNAROK_ACME_CACHE=/acme
