@@ -415,6 +415,7 @@ fn main() -> Result<()> {
     };
     let (buildings, roads, triangles) = built.tiles.values().fold((0, 0, 0), |(b, r, t), tile| (b + tile.buildings.len(), r + tile.roads.len(), t + tile.collision.triangles.len()));
     let cover: usize = built.tiles.values().map(|tile| tile.cover.len()).sum();
+    let rails: usize = built.tiles.values().map(|tile| tile.rails.len()).sum();
     let mut by_kind = [0usize; 7];
     for tree in built.tiles.values().flat_map(|tile| &tile.trees) {
         by_kind[usize::from(tree.kind).min(6)] += 1;
@@ -451,7 +452,7 @@ fn main() -> Result<()> {
     }
     std::fs::write(&args.out, &manifest).with_context(|| format!("writing {}", args.out.display()))?;
     eprintln!(
-        "wrote {} ({} KiB) and {tile_count} tiles ({} KiB): {buildings} buildings, {roads} roads, {cover} cover patches, {spawns} spawns, {triangles} collision triangles, hash {:08x}",
+        "wrote {} ({} KiB) and {tile_count} tiles ({} KiB): {buildings} buildings, {roads} roads, {rails} track pieces, {cover} cover patches, {spawns} spawns, {triangles} collision triangles, hash {:08x}",
         args.out.display(),
         manifest.len() / 1024,
         tile_bytes / 1024,

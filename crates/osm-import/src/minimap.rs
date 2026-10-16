@@ -5,7 +5,7 @@
 //! maps the playable square `[-half, half]` onto `[0, SIZE)` in both axes.
 
 use anyhow::Result;
-use shared::world::{COVER_FARM, COVER_INDUSTRIAL, COVER_PARK, COVER_SAND, COVER_URBAN, COVER_WATER, COVER_WOOD, Manifest, NO_WATER, ROAD_MAJOR, ROAD_MINOR, Tile};
+use shared::world::{COVER_FARM, COVER_INDUSTRIAL, COVER_PARK, COVER_SAND, COVER_URBAN, COVER_WATER, COVER_WOOD, Manifest, NO_WATER, RAIL_TRAM, ROAD_MAJOR, ROAD_MINOR, Tile};
 use std::collections::BTreeMap;
 
 /// Side of the image, pixels. 2048 px over 8.6 km is about 4 m a pixel.
@@ -19,6 +19,7 @@ const BUILDING: Rgb = [0xa9, 0x9d, 0x92];
 const ROAD_MAJOR_COLOR: Rgb = [0xf2, 0xb8, 0x5c];
 const ROAD_MINOR_COLOR: Rgb = [0xff, 0xff, 0xff];
 const ROAD_PATH_COLOR: Rgb = [0xc4, 0xa2, 0x78];
+const RAIL_COLOR: Rgb = [0x6b, 0x6b, 0x6b];
 
 fn cover_color(kind: u8) -> Rgb {
     match kind {
@@ -161,6 +162,11 @@ pub fn render(manifest: &Manifest, tiles: &BTreeMap<(u16, u16), Tile>) -> Result
             canvas.stroke(&ring(&canvas, &road.points), width, color);
         }
     }
+    // Tracks over the roads, so a level crossing shows the line running through.
+    for rail in tiles.values().flat_map(|tile| &tile.rails) {
+        let width = if rail.kind == RAIL_TRAM { 1.0 } else { (crate::assemble::ballast(f64::from(rail.gauge) / 100.0) * canvas.scale).max(1.5) };
+        canvas.stroke(&ring(&canvas, &rail.points), width, RAIL_COLOR);
+    }
 
     for building in tiles.values().flat_map(|tile| &tile.buildings) {
         let footprint = ring(&canvas, &building.footprint);
@@ -179,7 +185,7 @@ pub fn render(manifest: &Manifest, tiles: &BTreeMap<(u16, u16), Tile>) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shared::world::{Building, Road};
+    use shared::world::{Building, RAIL_TRAIN, Rail, Road};
 
     #[test]
     fn draws_buildings_and_roads_where_they_are() {
@@ -188,6 +194,8 @@ mod tests {
         // A 100 m building in the north-east quadrant, and a road along X = 0.
         tile.buildings.push(Building { footprint: vec![[20_000, -30_000], [30_000, -30_000], [30_000, -20_000], [20_000, -20_000]], ..Default::default() });
         tile.roads.push(Road { width: 800, kind: ROAD_MAJOR, points: vec![[0, -90_000], [0, 90_000]] });
+        // A track along Z = 500 m, crossing the road.
+        tile.rails.push(Rail { gauge: 144, kind: RAIL_TRAIN, points: vec![[-90_000, 50_000], [90_000, 50_000]] });
         let tiles = BTreeMap::from([((0, 0), tile)]);
         let bytes = render(&manifest, &tiles).unwrap();
         let decoded = png::Decoder::new(std::io::Cursor::new(bytes)).read_info().unwrap();
@@ -199,6 +207,8 @@ mod tests {
         let to_px = |m: f64| ((m + 1000.0) * scale) as usize;
         assert_eq!(at(to_px(250.0), to_px(-250.0)), BUILDING);
         assert_eq!(at(to_px(0.0), to_px(0.0)), ROAD_MAJOR_COLOR);
-        assert_eq!(at(to_px(500.0), to_px(500.0)), LAND);
+        assert_eq!(at(to_px(500.0), to_px(500.0)), RAIL_COLOR);
+        assert_eq!(at(to_px(0.0), to_px(500.0)), RAIL_COLOR, "the track crosses over the road");
+        assert_eq!(at(to_px(500.0), to_px(250.0)), LAND);
     }
 }

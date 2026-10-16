@@ -4,6 +4,7 @@ import { toonMaterial } from './toon'
 import type { TileGround } from '@/sim/terrain'
 import { ROOF_FLAT, type TileData } from '@/world'
 import { GRASS_COLOR, bakeNormalMap, bakeTerrainTexture } from './cover'
+import { buildRails } from './rails'
 import { buildRoads } from './roads'
 import { heightSampler, normalAt, toneAt, type HeightSource } from './shade'
 import { buildTrees } from './trees'
@@ -146,15 +147,18 @@ export function restitchTerrain(group: Group, around: HeightSource) {
 
 /**
  * One tile's terrain and buildings (extruded footprints), merged by colour so a tile is a handful
- * of draw calls. `salt` keeps colours stable between reloads and varied across tiles. Roads are
- * ribbons draped on the terrain; ground cover is painted into the terrain's texture.
+ * of draw calls. `salt` keeps colours stable between reloads and varied across tiles. Roads and
+ * tracks are ribbons draped on the terrain; ground cover is painted into the terrain's texture.
  */
 export function buildTile(tile: TileData, salt: number, ground: TileGround | null = null, around?: HeightSource, destroyed: ReadonlySet<number> = NONE): Group {
   const group = new Group()
   if (ground) {
     group.add(buildTerrain(tile, ground, around))
     const size = (ground.side - 1) * ground.cell
-    group.add(...buildRoads(tile.roads, heightSampler(ground, around), ground.cell, [ground.x0, ground.z0, ground.x0 + size, ground.z0 + size], TERRAIN_RAMP))
+    const height = heightSampler(ground, around)
+    const border = [ground.x0, ground.z0, ground.x0 + size, ground.z0 + size] as const
+    group.add(...buildRoads(tile.roads, height, ground.cell, border, TERRAIN_RAMP))
+    group.add(...buildRails(tile.rails, height, ground.cell, border, TERRAIN_RAMP))
   }
   group.add(...buildMerged(tile, salt, destroyed))
   group.add(...buildTrees(tile.trees))

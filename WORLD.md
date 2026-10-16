@@ -5,7 +5,7 @@ how to run, cache and debug it. The format itself is described in [design.md](de
 file is about the *pipeline*. The code is `crates/osm-import`.
 
 ```
-OpenStreetMap (Overpass) ─┐  buildings, roads, ground cover
+OpenStreetMap (Overpass) ─┐  buildings, roads, railways, ground cover
 Lantmäteriet DTM  ────────┤  terrain heights ──► ground grid
 Lantmäteriet Hydrografi ──┤  lakes, rivers, streams ► water surface, carved beds
 Lantmäteriet laser ───────┤  roof shapes ──────► buildings' roofs
@@ -198,17 +198,28 @@ auth. They are never written to the cache or to the world files. OSM and Umeå's
 
 | Data | Source | Licence | Used for |
 |---|---|---|---|
-| Buildings, roads, woods, parks | OpenStreetMap through [Overpass](https://overpass-api.de) | ODbL, © OpenStreetMap contributors | `Building` footprints and heights, `Road`, `Cover` |
+| Buildings, roads, railways, woods, parks | OpenStreetMap through [Overpass](https://overpass-api.de) | ODbL, © OpenStreetMap contributors | `Building` footprints and heights, `Road`, `Rail`, `Cover` |
 | Lakes, rivers, streams | Lantmäteriet *Hydrografi Direkt*, OGC API Features `ogc-features/v1/hydrografi` (`StandingWater`, `WatercoursePolygon`, `WatercourseLine`) | check the product's terms on Geotorget | `Tile.water`, `Tile.streams`, carved ground |
 | Terrain | Lantmäteriet *Markhöjd grid 1 m* (DTM), STAC collection `dtm-cog`, cloud-optimised GeoTIFF | CC BY 4.0 | `Tile.ground`, building floors, tree bases |
 | Laser points | Lantmäteriet *Laserdata Skog* (COPC), STAC collection `dsm-skoglig-copc` | CC BY 4.0 | roof fitting, trees |
 | Street and park trees | Umeå kommun open data, [`trad-som-forvaltas-av-gator-och-parker`](https://opendata.umea.se/explore/assets/trad-som-forvaltas-av-gator-och-parker/) | CC0 | `Tile.trees` |
 
 ### OpenStreetMap
-One Overpass query for the bounding box returns buildings, highways and cover (landuse, natural,
+One Overpass query for the bounding box returns buildings, highways, railways and cover (landuse, natural,
 leisure, riverbanks) as ways with inline geometry, plus multipolygon relations for cover. Heights
 come from the `height` tag, else `building:levels` × 3 + 1, else a guess of 6–12 m. Overpass
 often answers 504; the importer tries every endpoint, four rounds, 15 s apart, for each square. A box larger than `--overpass-chunk` is fetched as a grid of squares; ways and relations that cross a border come back twice and are merged by id.
+
+### Railways
+`railway=rail`, `light_rail`, `preserved` and `narrow_gauge` are `RAIL_TRAIN` tracks and `tram` is
+`RAIL_TRAM`, in `Tile.rails`, cut at tile borders like roads; subways, tunnels and disused, abandoned
+or planned lines are left out. The gauge is the `gauge` tag (millimetres, the first of a dual
+gauge), else 1435 mm (1000 mm narrow gauge). A train track is drawn as a ballast bed 2.2 m wider
+than the gauge (`BALLAST_EXTRA`, in the importer and `client/src/world.ts`) under the roads, with
+sleepers and raised rails over them; a tram is rails alone, flush with the street. Nothing collides
+with a track. Its ballast is gravel to the tyres (`sim/surface.ts`), it keeps trees off like a road,
+it is a dark line on the minimap, and it never offers spawns. A railway with `bridge=*` gets a deck
+built like a minor road bridge, but no road on it, and the rails are not drawn on the deck.
 
 ### Bridges (`bridge.rs`)
 A highway way with `bridge=*` (and no `tunnel`) is still a road in `Tile.roads`, but it is also built
@@ -358,7 +369,8 @@ Notes:
 ## Output and tests
 
 `world.msgpack` is the manifest (origin, extent, spawns, tile list with hashes); each tile is
-buildings, roads, collision mesh, ground heights, cover and trees, in world-absolute centimetres.
+buildings, roads, collision mesh, ground heights, cover, trees, water, streams, bridges, detail
+and railway tracks, in world-absolute centimetres.
 Both sides check `WORLD_VERSION`; bump it in `crates/shared/src/world.rs` **and**
 `client/src/world.ts` when the layout changes. The server tests
 `parked_cars_in_the_fixture_world_settle_and_stay_put` and

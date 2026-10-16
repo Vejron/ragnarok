@@ -108,6 +108,9 @@ pub struct Tile {
     /// simulates it. Empty when the tile has no relief finer than its ground or none was baked.
     #[serde(default)]
     pub detail: Vec<i8>,
+    /// Railway tracks, clipped to the tile. Drawn on the ground; nothing simulates them.
+    #[serde(default)]
+    pub rails: Vec<Rail>,
 }
 
 /// Units per unit of slope in `Tile::detail`: a slope of 2 (63°) is 127.
@@ -275,6 +278,21 @@ pub struct Road {
     pub kind: u8,
     pub points: Vec<[i32; 2]>,
 }
+
+/// A railway track's centre line.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Rail {
+    /// Distance between the rails, centimetres.
+    pub gauge: i32,
+    /// `RAIL_*`.
+    pub kind: u8,
+    pub points: Vec<[i32; 2]>,
+}
+
+/// A track on its own ballast bed, with sleepers.
+pub const RAIL_TRAIN: u8 = 0;
+/// A track set flush into the street.
+pub const RAIL_TRAM: u8 = 1;
 
 /// A patch of ground cover: one or more rings filled with the even-odd rule, so inner rings are holes.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -624,6 +642,7 @@ mod tests {
             streams: vec![Stream { width: 200, points: vec![[0, 0], [300, 100]] }],
             bridges: vec![Bridge { first: 0, deck: 12, steel: 4 }],
             detail: vec![0, -3, 127, -127],
+            rails: vec![Rail { gauge: 144, kind: RAIL_TRAIN, points: vec![[0, 0], [900, 50]] }],
         };
         assert_eq!(Tile::decode(&tile.encode()).unwrap(), tile);
         assert_eq!(manifest.tiles[0].path(), "tiles/1_0.msgpack");

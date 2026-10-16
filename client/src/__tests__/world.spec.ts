@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { WORLD_BASE, decodeManifest, decodeTile, worldHash } from '@/world'
+import { encode } from '@msgpack/msgpack'
+import { RAIL_TRAIN, RAIL_TRAM, WORLD_BASE, decodeManifest, decodeTile, worldHash } from '@/world'
 
 // The committed synthetic world (`fixtures/world/`); the real one is generated and git-ignored.
 const read = (path: string) => new Uint8Array(readFileSync(resolve(process.cwd(), '../fixtures/world', path)))
@@ -30,6 +31,7 @@ describe('world files', () => {
     let watery = 0
     let streams = 0
     let bridges = 0
+    let rails = 0
     for (const ref of world.tiles) {
       const bytes = read(`tiles/${ref.col}_${ref.row}.msgpack`)
       expect(worldHash(bytes), `tile ${ref.col}_${ref.row}`).toBe(ref.hash)
@@ -47,8 +49,19 @@ describe('world files', () => {
           expect(z).toBeLessThanOrEqual(z0 + world.tileSize + 0.02)
         }
       }
+      for (const rail of tile.rails) {
+        expect(rail.kind).toBe(RAIL_TRAM)
+        expect(rail.gauge).toBeCloseTo(1.44)
+        for (const [x, z] of rail.points) {
+          expect(x).toBeGreaterThanOrEqual(x0 - 0.02)
+          expect(x).toBeLessThanOrEqual(x0 + world.tileSize + 0.02)
+          expect(z).toBeGreaterThanOrEqual(z0 - 0.02)
+          expect(z).toBeLessThanOrEqual(z0 + world.tileSize + 0.02)
+        }
+      }
       buildings += tile.buildings.length
       streams += tile.streams.length
+      rails += tile.rails.length
       for (const bridge of tile.bridges) {
         // A bridge's triangles lie inside the tile's mesh.
         expect(bridge.first + bridge.deck + bridge.steel).toBeLessThanOrEqual(tile.collision.triangles.length / 3)
@@ -65,5 +78,13 @@ describe('world files', () => {
     expect(watery).toBeGreaterThan(0)
     expect(streams).toBeGreaterThan(0)
     expect(bridges).toBeGreaterThan(0)
+    expect(rails).toBeGreaterThan(0)
+  })
+
+  it('decodes tracks, and a tile written before them has none', () => {
+    const fields = [[], [], [[], []], [], [], [], [], [], [], []]
+    expect(decodeTile(encode(fields)).rails).toEqual([])
+    const tile = decodeTile(encode([...fields, [[144, RAIL_TRAIN, [[0, 0], [1000, -250]]]]]))
+    expect(tile.rails).toEqual([{ gauge: 1.44, kind: RAIL_TRAIN, points: [[0, 0], [10, -2.5]] }])
   })
 })

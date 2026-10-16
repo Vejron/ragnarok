@@ -291,7 +291,7 @@ describe('vehicles on a slope', () => {
     }
     return { x0: -100, z0: -100, cell: 5, side, heights }
   }
-  const tile: TileData = { buildings: [], roads: [], cover: [], trees: [], collision: { vertices: new Float32Array(), triangles: new Uint32Array() }, ground: new Float32Array(), water: new Float32Array(), streams: [], bridges: [] }
+  const tile: TileData = { buildings: [], roads: [], cover: [], trees: [], collision: { vertices: new Float32Array(), triangles: new Uint32Array() }, ground: new Float32Array(), water: new Float32Array(), streams: [], bridges: [], rails: [] }
 
   /** `RAMP_CHECKPOINTS` in vehicle.rs. */
   const checkpoints: [number, [number, number, number]][] = [

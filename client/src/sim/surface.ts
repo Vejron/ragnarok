@@ -1,4 +1,4 @@
-import { COVER_FARM, COVER_INDUSTRIAL, COVER_SAND, COVER_WATER, NO_WATER, ROAD_PATH, type TileData, type TileRef } from '@/world'
+import { BALLAST_EXTRA, COVER_FARM, COVER_INDUSTRIAL, COVER_SAND, COVER_WATER, NO_WATER, RAIL_TRAIN, ROAD_PATH, type Point2, type TileData, type TileRef } from '@/world'
 import type { TileGround } from './terrain'
 
 /**
@@ -36,10 +36,11 @@ export interface TileSurface {
 }
 
 /**
- * Rasterises `tile`'s ground cover, roads and water into a grid of surfaces. Covers are painted in
- * their order and roads over them, as the terrain texture does; water that is deep enough wins.
+ * Rasterises `tile`'s ground cover, tracks, roads and water into a grid of surfaces. Covers are
+ * painted in their order, then the ballast of railway tracks (gravel), then roads over them, as the
+ * terrain is drawn; water that is deep enough wins. A tile without `rails` has no tracks.
  */
-export function rasterSurface(tile: Pick<TileData, 'cover' | 'roads' | 'water'>, x0: number, z0: number, size: number, ground: TileGround | null = null): TileSurface {
+export function rasterSurface(tile: Pick<TileData, 'cover' | 'roads' | 'water'> & Partial<Pick<TileData, 'rails'>>, x0: number, z0: number, size: number, ground: TileGround | null = null): TileSurface {
   const side = Math.max(1, Math.ceil(size / SURFACE_CELL))
   const cells = new Uint8Array(side * side)
   const centre = (index: number) => (index + 0.5) * SURFACE_CELL
@@ -67,12 +68,11 @@ export function rasterSurface(tile: Pick<TileData, 'cover' | 'roads' | 'water'>,
     }
   }
 
-  for (const road of tile.roads) {
-    const surface = road.kind === ROAD_PATH ? SURFACE_DIRT : SURFACE_ASPHALT
-    const half = road.width / 2
-    for (let i = 1; i < road.points.length; i++) {
-      const [ax, az] = road.points[i - 1]!
-      const [bx, bz] = road.points[i]!
+  /** Paints every cell whose centre is within `half` of the line through `points`. */
+  const stroke = (points: readonly Point2[], half: number, surface: number) => {
+    for (let i = 1; i < points.length; i++) {
+      const [ax, az] = points[i - 1]!
+      const [bx, bz] = points[i]!
       const dx = bx - ax
       const dz = bz - az
       const length2 = dx * dx + dz * dz
@@ -92,6 +92,9 @@ export function rasterSurface(tile: Pick<TileData, 'cover' | 'roads' | 'water'>,
       }
     }
   }
+  // A tram's rails are set in the street, which the roads paint.
+  for (const rail of tile.rails ?? []) if (rail.kind === RAIL_TRAIN) stroke(rail.points, (rail.gauge + BALLAST_EXTRA) / 2, SURFACE_DIRT)
+  for (const road of tile.roads) stroke(road.points, road.width / 2, road.kind === ROAD_PATH ? SURFACE_DIRT : SURFACE_ASPHALT)
 
   if (ground && tile.water.length === ground.heights.length) {
     for (let row = 0; row < side; row++) {
@@ -122,7 +125,7 @@ export class Surfaces {
   }
 
   /** Rasterises and keeps `tile`'s surface. */
-  add(ref: TileRef, tile: Pick<TileData, 'cover' | 'roads' | 'water'>, ground: TileGround | null) {
+  add(ref: TileRef, tile: Parameters<typeof rasterSurface>[0], ground: TileGround | null) {
     const x0 = -this.halfExtent + ref.col * this.tileSize
     const z0 = -this.halfExtent + ref.row * this.tileSize
     this.tiles.set(this.key(ref.col, ref.row), rasterSurface(tile, x0, z0, this.tileSize, ground))

@@ -162,7 +162,7 @@ pub fn split([south, west, north, east]: [f64; 4], chunk: f64) -> Vec<[f64; 4]> 
 /// The Overpass QL for a box: also the cache key, so it is the one place that spells it.
 pub fn query([south, west, north, east]: [f64; 4]) -> String {
     let bbox = format!("{south},{west},{north},{east}");
-    let mut query = format!("[out:json][timeout:120];(way[\"building\"]({bbox});way[\"highway\"]({bbox});");
+    let mut query = format!("[out:json][timeout:120];(way[\"building\"]({bbox});way[\"highway\"]({bbox});way[\"railway\"]({bbox});");
     for filter in COVER_FILTERS.split(';') {
         query.push_str(&format!("way{filter}({bbox});relation[type=multipolygon]{filter}({bbox});"));
     }
@@ -170,7 +170,7 @@ pub fn query([south, west, north, east]: [f64; 4]) -> String {
     query
 }
 
-/// Fetches every building, highway and piece of ground cover in `[south, west, north, east]`.
+/// Fetches every building, highway, railway and piece of ground cover in `[south, west, north, east]`.
 /// Multipolygon relations are returned for cover only; courtyard buildings are not handled yet.
 fn fetch(endpoint: &str, bbox: [f64; 4]) -> Result<Osm> {
     let query = query(bbox);

@@ -21,7 +21,7 @@ const DISC = 12
 const RANK: Record<number, number> = { [ROAD_PATH]: 0, [ROAD_MINOR]: 1, [ROAD_MAJOR]: 2 }
 
 const materials = new Map<string, Material>()
-function layerMaterial(color: number, offset: number, ramp: Ramp) {
+export function layerMaterial(color: number, offset: number, ramp: Ramp) {
   const key = `${color}:${offset}`
   let found = materials.get(key)
   if (!found) {
@@ -34,7 +34,8 @@ function layerMaterial(color: number, offset: number, ramp: Ramp) {
   return found
 }
 
-class Layer {
+/** One material's worth of ground-hugging triangles, toned like the terrain under them. */
+export class Layer {
   readonly positions: number[] = []
   readonly normals: number[] = []
   readonly colors: number[] = []
@@ -46,10 +47,11 @@ class Layer {
     private readonly step: number,
   ) {}
 
-  vertex(x: number, z: number) {
+  /** A vertex on the ground at `(x, z)`, raised by `lift` (the layer's own unless given). */
+  vertex(x: number, z: number, lift = this.lift) {
     const normal = normalAt(this.height, x, z, this.step)
     const tone = toneAt(this.height, x, z, normal)
-    this.positions.push(x, this.height(x, z) + this.lift, z)
+    this.positions.push(x, this.height(x, z) + lift, z)
     this.normals.push(...normal)
     this.colors.push(tone, tone, tone)
     return this.positions.length / 3 - 1

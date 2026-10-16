@@ -34,6 +34,12 @@ export async function resolveWorldBase(): Promise<string> {
 export const ROAD_MAJOR = 0
 export const ROAD_MINOR = 1
 export const ROAD_PATH = 2
+/** A track on its own ballast bed, with sleepers. */
+export const RAIL_TRAIN = 0
+/** A track set flush into the street. */
+export const RAIL_TRAM = 1
+/** How much wider a track's ballast bed is than its gauge, metres (`BALLAST_EXTRA` in the importer). */
+export const BALLAST_EXTRA = 2.2
 
 export const COVER_WATER = 0
 export const COVER_WOOD = 1
@@ -160,6 +166,14 @@ export interface Road {
   points: Point2[]
 }
 
+/** A railway track's centre line. Drawn, not simulated. */
+export interface Rail {
+  /** Distance between the rails, metres. */
+  gauge: number
+  kind: number
+  points: Point2[]
+}
+
 /** A patch of ground cover: rings filled even-odd, so inner rings are holes. Drawn, not simulated. */
 export interface Cover {
   kind: number
@@ -236,6 +250,7 @@ export interface TileData {
   /** Narrow watercourses, flowing along their points. */
   streams: Stream[]
   bridges: Bridge[]
+  rails: Rail[]
 }
 
 /** FNV-1a, matching `world_hash` on the server. */
@@ -280,7 +295,7 @@ export function decodeManifest(bytes: Uint8Array): WorldData {
 }
 
 export function decodeTile(bytes: Uint8Array): TileData {
-  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges, detail] = decode(bytes) as [
+  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges, detail, rails] = decode(bytes) as [
     [number, number[][], number, number, number, number, number][],
     [number, number, number[][]][],
     [number[][], number[][]],
@@ -291,6 +306,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     [number, number[][]][],
     [number, number, number][] | undefined,
     number[] | undefined,
+    [number, number, number[][]][] | undefined,
   ]
   return {
     buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind]) => ({
@@ -324,6 +340,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     streams: streams.map(([width, points]) => ({ width: metres(width), points: points.map(point) })),
     bridges: (bridges ?? []).map(([first, deck, steel]) => ({ first, deck, steel })),
     detail: detail && detail.length > 0 ? Int8Array.from(detail) : undefined,
+    rails: (rails ?? []).map(([gauge, kind, points]) => ({ gauge: metres(gauge), kind, points: points.map(point) })),
   }
 }
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { LOAD_RADIUS, TileStreamer, UNLOAD_RADIUS } from '@/stream'
 import type { TileData, TileRef, WorldData } from '@/world'
 
-const empty: TileData = { buildings: [], roads: [], cover: [], trees: [], collision: { vertices: new Float32Array(), triangles: new Uint32Array() }, ground: new Float32Array(), water: new Float32Array(), streams: [], bridges: [] }
+const empty: TileData = { buildings: [], roads: [], cover: [], trees: [], collision: { vertices: new Float32Array(), triangles: new Uint32Array() }, ground: new Float32Array(), water: new Float32Array(), streams: [], bridges: [], rails: [] }
 
 /** A 10 × 10 grid of 100 m tiles, centred on the origin. */
 function grid(): WorldData {
