@@ -65,7 +65,12 @@ function iceServers(): RTCIceServer[] {
 interface Peer {
   id: number
   connection: RTCPeerConnection
-  sender: RTCRtpSender
+  /**
+   * The one audio transceiver. The offerer adds it; the answerer takes the one its remote offer
+   * creates, since `setRemoteDescription` never pairs an offered m-line with an `addTransceiver`
+   * one, and a transceiver of its own would sit unnegotiated with the microphone on it.
+   */
+  transceiver: RTCRtpTransceiver | null
   panner: PannerNode
   source: MediaStreamAudioSourceNode | null
   /** Chrome only feeds a remote stream to WebAudio while a media element holds it. */
@@ -151,6 +156,12 @@ export class VoiceChat {
         if (!peer) return
         await peer.connection.setRemoteDescription(data as RTCSessionDescriptionInit)
         peer.remoteSet = true
+        const transceiver = peer.connection.getTransceivers()[0]
+        if (!transceiver) throw new Error('offer carried no audio')
+        // Offered m-lines come up recvonly; sending back is what makes the other side hear us.
+        transceiver.direction = 'sendrecv'
+        if (this.mic) await transceiver.sender.replaceTrack(this.mic)
+        peer.transceiver = transceiver
         await this.flush(peer)
         const answer = await peer.connection.createAnswer()
         await peer.connection.setLocalDescription(answer)
@@ -206,7 +217,7 @@ export class VoiceChat {
       this.mic.enabled = this.talking
       this.micState = 'ready'
       // Connections made before the microphone was allowed carry it from now on, without renegotiating.
-      for (const peer of this.peers.values()) void peer.sender.replaceTrack(this.mic)
+      for (const peer of this.peers.values()) void peer.transceiver?.sender.replaceTrack(this.mic)
     } catch {
       this.micState = 'denied'
     }
@@ -216,7 +227,7 @@ export class VoiceChat {
     const ctx = audioContext()
     if (!ctx || typeof RTCPeerConnection === 'undefined' || this.peers.has(id)) return this.peers.get(id) ?? null
     const connection = new RTCPeerConnection({ iceServers: iceServers() })
-    const transceiver = connection.addTransceiver(this.mic ?? 'audio', { direction: 'sendrecv' })
+    const transceiver = offer ? connection.addTransceiver(this.mic ?? 'audio', { direction: 'sendrecv' }) : null
     const panner = ctx.createPanner()
     panner.panningModel = 'equalpower'
     panner.distanceModel = 'linear'
@@ -224,7 +235,7 @@ export class VoiceChat {
     panner.maxDistance = HEAR_RADIUS
     panner.rolloffFactor = 1
     panner.connect(ctx.destination)
-    const peer: Peer = { id, connection, sender: transceiver.sender, panner, source: null, element: null, queued: [], remoteSet: false, openedAt: Date.now() }
+    const peer: Peer = { id, connection, transceiver, panner, source: null, element: null, queued: [], remoteSet: false, openedAt: Date.now() }
     this.peers.set(id, peer)
 
     connection.onicecandidate = (event) => {
