@@ -8,6 +8,7 @@ mod gunnery;
 mod movement;
 mod npcs;
 mod pickups;
+mod plague;
 mod spawn;
 mod vehicles;
 
@@ -17,6 +18,7 @@ pub use gunnery::Gunnery;
 pub use movement::Movement;
 pub use npcs::Npcs;
 pub use pickups::Pickups;
+pub use plague::{FIRST_ARRIVAL_TICKS as PLAGUE_FIRST_ARRIVAL_TICKS, OrangePlague, progress_byte as plague_progress, wire_mode as plague_wire_mode};
 pub use spawn::{Spawn, usable as spawn_usable};
 pub use vehicles::Vehicles;
 

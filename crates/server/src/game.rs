@@ -79,12 +79,14 @@ impl Game {
                 rockets: BTreeMap::new(),
                 pickups: BTreeMap::new(),
                 roosters: BTreeMap::new(),
+                plague: None,
                 next_id: 1,
                 rng: Rng::from_time(),
                 shots: Vec::new(),
                 bullets: Vec::new(),
                 kills: Vec::new(),
                 hits: Vec::new(),
+                barks: Vec::new(),
                 history: VecDeque::new(),
             },
             mechanics: default_mechanics(),
@@ -97,6 +99,12 @@ impl Game {
             mechanic.on_start(&mut game.world);
         }
         Ok(game)
+    }
+
+    /// Adds `mechanic` to the end of the tick order, started at once.
+    pub fn add_mechanic(&mut self, mut mechanic: Box<dyn Mechanic>) {
+        mechanic.on_start(&mut self.world);
+        self.mechanics.push(mechanic);
     }
 
     pub fn handle(&mut self, command: Command) {
@@ -234,6 +242,7 @@ impl Game {
             mechanic.on_tick(&mut self.world, TICK_DT);
         }
         self.broadcast_kills();
+        self.broadcast_barks();
         self.send_hits();
         self.broadcast_destroyed();
         self.broadcast_damaged();
@@ -309,6 +318,15 @@ impl Game {
     }
 
     /// Tells everyone about the kills mechanics recorded this tick.
+    fn broadcast_barks(&mut self) {
+        for bark in self.world.barks.drain(..) {
+            let bytes = Bytes::from(encode(&bark));
+            for (&to, outbox) in &self.outboxes {
+                send_reliable(outbox, to, &bytes, &mut self.stalled);
+            }
+        }
+    }
+
     fn broadcast_kills(&mut self) {
         for kill in self.world.kills.drain(..) {
             let bytes = Bytes::from(encode(&kill));

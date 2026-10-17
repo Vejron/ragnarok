@@ -5,7 +5,7 @@ use crate::game::{Gun, PlaneArms, Rocket, World};
 use crate::physics::CarPose;
 use shared::consts::*;
 use shared::items::Falloff;
-use shared::protocol::{DAMAGE_TURRET, TURRET_GONE, KIND_HELI, KIND_MORTAR, KIND_PLANE, KIND_STRV, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, ShotEvent, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_MG, WEAPON_MORTAR, WEAPON_SHELL};
+use shared::protocol::{DAMAGE_TURRET, TURRET_GONE, KIND_HELI, KIND_MORTAR, KIND_PLANE, KIND_STRV, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, PROJECTILE_STRIKE, ShotEvent, WEAPON_AIRSTRIKE, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_MG, WEAPON_MORTAR, WEAPON_SHELL};
 use shared::quant::{from_mrad, to_cm, wrap_angle};
 
 /// Vehicle guns: the gunner's look direction aims the gun, and the fire button shoots it.
@@ -57,6 +57,7 @@ fn burst(world: &mut World, kind: u8, owner: u32, point: [f32; 3], dir: [f32; 3]
         PROJECTILE_CANNON => (WEAPON_AUTOCANNON, CANNON_RADIUS, CANNON_DAMAGE, CANNON_KNOCK),
         PROJECTILE_BOMB => (WEAPON_BOMB, BOMB_RADIUS, BOMB_DAMAGE, BOMB_KNOCK),
         PROJECTILE_MORTAR => (WEAPON_MORTAR, MORTAR_RADIUS, MORTAR_DAMAGE, MORTAR_KNOCK),
+        PROJECTILE_STRIKE => (WEAPON_AIRSTRIKE, STRIKE_RADIUS, STRIKE_DAMAGE, STRIKE_KNOCK),
         _ => (WEAPON_SHELL, EXPLOSION_RADIUS, EXPLOSION_DAMAGE, EXPLOSION_KNOCK),
     };
     let [x, y, z] = point.map(to_cm);
@@ -95,7 +96,7 @@ fn fire(world: &mut World, kind: u8, vid: u32, origin: [f32; 3], dir: [f32; 3], 
 /// Flies every shell one tick: gravity, then along its velocity until it meets a wall, a vehicle
 /// or a stickman, or its time runs out. It bursts where it stopped.
 fn step_shells(world: &mut World, dt: f32) {
-    let falls = |kind| kind == PROJECTILE_SHELL || kind == PROJECTILE_CANNON || kind == PROJECTILE_BOMB || kind == PROJECTILE_MORTAR;
+    let falls = |kind| kind == PROJECTILE_SHELL || kind == PROJECTILE_CANNON || kind == PROJECTILE_BOMB || kind == PROJECTILE_MORTAR || kind == PROJECTILE_STRIKE;
     let ids: Vec<u32> = world.rockets.iter().filter(|(_, rocket)| falls(rocket.kind)).map(|(&id, _)| id).collect();
     for id in ids {
         let Some(mut shell) = world.rockets.get(&id).copied() else { continue };
@@ -108,6 +109,13 @@ fn step_shells(world: &mut World, dt: f32) {
         // Stickmen are not physics bodies, so test the shell's path against each one.
         let player = first_player_hit(world, shell.position, dir, wall.unwrap_or(step), Some(shell.owner), 0);
         shell.ttl = shell.ttl.saturating_sub(1);
+        // The Orange Plague in front of all that: the shell bursts on him.
+        let reach = player.map(|(_, t)| t).or(wall).unwrap_or(step);
+        if let Some((t, _)) = super::plague::first_plague_hit(world, shell.position, dir, reach, shell.owner) {
+            world.rockets.remove(&id);
+            burst(world, shell.kind, shell.owner, std::array::from_fn(|i| shell.position[i] + dir[i] * t), dir, None);
+            continue;
+        }
         if let Some(t) = player.map(|(_, t)| t).or(wall) {
             let point: [f32; 3] = std::array::from_fn(|i| shell.position[i] + dir[i] * t);
             // A vehicle was hit first: its armor decides whether the shell bursts on it or glances off.

@@ -86,7 +86,7 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 
 | Field | Unit |
 |---|---|
-| `kind` | 0 = stickman, 5 = Hedemora rooster (an NPC: `yaw` is its heading, `flags` bit 7 is crowing) |
+| `kind` | 0 = stickman, 5 = Hedemora rooster (an NPC: `yaw` is its heading, `flags` bit 7 is crowing), 12 = the Orange Plague (below) |
 | `x, y, z` | centimetres, capsule centre (+X east, +Z south, +Y up) |
 | `yaw` | milliradians |
 | `vy` | vertical velocity, cm/s (needed to resume a predicted jump) |
@@ -94,6 +94,8 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 | `knock_x, knock_z` | knockback velocity, cm/s: the push a car gave the player, still sliding them. Needed to resume a predicted slide |
 
 Players sitting in a vehicle are **not** listed as entities. The vehicle's `seats` say where they are.
+
+The Orange Plague (kind 12, a 40 m boss) is sent to everyone wherever they are, and some fields mean something else for him: bits 3..6 of `flags` are his mode (`PLAGUE_*`: walk, stomp, strike, recover) and bit 1 means he is toppling; `stance` is how far through that mode he is, 0..255 (a walk's place in its two-stride cycle, otherwise how much is done), from which both sides pose his skeleton and so his hitboxes (`shared::plague`, `client/src/sim/plague-body.ts`); `vy` is his health in tenths of a percent plus 1024 times the `FACE_*` bits of what of his face has been shot out (eyes, ears, mouth), and is not interpolated; `knock_x, knock_z` are where his wind-up lands, relative to his feet, in decimetres. What he says is a reliable `[12, trigger, variant, subject]` bark.
 
 `vehicle` is `[id u32, kind u8, x i32, y i32, z i32, qx i16, qy i16, qz i16, steer i8, [seat u32, …], turret, hp u8, damage, arms, thrust]`:
 

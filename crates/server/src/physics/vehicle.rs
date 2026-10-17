@@ -24,6 +24,7 @@ use shared::protocol::{DAMAGE_WHEELS, THRUST_BOOST, THRUST_LIFT, KIND_DRONE, KIN
 pub const CAR_GRAVITY: f32 = 9.81;
 
 mod flight;
+use super::giant::without_giant;
 mod spec;
 
 use flight::{assist, fly, fly_drone, pull, roll_plane, thrust, walk, wing};
@@ -297,7 +298,7 @@ impl Physics {
             }
         }
         // Rays along the middle and out at each wingtip, low and at the top wing.
-        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::exclude_dynamic());
+        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, without_giant(QueryFilter::exclude_dynamic()));
         for offset in [0.0, -PLANE_WING_HALF_EXTENTS[0], PLANE_WING_HALF_EXTENTS[0]] {
             for height in [0.6, 2.4] {
                 let origin = Vector::new(position[0] + right[0] * offset, start + height, position[2] + right[2] * offset);
@@ -631,6 +632,10 @@ impl Physics {
     pub fn step_cars(&mut self, dt: f32) {
         self.apply_removals();
         if self.cars.is_empty() {
+            // Nothing to drive, but the Orange Plague's capsules still have to move.
+            if self.has_giant() {
+                self.step_pipeline();
+            }
             return;
         }
         for car in self.cars.values().filter(|car| matches!(car.spec.lift, Lift::Rotor | Lift::Drone)) {
@@ -652,7 +657,7 @@ impl Physics {
         for (&id, car) in self.cars.iter().filter(|(_, car)| car.spec.lift == Lift::Walker) {
             let Some(body) = self.bodies.get(car.body) else { continue };
             let [_, hy, _] = car.spec.half_extents;
-            let filter = QueryFilter::default().exclude_rigid_body(car.body);
+            let filter = without_giant(QueryFilter::default().exclude_rigid_body(car.body));
             let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, filter);
             let feet = [-1.0, 1.0].map(|side| {
                 let hip = body.translation() + *body.rotation() * Vector::new(side * WALKER_FOOT_HALF, -hy, 0.0);
@@ -799,7 +804,8 @@ impl Physics {
 
     /// Like [`Self::cast_ray`], and also says which vehicle it hit, if it was a vehicle and not the world.
     pub fn cast_ray_hit(&self, origin: [f32; 3], dir: [f32; 3], max: f32, ignore: u32) -> Option<(f32, Option<u32>)> {
-        let mut filter = QueryFilter::default();
+        // Rays pass through the Orange Plague: what meets him is decided by his hit capsules.
+        let mut filter = without_giant(QueryFilter::default());
         if let Some(car) = self.cars.get(&ignore) {
             filter = filter.exclude_rigid_body(car.body);
         }
@@ -834,7 +840,7 @@ impl Physics {
     /// How far a ray travels before it hits the world, and which building or tree that was, if it
     /// was one. Vehicles are not ignored.
     pub fn cast_ray_object(&self, origin: [f32; 3], dir: [f32; 3], max: f32) -> Option<(f32, Option<super::Obj>)> {
-        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::default());
+        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, without_giant(QueryFilter::default()));
         let ray = Ray::new(Vector::from(origin), Vector::from(dir));
         let (collider, distance) = queries.cast_ray(&ray, max, true)?;
         Some((distance, self.object_of(collider)))
@@ -842,7 +848,7 @@ impl Physics {
 
     /// How far a ray travels before it meets the world or a vehicle, and the surface normal there.
     pub fn cast_ray_normal(&self, origin: [f32; 3], dir: [f32; 3], max: f32) -> Option<(f32, [f32; 3])> {
-        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::default());
+        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, without_giant(QueryFilter::default()));
         let ray = Ray::new(Vector::from(origin), Vector::from(dir));
         let (_, hit) = queries.cast_ray_and_get_normal(&ray, max, true)?;
         Some((hit.time_of_impact, hit.normal.into()))

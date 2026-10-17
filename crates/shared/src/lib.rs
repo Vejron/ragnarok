@@ -8,6 +8,7 @@ pub mod consts;
 pub mod delta;
 pub mod items;
 pub mod movement;
+pub mod plague;
 pub mod protocol;
 pub mod quant;
 pub mod terrain;

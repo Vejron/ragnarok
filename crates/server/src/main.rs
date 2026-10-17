@@ -143,7 +143,18 @@ async fn main() -> Result<()> {
 
     let (world, hash) = load_world()?;
     let (commands, receiver) = mpsc::channel(session::COMMAND_CAPACITY);
-    let game_task = tokio::spawn(game::run(game::Game::new(world, hash)?, receiver));
+    let mut game = game::Game::new(world, hash)?;
+    // The Orange Plague: `RAGNAROK_PLAGUE` is how many seconds (with someone online) until he first
+    // comes to town, or `off`. Five minutes by default.
+    match env("RAGNAROK_PLAGUE").as_deref() {
+        Some("off") => tracing::info!("the Orange Plague stays away"),
+        value => {
+            let seconds = value.and_then(|v| v.parse::<u32>().ok());
+            let ticks = seconds.map_or(mechanics::PLAGUE_FIRST_ARRIVAL_TICKS, |s| s.max(1) * shared::consts::TICK_RATE);
+            game.add_mechanic(Box::new(mechanics::OrangePlague::new(ticks)));
+        }
+    }
+    let game_task = tokio::spawn(game::run(game, receiver));
     // The sessions would keep accepting players into a dead simulation, so end the process and let
     // the supervisor restart it.
     tokio::spawn(async move {

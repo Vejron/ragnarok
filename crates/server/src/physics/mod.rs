@@ -16,6 +16,7 @@ use shared::quant::from_cm;
 use shared::world::{ObjId, WorldFile};
 use std::collections::HashMap;
 
+mod giant;
 mod vehicle;
 pub use vehicle::{CarCondition, CarControls, CarImpact, CarPose, Strike, half_extents};
 
@@ -73,6 +74,8 @@ pub struct Physics {
     replacements: Vec<(Obj, Vec<Tri>)>,
     /// How far the playable square reaches from the centre to each side, metres. Planes turn back near it.
     bound: f32,
+    /// The Orange Plague's solid capsules, while he is in town (`giant.rs`).
+    giant: Vec<RigidBodyHandle>,
 }
 
 /// Height of the top of the invisible boundary walls around the playable square, metres above
@@ -247,6 +250,7 @@ impl Physics {
             removals: Vec::new(),
             replacements: Vec::new(),
             bound: from_cm(world.half_extent),
+            giant: Vec::new(),
         };
         for (collider, object) in static_colliders(world)? {
             let handle = physics.colliders.insert(collider);
@@ -323,7 +327,7 @@ impl Physics {
 
     /// Whether `shape` at `pose` touches the static world. Vehicles are ignored.
     pub fn touches_static(&self, shape: &dyn Shape, pose: Pose) -> bool {
-        self.touches(shape, pose, QueryFilter::exclude_dynamic())
+        self.touches(shape, pose, giant::without_giant(QueryFilter::exclude_dynamic()))
     }
 
     fn touches(&self, shape: &dyn Shape, pose: Pose, filter: QueryFilter) -> bool {

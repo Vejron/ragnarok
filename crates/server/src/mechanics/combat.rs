@@ -1,12 +1,13 @@
 use super::Mechanic;
 use super::armor::Outcome;
 use super::npcs::{damage_rooster, first_rooster_hit};
+use super::plague::{blast_plague, damage_plague, first_plague_hit};
 use super::spawn;
 use crate::game::{Rocket, World, starting_hotbar};
 use crate::physics::Obj;
 use shared::consts::*;
 use shared::items::*;
-use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, KIND_PLANE, Kill, S_HIT, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, BulletSpawn, WEAPON_BULLET, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_PELLET, WEAPON_ROADKILL, WEAPON_WRECK,
+use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, KIND_PLANE, Kill, S_HIT, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, PROJECTILE_STRIKE, S_KILL, ShotEvent, BulletSpawn, WEAPON_AIRSTRIKE, WEAPON_BULLET, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_PELLET, WEAPON_ROADKILL, WEAPON_STOMP, WEAPON_WRECK,
     DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_SHELL};
 use shared::quant::{from_mrad, to_cm, to_cm_i16, to_mrad};
 
@@ -116,7 +117,7 @@ fn position_of(world: &World, id: u32) -> Option<[f32; 3]> {
 }
 
 /// A `Hit` for `target`, which is about `at`.
-fn hit_at(role: u8, kind: u8, amount: u8, weapon: u8, bearing: i16, at: [f32; 3], target: u32) -> Hit {
+pub(super) fn hit_at(role: u8, kind: u8, amount: u8, weapon: u8, bearing: i16, at: [f32; 3], target: u32) -> Hit {
     let [x, y, z] = at.map(to_cm);
     Hit { tag: S_HIT, role, kind, amount, weapon, bearing, x, y, z, target }
 }
@@ -188,7 +189,7 @@ pub fn damage_hit(world: &mut World, victim: u32, amount: u8, attacker: Option<u
     }
     let style = match weapon {
         WEAPON_ROADKILL => DEATH_ROADKILL,
-        WEAPON_ROCKET | WEAPON_SHELL | WEAPON_WRECK | WEAPON_GRENADE | WEAPON_AUTOCANNON | WEAPON_BOMB | WEAPON_DRONE => DEATH_BLAST,
+        WEAPON_ROCKET | WEAPON_SHELL | WEAPON_WRECK | WEAPON_GRENADE | WEAPON_AUTOCANNON | WEAPON_BOMB | WEAPON_DRONE | WEAPON_STOMP | WEAPON_AIRSTRIKE => DEATH_BLAST,
         _ if head => DEATH_HEAD,
         _ if lost > 0 && amount > before.saturating_mul(2) => DEATH_OVERKILL,
         _ => DEATH_BODY,
@@ -275,6 +276,7 @@ pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
     for (id, amount) in roosters {
         damage_rooster(world, id, amount);
     }
+    blast_plague(world, &blast);
     let mut reached = world.physics.blast_cars(blast.point, blast.radius);
     // A shell that struck a vehicle's edge may burst further from its centre than the blast reaches.
     if let Some(direct) = direct.filter(|direct| !reached.iter().any(|&(vid, _)| vid == direct.vehicle)) {
@@ -574,6 +576,18 @@ fn step_bullet(world: &mut World, id: u32, dt: f32) {
     let reach = wall.map_or(step, |(t, _)| t);
     let hit = first_player_hit(world, bullet.position, dir, reach, Some(bullet.owner), bullet.back);
     let rooster = first_rooster_hit(world, bullet.position, dir, hit.map_or(reach, |(_, t)| t));
+    let nearest = rooster.map(|(_, t)| t).or(hit.map(|(_, t)| t)).unwrap_or(reach);
+    // The Orange Plague in front of all that takes it instead, as armour does: a quarter.
+    if let Some((t, part)) = first_plague_hit(world, bullet.position, dir, nearest, bullet.owner) {
+        world.rockets.remove(&id);
+        let point: [f32; 3] = std::array::from_fn(|i| bullet.position[i] + dir[i] * t);
+        let (base, weapon) = item.map_or((0, WEAPON_RIFLE), |d| (d.damage, d.weapon));
+        let attacker = world.players.contains_key(&bullet.owner).then_some(bullet.owner);
+        damage_plague(world, u32::from((base / 4).max(1)), attacker, part, weapon, point);
+        let [x, y, z] = point.map(to_cm);
+        world.shots.push(ShotEvent { shooter: id, weapon: WEAPON_BULLET, x, y, z });
+        return;
+    }
     bullet.ttl = bullet.ttl.saturating_sub(1);
     if hit.is_some() || rooster.is_some() || wall.is_some() {
         world.rockets.remove(&id);
@@ -631,7 +645,7 @@ fn step_rockets(world: &mut World, dt: f32) {
             continue;
         }
         // Shells and bombs are the `Gunnery` mechanic's.
-        if rocket.kind == PROJECTILE_SHELL || rocket.kind == PROJECTILE_CANNON || rocket.kind == PROJECTILE_BOMB || rocket.kind == PROJECTILE_MORTAR {
+        if rocket.kind == PROJECTILE_SHELL || rocket.kind == PROJECTILE_CANNON || rocket.kind == PROJECTILE_BOMB || rocket.kind == PROJECTILE_MORTAR || rocket.kind == PROJECTILE_STRIKE {
             continue;
         }
         // A rocket's motor keeps pushing it along its heading, up to its top speed.
@@ -645,6 +659,8 @@ fn step_rockets(world: &mut World, dt: f32) {
         let wall = world.physics.cast_ray(rocket.position, dir, step, rocket.source);
         let player = first_player_hit(world, rocket.position, dir, wall.unwrap_or(step), Some(rocket.owner), 0);
         let end = player.map(|(_, t)| t).or(wall);
+        // The Orange Plague is no physics body, so he is tested on his own; the burst hurts him.
+        let end = first_plague_hit(world, rocket.position, dir, end.unwrap_or(step), rocket.owner).map(|(t, _)| t).or(end);
         let ttl = rocket.ttl.saturating_sub(1);
         if let Some(t) = end {
             world.rockets.remove(&id);
@@ -806,6 +822,12 @@ pub fn hitscan(world: &mut World, shooter: u32, origin: [f32; 3], dir: [f32; 3],
     // A rooster nearer than the player (or with no player behind it) takes the shot.
     let rooster = first_rooster_hit(world, origin, dir, hit.map_or(reach, |(_, t)| t));
     let end = rooster.map(|(_, t)| t).or(hit.map(|(_, t)| t)).unwrap_or(reach);
+    // The Orange Plague in front of all that takes the round, at what a vehicle would.
+    if let Some((t, part)) = first_plague_hit(world, origin, dir, end, shooter) {
+        let point = std::array::from_fn(|i| origin[i] + dir[i] * t);
+        damage_plague(world, u32::from(round.vehicle.max(1)), Some(shooter), part, round.weapon, point);
+        return (t, true);
+    }
     if let Some((target, _)) = rooster {
         let dealt = round.falloff.apply(round.damage, end);
         damage_rooster(world, target, dealt);

@@ -311,6 +311,60 @@ export function extraSolids(kind: number | undefined): { desc: RAPIER.ColliderDe
   return []
 }
 
+/**
+ * The Orange Plague's collision groups (`physics/giant.rs` on the server): his capsules are in group 2,
+ * and rays leave that group out, as the server's do. Rapier packs memberships into the high 16 bits.
+ */
+const GIANT_GROUPS = ((0x0002 << 16) | 0xffff) >>> 0
+const RAYS_GROUPS = ((0xffff << 16) | (0xffff & ~0x0002)) >>> 0
+
+/** A capsule of his: the segment `a`..`b` and its radius, in the world. */
+export interface GiantCapsule {
+  a: readonly number[]
+  b: readonly number[]
+  radius: number
+}
+
+/** The Orange Plague as solids the predicted stickman walks into, at his pose in the newest snapshot. */
+class GiantSolids {
+  private readonly colliders: RAPIER.Collider[] = []
+
+  constructor(private readonly world: RAPIER.World) {}
+
+  place(capsules: readonly GiantCapsule[]) {
+    if (this.colliders.length !== capsules.length) {
+      this.remove()
+      for (const { a, b, radius } of capsules) {
+        const half = Math.hypot(b[0]! - a[0]!, b[1]! - a[1]!, b[2]! - a[2]!) / 2
+        const desc = half < 1e-3 ? RAPIER.ColliderDesc.ball(radius) : RAPIER.ColliderDesc.capsule(half, radius)
+        this.colliders.push(this.world.createCollider(desc.setCollisionGroups(GIANT_GROUPS)))
+      }
+    }
+    capsules.forEach(({ a, b }, i) => {
+      const collider = this.colliders[i]!
+      collider.setTranslation({ x: (a[0]! + b[0]!) / 2, y: (a[1]! + b[1]!) / 2, z: (a[2]! + b[2]!) / 2 })
+      collider.setRotation(upTo(b[0]! - a[0]!, b[1]! - a[1]!, b[2]! - a[2]!))
+    })
+  }
+
+  remove() {
+    for (const collider of this.colliders) this.world.removeCollider(collider, false)
+    this.colliders.length = 0
+  }
+}
+
+/** The rotation that turns +Y onto the direction `(x, y, z)`. */
+function upTo(x: number, y: number, z: number) {
+  const length = Math.hypot(x, y, z)
+  if (length < 1e-6) return { x: 0, y: 0, z: 0, w: 1 }
+  const [dx, dy, dz] = [x / length, y / length, z / length]
+  // Half-way between +Y and the direction; straight down needs an axis of its own.
+  if (dy < -0.999999) return { x: 1, y: 0, z: 0, w: 0 }
+  const w = 1 + dy
+  const n = Math.hypot(dz, dx, w)
+  return { x: dz / n, y: 0, z: -dx / n, w: w / n }
+}
+
 /** Rapier time on this client since the debug readout last reset it (see `render/perf.ts`). */
 export const physicsClock = { ms: 0, calls: 0 }
 
@@ -330,6 +384,7 @@ export class RapierMotor implements CharacterMotor {
   /** Solid stand-ins for the server's cars, by vehicle id. */
   private readonly cars = new Map<number, VehicleSolids>()
   private readonly carVelocities = new Map<number, readonly [number, number]>()
+  private giant: GiantSolids | null = null
 
   private constructor(
     private readonly world: RAPIER.World,
@@ -399,12 +454,30 @@ export class RapierMotor implements CharacterMotor {
   }
 
   /**
+   * Makes the Orange Plague solid for the character, as the server does: his solid capsules at his
+   * pose in the newest snapshot. Null takes him away.
+   */
+  setGiant(capsules: readonly GiantCapsule[] | null) {
+    timedPhysics(() => {
+      if (!capsules) {
+        this.giant?.remove()
+        this.giant = null
+        return
+      }
+      this.giant ??= new GiantSolids(this.world)
+      this.giant.place(capsules)
+      this.world.step()
+    })
+  }
+
+  /**
    * How far a ray travels before it meets the world or a car, and the surface normal there; null
    * when it reaches `max` clear. Used to draw where a grenade will go.
    */
   castRay(origin: Vec3, dir: Vec3, max: number): { t: number; normal: Vec3 } | null {
     const ray = new RAPIER.Ray({ x: origin[0], y: origin[1], z: origin[2] }, { x: dir[0], y: dir[1], z: dir[2] })
-    const hit = this.world.castRayAndGetNormal(ray, max, true, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS)
+    // Through the Orange Plague, as the server's rays go.
+    const hit = this.world.castRayAndGetNormal(ray, max, true, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS, RAYS_GROUPS)
     if (!hit) return null
     return { t: hit.timeOfImpact, normal: [hit.normal.x, hit.normal.y, hit.normal.z] }
   }

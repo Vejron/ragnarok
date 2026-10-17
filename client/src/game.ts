@@ -1,7 +1,7 @@
 import type { Node } from '@ragnarok/engine'
 import * as THREE from 'three'
 import {
-  ARMS_CUT, ARMS_JAMMED, ARMS_REAR_JAMMED, DAMAGE_TURRET, DAMAGE_WHEELS, encodeInput, encodePing, KIND_DRONE, KIND_HELI, KIND_PLANE, KIND_MORTAR, KIND_ROADSTER, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_STRV, KIND_TANK, KIND_WALKER, sceneStates, toAxis, toMrad, TURRET_GONE, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RICOCHET, WEAPON_TURRET,
+  ARMS_CUT, ARMS_JAMMED, ARMS_REAR_JAMMED, DAMAGE_TURRET, DAMAGE_WHEELS, encodeInput, encodePing, KIND_DRONE, KIND_HELI, KIND_PLANE, KIND_MORTAR, KIND_ROADSTER, KIND_PLAGUE, KIND_ROOSTER, KIND_SPORTS, PLAGUE_STRIKE, BARK_GAGGED, FACE_MOUTH, plagueHealth, WEAPON_AIRSTRIKE, WEAPON_STOMP, KIND_STICKMAN, KIND_STRV, KIND_TANK, KIND_WALKER, sceneStates, toAxis, toMrad, TURRET_GONE, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RICOCHET, WEAPON_TURRET,
   PROJECTILE_BULLET, WEAPON_BULLET, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_BOMB, WEAPON_CRASH, WEAPON_MG, WEAPON_PELLET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_WRECK,
   type Arms, type BulletSpawn, type DriveState, type EntityState, type InputFrame, type PickupState, type RocketState, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
 } from './net/codec'
@@ -15,6 +15,7 @@ import {
   CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS,
   HELI_GUN_COOLDOWN_TICKS, HELI_GUN_LENGTH, HELI_GUN_PITCH_MAX, HELI_GUN_PITCH_MIN, HELI_GUN_YAW_LIMIT, CANNON_RADIUS,
   SHELL_SPEED, GRAVITY, MORTAR_BARREL_LENGTH, MORTAR_COOLDOWN_TICKS, MORTAR_RADIUS, MORTAR_SHELL_SPEED, MORTAR_SHELL_TTL_TICKS, STRV_BARREL_LENGTH, STRV_BARREL_MAX, STRV_BARREL_MIN, TANK_BARREL_LENGTH, TANK_BARREL_MAX, TANK_BARREL_MIN, WALKER_GUN_COOLDOWN_TICKS, WALKER_GUN_LENGTH, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT, TICK_MS, TICK_RATE, vehicleMaxHp, WRECK_BLAST_RADIUS,
+  PLAGUE_FOOTFALL_RADIUS, PLAGUE_STOMP_RADIUS, STRIKE_RADIUS,
   BOMB_RADIUS, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, PLANE_BOMB_MIN_HEIGHT, PLANE_BOMB_PIVOT, PLANE_GUN_RANGE, PLANE_REAR_PITCH_MAX, PLANE_REAR_PITCH_MIN, PLANE_STALL_SPEED,
 } from './sim/consts'
 import { vehicleDef } from './sim/vehicles'
@@ -39,6 +40,10 @@ import { Surfaces, SURFACE_GRASS } from './sim/surface'
 import { Pickups } from './render/pickups'
 import { TrajectoryView } from './render/trajectory'
 import { MortarArc } from './render/mortar-arc'
+import { PlagueMarks, PlagueModel, STRIKE_LINGER, windupSeconds } from './render/plague'
+import { progressOf, solidsOf } from './sim/plague-body'
+import { muffle, plagueLine } from './plague-lines'
+import { PlagueVoice } from './plague-voice'
 import { dropTrajectory, throwTrajectory } from './sim/grenade'
 import { ProjectileTrails } from './render/trails'
 import { Rockets } from './render/rockets'
@@ -62,7 +67,7 @@ import { Character, Crowd } from './render/character'
 import { loadRoosterModel, RoosterModel } from './render/rooster'
 import { playCrow } from './audio'
 import { VehicleSounds } from './vehicleaudio'
-import { HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, HitFeedback } from './feedback'
+import { HIT_DEALT, HIT_KILL, HIT_PLAGUE, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, HitFeedback } from './feedback'
 import { buildGround } from './render/world'
 import { Replica } from './net/replica'
 import { TileStreamer } from './stream'
@@ -70,7 +75,7 @@ import { loadManifest, type WorldData } from './world'
 import { WorldView } from './worldview'
 import type { HudStats } from './hud'
 import { Scoreboard } from './scoreboard'
-import { colorFor, forgetAllPlayers, forgetPlayer, loadProfile, profileQuery, setPlayer } from './profile'
+import { colorFor, forgetAllPlayers, forgetPlayer, loadProfile, nameFor, profileQuery, setPlayer } from './profile'
 
 // The overlay and its tests import these from here.
 export type { HudStats } from './hud'
@@ -109,6 +114,11 @@ const MAX_TICKS_PER_FRAME = 8
 const PING_INTERVAL_MS = 1000
 /** A crow can be heard this far off, metres. */
 const ROOSTER_HEARING = 45
+/** The Orange Plague's footfalls shake and thud within this far, metres; his dust is drawn within `PLAGUE_DUST_RANGE`. */
+const PLAGUE_THUD_RANGE = 120
+const PLAGUE_DUST_RANGE = 300
+/** How long a line of his stays on screen, ms. */
+const BARK_MS = 5000
 /** A bullet in flight on this client. */
 interface LiveBullet {
   spawn: BulletSpawn
@@ -155,6 +165,13 @@ export class Game {
   private readonly crowd = new Crowd()
   private readonly avatars = new Map<number, Character>()
   private readonly roosters = new Map<number, RoosterModel>()
+  /** The Orange Plague, while he is in town, and the marks his attacks leave on the ground. */
+  private plague: { id: number; model: PlagueModel; mode: number; since: number; target: [number, number, number] | null; strikeUntil: number; health: number; face: number; x: number; z: number } | null = null
+  /** His voice: recordings where there are some, the browser's voice otherwise. */
+  private readonly plagueVoice = new PlagueVoice()
+  private readonly plagueMarks = new PlagueMarks()
+  /** His last line, and until when (`performance.now()`) it shows. */
+  private bark: { text: string; until: number } | null = null
   /** Rebuilds snapshots from deltas, and says which one to diff the next against. */
   private readonly replica = new Replica()
   private tiles: TileStreamer | null = null
@@ -281,7 +298,7 @@ export class Game {
     this.scene.scene.add(this.effects.root, this.view.damage.root, this.damageNumbers.root)
     this.scene.scene.add(this.rocketModels.root, this.trails.root)
     this.scene.scene.add(this.pickupModels.root)
-    this.scene.scene.add(this.trajectory.root, this.mortarArc.root)
+    this.scene.scene.add(this.trajectory.root, this.mortarArc.root, this.plagueMarks.root)
     this.scene.scene.add(this.smoke.root, this.glow.root, this.skids.root)
     this.smoke.groundAt = (x, z) => this.scene.groundAt(x, z)
     this.scene.scene.add(this.debris.root)
@@ -363,6 +380,7 @@ export class Game {
     this.progress = 0
     this.pendingShots = []
     this.motor?.setVehicles([])
+    this.motor?.setGiant(null)
     this.clock.reset()
     for (const [id, avatar] of this.avatars) {
       if (id !== 0) {
@@ -372,6 +390,8 @@ export class Game {
     }
     for (const model of this.roosters.values()) model.dispose()
     this.roosters.clear()
+    this.plague?.model.dispose()
+    this.plague = null
     if (!this.disposed && !this.halted) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = window.setTimeout(() => void this.connect(), this.backoff.next())
@@ -439,6 +459,9 @@ export class Game {
             return { ...vehicle, vx, vz }
           }),
         )
+        // So is the Orange Plague, posed as the newest snapshot has him.
+        const giant = remote.find((e) => e.kind === KIND_PLAGUE)
+        this.motor?.setGiant(giant ? solidsOf(giant) : null)
         // Seated players are not listed as entities; whatever track they left behind is stale.
         const mount = vehicles.find((vehicle) => vehicle.seats.includes(this.localId!))
         const wasSeated = this.seat !== null
@@ -511,6 +534,17 @@ export class Game {
         else if (message.role === HIT_TAKEN) {
           this.sounds.hurt(message.amount)
           this.chase.kick(Math.min(0.5, message.amount / 80))
+        }
+        break
+      }
+      case 'bark': {
+        const line = plagueLine(message.trigger, message.variant, message.subject ? nameFor(message.subject) : null)
+        if (line) {
+          // Once his mouth is taped shut, all anyone hears is the hum through it.
+          const gagged = message.trigger !== BARK_GAGGED && ((this.plague?.face ?? 0) & FACE_MOUTH) !== 0
+          this.bark = { text: gagged ? muffle(line.text) : line.text, until: now + BARK_MS }
+          this.plagueVoice.load()
+          this.plagueVoice.say(line, gagged)
         }
         break
       }
@@ -769,8 +803,14 @@ export class Game {
     const seen = new Set<number>([0])
     const nearby: Array<{ id: number; x: number; y: number; z: number }> = []
     const roosters = new Set<number>()
+    let plagueSeen = false
     for (const id of this.interp.ids()) {
       const state = this.interp.sample(id, renderTick)
+      if (state?.kind === KIND_PLAGUE) {
+        plagueSeen = true
+        this.drawPlague(id, state, dt, now, position)
+        continue
+      }
       if (state?.kind === KIND_ROOSTER) {
         roosters.add(id)
         this.rooster(id, state, dt, position)
@@ -799,6 +839,11 @@ export class Game {
         model.dispose()
         this.roosters.delete(id)
       }
+    }
+    if (!plagueSeen && this.plague) {
+      this.plague.model.dispose()
+      this.plague = null
+      this.plagueMarks.set(null, 0, 0, false, dt)
     }
 
     this.voice.setTalking(this.localId !== null && this.hp > 0 && this.input.isHeld('KeyV'))
@@ -858,6 +903,8 @@ export class Game {
       z: ride?.z ?? position[2],
       yaw: this.input.yaw,
       halfExtent: this.world?.halfExtent ?? 0,
+      plague: this.plague ? { health: this.plague.health, face: this.plague.face, x: this.plague.x, z: this.plague.z } : null,
+      bark: this.bark && now < this.bark.until ? this.bark.text : null,
     })
   }
 
@@ -888,6 +935,12 @@ export class Game {
       this.sounds.blast([to.x, to.y, to.z], 'big')
     } else if (shot.weapon === WEAPON_MORTAR) {
       this.blast(to, MORTAR_RADIUS, BLASTS.shell)
+      this.sounds.blast([to.x, to.y, to.z], 'big')
+    } else if (shot.weapon === WEAPON_STOMP) {
+      this.blast(to, PLAGUE_STOMP_RADIUS * 0.7, BLASTS.stomp)
+      this.sounds.blast([to.x, to.y, to.z], 'big')
+    } else if (shot.weapon === WEAPON_AIRSTRIKE) {
+      this.blast(to, STRIKE_RADIUS, BLASTS.shell)
       this.sounds.blast([to.x, to.y, to.z], 'big')
     } else if (shot.weapon === WEAPON_WRECK) {
       this.blast(to, WRECK_BLAST_RADIUS, BLASTS.wreck)
@@ -983,7 +1036,7 @@ export class Game {
   /** What a hit you landed looks like in the world: a number, flying debris and a flash on the target. */
   private showHit(hit: { kind: number; amount: number; x: number; y: number; z: number; target: number }) {
     const at = new THREE.Vector3(hit.x, hit.y, hit.z)
-    const kind = hit.kind === HIT_KILL ? 'kill' : hit.kind === HIT_VEHICLE ? 'vehicle' : hit.kind === HIT_ROOSTER ? 'rooster' : 'body'
+    const kind = hit.kind === HIT_KILL ? 'kill' : hit.kind === HIT_VEHICLE || hit.kind === HIT_PLAGUE ? 'vehicle' : hit.kind === HIT_ROOSTER ? 'rooster' : 'body'
     this.damageNumbers.spawn(at, hit.amount, kind, this.scene.camera)
     // Debris flies back towards the shooter, as it would from a round that came in.
     const back = this.scene.camera.position.clone().sub(at).normalize()
@@ -1564,6 +1617,55 @@ export class Game {
     return best.driverSeatFree ? 'E: drive the jeep' : 'E: ride along'
   }
 
+  /**
+   * Places and animates the Orange Plague, marks where his wind-up will land, and brings his feet down
+   * with dust and a thud as he walks. The mark of an airstrike stays up while its rockets fall.
+   */
+  private drawPlague(id: number, state: EntityState, dt: number, now: number, listener: readonly number[]) {
+    if (this.plague?.id !== id) {
+      this.plague?.model.dispose()
+      const model = new PlagueModel()
+      this.scene.scene.add(model.root)
+      this.plague = { id, model, mode: -1, since: now, target: null, strikeUntil: 0, health: 1, face: 0, x: 0, z: 0 }
+      this.plagueVoice.load()
+    }
+    const plague = this.plague
+    const mode = state.held
+    if (mode !== plague.mode) {
+      // An airstrike's wind-up just ended: its rockets are on the way, so the mark stays a while.
+      if (plague.mode === PLAGUE_STRIKE) plague.strikeUntil = now + STRIKE_LINGER * 1000
+      plague.mode = mode
+      plague.since = now
+    }
+    const { health, face } = plagueHealth(state.vy)
+    plague.health = health
+    plague.face = face
+    plague.x = state.x
+    plague.z = state.z
+    const length = windupSeconds(mode)
+    const windup = length > 0 ? Math.min(1, (now - plague.since) / 1000 / length) : 0
+    // The wind-up's target travels in tenths of a metre in the knock pair (see `KIND_PLAGUE`).
+    if (length > 0) {
+      const [tx, tz] = [state.x + state.knockX * 10, state.z + state.knockZ * 10]
+      plague.target = [tx, this.scene.groundAt(tx, tz), tz]
+    }
+    const lingering = now < plague.strikeUntil
+    this.plagueMarks.set(length > 0 || lingering ? plague.target : null, mode, windup, lingering, dt)
+    this.plagueVoice.setDistance(Math.hypot(state.x - listener[0]!, state.z - listener[2]!))
+    const progress = progressOf(mode, state.dead, state.stance)
+    const foot = plague.model.update([state.x, state.y, state.z], state.yaw, mode, progress, state.dead, face, this.plagueVoice.level(), listener, dt)
+    if (!foot) return
+    const distance = Math.hypot(foot[0] - listener[0]!, foot[1] - listener[2]!)
+    if (distance > PLAGUE_DUST_RANGE) return
+    const at = new THREE.Vector3(foot[0], this.scene.groundAt(foot[0], foot[1]), foot[1])
+    explosion(this.fxWorld, this.debris, at, PLAGUE_FOOTFALL_RADIUS * 0.5, BLASTS.footfall)
+    this.effects.shockwave({ x: at.x, y: at.y + 0.25, z: at.z }, PLAGUE_FOOTFALL_RADIUS)
+    if (distance < PLAGUE_THUD_RANGE) {
+      this.sounds.blast([at.x, at.y, at.z], 'small')
+      this.chase.kick(0.25 * (1 - distance / PLAGUE_THUD_RANGE))
+    }
+  }
+
   /** Places and animates rooster `id`, and lets it be heard when it crows: louder the nearer it is. */
   private rooster(id: number, state: { x: number; y: number; z: number; yaw: number; crowing: boolean }, dt: number, listener: readonly number[]) {
     let model = this.roosters.get(id)
@@ -1610,6 +1712,9 @@ export class Game {
     this.rocketModels.dispose()
     this.pickupModels.dispose()
     for (const model of this.roosters.values()) model.dispose()
+    this.plague?.model.dispose()
+    this.plagueMarks.dispose()
+    this.plagueVoice.stop()
     this.trajectory.dispose()
     this.mortarArc.dispose()
     this.scene.dispose()

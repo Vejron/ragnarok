@@ -150,6 +150,66 @@ impl Rooster {
     }
 }
 
+/// What the Orange Plague is doing. Its `mode_left` counts ticks down to the next change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlagueMode {
+    /// Walking his agenda, a foot coming down every stride.
+    Walk,
+    /// A foot raised over `target`, coming down when `mode_left` runs out.
+    Stomp,
+    /// On the phone: an airstrike falls around `target` when `mode_left` runs out.
+    Strike,
+    /// Getting his balance back after an attack.
+    Recover,
+    /// Shot down: falling over backwards, then gone.
+    Toppling,
+}
+
+/// One part of the Orange Plague's body, for what a hit on it does.
+pub use shared::plague::Part as PlaguePart;
+
+/// Damage the Orange Plague took since his mechanic last looked: who dealt it (a player, if one did)
+/// and how much. His brain reads it to know whom to hate.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlagueWound {
+    pub attacker: Option<u32>,
+    pub amount: u32,
+}
+
+/// The Orange Plague: a 40 m boss. He shares the id space with players. The `Plague` mechanic owns
+/// his brain; this is the body everyone else can see and hurt.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Plague {
+    pub id: u32,
+    /// Feet, on the ground.
+    pub position: [f32; 3],
+    pub yaw: f32,
+    pub hp: u32,
+    pub mode: PlagueMode,
+    pub mode_left: u32,
+    /// Where the wind-up lands, on the ground.
+    pub target: [f32; 3],
+    /// Metres walked since a foot last came down, and whether the right one is next.
+    pub stride: f32,
+    pub right_foot: bool,
+    /// Damage since the mechanic last read it.
+    pub wounds: Vec<PlagueWound>,
+    /// Set when the hand is shot while he calls in an airstrike: the call is dropped.
+    pub call_dropped: bool,
+    /// What each of his eyes, ears and mouth has left, by `FACE_*` bit number, and which (`FACE_*`
+    /// bits) have been shot out.
+    pub face_hp: [u32; 5],
+    pub face_lost: u8,
+    /// Parts of his face shot out since the mechanic last looked (`FACE_*` bits), and by whom.
+    pub losses: Vec<(u8, Option<u32>)>,
+}
+
+impl Plague {
+    pub fn alive(&self) -> bool {
+        self.hp > 0
+    }
+}
+
 /// Game-side state of a vehicle. Its rigid body lives in `Physics`, under the same id.
 pub struct Vehicle {
     pub kind: u8,
@@ -300,6 +360,8 @@ pub struct World {
     pub pickups: BTreeMap<u32, Pickup>,
     /// Roosters, which share the id space too.
     pub roosters: BTreeMap<u32, Rooster>,
+    /// The Orange Plague, while he is in town.
+    pub plague: Option<Plague>,
     pub(super) next_id: u32,
     pub rng: Rng,
     /// Rifle shots since the last snapshot, for drawing tracers. Drained when snapshots go out.
@@ -311,6 +373,8 @@ pub struct World {
     /// Hits since the last tick, each with the player it is for. Drained, summed and sent
     /// reliably to that player by `Game::step`.
     pub hits: Vec<(u32, Hit)>,
+    /// What the Orange Plague said since the last tick. Drained and broadcast reliably by `Game::step`.
+    pub barks: Vec<Bark>,
     /// Solid trees by identity, to look their size up from a collider hit.
     pub(super) trees_by_id: HashMap<ObjId, usize>,
     /// Buildings by identity.

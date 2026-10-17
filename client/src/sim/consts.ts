@@ -1,6 +1,6 @@
 /** Mirrors `crates/shared/src/consts.rs`. Keep the two in step. */
 
-export const PROTOCOL_VERSION = 30
+export const PROTOCOL_VERSION = 32
 
 /** A hurt building is drawn in this many worse states; the last is about to collapse. Mirrors `DAMAGE_STAGES`. */
 export const DAMAGE_STAGES = 3
@@ -356,3 +356,16 @@ export const SHELL_SPEED = 140.0
 export const EXPLOSION_RADIUS = 7.0
 /** An autocannon round bursts a third as wide as a tank shell. */
 export const CANNON_RADIUS = EXPLOSION_RADIUS / 3
+
+/** The Orange Plague (see `crates/shared/src/consts.rs`): what the client draws him and his attacks with. */
+export const PLAGUE_HEIGHT = 40.0
+export const PLAGUE_STRIDE = 7.0
+export const PLAGUE_FOOT_SPREAD = 3.0
+export const PLAGUE_FOOTFALL_RADIUS = 6.0
+export const PLAGUE_STOMP_RADIUS = 14.0
+export const PLAGUE_STOMP_WINDUP_TICKS = 60
+export const PLAGUE_STRIKE_RADIUS = 22.0
+export const PLAGUE_STRIKE_WINDUP_TICKS = 120
+export const PLAGUE_STRIKE_ROCKETS = 12
+export const PLAGUE_STRIKE_INTERVAL_TICKS = 6
+export const STRIKE_RADIUS = 7.0

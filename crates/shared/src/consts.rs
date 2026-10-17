@@ -1,7 +1,7 @@
 //! Simulation and network constants. Mirrored in `client/src/sim/consts.ts`.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 30;
+pub const PROTOCOL_VERSION: u8 = 32;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -652,3 +652,41 @@ pub const ROOSTER_CROW_TICKS: u32 = 100;
 pub const ROOSTER_CAPSULE_CENTRE: f32 = 0.4;
 pub const ROOSTER_CAPSULE_HALF_HEIGHT: f32 = 0.1;
 pub const ROOSTER_CAPSULE_RADIUS: f32 = 0.3;
+
+/// The Orange Plague: a 40 m tycoon who walks across the map buying up its tallest buildings by
+/// stomping them flat, and fights back with two attacks: a stomp at his feet and an airstrike far
+/// off. See `crates/server/src/mechanics/plague.rs` for how he picks them.
+pub const PLAGUE_HEIGHT: f32 = 40.0;
+pub const PLAGUE_HP: u32 = 50_000;
+/// Walking speed, m/s, and how fast he turns, rad/s.
+pub const PLAGUE_SPEED: f32 = 2.5;
+pub const PLAGUE_TURN_RATE: f32 = 0.6;
+/// A foot comes down every this many metres walked, a small blast where it lands.
+pub const PLAGUE_STRIDE: f32 = 7.0;
+/// How far left and right of his centre each foot lands, metres.
+pub const PLAGUE_FOOT_SPREAD: f32 = 3.0;
+pub const PLAGUE_FOOTFALL_RADIUS: f32 = 6.0;
+pub const PLAGUE_FOOTFALL_DAMAGE: f32 = 60.0;
+pub const PLAGUE_FOOTFALL_KNOCK: f32 = 12.0;
+/// The stomp: a foot raised for `PLAGUE_STOMP_WINDUP_TICKS`, its shadow on the ground where it will
+/// land, then a blast. It lands at most `PLAGUE_STOMP_REACH` metres from his centre.
+pub const PLAGUE_STOMP_REACH: f32 = 26.0;
+pub const PLAGUE_STOMP_RADIUS: f32 = 14.0;
+pub const PLAGUE_STOMP_DAMAGE: f32 = 160.0;
+pub const PLAGUE_STOMP_KNOCK: f32 = 28.0;
+pub const PLAGUE_STOMP_WINDUP_TICKS: u32 = 60;
+/// The airstrike: he phones it in for `PLAGUE_STRIKE_WINDUP_TICKS` while markers show the circle it
+/// will fall in, then `PLAGUE_STRIKE_ROCKETS` rockets fall into it, one every
+/// `PLAGUE_STRIKE_INTERVAL_TICKS`, from `PLAGUE_STRIKE_DROP_HEIGHT` metres up.
+pub const PLAGUE_STRIKE_RANGE: f32 = 260.0;
+pub const PLAGUE_STRIKE_RADIUS: f32 = 22.0;
+pub const PLAGUE_STRIKE_WINDUP_TICKS: u32 = 120;
+pub const PLAGUE_STRIKE_ROCKETS: u32 = 12;
+pub const PLAGUE_STRIKE_INTERVAL_TICKS: u32 = 6;
+pub const PLAGUE_STRIKE_DROP_HEIGHT: f32 = 150.0;
+/// Downward speed an airstrike rocket starts at, m/s, before gravity adds to it.
+pub const PLAGUE_STRIKE_DROP_SPEED: f32 = 40.0;
+/// One airstrike rocket going off.
+pub const STRIKE_RADIUS: f32 = 7.0;
+pub const STRIKE_DAMAGE: f32 = 120.0;
+pub const STRIKE_KNOCK: f32 = 18.0;

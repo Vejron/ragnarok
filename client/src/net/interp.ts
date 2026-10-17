@@ -1,5 +1,5 @@
 import type { EntityState, RocketState, VehicleState } from './codec'
-import { wrapAngle } from './codec'
+import { KIND_PLAGUE, wrapAngle } from './codec'
 import { TICK_RATE } from '@/sim/consts'
 
 /** Snapshot history per entity. At 30 Hz this is about a second. */
@@ -31,7 +31,8 @@ export function blendEntity(a: EntityState, b: EntityState, t: number): EntitySt
     y: lerp(a.y, b.y, t),
     z: lerp(a.z, b.z, t),
     yaw: lerpAngle(a.yaw, b.yaw, t),
-    vy: lerp(a.vy, b.vy, t),
+    // The Orange Plague's carries bits that must not be blended (see `KIND_PLAGUE`).
+    vy: b.kind === KIND_PLAGUE ? b.vy : lerp(a.vy, b.vy, t),
     knockX: lerp(a.knockX, b.knockX, t),
     knockZ: lerp(a.knockZ, b.knockZ, t),
     grounded: t < 0.5 ? a.grounded : b.grounded,

@@ -23,6 +23,7 @@ const S_HIT = 8
 const S_RTC = 9
 const S_CARVED = 10
 const S_PROFILES = 11
+const S_BARK = 12
 /** A `Hit` bearing for harm with no direction. */
 const BEARING_NONE = -32768
 
@@ -49,6 +50,53 @@ export const KIND_MORTAR = 9
 export const KIND_ROADSTER = 10
 /** An FPV drone, flown from afar by the player who launched it. */
 export const KIND_DRONE = 11
+/**
+ * The Orange Plague, a 40 m boss, sent to everyone wherever they are. For him `held` is his `PLAGUE_*`
+ * mode, `dead` means he is toppling, `stance` is how far through his mode he is (`sim/plague-body.ts`),
+ * `vy` is his health (tenths of a percent, so 10 is full) plus his `FACE_*` bits times
+ * `PLAGUE_FACE_SCALE` (see `plagueHealth`), and `knockX`, `knockZ` are where his wind-up lands relative
+ * to his feet, in tenths of a metre.
+ */
+export const KIND_PLAGUE = 12
+export const PLAGUE_WALK = 0
+/** A foot is raised over the target. */
+export const PLAGUE_STOMP = 1
+/** On the phone: an airstrike is coming down on the target. */
+export const PLAGUE_STRIKE = 2
+export const PLAGUE_RECOVER = 3
+/** What of his face has been shot out, as bits: each eye, each ear (his left first) and his mouth. */
+export const FACE_EYE_LEFT = 1 << 0
+export const FACE_EYE_RIGHT = 1 << 1
+export const FACE_EAR_LEFT = 1 << 2
+export const FACE_EAR_RIGHT = 1 << 3
+export const FACE_MOUTH = 1 << 4
+export const PLAGUE_FACE_SCALE = 1024
+
+/** The Orange Plague's health (0..1) and `FACE_*` bits, from his entity's `vy`. */
+export function plagueHealth(vy: number): { health: number; face: number } {
+  const raw = Math.round(vy * CM)
+  const face = Math.floor(raw / PLAGUE_FACE_SCALE)
+  return { health: Math.max(0, Math.min(1, (raw - face * PLAGUE_FACE_SCALE) / 1000)), face }
+}
+/** The Orange Plague's lines, as `BARK_*` triggers: what he is talking about. */
+export const BARK_ARRIVE = 0
+export const BARK_STOMP = 1
+export const BARK_STRIKE = 2
+export const BARK_HURT = 3
+export const BARK_FIRED = 4
+export const BARK_ADAPT_INFANTRY = 5
+export const BARK_ADAPT_ARMOR = 6
+export const BARK_ADAPT_AIR = 7
+export const BARK_REZONE = 8
+export const BARK_IDLE = 9
+export const BARK_DOWN = 10
+export const BARK_LEAVE = 11
+export const BARK_NEMESIS = 12
+/** An eye shot out (the subject did it); both gone; an ear shot off; his mouth shot shut. */
+export const BARK_EYE = 13
+export const BARK_BLIND = 14
+export const BARK_EAR = 15
+export const BARK_GAGGED = 16
 export const FLAG_GROUNDED = 1 << 0
 export const FLAG_DEAD = 1 << 1
 export const FLAG_CROUCHING = 1 << 2
@@ -91,6 +139,10 @@ export const WEAPON_TURRET = 17
 export const WEAPON_MORTAR = 18
 /** An FPV drone's charge going off. */
 export const WEAPON_DRONE = 19
+/** The Orange Plague's foot coming down. */
+export const WEAPON_STOMP = 20
+/** A rocket of the Orange Plague's airstrike going off. */
+export const WEAPON_AIRSTRIKE = 21
 
 /** How a stickman died, as in a `Kill`. Mirrors `DEATH_*`. */
 export const DEATH_BODY = 0
@@ -122,6 +174,8 @@ export const PROJECTILE_BULLET = 4
 export const PROJECTILE_BOMB = 5
 /** A mortar bomb in flight. */
 export const PROJECTILE_MORTAR = 6
+/** A rocket of the Orange Plague's airstrike, falling steeply. */
+export const PROJECTILE_STRIKE = 7
 
 /** `Turret`'s flags: a field mortar is hitched to a car, so it is drawn folded up for travel. Mirrors `TURRET_STOWED`. */
 export const TURRET_STOWED = 1 << 0
@@ -178,6 +232,8 @@ export interface EntityState {
   held: number
   /** A rooster mid-crow. */
   crowing: boolean
+  /** `STANCE_*` as sent; for the Orange Plague, how far through his mode he is. */
+  stance: number
 }
 
 /**
@@ -412,6 +468,8 @@ export type ServerMessage =
    */
   | { type: 'kill'; killer: number; victim: number; weapon: number; killerKills: number; victimDeaths: number; style: number; yaw: number; power: number }
   | { type: 'scores'; scores: Score[] }
+  /** The Orange Plague says something: a `BARK_*` line, which of them, and the player it is about (0 for nobody). */
+  | { type: 'bark'; trigger: number; variant: number; subject: number }
   /** What players chose: everyone's for a joiner, then each new player's. `color` indexes `PLAYER_COLORS`. */
   | { type: 'profiles'; players: { id: number; name: string; color: number }[] }
   /** Buildings and trees destroyed since the last such message; the first one a joiner gets is all of them. */
@@ -482,6 +540,7 @@ export function entityState(raw: readonly number[]): EntityState {
     knockZ: knockZ! / CM,
     held: (flags! & FLAG_HELD_MASK) >> FLAG_HELD_SHIFT,
     crowing: (flags! & FLAG_CROWING) !== 0,
+    stance: stance!,
   }
 }
 
@@ -721,6 +780,9 @@ export function decodeServer(bytes: Uint8Array): ServerMessage | null {
         type: 'kill', killer: raw[1] as number, victim: raw[2] as number, weapon: raw[3] as number, killerKills: raw[4] as number, victimDeaths: raw[5] as number,
         style: raw[6] as number, yaw: (raw[7] as number) / MRAD, power: (raw[8] as number) / 5,
       }
+    case S_BARK:
+      if (raw.length !== 4 || !ints(raw)) return null
+      return { type: 'bark', trigger: raw[1] as number, variant: raw[2] as number, subject: raw[3] as number }
     case S_SCORES: {
       if (raw.length !== 2 || !Array.isArray(raw[1])) return null
       const scores: Score[] = []

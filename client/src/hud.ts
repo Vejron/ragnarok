@@ -83,4 +83,9 @@ export interface HudStats {
   yaw: number
   /** Half the side of the playable square, metres; 0 before the world has loaded. */
   halfExtent: number
+  /** The Orange Plague, while he is in town: his health, 0..1, and where he stands, metres. */
+  /** The Orange Plague while he is in town: his health (0..1), what of his face is shot out (`FACE_*` bits) and where he is. */
+  plague: { health: number; face: number; x: number; z: number } | null
+  /** What he just said, while it is on screen. */
+  bark: string | null
 }

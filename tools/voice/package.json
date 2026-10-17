@@ -1,0 +1,9 @@
+{
+  "name": "plague-voice",
+  "private": true,
+  "type": "module",
+  "description": "Records the Orange Plague's lines: see plague_voice.mjs",
+  "dependencies": {
+    "kokoro-js": "^1.2.1"
+  }
+}

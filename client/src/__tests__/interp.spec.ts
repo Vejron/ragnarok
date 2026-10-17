@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { blendEntity, blendVehicle, Interpolator } from '@/net/interp'
 import type { EntityState, VehicleState } from '@/net/codec'
 
-const at = (x: number, yaw = 0): EntityState => ({ id: 7, kind: 0, x, y: 1, z: 0, yaw, vy: 0, grounded: true, dead: false, crouching: false, prone: false, knockX: 0, knockZ: 0, held: 0, crowing: false })
+const at = (x: number, yaw = 0): EntityState => ({ id: 7, kind: 0, x, y: 1, z: 0, yaw, vy: 0, grounded: true, dead: false, crouching: false, prone: false, knockX: 0, knockZ: 0, held: 0, crowing: false, stance: 0 })
 
 describe('Interpolator', () => {
   it('blends between the bracketing snapshots', () => {

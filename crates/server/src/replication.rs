@@ -79,7 +79,9 @@ impl Replica {
         let mut entities: Vec<(f32, EntityState)> = world
             .entities
             .iter()
-            .map(|e| (distance(e.x, e.z), *e))
+            // The Orange Plague stands 40 m tall: everyone is sent him, wherever they are, and he is
+            // never the one left out of a full datagram.
+            .map(|e| (if e.kind == KIND_PLAGUE { 0.0 } else { distance(e.x, e.z) }, *e))
             .filter(|(d, e)| within(held_entity(e.id), *d))
             .collect();
         let mut vehicles: Vec<(f32, VehicleState)> = world
@@ -218,6 +220,16 @@ mod tests {
         let scene = apply(&base, &delta);
         held.push((snapshot.tick, scene.clone()));
         scene
+    }
+
+    #[test]
+    fn the_orange_plague_is_sent_however_far_away_he_is() {
+        let mut replica = Replica::default();
+        let mut held = Vec::new();
+        let plague = EntityState { kind: KIND_PLAGUE, ..person(9, 2000.0, 0.0) };
+        let far = person(2, 2000.0, 10.0);
+        let first = snapshot(&mut replica, 2, &[plague, far]);
+        assert_eq!(rebuild(&mut held, &first).entities, vec![plague], "40 m tall: seen from anywhere");
     }
 
     #[test]

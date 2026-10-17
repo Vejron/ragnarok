@@ -7,7 +7,7 @@ import TouchControls from './TouchControls.vue'
 import type { InputController } from './sim/input'
 import { colorFor, cssColor, nameFor } from './profile'
 import type { Look } from './render/look'
-import { WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK } from './net/codec'
+import { FACE_EAR_LEFT, FACE_EAR_RIGHT, FACE_EYE_LEFT, FACE_EYE_RIGHT, FACE_MOUTH, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_AIRSTRIKE, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_STOMP, WEAPON_WRECK } from './net/codec'
 
 const container = ref<HTMLElement | null>(null)
 const stats = shallowRef<HudStats | null>(null)
@@ -69,10 +69,21 @@ onBeforeUnmount(() => {
 
 const swatch = (id: number) => cssColor(colorFor(id))
 const who = (id: number) => (id === 0 ? 'the fall' : nameFor(id))
+/** What of the Orange Plague's face can be shot out, his left first, as shown under his health bar. */
+const FACE_FEATURES = [
+  { bit: FACE_EYE_LEFT, icon: '👁', name: 'Left eye: put it out and he is blind on that side' },
+  { bit: FACE_EYE_RIGHT, icon: '👁', name: 'Right eye: put it out and he is blind on that side' },
+  { bit: FACE_EAR_LEFT, icon: '👂', name: 'Left ear: with both gone he cannot hear where shots come from' },
+  { bit: FACE_EAR_RIGHT, icon: '👂', name: 'Right ear: with both gone he cannot hear where shots come from' },
+  { bit: FACE_MOUTH, icon: '👄', name: 'Mouth: shoot it shut and he cannot phone in airstrikes' },
+] as const
+
+/** Whether a death with no killer was the Orange Plague's doing rather than a fall. */
+const byPlague = (weapon: number) => weapon === WEAPON_STOMP || weapon === WEAPON_AIRSTRIKE
 const settingsUrl = `${import.meta.env.BASE_URL}settings.html`
 /** What the kill feed shows between killer and victim. */
 const mark = (weapon: number) =>
-  weapon === WEAPON_SHELL || weapon === WEAPON_AUTOCANNON || weapon === WEAPON_ROCKET || weapon === WEAPON_GRENADE || weapon === WEAPON_WRECK || weapon === WEAPON_BOMB
+  weapon === WEAPON_SHELL || weapon === WEAPON_AUTOCANNON || weapon === WEAPON_ROCKET || weapon === WEAPON_GRENADE || weapon === WEAPON_WRECK || weapon === WEAPON_BOMB || byPlague(weapon)
     ? '💥'
     : weapon === WEAPON_REVOLVER ? '›‹' : '›'
 
@@ -205,7 +216,14 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
     :touch="stats.touch"
     @select="(slot) => input?.selectSlot(slot)"
   />
-  <Minimap v-if="stats && stats.halfExtent > 0 && !stats.touch" :x="stats.x" :z="stats.z" :yaw="stats.yaw" :half-extent="stats.halfExtent" :open="mapOpen" />
+  <Minimap v-if="stats && stats.halfExtent > 0 && !stats.touch" :x="stats.x" :z="stats.z" :yaw="stats.yaw" :half-extent="stats.halfExtent" :open="mapOpen" :plague="stats.plague" />
+  <div v-if="stats?.plague" class="plague-bar">
+    <div :style="{ width: stats.plague.health * 100 + '%' }" /><span>THE ORANGE PLAGUE</span>
+  </div>
+  <ul v-if="stats?.plague" class="plague-face" aria-label="His face">
+    <li v-for="feature in FACE_FEATURES" :key="feature.bit" :class="{ lost: (stats.plague.face & feature.bit) !== 0 }" :aria-label="feature.name">{{ feature.icon }}</li>
+  </ul>
+  <div v-if="stats?.bark" class="bark">{{ stats.bark }}</div>
   <div v-if="stats?.dead" class="death">
     <h2>ELIMINATED</h2>
     <p>Respawning in {{ Math.ceil(stats.respawnIn) }}</p>
@@ -216,7 +234,8 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
         <i :style="{ background: swatch(entry.killer) }" />{{ who(entry.killer) }}
         <b>{{ mark(entry.weapon) }}</b>
       </template>
-      <i :style="{ background: swatch(entry.victim) }" />{{ who(entry.victim) }}<template v-if="entry.killer === 0"> took {{ who(0) }}</template>
+      <template v-else-if="byPlague(entry.weapon)"><i class="plague" />The Orange Plague <b>{{ mark(entry.weapon) }}</b></template>
+      <i :style="{ background: swatch(entry.victim) }" />{{ who(entry.victim) }}<template v-if="entry.killer === 0 && !byPlague(entry.weapon)"> took {{ who(0) }}</template>
     </li>
   </ul>
   <table v-if="stats?.board.length" class="board">
@@ -378,6 +397,26 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
 .feed li.victim { box-shadow: 0 0 0 2px #ff5a5f; }
 .feed i, .board i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin: 0 6px 0 2px; }
 .feed b { margin: 0 6px; }
+.feed i.plague { background: #ff8c1a; }
+.plague-bar {
+  position: fixed; top: 96px; left: 50%; transform: translateX(-50%); width: min(420px, calc(100% - 32px)); height: 18px;
+  border-radius: 999px; overflow: hidden; pointer-events: none; background: rgba(29, 43, 54, 0.6); box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35);
+}
+.plague-bar div { height: 100%; background: linear-gradient(#ffb347, #ff7a00); transition: width 0.3s; }
+.plague-bar span {
+  position: absolute; inset: 0; display: grid; place-content: center; font-size: 12px; font-weight: 800; letter-spacing: 0.12em;
+  color: white; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.plague-face {
+  position: fixed; top: 118px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; margin: 0; padding: 0; list-style: none;
+  pointer-events: none; font-size: 16px;
+}
+.plague-face li { filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.6)); }
+.plague-face li.lost { opacity: 0.35; filter: grayscale(1); text-decoration: line-through; text-decoration-color: #ff3a1a; text-decoration-thickness: 3px; }
+.bark {
+  position: fixed; bottom: 26%; left: 50%; transform: translateX(-50%); max-width: min(640px, calc(100% - 32px)); pointer-events: none;
+  text-align: center; font-size: 17px; font-weight: 700; color: #ffd27a; background: rgba(20, 20, 20, 0.7); padding: 6px 14px; border-radius: 8px;
+}
 .board {
   position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); pointer-events: none; min-width: 320px;
   background: rgba(255, 255, 255, 0.92); border-radius: 14px; padding: 10px 16px; color: #1d2b36; font-weight: 700; border-collapse: collapse;

@@ -24,3 +24,7 @@ worlds/*/tiles/
 worlds/*/minimap.png
 worlds/active.json
 .deploy/
+
+# the voice generator's own packages (npm install in tools/voice)
+tools/voice/node_modules/
+tools/voice/samples/

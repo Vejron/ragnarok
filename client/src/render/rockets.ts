@@ -10,6 +10,8 @@ const MORTAR = 6
 const CANNON = 3
 const BULLET = 4
 const BOMB = 5
+/** A rocket of the Orange Plague's airstrike: a big glowing missile, nose down. */
+const STRIKE = 7
 
 /** The projectiles in flight: a glowing missile or a tank shell pointed along its velocity, or a tumbling grenade. Their trails are `ProjectileTrails`. */
 export class Rockets {
@@ -30,6 +32,9 @@ export class Rockets {
   private readonly fins = boxGeometry(0.2, 0.1, 0.02)
   private readonly bombMaterial = toonMaterial({ color: 0x2b2b26 })
   private readonly ballMaterial = toonMaterial({ color: 0x4f5d2e })
+  /** An airstrike rocket: big enough to see coming from far off, and hot red so it reads as his. */
+  private readonly missile = cylinderGeometry(0.35, 0.35, 3.2, 10)
+  private readonly missileMaterial = new Material({ color: 0xff4a2a, lit: false, fog: false })
   private readonly meshes = new Map<number, Mesh>()
   private readonly up = new THREE.Vector3(0, 1, 0)
 
@@ -50,6 +55,8 @@ export class Rockets {
         mesh = new Mesh(this.bullet, this.bulletMaterial)
       } else if (kind === CANNON) {
         mesh = new Mesh(this.smallSlug, this.slugMaterial)
+      } else if (kind === STRIKE) {
+        mesh = new Mesh(this.missile, this.missileMaterial)
       } else if (kind === SHELL || kind === MORTAR) {
         mesh = new Mesh(this.slug, this.slugMaterial)
       } else mesh = new Mesh(this.body, this.material)

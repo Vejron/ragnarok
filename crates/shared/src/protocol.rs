@@ -26,6 +26,7 @@ pub const S_HIT: u8 = 8;
 pub const S_RTC: u8 = 9;
 pub const S_CARVED: u8 = 10;
 pub const S_PROFILES: u8 = 11;
+pub const S_BARK: u8 = 12;
 
 /// `Hit` roles: whose feedback it is.
 /// You hurt something.
@@ -39,6 +40,8 @@ pub const HIT_VEHICLE: u8 = 1;
 /// A stickman or rooster that this hit finished.
 pub const HIT_KILL: u8 = 2;
 pub const HIT_ROOSTER: u8 = 3;
+/// The Orange Plague.
+pub const HIT_PLAGUE: u8 = 4;
 
 /// A `Hit` bearing for damage with no direction: a fall, a crash.
 pub const BEARING_NONE: i16 = i16::MIN;
@@ -68,6 +71,30 @@ pub const KIND_MORTAR: u8 = 9;
 pub const KIND_ROADSTER: u8 = 10;
 /// An FPV drone, flown from afar by the player who launched it. Gone once it blows up or its pilot lets go.
 pub const KIND_DRONE: u8 = 11;
+/// The Orange Plague, a 40 m boss. Appears in `EntityState`, and is sent to everyone wherever they
+/// are. Some of its fields mean something else for him:
+/// - the held-item bits of `flags` are his `PLAGUE_*` mode, and `FLAG_DEAD` means he is toppling;
+/// - `vy` is his health, in tenths of a percent of `PLAGUE_HP` (cm/s on the wire, so 1000 is full),
+///   plus `FACE_*` bits for what of his face has been shot out, times `PLAGUE_FACE_SCALE`;
+/// - `stance` is how far through his mode he is (see `plague::progress_byte`), which poses him;
+/// - `knock_x`, `knock_z` are where his wind-up lands, relative to his feet, in decimetres.
+pub const KIND_PLAGUE: u8 = 12;
+/// The Orange Plague's modes, in the held-item bits of his `flags`.
+pub const PLAGUE_WALK: u8 = 0;
+/// A foot is raised over the target: a stomp lands there when the wind-up is over.
+pub const PLAGUE_STOMP: u8 = 1;
+/// On the phone: an airstrike falls on the target when the wind-up is over.
+pub const PLAGUE_STRIKE: u8 = 2;
+/// Getting his balance back after an attack.
+pub const PLAGUE_RECOVER: u8 = 3;
+/// What of his face has been shot out, as bits: each eye, each ear (his left first) and his mouth.
+pub const FACE_EYE_LEFT: u8 = 1 << 0;
+pub const FACE_EYE_RIGHT: u8 = 1 << 1;
+pub const FACE_EAR_LEFT: u8 = 1 << 2;
+pub const FACE_EAR_RIGHT: u8 = 1 << 3;
+pub const FACE_MOUTH: u8 = 1 << 4;
+/// His `vy` is his health plus his `FACE_*` bits times this.
+pub const PLAGUE_FACE_SCALE: i16 = 1024;
 
 /// Health of a fresh vehicle of `kind`. Zero on the wire means wrecked.
 pub fn vehicle_hp(kind: u8) -> u8 {
@@ -134,6 +161,10 @@ pub const WEAPON_TURRET: u8 = 17;
 pub const WEAPON_MORTAR: u8 = 18;
 /// An FPV drone's charge going off; a shot-down one's pop too.
 pub const WEAPON_DRONE: u8 = 19;
+/// The Orange Plague's foot coming down: a footfall or a stomp.
+pub const WEAPON_STOMP: u8 = 20;
+/// One rocket of the Orange Plague's airstrike going off.
+pub const WEAPON_AIRSTRIKE: u8 = 21;
 
 /// How a stickman died, as sent in a `Kill`, so every client can stage the death to match.
 pub const DEATH_BODY: u8 = 0;
@@ -155,6 +186,8 @@ pub const PROJECTILE_BULLET: u8 = 4;
 pub const PROJECTILE_BOMB: u8 = 5;
 /// A mortar bomb: a high lob that falls steeply and bursts on the first thing it meets.
 pub const PROJECTILE_MORTAR: u8 = 6;
+/// A rocket of the Orange Plague's airstrike: falls steeply from high up and bursts on the first thing it meets.
+pub const PROJECTILE_STRIKE: u8 = 7;
 
 /// A bullet leaving a gun: `[id, shooter, item, x, y, z, vx, vy, vz, tick]`, centimetres and cm/s.
 /// Sent once (in two snapshots, in case one is lost) and not listed again: the path is
@@ -526,6 +559,49 @@ pub struct Kill {
     pub power: u8,
 }
 
+/// What the Orange Plague is ranting about, in a `Bark`. Clients hold the lines.
+/// He has come to town.
+pub const BARK_ARRIVE: u8 = 0;
+/// A foot goes up.
+pub const BARK_STOMP: u8 = 1;
+/// He calls in an airstrike; `subject` is whom he means it for, if he has someone in mind.
+pub const BARK_STRIKE: u8 = 2;
+/// Something stung; `subject` did it.
+pub const BARK_HURT: u8 = 3;
+/// `subject` died under his foot or his rockets.
+pub const BARK_FIRED: u8 = 4;
+/// What has been hurting him most lately has changed: infantry, armour or aircraft, and he will be
+/// aiming at it.
+pub const BARK_ADAPT_INFANTRY: u8 = 5;
+pub const BARK_ADAPT_ARMOR: u8 = 6;
+pub const BARK_ADAPT_AIR: u8 = 7;
+/// He has flattened a building and it is his.
+pub const BARK_REZONE: u8 = 8;
+/// Nothing else to say for a while.
+pub const BARK_IDLE: u8 = 9;
+/// He is going down; `subject` is who hurt him most.
+pub const BARK_DOWN: u8 = 10;
+/// He has what he came for and leaves.
+pub const BARK_LEAVE: u8 = 11;
+/// `subject` is his new Enemy of the Week: the one who has hurt him most lately.
+pub const BARK_NEMESIS: u8 = 12;
+/// `subject` shot out one of his eyes.
+pub const BARK_EYE: u8 = 13;
+/// Both his eyes are gone: he is blind.
+pub const BARK_BLIND: u8 = 14;
+/// `subject` shot off one of his ears.
+pub const BARK_EAR: u8 = 15;
+/// His mouth is shot shut: no more phone calls. Clients muffle whatever he says from then on.
+pub const BARK_GAGGED: u8 = 16;
+/// The highest `BARK_*`.
+pub const BARK_LAST: u8 = BARK_GAGGED;
+
+/// `[12, trigger, variant, subject]`, sent on a reliable stream to everyone: the Orange Plague says
+/// something. `trigger` is `BARK_*`; `variant` picks one of the client's lines for it (modulo how many
+/// it has); `subject` is the player the line names, or 0.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Bark(pub u8, pub u8, pub u8, pub u32);
+
 /// `[5, [[id, kills, deaths], ...]]`, sent on a reliable stream to a player who just joined.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Scores(pub u8, pub Vec<(u32, u16, u16)>);
@@ -629,7 +705,7 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 30, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
+        148, 0, 32, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[
@@ -701,6 +777,13 @@ mod tests {
         assert_eq!(encode(&message), PROFILES_FIXTURE);
         assert_eq!(decode::<Profiles>(PROFILES_FIXTURE), Some(message));
         assert_eq!(peek_tag(PROFILES_FIXTURE), Some(S_PROFILES));
+    }
+
+    #[test]
+    fn bark_matches_fixture() {
+        // Copied byte for byte in `client/src/__tests__/codec.spec.ts`.
+        assert_eq!(encode(&Bark(S_BARK, BARK_FIRED, 2, 7)), [148, 12, 4, 2, 7]);
+        assert_eq!(peek_tag(&[148, 12, 4, 2, 7]), Some(S_BARK));
     }
 
     #[test]

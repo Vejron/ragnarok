@@ -28,6 +28,9 @@ export const BLASTS = {
   cannon: { fire: 0.6, sparks: 1.6, smoke: 0.6, dirt: 0.6, chunks: 0.3 },
   bomb: { fire: 1.5, sparks: 1.4, smoke: 1.8, dirt: 1.8, chunks: 1.5 },
   wreck: { fire: 1.2, sparks: 1.1, smoke: 2, dirt: 0.5, chunks: 1, wreck: true },
+  /** The Orange Plague's foot: no fire, a lot of dust and asphalt. */
+  stomp: { fire: 0, sparks: 0.2, smoke: 2.2, dirt: 2.4, chunks: 1.6 },
+  footfall: { fire: 0, sparks: 0, smoke: 1.2, dirt: 1.2, chunks: 0.4 },
 } as const satisfies Record<string, ExplosionProfile>
 
 /** Beyond this the sparks, smoke and debris are not worth drawing, metres. */

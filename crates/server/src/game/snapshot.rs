@@ -15,6 +15,20 @@ impl Game {
             }
             EntityState { id, kind: KIND_ROOSTER, x: to_cm(x), y: to_cm(y), z: to_cm(z), yaw: to_mrad(rooster.yaw), vy: 0, flags, stance: STANCE_STANDING, knock_x: 0, knock_z: 0 }
         });
+        // The Orange Plague: his mode in the held-item bits, how far through it he is in `stance`,
+        // his health and his face in `vy`, and his wind-up's target in the knock pair (see `KIND_PLAGUE`).
+        let plague = self.world.plague.as_ref().map(|plague| {
+            let [x, y, z] = plague.position;
+            let (mode, toppling) = crate::mechanics::plague_wire_mode(plague);
+            let mut flags = FLAG_GROUNDED | ((mode << FLAG_HELD_SHIFT) & FLAG_HELD_MASK);
+            if toppling {
+                flags |= FLAG_DEAD;
+            }
+            let health = (plague.hp as f32 / PLAGUE_HP as f32 * 1000.0).ceil() as i16 + i16::from(plague.face_lost) * PLAGUE_FACE_SCALE;
+            let decimetres = |v: f32| (v * 10.0).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16;
+            let (knock_x, knock_z) = (decimetres(plague.target[0] - x), decimetres(plague.target[2] - z));
+            EntityState { id: plague.id, kind: KIND_PLAGUE, x: to_cm(x), y: to_cm(y), z: to_cm(z), yaw: to_mrad(plague.yaw), vy: health, flags, stance: crate::mechanics::plague_progress(plague), knock_x, knock_z }
+        });
         self.world
             .players
             .iter()
@@ -36,6 +50,7 @@ impl Game {
                 EntityState { id, kind: KIND_STICKMAN, x: to_cm(c.position[0]), y: to_cm(c.position[1]), z: to_cm(c.position[2]), yaw: to_mrad(c.yaw), vy: to_cm_i16(c.vy), flags, stance: if c.prone { STANCE_PRONE } else { STANCE_STANDING }, knock_x: to_cm_i16(c.knock[0]), knock_z: to_cm_i16(c.knock[1]) }
             })
             .chain(roosters)
+            .chain(plague)
             .collect()
     }
 
