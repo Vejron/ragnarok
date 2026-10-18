@@ -9,7 +9,7 @@ import {
 } from './consts'
 import { halfExtentsOf } from './kinds'
 import type { TileGround } from './terrain'
-import { beginSlide, decayKnock, desiredTranslation, f32, settleVertical } from './movement'
+import { beginSlide, decayKnock, desiredTranslation, f32, settleVertical, steerChute, toggleChute } from './movement'
 import { DAMAGE_TURRET, fromMrad, KIND_PLANE, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, type InputFrame, type VehicleState } from '@/net/codec'
 
 export type Vec3 = [number, number, number]
@@ -26,6 +26,8 @@ export interface CharacterState {
   ride: number
   /** Lying down. Mirrors `Character::prone`. */
   prone: boolean
+  /** Hanging under an open parachute; `knock` is then the glide. Mirrors `Character::chute`. */
+  chute: boolean
 }
 
 /** Moves a character shape through the static world. Abstracted so tests can use a flat floor. */
@@ -65,12 +67,13 @@ function changeStance(motor: CharacterMotor, position: Vec3, prone: boolean, wan
 }
 
 export function stepCharacter(motor: CharacterMotor, state: CharacterState, input: InputFrame, dt: number, speedScale = 1): CharacterState {
-  const stance = changeStance(motor, state.position, state.prone, (input.buttons & BUTTON_PRONE) !== 0)
+  const chute = toggleChute(state.chute, state.grounded, state.prone, input)
+  const stance = changeStance(motor, state.position, state.prone, (input.buttons & BUTTON_PRONE) !== 0 && !chute)
   // Jumping off a moving car keeps its speed, like on the server.
   const velocity = state.ride !== 0 ? motor.vehicleVelocity?.(state.ride) : undefined
   const jumped = velocity !== undefined && state.grounded && (input.buttons & BUTTON_JUMP) !== 0
-  const carried = beginSlide(jumped ? inherit(state.knock, velocity) : state.knock, state.grounded, input)
-  const { vy, desired } = desiredTranslation(state.vy, state.grounded, carried, input, dt, speedScale)
+  const carried = chute ? steerChute(state.knock, input) : beginSlide(jumped ? inherit(state.knock, velocity) : state.knock, state.grounded, input)
+  const { vy, desired } = desiredTranslation(state.vy, state.grounded, carried, input, dt, speedScale, chute)
   // Standing and not jumping: stay on the ground over a slope. Mirrors the choice in `move_character`.
   const moved = motor.move(stance.position, desired, state.grounded && vy <= 0, stance.prone)
   const translation = moved.translation
@@ -80,14 +83,16 @@ export function stepCharacter(motor: CharacterMotor, state: CharacterState, inpu
   // Walking off the roof into the air does the same. The client cannot tell a step down onto the
   // ground from a step down onto the car, so `ride` stays until the next snapshot says otherwise.
   const left = velocity !== undefined && !grounded && !jumped
+  const open = chute && !grounded
   return {
     position: [f32(x + translation[0]), f32(y + translation[1]), f32(z + translation[2])],
     yaw: fromMrad(input.yaw),
     vy: settleVertical(vy, desired[1], translation[1], grounded),
     grounded,
-    knock: decayKnock(left ? inherit(carried, velocity) : carried, grounded, (input.buttons & BUTTON_CROUCH) !== 0),
+    knock: open ? [carried[0], carried[1]] : decayKnock(left ? inherit(carried, velocity) : carried, grounded, (input.buttons & BUTTON_CROUCH) !== 0),
     ride: grounded ? state.ride : 0,
     prone: stance.prone,
+    chute: open,
   }
 }
 

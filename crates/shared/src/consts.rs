@@ -1,7 +1,7 @@
 //! Simulation and network constants. Mirrored in `client/src/sim/consts.ts`.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 32;
+pub const PROTOCOL_VERSION: u8 = 33;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -55,6 +55,8 @@ pub const BUTTON_HITCH: u16 = 1 << 9;
 /// Held by a mortar's gunner to walk the range dial out and in (W and S).
 pub const BUTTON_RANGE_UP: u16 = 1 << 10;
 pub const BUTTON_RANGE_DOWN: u16 = 1 << 11;
+/// One press: open or cut the parachute while in the air. Like a jump it is not repeated.
+pub const BUTTON_CHUTE: u16 = 1 << 12;
 
 /// Stickman movement, in metres and seconds.
 pub const WALK_SPEED: f32 = 4.0;
@@ -82,6 +84,17 @@ pub const KNOCK_MIN_SPEED: f32 = 0.05;
 pub const KNOCK_MAX_SPEED: f32 = 20.0;
 /// Terminal fall speed, so `vy` always fits its i16 cm/s wire field.
 pub const MAX_FALL_SPEED: f32 = 50.0;
+/// Parachute. An open canopy settles the fall at this speed, m/s; a faster fall is braked at `CHUTE_DRAG` m/s².
+pub const CHUTE_DESCENT: f32 = 5.0;
+pub const CHUTE_DRAG: f32 = 40.0;
+/// Glide speed under a canopy: full forward, backward (braking) and sideways, m/s.
+pub const CHUTE_FORWARD: f32 = 10.0;
+pub const CHUTE_BACK: f32 = 3.0;
+pub const CHUTE_SIDE: f32 = 5.0;
+/// How much of the gap to the wanted glide velocity is closed each tick: a canopy turns lazily.
+pub const CHUTE_STEER: f32 = 0.03;
+/// Respawns drop in from this far above the ground, metres, with the canopy open.
+pub const SPAWN_ALTITUDE: f32 = 100.0;
 
 /// Stickman collision capsule. Total height is `2 * (half_height + radius)` = 1.7 m, with the
 /// body origin at the capsule centre.
@@ -96,6 +109,8 @@ pub const PRONE_CENTRE: f32 = PRONE_RADIUS;
 /// Stance, as `EntityState::stance` on the wire. Crouching is a held button, not a stance.
 pub const STANCE_STANDING: u8 = 0;
 pub const STANCE_PRONE: u8 = 1;
+/// Hanging under an open parachute.
+pub const STANCE_CHUTE: u8 = 2;
 /// A round that hits above this height over the capsule centre hit the head.
 pub const HEAD_ZONE_Y: f32 = 0.45;
 /// What a headshot does to the damage.

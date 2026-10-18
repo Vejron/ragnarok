@@ -1,5 +1,6 @@
 import { Animator, Group, Mesh, SkinnedMesh, parseGlb, type AnimationClip, type Geometry, type Material, type Node } from '@ragnarok/engine'
 import * as THREE from 'three'
+import { Canopy } from './canopy'
 import { toonMaterial } from './toon'
 import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, PRONE_CENTRE, RUN_SPEED, STAND_CENTRE, WALK_SPEED } from '@/sim/consts'
 import { ITEM_AK5, ITEM_BANDAGE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, itemDef, type ItemDef } from '@/sim/items'
@@ -195,6 +196,7 @@ export class Character {
   /** A body thrown by its killing blow: where it has got to, relative to where it died. */
   private fling: { velocity: THREE.Vector3; spin: THREE.Vector3; offset: THREE.Vector3; groundAt: (x: number, z: number) => number } | null = null
   private readonly tumble = new THREE.Quaternion()
+  private readonly canopy: Canopy
 
   constructor(private readonly crowd: Crowd, id: number) {
     const asset = crowd.asset
@@ -207,6 +209,9 @@ export class Character {
     crowd.outfits.add(this.outfit)
     crowd.root.add(this.object)
     crowd.adjust(1)
+
+    this.canopy = new Canopy(colorFor(id))
+    this.object.add(this.canopy.root)
 
     this.chest = this.object.getObjectByName('chest') ?? null
     this.spine = this.object.getObjectByName('spine') ?? null
@@ -259,11 +264,12 @@ export class Character {
   /** Repaints the outfit: the player's chosen colour can arrive after their stickman. */
   setColor(hex: number) {
     this.outfit.color.setHex(hex)
+    this.canopy.setColor(hex)
     this.outfit.needsUpdate()
   }
 
   update(
-    position: readonly number[], yaw: number, vx: number, vz: number, grounded: boolean, dt: number, pitch = 0, crouching = false, sliding = false, prone = false,
+    position: readonly number[], yaw: number, vx: number, vz: number, grounded: boolean, dt: number, pitch = 0, crouching = false, sliding = false, prone = false, chute = false,
   ) {
     this.position.set(position[0]!, position[1]!, position[2]!)
     this.pitch = pitch
@@ -283,6 +289,7 @@ export class Character {
     const right = vx * cos - vz * sin
     const speed = Math.hypot(forward, right)
 
+    this.canopy.update(chute && !this.down, dt)
     this.air = chase(this.air, !grounded && !this.down ? 1 : 0, AIR_RATE, dt)
     this.death = chase(this.death, this.down ? 1 : 0, DEATH_RATE, dt)
     this.crouch = chase(this.crouch, crouching ? 1 : 0, CROUCH_RATE, dt)
@@ -538,6 +545,7 @@ export class Character {
   }
 
   dispose() {
+    this.canopy.dispose()
     this.object.removeFromParent()
     this.crowd.outfits.delete(this.outfit)
     this.outfit.dispose()

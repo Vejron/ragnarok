@@ -10,6 +10,7 @@ import { buildWater, disposeWater } from './render/water'
 import { shellOf } from './sim/carve'
 import { RapierMotor, trunkColliderIndex } from './sim/physics'
 import type { Surfaces } from './sim/surface'
+import type { Waters } from './sim/waters'
 import { groundOf, type Terrain } from './sim/terrain'
 import type { VehicleDriver } from './sim/vehicle'
 import type { TileData, TileRef, WorldData } from './world'
@@ -29,6 +30,7 @@ export class WorldView {
   world: WorldData | null = null
   terrain: Terrain | null = null
   surfaces: Surfaces | null = null
+  waters: Waters | null = null
   motor: RapierMotor | null = null
   driver: VehicleDriver | null = null
 
@@ -67,6 +69,7 @@ export class WorldView {
     if (water) this.waterRoot.add(water)
     this.terrain?.set(ref, ground)
     this.surfaces?.add(ref, tile, ground)
+    this.waters?.set(ref, ground, tile.water)
     this.groups.set(key, group)
     // Tiles already in place were shaded without this one beside them: close the seams.
     if (this.terrain && ground) {
@@ -93,6 +96,7 @@ export class WorldView {
       this.groups.delete(key)
       this.terrain?.delete(ref)
       this.surfaces?.delete(ref)
+      this.waters?.delete(ref)
       this.motor?.removeTile(walk)
       this.driver?.removeTile(drive)
     }

@@ -1,5 +1,5 @@
 import { decode, encode } from '@msgpack/msgpack'
-import { CAR_SEATS, MAX_PACKET, PROTOCOL_VERSION, STANCE_PRONE } from '@/sim/consts'
+import { CAR_SEATS, MAX_PACKET, PROTOCOL_VERSION, STANCE_CHUTE, STANCE_PRONE } from '@/sim/consts'
 import { HOTBAR_SLOTS, type ItemSlot } from '@/sim/items'
 
 /**
@@ -177,6 +177,8 @@ export interface EntityState {
   crouching: boolean
   /** Lying down. */
   prone: boolean
+  /** Hanging under an open parachute. */
+  chute: boolean
   /** Knockback velocity from being hit by a car, m/s. */
   knockX: number
   knockZ: number
@@ -486,6 +488,7 @@ export function entityState(raw: readonly number[]): EntityState {
     dead: (flags! & FLAG_DEAD) !== 0,
     crouching: (flags! & FLAG_CROUCHING) !== 0,
     prone: stance === STANCE_PRONE,
+    chute: stance === STANCE_CHUTE,
     knockX: knockX! / CM,
     knockZ: knockZ! / CM,
     held: (flags! & FLAG_HELD_MASK) >> FLAG_HELD_SHIFT,

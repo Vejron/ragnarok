@@ -16,7 +16,7 @@ const flat: CharacterMotor = {
   },
 }
 
-const standing = (): CharacterState => ({ position: [0, STANDING_Y, 0], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false })
+const standing = (): CharacterState => ({ position: [0, STANDING_Y, 0], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false })
 const forward = (seq: number, buttons = 0): InputFrame => ({ seq, strafe: 0, forward: 127, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 })
 
 /** What the server would compute: the same inputs from the same start. */
@@ -47,7 +47,7 @@ describe('Predictor', () => {
     predictor.acknowledge(3)
     expect(predictor.pendingCount).toBe(2)
     // The server stepped the player out at seq 3 and reports where; 4 and 5 walk on from there.
-    const outside: CharacterState = { position: [10, STANDING_Y, 10], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false }
+    const outside: CharacterState = { position: [10, STANDING_Y, 10], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false }
     predictor.reconcile(3, outside)
     const expected = [forward(4), forward(5)].reduce((state, input) => stepCharacter(flat, state, input, TICK_DT), outside)
     expect(predictor.state.position).toEqual(expected.position)
@@ -153,7 +153,7 @@ describe('knockback and cars', () => {
     const idle = (seq: number): InputFrame => ({ seq, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 })
     for (let seq = 1; seq <= 6; seq++) predictor.apply(idle(seq))
     // By input 3 a car had thrown the player 4 m/s towards +X and up.
-    const hit: CharacterState = { position: [0.2, STANDING_Y + 0.3, 0], yaw: 0, vy: 3, grounded: false, knock: [4, 0], ride: 0, prone: false }
+    const hit: CharacterState = { position: [0.2, STANDING_Y + 0.3, 0], yaw: 0, vy: 3, grounded: false, knock: [4, 0], ride: 0, prone: false, chute: false }
     predictor.reconcile(3, hit)
     const expected = [4, 5, 6].reduce((state, seq) => stepCharacter(flat, state, idle(seq), TICK_DT), hit)
     expect(predictor.state.position).toEqual(expected.position)

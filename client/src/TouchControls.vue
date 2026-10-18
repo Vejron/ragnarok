@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { reactive } from 'vue'
 import type { InputController } from './sim/input'
-import { BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_RELOAD, BUTTON_RUN, BUTTON_USE } from './sim/consts'
+import { BUTTON_CHUTE, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_RELOAD, BUTTON_RUN, BUTTON_USE } from './sim/consts'
 
 const props = defineProps<{ input: InputController; seat: string | null; canSwitch?: boolean }>()
 
@@ -93,6 +93,7 @@ const release = (mask: number) => () => props.input.hold(mask, false)
     <button v-if="!seat" class="btn crouch" @pointerdown.prevent="press(BUTTON_CROUCH)($event)" @pointerup="release(BUTTON_CROUCH)()" @pointercancel="release(BUTTON_CROUCH)()">CROUCH</button>
     <button v-if="seat === 'aviator' || seat === 'roadster'" class="btn crouch" @pointerdown.prevent="press(BUTTON_CROUCH)($event)" @pointerup="release(BUTTON_CROUCH)()" @pointercancel="release(BUTTON_CROUCH)()">{{ seat === 'roadster' ? 'BRAKE' : 'BOMB' }}</button>
     <button class="btn fire" @pointerdown.prevent="press(BUTTON_FIRE)($event)" @pointerup="release(BUTTON_FIRE)()" @pointercancel="release(BUTTON_FIRE)()">{{ seat === 'drone' ? 'BOOM' : 'FIRE' }}</button>
+    <button v-if="!seat" class="btn chute" @pointerdown.prevent="input.tap(BUTTON_CHUTE)">CHUTE</button>
     <button v-if="!seat" class="btn reload" @pointerdown.prevent="input.tap(BUTTON_RELOAD)">RELOAD</button>
     <button v-else-if="canSwitch" class="btn reload" @pointerdown.prevent="input.tap(BUTTON_RELOAD)">SEAT</button>
   </div>
@@ -121,6 +122,7 @@ const release = (mask: number) => () => props.input.hold(mask, false)
 .reload { right: calc(max(18px, env(safe-area-inset-right)) + 96px); bottom: max(24px, env(safe-area-inset-bottom)); background: rgba(255, 190, 11, 0.7); font-size: 10px; }
 .jump { right: max(26px, env(safe-area-inset-right)); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 100px); }
 .sink { right: calc(max(26px, env(safe-area-inset-right)) + 80px); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 100px); }
+.chute { right: calc(max(18px, env(safe-area-inset-right)) + 96px); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 60px); font-size: 10px; }
 .crouch { right: calc(max(26px, env(safe-area-inset-right)) + 80px); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 100px); font-size: 10px; }
 .use { right: max(26px, env(safe-area-inset-right)); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 180px); }
 </style>

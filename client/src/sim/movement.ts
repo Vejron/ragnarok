@@ -1,5 +1,5 @@
 import {
-  BUTTON_CROUCH, BUTTON_JUMP, BUTTON_PRONE, BUTTON_SLIDE, BUTTON_RUN, CROUCH_SPEED, GRAVITY, JUMP_SPEED, KNOCK_KEEP_AIR, KNOCK_KEEP_GROUND, KNOCK_MIN_SPEED, MAX_FALL_SPEED, RUN_SPEED,
+  BUTTON_CHUTE, BUTTON_CROUCH, CHUTE_BACK, CHUTE_DESCENT, CHUTE_DRAG, CHUTE_FORWARD, CHUTE_SIDE, CHUTE_STEER, BUTTON_JUMP, BUTTON_PRONE, BUTTON_SLIDE, BUTTON_RUN, CROUCH_SPEED, GRAVITY, JUMP_SPEED, KNOCK_KEEP_AIR, KNOCK_KEEP_GROUND, KNOCK_MIN_SPEED, MAX_FALL_SPEED, RUN_SPEED,
   PRONE_SPEED, SLIDE_KEEP, SLIDE_RETRIGGER, SLIDE_SPEED, WALK_SPEED,
 } from './consts'
 import { fromAxis, fromMrad, type InputFrame } from '@/net/codec'
@@ -27,6 +27,31 @@ export function wishVelocity(input: InputFrame, scale = 1): [number, number] {
   return [f32(x * speed * scale), f32(z * speed * scale)]
 }
 
+/** Whether the parachute is open after this input. Mirrors `toggle_chute`. */
+export function toggleChute(chute: boolean, grounded: boolean, prone: boolean, input: InputFrame): boolean {
+  if (grounded) return false
+  if (!(input.buttons & BUTTON_CHUTE)) return chute
+  return chute ? false : !prone
+}
+
+/** The velocity a canopy is steered towards, `[x, z]` in m/s. Mirrors `glide_velocity`. */
+export function glideVelocity(input: InputFrame): [number, number] {
+  const strafe = fromAxis(input.strafe)
+  const forward = fromAxis(input.forward)
+  const ahead = f32(forward >= 0 ? forward * CHUTE_FORWARD : forward * CHUTE_BACK)
+  const side = f32(strafe * CHUTE_SIDE)
+  const yaw = fromMrad(input.yaw)
+  const sin = Math.sin(yaw)
+  const cos = Math.cos(yaw)
+  return [f32(f32(-sin * ahead) + f32(cos * side)), f32(f32(-cos * ahead) - f32(sin * side))]
+}
+
+/** One tick of canopy steering. Mirrors `steer_chute`. */
+export function steerChute(knock: readonly [number, number], input: InputFrame): [number, number] {
+  const [wx, wz] = glideVelocity(input)
+  return [f32(knock[0] + f32(f32(wx - knock[0]) * CHUTE_STEER)), f32(knock[1] + f32(f32(wz - knock[1]) * CHUTE_STEER))]
+}
+
 export function desiredTranslation(
   vy: number,
   grounded: boolean,
@@ -34,9 +59,15 @@ export function desiredTranslation(
   input: InputFrame,
   dt: number,
   speedScale = 1,
+  chute = false,
 ): { vy: number; desired: [number, number, number] } {
   let next = vy
   if (grounded && input.buttons & BUTTON_JUMP) next = JUMP_SPEED
+  if (chute) {
+    const target = -CHUTE_DESCENT
+    next = f32(next < target ? Math.min(next + CHUTE_DRAG * dt, target) : Math.max(next - GRAVITY * dt, target))
+    return { vy: next, desired: [f32(knock[0] * dt), f32(next * dt), f32(knock[1] * dt)] }
+  }
   next = f32(Math.max(next - GRAVITY * dt, -MAX_FALL_SPEED))
   const [vx, vz] = wishVelocity(input, speedScale)
   return { vy: next, desired: [f32(f32(vx + knock[0]) * dt), f32(next * dt), f32(f32(vz + knock[1]) * dt)] }

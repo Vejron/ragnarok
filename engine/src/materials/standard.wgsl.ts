@@ -51,6 +51,10 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   let mapped = textureSample(normalMap, mapSampler, in.uv).xyz * 2.0 - 1.0;
   let material = materials[in.ids.x];
   let flags = material.params.x;
+  // Mirroring for a reflection: what is under the water plane is not part of the picture.
+  if (frame.lightCount.z > 0.5 && in.world.y < frame.lightCount.y) {
+    discard;
+  }
   var rgb = in.color.rgb * texel.rgb;
   if ((flags & MAT_LIT) != 0u) {
     var n = normalize(in.normal);

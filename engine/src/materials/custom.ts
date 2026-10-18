@@ -78,6 +78,9 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   }
   let flags = materials[in.ids.x].params.x;
   let c = surface(Surface(in.world, n, in.color, in.uv, in.custom, front, in.viewDepth));
+  if (frame.lightCount.z > 0.5 && in.world.y < frame.lightCount.y) {
+    discard;
+  }
   return vec4f(applyFog(c.rgb, flags, in.viewDepth), c.a);
 }
 `

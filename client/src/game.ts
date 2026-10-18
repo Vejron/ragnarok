@@ -36,6 +36,8 @@ import { damageSmoke, rocketTrail } from './render/vehiclesmoke'
 import { BLASTS, explosion, type ExplosionProfile } from './render/explosion'
 import { Gore } from './render/gore'
 import { Surfaces, SURFACE_GRASS } from './sim/surface'
+import { Waters } from './sim/waters'
+import { splash } from './render/splash'
 import { Pickups } from './render/pickups'
 import { TrajectoryView } from './render/trajectory'
 import { MortarArc } from './render/mortar-arc'
@@ -66,7 +68,7 @@ import { HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, HitFeedback }
 import { buildGround } from './render/world'
 import { Replica } from './net/replica'
 import { TileStreamer } from './stream'
-import { loadManifest, type WorldData } from './world'
+import { loadManifest, NO_WATER, type WorldData } from './world'
 import { WorldView } from './worldview'
 import type { HudStats } from './hud'
 import { Notices } from './notices'
@@ -80,6 +82,12 @@ export type { FeedEntry, ScoreRow, Side } from './scoreboard'
 export type { Blip } from './blips'
 
 /** How the minimap tells sides apart. */
+/** Feet this deep (metres) under the surface are in the water. */
+const WADE_DEPTH = 0.15
+/** Falling this high (metres) over the ground, a hint offers the parachute. */
+const CHUTE_PROMPT_HEIGHT = 4
+/** Wading ripples are drawn within this many metres of the camera. */
+const WADE_RIPPLE_RANGE = 60
 const MAP_SIDES = { colorOf: (id: number) => cssColor(colorFor(id)), isBot, allies }
 
 interface CarPlacement {
@@ -169,6 +177,7 @@ export class Game {
   private world: WorldData | null = null
   private terrain: Terrain | null = null
   private surfaces: Surfaces | null = null
+  private waters: Waters | null = null
   /** True from the welcome until the joiner's catch-up `destroyed` arrives: that one is state, not news. */
   private awaitingCatchUp = false
   private readonly cars = new Map<number, VehicleModel>()
@@ -317,6 +326,7 @@ export class Game {
     this.scene.scene.add(buildGround(world.halfExtent, world.groundCell > 0 ? -0.05 : 0))
     this.terrain = this.view.terrain = new Terrain(world.halfExtent, world.tileSize)
     this.surfaces = this.view.surfaces = new Surfaces(world.halfExtent, world.tileSize)
+    this.waters = this.view.waters = new Waters(world.halfExtent, world.tileSize)
     this.scene.groundAt = (x, z) => this.terrain?.heightAt(x, z) ?? 0
     const motor = await RapierMotor.create(world)
     this.motor = this.view.motor = motor
@@ -327,7 +337,7 @@ export class Game {
     // Until the server places us, walk around solo from the first spawn point.
     const [x, z] = world.spawns[0] ?? [0, 0]
     await this.tiles.prime(x, z)
-    this.predictor = new Predictor(motor, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false })
+    this.predictor = new Predictor(motor, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false })
     this.predictor.speedScale = (input) => aimSpeedScale(this.hotbar[Math.min(input.slot, HOTBAR_SLOTS - 1)]?.item ?? ITEM_NONE, input.buttons)
     this.avatar(0)
     if (this.disposed) return
@@ -475,7 +485,7 @@ export class Game {
           // The stickman is parked inside the car. Inputs still go out; the server just applies them to the car.
           this.predictor?.acknowledge(message.ack)
         } else if (own && this.predictor) {
-          this.predictor.reconcile(message.ack, { position: [own.x, own.y, own.z], yaw: own.yaw, vy: own.vy, grounded: own.grounded, knock: [own.knockX, own.knockZ], ride: message.ride, prone: own.prone })
+          this.predictor.reconcile(message.ack, { position: [own.x, own.y, own.z], yaw: own.yaw, vy: own.vy, grounded: own.grounded, knock: [own.knockX, own.knockZ], ride: message.ride, prone: own.prone, chute: own.chute })
         }
         break
       }
@@ -625,7 +635,9 @@ export class Game {
     me.held = this.hotbar[this.input.selectedSlot]?.item ?? ITEM_NONE
     // Face where the camera looks, immediately, rather than the last ticked yaw.
     me.update(position, flying ? local.yaw : this.input.yaw, localVx, localVz, local.grounded, dt, flying ? 0 : this.input.pitch, this.crouching || flying,
-      this.crouching && local.grounded && Math.hypot(local.knock[0], local.knock[1]) > SLIDE_MIN_SPEED, local.prone)
+      this.crouching && local.grounded && Math.hypot(local.knock[0], local.knock[1]) > SLIDE_MIN_SPEED, local.prone, local.chute)
+    if (!seated && this.hp > 0) this.wade(0, position[0], position[1], position[2], Math.hypot(localVx, localVz), dt)
+    else this.wading.delete(0)
     const ride = seated ? cars.get(this.seat!.vehicle) : undefined
     const gunner = ride !== undefined && vehicleDef(ride.kind).gun && this.seat!.index === 1
     // A Strv S's driver fires the gun, which only the barrel's elevation aims: the hull turns to aim sideways.
@@ -799,10 +811,12 @@ export class Game {
       avatar.held = state.held
       if (!state.dead) this.blobFoot(blobs, state.x, state.y, state.z)
       avatar.update([state.x, state.y, state.z], state.yaw, state.velocity[0], state.velocity[1], state.grounded, dt, 0, state.crouching,
-        state.crouching && state.grounded && Math.hypot(state.knockX, state.knockZ) > SLIDE_MIN_SPEED, state.prone)
+        state.crouching && state.grounded && Math.hypot(state.knockX, state.knockZ) > SLIDE_MIN_SPEED, state.prone, state.chute)
+      if (!state.dead) this.wade(id, state.x, state.y, state.z, Math.hypot(state.velocity[0], state.velocity[1]), dt)
     }
     for (const [id, avatar] of this.avatars) {
       if (!seen.has(id)) {
+        this.wading.delete(id)
         avatar.dispose()
         this.avatars.delete(id)
       }
@@ -818,6 +832,7 @@ export class Game {
     this.voice.setTalking(this.localId !== null && this.hp > 0 && this.input.isHeld('KeyV'))
     this.voice.update(this.localId, position, nearby)
     blobs.end()
+    this.mirrorWater()
     this.perf.beforeRender()
     this.scene.render()
     this.perf.end(ticks)
@@ -929,18 +944,19 @@ export class Game {
       // A bullet ended here; `shooter` is its id. It is drawn until it gets there.
       const bullet = this.bullets.get(shot.shooter)
       if (bullet) bullet.endTicks = bulletTicksTo(bullet.spawn, [shot.x, shot.y, shot.z])
-      if (bullet?.spawn.item === ITEM_SNIPER) this.effects.burst(to, 0.8)
+      if (this.watery(to, bullet?.spawn.item === ITEM_SNIPER ? 0.45 : 0.25)) { /* splashed */ }
+      else if (bullet?.spawn.item === ITEM_SNIPER) this.effects.burst(to, 0.8)
       else this.effects.pelletStrike(to)
       if (bullet?.spawn.shooter === this.localId) this.view.chipped(to.x, to.y, to.z, itemDef(bullet.spawn.item)?.damage ?? 0)
     } else if (shot.weapon === WEAPON_MG) {
       // The tracer was drawn when the gun fired; this is a round striking something.
-      this.effects.strike(to)
+      if (!this.watery(to, 0.25)) this.effects.strike(to)
     } else if (shot.weapon === WEAPON_PELLET) {
       // A further pellet of a spread: the blast and the sound came with the first.
       const gun = hitscanGunFor(WEAPON_SHOTGUN)
       const from = this.muzzleOf(shot.shooter)
       if (!gun || (from && from.distanceTo(to) >= gun.range - 1)) return
-      this.effects.pelletStrike(to)
+      if (!this.watery(to, 0.2)) this.effects.pelletStrike(to)
       if (shot.shooter === this.localId) this.view.chipped(to.x, to.y, to.z, gun.damage)
     } else if (shot.weapon === WEAPON_BOMB) {
       this.blast(to, BOMB_RADIUS, BLASTS.bomb)
@@ -968,7 +984,7 @@ export class Game {
       this.sounds.scrape(shot.shooter)
     } else if (shot.weapon === WEAPON_SNIPER) {
       // The round is drawn in flight; this is where it landed.
-      this.effects.burst(to, 0.8)
+      if (!this.watery(to, 0.45)) this.effects.burst(to, 0.8)
     } else if ((gun = hitscanGunFor(shot.weapon))) {
       const from = this.muzzleOf(shot.shooter)
       this.avatars.get(shot.shooter === this.localId ? 0 : shot.shooter)?.fire()
@@ -978,9 +994,10 @@ export class Game {
         if (gun.pellets > 1) {
           // No rays for a spread: a blast at the muzzle, then each pellet is drawn where it landed.
           this.effects.blast(from, to.clone().sub(from).normalize())
-          if (landed) this.effects.pelletStrike(to)
+          if (landed && !this.watery(to, 0.2)) this.effects.pelletStrike(to)
         } else {
           this.effects.tracer(from, to, landed)
+          if (landed) this.watery(to, 0.25)
         }
         this.muzzleLight(from, 0xffd890, 1.6, 6)
       }
@@ -990,6 +1007,49 @@ export class Game {
     }
   }
 
+  /**
+   * Splashes where something of about `size` metres struck, when `at` is at or under the water surface
+   * (the server reports the carved bed). Returns whether it did.
+   */
+  private watery(at: THREE.Vector3, size: number, speed = 10): boolean {
+    const level = this.waters?.levelAt(at.x, at.z) ?? NO_WATER
+    if (level === NO_WATER || at.y > level + 0.05) return false
+    splash(this.fxWorld, { x: at.x, y: level, z: at.z }, size, speed)
+    return true
+  }
+
+  /** Picks the water level to mirror this frame, if any water is about the camera. */
+  private mirrorWater() {
+    const camera = this.scene.camera.position
+    const look = this.scene.camera.getWorldDirection({ x: 0, y: 0, z: 0 })
+    const level = this.waters?.planeNear(camera.x, camera.z, look.x, look.z) ?? null
+    this.scene.setWaterPlane(level)
+  }
+
+  private readonly wading = new Map<number, { wet: boolean; ripple: number }>()
+
+  /** Splashes when a person's feet go into water, and ripples while they wade. `speed` is how fast they move, m/s. */
+  private wade(id: number, x: number, y: number, z: number, speed: number, dt: number) {
+    const level = this.waters?.levelAt(x, z) ?? NO_WATER
+    const wet = level !== NO_WATER && level - y > WADE_DEPTH
+    const was = this.wading.get(id)
+    if (!was) {
+      // First seen: already wet is not a splash.
+      this.wading.set(id, { wet, ripple: 0 })
+      return
+    }
+    if (wet && !was.wet) splash(this.fxWorld, { x, y: level, z }, 0.45, 2 + Math.min(speed, 8))
+    else if (!wet && was.wet && speed > 1) splash(this.fxWorld, { x, y: level === NO_WATER ? y : level, z }, 0.3, 1)
+    if (wet && speed > 1) {
+      was.ripple -= dt
+      if (was.ripple <= 0 && Math.hypot(this.scene.camera.position.x - x, this.scene.camera.position.z - z) < WADE_RIPPLE_RANGE) {
+        this.effects.ripple({ x, y: level + 0.02, z }, 0.3)
+        was.ripple = 0.35
+      }
+    }
+    was.wet = wet
+  }
+
   /** A short flash of light at a gun's muzzle: it lights the barrel, the hull and the ground in front of it. */
   private muzzleLight(at: THREE.Vector3, color: number, intensity: number, radius: number) {
     this.scene.scene.lights.flash(at.x, at.y, at.z, { color, intensity, radius, life: 0.09 })
@@ -997,6 +1057,12 @@ export class Game {
 
   /** A heavy blast: the layered fire, sparks, dust and debris, a flash, and a shove of the camera if it is close. */
   private blast(at: THREE.Vector3, radius: number, profile: ExplosionProfile) {
+    // On water it is a column of spray, not fire and dirt.
+    if (this.watery(at, radius * 0.45, 14)) {
+      const distance = at.distanceTo(this.scene.camera.position)
+      if (distance < radius * 8) this.chase.kick(Math.min(0.4, (radius / 10) * (1 - distance / (radius * 8))))
+      return
+    }
     this.effects.burst(at, radius)
     explosion(this.fxWorld, this.debris, at, radius, profile)
     // A flash that lights the ground and what stands on it, and a shockwave racing out over the ground.
@@ -1324,6 +1390,8 @@ export class Game {
       skids: this.skids,
       groundAt: (x, z) => this.scene.groundAt(x, z),
       surfaceAt: (x, z) => this.surfaces?.at(x, z) ?? SURFACE_GRASS,
+      waterAt: (x, z) => this.waters?.levelAt(x, z) ?? NO_WATER,
+      ripple: (at, size) => this.effects.ripple(at, size),
       camera: this.scene.camera.position,
     }
     return this.fxWorldMade
@@ -1575,6 +1643,10 @@ export class Game {
   private prompt(position: readonly number[], cars: ReadonlyMap<number, CarPlacement>): string | null {
     if (this.localId === null) return null
     if (this.seat) return this.seat.kind === KIND_DRONE ? null : 'E: get out'
+    const me = this.predictor?.state
+    if (me && this.hp > 0 && !me.grounded && position[1]! - (this.terrain?.heightAt(position[0]!, position[2]!) ?? 0) > CHUTE_PROMPT_HEIGHT) {
+      return me.chute ? 'G: cut the parachute' : 'G: open the parachute'
+    }
     // The server hands over an item before it boards a car, so the hint follows the same order.
     const pickup = this.pickupInReach(position)
     if (pickup) return `E: take ${itemDef(pickup.item)?.name ?? 'item'}`

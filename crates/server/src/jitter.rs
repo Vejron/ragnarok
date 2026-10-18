@@ -5,7 +5,7 @@
 //! repeats the last input on underrun (minus one-shot buttons), and drops back to `TARGET` if the
 //! queue grows past `MAX` (the client's clock is running ahead, or a burst arrived).
 
-use shared::consts::{BUTTON_FIRE, BUTTON_JUMP, BUTTON_RELOAD, BUTTON_SLIDE, BUTTON_USE};
+use shared::consts::{BUTTON_CHUTE, BUTTON_FIRE, BUTTON_JUMP, BUTTON_RELOAD, BUTTON_SLIDE, BUTTON_USE};
 use shared::protocol::InputFrame;
 use std::collections::VecDeque;
 
@@ -67,7 +67,7 @@ impl JitterBuffer {
         // stand still.
         self.starved = self.starved.saturating_add(1);
         let mut repeat = self.last;
-        repeat.buttons &= !(BUTTON_JUMP | BUTTON_USE | BUTTON_FIRE | BUTTON_SLIDE | BUTTON_RELOAD);
+        repeat.buttons &= !(BUTTON_JUMP | BUTTON_USE | BUTTON_FIRE | BUTTON_SLIDE | BUTTON_RELOAD | BUTTON_CHUTE);
         if self.starved > STARVE_LIMIT {
             repeat = InputFrame { seq: repeat.seq, strafe: 0, forward: 0, yaw: repeat.yaw, buttons: 0, pitch: repeat.pitch, view: repeat.view, slot: repeat.slot };
         }

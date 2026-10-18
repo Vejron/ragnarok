@@ -1,19 +1,20 @@
 use super::Mechanic;
 use crate::game::World;
 use crate::physics::{Character, STANDING_Y};
+use shared::consts::SPAWN_ALTITUDE;
 use shared::quant::from_cm;
 use shared::world::{Building, WorldFile};
 
-/// Drops new players at a spawn point. `Combat` calls `place` again when a dead player respawns.
+/// Drops new human players in under an open parachute from `SPAWN_ALTITUDE` above a spawn point. `Combat` calls `place` again when a dead player respawns.
 /// A player who chose their own spawn points (`Player::spawns`) uses them in turn; anyone else gets
 /// a random outdoor one of the world's. Those are sorted centre-first by `osm-import`; picking among
 /// the first few keeps players close.
 pub struct Spawn;
 
-/// Spawns are slightly above ground so a player never starts intersecting it.
-const SPAWN_DROP: f32 = 0.5;
 /// How many of the most central spawn points new players are spread over.
 const NEARBY_SPAWNS: usize = 6;
+/// Bots spawn slightly above ground so they never start intersecting it.
+const SPAWN_DROP: f32 = 0.5;
 /// A chosen spawn point must be at least this far from any wall, centimetres.
 const WALL_CLEARANCE: i32 = 100;
 
@@ -64,11 +65,14 @@ pub(super) fn place(world: &mut World, id: u32) {
         let index = (world.rng.next_u64() % nearby as u64) as usize;
         world.map.spawns[index]
     };
+    // Bots cannot steer a canopy, so they start on the ground.
+    let drop = !world.bots.contains_key(&id);
     if let Some(player) = world.players.get_mut(&id) {
         let (x, z) = (from_cm(point[0]), from_cm(point[1]));
         let ground = world.map.ground.height_at(x, z);
         player.character = Character {
-            position: [x, ground + STANDING_Y + SPAWN_DROP, z],
+            position: [x, ground + STANDING_Y + if drop { SPAWN_ALTITUDE } else { SPAWN_DROP }, z],
+            chute: drop,
             ..Default::default()
         };
     }
@@ -141,5 +145,17 @@ mod tests {
         let id = join(&mut game, vec![[-5_000, -5_000]]);
         assert!(game.world.players[&id].spawns.is_empty());
         assert_eq!(at(&game, id), [0, 0]);
+    }
+
+    #[test]
+    fn a_player_drops_in_under_an_open_chute_and_a_bot_starts_on_the_ground() {
+        let mut game = Game::new(map(), 0).unwrap();
+        let id = join(&mut game, vec![]);
+        let character = game.world.players[&id].character;
+        assert!(character.chute && !character.grounded);
+        assert!((character.position[1] - (STANDING_Y + SPAWN_ALTITUDE)).abs() < 1e-3);
+        let bot = game.add_bot([0.0, 0.0], 1, vec![]).unwrap();
+        let character = game.world.players[&bot].character;
+        assert!(!character.chute && character.position[1] < 2.0);
     }
 }

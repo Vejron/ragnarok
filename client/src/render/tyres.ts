@@ -6,6 +6,7 @@ import { halfExtentsOf } from '@/sim/kinds'
 import { tyreSlip, wheelLayout, type WheelLayout } from '@/sim/slip'
 import { SURFACE_ASPHALT, SURFACE_DIRT, SURFACE_GRASS, SURFACE_SAND, SURFACE_WATER } from '@/sim/surface'
 import type { Particles } from './particles'
+import { splash } from './splash'
 import type { Skidmarks } from './skidmarks'
 
 /** What every vehicle's effects draw into and look things up in. */
@@ -16,6 +17,10 @@ export interface FxWorld {
   skids: Skidmarks
   groundAt(x: number, z: number): number
   surfaceAt(x: number, z: number): number
+  /** The water surface height at a point, `NO_WATER` where there is none. */
+  waterAt?(x: number, z: number): number
+  /** Rings running out over the water surface from `at`, for a splash of about `size` metres. */
+  ripple?(at: { x: number; y: number; z: number }, size: number): void
   /** Where the camera is, so far-away vehicles can skip the particles. */
   camera: Vec3
 }
@@ -55,6 +60,8 @@ export class VehicleFx {
   private peak = 0
   private surface = SURFACE_GRASS
   private down = true
+  /** Whether a wheel was in water last frame. */
+  private wet = false
   private airTime = 0
   private fall = 0
   private landed = 0
@@ -176,6 +183,7 @@ export class VehicleFx {
     const layout = this.layout!
     const upright = new THREE.Vector3(0, 1, 0).applyQuaternion(this.q).y > 0.5
     let touching = !upright
+    const wet: THREE.Vector3[] = []
     layout.contacts.forEach((local, wheel) => {
       const contact = this.contact.set(local[0], local[1], local[2]).applyQuaternion(this.q).add(this.lastPosition!)
       const steered = wheel < layout.steered
@@ -204,6 +212,7 @@ export class VehicleFx {
       const moving = Math.abs(this.speed)
       if (surface === SURFACE_WATER) {
         world.skids.lift(track)
+        wet.push(contact.clone())
         if (particles && moving > 3 && Math.random() < dt * moving * 1.2) this.spray(world, contact)
         return
       }
@@ -225,6 +234,15 @@ export class VehicleFx {
       if (Math.random() < dt * 22 * kick) this.cloud(world, contact, look.cloud, surface === SURFACE_GRASS ? 0.28 : 0.4, [0.7, 3.6], 2.0)
       if (surface !== SURFACE_GRASS && slip > 0.2 && Math.random() < dt * 60 * slip) this.gravel(world, contact)
     })
+    // The first wheel into water, or a drop into it, throws a splash that grows with the speed.
+    const wading = wet[0]
+    if (wading && !this.wet && particles) {
+      const level = world.waterAt?.(wading.x, wading.z)
+      const surface = level !== undefined && Number.isFinite(level) ? level : wading.y
+      const hard = Math.max(Math.abs(this.speed), -this.velocity.y)
+      if (hard > 2) splash(world, { x: wading.x, y: surface, z: wading.z }, Math.min(2.5, 0.6 + hard * 0.08), hard)
+    }
+    this.wet = wet.length > 0
     // A landing is the first wheel touching after a real drop through the air.
     if (touching) {
       if (!this.down && this.airTime > 0.25 && this.fall > 3) this.landed = this.fall
@@ -267,8 +285,12 @@ export class VehicleFx {
   }
 
   private spray(world: FxWorld, at: THREE.Vector3) {
+    // The wheel's contact is the bed; the spray starts at the surface.
+    const level = world.waterAt?.(at.x, at.z)
+    const top = level !== undefined && Number.isFinite(level) ? level : at.y
+    if (Math.random() < 0.3) world.ripple?.({ x: at.x, y: top + 0.02, z: at.z }, 0.35)
     world.smoke.spawn({
-      position: [at.x, at.y + 0.1, at.z],
+      position: [at.x, top + 0.1, at.z],
       velocity: [this.side.x * rand(-2.5, 2.5) + this.velocity.x * 0.3, rand(2, 4.5), this.side.z * rand(-2.5, 2.5) + this.velocity.z * 0.3],
       life: rand(0.5, 0.9),
       size: [0.25, 1.1],

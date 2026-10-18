@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { beginSlide, decayKnock, desiredTranslation, wishVelocity } from '@/sim/movement'
+import { beginSlide, decayKnock, desiredTranslation, steerChute, toggleChute, wishVelocity } from '@/sim/movement'
 import { aimSpeedScale, ITEM_AK5, ITEM_GRENADE, ITEM_SNIPER } from '@/sim/items'
-import { BUTTON_ALT, BUTTON_CROUCH, BUTTON_JUMP, BUTTON_RUN, BUTTON_SLIDE, CROUCH_SPEED, SLIDE_SPEED, RUN_SPEED, TICK_DT, WALK_SPEED } from '@/sim/consts'
+import { BUTTON_ALT, BUTTON_CHUTE, BUTTON_CROUCH, CHUTE_DESCENT, CHUTE_FORWARD, TICK_RATE, BUTTON_JUMP, BUTTON_RUN, BUTTON_SLIDE, CROUCH_SPEED, SLIDE_SPEED, RUN_SPEED, TICK_DT, WALK_SPEED } from '@/sim/consts'
 
 const frame = (strafe: number, forward: number, yaw: number, buttons = 0) => ({ seq: 1, strafe, forward, yaw, buttons, pitch: 0, view: 0, slot: 0 })
 
@@ -65,5 +65,28 @@ describe('movement', () => {
     let air: [number, number] = [6, 0]
     for (let i = 0; i < 30; i++) air = decayKnock(air, false)
     expect(air[0]).toBeGreaterThan(4)
+  })
+
+  it('toggles the chute in the air only', () => {
+    const press = frame(0, 0, 0, BUTTON_CHUTE)
+    expect(toggleChute(false, false, false, press)).toBe(true)
+    expect(toggleChute(true, false, false, press)).toBe(false)
+    expect(toggleChute(false, true, false, press)).toBe(false)
+    expect(toggleChute(true, true, false, frame(0, 0, 0))).toBe(false)
+    expect(toggleChute(true, false, false, frame(0, 0, 0))).toBe(true)
+    expect(toggleChute(false, false, true, press)).toBe(false)
+  })
+
+  it('settles an open chute at a steady descent and glides forward', () => {
+    let vy = -40
+    for (let i = 0; i < TICK_RATE * 3; i++) vy = desiredTranslation(vy, false, [0, 0], frame(0, 0, 0), TICK_DT, 1, true).vy
+    expect(vy).toBeCloseTo(-CHUTE_DESCENT, 4)
+    let knock: readonly [number, number] = [0, 0]
+    for (let i = 0; i < TICK_RATE * 5; i++) knock = steerChute(knock, frame(0, 127, 0))
+    expect(knock[0]).toBeCloseTo(0, 2)
+    expect(knock[1]).toBeCloseTo(-CHUTE_FORWARD, 0)
+    // Walking adds nothing to the glide.
+    const { desired } = desiredTranslation(-CHUTE_DESCENT, false, knock, frame(0, 127, 0, BUTTON_RUN), TICK_DT, 1, true)
+    expect(desired[2]).toBeCloseTo(knock[1] * TICK_DT, 5)
   })
 })

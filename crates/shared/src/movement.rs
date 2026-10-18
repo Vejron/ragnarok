@@ -37,12 +37,46 @@ pub fn wish_velocity_scaled(input: &InputFrame, scale: f32) -> [f32; 2] {
     [x * speed * scale, z * speed * scale]
 }
 
+/// Whether the parachute is open after this input. A press opens it in the air and cuts it when open; on the
+/// ground it is always shut. A prone player cannot open one.
+pub fn toggle_chute(chute: bool, grounded: bool, prone: bool, input: &InputFrame) -> bool {
+    if grounded {
+        return false;
+    }
+    if input.buttons() & BUTTON_CHUTE == 0 {
+        return chute;
+    }
+    if chute { false } else { !prone }
+}
+
+/// The velocity a canopy is steered towards, `[x, z]` in m/s: full forward glides, back brakes.
+pub fn glide_velocity(input: &InputFrame) -> [f32; 2] {
+    let strafe = from_axis(input.strafe);
+    let forward = from_axis(input.forward);
+    let ahead = if forward >= 0.0 { forward * CHUTE_FORWARD } else { forward * CHUTE_BACK };
+    let side = strafe * CHUTE_SIDE;
+    let (sin, cos) = from_mrad(input.yaw).sin_cos();
+    [-sin * ahead + cos * side, -cos * ahead - sin * side]
+}
+
+/// One tick of canopy steering: `knock`, which carries the glide, closes part of the gap to the wanted velocity.
+pub fn steer_chute(knock: [f32; 2], input: &InputFrame) -> [f32; 2] {
+    let [wx, wz] = glide_velocity(input);
+    [knock[0] + (wx - knock[0]) * CHUTE_STEER, knock[1] + (wz - knock[1]) * CHUTE_STEER]
+}
+
 /// The first half of a movement step: the new vertical velocity and the translation to hand to
-/// the character controller. `knock` is the leftover knockback velocity, `[x, z]` in m/s.
-pub fn desired_translation(vy: f32, grounded: bool, knock: [f32; 2], input: &InputFrame, dt: f32, speed_scale: f32) -> (f32, [f32; 3]) {
+/// the character controller. `knock` is the leftover knockback velocity, `[x, z]` in m/s. Under an open
+/// `chute` it is the glide, and walking does not add to it.
+pub fn desired_translation(vy: f32, grounded: bool, knock: [f32; 2], input: &InputFrame, dt: f32, speed_scale: f32, chute: bool) -> (f32, [f32; 3]) {
     let mut vy = vy;
     if grounded && input.buttons() & BUTTON_JUMP != 0 {
         vy = JUMP_SPEED;
+    }
+    if chute {
+        let target = -CHUTE_DESCENT;
+        vy = if vy < target { (vy + CHUTE_DRAG * dt).min(target) } else { (vy - GRAVITY * dt).max(target) };
+        return (vy, [knock[0] * dt, vy * dt, knock[1] * dt]);
     }
     vy = (vy - GRAVITY * dt).max(-MAX_FALL_SPEED);
     let [vx, vz] = wish_velocity_scaled(input, speed_scale);
@@ -133,14 +167,14 @@ mod tests {
     #[test]
     fn jump_only_from_ground() {
         let jump = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_JUMP, pitch: 0, view: 0, slot: 0 };
-        assert!(desired_translation(0.0, true, [0.0; 2], &jump, TICK_DT, 1.0).0 > 0.0);
-        assert!(desired_translation(0.0, false, [0.0; 2], &jump, TICK_DT, 1.0).0 < 0.0);
+        assert!(desired_translation(0.0, true, [0.0; 2], &jump, TICK_DT, 1.0, false).0 > 0.0);
+        assert!(desired_translation(0.0, false, [0.0; 2], &jump, TICK_DT, 1.0, false).0 < 0.0);
     }
 
     #[test]
     fn knockback_adds_to_walking_and_dies_out() {
         let idle = InputFrame::default();
-        let (_, pushed) = desired_translation(0.0, true, [6.0, -3.0], &idle, TICK_DT, 1.0);
+        let (_, pushed) = desired_translation(0.0, true, [6.0, -3.0], &idle, TICK_DT, 1.0, false);
         assert!((pushed[0] - 6.0 * TICK_DT).abs() < 1e-6 && (pushed[2] + 3.0 * TICK_DT).abs() < 1e-6);
         let mut knock = [6.0, -3.0];
         for _ in 0..TICK_RATE * 3 {
@@ -150,5 +184,47 @@ mod tests {
         // In the air it lasts much longer.
         let air = (0..30).fold([6.0, 0.0], |k, _| decay_knock(k, false, false));
         assert!(air[0] > 4.0);
+    }
+
+    fn frame(forward: i8, buttons: u16) -> InputFrame {
+        InputFrame { seq: 1, strafe: 0, forward, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 }
+    }
+
+    #[test]
+    fn the_chute_toggles_in_the_air_only() {
+        let press = frame(0, BUTTON_CHUTE);
+        assert!(toggle_chute(false, false, false, &press));
+        assert!(!toggle_chute(true, false, false, &press));
+        assert!(!toggle_chute(false, true, false, &press), "no chute on the ground");
+        assert!(!toggle_chute(true, true, false, &frame(0, 0)), "landing shuts it");
+        assert!(toggle_chute(true, false, false, &frame(0, 0)), "it stays open");
+        assert!(!toggle_chute(false, false, true, &press), "not while prone");
+    }
+
+    #[test]
+    fn an_open_chute_slows_the_fall_to_a_steady_descent() {
+        let idle = frame(0, 0);
+        let mut vy = -40.0;
+        for _ in 0..TICK_RATE * 3 {
+            vy = desired_translation(vy, false, [0.0; 2], &idle, TICK_DT, 1.0, true).0;
+        }
+        assert!((vy + CHUTE_DESCENT).abs() < 1e-4, "settled at {vy}");
+        // Without it the fall only speeds up.
+        assert!(desired_translation(-40.0, false, [0.0; 2], &idle, TICK_DT, 1.0, false).0 < -40.0);
+    }
+
+    #[test]
+    fn a_canopy_glides_forward_and_turns_lazily() {
+        let mut knock = [0.0, 0.0];
+        for _ in 0..TICK_RATE * 5 {
+            knock = steer_chute(knock, &frame(127, 0));
+        }
+        assert!(knock[0].abs() < 1e-3 && (knock[1] + CHUTE_FORWARD).abs() < 0.1, "{knock:?}");
+        // One tick of steering the other way barely moves it.
+        let braked = steer_chute(knock, &frame(-127, 0));
+        assert!((braked[1] - knock[1]).abs() < 1.0);
+        // Walking does not add to the glide.
+        let (_, moved) = desired_translation(-CHUTE_DESCENT, false, knock, &frame(127, BUTTON_RUN), TICK_DT, 1.0, true);
+        assert!((moved[2] - knock[1] * TICK_DT).abs() < 1e-6);
     }
 }

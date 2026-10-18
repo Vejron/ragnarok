@@ -10,7 +10,7 @@ use rapier3d::parry::utils::Array2;
 use rapier3d::prelude::*;
 use shared::carve::Tri;
 use shared::consts::*;
-use shared::movement::{begin_slide, decay_knock, desired_translation, settle_vertical};
+use shared::movement::{begin_slide, decay_knock, desired_translation, settle_vertical, steer_chute, toggle_chute};
 use shared::protocol::InputFrame;
 use shared::quant::from_cm;
 use shared::world::{ObjId, WorldFile};
@@ -39,6 +39,8 @@ pub struct Character {
     pub ride: u32,
     /// Lying down. The capsule is then the prone ball, with the feet where they were standing.
     pub prone: bool,
+    /// Hanging under an open parachute. `knock` is then the glide.
+    pub chute: bool,
 }
 
 pub struct Physics {
@@ -389,9 +391,10 @@ impl Physics {
 
     /// `move_character` with walking speed multiplied by `speed_scale` (aiming a gun slows you).
     pub fn move_character_scaled(&self, character: &mut Character, input: &InputFrame, dt: f32, speed_scale: f32) {
-        self.change_stance(character, input.buttons() & BUTTON_PRONE != 0);
-        character.knock = begin_slide(character.knock, character.grounded, input);
-        let (vy, desired) = desired_translation(character.vy, character.grounded, character.knock, input, dt, speed_scale);
+        character.chute = toggle_chute(character.chute, character.grounded, character.prone, input);
+        self.change_stance(character, input.buttons() & BUTTON_PRONE != 0 && !character.chute);
+        character.knock = if character.chute { steer_chute(character.knock, input) } else { begin_slide(character.knock, character.grounded, input) };
+        let (vy, desired) = desired_translation(character.vy, character.grounded, character.knock, input, dt, speed_scale, character.chute);
         let queries = self.broad_phase.as_query_pipeline(
             self.narrow_phase.query_dispatcher(),
             &self.bodies,
@@ -414,7 +417,12 @@ impl Physics {
         let grounded = vertical.grounded && vy <= 0.0;
         character.vy = settle_vertical(vy, desired[1], end.y - start.y, grounded);
         character.grounded = grounded;
-        character.knock = decay_knock(character.knock, grounded, input.buttons() & BUTTON_CROUCH != 0);
+        if grounded {
+            character.chute = false;
+        }
+        if !character.chute {
+            character.knock = decay_knock(character.knock, grounded, input.buttons() & BUTTON_CROUCH != 0);
+        }
         character.yaw = shared::quant::from_mrad(input.yaw);
     }
 

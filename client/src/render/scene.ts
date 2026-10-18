@@ -1,7 +1,7 @@
 import { Bloom, Fog, Ink, PerspectiveCamera, Renderer, Scene as EngineScene } from '@ragnarok/engine'
 import { GunSightView } from './gunsight'
 import { ContactShadows } from './contact'
-import { setWaterLight } from './water'
+import { setWaterLight, setWaterPlane, setWaterReflection } from './water'
 import { CLASSIC, SOFT, loadLook, type Look } from './look'
 import { ON_FOOT_HEIGHT, ON_FOOT_SHOULDER } from '../sim/consts'
 
@@ -102,6 +102,7 @@ export class Scene {
     this.renderer = await Renderer.create(this.canvas, {
       onDeviceLost: (info) => console.error(`The graphics device was lost: ${info.message}`),
     })
+    setWaterReflection(this.renderer.reflection)
     this.resize()
   }
 
@@ -220,6 +221,17 @@ export class Scene {
     const fov = this.camera.fov + (target - this.camera.fov) * Math.min(1, dt * ZOOM_RATE)
     if (Math.abs(fov - this.camera.fov) < 1e-3) return
     this.camera.fov = Math.abs(fov - target) < 0.05 ? target : fov
+  }
+
+  /**
+   * The height of the water to mirror this frame, or null where there is none in sight (the mirrored
+   * pass is then skipped altogether).
+   */
+  setWaterPlane(height: number | null) {
+    if (!this.renderer) return
+    const on = this.currentLook.reflect && height !== null
+    this.renderer.reflectionHeight = on ? height : null
+    setWaterPlane(on ? height : null)
   }
 
   render() {

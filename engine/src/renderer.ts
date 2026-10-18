@@ -19,12 +19,15 @@ import { ShaderMaterial, type Material } from './scene/material'
 import { InstancedMesh, Mesh } from './scene/mesh'
 import type { Node } from './scene/node'
 import type { Scene } from './scene/scene'
+import { Texture } from './scene/texture'
 import { SkinnedMesh } from './scene/skin'
 
 /** Floats in the frame uniform block. Matches `Frame` in common.wgsl (padded to 384 bytes). */
 const FRAME_FLOATS = 160
 const HDR_FORMAT: GPUTextureFormat = 'rgba16float'
 const DEPTH_FORMAT: GPUTextureFormat = 'depth32float'
+/** The reflection holds nothing smaller than this share of the view's distance. */
+const REFLECT_MIN_SIZE = 0.01
 
 export interface RendererOptions {
   /** Multisampling for the main pass: 4 (default) or 1. */
@@ -146,6 +149,28 @@ export class Renderer {
   private readonly overlay: DrawItem[] = []
   /** Where in `mainBatches` the overlay's draws start. */
   private overlayFrom = 0
+
+  /**
+   * The scene mirrored in a horizontal plane, for water to sample: RGB is the scene, alpha is where it drew
+   * anything (the rest is sky). Drawn only while `reflectionHeight` is a world Y; set it to null for no pass.
+   * Draws opaque meshes only, within `reflectionRange` metres, at `reflectionScale` of the screen's size.
+   */
+  readonly reflection = new Texture({ data: new Uint8Array(4), width: 1, height: 1 }, { srgb: false, wrap: 'clamp', mipmaps: false })
+  reflectionHeight: number | null = null
+  reflectionScale = 0.5
+  reflectionRange = 300
+  private reflectionOn = false
+  private reflectionTarget: { width: number; height: number; color: GPUTexture | null; depth: GPUTexture; resolve: GPUTexture } | null = null
+  private readonly reflectionFrame = new Float32Array(FRAME_FLOATS)
+  private readonly reflectionFrameBuffer: GPUBuffer
+  private reflectionGroup: GPUBindGroup | null = null
+  private readonly reflectionFrustum = new Frustum()
+  private readonly reflectionView = mat4.create()
+  private readonly reflectionProjection = mat4.create()
+  private readonly reflectionViewProjection = mat4.create()
+  private readonly mirror = mat4.create()
+  private readonly reflected: DrawItem[] = []
+  private readonly reflectionBatches: Batch[] = []
   private readonly casters: DrawItem[] = []
   private readonly effects: Effect[] = []
   /** Bumped when the render targets are recreated, for effects holding views of them. */
@@ -188,6 +213,7 @@ export class Renderer {
     this.resources = new MaterialResources(device, this.textures)
     this.timer = new GpuTimer(device)
     this.frameBuffer = device.createBuffer({ label: 'frame', size: FRAME_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    this.reflectionFrameBuffer = device.createBuffer({ label: 'reflection frame', size: FRAME_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.objects = new ObjectTable(device)
     this.bones = new BoneTable(device)
     this.drawListBuffer = this.makeDrawListBuffer(this.drawList.length)
@@ -299,8 +325,10 @@ export class Renderer {
     this.camY = camera.matrixWorld[13]!
     this.camZ = camera.matrixWorld[14]!
     this.setupShadow(scene)
+    this.setupReflection(camera)
 
     this.poolUsed = 0
+    this.reflected.length = 0
     this.opaque.length = 0
     this.transparent.length = 0
     this.overlay.length = 0
@@ -312,15 +340,18 @@ export class Renderer {
     this.transparent.sort(byOrderThenFarToNear)
     this.overlay.sort(byOrderThenFarToNear)
     this.casters.sort(byStateThenGeometry)
+    this.reflected.sort(byStateThenGeometry)
 
     this.drawCount = 0
     this.mainBatches.length = 0
+    this.reflectionBatches.length = 0
     this.shadowBatches.length = 0
     this.writeBatches(this.opaque, this.mainBatches, true)
     this.writeBatches(this.transparent, this.mainBatches, false)
     this.overlayFrom = this.mainBatches.length
     this.writeBatches(this.overlay, this.mainBatches, false)
     this.writeBatches(this.casters, this.shadowBatches, true)
+    this.writeBatches(this.reflected, this.reflectionBatches, true)
 
     this.writeFrame(scene, camera)
     this.materials.flush()
@@ -337,6 +368,7 @@ export class Renderer {
     const effects = this.effectContext()
     for (const effect of this.effects) effect.prepare(effects, encoder)
     if (this.shadowsOn) this.shadowPass(encoder)
+    if (this.reflectionOn) this.reflectionPass(encoder, scene)
     this.mainPass(encoder, scene)
     if (this.effects.length) {
       const half = this.effects.some((e) => e.halfResolution)
@@ -409,16 +441,26 @@ export class Renderer {
     const inView = !mesh.frustumCulled || this.frustum.intersectsSphere(cx, cy, cz, radius)
     const inShadow = this.shadowsOn && mesh.castShadow && !material.transparent && !mesh.overlay &&
       (!mesh.frustumCulled || this.shadowFrustum.intersectsSphere(cx, cy, cz, radius))
-    if (!inView && !inShadow) return
+    const dx = cx - this.camX, dy = cy - this.camY, dz = cz - this.camZ
+    const distance2 = dx * dx + dy * dy + dz * dz
+    // Only what rises above the mirror, is near and big enough to show, and falls in the mirrored view.
+    const inReflection = this.reflectionOn && !material.transparent && !mesh.overlay &&
+      cy + radius > this.reflectionHeight! && distance2 < this.reflectionRange * this.reflectionRange &&
+      radius * radius > distance2 * (REFLECT_MIN_SIZE * REFLECT_MIN_SIZE) &&
+      (!mesh.frustumCulled || this.reflectionFrustum.intersectsSphere(cx, cy, cz, radius))
+    if (!inView && !inShadow && !inReflection) return
     const bones = mesh instanceof SkinnedMesh ? this.bones.sync(mesh, this.frameNumber) + 1 : 0
     const record = this.objects.sync(mesh, this.materials.sync(material), this.frameNumber, bones)
     const count = mesh instanceof InstancedMesh ? mesh.count : 1
-    if (inView) {
+    if (inView || inReflection) {
       const group = material instanceof ShaderMaterial ? this.resources.custom(material) : this.resources.standard(material)
-      const item = this.item(mesh, slot, record, count, this.pipelineFor(material, mesh.overlay), group)
-      const dx = cx - this.camX, dy = cy - this.camY, dz = cz - this.camZ
-      item.depth = dx * dx + dy * dy + dz * dz
-      ;(mesh.overlay ? this.overlay : material.transparent ? this.transparent : this.opaque).push(item)
+      const pipeline = this.pipelineFor(material, mesh.overlay)
+      if (inView) {
+        const item = this.item(mesh, slot, record, count, pipeline, group)
+        item.depth = distance2
+        ;(mesh.overlay ? this.overlay : material.transparent ? this.transparent : this.opaque).push(item)
+      }
+      if (inReflection) this.reflected.push(this.item(mesh, slot, record, count, pipeline, group))
     }
     if (inShadow) this.casters.push(this.item(mesh, slot, record, count, material.side === 'front' ? 0 : 1, 0))
   }
@@ -597,7 +639,21 @@ export class Renderer {
     f[84] = camera.near
     f[85] = camera.far
     this.writeLights(scene, f)
+    // The point-light count's neighbours are the clip: below `clip height` is cut away while mirroring.
+    f[89] = 0
+    f[90] = 0
     this.device.queue.writeBuffer(this.frameBuffer, 0, f)
+    if (this.reflectionOn) {
+      const r = this.reflectionFrame
+      const h = this.reflectionHeight!
+      r.set(f)
+      r.set(this.reflectionViewProjection, 0)
+      r.set(this.reflectionView, 16)
+      r[33] = 2 * h - this.camY
+      r[89] = h - 0.05
+      r[90] = 1
+      this.device.queue.writeBuffer(this.reflectionFrameBuffer, 0, r)
+    }
   }
 
   /** The strongest point lights as seen from the camera, up to the shader's limit. */
@@ -630,21 +686,26 @@ export class Renderer {
     if (this.drawCount) this.device.queue.writeBuffer(this.drawListBuffer, 0, this.drawList, 0, this.drawCount)
   }
 
+  private makeSceneGroup(frame: GPUBuffer): GPUBindGroup {
+    return this.device.createBindGroup({
+      label: 'scene',
+      layout: this.sceneLayout,
+      entries: [
+        { binding: 0, resource: { buffer: frame } },
+        { binding: 1, resource: { buffer: this.objects.buffer } },
+        { binding: 2, resource: { buffer: this.materials.buffer } },
+        { binding: 3, resource: { buffer: this.drawListBuffer } },
+        { binding: 4, resource: { buffer: this.bones.buffer } },
+      ],
+    })
+  }
+
   private bindScene() {
     const key = `${this.objects.generation}:${this.materials.generation}:${this.bones.generation}:${this.drawListBuffer.size}`
     if (!this.sceneGroup || key !== this.sceneGroupKey) {
       this.sceneGroupKey = key
-      this.sceneGroup = this.device.createBindGroup({
-        label: 'scene',
-        layout: this.sceneLayout,
-        entries: [
-          { binding: 0, resource: { buffer: this.frameBuffer } },
-          { binding: 1, resource: { buffer: this.objects.buffer } },
-          { binding: 2, resource: { buffer: this.materials.buffer } },
-          { binding: 3, resource: { buffer: this.drawListBuffer } },
-          { binding: 4, resource: { buffer: this.bones.buffer } },
-        ],
-      })
+      this.sceneGroup = this.makeSceneGroup(this.frameBuffer)
+      this.reflectionGroup = this.makeSceneGroup(this.reflectionFrameBuffer)
     }
     if (!this.lightingGroup) {
       this.lightingGroup = this.device.createBindGroup({
@@ -700,6 +761,69 @@ export class Renderer {
     }
   }
 
+  /** Mirrors the view in the reflection plane and sizes the target, or turns the reflection off. */
+  private setupReflection(camera: PerspectiveCamera) {
+    const h = this.reflectionHeight
+    // Under the surface there is nothing to mirror.
+    this.reflectionOn = h !== null && this.camY > h
+    if (!this.reflectionOn) return
+    const m = this.mirror
+    mat4.identity(m)
+    m[5] = -1
+    m[13] = 2 * h!
+    mat4.multiply(this.reflectionView, camera.view, m)
+    // A mirror reverses winding, and so does flipping the image: do both and the pipelines' culling still holds.
+    // The water samples the result flipped back.
+    const p = this.reflectionProjection
+    p.set(camera.projection)
+    p[0] = -p[0]!; p[4] = -p[4]!; p[8] = -p[8]!; p[12] = -p[12]!
+    mat4.multiply(this.reflectionViewProjection, p, this.reflectionView)
+    this.reflectionFrustum.setFromMatrix(this.reflectionViewProjection)
+    this.ensureReflectionTarget()
+  }
+
+  private ensureReflectionTarget() {
+    const width = Math.max(1, Math.round(this.width * this.reflectionScale))
+    const height = Math.max(1, Math.round(this.height * this.reflectionScale))
+    const t = this.reflectionTarget
+    if (t && t.width === width && t.height === height) return
+    t?.color?.destroy()
+    t?.depth.destroy()
+    t?.resolve.destroy()
+    const size = [width, height]
+    const msaa = this.sampleCount > 1
+    const resolve = this.device.createTexture({ label: 'reflection', size, format: HDR_FORMAT, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING })
+    this.reflectionTarget = {
+      width,
+      height,
+      color: msaa ? this.device.createTexture({ label: 'reflection msaa', size, format: HDR_FORMAT, sampleCount: this.sampleCount, usage: GPUTextureUsage.RENDER_ATTACHMENT }) : null,
+      depth: this.device.createTexture({ label: 'reflection depth', size, format: DEPTH_FORMAT, sampleCount: this.sampleCount, usage: GPUTextureUsage.RENDER_ATTACHMENT }),
+      resolve,
+    }
+    // Hand the texture to whatever material samples `reflection`: its bind group is rebuilt when the version moves.
+    this.reflection.version++
+    this.reflection.gpu = { texture: resolve, view: resolve.createView(), version: this.reflection.version }
+  }
+
+  private reflectionPass(encoder: GPUCommandEncoder, scene: Scene) {
+    const t = this.reflectionTarget!
+    const bg = scene.background
+    const pass = encoder.beginRenderPass({
+      label: 'reflection',
+      colorAttachments: [{
+        view: (t.color ?? t.resolve).createView(),
+        resolveTarget: t.color ? t.resolve.createView() : undefined,
+        // Alpha 0 is sky: the water draws its own there.
+        clearValue: { r: bg.r, g: bg.g, b: bg.b, a: 0 },
+        loadOp: 'clear',
+        storeOp: t.color ? 'discard' : 'store',
+      }],
+      depthStencilAttachment: { view: t.depth.createView(), depthClearValue: 0, depthLoadOp: 'clear', depthStoreOp: 'discard' },
+    })
+    this.drawBatches(pass, this.reflectionBatches, this.reflectionGroup!, 0, this.reflectionBatches.length)
+    pass.end()
+  }
+
   private mainPass(encoder: GPUCommandEncoder, scene: Scene) {
     const bg = scene.background
     const msaa = this.colorTarget !== null
@@ -717,13 +841,13 @@ export class Renderer {
       depthStencilAttachment: { view: this.depthTarget!.createView(), depthClearValue: 0, depthLoadOp: 'clear', depthStoreOp: 'store' },
       timestampWrites: this.timer.pass('main'),
     })
-    this.drawBatches(pass, 0, this.overlayFrom)
+    this.drawBatches(pass, this.mainBatches, this.sceneGroup!, 0, this.overlayFrom)
     pass.end()
   }
 
-  /** Draws `mainBatches[from..to)` into `pass`, binding only what changes between them. */
-  private drawBatches(pass: GPURenderPassEncoder, from: number, to: number) {
-    pass.setBindGroup(0, this.sceneGroup!)
+  /** Draws `batches[from..to)` into `pass`, binding only what changes between them. */
+  private drawBatches(pass: GPURenderPassEncoder, batches: Batch[], scene: GPUBindGroup, from: number, to: number) {
+    pass.setBindGroup(0, scene)
     pass.setVertexBuffer(0, this.arena.vertexBuffer)
     pass.setIndexBuffer(this.arena.indexBuffer, 'uint32')
     let current = -1
@@ -731,7 +855,7 @@ export class Renderer {
     let group1 = -2
     let group2 = -2
     for (let i = from; i < to; i++) {
-      const batch = this.mainBatches[i]!
+      const batch = batches[i]!
       if (batch.pipeline !== current) {
         pass.setPipeline(this.pipelines[batch.pipeline]!)
         current = batch.pipeline
@@ -806,7 +930,7 @@ export class Renderer {
       depthStencilAttachment: { view: this.depthTarget!.createView(), depthReadOnly: true },
       timestampWrites: this.timer.pass('overlay'),
     })
-    this.drawBatches(pass, this.overlayFrom, this.mainBatches.length)
+    this.drawBatches(pass, this.mainBatches, this.sceneGroup!, this.overlayFrom, this.mainBatches.length)
     pass.end()
   }
 

@@ -1,6 +1,6 @@
 /** Mirrors `crates/shared/src/consts.rs`. Keep the two in step. */
 
-export const PROTOCOL_VERSION = 32
+export const PROTOCOL_VERSION = 33
 
 /** A hurt building is drawn in this many worse states; the last is about to collapse. Mirrors `DAMAGE_STAGES`. */
 export const DAMAGE_STAGES = 3
@@ -45,6 +45,8 @@ export const BUTTON_HITCH = 1 << 9
 /** Held by a mortar's gunner: walk the range dial out (W) and in (S). Mirror `BUTTON_RANGE_*`. */
 export const BUTTON_RANGE_UP = 1 << 10
 export const BUTTON_RANGE_DOWN = 1 << 11
+/** One press: open or cut the parachute in the air. Mirrors `BUTTON_CHUTE`. */
+export const BUTTON_CHUTE = 1 << 12
 
 export const WALK_SPEED = 4.0
 export const RUN_SPEED = 7.5
@@ -67,6 +69,14 @@ export const KNOCK_KEEP_GROUND = 0.92
 export const KNOCK_KEEP_AIR = 0.99
 export const KNOCK_MIN_SPEED = 0.05
 export const KNOCK_MAX_SPEED = 20.0
+/** Parachute tuning. Mirrors `CHUTE_*` in consts.rs. */
+export const CHUTE_DESCENT = 5.0
+export const CHUTE_DRAG = 40.0
+export const CHUTE_FORWARD = 10.0
+export const CHUTE_BACK = 3.0
+export const CHUTE_SIDE = 5.0
+export const CHUTE_STEER = 0.03
+export const SPAWN_ALTITUDE = 100.0
 
 export const CAPSULE_HALF_HEIGHT = 0.5
 export const CAPSULE_RADIUS = 0.35
@@ -78,6 +88,8 @@ export const PRONE_CENTRE = PRONE_RADIUS
 /** Stance, as the entity stance byte on the wire. */
 export const STANCE_STANDING = 0
 export const STANCE_PRONE = 1
+/** Hanging under an open parachute. Mirrors `STANCE_CHUTE`. */
+export const STANCE_CHUTE = 2
 
 export const CONTROLLER_OFFSET = 0.02
 export const MAX_SLOPE_CLIMB_DEG = 50.0

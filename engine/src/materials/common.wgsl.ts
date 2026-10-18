@@ -24,7 +24,7 @@ struct Frame {
   shadow: vec4f,
   // camera near, camera far, seconds since the last frame, unused.
   clip: vec4f,
-  // Number of point lights, unused, unused, unused.
+  // Number of point lights, the height under which a reflection pass cuts the scene away, whether it does (0 or 1), unused.
   lightCount: vec4f,
   // Per light, two vec4s: xyz position and radius, then linear rgb times intensity.
   lights: array<vec4f, 16>,
