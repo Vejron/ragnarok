@@ -1,8 +1,10 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { GENERATED, RUST_SOURCE, generateConsts } from '../../scripts/gen-consts'
 
-// Every numeric `pub const` in `crates/shared/src/*.rs` that the client also exports under the same
+// consts.rs is generated into the client, so only the other shared files can drift. Every numeric
+// `pub const` in `crates/shared/src/*.rs` that the client also exports under the same
 // name must have the same value. The Rust side is read from source, so a new constant on either side
 // is covered without listing it anywhere. A constant only one side has is not checked, and neither
 // is one whose value is not a plain number, array or arithmetic of those.
@@ -80,6 +82,11 @@ const typescriptConsts = (): Map<string, Value> => {
 const close = (a: number, b: number) => Math.abs(a - b) <= 1e-5 * Math.max(1, Math.abs(a), Math.abs(b))
 
 describe('shared constants match the server', () => {
+  it('has an up to date consts.generated.ts', () => {
+    // consts.rs is the source; run `npm run gen:consts` if this fails.
+    expect(readFileSync(GENERATED, 'utf8')).toBe(generateConsts(readFileSync(RUST_SOURCE, 'utf8')))
+  })
+
   const rust = readRustConsts()
   const client = typescriptConsts()
   const shared = [...client.keys()].filter((name) => rust.has(name)).sort()

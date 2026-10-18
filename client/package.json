@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest",
     "type-check": "vue-tsc --build",
-    "lint": "oxlint src"
+    "lint": "oxlint src",
+    "gen:consts": "node scripts/gen-consts.ts"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.21.0",

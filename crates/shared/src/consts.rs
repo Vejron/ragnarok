@@ -1,4 +1,4 @@
-//! Simulation and network constants. Mirrored in `client/src/sim/consts.ts`.
+//! Simulation and network constants. `client/scripts/gen-consts.ts` generates the client's copy from this file: run `npm run gen:consts` in `client` after editing.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
 pub const PROTOCOL_VERSION: u8 = 33;
@@ -88,9 +88,9 @@ pub const MAX_FALL_SPEED: f32 = 50.0;
 pub const CHUTE_DESCENT: f32 = 5.0;
 pub const CHUTE_DRAG: f32 = 40.0;
 /// Glide speed under a canopy: full forward, backward (braking) and sideways, m/s.
-pub const CHUTE_FORWARD: f32 = 10.0;
+pub const CHUTE_FORWARD: f32 = 15.0;
 pub const CHUTE_BACK: f32 = 3.0;
-pub const CHUTE_SIDE: f32 = 5.0;
+pub const CHUTE_SIDE: f32 = 8.0;
 /// How much of the gap to the wanted glide velocity is closed each tick: a canopy turns lazily.
 pub const CHUTE_STEER: f32 = 0.03;
 /// Respawns drop in from this far above the ground, metres, with the canopy open.
