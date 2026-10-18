@@ -1,0 +1,34 @@
+{
+  "restart": 30,
+  "areas": {
+    "meadow": { "lat": 63.83976, "lon": 20.31514, "radius": 70 },
+    "shed": { "lat": 63.84030, "lon": 20.31610, "radius": 8 }
+  },
+  "squads": {
+    "cowthieves": {
+      "team": 2, "skill": 0.35, "loadout": ["revolver", "grenade"],
+      "bots": [
+        { "lat": 63.83995, "lon": 20.31480, "route": [ { "lat": 63.83995, "lon": 20.31480 }, { "lat": 63.83960, "lon": 20.31500 } ] },
+        { "lat": 63.83950, "lon": 20.31540, "route": [ { "lat": 63.83950, "lon": 20.31540 }, { "lat": 63.83985, "lon": 20.31560 } ] }
+      ]
+    },
+    "tankers": {
+      "team": 3, "skill": 0.6, "loadout": ["ak5", "bandage"],
+      "bots": [
+        { "lat": 63.83860, "lon": 20.31660 },
+        { "lat": 63.83870, "lon": 20.31670 }
+      ],
+      "tanks": [
+        { "lat": 63.83880, "lon": 20.31640, "route": [ { "lat": 63.83880, "lon": 20.31640 }, { "lat": 63.83940, "lon": 20.31560 }, { "lat": 63.83990, "lon": 20.31500 } ] }
+      ]
+    }
+  },
+  "triggers": [
+    { "when": { "start": true }, "do": [ { "spawn": "cowthieves" }, { "objective": "The cows are being stolen! Clear the meadow" } ] },
+    { "name": "cleared", "when": { "cleared": "cowthieves" }, "wait": 5,
+      "do": [ { "say": "The cows are free! Here come the tanks" }, { "objective": "Stop the tank before it reaches the shed" }, { "spawn": "tankers" } ] },
+    { "when": { "enter": "shed", "by": "tankers" }, "do": [ { "lose": "The tank reached the shed" } ] },
+    { "when": { "cleared": "tankers" }, "do": [ { "win": "Mariehem's meadow is safe. The cows salute you" } ] },
+    { "when": { "after": 900 }, "do": [ { "lose": "Out of time" } ] }
+  ]
+}

@@ -1,7 +1,9 @@
 import type { ArcView, MarkerView } from './feedback'
 import type { ItemSlot } from './sim/items'
 import type { ConnectionStatus } from './net/transport'
-import type { FeedEntry, ScoreRow } from './scoreboard'
+import type { NoticeView } from './notices'
+import type { Blip } from './blips'
+import type { FeedEntry, Side } from './scoreboard'
 import type { VoiceStatus } from './voice'
 
 /** Everything the overlay draws, assembled by the game once a frame. */
@@ -69,8 +71,10 @@ export interface HudStats {
   deaths: number
   /** Recent kills, oldest first. */
   feed: FeedEntry[]
-  /** Every player's tally, best first; empty unless the scoreboard key is held. */
-  board: ScoreRow[]
+  /** What the world's scenario has said: the objective, recent messages, and a win or a loss. */
+  notices: NoticeView
+  /** Every player's tally by side, best first; empty unless the scoreboard key is held. */
+  board: Side[]
   /** The marker for a hit just landed, or null. */
   hitMarker: MarkerView | null
   /** Strength 0..1 of the red flash for harm just taken. */
@@ -83,4 +87,6 @@ export interface HudStats {
   yaw: number
   /** Half the side of the playable square, metres; 0 before the world has loaded. */
   halfExtent: number
+  /** What else the map marks: allies in view, and recent gunfire. */
+  blips: Blip[]
 }

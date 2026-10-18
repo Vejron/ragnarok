@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { viewWindow, worldToMap } from './sim/minimap'
+import type { Blip } from './blips'
 import { WORLD_BASE } from './world'
 
-const props = defineProps<{ x: number; z: number; yaw: number; halfExtent: number; open: boolean }>()
+const props = defineProps<{ x: number; z: number; yaw: number; halfExtent: number; open: boolean; blips: Blip[] }>()
 
 const url = `${WORLD_BASE}minimap.png`
 /** The image is generated with the world; an older world has none, and then nothing is shown. */
@@ -22,6 +23,23 @@ const marker = computed(() => {
   const [u, v] = worldToMap(props.x, props.z, props.halfExtent)
   return { left: `${u * 100}%`, top: `${v * 100}%` }
 })
+/** The marks inside the small map, placed in its pixels around the player at its centre. */
+const smallBlips = computed(() => {
+  const scale = SMALL_PX / SMALL_METRES
+  return props.blips
+    .map((blip) => ({ blip, left: SMALL_PX / 2 + (blip.x - props.x) * scale, top: SMALL_PX / 2 + (blip.z - props.z) * scale }))
+    .filter(({ left, top }) => left > 4 && left < SMALL_PX - 4 && top > 4 && top < SMALL_PX - 4)
+    .map(({ blip, left, top }) => ({ blip, style: blipStyle(blip, `${left}px`, `${top}px`) }))
+})
+const bigBlips = computed(() =>
+  props.blips.map((blip) => {
+    const [u, v] = worldToMap(blip.x, blip.z, props.halfExtent)
+    return { blip, style: blipStyle(blip, `${u * 100}%`, `${v * 100}%`) }
+  }),
+)
+function blipStyle(blip: Blip, left: string, top: string) {
+  return { left, top, background: blip.color, opacity: blip.kind === 'ally' ? 1 : 0.25 + 0.75 * blip.strength }
+}
 // Camera forward is (-sin yaw, -cos yaw) in x/z; the arrow points up (north, -z) at yaw 0.
 const arrow = computed(() => ({ transform: `translate(-50%, -50%) rotate(${(-props.yaw * 180) / Math.PI}deg)` }))
 </script>
@@ -30,10 +48,12 @@ const arrow = computed(() => ({ transform: `translate(-50%, -50%) rotate(${(-pro
   <img v-show="false" :src="url" alt="" @error="missing = true" />
   <template v-if="!missing">
     <div v-if="!open" class="minimap" :style="smallStyle">
+      <i v-for="(mark, i) in smallBlips" :key="i" class="blip" :class="mark.blip.kind" :style="mark.style" />
       <i class="arrow" :style="{ transform: arrow.transform, left: '50%', top: '50%' }" />
     </div>
     <div v-else class="map">
       <img :src="url" alt="Map" />
+      <i v-for="(mark, i) in bigBlips" :key="i" class="blip" :class="mark.blip.kind" :style="mark.style" />
       <i class="arrow" :style="{ ...arrow, ...marker }" />
       <span class="hint">M close</span>
     </div>
@@ -78,6 +98,16 @@ const arrow = computed(() => ({ transform: `translate(-50%, -50%) rotate(${(-pro
   border-bottom: 16px solid #ff5a5f;
   filter: drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff);
 }
+.blip {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 1.5px #fff;
+}
+/* Gunfire is a diamond, so it reads apart from an ally's dot. */
+.blip.shot { border-radius: 1px; transform: translate(-50%, -50%) rotate(45deg); }
 .hint {
   position: absolute;
   right: 8px;

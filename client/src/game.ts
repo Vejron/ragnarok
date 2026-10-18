@@ -69,12 +69,18 @@ import { TileStreamer } from './stream'
 import { loadManifest, type WorldData } from './world'
 import { WorldView } from './worldview'
 import type { HudStats } from './hud'
-import { Scoreboard } from './scoreboard'
-import { colorFor, forgetAllPlayers, forgetPlayer, loadProfile, profileQuery, setPlayer } from './profile'
+import { Notices } from './notices'
+import { Scoreboard, sides } from './scoreboard'
+import { Blips } from './blips'
+import { allies, colorFor, cssColor, forgetAllPlayers, forgetPlayer, isBot, loadProfile, profileQuery, setPlayer, teamFor } from './profile'
 
 // The overlay and its tests import these from here.
 export type { HudStats } from './hud'
-export type { FeedEntry, ScoreRow } from './scoreboard'
+export type { FeedEntry, ScoreRow, Side } from './scoreboard'
+export type { Blip } from './blips'
+
+/** How the minimap tells sides apart. */
+const MAP_SIDES = { colorOf: (id: number) => cssColor(colorFor(id)), isBot, allies }
 
 interface CarPlacement {
   kind: number
@@ -228,6 +234,9 @@ export class Game {
   private lastFireAt = -Infinity
   /** Kills and deaths of everyone, kept up to date by the server's kill events. */
   private readonly board = new Scoreboard()
+  /** Allies and recent gunfire, for the minimap. */
+  private readonly blips = new Blips()
+  private readonly notices = new Notices()
   /** Hits dealt and taken, for the crosshair marker, the screen flash and the direction arcs. */
   private readonly hits = new HitFeedback()
   /** The vehicle seat the server says the local player sits in; null when on foot. */
@@ -347,6 +356,7 @@ export class Game {
     this.awaitingCatchUp = false
     this.seat = null
     this.board.clear()
+    this.notices.clear()
     forgetAllPlayers()
     this.hits.clear()
     this.hp = PLAYER_MAX_HP
@@ -362,6 +372,7 @@ export class Game {
     this.hotbar = emptyHotbar()
     this.progress = 0
     this.pendingShots = []
+    this.blips.clear()
     this.motor?.setVehicles([])
     this.clock.reset()
     for (const [id, avatar] of this.avatars) {
@@ -496,8 +507,8 @@ export class Game {
         this.board.replace(message.scores)
         break
       case 'profiles':
-        for (const { id, name, color } of message.players) {
-          setPlayer(id, name, color)
+        for (const { id, name, color, team, bot } of message.players) {
+          setPlayer(id, name, color, team, bot)
           // Snapshots come by datagram and can overtake this, so a stickman may already be drawn.
           this.avatars.get(id === this.localId ? 0 : id)?.setColor(colorFor(id))
         }
@@ -514,6 +525,9 @@ export class Game {
         }
         break
       }
+      case 'notice':
+        this.notices.receive(message.kind, message.text, now)
+        break
       case 'kill': {
         const body = this.avatars.get(message.victim === this.localId ? 0 : message.victim)
         if (body?.visible) this.gore.die(body, message.style, message.yaw, message.power, (x, z) => this.scene.groundAt(x, z))
@@ -849,7 +863,8 @@ export class Game {
       kills: this.board.kills(this.localId),
       deaths: this.board.deaths(this.localId),
       feed: this.board.recent(now, this.localId),
-      board: this.input.isHeld('Tab') ? this.board.rows(this.localId, this.interp.ids()) : [],
+      notices: this.notices.view(now),
+      board: this.input.isHeld('Tab') ? sides(this.board.rows(this.localId, this.interp.ids()), teamFor) : [],
       hitMarker: hitView.marker,
       hurt: hitView.vignette,
       hurtArcs: hitView.arcs,
@@ -858,7 +873,19 @@ export class Game {
       z: ride?.z ?? position[2],
       yaw: this.input.yaw,
       halfExtent: this.world?.halfExtent ?? 0,
+      blips: this.blips.view(now, this.localId, ride?.x ?? position[0]!, ride?.z ?? position[2]!, this.alliesInView(), MAP_SIDES),
     })
+  }
+
+  /** Where the local player's allies in view stand. */
+  private alliesInView(): { id: number; x: number; z: number }[] {
+    if (this.localId === null || teamFor(this.localId) === 0) return []
+    const found: { id: number; x: number; z: number }[] = []
+    for (const id of this.interp.ids()) {
+      const avatar = this.avatars.get(id)
+      if (avatar?.visible && allies(this.localId, id)) found.push({ id, x: avatar.position.x, z: avatar.position.z })
+    }
+    return found
   }
 
   private setHealth(hp: number, now: number) {
@@ -946,6 +973,7 @@ export class Game {
       const from = this.muzzleOf(shot.shooter)
       this.avatars.get(shot.shooter === this.localId ? 0 : shot.shooter)?.fire()
       if (from) {
+        this.blips.fired(shot.shooter, from.x, from.z, performance.now())
         const landed = from.distanceTo(to) < gun.range - 1
         if (gun.pellets > 1) {
           // No rays for a spread: a blast at the muzzle, then each pellet is drawn where it landed.
@@ -1000,6 +1028,9 @@ export class Game {
 
   /** Buffers the rockets of a snapshot, and notes the ones it no longer lists as burst at that tick. */
   private trackRockets(tick: number, rockets: readonly RocketState[]) {
+    const known = new Set(this.rocketInterp.ids())
+    // Nobody is named as a rocket's shooter: the map marks it as gunfire from where it was first seen.
+    for (const rocket of rockets) if (!known.has(rocket.id)) this.blips.fired(0, rocket.x, rocket.z, performance.now())
     this.rocketInterp.push(tick, rockets)
     const listed = new Set(rockets.map((rocket) => rocket.id))
     for (const id of this.rocketInterp.ids()) {
@@ -1034,6 +1065,7 @@ export class Game {
     for (const spawn of spawns) {
       if (this.seenBullets.has(spawn.id)) continue
       this.seenBullets.set(spawn.id, spawn.tick)
+      this.blips.fired(spawn.shooter, spawn.x, spawn.z, performance.now())
       this.bullets.set(spawn.id, { spawn, life: bulletLifeTicks(spawn), endTicks: null, shown: false, offset: null })
     }
     if (this.seenBullets.size > 256) {

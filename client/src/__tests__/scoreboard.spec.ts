@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FEED_LENGTH, FEED_MS, Scoreboard } from '../scoreboard'
+import { FEED_LENGTH, FEED_MS, Scoreboard, sides } from '../scoreboard'
 
 const kill = (killer: number, victim: number, killerKills = 1, victimDeaths = 1) => ({ killer, victim, weapon: 0, killerKills, victimDeaths })
 
@@ -47,5 +47,23 @@ describe('Scoreboard', () => {
     board.clear()
     expect(board.recent(0, null)).toEqual([])
     expect(board.rows(null, [])).toEqual([])
+  })
+})
+
+describe('sides', () => {
+  const row = (id: number, kills: number, you = false) => ({ id, kills, deaths: 1, you })
+
+  it('splits by team with the local player\'s side first, then by kills', () => {
+    const team = (id: number) => (id < 10 ? 0 : id < 20 ? 1 : 2)
+    const split = sides([row(21, 9), row(11, 5), row(12, 4), row(1, 2, true)], team)
+    expect(split.map((side) => [side.team, side.kills, side.deaths, side.rows.map((r) => r.id)])).toEqual([
+      [0, 2, 1, [1]],
+      [1, 9, 2, [11, 12]],
+      [2, 9, 1, [21]],
+    ])
+  })
+
+  it('keeps a room of people as one side', () => {
+    expect(sides([row(1, 3), row(2, 1, true)], () => 0)).toHaveLength(1)
   })
 })

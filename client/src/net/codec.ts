@@ -23,6 +23,12 @@ const S_HIT = 8
 const S_RTC = 9
 const S_CARVED = 10
 const S_PROFILES = 11
+const S_NOTICE = 12
+/** `Notice` kinds: what a world's scenario is telling everyone. */
+export const NOTICE_SAY = 0
+export const NOTICE_OBJECTIVE = 1
+export const NOTICE_WON = 2
+export const NOTICE_LOST = 3
 /** A `Hit` bearing for harm with no direction. */
 const BEARING_NONE = -32768
 
@@ -413,7 +419,9 @@ export type ServerMessage =
   | { type: 'kill'; killer: number; victim: number; weapon: number; killerKills: number; victimDeaths: number; style: number; yaw: number; power: number }
   | { type: 'scores'; scores: Score[] }
   /** What players chose: everyone's for a joiner, then each new player's. `color` indexes `PLAYER_COLORS`. */
-  | { type: 'profiles'; players: { id: number; name: string; color: number }[] }
+  | { type: 'profiles'; players: { id: number; name: string; color: number; team: number; bot: boolean }[] }
+  /** The scenario says something (`NOTICE_*`): a message, the objective (empty clears it), or that it was won or lost. */
+  | { type: 'notice'; kind: number; text: string }
   /** Buildings and trees destroyed since the last such message; the first one a joiner gets is all of them. */
   | { type: 'destroyed'; objects: DestroyedObject[] }
   /** Buildings hurt since the last such message; the first one a joiner gets is every hurt one. */
@@ -732,13 +740,16 @@ export function decodeServer(bytes: Uint8Array): ServerMessage | null {
     }
     case S_PROFILES: {
       if (raw.length !== 2 || !Array.isArray(raw[1])) return null
-      const players: { id: number; name: string; color: number }[] = []
+      const players: { id: number; name: string; color: number; team: number; bot: boolean }[] = []
       for (const item of raw[1] as unknown[]) {
-        if (!Array.isArray(item) || item.length !== 3 || !isInt(item[0]) || typeof item[1] !== 'string' || !isInt(item[2])) return null
-        players.push({ id: item[0], name: item[1], color: item[2] })
+        if (!Array.isArray(item) || item.length !== 5 || !isInt(item[0]) || typeof item[1] !== 'string' || !isInt(item[2]) || !isInt(item[3]) || !isInt(item[4])) return null
+        players.push({ id: item[0], name: item[1], color: item[2], team: item[3], bot: item[4] === 1 })
       }
       return { type: 'profiles', players }
     }
+    case S_NOTICE:
+      if (raw.length !== 3 || !isInt(raw[1]) || typeof raw[2] !== 'string') return null
+      return { type: 'notice', kind: raw[1], text: raw[2] }
     case S_DESTROYED: {
       if (raw.length !== 2 || !Array.isArray(raw[1])) return null
       const objects: DestroyedObject[] = []

@@ -15,6 +15,33 @@ export interface ScoreRow {
   you: boolean
 }
 
+/** One side's rows on the scoreboard, with what they have done between them. */
+export interface Side {
+  /** 0 for people, who are all against all. */
+  team: number
+  kills: number
+  deaths: number
+  rows: ScoreRow[]
+}
+
+/**
+ * `rows` (best first) split by team: the local player's side first, then the rest by kills. A
+ * room of people alone is one side.
+ */
+export function sides(rows: readonly ScoreRow[], teamOf: (id: number) => number): Side[] {
+  const byTeam = new Map<number, Side>()
+  for (const row of rows) {
+    const team = teamOf(row.id)
+    let side = byTeam.get(team)
+    if (!side) byTeam.set(team, (side = { team, kills: 0, deaths: 0, rows: [] }))
+    side.kills += row.kills
+    side.deaths += row.deaths
+    side.rows.push(row)
+  }
+  const yours = (side: Side) => side.rows.some((row) => row.you)
+  return [...byTeam.values()].sort((a, b) => Number(yours(b)) - Number(yours(a)) || b.kills - a.kills || a.team - b.team)
+}
+
 /** How long a kill stays in the feed, ms, and how many show at once. */
 export const FEED_MS = 6000
 export const FEED_LENGTH = 5

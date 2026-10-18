@@ -1,5 +1,6 @@
 use super::Mechanic;
 use super::armor::{self, Outcome};
+use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
 use super::combat::{Blast, Direct, Round, blast_at, first_player_hit, hitscan, look, rewind_ticks, scatter};
 use crate::game::{Gun, PlaneArms, Rocket, World};
 use crate::physics::CarPose;
@@ -70,6 +71,7 @@ fn burst(world: &mut World, kind: u8, owner: u32, point: [f32; 3], dir: [f32; 3]
 /// root and the barrel's heading, `length` of barrel ahead): it leaves the muzzle and flies on its own
 /// from there, so it takes time to arrive and falls on the way.
 fn fire(world: &mut World, kind: u8, vid: u32, origin: [f32; 3], dir: [f32; 3], length: f32, gunner: u32) {
+    make_noise(world, origin, Some(gunner), HEAR_BLAST);
     // A barrel poking into a wall bursts the shell there, instead of starting it on the far side.
     if let Some(t) = world.physics.cast_ray(origin, dir, length, vid) {
         burst(world, kind, gunner, std::array::from_fn(|i| origin[i] + dir[i] * t), dir, None);
@@ -323,6 +325,7 @@ fn heat_up(heat: &mut f32, jammed: &mut bool, by: f32) {
 fn machine_gun(world: &mut World, shooter: u32, vid: u32, muzzle: [f32; 3], dir: [f32; 3]) {
     let back = world.players.get(&shooter).map_or(0, |player| rewind_ticks(world.tick, player.input.view()));
     let round = Round { damage: PLANE_GUN_DAMAGE, vehicle: PLANE_GUN_VEHICLE_DAMAGE, plane: PLANE_GUN_PLANE_DAMAGE, weapon: WEAPON_MG, range: PLANE_GUN_RANGE, falloff: Falloff::NONE };
+    make_noise(world, muzzle, Some(shooter), HEAR_SHOT);
     let (end, struck) = hitscan(world, shooter, muzzle, dir, &round, vid, back);
     if struck {
         let [x, y, z] = std::array::from_fn(|i| to_cm(muzzle[i] + dir[i] * end));

@@ -2,6 +2,7 @@
 //! pickups, game modes) means adding a `Mechanic`, not editing the loop.
 
 mod armor;
+mod bots;
 mod combat;
 mod drones;
 mod gunnery;
@@ -11,14 +12,17 @@ mod pickups;
 mod spawn;
 mod vehicles;
 
-pub use combat::Combat;
+pub use bots::{Bots, DRIVER, GUNNER, nearest_waypoint, road_route};
+pub use combat::{Combat, position_of};
+#[cfg(test)]
+pub use combat::damage_vehicle;
 pub use drones::Drones;
 pub use gunnery::Gunnery;
 pub use movement::Movement;
 pub use npcs::Npcs;
 pub use pickups::Pickups;
 pub use spawn::{Spawn, usable as spawn_usable};
-pub use vehicles::Vehicles;
+pub use vehicles::{Vehicles, add_tank, remove_vehicle, seat};
 
 use crate::game::World;
 
@@ -33,7 +37,8 @@ pub trait Mechanic: Send {
     fn on_tick(&mut self, _world: &mut World, _dt: f32) {}
 }
 
-/// The mechanics a room runs, in tick order.
+/// The mechanics a room runs, in tick order. `Bots` goes first: it writes the bots' input, which
+/// everything after reads as it reads anyone's.
 pub fn default_mechanics() -> Vec<Box<dyn Mechanic>> {
-    vec![Box::new(Spawn), Box::new(Pickups), Box::new(Drones), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement), Box::new(Npcs), Box::new(Combat)]
+    vec![Box::new(Bots), Box::new(Spawn), Box::new(Pickups), Box::new(Drones), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement), Box::new(Npcs), Box::new(Combat)]
 }

@@ -137,10 +137,12 @@ impl Replica {
         let vehicle_distances: HashMap<u32, f32> = vehicles.iter().map(|(d, v)| (v.id, *d)).collect();
         let entity_distance = |id: u32| entity_distances.get(&id).copied().unwrap_or(0.0);
         let vehicle_distance = |id: u32| vehicle_distances.get(&id).copied().unwrap_or(0.0);
-        delta.new_entities.sort_by(|a, b| entity_distance(a.id).total_cmp(&entity_distance(b.id)));
-        delta.entities.sort_by(|a, b| entity_distance(a.id).total_cmp(&entity_distance(b.id)));
-        delta.new_vehicles.sort_by(|a, b| vehicle_distance(a.id).total_cmp(&vehicle_distance(b.id)));
-        delta.vehicles.sort_by(|a, b| vehicle_distance(a.id).total_cmp(&vehicle_distance(b.id)));
+        // Each distance looked up once, not at every comparison. They are never negative, and the bits
+        // of a positive float sort as the float does.
+        delta.new_entities.sort_by_cached_key(|e| entity_distance(e.id).to_bits());
+        delta.entities.sort_by_cached_key(|e| entity_distance(e.id).to_bits());
+        delta.new_vehicles.sort_by_cached_key(|v| vehicle_distance(v.id).to_bits());
+        delta.vehicles.sort_by_cached_key(|v| vehicle_distance(v.id).to_bits());
 
         let encode_with = |delta: &Delta, shots: &[ShotEvent], rockets: &[ProjectileState], pickups: &[PickupState], bullets: &[BulletSpawn]| {
             encode(&Snapshot { tag: S_SNAPSHOT, tick: own.tick, baseline: baseline_tick, ack: own.ack, ride: own.ride, new_entities: delta.new_entities.clone(), entities: delta.entities.clone(), new_vehicles: delta.new_vehicles.clone(), vehicles: delta.vehicles.clone(), removed: delta.removed.clone(), drive: own.drive, me: own.me.clone(), shots: shots.to_vec(), rockets: rockets.to_vec(), pickups: pickups.to_vec(), bullets: bullets.to_vec() })
@@ -148,13 +150,7 @@ impl Replica {
         let mut bytes = encode_with(&delta, &shots, &rockets, &pickups, &bullets);
         // Shed what can be shed: effects (cosmetic) first, then rockets, then the farthest
         // newcomers and changes. `removed` is never shed: stale things would linger.
-        while bytes.len() > MAX_PACKET {
-            let candidates = [
-                delta.new_entities.last().map(|e| (entity_distance(e.id), 0)),
-                delta.entities.last().map(|e| (entity_distance(e.id), 1)),
-                delta.new_vehicles.last().map(|v| (vehicle_distance(v.id), 2)),
-                delta.vehicles.last().map(|v| (vehicle_distance(v.id), 3)),
-            ];
+        while bytes.len() > MAX_PACKET && !(shots.is_empty() && rockets.is_empty() && pickups.is_empty() && bullets.is_empty()) {
             // Effects go first, as many at a time as the excess calls for (by the most one can take on
             // the wire): a crowd of bullets would otherwise cost an encode per bullet shed.
             let excess = bytes.len() - MAX_PACKET;
@@ -165,19 +161,43 @@ impl Replica {
                 rockets.truncate(rockets.len() - shed(rockets.len(), 20));
             } else if !pickups.is_empty() {
                 pickups.truncate(pickups.len() - shed(pickups.len(), 14));
-            } else if !bullets.is_empty() {
-                bullets.truncate(bullets.len() - shed(bullets.len(), 41));
-            } else if let Some((_, which)) = candidates.into_iter().flatten().max_by(|a, b| a.0.total_cmp(&b.0)) {
-                match which {
-                    0 => drop(delta.new_entities.pop()),
-                    1 => drop(delta.entities.pop()),
-                    2 => drop(delta.new_vehicles.pop()),
-                    _ => drop(delta.vehicles.pop()),
-                }
             } else {
-                break;
+                bullets.truncate(bullets.len() - shed(bullets.len(), 41));
             }
             bytes = encode_with(&delta, &shots, &rockets, &pickups, &bullets);
+        }
+        // Then the farthest newcomers and changes, whichever list they are in: what stays is the
+        // nearest of them, as many as fit. Each list goes on the wire as a MessagePack array, its
+        // header and then its items one after another, so what fits is worked out from each item's
+        // size and the snapshot with the lists empty: two encodes, rather than one per thing shed
+        // (a crowd sheds dozens).
+        if bytes.len() > MAX_PACKET {
+            let mut buffer = Vec::new();
+            // (distance, which list, bytes on the wire)
+            let mut order: Vec<(f32, usize, usize)> = Vec::new();
+            order.extend(delta.new_entities.iter().map(|e| (entity_distance(e.id), 0, wire_size(e, &mut buffer))));
+            order.extend(delta.entities.iter().map(|e| (entity_distance(e.id), 1, wire_size(e, &mut buffer))));
+            order.extend(delta.new_vehicles.iter().map(|v| (vehicle_distance(v.id), 2, wire_size(v, &mut buffer))));
+            order.extend(delta.vehicles.iter().map(|v| (vehicle_distance(v.id), 3, wire_size(v, &mut buffer))));
+            // Stable, and each list is already nearest-first, so what is kept is a prefix of each.
+            order.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let bare = Delta { removed: delta.removed.clone(), ..Default::default() };
+            let mut total = encode_with(&bare, &shots, &rockets, &pickups, &bullets).len();
+            let mut counts = [0; 4];
+            for &(_, list, size) in &order {
+                let grown = total + size + array_header(counts[list] + 1) - array_header(counts[list]);
+                if grown > MAX_PACKET {
+                    break;
+                }
+                total = grown;
+                counts[list] += 1;
+            }
+            delta.new_entities.truncate(counts[0]);
+            delta.entities.truncate(counts[1]);
+            delta.new_vehicles.truncate(counts[2]);
+            delta.vehicles.truncate(counts[3]);
+            bytes = encode_with(&delta, &shots, &rockets, &pickups, &bullets);
+            debug_assert_eq!(bytes.len(), total, "the worked-out size is the encoded size");
         }
 
         // What the client holds now is the baseline with the (possibly trimmed) delta applied.
@@ -187,6 +207,22 @@ impl Replica {
             self.sent.pop_front();
         }
         bytes
+    }
+}
+
+/// What `item` takes up inside an encoded message.
+fn wire_size<T: serde::Serialize>(item: &T, buffer: &mut Vec<u8>) -> usize {
+    buffer.clear();
+    rmp_serde::encode::write(buffer, item).expect("protocol messages always serialize");
+    buffer.len()
+}
+
+/// The bytes MessagePack spends saying an array holds `len` items.
+fn array_header(len: usize) -> usize {
+    match len {
+        0..16 => 1,
+        16..=0xFFFF => 3,
+        _ => 5,
     }
 }
 

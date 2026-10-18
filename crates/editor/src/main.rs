@@ -30,14 +30,16 @@ fn valid(name: &str) -> bool {
 #[derive(Deserialize, Serialize)]
 struct Area {
     tiles: Vec<Tile>,
-    /// Hand-placed spawn points, vehicles and items (latitude/longitude). The server reads these
-    /// from the same file; the importer ignores them.
+    /// Hand-placed spawn points, vehicles, items and bots (latitude/longitude). The server reads
+    /// these from the same file; the importer ignores them.
     #[serde(default)]
     spawns: Vec<serde_json::Value>,
     #[serde(default)]
     vehicles: Vec<serde_json::Value>,
     #[serde(default)]
     items: Vec<serde_json::Value>,
+    #[serde(default)]
+    bots: Vec<serde_json::Value>,
 }
 
 fn read_area(name: &str) -> Option<Area> {
@@ -93,7 +95,7 @@ async fn list_worlds(res: &mut Response) {
 async fn get_world(req: &mut Request, res: &mut Response) {
     let Some(name) = name_of(req, res) else { return };
     match read_area(&name) {
-        Some(area) => res.render(Json(serde_json::json!({ "name": name, "tiles": area.tiles, "spawns": area.spawns, "vehicles": area.vehicles, "items": area.items }))),
+        Some(area) => res.render(Json(serde_json::json!({ "name": name, "tiles": area.tiles, "spawns": area.spawns, "vehicles": area.vehicles, "items": area.items, "bots": area.bots }))),
         None => fail(res, StatusCode::NOT_FOUND, "no such world"),
     }
 }
@@ -377,4 +379,23 @@ async fn main() -> anyhow::Result<()> {
     eprintln!("map editor API on http://127.0.0.1:8700/api (run the client with `npm run dev` and open /editor.html)");
     Server::new(acceptor).serve(router).await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_saved_area_keeps_its_bots_and_their_routes() {
+        let sent = r#"{"tiles":[{"gx":1,"gy":2}],"spawns":[],"vehicles":[],"items":[],
+            "bots":[{"lat":63.82,"lon":20.29,"team":2,"skill":0.8,"route":[{"lat":63.82,"lon":20.29},{"lat":63.83,"lon":20.3}]}]}"#;
+        let area: Area = serde_json::from_str(sent).unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(&serde_json::to_vec(&area).unwrap()).unwrap();
+        let bot = &saved["bots"][0];
+        assert_eq!((bot["team"].as_u64(), bot["skill"].as_f64()), (Some(2), Some(0.8)));
+        assert_eq!(bot["route"].as_array().map(Vec::len), Some(2));
+        // An area saved before bots could be placed still loads.
+        let old: Area = serde_json::from_str(r#"{"tiles":[]}"#).unwrap();
+        assert!(old.bots.is_empty());
+    }
 }

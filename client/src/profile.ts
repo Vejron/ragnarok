@@ -24,11 +24,11 @@ if (PLAYER_COLORS.length !== PLAYER_COLOR_COUNT) throw new Error('PLAYER_COLORS 
 
 export const cssColor = (hex: number) => `#${hex.toString(16).padStart(6, '0')}`
 
-/** What the server said each player in the room chose. */
-const known = new Map<number, { name: string; color: number }>()
+/** What the server said each player in the room chose, and which side they are on. */
+const known = new Map<number, { name: string; color: number; team: number; bot: boolean }>()
 
-export function setPlayer(id: number, name: string, color: number) {
-  known.set(id, { name, color })
+export function setPlayer(id: number, name: string, color: number, team = 0, bot = false) {
+  known.set(id, { name, color, team, bot })
 }
 
 export function forgetPlayer(id: number) {
@@ -44,6 +44,15 @@ export const colorFor = (id: number) => PLAYER_COLORS[(known.get(id)?.color ?? i
 
 /** Entity `id`'s name, as the server knows it. */
 export const nameFor = (id: number) => known.get(id)?.name ?? `Player ${id}`
+
+/** Entity `id`'s team: 0 for people, who are all against all, and until we know. */
+export const teamFor = (id: number) => known.get(id)?.team ?? 0
+
+/** Whether entity `id` is a bot. */
+export const isBot = (id: number) => known.get(id)?.bot ?? false
+
+/** Whether `a` and `b` are on one side: the same team, other than 0. Nobody is their own ally. */
+export const allies = (a: number, b: number) => a !== b && teamFor(a) !== 0 && teamFor(a) === teamFor(b)
 
 /** A spawn point `[x, z]`, centimetres in the world's local frame, as the server takes them. */
 export type SpawnPoint = [number, number]

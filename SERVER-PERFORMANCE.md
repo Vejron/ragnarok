@@ -98,8 +98,8 @@ The audit of the server flagged these. Measured, none of them matter at this siz
 - **Per-player snapshot assembly is O(players x world).** At 64 players it is under 1 ms for the
   room. A spatial grid would add code and gain almost nothing until the room is several times
   larger.
-- **The shed loop re-encodes after every removal.** It only runs when a packet is over 1200
-  bytes, and a typical snapshot with 30 players in view is around 320 bytes.
+- ~~**The shed loop re-encodes after every removal.**~~ This one did matter, once bots crowded
+  the room (see [Crowds](#crowds)).
 - **32 scenes kept per player as baselines.** This is memory, not time, and was not measured; it is
   bounded by 64 players x 32 scenes of what is in range.
 
@@ -157,3 +157,23 @@ player firing an AK5 ten times a second (about 120 bullets in the air at once), 
 Stepping a bullet is cheap, one segment cast and one player test a tick; the cost was the wire. The
 shed loop also now drops effects in bulk, by the excess over the packet limit, instead of one
 re-encode per item. A synthetic room with every player firing full-auto is the worst case.
+
+## Crowds
+
+With bots (BOTS.md) a room holds 64 people and 64 bots, and the benchmark (`BOTS=64`) packs all 128
+stickmen around the spawn points, running. Almost every one of them changes in every snapshot, so a
+player's delta is about twice what fits in 1200 bytes, and the farthest half of it has to be shed.
+The shed loop dropped one entity at a time and re-encoded the whole snapshot after each, so dozens
+of encodes per player per snapshot:
+
+| Shedding entities and vehicles | Snapshots per call, 64 people + 64 bots | 64 people, no bots |
+|---|---|---|
+| One re-encode per thing shed (before) | 8.1 ms | 0.85 ms |
+| Halving to find how many fit | 3.3 ms | 0.86 ms |
+| Size worked out from each item's size, then one encode (built) | 1.9 ms | 0.60 ms |
+
+Each list is a MessagePack array, a header (1 byte below 16 items, 3 below 65,536) and then its
+items back to back, so the size with the nearest `k` kept is the size with the lists empty plus the
+kept items' sizes plus the header growth. That is exact, and a `debug_assert` checks it against
+the real encode. Sorting the delta by distance also looked each distance up in a `HashMap` at
+every comparison; it now looks each up once (`sort_by_cached_key`). Effects still shed first, in bulk.

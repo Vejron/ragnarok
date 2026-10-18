@@ -71,6 +71,9 @@ pub struct Physics {
     /// Buildings to be given a new shape, with its triangles in centimetres, at the start of the
     /// next step.
     replacements: Vec<(Obj, Vec<Tri>)>,
+    /// The ground, `[min x, min z, max x, max z]` in metres, under every static collider taken out or
+    /// reshaped since `take_changed` was last called: where the bots' walking grid is out of date.
+    changed: Vec<[f32; 4]>,
     /// How far the playable square reaches from the centre to each side, metres. Planes turn back near it.
     bound: f32,
 }
@@ -246,6 +249,7 @@ impl Physics {
             handles: HashMap::new(),
             removals: Vec::new(),
             replacements: Vec::new(),
+            changed: Vec::new(),
             bound: from_cm(world.half_extent),
         };
         for (collider, object) in static_colliders(world)? {
@@ -319,6 +323,31 @@ impl Physics {
     /// Which building or tree a collider is, if it is one.
     pub fn object_of(&self, collider: ColliderHandle) -> Option<Obj> {
         self.objects.get(&collider).copied()
+    }
+
+    /// How far a ray from `origin` along the unit `dir` goes before it meets the static world, within
+    /// `max`. Vehicles are ignored.
+    pub fn cast_ray_static(&self, origin: [f32; 3], dir: [f32; 3], max: f32) -> Option<f32> {
+        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::exclude_dynamic());
+        queries.cast_ray(&Ray::new(Vector::from(origin), Vector::from(dir)), max, true).map(|(_, distance)| distance)
+    }
+
+    /// Whether a box of half extents `half` centred at `centre`, unturned, touches the static world.
+    pub fn box_touches_static(&self, centre: [f32; 3], half: [f32; 3]) -> bool {
+        self.touches_static(&Cuboid::new(Vector::from(half)), Pose::from_translation(Vector::from(centre)))
+    }
+
+    /// The ground under the static colliders that have changed since the last call; see `changed`.
+    pub fn take_changed(&mut self) -> Vec<[f32; 4]> {
+        std::mem::take(&mut self.changed)
+    }
+
+    /// Notes the ground under collider `handle` as changed.
+    fn mark_changed(&mut self, handle: ColliderHandle) {
+        if let Some(collider) = self.colliders.get(handle) {
+            let aabb = collider.compute_aabb();
+            self.changed.push([aabb.mins.x, aabb.mins.z, aabb.maxs.x, aabb.maxs.z]);
+        }
     }
 
     /// Whether `shape` at `pose` touches the static world. Vehicles are ignored.

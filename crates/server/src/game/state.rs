@@ -82,6 +82,144 @@ pub struct Player {
     pub spawns: Vec<[i32; 2]>,
     /// Which of `spawns` the next spawn uses; counts up forever and wraps by `spawns.len()`.
     pub next_spawn: usize,
+    /// `TEAM_NONE` for people, who are all against all. Players on the same other team never hurt
+    /// each other.
+    pub team: u8,
+}
+
+/// Every player for themselves.
+pub const TEAM_NONE: u8 = 0;
+/// The team bots are on unless placed on another.
+pub const TEAM_BOTS: u8 = 1;
+/// Bots a room holds, on top of the `MAX_PLAYERS` people: bots never take a person's place.
+pub const MAX_BOTS: usize = 64;
+/// How good a shot a bot is unless placed with another skill: 0 is a raw recruit, 1 a marksman.
+pub const DEFAULT_SKILL: f32 = 0.5;
+
+/// What a bot is up to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BotMode {
+    /// Walking its route.
+    Patrol,
+    /// Running at someone it has seen, or at where it last saw them.
+    Pursue,
+    /// Lost them: looking round where they were last seen.
+    Search,
+}
+
+/// The mind of a bot. Its body is the `Player` with the same id; `Bots` writes that player's input
+/// each tick, so it walks, rides and dies exactly as a person does.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Bot {
+    pub home: [f32; 2],
+    /// Waypoints `[x, z]`, walked round in order.
+    pub route: Vec<[f32; 2]>,
+    /// The waypoint it is walking to.
+    pub next: usize,
+    pub mode: BotMode,
+    /// Ticks left of a search.
+    pub mode_left: u32,
+    /// Whom it is after, where they were last seen (the body's centre) and on which tick, and how
+    /// fast they seemed to be going then, m/s.
+    pub target: Option<u32>,
+    pub last_seen: [f32; 3],
+    pub seen_tick: u32,
+    pub velocity: [f32; 3],
+    /// Whether the target was in sight at the last look.
+    pub sees: bool,
+    /// Facing and looking up or down, radians, turned smoothly rather than snapped.
+    pub yaw: f32,
+    pub pitch: f32,
+    /// The nearest it has been to the next corner of its path since it last got closer, and ticks
+    /// since then.
+    pub best: f32,
+    pub stalled: u32,
+    /// The corners `[x, z]` still to walk to on its way to `path_to`, the next first, and ticks
+    /// until it looks for a better way.
+    pub path: Vec<[f32; 2]>,
+    pub path_to: [f32; 2],
+    pub replan_in: u32,
+    /// How good a shot it is, 0 to 1: how quickly it reacts, how close its aim is, how well it leads.
+    pub skill: f32,
+    /// The hotbar slot it holds.
+    pub slot: u8,
+    /// Ticks before it may fire on someone it has just seen.
+    pub react: u32,
+    /// Ticks it has had its target in sight, unbroken: its aim settles as this grows.
+    pub tracked: u32,
+    /// How far off its aim is, yaw and pitch, radians: drawn afresh at every look.
+    pub error: [f32; 2],
+    /// Ticks left of holding the trigger down, then of letting it go, for a gun that fires in bursts.
+    pub burst: u32,
+    pub pause: u32,
+    /// Which way it sidesteps while it stands and fights (-1, 0 or 1), and for how many more ticks.
+    pub strafe: i8,
+    pub strafe_left: u32,
+    /// Where the last hit it took came from (the attacker, or a blast's centre), until it has
+    /// turned that way.
+    pub hit_from: Option<[f32; 3]>,
+    /// What it holds at the start of every life, when not the standard loadout.
+    pub loadout: Option<[ItemSlot; HOTBAR_SLOTS]>,
+    /// The vehicle it crews and its seat there, when it is one of a tank's crew.
+    pub crew: Option<Crew>,
+    /// A driver backing out of being stuck: ticks left of it, and how often it has tried on the way
+    /// to this goal.
+    pub reverse_left: u32,
+    pub tries: u32,
+}
+
+/// A bot's place in a crew: its vehicle, and the seat it works (0 drives, 1 is the gun).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Crew {
+    pub vehicle: u32,
+    pub seat: usize,
+}
+
+/// Something loud a bot may hear: where it was, who made it (none for a wreck going up, say), and
+/// how far it carries, metres. Walls do not stop it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Noise {
+    pub at: [f32; 3],
+    pub by: Option<u32>,
+    pub reach: f32,
+}
+
+impl Bot {
+    pub fn new(home: [f32; 2], route: Vec<[f32; 2]>) -> Self {
+        Self {
+            home,
+            route,
+            next: 0,
+            mode: BotMode::Patrol,
+            mode_left: 0,
+            target: None,
+            last_seen: [0.0; 3],
+            seen_tick: 0,
+            velocity: [0.0; 3],
+            sees: false,
+            yaw: 0.0,
+            pitch: 0.0,
+            best: f32::MAX,
+            stalled: 0,
+            path: Vec::new(),
+            path_to: [0.0; 2],
+            replan_in: 0,
+            skill: DEFAULT_SKILL,
+            slot: 0,
+            react: 0,
+            tracked: 0,
+            error: [0.0; 2],
+            burst: 0,
+            pause: 0,
+            strafe: 0,
+            strafe_left: 0,
+            hit_from: None,
+            loadout: None,
+            crew: None,
+            reverse_left: 0,
+            tries: 0,
+        }
+    }
 }
 
 impl Player {
@@ -300,6 +438,10 @@ pub struct World {
     pub pickups: BTreeMap<u32, Pickup>,
     /// Roosters, which share the id space too.
     pub roosters: BTreeMap<u32, Rooster>,
+    /// The minds of the players that are bots, by player id.
+    pub bots: BTreeMap<u32, Bot>,
+    /// Where a stickman can walk, built as the bots look for ways round things.
+    pub nav: crate::navigation::NavGrid,
     pub(super) next_id: u32,
     pub rng: Rng,
     /// Rifle shots since the last snapshot, for drawing tracers. Drained when snapshots go out.
@@ -311,6 +453,8 @@ pub struct World {
     /// Hits since the last tick, each with the player it is for. Drained, summed and sent
     /// reliably to that player by `Game::step`.
     pub hits: Vec<(u32, Hit)>,
+    /// Gunshots and blasts since the bots last listened. Drained by `Bots` at the start of each tick.
+    pub noises: Vec<Noise>,
     /// Solid trees by identity, to look their size up from a collider hit.
     pub(super) trees_by_id: HashMap<ObjId, usize>,
     /// Buildings by identity.

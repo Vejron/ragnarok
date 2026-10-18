@@ -1,11 +1,13 @@
 mod game;
 mod jitter;
 mod mechanics;
+mod navigation;
 mod netem;
 mod physics;
 mod profile;
 mod replication;
 mod rng;
+mod scenario;
 mod session;
 mod tls;
 
@@ -78,6 +80,8 @@ struct Placements {
     vehicles: Vec<PlacedVehicleSpot>,
     #[serde(default)]
     items: Vec<PlacedItemSpot>,
+    #[serde(default)]
+    bots: Vec<PlacedBotSpot>,
 }
 
 #[derive(serde::Deserialize)]
@@ -104,8 +108,26 @@ struct PlacedItemSpot {
     lon: f64,
 }
 
+#[derive(serde::Deserialize)]
+struct PlacedBotSpot {
+    lat: f64,
+    lon: f64,
+    #[serde(default = "one")]
+    team: u8,
+    /// How good a shot it is, 0 to 1.
+    #[serde(default = "half")]
+    skill: f32,
+    /// Waypoints it walks round; empty makes up a short loop around where it stands.
+    #[serde(default)]
+    route: Vec<Spot>,
+}
+
 fn one() -> u8 {
     1
+}
+
+fn half() -> f32 {
+    0.5
 }
 
 /// Replaces the world's spawn points with the editor's, if it placed any, and records the placed
@@ -132,7 +154,50 @@ fn apply_placements(world: &mut WorldFile, path: &Path) {
         .iter()
         .filter_map(|i| locate(world, i.lat, i.lon).map(|at| shared::world::PlacedItem { item: i.item, count: i.count.max(1), at }))
         .collect();
-    tracing::info!(spawns = world.spawns.len(), vehicles = world.placed_vehicles.len(), items = world.placed_items.len(), "editor placements applied");
+    // A waypoint outside the world is dropped; the bot walks the rest.
+    world.placed_bots = placed
+        .bots
+        .iter()
+        .filter_map(|b| {
+            let route = b.route.iter().filter_map(|p| locate(world, p.lat, p.lon)).collect();
+            locate(world, b.lat, b.lon).map(|at| shared::world::PlacedBot { at, team: b.team, skill: b.skill, route })
+        })
+        .collect();
+    tracing::info!(spawns = world.spawns.len(), vehicles = world.placed_vehicles.len(), items = world.placed_items.len(), bots = world.placed_bots.len(), "editor placements applied");
+}
+
+/// `RAGNAROK_BOTS=n` adds `n` bots on top of any placed ones, for trying them out: each on the bot
+/// team at one of the world's spawn points just past the few players start at, on a made-up loop.
+fn add_test_bots(game: &mut game::Game) {
+    let Some(count) = env("RAGNAROK_BOTS").and_then(|n| n.parse::<usize>().ok()) else { return };
+    let spawns = game.world.map.spawns.clone();
+    for n in 0..count {
+        let at = spawns.get((n + 6) % spawns.len().max(1)).copied().unwrap_or([0, 0]);
+        if game.add_bot(at.map(shared::quant::from_cm), game::TEAM_BOTS, Vec::new()).is_none() {
+            tracing::warn!(added = n, "MAX_BOTS reached, no more test bots");
+            break;
+        }
+    }
+}
+
+/// `RAGNAROK_TANKS=n` adds `n` tank crews on the bot team, for trying them out: each tank at one of
+/// the world's spawn points, from the last back, where one fits, driving along the nearest road.
+fn add_test_tanks(game: &mut game::Game) {
+    let Some(count) = env("RAGNAROK_TANKS").and_then(|n| n.parse::<usize>().ok()) else { return };
+    let spawns = game.world.map.spawns.clone();
+    let mut added = 0;
+    for at in spawns.iter().rev() {
+        if added == count {
+            break;
+        }
+        let names = [format!("Tank {} driver", added + 1), format!("Tank {} gunner", added + 1)];
+        if game.add_crew(names, at.map(shared::quant::from_cm), game::TEAM_BOTS, Vec::new()).is_some() {
+            added += 1;
+        }
+    }
+    if added < count {
+        tracing::warn!(added, wanted = count, "room for fewer test tanks than asked for");
+    }
 }
 
 #[tokio::main]
@@ -143,7 +208,12 @@ async fn main() -> Result<()> {
 
     let (world, hash) = load_world()?;
     let (commands, receiver) = mpsc::channel(session::COMMAND_CAPACITY);
-    let game_task = tokio::spawn(game::run(game::Game::new(world, hash)?, receiver));
+    let mut game = game::Game::new(world, hash)?;
+    let scenario_path = Path::new(&world_path()).with_file_name("scenario.json");
+    game.scenario = scenario::load(&scenario_path, &game.world.map)?;
+    add_test_bots(&mut game);
+    add_test_tanks(&mut game);
+    let game_task = tokio::spawn(game::run(game, receiver));
     // The sessions would keep accepting players into a dead simulation, so end the process and let
     // the supervisor restart it.
     tokio::spawn(async move {
@@ -212,4 +282,18 @@ async fn main() -> Result<()> {
         Server::new(listener).serve(router).await;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn placed_bots_read_as_the_editor_writes_them_with_defaults_for_what_is_left_out() {
+        let text = r#"{"bots":[{"lat":63.82,"lon":20.29,"team":2,"skill":0.8,"route":[{"lat":63.83,"lon":20.3}]},{"lat":63.8,"lon":20.2}]}"#;
+        let placed: Placements = serde_json::from_str(text).unwrap();
+        let [a, b] = &placed.bots[..] else { panic!("two bots") };
+        assert_eq!((a.team, a.skill, a.route.len()), (2, 0.8, 1));
+        assert_eq!((b.team, b.skill, b.route.len()), (1, 0.5, 0));
+    }
 }

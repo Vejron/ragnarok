@@ -10,6 +10,7 @@ A browser multiplayer game: goofy stickmen in a real city built from OpenStreetM
 - [engine/README.md](engine/README.md): the WebGPU render engine the client draws with, a package of its own
 - [VEHICLES-I.md](VEHICLES-I.md): how roadmap stage 2 (cars, seats, driving) was built
 - [ARMOR.md](ARMOR.md): armor zones, ricochets, weak spots, turret loss and the Strv S
+- [BOTS.md](BOTS.md): server-run enemy stickmen that patrol, find their way, spot, hear, pursue and shoot, crew tanks along the roads, placed per world, and scenarios (`scenario.json`) with squads, triggers, waves, objectives and a win or a loss
 - [VEHICLES-II.md](VEHICLES-II.md): the tank, its gunner seat and the shell, driver prediction and the helicopter
 - [VEHICLES-III.md](VEHICLES-III.md): handling, tyre effects, crash damage and vehicle sound
 - [VEHICLES-IV.md](VEHICLES-IV.md): the Fokker triplane: flight, guns, bombs, model and sound

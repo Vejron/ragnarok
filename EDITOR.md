@@ -1,7 +1,7 @@
 # Map editor
 
 A browser tool for choosing which part of the map the game is played on, and for placing spawn
-points, vehicles and items on it by hand. It is a Vue page (`client/src/editor/`, opened as
+points, vehicles, items and enemy bots on it by hand. It is a Vue page (`client/src/editor/`, opened as
 `/editor.html`) on top of a small Salvo API (`crates/editor`). The editor never touches the game
 itself: it edits files under `worlds/<name>/` that the importer and the server read.
 
@@ -43,6 +43,30 @@ get ground (see `WORLD.md`, "Painting a world").
 - Vehicles that do not fit at their spot when the server starts are skipped, with a warning in the
   log.
 
+### Place bots and draw their routes
+
+Bots are the server's enemy stickmen (see `BOTS.md`). Each is drawn as a square in its team's
+colour with the team number on it, and its route as a line in the same colour: dashed from the bot
+out to its first waypoint, then solid round the waypoints and back to the first.
+
+| Tool | Click | Shift or right-click |
+|---|---|---|
+| Bot | On a bot: pick it. Elsewhere on a painted tile: place a new bot there, and pick it. | Remove the nearest bot. |
+| Route | Add a waypoint to the picked bot's route. On the bot itself, its own spot goes in the route. On another bot: pick that one instead. | Remove the picked bot's nearest waypoint. |
+
+- **Team and Skill** (1 to 4, and 0 to 1 in steps of 0.1) are the picked bot's own: changing them
+  changes it. They are also what the next bot placed gets.
+- **The picked bot** is outlined in yellow, its route drawn bold and its waypoints numbered. The
+  panel says what its route makes it do:
+  - **Guard** sets the route to only its own spot, so it stands guard there.
+  - **Clear route** empties it, so it makes up a short loop of its own near home.
+  - **Delete** removes the bot.
+- The route is the order the bot walks the waypoints in, looping. It finds its own way between
+  them, so the line need not avoid buildings.
+- Waypoints, like bots, go only on painted tiles.
+- Unlike spawns, vehicles and items, placed bots add to the game rather than replacing anything.
+  `RAGNAROK_BOTS` still adds made-up ones on top.
+
 ### 3. Manage worlds
 
 The side panel keeps several named worlds:
@@ -66,16 +90,23 @@ they survive the world being re-centred when tiles are added or removed:
   "tiles":    [{ "gx": 0, "gy": 0 }],
   "spawns":   [{ "lat": 63.8258, "lon": 20.2630 }],
   "vehicles": [{ "kind": 1, "lat": 63.8259, "lon": 20.2631, "yaw": 0.0 }],
-  "items":    [{ "item": 2, "count": 1, "lat": 63.8257, "lon": 20.2629 }]
+  "items":    [{ "item": 2, "count": 1, "lat": 63.8257, "lon": 20.2629 }],
+  "bots":     [{ "lat": 63.8256, "lon": 20.2628, "team": 1, "skill": 0.5,
+                 "route": [{ "lat": 63.8256, "lon": 20.2628 }, { "lat": 63.8260, "lon": 20.2640 }] }]
 }
 ```
 
-`spawns`, `vehicles` and `items` are optional; older files without them still load. `yaw` is in
+`spawns`, `vehicles`, `items` and `bots` are optional; older files without them still load. A
+bot's `team`, `skill` and `route` are optional as well (1, 0.5 and none); the editor always
+writes all three. `yaw` is in
 radians as the simulation counts it (0 faces north, positive turns left); the editor stores
 compass headings in 45° steps. `area.json` is committed; the generated files are git-ignored.
 
 Placements are not part of `world.msgpack`. The server reads `area.json` next to the manifest on
 start, so changing them needs a save and a server restart, but **no "Generate world"**.
+
+A world's scenario, `scenario.json` in the same folder, is written by hand: the editor does not
+show or change it, but deleting the world deletes it too. See [BOTS.md](BOTS.md), Scenarios.
 
 ## API
 
@@ -94,9 +125,10 @@ All under `/api` on port 8700.
 
 | | |
 |---|---|
-| `client/src/editor/Editor.vue` | The page: map, tools, markers, world list, job panel. |
-| `client/src/editor/placements.ts` | Placement types, vehicle and item kinds, heading/yaw conversion, nearest-marker lookup. |
+| `client/src/editor/Editor.vue` | The page: map, tools, markers, bot routes, world list, job panel. |
+| `client/src/editor/placements.ts` | Placement types, vehicle and item kinds, bot teams and route lines, heading/yaw conversion, nearest-marker lookup. |
 | `client/src/editor/api.ts` | Typed client for the API. |
 | `crates/editor/src/main.rs` | The API, job runner and world files. |
 | `crates/server/src/main.rs` | `apply_placements`: reads `area.json` at server start. |
 | `crates/server/src/mechanics/{vehicles,pickups}.rs` | Spawn the placed vehicles and items. |
+| `crates/server/src/game.rs` | `Game::new` adds the placed bots (`add_bot`); `mechanics/bots.rs` runs them. |

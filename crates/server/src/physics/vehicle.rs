@@ -610,6 +610,7 @@ impl Physics {
             let vertices: Vec<Vector> = triangles.iter().flat_map(|t| (0..3).map(move |k| corner(t, k))).collect();
             let indices: Vec<[u32; 3]> = (0..triangles.len() as u32).map(|i| [i * 3, i * 3 + 1, i * 3 + 2]).collect();
             let Ok(builder) = ColliderBuilder::trimesh(vertices, indices) else { continue };
+            self.mark_changed(old);
             self.objects.remove(&old);
             self.colliders.remove(old, &mut self.islands, &mut self.bodies, &mut self.soft_bodies, false);
             let handle = self.colliders.insert(builder.build());
@@ -618,6 +619,7 @@ impl Physics {
         }
         for object in std::mem::take(&mut self.removals) {
             if let Some(handle) = self.handles.remove(&object) {
+                self.mark_changed(handle);
                 self.objects.remove(&handle);
                 self.colliders.remove(handle, &mut self.islands, &mut self.bodies, &mut self.soft_bodies, false);
             }

@@ -6,13 +6,14 @@ use crate::mechanics::{Mechanic, default_mechanics};
 use crate::physics::{CarControls, Character, Obj, Physics};
 use crate::replication::{Everything, Own, Replica};
 use crate::rng::Rng;
+use crate::scenario::Scenario;
 use anyhow::Result;
 use bytes::Bytes;
 use shared::carve::{Cut, Shell, Tri};
 use shared::consts::*;
 use shared::items::{HOTBAR_SLOTS, ITEM_AK5, ITEM_GRENADE, ITEM_NONE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, def};
 use shared::protocol::*;
-use shared::quant::{pack_quat, to_axis, to_cm, to_cm_i16, to_milli_i16, to_mrad};
+use shared::quant::{from_cm, pack_quat, to_axis, to_cm, to_cm_i16, to_milli_i16, to_mrad};
 use shared::world::{Building, ObjId, Tree, WorldFile};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::time::Duration;
@@ -33,6 +34,12 @@ fn destroyed_entry(object: Obj, yaw: i16) -> (u8, u16, u16, u32, i16) {
 }
 
 /// Building `id`'s damage `stage`, and where a blast marked it, as a `Damaged` entry.
+/// Player `id`'s `Profiles` entry: who they are, and which side.
+fn profile_entry(world: &World, id: u32) -> ProfileEntry {
+    let player = &world.players[&id];
+    (id, player.name.clone(), player.color, player.team, world.bots.contains_key(&id) as u8)
+}
+
 fn damaged_entry(id: ObjId, stage: u8, mark: Option<[f32; 3]>) -> DamagedEntry {
     let [x, y, z] = mark.map(|p| p.map(|v| (v * 100.0).round() as i32)).unwrap_or([0; 3]);
     (id.col, id.row, id.index, stage, mark.is_some() as u8, x, y, z)
@@ -49,6 +56,8 @@ pub struct Game {
     /// sync for good; it is disconnected and rejoins with the catch-up instead.
     stalled: Vec<u32>,
     world_hash: u32,
+    /// The world's scenario, if it has one (see `scenario`).
+    pub scenario: Option<Scenario>,
 }
 
 /// Queues a reliable message, noting the player as stalled when the outbox is full. A closed one
@@ -79,12 +88,15 @@ impl Game {
                 rockets: BTreeMap::new(),
                 pickups: BTreeMap::new(),
                 roosters: BTreeMap::new(),
+                bots: BTreeMap::new(),
+                nav: Default::default(),
                 next_id: 1,
                 rng: Rng::from_time(),
                 shots: Vec::new(),
                 bullets: Vec::new(),
                 kills: Vec::new(),
                 hits: Vec::new(),
+                noises: Vec::new(),
                 history: VecDeque::new(),
             },
             mechanics: default_mechanics(),
@@ -92,9 +104,17 @@ impl Game {
             stalled: Vec::new(),
             replicas: BTreeMap::new(),
             world_hash,
+            scenario: None,
         };
         for mechanic in &mut game.mechanics {
             mechanic.on_start(&mut game.world);
+        }
+        for bot in std::mem::take(&mut game.world.map.placed_bots) {
+            let route = bot.route.iter().map(|point| point.map(from_cm)).collect();
+            match game.add_bot(bot.at.map(from_cm), bot.team, route) {
+                Some(id) => game.world.bots.get_mut(&id).expect("just added").skill = bot.skill.clamp(0.0, 1.0),
+                None => tracing::warn!(MAX_BOTS, "too many bots, placed bot skipped"),
+            }
         }
         Ok(game)
     }
@@ -126,7 +146,8 @@ impl Game {
     }
 
     fn join(&mut self, outbox: mpsc::Sender<Outgoing>, profile: Profile) -> Option<u32> {
-        if self.world.players.len() >= MAX_PLAYERS {
+        // People are the players with a connection; bots have their own room (`MAX_BOTS`).
+        if self.outboxes.len() >= MAX_PLAYERS {
             return None;
         }
         let id = self.world.alloc_id();
@@ -157,12 +178,12 @@ impl Game {
                 color: profile.color.unwrap_or((id % PLAYER_COLOR_COUNT as u32) as u8),
                 spawns: profile.spawns.into_iter().filter(|&point| crate::mechanics::spawn_usable(&self.world.map, point)).collect(),
                 next_spawn: 0,
+                team: TEAM_NONE,
             },
         );
-        let player = &self.world.players[&id];
-        let profiles = self.world.players.iter().map(|(&id, player)| (id, player.name.clone(), player.color)).collect();
+        let profiles = self.world.players.keys().map(|&id| profile_entry(&self.world, id)).collect();
         let _ = outbox.try_send(Outgoing::Reliable(encode(&Profiles(S_PROFILES, profiles)).into()));
-        let joiner = Bytes::from(encode(&Profiles(S_PROFILES, vec![(id, player.name.clone(), player.color)])));
+        let joiner = Bytes::from(encode(&Profiles(S_PROFILES, vec![profile_entry(&self.world, id)])));
         for (&to, other) in &self.outboxes {
             send_reliable(other, to, &joiner, &mut self.stalled);
         }
@@ -194,6 +215,9 @@ impl Game {
         if !carved.is_empty() {
             let _ = outbox.try_send(Outgoing::Reliable(encode(&Carved(S_CARVED, 0, carved)).into()));
         }
+        if let Some(objective) = self.scenario.as_ref().map(Scenario::objective).filter(|o| !o.is_empty()) {
+            let _ = outbox.try_send(Outgoing::Reliable(encode(&Notice(S_NOTICE, NOTICE_OBJECTIVE, objective.into())).into()));
+        }
         self.outboxes.insert(id, outbox);
         self.replicas.insert(id, Replica::default());
         for mechanic in &mut self.mechanics {
@@ -221,6 +245,110 @@ impl Game {
         tracing::info!(id, players = self.world.players.len(), "player left");
     }
 
+    /// Adds a bot living at `home` on `team` (`TEAM_BOTS` or above) that walks round `route`
+    /// (`[x, z]`, metres; empty makes one up). It is a player with no connection: `Bots` writes its
+    /// input, and everything else treats it as anyone else. `None` when there are `MAX_BOTS` already.
+    pub fn add_bot(&mut self, home: [f32; 2], team: u8, route: Vec<[f32; 2]>) -> Option<u32> {
+        let name = format!("Bot {}", self.world.bots.len() + 1);
+        self.add_bot_as(name, home, team, route)
+    }
+
+    /// `add_bot`, under `name`.
+    pub fn add_bot_as(&mut self, name: String, home: [f32; 2], team: u8, route: Vec<[f32; 2]>) -> Option<u32> {
+        if self.world.bots.len() >= MAX_BOTS {
+            return None;
+        }
+        let id = self.world.alloc_id();
+        let team = team.max(TEAM_BOTS);
+        self.world.players.insert(
+            id,
+            Player {
+                character: Character::default(),
+                seat: None,
+                hit_cooldown: 0,
+                input: InputFrame::default(),
+                inputs: JitterBuffer::default(),
+                ack: 0,
+                hp: PLAYER_MAX_HP,
+                respawn_in: 0,
+                hotbar: starting_hotbar(),
+                selected: 0,
+                fire_cooldown: 0,
+                reload_left: 0,
+                channel_left: 0,
+                trigger_held: false,
+                kills: 0,
+                deaths: 0,
+                name,
+                // One outfit per team, so a squad reads as one.
+                color: (team.wrapping_mul(5)) % PLAYER_COLOR_COUNT,
+                spawns: vec![home.map(to_cm)],
+                next_spawn: 0,
+                team,
+            },
+        );
+        self.world.bots.insert(id, Bot::new(home, route));
+        for mechanic in &mut self.mechanics {
+            mechanic.on_join(&mut self.world, id);
+        }
+        // Scores are only ever sent whole, to joiners; a bot's starts at zero on every client anyway.
+        let profile = Bytes::from(encode(&Profiles(S_PROFILES, vec![profile_entry(&self.world, id)])));
+        for (&to, outbox) in &self.outboxes {
+            send_reliable(outbox, to, &profile, &mut self.stalled);
+        }
+        tracing::info!(id, team, x = home[0], z = home[1], "bot added");
+        Some(id)
+    }
+
+    /// Parks a tank at `at` and puts a crew of two bots of `team` in it, named `names`: a driver
+    /// who drives it round `route` (`[x, z]`, metres; empty is along the nearest road) and a
+    /// gunner. Each lives beside where the tank stands, and gets back in when it comes back from
+    /// dying. Returns the tank and its driver and gunner, or `None` when there is no room for two
+    /// more bots or for the tank, or it does not fit there.
+    pub fn add_crew(&mut self, names: [String; 2], at: [f32; 2], team: u8, route: Vec<[f32; 2]>) -> Option<(u32, [u32; 2])> {
+        use crate::mechanics::{DRIVER, GUNNER, add_tank, nearest_waypoint, road_route, seat};
+        if self.world.bots.len() + 2 > MAX_BOTS {
+            return None;
+        }
+        let route = if route.is_empty() { road_route(&self.world.map, at) } else { route };
+        let next = nearest_waypoint(&route, at);
+        // Facing the first waypoint, or along the route when it starts right there.
+        let toward = route.get(next).filter(|p| (p[0] - at[0]).hypot(p[1] - at[1]) > 3.0).or_else(|| route.get((next + 1) % route.len()));
+        let yaw = toward.map_or(0.0, |p| (-(p[0] - at[0])).atan2(-(p[1] - at[1])));
+        let vid = add_tank(&mut self.world, at, yaw)?;
+        // Their homes: beside the tank, clear of its hull.
+        let (sin, cos) = yaw.sin_cos();
+        let home = [at[0] + cos * 4.0, at[1] - sin * 4.0];
+        let [driver_name, gunner_name] = names;
+        let mut crew = [0; 2];
+        for (slot, (name, index)) in [(driver_name, DRIVER), (gunner_name, GUNNER)].into_iter().enumerate() {
+            let id = self.add_bot_as(name, home, team, route.clone()).expect("room checked above");
+            let bot = self.world.bots.get_mut(&id).expect("just added");
+            bot.crew = Some(Crew { vehicle: vid, seat: index });
+            bot.next = next;
+            bot.yaw = yaw;
+            seat(&mut self.world, id, vid, index);
+            crew[slot] = id;
+        }
+        tracing::info!(vid, driver = crew[0], gunner = crew[1], "tank crew added");
+        Some((vid, crew))
+    }
+
+    /// Takes bot `id` out of the game, as if it had left. Anyone else is left alone.
+    pub fn remove_bot(&mut self, id: u32) {
+        if self.world.bots.contains_key(&id) {
+            self.leave(id);
+        }
+    }
+
+    /// Tells everyone something: a `Notice` of `kind` (`NOTICE_*`).
+    pub fn notice(&mut self, kind: u8, text: &str) {
+        let bytes = Bytes::from(encode(&Notice(S_NOTICE, kind, text.into())));
+        for (&to, outbox) in &self.outboxes {
+            send_reliable(outbox, to, &bytes, &mut self.stalled);
+        }
+    }
+
     /// One fixed simulation step.
     pub fn step(&mut self) {
         for player in self.world.players.values_mut() {
@@ -232,6 +360,10 @@ impl Game {
         }
         for mechanic in &mut self.mechanics {
             mechanic.on_tick(&mut self.world, TICK_DT);
+        }
+        if let Some(mut scenario) = self.scenario.take() {
+            scenario.tick(self);
+            self.scenario = Some(scenario);
         }
         self.broadcast_kills();
         self.send_hits();
@@ -383,7 +515,7 @@ mod tests {
         assert!(stickmen[0].z < 0, "walked towards -Z");
     }
 
-    fn profiles(outgoing: Vec<Outgoing>) -> Vec<Vec<(u32, String, u8)>> {
+    fn profiles(outgoing: Vec<Outgoing>) -> Vec<Vec<ProfileEntry>> {
         outgoing
             .into_iter()
             .filter_map(|out| match out {
@@ -402,8 +534,21 @@ mod tests {
         game.handle(Command::Join { outbox, reply, profile: Profile { name: "Åsa".into(), color: Some(5), spawns: vec![] } });
         let second = response.try_recv().unwrap().unwrap();
         let first_colour = (first % PLAYER_COLOR_COUNT as u32) as u8;
-        assert_eq!(profiles(drain(&mut inbox)), vec![vec![(first, format!("Player {first}"), first_colour), (second, "Åsa".into(), 5)]]);
-        assert_eq!(profiles(drain(&mut first_inbox)).last(), Some(&vec![(second, "Åsa".into(), 5)]));
+        assert_eq!(profiles(drain(&mut inbox)), vec![vec![(first, format!("Player {first}"), first_colour, TEAM_NONE, 0), (second, "Åsa".into(), 5, TEAM_NONE, 0)]]);
+        assert_eq!(profiles(drain(&mut first_inbox)).last(), Some(&vec![(second, "Åsa".into(), 5, TEAM_NONE, 0)]));
+    }
+
+    #[test]
+    fn a_bot_is_announced_with_its_team() {
+        let mut game = game();
+        let (_, mut inbox) = join(&mut game);
+        drain(&mut inbox);
+        let bot = game.add_bot([0.0, 0.0], 3, vec![]).unwrap();
+        assert_eq!(profiles(drain(&mut inbox)), vec![vec![(bot, "Bot 1".to_string(), (3 * 5) % PLAYER_COLOR_COUNT, 3, 1)]]);
+        let (outbox, mut late) = mpsc::channel(256);
+        let (reply, _response) = oneshot::channel();
+        game.handle(Command::Join { outbox, reply, profile: Default::default() });
+        assert!(profiles(drain(&mut late))[0].iter().any(|entry| entry.0 == bot && entry.3 == 3 && entry.4 == 1));
     }
 
     #[test]
@@ -504,9 +649,27 @@ mod tests {
             let (x, z) = (player.character.position[0], player.character.position[2]);
             player.character.position[1] = game.world.map.ground.height_at(x, z) + crate::physics::STANDING_Y + 0.5;
         }
+        // `BOTS=n`: that many bots as well, spread over the spawn points among the players, on made-up loops.
+        let bots: usize = std::env::var("BOTS").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
+        for n in 0..bots {
+            let at = if spawns.is_empty() { [(n % 8) as f32 * 70.0 - 245.0, (n / 8) as f32 * 70.0 - 245.0] } else { spawns[n * spawns.len() / bots.max(1) % spawns.len()] };
+            game.add_bot(at, TEAM_BOTS, Vec::new()).expect("BOTS is at most MAX_BOTS");
+        }
+        // `TANKS=n`: that many tank crews as well, at the spawn points from the last back, driving along the roads.
+        let tanks: usize = std::env::var("TANKS").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
+        let mut crews = Vec::new();
+        for &at in spawns.iter().rev() {
+            if crews.len() == tanks {
+                break;
+            }
+            if let Some((vid, _)) = game.add_crew(["Driver".into(), "Gunner".into()], at, TEAM_BOTS, Vec::new()) {
+                crews.push((vid, game.world.physics.car_pose(vid).map(|pose| pose.position)));
+            }
+        }
+        println!("{} people, {bots} bots, {} tanks", ids.len(), crews.len());
         let (mut step_total, mut step_max, mut snap_total) = (Duration::ZERO, Duration::ZERO, Duration::ZERO);
         let ticks = 600u32;
-        let mut per_mechanic = [Duration::ZERO; 7];
+        let mut per_mechanic = vec![Duration::ZERO; game.mechanics.len()];
         for t in 1..=ticks {
             for (n, id) in ids.iter().enumerate() {
                 let fire = if (t as usize + n).is_multiple_of(30) { BUTTON_FIRE } else { 0 };
@@ -539,8 +702,13 @@ mod tests {
                 while inbox.try_recv().is_ok() {}
             }
         }
+        for (vid, start) in crews {
+            let (Some(start), Some(pose)) = (start, game.world.physics.car_pose(vid)) else { continue };
+            let gun = game.world.vehicles.get(&vid).and_then(|vehicle| vehicle.gun).map_or(0, |gun| gun.shots);
+            println!("tank {vid}: drove {:.0} m, fired {gun}", (pose.position[0] - start[0]).hypot(pose.position[2] - start[2]));
+        }
         let budget = Duration::from_secs_f64(1.0 / TICK_RATE as f64);
-        println!("per mechanic per tick (Spawn, Pickups, Vehicles, Gunnery, Movement, Npcs, Combat): {:?}", per_mechanic.map(|d| d / ticks));
+        println!("per mechanic per tick (Bots, Spawn, Pickups, Drones, Vehicles, Gunnery, Movement, Npcs, Combat): {:?}", per_mechanic.iter().map(|d| *d / ticks).collect::<Vec<_>>());
         println!("mechanics: avg {:?}, worst {:?}; snapshots for the room: avg {:?} per call (every {SNAPSHOT_EVERY} ticks); budget {budget:?}", step_total / ticks, step_max, snap_total / (ticks / SNAPSHOT_EVERY));
     }
 }

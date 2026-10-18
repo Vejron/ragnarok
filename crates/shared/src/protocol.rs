@@ -26,6 +26,7 @@ pub const S_HIT: u8 = 8;
 pub const S_RTC: u8 = 9;
 pub const S_CARVED: u8 = 10;
 pub const S_PROFILES: u8 = 11;
+pub const S_NOTICE: u8 = 12;
 
 /// `Hit` roles: whose feedback it is.
 /// You hurt something.
@@ -530,10 +531,29 @@ pub struct Kill {
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Scores(pub u8, pub Vec<(u32, u16, u16)>);
 
-/// `[11, [[id, name, color], ...]]`, sent on a reliable stream: to a player who just joined with
-/// everyone's, and to everyone else with the joiner's. `color` indexes `PLAYER_COLOR_COUNT` colours.
+/// `[11, [[id, name, color, team, bot], ...]]`, sent on a reliable stream: to a player who just joined
+/// with everyone's, and to everyone else with the joiner's (a bot's when it is added). `color` indexes
+/// `PLAYER_COLOR_COUNT` colours. `team` is 0 for people, who are all against all; players on the same
+/// other team are on one side. `bot` is 1 for a bot (see BOTS.md).
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Profiles(pub u8, pub Vec<(u32, String, u8)>);
+pub struct Profiles(pub u8, pub Vec<ProfileEntry>);
+
+/// One `Profiles` entry: `(id, name, color, team, bot)`.
+pub type ProfileEntry = (u32, String, u8, u8, u8);
+
+/// `Notice` kinds: what a scenario is telling everyone.
+/// A message, shown for a few seconds.
+pub const NOTICE_SAY: u8 = 0;
+/// What to do now, shown until the next one; empty clears it. A joiner gets the current one.
+pub const NOTICE_OBJECTIVE: u8 = 1;
+/// The scenario is over: won, or lost. It starts again a little later.
+pub const NOTICE_WON: u8 = 2;
+pub const NOTICE_LOST: u8 = 3;
+
+/// `[12, kind, text]`, sent on a reliable stream to everyone when a world's scenario has something to
+/// say (see BOTS.md). `kind` is `NOTICE_*`.
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct Notice(pub u8, pub u8, pub String);
 
 /// `[6, [[kind, col, row, index, yaw], ...]]`, sent on a reliable stream: to everyone when
 /// buildings or trees are destroyed, and to a player who just joined with all that already are.
@@ -629,7 +649,7 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 30, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
+        148, 0, 32, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[
@@ -692,15 +712,26 @@ mod tests {
         assert_eq!(peek_tag(DESTROYED_FIXTURE), Some(S_DESTROYED));
     }
 
-    /// `[11, [[7, "Åsa", 3]]]`, mirrored in `codec.spec.ts`.
-    pub const PROFILES_FIXTURE: &[u8] = &[146, 11, 145, 147, 7, 164, 195, 133, 115, 97, 3];
+    /// `[11, [[7, "Åsa", 3, 2, 1]]]`, mirrored in `codec.spec.ts`.
+    pub const PROFILES_FIXTURE: &[u8] = &[146, 11, 145, 149, 7, 164, 195, 133, 115, 97, 3, 2, 1];
 
     #[test]
     fn profiles_match_fixture() {
-        let message = Profiles(S_PROFILES, vec![(7, "Åsa".into(), 3)]);
+        let message = Profiles(S_PROFILES, vec![(7, "Åsa".into(), 3, 2, 1)]);
         assert_eq!(encode(&message), PROFILES_FIXTURE);
         assert_eq!(decode::<Profiles>(PROFILES_FIXTURE), Some(message));
         assert_eq!(peek_tag(PROFILES_FIXTURE), Some(S_PROFILES));
+    }
+
+    /// `[12, 1, "Go"]`, mirrored in `codec.spec.ts`.
+    pub const NOTICE_FIXTURE: &[u8] = &[147, 12, 1, 162, 71, 111];
+
+    #[test]
+    fn notice_matches_fixture() {
+        let message = Notice(S_NOTICE, NOTICE_OBJECTIVE, "Go".into());
+        assert_eq!(encode(&message), NOTICE_FIXTURE);
+        assert_eq!(decode::<Notice>(NOTICE_FIXTURE), Some(message));
+        assert_eq!(peek_tag(NOTICE_FIXTURE), Some(S_NOTICE));
     }
 
     #[test]

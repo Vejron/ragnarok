@@ -1,8 +1,9 @@
 use super::Mechanic;
 use super::armor::Outcome;
+use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
 use super::npcs::{damage_rooster, first_rooster_hit};
 use super::spawn;
-use crate::game::{Rocket, World, starting_hotbar};
+use crate::game::{Player, Rocket, TEAM_NONE, World, starting_hotbar};
 use crate::physics::Obj;
 use shared::consts::*;
 use shared::items::*;
@@ -107,12 +108,18 @@ pub fn first_player_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f32
 }
 
 /// Where player `id` is: on foot (or flying a drone) where they stand, seated where their vehicle is.
-fn position_of(world: &World, id: u32) -> Option<[f32; 3]> {
+pub fn position_of(world: &World, id: u32) -> Option<[f32; 3]> {
     let player = world.players.get(&id)?;
     match player.seat {
         Some(seat) if !seat.remote => world.physics.car_pose(seat.vehicle).map(|pose| pose.position),
         _ => Some(player.character.position),
     }
+}
+
+/// Whether players `a` and `b` are on the same team, which spares each other. `TEAM_NONE` is no team.
+pub fn same_team(world: &World, a: u32, b: u32) -> bool {
+    let team = |id| world.players.get(&id).map_or(TEAM_NONE, |p: &Player| p.team);
+    team(a) != TEAM_NONE && team(a) == team(b)
 }
 
 /// A `Hit` for `target`, which is about `at`.
@@ -152,6 +159,9 @@ fn is_headshot(world: &World, victim: u32, origin: [f32; 3], dir: [f32; 3], t: f
 pub fn damage_hit(world: &mut World, victim: u32, amount: u8, attacker: Option<u32>, weapon: u8, source: Option<[f32; 3]>, head: bool) {
     let amount = if head { (f32::from(amount) * HEADSHOT_MULT).min(255.0) as u8 } else { amount };
     let other = attacker.filter(|&id| id != victim);
+    if other.is_some_and(|id| same_team(world, id, victim)) {
+        return;
+    }
     let from = source.or_else(|| other.and_then(|id| position_of(world, id)));
     let Some(player) = world.players.get_mut(&victim) else { return };
     if !player.alive() || amount == 0 {
@@ -162,6 +172,12 @@ pub fn damage_hit(world: &mut World, victim: u32, amount: u8, attacker: Option<u
     // A bandage needs a steady hand.
     player.channel_left = 0;
     let kind = if player.hp == 0 { HIT_KILL } else { HIT_BODY };
+    if let Some(bot) = world.bots.get_mut(&victim)
+        && from.is_some()
+    {
+        bot.hit_from = from;
+    }
+    let Some(player) = world.players.get_mut(&victim) else { return };
     let direction = from.map_or(BEARING_NONE, |from| bearing(player.character.position, from));
     let lost = before - player.hp;
     // Chest height, where a number or a flash belongs.
@@ -239,6 +255,7 @@ pub fn blast(world: &mut World, blast: Blast) {
 
 /// [`blast`], for a shell that struck vehicle `direct.vehicle` itself.
 pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
+    make_noise(world, blast.point, blast.attacker, HEAR_BLAST);
     let mut hurt = Vec::new();
     for (&id, player) in world.players.iter_mut().filter(|(_, player)| player.embodied() && player.alive()) {
         let c = &mut player.character;
@@ -462,6 +479,10 @@ pub fn damage_vehicle(world: &mut World, vid: u32, amount: u8, attacker: Option<
     let centre = at.map_or([0.0; 3], |p| [p[0], p[1] + 0.8, p[2]]);
     for &id in &seated {
         world.hits.push((id, hit_at(HIT_TAKEN, HIT_VEHICLE, lost, 0, direction, centre, vid)));
+        // A crew turns to where the hit on their vehicle came from, as one on foot would.
+        if let (Some(bot), Some(from)) = (world.bots.get_mut(&id), from) {
+            bot.hit_from = Some(from);
+        }
     }
     if let Some(id) = attacker.filter(|id| !seated.contains(id) && world.players.contains_key(id)) {
         world.hits.push((id, hit_at(HIT_DEALT, HIT_VEHICLE, lost, 0, BEARING_NONE, centre, vid)));
@@ -732,13 +753,15 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     let look_dir = look(yaw, pitch);
     let origin = [c.position[0], c.position[1] + eye_height(input.buttons(), c.prone), c.position[2]];
     let back = rewind_ticks(world.tick, input.view());
+    make_noise(world, c.position, Some(id), HEAR_SHOT);
     // Looking down a scope the camera is the eye, so the shot goes straight along the look
     // direction, true.
     let scoped = item.scope && input.buttons() & BUTTON_ALT != 0;
     let dir = if scoped {
         look_dir
     } else {
-        let aim = crosshair_dir(world, id, back, c.position, origin, yaw, look_dir, item.range);
+        // A bot has no camera: it aims its look from the eye itself.
+        let aim = if world.bots.contains_key(&id) { look_dir } else { crosshair_dir(world, id, back, c.position, origin, yaw, look_dir, item.range) };
         scatter(world, aim, effective_spread(item, input.buttons()))
     };
 
@@ -1000,14 +1023,15 @@ impl Mechanic for Combat {
     fn on_tick(&mut self, world: &mut World, dt: f32) {
         let ids: Vec<u32> = world.players.keys().copied().collect();
         for id in ids {
+            let loadout = world.bots.get(&id).and_then(|bot| bot.loadout);
             let Some(player) = world.players.get_mut(&id) else { continue };
             player.fire_cooldown = player.fire_cooldown.saturating_sub(1);
             if !player.alive() {
                 player.respawn_in = player.respawn_in.saturating_sub(1);
                 if player.respawn_in == 0 {
                     player.hp = PLAYER_MAX_HP;
-                    // A fresh life starts with the standard loadout.
-                    player.hotbar = starting_hotbar();
+                    // A fresh life starts with the standard loadout, or a scenario bot's own.
+                    player.hotbar = loadout.unwrap_or_else(starting_hotbar);
                     player.interrupt();
                     spawn::place(world, id);
                 }

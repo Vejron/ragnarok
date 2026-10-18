@@ -189,6 +189,9 @@ pub struct WorldFile {
     /// Items the map editor placed by hand. Empty means the server scatters its own.
     #[serde(skip)]
     pub placed_items: Vec<PlacedItem>,
+    /// Bots the map editor placed by hand. Empty means none (bar `RAGNAROK_BOTS`).
+    #[serde(skip)]
+    pub placed_bots: Vec<PlacedBot>,
 }
 
 /// A vehicle placed in the map editor: its kind, `[x, z]` in centimetres and heading in radians.
@@ -197,6 +200,17 @@ pub struct PlacedVehicle {
     pub kind: u8,
     pub at: [i32; 2],
     pub yaw: f32,
+}
+
+/// A bot placed in the map editor: where it lives, its team (above zero; bots of one team never
+/// hurt each other), how good a shot it is (`skill`, 0 to 1) and the waypoints it walks round,
+/// `[x, z]` in centimetres. An empty route means it makes up a short loop around `at`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PlacedBot {
+    pub at: [i32; 2],
+    pub team: u8,
+    pub skill: f32,
+    pub route: Vec<[i32; 2]>,
 }
 
 /// An item placed in the map editor: `[x, z]` in centimetres.

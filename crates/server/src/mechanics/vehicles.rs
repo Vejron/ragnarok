@@ -235,13 +235,48 @@ fn board(world: &mut World, id: u32) {
         }
     }
     if let Some((_, vehicle, index)) = nearest {
-        world.vehicles.get_mut(&vehicle).expect("found above").seats[index] = Some(id);
-        let player = world.players.get_mut(&id).expect("checked above");
-        player.seat = Some(Seat { vehicle, index, remote: false });
-        player.character.vy = 0.0;
-        player.character.ride = 0;
-        tracing::debug!(id, vehicle, index, "boarded");
+        seat(world, id, vehicle, index);
     }
+}
+
+/// Sits player `id` in seat `index` of `vehicle`, if it is free. A bot of a crew takes its own seat
+/// this way, where `BUTTON_USE` would take the first one free.
+pub fn seat(world: &mut World, id: u32, vehicle: u32, index: usize) -> bool {
+    let Some(car) = world.vehicles.get_mut(&vehicle) else { return false };
+    if index >= seat_count(car.kind) || car.seats[index].is_some() || car.wrecked() {
+        return false;
+    }
+    let Some(player) = world.players.get_mut(&id) else { return false };
+    if player.seat.is_some() {
+        return false;
+    }
+    car.seats[index] = Some(id);
+    player.seat = Some(Seat { vehicle, index, remote: false });
+    player.character.vy = 0.0;
+    player.character.ride = 0;
+    tracing::debug!(id, vehicle, index, "boarded");
+    true
+}
+
+/// Parks a fresh tank at `[x, z]` facing `yaw`, unless there are `MAX_VEHICLES` already or it does
+/// not fit there.
+pub fn add_tank(world: &mut World, [x, z]: [f32; 2], yaw: f32) -> Option<u32> {
+    let position = [x, world.map.ground.height_at(x, z) + CAR_DROP_Y, z];
+    if world.vehicles.len() >= MAX_VEHICLES || !world.physics.car_fits(KIND_TANK, position, yaw) {
+        return None;
+    }
+    Some(add_vehicle(world, KIND_TANK, position, yaw))
+}
+
+/// Takes vehicle `vid` out of the world. Anyone aboard is set down beside it first.
+pub fn remove_vehicle(world: &mut World, vid: u32) {
+    let aboard: Vec<u32> = world.vehicles.get(&vid).map(|vehicle| vehicle.seats.iter().flatten().copied().collect()).unwrap_or_default();
+    for id in aboard {
+        alight(world, id);
+    }
+    world.physics.detach(vid);
+    world.vehicles.remove(&vid);
+    world.physics.remove_car(vid);
 }
 
 /// Empties the player's seat. Returns where they sat.

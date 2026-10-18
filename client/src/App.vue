@@ -5,7 +5,7 @@ import Hotbar from './Hotbar.vue'
 import Minimap from './Minimap.vue'
 import TouchControls from './TouchControls.vue'
 import type { InputController } from './sim/input'
-import { colorFor, cssColor, nameFor } from './profile'
+import { colorFor, cssColor, isBot, nameFor } from './profile'
 import type { Look } from './render/look'
 import { WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK } from './net/codec'
 
@@ -69,6 +69,8 @@ onBeforeUnmount(() => {
 
 const swatch = (id: number) => cssColor(colorFor(id))
 const who = (id: number) => (id === 0 ? 'the fall' : nameFor(id))
+/** A side's heading on the scoreboard. */
+const sideName = (team: number) => (team === 0 ? 'People' : `Team ${team}`)
 const settingsUrl = `${import.meta.env.BASE_URL}settings.html`
 /** What the kill feed shows between killer and victim. */
 const mark = (weapon: number) =>
@@ -205,25 +207,38 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
     :touch="stats.touch"
     @select="(slot) => input?.selectSlot(slot)"
   />
-  <Minimap v-if="stats && stats.halfExtent > 0 && !stats.touch" :x="stats.x" :z="stats.z" :yaw="stats.yaw" :half-extent="stats.halfExtent" :open="mapOpen" />
+  <Minimap v-if="stats && stats.halfExtent > 0 && !stats.touch" :x="stats.x" :z="stats.z" :yaw="stats.yaw" :half-extent="stats.halfExtent" :open="mapOpen" :blips="stats.blips" />
   <div v-if="stats?.dead" class="death">
     <h2>ELIMINATED</h2>
     <p>Respawning in {{ Math.ceil(stats.respawnIn) }}</p>
   </div>
+  <div v-if="stats && (stats.notices.objective || stats.notices.messages.length)" class="scenario">
+    <p v-if="stats.notices.objective" class="objective">{{ stats.notices.objective }}</p>
+    <p v-for="(text, i) in stats.notices.messages" :key="i" class="message">{{ text }}</p>
+  </div>
+  <div v-if="stats?.notices.outcome" class="outcome" :class="stats.notices.outcome.won ? 'won' : 'lost'">
+    <h2>{{ stats.notices.outcome.won ? 'VICTORY' : 'DEFEAT' }}</h2>
+    <p>{{ stats.notices.outcome.text }}</p>
+  </div>
   <ul v-if="stats?.feed.length" class="feed">
     <li v-for="(entry, i) in stats.feed" :key="i" :class="entry.you ?? ''">
       <template v-if="entry.killer !== 0">
-        <i :style="{ background: swatch(entry.killer) }" />{{ who(entry.killer) }}
+        <i :style="{ background: swatch(entry.killer) }" />{{ who(entry.killer) }}<small v-if="isBot(entry.killer)" class="tag">BOT</small>
         <b>{{ mark(entry.weapon) }}</b>
       </template>
-      <i :style="{ background: swatch(entry.victim) }" />{{ who(entry.victim) }}<template v-if="entry.killer === 0"> took {{ who(0) }}</template>
+      <i :style="{ background: swatch(entry.victim) }" />{{ who(entry.victim) }}<small v-if="isBot(entry.victim)" class="tag">BOT</small><template v-if="entry.killer === 0"> took {{ who(0) }}</template>
     </li>
   </ul>
   <table v-if="stats?.board.length" class="board">
     <thead><tr><th>Player</th><th>Kills</th><th>Deaths</th></tr></thead>
-    <tbody>
-      <tr v-for="row in stats.board" :key="row.id" :class="{ you: row.you }">
-        <td><i :style="{ background: swatch(row.id) }" />{{ row.you ? `${nameFor(row.id)} (you)` : nameFor(row.id) }}</td>
+    <tbody v-for="side in stats.board" :key="side.team">
+      <tr v-if="stats.board.length > 1" class="side">
+        <th>{{ sideName(side.team) }}</th>
+        <th>{{ side.kills }}</th>
+        <th>{{ side.deaths }}</th>
+      </tr>
+      <tr v-for="row in side.rows" :key="row.id" :class="{ you: row.you }">
+        <td><i :style="{ background: swatch(row.id) }" />{{ row.you ? `${nameFor(row.id)} (you)` : nameFor(row.id) }}<small v-if="isBot(row.id)" class="tag">BOT</small></td>
         <td>{{ row.kills }}</td>
         <td>{{ row.deaths }}</td>
       </tr>
@@ -378,6 +393,21 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
 .feed li.victim { box-shadow: 0 0 0 2px #ff5a5f; }
 .feed i, .board i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin: 0 6px 0 2px; }
 .feed b { margin: 0 6px; }
+.scenario {
+  position: fixed; top: 52px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 32px); pointer-events: none;
+  display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; font-weight: 700; color: #1d2b36;
+}
+.scenario p { margin: 0; padding: 6px 14px; border-radius: 10px; background: rgba(255, 255, 255, 0.85); }
+.scenario .objective { font-size: 15px; font-weight: 800; box-shadow: 0 0 0 2px #2ec4b6; }
+.scenario .message { font-size: 14px; }
+.outcome {
+  position: fixed; inset: 0; display: grid; place-content: center; text-align: center; pointer-events: none;
+  color: white; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35);
+}
+.outcome.won { background: rgba(20, 120, 80, 0.3); }
+.outcome.lost { background: rgba(150, 20, 20, 0.3); }
+.outcome h2 { margin: 0; font-size: clamp(32px, 8vw, 72px); letter-spacing: 0.08em; }
+.outcome p { margin: 6px 0; font-size: 20px; font-weight: 700; }
 .board {
   position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); pointer-events: none; min-width: 320px;
   background: rgba(255, 255, 255, 0.92); border-radius: 14px; padding: 10px 16px; color: #1d2b36; font-weight: 700; border-collapse: collapse;
@@ -386,6 +416,9 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
 .board th:first-child, .board td:first-child { text-align: left; }
 .board td { text-align: right; padding: 4px 8px; }
 .board tr.you td { color: #138a4b; }
+.board tr.side th { text-align: right; font-size: 13px; opacity: 1; padding-top: 10px; border-bottom: 1px solid rgba(29, 43, 54, 0.15); }
+.board tr.side th:first-child { text-align: left; }
+.tag { margin-left: 6px; padding: 0 5px; border-radius: 4px; background: #1d2b36; color: #fff; font-size: 9px; font-weight: 700; letter-spacing: 0.05em; vertical-align: 1px; }
 .look {
   position: fixed; right: 12px; bottom: 12px; z-index: 1; display: flex; flex-direction: column; gap: 6px;
   padding: 10px 14px; border-radius: 14px; background: rgba(255, 255, 255, 0.92); color: #1d2b36; font-size: 13px; font-weight: 700;

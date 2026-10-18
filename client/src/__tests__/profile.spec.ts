@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
-  colorFor, emptyProfile, forgetAllPlayers, forgetPlayer, loadProfile, nameFor, parseProfile, PLAYER_COLORS, profileQuery,
-  sanitizeName, saveProfile, setPlayer, worldKey,
+  allies, colorFor, emptyProfile, forgetAllPlayers, forgetPlayer, isBot, loadProfile, nameFor, parseProfile, PLAYER_COLORS, profileQuery,
+  sanitizeName, saveProfile, setPlayer, teamFor, worldKey,
 } from '@/profile'
 
 describe('profile', () => {
@@ -48,5 +48,15 @@ describe('profile', () => {
     expect(colorFor(3)).toBe(PLAYER_COLORS[9]!.hex)
     forgetPlayer(3)
     expect(nameFor(3)).toBe('Player 3')
+  })
+
+  it('knows bots and sides, and that people are on nobody\'s', () => {
+    setPlayer(4, 'Bot 1', 0, 2, true)
+    setPlayer(5, 'Bot 2', 0, 2, true)
+    setPlayer(6, 'Åsa', 0)
+    setPlayer(7, 'Bo', 0)
+    expect([isBot(4), isBot(6), teamFor(4), teamFor(6), teamFor(99)]).toEqual([true, false, 2, 0, 0])
+    expect([allies(4, 5), allies(4, 4), allies(6, 7), allies(4, 6)]).toEqual([true, false, false, false])
+    forgetAllPlayers()
   })
 })

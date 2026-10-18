@@ -30,7 +30,7 @@ const WALL_AHEAD: f32 = 0.5;
 const ARRIVED: f32 = 0.3;
 
 /// Ground height at `x`, `z` if it is open ground (nothing, such as a roof, above it).
-fn open_ground(world: &World, x: f32, z: f32) -> Option<f32> {
+pub(super) fn open_ground(world: &World, x: f32, z: f32) -> Option<f32> {
     if !world.map.is_inside((x * 100.0) as i32, (z * 100.0) as i32) {
         return None;
     }
@@ -120,7 +120,7 @@ pub fn damage_rooster(world: &mut World, id: u32, amount: u8) {
 }
 
 /// Turns `yaw` towards `want` by at most `step`, the short way round.
-fn turn_towards(yaw: f32, want: f32, step: f32) -> f32 {
+pub(super) fn turn_towards(yaw: f32, want: f32, step: f32) -> f32 {
     let delta = (want - yaw + PI).rem_euclid(TAU) - PI;
     yaw + delta.clamp(-step, step)
 }

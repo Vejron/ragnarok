@@ -4,17 +4,23 @@ import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { api, type Job, type WorldSummary } from './api'
 import { formatBytes, formatDuration, formatRate, percent, remaining, stageWidth } from './format'
 import {
+  BOT_TEAMS,
+  DEFAULT_SKILL,
   emptyPlacements,
   HEADINGS,
   ITEM_KINDS,
   nearest,
+  routeLines,
+  routeSummary,
+  teamColour,
   VEHICLE_KINDS,
   yawOf,
+  type PlacedBot,
   type Placements,
 } from './placements'
 import { blockKey, blockOf, rectBounds, tileAt, tileKey, type BlockStatus, type GridInfo, type TileId } from './grid'
 
-type Tool = 'pan' | 'paint' | 'erase' | 'spawn' | 'vehicle' | 'item'
+type Tool = 'pan' | 'paint' | 'erase' | 'spawn' | 'vehicle' | 'item' | 'bot' | 'route'
 
 /** Below this zoom the cache window is too big to ask for. */
 const MIN_CACHE_ZOOM = 12
@@ -34,6 +40,12 @@ const placements = shallowRef<Placements>(emptyPlacements())
 const vehicleKind = ref(VEHICLE_KINDS[0]!.kind)
 const heading = ref(0)
 const itemKind = ref(ITEM_KINDS[0]!.item)
+/** The bot the Route tool adds waypoints to, and the panel edits: an index into `placements.bots`, or -1. */
+const selected = ref(-1)
+const selectedBot = computed<PlacedBot | undefined>(() => placements.value.bots[selected.value])
+/** The team and skill a new bot gets; with a bot picked, they are its own. */
+const botTeam = ref(BOT_TEAMS[0]!.team)
+const botSkill = ref(DEFAULT_SKILL)
 let markers: L.LayerGroup | undefined
 /** How close a click must be to a marker to pick it, in pixels. */
 const PICK_REACH = 16
@@ -83,6 +95,8 @@ function redraw() {
     canvas.style.width = `${size.x}px`
     canvas.style.height = `${size.y}px`
   }
+  // The canvas lives in a pane that moves with the map; keep it over the container.
+  L.DomUtil.setPosition(canvas, map.containerPointToLayerPoint([0, 0]))
   const ctx = canvas.getContext('2d')
   if (!ctx) return
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
@@ -149,7 +163,8 @@ function setTiles(next: Map<string, TileId>) {
   redraw()
 }
 
-const isPlacing = (t: Tool) => t === 'spawn' || t === 'vehicle' || t === 'item'
+const isPlacing = (t: Tool) => t === 'spawn' || t === 'vehicle' || t === 'item' || isBotTool(t)
+const isBotTool = (t: Tool) => t === 'bot' || t === 'route'
 
 function drawMarkers() {
   if (!markers) return
@@ -168,6 +183,32 @@ function drawMarkers() {
     L.marker([v.lat, v.lon], { icon: icon(info?.icon ?? '?', 'vehicle', v.yaw), interactive: false }).addTo(markers)
   }
   for (const i of p.items) L.marker([i.lat, i.lon], { icon: icon('◆', 'item'), interactive: false }).addTo(markers)
+  p.bots.forEach((bot, index) => {
+    const colour = teamColour(bot.team)
+    const picked = index === selected.value
+    const { lead, loop } = routeLines(bot)
+    const line = { color: colour, weight: picked ? 4 : 2, opacity: picked ? 0.95 : 0.6, interactive: false }
+    if (lead.length) L.polyline(lead, { ...line, dashArray: '4 6' }).addTo(markers!)
+    if (loop.length) L.polyline(loop, line).addTo(markers!)
+    if (picked) {
+      bot.route.forEach((point, n) =>
+        L.marker([point.lat, point.lon], {
+          icon: L.divIcon({ className: '', iconSize: [16, 16], iconAnchor: [8, 8], html: `<div class="waypoint" style="background:${colour}">${n + 1}</div>` }),
+          interactive: false,
+        }).addTo(markers!),
+      )
+    }
+    L.marker([bot.lat, bot.lon], {
+      icon: L.divIcon({
+        className: '',
+        iconSize: [22, 22],
+        iconAnchor: [11, 11],
+        html: `<div class="marker bot${picked ? ' picked' : ''}" style="background:${colour}" title="team ${bot.team}, skill ${bot.skill}">${bot.team}</div>`,
+      }),
+      interactive: false,
+      zIndexOffset: 1000,
+    }).addTo(markers!)
+  })
 }
 
 function setPlacements(next: Placements) {
@@ -176,16 +217,109 @@ function setPlacements(next: Placements) {
   drawMarkers()
 }
 
+/** Whether `[lat, lon]` is on a painted tile; if not, says so. */
+function onPainted(lat: number, lon: number): boolean {
+  const g = grid.value
+  if (!g) return false
+  const tile = tileAt(g, lat, lon)
+  if (painted.value.has(tileKey(tile.gx, tile.gy))) return true
+  message.value = 'Place things on painted tiles only.'
+  return false
+}
+
+function select(index: number) {
+  selected.value = index
+  const bot = placements.value.bots[index]
+  if (bot) {
+    botTeam.value = bot.team
+    botSkill.value = bot.skill
+  }
+  drawMarkers()
+}
+
+function setBots(bots: PlacedBot[]) {
+  setPlacements({ ...placements.value, bots })
+}
+
+function updateBot(index: number, change: Partial<PlacedBot>) {
+  setBots(placements.value.bots.map((bot, i) => (i === index ? { ...bot, ...change } : bot)))
+}
+
+/** The team and skill controls changed: a picked bot takes them. */
+function applyBotSettings() {
+  if (selectedBot.value) updateBot(selected.value, { team: botTeam.value, skill: botSkill.value })
+}
+
+/**
+ * A click with the Bot tool picks the bot under it, or places a new one there and picks it. With the
+ * Route tool it adds a waypoint to the picked bot's route: on the bot itself, its own spot exactly, so
+ * one click there makes it stand guard. Shift or right-click removes the nearest bot, or waypoint.
+ */
+function placeBot(px: readonly [number, number], lat: number, lon: number, removing: boolean) {
+  const bots = placements.value.bots
+  const toPoint = (p: { lat: number; lon: number }) => map!.latLngToContainerPoint([p.lat, p.lon])
+  const picked = nearest(bots.map(toPoint), px[0], px[1], PICK_REACH)
+  if (tool.value === 'bot') {
+    if (removing) {
+      if (picked < 0) return
+      setBots(bots.filter((_, i) => i !== picked))
+      select(picked === selected.value ? -1 : selected.value > picked ? selected.value - 1 : selected.value)
+    } else if (picked >= 0) {
+      select(picked)
+    } else if (onPainted(lat, lon)) {
+      setBots([...bots, { lat, lon, team: botTeam.value, skill: botSkill.value, route: [] }])
+      select(bots.length)
+    }
+    return
+  }
+  const bot = bots[selected.value]
+  if (!removing && picked >= 0 && picked !== selected.value) {
+    select(picked)
+    return
+  }
+  if (!bot) {
+    message.value = 'Pick a bot first: click one.'
+    return
+  }
+  if (removing) {
+    const index = nearest(bot.route.map(toPoint), px[0], px[1], PICK_REACH)
+    if (index >= 0) updateBot(selected.value, { route: bot.route.filter((_, i) => i !== index) })
+    return
+  }
+  const point = picked === selected.value ? { lat: bot.lat, lon: bot.lon } : { lat, lon }
+  if (picked === selected.value || onPainted(lat, lon)) updateBot(selected.value, { route: [...bot.route, point] })
+}
+
+function guard() {
+  const bot = selectedBot.value
+  if (bot) updateBot(selected.value, { route: [{ lat: bot.lat, lon: bot.lon }] })
+}
+
+function clearRoute() {
+  if (selectedBot.value) updateBot(selected.value, { route: [] })
+}
+
+function deleteBot() {
+  if (!selectedBot.value) return
+  setBots(placements.value.bots.filter((_, i) => i !== selected.value))
+  select(-1)
+}
+
 function placeAt(event: PointerEvent) {
   const g = grid.value
   if (!map || !g) return
   const box = map.getContainer().getBoundingClientRect()
   const px = [event.clientX - box.left, event.clientY - box.top] as const
   const at = map.containerPointToLatLng([px[0], px[1]])
+  const removing = event.shiftKey || event.buttons === 2 || event.button === 2
+  if (isBotTool(tool.value)) {
+    placeBot(px, at.lat, at.lng, removing)
+    return
+  }
   const current = placements.value
   const kind = tool.value as 'spawn' | 'vehicle' | 'item'
   const list = kind === 'spawn' ? current.spawns : kind === 'vehicle' ? current.vehicles : current.items
-  if (event.shiftKey || event.buttons === 2 || event.button === 2) {
+  if (removing) {
     const points = list.map((m) => map!.latLngToContainerPoint([m.lat, m.lon]))
     const index = nearest(points, px[0], px[1], PICK_REACH)
     if (index < 0) return
@@ -193,11 +327,7 @@ function placeAt(event: PointerEvent) {
     setPlacements({ ...current, [kind === 'spawn' ? 'spawns' : kind === 'vehicle' ? 'vehicles' : 'items']: rest })
     return
   }
-  const tile = tileAt(g, at.lat, at.lng)
-  if (!painted.value.has(tileKey(tile.gx, tile.gy))) {
-    message.value = 'Place things on painted tiles only.'
-    return
-  }
+  if (!onPainted(at.lat, at.lng)) return
   const where = { lat: at.lat, lon: at.lng }
   if (kind === 'spawn') setPlacements({ ...current, spawns: [...current.spawns, where] })
   else if (kind === 'vehicle')
@@ -282,8 +412,8 @@ async function openWorld(world: string) {
   const loaded = await api.world(world)
   const tiles = loaded.tiles
   name.value = world
-  placements.value = { spawns: loaded.spawns ?? [], vehicles: loaded.vehicles ?? [], items: loaded.items ?? [] }
-  drawMarkers()
+  placements.value = { spawns: loaded.spawns ?? [], vehicles: loaded.vehicles ?? [], items: loaded.items ?? [], bots: loaded.bots ?? [] }
+  select(-1)
   setTiles(new Map(tiles.map((t) => [tileKey(t.gx, t.gy), t])))
   dirty.value = false
   const first = tiles[0]
@@ -324,7 +454,7 @@ async function remove(world: string) {
     name.value = ''
     setTiles(new Map())
     placements.value = emptyPlacements()
-    drawMarkers()
+    select(-1)
   }
   await loadWorlds()
 }
@@ -338,7 +468,7 @@ async function activate(world: string) {
 function newWorld() {
   name.value = ''
   placements.value = emptyPlacements()
-  drawMarkers()
+  select(-1)
   setTiles(new Map())
   dirty.value = false
 }
@@ -391,9 +521,12 @@ onMounted(async () => {
     maxZoom: 19,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(map)
+  // Painted tiles go over the map tiles but under routes (overlay pane, 400) and markers.
+  const tilesPane = map.createPane('painted')
+  Object.assign(tilesPane.style, { zIndex: '350', pointerEvents: 'none' })
   canvas = document.createElement('canvas')
-  Object.assign(canvas.style, { position: 'absolute', left: '0', top: '0', pointerEvents: 'none', zIndex: '450' })
-  map.getContainer().appendChild(canvas)
+  Object.assign(canvas.style, { position: 'absolute', left: '0', top: '0', pointerEvents: 'none' })
+  tilesPane.appendChild(canvas)
   markers = L.layerGroup().addTo(map)
   zoom.value = map.getZoom()
   map.on('move zoom resize', redraw)
@@ -447,6 +580,10 @@ onBeforeUnmount(() => {
           <button :class="{ on: tool === 'vehicle' }" @click="setTool('vehicle')">Vehicle</button>
           <button :class="{ on: tool === 'item' }" @click="setTool('item')">Item</button>
         </div>
+        <div class="row">
+          <button :class="{ on: tool === 'bot' }" @click="setTool('bot')">Bot</button>
+          <button :class="{ on: tool === 'route' }" :disabled="!placements.bots.length" @click="setTool('route')">Route</button>
+        </div>
         <label v-if="tool === 'vehicle'">
           Vehicle
           <select v-model.number="vehicleKind">
@@ -465,10 +602,41 @@ onBeforeUnmount(() => {
             <option v-for="k in ITEM_KINDS" :key="k.item" :value="k.item">{{ k.name }}</option>
           </select>
         </label>
-        <p v-if="isPlacing(tool)" class="hint">Click a painted tile to place; Shift or right-click removes the nearest.</p>
+        <template v-if="isBotTool(tool)">
+          <label>
+            Team
+            <select v-model.number="botTeam" @change="applyBotSettings">
+              <option v-for="t in BOT_TEAMS" :key="t.team" :value="t.team">{{ t.team }}</option>
+            </select>
+          </label>
+          <label class="skill">
+            Skill
+            <input v-model.number="botSkill" type="range" min="0" max="1" step="0.1" @input="applyBotSettings" />
+            {{ botSkill.toFixed(1) }}
+          </label>
+          <div v-if="selectedBot" class="picked">
+            <p class="stat">
+              <span class="sw" :style="{ background: teamColour(selectedBot.team) }"></span>Bot {{ selected + 1 }} {{ routeSummary(selectedBot) }}.
+            </p>
+            <div class="row">
+              <button title="Stand guard at its spot" @click="guard">Guard</button>
+              <button title="Make up its own loop near home" @click="clearRoute">Clear route</button>
+              <button @click="deleteBot">Delete</button>
+            </div>
+          </div>
+          <p v-if="tool === 'bot'" class="hint">
+            Click a painted tile to place a bot, or a bot to pick it; Shift or right-click removes the nearest. Team and skill are the
+            picked bot's, and the next one's.
+          </p>
+          <p v-else class="hint">
+            Click to add a waypoint to the picked bot's route, which it walks round in order and back to the first; click the bot itself
+            to put its own spot in the route. Shift or right-click removes the nearest waypoint. Click another bot to pick it.
+          </p>
+        </template>
+        <p v-else-if="isPlacing(tool)" class="hint">Click a painted tile to place; Shift or right-click removes the nearest.</p>
         <p class="stat">
-          {{ placements.spawns.length }} spawns, {{ placements.vehicles.length }} vehicles, {{ placements.items.length }} items.
-          Placing any of a kind replaces the random ones in the game.
+          {{ placements.spawns.length }} spawns, {{ placements.vehicles.length }} vehicles, {{ placements.items.length }} items,
+          {{ placements.bots.length }} bots. Placing any spawns, vehicles or items replaces the random ones in the game.
         </p>
         <label>
           Brush
@@ -580,6 +748,24 @@ onBeforeUnmount(() => {
 .marker.item {
   background: #e8a200;
   border-radius: 4px;
+}
+.marker.bot {
+  border-radius: 4px;
+}
+.marker.bot.picked {
+  border: 3px solid #ffeb3b;
+  line-height: 16px;
+}
+.waypoint {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid #fff;
+  box-sizing: border-box;
+  color: #fff;
+  font: bold 9px/14px system-ui, sans-serif;
+  text-align: center;
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.7);
 }
 .marker i {
   position: absolute;
@@ -753,6 +939,23 @@ button.link {
   height: 12px;
   vertical-align: -2px;
   margin: 0 4px 0 8px;
+}
+.skill {
+  display: block;
+  margin: 6px 0;
+}
+.skill input {
+  width: 110px;
+  vertical-align: middle;
+  margin: 0 6px;
+}
+.picked {
+  margin: 6px 0;
+  padding: 4px 6px;
+  background: #ece6f0;
+}
+.picked .sw {
+  margin-left: 0;
 }
 .sw.ok {
   background: rgba(46, 160, 67, 0.7);
