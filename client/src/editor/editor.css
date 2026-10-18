@@ -1,0 +1,15 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+html,
+body,
+#editor {
+  height: 100%;
+  margin: 0;
+}
+
+/* Tailwind's reset caps image widths, which squeezes Leaflet's map tiles. */
+.leaflet-container img {
+  max-width: none !important;
+  max-height: none !important;
+}

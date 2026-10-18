@@ -4,6 +4,7 @@ import { fileURLToPath, URL } from 'node:url'
 
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import ui from '@nuxt/ui/vite'
 
 const WORLDS = fileURLToPath(new URL('../worlds', import.meta.url))
 const TYPES: Record<string, string> = { '.json': 'application/json', '.png': 'image/png', '.msgpack': 'application/msgpack' }
@@ -25,7 +26,7 @@ const editorWorlds = {
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [vue(), editorWorlds],
+  plugins: [vue(), ui({ ui: { colors: { primary: 'amber', neutral: 'zinc' } } }), editorWorlds],
   server: {
     proxy: {
       // The map editor's API (`cargo run -p editor`).

@@ -15,7 +15,7 @@ To see what they are thinking, add `RUST_LOG=info,server::mechanics::bots=debug`
 
 ## Placing bots
 
-Place bots and draw their routes in the map editor, with the Bot and Route tools (see [EDITOR.md](EDITOR.md)). Pick a bot to set its team and skill, make it stand guard, or let it make up its own loop. The editor saves them in the world's `worlds/<name>/area.json`, next to `spawns`, `vehicles` and `items`, and the file can also be written by hand:
+Bots that are there all the time can be placed straight into the world's `worlds/<name>/area.json`, next to `spawns`, `vehicles` and `items`. The map editor no longer places them (bots are placed as members of a squad in its Scenario mode, see [EDITOR.md](EDITOR.md)), but it still reads and draws them, and can **convert them into squads**. The file can also be written by hand:
 
 ```json
 "bots": [
@@ -36,7 +36,7 @@ A bot placed outside the world's tiles is skipped, and so is any waypoint outsid
 
 ## Scenarios
 
-A world can have a `scenario.json` next to its `area.json`, in `worlds/<name>/`. It has named **areas**, **squads** of bots, and **triggers** that say what happens when. Placed bots in `area.json` are there all the time; a squad is there only once a trigger spawns it. The file is written by hand for now (the editor does not know about it), with positions in latitude and longitude like `area.json`. Restart the server after changing it.
+A world can have a `scenario.json` next to its `area.json`, in `worlds/<name>/`. It has named **areas**, **squads** of bots, and **triggers** that say what happens when. Placed bots in `area.json` are there all the time; a squad is there only once a trigger spawns it. It can be edited in the map editor's Scenario mode, or written by hand (see [SCENARIOS.md](SCENARIOS.md) for a guide), with positions in latitude and longitude like `area.json`. Restart the server after changing it.
 
 ```json
 {
@@ -198,6 +198,16 @@ Each tick a bot listens to the noises made since it last listened (`World::noise
 
 **When a bot looks for a way.** It looks when it has none, when its goal has moved more than 2 m, and every 2 s on the way. Fighting needs no way: it walks straight at someone it can see. All the bots together look at no more than 8,000 cells a tick, and building a chunk counts as 200. One search stops at 6,000 cells (about an 80 m square). A bot whose turn has not come yet, or whose search found nothing, heads straight for its goal, as it did before it could find ways.
 
+## Keeping apart
+
+Bots steer clear of each other, so a squad spreads out instead of piling onto one spot. This is the separation rule of flocking (Reynolds' boids). Each tick, every bot that is alive and on its feet gets a push from every other such bot within 3 m (`SEPARATE`): away from it, from nothing at 3 m up to 1 on top of it, never more than 1 in all. Two bots on the exact same spot are pushed in opposite directions, along a line worked out from their ids. A bot sitting in a tank is left out.
+
+- **Walking.** The push bends the bot's heading, at 0.8 of the weight of its pull towards the goal (`PUSH_WEIGHT`). That is under 1, so a crowd slows a bot and swings it round the others, but cannot turn it back from its goal. The wall check (`steer`) runs after this, so the bent heading is still kept clear of walls. The push never changes the route or the way found, only the heading each tick.
+- **Fighting.** The sideways part of the push becomes its strafe, whether it is closing in or standing off, and replaces the random sidestep while others are close. A squad fighting one target fans out sideways instead of lining up behind its leader.
+- **Everyone counts**, on any team, but not people. Only bots feel the push.
+
+It does not give bots their own spots round a target, so a squad that all stop at the same stand-off distance will end up on a ring, spaced out by the push but not evenly. Two bots who must both wait on one waypoint will be held apart by the push; the one that cannot get within 1.2 m gives it up as stalled after 3 s and moves on to the next waypoint.
+
 ## How it works
 
 **A bot is a `Player` with no connection.** Each tick, the game loop gives every player an `InputFrame` (the movement axes, yaw, pitch, buttons and slot), and every mechanic reads only that. `Bots` (`crates/server/src/mechanics/bots.rs`) runs first and writes the bot's `InputFrame` itself. Everything after it handles the bot exactly as it would a person: walking and physics, items, seats, damage, kills, scores, respawning, replication and how it is drawn. Clients see a bot as an ordinary stickman, so bots needed no protocol change and no client change. Only scenarios added one, the `notice` message.
@@ -290,7 +300,7 @@ On the HUD, `game.rs` checks that a bot's profile carries its team and the bot f
 2. ~~**Shooting.**~~ Done (see [Fighting](#fighting)). Bots do not throw grenades yet, or take cover.
 3. ~~**Path finding.**~~ Done (see [Finding the way](#finding-the-way)). There are no doors: the inside of a building is never reached. There is also one floor per cell, so the road under a bridge is taken to be the bridge.
 4. ~~**Hearing.**~~ Done (see [Hearing](#hearing)). There are no quiet guns, and a bot hears every noise as loudly through a wall. Footsteps and engines make no noise.
-5. ~~**Editor tools.**~~ Done (see [EDITOR.md](EDITOR.md)): the Bot and Route tools place bots, draw their routes, and set team and skill. Before this, saving a world in the editor dropped any bots written into `area.json` by hand. Markers still cannot be dragged.
-6. ~~**Scenarios.**~~ Done (see [Scenarios](#scenarios)): squads with team, skill and loadout, areas, triggers, waves, objectives, a win or a loss, and a restart. It is all declarative. There is no script language, no editor support, and nothing on the minimap yet. A scenario does not reset people, vehicles or the world when it starts again.
+5. ~~**Editor tools.**~~ Done (see [EDITOR.md](EDITOR.md)): the Bot and Route tools placed bots, drew their routes, and set team and skill. Since scenario editing they work on squads in Scenario mode instead, and loose bots can be converted into squads. Markers still cannot be dragged.
+6. ~~**Scenarios.**~~ Done (see [Scenarios](#scenarios)): squads with team, skill and loadout, areas, triggers, waves, objectives, a win or a loss, and a restart. It is all declarative. There is no script language, and nothing on the minimap yet. A scenario does not reset people, vehicles or the world when it starts again.
 7. ~~**Vehicles.**~~ Done (see [Tank crews](#tank-crews)): a driver and a gunner in a tank, along the roads or a route, with a steering controller over the real tank physics and backing out when stuck. Tanks drive straight between waypoints, with no path finding of their own, so a building across the way is driven into or, if it will not break, given up. A crew does not get out to fight, does not swap seats when one of them dies, and never takes a tank it was not given. Bots use no other vehicles, and the editor cannot place crews yet.
 8. ~~**HUD.**~~ Done (see [On the HUD](#on-the-hud)). Bots have no name tags over their heads, and the minimap does not show a scenario's areas or objectives.

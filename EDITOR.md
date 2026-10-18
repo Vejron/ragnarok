@@ -43,29 +43,28 @@ get ground (see `WORLD.md`, "Painting a world").
 - Vehicles that do not fit at their spot when the server starts are skipped, with a warning in the
   log.
 
-### Place bots and draw their routes
+### Bots and tanks belong to squads
 
-Bots are the server's enemy stickmen (see `BOTS.md`). Each is drawn as a square in its team's
-colour with the team number on it, and its route as a line in the same colour: dashed from the bot
-out to its first waypoint, then solid round the waypoints and back to the first.
+Bots are the server's enemy stickmen (see `BOTS.md`), and since scenarios they are placed in
+**Scenario** mode, as members of a squad, with the Bot, Tank, Route and Pick tools. Each is drawn as
+a square in its squad's team colour (a bot with its team number, a tank with a T and a dashed
+outline), and its route as a line in the same colour.
 
 | Tool | Click | Shift or right-click |
 |---|---|---|
-| Bot | On a bot: pick it. Elsewhere on a painted tile: place a new bot there, and pick it. | Remove the nearest bot. |
-| Route | Add a waypoint to the picked bot's route. On the bot itself, its own spot goes in the route. On another bot: pick that one instead. | Remove the picked bot's nearest waypoint. |
+| Area | Place an area (a circle, 50 m to start with; set its radius in the panel). | |
+| Bot | Add a bot to the picked squad on a painted tile. On a bot: pick it. | Remove the nearest bot or tank. |
+| Tank | Add a tank to the picked squad. It comes with its own crew of two bots, besides the squad's listed bots. | Remove the nearest bot or tank. |
+| Route | Add a waypoint to the picked bot's or tank's route. On the bot itself, its own spot goes in the route. | Remove the nearest bot or tank. |
+| Pick | Pick a bot or tank, and its squad. | Remove the nearest bot or tank. |
 
-- **Team and Skill** (1 to 4, and 0 to 1 in steps of 0.1) are the picked bot's own: changing them
-  changes it. They are also what the next bot placed gets.
-- **The picked bot** is outlined in yellow, its route drawn bold and its waypoints numbered. The
-  panel says what its route makes it do:
-  - **Guard** sets the route to only its own spot, so it stands guard there.
-  - **Clear route** empties it, so it makes up a short loop of its own near home.
-  - **Delete** removes the bot.
-- The route is the order the bot walks the waypoints in, looping. It finds its own way between
-  them, so the line need not avoid buildings.
-- Waypoints, like bots, go only on painted tiles.
-- Unlike spawns, vehicles and items, placed bots add to the game rather than replacing anything.
-  `RAGNAROK_BOTS` still adds made-up ones on top.
+A squad has one team, skill and loadout for all its bots; set them in the panel. Nothing is in the
+game until a trigger spawns the squad (a trigger with **the scenario starts** does it at once).
+
+**Loose bots.** Worlds saved before squads can have bots placed straight into `area.json`. They
+are still read and drawn (read-only), and the sidebar offers **Convert to squads**: it makes a
+squad for each team and skill that respawns at home, as loose bots do, adds a trigger that spawns
+them at the start, saves the scenario and then the world without them.
 
 ### 3. Manage worlds
 
@@ -105,8 +104,9 @@ compass headings in 45° steps. `area.json` is committed; the generated files ar
 Placements are not part of `world.msgpack`. The server reads `area.json` next to the manifest on
 start, so changing them needs a save and a server restart, but **no "Generate world"**.
 
-A world's scenario, `scenario.json` in the same folder, is written by hand: the editor does not
-show or change it, but deleting the world deletes it too. See [BOTS.md](BOTS.md), Scenarios.
+A world's scenario, `scenario.json` in the same folder, is edited in **Scenario** mode (the sidebar's
+switch): areas, squads of bots and tanks on the map, and triggers as forms. Problems are listed
+before saving, and deleting the world deletes the scenario too. See [SCENARIOS.md](SCENARIOS.md) for how to write one, and [BOTS.md](BOTS.md), Scenarios, for the reference.
 
 ## API
 

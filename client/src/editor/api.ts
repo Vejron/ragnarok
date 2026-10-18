@@ -1,5 +1,6 @@
 import type { BlockStatus, TileId } from './grid'
 import type { Placements } from './placements'
+import type { Scenario } from './scenario'
 
 export interface WorldSummary {
   name: string
@@ -54,6 +55,16 @@ export const api = {
   generate: (name: string) => call<Job>(`/worlds/${name}/generate`, { method: 'POST' }),
   fetchWorld: (name: string) => call<Job>(`/worlds/${name}/fetch`, { method: 'POST' }),
   job: () => call<Job>('/job'),
+  /** The world's scenario, or undefined when it has none. */
+  scenario: async (world: string): Promise<Scenario | undefined> => {
+    const response = await fetch(`/api/worlds/${world}/scenario`)
+    if (response.status === 404) return undefined
+    const body = await response.json()
+    if (!response.ok) throw new Error(body.error ?? response.statusText)
+    return body as Scenario
+  },
+  saveScenario: (world: string, scenario: Scenario) => call(`/worlds/${world}/scenario`, json('PUT', scenario)),
+  removeScenario: (world: string) => call(`/worlds/${world}/scenario`, { method: 'DELETE' }).catch(() => undefined),
   cache: async (south: number, west: number, north: number, east: number) =>
     (await call<{ blocks: BlockStatus[] }>(`/cache?south=${south}&west=${west}&north=${north}&east=${east}`)).blocks,
 }

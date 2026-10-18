@@ -77,6 +77,11 @@ pub const HEAR_BLAST: f32 = 150.0;
 /// Already going to look somewhere, it goes to a noise instead only if that is this much nearer,
 /// metres: in a busy fight the nearest shot jumps about from tick to tick.
 const NEARER_NOISE: f32 = 10.0;
+/// Bots nearer than this push each other apart, metres: the push is nothing at this distance and
+/// 1 on top of each other. It weighs `PUSH_WEIGHT` against the pull of where the bot is going, which
+/// is under 1 so that a crowd can slow a bot but never walk it backwards from its goal.
+const SEPARATE: f32 = 3.0;
+const PUSH_WEIGHT: f32 = 0.8;
 /// Where on a body a bot looks at: about the chest, above the capsule centre.
 const CHEST: f32 = 0.3;
 
@@ -158,6 +163,42 @@ fn wobble(world: &mut World) -> f32 {
 
 fn distance_2d(a: [f32; 3], b: [f32; 3]) -> f32 {
     (b[0] - a[0]).hypot(b[2] - a[2])
+}
+
+/// The push on the bot `id` at `at` from the other bots in `crowd` (their ids and spots on the
+/// ground): away from each one within `SEPARATE`, harder the closer, at most 1 in all. This is the
+/// separation rule of flocking: a bot steers clear of its neighbours, so a crowd spreads out instead
+/// of piling onto one spot. Two on the very same spot are pushed apart along a line they agree on.
+fn push(id: u32, at: [f32; 3], crowd: &[(u32, [f32; 2])]) -> [f32; 2] {
+    let mut total = [0.0f32; 2];
+    for &(other, [x, z]) in crowd {
+        if other == id {
+            continue;
+        }
+        let (dx, dz) = (at[0] - x, at[2] - z);
+        let d = dx.hypot(dz);
+        if d >= SEPARATE {
+            continue;
+        }
+        let away = if d > 1e-3 {
+            [dx / d, dz / d]
+        } else {
+            let angle = id.min(other) as f32 * 2.4;
+            let sign = if id < other { 1.0 } else { -1.0 };
+            [angle.cos() * sign, angle.sin() * sign]
+        };
+        let strength = 1.0 - d / SEPARATE;
+        total[0] += away[0] * strength;
+        total[1] += away[1] * strength;
+    }
+    let size = total[0].hypot(total[1]);
+    if size > 1.0 { [total[0] / size, total[1] / size] } else { total }
+}
+
+/// `yaw` bent away from `push`, which pulls less than the way the bot wants to go.
+fn bend(yaw: f32, push: [f32; 2]) -> f32 {
+    let (x, z) = (-yaw.sin() + push[0] * PUSH_WEIGHT, -yaw.cos() + push[1] * PUSH_WEIGHT);
+    if x.hypot(z) < 1e-3 { yaw } else { (-x).atan2(-z) }
 }
 
 /// The heading that faces from `from` to `to`. Yaw 0 faces -Z: forward is (-sin yaw, -cos yaw).
@@ -325,7 +366,7 @@ fn steer(world: &World, at: [f32; 3], want: f32) -> f32 {
 /// to where the shot has to go, closes to where that gun is good (or stands and sidesteps there), and
 /// fires once it has reacted and is on aim.
 #[allow(clippy::too_many_arguments)]
-fn fight(world: &mut World, id: u32, bot: &mut Bot, eye: [f32; 3], slot: u8, distance: f32, dt: f32) -> InputFrame {
+fn fight(world: &mut World, id: u32, bot: &mut Bot, eye: [f32; 3], slot: u8, distance: f32, dt: f32, away: [f32; 2]) -> InputFrame {
     let Some(player) = world.players.get(&id) else { return InputFrame::default() };
     let held = player.hotbar[slot as usize];
     let (trigger_held, reloading) = (player.trigger_held, player.reload_left > 0);
@@ -384,6 +425,12 @@ fn fight(world: &mut World, id: u32, bot: &mut Bot, eye: [f32; 3], slot: u8, dis
             strafe = bot.strafe * 127;
         }
     }
+    // Others close by push it sideways, whether it is closing in or standing off, so a squad
+    // fanning out round one target does not stack up on one line.
+    let lateral = away[0] * bot.yaw.cos() - away[1] * bot.yaw.sin();
+    if lateral.abs() > 0.1 {
+        strafe = (lateral * 127.0).clamp(-127.0, 127.0) as i8;
+    }
     InputFrame { forward, strafe, buttons, yaw: to_mrad(bot.yaw), pitch: to_mrad(bot.pitch), view: world.tick as u16, slot, ..Default::default() }
 }
 
@@ -400,7 +447,7 @@ fn reload(world: &World, id: u32, bot: &Bot, mut input: InputFrame) -> InputFram
 }
 
 /// One tick of bot `id`'s thinking: what it does now, as the input a player would send.
-fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], budget: &mut usize) -> InputFrame {
+fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], crowd: &[(u32, [f32; 2])], budget: &mut usize) -> InputFrame {
     let idle = InputFrame { yaw: to_mrad(bot.yaw), pitch: to_mrad(bot.pitch), view: world.tick as u16, slot: bot.slot, ..Default::default() };
     let Some(player) = world.players.get(&id) else { return idle };
     if !player.alive() {
@@ -425,6 +472,7 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], b
     }
     let at = player.character.position;
     let eye = [at[0], at[1] + EYE_HEIGHT, at[2]];
+    let away = push(id, at, crowd);
     if bot.route.is_empty() {
         bot.route = make_route(world, bot.home);
     }
@@ -516,7 +564,7 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], b
                 return idle;
             }
             if bot.sees && let Some(slot) = gun {
-                return fight(world, id, bot, eye, slot, distance, dt);
+                return fight(world, id, bot, eye, slot, distance, dt, away);
             }
             if bot.sees && distance < CLOSE_IN {
                 // Unarmed and up close: stand and face them.
@@ -554,7 +602,7 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], b
         }
         return idle;
     }
-    let want = steer(world, at, heading(at, toward));
+    let want = steer(world, at, bend(heading(at, toward), away));
     bot.yaw = turn_towards(bot.yaw, want, TURN_RATE * dt);
     let facing = (turn_towards(bot.yaw, want, PI) - bot.yaw).abs() < WALK_WITHIN;
     InputFrame {
@@ -576,9 +624,14 @@ impl Mechanic for Bots {
         let noises = std::mem::take(&mut world.noises);
         let mut budget = SEARCH_PER_TICK;
         let ids: Vec<u32> = world.bots.keys().copied().collect();
+        // Where every bot on its feet stands as the tick begins, for them to steer clear of each other.
+        let crowd: Vec<(u32, [f32; 2])> = ids
+            .iter()
+            .filter_map(|id| world.players.get(id).filter(|p| p.alive() && p.seat.is_none()).map(|p| (*id, [p.character.position[0], p.character.position[2]])))
+            .collect();
         for id in ids {
             let Some(mut bot) = world.bots.remove(&id) else { continue };
-            let input = think(world, id, &mut bot, dt, &noises, &mut budget);
+            let input = think(world, id, &mut bot, dt, &noises, &crowd, &mut budget);
             let input = reload(world, id, &bot, input);
             world.bots.insert(id, bot);
             if let Some(player) = world.players.get_mut(&id) {

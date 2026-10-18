@@ -10,6 +10,7 @@ A browser multiplayer game: goofy stickmen in a real city built from OpenStreetM
 - [engine/README.md](engine/README.md): the WebGPU render engine the client draws with, a package of its own
 - [VEHICLES-I.md](VEHICLES-I.md): how roadmap stage 2 (cars, seats, driving) was built
 - [ARMOR.md](ARMOR.md): armor zones, ricochets, weak spots, turret loss and the Strv S
+- [SCENARIOS.md](SCENARIOS.md): a guide to writing a world's `scenario.json` by hand, since there is no scenario editor
 - [BOTS.md](BOTS.md): server-run enemy stickmen that patrol, find their way, spot, hear, pursue and shoot, crew tanks along the roads, placed per world, and scenarios (`scenario.json`) with squads, triggers, waves, objectives and a win or a loss
 - [VEHICLES-II.md](VEHICLES-II.md): the tank, its gunner seat and the shell, driver prediction and the helicopter
 - [VEHICLES-III.md](VEHICLES-III.md): handling, tyre effects, crash damage and vehicle sound
@@ -102,5 +103,7 @@ The first run issues the certificate and exits; start it again to load it.
 set -a; . ./.env.local; set +a
 DOMAIN="$TARGET_DOMAIN" scripts/deploy.sh "$SSH_USER@$SSH_HOST"
 ```
+
+To ship a world other than `client/public`, set `WORLD_DIR`, e.g. `WORLD_DIR=worlds/ersboda-alidhem`; its `area.json` and `scenario.json` go in with it.
 
 Commit first: the image is tagged with the current `HEAD`. A protocol bump shows players with the old page open the "reload" banner once the new container is up.

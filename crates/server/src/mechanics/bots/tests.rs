@@ -494,3 +494,54 @@ fn a_bot_sent_far_from_home_fights_at_the_end_of_its_route() {
     run(&mut game, 6.0);
     assert!(game.world.players[&human].deaths >= 1, "still on {} hp", game.world.players[&human].hp);
 }
+
+#[test]
+fn others_close_by_push_a_bot_away_and_far_ones_do_not() {
+    let crowd = [(1, [0.0, 0.0]), (2, [1.0, 0.0]), (3, [50.0, 0.0])];
+    let [x, z] = push(1, [0.0, 0.0, 0.0], &crowd);
+    assert!(x < -0.5 && z.abs() < 1e-6, "pushed west by the one at 1 m east: {x}, {z}");
+    assert_eq!(push(3, [50.0, 0.0, 0.0], &crowd), [0.0, 0.0], "nobody near");
+    // Two on one spot are pushed in opposite directions.
+    let same = [(1, [5.0, 5.0]), (2, [5.0, 5.0])];
+    let (a, b) = (push(1, [5.0, 0.0, 5.0], &same), push(2, [5.0, 0.0, 5.0], &same));
+    assert!(a[0].hypot(a[1]) > 0.9 && (a[0] + b[0]).abs() < 1e-6 && (a[1] + b[1]).abs() < 1e-6, "{a:?} {b:?}");
+    // However many crowd round, the push is never more than 1.
+    let many: Vec<(u32, [f32; 2])> = (0..9).map(|i| (10 + i, [0.5, 0.0])).collect();
+    let [x, z] = push(1, [0.0, 0.0, 0.0], &many);
+    assert!(x.hypot(z) <= 1.0 + 1e-6);
+}
+
+/// The smallest gap between any two of `ids`.
+fn closest(game: &Game, ids: &[u32]) -> f32 {
+    let mut least = f32::MAX;
+    for (n, &a) in ids.iter().enumerate() {
+        for &b in &ids[n + 1..] {
+            least = least.min(distance_2d(feet(game, a), feet(game, b)));
+        }
+    }
+    least
+}
+
+#[test]
+fn bots_that_start_on_one_spot_spread_out_instead_of_walking_as_one() {
+    let mut game = game(false);
+    let route = vec![[0.0, 0.0], [30.0, 0.0], [30.0, 30.0]];
+    let ids: Vec<u32> = (0..3).map(|_| game.add_bot([0.0, 0.0], TEAM_BOTS, route.clone()).unwrap()).collect();
+    run(&mut game, 8.0);
+    let gap = closest(&game, &ids);
+    assert!(gap > 1.0, "the closest two are {gap} m apart");
+}
+
+#[test]
+fn a_squad_fighting_one_target_does_not_stack_up_on_one_line() {
+    let mut game = game(false);
+    let ids: Vec<u32> = (0..3).map(|_| game.add_bot([0.0, 0.0], TEAM_BOTS, vec![[0.0, 0.0]]).unwrap()).collect();
+    let human = join(&mut game);
+    put(&mut game, human, [0.0, -40.0]);
+    for _ in 0..10 * TICK_RATE {
+        game.world.players.get_mut(&human).unwrap().hp = PLAYER_MAX_HP;
+        game.step();
+    }
+    let gap = closest(&game, &ids);
+    assert!(gap > 1.5, "the closest two are {gap} m apart");
+}

@@ -114,6 +114,52 @@ async fn put_world(req: &mut Request, res: &mut Response) {
     }
 }
 
+/// The scenario file's top-level keys, as `crates/server/src/scenario.rs` reads them.
+const SCENARIO_KEYS: [&str; 4] = ["areas", "squads", "triggers", "restart"];
+
+fn scenario_path(name: &str) -> PathBuf {
+    worlds_dir().join(name).join("scenario.json")
+}
+
+#[handler]
+async fn get_scenario(req: &mut Request, res: &mut Response) {
+    let Some(name) = name_of(req, res) else { return };
+    match std::fs::read_to_string(scenario_path(&name)).map(|text| serde_json::from_str::<serde_json::Value>(&text)) {
+        Ok(Ok(scenario)) => res.render(Json(scenario)),
+        Ok(Err(error)) => fail(res, StatusCode::INTERNAL_SERVER_ERROR, &format!("scenario.json is not JSON: {error}")),
+        Err(_) => fail(res, StatusCode::NOT_FOUND, "no scenario"),
+    }
+}
+
+/// Saves the scenario as the editor sends it. The editor checks the rest (names, positions, limits)
+/// as it goes; the server checks it again when it starts, so this only keeps the file well formed.
+#[handler]
+async fn put_scenario(req: &mut Request, res: &mut Response) {
+    let Some(name) = name_of(req, res) else { return };
+    if read_area(&name).is_none() {
+        return fail(res, StatusCode::NOT_FOUND, "no such world");
+    }
+    let Ok(scenario) = req.parse_json::<serde_json::Value>().await else { return fail(res, StatusCode::BAD_REQUEST, "expected a JSON scenario") };
+    let Some(object) = scenario.as_object() else { return fail(res, StatusCode::BAD_REQUEST, "a scenario is a JSON object") };
+    if let Some(key) = object.keys().find(|key| !SCENARIO_KEYS.contains(&key.as_str())) {
+        return fail(res, StatusCode::BAD_REQUEST, &format!("no such scenario field {key:?}; there are {}", SCENARIO_KEYS.join(", ")));
+    }
+    let text = serde_json::to_string_pretty(&scenario).unwrap_or_default() + "\n";
+    match std::fs::write(scenario_path(&name), text) {
+        Ok(()) => res.render(Json(serde_json::json!({ "name": name, "saved": true }))),
+        Err(error) => fail(res, StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
+    }
+}
+
+#[handler]
+async fn delete_scenario(req: &mut Request, res: &mut Response) {
+    let Some(name) = name_of(req, res) else { return };
+    match std::fs::remove_file(scenario_path(&name)) {
+        Ok(()) => res.render(Json(serde_json::json!({ "deleted": name }))),
+        Err(_) => fail(res, StatusCode::NOT_FOUND, "no scenario"),
+    }
+}
+
 #[handler]
 async fn delete_world(req: &mut Request, res: &mut Response) {
     let Some(name) = name_of(req, res) else { return };
@@ -373,7 +419,8 @@ async fn main() -> anyhow::Result<()> {
                 .delete(delete_world)
                 .push(Router::with_path("fetch").post(start_fetch))
                 .push(Router::with_path("generate").post(start_generate))
-                .push(Router::with_path("activate").post(activate)),
+                .push(Router::with_path("activate").post(activate))
+                .push(Router::with_path("scenario").get(get_scenario).put(put_scenario).delete(delete_scenario)),
         );
     let acceptor = TcpListener::new(("127.0.0.1", 8700)).bind().await;
     eprintln!("map editor API on http://127.0.0.1:8700/api (run the client with `npm run dev` and open /editor.html)");
@@ -384,6 +431,16 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_scenario_keeps_only_the_fields_the_server_reads() {
+        let known = r#"{"restart":30,"areas":{},"squads":{},"triggers":[]}"#;
+        let value: serde_json::Value = serde_json::from_str(known).unwrap();
+        assert!(value.as_object().unwrap().keys().all(|key| SCENARIO_KEYS.contains(&key.as_str())));
+        let typo: serde_json::Value = serde_json::from_str(r#"{"trigers":[]}"#).unwrap();
+        assert!(typo.as_object().unwrap().keys().any(|key| !SCENARIO_KEYS.contains(&key.as_str())));
+        assert_eq!(scenario_path("x"), worlds_dir().join("x").join("scenario.json"));
+    }
 
     #[test]
     fn a_saved_area_keeps_its_bots_and_their_routes() {
