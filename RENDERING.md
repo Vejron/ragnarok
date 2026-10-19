@@ -67,14 +67,14 @@ scene:
 | Piece | File | What it is |
 |---|---|---|
 | Ground plane | `world.ts` `buildGround` | One grass plane under the world; shows only where a tile is late. |
-| Tiles | `world.ts` `buildTile` | Terrain mesh, buildings, roads and trees of one 250 m tile. Streamed in and out around the player. |
+| Tiles | `world.ts` `buildTile` | Terrain mesh, buildings (as 1 m cubes, `voxels.ts`), roads and trees of one 250 m tile. Streamed in and out around the player. |
 | Vehicles | `car.ts`, `tank.ts`, `heli.ts`, `plane.ts`, `walker.ts`, `strvs.ts`, `mortar.ts` | glTF models from `client/public/models/`, one clone per vehicle (the mortar is built by hand). |
 | Characters | `character.ts` | Skinned clones of one shared model (`Crowd`), outfit colour by player id. |
 | Items, pickups, rockets | `items.ts`, `pickups.ts`, `rockets.ts` | Small hand-built meshes. |
 | Effects | `effects.ts` | Muzzle flashes, tracers, sparks, fireballs: `FlashEffects`, below. |
 | Particles | `particles.ts` | Smoke, dust, gravel, sparks and flames: GPU particles, below. |
 | Skidmarks | `skidmarks.ts` | A ring of quads with a birth time, faded in the shader. |
-| Damage | `damage.ts`, `fracture.ts`, `rubble.ts` | A building redrawn from its cells (holes blasted through walls and roofs, the wall around a hole burnt black, pieces pushed in where this player's rounds landed), thrown and falling chunks, collapses. |
+| Damage | `damage.ts`, `fracture.ts`, `rubble.ts` | A building redrawn from its cubes (holes blasted through walls and roofs, the cubes around a hole burnt black, cubes shrunk where this player's rounds landed), thrown and falling chunks of cubes, collapses. |
 | Trajectory | `trajectory.ts` | The arc a held grenade would take. |
 | Field mortar | `mortar.ts`, `mortar-arc.ts` | A hand-built gun, and the landing marker its gunner aims by. See [VEHICLES-V.md](VEHICLES-V.md). |
 | Contact shadows | `contact.ts` | Blob shadows, below. |

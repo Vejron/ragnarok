@@ -3,11 +3,13 @@ import * as THREE from 'three'
 import { toonMaterial } from './toon'
 import type { TileGround } from '@/sim/terrain'
 import { ROOF_FLAT, type TileData } from '@/world'
+import { shellOf } from '@/sim/carve'
 import { GRASS_COLOR, bakeNormalMap, bakeTerrainTexture } from './cover'
 import { buildRails } from './rails'
 import { buildRoads } from './roads'
 import { heightSampler, normalAt, toneAt, type HeightSource } from './shade'
 import { buildTrees } from './trees'
+import { voxelFaces, type Soup } from './voxels'
 
 
 export type { HeightSource }
@@ -192,12 +194,25 @@ function trianglePositions(tile: TileData, from: number, count: number, out: num
 }
 
 /**
- * The tile's buildings and bridges as one mesh with a colour per vertex, leaving out the buildings in
- * `destroyed`. One draw per tile (and one shadow draw) however many colours it holds.
+ * Building `index` as cubes (`voxels.ts`), the roof's cells in the roof colour, appended to `out`.
+ * False when it has no cells to draw (the importer left it no walls, or it is too big to cut).
+ */
+function buildingVoxels(tile: TileData, index: number, salt: number, out: Soup, offset?: readonly [number, number, number]): boolean {
+  const shell = shellOf(tile, index)
+  if (!shell) return false
+  const { wall, roof } = buildingColors(tile, index, salt)
+  voxelFaces(shell, (id) => shell.isSolid(id), (id) => (shell.isRoof(id) ? roof : wall), out, offset)
+  return true
+}
+
+/**
+ * The tile's buildings (as cubes) and bridges as one mesh with a colour per vertex, leaving out the
+ * buildings in `destroyed`. One draw per tile (and one shadow draw) however many colours it holds.
  */
 function buildMerged(tile: TileData, salt: number, destroyed: ReadonlySet<number>): Mesh[] {
   const positions: number[] = []
   const colors: number[] = []
+  const soup = { positions, colors }
   const tint = new THREE.Color()
   const add = (color: number, from: number, count: number) => {
     const before = positions.length
@@ -207,6 +222,7 @@ function buildMerged(tile: TileData, salt: number, destroyed: ReadonlySet<number
   }
   tile.buildings.forEach((building, index) => {
     if (destroyed.has(index)) return
+    if (buildingVoxels(tile, index, salt, soup)) return
     const { wall, roof } = buildingColors(tile, index, salt)
     add(wall, building.first, building.walls)
     add(roof, building.first + building.walls, building.roof)
@@ -243,6 +259,13 @@ export function collapsingBuilding(tile: TileData, index: number, salt: number):
   const { wall, roof } = buildingColors(tile, index, salt)
   const group = new Group()
   group.position.y = building.base
+  const soup: Soup = { positions: [], colors: [] }
+  if (buildingVoxels(tile, index, salt, soup, [0, building.base, 0])) {
+    const mesh = new Mesh(flatGeometry(soup.positions, soup.colors), buildingMaterial)
+    mesh.castShadow = true
+    group.add(mesh)
+    return group
+  }
   for (const [color, from, count] of [[wall, building.first, building.walls], [roof, building.first + building.walls, building.roof]] as const) {
     const mesh = new Mesh(flatGeometry(trianglePositions(tile, from, count, [], building.base)), material('building', color))
     mesh.castShadow = true

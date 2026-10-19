@@ -160,10 +160,15 @@ describe('redrawing a tile without a building', () => {
   it('drops that building\'s triangles from the merged meshes and no others', () => {
     const tile = twoHouses()
     const group = buildTile(tile, 0)
-    // 10 drawn triangles a house (the floor is not drawn), 3 vertices each.
-    expect(vertexCount(group)).toBe(2 * 10 * 3)
+    // Each house is drawn as its own cubes.
+    const both = vertexCount(group)
     rebuildBuildings(group, tile, 0, new Set([0]))
-    expect(vertexCount(group)).toBe(10 * 3)
+    const second = vertexCount(group)
+    rebuildBuildings(group, tile, 0, new Set([1]))
+    const first = vertexCount(group)
+    expect(first).toBeGreaterThan(0)
+    expect(second).toBeGreaterThan(0)
+    expect(first + second).toBe(both)
     rebuildBuildings(group, tile, 0, new Set([0, 1]))
     expect(vertexCount(group)).toBe(0)
   })
@@ -419,8 +424,10 @@ describe('a building with cells blasted out of it', () => {
     expect(twice).not.toEqual(once)
     // The wall breaks out: the dent is gone with the cell, and nothing is left to push.
     damage.carve(key, 0, [cell], [], [-1, 1.5, 0], true)
+    const broken = Array.from(bodyOf(damage).geometry.positions)
+    expect(broken).not.toEqual(twice)
     expect(damage.dent(key, 0, cell, 12)).toBe(false)
-    expect(bodyOf(damage).geometry.positions.length).toBeLessThan(twice.length)
+    expect(Array.from(bodyOf(damage).geometry.positions)).toEqual(broken)
   })
 
   it('is as it was when its tile streams back in, and throws nothing for a catch-up', () => {

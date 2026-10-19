@@ -208,7 +208,7 @@ impl Game {
             .iter()
             .filter(|(object_id, _)| !self.world.destroyed.iter().any(|&(done, _)| done == Obj::Building(**object_id)))
             .filter_map(|(object_id, carving)| {
-                let gone: Vec<u16> = (0..carving.removed.len()).filter(|&i| carving.removed[i]).map(|i| i as u16).collect();
+                let gone: Vec<u32> = (0..carving.removed.len()).filter(|&i| carving.removed[i]).map(|i| i as u32).collect();
                 (!gone.is_empty()).then(|| (object_id.col, object_id.row, object_id.index, 0, 0, 0, gone, Vec::new()))
             })
             .collect();

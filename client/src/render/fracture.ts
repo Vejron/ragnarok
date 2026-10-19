@@ -1,23 +1,21 @@
 import { Geometry } from '@ragnarok/engine'
 import * as THREE from 'three'
 import type { TileData } from '@/world'
-import { CELL_HP, shellOf, type Shell, type Tri } from '@/sim/carve'
+import { CELL_HP, shellOf, type Shell } from '@/sim/carve'
+import { voxelCube, voxelFaces, type Soup } from './voxels'
 import { buildingColors } from './world'
 
-/** How far behind the wall the dark inside of the building sits, metres. */
-const INSET = 0.4
-/** How much of the wall's brightness the inside keeps. */
-const INSIDE = 0.6
-/** How far a piece of wall that has taken all but its last hit is pushed in, metres, and how far it slips sideways. */
-const DENT_DEPTH = 0.22
-const DENT_SLIP = 0.09
-/** How much of its colour a piece of wall right beside a hole loses to the burn, and the next one out. */
+/** How far each side of a cell that has taken all but its last hit is pulled in, metres. */
+const DENT_DEPTH = 0.18
+/** How much of its colour a cell right beside a hole loses to the burn, and the next one out. */
 const CHAR_NEAR = 0.75
 const CHAR_FAR = 0.35
-/** How much of its colour a piece that has taken all but its last hit loses. */
+/** How much of its colour a cell that has taken all but its last hit loses. */
 const CHAR_DENT = 0.3
 /** Soot, as a share of the wall's own colour that is left when fully burnt. */
 const SOOT = 0.12
+/** How much of their colour thrown pieces keep. */
+const THROWN = 0.9
 
 export interface Fractured {
   /** Walls and roof, triangle soup, with a colour per vertex. */
@@ -25,44 +23,37 @@ export interface Fractured {
   colors: Float32Array
 }
 
+/** `color` scaled by `f`, as `0xrrggbb`. */
+function pack(color: THREE.Color, f: number): number {
+  const c = (v: number) => Math.max(0, Math.min(255, Math.round(v * f * 255)))
+  return (c(color.r) << 16) | (c(color.g) << 8) | c(color.b)
+}
+
+function arrays(soup: Soup): Fractured {
+  return { positions: Float32Array.from(soup.positions), colors: Float32Array.from(soup.colors) }
+}
+
 /**
- * A building's walls and roof as the small triangles of its cells (`sim/carve.ts`, cut as the
- * server cuts them), to be redrawn without the cells a blast took out and with the ones that have
- * been shot pushed in. Which triangles are which is fixed by the building alone, so every client sees
- * the same house. The server's collision follows the same cells: this is the picture of it.
+ * A building's cells (`sim/carve.ts`, cut as the server cuts them) drawn as cubes, to be redrawn
+ * without the cells a blast took out and with the ones that have been shot pulled in. Which cells
+ * there are is fixed by the building alone, so every client sees the same house. The server's
+ * collision follows the same cells.
  */
 export class Fracture {
   /** The building's cells, the same as the server cuts them, or null when it has no walls. */
   readonly shell: Shell | null
-  /** The small triangles, nine numbers each, wound to face out, and the cell of each. */
-  private readonly wall: number[] = []
-  private readonly wallCell: number[] = []
-  private readonly roof: number[] = []
-  private readonly roofCell: number[] = []
   private readonly wallColor: THREE.Color
   private readonly roofColor: THREE.Color
-  private readonly middle = new THREE.Vector3()
 
   constructor(tile: TileData, index: number, salt: number) {
-    const building = tile.buildings[index]!
     const colors = buildingColors(tile, index, salt)
     this.wallColor = new THREE.Color(colors.wall)
     this.roofColor = new THREE.Color(colors.roof)
     this.shell = shellOf(tile, index)
-    // The collision mesh is wound inwards and drawn reversed (a, c, b), so that is the order kept.
-    const outward = (t: Tri) => [t[0] / 100, t[1] / 100, t[2] / 100, t[6] / 100, t[7] / 100, t[8] / 100, t[3] / 100, t[4] / 100, t[5] / 100]
-    this.shell?.triangles.forEach(({ tri, cell }, i) => {
-      if (i < this.shell!.walls) {
-        this.wall.push(...outward(tri))
-        this.wallCell.push(cell)
-      } else {
-        this.roof.push(...outward(tri))
-        this.roofCell.push(cell)
-      }
-    })
-    for (const p of building.footprint) this.middle.x += p[0]
-    for (const p of building.footprint) this.middle.z += p[1]
-    this.middle.divideScalar(Math.max(1, building.footprint.length))
+  }
+
+  private colorOf(id: number): THREE.Color {
+    return this.shell?.isRoof(id) ? this.roofColor : this.wallColor
   }
 
   /**
@@ -75,8 +66,7 @@ export class Fracture {
     const shell = this.shell
     if (!shell || removed.size === 0) return out
     const [nx, ny, nz] = shell.dims
-    // Big cells (large buildings) are already a lot of wall: only the first ring.
-    const reach = shell.cell <= 200 ? 2 : 1
+    const reach = 2
     for (const id of removed) {
       const x = id % nx
       const z = Math.floor(id / nx) % nz
@@ -87,7 +77,7 @@ export class Fracture {
             const [ax, ay, az] = [x + dx, y + dy, z + dz]
             if (ax < 0 || ay < 0 || az < 0 || ax >= nx || ay >= ny || az >= nz) continue
             const near = shell.index(ax, ay, az)
-            if (removed.has(near)) continue
+            if (removed.has(near) || !shell.isSolid(near)) continue
             const ring = Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz))
             const level = ring === 1 ? CHAR_NEAR : CHAR_FAR
             if (level > (out.get(near) ?? 0)) out.set(near, level)
@@ -104,94 +94,46 @@ export class Fracture {
 
   /**
    * The building as it looks without the cells in `removed`, and with those in `dents` (damage a
-   * cell has taken, by cell) pushed in and slipped by how much of its health is spent.
+   * cell has taken, by cell) drawn apart, pulled in by how much of its health is spent.
    */
   build(removed: ReadonlySet<number> = new Set(), dents: ReadonlyMap<number, number> = new Map()): Fractured {
-    const positions: number[] = []
-    const colors: number[] = []
-    const n = new THREE.Vector3()
-    const u = new THREE.Vector3()
-    const w = new THREE.Vector3()
+    const soup: Soup = { positions: [], colors: [] }
+    const shell = this.shell
+    if (!shell) return arrays(soup)
     const burnt = this.burn(removed)
-    const tint = new THREE.Color()
-    const push = (source: readonly number[], at: number, cell: number, color: THREE.Color) => {
-      const damage = dents.get(cell)
-      const burn = Math.min(1, (burnt.get(cell) ?? 0) + (damage ? Math.min(1, damage / CELL_HP) * CHAR_DENT : 0))
-      tint.copy(color).multiplyScalar(1 - burn * (1 - SOOT))
-      const start = positions.length
-      for (let k = 0; k < 9; k += 3) {
-        positions.push(source[at + k]!, source[at + k + 1]!, source[at + k + 2]!)
-        colors.push(tint.r, tint.g, tint.b)
-      }
-      if (!damage) return
+    const shade = (id: number, extra = 0) => 1 - Math.min(1, (burnt.get(id) ?? 0) + extra) * (1 - SOOT)
+    const whole = (id: number) => shell.isSolid(id) && !removed.has(id) && !dents.has(id)
+    voxelFaces(shell, whole, (id) => pack(this.colorOf(id), shade(id)), soup)
+    for (const [id, damage] of dents) {
+      if (removed.has(id) || !shell.isSolid(id)) continue
       const f = Math.min(0.95, damage / CELL_HP)
-      u.set(source[at + 3]! - source[at]!, source[at + 4]! - source[at + 1]!, source[at + 5]! - source[at + 2]!)
-      w.set(source[at + 6]! - source[at]!, source[at + 7]! - source[at + 1]!, source[at + 8]! - source[at + 2]!)
-      n.crossVectors(u, w).normalize()
-      // The same slip for every triangle of the cell, and the same on every client.
-      const a = Math.sin(cell * 12.9898) * 43758.5453
-      const [jx, jz] = [(a - Math.floor(a)) * 2 - 1, (Math.sin(cell * 78.233) * 43758.5453) % 1]
-      for (let k = 0; k < 9; k += 3) {
-        positions[start + k]! += -n.x * DENT_DEPTH * f + jx * DENT_SLIP * f
-        positions[start + k + 1]! += -n.y * DENT_DEPTH * f
-        positions[start + k + 2]! += -n.z * DENT_DEPTH * f + jz * DENT_SLIP * f
-      }
+      voxelCube(shell, id, pack(this.colorOf(id), shade(id, f * CHAR_DENT)), DENT_DEPTH * f, soup)
     }
-    this.wallCell.forEach((cell, t) => !removed.has(cell) && push(this.wall, t * 9, cell, this.wallColor))
-    this.roofCell.forEach((cell, t) => !removed.has(cell) && push(this.roof, t * 9, cell, this.roofColor))
-    return { positions: Float32Array.from(positions), colors: Float32Array.from(colors) }
+    return arrays(soup)
   }
 
   /**
-   * What is inside the walls: the same walls drawn a little way in, dark, for a hole to show a room
-   * and not a void, without the cells that are gone.
+   * The cells in `cells` on their own, to be thrown: triangle soup around their centre, which is
+   * `pivot`. Null when those cells hold nothing.
    */
-  core(removed: ReadonlySet<number> = new Set()): { positions: Float32Array; colors: Float32Array } {
-    const positions: number[] = []
-    const colors: number[] = []
-    const p = new THREE.Vector3()
-    const toward = new THREE.Vector3()
-    this.wallCell.forEach((cell, t) => {
-      if (removed.has(cell)) return
-      for (let k = 0; k < 3; k++) {
-        p.fromArray(this.wall, t * 9 + k * 3)
-        toward.set(this.middle.x - p.x, 0, this.middle.z - p.z)
-        const reach = toward.length()
-        if (reach > 1e-3) p.addScaledVector(toward.divideScalar(reach), Math.min(INSET, reach))
-        positions.push(p.x, p.y, p.z)
-        colors.push(this.wallColor.r * INSIDE, this.wallColor.g * INSIDE, this.wallColor.b * INSIDE)
-      }
-    })
-    return { positions: Float32Array.from(positions), colors: Float32Array.from(colors) }
-  }
-
-  /**
-   * The wall and roof in `cells` on their own, to be thrown: triangle soup around its centre, which
-   * is `pivot`. Null when those cells hold nothing.
-   */
-  chunk(cells: ReadonlySet<number>): { positions: Float32Array; colors: Float32Array; pivot: THREE.Vector3 } | null {
-    const pieces: { source: number[]; at: number; color: THREE.Color }[] = []
-    this.wallCell.forEach((cell, t) => cells.has(cell) && pieces.push({ source: this.wall, at: t * 9, color: this.wallColor }))
-    this.roofCell.forEach((cell, t) => cells.has(cell) && pieces.push({ source: this.roof, at: t * 9, color: this.roofColor }))
-    if (pieces.length === 0) return null
+  chunk(cells: ReadonlySet<number>): (Fractured & { pivot: THREE.Vector3 }) | null {
+    const shell = this.shell
+    if (!shell) return null
     const pivot = new THREE.Vector3()
-    for (const { source, at } of pieces) {
-      for (let k = 0; k < 3; k++) {
-        pivot.x += source[at + k * 3]!
-        pivot.y += source[at + k * 3 + 1]!
-        pivot.z += source[at + k * 3 + 2]!
-      }
+    let n = 0
+    for (const id of cells) {
+      if (!shell.isSolid(id)) continue
+      const [x, y, z] = shell.centre(id)
+      pivot.x += x / 100
+      pivot.y += y / 100
+      pivot.z += z / 100
+      n++
     }
-    pivot.divideScalar(pieces.length * 3)
-    const positions: number[] = []
-    const colors: number[] = []
-    for (const { source, at, color } of pieces) {
-      for (let k = 0; k < 3; k++) {
-        positions.push(source[at + k * 3]! - pivot.x, source[at + k * 3 + 1]! - pivot.y, source[at + k * 3 + 2]! - pivot.z)
-        colors.push(color.r * 0.9, color.g * 0.9, color.b * 0.9)
-      }
-    }
-    return { positions: Float32Array.from(positions), colors: Float32Array.from(colors), pivot }
+    if (n === 0) return null
+    pivot.divideScalar(n)
+    const soup: Soup = { positions: [], colors: [] }
+    voxelFaces(shell, (id) => cells.has(id) && shell.isSolid(id), (id) => pack(this.colorOf(id), THROWN), soup, [pivot.x, pivot.y, pivot.z])
+    return { ...arrays(soup), pivot }
   }
 }
 

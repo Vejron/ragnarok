@@ -53,7 +53,6 @@ interface Drawn {
   /** The building's walls and roof as cells, once it is hurt, and what is drawn of them. */
   fracture: Fracture | null
   body: Mesh | null
-  core: Mesh | null
   falling: Falling[]
   shed: number
 }
@@ -72,7 +71,6 @@ interface Puff {
 const pieceMaterial = toonMaterial({ vertexColors: true, side: 'double' })
 // Double-sided: through a hole you see the inside of the far wall and the underside of the roof.
 const hurtMaterial = toonMaterial({ vertexColors: true, side: 'double' })
-const coreMaterial = toonMaterial({ vertexColors: true, side: 'double' })
 
 /** A wall triangle: the three corners and its unit normal (arbitrary side), metres. */
 interface Wall {
@@ -243,7 +241,7 @@ export class BuildingDamage {
     const walls = wallsOf(loaded.tile, index)
     if (walls.length === 0) return
     if (!drawn) {
-      drawn = { group: new Group(), fracture: null, body: null, core: null, falling: [], shed: SHED_SECONDS }
+      drawn = { group: new Group(), fracture: null, body: null, falling: [], shed: SHED_SECONDS }
       buildings.set(index, drawn)
       this.root.add(drawn.group)
     }
@@ -253,16 +251,8 @@ export class BuildingDamage {
   /** Redraws the building without the cells that are gone and with the ones that were shot pushed in. */
   private shatter(drawn: Drawn, key: number, index: number, loaded: Loaded, state: Hurt, live: boolean, burst: Burst | null) {
     const building = loaded.tile.buildings[index]!
-    if (!drawn.fracture) {
-      drawn.fracture = new Fracture(loaded.tile, index, loaded.salt)
-      const inside = drawn.fracture.core(state.removed)
-      drawn.core = new Mesh(shardGeometry(inside.positions, inside.colors), coreMaterial)
-      drawn.group.add(drawn.core)
-    } else if (drawn.core && burst) {
-      const inside = drawn.fracture.core(state.removed)
-      drawn.core.geometry.dispose()
-      drawn.core.geometry = shardGeometry(inside.positions, inside.colors)
-    }
+    // Cubes: through a hole you see the inner faces of the walls round it, so no room needs drawing.
+    drawn.fracture ??= new Fracture(loaded.tile, index, loaded.salt)
     const built = drawn.fracture.build(state.removed, state.dents)
     if (!drawn.body) {
       drawn.body = new Mesh(shardGeometry(built.positions, built.colors), hurtMaterial)
@@ -335,7 +325,7 @@ export class BuildingDamage {
   }
 
   private release(drawn: Drawn) {
-    for (const mesh of [drawn.body, drawn.core, ...drawn.falling.map((f) => f.mesh)]) mesh?.geometry.dispose()
+    for (const mesh of [drawn.body, ...drawn.falling.map((f) => f.mesh)]) mesh?.geometry.dispose()
     this.root.remove(drawn.group)
   }
 

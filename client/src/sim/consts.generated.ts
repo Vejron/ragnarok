@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 33
+export const PROTOCOL_VERSION = 34
 
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
@@ -126,9 +126,9 @@ export const CHUTE_DESCENT = 5.0
 export const CHUTE_DRAG = 40.0
 
 /** Glide speed under a canopy: full forward, backward (braking) and sideways, m/s. */
-export const CHUTE_FORWARD = 10.0
+export const CHUTE_FORWARD = 15.0
 export const CHUTE_BACK = 3.0
-export const CHUTE_SIDE = 5.0
+export const CHUTE_SIDE = 8.0
 
 /** How much of the gap to the wanted glide velocity is closed each tick: a canopy turns lazily. */
 export const CHUTE_STEER = 0.03

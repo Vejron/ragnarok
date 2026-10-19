@@ -583,7 +583,7 @@ pub type DamagedEntry = (u16, u16, u32, u8, u8, i32, i32, i32);
 pub struct Carved(pub u8, pub u8, pub Vec<CarvedEntry>);
 
 /// One `Carved` entry.
-pub type CarvedEntry = (u16, u16, u32, i32, i32, i32, Vec<u16>, Vec<u16>);
+pub type CarvedEntry = (u16, u16, u32, i32, i32, i32, Vec<u32>, Vec<u32>);
 
 /// `[8, role, kind, amount, weapon, bearing, x, y, z, target]`, sent on a reliable stream to the one player it is
 /// about, once per tick per `(role, kind)` with the amounts summed. `role` is `HIT_*`: dealt (you
@@ -649,7 +649,7 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 33, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
+        148, 0, 34, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[
