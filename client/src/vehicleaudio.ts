@@ -486,6 +486,16 @@ export class VehicleSounds {
     })
   }
 
+  /** A vehicle striking a tree: a dull wooden whump, a shiver of leaves, louder for a harder blow. */
+  treeHit(at: Vec3, size: number) {
+    const level = Math.min(1, 0.3 + size / 25)
+    this.emit(at, 1.0, (ctx, out, t) => {
+      VehicleSounds.ping(ctx, out, t, 'sine', 140, 50, 0.25, 0.9 * level)
+      VehicleSounds.burst(ctx, out, t, 'lowpass', 900, 200, 0.22, 0.8 * level)
+      VehicleSounds.burst(ctx, out, t, 'highpass', 3000, 2000, 0.5, 0.2 * level, 0.03)
+    })
+  }
+
   /** A tree of `size` metres splitting at its foot. */
   treeCrack(at: Vec3, size: number) {
     const level = Math.min(1, 0.4 + size / 25)

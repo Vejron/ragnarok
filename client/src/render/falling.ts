@@ -9,7 +9,7 @@ const LANDED = Math.PI / 2 - 0.08
 
 /** Where a felled tree is heard: its foot as it cracks, its crown as it hits the ground. `size` is its height in metres. */
 export interface TreeNoise {
-  phase: 'crack' | 'thud'
+  phase: 'hit' | 'crack' | 'thud'
   at: { x: number; y: number; z: number }
   size: number
 }
@@ -88,6 +88,8 @@ export class FallingTrees {
     // A soft push is felt first: the trunk gives for a moment. A hard one does not wait.
     const give = 0.3 * (1 - force) * (1 - force)
     const throwSpeed = force > SNAP ? (force - SNAP) * 2 * 9 : 0
+    // The blow itself is heard the moment it lands, harder the harder it was.
+    this.onNoise?.({ phase: 'hit', at: foot, size: tree.height * (0.5 + force) })
     this.falling.push({ pivot, axis, duration, elapsed: -give, foot, dx, dz, height: tree.height, crown: tree.crown, force, give, throwSpeed, settled: null,
       // The trunk splits: wood flies off the foot and the crown shakes its leaves loose.
       crack: (fx) => crack(fx, foot, dx, dz, tree.height, tree.crown, force),

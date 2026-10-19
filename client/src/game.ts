@@ -297,7 +297,8 @@ export class Game {
     this.view = new WorldView(this.scene.scene)
     this.view.onTreeNoise = ({ phase, at, size }) => {
       const where: [number, number, number] = [at.x, at.y, at.z]
-      if (phase === 'crack') this.sounds.treeCrack(where, size)
+      if (phase === 'hit') this.sounds.treeHit(where, size)
+      else if (phase === 'crack') this.sounds.treeCrack(where, size)
       else {
         this.sounds.treeThud(where, size)
         if (this.scene.camera.position.distanceTo(new THREE.Vector3(at.x, at.y, at.z)) < 12) this.chase.kick(0.15)

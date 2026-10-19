@@ -70,7 +70,7 @@ describe('felling a tree', () => {
     const fx = { smoke: { spawn: () => {} } }
     for (let i = 0; i < 600; i++) falling.update(0.01, fx)
     // It cracks as it starts and thuds as it lands, once each.
-    expect(noises).toEqual(['crack', 'thud'])
+    expect(noises).toEqual(['hit', 'crack', 'thud'])
     const pivot = group.children[group.children.length - 1]!
     const top = new THREE.Vector3(0, 1, 0).applyQuaternion(pivot.quaternion)
     expect(top.x).toBeGreaterThan(0.95)
