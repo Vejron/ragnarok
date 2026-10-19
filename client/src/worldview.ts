@@ -2,7 +2,7 @@ import { Group, type Scene } from '@ragnarok/engine'
 import type * as THREE from 'three'
 import { OBJ_BUILDING, OBJ_TREE, type CarvedBuilding, type DamagedBuilding, type DestroyedObject } from './net/codec'
 import type { Effects } from './render/effects'
-import { FallingTrees } from './render/falling'
+import { FallingTrees, type TreeFx, type TreeNoise } from './render/falling'
 import { BuildingDamage } from './render/damage'
 import { Collapses } from './render/rubble'
 import { buildTile, disposeTile, rebuildBuildings, restitchTerrain } from './render/world'
@@ -48,9 +48,14 @@ export class WorldView {
 
   constructor(private readonly scene: Scene) {}
 
+  /** Told when a felled tree cracks and lands, to be heard. */
+  set onTreeNoise(listener: ((noise: TreeNoise) => void) | null) {
+    this.fallingTrees.onNoise = listener
+  }
+
   /** Advances the falling trees, collapsing buildings and shards. */
-  update(dt: number, effects: Effects, camera: THREE.Vector3) {
-    this.fallingTrees.update(dt)
+  update(dt: number, effects: Effects, camera: THREE.Vector3, fx: TreeFx) {
+    this.fallingTrees.update(dt, fx)
     this.collapses.update(dt, effects)
     this.damage.update(dt, effects, camera)
   }
@@ -111,7 +116,7 @@ export class WorldView {
         this.fellTrees.set(key, fell)
         if (fell.has(object.index)) continue
         fell.set(object.index, object.yaw)
-        this.fellTree(key, object.index, object.yaw, animate)
+        this.fellTree(key, object.index, object.yaw, animate, object.force)
       } else if (object.kind === OBJ_BUILDING) {
         const gone = this.goneBuildings.get(key) ?? new Map<number, number>()
         this.goneBuildings.set(key, gone)
@@ -196,12 +201,12 @@ export class WorldView {
    * Fells tree number `index` of tile `key` if that tile is loaded: it leaves the tile's drawing
    * and falls, and its trunk stops being solid in both simulations.
    */
-  private fellTree(key: number, index: number, yaw: number, animate: boolean) {
+  private fellTree(key: number, index: number, yaw: number, animate: boolean, force = 0) {
     const group = this.groups.get(key)
     const solids = this.solids.get(key)
     const tree = solids?.tile.trees[index]
     if (!group || !solids || !tree) return
-    this.fallingTrees.fell(group, tree, index, yaw, animate)
+    this.fallingTrees.fell(group, tree, index, yaw, animate, force)
     const at = trunkColliderIndex(solids.tile, index)
     if (at < 0) return
     this.motor?.removeTile([solids.walk[at]])

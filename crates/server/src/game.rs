@@ -26,10 +26,10 @@ mod state;
 pub use state::*;
 
 /// `object` as a `Destroyed` entry.
-fn destroyed_entry(object: Obj, yaw: i16) -> (u8, u16, u16, u32, i16) {
+fn destroyed_entry(object: Obj, yaw: i16, force: u8) -> (u8, u16, u16, u32, i16, u8) {
     match object {
-        Obj::Tree(id) => (OBJ_TREE, id.col, id.row, id.index, yaw),
-        Obj::Building(id) => (OBJ_BUILDING, id.col, id.row, id.index, yaw),
+        Obj::Tree(id) => (OBJ_TREE, id.col, id.row, id.index, yaw, force),
+        Obj::Building(id) => (OBJ_BUILDING, id.col, id.row, id.index, yaw, force),
     }
 }
 
@@ -191,7 +191,7 @@ impl Game {
         let _ = outbox.try_send(Outgoing::Reliable(encode(&Scores(S_SCORES, scores)).into()));
         // Always sent, even empty: the client takes the first one after the welcome as the catch-up
         // (not news to animate), and snapshots on the datagram channel can overtake it.
-        let message = Destroyed(S_DESTROYED, self.world.destroyed.iter().map(|&(object, yaw)| destroyed_entry(object, yaw)).collect());
+        let message = Destroyed(S_DESTROYED, self.world.destroyed.iter().map(|&(object, yaw)| destroyed_entry(object, yaw, 0)).collect());
         let _ = outbox.try_send(Outgoing::Reliable(encode(&message).into()));
         let hurt: Vec<_> = self.world.object_hp.keys().filter_map(|&object| self.world.damage_stage(object).map(|stage| (object, stage))).collect();
         let hurt: Vec<_> = hurt.into_iter().filter_map(|(object, stage)| match object {
@@ -393,7 +393,7 @@ impl Game {
         if self.world.fresh_destroyed.is_empty() {
             return;
         }
-        let entries = self.world.fresh_destroyed.drain(..).map(|(object, yaw)| destroyed_entry(object, yaw)).collect();
+        let entries = self.world.fresh_destroyed.drain(..).map(|(object, yaw, force)| destroyed_entry(object, yaw, force)).collect();
         let bytes = Bytes::from(encode(&Destroyed(S_DESTROYED, entries)));
         for (&to, outbox) in &self.outboxes {
             send_reliable(outbox, to, &bytes, &mut self.stalled);
@@ -570,7 +570,7 @@ mod tests {
         game.handle(Command::Join { outbox, reply, profile: Default::default() });
         let id = response.try_recv().unwrap().unwrap();
         // The welcome already fills the one slot, so the next reliable message cannot be queued.
-        game.world.fresh_destroyed.push((Obj::Tree(Default::default()), 0));
+        game.world.fresh_destroyed.push((Obj::Tree(Default::default()), 0, 0));
         game.step();
         assert!(!game.world.players.contains_key(&id));
     }

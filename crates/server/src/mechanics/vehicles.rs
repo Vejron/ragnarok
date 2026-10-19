@@ -319,23 +319,66 @@ fn alight(world: &mut World, id: u32) {
 
 /// A car slower than this (m/s) only nudges a tree.
 const TREE_RAM_MIN_SPEED: f32 = 4.0;
+/// A tank barely has to be moving to push a tree over.
+const TANK_TREE_RAM_MIN_SPEED: f32 = 0.3;
 /// Tree damage per m/s of speed at the moment of impact: ten m/s fells a sapling, a broad trunk wants a run-up.
 const TREE_RAM_DAMAGE_PER_SPEED: f32 = 6.0;
 /// A tank's weight against a car's.
 const TANK_RAM_FACTOR: f32 = 3.0;
+/// A tank's weight against a tree: even a broad trunk goes over in one hit at a walking pace.
+const TANK_TREE_FACTOR: f32 = 5.0;
+/// Share of its speed a car keeps through a tree it fells, as the trunk gives way.
+const CAR_PLOW_KEEP: f32 = 0.6;
+/// How far (metres) a tank's hull reaches for a trunk: along its length, and out from each of the three points.
+const TANK_PLOW_REACH: f32 = 1.9;
+const TANK_PLOW_SPREAD: f32 = 1.8;
 
 /// Fells the trees a car is driving into. Speed is taken from before the step, as the impact
-/// itself has already slowed the car by now.
+/// itself has already slowed the car by now; a tree that goes down gives some of it back.
+/// (A tank never touches a tree: see `plow_trees`.)
 fn run_down_trees(world: &mut World, before: &BTreeMap<u32, CarPose>) {
     for (vid, object) in world.physics.car_tree_contacts() {
         let (Some(pose), Some(vehicle)) = (before.get(&vid), world.vehicles.get(&vid)) else { continue };
         let speed = pose.velocity[0].hypot(pose.velocity[2]);
-        if speed < TREE_RAM_MIN_SPEED || vehicle.wrecked() || vehicle.kind == KIND_DRONE {
+        let (kind, wrecked) = (vehicle.kind, vehicle.wrecked());
+        if speed < TREE_RAM_MIN_SPEED || wrecked || kind == KIND_DRONE {
             continue;
         }
-        let weight = if matches!(vehicle.kind, KIND_TANK | KIND_STRV) { TANK_RAM_FACTOR } else { 1.0 };
-        let amount = (speed * TREE_RAM_DAMAGE_PER_SPEED * weight) as u16;
-        super::combat::damage_object(world, object, amount, pose.position);
+        let amount = (speed * TREE_RAM_DAMAGE_PER_SPEED) as u16;
+        if super::combat::damage_object(world, object, amount, pose.position) && !matches!(kind, KIND_PLANE | KIND_HELI) {
+            // Only what the trunk took off the ground speed; falling and climbing are left to the physics.
+            let now = world.physics.car_pose(vid).map_or(pose.velocity, |now| now.velocity);
+            let kept = [pose.velocity[0] * CAR_PLOW_KEEP, now[1], pose.velocity[2] * CAR_PLOW_KEEP];
+            if now[0].hypot(now[2]) < kept[0].hypot(kept[2]) {
+                world.physics.set_car_velocity(vid, kept);
+            }
+        }
+    }
+}
+
+/// A tank or Strv drives through destructible trunks without being slowed (they are not in what its
+/// hull touches, and the client's prediction leaves them out the same way), and fells every one its
+/// hull overlaps, hard, in proportion to its speed.
+fn plow_trees(world: &mut World, before: &BTreeMap<u32, CarPose>) {
+    let tanks: Vec<u32> = world.vehicles.iter().filter(|(_, vehicle)| matches!(vehicle.kind, KIND_TANK | KIND_STRV) && !vehicle.wrecked()).map(|(&vid, _)| vid).collect();
+    for vid in tanks {
+        let (Some(was), Some(now)) = (before.get(&vid), world.physics.car_pose(vid)) else { continue };
+        let speed = was.velocity[0].hypot(was.velocity[2]);
+        if speed < TANK_TREE_RAM_MIN_SPEED {
+            continue;
+        }
+        // The hull is long: look at its middle and a point towards each end.
+        let (fx, fz) = (-now.yaw().sin(), -now.yaw().cos());
+        let mut trees: Vec<Obj> = [-TANK_PLOW_REACH, 0.0, TANK_PLOW_REACH]
+            .into_iter()
+            .flat_map(|along| world.physics.objects_near([now.position[0] + fx * along, now.position[1], now.position[2] + fz * along], TANK_PLOW_SPREAD))
+            .filter(|object| matches!(object, Obj::Tree(_)))
+            .collect();
+        trees.dedup();
+        let amount = (speed * TREE_RAM_DAMAGE_PER_SPEED * TANK_TREE_FACTOR) as u16;
+        for object in trees {
+            super::combat::damage_object(world, object, amount, now.position);
+        }
     }
 }
 
@@ -679,6 +722,7 @@ impl Mechanic for Vehicles {
         }
         knock_players(world);
         run_down_trees(world, &before);
+        plow_trees(world, &before);
         crash(world, &before);
 
         // Riders travel with their car; stuck or fallen cars are put right.

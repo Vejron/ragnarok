@@ -295,6 +295,14 @@ export class Game {
     this.perf = new PerfReadout(() => this.scene.renderer)
     this.input = new InputController(this.scene.canvas)
     this.view = new WorldView(this.scene.scene)
+    this.view.onTreeNoise = ({ phase, at, size }) => {
+      const where: [number, number, number] = [at.x, at.y, at.z]
+      if (phase === 'crack') this.sounds.treeCrack(where, size)
+      else {
+        this.sounds.treeThud(where, size)
+        if (this.scene.camera.position.distanceTo(new THREE.Vector3(at.x, at.y, at.z)) < 12) this.chase.kick(0.15)
+      }
+    }
     this.scene.scene.add(this.crowd.root)
     this.scene.scene.add(this.effects.root, this.view.damage.root, this.damageNumbers.root)
     this.scene.scene.add(this.rocketModels.root, this.trails.root)
@@ -592,7 +600,7 @@ export class Game {
       this.driverSnapshot = null
       this.driver?.reconcile(ack, vehicle, drive)
     }
-    this.view.update(dt, this.effects, this.cameraAt.set(this.scene.camera.position.x, this.scene.camera.position.y, this.scene.camera.position.z))
+    this.view.update(dt, this.effects, this.cameraAt.set(this.scene.camera.position.x, this.scene.camera.position.y, this.scene.camera.position.z), this.fxWorld)
     this.accumulator += dt * 1000
     let ticks = 0
     while (this.accumulator >= TICK_MS && ticks < MAX_TICKS_PER_FRAME) {

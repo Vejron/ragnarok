@@ -560,7 +560,7 @@ pub struct Notice(pub u8, pub u8, pub String);
 /// `kind` is `OBJ_*`; `(col, row, index)` is the object's `ObjId`; `yaw` (milliradians, as
 /// elsewhere) is the way a tree falls, or the direction a blast came from for a building.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Destroyed(pub u8, pub Vec<(u8, u16, u16, u32, i16)>);
+pub struct Destroyed(pub u8, pub Vec<(u8, u16, u16, u32, i16, u8)>);
 
 /// `[7, [[col, row, index, stage, marked, x, y, z], ...]]`, sent on a reliable stream: to everyone
 /// when buildings are hurt but still stand, and to a player who just joined with every hurt one.
@@ -672,8 +672,8 @@ mod tests {
         Snapshot { tag: S_SNAPSHOT, tick: 1234, baseline: 1230, ack: 42, ride: 9, new_entities: vec![EntityState { id: 7, kind: KIND_STICKMAN, x: 0, y: 85, z: 100_000, yaw: 0, vy: 0, flags: FLAG_GROUNDED | FLAG_DEAD, stance: 0, knock_x: 0, knock_z: 0 }], entities: vec![EntityDelta { id: 1, dx: 25, dy: -3, dz: 40, dyaw: -120, dvy: 650, flags: FLAG_GROUNDED, stance: 0, dknock_x: -300, dknock_z: 12 }], new_vehicles: vec![VehicleState { id: 10, kind: KIND_TANK, x: 300, y: 90, z: -2000, qx: 0, qy: 700, qz: 0, steer: 32, seats: vec![1, 7], turret: Some(Turret { yaw: -700, pitch: 250, shots: 3, range: 1234, flags: TURRET_STOWED }), hp: 0, damage: None, arms: None, thrust: None }, VehicleState { id: 12, kind: KIND_PLANE, x: -500, y: 300, z: 800, qx: 10, qy: -20, qz: 30, steer: 0, seats: vec![4, 0], turret: Some(Turret { yaw: 3000, pitch: 200, shots: 9, range: 0, flags: 0 }), hp: 70, damage: None, arms: Some(Arms { shots: 17, heat: 200, rear_heat: 0, bombs: 3, flags: ARMS_CUT | ARMS_JAMMED }), thrust: None }], vehicles: vec![VehicleDelta { id: 9, dx: 100, dy: 0, dz: -45, dqx: 3, dqy: -2, dqz: 0, dsteer: 4, seats: Some(vec![1, 0, 7, 0]), turret: None, hp: 100, damage: Some([0, 0, 40, 0, 0, 0, 255, 3]), arms: None, thrust: Some(Thrust { air: 200, flags: THRUST_BOOST | THRUST_LIFT }) }], removed: vec![3, 11], drive: Some(DriveState { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }), me: SelfState { hp: 73, progress: 128, slots: vec![ItemSlot { item: ITEM_AK5, count: 1, ammo: 17 }, ItemSlot { item: ITEM_NONE, count: 0, ammo: 0 }, ItemSlot { item: ITEM_GRENADE, count: 2, ammo: 0 }] }, shots: vec![ShotEvent { shooter: 7, weapon: WEAPON_RIFLE, x: 1500, y: 160, z: -4200 }, ShotEvent { shooter: 1, weapon: WEAPON_RIFLE, x: -20, y: 90, z: 31_000 }], rockets: vec![ProjectileState { id: 40, kind: PROJECTILE_GRENADE, x: 1200, y: 150, z: -800, vx: 3000, vy: 0, vz: -2500 }], pickups: vec![PickupState { id: 60, item: ITEM_BANDAGE, x: -300, y: 5, z: 1250 }], bullets: vec![BulletSpawn { id: 77, shooter: 7, item: ITEM_AK5, x: 120, y: 165, z: -3000, vx: 1500, vy: -20, vz: -27000, tick: 1233 }] }
     }
 
-    /// `[6, [[OBJ_TREE, 2, 3, 70000, -1571]]]`, mirrored in `codec.spec.ts`.
-    pub const DESTROYED_FIXTURE: &[u8] = &[146, 6, 145, 149, 0, 2, 3, 206, 0, 1, 17, 112, 209, 249, 221];
+    /// `[6, [[OBJ_TREE, 2, 3, 70000, -1571, 90]]]`, mirrored in `codec.spec.ts`.
+    pub const DESTROYED_FIXTURE: &[u8] = &[146, 6, 145, 150, 0, 2, 3, 206, 0, 1, 17, 112, 209, 249, 221, 90];
 
     /// `[7, [[2, 3, 70000, 3, 1, 1000, 20, -1000]]]`, mirrored in `destruction.spec.ts`.
     pub const DAMAGED_FIXTURE: &[u8] = &[146, 7, 145, 152, 2, 3, 206, 0, 1, 17, 112, 3, 1, 205, 3, 232, 20, 209, 252, 24];
@@ -706,7 +706,7 @@ mod tests {
 
     #[test]
     fn destroyed_matches_fixture() {
-        let message = Destroyed(S_DESTROYED, vec![(OBJ_TREE, 2, 3, 70_000, -1571)]);
+        let message = Destroyed(S_DESTROYED, vec![(OBJ_TREE, 2, 3, 70_000, -1571, 90)]);
         assert_eq!(encode(&message), DESTROYED_FIXTURE);
         assert_eq!(decode::<Destroyed>(DESTROYED_FIXTURE), Some(message));
         assert_eq!(peek_tag(DESTROYED_FIXTURE), Some(S_DESTROYED));

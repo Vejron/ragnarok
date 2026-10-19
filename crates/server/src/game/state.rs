@@ -463,8 +463,8 @@ pub struct World {
     pub object_hp: HashMap<Obj, u16>,
     /// Everything destroyed so far with the yaw it fell at, oldest first. A joiner is told all of it.
     pub destroyed: Vec<(Obj, i16)>,
-    /// What was destroyed since the last tick. Drained and broadcast reliably by `Game::step`.
-    pub fresh_destroyed: Vec<(Obj, i16)>,
+    /// What was destroyed since the last tick, with how violently (0..=255, see `combat::damage_object`). Drained and broadcast reliably by `Game::step`.
+    pub fresh_destroyed: Vec<(Obj, i16, u8)>,
     /// Buildings hurt since the last tick that need telling about: the damage stage they are in,
     /// and where a blast landed if it leaves a mark. Drained and broadcast reliably by `Game::step`.
     pub fresh_damaged: Vec<FreshDamage>,

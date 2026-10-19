@@ -9,7 +9,7 @@ import { trunkColliderIndex } from '@/sim/physics'
 import { TREE_PINE, type TileData, type Tree } from '@/world'
 
 // A copy of `DESTROYED_FIXTURE` in `crates/shared/src/protocol.rs`.
-const DESTROYED_FIXTURE = [146, 6, 145, 149, 0, 2, 3, 206, 0, 1, 17, 112, 209, 249, 221]
+const DESTROYED_FIXTURE = [146, 6, 145, 150, 0, 2, 3, 206, 0, 1, 17, 112, 209, 249, 221, 90]
 
 const tree = (x: number, solid: boolean): Tree => ({ x, z: 0, base: 0, height: 16, crown: 3, kind: TREE_PINE, solid, trunkRadius: 0.2, trunkHeight: 8 })
 
@@ -17,7 +17,7 @@ describe('destroyed message', () => {
   it('decodes the bytes the server sends', () => {
     expect(decodeServer(new Uint8Array(DESTROYED_FIXTURE))).toEqual({
       type: 'destroyed',
-      objects: [{ kind: OBJ_TREE, col: 2, row: 3, index: 70000, yaw: -1.571 }],
+      objects: [{ kind: OBJ_TREE, col: 2, row: 3, index: 70000, yaw: -1.571, force: 90 / 255 }],
     })
   })
 
@@ -64,13 +64,35 @@ describe('felling a tree', () => {
     // yaw -π/2 faces +X.
     const group = scene()
     const falling = new FallingTrees()
+    const noises: string[] = []
+    falling.onNoise = (noise) => noises.push(noise.phase)
     falling.fell(group, tree(0, true), 0, -Math.PI / 2, true)
-    for (let i = 0; i < 400; i++) falling.update(0.01)
+    const fx = { smoke: { spawn: () => {} } }
+    for (let i = 0; i < 600; i++) falling.update(0.01, fx)
+    // It cracks as it starts and thuds as it lands, once each.
+    expect(noises).toEqual(['crack', 'thud'])
     const pivot = group.children[group.children.length - 1]!
     const top = new THREE.Vector3(0, 1, 0).applyQuaternion(pivot.quaternion)
     expect(top.x).toBeGreaterThan(0.95)
     expect(Math.abs(top.z)).toBeLessThan(0.05)
     expect(top.y).toBeLessThan(0.1)
+  })
+
+  it('comes down much faster the harder it was hit', () => {
+    const landedAfter = (force: number) => {
+      const group = scene()
+      const falling = new FallingTrees()
+      let landed = -1
+      falling.onNoise = ({ phase }) => {
+        if (phase === 'thud') landed = t
+      }
+      falling.fell(group, tree(0, true), 0, 0, true, force)
+      const fx = { smoke: { spawn: () => {} } }
+      let t = 0
+      for (; t < 5 && landed < 0; t += 0.01) falling.update(0.01, fx)
+      return landed
+    }
+    expect(landedAfter(1)).toBeLessThan(landedAfter(0) / 2)
   })
 
   it('lies down at once when told it already fell', () => {

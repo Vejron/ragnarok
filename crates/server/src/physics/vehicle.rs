@@ -331,6 +331,11 @@ impl Physics {
         } else {
             chassis.density(spec.density)
         };
+        // A tank or a Strv is too heavy to be stopped by a tree: it goes through the trunk, felling it.
+        let heavy = matches!(kind, KIND_TANK | KIND_STRV);
+        if heavy {
+            chassis = chassis.collision_groups(super::plows_trees());
+        }
         let collider = self.colliders.insert_with_parent(chassis.build(), body, &mut self.bodies);
         // The turret is a cylinder, so it needs no turning with the gun. It adds no mass, which keeps
         // the hull's balance and the tuning that goes with it. A plane's wings are a weightless box
@@ -356,7 +361,13 @@ impl Physics {
             _ => Vec::new(),
         };
         let extra: Vec<ColliderHandle> =
-            solids.into_iter().map(|collider| self.colliders.insert_with_parent(collider.density(0.0).friction(0.4).build(), body, &mut self.bodies)).collect();
+            solids
+                .into_iter()
+                .map(|collider| {
+                    let collider = if heavy { collider.collision_groups(super::plows_trees()) } else { collider };
+                    self.colliders.insert_with_parent(collider.density(0.0).friction(0.4).build(), body, &mut self.bodies)
+                })
+                .collect();
         // A helicopter has no wheels, so its controller is never updated.
         let mut controller = DynamicRayCastVehicleController::new(body);
         // Our forward is -Z, but the controller only uses this axis to sign its own speed estimate,
@@ -517,6 +528,14 @@ impl Physics {
             body.set_position(Pose::from_parts(Vector::from(position), rotation), true);
             body.set_linvel(rotation * Vector::new(0.0, 0.0, -speed), true);
             body.set_angvel(Vector::ZERO, true);
+        }
+    }
+
+    /// Sets vehicle `id`'s linear velocity (m/s), leaving its spin alone.
+    pub fn set_car_velocity(&mut self, id: u32, velocity: [f32; 3]) {
+        let Some(car) = self.cars.get(&id) else { return };
+        if let Some(body) = self.bodies.get_mut(car.body) {
+            body.set_linvel(Vector::from(velocity), true);
         }
     }
 

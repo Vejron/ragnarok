@@ -687,3 +687,46 @@ fn a_roadster_driver_boosts_on_run_hops_on_jump_and_brakes_on_crouch() {
     // Nothing else carries a tank.
     assert!(game.vehicle_states().iter().filter(|v| v.kind != KIND_ROADSTER).all(|v| v.thrust.is_none()));
 }
+
+/// A game with one pine just in front of where a vehicle of `kind` is set down facing it, and the
+/// vehicle's speed (m/s) one tick before, and the tick the tree fell.
+fn drive_into_a_pine(kind: u8, speed: f32) -> Option<(f32, f32)> {
+    use shared::world::{ObjId, TREE_PINE, Tree};
+    let map = WorldFile {
+        version: WORLD_VERSION,
+        half_extent: 30_000,
+        spawns: (0..14).map(|i| [i * 2500 - 15_000, 20_000]).collect(),
+        trees: vec![Tree { x: 1500, z: 100, base: 0, height: 1600, crown: 300, kind: TREE_PINE, solid: true }],
+        tree_ids: vec![ObjId { col: 2, row: 3, index: 0 }],
+        ..Default::default()
+    };
+    let mut game = Game::new(map, 0).unwrap();
+    game.world.pickups.clear();
+    let vid = *game.world.vehicles.iter().find(|(_, vehicle)| vehicle.kind == kind).unwrap().0;
+    game.world.physics.reset_car(vid, [15.0, 1.0, 5.5], 0.0);
+    for _ in 0..60 {
+        Vehicles.on_tick(&mut game.world, TICK_DT);
+    }
+    game.world.physics.kick_car(vid, [0.0, 0.0, -speed]);
+    for _ in 0..120 {
+        let before = game.world.physics.car_pose(vid)?.velocity;
+        Vehicles.on_tick(&mut game.world, TICK_DT);
+        if !game.world.destroyed.is_empty() {
+            let after = game.world.physics.car_pose(vid)?.velocity;
+            return Some((before[0].hypot(before[2]), after[0].hypot(after[2])));
+        }
+    }
+    None
+}
+
+#[test]
+fn a_tank_plows_through_a_tree_without_slowing() {
+    let (before, after) = drive_into_a_pine(KIND_TANK, 10.0).expect("the tank felled the pine");
+    assert!(after > before * 0.98, "{before} -> {after}");
+}
+
+#[test]
+fn a_jeep_is_jolted_by_the_tree_it_fells() {
+    let (before, after) = drive_into_a_pine(KIND_JEEP, 20.0).expect("the jeep felled the pine");
+    assert!(after < before * 0.8, "{before} -> {after}");
+}

@@ -326,6 +326,8 @@ export interface DestroyedObject {
   index: number
   /** Radians: the way a tree falls (yaw 0 faces -Z, as everywhere), or where a blast came from. */
   yaw: number
+  /** 0..1: how violently it went. A tank plowing through it or a rocket is near 1; 0 for the catch-up on joining. */
+  force: number
 }
 
 /** A building that is hurt but stands: how badly, and where a blast marked it. */
@@ -757,8 +759,8 @@ export function decodeServer(bytes: Uint8Array): ServerMessage | null {
       if (raw.length !== 2 || !Array.isArray(raw[1])) return null
       const objects: DestroyedObject[] = []
       for (const item of raw[1] as unknown[]) {
-        if (!Array.isArray(item) || item.length !== 5 || !ints(item)) return null
-        objects.push({ kind: item[0] as number, col: item[1] as number, row: item[2] as number, index: item[3] as number, yaw: (item[4] as number) / MRAD })
+        if (!Array.isArray(item) || item.length !== 6 || !ints(item)) return null
+        objects.push({ kind: item[0] as number, col: item[1] as number, row: item[2] as number, index: item[3] as number, yaw: (item[4] as number) / MRAD, force: (item[5] as number) / 255 })
       }
       return { type: 'destroyed', objects }
     }

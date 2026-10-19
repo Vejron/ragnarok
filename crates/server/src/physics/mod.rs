@@ -84,6 +84,16 @@ pub struct Physics {
 /// the lowest ground. Mirrored by `BOUNDARY_HEIGHT` in `client/src/sim/physics.ts`.
 const BOUNDARY_HEIGHT: f32 = 200.0;
 
+/// The collision group of a tree that can be felled. A tank's hull leaves this group out of what it
+/// touches, so it drives through such a trunk (felling it, see `plow_trees`) instead of stopping on it.
+/// Mirrored by `TREE_GROUPS` and `HEAVY_GROUPS` in `client/src/sim/physics.ts`.
+pub const TREE_GROUP: Group = Group::GROUP_2;
+
+/// What a vehicle too heavy to be stopped by a tree touches: everything but felled-able trunks.
+pub fn plows_trees() -> InteractionGroups {
+    InteractionGroups::new(Group::ALL, Group::ALL.difference(TREE_GROUP), InteractionTestMode::And)
+}
+
 /// How far below the lowest dry ground the slab under a terrain sits, metres: the importer's
 /// `MAX_BED_BELOW`, the deepest a water bed is cut. Mirrored by `BED_FLOOR` in `client/src/sim/physics.ts`.
 const BED_FLOOR: f32 = 12.0;
@@ -163,9 +173,12 @@ pub fn static_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)
     // A tree is solid up to the crown: an upright cylinder on the ground at its foot.
     for (index, tree) in world.trees.iter().enumerate().filter(|(_, tree)| tree.solid) {
         let half_height = from_cm(tree.trunk_height()) / 2.0;
-        let cylinder = ColliderBuilder::cylinder(half_height, from_cm(tree.trunk_radius()))
-            .translation(Vector::new(from_cm(tree.x), from_cm(tree.base) + half_height, from_cm(tree.z)))
-            .build();
+        let mut cylinder = ColliderBuilder::cylinder(half_height, from_cm(tree.trunk_radius()))
+            .translation(Vector::new(from_cm(tree.x), from_cm(tree.base) + half_height, from_cm(tree.z)));
+        if tree.destructible() {
+            cylinder = cylinder.collision_groups(InteractionGroups::new(TREE_GROUP, Group::ALL, InteractionTestMode::And));
+        }
+        let cylinder = cylinder.build();
         // A rock is solid but is no `Obj`: nothing damages or fells it.
         let object = if tree.destructible() { world.tree_ids.get(index).map(|&id| Obj::Tree(id)) } else { None };
         colliders.push((cylinder, object));

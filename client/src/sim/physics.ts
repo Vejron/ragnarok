@@ -1,5 +1,5 @@
 import RAPIER from '@dimforge/rapier3d-compat'
-import { buildingTriangleRanges, type TileData, type WorldData } from '@/world'
+import { buildingTriangleRanges, treeKindDef, type TileData, type WorldData } from '@/world'
 import { shellOf, type Tri } from './carve'
 import {
   AUTOSTEP_HEIGHT, AUTOSTEP_MIN_WIDTH, CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, CONTROLLER_OFFSET,
@@ -151,6 +151,11 @@ export function buildStaticColliders(world: RAPIER.World, data: WorldData) {
   }
 }
 
+/** Rapier packs a collider's groups as memberships in the high 16 bits and what it touches in the low 16. Mirrors `TREE_GROUP` on the server. */
+export const TREE_GROUPS = 0x0002ffff
+/** A tank's or Strv's solids: members of everything, touching everything but the tree group. */
+export const HEAVY_GROUPS = 0xfffffffd
+
 /**
  * One tile's building mesh, tree trunks and terrain as static colliders (none for an empty tile). Tiles come
  * and go as the player moves; the server holds all of them merged, which is the same geometry, so
@@ -166,9 +171,10 @@ export function addTileCollider(world: RAPIER.World, tile: TileData, ground: Til
   for (const tree of tile.trees) {
     if (!tree.solid) continue
     const half = tree.trunkHeight / 2
-    colliders.push(
-      world.createCollider(RAPIER.ColliderDesc.cylinder(half, tree.trunkRadius).setTranslation(tree.x, tree.base + half, tree.z)),
-    )
+    const trunk = RAPIER.ColliderDesc.cylinder(half, tree.trunkRadius).setTranslation(tree.x, tree.base + half, tree.z)
+    // A trunk that can be felled is in a group a tank's hull does not touch (see `HEAVY_GROUPS`).
+    if (treeKindDef(tree.kind).destructible) trunk.setCollisionGroups(TREE_GROUPS)
+    colliders.push(world.createCollider(trunk))
   }
   if (ground) {
     const { side, cell, heights } = ground

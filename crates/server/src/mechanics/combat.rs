@@ -403,25 +403,28 @@ const BLAST_TREE_SCALE: f32 = 4.0;
 /// A bullet does this much less to a building than its damage: rifles chip walls, they don't fell them.
 const BULLET_BUILDING_DIVISOR: u16 = 3;
 
+/// `Destroyed` force of a killing blow that is exactly the object's health.
+const FORCE_PER_HEALTH: f32 = 64.0;
+
 /// Takes `amount` health off a building or tree. At zero it is destroyed: its collider goes, and
 /// everyone is told, with the way it falls (a tree: away from `from`, where the damage came from;
-/// a building: the same, for the way its rubble is thrown).
-pub fn damage_object(world: &mut World, object: Obj, amount: u16, from: [f32; 3]) {
+/// a building: the same, for the way its rubble is thrown). Returns whether this destroyed it.
+pub fn damage_object(world: &mut World, object: Obj, amount: u16, from: [f32; 3]) -> bool {
     if amount == 0 || world.destroyed.iter().any(|&(done, _)| done == object) {
-        return;
+        return false;
     }
     // Full health and where it stands, in metres.
     let (full, at) = match object {
         Obj::Tree(id) => match world.tree(id) {
             Some(tree) => (tree.hp(), [tree.x as f32 / 100.0, tree.z as f32 / 100.0]),
-            None => return,
+            None => return false,
         },
         Obj::Building(id) => match world.building(id) {
             Some(building) => {
                 let [x, z] = building.centre();
                 (building.hp(), [x as f32 / 100.0, z as f32 / 100.0])
             }
-            None => return,
+            None => return false,
         },
     };
     let before = world.damage_stage(object);
@@ -437,16 +440,20 @@ pub fn damage_object(world: &mut World, object: Obj, amount: u16, from: [f32; 3]
                 world.fresh_damaged.push((id, stage, marked.then_some(from)));
             }
         }
-        return;
+        return false;
     }
     world.object_hp.remove(&object);
     if !world.physics.destroy(object) {
-        return;
+        return false;
     }
     // `look`'s convention: yaw 0 faces -Z.
     let yaw = to_mrad((-(at[0] - from[0])).atan2(-(at[1] - from[2])));
     world.destroyed.push((object, yaw));
-    world.fresh_destroyed.push((object, yaw));
+    // How hard it was hit, for the way it falls: a killing blow of its own health is 64, and
+    // four times that or more is the most violent a client shows.
+    let force = (amount as f32 / full.max(1) as f32 * FORCE_PER_HEALTH).min(255.0) as u8;
+    world.fresh_destroyed.push((object, yaw, force));
+    true
 }
 
 /// How close `point` is to building `id`'s bounding box, metres: 0 inside it.

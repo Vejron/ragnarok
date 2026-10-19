@@ -18,7 +18,7 @@ import {
   WALKER_ACCEL, WALKER_BRAKE, WALKER_BALANCE_DAMP, WALKER_BALANCE_GAIN, WALKER_BALANCE_MAX, WALKER_BALANCE_MAX_PITCH, WALKER_CATCH_DAMP, WALKER_CATCH_FALL_MARGIN, WALKER_CATCH_GAIN, WALKER_CATCH_LEAN_MARGIN, WALKER_CATCH_MAX, WALKER_ACCEL_LEAN, WALKER_CRUISE_LEAN, WALKER_FALLEN_UP, WALKER_FOOT_HALF, WALKER_GRIP, WALKER_GRIP_GAIN, WALKER_GETUP_SHARE, WALKER_HALF_EXTENTS,
   WALKER_LEG_DAMPING, WALKER_LEG_LENGTH, WALKER_LEG_SPRING, WALKER_MAX_SPEED, WALKER_REVERSE_SHARE, WALKER_TURN_ACCEL, WALKER_TURN_RATE,
 } from './consts'
-import { addTileCollider, buildStaticColliders, extraSolids, rebuildBuildingCollider, timedPhysics, VehicleSolids } from './physics'
+import { addTileCollider, buildStaticColliders, extraSolids, HEAVY_GROUPS, rebuildBuildingCollider, timedPhysics, VehicleSolids } from './physics'
 import type { TileGround } from './terrain'
 import { vehicleDef } from './vehicles'
 import { DAMAGE_TURRET, DAMAGE_WHEELS, fromAxis, fromMrad, KIND_DRONE, KIND_HELI, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, THRUST_BOOST, THRUST_LIFT, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, WHEEL_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
@@ -336,10 +336,14 @@ export class CarSim {
     )
     const [hx, hy, hz] = spec.halfExtents
     const chassis = RAPIER.ColliderDesc.cuboid(hx, hy, hz).setFriction(0.4)
+    // A tank is too heavy to be stopped by a tree: it goes through the trunk, as on the server.
+    const heavy = kind === KIND_TANK || kind === KIND_STRV
+    if (heavy) chassis.setCollisionGroups(HEAVY_GROUPS)
     this.collider = world.createCollider(spec.comDrop > 0 ? lowered(chassis, spec) : chassis.setDensity(spec.density), this.body)
     // A tank's turret, a plane's wings and a walker's legs are solid but weightless, like the server's.
     for (const extra of extraSolids(kind)) {
       const [tx, ty, tz] = extra.offset
+      if (heavy) extra.desc.setCollisionGroups(HEAVY_GROUPS)
       this.extras.push(world.createCollider(extra.desc.setTranslation(tx, ty, tz).setDensity(0).setFriction(0.4), this.body))
     }
     if (spec.lift === 'rotor' || spec.lift === 'walker' || spec.lift === 'drone') {

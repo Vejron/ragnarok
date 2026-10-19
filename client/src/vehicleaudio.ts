@@ -486,6 +486,26 @@ export class VehicleSounds {
     })
   }
 
+  /** A tree of `size` metres splitting at its foot. */
+  treeCrack(at: Vec3, size: number) {
+    const level = Math.min(1, 0.4 + size / 25)
+    this.emit(at, 1.0, (ctx, out, t) => {
+      VehicleSounds.burst(ctx, out, t, 'bandpass', 1800, 500, 0.35, 0.8 * level)
+      VehicleSounds.ping(ctx, out, t, 'square', 320, 90, 0.15, 0.3 * level)
+      for (let i = 0; i < 4; i++) VehicleSounds.ping(ctx, out, t, 'square', 600 + Math.random() * 900, 200, 0.05, 0.15 * level, i * 0.07 + Math.random() * 0.05)
+    })
+  }
+
+  /** A felled tree of `size` metres hitting the ground: a heavy thump and a rustle of leaves. */
+  treeThud(at: Vec3, size: number) {
+    const level = Math.min(1, 0.4 + size / 25)
+    this.emit(at, 1.2, (ctx, out, t) => {
+      VehicleSounds.ping(ctx, out, t, 'sine', 90, 35, 0.35, 0.9 * level)
+      VehicleSounds.burst(ctx, out, t, 'lowpass', 700, 150, 0.3, 0.6 * level)
+      VehicleSounds.burst(ctx, out, t, 'highpass', 3500, 2500, 0.6, 0.15 * level, 0.05)
+    })
+  }
+
   /** A hard landing after a drop of `fall` m/s. */
   thud(at: Vec3, fall: number) {
     const level = landingThud(fall)
