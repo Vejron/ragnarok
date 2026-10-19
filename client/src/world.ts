@@ -2,7 +2,7 @@ import { decode } from '@msgpack/msgpack'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 10
+export const WORLD_VERSION = 11
 
 /** Where `world.msgpack`, `tiles/` and `minimap.png` are served from: `/` normally, `/dev/` for the dev world. */
 export let WORLD_BASE: string = withSlash(import.meta.env.VITE_WORLD_BASE || '/')
@@ -122,12 +122,28 @@ export interface Building {
   footprint: Point2[]
   /** Height of the floor, metres. The top of the roof is at `base + height`. */
   base: number
-  /** This building's triangles in the tile's collision mesh: walls, then roof (then the floor, not drawn). */
+  /**
+   * This building's triangles in the tile's collision mesh: walls, then roof (then the floor, not
+   * drawn). A building with `cells` has no wall or roof triangles, only its floor: it is its cubes.
+   */
   first: number
   walls: number
   roof: number
   /** `ROOF_*`: what the laser data fitted the roof as. */
   roofKind: number
+  /** Its 1 m cubes as the importer baked them, or null for a building with none (it keeps its triangles). */
+  cells: Cells | null
+}
+
+/**
+ * A building's cubes as the importer baked them (`world::Cells`): the grid, centimetres, and one flag
+ * a cell, packed (`unpack` in `sim/carve.ts`), for whether there is a cube there and whether it is roof.
+ */
+export interface Cells {
+  origin: [number, number, number]
+  dims: [number, number, number]
+  solid: Uint8Array
+  roof: Uint8Array
 }
 
 /**
@@ -296,7 +312,7 @@ export function decodeManifest(bytes: Uint8Array): WorldData {
 
 export function decodeTile(bytes: Uint8Array): TileData {
   const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges, detail, rails] = decode(bytes) as [
-    [number, number[][], number, number, number, number, number][],
+    [number, number[][], number, number, number, number, number, [number[], number[], Uint8Array, Uint8Array]?][],
     [number, number, number[][]][],
     [number[][], number[][]],
     number[],
@@ -309,7 +325,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     [number, number, number[][]][] | undefined,
   ]
   return {
-    buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind]) => ({
+    buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind, cells]) => ({
       height: metres(height),
       footprint: footprint.map(point),
       base: metres(base),
@@ -317,6 +333,10 @@ export function decodeTile(bytes: Uint8Array): TileData {
       walls,
       roof,
       roofKind,
+      cells:
+        cells && cells[1][0]! * cells[1][1]! * cells[1][2]! > 0
+          ? { origin: cells[0] as [number, number, number], dims: cells[1] as [number, number, number], solid: cells[2], roof: cells[3] }
+          : null,
     })),
     roads: roads.map(([width, kind, points]) => ({ width: metres(width), kind, points: points.map(point) })),
     cover: cover.map(([kind, rings]) => ({ kind, rings: rings.map((ring) => ring.map(point)) })),

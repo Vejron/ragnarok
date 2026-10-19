@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { toonMaterial } from './toon'
 import { DAMAGE_STAGES } from '@/sim/consts'
 import type { TileData } from '@/world'
+import { shellOf, type Shell } from '@/sim/carve'
 import type { Effects } from './effects'
 import { Fracture, shardGeometry } from './fracture'
 import { random } from './rubble'
@@ -79,9 +80,30 @@ interface Wall {
   area: number
 }
 
+const cubeWalls = new WeakMap<Shell, Wall[]>()
+
+/** The sides of building `index`'s cubes (`Shell.faces`, wound outwards), or its own wall triangles when it has no cubes. */
 function wallsOf(tile: TileData, index: number): Wall[] {
   const building = tile.buildings[index]
   if (!building) return []
+  const shell = shellOf(tile, index)
+  if (shell) {
+    let walls = cubeWalls.get(shell)
+    if (!walls) {
+      const faces = shell.faces(new Set())
+      walls = []
+      for (let o = 0; o < faces.length; o += 9) {
+        const [a, b, c] = [0, 3, 6].map((k) => new THREE.Vector3(faces[o + k]! / 100, faces[o + k + 1]! / 100, faces[o + k + 2]! / 100)) as [THREE.Vector3, THREE.Vector3, THREE.Vector3]
+        const triangle = new THREE.Triangle(a, b, c)
+        const normal = triangle.getNormal(new THREE.Vector3())
+        // Sides only: the tops and bottoms of the cubes are roof and floor.
+        if (Math.abs(normal.y) > 0.5) continue
+        walls.push({ triangle, normal, area: triangle.getArea() })
+      }
+      cubeWalls.set(shell, walls)
+    }
+    return walls
+  }
   const { vertices, triangles } = tile.collision
   const walls: Wall[] = []
   for (let t = building.first; t < building.first + building.walls; t++) {

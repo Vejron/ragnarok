@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 10;
+pub const WORLD_VERSION: u8 = 11;
 
 /// Metres per degree of latitude; longitude is scaled by cos(latitude).
 pub const METRES_PER_DEG_LAT: f64 = 110_540.0;
@@ -240,12 +240,65 @@ pub struct Building {
     /// `base + height`.
     pub base: i32,
     /// This building's triangles in the tile's collision mesh: `walls` triangles of wall from
-    /// `first`, then `roof` triangles of roof, then the floor (not drawn).
+    /// `first`, then `roof` triangles of roof, then the floor (not drawn). A building with `cells`
+    /// has no wall or roof triangles, only its floor: it is its cubes.
     pub first: u32,
     pub walls: u32,
     pub roof: u32,
     /// `ROOF_*`: what the roof was fitted as.
     pub roof_kind: u8,
+    /// The building's 1 m cubes (`carve::Shell`), worked out by the importer from its walls and
+    /// roof; the server and clients make the faces to collide with and draw from them. Empty
+    /// (`dims` all 0) for a building too big to cut, which keeps its own triangles.
+    #[serde(default)]
+    pub cells: Cells,
+}
+
+/// A building's cubes as the importer baked them: the grid (`carve::Shell`'s `origin` and `dims`)
+/// and a flag for each cell, packed by `carve::pack`: whether there is a cube there, and whether
+/// it is roof (for its colour).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Cells {
+    pub origin: [i32; 3],
+    pub dims: [u32; 3],
+    pub solid: Bits,
+    pub roof: Bits,
+}
+
+/// Bytes written as a msgpack `bin` (the client gets a `Uint8Array`), not an array of numbers.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Bits(pub Vec<u8>);
+
+impl Serialize for Bits {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bytes(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for Bits {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visit;
+        impl<'de> serde::de::Visitor<'de> for Visit {
+            type Value = Bits;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("bytes")
+            }
+            fn visit_bytes<E: serde::de::Error>(self, bytes: &[u8]) -> Result<Bits, E> {
+                Ok(Bits(bytes.to_vec()))
+            }
+            fn visit_byte_buf<E: serde::de::Error>(self, bytes: Vec<u8>) -> Result<Bits, E> {
+                Ok(Bits(bytes))
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Bits, A::Error> {
+                let mut out = Vec::new();
+                while let Some(byte) = seq.next_element()? {
+                    out.push(byte);
+                }
+                Ok(Bits(out))
+            }
+        }
+        deserializer.deserialize_bytes(Visit)
+    }
 }
 
 impl Building {
@@ -646,7 +699,7 @@ mod tests {
         };
         assert_eq!(Manifest::decode(&manifest.encode()).unwrap(), manifest);
         let tile = Tile {
-            buildings: vec![Building { height: 800, footprint: vec![[0, 0], [100, 0], [100, 100]], base: 250, first: 0, walls: 6, roof: 2, roof_kind: ROOF_GABLE }],
+            buildings: vec![Building { height: 800, footprint: vec![[0, 0], [100, 0], [100, 100]], base: 250, first: 0, walls: 6, roof: 2, roof_kind: ROOF_GABLE, cells: Cells { origin: [-100, 0, 200], dims: [2, 1, 5], solid: Bits(vec![0b1011, 3]), roof: Bits(vec![1, 0]) } }],
             roads: vec![Road { width: 600, kind: ROAD_MINOR, points: vec![[0, 0], [500, 500]] }],
             collision: CollisionMesh { vertices: vec![[0, 0, 0]], triangles: vec![[0, 0, 0]] },
             ground: vec![0, 10, 20, 30],

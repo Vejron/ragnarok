@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Shell, type Tri } from '@/sim/carve'
+import { Shell, unpack, type Tri } from '@/sim/carve'
 
 /** A box `w × d × h` metres, walls only, as `boxed` in `crates/shared/src/carve.rs`. */
 function boxed(w: number, d: number, h: number): Tri[] {
@@ -40,13 +40,31 @@ describe('carve', () => {
     // The faces, as `cell_numbers_match_the_fixture` sums them: each number by its place in its triangle.
     const sum = (faces: Int32Array) => faces.reduce((n, v, i) => n + v * ((i % 9) + 1), 0)
     const faces = shell.faces(new Set())
-    expect([faces.length / 9, sum(faces)]).toEqual([28, 267_900])
+    expect([faces.length / 9, sum(faces)]).toEqual([36, 352_800])
     const diagonal = Shell.of(slanted(), [])!
     let cells = 0
     for (let id = 0; id < diagonal.dims[0] * diagonal.dims[1] * diagonal.dims[2]; id++) if (diagonal.isSolid(id)) cells += id
     expect([diagonal.origin, diagonal.dims, diagonal.solidCount, cells]).toEqual([[-100, 0, 0], [9, 3, 6], 42, 3309])
     const slant = diagonal.faces(new Set())
     expect([slant.length / 9, sum(slant)]).toEqual([72, 960_300])
+  })
+
+  it('unpacks the cells the importer baked', () => {
+    // The bytes `packed_cells_match_the_fixture` in crates/shared/src/carve.rs pins for this box.
+    const cut = Shell.of(boxed(5, 4, 3), roof(5, 4, 3))!
+    const baked = Shell.fromCells({
+      origin: [0, 0, 0],
+      dims: [5, 3, 4],
+      solid: Uint8Array.from([63, 198, 15, 0, 1, 192, 57, 0, 0]),
+      roof: Uint8Array.from([0, 4, 255, 255, 15]),
+    })!
+    for (let id = 0; id < 60; id++) {
+      expect([baked.isSolid(id), baked.isRoof(id)]).toEqual([cut.isSolid(id), cut.isRoof(id)])
+    }
+    expect(baked.faces(new Set())).toEqual(cut.faces(new Set()))
+    // A long run of zero bytes, with a two-byte length (`baked_cells_come_back_as_they_were`).
+    const flags = unpack(Uint8Array.from([1, 0, 169, 2, 128]), 8 * 300, 8 * 300)
+    expect([...flags.keys()].filter((i) => flags[i])).toEqual([0, 8 * 299 + 7])
   })
 
   it('collides with the cubes that are left', () => {

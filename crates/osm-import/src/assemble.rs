@@ -226,10 +226,20 @@ pub struct Built {
 }
 
 impl Built {
-    /// Encodes every tile, records its hash in the manifest and returns `(manifest bytes, [(path, bytes)])`.
+    /// Bakes every building's cubes (`voxels::bake`), encodes every tile, records its hash in the
+    /// manifest and returns `(manifest bytes, [(path, bytes)])`.
     pub fn into_files(mut self) -> (Vec<u8>, Vec<(String, Vec<u8>)>) {
         let mut files = Vec::new();
         self.manifest.tiles.clear();
+        let mut tiles: Vec<&mut Tile> = self.tiles.values_mut().collect();
+        // Cutting the buildings is most of the time spent here: spread over the cores.
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+        let chunk = tiles.len().div_ceil(threads).max(1);
+        std::thread::scope(|scope| {
+            for part in tiles.chunks_mut(chunk) {
+                scope.spawn(move || part.iter_mut().for_each(|tile| crate::voxels::bake(tile)));
+            }
+        });
         for (&(col, row), tile) in &self.tiles {
             let bytes = tile.encode();
             let entry = TileRef { col, row, hash: world_hash(&bytes) };
@@ -295,6 +305,7 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, mask: Option<&std::co
             walls: parts.walls,
             roof: parts.roof,
             roof_kind: shape.kind(),
+            cells: Default::default(),
         });
         footprints.push(footprint);
     }

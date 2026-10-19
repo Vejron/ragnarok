@@ -9,7 +9,7 @@ import { buildRails } from './rails'
 import { buildRoads } from './roads'
 import { heightSampler, normalAt, toneAt, type HeightSource } from './shade'
 import { buildTrees } from './trees'
-import { voxelFaces, type Soup } from './voxels'
+import type { Soup } from './voxels'
 
 
 export type { HeightSource }
@@ -197,11 +197,20 @@ function trianglePositions(tile: TileData, from: number, count: number, out: num
  * Building `index` as cubes (`voxels.ts`), the roof's cells in the roof colour, appended to `out`.
  * False when it has no cells to draw (the importer left it no walls, or it is too big to cut).
  */
-function buildingVoxels(tile: TileData, index: number, salt: number, out: Soup, offset?: readonly [number, number, number]): boolean {
+function buildingVoxels(tile: TileData, index: number, salt: number, out: Soup, offset: readonly [number, number, number] = [0, 0, 0]): boolean {
   const shell = shellOf(tile, index)
   if (!shell) return false
-  const { wall, roof } = buildingColors(tile, index, salt)
-  voxelFaces(shell, (id) => shell.isSolid(id), (id) => (shell.isRoof(id) ? roof : wall), out, offset)
+  // The faces it is collided with (`Shell.facesWithRoof`), made once for both.
+  const { tris, roof } = shell.facesWithRoof(new Set())
+  const colors = buildingColors(tile, index, salt)
+  const [wall, top] = [new THREE.Color(colors.wall), new THREE.Color(colors.roof)]
+  for (let t = 0; t < roof.length; t++) {
+    const c = roof[t] ? top : wall
+    for (let k = 0; k < 9; k += 3) {
+      out.positions.push(tris[t * 9 + k]! / 100 - offset[0], tris[t * 9 + k + 1]! / 100 - offset[1], tris[t * 9 + k + 2]! / 100 - offset[2])
+      out.colors.push(c.r, c.g, c.b)
+    }
+  }
   return true
 }
 

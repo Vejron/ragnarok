@@ -15,6 +15,39 @@ export const MAX_CELLS = 4_000_000
 /** A triangle: three corners `[x, y, z]`, centimetres, flattened. */
 export type Tri = [number, number, number, number, number, number, number, number, number]
 
+/**
+ * Mirrors `unpack`: `count` flags, one a cell, from the bytes the importer packed them into (each
+ * XORed with the flag a layer of `layer` cells below, eight to a byte, runs of zero bytes as a 0 and
+ * the run's length less one in LEB128).
+ */
+export function unpack(packed: Uint8Array, count: number, layer: number): Uint8Array {
+  const bytes = new Uint8Array(Math.ceil(count / 8))
+  let at = 0
+  let to = 0
+  while (at < packed.length && to < bytes.length) {
+    const byte = packed[at++]!
+    if (byte !== 0) {
+      bytes[to++] = byte
+      continue
+    }
+    let run = 0
+    let scale = 1
+    while (at < packed.length) {
+      const part = packed[at++]!
+      run += (part & 0x7f) * scale
+      scale *= 128
+      if ((part & 0x80) === 0) break
+    }
+    to += run + 1
+  }
+  const flags = new Uint8Array(count)
+  for (let i = 0; i < count; i++) {
+    const bit = (bytes[i >> 3]! >> (i & 7)) & 1
+    flags[i] = bit ^ (i >= layer ? flags[i - layer]! : 0)
+  }
+  return flags
+}
+
 /** Mirrors `SAMPLE`. */
 const SAMPLE = CELL / 2
 
@@ -131,9 +164,14 @@ export class Shell {
   /** 1 where the roof passes through the cell, for drawing it in the roof's colour. Client only. */
   private readonly roofed: Uint8Array
 
-  private constructor(origin: [number, number, number], dims: [number, number, number], walls: ArrayLike<number>, roof: ArrayLike<number>) {
+  private constructor(origin: [number, number, number], dims: [number, number, number], walls: ArrayLike<number>, roof: ArrayLike<number>, baked?: { solid: Uint8Array; roof: Uint8Array }) {
     this.origin = origin
     this.dims = dims
+    if (baked) {
+      this.solid = baked.solid
+      this.roofed = baked.roof
+      return
+    }
     this.solid = new Uint8Array(dims[0] * dims[1] * dims[2])
     this.roofed = new Uint8Array(this.solid.length)
     for (const [list, isRoof] of [[walls, false], [roof, true]] as const) {
@@ -146,6 +184,15 @@ export class Shell {
       }
     }
     this.closeGaps()
+  }
+
+  /** Mirrors `Shell::from_cells`: the building as the importer baked it, or null when it has no cells. */
+  static fromCells(cells: { origin: [number, number, number]; dims: [number, number, number]; solid: Uint8Array; roof: Uint8Array }): Shell | null {
+    const [nx, ny, nz] = cells.dims
+    const count = nx * ny * nz
+    if (count === 0 || count > MAX_CELLS) return null
+    const layer = nx * nz
+    return new Shell([...cells.origin], [nx, ny, nz], [], [], { solid: unpack(cells.solid, count, layer), roof: unpack(cells.roof, count, layer) })
   }
 
   /** Cuts a building from its wall and roof triangles, or null when it has none or is too big. */
@@ -303,14 +350,25 @@ export class Shell {
     return out
   }
 
+  /** The faces of the whole building, worked out once: every tile collider and the drawing share them. */
+  private whole: { tris: Int32Array; roof: Uint8Array } | null = null
+
   /**
-   * Mirrors `faces`: what the building is collided with, the outer faces of its standing cubes (not
-   * in `removed`), merged, as triangles of nine centimetre numbers each.
+   * Mirrors `faces`: what the building is collided with and drawn as, the outer faces of its
+   * standing cubes (not in `removed`), wall and roof merged apart, as triangles of nine centimetre
+   * numbers each.
    */
   faces(removed: ReadonlySet<number>): Int32Array {
+    return this.facesWithRoof(removed).tris
+  }
+
+  /** `faces`, and for each triangle 1 when it is a roof cube's. */
+  facesWithRoof(removed: ReadonlySet<number>): { tris: Int32Array; roof: Uint8Array } {
+    if (removed.size === 0 && this.whole) return this.whole
     const keys = new Int32Array(this.solid.length)
-    for (let id = 0; id < keys.length; id++) keys[id] = this.solid[id] && !removed.has(id) ? 0 : -1
+    for (let id = 0; id < keys.length; id++) keys[id] = this.solid[id] && !removed.has(id) ? this.roofed[id]! : -1
     const out: number[] = []
+    const roof: number[] = []
     const p = [0, 0, 0]
     const corner = (f: Face, du: number, dv: number) => {
       p[f.d] = this.origin[f.d]! + (f.side > 0 ? f.i + 1 : f.i) * CELL
@@ -321,24 +379,33 @@ export class Shell {
     greedyFaces(this.dims, keys, (f) => {
       const order = f.side > 0 ? [0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1] : [0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1]
       for (let k = 0; k < 12; k += 2) corner(f, order[k]!, order[k + 1]!)
+      roof.push(f.key, f.key)
     })
-    return Int32Array.from(out)
+    const result = { tris: Int32Array.from(out), roof: Uint8Array.from(roof) }
+    if (removed.size === 0) this.whole = result
+    return result
   }
 }
 
 const shells = new WeakMap<{ buildings: unknown }, Map<number, Shell | null>>()
 
 /**
- * Building `index` of `tile`, cut into cells, once: its wall and roof triangles from the tile's
- * collision mesh. Null when it has none (a building the importer left no walls for).
+ * Building `index` of `tile`, cut into cells, once: the cells the importer baked, or for a building
+ * with none (a world built by hand) its wall and roof triangles from the tile's collision mesh, cut
+ * as the importer cuts them. Null when it has no cubes.
  */
-export function shellOf(tile: { buildings: readonly { first: number; walls: number; roof: number }[]; collision: { vertices: Float32Array; triangles: Uint32Array } }, index: number): Shell | null {
+export function shellOf(
+  tile: { buildings: readonly { first: number; walls: number; roof: number; cells?: Parameters<typeof Shell.fromCells>[0] | null }[]; collision: { vertices: Float32Array; triangles: Uint32Array } },
+  index: number,
+): Shell | null {
   let byIndex = shells.get(tile)
   if (!byIndex) shells.set(tile, (byIndex = new Map()))
   if (byIndex.has(index)) return byIndex.get(index)!
   const building = tile.buildings[index]
   let shell: Shell | null = null
-  if (building) {
+  if (building?.cells) {
+    shell = Shell.fromCells(building.cells)
+  } else if (building) {
     const { vertices, triangles } = tile.collision
     const flat = (from: number, to: number) => {
       const out = new Int32Array((to - from) * 9)

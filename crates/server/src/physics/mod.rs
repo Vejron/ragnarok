@@ -150,7 +150,7 @@ pub fn static_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)
             claimed[start..end].iter_mut().for_each(|c| *c = true);
             buildings.push((index, id, start, end));
         }
-        // Cutting every building into cubes is most of the loading: spread over the cores.
+        // Making every building's faces is most of the loading: spread over the cores.
         let built = in_parallel(&buildings, |&(index, _, start, end)| -> Result<Collider> {
             if let Some(shape) = building_shape(world, index) {
                 return Ok(trimesh_of(&shape).context("a building's cubes are not a valid mesh")?.build());
@@ -226,13 +226,22 @@ pub fn building_parts(world: &WorldFile, index: usize) -> Option<[Vec<Tri>; 3]> 
     Some([split(start, roof), split(roof, floor), split(floor, end)])
 }
 
-/// What building `index` of `world` is collided with while nothing has been cut from it: the faces
-/// of its cubes (`Shell::faces`) and its floor, centimetres. `None` when it has no cubes (it is too
-/// big to cut, or has no walls or roof), and is collided with as its own triangles. Mirrored by
-/// `rebuildBuildingCollider` in `client/src/sim/physics.ts`.
-pub fn building_shape(world: &WorldFile, index: usize) -> Option<Vec<Tri>> {
+/// Building `index` of `world` cut into cubes, and its floor (centimetres): the cells the importer
+/// baked, or for a building with none (a world built by hand) cut from its walls and roof. `None`
+/// when it has no cubes (it is too big to cut, or has no walls or roof).
+pub fn building_shell(world: &WorldFile, index: usize) -> Option<(Shell, Vec<Tri>)> {
     let [walls, roof, floor] = building_parts(world, index)?;
-    let shell = Shell::new(&walls, &roof)?;
+    let baked = &world.buildings.get(index)?.cells;
+    let shell = Shell::from_cells(baked).or_else(|| Shell::new(&walls, &roof))?;
+    Some((shell, floor))
+}
+
+/// What building `index` of `world` is collided with while nothing has been cut from it: the faces
+/// of its cubes (`Shell::faces`) and its floor, centimetres. `None` when it has no cubes, and is
+/// collided with as its own triangles. Mirrored by `rebuildBuildingCollider` in
+/// `client/src/sim/physics.ts`.
+pub fn building_shape(world: &WorldFile, index: usize) -> Option<Vec<Tri>> {
+    let (shell, floor) = building_shell(world, index)?;
     let mut shape = shell.faces(&shell.untouched());
     shape.extend(floor);
     Some(shape)

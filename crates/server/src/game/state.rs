@@ -549,11 +549,10 @@ impl World {
         Some(cut)
     }
 
-    /// Building `id`'s walls and roof cut into cells, from its triangles in the merged mesh.
+    /// Building `id` cut into cells, as `physics::building_shell`.
     fn cut_building(&self, id: ObjId) -> Option<Carving> {
         let index = *self.buildings_by_id.get(&id)?;
-        let [walls, roof, floor] = crate::physics::building_parts(&self.map, index)?;
-        let shell = Shell::new(&walls, &roof)?;
+        let (shell, floor) = crate::physics::building_shell(&self.map, index)?;
         let removed = shell.untouched();
         let hp = shell.fresh_hp();
         Some(Carving { shell, removed, hp, floor })

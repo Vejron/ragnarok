@@ -10,6 +10,12 @@
 //! `client/src/sim/carve.ts` (pinned by `cell_numbers_match_the_fixture` and `carve.spec.ts`).
 //!
 //! The floor is not carved: it is never part of the cells.
+//!
+//! The importer cuts every building once (`Shell::new`) and bakes the cells into the tile
+//! (`Shell::cells`, `world::Cells`), with the faces of the cubes in the collision mesh in place of
+//! the walls and roof; the server and clients only read them back (`Shell::from_cells`).
+
+use crate::world::{Bits, Cells};
 
 /// Side of a cell, centimetres: every building is cut into cubes of this size, on one lattice for
 /// the whole world (cell corners at multiples of it), so neighbouring buildings' cells line up.
@@ -35,6 +41,9 @@ pub struct Shell {
     pub dims: [usize; 3],
     /// Whether the cell is part of the building: a wall or the roof passes through it (see `Shell::new`).
     solid: Vec<bool>,
+    /// Whether the roof passes through the cell, for its colour. A cell filled to close a gap is
+    /// roof when either cell it joins is.
+    roof: Vec<bool>,
     /// Cells that hold the building up: its lowest layer, and any piece that never reached it.
     anchored: Vec<bool>,
 }
@@ -119,17 +128,51 @@ impl Shell {
             cell: CELL,
             dims,
             solid: vec![false; dims[0] * dims[1] * dims[2]],
+            roof: vec![false; dims[0] * dims[1] * dims[2]],
             anchored: Vec::new(),
         };
-        for tri in walls.iter().chain(roof) {
-            sample(tri, |point| {
-                let id = shell.cell_at(point);
-                shell.solid[id as usize] = true;
-            });
+        for (list, is_roof) in [(walls, false), (roof, true)] {
+            for tri in list {
+                sample(tri, |point| {
+                    let id = shell.cell_at(point) as usize;
+                    shell.solid[id] = true;
+                    shell.roof[id] |= is_roof;
+                });
+            }
         }
         shell.close_gaps();
         shell.anchor();
         Some(shell)
+    }
+
+    /// The cells as the importer bakes them into the tile (`pack`).
+    pub fn cells(&self) -> Cells {
+        let layer = self.dims[0] * self.dims[2];
+        Cells { origin: self.origin, dims: self.dims.map(|d| d as u32), solid: Bits(pack(&self.solid, layer)), roof: Bits(pack(&self.roof, layer)) }
+    }
+
+    /// The building cut as the importer baked it. `None` when it has no cells.
+    pub fn from_cells(cells: &Cells) -> Option<Self> {
+        let dims = cells.dims.map(|d| d as usize);
+        let n = dims[0] * dims[1] * dims[2];
+        if n == 0 || n > MAX_CELLS {
+            return None;
+        }
+        let mut shell = Shell {
+            origin: cells.origin,
+            cell: CELL,
+            dims,
+            solid: unpack(&cells.solid.0, n, dims[0] * dims[2]),
+            roof: unpack(&cells.roof.0, n, dims[0] * dims[2]),
+            anchored: Vec::new(),
+        };
+        shell.anchor();
+        Some(shell)
+    }
+
+    /// Whether the roof passes through cell `id`.
+    pub fn is_roof(&self, id: u32) -> bool {
+        self.roof.get(id as usize).copied().unwrap_or(false)
     }
 
     /// Fills one of the two empty cells beside each pair of solid cells that touch only along an
@@ -145,32 +188,34 @@ impl Shell {
                     if !at(x, y, z) {
                         continue;
                     }
+                    let here = self.index(x, y, z);
                     // Plane (x, z): towards +x+z and +x-z.
                     if x + 1 < nx && z + 1 < nz && at(x + 1, y, z + 1) && !at(x + 1, y, z) && !at(x, y, z + 1) {
-                        fill.push(self.index(x + 1, y, z));
+                        fill.push((self.index(x + 1, y, z), here, self.index(x + 1, y, z + 1)));
                     }
                     if x + 1 < nx && z > 0 && at(x + 1, y, z - 1) && !at(x + 1, y, z) && !at(x, y, z - 1) {
-                        fill.push(self.index(x + 1, y, z));
+                        fill.push((self.index(x + 1, y, z), here, self.index(x + 1, y, z - 1)));
                     }
                     // Plane (x, y): towards +x+y and +x-y.
                     if x + 1 < nx && y + 1 < ny && at(x + 1, y + 1, z) && !at(x + 1, y, z) && !at(x, y + 1, z) {
-                        fill.push(self.index(x + 1, y, z));
+                        fill.push((self.index(x + 1, y, z), here, self.index(x + 1, y + 1, z)));
                     }
                     if x + 1 < nx && y > 0 && at(x + 1, y - 1, z) && !at(x + 1, y, z) && !at(x, y - 1, z) {
-                        fill.push(self.index(x + 1, y, z));
+                        fill.push((self.index(x + 1, y, z), here, self.index(x + 1, y - 1, z)));
                     }
                     // Plane (z, y): towards +z+y and +z-y.
                     if z + 1 < nz && y + 1 < ny && at(x, y + 1, z + 1) && !at(x, y, z + 1) && !at(x, y + 1, z) {
-                        fill.push(self.index(x, y, z + 1));
+                        fill.push((self.index(x, y, z + 1), here, self.index(x, y + 1, z + 1)));
                     }
                     if z + 1 < nz && y > 0 && at(x, y - 1, z + 1) && !at(x, y, z + 1) && !at(x, y - 1, z) {
-                        fill.push(self.index(x, y, z + 1));
+                        fill.push((self.index(x, y, z + 1), here, self.index(x, y - 1, z + 1)));
                     }
                 }
             }
         }
-        for id in fill {
+        for (id, a, b) in fill {
             self.solid[id as usize] = true;
+            self.roof[id as usize] |= self.roof[a as usize] || self.roof[b as usize];
         }
     }
 
@@ -384,12 +429,14 @@ impl Shell {
         (0..self.solid.len()).filter(|&i| self.solid[i] && !removed[i]).count()
     }
 
-    /// What the building is collided with: the faces of its standing cubes (solid, not in `removed`)
-    /// that look onto a cell with nothing standing in it, as triangles in centimetres, wound
-    /// counter-clockwise seen from outside the cube. Neighbouring faces are merged into rectangles
-    /// as `greedy` does, so a plain wall is two triangles a side. Mirrored by `Shell.faces`.
+    /// What the building is collided with, and drawn as: the faces of its standing cubes (solid, not
+    /// in `removed`) that look onto a cell with nothing standing in it, as triangles in centimetres,
+    /// wound counter-clockwise seen from outside the cube. Neighbouring faces of wall cubes, and of
+    /// roof cubes, are merged into rectangles as `greedy` does, so a plain wall is two triangles a
+    /// side, and the clients draw the same faces in the wall's and the roof's colours. Mirrored by
+    /// `Shell.faces`.
     pub fn faces(&self, removed: &[bool]) -> Vec<Tri> {
-        let keys: Vec<i32> = (0..self.solid.len()).map(|i| if self.solid[i] && !removed[i] { 0 } else { -1 }).collect();
+        let keys: Vec<i32> = (0..self.solid.len()).map(|i| if self.solid[i] && !removed[i] { i32::from(self.roof[i]) } else { -1 }).collect();
         let mut out = Vec::new();
         greedy(self.dims, &keys, |face| {
             let corner = |du: usize, dv: usize| {
@@ -419,6 +466,73 @@ impl Shell {
     pub fn untouched(&self) -> Vec<bool> {
         vec![false; self.solid.len()]
     }
+}
+
+/// Packs one flag a cell (`Shell::index` order, `layer` cells to a layer of y) small for a tile
+/// file: each flag is XORed with the one under it, so a wall, the same all the way up, leaves only
+/// its bottom layer; the flags go eight to a byte, least significant bit first; and each run of
+/// zero bytes is written as a 0 and the run's length less one, as an unsigned LEB128 number.
+/// Mirrored (unpacking only) by `unpack` in `client/src/sim/carve.ts`.
+pub fn pack(flags: &[bool], layer: usize) -> Vec<u8> {
+    let mut bytes = vec![0u8; flags.len().div_ceil(8)];
+    for i in 0..flags.len() {
+        let below = i >= layer && flags[i - layer];
+        if flags[i] != below {
+            bytes[i / 8] |= 1 << (i % 8);
+        }
+    }
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != 0 {
+            out.push(bytes[i]);
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && bytes[i] == 0 {
+            i += 1;
+        }
+        out.push(0);
+        let mut run = i - start - 1;
+        while run >= 0x80 {
+            out.push((run as u8 & 0x7f) | 0x80);
+            run >>= 7;
+        }
+        out.push(run as u8);
+    }
+    out
+}
+
+/// `count` flags back from `pack`. Bytes missing at the end are zero.
+pub fn unpack(packed: &[u8], count: usize, layer: usize) -> Vec<bool> {
+    let mut bytes = Vec::with_capacity(count.div_ceil(8));
+    let mut at = 0;
+    while at < packed.len() {
+        let byte = packed[at];
+        at += 1;
+        if byte != 0 {
+            bytes.push(byte);
+            continue;
+        }
+        let (mut run, mut shift) = (0usize, 0);
+        while at < packed.len() {
+            let part = packed[at];
+            at += 1;
+            run |= ((part & 0x7f) as usize) << shift;
+            shift += 7;
+            if part & 0x80 == 0 {
+                break;
+            }
+        }
+        bytes.resize(bytes.len() + run + 1, 0);
+    }
+    let mut flags = vec![false; count];
+    for i in 0..count {
+        let bit = bytes.get(i / 8).is_some_and(|byte| byte & (1 << (i % 8)) != 0);
+        flags[i] = bit != (i >= layer && flags[i - layer]);
+    }
+    flags
 }
 
 /// One merged face of `greedy`: `w × h` cells from `(a, b)` of layer `i` along axis `d`, facing
@@ -617,13 +731,38 @@ mod tests {
         assert_eq!(shell.dims, [5, 3, 4]);
         let faces = shell.faces(&shell.untouched());
         let sum: i64 = faces.iter().flatten().enumerate().map(|(i, &v)| v as i64 * (i % 9 + 1) as i64).sum();
-        assert_eq!((faces.len(), shell.solid_count(), sum), (28, 48, 267_900));
+        assert_eq!((faces.len(), shell.solid_count(), sum), (36, 48, 352_800));
         let diagonal = Shell::new(&slanted(), &[]).unwrap();
         let cells: u64 = diagonal.solid_cells().iter().map(|&id| id as u64).sum();
         assert_eq!((diagonal.origin, diagonal.dims, diagonal.solid_count(), cells), ([-100, 0, 0], [9, 3, 6], 42, 3309));
         let faces = diagonal.faces(&diagonal.untouched());
         let sum: i64 = faces.iter().flatten().enumerate().map(|(i, &v)| v as i64 * (i % 9 + 1) as i64).sum();
         assert_eq!((faces.len(), sum), (72, 960_300));
+    }
+
+    #[test]
+    fn baked_cells_come_back_as_they_were() {
+        for shell in [Shell::new(&boxed(5, 4, 3), &roof(5, 4, 3)).unwrap(), Shell::new(&slanted(), &[]).unwrap()] {
+            let back = Shell::from_cells(&shell.cells()).unwrap();
+            assert_eq!((back.origin, back.dims, &back.solid, &back.roof), (shell.origin, shell.dims, &shell.solid, &shell.roof));
+        }
+        // A long run of zeros takes a two-byte length.
+        let mut flags = vec![false; 8 * 300];
+        flags[0] = true;
+        flags[8 * 299 + 7] = true;
+        let packed = pack(&flags, 8 * 300);
+        assert_eq!(packed, vec![1, 0, 169, 2, 128]);
+        assert_eq!(unpack(&packed, flags.len(), 8 * 300), flags);
+    }
+
+    /// Mirrored by `client/src/__tests__/carve.spec.ts`, which unpacks these bytes.
+    #[test]
+    fn packed_cells_match_the_fixture() {
+        let shell = Shell::new(&boxed(5, 4, 3), &roof(5, 4, 3)).unwrap();
+        let cells = shell.cells();
+        assert_eq!(cells.solid.0, vec![63, 198, 15, 0, 1, 192, 57, 0, 0]);
+        // The roof is the top layer: five bytes of nothing, then twenty cells of roof.
+        assert_eq!(cells.roof.0, vec![0, 4, 255, 255, 15]);
     }
 
     /// A wall 3 m high from (-37, 0, 12) to (712, 0, 530) cm, slanting across the grid.
