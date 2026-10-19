@@ -377,8 +377,11 @@ its `cells` hold the grid and two flags a cell (a cube is there; it is roof), pa
 `carve::pack` (each flag XORed with the one below it, then runs of zero bytes shortened), and its
 walls and roof leave the collision mesh, which keeps only its floor. The server and the clients
 make the faces to collide with and draw from the cells. On the 450-tile Ersboda world that leaves
-the tiles about as big as before (14.2 MB against 14.7 MB). `--bake` does it to a world written
-before (version 10) in place, without downloading anything.
+the tiles about as big as before (14.2 MB against 14.7 MB). Houses built wall to wall often both
+have a cube in the same place, which would be drawn twice and flicker; after baking, `voxels::share`
+gives each such cube to the first of them, across the whole world (35,626 cubes in Ersboda).
+`--bake` does all this to a world written before (version 10) in place, without downloading
+anything, and on a baked world it only shares the cubes again.
 Both sides check `WORLD_VERSION`; bump it in `crates/shared/src/world.rs` **and**
 `client/src/world.ts` when the layout changes. The server tests
 `parked_cars_in_the_fixture_world_settle_and_stay_put` and

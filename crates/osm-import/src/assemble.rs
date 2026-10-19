@@ -226,7 +226,7 @@ pub struct Built {
 }
 
 impl Built {
-    /// Bakes every building's cubes (`voxels::bake`), encodes every tile, records its hash in the
+    /// Bakes every building's cubes (`voxels::bake`, then `voxels::share`), encodes every tile, records its hash in the
     /// manifest and returns `(manifest bytes, [(path, bytes)])`.
     pub fn into_files(mut self) -> (Vec<u8>, Vec<(String, Vec<u8>)>) {
         let mut files = Vec::new();
@@ -240,6 +240,7 @@ impl Built {
                 scope.spawn(move || part.iter_mut().for_each(|tile| crate::voxels::bake(tile)));
             }
         });
+        crate::voxels::share(&mut tiles);
         for (&(col, row), tile) in &self.tiles {
             let bytes = tile.encode();
             let entry = TileRef { col, row, hash: world_hash(&bytes) };

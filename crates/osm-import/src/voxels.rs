@@ -2,9 +2,9 @@
 //! building themselves: the cells go into `Building::cells` in place of the walls and roof in the
 //! collision mesh, and both sides make the faces from them (see `shared::carve`).
 
-use shared::carve::{Shell, Tri};
-use shared::world::{CollisionMesh, Tile};
-use std::collections::HashMap;
+use shared::carve::{CELL, Shell, Tri, pack, unpack};
+use shared::world::{Bits, CollisionMesh, Tile};
+use std::collections::{HashMap, HashSet};
 
 /// Cuts each building of `tile` into cubes and rewrites the collision mesh to match: a building's
 /// walls and roof leave it (`walls` and `roof` become 0) and only its floor stays. A building too
@@ -53,6 +53,40 @@ pub fn bake(tile: &mut Tile) {
         bridge.first = moved.get(&bridge.first).copied().unwrap_or(out.triangles.len() as u32);
     }
     tile.collision = CollisionMesh { vertices: out.vertices, triangles: out.triangles };
+}
+
+/// Gives each cube claimed by more than one building to the first of them, in the order `tiles`
+/// and their buildings come: houses built wall to wall would otherwise both draw the cubes where
+/// they meet, in the same place. The cubes go on drawing and colliding as one of them. Run it over
+/// the whole world after `bake`, since neighbours can be in different tiles. Returns how many cubes
+/// it took away; running it again takes none.
+pub fn share(tiles: &mut [&mut Tile]) -> usize {
+    let mut claimed: HashSet<[i32; 3]> = HashSet::new();
+    let mut taken = 0;
+    for building in tiles.iter_mut().flat_map(|tile| tile.buildings.iter_mut()) {
+        let cells = &mut building.cells;
+        let dims = cells.dims.map(|d| d as usize);
+        let (n, layer) = (dims[0] * dims[1] * dims[2], dims[0] * dims[2]);
+        if n == 0 {
+            continue;
+        }
+        let mut solid = unpack(&cells.solid.0, n, layer);
+        let mut roof = unpack(&cells.roof.0, n, layer);
+        let base = cells.origin.map(|v| v.div_euclid(CELL));
+        let before = taken;
+        for id in 0..n {
+            let at = [base[0] + (id % dims[0]) as i32, base[1] + (id / layer) as i32, base[2] + ((id / dims[0]) % dims[2]) as i32];
+            if solid[id] && !claimed.insert(at) {
+                (solid[id], roof[id]) = (false, false);
+                taken += 1;
+            }
+        }
+        if taken > before {
+            cells.solid = Bits(pack(&solid, layer));
+            cells.roof = Bits(pack(&roof, layer));
+        }
+    }
+    taken
 }
 
 /// The mesh being written, with the old mesh's vertices that are still used, shared as they were.
@@ -117,5 +151,29 @@ mod tests {
         let again = tile.clone();
         bake(&mut tile);
         assert_eq!(tile, again, "baking twice");
+    }
+
+    #[test]
+    fn houses_wall_to_wall_share_the_cubes_where_they_meet() {
+        // Two 5 × 4 × 3 m houses, in different tiles, whose walls at x = 5 and 4.5 m are in the same
+        // cubes (x 4..5 m); a third far off.
+        let (mut one, mut two) = (CollisionMesh::default(), CollisionMesh::default());
+        let a = house(&mut one, 0);
+        let far = house(&mut one, 3000);
+        let b = house(&mut two, 450);
+        let mut first = Tile { buildings: vec![a, far], collision: one, ..Default::default() };
+        let mut second = Tile { buildings: vec![b], collision: two, ..Default::default() };
+        bake(&mut first);
+        bake(&mut second);
+        let count = |tile: &Tile, i: usize| Shell::from_cells(&tile.buildings[i].cells).unwrap().solid_count();
+        let whole = [count(&first, 0), count(&first, 1), count(&second, 0)];
+        // The wall at x = 4..5 m: 3 m high and 4 m deep.
+        assert_eq!(share(&mut [&mut first, &mut second]), 12);
+        assert_eq!([count(&first, 0), count(&first, 1), count(&second, 0)], [whole[0], whole[1], whole[2] - 12]);
+        let shell = Shell::from_cells(&second.buildings[0].cells).unwrap();
+        assert!(!shell.is_solid(shell.index(0, 1, 1)), "the shared wall is the first house's");
+        assert_eq!(shell.origin[0], 400);
+        assert!(shell.is_solid(shell.index(5, 1, 1)), "its own far wall stays");
+        assert_eq!(share(&mut [&mut first, &mut second]), 0, "sharing twice");
     }
 }

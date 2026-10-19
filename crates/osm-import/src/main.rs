@@ -314,34 +314,46 @@ fn laser(args: &Args, bbox: [f64; 4], mask: Option<&std::collections::BTreeSet<(
     Ok((cloud, detected))
 }
 
-/// `--bake`: reads the world at `path`, bakes every tile (`voxels::bake`) and writes it back as the
-/// current world version, with the tiles' new hashes.
+/// `--bake`: reads the world at `path`, bakes every tile (`voxels::bake`), gives the cubes houses
+/// share to one of them (`voxels::share`) and writes it back as the current world version, with the
+/// tiles' new hashes. A world baked already is only shared again, which changes nothing once done.
 fn bake_world(path: &std::path::Path) -> Result<()> {
     use shared::world::{Manifest, TileRef, WORLD_VERSION, Tile, world_hash};
     let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     let mut manifest = Manifest::decode(&bytes).with_context(|| format!("decoding {}", path.display()))?;
-    if manifest.version == WORLD_VERSION {
-        eprintln!("{} is baked already", path.display());
-        return Ok(());
-    }
-    anyhow::ensure!(manifest.version + 1 == WORLD_VERSION, "{} is world version {}; only {} can be baked", path.display(), manifest.version, WORLD_VERSION - 1);
+    anyhow::ensure!(
+        manifest.version + 1 >= WORLD_VERSION && manifest.version <= WORLD_VERSION,
+        "{} is world version {}; only {} and {} can be baked",
+        path.display(),
+        manifest.version,
+        WORLD_VERSION - 1,
+        WORLD_VERSION
+    );
     let dir = path.parent().map(PathBuf::from).unwrap_or_default();
-    let (mut before, mut after) = (0, 0);
-    let mut refs = Vec::new();
+    let mut tiles = Vec::new();
+    let mut before = 0;
     for entry in &manifest.tiles {
         let file = dir.join(entry.path());
         let bytes = std::fs::read(&file).with_context(|| format!("reading {}", file.display()))?;
+        before += bytes.len();
         let mut tile = Tile::decode(&bytes).with_context(|| format!("decoding {}", file.display()))?;
         voxels::bake(&mut tile);
+        tiles.push(tile);
+    }
+    let shared = voxels::share(&mut tiles.iter_mut().collect::<Vec<_>>());
+    let mut after = 0;
+    let mut refs = Vec::new();
+    for (entry, tile) in manifest.tiles.iter().zip(&tiles) {
+        let file = dir.join(entry.path());
         let baked = tile.encode();
-        (before, after) = (before + bytes.len(), after + baked.len());
+        after += baked.len();
         std::fs::write(&file, &baked).with_context(|| format!("writing {}", file.display()))?;
         refs.push(TileRef { hash: world_hash(&baked), ..*entry });
     }
     manifest.tiles = refs;
     manifest.version = WORLD_VERSION;
     std::fs::write(path, manifest.encode()).with_context(|| format!("writing {}", path.display()))?;
-    eprintln!("baked {} tiles: {} KiB before, {} KiB after", manifest.tiles.len(), before / 1024, after / 1024);
+    eprintln!("baked {} tiles: {} KiB before, {} KiB after; {shared} cubes shared by two houses kept by one", manifest.tiles.len(), before / 1024, after / 1024);
     Ok(())
 }
 
