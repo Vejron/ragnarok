@@ -336,8 +336,7 @@ const CARVE_REACH: f32 = 0.6;
 /// A bite smaller than this, metres, is not worth a collider: splash from far away.
 const CARVE_MIN_RADIUS: f32 = 0.8;
 
-/// Takes a bite out of standing building `id` where `blast` landed, and brings the building down
-/// if so little is left. A blast that was weak by the time it reached the wall bites less.
+/// Takes a bite out of standing building `id` where `blast` landed. A blast that was weak by the time it reached the wall bites less.
 fn bite_building(world: &mut World, id: shared::world::ObjId, blast: &Blast, falloff: f32) {
     if world.destroyed.iter().any(|&(done, _)| done == Obj::Building(id)) {
         return;
@@ -354,24 +353,15 @@ fn chip_building(world: &mut World, id: shared::world::ObjId, point: [f32; 3], d
     if world.destroyed.iter().any(|&(done, _)| done == Obj::Building(id)) {
         return;
     }
-    let Some((_, ruin)) = world.chip(id, point, damage) else { return };
-    if ruin {
-        damage_object(world, Obj::Building(id), u16::MAX, point);
-        world.carves.remove(&id);
-    }
+    world.chip(id, point, damage);
 }
 
-/// Cuts `radius` metres of standing building `id` away around `point`, and has the building come
-/// down if that leaves too little of it.
+/// Cuts `radius` metres of standing building `id` away around `point`.
 fn take_bite(world: &mut World, id: shared::world::ObjId, point: [f32; 3], radius: f32) {
     if world.destroyed.iter().any(|&(done, _)| done == Obj::Building(id)) {
         return;
     }
-    let Some((_, ruin)) = world.carve(id, point, radius) else { return };
-    if ruin {
-        damage_object(world, Obj::Building(id), u16::MAX, point);
-        world.carves.remove(&id);
-    }
+    world.carve(id, point, radius);
 }
 
 /// A vehicle drives into standing building `id` at `point`, `dv` m/s of speed taken out of it in
@@ -406,9 +396,10 @@ const BULLET_BUILDING_DIVISOR: u16 = 3;
 /// `Destroyed` force of a killing blow that is exactly the object's health.
 const FORCE_PER_HEALTH: f32 = 64.0;
 
-/// Takes `amount` health off a building or tree. At zero it is destroyed: its collider goes, and
-/// everyone is told, with the way it falls (a tree: away from `from`, where the damage came from;
-/// a building: the same, for the way its rubble is thrown). Returns whether this destroyed it.
+/// Takes `amount` health off a building or tree. A tree at zero is destroyed: its collider goes, and
+/// everyone is told, with the way it falls (away from `from`, where the damage came from). A
+/// building never comes down: its health stops at 1, the worst damage stage, which it shows by colour.
+/// Returns whether this destroyed it.
 pub fn damage_object(world: &mut World, object: Obj, amount: u16, from: [f32; 3]) -> bool {
     if amount == 0 || world.destroyed.iter().any(|&(done, _)| done == object) {
         return false;
@@ -429,6 +420,7 @@ pub fn damage_object(world: &mut World, object: Obj, amount: u16, from: [f32; 3]
     };
     let before = world.damage_stage(object);
     let left = world.object_hp.get(&object).copied().unwrap_or(full).saturating_sub(amount);
+    let left = if matches!(object, Obj::Building(_)) { left.max(1) } else { left };
     if left > 0 {
         world.object_hp.insert(object, left);
         // Buildings show it: a worse stage, or a blast big enough to leave a mark.

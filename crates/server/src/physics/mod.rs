@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterController};
 use rapier3d::parry::utils::Array2;
 use rapier3d::prelude::*;
-use shared::carve::Tri;
+use shared::carve::{Shell, Tri};
 use shared::consts::*;
 use shared::movement::{begin_slide, decay_knock, desired_translation, settle_vertical, steer_chute, toggle_chute};
 use shared::protocol::InputFrame;
@@ -136,9 +136,11 @@ pub fn static_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)
     let mesh = &world.collision;
     if !mesh.triangles.is_empty() {
         let vertex = |&[x, y, z]: &[i32; 3]| Vector::new(from_cm(x), from_cm(y), from_cm(z));
-        // Each building is its own trimesh so it can be taken out alone. Whatever no building
+        // Each building is its own trimesh so it can be taken out alone: its cubes and its floor
+        // (`building_shape`), or its own triangles when it has no cubes. Whatever no building
         // claims (bridges, hand-built worlds) stays together in one.
         let mut claimed = vec![false; mesh.triangles.len()];
+        let mut buildings = Vec::new();
         for (index, &[start, end]) in world.building_triangles.iter().enumerate() {
             let (start, end) = (start as usize, (end as usize).min(mesh.triangles.len()));
             let Some(&id) = world.building_ids.get(index) else { break };
@@ -146,6 +148,13 @@ pub fn static_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)
                 continue;
             }
             claimed[start..end].iter_mut().for_each(|c| *c = true);
+            buildings.push((index, id, start, end));
+        }
+        // Cutting every building into cubes is most of the loading: spread over the cores.
+        let built = in_parallel(&buildings, |&(index, _, start, end)| -> Result<Collider> {
+            if let Some(shape) = building_shape(world, index) {
+                return Ok(trimesh_of(&shape).context("a building's cubes are not a valid mesh")?.build());
+            }
             // Only this building's vertices, renumbered from zero.
             let mut renumber: HashMap<u32, u32> = HashMap::new();
             let mut vertices = Vec::new();
@@ -160,8 +169,10 @@ pub fn static_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)
                     })
                 })
                 .collect();
-            let trimesh = ColliderBuilder::trimesh(vertices, triangles).context("a building's collision mesh is invalid")?;
-            colliders.push((trimesh.build(), Some(Obj::Building(id))));
+            Ok(ColliderBuilder::trimesh(vertices, triangles).context("a building's collision mesh is invalid")?.build())
+        });
+        for (&(_, id, _, _), collider) in buildings.iter().zip(built) {
+            colliders.push((collider?, Some(Obj::Building(id))));
         }
         let rest: Vec<[u32; 3]> = mesh.triangles.iter().zip(&claimed).filter(|&(_, &taken)| !taken).map(|(&t, _)| t).collect();
         if !rest.is_empty() {
@@ -184,6 +195,55 @@ pub fn static_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)
         colliders.push((cylinder, object));
     }
     Ok(colliders)
+}
+
+/// `f` of every item of `items`, in order, worked out on all the cores.
+fn in_parallel<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let chunk = items.len().div_ceil(threads).max(1);
+    std::thread::scope(|scope| {
+        let f = &f;
+        let workers: Vec<_> = items.chunks(chunk).map(|part| scope.spawn(move || part.iter().map(f).collect::<Vec<_>>())).collect();
+        workers.into_iter().flat_map(|worker| worker.join().expect("a worker cutting buildings panicked")).collect()
+    })
+}
+
+/// Building `index` of `world` as triangles in centimetres from the collision mesh: its walls, its
+/// roof and its floor.
+pub fn building_parts(world: &WorldFile, index: usize) -> Option<[Vec<Tri>; 3]> {
+    let building = world.buildings.get(index)?;
+    let [start, end] = *world.building_triangles.get(index)?;
+    let mesh = &world.collision;
+    let end = (end as usize).min(mesh.triangles.len());
+    let start = (start as usize).min(end);
+    let tri = |t: usize| -> Tri {
+        let [a, b, c] = mesh.triangles[t].map(|v| mesh.vertices[v as usize]);
+        [a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]]
+    };
+    let split = |from: usize, to: usize| (from.min(end)..to.min(end)).map(tri).collect::<Vec<_>>();
+    let roof = start + building.walls as usize;
+    let floor = roof + building.roof as usize;
+    Some([split(start, roof), split(roof, floor), split(floor, end)])
+}
+
+/// What building `index` of `world` is collided with while nothing has been cut from it: the faces
+/// of its cubes (`Shell::faces`) and its floor, centimetres. `None` when it has no cubes (it is too
+/// big to cut, or has no walls or roof), and is collided with as its own triangles. Mirrored by
+/// `rebuildBuildingCollider` in `client/src/sim/physics.ts`.
+pub fn building_shape(world: &WorldFile, index: usize) -> Option<Vec<Tri>> {
+    let [walls, roof, floor] = building_parts(world, index)?;
+    let shell = Shell::new(&walls, &roof)?;
+    let mut shape = shell.faces(&shell.untouched());
+    shape.extend(floor);
+    Some(shape)
+}
+
+/// A trimesh of `triangles` (centimetres), each with corners of its own.
+pub fn trimesh_of(triangles: &[Tri]) -> Option<ColliderBuilder> {
+    let corner = |t: &Tri, k: usize| Vector::new(from_cm(t[k * 3]), from_cm(t[k * 3 + 1]), from_cm(t[k * 3 + 2]));
+    let vertices: Vec<Vector> = triangles.iter().flat_map(|t| (0..3).map(move |k| corner(t, k))).collect();
+    let indices: Vec<[u32; 3]> = (0..triangles.len() as u32).map(|i| [i * 3, i * 3 + 1, i * 3 + 2]).collect();
+    ColliderBuilder::trimesh(vertices, indices).ok()
 }
 
 /// The boundary walls as `(x, z, half width, half depth)`, metres: the four sides of the square

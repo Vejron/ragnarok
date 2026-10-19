@@ -1,6 +1,7 @@
 /**
  * A building cut into cells, the same way `crates/shared/src/carve.rs` cuts it: the server says
- * which cell numbers a blast broke, and this works out which cubes and triangles those were.
+ * which cell numbers a blast broke, and this works out which cubes those were. The building is
+ * drawn and collided with as its cubes.
  * Everything is integer centimetres, so a cell means the same on both sides (`carve.spec.ts` pins it).
  */
 
@@ -13,95 +14,6 @@ export const MAX_CELLS = 4_000_000
 
 /** A triangle: three corners `[x, y, z]`, centimetres, flattened. */
 export type Tri = [number, number, number, number, number, number, number, number, number]
-
-/**
- * Mirrors `subdivide`: bisects the longest edge, ties to the lowest, with integer midpoints rounded
- * down. Triangles are nine numbers each, flat, in `source` and appended to `out`.
- */
-export function subdivideFlat(source: ArrayLike<number>, limit: number, out: number[]) {
-  const limitSq = limit * limit
-  let stack = new Int32Array(9 * 64)
-  let top = 0
-  const t = new Int32Array(9)
-  for (let s = 0; s + 9 <= source.length; s += 9) {
-    for (let k = 0; k < 9; k++) stack[k] = source[s + k]!
-    top = 9
-    while (top > 0) {
-      top -= 9
-      for (let k = 0; k < 9; k++) t[k] = stack[top + k]!
-      const l0 = (t[0]! - t[3]!) ** 2 + (t[1]! - t[4]!) ** 2 + (t[2]! - t[5]!) ** 2
-      const l1 = (t[3]! - t[6]!) ** 2 + (t[4]! - t[7]!) ** 2 + (t[5]! - t[8]!) ** 2
-      const l2 = (t[6]! - t[0]!) ** 2 + (t[7]! - t[1]!) ** 2 + (t[8]! - t[2]!) ** 2
-      // The longest edge, ties to the lowest: p to q, with r opposite.
-      let longest = 0
-      let length = l0
-      if (l1 > length) {
-        longest = 1
-        length = l1
-      }
-      if (l2 > length) {
-        longest = 2
-        length = l2
-      }
-      const a = longest * 3
-      const b = ((longest + 1) % 3) * 3
-      const c = ((longest + 2) % 3) * 3
-      const px = t[a]!
-      const py = t[a + 1]!
-      const pz = t[a + 2]!
-      const qx = t[b]!
-      const qy = t[b + 1]!
-      const qz = t[b + 2]!
-      const rx = t[c]!
-      const ry = t[c + 1]!
-      const rz = t[c + 2]!
-      if (length <= limitSq) {
-        const ux = qx - px
-        const uy = qy - py
-        const uz = qz - pz
-        const vx = rx - px
-        const vy = ry - py
-        const vz = rz - pz
-        if (uy * vz - uz * vy !== 0 || uz * vx - ux * vz !== 0 || ux * vy - uy * vx !== 0) out.push(px, py, pz, qx, qy, qz, rx, ry, rz)
-        continue
-      }
-      const mx = (px + qx) >> 1
-      const my = (py + qy) >> 1
-      const mz = (pz + qz) >> 1
-      if (top + 18 > stack.length) {
-        const grown = new Int32Array(stack.length * 2)
-        grown.set(stack)
-        stack = grown
-      }
-      stack[top] = px
-      stack[top + 1] = py
-      stack[top + 2] = pz
-      stack[top + 3] = mx
-      stack[top + 4] = my
-      stack[top + 5] = mz
-      stack[top + 6] = rx
-      stack[top + 7] = ry
-      stack[top + 8] = rz
-      stack[top + 9] = mx
-      stack[top + 10] = my
-      stack[top + 11] = mz
-      stack[top + 12] = qx
-      stack[top + 13] = qy
-      stack[top + 14] = qz
-      stack[top + 15] = rx
-      stack[top + 16] = ry
-      stack[top + 17] = rz
-      top += 18
-    }
-  }
-}
-
-/** `subdivideFlat` for triangles one by one. */
-export function subdivide(source: readonly Tri[], limit: number, out: Tri[]) {
-  const flat: number[] = []
-  subdivideFlat(source.flat(), limit, flat)
-  for (let i = 0; i < flat.length; i += 9) out.push(flat.slice(i, i + 9) as Tri)
-}
 
 /** Mirrors `SAMPLE`. */
 const SAMPLE = CELL / 2
@@ -140,20 +52,80 @@ function sample(t: ArrayLike<number>, o: number, visit: (x: number, y: number, z
 }
 
 /**
- * A building's walls and roof as a grid of cells, and the small triangles of them that are collided
- * with, each in a cell. Mirrors `Shell`. The cells are worked out at once; the triangles only when
- * they are first asked for (a building that is drawn but never hurt does not need them).
+ * One merged face of `greedyFaces`: `w × h` cells from `(a, b)` of layer `i` along axis `d`, facing
+ * `side` (1 towards +d, -1 towards -d). `u` and `v` are the next axes round from `d`. Mirrors `Face`.
  */
+export interface Face {
+  d: number
+  u: number
+  v: number
+  side: number
+  i: number
+  a: number
+  b: number
+  w: number
+  h: number
+  key: number
+}
+
+/**
+ * Mirrors `greedy`: the faces of the cells of a `dims` grid with a key (`keys`, -1 for an empty
+ * cell) that look onto an empty cell or out of the grid, merged into rectangles of one key, in the
+ * same order as the server's.
+ */
+export function greedyFaces(dims: readonly [number, number, number], keys: Int32Array, emit: (face: Face) => void) {
+  // Step in the cell number for one cell along x, y and z (`Shell::index`).
+  const stride = [1, dims[0] * dims[2], dims[0]]
+  for (let d = 0; d < 3; d++) {
+    const u = (d + 1) % 3
+    const v = (d + 2) % 3
+    const [nu, nv, nd] = [dims[u]!, dims[v]!, dims[d]!]
+    const [su, sv, sd] = [stride[u]!, stride[v]!, stride[d]!]
+    const mask = new Int32Array(nu * nv)
+    for (const side of [1, -1]) {
+      for (let i = 0; i < nd; i++) {
+        const j = i + side
+        const beyond = j >= 0 && j < nd
+        let any = false
+        for (let b = 0; b < nv; b++) {
+          for (let a = 0; a < nu; a++) {
+            const id = i * sd + a * su + b * sv
+            const key = keys[id]!
+            mask[b * nu + a] = key >= 0 && !(beyond && keys[id + side * sd]! >= 0) ? key : -1
+            if (mask[b * nu + a]! >= 0) any = true
+          }
+        }
+        if (!any) continue
+        for (let b = 0; b < nv; b++) {
+          for (let a = 0; a < nu; ) {
+            const key = mask[b * nu + a]!
+            if (key < 0) {
+              a++
+              continue
+            }
+            let w = 1
+            while (a + w < nu && mask[b * nu + a + w] === key) w++
+            let h = 1
+            grow: while (b + h < nv) {
+              for (let k = 0; k < w; k++) if (mask[(b + h) * nu + a + k] !== key) break grow
+              h++
+            }
+            for (let r = 0; r < h; r++) mask.fill(-1, (b + r) * nu + a, (b + r) * nu + a + w)
+            emit({ d, u, v, side, i, a, b, w, h, key })
+            a += w
+          }
+        }
+      }
+    }
+  }
+}
+
+/** A building's walls and roof as a grid of cells. Mirrors `Shell`. */
 export class Shell {
   /** Corner of the grid with the smallest coordinates, centimetres. */
   readonly origin: [number, number, number]
   readonly cell = CELL
   readonly dims: [number, number, number]
-  /** The building's own wall and roof triangles, nine numbers each. */
-  private readonly sourceWalls: ArrayLike<number>
-  private readonly sourceRoof: ArrayLike<number>
-  /** The small triangles, nine numbers each, walls then roof, and the cell of each, once cut. */
-  private cut: { tris: Int32Array; cells: Uint32Array; walls: number } | null = null
   /** 1 where the cell is part of the building. */
   private readonly solid: Uint8Array
   /** 1 where the roof passes through the cell, for drawing it in the roof's colour. Client only. */
@@ -162,8 +134,6 @@ export class Shell {
   private constructor(origin: [number, number, number], dims: [number, number, number], walls: ArrayLike<number>, roof: ArrayLike<number>) {
     this.origin = origin
     this.dims = dims
-    this.sourceWalls = walls
-    this.sourceRoof = roof
     this.solid = new Uint8Array(dims[0] * dims[1] * dims[2])
     this.roofed = new Uint8Array(this.solid.length)
     for (const [list, isRoof] of [[walls, false], [roof, true]] as const) {
@@ -231,66 +201,6 @@ export class Shell {
   private cellOfPoint(x: number, y: number, z: number): number {
     const at = (v: number, axis: number) => Math.min(this.dims[axis]! - 1, Math.max(0, Math.floor((v - 1 - this.origin[axis]!) / CELL)))
     return (at(y, 1) * this.dims[2] + at(z, 2)) * this.dims[0] + at(x, 0)
-  }
-
-  /** Mirrors `owner`: the cell of the small triangle at `o` of `t`. */
-  private owner(t: ArrayLike<number>, o: number): number {
-    const cx = Math.floor((t[o]! + t[o + 3]! + t[o + 6]!) / 3)
-    const cy = Math.floor((t[o + 1]! + t[o + 4]! + t[o + 7]!) / 3)
-    const cz = Math.floor((t[o + 2]! + t[o + 5]! + t[o + 8]!) / 3)
-    const home = this.cellOfPoint(cx, cy, cz)
-    if (this.solid[home]) return home
-    const [nx, ny, nz] = this.dims
-    const x = home % nx
-    const z = Math.floor(home / nx) % nz
-    const y = Math.floor(home / (nx * nz))
-    let best = -1
-    let nearest = Infinity
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dz = -1; dz <= 1; dz++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const [ax, ay, az] = [x + dx, y + dy, z + dz]
-          if ((dx === 0 && dy === 0 && dz === 0) || ax < 0 || ay < 0 || az < 0 || ax >= nx || ay >= ny || az >= nz) continue
-          const id = this.index(ax, ay, az)
-          if (!this.solid[id]) continue
-          const c = this.centre(id)
-          const d = (c[0] - cx) ** 2 + (c[1] - cy) ** 2 + (c[2] - cz) ** 2
-          if (d < nearest || (d === nearest && id < best)) [best, nearest] = [id, d]
-        }
-      }
-    }
-    return best < 0 ? home : best
-  }
-
-  /** The small triangles and their cells, cut the first time they are needed. */
-  private triangles() {
-    if (this.cut) return this.cut
-    const walls: number[] = []
-    const roof: number[] = []
-    subdivideFlat(this.sourceWalls, CELL, walls)
-    subdivideFlat(this.sourceRoof, CELL, roof)
-    const tris = new Int32Array(walls.length + roof.length)
-    tris.set(walls)
-    tris.set(roof, walls.length)
-    const cells = new Uint32Array(tris.length / 9)
-    for (let i = 0; i < cells.length; i++) cells[i] = this.owner(tris, i * 9)
-    this.cut = { tris, cells, walls: walls.length / 9 }
-    return this.cut
-  }
-
-  /** How many small triangles there are, walls then roof. */
-  get triangleCount(): number {
-    return this.triangles().cells.length
-  }
-
-  /** How many of the small triangles are wall. */
-  get walls(): number {
-    return this.triangles().walls
-  }
-
-  /** The cell of small triangle `i`. */
-  triangleCell(i: number): number {
-    return this.triangles().cells[i]!
   }
 
   /** Whether cell `id` is part of the building. */
@@ -393,30 +303,27 @@ export class Shell {
     return out
   }
 
-  /** The small triangles whose cell is not in `removed`, walls first. */
-  standing(removed: ReadonlySet<number>): Tri[] {
-    const { tris, cells } = this.triangles()
-    const out: Tri[] = []
-    for (let i = 0; i < cells.length; i++) {
-      if (removed.has(cells[i]!)) continue
-      out.push(Array.from(tris.subarray(i * 9, i * 9 + 9)) as Tri)
+  /**
+   * Mirrors `faces`: what the building is collided with, the outer faces of its standing cubes (not
+   * in `removed`), merged, as triangles of nine centimetre numbers each.
+   */
+  faces(removed: ReadonlySet<number>): Int32Array {
+    const keys = new Int32Array(this.solid.length)
+    for (let id = 0; id < keys.length; id++) keys[id] = this.solid[id] && !removed.has(id) ? 0 : -1
+    const out: number[] = []
+    const p = [0, 0, 0]
+    const corner = (f: Face, du: number, dv: number) => {
+      p[f.d] = this.origin[f.d]! + (f.side > 0 ? f.i + 1 : f.i) * CELL
+      p[f.u] = this.origin[f.u]! + (f.a + du * f.w) * CELL
+      p[f.v] = this.origin[f.v]! + (f.b + dv * f.h) * CELL
+      out.push(p[0]!, p[1]!, p[2]!)
     }
-    return out
+    greedyFaces(this.dims, keys, (f) => {
+      const order = f.side > 0 ? [0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1] : [0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1]
+      for (let k = 0; k < 12; k += 2) corner(f, order[k]!, order[k + 1]!)
+    })
+    return Int32Array.from(out)
   }
-}
-
-/** Source triangles `[from, to)` of a tile's collision mesh as centimetre triangles. */
-export function trianglesOf(vertices: Float32Array, triangles: Uint32Array, from: number, to: number): Tri[] {
-  const out: Tri[] = []
-  for (let t = from; t < to; t++) {
-    const tri: number[] = []
-    for (let k = 0; k < 3; k++) {
-      const v = triangles[t * 3 + k]! * 3
-      tri.push(Math.round(vertices[v]! * 100), Math.round(vertices[v + 1]! * 100), Math.round(vertices[v + 2]! * 100))
-    }
-    out.push(tri as Tri)
-  }
-  return out
 }
 
 const shells = new WeakMap<{ buildings: unknown }, Map<number, Shell | null>>()

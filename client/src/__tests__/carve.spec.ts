@@ -36,22 +36,24 @@ describe('carve', () => {
     const shell = Shell.of(boxed(5, 4, 3), roof(5, 4, 3))!
     expect(shell.cell).toBe(100)
     expect(shell.dims).toEqual([5, 3, 4])
-    expect(shell.triangleCount).toBe(416)
     expect(shell.solidCount).toBe(48)
-    let sum = 0
-    for (let i = 0; i < shell.triangleCount; i++) sum += shell.triangleCell(i)
-    expect(sum).toBe(14_192)
+    // The faces, as `cell_numbers_match_the_fixture` sums them: each number by its place in its triangle.
+    const sum = (faces: Int32Array) => faces.reduce((n, v, i) => n + v * ((i % 9) + 1), 0)
+    const faces = shell.faces(new Set())
+    expect([faces.length / 9, sum(faces)]).toEqual([28, 267_900])
     const diagonal = Shell.of(slanted(), [])!
     let cells = 0
     for (let id = 0; id < diagonal.dims[0] * diagonal.dims[1] * diagonal.dims[2]; id++) if (diagonal.isSolid(id)) cells += id
     expect([diagonal.origin, diagonal.dims, diagonal.solidCount, cells]).toEqual([[-100, 0, 0], [9, 3, 6], 42, 3309])
+    const slant = diagonal.faces(new Set())
+    expect([slant.length / 9, sum(slant)]).toEqual([72, 960_300])
   })
 
-  it('leaves out the triangles of removed cells', () => {
+  it('collides with the cubes that are left', () => {
     const shell = Shell.of(boxed(5, 4, 3), roof(5, 4, 3))!
-    const some = shell.triangleCell(0)
-    const left = shell.standing(new Set([some]))
-    expect(left.length).toBeLessThan(shell.triangleCount)
-    expect(shell.standing(new Set()).length).toBe(shell.triangleCount)
+    const whole = shell.faces(new Set())
+    // A cell out of the middle of a wall opens a hole: its four sides become faces.
+    const hole = shell.faces(new Set([shell.cellAt(2.5, 1.5, 0.5)]))
+    expect(hole.length).toBeGreaterThan(whole.length)
   })
 })

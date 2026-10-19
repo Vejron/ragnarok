@@ -16,7 +16,6 @@ use super::{Obj, Physics};
 use rapier3d::control::{DynamicRayCastVehicleController, WheelTuning};
 use rapier3d::prelude::*;
 use shared::consts::*;
-use shared::quant::from_cm;
 use shared::protocol::{DAMAGE_WHEELS, THRUST_BOOST, THRUST_LIFT, KIND_DRONE, KIND_HELI, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, WHEEL_GONE, vehicle_hp};
 
 /// Gravity acting on vehicle bodies. Stickmen use `GRAVITY`; the ray-cast suspension is tuned
@@ -625,10 +624,7 @@ impl Physics {
                 self.removals.push(object);
                 continue;
             }
-            let corner = |t: &shared::carve::Tri, k: usize| Vector::new(from_cm(t[k * 3]), from_cm(t[k * 3 + 1]), from_cm(t[k * 3 + 2]));
-            let vertices: Vec<Vector> = triangles.iter().flat_map(|t| (0..3).map(move |k| corner(t, k))).collect();
-            let indices: Vec<[u32; 3]> = (0..triangles.len() as u32).map(|i| [i * 3, i * 3 + 1, i * 3 + 2]).collect();
-            let Ok(builder) = ColliderBuilder::trimesh(vertices, indices) else { continue };
+            let Some(builder) = super::trimesh_of(&triangles) else { continue };
             self.mark_changed(old);
             self.objects.remove(&old);
             self.colliders.remove(old, &mut self.islands, &mut self.bodies, &mut self.soft_bodies, false);

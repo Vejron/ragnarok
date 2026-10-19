@@ -2,16 +2,14 @@ import { Geometry } from '@ragnarok/engine'
 import * as THREE from 'three'
 import type { TileData } from '@/world'
 import { CELL_HP, shellOf, type Shell } from '@/sim/carve'
-import { voxelCube, voxelFaces, type Soup } from './voxels'
+import { voxelFaces, type Soup } from './voxels'
 import { buildingColors } from './world'
 
-/** How far each side of a cell that has taken all but its last hit is pulled in, metres. */
-const DENT_DEPTH = 0.18
 /** How much of its colour a cell right beside a hole loses to the burn, and the next one out. */
 const CHAR_NEAR = 0.75
 const CHAR_FAR = 0.35
 /** How much of its colour a cell that has taken all but its last hit loses. */
-const CHAR_DENT = 0.3
+const CHAR_DENT = 0.6
 /** Soot, as a share of the wall's own colour that is left when fully burnt. */
 const SOOT = 0.12
 /** How much of their colour thrown pieces keep. */
@@ -35,7 +33,7 @@ function arrays(soup: Soup): Fractured {
 
 /**
  * A building's cells (`sim/carve.ts`, cut as the server cuts them) drawn as cubes, to be redrawn
- * without the cells a blast took out and with the ones that have been shot pulled in. Which cells
+ * without the cells a blast took out and with the ones that have been shot darkened. Which cells
  * there are is fixed by the building alone, so every client sees the same house. The server's
  * collision follows the same cells.
  */
@@ -94,7 +92,7 @@ export class Fracture {
 
   /**
    * The building as it looks without the cells in `removed`, and with those in `dents` (damage a
-   * cell has taken, by cell) drawn apart, pulled in by how much of its health is spent.
+   * cell has taken, by cell) darkened by how much of its health is spent. A cell keeps its size.
    */
   build(removed: ReadonlySet<number> = new Set(), dents: ReadonlyMap<number, number> = new Map()): Fractured {
     const soup: Soup = { positions: [], colors: [] }
@@ -102,13 +100,9 @@ export class Fracture {
     if (!shell) return arrays(soup)
     const burnt = this.burn(removed)
     const shade = (id: number, extra = 0) => 1 - Math.min(1, (burnt.get(id) ?? 0) + extra) * (1 - SOOT)
-    const whole = (id: number) => shell.isSolid(id) && !removed.has(id) && !dents.has(id)
-    voxelFaces(shell, whole, (id) => pack(this.colorOf(id), shade(id)), soup)
-    for (const [id, damage] of dents) {
-      if (removed.has(id) || !shell.isSolid(id)) continue
-      const f = Math.min(0.95, damage / CELL_HP)
-      voxelCube(shell, id, pack(this.colorOf(id), shade(id, f * CHAR_DENT)), DENT_DEPTH * f, soup)
-    }
+    const standing = (id: number) => shell.isSolid(id) && !removed.has(id)
+    const worn = (id: number) => Math.min(0.95, (dents.get(id) ?? 0) / CELL_HP) * CHAR_DENT
+    voxelFaces(shell, standing, (id) => pack(this.colorOf(id), shade(id, worn(id))), soup)
     return arrays(soup)
   }
 

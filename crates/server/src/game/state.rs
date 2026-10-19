@@ -511,9 +511,8 @@ impl World {
 
     /// Takes the cells within `radius` metres of `point` out of standing building `id`, and every
     /// cell that leaves with nothing under it, and swaps its collider for what is left. Returns what
-    /// was cut and whether so little is left that the building should come down. `None` when it
-    /// is not a building that can be carved, or the blast broke nothing.
-    pub fn carve(&mut self, id: ObjId, point: [f32; 3], radius: f32) -> Option<(Cut, bool)> {
+    /// was cut: `None` when it is not a building that can be carved, or the blast broke nothing.
+    pub fn carve(&mut self, id: ObjId, point: [f32; 3], radius: f32) -> Option<Cut> {
         if !self.carves.contains_key(&id) {
             let carving = self.cut_building(id)?;
             self.carves.insert(id, carving);
@@ -526,7 +525,7 @@ impl World {
 
     /// A round of `damage` hits standing building `id` at `point`: the piece of wall there loses
     /// that much health and breaks out when it has none. As `carve` for what it returns.
-    pub fn chip(&mut self, id: ObjId, point: [f32; 3], damage: u8) -> Option<(Cut, bool)> {
+    pub fn chip(&mut self, id: ObjId, point: [f32; 3], damage: u8) -> Option<Cut> {
         if !self.carves.contains_key(&id) {
             let carving = self.cut_building(id)?;
             self.carves.insert(id, carving);
@@ -538,38 +537,22 @@ impl World {
     }
 
     /// Swaps the collider and queues the news for a cut that took something.
-    fn finish_cut(&mut self, id: ObjId, at: [i32; 3], cut: Cut) -> Option<(Cut, bool)> {
+    fn finish_cut(&mut self, id: ObjId, at: [i32; 3], cut: Cut) -> Option<Cut> {
         if cut.is_empty() {
             return None;
         }
         let carving = self.carves.get(&id)?;
-        let ruin = carving.shell.is_ruin(&carving.removed);
-        if !ruin {
-            let mut standing = carving.shell.standing_triangles(&carving.removed);
-            standing.extend_from_slice(&carving.floor);
-            self.physics.replace_building(Obj::Building(id), standing);
-        }
+        let mut standing = carving.shell.faces(&carving.removed);
+        standing.extend_from_slice(&carving.floor);
+        self.physics.replace_building(Obj::Building(id), standing);
         self.fresh_carved.push((id, at, cut.clone()));
-        Some((cut, ruin))
+        Some(cut)
     }
 
     /// Building `id`'s walls and roof cut into cells, from its triangles in the merged mesh.
     fn cut_building(&self, id: ObjId) -> Option<Carving> {
         let index = *self.buildings_by_id.get(&id)?;
-        let building = self.map.buildings.get(index)?;
-        let [start, end] = *self.map.building_triangles.get(index)?;
-        let mesh = &self.map.collision;
-        let end = (end as usize).min(mesh.triangles.len());
-        let start = (start as usize).min(end);
-        let tri = |t: usize| -> Tri {
-            let [a, b, c] = mesh.triangles[t].map(|v| mesh.vertices[v as usize]);
-            [a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]]
-        };
-        let split = |from: usize, count: usize| (from.min(end)..(from + count).min(end)).map(tri).collect::<Vec<_>>();
-        let walls = split(start, building.walls as usize);
-        let roof = split(start + building.walls as usize, building.roof as usize);
-        let floor = (start + building.walls as usize + building.roof as usize).min(end)..end;
-        let floor = floor.map(tri).collect();
+        let [walls, roof, floor] = crate::physics::building_parts(&self.map, index)?;
         let shell = Shell::new(&walls, &roof)?;
         let removed = shell.untouched();
         let hp = shell.fresh_hp();
