@@ -47,6 +47,12 @@ describe('carve', () => {
     expect([diagonal.origin, diagonal.dims, diagonal.solidCount, cells]).toEqual([[-100, 0, 0], [9, 3, 6], 42, 3309])
     const slant = diagonal.faces(new Set())
     expect([slant.length / 9, sum(slant)]).toEqual([72, 960_300])
+    // The boxes, summed the same way: each number by its place in its box.
+    const boxes = (s: Shell) => {
+      const b = s.boxes(new Set())
+      return [b.length / 6, b.reduce((n, v, i) => n + v * ((i % 6) + 1), 0)]
+    }
+    expect([boxes(shell), boxes(diagonal)]).toEqual([[5, 27_500], [6, 40_200]])
   })
 
   it('unpacks the cells the importer baked', () => {
@@ -73,5 +79,10 @@ describe('carve', () => {
     // A cell out of the middle of a wall opens a hole: its four sides become faces.
     const hole = shell.faces(new Set([shell.cellAt(2.5, 1.5, 0.5)]))
     expect(hole.length).toBeGreaterThan(whole.length)
+    // The cell is gone from the boxes, which still cover every other cube once.
+    const boxes = shell.boxes(new Set([shell.cellAt(2.5, 1.5, 0.5)]))
+    let cubes = 0
+    for (let i = 0; i < boxes.length; i += 6) cubes += ((boxes[i + 3]! - boxes[i]!) * (boxes[i + 4]! - boxes[i + 1]!) * (boxes[i + 5]! - boxes[i + 2]!)) / 100 ** 3
+    expect(cubes).toBe(shell.solidCount - 1)
   })
 })

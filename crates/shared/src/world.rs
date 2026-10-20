@@ -248,7 +248,8 @@ pub struct Building {
     /// `ROOF_*`: what the roof was fitted as.
     pub roof_kind: u8,
     /// The building's 1 m cubes (`carve::Shell`), worked out by the importer from its walls and
-    /// roof; the server and clients make the faces to collide with and draw from them. Empty
+    /// roof; the server and clients make the boxes to collide with, and the clients the faces to
+    /// draw, from them. Empty
     /// (`dims` all 0) for a building too big to cut, which keeps its own triangles.
     #[serde(default)]
     pub cells: Cells,

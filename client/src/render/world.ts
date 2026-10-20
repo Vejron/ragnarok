@@ -200,7 +200,7 @@ function trianglePositions(tile: TileData, from: number, count: number, out: num
 function buildingVoxels(tile: TileData, index: number, salt: number, out: Soup, offset: readonly [number, number, number] = [0, 0, 0]): boolean {
   const shell = shellOf(tile, index)
   if (!shell) return false
-  // The faces it is collided with (`Shell.facesWithRoof`), made once for both.
+  // The outer faces of its cubes (`Shell.facesWithRoof`); it is collided with as boxes.
   const { tris, roof } = shell.facesWithRoof(new Set())
   const colors = buildingColors(tile, index, salt)
   const [wall, top] = [new THREE.Color(colors.wall), new THREE.Color(colors.roof)]

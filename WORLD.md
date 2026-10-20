@@ -376,7 +376,8 @@ Every building is baked into 1 m cubes as the tiles are written (`voxels.rs`, `B
 its `cells` hold the grid and two flags a cell (a cube is there; it is roof), packed by
 `carve::pack` (each flag XORed with the one below it, then runs of zero bytes shortened), and its
 walls and roof leave the collision mesh, which keeps only its floor. The server and the clients
-make the faces to collide with and draw from the cells. On the 450-tile Ersboda world that leaves
+merge the cells into boxes to collide with (`Shell::boxes`), and the clients make the faces to draw
+from them. On the 450-tile Ersboda world that leaves
 the tiles about as big as before (14.2 MB against 14.7 MB). Houses built wall to wall often both
 have a cube in the same place, which would be drawn twice and flicker; after baking, `voxels::share`
 gives each such cube to the first of them, across the whole world (35,626 cubes in Ersboda).

@@ -542,8 +542,7 @@ impl World {
             return None;
         }
         let carving = self.carves.get(&id)?;
-        let mut standing = carving.shell.faces(&carving.removed);
-        standing.extend_from_slice(&carving.floor);
+        let standing = crate::physics::solid_of(&carving.shell.boxes(&carving.removed), &carving.floor);
         self.physics.replace_building(Obj::Building(id), standing);
         self.fresh_carved.push((id, at, cut.clone()));
         Some(cut)

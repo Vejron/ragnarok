@@ -193,11 +193,13 @@ export function addTileCollider(world: RAPIER.World, tile: TileData, ground: Til
 }
 
 /**
- * The tile's building mesh: each building as the faces of its cubes (`Shell.faces`, without the
- * cells in `carved` for it) and its floor, or as its own triangles when it has no cubes, then
- * whatever no building claims (bridges), and none of the buildings in `destroyed`. Mirrors
- * `building_shape` and `World::carve` on the server. Returns the new collider (the caller removes
- * any old one), or null when nothing is left of the mesh.
+ * The tile's buildings as one collider: each building as its cubes merged into boxes (`Shell.boxes`,
+ * without the cells in `carved` for it) and its floor, or as its own triangles when it has no
+ * cubes, then whatever no building claims (bridges), and none of the buildings in `destroyed`.
+ * Mirrors `building_shape` and `World::carve` on the server. With no boxes it is a trimesh;
+ * otherwise a compound of a cuboid a box and a triangle a remaining triangle, since a compound cannot
+ * hold a trimesh. Returns the new collider (the caller removes any old one), or null when nothing
+ * is left.
  */
 export function rebuildBuildingCollider(
   world: RAPIER.World,
@@ -212,32 +214,35 @@ export function rebuildBuildingCollider(
   buildingTriangleRanges(tile).forEach(([start, end], index) => {
     if (destroyed.has(index)) drop.fill(1, start, Math.min(end, count))
   })
-  const cubes: Int32Array[] = []
+  const boxes: Int32Array[] = []
   const none = new Set<number>()
   tile.buildings.forEach((building, index) => {
     if (destroyed.has(index)) return
     const shell = shellOf(tile, index)
     if (!shell) return
     drop.fill(1, building.first, Math.min(building.first + building.walls + building.roof, count))
-    cubes.push(shell.faces(carved.get(index) ?? none))
+    boxes.push(shell.boxes(carved.get(index) ?? none))
   })
   const kept: number[] = []
   for (let t = 0; t < count; t++) if (!drop[t]) kept.push(triangles[t * 3]!, triangles[t * 3 + 1]!, triangles[t * 3 + 2]!)
-  const extra = cubes.reduce((n, faces) => n + faces.length / 9, 0)
-  if (kept.length === 0 && extra === 0) return null
-  // The cube faces go after the tile's own vertices, three corners each, in metres.
-  const all = new Float32Array(vertices.length + extra * 9)
-  all.set(vertices)
-  const next = new Uint32Array(kept.length + extra * 3)
-  next.set(kept)
-  let vertex = vertices.length / 3
-  let at = vertices.length
-  let slot = kept.length
-  for (const faces of cubes) {
-    for (let k = 0; k < faces.length; k++) all[at++] = faces[k]! / 100
-    for (let k = 0; k < faces.length / 3; k++) next[slot++] = vertex++
+  const boxCount = boxes.reduce((n, b) => n + b.length / 6, 0)
+  if (boxCount === 0) return kept.length === 0 ? null : world.createCollider(RAPIER.ColliderDesc.trimesh(vertices, Uint32Array.from(kept)))
+  const shapes: RAPIER.Shape[] = []
+  const positions: RAPIER.Vector[] = []
+  const still = { x: 0, y: 0, z: 0, w: 1 }
+  for (const list of boxes) {
+    for (let i = 0; i < list.length; i += 6) {
+      const [x0, y0, z0, x1, y1, z1] = [list[i]!, list[i + 1]!, list[i + 2]!, list[i + 3]!, list[i + 4]!, list[i + 5]!]
+      shapes.push(new RAPIER.Cuboid((x1 - x0) / 200, (y1 - y0) / 200, (z1 - z0) / 200))
+      positions.push({ x: (x0 + x1) / 200, y: (y0 + y1) / 200, z: (z0 + z1) / 200 })
+    }
   }
-  return world.createCollider(RAPIER.ColliderDesc.trimesh(all, next))
+  const corner = (v: number) => ({ x: vertices[v * 3]!, y: vertices[v * 3 + 1]!, z: vertices[v * 3 + 2]! })
+  for (let k = 0; k < kept.length; k += 3) {
+    shapes.push(new RAPIER.Triangle(corner(kept[k]!), corner(kept[k + 1]!), corner(kept[k + 2]!)))
+    positions.push({ x: 0, y: 0, z: 0 })
+  }
+  return world.createCollider(RAPIER.ColliderDesc.compound(shapes, positions, shapes.map(() => still)))
 }
 
 /**

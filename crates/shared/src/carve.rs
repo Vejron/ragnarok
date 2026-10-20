@@ -429,7 +429,7 @@ impl Shell {
         (0..self.solid.len()).filter(|&i| self.solid[i] && !removed[i]).count()
     }
 
-    /// What the building is collided with, and drawn as: the faces of its standing cubes (solid, not
+    /// What the building is drawn as: the faces of its standing cubes (solid, not
     /// in `removed`) that look onto a cell with nothing standing in it, as triangles in centimetres,
     /// wound counter-clockwise seen from outside the cube. Neighbouring faces of wall cubes, and of
     /// roof cubes, are merged into rectangles as `greedy` does, so a plain wall is two triangles a
@@ -454,6 +454,47 @@ impl Shell {
                 out.extend([tri(p0, p2, p1), tri(p0, p3, p2)]);
             }
         });
+        out
+    }
+
+    /// What the building is collided with: its standing cubes (solid, not in `removed`) merged into
+    /// boxes, each `[min x, min y, min z, max x, max y, max z]` in centimetres. Going through the
+    /// cells in number order, each standing cell not yet in a box starts one, which grows first
+    /// along x, then along z while the whole row is standing and free, then up while the whole layer
+    /// is. A wall is then a box or two a floor, where its faces would be hundreds of triangles.
+    /// Mirrored by `Shell.boxes`.
+    pub fn boxes(&self, removed: &[bool]) -> Vec<[i32; 6]> {
+        let [nx, ny, nz] = self.dims;
+        let mut free: Vec<bool> = (0..self.solid.len()).map(|i| self.solid[i] && !removed[i]).collect();
+        let mut out = Vec::new();
+        for y in 0..ny {
+            for z in 0..nz {
+                for x in 0..nx {
+                    if !free[self.index(x, y, z) as usize] {
+                        continue;
+                    }
+                    let row = |free: &[bool], y: usize, z: usize, w: usize| (x..x + w).all(|x| free[self.index(x, y, z) as usize]);
+                    let mut w = 1;
+                    while x + w < nx && free[self.index(x + w, y, z) as usize] {
+                        w += 1;
+                    }
+                    let mut d = 1;
+                    while z + d < nz && row(&free, y, z + d, w) {
+                        d += 1;
+                    }
+                    let mut h = 1;
+                    while y + h < ny && (z..z + d).all(|z| row(&free, y + h, z, w)) {
+                        h += 1;
+                    }
+                    for (yi, zi, xi) in (y..y + h).flat_map(|y| (z..z + d).flat_map(move |z| (x..x + w).map(move |x| (y, z, x)))) {
+                        free[self.index(xi, yi, zi) as usize] = false;
+                    }
+                    let [ox, oy, oz] = self.origin;
+                    let c = |v: usize| v as i32 * self.cell;
+                    out.push([ox + c(x), oy + c(y), oz + c(z), ox + c(x + w), oy + c(y + h), oz + c(z + d)]);
+                }
+            }
+        }
         out
     }
 
@@ -723,7 +764,31 @@ mod tests {
         assert!(shell.faces(&removed).len() > faces.len());
     }
 
-    /// Mirrored byte for byte by `client/src/__tests__/carve.spec.ts`.
+    #[test]
+    fn the_boxes_cover_each_standing_cube_once() {
+        let shell = Shell::new(&boxed(6, 6, 4), &roof(6, 6, 4)).unwrap();
+        let mut removed = shell.untouched();
+        shell.blast(&mut removed, [300, 150, 0], 100);
+        for removed in [shell.untouched(), removed] {
+            let boxes = shell.boxes(&removed);
+            let mut covered = vec![0; removed.len()];
+            for b in &boxes {
+                for y in (b[1]..b[4]).step_by(CELL as usize) {
+                    for z in (b[2]..b[5]).step_by(CELL as usize) {
+                        for x in (b[0]..b[3]).step_by(CELL as usize) {
+                            covered[shell.cell_at([x as i64 + 1, y as i64 + 1, z as i64 + 1]) as usize] += 1;
+                        }
+                    }
+                }
+            }
+            for id in 0..removed.len() {
+                assert_eq!(covered[id], usize::from(shell.solid[id] && !removed[id]), "cell {id}");
+            }
+            assert!(boxes.len() < shell.standing(&removed) / 4, "{} boxes for {} cubes", boxes.len(), shell.standing(&removed));
+        }
+    }
+
+    /// Mirrored number for number by `client/src/__tests__/carve.spec.ts`.
     #[test]
     fn cell_numbers_match_the_fixture() {
         let shell = Shell::new(&boxed(5, 4, 3), &roof(5, 4, 3)).unwrap();
@@ -738,6 +803,13 @@ mod tests {
         let faces = diagonal.faces(&diagonal.untouched());
         let sum: i64 = faces.iter().flatten().enumerate().map(|(i, &v)| v as i64 * (i % 9 + 1) as i64).sum();
         assert_eq!((faces.len(), sum), (72, 960_300));
+        // The boxes, summed the same way: each number by its place in its box.
+        let boxes = |shell: &Shell| {
+            let boxes = shell.boxes(&shell.untouched());
+            let sum: i64 = boxes.iter().flatten().enumerate().map(|(i, &v)| v as i64 * (i % 6 + 1) as i64).sum();
+            (boxes.len(), sum)
+        };
+        assert_eq!((boxes(&shell), boxes(&diagonal)), ((5, 27_500), (6, 40_200)));
     }
 
     #[test]

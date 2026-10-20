@@ -614,21 +614,20 @@ impl Physics {
             return;
         }
         // Bitten buildings get their new shape first; one that is also coming down just goes.
-        for (object, triangles) in std::mem::take(&mut self.replacements) {
+        for (object, shape) in std::mem::take(&mut self.replacements) {
             if self.removals.contains(&object) {
                 continue;
             }
             let Some(&old) = self.handles.get(&object) else { continue };
             // A building with nothing left is not a collider at all.
-            if triangles.is_empty() {
+            let Some(shape) = shape else {
                 self.removals.push(object);
                 continue;
-            }
-            let Some(builder) = super::trimesh_of(&triangles) else { continue };
+            };
             self.mark_changed(old);
             self.objects.remove(&old);
             self.colliders.remove(old, &mut self.islands, &mut self.bodies, &mut self.soft_bodies, false);
-            let handle = self.colliders.insert(builder.build());
+            let handle = self.colliders.insert(ColliderBuilder::new(shape).build());
             self.objects.insert(handle, object);
             self.handles.insert(object, handle);
         }

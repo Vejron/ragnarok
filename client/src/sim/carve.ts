@@ -350,11 +350,54 @@ export class Shell {
     return out
   }
 
-  /** The faces of the whole building, worked out once: every tile collider and the drawing share them. */
+  /** The boxes of the whole building, worked out once: every tile collider shares them. */
+  private wholeBoxes: Int32Array | null = null
+
+  /**
+   * Mirrors `boxes`: what the building is collided with, its standing cubes (not in `removed`)
+   * merged into boxes of six centimetre numbers each, the low corner then the high one.
+   */
+  boxes(removed: ReadonlySet<number>): Int32Array {
+    if (removed.size === 0 && this.wholeBoxes) return this.wholeBoxes
+    const [nx, ny, nz] = this.dims
+    const free = new Uint8Array(this.solid.length)
+    for (let id = 0; id < free.length; id++) free[id] = this.solid[id] && !removed.has(id) ? 1 : 0
+    const row = (x: number, y: number, z: number, w: number) => {
+      const start = (y * nz + z) * nx + x
+      for (let k = 0; k < w; k++) if (!free[start + k]) return false
+      return true
+    }
+    const out: number[] = []
+    const [ox, oy, oz] = this.origin
+    for (let y = 0; y < ny; y++) {
+      for (let z = 0; z < nz; z++) {
+        for (let x = 0; x < nx; x++) {
+          if (!free[(y * nz + z) * nx + x]) continue
+          let w = 1
+          while (x + w < nx && free[(y * nz + z) * nx + x + w]) w++
+          let d = 1
+          while (z + d < nz && row(x, y, z + d, w)) d++
+          let h = 1
+          for (; y + h < ny; h++) {
+            let whole = true
+            for (let k = 0; k < d && whole; k++) whole = row(x, y + h, z + k, w)
+            if (!whole) break
+          }
+          for (let j = 0; j < h; j++) for (let k = 0; k < d; k++) free.fill(0, ((y + j) * nz + z + k) * nx + x, ((y + j) * nz + z + k) * nx + x + w)
+          out.push(ox + x * CELL, oy + y * CELL, oz + z * CELL, ox + (x + w) * CELL, oy + (y + h) * CELL, oz + (z + d) * CELL)
+        }
+      }
+    }
+    const result = Int32Array.from(out)
+    if (removed.size === 0) this.wholeBoxes = result
+    return result
+  }
+
+  /** The faces of the whole building, worked out once: the drawing shares them. */
   private whole: { tris: Int32Array; roof: Uint8Array } | null = null
 
   /**
-   * Mirrors `faces`: what the building is collided with and drawn as, the outer faces of its
+   * Mirrors `faces`: what the building is drawn as, the outer faces of its
    * standing cubes (not in `removed`), wall and roof merged apart, as triangles of nine centimetre
    * numbers each.
    */
