@@ -4,9 +4,15 @@ import { toonMaterial } from './toon'
 /**
  * Parses a `.glb` into a node tree whose materials are the game's flat toon ones, keeping each one's
  * name and base colour (so `paint`, `lamp` and the rest can be found and replaced). Every mesh casts a
- * shadow. `convert` can swap a material for something else (a headlight is unlit).
+ * shadow. `convert` can swap a material for something else (a headlight is unlit). `merge` joins plain
+ * parts into fewer draws, except those whose material is `paint` or named in `keep`, so they can still be
+ * recoloured.
  */
-export function parseToonModel(data: ArrayBuffer, convert?: (source: Material) => Material | null, options: { merge?: boolean } = {}): Node {
+export function parseToonModel(
+  data: ArrayBuffer,
+  convert?: (source: Material) => Material | null,
+  options: { merge?: boolean; keep?: readonly string[] } = {},
+): Node {
   const { scene } = parseGlb(data)
   scene.traverse((node) => {
     if (!(node instanceof Mesh)) return
@@ -15,7 +21,7 @@ export function parseToonModel(data: ArrayBuffer, convert?: (source: Material) =
     node.castShadow = true
   })
   if (options.merge) {
-    mergeParts(scene)
+    mergeParts(scene, options.keep ?? [])
     shareEqualGeometry(scene)
   }
   return scene
@@ -27,10 +33,10 @@ const mergedMaterial = toonMaterial({ vertexColors: true, name: 'merged' })
 /**
  * Cuts a model's draws down. Under every node that holds several meshes (a glTF node with several
  * materials), the plain lit ones are joined into one mesh whose vertices carry each piece's colour.
- * Left alone: the `paint` (every vehicle recolours it), unlit lamps and anything textured, double
+ * Left alone: the `paint` (every vehicle recolours it) and the materials in `keep`, unlit lamps and anything textured, double
  * sided or transparent, and the nodes themselves, so every part the game moves by name still moves.
  */
-function mergeParts(root: Node) {
+function mergeParts(root: Node, keep: readonly string[]) {
   const mergeable = (child: Node): child is Mesh => {
     if (child.constructor !== Mesh) return false
     const mesh = child as Mesh
@@ -40,6 +46,7 @@ function mergeParts(root: Node) {
       mesh.castShadow &&
       m.lit &&
       m.name !== 'paint' &&
+      !keep.includes(m.name) &&
       !m.map &&
       !m.normalMap &&
       m.side === 'front' &&

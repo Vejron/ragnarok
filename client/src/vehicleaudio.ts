@@ -579,6 +579,33 @@ export class VehicleSounds {
     })
   }
 
+  /** A hen leaping: a giant, robotic "BA-WK!", a short rising squawk and a falling one over a square-wave growl. */
+  bawk(at: Vec3) {
+    this.emit(at, 0.9, (ctx, out, t) => {
+      VehicleSounds.ping(ctx, out, t, 'sawtooth', 330, 500, 0.12, 0.45)
+      VehicleSounds.ping(ctx, out, t, 'sawtooth', 560, 250, 0.3, 0.55, 0.13)
+      VehicleSounds.ping(ctx, out, t, 'square', 165, 120, 0.42, 0.22)
+      VehicleSounds.burst(ctx, out, t, 'bandpass', 1400, 600, 0.08, 0.15, 0.13)
+    })
+  }
+
+  /** One beat of a hen's wings: a whoosh of air and a low flap. */
+  wingBeat(at: Vec3) {
+    this.emit(at, 0.4, (ctx, out, t) => {
+      VehicleSounds.burst(ctx, out, t, 'bandpass', 650, 350, 0.18, 0.45)
+      VehicleSounds.ping(ctx, out, t, 'sine', 95, 55, 0.14, 0.35)
+    })
+  }
+
+  /** An egg leaving a hen: a hollow plop and a clunk of the hatch. */
+  plop(at: Vec3) {
+    this.emit(at, 0.4, (ctx, out, t) => {
+      VehicleSounds.ping(ctx, out, t, 'sine', 460, 150, 0.14, 0.55)
+      VehicleSounds.burst(ctx, out, t, 'lowpass', 900, 200, 0.05, 0.25)
+      VehicleSounds.ping(ctx, out, t, 'triangle', 220, 140, 0.08, 0.2, 0.06)
+    })
+  }
+
   /** A blaster bolt: a bright zap that falls steeply in pitch, with a crack at the front and a low thrum. */
   laser(at: Vec3) {
     this.emit(at, 0.8, (ctx, out, t) => {

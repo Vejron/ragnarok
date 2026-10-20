@@ -44,6 +44,7 @@ export const VEHICLE_KINDS: { kind: number; name: string; icon: string }[] = [
   { kind: 3, name: 'Helicopter', icon: 'H' },
   { kind: 6, name: 'Plane', icon: 'P' },
   { kind: 7, name: 'Walker', icon: 'W' },
+  { kind: 12, name: 'Hen', icon: 'E' },
   { kind: 9, name: 'Mortar', icon: 'M' },
 ]
 

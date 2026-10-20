@@ -4,7 +4,7 @@ use crate::physics::{CarCondition, CarControls, CarImpact, CarPose, Character, O
 use shared::consts::*;
 use shared::vehicles::{VehicleDef, vehicle_def};
 use shared::protocol::{
-    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_DRONE, KIND_HELI, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, ShotEvent, WEAPON_CRASH,
+    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, ShotEvent, WEAPON_CRASH,
     WEAPON_ROADKILL, WEAPON_SCRAPE, seat_count, vehicle_hp,
 };
 use shared::quant::{from_axis, to_cm, wrap_angle};
@@ -30,6 +30,8 @@ const ROADSTER_COUNT: usize = 1;
 const STRV_COUNT: usize = 1;
 /// Walkers, placed with the tanks and the helicopter on the road's spawn points.
 const WALKER_COUNT: usize = 1;
+/// Hens, placed after the mortars on whichever spawn points are left.
+const HEN_COUNT: usize = 1;
 /// Field mortars, placed after the planes on whichever spawn points are left. A car hitches one (see `hitch`).
 const MORTAR_COUNT: usize = 1;
 /// Planes, placed after everything else where they have room to take off.
@@ -56,6 +58,16 @@ const ROADKILL_DAMAGE_PER_SPEED: f32 = 8.0;
 const HIT_COOLDOWN: u32 = 12;
 /// A car on its side or roof this long, and not moving, is set back on its wheels.
 const UNFLIP_TICKS: u32 = 3 * TICK_RATE;
+
+/// How high above the ground a fresh vehicle of `kind` starts, at its chassis centre: a walker's or a
+/// hen's hull as high as its legs hold it up.
+fn drop_height(kind: u8) -> f32 {
+    match kind {
+        KIND_WALKER | KIND_HEN => WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1],
+        KIND_PLANE => PLANE_DROP_Y,
+        _ => CAR_DROP_Y,
+    }
+}
 
 /// Heading of the nearest road segment to `(x, z)`, in the stickman yaw convention, or 0.
 fn road_heading(map: &WorldFile, x: f32, z: f32) -> f32 {
@@ -149,7 +161,7 @@ pub(super) fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: 
             home: (position, yaw),
             stuck_ticks: 0,
             gun: vehicle_def(kind).gun.then(Gun::default),
-            arms: vehicle_def(kind).arms.then(PlaneArms::default),
+            arms: vehicle_def(kind).arms.then(|| PlaneArms::fresh(kind)),
             hp: vehicle_hp(kind),
             wreck_in: 0,
             last_attacker: None,
@@ -218,6 +230,13 @@ fn hitch(world: &mut World, id: u32) {
     }
 }
 
+/// Where a vehicle of `kind` is boarded from: its hull, but a walker's or a hen's from between its feet,
+/// a leg's length below its hull, which is out of reach above a stickman's head. Mirrored in `game.ts`.
+fn boarding_point(kind: u8, pose: &CarPose) -> [f32; 3] {
+    let [x, y, z] = pose.position;
+    if matches!(kind, KIND_WALKER | KIND_HEN) { [x, y - WALKER_LEG_LENGTH, z] } else { [x, y, z] }
+}
+
 fn board(world: &mut World, id: u32) {
     let Some(player) = world.players.get(&id) else { return };
     let here = player.character.position;
@@ -229,7 +248,7 @@ fn board(world: &mut World, id: u32) {
         }
         let Some(free) = vehicle.seats[..seat_count(vehicle.kind)].iter().position(Option::is_none) else { continue };
         let Some(pose) = world.physics.car_pose(vid) else { continue };
-        let distance = pose.position.iter().zip(here).map(|(a, b)| (a - b) * (a - b)).sum::<f32>().sqrt();
+        let distance = boarding_point(vehicle.kind, &pose).iter().zip(here).map(|(a, b)| (a - b) * (a - b)).sum::<f32>().sqrt();
         if distance <= ENTER_RADIUS && nearest.is_none_or(|(best, ..)| distance < best) {
             nearest = Some((distance, vid, free));
         }
@@ -570,12 +589,7 @@ impl Mechanic for Vehicles {
             let mut placed = 0;
             for spot in world.map.placed_vehicles.clone() {
                 let (x, z) = (spot.at[0] as f32 / 100.0, spot.at[1] as f32 / 100.0);
-                let drop = match spot.kind {
-                    KIND_WALKER => WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1],
-                    KIND_PLANE => PLANE_DROP_Y,
-                    _ => CAR_DROP_Y,
-                };
-                let position = [x, world.map.ground.height_at(x, z) + drop, z];
+                let position = [x, world.map.ground.height_at(x, z) + drop_height(spot.kind), z];
                 if world.vehicles.len() >= MAX_VEHICLES {
                     tracing::warn!(kind = spot.kind, x, z, max = MAX_VEHICLES, "too many placed vehicles; skipped");
                 } else if world.physics.car_fits(spot.kind, position, spot.yaw) {
@@ -611,9 +625,7 @@ impl Mechanic for Vehicles {
             };
             let (x, z) = (cx as f32 / 100.0, cz as f32 / 100.0);
             let yaw = road_heading(&world.map, x, z);
-            // A walker's hull starts at the height its legs hold it up at.
-            let drop = if kind == KIND_WALKER { WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1] } else { CAR_DROP_Y };
-            let position = [x, world.map.ground.height_at(x, z) + drop, z];
+            let position = [x, world.map.ground.height_at(x, z) + drop_height(kind), z];
             if world.physics.car_fits(kind, position, yaw) && world.vehicles.len() < MAX_VEHICLES {
                 add_vehicle(world, kind, position, yaw);
                 used[index] = true;
@@ -621,25 +633,29 @@ impl Mechanic for Vehicles {
             }
         }
         placed += place_planes(world, &candidates, &used);
-        // The mortars take whichever spawn points the planes left, so they never push a plane off one.
+        // The mortars, then the hens, take whichever spawn points the planes left, so they never push a
+        // plane off one.
         let runways: Vec<CarPose> = world.vehicles.iter().filter(|(_, v)| v.kind == KIND_PLANE).filter_map(|(&id, _)| world.physics.car_pose(id)).collect();
-        let mut mortars = 0;
-        for (index, &[cx, cz]) in candidates.iter().enumerate() {
-            if mortars == MORTAR_COUNT {
-                break;
-            }
-            if used[index] {
-                continue;
-            }
-            let (x, z) = (cx as f32 / 100.0, cz as f32 / 100.0);
-            let yaw = road_heading(&world.map, x, z);
-            let position = [x, world.map.ground.height_at(x, z) + CAR_DROP_Y, z];
-            // Not on a plane's runway either: a plane needs the strip clear to take off.
-            let on_a_runway = runways.iter().any(|plane| on_runway(plane.position, plane.yaw(), PLANE_RUNWAY, position));
-            if !on_a_runway && world.physics.car_fits(KIND_MORTAR, position, yaw) && world.vehicles.len() < MAX_VEHICLES {
-                add_vehicle(world, KIND_MORTAR, position, yaw);
-                mortars += 1;
-                placed += 1;
+        for (kind, count) in [(KIND_MORTAR, MORTAR_COUNT), (KIND_HEN, HEN_COUNT)] {
+            let mut added = 0;
+            for (index, &[cx, cz]) in candidates.iter().enumerate() {
+                if added == count {
+                    break;
+                }
+                if used[index] {
+                    continue;
+                }
+                let (x, z) = (cx as f32 / 100.0, cz as f32 / 100.0);
+                let yaw = road_heading(&world.map, x, z);
+                let position = [x, world.map.ground.height_at(x, z) + drop_height(kind), z];
+                // Not on a plane's runway either: a plane needs the strip clear to take off.
+                let on_a_runway = runways.iter().any(|plane| on_runway(plane.position, plane.yaw(), PLANE_RUNWAY, position));
+                if !on_a_runway && world.physics.car_fits(kind, position, yaw) && world.vehicles.len() < MAX_VEHICLES {
+                    add_vehicle(world, kind, position, yaw);
+                    used[index] = true;
+                    added += 1;
+                    placed += 1;
+                }
             }
         }
         tracing::info!(vehicles = placed, "vehicles placed");
@@ -691,18 +707,20 @@ impl Mechanic for Vehicles {
                         let buttons = input.buttons();
                         let held = |button: u16| buttons & button != 0;
                         // A Roadster boosts on run and hops (then hovers) on jump, so its handbrake is on crouch.
+                        // A hen leaps, then flaps or glides, on jump.
                         let roadster = vehicle.kind == KIND_ROADSTER;
+                        let hen = vehicle.kind == KIND_HEN;
                         CarControls {
                             steer: from_axis(input.strafe),
                             throttle: from_axis(input.forward),
-                            handbrake: if roadster { held(BUTTON_CROUCH) } else { held(BUTTON_JUMP) },
+                            handbrake: if roadster { held(BUTTON_CROUCH) } else { !hen && held(BUTTON_JUMP) },
                             // A helicopter climbs on jump and sinks on run.
-                            lift: if roadster { 0.0 } else { f32::from(held(BUTTON_JUMP)) - f32::from(held(BUTTON_RUN)) },
+                            lift: if roadster || hen { 0.0 } else { f32::from(held(BUTTON_JUMP)) - f32::from(held(BUTTON_RUN)) },
                             powered: true,
                             // A plane and a drone fly towards where their pilot looks.
                             aim: matches!(vehicle.kind, KIND_PLANE | KIND_DRONE).then(|| [shared::quant::from_mrad(input.yaw), shared::quant::from_mrad(input.pitch())]),
                             boost: roadster && held(BUTTON_RUN),
-                            hop: roadster && held(BUTTON_JUMP),
+                            hop: (roadster || hen) && held(BUTTON_JUMP),
                         }
                     }
                     None => CarControls { handbrake: true, ..Default::default() },
@@ -742,7 +760,7 @@ impl Mechanic for Vehicles {
                 vehicle.turret_hp = TANK_TURRET_HP;
                     vehicle.turret_hp = TANK_TURRET_HP;
                     vehicle.last_attacker = None;
-                    vehicle.arms = vehicle.arms.map(|_| PlaneArms::default());
+                    vehicle.arms = vehicle.arms.map(|_| PlaneArms::fresh(vehicle.kind));
                     world.physics.reset_car(vid, vehicle.home.0, vehicle.home.1);
                 }
             } else if y < KILL_Y {
@@ -750,13 +768,13 @@ impl Mechanic for Vehicles {
                 vehicle.hp = vehicle_hp(vehicle.kind);
                 vehicle.damage = [0; 8];
                 vehicle.turret_hp = TANK_TURRET_HP;
-                vehicle.arms = vehicle.arms.map(|_| PlaneArms::default());
+                vehicle.arms = vehicle.arms.map(|_| PlaneArms::fresh(vehicle.kind));
                 world.physics.reset_car(vid, vehicle.home.0, vehicle.home.1);
             } else if vehicle.stuck_ticks >= UNFLIP_TICKS {
-                // A walker is put back on its feet: its hull is as high as its legs, and its leg boxes
-                // would be buried if it were set down a car's height above where it lies.
-                let rise = if vehicle.kind == KIND_WALKER {
-                    world.map.ground.height_at(x, z) + WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1] - y
+                // A walker or a hen is put back on its feet: its hull is as high as its legs, and its leg
+                // boxes would be buried if it were set down a car's height above where it lies.
+                let rise = if matches!(vehicle.kind, KIND_WALKER | KIND_HEN) {
+                    world.map.ground.height_at(x, z) + drop_height(vehicle.kind) - y
                 } else {
                     1.2
                 };

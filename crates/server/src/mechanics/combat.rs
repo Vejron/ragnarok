@@ -7,8 +7,8 @@ use crate::game::{Player, Rocket, TEAM_NONE, World, starting_hotbar};
 use crate::physics::Obj;
 use shared::consts::*;
 use shared::items::*;
-use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, KIND_PLANE, Kill, S_HIT, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, BulletSpawn, WEAPON_BULLET, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_PELLET, WEAPON_ROADKILL, WEAPON_WRECK,
-    DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_SHELL};
+use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, KIND_PLANE, Kill, S_HIT, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_EGG, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, BulletSpawn, WEAPON_BULLET, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_PELLET, WEAPON_ROADKILL, WEAPON_WRECK,
+    DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_EGG, WEAPON_SHELL};
 use shared::quant::{from_mrad, to_cm, to_cm_i16, to_mrad};
 
 /// Health, death, the items in the hotbar and what blasts do to people and vehicles.
@@ -204,7 +204,7 @@ pub fn damage_hit(world: &mut World, victim: u32, amount: u8, attacker: Option<u
     }
     let style = match weapon {
         WEAPON_ROADKILL => DEATH_ROADKILL,
-        WEAPON_ROCKET | WEAPON_SHELL | WEAPON_WRECK | WEAPON_GRENADE | WEAPON_AUTOCANNON | WEAPON_BOMB | WEAPON_DRONE => DEATH_BLAST,
+        WEAPON_ROCKET | WEAPON_SHELL | WEAPON_WRECK | WEAPON_GRENADE | WEAPON_AUTOCANNON | WEAPON_BOMB | WEAPON_DRONE | WEAPON_EGG => DEATH_BLAST,
         _ if head => DEATH_HEAD,
         _ if lost > 0 && amount > before.saturating_mul(2) => DEATH_OVERKILL,
         _ => DEATH_BODY,
@@ -642,7 +642,7 @@ fn step_rockets(world: &mut World, dt: f32) {
     let ids: Vec<u32> = world.rockets.keys().copied().collect();
     for id in ids {
         let Some(rocket) = world.rockets.get(&id).copied() else { continue };
-        if rocket.kind == PROJECTILE_GRENADE {
+        if rocket.kind == PROJECTILE_GRENADE || rocket.kind == PROJECTILE_EGG {
             step_grenade(world, id, dt);
             continue;
         }
@@ -881,27 +881,25 @@ fn throw_grenade(world: &mut World, id: u32) {
     );
 }
 
+/// A grenade or a hen's egg going off where it lies.
 fn burst_grenade(world: &mut World, grenade: &Rocket) {
+    let egg = grenade.kind == PROJECTILE_EGG;
+    let weapon = if egg { WEAPON_EGG } else { WEAPON_GRENADE };
     let [x, y, z] = grenade.position.map(to_cm);
-    world.shots.push(ShotEvent { shooter: grenade.owner, weapon: WEAPON_GRENADE, x, y, z });
+    world.shots.push(ShotEvent { shooter: grenade.owner, weapon, x, y, z });
     let attacker = world.players.contains_key(&grenade.owner).then_some(grenade.owner);
-    blast(
-        world,
-        Blast {
-            point: grenade.position,
-            radius: GRENADE_BLAST_RADIUS,
-            damage: GRENADE_DAMAGE,
-            knock: GRENADE_KNOCK,
-            dir: [0.0, 1.0, 0.0],
-            attacker,
-            weapon: WEAPON_GRENADE,
-        },
-    );
+    let (radius, damage, knock) = if egg { (HEN_EGG_BLAST_RADIUS, HEN_EGG_DAMAGE, HEN_EGG_KNOCK) } else { (GRENADE_BLAST_RADIUS, GRENADE_DAMAGE, GRENADE_KNOCK) };
+    blast(world, Blast { point: grenade.position, radius, damage, knock, dir: [0.0, 1.0, 0.0], attacker, weapon });
 }
 
 /// Flies one grenade a tick: gravity, a bounce off whatever it meets, and a burst when the fuse is out.
+/// A hen's egg flies the same way, a little bigger and bouncing less, and also bursts the moment it
+/// meets something harder than `HEN_EGG_SMASH_SPEED`.
 fn step_grenade(world: &mut World, id: u32, dt: f32) {
     let Some(mut grenade) = world.rockets.get(&id).copied() else { return };
+    let egg = grenade.kind == PROJECTILE_EGG;
+    let (radius, bounce) = if egg { (HEN_EGG_RADIUS, HEN_EGG_BOUNCE) } else { (GRENADE_RADIUS, GRENADE_BOUNCE) };
+    let mut smashed = false;
     grenade.ttl = grenade.ttl.saturating_sub(1);
     grenade.velocity[1] -= GRAVITY * dt;
     let mut remaining = dt;
@@ -913,13 +911,17 @@ fn step_grenade(world: &mut World, id: u32, dt: f32) {
         }
         let dir = grenade.velocity.map(|v| v / speed);
         let step = speed * remaining;
-        match world.physics.cast_ray_normal(grenade.position, dir, step + GRENADE_RADIUS) {
+        match world.physics.cast_ray_normal(grenade.position, dir, step + radius) {
             Some((t, normal)) => {
-                let travel = (t - GRENADE_RADIUS).clamp(0.0, step);
+                let travel = (t - radius).clamp(0.0, step);
                 grenade.position = std::array::from_fn(|i| grenade.position[i] + dir[i] * travel);
                 // Reflect, keeping some of the speed, and rolling to rest on a floor.
                 let along: f32 = (0..3).map(|i| grenade.velocity[i] * normal[i]).sum();
-                grenade.velocity = std::array::from_fn(|i| (grenade.velocity[i] - 2.0 * along * normal[i]) * GRENADE_BOUNCE);
+                if egg && -along > HEN_EGG_SMASH_SPEED {
+                    smashed = true;
+                    break;
+                }
+                grenade.velocity = std::array::from_fn(|i| (grenade.velocity[i] - 2.0 * along * normal[i]) * bounce);
                 if grenade.velocity.iter().map(|v| v * v).sum::<f32>() < 0.5 {
                     grenade.velocity = [0.0; 3];
                 }
@@ -931,7 +933,7 @@ fn step_grenade(world: &mut World, id: u32, dt: f32) {
             }
         }
     }
-    if grenade.ttl == 0 || grenade.position[1] < KILL_Y {
+    if smashed || grenade.ttl == 0 || grenade.position[1] < KILL_Y {
         world.rockets.remove(&id);
         burst_grenade(world, &grenade);
     } else {

@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 34
+export const PROTOCOL_VERSION = 35
 
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
@@ -494,6 +494,85 @@ export const WALKER_GUN_BARREL_X = 0.3
 export const WALKER_GUN_BARREL_DROP = 1.0
 export const WALKER_GUN_COOLDOWN_TICKS = Math.trunc(TICK_RATE / 4)
 export const WALKER_GUN_SPREAD = 0.01
+
+/**
+ * The hen (`KIND_HEN`): a giant robot hen on the walker's legs, one driver in a cockpit on its back. It
+ * walks and balances exactly as the walker does (the `WALKER_*` legs, spring and balance), and adds
+ * wings: a leap off the ground (Space), flapping that holds a slow climb while Space stays held in the
+ * air, and a glide that holds its fall to a slow sink once the flapping has run out. Jumping and
+ * flapping drain the wings' stamina, which comes back while it stands with Space let go.
+ */
+export const HEN_SEATS = 1
+export const HEN_HALF_EXTENTS = WALKER_HALF_EXTENTS
+
+/** The wings' stamina, as a share of full. */
+export const HEN_STAMINA = 1.0
+
+/**
+ * Upward speed a leap adds, m/s (about a 6 m leap), plus this much along its heading at full stick
+ * (half of it backwards), and the stamina it costs.
+ */
+export const HEN_JUMP_SPEED = 11.0
+export const HEN_JUMP_FORWARD = 6.0
+export const HEN_JUMP_COST = 0.2
+
+/**
+ * Flapping, once the leap has topped out, holds this upward speed, m/s, chasing it this hard (per
+ * second) by at most this much on top of gravity's worth, m/s², and uses this share of the stamina
+ * per second: about three seconds of it.
+ */
+export const HEN_FLAP_CLIMB = 1.5
+export const HEN_FLAP_GAIN = 3.0
+export const HEN_FLAP_ACCEL = 6.0
+export const HEN_FLAP_DRAIN = 0.33
+
+/**
+ * Held in the air, the wings carry it forward towards this speed at full stick, m/s, by at most
+ * this much, m/s².
+ */
+export const HEN_GLIDE_SPEED = 12.0
+export const HEN_GLIDE_ACCEL = 4.0
+
+/**
+ * With no stamina left the wings spread and hold its fall to this sink, m/s, chasing it this hard,
+ * per second.
+ */
+export const HEN_GLIDE_SINK = 4.0
+export const HEN_GLIDE_GAIN = 3.0
+
+/**
+ * In the air the wings keep it level, leaning it this far (radians, roughly) with the stick, levelling
+ * it this hard and this fast (per second), and turn it at this yaw rate, rad/s.
+ */
+export const HEN_AIR_TILT = 0.2
+export const HEN_AIR_LEVEL = 4.0
+export const HEN_AIR_RESPONSE = 6.0
+export const HEN_AIR_YAW = 1.2
+
+/** Stamina comes back at this share per second while a foot is down and Space is let go. */
+export const HEN_STAMINA_REFILL = 0.35
+
+/**
+ * Eggs: a clutch of `HEN_EGGS`, laid one at most every `HEN_EGG_COOLDOWN_TICKS` from `HEN_VENT` (hull
+ * frame, under the tail) with the hull's velocity and `HEN_EGG_TOSS` m/s backwards, and one growing back
+ * every `HEN_EGG_REGROW_TICKS`. An egg falls and bounces like a grenade (`HEN_EGG_RADIUS`, keeping
+ * `HEN_EGG_BOUNCE` of its speed), bursts when `HEN_EGG_FUSE_TICKS` run out, and at once when it meets
+ * something at more than `HEN_EGG_SMASH_SPEED` m/s, which a laid egg never does but a dropped one does.
+ */
+export const HEN_EGGS = 6
+export const HEN_EGG_COOLDOWN_TICKS = Math.trunc(TICK_RATE / 2)
+export const HEN_EGG_REGROW_TICKS = TICK_RATE * 4
+export const HEN_VENT = [0.0, -1.0, 2.0] as const
+export const HEN_EGG_TOSS = 3.0
+export const HEN_EGG_RADIUS = 0.35
+export const HEN_EGG_BOUNCE = 0.3
+export const HEN_EGG_FUSE_TICKS = TICK_RATE * 2
+export const HEN_EGG_SMASH_SPEED = 16.0
+
+/** An egg's blast, as a plane's bomb. */
+export const HEN_EGG_BLAST_RADIUS = 6.0
+export const HEN_EGG_DAMAGE = 110.0
+export const HEN_EGG_KNOCK = 16.0
 
 /**
  * The helicopter: a hull flown by a pilot (seat 0) with a gunner (seat 1) on the nose gun. There are no

@@ -25,8 +25,8 @@ export interface HudStats {
   /** A hint for the key that does something right now, or null. */
   prompt: string | null
   /** Set while in a vehicle: the seat's role. A plane's pilot is an aviator; a helicopter's, a pilot. */
-  seat: 'driver' | 'roadster' | 'pilot' | 'aviator' | 'walker' | 'strv' | 'mortar' | 'drone' | 'passenger' | 'gunner' | null
-  /** A Roadster's driver: what is left in the air tank, 0..1; null elsewhere. */
+  seat: 'driver' | 'roadster' | 'pilot' | 'aviator' | 'walker' | 'hen' | 'strv' | 'mortar' | 'drone' | 'passenger' | 'gunner' | null
+  /** A Roadster's driver: what is left in the air tank, 0..1; a hen's: its wings' stamina; null elsewhere. */
   air: number | null
   /** Flying a drone: its battery, 0..1, and the link's strength, 1 at the pilot's side to 0 at the edge of its range; null otherwise. */
   drone: { battery: number; signal: number } | null
@@ -43,6 +43,8 @@ export interface HudStats {
   jammed: boolean
   /** A plane's pilot: bombs left on the rack, or null elsewhere. */
   bombs: number | null
+  /** A hen's driver: eggs left in the clutch, or null elsewhere. */
+  eggs: number | null
   /** A plane's pilot: flying too slowly for the wings. */
   stall: boolean
   hp: number

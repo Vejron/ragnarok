@@ -4,9 +4,9 @@
  * and models in `render/`.
  */
 
-import { KIND_DRONE, KIND_HELI, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
+import { KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
 import {
-  CAR_SEATS, DRONE_HALF_EXTENTS, DRONE_SEATS, HELI_HALF_EXTENTS, HELI_SEATS, JEEP_AXLE_Z, JEEP_HALF_EXTENTS, JEEP_TRACK_HALF, MORTAR_HALF_EXTENTS, MORTAR_SEATS, PLANE_HALF_EXTENTS, PLANE_SEATS,
+  CAR_SEATS, DRONE_HALF_EXTENTS, DRONE_SEATS, HELI_HALF_EXTENTS, HELI_SEATS, HEN_HALF_EXTENTS, HEN_SEATS, JEEP_AXLE_Z, JEEP_HALF_EXTENTS, JEEP_TRACK_HALF, MORTAR_HALF_EXTENTS, MORTAR_SEATS, PLANE_HALF_EXTENTS, PLANE_SEATS,
   ROADSTER_AXLE_Z, ROADSTER_HALF_EXTENTS, ROADSTER_SEATS, ROADSTER_TRACK_HALF,
   SPORTS_AXLE_Z, SPORTS_HALF_EXTENTS, SPORTS_SEATS, SPORTS_TRACK_HALF, STRV_HALF_EXTENTS, STRV_SEATS, TANK_HALF_EXTENTS, TANK_SEATS, WALKER_HALF_EXTENTS, WALKER_SEATS,
 } from './consts'
@@ -22,7 +22,7 @@ export interface VehicleDef {
   halfExtents: readonly [number, number, number]
   /** Has a turret or mounted gun the gunner aims. */
   gun: boolean
-  /** Has a plane's pilot weapons (forward guns that heat and jam, bombs). */
+  /** Has a plane's pilot weapons (forward guns that heat and jam, bombs). A hen's eggs are its bombs. */
   arms: boolean
   /** A car's four wheels, which can be bent and lost; `trackHalf` and `axleZ` place them. */
   carWheels: boolean
@@ -43,6 +43,7 @@ export const VEHICLES: readonly VehicleDef[] = [
   { kind: KIND_MORTAR, name: 'Field mortar', hp: 150, seats: MORTAR_SEATS, halfExtents: MORTAR_HALF_EXTENTS, ...none, gun: true },
   { kind: KIND_ROADSTER, name: 'Roadster', hp: 100, seats: ROADSTER_SEATS, halfExtents: ROADSTER_HALF_EXTENTS, ...none, carWheels: true, trackHalf: ROADSTER_TRACK_HALF, axleZ: ROADSTER_AXLE_Z },
   { kind: KIND_DRONE, name: 'FPV drone', hp: 1, seats: DRONE_SEATS, halfExtents: DRONE_HALF_EXTENTS, ...none },
+  { kind: KIND_HEN, name: 'Hen', hp: 180, seats: HEN_SEATS, halfExtents: HEN_HALF_EXTENTS, ...none, arms: true },
 ]
 
 /** The definition of a vehicle `kind`. Unknown kinds are jeeps. */
@@ -50,6 +51,9 @@ export const vehicleDef = (kind: number | undefined): VehicleDef => VEHICLES.fin
 
 /** The seat whose occupant aims and fires `kind`'s gun: seat 1, or the driver's seat 0 where there is only one. Mirrors `gun_seat`. */
 export const gunSeat = (kind: number | undefined): number => (vehicleDef(kind).seats === 1 ? 0 : 1)
+
+/** A walker or a hen: a hull on two spring legs, boarded from between its feet. */
+export const isLegged = (kind: number | undefined): boolean => kind === KIND_WALKER || kind === KIND_HEN
 
 /** A tracked tank: the tank or the Strv S, which turn on the spot, rut soft ground and rumble alike. */
 export const isTracked = (kind: number | undefined): boolean => kind === KIND_TANK || kind === KIND_STRV

@@ -6,7 +6,7 @@ use crate::game::{Gun, PlaneArms, Rocket, World};
 use crate::physics::CarPose;
 use shared::consts::*;
 use shared::items::Falloff;
-use shared::protocol::{DAMAGE_TURRET, TURRET_GONE, KIND_HELI, KIND_MORTAR, KIND_PLANE, KIND_STRV, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, ShotEvent, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_MG, WEAPON_MORTAR, WEAPON_SHELL};
+use shared::protocol::{DAMAGE_TURRET, TURRET_GONE, KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_PLANE, KIND_STRV, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, ShotEvent, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_MG, WEAPON_MORTAR, WEAPON_SHELL};
 use shared::quant::{from_mrad, to_cm, wrap_angle};
 
 /// Vehicle guns: the gunner's look direction aims the gun, and the fire button shoots it.
@@ -15,7 +15,7 @@ use shared::quant::{from_mrad, to_cm, wrap_angle};
 /// rounds are shells in miniature. A plane's pilot fires two forward machine guns and drops bombs,
 /// and its gunner works a machine gun on a ring behind them (see `work_cockpit` and `work_ring`). A walker's
 /// driver aims and fires its chin guns (see `work_walker_guns`), and a Strv S's driver its fixed main gun
-/// (see `work_driver_cannon`). A tank's seat 1 is its gunner. Their input drives the turret instead of anything on foot, while
+/// (see `work_driver_cannon`). A hen's driver lays egg bombs (see `work_hen`). A tank's seat 1 is its gunner. Their input drives the turret instead of anything on foot, while
 /// the driver keeps the hull. The turret is stabilised: it follows the gunner's *world* heading
 /// at a limited slew rate, so turning the hull does not drag the aim around. A shell is a
 /// projectile: it leaves the muzzle at `SHELL_SPEED`, falls under gravity, and explodes at the first
@@ -373,6 +373,44 @@ fn work_cockpit(world: &mut World, vid: u32, mut arms: PlaneArms, pose: &CarPose
     arms
 }
 
+/// One tick of a hen's clutch for its driver in seat 0: fire lays an egg from under the tail, with the
+/// hull's velocity and a little backwards, one every `HEN_EGG_COOLDOWN_TICKS`. An egg is a projectile of
+/// its own that bounces until its fuse runs out (see `combat::step_grenade`). A clutch that is not full
+/// grows one back every `HEN_EGG_REGROW_TICKS`, laying or not. A fallen hen lays nothing.
+fn work_hen(world: &mut World, vid: u32, mut arms: PlaneArms, pose: &CarPose) -> PlaneArms {
+    arms.bomb_cooldown = arms.bomb_cooldown.saturating_sub(1);
+    arms.rearm = if arms.bombs < HEN_EGGS { arms.rearm + 1 } else { 0 };
+    if arms.rearm >= HEN_EGG_REGROW_TICKS {
+        arms.bombs += 1;
+        arms.rearm = 0;
+    }
+    let Some(driver) = world.vehicles[&vid].seats[0] else { return arms };
+    let Some(buttons) = world.players.get(&driver).map(|player| player.input.buttons()) else { return arms };
+    if buttons & BUTTON_FIRE == 0 || arms.bomb_cooldown > 0 || arms.bombs == 0 || pose.up_y < WALKER_FALLEN_UP {
+        return arms;
+    }
+    let toss = pose.world_dir([0.0, 0.0, HEN_EGG_TOSS]);
+    let id = world.alloc_id();
+    world.rockets.insert(
+        id,
+        Rocket {
+            kind: PROJECTILE_EGG,
+            owner: driver,
+            source: vid,
+            position: pose.world_point(HEN_VENT),
+            velocity: std::array::from_fn(|i| pose.velocity[i] + toss[i]),
+            ttl: HEN_EGG_FUSE_TICKS,
+            item: 0,
+            back: 0,
+            flown: 0.0,
+        },
+    );
+    arms.bombs -= 1;
+    arms.shots = arms.shots.wrapping_add(1);
+    arms.bomb_cooldown = HEN_EGG_COOLDOWN_TICKS;
+    arms
+}
+
 /// One tick of a plane's ring mount for its gunner in seat 1. The gunner's look direction, taken into
 /// the hull's frame, turns the ring all the way round and lifts the barrel within its travel; it holds
 /// fire while it points within `PLANE_REAR_DEAD_ZONE` of the nose, at the pilot.
@@ -469,6 +507,15 @@ impl Mechanic for Gunnery {
             }
             if let Some(vehicle) = world.vehicles.get_mut(&vid) {
                 vehicle.gun = Some(gun);
+            }
+        }
+        // A hen has no gun, only its eggs.
+        let hens: Vec<u32> = world.vehicles.iter().filter(|(_, vehicle)| vehicle.kind == KIND_HEN).map(|(&id, _)| id).collect();
+        for vid in hens {
+            let (Some(arms), Some(pose)) = (world.vehicles[&vid].arms, world.physics.car_pose(vid)) else { continue };
+            let arms = work_hen(world, vid, arms, &pose);
+            if let Some(vehicle) = world.vehicles.get_mut(&vid) {
+                vehicle.arms = Some(arms);
             }
         }
     }

@@ -1,6 +1,6 @@
 use super::*;
 use shared::consts::TICK_DT;
-use shared::protocol::{KIND_HELI, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_TANK, KIND_WALKER};
+use shared::protocol::{KIND_HELI, KIND_HEN, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_TANK, KIND_WALKER};
 use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 
 fn flat() -> WorldFile {
@@ -1195,6 +1195,128 @@ fn scripted_thrust_matches_fixture() {
             let position = physics.car_pose(1).unwrap().position;
             let close = position.iter().zip(expected).all(|(a, e)| (a - e).abs() < 0.001) && (tank(&physics) - air).abs() < 0.001;
             assert!(close, "tick {done}: {position:?} tank {}", tank(&physics));
+        }
+    }
+}
+
+fn hen() -> Physics {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_HEN, [0.0, 5.4, 0.0], 0.0);
+    run(&mut physics, DRIVEN, 120);
+    physics
+}
+
+fn stamina(physics: &Physics) -> f32 {
+    physics.car_thrust(1).unwrap().0
+}
+
+/// How much higher than it stood the hen got, and how many ticks it had no foot down, over `ticks`
+/// ticks of `controls` (then none) out of 700.
+fn flight(controls: CarControls, ticks: u32) -> (f32, u32, Physics) {
+    let mut physics = hen();
+    let start = physics.car_pose(1).unwrap().position[1];
+    let (mut top, mut airborne) = (start, 0);
+    for tick in 0..700 {
+        let pose = run(&mut physics, if tick < ticks { controls } else { DRIVEN }, 1);
+        top = top.max(pose.position[1]);
+        assert!(pose.up_y > 0.9, "the wings keep it level: {pose:?}");
+        if physics.car_thrust(1).unwrap().1 & THRUST_AIR != 0 {
+            airborne += 1;
+        }
+    }
+    (top - start, airborne, physics)
+}
+
+#[test]
+fn a_hen_stands_on_the_walkers_legs_with_full_stamina() {
+    let physics = hen();
+    let pose = physics.car_pose(1).unwrap();
+    assert!(pose.up_y > 0.99 && (pose.position[1] - (WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1])).abs() < 0.6, "{pose:?}");
+    assert_eq!(physics.car_thrust(1), Some((HEN_STAMINA, 0)));
+}
+
+#[test]
+fn a_tap_of_jump_is_one_leap_that_lands_on_its_feet() {
+    let (rise, airborne, physics) = flight(CarControls { hop: true, ..DRIVEN }, 1);
+    assert!((5.0..7.5).contains(&rise), "leapt {rise} m");
+    assert!((100..160).contains(&airborne), "{airborne} ticks in the air");
+    let pose = physics.car_pose(1).unwrap();
+    assert!(pose.up_y > 0.99 && pose.velocity.iter().all(|v| v.abs() < 0.2), "landed and stood: {pose:?}");
+    assert_eq!(stamina(&physics), HEN_STAMINA, "and got its breath back");
+}
+
+#[test]
+fn holding_jump_flaps_higher_then_glides_down_slowly() {
+    let hold = CarControls { hop: true, ..DRIVEN };
+    let (leap, leap_air, _) = flight(hold, 1);
+    let (rise, airborne, _) = flight(hold, 700);
+    assert!(rise > leap + 2.0, "flapping climbs past the leap: {rise} vs {leap}");
+    assert!(airborne > leap_air * 2, "and stays up much longer: {airborne} vs {leap_air}");
+
+    let mut physics = hen();
+    run(&mut physics, hold, 60);
+    assert_eq!(physics.car_thrust(1).unwrap().1, THRUST_AIR | THRUST_LIFT, "flapping");
+    run(&mut physics, hold, 200);
+    assert_eq!(stamina(&physics), 0.0, "until it runs out of breath");
+    let pose = run(&mut physics, hold, 60);
+    assert_eq!(physics.car_thrust(1).unwrap().1, THRUST_AIR | THRUST_GLIDE, "then gliding");
+    assert!((pose.velocity[1] + HEN_GLIDE_SINK).abs() < 0.3, "at the glide's sink: {pose:?}");
+}
+
+#[test]
+fn the_wings_carry_it_forward_and_stamina_comes_back_on_the_ground() {
+    let (_, _, physics) = flight(CarControls { hop: true, throttle: 1.0, ..DRIVEN }, 420);
+    let pose = physics.car_pose(1).unwrap();
+    assert!(-pose.position[2] > 60.0, "flew forward: {pose:?}");
+    let mut physics = hen();
+    run(&mut physics, CarControls { hop: true, ..DRIVEN }, 200);
+    let drained = stamina(&physics);
+    run(&mut physics, DRIVEN, 300);
+    assert!(stamina(&physics) > drained + 0.5, "refilled from {drained} to {}", stamina(&physics));
+    physics.reset_car(1, [0.0, 5.4, 0.0], 0.0);
+    assert_eq!(stamina(&physics), HEN_STAMINA);
+}
+
+#[test]
+fn an_empty_or_wrecked_hen_does_not_leap() {
+    let mut physics = hen();
+    run(&mut physics, CarControls { hop: true, ..CarControls::IDLE }, 30);
+    assert!(physics.car_pose(1).unwrap().velocity[1].abs() < 0.2, "nobody aboard");
+    physics.set_car_condition(1, CarCondition { power: 0.5, ..CarCondition::NEW });
+    run(&mut physics, CarControls { hop: true, ..DRIVEN }, 30);
+    assert_eq!(stamina(&physics), HEN_STAMINA, "a wreck");
+}
+
+/// A scripted hen run (walk, leap, flap, glide, land), for the fixture in `vehicle.spec.ts`.
+fn scripted_hen(tick: u32) -> CarControls {
+    match tick / 60 {
+        0 | 1 => DRIVEN,
+        2 => CarControls { throttle: 1.0, ..DRIVEN },
+        3..=7 => CarControls { hop: true, throttle: 1.0, steer: 0.3, ..DRIVEN },
+        _ => DRIVEN,
+    }
+}
+
+/// `(tick, position, stamina)` after `scripted_hen`, mirrored in `vehicle.spec.ts`.
+const HEN_CHECKPOINTS: [(u32, [f32; 3], f32); 4] = [
+    (180, [0.0000, 5.2071, -2.2903], 1.0000),
+    (240, [0.0279, 11.1432, -13.4641], 0.7835),
+    (420, [4.6358, 13.9028, -50.7188], 0.0000),
+    (600, [20.7118, 5.2639, -82.4246], 0.4608),
+];
+
+#[test]
+fn scripted_hen_matches_fixture() {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_HEN, [0.0, 5.4, 0.0], 0.0);
+    for tick in 0..600 {
+        physics.drive_car(1, scripted_hen(tick), TICK_DT);
+        physics.step_cars(TICK_DT);
+        let done = tick + 1;
+        if let Some((_, expected, left)) = HEN_CHECKPOINTS.iter().find(|(t, _, _)| *t == done) {
+            let position = physics.car_pose(1).unwrap().position;
+            let close = position.iter().zip(expected).all(|(a, e)| (a - e).abs() < 0.001) && (stamina(&physics) - left).abs() < 0.001;
+            assert!(close, "tick {done}: {position:?} stamina {}", stamina(&physics));
         }
     }
 }

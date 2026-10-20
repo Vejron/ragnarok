@@ -1,4 +1,4 @@
-import { KIND_DRONE, KIND_HELI, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
+import { KIND_DRONE, KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
 import { JEEP_MAX_SPEED, ROADSTER_MAX_SPEED, SPORTS_MAX_SPEED, STRV_MAX_SPEED, TANK_MAX_SPEED } from './consts'
 import { SURFACE_ASPHALT, SURFACE_GRASS, SURFACE_WATER } from './surface'
 
@@ -144,8 +144,8 @@ export function mixOf(input: SoundInput): SoundMix {
     pitch: 40, engine: 0, tone: 400, chop: 0, chopLevel: 0, stutter: 0, squeal: 0, squealHz: 1200, ground: 0, groundHz: 600, hiss: 0, rattle: 0, fire: !alive, cut: false,
   }
   if (!alive) return quiet
-  // A walker has no engine to hum, no tyres on the ground: its feet are heard by the footfalls. A mortar is towed, with no engine at all.
-  if (kind === KIND_WALKER || kind === KIND_MORTAR) return quiet
+  // A walker or a hen has no engine to hum, no tyres on the ground: its feet are heard by the footfalls. A mortar is towed, with no engine at all.
+  if (kind === KIND_WALKER || kind === KIND_HEN || kind === KIND_MORTAR) return quiet
   const lost = input.wheels ? input.wheels.filter((wear) => wear >= 255).length : 0
   const bent = input.wheels ? input.wheels.filter((wear) => wear >= 128 && wear < 255).length : 0
   const mix: SoundMix = { ...quiet }

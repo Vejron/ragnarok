@@ -10,6 +10,8 @@ const MORTAR = 6
 const CANNON = 3
 const BULLET = 4
 const BOMB = 5
+/** `PROJECTILE_EGG`: a hen's egg. */
+const EGG = 7
 
 /** The projectiles in flight: a glowing missile or a tank shell pointed along its velocity, or a tumbling grenade. Their trails are `ProjectileTrails`. */
 export class Rockets {
@@ -30,6 +32,9 @@ export class Rockets {
   private readonly fins = boxGeometry(0.2, 0.1, 0.02)
   private readonly bombMaterial = toonMaterial({ color: 0x2b2b26 })
   private readonly ballMaterial = toonMaterial({ color: 0x4f5d2e })
+  /** A hen's egg: a giant cream one (`HEN_EGG_RADIUS` across the middle), taller than it is wide, and rocking as it rolls. */
+  private readonly egg = sphereGeometry(0.35, 12, 9)
+  private readonly eggMaterial = toonMaterial({ color: 0xf6efdc })
   private readonly meshes = new Map<number, Mesh>()
   private readonly up = new THREE.Vector3(0, 1, 0)
 
@@ -38,7 +43,10 @@ export class Rockets {
     let mesh = this.meshes.get(id)
     if (!mesh) {
       if (kind === GRENADE) mesh = new Mesh(this.ball, this.ballMaterial)
-      else if (kind === BOMB) {
+      else if (kind === EGG) {
+        mesh = new Mesh(this.egg, this.eggMaterial)
+        mesh.scale.set(1, 1.3, 1)
+      } else if (kind === BOMB) {
         mesh = new Mesh(this.bomb, this.bombMaterial)
         for (const turn of [0, Math.PI / 2]) {
           const fin = new Mesh(this.fins, this.bombMaterial)
@@ -59,6 +67,12 @@ export class Rockets {
     mesh.position.set(...position)
     if (kind === GRENADE) {
       mesh.rotation.x += 0.25
+      return
+    }
+    if (kind === EGG) {
+      // It rocks as it rolls, faster the faster it goes, and stands on end when still.
+      const speed = Math.hypot(...velocity)
+      mesh.rotation.z = Math.sin(performance.now() / 90) * Math.min(0.5, speed * 0.08)
       return
     }
     const heading = new THREE.Vector3(...velocity)
@@ -87,6 +101,8 @@ export class Rockets {
     this.bulletMaterial.dispose()
     this.ball.dispose()
     this.ballMaterial.dispose()
+    this.egg.dispose()
+    this.eggMaterial.dispose()
     this.bomb.dispose()
     this.fins.dispose()
     this.bombMaterial.dispose()

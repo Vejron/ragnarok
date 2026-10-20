@@ -19,7 +19,8 @@
     "8": {"name": "Strv S", "hp": 220, "seats": 1, "halfExtents": [1.3, 0.45, 2.7], "gun": true, "arms": false, "carWheels": false, "trackHalf": 0, "axleZ": 0},
     "9": {"name": "Field mortar", "hp": 150, "seats": 1, "halfExtents": [1, 0.5, 1.5], "gun": true, "arms": false, "carWheels": false, "trackHalf": 0, "axleZ": 0},
     "10": {"name": "Roadster", "hp": 100, "seats": 2, "halfExtents": [0.95, 0.3, 2.2], "gun": false, "arms": false, "carWheels": true, "trackHalf": 0.82, "axleZ": 1.45},
-    "11": {"name": "FPV drone", "hp": 1, "seats": 1, "halfExtents": [0.22, 0.06, 0.22], "gun": false, "arms": false, "carWheels": false, "trackHalf": 0, "axleZ": 0}
+    "11": {"name": "FPV drone", "hp": 1, "seats": 1, "halfExtents": [0.22, 0.06, 0.22], "gun": false, "arms": false, "carWheels": false, "trackHalf": 0, "axleZ": 0},
+    "12": {"name": "Hen", "hp": 180, "seats": 1, "halfExtents": [1, 1.2, 1.8], "gun": false, "arms": true, "carWheels": false, "trackHalf": 0, "axleZ": 0}
   },
   "treeKinds": {
     "0": {"name": "Birch", "radius": 15, "refHeight": 1200, "radiusPctOfCrown": 0, "maxRadius": 60, "colliderHeightPct": 50, "destructible": true},

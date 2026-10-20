@@ -405,12 +405,20 @@ impl Default for PlaneArms {
     }
 }
 
+impl PlaneArms {
+    /// A full rack for a vehicle of `kind`: a plane's bombs, or a hen's clutch of eggs.
+    pub fn fresh(kind: u8) -> Self {
+        PlaneArms { bombs: if kind == KIND_HEN { HEN_EGGS } else { PLANE_BOMBS }, ..PlaneArms::default() }
+    }
+}
+
 /// A gun's heat as the wire carries it.
 pub(super) fn heat_byte(heat: f32) -> u8 {
     heat.round().clamp(0.0, 255.0) as u8
 }
 
-/// A Roadster's air tank on the wire: 0..=255 of full. Mirrored by `airOf` in `vehicle.ts`.
+/// A Roadster's air tank, or a hen's stamina, on the wire: 0..=255 of full (`ROADSTER_AIR` and
+/// `HEN_STAMINA` are both 1). Mirrored by `airOf` in `vehicle.ts`.
 pub(super) fn air_byte(tank: f32) -> u8 {
     (tank / ROADSTER_AIR * 255.0).round().clamp(0.0, 255.0) as u8
 }

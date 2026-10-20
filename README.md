@@ -16,6 +16,7 @@ A browser multiplayer game: goofy stickmen in a real city built from OpenStreetM
 - [VEHICLES-III.md](VEHICLES-III.md): handling, tyre effects, crash damage and vehicle sound
 - [VEHICLES-IV.md](VEHICLES-IV.md): the Fokker triplane: flight, guns, bombs, model and sound
 - [VEHICLES-VI.md](VEHICLES-VI.md): the Tesla Roadster: cold-gas boost, hop and hover
+- [VEHICLES-VII.md](VEHICLES-VII.md): the hen: a giant robot hen on the walker's legs that leaps, flaps, glides and lays egg bombs
 
 ## Requirements
 

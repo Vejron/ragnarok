@@ -10,7 +10,7 @@ import {
 import { halfExtentsOf } from './kinds'
 import type { TileGround } from './terrain'
 import { beginSlide, decayKnock, desiredTranslation, f32, settleVertical, steerChute, toggleChute } from './movement'
-import { DAMAGE_TURRET, fromMrad, KIND_PLANE, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, type InputFrame, type VehicleState } from '@/net/codec'
+import { DAMAGE_TURRET, fromMrad, KIND_HEN, KIND_PLANE, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, type InputFrame, type VehicleState } from '@/net/codec'
 
 export type Vec3 = [number, number, number]
 
@@ -311,7 +311,7 @@ export function extraSolids(kind: number | undefined): { desc: RAPIER.ColliderDe
     const [x, y, z] = PLANE_WING_HALF_EXTENTS
     return [{ desc: RAPIER.ColliderDesc.cuboid(x, y, z), offset: PLANE_WING_CENTRE }]
   }
-  if (kind === KIND_WALKER) {
+  if (kind === KIND_WALKER || kind === KIND_HEN) {
     const half = (WALKER_LEG_LENGTH - WALKER_LEG_CLEARANCE) / 2
     const hy = WALKER_HALF_EXTENTS[1]
     return [-1, 1].map((side) => ({

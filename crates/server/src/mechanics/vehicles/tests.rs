@@ -1,7 +1,7 @@
 use super::*;
 use crate::game::{Command, Game, Outgoing};
 use crate::physics::STANDING_Y;
-use shared::protocol::{InputFrame, THRUST_BOOST};
+use shared::protocol::{InputFrame, THRUST_AIR, THRUST_BOOST, THRUST_LIFT};
 use shared::world::{Road, WORLD_VERSION};
 use tokio::sync::{mpsc, oneshot};
 
@@ -388,11 +388,11 @@ fn parked_cars_in_the_fixture_world_settle_and_stay_put() {
         let after = game.world.physics.car_pose(id).unwrap();
         let moved = (after.position[0] - before.position[0]).hypot(after.position[2] - before.position[2]);
         let ground = game.world.map.ground.height_at(after.position[0], after.position[2]);
-        // A plane stands taller on its undercarriage than any car, and a walker's hull is up on its legs.
+        // A plane stands taller on its undercarriage than any car, and a walker's or a hen's hull is up on its legs.
         let ride = match game.world.vehicles[&id].kind {
             KIND_PLANE => 1.3,
             KIND_STRV => 1.2,
-            KIND_WALKER => WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1],
+            KIND_WALKER | KIND_HEN => WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1],
             _ => 1.0,
         };
         assert!(after.up_y > 0.99 && after.position[1] < ground + ride && moved < 0.5, "car {id}: {before:?} -> {after:?}");
@@ -684,8 +684,8 @@ fn a_roadster_driver_boosts_on_run_hops_on_jump_and_brakes_on_crouch() {
 
     press(&mut game, id, &mut seq, (0, 0), BUTTON_CROUCH, 3);
     assert!(game.world.vehicles[&vid].controls.handbrake);
-    // Nothing else carries a tank.
-    assert!(game.vehicle_states().iter().filter(|v| v.kind != KIND_ROADSTER).all(|v| v.thrust.is_none()));
+    // Nothing else carries a tank, but a hen's stamina and a drone's battery.
+    assert!(game.vehicle_states().iter().filter(|v| !matches!(v.kind, KIND_ROADSTER | KIND_HEN | KIND_DRONE)).all(|v| v.thrust.is_none()));
 }
 
 /// A game with one pine just in front of where a vehicle of `kind` is set down facing it, and the
@@ -729,4 +729,32 @@ fn a_tank_plows_through_a_tree_without_slowing() {
 fn a_jeep_is_jolted_by_the_tree_it_fells() {
     let (before, after) = drive_into_a_pine(KIND_JEEP, 20.0).expect("the jeep felled the pine");
     assert!(after < before * 0.8, "{before} -> {after}");
+}
+
+#[test]
+fn a_hen_driver_leaps_on_jump_and_the_snapshot_carries_its_stamina() {
+    let mut game = game();
+    let (id, _inbox) = join(&mut game);
+    let mut seq = 0;
+    idle(&mut game, id, &mut seq, 30);
+    let ground = game.world.map.ground.height_at(0.0, 60.0);
+    let vid = add_vehicle(&mut game.world, KIND_HEN, [0.0, ground + drop_height(KIND_HEN), 60.0], 0.0);
+    idle(&mut game, id, &mut seq, 60);
+    let stand = game.world.physics.car_pose(vid).unwrap().position[1];
+    let state = game.vehicle_states().into_iter().find(|v| v.id == vid).unwrap();
+    assert_eq!(state.thrust.map(|thrust| thrust.air), Some(255), "a hen sends its stamina, full");
+    assert_eq!(state.arms.map(|arms| arms.bombs), Some(HEN_EGGS), "and its clutch");
+
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    game.world.players.get_mut(&id).unwrap().character.position = [pose.position[0], STANDING_Y + ground, pose.position[2] + 3.0];
+    press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
+    idle(&mut game, id, &mut seq, 3);
+    assert_eq!(game.world.vehicles[&vid].seats[0], Some(id));
+
+    press(&mut game, id, &mut seq, (0, 0), BUTTON_JUMP, 20);
+    let controls = game.world.vehicles[&vid].controls;
+    assert!(controls.hop && !controls.handbrake && controls.lift == 0.0 && !controls.boost, "{controls:?}");
+    assert!(game.world.physics.car_pose(vid).unwrap().position[1] > stand + 2.0, "it leapt");
+    let thrust = game.vehicle_states().into_iter().find(|v| v.id == vid).unwrap().thrust.unwrap();
+    assert!(thrust.flags & THRUST_AIR != 0 && thrust.flags & THRUST_LIFT != 0 && thrust.air < 255, "{thrust:?}");
 }

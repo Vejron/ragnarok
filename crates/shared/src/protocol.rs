@@ -69,6 +69,8 @@ pub const KIND_MORTAR: u8 = 9;
 pub const KIND_ROADSTER: u8 = 10;
 /// An FPV drone, flown from afar by the player who launched it. Gone once it blows up or its pilot lets go.
 pub const KIND_DRONE: u8 = 11;
+/// The hen: a giant robot hen on the walker's legs that jumps, flaps and glides, and lays egg bombs. One seat.
+pub const KIND_HEN: u8 = 12;
 
 /// Health of a fresh vehicle of `kind`. Zero on the wire means wrecked.
 pub fn vehicle_hp(kind: u8) -> u8 {
@@ -135,6 +137,8 @@ pub const WEAPON_TURRET: u8 = 17;
 pub const WEAPON_MORTAR: u8 = 18;
 /// An FPV drone's charge going off; a shot-down one's pop too.
 pub const WEAPON_DRONE: u8 = 19;
+/// A hen's egg going off.
+pub const WEAPON_EGG: u8 = 20;
 
 /// How a stickman died, as sent in a `Kill`, so every client can stage the death to match.
 pub const DEATH_BODY: u8 = 0;
@@ -156,6 +160,8 @@ pub const PROJECTILE_BULLET: u8 = 4;
 pub const PROJECTILE_BOMB: u8 = 5;
 /// A mortar bomb: a high lob that falls steeply and bursts on the first thing it meets.
 pub const PROJECTILE_MORTAR: u8 = 6;
+/// A hen's egg: it falls and bounces like a grenade and bursts when its fuse runs out, or at once when it lands hard.
+pub const PROJECTILE_EGG: u8 = 7;
 
 /// A bullet leaving a gun: `[id, shooter, item, x, y, z, vx, vy, vz, tick]`, centimetres and cm/s.
 /// Sent once (in two snapshots, in case one is lost) and not listed again: the path is
@@ -385,7 +391,8 @@ pub const ARMS_REAR_JAMMED: u8 = 1 << 2;
 
 /// A Roadster's thrusters: `[air, flags]`. `air` is what is left in the tank, 0..=255 of full;
 /// `flags` are `THRUST_*`, the nozzles firing this tick. A drone sends its battery as `air`, with
-/// `THRUST_LINKED` set while its pilot still flies it.
+/// `THRUST_LINKED` set while its pilot still flies it. A hen sends its wings' stamina as `air`, with
+/// `THRUST_LIFT` while it jumps or flaps, `THRUST_GLIDE` while it glides and `THRUST_AIR` while no foot is down.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Thrust {
     pub air: u8,
@@ -397,6 +404,10 @@ pub const THRUST_BOOST: u8 = 1 << 0;
 pub const THRUST_LIFT: u8 = 1 << 1;
 /// A drone's: its pilot is still flying it, rather than it falling with the link lost.
 pub const THRUST_LINKED: u8 = 1 << 2;
+/// A hen's: its wings are spread and still, holding its fall to a glide.
+pub const THRUST_GLIDE: u8 = 1 << 3;
+/// A hen's: neither foot is on the ground.
+pub const THRUST_AIR: u8 = 1 << 4;
 
 /// The motion a driver needs to predict their own vehicle, which the vehicle's pose does not
 /// carry. Sent only to the player in the driver seat: `[vx, vy, vz, wx, wy, wz, steer, spin]`.
@@ -649,7 +660,7 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 34, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
+        148, 0, 35, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[
