@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Shell, unpack, type Tri } from '@/sim/carve'
+import { Shell, unpack, unpackListed, type Tri } from '@/sim/carve'
 
 /** A box `w × d × h` metres, walls only, as `boxed` in `crates/shared/src/carve.rs`. */
 function boxed(w: number, d: number, h: number): Tri[] {
@@ -68,6 +68,10 @@ describe('carve', () => {
       expect([baked.isSolid(id), baked.isRoof(id)]).toEqual([cut.isSolid(id), cut.isRoof(id)])
     }
     expect(baked.faces(new Set())).toEqual(cut.faces(new Set()))
+    expect([...baked.cells]).toEqual([...Array(60).keys()].filter((id) => cut.isSolid(id)))
+    // A run of zero bytes over several layers repeats the layer below it, cells listed and all.
+    const tower = unpackListed(Uint8Array.from([1, 0, 4]), 48, 8)
+    expect([[...tower.flags.keys()].filter((i) => tower.flags[i]), [...tower.ids]]).toEqual([[0, 8, 16, 24, 32, 40], [0, 8, 16, 24, 32, 40]])
     // A long run of zero bytes, with a two-byte length (`baked_cells_come_back_as_they_were`).
     const flags = unpack(Uint8Array.from([1, 0, 169, 2, 128]), 8 * 300, 8 * 300)
     expect([...flags.keys()].filter((i) => flags[i])).toEqual([0, 8 * 299 + 7])

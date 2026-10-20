@@ -20,10 +20,16 @@ export interface Soup {
 export function voxelFaces(shell: Shell, standing: (id: number) => boolean, color: (id: number) => number, out: Soup, offset: readonly [number, number, number] = [0, 0, 0]) {
   const dims = shell.dims
   const base = [0, 1, 2].map((a) => shell.origin[a]! / 100 - offset[a]!)
-  // Each cell's colour, or -1 where nothing stands: asked once a cell, not once a face.
-  const keys = new Int32Array(dims[0] * dims[1] * dims[2]).fill(-1)
-  for (let id = 0; id < keys.length; id++) if (standing(id)) keys[id] = color(id)
-  greedyFaces(dims, keys, (face) => quad(out, face, base, CELL / 100))
+  // Each standing cell's colour: asked once a cell, not once a face. Only the building's own cells
+  // are asked, as most of its grid is empty.
+  const stands = new Uint8Array(dims[0] * dims[1] * dims[2])
+  const keys = new Int32Array(stands.length)
+  const ids = shell.cells.filter((id) => standing(id))
+  for (const id of ids) {
+    stands[id] = 1
+    keys[id] = color(id)
+  }
+  greedyFaces(dims, stands, ids, keys, (face) => quad(out, face, base, CELL / 100))
 }
 
 /** One merged face as two triangles. */

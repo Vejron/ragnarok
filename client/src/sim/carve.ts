@@ -21,13 +21,46 @@ export type Tri = [number, number, number, number, number, number, number, numbe
  * the run's length less one in LEB128).
  */
 export function unpack(packed: Uint8Array, count: number, layer: number): Uint8Array {
-  const bytes = new Uint8Array(Math.ceil(count / 8))
+  return unpackListed(packed, count, layer).flags
+}
+
+/** `unpack`, and the numbers of the cells flagged, in order. */
+export function unpackListed(packed: Uint8Array, count: number, layer: number): { flags: Uint8Array; ids: Int32Array } {
+  const flags = new Uint8Array(count)
+  let ids = new Int32Array(1024)
+  let n = 0
+  const list = (id: number) => {
+    if (n === ids.length) {
+      const grown = new Int32Array(n * 2)
+      grown.set(ids)
+      ids = grown
+    }
+    ids[n++] = id
+  }
+  // The first listed cell not below the layer under the cell being unpacked.
+  let below = 0
+  let i = 0
+  // The next `n` cells are as the cells a layer below (empty in the bottom layer), copied in
+  // pieces no longer than a layer so a piece never reads what it writes.
+  const asBelow = (cells: number) => {
+    const end = Math.min(count, i + cells)
+    if (i < layer) i = Math.min(end, layer)
+    while (i < end) {
+      const piece = Math.min(end - i, layer)
+      flags.copyWithin(i, i - layer, i - layer + piece)
+      while (below < n && ids[below]! < i - layer) below++
+      while (below < n && ids[below]! < i - layer + piece) list(ids[below++]! + layer)
+      i += piece
+    }
+  }
   let at = 0
-  let to = 0
-  while (at < packed.length && to < bytes.length) {
+  while (at < packed.length && i < count) {
     const byte = packed[at++]!
     if (byte !== 0) {
-      bytes[to++] = byte
+      for (let k = 0; k < 8 && i < count; k++, i++) {
+        flags[i] = ((byte >> k) & 1) ^ (i >= layer ? flags[i - layer]! : 0)
+        if (flags[i]) list(i)
+      }
       continue
     }
     let run = 0
@@ -38,14 +71,10 @@ export function unpack(packed: Uint8Array, count: number, layer: number): Uint8A
       scale *= 128
       if ((part & 0x80) === 0) break
     }
-    to += run + 1
+    asBelow((run + 1) * 8)
   }
-  const flags = new Uint8Array(count)
-  for (let i = 0; i < count; i++) {
-    const bit = (bytes[i >> 3]! >> (i & 7)) & 1
-    flags[i] = bit ^ (i >= layer ? flags[i - layer]! : 0)
-  }
-  return flags
+  asBelow(count - i)
+  return { flags, ids: ids.slice(0, n) }
 }
 
 /** Mirrors `SAMPLE`. */
@@ -102,51 +131,82 @@ export interface Face {
 }
 
 /**
- * Mirrors `greedy`: the faces of the cells of a `dims` grid with a key (`keys`, -1 for an empty
- * cell) that look onto an empty cell or out of the grid, merged into rectangles of one key, in the
- * same order as the server's.
+ * Mirrors `greedy`: the faces of the standing cells of a `dims` grid (1 in `standing`; `ids` lists
+ * them in order) that look onto an empty cell or out of the grid, merged into rectangles of one key
+ * (`keys`, by cell number), in the same order as the server's. Only the standing cells are visited,
+ * as a big building's grid is mostly empty. `emit` is handed the same object each time.
  */
-export function greedyFaces(dims: readonly [number, number, number], keys: Int32Array, emit: (face: Face) => void) {
+export function greedyFaces(dims: readonly [number, number, number], standing: Uint8Array, ids: Int32Array, keys: ArrayLike<number>, emit: (face: Face) => void) {
+  const [nx, , nz] = dims
+  const count = ids.length
+  // Each standing cell's x, y and z.
+  const at = [new Int32Array(count), new Int32Array(count), new Int32Array(count)] as const
+  for (let n = 0; n < count; n++) {
+    const id = ids[n]!
+    at[0][n] = id % nx
+    at[2][n] = Math.floor(id / nx) % nz
+    at[1][n] = Math.floor(id / (nx * nz))
+  }
   // Step in the cell number for one cell along x, y and z (`Shell::index`).
-  const stride = [1, dims[0] * dims[2], dims[0]]
+  const stride = [1, nx * nz, nx]
+  const face: Face = { d: 0, u: 0, v: 0, side: 0, i: 0, a: 0, b: 0, w: 0, h: 0, key: 0 }
+  const layer = new Int32Array(count)
+  const where = new Int32Array(count)
+  const sorted = new Int32Array(count)
   for (let d = 0; d < 3; d++) {
     const u = (d + 1) % 3
     const v = (d + 2) % 3
     const [nu, nv, nd] = [dims[u]!, dims[v]!, dims[d]!]
     const [su, sv, sd] = [stride[u]!, stride[v]!, stride[d]!]
-    const mask = new Int32Array(nu * nv)
+    const [ad, au, av] = [at[d]!, at[u]!, at[v]!]
+    const mask = new Int32Array(nu * nv).fill(-1)
     for (const side of [1, -1]) {
-      for (let i = 0; i < nd; i++) {
+      // The faces looking out, as `b * nu + a`, sorted by layer `i` and then by that.
+      const starts = new Int32Array(nd + 1)
+      let exposed = 0
+      for (let n = 0; n < count; n++) {
+        const i = ad[n]!
         const j = i + side
-        const beyond = j >= 0 && j < nd
-        let any = false
-        for (let b = 0; b < nv; b++) {
-          for (let a = 0; a < nu; a++) {
-            const id = i * sd + a * su + b * sv
-            const key = keys[id]!
-            mask[b * nu + a] = key >= 0 && !(beyond && keys[id + side * sd]! >= 0) ? key : -1
-            if (mask[b * nu + a]! >= 0) any = true
-          }
+        if (j >= 0 && j < nd && standing[ids[n]! + side * sd]) continue
+        layer[exposed] = i
+        where[exposed++] = av[n]! * nu + au[n]!
+        starts[i + 1]!++
+      }
+      for (let i = 0; i < nd; i++) starts[i + 1]! += starts[i]!
+      const next = starts.slice(0, nd)
+      for (let n = 0; n < exposed; n++) sorted[next[layer[n]!]!++] = where[n]!
+      for (let i = 0; i < nd; i++) {
+        if (starts[i] === starts[i + 1]) continue
+        const faces = sorted.subarray(starts[i]!, starts[i + 1]!).sort()
+        const plane = i * sd
+        for (const p of faces) {
+          const a = p % nu
+          mask[p] = keys[plane + a * su + ((p - a) / nu) * sv]!
         }
-        if (!any) continue
-        for (let b = 0; b < nv; b++) {
-          for (let a = 0; a < nu; ) {
-            const key = mask[b * nu + a]!
-            if (key < 0) {
-              a++
-              continue
-            }
-            let w = 1
-            while (a + w < nu && mask[b * nu + a + w] === key) w++
-            let h = 1
-            grow: while (b + h < nv) {
-              for (let k = 0; k < w; k++) if (mask[(b + h) * nu + a + k] !== key) break grow
-              h++
-            }
-            for (let r = 0; r < h; r++) mask.fill(-1, (b + r) * nu + a, (b + r) * nu + a + w)
-            emit({ d, u, v, side, i, a, b, w, h, key })
-            a += w
+        for (const p of faces) {
+          const key = mask[p]!
+          if (key < 0) continue
+          const a = p % nu
+          const b = (p - a) / nu
+          let w = 1
+          while (a + w < nu && mask[p + w] === key) w++
+          let h = 1
+          grow: while (b + h < nv) {
+            for (let k = 0; k < w; k++) if (mask[p + h * nu + k] !== key) break grow
+            h++
           }
+          for (let r = 0; r < h; r++) mask.fill(-1, p + r * nu, p + r * nu + w)
+          face.d = d
+          face.u = u
+          face.v = v
+          face.side = side
+          face.i = i
+          face.a = a
+          face.b = b
+          face.w = w
+          face.h = h
+          face.key = key
+          emit(face)
         }
       }
     }
@@ -164,12 +224,13 @@ export class Shell {
   /** 1 where the roof passes through the cell, for drawing it in the roof's colour. Client only. */
   private readonly roofed: Uint8Array
 
-  private constructor(origin: [number, number, number], dims: [number, number, number], walls: ArrayLike<number>, roof: ArrayLike<number>, baked?: { solid: Uint8Array; roof: Uint8Array }) {
+  private constructor(origin: [number, number, number], dims: [number, number, number], walls: ArrayLike<number>, roof: ArrayLike<number>, baked?: { solid: Uint8Array; roof: Uint8Array; ids: Int32Array }) {
     this.origin = origin
     this.dims = dims
     if (baked) {
       this.solid = baked.solid
       this.roofed = baked.roof
+      this.solidIds = baked.ids
       return
     }
     this.solid = new Uint8Array(dims[0] * dims[1] * dims[2])
@@ -192,7 +253,8 @@ export class Shell {
     const count = nx * ny * nz
     if (count === 0 || count > MAX_CELLS) return null
     const layer = nx * nz
-    return new Shell([...cells.origin], [nx, ny, nz], [], [], { solid: unpack(cells.solid, count, layer), roof: unpack(cells.roof, count, layer) })
+    const { flags, ids } = unpackListed(cells.solid, count, layer)
+    return new Shell([...cells.origin], [nx, ny, nz], [], [], { solid: flags, ids, roof: unpack(cells.roof, count, layer) })
   }
 
   /** Cuts a building from its wall and roof triangles, or null when it has none or is too big. */
@@ -276,9 +338,27 @@ export class Shell {
 
   /** How many cells hold a piece of wall or roof. */
   get solidCount(): number {
-    let n = 0
-    for (const s of this.solid) n += s
-    return n
+    return this.cells.length
+  }
+
+  private solidIds: Int32Array | null = null
+
+  /** The cells that hold a piece of wall or roof, in order. */
+  get cells(): Int32Array {
+    if (this.solidIds) return this.solidIds
+    // Found natively, as most of the grid is empty.
+    const found: number[] = []
+    for (let id = this.solid.indexOf(1); id >= 0; id = this.solid.indexOf(1, id + 1)) found.push(id)
+    const ids = new Int32Array(found)
+    return (this.solidIds = ids)
+  }
+
+  /** The cells still standing once `removed` is knocked out: 1 a standing cell, and their numbers in order. */
+  standing(removed: ReadonlySet<number>): { standing: Uint8Array; ids: Int32Array } {
+    if (removed.size === 0) return { standing: this.solid, ids: this.cells }
+    const standing = this.solid.slice()
+    for (const id of removed) standing[id] = 0
+    return { standing, ids: this.cells.filter((id) => standing[id] === 1) }
   }
 
   /** The cell holding the point `(x, y, z)`, metres, clamped to the grid. */
@@ -360,8 +440,8 @@ export class Shell {
   boxes(removed: ReadonlySet<number>): Int32Array {
     if (removed.size === 0 && this.wholeBoxes) return this.wholeBoxes
     const [nx, ny, nz] = this.dims
-    const free = new Uint8Array(this.solid.length)
-    for (let id = 0; id < free.length; id++) free[id] = this.solid[id] && !removed.has(id) ? 1 : 0
+    const { standing, ids } = this.standing(removed)
+    const free = standing.slice()
     const row = (x: number, y: number, z: number, w: number) => {
       const start = (y * nz + z) * nx + x
       for (let k = 0; k < w; k++) if (!free[start + k]) return false
@@ -369,26 +449,26 @@ export class Shell {
     }
     const out: number[] = []
     const [ox, oy, oz] = this.origin
-    for (let y = 0; y < ny; y++) {
-      for (let z = 0; z < nz; z++) {
-        for (let x = 0; x < nx; x++) {
-          if (!free[(y * nz + z) * nx + x]) continue
-          let w = 1
-          while (x + w < nx && free[(y * nz + z) * nx + x + w]) w++
-          let d = 1
-          while (z + d < nz && row(x, y, z + d, w)) d++
-          let h = 1
-          for (; y + h < ny; h++) {
-            let whole = true
-            for (let k = 0; k < d && whole; k++) whole = row(x, y + h, z + k, w)
-            if (!whole) break
-          }
-          for (let j = 0; j < h; j++) for (let k = 0; k < d; k++) free.fill(0, ((y + j) * nz + z + k) * nx + x, ((y + j) * nz + z + k) * nx + x + w)
-          out.push(ox + x * CELL, oy + y * CELL, oz + z * CELL, ox + (x + w) * CELL, oy + (y + h) * CELL, oz + (z + d) * CELL)
-        }
+    // In cell order, as `boxes`, skipping the empty cells.
+    for (const id of ids) {
+      if (!free[id]) continue
+      const x = id % nx
+      const z = Math.floor(id / nx) % nz
+      const y = Math.floor(id / (nx * nz))
+      let w = 1
+      while (x + w < nx && free[(y * nz + z) * nx + x + w]) w++
+      let d = 1
+      while (z + d < nz && row(x, y, z + d, w)) d++
+      let h = 1
+      for (; y + h < ny; h++) {
+        let whole = true
+        for (let k = 0; k < d && whole; k++) whole = row(x, y + h, z + k, w)
+        if (!whole) break
       }
+      for (let j = 0; j < h; j++) for (let k = 0; k < d; k++) free.fill(0, ((y + j) * nz + z + k) * nx + x, ((y + j) * nz + z + k) * nx + x + w)
+      out.push(ox + x * CELL, oy + y * CELL, oz + z * CELL, ox + (x + w) * CELL, oy + (y + h) * CELL, oz + (z + d) * CELL)
     }
-    const result = Int32Array.from(out)
+    const result = new Int32Array(out)
     if (removed.size === 0) this.wholeBoxes = result
     return result
   }
@@ -408,23 +488,36 @@ export class Shell {
   /** `faces`, and for each triangle 1 when it is a roof cube's. */
   facesWithRoof(removed: ReadonlySet<number>): { tris: Int32Array; roof: Uint8Array } {
     if (removed.size === 0 && this.whole) return this.whole
-    const keys = new Int32Array(this.solid.length)
-    for (let id = 0; id < keys.length; id++) keys[id] = this.solid[id] && !removed.has(id) ? this.roofed[id]! : -1
-    const out: number[] = []
-    const roof: number[] = []
+    const { standing, ids } = this.standing(removed)
+    let out = new Int32Array(1024)
+    let roof = new Uint8Array(out.length / 9)
+    let tris = 0
     const p = [0, 0, 0]
-    const corner = (f: Face, du: number, dv: number) => {
+    const corner = (f: Face, du: number, dv: number, at: number) => {
       p[f.d] = this.origin[f.d]! + (f.side > 0 ? f.i + 1 : f.i) * CELL
       p[f.u] = this.origin[f.u]! + (f.a + du * f.w) * CELL
       p[f.v] = this.origin[f.v]! + (f.b + dv * f.h) * CELL
-      out.push(p[0]!, p[1]!, p[2]!)
+      out[at] = p[0]!
+      out[at + 1] = p[1]!
+      out[at + 2] = p[2]!
     }
-    greedyFaces(this.dims, keys, (f) => {
-      const order = f.side > 0 ? [0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1] : [0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1]
-      for (let k = 0; k < 12; k += 2) corner(f, order[k]!, order[k + 1]!)
-      roof.push(f.key, f.key)
+    const ahead = [0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1]
+    const behind = [0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1]
+    greedyFaces(this.dims, standing, ids, this.roofed, (f) => {
+      if ((tris + 2) * 9 > out.length) {
+        const grown = new Int32Array(out.length * 2)
+        grown.set(out)
+        out = grown
+        const more = new Uint8Array(grown.length / 9)
+        more.set(roof)
+        roof = more
+      }
+      const order = f.side > 0 ? ahead : behind
+      for (let k = 0; k < 12; k += 2) corner(f, order[k]!, order[k + 1]!, tris * 9 + (k / 2) * 3)
+      roof[tris++] = f.key
+      roof[tris++] = f.key
     })
-    const result = { tris: Int32Array.from(out), roof: Uint8Array.from(roof) }
+    const result = { tris: out.slice(0, tris * 9), roof: roof.slice(0, tris) }
     if (removed.size === 0) this.whole = result
     return result
   }
