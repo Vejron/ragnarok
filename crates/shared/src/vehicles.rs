@@ -7,7 +7,7 @@
 //! gameplay.json` fails until the two tables agree.
 
 use crate::consts::*;
-use crate::protocol::{KIND_DRONE, KIND_HELI, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER};
+use crate::protocol::{KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER};
 
 #[derive(Clone, Copy, Debug)]
 pub struct VehicleDef {
@@ -22,7 +22,8 @@ pub struct VehicleDef {
     pub half_extents: [f32; 3],
     /// Has a turret or a mounted gun the gunner aims (`Vehicle::gun`).
     pub gun: bool,
-    /// Has a plane's pilot weapons: forward guns that heat and jam, and bombs (`Vehicle::arms`).
+    /// Has a plane's pilot weapons: forward guns that heat and jam, and bombs (`Vehicle::arms`). A hen's
+    /// eggs are its bombs.
     pub arms: bool,
     /// A car's four wheels, which can be bent and shot off. Then `track_half` and `axle_z` place them.
     pub car_wheels: bool,
@@ -161,8 +162,22 @@ const DRONE: VehicleDef = VehicleDef {
     axle_z: 0.0,
 };
 
+/// The walker's legs and hull, with wings and eggs in place of guns.
+const HEN: VehicleDef = VehicleDef {
+    kind: KIND_HEN,
+    name: "Hen",
+    hp: 180,
+    seats: HEN_SEATS,
+    half_extents: HEN_HALF_EXTENTS,
+    gun: false,
+    arms: true,
+    car_wheels: false,
+    track_half: 0.0,
+    axle_z: 0.0,
+};
+
 /// Every vehicle kind, in id order.
-pub const VEHICLES: [VehicleDef; 10] = [JEEP, TANK, HELI, SPORTS, PLANE, WALKER, STRV, MORTAR, ROADSTER, DRONE];
+pub const VEHICLES: [VehicleDef; 11] = [JEEP, TANK, HELI, SPORTS, PLANE, WALKER, STRV, MORTAR, ROADSTER, DRONE, HEN];
 
 /// The seat whose occupant aims and fires `kind`'s gun: a tank's, helicopter's and plane's seat 1, but
 /// the driver's seat 0 where the vehicle has only one (a walker, a Strv S).
@@ -190,9 +205,9 @@ mod tests {
     }
 
     #[test]
-    fn only_armed_kinds_have_a_gun_and_only_the_plane_has_pilot_arms() {
-        assert!(vehicle_def(KIND_PLANE).arms && !vehicle_def(KIND_TANK).arms);
+    fn only_armed_kinds_have_a_gun_and_only_the_plane_and_the_hen_have_pilot_arms() {
+        assert!(vehicle_def(KIND_PLANE).arms && vehicle_def(KIND_HEN).arms && !vehicle_def(KIND_TANK).arms);
         assert!(vehicle_def(KIND_TANK).gun && vehicle_def(KIND_HELI).gun && vehicle_def(KIND_PLANE).gun && vehicle_def(KIND_WALKER).gun && vehicle_def(KIND_STRV).gun);
-        assert!(!vehicle_def(KIND_JEEP).gun && !vehicle_def(KIND_SPORTS).gun && !vehicle_def(KIND_ROADSTER).gun);
+        assert!(!vehicle_def(KIND_JEEP).gun && !vehicle_def(KIND_SPORTS).gun && !vehicle_def(KIND_ROADSTER).gun && !vehicle_def(KIND_HEN).gun);
     }
 }

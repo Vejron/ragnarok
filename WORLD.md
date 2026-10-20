@@ -172,7 +172,7 @@ scripts/world.sh --center 63.83976,20.31514 --half 1375 --out client/public/dev/
 | Page warns the world differs from the server's | `RAGNAROK_WORLD` and `VITE_WORLD_BASE` name different worlds, or the world was regenerated and the server not restarted |
 | `/dev/world.msgpack: 404` in the browser | the dev world isn't generated yet, or `VITE_WORLD_BASE` has no matching directory under `client/public/` |
 | `LM_USER and LM_PASS are not set` | put them in `.env.local`, or add `--synthetic` |
-| World version mismatch | the world was made by an older importer; regenerate it |
+| World version mismatch | the world was made by an older importer; regenerate it, or, from version 10, bake it in place with `cargo run -p osm-import -- --bake worlds/<name>/world.msgpack` |
 
 ## Credentials
 
@@ -371,12 +371,25 @@ Notes:
 `world.msgpack` is the manifest (origin, extent, spawns, tile list with hashes); each tile is
 buildings, roads, collision mesh, ground heights, cover, trees, water, streams, bridges, detail
 and railway tracks, in world-absolute centimetres.
+
+Every building is baked into 1 m cubes as the tiles are written (`voxels.rs`, `Built::into_files`):
+its `cells` hold the grid and two flags a cell (a cube is there; it is roof), packed by
+`carve::pack` (each flag XORed with the one below it, then runs of zero bytes shortened), and its
+walls and roof leave the collision mesh, which keeps only its floor. The server and the clients
+merge the cells into boxes to collide with (`Shell::boxes`), and the clients make the faces to draw
+from them. On the 450-tile Ersboda world that leaves
+the tiles about as big as before (14.2 MB against 14.7 MB). Houses built wall to wall often both
+have a cube in the same place, which would be drawn twice and flicker; after baking, `voxels::share`
+gives each such cube to the first of them, across the whole world (35,626 cubes in Ersboda).
+`--bake` does all this to a world written before (version 10) in place, without downloading
+anything, and on a baked world it only shares the cubes again.
 Both sides check `WORLD_VERSION`; bump it in `crates/shared/src/world.rs` **and**
 `client/src/world.ts` when the layout changes. The server tests
 `parked_cars_in_the_fixture_world_settle_and_stay_put` and
 `the_fixture_world_gets_its_items_on_open_ground` and client `world.spec.ts` read the small
 synthetic world committed in `fixtures/world/`, so with any format change regenerate and commit it:
-`cargo run -p osm-import -- --synthetic --out fixtures/world/world.msgpack`. The real world in
+`cargo run -p osm-import -- --synthetic --out fixtures/world/world.msgpack` (or `--bake` it, for a
+change only to the buildings' cubes). The real world in
 `client/public` is generated and git-ignored.
 
 ```sh

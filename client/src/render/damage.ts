@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { toonMaterial } from './toon'
 import { DAMAGE_STAGES } from '@/sim/consts'
 import type { TileData } from '@/world'
+import { shellOf, type Shell } from '@/sim/carve'
 import type { Effects } from './effects'
 import { Fracture, shardGeometry } from './fracture'
 import { random } from './rubble'
@@ -53,7 +54,6 @@ interface Drawn {
   /** The building's walls and roof as cells, once it is hurt, and what is drawn of them. */
   fracture: Fracture | null
   body: Mesh | null
-  core: Mesh | null
   falling: Falling[]
   shed: number
 }
@@ -72,7 +72,6 @@ interface Puff {
 const pieceMaterial = toonMaterial({ vertexColors: true, side: 'double' })
 // Double-sided: through a hole you see the inside of the far wall and the underside of the roof.
 const hurtMaterial = toonMaterial({ vertexColors: true, side: 'double' })
-const coreMaterial = toonMaterial({ vertexColors: true, side: 'double' })
 
 /** A wall triangle: the three corners and its unit normal (arbitrary side), metres. */
 interface Wall {
@@ -81,9 +80,30 @@ interface Wall {
   area: number
 }
 
+const cubeWalls = new WeakMap<Shell, Wall[]>()
+
+/** The sides of building `index`'s cubes (`Shell.faces`, wound outwards), or its own wall triangles when it has no cubes. */
 function wallsOf(tile: TileData, index: number): Wall[] {
   const building = tile.buildings[index]
   if (!building) return []
+  const shell = shellOf(tile, index)
+  if (shell) {
+    let walls = cubeWalls.get(shell)
+    if (!walls) {
+      const faces = shell.faces(new Set())
+      walls = []
+      for (let o = 0; o < faces.length; o += 9) {
+        const [a, b, c] = [0, 3, 6].map((k) => new THREE.Vector3(faces[o + k]! / 100, faces[o + k + 1]! / 100, faces[o + k + 2]! / 100)) as [THREE.Vector3, THREE.Vector3, THREE.Vector3]
+        const triangle = new THREE.Triangle(a, b, c)
+        const normal = triangle.getNormal(new THREE.Vector3())
+        // Sides only: the tops and bottoms of the cubes are roof and floor.
+        if (Math.abs(normal.y) > 0.5) continue
+        walls.push({ triangle, normal, area: triangle.getArea() })
+      }
+      cubeWalls.set(shell, walls)
+    }
+    return walls
+  }
   const { vertices, triangles } = tile.collision
   const walls: Wall[] = []
   for (let t = building.first; t < building.first + building.walls; t++) {
@@ -243,7 +263,7 @@ export class BuildingDamage {
     const walls = wallsOf(loaded.tile, index)
     if (walls.length === 0) return
     if (!drawn) {
-      drawn = { group: new Group(), fracture: null, body: null, core: null, falling: [], shed: SHED_SECONDS }
+      drawn = { group: new Group(), fracture: null, body: null, falling: [], shed: SHED_SECONDS }
       buildings.set(index, drawn)
       this.root.add(drawn.group)
     }
@@ -253,16 +273,8 @@ export class BuildingDamage {
   /** Redraws the building without the cells that are gone and with the ones that were shot pushed in. */
   private shatter(drawn: Drawn, key: number, index: number, loaded: Loaded, state: Hurt, live: boolean, burst: Burst | null) {
     const building = loaded.tile.buildings[index]!
-    if (!drawn.fracture) {
-      drawn.fracture = new Fracture(loaded.tile, index, loaded.salt)
-      const inside = drawn.fracture.core(state.removed)
-      drawn.core = new Mesh(shardGeometry(inside.positions, inside.colors), coreMaterial)
-      drawn.group.add(drawn.core)
-    } else if (drawn.core && burst) {
-      const inside = drawn.fracture.core(state.removed)
-      drawn.core.geometry.dispose()
-      drawn.core.geometry = shardGeometry(inside.positions, inside.colors)
-    }
+    // Cubes: through a hole you see the inner faces of the walls round it, so no room needs drawing.
+    drawn.fracture ??= new Fracture(loaded.tile, index, loaded.salt)
     const built = drawn.fracture.build(state.removed, state.dents)
     if (!drawn.body) {
       drawn.body = new Mesh(shardGeometry(built.positions, built.colors), hurtMaterial)
@@ -335,7 +347,7 @@ export class BuildingDamage {
   }
 
   private release(drawn: Drawn) {
-    for (const mesh of [drawn.body, drawn.core, ...drawn.falling.map((f) => f.mesh)]) mesh?.geometry.dispose()
+    for (const mesh of [drawn.body, ...drawn.falling.map((f) => f.mesh)]) mesh?.geometry.dispose()
     this.root.remove(drawn.group)
   }
 

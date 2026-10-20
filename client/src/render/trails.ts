@@ -1,5 +1,5 @@
 import { Ribbons, type RibbonStyle } from '@ragnarok/engine'
-import { PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_CANNON, PROJECTILE_GRENADE, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL } from '@/net/codec'
+import { PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_GRENADE, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL } from '@/net/codec'
 
 /** A white-hot core and a pale smoke line behind a rocket: the flame is short, the smoke hangs. */
 const ROCKET: RibbonStyle[] = [
@@ -26,7 +26,8 @@ function stylesFor(kind: number): RibbonStyle[] {
   if (kind === PROJECTILE_CANNON) return CANNON
   if (kind === PROJECTILE_BULLET) return BULLET
   if (kind === PROJECTILE_BOMB) return BOMB
-  if (kind === PROJECTILE_GRENADE) return GRENADE
+  // A hen's egg leaves the grenade's faint wake.
+  if (kind === PROJECTILE_GRENADE || kind === PROJECTILE_EGG) return GRENADE
   return ROCKET
 }
 

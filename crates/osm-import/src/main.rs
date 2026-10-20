@@ -14,10 +14,11 @@
 //!     cargo run -p osm-import -- --no-trees                    # skip Umeå's tree register
 //!     cargo run -p osm-import -- --refresh                     # download everything again
 //!     cargo run -p osm-import -- --clear-cache                 # delete .cache/osm-import
+//!     cargo run -p osm-import -- --bake worlds/x/world.msgpack  # bake the cubes into an older world
 //!
 //! Credentials, data sources and the cache are described in `WORLD.md`.
 
-use osm_import::{assemble, cache, canopy, dem, detail, grid, ground, hydro, lidar, minimap, overpass, progress, roof, trees, water};
+use osm_import::{assemble, cache, canopy, dem, detail, grid, ground, hydro, lidar, minimap, overpass, progress, roof, trees, voxels, water};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use std::path::PathBuf;
@@ -77,6 +78,10 @@ struct Args {
     /// Shortest tree to take from the laser data, metres above the terrain.
     #[arg(long, default_value_t = canopy::MIN_HEIGHT)]
     min_tree_height: f64,
+    /// Bake the buildings' cubes into a world written before they were (world version 10), in
+    /// place: its manifest, and the tiles next to it. Nothing is downloaded.
+    #[arg(long)]
+    bake: Option<PathBuf>,
     /// Skip OpenStreetMap and generate a procedural grid city (works offline).
     #[arg(long)]
     synthetic: bool,
@@ -309,8 +314,54 @@ fn laser(args: &Args, bbox: [f64; 4], mask: Option<&std::collections::BTreeSet<(
     Ok((cloud, detected))
 }
 
+/// `--bake`: reads the world at `path`, bakes every tile (`voxels::bake`), gives the cubes houses
+/// share to one of them (`voxels::share`) and writes it back as the current world version, with the
+/// tiles' new hashes. A world baked already is only shared again, which changes nothing once done.
+fn bake_world(path: &std::path::Path) -> Result<()> {
+    use shared::world::{Manifest, TileRef, WORLD_VERSION, Tile, world_hash};
+    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    let mut manifest = Manifest::decode(&bytes).with_context(|| format!("decoding {}", path.display()))?;
+    anyhow::ensure!(
+        manifest.version + 1 >= WORLD_VERSION && manifest.version <= WORLD_VERSION,
+        "{} is world version {}; only {} and {} can be baked",
+        path.display(),
+        manifest.version,
+        WORLD_VERSION - 1,
+        WORLD_VERSION
+    );
+    let dir = path.parent().map(PathBuf::from).unwrap_or_default();
+    let mut tiles = Vec::new();
+    let mut before = 0;
+    for entry in &manifest.tiles {
+        let file = dir.join(entry.path());
+        let bytes = std::fs::read(&file).with_context(|| format!("reading {}", file.display()))?;
+        before += bytes.len();
+        let mut tile = Tile::decode(&bytes).with_context(|| format!("decoding {}", file.display()))?;
+        voxels::bake(&mut tile);
+        tiles.push(tile);
+    }
+    let shared = voxels::share(&mut tiles.iter_mut().collect::<Vec<_>>());
+    let mut after = 0;
+    let mut refs = Vec::new();
+    for (entry, tile) in manifest.tiles.iter().zip(&tiles) {
+        let file = dir.join(entry.path());
+        let baked = tile.encode();
+        after += baked.len();
+        std::fs::write(&file, &baked).with_context(|| format!("writing {}", file.display()))?;
+        refs.push(TileRef { hash: world_hash(&baked), ..*entry });
+    }
+    manifest.tiles = refs;
+    manifest.version = WORLD_VERSION;
+    std::fs::write(path, manifest.encode()).with_context(|| format!("writing {}", path.display()))?;
+    eprintln!("baked {} tiles: {} KiB before, {} KiB after; {shared} cubes shared by two houses kept by one", manifest.tiles.len(), before / 1024, after / 1024);
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
+    if let Some(path) = &args.bake {
+        return bake_world(path);
+    }
     if args.clear_cache {
         let freed = cache::clear(&args.cache)?;
         eprintln!("cleared {} ({} MiB)", args.cache.display(), freed / (1024 * 1024));

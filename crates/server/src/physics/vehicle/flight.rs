@@ -95,6 +95,75 @@ pub(in crate::physics) fn thrust(body: &mut RigidBody, controls: CarControls, ta
     firing
 }
 
+/// One tick of a hen's wings, after [`walk`] has worked its legs; returns its `THRUST_*` flags.
+///
+/// With a foot down, jump leaps: a burst of upward speed and a little along the heading, once per
+/// press (a hen already rising that fast does not leap again). With no foot down, the wings keep the
+/// hull level, which the legs' balance cannot, leaning it with the stick and turning it with the
+/// steering, so every leap lands on its feet. Jump held in the air flaps: once the leap has topped out
+/// it holds a slow climb, and carries the hen forward with the stick.
+/// With no stamina left the wings spread instead and hold its fall to a slow glide. Leaping and
+/// flapping drain `stamina`, which comes back with a foot down and jump let go. A fallen or wrecked hen
+/// does none of it. Everything is a function of the body's state, the stamina and the controls, so the
+/// client can replay it.
+pub(in crate::physics) fn flap(body: &mut RigidBody, controls: CarControls, stamina: &mut f32, standing: bool, grounded: bool, dt: f32) -> u8 {
+    let mut flags = if grounded { 0 } else { THRUST_AIR };
+    let rotation = *body.rotation();
+    let up = rotation * Vector::Y;
+    if !standing || !controls.powered || up.y < WALKER_FALLEN_UP {
+        return flags;
+    }
+    let mass = body.mass();
+    let nose = rotation * Vector::new(0.0, 0.0, -1.0);
+    let flat = Vector::new(nose.x, 0.0, nose.z);
+    let heading = if flat.length() > 1e-3 { flat.normalize() } else { Vector::new(0.0, 0.0, -1.0) };
+    let (throttle, steer) = (controls.throttle.clamp(-1.0, 1.0), controls.steer.clamp(-1.0, 1.0));
+    let rising = body.linvel().y;
+    if grounded {
+        if controls.hop && *stamina >= HEN_JUMP_COST && rising < HEN_JUMP_SPEED * 0.5 {
+            let forward = HEN_JUMP_FORWARD * if throttle >= 0.0 { throttle } else { throttle * WALKER_REVERSE_SHARE };
+            body.set_linvel(body.linvel() + Vector::new(0.0, HEN_JUMP_SPEED, 0.0) + heading * forward, true);
+            *stamina -= HEN_JUMP_COST;
+            flags |= THRUST_LIFT;
+        } else if !controls.hop {
+            *stamina += HEN_STAMINA_REFILL * dt;
+        }
+        *stamina = stamina.clamp(0.0, HEN_STAMINA);
+        return flags;
+    }
+
+    // The wings trim it level, leaning it a little with the stick, and turn it with the steering.
+    let lean = (Vector::Y + heading * (throttle * HEN_AIR_TILT) + heading.cross(Vector::Y) * (steer * HEN_AIR_TILT)).normalize();
+    let mut wanted = up.cross(lean) * HEN_AIR_LEVEL;
+    wanted.y = -steer * HEN_AIR_YAW;
+    let current = body.angvel();
+    body.set_angvel(current + (wanted - current) * (HEN_AIR_RESPONSE * dt).min(1.0), true);
+    if !controls.hop {
+        return flags;
+    }
+
+    // Held, the wings carry it forward with the stick.
+    let along = body.linvel().dot(heading);
+    let ahead = (throttle.max(0.0) * HEN_GLIDE_SPEED - along).clamp(-HEN_GLIDE_ACCEL, HEN_GLIDE_ACCEL);
+    let mut push = if throttle > 0.0 { heading * ahead } else { Vector::ZERO };
+    if *stamina > 0.0 {
+        // Flapping, once the leap tops out: a slow climb, as high as the stamina lasts (it does not come
+        // back in the air). Until then the wings beat for free.
+        if rising <= HEN_FLAP_CLIMB {
+            push.y = CAR_GRAVITY + ((HEN_FLAP_CLIMB - rising) * HEN_FLAP_GAIN).clamp(-HEN_FLAP_ACCEL, HEN_FLAP_ACCEL);
+            *stamina = (*stamina - HEN_FLAP_DRAIN * dt).max(0.0);
+        }
+        flags |= THRUST_LIFT;
+    } else {
+        // Spread and still, the wings hold its fall to a glide, and do nothing while it falls slower.
+        push.y = (CAR_GRAVITY + (-HEN_GLIDE_SINK - rising) * HEN_GLIDE_GAIN).clamp(0.0, CAR_GRAVITY + HEN_FLAP_ACCEL);
+        flags |= THRUST_GLIDE;
+    }
+    // A force rather than an impulse: it is integrated together with gravity, so the climb is exact.
+    body.add_force(push * mass, true);
+    flags
+}
+
 /// One tick of rotor flight for a powered helicopter body.
 ///
 /// The disc leans by setting the angular velocity that carries the hull's up axis towards the

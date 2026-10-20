@@ -1,6 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat'
 import { buildingTriangleRanges, treeKindDef, type TileData, type WorldData } from '@/world'
-import { shellOf, type Tri } from './carve'
+import { shellOf } from './carve'
 import {
   AUTOSTEP_HEIGHT, AUTOSTEP_MIN_WIDTH, CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, CONTROLLER_OFFSET,
   BUTTON_CROUCH, BUTTON_JUMP, BUTTON_PRONE, KNOCK_MAX_SPEED, MAX_SLOPE_CLIMB_DEG, PRONE_CENTRE, PRONE_RADIUS, SNAP_DISTANCE, STAND_CENTRE,
@@ -10,7 +10,7 @@ import {
 import { halfExtentsOf } from './kinds'
 import type { TileGround } from './terrain'
 import { beginSlide, decayKnock, desiredTranslation, f32, settleVertical, steerChute, toggleChute } from './movement'
-import { DAMAGE_TURRET, fromMrad, KIND_PLANE, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, type InputFrame, type VehicleState } from '@/net/codec'
+import { DAMAGE_TURRET, fromMrad, KIND_HEN, KIND_PLANE, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, type InputFrame, type VehicleState } from '@/net/codec'
 
 export type Vec3 = [number, number, number]
 
@@ -165,7 +165,8 @@ export const HEAVY_GROUPS = 0xfffffffd
 export function addTileCollider(world: RAPIER.World, tile: TileData, ground: TileGround | null = null): RAPIER.Collider[] {
   const colliders: RAPIER.Collider[] = []
   if (tile.collision.triangles.length > 0) {
-    colliders.push(world.createCollider(RAPIER.ColliderDesc.trimesh(tile.collision.vertices, tile.collision.triangles)))
+    const buildings = rebuildBuildingCollider(world, tile, new Set())
+    if (buildings) colliders.push(buildings)
   }
   // Trunks, as on the server: an upright cylinder from the foot up to where the crown starts.
   for (const tree of tile.trees) {
@@ -192,10 +193,13 @@ export function addTileCollider(world: RAPIER.World, tile: TileData, ground: Til
 }
 
 /**
- * The tile's building mesh again, without the buildings in `destroyed`: what `addTileCollider`
- * made for it, minus those triangles, so a collapsed building stops being a wall here as it
- * does on the server. Returns the new collider (the caller removes the old one), or null when
- * nothing is left of the mesh.
+ * The tile's buildings as one collider: each building as its cubes merged into boxes (`Shell.boxes`,
+ * without the cells in `carved` for it) and its floor, or as its own triangles when it has no
+ * cubes, then whatever no building claims (bridges), and none of the buildings in `destroyed`.
+ * Mirrors `building_shape` and `World::carve` on the server. With no boxes it is a trimesh;
+ * otherwise a compound of a cuboid a box and a triangle a remaining triangle, since a compound cannot
+ * hold a trimesh. Returns the new collider (the caller removes any old one), or null when nothing
+ * is left.
  */
 export function rebuildBuildingCollider(
   world: RAPIER.World,
@@ -204,45 +208,41 @@ export function rebuildBuildingCollider(
   carved: ReadonlyMap<number, ReadonlySet<number>> = new Map(),
 ): RAPIER.Collider | null {
   const { triangles, vertices } = tile.collision
-  const ranges = buildingTriangleRanges(tile)
-  const gone = ranges.filter((_, index) => destroyed.has(index))
-  // A bitten building's walls and roof are its small triangles that are left; its floor stays as it was.
-  const bitten: { from: number; to: number; standing: Tri[] }[] = []
-  for (const [index, removed] of carved) {
-    const building = tile.buildings[index]
+  const count = triangles.length / 3
+  // 1 for a triangle of the tile's mesh that is left out: a fallen building's, or a wall or roof drawn as cubes.
+  const drop = new Uint8Array(count)
+  buildingTriangleRanges(tile).forEach(([start, end], index) => {
+    if (destroyed.has(index)) drop.fill(1, start, Math.min(end, count))
+  })
+  const boxes: Int32Array[] = []
+  const none = new Set<number>()
+  tile.buildings.forEach((building, index) => {
+    if (destroyed.has(index)) return
     const shell = shellOf(tile, index)
-    if (!building || !shell || destroyed.has(index)) continue
-    bitten.push({ from: building.first, to: building.first + building.walls + building.roof, standing: shell.standing(removed) })
-  }
+    if (!shell) return
+    drop.fill(1, building.first, Math.min(building.first + building.walls + building.roof, count))
+    boxes.push(shell.boxes(carved.get(index) ?? none))
+  })
   const kept: number[] = []
-  for (let t = 0; t < triangles.length / 3; t++) {
-    if (gone.some(([start, end]) => t >= start && t < end)) continue
-    if (bitten.some((b) => t >= b.from && t < b.to)) continue
-    kept.push(triangles[t * 3]!, triangles[t * 3 + 1]!, triangles[t * 3 + 2]!)
-  }
-  const extra = bitten.reduce((n, b) => n + b.standing.length, 0)
-  if (kept.length === 0 && extra === 0) return null
-  if (extra === 0) return world.createCollider(RAPIER.ColliderDesc.trimesh(vertices, Uint32Array.from(kept)))
-  // The small triangles go after the tile's own vertices, three corners each, in metres.
-  const all = new Float32Array(vertices.length + extra * 9)
-  all.set(vertices)
-  const indices = Uint32Array.from(kept)
-  const next = new Uint32Array(indices.length + extra * 3)
-  next.set(indices)
-  let vertex = vertices.length / 3
-  let at = vertices.length
-  let slot = indices.length
-  for (const b of bitten) {
-    for (const tri of b.standing) {
-      for (let k = 0; k < 3; k++) {
-        all[at++] = tri[k * 3]! / 100
-        all[at++] = tri[k * 3 + 1]! / 100
-        all[at++] = tri[k * 3 + 2]! / 100
-        next[slot++] = vertex++
-      }
+  for (let t = 0; t < count; t++) if (!drop[t]) kept.push(triangles[t * 3]!, triangles[t * 3 + 1]!, triangles[t * 3 + 2]!)
+  const boxCount = boxes.reduce((n, b) => n + b.length / 6, 0)
+  if (boxCount === 0) return kept.length === 0 ? null : world.createCollider(RAPIER.ColliderDesc.trimesh(vertices, Uint32Array.from(kept)))
+  const shapes: RAPIER.Shape[] = []
+  const positions: RAPIER.Vector[] = []
+  const still = { x: 0, y: 0, z: 0, w: 1 }
+  for (const list of boxes) {
+    for (let i = 0; i < list.length; i += 6) {
+      const [x0, y0, z0, x1, y1, z1] = [list[i]!, list[i + 1]!, list[i + 2]!, list[i + 3]!, list[i + 4]!, list[i + 5]!]
+      shapes.push(new RAPIER.Cuboid((x1 - x0) / 200, (y1 - y0) / 200, (z1 - z0) / 200))
+      positions.push({ x: (x0 + x1) / 200, y: (y0 + y1) / 200, z: (z0 + z1) / 200 })
     }
   }
-  return world.createCollider(RAPIER.ColliderDesc.trimesh(all, next))
+  const corner = (v: number) => ({ x: vertices[v * 3]!, y: vertices[v * 3 + 1]!, z: vertices[v * 3 + 2]! })
+  for (let k = 0; k < kept.length; k += 3) {
+    shapes.push(new RAPIER.Triangle(corner(kept[k]!), corner(kept[k + 1]!), corner(kept[k + 2]!)))
+    positions.push({ x: 0, y: 0, z: 0 })
+  }
+  return world.createCollider(RAPIER.ColliderDesc.compound(shapes, positions, shapes.map(() => still)))
 }
 
 /**
@@ -311,7 +311,7 @@ export function extraSolids(kind: number | undefined): { desc: RAPIER.ColliderDe
     const [x, y, z] = PLANE_WING_HALF_EXTENTS
     return [{ desc: RAPIER.ColliderDesc.cuboid(x, y, z), offset: PLANE_WING_CENTRE }]
   }
-  if (kind === KIND_WALKER) {
+  if (kind === KIND_WALKER || kind === KIND_HEN) {
     const half = (WALKER_LEG_LENGTH - WALKER_LEG_CLEARANCE) / 2
     const hy = WALKER_HALF_EXTENTS[1]
     return [-1, 1].map((side) => ({

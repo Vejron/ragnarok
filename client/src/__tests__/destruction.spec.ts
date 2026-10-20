@@ -112,6 +112,7 @@ import { Collapses } from '@/render/rubble'
 import { buildTile, rebuildBuildings } from '@/render/world'
 import { rebuildBuildingCollider } from '@/sim/physics'
 import { shellOf } from '@/sim/carve'
+import { Fracture } from '@/render/fracture'
 import { buildingTriangleRanges, ROOF_FLAT, type Building } from '@/world'
 
 /** A closed box mesh from `x0` to `x0 + 10` metres, 6 m tall: 12 triangles, 8 of them walls. */
@@ -128,7 +129,7 @@ function box(x0: number, vertexBase: number) {
 function twoHouses(): TileData {
   const [a, b] = [box(0, 0), box(30, 8)]
   const building = (x0: number, first: number): Building => ({
-    height: 6, base: 0, first, walls: 8, roof: 2, roofKind: ROOF_FLAT,
+    height: 6, base: 0, first, walls: 8, roof: 2, roofKind: ROOF_FLAT, cells: null,
     footprint: [[x0, -5], [x0 + 10, -5], [x0 + 10, 5], [x0, 5]],
   })
   return {
@@ -160,10 +161,15 @@ describe('redrawing a tile without a building', () => {
   it('drops that building\'s triangles from the merged meshes and no others', () => {
     const tile = twoHouses()
     const group = buildTile(tile, 0)
-    // 10 drawn triangles a house (the floor is not drawn), 3 vertices each.
-    expect(vertexCount(group)).toBe(2 * 10 * 3)
+    // Each house is drawn as its own cubes.
+    const both = vertexCount(group)
     rebuildBuildings(group, tile, 0, new Set([0]))
-    expect(vertexCount(group)).toBe(10 * 3)
+    const second = vertexCount(group)
+    rebuildBuildings(group, tile, 0, new Set([1]))
+    const first = vertexCount(group)
+    expect(first).toBeGreaterThan(0)
+    expect(second).toBeGreaterThan(0)
+    expect(first + second).toBe(both)
     rebuildBuildings(group, tile, 0, new Set([0, 1]))
     expect(vertexCount(group)).toBe(0)
   })
@@ -202,6 +208,25 @@ describe('the building collider without a fallen building', () => {
     expect(ray(-2, 1, 4)).not.toBeNull()
     // The other house and this one's floor are as they were.
     expect(ray(28, 1, 0)).not.toBeNull()
+  })
+
+  it('is the cubes the house is drawn as, not its own walls and roof', () => {
+    // A house whose walls and roof fall between the cells: 5.4 m tall, its west wall at x = 0.3.
+    const tile = twoHouses()
+    const v = tile.collision.vertices
+    for (let i = 0; i < 24; i += 3) {
+      v[i] = v[i]! + 0.3
+      if (v[i + 1] === 6) v[i + 1] = 5.4
+    }
+    const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 })
+    rebuildBuildingCollider(world, tile, new Set())
+    world.step()
+    // Standing on the roof is standing on the top of its cubes, 6 m up, as drawn.
+    const down = world.castRay(new RAPIER.Ray({ x: 5, y: 20, z: 0 }, { x: 0, y: -1, z: 0 }), 30, true)!
+    expect(20 - down.timeOfImpact).toBeCloseTo(6, 4)
+    // And walking into the wall stops at the cubes' face, x = 0.
+    const along = world.castRay(new RAPIER.Ray({ x: -2, y: 1, z: 0 }, { x: 1, y: 0, z: 0 }), 5, true)!
+    expect(along.timeOfImpact - 2).toBeCloseTo(0, 4)
   })
 
   it('is nothing at all once every building is gone', () => {
@@ -405,22 +430,29 @@ describe('a building with cells blasted out of it', () => {
     e.dispose()
   })
 
-  it('pushes a piece of wall in as it takes rounds, and drops the dent when it breaks out', () => {
+  it('darkens a piece of wall as it takes rounds, without shrinking it, and drops the dent when it breaks out', () => {
     const damage = new BuildingDamage()
     damage.attach(key, twoHouses())
+    const whole = Array.from(new Fracture(twoHouses(), 0, 0).build().positions)
     const shell = shellOf(twoHouses(), 0)!
     const cell = shell.cellAt(0, 1.5, 0)
+    // The darkest a vertex is: a shot cell is the only dark one.
+    const darkest = () => Math.min(...Array.from(bodyOf(damage).geometry.colors!))
+    const fresh = Math.min(...Array.from(new Fracture(twoHouses(), 0, 0).build().colors))
     expect(damage.dent(key, 0, cell, 12)).toBe(true)
     expect(damage.fractured(key)).toEqual([0])
-    const once = Array.from(bodyOf(damage).geometry.positions)
+    const once = darkest()
+    expect(once).toBeLessThan(fresh)
     expect(damage.dent(key, 0, cell, 12)).toBe(false)
-    const twice = Array.from(bodyOf(damage).geometry.positions)
-    expect(twice.length).toBe(once.length)
-    expect(twice).not.toEqual(once)
-    // The wall breaks out: the dent is gone with the cell, and nothing is left to push.
+    expect(darkest()).toBeLessThan(once)
+    // Every cube keeps its size: the walls are where they were, only cut into more faces.
+    const extent = (p: number[]) => [0, 1, 2].map((a) => [Math.min(...p.filter((_, i) => i % 3 === a)), Math.max(...p.filter((_, i) => i % 3 === a))])
+    expect(extent(Array.from(bodyOf(damage).geometry.positions))).toEqual(extent(whole))
+    // The wall breaks out: the dent is gone with the cell, and nothing is left to darken.
     damage.carve(key, 0, [cell], [], [-1, 1.5, 0], true)
+    const broken = Array.from(bodyOf(damage).geometry.positions)
     expect(damage.dent(key, 0, cell, 12)).toBe(false)
-    expect(bodyOf(damage).geometry.positions.length).toBeLessThan(twice.length)
+    expect(Array.from(bodyOf(damage).geometry.positions)).toEqual(broken)
   })
 
   it('is as it was when its tile streams back in, and throws nothing for a catch-up', () => {

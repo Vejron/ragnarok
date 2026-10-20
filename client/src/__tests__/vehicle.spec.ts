@@ -5,7 +5,7 @@ import { addTileCollider } from '@/sim/physics'
 import { heightIn, type TileGround } from '@/sim/terrain'
 import { f32 } from '@/sim/movement'
 import { BUTTON_CROUCH, BUTTON_JUMP, BUTTON_RUN, TICK_DT, vehicleMaxHp } from '@/sim/consts'
-import { DAMAGE_TURRET, KIND_DRONE, KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
+import { DAMAGE_TURRET, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
 import type { TileData, WorldData } from '@/world'
 
 const COAST: CarControls = { throttle: 0, steer: 0, handbrake: false, lift: 0, powered: false }
@@ -468,5 +468,50 @@ describe('a tank’s turret flag', () => {
     world.step()
     expect(ray(5)).not.toBeNull()
     world.free()
+  })
+})
+
+/** Mirrors `scripted_hen` in vehicle.rs: walk, leap, flap and glide forward, land. */
+function henned(tick: number): CarControls {
+  const driven = { ...COAST, powered: true }
+  const second = Math.floor(tick / 60)
+  if (second <= 1) return driven
+  if (second === 2) return { ...driven, throttle: 1 }
+  if (second <= 7) return { ...driven, hop: true, throttle: 1, steer: 0.3 }
+  return driven
+}
+
+/** `HEN_CHECKPOINTS` in vehicle.rs: `[tick, position, stamina]`. */
+const henCheckpoints: [number, [number, number, number], number][] = [
+  [180, [0.0, 5.2071, -2.2903], 1.0],
+  [240, [0.0279, 11.1432, -13.4641], 0.7835],
+  [420, [4.6358, 13.9028, -50.7188], 0.0],
+  [600, [20.7118, 5.2639, -82.4246], 0.4608],
+]
+
+describe('hen prediction', () => {
+  it('WASM leaps, flaps and glides where the native server does', async () => {
+    await RAPIER.init()
+    const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
+    world.timestep = TICK_DT
+    world.createCollider(RAPIER.ColliderDesc.cuboid(200, 0.5, 200).setTranslation(0, -0.5, 0))
+    const hen = new CarSim(world, KIND_HEN, [0, 5.4, 0], 0)
+    for (let tick = 0; tick < 600; tick++) {
+      hen.drive(henned(tick), TICK_DT)
+      hen.step(TICK_DT)
+      const expected = henCheckpoints.find(([t]) => t === tick + 1)
+      if (!expected) continue
+      hen.state().position.forEach((value, axis) => {
+        expect(Math.abs(value - expected[1][axis]!), `tick ${tick + 1} axis ${axis}`).toBeLessThan(0.01)
+      })
+      expect(hen.tank!).toBeCloseTo(expected[2], 3)
+    }
+    world.free()
+  })
+
+  it('maps jump to a leap for a hen, with no handbrake or climb', () => {
+    const frame = (buttons: number): InputFrame => ({ seq: 1, strafe: 0, forward: 0, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 })
+    expect(controlsOf(frame(BUTTON_JUMP), KIND_HEN)).toMatchObject({ hop: true, handbrake: false, lift: 0, boost: false })
+    expect(controlsOf(frame(BUTTON_RUN), KIND_HEN)).toMatchObject({ hop: false, boost: false, lift: 0 })
   })
 })

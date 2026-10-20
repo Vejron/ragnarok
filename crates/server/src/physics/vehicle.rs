@@ -10,14 +10,15 @@
 //! levelled and turned by setting its angular velocity, so it is flown by leaning (see [`fly`]).
 //! A plane rolls on wheels like a car, with no engine on them: its propeller pushes the body along the
 //! nose, and its wings hold it up once it is fast enough (see [`wing`]).
+//! A walker stands on two spring legs and is kept upright by a torque (see [`walk`]); a hen is a walker
+//! with wings, which leap, flap and glide (see [`flap`]).
 //! "Car" in the names below means any of these vehicles; [`Spec`] says which one.
 
 use super::{Obj, Physics};
 use rapier3d::control::{DynamicRayCastVehicleController, WheelTuning};
 use rapier3d::prelude::*;
 use shared::consts::*;
-use shared::quant::from_cm;
-use shared::protocol::{DAMAGE_WHEELS, THRUST_BOOST, THRUST_LIFT, KIND_DRONE, KIND_HELI, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, WHEEL_GONE, vehicle_hp};
+use shared::protocol::{DAMAGE_WHEELS, THRUST_AIR, THRUST_BOOST, THRUST_GLIDE, THRUST_LIFT, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, WHEEL_GONE, vehicle_hp};
 
 /// Gravity acting on vehicle bodies. Stickmen use `GRAVITY`; the ray-cast suspension is tuned
 /// around the real-world value.
@@ -26,7 +27,7 @@ pub const CAR_GRAVITY: f32 = 9.81;
 mod flight;
 mod spec;
 
-use flight::{assist, fly, fly_drone, pull, roll_plane, thrust, walk, wing};
+use flight::{assist, flap, fly, fly_drone, pull, roll_plane, thrust, walk, wing};
 pub use spec::half_extents;
 pub(super) use spec::{Lift, Spec, spec};
 
@@ -202,7 +203,7 @@ pub(super) struct Car {
     condition: CarCondition,
     /// A mortar's tow: the car it is hitched to, and the joint that holds it there.
     towed_by: Option<(u32, ImpulseJointHandle)>,
-    /// A Roadster's air tank, 0..=`ROADSTER_AIR`; `None` for anything without thrusters.
+    /// A Roadster's air tank, 0..=`ROADSTER_AIR`, or a hen's stamina, 0..=`HEN_STAMINA`; `None` for anything else.
     tank: Option<f32>,
     /// The `THRUST_*` nozzles that fired in the last step.
     firing: u8,
@@ -352,7 +353,7 @@ impl Physics {
             }
             // The legs hang from the bottom of the hull and stop short of the ground, so a car or a shell
             // hits them but the springs, not the boxes, carry the walker.
-            KIND_WALKER => {
+            KIND_WALKER | KIND_HEN => {
                 let half = (WALKER_LEG_LENGTH - WALKER_LEG_CLEARANCE) / 2.0;
                 [-1.0, 1.0]
                     .map(|side| ColliderBuilder::cuboid(WALKER_LEG_HALF_WIDTH, half, WALKER_LEG_HALF_DEPTH).translation(Vector::new(side * WALKER_FOOT_HALF, -hy - half, 0.0)))
@@ -395,7 +396,7 @@ impl Physics {
                 );
             }
         }
-        self.cars.insert(id, Car { spec, body, collider, extra, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW, towed_by: None, tank: (kind == KIND_ROADSTER).then_some(ROADSTER_AIR), firing: 0 });
+        self.cars.insert(id, Car { spec, body, collider, extra, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW, towed_by: None, tank: spec.tank, firing: 0 });
     }
 
     /// Takes vehicle `id` out of the world, with everything hitched to it.
@@ -478,9 +479,7 @@ impl Physics {
         car.turn = 0.0;
         car.spin = 0.0;
         car.firing = 0;
-        if let Some(tank) = &mut car.tank {
-            *tank = ROADSTER_AIR;
-        }
+        car.tank = car.spec.tank;
         // A turret shot off comes back with the tank.
         for &handle in &car.extra {
             if let Some(collider) = self.colliders.get_mut(handle) {
@@ -615,24 +614,20 @@ impl Physics {
             return;
         }
         // Bitten buildings get their new shape first; one that is also coming down just goes.
-        for (object, triangles) in std::mem::take(&mut self.replacements) {
+        for (object, shape) in std::mem::take(&mut self.replacements) {
             if self.removals.contains(&object) {
                 continue;
             }
             let Some(&old) = self.handles.get(&object) else { continue };
             // A building with nothing left is not a collider at all.
-            if triangles.is_empty() {
+            let Some(shape) = shape else {
                 self.removals.push(object);
                 continue;
-            }
-            let corner = |t: &shared::carve::Tri, k: usize| Vector::new(from_cm(t[k * 3]), from_cm(t[k * 3 + 1]), from_cm(t[k * 3 + 2]));
-            let vertices: Vec<Vector> = triangles.iter().flat_map(|t| (0..3).map(move |k| corner(t, k))).collect();
-            let indices: Vec<[u32; 3]> = (0..triangles.len() as u32).map(|i| [i * 3, i * 3 + 1, i * 3 + 2]).collect();
-            let Ok(builder) = ColliderBuilder::trimesh(vertices, indices) else { continue };
+            };
             self.mark_changed(old);
             self.objects.remove(&old);
             self.colliders.remove(old, &mut self.islands, &mut self.bodies, &mut self.soft_bodies, false);
-            let handle = self.colliders.insert(builder.build());
+            let handle = self.colliders.insert(ColliderBuilder::new(shape).build());
             self.objects.insert(handle, object);
             self.handles.insert(object, handle);
         }
@@ -682,10 +677,16 @@ impl Physics {
             stances.push((id, feet));
         }
         for (id, feet) in stances {
-            let Some(car) = self.cars.get(&id) else { continue };
+            let Some(car) = self.cars.get_mut(&id) else { continue };
             let Some(body) = self.bodies.get_mut(car.body) else { continue };
             // A wreck (no health, which is exactly half power) has let go.
-            walk(body, car.flight, car.condition.power > 0.5, feet);
+            let standing = car.condition.power > 0.5;
+            walk(body, car.flight, standing, feet);
+            // A hen's wings, after the legs, which reset the forces.
+            if let Some(stamina) = &mut car.tank {
+                let grounded = feet.iter().any(|reach| reach.is_some_and(|distance| distance < WALKER_LEG_LENGTH));
+                car.firing = flap(body, car.flight, stamina, standing, grounded, dt);
+            }
         }
         for car in self.cars.values_mut().filter(|car| car.spec.lift.wheeled()) {
             // Wheel rays must not hit their own chassis.
@@ -921,7 +922,7 @@ impl Physics {
         Some(CarMotion { linvel: body.linvel().into(), angvel: body.angvel().into(), steer: car.steer, spin: car.spin })
     }
 
-    /// A Roadster's air tank (share of full) and the `THRUST_*` nozzles that fired in the last step.
+    /// A Roadster's air tank or a hen's stamina (share of full) and the `THRUST_*` flags of the last step.
     pub fn car_thrust(&self, id: u32) -> Option<(f32, u8)> {
         let car = self.cars.get(&id)?;
         Some((car.tank?, car.firing))

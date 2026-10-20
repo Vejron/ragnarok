@@ -1,10 +1,11 @@
-import { KIND_DRONE, KIND_HELI, KIND_MORTAR, KIND_PLANE, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
+import { KIND_DRONE, KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_PLANE, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
 import { CarModel, loadCarModels, type VehicleModel } from './car'
 import { HeliModel, loadHeliModel } from './heli'
+import { HenModel, loadHenModel } from './hen'
 import { loadPlaneModel, PlaneModel } from './plane'
 import { DroneModel } from './drone'
 import { MortarModel } from './mortar'
-import { DRIVING_DISTANCE, DRONE_DISTANCE, HELI_DISTANCE, MORTAR_DISTANCE, PLANE_DISTANCE, STRV_DISTANCE, TANK_DISTANCE, WALKER_DISTANCE } from './scene'
+import { DRIVING_DISTANCE, DRONE_DISTANCE, HELI_DISTANCE, HEN_DISTANCE, MORTAR_DISTANCE, PLANE_DISTANCE, STRV_DISTANCE, TANK_DISTANCE, WALKER_DISTANCE } from './scene'
 import { loadStrvModel, StrvModel } from './strvs'
 import { loadTankModel, TankModel } from './tank'
 import { loadWalkerModel, WalkerModel } from './walker'
@@ -15,7 +16,7 @@ import { loadWalkerModel, WalkerModel } from './walker'
  */
 
 /** Fetches the models every kind is built from. */
-export const loadVehicleModels = () => Promise.all([loadCarModels(), loadTankModel(), loadHeliModel(), loadPlaneModel(), loadWalkerModel(), loadStrvModel()])
+export const loadVehicleModels = () => Promise.all([loadCarModels(), loadTankModel(), loadHeliModel(), loadPlaneModel(), loadWalkerModel(), loadHenModel(), loadStrvModel()])
 
 /** The drawn vehicle for `kind`. Unknown kinds are drawn as cars. */
 export function createVehicleModel(kind: number, id: number): VehicleModel {
@@ -23,6 +24,7 @@ export function createVehicleModel(kind: number, id: number): VehicleModel {
   if (kind === KIND_HELI) return new HeliModel(id)
   if (kind === KIND_PLANE) return new PlaneModel(id)
   if (kind === KIND_WALKER) return new WalkerModel(id)
+  if (kind === KIND_HEN) return new HenModel(id)
   if (kind === KIND_STRV) return new StrvModel(id)
   if (kind === KIND_MORTAR) return new MortarModel(id)
   if (kind === KIND_DRONE) return new DroneModel(id)
@@ -35,6 +37,7 @@ export function cameraDistance(kind: number): number {
   if (kind === KIND_HELI) return HELI_DISTANCE
   if (kind === KIND_PLANE) return PLANE_DISTANCE
   if (kind === KIND_WALKER) return WALKER_DISTANCE
+  if (kind === KIND_HEN) return HEN_DISTANCE
   if (kind === KIND_STRV) return STRV_DISTANCE
   if (kind === KIND_MORTAR) return MORTAR_DISTANCE
   if (kind === KIND_DRONE) return DRONE_DISTANCE

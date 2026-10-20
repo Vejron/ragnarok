@@ -729,24 +729,19 @@ fn rocket_at(game: &mut Game, point: [f32; 3]) {
 }
 
 #[test]
-fn a_house_survives_a_rifle_magazine_but_not_two_rockets() {
+fn a_house_takes_any_beating_and_is_still_standing() {
     let (mut game, house) = game_with_house();
     let Obj::Building(id) = house else { unreachable!() };
-    let hp = game.world.building(id).unwrap().hp();
-    assert_eq!(hp, 150, "a 10 x 10 x 6 m house");
-    // A magazine of 10 AK5 rounds, at a third of 12 each: 40 of 150.
-    for _ in 0..10 {
-        damage_object(&mut game.world, house, (12u16 / BULLET_BUILDING_DIVISOR).max(1), [0.0, 1.5, 0.0]);
+    assert_eq!(game.world.building(id).unwrap().hp(), 150, "a 10 x 10 x 6 m house");
+    for _ in 0..5 {
+        rocket_at(&mut game, [14.0, 1.0, 0.0]);
     }
-    assert!(game.world.destroyed.is_empty(), "a magazine brought it down");
-    // A rocket 1 m from the wall does 88 of the 110 left: one is not enough, two are.
-    rocket_at(&mut game, [14.0, 1.0, 0.0]);
-    assert!(game.world.destroyed.is_empty(), "one rocket after a magazine was enough");
-    rocket_at(&mut game, [14.0, 1.0, 0.0]);
-    assert_eq!(game.world.destroyed.len(), 1);
-    // The rubble flies away from the blast, which came from -X: towards +X, yaw -90 degrees.
-    let yaw = from_mrad(game.world.destroyed[0].1);
-    assert!((yaw + std::f32::consts::FRAC_PI_2).abs() < 0.2, "{yaw}");
+    damage_object(&mut game.world, house, u16::MAX, [0.0, 1.5, 0.0]);
+    game.step();
+    assert!(game.world.destroyed.is_empty(), "the house came down");
+    assert_eq!(game.world.object_hp.get(&house), Some(&1), "it is left at its last stage");
+    assert_eq!(game.world.damage_stage(house), Some(DAMAGE_STAGES));
+    assert!(game.world.physics.cast_ray_object([12.0, 1.0, 0.0], [1.0, 0.0, 0.0], 40.0).is_some(), "the walls stop nothing");
 }
 
 #[test]
@@ -757,30 +752,6 @@ fn a_rocket_on_the_wall_hurts_but_one_across_the_street_does_not() {
     assert!(game.world.object_hp.is_empty() && game.world.destroyed.is_empty(), "5 m from the wall is out of reach: {:?}", game.world.object_hp);
     rocket_at(&mut game, [27.0, 1.0, 0.0]);
     assert!(game.world.object_hp.get(&house).is_some_and(|&hp| hp < 150));
-}
-
-#[test]
-fn a_collapsed_house_is_open_air_and_a_joiner_is_told() {
-    let (mut game, house) = game_with_house();
-    let (_, mut told) = join(&mut game);
-    while told.try_recv().is_ok() {}
-    assert!(game.world.physics.cast_ray_object([12.0, 1.0, 0.0], [1.0, 0.0, 0.0], 40.0).is_some(), "the house is there to begin with");
-    damage_object(&mut game.world, house, 150, [0.0, 1.5, 0.0]);
-    game.step();
-    assert!(game.world.physics.cast_ray_object([12.0, 1.0, 0.0], [1.0, 0.0, 0.0], 40.0).is_none(), "the walls still stop a ray");
-    let mut kinds = Vec::new();
-    while let Ok(Outgoing::Reliable(bytes)) = told.try_recv() {
-        if shared::protocol::peek_tag(&bytes) == Some(shared::protocol::S_DESTROYED) {
-            kinds.extend(decode::<shared::protocol::Destroyed>(&bytes).unwrap().1.into_iter().map(|e| (e.0, e.1, e.2, e.3)));
-        }
-    }
-    assert_eq!(kinds, vec![(shared::protocol::OBJ_BUILDING, 1, 1, 0)]);
-    let (_, mut late) = join(&mut game);
-    let mut seen = false;
-    while let Ok(Outgoing::Reliable(bytes)) = late.try_recv() {
-        seen |= shared::protocol::peek_tag(&bytes) == Some(shared::protocol::S_DESTROYED);
-    }
-    assert!(seen, "a late joiner never heard the house fell");
 }
 
 /// What `Damaged` entries (stage, marked, x, y, z in cm) `inbox` has been sent.
@@ -824,11 +795,12 @@ fn a_joiner_is_told_how_hurt_a_standing_house_is() {
 }
 
 #[test]
-fn a_collapse_announces_no_damage() {
+fn a_killing_blow_on_a_house_is_its_last_stage() {
     let (mut game, house) = game_with_house();
     game.world.fresh_damaged.clear();
     damage_object(&mut game.world, house, 150, [14.0, 1.0, 0.0]);
-    assert!(game.world.fresh_damaged.is_empty());
+    assert_eq!(game.world.fresh_damaged.len(), 1);
+    assert_eq!(game.world.fresh_damaged[0].1, DAMAGE_STAGES);
 }
 
 /// The target is moved to `distance` metres in front of the shooter, and left long enough that no
@@ -977,9 +949,9 @@ fn a_rocket_bites_a_hole_in_the_wall_that_a_ray_goes_through() {
     assert!((hit - 3.0).abs() < 0.1, "the near wall is at x = 15: {hit}");
     rocket_at(&mut game, [14.5, 1.0, 0.0]);
     game.step();
-    // The wall is open at the hole, and the ray carries on to the far wall at x = 25.
+    // The wall is open at the hole, and the ray carries on to the far wall: its cubes, x = 24 to 25.
     let (hit, _) = game.world.physics.cast_ray_object([12.0, 1.0, 0.0], [1.0, 0.0, 0.0], 40.0).unwrap();
-    assert!((hit - 13.0).abs() < 0.1, "the bite did not open the wall: {hit}");
+    assert!((hit - 12.0).abs() < 0.1, "the bite did not open the wall: {hit}");
     assert!(game.world.destroyed.is_empty(), "a bite is not a collapse");
     assert!(game.world.object_hp.get(&house).is_some_and(|&hp| hp < 150), "and it still hurts");
     let told = carved_told(&mut inbox);
@@ -1012,7 +984,7 @@ fn cutting_the_foot_of_a_house_drops_what_stood_on_it() {
     for step in 0..=10 {
         let t = step as f32;
         for point in [[15.0 + t, 0.5, -5.0], [15.0 + t, 0.5, 5.0], [15.0, 0.5, -5.0 + t], [25.0, 0.5, -5.0 + t]] {
-            if let Some((cut, _)) = game.world.carve(id, point, 1.4) {
+            if let Some(cut) = game.world.carve(id, point, 1.4) {
                 fell += cut.fell.len();
             }
         }
@@ -1032,7 +1004,7 @@ fn a_piece_of_wall_takes_a_few_rounds_and_then_breaks_out() {
     }
     hit_object(&mut game.world, [12.0, 1.3, 0.2], [1.0, 0.0, 0.0], 3.0, 12);
     game.step();
-    assert!(ray(&game, 0.2) > 12.0, "the fourth round left no hole");
+    assert!(ray(&game, 0.2) > 11.0, "the fourth round left no hole");
     // It is a small one: two metres to the side the wall stands.
     assert!((ray(&game, 2.4) - 3.0).abs() < 0.1);
     assert!(game.world.destroyed.is_empty());

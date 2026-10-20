@@ -49,6 +49,9 @@ pub(in crate::physics) struct Spec {
     /// How far below the box's centre the centre of mass sits, metres. A low one keeps a car on its
     /// wheels through hard corners; zero leaves the box's own.
     pub(in crate::physics) com_drop: f32,
+    /// A full tank of what its tricks run on: a Roadster's air, or a hen's wings' stamina. `None` for
+    /// everything else. A walker with one has wings (see `flap`).
+    pub(in crate::physics) tank: Option<f32>,
 }
 
 pub(super) static JEEP: Spec = Spec {
@@ -69,6 +72,7 @@ pub(super) static JEEP: Spec = Spec {
     lift: Lift::Wheels,
     linear_damping: 0.05,
     com_drop: 0.15,
+    tank: None,
 };
 
 /// The field mortar: a towed gun on two wheels. Nothing drives it, so it has no engine; its wheels only
@@ -91,6 +95,7 @@ pub(super) static MORTAR: Spec = Spec {
     lift: Lift::Wheels,
     linear_damping: 0.05,
     com_drop: 0.0,
+    tank: None,
 };
 
 pub(super) static SPORTS: Spec = Spec {
@@ -110,6 +115,7 @@ pub(super) static SPORTS: Spec = Spec {
     lift: Lift::Wheels,
     linear_damping: 0.05,
     com_drop: 0.02,
+    tank: None,
 };
 
 pub(super) static ROADSTER: Spec = Spec {
@@ -129,6 +135,7 @@ pub(super) static ROADSTER: Spec = Spec {
     lift: Lift::Wheels,
     linear_damping: 0.05,
     com_drop: 0.02,
+    tank: Some(ROADSTER_AIR),
 };
 
 pub(super) static TANK: Spec = Spec {
@@ -149,6 +156,7 @@ pub(super) static TANK: Spec = Spec {
     lift: Lift::Wheels,
     linear_damping: 0.05,
     com_drop: 0.0,
+    tank: None,
 };
 
 /// The Strv S: a tank with a fixed gun in a casemate (a weightless solid, see `add_car`), and quicker: more engine for a little less hull,
@@ -170,6 +178,7 @@ pub(super) static STRV: Spec = Spec {
     lift: Lift::Wheels,
     linear_damping: 0.05,
     com_drop: 0.0,
+    tank: None,
 };
 
 pub(super) static HELI: Spec = Spec {
@@ -190,6 +199,7 @@ pub(super) static HELI: Spec = Spec {
     // Air drag is what limits the speed: the rotor's lean gives about 4.9 m/s², so about 25 m/s.
     linear_damping: 0.2,
     com_drop: 0.0,
+    tank: None,
 };
 
 pub(super) static PLANE: Spec = Spec {
@@ -211,6 +221,7 @@ pub(super) static PLANE: Spec = Spec {
     // Drag is `PLANE_DRAG`, by the square of the speed.
     linear_damping: 0.0,
     com_drop: 0.0,
+    tank: None,
 };
 
 pub(super) static WALKER: Spec = Spec {
@@ -231,6 +242,28 @@ pub(super) static WALKER: Spec = Spec {
     lift: Lift::Walker,
     linear_damping: 0.05,
     com_drop: 0.0,
+    tank: None,
+};
+
+/// The hen: the walker's legs under a lighter hull, so it gets off the ground more easily, and wings.
+pub(super) static HEN: Spec = Spec {
+    half_extents: HEN_HALF_EXTENTS,
+    // About 4.5 tonnes. Nothing below uses the wheel fields; the legs are the `WALKER_*` constants.
+    density: 200.0,
+    wheel_radius: 0.0,
+    track_half: 0.0,
+    axles: &[],
+    hard_point_y: 0.0,
+    suspension_rest: 0.0,
+    max_suspension_force: 0.0,
+    engine_force: 0.0,
+    max_speed: WALKER_MAX_SPEED,
+    steer_lock: 0.0,
+    turn_rate: WALKER_TURN_RATE,
+    lift: Lift::Walker,
+    linear_damping: 0.05,
+    com_drop: 0.0,
+    tank: Some(HEN_STAMINA),
 };
 
 pub(super) static DRONE: Spec = Spec {
@@ -250,12 +283,14 @@ pub(super) static DRONE: Spec = Spec {
     lift: Lift::Drone,
     linear_damping: DRONE_DAMPING,
     com_drop: 0.0,
+    tank: None,
 };
 
 /// The spec for a vehicle kind. Unknown kinds are jeeps.
 pub(in crate::physics) fn spec(kind: u8) -> &'static Spec {
     match kind {
         KIND_WALKER => &WALKER,
+        KIND_HEN => &HEN,
         KIND_TANK => &TANK,
         KIND_STRV => &STRV,
         KIND_HELI => &HELI,

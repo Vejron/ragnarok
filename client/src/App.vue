@@ -7,7 +7,8 @@ import TouchControls from './TouchControls.vue'
 import type { InputController } from './sim/input'
 import { colorFor, cssColor, isBot, nameFor } from './profile'
 import type { Look } from './render/look'
-import { WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK } from './net/codec'
+import { WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_EGG, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK } from './net/codec'
+import { HEN_EGGS } from './sim/consts'
 
 const container = ref<HTMLElement | null>(null)
 const stats = shallowRef<HudStats | null>(null)
@@ -75,7 +76,7 @@ const sideName = (team: number) => (team === 0 ? 'People' : `Team ${team}`)
 const settingsUrl = `${import.meta.env.BASE_URL}settings.html`
 /** What the kill feed shows between killer and victim. */
 const mark = (weapon: number) =>
-  weapon === WEAPON_SHELL || weapon === WEAPON_AUTOCANNON || weapon === WEAPON_ROCKET || weapon === WEAPON_GRENADE || weapon === WEAPON_WRECK || weapon === WEAPON_BOMB
+  weapon === WEAPON_SHELL || weapon === WEAPON_AUTOCANNON || weapon === WEAPON_ROCKET || weapon === WEAPON_GRENADE || weapon === WEAPON_WRECK || weapon === WEAPON_BOMB || weapon === WEAPON_EGG
     ? '💥'
     : weapon === WEAPON_REVOLVER ? '›‹' : '›'
 
@@ -156,6 +157,7 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
   <template v-if="!stats?.touch">
   <div v-if="stats?.seat === 'driver'" class="drive-hint">W/S gas and brake · A/D steer or turn · Space handbrake · H hitch a mortar<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   <div v-if="stats?.seat === 'roadster'" class="drive-hint">W/S gas and brake · A/D steer · Shift boost · Space hop, hold to hover · C handbrake · H hitch a mortar<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
+  <div v-if="stats?.seat === 'hen'" class="drive-hint">W/S walk · A/D turn · Space leap, hold to flap, then glide · W in the air to fly forward · Click or F lay an egg<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   <div v-if="stats?.seat === 'walker'" class="drive-hint">W/S walk · A/D turn · Mouse aim the guns (the body follows within 30°) · Click or F fire<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   <div v-if="stats?.seat === 'strv'" class="drive-hint">W/S gas and brake · A/D turn the tank to aim · Mouse look · Hold right mouse for the gun sight · Click or F fire · {{ stats.reload < 1 ? 'reloading…' : 'loaded' }}</div>
   <div v-if="stats?.seat === 'mortar'" class="drive-hint">Mouse aim sets the bearing · W/S range {{ Math.round(stats.range) }} m · Click or F fire · {{ stats.reload < 1 ? 'reloading…' : 'loaded' }}</div>
@@ -182,7 +184,8 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
   </template>
   <div v-if="stats && stats.feedLost > 0.01" class="fpv-lost" :style="{ opacity: stats.feedLost }"><span>SIGNAL LOST</span></div>
   <div v-if="stats && stats.air !== null" class="gauges">
-    <div class="heat air" :class="{ jammed: stats.air < 0.15 }"><div :style="{ width: stats.air * 100 + '%' }" /><span>{{ stats.air < 0.15 ? 'AIR LOW' : 'AIR' }}</span></div>
+    <div class="heat air" :class="{ jammed: stats.air < 0.15 }"><div :style="{ width: stats.air * 100 + '%' }" /><span>{{ stats.seat === 'hen' ? (stats.air < 0.15 ? 'GLIDE' : 'WINGS') : stats.air < 0.15 ? 'AIR LOW' : 'AIR' }}</span></div>
+    <div v-if="stats.eggs !== null" class="eggs"><i v-for="k in HEN_EGGS" :key="k" :class="{ gone: k > (stats.eggs ?? 0) }" /></div>
   </div>
   <div v-if="stats && stats.heat !== null" class="gauges">
     <div class="heat" :class="{ jammed: stats.jammed }"><div :style="{ width: stats.heat * 100 + '%' }" /><span>{{ stats.jammed ? 'JAMMED' : 'GUNS' }}</span></div>
@@ -358,6 +361,9 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
 .bombs { display: flex; gap: 5px; }
 .bombs i { width: 10px; height: 22px; border-radius: 5px 5px 2px 2px; background: #2b2b26; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.7); }
 .bombs i.gone { opacity: 0.2; }
+.eggs { display: flex; gap: 5px; }
+.eggs i { width: 14px; height: 18px; border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%; background: #f6efdc; box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.45); }
+.eggs i.gone { opacity: 0.2; }
 .health {
   position: fixed; left: 16px; bottom: 16px; width: 220px; height: 22px; border-radius: 999px; overflow: hidden; pointer-events: none;
   background: rgba(255, 255, 255, 0.55); box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.25);

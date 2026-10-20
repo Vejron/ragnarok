@@ -2,7 +2,7 @@ use super::*;
 use crate::game::{Command, Game, Seat};
 use crate::physics::STANDING_Y;
 use shared::items::Falloff;
-use shared::protocol::{InputFrame, KIND_HELI, KIND_MORTAR, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, WEAPON_BOMB, WEAPON_MG};
+use shared::protocol::{InputFrame, KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_EGG, WEAPON_BOMB, WEAPON_MG};
 use shared::quant::to_mrad;
 use shared::world::{Road, WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
@@ -613,4 +613,80 @@ fn the_range_dial_walks_the_lob_and_the_elevation_follows_it() {
     let gun = game.world.vehicles[&vid].gun.unwrap();
     assert_eq!(gun.range, MORTAR_RANGE_MIN);
     assert!(gun.pitch > 1.4 && gun.pitch <= MORTAR_PITCH_MAX, "nearly vertical at the shortest: {}", gun.pitch);
+}
+
+/// A hen standing off the road, `height` metres up, with a driver aboard and their first frames queued.
+fn hen_crewed(height: f32) -> (Game, u32, u32, u32) {
+    let mut game = game();
+    let (driver, _inbox) = join(&mut game);
+    let ground = game.world.map.ground.height_at(0.0, 60.0);
+    let vid = super::super::vehicles::add_vehicle(&mut game.world, KIND_HEN, [0.0, ground + WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1] + 0.2, 60.0], 0.0);
+    seat(&mut game, driver, vid, 0);
+    let mut seq = 0;
+    aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, 0, 60);
+    if height > 0.0 {
+        game.world.physics.reset_car(vid, [0.0, ground + height, 60.0], 0.0);
+    }
+    (game, driver, vid, seq)
+}
+
+fn eggs(game: &Game) -> Vec<Rocket> {
+    game.world.rockets.values().filter(|rocket| rocket.kind == PROJECTILE_EGG).copied().collect()
+}
+
+#[test]
+fn a_hen_lays_an_egg_behind_it_that_bursts_when_its_fuse_runs_out() {
+    let (mut game, driver, vid, mut seq) = hen_crewed(0.0);
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, BUTTON_FIRE, 1);
+    aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, 0, 1);
+    let laid = eggs(&game);
+    assert_eq!(laid.len(), 1, "{:?}", game.world.rockets);
+    let arms = game.world.vehicles[&vid].arms.unwrap();
+    assert_eq!((arms.bombs, arms.shots), (HEN_EGGS - 1, 1));
+    // Under the tail, which is behind the hull (+Z when it faces -Z).
+    assert!(laid[0].position[2] > pose.position[2] + 1.5 && laid[0].position[1] < pose.position[1], "{:?} vs {pose:?}", laid[0].position);
+
+    // Laid from a standing hen it lands too softly to smash, and goes off on its fuse.
+    aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, 0, HEN_EGG_FUSE_TICKS - 10);
+    let resting = eggs(&game);
+    assert_eq!(resting.len(), 1, "not before its fuse");
+    assert!(resting[0].position[1] < 1.0, "it lies on the ground: {:?}", resting[0].position);
+    aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, 0, 20);
+    assert!(eggs(&game).is_empty(), "it has burst");
+}
+
+#[test]
+fn an_egg_dropped_from_high_up_smashes_where_it_lands() {
+    let (mut game, driver, _, mut seq) = hen_crewed(25.0);
+    aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, BUTTON_FIRE, 1);
+    aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, 0, 1);
+    assert_eq!(eggs(&game).len(), 1);
+    // Watched until it is gone: it smashed on the ground with time left on its fuse.
+    let mut last = eggs(&game)[0];
+    for _ in 0..HEN_EGG_FUSE_TICKS {
+        aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, 0, 1);
+        match eggs(&game).first() {
+            Some(&egg) => last = egg,
+            None => break,
+        }
+    }
+    assert!(eggs(&game).is_empty(), "it burst");
+    assert!(last.ttl > 20 && last.position[1] < 5.0, "on landing, well before its fuse: {last:?}");
+}
+
+#[test]
+fn a_clutch_is_six_eggs_laid_one_at_a_time_and_grows_back() {
+    let (mut game, driver, vid, mut seq) = hen_crewed(0.0);
+    // Held for a second, it lays at its rate; the clutch runs out after six.
+    aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, BUTTON_FIRE, TICK_RATE);
+    let expected = TICK_RATE.div_ceil(HEN_EGG_COOLDOWN_TICKS) as u8;
+    assert_eq!(game.world.vehicles[&vid].arms.unwrap().shots, expected);
+    aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, BUTTON_FIRE, TICK_RATE * 3);
+    let arms = game.world.vehicles[&vid].arms.unwrap();
+    assert!(arms.bombs <= 1 && arms.shots >= HEN_EGGS, "{arms:?}");
+    // Let go, and they come back one at a time.
+    let before = arms.bombs;
+    aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, 0, HEN_EGG_REGROW_TICKS + 1);
+    assert_eq!(game.world.vehicles[&vid].arms.unwrap().bombs, before + 1);
 }

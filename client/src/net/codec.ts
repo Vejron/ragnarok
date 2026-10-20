@@ -55,6 +55,8 @@ export const KIND_MORTAR = 9
 export const KIND_ROADSTER = 10
 /** An FPV drone, flown from afar by the player who launched it. */
 export const KIND_DRONE = 11
+/** The hen: a giant robot hen on the walker's legs that leaps, flaps and glides, and lays egg bombs. */
+export const KIND_HEN = 12
 export const FLAG_GROUNDED = 1 << 0
 export const FLAG_DEAD = 1 << 1
 export const FLAG_CROUCHING = 1 << 2
@@ -97,6 +99,8 @@ export const WEAPON_TURRET = 17
 export const WEAPON_MORTAR = 18
 /** An FPV drone's charge going off. */
 export const WEAPON_DRONE = 19
+/** A hen's egg going off. */
+export const WEAPON_EGG = 20
 
 /** How a stickman died, as in a `Kill`. Mirrors `DEATH_*`. */
 export const DEATH_BODY = 0
@@ -128,6 +132,8 @@ export const PROJECTILE_BULLET = 4
 export const PROJECTILE_BOMB = 5
 /** A mortar bomb in flight. */
 export const PROJECTILE_MORTAR = 6
+/** A hen's egg, bouncing until its fuse runs out or smashing where it lands hard. */
+export const PROJECTILE_EGG = 7
 
 /** `Turret`'s flags: a field mortar is hitched to a car, so it is drawn folded up for travel. Mirrors `TURRET_STOWED`. */
 export const TURRET_STOWED = 1 << 0
@@ -142,6 +148,10 @@ export const THRUST_BOOST = 1 << 0
 export const THRUST_LIFT = 1 << 1
 /** A drone's: its pilot still flies it. A drone sends its battery as `air`. */
 export const THRUST_LINKED = 1 << 2
+/** A hen's: its wings are spread and still, gliding. A hen sends its stamina as `air`, and `THRUST_LIFT` while it leaps or flaps. */
+export const THRUST_GLIDE = 1 << 3
+/** A hen's: neither foot is on the ground. */
+export const THRUST_AIR = 1 << 4
 
 /** One tick of player intent, already quantized: what the client predicts with is what it sends. */
 export interface InputFrame {

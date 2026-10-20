@@ -1,8 +1,8 @@
 import type { Node } from '@ragnarok/engine'
 import * as THREE from 'three'
 import {
-  ARMS_CUT, ARMS_JAMMED, ARMS_REAR_JAMMED, DAMAGE_TURRET, DAMAGE_WHEELS, encodeInput, encodePing, KIND_DRONE, KIND_HELI, KIND_PLANE, KIND_MORTAR, KIND_ROADSTER, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_STRV, KIND_TANK, KIND_WALKER, sceneStates, toAxis, toMrad, TURRET_GONE, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RICOCHET, WEAPON_TURRET,
-  PROJECTILE_BULLET, WEAPON_BULLET, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_BOMB, WEAPON_CRASH, WEAPON_MG, WEAPON_PELLET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_WRECK,
+  ARMS_CUT, ARMS_JAMMED, ARMS_REAR_JAMMED, DAMAGE_TURRET, DAMAGE_WHEELS, encodeInput, encodePing, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_PLANE, KIND_MORTAR, KIND_ROADSTER, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_STRV, KIND_TANK, KIND_WALKER, sceneStates, toAxis, toMrad, TURRET_GONE, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RICOCHET, WEAPON_TURRET,
+  PROJECTILE_BULLET, WEAPON_BULLET, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_BOMB, WEAPON_EGG, WEAPON_CRASH, WEAPON_MG, WEAPON_PELLET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_WRECK,
   type Arms, type BulletSpawn, type DriveState, type EntityState, type InputFrame, type PickupState, type RocketState, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
 } from './net/codec'
 import { blendEntity, blendRocket, blendVehicle, Interpolator } from './net/interp'
@@ -14,10 +14,10 @@ import {
   ROCKET_BLAST_RADIUS, SHELL_COOLDOWN_TICKS, STANDING_Y,
   CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS,
   HELI_GUN_COOLDOWN_TICKS, HELI_GUN_LENGTH, HELI_GUN_PITCH_MAX, HELI_GUN_PITCH_MIN, HELI_GUN_YAW_LIMIT, CANNON_RADIUS,
-  SHELL_SPEED, GRAVITY, MORTAR_BARREL_LENGTH, MORTAR_COOLDOWN_TICKS, MORTAR_RADIUS, MORTAR_SHELL_SPEED, MORTAR_SHELL_TTL_TICKS, STRV_BARREL_LENGTH, STRV_BARREL_MAX, STRV_BARREL_MIN, TANK_BARREL_LENGTH, TANK_BARREL_MAX, TANK_BARREL_MIN, WALKER_GUN_COOLDOWN_TICKS, WALKER_GUN_LENGTH, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT, TICK_MS, TICK_RATE, vehicleMaxHp, WRECK_BLAST_RADIUS,
+  SHELL_SPEED, GRAVITY, MORTAR_BARREL_LENGTH, MORTAR_COOLDOWN_TICKS, MORTAR_RADIUS, MORTAR_SHELL_SPEED, MORTAR_SHELL_TTL_TICKS, STRV_BARREL_LENGTH, STRV_BARREL_MAX, STRV_BARREL_MIN, TANK_BARREL_LENGTH, TANK_BARREL_MAX, TANK_BARREL_MIN, WALKER_GUN_COOLDOWN_TICKS, WALKER_GUN_LENGTH, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_LEG_LENGTH, WALKER_TORSO_LIMIT, TICK_MS, TICK_RATE, vehicleMaxHp, WRECK_BLAST_RADIUS,
   BOMB_RADIUS, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, PLANE_BOMB_MIN_HEIGHT, PLANE_BOMB_PIVOT, PLANE_GUN_RANGE, PLANE_REAR_PITCH_MAX, PLANE_REAR_PITCH_MIN, PLANE_STALL_SPEED,
 } from './sim/consts'
-import { vehicleDef } from './sim/vehicles'
+import { isLegged, vehicleDef } from './sim/vehicles'
 import { aimSpeedScale, DRONE_BLAST_RADIUS, DRONE_RANGE, emptyHotbar, GRENADE_BLAST_RADIUS, HOTBAR_SLOTS, hitscanGunFor, ITEM_NONE, ITEM_SNIPER, itemDef, PICKUP_RADIUS, type ItemDef, type ItemSlot } from './sim/items'
 import { InputController } from './sim/input'
 import { RapierMotor } from './sim/physics'
@@ -59,6 +59,7 @@ import { MortarModel } from './render/mortar'
 import type { Mark } from './render/gunsight'
 import { TankModel } from './render/tank'
 import { WalkerModel } from './render/walker'
+import { HenModel } from './render/hen'
 import { cameraDistance, createVehicleModel, loadVehicleModels } from './render/vehicles'
 import { Character, Crowd } from './render/character'
 import { loadRoosterModel, RoosterModel } from './render/rooster'
@@ -863,13 +864,14 @@ export class Game {
       seat: !this.seat
         ? null
         : this.seat.index === 0
-          ? this.seat.kind === KIND_DRONE ? 'drone' : this.seat.kind === KIND_HELI ? 'pilot' : this.seat.kind === KIND_PLANE ? 'aviator' : this.seat.kind === KIND_WALKER ? 'walker' : this.seat.kind === KIND_STRV ? 'strv' : this.seat.kind === KIND_MORTAR ? 'mortar' : this.seat.kind === KIND_ROADSTER ? 'roadster' : 'driver'
+          ? this.seat.kind === KIND_DRONE ? 'drone' : this.seat.kind === KIND_HELI ? 'pilot' : this.seat.kind === KIND_PLANE ? 'aviator' : this.seat.kind === KIND_WALKER ? 'walker' : this.seat.kind === KIND_HEN ? 'hen' : this.seat.kind === KIND_STRV ? 'strv' : this.seat.kind === KIND_MORTAR ? 'mortar' : this.seat.kind === KIND_ROADSTER ? 'roadster' : 'driver'
           : vehicleDef(this.seat.kind).gun ? 'gunner' : 'passenger',
       canSwitchSeat: this.seat !== null && (cars.get(this.seat.vehicle)?.seats.includes(0) ?? false),
       range: this.seat?.kind === KIND_MORTAR ? (ride?.turret?.range ?? 0) : 0,
       reload: this.seat?.kind === KIND_PLANE ? 1 : Math.min(1, (now - this.lastShotAt) / ((this.seat?.kind === KIND_HELI ? HELI_GUN_COOLDOWN_TICKS : this.seat?.kind === KIND_WALKER ? WALKER_GUN_COOLDOWN_TICKS : this.seat?.kind === KIND_MORTAR ? MORTAR_COOLDOWN_TICKS : SHELL_COOLDOWN_TICKS) * TICK_MS)),
       ...this.cockpit(ride, aviator),
-      air: this.seat?.index === 0 && this.seat.kind === KIND_ROADSTER ? (this.driver?.thrust?.air ?? null) : null,
+      air: this.seat?.index === 0 && (this.seat.kind === KIND_ROADSTER || this.seat.kind === KIND_HEN) ? (this.driver?.thrust?.air ?? null) : null,
+      eggs: this.seat?.index === 0 && this.seat.kind === KIND_HEN ? (ride?.arms?.bombs ?? null) : null,
       drone: piloting ? { battery: this.refPoses.get(this.seat!.vehicle)?.thrust?.air ?? 1, signal: Math.max(0, 1 - Math.hypot(ride.x - position[0]!, ride.z - position[2]!) / DRONE_RANGE) } : null,
       feedLost: Math.max(0, 1 - (now - this.feedLostAt) / FEED_LOST_MS),
       hp: this.hp,
@@ -967,7 +969,8 @@ export class Game {
       if (!gun || (from && from.distanceTo(to) >= gun.range - 1)) return
       if (!this.watery(to, 0.2)) this.effects.pelletStrike(to)
       if (shot.shooter === this.localId) this.view.chipped(to.x, to.y, to.z, gun.damage)
-    } else if (shot.weapon === WEAPON_BOMB) {
+    } else if (shot.weapon === WEAPON_BOMB || shot.weapon === WEAPON_EGG) {
+      // A hen's egg goes off like a plane's bomb, and as wide.
       this.blast(to, BOMB_RADIUS, BLASTS.bomb)
       this.sounds.explosion([to.x, to.y, to.z])
     } else if (shot.weapon === WEAPON_RICOCHET) {
@@ -1340,8 +1343,16 @@ export class Game {
       const steer = mine ? driven.steer : state.steer
       const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion(...rotation))
       const yaw = Math.atan2(-forward.x, -forward.z)
+      // A hen draws its wings and legs from its flags: the driver's own as predicted, at once.
+      if (car instanceof HenModel) car.setFlags(mine ? (this.driver?.thrust?.flags ?? 0) : (state.thrust?.flags ?? 0))
       car.update([x, y, z], [rotation[0], rotation[1], rotation[2], rotation[3]], steer, state.seats, state.turret, state.arms)
-      if (car instanceof WalkerModel) for (const step of car.takeSteps()) this.sounds.footstep(step.at, step.weight)
+      if (car instanceof WalkerModel || car instanceof HenModel) for (const step of car.takeSteps()) this.sounds.footstep(step.at, step.weight)
+      if (car instanceof HenModel) {
+        const { beats, leapt, eggs } = car.takeEvents()
+        if (leapt) this.sounds.bawk([x, y + 2, z])
+        for (let k = 0; k < Math.min(beats, 2); k++) this.sounds.wingBeat([x, y, z])
+        if (eggs > 0) this.sounds.plop([x, y - 1, z])
+      }
       placed.set(id, { kind: state.kind, turret: state.turret, arms: state.arms, x, y, z, yaw, seats: state.seats })
       this.smoulder(id, state, [x, y, z], rotation)
       this.tyres(id, state, [x, y, z], rotation, steer)
@@ -1661,7 +1672,9 @@ export class Game {
     if (pickup) return `E: take ${itemDef(pickup.item)?.name ?? 'item'}`
     let best: { distance: number; driverSeatFree: boolean; kind: number } | null = null
     for (const car of cars.values()) {
-      const distance = Math.hypot(car.x - position[0]!, car.y - position[1]!, car.z - position[2]!)
+      // A walker or a hen is boarded from between its feet, as the server does (`boarding_point`).
+      const y = isLegged(car.kind) ? car.y - WALKER_LEG_LENGTH : car.y
+      const distance = Math.hypot(car.x - position[0]!, y - position[1]!, car.z - position[2]!)
       // A drone is only ever flown by whoever launched it.
       const hasFreeSeat = car.kind !== KIND_DRONE && car.seats.includes(0)
       if (hasFreeSeat && distance <= ENTER_RADIUS && (!best || distance < best.distance)) best = { distance, driverSeatFree: car.seats[0] === 0, kind: car.kind }
@@ -1674,6 +1687,8 @@ export class Game {
     if (best.kind === KIND_PLANE) return best.driverSeatFree ? 'E: fly the triplane' : 'E: man the rear gun'
     if (best.kind === KIND_SPORTS) return best.driverSeatFree ? 'E: drive the sports car' : 'E: ride along'
     if (best.kind === KIND_ROADSTER) return best.driverSeatFree ? 'E: drive the Roadster' : 'E: ride along'
+    if (best.kind === KIND_WALKER) return 'E: drive the walker'
+    if (best.kind === KIND_HEN) return 'E: drive the hen'
     return best.driverSeatFree ? 'E: drive the jeep' : 'E: ride along'
   }
 

@@ -17,11 +17,13 @@ import {
   PLANE_SUSPENSION_REST, PLANE_THRUST, PLANE_TRACK_HALF, PLANE_WHEEL_RADIUS, PLANE_YAW_RATE,
   WALKER_ACCEL, WALKER_BRAKE, WALKER_BALANCE_DAMP, WALKER_BALANCE_GAIN, WALKER_BALANCE_MAX, WALKER_BALANCE_MAX_PITCH, WALKER_CATCH_DAMP, WALKER_CATCH_FALL_MARGIN, WALKER_CATCH_GAIN, WALKER_CATCH_LEAN_MARGIN, WALKER_CATCH_MAX, WALKER_ACCEL_LEAN, WALKER_CRUISE_LEAN, WALKER_FALLEN_UP, WALKER_FOOT_HALF, WALKER_GRIP, WALKER_GRIP_GAIN, WALKER_GETUP_SHARE, WALKER_HALF_EXTENTS,
   WALKER_LEG_DAMPING, WALKER_LEG_LENGTH, WALKER_LEG_SPRING, WALKER_MAX_SPEED, WALKER_REVERSE_SHARE, WALKER_TURN_ACCEL, WALKER_TURN_RATE,
+  HEN_AIR_LEVEL, HEN_AIR_RESPONSE, HEN_AIR_TILT, HEN_AIR_YAW, HEN_FLAP_ACCEL, HEN_FLAP_CLIMB, HEN_FLAP_DRAIN, HEN_FLAP_GAIN, HEN_GLIDE_ACCEL, HEN_GLIDE_GAIN, HEN_GLIDE_SINK,
+  HEN_GLIDE_SPEED, HEN_HALF_EXTENTS, HEN_JUMP_COST, HEN_JUMP_FORWARD, HEN_JUMP_SPEED, HEN_STAMINA, HEN_STAMINA_REFILL,
 } from './consts'
 import { addTileCollider, buildStaticColliders, extraSolids, HEAVY_GROUPS, rebuildBuildingCollider, timedPhysics, VehicleSolids } from './physics'
 import type { TileGround } from './terrain'
 import { vehicleDef } from './vehicles'
-import { DAMAGE_TURRET, DAMAGE_WHEELS, fromAxis, fromMrad, KIND_DRONE, KIND_HELI, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, THRUST_BOOST, THRUST_LIFT, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, WHEEL_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
+import { DAMAGE_TURRET, DAMAGE_WHEELS, fromAxis, fromMrad, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, THRUST_AIR, THRUST_BOOST, THRUST_GLIDE, THRUST_LIFT, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, WHEEL_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
 import type { TileData, WorldData } from '@/world'
 import * as THREE from 'three'
 
@@ -219,6 +221,9 @@ const WALKER: Spec = {
   comDrop: 0,
 }
 
+/** The walker's legs under a lighter hull, and wings (see `flap`). Mirrors `HEN` in spec.rs. */
+const HEN: Spec = { ...WALKER, halfExtents: HEN_HALF_EXTENTS, density: 200 }
+
 const TURN_ACCEL = 3.0
 const BRAKE_PER_KG = 0.045
 const COAST_BRAKE_PER_KG = 0.0015
@@ -267,7 +272,7 @@ export interface CarControls {
   aim?: [number, number] | null
   /** A Roadster's rear nozzles are held open. */
   boost?: boolean
-  /** A Roadster hops off the ground, then holds itself up in the air. */
+  /** A Roadster hops off the ground, then holds itself up in the air. A hen leaps, then flaps or glides. */
   hop?: boolean
 }
 
@@ -313,7 +318,7 @@ export class CarSim {
   private air: [number, number] = [0, 0]
   /** How worn it is, from the last snapshot. */
   condition: CarCondition = NEW_CONDITION
-  /** A Roadster's air tank, 0..`ROADSTER_AIR`; null for anything without thrusters. */
+  /** A Roadster's air tank, 0..`ROADSTER_AIR`, or a hen's stamina, 0..`HEN_STAMINA`; null for anything else. */
   tank: number | null
   /** The `THRUST_*` nozzles that fired in the last step. */
   firing = 0
@@ -323,8 +328,8 @@ export class CarSim {
    * back near it, as on the server.
    */
   constructor(private readonly world: RAPIER.World, private readonly kind: number, position: [number, number, number], yaw: number, private readonly bound = Infinity) {
-    this.spec = kind === KIND_TANK ? TANK : kind === KIND_STRV ? STRV : kind === KIND_HELI ? HELI : kind === KIND_SPORTS ? SPORTS : kind === KIND_ROADSTER ? ROADSTER : kind === KIND_PLANE ? PLANE : kind === KIND_WALKER ? WALKER : kind === KIND_DRONE ? DRONE : JEEP
-    this.tank = kind === KIND_ROADSTER ? ROADSTER_AIR : null
+    this.spec = kind === KIND_TANK ? TANK : kind === KIND_STRV ? STRV : kind === KIND_HELI ? HELI : kind === KIND_SPORTS ? SPORTS : kind === KIND_ROADSTER ? ROADSTER : kind === KIND_PLANE ? PLANE : kind === KIND_WALKER ? WALKER : kind === KIND_HEN ? HEN : kind === KIND_DRONE ? DRONE : JEEP
+    this.tank = kind === KIND_ROADSTER ? ROADSTER_AIR : kind === KIND_HEN ? HEN_STAMINA : null
     const spec = this.spec
     this.body = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
@@ -468,8 +473,11 @@ export class CarSim {
     if (!controller) {
       // Forces persist from step to step until reset.
       this.body.resetForces(false)
-      if (this.spec.lift === 'walker') this.walk(this.flight, dt)
-      else if (this.flight.powered && this.spec.lift === 'drone') this.flyDrone(this.flight, dt)
+      if (this.spec.lift === 'walker') {
+        const grounded = this.walk(this.flight, dt)
+        // A hen's wings, after the legs.
+        if (this.tank !== null) this.firing = this.flap(this.flight, this.condition.power > 0.5, grounded, dt)
+      } else if (this.flight.powered && this.spec.lift === 'drone') this.flyDrone(this.flight, dt)
       else if (this.flight.powered) this.fly(this.flight, dt)
       this.world.step()
       return
@@ -658,7 +666,8 @@ export class CarSim {
   }
 
   /** Mirrors `walk` in `physics/vehicle/flight.rs`: spring legs, a capped balance torque, and walking at the hip. */
-  private walk(controls: CarControls, _dt: number) {
+  /** Mirrors `walk` and the feet cast before it in `Physics::step_cars`; returns whether a foot is within reach of the ground. */
+  private walk(controls: CarControls, _dt: number): boolean {
     const body = this.body
     body.resetTorques(false)
     const q = body.rotation()
@@ -782,12 +791,75 @@ export class CarSim {
     const totalX = pushX + catchX
     const totalZ = pushZ + catchZ
     if (totalX !== 0 || totalZ !== 0) body.addForceAtPoint({ x: totalX * mass, y: 0, z: totalZ * mass }, position, true)
-    if (!driven) return
+    const reached = feet.some((distance) => distance !== null && distance < WALKER_LEG_LENGTH)
+    if (!driven) return reached
     // It turns slower the faster it walks, so its feet can keep up with the heading.
     const turnRate = WALKER_TURN_RATE / (1 + Math.abs(alongHeading) / WALKER_MAX_SPEED)
     const yaw = (-clamp(controls.steer, -1, 1) * turnRate - av.y) * 4
     const yawInertia = (mass * (hx * hx + hz * hz)) / 3
     body.addTorque({ x: 0, y: clamp(yaw, -WALKER_TURN_ACCEL, WALKER_TURN_ACCEL) * yawInertia * share, z: 0 }, true)
+    return reached
+  }
+
+  /** Mirrors `flap` in `physics/vehicle/flight.rs`: leap, level in the air, flap or glide; returns the `THRUST_*` flags. */
+  private flap(controls: CarControls, standing: boolean, grounded: boolean, dt: number): number {
+    const body = this.body
+    let flags = grounded ? 0 : THRUST_AIR
+    const q = body.rotation()
+    const up = rotate(q, 0, 1, 0)
+    if (!standing || !controls.powered || up[1] < WALKER_FALLEN_UP) return flags
+    const mass = body.mass()
+    const nose = rotate(q, 0, 0, -1)
+    const flatLength = Math.hypot(nose[0], nose[2])
+    const heading: Vec = flatLength > 1e-3 ? [nose[0] / flatLength, 0, nose[2] / flatLength] : [0, 0, -1]
+    // heading × (0, 1, 0)
+    const right: Vec = [-heading[2], 0, heading[0]]
+    const throttle = clamp(controls.throttle, -1, 1)
+    const steer = clamp(controls.steer, -1, 1)
+    const v = body.linvel()
+    const rising = v.y
+    let stamina = this.tank!
+    if (grounded) {
+      if (controls.hop && stamina >= HEN_JUMP_COST && rising < HEN_JUMP_SPEED * 0.5) {
+        const forward = HEN_JUMP_FORWARD * (throttle >= 0 ? throttle : throttle * WALKER_REVERSE_SHARE)
+        body.setLinvel({ x: v.x + heading[0] * forward, y: v.y + HEN_JUMP_SPEED, z: v.z + heading[2] * forward }, true)
+        stamina -= HEN_JUMP_COST
+        flags |= THRUST_LIFT
+      } else if (!controls.hop) stamina += HEN_STAMINA_REFILL * dt
+      this.tank = clamp(stamina, 0, HEN_STAMINA)
+      return flags
+    }
+
+    // The wings trim it level, leaning it a little with the stick, and turn it with the steering.
+    const lx = heading[0] * throttle * HEN_AIR_TILT + right[0] * steer * HEN_AIR_TILT
+    const lz = heading[2] * throttle * HEN_AIR_TILT + right[2] * steer * HEN_AIR_TILT
+    const length = Math.hypot(lx, 1, lz)
+    const [wx, wy, wz] = [lx / length, 1 / length, lz / length]
+    // up × lean
+    const turn = [(up[1] * wz - up[2] * wy) * HEN_AIR_LEVEL, -steer * HEN_AIR_YAW, (up[0] * wy - up[1] * wx) * HEN_AIR_LEVEL]
+    const w = body.angvel()
+    const blend = Math.min(1, HEN_AIR_RESPONSE * dt)
+    body.setAngvel({ x: w.x + (turn[0]! - w.x) * blend, y: w.y + (turn[1]! - w.y) * blend, z: w.z + (turn[2]! - w.z) * blend }, true)
+    if (!controls.hop) return flags
+
+    // Held, the wings carry it forward with the stick.
+    const along = v.x * heading[0] + v.z * heading[2]
+    const ahead = clamp(Math.max(throttle, 0) * HEN_GLIDE_SPEED - along, -HEN_GLIDE_ACCEL, HEN_GLIDE_ACCEL)
+    const push: Vec = throttle > 0 ? [heading[0] * ahead, 0, heading[2] * ahead] : [0, 0, 0]
+    if (stamina > 0) {
+      // Flapping, once the leap tops out: a slow climb, as high as the stamina lasts.
+      if (rising <= HEN_FLAP_CLIMB) {
+        push[1] = CAR_GRAVITY + clamp((HEN_FLAP_CLIMB - rising) * HEN_FLAP_GAIN, -HEN_FLAP_ACCEL, HEN_FLAP_ACCEL)
+        this.tank = Math.max(0, stamina - HEN_FLAP_DRAIN * dt)
+      }
+      flags |= THRUST_LIFT
+    } else {
+      // Spread and still, the wings hold its fall to a glide.
+      push[1] = clamp(CAR_GRAVITY + (-HEN_GLIDE_SINK - rising) * HEN_GLIDE_GAIN, 0, CAR_GRAVITY + HEN_FLAP_ACCEL)
+      flags |= THRUST_GLIDE
+    }
+    body.addForce({ x: push[0] * mass, y: push[1] * mass, z: push[2] * mass }, true)
+    return flags
   }
 
   /** Mirrors `roll_plane`: no engine on the wheels, the front pair steered by A/D, brakes on Shift or with nobody aboard. */
@@ -952,18 +1024,20 @@ export function controlsOf(input: InputFrame, kind = 0): CarControls {
   const jump = (input.buttons & BUTTON_JUMP) !== 0
   const run = (input.buttons & BUTTON_RUN) !== 0
   // A Roadster boosts on run and hops (then hovers) on jump, so its handbrake is on crouch.
+  // A hen leaps, then flaps or glides, on jump.
   const roadster = kind === KIND_ROADSTER
+  const hen = kind === KIND_HEN
   return {
     steer: fromAxis(input.strafe),
     throttle: fromAxis(input.forward),
-    handbrake: roadster ? (input.buttons & BUTTON_CROUCH) !== 0 : jump,
+    handbrake: roadster ? (input.buttons & BUTTON_CROUCH) !== 0 : !hen && jump,
     // A helicopter climbs on jump and sinks on run.
-    lift: roadster ? 0 : Number(jump) - Number(run),
+    lift: roadster || hen ? 0 : Number(jump) - Number(run),
     powered: true,
     // Whoever flies a plane turns it towards where they look; only a plane reads it.
     aim: [fromMrad(input.yaw), fromMrad(input.pitch)],
     boost: roadster && run,
-    hop: roadster && jump,
+    hop: (roadster || hen) && jump,
   }
 }
 
@@ -1048,7 +1122,7 @@ export class VehicleDriver {
     return this.sim ? this.id : null
   }
 
-  /** The predicted vehicle's air tank (0..1) and the `THRUST_*` nozzles firing; null without thrusters. */
+  /** The predicted vehicle's air tank or stamina (0..1) and its `THRUST_*` flags; null for a kind without either. */
   get thrust(): { air: number; flags: number } | null {
     const sim = this.sim
     return sim && sim.tank !== null ? { air: sim.tank / ROADSTER_AIR, flags: sim.firing } : null

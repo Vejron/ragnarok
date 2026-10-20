@@ -26,7 +26,7 @@ distance from the vehicle's centre would give; neighbours still take the splash.
 |---|---|---|---|---|
 | Strv S | 55 deg | 58 / 72 / 75 / 78 deg | 1.0 / 1.0 / 1.4 / 1.3 | engine deck x1.6, casemate roof x1.3 |
 | tank | 20 deg | 66 / 74 / 78 / 80 deg | 1.0 / 1.0 / 1.35 / 1.3 | engine deck x1.5 |
-| cars, helicopter, walker | none | 82 deg all round | 1 | none |
+| cars, helicopter, walker, hen | none | 82 deg all round | 1 | none |
 | plane | none | never | 1 | none |
 
 Off the nose by about 22 degrees a level shell bounces off the Strv S front.
