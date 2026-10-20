@@ -181,7 +181,7 @@ function removeSquadNow() {
       <UCheckbox
         :model-value="!!squad.respawn"
         label="Respawn at home after dying"
-        @update:model-value="(v) => patchSquad(pickedSquad, { respawn: checked(v) || undefined })"
+        @update:model-value="(v: boolean | 'indeterminate') => patchSquad(pickedSquad, { respawn: checked(v) || undefined })"
       />
     </div>
     <p v-else class="text-xs text-muted">No squad picked. Add one, then place its bots and tanks on the map.</p>
@@ -197,26 +197,26 @@ function removeSquadNow() {
 
         <div class="space-y-1">
           <p class="text-xs font-semibold text-muted">When</p>
-          <label class="flex items-center gap-2"><UCheckbox :model-value="!!trigger.when.start" label="the scenario starts" @update:model-value="(v) => setWhen(index, 'start', checked(v) || undefined)" /></label>
+          <label class="flex items-center gap-2"><UCheckbox :model-value="!!trigger.when.start" label="the scenario starts" @update:model-value="(v: boolean | 'indeterminate') => setWhen(index, 'start', checked(v) || undefined)" /></label>
           <div class="flex items-center gap-2">
-            <UCheckbox :model-value="trigger.when.after !== undefined" label="after" @update:model-value="(v) => condition(index, 'after', checked(v))" />
+            <UCheckbox :model-value="trigger.when.after !== undefined" label="after" @update:model-value="(v: boolean | 'indeterminate') => condition(index, 'after', checked(v))" />
             <UInput v-if="trigger.when.after !== undefined" :model-value="trigger.when.after" type="number" min="0" class="w-20" @update:model-value="(v: string | number) => setWhen(index, 'after', Number(v))" />
             <span v-if="trigger.when.after !== undefined" class="text-xs text-muted">seconds</span>
           </div>
           <div class="flex items-center gap-2">
-            <UCheckbox :model-value="trigger.when.enter !== undefined" label="someone enters" @update:model-value="(v) => condition(index, 'enter', checked(v))" />
+            <UCheckbox :model-value="trigger.when.enter !== undefined" label="someone enters" @update:model-value="(v: boolean | 'indeterminate') => condition(index, 'enter', checked(v))" />
             <USelect v-if="trigger.when.enter !== undefined" :model-value="trigger.when.enter" :items="areaItems" @update:model-value="(v: string) => setWhen(index, 'enter', v)" />
           </div>
           <div v-if="trigger.when.enter !== undefined" class="ml-6 flex items-center gap-2">
-            <UCheckbox :model-value="trigger.when.by !== undefined" label="only from squad" @update:model-value="(v) => setWhen(index, 'by', checked(v) ? squadNames[0] ?? '' : undefined)" />
+            <UCheckbox :model-value="trigger.when.by !== undefined" label="only from squad" @update:model-value="(v: boolean | 'indeterminate') => setWhen(index, 'by', checked(v) ? squadNames[0] ?? '' : undefined)" />
             <USelect v-if="trigger.when.by !== undefined" :model-value="trigger.when.by" :items="squadItems" @update:model-value="(v: string) => setWhen(index, 'by', v)" />
           </div>
           <div class="flex items-center gap-2">
-            <UCheckbox :model-value="trigger.when.cleared !== undefined" label="squad is cleared" @update:model-value="(v) => condition(index, 'cleared', checked(v))" />
+            <UCheckbox :model-value="trigger.when.cleared !== undefined" label="squad is cleared" @update:model-value="(v: boolean | 'indeterminate') => condition(index, 'cleared', checked(v))" />
             <USelect v-if="trigger.when.cleared !== undefined" :model-value="trigger.when.cleared" :items="squadItems" @update:model-value="(v: string) => setWhen(index, 'cleared', v)" />
           </div>
           <div class="flex items-center gap-2">
-            <UCheckbox :model-value="trigger.when.done !== undefined" label="another trigger is done" @update:model-value="(v) => condition(index, 'done', checked(v))" />
+            <UCheckbox :model-value="trigger.when.done !== undefined" label="another trigger is done" @update:model-value="(v: boolean | 'indeterminate') => condition(index, 'done', checked(v))" />
             <USelect v-if="trigger.when.done !== undefined" :model-value="trigger.when.done" :items="namedTriggers" @update:model-value="(v: string) => setWhen(index, 'done', v)" />
           </div>
         </div>
