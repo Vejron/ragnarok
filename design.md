@@ -386,6 +386,14 @@ Make the project more modular and maintainable, with clear separation of concern
 Consider breaking the codebase into smaller, self-contained modules with well-defined interfaces, and adopting a consistent coding style and documentation standard.
 Do this without negatively impacting the existing functionality or introducing unnecessary complexity or performance degradation.
 
+### Tile meshes off the main thread
+
+Build tile meshes in a Web Worker, so the main thread never waits on them. Tiles are built on the main thread as they stream in (`attachTile` → `buildTile`).
+- On Ersboda most tiles build in about 2 ms.
+- The worst one, with very large buildings, takes about 21 ms. That is more than a 60 fps frame (16.7 ms), so it can cause a visible hitch.
+
+This is a bigger change. The worker would make the buildings' faces (`Shell.facesWithRoof`) and the vertex arrays, and pass them back to the main thread without copying them. The scene graph and the Rapier colliders must still be made on the main thread. The client's carve state must then be kept in step between the two threads.
+
 ### Editor
 
 Adding and removing weapons, vehicles, and other game entities should be straightforward, with minimal impact on unrelated systems. base engine should have a clear entity-component system, allowing for flexible composition and easy extension of game objects.
