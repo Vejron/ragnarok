@@ -1,10 +1,9 @@
-import { Group, Mesh, sphereGeometry, type Material, type Node } from '@ragnarok/engine'
+import { Group, Mesh, type Material, type Node } from '@ragnarok/engine'
 import * as THREE from 'three'
 import { parseToonModel, unlitMaterial } from './models'
 import { toonMaterial } from './toon'
 import { JEEP_MAX_STEER, JEEP_WHEEL_RADIUS, ROADSTER_MAX_STEER, ROADSTER_SEATS, ROADSTER_WHEEL_RADIUS, SPORTS_MAX_STEER, SPORTS_SEATS, SPORTS_WHEEL_RADIUS, CAR_SEATS } from '@/sim/consts'
 import { KIND_ROADSTER, KIND_SPORTS, THRUST_BOOST, THRUST_LIFT, type Arms, type Turret } from '@/net/codec'
-import { colorFor } from '@/profile'
 import { CarWear } from './carwear'
 import type { Debris } from './debris'
 import { halfExtentsOf } from '@/sim/kinds'
@@ -64,14 +63,15 @@ export interface Jet {
 
 /**
  * An open jeep, a low sports car or a Roadster, from the glTF the Blender script builds. Wheels roll with the
- * speed the interpolator reports and the front pair steers. Passengers show as coloured heads, one
- * per seat, at the `seat_N` markers of the model.
+ * speed the interpolator reports and the front pair steers. Its riders are drawn sitting by `Game`,
+ * their heads on the `seat_N` markers of the model (`VehicleDef.seatHeads`).
  */
 export class CarModel implements VehicleModel {
   readonly root = new Group()
   private readonly frontPivots: Node[] = []
   private readonly spinners: Node[] = []
-  private readonly heads: Mesh[] = []
+  /** Each seat's head point in the car's frame, from the model's `seat_N` markers. */
+  readonly seatMarkers: THREE.Vector3[] = []
   private readonly paint: Material
   private readonly wheelRadius: number
   private readonly maxSteer: number
@@ -104,28 +104,21 @@ export class CarModel implements VehicleModel {
 
     this.damage = new CarWear(this.root, model, halfExtentsOf(kind), wheelRadius, paint)
 
-    const headGeometry = sphereGeometry(0.2, 12, 10)
     for (let seat = 0; seat < seats; seat++) {
-      const head = new Mesh(headGeometry, toonMaterial({ color: 0xffffff }))
-      head.userData.head = true
-      head.position.copy(model.getObjectByName(`seat_${seat}`)!.position)
-      head.castShadow = true
-      head.visible = false
-      this.root.add(head)
-      this.heads.push(head)
+      const marker = model.getObjectByName(`seat_${seat}`)!.position
+      this.seatMarkers.push(new THREE.Vector3(marker.x, marker.y, marker.z))
     }
   }
 
   /**
    * Places the car and animates it. The wheels roll by however far the car moved along its nose
    * since the last call (so reversing spins them backwards), `steer` is the front wheel fraction
-   * of full lock and `seats` the occupant ids (0 for an empty seat).
+   * of full lock.
    */
   update(
     position: readonly [number, number, number],
     rotation: readonly [number, number, number, number],
     steer: number,
-    seats: readonly number[],
   ) {
     this.root.position.set(...position)
     this.root.quaternion.set(...rotation)
@@ -136,14 +129,6 @@ export class CarModel implements VehicleModel {
     for (const spinner of this.spinners) spinner.rotation.x = this.roll
     // Turning right (positive) is a clockwise yaw, which is a negative rotation about +Y.
     for (const pivot of this.frontPivots) pivot.rotation.y = -steer * this.maxSteer
-    this.heads.forEach((head, seat) => {
-      const occupant = seats[seat] ?? 0
-      head.visible = occupant !== 0
-      if (occupant !== 0) {
-        head.material.color.setHex(colorFor(occupant))
-        head.material.needsUpdate()
-      }
-    })
   }
 
   /**
@@ -180,8 +165,6 @@ export class CarModel implements VehicleModel {
   dispose() {
     this.damage.dispose()
     this.paint.dispose()
-    for (const head of this.heads) head.material.dispose()
-    this.heads[0]?.geometry.dispose()
     this.root.removeFromParent()
   }
 }

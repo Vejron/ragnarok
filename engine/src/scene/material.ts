@@ -146,6 +146,13 @@ export interface ShaderMaterialParams extends Omit<MaterialParams, 'lit' | 'map'
    * frame's `frame.cameraPos`, `frame.sunDir`, `frame.fog.w` (seconds) and the rest are in scope too.
    */
   wgsl: string
+  /**
+   * WGSL defining `fn displace(world: vec3f, custom: vec4f, color: vec4f) -> vec3f`, which moves each
+   * vertex in world space before it is projected; `custom` and `color` are the vertex's own attributes.
+   * It sees `params` and `frame` too. Moved vertices can leave the geometry's bounds: pad them, or turn
+   * the mesh's `frustumCulled` off. Shadows are cast from the unmoved vertices.
+   */
+  vertex?: string
   uniforms?: Record<string, UniformValue>
   textures?: Record<string, Texture>
 }
@@ -157,12 +164,14 @@ export interface ShaderMaterialParams extends Omit<MaterialParams, 'lit' | 'map'
  */
 export class ShaderMaterial extends Material {
   readonly wgsl: string
+  readonly vertex: string | undefined
   readonly uniforms: Record<string, UniformValue>
   readonly textures: Record<string, Texture>
 
   constructor(params: ShaderMaterialParams) {
     super({ ...params, lit: false })
     this.wgsl = params.wgsl
+    this.vertex = params.vertex
     this.uniforms = { ...params.uniforms }
     this.textures = { ...params.textures }
   }

@@ -1,10 +1,9 @@
-import { Group, Mesh, sphereGeometry, type Material, type Node } from '@ragnarok/engine'
+import { Group, Mesh, type Material, type Node } from '@ragnarok/engine'
 import * as THREE from 'three'
 import { parseToonModel } from './models'
 import { toonMaterial } from './toon'
-import { HELI_GUN_LENGTH, HELI_SEATS } from '@/sim/consts'
+import { HELI_GUN_LENGTH } from '@/sim/consts'
 import type { Turret } from '@/net/codec'
-import { colorFor } from '@/profile'
 import type { VehicleModel } from './car'
 
 export const HELI_MODEL_URL = `${import.meta.env.BASE_URL}models/heli.glb`
@@ -18,12 +17,6 @@ const RECOIL_SECONDS = 0.06
 /** Paint colours handed out by vehicle id, so neighbouring helicopters are told apart. */
 const PAINTS = [0x6b7a4f, 0x8a8456, 0x5d6b52, 0x7a7048] as const
 const GLASS_OPACITY = 0.45
-/** Each seat's occupant in the hull frame: the pilot raised behind and above the gunner in the nose. */
-const SEATS: readonly (readonly [number, number, number])[] = [
-  [0, 0.45, -0.45],
-  [0, 0.1, -1.55],
-]
-
 let asset: Node | null = null
 
 /**
@@ -56,7 +49,6 @@ export class HeliModel implements VehicleModel {
   private readonly turret: Node
   private readonly gun: Node
   private readonly gunRest: number
-  private readonly heads: Mesh[] = []
   private readonly paint: Material
   private rotorSpeed = 0
   private lastUpdate = performance.now()
@@ -82,16 +74,6 @@ export class HeliModel implements VehicleModel {
     this.gun = model.getObjectByName('gun')!
     this.gunRest = this.gun.position.z
 
-    const headGeometry = sphereGeometry(0.2, 12, 10)
-    for (let seat = 0; seat < HELI_SEATS; seat++) {
-      const head = new Mesh(headGeometry, toonMaterial({ color: 0xffffff }))
-      head.userData.head = true
-      head.position.set(...SEATS[seat]!)
-      head.castShadow = true
-      head.visible = false
-      this.root.add(head)
-      this.heads.push(head)
-    }
   }
 
   /**
@@ -121,14 +103,6 @@ export class HeliModel implements VehicleModel {
     const since = (now - this.firedAt) / 1000
     this.gun.position.z = this.gunRest + (since < RECOIL_SECONDS ? RECOIL_STROKE * (1 - since / RECOIL_SECONDS) : 0)
     this.gunner = seats[1] ?? 0
-    this.heads.forEach((head, seat) => {
-      const occupant = seats[seat] ?? 0
-      head.visible = occupant !== 0
-      if (occupant !== 0) {
-        head.material.color.setHex(colorFor(occupant))
-        head.material.needsUpdate()
-      }
-    })
   }
 
   /** A round was just fired: the barrels kick back. */
@@ -153,8 +127,6 @@ export class HeliModel implements VehicleModel {
   /** Frees what this helicopter owns; the model's geometry and other materials are shared by every one. */
   dispose() {
     this.paint.dispose()
-    for (const head of this.heads) head.material.dispose()
-    this.heads[0]?.geometry.dispose()
     this.root.removeFromParent()
   }
 }

@@ -1,7 +1,7 @@
 import { Color } from '../math/vec'
 import type { ShaderMaterial, UniformValue } from '../scene/material'
 import { COMMON_WGSL } from './common.wgsl'
-import { VERTEX_WGSL } from './vertex.wgsl'
+import { vertexWgsl } from './vertex.wgsl'
 
 /** What a ShaderMaterial compiles to: its shader, and how its uniforms pack into a buffer. */
 export interface CustomShader {
@@ -49,7 +49,6 @@ export function compileCustom(material: ShaderMaterial): CustomShader {
   const textures = textureNames.map((name, i) => `@group(1) @binding(${i + 2}) var ${name}: texture_2d<f32>;`).join('\n')
   const code = /* wgsl */ `
 ${COMMON_WGSL}
-${VERTEX_WGSL}
 
 struct Params {
 ${struct}
@@ -57,6 +56,9 @@ ${struct}
 @group(1) @binding(0) var<uniform> params: Params;
 @group(1) @binding(1) var materialSampler: sampler;
 ${textures}
+
+${material.vertex ?? ''}
+${vertexWgsl(material.vertex !== undefined)}
 
 struct Surface {
   world: vec3f,
@@ -84,7 +86,7 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   return vec4f(applyFog(c.rgb, flags, in.viewDepth), c.a);
 }
 `
-  const key = `${material.wgsl}|${fields.map((f) => `${f.name}:${f.type}`).join(',')}|${textureNames.join(',')}`
+  const key = `${material.wgsl}|${material.vertex ?? ''}|${fields.map((f) => `${f.name}:${f.type}`).join(',')}|${textureNames.join(',')}`
   return {
     key,
     code,

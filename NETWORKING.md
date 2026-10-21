@@ -97,7 +97,7 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 
 Players sitting in a vehicle are **not** listed as entities. The vehicle's `seats` say where they are.
 
-`vehicle` is `[id u32, kind u8, x i32, y i32, z i32, qx i16, qy i16, qz i16, steer i8, [seat u32, …], turret, hp u8, damage, arms, thrust]`:
+`vehicle` is `[id u32, kind u8, x i32, y i32, z i32, qx i16, qy i16, qz i16, steer i8, [seat u32, …], turret, hp u8, damage, arms, thrust, crew]`:
 
 | Field | Unit |
 |---|---|
@@ -112,6 +112,7 @@ Players sitting in a vehicle are **not** listed as entities. The vehicle's `seat
 | `damage` | `nil` while unhurt, else eight bytes: front, rear, left, right, then wheels FL, FR, RL, RR, each 0..255 (a wheel at 255 is gone). A tank has no wheels to hurt, so its byte 4 (`DAMAGE_TURRET`) is 255 (`TURRET_GONE`) once its turret has been shot off |
 | `arms` | `nil` for anything but a plane, else `[shots u8, heat u8, rear_heat u8, bombs u8, flags u8]` (below) |
 | `thrust` | `nil` for anything but a Roadster, a drone or a hen, else `[air u8, flags u8]`: the air left in its tank, 0..255 of full, and the nozzles firing (bit 0 the rear boost nozzles, bit 1 the lift nozzles). Other clients draw the jets from `flags`; the driver's prediction resumes from `air`. A drone sends its battery as `air` and sets bit 2 while its pilot still flies it. A hen sends its wings' stamina as `air`; bit 1 is set while it leaps or flaps, bit 3 while it glides with its wings spread and still, and bit 4 while neither foot is on the ground |
+| `crew` | One `[yaw i16, pitch i16, held u8]` per seat for a vehicle whose crew show (jeep, sports car, Roadster, helicopter, triplane, mortar), empty for any other: where each rider looks (mrad, in the world, yaw 0 facing -Z) and the `ITEM_*` in their hands, all zeros for an empty seat. Seated players are not entities; clients draw them sitting from this, their heads at the kind's seat head points |
 
 `turret` is `[yaw, pitch, shots, range, flags]`:
 
@@ -161,7 +162,7 @@ A snapshot is built per player from what is within `INTEREST_RADIUS` (300 m on t
 
 `entity_delta` is `[id u32, dx i32, dy i32, dz i32, dyaw i32, dvy i32, flags u8, dknock_x i32, dknock_z i32]`. Each field but `id` and `flags` is the new value minus the baseline's, in the same units as `entity`. `flags` is the new value. A change in the same entity's `kind` never happens.
 
-`vehicle_delta` is `[id u32, dx i32, dy i32, dz i32, dqx i32, dqy i32, dqz i32, dsteer i32, seats, turret, hp u8, damage, arms, thrust]`. The first eight are differences of the `vehicle` fields of the same name. `seats` is `nil` when unchanged, else the new list. `turret` is `nil` when unchanged, else the new `[yaw, pitch, shots, range, flags]`. `hp` is the new value. `damage` is `nil` when unchanged, else the new eight bytes (all zeros is a repair). `arms` is `nil` when unchanged, else the new five bytes. `thrust` is `nil` when unchanged, else the new two bytes.
+`vehicle_delta` is `[id u32, dx i32, dy i32, dz i32, dqx i32, dqy i32, dqz i32, dsteer i32, seats, turret, hp u8, damage, arms, thrust, crew]`. The first eight are differences of the `vehicle` fields of the same name. `seats` is `nil` when unchanged, else the new list. `turret` is `nil` when unchanged, else the new `[yaw, pitch, shots, range, flags]`. `hp` is the new value. `damage` is `nil` when unchanged, else the new eight bytes (all zeros is a repair). `arms` is `nil` when unchanged, else the new five bytes. `thrust` is `nil` when unchanged, else the new two bytes. `crew` is `nil` when unchanged, else the new list.
 
 The client's scene after a snapshot is:
 

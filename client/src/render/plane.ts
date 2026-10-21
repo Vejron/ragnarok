@@ -1,10 +1,9 @@
-import { Group, Mesh, sphereGeometry, type Material, type Node } from '@ragnarok/engine'
+import { Group, Mesh, type Material, type Node } from '@ragnarok/engine'
 import * as THREE from 'three'
 import { parseToonModel } from './models'
 import { toonMaterial } from './toon'
-import { PLANE_BOMBS, PLANE_REAR_LENGTH, PLANE_SEATS } from '@/sim/consts'
+import { PLANE_BOMBS, PLANE_REAR_LENGTH } from '@/sim/consts'
 import { ARMS_CUT, type Arms, type Turret } from '@/net/codec'
-import { colorFor } from '@/profile'
 import type { VehicleModel } from './car'
 
 export const PLANE_MODEL_URL = `${import.meta.env.BASE_URL}models/plane.glb`
@@ -28,12 +27,6 @@ const SURFACE_EASE = 10
 /** Paint handed out by vehicle id: Richthofen's red, then a Jasta's yellow, so the two planes are told apart. */
 const PAINTS = [0x8f1a14, 0xc99a1e, 0x2f4d7a, 0x3c5a2e] as const
 const GLASS_OPACITY = 0.45
-/** Each seat's occupant in the hull frame: the pilot behind the wings, the gunner standing in the ring. */
-const SEATS: readonly (readonly [number, number, number])[] = [
-  [0, 0.98, -0.45],
-  [0, 1.15, 0.7],
-]
-
 let asset: Node | null = null
 
 /**
@@ -71,7 +64,6 @@ export class PlaneModel implements VehicleModel {
   private readonly rudder: Node
   private readonly ailerons: [Node, Node]
   private readonly bombs: Node[]
-  private readonly heads: Mesh[] = []
   private readonly paint: Material
   private propSpeed = 0
   private lastUpdate = performance.now()
@@ -109,16 +101,6 @@ export class PlaneModel implements VehicleModel {
     this.ailerons = [part('aileron_L'), part('aileron_R')]
     this.bombs = Array.from({ length: PLANE_BOMBS }, (_, k) => part(`bomb_${k + 1}`))
 
-    const headGeometry = sphereGeometry(0.2, 12, 10)
-    for (let seat = 0; seat < PLANE_SEATS; seat++) {
-      const head = new Mesh(headGeometry, toonMaterial({ color: 0xffffff }))
-      head.userData.head = true
-      head.position.set(...SEATS[seat]!)
-      head.castShadow = true
-      head.visible = false
-      this.root.add(head)
-      this.heads.push(head)
-    }
   }
 
   /**
@@ -167,14 +149,6 @@ export class PlaneModel implements VehicleModel {
     this.ringGun.position.z = this.ringGunRest + kick((now - this.ringFiredAt) / 1000)
     this.guns.forEach((gun, side) => (gun.position.z = this.gunRests[side]! + kick((now - this.firedAt[side]!) / 1000)))
     this.gunner = seats[1] ?? 0
-    this.heads.forEach((head, seat) => {
-      const occupant = seats[seat] ?? 0
-      head.visible = occupant !== 0
-      if (occupant !== 0) {
-        head.material.color.setHex(colorFor(occupant))
-        head.material.needsUpdate()
-      }
-    })
   }
 
   /** The turn rates from how the orientation changed since the last update, smoothed. */
@@ -229,8 +203,6 @@ export class PlaneModel implements VehicleModel {
   /** Frees what this plane owns; the model's geometry and other materials are shared by every one. */
   dispose() {
     this.paint.dispose()
-    for (const head of this.heads) head.material.dispose()
-    this.heads[0]?.geometry.dispose()
     this.root.removeFromParent()
   }
 }

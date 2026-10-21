@@ -70,7 +70,18 @@ impl Game {
                     Some(drone) => Some(Thrust { air: battery_byte(drone.energy), flags: if drone.linked { THRUST_LINKED } else { 0 } }),
                     None => self.world.physics.car_thrust(id).map(|(tank, flags)| Thrust { air: air_byte(tank), flags }),
                 };
-                Some(VehicleState { id, kind: vehicle.kind, x: to_cm(x), y: to_cm(y), z: to_cm(z), qx, qy, qz, steer: to_axis(pose.steer), seats, turret, hp: vehicle.hp, damage, arms, thrust })
+                // Where each of a crew that shows looks, and what they hold, so they can be drawn sitting.
+                let crew = if shared::vehicles::vehicle_def(vehicle.kind).crew == shared::vehicles::Exposure::Sealed {
+                    Vec::new()
+                } else {
+                    vehicle.seats[..seat_count(vehicle.kind)]
+                        .iter()
+                        .map(|seat| {
+                            seat.and_then(|rider| self.world.players.get(&rider)).map_or(Rider::default(), |player| Rider { yaw: player.input.yaw, pitch: player.input.pitch(), held: player.held().item })
+                        })
+                        .collect()
+                };
+                Some(VehicleState { id, kind: vehicle.kind, x: to_cm(x), y: to_cm(y), z: to_cm(z), qx, qy, qz, steer: to_axis(pose.steer), seats, turret, hp: vehicle.hp, damage, arms, thrust, crew })
             })
             .collect()
     }

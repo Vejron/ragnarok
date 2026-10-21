@@ -226,6 +226,15 @@ export interface VehicleState {
   arms: Arms | null
   /** A Roadster's air tank and nozzles; `null` for anything else. */
   thrust: Thrust | null
+  /** One per seat for a vehicle whose crew show (`VehicleDef.crew`), empty for any other. */
+  crew: Rider[]
+}
+
+/** Where a seated player looks, in the world, and the `ITEM_*` in their hands. Zeros for an empty seat. */
+export interface Rider {
+  yaw: number
+  pitch: number
+  held: number
 }
 
 /** A Roadster's thrusters. */
@@ -377,14 +386,14 @@ export interface Score {
  */
 export type RawEntity = number[]
 
-/** A vehicle as it travels: `[id, kind, x, y, z, qx, qy, qz, steer, seats, turret | null, hp, damage | null, arms | null, thrust | null]`. */
-export type RawVehicle = [number, number, number, number, number, number, number, number, number, number[], number[] | null, number, number[] | null, number[] | null, number[] | null]
+/** A vehicle as it travels: `[id, kind, x, y, z, qx, qy, qz, steer, seats, turret | null, hp, damage | null, arms | null, thrust | null, crew]`, `crew` a `[yaw, pitch, held]` per seat. */
+export type RawVehicle = [number, number, number, number, number, number, number, number, number, number[], number[] | null, number, number[] | null, number[] | null, number[] | null, number[][]]
 
 /** `[id, dx, dy, dz, dyaw, dvy, flags, stance, dknockX, dknockZ]`: differences, except `id`, `flags` and `stance`. */
 export type RawEntityDelta = number[]
 
-/** `[id, dx, dy, dz, dqx, dqy, dqz, dsteer, seats | null, turret | null, hp, damage | null, arms | null, thrust | null]`. */
-export type RawVehicleDelta = [number, number, number, number, number, number, number, number, number[] | null, number[] | null, number, number[] | null, number[] | null, number[] | null]
+/** `[id, dx, dy, dz, dqx, dqy, dqz, dsteer, seats | null, turret | null, hp, damage | null, arms | null, thrust | null, crew | null]`. */
+export type RawVehicleDelta = [number, number, number, number, number, number, number, number, number[] | null, number[] | null, number, number[] | null, number[] | null, number[] | null, number[][] | null]
 
 /** Everything a client knows of the world at one snapshot, each list ordered by id. */
 export interface WireScene {
@@ -581,8 +590,13 @@ function isThrust(raw: unknown): boolean {
   return raw === null || (Array.isArray(raw) && raw.length === 2 && ints(raw))
 }
 
+/** `crew`: up to `CAR_SEATS` of `[yaw, pitch, held]`. */
+function isCrew(raw: unknown): boolean {
+  return Array.isArray(raw) && raw.length <= CAR_SEATS && raw.every((rider) => Array.isArray(rider) && rider.length === 3 && ints(rider))
+}
+
 function readVehicle(raw: unknown): RawVehicle | null {
-  if (!Array.isArray(raw) || raw.length !== 15 || !isInt(raw[11]) || !ints(raw.slice(0, 9)) || !isDamage(raw[12]) || !isArms(raw[13]) || !isThrust(raw[14])) return null
+  if (!Array.isArray(raw) || raw.length !== 16 || !isCrew(raw[15]) || !isInt(raw[11]) || !ints(raw.slice(0, 9)) || !isDamage(raw[12]) || !isArms(raw[13]) || !isThrust(raw[14])) return null
   const seats = readSeats(raw[9])
   const turret = readTurret(raw[10])
   if (!seats || turret === undefined) return null
@@ -590,7 +604,7 @@ function readVehicle(raw: unknown): RawVehicle | null {
 }
 
 function readVehicleDelta(raw: unknown): RawVehicleDelta | null {
-  if (!Array.isArray(raw) || raw.length !== 14 || !isInt(raw[10]) || !ints(raw.slice(0, 8)) || !isDamage(raw[11]) || !isArms(raw[12]) || !isThrust(raw[13])) return null
+  if (!Array.isArray(raw) || raw.length !== 15 || (raw[14] !== null && !isCrew(raw[14])) || !isInt(raw[10]) || !ints(raw.slice(0, 8)) || !isDamage(raw[11]) || !isArms(raw[12]) || !isThrust(raw[13])) return null
   if (raw[8] !== null && !readSeats(raw[8])) return null
   if (raw[9] !== null && !readTurret(raw[9])) return null
   return raw as RawVehicleDelta
@@ -603,7 +617,7 @@ function armsState(raw: readonly number[]): Arms {
 
 /** Converts a validated raw vehicle to source units. */
 export function vehicleState(raw: RawVehicle): VehicleState {
-  const [id, kind, x, y, z, qx, qy, qz, steer, seats, turret, hp, damage, arms, thrust] = raw
+  const [id, kind, x, y, z, qx, qy, qz, steer, seats, turret, hp, damage, arms, thrust, crew] = raw
   const [fx, fy, fz] = [qx / QUAT, qy / QUAT, qz / QUAT]
   return {
     id, kind,
@@ -616,6 +630,7 @@ export function vehicleState(raw: RawVehicle): VehicleState {
     damage: damage ?? NO_DAMAGE,
     arms: arms ? armsState(arms) : null,
     thrust: thrust ? { air: thrust[0]! / 255, flags: thrust[1]! } : null,
+    crew: crew.map(([yaw, pitch, held]) => ({ yaw: yaw! / MRAD, pitch: pitch! / MRAD, held: held! })),
   }
 }
 
@@ -653,7 +668,7 @@ export function applyDelta(base: WireScene, delta: WireDelta): WireScene {
     }
     // A damage of all zeros is a repair: the vehicle is as if it was never hurt.
     const damage = d[11] === null ? v[12] : d[11].some((value) => value !== 0) ? d[11] : null
-    vehicles.push([v[0], v[1], v[2] + d[1], v[3] + d[2], v[4] + d[3], v[5] + d[4], v[6] + d[5], v[7] + d[6], v[8] + d[7], d[8] ?? v[9], d[9] ?? v[10], d[10], damage, d[12] ?? v[13], d[13] ?? v[14]])
+    vehicles.push([v[0], v[1], v[2] + d[1], v[3] + d[2], v[4] + d[3], v[5] + d[4], v[6] + d[5], v[7] + d[6], v[8] + d[7], d[8] ?? v[9], d[9] ?? v[10], d[10], damage, d[12] ?? v[13], d[13] ?? v[14], d[14] ?? v[15]])
   }
   vehicles.push(...delta.newVehicles)
   return { entities: entities.sort((a, b) => a[0]! - b[0]!), vehicles: vehicles.sort((a, b) => a[0] - b[0]) }

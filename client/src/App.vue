@@ -16,7 +16,7 @@ const noseMark = ref<HTMLElement | null>(null)
 const aimMark = ref<HTMLElement | null>(null)
 const error = ref<string | null>(null)
 const input = shallowRef<InputController | null>(null)
-const look = ref<Look>({ soft: true, contact: true, far: true, ink: true, bloom: true, reflect: true })
+const look = ref<Look>({ soft: true, contact: true, far: true, ink: true, bloom: true, reflect: true, grass: true })
 let game: Game | null = null
 /** M: the minimap grows to the whole map. */
 const mapOpen = ref(false)
@@ -58,6 +58,7 @@ const LOOKS: { key: keyof Look; label: string }[] = [
   { key: 'ink', label: 'Ink outlines' },
   { key: 'bloom', label: 'Bloom' },
   { key: 'reflect', label: 'Water reflections' },
+  { key: 'grass', label: 'Grass' },
 ]
 function toggleLook(key: keyof Look) {
   look.value = { ...look.value, [key]: !look.value[key] }
@@ -164,6 +165,7 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
   <div v-if="stats?.seat === 'drone'" class="drive-hint">Mouse look and steer · W fly where you look · S back off · A/D strafe · Space climb · Shift sink · Click or F detonate · E recall</div>
   <div v-if="stats?.seat === 'pilot'" class="drive-hint">W/S lean forward and back · A/D turn · Space climb · Shift sink<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   <div v-if="stats?.seat === 'aviator'" class="drive-hint">Mouse steer (the plane turns to where you look) · Space throttle up · Shift throttle down · W/S/A/D by hand · Click or F fire · C bomb<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
+  <div v-if="stats?.seat === 'passenger'" class="drive-hint">Mouse look · Click or F fire your gun · Right mouse aim · 1-5 or wheel switch · R reload<template v-if="stats.canSwitchSeat">, or switch seat when it is full</template></div>
   <div v-if="stats?.seat === 'gunner'" class="drive-hint">Mouse aim · Hold right mouse for the gun sight · Click or F fire · {{ stats.jammed ? 'jammed!' : stats.heat !== null ? 'firing' : stats.reload < 1 ? 'reloading…' : 'loaded' }}<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   </template>
   <div v-if="(stats?.seat === 'gunner' || stats?.seat === 'walker' || stats?.seat === 'strv' || stats?.seat === 'mortar') && !stats.sight" class="reticle" :class="{ loading: stats.reload < 1 || stats.jammed }" />
@@ -193,18 +195,18 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
   </div>
   <div v-else-if="stats?.scoped" class="scope"><i class="scope-h" /><i class="scope-v" /></div>
   <div v-else-if="stats?.armed" class="cross" :class="{ aim: stats.aiming }" :style="stats.hitMarker ? { '--gap': (stats.aiming ? 3 : 7) + 6 * (1 - stats.hitMarker.progress) ** 2 + 'px' } : undefined"><i /><i /><i /><i /></div>
-  <div v-if="stats?.onFoot && stats.hp <= stats.maxHp / 4" class="vignette low-hp" />
+  <div v-if="stats?.hands && stats.hp <= stats.maxHp / 4" class="vignette low-hp" />
   <div v-if="stats && stats.hurt > 0.01" class="vignette" :style="{ opacity: stats.hurt }" />
   <div v-if="stats?.hurtArcs.length" class="arcs">
     <i v-for="(arc, i) in stats.hurtArcs" :key="i" :style="{ transform: `rotate(${arc.angle}rad)`, opacity: arc.alpha }" />
   </div>
   <canvas ref="markCanvas" class="hitcanvas" width="200" height="200" />
-  <div v-if="stats?.onFoot" class="health" :class="{ low: stats.hp <= stats.maxHp / 4, hurt: stats.hurt > 0.3 }">
+  <div v-if="stats?.hands" class="health" :class="{ low: stats.hp <= stats.maxHp / 4, hurt: stats.hurt > 0.3 }">
     <div class="health-fill" :style="{ width: (100 * stats.hp) / stats.maxHp + '%' }" />
     <span>{{ stats.hp }}</span>
   </div>
   <Hotbar
-    v-if="stats?.onFoot"
+    v-if="stats?.hands"
     :slots="stats.hotbar"
     :selected="stats.selected"
     :progress="stats.progress"

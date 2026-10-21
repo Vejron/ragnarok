@@ -134,7 +134,8 @@ fn a_shot_goes_where_the_shoulder_camera_crosshair_is() {
     let c = game.world.players[&shooter].character;
     let pivot_y = c.position[1] + ON_FOOT_HEIGHT;
     let eye = [c.position[0], c.position[1] + EYE_HEIGHT, c.position[2]];
-    let dir = crosshair_dir(&game.world, shooter, 0, c.position, eye, 0.0, look(0.0, 0.0), 100.0);
+    let pivot = [c.position[0] + ON_FOOT_SHOULDER, pivot_y, c.position[2]];
+    let dir = crosshair_dir(&game.world, shooter, 0, pivot, eye, look(0.0, 0.0), 100.0, 0);
     // Over 100 m the line from the eye crosses the camera's ray, which is 0.9 m to the right and 0.9 m above.
     let at = |t: f32| [eye[0] + dir[0] * t, eye[1] + dir[1] * t];
     assert!((at(100.0)[0] - (c.position[0] + ON_FOOT_SHOULDER)).abs() < 0.05, "x {}", at(100.0)[0]);
@@ -1008,4 +1009,149 @@ fn a_piece_of_wall_takes_a_few_rounds_and_then_breaks_out() {
     // It is a small one: two metres to the side the wall stands.
     assert!((ray(&game, 2.4) - 3.0).abs() < 0.1);
     assert!(game.world.destroyed.is_empty());
+}
+
+/// A vehicle of `kind` parked away from the spawn point, with a player in seat `index`, settled.
+fn rider_in(kind: u8, index: usize) -> (Game, u32, u32) {
+    let mut game = game();
+    let vid = crate::mechanics::vehicles::add_vehicle(&mut game.world, kind, [60.0, 2.0, 0.0], 0.0);
+    let (rider, inbox) = join(&mut game);
+    std::mem::forget(inbox);
+    assert!(crate::mechanics::vehicles::seat(&mut game.world, rider, vid, index));
+    for _ in 0..60 {
+        game.step();
+    }
+    (game, vid, rider)
+}
+
+/// A round of 20 damage that does 5 to a vehicle, out to 50 m.
+fn round() -> Round {
+    Round { damage: 20, vehicle: 5, plane: 5, weapon: WEAPON_RIFLE, range: 50.0, falloff: Falloff::NONE }
+}
+
+/// Fires `round` from 10 m out on the vehicle's right (+X), level, at height `y`, through its centre's
+/// depth `z`; returns what the rider and the vehicle lost.
+fn shoot_from_the_side(game: &mut Game, vid: u32, rider: u32, y: f32, z: f32) -> (u8, u8) {
+    let (shooter, inbox) = join(game);
+    std::mem::forget(inbox);
+    let at = game.world.physics.car_pose(vid).unwrap().position;
+    let (hp, car) = (game.world.players[&rider].hp, game.world.vehicles[&vid].hp);
+    hitscan(&mut game.world, shooter, [at[0] + 10.0, y, z], [-1.0, 0.0, 0.0], &round(), 0, 0);
+    (hp - game.world.players[&rider].hp, car - game.world.vehicles[&vid].hp)
+}
+
+#[test]
+fn a_jeep_passengers_head_shows_above_the_hull_and_can_be_shot() {
+    let (mut game, vid, rider) = rider_in(shared::protocol::KIND_JEEP, 1);
+    let (_, head) = game.world.seated_head(rider).expect("a jeep's crew show");
+    let (lost, chipped) = shoot_from_the_side(&mut game, vid, rider, head[1], head[2]);
+    assert_eq!(lost, (20.0 * HEADSHOT_MULT) as u8, "a round at the head is a headshot");
+    assert_eq!(chipped, 0, "and goes over the hull");
+}
+
+#[test]
+fn the_hull_stops_a_round_aimed_at_a_seated_players_legs() {
+    let (mut game, vid, rider) = rider_in(shared::protocol::KIND_JEEP, 1);
+    let (_, head) = game.world.seated_head(rider).unwrap();
+    let centre = game.world.physics.car_pose(vid).unwrap().position;
+    let (lost, chipped) = shoot_from_the_side(&mut game, vid, rider, centre[1], head[2]);
+    assert_eq!(lost, 0, "the door is in the way");
+    assert_eq!(chipped, 5, "and takes the round");
+}
+
+#[test]
+fn a_tanks_crew_cannot_be_shot() {
+    let (mut game, vid, rider) = rider_in(shared::protocol::KIND_TANK, 0);
+    assert!(game.world.seated_head(rider).is_none());
+    let top = game.world.physics.car_pose(vid).unwrap().position[1] + TANK_HALF_EXTENTS[1] + 0.2;
+    let (lost, _) = shoot_from_the_side(&mut game, vid, rider, top, 0.0);
+    assert_eq!(lost, 0);
+}
+
+#[test]
+fn a_helicopters_gunner_is_shot_through_the_glass() {
+    let (mut game, vid, rider) = rider_in(shared::protocol::KIND_HELI, 1);
+    let (_, head) = game.world.seated_head(rider).unwrap();
+    // The gunner sits inside the hull box, so the round meets the airframe first.
+    let (lost, chipped) = shoot_from_the_side(&mut game, vid, rider, head[1] - 0.3, head[2]);
+    assert_eq!(lost, 20, "the round goes on through to the body");
+    assert_eq!(chipped, 0, "and the airframe is unhurt");
+}
+
+#[test]
+fn a_seated_players_head_is_rewound_like_a_standing_ones() {
+    let (game, _, rider) = rider_in(shared::protocol::KIND_JEEP, 1);
+    let (_, now) = game.world.seated_head(rider).unwrap();
+    let then = game.world.head_at(rider, 1).expect("the record has them seated");
+    assert!((0..3).all(|i| (now[i] - then[i]).abs() < 0.05), "a parked jeep has not moved: {now:?} {then:?}");
+    assert!(game.world.position_at(rider, 1).is_none(), "and not standing");
+}
+
+#[test]
+fn a_passenger_shot_dead_falls_out_of_the_seat() {
+    let (mut game, vid, rider) = rider_in(shared::protocol::KIND_JEEP, 1);
+    damage(&mut game.world, rider, PLAYER_MAX_HP, None, WEAPON_RIFLE);
+    assert!(!game.world.players[&rider].alive());
+    assert!(game.world.players[&rider].seat.is_none());
+    assert_eq!(game.world.vehicles[&vid].seats[1], None);
+}
+
+#[test]
+fn a_jeep_passenger_fires_their_own_gun_out_of_the_car() {
+    let (mut game, vid, rider) = rider_in(shared::protocol::KIND_JEEP, 1);
+    give(&mut game, rider, 0, ITEM_AK5, 1);
+    let (_, head) = game.world.seated_head(rider).unwrap();
+    // A target ahead, where the passenger's shoulder camera looks.
+    let (target, inbox) = join(&mut game);
+    std::mem::forget(inbox);
+    let pivot = [head[0] + PASSENGER_SHOULDER, head[1] + PASSENGER_HEIGHT, head[2]];
+    game.world.players.get_mut(&target).unwrap().character.position = [pivot[0], STANDING_Y, head[2] - 20.0];
+    let pitch = ((STANDING_Y - pivot[1]) / 20.0).atan();
+    let mut seq = 0;
+    for _ in 0..3 {
+        press(&mut game, rider, &mut seq, BUTTON_FIRE, 0, pitch);
+    }
+    for _ in 0..12 {
+        press(&mut game, rider, &mut seq, 0, 0, pitch);
+    }
+    assert!(game.world.players[&target].hp < PLAYER_MAX_HP, "the round landed");
+    assert_eq!(game.world.vehicles[&vid].hp, vehicle_def(shared::protocol::KIND_JEEP).hp, "and left through the car without hurting it");
+    assert!(game.world.players[&rider].hotbar[0].ammo < ak5().mag);
+}
+
+#[test]
+fn a_driver_does_not_fire_their_gun() {
+    let (mut game, _, rider) = rider_in(shared::protocol::KIND_JEEP, 0);
+    give(&mut game, rider, 0, ITEM_AK5, 1);
+    let mut seq = 0;
+    for _ in 0..10 {
+        press(&mut game, rider, &mut seq, BUTTON_FIRE, 0, 0.0);
+    }
+    assert_eq!(game.world.players[&rider].hotbar[0].ammo, ak5().mag);
+}
+
+#[test]
+fn a_passenger_reloads_a_gun_that_is_not_full_and_otherwise_changes_seat() {
+    let (mut game, vid, rider) = rider_in(shared::protocol::KIND_JEEP, 1);
+    give(&mut game, rider, 0, ITEM_AK5, 1);
+    game.world.players.get_mut(&rider).unwrap().hotbar[0].ammo = 3;
+    let mut seq = 0;
+    press(&mut game, rider, &mut seq, BUTTON_RELOAD, 0, 0.0);
+    // Frames wait a moment in the jitter buffer before they are played.
+    for _ in 0..6 {
+        press(&mut game, rider, &mut seq, 0, 0, 0.0);
+    }
+    assert_eq!(game.world.players[&rider].seat.map(|seat| seat.index), Some(1), "still in their seat");
+    assert!(game.world.players[&rider].reload_left > 0, "reloading");
+    for _ in 0..ak5().reload_ticks + 2 {
+        press(&mut game, rider, &mut seq, 0, 0, 0.0);
+    }
+    assert_eq!(game.world.players[&rider].hotbar[0].ammo, ak5().mag);
+    press(&mut game, rider, &mut seq, BUTTON_RELOAD, 0, 0.0);
+    for _ in 0..6 {
+        press(&mut game, rider, &mut seq, 0, 0, 0.0);
+    }
+    let seat = game.world.players[&rider].seat.unwrap();
+    assert_eq!(seat.vehicle, vid);
+    assert_ne!(seat.index, 1, "with a full gun, reload moves them on");
 }

@@ -29,6 +29,35 @@ pub struct VehicleDef {
     pub car_wheels: bool,
     pub track_half: f32,
     pub axle_z: f32,
+    /// Whether its crew can be shot, and through what.
+    pub crew: Exposure,
+    /// Each seat's head point in the hull frame, for kinds whose crew show (`crew` is not `Sealed`).
+    /// The mortar's one seat is on its turning mount instead: `MORTAR_SEAT_HEAD`.
+    pub seat_heads: &'static [[f32; 3]],
+    /// Its passengers (every seat but the driver's) can fire the guns in their own hotbar.
+    pub crew_guns: bool,
+}
+
+/// How exposed a vehicle's crew are to gunfire.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Exposure {
+    /// Inside armour: only the vehicle can be hit.
+    Sealed,
+    /// Out in the open above the hull: the hull box still stops the rounds that meet it first.
+    Open,
+    /// Behind glass: rounds that meet the hull box can go on to hit the crew inside it.
+    Glazed,
+}
+
+impl Exposure {
+    /// Its name in `fixtures/parity/gameplay.json`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Exposure::Sealed => "sealed",
+            Exposure::Open => "open",
+            Exposure::Glazed => "glazed",
+        }
+    }
 }
 
 const JEEP: VehicleDef = VehicleDef {
@@ -42,6 +71,9 @@ const JEEP: VehicleDef = VehicleDef {
     car_wheels: true,
     track_half: JEEP_TRACK_HALF,
     axle_z: JEEP_AXLE_Z,
+    crew: Exposure::Open,
+    seat_heads: &JEEP_SEAT_HEADS,
+    crew_guns: true,
 };
 
 const TANK: VehicleDef = VehicleDef {
@@ -55,6 +87,9 @@ const TANK: VehicleDef = VehicleDef {
     car_wheels: false,
     track_half: 0.0,
     axle_z: 0.0,
+    crew: Exposure::Sealed,
+    seat_heads: &[],
+    crew_guns: false,
 };
 
 const HELI: VehicleDef = VehicleDef {
@@ -68,6 +103,9 @@ const HELI: VehicleDef = VehicleDef {
     car_wheels: false,
     track_half: 0.0,
     axle_z: 0.0,
+    crew: Exposure::Glazed,
+    seat_heads: &HELI_SEAT_HEADS,
+    crew_guns: false,
 };
 
 const SPORTS: VehicleDef = VehicleDef {
@@ -81,6 +119,9 @@ const SPORTS: VehicleDef = VehicleDef {
     car_wheels: true,
     track_half: SPORTS_TRACK_HALF,
     axle_z: SPORTS_AXLE_Z,
+    crew: Exposure::Open,
+    seat_heads: &SPORTS_SEAT_HEADS,
+    crew_guns: true,
 };
 
 const PLANE: VehicleDef = VehicleDef {
@@ -94,6 +135,9 @@ const PLANE: VehicleDef = VehicleDef {
     car_wheels: false,
     track_half: 0.0,
     axle_z: 0.0,
+    crew: Exposure::Open,
+    seat_heads: &PLANE_SEAT_HEADS,
+    crew_guns: false,
 };
 
 const WALKER: VehicleDef = VehicleDef {
@@ -107,6 +151,9 @@ const WALKER: VehicleDef = VehicleDef {
     car_wheels: false,
     track_half: 0.0,
     axle_z: 0.0,
+    crew: Exposure::Sealed,
+    seat_heads: &[],
+    crew_guns: false,
 };
 
 const STRV: VehicleDef = VehicleDef {
@@ -120,6 +167,9 @@ const STRV: VehicleDef = VehicleDef {
     car_wheels: false,
     track_half: 0.0,
     axle_z: 0.0,
+    crew: Exposure::Sealed,
+    seat_heads: &[],
+    crew_guns: false,
 };
 
 const MORTAR: VehicleDef = VehicleDef {
@@ -133,6 +183,9 @@ const MORTAR: VehicleDef = VehicleDef {
     car_wheels: false,
     track_half: 0.0,
     axle_z: 0.0,
+    crew: Exposure::Open,
+    seat_heads: &[],
+    crew_guns: false,
 };
 
 const ROADSTER: VehicleDef = VehicleDef {
@@ -146,6 +199,9 @@ const ROADSTER: VehicleDef = VehicleDef {
     car_wheels: true,
     track_half: ROADSTER_TRACK_HALF,
     axle_z: ROADSTER_AXLE_Z,
+    crew: Exposure::Open,
+    seat_heads: &ROADSTER_SEAT_HEADS,
+    crew_guns: true,
 };
 
 /// One hit brings it down.
@@ -160,6 +216,9 @@ const DRONE: VehicleDef = VehicleDef {
     car_wheels: false,
     track_half: 0.0,
     axle_z: 0.0,
+    crew: Exposure::Sealed,
+    seat_heads: &[],
+    crew_guns: false,
 };
 
 /// The walker's legs and hull, with wings and eggs in place of guns.
@@ -174,6 +233,9 @@ const HEN: VehicleDef = VehicleDef {
     car_wheels: false,
     track_half: 0.0,
     axle_z: 0.0,
+    crew: Exposure::Sealed,
+    seat_heads: &[],
+    crew_guns: false,
 };
 
 /// Every vehicle kind, in id order.
@@ -183,6 +245,27 @@ pub const VEHICLES: [VehicleDef; 11] = [JEEP, TANK, HELI, SPORTS, PLANE, WALKER,
 /// the driver's seat 0 where the vehicle has only one (a walker, a Strv S).
 pub fn gun_seat(kind: u8) -> usize {
     if vehicle_def(kind).seats == 1 { 0 } else { 1 }
+}
+
+/// Where seat `index` of a `kind` puts its occupant's head, in the hull frame, with the mortar's mount
+/// turned to `gun_yaw`. `None` for a crew that does not show.
+pub fn seat_head(kind: u8, index: usize, gun_yaw: f32) -> Option<[f32; 3]> {
+    let def = vehicle_def(kind);
+    if def.crew == Exposure::Sealed {
+        return None;
+    }
+    if kind == KIND_MORTAR {
+        let [x, y, z] = MORTAR_SEAT_HEAD;
+        let (sin, cos) = gun_yaw.sin_cos();
+        let [px, py, pz] = MORTAR_GUN_PIVOT;
+        return (index == 0).then_some([px + x * cos + z * sin, py + y, pz - x * sin + z * cos]);
+    }
+    def.seat_heads.get(index).copied()
+}
+
+/// Whether seat `index` of a `kind` fires its occupant's own guns: a car's passengers.
+pub fn crew_gun(kind: u8, index: usize) -> bool {
+    vehicle_def(kind).crew_guns && index != 0
 }
 
 /// The definition of a vehicle `kind`. Unknown kinds are jeeps.
@@ -200,6 +283,10 @@ mod tests {
             assert!(def.seats >= 1 && def.seats <= CAR_SEATS, "{} fits the seat array", def.name);
             assert!(def.hp > 0, "{} starts alive", def.name);
             assert_eq!(vehicle_def(def.kind).kind, def.kind);
+            if def.crew != Exposure::Sealed && def.kind != KIND_MORTAR {
+                assert_eq!(def.seat_heads.len(), def.seats, "{} places every seat's head", def.name);
+            }
+            assert!(!def.crew_guns || def.crew != Exposure::Sealed, "{} passengers who shoot can be shot", def.name);
             assert!(VEHICLES[index + 1..].iter().all(|other| other.kind != def.kind), "{} id is unique", def.name);
         }
     }

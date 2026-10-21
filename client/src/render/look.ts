@@ -14,6 +14,8 @@ export interface Look {
   bloom: boolean
   /** Water mirrors the scene: the world is drawn a second time, mirrored, at half size. */
   reflect: boolean
+  /** Grass that sways and parts around whoever goes through it; thinner on phones and tablets. */
+  grass: boolean
 }
 
 const KEY = 'ragnarok.look'
@@ -28,7 +30,7 @@ const RESET_ON_BUMP: (keyof Look)[] = ['ink']
 /** The long shadows are off on phones and tablets, where they cost fill rate and memory. */
 export function defaultLook(): Look {
   const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
-  return { soft: true, contact: true, far: !coarse, ink: true, bloom: !coarse, reflect: !coarse }
+  return { soft: true, contact: true, far: !coarse, ink: true, bloom: !coarse, reflect: !coarse, grass: true }
 }
 
 export function loadLook(): Look {

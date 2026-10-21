@@ -59,10 +59,10 @@ export interface HudStats {
   scoped: boolean
   /** Aiming a gun over the shoulder: half zoom, tighter spread. */
   aiming: boolean
-  /** On foot with a gun in hand: show the crosshair. */
+  /** A gun in hand, on foot or in a passenger seat: show the crosshair. */
   armed: boolean
-  /** Connected, standing and alive: the health bar and the hotbar are shown. */
-  onFoot: boolean
+  /** Connected, alive and with their own items to hand (standing, or a car's passenger): the health bar and the hotbar are shown. */
+  hands: boolean
   /** The five hotbar slots. */
   hotbar: ItemSlot[]
   /** The slot in hand. */

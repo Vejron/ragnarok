@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 35
+export const PROTOCOL_VERSION = 36
 
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
@@ -924,6 +924,45 @@ export const PRONE_EYE_HEIGHT = 0.2 - PRONE_CENTRE
  */
 export const ON_FOOT_SHOULDER = 0.9
 export const ON_FOOT_HEIGHT = 1.5
+
+/**
+ * Seated players. Each seat of a vehicle with open seats has a head point in the hull frame, where
+ * the client draws the sitting body's head (a car's `seat_N` markers, built by `build_car.py`). The
+ * body that can be shot is a short upright capsule hanging below it: head and shoulders down to the
+ * waist, so the hull box in front of the lower body takes the rounds aimed there.
+ */
+export const JEEP_SEAT_HEADS = [[-0.4, 0.62, -0.3], [0.4, 0.62, -0.3], [-0.4, 0.62, 0.75], [0.4, 0.62, 0.75]] as const
+export const SPORTS_SEAT_HEADS = [[-0.35, 0.4, 0.1], [0.35, 0.4, 0.1]] as const
+export const ROADSTER_SEAT_HEADS = [[-0.33, 0.42, 0.12], [0.33, 0.42, 0.12]] as const
+
+/** The pilot raised behind and above the gunner in the nose. */
+export const HELI_SEAT_HEADS = [[0.0, 0.45, -0.45], [0.0, 0.1, -1.55]] as const
+
+/** The pilot behind the wings, the gunner standing in the ring. */
+export const PLANE_SEAT_HEADS = [[0.0, 0.98, -0.45], [0.0, 1.15, 0.7]] as const
+
+/** The mortar's gunner rides its mount, so this is in the mount's frame: `MORTAR_GUN_PIVOT` turned by the gun's yaw. */
+export const MORTAR_SEAT_HEAD = [0.6, 0.45, 0.6] as const
+
+/**
+ * The seated capsule's centre is this far below the head point, and it spans `SEATED_HALF_HEIGHT`
+ * above and below that, plus `SEATED_RADIUS`.
+ */
+export const SEATED_CENTRE_DROP = 0.3
+export const SEATED_HALF_HEIGHT = 0.25
+export const SEATED_RADIUS = 0.25
+
+/** A round that hits a seated body above this far below its head point hit the head. */
+export const SEATED_HEAD_ZONE = 0.12
+
+/**
+ * A passenger who can shoot looks over their own shoulder: the camera's pivot is this far to the
+ * right of their head point and this far above it, and the camera sits `PASSENGER_DISTANCE` behind.
+ * The server rebuilds the crosshair ray from it, as on foot.
+ */
+export const PASSENGER_SHOULDER = 0.6
+export const PASSENGER_HEIGHT = 0.5
+export const PASSENGER_DISTANCE = 3.0
 
 /**
  * A hurt building is drawn in this many worse states. Stage `n` begins when its health falls to

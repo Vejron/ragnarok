@@ -325,7 +325,8 @@ fn switch_seat(world: &mut World, id: u32) {
     tracing::debug!(id, vehicle = seat.vehicle, from = seat.index, to = free, "switched seat");
 }
 
-fn alight(world: &mut World, id: u32) {
+/// Takes player `id` out of their seat and stands them beside the vehicle.
+pub fn alight(world: &mut World, id: u32) {
     let Some(seat) = vacate(world, id) else { return };
     let Some(pose) = world.physics.car_pose(seat.vehicle) else { return };
     let kind = world.vehicles.get(&seat.vehicle).map_or(KIND_JEEP, |vehicle| vehicle.kind);
@@ -681,12 +682,12 @@ impl Mechanic for Vehicles {
         for id in hitching {
             hitch(world, id);
         }
-        // Reload has no use inside a vehicle, so it moves to the other seat.
+        // Reload moves to the other seat, unless it is a passenger's to reload their own gun with.
         let switching: Vec<u32> = world
             .players
             .iter()
-            .filter(|(_, player)| {
-                player.alive() && player.seat.is_some() && player.input.buttons() & (BUTTON_RELOAD | BUTTON_USE) == BUTTON_RELOAD
+            .filter(|&(&id, player)| {
+                player.alive() && player.seat.is_some() && player.input.buttons() & (BUTTON_RELOAD | BUTTON_USE) == BUTTON_RELOAD && !super::combat::reloads_in_seat(world, id)
             })
             .map(|(&id, _)| id)
             .collect();

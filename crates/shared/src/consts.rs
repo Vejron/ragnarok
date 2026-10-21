@@ -1,7 +1,7 @@
 //! Simulation and network constants. `client/scripts/gen-consts.ts` generates the client's copy from this file: run `npm run gen:consts` in `client` after editing.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 35;
+pub const PROTOCOL_VERSION: u8 = 36;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -655,6 +655,33 @@ pub const PRONE_EYE_HEIGHT: f32 = 0.2 - PRONE_CENTRE;
 /// Mirrors `ON_FOOT_SHOULDER` and `ON_FOOT_HEIGHT` in the client.
 pub const ON_FOOT_SHOULDER: f32 = 0.9;
 pub const ON_FOOT_HEIGHT: f32 = 1.5;
+
+/// Seated players. Each seat of a vehicle with open seats has a head point in the hull frame, where
+/// the client draws the sitting body's head (a car's `seat_N` markers, built by `build_car.py`). The
+/// body that can be shot is a short upright capsule hanging below it: head and shoulders down to the
+/// waist, so the hull box in front of the lower body takes the rounds aimed there.
+pub const JEEP_SEAT_HEADS: [[f32; 3]; 4] = [[-0.4, 0.62, -0.3], [0.4, 0.62, -0.3], [-0.4, 0.62, 0.75], [0.4, 0.62, 0.75]];
+pub const SPORTS_SEAT_HEADS: [[f32; 3]; 2] = [[-0.35, 0.4, 0.1], [0.35, 0.4, 0.1]];
+pub const ROADSTER_SEAT_HEADS: [[f32; 3]; 2] = [[-0.33, 0.42, 0.12], [0.33, 0.42, 0.12]];
+/// The pilot raised behind and above the gunner in the nose.
+pub const HELI_SEAT_HEADS: [[f32; 3]; 2] = [[0.0, 0.45, -0.45], [0.0, 0.1, -1.55]];
+/// The pilot behind the wings, the gunner standing in the ring.
+pub const PLANE_SEAT_HEADS: [[f32; 3]; 2] = [[0.0, 0.98, -0.45], [0.0, 1.15, 0.7]];
+/// The mortar's gunner rides its mount, so this is in the mount's frame: `MORTAR_GUN_PIVOT` turned by the gun's yaw.
+pub const MORTAR_SEAT_HEAD: [f32; 3] = [0.6, 0.45, 0.6];
+/// The seated capsule's centre is this far below the head point, and it spans `SEATED_HALF_HEIGHT`
+/// above and below that, plus `SEATED_RADIUS`.
+pub const SEATED_CENTRE_DROP: f32 = 0.3;
+pub const SEATED_HALF_HEIGHT: f32 = 0.25;
+pub const SEATED_RADIUS: f32 = 0.25;
+/// A round that hits a seated body above this far below its head point hit the head.
+pub const SEATED_HEAD_ZONE: f32 = 0.12;
+/// A passenger who can shoot looks over their own shoulder: the camera's pivot is this far to the
+/// right of their head point and this far above it, and the camera sits `PASSENGER_DISTANCE` behind.
+/// The server rebuilds the crosshair ray from it, as on foot.
+pub const PASSENGER_SHOULDER: f32 = 0.6;
+pub const PASSENGER_HEIGHT: f32 = 0.5;
+pub const PASSENGER_DISTANCE: f32 = 3.0;
 
 /// Eye height above the capsule centre for a player holding `buttons`, lying down or not.
 pub fn eye_height(buttons: u16, prone: bool) -> f32 {

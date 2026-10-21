@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { Mesh } from '@ragnarok/engine'
 import * as THREE from 'three'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { CarModel, parseCarModel } from '@/render/car'
@@ -11,6 +10,7 @@ import {
 } from '@/sim/consts'
 import { KIND_JEEP, KIND_ROADSTER, KIND_SPORTS, THRUST_BOOST, THRUST_LIFT } from '@/net/codec'
 import { triangleCount } from './helpers'
+import { vehicleDef } from '@/sim/vehicles'
 
 const IDENTITY: [number, number, number, number] = [0, 0, 0, 1]
 
@@ -37,7 +37,7 @@ describe.each([
 ] as const)('the %s model', (_name, kind, trackHalf, axleZ, radius, ride, seats) => {
   it('has its wheels where the physics has them, touching the ground at its ride height', () => {
     const car = new CarModel(kind, 1)
-    car.update([0, 0, 0], IDENTITY, 0, [])
+    car.update([0, 0, 0], IDENTITY, 0)
     car.root.updateMatrixWorld(true)
     for (const [tag, x, z] of [['FL', -trackHalf, -axleZ], ['FR', trackHalf, -axleZ], ['RL', -trackHalf, axleZ], ['RR', trackHalf, axleZ]] as const) {
       const wheel = car.root.getObjectByName(`wheel_${tag}`)!
@@ -50,20 +50,20 @@ describe.each([
     car.dispose()
   })
 
-  it('shows one head per seat, and no more', () => {
+  it('has a seat marker where the server puts each rider\'s head', () => {
     const car = new CarModel(kind, 1)
-    const heads = car.root.children.filter((child) => child instanceof Mesh && child.userData.head)
+    const heads = vehicleDef(kind).seatHeads
+    expect(car.seatMarkers).toHaveLength(seats)
     expect(heads).toHaveLength(seats)
-    car.update([0, 0, 0], IDENTITY, 0, Array(seats).fill(7))
-    expect(heads.every((head) => head.visible)).toBe(true)
-    car.update([0, 0, 0], IDENTITY, 0, Array(seats).fill(0))
-    expect(heads.some((head) => head.visible)).toBe(false)
+    car.seatMarkers.forEach((marker, seat) => {
+      expect([marker.x, marker.y, marker.z].map((v) => Math.round(v * 1000) / 1000)).toEqual([...heads[seat]!])
+    })
     car.dispose()
   })
 
   it('steers the front wheels only and stays low-poly', () => {
     const car = new CarModel(kind, 1)
-    car.update([0, 0, 0], IDENTITY, 1, [])
+    car.update([0, 0, 0], IDENTITY, 1)
     expect(car.root.getObjectByName('pivot_FL')!.rotation.y).toBeLessThan(-0.3)
     expect(car.root.getObjectByName('pivot_RL')!.rotation.y).toBe(0)
     expect(triangles(car)).toBeLessThan(2500)
@@ -81,7 +81,7 @@ describe('the two cars', () => {
 describe('the Roadster model', () => {
   it('has four rear nozzles blowing back and six lift nozzles blowing down, at the body', () => {
     const car = new CarModel(KIND_ROADSTER, 1)
-    car.update([10, 2, -5], IDENTITY, 0, [])
+    car.update([10, 2, -5], IDENTITY, 0)
     expect(car.jets(0)).toHaveLength(0)
     const rear = car.jets(THRUST_BOOST)
     const lift = car.jets(THRUST_LIFT)
@@ -100,7 +100,7 @@ describe('the Roadster model', () => {
       expect(direction.y).toBeCloseTo(-1)
     }
     // Turned half round, the rear jets blow the other way.
-    car.update([0, 0, 0], [0, 1, 0, 0], 0, [])
+    car.update([0, 0, 0], [0, 1, 0, 0], 0)
     expect(car.jets(THRUST_BOOST)[0]!.direction.z).toBeCloseTo(-1)
     car.dispose()
   })

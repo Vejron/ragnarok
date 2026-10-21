@@ -1,10 +1,9 @@
-import { Group, Mesh, boxGeometry, cylinderGeometry, sphereGeometry, type Node } from '@ragnarok/engine'
+import { Group, Mesh, boxGeometry, cylinderGeometry, type Node } from '@ragnarok/engine'
 import * as THREE from 'three'
 import { toonMaterial } from './toon'
-import { colorFor } from '@/profile'
 import type { VehicleModel } from './car'
 import type { Turret } from '@/net/codec'
-import { MORTAR_BARREL_LENGTH, MORTAR_GUN_PIVOT, MORTAR_TRACK_HALF, MORTAR_WHEEL_RADIUS } from '@/sim/consts'
+import { MORTAR_BARREL_LENGTH, MORTAR_GUN_PIVOT, MORTAR_SEAT_HEAD, MORTAR_TRACK_HALF, MORTAR_WHEEL_RADIUS } from '@/sim/consts'
 
 /** Fore and aft of each axle, metres (`axles` in `spec.rs`). */
 const AXLE_Z = 0.9
@@ -76,7 +75,6 @@ const EXTRACTOR = cylinderGeometry(0.115, 0.115, 0.32, 12)
 EXTRACTOR.rotateX(-Math.PI / 2)
 const BRAKE = boxGeometry(0.28, 0.18, 0.34)
 const BREECH = boxGeometry(0.3, 0.3, 0.4)
-const HEAD = sphereGeometry(0.2, 12, 10)
 
 const WHEEL_SPOTS: [string, number, number][] = [
   ['FL', -MORTAR_TRACK_HALF, -AXLE_Z],
@@ -121,12 +119,12 @@ export class MortarModel implements VehicleModel {
   private readonly recoiling = new Group()
   private readonly pad = new Group()
   private readonly trails: Trail[] = []
-  private readonly head: Mesh
+  /** Where the gunner's head is, riding the mount. */
+  private readonly seat = new Group()
   private readonly spinners: Node[] = []
   private readonly paint = toonMaterial({ color: PAINT })
   private readonly steel = toonMaterial({ color: STEEL })
   private readonly rubber = toonMaterial({ color: RUBBER })
-  private readonly headMaterial = toonMaterial({ color: 0xffffff })
   private roll = 0
   private placed = false
   /** 0 set up to fire, 1 folded for travel. */
@@ -146,11 +144,8 @@ export class MortarModel implements VehicleModel {
     for (const side of [-1, 1]) this.trails.push(this.buildTrail(side))
     this.buildGun()
 
-    this.head = new Mesh(HEAD, this.headMaterial)
-    this.head.position.set(0.6, 0.45, 0.6)
-    this.head.castShadow = true
-    this.head.visible = false
-    this.mount.add(this.head)
+    this.seat.position.set(...MORTAR_SEAT_HEAD)
+    this.mount.add(this.seat)
   }
 
   private part(geometry: ConstructorParameters<typeof Mesh>[0], material: ConstructorParameters<typeof Mesh>[1], parent: Node, x: number, y: number, z: number, shadow = true) {
@@ -236,13 +231,13 @@ export class MortarModel implements VehicleModel {
 
   /**
    * Places the mortar and aims it. `turret` is the mount's yaw (hull frame), the elevation and whether
-   * the gun is hitched; `seats` the occupant ids, 0 for empty. The gunner's head shows when someone works it.
+   * the gun is hitched. Its gunner is drawn sitting on the mount by `Game` (`seatFrame`).
    */
   update(
     position: readonly [number, number, number],
     rotation: readonly [number, number, number, number],
     _steer: number,
-    seats: readonly number[],
+    _seats: readonly number[],
     turret?: Turret | null,
   ) {
     this.root.position.set(...position)
@@ -283,10 +278,14 @@ export class MortarModel implements VehicleModel {
     // The barrel slides back along its own line and eases home.
     const since = (now - this.firedAt) / 1000
     this.recoiling.position.z = since < RECOIL_SECONDS ? RECOIL_STROKE * (1 - since / RECOIL_SECONDS) ** 2 : 0
+  }
 
-    const gunner = seats[0] ?? 0
-    this.head.visible = gunner !== 0
-    if (gunner !== 0) this.headMaterial.color.setHex(colorFor(gunner))
+  /** The gunner's head point in the world and the mount's turn, as of the last `update`. */
+  seatFrame(head: THREE.Vector3, rotation: THREE.Quaternion) {
+    this.root.updateMatrixWorld(true)
+    this.seat.getWorldPosition(head)
+    const q = this.mount.getWorldQuaternion(new THREE.Quaternion())
+    rotation.set(q.x, q.y, q.z, q.w)
   }
 
   /** A bomb was just fired: the barrel kicks back. */
@@ -307,7 +306,6 @@ export class MortarModel implements VehicleModel {
     this.paint.dispose()
     this.steel.dispose()
     this.rubber.dispose()
-    this.headMaterial.dispose()
     this.root.removeFromParent()
   }
 }

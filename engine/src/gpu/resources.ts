@@ -87,13 +87,15 @@ export class MaterialResources {
     let program = this.programs.get(shader.key)
     if (!program) {
       const fragment = GPUShaderStage.FRAGMENT
+      // A material with vertex code reads its uniforms there too.
+      const uniforms = material.vertex !== undefined ? fragment | GPUShaderStage.VERTEX : fragment
       program = {
         shader,
         module: this.device.createShaderModule({ label: 'shader material', code: shader.code }),
         groupLayout: this.device.createBindGroupLayout({
           label: 'shader material',
           entries: [
-            { binding: 0, visibility: fragment, buffer: { type: 'uniform' } },
+            { binding: 0, visibility: uniforms, buffer: { type: 'uniform' } },
             { binding: 1, visibility: fragment, sampler: {} },
             ...shader.textureNames.map((_, i) => ({ binding: i + 2, visibility: fragment, texture: {} })),
           ],

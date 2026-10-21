@@ -73,6 +73,15 @@ const AIM_CHEST = 0.4
 const AIM_SPINE = 0.2
 const RECOIL_KICK = 0.09
 const RECOIL_DECAY = 14
+/**
+ * Height of the head's middle above the model's origin in the `sit` clip: the hips come down 0.42 m
+ * (`SIT_DROP` in build_character.py). A seated player is placed so their head lands on the seat's head point.
+ */
+export const SIT_HEAD = 1.22
+/** How far a seated body turns at the waist and chest towards where it aims, either way, radians. */
+const SIT_TWIST = 1.7
+/** Of that turn, the share the spine takes; the chest takes the rest. */
+const SIT_SPINE = 0.4
 
 export interface CharacterAsset {
   scene: Node
@@ -144,10 +153,13 @@ const smooth = (a: number, b: number, x: number) => {
 const chase = (value: number, target: number, rate: number, dt: number) => value + (target - value) * (1 - Math.exp(-rate * dt))
 
 const AXIS_X = new THREE.Vector3(1, 0, 0)
+const AXIS_Y = new THREE.Vector3(0, 1, 0)
 const SCRATCH = {
   q: new THREE.Quaternion(),
   parent: new THREE.Quaternion(),
   axis: new THREE.Vector3(),
+  forward: new THREE.Vector3(),
+  turn: new THREE.Quaternion(),
 }
 
 /**
@@ -242,7 +254,7 @@ export class Character {
     this.object.visible = false
   }
 
-  /** Whether it is drawn: false while it sits in a car. */
+  /** Whether it is drawn: false while it sits inside armour, or looks down its own scope. */
   get visible() {
     return this.shown
   }
@@ -273,12 +285,7 @@ export class Character {
   ) {
     this.position.set(position[0]!, position[1]!, position[2]!)
     this.pitch = pitch
-    if (this.flashLeft > 0) {
-      this.flashLeft = Math.max(0, this.flashLeft - dt)
-      const glow = (this.flashLeft / HIT_FLASH) * 0.9
-      this.outfit.emissive.set(glow, glow, glow)
-      this.outfit.needsUpdate()
-    }
+    this.fadeFlash(dt)
     this.flingStep(dt)
     if (!this.shown || this.gibbed) return
 
@@ -382,6 +389,61 @@ export class Character {
     this.place(yaw + turn * this.slide)
   }
 
+  /**
+   * Sits the character in a vehicle seat: its head on `head` (world), the body turned with the
+   * vehicle's `rotation`, and the chest twisted towards `yaw` and leaning with `pitch`, where it aims.
+   */
+  seat(head: THREE.Vector3, rotation: THREE.Quaternion, yaw: number, pitch: number, dt: number) {
+    this.position.copy(head)
+    this.pitch = pitch
+    this.fadeFlash(dt)
+    if (!this.shown || this.gibbed) return
+
+    // Every other clip gives way to sitting in the stance of the item in hand.
+    const sit = this.clip('sit')
+    let sum = 0
+    for (const name of this.actions.keys()) {
+      const next = chase(this.weights.get(name) ?? 0, name === sit ? 1 : 0, BLEND_RATE, dt)
+      this.weights.set(name, next)
+      sum += next
+    }
+    if (sum > 0) for (const [name, w] of this.weights) this.weights.set(name, w / sum)
+    const clip = this.actions.get(sit)
+    if (clip) this.idleTime = (this.idleTime + dt) % clip.clip.duration
+    for (const [name, action] of this.actions) {
+      const w = this.weights.get(name)!
+      action.enabled = w > 0.0005 || name === sit
+      action.weight = w
+      if (name.endsWith('sit')) action.time = this.idleTime
+    }
+    this.animator.update(dt)
+    this.head?.scale.setScalar(this.headless ? 0.001 : 1)
+    this.recoil = chase(this.recoil, 0, RECOIL_DECAY, dt)
+    this.aim()
+
+    // The legs stay with the seat; the waist and chest turn towards the aim, as far as a body turns.
+    const forward = SCRATCH.forward.set(0, 0, -1).applyQuaternion(rotation)
+    const facing = Math.atan2(-forward.x, -forward.z)
+    const twist = Math.max(-SIT_TWIST, Math.min(SIT_TWIST, Math.atan2(Math.sin(yaw - facing), Math.cos(yaw - facing))))
+    this.turn(this.spine, twist * SIT_SPINE, AXIS_Y)
+    this.turn(this.chest, twist * (1 - SIT_SPINE), AXIS_Y)
+
+    // The model faces +Z; the vehicle's nose is its -Z.
+    this.object.quaternion.copy(rotation).multiply(SCRATCH.turn.setFromAxisAngle(AXIS_Y, Math.PI))
+    this.object.position.copy(head).sub(SCRATCH.axis.set(0, SIT_HEAD, 0).applyQuaternion(rotation))
+    this.placed = true
+    this.object.visible = this.shown && !this.gibbed
+  }
+
+  /** Fades a hit's whitening. */
+  private fadeFlash(dt: number) {
+    if (this.flashLeft <= 0) return
+    this.flashLeft = Math.max(0, this.flashLeft - dt)
+    const glow = (this.flashLeft / HIT_FLASH) * 0.9
+    this.outfit.emissive.set(glow, glow, glow)
+    this.outfit.needsUpdate()
+  }
+
   private place(yaw: number) {
     // Lying down, the centre is already lower; the pivot goes back up to the ground the feet stand on.
     this.object.position.set(this.position.x, this.position.y - FOOT_OFFSET + (STAND_CENTRE - PRONE_CENTRE) * this.lie, this.position.z)
@@ -464,19 +526,19 @@ export class Character {
   private aim() {
     if (this.down || this.death > 0.3) return
     const lean = -this.pitch - this.recoil
-    this.bend(this.spine, lean * AIM_SPINE)
-    this.bend(this.chest, lean * AIM_CHEST)
+    this.turn(this.spine, lean * AIM_SPINE, AXIS_X)
+    this.turn(this.chest, lean * AIM_CHEST, AXIS_X)
   }
 
-  /** Rotates a bone about the body's left-right axis, in model space. */
-  private bend(bone: Node | null, angle: number) {
+  /** Rotates a bone about `axis` in model space: X bends it forward and back, Y turns it. */
+  private turn(bone: Node | null, angle: number, axis: THREE.Vector3) {
     if (!bone || Math.abs(angle) < 1e-4) return
     // The bone's parent frame relative to the model root, to carry the model-space axis down into it.
     const parent = SCRATCH.parent.identity()
     for (let node = bone.parent; node && node !== this.object; node = node.parent) {
       parent.premultiply(SCRATCH.q.set(node.quaternion.x, node.quaternion.y, node.quaternion.z, node.quaternion.w))
     }
-    SCRATCH.axis.copy(AXIS_X).applyQuaternion(parent.invert())
+    SCRATCH.axis.copy(axis).applyQuaternion(parent.invert())
     bone.quaternion.premultiply(SCRATCH.q.setFromAxisAngle(SCRATCH.axis, angle))
   }
 
@@ -538,7 +600,7 @@ export class Character {
     action.timeScale = dead ? 1 : 0
   }
 
-  /** Hides the character while it sits in a car. */
+  /** Hides the character: it sits inside armour, or its own scope is in the way. */
   set hidden(hidden: boolean) {
     this.shown = !hidden
     this.object.visible = this.shown && this.placed && !this.gibbed

@@ -1,9 +1,12 @@
 /**
  * The vertex stage every mesh shader shares: it fetches the object record through the draw list,
  * transforms to clip space, and passes the material colour (× tint × vertex colour) along.
- * Needs COMMON_WGSL before it.
+ * Needs COMMON_WGSL before it. With `displace`, the shader must also define
+ * `fn displace(world: vec3f, custom: vec4f, color: vec4f) -> vec3f`, which moves each vertex in world
+ * space before it is projected (a ShaderMaterial's `vertex` code: grass bending in the wind).
  */
-export const VERTEX_WGSL = /* wgsl */ `
+export function vertexWgsl(displace: boolean) {
+  return /* wgsl */ `
 struct VertexIn {
   @location(0) position: vec3f,
   @location(1) normal: vec3f,
@@ -33,7 +36,7 @@ fn vs(in: VertexIn) -> VertexOut {
   let object = objects[record];
   let material = materials[object.misc.x];
   let model = modelMatrix(object, in.joints, in.weights);
-  let world = model * vec4f(in.position, 1.0);
+  ${displace ? 'let world = vec4f(displace((model * vec4f(in.position, 1.0)).xyz, in.custom, in.color), 1.0);' : 'let world = model * vec4f(in.position, 1.0);'}
   var out: VertexOut;
   out.clip = frame.viewProj * world;
   out.world = world.xyz;
@@ -57,3 +60,6 @@ fn applyFog(rgb: vec3f, flags: u32, viewDepth: f32) -> vec3f {
   return mix(rgb, frame.fogColor.rgb, smoothstep(frame.fog.x, frame.fog.y, viewDepth));
 }
 `
+}
+
+export const VERTEX_WGSL = vertexWgsl(false)

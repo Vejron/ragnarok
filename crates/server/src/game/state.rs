@@ -429,7 +429,9 @@ pub(super) fn battery_byte(energy: u32) -> u8 {
 }
 
 /// Where the standing, living players were at the end of one tick: `(tick, [(id, position)])`.
-type Frame = (u32, Vec<(u32, [f32; 3])>);
+/// A tick and where everyone was at its end: each player's capsule centre, or their head point when
+/// seated (`true`) in a vehicle whose crew show.
+type Frame = (u32, Vec<(u32, [f32; 3], bool)>);
 
 /// Everything mechanics may read and change.
 pub struct World {
@@ -481,8 +483,8 @@ pub struct World {
     /// Bites taken since the last tick, for `Game::step` to broadcast: the building, where the
     /// blast was (centimetres) and the cells it broke and left hanging.
     pub fresh_carved: Vec<FreshCarve>,
-    /// Where each standing, living player was at the end of each of the last few ticks, newest
-    /// last, labelled with the tick number a snapshot of that state carries. Lag compensation
+    /// Where each living player was at the end of each of the last few ticks (standing, or their head
+    /// where they sit in the open), newest last, labelled with the tick number a snapshot of that state carries. Lag compensation
     /// rewinds shots against it.
     pub(super) history: VecDeque<Frame>,
 }
@@ -490,7 +492,12 @@ pub struct World {
 impl World {
     /// Notes where everyone stands, once a tick has finished.
     pub(super) fn record_history(&mut self) {
-        let positions = self.players.iter().filter(|(_, p)| p.embodied() && p.alive()).map(|(&id, p)| (id, p.character.position)).collect();
+        let positions = self
+            .players
+            .iter()
+            .filter(|(_, p)| p.alive())
+            .filter_map(|(&id, p)| if p.embodied() { Some((id, p.character.position, false)) } else { self.seated_head(id).map(|(_, head)| (id, head, true)) })
+            .collect();
         if self.history.len() > MAX_REWIND_TICKS as usize {
             self.history.pop_front();
         }
@@ -501,7 +508,23 @@ impl World {
     pub fn position_at(&self, id: u32, back: u32) -> Option<[f32; 3]> {
         let tick = self.tick.wrapping_sub(back);
         let (_, positions) = self.history.iter().rev().find(|(t, _)| *t == tick)?;
-        positions.iter().find(|(who, _)| *who == id).map(|(_, position)| *position)
+        positions.iter().find(|(who, _, seated)| *who == id && !seated).map(|(_, position, _)| *position)
+    }
+
+    /// Where seated player `id`'s head was `back` ticks ago, if the record goes that far and had them seated in it.
+    pub fn head_at(&self, id: u32, back: u32) -> Option<[f32; 3]> {
+        let tick = self.tick.wrapping_sub(back);
+        let (_, positions) = self.history.iter().rev().find(|(t, _)| *t == tick)?;
+        positions.iter().find(|(who, _, seated)| *who == id && *seated).map(|(_, head, _)| *head)
+    }
+
+    /// The vehicle player `id` sits in and where their head is in the world, if they sit in it (not
+    /// flying it from afar) and its crew show (`shared::vehicles::seat_head`).
+    pub fn seated_head(&self, id: u32) -> Option<(u32, [f32; 3])> {
+        let seat = self.players.get(&id)?.seat.filter(|seat| !seat.remote)?;
+        let vehicle = self.vehicles.get(&seat.vehicle)?;
+        let local = shared::vehicles::seat_head(vehicle.kind, seat.index, vehicle.gun.as_ref().map_or(0.0, |gun| gun.yaw))?;
+        Some((seat.vehicle, self.physics.car_pose(seat.vehicle)?.world_point(local)))
     }
 
     /// The tree `id` names, if it is one that can be hit.

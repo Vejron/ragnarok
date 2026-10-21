@@ -28,7 +28,7 @@ describe('Character holding things', () => {
   it('has a clip set per stance and a mesh and muzzle for each weapon', async () => {
     const c = await crowd()
     for (const prefix of ['pistol_', 'hold_']) {
-      for (const name of ['idle', 'jump_air', 'walk_fwd', 'run_left', 'crouch_idle', 'crouch_back', 'crawl_idle', 'crawl_fwd', 'slide']) {
+      for (const name of ['idle', 'jump_air', 'walk_fwd', 'run_left', 'crouch_idle', 'crouch_back', 'crawl_idle', 'crawl_fwd', 'slide', 'sit']) {
         expect(c.asset!.clips.has(prefix + name), prefix + name).toBe(true)
       }
     }
@@ -192,6 +192,32 @@ describe('Character', () => {
     expect(c.size).toBe(10)
     people.forEach((p) => p.dispose())
     expect(c.size).toBe(0)
+    c.dispose()
+  })
+
+  it('sits with its head on the seat and turns its chest to where it aims', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    const seat = new THREE.Vector3(3, 1.5, -2)
+    const upright = new THREE.Quaternion()
+    const sit = (yaw: number) => {
+      for (let t = 0; t < 1; t += 1 / 60) person.seat(seat, upright, yaw, 0, 1 / 60)
+      c.root.updateMatrixWorld(true)
+    }
+    sit(0)
+    expect(person.blend.get('sit')!).toBeGreaterThan(0.9)
+    // The head bone is the base of the head, a little below its middle.
+    const head = c.root.getObjectByName('head')!.getWorldPosition(new THREE.Vector3())
+    expect(head.x).toBeCloseTo(seat.x, 1)
+    expect(head.z).toBeCloseTo(seat.z, 1)
+    expect(head.y).toBeGreaterThan(seat.y - 0.2)
+    expect(head.y).toBeLessThan(seat.y)
+    // Facing the vehicle's nose (-Z) the rifle points ahead; looking left, it swings to the left (-X).
+    const ahead = person.muzzle()!.clone()
+    expect(ahead.z).toBeLessThan(seat.z - 0.3)
+    sit(Math.PI / 2)
+    const left = person.muzzle()!.clone()
+    expect(left.x).toBeLessThan(seat.x - 0.3)
     c.dispose()
   })
 

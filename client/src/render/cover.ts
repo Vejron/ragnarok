@@ -13,7 +13,7 @@ import {
 
 export const GRASS_COLOR = 0x8fd16a
 
-const COVER_COLORS: Record<number, number> = {
+export const COVER_COLORS: Record<number, number> = {
   [COVER_WATER]: 0x5cc0f0,
   [COVER_WOOD]: 0x5fae5a,
   [COVER_PARK]: 0xa8e07a,

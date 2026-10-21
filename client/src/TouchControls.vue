@@ -94,7 +94,7 @@ const release = (mask: number) => () => props.input.hold(mask, false)
     <button v-if="seat === 'aviator' || seat === 'roadster'" class="btn crouch" @pointerdown.prevent="press(BUTTON_CROUCH)($event)" @pointerup="release(BUTTON_CROUCH)()" @pointercancel="release(BUTTON_CROUCH)()">{{ seat === 'roadster' ? 'BRAKE' : 'BOMB' }}</button>
     <button class="btn fire" @pointerdown.prevent="press(BUTTON_FIRE)($event)" @pointerup="release(BUTTON_FIRE)()" @pointercancel="release(BUTTON_FIRE)()">{{ seat === 'drone' ? 'BOOM' : seat === 'hen' ? 'EGG' : 'FIRE' }}</button>
     <button v-if="!seat" class="btn chute" @pointerdown.prevent="input.tap(BUTTON_CHUTE)">CHUTE</button>
-    <button v-if="!seat" class="btn reload" @pointerdown.prevent="input.tap(BUTTON_RELOAD)">RELOAD</button>
+    <button v-if="!seat || seat === 'passenger'" class="btn reload" @pointerdown.prevent="input.tap(BUTTON_RELOAD)">RELOAD</button>
     <button v-else-if="canSwitch" class="btn reload" @pointerdown.prevent="input.tap(BUTTON_RELOAD)">SEAT</button>
   </div>
 </template>

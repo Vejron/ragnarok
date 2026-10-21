@@ -19,7 +19,9 @@ Conventions
     `hold` (hands low, in front). Clips are baked per stance: the rifle's are named plainly (`idle`,
     `walk_fwd`, ...), the others carry a `pistol_` / `hold_` prefix. `death` is shared.
   * Clips: idle, walk_fwd/back/left/right, run_fwd/back/left/right, crouch_idle, crouch_fwd/back/left/
-    right, crawl_idle, crawl_fwd/back/left/right, slide, jump_air, death. Clips loop with a duplicated last key so the mixer wraps without a hitch.
+    right, crawl_idle, crawl_fwd/back/left/right, slide, jump_air, sit, death. `sit` is a seat in a
+    vehicle: hips dropped by `SIT_DROP`, thighs level and shins down, so the head ends up `SIT_HEAD`
+    above the origin (the client places a seated player by it). Clips loop with a duplicated last key so the mixer wraps without a hitch.
 """
 
 import math
@@ -740,6 +742,25 @@ def slide(t):
     pose_rot("foot_L", 0.5, 0, 0)
 
 
+# Sitting: the hips come down this far, thighs level and shins reaching forward.
+SIT_DROP = 0.42
+
+
+def sit(t):
+    """In a vehicle seat: upright, thighs forward, the item still in hand, breathing."""
+    breath = math.sin(TAU * t)
+    pose_loc("hips", (0, 0, -SIT_DROP))
+    pose_rot("hips", -0.05, 0, 0)
+    pose_rot("spine", 0.03, 0, 0)
+    pose_rot("chest", 0.02 + 0.015 * breath, 0, 0)
+    pose_rot("head", -0.02 - 0.01 * breath, 0, 0)
+    # The shins reach forward under a dashboard rather than straight down, so the feet stay in the car.
+    for side in ("L", "R"):
+        pose_rot(f"thigh_{side}", -1.52, 0.1 if side == "R" else -0.1, 0)
+        pose_rot(f"shin_{side}", 0.72, 0, 0)
+        pose_rot(f"foot_{side}", 0.72, 0, 0)
+
+
 def build_actions():
     global CURRENT
     walk = dict(amp=0.68, lat_amp=0.38, knee=0.95, lean=0.0, bob=0.022, cycle_sway=0.03)
@@ -769,6 +790,7 @@ def build_actions():
             bake(f"{prefix}crawl_{name}", 48, crawl_gait(d, 0.15, 0.1, 0.9))
         bake(f"{prefix}slide", 120, slide)
         bake(f"{prefix}jump_air", 60, jump_air)
+        bake(f"{prefix}sit", 120, sit)
     # Dying lets go of everything, so one clip serves every stance.
     CURRENT = "rifle"
     bake("death", 60, death, loop=False)
@@ -866,7 +888,7 @@ def preview(directory):
         for i in range(4):
             at(clip, i * frames // 4)
             shoot(f"{clip}_{i}", "side" if clip.endswith("fwd") else "front")
-    for clip, view in (("slide", "side"), ("slide", "front"), ("crouch_idle", "side"), ("crouch_idle", "three"), ("crouch_fwd", "side"), ("crouch_right", "front"), ("crawl_idle", "lie_side"), ("crawl_idle", "lie_top"), ("crawl_fwd", "lie_side"), ("crawl_fwd", "lie_top"), ("crawl_left", "lie_top")):
+    for clip, view in (("slide", "side"), ("slide", "front"), ("crouch_idle", "side"), ("crouch_idle", "three"), ("crouch_fwd", "side"), ("crouch_right", "front"), ("crawl_idle", "lie_side"), ("crawl_idle", "lie_top"), ("crawl_fwd", "lie_side"), ("crawl_fwd", "lie_top"), ("crawl_left", "lie_top"), ("sit", "side"), ("sit", "three"), ("pistol_sit", "side")):
         for i in range(2):
             at(clip, i * (18 if "fwd" in clip or "right" in clip else 60))
             shoot(f"{clip}_{view}_{i}", view)

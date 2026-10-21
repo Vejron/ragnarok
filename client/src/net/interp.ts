@@ -82,6 +82,11 @@ export function blendVehicle(a: VehicleState, b: VehicleState, t: number): Vehic
       : b.turret,
     // Counters and gauges, like the turret's shot counter, come from the nearer snapshot.
     arms: t < 0.5 ? a.arms : b.arms,
+    // Each rider's look turns smoothly; what they hold changes at once.
+    crew: b.crew.map((rider, seat) => {
+      const before = a.crew[seat]
+      return before ? { yaw: lerpAngle(before.yaw, rider.yaw, t), pitch: lerp(before.pitch, rider.pitch, t), held: t < 0.5 ? before.held : rider.held } : rider
+    }),
   }
 }
 

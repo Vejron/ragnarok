@@ -7,6 +7,7 @@ use crate::game::{Player, Rocket, TEAM_NONE, World, starting_hotbar};
 use crate::physics::Obj;
 use shared::consts::*;
 use shared::items::*;
+use shared::vehicles::{Exposure, crew_gun, vehicle_def};
 use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, KIND_PLANE, Kill, S_HIT, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_EGG, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, BulletSpawn, WEAPON_BULLET, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_PELLET, WEAPON_ROADKILL, WEAPON_WRECK,
     DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_EGG, WEAPON_SHELL};
 use shared::quant::{from_mrad, to_cm, to_cm_i16, to_mrad};
@@ -19,7 +20,8 @@ use shared::quant::{from_mrad, to_cm, to_cm_i16, to_mrad};
 ///
 /// What `BUTTON_FIRE` does depends on the item in the selected hotbar slot: a gun is a hitscan
 /// from the eye along the look direction, a grenade is thrown, a bandage is applied. Seated
-/// players never use items: a gunner's trigger belongs to the gun.
+/// players use nothing (a gunner's trigger belongs to the gun) except a car's passengers, who fire
+/// their own guns from their seat.
 pub struct Combat;
 
 /// How hard (m/s) a bullet's killing blow throws the body, when nothing else was pushing it.
@@ -88,23 +90,74 @@ pub fn rewind_ticks(now: u32, view: u16) -> u32 {
     (back.max(0) as u32).min(MAX_REWIND_TICKS)
 }
 
-/// The nearest living standing player the ray meets within `max`, and how far along it is.
-/// `ignore` is the shooter. Stickmen are not physics bodies, so this is the only way to hit one.
-/// Players are tested where they stood `back` ticks ago, which is where a shooter with that much
-/// lag saw them.
+/// What of a living player a round can hit: an upright capsule (`half_height` above and below
+/// `centre`, plus `radius`), with the head above `head_y`. Standing, it is the stickman's capsule;
+/// seated in a vehicle whose crew show, a short one from the head down to the waist, in `vehicle`.
+#[derive(Clone, Copy, Debug)]
+pub struct Body {
+    pub centre: [f32; 3],
+    pub half_height: f32,
+    pub radius: f32,
+    pub head_y: f32,
+    pub vehicle: Option<u32>,
+}
+
+/// Player `id`'s body as it was `back` ticks ago, if a round can hit them: alive, and standing or
+/// sitting where they show. A crew inside armour (`Exposure::Sealed`) has none.
+pub fn body_of(world: &World, id: u32, back: u32) -> Option<Body> {
+    let player = world.players.get(&id).filter(|player| player.alive())?;
+    if player.embodied() {
+        let now = player.character.position;
+        let at = if back == 0 { now } else { world.position_at(id, back).unwrap_or(now) };
+        return Some(Body { centre: at, half_height: CAPSULE_HALF_HEIGHT, radius: CAPSULE_RADIUS, head_y: at[1] + HEAD_ZONE_Y, vehicle: None });
+    }
+    let (vehicle, now) = world.seated_head(id)?;
+    let head = if back == 0 { now } else { world.head_at(id, back).unwrap_or(now) };
+    Some(Body {
+        centre: [head[0], head[1] - SEATED_CENTRE_DROP, head[2]],
+        half_height: SEATED_HALF_HEIGHT,
+        radius: SEATED_RADIUS,
+        head_y: head[1] - SEATED_HEAD_ZONE,
+        vehicle: Some(vehicle),
+    })
+}
+
+/// The nearest living player the ray meets within `max`, standing or seated in the open, and how far
+/// along it is. `ignore` is the shooter. Stickmen are not physics bodies, so this is the only way to
+/// hit one. Players are tested where they were `back` ticks ago, which is where a shooter with that
+/// much lag saw them.
 pub fn first_player_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f32, ignore: Option<u32>, back: u32) -> Option<(u32, f32)> {
+    first_body_hit(world, origin, dir, max, ignore, back, |_| true)
+}
+
+/// [`first_player_hit`], among the bodies `only` accepts.
+fn first_body_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f32, ignore: Option<u32>, back: u32, only: impl Fn(&Body) -> bool) -> Option<(u32, f32)> {
     let mut best: Option<(u32, f32)> = None;
-    for (&id, player) in &world.players {
-        if Some(id) == ignore || !player.embodied() || !player.alive() {
+    for &id in world.players.keys() {
+        if Some(id) == ignore {
             continue;
         }
+        let Some(body) = body_of(world, id, back).filter(&only) else { continue };
         let limit = best.map_or(max, |(_, t)| t);
-        let at = if back == 0 { player.character.position } else { world.position_at(id, back).unwrap_or(player.character.position) };
-        if let Some(t) = ray_capsule(origin, dir, at, CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, limit) {
+        if let Some(t) = ray_capsule(origin, dir, body.centre, body.half_height, body.radius, limit) {
             best = Some((id, t));
         }
     }
     best
+}
+
+/// The player a round meets: the first within `reach`, where the world (`wall`, the vehicle it struck
+/// if any) stops it. A round that strikes a glazed vehicle (`Exposure::Glazed`) goes on through the
+/// glass to its crew, as far as whatever is behind them. `range` bounds that second look.
+#[allow(clippy::too_many_arguments)]
+fn round_hit(world: &World, origin: [f32; 3], dir: [f32; 3], reach: f32, wall: Option<u32>, range: f32, shooter: Option<u32>, back: u32) -> Option<(u32, f32)> {
+    let hit = first_player_hit(world, origin, dir, reach, shooter, back);
+    if hit.is_some() {
+        return hit;
+    }
+    let car = wall.filter(|car| world.vehicles.get(car).is_some_and(|vehicle| vehicle_def(vehicle.kind).crew == Exposure::Glazed))?;
+    let beyond = world.physics.cast_ray(origin, dir, range, car).unwrap_or(range);
+    first_body_hit(world, origin, dir, beyond, shooter, back, |body| body.vehicle == Some(car))
 }
 
 /// Where player `id` is: on foot (or flying a drone) where they stand, seated where their vehicle is.
@@ -149,9 +202,7 @@ pub fn damage_from(world: &mut World, victim: u32, amount: u8, attacker: Option<
 /// Whether a round that reaches `t` along `dir` from `origin` hits `victim` (where they stood `back`
 /// ticks ago) in the head.
 fn is_headshot(world: &World, victim: u32, origin: [f32; 3], dir: [f32; 3], t: f32, back: u32) -> bool {
-    let Some(player) = world.players.get(&victim) else { return false };
-    let at = if back == 0 { player.character.position } else { world.position_at(victim, back).unwrap_or(player.character.position) };
-    origin[1] + dir[1] * t - at[1] > HEAD_ZONE_Y
+    body_of(world, victim, back).is_some_and(|body| origin[1] + dir[1] * t > body.head_y)
 }
 
 /// `damage_from`, for a round that hit the head when `head`: it does `HEADSHOT_MULT` times the
@@ -177,11 +228,17 @@ pub fn damage_hit(world: &mut World, victim: u32, amount: u8, attacker: Option<u
     {
         bot.hit_from = from;
     }
+    // Chest height, where a number or a flash belongs: in the seat, for one sitting in the open.
+    let chest = match world.seated_head(victim) {
+        Some((_, head)) => [head[0], head[1] - SEATED_CENTRE_DROP, head[2]],
+        None => {
+            let at = world.players.get(&victim).map_or([0.0; 3], |player| player.character.position);
+            [at[0], at[1] + 0.9, at[2]]
+        }
+    };
+    let direction = from.map_or(BEARING_NONE, |from| bearing(chest, from));
     let Some(player) = world.players.get_mut(&victim) else { return };
-    let direction = from.map_or(BEARING_NONE, |from| bearing(player.character.position, from));
     let lost = before - player.hp;
-    // Chest height, where a number or a flash belongs.
-    let chest = [player.character.position[0], player.character.position[1] + 0.9, player.character.position[2]];
     world.hits.push((victim, hit_at(HIT_TAKEN, kind, lost, weapon, direction, chest, victim)));
     if let Some(id) = other {
         world.hits.push((id, hit_at(HIT_DEALT, kind, lost, weapon, BEARING_NONE, chest, victim)));
@@ -194,6 +251,11 @@ pub fn damage_hit(world: &mut World, victim: u32, amount: u8, attacker: Option<u
     player.fire_cooldown = 0;
     player.interrupt();
     let deaths = player.deaths;
+    // Shot in their seat, they fall out of the vehicle beside it.
+    if player.seat.is_some_and(|seat| !seat.remote) {
+        super::vehicles::alight(world, victim);
+    }
+    let Some(player) = world.players.get(&victim) else { return };
     let (knock, died_at) = (player.character.knock, player.character.position);
     let mut killer_kills = 0;
     let mut killer_id = 0;
@@ -590,10 +652,11 @@ fn step_bullet(world: &mut World, id: u32, dt: f32) {
     let speed = bullet.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
     let dir = bullet.velocity.map(|v| v / speed);
     let step = speed * dt;
-    let wall = world.physics.cast_ray_hit(bullet.position, dir, step, 0);
+    // A passenger's round leaves through their own vehicle (`source`) rather than stopping in it.
+    let wall = world.physics.cast_ray_hit(bullet.position, dir, step, bullet.source);
     let reach = wall.map_or(step, |(t, _)| t);
-    let hit = first_player_hit(world, bullet.position, dir, reach, Some(bullet.owner), bullet.back);
-    let rooster = first_rooster_hit(world, bullet.position, dir, hit.map_or(reach, |(_, t)| t));
+    let hit = round_hit(world, bullet.position, dir, reach, wall.and_then(|(_, car)| car), step, Some(bullet.owner), bullet.back);
+    let rooster = first_rooster_hit(world, bullet.position, dir, hit.map_or(reach, |(_, t)| t.min(reach)));
     bullet.ttl = bullet.ttl.saturating_sub(1);
     if hit.is_some() || rooster.is_some() || wall.is_some() {
         world.rockets.remove(&id);
@@ -700,14 +763,14 @@ pub fn scatter(world: &mut World, dir: [f32; 3], spread: f32) -> [f32; 3] {
 }
 
 /// The direction from `eye` to what the over-the-shoulder camera's crosshair is on: a wall or a
-/// player (as `shooter` saw them `back` ticks ago) within `range`, else the far end of its line. The camera is a function of yaw and pitch alone, so the
-/// server finds the same ray the player sees. Falls back to `look_dir` when the camera ray starts
-/// inside geometry or the point would send the shot sideways.
+/// player (as `shooter` saw them `back` ticks ago) within `range`, else the far end of its line, as
+/// seen from the camera's `pivot` (vehicle `ignore`, the shooter's own, is not in the way). The camera
+/// is a function of the pivot, yaw and pitch alone, so the server finds the same ray the player sees.
+/// Falls back to `look_dir` when the camera ray starts inside geometry or the point would send the
+/// shot sideways.
 #[allow(clippy::too_many_arguments)]
-fn crosshair_dir(world: &World, shooter: u32, back: u32, position: [f32; 3], eye: [f32; 3], yaw: f32, look_dir: [f32; 3], range: f32) -> [f32; 3] {
-    // The camera's pivot is to the right of the capsule, which is (cos yaw, 0, -sin yaw).
-    let pivot = [position[0] + yaw.cos() * ON_FOOT_SHOULDER, position[1] + ON_FOOT_HEIGHT, position[2] - yaw.sin() * ON_FOOT_SHOULDER];
-    let wall = world.physics.cast_ray(pivot, look_dir, range, 0).unwrap_or(range);
+fn crosshair_dir(world: &World, shooter: u32, back: u32, pivot: [f32; 3], eye: [f32; 3], look_dir: [f32; 3], range: f32, ignore: u32) -> [f32; 3] {
+    let wall = world.physics.cast_ray(pivot, look_dir, range, ignore).unwrap_or(range);
     let t = first_player_hit(world, pivot, look_dir, wall, Some(shooter), back).map_or(wall, |(_, t)| t);
     let to: [f32; 3] = std::array::from_fn(|i| pivot[i] + look_dir[i] * t - eye[i]);
     let len = to.iter().map(|v| v * v).sum::<f32>().sqrt();
@@ -742,7 +805,17 @@ fn hit_object(world: &mut World, origin: [f32; 3], dir: [f32; 3], reach: f32, da
     }
 }
 
-/// Fires gun `item` from player `id`'s eye, towards what the crosshair is on.
+/// Whether player `id`'s reload goes to the gun in their hands: they sit in a car's passenger seat
+/// holding one that is not full. Otherwise reload in a seat moves them to the next one.
+pub fn reloads_in_seat(world: &World, id: u32) -> bool {
+    let Some(player) = world.players.get(&id) else { return false };
+    let Some(seat) = player.seat.filter(|seat| !seat.remote) else { return false };
+    let held = player.held();
+    world.vehicles.get(&seat.vehicle).is_some_and(|vehicle| crew_gun(vehicle.kind, seat.index))
+        && def(held.item).is_some_and(|item| item.kind == ItemKind::Gun && held.ammo < item.mag)
+}
+
+/// Fires gun `item` from player `id`'s eye (their head, in a seat), towards what the crosshair is on.
 fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     let Some(player) = world.players.get(&id) else { return };
     let input = player.input;
@@ -750,9 +823,19 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     let pitch = from_mrad(input.pitch()).clamp(-MAX_PITCH, MAX_PITCH);
     let yaw = from_mrad(input.yaw);
     let look_dir = look(yaw, pitch);
-    let origin = [c.position[0], c.position[1] + eye_height(input.buttons(), c.prone), c.position[2]];
     let back = rewind_ticks(world.tick, input.view());
-    make_noise(world, c.position, Some(id), HEAR_SHOT);
+    // The camera's pivot is to the right of the body, which is (cos yaw, 0, -sin yaw): of the capsule
+    // on foot, of the head in a seat. A seated round leaves from the head and through the vehicle.
+    let right = [yaw.cos(), 0.0, -yaw.sin()];
+    let (origin, pivot, vehicle) = match world.seated_head(id) {
+        Some((vehicle, head)) => (head, std::array::from_fn(|i| head[i] + right[i] * PASSENGER_SHOULDER + if i == 1 { PASSENGER_HEIGHT } else { 0.0 }), vehicle),
+        None => (
+            [c.position[0], c.position[1] + eye_height(input.buttons(), c.prone), c.position[2]],
+            std::array::from_fn(|i| c.position[i] + right[i] * ON_FOOT_SHOULDER + if i == 1 { ON_FOOT_HEIGHT } else { 0.0 }),
+            0,
+        ),
+    };
+    make_noise(world, origin, Some(id), HEAR_SHOT);
     // Looking down a scope the camera is the eye, so the shot goes straight along the look
     // direction, true.
     let scoped = item.scope && input.buttons() & BUTTON_ALT != 0;
@@ -760,7 +843,7 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
         look_dir
     } else {
         // A bot has no camera: it aims its look from the eye itself.
-        let aim = if world.bots.contains_key(&id) { look_dir } else { crosshair_dir(world, id, back, c.position, origin, yaw, look_dir, item.range) };
+        let aim = if world.bots.contains_key(&id) { look_dir } else { crosshair_dir(world, id, back, pivot, origin, look_dir, item.range, vehicle) };
         scatter(world, aim, effective_spread(item, input.buttons()))
     };
 
@@ -774,7 +857,7 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
             Rocket {
                 kind: PROJECTILE_BULLET,
                 owner: id,
-                source: 0,
+                source: vehicle,
                 position: origin,
                 velocity,
                 ttl: (item.range / BULLET_SPEED * TICK_RATE as f32).ceil() as u32,
@@ -798,7 +881,7 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     let spread = effective_spread(item, input.buttons());
     for pellet in 0..item.pellets {
         let ray = if pellet == 0 { dir } else { scatter(world, dir, spread) };
-        let (end, _) = hitscan(world, id, origin, ray, &round, 0, back);
+        let (end, _) = hitscan(world, id, origin, ray, &round, vehicle, back);
         let point: [i32; 3] = std::array::from_fn(|i| to_cm(origin[i] + ray[i] * end));
         let weapon = if pellet == 0 { item.weapon } else { WEAPON_PELLET };
         world.shots.push(ShotEvent { shooter: id, weapon, x: point[0], y: point[1], z: point[2] });
@@ -824,9 +907,9 @@ pub struct Round {
 pub fn hitscan(world: &mut World, shooter: u32, origin: [f32; 3], dir: [f32; 3], round: &Round, ignore: u32, back: u32) -> (f32, bool) {
     let wall = world.physics.cast_ray_hit(origin, dir, round.range, ignore);
     let reach = wall.map_or(round.range, |(t, _)| t);
-    let hit = first_player_hit(world, origin, dir, reach, Some(shooter), back);
+    let hit = round_hit(world, origin, dir, reach, wall.and_then(|(_, car)| car), round.range, Some(shooter), back);
     // A rooster nearer than the player (or with no player behind it) takes the shot.
-    let rooster = first_rooster_hit(world, origin, dir, hit.map_or(reach, |(_, t)| t));
+    let rooster = first_rooster_hit(world, origin, dir, hit.map_or(reach, |(_, t)| t.min(reach)));
     let end = rooster.map(|(_, t)| t).or(hit.map(|(_, t)| t)).unwrap_or(reach);
     if let Some((target, _)) = rooster {
         let dealt = round.falloff.apply(round.damage, end);
@@ -949,7 +1032,8 @@ fn spend(slot: &mut ItemSlot) {
     }
 }
 
-/// One tick of item use for a living, standing player: switching, reloading, and what fire does.
+/// One tick of item use for a living player, standing or in a car's passenger seat: switching,
+/// reloading, and what fire does.
 fn use_item(world: &mut World, id: u32) {
     let Some(player) = world.players.get_mut(&id) else { return };
     let buttons = player.input.buttons();
@@ -961,11 +1045,15 @@ fn use_item(world: &mut World, id: u32) {
     let pressed = buttons & BUTTON_FIRE != 0;
     let fresh = pressed && !player.trigger_held;
     player.trigger_held = pressed;
-    if player.seat.is_some() {
-        player.interrupt();
-        return;
-    }
     let held = player.held();
+    // In a seat only a car's passengers use anything, and only their guns.
+    if let Some(seat) = player.seat {
+        let passenger = !seat.remote && world.vehicles.get(&seat.vehicle).is_some_and(|vehicle| crew_gun(vehicle.kind, seat.index));
+        if !passenger || def(held.item).is_none_or(|item| item.kind != ItemKind::Gun) {
+            player.interrupt();
+            return;
+        }
+    }
     let Some(item) = def(held.item).copied() else {
         player.interrupt();
         return;
