@@ -247,6 +247,52 @@ pub(in crate::physics) fn fly_drone(body: &mut RigidBody, controls: CarControls,
     body.set_angvel(current + (turn - current) * (DRONE_RESPONSE * dt).min(1.0), true);
 }
 
+/// One tick of a loitering drone with its motor running: a simplified, nimble plane. It always flies at
+/// `LOITER_SPEED` along its nose: the wings and motor push its velocity there as hard as
+/// `LOITER_MAX_ACCEL` lets them, on top of holding it up, so there is no stall, no throttle and no
+/// slide. The nose is steered as the plane's is: the mouse sets where to go and the autopilot banks into
+/// the turn and pulls, levelling its wings as it arrives; W/S pitch and A/D roll by hand while held,
+/// and with neither it flies level. Everything is a function of the body's state and the controls
+/// alone, so the client can replay it.
+pub(in crate::physics) fn fly_loiter(body: &mut RigidBody, controls: CarControls, dt: f32) {
+    let rotation = *body.rotation();
+    let nose = rotation * Vector::new(0.0, 0.0, -1.0);
+    let up = rotation * Vector::Y;
+    let right = rotation * Vector::X;
+
+    let mut wanted = nose * LOITER_SPEED;
+    // Climbing fades out under the ceiling, and above it it sinks back.
+    let headroom = ((LOITER_CEILING - body.translation().y) / 20.0).clamp(-1.0, 1.0);
+    wanted.y = wanted.y.min(headroom * LOITER_SPEED);
+    let mut push = (wanted - body.linvel()) * LOITER_GRIP;
+    let size = push.length();
+    if size > LOITER_MAX_ACCEL {
+        push *= LOITER_MAX_ACCEL / size;
+    }
+    // A force rather than an impulse: it is integrated together with gravity, so level flight is exact.
+    body.add_force((push + Vector::Y * CAR_GRAVITY) * body.mass(), true);
+
+    let bank = (-right.y).atan2(up.y);
+    let steer = controls.steer.clamp(-1.0, 1.0);
+    let pull = (-controls.throttle).clamp(-1.0, 1.0);
+    let mouse = controls.aim.map(|[yaw, pitch]| {
+        let pitch = pitch.clamp(-PLANE_AIM_MAX_PITCH, PLANE_AIM_MAX_PITCH);
+        autopilot(rotation, Vector::new(-yaw.sin() * pitch.cos(), pitch.sin(), -yaw.cos() * pitch.cos()), LOITER_SPEED, LOITER_MAX_BANK)
+    });
+    let level_pitch = (-nose.y.clamp(-1.0, 1.0).asin() * PLANE_LEVEL_GAIN).clamp(-1.0, 1.0);
+    let pitch = if pull.abs() > 0.05 { pull } else { mouse.map_or(level_pitch, |m| m[0]) };
+    let roll = if steer.abs() > 0.05 { steer } else { mouse.map_or((-bank * 2.0).clamp(-1.0, 1.0), |m| m[2]) };
+    let roll = roll.clamp((-LOITER_MAX_BANK - bank) * 3.0, (LOITER_MAX_BANK - bank) * 3.0).clamp(-1.0, 1.0);
+    let yaw = match mouse {
+        Some(m) if steer.abs() <= 0.05 => m[1],
+        _ => (steer * 0.3 + bank.sin() * 0.8).clamp(-1.0, 1.0),
+    };
+    // + about X lifts the nose, + about Y turns left and + about Z lifts the right wing.
+    let turn = rotation * Vector::new(pitch * LOITER_PITCH_RATE, -yaw * LOITER_YAW_RATE, -roll * LOITER_ROLL_RATE);
+    let current = body.angvel();
+    body.set_angvel(current + (turn - current) * (LOITER_RESPONSE * dt).min(1.0), true);
+}
+
 /// One tick of a walker: its two legs push the hull up from the ground, a torque keeps it upright and
 /// the driver walks and turns it. `feet` is how far below each hip the ground is, `None` where it is
 /// out of reach; a leg is a spring that pushes only while the foot is within `WALKER_LEG_LENGTH`.
@@ -401,11 +447,11 @@ pub(in crate::physics) fn edge_depth(position: Vector, bound: f32) -> f32 {
     into(position.x).max(into(position.z))
 }
 
-/// What a plane flies itself to do to head for `target`, a world direction: `[pitch, yaw, roll]`, each
+/// What a plane flies itself to do to head for `target`, a world direction, banking no more than `max_bank`: `[pitch, yaw, roll]`, each
 /// -1..=1 as a share of the full rate. It banks into the turn and pulls once banked, takes the turn
 /// level when the target is behind, and levels its wings when the target is nearly ahead. The pilot
 /// uses it near the edge of the world and an empty plane to glide.
-pub(in crate::physics) fn autopilot(rotation: Rotation, target: Vector, airspeed: f32) -> [f32; 3] {
+pub(in crate::physics) fn autopilot(rotation: Rotation, target: Vector, airspeed: f32, max_bank: f32) -> [f32; 3] {
     let up = rotation * Vector::Y;
     let right = rotation * Vector::X;
     let local = rotation.inverse() * target;
@@ -426,7 +472,7 @@ pub(in crate::physics) fn autopilot(rotation: Rotation, target: Vector, airspeed
     let mut pitch = (above * off * PLANE_AIM_GAIN).clamp(-1.0, 1.0);
     if pitch > 0.0 {
         // A wide turn waits for the bank before it pulls, and nobody pulls hard near the stall.
-        let banked = if off > 1.2 { (bank.abs() / PLANE_MAX_BANK).clamp(0.25, 1.0) } else { 1.0 };
+        let banked = if off > 1.2 { (bank.abs() / max_bank).clamp(0.25, 1.0) } else { 1.0 };
         let margin = ((airspeed - PLANE_STALL_SPEED) / (0.4 * PLANE_STALL_SPEED)).clamp(0.2, 1.0);
         pitch *= banked * margin;
     }
@@ -434,7 +480,7 @@ pub(in crate::physics) fn autopilot(rotation: Rotation, target: Vector, airspeed
     let level = (-bank * 2.0).clamp(-1.0, 1.0);
     let into = (across * off * 3.0).clamp(-1.0, 1.0);
     let blend = (off / PLANE_BANK_ANGLE).min(1.0);
-    let roll = (level + (into - level) * blend).clamp((-PLANE_MAX_BANK - bank) * 3.0, (PLANE_MAX_BANK - bank) * 3.0);
+    let roll = (level + (into - level) * blend).clamp((-max_bank - bank) * 3.0, (max_bank - bank) * 3.0);
     [pitch, yaw, roll.clamp(-1.0, 1.0)]
 }
 
@@ -487,7 +533,7 @@ pub(in crate::physics) fn wing(body: &mut RigidBody, controls: CarControls, powe
         // What the plane flies itself to do: glide on level (a little nose down with nobody aboard) and,
         // near the edge, turn back to the middle.
         let hold = aim_direction([heading, if controls.powered { 0.0 } else { PLANE_GLIDE_PITCH }], position, bound);
-        let auto = autopilot(rotation, hold, airspeed);
+        let auto = autopilot(rotation, hold, airspeed, PLANE_MAX_BANK);
         let [pitch, yaw, roll] = if controls.powered {
             let bank = (-right.y).atan2(up.y);
             let steer = controls.steer.clamp(-1.0, 1.0);
@@ -496,7 +542,7 @@ pub(in crate::physics) fn wing(body: &mut RigidBody, controls: CarControls, powe
             // keys then take an axis over while they are held, and with neither it flies level.
             let mouse = controls.aim.map(|[yaw, pitch]| {
                 let aim = aim_direction([yaw, pitch.clamp(-PLANE_AIM_MAX_PITCH, PLANE_AIM_MAX_PITCH)], position, bound);
-                autopilot(rotation, aim, airspeed)
+                autopilot(rotation, aim, airspeed, PLANE_MAX_BANK)
             });
             let level_pitch = (-nose.y.clamp(-1.0, 1.0).asin() * PLANE_LEVEL_GAIN).clamp(-1.0, 1.0);
             let pitch = if pull.abs() > 0.05 { pull } else { mouse.map_or(level_pitch, |m| m[0]) };

@@ -9,7 +9,7 @@ use shared::consts::*;
 use shared::items::*;
 use shared::vehicles::{Exposure, crew_gun, vehicle_def};
 use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, KIND_PLANE, Kill, S_HIT, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_EGG, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, BulletSpawn, WEAPON_BULLET, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_PELLET, WEAPON_ROADKILL, WEAPON_WRECK,
-    DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_EGG, WEAPON_SHELL};
+    DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_EGG, WEAPON_LOITER, WEAPON_SHELL};
 use shared::quant::{from_mrad, to_cm, to_cm_i16, to_mrad};
 
 /// Health, death, the items in the hotbar and what blasts do to people and vehicles.
@@ -266,7 +266,7 @@ pub fn damage_hit(world: &mut World, victim: u32, amount: u8, attacker: Option<u
     }
     let style = match weapon {
         WEAPON_ROADKILL => DEATH_ROADKILL,
-        WEAPON_ROCKET | WEAPON_SHELL | WEAPON_WRECK | WEAPON_GRENADE | WEAPON_AUTOCANNON | WEAPON_BOMB | WEAPON_DRONE | WEAPON_EGG => DEATH_BLAST,
+        WEAPON_ROCKET | WEAPON_SHELL | WEAPON_WRECK | WEAPON_GRENADE | WEAPON_AUTOCANNON | WEAPON_BOMB | WEAPON_DRONE | WEAPON_LOITER | WEAPON_EGG => DEATH_BLAST,
         _ if head => DEATH_HEAD,
         _ if lost > 0 && amount > before.saturating_mul(2) => DEATH_OVERKILL,
         _ => DEATH_BODY,
@@ -1088,7 +1088,7 @@ fn use_item(world: &mut World, id: u32) {
             }
         }
         ItemKind::Drone => {
-            if fresh && player.fire_cooldown == 0 && super::drones::launch(world, id) {
+            if fresh && player.fire_cooldown == 0 && super::drones::launch(world, id, shared::items::drone_kind(held.item)) {
                 let player = world.players.get_mut(&id).expect("checked above");
                 player.fire_cooldown = item.cooldown_ticks;
                 spend(&mut player.hotbar[slot]);

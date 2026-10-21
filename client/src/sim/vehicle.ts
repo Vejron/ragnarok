@@ -11,6 +11,7 @@ import {
   HELI_VERT_ACCEL, HELI_VERT_GAIN, HELI_YAW_RATE, BUTTON_RUN, vehicleMaxHp,
   DRONE_ACCEL_GAIN, DRONE_CEILING, DRONE_CLIMB_SPEED, DRONE_DAMPING, DRONE_HALF_EXTENTS, DRONE_LEVEL_GAIN, DRONE_MAX_ACCEL, DRONE_RESPONSE, DRONE_SINK_SPEED, DRONE_SPEED,
   DRONE_STRAFE_SPEED, DRONE_YAW_GAIN, DRONE_YAW_RATE,
+  LOITER_CEILING, LOITER_DAMPING, LOITER_GRIP, LOITER_HALF_EXTENTS, LOITER_MAX_ACCEL, LOITER_MAX_BANK, LOITER_PITCH_RATE, LOITER_RESPONSE, LOITER_ROLL_RATE, LOITER_SPEED, LOITER_YAW_RATE,
   PLANE_AIM_GAIN, PLANE_AIM_MAX_PITCH, PLANE_AOA_GAIN, PLANE_LEVEL_GAIN, PLANE_AXLES_Z, PLANE_BANK_ANGLE, PLANE_CEILING, PLANE_CRUISE_SPEED, PLANE_CRUISE_THROTTLE, PLANE_DRAG,
   PLANE_EDGE_MARGIN, PLANE_GLIDE_PITCH, PLANE_HALF_EXTENTS, PLANE_HARD_POINT_Y, PLANE_IDLE_THROTTLE, PLANE_LEVEL_SPEED, PLANE_MAX_BANK,
   PLANE_MAX_LIFT, PLANE_MAX_STEER, PLANE_PITCH_RATE, PLANE_RESPONSE, PLANE_ROLL_RATE, PLANE_SIDE_GAIN, PLANE_STALL_DROP, PLANE_STALL_SPEED,
@@ -23,7 +24,7 @@ import {
 import { addTileCollider, buildStaticColliders, extraSolids, HEAVY_GROUPS, rebuildBuildingCollider, timedPhysics, VehicleSolids } from './physics'
 import type { TileGround } from './terrain'
 import { vehicleDef } from './vehicles'
-import { DAMAGE_TURRET, DAMAGE_WHEELS, fromAxis, fromMrad, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, THRUST_AIR, THRUST_BOOST, THRUST_GLIDE, THRUST_LIFT, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, WHEEL_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
+import { DAMAGE_TURRET, DAMAGE_WHEELS, fromAxis, fromMrad, isDrone, KIND_DRONE, KIND_HELI, KIND_LOITER, KIND_HEN, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, THRUST_AIR, THRUST_BOOST, THRUST_GLIDE, THRUST_LIFT, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, WHEEL_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
 import type { TileData, WorldData } from '@/world'
 import * as THREE from 'three'
 
@@ -35,8 +36,8 @@ import * as THREE from 'three'
 /** Gravity on vehicle bodies. */
 export const CAR_GRAVITY = 9.81
 
-/** What holds a vehicle up: its wheels; a rotor, with no wheels; wheels on the ground and wings in the air; two spring legs; or a drone's four rotors. */
-type Lift = 'wheels' | 'rotor' | 'wing' | 'walker' | 'drone'
+/** What holds a vehicle up: its wheels; a rotor, with no wheels; wheels on the ground and wings in the air; two spring legs; a drone's four rotors; or a loitering drone's motor and wings. */
+type Lift = 'wheels' | 'rotor' | 'wing' | 'walker' | 'drone' | 'loiter'
 
 interface Spec {
   halfExtents: readonly [number, number, number]
@@ -185,6 +186,24 @@ const DRONE: Spec = {
   comDrop: 0,
 }
 
+const LOITER: Spec = {
+  halfExtents: LOITER_HALF_EXTENTS,
+  density: 45,
+  wheelRadius: 0,
+  trackHalf: 0,
+  axles: [],
+  hardPointY: 0,
+  suspensionRest: 0,
+  maxSuspensionForce: 0,
+  engineForce: 0,
+  maxSpeed: 0,
+  steerLock: 0,
+  turnRate: 0,
+  lift: 'loiter',
+  linearDamping: LOITER_DAMPING,
+  comDrop: 0,
+}
+
 const PLANE: Spec = {
   halfExtents: PLANE_HALF_EXTENTS,
   density: 90,
@@ -328,7 +347,7 @@ export class CarSim {
    * back near it, as on the server.
    */
   constructor(private readonly world: RAPIER.World, private readonly kind: number, position: [number, number, number], yaw: number, private readonly bound = Infinity) {
-    this.spec = kind === KIND_TANK ? TANK : kind === KIND_STRV ? STRV : kind === KIND_HELI ? HELI : kind === KIND_SPORTS ? SPORTS : kind === KIND_ROADSTER ? ROADSTER : kind === KIND_PLANE ? PLANE : kind === KIND_WALKER ? WALKER : kind === KIND_HEN ? HEN : kind === KIND_DRONE ? DRONE : JEEP
+    this.spec = kind === KIND_TANK ? TANK : kind === KIND_STRV ? STRV : kind === KIND_HELI ? HELI : kind === KIND_SPORTS ? SPORTS : kind === KIND_ROADSTER ? ROADSTER : kind === KIND_PLANE ? PLANE : kind === KIND_WALKER ? WALKER : kind === KIND_HEN ? HEN : kind === KIND_DRONE ? DRONE : kind === KIND_LOITER ? LOITER : JEEP
     this.tank = kind === KIND_ROADSTER ? ROADSTER_AIR : kind === KIND_HEN ? HEN_STAMINA : null
     const spec = this.spec
     this.body = world.createRigidBody(
@@ -337,7 +356,7 @@ export class CarSim {
         .setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) })
         .setLinearDamping(spec.linearDamping)
         .setAngularDamping(0.8)
-        .setCcdEnabled(kind === KIND_DRONE),
+        .setCcdEnabled(isDrone(kind)),
     )
     const [hx, hy, hz] = spec.halfExtents
     const chassis = RAPIER.ColliderDesc.cuboid(hx, hy, hz).setFriction(0.4)
@@ -351,7 +370,7 @@ export class CarSim {
       if (heavy) extra.desc.setCollisionGroups(HEAVY_GROUPS)
       this.extras.push(world.createCollider(extra.desc.setTranslation(tx, ty, tz).setDensity(0).setFriction(0.4), this.body))
     }
-    if (spec.lift === 'rotor' || spec.lift === 'walker' || spec.lift === 'drone') {
+    if (spec.lift === 'rotor' || spec.lift === 'walker' || spec.lift === 'drone' || spec.lift === 'loiter') {
       // No wheels: the rotors, or the legs, are forces on the body.
       this.controller = null
       this.wheels = 0
@@ -478,6 +497,7 @@ export class CarSim {
         // A hen's wings, after the legs.
         if (this.tank !== null) this.firing = this.flap(this.flight, this.condition.power > 0.5, grounded, dt)
       } else if (this.flight.powered && this.spec.lift === 'drone') this.flyDrone(this.flight, dt)
+      else if (this.flight.powered && this.spec.lift === 'loiter') this.flyLoiter(this.flight, dt)
       else if (this.flight.powered) this.fly(this.flight, dt)
       this.world.step()
       return
@@ -663,6 +683,46 @@ export class CarSim {
     const w = body.angvel()
     const blend = Math.min(1, DRONE_RESPONSE * dt)
     body.setAngvel({ x: w.x + (turn[0]! - w.x) * blend, y: w.y + (turn[1]! - w.y) * blend, z: w.z + (turn[2]! - w.z) * blend }, true)
+  }
+
+  /** Mirrors `fly_loiter` in `physics/vehicle/flight.rs`: always cruising along the heading, pitched with the look; the nose follows the velocity and it banks into its turns. */
+  private flyLoiter(controls: CarControls, dt: number) {
+    const body = this.body
+    const q = body.rotation()
+    const nose = rotate(q, 0, 0, -1)
+    const up = rotate(q, 0, 1, 0)
+    const right = rotate(q, 1, 0, 0)
+
+    const wanted = scale(nose, LOITER_SPEED)
+    // Climbing fades out under the ceiling, and above it it sinks back.
+    const headroom = clamp((LOITER_CEILING - body.translation().y) / 20, -1, 1)
+    wanted[1] = Math.min(wanted[1], headroom * LOITER_SPEED)
+    const v = body.linvel()
+    let push = scale([wanted[0] - v.x, wanted[1] - v.y, wanted[2] - v.z], LOITER_GRIP)
+    const size = Math.hypot(...push)
+    if (size > LOITER_MAX_ACCEL) push = scale(push, LOITER_MAX_ACCEL / size)
+    const mass = body.mass()
+    body.addForce({ x: push[0] * mass, y: (push[1] + CAR_GRAVITY) * mass, z: push[2] * mass }, true)
+
+    const bank = Math.atan2(-right[1], up[1])
+    const steer = clamp(controls.steer, -1, 1)
+    const pull = clamp(-controls.throttle, -1, 1)
+    const mouse = controls.aim
+      ? (() => {
+          const [yaw, rawPitch] = controls.aim
+          const pitch = clamp(rawPitch, -PLANE_AIM_MAX_PITCH, PLANE_AIM_MAX_PITCH)
+          return autopilot(q, [-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)], LOITER_SPEED, LOITER_MAX_BANK)
+        })()
+      : null
+    const levelPitch = clamp(-Math.asin(clamp(nose[1], -1, 1)) * PLANE_LEVEL_GAIN, -1, 1)
+    const pitch = Math.abs(pull) > 0.05 ? pull : mouse ? mouse[0] : levelPitch
+    let roll = Math.abs(steer) > 0.05 ? steer : mouse ? mouse[2] : clamp(-bank * 2, -1, 1)
+    roll = clamp(clamp(roll, (-LOITER_MAX_BANK - bank) * 3, (LOITER_MAX_BANK - bank) * 3), -1, 1)
+    const yaw = mouse && Math.abs(steer) <= 0.05 ? mouse[1] : clamp(steer * 0.3 + Math.sin(bank) * 0.8, -1, 1)
+    const turn = rotate(q, pitch * LOITER_PITCH_RATE, -yaw * LOITER_YAW_RATE, -roll * LOITER_ROLL_RATE)
+    const w = body.angvel()
+    const blend = Math.min(1, LOITER_RESPONSE * dt)
+    body.setAngvel({ x: w.x + (turn[0] - w.x) * blend, y: w.y + (turn[1] - w.y) * blend, z: w.z + (turn[2] - w.z) * blend }, true)
   }
 
   /** Mirrors `walk` in `physics/vehicle/flight.rs`: spring legs, a capped balance torque, and walking at the hip. */
@@ -911,7 +971,7 @@ export class CarSim {
       const heading = Math.atan2(-nose[0], -nose[2])
       const near = edgeDepth([position.x, position.y, position.z], this.bound)
       const hold = aimDirection([heading, controls.powered ? 0 : PLANE_GLIDE_PITCH], [position.x, position.y, position.z], this.bound)
-      const auto = autopilot(q, hold, airspeed)
+      const auto = autopilot(q, hold, airspeed, PLANE_MAX_BANK)
       let command = auto
       if (controls.powered) {
         const bank = Math.atan2(-right[1], up[1])
@@ -919,7 +979,7 @@ export class CarSim {
         const pull = clamp(-controls.throttle, -1, 1)
         // With the mouse the plane flies itself towards where it points; the keys take an axis over while held.
         const mouse = controls.aim
-          ? autopilot(q, aimDirection([controls.aim[0], clamp(controls.aim[1], -PLANE_AIM_MAX_PITCH, PLANE_AIM_MAX_PITCH)], [position.x, position.y, position.z], this.bound), airspeed)
+          ? autopilot(q, aimDirection([controls.aim[0], clamp(controls.aim[1], -PLANE_AIM_MAX_PITCH, PLANE_AIM_MAX_PITCH)], [position.x, position.y, position.z], this.bound), airspeed, PLANE_MAX_BANK)
           : null
         const levelPitch = clamp(-Math.asin(clamp(nose[1], -1, 1)) * PLANE_LEVEL_GAIN, -1, 1)
         const pitch = Math.abs(pull) > 0.05 ? pull : mouse ? mouse[0] : levelPitch
@@ -968,7 +1028,7 @@ function edgeDepth(position: readonly number[], bound: number): number {
 }
 
 /** Mirrors `autopilot`: `[pitch, yaw, roll]` that would turn a plane towards the world direction `target`. */
-function autopilot(q: { x: number; y: number; z: number; w: number }, target: Vec, airspeed: number): Vec {
+function autopilot(q: { x: number; y: number; z: number; w: number }, target: Vec, airspeed: number, maxBank: number): Vec {
   const up = rotate(q, 0, 1, 0)
   const right = rotate(q, 1, 0, 0)
   const local = rotate({ x: -q.x, y: -q.y, z: -q.z, w: q.w }, target[0], target[1], target[2])
@@ -983,7 +1043,7 @@ function autopilot(q: { x: number; y: number; z: number; w: number }, target: Ve
   }
   let pitch = clamp(above * off * PLANE_AIM_GAIN, -1, 1)
   if (pitch > 0) {
-    const banked = off > 1.2 ? clamp(Math.abs(bank) / PLANE_MAX_BANK, 0.25, 1) : 1
+    const banked = off > 1.2 ? clamp(Math.abs(bank) / maxBank, 0.25, 1) : 1
     const margin = clamp((airspeed - PLANE_STALL_SPEED) / (0.4 * PLANE_STALL_SPEED), 0.2, 1)
     pitch *= banked * margin
   }
@@ -992,7 +1052,7 @@ function autopilot(q: { x: number; y: number; z: number; w: number }, target: Ve
   const into = clamp(across * off * 3, -1, 1)
   const blend = Math.min(1, off / PLANE_BANK_ANGLE)
   let roll = level + (into - level) * blend
-  roll = clamp(clamp(roll, (-PLANE_MAX_BANK - bank) * 3, (PLANE_MAX_BANK - bank) * 3), -1, 1)
+  roll = clamp(clamp(roll, (-maxBank - bank) * 3, (maxBank - bank) * 3), -1, 1)
   return [pitch, yaw, roll]
 }
 

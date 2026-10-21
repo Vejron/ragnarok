@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { InputController } from '@/sim/input'
-import { BUTTON_ALT, BUTTON_FIRE, BUTTON_RELOAD, BUTTON_USE } from '@/sim/consts'
+import { BUTTON_ALT, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_PRONE, BUTTON_RELOAD, BUTTON_USE } from '@/sim/consts'
 
 const press = (code: string) => window.dispatchEvent(new KeyboardEvent('keydown', { code }))
 const release = (code: string) => window.dispatchEvent(new KeyboardEvent('keyup', { code }))
@@ -32,6 +32,45 @@ describe('InputController hotbar', () => {
     expect(i.sample().slot).toBe(0)
     i.selectSlot(3)
     expect(i.sample().slot).toBe(3)
+  })
+
+  it('toggles prone with Z, and gets up on jump or crouch', () => {
+    const i = make()
+    press('KeyZ')
+    release('KeyZ')
+    expect(i.sample().buttons & BUTTON_PRONE).toBeTruthy()
+    expect(i.sample().buttons & BUTTON_PRONE).toBeTruthy()
+    press('KeyZ')
+    release('KeyZ')
+    expect(i.sample().buttons & BUTTON_PRONE).toBe(0)
+    press('KeyZ')
+    release('KeyZ')
+    press('Space')
+    release('Space')
+    expect(i.sample().buttons & BUTTON_PRONE).toBe(0)
+    press('KeyZ')
+    release('KeyZ')
+    press('KeyC')
+    const crouched = i.sample().buttons
+    expect(crouched & BUTTON_PRONE).toBe(0)
+    expect(crouched & BUTTON_CROUCH).toBeTruthy()
+    release('KeyC')
+    press('KeyZ')
+    release('KeyZ')
+    i.clearProne()
+    expect(i.sample().buttons & BUTTON_PRONE).toBe(0)
+  })
+
+  it('toggles prone from the on-screen button', () => {
+    const i = make()
+    i.tap(BUTTON_PRONE)
+    expect(i.prone).toBe(true)
+    expect(i.sample().buttons & BUTTON_PRONE).toBeTruthy()
+    i.tap(BUTTON_PRONE)
+    expect(i.prone).toBe(false)
+    i.tap(BUTTON_PRONE)
+    i.hold(BUTTON_JUMP, true)
+    expect(i.prone).toBe(false)
   })
 
   it('sends reload and use for a single frame, and fire for as long as it is held', () => {

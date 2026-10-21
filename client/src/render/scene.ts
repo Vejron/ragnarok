@@ -38,6 +38,7 @@ export const GUNNER_FOCUS = 60
 export const CAMERA_HEIGHT = 1.2
 /** Not used for flying it (that is first person, `fpvFrom`), only by anything that asks every kind. */
 export const DRONE_DISTANCE = 3
+export const LOITER_DISTANCE = 10
 
 /** How far from what it follows the sun (or moon) is put, metres, along its direction. */
 const SUN_DISTANCE = 120
@@ -55,6 +56,8 @@ const SHADOW_FAR = { span: 300, size: 4096, depth: 300 }
 const DEFAULT_FOV = 75
 /** An FPV camera's wide lens. */
 const FPV_FOV = 100
+/** A loitering drone's belly camera: narrower, to pick out targets from 100 m up. */
+const DOWN_FOV = 55
 const AIM_FOV = 50
 const SCOPE_FOV = 18
 /** A gunner's sight: a tank gun's optic, wide enough to hold a range ladder out to 400 m. */
@@ -262,6 +265,17 @@ export class Scene {
     this.camera.rotateZ(roll)
   }
 
+  /**
+   * A loitering drone's belly camera at `eye`: straight down, with the drone's heading `yaw` up the
+   * screen, and no bank, so the ground below reads like a map.
+   */
+  downFrom(eye: readonly number[], yaw: number) {
+    this.camera.position.set(eye[0]!, eye[1]!, eye[2]!)
+    // Turned to the heading, then tipped from looking along it to looking down, which puts the heading at the top.
+    this.camera.quaternion.setFromEuler(-Math.PI / 2, yaw, 0, 'YXZ')
+    this.sunOver(eye[0]!, eye[1]!, eye[2]!)
+  }
+
   /** Centres the sun's shadow on `(x, y, z)`. */
   private sunOver(x: number, y: number, z: number) {
     const sun = this.scene.sun
@@ -270,8 +284,8 @@ export class Scene {
   }
 
   /** Eases the field of view towards the scope or aim zoom, or back, `dt` seconds on. `boost` widens the plain view, e.g. with speed. */
-  zoomTo(zoom: 'none' | 'aim' | 'scope' | 'sight' | 'fpv', dt: number, boost = 0) {
-    const target = zoom === 'scope' ? SCOPE_FOV : zoom === 'sight' ? SIGHT_FOV : zoom === 'aim' ? AIM_FOV : zoom === 'fpv' ? FPV_FOV : DEFAULT_FOV + boost
+  zoomTo(zoom: 'none' | 'aim' | 'scope' | 'sight' | 'fpv' | 'down', dt: number, boost = 0) {
+    const target = zoom === 'scope' ? SCOPE_FOV : zoom === 'sight' ? SIGHT_FOV : zoom === 'aim' ? AIM_FOV : zoom === 'fpv' ? FPV_FOV : zoom === 'down' ? DOWN_FOV : DEFAULT_FOV + boost
     const fov = this.camera.fov + (target - this.camera.fov) * Math.min(1, dt * ZOOM_RATE)
     if (Math.abs(fov - this.camera.fov) < 1e-3) return
     this.camera.fov = Math.abs(fov - target) < 0.05 ? target : fov

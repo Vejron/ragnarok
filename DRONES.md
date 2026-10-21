@@ -83,7 +83,7 @@ An earlier version leaned the hull like the helicopter and held height with the 
 
 ### Wire
 
-`PROTOCOL_VERSION` is 29.
+`PROTOCOL_VERSION` was 29 when FPV drones came in; the loitering drone moved it to 37.
 
 - `KIND_DRONE` = 11.
 - `WEAPON_DRONE` = 19, a blast (`DEATH_BLAST`). A pop is sent as a shot of weapon 6 (the autocannon's burst, about its size), but its damage is still credited as `WEAPON_DRONE`.
@@ -104,12 +104,56 @@ The seat role is `drone`. In `game.ts`:
 
 A `WEAPON_DRONE` shot is drawn as a grenade-sized blast.
 
+## Loitering drones
+
+A loitering drone is the FPV drone's big sibling: a Shahed-sized delta wing (about 2.5 m across and 3.5 m long) with a 12 m warhead. It is a second drone kind, and the same `Drones` mechanic, remote seat, battery, HUD and prediction handle it. Each kind's gameplay numbers are a `DroneDef` (`drone_def(kind)` in `crates/shared/src/items.rs`).
+
+- **The item** (`ITEM_LOITER` = 9, "Loitering drone"). One per slot. It is scattered with the pickups (weight 1, rarer than the FPV drone) and can be placed and put in loadouts in the editor.
+- **Launch.** Click or F with it in hand. It appears 100 m above the eye and 50 m behind it (`LOITER_LAUNCH_UP`, `LOITER_LAUNCH_BACK`), nose along the look, and already flying at 35 m/s. A launch fails only if it doesn't fit there, or the room is at `MAX_VEHICLES`.
+- **Flying.** It flies like a simplified, nimble version of the triplane:
+  - It always flies at 35 m/s (`LOITER_SPEED`) along its nose. There is no throttle, no stall and no sideways slide.
+  - The mouse sets where to go, and the plane's autopilot flies it there: it banks into the turn (at most about 57°, `LOITER_MAX_BANK`), pulls round, and levels its wings as the nose arrives. The look's pitch is clamped to −1.2..0.6 rad.
+  - W pushes the nose down and S pulls it up, and A/D roll it, while held, as in the plane.
+  - It turns much quicker than the plane: an about-turn takes under 4 s.
+- **Two cameras.** A fresh right-click (aim) swaps them. On touch screens the CAM button does it.
+  - The nose camera is the FPV view (100°), and it banks with the airframe.
+  - The belly camera looks straight down with the heading at the top of the screen and does not bank (55°), so the ground reads like a map.
+  - The swap is client-side only. The mouse steers in both views.
+- **Ways it ends.** The same as an FPV drone (detonate, impact, proximity, recall, link loss, shot down), with its own numbers:
+
+  | | Loitering drone | FPV drone |
+  |---|---|---|
+  | Battery | 60 s | 25 s |
+  | Range | 600 m | 250 m |
+  | Blast | 12 m, 300 damage | 4 m, 120 damage |
+  | Proximity fuse | 2 m | 0.7 m |
+  | Fall before it goes off | 8 s | 5 s |
+  | Health | 40 (a few rifle rounds) | 1 |
+  | Shot down | 4 m, 60-damage pop, drawn as a tank shell's burst | 1.5 m, 20-damage pop |
+
+- **HUD.** The FPV overlay, with `CAM FWD` / `CAM DOWN` after LIVE, and a heading tick at the top in the down view.
+- **Model and sound** (`render/loiter.ts`). A grey delta wing with wingtip fins and a pusher prop that winds down once the link is lost. The sound is a two-stroke buzz.
+
+### How it differs underneath
+
+- **Flight.** `fly_loiter` in `physics/vehicle/flight.rs` (`Lift::Loiter`), mirrored by `CarSim.flyLoiter`.
+  - A force pushes its velocity towards `LOITER_SPEED` along the nose (`LOITER_GRIP`, capped at `LOITER_MAX_ACCEL`) on top of cancelling gravity, so it goes where it points whatever its attitude.
+  - The nose is steered as `wing` steers the plane: `autopilot` (now taking a bank limit) for the mouse, and the same W/S and A/D overrides. The turn rates are `LOITER_PITCH_RATE`, `LOITER_YAW_RATE` and `LOITER_ROLL_RATE`, with no loss of authority at low speed.
+  - Earlier versions flew it by velocity like the quadcopter, yawing towards the look with the wings banked to suit. It felt floaty: it could flip, it was slow to roll out, and it slid on its old course after a turn.
+  - `LOITER_CHECKPOINTS` (`physics/vehicle/tests.rs`) and `vehicle.spec.ts` keep the server and WASM in step. The scripted run starts at z = 100, so that it stays clear of the test world's edge wall.
+- **Wire.**
+  - `KIND_LOITER` = 13 and `WEAPON_LOITER` = 21 (a blast).
+  - The battery rides in `thrust` like the FPV drone's, scaled to its own `energy_ticks`.
+  - `is_drone(kind)` / `isDrone(kind)` stand wherever the code used to ask for `KIND_DRONE`: boarding, ramming, crash damage, the remote pilot, the camera and the prompts.
+- **Range past the interest circle.** Its 600 m range is beyond `INTEREST_RADIUS` (300 m), which is centred on the drone, so far out the pilot's own body drops out of their snapshots. That is harmless: while seated, the client draws its body from its own prediction and doesn't reconcile against the snapshot. Other players near the body aren't seen by the pilot, the same as when the pilot can't see anything else that far from the drone.
+- **Ceiling.** `LOITER_CEILING` is an absolute 500 m, so a launch from high ground isn't pushed straight back down.
+
 ## Tuning
 
-- Flight: the `DRONE_*` constants in `crates/shared/src/consts.rs`, mirrored in `client/src/sim/consts.ts`.
-- Gameplay (battery, range, blast, pop, impact and proximity fuses, fall time): the `DRONE_*` constants in `crates/shared/src/items.rs`. The client mirrors those it shows.
+- Flight: the `DRONE_*` and `LOITER_*` constants in `crates/shared/src/consts.rs`, which `npm run gen:consts` mirrors to the client.
+- Gameplay (battery, range, blast, pop, impact and proximity fuses, fall time): the `DRONE_*` and `LOITER_*` constants in `crates/shared/src/items.rs`, gathered per kind by `drone_def`. The client mirrors those it shows.
 
-`consts-parity.spec.ts` keeps each mirrored pair equal. Changing a flight constant moves the scripted run, so regenerate `DRONE_CHECKPOINTS` on both sides.
+`consts-parity.spec.ts` keeps each mirrored pair equal. Changing a flight constant moves the scripted run, so regenerate `DRONE_CHECKPOINTS` or `LOITER_CHECKPOINTS` on both sides.
 
 ## Not done
 

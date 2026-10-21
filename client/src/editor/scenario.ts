@@ -70,7 +70,7 @@ export interface Scenario {
 export const MAX_LOADOUT = 5
 export const MAX_TEXT = 200
 /** Item names the server knows for a loadout, as the editor's item list spells them. */
-export const LOADOUT_ITEMS = ['Revolver', 'AK5', 'Sniper', 'Shotgun', 'Grenade', 'Bandage', 'Golden egg', 'FPV drone']
+export const LOADOUT_ITEMS = ['Revolver', 'AK5', 'Sniper', 'Shotgun', 'Grenade', 'Bandage', 'Golden egg', 'FPV drone', 'Loitering drone']
 /** What a name refers to: an area, a squad or a named trigger. */
 export type NameKind = 'area' | 'squad' | 'trigger'
 

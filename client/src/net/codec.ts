@@ -57,6 +57,13 @@ export const KIND_ROADSTER = 10
 export const KIND_DRONE = 11
 /** The hen: a giant robot hen on the walker's legs that leaps, flaps and glides, and lays egg bombs. */
 export const KIND_HEN = 12
+/** A loitering drone: a Shahed-sized delta wing with a big warhead, flown from afar and always cruising. */
+export const KIND_LOITER = 13
+
+/** Whether `kind` is a drone, flown from a remote seat by whoever launched it. Mirrors `is_drone` in protocol.rs. */
+export function isDrone(kind: number | undefined): boolean {
+  return kind === KIND_DRONE || kind === KIND_LOITER
+}
 export const FLAG_GROUNDED = 1 << 0
 export const FLAG_DEAD = 1 << 1
 export const FLAG_CROUCHING = 1 << 2
@@ -101,6 +108,8 @@ export const WEAPON_MORTAR = 18
 export const WEAPON_DRONE = 19
 /** A hen's egg going off. */
 export const WEAPON_EGG = 20
+/** A loitering drone's warhead going off. */
+export const WEAPON_LOITER = 21
 
 /** How a stickman died, as in a `Kill`. Mirrors `DEATH_*`. */
 export const DEATH_BODY = 0

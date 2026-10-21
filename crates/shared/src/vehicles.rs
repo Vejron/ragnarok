@@ -7,7 +7,7 @@
 //! gameplay.json` fails until the two tables agree.
 
 use crate::consts::*;
-use crate::protocol::{KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER};
+use crate::protocol::{KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER};
 
 #[derive(Clone, Copy, Debug)]
 pub struct VehicleDef {
@@ -238,8 +238,25 @@ const HEN: VehicleDef = VehicleDef {
     crew_guns: false,
 };
 
+/// Takes a few rifle rounds to bring down.
+const LOITER: VehicleDef = VehicleDef {
+    kind: KIND_LOITER,
+    name: "Loitering drone",
+    hp: 40,
+    seats: LOITER_SEATS,
+    half_extents: LOITER_HALF_EXTENTS,
+    gun: false,
+    arms: false,
+    car_wheels: false,
+    track_half: 0.0,
+    axle_z: 0.0,
+    crew: Exposure::Sealed,
+    seat_heads: &[],
+    crew_guns: false,
+};
+
 /// Every vehicle kind, in id order.
-pub const VEHICLES: [VehicleDef; 11] = [JEEP, TANK, HELI, SPORTS, PLANE, WALKER, STRV, MORTAR, ROADSTER, DRONE, HEN];
+pub const VEHICLES: [VehicleDef; 12] = [JEEP, TANK, HELI, SPORTS, PLANE, WALKER, STRV, MORTAR, ROADSTER, DRONE, HEN, LOITER];
 
 /// The seat whose occupant aims and fires `kind`'s gun: a tank's, helicopter's and plane's seat 1, but
 /// the driver's seat 0 where the vehicle has only one (a walker, a Strv S).

@@ -25,11 +25,14 @@ export interface HudStats {
   /** A hint for the key that does something right now, or null. */
   prompt: string | null
   /** Set while in a vehicle: the seat's role. A plane's pilot is an aviator; a helicopter's, a pilot. */
-  seat: 'driver' | 'roadster' | 'pilot' | 'aviator' | 'walker' | 'hen' | 'strv' | 'mortar' | 'drone' | 'passenger' | 'gunner' | null
+  seat: 'driver' | 'roadster' | 'pilot' | 'aviator' | 'walker' | 'hen' | 'strv' | 'mortar' | 'drone' | 'loiter' | 'passenger' | 'gunner' | null
   /** A Roadster's driver: what is left in the air tank, 0..1; a hen's: its wings' stamina; null elsewhere. */
   air: number | null
-  /** Flying a drone: its battery, 0..1, and the link's strength, 1 at the pilot's side to 0 at the edge of its range; null otherwise. */
-  drone: { battery: number; signal: number } | null
+  /**
+   * Flying a drone: its battery, 0..1, and the link's strength, 1 at the pilot's side to 0 at the edge of its range;
+   * for a loitering drone also which camera is watched (null for an FPV drone's one); null when not flying one.
+   */
+  drone: { battery: number; signal: number; camera: 'forward' | 'down' | null } | null
   /** Strength 0..1 of the static that follows a drone's feed cutting out. */
   feedLost: number
   /** Seated with a free seat to move to: R switches to it. */

@@ -71,6 +71,14 @@ pub const KIND_ROADSTER: u8 = 10;
 pub const KIND_DRONE: u8 = 11;
 /// The hen: a giant robot hen on the walker's legs that jumps, flaps and glides, and lays egg bombs. One seat.
 pub const KIND_HEN: u8 = 12;
+/// A loitering drone: a Shahed-sized delta wing with a big warhead, flown from afar like an FPV drone
+/// but launched high above and behind its pilot, and always cruising forward.
+pub const KIND_LOITER: u8 = 13;
+
+/// Whether `kind` is a drone: flown from a remote seat by whoever launched it (see the `Drones` mechanic).
+pub fn is_drone(kind: u8) -> bool {
+    matches!(kind, KIND_DRONE | KIND_LOITER)
+}
 
 /// Health of a fresh vehicle of `kind`. Zero on the wire means wrecked.
 pub fn vehicle_hp(kind: u8) -> u8 {
@@ -139,6 +147,8 @@ pub const WEAPON_MORTAR: u8 = 18;
 pub const WEAPON_DRONE: u8 = 19;
 /// A hen's egg going off.
 pub const WEAPON_EGG: u8 = 20;
+/// A loitering drone's warhead going off.
+pub const WEAPON_LOITER: u8 = 21;
 
 /// How a stickman died, as sent in a `Kill`, so every client can stage the death to match.
 pub const DEATH_BODY: u8 = 0;
@@ -672,7 +682,7 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 36, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
+        148, 0, 37, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[

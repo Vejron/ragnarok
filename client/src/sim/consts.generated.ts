@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 36
+export const PROTOCOL_VERSION = 37
 
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
@@ -640,6 +640,38 @@ export const DRONE_RESPONSE = 14.0
 
 /** Air drag on the body, which is all that slows a drone whose motors are off. */
 export const DRONE_DAMPING = 0.1
+
+/**
+ * The loitering drone: a delta wing about 2.5 m across and 3.5 m long, with a pusher prop. It flies as
+ * a simplified, nimble plane: always at `LOITER_SPEED` along its nose, with no throttle. The wings and
+ * motor close any gap between its velocity and that at `LOITER_GRIP` per second, never harder than
+ * `LOITER_MAX_ACCEL` m/s², so it goes where its nose points, and they hold it up whatever its attitude.
+ * The nose is steered as a plane's is: the mouse sets where to go and it banks into the turn and pulls
+ * (see `autopilot`), and W/S pitch and A/D roll by hand while held. It turns at most `LOITER_PITCH_RATE`,
+ * `LOITER_YAW_RATE` and `LOITER_ROLL_RATE` rad/s about its own axes; its angular velocity follows the
+ * controls at `LOITER_RESPONSE` per second.
+ */
+export const LOITER_SEATS = 1
+export const LOITER_HALF_EXTENTS = [1.25, 0.25, 1.75] as const
+export const LOITER_SPEED = 35.0
+export const LOITER_GRIP = 10.0
+export const LOITER_MAX_ACCEL = 80.0
+export const LOITER_PITCH_RATE = 2.0
+export const LOITER_ROLL_RATE = 4.0
+export const LOITER_YAW_RATE = 0.8
+export const LOITER_RESPONSE = 8.0
+
+/**
+ * The most the autopilot banks it into a turn, radians (about 57 degrees): less than the plane, so a
+ * hard reversal stays a turn rather than a roll on to its back.
+ */
+export const LOITER_MAX_BANK = 1.0
+
+/** Climbing fades out over the last 20 m below this height, and above it it is pushed down. */
+export const LOITER_CEILING = 500.0
+
+/** Air drag on the body, which is all that slows one whose motor is off. */
+export const LOITER_DAMPING = 0.05
 
 /**
  * The nose gun: a four-barrel autocannon on a chin mount. `HELI_GUN_PIVOT` is the mount in the hull

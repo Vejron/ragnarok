@@ -232,3 +232,85 @@ fn a_pilot_who_leaves_takes_the_drone_with_them() {
     assert!(!game.world.vehicles.contains_key(&vid));
 }
 
+
+/// A pilot like [`pilot`]'s, holding a loitering drone instead.
+fn loiter_pilot(game: &mut Game) -> (u32, u32) {
+    let (id, seq) = pilot(game);
+    game.world.players.get_mut(&id).unwrap().hotbar[0] = ItemSlot { item: ITEM_LOITER, count: 1, ammo: 0 };
+    (id, seq)
+}
+
+#[test]
+fn a_loitering_drone_starts_high_up_behind_its_pilot_already_flying() {
+    let mut game = game();
+    let (id, mut seq) = loiter_pilot(&mut game);
+    let body = game.world.players[&id].character.position;
+    // Facing -Z: behind is +Z. It has flown a metre or two by the time it is looked at.
+    fly(&mut game, id, &mut seq, 0, 0.0, BUTTON_FIRE, 3);
+    let vid = game.world.players[&id].seat.expect("the pilot is at its controls").vehicle;
+    assert_eq!(game.world.vehicles[&vid].kind, KIND_LOITER);
+    assert_eq!(game.world.players[&id].hotbar[0].item, ITEM_NONE, "it left the hand");
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    assert!((pose.position[0] - body[0]).abs() < 0.5, "{pose:?}");
+    assert!((pose.position[1] - body[1] - LOITER_LAUNCH_UP).abs() < 3.0, "{pose:?}");
+    assert!((pose.position[2] - body[2] - LOITER_LAUNCH_BACK).abs() < 3.0, "{pose:?}");
+    assert!(pose.velocity[2] < -LOITER_SPEED * 0.8, "already cruising along the look: {pose:?}");
+}
+
+#[test]
+fn a_loitering_drone_left_alone_keeps_flying() {
+    let mut game = game();
+    let (id, mut seq) = loiter_pilot(&mut game);
+    let vid = launch_drone(&mut game, id, &mut seq);
+    let start = game.world.physics.car_pose(vid).unwrap().position;
+    idle(&mut game, id, &mut seq, 120);
+    let now = game.world.physics.car_pose(vid).unwrap().position;
+    assert!(start[2] - now[2] > 40.0, "it cannot hover: {start:?} -> {now:?}");
+    assert!((now[1] - start[1]).abs() < 2.0, "but holds its height: {start:?} -> {now:?}");
+    assert!(drone(&game, vid).is_some_and(|drone| drone.linked));
+    let listed = game.vehicle_states().into_iter().find(|vehicle| vehicle.id == vid).unwrap();
+    assert!(listed.thrust.is_some_and(|thrust| thrust.air > 240), "its own, longer battery: {:?}", listed.thrust);
+}
+
+#[test]
+fn a_loitering_drones_warhead_reaches_far() {
+    let mut game = game();
+    let (id, mut seq) = loiter_pilot(&mut game);
+    let target = join(&mut game);
+    let vid = launch_drone(&mut game, id, &mut seq);
+    // Brought down to the ground, with someone well outside an FPV drone's blast.
+    game.world.physics.reset_car(vid, [100.0, 2.0, -60.0], 0.0);
+    game.world.players.get_mut(&target).unwrap().character.position = [108.0, STANDING_Y, -60.0];
+    fly(&mut game, id, &mut seq, 0, 0.0, BUTTON_FIRE, 3);
+    assert!(!game.world.vehicles.contains_key(&vid), "it went off");
+    assert_eq!(game.world.players[&id].seat, None);
+    assert!(game.world.players[&target].hp < PLAYER_MAX_HP, "8 m out, the blast still hurts");
+}
+
+#[test]
+fn a_loitering_drone_takes_more_than_one_hit() {
+    let mut game = game();
+    let (id, mut seq) = loiter_pilot(&mut game);
+    let shooter = join(&mut game);
+    let vid = launch_drone(&mut game, id, &mut seq);
+    super::super::combat::damage_vehicle(&mut game.world, vid, 30, Some(shooter));
+    assert!(game.world.vehicles.contains_key(&vid), "one round does not bring it down");
+    super::super::combat::damage_vehicle(&mut game.world, vid, 30, Some(shooter));
+    assert!(!game.world.vehicles.contains_key(&vid), "two do");
+    assert_eq!(game.world.players[&id].seat, None, "and the pilot is back in their body");
+}
+
+#[test]
+fn a_loitering_drone_reaches_much_further_than_an_fpv_drone() {
+    let mut game = game();
+    let (id, mut seq) = loiter_pilot(&mut game);
+    let vid = launch_drone(&mut game, id, &mut seq);
+    let body = game.world.players[&id].character.position;
+    game.world.physics.reset_car(vid, [body[0], 100.0, body[2] - 450.0], 0.0);
+    idle(&mut game, id, &mut seq, 1);
+    assert!(drone(&game, vid).is_some_and(|drone| drone.linked), "450 m out it is still flown");
+    game.world.physics.reset_car(vid, [body[0], 100.0, body[2] - LOITER_RANGE - 5.0], 0.0);
+    idle(&mut game, id, &mut seq, 1);
+    assert_eq!(game.world.players[&id].seat, None, "past its range the link is lost");
+    assert!(drone(&game, vid).is_some_and(|drone| !drone.linked));
+}

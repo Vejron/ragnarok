@@ -67,7 +67,7 @@ impl Game {
                     Arms { shots: arms.shots, heat: heat_byte(arms.heat), rear_heat: heat_byte(rear.heat), bombs: arms.bombs, flags }
                 });
                 let thrust = match vehicle.drone {
-                    Some(drone) => Some(Thrust { air: battery_byte(drone.energy), flags: if drone.linked { THRUST_LINKED } else { 0 } }),
+                    Some(drone) => Some(Thrust { air: battery_byte(&drone), flags: if drone.linked { THRUST_LINKED } else { 0 } }),
                     None => self.world.physics.car_thrust(id).map(|(tank, flags)| Thrust { air: air_byte(tank), flags }),
                 };
                 // Where each of a crew that shows looks, and what they hold, so they can be drawn sitting.
@@ -143,7 +143,8 @@ impl Game {
                 me: SelfState { hp: player.hp, progress: progress(player), slots: player.hotbar.to_vec() },
             };
             // Seated players ride with their vehicle, so the vehicle's position is theirs. A drone's
-            // pilot sees what it sees; `DRONE_RANGE` keeps their body in the picture too.
+            // pilot sees what it sees. An FPV drone's range keeps their body in the picture too; a
+            // loitering drone can take it out, which their client, drawing the body itself, does not mind.
             let remote = player.seat.filter(|seat| seat.remote).and_then(|seat| self.world.physics.car_pose(seat.vehicle));
             let here = remote.map_or(player.character.position, |pose| pose.position);
             let at = [here[0], here[2]];

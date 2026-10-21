@@ -48,6 +48,8 @@ export class InputController {
   private touching = false
   private stick: [number, number, boolean] = [0, 0, false]
   private touchHeld = 0
+  /** Lying down: Z toggles it, and jumping or crouching gets up. */
+  private proneLatched = false
 
   constructor(private readonly element: HTMLElement) {
     const options = { signal: this.abort.signal }
@@ -129,12 +131,27 @@ export class InputController {
   /** A button held down on screen, like a key. */
   hold(mask: number, down: boolean) {
     this.touchHeld = down ? this.touchHeld | mask : this.touchHeld & ~mask
+    if (down && mask & (BUTTON_JUMP | BUTTON_CROUCH)) this.proneLatched = false
     if (down) this.latched |= mask | (mask === BUTTON_CROUCH && this.running() ? BUTTON_SLIDE : 0)
   }
 
-  /** A button pressed once on screen. */
+  /** A button pressed once on screen. Prone is a toggle, as Z is. */
   tap(mask: number) {
-    this.latched |= mask
+    if (mask === BUTTON_PRONE) this.proneLatched = !this.proneLatched
+    else {
+      if (mask & (BUTTON_JUMP | BUTTON_CROUCH)) this.proneLatched = false
+      this.latched |= mask
+    }
+  }
+
+  /** Whether the player has asked to lie down. */
+  get prone() {
+    return this.proneLatched
+  }
+
+  /** Gets up: dying or taking a seat should not leave the player lying down afterwards. */
+  clearProne() {
+    this.proneLatched = false
   }
 
   /** Eases the camera yaw towards `target` (e.g. behind a car) unless the mouse moved recently. */
@@ -155,6 +172,9 @@ export class InputController {
     if (down) {
       this.held.add(event.code)
       if (event.code === 'Space') this.latched |= BUTTON_JUMP
+      // Z lies down and gets up again; jumping or crouching also gets up.
+      if (event.code === 'KeyZ') this.proneLatched = !this.proneLatched
+      if (event.code === 'Space' || event.code === 'KeyC' || event.code === 'ControlLeft') this.proneLatched = false
       if (event.code === 'KeyE') this.latched |= BUTTON_USE
       if (event.code === 'KeyH') this.latched |= BUTTON_HITCH
       if (event.code === 'KeyG') this.latched |= BUTTON_CHUTE
@@ -186,7 +206,7 @@ export class InputController {
     if (this.firing || this.held.has('KeyF')) buttons |= BUTTON_FIRE
     if (this.aiming) buttons |= BUTTON_ALT
     if (this.held.has('KeyC') || this.held.has('ControlLeft')) buttons |= BUTTON_CROUCH
-    if (this.held.has('KeyZ')) buttons |= BUTTON_PRONE
+    if (this.proneLatched) buttons |= BUTTON_PRONE
     // W and S walk a mortar's range dial; nobody on foot or driving needs them for anything else here.
     if (this.held.has('KeyW')) buttons |= BUTTON_RANGE_UP
     if (this.held.has('KeyS')) buttons |= BUTTON_RANGE_DOWN

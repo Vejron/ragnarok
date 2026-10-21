@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { reactive } from 'vue'
 import type { InputController } from './sim/input'
-import { BUTTON_CHUTE, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_RELOAD, BUTTON_RUN, BUTTON_USE } from './sim/consts'
+import { BUTTON_ALT, BUTTON_CHUTE, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_PRONE, BUTTON_RELOAD, BUTTON_RUN, BUTTON_USE } from './sim/consts'
 
 const props = defineProps<{ input: InputController; seat: string | null; canSwitch?: boolean }>()
 
@@ -85,16 +85,20 @@ const release = (mask: number) => () => props.input.hold(mask, false)
     <div v-if="stick.active" class="base" :style="{ left: stick.x + 'px', top: stick.y + 'px' }">
       <div class="knob" :style="{ transform: `translate(${stick.dx}px, ${stick.dy}px)` }" />
     </div>
-    <button class="btn use" @pointerdown.prevent="input.tap(BUTTON_USE)">{{ seat === 'drone' ? 'RECALL' : 'USE' }}</button>
+    <button class="btn use" @pointerdown.prevent="input.tap(BUTTON_USE)">{{ seat === 'drone' || seat === 'loiter' ? 'RECALL' : 'USE' }}</button>
     <button class="btn jump" @pointerdown.prevent="press(BUTTON_JUMP)($event)" @pointerup="release(BUTTON_JUMP)()" @pointercancel="release(BUTTON_JUMP)()">
       {{ seat === 'driver' ? 'BRAKE' : seat === 'roadster' ? 'HOP' : seat === 'hen' ? 'FLAP' : seat === 'aviator' ? 'FASTER' : seat === 'pilot' || seat === 'drone' ? 'UP' : 'JUMP' }}
     </button>
     <button v-if="seat === 'pilot' || seat === 'drone' || seat === 'aviator' || seat === 'roadster'" class="btn sink" @pointerdown.prevent="press(BUTTON_RUN)($event)" @pointerup="release(BUTTON_RUN)()" @pointercancel="release(BUTTON_RUN)()">{{ seat === 'aviator' ? 'SLOWER' : seat === 'roadster' ? 'BOOST' : 'DOWN' }}</button>
     <button v-if="!seat" class="btn crouch" @pointerdown.prevent="press(BUTTON_CROUCH)($event)" @pointerup="release(BUTTON_CROUCH)()" @pointercancel="release(BUTTON_CROUCH)()">CROUCH</button>
+    <!-- Lying down is a toggle, as Z is. -->
+    <button v-if="!seat" class="btn prone" @pointerdown.prevent="input.tap(BUTTON_PRONE)">PRONE</button>
     <button v-if="seat === 'aviator' || seat === 'roadster'" class="btn crouch" @pointerdown.prevent="press(BUTTON_CROUCH)($event)" @pointerup="release(BUTTON_CROUCH)()" @pointercancel="release(BUTTON_CROUCH)()">{{ seat === 'roadster' ? 'BRAKE' : 'BOMB' }}</button>
-    <button class="btn fire" @pointerdown.prevent="press(BUTTON_FIRE)($event)" @pointerup="release(BUTTON_FIRE)()" @pointercancel="release(BUTTON_FIRE)()">{{ seat === 'drone' ? 'BOOM' : seat === 'hen' ? 'EGG' : 'FIRE' }}</button>
+    <button class="btn fire" @pointerdown.prevent="press(BUTTON_FIRE)($event)" @pointerup="release(BUTTON_FIRE)()" @pointercancel="release(BUTTON_FIRE)()">{{ seat === 'drone' || seat === 'loiter' ? 'BOOM' : seat === 'hen' ? 'EGG' : 'FIRE' }}</button>
     <button v-if="!seat" class="btn chute" @pointerdown.prevent="input.tap(BUTTON_CHUTE)">CHUTE</button>
     <button v-if="!seat || seat === 'passenger'" class="btn reload" @pointerdown.prevent="input.tap(BUTTON_RELOAD)">RELOAD</button>
+    <!-- A loitering drone's camera swap is aim, as right-click is. -->
+    <button v-else-if="seat === 'loiter'" class="btn reload" @pointerdown.prevent="press(BUTTON_ALT)($event)" @pointerup="release(BUTTON_ALT)()" @pointercancel="release(BUTTON_ALT)()">CAM</button>
     <button v-else-if="canSwitch" class="btn reload" @pointerdown.prevent="input.tap(BUTTON_RELOAD)">SEAT</button>
   </div>
 </template>
@@ -124,5 +128,6 @@ const release = (mask: number) => () => props.input.hold(mask, false)
 .sink { right: calc(max(26px, env(safe-area-inset-right)) + 80px); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 100px); }
 .chute { right: calc(max(18px, env(safe-area-inset-right)) + 96px); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 60px); font-size: 10px; }
 .crouch { right: calc(max(26px, env(safe-area-inset-right)) + 80px); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 100px); font-size: 10px; }
+.prone { right: calc(max(26px, env(safe-area-inset-right)) + 160px); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 100px); font-size: 10px; }
 .use { right: max(26px, env(safe-area-inset-right)); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 180px); }
 </style>

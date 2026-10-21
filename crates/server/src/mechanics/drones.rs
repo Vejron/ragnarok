@@ -4,30 +4,31 @@ use super::vehicles::add_vehicle;
 use crate::game::{Drone, Seat, World};
 use shared::consts::*;
 use shared::items::*;
-use shared::protocol::{KIND_DRONE, ShotEvent, WEAPON_AUTOCANNON, WEAPON_DRONE};
+use shared::protocol::{KIND_DRONE, KIND_LOITER, ShotEvent, WEAPON_AUTOCANNON, WEAPON_SHELL};
 use shared::quant::{from_mrad, to_cm};
 
-/// FPV drones: launched from the hotbar, flown by their owner in place of their own body, and gone
-/// in a blast.
+/// FPV and loitering drones: launched from the hotbar, flown by their owner in place of their own body,
+/// and gone in a blast.
 ///
-/// Launching one (`Combat` on fire, with a drone in hand) adds a `KIND_DRONE` vehicle in front of the
-/// player and puts them in its seat 0 as a *remote* seat: their input drives the drone through
+/// Launching one (`Combat` on fire, with a drone in hand) adds a drone vehicle: a `KIND_DRONE` in front
+/// of the player, or a `KIND_LOITER` high above and behind them. It puts them in its seat 0 as a *remote* seat: their input drives the drone through
 /// `Vehicles` like any pilot's, while their body stays where it stood, kneeling, still to be shot.
 /// It runs before `Vehicles`, so what it decides here takes effect in this tick's step:
 ///
 /// - fire (a fresh press) sets the charge off where the drone is;
 /// - use gives up: the drone is simply gone, and the pilot back in their body;
 /// - the battery running out, the pilot losing any health, dying or leaving, or the drone going past
-///   `DRONE_RANGE` loses the link: the pilot is back in their body, and the drone falls with its
-///   motors off and goes off on whatever it lands on (or after `DRONE_FALL_TICKS`);
+///   its range loses the link: the pilot is back in their body, and the drone falls with its
+///   motors off and goes off on whatever it lands on (or after its fall time);
 /// - a flown drone hitting something hard enough, or coming close to a stickman, goes off.
 ///
-/// One hit of anything wrecks it (it has 1 hp); `Combat::wreck` then calls [`pop`] instead.
+/// Each kind's numbers are its `drone_def`. Wrecking one (an FPV drone has 1 hp, a loitering drone a
+/// few rounds' worth) makes `Combat::wreck` call [`pop`] instead.
 pub struct Drones;
 
-/// Launches a drone for player `id`, and puts them at its controls. Returns whether one went up:
-/// not when they are dead or seated, with no room for it in front of them, or at `MAX_VEHICLES`.
-pub fn launch(world: &mut World, id: u32) -> bool {
+/// Launches a drone of `kind` for player `id`, and puts them at its controls. Returns whether one went
+/// up: not when they are dead or seated, with no room for it where it starts, or at `MAX_VEHICLES`.
+pub fn launch(world: &mut World, id: u32, kind: u8) -> bool {
     let Some(player) = world.players.get(&id) else { return false };
     if !player.alive() || player.seat.is_some() || world.vehicles.len() >= MAX_VEHICLES {
         return false;
@@ -36,21 +37,31 @@ pub fn launch(world: &mut World, id: u32) -> bool {
     let yaw = from_mrad(input.yaw);
     let eye = [c.position[0], c.position[1] + eye_height(input.buttons(), c.prone), c.position[2]];
     let ahead = look(yaw, 0.0);
-    // Up against a wall it goes up in front of the wall.
-    let clearance = DRONE_HALF_EXTENTS[0] + 0.1;
-    let reach = world.physics.cast_ray(eye, ahead, DRONE_LAUNCH_AHEAD + clearance, 0).map_or(DRONE_LAUNCH_AHEAD, |t| (t - clearance).max(0.0));
-    let position = [eye[0] + ahead[0] * reach, eye[1] + DRONE_LAUNCH_UP, eye[2] + ahead[2] * reach];
-    if !world.physics.car_fits(KIND_DRONE, position, yaw) {
+    let position = if kind == KIND_LOITER {
+        // Far up and back, so it comes in over its pilot's head along their look.
+        [eye[0] - ahead[0] * LOITER_LAUNCH_BACK, eye[1] + LOITER_LAUNCH_UP, eye[2] - ahead[2] * LOITER_LAUNCH_BACK]
+    } else {
+        // Up against a wall it goes up in front of the wall.
+        let clearance = DRONE_HALF_EXTENTS[0] + 0.1;
+        let reach = world.physics.cast_ray(eye, ahead, DRONE_LAUNCH_AHEAD + clearance, 0).map_or(DRONE_LAUNCH_AHEAD, |t| (t - clearance).max(0.0));
+        [eye[0] + ahead[0] * reach, eye[1] + DRONE_LAUNCH_UP, eye[2] + ahead[2] * reach]
+    };
+    if !world.physics.car_fits(kind, position, yaw) {
         return false;
     }
-    let vid = add_vehicle(world, KIND_DRONE, position, yaw);
+    let vid = add_vehicle(world, kind, position, yaw);
+    if kind == KIND_LOITER {
+        // It cannot hover: it starts out already cruising.
+        world.physics.set_car_velocity(vid, ahead.map(|v| v * LOITER_SPEED));
+    }
+    let def = drone_def(kind);
     let vehicle = world.vehicles.get_mut(&vid).expect("just added");
     vehicle.seats[0] = Some(id);
-    vehicle.drone = Some(Drone { owner: id, energy: DRONE_ENERGY_TICKS, linked: true, pilot_hp: hp, fall_left: DRONE_FALL_TICKS });
+    vehicle.drone = Some(Drone { kind, owner: id, energy: def.energy_ticks, linked: true, pilot_hp: hp, fall_left: def.fall_ticks });
     let player = world.players.get_mut(&id).expect("checked above");
     player.seat = Some(Seat { vehicle: vid, index: 0, remote: true });
     player.interrupt();
-    tracing::debug!(id, vid, "drone launched");
+    tracing::debug!(id, vid, kind, "drone launched");
     true
 }
 
@@ -75,38 +86,46 @@ fn remove(world: &mut World, vid: u32) {
     world.physics.remove_car(vid);
 }
 
-/// Sets drone `vid`'s charge off where it is: a `WEAPON_DRONE` blast credited to its owner.
+/// Sets drone `vid`'s charge off where it is: a blast of its kind's weapon, credited to its owner.
 fn detonate(world: &mut World, vid: u32) {
-    let Some(owner) = world.vehicles.get(&vid).and_then(|vehicle| vehicle.drone).map(|drone| drone.owner) else { return };
+    let Some(drone) = world.vehicles.get(&vid).and_then(|vehicle| vehicle.drone) else { return };
+    let owner = drone.owner;
+    let def = drone_def(drone.kind);
     let attacker = world.players.contains_key(&owner).then_some(owner);
-    burst(world, vid, attacker, WEAPON_DRONE, DRONE_BLAST_RADIUS, DRONE_DAMAGE, DRONE_KNOCK);
+    burst(world, vid, attacker, def.weapon, def, def.blast_radius, def.damage, def.knock);
     tracing::debug!(vid, owner, "drone went off");
 }
 
 /// Drone `vid` was shot down: it pops, credited to whoever shot it. The pop is drawn as an
-/// autocannon round's burst, which is about its size.
+/// autocannon round's burst for an FPV drone and a tank shell's for a loitering one, about their sizes.
 pub(super) fn pop(world: &mut World, vid: u32) {
-    let attacker = world.vehicles.get(&vid).and_then(|vehicle| vehicle.last_attacker);
-    burst(world, vid, attacker, WEAPON_AUTOCANNON, DRONE_POP_RADIUS, DRONE_POP_DAMAGE, DRONE_KNOCK * 0.3);
+    let Some(vehicle) = world.vehicles.get(&vid) else { return };
+    let attacker = vehicle.last_attacker;
+    let kind = vehicle.drone.map_or(KIND_DRONE, |drone| drone.kind);
+    let def = drone_def(kind);
+    let shown_as = if kind == KIND_LOITER { WEAPON_SHELL } else { WEAPON_AUTOCANNON };
+    burst(world, vid, attacker, shown_as, def, def.pop_radius, def.pop_damage, def.knock * 0.3);
     tracing::debug!(vid, "drone shot down");
 }
 
-/// Removes drone `vid` and puts a blast where it was. It is gone before the blast, which so never finds it.
-fn burst(world: &mut World, vid: u32, attacker: Option<u32>, shown_as: u8, radius: f32, damage: f32, knock: f32) {
+/// Removes drone `vid` and puts a blast where it was, credited as `def.weapon`. It is gone before the
+/// blast, which so never finds it.
+#[allow(clippy::too_many_arguments)]
+fn burst(world: &mut World, vid: u32, attacker: Option<u32>, shown_as: u8, def: &DroneDef, radius: f32, damage: f32, knock: f32) {
     let Some(pose) = world.physics.car_pose(vid) else { return };
     remove(world, vid);
     let [x, y, z] = pose.position.map(to_cm);
     world.shots.push(ShotEvent { shooter: attacker.unwrap_or(0), weapon: shown_as, x, y, z });
-    blast(world, Blast { point: pose.position, radius, damage, knock, dir: [0.0, 1.0, 0.0], attacker, weapon: WEAPON_DRONE });
+    blast(world, Blast { point: pose.position, radius, damage, knock, dir: [0.0, 1.0, 0.0], attacker, weapon: def.weapon });
 }
 
-/// Whether `point` is within `DRONE_PROXIMITY` of the axis of a living stickman other than `owner`.
-fn near_someone(world: &World, point: [f32; 3], owner: u32) -> bool {
+/// Whether `point` is within `proximity` of the axis of a living stickman other than `owner`.
+fn near_someone(world: &World, point: [f32; 3], owner: u32, proximity: f32) -> bool {
     world.players.iter().filter(|&(&id, player)| id != owner && player.embodied() && player.alive()).any(|(_, player)| {
         let c = player.character.position;
         let dy = (point[1] - c[1]).clamp(-CAPSULE_HALF_HEIGHT, CAPSULE_HALF_HEIGHT);
         let d = [point[0] - c[0], point[1] - c[1] - dy, point[2] - c[2]];
-        d.iter().map(|v| v * v).sum::<f32>() < DRONE_PROXIMITY * DRONE_PROXIMITY
+        d.iter().map(|v| v * v).sum::<f32>() < proximity * proximity
     })
 }
 
@@ -135,6 +154,7 @@ impl Mechanic for Drones {
             // An earlier one's blast may have taken this one down already.
             let Some(drone) = world.vehicles.get(&vid).and_then(|vehicle| vehicle.drone) else { continue };
             let Some(pose) = world.physics.car_pose(vid) else { continue };
+            let def = drone_def(drone.kind);
             let pilot = world.players.get(&drone.owner).filter(|player| player.seat.is_some_and(|seat| seat.vehicle == vid));
             let fate = if pose.position[1] < KILL_Y {
                 Fate::Gone
@@ -145,7 +165,7 @@ impl Mechanic for Drones {
                     Fate::Detonate
                 } else if buttons & BUTTON_USE != 0 {
                     Fate::Abort
-                } else if !pilot.alive() || pilot.hp < drone.pilot_hp || drone.energy <= 1 || away > DRONE_RANGE {
+                } else if !pilot.alive() || pilot.hp < drone.pilot_hp || drone.energy <= 1 || away > def.range {
                     Fate::Cut
                 } else {
                     Fate::Flies
@@ -159,7 +179,7 @@ impl Mechanic for Drones {
                 Fate::Flies
             };
             let linked = drone.linked && matches!(fate, Fate::Flies);
-            let hit = impacts.iter().any(|impact| impact.car == vid && (!linked || impact.dv > DRONE_IMPACT_DV));
+            let hit = impacts.iter().any(|impact| impact.car == vid && (!linked || impact.dv > def.impact_dv));
             match fate {
                 Fate::Gone => remove(world, vid),
                 Fate::Abort => {
@@ -171,7 +191,7 @@ impl Mechanic for Drones {
                     tracing::debug!(vid, "drone recalled");
                 }
                 Fate::Detonate => detonate(world, vid),
-                _ if hit || near_someone(world, pose.position, drone.owner) => detonate(world, vid),
+                _ if hit || near_someone(world, pose.position, drone.owner, def.proximity) => detonate(world, vid),
                 Fate::Cut => cut(world, vid),
                 Fate::Flies => {
                     let Some(drone) = world.vehicles.get_mut(&vid).and_then(|vehicle| vehicle.drone.as_mut()) else { continue };

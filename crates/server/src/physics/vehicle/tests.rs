@@ -1,6 +1,6 @@
 use super::*;
 use shared::consts::TICK_DT;
-use shared::protocol::{KIND_HELI, KIND_HEN, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_TANK, KIND_WALKER};
+use shared::protocol::{KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_TANK, KIND_WALKER};
 use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 
 fn flat() -> WorldFile {
@@ -559,6 +559,127 @@ fn scripted_drone_matches_fixture() {
             assert!(close, "tick {done}: {position:?}");
         }
     }
+}
+
+/// A scripted loitering-drone flight for the fixture in `vehicle.spec.ts`: straight on, a turn
+/// towards a new look, a dive down the look, a roll by hand, then a pull up by hand.
+fn scripted_loiter(tick: u32) -> CarControls {
+    let looking = |yaw: f32, pitch: f32| CarControls { aim: Some([yaw, pitch]), ..PILOTED };
+    match tick / 60 {
+        0 => looking(0.0, 0.0),
+        1 | 2 => looking(1.0, 0.0),
+        3 | 4 => looking(1.0, -0.4),
+        5 => CarControls { steer: 1.0, ..looking(1.0, 0.0) },
+        _ => CarControls { throttle: -1.0, ..looking(1.0, 0.0) },
+    }
+}
+
+/// Starts a loitering drone at `[0, 60, 100]`, flying towards -Z, as a launch does. It stays clear of
+/// the edge of the world, which is a wall.
+fn with_loiter() -> Physics {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_LOITER, [0.0, 60.0, 100.0], 0.0);
+    physics.set_car_velocity(1, [0.0, 0.0, -LOITER_SPEED]);
+    physics
+}
+
+/// `(tick, position)` of `scripted_loiter` from `with_loiter`, mirrored in `vehicle.spec.ts`.
+const LOITER_CHECKPOINTS: [(u32, [f32; 3]); 4] = [
+    (90, [-1.9952, 60.7377, 48.0302]),
+    (210, [-55.8591, 63.7674, 5.9786]),
+    (330, [-109.7632, 38.6259, -29.9292]),
+    (480, [-157.6974, 55.4860, -57.6976]),
+];
+
+#[test]
+fn scripted_loiter_matches_fixture() {
+    let mut physics = with_loiter();
+    for tick in 0..480 {
+        physics.drive_car(1, scripted_loiter(tick), TICK_DT);
+        physics.step_cars(TICK_DT);
+        let done = tick + 1;
+        if let Some((_, expected)) = LOITER_CHECKPOINTS.iter().find(|(t, _)| *t == done) {
+            let position = physics.car_pose(1).unwrap().position;
+            let close = position.iter().zip(expected).all(|(a, e)| (a - e).abs() < 0.001);
+            assert!(close, "tick {done}: {position:?}");
+        }
+    }
+}
+
+fn speed(pose: &CarPose) -> f32 {
+    pose.velocity.iter().map(|v| v * v).sum::<f32>().sqrt()
+}
+
+#[test]
+fn a_loitering_drone_left_alone_flies_straight_and_level() {
+    let mut physics = with_loiter();
+    let looking = CarControls { aim: Some([0.0, 0.0]), ..PILOTED };
+    let pose = run(&mut physics, looking, 60 * 4);
+    assert!(pose.position[2] < -10.0 && pose.position[0].abs() < 0.5, "it kept flying ahead: {pose:?}");
+    assert!((pose.position[1] - 60.0).abs() < 0.5, "and held its height: {pose:?}");
+    assert!((speed(&pose) - LOITER_SPEED).abs() < 0.5, "at its speed: {}", speed(&pose));
+}
+
+#[test]
+fn a_loitering_drone_banks_into_a_turn_and_rolls_out_on_the_new_heading() {
+    let mut physics = with_loiter();
+    // Looking a quarter turn left.
+    let turning = CarControls { aim: Some([std::f32::consts::FRAC_PI_2, 0.0]), ..PILOTED };
+    let early = run(&mut physics, turning, 30);
+    // Banked left: the right wingtip is up.
+    let [x, y, z, w] = early.rotation;
+    let right_y = 2.0 * (x * y + w * z);
+    assert!(right_y > 0.3, "banked into the turn: {right_y}");
+    let pose = run(&mut physics, turning, 150);
+    assert!((yaw(&pose) - std::f32::consts::FRAC_PI_2).abs() < 0.1, "came round: {}", yaw(&pose));
+    assert!(pose.up_y > 0.98, "and levelled out: {pose:?}");
+    // Facing +PI/2 is heading -X: it flies where its nose points, at its speed.
+    assert!(-pose.velocity[0] > LOITER_SPEED - 1.0 && pose.velocity[2].abs() < 1.0, "no slide: {:?}", pose.velocity);
+    assert!((pose.position[1] - 60.0).abs() < 8.0, "about level through the turn: {pose:?}");
+}
+
+#[test]
+fn a_loitering_drone_turns_quicker_than_the_plane() {
+    let mut physics = with_loiter();
+    // About turn: half a circle in a few seconds.
+    let back = CarControls { aim: Some([3.0, 0.0]), ..PILOTED };
+    let pose = run(&mut physics, back, 60 * 4);
+    assert!(yaw(&pose).abs() > 2.8, "came about: {}", yaw(&pose));
+}
+
+#[test]
+fn a_loitering_drone_keeps_its_speed_and_never_rolls_over() {
+    // Hard turns while diving, pulling up and weaving: the mouse thrown about.
+    let mut physics = with_loiter();
+    for tick in 0..60 * 8 {
+        let yaw = if (tick / 60) % 2 == 0 { 2.5 } else { -2.5 };
+        let pitch = if (tick / 90) % 2 == 0 { -1.2 } else { 0.6 };
+        let controls = CarControls { aim: Some([yaw, pitch]), ..PILOTED };
+        physics.drive_car(1, controls, TICK_DT);
+        physics.step_cars(TICK_DT);
+        let pose = physics.car_pose(1).unwrap();
+        assert!(pose.up_y > 0.0, "tick {tick}: upside down: {pose:?}");
+        assert!((speed(&pose) - LOITER_SPEED).abs() < 3.0, "tick {tick}: speed {}", speed(&pose));
+        if pose.position[1] < 15.0 {
+            physics.reset_car(1, [pose.position[0], 60.0, pose.position[2]], pose.yaw());
+            physics.set_car_velocity(1, pose.velocity);
+        }
+    }
+}
+
+#[test]
+fn a_loitering_drone_pitches_and_rolls_by_hand() {
+    let ahead = CarControls { aim: Some([0.0, 0.0]), ..PILOTED };
+    // W pushes the nose down.
+    let mut physics = with_loiter();
+    let pose = run(&mut physics, CarControls { throttle: 1.0, ..ahead }, 30);
+    assert!(pose.velocity[1] < -10.0, "diving: {pose:?}");
+    // D rolls right: the right wingtip goes down.
+    let mut physics = with_loiter();
+    let pose = run(&mut physics, CarControls { steer: 1.0, ..ahead }, 20);
+    let [x, y, z, w] = pose.rotation;
+    let right_y = 2.0 * (x * y + w * z);
+    assert!(right_y < -0.5, "rolled right: {right_y}");
 }
 
 #[test]

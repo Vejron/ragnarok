@@ -1,8 +1,8 @@
 import type { Node } from '@ragnarok/engine'
 import * as THREE from 'three'
 import {
-  ARMS_CUT, ARMS_JAMMED, ARMS_REAR_JAMMED, DAMAGE_TURRET, DAMAGE_WHEELS, encodeInput, encodePing, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_PLANE, KIND_MORTAR, KIND_ROADSTER, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_STRV, KIND_TANK, KIND_WALKER, sceneStates, toAxis, toMrad, TURRET_GONE, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RICOCHET, WEAPON_TURRET,
-  PROJECTILE_BULLET, WEAPON_BULLET, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_BOMB, WEAPON_EGG, WEAPON_CRASH, WEAPON_MG, WEAPON_PELLET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_WRECK,
+  ARMS_CUT, ARMS_JAMMED, ARMS_REAR_JAMMED, DAMAGE_TURRET, DAMAGE_WHEELS, encodeInput, encodePing, isDrone, KIND_DRONE, KIND_HELI, KIND_LOITER, KIND_HEN, KIND_PLANE, KIND_MORTAR, KIND_ROADSTER, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_STRV, KIND_TANK, KIND_WALKER, sceneStates, toAxis, toMrad, TURRET_GONE, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RICOCHET, WEAPON_TURRET,
+  PROJECTILE_BULLET, WEAPON_BULLET, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LOITER, WEAPON_BOMB, WEAPON_EGG, WEAPON_CRASH, WEAPON_MG, WEAPON_PELLET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_WRECK,
   type Arms, type BulletSpawn, type DriveState, type EntityState, type InputFrame, type PickupState, type RocketState, type Rider, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
 } from './net/codec'
 import { blendEntity, blendRocket, blendVehicle, Interpolator } from './net/interp'
@@ -19,7 +19,7 @@ import {
   BOMB_RADIUS, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, PLANE_BOMB_MIN_HEIGHT, PLANE_BOMB_PIVOT, PLANE_GUN_RANGE, PLANE_REAR_PITCH_MAX, PLANE_REAR_PITCH_MIN, PLANE_STALL_SPEED,
 } from './sim/consts'
 import { crewGun, isLegged, seatHead, vehicleDef } from './sim/vehicles'
-import { aimSpeedScale, DRONE_BLAST_RADIUS, DRONE_RANGE, emptyHotbar, GRENADE_BLAST_RADIUS, HOTBAR_SLOTS, hitscanGunFor, ITEM_NONE, ITEM_SNIPER, itemDef, PICKUP_RADIUS, type ItemDef, type ItemSlot } from './sim/items'
+import { aimSpeedScale, DRONE_BLAST_RADIUS, DRONE_RANGE, LOITER_BLAST_RADIUS, LOITER_RANGE, emptyHotbar, GRENADE_BLAST_RADIUS, HOTBAR_SLOTS, hitscanGunFor, ITEM_NONE, ITEM_SNIPER, itemDef, PICKUP_RADIUS, type ItemDef, type ItemSlot } from './sim/items'
 import { InputController } from './sim/input'
 import { RapierMotor } from './sim/physics'
 import { Terrain } from './sim/terrain'
@@ -157,6 +157,9 @@ const SIGHT_RANGE_MAX = 1500
 const AIM_LOOK_SCALE = 0.6
 /** How long the static shows after a drone's feed cuts out, ms. */
 const FEED_LOST_MS = 700
+/** A loitering drone's look is kept between these pitches, radians: steep enough to dive, not to loop. */
+const LOITER_PITCH_MIN = -1.2
+const LOITER_PITCH_MAX = 0.6
 
 /**
  * The client game loop. Fixed 60 Hz ticks sample input, predict the local player and send inputs;
@@ -268,6 +271,10 @@ export class Game {
   private wasTanker = false
   private wasMortar = false
   private wasPiloting = false
+  /** Which of a loitering drone's two cameras the local pilot watches; aim (right-click) swaps them. */
+  private loiterCam: 'forward' | 'down' = 'forward'
+  /** Aim was held last frame, so a fresh press swaps the loitering drone's camera once. */
+  private wasAimHeld = false
   /** The local player's own drone, hidden from its own camera while they fly it. */
   private hiddenDrone: VehicleModel | null = null
   /** `performance.now()` when the local player's drone feed last cut out, for a burst of static. */
@@ -492,7 +499,7 @@ export class Game {
         // A door closing, for getting in or out (not for hopping seats).
         if (wasSeated !== (this.seat !== null) && this.hp > 0) this.sounds.door()
         // A drone's pilot is still listed, kneeling where they launched it.
-        for (const vehicle of vehicles) if (vehicle.kind !== KIND_DRONE) for (const rider of vehicle.seats) if (rider !== 0) this.interp.remove(rider)
+        for (const vehicle of vehicles) if (!isDrone(vehicle.kind)) for (const rider of vehicle.seats) if (rider !== 0) this.interp.remove(rider)
         const own = entities.find((e) => e.id === this.localId)
         this.driver?.setObstacles(vehicles)
         if (mount && this.seat?.index === 0 && mount.kind !== KIND_MORTAR && message.drive) {
@@ -573,6 +580,8 @@ export class Game {
   }
 
   private tick() {
+    // Dead or seated, nobody is lying down: respawning or stepping out starts on their feet.
+    if (this.seat || this.hp === 0) this.input.clearProne()
     const sample = this.input.sample()
     this.crouching = (sample.buttons & BUTTON_CROUCH) !== 0
     const frame: InputFrame = {
@@ -633,7 +642,7 @@ export class Game {
     if (this.clock.synced) this.scene.setTimeOfDay(dayPhase(renderTick, TICK_RATE))
     const seated = this.seat !== null
     // Flying a drone: the body kneels where it launched it, and the view is the drone's camera.
-    const flying = this.seat !== null && this.seat.kind === KIND_DRONE
+    const flying = this.seat !== null && isDrone(this.seat.kind)
     const driven = this.driver?.pose(this.accumulator / TICK_MS, dt) ?? null
     const cars = this.updateCars(renderTick, driven)
 
@@ -660,9 +669,14 @@ export class Game {
     const sighted = this.hp > 0 && this.input.aimHeld && driving !== undefined
       && (driving.kind === KIND_TANK ? this.seat!.index === 1 : driving.kind === KIND_STRV && this.seat!.index === 0)
     this.input.lookScale = sighted ? SIGHT_LOOK_SCALE : scoped ? SCOPE_LOOK_SCALE : aiming ? AIM_LOOK_SCALE : 1
-    const chase = driving && this.seat!.index === 0 && driving.kind !== KIND_HELI && driving.kind !== KIND_PLANE && driving.kind !== KIND_MORTAR && driving.kind !== KIND_DRONE ? this.chase.update([driving.x, driving.y, driving.z], driving.yaw, dt, cameraDistance(driving.kind)) : null
+    const chase = driving && this.seat!.index === 0 && driving.kind !== KIND_HELI && driving.kind !== KIND_PLANE && driving.kind !== KIND_MORTAR && !isDrone(driving.kind) ? this.chase.update([driving.x, driving.y, driving.z], driving.yaw, dt, cameraDistance(driving.kind)) : null
     if (!chase) this.chase.reset()
-    this.scene.zoomTo(flying ? 'fpv' : sighted ? 'sight' : scoped ? 'scope' : aiming ? 'aim' : 'none', dt, chase?.fovBoost ?? 0)
+    // A loitering drone's pilot swaps between its nose camera and its belly camera on a fresh aim press.
+    const aimHeld = this.input.aimHeld
+    if (flying && this.seat!.kind === KIND_LOITER && aimHeld && !this.wasAimHeld) this.loiterCam = this.loiterCam === 'forward' ? 'down' : 'forward'
+    this.wasAimHeld = aimHeld
+    const looksDown = flying && this.seat!.kind === KIND_LOITER && this.loiterCam === 'down'
+    this.scene.zoomTo(looksDown ? 'down' : flying ? 'fpv' : sighted ? 'sight' : scoped ? 'scope' : aiming ? 'aim' : 'none', dt, chase?.fovBoost ?? 0)
     me.hidden = (seated && !flying && !sitting) || scoped
     me.dead = this.hp === 0
     me.held = this.hotbar[this.input.selectedSlot]?.item ?? ITEM_NONE
@@ -680,7 +694,7 @@ export class Game {
     const turret = gunner ? this.cars.get(this.seat!.vehicle) : undefined
     const aviator = ride?.kind === KIND_PLANE && this.seat!.index === 0
     const walking = ride?.kind === KIND_WALKER && this.seat!.index === 0
-    const piloting = ride?.kind === KIND_DRONE && this.seat!.index === 0
+    const piloting = isDrone(ride?.kind) && this.seat!.index === 0
     this.scene.gunsight.hide()
     if (gunner && (turret instanceof TankModel || turret instanceof HeliModel || turret instanceof PlaneModel)) {
       if (!this.wasGunner && ride.turret) {
@@ -701,22 +715,31 @@ export class Game {
       else this.scene.aimFrom([origin.x, origin.y, origin.z], this.input.yaw, this.input.pitch)
     } else if (piloting) {
       // The look is where the drone heads: it turns to follow, and the view is its nose camera, banking with it.
+      const loiter = ride.kind === KIND_LOITER
       if (!this.wasPiloting) {
         this.input.yaw = ride.yaw
         this.input.pitch = 0
+        this.loiterCam = 'forward'
       }
-      this.input.clampPitch(-1.4, 1.0)
+      if (loiter) this.input.clampPitch(LOITER_PITCH_MIN, LOITER_PITCH_MAX)
+      else this.input.clampPitch(-1.4, 1.0)
       const model = this.cars.get(this.seat!.vehicle)
       let bank = 0
+      // A loitering drone's cameras sit in its nose and under its belly; an FPV drone's is at its centre.
+      const eye = new THREE.Vector3(0, loiter ? (this.loiterCam === 'down' ? -0.35 : 0) : 0.05, loiter && this.loiterCam === 'forward' ? -1.7 : 0)
       if (model) {
         const right = new THREE.Vector3(1, 0, 0).applyQuaternion(model.root.quaternion)
         const top = new THREE.Vector3(0, 1, 0).applyQuaternion(model.root.quaternion)
         bank = -Math.atan2(-right.y, top.y)
+        eye.applyQuaternion(model.root.quaternion)
         // Its own frame would fill the lens.
         model.root.visible = false
         this.hiddenDrone = model
       }
-      this.scene.fpvFrom([ride.x, ride.y + 0.05, ride.z], this.input.yaw, this.input.pitch, bank)
+      const at = [ride.x + eye.x, ride.y + eye.y, ride.z + eye.z]
+      // The belly camera looks straight down with the drone's heading up the screen; it does not bank.
+      if (loiter && this.loiterCam === 'down') this.scene.downFrom(at, ride.yaw)
+      else this.scene.fpvFrom(at, this.input.yaw, this.input.pitch, bank)
     } else if (aviator) {
       // The mouse is the aim and moves at once; the plane turns to follow it, and the camera follows
       // the aim at an easy pace, so the circle drifts across the screen as it catches up.
@@ -909,7 +932,7 @@ export class Game {
       seat: !this.seat
         ? null
         : this.seat.index === 0
-          ? this.seat.kind === KIND_DRONE ? 'drone' : this.seat.kind === KIND_HELI ? 'pilot' : this.seat.kind === KIND_PLANE ? 'aviator' : this.seat.kind === KIND_WALKER ? 'walker' : this.seat.kind === KIND_HEN ? 'hen' : this.seat.kind === KIND_STRV ? 'strv' : this.seat.kind === KIND_MORTAR ? 'mortar' : this.seat.kind === KIND_ROADSTER ? 'roadster' : 'driver'
+          ? this.seat.kind === KIND_DRONE ? 'drone' : this.seat.kind === KIND_LOITER ? 'loiter' : this.seat.kind === KIND_HELI ? 'pilot' : this.seat.kind === KIND_PLANE ? 'aviator' : this.seat.kind === KIND_WALKER ? 'walker' : this.seat.kind === KIND_HEN ? 'hen' : this.seat.kind === KIND_STRV ? 'strv' : this.seat.kind === KIND_MORTAR ? 'mortar' : this.seat.kind === KIND_ROADSTER ? 'roadster' : 'driver'
           : vehicleDef(this.seat.kind).gun ? 'gunner' : 'passenger',
       canSwitchSeat: this.seat !== null && (cars.get(this.seat.vehicle)?.seats.includes(0) ?? false),
       range: this.seat?.kind === KIND_MORTAR ? (ride?.turret?.range ?? 0) : 0,
@@ -917,7 +940,13 @@ export class Game {
       ...this.cockpit(ride, aviator),
       air: this.seat?.index === 0 && (this.seat.kind === KIND_ROADSTER || this.seat.kind === KIND_HEN) ? (this.driver?.thrust?.air ?? null) : null,
       eggs: this.seat?.index === 0 && this.seat.kind === KIND_HEN ? (ride?.arms?.bombs ?? null) : null,
-      drone: piloting ? { battery: this.refPoses.get(this.seat!.vehicle)?.thrust?.air ?? 1, signal: Math.max(0, 1 - Math.hypot(ride.x - position[0]!, ride.z - position[2]!) / DRONE_RANGE) } : null,
+      drone: piloting
+        ? {
+          battery: this.refPoses.get(this.seat!.vehicle)?.thrust?.air ?? 1,
+          signal: Math.max(0, 1 - Math.hypot(ride.x - position[0]!, ride.z - position[2]!) / (ride.kind === KIND_LOITER ? LOITER_RANGE : DRONE_RANGE)),
+          camera: ride.kind === KIND_LOITER ? this.loiterCam : null,
+        }
+        : null,
       feedLost: Math.max(0, 1 - (now - this.feedLostAt) / FEED_LOST_MS),
       hp: this.hp,
       maxHp: PLAYER_MAX_HP,
@@ -993,6 +1022,9 @@ export class Game {
     } else if (shot.weapon === WEAPON_DRONE) {
       this.blast(to, DRONE_BLAST_RADIUS, BLASTS.grenade)
       this.sounds.blast([to.x, to.y, to.z], 'small')
+    } else if (shot.weapon === WEAPON_LOITER) {
+      this.blast(to, LOITER_BLAST_RADIUS, BLASTS.shell)
+      this.sounds.explosion([to.x, to.y, to.z])
     } else if (shot.weapon === WEAPON_AUTOCANNON) {
       this.blast(to, CANNON_RADIUS, BLASTS.cannon)
       this.sounds.blast([to.x, to.y, to.z], 'small')
@@ -1765,7 +1797,7 @@ export class Game {
   /** The key hint for what E does here. */
   private prompt(position: readonly number[], cars: ReadonlyMap<number, CarPlacement>): string | null {
     if (this.localId === null) return null
-    if (this.seat) return this.seat.kind === KIND_DRONE ? null : 'E: get out'
+    if (this.seat) return isDrone(this.seat.kind) ? null : 'E: get out'
     const me = this.predictor?.state
     if (me && this.hp > 0 && !me.grounded && position[1]! - (this.terrain?.heightAt(position[0]!, position[2]!) ?? 0) > CHUTE_PROMPT_HEIGHT) {
       return me.chute ? 'G: cut the parachute' : 'G: open the parachute'
@@ -1779,7 +1811,7 @@ export class Game {
       const y = isLegged(car.kind) ? car.y - WALKER_LEG_LENGTH : car.y
       const distance = Math.hypot(car.x - position[0]!, y - position[1]!, car.z - position[2]!)
       // A drone is only ever flown by whoever launched it.
-      const hasFreeSeat = car.kind !== KIND_DRONE && car.seats.includes(0)
+      const hasFreeSeat = !isDrone(car.kind) && car.seats.includes(0)
       if (hasFreeSeat && distance <= ENTER_RADIUS && (!best || distance < best.distance)) best = { distance, driverSeatFree: car.seats[0] === 0, kind: car.kind }
     }
     if (!best) return null

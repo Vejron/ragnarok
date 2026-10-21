@@ -18,7 +18,7 @@ use super::{Obj, Physics};
 use rapier3d::control::{DynamicRayCastVehicleController, WheelTuning};
 use rapier3d::prelude::*;
 use shared::consts::*;
-use shared::protocol::{DAMAGE_WHEELS, THRUST_AIR, THRUST_BOOST, THRUST_GLIDE, THRUST_LIFT, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, WHEEL_GONE, vehicle_hp};
+use shared::protocol::{DAMAGE_WHEELS, THRUST_AIR, THRUST_BOOST, THRUST_GLIDE, THRUST_LIFT, KIND_DRONE, KIND_HELI, KIND_LOITER, KIND_HEN, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, WHEEL_GONE, is_drone, vehicle_hp};
 
 /// Gravity acting on vehicle bodies. Stickmen use `GRAVITY`; the ray-cast suspension is tuned
 /// around the real-world value.
@@ -27,7 +27,7 @@ pub const CAR_GRAVITY: f32 = 9.81;
 mod flight;
 mod spec;
 
-use flight::{assist, flap, fly, fly_drone, pull, roll_plane, thrust, walk, wing};
+use flight::{assist, flap, fly, fly_drone, fly_loiter, pull, roll_plane, thrust, walk, wing};
 pub use spec::half_extents;
 pub(super) use spec::{Lift, Spec, spec};
 
@@ -320,7 +320,7 @@ impl Physics {
             .linear_damping(spec.linear_damping)
             .angular_damping(0.8)
             // A drone covers more than its own size in a tick, and would fly through a wall without it.
-            .ccd_enabled(kind == KIND_DRONE)
+            .ccd_enabled(is_drone(kind))
             .build();
         let body = self.bodies.insert(body);
         let mut chassis = ColliderBuilder::cuboid(hx, hy, hz).friction(0.4);
@@ -548,7 +548,7 @@ impl Physics {
     /// Applies the driver's controls to the wheels for the next [`Physics::step_cars`].
     pub fn drive_car(&mut self, id: u32, controls: CarControls, dt: f32) {
         let Some(car) = self.cars.get_mut(&id) else { return };
-        if matches!(car.spec.lift, Lift::Rotor | Lift::Walker | Lift::Drone) {
+        if matches!(car.spec.lift, Lift::Rotor | Lift::Walker | Lift::Drone | Lift::Loiter) {
             car.flight = controls;
             return;
         }
@@ -649,7 +649,7 @@ impl Physics {
         if self.cars.is_empty() {
             return;
         }
-        for car in self.cars.values().filter(|car| matches!(car.spec.lift, Lift::Rotor | Lift::Drone)) {
+        for car in self.cars.values().filter(|car| matches!(car.spec.lift, Lift::Rotor | Lift::Drone | Lift::Loiter)) {
             if let Some(body) = self.bodies.get_mut(car.body) {
                 // Forces persist from step to step until reset.
                 body.reset_forces(false);
@@ -658,6 +658,8 @@ impl Physics {
                 }
                 if car.spec.lift == Lift::Drone {
                     fly_drone(body, car.flight, dt);
+                } else if car.spec.lift == Lift::Loiter {
+                    fly_loiter(body, car.flight, dt);
                 } else {
                     fly(body, car.flight, dt);
                 }

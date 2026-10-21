@@ -15,6 +15,8 @@ export const ITEM_GOLDEN_EGG = 6
 export const ITEM_SHOTGUN = 7
 /** Launched from the hand and flown in its owner's place until it blows up. */
 export const ITEM_DRONE = 8
+/** A loitering drone: launched high above and behind its owner, and flown into a target. */
+export const ITEM_LOITER = 9
 
 export type ItemKind = 'gun' | 'grenade' | 'heal' | 'drone'
 
@@ -59,6 +61,7 @@ const DEFS: Record<number, ItemDef> = {
   [ITEM_GRENADE]: { name: 'Grenade', kind: 'grenade', auto: false, damage: 0, cooldownTicks: TICK_RATE, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 3, stance: 'hold', weapon: 5, projectile: false, sound: 'rifle', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
   [ITEM_BANDAGE]: { name: 'Bandage', kind: 'heal', auto: false, damage: 40, cooldownTicks: 0, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 5, stance: 'hold', weapon: 0, projectile: false, sound: 'rifle', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
   [ITEM_DRONE]: { name: 'FPV drone', kind: 'drone', auto: false, damage: 0, cooldownTicks: TICK_RATE, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 1, stance: 'hold', weapon: 19, projectile: false, sound: 'rifle', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
+  [ITEM_LOITER]: { name: 'Loitering drone', kind: 'drone', auto: false, damage: 0, cooldownTicks: TICK_RATE, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 1, stance: 'hold', weapon: 21, projectile: false, sound: 'rifle', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
   [ITEM_GOLDEN_EGG]: { name: 'Golden egg', kind: 'heal', auto: false, damage: 255, cooldownTicks: 0, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 1, stance: 'hold', weapon: 0, projectile: false, sound: 'rifle', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
 }
 
@@ -100,6 +103,10 @@ export const GRENADE_BOUNCE = 0.4
 export const DRONE_ENERGY_TICKS = 25 * TICK_RATE
 export const DRONE_RANGE = 250.0
 export const DRONE_BLAST_RADIUS = 4.0
+/** Loitering drones, the same. Mirrors `LOITER_*` in items.rs. */
+export const LOITER_ENERGY_TICKS = 60 * TICK_RATE
+export const LOITER_RANGE = 600.0
+export const LOITER_BLAST_RADIUS = 12.0
 /** The most pitch the server will accept, radians. */
 export const MAX_AIM_PITCH = 1.5
 /** A player in this many metres of an item can take it with use. */

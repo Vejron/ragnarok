@@ -1,11 +1,12 @@
-import { KIND_DRONE, KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_PLANE, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
+import { KIND_DRONE, KIND_HELI, KIND_HEN, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
 import { CarModel, loadCarModels, type VehicleModel } from './car'
 import { HeliModel, loadHeliModel } from './heli'
 import { HenModel, loadHenModel } from './hen'
 import { loadPlaneModel, PlaneModel } from './plane'
 import { DroneModel } from './drone'
+import { LoiterModel } from './loiter'
 import { MortarModel } from './mortar'
-import { DRIVING_DISTANCE, DRONE_DISTANCE, HELI_DISTANCE, HEN_DISTANCE, MORTAR_DISTANCE, PLANE_DISTANCE, STRV_DISTANCE, TANK_DISTANCE, WALKER_DISTANCE } from './scene'
+import { DRIVING_DISTANCE, DRONE_DISTANCE, HELI_DISTANCE, HEN_DISTANCE, LOITER_DISTANCE, MORTAR_DISTANCE, PLANE_DISTANCE, STRV_DISTANCE, TANK_DISTANCE, WALKER_DISTANCE } from './scene'
 import { loadStrvModel, StrvModel } from './strvs'
 import { loadTankModel, TankModel } from './tank'
 import { loadWalkerModel, WalkerModel } from './walker'
@@ -28,6 +29,7 @@ export function createVehicleModel(kind: number, id: number): VehicleModel {
   if (kind === KIND_STRV) return new StrvModel(id)
   if (kind === KIND_MORTAR) return new MortarModel(id)
   if (kind === KIND_DRONE) return new DroneModel(id)
+  if (kind === KIND_LOITER) return new LoiterModel(id)
   return new CarModel(kind, id)
 }
 
@@ -41,5 +43,6 @@ export function cameraDistance(kind: number): number {
   if (kind === KIND_STRV) return STRV_DISTANCE
   if (kind === KIND_MORTAR) return MORTAR_DISTANCE
   if (kind === KIND_DRONE) return DRONE_DISTANCE
+  if (kind === KIND_LOITER) return LOITER_DISTANCE
   return DRIVING_DISTANCE
 }

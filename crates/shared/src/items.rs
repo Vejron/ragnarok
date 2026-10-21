@@ -1,7 +1,7 @@
 //! Items a player can carry in the hotbar. Mirrored in `client/src/sim/items.ts`.
 
 use crate::consts::TICK_RATE;
-use crate::protocol::{WEAPON_DRONE, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_RIFLE, WEAPON_SHOTGUN, WEAPON_SNIPER};
+use crate::protocol::{KIND_LOITER, WEAPON_DRONE, WEAPON_GRENADE, WEAPON_LOITER, WEAPON_REVOLVER, WEAPON_RIFLE, WEAPON_SHOTGUN, WEAPON_SNIPER};
 
 /// Slots in the hotbar. A player picks one with the `slot` field of their input.
 pub const HOTBAR_SLOTS: usize = 5;
@@ -18,8 +18,10 @@ pub const ITEM_GOLDEN_EGG: u8 = 6;
 pub const ITEM_SHOTGUN: u8 = 7;
 /// An FPV drone: launched from the hand and flown in its owner's place until it blows up.
 pub const ITEM_DRONE: u8 = 8;
+/// A loitering drone: launched high above and behind its owner, and flown into a target.
+pub const ITEM_LOITER: u8 = 9;
 /// One past the largest item id.
-pub const ITEM_COUNT: u8 = 9;
+pub const ITEM_COUNT: u8 = 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ItemKind {
@@ -29,7 +31,8 @@ pub enum ItemKind {
     Grenade,
     /// Used over time to restore health.
     Heal,
-    /// Launched, then flown by its owner as a vehicle of `KIND_DRONE` (see the `Drones` mechanic).
+    /// Launched, then flown by its owner as a drone vehicle, `KIND_DRONE` or `KIND_LOITER` (see the
+    /// `Drones` mechanic).
     Drone,
 }
 
@@ -265,6 +268,27 @@ const DRONE: ItemDef = ItemDef {
     weight: 2,
 };
 
+const LOITER: ItemDef = ItemDef {
+    name: "Loitering drone",
+    kind: ItemKind::Drone,
+    auto: false,
+    // The blast's is `LOITER.damage` in `drone_def`.
+    damage: 0,
+    cooldown_ticks: TICK_RATE,
+    mag: 0,
+    reload_ticks: 0,
+    range: 0.0,
+    spread: 0.0,
+    projectile: false,
+    pellets: 1,
+    falloff: Falloff::NONE,
+    aim_speed: 1.0,
+    scope: false,
+    stack: 1,
+    weapon: WEAPON_LOITER,
+    weight: 1,
+};
+
 /// The definition of `item`; `None` for an empty slot or an unknown id.
 pub fn def(item: u8) -> Option<&'static ItemDef> {
     match item {
@@ -276,6 +300,7 @@ pub fn def(item: u8) -> Option<&'static ItemDef> {
         ITEM_SHOTGUN => Some(&SHOTGUN),
         ITEM_GOLDEN_EGG => Some(&GOLDEN_EGG),
         ITEM_DRONE => Some(&DRONE),
+        ITEM_LOITER => Some(&LOITER),
         _ => None,
     }
 }
@@ -334,6 +359,80 @@ pub const DRONE_IMPACT_DV: f32 = 4.0;
 pub const DRONE_PROXIMITY: f32 = 0.7;
 /// Ticks a drone that lost its link falls before it goes off by itself.
 pub const DRONE_FALL_TICKS: u32 = 5 * TICK_RATE;
+
+/// Loitering drones. One flies for `LOITER_ENERGY_TICKS` and no further than `LOITER_RANGE` from its
+/// pilot's body. That is past `INTEREST_RADIUS`, so far out the pilot's body drops out of their own
+/// snapshots; their client draws it from its own prediction while they fly, so it does not need them. It is launched `LOITER_LAUNCH_BACK` metres behind the eye (away from the look) and
+/// `LOITER_LAUNCH_UP` above it, already cruising along the look.
+pub const LOITER_ENERGY_TICKS: u32 = 60 * TICK_RATE;
+pub const LOITER_RANGE: f32 = 600.0;
+pub const LOITER_LAUNCH_BACK: f32 = 50.0;
+pub const LOITER_LAUNCH_UP: f32 = 100.0;
+/// Its warhead.
+pub const LOITER_BLAST_RADIUS: f32 = 12.0;
+pub const LOITER_DAMAGE: f32 = 300.0;
+pub const LOITER_KNOCK: f32 = 25.0;
+/// Shot down, its warhead only partly goes off.
+pub const LOITER_POP_RADIUS: f32 = 4.0;
+pub const LOITER_POP_DAMAGE: f32 = 60.0;
+pub const LOITER_IMPACT_DV: f32 = 4.0;
+pub const LOITER_PROXIMITY: f32 = 2.0;
+pub const LOITER_FALL_TICKS: u32 = 8 * TICK_RATE;
+
+/// What a drone kind does in the `Drones` mechanic: how long and how far it flies, and its charge.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DroneDef {
+    pub energy_ticks: u32,
+    pub range: f32,
+    pub blast_radius: f32,
+    pub damage: f32,
+    pub knock: f32,
+    pub pop_radius: f32,
+    pub pop_damage: f32,
+    pub impact_dv: f32,
+    pub proximity: f32,
+    pub fall_ticks: u32,
+    /// What its blast is credited as.
+    pub weapon: u8,
+}
+
+const FPV: DroneDef = DroneDef {
+    energy_ticks: DRONE_ENERGY_TICKS,
+    range: DRONE_RANGE,
+    blast_radius: DRONE_BLAST_RADIUS,
+    damage: DRONE_DAMAGE,
+    knock: DRONE_KNOCK,
+    pop_radius: DRONE_POP_RADIUS,
+    pop_damage: DRONE_POP_DAMAGE,
+    impact_dv: DRONE_IMPACT_DV,
+    proximity: DRONE_PROXIMITY,
+    fall_ticks: DRONE_FALL_TICKS,
+    weapon: WEAPON_DRONE,
+};
+
+const LOITERING: DroneDef = DroneDef {
+    energy_ticks: LOITER_ENERGY_TICKS,
+    range: LOITER_RANGE,
+    blast_radius: LOITER_BLAST_RADIUS,
+    damage: LOITER_DAMAGE,
+    knock: LOITER_KNOCK,
+    pop_radius: LOITER_POP_RADIUS,
+    pop_damage: LOITER_POP_DAMAGE,
+    impact_dv: LOITER_IMPACT_DV,
+    proximity: LOITER_PROXIMITY,
+    fall_ticks: LOITER_FALL_TICKS,
+    weapon: WEAPON_LOITER,
+};
+
+/// The drone def of vehicle `kind`: a loitering drone's, else the FPV drone's.
+pub fn drone_def(kind: u8) -> &'static DroneDef {
+    if kind == KIND_LOITER { &LOITERING } else { &FPV }
+}
+
+/// The drone vehicle kind item `item` launches.
+pub fn drone_kind(item: u8) -> u8 {
+    if item == ITEM_LOITER { KIND_LOITER } else { crate::protocol::KIND_DRONE }
+}
 
 /// Ground pickups. A player in `PICKUP_RADIUS` of one who presses use takes it.
 pub const PICKUP_RADIUS: f32 = 2.0;

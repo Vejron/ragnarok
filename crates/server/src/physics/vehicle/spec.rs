@@ -16,6 +16,8 @@ pub(in crate::physics) enum Lift {
     Walker,
     /// Four small rotors that hold it up and turn it towards where its pilot looks.
     Drone,
+    /// A loitering drone's motor and wings: always cruising forward, turning towards the look.
+    Loiter,
 }
 
 impl Lift {
@@ -286,6 +288,26 @@ pub(super) static DRONE: Spec = Spec {
     tank: None,
 };
 
+pub(super) static LOITER: Spec = Spec {
+    half_extents: LOITER_HALF_EXTENTS,
+    // A box 2.5 x 0.5 x 3.5 m around the wing, about 200 kg. Nothing below uses the wheel fields.
+    density: 45.0,
+    wheel_radius: 0.0,
+    track_half: 0.0,
+    axles: &[],
+    hard_point_y: 0.0,
+    suspension_rest: 0.0,
+    max_suspension_force: 0.0,
+    engine_force: 0.0,
+    max_speed: 0.0,
+    steer_lock: 0.0,
+    turn_rate: 0.0,
+    lift: Lift::Loiter,
+    linear_damping: LOITER_DAMPING,
+    com_drop: 0.0,
+    tank: None,
+};
+
 /// The spec for a vehicle kind. Unknown kinds are jeeps.
 pub(in crate::physics) fn spec(kind: u8) -> &'static Spec {
     match kind {
@@ -299,6 +321,7 @@ pub(in crate::physics) fn spec(kind: u8) -> &'static Spec {
         KIND_ROADSTER => &ROADSTER,
         KIND_MORTAR => &MORTAR,
         KIND_DRONE => &DRONE,
+        KIND_LOITER => &LOITER,
         _ => &JEEP,
     }
 }

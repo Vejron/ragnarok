@@ -1,6 +1,6 @@
 import { Group, Material, Mesh, boxGeometry, sphereGeometry, type Geometry } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
-import { ITEM_AK5, ITEM_BANDAGE, ITEM_DRONE, ITEM_GOLDEN_EGG, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER } from '@/sim/items'
+import { ITEM_AK5, ITEM_BANDAGE, ITEM_DRONE, ITEM_GOLDEN_EGG, ITEM_LOITER, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER } from '@/sim/items'
 
 const GUN_METAL = 0x3b3f47
 const GUN_TRIM = 0xf2a33a
@@ -85,6 +85,13 @@ export function buildItem(item: number): Group {
       box(group, [0.04, 0.03, 0.12], [0, -0.01, 0], OLIVE)
       for (const angle of [Math.PI / 4, -Math.PI / 4]) box(group, [0.025, 0.015, 0.4], [0, 0.04, 0], GUN_METAL).rotation.y = angle
       for (const [x, z] of [[-0.14, -0.14], [0.14, -0.14], [-0.14, 0.14], [0.14, 0.14]] as const) box(group, [0.04, 0.035, 0.04], [x, 0.055, z], GUN_TRIM)
+      break
+    case ITEM_LOITER:
+      // A launch crate with the drone's swept wing and fins showing on top.
+      box(group, [0.3, 0.14, 0.42], [0, 0, 0], OLIVE)
+      box(group, [0.5, 0.02, 0.16], [0, 0.08, 0.1], GUN_METAL)
+      box(group, [0.28, 0.02, 0.14], [0, 0.08, -0.04], GUN_METAL)
+      for (const x of [-0.24, 0.24]) box(group, [0.015, 0.08, 0.1], [x, 0.12, 0.12], GUN_TRIM)
       break
     case ITEM_GOLDEN_EGG: {
       sphere ??= sphereGeometry(0.06, 10, 8)

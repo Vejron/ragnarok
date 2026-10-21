@@ -163,6 +163,7 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
   <div v-if="stats?.seat === 'strv'" class="drive-hint">W/S gas and brake · A/D turn the tank to aim · Mouse look · Hold right mouse for the gun sight · Click or F fire · {{ stats.reload < 1 ? 'reloading…' : 'loaded' }}</div>
   <div v-if="stats?.seat === 'mortar'" class="drive-hint">Mouse aim sets the bearing · W/S range {{ Math.round(stats.range) }} m · Click or F fire · {{ stats.reload < 1 ? 'reloading…' : 'loaded' }}</div>
   <div v-if="stats?.seat === 'drone'" class="drive-hint">Mouse look and steer · W fly where you look · S back off · A/D strafe · Space climb · Shift sink · Click or F detonate · E recall</div>
+  <div v-if="stats?.seat === 'loiter'" class="drive-hint">Mouse steer (it banks and turns to where you look) · W/S pitch · A/D roll · Right-click swap camera · Click or F detonate · E recall</div>
   <div v-if="stats?.seat === 'pilot'" class="drive-hint">W/S lean forward and back · A/D turn · Space climb · Shift sink<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   <div v-if="stats?.seat === 'aviator'" class="drive-hint">Mouse steer (the plane turns to where you look) · Space throttle up · Shift throttle down · W/S/A/D by hand · Click or F fire · C bomb<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   <div v-if="stats?.seat === 'passenger'" class="drive-hint">Mouse look · Click or F fire your gun · Right mouse aim · 1-5 or wheel switch · R reload<template v-if="stats.canSwitchSeat">, or switch seat when it is full</template></div>
@@ -178,7 +179,9 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
     <div class="fpv" />
     <div class="fpv-noise" :style="{ opacity: 0.06 + 0.6 * (1 - stats.drone.signal) ** 2 }" />
     <div class="fpv-cross"><i /><i /></div>
-    <div class="fpv-live">● LIVE</div>
+    <div class="fpv-live">● LIVE<template v-if="stats.drone.camera"> · {{ stats.drone.camera === 'down' ? 'CAM DOWN' : 'CAM FWD' }}</template></div>
+    <!-- Looking straight down, the top of the screen is where it heads. -->
+    <div v-if="stats.drone.camera === 'down'" class="fpv-heading">▲</div>
     <div class="gauges">
       <div class="heat air" :class="{ jammed: stats.drone.battery < 0.2 }"><div :style="{ width: stats.drone.battery * 100 + '%' }" /><span>{{ stats.drone.battery < 0.2 ? 'BATTERY LOW' : 'BATTERY' }}</span></div>
       <div class="heat air" :class="{ jammed: stats.drone.signal < 0.2 }"><div :style="{ width: stats.drone.signal * 100 + '%' }" /><span>{{ stats.drone.signal < 0.2 ? 'SIGNAL WEAK' : 'SIGNAL' }}</span></div>
@@ -349,6 +352,7 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
 .fpv-cross i { position: absolute; background: rgba(255, 255, 255, 0.85); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4); }
 .fpv-cross i:nth-child(1) { width: 18px; height: 2px; left: -9px; top: -1px; }
 .fpv-cross i:nth-child(2) { width: 2px; height: 18px; left: -1px; top: -9px; }
+.fpv-heading { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); pointer-events: none; font-size: 14px; color: rgba(255, 255, 255, 0.85); text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6); }
 .fpv-live { position: fixed; top: 14px; right: 16px; pointer-events: none; font-size: 13px; font-weight: 800; color: #ff5a5f; letter-spacing: 0.1em; animation: blink 1s steps(2) infinite; }
 .gauges { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; pointer-events: none; }
 .heat {

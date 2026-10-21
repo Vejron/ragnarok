@@ -7,7 +7,8 @@
     "5": {"name": "Sniper", "kind": "gun", "auto": false, "damage": 90, "cooldownTicks": 120, "mag": 5, "reloadTicks": 180, "range": 400, "aimSpeed": 0.4, "scope": true, "stack": 1, "weapon": 7, "projectile": true, "pellets": 1, "falloffStart": 0, "falloffEnd": 0, "falloffMin": 1},
     "6": {"name": "Golden egg", "kind": "heal", "auto": false, "damage": 255, "cooldownTicks": 0, "mag": 0, "reloadTicks": 0, "range": 0, "aimSpeed": 1, "scope": false, "stack": 1, "weapon": 0, "projectile": false, "pellets": 1, "falloffStart": 0, "falloffEnd": 0, "falloffMin": 1},
     "7": {"name": "Shotgun", "kind": "gun", "auto": false, "damage": 12, "cooldownTicks": 60, "mag": 5, "reloadTicks": 180, "range": 40, "aimSpeed": 0.7, "scope": false, "stack": 1, "weapon": 13, "projectile": false, "pellets": 10, "falloffStart": 8, "falloffEnd": 40, "falloffMin": 0.25},
-    "8": {"name": "FPV drone", "kind": "drone", "auto": false, "damage": 0, "cooldownTicks": 60, "mag": 0, "reloadTicks": 0, "range": 0, "aimSpeed": 1, "scope": false, "stack": 1, "weapon": 19, "projectile": false, "pellets": 1, "falloffStart": 0, "falloffEnd": 0, "falloffMin": 1}
+    "8": {"name": "FPV drone", "kind": "drone", "auto": false, "damage": 0, "cooldownTicks": 60, "mag": 0, "reloadTicks": 0, "range": 0, "aimSpeed": 1, "scope": false, "stack": 1, "weapon": 19, "projectile": false, "pellets": 1, "falloffStart": 0, "falloffEnd": 0, "falloffMin": 1},
+    "9": {"name": "Loitering drone", "kind": "drone", "auto": false, "damage": 0, "cooldownTicks": 60, "mag": 0, "reloadTicks": 0, "range": 0, "aimSpeed": 1, "scope": false, "stack": 1, "weapon": 21, "projectile": false, "pellets": 1, "falloffStart": 0, "falloffEnd": 0, "falloffMin": 1}
   },
   "vehicles": {
     "1": {"name": "Jeep", "hp": 100, "seats": 4, "halfExtents": [1, 0.42, 1.95], "gun": false, "arms": false, "carWheels": true, "trackHalf": 0.9, "axleZ": 1.25, "crew": "open", "crewGuns": true, "seatHeads": [[-0.4, 0.62, -0.3], [0.4, 0.62, -0.3], [-0.4, 0.62, 0.75], [0.4, 0.62, 0.75]]},
@@ -20,7 +21,8 @@
     "9": {"name": "Field mortar", "hp": 150, "seats": 1, "halfExtents": [1, 0.5, 1.5], "gun": true, "arms": false, "carWheels": false, "trackHalf": 0, "axleZ": 0, "crew": "open", "crewGuns": false, "seatHeads": []},
     "10": {"name": "Roadster", "hp": 100, "seats": 2, "halfExtents": [0.95, 0.3, 2.2], "gun": false, "arms": false, "carWheels": true, "trackHalf": 0.82, "axleZ": 1.45, "crew": "open", "crewGuns": true, "seatHeads": [[-0.33, 0.42, 0.12], [0.33, 0.42, 0.12]]},
     "11": {"name": "FPV drone", "hp": 1, "seats": 1, "halfExtents": [0.22, 0.06, 0.22], "gun": false, "arms": false, "carWheels": false, "trackHalf": 0, "axleZ": 0, "crew": "sealed", "crewGuns": false, "seatHeads": []},
-    "12": {"name": "Hen", "hp": 180, "seats": 1, "halfExtents": [1, 1.2, 1.8], "gun": false, "arms": true, "carWheels": false, "trackHalf": 0, "axleZ": 0, "crew": "sealed", "crewGuns": false, "seatHeads": []}
+    "12": {"name": "Hen", "hp": 180, "seats": 1, "halfExtents": [1, 1.2, 1.8], "gun": false, "arms": true, "carWheels": false, "trackHalf": 0, "axleZ": 0, "crew": "sealed", "crewGuns": false, "seatHeads": []},
+    "13": {"name": "Loitering drone", "hp": 40, "seats": 1, "halfExtents": [1.25, 0.25, 1.75], "gun": false, "arms": false, "carWheels": false, "trackHalf": 0, "axleZ": 0, "crew": "sealed", "crewGuns": false, "seatHeads": []}
   },
   "treeKinds": {
     "0": {"name": "Birch", "radius": 15, "refHeight": 1200, "radiusPctOfCrown": 0, "maxRadius": 60, "colliderHeightPct": 50, "destructible": true},

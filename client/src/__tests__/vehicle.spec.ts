@@ -4,8 +4,8 @@ import { CarSim, CAR_GRAVITY, conditionOf, controlsOf, VehicleDriver, type CarCo
 import { addTileCollider } from '@/sim/physics'
 import { heightIn, type TileGround } from '@/sim/terrain'
 import { f32 } from '@/sim/movement'
-import { BUTTON_CROUCH, BUTTON_JUMP, BUTTON_RUN, TICK_DT, vehicleMaxHp } from '@/sim/consts'
-import { DAMAGE_TURRET, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
+import { BUTTON_CROUCH, BUTTON_JUMP, BUTTON_RUN, LOITER_SPEED, TICK_DT, vehicleMaxHp } from '@/sim/consts'
+import { DAMAGE_TURRET, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
 import type { TileData, WorldData } from '@/world'
 
 const COAST: CarControls = { throttle: 0, steer: 0, handbrake: false, lift: 0, powered: false }
@@ -81,6 +81,25 @@ const droneCheckpoints: [number, [number, number, number]][] = [
   [210, [0, 21.206, -1.9828]],
   [330, [-0.9514, 18.6062, -42.9446]],
   [480, [-38.1789, 15.5587, -89.1635]],
+]
+
+/** Same as `scripted_loiter` in vehicle.rs. */
+const loiterFlight = (tick: number): CarControls => {
+  switch (Math.floor(tick / 60)) {
+    case 0: return looking(0, 0)
+    case 1: case 2: return looking(1, 0)
+    case 3: case 4: return looking(1, -0.4)
+    case 5: return { ...looking(1, 0), steer: 1 }
+    default: return { ...looking(1, 0), throttle: -1 }
+  }
+}
+
+/** `LOITER_CHECKPOINTS` in vehicle.rs: a loitering drone started at [0, 60, 100], flying towards -Z. */
+const loiterCheckpoints: [number, [number, number, number]][] = [
+  [90, [-1.9952, 60.7377, 48.0302]],
+  [210, [-55.8591, 63.7674, 5.9786]],
+  [330, [-109.7632, 38.6259, -29.9292]],
+  [480, [-157.6974, 55.486, -57.6976]],
 ]
 
 /** Same as `scripted_walk` in vehicle.rs. */
@@ -272,6 +291,26 @@ describe('drone prediction', () => {
   it('flies towards where its pilot looks', () => {
     const frame: InputFrame = { seq: 1, strafe: 0, forward: 127, yaw: 500, pitch: -300, buttons: 0, view: 0, slot: 0 }
     expect(controlsOf(frame, KIND_DRONE)).toMatchObject({ throttle: 1, powered: true, aim: [0.5, -0.3] })
+    expect(controlsOf(frame, KIND_LOITER)).toMatchObject({ throttle: 1, powered: true, aim: [0.5, -0.3] })
+  })
+
+  it('WASM flies a loitering drone where the native server does', async () => {
+    await RAPIER.init()
+    const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
+    world.timestep = TICK_DT
+    world.createCollider(RAPIER.ColliderDesc.cuboid(200, 0.5, 200).setTranslation(0, -0.5, 0))
+    const loiter = new CarSim(world, KIND_LOITER, [0, 60, 100], 0)
+    loiter.setState([0, 60, 100], [0, 0, 0, 1], [0, 0, -LOITER_SPEED], [0, 0, 0], 0, 0)
+    for (let tick = 0; tick < 480; tick++) {
+      loiter.drive(loiterFlight(tick), TICK_DT)
+      loiter.step(TICK_DT)
+      const expected = loiterCheckpoints.find(([t]) => t === tick + 1)
+      if (!expected) continue
+      loiter.state().position.forEach((value, axis) => {
+        expect(Math.abs(value - expected[1][axis]!), `tick ${tick + 1} axis ${axis}`).toBeLessThan(0.01)
+      })
+    }
+    world.free()
   })
 })
 
