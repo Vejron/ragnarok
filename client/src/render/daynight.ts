@@ -3,8 +3,8 @@ import type { Palette } from './look'
 
 /** A whole day, midnight to midnight, in seconds of server time. */
 export const DAY_SECONDS = 30 * 60
-/** Where in the day a server's tick 0 falls: a fresh server opens in the morning. */
-const START_PHASE = 0.3
+/** Where in the day a server's tick 0 falls: a fresh server opens at midnight. */
+const START_PHASE = 0
 
 /** How high the sun gets at noon. Higher and hillsides all fall in the same lit band of the toon ramp. */
 const NOON_ELEVATION = (50 * Math.PI) / 180

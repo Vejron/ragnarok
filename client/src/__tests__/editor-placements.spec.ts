@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { BOT_TEAMS, headingOf, isGuard, nearest, routeLines, routeSummary, teamColour, yawOf, type PlacedBot } from '../editor/placements'
+import { BOT_TEAMS, headingOf, isGuard, ITEM_KINDS, nearest, routeLines, routeSummary, teamColour, yawOf, type PlacedBot } from '../editor/placements'
+import { LOADOUT_ITEMS } from '../editor/scenario'
+import { ITEM_GOLDEN_EGG, itemDef } from '../sim/items'
 
 describe('editor placements', () => {
   it('turns a compass heading into the simulation yaw and back', () => {
@@ -39,5 +41,21 @@ describe('editor bots', () => {
 
   it('gives every team its own colour', () => {
     expect(new Set(BOT_TEAMS.map((t) => teamColour(t.team))).size).toBe(BOT_TEAMS.length)
+  })
+})
+
+describe('the editor item lists', () => {
+  // Every item but the golden egg (only a rooster drops it) can be placed, and every item can be in a loadout.
+  const items = Array.from({ length: 64 }, (_, id) => ({ id, def: itemDef(id) })).filter(({ def }) => def !== undefined)
+
+  it('offer every item to place, under its own name', () => {
+    const placeable = items.filter(({ id }) => id !== ITEM_GOLDEN_EGG).map(({ id, def }) => ({ item: id, name: def!.name }))
+    const listed = ITEM_KINDS.filter(({ item }) => item !== ITEM_GOLDEN_EGG).map(({ item, name }) => ({ item, name }))
+    expect(listed).toEqual(expect.arrayContaining(placeable))
+    expect(listed).toHaveLength(placeable.length)
+  })
+
+  it('know every item for a loadout', () => {
+    expect([...LOADOUT_ITEMS].sort()).toEqual(items.map(({ def }) => def!.name).sort())
   })
 })

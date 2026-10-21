@@ -365,13 +365,16 @@ pub const GRENADE_RADIUS: f32 = 0.1;
 /// Grenades in flight at once, which bounds the projectile list.
 pub const MAX_GRENADES: usize = 16;
 
-/// Flares: fired along the look direction at `FLARE_SPEED`, they climb under gravity. Once falling
-/// their parachute opens: the sink eases to `FLARE_SINK` and the sideways drift dies away at
-/// `FLARE_DRAG` a second. They stop on whatever they meet and burn out `FLARE_BURN_TICKS` after firing.
+/// Flares: fired `FLARE_LOFT` radians above the look direction at `FLARE_SPEED` (the on-foot look
+/// only reaches 0.6 up, and a flare wants to go high), they climb under gravity. Once falling their
+/// parachute opens: the sink eases to `FLARE_SINK` and the sideways drift dies away at `FLARE_DRAG`
+/// a second. They stop on whatever they meet and burn out `FLARE_BURN_TICKS` after firing, which
+/// for a steep shot is still in the air.
 pub const FLARE_SPEED: f32 = 55.0;
 pub const FLARE_SINK: f32 = 2.5;
 pub const FLARE_DRAG: f32 = 1.5;
-pub const FLARE_BURN_TICKS: u32 = 45 * TICK_RATE;
+pub const FLARE_BURN_TICKS: u32 = 20 * TICK_RATE;
+pub const FLARE_LOFT: f32 = 0.6;
 /// It leaves this far in front of the eye, metres, and is this big for collision.
 pub const FLARE_MUZZLE: f32 = 0.6;
 pub const FLARE_RADIUS: f32 = 0.1;

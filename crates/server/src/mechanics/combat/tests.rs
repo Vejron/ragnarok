@@ -546,15 +546,17 @@ fn a_flare_gun_spends_a_flare_and_fires_it() {
     assert_eq!(game.world.players[&shooter].hotbar[2].count, 1, "one fired");
     let flare = *game.world.rockets.values().next().expect("in flight");
     assert_eq!(flare.kind, PROJECTILE_FLARE);
+    // Aimed level, it still goes up steeply.
+    let speed = flare.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
+    assert!((flare.velocity[1] / speed - FLARE_LOFT.sin()).abs() < 0.02, "{:?}", flare.velocity);
     assert!(game.world.shots.iter().any(|s| s.weapon == WEAPON_FLARE && s.shooter == shooter));
 }
 
 #[test]
-fn a_flare_climbs_then_sinks_slowly_and_burns_out_where_it_lands() {
+fn a_flare_climbs_then_sinks_slowly_and_burns_out_in_the_air() {
     let (mut game, shooter, target, _, _) = duel();
     let id = game.world.alloc_id();
-    let start = [100.0, 2.0, 10.0];
-    game.world.rockets.insert(id, Rocket { kind: PROJECTILE_FLARE, owner: shooter, source: 0, position: start, velocity: [5.0, FLARE_SPEED, 0.0], ttl: FLARE_BURN_TICKS, item: 0, back: 0, flown: 0.0 });
+    game.world.rockets.insert(id, Rocket { kind: PROJECTILE_FLARE, owner: shooter, source: 0, position: [100.0, 2.0, 10.0], velocity: [5.0, FLARE_SPEED, 0.0], ttl: FLARE_BURN_TICKS, item: 0, back: 0, flown: 0.0 });
     let mut top = 0.0f32;
     let mut ticks = 0;
     while game.world.rockets[&id].velocity[1] > 0.0 {
@@ -572,21 +574,33 @@ fn a_flare_climbs_then_sinks_slowly_and_burns_out_where_it_lands() {
     assert!((hanging.velocity[1] + FLARE_SINK).abs() < 1e-3, "sinks at {}", hanging.velocity[1]);
     assert!(hanging.velocity[0].abs() < 0.5, "drift dies away: {}", hanging.velocity[0]);
     assert!(hanging.position[1] > top - 2.0 * FLARE_SINK - 2.0, "slowly: {} from {top}", hanging.position[1]);
-    // It lands well before it burns out, and burns where it lies.
+    for _ in ticks..FLARE_BURN_TICKS - 1 {
+        game.step();
+    }
+    let last = game.world.rockets[&id];
+    assert!(last.position[1] > 10.0 && last.velocity[1] < 0.0, "still hanging just before it burns out: {last:?}");
+    game.step();
+    assert!(!game.world.rockets.contains_key(&id), "burnt out");
+    assert_eq!(game.world.players[&target].hp, PLAYER_MAX_HP, "light, not harm");
+}
+
+#[test]
+fn a_flare_that_comes_down_burns_where_it_lands() {
+    let (mut game, shooter, _, _, _) = duel();
+    let id = game.world.alloc_id();
+    game.world.rockets.insert(id, Rocket { kind: PROJECTILE_FLARE, owner: shooter, source: 0, position: [100.0, 3.0, 10.0], velocity: [0.0, -1.0, 0.0], ttl: FLARE_BURN_TICKS, item: 0, back: 0, flown: 0.0 });
+    let mut ticks = 0;
     while game.world.rockets[&id].velocity != [0.0; 3] {
         game.step();
         ticks += 1;
-        assert!(ticks < FLARE_BURN_TICKS, "still falling when it burnt out");
+        assert!(ticks < 3 * TICK_RATE, "still falling");
     }
     let landed = game.world.rockets[&id].position;
     assert!(landed[1] < 1.0, "on the ground: {landed:?}");
-    game.step();
-    assert_eq!(game.world.rockets[&id].position, landed);
-    for _ in ticks + 1..FLARE_BURN_TICKS {
+    for _ in 0..TICK_RATE {
         game.step();
     }
-    assert!(!game.world.rockets.contains_key(&id), "burnt out");
-    assert_eq!(game.world.players[&target].hp, PLAYER_MAX_HP, "light, not harm");
+    assert_eq!(game.world.rockets[&id].position, landed, "it burns where it lies");
 }
 
 #[test]
@@ -630,8 +644,9 @@ fn a_new_life_starts_with_the_standard_loadout() {
     let hotbar = game.world.players[&target].hotbar;
     assert_eq!(hotbar, starting_hotbar());
     let items: Vec<u8> = hotbar.iter().map(|slot| slot.item).collect();
-    assert_eq!(items, [ITEM_REVOLVER, ITEM_AK5, ITEM_SNIPER, ITEM_GRENADE, ITEM_SHOTGUN]);
-    assert_eq!(hotbar[1].ammo, def(ITEM_AK5).unwrap().mag, "magazines are full");
+    assert_eq!(items, [ITEM_AK5, ITEM_SNIPER, ITEM_FLARE, ITEM_DRONE, ITEM_LOITER]);
+    assert_eq!(hotbar[0].ammo, def(ITEM_AK5).unwrap().mag, "magazines are full");
+    assert_eq!(hotbar[2].count, def(ITEM_FLARE).unwrap().stack, "a full stack of flares");
     let _ = &mut seq;
 }
 /// A game on a world with one solid pine at (10, 0), identified as tile (2, 3) index 0.
@@ -875,6 +890,7 @@ fn one_round_from(game: &mut Game, shooter: u32, item: u8, distance: f32) {
 #[test]
 fn a_shotgun_kills_at_point_blank_and_credits_the_shooter() {
     let (mut game, shooter, target, mut seq, _) = duel();
+    give(&mut game, shooter, 4, ITEM_SHOTGUN, 1);
     stand_at(&mut game, target, 3.0);
     // The shoulder camera is 1.5 m above the target's centre, so the crosshair on it at three metres is well down.
     // Aimed, so the spread is tight enough that every pellet is on the body and the kill is not down to luck.
@@ -913,6 +929,7 @@ fn a_shotgun_pellet_is_a_scratch_from_far_away() {
 #[test]
 fn a_shotgun_pull_costs_one_round_and_needs_a_fresh_press() {
     let (mut game, shooter, target, mut seq, _) = duel();
+    give(&mut game, shooter, 4, ITEM_SHOTGUN, 1);
     stand_at(&mut game, target, 35.0);
     // Held for two seconds: the cooldown is a second, but a pump gun still wants a fresh press.
     hold_slot(&mut game, shooter, &mut seq, BUTTON_FIRE, 4, 2 * TICK_RATE);

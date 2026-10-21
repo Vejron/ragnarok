@@ -11,7 +11,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use shared::carve::{Cut, Shell, Tri};
 use shared::consts::*;
-use shared::items::{HOTBAR_SLOTS, ITEM_AK5, ITEM_GRENADE, ITEM_NONE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, def};
+use shared::items::{HOTBAR_SLOTS, ITEM_AK5, ITEM_DRONE, ITEM_FLARE, ITEM_LOITER, ITEM_SNIPER, def};
 use shared::protocol::*;
 use shared::quant::{from_cm, pack_quat, to_axis, to_cm, to_cm_i16, to_milli_i16, to_mrad};
 use shared::world::{Building, ObjId, Tree, WorldFile};

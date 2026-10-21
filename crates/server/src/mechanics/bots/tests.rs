@@ -288,6 +288,8 @@ fn it_leads_a_moving_target_and_aims_over_the_drop() {
 fn it_takes_the_shotgun_up_close_and_a_rifle_further_out() {
     let mut game = game(false);
     let bot = guard(&mut game, 0.5);
+    // The standard loadout has no shotgun: one is carried in the last slot.
+    game.world.players.get_mut(&bot).unwrap().hotbar[4] = ItemSlot { item: shared::items::ITEM_SHOTGUN, count: 1, ammo: shared::items::def(shared::items::ITEM_SHOTGUN).unwrap().mag };
     let human = join(&mut game);
     put(&mut game, human, [0.0, -6.0]);
     run(&mut game, 0.5);

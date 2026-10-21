@@ -111,7 +111,7 @@ export const LOITER_ENERGY_TICKS = 60 * TICK_RATE
 export const LOITER_RANGE = 600.0
 export const LOITER_BLAST_RADIUS = 12.0
 /** Flares: how long one burns and how fast it sinks under its parachute. Mirrors `FLARE_*` in items.rs. */
-export const FLARE_BURN_TICKS = 45 * TICK_RATE
+export const FLARE_BURN_TICKS = 20 * TICK_RATE
 export const FLARE_SINK = 2.5
 /** The most pitch the server will accept, radians. */
 export const MAX_AIM_PITCH = 1.5

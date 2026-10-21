@@ -198,7 +198,7 @@ its target. There is no point lighting. Background and fog share the sky colour;
 ### Day and night
 
 The day lasts 30 minutes (`DAY_SECONDS` in `render/daynight.ts`), counted from the server's tick, so
-every player sees the same time. A fresh server opens in the morning. `skyAt(phase, palette)` gives the
+every player sees the same time. A fresh server opens at midnight. `skyAt(phase, palette)` gives the
 light for a phase of the day (0 midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset) and
 `Scene.setTimeOfDay` applies it to the sun, hemisphere, sky, fog and water. `Game` calls it every frame
 once the clock has synced; the editor never does, so it stays at noon.

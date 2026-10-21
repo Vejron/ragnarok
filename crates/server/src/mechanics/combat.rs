@@ -1028,12 +1028,12 @@ fn step_grenade(world: &mut World, id: u32, dt: f32) {
     }
 }
 
-/// Fires a flare from player `id`'s eye along where they look.
+/// Fires a flare from player `id`'s eye, well above where they look so it goes up.
 fn fire_flare(world: &mut World, id: u32) {
     let Some(player) = world.players.get(&id) else { return };
     let input = player.input;
     let c = player.character;
-    let dir = look(from_mrad(input.yaw), from_mrad(input.pitch()).clamp(-MAX_PITCH, MAX_PITCH));
+    let dir = look(from_mrad(input.yaw), (from_mrad(input.pitch()) + FLARE_LOFT).clamp(-MAX_PITCH, MAX_PITCH));
     let eye = [c.position[0], c.position[1] + eye_height(input.buttons(), c.prone), c.position[2]];
     // Up against a wall it starts at the wall instead of on its far side.
     let reach = world.physics.cast_ray(eye, dir, FLARE_MUZZLE + FLARE_RADIUS, 0).map_or(FLARE_MUZZLE, |t| (t - FLARE_RADIUS).max(0.0));
