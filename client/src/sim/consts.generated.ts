@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 37
+export const PROTOCOL_VERSION = 38
 
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60

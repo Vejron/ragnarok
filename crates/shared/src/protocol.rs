@@ -149,6 +149,8 @@ pub const WEAPON_DRONE: u8 = 19;
 pub const WEAPON_EGG: u8 = 20;
 /// A loitering drone's warhead going off.
 pub const WEAPON_LOITER: u8 = 21;
+/// Shot events only: a flare gun fired from `shooter`'s hand, at `x, y, z`.
+pub const WEAPON_FLARE: u8 = 22;
 
 /// How a stickman died, as sent in a `Kill`, so every client can stage the death to match.
 pub const DEATH_BODY: u8 = 0;
@@ -172,6 +174,9 @@ pub const PROJECTILE_BOMB: u8 = 5;
 pub const PROJECTILE_MORTAR: u8 = 6;
 /// A hen's egg: it falls and bounces like a grenade and bursts when its fuse runs out, or at once when it lands hard.
 pub const PROJECTILE_EGG: u8 = 7;
+/// A flare: it climbs, then hangs under its parachute, burning brightly as it drifts down, and burns
+/// out where it lies. It hurts nobody.
+pub const PROJECTILE_FLARE: u8 = 8;
 
 /// A bullet leaving a gun: `[id, shooter, item, x, y, z, vx, vy, vz, tick]`, centimetres and cm/s.
 /// Sent once (in two snapshots, in case one is lost) and not listed again: the path is
@@ -682,7 +687,7 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 37, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
+        148, 0, 38, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[

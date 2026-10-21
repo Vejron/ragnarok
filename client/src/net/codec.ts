@@ -110,6 +110,8 @@ export const WEAPON_DRONE = 19
 export const WEAPON_EGG = 20
 /** A loitering drone's warhead going off. */
 export const WEAPON_LOITER = 21
+/** A flare gun fired from `shooter`'s hand. */
+export const WEAPON_FLARE = 22
 
 /** How a stickman died, as in a `Kill`. Mirrors `DEATH_*`. */
 export const DEATH_BODY = 0
@@ -143,6 +145,8 @@ export const PROJECTILE_BOMB = 5
 export const PROJECTILE_MORTAR = 6
 /** A hen's egg, bouncing until its fuse runs out or smashing where it lands hard. */
 export const PROJECTILE_EGG = 7
+/** A flare: it climbs, then hangs under its parachute, burning brightly as it drifts down. */
+export const PROJECTILE_FLARE = 8
 
 /** `Turret`'s flags: a field mortar is hitched to a car, so it is drawn folded up for travel. Mirrors `TURRET_STOWED`. */
 export const TURRET_STOWED = 1 << 0

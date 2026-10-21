@@ -15,11 +15,12 @@ Conventions
   * Two materials, so two draw calls per player: `outfit` (vertex colours are shades of white, tinted
     per player at runtime) and `gear` (skin, boots; vertex colours are the final colours). Each weapon
     is its own mesh, `weapon_<name>`, skinned to the right hand and made in the pose it is held in.
-  * Stances say how the arms hold things: `rifle` (both hands on the gun), `pistol` (one arm out) and
+  * Stances say how the arms hold things: `rifle` (both hands on the gun), `pistol` (both hands, out in front) and
     `hold` (hands low, in front). Clips are baked per stance: the rifle's are named plainly (`idle`,
     `walk_fwd`, ...), the others carry a `pistol_` / `hold_` prefix. `death` is shared.
   * Clips: idle, walk_fwd/back/left/right, run_fwd/back/left/right, crouch_idle, crouch_fwd/back/left/
-    right, crawl_idle, crawl_fwd/back/left/right, slide, jump_air, sit, death. `sit` is a seat in a
+    right, crawl_idle, crawl_fwd/back/left/right, slide, jump_air, sit, death. The crawl is an army
+    crawl lying face down along -Y, resting on the ground at the origin's height. `sit` is a seat in a
     vehicle: hips dropped by `SIT_DROP`, thighs level and shins down, so the head ends up `SIT_HEAD`
     above the origin (the client places a seated player by it). Clips loop with a duplicated last key so the mixer wraps without a hitch.
 """
@@ -70,10 +71,10 @@ FOREGRIP = Vector((-0.15, -0.44, 1.07))
 # is the one that holds the item; the muzzle is measured from `GRIP_OF[stance]`.
 STANCES = {
     "rifle": dict(R=GRIP, L=FOREGRIP, pole_r=Vector((-0.6, 0.35, -1.0)), pole_l=Vector((0.8, 0.25, -1.0))),
-    # One arm out in front with the revolver, the other relaxed at the side.
+    # The revolver in both hands, out in front of the chest: the left hand cups the right from below.
     "pistol": dict(
-        R=Vector((-0.16, -0.58, 1.28)), L=Vector((0.27, -0.12, 0.98)),
-        pole_r=Vector((-0.4, 0.0, -1.0)), pole_l=Vector((0.8, 0.3, -0.5)),
+        R=Vector((-0.07, -0.42, 1.2)), L=Vector((-0.02, -0.38, 1.15)),
+        pole_r=Vector((-0.5, 0.2, -1.0)), pole_l=Vector((0.6, 0.2, -1.0)),
     ),
     # Hands low and in front, as when holding a grenade or winding a bandage.
     "hold": dict(
@@ -674,56 +675,201 @@ def crouch_idle(t):
         pose_rot(f"foot_{side}", -0.95, 0, 0)
 
 
-# Lying face down: the root turns a quarter about the feet so the body lies along the ground, the
-# head forward. The root is then lifted so the chest, not its front, rests on the floor.
-CRAWL_LIFT = 0.20
-# Toes angled up off the floor: the foot bone points down at rest, so without this they sink into it.
-CRAWL_FOOT = 0.5
+# Lying face down: the root turns a quarter about the feet so the body lies along the ground, head
+# forward (-Y). In the lying body's own axes X is still its left, -Y its belly and Z towards its head.
+# The body is then lowered (by the root) until it rests on the floor, measured on the mesh itself.
+REST4 = {b.name: b.matrix_local.copy() for b in arm_data.bones}
+# Body vertices, by the bone each is bound to, for finding the floor. Arms are left out: they reach
+# for the ground themselves.
+_GROUP = {g.index: g.name for g in body.vertex_groups}
+TRUNK = [
+    (_GROUP[v.groups[0].group], v.co.copy())
+    for i, v in enumerate(mesh.vertices)
+    if v.groups and i % 2 == 0 and not _GROUP[v.groups[0].group].startswith(("upper_arm", "forearm", "hand"))
+]
+# How far the chest lifts off the ground to look ahead.
+PRONE_ARCH = 0.22
 
 
-def crawl_pose(breath=0.0):
-    pose_rot("root", math.pi / 2, 0, 0)
-    pose_loc("root", (0, 0, CRAWL_LIFT + 0.004 * breath))
-    pose_rot("hips", 0.0, 0, 0)
-    pose_rot("spine", 0.0, 0, 0)
-    pose_rot("chest", 0.05 + 0.01 * breath, 0, 0)
-    pose_rot("head", -0.25, 0, 0)
-    # Elbows out, forearms forward along the floor: the hands take the weight.
-    for side, sx in (("L", 1), ("R", -1)):
-        arm_obj.pose.bones[f"upper_arm_{side}"].rotation_euler = (0.0, -sx * math.pi / 2, 0)
-        arm_obj.pose.bones[f"forearm_{side}"].rotation_euler = (-math.pi / 2, -math.pi / 2, -math.pi / 2)
-        arm_obj.pose.bones[f"hand_{side}"].rotation_euler = (0, 0, 0)
+def pose_mat(name, world_rotation):
+    """Like `pose_rot`, with the rotation given as a matrix in armature axes."""
+    arm_obj.pose.bones[name].rotation_euler = local_euler(name, world_rotation)
 
 
-def crawl_gait(direction, amp, lat_amp, knee):
-    """Crawl along `direction` = (right, forward): the legs take turns pushing and the body rolls with them."""
-    dr, df = direction
+def settle():
+    """Lowers the body by the root until its lowest point rests on the ground."""
+    pose_loc("root", (0, 0, 0))
+    bpy.context.view_layer.update()
+    mats = {}
+    low = math.inf
+    for b, co in TRUNK:
+        m = mats.get(b)
+        if m is None:
+            m = mats[b] = arm_obj.pose.bones[b].matrix @ REST4[b].inverted()
+        low = min(low, (m @ co).z)
+    pose_loc("root", (0, 0, -low))
+    bpy.context.view_layer.update()
+
+
+def lie(breath=0.0, arch=PRONE_ARCH, yaw=0.0):
+    pose_mat("root", Matrix.Rotation(yaw, 3, "Z") @ Matrix.Rotation(math.pi / 2, 3, "X"))
+    pose_rot("hips", -0.05, 0, 0)
+    pose_rot("spine", -arch * 0.5 - 0.01 * breath, 0, 0)
+    pose_rot("chest", -arch * 0.7, 0, 0)
+    pose_rot("neck", -0.3, 0, 0)
+    pose_rot("head", -0.35, 0, 0)
+
+
+def frog_leg(side, draw):
+    """One leg lying: `draw` 0 is stretched out behind, 1 is the knee pulled up beside the hip along
+    the ground. The leg is turned out, so the inside of it lies on the floor and the knee bends flat."""
+    sx = 1.0 if side == "L" else -1.0
+    pose_mat(
+        f"thigh_{side}",
+        Matrix.Rotation(-sx * (0.12 + 0.95 * draw), 3, "Y") @ Matrix.Rotation(sx * (1.5 + 0.1 * draw), 3, "Z") @ Matrix.Rotation(-0.14, 3, "X"),
+    )
+    pose_rot(f"shin_{side}", 0.15 + 1.75 * draw, 0, 0)
+    # The foot lies on its inside edge, toes out.
+    pose_rot(f"foot_{side}", 0.1, 0, 0)
+
+
+def ease(t):
+    t = min(max(t, 0.0), 1.0)
+    return t * t * (3 - 2 * t)
+
+
+def drawn(p):
+    """How far a leg is drawn up at its phase `p`: it pushes back slowly, rests, then is pulled up."""
+    p %= 1.0
+    if p < 0.6:
+        return 1.0 - ease(p / 0.6)
+    if p < 0.72:
+        return 0.0
+    return ease((p - 0.72) / 0.28)
+
+
+# Each stance's hands as the carry pose holds them: the guns are modelled there, so lying down the
+# hands keep these turns and the gun still points ahead.
+CARRY_HAND = {}
+for _stance in STANCES:
+    reset_pose()
+    carry_pose(_stance)
+    bpy.context.view_layer.update()
+    CARRY_HAND[_stance] = {n: (arm_obj.pose.bones[f"hand_{n}"].matrix.to_3x3(), arm_obj.pose.bones[f"hand_{n}"].head.copy()) for n in ("R", "L")}
+reset_pose()
+# A flat hand on the ground, fingers ahead, palm down.
+FLAT_HAND = {
+    "L": Matrix.Rotation(-math.pi / 2, 3, "Y") @ Matrix.Rotation(-math.pi / 2, 3, "X"),
+    "R": Matrix.Rotation(math.pi / 2, 3, "Y") @ Matrix.Rotation(-math.pi / 2, 3, "X"),
+}
+
+
+def reach(side, wrist, hand, pole):
+    """Two-bone IK on the body as it is posed now: the wrist to `wrist`, the hand turned `hand` and the
+    elbow towards `pole`, all in armature space."""
+    upper, fore, hand_bone = f"upper_arm_{side}", f"forearm_{side}", f"hand_{side}"
+    bpy.context.view_layer.update()
+    chest = arm_obj.pose.bones["chest"].matrix
+    free = chest @ REST4["chest"].inverted() @ REST4[upper]
+    root = free.to_translation()
+    to = wrist - root
+    length = min(max(to.length, 0.05), (UPPER_ARM + FOREARM) * 0.999)
+    d = to.normalized()
+    a = (UPPER_ARM**2 - FOREARM**2 + length**2) / (2 * length)
+    h = math.sqrt(max(UPPER_ARM**2 - a * a, 0.0))
+    out = Vector(pole) - d * Vector(pole).dot(d)
+    out.normalize()
+    elbow = root + d * a + out * h
+    end = root + d * length
+
+    def aim(free_rotation, start, target):
+        q = free_rotation.col[1].normalized().rotation_difference((target - start).normalized())
+        return q.to_matrix() @ free_rotation
+
+    up = aim(free.to_3x3(), root, elbow)
+    fo = aim(up @ REST3[upper].inverted() @ REST3[fore], elbow, end)
+    chest3 = chest.to_3x3()
+    bones = arm_obj.pose.bones
+    bones[upper].rotation_euler = ((chest3 @ REST3["chest"].inverted() @ REST3[upper]).inverted() @ up).to_euler("XYZ")
+    bones[fore].rotation_euler = ((up @ REST3[upper].inverted() @ REST3[fore]).inverted() @ fo).to_euler("XYZ")
+    bones[hand_bone].rotation_euler = ((fo @ REST3[fore].inverted() @ REST3[hand_bone]).inverted() @ hand).to_euler("XYZ")
+
+
+# Lying down, where the right wrist holds each gun, from the right shoulder: the rifle under the chin,
+# the revolver further out and nearer the middle, where both hands meet on it.
+GUN_AHEAD = {"rifle": Vector((0.17, -0.3, -0.12)), "pistol": Vector((0.2, -0.4, -0.1))}
+
+
+def lying_arms(t, moving, back=False):
+    """A gun is carried forward in both hands under the chin, nudged ahead with each push. A grenade or a
+    bandage stays in the right hand while the hands take turns pulling along the ground."""
+    bpy.context.view_layer.update()
+    shoulder = {n: arm_obj.pose.bones[f"upper_arm_{n}"].head.copy() for n in ("R", "L")}
+    hands = CARRY_HAND[CURRENT]
+    if CURRENT in GUN_AHEAD:
+        nudge = 0.04 * math.sin(2 * TAU * t) if moving else 0.0
+        grip = shoulder["R"] + GUN_AHEAD[CURRENT] - Vector((0, nudge, 0))
+        grip.z = max(grip.z, 0.1 if moving else 0.16)
+        reach("R", grip, hands["R"][0], (-1.0, 0.2, -0.5))
+        reach("L", grip + (hands["L"][1] - hands["R"][1]), hands["L"][0], (1.0, 0.0, -0.5))
+        return
+    for n, sx in (("R", -1.0), ("L", 1.0)):
+        # Each hand pulls along with the opposite leg's push.
+        d = drawn(t + (0.0 if n == "R" else 0.5)) if moving else 0.35
+        if back:
+            d = 1.0 - d
+        lift = 0.06 * math.sin(math.pi * d) if moving and drawn(t + (0.0 if n == "R" else 0.5) + 0.01) > d else 0.0
+        wrist = Vector((shoulder[n].x + sx * 0.1, shoulder[n].y - 0.05 - 0.42 * d, 0.06 + lift))
+        turned = hands["R"][0] if n == "R" else FLAT_HAND[n]
+        reach(n, wrist, turned, (sx * 1.0, 0.2, 0.4))
+
+
+def crawl_gait(yaw=0.0, amount=1.0, back=False):
+    """Army crawl. The legs take turns drawing a knee up along the ground and pushing off it; the hips
+    roll up on the drawn side and the spine snakes towards it, while the arms pull or carry the gun."""
 
     def fn(t):
-        phi = TAU * t
-        crawl_pose(math.sin(phi))
-        # The torso rolls about its length with each push, the way a crawler pulls along.
-        arm_obj.pose.bones["hips"].rotation_euler = (0, 0, 0.08 * math.sin(phi) * (abs(df) + 0.2))
-        for side, offset in (("L", 0.0), ("R", math.pi)):
-            p = phi + offset
-            s = math.sin(p)
-            lift = max(0.0, math.cos(p))
-            thigh_x = amp * s * df
-            thigh_y = lat_amp * s * dr + (0.1 if side == "L" else -0.1)
-            shin_x = knee * lift**1.2
-            pose_rot(f"thigh_{side}", thigh_x, thigh_y, 0)
-            pose_rot(f"shin_{side}", shin_x, 0, 0)
-            pose_rot(f"foot_{side}", CRAWL_FOOT + shin_x * 0.5 - thigh_x * 0.5, 0, 0)
+        u = 1.0 - t if back else t
+        lie(math.sin(TAU * u), yaw=yaw)
+        dl = drawn(u) * amount
+        dr = drawn(u + 0.5) * amount
+        frog_leg("L", dl)
+        frog_leg("R", dr)
+        roll = 0.12 * (dl - dr)
+        bones = arm_obj.pose.bones
+        for name, m in (
+            ("hips", Matrix.Rotation(-roll, 3, "Z")),
+            ("spine", Matrix.Rotation(0.06 * (dl - dr), 3, "Y")),
+            ("chest", Matrix.Rotation(roll * 0.6, 3, "Z") @ Matrix.Rotation(-0.05 * (dl - dr), 3, "Y")),
+            ("head", Matrix.Rotation(-roll * 0.5, 3, "Z")),
+        ):
+            bones[name].rotation_euler = (local_euler(name, m).to_matrix() @ bones[name].rotation_euler.to_matrix()).to_euler("XYZ")
+        settle()
+        lying_arms(u, True, back)
 
     return fn
 
 
 def crawl_idle(t):
-    crawl_pose(math.sin(TAU * t))
-    for side in ("L", "R"):
-        pose_rot(f"thigh_{side}", 0.0, 0.1 if side == "L" else -0.1, 0)
-        pose_rot(f"shin_{side}", 0.05, 0, 0)
-        pose_rot(f"foot_{side}", CRAWL_FOOT, 0, 0)
+    """Lying still, propped on the elbows with the gun up and aimed."""
+    lie(math.sin(TAU * t), arch=PRONE_ARCH * 1.3)
+    frog_leg("L", 0.18)
+    frog_leg("R", 0.05)
+    settle()
+    lying_arms(t, False)
+
+
+def crawl_stride():
+    """How far one cycle carries the body: each knee slides from beside the hip to straight out once."""
+    knees = []
+    for draw in (0.0, 1.0):
+        reset_pose()
+        lie()
+        frog_leg("L", draw)
+        bpy.context.view_layer.update()
+        knees.append(arm_obj.pose.bones["shin_L"].head.copy())
+    reset_pose()
+    return 2 * abs(knees[1].y - knees[0].y)
 
 
 def slide(t):
@@ -761,6 +907,10 @@ def sit(t):
         pose_rot(f"foot_{side}", 0.72, 0, 0)
 
 
+# One crawl cycle, two pushes, at 60 fps.
+CRAWL_FRAMES = 78
+
+
 def build_actions():
     global CURRENT
     walk = dict(amp=0.68, lat_amp=0.38, knee=0.95, lean=0.0, bob=0.022, cycle_sway=0.03)
@@ -785,9 +935,12 @@ def build_actions():
         bake(f"{prefix}crouch_idle", 120, crouch_idle)
         for name, d in dirs.items():
             bake(f"{prefix}crouch_{name}", 36, crouch_gait(d, 0.3, 0.26, 0.5))
-        bake(f"{prefix}crawl_idle", 120, crawl_idle)
-        for name, d in dirs.items():
-            bake(f"{prefix}crawl_{name}", 48, crawl_gait(d, 0.15, 0.1, 0.9))
+        bake(f"{prefix}crawl_idle", 180, crawl_idle)
+        bake(f"{prefix}crawl_fwd", CRAWL_FRAMES, crawl_gait())
+        bake(f"{prefix}crawl_back", CRAWL_FRAMES, crawl_gait(amount=0.8, back=True))
+        # Sideways the body turns a little towards where it goes and crawls on that slant.
+        bake(f"{prefix}crawl_left", CRAWL_FRAMES, crawl_gait(yaw=0.6, amount=0.8))
+        bake(f"{prefix}crawl_right", CRAWL_FRAMES, crawl_gait(yaw=-0.6, amount=0.8))
         bake(f"{prefix}slide", 120, slide)
         bake(f"{prefix}jump_air", 60, jump_air)
         bake(f"{prefix}sit", 120, sit)
@@ -799,6 +952,10 @@ def build_actions():
 
 
 build_actions()
+anim_action = arm_obj.animation_data.action
+arm_obj.animation_data.action = None
+print(f"crawl: {crawl_stride() / (CRAWL_FRAMES / FPS):.2f} m/s")
+arm_obj.animation_data.action = anim_action
 
 # The death clip should not loop-wrap with a pose change: hold the final pose on its closing key.
 # (It is `t = f / frames`, so the last key at t = 1 equals the lying-down pose and is not wrapped.)
@@ -868,6 +1025,7 @@ def preview(directory):
         # Lying down, the body runs along -Y from the feet: frame it from above and from the side.
         "lie_top": (Vector((0, -0.85, 6.0)), Vector((0, -0.85, 0.0))),
         "lie_side": (Vector((6, -0.85, 0.4)), Vector((0, -0.85, 0.2))),
+        "lie_three": (Vector((-3.5, -4.0, 2.4)), Vector((0, -0.85, 0.2))),
     }
 
     def shoot(name, view):
@@ -888,10 +1046,23 @@ def preview(directory):
         for i in range(4):
             at(clip, i * frames // 4)
             shoot(f"{clip}_{i}", "side" if clip.endswith("fwd") else "front")
-    for clip, view in (("slide", "side"), ("slide", "front"), ("crouch_idle", "side"), ("crouch_idle", "three"), ("crouch_fwd", "side"), ("crouch_right", "front"), ("crawl_idle", "lie_side"), ("crawl_idle", "lie_top"), ("crawl_fwd", "lie_side"), ("crawl_fwd", "lie_top"), ("crawl_left", "lie_top"), ("sit", "side"), ("sit", "three"), ("pistol_sit", "side")):
+    for clip, view in (("slide", "side"), ("slide", "front"), ("crouch_idle", "side"), ("crouch_idle", "three"), ("crouch_fwd", "side"), ("crouch_right", "front"), ("sit", "side"), ("sit", "three"), ("pistol_sit", "side")):
         for i in range(2):
             at(clip, i * (18 if "fwd" in clip or "right" in clip else 60))
             shoot(f"{clip}_{view}_{i}", view)
+    # Lying down in each stance: still from three sides, and a crawl cycle in four steps.
+    for stance, item in (("", "ak5"), ("pistol_", "revolver"), ("hold_", "grenade")):
+        for obj in weapon_objects:
+            obj.hide_render = obj.name != f"weapon_{item}"
+        at(f"{stance}crawl_idle", 0)
+        for view in ("lie_side", "lie_top", "lie_three"):
+            shoot(f"{stance}crawl_idle_{view}", view)
+        for i in range(4):
+            at(f"{stance}crawl_fwd", i * CRAWL_FRAMES // 4)
+            shoot(f"{stance}crawl_fwd_{i}_top", "lie_top")
+            shoot(f"{stance}crawl_fwd_{i}_three", "lie_three")
+    for obj in weapon_objects:
+        obj.hide_render = False
     # Each weapon in the stance it is held in, one at a time.
     for obj in weapon_objects:
         obj.hide_render = True

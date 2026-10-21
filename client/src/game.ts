@@ -2,7 +2,7 @@ import type { Node } from '@ragnarok/engine'
 import * as THREE from 'three'
 import {
   ARMS_CUT, ARMS_JAMMED, ARMS_REAR_JAMMED, DAMAGE_TURRET, DAMAGE_WHEELS, encodeInput, encodePing, isDrone, KIND_DRONE, KIND_HELI, KIND_LOITER, KIND_HEN, KIND_PLANE, KIND_MORTAR, KIND_ROADSTER, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_STRV, KIND_TANK, KIND_WALKER, sceneStates, toAxis, toMrad, TURRET_GONE, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RICOCHET, WEAPON_TURRET,
-  PROJECTILE_BULLET, WEAPON_BULLET, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LOITER, WEAPON_BOMB, WEAPON_EGG, WEAPON_CRASH, WEAPON_MG, WEAPON_PELLET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_WRECK,
+  PROJECTILE_BULLET, PROJECTILE_FLARE, WEAPON_BULLET, WEAPON_FLARE, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LOITER, WEAPON_BOMB, WEAPON_EGG, WEAPON_CRASH, WEAPON_MG, WEAPON_PELLET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_WRECK,
   type Arms, type BulletSpawn, type DriveState, type EntityState, type InputFrame, type PickupState, type RocketState, type Rider, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
 } from './net/codec'
 import { blendEntity, blendRocket, blendVehicle, Interpolator } from './net/interp'
@@ -88,6 +88,10 @@ export type { Blip } from './blips'
 /** How the minimap tells sides apart. */
 /** Feet this deep (metres) under the surface are in the water. */
 const WADE_DEPTH = 0.15
+/** A burning flare's light: warm white, strong enough to light a field from where it hangs. */
+const FLARE_LIGHT = 0xffe8c8
+const FLARE_INTENSITY = 5
+const FLARE_LIGHT_RADIUS = 150
 /** Falling this high (metres) over the ground, a hint offers the parachute. */
 const CHUTE_PROMPT_HEIGHT = 4
 /** Wading ripples are drawn within this many metres of the camera. */
@@ -1025,6 +1029,13 @@ export class Game {
     } else if (shot.weapon === WEAPON_LOITER) {
       this.blast(to, LOITER_BLAST_RADIUS, BLASTS.shell)
       this.sounds.explosion([to.x, to.y, to.z])
+    } else if (shot.weapon === WEAPON_FLARE) {
+      // The flare itself is a projectile; this is the gun going off.
+      this.avatars.get(shot.shooter === this.localId ? 0 : shot.shooter)?.fire()
+      const from = this.muzzleOf(shot.shooter) ?? to
+      this.effects.muzzle(from)
+      this.muzzleLight(from, 0xffa060, 2.5, 8)
+      this.sounds.gunshot([from.x, from.y, from.z], 'revolver')
     } else if (shot.weapon === WEAPON_AUTOCANNON) {
       this.blast(to, CANNON_RADIUS, BLASTS.cannon)
       this.sounds.blast([to.x, to.y, to.z], 'small')
@@ -1211,6 +1222,7 @@ export class Game {
       if (!state) continue
       this.rocketModels.place(id, state.kind, [state.x, state.y, state.z], [state.vx, state.vy, state.vz])
       this.trails.follow('r', id, state.kind, state.x, state.y, state.z)
+      if (state.kind === PROJECTILE_FLARE) this.burnFlare(id, state.x, state.y, state.z)
       // Only a motor-driven rocket (kind 0) leaves a flame and a smoke trail.
       if (state.kind === 0) {
         this.trailOwed.set(id, rocketTrail(this.fxWorld, [state.x, state.y, state.z], [state.vx, state.vy, state.vz], this.frameDt, this.trailOwed.get(id) ?? 0))
@@ -1273,6 +1285,32 @@ export class Game {
     }
     const heard = muzzle ?? new THREE.Vector3(at[0], at[1], at[2])
     this.sounds.gunshot([heard.x, heard.y, heard.z], gun?.sound ?? 'rifle')
+  }
+
+  /**
+   * A burning flare, drawn each frame it is listed: a blooming halo, sparks dripping off it, and a strong,
+   * gently flickering light on everything below. The halo lives two frames, so it looks the same at any frame rate.
+   */
+  private burnFlare(id: number, x: number, y: number, z: number) {
+    const now = performance.now()
+    const flicker = 0.85 + 0.15 * Math.sin(now * 0.031 + id) * Math.sin(now * 0.0117 + id * 2.3)
+    this.scene.scene.lights.hold(x, y, z, { color: FLARE_LIGHT, intensity: FLARE_INTENSITY * flicker, radius: FLARE_LIGHT_RADIUS })
+    const life = Math.max(this.frameDt, 1 / 240) * 2
+    this.glow.spawn({ position: [x, y, z], velocity: [0, 0, 0], life, size: [3 * flicker, 2.6], color: 0xfff2dc, alpha: 0.9, glow: 4 })
+    this.glow.spawn({ position: [x, y, z], velocity: [0, 0, 0], life, size: [0.9, 0.8], color: 0xffffff, alpha: 1, glow: 8 })
+    if (Math.random() < this.frameDt * 10) {
+      this.glow.spawn({
+        position: [x, y, z],
+        velocity: [(Math.random() - 0.5) * 1.5, -0.5 - Math.random(), (Math.random() - 0.5) * 1.5],
+        life: 0.6 + Math.random() * 0.6,
+        size: [0.14, 0.04],
+        color: 0xffc46a,
+        alpha: 1,
+        gravity: 6,
+        drag: 0.5,
+        glow: 3,
+      })
+    }
   }
 
   /** The unspent fraction of a smoke puff, per rocket in flight. */

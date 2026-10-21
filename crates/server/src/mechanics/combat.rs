@@ -8,8 +8,8 @@ use crate::physics::Obj;
 use shared::consts::*;
 use shared::items::*;
 use shared::vehicles::{Exposure, crew_gun, vehicle_def};
-use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, KIND_PLANE, Kill, S_HIT, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_EGG, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, BulletSpawn, WEAPON_BULLET, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_PELLET, WEAPON_ROADKILL, WEAPON_WRECK,
-    DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_EGG, WEAPON_LOITER, WEAPON_SHELL};
+use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, KIND_PLANE, Kill, S_HIT, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_EGG, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, BulletSpawn, WEAPON_BULLET, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_PELLET, WEAPON_ROADKILL, WEAPON_WRECK,
+    DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_EGG, WEAPON_FLARE, WEAPON_LOITER, WEAPON_SHELL};
 use shared::quant::{from_mrad, to_cm, to_cm_i16, to_mrad};
 
 /// Health, death, the items in the hotbar and what blasts do to people and vehicles.
@@ -713,6 +713,10 @@ fn step_rockets(world: &mut World, dt: f32) {
             step_bullet(world, id, dt);
             continue;
         }
+        if rocket.kind == PROJECTILE_FLARE {
+            step_flare(world, id, dt);
+            continue;
+        }
         // Shells and bombs are the `Gunnery` mechanic's.
         if rocket.kind == PROJECTILE_SHELL || rocket.kind == PROJECTILE_CANNON || rocket.kind == PROJECTILE_BOMB || rocket.kind == PROJECTILE_MORTAR {
             continue;
@@ -1024,6 +1028,56 @@ fn step_grenade(world: &mut World, id: u32, dt: f32) {
     }
 }
 
+/// Fires a flare from player `id`'s eye along where they look.
+fn fire_flare(world: &mut World, id: u32) {
+    let Some(player) = world.players.get(&id) else { return };
+    let input = player.input;
+    let c = player.character;
+    let dir = look(from_mrad(input.yaw), from_mrad(input.pitch()).clamp(-MAX_PITCH, MAX_PITCH));
+    let eye = [c.position[0], c.position[1] + eye_height(input.buttons(), c.prone), c.position[2]];
+    // Up against a wall it starts at the wall instead of on its far side.
+    let reach = world.physics.cast_ray(eye, dir, FLARE_MUZZLE + FLARE_RADIUS, 0).map_or(FLARE_MUZZLE, |t| (t - FLARE_RADIUS).max(0.0));
+    let position: [f32; 3] = std::array::from_fn(|i| eye[i] + dir[i] * reach);
+    let [x, y, z] = position.map(to_cm);
+    world.shots.push(ShotEvent { shooter: id, weapon: WEAPON_FLARE, x, y, z });
+    let flare_id = world.alloc_id();
+    world.rockets.insert(
+        flare_id,
+        Rocket { kind: PROJECTILE_FLARE, owner: id, source: 0, position, velocity: dir.map(|v| v * FLARE_SPEED), ttl: FLARE_BURN_TICKS, item: 0, back: 0, flown: 0.0 },
+    );
+}
+
+/// Flies one flare a tick: it climbs under gravity, then sinks slowly under its parachute while its
+/// drift dies away, stops on whatever it meets, and is gone when it has burnt out.
+fn step_flare(world: &mut World, id: u32, dt: f32) {
+    let Some(mut flare) = world.rockets.get(&id).copied() else { return };
+    flare.ttl = flare.ttl.saturating_sub(1);
+    if flare.velocity != [0.0; 3] {
+        flare.velocity[1] -= GRAVITY * dt;
+        if flare.velocity[1] < 0.0 {
+            let keep = (-FLARE_DRAG * dt).exp();
+            flare.velocity[0] *= keep;
+            flare.velocity[2] *= keep;
+            flare.velocity[1] = flare.velocity[1].max(-FLARE_SINK);
+        }
+        let speed = flare.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
+        let dir = flare.velocity.map(|v| v / speed);
+        let step = speed * dt;
+        match world.physics.cast_ray(flare.position, dir, step + FLARE_RADIUS, 0) {
+            Some(t) => {
+                flare.position = std::array::from_fn(|i| flare.position[i] + dir[i] * (t - FLARE_RADIUS).clamp(0.0, step));
+                flare.velocity = [0.0; 3];
+            }
+            None => flare.position = std::array::from_fn(|i| flare.position[i] + dir[i] * step),
+        }
+    }
+    if flare.ttl == 0 || flare.position[1] < KILL_Y {
+        world.rockets.remove(&id);
+    } else {
+        world.rockets.insert(id, flare);
+    }
+}
+
 /// The slot in hand after it has been used once: one fewer, and empty when none are left.
 fn spend(slot: &mut ItemSlot) {
     slot.count = slot.count.saturating_sub(1);
@@ -1085,6 +1139,14 @@ fn use_item(world: &mut World, id: u32) {
                 player.fire_cooldown = item.cooldown_ticks;
                 spend(&mut player.hotbar[slot]);
                 throw_grenade(world, id);
+            }
+        }
+        ItemKind::Flare => {
+            let burning = world.rockets.values().filter(|rocket| rocket.kind == PROJECTILE_FLARE).count();
+            if fresh && player.fire_cooldown == 0 && burning < MAX_FLARES {
+                player.fire_cooldown = item.cooldown_ticks;
+                spend(&mut player.hotbar[slot]);
+                fire_flare(world, id);
             }
         }
         ItemKind::Drone => {

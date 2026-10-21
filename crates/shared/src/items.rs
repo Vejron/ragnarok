@@ -1,7 +1,7 @@
 //! Items a player can carry in the hotbar. Mirrored in `client/src/sim/items.ts`.
 
 use crate::consts::TICK_RATE;
-use crate::protocol::{KIND_LOITER, WEAPON_DRONE, WEAPON_GRENADE, WEAPON_LOITER, WEAPON_REVOLVER, WEAPON_RIFLE, WEAPON_SHOTGUN, WEAPON_SNIPER};
+use crate::protocol::{KIND_LOITER, WEAPON_DRONE, WEAPON_FLARE, WEAPON_GRENADE, WEAPON_LOITER, WEAPON_REVOLVER, WEAPON_RIFLE, WEAPON_SHOTGUN, WEAPON_SNIPER};
 
 /// Slots in the hotbar. A player picks one with the `slot` field of their input.
 pub const HOTBAR_SLOTS: usize = 5;
@@ -20,8 +20,10 @@ pub const ITEM_SHOTGUN: u8 = 7;
 pub const ITEM_DRONE: u8 = 8;
 /// A loitering drone: launched high above and behind its owner, and flown into a target.
 pub const ITEM_LOITER: u8 = 9;
+/// A flare gun: one shot sends a flare up that hangs under a parachute, lighting the ground below.
+pub const ITEM_FLARE: u8 = 10;
 /// One past the largest item id.
-pub const ITEM_COUNT: u8 = 10;
+pub const ITEM_COUNT: u8 = 11;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ItemKind {
@@ -34,6 +36,8 @@ pub enum ItemKind {
     /// Launched, then flown by its owner as a drone vehicle, `KIND_DRONE` or `KIND_LOITER` (see the
     /// `Drones` mechanic).
     Drone,
+    /// Fires a flare: light, not harm.
+    Flare,
 }
 
 /// How a hitscan round loses damage with distance: all of it up to `start` metres, then a straight
@@ -289,6 +293,27 @@ const LOITER: ItemDef = ItemDef {
     weight: 1,
 };
 
+const FLARE: ItemDef = ItemDef {
+    name: "Flare gun",
+    kind: ItemKind::Flare,
+    auto: false,
+    damage: 0,
+    cooldown_ticks: TICK_RATE,
+    mag: 0,
+    reload_ticks: 0,
+    range: 0.0,
+    spread: 0.0,
+    projectile: false,
+    pellets: 1,
+    falloff: Falloff::NONE,
+    aim_speed: 1.0,
+    scope: false,
+    // Flares left; the gun goes when the last is fired.
+    stack: 3,
+    weapon: WEAPON_FLARE,
+    weight: 2,
+};
+
 /// The definition of `item`; `None` for an empty slot or an unknown id.
 pub fn def(item: u8) -> Option<&'static ItemDef> {
     match item {
@@ -301,6 +326,7 @@ pub fn def(item: u8) -> Option<&'static ItemDef> {
         ITEM_GOLDEN_EGG => Some(&GOLDEN_EGG),
         ITEM_DRONE => Some(&DRONE),
         ITEM_LOITER => Some(&LOITER),
+        ITEM_FLARE => Some(&FLARE),
         _ => None,
     }
 }
@@ -338,6 +364,19 @@ pub const GRENADE_MUZZLE: f32 = 0.6;
 pub const GRENADE_RADIUS: f32 = 0.1;
 /// Grenades in flight at once, which bounds the projectile list.
 pub const MAX_GRENADES: usize = 16;
+
+/// Flares: fired along the look direction at `FLARE_SPEED`, they climb under gravity. Once falling
+/// their parachute opens: the sink eases to `FLARE_SINK` and the sideways drift dies away at
+/// `FLARE_DRAG` a second. They stop on whatever they meet and burn out `FLARE_BURN_TICKS` after firing.
+pub const FLARE_SPEED: f32 = 55.0;
+pub const FLARE_SINK: f32 = 2.5;
+pub const FLARE_DRAG: f32 = 1.5;
+pub const FLARE_BURN_TICKS: u32 = 45 * TICK_RATE;
+/// It leaves this far in front of the eye, metres, and is this big for collision.
+pub const FLARE_MUZZLE: f32 = 0.6;
+pub const FLARE_RADIUS: f32 = 0.1;
+/// Flares burning at once. They burn long, so they get their own bound on top of the grenades'.
+pub const MAX_FLARES: usize = 8;
 
 /// FPV drones. One flies for `DRONE_ENERGY_TICKS` and no further than
 /// `DRONE_RANGE` metres from its pilot's body, which keeps both inside one `INTEREST_RADIUS`. It is
@@ -459,6 +498,7 @@ mod tests {
                     ItemKind::Grenade => "grenade",
                     ItemKind::Heal => "heal",
                     ItemKind::Drone => "drone",
+                    ItemKind::Flare => "flare",
                 };
                 format!(
                     "    \"{id}\": {{\"name\": \"{}\", \"kind\": \"{kind}\", \"auto\": {}, \"damage\": {}, \"cooldownTicks\": {}, \"mag\": {}, \"reloadTicks\": {}, \"range\": {}, \"aimSpeed\": {}, \"scope\": {}, \"stack\": {}, \"weapon\": {}, \"projectile\": {}, \"pellets\": {}, \"falloffStart\": {}, \"falloffEnd\": {}, \"falloffMin\": {}}}",

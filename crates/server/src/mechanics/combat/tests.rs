@@ -1,7 +1,7 @@
 use super::*;
 use crate::game::{Command, Game, Outgoing};
 use crate::physics::STANDING_Y;
-use shared::protocol::{InputFrame, Snapshot, WEAPON_BULLET, WEAPON_REVOLVER, WEAPON_PELLET, WEAPON_SHOTGUN, decode};
+use shared::protocol::{InputFrame, Snapshot, WEAPON_BULLET, WEAPON_FLARE, WEAPON_REVOLVER, WEAPON_PELLET, WEAPON_SHOTGUN, decode};
 use shared::quant::to_mrad;
 use shared::world::{WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
@@ -536,6 +536,57 @@ fn a_grenade_at_your_feet_hurts_and_one_beside_a_target_kills_them() {
     assert!(game.world.rockets.is_empty());
     assert!(game.world.players[&target].hp < PLAYER_MAX_HP - 50, "{}", game.world.players[&target].hp);
     assert_eq!(game.world.players[&shooter].hp, PLAYER_MAX_HP, "20 m clear of the blast");
+}
+
+#[test]
+fn a_flare_gun_spends_a_flare_and_fires_it() {
+    let (mut game, shooter, _, mut seq, _) = duel();
+    give(&mut game, shooter, 2, ITEM_FLARE, 2);
+    hold_slot(&mut game, shooter, &mut seq, BUTTON_FIRE, 2, 1);
+    assert_eq!(game.world.players[&shooter].hotbar[2].count, 1, "one fired");
+    let flare = *game.world.rockets.values().next().expect("in flight");
+    assert_eq!(flare.kind, PROJECTILE_FLARE);
+    assert!(game.world.shots.iter().any(|s| s.weapon == WEAPON_FLARE && s.shooter == shooter));
+}
+
+#[test]
+fn a_flare_climbs_then_sinks_slowly_and_burns_out_where_it_lands() {
+    let (mut game, shooter, target, _, _) = duel();
+    let id = game.world.alloc_id();
+    let start = [100.0, 2.0, 10.0];
+    game.world.rockets.insert(id, Rocket { kind: PROJECTILE_FLARE, owner: shooter, source: 0, position: start, velocity: [5.0, FLARE_SPEED, 0.0], ttl: FLARE_BURN_TICKS, item: 0, back: 0, flown: 0.0 });
+    let mut top = 0.0f32;
+    let mut ticks = 0;
+    while game.world.rockets[&id].velocity[1] > 0.0 {
+        game.step();
+        ticks += 1;
+        top = top.max(game.world.rockets[&id].position[1]);
+    }
+    assert!(top > 50.0, "it climbs high: {top}");
+    // Under its parachute it sinks no faster than `FLARE_SINK` and its drift dies away.
+    for _ in 0..2 * TICK_RATE {
+        game.step();
+        ticks += 1;
+    }
+    let hanging = game.world.rockets[&id];
+    assert!((hanging.velocity[1] + FLARE_SINK).abs() < 1e-3, "sinks at {}", hanging.velocity[1]);
+    assert!(hanging.velocity[0].abs() < 0.5, "drift dies away: {}", hanging.velocity[0]);
+    assert!(hanging.position[1] > top - 2.0 * FLARE_SINK - 2.0, "slowly: {} from {top}", hanging.position[1]);
+    // It lands well before it burns out, and burns where it lies.
+    while game.world.rockets[&id].velocity != [0.0; 3] {
+        game.step();
+        ticks += 1;
+        assert!(ticks < FLARE_BURN_TICKS, "still falling when it burnt out");
+    }
+    let landed = game.world.rockets[&id].position;
+    assert!(landed[1] < 1.0, "on the ground: {landed:?}");
+    game.step();
+    assert_eq!(game.world.rockets[&id].position, landed);
+    for _ in ticks + 1..FLARE_BURN_TICKS {
+        game.step();
+    }
+    assert!(!game.world.rockets.contains_key(&id), "burnt out");
+    assert_eq!(game.world.players[&target].hp, PLAYER_MAX_HP, "light, not harm");
 }
 
 #[test]

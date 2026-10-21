@@ -17,8 +17,10 @@ export const ITEM_SHOTGUN = 7
 export const ITEM_DRONE = 8
 /** A loitering drone: launched high above and behind its owner, and flown into a target. */
 export const ITEM_LOITER = 9
+/** Fires a flare that hangs under a parachute, lighting the ground below. */
+export const ITEM_FLARE = 10
 
-export type ItemKind = 'gun' | 'grenade' | 'heal' | 'drone'
+export type ItemKind = 'gun' | 'grenade' | 'heal' | 'drone' | 'flare'
 
 export interface ItemDef {
   name: string
@@ -62,6 +64,7 @@ const DEFS: Record<number, ItemDef> = {
   [ITEM_BANDAGE]: { name: 'Bandage', kind: 'heal', auto: false, damage: 40, cooldownTicks: 0, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 5, stance: 'hold', weapon: 0, projectile: false, sound: 'rifle', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
   [ITEM_DRONE]: { name: 'FPV drone', kind: 'drone', auto: false, damage: 0, cooldownTicks: TICK_RATE, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 1, stance: 'hold', weapon: 19, projectile: false, sound: 'rifle', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
   [ITEM_LOITER]: { name: 'Loitering drone', kind: 'drone', auto: false, damage: 0, cooldownTicks: TICK_RATE, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 1, stance: 'hold', weapon: 21, projectile: false, sound: 'rifle', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
+  [ITEM_FLARE]: { name: 'Flare gun', kind: 'flare', auto: false, damage: 0, cooldownTicks: TICK_RATE, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 3, stance: 'pistol', weapon: 22, projectile: false, sound: 'revolver', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
   [ITEM_GOLDEN_EGG]: { name: 'Golden egg', kind: 'heal', auto: false, damage: 255, cooldownTicks: 0, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 1, stance: 'hold', weapon: 0, projectile: false, sound: 'rifle', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
 }
 
@@ -107,6 +110,9 @@ export const DRONE_BLAST_RADIUS = 4.0
 export const LOITER_ENERGY_TICKS = 60 * TICK_RATE
 export const LOITER_RANGE = 600.0
 export const LOITER_BLAST_RADIUS = 12.0
+/** Flares: how long one burns and how fast it sinks under its parachute. Mirrors `FLARE_*` in items.rs. */
+export const FLARE_BURN_TICKS = 45 * TICK_RATE
+export const FLARE_SINK = 2.5
 /** The most pitch the server will accept, radians. */
 export const MAX_AIM_PITCH = 1.5
 /** A player in this many metres of an item can take it with use. */

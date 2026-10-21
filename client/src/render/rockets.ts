@@ -12,6 +12,8 @@ const BULLET = 4
 const BOMB = 5
 /** `PROJECTILE_EGG`: a hen's egg. */
 const EGG = 7
+/** `PROJECTILE_FLARE`: a burning flare, under its parachute once it sinks. */
+const FLARE = 8
 
 /** The projectiles in flight: a glowing missile or a tank shell pointed along its velocity, or a tumbling grenade. Their trails are `ProjectileTrails`. */
 export class Rockets {
@@ -35,6 +37,11 @@ export class Rockets {
   /** A hen's egg: a giant cream one (`HEN_EGG_RADIUS` across the middle), taller than it is wide, and rocking as it rolls. */
   private readonly egg = sphereGeometry(0.35, 12, 9)
   private readonly eggMaterial = toonMaterial({ color: 0xf6efdc })
+  /** A flare: a white-hot core (its glow and light are the game's), and a pale canopy above it while it sinks. */
+  private readonly flare = sphereGeometry(0.12, 8, 6)
+  private readonly flareMaterial = new Material({ color: 0xfff6e0, lit: false, fog: false })
+  private readonly canopy = cylinderGeometry(0.08, 0.7, 0.4, 10)
+  private readonly canopyMaterial = toonMaterial({ color: 0xe8e4d8 })
   private readonly meshes = new Map<number, Mesh>()
   private readonly up = new THREE.Vector3(0, 1, 0)
 
@@ -43,7 +50,13 @@ export class Rockets {
     let mesh = this.meshes.get(id)
     if (!mesh) {
       if (kind === GRENADE) mesh = new Mesh(this.ball, this.ballMaterial)
-      else if (kind === EGG) {
+      else if (kind === FLARE) {
+        mesh = new Mesh(this.flare, this.flareMaterial)
+        const canopy = new Mesh(this.canopy, this.canopyMaterial)
+        canopy.position.y = 1.4
+        canopy.visible = false
+        mesh.add(canopy)
+      } else if (kind === EGG) {
         mesh = new Mesh(this.egg, this.eggMaterial)
         mesh.scale.set(1, 1.3, 1)
       } else if (kind === BOMB) {
@@ -67,6 +80,14 @@ export class Rockets {
     mesh.position.set(...position)
     if (kind === GRENADE) {
       mesh.rotation.x += 0.25
+      return
+    }
+    if (kind === FLARE) {
+      // The canopy is open while it sinks, swaying a little, and gone once it lies on the ground.
+      const canopy = mesh.children[0]!
+      canopy.visible = velocity[1] < -0.5
+      const t = performance.now() / 1000 + id
+      mesh.rotation.set(Math.sin(t * 0.9) * 0.08, 0, Math.sin(t * 0.7) * 0.08)
       return
     }
     if (kind === EGG) {
@@ -103,6 +124,10 @@ export class Rockets {
     this.ballMaterial.dispose()
     this.egg.dispose()
     this.eggMaterial.dispose()
+    this.flare.dispose()
+    this.flareMaterial.dispose()
+    this.canopy.dispose()
+    this.canopyMaterial.dispose()
     this.bomb.dispose()
     this.fins.dispose()
     this.bombMaterial.dispose()

@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { Canopy } from './canopy'
 import { toonMaterial } from './toon'
 import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, PRONE_CENTRE, RUN_SPEED, STAND_CENTRE, WALK_SPEED } from '@/sim/consts'
-import { ITEM_AK5, ITEM_BANDAGE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, itemDef, type ItemDef } from '@/sim/items'
+import { ITEM_AK5, ITEM_BANDAGE, ITEM_FLARE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, itemDef, type ItemDef } from '@/sim/items'
 import { type Limb, poseLimb, splitLimbs } from './gibs'
 import { colorFor } from '@/profile'
 
@@ -29,6 +29,8 @@ const WEAPON_MESH: Record<number, string> = {
   [ITEM_SHOTGUN]: 'weapon_ak5',
   [ITEM_GRENADE]: 'weapon_grenade',
   [ITEM_BANDAGE]: 'weapon_bandage',
+  // The same: a pistol grip, so it borrows the revolver's.
+  [ITEM_FLARE]: 'weapon_revolver',
 }
 /** The muzzle bone of the stance whose hand pose a gun is modelled in; none for the hands-low stance. */
 const MUZZLE_BONE: Record<Stance, string | null> = { rifle: 'muzzle', pistol: 'muzzle_pistol', hold: null }
@@ -51,11 +53,12 @@ const SPEED_OF: Record<string, number> = {
   crouch_back: 1.8,
   crouch_left: 1.5,
   crouch_right: 1.5,
-  // Crawling covers a stride every 0.8 s, so it cycles at the rate the body actually moves.
-  crawl_fwd: 1.0,
-  crawl_back: 1.0,
-  crawl_left: 0.9,
-  crawl_right: 0.9,
+  // The knees push off about 0.4 m/s worth (the build script prints it), but lying flat the slide
+  // hardly shows and a crawl cycling that fast looks frantic: this keeps a steady pull at prone speed.
+  crawl_fwd: 0.7,
+  crawl_back: 0.7,
+  crawl_left: 0.7,
+  crawl_right: 0.7,
 }
 const LOCOMOTION = Object.keys(SPEED_OF)
 
@@ -67,6 +70,8 @@ const BLEND_RATE = 12
 const AIR_RATE = 10
 const DEATH_RATE = 9
 const CROUCH_RATE = 10
+/** Getting down onto the belly and back up is slower than a crouch, so it reads as a movement. */
+const LIE_RATE = 5
 const SLIDE_RATE = 14
 /** Torso lean for aiming: how much of the camera pitch the chest and spine take. */
 const AIM_CHEST = 0.4
@@ -300,7 +305,7 @@ export class Character {
     this.air = chase(this.air, !grounded && !this.down ? 1 : 0, AIR_RATE, dt)
     this.death = chase(this.death, this.down ? 1 : 0, DEATH_RATE, dt)
     this.crouch = chase(this.crouch, crouching ? 1 : 0, CROUCH_RATE, dt)
-    this.lie = chase(this.lie, prone ? 1 : 0, CROUCH_RATE, dt)
+    this.lie = chase(this.lie, prone ? 1 : 0, LIE_RATE, dt)
     const alive = 1 - this.death
     const ground = alive * (1 - this.air)
     this.slide = chase(this.slide, sliding && crouching ? 1 : 0, SLIDE_RATE, dt)
