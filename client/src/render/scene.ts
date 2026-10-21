@@ -83,6 +83,7 @@ export class Scene {
   /** Blob shadows; the game fills them in each frame. */
   readonly contact: ContactShadows
   private currentLook: Look = loadLook()
+  private disposed = false
 
   constructor(private readonly container: HTMLElement) {
     this.canvas.style.cssText = 'display:block;width:100%;height:100%'
@@ -101,11 +102,40 @@ export class Scene {
 
   /** Gets the GPU and sizes the picture. Rejects where WebGPU is missing. */
   async init() {
-    this.renderer = await Renderer.create(this.canvas, {
-      onDeviceLost: (info) => console.error(`The graphics device was lost: ${info.message}`),
-    })
-    setWaterReflection(this.renderer.reflection)
+    this.renderer = await this.createRenderer()
     this.resize()
+  }
+
+  private async createRenderer(): Promise<Renderer> {
+    const renderer = await Renderer.create(this.canvas, { onDeviceLost: (info) => this.deviceLost(info) })
+    setWaterReflection(renderer.reflection)
+    return renderer
+  }
+
+  /**
+   * The GPU can drop the device at any time (sleep and wake, a driver reset, a switch between GPUs), after
+   * which nothing draws and the canvas stays black. Ask for a new one; everything the scene holds is
+   * uploaded again on the next frame, since the engine's GPU copies belong to the device that made them.
+   */
+  private async deviceLost(info: GPUDeviceLostInfo) {
+    if (info.reason === 'destroyed' || this.disposed) return
+    console.warn(`The graphics device was lost (${info.message}); getting a new one`)
+    this.renderer = null
+    for (let attempt = 0; !this.disposed; attempt++) {
+      try {
+        const renderer = await this.createRenderer()
+        if (this.disposed) {
+          renderer.destroy()
+          return
+        }
+        this.renderer = renderer
+        this.resize()
+        return
+      } catch (error) {
+        console.error('Could not get the graphics device back:', error)
+        await new Promise((resolve) => setTimeout(resolve, Math.min(1000 * 2 ** attempt, 10000)))
+      }
+    }
   }
 
   get look(): Readonly<Look> {
@@ -245,6 +275,7 @@ export class Scene {
   }
 
   dispose() {
+    this.disposed = true
     this.resizeObserver.disconnect()
     this.gunsight.dispose()
     this.contact.dispose()

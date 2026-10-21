@@ -1,9 +1,11 @@
 import type { PixelData, Texture } from '../scene/texture'
 
-interface TextureSlot {
+export interface TextureSlot {
   texture: GPUTexture
   view: GPUTextureView
   version: number
+  /** The device it lives on: a slot from another (a lost one) is ignored and the texture re-uploaded. */
+  device: GPUDevice
 }
 
 const BLIT_WGSL = /* wgsl */ `
@@ -51,6 +53,7 @@ export class TextureStore {
   /** The texture's view, uploading it first if it is new or changed. */
   view(texture: Texture): GPUTextureView {
     let slot = texture.gpu as TextureSlot | undefined
+    if (slot && slot.device !== this.device) slot = undefined
     if (slot && slot.version === texture.version) return slot.view
     if (texture.disposed) {
       slot?.texture.destroy()
@@ -70,7 +73,7 @@ export class TextureStore {
         mipLevelCount,
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
       })
-      slot = { texture: gpu, view: gpu.createView(), version: -1 }
+      slot = { texture: gpu, view: gpu.createView(), version: -1, device: this.device }
       texture.gpu = slot
     }
     slot.version = texture.version

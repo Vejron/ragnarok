@@ -14,6 +14,8 @@ const RAMP_ROWS = 64
 interface MaterialSlot {
   index: number
   version: number
+  /** The table it was allocated in: a slot from another (a lost device's) is ignored and the record rewritten. */
+  owner: MaterialTable
 }
 
 /**
@@ -52,6 +54,7 @@ export class MaterialTable {
   /** The material's record index, uploading it first if it is new or changed. */
   sync(material: Material): number {
     let slot = material.gpu as MaterialSlot | undefined
+    if (slot && slot.owner !== this) slot = undefined
     if (slot && slot.version === material.version) return slot.index
     if (!slot) {
       let index = this.slots.alloc(1)
@@ -59,7 +62,7 @@ export class MaterialTable {
         this.grow(this.slots.capacity * 2)
         index = this.slots.alloc(1)
       }
-      slot = { index, version: -1 }
+      slot = { index, version: -1, owner: this }
       material.gpu = slot
       this.live.add(material)
     }

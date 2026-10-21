@@ -4,7 +4,7 @@ import { BoneTable } from './gpu/bones'
 import { MaterialTable } from './gpu/materials'
 import { ObjectTable } from './gpu/objects'
 import { MaterialResources } from './gpu/resources'
-import { TextureStore } from './gpu/textures'
+import { TextureStore, type TextureSlot } from './gpu/textures'
 import { GpuTimer } from './gpu/timer'
 import { SHADOW_WGSL } from './materials/shadow.wgsl'
 import { STANDARD_WGSL } from './materials/standard.wgsl'
@@ -802,7 +802,7 @@ export class Renderer {
     }
     // Hand the texture to whatever material samples `reflection`: its bind group is rebuilt when the version moves.
     this.reflection.version++
-    this.reflection.gpu = { texture: resolve, view: resolve.createView(), version: this.reflection.version }
+    this.reflection.gpu = { texture: resolve, view: resolve.createView(), version: this.reflection.version, device: this.device } satisfies TextureSlot
   }
 
   private reflectionPass(encoder: GPUCommandEncoder, scene: Scene) {

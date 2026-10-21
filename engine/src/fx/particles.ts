@@ -173,6 +173,8 @@ export class ParticleSystem extends Effect {
   }
 
   prepare(ctx: EffectContext, encoder: GPUCommandEncoder) {
+    // A new device (the old one was lost) starts the pool afresh.
+    if (this.gpu && this.gpu.device !== ctx.device) this.gpu = null
     const gpu = (this.gpu ??= new ParticleGpu(ctx.device, this.capacity))
     const device = ctx.device
     if (this.ground && this.ground.version !== gpu.groundVersion) gpu.uploadGround(this.ground)
@@ -254,7 +256,7 @@ class ParticleGpu {
   private pendingCount: { buffer: GPUBuffer; done: (dead: number) => void } | null = null
   private frame = 0
 
-  constructor(private readonly device: GPUDevice, private readonly capacity: number) {
+  constructor(readonly device: GPUDevice, private readonly capacity: number) {
     const storage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
     this.particles = device.createBuffer({ label: 'particles', size: capacity * PARTICLE_BYTES, usage: storage })
     this.deadList = device.createBuffer({ label: 'particle dead list', size: capacity * 4, usage: storage })

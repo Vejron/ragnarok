@@ -27,6 +27,8 @@ export interface GeometrySlot {
   firstIndex: number
   indexCount: number
   version: number
+  /** The arena it was allocated in: a slot from another (a lost device's) is ignored and the geometry re-uploaded. */
+  owner: GeometryArena
 }
 
 const INITIAL_VERTICES = 1 << 18
@@ -52,6 +54,7 @@ export class GeometryArena {
   /** Uploads `geometry` if it is new or changed; returns its slot, or null once disposed. */
   sync(geometry: Geometry): GeometrySlot | null {
     let slot = geometry.gpu as GeometrySlot | undefined
+    if (slot && slot.owner !== this) slot = undefined
     if (slot && slot.version === geometry.version) {
       const ranges = geometry.dirtyRanges
       for (let i = 0; i < ranges.length; i += 2) this.writeVertices(geometry, slot, ranges[i]!, ranges[i + 1]!)
@@ -77,6 +80,7 @@ export class GeometryArena {
         firstIndex: this.allocIndices(indexCount),
         indexCount,
         version: geometry.version,
+        owner: this,
       }
       geometry.gpu = slot
     }

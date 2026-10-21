@@ -158,7 +158,7 @@ export class FlashEffects extends Effect {
   private dirtyFrom = -1
   private dirtyCount = 0
   private readonly color = new Color()
-  private gpu: { buffer: GPUBuffer; clock: GPUBuffer; pipeline: GPURenderPipeline; group: GPUBindGroup; sampleCount: number } | null = null
+  private gpu: { device: GPUDevice; buffer: GPUBuffer; clock: GPUBuffer; pipeline: GPURenderPipeline; group: GPUBindGroup; sampleCount: number } | null = null
 
   constructor(readonly capacity = 8192) {
     super()
@@ -252,6 +252,8 @@ export class FlashEffects extends Effect {
   }
 
   private ensure(ctx: EffectContext) {
+    // A new device (the old one was lost) needs everything made again, records included.
+    if (this.gpu && this.gpu.device !== ctx.device) this.gpu = null
     if (this.gpu && this.gpu.sampleCount === ctx.sampleCount) return this.gpu
     const device = ctx.device
     const buffer = this.gpu?.buffer ?? device.createBuffer({ label: 'flashes', size: this.data.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST })
@@ -292,7 +294,7 @@ export class FlashEffects extends Effect {
       this.dirtyFrom = this.tail
       this.dirtyCount = this.live
     }
-    this.gpu = { buffer, clock, pipeline, group, sampleCount: ctx.sampleCount }
+    this.gpu = { device, buffer, clock, pipeline, group, sampleCount: ctx.sampleCount }
     return this.gpu
   }
 }

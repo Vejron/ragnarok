@@ -122,7 +122,7 @@ export class Ribbons extends Effect {
   private data: Float32Array<ArrayBuffer>
   private readonly color = new Color()
   private readonly colorEnd = new Color()
-  private gpu: { buffer: GPUBuffer; pipelines: GPURenderPipeline[]; group: GPUBindGroup; format: string } | null = null
+  private gpu: { device: GPUDevice; buffer: GPUBuffer; pipelines: GPURenderPipeline[]; group: GPUBindGroup; format: string } | null = null
   private counts = [0, 0]
 
   constructor(readonly capacity = 8192) {
@@ -237,6 +237,8 @@ export class Ribbons extends Effect {
 
   private ensureGpu(ctx: EffectContext) {
     const key = `${ctx.colorFormat}|${ctx.sampleCount}`
+    // A new device (the old one was lost) needs everything made again.
+    if (this.gpu && this.gpu.device !== ctx.device) this.gpu = null
     if (this.gpu && this.gpu.format === key) return this.gpu
     const device = ctx.device
     const buffer = this.gpu?.buffer ?? device.createBuffer({
@@ -264,7 +266,7 @@ export class Ribbons extends Effect {
       multisample: { count: ctx.sampleCount },
     }))
     const group = device.createBindGroup({ label: 'ribbons', layout, entries: [{ binding: 0, resource: { buffer } }] })
-    this.gpu = { buffer, pipelines, group, format: key }
+    this.gpu = { device, buffer, pipelines, group, format: key }
     return this.gpu
   }
 }
