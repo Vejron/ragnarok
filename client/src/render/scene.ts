@@ -1,8 +1,9 @@
-import { Bloom, Fog, Ink, PerspectiveCamera, Renderer, Scene as EngineScene } from '@ragnarok/engine'
+import { Bloom, Color, Fog, Ink, PerspectiveCamera, Renderer, Scene as EngineScene } from '@ragnarok/engine'
 import { GunSightView } from './gunsight'
 import { ContactShadows } from './contact'
 import { setWaterLight, setWaterPlane, setWaterReflection } from './water'
-import { CLASSIC, SOFT, loadLook, type Look } from './look'
+import { CLASSIC, SOFT, loadLook, type Look, type Palette } from './look'
+import { createSky, skyAt } from './daynight'
 import { ON_FOOT_HEIGHT, ON_FOOT_SHOULDER } from '../sim/consts'
 
 // On foot the camera is over the right shoulder and a little above the head; the server shares these.
@@ -38,11 +39,10 @@ export const CAMERA_HEIGHT = 1.2
 /** Not used for flying it (that is first person, `fpvFrom`), only by anything that asks every kind. */
 export const DRONE_DISTANCE = 3
 
-/**
- * Where the sun sits relative to what it follows, metres: about 42° above the horizon. Higher and
- * hillsides all fall in the same lit band; lower and the terrain's toon ramp shows its form.
- */
-const SUN_OFFSET = [70, 80, 55] as const
+/** How far from what it follows the sun (or moon) is put, metres, along its direction. */
+const SUN_DISTANCE = 120
+/** The time of day until the game says otherwise (the editor never does): noon. */
+const NOON = 0.5
 
 /**
  * The sun's shadow map covers a square this many metres to a side around the player, at this resolution,
@@ -83,6 +83,12 @@ export class Scene {
   /** Blob shadows; the game fills them in each frame. */
   readonly contact: ContactShadows
   private currentLook: Look = loadLook()
+  private palette: Palette = CLASSIC
+  private dayPhase = NOON
+  private readonly sky = createSky()
+  private readonly glint = new Color()
+  /** Where the sun stands relative to what it follows, metres; moves with the time of day. */
+  private readonly sunOffset = [0, SUN_DISTANCE, 0]
   private disposed = false
 
   constructor(private readonly container: HTMLElement) {
@@ -90,7 +96,6 @@ export class Scene {
     container.appendChild(this.canvas)
 
     this.scene.fog = new Fog(150, 600)
-    this.scene.sun.position.set(...SUN_OFFSET)
     this.scene.sun.shadow.enabled = true
     this.contact = new ContactShadows((x, z) => this.groundAt(x, z))
     this.scene.add(this.contact.root, this.gunsight.root)
@@ -146,22 +151,39 @@ export class Scene {
   setLook(look: Look) {
     this.currentLook = { ...look }
     const palette = look.soft ? SOFT : CLASSIC
+    this.palette = palette
     const scene = this.scene
-    scene.background.setHex(palette.sky)
-    scene.fog!.color.setHex(palette.sky)
-    scene.hemisphere.sky.setHex(palette.hemiSky)
-    scene.hemisphere.ground.setHex(palette.hemiGround)
-    scene.hemisphere.intensity = palette.hemiIntensity
-    scene.sun.color.setHex(palette.sun)
-    scene.sun.intensity = palette.sunIntensity
     scene.sun.shadow.radius = palette.shadowRadius
     scene.toneMapping = palette.toneMapping
     scene.exposure = palette.exposure
-    setWaterLight(palette.sky, palette.sun)
+    this.setTimeOfDay(this.dayPhase)
     this.contact.active = look.contact
     this.setShadowReach(look.far)
     scene.ink = look.ink ? (scene.ink ?? new Ink()) : null
     scene.bloom = look.bloom ? (scene.bloom ?? new Bloom()) : null
+  }
+
+  /**
+   * Moves the sun (or by night the moon) and colours the sky, fog and fill for `phase` of the day
+   * (`dayPhase`: 0 midnight, 0.5 noon). The sun's position follows on the next `follow`/`aimFrom`/... call.
+   */
+  setTimeOfDay(phase: number) {
+    this.dayPhase = phase
+    const sky = skyAt(phase, this.palette, this.sky)
+    const scene = this.scene
+    scene.background.copy(sky.sky)
+    scene.fog!.color.copy(sky.sky)
+    scene.hemisphere.sky.copy(sky.hemiSky)
+    scene.hemisphere.ground.copy(sky.hemiGround)
+    scene.hemisphere.intensity = sky.hemiIntensity
+    scene.sun.color.copy(sky.lightColor)
+    scene.sun.intensity = sky.lightIntensity
+    for (let i = 0; i < 3; i++) this.sunOffset[i] = sky.lightDir[i]! * SUN_DISTANCE
+    // The water's glint is the light's colour scaled by its strength against the noon sun's.
+    this.glint.copy(sky.lightColor).multiplyScalar(sky.lightIntensity / this.palette.sunIntensity)
+    setWaterLight(sky.sky.getHex(), this.glint.getHex())
+    const target = scene.sun.target
+    this.sunOver(target.x, target.y, target.z)
   }
 
   private setShadowReach(far: boolean) {
@@ -244,7 +266,7 @@ export class Scene {
   private sunOver(x: number, y: number, z: number) {
     const sun = this.scene.sun
     sun.target.set(x, y, z)
-    sun.position.set(x + SUN_OFFSET[0], y + SUN_OFFSET[1], z + SUN_OFFSET[2])
+    sun.position.set(x + this.sunOffset[0]!, y + this.sunOffset[1]!, z + this.sunOffset[2]!)
   }
 
   /** Eases the field of view towards the scope or aim zoom, or back, `dt` seconds on. `boost` widens the plain view, e.g. with speed. */

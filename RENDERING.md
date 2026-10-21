@@ -192,9 +192,23 @@ little by the soft palette's Neutral tone map: a pure yellow comes out about 12%
 
 ## Light
 
-One hemisphere light (sky colour above, ground bounce below) and one shadow-casting sun (about 42°
-up, offset `[70, 80, 55]` m from its target). There is no point lighting. Background and fog share the
-sky colour; fog runs 150–600 m.
+One hemisphere light (sky colour above, ground bounce below) and one shadow-casting sun, 120 m from
+its target. There is no point lighting. Background and fog share the sky colour; fog runs 150–600 m.
+
+### Day and night
+
+The day lasts 30 minutes (`DAY_SECONDS` in `render/daynight.ts`), counted from the server's tick, so
+every player sees the same time. A fresh server opens in the morning. `skyAt(phase, palette)` gives the
+light for a phase of the day (0 midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset) and
+`Scene.setTimeOfDay` applies it to the sun, hemisphere, sky, fog and water. `Game` calls it every frame
+once the clock has synced; the editor never does, so it stays at noon.
+
+- The sun rises, arcs through the bearing the old fixed sun had and peaks at 50°. At noon the light is
+  the palette's exactly.
+- The sun fades out at the horizon. By night the same light becomes a dim blue moon opposite the sun,
+  held at least 25° up so it never shines from under the ground and shadows keep working.
+- Sky and fill blend from night blues through a golden hour near the horizon to the palette's day.
+- `?time=0.27` in the address pins the time of day (here, just after sunrise), to look at one time.
 
 The sun's shadow map is a square orthographic frustum centred on the camera's target. Its centre is
 snapped to whole texels in the light's view, so the edges do not crawl as the target moves, and the

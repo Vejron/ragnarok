@@ -28,6 +28,7 @@ import { Predictor } from './sim/predict'
 import type { Vec3 } from './sim/physics'
 import { CarModel, type VehicleModel } from './render/car'
 import { Effects } from './render/effects'
+import { dayPhase } from './render/daynight'
 import { DamageNumbers } from './render/damagenumbers'
 import { Particles } from './render/particles'
 import { Skidmarks } from './render/skidmarks'
@@ -628,6 +629,8 @@ export class Game {
 
     const predictor = this.predictor!
     const renderTick = this.clock.tickAt(now) - this.clock.interpDelay
+    // The time of day runs on the server's clock, so every player sees the same sky.
+    if (this.clock.synced) this.scene.setTimeOfDay(dayPhase(renderTick, TICK_RATE))
     const seated = this.seat !== null
     // Flying a drone: the body kneels where it launched it, and the view is the drone's camera.
     const flying = this.seat !== null && this.seat.kind === KIND_DRONE
