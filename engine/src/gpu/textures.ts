@@ -42,6 +42,8 @@ export class TextureStore {
   private readonly blitModule: GPUShaderModule
   private readonly blitPipelines = new Map<GPUTextureFormat, GPURenderPipeline>()
   private readonly blitSampler: GPUSampler
+  /** Textures holding a GPU copy here, so disposed ones are freed even when nothing samples them again. */
+  private readonly live = new Set<Texture>()
 
   constructor(private readonly device: GPUDevice) {
     this.white = this.solid([255, 255, 255, 255], 'rgba8unorm')
@@ -58,6 +60,7 @@ export class TextureStore {
     if (texture.disposed) {
       slot?.texture.destroy()
       texture.gpu = undefined
+      this.live.delete(texture)
       return this.white
     }
     const format: GPUTextureFormat = texture.srgb ? 'rgba8unorm-srgb' : 'rgba8unorm'
@@ -75,6 +78,7 @@ export class TextureStore {
       })
       slot = { texture: gpu, view: gpu.createView(), version: -1, device: this.device }
       texture.gpu = slot
+      this.live.add(texture)
     }
     slot.version = texture.version
     const source = texture.source
@@ -86,6 +90,17 @@ export class TextureStore {
     }
     if (mipLevelCount > 1) this.generateMips(slot.texture)
     return slot.view
+  }
+
+  /** Destroys the GPU copies of disposed textures. Call once per frame, after drawing. */
+  collect() {
+    for (const texture of this.live) {
+      if (!texture.disposed) continue
+      const slot = texture.gpu as TextureSlot | undefined
+      if (slot?.device === this.device) slot.texture.destroy()
+      texture.gpu = undefined
+      this.live.delete(texture)
+    }
   }
 
   sampler(texture: Texture | null): GPUSampler {

@@ -189,7 +189,9 @@ export class Renderer {
     if (!adapter) throw new Error('No WebGPU adapter')
     const requiredFeatures: GPUFeatureName[] = []
     if (adapter.features.has('timestamp-query')) requiredFeatures.push('timestamp-query')
-    const device = await adapter.requestDevice({ requiredFeatures })
+    // The geometry arena is one vertex buffer; take what the GPU allows rather than the 256 MB default.
+    const requiredLimits = { maxBufferSize: adapter.limits.maxBufferSize }
+    const device = await adapter.requestDevice({ requiredFeatures, requiredLimits })
     return new Renderer(canvas, device, options)
   }
 
@@ -384,6 +386,8 @@ export class Renderer {
     this.timer.read()
     for (const effect of this.effects) effect.afterSubmit()
     this.materials.collect()
+    this.arena.collect()
+    this.textures.collect()
     this.objects.sweep(this.frameNumber)
     this.bones.sweep(this.frameNumber)
     this.resources.sweep()

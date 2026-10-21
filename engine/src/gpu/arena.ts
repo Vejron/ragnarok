@@ -45,6 +45,8 @@ export class GeometryArena {
   generation = 0
   private readonly vertices = new RangeAllocator(INITIAL_VERTICES)
   private readonly indices = new RangeAllocator(INITIAL_INDICES)
+  /** Geometries holding a slot here, so disposed ones are freed even when nothing draws them again. */
+  private readonly live = new Set<Geometry>()
 
   constructor(private readonly device: GPUDevice) {
     this.vertexBuffer = this.makeVertexBuffer(INITIAL_VERTICES)
@@ -65,6 +67,7 @@ export class GeometryArena {
     if (geometry.disposed) {
       if (slot) this.release(slot)
       geometry.gpu = undefined
+      this.live.delete(geometry)
       return null
     }
     const vertexCount = geometry.vertexCount
@@ -83,10 +86,25 @@ export class GeometryArena {
         owner: this,
       }
       geometry.gpu = slot
+      this.live.add(geometry)
     }
     slot.version = geometry.version
     this.write(geometry, slot)
     return slot
+  }
+
+  /**
+   * Frees the slots of disposed geometries. Call once per frame, after drawing: a geometry is usually
+   * disposed once its mesh has left the scene, so `sync` never sees it again.
+   */
+  collect() {
+    for (const geometry of this.live) {
+      if (!geometry.disposed) continue
+      const slot = geometry.gpu as GeometrySlot | undefined
+      if (slot?.owner === this) this.release(slot)
+      geometry.gpu = undefined
+      this.live.delete(geometry)
+    }
   }
 
   release(slot: GeometrySlot) {
@@ -184,6 +202,11 @@ export class GeometryArena {
   }
 
   private grow(old: GPUBuffer, next: GPUBuffer, bytes: number): GPUBuffer {
+    // Past the device's limit the new buffer would be invalid and every draw after it fail: a black screen.
+    if (next.size > this.device.limits.maxBufferSize) {
+      next.destroy()
+      throw new Error(`Geometry arena needs ${next.size} bytes, over the GPU's ${this.device.limits.maxBufferSize}`)
+    }
     const encoder = this.device.createCommandEncoder()
     encoder.copyBufferToBuffer(old, 0, next, 0, bytes)
     this.device.queue.submit([encoder.finish()])
