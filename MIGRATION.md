@@ -133,7 +133,124 @@ Phase 3 and 4 need both.
 
 ### Phase 3: component replication (protocol v2)
 
-- [ ] Per entity: id, component mask, changed components; codec generated from Rust.
+**Goal.** A new kind of thing, or a new capability on an existing one, needs no new wire format, no
+codec edit and no delta code on either side. The server sends the components it marks as replicated;
+the client keeps them in an entity store keyed by id. Measure: a new vehicle kind or NPC touches zero
+files under `net/`, `protocol.rs`, `delta.rs` and `replication.rs`.
+
+**What stays.** The protocol already does the hard parts well, and v2 keeps all of them:
+
+- diffs against the baseline the client acknowledged, so a lost snapshot costs nothing;
+- per-player interest at 300 m, held until 340 m;
+- the 1200-byte limit, kept by shedding the farthest first;
+- MessagePack;
+- the reliable stream and every reliable message (`kill`, `hit`, `destroyed`, `carved`…), which are
+  events, not entity state;
+- the per-player header fields: `ack`, `ride`, `drive`, `self`.
+
+**What changes is the shape of the state**, which today is one hand-written row per family:
+
+- `EntityState` and `VehicleState` (with optional `turret`, `arms`, `thrust`, `crew`), and their
+  deltas `EntityDelta` and `VehicleDelta`;
+- a projectile list resent whole every snapshot, and a pickup list capped at 24;
+- each of those written three times: Rust struct, `delta.rs`, `codec.ts`.
+
+#### Design
+
+1. **Replicated components** live in one Rust module, `shared::replicated`. Each is a small struct
+   with a stable wire id (`u8`, never reused) and a quantised wire form (the units today's rows
+   use):
+   - `Kind`, which picks the model;
+   - `Place`, centimetres;
+   - `Heading`, yaw;
+   - `Orientation`, a quaternion's x, y, z;
+   - `Motion`: vertical speed and knock, to resume a predicted stickman;
+   - `Flags`: grounded, dead, crouching, crowing;
+   - `Held`: the item in hand;
+   - `Steer`;
+   - `Seats`, `Turret`, `Health`, `Damage`, `Arms` and `Thrust` (to be split into one component
+     per meaning: air, stamina, battery, nozzles);
+   - `Crew`;
+   - `Velocity`, for projectiles;
+   - `Pickup`, the item lying there.
+
+   Fields that change together share a component, so the mask overhead stays small. A component may
+   say how it diffs (`Place` and `Heading` send differences, which MessagePack makes 1–2 bytes); the
+   default is "send the new value when it changed".
+2. **An entity update on the wire** is `[id, set, cleared, payload…]`:
+   - `set` is a bit mask of the components that follow, in wire-id order;
+   - `cleared` is a mask of components the entity no longer has (a repaired hull clears `Damage`, a
+     turret shot off clears `Turret`).
+
+   A new entity has every one of its components set. The snapshot becomes
+   `[1, tick, baseline, ack, ride, [update…], [removed…], drive, self, [shot…], [bullet…]]`.
+   Projectiles and pickups become ordinary entities in `[update…]`; their extra lists go. Shots and
+   bullets stay what they are: fire-and-forget events.
+3. **The server builds the scene from the ECS directly**, by a registry of (wire id → read the
+   component from the entity). This replaces `snapshot.rs`'s row building.
+   - Interest reads `Place`.
+   - Diff and apply become one generic pair over component lists, replacing `delta.rs`. It still
+     stores the scene each player holds, so loss handling is unchanged.
+   - A later optimisation, not needed at today's sizes: skip comparing a component whose
+     `bevy_ecs` change tick is older than the baseline's.
+4. **The codec is generated from Rust.** Rust writes a schema, as it writes
+   `tables.generated.json`: for each component its wire id, name, field names, types and scales.
+   - The client decodes every component with one schema-driven function, and applies deltas with
+     one generic function.
+   - Byte fixtures produced by Rust pin the two sides together, as `codec.spec.ts` does today.
+   - Client → server messages (`input`, `ping`, `rtc`) are tiny and stay hand-written.
+5. **The client gets an entity store in Phase 3, and its presenters in Phase 4.** To keep this phase
+   bounded, the store has an adapter that turns it back into today's `EntityState`, `VehicleState`,
+   rocket and pickup lists. `game.ts` then runs unchanged on v2, and each adapter field Phase 4
+   replaces with a presenter is one less mirror.
+
+#### Steps
+
+Each step is tested on its own. Only the last one changes the wire.
+
+- [ ] **3.1** `shared::replicated`: the components, their wire ids, the generic diff and apply, and
+      the schema export. Unit tests port `delta.rs`'s tests: an unchanged turret is not resent, a
+      repair clears damage, and so on.
+- [ ] **3.2** Server: the component scene built from the ECS. Parity oracle: for the full-room
+      scenario, converting it to today's rows must equal what `snapshot.rs` builds, entity for
+      entity.
+- [ ] **3.3** Client: the generated schema, the generic decoder, the store and its `apply`. Byte
+      fixtures from Rust decode to the scenes Rust built.
+- [ ] **3.4** Client: the adapter, from the store to today's states. The same fixtures must give the
+      states the v1 decoder gives.
+- [ ] **3.5** Switch:
+  - snapshot v2 on the wire, with `PROTOCOL_VERSION` bumped;
+  - client and server ship together, so there is no dual-protocol period;
+  - delete `EntityState`/`VehicleState`/`*Delta` and their codec, `delta.rs`, the projectile and
+    pickup lists and `snapshot.rs`'s row building;
+  - update NETWORKING.md.
+- [ ] **3.6** A headless browser session against a real server: join, walk, drive, shoot, and watch a
+      bot and a rooster, with the client's console clean. This is also the first end-to-end run of the
+      migration so far.
+
+#### Guardrails
+
+- **Bandwidth.**
+  - Snapshot bytes in the scenarios NETWORKING.md quotes stay where they are or drop: a standing
+    room costs nothing, and 30 players running in view is about 320 bytes.
+  - Vehicles should drop, since only their changed parts are sent; rockets should drop a lot, being
+    no longer resent whole.
+  - A replication test asserts these sizes.
+- **Server cost.** Snapshot building is now about 0.72 ms per call for the room. It is measured
+  before and after; the ECS read replaces building the rows, so it should not grow.
+- **The 1200-byte limit**, shedding order, hysteresis and the baseline window keep their tests,
+  ported.
+
+#### Decisions (proposed defaults)
+
+1. **Encoding**: MessagePack stays. A bit-packed format would save perhaps 30–50% but is a codec of
+   its own; it can follow if bandwidth ever matters.
+2. **Switch**: in one release, behind the adapter, rather than two protocols side by side.
+3. **Projectiles and pickups join the entity stream** (in step 3.2), rather than keeping their lists.
+4. **Owner-only components** (the hotbar, the driver's exact motion) move into components with an
+   audience in Phase 4. In Phase 3 they stay in the `self`/`drive` header.
+5. **Seated players** stay unlisted, as now. Listing them with a `Seated` component is a Phase 4
+   presenter change.
 
 ### Phase 4: client entity store and presenters
 
