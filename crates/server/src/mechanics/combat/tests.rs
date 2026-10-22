@@ -351,9 +351,9 @@ fn a_rocket_in_flight_is_in_the_snapshot() {
     game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 0, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 };
     fire_rocket(&mut game.world, shooter);
     hold(&mut game, shooter, &mut seq, 0.0, 0, 1);
-    let rockets = game.projectile_states();
+    let rockets = game.seen_projectiles();
     assert_eq!(rockets.len(), 1);
-    let shared::protocol::ProjectileState { kind, z, vz, .. } = rockets[0];
+    let (kind, z, vz) = (rockets[0].1.projectile.as_ref().unwrap().kind, rockets[0].1.place.unwrap().z, rockets[0].1.velocity.unwrap().vz);
     assert_eq!(kind, PROJECTILE_ROCKET);
     assert!(z < 0, "flying towards -Z from the shooter at z = 0: {z}");
     // The motor has pushed it past its launch speed, straight ahead, and no further than its top speed.
@@ -964,7 +964,7 @@ fn a_gun_round_flies_and_is_announced_once_instead_of_listed_every_snapshot() {
     let spawn = game.world.bullets[0];
     assert_eq!((spawn.id, spawn.shooter, spawn.item), (*bullet.0, shooter, ITEM_AK5));
     assert!((spawn.vz as f32 / 100.0 + BULLET_SPEED).abs() < 1.0, "fired along -Z at the bullet speed: {}", spawn.vz);
-    assert!(game.projectile_states().is_empty(), "flown by the clients, not listed in every snapshot");
+    assert!(game.seen_projectiles().is_empty(), "flown by the clients, not listed in every snapshot");
 }
 
 #[test]

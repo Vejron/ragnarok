@@ -23,7 +23,7 @@ This document describes how the game is built and why. The wire format is specif
 │ Transport ◄── snapshots, pong ── │ ◄── datagrams ── │        ▼                              │
 │   │       ◄── welcome, leave ─── │ ◄── uni streams ─│ game task: owns World, 60 Hz fixed    │
 │   ▼                              │                  │   JitterBuffer ─► Mechanics ─► Rapier │
-│ ServerClock + Interpolator       │                  │   every 2nd tick: Snapshot per player │
+│ ServerClock + EntityStore        │                  │   every 2nd tick: Snapshot per player │
 │   │                              │                  └──────────────────────────────────────┘
 │   ▼                              │                         ▲
 │ Scene: tiles, stickmen, camera   │  world.msgpack + tiles/ ┘ (same files on both sides)
@@ -92,10 +92,18 @@ The local player is simulated on the client with the same rules and the same Rap
 
 ### 5.4 Remote interpolation
 
-Remote entities are drawn in the past, at `renderTick = estServerTick − interpDelay` (`client/src/net/interp.ts`). This way there are almost always two snapshots to blend between.
+Remote entities are drawn in the past, at `renderTick = estServerTick − interpDelay`. This way there are almost always two snapshots to blend between.
 
-- Snapshots are buffered per entity by server tick, inserted in sorted order (datagrams can reorder) and capped at 32.
-- Position is interpolated linearly. Yaw takes the shortest arc. Past the newest snapshot, the entity holds its last state (no extrapolation yet).
+- **The store.** `client/src/entities/store.ts` buffers every replicated entity's components per server tick, inserted in sorted order (datagrams can reorder) and capped at 32.
+- **Blending.** Each field blends as its unit says (`UNITS` in `crates/shared/src/replicated.rs`):
+  - positions and steering are interpolated linearly;
+  - angles take the shortest arc, and rotations are normalised lerps;
+  - counters, flags and gauges come from the nearer snapshot.
+
+  Rust writes the conversion into game units and the blend as code (`entities/units.generated.ts`).
+- **Past the newest snapshot** the entity holds its last state; there is no extrapolation yet.
+- **Ending.** An entity the newest snapshot no longer has ends at that tick, and goes when the picture gets there.
+- **Presenters** (`entities/presenters/`) draw what the store holds, each chosen by the components an entity has: projectiles, items, stickmen, the rooster, vehicles, and one per vehicle component (guns, wear, smoke, jets).
 
 ### 5.5 Clock sync and adaptive delay
 
@@ -295,11 +303,11 @@ Vehicles are server-side dynamic rigid bodies (§10). The physics pipeline steps
 
 ## 10. Entities and vehicles
 
-- **Entities:** players and vehicles share one id space. Stickmen are `EntityState`s. Each vehicle kind is a `VehicleState` in its own list in the snapshot (`KIND_JEEP` and `KIND_TANK` now, later `KIND_HELI`). A separate list per family keeps stickmen at their 20 bytes.
+- **Entities:** players, creatures, vehicles, projectiles and items on the ground share one id space. Each is replicated as the components it has (§5.8): a stickman is a place, a heading, motion and flags; a vehicle adds an orientation, seats, health and whatever it carries (a turret, arms, thrust, a crew).
 - **Seats (built):** each vehicle has a seat list. Seat 0 is the driver, and the others are passengers or gunners. A car has 4.
   - `BUTTON_USE` boards the nearest vehicle with a free seat within `ENTER_RADIUS` (4 m), taking the lowest free seat. Pressing it again leaves.
   - Leaving puts the stickman beside the car on the seat's side, or on the other side, the back or the front if that spot is blocked.
-  - Seat state travels in the snapshot (`VehicleState::seats`), not as reliable events. The client's view of its seat can then never disagree with the snapshots it draws. Reliable events stay for things that really are one-off, such as chat.
+  - Seat state travels in the snapshot (the `seats` component), not as reliable events. The client's view of its seat can then never disagree with the snapshots it draws. Reliable events stay for things that really are one-off, such as chat.
 - **Input routing (built):** while seated, a player's input frames drive their seat instead of the stickman. The driver's forward axis is throttle and brake, the strafe axis is steering, and jump is the handbrake. A seated player is left out of the entity list, and their position follows the car.
 - **Knockback (built):** after the cars step, any standing player whose capsule overlaps a car is thrown: a horizontal velocity of 1.1 × the car's speed (at least 2.5 m/s, at most 20), mostly along the car's heading with some outward push, plus a hop. `Character::knock` carries it. It is added to walking and bleeds off per tick (§9). It is in the snapshot, so the client's reconciliation replays it like any other state. A 12-tick cooldown makes one pass one hit. Damage is combat's: see §5.6.
 - **Riding on top (built):** a stickman standing on a car is carried by it.

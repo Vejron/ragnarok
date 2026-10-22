@@ -57,7 +57,7 @@ fn a_bot_is_a_player_on_the_bot_team_seen_as_a_stickman_at_home() {
     assert_eq!(player.team, TEAM_BOTS, "a bot is never on no team");
     let [x, _, z] = player.character.position;
     assert!((x - 20.0).abs() < 0.01 && (z + 10.0).abs() < 0.01, "spawned at {x}, {z}");
-    assert!(game.entity_states().iter().any(|e| e.kind == KIND_STICKMAN && e.id == id));
+    assert!(game.seen_people(KIND_STICKMAN).iter().any(|(seen, _)| *seen == id));
 }
 
 #[test]

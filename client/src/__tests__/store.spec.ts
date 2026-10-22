@@ -2,10 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Presenters, type Frame, type Presenter } from '@/entities/presenter'
 import { EntityStore, type Sampled } from '@/entities/store'
 import type { Entity } from '@/entities/units'
-import { v1Scene } from '@/net/adapter'
-import { sceneStates, type EntityState, type RocketState, type VehicleState } from '@/net/codec'
 import type { Components } from '@/net/components.generated'
-import { blendEntity, blendRocket, blendVehicle, Interpolator } from '@/net/interp'
 
 /** A stickman at `x` metres facing `yaw` radians, as the wire has it. */
 const person = (x: number, yaw = 0): Components => ({
@@ -144,51 +141,24 @@ function room(n: number): Map<number, Components> {
 }
 
 describe('a full room', () => {
-  it('costs the store no more a second than the adapter and the three interpolators it replaces', () => {
+  it('costs the store a small share of a second to take in and draw for a second', () => {
     // A second of play: 30 snapshots taken in, and 60 frames drawn between them.
-    const scenes = Array.from({ length: 60 }, (_, n) => room(n))
-    const second = (take: (tick: number, scene: Map<number, Components>) => void, draw: (tick: number) => void) => {
+    const scenes = Array.from({ length: 30 }, (_, n) => room(n))
+    const second = () => {
+      const store = new EntityStore()
       const start = performance.now()
       for (let n = 0; n < 30; n++) {
-        take(2 * n, scenes[n]!)
-        draw(2 * n - 3.5)
-        draw(2 * n - 2.5)
+        store.push(2 * n, scenes[n]!, true)
+        store.sampleAll(2 * n - 3.5)
+        store.sampleAll(2 * n - 2.5)
       }
       return performance.now() - start
     }
-    const before = () => {
-      const people = new Interpolator<EntityState>(blendEntity)
-      const cars = new Interpolator<VehicleState>(blendVehicle)
-      const rockets = new Interpolator<RocketState>(blendRocket)
-      return second(
-        (tick, scene) => {
-          const { wire, rockets: flying } = v1Scene(scene)
-          const { entities, vehicles } = sceneStates(wire)
-          people.push(tick, entities)
-          cars.push(tick, vehicles)
-          rockets.push(tick, flying)
-        },
-        (tick) => {
-          for (const id of people.ids()) people.sample(id, tick)
-          for (const id of cars.ids()) cars.sample(id, tick)
-          for (const id of rockets.ids()) rockets.sample(id, tick)
-        },
-      )
-    }
-    const after = () => {
-      const store = new EntityStore()
-      return second((tick, scene) => store.push(tick, scene, true), (tick) => store.sampleAll(tick))
-    }
-    // Warm both up, then take the best of several runs of each.
-    for (let i = 0; i < 5; i++) {
-      before()
-      after()
-    }
-    const old = Math.min(...Array.from({ length: 7 }, before))
-    const now = Math.min(...Array.from({ length: 7 }, after))
-    console.log(`a full room for a second: adapter and interpolators ${old.toFixed(2)} ms, store ${now.toFixed(2)} ms`)
-    // Under vitest the two come out about even and swing by a tenth from run to run; built and run by
-    // Node alone, the store takes about half the time (MIGRATION.md, 4.2). This catches a real step back.
-    expect(now).toBeLessThan(old * 1.25)
+    for (let i = 0; i < 5; i++) second()
+    const best = Math.min(...Array.from({ length: 7 }, second))
+    console.log(`a full room for a second: store ${best.toFixed(2)} ms`)
+    // Built and run by Node alone it is about 0.6 ms, under vitest about 1 (MIGRATION.md, 4.2); the
+    // adapter and interpolators it replaced took about 1.0 ms. This catches a real step back.
+    expect(best).toBeLessThan(3)
   })
 })

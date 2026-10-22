@@ -282,10 +282,13 @@ fn units_ts() -> String {
             continue;
         }
         // Unchanged, as a moving entity's other components mostly are, it is the same object: no new one.
-        let same: Vec<String> = fields.iter().filter(|(_, rust, _)| struct_of(rust).is_none()).map(|(field, _, _)| format!("a.{name}.{field} === b.{name}.{field}")).collect();
-        let same = if same.len() == fields.len() { format!("a.{name} === b.{name} || ({})", same.join(" && ")) } else { format!("a.{name} === b.{name}") };
+        let rotation = fields.iter().all(|(_, _, unit)| *unit == "quat");
+        // A rotation's `w` is rebuilt on the client, and is part of what it is.
+        let parts = fields.iter().filter(|(_, rust, _)| struct_of(rust).is_none()).map(|(field, _, _)| *field).chain(rotation.then_some("qw"));
+        let same: Vec<String> = parts.map(|field| format!("a.{name}.{field} === b.{name}.{field}")).collect();
+        let same = if same.len() >= fields.len() { format!("a.{name} === b.{name} || ({})", same.join(" && ")) } else { format!("a.{name} === b.{name}") };
         let both = format!("a.{name} && b.{name} ? ({same} ? b.{name} : ");
-        let blended = if fields.iter().all(|(_, _, unit)| *unit == "quat") {
+        let blended = if rotation {
             format!("rotation(a.{name}, b.{name}, t)")
         } else {
             let parts: Vec<String> = fields.iter().map(|(field, rust, unit)| format!("{field}: {}", blend_field_ts(&format!("a.{name}.{field}"), &format!("b.{name}.{field}"), rust, unit))).collect();
@@ -356,9 +359,8 @@ fn generated(path: &str, contents: &str) {
     assert_eq!(committed, contents, "{} is stale: regenerate it with UPDATE_PARITY=1 cargo test -p shared", path.display());
 }
 
-/// A scene with every family and the edge cases of each, and its v1 rows as v1 encodes them: what the
-/// client's adapter (Phase 3.4) must turn the scene into.
-fn adapter_fixture_json() -> String {
+/// A scene with every family and the edge cases of each, for the client's conversion into its units.
+fn scene_fixture_json() -> String {
     let vehicle = |kind: u8| Replicated { kind: Some(Kind { kind }), place: Some(Place { x: 500, y: 80, z: -900 }), orientation: Some(Orientation { qx: 10, qy: -2000, qz: 30 }), steer: Some(Steer { steer: 40 }), seats: Some(Seats { riders: vec![0, 0] }), health: Some(Health { hp: 100 }), ..Default::default() };
     let scene: Scene = vec![
         // Prone, knocked, crouching, holding a gun (flags carry the held item).
@@ -376,8 +378,7 @@ fn adapter_fixture_json() -> String {
         (9, Replicated { projectile: Some(Projectile { kind: 0 }), place: Some(Place { x: 1, y: 2000, z: 3 }), velocity: Some(Velocity { vx: -4000, vy: 50, vz: 0 }), ..Default::default() }),
         (10, Replicated { pickup: Some(Pickup { item: 7 }), place: Some(Place { x: -5, y: 30, z: 5 }), ..Default::default() }),
     ];
-    let v1: Vec<String> = encode(&v1_rows(&scene)).iter().map(u8::to_string).collect();
-    format!("{{\n  \"scene\": {},\n  \"v1\": [{}]\n}}\n", scene_json(&scene), v1.join(", "))
+    format!("{{\n  \"scene\": {}\n}}\n", scene_json(&scene))
 }
 
 #[test]
@@ -385,7 +386,7 @@ fn the_clients_components_and_fixture_are_generated_from_these() {
     generated("client/src/net/components.generated.ts", &components_ts());
     generated("client/src/entities/units.generated.ts", &units_ts());
     generated("client/src/__tests__/replicated.fixture.json", &fixture_json());
-    generated("client/src/__tests__/adapter.fixture.json", &adapter_fixture_json());
+    generated("client/src/__tests__/scene.fixture.json", &scene_fixture_json());
 }
 
 #[test]

@@ -91,17 +91,18 @@ fn use_boards_the_nearest_car_and_use_again_leaves() {
     press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
     idle(&mut game, id, &mut seq, 3);
     assert_eq!(game.world.entities.of::<Seats>(vid)[0], Some(id));
-    assert!(game.entity_states().iter().all(|e| e.kind != shared::protocol::KIND_STICKMAN), "a seated player is not a stickman entity");
-    assert_eq!(game.vehicle_states().iter().find(|v| v.id == vid).unwrap().seats[0], id);
+    assert!(game.seen_people(shared::protocol::KIND_STICKMAN).is_empty(), "a seated player is not a stickman entity");
+    assert_eq!(game.seen(vid).unwrap().seats.unwrap().riders[0], id);
 
     press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
     idle(&mut game, id, &mut seq, 3);
     assert!(game.world.entities.of::<Seats>(vid).vacant());
-    let states: Vec<_> = game.entity_states().into_iter().filter(|e| e.kind == shared::protocol::KIND_STICKMAN).collect();
+    let states = game.seen_people(shared::protocol::KIND_STICKMAN);
     assert_eq!(states.len(), 1);
     // The stickman stands beside the car, not inside it.
     let pose = game.world.physics.car_pose(vid).unwrap();
-    let (dx, dz) = (states[0].x as f32 / 100.0 - pose.position[0], states[0].z as f32 / 100.0 - pose.position[2]);
+    let place = states[0].1.place.unwrap();
+    let (dx, dz) = (place.x as f32 / 100.0 - pose.position[0], place.z as f32 / 100.0 - pose.position[2]);
     assert!(dx.hypot(dz) > 1.5, "{dx} {dz}");
 }
 
@@ -282,7 +283,7 @@ fn a_driven_car_knocks_back_a_player_in_its_way() {
     assert!(moved > 2.0, "thrown {moved} m along the car's heading");
     assert!(game.world.entities.of::<Player>(victim).seat.is_none());
     // And it shows on the wire.
-    assert!(game.entity_states().iter().any(|e| e.id == victim));
+    assert!(game.seen(victim).is_some());
 }
 
 /// A driver in a car and a second player standing on its roof.
@@ -427,8 +428,8 @@ fn a_tank_has_a_driver_and_a_gunner_and_no_third_seat() {
     }
     let seated: Vec<_> = crew.iter().map(|(id, ..)| game.world.entities.of::<Player>(*id).seat.map(|seat| (seat.vehicle, seat.index))).collect();
     assert_eq!(seated, [Some((vid, 0)), Some((vid, 1)), None], "two seats, the third stays outside");
-    let state = game.vehicle_states().into_iter().find(|v| v.id == vid).unwrap();
-    assert_eq!(state.seats.len(), 2);
+    let state = game.seen(vid).unwrap();
+    assert_eq!(state.seats.unwrap().riders.len(), 2);
     assert!(state.turret.is_some(), "a tank reports its turret");
 }
 
@@ -615,8 +616,8 @@ fn a_pilot_and_a_gunner_take_a_plane_off_and_a_third_stays_behind() {
     }
     let seated: Vec<_> = crew.iter().map(|(id, ..)| game.world.entities.of::<Player>(*id).seat.map(|seat| seat.index)).collect();
     assert_eq!(seated, [Some(0), Some(1), None], "a pilot, a gunner, and nobody else");
-    let state = game.vehicle_states().into_iter().find(|v| v.id == vid).unwrap();
-    assert_eq!(state.arms, Some(shared::protocol::Arms { shots: 0, heat: 0, rear_heat: 0, bombs: PLANE_BOMBS, flags: 0 }), "the plane reports its weapons");
+    let state = game.seen(vid).unwrap();
+    assert_eq!(state.arms, Some(shared::replicated::Arms { shots: 0, heat: 0, rear_heat: 0, bombs: PLANE_BOMBS, flags: 0 }), "the plane reports its weapons");
 
     // Space for full throttle and a little back stick (S) to lift off, along the road.
     let (pilot, gunner, mut seq) = (crew[0].0, crew[1].0, crew[0].2);
@@ -674,7 +675,7 @@ fn a_roadster_driver_boosts_on_run_hops_on_jump_and_brakes_on_crouch() {
     press(&mut game, id, &mut seq, (0, 0), BUTTON_RUN, 30);
     let controls = game.world.entities.of::<Vehicle>(vid).controls;
     assert!(controls.boost && !controls.hop && !controls.handbrake && controls.lift == 0.0, "{controls:?}");
-    let thrust = game.vehicle_states().into_iter().find(|v| v.id == vid).unwrap().thrust.expect("a roadster sends its tank");
+    let thrust = game.seen(vid).unwrap().thrust.expect("a roadster sends its tank");
     assert_eq!(thrust.flags, THRUST_BOOST);
     assert!(thrust.air < 255, "boosting drains the tank: {}", thrust.air);
     assert!(game.world.physics.car_pose(vid).unwrap().velocity.iter().map(|v| v * v).sum::<f32>().sqrt() > 5.0);
@@ -687,7 +688,7 @@ fn a_roadster_driver_boosts_on_run_hops_on_jump_and_brakes_on_crouch() {
     press(&mut game, id, &mut seq, (0, 0), BUTTON_CROUCH, 3);
     assert!(game.world.entities.of::<Vehicle>(vid).controls.handbrake);
     // Nothing else carries a tank, but a hen's stamina and a drone's battery.
-    assert!(game.vehicle_states().iter().filter(|v| !matches!(v.kind, KIND_ROADSTER | KIND_HEN | KIND_DRONE)).all(|v| v.thrust.is_none()));
+    assert!(game.seen_vehicles().iter().filter(|(_, v)| !matches!(v.kind.as_ref().unwrap().kind, KIND_ROADSTER | KIND_HEN | KIND_DRONE)).all(|(_, v)| v.thrust.is_none()));
 }
 
 /// A game with one pine just in front of where a vehicle of `kind` is set down facing it, and the
@@ -743,7 +744,7 @@ fn a_hen_driver_leaps_on_jump_and_the_snapshot_carries_its_stamina() {
     let vid = add_vehicle(&mut game.world, KIND_HEN, [0.0, ground + drop_height(KIND_HEN), 60.0], 0.0);
     idle(&mut game, id, &mut seq, 60);
     let stand = game.world.physics.car_pose(vid).unwrap().position[1];
-    let state = game.vehicle_states().into_iter().find(|v| v.id == vid).unwrap();
+    let state = game.seen(vid).unwrap();
     assert_eq!(state.thrust.map(|thrust| thrust.air), Some(255), "a hen sends its stamina, full");
     assert_eq!(state.arms.map(|arms| arms.bombs), Some(HEN_EGGS), "and its clutch");
 
@@ -757,6 +758,6 @@ fn a_hen_driver_leaps_on_jump_and_the_snapshot_carries_its_stamina() {
     let controls = game.world.entities.of::<Vehicle>(vid).controls;
     assert!(controls.hop && !controls.handbrake && controls.lift == 0.0 && !controls.boost, "{controls:?}");
     assert!(game.world.physics.car_pose(vid).unwrap().position[1] > stand + 2.0, "it leapt");
-    let thrust = game.vehicle_states().into_iter().find(|v| v.id == vid).unwrap().thrust.unwrap();
+    let thrust = game.seen(vid).unwrap().thrust.unwrap();
     assert!(thrust.flags & THRUST_AIR != 0 && thrust.flags & THRUST_LIFT != 0 && thrust.air < 255, "{thrust:?}");
 }

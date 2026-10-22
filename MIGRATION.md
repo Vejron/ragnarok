@@ -329,7 +329,7 @@ not change.
 - [x] **4.3** Stickmen and the rooster from the store: the entity interpolator goes.
 - [x] **4.4** Vehicles from the store, as a model presenter and component presenters: the vehicle
       interpolator goes, along with the per-vehicle maps in `game.ts`.
-- [ ] **4.5** The adapter and v1's rows are deleted:
+- [x] **4.5** The adapter and v1's rows are deleted:
   - client: `v1Rows`/`v1Scene`, `RawEntity`/`RawVehicle`, `EntityState`/`VehicleState`/`RocketState`/
     `PickupState`;
   - Rust: `v1_rows`, the row structs, and the server's test views built on them.
@@ -1704,3 +1704,59 @@ a rooster), with a release server and the dev client:
 **Checks:** client 389 passing; `vue-tsc` and oxlint add nothing.
 
 **Next:** 4.5, deleting the adapter and v1's rows.
+
+### 2026-10-22: Phase 4.5, the adapter and v1's rows deleted
+
+Nothing on either side speaks v1's rows any more.
+
+**Deleted:**
+
+- **Client:**
+  - `net/adapter.ts` and its test and fixture;
+  - `net/interp.ts` (`Interpolator` and the three blends) and its test;
+  - from `codec.ts`: `EntityState`, `VehicleState`, `RocketState`, `PickupState`, `Turret`, `Arms`,
+    `Rider`, `Thrust`, `RawEntity`, `RawVehicle`, `WireScene`, and their converters (`entityState`,
+    `vehicleState`, `rocketState`, `pickupState`, `sceneStates`).
+- **Rust:**
+  - `shared::replicated::v1_rows`;
+  - `EntityState`, `VehicleState`, `ProjectileState`, `PickupState`, `Turret`, `Arms` and `Thrust`
+    from `protocol.rs`. `Rider` stays: it is what the `crew` component holds.
+  - What the deleted structs documented (a turret's angles and counter, the arms' heats, what `air`
+    means per vehicle, the damage slots) moved onto the component docs. The flag constants point at
+    the components.
+
+**Server tests.** 28 assertions read the world through the v1 views (`entity_states()` and the like).
+They now use views of the replicated scene: `seen(id)`, `seen_people(kind)`, `seen_vehicles()`,
+`seen_projectiles()` and `seen_pickups()` in `game/snapshot.rs`. The assertions are unchanged.
+
+- The end-to-end replication test counts what the client holds by component.
+- `full_room_tick_cost` times reading the world as components alone.
+
+**Client tests.**
+
+- `units.spec.ts` no longer compares with v1's converters. It asserts the values themselves, taken
+  from the deleted tests: the scene in game units from `codec.spec.ts`, the rooster's flags, and the
+  fixture scene's families from `adapter.spec.ts`. It adds steering clamped to full lock.
+- It also takes the blending cases from `interp.spec.ts`: the short way through ±π, a sign-flipped
+  quaternion, turret counters and seats from the nearer snapshot. New cases cover riders joining
+  mid-blend and unchanged components kept as they are.
+- Rust now writes `scene.fixture.json`, the scene with every family, without the v1 bytes.
+- The store's cost test is now a budget (under 3 ms for a full room's second), since the path it
+  was compared with is gone.
+
+**A fix found on the way.** The generated blend skips a rotation whose x, y and z did not change. It now
+compares `w` too: a quaternion and its negation share x, y and z only when `w` is 0, so real data was
+never affected, but the shortcut should not depend on that.
+
+**Docs.** `design.md` §5.4 now describes the store, blending by unit, ending at the picture's tick and
+the presenters, and §10 describes entities as components.
+
+**Checks:**
+
+- Rust: server 271, shared 68, sim 111, osm-import 81, editor 2.
+- Client: 378.
+- Workspace clippy, `vue-tsc` and oxlint add nothing.
+
+**Progress:** `codec.ts` is 507 lines (from 704). `game.ts` is unchanged at 1,595.
+
+**Next:** 4.6, seats as data: camera rigs, the HUD's seat role and the prompt.

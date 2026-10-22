@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { encode } from '@msgpack/msgpack'
-import { ARMS_CUT, decodeServer, NOTICE_OBJECTIVE, KIND_ROADSTER, THRUST_BOOST, TURRET_STOWED, encodeInput, encodePing, encodeRtc, RTC_ICE, entityState, FLAG_CROWING, FLAG_DEAD, FLAG_GROUNDED, KIND_PLANE, KIND_ROOSTER, sceneStates, toMrad, type WireScene } from '@/net/codec'
+import { decodeServer, NOTICE_OBJECTIVE, encodeInput, encodePing, encodeRtc, RTC_ICE, FLAG_DEAD, FLAG_GROUNDED, toMrad, TURRET_STOWED } from '@/net/codec'
 import { Replica } from '@/net/replica'
 import type { Update } from '@/net/replicated'
 import { BUTTON_FIRE, BUTTON_JUMP, BUTTON_RUN } from '@/sim/consts'
@@ -77,47 +77,6 @@ describe('codec', () => {
         { shooter: 1, weapon: 0, x: -0.2, y: 0.9, z: 310 },
       ],
       bullets: [{ id: 77, shooter: 7, item: 2, x: 1.2, y: 1.65, z: -30, vx: 15, vy: -0.2, vz: -270, tick: 1233 }],
-    })
-  })
-
-  it('reads a crowing rooster from its kind and flags', () => {
-    const raw = [12, KIND_ROOSTER, 100, 50, -200, 1571, 0, FLAG_GROUNDED | FLAG_CROWING, 0, 0]
-    expect(entityState(raw)).toMatchObject({ id: 12, kind: 5, grounded: true, crowing: true, dead: false, held: 0 })
-    expect(entityState([12, KIND_ROOSTER, 0, 0, 0, 0, 0, FLAG_GROUNDED, 0, 0]).crowing).toBe(false)
-  })
-
-  it('converts a rebuilt scene to game units', () => {
-    const scene: WireScene = {
-      entities: [[1, 0, 1234, -123456, 101, 1571, -500, 0, 0, 650, -300], [7, 0, 0, 85, 100000, 0, 0, 3, 0, 0, 0]],
-      vehicles: [
-        [9, KIND_ROADSTER, -250, 80, 4100, 1200, -3000, 15, -64, [1, 0, 7, 0], null, 100, [0, 0, 40, 0, 0, 0, 255, 3], null, [51, THRUST_BOOST], [[0, 0, 0], [1571, -100, 2]]],
-        [10, 2, 300, 90, -2000, 0, 700, 0, 32, [1, 7], [-700, 250, 3, 1234, TURRET_STOWED], 0, null, null, null, []],
-        [12, KIND_PLANE, 0, 140, 0, 0, 0, 0, 0, [4, 0], [3142, 500, 9, 0, 0], 70, null, [17, 255, 51, 3, ARMS_CUT], null, []],
-      ],
-    }
-    expect(sceneStates(scene)).toEqual({
-      entities: [
-        { id: 1, kind: 0, x: 12.34, y: -1234.56, z: 1.01, yaw: 1.571, vy: -5, grounded: false, dead: false, crouching: false, prone: false, chute: false, knockX: 6.5, knockZ: -3, held: 0, crowing: false },
-        { id: 7, kind: 0, x: 0, y: 0.85, z: 1000, yaw: 0, vy: 0, grounded: true, dead: true, crouching: false, prone: false, chute: false, knockX: 0, knockZ: 0, held: 0, crowing: false },
-      ],
-      vehicles: [
-        {
-          id: 9, kind: KIND_ROADSTER, x: -2.5, y: 0.8, z: 41,
-          qx: 1200 / 32767, qy: -3000 / 32767, qz: 15 / 32767, qw: expect.closeTo(Math.sqrt(1 - (1200 ** 2 + 3000 ** 2 + 15 ** 2) / 32767 ** 2), 6),
-          steer: -64 / 127, seats: [1, 0, 7, 0], turret: null, hp: 100, damage: [0, 0, 40, 0, 0, 0, 255, 3], arms: null, thrust: { air: 0.2, flags: THRUST_BOOST },
-          crew: [{ yaw: 0, pitch: 0, held: 0 }, { yaw: 1.571, pitch: -0.1, held: 2 }],
-        },
-        {
-          id: 10, kind: 2, x: 3, y: 0.9, z: -20,
-          qx: 0, qy: 700 / 32767, qz: 0, qw: expect.closeTo(Math.sqrt(1 - (700 / 32767) ** 2), 6),
-          steer: 32 / 127, seats: [1, 7], turret: { yaw: -0.7, pitch: 0.25, shots: 3, range: 123.4, stowed: true }, hp: 0, damage: [0, 0, 0, 0, 0, 0, 0, 0], arms: null, thrust: null, crew: [],
-        },
-        {
-          id: 12, kind: KIND_PLANE, x: 0, y: 1.4, z: 0, qx: 0, qy: 0, qz: 0, qw: 1, steer: 0, seats: [4, 0],
-          turret: { yaw: 3.142, pitch: 0.5, shots: 9, range: 0, stowed: false }, hp: 70, damage: [0, 0, 0, 0, 0, 0, 0, 0],
-          arms: { shots: 17, heat: 1, rearHeat: 0.2, bombs: 3, flags: ARMS_CUT }, thrust: null, crew: [],
-        },
-      ],
     })
   })
 

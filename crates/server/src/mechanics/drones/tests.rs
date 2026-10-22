@@ -68,9 +68,9 @@ fn a_launch_spends_the_drone_and_puts_the_player_at_its_controls() {
     assert_eq!(game.world.entities.of::<Vehicle>(vid).kind, KIND_DRONE);
     assert!(drone(&game, vid).is_some_and(|drone| drone.linked && drone.owner == id));
     // The body is still out there, kneeling, and its drone is listed with a full, linked battery.
-    let body = game.entity_states().into_iter().find(|entity| entity.id == id).expect("the pilot's body is listed");
-    assert_ne!(body.flags & shared::protocol::FLAG_CROUCHING, 0);
-    let listed = game.vehicle_states().into_iter().find(|vehicle| vehicle.id == vid).unwrap();
+    let body = game.seen(id).expect("the pilot's body is listed");
+    assert_ne!(body.flags.unwrap().flags & shared::protocol::FLAG_CROUCHING, 0);
+    let listed = game.seen(vid).unwrap();
     let thrust = listed.thrust.expect("a drone sends its battery");
     assert!(thrust.air > 250 && thrust.flags & THRUST_LINKED != 0, "{thrust:?}");
 }
@@ -167,7 +167,7 @@ fn use_recalls_the_drone_without_a_blast() {
     let player = &game.world.entities.of::<Player>(id);
     assert_eq!(player.seat, None, "back in the body, and not in some other vehicle");
     assert_eq!(player.hp, PLAYER_MAX_HP);
-    assert!(!game.vehicle_states().iter().any(|vehicle| vehicle.id == vid), "no longer listed");
+    assert!(game.seen(vid).is_none(), "no longer listed");
 }
 
 #[test]
@@ -268,8 +268,8 @@ fn a_loitering_drone_left_alone_keeps_flying() {
     assert!(start[2] - now[2] > 40.0, "it cannot hover: {start:?} -> {now:?}");
     assert!((now[1] - start[1]).abs() < 2.0, "but holds its height: {start:?} -> {now:?}");
     assert!(drone(&game, vid).is_some_and(|drone| drone.linked));
-    let listed = game.vehicle_states().into_iter().find(|vehicle| vehicle.id == vid).unwrap();
-    assert!(listed.thrust.is_some_and(|thrust| thrust.air > 240), "its own, longer battery: {:?}", listed.thrust);
+    let listed = game.seen(vid).unwrap();
+    assert!(listed.thrust.as_ref().is_some_and(|thrust| thrust.air > 240), "its own, longer battery: {:?}", listed.thrust);
 }
 
 #[test]

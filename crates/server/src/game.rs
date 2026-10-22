@@ -602,7 +602,7 @@ mod tests {
         game.handle(Command::Leave(first));
         let Some(Outgoing::Reliable(leave)) = drain(&mut b).into_iter().next() else { panic!("no leave") };
         assert_eq!(decode::<Leave>(&leave), Some(Leave(S_LEAVE, first)));
-        assert_eq!(game.entity_states().iter().filter(|e| e.kind == KIND_STICKMAN).count(), 1);
+        assert_eq!(game.seen_people(KIND_STICKMAN).len(), 1);
     }
 
     /// Not a regression test: a rough cost of one tick with a full room, to aim optimisation at. Players
@@ -715,17 +715,12 @@ mod tests {
         let names: Vec<&str> = game.mechanics.iter().map(|mechanic| mechanic.name()).collect();
         println!("per mechanic per tick ({}): {:?}", names.join(", "), per_mechanic.iter().map(|d| *d / ticks).collect::<Vec<_>>());
         println!("mechanics: avg {:?}, worst {:?}; snapshots for the room: avg {:?} per call (every {SNAPSHOT_EVERY} ticks); budget {budget:?}", step_total / ticks, step_max, snap_total / (ticks / SNAPSHOT_EVERY));
-        // What reading the world for snapshots costs, once per snapshot: v1's rows against v2's scene.
+        // What reading the world for snapshots costs, once per snapshot.
         let runs = 200u32;
-        let started = Instant::now();
-        for _ in 0..runs {
-            std::hint::black_box((game.entity_states(), game.vehicle_states(), game.projectile_states(), game.pickup_states()));
-        }
-        let rows = started.elapsed() / runs;
         let started = Instant::now();
         for _ in 0..runs {
             std::hint::black_box(game.replicated());
         }
-        println!("reading the world: v1 rows {rows:?}, v2 scene {:?}", started.elapsed() / runs);
+        println!("reading the world as components: {:?}", started.elapsed() / runs);
     }
 }

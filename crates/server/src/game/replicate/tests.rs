@@ -94,16 +94,18 @@ fn a_client_rebuilds_exactly_what_the_server_has_near_it_in_a_busy_room() {
             for (id, entity) in client {
                 assert_eq!(server.iter().find(|(had, _)| had == id).map(|(_, e)| e), Some(entity), "the client holds {id} as the server has it, tick {t}");
             }
-            let (entities, vehicles, rockets, pickups) = wire::v1_rows(client);
-            seen = (seen.0.max(entities.len()), seen.1.max(vehicles.len()), seen.2.max(rockets.len()), seen.3.max(pickups.len()));
+            let count = |which: fn(&Replicated) -> bool| client.iter().filter(|(_, e)| which(e)).count();
+            let entities = count(|e| e.orientation.is_none() && e.projectile.is_none() && e.pickup.is_none());
+            let (vehicles, rockets, pickups) = (count(|e| e.orientation.is_some()), count(|e| e.projectile.is_some()), count(|e| e.pickup.is_some()));
+            seen = (seen.0.max(entities), seen.1.max(vehicles), seen.2.max(rockets), seen.3.max(pickups));
         }
         if t % 6 == 0 {
-            let vehicles = game.vehicle_states();
-            drones |= vehicles.iter().any(|v| v.thrust.is_some_and(|t| t.flags & THRUST_LINKED != 0));
-            hurt |= vehicles.iter().any(|v| v.damage.is_some());
-            wrecks |= vehicles.iter().any(|v| v.hp == 0);
-            crews |= vehicles.iter().any(|v| v.crew.iter().any(|rider| rider.held != 0));
-            dead |= game.entity_states().iter().any(|e| e.flags & FLAG_DEAD != 0);
+            let vehicles = game.seen_vehicles();
+            drones |= vehicles.iter().any(|(_, v)| v.thrust.as_ref().is_some_and(|t| t.flags & THRUST_LINKED != 0));
+            hurt |= vehicles.iter().any(|(_, v)| v.damage.is_some());
+            wrecks |= vehicles.iter().any(|(_, v)| v.health.as_ref().is_some_and(|h| h.hp == 0));
+            crews |= vehicles.iter().any(|(_, v)| v.crew.as_ref().is_some_and(|crew| crew.riders.iter().any(|rider| rider.held != 0)));
+            dead |= game.seen_people(KIND_STICKMAN).iter().any(|(_, e)| e.flags.as_ref().is_some_and(|f| f.flags & FLAG_DEAD != 0));
         }
     }
     let (entities, vehicles, rockets, _) = seen;

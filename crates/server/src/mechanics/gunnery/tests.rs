@@ -235,9 +235,9 @@ fn a_shell_in_flight_is_in_the_snapshot_and_falls() {
     let (mut game, gunner, vid, mut seq) = crewed();
     let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
     aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, BUTTON_FIRE, 3);
-    let listed = game.projectile_states();
+    let listed = game.seen_projectiles();
     assert_eq!(listed.len(), 1);
-    assert_eq!(listed[0].kind, PROJECTILE_SHELL);
+    assert_eq!(listed[0].1.projectile.as_ref().unwrap().kind, PROJECTILE_SHELL);
     let before = game.world.in_flight().values().next().unwrap().velocity;
     aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, 0, 5);
     let after = game.world.in_flight().values().next().unwrap().velocity;
@@ -287,9 +287,9 @@ fn the_nose_gun_throws_small_shells_that_burst_a_third_as_wide() {
 
     aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, BUTTON_FIRE, 2);
     assert_eq!(turret(&game, vid).shots, 1);
-    let listed = game.projectile_states();
+    let listed = game.seen_projectiles();
     assert_eq!(listed.len(), 1, "the round is in flight");
-    assert_eq!(listed[0].kind, PROJECTILE_CANNON);
+    assert_eq!(listed[0].1.projectile.as_ref().unwrap().kind, PROJECTILE_CANNON);
     assert_eq!(game.world.entities.of::<Player>(victim).hp, before, "and has not arrived");
 
     aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, 0, 30);
@@ -467,7 +467,7 @@ fn the_forward_guns_jam_when_hot_and_clear_when_cool() {
     let shots = shown(&game, vid, Show::Guns).shots;
     aim_and_hold(&mut game, pilot, &mut seq, yaw, 0.0, BUTTON_FIRE, 60);
     assert_eq!(shown(&game, vid, Show::Guns).shots, shots, "a jammed gun does not fire");
-    assert!(game.vehicle_states().iter().find(|v| v.id == vid).unwrap().arms.unwrap().flags & shared::protocol::ARMS_JAMMED != 0);
+    assert!(game.seen(vid).unwrap().arms.unwrap().flags & shared::protocol::ARMS_JAMMED != 0);
     aim_and_hold(&mut game, pilot, &mut seq, yaw, 0.0, 0, 60 * 3);
     assert!(!shown(&game, vid, Show::Guns).jammed, "cool again");
     aim_and_hold(&mut game, pilot, &mut seq, yaw, 0.0, BUTTON_FIRE, 20);

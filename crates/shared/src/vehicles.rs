@@ -41,12 +41,12 @@ pub struct VehicleDef {
 }
 
 impl VehicleDef {
-    /// Whether the snapshot carries a turret for it (`VehicleState::turret`).
+    /// Whether the snapshot carries a turret for it (the `turret` component).
     pub fn gun(&self) -> bool {
         self.mounts.iter().any(|mount| mount.show == Show::Turret)
     }
 
-    /// Whether the snapshot carries pilot arms for it (`VehicleState::arms`): guns that heat and jam, and
+    /// Whether the snapshot carries pilot arms for it (the `arms` component): guns that heat and jam, and
     /// bombs. A hen's eggs are its bombs.
     pub fn arms(&self) -> bool {
         self.mounts.iter().any(|mount| mount.show.arms())

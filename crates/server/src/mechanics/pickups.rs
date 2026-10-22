@@ -293,11 +293,11 @@ mod tests {
         let slot = game.world.entities.of::<Player>(id).hotbar[0];
         assert_eq!(slot, ItemSlot { item: ITEM_AK5, count: 1, ammo: def(ITEM_AK5).unwrap().mag });
         assert!(game.world.pickup(pid).unwrap().respawn_in > 0);
-        assert!(game.pickup_states().is_empty(), "a taken item is not shown");
+        assert!(game.seen_pickups().is_empty(), "a taken item is not shown");
 
         game.world.pickup_mut(pid).unwrap().respawn_in = 1;
         game.step();
-        assert_eq!(game.pickup_states().len(), 1);
+        assert_eq!(game.seen_pickups().len(), 1);
     }
 
     #[test]

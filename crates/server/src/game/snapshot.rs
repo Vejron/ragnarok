@@ -3,24 +3,35 @@
 
 use super::*;
 
-/// The world as v1's rows (`shared::replicated::v1_rows` of `Game::replicated`), for tests that ask
+/// The world as a client is told it (`Game::replicated`), by what each thing is, for tests that ask
 /// what a client is shown.
 #[cfg(test)]
 impl Game {
-    pub fn entity_states(&self) -> Vec<EntityState> {
-        shared::replicated::v1_rows(&self.replicated()).0
+    /// What a client is told of entity `id`, if anything.
+    pub fn seen(&self, id: u32) -> Option<shared::replicated::Replicated> {
+        self.replicated().into_iter().find(|(seen, _)| *seen == id).map(|(_, entity)| entity)
     }
 
-    pub fn vehicle_states(&self) -> Vec<VehicleState> {
-        shared::replicated::v1_rows(&self.replicated()).1
+    /// The replicated entities `which` picks, by id.
+    pub fn seen_where(&self, which: impl Fn(&shared::replicated::Replicated) -> bool) -> Vec<(u32, shared::replicated::Replicated)> {
+        self.replicated().into_iter().filter(|(_, entity)| which(entity)).collect()
     }
 
-    pub fn projectile_states(&self) -> Vec<ProjectileState> {
-        shared::replicated::v1_rows(&self.replicated()).2
+    /// Stickmen and creatures of `kind` on foot.
+    pub fn seen_people(&self, kind: u8) -> Vec<(u32, shared::replicated::Replicated)> {
+        self.seen_where(|e| e.orientation.is_none() && e.projectile.is_none() && e.pickup.is_none() && e.kind.as_ref().is_some_and(|k| k.kind == kind))
     }
 
-    pub fn pickup_states(&self) -> Vec<PickupState> {
-        shared::replicated::v1_rows(&self.replicated()).3
+    pub fn seen_vehicles(&self) -> Vec<(u32, shared::replicated::Replicated)> {
+        self.seen_where(|e| e.orientation.is_some())
+    }
+
+    pub fn seen_projectiles(&self) -> Vec<(u32, shared::replicated::Replicated)> {
+        self.seen_where(|e| e.projectile.is_some())
+    }
+
+    pub fn seen_pickups(&self) -> Vec<(u32, shared::replicated::Replicated)> {
+        self.seen_where(|e| e.pickup.is_some())
     }
 }
 

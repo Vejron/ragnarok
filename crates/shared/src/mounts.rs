@@ -110,7 +110,7 @@ pub enum Need {
 }
 
 /// Where the snapshot shows a mount. Until components replicate on their own (protocol v2) a vehicle
-/// shows at most one turret (`VehicleState::turret`) and one set of pilot arms (`VehicleState::arms`).
+/// shows at most one turret (the `turret` component) and one set of pilot arms (`arms`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Show {
     /// Not at all.

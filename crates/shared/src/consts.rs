@@ -106,7 +106,7 @@ pub const PRONE_RADIUS: f32 = 0.3;
 /// Capsule-centre height above the feet, standing and prone.
 pub const STAND_CENTRE: f32 = CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS;
 pub const PRONE_CENTRE: f32 = PRONE_RADIUS;
-/// Stance, as `EntityState::stance` on the wire. Crouching is a held button, not a stance.
+/// Stance, as `replicated::Flags::stance` on the wire. Crouching is a held button, not a stance.
 pub const STANCE_STANDING: u8 = 0;
 pub const STANCE_PRONE: u8 = 1;
 /// Hanging under an open parachute.

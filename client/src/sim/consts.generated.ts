@@ -153,7 +153,7 @@ export const PRONE_RADIUS = 0.3
 export const STAND_CENTRE = CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS
 export const PRONE_CENTRE = PRONE_RADIUS
 
-/** Stance, as `EntityState::stance` on the wire. Crouching is a held button, not a stance. */
+/** Stance, as `replicated::Flags::stance` on the wire. Crouching is a held button, not a stance. */
 export const STANCE_STANDING = 0
 export const STANCE_PRONE = 1
 

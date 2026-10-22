@@ -18,7 +18,7 @@
 //!
 //! An update for an id not in the baseline brings the whole entity: everything it has is set.
 
-use crate::protocol::{self, EntityState, PickupState, ProjectileState, Rider, VehicleState};
+use crate::protocol::Rider;
 use serde::de::{self, SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -305,7 +305,9 @@ replicated! {
     Steer { steer: i8 as axis }
 
     set 6 turret
-    /// A gun on a mount, as `protocol::Turret`.
+    /// A gun on a mount, as it is drawn: the turret's yaw (+ turns left) and the barrel's elevation (+ is
+    /// up), both in the hull's frame; the shots fired, modulo 256, so a client sees a new one as a change;
+    /// a field mortar's range dial; and `TURRET_*` flags.
     Turret { yaw: i16 as mrad, pitch: i16 as mrad, shots: u8, range: u16 as dm, flags: u8 }
 
     set 7 crew
@@ -313,11 +315,14 @@ replicated! {
     Crew { riders: Vec<Rider> }
 
     set 8 thrust
-    /// Air, stamina or battery left, 0..=255, and the `THRUST_*` nozzles firing.
+    /// What is left of a Roadster's air, a hen's wings' stamina or a drone's battery, 0..=255 of full,
+    /// and the `THRUST_*` flags: the nozzles firing, a hen's glide or lift, a drone still linked.
     Thrust { air: u8 as byte, flags: u8 }
 
     set 9 arms
-    /// A plane's pilot weapons and engine, or a hen's eggs, as `protocol::Arms`.
+    /// A plane's pilot weapons and engine, as drawn and shown on the crew's gauges: the forward guns'
+    /// rounds modulo 256 (the left gun fires the even ones), the heat of both sets of guns (they jam at
+    /// 255), the bombs on the rack, and `ARMS_*` flags. A hen sends its clutch of eggs as `bombs`.
     Arms { shots: u8, heat: u8 as byte, rear_heat: u8 as byte, bombs: u8, flags: u8 }
 
     set 10 seats
@@ -329,7 +334,9 @@ replicated! {
     Health { hp: u8 }
 
     set 12 damage
-    /// A hurt hull and wheels, as `VehicleState::damage`. Absent while unhurt.
+    /// A hurt hull and wheels, each 0..=255: front, rear, left, right, then the wheels front left, front
+    /// right, rear left, rear right (`DAMAGE_*`). A wheel at `WHEEL_GONE` has come off; a tank's slot 4 at
+    /// `TURRET_GONE` means its turret has been shot off. Absent while unhurt.
     Damage { parts: [u8; 8] }
 
     diff 13 velocity
@@ -378,49 +385,6 @@ mod json {
             format!("{{\"yaw\": {}, \"pitch\": {}, \"held\": {}}}", self.yaw, self.pitch, self.held)
         }
     }
-}
-
-/// Protocol v1's rows of a v2 scene: what the client's adapter turns a scene into until Phase 4, and
-/// what the server's v1 snapshot code is checked against. What an entity is follows from its
-/// components: a `pickup`, a `projectile`, an `orientation` (a vehicle), else a stickman or a creature.
-/// Goes with v1, in Phase 3.5.
-pub fn v1_rows(scene: &[(u32, Replicated)]) -> (Vec<EntityState>, Vec<VehicleState>, Vec<ProjectileState>, Vec<PickupState>) {
-    let (mut entities, mut vehicles, mut rockets, mut pickups) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    for (id, e) in scene {
-        let id = *id;
-        let Place { x, y, z } = e.place.unwrap_or_default();
-        let kind = e.kind.as_ref().map_or(0, |kind| kind.kind);
-        if let Some(pickup) = &e.pickup {
-            pickups.push(PickupState { id, item: pickup.item, x, y, z });
-        } else if let Some(projectile) = &e.projectile {
-            let Velocity { vx, vy, vz } = e.velocity.unwrap_or_default();
-            rockets.push(ProjectileState { id, kind: projectile.kind, x, y, z, vx, vy, vz });
-        } else if let Some(Orientation { qx, qy, qz }) = e.orientation {
-            vehicles.push(VehicleState {
-                id,
-                kind,
-                x,
-                y,
-                z,
-                qx,
-                qy,
-                qz,
-                steer: e.steer.map_or(0, |steer| steer.steer),
-                seats: e.seats.clone().map_or_else(Vec::new, |seats| seats.riders),
-                turret: e.turret.as_ref().map(|t| protocol::Turret { yaw: t.yaw, pitch: t.pitch, shots: t.shots, range: t.range, flags: t.flags }),
-                hp: e.health.as_ref().map_or(0, |health| health.hp),
-                damage: e.damage.as_ref().map(|damage| damage.parts),
-                arms: e.arms.as_ref().map(|a| protocol::Arms { shots: a.shots, heat: a.heat, rear_heat: a.rear_heat, bombs: a.bombs, flags: a.flags }),
-                thrust: e.thrust.as_ref().map(|t| protocol::Thrust { air: t.air, flags: t.flags }),
-                crew: e.crew.clone().map_or_else(Vec::new, |crew| crew.riders),
-            });
-        } else {
-            let motion = e.motion.unwrap_or_default();
-            let flags = e.flags.clone().unwrap_or_default();
-            entities.push(EntityState { id, kind, x, y, z, yaw: e.heading.map_or(0, |h| h.yaw), vy: motion.vy, flags: flags.flags, stance: flags.stance, knock_x: motion.knock_x, knock_z: motion.knock_z });
-        }
-    }
-    (entities, vehicles, rockets, pickups)
 }
 
 /// What a receiver holds: every entity it has been told of, by id.

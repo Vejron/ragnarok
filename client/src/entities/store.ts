@@ -1,7 +1,7 @@
 /**
  * Every replicated entity the client has been told of, as the components it has in the game's units,
  * with the recent snapshots of each so it can be drawn between them at the render tick. Fed every scene
- * `Replica` rebuilds; replaces protocol v1's interpolator per family.
+ * `Replica` rebuilds: one store for every family, which the presenters draw from.
  *
  * An entity the newest scene no longer has (it went out of range, burst, or was picked up) ends at that
  * scene's tick: it is drawn until the render tick gets there, so it goes when the picture reaches the

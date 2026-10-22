@@ -309,7 +309,7 @@ mod tests {
         assert_eq!(eggs.len(), 1);
         assert!(eggs[0].dropped);
         assert!(first_hurtbox_hit(&game.world, [centre[0], centre[1], centre[2] + 5.0], [0.0, 0.0, -1.0], 20.0).is_none(), "dead is not hit");
-        assert!(game.entity_states().iter().all(|e| e.kind != KIND_ROOSTER));
+        assert!(game.seen_people(KIND_ROOSTER).is_empty());
 
         for _ in 0..ROOSTER_RESPAWN_TICKS {
             game.step();
@@ -317,7 +317,7 @@ mod tests {
         let back = rooster(&game);
         assert!(back.health.alive());
         assert_eq!(back.wander.mode, WanderMode::Idle, "back from the dead it stands about first");
-        assert!(game.entity_states().iter().any(|e| e.kind == KIND_ROOSTER));
+        assert!(!game.seen_people(KIND_ROOSTER).is_empty());
     }
 
     #[test]

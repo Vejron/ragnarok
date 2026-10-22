@@ -50,9 +50,9 @@ pub const OBJ_BUILDING: u8 = 1;
 
 /// Entity kinds.
 pub const KIND_STICKMAN: u8 = 0;
-/// A Hedemora rooster, an NPC. Appears in `EntityState`, like a stickman, with its own model.
+/// A Hedemora rooster, an NPC. Replicated like a stickman, with its own model.
 pub const KIND_ROOSTER: u8 = 5;
-/// Vehicle kinds. These appear in `VehicleState`, not in `EntityState`.
+/// Vehicle kinds: replicated with an `orientation`.
 pub const KIND_JEEP: u8 = 1;
 pub const KIND_TANK: u8 = 2;
 pub const KIND_HELI: u8 = 3;
@@ -91,7 +91,7 @@ pub fn seat_count(kind: u8) -> usize {
     crate::vehicles::vehicle_def(kind).seats
 }
 
-/// `EntityState::flags` bits.
+/// `replicated::Flags::flags` bits.
 pub const FLAG_GROUNDED: u8 = 1 << 0;
 /// Dead and waiting to respawn: lying where they fell, and neither hit nor hurt by anything.
 pub const FLAG_DEAD: u8 = 1 << 1;
@@ -160,7 +160,7 @@ pub const DEATH_ROADKILL: u8 = 3;
 /// Far more damage than was left to take.
 pub const DEATH_OVERKILL: u8 = 4;
 
-/// `ProjectileState` kinds.
+/// `replicated::Projectile` kinds.
 pub const PROJECTILE_ROCKET: u8 = 0;
 pub const PROJECTILE_GRENADE: u8 = 1;
 pub const PROJECTILE_SHELL: u8 = 2;
@@ -260,65 +260,6 @@ pub struct Welcome {
     pub world_hash: u32,
 }
 
-/// A stickman or a creature as protocol v1 sent it, and as the client's adapter still hands it to
-/// `game.ts` (`shared::replicated::v1_rows`). Not on the wire since v2; goes with the adapter in Phase 4.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EntityState {
-    /// Entity id.
-    pub id: u32,
-    /// `KIND_*`.
-    pub kind: u8,
-    /// Position of the body origin, centimetres.
-    pub x: i32,
-    pub y: i32,
-    pub z: i32,
-    /// Facing, milliradians.
-    pub yaw: i16,
-    /// Vertical velocity, cm/s. Needed to resume a predicted jump from the authoritative state.
-    pub vy: i16,
-    /// `FLAG_*` bits.
-    pub flags: u8,
-    /// `STANCE_*`: lying down or not. Only stickmen differ from `STANCE_STANDING`.
-    pub stance: u8,
-    /// Knockback velocity (a car hit them), cm/s along X and Z. Needed to resume a predicted slide from the authoritative state.
-    pub knock_x: i16,
-    pub knock_z: i16,
-}
-
-/// A vehicle as protocol v1 sent it (see `EntityState`). Players sitting in a vehicle are not listed as entities: the vehicle's
-/// seats say who is in it, `crew` where they look and what they hold, and the client draws them from that.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VehicleState {
-    /// Vehicle id. Shares the id space with players.
-    pub id: u32,
-    /// `KIND_*`.
-    pub kind: u8,
-    /// Position of the chassis centre, centimetres.
-    pub x: i32,
-    pub y: i32,
-    pub z: i32,
-    /// Chassis orientation as the `x, y, z` of a unit quaternion scaled by 32767, with `w >= 0`.
-    pub qx: i16,
-    pub qy: i16,
-    pub qz: i16,
-    /// Front wheel steering as a fraction of its kind's `*_MAX_STEER`, -127..=127 (+ is right).
-    pub steer: i8,
-    /// Player id in each seat, or 0 for an empty one. Seat 0 is the driver.
-    pub seats: Vec<u32>,
-    /// The gun, for vehicles that have one; `nil` otherwise.
-    pub turret: Option<Turret>,
-    /// Health; 0 is a burning wreck nobody can board.
-    pub hp: u8,
-    /// Crash damage, `nil` while there is none: `[front, rear, left, right, wheel FL, FR, RL, RR]`, each 0..=255. A wheel at 255 has come off. See `DAMAGE_*`.
-    pub damage: Option<[u8; 8]>,
-    /// A plane's pilot weapons and engine, `nil` for anything else.
-    pub arms: Option<Arms>,
-    /// A Roadster's air tank and which nozzles are firing, or a drone's battery in `air`; `nil` for anything else.
-    pub thrust: Option<Thrust>,
-    /// One per seat, for a vehicle whose crew show (`VehicleDef::crew`), and empty for any other.
-    pub crew: Vec<Rider>,
-}
-
 /// Where a seated player looks and what they hold, so others can draw them sitting: `[yaw, pitch,
 /// held]`, milliradians in the world (yaw 0 faces -Z) and an `ITEM_*`. All zeros for an empty seat.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -341,52 +282,15 @@ pub const TURRET_GONE: u8 = 255;
 /// A wheel damaged this much has come off.
 pub const WHEEL_GONE: u8 = 255;
 
-/// A vehicle's gun, as it is drawn: the turret and barrel angles in the hull frame, and the last
-/// shot. `shots` counts shots modulo 256, so a client sees a new shot as a change in the counter;
-/// `range` is a field mortar's range dial, in decimetres; `flags` are `TURRET_*`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Turret {
-    /// Turret yaw relative to the hull, milliradians (+ turns left).
-    pub yaw: i16,
-    /// Barrel elevation, milliradians (+ is up).
-    pub pitch: i16,
-    pub shots: u8,
-    pub range: u16,
-    pub flags: u8,
-}
-
-/// `Turret::flags`: a field mortar is hitched to a car, so it is drawn folded up for travel.
+/// `replicated::Turret::flags`: a field mortar is hitched to a car, so it is drawn folded up for travel.
 pub const TURRET_STOWED: u8 = 1;
 
-/// A plane's weapons and engine, as they are drawn and shown on the crew's gauges:
-/// `[shots, heat, rear_heat, bombs, flags]`. `shots` counts the forward guns' rounds modulo 256, as
-/// `Turret::shots` does the rear gun's (the left gun fires the even ones); the heats are 0..=255 and
-/// jam the guns at 255; `bombs` are left on the rack; `flags` are `ARMS_*`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Arms {
-    pub shots: u8,
-    pub heat: u8,
-    pub rear_heat: u8,
-    pub bombs: u8,
-    pub flags: u8,
-}
-
-/// `Arms` flags: the blip switch is cutting the engine, and either set of guns is jammed.
+/// `replicated::Arms::flags`: the blip switch is cutting the engine, and either set of guns is jammed.
 pub const ARMS_CUT: u8 = 1 << 0;
 pub const ARMS_JAMMED: u8 = 1 << 1;
 pub const ARMS_REAR_JAMMED: u8 = 1 << 2;
 
-/// A Roadster's thrusters: `[air, flags]`. `air` is what is left in the tank, 0..=255 of full;
-/// `flags` are `THRUST_*`, the nozzles firing this tick. A drone sends its battery as `air`, with
-/// `THRUST_LINKED` set while its pilot still flies it. A hen sends its wings' stamina as `air`, with
-/// `THRUST_LIFT` while it jumps or flaps, `THRUST_GLIDE` while it glides and `THRUST_AIR` while no foot is down.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Thrust {
-    pub air: u8,
-    pub flags: u8,
-}
-
-/// `Thrust` flags: the rear (boost) nozzles and the lift (hop and hover) nozzles.
+/// `replicated::Thrust::flags`: the rear (boost) nozzles and the lift (hop and hover) nozzles.
 pub const THRUST_BOOST: u8 = 1 << 0;
 pub const THRUST_LIFT: u8 = 1 << 1;
 /// A drone's: its pilot is still flying it, rather than it falling with the link lost.
@@ -426,20 +330,6 @@ pub struct ShotEvent {
     pub z: i32,
 }
 
-/// A rocket or grenade in flight: `[id, kind, x, y, z, vx, vy, vz]`, centimetres and cm/s. A client
-/// extrapolates nothing: it interpolates these like any entity and aims the rocket along `v`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProjectileState {
-    pub id: u32,
-    pub kind: u8,
-    pub x: i32,
-    pub y: i32,
-    pub z: i32,
-    pub vx: i16,
-    pub vy: i16,
-    pub vz: i16,
-}
-
 /// One hotbar slot: `[item, count, ammo]`. `item` is `ITEM_NONE` for an empty slot; `ammo` is the
 /// rounds left in the magazine of a gun.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -457,16 +347,6 @@ pub struct SelfState {
     pub hp: u8,
     pub progress: u8,
     pub slots: Vec<ItemSlot>,
-}
-
-/// An item lying on the ground: `[id, item, x, y, z]`, centimetres. Static until taken.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PickupState {
-    pub id: u32,
-    pub item: u8,
-    pub x: i32,
-    pub y: i32,
-    pub z: i32,
 }
 
 /// `[1, server_tick, baseline, ack_input_seq, ride, [update, ...], [removed id, ...], drive, self,
