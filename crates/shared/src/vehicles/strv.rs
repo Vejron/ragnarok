@@ -8,6 +8,7 @@ const ARMOR: Armor = Armor {
     ricochet: [58.0, 72.0, 75.0, 78.0],
     mult: [1.0, 1.0, 1.4, 1.3],
     weak: &[WeakSpot { centre: [0.0, 0.2, 2.0], half: [1.1, 0.4, 0.7], mult: 1.6 }, WeakSpot { centre: [0.0, 0.6, -0.3], half: [0.7, 0.2, 0.9], mult: 1.3 }],
+    canvas: false,
 };
 
 /// The Strv S: a tank with a fixed gun in a casemate (a weightless solid, see `add_car`), and quicker: more engine for a little less hull,
@@ -46,6 +47,8 @@ pub(super) const STRV: VehicleDef = VehicleDef {
         solids: &[Solid { shape: Shape::Cuboid(STRV_CASEMATE_HALF), at: STRV_CASEMATE_CENTRE, role: Role::Part }],
     },
     armor: ARMOR,
+    drone: None,
+    mount_seat: None,
 };
 
 /// The driver's main gun, fixed in the hull.

@@ -2,8 +2,8 @@
 
 use super::*;
 
-/// The engine deck, over the back of the hull.
-const ARMOR: Armor = Armor { front_slope: 0.35, ricochet: [66.0, 74.0, 78.0, 80.0], mult: [1.0, 1.0, 1.35, 1.3], weak: &[WeakSpot { centre: [0.0, 0.3, 2.0], half: [1.1, 0.4, 0.6], mult: 1.5 }] };
+/// Its weak spot is the engine deck, over the back of the hull.
+const ARMOR: Armor = Armor { front_slope: 0.35, ricochet: [66.0, 74.0, 78.0, 80.0], mult: [1.0, 1.0, 1.35, 1.3], weak: &[WeakSpot { centre: [0.0, 0.3, 2.0], half: [1.1, 0.4, 0.6], mult: 1.5 }], canvas: false };
 
 const SHELL: Fire = Fire::Shell { kind: PROJECTILE_SHELL, speed: SHELL_SPEED, length: TANK_BARREL_LENGTH, ttl: SHELL_TTL_TICKS };
 
@@ -42,6 +42,8 @@ pub(super) const TANK: VehicleDef = VehicleDef {
         solids: &[Solid { shape: Shape::Cylinder { half_height: TANK_TURRET_HALF_HEIGHT, radius: TANK_TURRET_RADIUS }, at: TANK_TURRET_PIVOT, role: Role::Turret }],
     },
     armor: ARMOR,
+    drone: None,
+    mount_seat: None,
 };
 
 const MOUNTS: &[MountDef] = &[MountDef {

@@ -39,6 +39,8 @@ pub(super) const MORTAR: VehicleDef = VehicleDef {
         solids: &[],
     },
     armor: LIGHT,
+    drone: None,
+    mount_seat: Some(MountSeat { pivot: MORTAR_GUN_PIVOT, head: MORTAR_SEAT_HEAD }),
 };
 
 /// The tube, which a towed mortar cannot fire: it is being pulled.

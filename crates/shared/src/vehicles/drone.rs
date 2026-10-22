@@ -2,6 +2,23 @@
 
 use super::*;
 
+/// One shot down pops about as big as an autocannon round's burst.
+pub(super) const FPV: &DroneDef = &DroneDef {
+    energy_ticks: DRONE_ENERGY_TICKS,
+    range: DRONE_RANGE,
+    blast_radius: DRONE_BLAST_RADIUS,
+    damage: DRONE_DAMAGE,
+    knock: DRONE_KNOCK,
+    pop_radius: DRONE_POP_RADIUS,
+    pop_damage: DRONE_POP_DAMAGE,
+    impact_dv: DRONE_IMPACT_DV,
+    proximity: DRONE_PROXIMITY,
+    fall_ticks: DRONE_FALL_TICKS,
+    weapon: WEAPON_DRONE,
+    pop_shown_as: WEAPON_AUTOCANNON,
+    launch: Launch::Ahead { ahead: DRONE_LAUNCH_AHEAD, up: DRONE_LAUNCH_UP },
+};
+
 /// One hit brings it down.
 pub(super) const DRONE: VehicleDef = VehicleDef {
     kind: KIND_DRONE,
@@ -37,4 +54,6 @@ pub(super) const DRONE: VehicleDef = VehicleDef {
         solids: &[],
     },
     armor: LIGHT,
+    drone: Some(*FPV),
+    mount_seat: None,
 };

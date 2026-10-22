@@ -50,6 +50,8 @@ pub(super) const WALKER: VehicleDef = VehicleDef {
         solids: &LEG_SOLIDS,
     },
     armor: LIGHT,
+    drone: None,
+    mount_seat: None,
 };
 
 /// The driver's chin guns: the upper body turns within `WALKER_TORSO_LIMIT` of the legs.

@@ -40,6 +40,8 @@ pub(super) const PLANE: VehicleDef = VehicleDef {
         solids: &[Solid { shape: Shape::Cuboid(PLANE_WING_HALF_EXTENTS), at: PLANE_WING_CENTRE, role: Role::Wings }],
     },
     armor: SOFT,
+    drone: None,
+    mount_seat: None,
 };
 
 /// The gunner's ring mount behind the cockpit, the pilot's two forward guns, which take turns, and

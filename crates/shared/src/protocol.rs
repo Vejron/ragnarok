@@ -48,36 +48,11 @@ pub const BEARING_NONE: i16 = i16::MIN;
 pub const OBJ_TREE: u8 = 0;
 pub const OBJ_BUILDING: u8 = 1;
 
-/// Entity kinds.
-pub const KIND_STICKMAN: u8 = 0;
-/// A Hedemora rooster, an NPC. Replicated like a stickman, with its own model.
-pub const KIND_ROOSTER: u8 = 5;
-/// Vehicle kinds: replicated with an `orientation`.
-pub const KIND_JEEP: u8 = 1;
-pub const KIND_TANK: u8 = 2;
-pub const KIND_HELI: u8 = 3;
-pub const KIND_SPORTS: u8 = 4;
-/// The triplane. 5 is the rooster's.
-pub const KIND_PLANE: u8 = 6;
-/// The two-legged walker. 5 is the rooster's.
-pub const KIND_WALKER: u8 = 7;
-/// The turretless Strv S tank, one seat.
-pub const KIND_STRV: u8 = 8;
-/// The towed field mortar, one seat for its gunner.
-pub const KIND_MORTAR: u8 = 9;
-/// The Tesla Roadster, a sports car with cold-gas thrusters: boost, hop and hover. Two seats.
-pub const KIND_ROADSTER: u8 = 10;
-/// An FPV drone, flown from afar by the player who launched it. Gone once it blows up or its pilot lets go.
-pub const KIND_DRONE: u8 = 11;
-/// The hen: a giant robot hen on the walker's legs that jumps, flaps and glides, and lays egg bombs. One seat.
-pub const KIND_HEN: u8 = 12;
-/// A loitering drone: a Shahed-sized delta wing with a big warhead, flown from afar like an FPV drone
-/// but launched high above and behind its pilot, and always cruising forward.
-pub const KIND_LOITER: u8 = 13;
+pub use crate::consts::{KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_STRV, KIND_TANK, KIND_WALKER};
 
 /// Whether `kind` is a drone: flown from a remote seat by whoever launched it (see the `Drones` mechanic).
 pub fn is_drone(kind: u8) -> bool {
-    matches!(kind, KIND_DRONE | KIND_LOITER)
+    crate::vehicles::vehicle_def(kind).drone.is_some()
 }
 
 /// Health of a fresh vehicle of `kind`. Zero on the wire means wrecked.

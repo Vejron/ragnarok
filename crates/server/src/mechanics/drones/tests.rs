@@ -1,4 +1,5 @@
 use super::*;
+use shared::items::*;
 use crate::game::{Command, Game, Outgoing};
 use sim::STANDING_Y;
 use shared::protocol::{InputFrame, ItemSlot, THRUST_LINKED, WEAPON_RIFLE};

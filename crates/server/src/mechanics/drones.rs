@@ -4,8 +4,9 @@ use super::vehicles::add_vehicle;
 use crate::entities::{HurtBy, With};
 use crate::game::{Drone, Player, Seat, Seats, Vehicle, World};
 use shared::consts::*;
-use shared::items::*;
-use shared::protocol::{KIND_DRONE, KIND_LOITER, ShotEvent, WEAPON_AUTOCANNON, WEAPON_SHELL};
+use shared::protocol::{KIND_DRONE, ShotEvent};
+use shared::vehicles::{DroneDef, Launch, drone_def};
+use sim::half_extents;
 use shared::quant::{from_mrad, to_cm};
 
 /// FPV and loitering drones: launched from the hotbar, flown by their owner in place of their own body,
@@ -38,24 +39,24 @@ pub fn launch(world: &mut World, id: u32, kind: u8) -> bool {
     let yaw = from_mrad(input.yaw);
     let eye = [c.position[0], c.position[1] + eye_height(input.buttons(), c.prone), c.position[2]];
     let ahead = look(yaw, 0.0);
-    let position = if kind == KIND_LOITER {
-        // Far up and back, so it comes in over its pilot's head along their look.
-        [eye[0] - ahead[0] * LOITER_LAUNCH_BACK, eye[1] + LOITER_LAUNCH_UP, eye[2] - ahead[2] * LOITER_LAUNCH_BACK]
-    } else {
-        // Up against a wall it goes up in front of the wall.
-        let clearance = DRONE_HALF_EXTENTS[0] + 0.1;
-        let reach = world.physics.cast_ray(eye, ahead, DRONE_LAUNCH_AHEAD + clearance, 0).map_or(DRONE_LAUNCH_AHEAD, |t| (t - clearance).max(0.0));
-        [eye[0] + ahead[0] * reach, eye[1] + DRONE_LAUNCH_UP, eye[2] + ahead[2] * reach]
+    let def = drone_def(kind);
+    let position = match def.launch {
+        Launch::Behind { back, up, .. } => [eye[0] - ahead[0] * back, eye[1] + up, eye[2] - ahead[2] * back],
+        Launch::Ahead { ahead: reach, up } => {
+            // Up against a wall it goes up in front of the wall.
+            let clearance = half_extents(kind)[0] + 0.1;
+            let reach = world.physics.cast_ray(eye, ahead, reach + clearance, 0).map_or(reach, |t| (t - clearance).max(0.0));
+            [eye[0] + ahead[0] * reach, eye[1] + up, eye[2] + ahead[2] * reach]
+        }
     };
     if !world.physics.car_fits(kind, position, yaw) {
         return false;
     }
     let vid = add_vehicle(world, kind, position, yaw);
-    if kind == KIND_LOITER {
+    if let Launch::Behind { speed, .. } = def.launch {
         // It cannot hover: it starts out already cruising.
-        world.physics.set_car_velocity(vid, ahead.map(|v| v * LOITER_SPEED));
+        world.physics.set_car_velocity(vid, ahead.map(|v| v * speed));
     }
-    let def = drone_def(kind);
     world.entities.of_mut::<Seats>(vid)[0] = Some(id);
     world.entities.insert(vid, Drone { kind, owner: id, energy: def.energy_ticks, linked: true, pilot_hp: hp, fall_left: def.fall_ticks });
     let mut player = world.entities.get_mut::<Player>(id).expect("checked above");
@@ -101,8 +102,7 @@ pub(super) fn pop(world: &mut World, vid: u32) {
     let attacker = world.entities.get::<HurtBy>(vid).map(|by| by.0);
     let kind = world.entities.get::<Drone>(vid).map_or(KIND_DRONE, |drone| drone.kind);
     let def = drone_def(kind);
-    let shown_as = if kind == KIND_LOITER { WEAPON_SHELL } else { WEAPON_AUTOCANNON };
-    burst(world, vid, attacker, shown_as, def, def.pop_radius, def.pop_damage, def.knock * 0.3);
+    burst(world, vid, attacker, def.pop_shown_as, def, def.pop_radius, def.pop_damage, def.knock * 0.3);
     tracing::debug!(vid, "drone shot down");
 }
 

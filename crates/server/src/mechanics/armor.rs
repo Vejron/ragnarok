@@ -15,7 +15,7 @@
 use crate::game::{Player, Seats, Vehicle, World};
 use sim::Strike;
 use shared::consts::*;
-use shared::protocol::{DAMAGE_TURRET, KIND_TANK, ShotEvent, TURRET_GONE, WEAPON_RICOCHET, WEAPON_TURRET, WEAPON_WRECK};
+use shared::protocol::{DAMAGE_TURRET, ShotEvent, TURRET_GONE, WEAPON_RICOCHET, WEAPON_TURRET, WEAPON_WRECK};
 use shared::quant::to_cm;
 use shared::vehicles::vehicle_def;
 
@@ -125,7 +125,7 @@ pub fn damage_turret(world: &mut World, vid: u32, damage: u8, attacker: Option<u
         return;
     }
     let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(vid) else { return };
-    if vehicle.kind != KIND_TANK || vehicle.damage[DAMAGE_TURRET] == TURRET_GONE {
+    if !vehicle_def(vehicle.kind).sheds_turret() || vehicle.damage[DAMAGE_TURRET] == TURRET_GONE {
         return;
     }
     vehicle.turret_hp = vehicle.turret_hp.saturating_sub(damage);

@@ -10,7 +10,7 @@ use sim::Obj;
 use shared::consts::*;
 use shared::items::*;
 use shared::vehicles::{Exposure, crew_gun, vehicle_def};
-use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, KIND_PLANE, Kill, S_HIT, PROJECTILE_BULLET, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_ROCKET, S_KILL, ShotEvent, BulletSpawn, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_PELLET, WEAPON_ROADKILL, WEAPON_WRECK,
+use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, Kill, S_HIT, PROJECTILE_BULLET, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_ROCKET, S_KILL, ShotEvent, BulletSpawn, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_PELLET, WEAPON_ROADKILL, WEAPON_WRECK,
     DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_EGG, WEAPON_FLARE, WEAPON_LOITER, WEAPON_SHELL};
 use shared::quant::{from_mrad, to_cm, to_cm_i16, to_mrad};
 
@@ -882,13 +882,13 @@ pub fn land(world: &mut World, flight: &Flight, met: &Strike, round: &Round) {
         let head = is_headshot(world, victim, origin, dir, t, back);
         damage_hit(world, victim, dealt, attacker, round.weapon, None, head);
     } else if let Some((_, Some(car))) = wall {
-        let plane = world.entities.get::<Vehicle>(car).is_some_and(|vehicle| vehicle.kind == KIND_PLANE);
+        let canvas = world.entities.get::<Vehicle>(car).is_some_and(|vehicle| vehicle_def(vehicle.kind).armor.canvas);
         let point = std::array::from_fn(|i| origin[i] + dir[i] * reach);
         match super::armor::armor_of(world, car, origin, dir, reach) {
             Some(Outcome::Ricochet { .. }) => super::armor::announce_ricochet(world, car, point),
             struck => {
                 let scale = if let Some(Outcome::Hit { scale, .. }) = struck { scale } else { 1.0 };
-                let base = if plane { round.plane } else { round.vehicle };
+                let base = if canvas { round.plane } else { round.vehicle };
                 damage_vehicle(world, car, (f32::from(base) * scale).round().max(1.0) as u8, attacker);
                 super::vehicles::shoot_wheels(world, car, point, f32::from(round.damage), super::vehicles::BULLET_WHEEL_REACH);
             }
@@ -1010,8 +1010,8 @@ fn use_item(world: &mut World, id: u32) {
                 fire_flare(world, id);
             }
         }
-        ItemKind::Drone => {
-            if fresh && player.fire_cooldown == 0 && super::drones::launch(world, id, shared::items::drone_kind(held.item)) {
+        ItemKind::Drone(kind) => {
+            if fresh && player.fire_cooldown == 0 && super::drones::launch(world, id, kind) {
                 let mut player = world.entities.get_mut::<Player>(id).expect("checked above");
                 player.fire_cooldown = item.cooldown_ticks;
                 spend(&mut player.hotbar[slot]);

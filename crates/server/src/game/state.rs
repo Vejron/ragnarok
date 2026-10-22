@@ -265,7 +265,7 @@ pub struct Vehicle {
 /// mechanic owns it.
 #[derive(crate::entities::Component, Clone, Copy, Debug, PartialEq)]
 pub struct Drone {
-    /// `KIND_DRONE` or `KIND_LOITER`, which picks its `shared::items::drone_def`.
+    /// `KIND_DRONE` or `KIND_LOITER`, which picks its `shared::vehicles::drone_def`.
     pub kind: u8,
     /// Who launched it, credited with what it blows up.
     pub owner: u32,
@@ -422,7 +422,7 @@ pub(super) fn air_byte(tank: f32) -> u8 {
 
 /// A drone's battery on the wire: 0..=255 of full. Mirrored by the client's drone gauge.
 pub(super) fn battery_byte(drone: &Drone) -> u8 {
-    (drone.energy as f32 / shared::items::drone_def(drone.kind).energy_ticks as f32 * 255.0).round().clamp(0.0, 255.0) as u8
+    (drone.energy as f32 / shared::vehicles::drone_def(drone.kind).energy_ticks as f32 * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
 /// Where the standing, living players were at the end of one tick: `(tick, [(id, position)])`.

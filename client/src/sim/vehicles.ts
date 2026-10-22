@@ -4,8 +4,6 @@
  * physics is the server's (`crates/sim`, run here through `motor.ts`) and models are in `render/`.
  */
 
-import { KIND_MORTAR } from '@/net/codec'
-import { MORTAR_GUN_PIVOT, MORTAR_SEAT_HEAD } from './consts'
 import tables from './tables.generated.json'
 
 export interface VehicleDef {
@@ -27,14 +25,18 @@ export interface VehicleDef {
   axleZ: number
   /** Whether its crew can be shot: `sealed` inside armour, `open` above the hull, `glazed` behind glass the rounds go through. */
   crew: 'sealed' | 'open' | 'glazed'
-  /** Each seat's head point in the hull frame, where its occupant is drawn sitting (not the mortar's: `seatHead`). */
+  /** Each seat's head point in the hull frame, where its occupant is drawn sitting (not for a `mountSeat`: `seatHead`). */
   seatHeads: readonly (readonly [number, number, number])[]
+  /** Its one seat is on its turning mount (the mortar's): the head is `head` from the mount's `pivot`, turned with the gun. */
+  mountSeat: { pivot: Triple; head: Triple } | null
   /** Its passengers (every seat but the driver's) fire the guns in their own hotbar. */
   crewGuns: boolean
   /** A hull on two spring legs, boarded from between its feet: a walker or a hen. */
   legged: boolean
   /** Tracked and heavy: turns on the spot, ruts soft ground, rumbles, and plows through trees. */
   heavy: boolean
+  /** Flown from afar by whoever launched it. */
+  drone: boolean
 }
 
 type Triple = readonly [number, number, number]
@@ -46,6 +48,7 @@ export const VEHICLES: readonly VehicleDef[] = tables.vehicles.map((row) => ({
   halfExtents: triple(row.halfExtents),
   crew: row.crew as VehicleDef['crew'],
   seatHeads: row.seatHeads.map(triple),
+  mountSeat: row.mountSeat && { pivot: triple(row.mountSeat.pivot), head: triple(row.mountSeat.head) },
 }))
 
 /** The definition of a vehicle `kind`. Unknown kinds are jeeps. */
@@ -55,16 +58,16 @@ export const vehicleDef = (kind: number | undefined): VehicleDef => VEHICLES.fin
 export const gunSeat = (kind: number | undefined): number => (vehicleDef(kind).seats === 1 ? 0 : 1)
 
 /**
- * Where seat `index` of a `kind` puts its occupant's head, in the hull frame, with the mortar's mount
- * turned to `gunYaw`; null for a crew that does not show. Mirrors `seat_head`.
+ * Where seat `index` of a `kind` puts its occupant's head, in the hull frame, with a seat on a turning
+ * mount turned to `gunYaw`; null for a crew that does not show. Mirrors `seat_head`.
  */
 export const seatHead = (kind: number | undefined, index: number, gunYaw = 0): readonly [number, number, number] | null => {
   const def = vehicleDef(kind)
   if (def.crew === 'sealed') return null
-  if (def.kind === KIND_MORTAR) {
+  if (def.mountSeat) {
     if (index !== 0) return null
-    const [x, y, z] = MORTAR_SEAT_HEAD
-    const [px, py, pz] = MORTAR_GUN_PIVOT
+    const [x, y, z] = def.mountSeat.head
+    const [px, py, pz] = def.mountSeat.pivot
     const sin = Math.sin(gunYaw)
     const cos = Math.cos(gunYaw)
     return [px + x * cos + z * sin, py + y, pz - x * sin + z * cos]
@@ -80,3 +83,6 @@ export const isLegged = (kind: number | undefined): boolean => kind !== undefine
 
 /** A tracked tank: the tank or the Strv S, which turn on the spot, rut soft ground and rumble alike. */
 export const isTracked = (kind: number | undefined): boolean => kind !== undefined && vehicleDef(kind).heavy
+
+/** Whether `kind` is a drone, flown from a remote seat by whoever launched it. Mirrors `is_drone`. */
+export const isDrone = (kind: number | undefined): boolean => kind !== undefined && vehicleDef(kind).drone

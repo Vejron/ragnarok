@@ -3,16 +3,18 @@
 //! `crate::mounts`), how it stands and meets the world (`Body`), what the physics makes of it (`Spec`,
 //! which `crates/sim` runs on the server and in the client's prediction) and its armour.
 //!
-//! Adding a kind: a `KIND_*` id in `protocol.rs`, its file here and a place in `VEHICLES`, the
-//! constants the client needs too in `consts.rs`, and its model. A new way of moving is a `Lift` and
-//! its system in `crates/sim`. The client's table is built from `client/src/sim/tables.generated.json`,
-//! which `UPDATE_PARITY=1 cargo test -p shared parity` regenerates from this one.
+//! Adding a kind: its `KIND_*` id in `consts.rs` (which the client's copy is generated from), its
+//! file here and its place in `VEHICLES`, and its model. Nothing in the server or the sim branches on
+//! a kind: what a kind does is its fields. A new way of moving is a `Lift` and its system in
+//! `crates/sim`. The client's table is built from `client/src/sim/tables.generated.json`, which
+//! `UPDATE_PARITY=1 cargo test -p shared parity` regenerates from this one.
 
 use crate::consts::*;
 use crate::mounts::{Aim, Ammo, Fire, MountDef, Muzzle, Need, Refill, Show};
+use crate::items::*;
 use crate::protocol::{
     KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON,
-    PROJECTILE_EGG, PROJECTILE_MORTAR, PROJECTILE_SHELL, WEAPON_MG,
+    PROJECTILE_EGG, PROJECTILE_MORTAR, PROJECTILE_SHELL, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LOITER, WEAPON_MG, WEAPON_SHELL,
 };
 
 mod drone;
@@ -57,6 +59,49 @@ pub struct VehicleDef {
     pub spec: Spec,
     /// What a shot does to it, by where it lands and at what angle.
     pub armor: Armor,
+    /// For a drone, flown from afar by whoever launched it: how it flies, strikes and is launched.
+    pub drone: Option<DroneDef>,
+    /// Its one seat is on its turning mount rather than in the hull: the mortar's.
+    pub mount_seat: Option<MountSeat>,
+}
+
+/// A seat on a mount that turns with the gun.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MountSeat {
+    /// Where the mount turns, in the hull frame.
+    pub pivot: [f32; 3],
+    /// The occupant's head, from the pivot, with the gun pointing ahead.
+    pub head: [f32; 3],
+}
+
+/// What a drone kind does in the `Drones` mechanic: how long and how far it flies, and its charge.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DroneDef {
+    pub energy_ticks: u32,
+    pub range: f32,
+    pub blast_radius: f32,
+    pub damage: f32,
+    pub knock: f32,
+    pub pop_radius: f32,
+    pub pop_damage: f32,
+    pub impact_dv: f32,
+    pub proximity: f32,
+    pub fall_ticks: u32,
+    /// What its blast is credited as.
+    pub weapon: u8,
+    /// How its pop is drawn when it is shot down: as the burst of a round about its size.
+    pub pop_shown_as: u8,
+    pub launch: Launch,
+}
+
+/// Where a drone starts, from its pilot's eye and look.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Launch {
+    /// `ahead` metres along the look, or short of a wall there, and `up` above the eye.
+    Ahead { ahead: f32, up: f32 },
+    /// `back` metres behind the eye and `up` above it, already flying along the look at `speed`: it
+    /// comes in over its pilot's head.
+    Behind { back: f32, up: f32, speed: f32 },
 }
 
 impl VehicleDef {
@@ -68,6 +113,11 @@ impl VehicleDef {
     /// How far either side of the centre line its wheels are, metres.
     pub fn track_half(&self) -> f32 {
         self.spec.track_half
+    }
+
+    /// Whether its turret can be shot off: it has a `Role::Turret` solid.
+    pub fn sheds_turret(&self) -> bool {
+        self.spec.solids.iter().any(|solid| solid.role == Role::Turret)
     }
 
     /// How far fore and aft of the centre a car's axles are, metres.
@@ -152,6 +202,8 @@ pub struct Armor {
     /// Damage multiplier by zone.
     pub mult: [f32; 4],
     pub weak: &'static [WeakSpot],
+    /// Canvas and wood, which a machine gun's rounds tear through: they deal their `plane` damage.
+    pub canvas: bool,
 }
 
 /// A box on the hull where a hit does extra: an engine deck, a roof hatch.
@@ -163,9 +215,9 @@ pub struct WeakSpot {
 }
 
 /// Cars, the helicopter and the walker: only the most grazing hit glances off.
-const LIGHT: Armor = Armor { front_slope: 0.0, ricochet: [82.0, 82.0, 82.0, 82.0], mult: [1.0; 4], weak: &[] };
+const LIGHT: Armor = Armor { front_slope: 0.0, ricochet: [82.0, 82.0, 82.0, 82.0], mult: [1.0; 4], weak: &[], canvas: false };
 /// Canvas and wood: nothing glances off.
-const SOFT: Armor = Armor { front_slope: 0.0, ricochet: [91.0; 4], mult: [1.0; 4], weak: &[] };
+const SOFT: Armor = Armor { front_slope: 0.0, ricochet: [91.0; 4], mult: [1.0; 4], weak: &[], canvas: true };
 
 /// Every vehicle kind, in id order.
 pub static VEHICLES: [VehicleDef; 12] = [
@@ -200,17 +252,15 @@ pub fn gun_seat(kind: u8) -> usize {
     if vehicle_def(kind).seats == 1 { 0 } else { 1 }
 }
 
-/// Where seat `index` of a `kind` puts its occupant's head, in the hull frame, with the mortar's mount
-/// turned to `gun_yaw`. `None` for a crew that does not show.
+/// Where seat `index` of a `kind` puts its occupant's head, in the hull frame, with a seat on a
+/// turning mount turned to `gun_yaw`. `None` for a crew that does not show.
 pub fn seat_head(kind: u8, index: usize, gun_yaw: f32) -> Option<[f32; 3]> {
     let def = vehicle_def(kind);
     if def.crew == Exposure::Sealed {
         return None;
     }
-    if kind == KIND_MORTAR {
-        let [x, y, z] = MORTAR_SEAT_HEAD;
+    if let Some(MountSeat { pivot: [px, py, pz], head: [x, y, z] }) = def.mount_seat {
         let (sin, cos) = gun_yaw.sin_cos();
-        let [px, py, pz] = MORTAR_GUN_PIVOT;
         return (index == 0).then_some([px + x * cos + z * sin, py + y, pz - x * sin + z * cos]);
     }
     def.seat_heads.get(index).copied()
@@ -219,6 +269,11 @@ pub fn seat_head(kind: u8, index: usize, gun_yaw: f32) -> Option<[f32; 3]> {
 /// Whether seat `index` of a `kind` fires its occupant's own guns: a car's passengers.
 pub fn crew_gun(kind: u8, index: usize) -> bool {
     vehicle_def(kind).crew_guns && index != 0
+}
+
+/// What drone `kind` does: an FPV drone's for a kind that is not a drone.
+pub fn drone_def(kind: u8) -> &'static DroneDef {
+    vehicle_def(kind).drone.as_ref().unwrap_or(drone::FPV)
 }
 
 /// The definition of a vehicle `kind`. Unknown kinds are jeeps.
@@ -237,7 +292,7 @@ mod tests {
             assert!(def.seats >= 1 && def.seats <= CAR_SEATS, "{} fits the seat array", def.name);
             assert!(def.hp > 0, "{} starts alive", def.name);
             assert_eq!(vehicle_def(def.kind).kind, def.kind);
-            if def.crew != Exposure::Sealed && def.kind != KIND_MORTAR {
+            if def.crew != Exposure::Sealed && def.mount_seat.is_none() {
                 assert_eq!(def.seat_heads.len(), def.seats, "{} places every seat's head", def.name);
             }
             assert!(!def.crew_guns || def.crew != Exposure::Sealed, "{} passengers who shoot can be shot", def.name);

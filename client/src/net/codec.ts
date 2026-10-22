@@ -37,34 +37,12 @@ const BEARING_NONE = -32768
 export const OBJ_TREE = 0
 export const OBJ_BUILDING = 1
 
-export const KIND_STICKMAN = 0
-export const KIND_JEEP = 1
-export const KIND_TANK = 2
-export const KIND_HELI = 3
-export const KIND_SPORTS = 4
-/** A Hedemora rooster, an NPC. */
-export const KIND_ROOSTER = 5
-/** The triplane. */
-export const KIND_PLANE = 6
-/** The two-legged walker. */
-export const KIND_WALKER = 7
-/** The turretless Strv S tank, one seat. */
-export const KIND_STRV = 8
-/** The towed field mortar, one seat for its gunner. */
-export const KIND_MORTAR = 9
-/** The Tesla Roadster: a sports car with cold-gas thrusters (boost, hop and hover). Two seats. */
-export const KIND_ROADSTER = 10
-/** An FPV drone, flown from afar by the player who launched it. */
-export const KIND_DRONE = 11
-/** The hen: a giant robot hen on the walker's legs that leaps, flaps and glides, and lays egg bombs. */
-export const KIND_HEN = 12
-/** A loitering drone: a Shahed-sized delta wing with a big warhead, flown from afar and always cruising. */
-export const KIND_LOITER = 13
+/** Entity kinds, generated from `consts.rs`. A vehicle kind's definition is `vehicleDef`. */
+export {
+  KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_STRV, KIND_TANK, KIND_WALKER,
+} from '@/sim/consts'
+export { isDrone } from '@/sim/vehicles'
 
-/** Whether `kind` is a drone, flown from a remote seat by whoever launched it. Mirrors `is_drone` in protocol.rs. */
-export function isDrone(kind: number | undefined): boolean {
-  return kind === KIND_DRONE || kind === KIND_LOITER
-}
 export const FLAG_GROUNDED = 1 << 0
 export const FLAG_DEAD = 1 << 1
 export const FLAG_CROUCHING = 1 << 2

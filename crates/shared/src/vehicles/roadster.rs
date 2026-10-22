@@ -36,4 +36,6 @@ pub(super) const ROADSTER: VehicleDef = VehicleDef {
         solids: &[],
     },
     armor: LIGHT,
+    drone: None,
+    mount_seat: None,
 };

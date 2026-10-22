@@ -4,6 +4,48 @@
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
 export const PROTOCOL_VERSION = 39
 
+/**
+ * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
+ * `crate::vehicles`.
+ */
+export const KIND_STICKMAN = 0
+
+/** A Hedemora rooster, an NPC. Replicated like a stickman, with its own model. */
+export const KIND_ROOSTER = 5
+
+/** Vehicle kinds: replicated with an `orientation`. */
+export const KIND_JEEP = 1
+export const KIND_TANK = 2
+export const KIND_HELI = 3
+export const KIND_SPORTS = 4
+
+/** The triplane. 5 is the rooster's. */
+export const KIND_PLANE = 6
+
+/** The two-legged walker. 5 is the rooster's. */
+export const KIND_WALKER = 7
+
+/** The turretless Strv S tank, one seat. */
+export const KIND_STRV = 8
+
+/** The towed field mortar, one seat for its gunner. */
+export const KIND_MORTAR = 9
+
+/** The Tesla Roadster, a sports car with cold-gas thrusters: boost, hop and hover. Two seats. */
+export const KIND_ROADSTER = 10
+
+/** An FPV drone, flown from afar by the player who launched it. Gone once it blows up or its pilot lets go. */
+export const KIND_DRONE = 11
+
+/** The hen: a giant robot hen on the walker's legs that jumps, flaps and glides, and lays egg bombs. One seat. */
+export const KIND_HEN = 12
+
+/**
+ * A loitering drone: a Shahed-sized delta wing with a big warhead, flown from afar like an FPV drone
+ * but launched high above and behind its pilot, and always cruising forward.
+ */
+export const KIND_LOITER = 13
+
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
 

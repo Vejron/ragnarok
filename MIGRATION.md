@@ -425,7 +425,7 @@ Client:
 
 - [x] **5.1** One Rust definition per kind, physics and armour included; the sim and `armor.rs` read
       it.
-- [ ] **5.2** The server and the sim kind-free. Kind ids generated for the client.
+- [x] **5.2** The server and the sim kind-free. Kind ids generated for the client.
 - [ ] **5.3** One client presentation per kind. Sound, tyres, smoke, models and the editor read it.
 - [ ] **5.4** Measure: add a trial kind in a scratch worktree and count the files it touches.
       Document how to add a kind.
@@ -2021,3 +2021,35 @@ Mechanics took 1.66 to 1.79 ms before and 1.65 to 1.67 ms after: no change beyon
 **Checks:** server 271, shared 68, sim 111, client 401; clippy clean.
 
 **Next:** 5.2, the server and the sim kind-free.
+
+### 2026-10-22: Phase 5.2, the server and the sim kind-free
+
+Every branch on a vehicle kind outside the world's spawn mix became a field of the definition:
+
+| Was | Now |
+|---|---|
+| `damage_turret`: only a `KIND_TANK` sheds its turret | `sheds_turret()`: it has a `Role::Turret` solid |
+| `seat_head`: the mortar's seat turns with its mount | `mount_seat: Option<MountSeat { pivot, head }>` |
+| `is_drone`: `KIND_DRONE` or `KIND_LOITER` | `drone: Option<DroneDef>` is set |
+| `combat.rs`: a `KIND_PLANE` takes a round's `plane` damage | `Armor::canvas` |
+| `drones.rs`: a loitering drone launches far up and back, cruising, and pops as a shell | `DroneDef::launch` (`Ahead` or `Behind`) and `pop_shown_as` |
+| `drone_kind(item)`: the loitering drone's item launches a loitering drone | `ItemKind::Drone(kind)` |
+| `drone_def(kind)`: an if over kinds in `items.rs` | the definition's `drone` (FPV and loitering in their kinds' files) |
+
+**Kind ids** moved from `protocol.rs` to `consts.rs`, which re-exports them, so the client's are
+generated. The `KIND_*` block in `codec.ts`, a hand copy, now re-exports the generated ones.
+
+**Client.** The generated table gains `drone` and `mountSeat`. `isDrone` and `seatHead` read them, and
+`seatHead` no longer has the mortar branch. `isDrone` moved to `sim/vehicles.ts`; `codec.ts`
+re-exports it.
+
+**Progress:**
+
+- Rust kind branches: 19 to 8. All 8 are the world's spawn mix and its runways in
+  `mechanics/vehicles.rs`, which say which kinds a world gets, not what a kind does.
+- `crates/sim` has none, and neither does any server mechanic's behaviour.
+- Client: 49 to 47.
+
+**Checks:** server 271, shared 68, sim 111, client 401; clippy, `vue-tsc` and oxlint add nothing.
+
+**Next:** 5.3, one client presentation per kind.

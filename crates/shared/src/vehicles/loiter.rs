@@ -2,6 +2,24 @@
 
 use super::*;
 
+/// It cannot hover, so it starts out far up and back, already cruising; shot down, it pops about as
+/// big as a tank shell's burst.
+const LOITERING: DroneDef = DroneDef {
+    energy_ticks: LOITER_ENERGY_TICKS,
+    range: LOITER_RANGE,
+    blast_radius: LOITER_BLAST_RADIUS,
+    damage: LOITER_DAMAGE,
+    knock: LOITER_KNOCK,
+    pop_radius: LOITER_POP_RADIUS,
+    pop_damage: LOITER_POP_DAMAGE,
+    impact_dv: LOITER_IMPACT_DV,
+    proximity: LOITER_PROXIMITY,
+    fall_ticks: LOITER_FALL_TICKS,
+    weapon: WEAPON_LOITER,
+    pop_shown_as: WEAPON_SHELL,
+    launch: Launch::Behind { back: LOITER_LAUNCH_BACK, up: LOITER_LAUNCH_UP, speed: LOITER_SPEED },
+};
+
 /// Takes a few rifle rounds to bring down.
 pub(super) const LOITER: VehicleDef = VehicleDef {
     kind: KIND_LOITER,
@@ -37,4 +55,6 @@ pub(super) const LOITER: VehicleDef = VehicleDef {
         solids: &[],
     },
     armor: LIGHT,
+    drone: Some(LOITERING),
+    mount_seat: None,
 };
