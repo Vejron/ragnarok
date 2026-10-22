@@ -334,7 +334,7 @@ not change.
     `PickupState`;
   - Rust: `v1_rows`, the row structs, and the server's test views built on them.
 - [x] **4.6** Seats as data: camera rigs, the HUD's seat role and the prompt.
-- [ ] **4.7** `game.ts` split into the parts above.
+- [x] **4.7** `game.ts` split into the parts above.
 
 #### Guardrails
 
@@ -1826,3 +1826,69 @@ driver's vehicle is predicted, which is prediction, not presentation.
 **Checks:** client 395 passing; `vue-tsc` and oxlint add nothing.
 
 **Next:** 4.7, splitting `game.ts`.
+
+### 2026-10-22: Phase 4.7, `game.ts` split
+
+`game.ts` keeps the loop, the connection and message handling, the local player's prediction and
+firing feedback, and the wiring. The rest moved out:
+
+| Module | What it holds | Lines |
+|---|---|---|
+| `events.ts` (`Events`) | Shots, blasts, crashes and bullets, played when the picture reaches their tick. Includes the 20-way weapon switch, blasts, muzzle lights, hit numbers, and bullets in flight with their dedupe. | 300 |
+| `surroundings.ts` (`Surroundings`) | Splashes, wading (its per-person state too), the water mirror, the grass parted underfoot and by rotors, and contact shadows. | 140 |
+| `entities/presenters/riders.ts` (`Riders`) | Everyone else seated where their crew show. This was a loop in `frame()`; it is now a presenter in the `people` group, with `seatFrame`. Its own `seated` list keeps the grass parted only by those on foot, as before. | 75 |
+| `prompt.ts` | The E/G prompt and the item in reach, as pure functions. | 70 |
+| `gauges.ts` | A plane's cockpit gauges and the pilot's two screen markers. | 50 |
+| `arcs.ts` (`Arcs`) | The grenade throw, the mortar bomb and the plane's bomb arcs. | 70 |
+
+The connection and message handling stayed in `Game`. Separating the snapshot handler from the
+prediction and seat state it feeds would only move the wiring, not remove it.
+
+**Tests:** `prompt.spec.ts` covers:
+
+- the lowest free seat of the nearest vehicle, and nothing in reach;
+- no drone and no way out of one;
+- a hen boarded from between its feet;
+- an item before a seat, and the parachute before either;
+- the nearest item on the same level;
+- a bullet started once though it is sent twice, ending where the server says it struck.
+
+**Browser.** A short headless session on the fixture world: joining, landing, walking, firing (15
+bullets back), boarding a jeep, driving it 23 m and getting out all worked. The presenters drew all
+16 vehicles and 24 items, the rooster was held, the prompt read "E: drive the jeep", and the console
+was clean.
+
+- One run's boarding failed. The script had chosen a jeep its own burst had just wrecked, and a wreck
+  cannot be boarded. The script now skips wrecks and drones.
+- The fixture world has no bots, so "others in view" is not checked there.
+
+**Progress:**
+
+| | Start of Phase 4 | Now |
+|---|---|---|
+| `game.ts` lines | 1,922 | 915 |
+| id-keyed maps and sets in `game.ts` | 15 | 1 (`refPoses`, the newest snapshot's vehicle poses for prediction) |
+| `KIND_*` equality branches in `game.ts` | 32 | 0 |
+| `codec.ts` lines | 704 | 507 |
+
+**Checks:** client 401 passing; `vue-tsc` and oxlint add nothing.
+
+### Phase 4 done
+
+The client draws from components: a store keyed by id, presenters chosen by what an entity has, seats
+as data and camera rigs as a registry. The adapter and v1's rows are gone from both sides.
+
+**Measure.** A new vehicle kind now touches these client files:
+
+- its model;
+- its row in `seats.ts`;
+- `createVehicleModel`, still an if-chain over kinds (Phase 5's prefabs);
+- the HUD hints in `App.vue` if it needs a new seat role.
+
+Nothing under `net/` or `entities/` changes, and `game.ts` does not change.
+
+**Next:** Phase 5, prefabs: a vehicle as one definition, one model, and a lift system only when it
+moves in a new way. The phases still open:
+
+- Phase 1's remaining mirrors: the codec, `terrain.ts` and `carve.ts`;
+- the deferred wire changes: owner-only components, and a `Seated` component.

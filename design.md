@@ -103,7 +103,12 @@ Remote entities are drawn in the past, at `renderTick = estServerTick − interp
   Rust writes the conversion into game units and the blend as code (`entities/units.generated.ts`).
 - **Past the newest snapshot** the entity holds its last state; there is no extrapolation yet.
 - **Ending.** An entity the newest snapshot no longer has ends at that tick, and goes when the picture gets there.
-- **Presenters** (`entities/presenters/`) draw what the store holds, each chosen by the components an entity has: projectiles, items, stickmen, the rooster, vehicles, and one per vehicle component (guns, wear, smoke, jets).
+- **Presenters** (`entities/presenters/`) draw what the store holds, each chosen by the components an entity has: projectiles, items, stickmen, riders in their seats, the rooster, vehicles, and one per vehicle component (guns, wear, smoke, jets).
+- **Around them**, `client/src/game.ts` keeps the loop and wires the rest together:
+  - `events.ts` plays shots, blasts and bullets when the picture reaches them;
+  - `seats.ts` says what each seat of each vehicle means (camera rig, HUD role, prompt), and `cameras.ts` holds the rigs;
+  - `surroundings.ts` does splashes, wading, grass and contact shadows;
+  - `prompt.ts`, `gauges.ts` and `arcs.ts` hold the E prompt, a plane's gauges and sights, and the arcs drawn ahead of a throw or a bomb.
 
 ### 5.5 Clock sync and adaptive delay
 
