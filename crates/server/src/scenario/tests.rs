@@ -62,7 +62,7 @@ fn kill(game: &mut Game, id: u32) {
 }
 
 fn put(game: &mut Game, id: u32, [x, z]: [f32; 2]) {
-    let y = game.world.map.ground.height_at(x, z) + crate::physics::STANDING_Y;
+    let y = game.world.map.ground.height_at(x, z) + sim::STANDING_Y;
     game.world.players.get_mut(&id).unwrap().character.position = [x, y, z];
 }
 

@@ -373,7 +373,7 @@ fn spawn_checks_see_walls() {
 
 #[test]
 fn cars_are_solid_to_characters() {
-    use crate::physics::{Character, STANDING_Y};
+    use crate::{Character, STANDING_Y};
     use shared::protocol::InputFrame;
     let mut physics = with_car(&flat());
     run(&mut physics, COAST, 60);
@@ -390,7 +390,7 @@ fn cars_are_solid_to_characters() {
 
 #[test]
 fn a_moving_car_overlaps_a_character_in_its_path() {
-    use crate::physics::STANDING_Y;
+    use crate::STANDING_Y;
     let mut physics = with_car(&flat());
     run(&mut physics, COAST, 60);
     let in_path = [0.0, STANDING_Y, -12.0];
@@ -1043,7 +1043,7 @@ fn a_tanks_turret_is_solid_above_the_hull() {
     // The gun's own tank does not stop its shell.
     assert!(physics.cast_ray([-10.0, height, rest.position[2] + pz], [1.0, 0.0, 0.0], 30.0, 1).is_none());
     // A standing character on the roof of the turret is carried by the tank.
-    let on_top = [rest.position[0] + px, rest.position[1] + py + TANK_TURRET_HALF_HEIGHT + crate::physics::STANDING_Y - 0.05, rest.position[2] + pz];
+    let on_top = [rest.position[0] + px, rest.position[1] + py + TANK_TURRET_HALF_HEIGHT + crate::STANDING_Y - 0.05, rest.position[2] + pz];
     assert_eq!(physics.car_under(on_top).map(|hit| hit.car), Some(1));
 }
 

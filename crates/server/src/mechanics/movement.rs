@@ -1,6 +1,6 @@
 use super::Mechanic;
 use crate::game::World;
-use crate::physics::Character;
+use sim::Character;
 use shared::consts::*;
 use shared::items::{aim_speed_scale, HOTBAR_SLOTS};
 

@@ -4,7 +4,7 @@ use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
 use super::life::{blasted, damage_entity, first_hurtbox_hit, hit_mark};
 use super::spawn;
 use crate::game::{Player, Rocket, TEAM_NONE, World, starting_hotbar};
-use crate::physics::Obj;
+use sim::Obj;
 use shared::consts::*;
 use shared::items::*;
 use shared::vehicles::{Exposure, crew_gun, vehicle_def};

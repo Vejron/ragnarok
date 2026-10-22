@@ -3746,7 +3746,6 @@ dependencies = [
  "bevy_ecs",
  "bytes",
  "certon",
- "rapier3d",
  "rcgen",
  "rmp-serde",
  "salvo",
@@ -3754,6 +3753,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "shared",
+ "sim",
  "time",
  "tokio",
  "tracing",
@@ -3855,6 +3855,15 @@ checksum = "28d567dcbaf0049cb8ac2608a76cd95ff9e4412e1899d389ee400918ca7537f5"
 dependencies = [
  "digest 0.11.3",
  "rand_core 0.10.1",
+]
+
+[[package]]
+name = "sim"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rapier3d",
+ "shared",
 ]
 
 [[package]]

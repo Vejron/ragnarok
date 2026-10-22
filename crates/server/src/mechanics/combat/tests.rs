@@ -1,6 +1,6 @@
 use super::*;
 use crate::game::{Command, Game, Outgoing};
-use crate::physics::STANDING_Y;
+use sim::STANDING_Y;
 use shared::protocol::{InputFrame, Snapshot, WEAPON_BULLET, WEAPON_FLARE, WEAPON_REVOLVER, WEAPON_PELLET, WEAPON_SHOTGUN, decode};
 use shared::quant::to_mrad;
 use shared::world::{WORLD_VERSION, WorldFile};

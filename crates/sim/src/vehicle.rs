@@ -507,7 +507,7 @@ impl Physics {
     }
 
     /// Test helper: rolls a car about its forward axis and moves it.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub fn set_car_roll(&mut self, id: u32, roll: f32, position: [f32; 3]) {
         let Some(car) = self.cars.get(&id) else { return };
         if let Some(body) = self.bodies.get_mut(car.body) {
@@ -519,7 +519,7 @@ impl Physics {
 
     /// Test helper: points vehicle `id` `pitch` radians up from level at `yaw`, at `position`, moving
     /// along its nose at `speed`.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub fn set_car_dive(&mut self, id: u32, position: [f32; 3], yaw: f32, pitch: f32, speed: f32) {
         let Some(car) = self.cars.get(&id) else { return };
         if let Some(body) = self.bodies.get_mut(car.body) {

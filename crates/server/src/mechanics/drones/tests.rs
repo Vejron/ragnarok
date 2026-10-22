@@ -1,6 +1,6 @@
 use super::*;
 use crate::game::{Command, Game, Outgoing};
-use crate::physics::STANDING_Y;
+use sim::STANDING_Y;
 use shared::protocol::{InputFrame, ItemSlot, THRUST_LINKED, WEAPON_RIFLE};
 use shared::world::{WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};

@@ -3,7 +3,7 @@ use super::armor::{self, Outcome};
 use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
 use super::combat::{Blast, Direct, Round, blast_at, first_player_hit, hitscan, look, rewind_ticks, scatter};
 use crate::game::{Gun, PlaneArms, Rocket, World};
-use crate::physics::CarPose;
+use sim::CarPose;
 use shared::consts::*;
 use shared::items::Falloff;
 use shared::protocol::{DAMAGE_TURRET, TURRET_GONE, KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_PLANE, KIND_STRV, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, ShotEvent, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_MG, WEAPON_MORTAR, WEAPON_SHELL};

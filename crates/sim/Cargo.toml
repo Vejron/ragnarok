@@ -1,0 +1,18 @@
+[package]
+name = "sim"
+version.workspace = true
+edition.workspace = true
+
+# The simulation both sides run: Rapier physics for stickmen and vehicles, from the world file and the
+# shared movement rules. The server links it natively; the client is to run the same code as WASM
+# (MIGRATION.md, Phase 1), so nothing here may depend on tokio, sockets or the file system.
+
+[dependencies]
+anyhow.workspace = true
+rapier3d = "0.36"
+shared.workspace = true
+
+[features]
+# Helpers that set up states for tests (`set_car_roll`, `set_car_dive`, `move_character`), for the
+# server's tests too.
+testing = []

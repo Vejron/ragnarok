@@ -89,10 +89,14 @@ Phase 3 and 4 need both.
 
 ### Phase 1 (track A): one simulation, native and WASM
 
-- [ ] Install the toolchain: `rustup target add wasm32-unknown-unknown`, `wasm-bindgen-cli` (needs the
-      owner's go-ahead: it changes the machine, not the repo).
-- [ ] Extract `crates/sim`: movement rules, the vehicle lift models (`physics/vehicle`, `flight`, `spec`),
-      carve and terrain, with no tokio or salvo, keyed on spec data instead of kind.
+- [x] Install the toolchain: `rustup target add wasm32-unknown-unknown`, `wasm-bindgen-cli` 0.2.129
+      (the `wasm-bindgen` crate must be pinned to the same version).
+- [x] Extract `crates/sim`: the server's `physics` module (Rapier world, character controller, the
+      vehicle lift models in `vehicle`, `flight` and `spec`), with no tokio or salvo. It builds for
+      `wasm32-unknown-unknown` unchanged. Movement rules, carve and terrain stay in `shared`, which
+      `sim` depends on.
+- [ ] Re-key the lift models on spec data instead of kind (the remaining `KIND_*` matches in
+      `sim/src/vehicle.rs`).
 - [ ] Build it for `wasm32` and load it in the client; prove the pipeline on movement first.
 - [ ] Move vehicle prediction to it, so the client's Rapier is the server's Rapier; delete
       `sim/vehicle.ts` and the other mirrors.
@@ -234,3 +238,21 @@ Not yet checked: a game in a browser (shooting the rooster, picking up and dropp
 `Projectile` plus a fuse and a burst component, and `step_rockets`, `step_bullet`, `step_grenade`,
 `step_flare` and `step_shells` become systems over those components. Vehicles wait for Phase 1's
 `crates/sim`, or go first with their physics left in `Physics`, if track A stays blocked.
+
+### 2026-10-22: toolchain installed; physics extracted into `crates/sim`
+
+- Installed the `wasm32-unknown-unknown` target and `wasm-bindgen-cli` 0.2.129. Binaryen (`wasm-opt`)
+  is not installed; it only shrinks the output and can wait.
+- `crates/server/src/physics/` moved to `crates/sim/src/` with `git mv`, so history follows: `mod.rs`
+  became `lib.rs`, and `tests.rs`, `vehicle.rs` and `vehicle/` came along as they were.
+  `pub(in crate::physics)` became `pub(crate)`, and the server's `crate::physics::` paths became `sim::`.
+- The server no longer depends on `rapier3d`: nothing outside `physics/` used it. Only `sim` does.
+- Test-only helpers (`set_car_roll`, `set_car_dive`, `move_character`) sit behind a `testing` feature,
+  which the server turns on only as a dev-dependency.
+- `cargo build -p sim --target wasm32-unknown-unknown --release` builds as it is. The server's Rapier
+  0.36 physics, its character controller and every lift model can run in the browser with no changes.
+- Tests: server 258 and sim 98, which is the same 356 as before, split between the crates.
+
+**Next:** `crates/sim-wasm` (a `cdylib` made with `wasm-bindgen`) and a client build step. Then the
+client's stickman prediction runs on `sim`, in place of `sim/movement.ts` and the `rapier3d-compat`
+character motor, checked against the existing `predict.spec.ts` fixture.

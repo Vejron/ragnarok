@@ -35,7 +35,7 @@ fn join(game: &mut Game) -> u32 {
 
 /// Puts player `id` standing at `[x, z]`.
 fn put(game: &mut Game, id: u32, [x, z]: [f32; 2]) {
-    let y = game.world.map.ground.height_at(x, z) + crate::physics::STANDING_Y;
+    let y = game.world.map.ground.height_at(x, z) + sim::STANDING_Y;
     game.world.players.get_mut(&id).unwrap().character.position = [x, y, z];
 }
 
@@ -412,7 +412,7 @@ fn it_goes_to_look_where_it_heard_a_gunshot_and_searches_there() {
     let bot = guard(&mut game, 0.5);
     disarm(&mut game, bot);
     // Behind the wall, out of sight: only heard.
-    let shot = [25.0, crate::physics::STANDING_Y, 0.0];
+    let shot = [25.0, sim::STANDING_Y, 0.0];
     make_noise(&mut game.world, shot, None, HEAR_SHOT);
     game.step();
     assert_eq!(game.world.bots[&bot].mode, BotMode::Pursue);
@@ -433,7 +433,7 @@ fn it_goes_to_look_where_it_heard_a_gunshot_and_searches_there() {
 fn a_blast_carries_further_than_a_gunshot_and_its_own_shots_are_not_news() {
     let mut game = game(false);
     let bot = guard(&mut game, 0.5);
-    let far = [0.0, crate::physics::STANDING_Y, 120.0];
+    let far = [0.0, sim::STANDING_Y, 120.0];
     make_noise(&mut game.world, far, None, HEAR_SHOT);
     make_noise(&mut game.world, [0.0, 0.0, 0.0], Some(bot), HEAR_SHOT);
     game.step();
@@ -457,7 +457,7 @@ fn a_bot_in_a_fight_is_not_drawn_off_by_noises() {
     run(&mut game, 0.5);
     assert!(game.world.bots[&bot].sees);
     for _ in 0..TICK_RATE {
-        make_noise(&mut game.world, [0.0, crate::physics::STANDING_Y, 30.0], None, HEAR_BLAST);
+        make_noise(&mut game.world, [0.0, sim::STANDING_Y, 30.0], None, HEAR_BLAST);
         game.step();
     }
     let mind = &game.world.bots[&bot];

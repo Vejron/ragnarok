@@ -317,7 +317,7 @@ fn new_goal(bot: &mut Bot) {
 /// there is some of this tick's `budget` of cells left. With no way found it heads straight for the goal.
 fn follow(world: &mut World, bot: &mut Bot, at: [f32; 3], goal: [f32; 3], budget: &mut usize) -> [f32; 3] {
     let (here, to) = ([at[0], at[2]], [goal[0], goal[2]]);
-    let feet = |p: [f32; 3]| [p[0], p[1] - crate::physics::STANDING_Y, p[2]];
+    let feet = |p: [f32; 3]| [p[0], p[1] - sim::STANDING_Y, p[2]];
     bot.replan_in = bot.replan_in.saturating_sub(1);
     let moved = (to[0] - bot.path_to[0]).hypot(to[1] - bot.path_to[1]) > GOAL_MOVED;
     if (bot.path.is_empty() || moved || bot.replan_in == 0) && *budget > 0 {

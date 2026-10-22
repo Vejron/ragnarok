@@ -14,7 +14,7 @@ use crate::game::Crew;
 use crate::mechanics::combat::position_of;
 use crate::mechanics::gunnery::aim;
 use crate::mechanics::vehicles::seat;
-use crate::physics::CarPose;
+use sim::CarPose;
 use shared::protocol::{DAMAGE_TURRET, TURRET_GONE};
 use shared::quant::wrap_angle;
 use shared::world::WorldFile;

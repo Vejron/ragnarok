@@ -1,6 +1,6 @@
 use super::Mechanic;
 use crate::game::World;
-use crate::physics::{Character, STANDING_Y};
+use sim::{Character, STANDING_Y};
 use shared::consts::SPAWN_ALTITUDE;
 use shared::quant::from_cm;
 use shared::world::{Building, WorldFile};

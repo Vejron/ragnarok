@@ -1,6 +1,6 @@
 use super::*;
 use crate::game::{Command, Game, Seat};
-use crate::physics::STANDING_Y;
+use sim::STANDING_Y;
 use shared::items::Falloff;
 use shared::protocol::{InputFrame, KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_EGG, WEAPON_BOMB, WEAPON_MG};
 use shared::quant::to_mrad;

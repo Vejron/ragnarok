@@ -5,7 +5,7 @@ use super::*;
 
 /// What holds a vehicle up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::physics) enum Lift {
+pub(crate) enum Lift {
     /// Its wheels, and nothing else.
     Wheels,
     /// A rotor, with no wheels at all.
@@ -22,38 +22,38 @@ pub(in crate::physics) enum Lift {
 
 impl Lift {
     /// Whether the kind has a wheel controller to update.
-    pub(in crate::physics) fn wheeled(self) -> bool {
+    pub(crate) fn wheeled(self) -> bool {
         matches!(self, Lift::Wheels | Lift::Wing)
     }
 }
 
 /// What differs between vehicle kinds.
-pub(in crate::physics) struct Spec {
+pub(crate) struct Spec {
     pub half_extents: [f32; 3],
     /// Chassis density in kg/m³.
-    pub(in crate::physics) density: f32,
-    pub(in crate::physics) wheel_radius: f32,
-    pub(in crate::physics) track_half: f32,
+    pub(crate) density: f32,
+    pub(crate) wheel_radius: f32,
+    pub(crate) track_half: f32,
     /// Z of each axle, front first.
-    pub(in crate::physics) axles: &'static [f32],
-    pub(in crate::physics) hard_point_y: f32,
-    pub(in crate::physics) suspension_rest: f32,
-    pub(in crate::physics) max_suspension_force: f32,
+    pub(crate) axles: &'static [f32],
+    pub(crate) hard_point_y: f32,
+    pub(crate) suspension_rest: f32,
+    pub(crate) max_suspension_force: f32,
     /// Total engine force over all wheels, newtons.
-    pub(in crate::physics) engine_force: f32,
-    pub(in crate::physics) max_speed: f32,
+    pub(crate) engine_force: f32,
+    pub(crate) max_speed: f32,
     /// Steering lock of the front axle at standstill, radians. Zero for a tank, which turns by `turn_rate`.
-    pub(in crate::physics) steer_lock: f32,
+    pub(crate) steer_lock: f32,
     /// Yaw rate at full stick for a vehicle that turns on the spot, rad/s.
-    pub(in crate::physics) turn_rate: f32,
-    pub(in crate::physics) lift: Lift,
-    pub(in crate::physics) linear_damping: f32,
+    pub(crate) turn_rate: f32,
+    pub(crate) lift: Lift,
+    pub(crate) linear_damping: f32,
     /// How far below the box's centre the centre of mass sits, metres. A low one keeps a car on its
     /// wheels through hard corners; zero leaves the box's own.
-    pub(in crate::physics) com_drop: f32,
+    pub(crate) com_drop: f32,
     /// A full tank of what its tricks run on: a Roadster's air, or a hen's wings' stamina. `None` for
     /// everything else. A walker with one has wings (see `flap`).
-    pub(in crate::physics) tank: Option<f32>,
+    pub(crate) tank: Option<f32>,
 }
 
 pub(super) static JEEP: Spec = Spec {
@@ -309,7 +309,7 @@ pub(super) static LOITER: Spec = Spec {
 };
 
 /// The spec for a vehicle kind. Unknown kinds are jeeps.
-pub(in crate::physics) fn spec(kind: u8) -> &'static Spec {
+pub(crate) fn spec(kind: u8) -> &'static Spec {
     match kind {
         KIND_WALKER => &WALKER,
         KIND_HEN => &HEN,

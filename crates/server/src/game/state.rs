@@ -525,7 +525,7 @@ impl World {
             return None;
         }
         let carving = self.carves.get(&id)?;
-        let standing = crate::physics::solid_of(&carving.shell.boxes(&carving.removed), &carving.floor);
+        let standing = sim::solid_of(&carving.shell.boxes(&carving.removed), &carving.floor);
         self.physics.replace_building(Obj::Building(id), standing);
         self.fresh_carved.push((id, at, cut.clone()));
         Some(cut)
@@ -534,7 +534,7 @@ impl World {
     /// Building `id` cut into cells, as `physics::building_shell`.
     fn cut_building(&self, id: ObjId) -> Option<Carving> {
         let index = *self.buildings_by_id.get(&id)?;
-        let (shell, floor) = crate::physics::building_shell(&self.map, index)?;
+        let (shell, floor) = sim::building_shell(&self.map, index)?;
         let removed = shell.untouched();
         let hp = shell.fresh_hp();
         Some(Carving { shell, removed, hp, floor })

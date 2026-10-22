@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/shared", "crates/server", "crates/osm-import", "crates/editor"]
+members = ["crates/shared", "crates/sim", "crates/server", "crates/osm-import", "crates/editor"]
 
 [profile.dev.package."*"]
 opt-level = 3
@@ -18,3 +18,4 @@ anyhow = "1"
 rmp-serde = "1"
 serde = { version = "1", features = ["derive"] }
 shared = { path = "crates/shared" }
+sim = { path = "crates/sim" }

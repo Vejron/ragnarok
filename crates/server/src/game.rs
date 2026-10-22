@@ -3,7 +3,7 @@
 
 use crate::jitter::JitterBuffer;
 use crate::mechanics::{Mechanic, default_mechanics};
-use crate::physics::{CarControls, Character, Obj, Physics};
+use sim::{CarControls, Character, Obj, Physics};
 use crate::replication::{Everything, Own, Replica};
 use crate::rng::Rng;
 use crate::scenario::Scenario;
@@ -648,7 +648,7 @@ mod tests {
                 player.character.position[2] = sz;
             }
             let (x, z) = (player.character.position[0], player.character.position[2]);
-            player.character.position[1] = game.world.map.ground.height_at(x, z) + crate::physics::STANDING_Y + 0.5;
+            player.character.position[1] = game.world.map.ground.height_at(x, z) + sim::STANDING_Y + 0.5;
         }
         // `BOTS=n`: that many bots as well, spread over the spawn points among the players, on made-up loops.
         let bots: usize = std::env::var("BOTS").ok().and_then(|n| n.parse().ok()).unwrap_or(0);

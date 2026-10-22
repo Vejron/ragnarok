@@ -5,13 +5,13 @@ use super::*;
 
 /// Share of full engine force at `speed` for a top speed of `max`: all of it up to [`FULL_POWER`]
 /// of the way, then less and less until none at `max`.
-pub(in crate::physics) fn pull(speed: f32, max: f32) -> f32 {
+pub(crate) fn pull(speed: f32, max: f32) -> f32 {
     ((max - speed.abs()) / (max * (1.0 - FULL_POWER))).clamp(0.0, 1.0)
 }
 
 /// A plane's wheels for one tick: no engine, the front pair steered towards where the pilot looks
 /// (and by A/D), and braked while the stick is pulled back or nobody is aboard.
-pub(in crate::physics) fn roll_plane(car: &mut Car, controls: CarControls, body: &RigidBody, speed: f32, mass: f32, dt: f32) {
+pub(crate) fn roll_plane(car: &mut Car, controls: CarControls, body: &RigidBody, speed: f32, mass: f32, dt: f32) {
     let _ = body;
     let wanted = if controls.powered { controls.steer.clamp(-1.0, 1.0) } else { 0.0 };
     let lock = car.spec.steer_lock / (1.0 + speed.abs() / STEER_FADE_SPEED);
@@ -31,7 +31,7 @@ pub(in crate::physics) fn roll_plane(car: &mut Car, controls: CarControls, body:
 
 /// Keeps a car planted and lets it be steered in the air: downforce while any wheel is down, and a
 /// nudge of pitch (throttle) and roll (steering) while none is.
-pub(in crate::physics) fn assist(body: &mut RigidBody, (throttle, steer): (f32, f32), grounded: bool, dt: f32) {
+pub(crate) fn assist(body: &mut RigidBody, (throttle, steer): (f32, f32), grounded: bool, dt: f32) {
     let rotation = *body.rotation();
     if grounded {
         let push = DOWNFORCE_PER_KG * body.mass() * body.linvel().length_squared() * dt;
@@ -50,7 +50,7 @@ pub(in crate::physics) fn assist(body: &mut RigidBody, (throttle, steer): (f32, 
 /// in the air, the lift nozzles keep the car level (leaning it with the stick) and, once the hop
 /// has topped out, hold a slow climb that fades out below the ceiling. Both drain `tank`, which refills while the car sits on its wheels with both controls let go.
 /// Everything is a function of the body's state, the tank and the controls, so the client can replay it.
-pub(in crate::physics) fn thrust(body: &mut RigidBody, controls: CarControls, tank: &mut f32, grounded: bool, dt: f32) -> u8 {
+pub(crate) fn thrust(body: &mut RigidBody, controls: CarControls, tank: &mut f32, grounded: bool, dt: f32) -> u8 {
     let rotation = *body.rotation();
     let mass = body.mass();
     let mut firing = 0;
@@ -106,7 +106,7 @@ pub(in crate::physics) fn thrust(body: &mut RigidBody, controls: CarControls, ta
 /// flapping drain `stamina`, which comes back with a foot down and jump let go. A fallen or wrecked hen
 /// does none of it. Everything is a function of the body's state, the stamina and the controls, so the
 /// client can replay it.
-pub(in crate::physics) fn flap(body: &mut RigidBody, controls: CarControls, stamina: &mut f32, standing: bool, grounded: bool, dt: f32) -> u8 {
+pub(crate) fn flap(body: &mut RigidBody, controls: CarControls, stamina: &mut f32, standing: bool, grounded: bool, dt: f32) -> u8 {
     let mut flags = if grounded { 0 } else { THRUST_AIR };
     let rotation = *body.rotation();
     let up = rotation * Vector::Y;
@@ -171,7 +171,7 @@ pub(in crate::physics) fn flap(body: &mut RigidBody, controls: CarControls, stam
 /// from the stick, like a tank's. The rotor then pushes along the up axis hard enough to hover
 /// however it leans, and holds a vertical speed set by the climb input. Everything is a function
 /// of the body's state and the controls alone, so the client can replay it.
-pub(in crate::physics) fn fly(body: &mut RigidBody, controls: CarControls, dt: f32) {
+pub(crate) fn fly(body: &mut RigidBody, controls: CarControls, dt: f32) {
     let rotation = *body.rotation();
     let up = rotation * Vector::Y;
     let nose = rotation * Vector::new(0.0, 0.0, -1.0);
@@ -206,7 +206,7 @@ pub(in crate::physics) fn fly(body: &mut RigidBody, controls: CarControls, dt: f
 /// ask for one (see `DRONE_SPEED`), and the rotors push towards it as hard as `DRONE_MAX_ACCEL` lets them,
 /// on top of holding the drone up. The hull leans the way they push and turns towards where its pilot
 /// looks. Everything is a function of the body's state and the controls alone, so the client can replay it.
-pub(in crate::physics) fn fly_drone(body: &mut RigidBody, controls: CarControls, dt: f32) {
+pub(crate) fn fly_drone(body: &mut RigidBody, controls: CarControls, dt: f32) {
     let rotation = *body.rotation();
     let up = rotation * Vector::Y;
     let nose = rotation * Vector::new(0.0, 0.0, -1.0);
@@ -254,7 +254,7 @@ pub(in crate::physics) fn fly_drone(body: &mut RigidBody, controls: CarControls,
 /// the turn and pulls, levelling its wings as it arrives; W/S pitch and A/D roll by hand while held,
 /// and with neither it flies level. Everything is a function of the body's state and the controls
 /// alone, so the client can replay it.
-pub(in crate::physics) fn fly_loiter(body: &mut RigidBody, controls: CarControls, dt: f32) {
+pub(crate) fn fly_loiter(body: &mut RigidBody, controls: CarControls, dt: f32) {
     let rotation = *body.rotation();
     let nose = rotation * Vector::new(0.0, 0.0, -1.0);
     let up = rotation * Vector::Y;
@@ -302,7 +302,7 @@ pub(in crate::physics) fn fly_loiter(body: &mut RigidBody, controls: CarControls
 /// `WALKER_FALLEN_UP` the legs let go and the driver loses control, and a weak pull stands it up again
 /// by itself. `standing` is false for a wreck, which has no pull at all. Everything is a function of
 /// the body's state and the controls alone, so the client can replay it.
-pub(in crate::physics) fn walk(body: &mut RigidBody, controls: CarControls, standing: bool, feet: [Option<f32>; 2]) {
+pub(crate) fn walk(body: &mut RigidBody, controls: CarControls, standing: bool, feet: [Option<f32>; 2]) {
     let rotation = *body.rotation();
     let up = rotation * Vector::Y;
     let mass = body.mass();
@@ -410,7 +410,7 @@ pub(in crate::physics) fn walk(body: &mut RigidBody, controls: CarControls, stan
 
 /// The share of a plane's thrust its throttle asks for. With the stick released it cruises in the
 /// air but idles on the ground, so a pilot who climbs in does not roll off at once.
-pub(in crate::physics) fn throttle_setting(throttle: f32, grounded: bool) -> f32 {
+pub(crate) fn throttle_setting(throttle: f32, grounded: bool) -> f32 {
     let throttle = throttle.clamp(-1.0, 1.0);
     if throttle > 0.0 {
         PLANE_CRUISE_THROTTLE + throttle * (1.0 - PLANE_CRUISE_THROTTLE)
@@ -425,7 +425,7 @@ pub(in crate::physics) fn throttle_setting(throttle: f32, grounded: bool) -> f32
 
 /// The unit direction a pilot looking at `[yaw, pitch]` wants to fly, turned back towards the middle
 /// near the edge of a world `bound` metres from its centre to each side.
-pub(in crate::physics) fn aim_direction(aim: [f32; 2], position: Vector, bound: f32) -> Vector {
+pub(crate) fn aim_direction(aim: [f32; 2], position: Vector, bound: f32) -> Vector {
     let [yaw, pitch] = aim;
     let direction = Vector::new(-yaw.sin() * pitch.cos(), pitch.sin(), -yaw.cos() * pitch.cos());
     // How far into the margin it is along each axis, 0 to 1, towards the side it is on.
@@ -442,7 +442,7 @@ pub(in crate::physics) fn aim_direction(aim: [f32; 2], position: Vector, bound: 
 }
 
 /// How deep into the edge margin `position` is, 0 (outside it) to 1 (at the wall).
-pub(in crate::physics) fn edge_depth(position: Vector, bound: f32) -> f32 {
+pub(crate) fn edge_depth(position: Vector, bound: f32) -> f32 {
     let into = |coordinate: f32| ((coordinate.abs() - (bound - PLANE_EDGE_MARGIN)) / PLANE_EDGE_MARGIN).clamp(0.0, 1.0);
     into(position.x).max(into(position.z))
 }
@@ -451,7 +451,7 @@ pub(in crate::physics) fn edge_depth(position: Vector, bound: f32) -> f32 {
 /// -1..=1 as a share of the full rate. It banks into the turn and pulls once banked, takes the turn
 /// level when the target is behind, and levels its wings when the target is nearly ahead. The pilot
 /// uses it near the edge of the world and an empty plane to glide.
-pub(in crate::physics) fn autopilot(rotation: Rotation, target: Vector, airspeed: f32, max_bank: f32) -> [f32; 3] {
+pub(crate) fn autopilot(rotation: Rotation, target: Vector, airspeed: f32, max_bank: f32) -> [f32; 3] {
     let up = rotation * Vector::Y;
     let right = rotation * Vector::X;
     let local = rotation.inverse() * target;
@@ -500,7 +500,7 @@ pub(in crate::physics) fn autopilot(rotation: Rotation, target: Vector, airspeed
 /// rudder from the stick. Authority is lost at low speed. Near the edge of the world the plane turns itself
 /// back, and with nobody aboard it glides. Everything is a function of the body's state and the controls
 /// alone, so the client can replay it.
-pub(in crate::physics) fn wing(body: &mut RigidBody, controls: CarControls, power: f32, grounded: bool, bound: f32, dt: f32) {
+pub(crate) fn wing(body: &mut RigidBody, controls: CarControls, power: f32, grounded: bool, bound: f32, dt: f32) {
     let rotation = *body.rotation();
     let nose = rotation * Vector::new(0.0, 0.0, -1.0);
     let up = rotation * Vector::Y;

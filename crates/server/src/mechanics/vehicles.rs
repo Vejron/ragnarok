@@ -1,6 +1,6 @@
 use super::Mechanic;
 use crate::game::{Gun, PlaneArms, Seat, Vehicle, World};
-use crate::physics::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_extents};
+use sim::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_extents};
 use shared::consts::*;
 use shared::vehicles::{VehicleDef, vehicle_def};
 use shared::protocol::{

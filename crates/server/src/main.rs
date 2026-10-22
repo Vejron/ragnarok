@@ -4,7 +4,6 @@ mod jitter;
 mod mechanics;
 mod navigation;
 mod netem;
-mod physics;
 mod profile;
 mod replication;
 mod rng;
