@@ -3,6 +3,7 @@
 A browser multiplayer game: goofy stickmen in a real city built from OpenStreetMap. There's a server-authoritative Rust game server (Salvo, WebTransport, Rapier) and a Vue 3 + WebGPU client (drawn by the [engine](engine/README.md)) with client-side prediction and snapshot interpolation.
 
 - [design.md](design.md): architecture, netcode, world pipeline and roadmap
+- [MIGRATION.md](MIGRATION.md): the move to entities and components (ECS) and one shared simulation: plan, rules and log
 - [WORLD.md](WORLD.md): generating the world: data sources, credentials, download cache
 - [NETWORKING.md](NETWORKING.md): wire protocol
 - [SERVER-PERFORMANCE.md](SERVER-PERFORMANCE.md): what a full room costs per tick, how it is measured, what is and is not worth optimising

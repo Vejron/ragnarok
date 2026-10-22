@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+bevy_ecs = { version = "0.20", default-features = false, features = ["std"] }
 bytes = "1"
 certon = "0.3"
 rapier3d = "0.36"

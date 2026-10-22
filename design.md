@@ -388,6 +388,8 @@ Make the project more modular and maintainable, with clear separation of concern
 Consider breaking the codebase into smaller, self-contained modules with well-defined interfaces, and adopting a consistent coding style and documentation standard.
 Do this without negatively impacting the existing functionality or introducing unnecessary complexity or performance degradation.
 
+Under way on branch `refactor/ecs-migration`: dynamic entities are moving to `bevy_ecs` components (roosters and pickups so far), and the client's hand-mirrored simulation is to be replaced by the Rust one built for WASM. See [MIGRATION.md](MIGRATION.md) for the plan, the rules each step keeps and the log.
+
 ### Tile meshes off the main thread
 
 Build tile meshes in a Web Worker, so the main thread never waits on them. Tiles are built on the main thread as they stream in (`attachTile` → `buildTile`).
