@@ -23,7 +23,7 @@ import { aimSpeedScale, DRONE_BLAST_RADIUS, DRONE_RANGE, LOITER_BLAST_RADIUS, LO
 import { InputController } from './sim/input'
 import { SimMotor } from './sim/motor'
 import { Terrain } from './sim/terrain'
-import { VehicleDriver, type DrivenPose } from './sim/vehicle'
+import { VehicleDriver, type DrivenPose } from './sim/driver'
 import { Predictor } from './sim/predict'
 import type { Vec3 } from './sim/motor'
 import { CarModel, type VehicleModel } from './render/car'
@@ -367,7 +367,7 @@ export class Game {
     if (!world.bytes) throw new Error('the manifest came without its bytes')
     const motor = await SimMotor.create(world.bytes)
     this.motor = this.view.motor = motor
-    this.driver = this.view.driver = await VehicleDriver.create(world)
+    this.driver = new VehicleDriver(motor)
     await Promise.all([this.crowd.load(), loadVehicleModels(), loadRoosterModel()])
     // The buildings arrive as tiles, around wherever the player is.
     this.tiles = new TileStreamer(world, { attach: (ref, tile) => this.view.attachTile(ref, tile) })
@@ -506,7 +506,6 @@ export class Game {
         // A drone's pilot is still listed, kneeling where they launched it.
         for (const vehicle of vehicles) if (!isDrone(vehicle.kind)) for (const rider of vehicle.seats) if (rider !== 0) this.interp.remove(rider)
         const own = entities.find((e) => e.id === this.localId)
-        this.driver?.setObstacles(vehicles)
         if (mount && this.seat?.index === 0 && mount.kind !== KIND_MORTAR && message.drive) {
           // Replaying the unacknowledged inputs steps the whole physics world once each, so it waits
           // for the next frame: a backlog of snapshots (a busy main thread) is then one replay, not

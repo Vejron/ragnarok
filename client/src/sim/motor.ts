@@ -1,7 +1,7 @@
 import init, { ClientSim } from './wasm/sim'
-import { DAMAGE_TURRET, TURRET_GONE, type InputFrame, type VehicleState } from '@/net/codec'
+import { DAMAGE_TURRET, TURRET_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
 import type { TileRef } from '@/world'
-import { timedPhysics as timed } from './physics'
+import { ROADSTER_AIR } from './consts'
 
 export type Vec3 = [number, number, number]
 
@@ -23,6 +23,66 @@ export interface CharacterState {
 
 /** One tick of a stickman: what `Predictor` runs, and replays on reconciling. */
 export type Stepper = (state: CharacterState, input: InputFrame, dt: number, speedScale: number) => CharacterState
+
+/** What a driver asks of a vehicle this tick, as `sim::CarControls`. */
+export interface CarControls {
+  /** -1 (reverse) ..= 1 (forward). */
+  throttle: number
+  /** -1 (left) ..= 1 (right). */
+  steer: number
+  handbrake: boolean
+  /** -1 (sink) ..= 1 (climb). Only a helicopter has it. */
+  lift: number
+  /** A pilot is aboard and the rotor or propeller turns. */
+  powered: boolean
+  /** Where a plane's or a drone's pilot looks, `[yaw, pitch]`: it turns towards it. Null flies straight on. */
+  aim?: [number, number] | null
+  /** A Roadster's rear nozzles are held open. */
+  boost?: boolean
+  /** A Roadster hops, then hovers; a hen leaps, then flaps or glides. */
+  hop?: boolean
+}
+
+/** A simulated vehicle's state, as `ClientSim::car_state` gives it. */
+export interface CarBodyState {
+  position: [number, number, number]
+  /** Unit quaternion `[x, y, z, w]`. */
+  rotation: [number, number, number, number]
+  linvel: [number, number, number]
+  angvel: [number, number, number]
+  /** Front wheel angle, radians, and the yaw rate a tank has ramped to. */
+  steer: number
+  spin: number
+  /** A Roadster's air or a hen's stamina (`ROADSTER_AIR` and `HEN_STAMINA` full); null for a kind without either. */
+  tank: number | null
+  /** The `THRUST_*` nozzles that fired in the last step. */
+  firing: number
+  /** Steering as a fraction of the lock, for drawing the front wheels. */
+  steerFraction: number
+}
+
+/** Physics time on this client since the debug readout last reset it (see `render/perf.ts`). */
+export const physicsClock = { ms: 0, calls: 0 }
+
+/** Runs `work` and adds its time to `physicsClock`. */
+export function timedPhysics<T>(work: () => T): T {
+  const started = performance.now()
+  try {
+    return work()
+  } finally {
+    physicsClock.ms += performance.now() - started
+    physicsClock.calls++
+  }
+}
+const timed = timedPhysics
+
+const flag = (b: boolean | undefined) => (b ? 1 : 0)
+
+/** What a driver's `input` asks of a vehicle of `kind`, read as the server reads it (`CarControls::driven`). */
+export function controlsOf(input: InputFrame, kind: number): CarControls {
+  const c = ClientSim.controlsFor(kind, input.strafe, input.forward, input.yaw, input.pitch, input.buttons)
+  return { throttle: c[0]!, steer: c[1]!, handbrake: c[2] === 1, lift: c[3]!, powered: c[4] === 1, aim: c[5] === 1 ? [c[6]!, c[7]!] : null, boost: c[8] === 1, hop: c[9] === 1 }
+}
 
 /** A vehicle of the newest snapshot, as a solid for the stickman, with its horizontal velocity. */
 export type Obstacle = Pick<VehicleState, 'id' | 'x' | 'y' | 'z' | 'qx' | 'qy' | 'qz' | 'qw'> & { kind?: number; vx?: number; vz?: number; damage?: readonly number[] }
@@ -99,6 +159,56 @@ export class SimMotor {
     const hit = this.sim.castRay(origin[0], origin[1], origin[2], dir[0], dir[1], dir[2], max)
     if (hit.length < 4) return null
     return { t: hit[0]!, normal: [hit[1]!, hit[2]!, hit[3]!] }
+  }
+
+  /** Starts simulating vehicle `id` of `kind` here in place of its stand-in: the player drives it. */
+  startCar(id: number, kind: number, position: Vec3, yaw = 0) {
+    this.sim.startCar(id, kind, position[0], position[1], position[2], yaw)
+  }
+
+  stopCar(id: number) {
+    this.sim.stopCar(id)
+  }
+
+  /**
+   * Puts simulated vehicle `id` where the server says it is: its pose, the driver's motion, and the
+   * air, wear and turret the snapshot shows.
+   */
+  setCarState(id: number, vehicle: VehicleState, drive: DriveState) {
+    // The wire carries a share of full (`air_byte` on the server).
+    const tank = vehicle.thrust ? vehicle.thrust.air * ROADSTER_AIR : Number.NaN
+    const turret = vehicle.damage[DAMAGE_TURRET] !== TURRET_GONE
+    this.sim.setCarState(id, vehicle.x, vehicle.y, vehicle.z, vehicle.qx, vehicle.qy, vehicle.qz, vehicle.qw, drive.vx, drive.vy, drive.vz, drive.wx, drive.wy, drive.wz, drive.steer, drive.spin, tank, vehicle.hp, Uint8Array.from(vehicle.damage), turret)
+  }
+
+  /** Puts simulated vehicle `id` in a state of the caller's making, the rest as it is when new; for tests. */
+  placeCar(id: number, state: { position: Vec3; rotation?: [number, number, number, number]; linvel?: Vec3; angvel?: Vec3; hp?: number; damage?: readonly number[]; turret?: boolean }) {
+    const { position, rotation = [0, 0, 0, 1], linvel = [0, 0, 0], angvel = [0, 0, 0], hp = 255, damage = [0, 0, 0, 0, 0, 0, 0, 0], turret = true } = state
+    this.sim.setCarState(id, ...position, ...rotation, ...linvel, ...angvel, 0, 0, Number.NaN, hp, Uint8Array.from(damage), turret)
+  }
+
+  /** One tick of simulated vehicle `id` under `controls`: the server's `drive_car` then `step_cars`. */
+  driveCar(id: number, controls: CarControls, dt: number) {
+    const aim = controls.aim ?? null
+    const c = [controls.throttle, controls.steer, flag(controls.handbrake), controls.lift, flag(controls.powered), flag(aim !== null), aim?.[0] ?? 0, aim?.[1] ?? 0, flag(controls.boost), flag(controls.hop)]
+    timed(() => this.sim.driveCar(id, Float32Array.from(c), dt))
+  }
+
+  /** Simulated vehicle `id`'s state, or null when it is not simulated here. */
+  carState(id: number): CarBodyState | null {
+    const s = this.sim.carState(id)
+    if (s.length < 18) return null
+    return {
+      position: [s[0]!, s[1]!, s[2]!],
+      rotation: [s[3]!, s[4]!, s[5]!, s[6]!],
+      linvel: [s[7]!, s[8]!, s[9]!],
+      angvel: [s[10]!, s[11]!, s[12]!],
+      steer: s[13]!,
+      spin: s[14]!,
+      tank: Number.isNaN(s[15]!) ? null : s[15]!,
+      firing: s[16]!,
+      steerFraction: s[17]!,
+    }
   }
 
   /** Whether the standing body fits with its centre at `position`. */

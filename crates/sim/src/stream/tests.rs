@@ -130,3 +130,19 @@ fn vehicles_are_solid_where_the_snapshot_puts_them_and_a_tank_loses_its_turret()
     assert_eq!(physics.obstacle_ids(), vec![8]);
     assert!(physics.cast_ray_normal([0.0, 10.0, 0.0], [0.0, -1.0, 0.0], 20.0).is_some_and(|(t, _)| (t - 10.0).abs() < 1e-3), "only the slab where the jeep was");
 }
+
+#[test]
+fn a_predicted_vehicle_is_not_moved_on_by_a_refresh_and_has_no_stand_in() {
+    let manifest = Manifest { half_extent: 5_000, tile_size: 10_000, ..Default::default() };
+    let mut physics = Physics::streamed(&manifest);
+    physics.add_car(3, KIND_JEEP, [0.0, 3.0, 0.0], 0.0);
+    let before = physics.car_pose(3).unwrap().position;
+    for _ in 0..10 {
+        physics.refresh();
+    }
+    assert_eq!(physics.car_pose(3).unwrap().position, before, "refreshing must not drop the car");
+    physics.set_obstacle(3, KIND_JEEP, [20.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0], [0.0; 3], true);
+    assert!(physics.obstacle_ids().is_empty());
+    physics.step_cars(TICK_DT);
+    assert!(physics.car_pose(3).unwrap().position[1] < before[1], "stepping does");
+}

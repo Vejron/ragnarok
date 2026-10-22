@@ -4,10 +4,10 @@ use sim::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_ex
 use shared::consts::*;
 use shared::vehicles::{VehicleDef, vehicle_def};
 use shared::protocol::{
-    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, ShotEvent, WEAPON_CRASH, is_drone,
+    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, ShotEvent, WEAPON_CRASH, is_drone,
     WEAPON_ROADKILL, WEAPON_SCRAPE, seat_count, vehicle_hp,
 };
-use shared::quant::{from_axis, to_cm, wrap_angle};
+use shared::quant::{to_cm, wrap_angle};
 use shared::world::WorldFile;
 use std::collections::BTreeMap;
 
@@ -703,27 +703,7 @@ impl Mechanic for Vehicles {
                 CarControls { handbrake: !towed, ..Default::default() }
             } else {
                 match vehicle.seats[0].and_then(|driver| world.players.get(&driver)) {
-                    Some(driver) => {
-                        let input = &driver.input;
-                        let buttons = input.buttons();
-                        let held = |button: u16| buttons & button != 0;
-                        // A Roadster boosts on run and hops (then hovers) on jump, so its handbrake is on crouch.
-                        // A hen leaps, then flaps or glides, on jump.
-                        let roadster = vehicle.kind == KIND_ROADSTER;
-                        let hen = vehicle.kind == KIND_HEN;
-                        CarControls {
-                            steer: from_axis(input.strafe),
-                            throttle: from_axis(input.forward),
-                            handbrake: if roadster { held(BUTTON_CROUCH) } else { !hen && held(BUTTON_JUMP) },
-                            // A helicopter climbs on jump and sinks on run.
-                            lift: if roadster || hen { 0.0 } else { f32::from(held(BUTTON_JUMP)) - f32::from(held(BUTTON_RUN)) },
-                            powered: true,
-                            // A plane and a drone fly towards where their pilot looks.
-                            aim: matches!(vehicle.kind, KIND_PLANE | KIND_DRONE | KIND_LOITER).then(|| [shared::quant::from_mrad(input.yaw), shared::quant::from_mrad(input.pitch())]),
-                            boost: roadster && held(BUTTON_RUN),
-                            hop: (roadster || hen) && held(BUTTON_JUMP),
-                        }
-                    }
+                    Some(driver) => CarControls::driven(vehicle.kind, &driver.input),
                     None => CarControls { handbrake: true, ..Default::default() },
                 }
             };

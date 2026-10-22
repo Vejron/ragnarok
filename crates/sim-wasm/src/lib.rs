@@ -5,7 +5,7 @@
 
 use shared::protocol::InputFrame;
 use shared::world::{Manifest, ObjId, Tile};
-use sim::{Character, Obj, Physics};
+use sim::{CarCondition, CarControls, CarMotion, Character, Obj, Physics};
 use wasm_bindgen::prelude::*;
 
 /// How a character travels in a `Float64Array`: every `f32` and every id fits exactly.
@@ -50,6 +50,34 @@ fn write(character: &Character, state: &mut [f64]) {
     state[CHUTE] = flag(character.chute);
 }
 
+/// How car controls travel in a `Float32Array`: `[throttle, steer, handbrake, lift, powered, aimed,
+/// aim yaw, aim pitch, boost, hop]`, flags as 0 or 1.
+pub const CONTROLS_LEN: usize = 10;
+
+fn controls_to(controls: &CarControls) -> Vec<f32> {
+    let flag = |b: bool| if b { 1.0 } else { 0.0 };
+    let [yaw, pitch] = controls.aim.unwrap_or_default();
+    vec![controls.throttle, controls.steer, flag(controls.handbrake), controls.lift, flag(controls.powered), flag(controls.aim.is_some()), yaw, pitch, flag(controls.boost), flag(controls.hop)]
+}
+
+fn controls_from(c: &[f32]) -> CarControls {
+    let at = |i: usize| c.get(i).copied().unwrap_or(0.0);
+    CarControls {
+        throttle: at(0),
+        steer: at(1),
+        handbrake: at(2) != 0.0,
+        lift: at(3),
+        powered: at(4) != 0.0,
+        aim: (at(5) != 0.0).then(|| [at(6), at(7)]),
+        boost: at(8) != 0.0,
+        hop: at(9) != 0.0,
+    }
+}
+
+/// How a car's state travels: `[x, y, z, qx, qy, qz, qw, vx, vy, vz, wx, wy, wz, steer, spin, tank,
+/// firing, steer fraction]`; `tank` is NaN for a kind without one.
+pub const CAR_STATE_LEN: usize = 18;
+
 fn error(context: &str, cause: impl std::fmt::Display) -> JsError {
     JsError::new(&format!("{context}: {cause}"))
 }
@@ -58,6 +86,8 @@ fn error(context: &str, cause: impl std::fmt::Display) -> JsError {
 pub struct ClientSim {
     physics: Physics,
     manifest: Manifest,
+    /// The kind of each vehicle simulated here (the player's own, predicted), by id.
+    cars: std::collections::BTreeMap<u32, u8>,
 }
 
 #[wasm_bindgen]
@@ -66,7 +96,7 @@ impl ClientSim {
     #[wasm_bindgen(constructor)]
     pub fn new(manifest: &[u8]) -> Result<ClientSim, JsError> {
         let manifest = Manifest::decode(manifest).map_err(|e| error("decoding the manifest", e))?;
-        Ok(ClientSim { physics: Physics::streamed(&manifest), manifest })
+        Ok(ClientSim { physics: Physics::streamed(&manifest), manifest, cars: Default::default() })
     }
 
     /// Adds tile `(col, row)` from its file's bytes, replacing it if it is already there.
@@ -139,6 +169,72 @@ impl ClientSim {
         write(&character, state);
     }
 
+    /// Starts simulating vehicle `id` of `kind` here, as a body of its own in place of its stand-in:
+    /// the player drives it, and predicts it.
+    #[allow(clippy::too_many_arguments)]
+    #[wasm_bindgen(js_name = startCar)]
+    pub fn start_car(&mut self, id: u32, kind: u8, x: f32, y: f32, z: f32, yaw: f32) {
+        self.stop_car(id);
+        self.physics.remove_obstacle(id);
+        self.physics.add_car(id, kind, [x, y, z], yaw);
+        self.cars.insert(id, kind);
+    }
+
+    /// Stops simulating vehicle `id`.
+    #[wasm_bindgen(js_name = stopCar)]
+    pub fn stop_car(&mut self, id: u32) {
+        if self.cars.remove(&id).is_some() {
+            self.physics.remove_car(id);
+        }
+    }
+
+    /// Puts vehicle `id` in the state a snapshot reports: pose, motion (`DriveState`), its tank
+    /// (NaN to leave it), and the wear its health and damage mean, turret included.
+    #[allow(clippy::too_many_arguments)]
+    #[wasm_bindgen(js_name = setCarState)]
+    pub fn set_car_state(&mut self, id: u32, x: f32, y: f32, z: f32, qx: f32, qy: f32, qz: f32, qw: f32, vx: f32, vy: f32, vz: f32, wx: f32, wy: f32, wz: f32, steer: f32, spin: f32, tank: f32, hp: u8, damage: &[u8], turret: bool) {
+        let Some(&kind) = self.cars.get(&id) else { return };
+        let motion = CarMotion { linvel: [vx, vy, vz], angvel: [wx, wy, wz], steer, spin };
+        self.physics.set_car_state(id, [x, y, z], [qx, qy, qz, qw], motion, (!tank.is_nan()).then_some(tank));
+        let mut wear = [0; 8];
+        for (slot, &value) in wear.iter_mut().zip(damage) {
+            *slot = value;
+        }
+        self.physics.set_car_condition(id, CarCondition::of(kind, hp, wear));
+        self.physics.set_turret(id, turret);
+    }
+
+    /// The controls (`CONTROLS_LEN` numbers) a driver's input asks of a vehicle of `kind`, as the
+    /// server reads them (`CarControls::driven`).
+    #[wasm_bindgen(js_name = controlsFor)]
+    pub fn controls_for(kind: u8, strafe: i8, forward: i8, yaw: i16, pitch: i16, buttons: u16) -> Vec<f32> {
+        let input = InputFrame { strafe, forward, yaw, pitch, buttons, ..Default::default() };
+        controls_to(&CarControls::driven(kind, &input))
+    }
+
+    /// One tick of vehicle `id` under `controls` (`CONTROLS_LEN` numbers): the server's `drive_car`
+    /// then `step_cars`.
+    #[wasm_bindgen(js_name = driveCar)]
+    pub fn drive_car(&mut self, id: u32, controls: &[f32], dt: f32) {
+        if !self.cars.contains_key(&id) {
+            return;
+        }
+        self.physics.drive_car(id, controls_from(controls), dt);
+        self.physics.step_cars(dt);
+    }
+
+    /// Vehicle `id`'s state (`CAR_STATE_LEN` numbers), or nothing when it is not simulated here.
+    #[wasm_bindgen(js_name = carState)]
+    pub fn car_state(&self, id: u32) -> Vec<f32> {
+        let (Some(pose), Some(motion)) = (self.physics.car_pose(id), self.physics.car_motion(id)) else { return Vec::new() };
+        let (tank, firing) = self.physics.car_thrust(id).map_or((f32::NAN, 0), |(tank, firing)| (tank, firing));
+        let [x, y, z] = pose.position;
+        let [qx, qy, qz, qw] = pose.rotation;
+        let [vx, vy, vz] = motion.linvel;
+        let [wx, wy, wz] = motion.angvel;
+        vec![x, y, z, qx, qy, qz, qw, vx, vy, vz, wx, wy, wz, motion.steer, motion.spin, tank, f32::from(firing), pose.steer]
+    }
+
     /// Whether the standing body fits with its centre at `(x, y, z)`.
     pub fn fits(&self, x: f32, y: f32, z: f32) -> bool {
         self.physics.character_fits([x, y, z])
@@ -156,6 +252,15 @@ impl ClientSim {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn controls_survive_the_trip_through_numbers() {
+        let controls = CarControls { throttle: -0.5, steer: 1.0, handbrake: true, lift: -1.0, powered: true, aim: Some([0.25, -1.5]), boost: false, hop: true };
+        let numbers = controls_to(&controls);
+        assert_eq!(numbers.len(), CONTROLS_LEN);
+        assert_eq!(controls_from(&numbers), controls);
+        assert_eq!(controls_from(&controls_to(&CarControls::IDLE)), CarControls::IDLE);
+    }
 
     #[test]
     fn a_character_survives_the_trip_through_numbers() {

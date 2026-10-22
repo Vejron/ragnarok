@@ -1,7 +1,7 @@
 /**
  * What each vehicle kind is, in one table. Mirrors `crates/shared/src/vehicles.rs`; `parity.spec.ts`
- * checks it against `fixtures/parity/gameplay.json`. Kind-specific physics lives in `vehicle.ts`
- * and models in `render/`.
+ * checks it against `fixtures/parity/gameplay.json`. Kind-specific physics is the server's
+ * (`crates/sim`, run here through `motor.ts`) and models are in `render/`.
  */
 
 import { KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'

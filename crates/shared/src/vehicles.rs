@@ -1,9 +1,10 @@
 //! What each vehicle kind is, in one table: the gameplay facts both the server and the client need
-//! (health, seats, size, what it carries). The physics tuning stays in the server's `Spec`s and the
-//! client's `sim/vehicle.ts`; a kind's wheel layout and extents are the constants in `consts.rs`.
+//! (health, seats, size, what it carries). The physics tuning is in `crates/sim`'s `Spec`s, which the
+//! server and the client's prediction both run; a kind's wheel layout and extents are the constants
+//! in `consts.rs`.
 //!
 //! Adding a kind: a `KIND_*` id in `protocol.rs`, its constants in `consts.rs`, a `VehicleDef` here
-//! and in `client/src/sim/vehicles.ts`, then its physics `Spec` and model. `fixtures/parity/
+//! and in `client/src/sim/vehicles.ts`, then its physics `Spec` in `crates/sim` and its model. `fixtures/parity/
 //! gameplay.json` fails until the two tables agree.
 
 use crate::consts::*;

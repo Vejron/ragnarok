@@ -1,7 +1,7 @@
 use super::*;
 use crate::game::{Command, Game, Outgoing};
 use sim::STANDING_Y;
-use shared::protocol::{InputFrame, THRUST_AIR, THRUST_BOOST, THRUST_LIFT};
+use shared::protocol::{InputFrame, KIND_DRONE, THRUST_AIR, THRUST_BOOST, THRUST_LIFT};
 use shared::world::{Road, WORLD_VERSION};
 use tokio::sync::{mpsc, oneshot};
 

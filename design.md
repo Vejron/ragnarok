@@ -38,7 +38,7 @@ This document describes how the game is built and why. The wire format is specif
 | `crates/osm-import` | CLI that turns an OSM bounding box into `world.msgpack` and a grid of tile files. |
 | `client` | Vue 3 + Vite app. Handles prediction and interpolation; draws with the WebGPU engine (`engine`). |
 
-The local stickman's prediction runs the server's own physics: `crates/sim` (the Rapier world, the character controller and the vehicles), built to WASM through `crates/sim-wasm` and wrapped by `client/src/sim/motor.ts`. The rest of `crates/shared` the client still mirrors by hand, as it does the vehicle physics for driver prediction (`client/src/sim/vehicle.ts`), until [MIGRATION.md](MIGRATION.md) Phase 1 moves that too. Byte-for-byte fixture tests on both sides (`protocol.rs` ↔ `codec.spec.ts`) and the physics fixtures (`crates/sim/src/tests.rs` ↔ `predict.spec.ts`, `vehicle.spec.ts`) fail when the two drift apart.
+The client's prediction, of the stickman and of the vehicle it drives, runs the server's own physics: `crates/sim` (the Rapier world, the character controller and the vehicles), built to WASM through `crates/sim-wasm` and wrapped by `client/src/sim/motor.ts`. The rest of `crates/shared` (the codec, the item and vehicle tables, carving and terrain for drawing) the client still mirrors by hand, until [MIGRATION.md](MIGRATION.md) moves that too. Byte-for-byte fixture tests on both sides (`protocol.rs` ↔ `codec.spec.ts`) and the physics checkpoints recorded from native (`crates/sim` ↔ `predict.spec.ts`, `vehicle.spec.ts`) fail when the two drift apart.
 
 Transport, TLS and deployment follow [flax3d](https://github.com/Vejron/flax3d):
 - In development, a self-signed certificate is pinned through `serverCertificateHashes`, and Vite proxies the hash.
@@ -266,7 +266,7 @@ The archetypes are rows of `TREE_KINDS` (`crates/shared/src/world.rs`), mirrored
 
 ## 9. Physics
 
-Both sides use Rapier 3D 0.36 through `crates/sim`: natively on the server, and built to WASM for the client's stickman (`crates/sim-wasm`). The client's driver prediction still has a world of its own in `@dimforge/rapier3d-compat` 0.21.
+Both sides use Rapier 3D 0.36 through `crates/sim`: natively on the server, and built to WASM for the client's prediction (`crates/sim-wasm`), one world for the stickman and the vehicle it drives.
 
 - **Static scene** (`static_colliders` / `buildStaticColliders`): a ground slab (on a flat world its top is y = 0 and it is the ground; on a terrain it is a safety net 12 m below y = 0, under the deepest water bed, so beds carved below the lowest dry ground can be driven and swum into), a heightfield for the terrain (one per tile on the client, one for the whole world on the server, same surface), four boundary walls up to y = 200, and the building trimesh.
 - **Bitten buildings** (`shared::carve`, `World::carve`, `client/src/sim/carve.ts`): every building is a shell of 1 m cubes on one world lattice, and it is drawn (`client/src/render/voxels.ts`) and collided with as those cubes on both sides, so you stand on the top of a cube, not on the roof inside it. A blast that reaches a standing building cuts a ragged hole of cells out of its walls and roof, and every cell left with no chain of cells to the ground falls, so cutting the foot of a wall brings the top down with it. The building's collider is replaced by the boxes of the cubes that are left, on the server at the next `step_cars` and on each client when the `carved` message arrives, so a hole is a doorway for people, bullets and vehicles. A building never collapses as a whole however much of it is gone: its health stops at 1, the worst damage stage, and shot cubes only darken. See NETWORKING.md for the cells and the message.
@@ -306,8 +306,8 @@ Vehicles are server-side dynamic rigid bodies (§10). The physics pipeline steps
   - Jumping off, or stepping off into the air, adds the car's horizontal velocity to the stickman's knockback. They keep the car's speed instead of dropping away from it.
   - The snapshot tells each player its own `ride`. The client predicts a rider in the frame where the car stands still at its newest snapshot pose, and draws it carried to wherever the interpolated car is. The stickman stays glued to the roof, and the walking on top is still predicted.
 - **Driver prediction (built):** the driver's own vehicle is predicted. Everyone else's vehicles are still server-simulated and interpolated.
-  - The client keeps a second Rapier world with the same static scene and gravity 9.81 (`VehicleDriver`, `client/src/sim/vehicle.ts`). Other vehicles are boxes in it, at the newest snapshot pose.
-  - `CarSim` mirrors `drive_car` and `step_cars` line by line. Native and WASM agree to about 0.1 mm over 8 s of driving, for the car and the tank (`vehicle.rs` ↔ `vehicle.spec.ts`).
+  - The driven vehicle is a body in the client's own `sim` world, the one the stickman walks (`VehicleDriver`, `client/src/sim/driver.ts`), stepped by the server's `drive_car` and `step_cars` with the server's `CarControls::driven`. Other vehicles are solid stand-ins in it, at the newest snapshot pose, with the solids `add_car` gives them.
+  - The WASM build lands on the checkpoints the native build recorded for every vehicle kind (`crates/sim/src/vehicle/tests.rs` ↔ `vehicle.spec.ts`).
   - The snapshot carries the driver's `drive` motion (velocity, angular velocity, steering, spin). On each snapshot the sim is set to that state at `ack` and the pending inputs are replayed, like the stickman. The leftover is a position and rotation offset that decays (10/s). More than 3 m is a snap.
   - The turret, seats and every other vehicle still come from interpolated snapshots.
 - **Vehicles:**

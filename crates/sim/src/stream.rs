@@ -117,14 +117,23 @@ impl Physics {
 
     /// Carries out queued destructions and reshapes (`destroy`, `replace_building`) and brings the
     /// broad-phase up to date, for a world whose vehicles are not stepped (the client's).
+    ///
+    /// While a vehicle is simulated here (the client's own, predicted) the pipeline is not stepped,
+    /// which would move that vehicle on: its next `step_cars` brings the queries up to date instead.
     pub fn refresh(&mut self) {
         self.apply_removals();
-        self.step_pipeline();
+        if self.cars.is_empty() {
+            self.step_pipeline();
+        }
     }
 
     /// Puts vehicle `id` of `kind` where a snapshot shows it, as a solid the stickman walks into,
     /// moving at `velocity` m/s. `turret` is whether a tank still has its turret.
+    /// A vehicle simulated here (`add_car`) has no stand-in: it is solid as it is.
     pub fn set_obstacle(&mut self, id: u32, kind: u8, position: [f32; 3], rotation: [f32; 4], velocity: [f32; 3], turret: bool) {
+        if self.cars.contains_key(&id) {
+            return;
+        }
         let pose = Pose::from_parts(Vector::from(position), Rotation::from_xyzw(rotation[0], rotation[1], rotation[2], rotation[3]).normalize());
         if self.obstacles.get(&id).is_some_and(|obstacle| obstacle.kind != kind) {
             self.remove_obstacle(id);

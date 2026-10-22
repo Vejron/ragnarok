@@ -1,5 +1,5 @@
-//! Stickman movement rules that sit around the Rapier character controller. Mirrored in
-//! `client/src/sim/movement.ts`; the server and the client's prediction must agree exactly.
+//! Stickman movement rules that sit around the Rapier character controller. The server and the
+//! client's prediction both run them, through `sim::Physics::step_character`.
 
 use crate::consts::*;
 use crate::protocol::InputFrame;

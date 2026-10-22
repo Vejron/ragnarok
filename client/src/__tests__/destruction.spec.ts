@@ -1,11 +1,10 @@
-import { beforeAll, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { Group, InstancedMesh, Mesh } from '@ragnarok/engine'
 import * as THREE from 'three'
 import { decodeServer, OBJ_TREE } from '@/net/codec'
 import { BuildingDamage } from '@/render/damage'
 import { buildTrees } from '@/render/trees'
 import { FallingTrees } from '@/render/falling'
-import { trunkColliderIndex } from '@/sim/physics'
 import { TREE_PINE, type TileData, type Tree } from '@/world'
 
 // A copy of `DESTROYED_FIXTURE` in `crates/shared/src/protocol.rs`.
@@ -24,21 +23,6 @@ describe('destroyed message', () => {
   it('refuses entries of the wrong shape', () => {
     // [6, [[0, 1, 2]]]
     expect(decodeServer(new Uint8Array([146, 6, 145, 147, 0, 1, 2]))).toBeNull()
-  })
-})
-
-describe('trunkColliderIndex', () => {
-  const tile = (triangles: number, trees: Tree[]) => ({ trees, collision: { vertices: new Float32Array(0), triangles: new Uint32Array(triangles * 3) } }) as unknown as TileData
-
-  it('counts the building mesh, then solid trees only', () => {
-    const t = tile(1, [tree(0, true), tree(5, false), tree(10, true)])
-    expect(trunkColliderIndex(t, 0)).toBe(1)
-    expect(trunkColliderIndex(t, 1)).toBe(-1)
-    expect(trunkColliderIndex(t, 2)).toBe(2)
-  })
-
-  it('starts at zero when the tile has no buildings', () => {
-    expect(trunkColliderIndex(tile(0, [tree(0, true)]), 0)).toBe(0)
   })
 })
 
@@ -106,11 +90,11 @@ describe('felling a tree', () => {
 
 // ---- buildings
 
-import RAPIER from '@dimforge/rapier3d-compat'
 import { Effects } from '@/render/effects'
 import { Collapses } from '@/render/rubble'
 import { buildTile, rebuildBuildings } from '@/render/world'
-import { rebuildBuildingCollider } from '@/sim/physics'
+import type { SimMotor } from '@/sim/motor'
+import { flatMotor, tileBytes } from './worlds'
 import { shellOf } from '@/sim/carve'
 import { Fracture } from '@/render/fracture'
 import { buildingTriangleRanges, ROOF_FLAT, type Building } from '@/world'
@@ -176,41 +160,45 @@ describe('redrawing a tile without a building', () => {
 })
 
 describe('the building collider without a fallen building', () => {
-  beforeAll(async () => {
-    await RAPIER.init()
-  })
-
-  const solid = (world: RAPIER.World, x: number) => {
-    world.step()
-    return world.castRay(new RAPIER.Ray({ x, y: 1, z: 0 }, { x: 1, y: 0, z: 0 }), 5, true) !== null
+  /** The tile in a world of its own, solid to the server's physics (in WASM). */
+  async function solidTile(tile: TileData): Promise<SimMotor> {
+    const { vertices, triangles } = tile.collision
+    const motor = await flatMotor()
+    motor.addTile(
+      { col: 0, row: 0 },
+      tileBytes({
+        vertices: Array.from({ length: vertices.length / 3 }, (_, i) => [vertices[i * 3]!, vertices[i * 3 + 1]!, vertices[i * 3 + 2]!]),
+        triangles: Array.from({ length: triangles.length / 3 }, (_, i) => [triangles[i * 3]!, triangles[i * 3 + 1]!, triangles[i * 3 + 2]!]),
+        buildings: tile.buildings,
+      }),
+    )
+    return motor
   }
+  const along = (motor: SimMotor, x: number, y = 1, z = 0) => motor.castRay([x, y, z], [1, 0, 0], 5)
 
-  it('keeps the other house and loses that one', () => {
-    const tile = twoHouses()
-    const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 })
-    const collider = rebuildBuildingCollider(world, tile, new Set([0]))
-    expect(collider).not.toBeNull()
+  it('keeps the other house and loses that one', async () => {
+    const motor = await solidTile(twoHouses())
+    motor.setBuildings(0, 0, [0], new Map())
     // Rays start 2 m before each house's west wall.
-    expect(solid(world, -2)).toBe(false)
-    expect(solid(world, 28)).toBe(true)
+    expect(along(motor, -2)).toBeNull()
+    expect(along(motor, 28)).not.toBeNull()
   })
 
-  it('opens the wall where cells were blasted out and leaves the rest of that wall', () => {
+  // The cells are the ones the client draws (`carve.ts`); the server's physics cuts them out of its own shell.
+  it('opens the wall where cells were blasted out and leaves the rest of that wall', async () => {
     const tile = twoHouses()
     const shell = shellOf(tile, 0)!
     const hole = new Set<number>()
     for (let y = 0; y <= 2.5; y += 0.5) for (let z = -1.5; z <= 1.5; z += 0.5) hole.add(shell.cellAt(0, y, z))
-    const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 })
-    expect(rebuildBuildingCollider(world, tile, new Set(), new Map([[0, hole]]))).not.toBeNull()
-    world.step()
-    const ray = (x: number, y: number, z: number) => world.castRay(new RAPIER.Ray({ x, y, z }, { x: 1, y: 0, z: 0 }), 5, true)
-    expect(ray(-2, 1, 0)).toBeNull()
-    expect(ray(-2, 1, 4)).not.toBeNull()
+    const motor = await solidTile(tile)
+    motor.setBuildings(0, 0, [], new Map([[0, hole]]))
+    expect(along(motor, -2, 1, 0)).toBeNull()
+    expect(along(motor, -2, 1, 4)).not.toBeNull()
     // The other house and this one's floor are as they were.
-    expect(ray(28, 1, 0)).not.toBeNull()
+    expect(along(motor, 28, 1, 0)).not.toBeNull()
   })
 
-  it('is the cubes the house is drawn as, not its own walls and roof', () => {
+  it('is the cubes the house is drawn as, not its own walls and roof', async () => {
     // A house whose walls and roof fall between the cells: 5.4 m tall, its west wall at x = 0.3.
     const tile = twoHouses()
     const v = tile.collision.vertices
@@ -218,20 +206,21 @@ describe('the building collider without a fallen building', () => {
       v[i] = v[i]! + 0.3
       if (v[i + 1] === 6) v[i + 1] = 5.4
     }
-    const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 })
-    rebuildBuildingCollider(world, tile, new Set())
-    world.step()
+    const motor = await solidTile(tile)
     // Standing on the roof is standing on the top of its cubes, 6 m up, as drawn.
-    const down = world.castRay(new RAPIER.Ray({ x: 5, y: 20, z: 0 }, { x: 0, y: -1, z: 0 }), 30, true)!
-    expect(20 - down.timeOfImpact).toBeCloseTo(6, 4)
+    const down = motor.castRay([5, 20, 0], [0, -1, 0], 30)!
+    expect(20 - down.t).toBeCloseTo(6, 4)
     // And walking into the wall stops at the cubes' face, x = 0.
-    const along = world.castRay(new RAPIER.Ray({ x: -2, y: 1, z: 0 }, { x: 1, y: 0, z: 0 }), 5, true)!
-    expect(along.timeOfImpact - 2).toBeCloseTo(0, 4)
+    expect(along(motor, -2)!.t - 2).toBeCloseTo(0, 4)
   })
 
-  it('is nothing at all once every building is gone', () => {
-    const world = new RAPIER.World({ x: 0, y: 0, z: 0 })
-    expect(rebuildBuildingCollider(world, twoHouses(), new Set([0, 1]))).toBeNull()
+  it('is nothing at all once every building is gone', async () => {
+    const motor = await solidTile(twoHouses())
+    motor.setBuildings(0, 0, [0, 1], new Map())
+    expect(along(motor, -2)).toBeNull()
+    expect(along(motor, 28)).toBeNull()
+    // Down to the ground, with no floor left either.
+    expect(20 - motor.castRay([5, 20, 0], [0, -1, 0], 30)!.t).toBeCloseTo(0, 4)
   })
 })
 

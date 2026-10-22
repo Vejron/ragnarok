@@ -102,7 +102,7 @@ Phase 3 and 4 need both.
 - [x] A static scene that streams: `Physics::streamed`, `add_tile`, `remove_tile`, `refresh`, and
       snapshot vehicles as solid stand-ins (`set_obstacle`), built with the server's own collider code.
 - [x] `crates/sim-wasm` and a client build step; the client's stickman prediction on it.
-- [ ] Move vehicle prediction to it (`VehicleDriver`, `CarSim`), so the client's second Rapier world
+- [x] Move vehicle prediction to it (`VehicleDriver`, `CarSim`), so the client's second Rapier world
       is the server's too; then delete `sim/vehicle.ts`, the rest of `sim/physics.ts` and
       `@dimforge/rapier3d-compat`.
 - [ ] The remaining mirrors: `carve.ts` (also drawn from, so it may stay as a reader of the WASM
@@ -381,3 +381,86 @@ with the old `RapierMotor` put back temporarily for the comparison:
 
 **Next:** vehicle prediction on `sim` (`VehicleDriver` and `CarSim` in `sim/vehicle.ts`, about 1,300
 lines that mirror `crates/sim/src/vehicle.rs` and `flight.rs`). Then `rapier3d-compat` goes.
+
+### 2026-10-22: the driver's vehicle runs on the server's physics; the JS physics engine is gone
+
+The client used to keep a second Rapier world, holding a second copy of every streamed tile, in which
+`CarSim` (1,329 lines in `sim/vehicle.ts`) mirrored the server's `drive_car` and `step_cars` line by
+line for every lift model. Now the vehicle the player drives is a body in the client's one `sim`
+world, the one the stickman walks, stepped by the server's own code.
+
+**`sim`:**
+
+- `CarControls::driven(kind, &input)` is how a driver's input becomes controls. It moved from the
+  server's `Vehicles` mechanic, which now calls it. The client's copy (`controlsOf`) had drifted:
+  it gave every vehicle an aim, where the server gives one only to planes and drones. Nothing but a
+  plane read it, so it did no harm yet, but it was the same kind of drift as the stickman's.
+- `set_car_state` puts a vehicle in the state a snapshot reports, for reconciling: pose, `DriveState`
+  motion (steering angle and a tank's ramped spin included) and the air tank.
+- `refresh` no longer steps the pipeline while a vehicle is simulated, since that would move the
+  predicted vehicle on. Its next `step_cars` brings the queries up to date. The old TS code had the
+  same guard.
+- `set_obstacle` never puts a stand-in for a vehicle that is simulated.
+- `CAR_GRAVITY` moved to `shared/consts.rs`, so the client's renderers (the walker's and the hen's
+  rest pose) get it generated instead of from the mirror.
+- New Rust tests take over from TS tests that tested deleted TS code: the controls mapping (4),
+  `CarCondition::of` with a tank's turret flag (2), the state round trip, and the refresh and
+  stand-in guards. sim now has 111 tests.
+
+**`sim-wasm`:** `startCar`, `stopCar`, `setCarState` (pose, motion, tank, wear and turret from the
+snapshot), `controlsFor`, `driveCar` (`drive_car` then `step_cars`) and `carState`. Controls and car
+state cross as fixed `f32` layouts.
+
+**Client:**
+
+- `sim/driver.ts` (`VehicleDriver`) keeps the prediction bookkeeping as it was: pending inputs,
+  replay, the decaying correction and the interpolated pose. It now drives the car through
+  `SimMotor`.
+- `game.ts` makes it from the motor and no longer feeds it obstacles: the motor places every vehicle,
+  and `sim` leaves out the one it simulates.
+- `worldview.ts` keeps one world in step instead of two: no more driver tile colliders, felled-trunk
+  slots or rebuilt building compounds.
+- Deleted: `sim/vehicle.ts`, `sim/physics.ts` and the npm dependency `@dimforge/rapier3d-compat`.
+  This change removes 1,991 lines and adds 761.
+
+**Tests:**
+
+- `vehicle.spec.ts` runs every native-recorded checkpoint on the WASM build: jeep, sports car, tank,
+  Strv, damaged jeep, walker, Roadster, helicopter, drone, loitering drone, plane, the 12° slope and
+  hen. All pass with the old tolerances.
+- So do the reconciliation tests and the turret test, now through the motor.
+- The aim checks compare with `toBeCloseTo`, because the aim now comes back as an `f32`.
+- Three destruction tests (a fallen building, a carved hole, cubes rather than walls) now check that
+  the cells the client draws (`carve.ts`) are the cells the server's physics cuts. That is a real
+  cross-language check where before it compared TS with TS.
+- The boundary-wall tests check, with rays, that a shaped world's walls come through to the client
+  from the manifest's tile list.
+- Deleted with the code they tested: `trunkColliderIndex` (2 tests) and `conditionOf` (2 tests,
+  moved to Rust).
+- Client: 50 files, 363 tests. Rust: sim 111, sim-wasm 2, server 258, shared 59, osm-import 81,
+  editor 2. `cargo clippy --workspace --all-targets -- -D warnings` is clean.
+
+**Measured** on `worlds/ersboda-alidhem`: a jeep driven 20 s by the same inputs, with the old `CarSim`
+put back temporarily:
+
+| | Old `CarSim` in JS Rapier | Server's code in WASM |
+|---|---|---|
+| One predicted tick, the 21 tiles loaded at the spawn | 292 to 328 µs | 12 to 33 µs (12 once warm) |
+| One predicted tick, all 450 tiles | 10.3 to 12.5 ms | 14 to 32 µs |
+| Apart after 20 s | | 2 cm |
+
+A reconcile replays about 20 ticks, so it now costs about 0.24 ms instead of about 6 ms.
+
+**Download:** the WASM grew to 2.76 MB (943 KB gzipped). `rapier3d-compat`, 4.3 MB (1.66 MB gzipped)
+of base64-embedded WASM, is no longer bundled, so the page is about 1.6 MB gzipped lighter than
+before this change, and lighter than `master`. One copy of the static scene is held in memory
+instead of two.
+
+**Browser:** in headless Chrome through the dev server, `VehicleDriver` started predicting a jeep on
+`ersboda-alidhem` (all 450 tiles) and drove it 24.6 m in 10 s, resting on the terrain.
+
+Not yet checked: a full game session in a browser.
+
+**Next:** phase 1 is down to the remaining mirrors: the codec and the item and vehicle tables, which
+can be generated from Rust, and `carve.ts` and `terrain.ts`, which the renderer reads. Then Phase 1's
+"re-key the lift models on spec data" and Phase 2's projectiles.

@@ -1,6 +1,6 @@
 import { GRAVITY, TICK_DT } from './consts'
 import { GRENADE_BOUNCE, GRENADE_FUSE_TICKS, GRENADE_LOFT, GRENADE_MUZZLE, GRENADE_RADIUS, GRENADE_SPEED, MAX_AIM_PITCH } from './items'
-import type { Vec3 } from './physics'
+import type { Vec3 } from './motor'
 
 /** Casts a ray: how far it travels before it meets something, and that surface's normal. */
 export type RayCaster = (origin: Vec3, dir: Vec3, max: number) => { t: number; normal: Vec3 } | null

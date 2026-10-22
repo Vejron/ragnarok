@@ -1,12 +1,50 @@
-import RAPIER from '@dimforge/rapier3d-compat'
 import { describe, expect, it } from 'vitest'
-import { CarSim, CAR_GRAVITY, conditionOf, controlsOf, VehicleDriver, type CarControls } from '@/sim/vehicle'
-import { addTileCollider } from '@/sim/physics'
+import { VehicleDriver } from '@/sim/driver'
+import { controlsOf, SimMotor, type CarControls } from '@/sim/motor'
 import { heightIn, type TileGround } from '@/sim/terrain'
 import { f32 } from '@/sim/round'
 import { BUTTON_CROUCH, BUTTON_JUMP, BUTTON_RUN, LOITER_SPEED, TICK_DT, vehicleMaxHp } from '@/sim/consts'
-import { DAMAGE_TURRET, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, TURRET_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
-import type { TileData, WorldData } from '@/world'
+import { KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
+import { manifestBytes, tileBytes } from './worlds'
+
+// Every vehicle here is driven by the server's own physics (`crates/sim`, built to WASM), and the
+// checkpoints are where the native build put it (`crates/sim/src/vehicle/tests.rs`): what is checked
+// is that the WASM build of the same code agrees.
+
+/** A flat field `half` metres from the middle to each side, as the native tests' worlds are. */
+const field = (half = 400) => SimMotor.create(manifestBytes(half, 2 * half))
+
+/** The vehicle being run. */
+const CAR = 1
+
+/** Runs a fresh vehicle of `kind` from `start` under `controls`, checking it against `checkpoints` (`[tick, position]`) within `tolerance`. */
+async function run(
+  kind: number,
+  start: [number, number, number],
+  ticks: number,
+  controls: (tick: number) => CarControls,
+  checkpoints: readonly (readonly [number, readonly number[], number?])[],
+  tolerance = 0.01,
+  setUp: (motor: SimMotor) => void | Promise<void> = () => {},
+  half = 400,
+) {
+  const motor = await field(half)
+  motor.startCar(CAR, kind, start)
+  await setUp(motor)
+  for (let tick = 0; tick < ticks; tick++) {
+    motor.driveCar(CAR, controls(tick), TICK_DT)
+    const expected = checkpoints.find(([t]) => t === tick + 1)
+    if (!expected) continue
+    const state = motor.carState(CAR)!
+    state.position.forEach((value, axis) => {
+      expect(Math.abs(value - expected[1][axis]!), `kind ${kind} tick ${tick + 1} axis ${axis}`).toBeLessThan(tolerance)
+    })
+    if (expected[2] !== undefined) expect(state.tank!).toBeCloseTo(expected[2], 3)
+  }
+  motor.dispose()
+}
+
+const frame = (buttons: number, rest: Partial<InputFrame> = {}): InputFrame => ({ seq: 1, strafe: 0, forward: 0, yaw: 0, buttons, pitch: 0, view: 0, slot: 0, ...rest })
 
 const COAST: CarControls = { throttle: 0, steer: 0, handbrake: false, lift: 0, powered: false }
 const FORWARD: CarControls = { ...COAST, throttle: 1 }
@@ -123,40 +161,12 @@ const walkCheckpoints: [number, [number, number, number]][] = [
 
 describe('vehicle prediction', () => {
   it('a WASM walker walks where the native server does', async () => {
-    await RAPIER.init()
-    const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
-    world.timestep = TICK_DT
-    world.createCollider(RAPIER.ColliderDesc.cuboid(200, 0.5, 200).setTranslation(0, -0.5, 0))
-    const walker = new CarSim(world, KIND_WALKER, [0, 4.9, 0], 0)
-    for (let tick = 0; tick < 480; tick++) {
-      walker.drive(walked(tick), TICK_DT)
-      walker.step(TICK_DT)
-      const expected = walkCheckpoints.find(([t]) => t === tick + 1)
-      if (!expected) continue
-      walker.state().position.forEach((value, axis) => {
-        expect(Math.abs(value - expected[1][axis]!), `tick ${tick + 1} axis ${axis}`).toBeLessThan(0.05)
-      })
-    }
-    world.free()
+    await run(KIND_WALKER, [0, 4.9, 0], 480, walked, walkCheckpoints, 0.05)
   })
 
   it('WASM vehicles drive where the native server does', async () => {
-    await RAPIER.init()
     for (const kind of [KIND_JEEP, KIND_SPORTS, KIND_TANK, KIND_STRV]) {
-      const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
-      world.timestep = TICK_DT
-      world.createCollider(RAPIER.ColliderDesc.cuboid(200, 0.5, 200).setTranslation(0, -0.5, 0))
-      const car = new CarSim(world, kind, [0, 1.5, 0], 0)
-      for (let tick = 0; tick < 480; tick++) {
-        car.drive(scripted(tick), TICK_DT)
-        car.step(TICK_DT)
-        const expected = checkpoints.find(([k, t]) => k === kind && t === tick + 1)
-        if (!expected) continue
-        car.state().position.forEach((value, axis) => {
-          expect(Math.abs(value - expected[2][axis]!), `kind ${kind} tick ${tick + 1} axis ${axis}`).toBeLessThan(0.01)
-        })
-      }
-      world.free()
+      await run(kind, [0, 1.5, 0], 480, scripted, checkpoints.filter(([k]) => k === kind).map(([, tick, position]) => [tick, position] as const))
     }
   })
 
@@ -168,29 +178,8 @@ describe('vehicle prediction', () => {
   ]
 
   it('WASM drives a damaged jeep where the native server does', async () => {
-    await RAPIER.init()
-    const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
-    world.timestep = TICK_DT
-    world.createCollider(RAPIER.ColliderDesc.cuboid(200, 0.5, 200).setTranslation(0, -0.5, 0))
-    const car = new CarSim(world, KIND_JEEP, [0, 1.5, 0], 0)
-    car.condition = { power: 0.8, wheels: [180, 0, 0, 255] }
-    for (let tick = 0; tick < 480; tick++) {
-      car.drive(scripted(tick), TICK_DT)
-      car.step(TICK_DT)
-      const expected = damagedCheckpoints.find(([t]) => t === tick + 1)
-      if (!expected) continue
-      car.state().position.forEach((value, axis) => {
-        expect(Math.abs(value - expected[1][axis]!), `tick ${tick + 1} axis ${axis}`).toBeLessThan(0.01)
-      })
-    }
-    world.free()
-  })
-
-  it('reads a vehicle’s condition off the snapshot like the server', () => {
-    expect(conditionOf(KIND_JEEP, 100, [9, 9, 9, 9, 1, 2, 3, 4])).toEqual({ power: 1, wheels: [1, 2, 3, 4] })
-    expect(conditionOf(KIND_JEEP, 60, [0, 0, 0, 0, 0, 0, 0, 0]).power).toBe(1)
-    expect(conditionOf(KIND_JEEP, 10, [0, 0, 0, 0, 0, 0, 0, 0]).power).toBeCloseTo(0.6)
-    expect(conditionOf(KIND_TANK, 125, [0, 0, 0, 0, 0, 0, 0, 0]).power).toBe(1)
+    // 30 of 100 health is 0.8 of the engine's power; a bent front left wheel and no rear right one.
+    await run(KIND_JEEP, [0, 1.5, 0], 480, scripted, damagedCheckpoints, 0.01, (motor) => motor.placeCar(CAR, { position: [0, 1.5, 0], hp: 30, damage: [0, 0, 0, 0, 180, 0, 0, 255] }))
   })
 })
 
@@ -215,26 +204,10 @@ const thrustCheckpoints: [number, [number, number, number], number][] = [
 
 describe('roadster prediction', () => {
   it('WASM boosts, hops and hovers where the native server does', async () => {
-    await RAPIER.init()
-    const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
-    world.timestep = TICK_DT
-    world.createCollider(RAPIER.ColliderDesc.cuboid(200, 0.5, 200).setTranslation(0, -0.5, 0))
-    const car = new CarSim(world, KIND_ROADSTER, [0, 1.5, 0], 0)
-    for (let tick = 0; tick < 420; tick++) {
-      car.drive(thrusted(tick), TICK_DT)
-      car.step(TICK_DT)
-      const expected = thrustCheckpoints.find(([t]) => t === tick + 1)
-      if (!expected) continue
-      car.state().position.forEach((value, axis) => {
-        expect(Math.abs(value - expected[1][axis]!), `tick ${tick + 1} axis ${axis}`).toBeLessThan(0.01)
-      })
-      expect(car.tank!).toBeCloseTo(expected[2], 3)
-    }
-    world.free()
+    await run(KIND_ROADSTER, [0, 1.5, 0], 420, thrusted, thrustCheckpoints)
   })
 
   it('maps run, jump and crouch to boost, hop and handbrake for a Roadster only', () => {
-    const frame = (buttons: number): InputFrame => ({ seq: 1, strafe: 0, forward: 0, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 })
     expect(controlsOf(frame(BUTTON_RUN), KIND_ROADSTER)).toMatchObject({ boost: true, hop: false, handbrake: false, lift: 0 })
     expect(controlsOf(frame(BUTTON_JUMP), KIND_ROADSTER)).toMatchObject({ boost: false, hop: true, handbrake: false, lift: 0 })
     expect(controlsOf(frame(BUTTON_CROUCH), KIND_ROADSTER)).toMatchObject({ handbrake: true })
@@ -244,73 +217,36 @@ describe('roadster prediction', () => {
 
 describe('helicopter prediction', () => {
   it('WASM flies where the native server does', async () => {
-    await RAPIER.init()
-    const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
-    world.timestep = TICK_DT
-    world.createCollider(RAPIER.ColliderDesc.cuboid(200, 0.5, 200).setTranslation(0, -0.5, 0))
-    const heli = new CarSim(world, KIND_HELI, [0, 3, 0], 0)
-    for (let tick = 0; tick < 480; tick++) {
-      heli.drive(flight(tick), TICK_DT)
-      heli.step(TICK_DT)
-      const expected = flightCheckpoints.find(([t]) => t === tick + 1)
-      if (!expected) continue
-      heli.state().position.forEach((value, axis) => {
-        expect(Math.abs(value - expected[1][axis]!), `tick ${tick + 1} axis ${axis}`).toBeLessThan(0.01)
-      })
-    }
-    world.free()
+    await run(KIND_HELI, [0, 3, 0], 480, flight, flightCheckpoints)
   })
 
   it('jump climbs and run sinks, as on the server', () => {
-    const frame = (buttons: number): InputFrame => ({ seq: 1, strafe: 0, forward: 0, yaw: 0, pitch: 0, buttons, view: 0, slot: 0 })
-    expect(controlsOf(frame(1))).toMatchObject({ lift: 1, powered: true })
-    expect(controlsOf(frame(2))).toMatchObject({ lift: -1 })
-    expect(controlsOf(frame(3))).toMatchObject({ lift: 0 })
+    expect(controlsOf(frame(BUTTON_JUMP), KIND_HELI)).toMatchObject({ lift: 1, powered: true })
+    expect(controlsOf(frame(BUTTON_RUN), KIND_HELI)).toMatchObject({ lift: -1 })
+    expect(controlsOf(frame(BUTTON_JUMP | BUTTON_RUN), KIND_HELI)).toMatchObject({ lift: 0 })
   })
 })
 
 describe('drone prediction', () => {
   it('WASM flies a drone where the native server does', async () => {
-    await RAPIER.init()
-    const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
-    world.timestep = TICK_DT
-    world.createCollider(RAPIER.ColliderDesc.cuboid(200, 0.5, 200).setTranslation(0, -0.5, 0))
-    const drone = new CarSim(world, KIND_DRONE, [0, 3, 0], 0)
-    for (let tick = 0; tick < 480; tick++) {
-      drone.drive(droneFlight(tick), TICK_DT)
-      drone.step(TICK_DT)
-      const expected = droneCheckpoints.find(([t]) => t === tick + 1)
-      if (!expected) continue
-      drone.state().position.forEach((value, axis) => {
-        expect(Math.abs(value - expected[1][axis]!), `tick ${tick + 1} axis ${axis}`).toBeLessThan(0.01)
-      })
-    }
-    world.free()
+    await run(KIND_DRONE, [0, 3, 0], 480, droneFlight, droneCheckpoints)
   })
 
   it('flies towards where its pilot looks', () => {
-    const frame: InputFrame = { seq: 1, strafe: 0, forward: 127, yaw: 500, pitch: -300, buttons: 0, view: 0, slot: 0 }
-    expect(controlsOf(frame, KIND_DRONE)).toMatchObject({ throttle: 1, powered: true, aim: [0.5, -0.3] })
-    expect(controlsOf(frame, KIND_LOITER)).toMatchObject({ throttle: 1, powered: true, aim: [0.5, -0.3] })
+    const looks = frame(0, { forward: 127, yaw: 500, pitch: -300 })
+    // The aim comes back from the server's code as f32.
+    const aimed = (aim: [number, number] | null | undefined) => aim!.forEach((value, i) => expect(value).toBeCloseTo([0.5, -0.3][i]!, 6))
+    for (const kind of [KIND_DRONE, KIND_LOITER]) {
+      const controls = controlsOf(looks, kind)
+      expect(controls).toMatchObject({ throttle: 1, powered: true })
+      aimed(controls.aim)
+    }
+    // Nothing that drives on the ground reads the look.
+    expect(controlsOf(looks, KIND_JEEP).aim).toBeNull()
   })
 
   it('WASM flies a loitering drone where the native server does', async () => {
-    await RAPIER.init()
-    const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
-    world.timestep = TICK_DT
-    world.createCollider(RAPIER.ColliderDesc.cuboid(200, 0.5, 200).setTranslation(0, -0.5, 0))
-    const loiter = new CarSim(world, KIND_LOITER, [0, 60, 100], 0)
-    loiter.setState([0, 60, 100], [0, 0, 0, 1], [0, 0, -LOITER_SPEED], [0, 0, 0], 0, 0)
-    for (let tick = 0; tick < 480; tick++) {
-      loiter.drive(loiterFlight(tick), TICK_DT)
-      loiter.step(TICK_DT)
-      const expected = loiterCheckpoints.find(([t]) => t === tick + 1)
-      if (!expected) continue
-      loiter.state().position.forEach((value, axis) => {
-        expect(Math.abs(value - expected[1][axis]!), `tick ${tick + 1} axis ${axis}`).toBeLessThan(0.01)
-      })
-    }
-    world.free()
+    await run(KIND_LOITER, [0, 60, 100], 480, loiterFlight, loiterCheckpoints, 0.01, (motor) => motor.placeCar(CAR, { position: [0, 60, 100], linvel: [0, 0, -LOITER_SPEED] }))
   })
 })
 
@@ -337,29 +273,16 @@ const planeCheckpoints: [number, [number, number, number]][] = [
 
 describe('plane prediction', () => {
   it('WASM flies a plane where the native server does', async () => {
-    await RAPIER.init()
-    const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
-    world.timestep = TICK_DT
-    world.createCollider(RAPIER.ColliderDesc.cuboid(3000, 0.5, 3000).setTranslation(0, -0.5, 0))
-    const plane = new CarSim(world, KIND_PLANE, [0, 1.5, 600], 0, 3000)
-    for (let tick = 0; tick < 900; tick++) {
-      plane.drive(planeFlight(tick), TICK_DT)
-      plane.step(TICK_DT)
-      const expected = planeCheckpoints.find(([t]) => t === tick + 1)
-      if (!expected) continue
-      plane.state().position.forEach((value, axis) => {
-        expect(Math.abs(value - expected[1][axis]!), `tick ${tick + 1} axis ${axis}`).toBeLessThan(0.01)
-      })
-    }
-    world.free()
+    // A field 3 km from the middle to each edge, as the native test's.
+    await run(KIND_PLANE, [0, 1.5, 600], 900, planeFlight, planeCheckpoints, 0.01, () => {}, 3000)
   })
 
   it('reads the stick and throttle off the keys and the aim off where the mouse looks', () => {
     // W is forward on the stick (nose down), Space the throttle up, Shift the throttle down.
-    const frame = (forward: number, strafe: number, buttons: number, yaw = 1200): InputFrame => ({ seq: 1, strafe, forward, yaw, pitch: -300, buttons, view: 0, slot: 0 })
-    expect(controlsOf(frame(127, 0, 1))).toMatchObject({ throttle: 1, lift: 1, powered: true })
-    expect(controlsOf(frame(-127, 127, 2))).toMatchObject({ throttle: -1, steer: 1, lift: -1 })
-    expect(controlsOf(frame(0, 0, 0, 1200)).aim).toEqual([1.2, -0.3])
+    const keys = (forward: number, strafe: number, buttons: number) => frame(buttons, { forward, strafe, yaw: 1200, pitch: -300 })
+    expect(controlsOf(keys(127, 0, BUTTON_JUMP), KIND_PLANE)).toMatchObject({ throttle: 1, lift: 1, powered: true })
+    expect(controlsOf(keys(-127, 127, BUTTON_RUN), KIND_PLANE)).toMatchObject({ throttle: -1, steer: 1, lift: -1 })
+    controlsOf(keys(0, 0, 0), KIND_PLANE).aim!.forEach((value, i) => expect(value).toBeCloseTo([1.2, -0.3][i]!, 6))
   })
 })
 
@@ -375,8 +298,6 @@ describe('vehicles on a slope', () => {
     }
     return { x0: -100, z0: -100, cell: 5, side, heights }
   }
-  const tile: TileData = { buildings: [], roads: [], cover: [], trees: [], collision: { vertices: new Float32Array(), triangles: new Uint32Array() }, ground: new Float32Array(), water: new Float32Array(), streams: [], bridges: [], rails: [] }
-
   /** `RAMP_CHECKPOINTS` in vehicle.rs. */
   const checkpoints: [number, [number, number, number]][] = [
     [60, [0, 13.8145, 39.1671]],
@@ -385,29 +306,21 @@ describe('vehicles on a slope', () => {
   ]
 
   it('WASM car climbs where the native server does', async () => {
-    await RAPIER.init()
-    const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
-    world.timestep = TICK_DT
-    world.createCollider(RAPIER.ColliderDesc.cuboid(100, 0.5, 100).setTranslation(0, -0.5, 0))
-    addTileCollider(world, tile, ramp())
-    world.step()
-    const sim = new CarSim(world, KIND_JEEP, [0, heightIn(ramp(), 0, 40) + 1.5, 40], 0)
+    // One 200 m tile with 5 m ground cells: the ramp is its ground.
+    const motor = await SimMotor.create(manifestBytes(100, 200, 5))
+    motor.addTile({ col: 0, row: 0 }, tileBytes({ ground: ramp().heights }))
+    motor.startCar(CAR, KIND_JEEP, [0, heightIn(ramp(), 0, 40) + 1.5, 40])
     for (let tick = 1; tick <= 360; tick++) {
-      sim.drive(FORWARD, TICK_DT)
-      sim.step(TICK_DT)
+      motor.driveCar(CAR, FORWARD, TICK_DT)
       const expected = checkpoints.find(([t]) => t === tick)?.[1]
       if (!expected) continue
-      sim.state().position.forEach((value, axis) => expect(Math.abs(value - expected[axis]!), `tick ${tick} axis ${axis}`).toBeLessThan(0.02))
+      motor.carState(CAR)!.position.forEach((value, axis) => expect(Math.abs(value - expected[axis]!), `tick ${tick} axis ${axis}`).toBeLessThan(0.02))
     }
-    world.free()
+    motor.dispose()
   })
 })
 
 describe('driving a predicted vehicle', () => {
-  const flat = (): WorldData => ({
-    origin: [0, 0], halfExtent: 200, tileSize: 100, spawns: [], tiles: [], groundCell: 0,
-    collision: { vertices: new Float32Array(), triangles: new Uint32Array() },
-  })
   /** A driver's input that goes forward, swings left and right and brakes. */
   const input = (seq: number): InputFrame => ({
     seq, strafe: Math.round(Math.sin(seq / 25) * 100), forward: seq < 200 ? 127 : -127, yaw: 0, pitch: 0, view: 0, slot: 0, buttons: seq % 150 === 0 ? 1 : 0,
@@ -415,29 +328,18 @@ describe('driving a predicted vehicle', () => {
 
   /** What the server would send after `ticks` of the inputs: quantized as on the wire. */
   async function serverState(kind: number, ticks: number): Promise<{ vehicle: VehicleState; drive: DriveState }> {
-    await RAPIER.init()
-    const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
-    world.timestep = TICK_DT
-    world.createCollider(RAPIER.ColliderDesc.cuboid(200, 0.5, 200).setTranslation(0, -0.5, 0))
-    const sim = new CarSim(world, kind, [0, 1, 0], 0, 200)
+    const server = await field(200)
+    server.startCar(3, kind, [0, 1, 0])
     // Settle first, the way a parked car has before anyone boards it.
-    for (let tick = 0; tick < 120; tick++) {
-      sim.drive({ ...COAST, handbrake: true }, TICK_DT)
-      sim.step(TICK_DT)
-    }
-    const start = sim.state()
-    for (let seq = 1; seq <= ticks; seq++) {
-      sim.drive(controlsOf(input(seq)), TICK_DT)
-      sim.step(TICK_DT)
-    }
-    const s = sim.state()
+    for (let tick = 0; tick < 120; tick++) server.driveCar(3, { ...COAST, handbrake: true }, TICK_DT)
+    for (let seq = 1; seq <= ticks; seq++) server.driveCar(3, controlsOf(input(seq), kind), TICK_DT)
+    const s = server.carState(3)!
+    server.dispose()
     const cm = (v: number) => Math.round(v * 100) / 100
     const unit = (v: number) => Math.round(v * 32767) / 32767
     const sign = s.rotation[3] < 0 ? -1 : 1
     const [qx, qy, qz] = [unit(s.rotation[0] * sign), unit(s.rotation[1] * sign), unit(s.rotation[2] * sign)]
     const milli = (v: number) => Math.round(v * 1000) / 1000
-    void start
-    world.free()
     return {
       vehicle: {
         id: 3, kind, x: cm(s.position[0]), y: cm(s.position[1]), z: cm(s.position[2]),
@@ -446,7 +348,7 @@ describe('driving a predicted vehicle', () => {
       drive: {
         vx: cm(s.linvel[0]), vy: cm(s.linvel[1]), vz: cm(s.linvel[2]),
         wx: milli(s.angvel[0]), wy: milli(s.angvel[1]), wz: milli(s.angvel[2]),
-        steer: milli(sim.steer), spin: 0,
+        steer: milli(s.steer), spin: milli(s.spin),
       },
     }
   }
@@ -454,7 +356,8 @@ describe('driving a predicted vehicle', () => {
   it('replaying over the server state lands where an uninterrupted run does', async () => {
     for (const kind of [KIND_JEEP, KIND_TANK, KIND_HELI, KIND_PLANE]) {
       // The client is 20 ticks ahead of the last state the server has told it about.
-      const driver = await VehicleDriver.create(flat())
+      const motor = await field(200)
+      const driver = new VehicleDriver(motor)
       const early = await serverState(kind, 0)
       driver.reconcile(0, early.vehicle, early.drive)
       for (let seq = 1; seq <= 300; seq++) driver.apply(input(seq))
@@ -467,46 +370,46 @@ describe('driving a predicted vehicle', () => {
       expect(distance, `kind ${kind}`).toBeLessThan(0.1)
       expect(driver.lastCorrection).toBeLessThan(0.1)
       driver.dispose()
+      motor.dispose()
     }
   })
 
-  it('stops predicting when the player leaves the seat', async () => {
-    const driver = await VehicleDriver.create(flat())
+  it('stops predicting when the player leaves the seat, and the vehicle is a solid again', async () => {
+    const motor = await field(200)
+    const driver = new VehicleDriver(motor)
     const state = await serverState(KIND_JEEP, 0)
+    motor.setVehicles([state.vehicle])
     driver.reconcile(0, state.vehicle, state.drive)
     expect(driver.driving).toBe(3)
+    expect(motor.carState(3)).not.toBeNull()
     driver.leave()
     expect(driver.driving).toBeNull()
     expect(driver.pose(0, 0)).toBeNull()
-    driver.dispose()
+    expect(motor.carState(3)).toBeNull()
+    motor.setVehicles([state.vehicle])
+    const roof = motor.castRay([state.vehicle.x, 10, state.vehicle.z], [0, -1, 0], 20)!
+    expect(10 - roof.t).toBeGreaterThan(1)
+    motor.dispose()
   })
 })
 
-describe('a tank’s turret flag', () => {
-  it('is not mistaken for a lost wheel', () => {
-    const damage = [0, 0, 0, 0, TURRET_GONE, 0, 0, 0]
-    expect(conditionOf(KIND_TANK, 250, damage).wheels).toEqual([0, 0, 0, 0])
-    // A car's four wheels are in the same slots.
-    expect(conditionOf(KIND_JEEP, 100, damage).wheels).toEqual([TURRET_GONE, 0, 0, 0])
-    expect(DAMAGE_TURRET).toBe(4)
-  })
-
-  it('drops the turret solid for a predicted tank and puts it back', async () => {
-    await RAPIER.init()
-    const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
-    world.timestep = TICK_DT
-    const ray = (from: number) => world.castRay(new RAPIER.Ray({ x: 0, y: 1.7, z: 0.3 + from }, { x: 0, y: 0, z: -1 }), 20, true)
-    const car = new CarSim(world, KIND_TANK, [0, 0.94, 0], 0)
-    world.step()
-    expect(ray(5)).not.toBeNull()
-    car.setTurret(false)
-    world.step()
+describe('a tank’s turret', () => {
+  it('is dropped as a solid for a predicted tank and put back', async () => {
+    const motor = await field(200)
+    motor.startCar(CAR, KIND_TANK, [0, 0.94, 0])
+    motor.driveCar(CAR, COAST, TICK_DT)
+    motor.placeCar(CAR, { position: [0, 0.94, 0] })
     // The turret ring is at y 0.85 above the centre; the ray at 0.76 above the hull's top meets only it.
-    expect(ray(5)).toBeNull()
-    car.setTurret(true)
-    world.step()
-    expect(ray(5)).not.toBeNull()
-    world.free()
+    const ray = () => motor.castRay([0, 1.7, 5.3], [0, 0, -1], 20)
+    motor.driveCar(CAR, { ...COAST, handbrake: true }, TICK_DT)
+    expect(ray()).not.toBeNull()
+    motor.placeCar(CAR, { position: [0, 0.94, 0], turret: false })
+    motor.driveCar(CAR, { ...COAST, handbrake: true }, TICK_DT)
+    expect(ray()).toBeNull()
+    motor.placeCar(CAR, { position: [0, 0.94, 0], turret: true })
+    motor.driveCar(CAR, { ...COAST, handbrake: true }, TICK_DT)
+    expect(ray()).not.toBeNull()
+    motor.dispose()
   })
 })
 
@@ -530,26 +433,10 @@ const henCheckpoints: [number, [number, number, number], number][] = [
 
 describe('hen prediction', () => {
   it('WASM leaps, flaps and glides where the native server does', async () => {
-    await RAPIER.init()
-    const world = new RAPIER.World({ x: 0, y: -CAR_GRAVITY, z: 0 })
-    world.timestep = TICK_DT
-    world.createCollider(RAPIER.ColliderDesc.cuboid(200, 0.5, 200).setTranslation(0, -0.5, 0))
-    const hen = new CarSim(world, KIND_HEN, [0, 5.4, 0], 0)
-    for (let tick = 0; tick < 600; tick++) {
-      hen.drive(henned(tick), TICK_DT)
-      hen.step(TICK_DT)
-      const expected = henCheckpoints.find(([t]) => t === tick + 1)
-      if (!expected) continue
-      hen.state().position.forEach((value, axis) => {
-        expect(Math.abs(value - expected[1][axis]!), `tick ${tick + 1} axis ${axis}`).toBeLessThan(0.01)
-      })
-      expect(hen.tank!).toBeCloseTo(expected[2], 3)
-    }
-    world.free()
+    await run(KIND_HEN, [0, 5.4, 0], 600, henned, henCheckpoints)
   })
 
   it('maps jump to a leap for a hen, with no handbrake or climb', () => {
-    const frame = (buttons: number): InputFrame => ({ seq: 1, strafe: 0, forward: 0, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 })
     expect(controlsOf(frame(BUTTON_JUMP), KIND_HEN)).toMatchObject({ hop: true, handbrake: false, lift: 0, boost: false })
     expect(controlsOf(frame(BUTTON_RUN), KIND_HEN)).toMatchObject({ hop: false, boost: false, lift: 0 })
   })

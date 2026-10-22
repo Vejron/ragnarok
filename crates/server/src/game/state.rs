@@ -371,7 +371,8 @@ pub(super) fn heat_byte(heat: f32) -> u8 {
 }
 
 /// A Roadster's air tank, or a hen's stamina, on the wire: 0..=255 of full (`ROADSTER_AIR` and
-/// `HEN_STAMINA` are both 1). Mirrored by `airOf` in `vehicle.ts`.
+/// `HEN_STAMINA` are both 1). The client's codec divides it back (`thrust.air`), and `SimMotor`
+/// scales that by `ROADSTER_AIR` for the prediction.
 pub(super) fn air_byte(tank: f32) -> u8 {
     (tank / ROADSTER_AIR * 255.0).round().clamp(0.0, 255.0) as u8
 }

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { blockOf, rectBounds, tileAt, type GridInfo } from '../editor/grid'
+import { SimMotor } from '@/sim/motor'
+import { manifestBytes } from './worlds'
 
 // The values `GET /api/grid` returns: the importer's fixed global grid.
 const grid: GridInfo = { origin: [63.8225, 20.235], tile: 250, blockTiles: 8, metresPerDegLat: 110540, metresPerDegLon: 111320 }
@@ -24,18 +26,19 @@ describe('editor grid', () => {
 })
 
 describe('boundary walls of a shaped world', () => {
+  // The walls are the server's (`boundary_walls`, tested there); this checks the client's physics
+  // raises them from the manifest's tiles.
   it('are the square for a world that fills it', async () => {
-    const { boundaryWalls } = await import('../sim/physics')
-    expect(boundaryWalls({ halfExtent: 100, tileSize: 100, inside: null })).toHaveLength(4)
+    const motor = await SimMotor.create(manifestBytes(100, 100))
+    expect(motor.castRay([-50, 1, -50], [1, 0, 0], 500)!.t).toBeCloseTo(150 - 0.5, 3)
   })
 
-  it('follow the notch of an L (mirrors the server test)', async () => {
-    const { boundaryWalls } = await import('../sim/physics')
-    // 2 x 2 grid of 100 m tiles, south-east tile missing.
-    const walls = boundaryWalls({ halfExtent: 100, tileSize: 100, inside: [true, true, true, false] })
-    // Outer north, west, east (north row only), south (west tile only), and the notch's two edges.
-    expect(walls).toHaveLength(6)
-    expect(walls).toContainEqual([50, 0, 50, 0.5])
-    expect(walls).toContainEqual([0, 50, 0.5, 50])
+  it('follow the notch of an L', async () => {
+    // 2 x 2 grid of 100 m tiles, the south-east one (col 1, row 1) missing.
+    const motor = await SimMotor.create(manifestBytes(100, 100, 0, [[0, 0], [1, 0], [0, 1]]))
+    // Across the north row to the outer wall; from the south-west tile into the notch; from the north-east tile into it.
+    expect(motor.castRay([-50, 1, -50], [1, 0, 0], 500)!.t).toBeCloseTo(150 - 0.5, 3)
+    expect(motor.castRay([-50, 1, 50], [1, 0, 0], 500)!.t).toBeCloseTo(50 - 0.5, 3)
+    expect(motor.castRay([50, 1, -50], [0, 0, 1], 500)!.t).toBeCloseTo(50 - 0.5, 3)
   })
 })

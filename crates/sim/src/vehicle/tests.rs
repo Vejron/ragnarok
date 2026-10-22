@@ -1,6 +1,6 @@
 use super::*;
 use shared::consts::TICK_DT;
-use shared::protocol::{KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_TANK, KIND_WALKER};
+use shared::protocol::{KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_TANK, KIND_WALKER};
 use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 
 fn flat() -> WorldFile {
@@ -1440,4 +1440,76 @@ fn scripted_hen_matches_fixture() {
             assert!(close, "tick {done}: {position:?} stamina {}", stamina(&physics));
         }
     }
+}
+
+fn frame(buttons: u16) -> shared::protocol::InputFrame {
+    shared::protocol::InputFrame { seq: 1, buttons, ..Default::default() }
+}
+
+#[test]
+fn a_roadster_boosts_on_run_hops_on_jump_and_brakes_on_crouch() {
+    let roadster = |buttons| CarControls::driven(KIND_ROADSTER, &frame(buttons));
+    assert!(roadster(BUTTON_RUN).boost && !roadster(BUTTON_RUN).hop && !roadster(BUTTON_RUN).handbrake);
+    assert!(roadster(BUTTON_JUMP).hop && !roadster(BUTTON_JUMP).boost && roadster(BUTTON_JUMP).lift == 0.0);
+    assert!(roadster(BUTTON_CROUCH).handbrake);
+    let sports = CarControls::driven(KIND_SPORTS, &frame(BUTTON_JUMP));
+    assert!(sports.handbrake && !sports.hop && !sports.boost);
+}
+
+#[test]
+fn a_helicopter_climbs_on_jump_and_sinks_on_run() {
+    assert_eq!(CarControls::driven(KIND_HELI, &frame(BUTTON_JUMP)).lift, 1.0);
+    assert_eq!(CarControls::driven(KIND_HELI, &frame(BUTTON_RUN)).lift, -1.0);
+    assert_eq!(CarControls::driven(KIND_HELI, &frame(BUTTON_JUMP | BUTTON_RUN)).lift, 0.0);
+    assert!(CarControls::driven(KIND_HELI, &frame(0)).powered);
+}
+
+#[test]
+fn only_planes_and_drones_fly_towards_the_look() {
+    let input = shared::protocol::InputFrame { forward: 127, strafe: 127, yaw: 500, pitch: -300, ..Default::default() };
+    for kind in [KIND_PLANE, KIND_DRONE, KIND_LOITER] {
+        let controls = CarControls::driven(kind, &input);
+        assert_eq!(controls.aim, Some([0.5, -0.3]), "kind {kind}");
+        assert_eq!((controls.throttle, controls.steer), (1.0, 1.0));
+    }
+    for kind in [KIND_JEEP, KIND_TANK, KIND_HELI, KIND_HEN] {
+        assert_eq!(CarControls::driven(kind, &input).aim, None, "kind {kind}");
+    }
+}
+
+#[test]
+fn a_hen_leaps_on_jump_with_no_handbrake_or_climb() {
+    let jump = CarControls::driven(KIND_HEN, &frame(BUTTON_JUMP));
+    assert!(jump.hop && !jump.handbrake && !jump.boost && jump.lift == 0.0);
+    let run = CarControls::driven(KIND_HEN, &frame(BUTTON_RUN));
+    assert!(!run.hop && !run.boost && run.lift == 0.0);
+}
+
+#[test]
+fn a_car_put_in_a_reported_state_is_in_it() {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_ROADSTER, [0.0, 1.0, 0.0], 0.0);
+    let motion = CarMotion { linvel: [1.0, -2.0, 3.0], angvel: [0.1, 0.2, -0.3], steer: 0.2, spin: 0.0 };
+    let turned = [0.0, 0.38268343, 0.0, 0.9238795];
+    physics.set_car_state(1, [5.0, 2.0, -7.0], turned, motion, Some(0.25));
+    let pose = physics.car_pose(1).unwrap();
+    assert_eq!(pose.position, [5.0, 2.0, -7.0]);
+    assert!((pose.rotation[1] - turned[1]).abs() < 1e-6);
+    assert_eq!(physics.car_motion(1), Some(motion));
+    assert_eq!(physics.car_thrust(1).map(|(tank, _)| tank), Some(0.25));
+}
+
+#[test]
+fn a_cars_wheels_are_read_off_the_damage_and_its_engine_off_its_health() {
+    assert_eq!(CarCondition::of(KIND_JEEP, 100, [9, 9, 9, 9, 1, 2, 3, 4]), CarCondition { power: 1.0, wheels: [1, 2, 3, 4] });
+    assert!((CarCondition::of(KIND_JEEP, 10, [0; 8]).power - 0.6).abs() < 1e-6);
+    assert_eq!(CarCondition::of(KIND_TANK, 125, [0; 8]).power, 1.0);
+}
+
+#[test]
+fn a_tanks_turret_flag_is_not_mistaken_for_a_lost_wheel() {
+    let damage = [0, 0, 0, 0, shared::protocol::TURRET_GONE, 0, 0, 0];
+    assert_eq!(CarCondition::of(KIND_TANK, 250, damage).wheels, [0; 4]);
+    // A car's four wheels are in the same slots.
+    assert_eq!(CarCondition::of(KIND_JEEP, 100, damage).wheels, [shared::protocol::TURRET_GONE, 0, 0, 0]);
 }

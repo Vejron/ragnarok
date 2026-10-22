@@ -9,16 +9,11 @@ import { buildTile, disposeTile, rebuildBuildings, restitchTerrain } from './ren
 import { buildWater, disposeWater } from './render/water'
 import { shellOf } from './sim/carve'
 import type { SimMotor } from './sim/motor'
-import { addTileCollider, trunkColliderIndex } from './sim/physics'
 import type { Surfaces } from './sim/surface'
 import type { Waters } from './sim/waters'
 import { groundOf, type Terrain } from './sim/terrain'
 import type { Grass } from './render/grass'
-import type { VehicleDriver } from './sim/vehicle'
 import type { TileData, TileRef, WorldData } from './world'
-
-/** A tile's colliders in the vehicle simulation, with the ones taken out one by one (felled trunks) left `undefined`. */
-type TileSolids = (ReturnType<typeof addTileCollider>[number] | undefined)[]
 
 /** Tiles are keyed by `row * 65536 + col`, as the server names the objects in them. */
 export const tileKey = (col: number, row: number) => row * 65536 + col
@@ -37,15 +32,16 @@ export class WorldView {
   surfaces: Surfaces | null = null
   grass: Grass | null = null
   waters: Waters | null = null
+  /** What is solid to the local stickman and the vehicle it drives: the server's physics. */
   motor: SimMotor | null = null
-  driver: VehicleDriver | null = null
 
   readonly damage = new BuildingDamage()
   /** Water of every tile, drawn after everything solid. */
   readonly waterRoot = new Group()
 
   private readonly groups = new Map<number, Group>()
-  private readonly solids = new Map<number, { tile: TileData; salt: number; drive: TileSolids }>()
+  /** The tiles drawn now, with the salt their colours were picked with. */
+  private readonly loaded = new Map<number, { tile: TileData; salt: number }>()
   /** Trees that fell, by tile then index, with the way they fell: replayed onto tiles that stream in later. */
   private readonly fellTrees = new Map<number, Map<number, number>>()
   private readonly fallingTrees = new FallingTrees()
@@ -91,8 +87,7 @@ export class WorldView {
       }
     }
     if (tile.bytes) this.motor?.addTile(ref, tile.bytes)
-    const drive: TileSolids = this.driver?.addTile(tile, ground) ?? []
-    this.solids.set(key, { tile, salt, drive })
+    this.loaded.set(key, { tile, salt })
     this.damage.attach(key, tile, salt)
     if (down.size > 0 || this.damage.carved(key).size > 0) {
       this.dropBuildingColliders(key)
@@ -101,7 +96,7 @@ export class WorldView {
     // Trees that fell before this tile streamed in (or while it was away) are already down.
     for (const [index, yaw] of this.fellTrees.get(key) ?? []) this.fellTree(key, index, yaw, false)
     return () => {
-      this.solids.delete(key)
+      this.loaded.delete(key)
       this.damage.detach(key)
       disposeTile(group)
       if (water) disposeWater(water)
@@ -111,7 +106,6 @@ export class WorldView {
       this.grass?.removeTile(ref)
       this.waters?.delete(ref)
       this.motor?.removeTile(ref)
-      this.driver?.removeTile(drive)
     }
   }
 
@@ -150,8 +144,8 @@ export class WorldView {
       touched.add(key)
       if (!first) continue
       const group = this.groups.get(key)
-      const solids = this.solids.get(key)
-      if (group && solids) rebuildBuildings(group, solids.tile, solids.salt, this.undrawnBuildings(key))
+      const loaded = this.loaded.get(key)
+      if (group && loaded) rebuildBuildings(group, loaded.tile, loaded.salt, this.undrawnBuildings(key))
     }
     for (const key of touched) this.dropBuildingColliders(key)
   }
@@ -165,9 +159,9 @@ export class WorldView {
     const world = this.world
     if (!world) return
     const key = tileKey(Math.floor((x + world.halfExtent) / world.tileSize), Math.floor((z + world.halfExtent) / world.tileSize))
-    const solids = this.solids.get(key)
-    if (!solids) return
-    const { tile } = solids
+    const loaded = this.loaded.get(key)
+    if (!loaded) return
+    const { tile } = loaded
     const carved = this.damage.carved(key)
     let best: { index: number; cell: number; distance: number } | null = null
     tile.buildings.forEach((building, index) => {
@@ -189,7 +183,7 @@ export class WorldView {
     const { index, cell } = best as { index: number; cell: number }
     if (!this.damage.dent(key, index, cell, damage)) return
     const group = this.groups.get(key)
-    if (group) rebuildBuildings(group, tile, solids.salt, this.undrawnBuildings(key))
+    if (group) rebuildBuildings(group, tile, loaded.salt, this.undrawnBuildings(key))
   }
 
   /** The server says these standing buildings are hurt. */
@@ -211,16 +205,12 @@ export class WorldView {
    */
   private fellTree(key: number, index: number, yaw: number, animate: boolean, force = 0) {
     const group = this.groups.get(key)
-    const solids = this.solids.get(key)
-    const tree = solids?.tile.trees[index]
-    if (!group || !solids || !tree) return
+    const loaded = this.loaded.get(key)
+    const tree = loaded?.tile.trees[index]
+    if (!group || !loaded || !tree) return
     this.fallingTrees.fell(group, tree, index, yaw, animate, force)
     const { col, row } = tileOf(key)
     this.motor?.fellTree(col, row, index)
-    const at = trunkColliderIndex(solids.tile, index)
-    if (at < 0) return
-    this.driver?.removeTile([solids.drive[at]])
-    solids.drive[at] = undefined
   }
 
   /** The buildings of tile `key` its own drawing leaves out: those that fell, and those drawn as shards instead. */
@@ -232,14 +222,12 @@ export class WorldView {
 
   /** Rebuilds tile `key`'s building colliders in both simulations without the buildings that fell. */
   private dropBuildingColliders(key: number) {
-    const solids = this.solids.get(key)
-    if (!solids || solids.tile.collision.triangles.length === 0) return
+    const loaded = this.loaded.get(key)
+    if (!loaded || loaded.tile.collision.triangles.length === 0) return
     const down = new Set(this.goneBuildings.get(key)?.keys())
     const carved = this.damage.carved(key)
     const { col, row } = tileOf(key)
     this.motor?.setBuildings(col, row, down, carved)
-    // The building mesh is `addTile`'s first collider, when the tile has one.
-    if (this.driver) solids.drive[0] = this.driver.rebuildBuildings(solids.drive[0], solids.tile, down, carved)
   }
 
   /**
@@ -248,14 +236,14 @@ export class WorldView {
    */
   private fellBuilding(key: number, index: number, yaw: number, animate: boolean) {
     const group = this.groups.get(key)
-    const solids = this.solids.get(key)
-    if (!group || !solids || !solids.tile.buildings[index]) return
-    rebuildBuildings(group, solids.tile, solids.salt, this.undrawnBuildings(key))
+    const loaded = this.loaded.get(key)
+    if (!group || !loaded || !loaded.tile.buildings[index]) return
+    rebuildBuildings(group, loaded.tile, loaded.salt, this.undrawnBuildings(key))
     this.dropBuildingColliders(key)
     if (animate) {
-      this.collapses.start(group, solids.tile, index, solids.salt, yaw, (x, z) => this.terrain?.heightAt(x, z) ?? 0, key * 1_000_003 + index)
+      this.collapses.start(group, loaded.tile, index, loaded.salt, yaw, (x, z) => this.terrain?.heightAt(x, z) ?? 0, key * 1_000_003 + index)
     } else {
-      Collapses.settled(group, solids.tile, index)
+      Collapses.settled(group, loaded.tile, index)
     }
   }
 }

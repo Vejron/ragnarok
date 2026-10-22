@@ -297,6 +297,9 @@ pub const WALKER_GRIP: f32 = 8.0;
 /// Yaw rate at full stick, rad/s, and the angular acceleration towards it, rad/s².
 pub const WALKER_TURN_RATE: f32 = 1.7;
 pub const WALKER_TURN_ACCEL: f32 = 8.0;
+/// Gravity acting on vehicle bodies. Stickmen use `GRAVITY`; the ray-cast suspension is tuned
+/// around the real-world value.
+pub const CAR_GRAVITY: f32 = 9.81;
 /// Leg spring and damper, per kilogram of the whole body for the pair: the spring settles at
 /// `CAR_GRAVITY / WALKER_LEG_SPRING` of compression.
 pub const WALKER_LEG_SPRING: f32 = 80.0;

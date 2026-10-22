@@ -420,6 +420,12 @@ export const WALKER_TURN_RATE = 1.7
 export const WALKER_TURN_ACCEL = 8.0
 
 /**
+ * Gravity acting on vehicle bodies. Stickmen use `GRAVITY`; the ray-cast suspension is tuned
+ * around the real-world value.
+ */
+export const CAR_GRAVITY = 9.81
+
+/**
  * Leg spring and damper, per kilogram of the whole body for the pair: the spring settles at
  * `CAR_GRAVITY / WALKER_LEG_SPRING` of compression.
  */

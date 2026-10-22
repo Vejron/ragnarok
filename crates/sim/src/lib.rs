@@ -1,8 +1,10 @@
 //! Static world collision, the stickman character controller and the dynamic vehicle bodies.
 //!
-//! The client builds the same scene in `client/src/sim/physics.ts` from the same world file and
-//! constants, so its prediction hits the same walls. Native and WASM Rapier are not bit-exact,
-//! so tiny differences are absorbed by reconciliation rather than assumed away.
+//! The server links this natively and builds the whole world at once (`Physics::new`). The client
+//! runs the same code built to WASM (`crates/sim-wasm`) and builds the tiles around the player
+//! (`Physics::streamed`, `stream.rs`), so its prediction hits the same walls and drives the same
+//! vehicles. Native and WASM floats are not promised bit-exact; the tiny differences are absorbed by
+//! reconciliation rather than assumed away.
 
 use anyhow::{Context, Result};
 use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterController};
@@ -18,7 +20,7 @@ use std::collections::HashMap;
 
 mod stream;
 mod vehicle;
-pub use vehicle::{CarCondition, CarControls, CarImpact, CarPose, Strike, half_extents};
+pub use vehicle::{CarCondition, CarControls, CarImpact, CarMotion, CarPose, Strike, half_extents};
 
 /// A destructible piece of the static world: a building or a tree, by tile and index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -88,12 +90,11 @@ pub struct Physics {
 }
 
 /// Height of the top of the invisible boundary walls around the playable square, metres above
-/// the lowest ground. Mirrored by `BOUNDARY_HEIGHT` in `client/src/sim/physics.ts`.
+/// the lowest ground.
 const BOUNDARY_HEIGHT: f32 = 200.0;
 
 /// The collision group of a tree that can be felled. A tank's hull leaves this group out of what it
 /// touches, so it drives through such a trunk (felling it, see `plow_trees`) instead of stopping on it.
-/// Mirrored by `TREE_GROUPS` and `HEAVY_GROUPS` in `client/src/sim/physics.ts`.
 pub const TREE_GROUP: Group = Group::GROUP_2;
 
 /// What a vehicle too heavy to be stopped by a tree touches: everything but felled-able trunks.
@@ -102,12 +103,11 @@ pub fn plows_trees() -> InteractionGroups {
 }
 
 /// How far below the lowest dry ground the slab under a terrain sits, metres: the importer's
-/// `MAX_BED_BELOW`, the deepest a water bed is cut. Mirrored by `BED_FLOOR` in `client/src/sim/physics.ts`.
+/// `MAX_BED_BELOW`, the deepest a water bed is cut.
 const BED_FLOOR: f32 = 12.0;
 
 /// The static colliders every simulation of `world` uses: the ground slab, the terrain, four
-/// boundary walls, the building mesh and the tree trunks. Mirrored by `buildStaticColliders` in
-/// `client/src/sim/physics.ts`.
+/// boundary walls, the building mesh and the tree trunks.
 ///
 /// A building or tree comes with the [`Obj`] it is, for worlds that went through `assemble`.
 pub fn static_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)>> {
@@ -265,7 +265,7 @@ pub fn building_shell(world: &WorldFile, index: usize) -> Option<(Shell, Vec<Tri
 
 /// What building `index` of `world` is collided with while nothing has been cut from it: its cubes
 /// merged into boxes and its floor (`solid_of`). `None` when it has no cubes, and is collided with
-/// as its own triangles. Mirrored by `rebuildBuildingCollider` in `client/src/sim/physics.ts`.
+/// as its own triangles.
 pub fn building_shape(world: &WorldFile, index: usize) -> Option<SharedShape> {
     let (shell, floor) = building_shell(world, index)?;
     solid_of(&shell.boxes(&shell.untouched()), &floor)
@@ -291,8 +291,7 @@ pub fn solid_of(boxes: &[[i32; 6]], floor: &[Tri]) -> Option<SharedShape> {
 
 /// The boundary walls as `(x, z, half width, half depth)`, metres: the four sides of the square
 /// for a world that fills it, else a wall along every edge between a tile of the world and one that
-/// is not (or the edge of the square), merged into runs. Mirrored by `boundaryWalls` in
-/// `client/src/sim/physics.ts`.
+/// is not (or the edge of the square), merged into runs.
 fn boundary_walls(world: &WorldFile) -> Vec<(f32, f32, f32, f32)> {
     let half = from_cm(world.half_extent);
     let grid = world.grid() as i64;
@@ -398,7 +397,7 @@ impl Physics {
     /// broad-phase over the static scene, which scene queries need.
     fn step_pipeline(&mut self) {
         self.pipeline.step(
-            Vector::new(0.0, -vehicle::CAR_GRAVITY, 0.0),
+            Vector::new(0.0, -CAR_GRAVITY, 0.0),
             &self.parameters,
             &mut self.islands,
             &mut self.broad_phase,

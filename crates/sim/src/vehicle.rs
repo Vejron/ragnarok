@@ -20,9 +20,6 @@ use rapier3d::prelude::*;
 use shared::consts::*;
 use shared::protocol::{DAMAGE_WHEELS, THRUST_AIR, THRUST_BOOST, THRUST_GLIDE, THRUST_LIFT, KIND_DRONE, KIND_HELI, KIND_LOITER, KIND_HEN, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, WHEEL_GONE, is_drone, vehicle_hp};
 
-/// Gravity acting on vehicle bodies. Stickmen use `GRAVITY`; the ray-cast suspension is tuned
-/// around the real-world value.
-pub const CAR_GRAVITY: f32 = 9.81;
 
 mod flight;
 mod spec;
@@ -100,7 +97,7 @@ impl CarCondition {
     pub const NEW: CarCondition = CarCondition { power: 1.0, wheels: [0; 4] };
 
     /// From a vehicle's health and damage as the snapshot carries them. The engine keeps full power
-    /// down to half health and loses up to half of it below. Mirrored by `conditionOf` in `vehicle.ts`.
+    /// down to half health and loses up to half of it below.
     pub fn of(kind: u8, hp: u8, damage: [u8; 8]) -> CarCondition {
         let health = f32::from(hp) / f32::from(vehicle_hp(kind));
         // Only a car has wheels to hurt: a tank's first wheel slot says whether its turret is on.
@@ -115,6 +112,28 @@ impl CarCondition {
 impl CarControls {
     /// Nobody asks for anything.
     pub const IDLE: CarControls = CarControls { throttle: 0.0, steer: 0.0, handbrake: false, lift: 0.0, powered: false, aim: None, boost: false, hop: false };
+
+    /// What the driver's `input` asks of a vehicle of `kind`. The server drives with it, and the
+    /// client predicts its own vehicle with the same.
+    pub fn driven(kind: u8, input: &shared::protocol::InputFrame) -> CarControls {
+        let held = |button: u16| input.buttons() & button != 0;
+        // A Roadster boosts on run and hops (then hovers) on jump, so its handbrake is on crouch.
+        // A hen leaps, then flaps or glides, on jump.
+        let roadster = kind == KIND_ROADSTER;
+        let hen = kind == KIND_HEN;
+        CarControls {
+            steer: shared::quant::from_axis(input.strafe),
+            throttle: shared::quant::from_axis(input.forward),
+            handbrake: if roadster { held(BUTTON_CROUCH) } else { !hen && held(BUTTON_JUMP) },
+            // A helicopter climbs on jump and sinks on run.
+            lift: if roadster || hen { 0.0 } else { f32::from(held(BUTTON_JUMP)) - f32::from(held(BUTTON_RUN)) },
+            powered: true,
+            // A plane and a drone fly towards where their pilot looks.
+            aim: matches!(kind, KIND_PLANE | KIND_DRONE | KIND_LOITER).then(|| [shared::quant::from_mrad(input.yaw), shared::quant::from_mrad(input.pitch())]),
+            boost: roadster && held(BUTTON_RUN),
+            hop: (roadster || hen) && held(BUTTON_JUMP),
+        }
+    }
 }
 
 /// A car's pose as the game loop and the wire need it.
@@ -544,6 +563,24 @@ impl Physics {
     }
 
     /// How worn vehicle `id` is from now on; applied by [`Physics::drive_car`].
+    /// Puts vehicle `id` in the state a snapshot reports for it: its pose, its motion and, for a kind
+    /// that has one, its tank (`None` leaves the tank as it is). The client predicts its own vehicle
+    /// from there.
+    pub fn set_car_state(&mut self, id: u32, position: [f32; 3], rotation: [f32; 4], motion: CarMotion, tank: Option<f32>) {
+        let Some(car) = self.cars.get_mut(&id) else { return };
+        car.steer = motion.steer;
+        car.spin = motion.spin;
+        if let (Some(tank), Some(slot)) = (tank, car.tank.as_mut()) {
+            *slot = tank;
+        }
+        if let Some(body) = self.bodies.get_mut(car.body) {
+            let rotation = Rotation::from_xyzw(rotation[0], rotation[1], rotation[2], rotation[3]).normalize();
+            body.set_position(Pose::from_parts(Vector::from(position), rotation), true);
+            body.set_linvel(Vector::from(motion.linvel), true);
+            body.set_angvel(Vector::from(motion.angvel), true);
+        }
+    }
+
     pub fn set_car_condition(&mut self, id: u32, condition: CarCondition) {
         if let Some(car) = self.cars.get_mut(&id) {
             car.condition = condition;
