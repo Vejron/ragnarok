@@ -213,7 +213,7 @@ fn controls(throttle: f32, steer: f32, halt: bool, idle: InputFrame) -> InputFra
 fn drive(world: &World, bot: &mut Bot, vid: u32, pose: &CarPose, idle: InputFrame) -> InputFrame {
     let at = pose.position;
     let halt = controls(0.0, 0.0, true, idle);
-    let gunner = world.entities.get::<Seats>(vid).and_then(|seats| seats.rider(GUNNER)).and_then(|id| world.bots.get(&id));
+    let gunner = world.entities.get::<Seats>(vid).and_then(|seats| seats.rider(GUNNER)).and_then(|id| world.entities.get::<Bot>(id));
     // How fast it may go: full speed, unless it is coming up to a sharp turn.
     let mut limit = TANK_MAX_SPEED;
     let goal = match gunner.map(|g| (g.mode, g.sees, g.last_seen)) {

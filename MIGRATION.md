@@ -126,7 +126,8 @@ Phase 3 and 4 need both.
 - [x] `Seats` out of `Vehicle`.
 - [ ] The sim's per-kind controls and solids into its `Spec`.
 - [x] Players as entities (`Player` component).
-- [ ] Bots' minds as a `Bot` component; a player's health and hit test joined with the generic ones.
+- [x] Bots' minds as a `Bot` component on the player's entity.
+- [ ] A player's health and hit test joined with the generic ones.
 - [ ] Events in place of `hits`, `kills`, `noises`.
 
 ### Phase 3: component replication (protocol v2)
@@ -823,3 +824,33 @@ with each other.
 **Next:** bots' minds as a `Bot` component on the player's entity. After that, a player's `Health`
 and hit test can join the generic ones roosters use, giving one hit test and one damage path for
 everything that can be shot.
+
+### 2026-10-22: a bot's mind is a component on its player
+
+`World::bots` is gone. A bot is a player entity that also has a `Bot` component:
+
+- `add_bot` puts the component on the new player's entity.
+- `Bots::on_leave` removes it; despawning the player would drop it anyway.
+- "Is this a bot" is `has::<Bot>(id)`, and the bot count is `count::<Bot>()`.
+- The same converter as for players rewrote the 60-odd lookups. It also rewrote one `Vec` field that
+  happens to be called `bots` (`placed.bots[..]` in a `main.rs` test), which was put back by hand.
+
+`Bots::on_tick` used to take each mind out of the map, let it think with the whole world in hand,
+then put it back. It now swaps an empty `Bot::new` in its place (no allocation) and back. The only
+read of another mind while thinking is a tank driver reading its gunner's, which is never the mind
+being thought with, so the placeholder is never seen. Moving the component off the entity and back
+would have moved every player row between archetypes twice a tick.
+
+**Checks:** server 264 tests, all passing; clippy clean. `full_room_tick_cost` with `BOTS=32`, back to
+back against the last commit, two runs each:
+
+| Mechanic | Before | After |
+|---|---|---|
+| `Bots` | 65.1–67.7 µs | 57.5–62.2 µs (the map remove and insert per bot are gone) |
+| `Combat` | 49.3–50.8 µs | 49.5–53.8 µs |
+| `Vehicles` | 36.3–36.9 µs | 34.7–38.4 µs |
+| Mechanics, avg | 2.20–2.21 ms | 2.08–2.09 ms (mostly `Movement` noise) |
+
+**Next:** a player's health and hit test joined with the generic ones. Players are tested by
+`first_body_hit` and roosters by `first_hurtbox_hit`, and blasts have two loops as well. One hit test
+and one damage path for everything that can be shot is what makes a new NPC cheap.

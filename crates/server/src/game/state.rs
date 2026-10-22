@@ -107,7 +107,7 @@ pub enum BotMode {
 
 /// The mind of a bot. Its body is the `Player` with the same id; `Bots` writes that player's input
 /// each tick, so it walks, rides and dies exactly as a person does.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(crate::entities::Component, Clone, Debug, PartialEq)]
 pub struct Bot {
     pub home: [f32; 2],
     /// Waypoints `[x, z]`, walked round in order.
@@ -435,11 +435,9 @@ pub struct World {
     pub tick: u32,
     pub map: WorldFile,
     pub physics: Physics,
-    /// The families moved to components so far: players, roosters, items on the ground, projectiles and
-    /// vehicles, in one id space.
+    /// The families moved to components so far: players (and bots' minds, a `Bot` on the player's
+    /// entity), roosters, items on the ground, projectiles and vehicles, in one id space.
     pub entities: crate::entities::Entities,
-    /// The minds of the players that are bots, by player id.
-    pub bots: BTreeMap<u32, Bot>,
     /// Where a stickman can walk, built as the bots look for ways round things.
     pub nav: crate::navigation::NavGrid,
     pub(super) next_id: u32,

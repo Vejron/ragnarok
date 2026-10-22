@@ -1,5 +1,5 @@
 use super::*;
-use crate::game::{Command, Outgoing, Profile};
+use crate::game::{Bot, Command, Outgoing, Profile};
 use shared::consts::{RESPAWN_TICKS, WRECK_TICKS};
 use shared::items::{ITEM_GRENADE, ITEM_NONE, ITEM_SHOTGUN, ITEM_SNIPER};
 use shared::protocol::{Notice, S_NOTICE, decode, peek_tag};
@@ -47,7 +47,7 @@ fn run(game: &mut Game, seconds: f32) {
 }
 
 fn bots(game: &Game) -> Vec<u32> {
-    game.world.bots.keys().copied().collect()
+    game.world.entities.ids::<With<Bot>>()
 }
 
 fn alive_bots(game: &Game) -> Vec<u32> {
@@ -90,7 +90,7 @@ fn a_squad_spawns_at_the_start_with_its_loadout_and_everyone_hears_the_objective
     let names: Vec<_> = ids.iter().map(|id| game.world.entities.of::<Player>(*id).name.clone()).collect();
     assert_eq!(names, ["Guards 1", "Guards 2"]);
     for id in &ids {
-        let (player, bot) = (&game.world.entities.of::<Player>(*id), &game.world.bots[id]);
+        let (player, bot) = (&game.world.entities.of::<Player>(*id), &game.world.entities.of::<Bot>(*id));
         assert_eq!(player.team, 2);
         assert_eq!(bot.skill, 0.9);
         assert_eq!(player.hotbar[0].item, ITEM_SHOTGUN);
@@ -372,7 +372,7 @@ fn a_squad_tank_comes_crewed_and_goes_once_it_is_wrecked_and_burnt_out() {
     let crew: Vec<u32> = game.world.entities.of::<Seats>(vid).iter().flatten().copied().collect();
     assert_eq!(crew.len(), 2, "both seats manned");
     for id in &crew {
-        assert_eq!((game.world.entities.of::<Player>(*id).team, game.world.bots[id].skill), (3, 0.8));
+        assert_eq!((game.world.entities.of::<Player>(*id).team, game.world.entities.of::<Bot>(*id).skill), (3, 0.8));
     }
 
     crate::mechanics::damage_vehicle(&mut game.world, vid, 255, None);

@@ -84,9 +84,9 @@ fn it_walks_its_route_round_and_round() {
     let mut visited = [false; 3];
     for _ in 0..(40 * TICK_RATE) {
         game.step();
-        let next = game.world.bots[&id].next;
+        let next = game.world.entities.of::<Bot>(id).next;
         visited[next] = true;
-        assert_eq!(game.world.bots[&id].mode, BotMode::Patrol);
+        assert_eq!(game.world.entities.of::<Bot>(id).mode, BotMode::Patrol);
     }
     assert_eq!(visited, [true; 3], "went to every waypoint");
     let [x, _, z] = feet(&game, id);
@@ -98,7 +98,7 @@ fn it_makes_up_a_route_near_home_when_given_none() {
     let mut game = game(false);
     let id = game.add_bot([0.0, 0.0], TEAM_BOTS, vec![]).unwrap();
     game.step();
-    let route = &game.world.bots[&id].route;
+    let route = &game.world.entities.of::<Bot>(id).route;
     assert!(route.len() > 1, "route {route:?}");
     assert!(route.iter().all(|p| p[0].hypot(p[1]) <= ROUTE_RADIUS + 0.01));
 }
@@ -111,7 +111,7 @@ fn disarm(game: &mut Game, id: u32) {
 /// A bot guarding `[0, 0]`, facing -Z (yaw 0), as good a shot as `skill`.
 fn guard(game: &mut Game, skill: f32) -> u32 {
     let bot = game.add_bot([0.0, 0.0], TEAM_BOTS, vec![[0.0, 0.0]]).unwrap();
-    game.world.bots.get_mut(&bot).unwrap().skill = skill;
+    game.world.entities.get_mut::<Bot>(bot).unwrap().skill = skill;
     bot
 }
 
@@ -128,8 +128,8 @@ fn an_unarmed_bot_spots_someone_in_front_and_runs_at_them() {
     let human = join(&mut game);
     put(&mut game, human, [0.0, -30.0]);
     run(&mut game, 0.5);
-    assert_eq!(game.world.bots[&bot].mode, BotMode::Pursue);
-    assert_eq!(game.world.bots[&bot].target, Some(human));
+    assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Pursue);
+    assert_eq!(game.world.entities.of::<Bot>(bot).target, Some(human));
     run(&mut game, 5.0);
     let gap = distance_2d(feet(&game, bot), feet(&game, human));
     assert!(gap < CLOSE_IN + 0.5, "closed in to {gap} m");
@@ -144,9 +144,9 @@ fn a_calm_bot_does_not_see_behind_it_or_through_walls() {
     let walled = join(&mut game);
     // East of the wall, which stands between them.
     put(&mut game, walled, [30.0, 0.0]);
-    game.world.bots.get_mut(&bot).unwrap().yaw = -PI / 2.0; // Facing +X, at the wall.
+    game.world.entities.get_mut::<Bot>(bot).unwrap().yaw = -PI / 2.0; // Facing +X, at the wall.
     run(&mut game, 1.0);
-    assert_eq!(game.world.bots[&bot].mode, BotMode::Patrol, "saw {:?}", game.world.bots[&bot].target);
+    assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Patrol, "saw {:?}", game.world.entities.of::<Bot>(bot).target);
 }
 
 #[test]
@@ -156,15 +156,15 @@ fn it_goes_to_where_it_lost_them_looks_round_and_goes_back_to_its_route() {
     let human = join(&mut game);
     put(&mut game, human, [0.0, -20.0]);
     run(&mut game, 0.5);
-    assert_eq!(game.world.bots[&bot].mode, BotMode::Pursue);
+    assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Pursue);
     // They slip behind the wall.
     put(&mut game, human, [40.0, 0.0]);
     run(&mut game, 6.0);
-    assert_eq!(game.world.bots[&bot].mode, BotMode::Search);
+    assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Search);
     let near_last_seen = distance_2d(feet(&game, bot), [0.0, 0.0, -20.0]);
     assert!(near_last_seen < 3.0, "{near_last_seen} m from where they were seen");
     run(&mut game, 8.0);
-    assert_eq!(game.world.bots[&bot].mode, BotMode::Patrol);
+    assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Patrol);
 }
 
 #[test]
@@ -173,7 +173,7 @@ fn bots_ignore_their_own_team_and_cannot_hurt_it() {
     let a = game.add_bot([0.0, 0.0], TEAM_BOTS, vec![[0.0, 0.0]]).unwrap();
     let b = game.add_bot([0.0, -10.0], TEAM_BOTS, vec![[0.0, -10.0]]).unwrap();
     run(&mut game, 1.0);
-    assert_eq!(game.world.bots[&a].mode, BotMode::Patrol);
+    assert_eq!(game.world.entities.of::<Bot>(a).mode, BotMode::Patrol);
     damage(&mut game.world, b, 50, Some(a), 0);
     assert_eq!(game.world.entities.of::<Player>(b).hp, PLAYER_MAX_HP);
     // People are on no team: they still hurt each other, and bots.
@@ -192,7 +192,7 @@ fn a_bot_on_another_team_is_fair_game() {
     let red = game.add_bot([0.0, 0.0], TEAM_BOTS, vec![[0.0, 0.0]]).unwrap();
     let blue = game.add_bot([0.0, -20.0], TEAM_BOTS + 1, vec![[0.0, -20.0]]).unwrap();
     run(&mut game, 0.5);
-    assert_eq!(game.world.bots[&red].target, Some(blue));
+    assert_eq!(game.world.entities.of::<Bot>(red).target, Some(blue));
 }
 
 #[test]
@@ -202,12 +202,12 @@ fn a_killed_bot_comes_back_at_home_on_patrol() {
     let human = join(&mut game);
     put(&mut game, human, [5.0, -10.0]);
     run(&mut game, 0.5);
-    assert_eq!(game.world.bots[&bot].mode, BotMode::Pursue);
+    assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Pursue);
     put(&mut game, human, [-80.0, 80.0]);
     damage(&mut game.world, bot, PLAYER_MAX_HP, Some(human), 0);
     run(&mut game, RESPAWN_TICKS as f32 / TICK_RATE as f32 + 0.2);
     assert!(game.world.entities.of::<Player>(bot).alive());
-    assert_eq!(game.world.bots[&bot].mode, BotMode::Patrol);
+    assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Patrol);
     assert!(distance_2d(feet(&game, bot), [5.0, 0.0, 5.0]) < 2.0, "back home");
 }
 
@@ -233,7 +233,7 @@ fn it_takes_a_moment_to_react() {
     put(&mut game, human, [0.0, -25.0]);
     // Seen within a tenth of a second; not fired on for REACT_POOR after that.
     run(&mut game, REACT_POOR - 0.15);
-    assert_eq!(game.world.bots[&bot].mode, BotMode::Pursue);
+    assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Pursue);
     assert_eq!(rounds_left(&game, bot), full, "fired before it had reacted");
     run(&mut game, 1.0);
     assert!(rounds_left(&game, bot) < full, "never fired");
@@ -376,14 +376,14 @@ fn it_chases_round_a_wall_to_where_it_last_saw_someone() {
     game.step();
     // It last saw them just behind the wall, and has lost them.
     let y = feet(&game, bot)[1];
-    let mind = game.world.bots.get_mut(&bot).unwrap();
+    let mut mind = game.world.entities.get_mut::<Bot>(bot).unwrap();
     mind.mode = BotMode::Pursue;
     mind.target = Some(human);
     mind.last_seen = [14.0, y, 0.0];
     for _ in 0..(25 * TICK_RATE) {
         game.step();
-        if game.world.bots[&bot].mode != BotMode::Pursue {
-            assert_eq!(game.world.bots[&bot].mode, BotMode::Search, "gave up the chase");
+        if game.world.entities.of::<Bot>(bot).mode != BotMode::Pursue {
+            assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Search, "gave up the chase");
             let gap = distance_2d(feet(&game, bot), [14.0, 0.0, 0.0]);
             assert!(gap < 2.0, "searching {gap} m from where they were last seen, at {:?}", feet(&game, bot));
             return;
@@ -399,10 +399,10 @@ fn a_calm_bot_shot_from_behind_turns_round_and_fights_back() {
     let human = join(&mut game);
     put(&mut game, human, [0.0, 30.0]);
     run(&mut game, 1.0);
-    assert_eq!(game.world.bots[&bot].mode, BotMode::Patrol, "it does not see behind it");
+    assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Patrol, "it does not see behind it");
     damage(&mut game.world, bot, 10, Some(human), 0);
     run(&mut game, 1.0);
-    let mind = &game.world.bots[&bot];
+    let mind = &game.world.entities.of::<Bot>(bot);
     assert_eq!((mind.mode, mind.target, mind.sees), (BotMode::Pursue, Some(human), true));
 }
 
@@ -415,12 +415,12 @@ fn it_goes_to_look_where_it_heard_a_gunshot_and_searches_there() {
     let shot = [25.0, sim::STANDING_Y, 0.0];
     make_noise(&mut game.world, shot, None, HEAR_SHOT);
     game.step();
-    assert_eq!(game.world.bots[&bot].mode, BotMode::Pursue);
-    assert_eq!(game.world.bots[&bot].target, None, "it has seen no one");
+    assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Pursue);
+    assert_eq!(game.world.entities.of::<Bot>(bot).target, None, "it has seen no one");
     for _ in 0..(25 * TICK_RATE) {
         game.step();
-        if game.world.bots[&bot].mode != BotMode::Pursue {
-            assert_eq!(game.world.bots[&bot].mode, BotMode::Search);
+        if game.world.entities.of::<Bot>(bot).mode != BotMode::Pursue {
+            assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Search);
             let gap = distance_2d(feet(&game, bot), shot);
             assert!(gap < 2.0, "searching {gap} m from the shot");
             return;
@@ -437,14 +437,14 @@ fn a_blast_carries_further_than_a_gunshot_and_its_own_shots_are_not_news() {
     make_noise(&mut game.world, far, None, HEAR_SHOT);
     make_noise(&mut game.world, [0.0, 0.0, 0.0], Some(bot), HEAR_SHOT);
     game.step();
-    assert_eq!(game.world.bots[&bot].mode, BotMode::Patrol);
+    assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Patrol);
     crate::mechanics::combat::blast(
         &mut game.world,
         crate::mechanics::combat::Blast { point: far, radius: 1.0, damage: 0.0, knock: 0.0, dir: [0.0, 0.0, 1.0], attacker: None, weapon: 0 },
     );
     game.step();
-    assert_eq!(game.world.bots[&bot].mode, BotMode::Pursue);
-    assert!(distance_2d(game.world.bots[&bot].last_seen, far) < 0.01);
+    assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Pursue);
+    assert!(distance_2d(game.world.entities.of::<Bot>(bot).last_seen, far) < 0.01);
 }
 
 #[test]
@@ -455,12 +455,12 @@ fn a_bot_in_a_fight_is_not_drawn_off_by_noises() {
     let human = join(&mut game);
     put(&mut game, human, [0.0, -20.0]);
     run(&mut game, 0.5);
-    assert!(game.world.bots[&bot].sees);
+    assert!(game.world.entities.of::<Bot>(bot).sees);
     for _ in 0..TICK_RATE {
         make_noise(&mut game.world, [0.0, sim::STANDING_Y, 30.0], None, HEAR_BLAST);
         game.step();
     }
-    let mind = &game.world.bots[&bot];
+    let mind = &game.world.entities.of::<Bot>(bot);
     assert_eq!((mind.target, mind.sees), (Some(human), true));
     assert!(distance_2d(mind.last_seen, feet(&game, human)) < 0.5);
 }
@@ -473,13 +473,13 @@ fn a_teammate_firing_behind_a_wall_brings_it_running() {
     let human = join(&mut game);
     put(&mut game, human, [0.0, -25.0]);
     let helper = game.add_bot([30.0, 0.0], TEAM_BOTS, vec![[30.0, 0.0]]).unwrap();
-    game.world.bots.get_mut(&helper).unwrap().yaw = -PI / 2.0;
+    game.world.entities.get_mut::<Bot>(helper).unwrap().yaw = -PI / 2.0;
     let mut stood = Vec::new();
     for _ in 0..(2 * TICK_RATE) {
         stood.push(feet(&game, fighter));
         game.step();
     }
-    let mind = &game.world.bots[&helper];
+    let mind = &game.world.entities.of::<Bot>(helper);
     assert_eq!(mind.mode, BotMode::Pursue, "heard nothing");
     assert!(stood.iter().any(|&at| distance_2d(mind.last_seen, at) < 0.1), "went to look at {:?}, not where the fighter fired from", mind.last_seen);
 }
@@ -489,7 +489,7 @@ fn a_bot_sent_far_from_home_fights_at_the_end_of_its_route() {
     let mut game = game(false);
     // Home at one side, the one waypoint 170 m off at the other: an attacker's route.
     let bot = game.add_bot([-90.0, 0.0], TEAM_BOTS, vec![[80.0, 0.0]]).unwrap();
-    game.world.bots.get_mut(&bot).unwrap().skill = 1.0;
+    game.world.entities.get_mut::<Bot>(bot).unwrap().skill = 1.0;
     put(&mut game, bot, [80.0, 0.0]);
     let human = join(&mut game);
     put(&mut game, human, [80.0, -25.0]);

@@ -38,7 +38,7 @@ fn destroyed_entry(object: Obj, yaw: i16, force: u8) -> (u8, u16, u16, u32, i16,
 /// Player `id`'s `Profiles` entry: who they are, and which side.
 fn profile_entry(world: &World, id: u32) -> ProfileEntry {
     let player = &world.entities.of::<Player>(id);
-    (id, player.name.clone(), player.color, player.team, world.bots.contains_key(&id) as u8)
+    (id, player.name.clone(), player.color, player.team, world.entities.has::<Bot>(id) as u8)
 }
 
 fn damaged_entry(id: ObjId, stage: u8, mark: Option<[f32; 3]>) -> DamagedEntry {
@@ -85,7 +85,6 @@ impl Game {
                 fresh_carved: Vec::new(),
                 map,
                 entities: Default::default(),
-                bots: BTreeMap::new(),
                 nav: Default::default(),
                 next_id: 1,
                 rng: Rng::from_time(),
@@ -111,7 +110,7 @@ impl Game {
         for bot in std::mem::take(&mut game.world.map.placed_bots) {
             let route = bot.route.iter().map(|point| point.map(from_cm)).collect();
             match game.add_bot(bot.at.map(from_cm), bot.team, route) {
-                Some(id) => game.world.bots.get_mut(&id).expect("just added").skill = bot.skill.clamp(0.0, 1.0),
+                Some(id) => game.world.entities.get_mut::<Bot>(id).expect("just added").skill = bot.skill.clamp(0.0, 1.0),
                 None => tracing::warn!(MAX_BOTS, "too many bots, placed bot skipped"),
             }
         }
@@ -249,13 +248,13 @@ impl Game {
     /// (`[x, z]`, metres; empty makes one up). It is a player with no connection: `Bots` writes its
     /// input, and everything else treats it as anyone else. `None` when there are `MAX_BOTS` already.
     pub fn add_bot(&mut self, home: [f32; 2], team: u8, route: Vec<[f32; 2]>) -> Option<u32> {
-        let name = format!("Bot {}", self.world.bots.len() + 1);
+        let name = format!("Bot {}", self.world.entities.count::<Bot>() + 1);
         self.add_bot_as(name, home, team, route)
     }
 
     /// `add_bot`, under `name`.
     pub fn add_bot_as(&mut self, name: String, home: [f32; 2], team: u8, route: Vec<[f32; 2]>) -> Option<u32> {
-        if self.world.bots.len() >= MAX_BOTS {
+        if self.world.entities.count::<Bot>() >= MAX_BOTS {
             return None;
         }
         let id = self.world.alloc_id();
@@ -287,7 +286,7 @@ impl Game {
                 team,
             },
         );
-        self.world.bots.insert(id, Bot::new(home, route));
+        self.world.entities.insert(id, Bot::new(home, route));
         for mechanic in &mut self.mechanics {
             mechanic.on_join(&mut self.world, id);
         }
@@ -307,7 +306,7 @@ impl Game {
     /// more bots or for the tank, or it does not fit there.
     pub fn add_crew(&mut self, names: [String; 2], at: [f32; 2], team: u8, route: Vec<[f32; 2]>) -> Option<(u32, [u32; 2])> {
         use crate::mechanics::{DRIVER, GUNNER, add_tank, nearest_waypoint, road_route, seat};
-        if self.world.bots.len() + 2 > MAX_BOTS {
+        if self.world.entities.count::<Bot>() + 2 > MAX_BOTS {
             return None;
         }
         let route = if route.is_empty() { road_route(&self.world.map, at) } else { route };
@@ -323,7 +322,7 @@ impl Game {
         let mut crew = [0; 2];
         for (slot, (name, index)) in [(driver_name, DRIVER), (gunner_name, GUNNER)].into_iter().enumerate() {
             let id = self.add_bot_as(name, home, team, route.clone()).expect("room checked above");
-            let bot = self.world.bots.get_mut(&id).expect("just added");
+            let mut bot = self.world.entities.get_mut::<Bot>(id).expect("just added");
             bot.crew = Some(Crew { vehicle: vid, seat: index });
             bot.next = next;
             bot.yaw = yaw;
@@ -336,7 +335,7 @@ impl Game {
 
     /// Takes bot `id` out of the game, as if it had left. Anyone else is left alone.
     pub fn remove_bot(&mut self, id: u32) {
-        if self.world.bots.contains_key(&id) {
+        if self.world.entities.has::<Bot>(id) {
             self.leave(id);
         }
     }

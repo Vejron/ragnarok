@@ -5,7 +5,7 @@ use super::life::{blasted, damage_entity, first_hurtbox_hit, hit_mark};
 use super::spawn;
 use super::projectiles::{self, Flying, Stage};
 use crate::entities::{Health, HurtBy, NetId, With};
-use crate::game::{Drone, Player, Seats, TEAM_NONE, Vehicle, World, Wreck, starting_hotbar};
+use crate::game::{Bot, Drone, Player, Seats, TEAM_NONE, Vehicle, World, Wreck, starting_hotbar};
 use sim::Obj;
 use shared::consts::*;
 use shared::items::*;
@@ -238,7 +238,7 @@ pub fn damage_hit(world: &mut World, victim: u32, amount: u8, attacker: Option<u
     // A bandage needs a steady hand.
     player.channel_left = 0;
     let kind = if player.hp == 0 { HIT_KILL } else { HIT_BODY };
-    if let Some(bot) = world.bots.get_mut(&victim)
+    if let Some(mut bot) = world.entities.get_mut::<Bot>(victim)
         && from.is_some()
     {
         bot.hit_from = from;
@@ -550,7 +550,7 @@ pub fn damage_vehicle(world: &mut World, vid: u32, amount: u8, attacker: Option<
     for &id in &seated {
         world.hits.push((id, hit_at(HIT_TAKEN, HIT_VEHICLE, lost, 0, direction, centre, vid)));
         // A crew turns to where the hit on their vehicle came from, as one on foot would.
-        if let (Some(bot), Some(from)) = (world.bots.get_mut(&id), from) {
+        if let (Some(mut bot), Some(from)) = (world.entities.get_mut::<Bot>(id), from) {
             bot.hit_from = Some(from);
         }
     }
@@ -741,7 +741,7 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
         look_dir
     } else {
         // A bot has no camera: it aims its look from the eye itself.
-        let aim = if world.bots.contains_key(&id) { look_dir } else { crosshair_dir(world, id, back, pivot, origin, look_dir, item.range, vehicle) };
+        let aim = if world.entities.has::<Bot>(id) { look_dir } else { crosshair_dir(world, id, back, pivot, origin, look_dir, item.range, vehicle) };
         scatter(world, aim, effective_spread(item, input.buttons()))
     };
 
@@ -969,7 +969,7 @@ impl Mechanic for Combat {
     fn on_tick(&mut self, world: &mut World, dt: f32) {
         let ids = world.entities.ids::<With<Player>>();
         for id in ids {
-            let loadout = world.bots.get(&id).and_then(|bot| bot.loadout);
+            let loadout = world.entities.get::<Bot>(id).and_then(|bot| bot.loadout);
             let Some(mut player) = world.entities.get_mut::<Player>(id) else { continue };
             player.fire_cooldown = player.fire_cooldown.saturating_sub(1);
             if !player.alive() {

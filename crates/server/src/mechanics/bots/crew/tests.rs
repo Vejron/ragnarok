@@ -66,7 +66,7 @@ fn a_crew_is_two_bots_in_their_seats_of_a_fresh_tank() {
     assert_eq!(game.world.entities.of::<Vehicle>(vid).kind, shared::protocol::KIND_TANK);
     assert_eq!(seated(&game, driver), Some((vid, DRIVER)));
     assert_eq!(seated(&game, gunner), Some((vid, GUNNER)));
-    assert_eq!(game.world.bots[&driver].crew, Some(Crew { vehicle: vid, seat: DRIVER }));
+    assert_eq!(game.world.entities.of::<Bot>(driver).crew, Some(Crew { vehicle: vid, seat: DRIVER }));
 }
 
 #[test]
@@ -77,12 +77,12 @@ fn the_driver_drives_its_route_round_and_round() {
     let mut visited = [false; 4];
     for _ in 0..(90 * TICK_RATE) {
         game.step();
-        visited[game.world.bots[&driver].next] = true;
+        visited[game.world.entities.of::<Bot>(driver).next] = true;
         let [x, _, z] = tank(&game, vid).position;
         assert!(x > -10.0 && x < 60.0 && z > -10.0 && z < 60.0, "keeps to its route: {x}, {z}");
     }
     assert_eq!(visited, [true; 4], "drove to every waypoint");
-    assert!(game.world.bots[&driver].tries == 0 || game.world.bots[&driver].tries < TRIES, "never stuck on open ground");
+    assert!(game.world.entities.of::<Bot>(driver).tries == 0 || game.world.entities.of::<Bot>(driver).tries < TRIES, "never stuck on open ground");
 }
 
 /// A road from (-200, -20) east to (200, -20), then north to (200, 100).
@@ -144,7 +144,7 @@ fn with_no_route_it_drives_along_the_nearest_road() {
     let mut game = game(false, vec![road()]);
     let (vid, [driver, _]) = crew(&mut game, [0.0, -20.0], vec![]);
     let points: Vec<[f32; 2]> = road().points.iter().map(|p| [p[0] as f32 / 100.0, p[1] as f32 / 100.0]).collect();
-    assert!(game.world.bots[&driver].route.len() > 4);
+    assert!(game.world.entities.of::<Bot>(driver).route.len() > 4);
     let start = tank(&game, vid).position;
     let mut furthest: f32 = 0.0;
     for _ in 0..60 {
@@ -172,14 +172,14 @@ fn the_shell_laid_for_a_mark_lands_on_it() {
 fn the_gunner_shells_someone_it_sees_all_round_and_the_tank_holds_still() {
     let mut game = game(false, vec![]);
     let (vid, [_, gunner]) = crew(&mut game, [0.0, 0.0], vec![[0.0, 0.0], [0.0, -60.0]]);
-    game.world.bots.get_mut(&gunner).unwrap().skill = 1.0;
+    game.world.entities.get_mut::<Bot>(gunner).unwrap().skill = 1.0;
     let person = join(&mut game);
     // Behind the tank, which first heads the other way.
     put(&mut game, person, [10.0, 70.0]);
     let mut halted = false;
     for _ in 0..(20 * TICK_RATE) {
         game.step();
-        let fighting = game.world.bots[&gunner].sees;
+        let fighting = game.world.entities.of::<Bot>(gunner).sees;
         if fighting && tank(&game, vid).forward_speed.abs() < 0.3 {
             halted = true;
         }
@@ -207,13 +207,13 @@ fn it_leaves_its_own_team_alone() {
 fn it_does_not_fire_on_someone_close_enough_for_the_burst_to_reach_it() {
     let mut game = game(false, vec![]);
     let (vid, [_, gunner]) = crew(&mut game, [0.0, 0.0], vec![[0.0, 0.0]]);
-    game.world.bots.get_mut(&gunner).unwrap().skill = 1.0;
+    game.world.entities.get_mut::<Bot>(gunner).unwrap().skill = 1.0;
     let person = join(&mut game);
     for _ in 0..(6 * TICK_RATE) {
         put(&mut game, person, [6.0, -6.0]);
         game.step();
     }
-    assert!(game.world.bots[&gunner].sees, "it sees them");
+    assert!(game.world.entities.of::<Bot>(gunner).sees, "it sees them");
     assert_eq!(shells_fired(&game, vid), 0, "but holds its fire");
 }
 
@@ -229,7 +229,7 @@ fn a_stuck_tank_backs_out_and_gives_the_waypoint_up() {
         reversed |= tank(&game, vid).forward_speed < -1.0;
         let [x, _, z] = tank(&game, vid).position;
         assert!(x < 21.0, "never through the wall: {x}");
-        if game.world.bots[&driver].next == 2 && reversed {
+        if game.world.entities.of::<Bot>(driver).next == 2 && reversed {
             gave_up = true;
         }
         if gave_up && x.hypot(z + 50.0) < WAYPOINT_REACHED + 1.0 {
@@ -294,11 +294,11 @@ fn tanks_drive_the_fixture_city() {
         for (crew, was) in crews.iter_mut().zip(before) {
             let now = tank(&game, crew.0).position;
             crew.3 += (now[0] - was[0]).hypot(now[2] - was[2]);
-            crew.4 = crew.4.max(game.world.bots[&crew.1].tries);
+            crew.4 = crew.4.max(game.world.entities.of::<Bot>(crew.1).tries);
         }
     }
     for (vid, driver, start, driven, tries) in crews {
-        let bot = &game.world.bots[&driver];
+        let bot = &game.world.entities.of::<Bot>(driver);
         let pose = tank(&game, vid);
         println!(
             "tank {vid}: {} waypoints, at {} now, drove {driven:.0} m, {:.0} m from start, most tries {tries}, upright {:.2}",

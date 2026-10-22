@@ -17,6 +17,7 @@ pub use crew::road_route;
 pub use crew::{DRIVER, GUNNER, nearest_waypoint};
 
 use super::Mechanic;
+use crate::entities::With;
 use super::combat::same_team;
 use super::life::open_ground;
 use super::npcs::turn_towards;
@@ -267,7 +268,7 @@ fn spot(world: &World, id: u32, eye: [f32; 3], yaw: f32, alert: bool) -> Option<
 /// Notes a noise at `at` made by `by` that carries `reach` metres, for the bots to hear on the next
 /// tick. With no bots to hear it, it is not kept.
 pub fn make_noise(world: &mut World, at: [f32; 3], by: Option<u32>, reach: f32) {
-    if !world.bots.is_empty() {
+    if world.entities.count::<Bot>() > 0 {
         world.noises.push(Noise { at, by, reach });
     }
 }
@@ -615,7 +616,7 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
 
 impl Mechanic for Bots {
     fn on_leave(&mut self, world: &mut World, id: u32) {
-        world.bots.remove(&id);
+        world.entities.remove::<Bot>(id);
     }
 
     fn on_tick(&mut self, world: &mut World, dt: f32) {
@@ -624,17 +625,20 @@ impl Mechanic for Bots {
         }
         let noises = std::mem::take(&mut world.noises);
         let mut budget = SEARCH_PER_TICK;
-        let ids: Vec<u32> = world.bots.keys().copied().collect();
+        let ids = world.entities.ids::<With<Bot>>();
         // Where every bot on its feet stands as the tick begins, for them to steer clear of each other.
         let crowd: Vec<(u32, [f32; 2])> = ids
             .iter()
             .filter_map(|id| world.entities.get::<Player>(*id).filter(|p| p.alive() && p.seat.is_none()).map(|p| (*id, [p.character.position[0], p.character.position[2]])))
             .collect();
         for id in ids {
-            let Some(mut bot) = world.bots.remove(&id) else { continue };
+            // Taken out to think with the world in hand, an empty mind in its place: what a bot thinks
+            // reads only other bots' minds (a driver its gunner's).
+            let Some(mut mind) = world.entities.get_mut::<Bot>(id) else { continue };
+            let mut bot = std::mem::replace(&mut *mind, Bot::new([0.0; 2], Vec::new()));
             let input = think(world, id, &mut bot, dt, &noises, &crowd, &mut budget);
             let input = reload(world, id, &bot, input);
-            world.bots.insert(id, bot);
+            *world.entities.of_mut::<Bot>(id) = bot;
             if let Some(mut player) = world.entities.get_mut::<Player>(id) {
                 player.input = input;
             }

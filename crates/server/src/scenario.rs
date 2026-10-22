@@ -7,7 +7,7 @@
 //! The file names things; `Scenario` holds them as indices, checked once when it is read, so a
 //! typo stops the server with a message instead of a trigger that never fires.
 
-use crate::game::{Game, Player, Seats, Vehicle, World, Wreck};
+use crate::game::{Bot, Game, Player, Seats, Vehicle, World, Wreck};
 use crate::entities::With;
 use crate::mechanics::{position_of, remove_vehicle};
 use anyhow::{Context, Result, bail};
@@ -480,7 +480,7 @@ impl Scenario {
                 };
                 match by {
                     Some(squad) => progress.members[squad].iter().any(inside),
-                    None => world.entities.ids::<With<Player>>().iter().filter(|id| !world.bots.contains_key(id)).any(inside),
+                    None => world.entities.ids::<With<Player>>().iter().filter(|id| !world.entities.has::<Bot>(**id)).any(inside),
                 }
             }
             Condition::Cleared(squad) => progress.spawned[squad] && !progress.members[squad].iter().any(|id| world.entities.get::<Player>(*id).is_some_and(|p| p.alive())),
@@ -505,7 +505,7 @@ impl Scenario {
                         tracing::warn!(squad = squad.name, "MAX_BOTS reached, squad not all spawned");
                         break;
                     };
-                    if let Some(bot) = game.world.bots.get_mut(&id) {
+                    if let Some(mut bot) = game.world.entities.get_mut::<Bot>(id) {
                         bot.skill = squad.skill;
                         bot.loadout = squad.loadout;
                     }
@@ -523,7 +523,7 @@ impl Scenario {
                     };
                     n += 2;
                     for id in crew {
-                        if let Some(bot) = game.world.bots.get_mut(&id) {
+                        if let Some(mut bot) = game.world.entities.get_mut::<Bot>(id) {
                             bot.skill = squad.skill;
                             bot.loadout = squad.loadout;
                         }
