@@ -2,6 +2,8 @@
 //! and the `Command`/`Outgoing` messages the sessions exchange with it.
 
 use super::*;
+use shared::mounts::{MountDef, Show};
+use shared::vehicles::vehicle_def;
 pub use crate::profile::Profile;
 
 pub enum Command {
@@ -249,10 +251,8 @@ pub struct Vehicle {
     pub home: ([f32; 3], f32),
     /// Consecutive ticks spent on its side or roof and not moving.
     pub stuck_ticks: u32,
-    /// The turret, for a vehicle that has one (a plane's is the gunner's ring mount).
-    pub gun: Option<Gun>,
-    /// A plane's forward guns and bombs.
-    pub arms: Option<PlaneArms>,
+    /// What each of its weapon mounts is doing, one per `vehicle_def(kind).mounts`, in that order.
+    pub mounts: Vec<Mount>,
     /// Health. At zero it is a wreck for `WRECK_TICKS`, then it is put back at `home`.
     pub hp: u8,
     pub wreck_in: u32,
@@ -291,54 +291,61 @@ impl Vehicle {
     }
 }
 
-/// A vehicle's gun: where it points and when it can fire again. The `Gunnery` mechanic owns it.
+/// What a weapon mount (`shared::mounts::MountDef`) is doing: where it points, when it can fire
+/// again and what it has left. The `Gunnery` mechanic owns it.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Gun {
-    /// Turret yaw relative to the hull, radians, + turns left.
+pub struct Mount {
+    /// Yaw relative to the hull, radians, + turns left.
     pub yaw: f32,
-    /// Barrel elevation, radians, + is up.
+    /// Elevation, radians, + is up.
     pub pitch: f32,
-    /// Ticks until the next shell can be fired.
+    /// Ticks until the next round.
     pub cooldown: u32,
-    /// Shells fired so far, modulo 256.
+    /// Rounds fired so far, modulo 256: which barrel of several is next, and how the client knows to
+    /// draw one.
     pub shots: u8,
-    /// Unused: shells fly now, so there is no distance to report. Kept so the wire does not change.
+    /// A mortar's range dial, metres; 0 until it is first dialled.
     pub range: f32,
     /// A machine gun's heat, 0..=255: at 255 it jams until it has cooled to `GUN_UNJAM`.
     pub heat: f32,
     pub jammed: bool,
-    /// A helicopter's rocket pods: ticks until the next rocket, and rockets fired (which tube is next).
-    pub pod_cooldown: u32,
-    pub pod_shots: u8,
+    /// Rounds left, for a mount that can run out.
+    pub ammo: u8,
+    /// Ticks towards more ammo (`shared::mounts::Refill`).
+    pub refill: u32,
 }
 
-/// What a plane's pilot fires: the two forward guns, which take turns, and the bomb rack. The
-/// `Gunnery` mechanic owns it.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PlaneArms {
-    /// Ticks until the next round.
-    pub cooldown: u32,
-    /// Rounds fired so far, modulo 256; the left gun fires the even ones.
-    pub shots: u8,
-    pub heat: f32,
-    pub jammed: bool,
-    pub bombs: u8,
-    /// Ticks until the next bomb can drop.
-    pub bomb_cooldown: u32,
-    /// Ticks the plane has stood still on the ground, towards a full rack.
-    pub rearm: u32,
-}
-
-impl Default for PlaneArms {
-    fn default() -> Self {
-        PlaneArms { cooldown: 0, shots: 0, heat: 0.0, jammed: false, bombs: PLANE_BOMBS, bomb_cooldown: 0, rearm: 0 }
+impl Mount {
+    /// A mount of `def` as a fresh vehicle has it.
+    pub fn fresh(def: &MountDef) -> Self {
+        Mount { ammo: def.ammo.map_or(0, |ammo| ammo.full), ..Mount::default() }
     }
 }
 
-impl PlaneArms {
-    /// A full rack for a vehicle of `kind`: a plane's bombs, or a hen's clutch of eggs.
-    pub fn fresh(kind: u8) -> Self {
-        PlaneArms { bombs: if kind == KIND_HEN { HEN_EGGS } else { PLANE_BOMBS }, ..PlaneArms::default() }
+impl Vehicle {
+    /// Its mounts with their definitions, in the order they are worked.
+    pub fn armed(&self) -> impl Iterator<Item = (&'static MountDef, &Mount)> {
+        vehicle_def(self.kind).mounts.iter().zip(&self.mounts)
+    }
+
+    /// The mount the snapshot shows as `show`, if it has one.
+    pub fn shown(&self, show: Show) -> Option<&Mount> {
+        self.armed().find(|(def, _)| def.show == show).map(|(_, mount)| mount)
+    }
+
+    /// The mount the snapshot shows as its turret.
+    pub fn turret(&self) -> Option<&Mount> {
+        self.shown(Show::Turret)
+    }
+
+    /// Puts its pilot's arms back as a fresh vehicle's: guns cool and racks full. A turret keeps its aim
+    /// and its count.
+    pub fn restock(&mut self) {
+        for (def, mount) in vehicle_def(self.kind).mounts.iter().zip(&mut self.mounts) {
+            if def.show.arms() {
+                *mount = Mount::fresh(def);
+            }
+        }
     }
 }
 
@@ -451,7 +458,7 @@ impl World {
     pub fn seated_head(&self, id: u32) -> Option<(u32, [f32; 3])> {
         let seat = self.players.get(&id)?.seat.filter(|seat| !seat.remote)?;
         let vehicle = self.vehicles.get(&seat.vehicle)?;
-        let local = shared::vehicles::seat_head(vehicle.kind, seat.index, vehicle.gun.as_ref().map_or(0.0, |gun| gun.yaw))?;
+        let local = shared::vehicles::seat_head(vehicle.kind, seat.index, vehicle.turret().map_or(0.0, |gun| gun.yaw))?;
         Some((seat.vehicle, self.physics.car_pose(seat.vehicle)?.world_point(local)))
     }
 

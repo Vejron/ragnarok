@@ -56,7 +56,7 @@ fn seated(game: &Game, id: u32) -> Option<(u32, usize)> {
 }
 
 fn shells_fired(game: &Game, vid: u32) -> u8 {
-    game.world.vehicles[&vid].gun.unwrap().shots
+    game.world.vehicles[&vid].turret().unwrap().shots
 }
 
 #[test]

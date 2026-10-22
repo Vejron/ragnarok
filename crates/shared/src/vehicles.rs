@@ -4,10 +4,12 @@
 //! in `consts.rs`.
 //!
 //! Adding a kind: a `KIND_*` id in `protocol.rs`, its constants in `consts.rs`, a `VehicleDef` here
-//! and in `client/src/sim/vehicles.ts`, then its physics `Spec` in `crates/sim` and its model. `fixtures/parity/
-//! gameplay.json` fails until the two tables agree.
+//! (with its weapons as `mounts`, see `crate::mounts`) and in `client/src/sim/vehicles.ts`, then its
+//! physics `Spec` in `crates/sim` and its model. `fixtures/parity/gameplay.json` fails until the two
+//! tables agree.
 
 use crate::consts::*;
+use crate::mounts::{HELI_MOUNTS, HEN_MOUNTS, MORTAR_MOUNTS, MountDef, PLANE_MOUNTS, STRV_MOUNTS, Show, TANK_MOUNTS, WALKER_MOUNTS};
 use crate::protocol::{KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER};
 
 #[derive(Clone, Copy, Debug)]
@@ -21,11 +23,8 @@ pub struct VehicleDef {
     pub seats: usize,
     /// Half extents of the chassis box, metres.
     pub half_extents: [f32; 3],
-    /// Has a turret or a mounted gun the gunner aims (`Vehicle::gun`).
-    pub gun: bool,
-    /// Has a plane's pilot weapons: forward guns that heat and jam, and bombs (`Vehicle::arms`). A hen's
-    /// eggs are its bombs.
-    pub arms: bool,
+    /// What it fires, worked in this order every tick (`crate::mounts`).
+    pub mounts: &'static [MountDef],
     /// A car's four wheels, which can be bent and shot off. Then `track_half` and `axle_z` place them.
     pub car_wheels: bool,
     pub track_half: f32,
@@ -37,6 +36,19 @@ pub struct VehicleDef {
     pub seat_heads: &'static [[f32; 3]],
     /// Its passengers (every seat but the driver's) can fire the guns in their own hotbar.
     pub crew_guns: bool,
+}
+
+impl VehicleDef {
+    /// Whether the snapshot carries a turret for it (`VehicleState::turret`).
+    pub fn gun(&self) -> bool {
+        self.mounts.iter().any(|mount| mount.show == Show::Turret)
+    }
+
+    /// Whether the snapshot carries pilot arms for it (`VehicleState::arms`): guns that heat and jam, and
+    /// bombs. A hen's eggs are its bombs.
+    pub fn arms(&self) -> bool {
+        self.mounts.iter().any(|mount| mount.show.arms())
+    }
 }
 
 /// How exposed a vehicle's crew are to gunfire.
@@ -67,8 +79,7 @@ const JEEP: VehicleDef = VehicleDef {
     hp: 100,
     seats: CAR_SEATS,
     half_extents: JEEP_HALF_EXTENTS,
-    gun: false,
-    arms: false,
+    mounts: &[],
     car_wheels: true,
     track_half: JEEP_TRACK_HALF,
     axle_z: JEEP_AXLE_Z,
@@ -83,8 +94,7 @@ const TANK: VehicleDef = VehicleDef {
     hp: 250,
     seats: TANK_SEATS,
     half_extents: TANK_HALF_EXTENTS,
-    gun: true,
-    arms: false,
+    mounts: TANK_MOUNTS,
     car_wheels: false,
     track_half: 0.0,
     axle_z: 0.0,
@@ -99,8 +109,7 @@ const HELI: VehicleDef = VehicleDef {
     hp: 100,
     seats: HELI_SEATS,
     half_extents: HELI_HALF_EXTENTS,
-    gun: true,
-    arms: false,
+    mounts: HELI_MOUNTS,
     car_wheels: false,
     track_half: 0.0,
     axle_z: 0.0,
@@ -115,8 +124,7 @@ const SPORTS: VehicleDef = VehicleDef {
     hp: 100,
     seats: SPORTS_SEATS,
     half_extents: SPORTS_HALF_EXTENTS,
-    gun: false,
-    arms: false,
+    mounts: &[],
     car_wheels: true,
     track_half: SPORTS_TRACK_HALF,
     axle_z: SPORTS_AXLE_Z,
@@ -131,8 +139,7 @@ const PLANE: VehicleDef = VehicleDef {
     hp: 70,
     seats: PLANE_SEATS,
     half_extents: PLANE_HALF_EXTENTS,
-    gun: true,
-    arms: true,
+    mounts: PLANE_MOUNTS,
     car_wheels: false,
     track_half: 0.0,
     axle_z: 0.0,
@@ -147,8 +154,7 @@ const WALKER: VehicleDef = VehicleDef {
     hp: 200,
     seats: WALKER_SEATS,
     half_extents: WALKER_HALF_EXTENTS,
-    gun: true,
-    arms: false,
+    mounts: WALKER_MOUNTS,
     car_wheels: false,
     track_half: 0.0,
     axle_z: 0.0,
@@ -163,8 +169,7 @@ const STRV: VehicleDef = VehicleDef {
     hp: 220,
     seats: STRV_SEATS,
     half_extents: STRV_HALF_EXTENTS,
-    gun: true,
-    arms: false,
+    mounts: STRV_MOUNTS,
     car_wheels: false,
     track_half: 0.0,
     axle_z: 0.0,
@@ -179,8 +184,7 @@ const MORTAR: VehicleDef = VehicleDef {
     hp: 150,
     seats: MORTAR_SEATS,
     half_extents: MORTAR_HALF_EXTENTS,
-    gun: true,
-    arms: false,
+    mounts: MORTAR_MOUNTS,
     car_wheels: false,
     track_half: 0.0,
     axle_z: 0.0,
@@ -195,8 +199,7 @@ const ROADSTER: VehicleDef = VehicleDef {
     hp: 100,
     seats: ROADSTER_SEATS,
     half_extents: ROADSTER_HALF_EXTENTS,
-    gun: false,
-    arms: false,
+    mounts: &[],
     car_wheels: true,
     track_half: ROADSTER_TRACK_HALF,
     axle_z: ROADSTER_AXLE_Z,
@@ -212,8 +215,7 @@ const DRONE: VehicleDef = VehicleDef {
     hp: 1,
     seats: DRONE_SEATS,
     half_extents: DRONE_HALF_EXTENTS,
-    gun: false,
-    arms: false,
+    mounts: &[],
     car_wheels: false,
     track_half: 0.0,
     axle_z: 0.0,
@@ -229,8 +231,7 @@ const HEN: VehicleDef = VehicleDef {
     hp: 180,
     seats: HEN_SEATS,
     half_extents: HEN_HALF_EXTENTS,
-    gun: false,
-    arms: true,
+    mounts: HEN_MOUNTS,
     car_wheels: false,
     track_half: 0.0,
     axle_z: 0.0,
@@ -246,8 +247,7 @@ const LOITER: VehicleDef = VehicleDef {
     hp: 40,
     seats: LOITER_SEATS,
     half_extents: LOITER_HALF_EXTENTS,
-    gun: false,
-    arms: false,
+    mounts: &[],
     car_wheels: false,
     track_half: 0.0,
     axle_z: 0.0,
@@ -311,8 +311,8 @@ mod tests {
 
     #[test]
     fn only_armed_kinds_have_a_gun_and_only_the_plane_and_the_hen_have_pilot_arms() {
-        assert!(vehicle_def(KIND_PLANE).arms && vehicle_def(KIND_HEN).arms && !vehicle_def(KIND_TANK).arms);
-        assert!(vehicle_def(KIND_TANK).gun && vehicle_def(KIND_HELI).gun && vehicle_def(KIND_PLANE).gun && vehicle_def(KIND_WALKER).gun && vehicle_def(KIND_STRV).gun);
-        assert!(!vehicle_def(KIND_JEEP).gun && !vehicle_def(KIND_SPORTS).gun && !vehicle_def(KIND_ROADSTER).gun && !vehicle_def(KIND_HEN).gun);
+        assert!(vehicle_def(KIND_PLANE).arms() && vehicle_def(KIND_HEN).arms() && !vehicle_def(KIND_TANK).arms());
+        assert!(vehicle_def(KIND_TANK).gun() && vehicle_def(KIND_HELI).gun() && vehicle_def(KIND_PLANE).gun() && vehicle_def(KIND_WALKER).gun() && vehicle_def(KIND_STRV).gun());
+        assert!(!vehicle_def(KIND_JEEP).gun() && !vehicle_def(KIND_SPORTS).gun() && !vehicle_def(KIND_ROADSTER).gun() && !vehicle_def(KIND_HEN).gun());
     }
 }

@@ -2,6 +2,8 @@
 //! the per-player part (own state, driver motion) that goes with it.
 
 use super::*;
+use shared::mounts::Show;
+use shared::vehicles::vehicle_def;
 
 impl Game {
     /// Standing players (and those flying a drone, who kneel where they stood), then the living ECS
@@ -54,21 +56,25 @@ impl Game {
                 let seats = vehicle.seats[..seat_count(vehicle.kind)].iter().map(|seat| seat.unwrap_or(0)).collect();
                 // A hitched mortar is drawn folded up for travel.
                 let flags = if self.world.physics.towed_by(id).is_some() { TURRET_STOWED } else { 0 };
-                let turret = vehicle.gun.map(|gun| Turret { yaw: to_mrad(gun.yaw), pitch: to_mrad(gun.pitch), shots: gun.shots, range: (gun.range * 10.0).round().clamp(0.0, u16::MAX as f32) as u16, flags });
+                let turret = vehicle.turret().map(|gun| Turret { yaw: to_mrad(gun.yaw), pitch: to_mrad(gun.pitch), shots: gun.shots, range: (gun.range * 10.0).round().clamp(0.0, u16::MAX as f32) as u16, flags });
                 let damage = (vehicle.damage != [0; 8]).then_some(vehicle.damage);
-                let arms = vehicle.arms.map(|arms| {
-                    let rear = vehicle.gun.unwrap_or_default();
+                let arms = vehicle_def(vehicle.kind).arms().then(|| {
+                    let guns = vehicle.shown(Show::Guns).copied().unwrap_or_default();
+                    let rack = vehicle.shown(Show::Rack).copied().unwrap_or_default();
+                    let rear = vehicle.turret().copied().unwrap_or_default();
                     let mut flags = 0;
                     if vehicle.controls.powered && vehicle.controls.lift < -0.5 {
                         flags |= ARMS_CUT;
                     }
-                    if arms.jammed {
+                    if guns.jammed {
                         flags |= ARMS_JAMMED;
                     }
                     if rear.jammed {
                         flags |= ARMS_REAR_JAMMED;
                     }
-                    Arms { shots: arms.shots, heat: heat_byte(arms.heat), rear_heat: heat_byte(rear.heat), bombs: arms.bombs, flags }
+                    // A rack counts its rounds as the guns' when there are no guns: a hen's eggs.
+                    let shots = if vehicle.shown(Show::Guns).is_some() { guns.shots } else { rack.shots };
+                    Arms { shots, heat: heat_byte(guns.heat), rear_heat: heat_byte(rear.heat), bombs: rack.ammo, flags }
                 });
                 let thrust = match vehicle.drone {
                     Some(drone) => Some(Thrust { air: battery_byte(&drone), flags: if drone.linked { THRUST_LINKED } else { 0 } }),

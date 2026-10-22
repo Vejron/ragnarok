@@ -118,7 +118,9 @@ Phase 3 and 4 need both.
 - [ ] Cache query states, and keep one id-ordered list per tick, so the per-call setup cost seen in
       the measurements below does not grow with the families that follow.
 - [x] Projectiles (rockets, grenades, shells, bullets, flares) as `Projectile` + fuse + burst.
-- [ ] Vehicles, with weapon mounts replacing the `work_*` functions (after Phase 1's `crates/sim`).
+- [x] Weapon mounts as data (`shared::mounts`), worked by one routine in place of the `work_*`
+      functions.
+- [ ] Vehicles as entities: `Mounts`, `Seats`, `Drone` and `Wreckable` as components.
 - [ ] Players and bots.
 - [ ] Events in place of `hits`, `kills`, `noises`.
 
@@ -514,3 +516,54 @@ the blast. Now they are ECS entities in `mechanics/projectiles.rs`, made of part
 **Next:** players and bots, the largest family, with events (`Damage`, `Kill`, `Noise`) in place of
 the `hits`, `kills` and `noises` vectors; or first the weapon mounts on vehicles (`Gun`, `PlaneArms`
 and the `work_*` functions in `gunnery.rs`), which now only launch projectiles.
+
+### 2026-10-22: a vehicle's weapons are rows of data
+
+`Gunnery::on_tick` was one `if kind == X { work_x() }` per armed kind, plus a second loop for hens.
+There were eight hand-written `work_*` functions, and two state structs that each meant several things:
+`Gun` was a tank's turret, a helicopter's nose gun and its rocket pods, and a plane's ring mount.
+`PlaneArms` was a plane's guns and bombs and also a hen's eggs. Now:
+
+- `crates/shared/src/mounts.rs` describes a weapon mount: `MountDef { seat, aim, muzzle, fire,
+  trigger, cooldown, spread, recoil, heat, ammo, needs, show }`.
+- `VehicleDef::mounts` lists a kind's mounts in the order they are worked. The `gun` and `arms` flags
+  became methods derived from the mounts, so the client's parity fixture is byte-identical.
+
+| Part | Variants |
+|---|---|
+| `Aim` | `Fixed` (pods, forward guns, racks), `Turret` (stabilised in the world: the tank), `Bore` (fixed in the hull, elevates only: the Strv S), `Mount` (follows the look as seen from the hull, optionally limited: the helicopter's nose gun, the walker's chin guns, the plane's ring), `Lob` (the mortar's dial and high lob) |
+| `Muzzle` | `One(pivot)`, `Turns(pivots)` (pods, forward guns), `Twin` (the walker's two barrels) |
+| `Fire` | `Shell { kind, speed, length, ttl }`, `Rocket`, `Hitscan` (a machine gun `Round`), `Drop { kind, toss }` (bombs, eggs) |
+| `Ammo` | `full` with `Refill::Parked(ticks)` (the plane's rack) or `Refill::Regrow(ticks)` (the hen's clutch) |
+| `Need` | `Upright`, `Turret` (block aiming and firing); `Untowed`, `Height`, `Clear` (block firing) |
+| `Show` | which wire field shows it until protocol v2: `Turret`, `Guns`, `Rack` or `Hidden` |
+
+- On the server, `Vehicle::mounts: Vec<Mount>` holds one state per definition: aim, cooldown, shots,
+  range, heat, jam, ammo and refill. `Gun` and `PlaneArms` are gone.
+  - `Vehicle::shown(show)` and `turret()` read them; the snapshot builds `Turret` and `Arms` from them.
+  - `restock()` replaces `PlaneArms::fresh` on respawn. Only the arms are reset, as before; a turret
+    keeps its aim and count.
+- `gunnery.rs` has one `work` for every mount, with `turn`, `shoot`, `refill`, `can_work` and
+  `can_fire`. Each arm is one of the old functions' steps, in the same order: the cooldown, then
+  cooling, refill, seat and needs, aim, trigger, the shot, recoil and counters. It is 275 lines (446
+  before; 525 at the start of the migration), with no branch on vehicle kind.
+- Arming a new vehicle is a row in `mounts.rs`. A new way to aim or fire is a variant and its match
+  arm. `a_mount_made_of_parts_no_vehicle_has_works` arms a jeep's passenger with a ring-mounted
+  rocket launcher that runs out and regrows.
+- **One change in order:** a hen's egg is now laid in vehicle-id order with the other weapons, not in
+  a pass after all of them. On a tick where a hen and a lower-numbered gunned vehicle both fire, their
+  projectiles get each other's ids. Nothing else changes; the wire is unchanged.
+- I removed a duplicated `turret_hp` reset in the wreck respawn (a misindented copy from e60d7cc).
+
+**Checks:**
+
+- Server: 262 tests (261 plus the one above), all passing unchanged. The 49 test reads of `gun` and
+  `arms` now go through `shown`.
+- Shared: 62 (59 plus 3 consistency tests on the mount table). Client: 363, unchanged. Clippy with
+  `-D warnings` is clean.
+- `full_room_tick_cost`: mechanics 1.54 to 1.59 ms, snapshots 0.68 to 0.69 ms, `Gunnery` 0.86 to 0.89 µs
+  (under 1 µs before).
+
+**Next:** vehicles as ECS entities, with `Mounts`, `Seats` and `Drone` as components, which now have
+clear boundaries. Or players and bots with events (`Damage`, `Kill`, `Noise`) in place of the `hits`,
+`kills` and `noises` vectors.

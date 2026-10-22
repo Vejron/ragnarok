@@ -1,5 +1,5 @@
 use super::Mechanic;
-use crate::game::{Gun, PlaneArms, Seat, Vehicle, World};
+use crate::game::{Mount, Seat, Vehicle, World};
 use sim::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_extents};
 use shared::consts::*;
 use shared::vehicles::{VehicleDef, vehicle_def};
@@ -160,8 +160,7 @@ pub(super) fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: 
             controls: CarControls::default(),
             home: (position, yaw),
             stuck_ticks: 0,
-            gun: vehicle_def(kind).gun.then(Gun::default),
-            arms: vehicle_def(kind).arms.then(|| PlaneArms::fresh(kind)),
+            mounts: vehicle_def(kind).mounts.iter().map(Mount::fresh).collect(),
             hp: vehicle_hp(kind),
             wreck_in: 0,
             last_attacker: None,
@@ -738,10 +737,9 @@ impl Mechanic for Vehicles {
                 if vehicle.wreck_in == 0 {
                     vehicle.hp = vehicle_hp(vehicle.kind);
                     vehicle.damage = [0; 8];
-                vehicle.turret_hp = TANK_TURRET_HP;
                     vehicle.turret_hp = TANK_TURRET_HP;
                     vehicle.last_attacker = None;
-                    vehicle.arms = vehicle.arms.map(|_| PlaneArms::fresh(vehicle.kind));
+                    vehicle.restock();
                     world.physics.reset_car(vid, vehicle.home.0, vehicle.home.1);
                 }
             } else if y < KILL_Y {
@@ -749,7 +747,7 @@ impl Mechanic for Vehicles {
                 vehicle.hp = vehicle_hp(vehicle.kind);
                 vehicle.damage = [0; 8];
                 vehicle.turret_hp = TANK_TURRET_HP;
-                vehicle.arms = vehicle.arms.map(|_| PlaneArms::fresh(vehicle.kind));
+                vehicle.restock();
                 world.physics.reset_car(vid, vehicle.home.0, vehicle.home.1);
             } else if vehicle.stuck_ticks >= UNFLIP_TICKS {
                 // A walker or a hen is put back on its feet: its hull is as high as its legs, and its leg

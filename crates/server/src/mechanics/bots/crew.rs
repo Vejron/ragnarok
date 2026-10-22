@@ -361,7 +361,7 @@ fn gun(world: &mut World, id: u32, bot: &mut Bot, vid: u32, pose: &CarPose, nois
     let eye = pose.world_point(TURRET_EYE);
     let chase = (CHASE * TICK_RATE as f32) as u32;
     let Some(vehicle) = world.vehicles.get(&vid) else { return idle };
-    let turret = vehicle.gun.unwrap_or_default();
+    let turret = vehicle.turret().copied().unwrap_or_default();
     let turret_on = vehicle.damage[DAMAGE_TURRET] != TURRET_GONE;
 
     // A hit on the tank, or a fight heard, sends it after where that came from.

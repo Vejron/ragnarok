@@ -2,7 +2,8 @@ use super::*;
 use crate::game::{Command, Game, Seat};
 use sim::STANDING_Y;
 use shared::items::Falloff;
-use shared::protocol::{InputFrame, KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_EGG, WEAPON_BOMB, WEAPON_MG};
+use shared::mounts::Show;
+use shared::protocol::{KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_PLANE, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_SHELL, WEAPON_BOMB, WEAPON_MG};
 use shared::quant::to_mrad;
 use shared::world::{Road, WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
@@ -34,6 +35,15 @@ fn join(game: &mut Game) -> (u32, mpsc::Receiver<crate::game::Outgoing>) {
 fn seat(game: &mut Game, id: u32, vid: u32, index: usize) {
     game.world.vehicles.get_mut(&vid).unwrap().seats[index] = Some(id);
     game.world.players.get_mut(&id).unwrap().seat = Some(Seat { vehicle: vid, index, remote: false });
+}
+
+/// What vehicle `vid`'s mount shown as `show` is doing.
+fn shown(game: &Game, vid: u32, show: Show) -> Mount {
+    *game.world.vehicles[&vid].shown(show).expect("it has that mount")
+}
+
+fn turret(game: &Game, vid: u32) -> Mount {
+    shown(game, vid, Show::Turret)
 }
 
 fn tank(game: &Game) -> u32 {
@@ -70,13 +80,13 @@ fn the_turret_follows_the_gunner_and_the_barrel_is_limited() {
     let (mut game, gunner, vid, mut seq) = crewed();
     let hull = game.world.physics.car_pose(vid).unwrap().yaw();
     aim_and_hold(&mut game, gunner, &mut seq, hull + 1.0, 0.3, 0, 180);
-    let gun = game.world.vehicles[&vid].gun.unwrap();
+    let gun = turret(&game, vid);
     assert!((gun.yaw - 1.0).abs() < 0.02 && (gun.pitch - 0.3).abs() < 0.02, "{gun:?}");
     // Looking far up asks for more than the barrel can do.
     aim_and_hold(&mut game, gunner, &mut seq, hull + 1.0, 1.2, 0, 180);
-    assert!((game.world.vehicles[&vid].gun.unwrap().pitch - TANK_BARREL_MAX).abs() < 0.01);
+    assert!((turret(&game, vid).pitch - TANK_BARREL_MAX).abs() < 0.01);
     aim_and_hold(&mut game, gunner, &mut seq, hull - 2.5, 0.0, 0, 120);
-    let turned = game.world.vehicles[&vid].gun.unwrap().yaw;
+    let turned = turret(&game, vid).yaw;
     assert!(turned < 1.0, "the turret slews at a limited rate, the short way round: {turned}");
 }
 
@@ -85,7 +95,7 @@ fn turret_slew_is_rate_limited() {
     let (mut game, gunner, vid, mut seq) = crewed();
     let hull = game.world.physics.car_pose(vid).unwrap().yaw();
     aim_and_hold(&mut game, gunner, &mut seq, hull + 2.0, 0.0, 0, 30);
-    let yaw = game.world.vehicles[&vid].gun.unwrap().yaw;
+    let yaw = turret(&game, vid).yaw;
     // 30 ticks is half a second: at most 0.7 rad, plus the jitter buffer's lag.
     assert!(yaw > 0.3 && yaw <= TANK_TURRET_SLEW * 0.5 + 0.01, "{yaw}");
 }
@@ -95,12 +105,12 @@ fn firing_hits_and_throws_a_stickman_in_the_line_of_fire() {
     let (mut game, gunner, vid, mut seq) = crewed();
     let (victim, _inbox) = join(&mut game);
     let pose = game.world.physics.car_pose(vid).unwrap();
-    let gun = game.world.vehicles[&vid].gun.unwrap();
+    let gun = turret(&game, vid);
     let (origin, dir) = aim(&pose, gun.yaw, gun.pitch);
     game.world.players.get_mut(&victim).unwrap().character.position = std::array::from_fn(|i| origin[i] + dir[i] * 25.0);
 
     aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, BUTTON_FIRE, 3);
-    assert_eq!(game.world.vehicles[&vid].gun.unwrap().shots, 1);
+    assert_eq!(turret(&game, vid).shots, 1);
     // 25 m at 140 m/s is about ten ticks: the shell is on its way, and nobody is hurt yet.
     assert_eq!(game.world.in_flight().len(), 1, "the shell is in flight");
     assert_eq!(game.world.players[&victim].character.knock, [0.0, 0.0]);
@@ -120,7 +130,7 @@ fn a_direct_hit_kills_and_the_gunner_gets_the_credit() {
     let (victim, _inbox) = join(&mut game);
     let (near, _inbox2) = join(&mut game);
     let pose = game.world.physics.car_pose(vid).unwrap();
-    let gun = game.world.vehicles[&vid].gun.unwrap();
+    let gun = turret(&game, vid);
     let (origin, dir) = aim(&pose, gun.yaw, gun.pitch);
     let at = |metres: f32, side: f32| std::array::from_fn::<f32, 3, _>(|i| origin[i] + dir[i] * metres + if i == 0 { side } else { 0.0 });
     game.world.players.get_mut(&victim).unwrap().character.position = at(25.0, 0.0);
@@ -141,9 +151,9 @@ fn the_gun_reloads_between_shots_and_a_stickman_far_away_is_unharmed() {
     game.world.players.get_mut(&bystander).unwrap().character.position = [0.0, STANDING_Y, 150.0];
     let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
     aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, BUTTON_FIRE, 60);
-    assert_eq!(game.world.vehicles[&vid].gun.unwrap().shots, 1, "trigger held for a second: one shell");
+    assert_eq!(turret(&game, vid).shots, 1, "trigger held for a second: one shell");
     aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, BUTTON_FIRE, 60);
-    assert_eq!(game.world.vehicles[&vid].gun.unwrap().shots, 2, "reloaded after a second and a half");
+    assert_eq!(turret(&game, vid).shots, 2, "reloaded after a second and a half");
     assert_eq!(game.world.players[&bystander].character.knock, [0.0, 0.0]);
 }
 
@@ -168,7 +178,7 @@ fn nobody_in_the_gunner_seat_means_no_shooting() {
     let mut seq = 0;
     // The driver holds fire, but only the gunner's seat works the gun.
     aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, BUTTON_FIRE, 120);
-    assert_eq!(game.world.vehicles[&vid].gun.unwrap().shots, 0);
+    assert_eq!(turret(&game, vid).shots, 0);
 }
 
 #[test]
@@ -250,11 +260,11 @@ fn the_nose_gun_follows_the_gunner_within_its_travel() {
     let (mut game, gunner, vid, mut seq) = heli_crewed();
     let hull = game.world.physics.car_pose(vid).unwrap().yaw();
     aim_and_hold(&mut game, gunner, &mut seq, hull + 0.5, -0.3, 0, 60);
-    let gun = game.world.vehicles[&vid].gun.unwrap();
+    let gun = turret(&game, vid);
     assert!((gun.yaw - 0.5).abs() < 0.03 && (gun.pitch + 0.3).abs() < 0.03, "{gun:?}");
     // Looking behind or high above asks for more than the mount can do.
     aim_and_hold(&mut game, gunner, &mut seq, hull + 2.5, 1.0, 0, 120);
-    let gun = game.world.vehicles[&vid].gun.unwrap();
+    let gun = turret(&game, vid);
     assert!((gun.yaw - HELI_GUN_YAW_LIMIT).abs() < 0.01, "{gun:?}");
     assert!((gun.pitch - HELI_GUN_PITCH_MAX).abs() < 0.01, "{gun:?}");
 }
@@ -275,7 +285,7 @@ fn the_nose_gun_throws_small_shells_that_burst_a_third_as_wide() {
     let before = game.world.players[&victim].hp;
 
     aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, BUTTON_FIRE, 2);
-    assert_eq!(game.world.vehicles[&vid].gun.unwrap().shots, 1);
+    assert_eq!(turret(&game, vid).shots, 1);
     let listed = game.projectile_states();
     assert_eq!(listed.len(), 1, "the round is in flight");
     assert_eq!(listed[0].kind, PROJECTILE_CANNON);
@@ -293,7 +303,7 @@ fn the_nose_gun_fires_a_burst_at_its_rate_and_only_for_the_gunner() {
     let (mut game, gunner, vid, mut seq) = heli_crewed();
     let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
     aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, BUTTON_FIRE, 60);
-    let fired = game.world.vehicles[&vid].gun.unwrap().shots;
+    let fired = turret(&game, vid).shots;
     let expected = (60 / HELI_GUN_COOLDOWN_TICKS) as u8;
     assert!(fired.abs_diff(expected) <= 2, "{fired} rounds in a second, expected about {expected}");
 
@@ -304,7 +314,7 @@ fn the_nose_gun_fires_a_burst_at_its_rate_and_only_for_the_gunner() {
     seat(&mut alone, pilot, vid, 0);
     let mut seq = 0;
     aim_and_hold(&mut alone, pilot, &mut seq, 0.0, 0.0, BUTTON_FIRE, 30);
-    assert_eq!(alone.world.vehicles[&vid].gun.unwrap().shots, 0);
+    assert_eq!(turret(&alone, vid).shots, 0);
 }
 
 #[test]
@@ -315,9 +325,9 @@ fn the_pilot_fires_rockets_that_accelerate_straight_ahead() {
     seat(&mut game, pilot, vid, 0);
     let mut seq = 0;
     aim_and_hold(&mut game, pilot, &mut seq, 0.0, 0.0, BUTTON_FIRE, 6);
-    let fired = game.world.vehicles[&vid].gun.unwrap().pod_shots;
+    let fired = shown(&game, vid, Show::Hidden).shots;
     assert!(fired >= 1, "the pilot's trigger fires the pods");
-    assert_eq!(game.world.vehicles[&vid].gun.unwrap().shots, 0, "the nose gun is the gunner's");
+    assert_eq!(turret(&game, vid).shots, 0, "the nose gun is the gunner's");
     let speed = |game: &Game| {
         game.world.in_flight().values().filter(|r| r.kind == PROJECTILE_ROCKET).map(|r| r.velocity.iter().map(|v| v * v).sum::<f32>().sqrt()).fold(0.0, f32::max)
     };
@@ -341,15 +351,15 @@ fn the_walkers_driver_aims_with_the_upper_body_within_thirty_degrees_and_fires()
     aim_and_hold(&mut game, driver, &mut seq, hull, 0.0, 0, 90);
     // A look inside its travel is followed, whichever way the legs face.
     aim_and_hold(&mut game, driver, &mut seq, hull + 0.3, 0.1, 0, 90);
-    let gun = game.world.vehicles[&vid].gun.unwrap();
+    let gun = turret(&game, vid);
     assert!((gun.yaw - 0.3).abs() < 0.03 && (gun.pitch - 0.1).abs() < 0.03, "{gun:?}");
     // And one beyond it stops at the limit.
     aim_and_hold(&mut game, driver, &mut seq, hull + 1.5, 0.0, 0, 120);
-    let gun = game.world.vehicles[&vid].gun.unwrap();
+    let gun = turret(&game, vid);
     assert!((gun.yaw - WALKER_TORSO_LIMIT).abs() < 0.01, "{gun:?}");
     // The driver's trigger fires the guns, at their rate, and a round is in the air.
     aim_and_hold(&mut game, driver, &mut seq, hull + 0.3, 0.0, BUTTON_FIRE, 60);
-    let fired = game.world.vehicles[&vid].gun.unwrap().shots;
+    let fired = turret(&game, vid).shots;
     let expected = (60 / WALKER_GUN_COOLDOWN_TICKS) as u8;
     assert!(fired.abs_diff(expected) <= 2, "{fired} rounds in a second, expected about {expected}");
 }
@@ -370,18 +380,18 @@ fn a_strv_driver_fires_the_hull_gun_and_only_elevation_follows_the_look() {
     aim_and_hold(&mut game, driver, &mut seq, hull, 0.0, 0, 90);
     // Looking sideways does nothing to the gun, and looking up lifts the barrel to its limit.
     aim_and_hold(&mut game, driver, &mut seq, hull + 1.0, 1.2, 0, 120);
-    let gun = game.world.vehicles[&vid].gun.unwrap();
+    let gun = turret(&game, vid);
     assert!(gun.yaw.abs() < 1e-6, "{gun:?}");
     assert!((gun.pitch - STRV_BARREL_MAX).abs() < 0.01, "{gun:?}");
     aim_and_hold(&mut game, driver, &mut seq, hull, -1.0, 0, 120);
-    let gun = game.world.vehicles[&vid].gun.unwrap();
+    let gun = turret(&game, vid);
     assert!((gun.pitch - STRV_BARREL_MIN).abs() < 0.01, "{gun:?}");
     // The driver's trigger fires a shell, at the shell's cooldown, and kicks the hull back.
     aim_and_hold(&mut game, driver, &mut seq, hull, 0.0, BUTTON_FIRE, 3);
-    assert_eq!(game.world.vehicles[&vid].gun.unwrap().shots, 1);
+    assert_eq!(turret(&game, vid).shots, 1);
     assert!(game.world.physics.car_pose(vid).unwrap().forward_speed < -0.5);
     aim_and_hold(&mut game, driver, &mut seq, hull, 0.0, BUTTON_FIRE, SHELL_COOLDOWN_TICKS);
-    assert_eq!(game.world.vehicles[&vid].gun.unwrap().shots, 2);
+    assert_eq!(turret(&game, vid).shots, 2);
 }
 
 #[test]
@@ -391,7 +401,7 @@ fn an_empty_strv_does_not_fire() {
     for _ in 0..60 {
         game.step();
     }
-    assert_eq!(game.world.vehicles[&vid].gun.unwrap().shots, 0);
+    assert_eq!(turret(&game, vid).shots, 0);
 }
 
 fn plane(game: &Game) -> u32 {
@@ -430,7 +440,7 @@ fn the_forward_guns_take_turns_and_hit_what_is_ahead_of_the_nose() {
     let hp = game.world.vehicles[&vid].hp;
 
     let hits = hold_watching(&mut game, pilot, &mut seq, pose.yaw(), BUTTON_FIRE, 30, WEAPON_MG);
-    let arms = game.world.vehicles[&vid].arms.unwrap();
+    let arms = shown(&game, vid, Show::Guns);
     let expected = (30 / PLANE_GUN_COOLDOWN_TICKS) as u8;
     assert!(arms.shots.abs_diff(expected) <= 1, "{} rounds in half a second, expected about {expected}", arms.shots);
     assert!(game.world.players[&victim].hp < PLAYER_MAX_HP, "the stickman ahead is hit");
@@ -446,21 +456,21 @@ fn the_forward_guns_jam_when_hot_and_clear_when_cool() {
     let mut jammed_at = None;
     for tick in 0..60 * 8 {
         aim_and_hold(&mut game, pilot, &mut seq, yaw, 0.0, BUTTON_FIRE, 1);
-        if game.world.vehicles[&vid].arms.unwrap().jammed {
+        if shown(&game, vid, Show::Guns).jammed {
             jammed_at = Some(tick);
             break;
         }
     }
     let jammed_at = jammed_at.expect("the guns jam");
     assert!((60 * 3..60 * 6).contains(&jammed_at), "after about four seconds: {jammed_at} ticks");
-    let shots = game.world.vehicles[&vid].arms.unwrap().shots;
+    let shots = shown(&game, vid, Show::Guns).shots;
     aim_and_hold(&mut game, pilot, &mut seq, yaw, 0.0, BUTTON_FIRE, 60);
-    assert_eq!(game.world.vehicles[&vid].arms.unwrap().shots, shots, "a jammed gun does not fire");
+    assert_eq!(shown(&game, vid, Show::Guns).shots, shots, "a jammed gun does not fire");
     assert!(game.vehicle_states().iter().find(|v| v.id == vid).unwrap().arms.unwrap().flags & shared::protocol::ARMS_JAMMED != 0);
     aim_and_hold(&mut game, pilot, &mut seq, yaw, 0.0, 0, 60 * 3);
-    assert!(!game.world.vehicles[&vid].arms.unwrap().jammed, "cool again");
+    assert!(!shown(&game, vid, Show::Guns).jammed, "cool again");
     aim_and_hold(&mut game, pilot, &mut seq, yaw, 0.0, BUTTON_FIRE, 20);
-    assert!(game.world.vehicles[&vid].arms.unwrap().shots != shots, "and firing");
+    assert!(shown(&game, vid, Show::Guns).shots != shots, "and firing");
 }
 
 #[test]
@@ -475,7 +485,7 @@ fn a_bomb_leaves_with_the_planes_speed_and_bursts_where_it_lands() {
     aim_and_hold(&mut game, pilot, &mut seq, pose.yaw(), 0.0, 0, 1);
     let bombs: Vec<_> = game.world.in_flight().values().filter(|rocket| rocket.kind == PROJECTILE_BOMB).copied().collect();
     assert_eq!(bombs.len(), 1, "{:?}", game.world.in_flight());
-    assert_eq!(game.world.vehicles[&vid].arms.unwrap().bombs, PLANE_BOMBS - 1);
+    assert_eq!(shown(&game, vid, Show::Rack).ammo, PLANE_BOMBS - 1);
     let along = -sin * bombs[0].velocity[0] - cos * bombs[0].velocity[2];
     assert!(along > 25.0, "it carries the plane's speed: {:?}", bombs[0].velocity);
     let dropped_at = bombs[0].position;
@@ -493,7 +503,7 @@ fn the_rack_holds_four_bombs_and_fills_again_on_the_ground() {
     let pose = game.world.physics.car_pose(vid).unwrap();
     // On the ground the rack holds on to them.
     aim_and_hold(&mut game, pilot, &mut seq, pose.yaw(), 0.0, BUTTON_CROUCH, 60);
-    assert_eq!(game.world.vehicles[&vid].arms.unwrap().bombs, PLANE_BOMBS);
+    assert_eq!(shown(&game, vid, Show::Rack).ammo, PLANE_BOMBS);
     // High up, held crouch drops one every half second, and the fifth is not there.
     game.world.physics.reset_car(vid, [pose.position[0], 120.0, 60.0], pose.yaw());
     let mut dropped = 0;
@@ -502,11 +512,11 @@ fn the_rack_holds_four_bombs_and_fills_again_on_the_ground() {
         aim_and_hold(&mut game, pilot, &mut seq, pose.yaw(), 0.0, BUTTON_CROUCH, 1);
         dropped += game.world.in_flight().iter().filter(|(id, r)| r.kind == PROJECTILE_BOMB && !before.contains(id)).count();
     }
-    assert_eq!((dropped, game.world.vehicles[&vid].arms.unwrap().bombs), (PLANE_BOMBS as usize, 0));
+    assert_eq!((dropped, shown(&game, vid, Show::Rack).ammo), (PLANE_BOMBS as usize, 0));
     // Back home and standing still, the ground crew loads it again.
     game.world.physics.reset_car(vid, pose.position, pose.yaw());
     aim_and_hold(&mut game, pilot, &mut seq, pose.yaw(), 0.0, 0, PLANE_REARM_TICKS + 90);
-    assert_eq!(game.world.vehicles[&vid].arms.unwrap().bombs, PLANE_BOMBS);
+    assert_eq!(shown(&game, vid, Show::Rack).ammo, PLANE_BOMBS);
 }
 
 #[test]
@@ -515,16 +525,16 @@ fn the_rear_gun_turns_all_the_way_round_but_never_fires_at_the_pilot() {
     let hull = game.world.physics.car_pose(vid).unwrap().yaw();
     // Looking ahead over the pilot's head: the ring follows, the trigger does nothing.
     aim_and_hold(&mut game, gunner, &mut seq, hull, 0.2, BUTTON_FIRE, 60);
-    let gun = game.world.vehicles[&vid].gun.unwrap();
+    let gun = turret(&game, vid);
     assert!(gun.yaw.abs() < 0.05 && (gun.pitch - 0.2).abs() < 0.05, "{gun:?}");
     assert_eq!(gun.shots, 0);
     // Straight behind, and up high.
     aim_and_hold(&mut game, gunner, &mut seq, hull + std::f32::consts::PI, 1.4, BUTTON_FIRE, 90);
-    let gun = game.world.vehicles[&vid].gun.unwrap();
+    let gun = turret(&game, vid);
     assert!(wrap_angle(gun.yaw - std::f32::consts::PI).abs() < 0.05, "{gun:?}");
     assert!((gun.pitch - PLANE_REAR_PITCH_MAX).abs() < 0.01, "{gun:?}");
     assert!(gun.shots > 3, "{gun:?}");
-    assert_eq!(game.world.vehicles[&vid].arms.unwrap().shots, 0, "the gunner's trigger is not the pilot's");
+    assert_eq!(shown(&game, vid, Show::Guns).shots, 0, "the gunner's trigger is not the pilot's");
 }
 
 #[test]
@@ -534,7 +544,7 @@ fn the_rear_gun_hits_a_stickman_behind_and_only_its_gunner_works_it() {
     let hull = game.world.physics.car_pose(vid).unwrap().yaw();
     aim_and_hold(&mut game, gunner, &mut seq, hull + std::f32::consts::PI, 0.0, 0, 60);
     let pose = game.world.physics.car_pose(vid).unwrap();
-    let gun = game.world.vehicles[&vid].gun.unwrap();
+    let gun = turret(&game, vid);
     let (ring, dir) = aim_from(&pose, PLANE_REAR_PIVOT, gun.yaw, gun.pitch);
     game.world.players.get_mut(&victim).unwrap().character.position = std::array::from_fn(|i| ring[i] + dir[i] * 20.0 + if i == 1 { -0.3 } else { 0.0 });
     aim_and_hold(&mut game, gunner, &mut seq, hull + std::f32::consts::PI, 0.0, BUTTON_FIRE, 30);
@@ -544,7 +554,7 @@ fn the_rear_gun_hits_a_stickman_behind_and_only_its_gunner_works_it() {
     let (mut game, pilot, vid, mut seq) = plane_crewed(0);
     let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
     aim_and_hold(&mut game, pilot, &mut seq, yaw + std::f32::consts::PI, 0.0, BUTTON_FIRE, 30);
-    assert_eq!(game.world.vehicles[&vid].gun.unwrap().shots, 0);
+    assert_eq!(turret(&game, vid).shots, 0);
 }
 
 #[test]
@@ -575,7 +585,7 @@ fn a_mortar_bomb_arcs_up_and_lands_on_the_range_it_was_dialled_to() {
     let mut seq = 0;
     // Straight ahead, and the dial left where it starts.
     aim_and_hold(&mut game, gunner, &mut seq, 0.0, 0.0, BUTTON_FIRE, 2);
-    assert_eq!(game.world.vehicles[&vid].gun.unwrap().shots, 1, "one bomb away");
+    assert_eq!(turret(&game, vid).shots, 1, "one bomb away");
     // It bursts where it meets the ground, and is gone the tick after. Track it until then.
     let (mut apex, mut last) = (0.0_f32, None);
     for _ in 0..900 {
@@ -605,12 +615,12 @@ fn the_range_dial_walks_the_lob_and_the_elevation_follows_it() {
     let mut seq = 0;
     // Dialled all the way out, the longest lob is the lowest elevation.
     aim_and_hold(&mut game, gunner, &mut seq, 0.0, 0.0, BUTTON_RANGE_UP, 600);
-    let gun = game.world.vehicles[&vid].gun.unwrap();
+    let gun = turret(&game, vid);
     assert_eq!(gun.range, MORTAR_RANGE_MAX);
     assert!((gun.pitch - MORTAR_PITCH_MIN).abs() < 0.01, "45 degrees at the longest range: {}", gun.pitch);
     // And all the way in, it is nearly vertical, but never past the top of the travel.
     aim_and_hold(&mut game, gunner, &mut seq, 0.0, 0.0, BUTTON_RANGE_DOWN, 600);
-    let gun = game.world.vehicles[&vid].gun.unwrap();
+    let gun = turret(&game, vid);
     assert_eq!(gun.range, MORTAR_RANGE_MIN);
     assert!(gun.pitch > 1.4 && gun.pitch <= MORTAR_PITCH_MAX, "nearly vertical at the shortest: {}", gun.pitch);
 }
@@ -642,8 +652,8 @@ fn a_hen_lays_an_egg_behind_it_that_bursts_when_its_fuse_runs_out() {
     aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, 0, 1);
     let laid = eggs(&game);
     assert_eq!(laid.len(), 1, "{:?}", game.world.in_flight());
-    let arms = game.world.vehicles[&vid].arms.unwrap();
-    assert_eq!((arms.bombs, arms.shots), (HEN_EGGS - 1, 1));
+    let clutch = shown(&game, vid, Show::Rack);
+    assert_eq!((clutch.ammo, clutch.shots), (HEN_EGGS - 1, 1));
     // Under the tail, which is behind the hull (+Z when it faces -Z).
     assert!(laid[0].position[2] > pose.position[2] + 1.5 && laid[0].position[1] < pose.position[1], "{:?} vs {pose:?}", laid[0].position);
 
@@ -681,12 +691,53 @@ fn a_clutch_is_six_eggs_laid_one_at_a_time_and_grows_back() {
     // Held for a second, it lays at its rate; the clutch runs out after six.
     aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, BUTTON_FIRE, TICK_RATE);
     let expected = TICK_RATE.div_ceil(HEN_EGG_COOLDOWN_TICKS) as u8;
-    assert_eq!(game.world.vehicles[&vid].arms.unwrap().shots, expected);
+    assert_eq!(shown(&game, vid, Show::Rack).shots, expected);
     aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, BUTTON_FIRE, TICK_RATE * 3);
-    let arms = game.world.vehicles[&vid].arms.unwrap();
-    assert!(arms.bombs <= 1 && arms.shots >= HEN_EGGS, "{arms:?}");
+    let clutch = shown(&game, vid, Show::Rack);
+    assert!(clutch.ammo <= 1 && clutch.shots >= HEN_EGGS, "{clutch:?}");
     // Let go, and they come back one at a time.
-    let before = arms.bombs;
+    let before = clutch.ammo;
     aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, 0, HEN_EGG_REGROW_TICKS + 1);
-    assert_eq!(game.world.vehicles[&vid].arms.unwrap().bombs, before + 1);
+    assert_eq!(shown(&game, vid, Show::Rack).ammo, before + 1);
+}
+
+#[test]
+fn a_mount_made_of_parts_no_vehicle_has_works() {
+    // A rocket launcher on a ring behind a jeep's passenger: two rockets, one more a second.
+    const LAUNCHER: MountDef = MountDef {
+        seat: 1,
+        aim: Aim::Mount { yaw_limit: None, pitch: (-0.2, 0.6), slew: 2.0 },
+        muzzle: Muzzle::One([0.0, 1.2, 0.5]),
+        fire: Fire::Rocket { speed: 20.0, ttl: ROCKET_TTL_TICKS },
+        trigger: BUTTON_FIRE,
+        cooldown: 10,
+        spread: 0.0,
+        recoil: 0.0,
+        heat: 0.0,
+        ammo: Some(Ammo { full: 2, refill: Refill::Regrow(TICK_RATE) }),
+        needs: &[],
+        show: Show::Hidden,
+    };
+    let mut game = game();
+    let (passenger, _inbox) = join(&mut game);
+    let ground = game.world.map.ground.height_at(0.0, 60.0);
+    let vid = super::super::vehicles::add_vehicle(&mut game.world, shared::protocol::KIND_JEEP, [0.0, ground + 1.0, 60.0], 0.0);
+    seat(&mut game, passenger, vid, 1);
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    // Looking straight back over the tailgate, trigger held.
+    let behind = wrap_angle(pose.yaw() + std::f32::consts::PI);
+    game.world.players.get_mut(&passenger).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: to_mrad(behind), buttons: BUTTON_FIRE, pitch: 0, view: 0, slot: 0 };
+    let mut mount = Mount::fresh(&LAUNCHER);
+    let rockets = |game: &Game| projectiles::count(&game.world.entities, Some(PROJECTILE_ROCKET));
+    for _ in 0..TICK_RATE {
+        mount = work(&mut game.world, vid, &LAUNCHER, mount, &pose, TICK_DT);
+    }
+    assert_eq!((rockets(&game), mount.ammo), (2, 0), "it runs out");
+    // The second comes back a second after the first was fired, and goes at once.
+    for _ in 0..TICK_RATE - 5 {
+        mount = work(&mut game.world, vid, &LAUNCHER, mount, &pose, TICK_DT);
+    }
+    assert_eq!(rockets(&game), 3, "it gets one back a second after it began to run low");
+    assert!((mount.yaw.abs() - std::f32::consts::PI).abs() < 0.05, "it turned to look behind: {}", mount.yaw);
+    assert!(game.world.in_flight().values().all(|rocket| rocket.owner == passenger && rocket.source == vid));
 }

@@ -2,31 +2,31 @@ use super::Mechanic;
 use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
 use super::combat::{Round, hitscan, look, rewind_ticks, scatter};
 use super::projectiles::{self, Flying, Stage};
-use crate::game::{Gun, PlaneArms, World};
+use crate::game::{Mount, World};
 use sim::CarPose;
 use shared::consts::*;
 use shared::items::Falloff;
-use shared::protocol::{DAMAGE_TURRET, TURRET_GONE, KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_PLANE, KIND_STRV, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, ShotEvent, WEAPON_MG};
+use shared::mounts::{Aim, Ammo, Fire, MountDef, Muzzle, Need, Refill};
+use shared::protocol::{DAMAGE_TURRET, InputFrame, PROJECTILE_ROCKET, ShotEvent, TURRET_GONE};
 use shared::quant::{from_mrad, to_cm, wrap_angle};
+use shared::vehicles::vehicle_def;
 
-/// Vehicle guns: the gunner's look direction aims the gun, and the fire button shoots it.
-///
-/// A helicopter's nose gun is an autocannon, worked from seat 1 as well (see `work_autocannon`): its
-/// rounds are shells in miniature. A plane's pilot fires two forward machine guns and drops bombs,
-/// and its gunner works a machine gun on a ring behind them (see `work_cockpit` and `work_ring`). A walker's
-/// driver aims and fires its chin guns (see `work_walker_guns`), and a Strv S's driver its fixed main gun
-/// (see `work_driver_cannon`). A hen's driver lays egg bombs (see `work_hen`). A tank's seat 1 is its gunner. Their input drives the turret instead of anything on foot, while
-/// the driver keeps the hull. The turret is stabilised: it follows the gunner's *world* heading
-/// at a limited slew rate, so turning the hull does not drag the aim around. A shell is a
-/// projectile: it leaves the muzzle at `SHELL_SPEED`, falls under gravity, and explodes at the first
-/// wall, vehicle or stickman it meets, throwing everyone nearby and shoving vehicles.
+/// Vehicle weapons: every mount in a vehicle's `VehicleDef::mounts` (`shared::mounts`), worked the same
+/// way. The occupant of the mount's seat aims it with their look and fires it with its trigger; their
+/// input drives the mount instead of anything on foot, while the driver keeps the hull. What it fires
+/// is a projectile (a shell, a rocket, a bomb, an egg; see `projectiles`) or a machine gun round, a
+/// hitscan. Nothing here branches on the vehicle's kind: a tank's stabilised turret, a helicopter's
+/// nose gun and pods, a plane's ring mount, forward guns and bombs, a walker's chin guns, a Strv S's
+/// fixed gun, a mortar's tube and a hen's eggs are each a row of data.
 pub struct Gunnery;
-
-/// The seat that works the gun.
-const GUNNER_SEAT: usize = 1;
 
 fn step_toward(current: f32, target: f32, step: f32) -> f32 {
     current + (target - current).clamp(-step, step)
+}
+
+/// Turns `yaw` towards `target` the short way round, by at most `step`.
+fn follow(yaw: f32, target: f32, step: f32) -> f32 {
+    wrap_angle(step_toward(yaw, yaw + wrap_angle(target - yaw), step))
 }
 
 /// Where the shell leaves the turret ring, and its unit direction, for a gun at `yaw` / `pitch`
@@ -41,193 +41,12 @@ fn aim_from(pose: &CarPose, pivot: [f32; 3], yaw: f32, pitch: f32) -> ([f32; 3],
     (pose.world_point(pivot), pose.world_dir(local))
 }
 
-/// How fast a shell of `kind` leaves its muzzle, m/s. A mortar bomb is slower and lobs high.
-fn muzzle_speed(kind: u8) -> f32 {
-    if kind == PROJECTILE_MORTAR { MORTAR_SHELL_SPEED } else { SHELL_SPEED }
-}
-
-/// How long a shell of `kind` flies before it bursts on its own.
-fn shell_ttl(kind: u8) -> u32 {
-    if kind == PROJECTILE_MORTAR { MORTAR_SHELL_TTL_TICKS } else { SHELL_TTL_TICKS }
-}
-
-
-/// Fires a shell of `kind` from vehicle `vid` for `gunner`, from `origin` along `dir` (the muzzle's
-/// root and the barrel's heading, `length` of barrel ahead): it leaves the muzzle and flies on its own
-/// from there, so it takes time to arrive and falls on the way.
-fn fire(world: &mut World, kind: u8, vid: u32, origin: [f32; 3], dir: [f32; 3], length: f32, gunner: u32) {
-    make_noise(world, origin, Some(gunner), HEAR_BLAST);
-    // A barrel poking into a wall bursts the shell there, instead of starting it on the far side.
-    if let Some(t) = world.physics.cast_ray(origin, dir, length, vid) {
-        projectiles::burst_at(world, kind, gunner, std::array::from_fn(|i| origin[i] + dir[i] * t), dir);
-        return;
-    }
-    world.launch(Flying {
-        kind,
-        owner: gunner,
-        source: vid,
-        position: std::array::from_fn(|i| origin[i] + dir[i] * length),
-        velocity: dir.map(|v| v * muzzle_speed(kind)),
-        ttl: shell_ttl(kind),
-        item: 0,
-        back: 0,
-        flown: 0.0,
-    });
-}
-
-
-/// One tick of a helicopter's nose gun, for the gunner in seat 1 if there is one, and the gun as it is
-/// after it. The gunner's look direction is taken in the world and expressed in the hull's frame, so the
-/// gun holds its aim while the helicopter leans and turns, until the target leaves its travel. A round
-/// is a small shell, scattered a little: it flies, falls and bursts like a tank's.
-fn work_autocannon(world: &mut World, vid: u32, mut gun: Gun, pose: &CarPose, dt: f32) -> Gun {
-    gun.cooldown = gun.cooldown.saturating_sub(1);
-    let Some(gunner) = world.vehicles[&vid].seats[GUNNER_SEAT] else { return gun };
-    let Some(input) = world.players.get(&gunner).map(|player| player.input) else { return gun };
-
-    let local = pose.local_dir(look(from_mrad(input.yaw), from_mrad(input.pitch())));
-    let yaw = (-local[0]).atan2(-local[2]).clamp(-HELI_GUN_YAW_LIMIT, HELI_GUN_YAW_LIMIT);
-    let pitch = local[1].clamp(-1.0, 1.0).asin().clamp(HELI_GUN_PITCH_MIN, HELI_GUN_PITCH_MAX);
-    gun.yaw = step_toward(gun.yaw, yaw, HELI_GUN_SLEW * dt);
-    gun.pitch = step_toward(gun.pitch, pitch, HELI_GUN_SLEW * dt);
-    if input.buttons() & BUTTON_FIRE == 0 || gun.cooldown > 0 {
-        return gun;
-    }
-
-    let (origin, dir) = aim_from(pose, HELI_GUN_PIVOT, gun.yaw, gun.pitch);
-    let dir = scatter(world, dir, HELI_GUN_SPREAD);
-    fire(world, PROJECTILE_CANNON, vid, origin, dir, HELI_GUN_LENGTH, gunner);
-    gun.shots = gun.shots.wrapping_add(1);
-    gun.cooldown = HELI_GUN_COOLDOWN_TICKS;
-    gun
-}
-
-/// One tick of a helicopter's rocket pods, for the pilot in seat 0 if there is one. Holding fire sends a
-/// rocket from the next tube along the nose every `HELI_ROCKET_COOLDOWN_TICKS`. The rocket starts at the
-/// helicopter's speed along the nose plus a small push and accelerates from there (see `projectiles`).
-fn work_pods(world: &mut World, vid: u32, mut gun: Gun, pose: &CarPose) -> Gun {
-    gun.pod_cooldown = gun.pod_cooldown.saturating_sub(1);
-    let Some(pilot) = world.vehicles[&vid].seats[0] else { return gun };
-    let Some(buttons) = world.players.get(&pilot).map(|player| player.input.buttons()) else { return gun };
-    if buttons & BUTTON_FIRE == 0 || gun.pod_cooldown > 0 {
-        return gun;
-    }
-    let pivot = HELI_POD_PIVOTS[usize::from(gun.pod_shots) % HELI_POD_PIVOTS.len()];
-    let (origin, dir) = aim_from(pose, pivot, 0.0, 0.0);
-    // It flies where the nose points, not where the helicopter is drifting: only the helicopter's speed
-    // along the nose is carried over, so a sideways slide does not bend the rocket's heading.
-    let along: f32 = (0..3).map(|i| pose.velocity[i] * dir[i]).sum::<f32>().max(0.0);
-    world.launch(Flying {
-        kind: PROJECTILE_ROCKET,
-        owner: pilot,
-        source: vid,
-        position: origin,
-        velocity: dir.map(|d| d * (HELI_ROCKET_LAUNCH_SPEED + along)),
-        ttl: ROCKET_TTL_TICKS,
-        item: 0,
-        back: 0,
-        flown: 0.0,
-    });
-    gun.pod_shots = gun.pod_shots.wrapping_add(1);
-    gun.pod_cooldown = HELI_ROCKET_COOLDOWN_TICKS;
-    gun
-}
-
-/// One tick of a walker's chin guns, for its driver in seat 0. The driver's look direction, taken into
-/// the hull's frame, turns the upper body within `WALKER_TORSO_LIMIT` of the way the legs face and lifts
-/// the guns within their travel, at `WALKER_GUN_SLEW`. A walker that has fallen cannot aim or fire.
-fn work_walker_guns(world: &mut World, vid: u32, mut gun: Gun, pose: &CarPose, dt: f32) -> Gun {
-    gun.cooldown = gun.cooldown.saturating_sub(1);
-    let Some(driver) = world.vehicles[&vid].seats[0] else { return gun };
-    let Some(input) = world.players.get(&driver).map(|player| player.input) else { return gun };
-    if pose.up_y < WALKER_FALLEN_UP {
-        return gun;
-    }
-
-    let local = pose.local_dir(look(from_mrad(input.yaw), from_mrad(input.pitch())));
-    let yaw = (-local[0]).atan2(-local[2]).clamp(-WALKER_TORSO_LIMIT, WALKER_TORSO_LIMIT);
-    let pitch = local[1].clamp(-1.0, 1.0).asin().clamp(WALKER_GUN_PITCH_MIN, WALKER_GUN_PITCH_MAX);
-    gun.yaw = step_toward(gun.yaw, yaw, WALKER_GUN_SLEW * dt);
-    gun.pitch = step_toward(gun.pitch, pitch, WALKER_GUN_SLEW * dt);
-    if input.buttons() & BUTTON_FIRE == 0 || gun.cooldown > 0 {
-        return gun;
-    }
-
-    let (_, dir) = aim_from(pose, WALKER_GUN_PIVOT, gun.yaw, gun.pitch);
-    // The barrels hang under the chin, one either side, and take turns: the shell starts at the one
-    // whose turn it is, the offset turned with the upper body (yaw) and the guns (pitch).
-    let side = if gun.shots.is_multiple_of(2) { -1.0 } else { 1.0 };
-    let (sp, cp) = gun.pitch.sin_cos();
-    let (sy, cy) = gun.yaw.sin_cos();
-    let (bx, by) = (side * WALKER_GUN_BARREL_X, -WALKER_GUN_BARREL_DROP);
-    let (ly, lz) = (by * cp, by * sp);
-    let offset = [bx * cy + lz * sy, ly, -bx * sy + lz * cy];
-    let pivot = std::array::from_fn(|i| WALKER_GUN_PIVOT[i] + offset[i]);
-    let origin = pose.world_point(pivot);
-    let dir = scatter(world, dir, WALKER_GUN_SPREAD);
-    fire(world, PROJECTILE_CANNON, vid, origin, dir, WALKER_GUN_LENGTH, driver);
-    gun.shots = gun.shots.wrapping_add(1);
-    gun.cooldown = WALKER_GUN_COOLDOWN_TICKS;
-    gun
-}
-
-/// One tick of a field mortar, for its gunner in seat 0. The gunner's look turns the mount to face where they
-/// look, and the range dial (W and S) sets how far the bomb flies. The barrel's elevation is the lob that
-/// lands it there, so the tube always points where the bomb will go. The bomb leaves at `MORTAR_SHELL_SPEED`,
-/// and the mortar is shoved back on its wheels. A towed mortar cannot fire: it is being pulled.
-fn work_mortar(world: &mut World, vid: u32, mut gun: Gun, pose: &CarPose, dt: f32) -> Gun {
-    gun.cooldown = gun.cooldown.saturating_sub(1);
-    let Some(gunner) = world.vehicles[&vid].seats[0] else { return gun };
-    let Some(input) = world.players.get(&gunner).map(|player| player.input) else { return gun };
-
-    let wanted = wrap_angle(from_mrad(input.yaw) - pose.yaw());
-    gun.yaw = wrap_angle(step_toward(gun.yaw, gun.yaw + wrap_angle(wanted - gun.yaw), MORTAR_TRAVERSE_SLEW * dt));
-    // A gun that has never been dialled starts at the middle of the range, not at zero.
-    let range = if gun.range == 0.0 { MORTAR_RANGE_START } else { gun.range };
-    let buttons = input.buttons();
-    let dial = f32::from(buttons & BUTTON_RANGE_UP != 0) - f32::from(buttons & BUTTON_RANGE_DOWN != 0);
-    gun.range = (range + dial * MORTAR_RANGE_RATE * dt).clamp(MORTAR_RANGE_MIN, MORTAR_RANGE_MAX);
-    gun.pitch = lob_pitch(gun.range);
-    if buttons & BUTTON_FIRE == 0 || gun.cooldown > 0 || world.physics.towed_by(vid).is_some() {
-        return gun;
-    }
-
-    let (origin, dir) = aim_from(pose, MORTAR_GUN_PIVOT, gun.yaw, gun.pitch);
-    fire(world, PROJECTILE_MORTAR, vid, origin, dir, MORTAR_BARREL_LENGTH, gunner);
-    world.physics.kick_car(vid, [-dir[0] * MORTAR_RECOIL, 0.0, -dir[2] * MORTAR_RECOIL]);
-    gun.shots = gun.shots.wrapping_add(1);
-    gun.cooldown = MORTAR_COOLDOWN_TICKS;
-    gun
-}
-
 /// The elevation of the high lob that lands a bomb `range` metres out on level ground, from `MORTAR_SHELL_SPEED`
 /// and `GRAVITY`: the steeper of the two angles that reach it, so the shorter the range the closer to vertical.
 /// Clamped to the mortar's elevation travel.
 pub fn lob_pitch(range: f32) -> f32 {
     let sine = (GRAVITY * range / (MORTAR_SHELL_SPEED * MORTAR_SHELL_SPEED)).min(1.0);
     (0.5 * (std::f32::consts::PI - sine.asin())).clamp(MORTAR_PITCH_MIN, MORTAR_PITCH_MAX)
-}
-
-/// One tick of a Strv S's main gun, for its driver in seat 0. The gun is fixed in the hull, so it points
-/// where the hull does (the yaw stays 0: the driver aims sideways by turning the tank) and the driver's
-/// look pitch only elevates the barrel, within its travel, at `STRV_BARREL_SLEW`. It kicks the hull back
-/// like a tank's.
-fn work_driver_cannon(world: &mut World, vid: u32, mut gun: Gun, pose: &CarPose, dt: f32) -> Gun {
-    gun.cooldown = gun.cooldown.saturating_sub(1);
-    gun.yaw = 0.0;
-    let Some(driver) = world.vehicles[&vid].seats[0] else { return gun };
-    let Some(input) = world.players.get(&driver).map(|player| player.input) else { return gun };
-
-    gun.pitch = step_toward(gun.pitch, from_mrad(input.pitch).clamp(STRV_BARREL_MIN, STRV_BARREL_MAX), STRV_BARREL_SLEW * dt);
-    if input.buttons() & BUTTON_FIRE == 0 || gun.cooldown > 0 {
-        return gun;
-    }
-    let (origin, dir) = aim_from(pose, STRV_GUN_PIVOT, 0.0, gun.pitch);
-    fire(world, PROJECTILE_SHELL, vid, origin, dir, STRV_BARREL_LENGTH, driver);
-    world.physics.kick_car(vid, [-dir[0] * SHELL_RECOIL, 0.0, -dir[2] * SHELL_RECOIL]);
-    gun.shots = gun.shots.wrapping_add(1);
-    gun.cooldown = SHELL_COOLDOWN_TICKS;
-    gun
 }
 
 /// A machine gun's barrels cooling for a tick; a jammed gun clears once they are cool enough.
@@ -246,197 +65,207 @@ fn heat_up(heat: &mut f32, jammed: &mut bool, by: f32) {
     }
 }
 
-/// One machine gun round for `shooter` from vehicle `vid`, out of `muzzle` along `dir`. Every round is
-/// drawn by the client from the gun's counter; only one that hit something is announced, for the spark.
-fn machine_gun(world: &mut World, shooter: u32, vid: u32, muzzle: [f32; 3], dir: [f32; 3]) {
+/// One tick of mount `def` on vehicle `vid` at `pose`, and the mount as it is after it.
+fn work(world: &mut World, vid: u32, def: &MountDef, mut mount: Mount, pose: &CarPose, dt: f32) -> Mount {
+    mount.cooldown = mount.cooldown.saturating_sub(1);
+    cool(&mut mount.heat, &mut mount.jammed);
+    if let Some(ammo) = def.ammo {
+        refill(world, &mut mount, ammo, pose);
+    }
+    if let Aim::Bore { .. } = def.aim {
+        mount.yaw = 0.0;
+    }
+    let Some(occupant) = world.vehicles[&vid].seats[def.seat] else { return mount };
+    let Some(input) = world.players.get(&occupant).map(|player| player.input) else { return mount };
+    if !def.needs.iter().all(|&need| can_work(world, vid, need, pose)) {
+        return mount;
+    }
+    turn(&mut mount, def.aim, &input, pose, dt);
+
+    let loaded = def.ammo.is_none() || mount.ammo > 0;
+    if input.buttons() & def.trigger == 0 || mount.cooldown > 0 || mount.jammed || !loaded {
+        return mount;
+    }
+    if !def.needs.iter().all(|&need| can_fire(world, vid, need, &mount, pose)) {
+        return mount;
+    }
+    let dir = shoot(world, vid, def, &mount, occupant, pose);
+    if def.recoil != 0.0 {
+        // The hull is shoved back along the barrel, level, so it does not dig in.
+        world.physics.kick_car(vid, [-dir[0] * def.recoil, 0.0, -dir[2] * def.recoil]);
+    }
+    mount.shots = mount.shots.wrapping_add(1);
+    mount.cooldown = def.cooldown;
+    heat_up(&mut mount.heat, &mut mount.jammed, def.heat);
+    if def.ammo.is_some() {
+        mount.ammo -= 1;
+    }
+    mount
+}
+
+/// A mount that can run out getting more, whoever is in its seat.
+fn refill(world: &World, mount: &mut Mount, ammo: Ammo, pose: &CarPose) {
+    match ammo.refill {
+        Refill::Parked(ticks) => {
+            let speed = pose.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
+            let parked = speed < 0.5 && height(world, pose) < 2.0;
+            mount.refill = if parked { mount.refill + 1 } else { 0 };
+            if mount.refill >= ticks {
+                mount.ammo = ammo.full;
+            }
+        }
+        Refill::Regrow(ticks) => {
+            mount.refill = if mount.ammo < ammo.full { mount.refill + 1 } else { 0 };
+            if mount.refill >= ticks {
+                mount.ammo += 1;
+                mount.refill = 0;
+            }
+        }
+    }
+}
+
+/// How high the vehicle at `pose` is over the ground.
+fn height(world: &World, pose: &CarPose) -> f32 {
+    let [x, y, z] = pose.position;
+    y - world.map.ground.height_at(x, z)
+}
+
+/// Whether a mount can be aimed and fired at all: without this it holds still.
+fn can_work(world: &World, vid: u32, need: Need, pose: &CarPose) -> bool {
+    match need {
+        Need::Upright => pose.up_y >= WALKER_FALLEN_UP,
+        Need::Turret => world.vehicles[&vid].damage[DAMAGE_TURRET] != TURRET_GONE,
+        Need::Untowed | Need::Height(_) | Need::Clear(_) => true,
+    }
+}
+
+/// Whether an aimed, loaded mount can fire this tick.
+fn can_fire(world: &World, vid: u32, need: Need, mount: &Mount, pose: &CarPose) -> bool {
+    match need {
+        Need::Untowed => world.physics.towed_by(vid).is_none(),
+        Need::Height(least) => height(world, pose) > least,
+        Need::Clear(arc) => mount.yaw.abs() >= arc,
+        Need::Upright | Need::Turret => true,
+    }
+}
+
+/// A tick of the occupant's look turning the mount.
+fn turn(mount: &mut Mount, aim: Aim, input: &InputFrame, pose: &CarPose, dt: f32) {
+    match aim {
+        Aim::Fixed => {}
+        Aim::Turret { slew, pitch: (min, max), pitch_slew } => {
+            mount.yaw = follow(mount.yaw, wrap_angle(from_mrad(input.yaw) - pose.yaw()), slew * dt);
+            mount.pitch = step_toward(mount.pitch, from_mrad(input.pitch()).clamp(min, max), pitch_slew * dt);
+        }
+        Aim::Bore { pitch: (min, max), slew } => {
+            mount.pitch = step_toward(mount.pitch, from_mrad(input.pitch()).clamp(min, max), slew * dt);
+        }
+        Aim::Mount { yaw_limit, pitch: (min, max), slew } => {
+            // The look is taken in the world and seen from the hull.
+            let local = pose.local_dir(look(from_mrad(input.yaw), from_mrad(input.pitch())));
+            let yaw = (-local[0]).atan2(-local[2]);
+            let pitch = local[1].clamp(-1.0, 1.0).asin().clamp(min, max);
+            mount.yaw = match yaw_limit {
+                Some(limit) => step_toward(mount.yaw, yaw.clamp(-limit, limit), slew * dt),
+                None => follow(mount.yaw, yaw, slew * dt),
+            };
+            mount.pitch = step_toward(mount.pitch, pitch, slew * dt);
+        }
+        Aim::Lob { slew } => {
+            mount.yaw = follow(mount.yaw, wrap_angle(from_mrad(input.yaw) - pose.yaw()), slew * dt);
+            // A gun that has never been dialled starts at the middle of the range, not at zero.
+            let range = if mount.range == 0.0 { MORTAR_RANGE_START } else { mount.range };
+            let buttons = input.buttons();
+            let dial = f32::from(buttons & BUTTON_RANGE_UP != 0) - f32::from(buttons & BUTTON_RANGE_DOWN != 0);
+            mount.range = (range + dial * MORTAR_RANGE_RATE * dt).clamp(MORTAR_RANGE_MIN, MORTAR_RANGE_MAX);
+            mount.pitch = lob_pitch(mount.range);
+        }
+    }
+}
+
+/// Fires a round of `def` for `occupant`, and returns the barrel's heading (before any spread).
+fn shoot(world: &mut World, vid: u32, def: &MountDef, mount: &Mount, occupant: u32, pose: &CarPose) -> [f32; 3] {
+    let (origin, dir) = match def.muzzle {
+        Muzzle::One(pivot) => aim_from(pose, pivot, mount.yaw, mount.pitch),
+        Muzzle::Turns(pivots) => aim_from(pose, pivots[usize::from(mount.shots) % pivots.len()], mount.yaw, mount.pitch),
+        Muzzle::Twin { pivot, x, drop } => {
+            let (_, dir) = aim_from(pose, pivot, mount.yaw, mount.pitch);
+            // One barrel either side, taking turns: the offset turns with the mount (yaw) and the
+            // barrels (pitch).
+            let side = if mount.shots.is_multiple_of(2) { -1.0 } else { 1.0 };
+            let (sp, cp) = mount.pitch.sin_cos();
+            let (sy, cy) = mount.yaw.sin_cos();
+            let (bx, by) = (side * x, -drop);
+            let (ly, lz) = (by * cp, by * sp);
+            let offset = [bx * cy + lz * sy, ly, -bx * sy + lz * cy];
+            (pose.world_point(std::array::from_fn(|i| pivot[i] + offset[i])), dir)
+        }
+    };
+    match def.fire {
+        Fire::Shell { kind, speed, length, ttl } => {
+            let aimed = scatter(world, dir, def.spread);
+            fire(world, kind, vid, origin, aimed, length, speed, ttl, occupant);
+        }
+        Fire::Rocket { speed, ttl } => {
+            // It flies where the barrel points, not where the vehicle is drifting: only the vehicle's
+            // speed along it is carried over, so a sideways slide does not bend the rocket's heading.
+            let along: f32 = (0..3).map(|i| pose.velocity[i] * dir[i]).sum::<f32>().max(0.0);
+            world.launch(Flying { kind: PROJECTILE_ROCKET, owner: occupant, source: vid, position: origin, velocity: dir.map(|d| d * (speed + along)), ttl, item: 0, back: 0, flown: 0.0 });
+        }
+        Fire::Hitscan { length, damage, vehicle, plane, weapon, range } => {
+            let muzzle = std::array::from_fn(|i| origin[i] + dir[i] * length);
+            let aimed = scatter(world, dir, def.spread);
+            let round = Round { damage, vehicle, plane, weapon, range, falloff: Falloff::NONE };
+            machine_gun(world, occupant, vid, muzzle, aimed, &round);
+        }
+        Fire::Drop { kind, toss, ttl } => {
+            let toss = pose.world_dir(toss);
+            let velocity = std::array::from_fn(|i| pose.velocity[i] + toss[i]);
+            world.launch(Flying { kind, owner: occupant, source: vid, position: origin, velocity, ttl, item: 0, back: 0, flown: 0.0 });
+        }
+    }
+    dir
+}
+
+/// Fires a shell of `kind` from vehicle `vid` for `gunner`, from `origin` along `dir` (the muzzle's
+/// root and the barrel's heading, `length` of barrel ahead) at `speed`: it leaves the muzzle and flies
+/// on its own from there, so it takes time to arrive and falls on the way.
+#[allow(clippy::too_many_arguments)]
+fn fire(world: &mut World, kind: u8, vid: u32, origin: [f32; 3], dir: [f32; 3], length: f32, speed: f32, ttl: u32, gunner: u32) {
+    make_noise(world, origin, Some(gunner), HEAR_BLAST);
+    // A barrel poking into a wall bursts the shell there, instead of starting it on the far side.
+    if let Some(t) = world.physics.cast_ray(origin, dir, length, vid) {
+        projectiles::burst_at(world, kind, gunner, std::array::from_fn(|i| origin[i] + dir[i] * t), dir);
+        return;
+    }
+    world.launch(Flying { kind, owner: gunner, source: vid, position: std::array::from_fn(|i| origin[i] + dir[i] * length), velocity: dir.map(|v| v * speed), ttl, item: 0, back: 0, flown: 0.0 });
+}
+
+/// One machine gun `round` for `shooter` from vehicle `vid`, out of `muzzle` along `dir`. Every round
+/// is drawn by the client from the gun's counter; only one that hit something is announced, for the spark.
+fn machine_gun(world: &mut World, shooter: u32, vid: u32, muzzle: [f32; 3], dir: [f32; 3], round: &Round) {
     let back = world.players.get(&shooter).map_or(0, |player| rewind_ticks(world.tick, player.input.view()));
-    let round = Round { damage: PLANE_GUN_DAMAGE, vehicle: PLANE_GUN_VEHICLE_DAMAGE, plane: PLANE_GUN_PLANE_DAMAGE, weapon: WEAPON_MG, range: PLANE_GUN_RANGE, falloff: Falloff::NONE };
     make_noise(world, muzzle, Some(shooter), HEAR_SHOT);
-    let (end, struck) = hitscan(world, shooter, muzzle, dir, &round, vid, back);
+    let (end, struck) = hitscan(world, shooter, muzzle, dir, round, vid, back);
     if struck {
         let [x, y, z] = std::array::from_fn(|i| to_cm(muzzle[i] + dir[i] * end));
-        world.shots.push(ShotEvent { shooter, weapon: WEAPON_MG, x, y, z });
+        world.shots.push(ShotEvent { shooter, weapon: round.weapon, x, y, z });
     }
-}
-
-/// One tick of a plane's cockpit for its pilot in seat 0: the forward guns, which fire in turn along the
-/// nose while the trigger is held and they are not jammed, and the bomb rack, which drops one on crouch.
-/// A bomb leaves with the plane's own velocity. The rack fills again once the plane has stood still on
-/// the ground for a while. No bomb drops on the ground.
-fn work_cockpit(world: &mut World, vid: u32, mut arms: PlaneArms, pose: &CarPose) -> PlaneArms {
-    arms.cooldown = arms.cooldown.saturating_sub(1);
-    arms.bomb_cooldown = arms.bomb_cooldown.saturating_sub(1);
-    cool(&mut arms.heat, &mut arms.jammed);
-    let speed = pose.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
-    let [x, y, z] = pose.position;
-    let height = y - world.map.ground.height_at(x, z);
-    let parked = speed < 0.5 && height < 2.0;
-    arms.rearm = if parked { arms.rearm + 1 } else { 0 };
-    if arms.rearm >= PLANE_REARM_TICKS {
-        arms.bombs = PLANE_BOMBS;
-    }
-
-    let Some(pilot) = world.vehicles[&vid].seats[0] else { return arms };
-    let Some(buttons) = world.players.get(&pilot).map(|player| player.input.buttons()) else { return arms };
-    if buttons & BUTTON_FIRE != 0 && arms.cooldown == 0 && !arms.jammed {
-        // The left gun fires the even rounds.
-        let pivot = PLANE_GUN_PIVOTS[usize::from(arms.shots % 2)];
-        let (muzzle, dir) = aim_from(pose, pivot, 0.0, 0.0);
-        let dir = scatter(world, dir, PLANE_GUN_SPREAD);
-        machine_gun(world, pilot, vid, muzzle, dir);
-        arms.shots = arms.shots.wrapping_add(1);
-        arms.cooldown = PLANE_GUN_COOLDOWN_TICKS;
-        heat_up(&mut arms.heat, &mut arms.jammed, PLANE_GUN_HEAT);
-    }
-    // The rack only lets go in the air, where the bomb has room to fall clear.
-    if buttons & BUTTON_CROUCH != 0 && arms.bomb_cooldown == 0 && arms.bombs > 0 && height > PLANE_BOMB_MIN_HEIGHT {
-        let ttl = SHELL_TTL_TICKS * 2;
-        world.launch(Flying { kind: PROJECTILE_BOMB, owner: pilot, source: vid, position: pose.world_point(PLANE_BOMB_PIVOT), velocity: pose.velocity, ttl, item: 0, back: 0, flown: 0.0 });
-        arms.bombs -= 1;
-        arms.bomb_cooldown = PLANE_BOMB_COOLDOWN_TICKS;
-    }
-    arms
-}
-
-/// One tick of a hen's clutch for its driver in seat 0: fire lays an egg from under the tail, with the
-/// hull's velocity and a little backwards, one every `HEN_EGG_COOLDOWN_TICKS`. An egg is a projectile of
-/// its own that bounces until its fuse runs out (see `projectiles`). A clutch that is not full
-/// grows one back every `HEN_EGG_REGROW_TICKS`, laying or not. A fallen hen lays nothing.
-fn work_hen(world: &mut World, vid: u32, mut arms: PlaneArms, pose: &CarPose) -> PlaneArms {
-    arms.bomb_cooldown = arms.bomb_cooldown.saturating_sub(1);
-    arms.rearm = if arms.bombs < HEN_EGGS { arms.rearm + 1 } else { 0 };
-    if arms.rearm >= HEN_EGG_REGROW_TICKS {
-        arms.bombs += 1;
-        arms.rearm = 0;
-    }
-    let Some(driver) = world.vehicles[&vid].seats[0] else { return arms };
-    let Some(buttons) = world.players.get(&driver).map(|player| player.input.buttons()) else { return arms };
-    if buttons & BUTTON_FIRE == 0 || arms.bomb_cooldown > 0 || arms.bombs == 0 || pose.up_y < WALKER_FALLEN_UP {
-        return arms;
-    }
-    let toss = pose.world_dir([0.0, 0.0, HEN_EGG_TOSS]);
-    world.launch(Flying {
-        kind: PROJECTILE_EGG,
-        owner: driver,
-        source: vid,
-        position: pose.world_point(HEN_VENT),
-        velocity: std::array::from_fn(|i| pose.velocity[i] + toss[i]),
-        ttl: HEN_EGG_FUSE_TICKS,
-        item: 0,
-        back: 0,
-        flown: 0.0,
-    });
-    arms.bombs -= 1;
-    arms.shots = arms.shots.wrapping_add(1);
-    arms.bomb_cooldown = HEN_EGG_COOLDOWN_TICKS;
-    arms
-}
-
-/// One tick of a plane's ring mount for its gunner in seat 1. The gunner's look direction, taken into
-/// the hull's frame, turns the ring all the way round and lifts the barrel within its travel; it holds
-/// fire while it points within `PLANE_REAR_DEAD_ZONE` of the nose, at the pilot.
-fn work_ring(world: &mut World, vid: u32, mut gun: Gun, pose: &CarPose, dt: f32) -> Gun {
-    gun.cooldown = gun.cooldown.saturating_sub(1);
-    cool(&mut gun.heat, &mut gun.jammed);
-    let Some(gunner) = world.vehicles[&vid].seats[GUNNER_SEAT] else { return gun };
-    let Some(input) = world.players.get(&gunner).map(|player| player.input) else { return gun };
-
-    let local = pose.local_dir(look(from_mrad(input.yaw), from_mrad(input.pitch())));
-    let yaw = (-local[0]).atan2(-local[2]);
-    let pitch = local[1].clamp(-1.0, 1.0).asin().clamp(PLANE_REAR_PITCH_MIN, PLANE_REAR_PITCH_MAX);
-    gun.yaw = wrap_angle(step_toward(gun.yaw, gun.yaw + wrap_angle(yaw - gun.yaw), PLANE_REAR_SLEW * dt));
-    gun.pitch = step_toward(gun.pitch, pitch, PLANE_REAR_SLEW * dt);
-    if input.buttons() & BUTTON_FIRE == 0 || gun.cooldown > 0 || gun.jammed || gun.yaw.abs() < PLANE_REAR_DEAD_ZONE {
-        return gun;
-    }
-    let (ring, dir) = aim_from(pose, PLANE_REAR_PIVOT, gun.yaw, gun.pitch);
-    let muzzle = std::array::from_fn(|i| ring[i] + dir[i] * PLANE_REAR_LENGTH);
-    let dir = scatter(world, dir, PLANE_GUN_SPREAD);
-    machine_gun(world, gunner, vid, muzzle, dir);
-    gun.shots = gun.shots.wrapping_add(1);
-    gun.cooldown = PLANE_REAR_COOLDOWN_TICKS;
-    heat_up(&mut gun.heat, &mut gun.jammed, PLANE_REAR_HEAT);
-    gun
 }
 
 impl Mechanic for Gunnery {
     fn on_tick(&mut self, world: &mut World, dt: f32) {
         projectiles::step(world, dt, Stage::Guns);
-        let ids: Vec<u32> = world.vehicles.iter().filter(|(_, vehicle)| vehicle.gun.is_some()).map(|(&id, _)| id).collect();
+        let ids: Vec<u32> = world.vehicles.iter().filter(|(_, vehicle)| !vehicle.mounts.is_empty()).map(|(&id, _)| id).collect();
         for vid in ids {
-            let vehicle = &world.vehicles[&vid];
-            let Some(mut gun) = vehicle.gun else { continue };
-            let gunner = vehicle.seats[GUNNER_SEAT].and_then(|id| world.players.get(&id)).map(|player| player.input);
             let Some(pose) = world.physics.car_pose(vid) else { continue };
-            if vehicle.kind == KIND_PLANE {
-                let arms = vehicle.arms.unwrap_or_default();
-                let gun = work_ring(world, vid, gun, &pose, dt);
-                let arms = work_cockpit(world, vid, arms, &pose);
+            let defs = vehicle_def(world.vehicles[&vid].kind).mounts;
+            for (index, def) in defs.iter().enumerate() {
+                let Some(mount) = world.vehicles.get(&vid).map(|vehicle| vehicle.mounts[index]) else { break };
+                let mount = work(world, vid, def, mount, &pose, dt);
                 if let Some(vehicle) = world.vehicles.get_mut(&vid) {
-                    vehicle.gun = Some(gun);
-                    vehicle.arms = Some(arms);
+                    vehicle.mounts[index] = mount;
                 }
-                continue;
-            }
-            if vehicle.kind == KIND_WALKER {
-                let gun = work_walker_guns(world, vid, gun, &pose, dt);
-                if let Some(vehicle) = world.vehicles.get_mut(&vid) {
-                    vehicle.gun = Some(gun);
-                }
-                continue;
-            }
-            if vehicle.kind == KIND_MORTAR {
-                let gun = work_mortar(world, vid, gun, &pose, dt);
-                if let Some(vehicle) = world.vehicles.get_mut(&vid) {
-                    vehicle.gun = Some(gun);
-                }
-                continue;
-            }
-            if vehicle.kind == KIND_STRV {
-                let gun = work_driver_cannon(world, vid, gun, &pose, dt);
-                if let Some(vehicle) = world.vehicles.get_mut(&vid) {
-                    vehicle.gun = Some(gun);
-                }
-                continue;
-            }
-            if vehicle.kind == KIND_HELI {
-                let gun = work_autocannon(world, vid, gun, &pose, dt);
-                let gun = work_pods(world, vid, gun, &pose);
-                if let Some(vehicle) = world.vehicles.get_mut(&vid) {
-                    vehicle.gun = Some(gun);
-                }
-                continue;
-            }
-
-            gun.cooldown = gun.cooldown.saturating_sub(1);
-            let mut trigger = false;
-            // A tank whose turret has been shot off has no gun to work.
-            let turret_on = vehicle.damage[DAMAGE_TURRET] != TURRET_GONE;
-            if let (true, Some(input)) = (turret_on, gunner) {
-                let wanted = wrap_angle(from_mrad(input.yaw) - pose.yaw());
-                gun.yaw = wrap_angle(step_toward(gun.yaw, gun.yaw + wrap_angle(wanted - gun.yaw), TANK_TURRET_SLEW * dt));
-                gun.pitch = step_toward(gun.pitch, from_mrad(input.pitch).clamp(TANK_BARREL_MIN, TANK_BARREL_MAX), TANK_BARREL_SLEW * dt);
-                trigger = input.buttons() & BUTTON_FIRE != 0 && gun.cooldown == 0;
-            }
-            if let (true, Some(gunner_id)) = (trigger, world.vehicles[&vid].seats[GUNNER_SEAT]) {
-                let (origin, dir) = aim(&pose, gun.yaw, gun.pitch);
-                fire(world, PROJECTILE_SHELL, vid, origin, dir, TANK_BARREL_LENGTH, gunner_id);
-                // Recoil: the hull is shoved back along the barrel (level, so it doesn't dig in).
-                world.physics.kick_car(vid, [-dir[0] * SHELL_RECOIL, 0.0, -dir[2] * SHELL_RECOIL]);
-                gun.shots = gun.shots.wrapping_add(1);
-                gun.cooldown = SHELL_COOLDOWN_TICKS;
-            }
-            if let Some(vehicle) = world.vehicles.get_mut(&vid) {
-                vehicle.gun = Some(gun);
-            }
-        }
-        // A hen has no gun, only its eggs.
-        let hens: Vec<u32> = world.vehicles.iter().filter(|(_, vehicle)| vehicle.kind == KIND_HEN).map(|(&id, _)| id).collect();
-        for vid in hens {
-            let (Some(arms), Some(pose)) = (world.vehicles[&vid].arms, world.physics.car_pose(vid)) else { continue };
-            let arms = work_hen(world, vid, arms, &pose);
-            if let Some(vehicle) = world.vehicles.get_mut(&vid) {
-                vehicle.arms = Some(arms);
             }
         }
     }
