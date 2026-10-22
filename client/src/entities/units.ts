@@ -25,4 +25,11 @@ export interface Rotation {
 /** An entity in the game's units: the components it has, every field scaled by its unit. */
 export type Entity = Omit<Components, 'orientation'> & { orientation?: Rotation }
 
+/** A gun on a mount (`turret`), in the game's units: radians, and metres of range. */
+export type Turret = NonNullable<Entity['turret']>
+/** A plane's pilot weapons and engine, or a hen's eggs (`arms`), heat as 0..1. */
+export type Arms = NonNullable<Entity['arms']>
+/** Where a seat's rider looks, in radians, and what they hold (`crew`). */
+export type Rider = NonNullable<Entity['crew']>['riders'][number]
+
 export { blend, toGame } from './units.generated'

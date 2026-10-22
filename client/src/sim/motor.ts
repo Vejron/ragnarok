@@ -1,5 +1,5 @@
 import init, { ClientSim } from './wasm/sim'
-import { DAMAGE_TURRET, TURRET_GONE, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
+import { DAMAGE_TURRET, TURRET_GONE, type DriveState, type InputFrame } from '@/net/codec'
 import type { TileRef } from '@/world'
 import { ROADSTER_AIR } from './consts'
 
@@ -84,8 +84,26 @@ export function controlsOf(input: InputFrame, kind: number): CarControls {
   return { throttle: c[0]!, steer: c[1]!, handbrake: c[2] === 1, lift: c[3]!, powered: c[4] === 1, aim: c[5] === 1 ? [c[6]!, c[7]!] : null, boost: c[8] === 1, hop: c[9] === 1 }
 }
 
+/** A vehicle as the newest snapshot has it, which its driver's prediction starts from. Metres. */
+export interface VehiclePose {
+  id: number
+  kind: number
+  x: number
+  y: number
+  z: number
+  qx: number
+  qy: number
+  qz: number
+  qw: number
+  hp: number
+  /** `VehicleState::damage`'s parts, all 0 while unhurt. */
+  damage: readonly number[]
+  /** Air, stamina or battery left, 0..1, for a vehicle that has any. */
+  air: number | null
+}
+
 /** A vehicle of the newest snapshot, as a solid for the stickman, with its horizontal velocity. */
-export type Obstacle = Pick<VehicleState, 'id' | 'x' | 'y' | 'z' | 'qx' | 'qy' | 'qz' | 'qw'> & { kind?: number; vx?: number; vz?: number; damage?: readonly number[] }
+export type Obstacle = Pick<VehiclePose, 'id' | 'x' | 'y' | 'z' | 'qx' | 'qy' | 'qz' | 'qw'> & { kind?: number; vx?: number; vz?: number; damage?: readonly number[] }
 
 /**
  * The local stickman's world: the server's own physics (`crates/sim`, built to WASM by
@@ -174,9 +192,9 @@ export class SimMotor {
    * Puts simulated vehicle `id` where the server says it is: its pose, the driver's motion, and the
    * air, wear and turret the snapshot shows.
    */
-  setCarState(id: number, vehicle: VehicleState, drive: DriveState) {
+  setCarState(id: number, vehicle: VehiclePose, drive: DriveState) {
     // The wire carries a share of full (`air_byte` on the server).
-    const tank = vehicle.thrust ? vehicle.thrust.air * ROADSTER_AIR : Number.NaN
+    const tank = vehicle.air !== null ? vehicle.air * ROADSTER_AIR : Number.NaN
     const turret = vehicle.damage[DAMAGE_TURRET] !== TURRET_GONE
     this.sim.setCarState(id, vehicle.x, vehicle.y, vehicle.z, vehicle.qx, vehicle.qy, vehicle.qz, vehicle.qw, drive.vx, drive.vy, drive.vz, drive.wx, drive.wy, drive.wz, drive.steer, drive.spin, tank, vehicle.hp, Uint8Array.from(vehicle.damage), turret)
   }

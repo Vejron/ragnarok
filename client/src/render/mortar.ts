@@ -2,7 +2,8 @@ import { Group, Mesh, boxGeometry, cylinderGeometry, type Node } from '@ragnarok
 import * as THREE from 'three'
 import { toonMaterial } from './toon'
 import type { VehicleModel } from './car'
-import type { Turret } from '@/net/codec'
+import type { Turret } from '@/entities/units'
+import { TURRET_STOWED } from '@/net/codec'
 import { MORTAR_BARREL_LENGTH, MORTAR_GUN_PIVOT, MORTAR_SEAT_HEAD, MORTAR_TRACK_HALF, MORTAR_WHEEL_RADIUS } from '@/sim/consts'
 
 /** Fore and aft of each axle, metres (`axles` in `spec.rs`). */
@@ -105,7 +106,7 @@ interface Trail {
  * unit. The mount turns with the gun's traverse and the cradle lifts with its elevation, so the barrel's
  * line is the server's aim.
  *
- * Hitched (`turret.stowed`) it folds for travel: the barrel swings round onto the lock over the rear,
+ * Hitched (`TURRET_STOWED`) it folds for travel: the barrel swings round onto the lock over the rear,
  * then the trails close into a tow bar at the hitch and the firing pad lifts. Let go, it unfolds the same
  * way backwards. The fold is only drawn: the server fires only an unhitched gun.
  */
@@ -244,7 +245,7 @@ export class MortarModel implements VehicleModel {
     this.root.quaternion.set(...rotation)
     this.forward.set(0, 0, -1).applyQuaternion(this.root.quaternion)
     const now = performance.now()
-    const stowed = turret?.stowed ? 1 : 0
+    const stowed = turret && (turret.flags & TURRET_STOWED) !== 0 ? 1 : 0
     if (this.placed) {
       // Wheels turn with the ground they roll over.
       const ahead = this.forward.x * (position[0] - this.last.x) + this.forward.y * (position[1] - this.last.y) + this.forward.z * (position[2] - this.last.z)

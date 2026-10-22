@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { TICK_DT, ROADSTER_AIR } from './consts'
-import { controlsOf, type CarBodyState, type SimMotor } from './motor'
-import type { DriveState, InputFrame, VehicleState } from '@/net/codec'
+import { controlsOf, type CarBodyState, type SimMotor, type VehiclePose } from './motor'
+import type { DriveState, InputFrame } from '@/net/codec'
 
 /** A correction larger than this is a teleport (respawn, unflip), not a misprediction: snap. */
 const SNAP_DISTANCE = 3
@@ -76,7 +76,7 @@ export class VehicleDriver {
   }
 
   /** Rewinds to the server's state as of input `ack` and replays everything newer. */
-  reconcile(ack: number, vehicle: VehicleState, drive: DriveState) {
+  reconcile(ack: number, vehicle: VehiclePose, drive: DriveState) {
     this.acknowledge(ack)
     if (this.id !== vehicle.id || this.kind !== vehicle.kind) {
       this.leave()

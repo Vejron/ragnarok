@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { VehicleDriver } from '@/sim/driver'
-import { controlsOf, SimMotor, type CarControls } from '@/sim/motor'
+import { controlsOf, SimMotor, type CarControls, type VehiclePose } from '@/sim/motor'
 import { heightIn, type TileGround } from '@/sim/terrain'
 import { f32 } from '@/sim/round'
 import { BUTTON_CROUCH, BUTTON_JUMP, BUTTON_RUN, LOITER_SPEED, TICK_DT, vehicleMaxHp } from '@/sim/consts'
-import { KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, type DriveState, type InputFrame, type VehicleState } from '@/net/codec'
+import { KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, type DriveState, type InputFrame } from '@/net/codec'
 import { manifestBytes, tileBytes } from './worlds'
 
 // Every vehicle here is driven by the server's own physics (`crates/sim`, built to WASM), and the
@@ -327,7 +327,7 @@ describe('driving a predicted vehicle', () => {
   })
 
   /** What the server would send after `ticks` of the inputs: quantized as on the wire. */
-  async function serverState(kind: number, ticks: number): Promise<{ vehicle: VehicleState; drive: DriveState }> {
+  async function serverState(kind: number, ticks: number): Promise<{ vehicle: VehiclePose; drive: DriveState }> {
     const server = await field(200)
     server.startCar(3, kind, [0, 1, 0])
     // Settle first, the way a parked car has before anyone boards it.
@@ -343,7 +343,7 @@ describe('driving a predicted vehicle', () => {
     return {
       vehicle: {
         id: 3, kind, x: cm(s.position[0]), y: cm(s.position[1]), z: cm(s.position[2]),
-        qx, qy, qz, qw: Math.sqrt(1 - qx * qx - qy * qy - qz * qz), steer: 0, seats: [1, 0, 0, 0], turret: null, hp: vehicleMaxHp(kind), damage: [0, 0, 0, 0, 0, 0, 0, 0], arms: null, thrust: null, crew: [],
+        qx, qy, qz, qw: Math.sqrt(1 - qx * qx - qy * qy - qz * qz), hp: vehicleMaxHp(kind), damage: [0, 0, 0, 0, 0, 0, 0, 0], air: null,
       },
       drive: {
         vx: cm(s.linvel[0]), vy: cm(s.linvel[1]), vz: cm(s.linvel[2]),

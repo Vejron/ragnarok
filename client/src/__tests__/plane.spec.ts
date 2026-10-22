@@ -5,10 +5,11 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { boxOf, triangleCount } from './helpers'
 import { parsePlaneModel, PlaneModel } from '@/render/plane'
 import { PLANE_BOMBS, PLANE_GUN_PIVOTS, PLANE_REAR_LENGTH, PLANE_REAR_PIVOT } from '@/sim/consts'
-import { ARMS_CUT, type Arms } from '@/net/codec'
+import { ARMS_CUT } from '@/net/codec'
+import type { Arms } from '@/entities/units'
 
 const IDENTITY: [number, number, number, number] = [0, 0, 0, 1]
-const ARMS: Arms = { shots: 0, heat: 0, rearHeat: 0, bombs: PLANE_BOMBS, flags: 0 }
+const ARMS: Arms = { shots: 0, heat: 0, rear_heat: 0, bombs: PLANE_BOMBS, flags: 0 }
 
 beforeAll(async () => {
   const bytes = readFileSync(resolve(process.cwd(), 'public/models/plane.glb'))
@@ -64,9 +65,9 @@ describe('PlaneModel', () => {
 
   it('swings the ring gun all the way round and ends its barrel at the muzzle', () => {
     const plane = new PlaneModel(1)
-    plane.update([0, 0, 0], IDENTITY, 0, [0, 4], { yaw: 0, pitch: 0, shots: 0, range: 0, stowed: false }, ARMS)
+    plane.update([0, 0, 0], IDENTITY, 0, [0, 4], { yaw: 0, pitch: 0, shots: 0, range: 0, flags: 0 }, ARMS)
     expect(plane.barrel().direction.z).toBeCloseTo(-1, 3)
-    plane.update([0, 0, 0], IDENTITY, 0, [0, 4], { yaw: Math.PI, pitch: 0.5, shots: 0, range: 0, stowed: false }, ARMS)
+    plane.update([0, 0, 0], IDENTITY, 0, [0, 4], { yaw: Math.PI, pitch: 0.5, shots: 0, range: 0, flags: 0 }, ARMS)
     const { origin, direction } = plane.barrel()
     expect(direction.z).toBeGreaterThan(0.8)
     expect(direction.y).toBeCloseTo(Math.sin(0.5), 3)

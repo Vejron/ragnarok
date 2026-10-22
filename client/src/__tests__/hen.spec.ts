@@ -4,14 +4,15 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { boxOf, triangleCount } from './helpers'
 import { Mesh } from '@ragnarok/engine'
 import { HenModel, parseHenModel } from '@/render/hen'
-import { THRUST_AIR, THRUST_GLIDE, THRUST_LIFT, type Arms } from '@/net/codec'
+import { THRUST_AIR, THRUST_GLIDE, THRUST_LIFT } from '@/net/codec'
+import type { Arms } from '@/entities/units'
 
 const IDENTITY: [number, number, number, number] = [0, 0, 0, 1]
 const AT: [number, number, number] = [0, 5.3, 0]
 const arms = (shots: number): Arms => ({
   shots,
   heat: 0,
-  rearHeat: 0,
+  rear_heat: 0,
   bombs: 6,
   flags: 0,
 })

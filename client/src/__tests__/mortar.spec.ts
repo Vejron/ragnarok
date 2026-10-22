@@ -3,10 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { boxOf, triangleCount } from './helpers'
 import { MortarModel, STOW_SECONDS } from '@/render/mortar'
 import { MORTAR_BARREL_LENGTH, MORTAR_GUN_PIVOT, MORTAR_TRACK_HALF } from '@/sim/consts'
-import type { Turret } from '@/net/codec'
+import { TURRET_STOWED } from '@/net/codec'
+import type { Turret } from '@/entities/units'
 
 const IDENTITY: [number, number, number, number] = [0, 0, 0, 1]
-const AIM: Turret = { yaw: 0.5, pitch: 1.0, shots: 0, range: 120, stowed: false }
+const AIM: Turret = { yaw: 0.5, pitch: 1.0, shots: 0, range: 120, flags: 0 }
 const named = (mortar: MortarModel, name: string) => mortar.root.getObjectByName(name)!
 const world = (mortar: MortarModel, name: string) => {
   mortar.root.updateMatrixWorld(true)
@@ -47,7 +48,7 @@ describe('MortarModel', () => {
 
   it('is drawn folded straight away when first seen hitched: barrel on the rear lock, trails shut at the hitch', () => {
     const mortar = new MortarModel(1)
-    mortar.update([0, 0, 0], IDENTITY, 0, [0], { ...AIM, stowed: true })
+    mortar.update([0, 0, 0], IDENTITY, 0, [0], { ...AIM, flags: TURRET_STOWED })
     const { direction } = mortar.barrel()
     expect(direction.z).toBeCloseTo(1, 3)
     const left = world(mortar, 'tip_L')
@@ -61,7 +62,7 @@ describe('MortarModel', () => {
     let now = 1000
     vi.spyOn(performance, 'now').mockImplementation(() => now)
     const mortar = new MortarModel(1)
-    mortar.update([0, 0, 0], IDENTITY, 0, [0], { ...AIM, stowed: true })
+    mortar.update([0, 0, 0], IDENTITY, 0, [0], { ...AIM, flags: TURRET_STOWED })
     const padUp = world(mortar, 'pad').y
 
     now += (STOW_SECONDS * 1000) / 4

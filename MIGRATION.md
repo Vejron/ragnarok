@@ -327,7 +327,7 @@ not change.
 - [x] **4.2** The store, with projectiles and items on the ground as its first presenters: the rocket
       interpolator and the adapter's rocket and item lists go.
 - [x] **4.3** Stickmen and the rooster from the store: the entity interpolator goes.
-- [ ] **4.4** Vehicles from the store, as a model presenter and component presenters: the vehicle
+- [x] **4.4** Vehicles from the store, as a model presenter and component presenters: the vehicle
       interpolator goes, along with the per-vehicle maps in `game.ts`.
 - [ ] **4.5** The adapter and v1's rows are deleted:
   - client: `v1Rows`/`v1Scene`, `RawEntity`/`RawVehicle`, `EntityState`/`VehicleState`/`RocketState`/
@@ -1635,3 +1635,72 @@ their seat in the vehicle takes it over.
 **Checks:** client 385 passing; `vue-tsc` and oxlint add nothing.
 
 **Next:** 4.4, vehicles from the store.
+
+### 2026-10-22: Phase 4.4, vehicles from the store
+
+The vehicle interpolator is gone, and so are `updateCars` and the per-vehicle maps in `game.ts`: `cars`,
+`vehicleFx`, `shots`, `forwardShots`, `lastArms`, `smokeOwed` and `turretsShed`. A third group of
+presenters, `machines`, runs first in the frame, because the camera follows what it draws:
+
+- **`Vehicles`** (`presenters/vehicles.ts`) draws the model at its pose: the predicted one for the
+  vehicle the local player drives, and the sampled one otherwise.
+  - It owns each vehicle's motion effects (`VehicleFx`: tyres, dust, spray), the engine's sound, and
+    the steps and wing beats of anything that walks.
+  - It publishes `placed`, this frame's vehicles with their parts, for the camera, the HUD, the
+    prompt and the seats.
+  - `model(id)` and `fx(id)` are for the shot events and the camera.
+- **One presenter per component:**
+
+  | Presenter | Component | Draws |
+  |---|---|---|
+  | `Turrets` | `turret` | A gun going off: flash, light, recoil, bang. A plane's rear ring gun is drawn as tracers. |
+  | `PlaneGuns` | `arms` | The forward guns' tracers. |
+  | `Wear` | `damage` | A car's wear, and a tank's turret thrown once and put back on repair. The `WEAPON_TURRET` event calls it too. |
+  | `Smoke` | `health` | Smoke as a vehicle dies, and the burning wreck's light. |
+  | `Jets` | `thrust` | Cold gas from the nozzles. |
+
+  Each keeps its own per-vehicle state and lets go of it in `remove`.
+
+**Types.**
+
+- The models now take the component types in game units (`Turret`, `Arms` and `Rider` in
+  `entities/units.ts`) rather than v1's. A mortar's `stowed` became `TURRET_STOWED` in `turret.flags`,
+  and a plane's `rearHeat` became `rear_heat`.
+- The motor and the driver take `VehiclePose` (`sim/motor.ts`) instead of `VehicleState`: just what
+  prediction needs. `poseOf` builds it from a vehicle entity.
+
+**The snapshot handler** no longer uses the adapter at all. It reads the rebuilt scene for:
+
+- the vehicles' poses, which make the solids the stickman is predicted against;
+- the local player's seat;
+- the driver's starting pose.
+
+**Changes in behaviour:** a vehicle leaving range goes when the picture reaches it, as everything now
+does. Smoke reads the vehicle's motion from this frame rather than the last.
+
+**Tests:** `vehicle-presenters.spec.ts` uses a real tank model and a recording world.
+
+- A vehicle is drawn at its pose, and the driven one at its predicted pose.
+- A gun's counter moving fires (flash, light, bang, and the local gunner's reload); first sight does
+  not.
+- A shot-off turret is thrown once, even when the event also says so, and a wreck burns.
+- A vehicle going lets go of its model and its sounds.
+
+The model tests use the new turret and arms types.
+
+**Browser.** A short headless session on the fixture world (`fixtures/world`: 9 tiles, 16 vehicles and
+a rooster), with a release server and the dev client:
+
+- the presenters drew all 16 vehicles and 24 items held;
+- walking, firing (16 bullets back), boarding a helicopter, flying it 54 m and getting out all
+  worked;
+- the rooster was held 17 m away;
+- prediction corrections stayed at 0.01 m;
+- the console was clean.
+
+**Progress:** `game.ts` is 1,595 lines (from 1,922), with 4 id-keyed maps and sets (from 15) and 30
+`KIND_*` branches.
+
+**Checks:** client 389 passing; `vue-tsc` and oxlint add nothing.
+
+**Next:** 4.5, deleting the adapter and v1's rows.

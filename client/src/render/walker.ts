@@ -4,7 +4,7 @@ import { Legs } from './legs'
 import { parseToonModel, unlitMaterial } from './models'
 import { toonMaterial } from './toon'
 import { WALKER_FOOT_HALF, WALKER_GUN_BARREL_DROP, WALKER_GUN_BARREL_X, WALKER_HALF_EXTENTS, WALKER_LEG_LENGTH, WALKER_LEG_SPRING, CAR_GRAVITY } from '@/sim/consts'
-import type { Turret } from '@/net/codec'
+import type { Turret } from '@/entities/units'
 import { colorFor } from '@/profile'
 import type { VehicleModel } from './car'
 

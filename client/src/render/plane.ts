@@ -3,7 +3,8 @@ import * as THREE from 'three'
 import { parseToonModel } from './models'
 import { toonMaterial } from './toon'
 import { PLANE_BOMBS, PLANE_REAR_LENGTH } from '@/sim/consts'
-import { ARMS_CUT, type Arms, type Turret } from '@/net/codec'
+import { ARMS_CUT } from '@/net/codec'
+import type { Arms, Turret } from '@/entities/units'
 import type { VehicleModel } from './car'
 
 export const PLANE_MODEL_URL = `${import.meta.env.BASE_URL}models/plane.glb`

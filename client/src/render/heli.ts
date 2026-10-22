@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { parseToonModel } from './models'
 import { toonMaterial } from './toon'
 import { HELI_GUN_LENGTH } from '@/sim/consts'
-import type { Turret } from '@/net/codec'
+import type { Turret } from '@/entities/units'
 import type { VehicleModel } from './car'
 
 export const HELI_MODEL_URL = `${import.meta.env.BASE_URL}models/heli.glb`
