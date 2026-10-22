@@ -208,7 +208,7 @@ files under `net/`, `protocol.rs`, `delta.rs` and `replication.rs`.
 
 Each step is tested on its own. Only the last one changes the wire.
 
-- [ ] **3.1** `shared::replicated`: the components, their wire ids, the generic diff and apply, and
+- [x] **3.1** `shared::replicated`: the components, their wire ids, the generic diff and apply, and
       the schema export. Unit tests port `delta.rs`'s tests: an unchanged turret is not resent, a
       repair clears damage, and so on.
 - [ ] **3.2** Server: the component scene built from the ECS. Parity oracle: for the full-room
@@ -1115,3 +1115,57 @@ Three new tests, each run first against the old code to see it fail:
 **Checks:** server 268, sim 111, client 362 tests (on a fresh WASM build), all passing; workspace
 clippy clean. `full_room_tick_cost`: `Vehicles` 31.4–34.0 µs, about 1–2 µs higher on these runs, mostly
 the new check of each living creature against the cars. Within the noise of the runs above.
+
+### 2026-10-22: Phase 3.1, replicated components
+
+`crates/shared/src/replicated.rs` defines protocol v2's entity state. Nothing uses it on the wire yet.
+
+- **One list.** One `replicated!` invocation lists every component in wire-id order: its id, its
+  name, its fields, and `diff` (sent as a difference) or `set` (sent whole). There are 17:
+  - `place`, `heading`, `motion`, `orientation`, `steer` and `velocity` are `diff`;
+  - `flags`, `turret`, `crew`, `thrust`, `arms`, `seats`, `health`, `damage`, `kind`,
+    `projectile` and `pickup` are `set`.
+
+  They carry exactly what today's rows do, field for field, so step 3.4's adapter can be exact.
+- **Made from the list:**
+  - each component's struct and its `Component` impl;
+  - `Replicated`, an entity as the components it has (one `Option` each);
+  - `Update`, one snapshot's word on one entity;
+  - `Replicated::update`, `Replicated::apply`, `Update`'s MessagePack encoding and `schema()`.
+- **The wire** is `[id, set, (cleared), fields…]`:
+  - the fields of each set component go inline in wire-id order, with no array of their own;
+  - bit 31 of `set` says a `cleared` mask follows, which is how a repaired hull drops `damage`.
+- **Diff rule.** A `diff` component goes as the difference from the receiver's baseline when the
+  baseline has it, and whole when not. Its fields are widened to `i32` either way, so the decoder
+  needs no knowledge of the baseline to read it.
+- **Scenes.** `diff(base, now)` and `apply(base, updates, removed)` over id-ordered scenes replace
+  what `delta.rs` does per family.
+- **Schema.** `client/src/net/schema.generated.json` is the schema the client will decode with. A
+  test fails while it is stale; `UPDATE_PARITY=1 cargo test -p shared` rewrites it, as it does the
+  gameplay tables.
+
+10 tests cover:
+
+- a new entity with every component round-trips;
+- nothing changed sends nothing;
+- a walking stickman sends only `place` and `heading`, as differences;
+- an unmoved turret is not resent;
+- a repair clears damage, and new hurt brings it back;
+- a component the baseline lacks goes whole;
+- differences across a field's whole range;
+- a scene with arrivals, changes and departures;
+- the schema file.
+
+Sizes, against today's rows for the same change:
+
+| Update | v1 | v2 |
+|---|---|---|
+| A walking stickman | 11 bytes | 7 bytes |
+| A moving tank turning its turret | 24 bytes | 13 bytes |
+
+A new stickman is 19 bytes and a new tank 29. v1 sent `flags`, `hp` and the whole turret on every
+change; v2 sends only what changed.
+
+**Checks:** shared 72 tests, all passing; clippy clean.
+
+**Next:** 3.2, the component scene built from the server's ECS, checked against today's rows.
