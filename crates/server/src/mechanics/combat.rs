@@ -3,12 +3,13 @@ use super::armor::Outcome;
 use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
 use super::life::{blasted, damage_entity, first_hurtbox_hit, hit_mark};
 use super::spawn;
-use crate::game::{Player, Rocket, TEAM_NONE, World, starting_hotbar};
+use super::projectiles::{self, Flying, Stage};
+use crate::game::{Player, TEAM_NONE, World, starting_hotbar};
 use sim::Obj;
 use shared::consts::*;
 use shared::items::*;
 use shared::vehicles::{Exposure, crew_gun, vehicle_def};
-use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, KIND_PLANE, Kill, S_HIT, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_EGG, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, BulletSpawn, WEAPON_BULLET, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_PELLET, WEAPON_ROADKILL, WEAPON_WRECK,
+use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, KIND_PLANE, Kill, S_HIT, PROJECTILE_BULLET, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_ROCKET, S_KILL, ShotEvent, BulletSpawn, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_PELLET, WEAPON_ROADKILL, WEAPON_WRECK,
     DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_EGG, WEAPON_FLARE, WEAPON_LOITER, WEAPON_SHELL};
 use shared::quant::{from_mrad, to_cm, to_cm_i16, to_mrad};
 
@@ -150,7 +151,7 @@ fn first_body_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f32, igno
 /// if any) stops it. A round that strikes a glazed vehicle (`Exposure::Glazed`) goes on through the
 /// glass to its crew, as far as whatever is behind them. `range` bounds that second look.
 #[allow(clippy::too_many_arguments)]
-fn round_hit(world: &World, origin: [f32; 3], dir: [f32; 3], reach: f32, wall: Option<u32>, range: f32, shooter: Option<u32>, back: u32) -> Option<(u32, f32)> {
+pub(super) fn round_hit(world: &World, origin: [f32; 3], dir: [f32; 3], reach: f32, wall: Option<u32>, range: f32, shooter: Option<u32>, back: u32) -> Option<(u32, f32)> {
     let hit = first_player_hit(world, origin, dir, reach, shooter, back);
     if hit.is_some() {
         return hit;
@@ -176,7 +177,7 @@ pub fn same_team(world: &World, a: u32, b: u32) -> bool {
 }
 
 /// A `Hit` for `target`, which is about `at`.
-fn hit_at(role: u8, kind: u8, amount: u8, weapon: u8, bearing: i16, at: [f32; 3], target: u32) -> Hit {
+pub(super) fn hit_at(role: u8, kind: u8, amount: u8, weapon: u8, bearing: i16, at: [f32; 3], target: u32) -> Hit {
     let [x, y, z] = at.map(to_cm);
     Hit { tag: S_HIT, role, kind, amount, weapon, bearing, x, y, z, target }
 }
@@ -201,7 +202,7 @@ pub fn damage_from(world: &mut World, victim: u32, amount: u8, attacker: Option<
 
 /// Whether a round that reaches `t` along `dir` from `origin` hits `victim` (where they stood `back`
 /// ticks ago) in the head.
-fn is_headshot(world: &World, victim: u32, origin: [f32; 3], dir: [f32; 3], t: f32, back: u32) -> bool {
+pub(super) fn is_headshot(world: &World, victim: u32, origin: [f32; 3], dir: [f32; 3], t: f32, back: u32) -> bool {
     body_of(world, victim, back).is_some_and(|body| origin[1] + dir[1] * t > body.head_y)
 }
 
@@ -591,13 +592,6 @@ fn wreck(world: &mut World, vid: u32) {
     tracing::debug!(vid, "vehicle wrecked");
 }
 
-fn burst_rocket(world: &mut World, owner: u32, point: [f32; 3], dir: [f32; 3]) {
-    let [x, y, z] = point.map(to_cm);
-    world.shots.push(ShotEvent { shooter: owner, weapon: WEAPON_ROCKET, x, y, z });
-    // A dead or departed owner still gets the blast, just not the credit.
-    let attacker = world.players.contains_key(&owner).then_some(owner);
-    blast(world, Blast { point, radius: ROCKET_BLAST_RADIUS, damage: ROCKET_DAMAGE, knock: ROCKET_KNOCK, dir, attacker, weapon: WEAPON_ROCKET });
-}
 
 /// Launches a rocket from player `id`'s eye. No item does this yet; it is kept for a launcher pickup.
 #[allow(dead_code)]
@@ -610,130 +604,23 @@ fn fire_rocket(world: &mut World, id: u32) {
     let eye = [c.position[0], c.position[1] + eye_height(input.buttons(), c.prone), c.position[2]];
     // Up against a wall it bursts right there instead of starting on its far side.
     if let Some(t) = world.physics.cast_ray(eye, dir, ROCKET_MUZZLE, 0) {
-        burst_rocket(world, id, std::array::from_fn(|i| eye[i] + dir[i] * t), dir);
+        projectiles::burst_at(world, PROJECTILE_ROCKET, id, std::array::from_fn(|i| eye[i] + dir[i] * t), dir);
         return;
     }
-    let rocket_id = world.alloc_id();
-    world.rockets.insert(
-        rocket_id,
-        Rocket {
-            kind: PROJECTILE_ROCKET,
-            owner: id,
-            source: 0,
-            position: std::array::from_fn(|i| eye[i] + dir[i] * ROCKET_MUZZLE),
-            velocity: dir.map(|v| v * ROCKET_SPEED),
-            ttl: ROCKET_TTL_TICKS,
-            item: 0,
-            back: 0,
-            flown: 0.0,
-        },
-    );
+    world.launch(Flying {
+        kind: PROJECTILE_ROCKET,
+        owner: id,
+        source: 0,
+        position: std::array::from_fn(|i| eye[i] + dir[i] * ROCKET_MUZZLE),
+        velocity: dir.map(|v| v * ROCKET_SPEED),
+        ttl: ROCKET_TTL_TICKS,
+        item: 0,
+        back: 0,
+        flown: 0.0,
+    });
 }
 
-/// Flies one bullet a tick: a little gravity, then along its velocity until it meets a wall, a vehicle
-/// or a stickman. A stickman takes the gun's damage, less the longer it flew; a vehicle a quarter of it.
-/// Stickmen are met where they were when the shooter fired (`back` ticks ago), so a shot that was on
-/// target on the shooter's screen is on target here. Clients fly it themselves (`BulletSpawn`); the
-/// shot event at its end says where it stopped.
-fn step_bullet(world: &mut World, id: u32, dt: f32) {
-    let Some(mut bullet) = world.rockets.get(&id).copied() else { return };
-    let item = def(bullet.item).copied();
-    bullet.velocity[1] -= GRAVITY * BULLET_GRAVITY_SCALE * dt;
-    let speed = bullet.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
-    let dir = bullet.velocity.map(|v| v / speed);
-    let step = speed * dt;
-    // A passenger's round leaves through their own vehicle (`source`) rather than stopping in it.
-    let wall = world.physics.cast_ray_hit(bullet.position, dir, step, bullet.source);
-    let reach = wall.map_or(step, |(t, _)| t);
-    let hit = round_hit(world, bullet.position, dir, reach, wall.and_then(|(_, car)| car), step, Some(bullet.owner), bullet.back);
-    let creature = first_hurtbox_hit(world, bullet.position, dir, hit.map_or(reach, |(_, t)| t.min(reach)));
-    bullet.ttl = bullet.ttl.saturating_sub(1);
-    if hit.is_some() || creature.is_some() || wall.is_some() {
-        world.rockets.remove(&id);
-        let end = creature.map(|(_, t)| t).or(hit.map(|(_, t)| t)).unwrap_or(reach);
-        let point: [f32; 3] = std::array::from_fn(|i| bullet.position[i] + dir[i] * end);
-        let (base, falloff, weapon) = item.map_or((0, Falloff::NONE, WEAPON_RIFLE), |d| (d.damage, d.falloff, d.weapon));
-        let damage_dealt = falloff.apply(base, bullet.flown + end);
-        let attacker = world.players.contains_key(&bullet.owner).then_some(bullet.owner);
-        if let Some((target, _)) = creature {
-            damage_entity(world, target, damage_dealt);
-            if let (Some(owner), Some((kind, at))) = (attacker, hit_mark(world, target)) {
-                world.hits.push((owner, hit_at(HIT_DEALT, kind, damage_dealt, weapon, BEARING_NONE, at, target)));
-            }
-        } else if let Some((victim, _)) = hit {
-            let head = hit.is_some_and(|(_, t)| is_headshot(world, victim, bullet.position, dir, t, bullet.back));
-            damage_hit(world, victim, damage_dealt, attacker, weapon, None, head);
-        } else if let Some((_, Some(car))) = wall {
-            match super::armor::armor_of(world, car, bullet.position, dir, reach) {
-                Some(Outcome::Ricochet { .. }) => super::armor::announce_ricochet(world, car, point),
-                struck => {
-                    let scale = if let Some(Outcome::Hit { scale, .. }) = struck { scale } else { 1.0 };
-                    let chip = (f32::from((base / 4).max(1)) * scale).round().max(1.0) as u8;
-                    damage_vehicle(world, car, chip, attacker);
-                    super::vehicles::shoot_wheels(world, car, point, f32::from(base), super::vehicles::BULLET_WHEEL_REACH);
-                }
-            }
-        } else if wall.is_some() {
-            hit_object(world, bullet.position, dir, reach, base);
-        }
-        let [x, y, z] = point.map(to_cm);
-        world.shots.push(ShotEvent { shooter: id, weapon: WEAPON_BULLET, x, y, z });
-        return;
-    }
-    bullet.flown += step;
-    bullet.position = std::array::from_fn(|i| bullet.position[i] + dir[i] * step);
-    if bullet.ttl == 0 || bullet.position[1] < KILL_Y {
-        world.rockets.remove(&id);
-    } else {
-        world.rockets.insert(id, bullet);
-    }
-}
 
-/// Flies every rocket one tick, and bursts the ones that meet something.
-fn step_rockets(world: &mut World, dt: f32) {
-    let ids: Vec<u32> = world.rockets.keys().copied().collect();
-    for id in ids {
-        let Some(rocket) = world.rockets.get(&id).copied() else { continue };
-        if rocket.kind == PROJECTILE_GRENADE || rocket.kind == PROJECTILE_EGG {
-            step_grenade(world, id, dt);
-            continue;
-        }
-        if rocket.kind == PROJECTILE_BULLET {
-            step_bullet(world, id, dt);
-            continue;
-        }
-        if rocket.kind == PROJECTILE_FLARE {
-            step_flare(world, id, dt);
-            continue;
-        }
-        // Shells and bombs are the `Gunnery` mechanic's.
-        if rocket.kind == PROJECTILE_SHELL || rocket.kind == PROJECTILE_CANNON || rocket.kind == PROJECTILE_BOMB || rocket.kind == PROJECTILE_MORTAR {
-            continue;
-        }
-        // A rocket's motor keeps pushing it along its heading, up to its top speed.
-        let speed = rocket.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
-        let dir = rocket.velocity.map(|v| v / speed);
-        let speed = (speed + ROCKET_ACCEL * dt).min(ROCKET_MAX_SPEED.max(speed));
-        if let Some(r) = world.rockets.get_mut(&id) {
-            r.velocity = dir.map(|v| v * speed);
-        }
-        let step = speed * dt;
-        let wall = world.physics.cast_ray(rocket.position, dir, step, rocket.source);
-        let player = first_player_hit(world, rocket.position, dir, wall.unwrap_or(step), Some(rocket.owner), 0);
-        let end = player.map(|(_, t)| t).or(wall);
-        let ttl = rocket.ttl.saturating_sub(1);
-        if let Some(t) = end {
-            world.rockets.remove(&id);
-            burst_rocket(world, rocket.owner, std::array::from_fn(|i| rocket.position[i] + dir[i] * t), dir);
-        } else if ttl == 0 {
-            world.rockets.remove(&id);
-            burst_rocket(world, rocket.owner, std::array::from_fn(|i| rocket.position[i] + dir[i] * step), dir);
-        } else if let Some(rocket) = world.rockets.get_mut(&id) {
-            rocket.position = std::array::from_fn(|i| rocket.position[i] + dir[i] * step);
-            rocket.ttl = ttl;
-        }
-    }
-}
 
 /// A unit vector `spread` radians at most from `dir`, uniformly in a cone.
 pub fn scatter(world: &mut World, dir: [f32; 3], spread: f32) -> [f32; 3] {
@@ -781,7 +668,7 @@ fn effective_spread(item: &ItemDef, buttons: u16) -> f32 {
 }
 
 /// A round that ended in the world: damages the building or tree it struck, if it was one.
-fn hit_object(world: &mut World, origin: [f32; 3], dir: [f32; 3], reach: f32, damage: u8) {
+pub(super) fn hit_object(world: &mut World, origin: [f32; 3], dir: [f32; 3], reach: f32, damage: u8) {
     // The ray stops at the surface; look a hair past it to be inside the collider.
     if let Some((_, Some(object))) = world.physics.cast_ray_object(origin, dir, reach + 0.05) {
         // Bullets only chip a wall: a third of what they do to a tree, and never nothing.
@@ -842,23 +729,19 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
 
     if item.projectile {
         // The round leaves the eye and flies on its own, so it takes time to arrive and drops a little.
-        let bullet_id = world.alloc_id();
         let velocity = dir.map(|v| v * BULLET_SPEED);
         let gun = gun_for_weapon(item.weapon);
-        world.rockets.insert(
-            bullet_id,
-            Rocket {
-                kind: PROJECTILE_BULLET,
-                owner: id,
-                source: vehicle,
-                position: origin,
-                velocity,
-                ttl: (item.range / BULLET_SPEED * TICK_RATE as f32).ceil() as u32,
-                item: gun,
-                back,
-                flown: 0.0,
-            },
-        );
+        let bullet_id = world.launch(Flying {
+            kind: PROJECTILE_BULLET,
+            owner: id,
+            source: vehicle,
+            position: origin,
+            velocity,
+            ttl: (item.range / BULLET_SPEED * TICK_RATE as f32).ceil() as u32,
+            item: gun,
+            back,
+            flown: 0.0,
+        });
         // Clients fly it themselves from this: where, which way, how fast, and when.
         let [x, y, z] = origin.map(to_cm);
         let [vx, vy, vz] = velocity.map(to_cm_i16);
@@ -941,82 +824,20 @@ fn throw_grenade(world: &mut World, id: u32) {
     let eye = [c.position[0], c.position[1] + eye_height(input.buttons(), c.prone), c.position[2]];
     // Up against a wall it starts at the wall instead of on its far side.
     let reach = world.physics.cast_ray(eye, dir, GRENADE_MUZZLE + GRENADE_RADIUS, 0).map_or(GRENADE_MUZZLE, |t| (t - GRENADE_RADIUS).max(0.0));
-    let grenade_id = world.alloc_id();
-    world.rockets.insert(
-        grenade_id,
-        Rocket {
-            kind: PROJECTILE_GRENADE,
-            owner: id,
-            source: 0,
-            position: std::array::from_fn(|i| eye[i] + dir[i] * reach),
-            velocity: dir.map(|v| v * GRENADE_SPEED),
-            ttl: GRENADE_FUSE_TICKS,
-            item: 0,
-            back: 0,
-            flown: 0.0,
-        },
-    );
+    world.launch(Flying {
+        kind: PROJECTILE_GRENADE,
+        owner: id,
+        source: 0,
+        position: std::array::from_fn(|i| eye[i] + dir[i] * reach),
+        velocity: dir.map(|v| v * GRENADE_SPEED),
+        ttl: GRENADE_FUSE_TICKS,
+        item: 0,
+        back: 0,
+        flown: 0.0,
+    });
 }
 
-/// A grenade or a hen's egg going off where it lies.
-fn burst_grenade(world: &mut World, grenade: &Rocket) {
-    let egg = grenade.kind == PROJECTILE_EGG;
-    let weapon = if egg { WEAPON_EGG } else { WEAPON_GRENADE };
-    let [x, y, z] = grenade.position.map(to_cm);
-    world.shots.push(ShotEvent { shooter: grenade.owner, weapon, x, y, z });
-    let attacker = world.players.contains_key(&grenade.owner).then_some(grenade.owner);
-    let (radius, damage, knock) = if egg { (HEN_EGG_BLAST_RADIUS, HEN_EGG_DAMAGE, HEN_EGG_KNOCK) } else { (GRENADE_BLAST_RADIUS, GRENADE_DAMAGE, GRENADE_KNOCK) };
-    blast(world, Blast { point: grenade.position, radius, damage, knock, dir: [0.0, 1.0, 0.0], attacker, weapon });
-}
 
-/// Flies one grenade a tick: gravity, a bounce off whatever it meets, and a burst when the fuse is out.
-/// A hen's egg flies the same way, a little bigger and bouncing less, and also bursts the moment it
-/// meets something harder than `HEN_EGG_SMASH_SPEED`.
-fn step_grenade(world: &mut World, id: u32, dt: f32) {
-    let Some(mut grenade) = world.rockets.get(&id).copied() else { return };
-    let egg = grenade.kind == PROJECTILE_EGG;
-    let (radius, bounce) = if egg { (HEN_EGG_RADIUS, HEN_EGG_BOUNCE) } else { (GRENADE_RADIUS, GRENADE_BOUNCE) };
-    let mut smashed = false;
-    grenade.ttl = grenade.ttl.saturating_sub(1);
-    grenade.velocity[1] -= GRAVITY * dt;
-    let mut remaining = dt;
-    // A grenade can meet a surface more than once in a tick in a corner; three is plenty.
-    for _ in 0..3 {
-        let speed = grenade.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
-        if speed < 1e-3 {
-            break;
-        }
-        let dir = grenade.velocity.map(|v| v / speed);
-        let step = speed * remaining;
-        match world.physics.cast_ray_normal(grenade.position, dir, step + radius) {
-            Some((t, normal)) => {
-                let travel = (t - radius).clamp(0.0, step);
-                grenade.position = std::array::from_fn(|i| grenade.position[i] + dir[i] * travel);
-                // Reflect, keeping some of the speed, and rolling to rest on a floor.
-                let along: f32 = (0..3).map(|i| grenade.velocity[i] * normal[i]).sum();
-                if egg && -along > HEN_EGG_SMASH_SPEED {
-                    smashed = true;
-                    break;
-                }
-                grenade.velocity = std::array::from_fn(|i| (grenade.velocity[i] - 2.0 * along * normal[i]) * bounce);
-                if grenade.velocity.iter().map(|v| v * v).sum::<f32>() < 0.5 {
-                    grenade.velocity = [0.0; 3];
-                }
-                remaining *= 1.0 - travel / step.max(1e-6);
-            }
-            None => {
-                grenade.position = std::array::from_fn(|i| grenade.position[i] + dir[i] * step);
-                break;
-            }
-        }
-    }
-    if smashed || grenade.ttl == 0 || grenade.position[1] < KILL_Y {
-        world.rockets.remove(&id);
-        burst_grenade(world, &grenade);
-    } else {
-        world.rockets.insert(id, grenade);
-    }
-}
 
 /// Fires a flare from player `id`'s eye, well above where they look so it goes up.
 fn fire_flare(world: &mut World, id: u32) {
@@ -1030,43 +851,9 @@ fn fire_flare(world: &mut World, id: u32) {
     let position: [f32; 3] = std::array::from_fn(|i| eye[i] + dir[i] * reach);
     let [x, y, z] = position.map(to_cm);
     world.shots.push(ShotEvent { shooter: id, weapon: WEAPON_FLARE, x, y, z });
-    let flare_id = world.alloc_id();
-    world.rockets.insert(
-        flare_id,
-        Rocket { kind: PROJECTILE_FLARE, owner: id, source: 0, position, velocity: dir.map(|v| v * FLARE_SPEED), ttl: FLARE_BURN_TICKS, item: 0, back: 0, flown: 0.0 },
-    );
+    world.launch(Flying { kind: PROJECTILE_FLARE, owner: id, source: 0, position, velocity: dir.map(|v| v * FLARE_SPEED), ttl: FLARE_BURN_TICKS, item: 0, back: 0, flown: 0.0 });
 }
 
-/// Flies one flare a tick: it climbs under gravity, then sinks slowly under its parachute while its
-/// drift dies away, stops on whatever it meets, and is gone when it has burnt out.
-fn step_flare(world: &mut World, id: u32, dt: f32) {
-    let Some(mut flare) = world.rockets.get(&id).copied() else { return };
-    flare.ttl = flare.ttl.saturating_sub(1);
-    if flare.velocity != [0.0; 3] {
-        flare.velocity[1] -= GRAVITY * dt;
-        if flare.velocity[1] < 0.0 {
-            let keep = (-FLARE_DRAG * dt).exp();
-            flare.velocity[0] *= keep;
-            flare.velocity[2] *= keep;
-            flare.velocity[1] = flare.velocity[1].max(-FLARE_SINK);
-        }
-        let speed = flare.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
-        let dir = flare.velocity.map(|v| v / speed);
-        let step = speed * dt;
-        match world.physics.cast_ray(flare.position, dir, step + FLARE_RADIUS, 0) {
-            Some(t) => {
-                flare.position = std::array::from_fn(|i| flare.position[i] + dir[i] * (t - FLARE_RADIUS).clamp(0.0, step));
-                flare.velocity = [0.0; 3];
-            }
-            None => flare.position = std::array::from_fn(|i| flare.position[i] + dir[i] * step),
-        }
-    }
-    if flare.ttl == 0 || flare.position[1] < KILL_Y {
-        world.rockets.remove(&id);
-    } else {
-        world.rockets.insert(id, flare);
-    }
-}
 
 /// The slot in hand after it has been used once: one fewer, and empty when none are left.
 fn spend(slot: &mut ItemSlot) {
@@ -1125,14 +912,14 @@ fn use_item(world: &mut World, id: u32) {
             }
         }
         ItemKind::Grenade => {
-            if fresh && player.fire_cooldown == 0 && world.rockets.len() < MAX_ROCKETS + MAX_GRENADES {
+            if fresh && player.fire_cooldown == 0 && projectiles::count(&world.entities, None) < MAX_ROCKETS + MAX_GRENADES {
                 player.fire_cooldown = item.cooldown_ticks;
                 spend(&mut player.hotbar[slot]);
                 throw_grenade(world, id);
             }
         }
         ItemKind::Flare => {
-            let burning = world.rockets.values().filter(|rocket| rocket.kind == PROJECTILE_FLARE).count();
+            let burning = projectiles::count(&world.entities, Some(PROJECTILE_FLARE));
             if fresh && player.fire_cooldown == 0 && burning < MAX_FLARES {
                 player.fire_cooldown = item.cooldown_ticks;
                 spend(&mut player.hotbar[slot]);
@@ -1184,7 +971,7 @@ impl Mechanic for Combat {
             }
             use_item(world, id);
         }
-        step_rockets(world, dt);
+        projectiles::step(world, dt, Stage::Hands);
     }
 }
 

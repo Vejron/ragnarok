@@ -85,7 +85,6 @@ impl Game {
                 map,
                 players: BTreeMap::new(),
                 vehicles: BTreeMap::new(),
-                rockets: BTreeMap::new(),
                 entities: Default::default(),
                 bots: BTreeMap::new(),
                 nav: Default::default(),

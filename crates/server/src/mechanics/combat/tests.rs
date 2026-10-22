@@ -117,7 +117,7 @@ fn a_shot_at_the_ground_hits_nobody_and_ends_on_it() {
     game.world.shots.clear();
     fire_gun(&mut game.world, shooter, ak5());
     for _ in 0..10 {
-        step_rockets(&mut game.world, 1.0 / TICK_RATE as f32);
+        projectiles::step(&mut game.world, 1.0 / TICK_RATE as f32, Stage::Hands);
     }
     assert_eq!(game.world.players[&target].hp, PLAYER_MAX_HP);
     let end = game.world.shots.last().expect("a shot was recorded");
@@ -261,7 +261,7 @@ fn a_rocket_flies_and_bursts_on_the_target_and_hurts_it() {
     let hp = game.world.players[&target].hp;
     assert!(hp < PLAYER_MAX_HP, "the rocket landed");
     assert!(hp <= PLAYER_MAX_HP - 90, "a direct hit is nearly lethal: {hp}");
-    assert!(game.world.rockets.is_empty(), "a burst rocket is gone");
+    assert!(game.world.in_flight().is_empty(), "a burst rocket is gone");
     assert_eq!(game.world.players[&shooter].hp, PLAYER_MAX_HP, "20 m away is outside the blast");
 }
 
@@ -445,7 +445,7 @@ fn a_scoped_sniper_shot_goes_true_along_the_look_direction() {
     press(&mut game, shooter, &mut seq, BUTTON_ALT | BUTTON_FIRE, 1, 0.0);
     // A round in flight, not an instant hit.
     assert_eq!(game.world.players[&target].hp, PLAYER_MAX_HP);
-    assert!(game.world.rockets.values().any(|r| r.kind == PROJECTILE_BULLET));
+    assert!(game.world.in_flight().values().any(|r| r.kind == PROJECTILE_BULLET));
     // 20 m at twice a tank shell's speed is a handful of ticks.
     let mut landed = false;
     for _ in 0..TICK_RATE / 4 {
@@ -515,14 +515,14 @@ fn a_grenade_arcs_falls_and_bursts_when_the_fuse_is_out() {
     // Thrown level at a target 20 m away: it lands short of them, then the fuse takes it.
     hold_slot(&mut game, shooter, &mut seq, BUTTON_FIRE, 2, 1);
     assert_eq!(game.world.players[&shooter].hotbar[2].count, 1, "one thrown");
-    assert_eq!(game.world.rockets.len(), 1);
-    let grenade = *game.world.rockets.values().next().unwrap();
+    assert_eq!(game.world.in_flight().len(), 1);
+    let grenade = *game.world.in_flight().values().next().unwrap();
     assert_eq!(grenade.kind, PROJECTILE_GRENADE);
     hold_slot(&mut game, shooter, &mut seq, 0, 2, 20);
-    let grenade = *game.world.rockets.values().next().expect("still in flight");
+    let grenade = *game.world.in_flight().values().next().expect("still in flight");
     assert!(grenade.position[1] < 3.0, "gravity pulls it down: y = {}", grenade.position[1]);
     hold_slot(&mut game, shooter, &mut seq, 0, 2, GRENADE_FUSE_TICKS);
-    assert!(game.world.rockets.is_empty(), "burst");
+    assert!(game.world.in_flight().is_empty(), "burst");
     assert!(game.world.shots.iter().any(|s| s.weapon == WEAPON_GRENADE) || game.world.players[&target].hp <= PLAYER_MAX_HP);
 }
 
@@ -531,9 +531,9 @@ fn a_grenade_at_your_feet_hurts_and_one_beside_a_target_kills_them() {
     let (mut game, shooter, target, _, _) = duel();
     let at = game.world.players[&target].character.position;
     let id = game.world.alloc_id();
-    game.world.rockets.insert(id, Rocket { kind: PROJECTILE_GRENADE, owner: shooter, source: 0, position: [at[0] + 1.0, at[1], at[2]], velocity: [0.0; 3], ttl: 1, item: 0, back: 0, flown: 0.0 });
+    game.world.launch_as(id, Flying { kind: PROJECTILE_GRENADE, owner: shooter, source: 0, position: [at[0] + 1.0, at[1], at[2]], velocity: [0.0; 3], ttl: 1, item: 0, back: 0, flown: 0.0 });
     game.step();
-    assert!(game.world.rockets.is_empty());
+    assert!(game.world.in_flight().is_empty());
     assert!(game.world.players[&target].hp < PLAYER_MAX_HP - 50, "{}", game.world.players[&target].hp);
     assert_eq!(game.world.players[&shooter].hp, PLAYER_MAX_HP, "20 m clear of the blast");
 }
@@ -544,7 +544,7 @@ fn a_flare_gun_spends_a_flare_and_fires_it() {
     give(&mut game, shooter, 2, ITEM_FLARE, 2);
     hold_slot(&mut game, shooter, &mut seq, BUTTON_FIRE, 2, 1);
     assert_eq!(game.world.players[&shooter].hotbar[2].count, 1, "one fired");
-    let flare = *game.world.rockets.values().next().expect("in flight");
+    let flare = *game.world.in_flight().values().next().expect("in flight");
     assert_eq!(flare.kind, PROJECTILE_FLARE);
     // Aimed level, it still goes up steeply.
     let speed = flare.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
@@ -556,13 +556,13 @@ fn a_flare_gun_spends_a_flare_and_fires_it() {
 fn a_flare_climbs_then_sinks_slowly_and_burns_out_in_the_air() {
     let (mut game, shooter, target, _, _) = duel();
     let id = game.world.alloc_id();
-    game.world.rockets.insert(id, Rocket { kind: PROJECTILE_FLARE, owner: shooter, source: 0, position: [100.0, 2.0, 10.0], velocity: [5.0, FLARE_SPEED, 0.0], ttl: FLARE_BURN_TICKS, item: 0, back: 0, flown: 0.0 });
+    game.world.launch_as(id, Flying { kind: PROJECTILE_FLARE, owner: shooter, source: 0, position: [100.0, 2.0, 10.0], velocity: [5.0, FLARE_SPEED, 0.0], ttl: FLARE_BURN_TICKS, item: 0, back: 0, flown: 0.0 });
     let mut top = 0.0f32;
     let mut ticks = 0;
-    while game.world.rockets[&id].velocity[1] > 0.0 {
+    while game.world.in_flight()[&id].velocity[1] > 0.0 {
         game.step();
         ticks += 1;
-        top = top.max(game.world.rockets[&id].position[1]);
+        top = top.max(game.world.in_flight()[&id].position[1]);
     }
     assert!(top > 50.0, "it climbs high: {top}");
     // Under its parachute it sinks no faster than `FLARE_SINK` and its drift dies away.
@@ -570,17 +570,17 @@ fn a_flare_climbs_then_sinks_slowly_and_burns_out_in_the_air() {
         game.step();
         ticks += 1;
     }
-    let hanging = game.world.rockets[&id];
+    let hanging = game.world.in_flight()[&id];
     assert!((hanging.velocity[1] + FLARE_SINK).abs() < 1e-3, "sinks at {}", hanging.velocity[1]);
     assert!(hanging.velocity[0].abs() < 0.5, "drift dies away: {}", hanging.velocity[0]);
     assert!(hanging.position[1] > top - 2.0 * FLARE_SINK - 2.0, "slowly: {} from {top}", hanging.position[1]);
     for _ in ticks..FLARE_BURN_TICKS - 1 {
         game.step();
     }
-    let last = game.world.rockets[&id];
+    let last = game.world.in_flight()[&id];
     assert!(last.position[1] > 10.0 && last.velocity[1] < 0.0, "still hanging just before it burns out: {last:?}");
     game.step();
-    assert!(!game.world.rockets.contains_key(&id), "burnt out");
+    assert!(!game.world.in_flight().contains_key(&id), "burnt out");
     assert_eq!(game.world.players[&target].hp, PLAYER_MAX_HP, "light, not harm");
 }
 
@@ -588,19 +588,19 @@ fn a_flare_climbs_then_sinks_slowly_and_burns_out_in_the_air() {
 fn a_flare_that_comes_down_burns_where_it_lands() {
     let (mut game, shooter, _, _, _) = duel();
     let id = game.world.alloc_id();
-    game.world.rockets.insert(id, Rocket { kind: PROJECTILE_FLARE, owner: shooter, source: 0, position: [100.0, 3.0, 10.0], velocity: [0.0, -1.0, 0.0], ttl: FLARE_BURN_TICKS, item: 0, back: 0, flown: 0.0 });
+    game.world.launch_as(id, Flying { kind: PROJECTILE_FLARE, owner: shooter, source: 0, position: [100.0, 3.0, 10.0], velocity: [0.0, -1.0, 0.0], ttl: FLARE_BURN_TICKS, item: 0, back: 0, flown: 0.0 });
     let mut ticks = 0;
-    while game.world.rockets[&id].velocity != [0.0; 3] {
+    while game.world.in_flight()[&id].velocity != [0.0; 3] {
         game.step();
         ticks += 1;
         assert!(ticks < 3 * TICK_RATE, "still falling");
     }
-    let landed = game.world.rockets[&id].position;
+    let landed = game.world.in_flight()[&id].position;
     assert!(landed[1] < 1.0, "on the ground: {landed:?}");
     for _ in 0..TICK_RATE {
         game.step();
     }
-    assert_eq!(game.world.rockets[&id].position, landed, "it burns where it lies");
+    assert_eq!(game.world.in_flight()[&id].position, landed, "it burns where it lies");
 }
 
 #[test]
@@ -957,7 +957,8 @@ fn a_gun_round_flies_and_is_announced_once_instead_of_listed_every_snapshot() {
     let aim = aim_for(&game, shooter, 0);
     press(&mut game, shooter, &mut seq, BUTTON_FIRE, 0, aim);
     assert_eq!(game.world.players[&target].hp, PLAYER_MAX_HP, "it has to get there first");
-    let bullet = game.world.rockets.iter().find(|(_, r)| r.kind == PROJECTILE_BULLET).expect("the round is in flight");
+    let flying = game.world.in_flight();
+    let bullet = flying.iter().find(|(_, r)| r.kind == PROJECTILE_BULLET).expect("the round is in flight");
     assert_eq!(bullet.1.item, ITEM_AK5);
     assert_eq!(game.world.bullets.len(), 1);
     let spawn = game.world.bullets[0];
@@ -972,9 +973,9 @@ fn a_round_that_has_flown_far_hits_for_less() {
         let (mut game, shooter, target, ..) = duel();
         let gun = ak5();
         let id = game.world.alloc_id();
-        game.world.rockets.insert(
+        game.world.launch_as(
             id,
-            Rocket {
+            Flying {
                 kind: PROJECTILE_BULLET,
                 owner: shooter,
                 source: 0,
@@ -986,7 +987,7 @@ fn a_round_that_has_flown_far_hits_for_less() {
                 flown,
             },
         );
-        step_rockets(&mut game.world, 1.0 / TICK_RATE as f32);
+        projectiles::step(&mut game.world, 1.0 / TICK_RATE as f32, Stage::Hands);
         let lost = PLAYER_MAX_HP - game.world.players[&target].hp;
         if full {
             assert_eq!(lost, gun.damage);

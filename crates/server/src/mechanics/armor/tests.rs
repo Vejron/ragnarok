@@ -1,5 +1,6 @@
 use super::*;
-use crate::game::{Command, Game, Rocket, Seat};
+use super::super::projectiles::Flying;
+use crate::game::{Command, Game, Seat};
 use shared::protocol::{KIND_JEEP, KIND_STRV, PROJECTILE_SHELL, WEAPON_SHELL};
 use shared::world::{Road, WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
@@ -120,12 +121,12 @@ fn shoot_at(game: &mut Game, vid: u32, target: [f32; 3], local_from: [f32; 3]) -
     let len = flat.iter().map(|v| v * v).sum::<f32>().sqrt();
     let dir = flat.map(|v| v / len);
     let id = game.world.alloc_id();
-    game.world.rockets.insert(id, Rocket { kind: PROJECTILE_SHELL, owner: 0, source: 0, position: from, velocity: dir.map(|v| v * SHELL_SPEED), ttl: SHELL_TTL_TICKS, item: 0, back: 0, flown: 0.0 });
+    game.world.launch_as(id, Flying { kind: PROJECTILE_SHELL, owner: 0, source: 0, position: from, velocity: dir.map(|v| v * SHELL_SPEED), ttl: SHELL_TTL_TICKS, item: 0, back: 0, flown: 0.0 });
     let mut events = Vec::new();
     for _ in 0..40 {
         game.step();
         events.extend(game.world.shots.iter().copied());
-        if !game.world.rockets.contains_key(&id) {
+        if !game.world.in_flight().contains_key(&id) {
             break;
         }
     }
@@ -217,7 +218,7 @@ fn a_shell_into_a_tanks_turret_damages_the_turret() {
     let dir = [target[0] - from[0], target[1] - from[1], target[2] - from[2]];
     let len = dir.iter().map(|v| v * v).sum::<f32>().sqrt();
     let id = game.world.alloc_id();
-    game.world.rockets.insert(id, Rocket { kind: PROJECTILE_SHELL, owner: 0, source: 0, position: from, velocity: dir.map(|v| v / len * SHELL_SPEED), ttl: SHELL_TTL_TICKS, item: 0, back: 0, flown: 0.0 });
+    game.world.launch_as(id, Flying { kind: PROJECTILE_SHELL, owner: 0, source: 0, position: from, velocity: dir.map(|v| v / len * SHELL_SPEED), ttl: SHELL_TTL_TICKS, item: 0, back: 0, flown: 0.0 });
     for _ in 0..40 {
         game.step();
     }

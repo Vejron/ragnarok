@@ -102,10 +102,10 @@ fn firing_hits_and_throws_a_stickman_in_the_line_of_fire() {
     aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, BUTTON_FIRE, 3);
     assert_eq!(game.world.vehicles[&vid].gun.unwrap().shots, 1);
     // 25 m at 140 m/s is about ten ticks: the shell is on its way, and nobody is hurt yet.
-    assert_eq!(game.world.rockets.len(), 1, "the shell is in flight");
+    assert_eq!(game.world.in_flight().len(), 1, "the shell is in flight");
     assert_eq!(game.world.players[&victim].character.knock, [0.0, 0.0]);
     aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, 0, 30);
-    assert!(game.world.rockets.is_empty(), "and then it has burst");
+    assert!(game.world.in_flight().is_empty(), "and then it has burst");
     let character = &game.world.players[&victim].character;
     let speed = character.knock[0].hypot(character.knock[1]);
     assert!(speed > 10.0, "blast knockback {speed}");
@@ -183,7 +183,7 @@ fn the_shell_stops_at_the_first_thing_it_meets() {
     aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, BUTTON_FIRE, 40);
     let blocker_hp = game.world.players[&blocker].hp;
     assert!(blocker_hp < PLAYER_MAX_HP, "{blocker_hp}");
-    assert!(game.world.rockets.is_empty());
+    assert!(game.world.in_flight().is_empty());
     assert_eq!(game.world.players[&behind].character.knock, [0.0, 0.0], "outside the blast radius");
 }
 
@@ -198,7 +198,7 @@ fn fly(pitch: f32) -> (u32, f32) {
     let mut last = [0.0; 3];
     let mut ticks = 0;
     while ticks < 600 {
-        match game.world.rockets.values().next() {
+        match game.world.in_flight().values().next() {
             Some(shell) => last = shell.position,
             None if ticks > 0 => break,
             None => {}
@@ -227,9 +227,9 @@ fn a_shell_in_flight_is_in_the_snapshot_and_falls() {
     let listed = game.projectile_states();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].kind, PROJECTILE_SHELL);
-    let before = game.world.rockets.values().next().unwrap().velocity;
+    let before = game.world.in_flight().values().next().unwrap().velocity;
     aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, 0, 5);
-    let after = game.world.rockets.values().next().unwrap().velocity;
+    let after = game.world.in_flight().values().next().unwrap().velocity;
     assert!(after[1] < before[1] - 1.0, "gravity pulls it down: {before:?} to {after:?}");
 }
 
@@ -282,7 +282,7 @@ fn the_nose_gun_throws_small_shells_that_burst_a_third_as_wide() {
     assert_eq!(game.world.players[&victim].hp, before, "and has not arrived");
 
     aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, 0, 30);
-    assert!(game.world.rockets.is_empty(), "it has burst");
+    assert!(game.world.in_flight().is_empty(), "it has burst");
     let hp = game.world.players[&victim].hp;
     assert!(hp < before && before - hp < 60, "hurt, but less than a tank shell: {before} to {hp}");
     assert_eq!(game.world.players[&bystander].hp, PLAYER_MAX_HP, "outside the small blast");
@@ -319,13 +319,13 @@ fn the_pilot_fires_rockets_that_accelerate_straight_ahead() {
     assert!(fired >= 1, "the pilot's trigger fires the pods");
     assert_eq!(game.world.vehicles[&vid].gun.unwrap().shots, 0, "the nose gun is the gunner's");
     let speed = |game: &Game| {
-        game.world.rockets.values().filter(|r| r.kind == PROJECTILE_ROCKET).map(|r| r.velocity.iter().map(|v| v * v).sum::<f32>().sqrt()).fold(0.0, f32::max)
+        game.world.in_flight().values().filter(|r| r.kind == PROJECTILE_ROCKET).map(|r| r.velocity.iter().map(|v| v * v).sum::<f32>().sqrt()).fold(0.0, f32::max)
     };
     let early = speed(&game);
     aim_and_hold(&mut game, pilot, &mut seq, 0.0, 0.0, 0, 10);
     let later = speed(&game);
     assert!(early > 0.0 && later > early, "{early} then {later}");
-    for rocket in game.world.rockets.values().filter(|r| r.kind == PROJECTILE_ROCKET) {
+    for rocket in game.world.in_flight().values().filter(|r| r.kind == PROJECTILE_ROCKET) {
         assert!(rocket.velocity[1].abs() < rocket.velocity[0].abs().max(rocket.velocity[2].abs()), "no arc: {rocket:?}");
     }
 }
@@ -436,7 +436,7 @@ fn the_forward_guns_take_turns_and_hit_what_is_ahead_of_the_nose() {
     assert!(game.world.players[&victim].hp < PLAYER_MAX_HP, "the stickman ahead is hit");
     assert!(!hits.is_empty() && hits.iter().all(|shot| shot.shooter == pilot), "{hits:?}");
     assert_eq!(game.world.vehicles[&vid].hp, hp, "its own guns never hurt the plane");
-    assert!(game.world.rockets.is_empty(), "rounds are hitscans, not projectiles");
+    assert!(game.world.in_flight().is_empty(), "rounds are hitscans, not projectiles");
 }
 
 #[test]
@@ -473,8 +473,8 @@ fn a_bomb_leaves_with_the_planes_speed_and_bursts_where_it_lands() {
     game.world.physics.kick_car(vid, [-sin * 30.0, 0.0, -cos * 30.0]);
     aim_and_hold(&mut game, pilot, &mut seq, pose.yaw(), 0.0, BUTTON_CROUCH, 1);
     aim_and_hold(&mut game, pilot, &mut seq, pose.yaw(), 0.0, 0, 1);
-    let bombs: Vec<_> = game.world.rockets.values().filter(|rocket| rocket.kind == PROJECTILE_BOMB).copied().collect();
-    assert_eq!(bombs.len(), 1, "{:?}", game.world.rockets);
+    let bombs: Vec<_> = game.world.in_flight().values().filter(|rocket| rocket.kind == PROJECTILE_BOMB).copied().collect();
+    assert_eq!(bombs.len(), 1, "{:?}", game.world.in_flight());
     assert_eq!(game.world.vehicles[&vid].arms.unwrap().bombs, PLANE_BOMBS - 1);
     let along = -sin * bombs[0].velocity[0] - cos * bombs[0].velocity[2];
     assert!(along > 25.0, "it carries the plane's speed: {:?}", bombs[0].velocity);
@@ -498,9 +498,9 @@ fn the_rack_holds_four_bombs_and_fills_again_on_the_ground() {
     game.world.physics.reset_car(vid, [pose.position[0], 120.0, 60.0], pose.yaw());
     let mut dropped = 0;
     for _ in 0..PLANE_BOMB_COOLDOWN_TICKS * 5 + 5 {
-        let before: Vec<u32> = game.world.rockets.keys().copied().collect();
+        let before: Vec<u32> = game.world.in_flight().keys().copied().collect();
         aim_and_hold(&mut game, pilot, &mut seq, pose.yaw(), 0.0, BUTTON_CROUCH, 1);
-        dropped += game.world.rockets.iter().filter(|(id, r)| r.kind == PROJECTILE_BOMB && !before.contains(id)).count();
+        dropped += game.world.in_flight().iter().filter(|(id, r)| r.kind == PROJECTILE_BOMB && !before.contains(id)).count();
     }
     assert_eq!((dropped, game.world.vehicles[&vid].arms.unwrap().bombs), (PLANE_BOMBS as usize, 0));
     // Back home and standing still, the ground crew loads it again.
@@ -580,7 +580,7 @@ fn a_mortar_bomb_arcs_up_and_lands_on_the_range_it_was_dialled_to() {
     let (mut apex, mut last) = (0.0_f32, None);
     for _ in 0..900 {
         aim_and_hold(&mut game, gunner, &mut seq, 0.0, 0.0, 0, 1);
-        match game.world.rockets.values().next() {
+        match game.world.in_flight().values().next() {
             Some(rocket) => {
                 apex = apex.max(rocket.position[1]);
                 last = Some(rocket.position);
@@ -589,7 +589,7 @@ fn a_mortar_bomb_arcs_up_and_lands_on_the_range_it_was_dialled_to() {
         }
     }
     let [x, y, z] = last.expect("the bomb was in flight");
-    assert!(game.world.rockets.is_empty(), "and it has burst");
+    assert!(game.world.in_flight().is_empty(), "and it has burst");
     assert!(apex > 10.0 && apex < 120.0, "it lobs high, to {apex} m");
     assert!(y < 3.0, "and bursts on the ground, not in the sky: {y} m up");
     let range = x.hypot(z - 20.0);
@@ -630,8 +630,8 @@ fn hen_crewed(height: f32) -> (Game, u32, u32, u32) {
     (game, driver, vid, seq)
 }
 
-fn eggs(game: &Game) -> Vec<Rocket> {
-    game.world.rockets.values().filter(|rocket| rocket.kind == PROJECTILE_EGG).copied().collect()
+fn eggs(game: &Game) -> Vec<Flying> {
+    game.world.in_flight().values().filter(|rocket| rocket.kind == PROJECTILE_EGG).copied().collect()
 }
 
 #[test]
@@ -641,7 +641,7 @@ fn a_hen_lays_an_egg_behind_it_that_bursts_when_its_fuse_runs_out() {
     aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, BUTTON_FIRE, 1);
     aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, 0, 1);
     let laid = eggs(&game);
-    assert_eq!(laid.len(), 1, "{:?}", game.world.rockets);
+    assert_eq!(laid.len(), 1, "{:?}", game.world.in_flight());
     let arms = game.world.vehicles[&vid].arms.unwrap();
     assert_eq!((arms.bombs, arms.shots), (HEN_EGGS - 1, 1));
     // Under the tail, which is behind the hull (+Z when it faces -Z).

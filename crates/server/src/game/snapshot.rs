@@ -92,14 +92,15 @@ impl Game {
 
     /// The motion of the vehicle `id` drives, for their own prediction; `None` for anyone else.
     pub fn projectile_states(&self) -> Vec<ProjectileState> {
+        // A round is not among them: clients fly it themselves from its `BulletSpawn`.
         self.world
-            .rockets
-            .iter()
-            .filter(|(_, rocket)| rocket.kind != PROJECTILE_BULLET)
-            .map(|(&id, rocket)| {
-                let [x, y, z] = rocket.position.map(to_cm);
-                let [vx, vy, vz] = rocket.velocity.map(to_cm_i16);
-                ProjectileState { id, kind: rocket.kind, x, y, z, vx, vy, vz }
+            .in_flight()
+            .into_iter()
+            .filter(|(_, flying)| flying.kind != PROJECTILE_BULLET)
+            .map(|(id, flying)| {
+                let [x, y, z] = flying.position.map(to_cm);
+                let [vx, vy, vz] = flying.velocity.map(to_cm_i16);
+                ProjectileState { id, kind: flying.kind, x, y, z, vx, vy, vz }
             })
             .collect()
     }

@@ -10,6 +10,7 @@ mod life;
 mod movement;
 mod npcs;
 mod pickups;
+mod projectiles;
 mod spawn;
 mod vehicles;
 
@@ -48,6 +49,7 @@ pub trait Mechanic: Send {
 pub fn register_components(ecs: &mut bevy_ecs::world::World) {
     ecs.register_component::<npcs::Wander>();
     ecs.register_component::<pickups::Pickup>();
+    projectiles::register(ecs);
 }
 
 /// The mechanics a room runs, in tick order. `Bots` goes first: it writes the bots' input, which

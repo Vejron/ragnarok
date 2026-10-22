@@ -1,12 +1,12 @@
 use super::Mechanic;
-use super::armor::{self, Outcome};
 use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
-use super::combat::{Blast, Direct, Round, blast_at, first_player_hit, hitscan, look, rewind_ticks, scatter};
-use crate::game::{Gun, PlaneArms, Rocket, World};
+use super::combat::{Round, hitscan, look, rewind_ticks, scatter};
+use super::projectiles::{self, Flying, Stage};
+use crate::game::{Gun, PlaneArms, World};
 use sim::CarPose;
 use shared::consts::*;
 use shared::items::Falloff;
-use shared::protocol::{DAMAGE_TURRET, TURRET_GONE, KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_PLANE, KIND_STRV, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, ShotEvent, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_MG, WEAPON_MORTAR, WEAPON_SHELL};
+use shared::protocol::{DAMAGE_TURRET, TURRET_GONE, KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_PLANE, KIND_STRV, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, ShotEvent, WEAPON_MG};
 use shared::quant::{from_mrad, to_cm, wrap_angle};
 
 /// Vehicle guns: the gunner's look direction aims the gun, and the fire button shoots it.
@@ -51,21 +51,6 @@ fn shell_ttl(kind: u8) -> u32 {
     if kind == PROJECTILE_MORTAR { MORTAR_SHELL_TTL_TICKS } else { SHELL_TTL_TICKS }
 }
 
-/// A shell of `kind` going off at `point`: the burst everyone sees, and the blast. An autocannon round
-/// is a third of a tank shell's reach, and hits for less.
-fn burst(world: &mut World, kind: u8, owner: u32, point: [f32; 3], dir: [f32; 3], direct: Option<Direct>) {
-    let (weapon, radius, damage, knock) = match kind {
-        PROJECTILE_CANNON => (WEAPON_AUTOCANNON, CANNON_RADIUS, CANNON_DAMAGE, CANNON_KNOCK),
-        PROJECTILE_BOMB => (WEAPON_BOMB, BOMB_RADIUS, BOMB_DAMAGE, BOMB_KNOCK),
-        PROJECTILE_MORTAR => (WEAPON_MORTAR, MORTAR_RADIUS, MORTAR_DAMAGE, MORTAR_KNOCK),
-        _ => (WEAPON_SHELL, EXPLOSION_RADIUS, EXPLOSION_DAMAGE, EXPLOSION_KNOCK),
-    };
-    let [x, y, z] = point.map(to_cm);
-    world.shots.push(ShotEvent { shooter: owner, weapon, x, y, z });
-    // A gunner who has left or died still gets the blast, just not the credit.
-    let attacker = world.players.contains_key(&owner).then_some(owner);
-    blast_at(world, Blast { point, radius, damage, knock, dir, attacker, weapon }, direct);
-}
 
 /// Fires a shell of `kind` from vehicle `vid` for `gunner`, from `origin` along `dir` (the muzzle's
 /// root and the barrel's heading, `length` of barrel ahead): it leaves the muzzle and flies on its own
@@ -74,77 +59,22 @@ fn fire(world: &mut World, kind: u8, vid: u32, origin: [f32; 3], dir: [f32; 3], 
     make_noise(world, origin, Some(gunner), HEAR_BLAST);
     // A barrel poking into a wall bursts the shell there, instead of starting it on the far side.
     if let Some(t) = world.physics.cast_ray(origin, dir, length, vid) {
-        burst(world, kind, gunner, std::array::from_fn(|i| origin[i] + dir[i] * t), dir, None);
+        projectiles::burst_at(world, kind, gunner, std::array::from_fn(|i| origin[i] + dir[i] * t), dir);
         return;
     }
-    let id = world.alloc_id();
-    world.rockets.insert(
-        id,
-        Rocket {
-            kind,
-            owner: gunner,
-            source: vid,
-            position: std::array::from_fn(|i| origin[i] + dir[i] * length),
-            velocity: dir.map(|v| v * muzzle_speed(kind)),
-            ttl: shell_ttl(kind),
-            item: 0,
-            back: 0,
-            flown: 0.0,
-        },
-    );
+    world.launch(Flying {
+        kind,
+        owner: gunner,
+        source: vid,
+        position: std::array::from_fn(|i| origin[i] + dir[i] * length),
+        velocity: dir.map(|v| v * muzzle_speed(kind)),
+        ttl: shell_ttl(kind),
+        item: 0,
+        back: 0,
+        flown: 0.0,
+    });
 }
 
-/// Flies every shell one tick: gravity, then along its velocity until it meets a wall, a vehicle
-/// or a stickman, or its time runs out. It bursts where it stopped.
-fn step_shells(world: &mut World, dt: f32) {
-    let falls = |kind| kind == PROJECTILE_SHELL || kind == PROJECTILE_CANNON || kind == PROJECTILE_BOMB || kind == PROJECTILE_MORTAR;
-    let ids: Vec<u32> = world.rockets.iter().filter(|(_, rocket)| falls(rocket.kind)).map(|(&id, _)| id).collect();
-    for id in ids {
-        let Some(mut shell) = world.rockets.get(&id).copied() else { continue };
-        shell.velocity[1] -= GRAVITY * dt;
-        let speed = shell.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
-        let dir = shell.velocity.map(|v| v / speed);
-        let step = speed * dt;
-        let hit = world.physics.cast_ray_hit(shell.position, dir, step, shell.source);
-        let wall = hit.map(|(t, _)| t);
-        // Stickmen are not physics bodies, so test the shell's path against each one.
-        let player = first_player_hit(world, shell.position, dir, wall.unwrap_or(step), Some(shell.owner), 0);
-        shell.ttl = shell.ttl.saturating_sub(1);
-        if let Some(t) = player.map(|(_, t)| t).or(wall) {
-            let point: [f32; 3] = std::array::from_fn(|i| shell.position[i] + dir[i] * t);
-            // A vehicle was hit first: its armor decides whether the shell bursts on it or glances off.
-            let mut direct = None;
-            if let (None, Some((_, Some(vid)))) = (player, hit) {
-                match armor::armor_of(world, vid, shell.position, dir, step) {
-                    Some(Outcome::Ricochet { normal }) => {
-                        let normal = world.physics.car_pose(vid).map_or(normal, |pose| pose.world_dir(normal));
-                        armor::announce_ricochet(world, vid, point);
-                        let out = armor::reflect(dir, normal);
-                        shell.velocity = out.map(|v| v * speed * armor::RICOCHET_KEEP);
-                        // Just clear of the plate, so the next step does not hit it again.
-                        shell.position = std::array::from_fn(|i| point[i] + normal[i] * 0.1);
-                        world.rockets.insert(id, shell);
-                        continue;
-                    }
-                    Some(Outcome::Hit { scale, turret }) => direct = Some(Direct { vehicle: vid, scale, turret }),
-                    None => {}
-                }
-            }
-            world.rockets.remove(&id);
-            burst(world, shell.kind, shell.owner, point, dir, direct);
-            continue;
-        }
-        shell.position = std::array::from_fn(|i| shell.position[i] + dir[i] * step);
-        if shell.position[1] < KILL_Y {
-            world.rockets.remove(&id);
-        } else if shell.ttl == 0 {
-            world.rockets.remove(&id);
-            burst(world, shell.kind, shell.owner, shell.position, dir, None);
-        } else {
-            world.rockets.insert(id, shell);
-        }
-    }
-}
 
 /// One tick of a helicopter's nose gun, for the gunner in seat 1 if there is one, and the gun as it is
 /// after it. The gunner's look direction is taken in the world and expressed in the hull's frame, so the
@@ -174,7 +104,7 @@ fn work_autocannon(world: &mut World, vid: u32, mut gun: Gun, pose: &CarPose, dt
 
 /// One tick of a helicopter's rocket pods, for the pilot in seat 0 if there is one. Holding fire sends a
 /// rocket from the next tube along the nose every `HELI_ROCKET_COOLDOWN_TICKS`. The rocket starts at the
-/// helicopter's speed along the nose plus a small push and accelerates from there (see `step_rockets`).
+/// helicopter's speed along the nose plus a small push and accelerates from there (see `projectiles`).
 fn work_pods(world: &mut World, vid: u32, mut gun: Gun, pose: &CarPose) -> Gun {
     gun.pod_cooldown = gun.pod_cooldown.saturating_sub(1);
     let Some(pilot) = world.vehicles[&vid].seats[0] else { return gun };
@@ -187,21 +117,17 @@ fn work_pods(world: &mut World, vid: u32, mut gun: Gun, pose: &CarPose) -> Gun {
     // It flies where the nose points, not where the helicopter is drifting: only the helicopter's speed
     // along the nose is carried over, so a sideways slide does not bend the rocket's heading.
     let along: f32 = (0..3).map(|i| pose.velocity[i] * dir[i]).sum::<f32>().max(0.0);
-    let id = world.alloc_id();
-    world.rockets.insert(
-        id,
-        Rocket {
-            kind: PROJECTILE_ROCKET,
-            owner: pilot,
-            source: vid,
-            position: origin,
-            velocity: dir.map(|d| d * (HELI_ROCKET_LAUNCH_SPEED + along)),
-            ttl: ROCKET_TTL_TICKS,
-            item: 0,
-            back: 0,
-            flown: 0.0,
-        },
-    );
+    world.launch(Flying {
+        kind: PROJECTILE_ROCKET,
+        owner: pilot,
+        source: vid,
+        position: origin,
+        velocity: dir.map(|d| d * (HELI_ROCKET_LAUNCH_SPEED + along)),
+        ttl: ROCKET_TTL_TICKS,
+        item: 0,
+        back: 0,
+        flown: 0.0,
+    });
     gun.pod_shots = gun.pod_shots.wrapping_add(1);
     gun.pod_cooldown = HELI_ROCKET_COOLDOWN_TICKS;
     gun
@@ -364,9 +290,8 @@ fn work_cockpit(world: &mut World, vid: u32, mut arms: PlaneArms, pose: &CarPose
     }
     // The rack only lets go in the air, where the bomb has room to fall clear.
     if buttons & BUTTON_CROUCH != 0 && arms.bomb_cooldown == 0 && arms.bombs > 0 && height > PLANE_BOMB_MIN_HEIGHT {
-        let id = world.alloc_id();
         let ttl = SHELL_TTL_TICKS * 2;
-        world.rockets.insert(id, Rocket { kind: PROJECTILE_BOMB, owner: pilot, source: vid, position: pose.world_point(PLANE_BOMB_PIVOT), velocity: pose.velocity, ttl, item: 0, back: 0, flown: 0.0 });
+        world.launch(Flying { kind: PROJECTILE_BOMB, owner: pilot, source: vid, position: pose.world_point(PLANE_BOMB_PIVOT), velocity: pose.velocity, ttl, item: 0, back: 0, flown: 0.0 });
         arms.bombs -= 1;
         arms.bomb_cooldown = PLANE_BOMB_COOLDOWN_TICKS;
     }
@@ -375,7 +300,7 @@ fn work_cockpit(world: &mut World, vid: u32, mut arms: PlaneArms, pose: &CarPose
 
 /// One tick of a hen's clutch for its driver in seat 0: fire lays an egg from under the tail, with the
 /// hull's velocity and a little backwards, one every `HEN_EGG_COOLDOWN_TICKS`. An egg is a projectile of
-/// its own that bounces until its fuse runs out (see `combat::step_grenade`). A clutch that is not full
+/// its own that bounces until its fuse runs out (see `projectiles`). A clutch that is not full
 /// grows one back every `HEN_EGG_REGROW_TICKS`, laying or not. A fallen hen lays nothing.
 fn work_hen(world: &mut World, vid: u32, mut arms: PlaneArms, pose: &CarPose) -> PlaneArms {
     arms.bomb_cooldown = arms.bomb_cooldown.saturating_sub(1);
@@ -390,21 +315,17 @@ fn work_hen(world: &mut World, vid: u32, mut arms: PlaneArms, pose: &CarPose) ->
         return arms;
     }
     let toss = pose.world_dir([0.0, 0.0, HEN_EGG_TOSS]);
-    let id = world.alloc_id();
-    world.rockets.insert(
-        id,
-        Rocket {
-            kind: PROJECTILE_EGG,
-            owner: driver,
-            source: vid,
-            position: pose.world_point(HEN_VENT),
-            velocity: std::array::from_fn(|i| pose.velocity[i] + toss[i]),
-            ttl: HEN_EGG_FUSE_TICKS,
-            item: 0,
-            back: 0,
-            flown: 0.0,
-        },
-    );
+    world.launch(Flying {
+        kind: PROJECTILE_EGG,
+        owner: driver,
+        source: vid,
+        position: pose.world_point(HEN_VENT),
+        velocity: std::array::from_fn(|i| pose.velocity[i] + toss[i]),
+        ttl: HEN_EGG_FUSE_TICKS,
+        item: 0,
+        back: 0,
+        flown: 0.0,
+    });
     arms.bombs -= 1;
     arms.shots = arms.shots.wrapping_add(1);
     arms.bomb_cooldown = HEN_EGG_COOLDOWN_TICKS;
@@ -440,7 +361,7 @@ fn work_ring(world: &mut World, vid: u32, mut gun: Gun, pose: &CarPose, dt: f32)
 
 impl Mechanic for Gunnery {
     fn on_tick(&mut self, world: &mut World, dt: f32) {
-        step_shells(world, dt);
+        projectiles::step(world, dt, Stage::Guns);
         let ids: Vec<u32> = world.vehicles.iter().filter(|(_, vehicle)| vehicle.gun.is_some()).map(|(&id, _)| id).collect();
         for vid in ids {
             let vehicle = &world.vehicles[&vid];

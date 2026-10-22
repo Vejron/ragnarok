@@ -117,7 +117,7 @@ Phase 3 and 4 need both.
 - [x] Pickups.
 - [ ] Cache query states, and keep one id-ordered list per tick, so the per-call setup cost seen in
       the measurements below does not grow with the families that follow.
-- [ ] Projectiles (rockets, grenades, shells, bullets, flares) as `Projectile` + fuse + burst.
+- [x] Projectiles (rockets, grenades, shells, bullets, flares) as `Projectile` + fuse + burst.
 - [ ] Vehicles, with weapon mounts replacing the `work_*` functions (after Phase 1's `crates/sim`).
 - [ ] Players and bots.
 - [ ] Events in place of `hits`, `kills`, `noises`.
@@ -464,3 +464,53 @@ Not yet checked: a full game session in a browser.
 **Next:** phase 1 is down to the remaining mirrors: the codec and the item and vehicle tables, which
 can be generated from Rust, and `carve.ts` and `terrain.ts`, which the renderer reads. Then Phase 1's
 "re-key the lift models on spec data" and Phase 2's projectiles.
+
+### 2026-10-22: projectiles are made of what they do
+
+Every projectile used to be a `Rocket` in `World::rockets`, with nine kinds told apart by `if kind ==`
+across five steppers in two mechanics (`step_rockets`, `step_bullet`, `step_grenade` and `step_flare`
+in `combat.rs`, `step_shells` in `gunnery.rs`), and two more `burst` helpers that matched on kind for
+the blast. Now they are ECS entities in `mechanics/projectiles.rs`, made of parts:
+
+| Part | Components |
+|---|---|
+| Every projectile | `Projectile { kind, owner, source, ttl }`, `Transform`, `Velocity` |
+| How it moves | `Gravity(scale)`, `Motor { accel, top }` (a rocket), `Sinks { drag, max_sink }` (a flare) |
+| What meeting something does, one of | `Strikes { bodies, armor, lost_below }` (rockets, shells, bombs), `Bounces { radius, keep, smash }` (grenades, eggs), `Sticks { radius }` (flares), `Round { item, back, flown }` (a gun's bullet) |
+| What bursting does | `Burst { weapon, radius, damage, knock, upward }`, absent for what only goes out |
+| When it moves | `GunStage`: at the start of `Gunnery`'s tick, before the vehicle guns fire. Without it, at the end of `Combat`'s, in the tick it is thrown or fired |
+
+- `prefab(kind)` gives each kind its parts, and `burst_of(kind)` its blast. `burst_at` sets off a blast
+  that never flew (a barrel or a launcher pressed against a wall).
+- `step(world, dt, stage)` runs each projectile's whole tick in id order, as before. The motion parts
+  come first (`fly`), then its one contact handler.
+- Nothing branches on `kind` any more. It is what the client draws. A new projectile is a new prefab.
+  `a_projectile_is_what_it_is_made_of` builds one no item fires (a bouncing ball with a rocket motor
+  that bursts like a grenade) from parts alone, and it works.
+- The handlers are the old steppers ported nearly line for line, so behaviour is kept: armor
+  ricochets, eggs smashing, flares that stick and burn, and rounds that fall off with distance and
+  rewind for lag. The rule for falling out of the world stays per behaviour as it was: a shell is lost,
+  a grenade bursts, a rocket has no such check.
+- `World` has `launch`, `launch_as`, `in_flight` (a `BTreeMap<u32, Flying>` snapshot), and `flying`.
+  `projectiles::count` is on the entities alone, so it can be asked while a player is borrowed.
+  `Rocket` and `World::rockets` are gone.
+- Every spawn site (rocket launcher, grenade, flare, gun rounds, tank, helicopter, mortar and Strv
+  shells, helicopter pods, plane bombs, hen eggs) calls `world.launch(Flying { .. })`. The snapshot's
+  `projectile_states` reads `in_flight`. The wire is unchanged.
+- The tests' 42 reads and inserts on `world.rockets` now go through the facade. A mechanical rewrite
+  turned one multi-line insert into `in_flight().insert(..)`, which would have written to a
+  temporary copy; it was caught and fixed, and a search confirms nothing else writes to a snapshot.
+- `combat.rs` is 979 lines (1,202 at the start of the migration) and `gunnery.rs` 446 (525). The
+  change removes 461 lines and adds 148, plus the new module.
+
+**Checks:**
+
+- Server: 261 tests. That is 258 plus 3 new ones: every kind has exactly one contact behaviour, the
+  right stage and the right blast; a projectile made of parts works; a shell waits for the guns.
+- Client: 363 tests, unchanged. Clippy with `-D warnings` is clean.
+- `full_room_tick_cost`: mechanics 1.57 to 1.61 ms (baseline 1.67 to 1.70), snapshots 0.69 to 0.71 ms
+  (0.76 to 0.78), `Combat` 35 to 37 µs (31 at baseline), `Gunnery` under 1 µs.
+
+**Next:** players and bots, the largest family, with events (`Damage`, `Kill`, `Noise`) in place of
+the `hits`, `kills` and `noises` vectors; or first the weapon mounts on vehicles (`Gun`, `PlaneArms`
+and the `work_*` functions in `gunnery.rs`), which now only launch projectiles.

@@ -291,29 +291,6 @@ impl Vehicle {
     }
 }
 
-/// A rocket, a grenade or a tank shell in flight. The `Combat` mechanic steps rockets and grenades,
-/// `Gunnery` steps shells. A rocket flies straight and bursts on contact; a grenade falls, bounces,
-/// and bursts when `ttl` runs out; a shell falls in an arc and bursts on contact.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Rocket {
-    /// `PROJECTILE_*`.
-    pub kind: u8,
-    pub owner: u32,
-    /// The vehicle it left, which it flies through; 0 for none.
-    pub source: u32,
-    pub position: [f32; 3],
-    pub velocity: [f32; 3],
-    pub ttl: u32,
-    /// For a `PROJECTILE_BULLET`: the gun it came from (`ITEM_*`), whose damage, falloff and weapon id it
-    /// carries; 0 otherwise.
-    pub item: u8,
-    /// For a bullet: how many ticks back the shooter saw the world, so it meets stickmen where they
-    /// were in the picture it was aimed in.
-    pub back: u32,
-    /// For a bullet: metres flown, which its damage falls off with.
-    pub flown: f32,
-}
-
 /// A vehicle's gun: where it points and when it can fire again. The `Gunnery` mechanic owns it.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Gun {
@@ -396,10 +373,8 @@ pub struct World {
     pub players: BTreeMap<u32, Player>,
     /// Vehicles share the id space with players.
     pub vehicles: BTreeMap<u32, Vehicle>,
-    /// Rockets in flight, which share the id space too.
-    pub rockets: BTreeMap<u32, Rocket>,
-    /// The families moved to components so far (roosters, items on the ground), which share the id
-    /// space too.
+    /// The families moved to components so far (roosters, items on the ground, projectiles), which
+    /// share the id space too.
     pub entities: crate::entities::Entities,
     /// The minds of the players that are bots, by player id.
     pub bots: BTreeMap<u32, Bot>,
