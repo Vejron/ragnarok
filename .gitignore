@@ -24,3 +24,6 @@ worlds/*/tiles/
 worlds/*/minimap.png
 worlds/active.json
 .deploy/
+
+# built from crates/sim-wasm by client/scripts/build-wasm.ts (npm run build:wasm)
+client/src/sim/wasm/

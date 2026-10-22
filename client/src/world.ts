@@ -240,6 +240,8 @@ export interface WorldData {
   inside?: boolean[] | null
   /** Collision that is not part of any tile. Empty in a generated world; tests fill it in. */
   collision: CollisionMesh
+  /** The `world.msgpack` this was decoded from, which the stickman's physics reads for itself. */
+  bytes?: Uint8Array
 }
 
 /** One tile file: the buildings and roads inside a square of the world. Metres, world-absolute. */
@@ -267,6 +269,8 @@ export interface TileData {
   streams: Stream[]
   bridges: Bridge[]
   rails: Rail[]
+  /** The tile file this was decoded from, which the stickman's physics reads for itself. */
+  bytes?: Uint8Array
 }
 
 /** FNV-1a, matching `world_hash` on the server. */
@@ -307,6 +311,7 @@ export function decodeManifest(bytes: Uint8Array): WorldData {
     groundCell: metres(groundCell),
     inside,
     collision: noCollision(),
+    bytes,
   }
 }
 
@@ -361,6 +366,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     bridges: (bridges ?? []).map(([first, deck, steel]) => ({ first, deck, steel })),
     detail: detail && detail.length > 0 ? Int8Array.from(detail) : undefined,
     rails: (rails ?? []).map(([gauge, kind, points]) => ({ gauge: metres(gauge), kind, points: points.map(point) })),
+    bytes,
   }
 }
 

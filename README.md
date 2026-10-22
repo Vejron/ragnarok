@@ -21,7 +21,8 @@ A browser multiplayer game: goofy stickmen in a real city built from OpenStreetM
 
 ## Requirements
 
-- Rust 1.85+ (edition 2024)
+- Rust 1.85+ (edition 2024), with the WASM target: `rustup target add wasm32-unknown-unknown`
+- `wasm-bindgen` of the version `crates/sim-wasm/Cargo.toml` pins: `cargo install wasm-bindgen-cli --version 0.2.129 --locked`. The client's prediction runs the server's own physics (`crates/sim`) built to WASM; `npm run dev`, `npm test`, `npm run type-check` and `npm run build` build it first (`npm run build:wasm`).
 - Node 22.18+ or 24.12+
 - A browser with WebTransport: Chrome, Edge or Firefox
 

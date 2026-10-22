@@ -19,7 +19,7 @@ WORLD_DIR="${WORLD_DIR:-client/public}"
 [[ -n "$HOST" ]] || { echo "usage: DOMAIN=... $0 user@host" >&2; exit 1; }
 [[ "$DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "set DOMAIN to a valid hostname" >&2; exit 1; }
 [[ "$HEALTH_TIMEOUT" =~ ^[0-9]+$ && "$CARGO_JOBS" =~ ^[0-9]+$ ]] || { echo "bad numeric option" >&2; exit 1; }
-for tool in npm docker ssh gzip; do command -v "$tool" >/dev/null || { echo "missing $tool" >&2; exit 1; }; done
+for tool in npm cargo wasm-bindgen docker ssh gzip; do command -v "$tool" >/dev/null || { echo "missing $tool" >&2; exit 1; }; done
 
 # The world is generated, not committed (scripts/world.sh); the image would be built without it.
 [[ -f "$WORLD_DIR/world.msgpack" && -d "$WORLD_DIR/tiles" ]] || { echo "no world in $WORLD_DIR; run scripts/world.sh first" >&2; exit 1; }

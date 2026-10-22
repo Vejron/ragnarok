@@ -38,7 +38,7 @@ This document describes how the game is built and why. The wire format is specif
 | `crates/osm-import` | CLI that turns an OSM bounding box into `world.msgpack` and a grid of tile files. |
 | `client` | Vue 3 + Vite app. Handles prediction and interpolation; draws with the WebGPU engine (`engine`). |
 
-The TypeScript client mirrors `crates/shared` by hand. Byte-for-byte fixture tests on both sides (`protocol.rs` ↔ `codec.spec.ts`) and a physics fixture (`physics.rs` ↔ `predict.spec.ts`) fail when the two languages drift apart.
+The local stickman's prediction runs the server's own physics: `crates/sim` (the Rapier world, the character controller and the vehicles), built to WASM through `crates/sim-wasm` and wrapped by `client/src/sim/motor.ts`. The rest of `crates/shared` the client still mirrors by hand, as it does the vehicle physics for driver prediction (`client/src/sim/vehicle.ts`), until [MIGRATION.md](MIGRATION.md) Phase 1 moves that too. Byte-for-byte fixture tests on both sides (`protocol.rs` ↔ `codec.spec.ts`) and the physics fixtures (`crates/sim/src/tests.rs` ↔ `predict.spec.ts`, `vehicle.spec.ts`) fail when the two drift apart.
 
 Transport, TLS and deployment follow [flax3d](https://github.com/Vejron/flax3d):
 - In development, a self-signed certificate is pinned through `serverCertificateHashes`, and Vite proxies the hash.
@@ -266,14 +266,14 @@ The archetypes are rows of `TREE_KINDS` (`crates/shared/src/world.rs`), mirrored
 
 ## 9. Physics
 
-Both sides use Rapier 3D: `rapier3d` 0.36 natively and `@dimforge/rapier3d-compat` 0.21 in WASM.
+Both sides use Rapier 3D 0.36 through `crates/sim`: natively on the server, and built to WASM for the client's stickman (`crates/sim-wasm`). The client's driver prediction still has a world of its own in `@dimforge/rapier3d-compat` 0.21.
 
 - **Static scene** (`static_colliders` / `buildStaticColliders`): a ground slab (on a flat world its top is y = 0 and it is the ground; on a terrain it is a safety net 12 m below y = 0, under the deepest water bed, so beds carved below the lowest dry ground can be driven and swum into), a heightfield for the terrain (one per tile on the client, one for the whole world on the server, same surface), four boundary walls up to y = 200, and the building trimesh.
 - **Bitten buildings** (`shared::carve`, `World::carve`, `client/src/sim/carve.ts`): every building is a shell of 1 m cubes on one world lattice, and it is drawn (`client/src/render/voxels.ts`) and collided with as those cubes on both sides, so you stand on the top of a cube, not on the roof inside it. A blast that reaches a standing building cuts a ragged hole of cells out of its walls and roof, and every cell left with no chain of cells to the ground falls, so cutting the foot of a wall brings the top down with it. The building's collider is replaced by the boxes of the cubes that are left, on the server at the next `step_cars` and on each client when the `carved` message arrives, so a hole is a doorway for people, bullets and vehicles. A building never collapses as a whole however much of it is gone: its health stops at 1, the worst damage stage, and shot cubes only darken. See NETWORKING.md for the cells and the message.
 - **Stickman:** a capsule (half-height 0.5 m, radius 0.35 m, 1.7 m tall) moved by `KinematicCharacterController`.
   - Controller settings: offset 2 cm, slide on, autostep 35 cm, 50° max slope.
   - Characters are shape-cast, not colliders, so players don't block each other. Prediction then never depends on where remote players really are.
-- **Movement rules** (`movement.rs` / `movement.ts`):
+- **Movement rules** (`crates/shared/src/movement.rs`, run by both sides through `Physics::step_character`):
   - Horizontal speed is set directly from input (walk 4 m/s, run 7.5 m/s), plus any knockback velocity, which keeps 92% of itself per tick on the ground and 99% in the air.
   - Holding `BUTTON_CROUCH` (C or Ctrl, a CROUCH button on touch) overrides run and caps speed at 2 m/s, and lowers the eye 0.3 m for rifle and rocket origins. The capsule keeps its size, so collision and hit boxes do not change. Pressing crouch while running sends `BUTTON_SLIDE` once: the server launches the player along their heading as 12 m/s of knockback (well above the 7.5 m/s run) (only grounded, and not mid-slide), which bleeds off at 4% a tick while crouch stays held instead of the usual 8%. Being crouched, grounded and above 2 m/s of knockback is what clients draw as the `slide` clip, with the body turned along its heading, so no extra state travels. The server sets `FLAG_CROUCHING` in the entity flags, so other clients play the `crouch_*` clips.
   - Gravity is 20 m/s² and jump speed is 6.5 m/s.
@@ -281,8 +281,8 @@ Both sides use Rapier 3D: `rapier3d` 0.36 natively and `@dimforge/rapier3d-compa
 - **Two-pass move:** horizontal movement, then vertical, as separate controller calls. A combined pass makes the controller stall for a tick every few seconds on flat ground, in both native and WASM, and each stall is a misprediction.
 - **Snap to ground** (`SNAP_DISTANCE`, 0.3 m) is on for the horizontal pass of a character that was standing and is not jumping, and off for the vertical pass, where it sinks the capsule slowly. Without it, running down a 20° slope is mostly airborne ticks, which stops jumping and slows the knockback decay. Native and WASM agree to about 1 cm on a slope run (`ramp_run_matches_fixture` ↔ `predict.spec.ts`).
 - **Native vs WASM:**
-  - The two builds aren't bit-exact. The client rounds its movement math to f32 to match the server.
-  - The cross-language fixture agrees to well under 1 mm per tick and within 1 cm over 90 ticks of wall-sliding and jumping.
+  - The stickman is the same Rust code on both sides, built twice. Native and WASM floats are not promised bit-exact, but the fixtures (`predict.spec.ts`, checkpoints recorded from native) agree to well under 1 mm.
+  - The client builds its scene a tile at a time (`Physics::streamed`, `add_tile`) with the server's collider code; `crates/sim/src/stream/tests.rs` checks that the streamed fixture city collides as the whole one does.
   - Reconciliation only ever replays about one RTT of ticks, so long-horizon drift never shows.
 
 Vehicles are server-side dynamic rigid bodies (§10). The physics pipeline steps once per tick, and only does real work once a vehicle exists.

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/shared", "crates/sim", "crates/server", "crates/osm-import", "crates/editor"]
+members = ["crates/shared", "crates/sim", "crates/sim-wasm", "crates/server", "crates/osm-import", "crates/editor"]
 
 [profile.dev.package."*"]
 opt-level = 3

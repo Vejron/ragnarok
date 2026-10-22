@@ -101,9 +101,12 @@ Phase 3 and 4 need both.
       prediction call the same function, ride and inherit included.
 - [x] A static scene that streams: `Physics::streamed`, `add_tile`, `remove_tile`, `refresh`, and
       snapshot vehicles as solid stand-ins (`set_obstacle`), built with the server's own collider code.
-- [ ] `crates/sim-wasm` and a client build step; the client's stickman prediction on it.
-- [ ] Move vehicle prediction to it, so the client's Rapier is the server's Rapier; delete
-      `sim/vehicle.ts` and the other mirrors.
+- [x] `crates/sim-wasm` and a client build step; the client's stickman prediction on it.
+- [ ] Move vehicle prediction to it (`VehicleDriver`, `CarSim`), so the client's second Rapier world
+      is the server's too; then delete `sim/vehicle.ts`, the rest of `sim/physics.ts` and
+      `@dimforge/rapier3d-compat`.
+- [ ] The remaining mirrors: `carve.ts` (also drawn from, so it may stay as a reader of the WASM
+      side), `terrain.ts`, the item and vehicle tables, the codec.
 
 ### Phase 2 (track B): server ECS, one family at a time
 
@@ -297,3 +300,84 @@ the client gets it by running the same code.
 - Removing a tile leaves only the slab under it.
 - Destroyed buildings and trees stop colliding.
 - Obstacles are solid, carry their velocity, and a tank's turret comes off and goes back on.
+
+### 2026-10-22: the client's stickman runs on the server's physics
+
+**`crates/sim-wasm`:**
+
+- A `wasm-bindgen` `cdylib` over `sim`. `ClientSim` is made from the `world.msgpack` bytes and takes
+  tiles as their files' bytes, decoded in Rust by `shared`'s own `Tile::decode`.
+- It fells trees and buildings and carves buildings by `ObjId` (tile and index, as the server names
+  them), places snapshot vehicles as obstacles, and steps the stickman with `Physics::step_character`.
+- Character state crosses the boundary as 11 `f64`, which hold every `f32` and every id exactly.
+- `stream.rs` gained `carve_building`, which cuts a streamed tile's building into cells with the
+  server's `building_shell` and `solid_of`. For that, each streamed tile keeps its one-tile world.
+
+**Build:**
+
+- `client/scripts/build-wasm.ts` (`npm run build:wasm`) runs `cargo build --target
+  wasm32-unknown-unknown --release -p sim-wasm` and `wasm-bindgen --target web` into
+  `client/src/sim/wasm/`, which is git-ignored.
+- npm's `predev`, `pretest`, `pretype-check` and `prebuild` run it. When nothing changed it takes well
+  under a second.
+- The output is 2.7 MB, 0.91 MB gzipped. For comparison, `rapier3d-compat` ships 4.3 MB (1.66 MB
+  gzipped), because it base64-embeds its WASM. Until vehicle prediction moves over, the page loads
+  both.
+- CI's client job now installs the `wasm32` target and `wasm-bindgen` 0.2.129 (`taiki-e/install-action`),
+  and `scripts/deploy.sh` checks for `cargo` and `wasm-bindgen`.
+
+**Client:**
+
+- `sim/motor.ts` (`SimMotor`) replaces `RapierMotor`, with the same jobs: tiles, vehicles as solids,
+  ray casts for the trajectory previews, and the step.
+- `Predictor` now takes a step function (`Stepper`) instead of a motor.
+- `worldview.ts` names destroyed and carved buildings by tile and index, where it used to keep
+  collider slots for the stickman's world. The driver's world still does that, until it moves too.
+- `world.ts` keeps the raw manifest and tile bytes (`WorldData.bytes`, `TileData.bytes`) for the WASM
+  side.
+- Deleted: `sim/movement.ts` (the mirrored rules) and, from `sim/physics.ts`, `stepCharacter`, the
+  stance change, `inherit` and `RapierMotor`, about 260 lines of mirror. `f32` moved to `sim/round.ts`.
+  `physics.ts` keeps only what `VehicleDriver` uses.
+
+**Tests:**
+
+- Vitest loads the WASM in `src/__tests__/setup.ts` with `initSync`, since Node's fetch cannot read
+  files. `src/__tests__/worlds.ts` builds test worlds as manifest and tile bytes, the same way real
+  ones arrive.
+- `predict.spec.ts` runs against the real physics in place of a hand-written flat floor.
+- The cross-language checkpoints recorded from native (the run against a wall and the 20° ramp) pass
+  with the Rust code in WASM.
+- The "walks off a moving roof" test now expects the server's order: knockback decays, then the car's
+  speed is added. The two Predictor tests that wanted 1e-6 m now accept 1e-3 m, because the real
+  controller nudges a replayed step by a fraction of a millimetre, where the fake floor moved exactly
+  nothing.
+- `movement.spec.ts` lost the 8 tests that copied `shared::movement`'s Rust tests one for one. It keeps
+  the speed-scale and aim tests, on the real physics.
+- Client: 50 files, 367 tests (375 before, less those 8).
+- Rust: sim 103, sim-wasm 1, server 258, shared 59, osm-import 81, editor 2.
+- `cargo clippy --workspace --all-targets -- -D warnings`, as CI runs it, is clean. Two old lints that
+  current stable Rust flags were fixed in a separate commit (`chore(server): satisfy clippy`).
+
+**Measured** on `worlds/ersboda-alidhem` (450 tiles, with terrain), in vitest on Node, in two rounds,
+with the old `RapierMotor` put back temporarily for the comparison:
+
+| | Old JS Rapier mirror | Server's code in WASM |
+|---|---|---|
+| Making all 450 tiles solid | 3.97 to 5.13 s | 1.25 to 2.10 s, decoding included |
+| Slowest single tile | 34 to 62 ms | 31 to 55 ms |
+| One stickman step | 19.8 to 22.6 µs | 17.1 to 19.0 µs |
+| Apart after 50 s of the same inputs | | 1 mm |
+
+**Browser:**
+
+- Headless Chrome loaded the module through Vite's dev server: `init()` fetched the WASM (served as
+  `application/wasm`).
+- It built all 450 tiles of `ersboda-alidhem`, found the ground at the first spawn and walked the
+  stickman 26.6 m over the terrain, staying grounded.
+- Not yet checked: a full game session in a browser (WebGPU and WebTransport, playing against the
+  server).
+- `client/public/world.msgpack` and `client/public/dev/` are world version 9, older than the client's
+  version 11. Regenerate them (`scripts/world.sh`, `scripts/world-dev.sh`) before playing on them.
+
+**Next:** vehicle prediction on `sim` (`VehicleDriver` and `CarSim` in `sim/vehicle.ts`, about 1,300
+lines that mirror `crates/sim/src/vehicle.rs` and `flight.rs`). Then `rapier3d-compat` goes.

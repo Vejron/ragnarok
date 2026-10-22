@@ -16,6 +16,13 @@ pub(crate) struct Obstacle {
     velocity: [f32; 3],
 }
 
+/// A streamed tile: its colliders, and the tile alone as a world (what collides in it, under the
+/// server's ids), from which its buildings are cut into cells when blasts bite them.
+pub(crate) struct StreamedTile {
+    handles: Vec<ColliderHandle>,
+    world: WorldFile,
+}
+
 /// The manifest's world with nothing in it and no terrain: enough for the slab, the walls and one
 /// tile's buildings and trees (`WorldFile::assemble` would otherwise lay out the whole world's ground).
 fn bare(manifest: &Manifest) -> WorldFile {
@@ -67,17 +74,18 @@ impl Physics {
         // The tile alone, as the server's merged world holds it: what collides, under the same ids.
         let solid = Tile { buildings: tile.buildings.clone(), collision: tile.collision.clone(), trees: tile.trees.clone(), bridges: tile.bridges.clone(), ..Default::default() };
         let alone = Manifest { ground_cell: 0, tiles: Vec::new(), spawns: Vec::new(), ..manifest.clone() };
-        for (collider, object) in object_colliders(&WorldFile::assemble(&alone, [(col, row, solid)]))? {
+        let world = WorldFile::assemble(&alone, [(col, row, solid)]);
+        for (collider, object) in object_colliders(&world)? {
             handles.push(self.insert_static(collider, object));
         }
-        self.tiles.insert((col, row), handles);
+        self.tiles.insert((col, row), StreamedTile { handles, world });
         self.refresh();
         Ok(())
     }
 
     /// Takes tile `(col, row)` out, with whatever of it is still standing.
     pub fn remove_tile(&mut self, col: u16, row: u16) {
-        let Some(handles) = self.tiles.remove(&(col, row)) else { return };
+        let Some(StreamedTile { handles, .. }) = self.tiles.remove(&(col, row)) else { return };
         for handle in handles {
             if let Some(object) = self.objects.remove(&handle) {
                 self.handles.remove(&object);
@@ -87,6 +95,24 @@ impl Physics {
         self.removals.retain(|object| self.handles.contains_key(object));
         self.replacements.retain(|(object, _)| self.handles.contains_key(object));
         self.refresh();
+    }
+
+    /// Gives building `index` of streamed tile `(col, row)` the shape it has with the cells `removed`
+    /// taken out (the cells a `Carved` message lists, blasted and fallen alike), as `World::carve` does
+    /// on the server. Takes effect at the next `refresh`. Does nothing for a building that is not
+    /// standing or cannot be cut into cells.
+    pub fn carve_building(&mut self, col: u16, row: u16, index: u32, removed: &[u32]) {
+        let Some(tile) = self.tiles.get(&(col, row)) else { return };
+        let Some(at) = tile.world.building_ids.iter().position(|id| id.index == index) else { return };
+        let Some((shell, floor)) = building_shell(&tile.world, at) else { return };
+        let mut gone = shell.untouched();
+        for &cell in removed {
+            if let Some(flag) = gone.get_mut(cell as usize) {
+                *flag = true;
+            }
+        }
+        let shape = solid_of(&shell.boxes(&gone), &floor);
+        self.replace_building(Obj::Building(shared::world::ObjId { col, row, index }), shape);
     }
 
     /// Carries out queued destructions and reshapes (`destroy`, `replace_building`) and brings the

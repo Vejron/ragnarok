@@ -81,7 +81,7 @@ pub struct Physics {
     bound: f32,
     /// The static colliders of each streamed tile (`add_tile`), by `(col, row)`. Empty on the server,
     /// which has every tile from the start.
-    tiles: HashMap<(u16, u16), Vec<ColliderHandle>>,
+    tiles: HashMap<(u16, u16), stream::StreamedTile>,
     /// Vehicles as solid stand-ins at their snapshot pose (`set_obstacle`), by id: what the client's
     /// prediction walks into. Empty on the server, which simulates the vehicles themselves.
     obstacles: std::collections::BTreeMap<u32, stream::Obstacle>,

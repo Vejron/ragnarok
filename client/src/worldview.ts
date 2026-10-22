@@ -8,7 +8,8 @@ import { Collapses } from './render/rubble'
 import { buildTile, disposeTile, rebuildBuildings, restitchTerrain } from './render/world'
 import { buildWater, disposeWater } from './render/water'
 import { shellOf } from './sim/carve'
-import { RapierMotor, trunkColliderIndex } from './sim/physics'
+import type { SimMotor } from './sim/motor'
+import { addTileCollider, trunkColliderIndex } from './sim/physics'
 import type { Surfaces } from './sim/surface'
 import type { Waters } from './sim/waters'
 import { groundOf, type Terrain } from './sim/terrain'
@@ -16,11 +17,14 @@ import type { Grass } from './render/grass'
 import type { VehicleDriver } from './sim/vehicle'
 import type { TileData, TileRef, WorldData } from './world'
 
-/** A tile's colliders in one simulation, with the ones taken out one by one (felled trunks) left `undefined`. */
-type TileSolids = (ReturnType<RapierMotor['addTile']>[number] | undefined)[]
+/** A tile's colliders in the vehicle simulation, with the ones taken out one by one (felled trunks) left `undefined`. */
+type TileSolids = (ReturnType<typeof addTileCollider>[number] | undefined)[]
 
 /** Tiles are keyed by `row * 65536 + col`, as the server names the objects in them. */
 export const tileKey = (col: number, row: number) => row * 65536 + col
+
+/** The `(col, row)` of tile `key`. */
+const tileOf = (key: number) => ({ col: key % 65536, row: Math.floor(key / 65536) })
 
 /**
  * What the player's world looks like and what is solid in it: the streamed tiles, drawn and made
@@ -33,7 +37,7 @@ export class WorldView {
   surfaces: Surfaces | null = null
   grass: Grass | null = null
   waters: Waters | null = null
-  motor: RapierMotor | null = null
+  motor: SimMotor | null = null
   driver: VehicleDriver | null = null
 
   readonly damage = new BuildingDamage()
@@ -41,7 +45,7 @@ export class WorldView {
   readonly waterRoot = new Group()
 
   private readonly groups = new Map<number, Group>()
-  private readonly solids = new Map<number, { tile: TileData; salt: number; walk: TileSolids; drive: TileSolids }>()
+  private readonly solids = new Map<number, { tile: TileData; salt: number; drive: TileSolids }>()
   /** Trees that fell, by tile then index, with the way they fell: replayed onto tiles that stream in later. */
   private readonly fellTrees = new Map<number, Map<number, number>>()
   private readonly fallingTrees = new FallingTrees()
@@ -86,9 +90,9 @@ export class WorldView {
         if (next) restitchTerrain(next, this.terrain)
       }
     }
-    const walk: TileSolids = this.motor?.addTile(tile, ground) ?? []
+    if (tile.bytes) this.motor?.addTile(ref, tile.bytes)
     const drive: TileSolids = this.driver?.addTile(tile, ground) ?? []
-    this.solids.set(key, { tile, salt, walk, drive })
+    this.solids.set(key, { tile, salt, drive })
     this.damage.attach(key, tile, salt)
     if (down.size > 0 || this.damage.carved(key).size > 0) {
       this.dropBuildingColliders(key)
@@ -106,7 +110,7 @@ export class WorldView {
       this.surfaces?.delete(ref)
       this.grass?.removeTile(ref)
       this.waters?.delete(ref)
-      this.motor?.removeTile(walk)
+      this.motor?.removeTile(ref)
       this.driver?.removeTile(drive)
     }
   }
@@ -211,11 +215,11 @@ export class WorldView {
     const tree = solids?.tile.trees[index]
     if (!group || !solids || !tree) return
     this.fallingTrees.fell(group, tree, index, yaw, animate, force)
+    const { col, row } = tileOf(key)
+    this.motor?.fellTree(col, row, index)
     const at = trunkColliderIndex(solids.tile, index)
     if (at < 0) return
-    this.motor?.removeTile([solids.walk[at]])
     this.driver?.removeTile([solids.drive[at]])
-    solids.walk[at] = undefined
     solids.drive[at] = undefined
   }
 
@@ -232,8 +236,9 @@ export class WorldView {
     if (!solids || solids.tile.collision.triangles.length === 0) return
     const down = new Set(this.goneBuildings.get(key)?.keys())
     const carved = this.damage.carved(key)
+    const { col, row } = tileOf(key)
+    this.motor?.setBuildings(col, row, down, carved)
     // The building mesh is `addTile`'s first collider, when the tile has one.
-    if (this.motor) solids.walk[0] = this.motor.rebuildBuildings(solids.walk[0], solids.tile, down, carved)
     if (this.driver) solids.drive[0] = this.driver.rebuildBuildings(solids.drive[0], solids.tile, down, carved)
   }
 

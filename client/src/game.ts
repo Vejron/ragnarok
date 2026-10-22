@@ -21,11 +21,11 @@ import {
 import { crewGun, isLegged, seatHead, vehicleDef } from './sim/vehicles'
 import { aimSpeedScale, DRONE_BLAST_RADIUS, DRONE_RANGE, LOITER_BLAST_RADIUS, LOITER_RANGE, emptyHotbar, GRENADE_BLAST_RADIUS, HOTBAR_SLOTS, hitscanGunFor, ITEM_NONE, ITEM_SNIPER, itemDef, PICKUP_RADIUS, type ItemDef, type ItemSlot } from './sim/items'
 import { InputController } from './sim/input'
-import { RapierMotor } from './sim/physics'
+import { SimMotor } from './sim/motor'
 import { Terrain } from './sim/terrain'
 import { VehicleDriver, type DrivenPose } from './sim/vehicle'
 import { Predictor } from './sim/predict'
-import type { Vec3 } from './sim/physics'
+import type { Vec3 } from './sim/motor'
 import { CarModel, type VehicleModel } from './render/car'
 import { Effects } from './render/effects'
 import { dayPhase } from './render/daynight'
@@ -286,7 +286,7 @@ export class Game {
   /** The yaw and pitch a plane's camera has eased to, behind the mouse's aim. */
   private planeView: [number, number] = [0, 0]
   private predictor: Predictor | null = null
-  private motor: RapierMotor | null = null
+  private motor: SimMotor | null = null
   /** Predicts the vehicle the local player drives. */
   private driver: VehicleDriver | null = null
   /** The newest snapshot of the driven vehicle, waiting for the next frame to be reconciled with. */
@@ -364,7 +364,8 @@ export class Game {
     this.grass = this.view.grass = new Grass(world.halfExtent, world.tileSize, (x, z) => terrain.sample(x, z))
     this.scene.scene.add(this.grass.root)
     this.applyGrass(this.scene.look)
-    const motor = await RapierMotor.create(world)
+    if (!world.bytes) throw new Error('the manifest came without its bytes')
+    const motor = await SimMotor.create(world.bytes)
     this.motor = this.view.motor = motor
     this.driver = this.view.driver = await VehicleDriver.create(world)
     await Promise.all([this.crowd.load(), loadVehicleModels(), loadRoosterModel()])
@@ -373,7 +374,7 @@ export class Game {
     // Until the server places us, walk around solo from the first spawn point.
     const [x, z] = world.spawns[0] ?? [0, 0]
     await this.tiles.prime(x, z)
-    this.predictor = new Predictor(motor, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false })
+    this.predictor = new Predictor(motor.stepper, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false })
     this.predictor.speedScale = (input) => aimSpeedScale(this.hotbar[Math.min(input.slot, HOTBAR_SLOTS - 1)]?.item ?? ITEM_NONE, input.buttons)
     this.avatar(0)
     if (this.disposed) return
@@ -1348,7 +1349,7 @@ export class Game {
   }
 
   /** For a field mortar's gunner: where a bomb fired now would land, from the tube's muzzle at the mortar's muzzle speed. */
-  private mortarPath(motor: RapierMotor) {
+  private mortarPath(motor: SimMotor) {
     const mount = this.cars.get(this.seat!.vehicle)
     if (!(mount instanceof MortarModel)) return null
     const { origin, direction } = mount.barrel()
@@ -1359,7 +1360,7 @@ export class Game {
   }
 
   /** For a plane's pilot with bombs on the rack and room under them: where one let go now would land. */
-  private bombPath(motor: RapierMotor) {
+  private bombPath(motor: SimMotor) {
     const id = this.seat!.vehicle
     const plane = this.cars.get(id)
     const state = this.lastArms.get(id)
@@ -1899,6 +1900,7 @@ export class Game {
     this.voice.dispose()
     this.input.dispose()
     this.driver?.dispose()
+    this.motor?.dispose()
     this.tiles?.dispose()
     this.crowd.dispose()
     this.effects.dispose()
