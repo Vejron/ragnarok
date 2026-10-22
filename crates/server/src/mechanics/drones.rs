@@ -1,7 +1,7 @@
 use super::Mechanic;
 use super::combat::{Blast, blast, look};
 use super::vehicles::add_vehicle;
-use crate::entities::With;
+use crate::entities::{HurtBy, With};
 use crate::game::{Drone, Seat, Vehicle, World};
 use shared::consts::*;
 use shared::items::*;
@@ -99,8 +99,7 @@ fn detonate(world: &mut World, vid: u32) {
 /// Drone `vid` was shot down: it pops, credited to whoever shot it. The pop is drawn as an
 /// autocannon round's burst for an FPV drone and a tank shell's for a loitering one, about their sizes.
 pub(super) fn pop(world: &mut World, vid: u32) {
-    let Some(vehicle) = world.entities.get::<Vehicle>(vid) else { return };
-    let attacker = vehicle.last_attacker;
+    let attacker = world.entities.get::<HurtBy>(vid).map(|by| by.0);
     let kind = world.entities.get::<Drone>(vid).map_or(KIND_DRONE, |drone| drone.kind);
     let def = drone_def(kind);
     let shown_as = if kind == KIND_LOITER { WEAPON_SHELL } else { WEAPON_AUTOCANNON };

@@ -252,11 +252,6 @@ pub struct Vehicle {
     pub home: ([f32; 3], f32),
     /// Consecutive ticks spent on its side or roof and not moving.
     pub stuck_ticks: u32,
-    /// Health. At zero it is a wreck for `WRECK_TICKS`, then it is put back at `home`.
-    pub hp: u8,
-    pub wreck_in: u32,
-    /// Whoever last hurt it, who is credited with the deaths when it blows up.
-    pub last_attacker: Option<u32>,
     /// What a tank's turret has left before it comes off (`TANK_TURRET_HP` when whole).
     pub turret_hp: u8,
     /// Crash damage as the snapshot carries it (`DAMAGE_*`); all zeros when unhurt.
@@ -283,10 +278,11 @@ pub struct Drone {
     pub fall_left: u32,
 }
 
-impl Vehicle {
-    pub fn wrecked(&self) -> bool {
-        self.hp == 0
-    }
+/// A vehicle at zero `Health` is a wreck: it burns where it lies for `left` more ticks, then the room
+/// puts a fresh one back at its `home`. The `Vehicles` mechanic owns it.
+#[derive(crate::entities::Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Wreck {
+    pub left: u32,
 }
 
 /// What a weapon mount (`shared::mounts::MountDef`) is doing: where it points, when it can fire

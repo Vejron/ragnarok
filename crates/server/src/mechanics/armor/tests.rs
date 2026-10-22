@@ -1,4 +1,5 @@
 use super::*;
+use crate::entities::Health;
 use super::super::projectiles::Flying;
 use crate::game::{Command, Game, Seat};
 use shared::protocol::{KIND_JEEP, KIND_STRV, PROJECTILE_SHELL, WEAPON_SHELL};
@@ -137,10 +138,10 @@ fn shoot_at(game: &mut Game, vid: u32, target: [f32; 3], local_from: [f32; 3]) -
 fn a_shell_into_the_side_of_a_strv_hurts_and_one_into_its_glacis_off_axis_glances_off() {
     let mut game = game();
     let vid = of_kind(&game, KIND_STRV);
-    let full = game.world.entities.of::<Vehicle>(vid).hp;
+    let full = game.world.entities.of::<Health>(vid).hp;
     // Square onto its left side.
     shoot(&mut game, vid, [-1.0, 0.0, 0.0]);
-    let after_side = game.world.entities.of::<Vehicle>(vid).hp;
+    let after_side = game.world.entities.of::<Health>(vid).hp;
     let side_damage = full - after_side;
     assert!(side_damage >= 90, "a square side hit hurts: {side_damage}");
     // 40 degrees off the nose at the middle of the glacis: a glancing blow.
@@ -148,19 +149,19 @@ fn a_shell_into_the_side_of_a_strv_hurts_and_one_into_its_glacis_off_axis_glance
     let events = shoot_at(&mut game, vid, [0.0, 0.0, -STRV_HALF_EXTENTS[2] + 0.05], [s, 0.0, -c]);
     assert!(events.iter().any(|e| e.weapon == WEAPON_RICOCHET && e.shooter == vid), "{events:?}");
     assert!(!events.iter().any(|e| e.weapon == WEAPON_SHELL), "a ricochet does not burst: {events:?}");
-    assert_eq!(game.world.entities.of::<Vehicle>(vid).hp, after_side);
+    assert_eq!(game.world.entities.of::<Health>(vid).hp, after_side);
 }
 
 #[test]
 fn a_hit_from_behind_costs_more_than_one_into_the_nose() {
     let mut game = game();
     let vid = of_kind(&game, KIND_STRV);
-    let full = game.world.entities.of::<Vehicle>(vid).hp;
+    let full = game.world.entities.of::<Health>(vid).hp;
     shoot(&mut game, vid, [0.0, 0.0, -1.0]);
-    let nose = full - game.world.entities.of::<Vehicle>(vid).hp;
-    let before = game.world.entities.of::<Vehicle>(vid).hp;
+    let nose = full - game.world.entities.of::<Health>(vid).hp;
+    let before = game.world.entities.of::<Health>(vid).hp;
     shoot(&mut game, vid, [0.0, 0.0, 1.0]);
-    let tail = before - game.world.entities.of::<Vehicle>(vid).hp;
+    let tail = before - game.world.entities.of::<Health>(vid).hp;
     assert!(nose > 0 && tail > nose * 2, "nose {nose}, tail {tail}");
 }
 
@@ -188,7 +189,7 @@ fn enough_damage_to_the_turret_takes_it_off_and_kills_the_gunner() {
     assert_eq!(vehicle.seats[1], None);
     assert!(!game.world.players[&gunner].alive(), "the gunner went with it");
     assert!(game.world.shots.iter().any(|shot| shot.weapon == WEAPON_TURRET));
-    assert!(vehicle.hp > 0, "the tank itself is not wrecked");
+    assert!(!game.world.entities.dead(vid), "the tank itself is not wrecked");
 }
 
 #[test]

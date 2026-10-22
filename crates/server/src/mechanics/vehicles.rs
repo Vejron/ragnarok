@@ -1,6 +1,6 @@
-use crate::entities::With;
+use crate::entities::{Health, HurtBy, With};
 use super::Mechanic;
-use crate::game::{Mounts, Seat, Vehicle, World};
+use crate::game::{Mounts, Seat, Vehicle, World, Wreck};
 use sim::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_extents};
 use shared::consts::*;
 use shared::vehicles::{VehicleDef, vehicle_def};
@@ -142,25 +142,35 @@ fn place_planes(world: &mut World, candidates: &[[i32; 2]], used: &[bool]) -> us
     parked.len()
 }
 
+/// Vehicle `vid` put back as new: whole, restocked and, once its wreck has burnt out, `HurtBy` no one.
+fn restore(world: &mut World, vid: u32, burnt: bool) {
+    let mut health = world.entities.of_mut::<Health>(vid);
+    health.hp = health.max;
+    if burnt {
+        world.entities.remove::<(Wreck, HurtBy)>(vid);
+    }
+    if let Some(mut mounts) = world.entities.get_mut::<Mounts>(vid) {
+        mounts.restock();
+    }
+}
+
 pub(super) fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: f32) -> u32 {
     let id = world.alloc_id();
     world.physics.add_car(id, kind, position, yaw);
     world.entities.spawn(
         id,
-        Vehicle {
+        (Vehicle {
             kind,
             seats: [None; CAR_SEATS],
             controls: CarControls::default(),
             home: (position, yaw),
             stuck_ticks: 0,
-            hp: vehicle_hp(kind),
-            wreck_in: 0,
-            last_attacker: None,
             turret_hp: TANK_TURRET_HP,
             damage: [0; 8],
             scrape_in: 0,
         },
-    );
+        Health::full(vehicle_hp(kind)),
+    ));
     if let Some(mounts) = Mounts::fresh(vehicle_def(kind).mounts) {
         world.entities.insert(id, mounts);
     }
@@ -197,7 +207,7 @@ fn exit_position(world: &World, kind: u8, pose: &CarPose, seat: usize) -> [f32; 
 fn hitch(world: &mut World, id: u32) {
     let Some(seat) = world.players.get(&id).and_then(|player| player.seat) else { return };
     let car = seat.vehicle;
-    if seat.index != 0 || world.entities.get::<Vehicle>(car).is_none_or(|vehicle| vehicle.wrecked() || !vehicle_def(vehicle.kind).car_wheels) {
+    if seat.index != 0 || world.entities.get::<Vehicle>(car).is_none_or(|vehicle| world.entities.dead(car) || !vehicle_def(vehicle.kind).car_wheels) {
         return;
     }
     let Some(pose) = world.physics.car_pose(car) else { return };
@@ -211,7 +221,7 @@ fn hitch(world: &mut World, id: u32) {
         return;
     }
     let nearest = world.entities.all::<Vehicle>()
-        .filter(|(_, vehicle)| vehicle_def(vehicle.kind).body.towed && !vehicle.wrecked() && vehicle.seats.iter().all(Option::is_none))
+        .filter(|&(mortar, vehicle)| vehicle_def(vehicle.kind).body.towed && !world.entities.dead(mortar) && vehicle.seats.iter().all(Option::is_none))
         .filter_map(|(mortar, _)| world.physics.tow_reach(car, mortar).map(|reach| (reach, mortar)))
         .filter(|&(reach, mortar)| reach <= HITCH_REACH && world.physics.towed_by(mortar).is_none())
         .min_by(|a, b| a.0.total_cmp(&b.0));
@@ -234,7 +244,7 @@ fn board(world: &mut World, id: u32) {
     let mut nearest: Option<(f32, u32, usize)> = None;
     for (vid, vehicle) in world.entities.all::<Vehicle>() {
         // A towed mortar is being pulled, and no one climbs on while it is. A drone is flown from afar.
-        if vehicle.wrecked() || world.physics.towed_by(vid).is_some() || is_drone(vehicle.kind) {
+        if world.entities.dead(vid) || world.physics.towed_by(vid).is_some() || is_drone(vehicle.kind) {
             continue;
         }
         let Some(free) = vehicle.seats[..seat_count(vehicle.kind)].iter().position(Option::is_none) else { continue };
@@ -252,8 +262,11 @@ fn board(world: &mut World, id: u32) {
 /// Sits player `id` in seat `index` of `vehicle`, if it is free. A bot of a crew takes its own seat
 /// this way, where `BUTTON_USE` would take the first one free.
 pub fn seat(world: &mut World, id: u32, vehicle: u32, index: usize) -> bool {
+    if world.entities.dead(vehicle) {
+        return false;
+    }
     let Some(mut car) = world.entities.get_mut::<Vehicle>(vehicle) else { return false };
-    if index >= seat_count(car.kind) || car.seats[index].is_some() || car.wrecked() {
+    if index >= seat_count(car.kind) || car.seats[index].is_some() {
         return false;
     }
     let Some(player) = world.players.get_mut(&id) else { return false };
@@ -349,7 +362,7 @@ fn run_down_trees(world: &mut World, before: &BTreeMap<u32, CarPose>) {
     for (vid, object) in world.physics.car_tree_contacts() {
         let (Some(pose), Some(vehicle)) = (before.get(&vid), world.entities.get::<Vehicle>(vid)) else { continue };
         let speed = pose.velocity[0].hypot(pose.velocity[2]);
-        let (kind, wrecked) = (vehicle.kind, vehicle.wrecked());
+        let (kind, wrecked) = (vehicle.kind, world.entities.dead(vid));
         if speed < TREE_RAM_MIN_SPEED || wrecked || is_drone(kind) {
             continue;
         }
@@ -369,7 +382,7 @@ fn run_down_trees(world: &mut World, before: &BTreeMap<u32, CarPose>) {
 /// hull touches, and the client's prediction leaves them out the same way), and fells every one its
 /// hull overlaps, hard, in proportion to its speed.
 fn plow_trees(world: &mut World, before: &BTreeMap<u32, CarPose>) {
-    let tanks: Vec<u32> = world.entities.all::<Vehicle>().filter(|(_, vehicle)| vehicle_def(vehicle.kind).body.heavy && !vehicle.wrecked()).map(|(vid, _)| vid).collect();
+    let tanks: Vec<u32> = world.entities.all::<Vehicle>().filter(|&(vid, vehicle)| vehicle_def(vehicle.kind).body.heavy && !world.entities.dead(vid)).map(|(vid, _)| vid).collect();
     for vid in tanks {
         let (Some(was), Some(now)) = (before.get(&vid), world.physics.car_pose(vid)) else { continue };
         let speed = was.velocity[0].hypot(was.velocity[2]);
@@ -463,10 +476,10 @@ fn hurt_wheels(kind: u8, damage: &mut [u8; 8], local: [f32; 3], amount: f32, rea
 /// bends or knocks off a wheel it landed near. The hull's own health is handled by the caller.
 pub fn shoot_wheels(world: &mut World, vid: u32, point: [f32; 3], damage: f32, reach: f32) {
     let Some(pose) = world.physics.car_pose(vid) else { return };
-    let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(vid) else { return };
-    if vehicle.wrecked() {
+    if world.entities.dead(vid) {
         return;
     }
+    let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(vid) else { return };
     let offset = std::array::from_fn(|i| point[i] - pose.position[i]);
     hurt_wheels(vehicle.kind, &mut vehicle.damage, pose.local_dir(offset), damage * SHOT_WHEEL_PER_DAMAGE, reach);
 }
@@ -489,15 +502,18 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
     for impact in rams {
         let Some(Obj::Building(id)) = impact.object else { continue };
         let Some(vehicle) = world.entities.get::<Vehicle>(impact.car) else { continue };
-        if vehicle.wrecked() || is_drone(vehicle.kind) {
+        if world.entities.dead(impact.car) || is_drone(vehicle.kind) {
             continue;
         }
         super::combat::ram_building(world, id, impact.point, impact.dv, vehicle_def(vehicle.kind).body.ram);
     }
     for (vid, impact) in hardest {
-        let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(vid) else { continue };
         // A drone's own collisions are what set it off (see `Drones`).
-        if vehicle.wrecked() || is_drone(vehicle.kind) {
+        if world.entities.dead(vid) {
+            continue;
+        }
+        let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(vid) else { continue };
+        if is_drone(vehicle.kind) {
             continue;
         }
         let [x, y, z] = impact.point.map(to_cm);
@@ -677,6 +693,7 @@ impl Mechanic for Vehicles {
 
         // The driver's input becomes the car's controls; an empty car holds its handbrake.
         for vid in world.entities.ids::<With<Vehicle>>() {
+            let hp = world.entities.of::<Health>(vid).hp;
             let mut vehicle = world.entities.of_mut::<Vehicle>(vid);
             let towed = world.physics.towed_by(vid).is_some();
             vehicle.controls = if vehicle_def(vehicle.kind).body.towed {
@@ -688,7 +705,7 @@ impl Mechanic for Vehicles {
                     None => CarControls { handbrake: true, ..Default::default() },
                 }
             };
-            world.physics.set_car_condition(vid, CarCondition::of(vehicle.kind, vehicle.hp, vehicle.damage));
+            world.physics.set_car_condition(vid, CarCondition::of(vehicle.kind, hp, vehicle.damage));
             world.physics.drive_car(vid, vehicle.controls, dt);
         }
         let before: BTreeMap<u32, CarPose> = world.entities.ids::<With<Vehicle>>().into_iter().filter_map(|vid| Some((vid, world.physics.car_pose(vid)?))).collect();
@@ -707,29 +724,31 @@ impl Mechanic for Vehicles {
 
         // Riders travel with their car; stuck or fallen cars are put right.
         for vid in world.entities.ids::<With<Vehicle>>() {
-            let mut vehicle = world.entities.of_mut::<Vehicle>(vid);
             let Some(pose) = world.physics.car_pose(vid) else { continue };
+            // A wreck burns where it lies, then the room puts a fresh one back.
+            let wrecked = world.entities.dead(vid);
+            let burnt = wrecked
+                && world.entities.get_mut::<Wreck>(vid).is_none_or(|mut wreck| {
+                    wreck.left = wreck.left.saturating_sub(1);
+                    wreck.left == 0
+                });
+            let mut vehicle = world.entities.of_mut::<Vehicle>(vid);
             // Put back as new: its weapons are restocked once it is let go of.
             let mut fresh = false;
             let [x, y, z] = pose.position;
             let slow = pose.forward_speed.abs() < 1.5;
             vehicle.stuck_ticks = if pose.up_y < 0.2 && slow { vehicle.stuck_ticks + 1 } else { 0 };
-            if vehicle.wrecked() {
+            if wrecked {
                 // A wreck lets go of whatever it tows, and whatever tows it.
                 world.physics.detach(vid);
-                // A wreck burns where it lies, then the room puts a fresh one back.
-                vehicle.wreck_in = vehicle.wreck_in.saturating_sub(1);
-                if vehicle.wreck_in == 0 {
-                    vehicle.hp = vehicle_hp(vehicle.kind);
+                if burnt {
                     vehicle.damage = [0; 8];
                     vehicle.turret_hp = TANK_TURRET_HP;
-                    vehicle.last_attacker = None;
                     fresh = true;
                     world.physics.reset_car(vid, vehicle.home.0, vehicle.home.1);
                 }
             } else if y < KILL_Y {
                 // Fallen out of the world: a fresh one at home.
-                vehicle.hp = vehicle_hp(vehicle.kind);
                 vehicle.damage = [0; 8];
                 vehicle.turret_hp = TANK_TURRET_HP;
                 fresh = true;
@@ -756,8 +775,8 @@ impl Mechanic for Vehicles {
                     player.character.grounded = true;
                 }
             }
-            if fresh && let Some(mut mounts) = world.entities.get_mut::<Mounts>(vid) {
-                mounts.restock();
+            if fresh {
+                restore(world, vid, burnt);
             }
         }
     }

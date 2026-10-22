@@ -1,4 +1,5 @@
 use super::*;
+use crate::entities::Health;
 use crate::game::{Command, Game, Seat};
 use sim::STANDING_Y;
 use shared::items::Falloff;
@@ -437,7 +438,7 @@ fn the_forward_guns_take_turns_and_hit_what_is_ahead_of_the_nose() {
     let pose = game.world.physics.car_pose(vid).unwrap();
     let (muzzle, dir) = aim_from(&pose, PLANE_GUN_PIVOTS[0], 0.0, 0.0);
     game.world.players.get_mut(&victim).unwrap().character.position = std::array::from_fn(|i| muzzle[i] + dir[i] * 25.0 + if i == 1 { -0.3 } else { 0.0 });
-    let hp = game.world.entities.of::<Vehicle>(vid).hp;
+    let hp = game.world.entities.of::<Health>(vid).hp;
 
     let hits = hold_watching(&mut game, pilot, &mut seq, pose.yaw(), BUTTON_FIRE, 30, WEAPON_MG);
     let arms = shown(&game, vid, Show::Guns);
@@ -445,7 +446,7 @@ fn the_forward_guns_take_turns_and_hit_what_is_ahead_of_the_nose() {
     assert!(arms.shots.abs_diff(expected) <= 1, "{} rounds in half a second, expected about {expected}", arms.shots);
     assert!(game.world.players[&victim].hp < PLAYER_MAX_HP, "the stickman ahead is hit");
     assert!(!hits.is_empty() && hits.iter().all(|shot| shot.shooter == pilot), "{hits:?}");
-    assert_eq!(game.world.entities.of::<Vehicle>(vid).hp, hp, "its own guns never hurt the plane");
+    assert_eq!(game.world.entities.of::<Health>(vid).hp, hp, "its own guns never hurt the plane");
     assert!(game.world.in_flight().is_empty(), "rounds are hitscans, not projectiles");
 }
 
@@ -572,8 +573,8 @@ fn machine_gun_rounds_hurt_a_plane_more_than_a_car() {
         let (_, struck) = hitscan(&mut game.world, shooter, origin, [0.0, -1.0, 0.0], &round, 0, 0);
         assert!(struck);
     }
-    assert_eq!(game.world.entities.of::<Vehicle>(target).hp, shared::protocol::vehicle_hp(KIND_PLANE) - PLANE_GUN_PLANE_DAMAGE);
-    assert_eq!(game.world.entities.of::<Vehicle>(car).hp, 100 - PLANE_GUN_VEHICLE_DAMAGE);
+    assert_eq!(game.world.entities.of::<Health>(target).hp, shared::protocol::vehicle_hp(KIND_PLANE) - PLANE_GUN_PLANE_DAMAGE);
+    assert_eq!(game.world.entities.of::<Health>(car).hp, 100 - PLANE_GUN_VEHICLE_DAMAGE);
 }
 
 #[test]

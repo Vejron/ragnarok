@@ -4,7 +4,8 @@ use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
 use super::life::{blasted, damage_entity, first_hurtbox_hit, hit_mark};
 use super::spawn;
 use super::projectiles::{self, Flying, Stage};
-use crate::game::{Drone, Player, TEAM_NONE, Vehicle, World, starting_hotbar};
+use crate::entities::{Health, HurtBy};
+use crate::game::{Drone, Player, TEAM_NONE, Vehicle, World, Wreck, starting_hotbar};
 use sim::Obj;
 use shared::consts::*;
 use shared::items::*;
@@ -513,18 +514,19 @@ fn distance_to_building(world: &World, id: shared::world::ObjId, point: [f32; 3]
 
 /// Takes `amount` health off vehicle `vid`, and wrecks it at zero.
 pub fn damage_vehicle(world: &mut World, vid: u32, amount: u8, attacker: Option<u32>) {
-    let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(vid) else { return };
-    if vehicle.wrecked() || amount == 0 {
+    let Some(seats) = world.entities.get::<Vehicle>(vid).map(|vehicle| vehicle.seats) else { return };
+    let Some(mut health) = world.entities.get_mut::<Health>(vid) else { return };
+    if !health.alive() || amount == 0 {
         return;
     }
-    if attacker.is_some() {
-        vehicle.last_attacker = attacker;
+    let before = health.hp;
+    health.hp = health.hp.saturating_sub(amount);
+    let lost = before - health.hp;
+    let wrecked = !health.alive();
+    if let Some(id) = attacker {
+        world.entities.insert(vid, HurtBy(id));
     }
-    let before = vehicle.hp;
-    vehicle.hp = vehicle.hp.saturating_sub(amount);
-    let lost = before - vehicle.hp;
-    let wrecked = vehicle.hp == 0;
-    let seated: Vec<u32> = vehicle.seats.iter().flatten().copied().collect();
+    let seated: Vec<u32> = seats.iter().flatten().copied().collect();
     let at = world.physics.car_pose(vid).map(|pose| pose.position);
     let from = attacker.and_then(|id| position_of(world, id));
     let direction = at.zip(from).map_or(BEARING_NONE, |(at, from)| bearing(at, from));
@@ -553,10 +555,10 @@ fn wreck(world: &mut World, vid: u32) {
         return;
     }
     let Some(pose) = world.physics.car_pose(vid) else { return };
+    let attacker = world.entities.get::<HurtBy>(vid).map(|by| by.0);
+    world.entities.insert(vid, Wreck { left: WRECK_TICKS });
     let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(vid) else { return };
-    vehicle.wreck_in = WRECK_TICKS;
     vehicle.controls = Default::default();
-    let attacker = vehicle.last_attacker;
     let crew: Vec<u32> = vehicle.seats.iter_mut().filter_map(Option::take).collect();
     for id in crew {
         if let Some(player) = world.players.get_mut(&id) {

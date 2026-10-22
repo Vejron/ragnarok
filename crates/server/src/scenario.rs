@@ -7,7 +7,7 @@
 //! The file names things; `Scenario` holds them as indices, checked once when it is read, so a
 //! typo stops the server with a message instead of a trigger that never fires.
 
-use crate::game::{Game, Vehicle, World};
+use crate::game::{Game, Vehicle, World, Wreck};
 use crate::mechanics::{position_of, remove_vehicle};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -455,7 +455,7 @@ impl Scenario {
                 let Some(vehicle) = world.entities.get::<Vehicle>(vid) else { return false };
                 let crew_gone = crew.iter().all(|id| !world.players.contains_key(id));
                 let empty = vehicle.seats.iter().all(Option::is_none);
-                let burnt = !vehicle.wrecked() || vehicle.wreck_in <= 1;
+                let burnt = !world.entities.dead(vid) || world.entities.get::<Wreck>(vid).is_none_or(|wreck| wreck.left <= 1);
                 let goes = crew_gone && empty && burnt;
                 if goes {
                     remove_vehicle(&mut game.world, vid);

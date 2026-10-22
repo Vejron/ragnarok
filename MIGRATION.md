@@ -122,7 +122,8 @@ Phase 3 and 4 need both.
       functions.
 - [x] Vehicles as entities, with `Mounts` and `Drone` as components of their own.
 - [x] Per-kind branches in `vehicles.rs` to data (`VehicleDef::body`).
-- [ ] `Seats` and the wreck state out of `Vehicle`; the sim's per-kind controls and solids into its `Spec`.
+- [x] A vehicle's health and wreck state as `Health`, `HurtBy` and `Wreck`.
+- [ ] `Seats` out of `Vehicle`; the sim's per-kind controls and solids into its `Spec`.
 - [ ] Players and bots.
 - [ ] Events in place of `hits`, `kills`, `noises`.
 
@@ -651,3 +652,35 @@ kind in `VehicleDef` (`crates/shared/src/vehicles.rs`):
 
 **Next:** `Seats` and the wreck state out of `Vehicle`, or players and bots with events in place of the
 `hits`, `kills` and `noises` vectors.
+
+### 2026-10-22: a vehicle's health and its wreck are components
+
+`Vehicle` lost `hp`, `wreck_in` and `last_attacker`. What they held now lives in components that are
+not about vehicles:
+
+- **`Health`**, the same component the roosters use. A vehicle is spawned with
+  `Health::full(vehicle_hp(kind))`. `damage_vehicle` takes it down; the snapshot's `hp` reads it.
+- **`HurtBy(id)`** (new, in `entities.rs`): whoever last hurt it, credited with its death. It is absent
+  while nobody has, not an `Option` inside a struct. The wreck's blast and a drone's pop read it.
+- **`Wreck { left }`** (new, beside `Vehicle`): inserted by `combat::wreck`, counted down by `Vehicles`.
+  At zero, `vehicles::restore` puts the vehicle back whole and removes `Wreck` and `HurtBy` together.
+- `Entities::dead(id)` (any entity with `Health` at zero) replaces `Vehicle::wrecked()` at its 14
+  call sites. Where a site holds a `Mut<Vehicle>`, it asks before taking the borrow.
+
+Behaviour is kept, including two details:
+
+- A vehicle at zero health with no `Wreck` comes back the next tick. This happens when `wreck` found no
+  body, and `wreck_in` did the same at 0.
+- A vehicle that falls out of the world comes back whole but keeps its `HurtBy`, as it kept
+  `last_attacker`.
+
+Two tests now also check that a restored wreck carries no `Wreck` and no `HurtBy`.
+
+`turret_hp`, `damage` and `scrape_in` stay in `Vehicle` for now. They are what armour and crashes do
+to a hull, and they move when those do.
+
+**Checks:** server 262 tests, all passing; clippy clean. `full_room_tick_cost`: `Vehicles` 29.4 to
+31.4 µs over three runs, within the noise of the 28.7 to 29.3 µs before. The extra lookups are
+`dead()` per vehicle, which go away with cached query states.
+
+**Next:** `Seats` out of `Vehicle`, so that anything can be ridden, then players and bots.

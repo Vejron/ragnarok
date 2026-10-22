@@ -44,6 +44,10 @@ impl Health {
     }
 }
 
+/// Whoever last hurt it, credited with its death. Absent while nobody has.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HurtBy(pub u32);
+
 /// What a round or a blast can meet: an upright capsule over the feet. `hit_kind` is the `HIT_*` the
 /// shooter is told they hit.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
@@ -101,6 +105,7 @@ impl Default for Entities {
         ecs.register_component::<NetKind>();
         ecs.register_component::<Transform>();
         ecs.register_component::<Health>();
+        ecs.register_component::<HurtBy>();
         ecs.register_component::<Hurtbox>();
         ecs.register_component::<Home>();
         ecs.register_component::<Respawn>();
@@ -148,6 +153,11 @@ impl Entities {
     #[track_caller]
     pub fn of_mut<T: Component<Mutability = bevy_ecs::component::Mutable>>(&mut self, id: u32) -> Mut<'_, T> {
         self.get_mut::<T>(id).unwrap_or_else(|| panic!("entity {id} has no {}", std::any::type_name::<T>()))
+    }
+
+    /// Whether entity `id` has `Health` and none of it left: a dead rooster, a wrecked vehicle.
+    pub fn dead(&self, id: u32) -> bool {
+        self.get::<Health>(id).is_some_and(|health| !health.alive())
     }
 
     pub fn has<T: Component>(&self, id: u32) -> bool {

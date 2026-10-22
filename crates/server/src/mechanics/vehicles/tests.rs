@@ -1,4 +1,5 @@
 use super::*;
+use crate::entities::{Health, HurtBy};
 use crate::game::{Command, Game, Outgoing};
 use sim::STANDING_Y;
 use shared::protocol::{InputFrame, KIND_DRONE, THRUST_AIR, THRUST_BOOST, THRUST_LIFT};
@@ -225,7 +226,7 @@ fn a_car_on_its_roof_is_put_back_on_its_wheels() {
 fn a_fallen_walker_is_stood_on_its_feet_and_unhurt() {
     let mut game = game();
     let vid = game.world.entities.all::<Vehicle>().find(|(_, vehicle)| vehicle.kind == KIND_WALKER).unwrap().0;
-    let hp = game.world.entities.of::<Vehicle>(vid).hp;
+    let hp = game.world.entities.of::<Health>(vid).hp;
     let pose = game.world.physics.car_pose(vid).unwrap();
     // On its back, its hull on the ground, where its get-up pull cannot turn it.
     game.world.physics.set_car_roll(vid, std::f32::consts::PI, [pose.position[0], 1.3, pose.position[2]]);
@@ -236,7 +237,7 @@ fn a_fallen_walker_is_stood_on_its_feet_and_unhurt() {
     let ground = game.world.map.ground.height_at(after.position[0], after.position[2]);
     assert!(after.up_y > 0.95, "back on its feet: {after:?}");
     assert!(after.position[1] > ground + WALKER_LEG_LENGTH - 1.0, "standing, not sunk: {after:?}");
-    assert!(game.world.entities.of::<Vehicle>(vid).hp + 10 >= hp, "standing up did not hurt it: {} of {hp}", game.world.entities.of::<Vehicle>(vid).hp);
+    assert!(game.world.entities.of::<Health>(vid).hp + 10 >= hp, "standing up did not hurt it: {} of {hp}", game.world.entities.of::<Health>(vid).hp);
 }
 
 #[test]
@@ -509,11 +510,12 @@ fn ramming_a_car_hurts_both_and_blames_the_driver() {
     game.world.physics.kick_car(a, [0.0, 0.0, -22.0]);
     let events = crash_events(&mut game, 60);
     let (rammer, rammed) = (&game.world.entities.of::<Vehicle>(a), &game.world.entities.of::<Vehicle>(b));
-    assert!(rammer.hp < vehicle_hp(KIND_JEEP) && rammed.hp < vehicle_hp(KIND_JEEP), "{} {}", rammer.hp, rammed.hp);
+    let hp = |vid| game.world.entities.of::<Health>(vid).hp;
+    assert!(hp(a) < vehicle_hp(KIND_JEEP) && hp(b) < vehicle_hp(KIND_JEEP), "{} {}", hp(a), hp(b));
     assert!(rammer.damage[DAMAGE_FRONT] > 50, "the rammer's nose: {:?}", rammer.damage);
     // `b` faces -X, so its left side faces +Z, where `a` came from.
     assert!(rammed.damage[DAMAGE_LEFT] > 50 && rammed.damage[DAMAGE_RIGHT] == 0, "the rammed car's flank: {:?}", rammed.damage);
-    assert_eq!(rammed.last_attacker, Some(id));
+    assert_eq!(game.world.entities.get::<HurtBy>(b), Some(&HurtBy(id)));
     assert!(events.iter().any(|shot| shot.shooter == a && shot.weapon == WEAPON_CRASH), "{events:?}");
     let hit = events.iter().find(|shot| shot.weapon == WEAPON_CRASH).unwrap();
     assert!((hit.z as f32 / 100.0 - 19.0).abs() < 2.0, "where they met: {hit:?}");
@@ -525,7 +527,7 @@ fn a_nudge_does_no_harm() {
     let (a, b) = two_cars(&mut game);
     game.world.physics.kick_car(a, [0.0, 0.0, -3.0]);
     let events = crash_events(&mut game, 300);
-    assert_eq!((game.world.entities.of::<Vehicle>(a).hp, game.world.entities.of::<Vehicle>(b).hp), (vehicle_hp(KIND_JEEP), vehicle_hp(KIND_JEEP)));
+    assert_eq!((game.world.entities.of::<Health>(a).hp, game.world.entities.of::<Health>(b).hp), (vehicle_hp(KIND_JEEP), vehicle_hp(KIND_JEEP)));
     assert_eq!(game.world.entities.of::<Vehicle>(b).damage, [0; 8]);
     assert!(events.iter().all(|shot| shot.weapon != WEAPON_CRASH), "{events:?}");
 }
@@ -544,12 +546,13 @@ fn a_wheel_takes_a_hit_beside_it_and_a_wreck_comes_back_whole() {
     let mut game = game();
     let (a, _) = two_cars(&mut game);
     game.world.entities.get_mut::<Vehicle>(a).unwrap().damage = damage;
+    game.world.entities.insert(a, HurtBy(7));
     super::super::combat::damage_vehicle(&mut game.world, a, 255, None);
     for _ in 0..WRECK_TICKS + 2 {
         Vehicles.on_tick(&mut game.world, TICK_DT);
     }
-    let vehicle = &game.world.entities.of::<Vehicle>(a);
-    assert_eq!((vehicle.hp, vehicle.damage), (vehicle_hp(KIND_JEEP), [0; 8]));
+    assert_eq!((game.world.entities.of::<Health>(a).hp, game.world.entities.of::<Vehicle>(a).damage), (vehicle_hp(KIND_JEEP), [0; 8]));
+    assert!(game.world.entities.get::<HurtBy>(a).is_none(), "nobody is blamed for a fresh one");
 }
 
 #[test]
@@ -637,8 +640,7 @@ fn a_gentle_landing_does_no_harm() {
     // Coming in at 22 m/s and sinking at a metre and a half a second.
     game.world.physics.set_car_dive(vid, [pose.position[0], 3.0, pose.position[2]], pose.yaw(), -0.07, 22.0);
     let events = crash_events(&mut game, 180);
-    let vehicle = &game.world.entities.of::<Vehicle>(vid);
-    assert_eq!(vehicle.hp, vehicle_hp(KIND_PLANE), "{events:?}");
+    assert_eq!(game.world.entities.of::<Health>(vid).hp, vehicle_hp(KIND_PLANE), "{events:?}");
     let landed = game.world.physics.car_pose(vid).unwrap();
     assert!(landed.up_y > 0.95 && landed.position[1] < 1.5, "{landed:?}");
 }
@@ -653,7 +655,7 @@ fn flying_a_plane_into_the_ground_wrecks_it() {
     for _ in 0..120 {
         Vehicles.on_tick(&mut game.world, TICK_DT);
     }
-    assert!(game.world.entities.of::<Vehicle>(vid).wrecked(), "hp {}", game.world.entities.of::<Vehicle>(vid).hp);
+    assert!(game.world.entities.dead(vid), "hp {}", game.world.entities.of::<Health>(vid).hp);
 }
 
 #[test]

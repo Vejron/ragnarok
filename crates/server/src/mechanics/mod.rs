@@ -52,6 +52,7 @@ pub fn register_components(ecs: &mut bevy_ecs::world::World) {
     ecs.register_component::<crate::game::Vehicle>();
     ecs.register_component::<crate::game::Mounts>();
     ecs.register_component::<crate::game::Drone>();
+    ecs.register_component::<crate::game::Wreck>();
     projectiles::register(ecs);
 }
 

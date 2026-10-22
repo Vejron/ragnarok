@@ -178,7 +178,7 @@ pub(super) enum Boarding {
 /// Whether crewman `id`, on foot at `at`, gets back into its tank, walks to it, or does without.
 pub(super) fn board(world: &mut World, id: u32, crew: Crew, at: [f32; 3]) -> Boarding {
     let Some(vehicle) = world.entities.get::<Vehicle>(crew.vehicle) else { return Boarding::No };
-    if vehicle.wrecked() || vehicle.seats[crew.seat].is_some() {
+    if world.entities.dead(crew.vehicle) || vehicle.seats[crew.seat].is_some() {
         return Boarding::No;
     }
     let Some(pose) = world.physics.car_pose(crew.vehicle) else { return Boarding::No };

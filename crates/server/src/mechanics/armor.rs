@@ -161,8 +161,11 @@ pub fn announce_ricochet(world: &mut World, vid: u32, point: [f32; 3]) {
 /// Hits of `damage` that land on the turret of tank `vid`. At zero the turret comes off: it is gone
 /// until the tank is put back, its solid goes, the gunner dies with it and `DAMAGE_TURRET` tells clients.
 pub fn damage_turret(world: &mut World, vid: u32, damage: u8, attacker: Option<u32>) {
+    if world.entities.dead(vid) {
+        return;
+    }
     let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(vid) else { return };
-    if vehicle.kind != KIND_TANK || vehicle.damage[DAMAGE_TURRET] == TURRET_GONE || vehicle.wrecked() {
+    if vehicle.kind != KIND_TANK || vehicle.damage[DAMAGE_TURRET] == TURRET_GONE {
         return;
     }
     vehicle.turret_hp = vehicle.turret_hp.saturating_sub(damage);

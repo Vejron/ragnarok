@@ -91,7 +91,7 @@ impl Game {
                         })
                         .collect()
                 };
-                Some(VehicleState { id, kind: vehicle.kind, x: to_cm(x), y: to_cm(y), z: to_cm(z), qx, qy, qz, steer: to_axis(pose.steer), seats, turret, hp: vehicle.hp, damage, arms, thrust, crew })
+                Some(VehicleState { id, kind: vehicle.kind, x: to_cm(x), y: to_cm(y), z: to_cm(z), qx, qy, qz, steer: to_axis(pose.steer), seats, turret, hp: self.world.entities.get::<crate::entities::Health>(id).map_or(0, |health| health.hp), damage, arms, thrust, crew })
             })
             .collect()
     }
