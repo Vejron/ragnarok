@@ -4,51 +4,9 @@ use shared::protocol::{KIND_DRONE, KIND_JEEP, PROJECTILE_ROCKET};
 use shared::world::{WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
 
-/// Protocol v1's rows, rebuilt from a v2 scene: the reference for the client's adapter (Phase 3.4).
-/// What an entity is follows from its components: a `pickup`, a `projectile`, an `orientation` (a
-/// vehicle), else a stickman or a creature.
-fn rows(scene: &Scene) -> (Vec<EntityState>, Vec<VehicleState>, Vec<ProjectileState>, Vec<PickupState>) {
-    let (mut entities, mut vehicles, mut rockets, mut pickups) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    for (id, e) in scene {
-        let id = *id;
-        let wire::Place { x, y, z } = e.place.expect("everything listed has a place");
-        let kind = e.kind.as_ref().map_or(0, |kind| kind.kind);
-        if let Some(pickup) = &e.pickup {
-            pickups.push(PickupState { id, item: pickup.item, x, y, z });
-        } else if let Some(projectile) = &e.projectile {
-            let wire::Velocity { vx, vy, vz } = e.velocity.unwrap_or_default();
-            rockets.push(ProjectileState { id, kind: projectile.kind, x, y, z, vx, vy, vz });
-        } else if let Some(wire::Orientation { qx, qy, qz }) = e.orientation {
-            vehicles.push(VehicleState {
-                id,
-                kind,
-                x,
-                y,
-                z,
-                qx,
-                qy,
-                qz,
-                steer: e.steer.map_or(0, |steer| steer.steer),
-                seats: e.seats.clone().map_or_else(Vec::new, |seats| seats.riders),
-                turret: e.turret.as_ref().map(|t| Turret { yaw: t.yaw, pitch: t.pitch, shots: t.shots, range: t.range, flags: t.flags }),
-                hp: e.health.as_ref().map_or(0, |health| health.hp),
-                damage: e.damage.as_ref().map(|damage| damage.parts),
-                arms: e.arms.as_ref().map(|a| Arms { shots: a.shots, heat: a.heat, rear_heat: a.rear_heat, bombs: a.bombs, flags: a.flags }),
-                thrust: e.thrust.as_ref().map(|t| Thrust { air: t.air, flags: t.flags }),
-                crew: e.crew.clone().map_or_else(Vec::new, |crew| crew.riders),
-            });
-        } else {
-            let motion = e.motion.unwrap_or_default();
-            let flags = e.flags.clone().unwrap_or_default();
-            entities.push(EntityState { id, kind, x, y, z, yaw: e.heading.map_or(0, |h| h.yaw), vy: motion.vy, flags: flags.flags, stance: flags.stance, knock_x: motion.knock_x, knock_z: motion.knock_z });
-        }
-    }
-    (entities, vehicles, rockets, pickups)
-}
-
 /// Whether the v2 scene says exactly what the v1 rows do, of everything in the room.
 fn same_as_v1(game: &Game) -> (usize, usize, usize, usize) {
-    let (entities, vehicles, rockets, pickups) = rows(&game.replicated());
+    let (entities, vehicles, rockets, pickups) = wire::v1_rows(&game.replicated());
     let mut v1_entities = game.entity_states();
     v1_entities.sort_by_key(|e| e.id);
     assert_eq!(entities, v1_entities, "stickmen and creatures, tick {}", game.world.tick);

@@ -18,7 +18,7 @@
 //!
 //! An update for an id not in the baseline brings the whole entity: everything it has is set.
 
-use crate::protocol::Rider;
+use crate::protocol::{self, EntityState, PickupState, ProjectileState, Rider, VehicleState};
 use serde::de::{self, SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -363,6 +363,49 @@ mod json {
             format!("{{\"yaw\": {}, \"pitch\": {}, \"held\": {}}}", self.yaw, self.pitch, self.held)
         }
     }
+}
+
+/// Protocol v1's rows of a v2 scene: what the client's adapter turns a scene into until Phase 4, and
+/// what the server's v1 snapshot code is checked against. What an entity is follows from its
+/// components: a `pickup`, a `projectile`, an `orientation` (a vehicle), else a stickman or a creature.
+/// Goes with v1, in Phase 3.5.
+pub fn v1_rows(scene: &[(u32, Replicated)]) -> (Vec<EntityState>, Vec<VehicleState>, Vec<ProjectileState>, Vec<PickupState>) {
+    let (mut entities, mut vehicles, mut rockets, mut pickups) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for (id, e) in scene {
+        let id = *id;
+        let Place { x, y, z } = e.place.unwrap_or_default();
+        let kind = e.kind.as_ref().map_or(0, |kind| kind.kind);
+        if let Some(pickup) = &e.pickup {
+            pickups.push(PickupState { id, item: pickup.item, x, y, z });
+        } else if let Some(projectile) = &e.projectile {
+            let Velocity { vx, vy, vz } = e.velocity.unwrap_or_default();
+            rockets.push(ProjectileState { id, kind: projectile.kind, x, y, z, vx, vy, vz });
+        } else if let Some(Orientation { qx, qy, qz }) = e.orientation {
+            vehicles.push(VehicleState {
+                id,
+                kind,
+                x,
+                y,
+                z,
+                qx,
+                qy,
+                qz,
+                steer: e.steer.map_or(0, |steer| steer.steer),
+                seats: e.seats.clone().map_or_else(Vec::new, |seats| seats.riders),
+                turret: e.turret.as_ref().map(|t| protocol::Turret { yaw: t.yaw, pitch: t.pitch, shots: t.shots, range: t.range, flags: t.flags }),
+                hp: e.health.as_ref().map_or(0, |health| health.hp),
+                damage: e.damage.as_ref().map(|damage| damage.parts),
+                arms: e.arms.as_ref().map(|a| protocol::Arms { shots: a.shots, heat: a.heat, rear_heat: a.rear_heat, bombs: a.bombs, flags: a.flags }),
+                thrust: e.thrust.as_ref().map(|t| protocol::Thrust { air: t.air, flags: t.flags }),
+                crew: e.crew.clone().map_or_else(Vec::new, |crew| crew.riders),
+            });
+        } else {
+            let motion = e.motion.unwrap_or_default();
+            let flags = e.flags.clone().unwrap_or_default();
+            entities.push(EntityState { id, kind, x, y, z, yaw: e.heading.map_or(0, |h| h.yaw), vy: motion.vy, flags: flags.flags, stance: flags.stance, knock_x: motion.knock_x, knock_z: motion.knock_z });
+        }
+    }
+    (entities, vehicles, rockets, pickups)
 }
 
 /// What a receiver holds: every entity it has been told of, by id.

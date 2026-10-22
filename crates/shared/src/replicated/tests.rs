@@ -248,10 +248,35 @@ fn generated(path: &str, contents: &str) {
     assert_eq!(committed, contents, "{} is stale: regenerate it with UPDATE_PARITY=1 cargo test -p shared", path.display());
 }
 
+/// A scene with every family and the edge cases of each, and its v1 rows as v1 encodes them: what the
+/// client's adapter (Phase 3.4) must turn the scene into.
+fn adapter_fixture_json() -> String {
+    let vehicle = |kind: u8| Replicated { kind: Some(Kind { kind }), place: Some(Place { x: 500, y: 80, z: -900 }), orientation: Some(Orientation { qx: 10, qy: -2000, qz: 30 }), steer: Some(Steer { steer: 40 }), seats: Some(Seats { riders: vec![0, 0] }), health: Some(Health { hp: 100 }), ..Default::default() };
+    let scene: Scene = vec![
+        // Prone, knocked, crouching, holding a gun (flags carry the held item).
+        (1, Replicated { motion: Some(Motion { vy: -320, knock_x: 150, knock_z: -40 }), flags: Some(Flags { flags: 0b0001_0101, stance: 1 }), ..stickman(-700, -1500) }),
+        // A rooster: no motion, crowing.
+        (2, Replicated { kind: Some(Kind { kind: 5 }), place: Some(Place { x: 10, y: 0, z: 20 }), heading: Some(Heading { yaw: 900 }), flags: Some(Flags { flags: 0b1000_0001, stance: 0 }), ..Default::default() }),
+        (4, tank(300, -700)),
+        // A field mortar, hitched: its turret stowed, its crew showing and empty.
+        (5, Replicated { turret: Some(Turret { yaw: 0, pitch: 600, shots: 0, range: 1500, flags: 1 }), crew: Some(Crew { riders: vec![Rider::default()] }), seats: Some(Seats { riders: vec![0] }), ..vehicle(9) }),
+        // A plane: crew showing, arms, hurt.
+        (6, Replicated { turret: Some(Turret { yaw: 3000, pitch: -100, shots: 17, range: 0, flags: 0 }), crew: Some(Crew { riders: vec![Rider { yaw: 100, pitch: 50, held: 0 }, Rider { yaw: -3000, pitch: -40, held: 2 }] }), arms: Some(Arms { shots: 200, heat: 128, rear_heat: 3, bombs: 4, flags: 2 }), damage: Some(Damage { parts: [0, 9, 0, 0, 0, 0, 0, 0] }), seats: Some(Seats { riders: vec![1, 0] }), ..vehicle(6) }),
+        // A drone, linked, its battery as air; a wreck.
+        (7, Replicated { thrust: Some(Thrust { air: 99, flags: 4 }), seats: Some(Seats { riders: vec![1] }), ..vehicle(11) }),
+        (8, Replicated { health: Some(Health { hp: 0 }), ..vehicle(1) }),
+        (9, Replicated { projectile: Some(Projectile { kind: 0 }), place: Some(Place { x: 1, y: 2000, z: 3 }), velocity: Some(Velocity { vx: -4000, vy: 50, vz: 0 }), ..Default::default() }),
+        (10, Replicated { pickup: Some(Pickup { item: 7 }), place: Some(Place { x: -5, y: 30, z: 5 }), ..Default::default() }),
+    ];
+    let v1: Vec<String> = encode(&v1_rows(&scene)).iter().map(u8::to_string).collect();
+    format!("{{\n  \"scene\": {},\n  \"v1\": [{}]\n}}\n", scene_json(&scene), v1.join(", "))
+}
+
 #[test]
 fn the_clients_components_and_fixture_are_generated_from_these() {
     generated("client/src/net/components.generated.ts", &components_ts());
     generated("client/src/__tests__/replicated.fixture.json", &fixture_json());
+    generated("client/src/__tests__/adapter.fixture.json", &adapter_fixture_json());
 }
 
 #[test]

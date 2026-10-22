@@ -536,10 +536,14 @@ function decodeShot(raw: unknown): ShotEvent | null {
   return { shooter: shooter!, weapon: weapon!, x: x! / CM, y: y! / CM, z: z! / CM }
 }
 
-function decodeRocket(raw: unknown): RocketState | null {
-  if (!Array.isArray(raw) || raw.length !== 8 || !ints(raw)) return null
+/** `[id, kind, x, y, z, vx, vy, vz]` (centimetres, cm/s) in source units. */
+export function rocketState(raw: readonly number[]): RocketState {
   const [id, kind, x, y, z, vx, vy, vz] = raw as number[]
   return { id: id!, kind: kind!, x: x! / CM, y: y! / CM, z: z! / CM, vx: vx! / CM, vy: vy! / CM, vz: vz! / CM }
+}
+
+function decodeRocket(raw: unknown): RocketState | null {
+  return Array.isArray(raw) && raw.length === 8 && ints(raw) ? rocketState(raw as number[]) : null
 }
 
 function decodeBullet(raw: unknown): BulletSpawn | null {
@@ -548,10 +552,14 @@ function decodeBullet(raw: unknown): BulletSpawn | null {
   return { id: id!, shooter: shooter!, item: item!, x: x! / CM, y: y! / CM, z: z! / CM, vx: vx! / CM, vy: vy! / CM, vz: vz! / CM, tick: tick! }
 }
 
-function decodePickup(raw: unknown): PickupState | null {
-  if (!Array.isArray(raw) || raw.length !== 5 || !ints(raw)) return null
+/** `[id, item, x, y, z]` (centimetres) in source units. */
+export function pickupState(raw: readonly number[]): PickupState {
   const [id, item, x, y, z] = raw as number[]
   return { id: id!, item: item!, x: x! / CM, y: y! / CM, z: z! / CM }
+}
+
+function decodePickup(raw: unknown): PickupState | null {
+  return Array.isArray(raw) && raw.length === 5 && ints(raw) ? pickupState(raw as number[]) : null
 }
 
 /** `[hp, progress, [[item, count, ammo], ...]]`: what the server tells a player about themselves. */

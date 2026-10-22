@@ -216,7 +216,7 @@ Each step is tested on its own. Only the last one changes the wire.
       entity.
 - [x] **3.3** Client: the generated schema, the generic decoder, the store and its `apply`. Byte
       fixtures from Rust decode to the scenes Rust built.
-- [ ] **3.4** Client: the adapter, from the store to today's states. The same fixtures must give the
+- [x] **3.4** Client: the adapter, from the store to today's states. The same fixtures must give the
       states the v1 decoder gives.
 - [ ] **3.5** Switch:
   - snapshot v2 on the wire, with `PROTOCOL_VERSION` bumped;
@@ -1257,3 +1257,38 @@ measurement matters.
 
 **Next:** 3.4, the adapter from a `Scene` to v1's `EntityState`, `VehicleState`, rocket and pickup
 states, checked against the v1 decoder on the same world.
+
+### 2026-10-22: Phase 3.4, the v1 adapter
+
+`client/src/net/adapter.ts` turns a v2 `Scene` into what `game.ts` takes from a v1 snapshot:
+
+- `v1Rows` builds v1's integer rows (`RawEntity`, `RawVehicle`, and the rocket and pickup rows).
+- `v1Scene` hands them to the existing conversions (`sceneStates`, and `rocketState` and
+  `pickupState`, now exported from `codec.ts`), so units and flag decoding stay in one place.
+- What an entity is follows from its components, the same rule as the Rust side.
+
+It is held to the server by a chain of exact checks:
+
+1. **Server to `v1_rows`.** The Rust oracle's `rows()` moved into `shared::replicated` as `v1_rows`.
+   The server's busy-room oracle (3.2) uses it, so `v1_rows` of the server's scene equals the
+   server's v1 rows.
+2. **`v1_rows` to the bytes.** Rust writes `client/src/__tests__/adapter.fixture.json`: a scene with
+   every family and each one's edge cases, and its v1 rows as the v1 encoder puts them on the wire.
+   The edge cases are:
+   - a prone, knocked, crouching stickman holding a gun;
+   - a crowing rooster with no `motion`;
+   - a tank;
+   - a hitched mortar with an empty crew showing;
+   - a hurt plane with arms and crew;
+   - a linked drone;
+   - a wreck;
+   - a rocket;
+   - a pickup.
+3. **The bytes to the adapter.** `adapter.spec.ts` requires `v1Rows` to give exactly the decoded
+   bytes, and the game-unit states to come out right for each edge case.
+
+**Checks:** client 369 tests and every Rust suite, all passing; `vue-tsc`, oxlint and workspace
+clippy clean.
+
+**Next:** 3.5, the switch: v2 snapshots on the wire, `PROTOCOL_VERSION` bumped, v1's rows, deltas and
+codec deleted, and NETWORKING.md rewritten.
