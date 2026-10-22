@@ -6,7 +6,6 @@ import { loadPlaneModel, PlaneModel } from './plane'
 import { DroneModel } from './drone'
 import { LoiterModel } from './loiter'
 import { MortarModel } from './mortar'
-import { DRIVING_DISTANCE, DRONE_DISTANCE, HELI_DISTANCE, HEN_DISTANCE, LOITER_DISTANCE, MORTAR_DISTANCE, PLANE_DISTANCE, STRV_DISTANCE, TANK_DISTANCE, WALKER_DISTANCE } from './scene'
 import { loadStrvModel, StrvModel } from './strvs'
 import { loadTankModel, TankModel } from './tank'
 import { loadWalkerModel, WalkerModel } from './walker'
@@ -33,16 +32,3 @@ export function createVehicleModel(kind: number, id: number): VehicleModel {
   return new CarModel(kind, id)
 }
 
-/** How far behind a vehicle of `kind` the camera sits. */
-export function cameraDistance(kind: number): number {
-  if (kind === KIND_TANK) return TANK_DISTANCE
-  if (kind === KIND_HELI) return HELI_DISTANCE
-  if (kind === KIND_PLANE) return PLANE_DISTANCE
-  if (kind === KIND_WALKER) return WALKER_DISTANCE
-  if (kind === KIND_HEN) return HEN_DISTANCE
-  if (kind === KIND_STRV) return STRV_DISTANCE
-  if (kind === KIND_MORTAR) return MORTAR_DISTANCE
-  if (kind === KIND_DRONE) return DRONE_DISTANCE
-  if (kind === KIND_LOITER) return LOITER_DISTANCE
-  return DRIVING_DISTANCE
-}

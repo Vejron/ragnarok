@@ -333,7 +333,7 @@ not change.
   - client: `v1Rows`/`v1Scene`, `RawEntity`/`RawVehicle`, `EntityState`/`VehicleState`/`RocketState`/
     `PickupState`;
   - Rust: `v1_rows`, the row structs, and the server's test views built on them.
-- [ ] **4.6** Seats as data: camera rigs, the HUD's seat role and the prompt.
+- [x] **4.6** Seats as data: camera rigs, the HUD's seat role and the prompt.
 - [ ] **4.7** `game.ts` split into the parts above.
 
 #### Guardrails
@@ -1760,3 +1760,69 @@ the presenters, and §10 describes entities as components.
 **Progress:** `codec.ts` is 507 lines (from 704). `game.ts` is unchanged at 1,595.
 
 **Next:** 4.6, seats as data: camera rigs, the HUD's seat role and the prompt.
+
+### 2026-10-22: Phase 4.6, seats as data
+
+**The table.** `client/src/seats.ts` says what sitting in each seat of each vehicle means on the client,
+one row per kind in seat order. A new vehicle is one row there, not a branch in each of the camera, the
+HUD and the prompt.
+
+- **Per vehicle:** how far behind it the camera sits (this replaces `cameraDistance`'s if-chain), the
+  reload of the gun its crew fires, and its rotors' downwash on the grass.
+- **Per seat:**
+  - the camera rig;
+  - the HUD's role, which picks its hints;
+  - the E prompt for boarding into it (none for a drone, which is flown from afar);
+  - whether it has the chase camera;
+  - whether aiming looks down a sight;
+  - its gauges (`air`, `eggs`, `cockpit`, `range`);
+  - the arc it draws (a mortar bomb's, or where a plane's bomb would land).
+
+**The rigs.** `client/src/cameras.ts` holds one rig per way of following:
+
+| Rig | Seat |
+|---|---|
+| `drive` | behind the vehicle |
+| `gun` | behind a mounted gun, its travel `level` (tank) or in the `hull`'s frame (helicopter, plane) |
+| `fpv` | a drone's camera, with a belly camera on the loitering drone |
+| `aviator` | a plane's pilot |
+| `tanker` | a Strv S's driver |
+| `walker` | a walker's driver |
+| `mortar` | a field mortar's crew |
+| `passenger` | a car's passenger, over the shoulder |
+
+- Each rig has `enter`, `frame` and `leave`. The camera switches rig when the seat changes, keyed by
+  vehicle and seat.
+- What each rig remembers between frames is its own: the plane's eased view, whether the gun has been
+  aimed, the drone hidden from its own lens, and the feed cut on leaving.
+- This replaces six `was*` flags, `loiterCam`, `wasAimHeld`, `hiddenDrone`, `feedLostAt` and
+  `planeView` in `game.ts`, along with the camera's 115-line if-chain.
+- `lookAlong`, `limitGun` and `lookDownBarrel` moved with the rigs.
+
+**What changed in `game.ts`:**
+
+- `frame()` builds one `Seated` for the rig, or places the on-foot camera.
+- The HUD's seat role (a nine-way ternary), its reload, range, air, eggs, cockpit and drone link come
+  from the table.
+- The boarding prompt is the board text of the nearest vehicle's lowest free seat, which is the seat
+  the server boards into. It replaces ten branches.
+
+**Tests** (`seats.spec.ts`):
+
+- For each of the 12 vehicle kinds and each seat, the table must say what the old if-chains said:
+  prompt, HUD role, reload, sight and chase camera. A seat whose occupant fires their own guns has the
+  passenger rig.
+- Rigs:
+  - taking a seat aims the look where it points, and only then;
+  - a drone is flown through its camera, hidden from itself, and the feed cuts when the link goes;
+  - a loitering drone's cameras swap on a fresh aim press;
+  - a gunner whose model has no barrel yet sits behind the vehicle, then aims along the barrel once
+    it has one.
+
+**Progress:** `game.ts` is 1,367 lines (from 1,595; 1,922 at the start of Phase 4). It has 4 id-keyed
+maps and sets, and no `KIND_*` equality branches; the one `!== KIND_MORTAR` left decides whether a
+driver's vehicle is predicted, which is prediction, not presentation.
+
+**Checks:** client 395 passing; `vue-tsc` and oxlint add nothing.
+
+**Next:** 4.7, splitting `game.ts`.
