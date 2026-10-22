@@ -47,7 +47,7 @@ fn idle(game: &mut Game, id: u32, seq: &mut u32, ticks: u32) {
 fn move_player_next_to_a_car(game: &mut Game, id: u32) -> u32 {
     let (vid, _) = game.world.entities.all::<Vehicle>().next().unwrap();
     let pose = game.world.physics.car_pose(vid).unwrap();
-    let player = game.world.players.get_mut(&id).unwrap();
+    let mut player = game.world.entities.get_mut::<Player>(id).unwrap();
     player.character.position = [pose.position[0] + 2.0, STANDING_Y, pose.position[2]];
     vid
 }
@@ -111,10 +111,10 @@ fn a_player_out_of_reach_does_not_board() {
     let (id, _inbox) = join(&mut game);
     let mut seq = 0;
     idle(&mut game, id, &mut seq, 30);
-    game.world.players.get_mut(&id).unwrap().character.position = [0.0, STANDING_Y, 15.0];
+    game.world.entities.get_mut::<Player>(id).unwrap().character.position = [0.0, STANDING_Y, 15.0];
     press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
     idle(&mut game, id, &mut seq, 3);
-    assert!(game.world.players[&id].seat.is_none());
+    assert!(game.world.entities.of::<Player>(id).seat.is_none());
 }
 
 #[test]
@@ -147,7 +147,7 @@ fn the_driver_steers_and_passengers_ride_along() {
     let end = game.world.physics.car_pose(vid).unwrap();
     let travelled = (end.position[0] - start[0]).hypot(end.position[2] - start[2]);
     assert!(travelled > 5.0, "the car drove {travelled} m");
-    let rider_at = game.world.players[&rider].character.position;
+    let rider_at = game.world.entities.of::<Player>(rider).character.position;
     assert_eq!(rider_at, end.position, "passengers move with the car");
 
     // Only the driver is told the car's exact motion, so they can predict it.
@@ -170,20 +170,20 @@ fn a_pilot_lifts_off_with_one_passenger() {
     let (vid, _) = game.world.entities.all::<Vehicle>().find(|(_, vehicle)| vehicle.kind == KIND_HELI).expect("a helicopter is placed");
     let start = game.world.physics.car_pose(vid).unwrap();
     for id in [pilot, rider, third] {
-        game.world.players.get_mut(&id).unwrap().character.position = [start.position[0] + 2.5, STANDING_Y, start.position[2]];
+        game.world.entities.get_mut::<Player>(id).unwrap().character.position = [start.position[0] + 2.5, STANDING_Y, start.position[2]];
     }
     for (id, seq) in [(pilot, &mut seq_a), (rider, &mut seq_b), (third, &mut seq_c)] {
         press(&mut game, id, seq, (0, 0), BUTTON_USE, 1);
         idle(&mut game, id, seq, 3);
     }
     assert_eq!(game.world.entities.of::<Seats>(vid)[..], [Some(pilot), Some(rider)], "two seats, and the pilot first");
-    assert!(game.world.players[&third].seat.is_none());
+    assert!(game.world.entities.of::<Player>(third).seat.is_none());
 
     // Jump climbs: a second of rotor spin-up is not needed, the lift is immediate.
     press(&mut game, pilot, &mut seq_a, (0, 0), BUTTON_JUMP, 120);
     let end = game.world.physics.car_pose(vid).unwrap();
     assert!(end.position[1] > start.position[1] + 3.0, "climbed from {} to {}", start.position[1], end.position[1]);
-    assert_eq!(game.world.players[&rider].character.position, end.position, "the passenger goes up with it");
+    assert_eq!(game.world.entities.of::<Player>(rider).character.position, end.position, "the passenger goes up with it");
     let drive = game.drive_state(pilot).expect("the pilot gets the motion");
     assert!(drive.vy > 100, "climbing at over 1 m/s: {drive:?}");
 
@@ -258,7 +258,7 @@ fn a_driven_car_knocks_back_a_player_in_its_way() {
     let (sin, cos) = pose.yaw().sin_cos();
     let ahead = [-sin, -cos];
     let spot = [pose.position[0] + ahead[0] * 12.0, STANDING_Y, pose.position[2] + ahead[1] * 12.0];
-    game.world.players.get_mut(&victim).unwrap().character.position = spot;
+    game.world.entities.get_mut::<Player>(victim).unwrap().character.position = spot;
 
     let mut peak_knock: f32 = 0.0;
     let mut hopped = false;
@@ -269,18 +269,18 @@ fn a_driven_car_knocks_back_a_player_in_its_way() {
         game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
         game.handle(Command::Input(victim, 0, vec![InputFrame { seq: seq_b, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
         game.step();
-        let character = game.world.players[&victim].character;
+        let character = game.world.entities.of::<Player>(victim).character;
         peak_knock = peak_knock.max(character.knock[0].hypot(character.knock[1]));
         hopped |= character.position[1] > STANDING_Y + 0.3;
-        lowest_hp = lowest_hp.min(game.world.players[&victim].hp);
+        lowest_hp = lowest_hp.min(game.world.entities.of::<Player>(victim).hp);
     }
     assert!(lowest_hp < PLAYER_MAX_HP, "a car at speed hurts: lowest hp {lowest_hp}");
     assert!(peak_knock > KNOCK_MIN_PUSH, "peak knockback {peak_knock}");
     assert!(hopped, "a hit sends the player up");
-    let character = game.world.players[&victim].character;
+    let character = game.world.entities.of::<Player>(victim).character;
     let moved = (character.position[0] - spot[0]) * ahead[0] + (character.position[2] - spot[2]) * ahead[1];
     assert!(moved > 2.0, "thrown {moved} m along the car's heading");
-    assert!(game.world.players[&victim].seat.is_none());
+    assert!(game.world.entities.of::<Player>(victim).seat.is_none());
     // And it shows on the wire.
     assert!(game.entity_states().iter().any(|e| e.id == victim));
 }
@@ -309,7 +309,7 @@ fn driver_and_roof_rider(game: &mut Game) -> RoofScene {
     let pose = game.world.physics.car_pose(vid).unwrap();
     // Drop the rider on the roof; it settles a tick or two later.
     let top = pose.position[1] + JEEP_HALF_EXTENTS[1] + STANDING_Y + 0.05;
-    game.world.players.get_mut(&rider).unwrap().character.position = [pose.position[0], top, pose.position[2]];
+    game.world.entities.get_mut::<Player>(rider).unwrap().character.position = [pose.position[0], top, pose.position[2]];
     for _ in 0..30 {
         seq_a += 1;
         seq_b += 1;
@@ -324,7 +324,7 @@ fn driver_and_roof_rider(game: &mut Game) -> RoofScene {
 fn a_player_on_the_roof_rides_along() {
     let mut game = game();
     let RoofScene { vid, driver, rider, start, seqs: (mut seq_a, mut seq_b), .. } = driver_and_roof_rider(&mut game);
-    assert_eq!(game.world.players[&rider].character.ride, vid, "standing on the roof");
+    assert_eq!(game.world.entities.of::<Player>(rider).character.ride, vid, "standing on the roof");
     for _ in 0..240 {
         seq_a += 1;
         seq_b += 1;
@@ -333,14 +333,14 @@ fn a_player_on_the_roof_rides_along() {
         game.step();
     }
     let car = game.world.physics.car_pose(vid).unwrap();
-    let on = game.world.players[&rider].character;
+    let on = game.world.entities.of::<Player>(rider).character;
     let travelled = (car.position[0] - start[0]).hypot(car.position[2] - start[1]);
     assert!(travelled > 8.0, "the car drove {travelled} m");
     assert_eq!(on.ride, vid);
     let apart = (on.position[0] - car.position[0]).hypot(on.position[2] - car.position[2]);
     assert!(apart < 1.5, "the rider is {apart} m from the car's centre");
     assert!(on.position[1] > car.position[1] + 0.8, "still on top: {:?} vs {:?}", on.position, car.position);
-    assert_eq!(game.world.players[&rider].hit_cooldown, 0, "a rider is never run over by their own car");
+    assert_eq!(game.world.entities.of::<Player>(rider).hit_cooldown, 0, "a rider is never run over by their own car");
 }
 
 #[test]
@@ -368,7 +368,7 @@ fn jumping_off_a_moving_car_keeps_its_speed() {
     game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
     game.handle(Command::Input(rider, 0, vec![InputFrame { seq: seq_b, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
     game.step();
-    let left = game.world.players[&rider].character;
+    let left = game.world.entities.of::<Player>(rider).character;
     assert_eq!(left.ride, 0);
     assert!(!left.grounded);
     let knock = left.knock[0].hypot(left.knock[1]);
@@ -421,11 +421,11 @@ fn a_tank_has_a_driver_and_a_gunner_and_no_third_seat() {
         idle(&mut game, *id, seq, 3);
     }
     for (id, _, seq) in &mut crew {
-        game.world.players.get_mut(id).unwrap().character.position = [pose.position[0] + 2.5, STANDING_Y, pose.position[2]];
+        game.world.entities.get_mut::<Player>(*id).unwrap().character.position = [pose.position[0] + 2.5, STANDING_Y, pose.position[2]];
         press(&mut game, *id, seq, (0, 0), BUTTON_USE, 1);
         idle(&mut game, *id, seq, 3);
     }
-    let seated: Vec<_> = crew.iter().map(|(id, ..)| game.world.players[id].seat.map(|seat| (seat.vehicle, seat.index))).collect();
+    let seated: Vec<_> = crew.iter().map(|(id, ..)| game.world.entities.of::<Player>(*id).seat.map(|seat| (seat.vehicle, seat.index))).collect();
     assert_eq!(seated, [Some((vid, 0)), Some((vid, 1)), None], "two seats, the third stays outside");
     let state = game.vehicle_states().into_iter().find(|v| v.id == vid).unwrap();
     assert_eq!(state.seats.len(), 2);
@@ -440,7 +440,7 @@ fn a_lone_crewman_can_switch_between_driver_and_gunner() {
     let (id, _inbox) = join(&mut game);
     let mut seq = 0;
     idle(&mut game, id, &mut seq, 3);
-    game.world.players.get_mut(&id).unwrap().character.position = [pose.position[0] + 2.5, STANDING_Y, pose.position[2]];
+    game.world.entities.get_mut::<Player>(id).unwrap().character.position = [pose.position[0] + 2.5, STANDING_Y, pose.position[2]];
     press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
     idle(&mut game, id, &mut seq, 3);
     assert_eq!(game.world.entities.of::<Seats>(vid)[..2], [Some(id), None]);
@@ -448,7 +448,7 @@ fn a_lone_crewman_can_switch_between_driver_and_gunner() {
     press(&mut game, id, &mut seq, (0, 0), BUTTON_RELOAD, 1);
     idle(&mut game, id, &mut seq, 3);
     assert_eq!(game.world.entities.of::<Seats>(vid)[..2], [None, Some(id)]);
-    assert_eq!(game.world.players[&id].seat, Some(Seat { vehicle: vid, index: 1, remote: false }));
+    assert_eq!(game.world.entities.of::<Player>(id).seat, Some(Seat { vehicle: vid, index: 1, remote: false }));
 
     press(&mut game, id, &mut seq, (0, 0), BUTTON_RELOAD, 1);
     idle(&mut game, id, &mut seq, 3);
@@ -467,7 +467,7 @@ fn a_full_tank_has_nowhere_to_switch_to() {
     }
     for (id, _, seq) in &mut crew {
         idle(&mut game, *id, seq, 3);
-        game.world.players.get_mut(id).unwrap().character.position = [pose.position[0] + 2.5, STANDING_Y, pose.position[2]];
+        game.world.entities.get_mut::<Player>(*id).unwrap().character.position = [pose.position[0] + 2.5, STANDING_Y, pose.position[2]];
         press(&mut game, *id, seq, (0, 0), BUTTON_USE, 1);
         idle(&mut game, *id, seq, 3);
     }
@@ -506,7 +506,7 @@ fn ramming_a_car_hurts_both_and_blames_the_driver() {
     let (id, _inbox) = join(&mut game);
     let (a, b) = two_cars(&mut game);
     game.world.entities.get_mut::<Seats>(a).unwrap()[0] = Some(id);
-    game.world.players.get_mut(&id).unwrap().seat = Some(Seat { vehicle: a, index: 0, remote: false });
+    game.world.entities.get_mut::<Player>(id).unwrap().seat = Some(Seat { vehicle: a, index: 0, remote: false });
     game.world.physics.kick_car(a, [0.0, 0.0, -22.0]);
     let events = crash_events(&mut game, 60);
     let (rammer, rammed) = (&game.world.entities.of::<Vehicle>(a), &game.world.entities.of::<Vehicle>(b));
@@ -609,11 +609,11 @@ fn a_pilot_and_a_gunner_take_a_plane_off_and_a_third_stays_behind() {
     }
     for (id, _, seq) in &mut crew {
         idle(&mut game, *id, seq, 3);
-        game.world.players.get_mut(id).unwrap().character.position = [start.position[0], STANDING_Y, start.position[2] + 3.0];
+        game.world.entities.get_mut::<Player>(*id).unwrap().character.position = [start.position[0], STANDING_Y, start.position[2] + 3.0];
         press(&mut game, *id, seq, (0, 0), BUTTON_USE, 1);
         idle(&mut game, *id, seq, 3);
     }
-    let seated: Vec<_> = crew.iter().map(|(id, ..)| game.world.players[id].seat.map(|seat| seat.index)).collect();
+    let seated: Vec<_> = crew.iter().map(|(id, ..)| game.world.entities.of::<Player>(*id).seat.map(|seat| seat.index)).collect();
     assert_eq!(seated, [Some(0), Some(1), None], "a pilot, a gunner, and nobody else");
     let state = game.vehicle_states().into_iter().find(|v| v.id == vid).unwrap();
     assert_eq!(state.arms, Some(shared::protocol::Arms { shots: 0, heat: 0, rear_heat: 0, bombs: PLANE_BOMBS, flags: 0 }), "the plane reports its weapons");
@@ -628,7 +628,7 @@ fn a_pilot_and_a_gunner_take_a_plane_off_and_a_third_stays_behind() {
     }
     let flying = game.world.physics.car_pose(vid).unwrap();
     assert!(flying.position[1] > start.position[1] + 5.0 && flying.forward_speed > PLANE_STALL_SPEED, "{start:?} -> {flying:?}");
-    assert_eq!(game.world.players[&gunner].character.position, flying.position, "the gunner goes up with it");
+    assert_eq!(game.world.entities.of::<Player>(gunner).character.position, flying.position, "the gunner goes up with it");
     assert!(game.drive_state(pilot).is_some(), "the pilot predicts the plane");
 }
 
@@ -666,7 +666,7 @@ fn a_roadster_driver_boosts_on_run_hops_on_jump_and_brakes_on_crouch() {
     idle(&mut game, id, &mut seq, 30);
     let (vid, _) = game.world.entities.all::<Vehicle>().find(|(_, vehicle)| vehicle.kind == KIND_ROADSTER).expect("a roadster is placed");
     let pose = game.world.physics.car_pose(vid).unwrap();
-    game.world.players.get_mut(&id).unwrap().character.position = [pose.position[0], STANDING_Y, pose.position[2] + 2.0];
+    game.world.entities.get_mut::<Player>(id).unwrap().character.position = [pose.position[0], STANDING_Y, pose.position[2] + 2.0];
     press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
     idle(&mut game, id, &mut seq, 3);
     assert_eq!(game.world.entities.of::<Seats>(vid)[0], Some(id));
@@ -748,7 +748,7 @@ fn a_hen_driver_leaps_on_jump_and_the_snapshot_carries_its_stamina() {
     assert_eq!(state.arms.map(|arms| arms.bombs), Some(HEN_EGGS), "and its clutch");
 
     let pose = game.world.physics.car_pose(vid).unwrap();
-    game.world.players.get_mut(&id).unwrap().character.position = [pose.position[0], STANDING_Y + ground, pose.position[2] + 3.0];
+    game.world.entities.get_mut::<Player>(id).unwrap().character.position = [pose.position[0], STANDING_Y + ground, pose.position[2] + 3.0];
     press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
     idle(&mut game, id, &mut seq, 3);
     assert_eq!(game.world.entities.of::<Seats>(vid)[0], Some(id));

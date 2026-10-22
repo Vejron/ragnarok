@@ -51,19 +51,19 @@ fn bots(game: &Game) -> Vec<u32> {
 }
 
 fn alive_bots(game: &Game) -> Vec<u32> {
-    bots(game).into_iter().filter(|id| game.world.players[id].alive()).collect()
+    bots(game).into_iter().filter(|id| game.world.entities.of::<Player>(*id).alive()).collect()
 }
 
 /// Kills player `id` as anything would: down to nothing, and back after the usual wait.
 fn kill(game: &mut Game, id: u32) {
-    let player = game.world.players.get_mut(&id).unwrap();
+    let mut player = game.world.entities.get_mut::<Player>(id).unwrap();
     player.hp = 0;
     player.respawn_in = RESPAWN_TICKS;
 }
 
 fn put(game: &mut Game, id: u32, [x, z]: [f32; 2]) {
     let y = game.world.map.ground.height_at(x, z) + sim::STANDING_Y;
-    game.world.players.get_mut(&id).unwrap().character.position = [x, y, z];
+    game.world.entities.get_mut::<Player>(id).unwrap().character.position = [x, y, z];
 }
 
 fn error(json: &str) -> String {
@@ -87,10 +87,10 @@ fn a_squad_spawns_at_the_start_with_its_loadout_and_everyone_hears_the_objective
 
     let ids = bots(&game);
     assert_eq!(ids.len(), 2);
-    let names: Vec<_> = ids.iter().map(|id| game.world.players[id].name.clone()).collect();
+    let names: Vec<_> = ids.iter().map(|id| game.world.entities.of::<Player>(*id).name.clone()).collect();
     assert_eq!(names, ["Guards 1", "Guards 2"]);
     for id in &ids {
-        let (player, bot) = (&game.world.players[id], &game.world.bots[id]);
+        let (player, bot) = (&game.world.entities.of::<Player>(*id), &game.world.bots[id]);
         assert_eq!(player.team, 2);
         assert_eq!(bot.skill, 0.9);
         assert_eq!(player.hotbar[0].item, ITEM_SHOTGUN);
@@ -116,9 +116,9 @@ fn a_fallen_bot_lies_as_long_as_anyone_would_and_then_leaves() {
     let [id] = bots(&game)[..] else { panic!("one bot") };
     kill(&mut game, id);
     run(&mut game, RESPAWN_TICKS as f32 / TICK_RATE as f32 - 0.2);
-    assert!(game.world.players.contains_key(&id), "its body still lies there");
+    assert!(game.world.entities.has::<Player>(id), "its body still lies there");
     run(&mut game, 0.4);
-    assert!(!game.world.players.contains_key(&id) && bots(&game).is_empty(), "it does not come back");
+    assert!(!game.world.entities.has::<Player>(id) && bots(&game).is_empty(), "it does not come back");
 }
 
 #[test]
@@ -153,7 +153,7 @@ fn clearing_the_squad_wins_and_after_a_while_it_all_starts_again() {
     assert_eq!(notices(&mut inbox), vec![(NOTICE_OBJECTIVE, String::new()), (NOTICE_OBJECTIVE, "Clear the farm".into())], "cleared, then set again");
     let again = alive_bots(&game);
     assert_eq!(again.len(), 2, "the squad is back");
-    assert!(first.iter().all(|id| !game.world.players.contains_key(id)), "the fallen were cleared away");
+    assert!(first.iter().all(|id| !game.world.entities.has::<Player>(*id)), "the fallen were cleared away");
 }
 
 #[test]
@@ -260,7 +260,7 @@ fn a_squad_that_respawns_comes_back_with_its_own_loadout() {
     let [id] = bots(&game)[..] else { panic!("one bot") };
     kill(&mut game, id);
     run(&mut game, RESPAWN_TICKS as f32 / TICK_RATE as f32 + 0.5);
-    let player = &game.world.players[&id];
+    let player = &game.world.entities.of::<Player>(id);
     assert!(player.alive(), "back");
     assert_eq!(player.hotbar[0].item, ITEM_SNIPER);
     assert_eq!(player.hotbar[1].item, ITEM_NONE, "not the standard loadout");
@@ -312,7 +312,7 @@ fn the_example_in_bots_md_plays_through_to_a_win() {
     for wave in 0..3 {
         let raiders = alive_bots(&game);
         assert_eq!(raiders.len(), 2, "wave {wave}");
-        assert_eq!(game.world.players[&raiders[0]].name, "Raiders 1");
+        assert_eq!(game.world.entities.of::<Player>(raiders[0]).name, "Raiders 1");
         for id in raiders {
             kill(&mut game, id);
         }
@@ -366,20 +366,20 @@ fn a_squad_tank_comes_crewed_and_goes_once_it_is_wrecked_and_burnt_out() {
     game.step();
     let tanks: Vec<u32> = game.world.entities.all::<Vehicle>().filter(|(_, v)| v.kind == shared::protocol::KIND_TANK).map(|(id, _)| id).collect();
     let [vid] = tanks[..] else { panic!("one tank: {tanks:?}") };
-    let mut names: Vec<_> = bots(&game).iter().map(|id| game.world.players[id].name.clone()).collect();
+    let mut names: Vec<_> = bots(&game).iter().map(|id| game.world.entities.of::<Player>(*id).name.clone()).collect();
     names.sort();
     assert_eq!(names, ["Armour 1", "Armour 2", "Armour 3"], "the crew are numbered after the squad's bots");
     let crew: Vec<u32> = game.world.entities.of::<Seats>(vid).iter().flatten().copied().collect();
     assert_eq!(crew.len(), 2, "both seats manned");
     for id in &crew {
-        assert_eq!((game.world.players[id].team, game.world.bots[id].skill), (3, 0.8));
+        assert_eq!((game.world.entities.of::<Player>(*id).team, game.world.bots[id].skill), (3, 0.8));
     }
 
     crate::mechanics::damage_vehicle(&mut game.world, vid, 255, None);
     let [walker] = bots(&game).into_iter().filter(|id| !crew.contains(id)).collect::<Vec<_>>()[..] else { panic!() };
     kill(&mut game, walker);
     run(&mut game, 5.0);
-    assert!(crew.iter().all(|id| !game.world.players.contains_key(id)), "the crew died in it and left");
+    assert!(crew.iter().all(|id| !game.world.entities.has::<Player>(*id)), "the crew died in it and left");
     assert!(game.world.entities.has::<Vehicle>(vid), "the wreck still burns");
     assert!(notices(&mut inbox).iter().any(|(kind, _)| *kind == NOTICE_WON), "the squad is cleared");
     run(&mut game, WRECK_TICKS as f32 / TICK_RATE as f32);

@@ -125,7 +125,8 @@ Phase 3 and 4 need both.
 - [x] A vehicle's health and wreck state as `Health`, `HurtBy` and `Wreck`.
 - [x] `Seats` out of `Vehicle`.
 - [ ] The sim's per-kind controls and solids into its `Spec`.
-- [ ] Players and bots.
+- [x] Players as entities (`Player` component).
+- [ ] Bots' minds as a `Bot` component; a player's health and hit test joined with the generic ones.
 - [ ] Events in place of `hits`, `kills`, `noises`.
 
 ### Phase 3: component replication (protocol v2)
@@ -759,3 +760,66 @@ The extra cost of the families that follow is now per entity, not per call.
 
 **Next:** players and bots, the largest family left, with events in place of the `hits`, `kills` and
 `noises` vectors.
+
+### 2026-10-22: players are entities
+
+`World::players`, a `BTreeMap<u32, Player>`, is gone. A player, connected or bot, is an entity with a
+`Player` component, under the same id. Bots' minds (`World::bots`) are still a map, keyed by the same
+ids. They move next, as a `Bot` component on the player's entity.
+
+**How it was converted.** A bracket-matching script rewrote the 300-odd lookups, about two thirds of
+them in tests:
+
+| Map form | Entity form |
+|---|---|
+| `players[&id]` | `entities.of::<Player>(id)` |
+| `players.get(&id)` | `entities.get::<Player>(id)` |
+| `players.get_mut(&id)` | `entities.get_mut::<Player>(id)` |
+| `players.contains_key(&id)` | `entities.has::<Player>(id)` |
+
+The 25 passes over the whole map were rewritten by hand:
+
+- Read-only passes use `all::<Player>()`.
+- Passes that change players go over `ids::<With<Player>>()` with `of_mut`, in id order as before.
+- Filters such as "who pressed use" use the new `ids_where`, which filters in one unordered pass and
+  sorts only the ids that pass.
+
+**Borrows.** A player and another component now live in the same store, so code that held one while
+reading the other had to be split. Each split reads first and writes after:
+
+- `use_item` reads its seat before taking the player.
+- The grenade and flare caps are counted before the player is taken again.
+- `seat` checks seats and player, then writes each.
+- The car controls copy the driver's input first.
+- The rider loop copies the riders out.
+- `knock_players` takes the player again after the drone check.
+- The pickup trade decides on the player's side, then writes the pickup.
+
+**Performance.** The first measurement showed `Combat` 8 µs slower. Each shot's player hit test
+built and sorted a list of 64 ids, and 64 players fire. Three changes fixed it:
+
+- `first_body_hit` is one unordered `scan` over `(NetId, Player)`, with no per-player look-up.
+  `ray_capsule` accepts a hit at the limit, so in id order the later of two equal hits won; the scan
+  keeps that rule (higher id).
+- The id index hashes with a Fibonacci multiply (`IdHasher`) in place of SipHash. Ids are sequential,
+  and every look-up by id goes through the index.
+- `ids_where`, above.
+
+**Checks:** server 264, sim 111, shared 62, osm-import 81 and editor 2 tests, all passing; clippy
+clean. Behaviour and the wire are unchanged. `full_room_tick_cost`, run back to back against the last
+commit, two runs each:
+
+| Mechanic | Before | After |
+|---|---|---|
+| `Combat` | 32.3–33.2 µs | 27.8–28.3 µs |
+| `Vehicles` | 31.2–32.2 µs | 32.1–32.4 µs |
+| `Gunnery` | 0.87–0.95 µs | 0.69–0.70 µs |
+| `Movement` | 1.62–1.63 ms | 1.62–1.66 ms |
+| Mechanics, avg | 1.685–1.701 ms | 1.687–1.718 ms |
+
+The machine ran about 3% slower this session than in the entries above, so compare these numbers only
+with each other.
+
+**Next:** bots' minds as a `Bot` component on the player's entity. After that, a player's `Health`
+and hit test can join the generic ones roosters use, giving one hit test and one damage path for
+everything that can be shot.

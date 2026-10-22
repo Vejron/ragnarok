@@ -7,7 +7,8 @@
 //! The file names things; `Scenario` holds them as indices, checked once when it is read, so a
 //! typo stops the server with a message instead of a trigger that never fires.
 
-use crate::game::{Game, Seats, Vehicle, World, Wreck};
+use crate::game::{Game, Player, Seats, Vehicle, World, Wreck};
+use crate::entities::With;
 use crate::mechanics::{position_of, remove_vehicle};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -437,7 +438,7 @@ impl Scenario {
                 continue;
             }
             members.retain(|&id| {
-                let stays = game.world.players.get(&id).is_some_and(|p| p.alive() || p.respawn_in > 1);
+                let stays = game.world.entities.get::<Player>(id).is_some_and(|p| p.alive() || p.respawn_in > 1);
                 if !stays {
                     game.remove_bot(id);
                 }
@@ -455,7 +456,7 @@ impl Scenario {
                 if !world.entities.has::<Vehicle>(vid) {
                     return false;
                 }
-                let crew_gone = crew.iter().all(|id| !world.players.contains_key(id));
+                let crew_gone = crew.iter().all(|id| !world.entities.has::<Player>(*id));
                 let empty = world.entities.get::<Seats>(vid).is_none_or(Seats::vacant);
                 let burnt = !world.entities.dead(vid) || world.entities.get::<Wreck>(vid).is_none_or(|wreck| wreck.left <= 1);
                 let goes = crew_gone && empty && burnt;
@@ -475,14 +476,14 @@ impl Scenario {
             Condition::Enter { area, by } => {
                 let Area { at, radius } = self.areas[area];
                 let inside = |id: &u32| {
-                    world.players.get(id).is_some_and(|p| p.alive()) && position_of(world, *id).is_some_and(|p| (p[0] - at[0]).hypot(p[2] - at[1]) <= radius)
+                    world.entities.get::<Player>(*id).is_some_and(|p| p.alive()) && position_of(world, *id).is_some_and(|p| (p[0] - at[0]).hypot(p[2] - at[1]) <= radius)
                 };
                 match by {
                     Some(squad) => progress.members[squad].iter().any(inside),
-                    None => world.players.keys().filter(|id| !world.bots.contains_key(id)).any(inside),
+                    None => world.entities.ids::<With<Player>>().iter().filter(|id| !world.bots.contains_key(id)).any(inside),
                 }
             }
-            Condition::Cleared(squad) => progress.spawned[squad] && !progress.members[squad].iter().any(|id| world.players.get(id).is_some_and(|p| p.alive())),
+            Condition::Cleared(squad) => progress.spawned[squad] && !progress.members[squad].iter().any(|id| world.entities.get::<Player>(*id).is_some_and(|p| p.alive())),
             Condition::Done(trigger) => {
                 let (times, fired) = (self.triggers[trigger].times, progress.fired[trigger]);
                 fired >= times.max(1)
@@ -508,7 +509,7 @@ impl Scenario {
                         bot.skill = squad.skill;
                         bot.loadout = squad.loadout;
                     }
-                    if let (Some(hotbar), Some(player)) = (squad.loadout, game.world.players.get_mut(&id)) {
+                    if let (Some(hotbar), Some(mut player)) = (squad.loadout, game.world.entities.get_mut::<Player>(id)) {
                         player.hotbar = hotbar;
                     }
                     self.progress.members[s].push(id);
@@ -526,7 +527,7 @@ impl Scenario {
                             bot.skill = squad.skill;
                             bot.loadout = squad.loadout;
                         }
-                        if let (Some(hotbar), Some(player)) = (squad.loadout, game.world.players.get_mut(&id)) {
+                        if let (Some(hotbar), Some(mut player)) = (squad.loadout, game.world.entities.get_mut::<Player>(id)) {
                             player.hotbar = hotbar;
                         }
                     }

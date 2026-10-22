@@ -22,10 +22,10 @@ impl Game {
             Some(EntityState { id, kind, x: to_cm(x), y: to_cm(y), z: to_cm(z), yaw: to_mrad(transform.yaw), vy: 0, flags, stance: STANCE_STANDING, knock_x: 0, knock_z: 0 })
         });
         self.world
-            .players
-            .iter()
+            .entities
+            .all::<Player>()
             .filter(|(_, player)| player.embodied())
-            .map(|(&id, player)| {
+            .map(|(id, player)| {
                 let c = &player.character;
                 let mut flags = 0;
                 if c.grounded {
@@ -88,7 +88,7 @@ impl Game {
                     riders
                         .iter()
                         .map(|seat| {
-                            seat.and_then(|rider| self.world.players.get(&rider)).map_or(Rider::default(), |player| Rider { yaw: player.input.yaw, pitch: player.input.pitch(), held: player.held().item })
+                            seat.and_then(|rider| self.world.entities.get::<Player>(rider)).map_or(Rider::default(), |player| Rider { yaw: player.input.yaw, pitch: player.input.pitch(), held: player.held().item })
                         })
                         .collect()
                 };
@@ -127,7 +127,7 @@ impl Game {
     }
 
     pub(crate) fn drive_state(&self, id: u32) -> Option<DriveState> {
-        let seat = self.world.players.get(&id)?.seat?;
+        let seat = self.world.entities.get::<Player>(id)?.seat?;
         if seat.index != 0 {
             return None;
         }
@@ -151,7 +151,7 @@ impl Game {
         let everything = Everything { entities: &entities, vehicles: &vehicles, shots: &shots, rockets: &rockets, pickups: &pickups, bullets: &bullets };
         let ids: Vec<u32> = self.outboxes.keys().copied().collect();
         for id in ids {
-            let Some(player) = self.world.players.get(&id) else { continue };
+            let Some(player) = self.world.entities.get::<Player>(id) else { continue };
             let own = Own { tick: self.world.tick, ack: player.ack, ride: player.character.ride, drive: self.drive_state(id),
                 me: SelfState { hp: player.hp, progress: progress(player), slots: player.hotbar.to_vec() },
             };

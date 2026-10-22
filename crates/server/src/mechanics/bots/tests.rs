@@ -36,11 +36,11 @@ fn join(game: &mut Game) -> u32 {
 /// Puts player `id` standing at `[x, z]`.
 fn put(game: &mut Game, id: u32, [x, z]: [f32; 2]) {
     let y = game.world.map.ground.height_at(x, z) + sim::STANDING_Y;
-    game.world.players.get_mut(&id).unwrap().character.position = [x, y, z];
+    game.world.entities.get_mut::<Player>(id).unwrap().character.position = [x, y, z];
 }
 
 fn feet(game: &Game, id: u32) -> [f32; 3] {
-    game.world.players[&id].character.position
+    game.world.entities.of::<Player>(id).character.position
 }
 
 fn run(game: &mut Game, seconds: f32) {
@@ -53,7 +53,7 @@ fn run(game: &mut Game, seconds: f32) {
 fn a_bot_is_a_player_on_the_bot_team_seen_as_a_stickman_at_home() {
     let mut game = game(false);
     let id = game.add_bot([20.0, -10.0], 0, vec![]).unwrap();
-    let player = &game.world.players[&id];
+    let player = &game.world.entities.of::<Player>(id);
     assert_eq!(player.team, TEAM_BOTS, "a bot is never on no team");
     let [x, _, z] = player.character.position;
     assert!((x - 20.0).abs() < 0.01 && (z + 10.0).abs() < 0.01, "spawned at {x}, {z}");
@@ -74,7 +74,7 @@ fn bots_have_their_own_room_and_never_keep_people_out() {
     let (reply, mut response) = oneshot::channel();
     game.handle(Command::Join { outbox, reply, profile: Profile::default() });
     assert_eq!(response.try_recv().unwrap(), None, "no more than MAX_PLAYERS people");
-    assert_eq!(game.world.players.len(), MAX_BOTS + MAX_PLAYERS);
+    assert_eq!(game.world.entities.count::<Player>(), MAX_BOTS + MAX_PLAYERS);
 }
 
 #[test]
@@ -105,7 +105,7 @@ fn it_makes_up_a_route_near_home_when_given_none() {
 
 /// Takes every item off player `id`.
 fn disarm(game: &mut Game, id: u32) {
-    game.world.players.get_mut(&id).unwrap().hotbar = Default::default();
+    game.world.entities.get_mut::<Player>(id).unwrap().hotbar = Default::default();
 }
 
 /// A bot guarding `[0, 0]`, facing -Z (yaw 0), as good a shot as `skill`.
@@ -116,7 +116,7 @@ fn guard(game: &mut Game, skill: f32) -> u32 {
 }
 
 fn rounds_left(game: &Game, id: u32) -> u8 {
-    game.world.players[&id].held().ammo
+    game.world.entities.of::<Player>(id).held().ammo
 }
 
 #[test]
@@ -175,15 +175,15 @@ fn bots_ignore_their_own_team_and_cannot_hurt_it() {
     run(&mut game, 1.0);
     assert_eq!(game.world.bots[&a].mode, BotMode::Patrol);
     damage(&mut game.world, b, 50, Some(a), 0);
-    assert_eq!(game.world.players[&b].hp, PLAYER_MAX_HP);
+    assert_eq!(game.world.entities.of::<Player>(b).hp, PLAYER_MAX_HP);
     // People are on no team: they still hurt each other, and bots.
     let human = join(&mut game);
     let other = join(&mut game);
-    assert_eq!(game.world.players[&human].team, TEAM_NONE);
+    assert_eq!(game.world.entities.of::<Player>(human).team, TEAM_NONE);
     damage(&mut game.world, other, 10, Some(human), 0);
     damage(&mut game.world, b, 10, Some(human), 0);
-    assert_eq!(game.world.players[&other].hp, PLAYER_MAX_HP - 10);
-    assert_eq!(game.world.players[&b].hp, PLAYER_MAX_HP - 10);
+    assert_eq!(game.world.entities.of::<Player>(other).hp, PLAYER_MAX_HP - 10);
+    assert_eq!(game.world.entities.of::<Player>(b).hp, PLAYER_MAX_HP - 10);
 }
 
 #[test]
@@ -206,7 +206,7 @@ fn a_killed_bot_comes_back_at_home_on_patrol() {
     put(&mut game, human, [-80.0, 80.0]);
     damage(&mut game.world, bot, PLAYER_MAX_HP, Some(human), 0);
     run(&mut game, RESPAWN_TICKS as f32 / TICK_RATE as f32 + 0.2);
-    assert!(game.world.players[&bot].alive());
+    assert!(game.world.entities.of::<Player>(bot).alive());
     assert_eq!(game.world.bots[&bot].mode, BotMode::Patrol);
     assert!(distance_2d(feet(&game, bot), [5.0, 0.0, 5.0]) < 2.0, "back home");
 }
@@ -219,8 +219,8 @@ fn it_shoots_someone_it_sees_dead() {
     let human = join(&mut game);
     put(&mut game, human, [0.0, -25.0]);
     run(&mut game, 6.0);
-    assert!(game.world.players[&human].deaths >= 1, "still on {} hp", game.world.players[&human].hp);
-    assert_eq!(game.world.players[&bot].kills, game.world.players[&human].deaths);
+    assert!(game.world.entities.of::<Player>(human).deaths >= 1, "still on {} hp", game.world.entities.of::<Player>(human).hp);
+    assert_eq!(game.world.entities.of::<Player>(bot).kills, game.world.entities.of::<Player>(human).deaths);
 }
 
 #[test]
@@ -254,9 +254,9 @@ fn a_better_shot_hits_more() {
             let x = 10.0 - ((t * 4.0) % 40.0 - 20.0).abs();
             put(&mut game, human, [x, -25.0]);
             game.step();
-            let hp = game.world.players[&human].hp;
+            let hp = game.world.entities.of::<Player>(human).hp;
             dealt += u32::from(PLAYER_MAX_HP - hp);
-            game.world.players.get_mut(&human).unwrap().hp = PLAYER_MAX_HP;
+            game.world.entities.get_mut::<Player>(human).unwrap().hp = PLAYER_MAX_HP;
         }
         let _ = bot;
         dealt
@@ -289,14 +289,14 @@ fn it_takes_the_shotgun_up_close_and_a_rifle_further_out() {
     let mut game = game(false);
     let bot = guard(&mut game, 0.5);
     // The standard loadout has no shotgun: one is carried in the last slot.
-    game.world.players.get_mut(&bot).unwrap().hotbar[4] = ItemSlot { item: shared::items::ITEM_SHOTGUN, count: 1, ammo: shared::items::def(shared::items::ITEM_SHOTGUN).unwrap().mag };
+    game.world.entities.get_mut::<Player>(bot).unwrap().hotbar[4] = ItemSlot { item: shared::items::ITEM_SHOTGUN, count: 1, ammo: shared::items::def(shared::items::ITEM_SHOTGUN).unwrap().mag };
     let human = join(&mut game);
     put(&mut game, human, [0.0, -6.0]);
     run(&mut game, 0.5);
-    assert_eq!(game.world.players[&bot].held().item, shared::items::ITEM_SHOTGUN);
+    assert_eq!(game.world.entities.of::<Player>(bot).held().item, shared::items::ITEM_SHOTGUN);
     put(&mut game, human, [0.0, -40.0]);
     run(&mut game, 0.5);
-    assert_eq!(game.world.players[&bot].held().item, shared::items::ITEM_AK5);
+    assert_eq!(game.world.entities.of::<Player>(bot).held().item, shared::items::ITEM_AK5);
 }
 
 #[test]
@@ -308,7 +308,7 @@ fn it_stands_off_at_the_distance_its_gun_is_good_at() {
     run(&mut game, 0.3);
     // Someone who cannot die, standing still.
     for _ in 0..8 * TICK_RATE {
-        game.world.players.get_mut(&human).unwrap().hp = PLAYER_MAX_HP;
+        game.world.entities.get_mut::<Player>(human).unwrap().hp = PLAYER_MAX_HP;
         game.step();
     }
     let gap = distance_2d(feet(&game, bot), feet(&game, human));
@@ -320,16 +320,16 @@ fn it_reloads_when_empty_and_tops_up_between_fights() {
     let mut game = game(false);
     let bot = guard(&mut game, 0.5);
     game.step();
-    let slot = game.world.players[&bot].selected;
-    let mag = shared::items::def(game.world.players[&bot].held().item).unwrap().mag;
-    game.world.players.get_mut(&bot).unwrap().hotbar[slot].ammo = 3;
+    let slot = game.world.entities.of::<Player>(bot).selected;
+    let mag = shared::items::def(game.world.entities.of::<Player>(bot).held().item).unwrap().mag;
+    game.world.entities.get_mut::<Player>(bot).unwrap().hotbar[slot].ammo = 3;
     run(&mut game, 4.0);
     assert_eq!(rounds_left(&game, bot), mag, "topped up with no one about");
     let human = join(&mut game);
     put(&mut game, human, [0.0, -25.0]);
-    game.world.players.get_mut(&bot).unwrap().hotbar[slot].ammo = 0;
+    game.world.entities.get_mut::<Player>(bot).unwrap().hotbar[slot].ammo = 0;
     run(&mut game, 0.5);
-    assert!(game.world.players[&bot].reload_left > 0, "reloading in the middle of a fight");
+    assert!(game.world.entities.of::<Player>(bot).reload_left > 0, "reloading in the middle of a fight");
 }
 
 #[test]
@@ -494,7 +494,7 @@ fn a_bot_sent_far_from_home_fights_at_the_end_of_its_route() {
     let human = join(&mut game);
     put(&mut game, human, [80.0, -25.0]);
     run(&mut game, 6.0);
-    assert!(game.world.players[&human].deaths >= 1, "still on {} hp", game.world.players[&human].hp);
+    assert!(game.world.entities.of::<Player>(human).deaths >= 1, "still on {} hp", game.world.entities.of::<Player>(human).hp);
 }
 
 #[test]
@@ -541,7 +541,7 @@ fn a_squad_fighting_one_target_does_not_stack_up_on_one_line() {
     let human = join(&mut game);
     put(&mut game, human, [0.0, -40.0]);
     for _ in 0..10 * TICK_RATE {
-        game.world.players.get_mut(&human).unwrap().hp = PLAYER_MAX_HP;
+        game.world.entities.get_mut::<Player>(human).unwrap().hp = PLAYER_MAX_HP;
         game.step();
     }
     let gap = closest(&game, &ids);

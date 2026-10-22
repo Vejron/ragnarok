@@ -11,6 +11,7 @@ use bevy_ecs::query::{QueryData, QueryFilter, QueryIter, QueryState};
 use std::any::{Any, TypeId};
 use std::cell::{RefCell, RefMut};
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 use std::collections::hash_map::Entry;
 
 pub use bevy_ecs::prelude::{Bundle, Component, Entity, Mut, With};
@@ -97,7 +98,7 @@ pub struct Respawned;
 /// The ECS world and the index from wire ids to entities.
 pub struct Entities {
     pub ecs: bevy_ecs::world::World,
-    index: HashMap<u32, Entity>,
+    index: HashMap<u32, Entity, BuildHasherDefault<IdHasher>>,
     /// The `QueryState` behind each kind of query asked for so far, kept between calls: making one
     /// matches it against every archetype, which cost more than the query itself.
     queries: RefCell<HashMap<TypeId, Box<dyn Any + Send>>>,
@@ -118,7 +119,7 @@ impl Default for Entities {
         ecs.register_component::<DropOnDeath>();
         ecs.register_component::<Respawned>();
         crate::mechanics::register_components(&mut ecs);
-        Entities { ecs, index: HashMap::new(), queries: RefCell::default() }
+        Entities { ecs, index: HashMap::default(), queries: RefCell::default() }
     }
 }
 
@@ -226,12 +227,42 @@ impl Entities {
         }
     }
 
+    /// The ids of the entities whose `T` passes `keep`, in id order. Only those that pass are sorted,
+    /// which for "whoever pressed fire" is usually none.
+    pub fn ids_where<T: Component>(&self, mut keep: impl FnMut(u32, &T) -> bool) -> Vec<u32> {
+        let mut ids = self.scan::<(&NetId, &T), (), _>(|all| all.filter(|&(id, t)| keep(id.0, t)).map(|(id, _)| id.0).collect::<Vec<u32>>()).unwrap_or_default();
+        ids.sort_unstable();
+        ids
+    }
+
     /// The ids of the entities `F` matches, in id order: a pass that draws random numbers or makes
     /// output keeps the order the old `BTreeMap`s gave it.
     pub fn ids<F: QueryFilter + 'static>(&self) -> Vec<u32> {
         let mut ids: Vec<u32> = self.query::<&NetId, F>().map_or_else(Vec::new, |state| state.iter_manual(&self.ecs).map(|id| id.0).collect());
         ids.sort_unstable();
         ids
+    }
+}
+
+/// Hashes a wire id for the index. Ids are handed out one after another, so a multiply by an odd constant
+/// (Fibonacci hashing) spreads them as well as SipHash does, at a fraction of the cost: every component
+/// look-up by id goes through it.
+#[derive(Default)]
+struct IdHasher(u64);
+
+impl Hasher for IdHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.0 = (self.0.rotate_left(8) ^ u64::from(byte)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        }
+    }
+
+    fn write_u32(&mut self, id: u32) {
+        self.0 = u64::from(id).wrapping_mul(0x9E37_79B9_7F4A_7C15);
     }
 }
 

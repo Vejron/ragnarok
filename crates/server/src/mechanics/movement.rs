@@ -1,5 +1,6 @@
 use super::Mechanic;
-use crate::game::World;
+use crate::entities::With;
+use crate::game::{Player, World};
 use shared::items::{aim_speed_scale, HOTBAR_SLOTS};
 
 /// Walks every standing stickman by its input through the character controller, and keeps track of
@@ -12,7 +13,12 @@ pub struct Movement;
 
 impl Mechanic for Movement {
     fn on_tick(&mut self, world: &mut World, dt: f32) {
-        for player in world.players.values_mut().filter(|player| player.seat.is_none() && player.alive()) {
+        for id in world.entities.ids::<With<Player>>() {
+            let mut player = world.entities.of_mut::<Player>(id);
+            if player.seat.is_some() || !player.alive() {
+                continue;
+            }
+            let player = &mut *player;
             let character = &mut player.character;
             let velocity = world.physics.car_pose(character.ride).map(|pose| pose.velocity);
             let slot = (player.input.slot() as usize).min(HOTBAR_SLOTS - 1);

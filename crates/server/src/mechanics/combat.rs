@@ -4,7 +4,7 @@ use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
 use super::life::{blasted, damage_entity, first_hurtbox_hit, hit_mark};
 use super::spawn;
 use super::projectiles::{self, Flying, Stage};
-use crate::entities::{Health, HurtBy};
+use crate::entities::{Health, HurtBy, NetId, With};
 use crate::game::{Drone, Player, Seats, TEAM_NONE, Vehicle, World, Wreck, starting_hotbar};
 use sim::Obj;
 use shared::consts::*;
@@ -107,7 +107,14 @@ pub struct Body {
 /// Player `id`'s body as it was `back` ticks ago, if a round can hit them: alive, and standing or
 /// sitting where they show. A crew inside armour (`Exposure::Sealed`) has none.
 pub fn body_of(world: &World, id: u32, back: u32) -> Option<Body> {
-    let player = world.players.get(&id).filter(|player| player.alive())?;
+    body(world, id, world.entities.get::<Player>(id)?, back)
+}
+
+/// [`body_of`], for player `id` already in hand.
+fn body(world: &World, id: u32, player: &Player, back: u32) -> Option<Body> {
+    if !player.alive() {
+        return None;
+    }
     if player.embodied() {
         let now = player.character.position;
         let at = if back == 0 { now } else { world.position_at(id, back).unwrap_or(now) };
@@ -134,18 +141,24 @@ pub fn first_player_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f32
 
 /// [`first_player_hit`], among the bodies `only` accepts.
 fn first_body_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f32, ignore: Option<u32>, back: u32, only: impl Fn(&Body) -> bool) -> Option<(u32, f32)> {
-    let mut best: Option<(u32, f32)> = None;
-    for &id in world.players.keys() {
-        if Some(id) == ignore {
-            continue;
+    // In storage order. `ray_capsule` takes a hit at the limit, so in id order the later of two at the
+    // same distance won: the higher id is hit, as it was.
+    world.entities.scan::<(&NetId, &Player), (), _>(|players| {
+        let mut best: Option<(u32, f32)> = None;
+        for (&NetId(id), player) in players {
+            if Some(id) == ignore {
+                continue;
+            }
+            let Some(body) = body(world, id, player, back).filter(&only) else { continue };
+            let limit = best.map_or(max, |(_, t)| t);
+            if let Some(t) = ray_capsule(origin, dir, body.centre, body.half_height, body.radius, limit)
+                && best.is_none_or(|(other, at)| t < at || id > other)
+            {
+                best = Some((id, t));
+            }
         }
-        let Some(body) = body_of(world, id, back).filter(&only) else { continue };
-        let limit = best.map_or(max, |(_, t)| t);
-        if let Some(t) = ray_capsule(origin, dir, body.centre, body.half_height, body.radius, limit) {
-            best = Some((id, t));
-        }
-    }
-    best
+        best
+    })?
 }
 
 /// The player a round meets: the first within `reach`, where the world (`wall`, the vehicle it struck
@@ -164,7 +177,7 @@ pub(super) fn round_hit(world: &World, origin: [f32; 3], dir: [f32; 3], reach: f
 
 /// Where player `id` is: on foot (or flying a drone) where they stand, seated where their vehicle is.
 pub fn position_of(world: &World, id: u32) -> Option<[f32; 3]> {
-    let player = world.players.get(&id)?;
+    let player = world.entities.get::<Player>(id)?;
     match player.seat {
         Some(seat) if !seat.remote => world.physics.car_pose(seat.vehicle).map(|pose| pose.position),
         _ => Some(player.character.position),
@@ -173,7 +186,7 @@ pub fn position_of(world: &World, id: u32) -> Option<[f32; 3]> {
 
 /// Whether players `a` and `b` are on the same team, which spares each other. `TEAM_NONE` is no team.
 pub fn same_team(world: &World, a: u32, b: u32) -> bool {
-    let team = |id| world.players.get(&id).map_or(TEAM_NONE, |p: &Player| p.team);
+    let team = |id| world.entities.get::<Player>(id).map_or(TEAM_NONE, |p: &Player| p.team);
     team(a) != TEAM_NONE && team(a) == team(b)
 }
 
@@ -216,7 +229,7 @@ pub fn damage_hit(world: &mut World, victim: u32, amount: u8, attacker: Option<u
         return;
     }
     let from = source.or_else(|| other.and_then(|id| position_of(world, id)));
-    let Some(player) = world.players.get_mut(&victim) else { return };
+    let Some(mut player) = world.entities.get_mut::<Player>(victim) else { return };
     if !player.alive() || amount == 0 {
         return;
     }
@@ -234,12 +247,12 @@ pub fn damage_hit(world: &mut World, victim: u32, amount: u8, attacker: Option<u
     let chest = match world.seated_head(victim) {
         Some((_, head)) => [head[0], head[1] - SEATED_CENTRE_DROP, head[2]],
         None => {
-            let at = world.players.get(&victim).map_or([0.0; 3], |player| player.character.position);
+            let at = world.entities.get::<Player>(victim).map_or([0.0; 3], |player| player.character.position);
             [at[0], at[1] + 0.9, at[2]]
         }
     };
     let direction = from.map_or(BEARING_NONE, |from| bearing(chest, from));
-    let Some(player) = world.players.get_mut(&victim) else { return };
+    let Some(mut player) = world.entities.get_mut::<Player>(victim) else { return };
     let lost = before - player.hp;
     world.hits.push((victim, hit_at(HIT_TAKEN, kind, lost, weapon, direction, chest, victim)));
     if let Some(id) = other {
@@ -257,11 +270,11 @@ pub fn damage_hit(world: &mut World, victim: u32, amount: u8, attacker: Option<u
     if player.seat.is_some_and(|seat| !seat.remote) {
         super::vehicles::alight(world, victim);
     }
-    let Some(player) = world.players.get(&victim) else { return };
+    let Some(player) = world.entities.get::<Player>(victim) else { return };
     let (knock, died_at) = (player.character.knock, player.character.position);
     let mut killer_kills = 0;
     let mut killer_id = 0;
-    if let Some(killer) = attacker.filter(|&id| id != victim).and_then(|id| world.players.get_mut(&id).map(|p| (id, p))) {
+    if let Some(mut killer) = attacker.filter(|&id| id != victim).and_then(|id| world.entities.get_mut::<Player>(id).map(|p| (id, p))) {
         killer.1.kills = killer.1.kills.saturating_add(1);
         killer_kills = killer.1.kills;
         killer_id = killer.0;
@@ -321,7 +334,11 @@ pub fn blast(world: &mut World, blast: Blast) {
 pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
     make_noise(world, blast.point, blast.attacker, HEAR_BLAST);
     let mut hurt = Vec::new();
-    for (&id, player) in world.players.iter_mut().filter(|(_, player)| player.embodied() && player.alive()) {
+    for id in world.entities.ids::<With<Player>>() {
+        let mut player = world.entities.of_mut::<Player>(id);
+        if !player.embodied() || !player.alive() {
+            continue;
+        }
         let c = &mut player.character;
         let away: [f32; 3] = std::array::from_fn(|i| c.position[i] - blast.point[i]);
         let distance = away.iter().map(|v| v * v).sum::<f32>().sqrt();
@@ -537,7 +554,7 @@ pub fn damage_vehicle(world: &mut World, vid: u32, amount: u8, attacker: Option<
             bot.hit_from = Some(from);
         }
     }
-    if let Some(id) = attacker.filter(|id| !seated.contains(id) && world.players.contains_key(id)) {
+    if let Some(id) = attacker.filter(|id| !seated.contains(id) && world.entities.has::<Player>(*id)) {
         world.hits.push((id, hit_at(HIT_DEALT, HIT_VEHICLE, lost, 0, BEARING_NONE, centre, vid)));
     }
     if wrecked {
@@ -560,7 +577,7 @@ fn wreck(world: &mut World, vid: u32) {
     vehicle.controls = Default::default();
     let crew = world.entities.get_mut::<Seats>(vid).map(|mut seats| seats.take_all()).unwrap_or_default();
     for id in crew {
-        if let Some(player) = world.players.get_mut(&id) {
+        if let Some(mut player) = world.entities.get_mut::<Player>(id) {
             player.seat = None;
             player.character.position = pose.position;
         }
@@ -597,7 +614,7 @@ fn wreck(world: &mut World, vid: u32) {
 /// Launches a rocket from player `id`'s eye. No item does this yet; it is kept for a launcher pickup.
 #[allow(dead_code)]
 fn fire_rocket(world: &mut World, id: u32) {
-    let Some(player) = world.players.get(&id) else { return };
+    let Some(player) = world.entities.get::<Player>(id) else { return };
     let input = player.input;
     let c = player.character;
     let pitch = from_mrad(input.pitch()).clamp(-MAX_PITCH, MAX_PITCH);
@@ -689,7 +706,7 @@ pub(super) fn hit_object(world: &mut World, origin: [f32; 3], dir: [f32; 3], rea
 /// Whether player `id`'s reload goes to the gun in their hands: they sit in a car's passenger seat
 /// holding one that is not full. Otherwise reload in a seat moves them to the next one.
 pub fn reloads_in_seat(world: &World, id: u32) -> bool {
-    let Some(player) = world.players.get(&id) else { return false };
+    let Some(player) = world.entities.get::<Player>(id) else { return false };
     let Some(seat) = player.seat.filter(|seat| !seat.remote) else { return false };
     let held = player.held();
     world.entities.get::<Vehicle>(seat.vehicle).is_some_and(|vehicle| crew_gun(vehicle.kind, seat.index))
@@ -698,7 +715,7 @@ pub fn reloads_in_seat(world: &World, id: u32) -> bool {
 
 /// Fires gun `item` from player `id`'s eye (their head, in a seat), towards what the crosshair is on.
 fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
-    let Some(player) = world.players.get(&id) else { return };
+    let Some(player) = world.entities.get::<Player>(id) else { return };
     let input = player.input;
     let c = player.character;
     let pitch = from_mrad(input.pitch()).clamp(-MAX_PITCH, MAX_PITCH);
@@ -817,7 +834,7 @@ pub fn hitscan(world: &mut World, shooter: u32, origin: [f32; 3], dir: [f32; 3],
 
 /// Throws a grenade from player `id`'s eye, a little above where they look so it arcs.
 fn throw_grenade(world: &mut World, id: u32) {
-    let Some(player) = world.players.get(&id) else { return };
+    let Some(player) = world.entities.get::<Player>(id) else { return };
     let input = player.input;
     let c = player.character;
     let pitch = (from_mrad(input.pitch()) + GRENADE_LOFT).clamp(-MAX_PITCH, MAX_PITCH);
@@ -842,7 +859,7 @@ fn throw_grenade(world: &mut World, id: u32) {
 
 /// Fires a flare from player `id`'s eye, well above where they look so it goes up.
 fn fire_flare(world: &mut World, id: u32) {
-    let Some(player) = world.players.get(&id) else { return };
+    let Some(player) = world.entities.get::<Player>(id) else { return };
     let input = player.input;
     let c = player.character;
     let dir = look(from_mrad(input.yaw), (from_mrad(input.pitch()) + FLARE_LOFT).clamp(-MAX_PITCH, MAX_PITCH));
@@ -867,7 +884,9 @@ fn spend(slot: &mut ItemSlot) {
 /// One tick of item use for a living player, standing or in a car's passenger seat: switching,
 /// reloading, and what fire does.
 fn use_item(world: &mut World, id: u32) {
-    let Some(player) = world.players.get_mut(&id) else { return };
+    let Some(seat) = world.entities.get::<Player>(id).map(|player| player.seat) else { return };
+    let passenger = seat.is_some_and(|seat| !seat.remote && world.entities.get::<Vehicle>(seat.vehicle).is_some_and(|vehicle| crew_gun(vehicle.kind, seat.index)));
+    let mut player = world.entities.of_mut::<Player>(id);
     let buttons = player.input.buttons();
     let slot = (player.input.slot() as usize).min(HOTBAR_SLOTS - 1);
     if slot != player.selected {
@@ -879,12 +898,9 @@ fn use_item(world: &mut World, id: u32) {
     player.trigger_held = pressed;
     let held = player.held();
     // In a seat only a car's passengers use anything, and only their guns.
-    if let Some(seat) = player.seat {
-        let passenger = !seat.remote && world.entities.get::<Vehicle>(seat.vehicle).is_some_and(|vehicle| crew_gun(vehicle.kind, seat.index));
-        if !passenger || def(held.item).is_none_or(|item| item.kind != ItemKind::Gun) {
-            player.interrupt();
-            return;
-        }
+    if seat.is_some() && (!passenger || def(held.item).is_none_or(|item| item.kind != ItemKind::Gun)) {
+        player.interrupt();
+        return;
     }
     let Some(item) = def(held.item).copied() else {
         player.interrupt();
@@ -914,14 +930,15 @@ fn use_item(world: &mut World, id: u32) {
         }
         ItemKind::Grenade => {
             if fresh && player.fire_cooldown == 0 && projectiles::count(&world.entities, None) < MAX_ROCKETS + MAX_GRENADES {
+                let mut player = world.entities.of_mut::<Player>(id);
                 player.fire_cooldown = item.cooldown_ticks;
                 spend(&mut player.hotbar[slot]);
                 throw_grenade(world, id);
             }
         }
         ItemKind::Flare => {
-            let burning = projectiles::count(&world.entities, Some(PROJECTILE_FLARE));
-            if fresh && player.fire_cooldown == 0 && burning < MAX_FLARES {
+            if fresh && player.fire_cooldown == 0 && projectiles::count(&world.entities, Some(PROJECTILE_FLARE)) < MAX_FLARES {
+                let mut player = world.entities.of_mut::<Player>(id);
                 player.fire_cooldown = item.cooldown_ticks;
                 spend(&mut player.hotbar[slot]);
                 fire_flare(world, id);
@@ -929,7 +946,7 @@ fn use_item(world: &mut World, id: u32) {
         }
         ItemKind::Drone => {
             if fresh && player.fire_cooldown == 0 && super::drones::launch(world, id, shared::items::drone_kind(held.item)) {
-                let player = world.players.get_mut(&id).expect("checked above");
+                let mut player = world.entities.get_mut::<Player>(id).expect("checked above");
                 player.fire_cooldown = item.cooldown_ticks;
                 spend(&mut player.hotbar[slot]);
             }
@@ -950,10 +967,10 @@ fn use_item(world: &mut World, id: u32) {
 
 impl Mechanic for Combat {
     fn on_tick(&mut self, world: &mut World, dt: f32) {
-        let ids: Vec<u32> = world.players.keys().copied().collect();
+        let ids = world.entities.ids::<With<Player>>();
         for id in ids {
             let loadout = world.bots.get(&id).and_then(|bot| bot.loadout);
-            let Some(player) = world.players.get_mut(&id) else { continue };
+            let Some(mut player) = world.entities.get_mut::<Player>(id) else { continue };
             player.fire_cooldown = player.fire_cooldown.saturating_sub(1);
             if !player.alive() {
                 player.respawn_in = player.respawn_in.saturating_sub(1);

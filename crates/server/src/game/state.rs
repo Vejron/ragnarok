@@ -41,6 +41,9 @@ pub fn starting_hotbar() -> [ItemSlot; HOTBAR_SLOTS] {
     [full(ITEM_AK5), full(ITEM_SNIPER), full(ITEM_FLARE), full(ITEM_DRONE), full(ITEM_LOITER)]
 }
 
+/// A stickman, a connected player's or a bot's: a component on the player's entity. Passes over players
+/// go by `Entities::ids::<With<Player>>()`, in id order as the map they were kept in gave them.
+#[derive(crate::entities::Component)]
 pub struct Player {
     pub character: Character,
     /// While seated the stickman is hidden and rides with the vehicle; input drives the seat.
@@ -432,10 +435,8 @@ pub struct World {
     pub tick: u32,
     pub map: WorldFile,
     pub physics: Physics,
-    /// Ordered by id so every pass over players is deterministic.
-    pub players: BTreeMap<u32, Player>,
-    /// The families moved to components so far (roosters, items on the ground, projectiles, vehicles),
-    /// which share the id space with players.
+    /// The families moved to components so far: players, roosters, items on the ground, projectiles and
+    /// vehicles, in one id space.
     pub entities: crate::entities::Entities,
     /// The minds of the players that are bots, by player id.
     pub bots: BTreeMap<u32, Bot>,
@@ -482,10 +483,10 @@ impl World {
     /// Notes where everyone stands, once a tick has finished.
     pub(super) fn record_history(&mut self) {
         let positions = self
-            .players
-            .iter()
+            .entities
+            .all::<Player>()
             .filter(|(_, p)| p.alive())
-            .filter_map(|(&id, p)| if p.embodied() { Some((id, p.character.position, false)) } else { self.seated_head(id).map(|(_, head)| (id, head, true)) })
+            .filter_map(|(id, p)| if p.embodied() { Some((id, p.character.position, false)) } else { self.seated_head(id).map(|(_, head)| (id, head, true)) })
             .collect();
         if self.history.len() > MAX_REWIND_TICKS as usize {
             self.history.pop_front();
@@ -510,7 +511,7 @@ impl World {
     /// The vehicle player `id` sits in and where their head is in the world, if they sit in it (not
     /// flying it from afar) and its crew show (`shared::vehicles::seat_head`).
     pub fn seated_head(&self, id: u32) -> Option<(u32, [f32; 3])> {
-        let seat = self.players.get(&id)?.seat.filter(|seat| !seat.remote)?;
+        let seat = self.entities.get::<Player>(id)?.seat.filter(|seat| !seat.remote)?;
         let vehicle = self.entities.get::<Vehicle>(seat.vehicle)?;
         let local = shared::vehicles::seat_head(vehicle.kind, seat.index, self.entities.get::<Mounts>(seat.vehicle).and_then(Mounts::turret).map_or(0.0, |gun| gun.yaw))?;
         Some((seat.vehicle, self.physics.car_pose(seat.vehicle)?.world_point(local)))

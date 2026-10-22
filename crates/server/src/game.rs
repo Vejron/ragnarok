@@ -1,6 +1,7 @@
 //! The authoritative game loop: one task owns the whole world and steps it at a fixed rate.
 //! Sessions talk to it only through `Command`s in and `Outgoing` messages out.
 
+use crate::entities::With;
 use crate::jitter::JitterBuffer;
 use crate::mechanics::{Mechanic, default_mechanics};
 use sim::{CarControls, Character, Obj, Physics};
@@ -36,7 +37,7 @@ fn destroyed_entry(object: Obj, yaw: i16, force: u8) -> (u8, u16, u16, u32, i16,
 /// Building `id`'s damage `stage`, and where a blast marked it, as a `Damaged` entry.
 /// Player `id`'s `Profiles` entry: who they are, and which side.
 fn profile_entry(world: &World, id: u32) -> ProfileEntry {
-    let player = &world.players[&id];
+    let player = &world.entities.of::<Player>(id);
     (id, player.name.clone(), player.color, player.team, world.bots.contains_key(&id) as u8)
 }
 
@@ -83,7 +84,6 @@ impl Game {
                 carves: HashMap::new(),
                 fresh_carved: Vec::new(),
                 map,
-                players: BTreeMap::new(),
                 entities: Default::default(),
                 bots: BTreeMap::new(),
                 nav: Default::default(),
@@ -128,14 +128,14 @@ impl Game {
                 // Signaling is retried by WebRTC itself, so a full outbox just sheds it: unlike
                 // game state it must not cost the receiver their session.
                 if from != to
-                    && self.world.players.contains_key(&from)
+                    && self.world.entities.has::<Player>(from)
                     && let Some(outbox) = self.outboxes.get(&to)
                 {
                     let _ = outbox.try_send(Outgoing::Reliable(encode(&Rtc(S_RTC, from, kind, json)).into()));
                 }
             }
             Command::Input(id, baseline, frames) => {
-                if let Some(player) = self.world.players.get_mut(&id) {
+                if let Some(mut player) = self.world.entities.get_mut::<Player>(id) {
                     player.inputs.push(&frames);
                 }
                 if let Some(replica) = self.replicas.get_mut(&id) {
@@ -155,7 +155,7 @@ impl Game {
         if outbox.try_send(Outgoing::Reliable(welcome.into())).is_err() {
             return None;
         }
-        self.world.players.insert(
+        self.world.entities.spawn(
             id,
             Player {
                 character: Character::default(),
@@ -181,13 +181,13 @@ impl Game {
                 team: TEAM_NONE,
             },
         );
-        let profiles = self.world.players.keys().map(|&id| profile_entry(&self.world, id)).collect();
+        let profiles = self.world.entities.ids::<With<Player>>().into_iter().map(|id| profile_entry(&self.world, id)).collect();
         let _ = outbox.try_send(Outgoing::Reliable(encode(&Profiles(S_PROFILES, profiles)).into()));
         let joiner = Bytes::from(encode(&Profiles(S_PROFILES, vec![profile_entry(&self.world, id)])));
         for (&to, other) in &self.outboxes {
             send_reliable(other, to, &joiner, &mut self.stalled);
         }
-        let scores = self.world.players.iter().map(|(&id, player)| (id, player.kills, player.deaths)).collect();
+        let scores = self.world.entities.all::<Player>().map(|(id, player)| (id, player.kills, player.deaths)).collect();
         let _ = outbox.try_send(Outgoing::Reliable(encode(&Scores(S_SCORES, scores)).into()));
         // Always sent, even empty: the client takes the first one after the welcome as the catch-up
         // (not news to animate), and snapshots on the datagram channel can overtake it.
@@ -223,26 +223,26 @@ impl Game {
         for mechanic in &mut self.mechanics {
             mechanic.on_join(&mut self.world, id);
         }
-        let player = &self.world.players[&id];
-        tracing::info!(id, name = %player.name, spawns = player.spawns.len(), players = self.world.players.len(), "player joined");
+        let player = &self.world.entities.of::<Player>(id);
+        tracing::info!(id, name = %player.name, spawns = player.spawns.len(), players = self.world.entities.count::<Player>(), "player joined");
         Some(id)
     }
 
     fn leave(&mut self, id: u32) {
-        if !self.world.players.contains_key(&id) {
+        if !self.world.entities.has::<Player>(id) {
             return;
         }
         for mechanic in &mut self.mechanics {
             mechanic.on_leave(&mut self.world, id);
         }
-        self.world.players.remove(&id);
+        self.world.entities.despawn(id);
         self.outboxes.remove(&id);
         self.replicas.remove(&id);
         let leave = Bytes::from(encode(&Leave(S_LEAVE, id)));
         for (&to, outbox) in &self.outboxes {
             send_reliable(outbox, to, &leave, &mut self.stalled);
         }
-        tracing::info!(id, players = self.world.players.len(), "player left");
+        tracing::info!(id, players = self.world.entities.count::<Player>(), "player left");
     }
 
     /// Adds a bot living at `home` on `team` (`TEAM_BOTS` or above) that walks round `route`
@@ -260,7 +260,7 @@ impl Game {
         }
         let id = self.world.alloc_id();
         let team = team.max(TEAM_BOTS);
-        self.world.players.insert(
+        self.world.entities.spawn(
             id,
             Player {
                 character: Character::default(),
@@ -351,7 +351,8 @@ impl Game {
 
     /// One fixed simulation step.
     pub fn step(&mut self) {
-        for player in self.world.players.values_mut() {
+        for id in self.world.entities.ids::<With<Player>>() {
+            let mut player = self.world.entities.of_mut::<Player>(id);
             let consumed = player.inputs.pop();
             player.input = consumed.input;
             if consumed.fresh {
@@ -572,7 +573,7 @@ mod tests {
         // The welcome already fills the one slot, so the next reliable message cannot be queued.
         game.world.fresh_destroyed.push((Obj::Tree(Default::default()), 0, 0));
         game.step();
-        assert!(!game.world.players.contains_key(&id));
+        assert!(!game.world.entities.has::<Player>(id));
     }
 
     #[test]
@@ -635,7 +636,7 @@ mod tests {
         let spawns: Vec<[f32; 2]> = game.world.map.spawns.iter().map(|s| [s[0] as f32 / 100.0, s[1] as f32 / 100.0]).collect();
         println!("{} spawn points", spawns.len());
         for (n, id) in ids.iter().enumerate() {
-            let player = game.world.players.get_mut(id).unwrap();
+            let mut player = game.world.entities.get_mut::<Player>(*id).unwrap();
             if spawns.is_empty() {
                 player.character.position[0] = (n % 8) as f32 * 70.0 - 250.0;
                 player.character.position[2] = (n / 8) as f32 * 70.0 - 250.0;
@@ -677,7 +678,8 @@ mod tests {
                 game.handle(Command::Input(*id, t.saturating_sub(2), vec![frame]));
             }
             let started = Instant::now();
-            for player in game.world.players.values_mut() {
+            for id in game.world.entities.ids::<With<Player>>() {
+                let mut player = game.world.entities.of_mut::<Player>(id);
                 let consumed = player.inputs.pop();
                 player.input = consumed.input;
                 if consumed.fresh {

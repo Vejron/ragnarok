@@ -10,7 +10,7 @@
 //! real tank. A crewman on foot (respawned, or put out) walks back to its tank and gets in.
 
 use super::*;
-use crate::game::{Crew, Mounts, Seats, Vehicle};
+use crate::game::{Crew, Mounts, Player, Seats, Vehicle};
 use crate::mechanics::combat::position_of;
 use crate::mechanics::gunnery::aim;
 use crate::mechanics::vehicles::seat;
@@ -303,7 +303,7 @@ fn next_waypoint(bot: &mut Bot) {
 /// foot, or in a vehicle (but not its own). With where to lay the gun on them.
 fn spot_from_turret(world: &World, id: u32, vid: u32, eye: [f32; 3]) -> Option<(u32, [f32; 3])> {
     let mut best: Option<(u32, [f32; 3], f32)> = None;
-    for (&other, player) in &world.players {
+    for (other, player) in world.entities.all::<Player>() {
         if other == id || !player.alive() || same_team(world, id, other) {
             continue;
         }
@@ -450,7 +450,7 @@ fn gun(world: &mut World, id: u32, bot: &mut Bot, vid: u32, pose: &CarPose, nois
     let mut buttons = 0;
     if fire && laid && in_reach && turret_on && turret.cooldown == 0 {
         let (muzzle, _) = aim(pose, turret.yaw, turret.pitch);
-        let target = bot.target.and_then(|t| world.players.get(&t)).and_then(|p| p.seat).filter(|s| !s.remote).map(|s| s.vehicle);
+        let target = bot.target.and_then(|t| world.entities.get::<Player>(t)).and_then(|p| p.seat).filter(|s| !s.remote).map(|s| s.vehicle);
         if clear_shot(world, muzzle, bot.last_seen, vid, target) {
             buttons |= BUTTON_FIRE;
         }

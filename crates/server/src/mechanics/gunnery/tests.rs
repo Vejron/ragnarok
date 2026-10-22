@@ -35,7 +35,7 @@ fn join(game: &mut Game) -> (u32, mpsc::Receiver<crate::game::Outgoing>) {
 /// Puts `id` straight into a seat of vehicle `vid`.
 fn seat(game: &mut Game, id: u32, vid: u32, index: usize) {
     game.world.entities.get_mut::<Seats>(vid).unwrap()[index] = Some(id);
-    game.world.players.get_mut(&id).unwrap().seat = Some(Seat { vehicle: vid, index, remote: false });
+    game.world.entities.get_mut::<Player>(id).unwrap().seat = Some(Seat { vehicle: vid, index, remote: false });
 }
 
 /// What vehicle `vid`'s mount shown as `show` is doing.
@@ -108,16 +108,16 @@ fn firing_hits_and_throws_a_stickman_in_the_line_of_fire() {
     let pose = game.world.physics.car_pose(vid).unwrap();
     let gun = turret(&game, vid);
     let (origin, dir) = aim(&pose, gun.yaw, gun.pitch);
-    game.world.players.get_mut(&victim).unwrap().character.position = std::array::from_fn(|i| origin[i] + dir[i] * 25.0);
+    game.world.entities.get_mut::<Player>(victim).unwrap().character.position = std::array::from_fn(|i| origin[i] + dir[i] * 25.0);
 
     aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, BUTTON_FIRE, 3);
     assert_eq!(turret(&game, vid).shots, 1);
     // 25 m at 140 m/s is about ten ticks: the shell is on its way, and nobody is hurt yet.
     assert_eq!(game.world.in_flight().len(), 1, "the shell is in flight");
-    assert_eq!(game.world.players[&victim].character.knock, [0.0, 0.0]);
+    assert_eq!(game.world.entities.of::<Player>(victim).character.knock, [0.0, 0.0]);
     aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, 0, 30);
     assert!(game.world.in_flight().is_empty(), "and then it has burst");
-    let character = &game.world.players[&victim].character;
+    let character = &game.world.entities.of::<Player>(victim).character;
     let speed = character.knock[0].hypot(character.knock[1]);
     assert!(speed > 10.0, "blast knockback {speed}");
     // Thrown away from the tank, along the shell's way.
@@ -134,14 +134,14 @@ fn a_direct_hit_kills_and_the_gunner_gets_the_credit() {
     let gun = turret(&game, vid);
     let (origin, dir) = aim(&pose, gun.yaw, gun.pitch);
     let at = |metres: f32, side: f32| std::array::from_fn::<f32, 3, _>(|i| origin[i] + dir[i] * metres + if i == 0 { side } else { 0.0 });
-    game.world.players.get_mut(&victim).unwrap().character.position = at(25.0, 0.0);
+    game.world.entities.get_mut::<Player>(victim).unwrap().character.position = at(25.0, 0.0);
     // Caught at the edge of the blast: hurt, not dead.
-    game.world.players.get_mut(&near).unwrap().character.position = at(25.0, 5.0);
+    game.world.entities.get_mut::<Player>(near).unwrap().character.position = at(25.0, 5.0);
 
     aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, BUTTON_FIRE, 40);
-    assert!(!game.world.players[&victim].alive());
-    assert_eq!(game.world.players[&gunner].kills, 1);
-    let bystander = &game.world.players[&near];
+    assert!(!game.world.entities.of::<Player>(victim).alive());
+    assert_eq!(game.world.entities.of::<Player>(gunner).kills, 1);
+    let bystander = &game.world.entities.of::<Player>(near);
     assert!(bystander.alive() && bystander.hp < PLAYER_MAX_HP, "{}", bystander.hp);
 }
 
@@ -149,13 +149,13 @@ fn a_direct_hit_kills_and_the_gunner_gets_the_credit() {
 fn the_gun_reloads_between_shots_and_a_stickman_far_away_is_unharmed() {
     let (mut game, gunner, vid, mut seq) = crewed();
     let (bystander, _inbox) = join(&mut game);
-    game.world.players.get_mut(&bystander).unwrap().character.position = [0.0, STANDING_Y, 150.0];
+    game.world.entities.get_mut::<Player>(bystander).unwrap().character.position = [0.0, STANDING_Y, 150.0];
     let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
     aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, BUTTON_FIRE, 60);
     assert_eq!(turret(&game, vid).shots, 1, "trigger held for a second: one shell");
     aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, BUTTON_FIRE, 60);
     assert_eq!(turret(&game, vid).shots, 2, "reloaded after a second and a half");
-    assert_eq!(game.world.players[&bystander].character.knock, [0.0, 0.0]);
+    assert_eq!(game.world.entities.of::<Player>(bystander).character.knock, [0.0, 0.0]);
 }
 
 #[test]
@@ -189,13 +189,13 @@ fn the_shell_stops_at_the_first_thing_it_meets() {
     let (behind, _b) = join(&mut game);
     let pose = game.world.physics.car_pose(vid).unwrap();
     let (origin, dir) = aim(&pose, 0.0, 0.0);
-    game.world.players.get_mut(&blocker).unwrap().character.position = std::array::from_fn(|i| origin[i] + dir[i] * 15.0);
-    game.world.players.get_mut(&behind).unwrap().character.position = std::array::from_fn(|i| origin[i] + dir[i] * 40.0);
+    game.world.entities.get_mut::<Player>(blocker).unwrap().character.position = std::array::from_fn(|i| origin[i] + dir[i] * 15.0);
+    game.world.entities.get_mut::<Player>(behind).unwrap().character.position = std::array::from_fn(|i| origin[i] + dir[i] * 40.0);
     aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, BUTTON_FIRE, 40);
-    let blocker_hp = game.world.players[&blocker].hp;
+    let blocker_hp = game.world.entities.of::<Player>(blocker).hp;
     assert!(blocker_hp < PLAYER_MAX_HP, "{blocker_hp}");
     assert!(game.world.in_flight().is_empty());
-    assert_eq!(game.world.players[&behind].character.knock, [0.0, 0.0], "outside the blast radius");
+    assert_eq!(game.world.entities.of::<Player>(behind).character.knock, [0.0, 0.0], "outside the blast radius");
 }
 
 /// Fires level, or at `pitch`, from a fresh tank, and flies the shell until it is gone. Returns
@@ -278,25 +278,25 @@ fn the_nose_gun_throws_small_shells_that_burst_a_third_as_wide() {
     let pose = game.world.physics.car_pose(vid).unwrap();
     let (origin, dir) = aim_from(&pose, HELI_GUN_PIVOT, 0.0, 0.0);
     let at: [f32; 3] = std::array::from_fn(|i| origin[i] + dir[i] * 15.0);
-    game.world.players.get_mut(&victim).unwrap().character.position = at;
+    game.world.entities.get_mut::<Player>(victim).unwrap().character.position = at;
     // Three metres to the side: inside a tank shell's blast, outside this one's.
     let mut beside = at;
     beside[0] += 4.0;
-    game.world.players.get_mut(&bystander).unwrap().character.position = beside;
-    let before = game.world.players[&victim].hp;
+    game.world.entities.get_mut::<Player>(bystander).unwrap().character.position = beside;
+    let before = game.world.entities.of::<Player>(victim).hp;
 
     aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, BUTTON_FIRE, 2);
     assert_eq!(turret(&game, vid).shots, 1);
     let listed = game.projectile_states();
     assert_eq!(listed.len(), 1, "the round is in flight");
     assert_eq!(listed[0].kind, PROJECTILE_CANNON);
-    assert_eq!(game.world.players[&victim].hp, before, "and has not arrived");
+    assert_eq!(game.world.entities.of::<Player>(victim).hp, before, "and has not arrived");
 
     aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, 0, 30);
     assert!(game.world.in_flight().is_empty(), "it has burst");
-    let hp = game.world.players[&victim].hp;
+    let hp = game.world.entities.of::<Player>(victim).hp;
     assert!(hp < before && before - hp < 60, "hurt, but less than a tank shell: {before} to {hp}");
-    assert_eq!(game.world.players[&bystander].hp, PLAYER_MAX_HP, "outside the small blast");
+    assert_eq!(game.world.entities.of::<Player>(bystander).hp, PLAYER_MAX_HP, "outside the small blast");
 }
 
 #[test]
@@ -437,14 +437,14 @@ fn the_forward_guns_take_turns_and_hit_what_is_ahead_of_the_nose() {
     let (victim, _inbox) = join(&mut game);
     let pose = game.world.physics.car_pose(vid).unwrap();
     let (muzzle, dir) = aim_from(&pose, PLANE_GUN_PIVOTS[0], 0.0, 0.0);
-    game.world.players.get_mut(&victim).unwrap().character.position = std::array::from_fn(|i| muzzle[i] + dir[i] * 25.0 + if i == 1 { -0.3 } else { 0.0 });
+    game.world.entities.get_mut::<Player>(victim).unwrap().character.position = std::array::from_fn(|i| muzzle[i] + dir[i] * 25.0 + if i == 1 { -0.3 } else { 0.0 });
     let hp = game.world.entities.of::<Health>(vid).hp;
 
     let hits = hold_watching(&mut game, pilot, &mut seq, pose.yaw(), BUTTON_FIRE, 30, WEAPON_MG);
     let arms = shown(&game, vid, Show::Guns);
     let expected = (30 / PLANE_GUN_COOLDOWN_TICKS) as u8;
     assert!(arms.shots.abs_diff(expected) <= 1, "{} rounds in half a second, expected about {expected}", arms.shots);
-    assert!(game.world.players[&victim].hp < PLAYER_MAX_HP, "the stickman ahead is hit");
+    assert!(game.world.entities.of::<Player>(victim).hp < PLAYER_MAX_HP, "the stickman ahead is hit");
     assert!(!hits.is_empty() && hits.iter().all(|shot| shot.shooter == pilot), "{hits:?}");
     assert_eq!(game.world.entities.of::<Health>(vid).hp, hp, "its own guns never hurt the plane");
     assert!(game.world.in_flight().is_empty(), "rounds are hitscans, not projectiles");
@@ -547,9 +547,9 @@ fn the_rear_gun_hits_a_stickman_behind_and_only_its_gunner_works_it() {
     let pose = game.world.physics.car_pose(vid).unwrap();
     let gun = turret(&game, vid);
     let (ring, dir) = aim_from(&pose, PLANE_REAR_PIVOT, gun.yaw, gun.pitch);
-    game.world.players.get_mut(&victim).unwrap().character.position = std::array::from_fn(|i| ring[i] + dir[i] * 20.0 + if i == 1 { -0.3 } else { 0.0 });
+    game.world.entities.get_mut::<Player>(victim).unwrap().character.position = std::array::from_fn(|i| ring[i] + dir[i] * 20.0 + if i == 1 { -0.3 } else { 0.0 });
     aim_and_hold(&mut game, gunner, &mut seq, hull + std::f32::consts::PI, 0.0, BUTTON_FIRE, 30);
-    assert!(game.world.players[&victim].hp < PLAYER_MAX_HP);
+    assert!(game.world.entities.of::<Player>(victim).hp < PLAYER_MAX_HP);
 
     // A pilot alone works only the forward guns.
     let (mut game, pilot, vid, mut seq) = plane_crewed(0);

@@ -28,7 +28,7 @@ const AIM_20M: f32 = -0.075;
 
 /// How a player aims with `slot` in hand: a gun's crosshair on a target 20 m away, anything else level.
 fn aim_for(game: &Game, id: u32, slot: usize) -> f32 {
-    let item = game.world.players[&id].hotbar[slot].item;
+    let item = game.world.entities.of::<Player>(id).hotbar[slot].item;
     if def(item).is_some_and(|d| d.kind == ItemKind::Gun) { AIM_20M } else { 0.0 }
 }
 
@@ -55,8 +55,8 @@ fn duel() -> (Game, u32, u32, u32, u32) {
     let (shooter, _a) = join(&mut game);
     let (target, _b) = join(&mut game);
     std::mem::forget((_a, _b));
-    game.world.players.get_mut(&shooter).unwrap().character.position = [100.0, STANDING_Y, 0.0];
-    game.world.players.get_mut(&target).unwrap().character.position = [100.0 + ON_FOOT_SHOULDER, STANDING_Y, -20.0];
+    game.world.entities.get_mut::<Player>(shooter).unwrap().character.position = [100.0, STANDING_Y, 0.0];
+    game.world.entities.get_mut::<Player>(target).unwrap().character.position = [100.0 + ON_FOOT_SHOULDER, STANDING_Y, -20.0];
     // The shooter carries an AK5 in slot 0, which is where `hold` keeps the selection.
     give(&mut game, shooter, 0, ITEM_AK5, 1);
     let (mut sa, mut sb) = (0, 0);
@@ -67,7 +67,7 @@ fn duel() -> (Game, u32, u32, u32, u32) {
 
 fn give(game: &mut Game, id: u32, slot: usize, item: u8, count: u8) {
     let mag = def(item).map_or(0, |d| d.mag);
-    game.world.players.get_mut(&id).unwrap().hotbar[slot] = ItemSlot { item, count, ammo: mag };
+    game.world.entities.get_mut::<Player>(id).unwrap().hotbar[slot] = ItemSlot { item, count, ammo: mag };
 }
 
 /// One tick of `buttons` with `slot` selected, looking `pitch` radians up.
@@ -99,28 +99,28 @@ fn the_ak5_hurts_what_it_points_at_and_credits_the_shooter() {
     let (mut game, shooter, target, mut seq, _) = duel();
     hold(&mut game, shooter, &mut seq, 0.0, BUTTON_FIRE, 3);
     settle(&mut game, shooter, &mut seq);
-    let hp = game.world.players[&target].hp;
+    let hp = game.world.entities.of::<Player>(target).hp;
     assert_eq!(hp, PLAYER_MAX_HP - ak5().damage, "one shot while held for three ticks");
-    assert_eq!(game.world.players[&shooter].hp, PLAYER_MAX_HP);
+    assert_eq!(game.world.entities.of::<Player>(shooter).hp, PLAYER_MAX_HP);
 
     let shots_needed = PLAYER_MAX_HP.div_ceil(ak5().damage) as u32;
     hold(&mut game, shooter, &mut seq, 0.0, BUTTON_FIRE, shots_needed * ak5().cooldown_ticks);
     settle(&mut game, shooter, &mut seq);
-    assert!(!game.world.players[&target].alive());
-    assert_eq!(game.world.players[&shooter].kills, 1);
-    assert_eq!(game.world.players[&target].deaths, 1);
+    assert!(!game.world.entities.of::<Player>(target).alive());
+    assert_eq!(game.world.entities.of::<Player>(shooter).kills, 1);
+    assert_eq!(game.world.entities.of::<Player>(target).deaths, 1);
 }
 
 #[test]
 fn a_shot_at_the_ground_hits_nobody_and_ends_on_it() {
     let (mut game, shooter, target, _, _) = duel();
-    game.world.players.get_mut(&shooter).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: to_mrad(-0.8), view: 0, slot: 0 };
+    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: to_mrad(-0.8), view: 0, slot: 0 };
     game.world.shots.clear();
     fire_gun(&mut game.world, shooter, ak5());
     for _ in 0..10 {
         projectiles::step(&mut game.world, 1.0 / TICK_RATE as f32, Stage::Hands);
     }
-    assert_eq!(game.world.players[&target].hp, PLAYER_MAX_HP);
+    assert_eq!(game.world.entities.of::<Player>(target).hp, PLAYER_MAX_HP);
     let end = game.world.shots.last().expect("a shot was recorded");
     assert!(end.y.abs() < 20, "ends on the ground, y = {} cm", end.y);
     assert!(end.z < 0 && end.z > -2000, "a little ahead of the shooter: z = {} cm", end.z);
@@ -131,8 +131,8 @@ fn a_shot_goes_where_the_shoulder_camera_crosshair_is() {
     let (mut game, shooter, _, _, _) = duel();
     // The pivot is 0.9 m to the right; a target whose centre is on that line is under the crosshair,
     // and one 5 m off to the side is not.
-    game.world.players.get_mut(&shooter).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: 0, view: 0, slot: 0 };
-    let c = game.world.players[&shooter].character;
+    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: 0, view: 0, slot: 0 };
+    let c = game.world.entities.of::<Player>(shooter).character;
     let pivot_y = c.position[1] + ON_FOOT_HEIGHT;
     let eye = [c.position[0], c.position[1] + EYE_HEIGHT, c.position[2]];
     let pivot = [c.position[0] + ON_FOOT_SHOULDER, pivot_y, c.position[2]];
@@ -147,8 +147,8 @@ fn a_shot_goes_where_the_shoulder_camera_crosshair_is() {
 #[test]
 fn a_hit_is_reported_to_the_shooter_and_the_victim_with_a_bearing() {
     let (mut game, shooter, target, _, _) = duel();
-    game.world.players.get_mut(&shooter).unwrap().character.position = [0.0, STANDING_Y, 0.0];
-    game.world.players.get_mut(&target).unwrap().character.position = [0.0, STANDING_Y, -20.0];
+    game.world.entities.get_mut::<Player>(shooter).unwrap().character.position = [0.0, STANDING_Y, 0.0];
+    game.world.entities.get_mut::<Player>(target).unwrap().character.position = [0.0, STANDING_Y, -20.0];
     game.world.hits.clear();
     damage(&mut game.world, target, 30, Some(shooter), WEAPON_RIFLE);
     let hits = &game.world.hits;
@@ -183,14 +183,14 @@ fn dead_players_do_not_fire_and_cannot_be_hit_until_they_respawn() {
     assert_eq!(game.world.kills[0].killer, shooter);
     // The dead hold fire at the shooter; nothing happens.
     hold(&mut game, target, &mut seq_t, std::f32::consts::PI, BUTTON_FIRE, 30);
-    assert_eq!(game.world.players[&shooter].hp, PLAYER_MAX_HP);
+    assert_eq!(game.world.entities.of::<Player>(shooter).hp, PLAYER_MAX_HP);
     // And are not hit again while down.
     hold(&mut game, shooter, &mut seq, 0.0, BUTTON_FIRE, 30);
-    assert_eq!(game.world.players[&target].deaths, 1);
-    assert_eq!(game.world.players[&shooter].kills, 1);
+    assert_eq!(game.world.entities.of::<Player>(target).deaths, 1);
+    assert_eq!(game.world.entities.of::<Player>(shooter).kills, 1);
 
     hold(&mut game, target, &mut seq_t, 0.0, 0, RESPAWN_TICKS);
-    let target = &game.world.players[&target];
+    let target = &game.world.entities.of::<Player>(target);
     assert!(target.alive());
     assert_eq!(target.hp, PLAYER_MAX_HP);
 }
@@ -198,18 +198,18 @@ fn dead_players_do_not_fire_and_cannot_be_hit_until_they_respawn() {
 #[test]
 fn falling_out_of_the_world_is_a_death_with_no_killer() {
     let (mut game, shooter, target, _, mut seq_t) = duel();
-    game.world.players.get_mut(&target).unwrap().character.position[1] = KILL_Y - 1.0;
+    game.world.entities.get_mut::<Player>(target).unwrap().character.position[1] = KILL_Y - 1.0;
     hold(&mut game, target, &mut seq_t, 0.0, 0, 1);
-    assert!(!game.world.players[&target].alive());
-    assert_eq!(game.world.players[&target].deaths, 1);
-    assert_eq!(game.world.players[&shooter].kills, 0);
+    assert!(!game.world.entities.of::<Player>(target).alive());
+    assert_eq!(game.world.entities.of::<Player>(target).deaths, 1);
+    assert_eq!(game.world.entities.of::<Player>(shooter).kills, 0);
 }
 
 #[test]
 fn snapshots_carry_own_health_and_shot_events() {
     let mut game = game();
     let (shooter, mut inbox) = join(&mut game);
-    game.world.players.get_mut(&shooter).unwrap().character.position = [100.0, STANDING_Y, 0.0];
+    game.world.entities.get_mut::<Player>(shooter).unwrap().character.position = [100.0, STANDING_Y, 0.0];
     let mut seq = 0;
     give(&mut game, shooter, 0, ITEM_AK5, 1);
     hold(&mut game, shooter, &mut seq, 0.0, BUTTON_FIRE, 6);
@@ -239,7 +239,7 @@ fn driver_in_the_car(game: &mut Game) -> (u32, u32) {
     let (id, inbox) = join(game);
     std::mem::forget(inbox);
     game.world.entities.get_mut::<Seats>(vid).unwrap()[0] = Some(id);
-    game.world.players.get_mut(&id).unwrap().seat = Some(crate::game::Seat { vehicle: vid, index: 0, remote: false });
+    game.world.entities.get_mut::<Player>(id).unwrap().seat = Some(crate::game::Seat { vehicle: vid, index: 0, remote: false });
     (vid, id)
 }
 
@@ -247,38 +247,38 @@ fn driver_in_the_car(game: &mut Game) -> (u32, u32) {
 fn a_rocket_flies_and_bursts_on_the_target_and_hurts_it() {
     let (mut game, shooter, target, mut seq, _) = duel();
     // A rocket flies along the look direction from the eye, so it is the target that stands in its line.
-    game.world.players.get_mut(&target).unwrap().character.position[0] = 100.0;
-    game.world.players.get_mut(&shooter).unwrap().input = InputFrame { seq: 0, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 };
+    game.world.entities.get_mut::<Player>(target).unwrap().character.position[0] = 100.0;
+    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 0, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 };
     fire_rocket(&mut game.world, shooter);
     // 20 m at 45 m/s is under half a second.
     for _ in 0..40 {
         seq += 1;
         game.handle(Command::Input(shooter, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
         game.step();
-        if game.world.players[&target].hp < PLAYER_MAX_HP {
+        if game.world.entities.of::<Player>(target).hp < PLAYER_MAX_HP {
             break;
         }
     }
-    let hp = game.world.players[&target].hp;
+    let hp = game.world.entities.of::<Player>(target).hp;
     assert!(hp < PLAYER_MAX_HP, "the rocket landed");
     assert!(hp <= PLAYER_MAX_HP - 90, "a direct hit is nearly lethal: {hp}");
     assert!(game.world.in_flight().is_empty(), "a burst rocket is gone");
-    assert_eq!(game.world.players[&shooter].hp, PLAYER_MAX_HP, "20 m away is outside the blast");
+    assert_eq!(game.world.entities.of::<Player>(shooter).hp, PLAYER_MAX_HP, "20 m away is outside the blast");
 }
 
 #[test]
 fn a_rocket_into_a_wall_next_to_you_hurts_you_and_credits_nobody() {
     let (mut game, shooter, _, mut seq, _) = duel();
     // Straight down at the feet: bursts a metre or so away.
-    game.world.players.get_mut(&shooter).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: to_mrad(-1.4), view: 0, slot: 0 };
+    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: to_mrad(-1.4), view: 0, slot: 0 };
     fire_rocket(&mut game.world, shooter);
     for _ in 0..4 {
         seq += 1;
         game.handle(Command::Input(shooter, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: to_mrad(-1.4), view: 0, slot: 0 }]));
         game.step();
     }
-    assert!(game.world.players[&shooter].hp < PLAYER_MAX_HP, "hit by your own blast");
-    assert_eq!(game.world.players[&shooter].kills, 0);
+    assert!(game.world.entities.of::<Player>(shooter).hp < PLAYER_MAX_HP, "hit by your own blast");
+    assert_eq!(game.world.entities.of::<Player>(shooter).kills, 0);
 }
 
 #[test]
@@ -289,7 +289,7 @@ fn the_ak5_chips_a_vehicle_and_a_wreck_kills_the_crew() {
     std::mem::forget(_inbox);
     give(&mut game, shooter, 0, ITEM_AK5, 1);
     let pose = game.world.physics.car_pose(vid).unwrap();
-    game.world.players.get_mut(&shooter).unwrap().character.position = [pose.position[0], STANDING_Y, pose.position[2] + 15.0];
+    game.world.entities.get_mut::<Player>(shooter).unwrap().character.position = [pose.position[0], STANDING_Y, pose.position[2] + 15.0];
     let mut seq = 0;
     hold(&mut game, shooter, &mut seq, 0.0, 0, 3);
     // The eye is above the roof; look a little down at the car.
@@ -305,8 +305,8 @@ fn the_ak5_chips_a_vehicle_and_a_wreck_kills_the_crew() {
     damage_vehicle(&mut game.world, vid, max, Some(shooter));
     assert!(game.world.entities.dead(vid));
     assert!(game.world.entities.of::<Seats>(vid).vacant(), "the crew is out of their seats");
-    assert!(!game.world.players[&driver].alive(), "and dead");
-    assert_eq!(game.world.players[&shooter].kills, 1, "the credit goes to whoever wrecked it");
+    assert!(!game.world.entities.of::<Player>(driver).alive(), "and dead");
+    assert_eq!(game.world.entities.of::<Player>(shooter).kills, 1, "the credit goes to whoever wrecked it");
     assert!(game.world.shots.iter().any(|shot| shot.weapon == WEAPON_WRECK));
 }
 
@@ -330,12 +330,12 @@ fn a_wreck_cannot_be_boarded_and_comes_back_whole() {
     let (id, inbox) = join(&mut game);
     std::mem::forget(inbox);
     let pose = game.world.physics.car_pose(vid).unwrap();
-    game.world.players.get_mut(&id).unwrap().character.position = [pose.position[0] + 2.0, STANDING_Y, pose.position[2]];
+    game.world.entities.get_mut::<Player>(id).unwrap().character.position = [pose.position[0] + 2.0, STANDING_Y, pose.position[2]];
     let mut seq = 0;
     hold(&mut game, id, &mut seq, 0.0, 0, 3);
     hold(&mut game, id, &mut seq, 0.0, BUTTON_USE, 1);
     hold(&mut game, id, &mut seq, 0.0, 0, 3);
-    assert!(game.world.players[&id].seat.is_none(), "nobody boards a wreck");
+    assert!(game.world.entities.of::<Player>(id).seat.is_none(), "nobody boards a wreck");
 
     for _ in 0..WRECK_TICKS {
         game.step();
@@ -348,7 +348,7 @@ fn a_wreck_cannot_be_boarded_and_comes_back_whole() {
 #[test]
 fn a_rocket_in_flight_is_in_the_snapshot() {
     let (mut game, shooter, _, mut seq, _) = duel();
-    game.world.players.get_mut(&shooter).unwrap().input = InputFrame { seq: 0, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 };
+    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 0, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 };
     fire_rocket(&mut game.world, shooter);
     hold(&mut game, shooter, &mut seq, 0.0, 0, 1);
     let rockets = game.projectile_states();
@@ -369,7 +369,7 @@ fn shoot_at_a_target_that_has_moved(lag: u32) -> u8 {
         game.step();
     }
     let tick_before = game.world.tick;
-    game.world.players.get_mut(&target).unwrap().character.position = [105.0, STANDING_Y, -20.0];
+    game.world.entities.get_mut::<Player>(target).unwrap().character.position = [105.0, STANDING_Y, -20.0];
     hold(&mut game, shooter, &mut seq, 0.0, 0, 4);
     // The picture on the shooter's screen was `lag` ticks behind the server.
     let view = game.world.tick.wrapping_sub(lag);
@@ -377,7 +377,7 @@ fn shoot_at_a_target_that_has_moved(lag: u32) -> u8 {
     seq += 1;
     game.handle(Command::Input(shooter, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: to_mrad(aim_for(&game, shooter, 0)), view: view as u16, slot: 0 }]));
     settle(&mut game, shooter, &mut seq);
-    game.world.players[&target].hp
+    game.world.entities.of::<Player>(target).hp
 }
 
 #[test]
@@ -405,7 +405,7 @@ fn an_empty_hand_does_nothing() {
     let (mut game, shooter, target, mut seq, _) = duel();
     give(&mut game, shooter, 4, ITEM_NONE, 0);
     hold_slot(&mut game, shooter, &mut seq, BUTTON_FIRE, 4, 10);
-    assert_eq!(game.world.players[&target].hp, PLAYER_MAX_HP);
+    assert_eq!(game.world.entities.of::<Player>(target).hp, PLAYER_MAX_HP);
     assert!(game.world.shots.is_empty());
 }
 
@@ -422,13 +422,13 @@ fn the_revolver_needs_a_press_per_shot_and_hits_hard() {
     let revolver = def(ITEM_REVOLVER).unwrap();
     // Held down for a second: still one shot.
     hold_slot(&mut game, shooter, &mut seq, BUTTON_FIRE, 1, TICK_RATE);
-    assert_eq!(game.world.players[&target].hp, PLAYER_MAX_HP - revolver.damage);
-    assert_eq!(game.world.players[&shooter].hotbar[1].ammo, revolver.mag - 1);
+    assert_eq!(game.world.entities.of::<Player>(target).hp, PLAYER_MAX_HP - revolver.damage);
+    assert_eq!(game.world.entities.of::<Player>(shooter).hotbar[1].ammo, revolver.mag - 1);
     // Let go and press again once the hammer is back.
     hold_slot(&mut game, shooter, &mut seq, 0, 1, revolver.cooldown_ticks);
     hold_slot(&mut game, shooter, &mut seq, BUTTON_FIRE, 1, 1);
     hold_slot(&mut game, shooter, &mut seq, 0, 1, 12);
-    assert_eq!(game.world.players[&target].hp, PLAYER_MAX_HP - 2 * revolver.damage);
+    assert_eq!(game.world.entities.of::<Player>(target).hp, PLAYER_MAX_HP - 2 * revolver.damage);
     assert!(game.world.shots.iter().all(|shot| shot.weapon == WEAPON_REVOLVER) || game.world.shots.is_empty());
 }
 
@@ -439,12 +439,12 @@ fn a_scoped_sniper_shot_goes_true_along_the_look_direction() {
     give(&mut game, shooter, 1, ITEM_SNIPER, 1);
     // Straight ahead of the eye, not off to the side where the over-the-shoulder crosshair
     // would find a target.
-    game.world.players.get_mut(&target).unwrap().character.position = [100.0, STANDING_Y, -20.0];
+    game.world.entities.get_mut::<Player>(target).unwrap().character.position = [100.0, STANDING_Y, -20.0];
     // Long enough that no rewound picture still has it anywhere else.
     hold(&mut game, shooter, &mut seq, 0.0, 0, MAX_REWIND_TICKS + 1);
     press(&mut game, shooter, &mut seq, BUTTON_ALT | BUTTON_FIRE, 1, 0.0);
     // A round in flight, not an instant hit.
-    assert_eq!(game.world.players[&target].hp, PLAYER_MAX_HP);
+    assert_eq!(game.world.entities.of::<Player>(target).hp, PLAYER_MAX_HP);
     assert!(game.world.in_flight().values().any(|r| r.kind == PROJECTILE_BULLET));
     // 20 m at twice a tank shell's speed is a handful of ticks.
     let mut landed = false;
@@ -455,8 +455,8 @@ fn a_scoped_sniper_shot_goes_true_along_the_look_direction() {
     assert!(landed);
     // Straight ahead of the eye is the head: double damage, and a headshot kill.
     let expected = PLAYER_MAX_HP.saturating_sub(sniper.damage * 2);
-    assert_eq!(game.world.players[&target].hp, expected);
-    assert_eq!(game.world.players[&shooter].hotbar[1].ammo, sniper.mag - 1);
+    assert_eq!(game.world.entities.of::<Player>(target).hp, expected);
+    assert_eq!(game.world.entities.of::<Player>(shooter).hotbar[1].ammo, sniper.mag - 1);
 }
 
 #[test]
@@ -475,37 +475,37 @@ fn aim_without_a_scoped_gun_changes_nothing() {
     let pitch = aim_for(&game, shooter, 0);
     press(&mut game, shooter, &mut seq, BUTTON_ALT | BUTTON_FIRE, 0, pitch);
     settle(&mut game, shooter, &mut seq);
-    assert!(game.world.players[&target].hp < PLAYER_MAX_HP);
+    assert!(game.world.entities.of::<Player>(target).hp < PLAYER_MAX_HP);
 }
 
 #[test]
 fn a_gun_runs_dry_reloads_and_fires_again() {
     let (mut game, shooter, target, mut seq, _) = duel();
-    game.world.players.get_mut(&shooter).unwrap().hotbar[0].ammo = 1;
+    game.world.entities.get_mut::<Player>(shooter).unwrap().hotbar[0].ammo = 1;
     hold(&mut game, shooter, &mut seq, 0.0, BUTTON_FIRE, 1);
-    assert_eq!(game.world.players[&shooter].hotbar[0].ammo, 0);
+    assert_eq!(game.world.entities.of::<Player>(shooter).hotbar[0].ammo, 0);
     settle(&mut game, shooter, &mut seq);
-    let hp = game.world.players[&target].hp;
+    let hp = game.world.entities.of::<Player>(target).hp;
     // Dry: pulling the trigger starts a reload instead of a shot.
     hold(&mut game, shooter, &mut seq, 0.0, BUTTON_FIRE, ak5().cooldown_ticks + 1);
-    assert_eq!(game.world.players[&target].hp, hp);
-    assert!(game.world.players[&shooter].reload_left > 0);
+    assert_eq!(game.world.entities.of::<Player>(target).hp, hp);
+    assert!(game.world.entities.of::<Player>(shooter).reload_left > 0);
     hold(&mut game, shooter, &mut seq, 0.0, 0, ak5().reload_ticks + 1);
-    assert_eq!(game.world.players[&shooter].hotbar[0].ammo, ak5().mag);
+    assert_eq!(game.world.entities.of::<Player>(shooter).hotbar[0].ammo, ak5().mag);
     hold(&mut game, shooter, &mut seq, 0.0, BUTTON_FIRE, 1);
     settle(&mut game, shooter, &mut seq);
-    assert_eq!(game.world.players[&target].hp, hp - ak5().damage);
+    assert_eq!(game.world.entities.of::<Player>(target).hp, hp - ak5().damage);
 }
 
 #[test]
 fn switching_slots_drops_a_reload() {
     let (mut game, shooter, _, mut seq, _) = duel();
-    game.world.players.get_mut(&shooter).unwrap().hotbar[0].ammo = 3;
+    game.world.entities.get_mut::<Player>(shooter).unwrap().hotbar[0].ammo = 3;
     hold_slot(&mut game, shooter, &mut seq, BUTTON_RELOAD, 0, 2);
-    assert!(game.world.players[&shooter].reload_left > 0);
+    assert!(game.world.entities.of::<Player>(shooter).reload_left > 0);
     hold_slot(&mut game, shooter, &mut seq, 0, 3, 1);
-    assert_eq!(game.world.players[&shooter].reload_left, 0);
-    assert_eq!(game.world.players[&shooter].hotbar[0].ammo, 3, "it never finished");
+    assert_eq!(game.world.entities.of::<Player>(shooter).reload_left, 0);
+    assert_eq!(game.world.entities.of::<Player>(shooter).hotbar[0].ammo, 3, "it never finished");
 }
 
 #[test]
@@ -514,7 +514,7 @@ fn a_grenade_arcs_falls_and_bursts_when_the_fuse_is_out() {
     give(&mut game, shooter, 2, ITEM_GRENADE, 2);
     // Thrown level at a target 20 m away: it lands short of them, then the fuse takes it.
     hold_slot(&mut game, shooter, &mut seq, BUTTON_FIRE, 2, 1);
-    assert_eq!(game.world.players[&shooter].hotbar[2].count, 1, "one thrown");
+    assert_eq!(game.world.entities.of::<Player>(shooter).hotbar[2].count, 1, "one thrown");
     assert_eq!(game.world.in_flight().len(), 1);
     let grenade = *game.world.in_flight().values().next().unwrap();
     assert_eq!(grenade.kind, PROJECTILE_GRENADE);
@@ -523,19 +523,19 @@ fn a_grenade_arcs_falls_and_bursts_when_the_fuse_is_out() {
     assert!(grenade.position[1] < 3.0, "gravity pulls it down: y = {}", grenade.position[1]);
     hold_slot(&mut game, shooter, &mut seq, 0, 2, GRENADE_FUSE_TICKS);
     assert!(game.world.in_flight().is_empty(), "burst");
-    assert!(game.world.shots.iter().any(|s| s.weapon == WEAPON_GRENADE) || game.world.players[&target].hp <= PLAYER_MAX_HP);
+    assert!(game.world.shots.iter().any(|s| s.weapon == WEAPON_GRENADE) || game.world.entities.of::<Player>(target).hp <= PLAYER_MAX_HP);
 }
 
 #[test]
 fn a_grenade_at_your_feet_hurts_and_one_beside_a_target_kills_them() {
     let (mut game, shooter, target, _, _) = duel();
-    let at = game.world.players[&target].character.position;
+    let at = game.world.entities.of::<Player>(target).character.position;
     let id = game.world.alloc_id();
     game.world.launch_as(id, Flying { kind: PROJECTILE_GRENADE, owner: shooter, source: 0, position: [at[0] + 1.0, at[1], at[2]], velocity: [0.0; 3], ttl: 1, item: 0, back: 0, flown: 0.0 });
     game.step();
     assert!(game.world.in_flight().is_empty());
-    assert!(game.world.players[&target].hp < PLAYER_MAX_HP - 50, "{}", game.world.players[&target].hp);
-    assert_eq!(game.world.players[&shooter].hp, PLAYER_MAX_HP, "20 m clear of the blast");
+    assert!(game.world.entities.of::<Player>(target).hp < PLAYER_MAX_HP - 50, "{}", game.world.entities.of::<Player>(target).hp);
+    assert_eq!(game.world.entities.of::<Player>(shooter).hp, PLAYER_MAX_HP, "20 m clear of the blast");
 }
 
 #[test]
@@ -543,7 +543,7 @@ fn a_flare_gun_spends_a_flare_and_fires_it() {
     let (mut game, shooter, _, mut seq, _) = duel();
     give(&mut game, shooter, 2, ITEM_FLARE, 2);
     hold_slot(&mut game, shooter, &mut seq, BUTTON_FIRE, 2, 1);
-    assert_eq!(game.world.players[&shooter].hotbar[2].count, 1, "one fired");
+    assert_eq!(game.world.entities.of::<Player>(shooter).hotbar[2].count, 1, "one fired");
     let flare = *game.world.in_flight().values().next().expect("in flight");
     assert_eq!(flare.kind, PROJECTILE_FLARE);
     // Aimed level, it still goes up steeply.
@@ -581,7 +581,7 @@ fn a_flare_climbs_then_sinks_slowly_and_burns_out_in_the_air() {
     assert!(last.position[1] > 10.0 && last.velocity[1] < 0.0, "still hanging just before it burns out: {last:?}");
     game.step();
     assert!(!game.world.in_flight().contains_key(&id), "burnt out");
-    assert_eq!(game.world.players[&target].hp, PLAYER_MAX_HP, "light, not harm");
+    assert_eq!(game.world.entities.of::<Player>(target).hp, PLAYER_MAX_HP, "light, not harm");
 }
 
 #[test]
@@ -607,13 +607,13 @@ fn a_flare_that_comes_down_burns_where_it_lands() {
 fn a_bandage_heals_after_a_pause_and_is_used_up() {
     let (mut game, shooter, _, mut seq, _) = duel();
     give(&mut game, shooter, 3, ITEM_BANDAGE, 1);
-    game.world.players.get_mut(&shooter).unwrap().hp = 30;
+    game.world.entities.get_mut::<Player>(shooter).unwrap().hp = 30;
     hold_slot(&mut game, shooter, &mut seq, BUTTON_FIRE, 3, 1);
-    assert_eq!(game.world.players[&shooter].hp, 30, "not yet");
-    assert!(game.world.players[&shooter].channel_left > 0);
+    assert_eq!(game.world.entities.of::<Player>(shooter).hp, 30, "not yet");
+    assert!(game.world.entities.of::<Player>(shooter).channel_left > 0);
     hold_slot(&mut game, shooter, &mut seq, 0, 3, BANDAGE_TICKS + 1);
-    assert_eq!(game.world.players[&shooter].hp, 30 + def(ITEM_BANDAGE).unwrap().damage);
-    assert_eq!(game.world.players[&shooter].hotbar[3], ItemSlot { item: ITEM_NONE, count: 0, ammo: 0 });
+    assert_eq!(game.world.entities.of::<Player>(shooter).hp, 30 + def(ITEM_BANDAGE).unwrap().damage);
+    assert_eq!(game.world.entities.of::<Player>(shooter).hotbar[3], ItemSlot { item: ITEM_NONE, count: 0, ammo: 0 });
 }
 
 #[test]
@@ -621,17 +621,17 @@ fn being_hit_spoils_a_bandage_and_full_health_does_not_start_one() {
     let (mut game, shooter, target, mut seq, _) = duel();
     give(&mut game, shooter, 3, ITEM_BANDAGE, 2);
     hold_slot(&mut game, shooter, &mut seq, BUTTON_FIRE, 3, 1);
-    assert_eq!(game.world.players[&shooter].channel_left, 0, "nothing to heal");
+    assert_eq!(game.world.entities.of::<Player>(shooter).channel_left, 0, "nothing to heal");
 
-    game.world.players.get_mut(&shooter).unwrap().hp = 50;
+    game.world.entities.get_mut::<Player>(shooter).unwrap().hp = 50;
     hold_slot(&mut game, shooter, &mut seq, 0, 3, 5);
     hold_slot(&mut game, shooter, &mut seq, BUTTON_FIRE, 3, 1);
-    assert!(game.world.players[&shooter].channel_left > 0);
+    assert!(game.world.entities.of::<Player>(shooter).channel_left > 0);
     damage(&mut game.world, shooter, 5, Some(target), WEAPON_RIFLE);
-    assert_eq!(game.world.players[&shooter].channel_left, 0);
+    assert_eq!(game.world.entities.of::<Player>(shooter).channel_left, 0);
     hold_slot(&mut game, shooter, &mut seq, 0, 3, BANDAGE_TICKS + 1);
-    assert_eq!(game.world.players[&shooter].hp, 45);
-    assert_eq!(game.world.players[&shooter].hotbar[3].count, 2, "not spent");
+    assert_eq!(game.world.entities.of::<Player>(shooter).hp, 45);
+    assert_eq!(game.world.entities.of::<Player>(shooter).hotbar[3].count, 2, "not spent");
 }
 
 #[test]
@@ -640,8 +640,8 @@ fn a_new_life_starts_with_the_standard_loadout() {
     give(&mut game, target, 4, ITEM_BANDAGE, 2);
     damage(&mut game.world, target, PLAYER_MAX_HP, Some(shooter), WEAPON_RIFLE);
     hold(&mut game, target, &mut seq_t, 0.0, 0, RESPAWN_TICKS);
-    assert!(game.world.players[&target].alive());
-    let hotbar = game.world.players[&target].hotbar;
+    assert!(game.world.entities.of::<Player>(target).alive());
+    let hotbar = game.world.entities.of::<Player>(target).hotbar;
     assert_eq!(hotbar, starting_hotbar());
     let items: Vec<u8> = hotbar.iter().map(|slot| slot.item).collect();
     assert_eq!(items, [ITEM_AK5, ITEM_SNIPER, ITEM_FLARE, ITEM_DRONE, ITEM_LOITER]);
@@ -873,7 +873,7 @@ fn a_killing_blow_on_a_house_is_its_last_stage() {
 /// The target is moved to `distance` metres in front of the shooter, and left long enough that no
 /// rewound picture still has it anywhere else.
 fn stand_at(game: &mut Game, id: u32, distance: f32) {
-    game.world.players.get_mut(&id).unwrap().character.position = [100.0 + ON_FOOT_SHOULDER, STANDING_Y, -distance];
+    game.world.entities.get_mut::<Player>(id).unwrap().character.position = [100.0 + ON_FOOT_SHOULDER, STANDING_Y, -distance];
     for _ in 0..=MAX_REWIND_TICKS {
         game.step();
     }
@@ -897,14 +897,14 @@ fn a_shotgun_kills_at_point_blank_and_credits_the_shooter() {
     for _ in 0..6 {
         press(&mut game, shooter, &mut seq, BUTTON_FIRE | BUTTON_ALT, 4, -0.46);
     }
-    assert_eq!(game.world.players[&target].hp, 0, "ten pellets at three metres are lethal");
-    assert_eq!(game.world.players[&shooter].kills, 1);
+    assert_eq!(game.world.entities.of::<Player>(target).hp, 0, "ten pellets at three metres are lethal");
+    assert_eq!(game.world.entities.of::<Player>(shooter).kills, 1);
 }
 
 #[test]
 fn a_shotgun_pull_announces_every_pellet() {
     let (mut game, shooter, _, _, _) = duel();
-    game.world.players.get_mut(&shooter).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: to_mrad(AIM_20M), view: 0, slot: 4 };
+    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: to_mrad(AIM_20M), view: 0, slot: 4 };
     game.world.shots.clear();
     fire_gun(&mut game.world, shooter, def(ITEM_SHOTGUN).unwrap());
     let gun = def(ITEM_SHOTGUN).unwrap();
@@ -919,10 +919,10 @@ fn a_shotgun_pellet_is_a_scratch_from_far_away() {
     let gun = def(ITEM_SHOTGUN).unwrap();
     let (mut near, shooter, target, ..) = duel();
     one_round_from(&mut near, shooter, ITEM_SHOTGUN, 5.0);
-    assert_eq!(near.world.players[&target].hp, PLAYER_MAX_HP - gun.damage);
+    assert_eq!(near.world.entities.of::<Player>(target).hp, PLAYER_MAX_HP - gun.damage);
     let (mut far, shooter, target, ..) = duel();
     one_round_from(&mut far, shooter, ITEM_SHOTGUN, 38.0);
-    let lost = PLAYER_MAX_HP - far.world.players[&target].hp;
+    let lost = PLAYER_MAX_HP - far.world.entities.of::<Player>(target).hp;
     assert!(lost > 0 && lost < gun.damage / 2, "{lost}");
 }
 
@@ -934,7 +934,7 @@ fn a_shotgun_pull_costs_one_round_and_needs_a_fresh_press() {
     // Held for two seconds: the cooldown is a second, but a pump gun still wants a fresh press.
     hold_slot(&mut game, shooter, &mut seq, BUTTON_FIRE, 4, 2 * TICK_RATE);
     let gun = def(ITEM_SHOTGUN).unwrap();
-    assert_eq!(game.world.players[&shooter].hotbar[4].ammo, gun.mag - 1);
+    assert_eq!(game.world.entities.of::<Player>(shooter).hotbar[4].ammo, gun.mag - 1);
 }
 
 #[test]
@@ -943,10 +943,10 @@ fn guns_lose_damage_with_distance_and_keep_it_up_close() {
         let gun = def(item).unwrap();
         let (mut close, shooter, target, ..) = duel();
         one_round_from(&mut close, shooter, item, gun.falloff.start);
-        assert_eq!(close.world.players[&target].hp, PLAYER_MAX_HP - gun.damage, "{}", gun.name);
+        assert_eq!(close.world.entities.of::<Player>(target).hp, PLAYER_MAX_HP - gun.damage, "{}", gun.name);
         let (mut far, shooter, target, ..) = duel();
         one_round_from(&mut far, shooter, item, gun.range - 1.0);
-        let lost = PLAYER_MAX_HP - far.world.players[&target].hp;
+        let lost = PLAYER_MAX_HP - far.world.entities.of::<Player>(target).hp;
         assert!(lost < gun.damage && lost >= gun.damage / 2, "{}: {lost}", gun.name);
     }
 }
@@ -956,7 +956,7 @@ fn a_gun_round_flies_and_is_announced_once_instead_of_listed_every_snapshot() {
     let (mut game, shooter, target, mut seq, _) = duel();
     let aim = aim_for(&game, shooter, 0);
     press(&mut game, shooter, &mut seq, BUTTON_FIRE, 0, aim);
-    assert_eq!(game.world.players[&target].hp, PLAYER_MAX_HP, "it has to get there first");
+    assert_eq!(game.world.entities.of::<Player>(target).hp, PLAYER_MAX_HP, "it has to get there first");
     let flying = game.world.in_flight();
     let bullet = flying.iter().find(|(_, r)| r.kind == PROJECTILE_BULLET).expect("the round is in flight");
     assert_eq!(bullet.1.item, ITEM_AK5);
@@ -988,7 +988,7 @@ fn a_round_that_has_flown_far_hits_for_less() {
             },
         );
         projectiles::step(&mut game.world, 1.0 / TICK_RATE as f32, Stage::Hands);
-        let lost = PLAYER_MAX_HP - game.world.players[&target].hp;
+        let lost = PLAYER_MAX_HP - game.world.entities.of::<Player>(target).hp;
         if full {
             assert_eq!(lost, gun.damage);
         } else {
@@ -1104,9 +1104,9 @@ fn shoot_from_the_side(game: &mut Game, vid: u32, rider: u32, y: f32, z: f32) ->
     let (shooter, inbox) = join(game);
     std::mem::forget(inbox);
     let at = game.world.physics.car_pose(vid).unwrap().position;
-    let (hp, car) = (game.world.players[&rider].hp, game.world.entities.of::<Health>(vid).hp);
+    let (hp, car) = (game.world.entities.of::<Player>(rider).hp, game.world.entities.of::<Health>(vid).hp);
     hitscan(&mut game.world, shooter, [at[0] + 10.0, y, z], [-1.0, 0.0, 0.0], &round(), 0, 0);
-    (hp - game.world.players[&rider].hp, car - game.world.entities.of::<Health>(vid).hp)
+    (hp - game.world.entities.of::<Player>(rider).hp, car - game.world.entities.of::<Health>(vid).hp)
 }
 
 #[test]
@@ -1160,8 +1160,8 @@ fn a_seated_players_head_is_rewound_like_a_standing_ones() {
 fn a_passenger_shot_dead_falls_out_of_the_seat() {
     let (mut game, vid, rider) = rider_in(shared::protocol::KIND_JEEP, 1);
     damage(&mut game.world, rider, PLAYER_MAX_HP, None, WEAPON_RIFLE);
-    assert!(!game.world.players[&rider].alive());
-    assert!(game.world.players[&rider].seat.is_none());
+    assert!(!game.world.entities.of::<Player>(rider).alive());
+    assert!(game.world.entities.of::<Player>(rider).seat.is_none());
     assert_eq!(game.world.entities.of::<Seats>(vid)[1], None);
 }
 
@@ -1174,7 +1174,7 @@ fn a_jeep_passenger_fires_their_own_gun_out_of_the_car() {
     let (target, inbox) = join(&mut game);
     std::mem::forget(inbox);
     let pivot = [head[0] + PASSENGER_SHOULDER, head[1] + PASSENGER_HEIGHT, head[2]];
-    game.world.players.get_mut(&target).unwrap().character.position = [pivot[0], STANDING_Y, head[2] - 20.0];
+    game.world.entities.get_mut::<Player>(target).unwrap().character.position = [pivot[0], STANDING_Y, head[2] - 20.0];
     let pitch = ((STANDING_Y - pivot[1]) / 20.0).atan();
     let mut seq = 0;
     for _ in 0..3 {
@@ -1183,9 +1183,9 @@ fn a_jeep_passenger_fires_their_own_gun_out_of_the_car() {
     for _ in 0..12 {
         press(&mut game, rider, &mut seq, 0, 0, pitch);
     }
-    assert!(game.world.players[&target].hp < PLAYER_MAX_HP, "the round landed");
+    assert!(game.world.entities.of::<Player>(target).hp < PLAYER_MAX_HP, "the round landed");
     assert_eq!(game.world.entities.of::<Health>(vid).hp, vehicle_def(shared::protocol::KIND_JEEP).hp, "and left through the car without hurting it");
-    assert!(game.world.players[&rider].hotbar[0].ammo < ak5().mag);
+    assert!(game.world.entities.of::<Player>(rider).hotbar[0].ammo < ak5().mag);
 }
 
 #[test]
@@ -1196,31 +1196,31 @@ fn a_driver_does_not_fire_their_gun() {
     for _ in 0..10 {
         press(&mut game, rider, &mut seq, BUTTON_FIRE, 0, 0.0);
     }
-    assert_eq!(game.world.players[&rider].hotbar[0].ammo, ak5().mag);
+    assert_eq!(game.world.entities.of::<Player>(rider).hotbar[0].ammo, ak5().mag);
 }
 
 #[test]
 fn a_passenger_reloads_a_gun_that_is_not_full_and_otherwise_changes_seat() {
     let (mut game, vid, rider) = rider_in(shared::protocol::KIND_JEEP, 1);
     give(&mut game, rider, 0, ITEM_AK5, 1);
-    game.world.players.get_mut(&rider).unwrap().hotbar[0].ammo = 3;
+    game.world.entities.get_mut::<Player>(rider).unwrap().hotbar[0].ammo = 3;
     let mut seq = 0;
     press(&mut game, rider, &mut seq, BUTTON_RELOAD, 0, 0.0);
     // Frames wait a moment in the jitter buffer before they are played.
     for _ in 0..6 {
         press(&mut game, rider, &mut seq, 0, 0, 0.0);
     }
-    assert_eq!(game.world.players[&rider].seat.map(|seat| seat.index), Some(1), "still in their seat");
-    assert!(game.world.players[&rider].reload_left > 0, "reloading");
+    assert_eq!(game.world.entities.of::<Player>(rider).seat.map(|seat| seat.index), Some(1), "still in their seat");
+    assert!(game.world.entities.of::<Player>(rider).reload_left > 0, "reloading");
     for _ in 0..ak5().reload_ticks + 2 {
         press(&mut game, rider, &mut seq, 0, 0, 0.0);
     }
-    assert_eq!(game.world.players[&rider].hotbar[0].ammo, ak5().mag);
+    assert_eq!(game.world.entities.of::<Player>(rider).hotbar[0].ammo, ak5().mag);
     press(&mut game, rider, &mut seq, BUTTON_RELOAD, 0, 0.0);
     for _ in 0..6 {
         press(&mut game, rider, &mut seq, 0, 0, 0.0);
     }
-    let seat = game.world.players[&rider].seat.unwrap();
+    let seat = game.world.entities.of::<Player>(rider).seat.unwrap();
     assert_eq!(seat.vehicle, vid);
     assert_ne!(seat.index, 1, "with a full gun, reload moves them on");
 }

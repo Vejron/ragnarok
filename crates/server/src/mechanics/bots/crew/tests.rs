@@ -38,7 +38,7 @@ fn join(game: &mut Game) -> u32 {
 
 fn put(game: &mut Game, id: u32, [x, z]: [f32; 2]) {
     let y = game.world.map.ground.height_at(x, z) + sim::STANDING_Y;
-    game.world.players.get_mut(&id).unwrap().character.position = [x, y, z];
+    game.world.entities.get_mut::<Player>(id).unwrap().character.position = [x, y, z];
 }
 
 fn run(game: &mut Game, seconds: f32) {
@@ -52,7 +52,7 @@ fn tank(game: &Game, vid: u32) -> CarPose {
 }
 
 fn seated(game: &Game, id: u32) -> Option<(u32, usize)> {
-    game.world.players[&id].seat.map(|seat| (seat.vehicle, seat.index))
+    game.world.entities.of::<Player>(id).seat.map(|seat| (seat.vehicle, seat.index))
 }
 
 fn shells_fired(game: &Game, vid: u32) -> u8 {
@@ -183,13 +183,13 @@ fn the_gunner_shells_someone_it_sees_all_round_and_the_tank_holds_still() {
         if fighting && tank(&game, vid).forward_speed.abs() < 0.3 {
             halted = true;
         }
-        if !game.world.players[&person].alive() {
+        if !game.world.entities.of::<Player>(person).alive() {
             break;
         }
         put(&mut game, person, [10.0, 70.0]);
     }
     assert!(shells_fired(&game, vid) > 0, "it fired");
-    assert!(!game.world.players[&person].alive(), "and got them in the end");
+    assert!(!game.world.entities.of::<Player>(person).alive(), "and got them in the end");
     assert!(halted, "the driver held still while the gunner fought");
 }
 
@@ -200,7 +200,7 @@ fn it_leaves_its_own_team_alone() {
     let friend = game.add_bot([0.0, -40.0], TEAM_BOTS, vec![[0.0, -40.0]]).unwrap();
     run(&mut game, 8.0);
     assert_eq!(shells_fired(&game, vid), 0);
-    assert!(game.world.players[&friend].alive());
+    assert!(game.world.entities.of::<Player>(friend).alive());
 }
 
 #[test]
@@ -246,7 +246,7 @@ fn a_crew_gets_back_in_when_their_wrecked_tank_comes_back() {
     run(&mut game, 1.0);
     damage_vehicle(&mut game.world, vid, 255, None);
     game.step();
-    assert!(!game.world.players[&driver].alive() && !game.world.players[&gunner].alive(), "the crew die in the wreck");
+    assert!(!game.world.entities.of::<Player>(driver).alive() && !game.world.entities.of::<Player>(gunner).alive(), "the crew die in the wreck");
     assert_eq!(seated(&game, driver), None);
     // They come back in 3 s, beside it; the tank is put back after `WRECK_TICKS`.
     run(&mut game, WRECK_TICKS as f32 / TICK_RATE as f32 + 6.0);
@@ -264,7 +264,7 @@ fn a_crewman_put_out_of_reach_of_its_tank_fights_on_foot() {
     put(&mut game, person, [0.0, -10.0]);
     run(&mut game, 5.0);
     assert_eq!(seated(&game, driver), None);
-    let hurt = &game.world.players[&person];
+    let hurt = &game.world.entities.of::<Player>(person);
     assert!(hurt.hp < shared::consts::PLAYER_MAX_HP || hurt.deaths > 0, "it shot them on foot");
 }
 

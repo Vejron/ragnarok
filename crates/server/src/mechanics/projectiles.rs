@@ -16,7 +16,7 @@ use super::armor::{self, Outcome};
 use super::combat::{Blast, Direct, blast_at, damage_hit, damage_vehicle, hit_at, hit_object, is_headshot, round_hit};
 use super::life::{damage_entity, first_hurtbox_hit, hit_mark};
 use crate::entities::{Component, Transform, With};
-use crate::game::World;
+use crate::game::{Player, World};
 use shared::consts::*;
 use shared::items::{FLARE_DRAG, FLARE_RADIUS, FLARE_SINK, Falloff, GRENADE_BLAST_RADIUS, GRENADE_BOUNCE, GRENADE_DAMAGE, GRENADE_KNOCK, GRENADE_RADIUS, def};
 use shared::protocol::{BEARING_NONE, HIT_DEALT, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, ShotEvent, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_BULLET, WEAPON_EGG, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_SHELL};
@@ -326,7 +326,7 @@ fn set_off(world: &mut World, burst: Burst, owner: u32, point: [f32; 3], dir: [f
     let [x, y, z] = point.map(to_cm);
     world.shots.push(ShotEvent { shooter: owner, weapon: burst.weapon, x, y, z });
     // A dead or departed owner still gets the blast, just not the credit.
-    let attacker = world.players.contains_key(&owner).then_some(owner);
+    let attacker = world.entities.has::<Player>(owner).then_some(owner);
     let dir = if burst.upward { [0.0, 1.0, 0.0] } else { dir };
     blast_at(world, Blast { point, radius: burst.radius, damage: burst.damage, knock: burst.knock, dir, attacker, weapon: burst.weapon }, direct);
 }
@@ -467,7 +467,7 @@ fn step_round(world: &mut World, id: u32, dt: f32) {
         let point: [f32; 3] = std::array::from_fn(|i| s.position[i] + dir[i] * end);
         let (base, falloff, weapon) = item.map_or((0, Falloff::NONE, WEAPON_RIFLE), |d| (d.damage, d.falloff, d.weapon));
         let damage_dealt = falloff.apply(base, round.flown + end);
-        let attacker = world.players.contains_key(&s.owner).then_some(s.owner);
+        let attacker = world.entities.has::<Player>(s.owner).then_some(s.owner);
         if let Some((target, _)) = creature {
             damage_entity(world, target, damage_dealt);
             if let (Some(owner), Some((kind, at))) = (attacker, hit_mark(world, target)) {

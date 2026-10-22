@@ -3,7 +3,7 @@ use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
 use super::combat::{Round, hitscan, look, rewind_ticks, scatter};
 use super::projectiles::{self, Flying, Stage};
 use crate::entities::With;
-use crate::game::{Mount, Mounts, Seats, Vehicle, World};
+use crate::game::{Mount, Mounts, Player, Seats, Vehicle, World};
 use sim::CarPose;
 use shared::consts::*;
 use shared::items::Falloff;
@@ -76,7 +76,7 @@ fn work(world: &mut World, vid: u32, def: &MountDef, mut mount: Mount, pose: &Ca
         mount.yaw = 0.0;
     }
     let Some(occupant) = world.entities.get::<Seats>(vid).and_then(|seats| seats.rider(def.seat)) else { return mount };
-    let Some(input) = world.players.get(&occupant).map(|player| player.input) else { return mount };
+    let Some(input) = world.entities.get::<Player>(occupant).map(|player| player.input) else { return mount };
     if !def.needs.iter().all(|&need| can_work(world, vid, need, pose)) {
         return mount;
     }
@@ -244,7 +244,7 @@ fn fire(world: &mut World, kind: u8, vid: u32, origin: [f32; 3], dir: [f32; 3], 
 /// One machine gun `round` for `shooter` from vehicle `vid`, out of `muzzle` along `dir`. Every round
 /// is drawn by the client from the gun's counter; only one that hit something is announced, for the spark.
 fn machine_gun(world: &mut World, shooter: u32, vid: u32, muzzle: [f32; 3], dir: [f32; 3], round: &Round) {
-    let back = world.players.get(&shooter).map_or(0, |player| rewind_ticks(world.tick, player.input.view()));
+    let back = world.entities.get::<Player>(shooter).map_or(0, |player| rewind_ticks(world.tick, player.input.view()));
     make_noise(world, muzzle, Some(shooter), HEAR_SHOT);
     let (end, struck) = hitscan(world, shooter, muzzle, dir, round, vid, back);
     if struck {
