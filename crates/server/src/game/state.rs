@@ -3,7 +3,6 @@
 
 use super::*;
 use shared::mounts::{MountDef, Show};
-use shared::vehicles::vehicle_def;
 pub use crate::profile::Profile;
 
 pub enum Command {
@@ -253,8 +252,6 @@ pub struct Vehicle {
     pub home: ([f32; 3], f32),
     /// Consecutive ticks spent on its side or roof and not moving.
     pub stuck_ticks: u32,
-    /// What each of its weapon mounts is doing, one per `vehicle_def(kind).mounts`, in that order.
-    pub mounts: Vec<Mount>,
     /// Health. At zero it is a wreck for `WRECK_TICKS`, then it is put back at `home`.
     pub hp: u8,
     pub wreck_in: u32,
@@ -266,12 +263,11 @@ pub struct Vehicle {
     pub damage: [u8; 8],
     /// Ticks before it may throw sparks again.
     pub scrape_in: u8,
-    /// A drone's link to its pilot and its battery; `None` for anything else.
-    pub drone: Option<Drone>,
 }
 
-/// What a drone carries beyond being a vehicle. The `Drones` mechanic owns it.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// What a drone carries beyond being a vehicle: a component on the vehicle's entity. The `Drones`
+/// mechanic owns it.
+#[derive(crate::entities::Component, Clone, Copy, Debug, PartialEq)]
 pub struct Drone {
     /// `KIND_DRONE` or `KIND_LOITER`, which picks its `shared::items::drone_def`.
     pub kind: u8,
@@ -324,26 +320,35 @@ impl Mount {
     }
 }
 
-impl Vehicle {
-    /// Its mounts with their definitions, in the order they are worked.
-    pub fn armed(&self) -> impl Iterator<Item = (&'static MountDef, &Mount)> {
-        vehicle_def(self.kind).mounts.iter().zip(&self.mounts)
+/// A vehicle's weapons: a component on the entities of the vehicles that have any, holding the mounts'
+/// definitions (`VehicleDef::mounts` for a kind's own) and what each is doing, in the order they are
+/// worked. The `Gunnery` mechanic owns it.
+#[derive(crate::entities::Component, Clone, Debug, PartialEq)]
+pub struct Mounts {
+    pub defs: &'static [MountDef],
+    pub state: Vec<Mount>,
+}
+
+impl Mounts {
+    /// Mounts of `defs` as a fresh vehicle has them; `None` for no mounts at all.
+    pub fn fresh(defs: &'static [MountDef]) -> Option<Self> {
+        (!defs.is_empty()).then(|| Mounts { defs, state: defs.iter().map(Mount::fresh).collect() })
     }
 
-    /// The mount the snapshot shows as `show`, if it has one.
+    /// The mount the snapshot shows as `show`, if there is one.
     pub fn shown(&self, show: Show) -> Option<&Mount> {
-        self.armed().find(|(def, _)| def.show == show).map(|(_, mount)| mount)
+        self.defs.iter().zip(&self.state).find(|(def, _)| def.show == show).map(|(_, mount)| mount)
     }
 
-    /// The mount the snapshot shows as its turret.
+    /// The mount the snapshot shows as the turret.
     pub fn turret(&self) -> Option<&Mount> {
         self.shown(Show::Turret)
     }
 
-    /// Puts its pilot's arms back as a fresh vehicle's: guns cool and racks full. A turret keeps its aim
-    /// and its count.
+    /// Puts the pilot's arms back as a fresh vehicle's: guns cool and racks full. A turret keeps its
+    /// aim and its count.
     pub fn restock(&mut self) {
-        for (def, mount) in vehicle_def(self.kind).mounts.iter().zip(&mut self.mounts) {
+        for (def, mount) in self.defs.iter().zip(&mut self.state) {
             if def.show.arms() {
                 *mount = Mount::fresh(def);
             }
@@ -458,7 +463,7 @@ impl World {
     pub fn seated_head(&self, id: u32) -> Option<(u32, [f32; 3])> {
         let seat = self.players.get(&id)?.seat.filter(|seat| !seat.remote)?;
         let vehicle = self.entities.get::<Vehicle>(seat.vehicle)?;
-        let local = shared::vehicles::seat_head(vehicle.kind, seat.index, vehicle.turret().map_or(0.0, |gun| gun.yaw))?;
+        let local = shared::vehicles::seat_head(vehicle.kind, seat.index, self.entities.get::<Mounts>(seat.vehicle).and_then(Mounts::turret).map_or(0.0, |gun| gun.yaw))?;
         Some((seat.vehicle, self.physics.car_pose(seat.vehicle)?.world_point(local)))
     }
 

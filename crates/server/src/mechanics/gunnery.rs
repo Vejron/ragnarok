@@ -1,16 +1,15 @@
-use crate::game::Vehicle;
 use super::Mechanic;
 use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
 use super::combat::{Round, hitscan, look, rewind_ticks, scatter};
 use super::projectiles::{self, Flying, Stage};
-use crate::game::{Mount, World};
+use crate::entities::With;
+use crate::game::{Mount, Mounts, Vehicle, World};
 use sim::CarPose;
 use shared::consts::*;
 use shared::items::Falloff;
 use shared::mounts::{Aim, Ammo, Fire, MountDef, Muzzle, Need, Refill};
 use shared::protocol::{DAMAGE_TURRET, InputFrame, PROJECTILE_ROCKET, ShotEvent, TURRET_GONE};
 use shared::quant::{from_mrad, to_cm, wrap_angle};
-use shared::vehicles::vehicle_def;
 
 /// Vehicle weapons: every mount in a vehicle's `VehicleDef::mounts` (`shared::mounts`), worked the same
 /// way. The occupant of the mount's seat aims it with their look and fires it with its trigger; their
@@ -257,15 +256,14 @@ fn machine_gun(world: &mut World, shooter: u32, vid: u32, muzzle: [f32; 3], dir:
 impl Mechanic for Gunnery {
     fn on_tick(&mut self, world: &mut World, dt: f32) {
         projectiles::step(world, dt, Stage::Guns);
-        let ids: Vec<u32> = world.entities.all::<Vehicle>().filter(|(_, vehicle)| !vehicle.mounts.is_empty()).map(|(id, _)| id).collect();
-        for vid in ids {
+        for vid in world.entities.ids::<With<Mounts>>() {
             let Some(pose) = world.physics.car_pose(vid) else { continue };
-            let defs = vehicle_def(world.entities.of::<Vehicle>(vid).kind).mounts;
+            let defs = world.entities.of::<Mounts>(vid).defs;
             for (index, def) in defs.iter().enumerate() {
-                let Some(mount) = world.entities.get::<Vehicle>(vid).map(|vehicle| vehicle.mounts[index]) else { break };
+                let Some(mount) = world.entities.get::<Mounts>(vid).map(|mounts| mounts.state[index]) else { break };
                 let mount = work(world, vid, def, mount, &pose, dt);
-                if let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(vid) {
-                    vehicle.mounts[index] = mount;
+                if let Some(mut mounts) = world.entities.get_mut::<Mounts>(vid) {
+                    mounts.state[index] = mount;
                 }
             }
         }

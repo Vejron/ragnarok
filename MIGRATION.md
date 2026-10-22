@@ -120,7 +120,8 @@ Phase 3 and 4 need both.
 - [x] Projectiles (rockets, grenades, shells, bullets, flares) as `Projectile` + fuse + burst.
 - [x] Weapon mounts as data (`shared::mounts`), worked by one routine in place of the `work_*`
       functions.
-- [ ] Vehicles as entities: `Mounts`, `Seats`, `Drone` and `Wreckable` as components.
+- [x] Vehicles as entities, with `Mounts` and `Drone` as components of their own.
+- [ ] `Seats` and the wreck state out of `Vehicle`, and per-kind branches in `vehicles.rs` to spec data.
 - [ ] Players and bots.
 - [ ] Events in place of `hits`, `kills`, `noises`.
 
@@ -590,3 +591,30 @@ would remove (an open item above).
 
 **Next:** split `Vehicle` into the components it is made of, starting with `Drone` and the weapon
 mounts.
+
+### 2026-10-22: a vehicle's weapons and a drone's link are components
+
+`Vehicle` lost `mounts: Vec<Mount>` and `drone: Option<Drone>`. Both are components on the vehicle's
+entity now, present only on the vehicles that have them.
+
+- **`Mounts { defs, state }`**: the mounts' definitions and what each is doing. `add_vehicle` inserts
+  it when the kind's `VehicleDef::mounts` is not empty.
+  - Because it carries its own `defs`, an entity is armed by having one, whatever its kind. The test
+    `a_mount_made_of_parts_no_vehicle_has_works` now bolts a rocket ring onto a jeep. The room's own
+    tick works it: aim, run out, regrow.
+  - `Gunnery` goes over `ids::<With<Mounts>>()` and never looks at the kind.
+  - `shown`, `turret` and `restock` moved from `Vehicle` to `Mounts`. The respawn in `Vehicles` notes
+    that a vehicle is put back as new and restocks its `Mounts` once the vehicle borrow ends.
+- **`Drone`**: inserted by `drones::launch`. `Drones` goes over `ids::<With<Drone>>()`, and finding
+  a pilot's drones is `all::<Drone>()`. `combat` asks `has::<Drone>`. The snapshot's battery gauge
+  reads the component.
+- Behaviour, order and the wire are unchanged.
+
+**Checks:** server 262 tests, all passing; clippy clean. `full_room_tick_cost`: `Vehicles` 29 to 30 µs,
+`Drones` 0.77 to 0.80 µs, `Gunnery` 1.29 to 1.37 µs, `Combat` 35 to 36 µs. Mechanics in total 1.53 to
+1.62 ms, which moves with `Movement` (1.49 to 1.55 ms, not touched here) from run to run. Snapshots 0.69
+to 0.72 ms.
+
+**Next:** take `Seats` and the wreck state (`hp`, `wreck_in`, `last_attacker`) out of `Vehicle`, and
+the remaining per-kind branches in `vehicles.rs` (drop height, ram weight, legs) into spec data. Then
+players and bots.

@@ -9,9 +9,8 @@
 //! Both write their input as a player in that seat would, so `Vehicles` and `Gunnery` drive the
 //! real tank. A crewman on foot (respawned, or put out) walks back to its tank and gets in.
 
-use crate::game::Vehicle;
 use super::*;
-use crate::game::Crew;
+use crate::game::{Crew, Mounts, Vehicle};
 use crate::mechanics::combat::position_of;
 use crate::mechanics::gunnery::aim;
 use crate::mechanics::vehicles::seat;
@@ -362,7 +361,7 @@ fn gun(world: &mut World, id: u32, bot: &mut Bot, vid: u32, pose: &CarPose, nois
     let eye = pose.world_point(TURRET_EYE);
     let chase = (CHASE * TICK_RATE as f32) as u32;
     let Some(vehicle) = world.entities.get::<Vehicle>(vid) else { return idle };
-    let turret = vehicle.turret().copied().unwrap_or_default();
+    let turret = world.entities.get::<Mounts>(vid).and_then(Mounts::turret).copied().unwrap_or_default();
     let turret_on = vehicle.damage[DAMAGE_TURRET] != TURRET_GONE;
 
     // A hit on the tank, or a fight heard, sends it after where that came from.

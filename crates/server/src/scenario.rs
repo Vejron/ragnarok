@@ -7,8 +7,7 @@
 //! The file names things; `Scenario` holds them as indices, checked once when it is read, so a
 //! typo stops the server with a message instead of a trigger that never fires.
 
-use crate::game::Vehicle;
-use crate::game::{Game, World};
+use crate::game::{Game, Vehicle, World};
 use crate::mechanics::{position_of, remove_vehicle};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;

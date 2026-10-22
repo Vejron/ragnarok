@@ -12,8 +12,7 @@
 //! can tell what will happen. Every kind has a profile; the Strv S's steep glacis turns shots away from
 //! well off the nose, a jeep only deflects the most grazing.
 
-use crate::game::Vehicle;
-use crate::game::World;
+use crate::game::{Vehicle, World};
 use sim::Strike;
 use shared::consts::*;
 use shared::protocol::{DAMAGE_TURRET, KIND_STRV, KIND_TANK, KIND_PLANE, ShotEvent, TURRET_GONE, WEAPON_RICOCHET, WEAPON_TURRET, WEAPON_WRECK};

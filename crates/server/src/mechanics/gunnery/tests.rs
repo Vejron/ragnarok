@@ -39,7 +39,7 @@ fn seat(game: &mut Game, id: u32, vid: u32, index: usize) {
 
 /// What vehicle `vid`'s mount shown as `show` is doing.
 fn shown(game: &Game, vid: u32, show: Show) -> Mount {
-    *game.world.entities.of::<Vehicle>(vid).shown(show).expect("it has that mount")
+    *game.world.entities.of::<Mounts>(vid).shown(show).expect("it has that mount")
 }
 
 fn turret(game: &Game, vid: u32) -> Mount {
@@ -704,7 +704,7 @@ fn a_clutch_is_six_eggs_laid_one_at_a_time_and_grows_back() {
 #[test]
 fn a_mount_made_of_parts_no_vehicle_has_works() {
     // A rocket launcher on a ring behind a jeep's passenger: two rockets, one more a second.
-    const LAUNCHER: MountDef = MountDef {
+    const LAUNCHER: &[MountDef] = &[MountDef {
         seat: 1,
         aim: Aim::Mount { yaw_limit: None, pitch: (-0.2, 0.6), slew: 2.0 },
         muzzle: Muzzle::One([0.0, 1.2, 0.5]),
@@ -717,27 +717,27 @@ fn a_mount_made_of_parts_no_vehicle_has_works() {
         ammo: Some(Ammo { full: 2, refill: Refill::Regrow(TICK_RATE) }),
         needs: &[],
         show: Show::Hidden,
-    };
+    }];
     let mut game = game();
     let (passenger, _inbox) = join(&mut game);
     let ground = game.world.map.ground.height_at(0.0, 60.0);
     let vid = super::super::vehicles::add_vehicle(&mut game.world, shared::protocol::KIND_JEEP, [0.0, ground + 1.0, 60.0], 0.0);
+    // Bolted on: the jeep is armed by having the component, and the room's own tick works it.
+    game.world.entities.insert(vid, Mounts::fresh(LAUNCHER).unwrap());
     seat(&mut game, passenger, vid, 1);
-    let pose = game.world.physics.car_pose(vid).unwrap();
+    let mut seq = 0;
+    aim_and_hold(&mut game, passenger, &mut seq, 0.0, 0.0, 0, 30);
+    let launcher = |game: &Game| game.world.entities.of::<Mounts>(vid).state[0];
+    assert_eq!(launcher(&game).shots, 0, "nothing fires without the trigger");
+
     // Looking straight back over the tailgate, trigger held.
-    let behind = wrap_angle(pose.yaw() + std::f32::consts::PI);
-    game.world.players.get_mut(&passenger).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: to_mrad(behind), buttons: BUTTON_FIRE, pitch: 0, view: 0, slot: 0 };
-    let mut mount = Mount::fresh(&LAUNCHER);
-    let rockets = |game: &Game| projectiles::count(&game.world.entities, Some(PROJECTILE_ROCKET));
-    for _ in 0..TICK_RATE {
-        mount = work(&mut game.world, vid, &LAUNCHER, mount, &pose, TICK_DT);
-    }
-    assert_eq!((rockets(&game), mount.ammo), (2, 0), "it runs out");
+    let behind = wrap_angle(game.world.physics.car_pose(vid).unwrap().yaw() + std::f32::consts::PI);
+    aim_and_hold(&mut game, passenger, &mut seq, behind, 0.0, BUTTON_FIRE, TICK_RATE);
+    assert_eq!((launcher(&game).shots, launcher(&game).ammo), (2, 0), "it runs out");
     // The second comes back a second after the first was fired, and goes at once.
-    for _ in 0..TICK_RATE - 5 {
-        mount = work(&mut game.world, vid, &LAUNCHER, mount, &pose, TICK_DT);
-    }
-    assert_eq!(rockets(&game), 3, "it gets one back a second after it began to run low");
-    assert!((mount.yaw.abs() - std::f32::consts::PI).abs() < 0.05, "it turned to look behind: {}", mount.yaw);
-    assert!(game.world.in_flight().values().all(|rocket| rocket.owner == passenger && rocket.source == vid));
+    aim_and_hold(&mut game, passenger, &mut seq, behind, 0.0, BUTTON_FIRE, TICK_RATE - 5);
+    assert_eq!(launcher(&game).shots, 3, "it gets one back a second after it began to run low");
+    let yaw = launcher(&game).yaw;
+    assert!((yaw.abs() - std::f32::consts::PI).abs() < 0.05, "it turned to look behind: {yaw}");
+    assert!(game.world.in_flight().values().filter(|p| p.kind == PROJECTILE_ROCKET).all(|rocket| rocket.owner == passenger && rocket.source == vid));
 }

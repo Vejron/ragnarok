@@ -150,7 +150,6 @@ impl Entities {
         self.get_mut::<T>(id).unwrap_or_else(|| panic!("entity {id} has no {}", std::any::type_name::<T>()))
     }
 
-    #[cfg(test)]
     pub fn has<T: Component>(&self, id: u32) -> bool {
         self.get::<T>(id).is_some()
     }

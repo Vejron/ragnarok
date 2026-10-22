@@ -54,12 +54,14 @@ impl Game {
                 let seats = vehicle.seats[..seat_count(vehicle.kind)].iter().map(|seat| seat.unwrap_or(0)).collect();
                 // A hitched mortar is drawn folded up for travel.
                 let flags = if self.world.physics.towed_by(id).is_some() { TURRET_STOWED } else { 0 };
-                let turret = vehicle.turret().map(|gun| Turret { yaw: to_mrad(gun.yaw), pitch: to_mrad(gun.pitch), shots: gun.shots, range: (gun.range * 10.0).round().clamp(0.0, u16::MAX as f32) as u16, flags });
+                let mounts = self.world.entities.get::<Mounts>(id);
+                let shown = |show| mounts.and_then(|mounts| mounts.shown(show)).copied();
+                let turret = shown(Show::Turret).map(|gun| Turret { yaw: to_mrad(gun.yaw), pitch: to_mrad(gun.pitch), shots: gun.shots, range: (gun.range * 10.0).round().clamp(0.0, u16::MAX as f32) as u16, flags });
                 let damage = (vehicle.damage != [0; 8]).then_some(vehicle.damage);
                 let arms = vehicle_def(vehicle.kind).arms().then(|| {
-                    let guns = vehicle.shown(Show::Guns).copied().unwrap_or_default();
-                    let rack = vehicle.shown(Show::Rack).copied().unwrap_or_default();
-                    let rear = vehicle.turret().copied().unwrap_or_default();
+                    let guns = shown(Show::Guns).unwrap_or_default();
+                    let rack = shown(Show::Rack).unwrap_or_default();
+                    let rear = shown(Show::Turret).unwrap_or_default();
                     let mut flags = 0;
                     if vehicle.controls.powered && vehicle.controls.lift < -0.5 {
                         flags |= ARMS_CUT;
@@ -71,11 +73,11 @@ impl Game {
                         flags |= ARMS_REAR_JAMMED;
                     }
                     // A rack counts its rounds as the guns' when there are no guns: a hen's eggs.
-                    let shots = if vehicle.shown(Show::Guns).is_some() { guns.shots } else { rack.shots };
+                    let shots = if shown(Show::Guns).is_some() { guns.shots } else { rack.shots };
                     Arms { shots, heat: heat_byte(guns.heat), rear_heat: heat_byte(rear.heat), bombs: rack.ammo, flags }
                 });
-                let thrust = match vehicle.drone {
-                    Some(drone) => Some(Thrust { air: battery_byte(&drone), flags: if drone.linked { THRUST_LINKED } else { 0 } }),
+                let thrust = match self.world.entities.get::<Drone>(id) {
+                    Some(drone) => Some(Thrust { air: battery_byte(drone), flags: if drone.linked { THRUST_LINKED } else { 0 } }),
                     None => self.world.physics.car_thrust(id).map(|(tank, flags)| Thrust { air: air_byte(tank), flags }),
                 };
                 // Where each of a crew that shows looks, and what they hold, so they can be drawn sitting.

@@ -1,11 +1,10 @@
-use crate::game::Vehicle;
 use super::Mechanic;
 use super::armor::Outcome;
 use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
 use super::life::{blasted, damage_entity, first_hurtbox_hit, hit_mark};
 use super::spawn;
 use super::projectiles::{self, Flying, Stage};
-use crate::game::{Player, TEAM_NONE, World, starting_hotbar};
+use crate::game::{Drone, Player, TEAM_NONE, Vehicle, World, starting_hotbar};
 use sim::Obj;
 use shared::consts::*;
 use shared::items::*;
@@ -549,7 +548,7 @@ pub fn damage_vehicle(world: &mut World, vid: u32, amount: u8, attacker: Option<
 /// next one with it.
 fn wreck(world: &mut World, vid: u32) {
     // A drone shot down only pops, and its pilot is back in their own body.
-    if world.entities.get::<Vehicle>(vid).is_some_and(|vehicle| vehicle.drone.is_some()) {
+    if world.entities.has::<Drone>(vid) {
         super::drones::pop(world, vid);
         return;
     }

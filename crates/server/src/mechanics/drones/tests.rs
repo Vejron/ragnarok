@@ -54,7 +54,7 @@ fn launch_drone(game: &mut Game, id: u32, seq: &mut u32) -> u32 {
 }
 
 fn drone(game: &Game, vid: u32) -> Option<Drone> {
-    game.world.entities.get::<Vehicle>(vid).and_then(|vehicle| vehicle.drone)
+    game.world.entities.get::<Drone>(vid).copied()
 }
 
 #[test]
@@ -177,7 +177,7 @@ fn a_flat_battery_drops_the_drone_which_goes_off_where_it_lands() {
     let vid = launch_drone(&mut game, id, &mut seq);
     // Well away from the pilot first, and up a little.
     fly(&mut game, id, &mut seq, 127, 0.1, 0, 90);
-    game.world.entities.get_mut::<Vehicle>(vid).unwrap().drone.as_mut().unwrap().energy = 2;
+    game.world.entities.of_mut::<Drone>(vid).energy = 2;
     idle(&mut game, id, &mut seq, 3);
     assert_eq!(game.world.players[&id].seat, None, "control is back with the pilot");
     assert!(drone(&game, vid).is_some_and(|drone| !drone.linked), "and the drone falls");

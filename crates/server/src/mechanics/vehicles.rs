@@ -1,6 +1,6 @@
 use crate::entities::With;
 use super::Mechanic;
-use crate::game::{Mount, Seat, Vehicle, World};
+use crate::game::{Mounts, Seat, Vehicle, World};
 use sim::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_extents};
 use shared::consts::*;
 use shared::vehicles::{VehicleDef, vehicle_def};
@@ -161,16 +161,17 @@ pub(super) fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: 
             controls: CarControls::default(),
             home: (position, yaw),
             stuck_ticks: 0,
-            mounts: vehicle_def(kind).mounts.iter().map(Mount::fresh).collect(),
             hp: vehicle_hp(kind),
             wreck_in: 0,
             last_attacker: None,
             turret_hp: TANK_TURRET_HP,
             damage: [0; 8],
             scrape_in: 0,
-            drone: None,
         },
     );
+    if let Some(mounts) = Mounts::fresh(vehicle_def(kind).mounts) {
+        world.entities.insert(id, mounts);
+    }
     id
 }
 
@@ -728,6 +729,8 @@ impl Mechanic for Vehicles {
         for vid in world.entities.ids::<With<Vehicle>>() {
             let mut vehicle = world.entities.of_mut::<Vehicle>(vid);
             let Some(pose) = world.physics.car_pose(vid) else { continue };
+            // Put back as new: its weapons are restocked once it is let go of.
+            let mut fresh = false;
             let [x, y, z] = pose.position;
             let slow = pose.forward_speed.abs() < 1.5;
             vehicle.stuck_ticks = if pose.up_y < 0.2 && slow { vehicle.stuck_ticks + 1 } else { 0 };
@@ -741,7 +744,7 @@ impl Mechanic for Vehicles {
                     vehicle.damage = [0; 8];
                     vehicle.turret_hp = TANK_TURRET_HP;
                     vehicle.last_attacker = None;
-                    vehicle.restock();
+                    fresh = true;
                     world.physics.reset_car(vid, vehicle.home.0, vehicle.home.1);
                 }
             } else if y < KILL_Y {
@@ -749,7 +752,7 @@ impl Mechanic for Vehicles {
                 vehicle.hp = vehicle_hp(vehicle.kind);
                 vehicle.damage = [0; 8];
                 vehicle.turret_hp = TANK_TURRET_HP;
-                vehicle.restock();
+                fresh = true;
                 world.physics.reset_car(vid, vehicle.home.0, vehicle.home.1);
             } else if vehicle.stuck_ticks >= UNFLIP_TICKS {
                 // A walker or a hen is put back on its feet: its hull is as high as its legs, and its leg
@@ -772,6 +775,9 @@ impl Mechanic for Vehicles {
                     player.character.yaw = pose.yaw();
                     player.character.grounded = true;
                 }
+            }
+            if fresh && let Some(mut mounts) = world.entities.get_mut::<Mounts>(vid) {
+                mounts.restock();
             }
         }
     }
