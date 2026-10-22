@@ -4,7 +4,7 @@
 //! trunk or a wall is the same shape on both sides.
 
 use super::*;
-use crate::vehicle::{extra_solids, heavy};
+use crate::vehicle::{Role, extra_solids, heavy, spec, with_role};
 use shared::world::{Manifest, Tile};
 
 /// A vehicle as a snapshot shows it: a fixed body with the hull and the extra solids its kind has,
@@ -154,12 +154,10 @@ impl Physics {
         if let Some(body) = self.bodies.get_mut(obstacle.body) {
             body.set_position(pose, false);
         }
-        // Only a tank's turret can be shot off.
-        if kind == shared::protocol::KIND_TANK {
-            for &handle in &obstacle.extra {
-                if let Some(collider) = self.colliders.get_mut(handle) {
-                    collider.set_enabled(turret);
-                }
+        // Only a turret can be shot off.
+        for handle in with_role(spec(kind), &obstacle.extra, Role::Turret) {
+            if let Some(collider) = self.colliders.get_mut(handle) {
+                collider.set_enabled(turret);
             }
         }
     }

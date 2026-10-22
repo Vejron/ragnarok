@@ -54,7 +54,64 @@ pub(crate) struct Spec {
     /// A full tank of what its tricks run on: a Roadster's air, or a hen's wings' stamina. `None` for
     /// everything else. A walker with one has wings (see `flap`).
     pub(crate) tank: Option<f32>,
+    /// What its driver's buttons do (see `CarControls::driven`).
+    pub(crate) buttons: Buttons,
+    /// It flies towards where its pilot looks, which the controls carry as `aim`.
+    pub(crate) aims: bool,
+    /// What it carries beside its hull box.
+    pub(crate) solids: &'static [Solid],
 }
+
+/// What a driver's buttons do, beyond the stick (steer and throttle) every vehicle takes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Buttons {
+    /// Jump is the handbrake; a helicopter also climbs on jump and sinks on run.
+    Drive,
+    /// A Roadster's: run boosts, jump hops (then hovers), and crouch is the handbrake.
+    Stunt,
+    /// A hen's: jump leaps, then flaps or glides. There is no handbrake.
+    Leap,
+}
+
+/// A solid a vehicle carries beside its hull box, fixed to the hull at `at` (hull frame). It adds no
+/// mass, which keeps the hull's balance and the tuning that goes with it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Solid {
+    pub(crate) shape: Shape,
+    pub(crate) at: [f32; 3],
+    pub(crate) role: Role,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Shape {
+    /// Upright, so a turret needs no turning with its gun.
+    Cylinder { half_height: f32, radius: f32 },
+    Cuboid([f32; 3]),
+}
+
+/// What else a solid is, beyond something to hit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Role {
+    Part,
+    /// It can be shot off (`Physics::set_turret`), and a strike on it is a turret hit.
+    Turret,
+    /// Wings: kept clear of the world when the vehicle is placed (`Physics::car_fits`).
+    Wings,
+}
+
+/// A walker's two legs under a hull `hy` high. They hang from the bottom of the hull and stop short of
+/// the ground, so a car or a shell hits them but the springs, not the boxes, carry the walker.
+const fn legs(hy: f32) -> [Solid; 2] {
+    let half = (WALKER_LEG_LENGTH - WALKER_LEG_CLEARANCE) / 2.0;
+    let leg = Shape::Cuboid([WALKER_LEG_HALF_WIDTH, half, WALKER_LEG_HALF_DEPTH]);
+    [
+        Solid { shape: leg, at: [-WALKER_FOOT_HALF, -hy - half, 0.0], role: Role::Part },
+        Solid { shape: leg, at: [WALKER_FOOT_HALF, -hy - half, 0.0], role: Role::Part },
+    ]
+}
+
+const WALKER_LEGS: [Solid; 2] = legs(WALKER_HALF_EXTENTS[1]);
+const HEN_LEGS: [Solid; 2] = legs(HEN_HALF_EXTENTS[1]);
 
 pub(super) static JEEP: Spec = Spec {
     half_extents: JEEP_HALF_EXTENTS,
@@ -75,6 +132,9 @@ pub(super) static JEEP: Spec = Spec {
     linear_damping: 0.05,
     com_drop: 0.15,
     tank: None,
+    buttons: Buttons::Drive,
+    aims: false,
+    solids: &[],
 };
 
 /// The field mortar: a towed gun on two wheels. Nothing drives it, so it has no engine; its wheels only
@@ -98,6 +158,9 @@ pub(super) static MORTAR: Spec = Spec {
     linear_damping: 0.05,
     com_drop: 0.0,
     tank: None,
+    buttons: Buttons::Drive,
+    aims: false,
+    solids: &[],
 };
 
 pub(super) static SPORTS: Spec = Spec {
@@ -118,6 +181,9 @@ pub(super) static SPORTS: Spec = Spec {
     linear_damping: 0.05,
     com_drop: 0.02,
     tank: None,
+    buttons: Buttons::Drive,
+    aims: false,
+    solids: &[],
 };
 
 pub(super) static ROADSTER: Spec = Spec {
@@ -138,6 +204,9 @@ pub(super) static ROADSTER: Spec = Spec {
     linear_damping: 0.05,
     com_drop: 0.02,
     tank: Some(ROADSTER_AIR),
+    buttons: Buttons::Stunt,
+    aims: false,
+    solids: &[],
 };
 
 pub(super) static TANK: Spec = Spec {
@@ -159,6 +228,9 @@ pub(super) static TANK: Spec = Spec {
     linear_damping: 0.05,
     com_drop: 0.0,
     tank: None,
+    buttons: Buttons::Drive,
+    aims: false,
+    solids: &[Solid { shape: Shape::Cylinder { half_height: TANK_TURRET_HALF_HEIGHT, radius: TANK_TURRET_RADIUS }, at: TANK_TURRET_PIVOT, role: Role::Turret }],
 };
 
 /// The Strv S: a tank with a fixed gun in a casemate (a weightless solid, see `add_car`), and quicker: more engine for a little less hull,
@@ -181,6 +253,9 @@ pub(super) static STRV: Spec = Spec {
     linear_damping: 0.05,
     com_drop: 0.0,
     tank: None,
+    buttons: Buttons::Drive,
+    aims: false,
+    solids: &[Solid { shape: Shape::Cuboid(STRV_CASEMATE_HALF), at: STRV_CASEMATE_CENTRE, role: Role::Part }],
 };
 
 pub(super) static HELI: Spec = Spec {
@@ -202,6 +277,9 @@ pub(super) static HELI: Spec = Spec {
     linear_damping: 0.2,
     com_drop: 0.0,
     tank: None,
+    buttons: Buttons::Drive,
+    aims: false,
+    solids: &[],
 };
 
 pub(super) static PLANE: Spec = Spec {
@@ -224,6 +302,9 @@ pub(super) static PLANE: Spec = Spec {
     linear_damping: 0.0,
     com_drop: 0.0,
     tank: None,
+    buttons: Buttons::Drive,
+    aims: true,
+    solids: &[Solid { shape: Shape::Cuboid(PLANE_WING_HALF_EXTENTS), at: PLANE_WING_CENTRE, role: Role::Wings }],
 };
 
 pub(super) static WALKER: Spec = Spec {
@@ -245,6 +326,9 @@ pub(super) static WALKER: Spec = Spec {
     linear_damping: 0.05,
     com_drop: 0.0,
     tank: None,
+    buttons: Buttons::Drive,
+    aims: false,
+    solids: &WALKER_LEGS,
 };
 
 /// The hen: the walker's legs under a lighter hull, so it gets off the ground more easily, and wings.
@@ -266,6 +350,9 @@ pub(super) static HEN: Spec = Spec {
     linear_damping: 0.05,
     com_drop: 0.0,
     tank: Some(HEN_STAMINA),
+    buttons: Buttons::Leap,
+    aims: false,
+    solids: &HEN_LEGS,
 };
 
 pub(super) static DRONE: Spec = Spec {
@@ -286,6 +373,9 @@ pub(super) static DRONE: Spec = Spec {
     linear_damping: DRONE_DAMPING,
     com_drop: 0.0,
     tank: None,
+    buttons: Buttons::Drive,
+    aims: true,
+    solids: &[],
 };
 
 pub(super) static LOITER: Spec = Spec {
@@ -306,6 +396,9 @@ pub(super) static LOITER: Spec = Spec {
     linear_damping: LOITER_DAMPING,
     com_drop: 0.0,
     tank: None,
+    buttons: Buttons::Drive,
+    aims: true,
+    solids: &[],
 };
 
 /// The spec for a vehicle kind. Unknown kinds are jeeps.

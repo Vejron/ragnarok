@@ -26,7 +26,7 @@ mod spec;
 
 use flight::{assist, flap, fly, fly_drone, fly_loiter, pull, roll_plane, thrust, walk, wing};
 pub use spec::half_extents;
-pub(super) use spec::{Lift, Spec, spec};
+pub(super) use spec::{Buttons, Lift, Role, Shape, Solid, Spec, spec};
 
 
 /// How quickly a tank's yaw rate follows the stick, rad/s².
@@ -117,21 +117,19 @@ impl CarControls {
     /// client predicts its own vehicle with the same.
     pub fn driven(kind: u8, input: &shared::protocol::InputFrame) -> CarControls {
         let held = |button: u16| input.buttons() & button != 0;
-        // A Roadster boosts on run and hops (then hovers) on jump, so its handbrake is on crouch.
-        // A hen leaps, then flaps or glides, on jump.
-        let roadster = kind == KIND_ROADSTER;
-        let hen = kind == KIND_HEN;
-        CarControls {
+        let spec = spec(kind);
+        let stick = CarControls {
             steer: shared::quant::from_axis(input.strafe),
             throttle: shared::quant::from_axis(input.forward),
-            handbrake: if roadster { held(BUTTON_CROUCH) } else { !hen && held(BUTTON_JUMP) },
-            // A helicopter climbs on jump and sinks on run.
-            lift: if roadster || hen { 0.0 } else { f32::from(held(BUTTON_JUMP)) - f32::from(held(BUTTON_RUN)) },
             powered: true,
             // A plane and a drone fly towards where their pilot looks.
-            aim: matches!(kind, KIND_PLANE | KIND_DRONE | KIND_LOITER).then(|| [shared::quant::from_mrad(input.yaw), shared::quant::from_mrad(input.pitch())]),
-            boost: roadster && held(BUTTON_RUN),
-            hop: (roadster || hen) && held(BUTTON_JUMP),
+            aim: spec.aims.then(|| [shared::quant::from_mrad(input.yaw), shared::quant::from_mrad(input.pitch())]),
+            ..CarControls::IDLE
+        };
+        match spec.buttons {
+            Buttons::Drive => CarControls { handbrake: held(BUTTON_JUMP), lift: f32::from(held(BUTTON_JUMP)) - f32::from(held(BUTTON_RUN)), ..stick },
+            Buttons::Stunt => CarControls { handbrake: held(BUTTON_CROUCH), boost: held(BUTTON_RUN), hop: held(BUTTON_JUMP), ..stick },
+            Buttons::Leap => CarControls { hop: held(BUTTON_JUMP), ..stick },
         }
     }
 }
@@ -289,31 +287,24 @@ pub(crate) fn heavy(kind: u8) -> bool {
 /// a Strv's casemate, a plane's wings, a walker's legs. Heavy vehicles' leave the felled-able trees
 /// out of what they touch, as the hull does.
 pub(crate) fn extra_solids(kind: u8) -> Vec<ColliderBuilder> {
-    let hy = spec(kind).half_extents[1];
-    // The turret is a cylinder, so it needs no turning with the gun. It adds no mass, which keeps
-    // the hull's balance and the tuning that goes with it. A plane's wings are a weightless box
-    // the same way.
-    let solids: Vec<ColliderBuilder> = match kind {
-        KIND_TANK => vec![ColliderBuilder::cylinder(TANK_TURRET_HALF_HEIGHT, TANK_TURRET_RADIUS).translation(Vector::from(TANK_TURRET_PIVOT))],
-        KIND_STRV => {
-            let [x, y, z] = STRV_CASEMATE_HALF;
-            vec![ColliderBuilder::cuboid(x, y, z).translation(Vector::from(STRV_CASEMATE_CENTRE))]
+    let solids = spec(kind).solids.iter().map(|solid| ColliderBuilder::new(solid.shape(0.0)).translation(Vector::from(solid.at)));
+    if heavy(kind) { solids.map(|collider| collider.collision_groups(super::plows_trees())).collect() } else { solids.collect() }
+}
+
+impl Solid {
+    /// Its shape, grown by `margin` on every side.
+    pub(crate) fn shape(&self, margin: f32) -> SharedShape {
+        match self.shape {
+            Shape::Cylinder { half_height, radius } => SharedShape::cylinder(half_height + margin, radius + margin),
+            Shape::Cuboid([x, y, z]) => SharedShape::cuboid(x + margin, y + margin, z + margin),
         }
-        KIND_PLANE => {
-            let [x, y, z] = PLANE_WING_HALF_EXTENTS;
-            vec![ColliderBuilder::cuboid(x, y, z).translation(Vector::from(PLANE_WING_CENTRE))]
-        }
-        // The legs hang from the bottom of the hull and stop short of the ground, so a car or a shell
-        // hits them but the springs, not the boxes, carry the walker.
-        KIND_WALKER | KIND_HEN => {
-            let half = (WALKER_LEG_LENGTH - WALKER_LEG_CLEARANCE) / 2.0;
-            [-1.0, 1.0]
-                .map(|side| ColliderBuilder::cuboid(WALKER_LEG_HALF_WIDTH, half, WALKER_LEG_HALF_DEPTH).translation(Vector::new(side * WALKER_FOOT_HALF, -hy - half, 0.0)))
-                .into()
-        }
-        _ => Vec::new(),
-    };
-    if heavy(kind) { solids.into_iter().map(|collider| collider.collision_groups(super::plows_trees())).collect() } else { solids }
+    }
+}
+
+/// The handles of `extra` (a car's or a stand-in's extra solids, made from `spec.solids` in order)
+/// whose solid has `role`.
+pub(crate) fn with_role<'a>(spec: &'a Spec, extra: &'a [ColliderHandle], role: Role) -> impl Iterator<Item = ColliderHandle> + 'a {
+    extra.iter().zip(spec.solids).filter(move |(_, solid)| solid.role == role).map(|(&handle, _)| handle)
 }
 
 impl Physics {
@@ -325,13 +316,10 @@ impl Physics {
         if self.touches_static(shape.as_ref(), pose_of(position, yaw)) {
             return false;
         }
-        if kind != KIND_PLANE {
-            return true;
-        }
-        let [wx, wy, wz] = PLANE_WING_HALF_EXTENTS;
-        let wings = SharedShape::cuboid(wx + 0.1, wy + 0.1, wz + 0.1);
-        let at = pose_of(position, yaw) * Vector::from(PLANE_WING_CENTRE);
-        !self.touches_static(wings.as_ref(), Pose::from_parts(at, Rotation::from_rotation_y(yaw)))
+        spec(kind).solids.iter().filter(|solid| solid.role == Role::Wings).all(|wings| {
+            let at = pose_of(position, yaw) * Vector::from(wings.at);
+            !self.touches_static(wings.shape(0.1).as_ref(), Pose::from_parts(at, Rotation::from_rotation_y(yaw)))
+        })
     }
 
     /// How far a plane parked at `position` facing `yaw` could run straight ahead before a building,
@@ -521,10 +509,7 @@ impl Physics {
     /// Puts a tank's turret solid back (`true`) or takes it away (`false`): it comes off when shot off.
     pub fn set_turret(&mut self, id: u32, present: bool) {
         let Some(car) = self.cars.get(&id) else { return };
-        if !std::ptr::eq(car.spec, &spec::TANK) {
-            return;
-        }
-        for &handle in &car.extra {
+        for handle in with_role(car.spec, &car.extra, Role::Turret) {
             if let Some(collider) = self.colliders.get_mut(handle) {
                 collider.set_enabled(present);
             }
@@ -892,7 +877,7 @@ impl Physics {
         let point = Vector::from(origin) + Vector::from(dir) * hit.time_of_impact;
         Some(Strike {
             distance: hit.time_of_impact,
-            turret: std::ptr::eq(car.spec, &spec::TANK) && car.extra.contains(&collider),
+            turret: with_role(car.spec, &car.extra, Role::Turret).any(|handle| handle == collider),
             normal: (to_local * hit.normal).into(),
             point: (to_local * (point - body.translation())).into(),
         })

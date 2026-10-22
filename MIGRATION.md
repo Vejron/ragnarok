@@ -124,7 +124,7 @@ Phase 3 and 4 need both.
 - [x] Per-kind branches in `vehicles.rs` to data (`VehicleDef::body`).
 - [x] A vehicle's health and wreck state as `Health`, `HurtBy` and `Wreck`.
 - [x] `Seats` out of `Vehicle`.
-- [ ] The sim's per-kind controls and solids into its `Spec`.
+- [x] The sim's per-kind controls and solids into its `Spec`.
 - [x] Players as entities (`Player` component).
 - [x] Bots' minds as a `Bot` component on the player's entity.
 - [ ] A player's health and hit test joined with the generic ones.
@@ -886,3 +886,37 @@ settled run, within the noise of the last entry; the work per round is the same.
 
 **Next:** the sim's per-kind controls and solids into its `Spec`. Then Phase 0: generating the
 client's tables from Rust, which is most of what a new kind costs in files.
+
+### 2026-10-22: the sim's per-kind controls and solids are its spec
+
+The sim's `Spec` table (`crates/sim/src/vehicle/spec.rs`) said how each kind drives and holds itself
+up. Six other places in the sim still named kinds:
+
+| Where | What it asked | Now |
+|---|---|---|
+| `CarControls::driven` | Roadster? hen? plane or drone? | `spec.buttons` (`Drive`, `Stunt`, `Leap`) and `spec.aims` |
+| `extra_solids` | tank turret, Strv casemate, plane wings, legs | `spec.solids` |
+| `car_fits` | is it a plane, whose wings must be clear? | the solids with `Role::Wings` |
+| `set_turret`, `armor_strike` | `std::ptr::eq(spec, &TANK)` | the solids with `Role::Turret` |
+| `stream.rs` replay obstacles | `kind == KIND_TANK` | the same |
+
+- A `Solid` is a shape (`Cylinder` or `Cuboid`), a place on the hull and a `Role`: `Part`, `Turret`
+  (it can be shot off, and a strike on it is a turret hit) or `Wings` (kept clear when the vehicle is
+  placed).
+- A walker's and a hen's legs come from one `const fn legs(hy)`, with the arithmetic of the old loop.
+- `Buttons::Drive` is jump for the handbrake, and jump/run for a helicopter's climb and sink.
+  `Stunt` is the Roadster's: run boosts, jump hops, crouch brakes. `Leap` is the hen's: jump leaps,
+  with no handbrake.
+- The only kind names left in the sim are the `kind → spec` table itself.
+
+A vehicle that moves like an existing one is now a row in each table: `VehicleDef` with its mounts
+and body in `shared`, and a `Spec` with its buttons and solids in the sim. A new way of moving still
+needs a new `Lift`.
+
+**Checks:** sim 111, server 265, shared 62, osm-import 81 and editor 2 tests, all passing; client 363
+tests against a freshly built WASM sim, all passing; workspace clippy clean. `full_room_tick_cost`:
+`Vehicles` 29.5 µs, unchanged; the per-kind lookups were already behind `spec()`.
+
+**Next:** Phase 0, generating the client's `items.ts` and `vehicles.ts` from the Rust tables. That
+covers most of the files a new kind touches, and the client is the half of the migration not yet
+started.
