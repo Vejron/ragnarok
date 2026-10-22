@@ -41,9 +41,6 @@ const PLANE_COUNT: usize = 2;
 const RUNWAY_SEARCH: f32 = 150.0;
 /// Spawn points `Spawn` hands to players first; cars prefer the others.
 const PLAYER_SPAWNS: usize = 6;
-/// Spawn height of the chassis centre, a little above its resting height.
-const CAR_DROP_Y: f32 = 1.0;
-const PLANE_DROP_Y: f32 = 1.5;
 /// Cars at least this fast (or any overlap at all) hurl a standing player away.
 /// Knockback speed is the car's speed times this, within the limits below.
 const KNOCK_SPEED_FACTOR: f32 = 1.1;
@@ -60,14 +57,9 @@ const HIT_COOLDOWN: u32 = 12;
 /// A car on its side or roof this long, and not moving, is set back on its wheels.
 const UNFLIP_TICKS: u32 = 3 * TICK_RATE;
 
-/// How high above the ground a fresh vehicle of `kind` starts, at its chassis centre: a walker's or a
-/// hen's hull as high as its legs hold it up.
+/// How high above the ground a fresh vehicle of `kind` starts, at its chassis centre.
 fn drop_height(kind: u8) -> f32 {
-    match kind {
-        KIND_WALKER | KIND_HEN => WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1],
-        KIND_PLANE => PLANE_DROP_Y,
-        _ => CAR_DROP_Y,
-    }
+    vehicle_def(kind).body.drop_y
 }
 
 /// Heading of the nearest road segment to `(x, z)`, in the stickman yaw convention, or 0.
@@ -119,7 +111,7 @@ fn place_planes(world: &mut World, candidates: &[[i32; 2]], used: &[bool]) -> us
     for (&[cx, cz], _) in candidates.iter().zip(used).filter(|(_, used)| !**used) {
         let (x, z) = (cx as f32 / 100.0, cz as f32 / 100.0);
         let road = road_heading(&world.map, x, z);
-        let position = [x, world.map.ground.height_at(x, z) + PLANE_DROP_Y, z];
+        let position = [x, world.map.ground.height_at(x, z) + drop_height(KIND_PLANE), z];
         let best = [road, wrap_angle(road + std::f32::consts::PI)]
             .into_iter()
             .filter(|&yaw| world.physics.car_fits(KIND_PLANE, position, yaw))
@@ -219,7 +211,7 @@ fn hitch(world: &mut World, id: u32) {
         return;
     }
     let nearest = world.entities.all::<Vehicle>()
-        .filter(|(_, vehicle)| vehicle.kind == KIND_MORTAR && !vehicle.wrecked() && vehicle.seats.iter().all(Option::is_none))
+        .filter(|(_, vehicle)| vehicle_def(vehicle.kind).body.towed && !vehicle.wrecked() && vehicle.seats.iter().all(Option::is_none))
         .filter_map(|(mortar, _)| world.physics.tow_reach(car, mortar).map(|reach| (reach, mortar)))
         .filter(|&(reach, mortar)| reach <= HITCH_REACH && world.physics.towed_by(mortar).is_none())
         .min_by(|a, b| a.0.total_cmp(&b.0));
@@ -229,11 +221,11 @@ fn hitch(world: &mut World, id: u32) {
     }
 }
 
-/// Where a vehicle of `kind` is boarded from: its hull, but a walker's or a hen's from between its feet,
-/// a leg's length below its hull, which is out of reach above a stickman's head. Mirrored in `game.ts`.
+/// Where a vehicle of `kind` is boarded from: its hull, but a legged one's from between its feet, a
+/// leg's length below its hull, which is out of reach above a stickman's head. Mirrored in `game.ts`.
 fn boarding_point(kind: u8, pose: &CarPose) -> [f32; 3] {
     let [x, y, z] = pose.position;
-    if matches!(kind, KIND_WALKER | KIND_HEN) { [x, y - WALKER_LEG_LENGTH, z] } else { [x, y, z] }
+    [x, y - vehicle_def(kind).body.legs, z]
 }
 
 fn board(world: &mut World, id: u32) {
@@ -279,7 +271,7 @@ pub fn seat(world: &mut World, id: u32, vehicle: u32, index: usize) -> bool {
 /// Parks a fresh tank at `[x, z]` facing `yaw`, unless there are `MAX_VEHICLES` already or it does
 /// not fit there.
 pub fn add_tank(world: &mut World, [x, z]: [f32; 2], yaw: f32) -> Option<u32> {
-    let position = [x, world.map.ground.height_at(x, z) + CAR_DROP_Y, z];
+    let position = [x, world.map.ground.height_at(x, z) + drop_height(KIND_TANK), z];
     if world.entities.count::<Vehicle>() >= MAX_VEHICLES || !world.physics.car_fits(KIND_TANK, position, yaw) {
         return None;
     }
@@ -342,8 +334,6 @@ const TREE_RAM_MIN_SPEED: f32 = 4.0;
 const TANK_TREE_RAM_MIN_SPEED: f32 = 0.3;
 /// Tree damage per m/s of speed at the moment of impact: ten m/s fells a sapling, a broad trunk wants a run-up.
 const TREE_RAM_DAMAGE_PER_SPEED: f32 = 6.0;
-/// A tank's weight against a car's.
-const TANK_RAM_FACTOR: f32 = 3.0;
 /// A tank's weight against a tree: even a broad trunk goes over in one hit at a walking pace.
 const TANK_TREE_FACTOR: f32 = 5.0;
 /// Share of its speed a car keeps through a tree it fells, as the trunk gives way.
@@ -364,7 +354,7 @@ fn run_down_trees(world: &mut World, before: &BTreeMap<u32, CarPose>) {
             continue;
         }
         let amount = (speed * TREE_RAM_DAMAGE_PER_SPEED) as u16;
-        if super::combat::damage_object(world, object, amount, pose.position) && !matches!(kind, KIND_PLANE | KIND_HELI) {
+        if super::combat::damage_object(world, object, amount, pose.position) && !vehicle_def(kind).body.flies {
             // Only what the trunk took off the ground speed; falling and climbing are left to the physics.
             let now = world.physics.car_pose(vid).map_or(pose.velocity, |now| now.velocity);
             let kept = [pose.velocity[0] * CAR_PLOW_KEEP, now[1], pose.velocity[2] * CAR_PLOW_KEEP];
@@ -375,11 +365,11 @@ fn run_down_trees(world: &mut World, before: &BTreeMap<u32, CarPose>) {
     }
 }
 
-/// A tank or Strv drives through destructible trunks without being slowed (they are not in what its
+/// A heavy vehicle (a tank or a Strv) drives through destructible trunks without being slowed (they are not in what its
 /// hull touches, and the client's prediction leaves them out the same way), and fells every one its
 /// hull overlaps, hard, in proportion to its speed.
 fn plow_trees(world: &mut World, before: &BTreeMap<u32, CarPose>) {
-    let tanks: Vec<u32> = world.entities.all::<Vehicle>().filter(|(_, vehicle)| matches!(vehicle.kind, KIND_TANK | KIND_STRV) && !vehicle.wrecked()).map(|(vid, _)| vid).collect();
+    let tanks: Vec<u32> = world.entities.all::<Vehicle>().filter(|(_, vehicle)| vehicle_def(vehicle.kind).body.heavy && !vehicle.wrecked()).map(|(vid, _)| vid).collect();
     for vid in tanks {
         let (Some(was), Some(now)) = (before.get(&vid), world.physics.car_pose(vid)) else { continue };
         let speed = was.velocity[0].hypot(was.velocity[2]);
@@ -417,10 +407,6 @@ pub const WHEEL_REACH: f32 = 1.8;
 const SHOT_WHEEL_PER_DAMAGE: f32 = 1.8;
 /// How near a bullet must land to a wheel to hurt it; a blast uses `WHEEL_REACH`.
 pub const BULLET_WHEEL_REACH: f32 = 1.0;
-/// A tank's armour takes this share of what a car would.
-const TANK_CRASH_FACTOR: f32 = 0.2;
-/// A plane is wood and canvas: it takes this much more, so flying it into anything at speed is the end of it.
-const PLANE_CRASH_FACTOR: f32 = 2.0;
 /// A tree gives way, so hitting one hurts half as much.
 const TREE_CRASH_FACTOR: f32 = 0.5;
 /// A lighter contact than a crash throws sparks if the vehicle is this fast (m/s), at most every few ticks.
@@ -506,8 +492,7 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
         if vehicle.wrecked() || is_drone(vehicle.kind) {
             continue;
         }
-        let weight = if matches!(vehicle.kind, KIND_TANK | KIND_STRV) { TANK_RAM_FACTOR } else { 1.0 };
-        super::combat::ram_building(world, id, impact.point, impact.dv, weight);
+        super::combat::ram_building(world, id, impact.point, impact.dv, vehicle_def(vehicle.kind).body.ram);
     }
     for (vid, impact) in hardest {
         let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(vid) else { continue };
@@ -525,12 +510,7 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
             }
             continue;
         }
-        if matches!(vehicle.kind, KIND_TANK | KIND_STRV) {
-            over *= TANK_CRASH_FACTOR;
-        }
-        if vehicle.kind == KIND_PLANE {
-            over *= PLANE_CRASH_FACTOR;
-        }
+        over *= vehicle_def(vehicle.kind).body.crash;
         if matches!(impact.object, Some(Obj::Tree(_))) {
             over *= TREE_CRASH_FACTOR;
         }
@@ -699,7 +679,7 @@ impl Mechanic for Vehicles {
         for vid in world.entities.ids::<With<Vehicle>>() {
             let mut vehicle = world.entities.of_mut::<Vehicle>(vid);
             let towed = world.physics.towed_by(vid).is_some();
-            vehicle.controls = if vehicle.kind == KIND_MORTAR {
+            vehicle.controls = if vehicle_def(vehicle.kind).body.towed {
                 // Nothing drives a mortar: it rolls when towed, and holds its brake when it is not.
                 CarControls { handbrake: !towed, ..Default::default() }
             } else {
@@ -757,7 +737,7 @@ impl Mechanic for Vehicles {
             } else if vehicle.stuck_ticks >= UNFLIP_TICKS {
                 // A walker or a hen is put back on its feet: its hull is as high as its legs, and its leg
                 // boxes would be buried if it were set down a car's height above where it lies.
-                let rise = if matches!(vehicle.kind, KIND_WALKER | KIND_HEN) {
+                let rise = if vehicle_def(vehicle.kind).body.legs > 0.0 {
                     world.map.ground.height_at(x, z) + drop_height(vehicle.kind) - y
                 } else {
                     1.2

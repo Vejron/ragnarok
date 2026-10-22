@@ -36,6 +36,8 @@ pub struct VehicleDef {
     pub seat_heads: &'static [[f32; 3]],
     /// Its passengers (every seat but the driver's) can fire the guns in their own hotbar.
     pub crew_guns: bool,
+    /// How it stands and meets the world.
+    pub body: Body,
 }
 
 impl VehicleDef {
@@ -73,6 +75,38 @@ impl Exposure {
     }
 }
 
+/// How a kind stands and meets the world, as the game sees it (its physics are `crates/sim`'s `Spec`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Body {
+    /// How high over the ground its chassis centre starts, a little above where it comes to rest.
+    pub drop_y: f32,
+    /// How far its legs reach below the hull, 0 for none: it is boarded from between its feet, and
+    /// stood back up on them.
+    pub legs: f32,
+    /// Too heavy for a tree to stop: it goes through trunks, felling them (and the physics leaves them
+    /// out of what it touches).
+    pub heavy: bool,
+    /// How hard it rams a building, against a car's 1.
+    pub ram: f32,
+    /// Crash damage it takes, against a car's 1.
+    pub crash: f32,
+    /// Flies: a tree it fells does not slow it.
+    pub flies: bool,
+    /// Nobody drives it: it rolls when towed, holds its brake when not, and can be hitched.
+    pub towed: bool,
+}
+
+const CAR: Body = Body { drop_y: 1.0, legs: 0.0, heavy: false, ram: 1.0, crash: 1.0, flies: false, towed: false };
+/// A tank's armour takes a fifth of what a car would, and it rams with three times a car's weight.
+const TRACKS: Body = Body { heavy: true, ram: 3.0, crash: 0.2, ..CAR };
+const ROTOR: Body = Body { flies: true, ..CAR };
+/// A plane is wood and canvas: it takes twice the crash damage, so flying it into anything at speed
+/// is the end of it.
+const WINGS: Body = Body { drop_y: 1.5, crash: 2.0, flies: true, ..CAR };
+/// A walker's or a hen's hull starts as high as its legs hold it up.
+const LEGS: Body = Body { drop_y: WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1], legs: WALKER_LEG_LENGTH, ..CAR };
+const TOWED: Body = Body { towed: true, ..CAR };
+
 const JEEP: VehicleDef = VehicleDef {
     kind: KIND_JEEP,
     name: "Jeep",
@@ -86,6 +120,7 @@ const JEEP: VehicleDef = VehicleDef {
     crew: Exposure::Open,
     seat_heads: &JEEP_SEAT_HEADS,
     crew_guns: true,
+    body: CAR,
 };
 
 const TANK: VehicleDef = VehicleDef {
@@ -101,6 +136,7 @@ const TANK: VehicleDef = VehicleDef {
     crew: Exposure::Sealed,
     seat_heads: &[],
     crew_guns: false,
+    body: TRACKS,
 };
 
 const HELI: VehicleDef = VehicleDef {
@@ -116,6 +152,7 @@ const HELI: VehicleDef = VehicleDef {
     crew: Exposure::Glazed,
     seat_heads: &HELI_SEAT_HEADS,
     crew_guns: false,
+    body: ROTOR,
 };
 
 const SPORTS: VehicleDef = VehicleDef {
@@ -131,6 +168,7 @@ const SPORTS: VehicleDef = VehicleDef {
     crew: Exposure::Open,
     seat_heads: &SPORTS_SEAT_HEADS,
     crew_guns: true,
+    body: CAR,
 };
 
 const PLANE: VehicleDef = VehicleDef {
@@ -146,6 +184,7 @@ const PLANE: VehicleDef = VehicleDef {
     crew: Exposure::Open,
     seat_heads: &PLANE_SEAT_HEADS,
     crew_guns: false,
+    body: WINGS,
 };
 
 const WALKER: VehicleDef = VehicleDef {
@@ -161,6 +200,7 @@ const WALKER: VehicleDef = VehicleDef {
     crew: Exposure::Sealed,
     seat_heads: &[],
     crew_guns: false,
+    body: LEGS,
 };
 
 const STRV: VehicleDef = VehicleDef {
@@ -176,6 +216,7 @@ const STRV: VehicleDef = VehicleDef {
     crew: Exposure::Sealed,
     seat_heads: &[],
     crew_guns: false,
+    body: TRACKS,
 };
 
 const MORTAR: VehicleDef = VehicleDef {
@@ -191,6 +232,7 @@ const MORTAR: VehicleDef = VehicleDef {
     crew: Exposure::Open,
     seat_heads: &[],
     crew_guns: false,
+    body: TOWED,
 };
 
 const ROADSTER: VehicleDef = VehicleDef {
@@ -206,6 +248,7 @@ const ROADSTER: VehicleDef = VehicleDef {
     crew: Exposure::Open,
     seat_heads: &ROADSTER_SEAT_HEADS,
     crew_guns: true,
+    body: CAR,
 };
 
 /// One hit brings it down.
@@ -222,6 +265,7 @@ const DRONE: VehicleDef = VehicleDef {
     crew: Exposure::Sealed,
     seat_heads: &[],
     crew_guns: false,
+    body: ROTOR,
 };
 
 /// The walker's legs and hull, with wings and eggs in place of guns.
@@ -238,6 +282,7 @@ const HEN: VehicleDef = VehicleDef {
     crew: Exposure::Sealed,
     seat_heads: &[],
     crew_guns: false,
+    body: LEGS,
 };
 
 /// Takes a few rifle rounds to bring down.
@@ -254,6 +299,7 @@ const LOITER: VehicleDef = VehicleDef {
     crew: Exposure::Sealed,
     seat_heads: &[],
     crew_guns: false,
+    body: ROTOR,
 };
 
 /// Every vehicle kind, in id order.

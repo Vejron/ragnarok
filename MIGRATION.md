@@ -121,7 +121,8 @@ Phase 3 and 4 need both.
 - [x] Weapon mounts as data (`shared::mounts`), worked by one routine in place of the `work_*`
       functions.
 - [x] Vehicles as entities, with `Mounts` and `Drone` as components of their own.
-- [ ] `Seats` and the wreck state out of `Vehicle`, and per-kind branches in `vehicles.rs` to spec data.
+- [x] Per-kind branches in `vehicles.rs` to data (`VehicleDef::body`).
+- [ ] `Seats` and the wreck state out of `Vehicle`; the sim's per-kind controls and solids into its `Spec`.
 - [ ] Players and bots.
 - [ ] Events in place of `hits`, `kills`, `noises`.
 
@@ -618,3 +619,35 @@ to 0.72 ms.
 **Next:** take `Seats` and the wreck state (`hp`, `wreck_in`, `last_attacker`) out of `Vehicle`, and
 the remaining per-kind branches in `vehicles.rs` (drop height, ram weight, legs) into spec data. Then
 players and bots.
+
+### 2026-10-22: what a vehicle's body does is data
+
+The `Vehicles` mechanic told kinds apart with `matches!(kind, KIND_TANK | KIND_STRV)` and the like in
+nine places. Each was a trait of the vehicle's body under another name. They are now one `Body` per
+kind in `VehicleDef` (`crates/shared/src/vehicles.rs`):
+
+| Field | Was | Kinds |
+|---|---|---|
+| `drop_y` | `drop_height`'s match, `CAR_DROP_Y`, `PLANE_DROP_Y` | legs a leg's length plus the hull, a plane 1.5, the rest 1.0 |
+| `legs` | `KIND_WALKER \| KIND_HEN` in boarding and in standing back up | walker, hen |
+| `heavy` | `KIND_TANK \| KIND_STRV` in `plow_trees`, and the sim's `heavy()`, which now reads it | tank, Strv |
+| `ram` | `TANK_RAM_FACTOR` | tank, Strv 3 |
+| `crash` | `TANK_CRASH_FACTOR`, `PLANE_CRASH_FACTOR` | tank, Strv 0.2; plane 2 |
+| `flies` | `KIND_PLANE \| KIND_HELI` when a felled tree would slow it | plane, helicopter, drones |
+| `towed` | `KIND_MORTAR` for the brake and for hitching | mortar |
+
+- The bodies are named: `CAR`, `TRACKS`, `ROTOR`, `WINGS`, `LEGS` and `TOWED`. A new kind picks one or
+  writes its own.
+- What still names a kind in `vehicles.rs` is on purpose: which vehicles a room places (the mix, the
+  planes' runways, `add_tank`).
+- The sim still names kinds in two places: `CarControls::driven` (Roadster and hen buttons, and which
+  kinds fly to the pilot's aim) and `extra_solids` (turret, casemate, wings, legs). Those are physics,
+  and belong in its `Spec`.
+- The constants are moved, not changed, so behaviour is the same. The parity fixture and client
+  constants are untouched.
+
+**Checks:** server 262, sim 111, shared 62, client 363 tests, all passing; clippy clean.
+`full_room_tick_cost`: `Vehicles` 28.7 to 29.3 µs, unchanged.
+
+**Next:** `Seats` and the wreck state out of `Vehicle`, or players and bots with events in place of the
+`hits`, `kills` and `noises` vectors.

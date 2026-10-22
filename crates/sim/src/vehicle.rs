@@ -279,9 +279,10 @@ impl CarPose {
     }
 }
 
-/// A tank or a Strv is too heavy to be stopped by a tree: it goes through the trunk, felling it.
+/// Whether a vehicle of `kind` is too heavy to be stopped by a tree (a tank, a Strv): it goes through
+/// the trunk, felling it.
 pub(crate) fn heavy(kind: u8) -> bool {
-    matches!(kind, KIND_TANK | KIND_STRV)
+    shared::vehicles::vehicle_def(kind).body.heavy
 }
 
 /// The solids a vehicle of `kind` has besides its hull box, placed in the hull frame: a tank's turret,
