@@ -46,10 +46,8 @@ impl Game {
     }
 
     pub fn vehicle_states(&self) -> Vec<VehicleState> {
-        self.world
-            .vehicles
-            .iter()
-            .filter_map(|(&id, vehicle)| {
+        self.world.entities.all::<Vehicle>()
+            .filter_map(|(id, vehicle)| {
                 let pose = self.world.physics.car_pose(id)?;
                 let [x, y, z] = pose.position;
                 let [qx, qy, qz] = pack_quat(pose.rotation);

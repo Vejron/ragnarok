@@ -33,13 +33,13 @@ fn join(game: &mut Game) -> (u32, mpsc::Receiver<crate::game::Outgoing>) {
 
 /// Puts `id` straight into a seat of vehicle `vid`.
 fn seat(game: &mut Game, id: u32, vid: u32, index: usize) {
-    game.world.vehicles.get_mut(&vid).unwrap().seats[index] = Some(id);
+    game.world.entities.get_mut::<Vehicle>(vid).unwrap().seats[index] = Some(id);
     game.world.players.get_mut(&id).unwrap().seat = Some(Seat { vehicle: vid, index, remote: false });
 }
 
 /// What vehicle `vid`'s mount shown as `show` is doing.
 fn shown(game: &Game, vid: u32, show: Show) -> Mount {
-    *game.world.vehicles[&vid].shown(show).expect("it has that mount")
+    *game.world.entities.of::<Vehicle>(vid).shown(show).expect("it has that mount")
 }
 
 fn turret(game: &Game, vid: u32) -> Mount {
@@ -47,11 +47,11 @@ fn turret(game: &Game, vid: u32) -> Mount {
 }
 
 fn tank(game: &Game) -> u32 {
-    *game.world.vehicles.iter().find(|(_, vehicle)| vehicle.kind == KIND_TANK).expect("tanks are placed").0
+    game.world.entities.all::<Vehicle>().find(|(_, vehicle)| vehicle.kind == KIND_TANK).expect("tanks are placed").0
 }
 
 fn heli(game: &Game) -> u32 {
-    *game.world.vehicles.iter().find(|(_, vehicle)| vehicle.kind == KIND_HELI).expect("a helicopter is placed").0
+    game.world.entities.all::<Vehicle>().find(|(_, vehicle)| vehicle.kind == KIND_HELI).expect("a helicopter is placed").0
 }
 
 /// Feeds the gunner's look and trigger for `ticks` ticks.
@@ -344,7 +344,7 @@ fn the_pilot_fires_rockets_that_accelerate_straight_ahead() {
 fn the_walkers_driver_aims_with_the_upper_body_within_thirty_degrees_and_fires() {
     let mut game = game();
     let (driver, _inbox) = join(&mut game);
-    let vid = *game.world.vehicles.iter().find(|(_, vehicle)| vehicle.kind == KIND_WALKER).expect("a walker is placed").0;
+    let vid = game.world.entities.all::<Vehicle>().find(|(_, vehicle)| vehicle.kind == KIND_WALKER).expect("a walker is placed").0;
     seat(&mut game, driver, vid, 0);
     let mut seq = 0;
     let hull = game.world.physics.car_pose(vid).unwrap().yaw();
@@ -365,7 +365,7 @@ fn the_walkers_driver_aims_with_the_upper_body_within_thirty_degrees_and_fires()
 }
 
 fn strv(game: &Game) -> u32 {
-    *game.world.vehicles.iter().find(|(_, vehicle)| vehicle.kind == KIND_STRV).expect("a Strv S is placed").0
+    game.world.entities.all::<Vehicle>().find(|(_, vehicle)| vehicle.kind == KIND_STRV).expect("a Strv S is placed").0
 }
 
 #[test]
@@ -373,7 +373,7 @@ fn a_strv_driver_fires_the_hull_gun_and_only_elevation_follows_the_look() {
     let mut game = game();
     let (driver, _inbox) = join(&mut game);
     let vid = strv(&game);
-    assert_eq!(game.world.vehicles[&vid].seats.iter().flatten().count(), 0);
+    assert_eq!(game.world.entities.of::<Vehicle>(vid).seats.iter().flatten().count(), 0);
     seat(&mut game, driver, vid, 0);
     let mut seq = 0;
     let hull = game.world.physics.car_pose(vid).unwrap().yaw();
@@ -405,7 +405,7 @@ fn an_empty_strv_does_not_fire() {
 }
 
 fn plane(game: &Game) -> u32 {
-    *game.world.vehicles.iter().find(|(_, vehicle)| vehicle.kind == KIND_PLANE).expect("a plane is placed").0
+    game.world.entities.all::<Vehicle>().find(|(_, vehicle)| vehicle.kind == KIND_PLANE).expect("a plane is placed").0
 }
 
 /// A parked plane with a crewman in `seat`, settled, with their first frames queued looking along the nose.
@@ -437,7 +437,7 @@ fn the_forward_guns_take_turns_and_hit_what_is_ahead_of_the_nose() {
     let pose = game.world.physics.car_pose(vid).unwrap();
     let (muzzle, dir) = aim_from(&pose, PLANE_GUN_PIVOTS[0], 0.0, 0.0);
     game.world.players.get_mut(&victim).unwrap().character.position = std::array::from_fn(|i| muzzle[i] + dir[i] * 25.0 + if i == 1 { -0.3 } else { 0.0 });
-    let hp = game.world.vehicles[&vid].hp;
+    let hp = game.world.entities.of::<Vehicle>(vid).hp;
 
     let hits = hold_watching(&mut game, pilot, &mut seq, pose.yaw(), BUTTON_FIRE, 30, WEAPON_MG);
     let arms = shown(&game, vid, Show::Guns);
@@ -445,7 +445,7 @@ fn the_forward_guns_take_turns_and_hit_what_is_ahead_of_the_nose() {
     assert!(arms.shots.abs_diff(expected) <= 1, "{} rounds in half a second, expected about {expected}", arms.shots);
     assert!(game.world.players[&victim].hp < PLAYER_MAX_HP, "the stickman ahead is hit");
     assert!(!hits.is_empty() && hits.iter().all(|shot| shot.shooter == pilot), "{hits:?}");
-    assert_eq!(game.world.vehicles[&vid].hp, hp, "its own guns never hurt the plane");
+    assert_eq!(game.world.entities.of::<Vehicle>(vid).hp, hp, "its own guns never hurt the plane");
     assert!(game.world.in_flight().is_empty(), "rounds are hitscans, not projectiles");
 }
 
@@ -562,7 +562,7 @@ fn machine_gun_rounds_hurt_a_plane_more_than_a_car() {
     let mut game = game();
     let (shooter, _inbox) = join(&mut game);
     let target = plane(&game);
-    let car = *game.world.vehicles.iter().find(|(_, v)| v.kind == shared::protocol::KIND_JEEP).unwrap().0;
+    let car = game.world.entities.all::<Vehicle>().find(|(_, v)| v.kind == shared::protocol::KIND_JEEP).unwrap().0;
     // The broad-phase learns of the vehicles in the first step.
     game.step();
     let round = Round { damage: PLANE_GUN_DAMAGE, vehicle: PLANE_GUN_VEHICLE_DAMAGE, plane: PLANE_GUN_PLANE_DAMAGE, weapon: WEAPON_MG, range: 50.0, falloff: Falloff::NONE };
@@ -572,8 +572,8 @@ fn machine_gun_rounds_hurt_a_plane_more_than_a_car() {
         let (_, struck) = hitscan(&mut game.world, shooter, origin, [0.0, -1.0, 0.0], &round, 0, 0);
         assert!(struck);
     }
-    assert_eq!(game.world.vehicles[&target].hp, shared::protocol::vehicle_hp(KIND_PLANE) - PLANE_GUN_PLANE_DAMAGE);
-    assert_eq!(game.world.vehicles[&car].hp, 100 - PLANE_GUN_VEHICLE_DAMAGE);
+    assert_eq!(game.world.entities.of::<Vehicle>(target).hp, shared::protocol::vehicle_hp(KIND_PLANE) - PLANE_GUN_PLANE_DAMAGE);
+    assert_eq!(game.world.entities.of::<Vehicle>(car).hp, 100 - PLANE_GUN_VEHICLE_DAMAGE);
 }
 
 #[test]

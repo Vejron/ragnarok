@@ -1,3 +1,4 @@
+use crate::game::Vehicle;
 use super::Mechanic;
 use super::armor::Outcome;
 use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
@@ -156,7 +157,7 @@ pub(super) fn round_hit(world: &World, origin: [f32; 3], dir: [f32; 3], reach: f
     if hit.is_some() {
         return hit;
     }
-    let car = wall.filter(|car| world.vehicles.get(car).is_some_and(|vehicle| vehicle_def(vehicle.kind).crew == Exposure::Glazed))?;
+    let car = wall.filter(|car| world.entities.get::<Vehicle>(*car).is_some_and(|vehicle| vehicle_def(vehicle.kind).crew == Exposure::Glazed))?;
     let beyond = world.physics.cast_ray(origin, dir, range, car).unwrap_or(range);
     first_body_hit(world, origin, dir, beyond, shooter, back, |body| body.vehicle == Some(car))
 }
@@ -513,7 +514,7 @@ fn distance_to_building(world: &World, id: shared::world::ObjId, point: [f32; 3]
 
 /// Takes `amount` health off vehicle `vid`, and wrecks it at zero.
 pub fn damage_vehicle(world: &mut World, vid: u32, amount: u8, attacker: Option<u32>) {
-    let Some(vehicle) = world.vehicles.get_mut(&vid) else { return };
+    let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(vid) else { return };
     if vehicle.wrecked() || amount == 0 {
         return;
     }
@@ -548,12 +549,12 @@ pub fn damage_vehicle(world: &mut World, vid: u32, amount: u8, attacker: Option<
 /// next one with it.
 fn wreck(world: &mut World, vid: u32) {
     // A drone shot down only pops, and its pilot is back in their own body.
-    if world.vehicles.get(&vid).is_some_and(|vehicle| vehicle.drone.is_some()) {
+    if world.entities.get::<Vehicle>(vid).is_some_and(|vehicle| vehicle.drone.is_some()) {
         super::drones::pop(world, vid);
         return;
     }
     let Some(pose) = world.physics.car_pose(vid) else { return };
-    let Some(vehicle) = world.vehicles.get_mut(&vid) else { return };
+    let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(vid) else { return };
     vehicle.wreck_in = WRECK_TICKS;
     vehicle.controls = Default::default();
     let attacker = vehicle.last_attacker;
@@ -691,7 +692,7 @@ pub fn reloads_in_seat(world: &World, id: u32) -> bool {
     let Some(player) = world.players.get(&id) else { return false };
     let Some(seat) = player.seat.filter(|seat| !seat.remote) else { return false };
     let held = player.held();
-    world.vehicles.get(&seat.vehicle).is_some_and(|vehicle| crew_gun(vehicle.kind, seat.index))
+    world.entities.get::<Vehicle>(seat.vehicle).is_some_and(|vehicle| crew_gun(vehicle.kind, seat.index))
         && def(held.item).is_some_and(|item| item.kind == ItemKind::Gun && held.ammo < item.mag)
 }
 
@@ -797,7 +798,7 @@ pub fn hitscan(world: &mut World, shooter: u32, origin: [f32; 3], dir: [f32; 3],
         let head = hit.is_some_and(|(_, t)| is_headshot(world, victim, origin, dir, t, back));
         damage_hit(world, victim, round.falloff.apply(round.damage, end), Some(shooter), round.weapon, None, head);
     } else if let Some((_, Some(car))) = wall {
-        let plane = world.vehicles.get(&car).is_some_and(|vehicle| vehicle.kind == KIND_PLANE);
+        let plane = world.entities.get::<Vehicle>(car).is_some_and(|vehicle| vehicle.kind == KIND_PLANE);
         let point = std::array::from_fn(|i| origin[i] + dir[i] * reach);
         match super::armor::armor_of(world, car, origin, dir, reach) {
             Some(Outcome::Ricochet { .. }) => super::armor::announce_ricochet(world, car, point),
@@ -879,7 +880,7 @@ fn use_item(world: &mut World, id: u32) {
     let held = player.held();
     // In a seat only a car's passengers use anything, and only their guns.
     if let Some(seat) = player.seat {
-        let passenger = !seat.remote && world.vehicles.get(&seat.vehicle).is_some_and(|vehicle| crew_gun(vehicle.kind, seat.index));
+        let passenger = !seat.remote && world.entities.get::<Vehicle>(seat.vehicle).is_some_and(|vehicle| crew_gun(vehicle.kind, seat.index));
         if !passenger || def(held.item).is_none_or(|item| item.kind != ItemKind::Gun) {
             player.interrupt();
             return;

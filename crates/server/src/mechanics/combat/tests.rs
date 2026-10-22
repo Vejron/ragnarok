@@ -234,10 +234,10 @@ fn snapshots_carry_own_health_and_shot_events() {
 
 /// The one car in the test world, and a player sitting in its driver seat.
 fn driver_in_the_car(game: &mut Game) -> (u32, u32) {
-    let (&vid, _) = game.world.vehicles.iter().next().expect("a car is placed at the spawn point");
+    let (vid, _) = game.world.entities.all::<Vehicle>().next().expect("a car is placed at the spawn point");
     let (id, inbox) = join(game);
     std::mem::forget(inbox);
-    game.world.vehicles.get_mut(&vid).unwrap().seats[0] = Some(id);
+    game.world.entities.get_mut::<Vehicle>(vid).unwrap().seats[0] = Some(id);
     game.world.players.get_mut(&id).unwrap().seat = Some(crate::game::Seat { vehicle: vid, index: 0, remote: false });
     (vid, id)
 }
@@ -299,10 +299,10 @@ fn the_ak5_chips_a_vehicle_and_a_wreck_kills_the_crew() {
     }
     let max = shared::protocol::vehicle_hp(shared::protocol::KIND_JEEP);
     settle(&mut game, shooter, &mut seq);
-    assert_eq!(game.world.vehicles[&vid].hp, max - (ak5().damage / 4).max(1));
+    assert_eq!(game.world.entities.of::<Vehicle>(vid).hp, max - (ak5().damage / 4).max(1));
 
     damage_vehicle(&mut game.world, vid, max, Some(shooter));
-    let vehicle = &game.world.vehicles[&vid];
+    let vehicle = &game.world.entities.of::<Vehicle>(vid);
     assert!(vehicle.wrecked());
     assert_eq!(vehicle.seats, [None; CAR_SEATS], "the crew is out of their seats");
     assert!(!game.world.players[&driver].alive(), "and dead");
@@ -326,7 +326,7 @@ fn a_wreck_cannot_be_boarded_and_comes_back_whole() {
     let mut game = game();
     let (vid, _driver) = driver_in_the_car(&mut game);
     damage_vehicle(&mut game.world, vid, 255, None);
-    assert!(game.world.vehicles[&vid].wrecked());
+    assert!(game.world.entities.of::<Vehicle>(vid).wrecked());
     let (id, inbox) = join(&mut game);
     std::mem::forget(inbox);
     let pose = game.world.physics.car_pose(vid).unwrap();
@@ -340,7 +340,7 @@ fn a_wreck_cannot_be_boarded_and_comes_back_whole() {
     for _ in 0..WRECK_TICKS {
         game.step();
     }
-    let vehicle = &game.world.vehicles[&vid];
+    let vehicle = &game.world.entities.of::<Vehicle>(vid);
     assert!(!vehicle.wrecked());
     assert_eq!(vehicle.hp, shared::protocol::vehicle_hp(shared::protocol::KIND_JEEP));
 }
@@ -1104,9 +1104,9 @@ fn shoot_from_the_side(game: &mut Game, vid: u32, rider: u32, y: f32, z: f32) ->
     let (shooter, inbox) = join(game);
     std::mem::forget(inbox);
     let at = game.world.physics.car_pose(vid).unwrap().position;
-    let (hp, car) = (game.world.players[&rider].hp, game.world.vehicles[&vid].hp);
+    let (hp, car) = (game.world.players[&rider].hp, game.world.entities.of::<Vehicle>(vid).hp);
     hitscan(&mut game.world, shooter, [at[0] + 10.0, y, z], [-1.0, 0.0, 0.0], &round(), 0, 0);
-    (hp - game.world.players[&rider].hp, car - game.world.vehicles[&vid].hp)
+    (hp - game.world.players[&rider].hp, car - game.world.entities.of::<Vehicle>(vid).hp)
 }
 
 #[test]
@@ -1162,7 +1162,7 @@ fn a_passenger_shot_dead_falls_out_of_the_seat() {
     damage(&mut game.world, rider, PLAYER_MAX_HP, None, WEAPON_RIFLE);
     assert!(!game.world.players[&rider].alive());
     assert!(game.world.players[&rider].seat.is_none());
-    assert_eq!(game.world.vehicles[&vid].seats[1], None);
+    assert_eq!(game.world.entities.of::<Vehicle>(vid).seats[1], None);
 }
 
 #[test]
@@ -1184,7 +1184,7 @@ fn a_jeep_passenger_fires_their_own_gun_out_of_the_car() {
         press(&mut game, rider, &mut seq, 0, 0, pitch);
     }
     assert!(game.world.players[&target].hp < PLAYER_MAX_HP, "the round landed");
-    assert_eq!(game.world.vehicles[&vid].hp, vehicle_def(shared::protocol::KIND_JEEP).hp, "and left through the car without hurting it");
+    assert_eq!(game.world.entities.of::<Vehicle>(vid).hp, vehicle_def(shared::protocol::KIND_JEEP).hp, "and left through the car without hurting it");
     assert!(game.world.players[&rider].hotbar[0].ammo < ak5().mag);
 }
 

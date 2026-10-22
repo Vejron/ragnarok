@@ -567,3 +567,26 @@ There were eight hand-written `work_*` functions, and two state structs that eac
 **Next:** vehicles as ECS entities, with `Mounts`, `Seats` and `Drone` as components, which now have
 clear boundaries. Or players and bots with events (`Damage`, `Kill`, `Noise`) in place of the `hits`,
 `kills` and `noises` vectors.
+
+### 2026-10-22: vehicles are entities
+
+`World::vehicles` (a `BTreeMap<u32, Vehicle>`) is gone. `Vehicle` is a component, spawned with its
+`NetId` by `add_vehicle` and despawned by `remove_vehicle` and the drones' `remove`.
+
+- `Entities` gained generic accessors that borrow only `world.entities`, so a vehicle can be held
+  while `world.physics` or `world.players` is changed, as the map allowed:
+  - `of::<T>(id)` and `of_mut::<T>(id)` panic when the entity has no `T`, like indexing a map.
+  - `has`, `count`, and `all::<T>()`, which gives every `(id, &T)` in id order.
+  - Loops that changed every vehicle go `for vid in ids::<With<Vehicle>>()` with `of_mut`.
+- The 180 call sites were rewritten mechanically: `[&id]` became `of`, `get` and `get_mut` became
+  the ECS versions, `iter` became `all`, and `keys` became `ids`. The compiler then flagged the
+  bindings that need `mut` for a `Mut<Vehicle>` and the `(&id, ..)` patterns that are now `(id, ..)`.
+- Behaviour is unchanged: every pass still goes in id order.
+
+**Checks:** server 262 tests, unchanged; clippy clean. `full_room_tick_cost`: mechanics 1.53 to 1.57 ms,
+snapshots 0.69 to 0.71 ms. `Vehicles` is 28.7 µs (26), `Drones` 0.86 µs (0.43) and `Gunnery` 1.36 µs
+(0.87). The difference is each pass building its query and sorting, which caching the query states
+would remove (an open item above).
+
+**Next:** split `Vehicle` into the components it is made of, starting with `Drone` and the weapon
+mounts.

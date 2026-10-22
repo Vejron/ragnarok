@@ -1,3 +1,4 @@
+use crate::game::Vehicle;
 use super::Mechanic;
 use super::combat::{Blast, blast, look};
 use super::vehicles::add_vehicle;
@@ -30,7 +31,7 @@ pub struct Drones;
 /// up: not when they are dead or seated, with no room for it where it starts, or at `MAX_VEHICLES`.
 pub fn launch(world: &mut World, id: u32, kind: u8) -> bool {
     let Some(player) = world.players.get(&id) else { return false };
-    if !player.alive() || player.seat.is_some() || world.vehicles.len() >= MAX_VEHICLES {
+    if !player.alive() || player.seat.is_some() || world.entities.count::<Vehicle>() >= MAX_VEHICLES {
         return false;
     }
     let (input, c, hp) = (player.input, player.character, player.hp);
@@ -55,7 +56,7 @@ pub fn launch(world: &mut World, id: u32, kind: u8) -> bool {
         world.physics.set_car_velocity(vid, ahead.map(|v| v * LOITER_SPEED));
     }
     let def = drone_def(kind);
-    let vehicle = world.vehicles.get_mut(&vid).expect("just added");
+    let mut vehicle = world.entities.get_mut::<Vehicle>(vid).expect("just added");
     vehicle.seats[0] = Some(id);
     vehicle.drone = Some(Drone { kind, owner: id, energy: def.energy_ticks, linked: true, pilot_hp: hp, fall_left: def.fall_ticks });
     let player = world.players.get_mut(&id).expect("checked above");
@@ -67,7 +68,7 @@ pub fn launch(world: &mut World, id: u32, kind: u8) -> bool {
 
 /// Drone `vid` loses its pilot: they are back in their body, and it flies on with its motors off.
 fn cut(world: &mut World, vid: u32) {
-    let Some(vehicle) = world.vehicles.get_mut(&vid) else { return };
+    let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(vid) else { return };
     let Some(drone) = &mut vehicle.drone else { return };
     drone.linked = false;
     let pilot = vehicle.seats[0].take();
@@ -82,13 +83,13 @@ fn cut(world: &mut World, vid: u32) {
 /// Takes drone `vid` out of the world, and lets its pilot go if it still has one.
 fn remove(world: &mut World, vid: u32) {
     cut(world, vid);
-    world.vehicles.remove(&vid);
+    world.entities.despawn(vid);
     world.physics.remove_car(vid);
 }
 
 /// Sets drone `vid`'s charge off where it is: a blast of its kind's weapon, credited to its owner.
 fn detonate(world: &mut World, vid: u32) {
-    let Some(drone) = world.vehicles.get(&vid).and_then(|vehicle| vehicle.drone) else { return };
+    let Some(drone) = world.entities.get::<Vehicle>(vid).and_then(|vehicle| vehicle.drone) else { return };
     let owner = drone.owner;
     let def = drone_def(drone.kind);
     let attacker = world.players.contains_key(&owner).then_some(owner);
@@ -99,7 +100,7 @@ fn detonate(world: &mut World, vid: u32) {
 /// Drone `vid` was shot down: it pops, credited to whoever shot it. The pop is drawn as an
 /// autocannon round's burst for an FPV drone and a tank shell's for a loitering one, about their sizes.
 pub(super) fn pop(world: &mut World, vid: u32) {
-    let Some(vehicle) = world.vehicles.get(&vid) else { return };
+    let Some(vehicle) = world.entities.get::<Vehicle>(vid) else { return };
     let attacker = vehicle.last_attacker;
     let kind = vehicle.drone.map_or(KIND_DRONE, |drone| drone.kind);
     let def = drone_def(kind);
@@ -140,7 +141,7 @@ enum Fate {
 
 impl Mechanic for Drones {
     fn on_leave(&mut self, world: &mut World, id: u32) {
-        let owned: Vec<u32> = world.vehicles.iter().filter(|(_, vehicle)| vehicle.drone.is_some_and(|drone| drone.owner == id)).map(|(&vid, _)| vid).collect();
+        let owned: Vec<u32> = world.entities.all::<Vehicle>().filter(|(_, vehicle)| vehicle.drone.is_some_and(|drone| drone.owner == id)).map(|(vid, _)| vid).collect();
         for vid in owned {
             remove(world, vid);
         }
@@ -149,10 +150,10 @@ impl Mechanic for Drones {
     fn on_tick(&mut self, world: &mut World, _dt: f32) {
         // What every vehicle hit in the last step.
         let impacts = world.physics.car_impacts();
-        let drones: Vec<u32> = world.vehicles.iter().filter(|(_, vehicle)| vehicle.drone.is_some()).map(|(&vid, _)| vid).collect();
+        let drones: Vec<u32> = world.entities.all::<Vehicle>().filter(|(_, vehicle)| vehicle.drone.is_some()).map(|(vid, _)| vid).collect();
         for vid in drones {
             // An earlier one's blast may have taken this one down already.
-            let Some(drone) = world.vehicles.get(&vid).and_then(|vehicle| vehicle.drone) else { continue };
+            let Some(drone) = world.entities.get::<Vehicle>(vid).and_then(|vehicle| vehicle.drone) else { continue };
             let Some(pose) = world.physics.car_pose(vid) else { continue };
             let def = drone_def(drone.kind);
             let pilot = world.players.get(&drone.owner).filter(|player| player.seat.is_some_and(|seat| seat.vehicle == vid));
@@ -194,7 +195,8 @@ impl Mechanic for Drones {
                 _ if hit || near_someone(world, pose.position, drone.owner, def.proximity) => detonate(world, vid),
                 Fate::Cut => cut(world, vid),
                 Fate::Flies => {
-                    let Some(drone) = world.vehicles.get_mut(&vid).and_then(|vehicle| vehicle.drone.as_mut()) else { continue };
+                    let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(vid) else { continue };
+                    let Some(drone) = vehicle.drone.as_mut() else { continue };
                     if drone.linked {
                         drone.energy -= 1;
                     } else {

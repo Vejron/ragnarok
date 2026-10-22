@@ -54,7 +54,7 @@ fn launch_drone(game: &mut Game, id: u32, seq: &mut u32) -> u32 {
 }
 
 fn drone(game: &Game, vid: u32) -> Option<Drone> {
-    game.world.vehicles.get(&vid).and_then(|vehicle| vehicle.drone)
+    game.world.entities.get::<Vehicle>(vid).and_then(|vehicle| vehicle.drone)
 }
 
 #[test]
@@ -65,7 +65,7 @@ fn a_launch_spends_the_drone_and_puts_the_player_at_its_controls() {
     let player = &game.world.players[&id];
     assert_eq!(player.seat, Some(Seat { vehicle: vid, index: 0, remote: true }));
     assert_eq!(player.hotbar[0].item, ITEM_NONE, "the drone left the hand");
-    assert_eq!(game.world.vehicles[&vid].kind, KIND_DRONE);
+    assert_eq!(game.world.entities.of::<Vehicle>(vid).kind, KIND_DRONE);
     assert!(drone(&game, vid).is_some_and(|drone| drone.linked && drone.owner == id));
     // The body is still out there, kneeling, and its drone is listed with a full, linked battery.
     let body = game.entity_states().into_iter().find(|entity| entity.id == id).expect("the pilot's body is listed");
@@ -127,7 +127,7 @@ fn fire_sets_the_charge_off_and_hurts_who_is_near() {
     // Beside the drone, out of its proximity fuse.
     game.world.players.get_mut(&target).unwrap().character.position = [at[0] + 2.0, STANDING_Y, at[2]];
     fly(&mut game, id, &mut seq, 0, 0.0, BUTTON_FIRE, 3);
-    assert!(!game.world.vehicles.contains_key(&vid), "the drone is gone");
+    assert!(!game.world.entities.has::<Vehicle>(vid), "the drone is gone");
     assert_eq!(game.world.players[&id].seat, None, "the pilot is back in their body");
     assert!(game.world.players[&target].hp < PLAYER_MAX_HP, "the blast reached the bystander");
 }
@@ -142,14 +142,14 @@ fn flying_into_someone_kills_them_and_credits_the_pilot() {
     game.world.players.get_mut(&target).unwrap().character.position = [at[0], STANDING_Y, at[2] - 15.0];
     // Down to head height, then straight at them.
     for _ in 0..240 {
-        if !game.world.vehicles.contains_key(&vid) {
+        if !game.world.entities.has::<Vehicle>(vid) {
             break;
         }
         let y = game.world.physics.car_pose(vid).unwrap().position[1];
         let pitch = if y > STANDING_Y + 0.6 { -0.15 } else { 0.0 };
         fly(&mut game, id, &mut seq, 127, pitch, 0, 1);
     }
-    assert!(!game.world.vehicles.contains_key(&vid), "it went off");
+    assert!(!game.world.entities.has::<Vehicle>(vid), "it went off");
     assert_eq!(game.world.players[&target].hp, 0, "right on them, the blast kills");
     assert_eq!(game.world.players[&id].kills, 1);
 }
@@ -159,11 +159,11 @@ fn use_recalls_the_drone_without_a_blast() {
     let mut game = game();
     let (id, mut seq) = pilot(&mut game);
     let vid = launch_drone(&mut game, id, &mut seq);
-    let vehicles = game.world.vehicles.len();
+    let vehicles = game.world.entities.count::<Vehicle>();
     fly(&mut game, id, &mut seq, 0, 0.0, BUTTON_USE, 1);
     idle(&mut game, id, &mut seq, 3);
-    assert!(!game.world.vehicles.contains_key(&vid));
-    assert_eq!(game.world.vehicles.len(), vehicles - 1);
+    assert!(!game.world.entities.has::<Vehicle>(vid));
+    assert_eq!(game.world.entities.count::<Vehicle>(), vehicles - 1);
     let player = &game.world.players[&id];
     assert_eq!(player.seat, None, "back in the body, and not in some other vehicle");
     assert_eq!(player.hp, PLAYER_MAX_HP);
@@ -177,12 +177,12 @@ fn a_flat_battery_drops_the_drone_which_goes_off_where_it_lands() {
     let vid = launch_drone(&mut game, id, &mut seq);
     // Well away from the pilot first, and up a little.
     fly(&mut game, id, &mut seq, 127, 0.1, 0, 90);
-    game.world.vehicles.get_mut(&vid).unwrap().drone.as_mut().unwrap().energy = 2;
+    game.world.entities.get_mut::<Vehicle>(vid).unwrap().drone.as_mut().unwrap().energy = 2;
     idle(&mut game, id, &mut seq, 3);
     assert_eq!(game.world.players[&id].seat, None, "control is back with the pilot");
     assert!(drone(&game, vid).is_some_and(|drone| !drone.linked), "and the drone falls");
     idle(&mut game, id, &mut seq, DRONE_FALL_TICKS + 10);
-    assert!(!game.world.vehicles.contains_key(&vid), "it went off");
+    assert!(!game.world.entities.has::<Vehicle>(vid), "it went off");
     assert_eq!(game.world.players[&id].hp, PLAYER_MAX_HP, "far from the pilot");
 }
 
@@ -194,7 +194,7 @@ fn one_hit_pops_the_drone_and_frees_the_pilot() {
     let vid = launch_drone(&mut game, id, &mut seq);
     fly(&mut game, id, &mut seq, 127, 0.0, 0, 60);
     super::super::combat::damage_vehicle(&mut game.world, vid, 1, Some(shooter));
-    assert!(!game.world.vehicles.contains_key(&vid));
+    assert!(!game.world.entities.has::<Vehicle>(vid));
     assert_eq!(game.world.players[&id].seat, None);
     assert_eq!(game.world.players[&id].hp, PLAYER_MAX_HP, "nobody in the drone died with it");
 }
@@ -229,7 +229,7 @@ fn a_pilot_who_leaves_takes_the_drone_with_them() {
     let vid = launch_drone(&mut game, id, &mut seq);
     game.handle(Command::Leave(id));
     game.step();
-    assert!(!game.world.vehicles.contains_key(&vid));
+    assert!(!game.world.entities.has::<Vehicle>(vid));
 }
 
 
@@ -248,7 +248,7 @@ fn a_loitering_drone_starts_high_up_behind_its_pilot_already_flying() {
     // Facing -Z: behind is +Z. It has flown a metre or two by the time it is looked at.
     fly(&mut game, id, &mut seq, 0, 0.0, BUTTON_FIRE, 3);
     let vid = game.world.players[&id].seat.expect("the pilot is at its controls").vehicle;
-    assert_eq!(game.world.vehicles[&vid].kind, KIND_LOITER);
+    assert_eq!(game.world.entities.of::<Vehicle>(vid).kind, KIND_LOITER);
     assert_eq!(game.world.players[&id].hotbar[0].item, ITEM_NONE, "it left the hand");
     let pose = game.world.physics.car_pose(vid).unwrap();
     assert!((pose.position[0] - body[0]).abs() < 0.5, "{pose:?}");
@@ -282,7 +282,7 @@ fn a_loitering_drones_warhead_reaches_far() {
     game.world.physics.reset_car(vid, [100.0, 2.0, -60.0], 0.0);
     game.world.players.get_mut(&target).unwrap().character.position = [108.0, STANDING_Y, -60.0];
     fly(&mut game, id, &mut seq, 0, 0.0, BUTTON_FIRE, 3);
-    assert!(!game.world.vehicles.contains_key(&vid), "it went off");
+    assert!(!game.world.entities.has::<Vehicle>(vid), "it went off");
     assert_eq!(game.world.players[&id].seat, None);
     assert!(game.world.players[&target].hp < PLAYER_MAX_HP, "8 m out, the blast still hurts");
 }
@@ -294,9 +294,9 @@ fn a_loitering_drone_takes_more_than_one_hit() {
     let shooter = join(&mut game);
     let vid = launch_drone(&mut game, id, &mut seq);
     super::super::combat::damage_vehicle(&mut game.world, vid, 30, Some(shooter));
-    assert!(game.world.vehicles.contains_key(&vid), "one round does not bring it down");
+    assert!(game.world.entities.has::<Vehicle>(vid), "one round does not bring it down");
     super::super::combat::damage_vehicle(&mut game.world, vid, 30, Some(shooter));
-    assert!(!game.world.vehicles.contains_key(&vid), "two do");
+    assert!(!game.world.entities.has::<Vehicle>(vid), "two do");
     assert_eq!(game.world.players[&id].seat, None, "and the pilot is back in their body");
 }
 

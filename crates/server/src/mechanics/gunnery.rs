@@ -1,3 +1,4 @@
+use crate::game::Vehicle;
 use super::Mechanic;
 use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
 use super::combat::{Round, hitscan, look, rewind_ticks, scatter};
@@ -75,7 +76,7 @@ fn work(world: &mut World, vid: u32, def: &MountDef, mut mount: Mount, pose: &Ca
     if let Aim::Bore { .. } = def.aim {
         mount.yaw = 0.0;
     }
-    let Some(occupant) = world.vehicles[&vid].seats[def.seat] else { return mount };
+    let Some(occupant) = world.entities.of::<Vehicle>(vid).seats[def.seat] else { return mount };
     let Some(input) = world.players.get(&occupant).map(|player| player.input) else { return mount };
     if !def.needs.iter().all(|&need| can_work(world, vid, need, pose)) {
         return mount;
@@ -134,7 +135,7 @@ fn height(world: &World, pose: &CarPose) -> f32 {
 fn can_work(world: &World, vid: u32, need: Need, pose: &CarPose) -> bool {
     match need {
         Need::Upright => pose.up_y >= WALKER_FALLEN_UP,
-        Need::Turret => world.vehicles[&vid].damage[DAMAGE_TURRET] != TURRET_GONE,
+        Need::Turret => world.entities.of::<Vehicle>(vid).damage[DAMAGE_TURRET] != TURRET_GONE,
         Need::Untowed | Need::Height(_) | Need::Clear(_) => true,
     }
 }
@@ -256,14 +257,14 @@ fn machine_gun(world: &mut World, shooter: u32, vid: u32, muzzle: [f32; 3], dir:
 impl Mechanic for Gunnery {
     fn on_tick(&mut self, world: &mut World, dt: f32) {
         projectiles::step(world, dt, Stage::Guns);
-        let ids: Vec<u32> = world.vehicles.iter().filter(|(_, vehicle)| !vehicle.mounts.is_empty()).map(|(&id, _)| id).collect();
+        let ids: Vec<u32> = world.entities.all::<Vehicle>().filter(|(_, vehicle)| !vehicle.mounts.is_empty()).map(|(id, _)| id).collect();
         for vid in ids {
             let Some(pose) = world.physics.car_pose(vid) else { continue };
-            let defs = vehicle_def(world.vehicles[&vid].kind).mounts;
+            let defs = vehicle_def(world.entities.of::<Vehicle>(vid).kind).mounts;
             for (index, def) in defs.iter().enumerate() {
-                let Some(mount) = world.vehicles.get(&vid).map(|vehicle| vehicle.mounts[index]) else { break };
+                let Some(mount) = world.entities.get::<Vehicle>(vid).map(|vehicle| vehicle.mounts[index]) else { break };
                 let mount = work(world, vid, def, mount, &pose, dt);
-                if let Some(vehicle) = world.vehicles.get_mut(&vid) {
+                if let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(vid) {
                     vehicle.mounts[index] = mount;
                 }
             }

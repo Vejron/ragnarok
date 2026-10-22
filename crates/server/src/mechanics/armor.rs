@@ -12,6 +12,7 @@
 //! can tell what will happen. Every kind has a profile; the Strv S's steep glacis turns shots away from
 //! well off the nose, a jeep only deflects the most grazing.
 
+use crate::game::Vehicle;
 use crate::game::World;
 use sim::Strike;
 use shared::consts::*;
@@ -140,7 +141,7 @@ pub fn judge(kind: u8, strike: &Strike, dir: [f32; 3]) -> Outcome {
 /// What vehicle `vid`'s armor makes of a shot from `origin` along the unit `dir` that reaches it within
 /// `max` metres. `None` if the shot does not touch it.
 pub fn armor_of(world: &World, vid: u32, origin: [f32; 3], dir: [f32; 3], max: f32) -> Option<Outcome> {
-    let kind = world.vehicles.get(&vid)?.kind;
+    let kind = world.entities.get::<Vehicle>(vid)?.kind;
     let pose = world.physics.car_pose(vid)?;
     let strike = world.physics.armor_strike(origin, dir, max + 0.05, vid)?;
     Some(judge(kind, &strike, pose.local_dir(dir)))
@@ -161,7 +162,7 @@ pub fn announce_ricochet(world: &mut World, vid: u32, point: [f32; 3]) {
 /// Hits of `damage` that land on the turret of tank `vid`. At zero the turret comes off: it is gone
 /// until the tank is put back, its solid goes, the gunner dies with it and `DAMAGE_TURRET` tells clients.
 pub fn damage_turret(world: &mut World, vid: u32, damage: u8, attacker: Option<u32>) {
-    let Some(vehicle) = world.vehicles.get_mut(&vid) else { return };
+    let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(vid) else { return };
     if vehicle.kind != KIND_TANK || vehicle.damage[DAMAGE_TURRET] == TURRET_GONE || vehicle.wrecked() {
         return;
     }

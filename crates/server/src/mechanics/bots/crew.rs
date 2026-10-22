@@ -9,6 +9,7 @@
 //! Both write their input as a player in that seat would, so `Vehicles` and `Gunnery` drive the
 //! real tank. A crewman on foot (respawned, or put out) walks back to its tank and gets in.
 
+use crate::game::Vehicle;
 use super::*;
 use crate::game::Crew;
 use crate::mechanics::combat::position_of;
@@ -177,7 +178,7 @@ pub(super) enum Boarding {
 
 /// Whether crewman `id`, on foot at `at`, gets back into its tank, walks to it, or does without.
 pub(super) fn board(world: &mut World, id: u32, crew: Crew, at: [f32; 3]) -> Boarding {
-    let Some(vehicle) = world.vehicles.get(&crew.vehicle) else { return Boarding::No };
+    let Some(vehicle) = world.entities.get::<Vehicle>(crew.vehicle) else { return Boarding::No };
     if vehicle.wrecked() || vehicle.seats[crew.seat].is_some() {
         return Boarding::No;
     }
@@ -213,7 +214,7 @@ fn controls(throttle: f32, steer: f32, halt: bool, idle: InputFrame) -> InputFra
 fn drive(world: &World, bot: &mut Bot, vid: u32, pose: &CarPose, idle: InputFrame) -> InputFrame {
     let at = pose.position;
     let halt = controls(0.0, 0.0, true, idle);
-    let gunner = world.vehicles.get(&vid).and_then(|vehicle| vehicle.seats[GUNNER]).and_then(|id| world.bots.get(&id));
+    let gunner = world.entities.get::<Vehicle>(vid).and_then(|vehicle| vehicle.seats[GUNNER]).and_then(|id| world.bots.get(&id));
     // How fast it may go: full speed, unless it is coming up to a sharp turn.
     let mut limit = TANK_MAX_SPEED;
     let goal = match gunner.map(|g| (g.mode, g.sees, g.last_seen)) {
@@ -360,7 +361,7 @@ fn gun(world: &mut World, id: u32, bot: &mut Bot, vid: u32, pose: &CarPose, nois
     let at = pose.position;
     let eye = pose.world_point(TURRET_EYE);
     let chase = (CHASE * TICK_RATE as f32) as u32;
-    let Some(vehicle) = world.vehicles.get(&vid) else { return idle };
+    let Some(vehicle) = world.entities.get::<Vehicle>(vid) else { return idle };
     let turret = vehicle.turret().copied().unwrap_or_default();
     let turret_on = vehicle.damage[DAMAGE_TURRET] != TURRET_GONE;
 

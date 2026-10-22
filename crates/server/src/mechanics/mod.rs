@@ -49,6 +49,7 @@ pub trait Mechanic: Send {
 pub fn register_components(ecs: &mut bevy_ecs::world::World) {
     ecs.register_component::<npcs::Wander>();
     ecs.register_component::<pickups::Pickup>();
+    ecs.register_component::<crate::game::Vehicle>();
     projectiles::register(ecs);
 }
 

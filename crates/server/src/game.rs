@@ -84,7 +84,6 @@ impl Game {
                 fresh_carved: Vec::new(),
                 map,
                 players: BTreeMap::new(),
-                vehicles: BTreeMap::new(),
                 entities: Default::default(),
                 bots: BTreeMap::new(),
                 nav: Default::default(),
@@ -705,7 +704,7 @@ mod tests {
         }
         for (vid, start) in crews {
             let (Some(start), Some(pose)) = (start, game.world.physics.car_pose(vid)) else { continue };
-            let gun = game.world.vehicles.get(&vid).and_then(|vehicle| vehicle.turret()).map_or(0, |gun| gun.shots);
+            let gun = game.world.entities.get::<Vehicle>(vid).and_then(|vehicle| vehicle.turret()).map_or(0, |gun| gun.shots);
             println!("tank {vid}: drove {:.0} m, fired {gun}", (pose.position[0] - start[0]).hypot(pose.position[2] - start[2]));
         }
         let budget = Duration::from_secs_f64(1.0 / TICK_RATE as f64);

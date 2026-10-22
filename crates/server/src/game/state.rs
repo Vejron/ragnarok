@@ -241,7 +241,9 @@ impl Player {
     }
 }
 
-/// Game-side state of a vehicle. Its rigid body lives in `Physics`, under the same id.
+/// Game-side state of a vehicle, an entity's component. Its rigid body lives in `Physics`, under the
+/// same id.
+#[derive(crate::entities::Component)]
 pub struct Vehicle {
     pub kind: u8,
     /// Player in each seat. Seat 0 is the driver.
@@ -378,10 +380,8 @@ pub struct World {
     pub physics: Physics,
     /// Ordered by id so every pass over players is deterministic.
     pub players: BTreeMap<u32, Player>,
-    /// Vehicles share the id space with players.
-    pub vehicles: BTreeMap<u32, Vehicle>,
-    /// The families moved to components so far (roosters, items on the ground, projectiles), which
-    /// share the id space too.
+    /// The families moved to components so far (roosters, items on the ground, projectiles, vehicles),
+    /// which share the id space with players.
     pub entities: crate::entities::Entities,
     /// The minds of the players that are bots, by player id.
     pub bots: BTreeMap<u32, Bot>,
@@ -457,7 +457,7 @@ impl World {
     /// flying it from afar) and its crew show (`shared::vehicles::seat_head`).
     pub fn seated_head(&self, id: u32) -> Option<(u32, [f32; 3])> {
         let seat = self.players.get(&id)?.seat.filter(|seat| !seat.remote)?;
-        let vehicle = self.vehicles.get(&seat.vehicle)?;
+        let vehicle = self.entities.get::<Vehicle>(seat.vehicle)?;
         let local = shared::vehicles::seat_head(vehicle.kind, seat.index, vehicle.turret().map_or(0.0, |gun| gun.yaw))?;
         Some((seat.vehicle, self.physics.car_pose(seat.vehicle)?.world_point(local)))
     }

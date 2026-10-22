@@ -364,12 +364,12 @@ fn a_squad_tank_comes_crewed_and_goes_once_it_is_wrecked_and_burnt_out() {
     let mut game = start(&json);
     let (_, mut inbox) = join(&mut game);
     game.step();
-    let tanks: Vec<u32> = game.world.vehicles.iter().filter(|(_, v)| v.kind == shared::protocol::KIND_TANK).map(|(&id, _)| id).collect();
+    let tanks: Vec<u32> = game.world.entities.all::<Vehicle>().filter(|(_, v)| v.kind == shared::protocol::KIND_TANK).map(|(id, _)| id).collect();
     let [vid] = tanks[..] else { panic!("one tank: {tanks:?}") };
     let mut names: Vec<_> = bots(&game).iter().map(|id| game.world.players[id].name.clone()).collect();
     names.sort();
     assert_eq!(names, ["Armour 1", "Armour 2", "Armour 3"], "the crew are numbered after the squad's bots");
-    let crew: Vec<u32> = game.world.vehicles[&vid].seats.iter().flatten().copied().collect();
+    let crew: Vec<u32> = game.world.entities.of::<Vehicle>(vid).seats.iter().flatten().copied().collect();
     assert_eq!(crew.len(), 2, "both seats manned");
     for id in &crew {
         assert_eq!((game.world.players[id].team, game.world.bots[id].skill), (3, 0.8));
@@ -380,10 +380,10 @@ fn a_squad_tank_comes_crewed_and_goes_once_it_is_wrecked_and_burnt_out() {
     kill(&mut game, walker);
     run(&mut game, 5.0);
     assert!(crew.iter().all(|id| !game.world.players.contains_key(id)), "the crew died in it and left");
-    assert!(game.world.vehicles.contains_key(&vid), "the wreck still burns");
+    assert!(game.world.entities.has::<Vehicle>(vid), "the wreck still burns");
     assert!(notices(&mut inbox).iter().any(|(kind, _)| *kind == NOTICE_WON), "the squad is cleared");
     run(&mut game, WRECK_TICKS as f32 / TICK_RATE as f32);
-    assert!(!game.world.vehicles.contains_key(&vid), "then it is gone, not put back for anyone");
+    assert!(!game.world.entities.has::<Vehicle>(vid), "then it is gone, not put back for anyone");
 }
 
 #[test]
@@ -400,7 +400,7 @@ fn removing_a_squad_takes_its_tank_too_and_a_restart_brings_a_fresh_one() {
         ll(0.0, 40.0)
     );
     let mut game = start(&json);
-    let tanks = |game: &Game| game.world.vehicles.values().filter(|v| v.kind == shared::protocol::KIND_TANK).count();
+    let tanks = |game: &Game| game.world.entities.all::<Vehicle>().map(|(_, vehicle)| vehicle).filter(|v| v.kind == shared::protocol::KIND_TANK).count();
     game.step();
     assert_eq!((tanks(&game), bots(&game).len()), (1, 2));
     run(&mut game, 2.5);

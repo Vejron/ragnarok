@@ -56,14 +56,14 @@ fn seated(game: &Game, id: u32) -> Option<(u32, usize)> {
 }
 
 fn shells_fired(game: &Game, vid: u32) -> u8 {
-    game.world.vehicles[&vid].turret().unwrap().shots
+    game.world.entities.of::<Vehicle>(vid).turret().unwrap().shots
 }
 
 #[test]
 fn a_crew_is_two_bots_in_their_seats_of_a_fresh_tank() {
     let mut game = game(false, vec![]);
     let (vid, [driver, gunner]) = crew(&mut game, [0.0, 0.0], vec![[0.0, 0.0], [0.0, -40.0]]);
-    assert_eq!(game.world.vehicles[&vid].kind, shared::protocol::KIND_TANK);
+    assert_eq!(game.world.entities.of::<Vehicle>(vid).kind, shared::protocol::KIND_TANK);
     assert_eq!(seated(&game, driver), Some((vid, DRIVER)));
     assert_eq!(seated(&game, gunner), Some((vid, GUNNER)));
     assert_eq!(game.world.bots[&driver].crew, Some(Crew { vehicle: vid, seat: DRIVER }));

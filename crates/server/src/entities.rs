@@ -138,6 +138,35 @@ impl Entities {
         self.ecs.get_mut::<T>(entity)
     }
 
+    /// Entity `id`'s `T`, which it must have, as indexing a map would.
+    #[track_caller]
+    pub fn of<T: Component>(&self, id: u32) -> &T {
+        self.get::<T>(id).unwrap_or_else(|| panic!("entity {id} has no {}", std::any::type_name::<T>()))
+    }
+
+    /// The same, to change.
+    #[track_caller]
+    pub fn of_mut<T: Component<Mutability = bevy_ecs::component::Mutable>>(&mut self, id: u32) -> Mut<'_, T> {
+        self.get_mut::<T>(id).unwrap_or_else(|| panic!("entity {id} has no {}", std::any::type_name::<T>()))
+    }
+
+    #[cfg(test)]
+    pub fn has<T: Component>(&self, id: u32) -> bool {
+        self.get::<T>(id).is_some()
+    }
+
+    /// How many entities have a `T`.
+    pub fn count<T: Component>(&self) -> usize {
+        self.ecs.try_query::<&T>().map_or(0, |mut query| query.iter(&self.ecs).count())
+    }
+
+    /// Every entity's `T` with its id, in id order.
+    pub fn all<T: Component>(&self) -> std::vec::IntoIter<(u32, &T)> {
+        let mut all: Vec<(u32, &T)> = self.ecs.try_query::<(&NetId, &T)>().map_or_else(Vec::new, |mut query| query.iter(&self.ecs).map(|(id, t)| (id.0, t)).collect());
+        all.sort_unstable_by_key(|&(id, _)| id);
+        all.into_iter()
+    }
+
     pub fn insert(&mut self, id: u32, bundle: impl Bundle) {
         if let Some(entity) = self.entity(id) {
             self.ecs.entity_mut(entity).insert(bundle);
