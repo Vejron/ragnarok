@@ -260,6 +260,42 @@ impl CarPose {
     }
 }
 
+/// A tank or a Strv is too heavy to be stopped by a tree: it goes through the trunk, felling it.
+pub(crate) fn heavy(kind: u8) -> bool {
+    matches!(kind, KIND_TANK | KIND_STRV)
+}
+
+/// The solids a vehicle of `kind` has besides its hull box, placed in the hull frame: a tank's turret,
+/// a Strv's casemate, a plane's wings, a walker's legs. Heavy vehicles' leave the felled-able trees
+/// out of what they touch, as the hull does.
+pub(crate) fn extra_solids(kind: u8) -> Vec<ColliderBuilder> {
+    let hy = spec(kind).half_extents[1];
+    // The turret is a cylinder, so it needs no turning with the gun. It adds no mass, which keeps
+    // the hull's balance and the tuning that goes with it. A plane's wings are a weightless box
+    // the same way.
+    let solids: Vec<ColliderBuilder> = match kind {
+        KIND_TANK => vec![ColliderBuilder::cylinder(TANK_TURRET_HALF_HEIGHT, TANK_TURRET_RADIUS).translation(Vector::from(TANK_TURRET_PIVOT))],
+        KIND_STRV => {
+            let [x, y, z] = STRV_CASEMATE_HALF;
+            vec![ColliderBuilder::cuboid(x, y, z).translation(Vector::from(STRV_CASEMATE_CENTRE))]
+        }
+        KIND_PLANE => {
+            let [x, y, z] = PLANE_WING_HALF_EXTENTS;
+            vec![ColliderBuilder::cuboid(x, y, z).translation(Vector::from(PLANE_WING_CENTRE))]
+        }
+        // The legs hang from the bottom of the hull and stop short of the ground, so a car or a shell
+        // hits them but the springs, not the boxes, carry the walker.
+        KIND_WALKER | KIND_HEN => {
+            let half = (WALKER_LEG_LENGTH - WALKER_LEG_CLEARANCE) / 2.0;
+            [-1.0, 1.0]
+                .map(|side| ColliderBuilder::cuboid(WALKER_LEG_HALF_WIDTH, half, WALKER_LEG_HALF_DEPTH).translation(Vector::new(side * WALKER_FOOT_HALF, -hy - half, 0.0)))
+                .into()
+        }
+        _ => Vec::new(),
+    };
+    if heavy(kind) { solids.into_iter().map(|collider| collider.collision_groups(super::plows_trees())).collect() } else { solids }
+}
+
 impl Physics {
     /// Whether a vehicle of `kind` at `position` / `yaw` is clear of buildings and walls.
     pub fn car_fits(&self, kind: u8, position: [f32; 3], yaw: f32) -> bool {
@@ -332,43 +368,12 @@ impl Physics {
         } else {
             chassis.density(spec.density)
         };
-        // A tank or a Strv is too heavy to be stopped by a tree: it goes through the trunk, felling it.
-        let heavy = matches!(kind, KIND_TANK | KIND_STRV);
-        if heavy {
+        if heavy(kind) {
             chassis = chassis.collision_groups(super::plows_trees());
         }
         let collider = self.colliders.insert_with_parent(chassis.build(), body, &mut self.bodies);
-        // The turret is a cylinder, so it needs no turning with the gun. It adds no mass, which keeps
-        // the hull's balance and the tuning that goes with it. A plane's wings are a weightless box
-        // the same way.
-        let solids: Vec<ColliderBuilder> = match kind {
-            KIND_TANK => vec![ColliderBuilder::cylinder(TANK_TURRET_HALF_HEIGHT, TANK_TURRET_RADIUS).translation(Vector::from(TANK_TURRET_PIVOT))],
-            KIND_STRV => {
-                let [x, y, z] = STRV_CASEMATE_HALF;
-                vec![ColliderBuilder::cuboid(x, y, z).translation(Vector::from(STRV_CASEMATE_CENTRE))]
-            }
-            KIND_PLANE => {
-                let [x, y, z] = PLANE_WING_HALF_EXTENTS;
-                vec![ColliderBuilder::cuboid(x, y, z).translation(Vector::from(PLANE_WING_CENTRE))]
-            }
-            // The legs hang from the bottom of the hull and stop short of the ground, so a car or a shell
-            // hits them but the springs, not the boxes, carry the walker.
-            KIND_WALKER | KIND_HEN => {
-                let half = (WALKER_LEG_LENGTH - WALKER_LEG_CLEARANCE) / 2.0;
-                [-1.0, 1.0]
-                    .map(|side| ColliderBuilder::cuboid(WALKER_LEG_HALF_WIDTH, half, WALKER_LEG_HALF_DEPTH).translation(Vector::new(side * WALKER_FOOT_HALF, -hy - half, 0.0)))
-                    .into()
-            }
-            _ => Vec::new(),
-        };
         let extra: Vec<ColliderHandle> =
-            solids
-                .into_iter()
-                .map(|collider| {
-                    let collider = if heavy { collider.collision_groups(super::plows_trees()) } else { collider };
-                    self.colliders.insert_with_parent(collider.density(0.0).friction(0.4).build(), body, &mut self.bodies)
-                })
-                .collect();
+            extra_solids(kind).into_iter().map(|collider| self.colliders.insert_with_parent(collider.density(0.0).friction(0.4).build(), body, &mut self.bodies)).collect();
         // A helicopter has no wheels, so its controller is never updated.
         let mut controller = DynamicRayCastVehicleController::new(body);
         // Our forward is -Z, but the controller only uses this axis to sign its own speed estimate,
@@ -609,7 +614,7 @@ impl Physics {
 
     /// Takes destroyed buildings and trees out of the collider set. With no car the pipeline does
     /// not run otherwise, and the broad-phase would keep pointing at colliders that are gone.
-    fn apply_removals(&mut self) {
+    pub(crate) fn apply_removals(&mut self) {
         if self.removals.is_empty() && self.replacements.is_empty() {
             return;
         }

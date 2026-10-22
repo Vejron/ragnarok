@@ -1,7 +1,5 @@
 use super::Mechanic;
 use crate::game::World;
-use sim::Character;
-use shared::consts::*;
 use shared::items::{aim_speed_scale, HOTBAR_SLOTS};
 
 /// Walks every standing stickman by its input through the character controller, and keeps track of
@@ -12,36 +10,15 @@ use shared::items::{aim_speed_scale, HOTBAR_SLOTS};
 /// drop away from a moving car as if it had stopped.
 pub struct Movement;
 
-/// Adds a car's horizontal velocity to a character's knockback, within the wire's limit.
-fn inherit(character: &mut Character, velocity: [f32; 3]) {
-    let mut knock = [character.knock[0] + velocity[0], character.knock[1] + velocity[2]];
-    let speed = knock[0].hypot(knock[1]);
-    if speed > KNOCK_MAX_SPEED {
-        knock = [knock[0] / speed * KNOCK_MAX_SPEED, knock[1] / speed * KNOCK_MAX_SPEED];
-    }
-    character.knock = knock;
-}
-
 impl Mechanic for Movement {
     fn on_tick(&mut self, world: &mut World, dt: f32) {
         for player in world.players.values_mut().filter(|player| player.seat.is_none() && player.alive()) {
             let character = &mut player.character;
-            let was_riding = character.ride;
-            let velocity = world.physics.car_pose(was_riding).map(|pose| pose.velocity);
-            let jumped = was_riding != 0 && character.grounded && player.input.buttons() & BUTTON_JUMP != 0;
-            if let (true, Some(velocity)) = (jumped, velocity) {
-                inherit(character, velocity);
-            }
+            let velocity = world.physics.car_pose(character.ride).map(|pose| pose.velocity);
             let slot = (player.input.slot() as usize).min(HOTBAR_SLOTS - 1);
             let scale = aim_speed_scale(player.hotbar[slot].item, player.input.buttons());
-            world.physics.move_character_scaled(character, &player.input, dt, scale);
+            world.physics.step_character(character, &player.input, dt, scale, velocity);
             character.ride = if character.grounded { world.physics.car_under(character.position).map_or(0, |hit| hit.car) } else { 0 };
-            if let (false, false, Some(velocity)) = (jumped, character.grounded, velocity) {
-                // Stepped off the edge of the roof.
-                if was_riding != 0 {
-                    inherit(character, velocity);
-                }
-            }
         }
     }
 }

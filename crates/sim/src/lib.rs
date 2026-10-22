@@ -16,6 +16,7 @@ use shared::quant::from_cm;
 use shared::world::{ObjId, WorldFile};
 use std::collections::HashMap;
 
+mod stream;
 mod vehicle;
 pub use vehicle::{CarCondition, CarControls, CarImpact, CarPose, Strike, half_extents};
 
@@ -78,6 +79,12 @@ pub struct Physics {
     changed: Vec<[f32; 4]>,
     /// How far the playable square reaches from the centre to each side, metres. Planes turn back near it.
     bound: f32,
+    /// The static colliders of each streamed tile (`add_tile`), by `(col, row)`. Empty on the server,
+    /// which has every tile from the start.
+    tiles: HashMap<(u16, u16), Vec<ColliderHandle>>,
+    /// Vehicles as solid stand-ins at their snapshot pose (`set_obstacle`), by id: what the client's
+    /// prediction walks into. Empty on the server, which simulates the vehicles themselves.
+    obstacles: std::collections::BTreeMap<u32, stream::Obstacle>,
 }
 
 /// Height of the top of the invisible boundary walls around the playable square, metres above
@@ -104,14 +111,10 @@ const BED_FLOOR: f32 = 12.0;
 ///
 /// A building or tree comes with the [`Obj`] it is, for worlds that went through `assemble`.
 pub fn static_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)>> {
-    let half = from_cm(world.half_extent);
-    // Ground: a 1 m thick slab. On flat worlds its top is y = 0 and it is the whole ground;
-    // elsewhere it sits `BED_FLOOR` below, under the lowest water bed, and only catches what
-    // falls through a gap.
-    let top = if world.ground.is_flat() { 0.0 } else { -BED_FLOOR };
-    let mut colliders = vec![(ColliderBuilder::cuboid(half, 0.5, half).translation(Vector::new(0.0, top - 0.5, 0.0)).build(), None)];
+    let terrain = !world.ground.is_flat();
+    let mut colliders = vec![(slab(world, terrain), None)];
     let ground = &world.ground;
-    if !ground.is_flat() {
+    if terrain {
         let side = ground.side as usize;
         // Parry's heightfield is column-major with rows along Z: heights[(row, col)].
         let mut heights = Vec::with_capacity(side * side);
@@ -129,10 +132,30 @@ pub fn static_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)
             None,
         ));
     }
+    colliders.extend(walls(world).into_iter().map(|wall| (wall, None)));
+    colliders.extend(object_colliders(world)?);
+    Ok(colliders)
+}
+
+/// Ground: a 1 m thick slab. On flat worlds its top is y = 0 and it is the whole ground; under a
+/// terrain it sits `BED_FLOOR` below, under the lowest water bed, and only catches what falls through
+/// a gap.
+fn slab(world: &WorldFile, terrain: bool) -> Collider {
+    let half = from_cm(world.half_extent);
+    let top = if terrain { -BED_FLOOR } else { 0.0 };
+    ColliderBuilder::cuboid(half, 0.5, half).translation(Vector::new(0.0, top - 0.5, 0.0)).build()
+}
+
+/// The walls around the playable square (`boundary_walls`).
+fn walls(world: &WorldFile) -> Vec<Collider> {
     let wall = BOUNDARY_HEIGHT / 2.0;
-    for (x, z, hx, hz) in boundary_walls(world) {
-        colliders.push((ColliderBuilder::cuboid(hx, wall, hz).translation(Vector::new(x, wall, z)).build(), None));
-    }
+    boundary_walls(world).into_iter().map(|(x, z, hx, hz)| ColliderBuilder::cuboid(hx, wall, hz).translation(Vector::new(x, wall, z)).build()).collect()
+}
+
+/// The buildings, the rest of the collision mesh (bridges) and the tree trunks of `world`, each
+/// building or tree with the [`Obj`] it is.
+fn object_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)>> {
+    let mut colliders = Vec::new();
     let mesh = &world.collision;
     if !mesh.triangles.is_empty() {
         let vertex = |&[x, y, z]: &[i32; 3]| Vector::new(from_cm(x), from_cm(y), from_cm(z));
@@ -199,6 +222,10 @@ pub fn static_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)
 
 /// `f` of every item of `items`, in order, worked out on all the cores.
 fn in_parallel<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    // The browser has no threads to spawn: one tile at a time is little work anyway.
+    if cfg!(target_arch = "wasm32") {
+        return items.iter().map(f).collect();
+    }
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
     let chunk = items.len().div_ceil(threads).max(1);
     std::thread::scope(|scope| {
@@ -319,7 +346,17 @@ fn controller() -> KinematicCharacterController {
 
 impl Physics {
     pub fn new(world: &WorldFile) -> Result<Self> {
-        let mut physics = Self {
+        let mut physics = Self::empty(from_cm(world.half_extent));
+        for (collider, object) in static_colliders(world)? {
+            physics.insert_static(collider, object);
+        }
+        physics.step_pipeline();
+        Ok(physics)
+    }
+
+    /// A world with nothing in it yet, `bound` metres from the centre to each side.
+    fn empty(bound: f32) -> Self {
+        Self {
             bodies: RigidBodySet::new(),
             colliders: ColliderSet::new(),
             broad_phase: DefaultBroadPhase::new(),
@@ -341,17 +378,20 @@ impl Physics {
             removals: Vec::new(),
             replacements: Vec::new(),
             changed: Vec::new(),
-            bound: from_cm(world.half_extent),
-        };
-        for (collider, object) in static_colliders(world)? {
-            let handle = physics.colliders.insert(collider);
-            if let Some(object) = object {
-                physics.objects.insert(handle, object);
-                physics.handles.insert(object, handle);
-            }
+            bound,
+            tiles: HashMap::new(),
+            obstacles: std::collections::BTreeMap::new(),
         }
-        physics.step_pipeline();
-        Ok(physics)
+    }
+
+    /// Adds a static collider, noting the building or tree it is.
+    fn insert_static(&mut self, collider: Collider, object: Option<Obj>) -> ColliderHandle {
+        let handle = self.colliders.insert(collider);
+        if let Some(object) = object {
+            self.objects.insert(handle, object);
+            self.handles.insert(object, handle);
+        }
+        handle
     }
 
     /// Runs the rigid-body pipeline for one tick. Before any vehicle exists this only builds the
@@ -515,6 +555,22 @@ impl Physics {
         character.yaw = shared::quant::from_mrad(input.yaw);
     }
 
+    /// One tick of a stickman on foot, as both the server and the client's prediction run it:
+    /// `move_character_scaled`, plus what standing on a vehicle moving at `ride_velocity` does. Jumping
+    /// off it adds its speed to the knockback before the move; stepping off its edge adds it after.
+    /// Which vehicle the character stands on next (`Character::ride`) is the caller's to say.
+    pub fn step_character(&self, character: &mut Character, input: &InputFrame, dt: f32, speed_scale: f32, ride_velocity: Option<[f32; 3]>) {
+        let jumped = character.ride != 0 && character.grounded && input.buttons() & BUTTON_JUMP != 0;
+        if let (true, Some(velocity)) = (jumped, ride_velocity) {
+            inherit(character, velocity);
+        }
+        self.move_character_scaled(character, input, dt, speed_scale);
+        if let (false, false, Some(velocity)) = (jumped, character.grounded, ride_velocity) {
+            // Stepped off the edge of the roof.
+            inherit(character, velocity);
+        }
+    }
+
     /// Lies down or gets up, keeping the feet where they are. Getting up is refused while the
     /// standing body would not fit, so the player stays low until there is room.
     fn change_stance(&self, character: &mut Character, wants_prone: bool) {
@@ -529,6 +585,16 @@ impl Physics {
             character.prone = wants_prone;
         }
     }
+}
+
+/// Adds a vehicle's horizontal velocity to a character's knockback, within the wire's limit.
+fn inherit(character: &mut Character, velocity: [f32; 3]) {
+    let mut knock = [character.knock[0] + velocity[0], character.knock[1] + velocity[2]];
+    let speed = knock[0].hypot(knock[1]);
+    if speed > KNOCK_MAX_SPEED {
+        knock = [knock[0] / speed * KNOCK_MAX_SPEED, knock[1] / speed * KNOCK_MAX_SPEED];
+    }
+    character.knock = knock;
 }
 
 /// Capsule-centre height for a character standing on flat ground at y = 0.

@@ -97,7 +97,11 @@ Phase 3 and 4 need both.
       `sim` depends on.
 - [ ] Re-key the lift models on spec data instead of kind (the remaining `KIND_*` matches in
       `sim/src/vehicle.rs`).
-- [ ] Build it for `wasm32` and load it in the client; prove the pipeline on movement first.
+- [x] One `step_character` for both sides: the server's `Movement` mechanic and (next) the client's
+      prediction call the same function, ride and inherit included.
+- [x] A static scene that streams: `Physics::streamed`, `add_tile`, `remove_tile`, `refresh`, and
+      snapshot vehicles as solid stand-ins (`set_obstacle`), built with the server's own collider code.
+- [ ] `crates/sim-wasm` and a client build step; the client's stickman prediction on it.
 - [ ] Move vehicle prediction to it, so the client's Rapier is the server's Rapier; delete
       `sim/vehicle.ts` and the other mirrors.
 
@@ -256,3 +260,40 @@ Not yet checked: a game in a browser (shooting the rooster, picking up and dropp
 **Next:** `crates/sim-wasm` (a `cdylib` made with `wasm-bindgen`) and a client build step. Then the
 client's stickman prediction runs on `sim`, in place of `sim/movement.ts` and the `rapier3d-compat`
 character motor, checked against the existing `predict.spec.ts` fixture.
+
+### 2026-10-22: one character step, and a static scene that streams
+
+**One `step_character`.** The ride and inherit logic around `move_character_scaled` moved from the
+server's `Movement` mechanic into `sim::Physics::step_character`, so the client's prediction can call the
+same function. Moving it turned up a drift between the mirrors. When a stickman steps off a moving
+roof, the server decays the knockback and then adds the car's speed. `stepCharacter` in
+`client/src/sim/physics.ts` adds the speed and then decays. So every step-off was a small
+misprediction, which reconciliation hid. The server's order stands, since it is the authority, and
+the client gets it by running the same code.
+
+**Streaming** (`crates/sim/src/stream.rs`):
+
+- `static_colliders` is split into the slab, the walls and the objects (buildings, bridges, trunks).
+  Its output and order are unchanged, and the server still builds everything at once.
+- `Physics::streamed(&Manifest)` starts with only the slab and the walls.
+- `add_tile(&Manifest, col, row, &Tile)` adds a tile's own heightfield, laid out as the server's grid
+  is. Its buildings and trees are built by assembling a world of that one tile with terrain switched
+  off, so the ids (`ObjId`) and the triangle ranges are exactly the server's. Terrain is off because
+  `WorldFile::assemble` would otherwise allocate a world-sized ground grid on every tile.
+- `remove_tile` and `refresh` cover tiles leaving and queued changes. `refresh` applies queued
+  `destroy` / `replace_building` and updates the broad-phase, for a world that never calls `step_cars`.
+- `set_obstacle` / `remove_obstacle` put snapshot vehicles in as fixed bodies with the same solids
+  `add_car` gives them. Those solids are factored out as `vehicle::extra_solids` and `heavy`. They
+  replace `extraSolids` in `physics.ts`, which was a hand copy. A tank's turret can be turned off.
+- `in_parallel` runs in sequence on `wasm32`, where spawning a thread panics at run time even though
+  it compiles.
+
+**Tests** (`crates/sim/src/stream/tests.rs`, 5 new, sim now 103):
+
+- The fixture city, built whole and streamed tile by tile, gives the same hit, within 1 mm, for every
+  ray of a grid of downward and sideways probes (more than 100 of them hit something).
+- A stickman running and jumping for 10 s over the city ends up within 1 cm of the same run on the
+  whole world.
+- Removing a tile leaves only the slab under it.
+- Destroyed buildings and trees stop colliding.
+- Obstacles are solid, carry their velocity, and a tank's turret comes off and goes back on.
