@@ -230,7 +230,7 @@ fn work_walker_guns(world: &mut World, vid: u32, mut gun: Gun, pose: &CarPose, d
     let (_, dir) = aim_from(pose, WALKER_GUN_PIVOT, gun.yaw, gun.pitch);
     // The barrels hang under the chin, one either side, and take turns: the shell starts at the one
     // whose turn it is, the offset turned with the upper body (yaw) and the guns (pitch).
-    let side = if gun.shots % 2 == 0 { -1.0 } else { 1.0 };
+    let side = if gun.shots.is_multiple_of(2) { -1.0 } else { 1.0 };
     let (sp, cp) = gun.pitch.sin_cos();
     let (sy, cy) = gun.yaw.sin_cos();
     let (bx, by) = (side * WALKER_GUN_BARREL_X, -WALKER_GUN_BARREL_DROP);

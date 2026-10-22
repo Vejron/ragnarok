@@ -129,10 +129,11 @@ impl Game {
             Command::Rtc { from, to, kind, json } => {
                 // Signaling is retried by WebRTC itself, so a full outbox just sheds it: unlike
                 // game state it must not cost the receiver their session.
-                if from != to && self.world.players.contains_key(&from) {
-                    if let Some(outbox) = self.outboxes.get(&to) {
-                        let _ = outbox.try_send(Outgoing::Reliable(encode(&Rtc(S_RTC, from, kind, json)).into()));
-                    }
+                if from != to
+                    && self.world.players.contains_key(&from)
+                    && let Some(outbox) = self.outboxes.get(&to)
+                {
+                    let _ = outbox.try_send(Outgoing::Reliable(encode(&Rtc(S_RTC, from, kind, json)).into()));
                 }
             }
             Command::Input(id, baseline, frames) => {
