@@ -321,6 +321,34 @@ mod tests {
     }
 
     #[test]
+    fn a_hitscan_round_and_a_bullet_in_flight_both_hurt_a_rooster() {
+        use crate::mechanics::combat::{Round, hitscan};
+        use crate::mechanics::projectiles::Flying;
+        use shared::items::ITEM_AK5;
+        use shared::protocol::{HIT_DEALT, PROJECTILE_BULLET};
+        let gun = def(ITEM_AK5).unwrap();
+        let shooter = 999;
+
+        let mut game = game();
+        let r = rooster(&game);
+        let p = r.transform.position;
+        let round = Round { damage: 1, vehicle: 1, plane: 1, weapon: gun.weapon, range: gun.range, falloff: gun.falloff };
+        let (_, struck) = hitscan(&mut game.world, shooter, [p[0], p[1] + ROOSTER_CAPSULE_CENTRE, p[2] + 5.0], [0.0, 0.0, -1.0], &round, 0, 0);
+        assert!(struck);
+        assert_eq!(rooster(&game).health.hp, ROOSTER_HP - 1);
+        assert!(game.world.hits.iter().any(|(to, hit)| *to == shooter && hit.role == HIT_DEALT && hit.target == r.id), "the shooter sees the hit");
+
+        let mut game = self::game();
+        let r = rooster(&game);
+        let p = r.transform.position;
+        let at = [p[0], p[1] + ROOSTER_CAPSULE_CENTRE, p[2] + 3.0];
+        game.world.launch(Flying { kind: PROJECTILE_BULLET, owner: shooter, source: 0, position: at, velocity: [0.0, 0.0, -300.0], ttl: 30, item: ITEM_AK5, back: 0, flown: 0.0 });
+        game.step();
+        assert!(rooster(&game).health.hp < ROOSTER_HP, "the bullet met it on its first step");
+        assert_eq!(crate::mechanics::projectiles::count(&game.world.entities, None), 0, "and is spent");
+    }
+
+    #[test]
     fn killed_again_it_leaves_only_one_egg_lying_about() {
         let mut game = game();
         let id = rooster(&game).id;

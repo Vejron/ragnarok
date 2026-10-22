@@ -854,3 +854,35 @@ back against the last commit, two runs each:
 **Next:** a player's health and hit test joined with the generic ones. Players are tested by
 `first_body_hit` and roosters by `first_hurtbox_hit`, and blasts have two loops as well. One hit test
 and one damage path for everything that can be shot is what makes a new NPC cheap.
+
+### 2026-10-22: one place decides what a round hits
+
+`combat::hitscan` (rifles fired instantly, aircraft guns) and `projectiles::step_round` (gun rounds in
+flight) each had their own copy of the same 30 lines: a rooster nearer than a stickman, else the
+stickman with headshot, else the vehicle with armour and wheels, else the building or tree. A new
+target would have had to be added to both. They differed only in values, and both now end in
+`combat.rs`:
+
+- `strike(&World, &Flight, wall, range) -> Strike`: what the last stretch of the flight meets. It
+  changes nothing, so a bullet is still despawned before it does damage, as it was.
+- `land(&mut World, &Flight, &Strike, &Round)`: the damage.
+- `Flight` carries what differed:
+  - `shooter`, never hit by their own round;
+  - `attacker`, credited, `None` for a bullet whose owner has left;
+  - `back`, the ticks of lag compensation;
+  - `flown`, for falloff.
+- A bullet is passed as a `Round` with its vehicle and plane damage both its chip (damage / 4, at least
+  1), which is what it did before.
+
+New test: a hitscan round and a bullet in flight both hurt a rooster, and the shooter sees the hit.
+No test covered either path into a creature.
+
+**Found, not changed:** rockets, shells and grenades that strike (`step_striking`) test stickmen only,
+so they fly through roosters and burst on whatever is behind. Making them strike creatures too would
+change behaviour, so it waits for a decision. With `strike` it is one line.
+
+**Checks:** server 265 tests, all passing; clippy clean. `full_room_tick_cost`: `Combat` 29.2 µs on a
+settled run, within the noise of the last entry; the work per round is the same.
+
+**Next:** the sim's per-kind controls and solids into its `Spec`. Then Phase 0: generating the
+client's tables from Rust, which is most of what a new kind costs in files.

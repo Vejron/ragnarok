@@ -13,13 +13,12 @@
 //! kind is a new prefab in `prefab`.
 
 use super::armor::{self, Outcome};
-use super::combat::{Blast, Direct, blast_at, damage_hit, damage_vehicle, hit_at, hit_object, is_headshot, round_hit};
-use super::life::{damage_entity, first_hurtbox_hit, hit_mark};
+use super::combat::{Blast, Direct, Flight, Round as Damage, blast_at, land, strike};
 use crate::entities::{Component, Transform, With};
 use crate::game::{Player, World};
 use shared::consts::*;
 use shared::items::{FLARE_DRAG, FLARE_RADIUS, FLARE_SINK, Falloff, GRENADE_BLAST_RADIUS, GRENADE_BOUNCE, GRENADE_DAMAGE, GRENADE_KNOCK, GRENADE_RADIUS, def};
-use shared::protocol::{BEARING_NONE, HIT_DEALT, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, ShotEvent, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_BULLET, WEAPON_EGG, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_SHELL};
+use shared::protocol::{PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, ShotEvent, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_BULLET, WEAPON_EGG, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_SHELL};
 use shared::quant::to_cm;
 use std::collections::BTreeMap;
 
@@ -457,38 +456,18 @@ fn step_round(world: &mut World, id: u32, dt: f32) {
     let step = speed * dt;
     // A passenger's round leaves through their own vehicle (`source`) rather than stopping in it.
     let wall = world.physics.cast_ray_hit(s.position, dir, step, s.source);
-    let reach = wall.map_or(step, |(t, _)| t);
-    let hit = round_hit(world, s.position, dir, reach, wall.and_then(|(_, car)| car), step, Some(s.owner), round.back);
-    let creature = first_hurtbox_hit(world, s.position, dir, hit.map_or(reach, |(_, t)| t.min(reach)));
+    let (base, falloff, weapon) = item.map_or((0, Falloff::NONE, WEAPON_RIFLE), |d| (d.damage, d.falloff, d.weapon));
+    // What it does to a vehicle is a chip of what it does to a stickman, a plane no different.
+    let chip = (base / 4).max(1);
+    let damage = Damage { damage: base, vehicle: chip, plane: chip, weapon, range: step, falloff };
+    let attacker = world.entities.has::<Player>(s.owner).then_some(s.owner);
+    let flight = Flight { origin: s.position, dir, shooter: Some(s.owner), attacker, back: round.back, flown: round.flown };
+    let met = strike(world, &flight, wall, step);
     s.ttl = s.ttl.saturating_sub(1);
-    if hit.is_some() || creature.is_some() || wall.is_some() {
+    if met.any() {
         world.entities.despawn(id);
-        let end = creature.map(|(_, t)| t).or(hit.map(|(_, t)| t)).unwrap_or(reach);
-        let point: [f32; 3] = std::array::from_fn(|i| s.position[i] + dir[i] * end);
-        let (base, falloff, weapon) = item.map_or((0, Falloff::NONE, WEAPON_RIFLE), |d| (d.damage, d.falloff, d.weapon));
-        let damage_dealt = falloff.apply(base, round.flown + end);
-        let attacker = world.entities.has::<Player>(s.owner).then_some(s.owner);
-        if let Some((target, _)) = creature {
-            damage_entity(world, target, damage_dealt);
-            if let (Some(owner), Some((kind, at))) = (attacker, hit_mark(world, target)) {
-                world.hits.push((owner, hit_at(HIT_DEALT, kind, damage_dealt, weapon, BEARING_NONE, at, target)));
-            }
-        } else if let Some((victim, _)) = hit {
-            let head = hit.is_some_and(|(_, t)| is_headshot(world, victim, s.position, dir, t, round.back));
-            damage_hit(world, victim, damage_dealt, attacker, weapon, None, head);
-        } else if let Some((_, Some(car))) = wall {
-            match armor::armor_of(world, car, s.position, dir, reach) {
-                Some(Outcome::Ricochet { .. }) => armor::announce_ricochet(world, car, point),
-                struck => {
-                    let scale = if let Some(Outcome::Hit { scale, .. }) = struck { scale } else { 1.0 };
-                    let chip = (f32::from((base / 4).max(1)) * scale).round().max(1.0) as u8;
-                    damage_vehicle(world, car, chip, attacker);
-                    super::vehicles::shoot_wheels(world, car, point, f32::from(base), super::vehicles::BULLET_WHEEL_REACH);
-                }
-            }
-        } else if wall.is_some() {
-            hit_object(world, s.position, dir, reach, base);
-        }
+        land(world, &flight, &met, &damage);
+        let point: [f32; 3] = std::array::from_fn(|i| s.position[i] + dir[i] * met.end);
         let [x, y, z] = point.map(to_cm);
         world.shots.push(ShotEvent { shooter: id, weapon: WEAPON_BULLET, x, y, z });
         return;

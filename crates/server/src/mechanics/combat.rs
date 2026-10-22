@@ -796,24 +796,78 @@ pub struct Round {
 
 /// Fires one round for `shooter` from `origin` along the unit `dir`, through vehicle `ignore` (the one
 /// it is fired from, or 0), at stickmen where they stood `back` ticks ago. It hurts the first thing it
-/// meets: a stickman, a rooster, a vehicle, or a building or a tree. Returns how far it went, and
-/// whether it met anything at all before the end of its range.
+/// meets (see [`land`]). Returns how far it went, and whether it met anything at all before the end of
+/// its range.
 pub fn hitscan(world: &mut World, shooter: u32, origin: [f32; 3], dir: [f32; 3], round: &Round, ignore: u32, back: u32) -> (f32, bool) {
     let wall = world.physics.cast_ray_hit(origin, dir, round.range, ignore);
-    let reach = wall.map_or(round.range, |(t, _)| t);
-    let hit = round_hit(world, origin, dir, reach, wall.and_then(|(_, car)| car), round.range, Some(shooter), back);
+    let flight = Flight { origin, dir, shooter: Some(shooter), attacker: Some(shooter), back, flown: 0.0 };
+    let met = strike(world, &flight, wall, round.range);
+    land(world, &flight, &met, round);
+    (met.end, met.any())
+}
+
+/// A round on its way, for [`strike`] and [`land`]: where it is and which way it goes, whose it is,
+/// and how far it has come.
+pub struct Flight {
+    pub origin: [f32; 3],
+    pub dir: [f32; 3],
+    /// Never hit by their own round.
+    pub shooter: Option<u32>,
+    /// Credited with what it does; `None` once they have left.
+    pub attacker: Option<u32>,
+    /// Stickmen are tested where they stood this many ticks ago.
+    pub back: u32,
+    /// Metres flown before `origin`, for the damage falloff.
+    pub flown: f32,
+}
+
+/// What a round's last stretch meets, found by [`strike`] before [`land`] does anything about it.
+pub struct Strike {
+    /// The world the ray met first: how far, and the vehicle if it was one.
+    wall: Option<(f32, Option<u32>)>,
+    /// How far the stretch goes: to the wall, or the whole range.
+    reach: f32,
+    /// A rooster, or any other creature with a `Hurtbox`, nearer than any stickman.
+    creature: Option<u32>,
+    /// The stickman met, and how far along.
+    hit: Option<(u32, f32)>,
+    /// Where it stops.
+    pub end: f32,
+}
+
+impl Strike {
+    /// Whether it met anything at all.
+    pub fn any(&self) -> bool {
+        self.creature.is_some() || self.hit.is_some() || self.wall.is_some()
+    }
+}
+
+/// What a round flying `range` metres along `flight` meets, `wall` being what the world's ray met: the
+/// first of a creature, a stickman (seen through glass too), a vehicle, a building or a tree.
+pub fn strike(world: &World, flight: &Flight, wall: Option<(f32, Option<u32>)>, range: f32) -> Strike {
+    let Flight { origin, dir, shooter, back, .. } = *flight;
+    let reach = wall.map_or(range, |(t, _)| t);
+    let hit = round_hit(world, origin, dir, reach, wall.and_then(|(_, car)| car), range, shooter, back);
     // A creature (a rooster) nearer than the player (or with no player behind it) takes the shot.
     let creature = first_hurtbox_hit(world, origin, dir, hit.map_or(reach, |(_, t)| t.min(reach)));
     let end = creature.map(|(_, t)| t).or(hit.map(|(_, t)| t)).unwrap_or(reach);
-    if let Some((target, _)) = creature {
-        let dealt = round.falloff.apply(round.damage, end);
+    Strike { wall, reach, creature: creature.map(|(id, _)| id), hit, end }
+}
+
+/// Hurts what `met` says the round met, by `round`'s damage less what the distance flown takes off. A
+/// hitscan round and a bullet in flight both end here.
+pub fn land(world: &mut World, flight: &Flight, met: &Strike, round: &Round) {
+    let Flight { origin, dir, attacker, back, flown, .. } = *flight;
+    let &Strike { wall, reach, creature, hit, end } = met;
+    let dealt = round.falloff.apply(round.damage, flown + end);
+    if let Some(target) = creature {
         damage_entity(world, target, dealt);
-        if let Some((kind, at)) = hit_mark(world, target) {
-            world.hits.push((shooter, hit_at(HIT_DEALT, kind, dealt, round.weapon, BEARING_NONE, at, target)));
+        if let (Some(owner), Some((kind, at))) = (attacker, hit_mark(world, target)) {
+            world.hits.push((owner, hit_at(HIT_DEALT, kind, dealt, round.weapon, BEARING_NONE, at, target)));
         }
-    } else if let Some((victim, _)) = hit {
-        let head = hit.is_some_and(|(_, t)| is_headshot(world, victim, origin, dir, t, back));
-        damage_hit(world, victim, round.falloff.apply(round.damage, end), Some(shooter), round.weapon, None, head);
+    } else if let Some((victim, t)) = hit {
+        let head = is_headshot(world, victim, origin, dir, t, back);
+        damage_hit(world, victim, dealt, attacker, round.weapon, None, head);
     } else if let Some((_, Some(car))) = wall {
         let plane = world.entities.get::<Vehicle>(car).is_some_and(|vehicle| vehicle.kind == KIND_PLANE);
         let point = std::array::from_fn(|i| origin[i] + dir[i] * reach);
@@ -822,14 +876,13 @@ pub fn hitscan(world: &mut World, shooter: u32, origin: [f32; 3], dir: [f32; 3],
             struck => {
                 let scale = if let Some(Outcome::Hit { scale, .. }) = struck { scale } else { 1.0 };
                 let base = if plane { round.plane } else { round.vehicle };
-                damage_vehicle(world, car, (f32::from(base) * scale).round().max(1.0) as u8, Some(shooter));
+                damage_vehicle(world, car, (f32::from(base) * scale).round().max(1.0) as u8, attacker);
                 super::vehicles::shoot_wheels(world, car, point, f32::from(round.damage), super::vehicles::BULLET_WHEEL_REACH);
             }
         }
     } else if wall.is_some() {
         hit_object(world, origin, dir, reach, round.damage);
     }
-    (end, creature.is_some() || hit.is_some() || wall.is_some())
 }
 
 /// Throws a grenade from player `id`'s eye, a little above where they look so it arcs.
