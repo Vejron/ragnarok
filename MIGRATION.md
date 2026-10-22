@@ -354,8 +354,91 @@ These stay as Phase 3 left them, and can follow as their own steps:
 
 ### Phase 5: prefabs
 
-- [ ] A vehicle is one definition, one model, and a lift system only when it moves in a new way.
-      Measure: files touched per new kind (38 today, aim for 3 to 5).
+**Goal.** A vehicle kind is one definition on each side and one model. A new lift system is written
+only when the kind moves in a new way. Measure: a new kind that moves like an existing one touches
+3 to 5 files (the loitering drone touched 38).
+
+**Where it starts** (at `082411d`). A new wheeled kind touches these files by hand.
+
+Rust:
+
+- `protocol.rs`: its id.
+- `consts.rs`: its sizes.
+- `vehicles.rs`: its `VehicleDef`.
+- `mounts.rs`: its guns.
+- The sim's `spec.rs`: its `Spec`, and an arm in `spec()`.
+- `armor.rs`: its profile, if it is not light.
+
+Client:
+
+- `codec.ts`: the id again.
+- Its model, and a branch in `createVehicleModel`.
+- Its row in `seats.ts`.
+- `engine.ts`: the top speed, gears and pitch; otherwise it sounds like a jeep at a jeep's speed.
+- `vehicleaudio.ts`: its voices.
+- `slip.ts`: its wheel layout; otherwise it leaves a jeep's tracks.
+- `tyres.ts`: which wheels are driven and what comes out of the exhaust.
+- `vehiclesmoke.ts`: where its engine is.
+- The editor's `placements.ts`.
+
+**Kind branches left:**
+
+- Rust: 33 in 9 files, of which 11 are `spec()`'s match.
+- Client: 49 in 14 files, of which 29 are in sound, tyres and smoke, and 9 in `createVehicleModel`.
+
+#### Design
+
+1. **One Rust definition per kind.** `crates/shared/src/vehicles/` holds one file per kind, with
+   everything the game knows about it:
+   - its facts (name, health, seats, size);
+   - its body, crew and mounts;
+   - its physics: the sim's `Spec`, moved into `shared` as plain data;
+   - its armour: `armor.rs`'s `Profile`;
+   - for a drone, its `DroneDef` and how it is launched.
+
+   The sim, `armor.rs`, `Gunnery` and the drone mechanic read the definition, and `vehicle_def` is an
+   index rather than a search. The definition's numbers are kept bit for bit, so every physics
+   fixture holds.
+2. **No kind branches in the server or the sim.** What each remaining branch asks becomes a field:
+   - a turret that can be shot off (`damage_turret`);
+   - a seat on a turning mount (`seat_head` for the mortar);
+   - flown from afar (`is_drone`);
+   - canvas a machine gun tears (the plane in `combat.rs`);
+   - where a drone is launched and how it pops;
+   - which drone an item launches.
+
+   Kind ids move to `consts.rs`, so the client's are generated rather than copied into `codec.ts`.
+   The world's spawn mix in `vehicles.rs` stays: it is the world's choice, not the kind's.
+3. **One client presentation per kind.** `client/src/kinds/` holds one file per kind:
+   - its model;
+   - its seats (today's `seats.ts` row);
+   - its sound: voices, filters, gears, pitch and which mix it uses;
+   - its effects: wheel marks, driven wheels, exhaust, engine bay;
+   - its editor icon.
+
+   The generated table carries the physics numbers the client copies by hand today: top speed, wheel
+   layout, towed, a turret that can be shed. `createVehicleModel`, `seats.ts`, `engine.ts`,
+   `vehicleaudio.ts`, `tyres.ts`, `slip.ts`, `vehiclesmoke.ts` and the editor read the presentation.
+   A test checks that every Rust kind has one.
+
+#### Steps
+
+- [ ] **5.1** One Rust definition per kind, physics and armour included; the sim and `armor.rs` read
+      it.
+- [ ] **5.2** The server and the sim kind-free. Kind ids generated for the client.
+- [ ] **5.3** One client presentation per kind. Sound, tyres, smoke, models and the editor read it.
+- [ ] **5.4** Measure: add a trial kind in a scratch worktree and count the files it touches.
+      Document how to add a kind.
+
+#### Guardrails
+
+- **Behaviour:**
+  - the physics fixtures in `crates/sim` hold unchanged;
+  - the generated table changes only by the fields it gains;
+  - `seats.spec.ts` and the sound and slip tests hold;
+  - the sound mix is checked against the old if-chains for every kind, as the seats were.
+- **Cost:** `full_room_tick_cost` before and after 5.1.
+- **Progress:** kind branches and files touched per new kind, logged at each step.
 
 ## Baselines
 
