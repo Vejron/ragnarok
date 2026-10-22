@@ -21,6 +21,7 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{MissedTickBehavior, interval};
 
+mod replicate;
 mod snapshot;
 mod state;
 
@@ -712,5 +713,17 @@ mod tests {
         let names: Vec<&str> = game.mechanics.iter().map(|mechanic| mechanic.name()).collect();
         println!("per mechanic per tick ({}): {:?}", names.join(", "), per_mechanic.iter().map(|d| *d / ticks).collect::<Vec<_>>());
         println!("mechanics: avg {:?}, worst {:?}; snapshots for the room: avg {:?} per call (every {SNAPSHOT_EVERY} ticks); budget {budget:?}", step_total / ticks, step_max, snap_total / (ticks / SNAPSHOT_EVERY));
+        // What reading the world for snapshots costs, once per snapshot: v1's rows against v2's scene.
+        let runs = 200u32;
+        let started = Instant::now();
+        for _ in 0..runs {
+            std::hint::black_box((game.entity_states(), game.vehicle_states(), game.projectile_states(), game.pickup_states()));
+        }
+        let rows = started.elapsed() / runs;
+        let started = Instant::now();
+        for _ in 0..runs {
+            std::hint::black_box(game.replicated());
+        }
+        println!("reading the world: v1 rows {rows:?}, v2 scene {:?}", started.elapsed() / runs);
     }
 }

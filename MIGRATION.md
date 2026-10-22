@@ -211,7 +211,7 @@ Each step is tested on its own. Only the last one changes the wire.
 - [x] **3.1** `shared::replicated`: the components, their wire ids, the generic diff and apply, and
       the schema export. Unit tests port `delta.rs`'s tests: an unchanged turret is not resent, a
       repair clears damage, and so on.
-- [ ] **3.2** Server: the component scene built from the ECS. Parity oracle: for the full-room
+- [x] **3.2** Server: the component scene built from the ECS. Parity oracle: for the full-room
       scenario, converting it to today's rows must equal what `snapshot.rs` builds, entity for
       entity.
 - [ ] **3.3** Client: the generated schema, the generic decoder, the store and its `apply`. Byte
@@ -1169,3 +1169,55 @@ change; v2 sends only what changed.
 **Checks:** shared 72 tests, all passing; clippy clean.
 
 **Next:** 3.2, the component scene built from the server's ECS, checked against today's rows.
+
+### 2026-10-22: Phase 3.2, the server's scene as components
+
+`Game::replicated()` (`crates/server/src/game/replicate.rs`) builds protocol v2's scene from the ECS.
+It is every replicated entity as a `shared::replicated::Replicated`, ordered by id. Who is listed is
+as in v1:
+
+- standing players, and those flying a drone;
+- living creatures;
+- vehicles with a body;
+- projectiles but gun rounds;
+- items on the ground.
+
+Each entity gets only the components it has:
+
+| Entity | Components |
+|---|---|
+| Stickman | `kind`, `place`, `heading`, `motion`, `flags` |
+| Rooster | `kind`, `place`, `heading`, `flags` |
+| Vehicle | `kind`, `place`, `orientation`, `steer`, `seats`, `health`, and whichever of `turret`, `crew`, `thrust`, `arms`, `damage` it has |
+| Projectile | `projectile`, `place`, `velocity` |
+| Pickup | `pickup`, `place` |
+
+**Parity oracle** (`game/replicate/tests.rs`):
+
+- `rows(scene)` turns a v2 scene back into v1's rows. What an entity is follows from its components:
+  a `pickup`, a `projectile`, an `orientation` (a vehicle), else a stickman or creature. This is the
+  reference the client's adapter (3.4) mirrors.
+- The test runs a busy room for 360 ticks on the committed city: 12 players running and firing
+  different items, some crouching, 4 bots and a tank crew.
+- It forces the cases a quiet room would not have:
+  - a drone in the air;
+  - a rocket in flight;
+  - a hurt jeep with a passenger aboard;
+  - a wreck;
+  - a dead player.
+- Every 6 ticks it requires the rows from v2 to equal `entity_states`, `vehicle_states`,
+  `projectile_states` and `pickup_states` exactly. It also requires that each forced case was seen,
+  so the comparison cannot pass by never meeting it.
+
+`mechanics::for_tests` exposes what such setup needs from outside the mechanics, in test builds only.
+
+**Cost:** `full_room_tick_cost` now also times reading the world for a snapshot. v1's rows take about
+2.3 µs and v2's scene about 3.0 µs, against about 0.7 ms per snapshot round. The real cost is the
+per-player diff and shedding, which 3.5 moves to the generic diff, and where the guardrail
+measurement matters.
+
+`replicated()` is not on the wire yet, so the module allows dead code outside tests until 3.5.
+
+**Checks:** server 269 tests, all passing; clippy clean.
+
+**Next:** 3.3, the client's schema-driven decoder and entity store.

@@ -64,3 +64,15 @@ pub fn register_components(ecs: &mut bevy_ecs::world::World) {
 pub fn default_mechanics() -> Vec<Box<dyn Mechanic>> {
     vec![Box::new(Bots), Box::new(Spawn), Box::new(Pickups), Box::new(Drones), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement), Box::new(Life), Box::new(Npcs), Box::new(Combat)]
 }
+
+/// What tests outside the mechanics reach in for: setting up a busy room without playing it.
+#[cfg(test)]
+pub(crate) mod for_tests {
+    pub use super::combat::damage;
+    pub use super::drones::launch as launch_drone;
+    pub use super::projectiles::Flying;
+
+    pub fn add_vehicle(world: &mut crate::game::World, kind: u8, position: [f32; 3], yaw: f32) -> u32 {
+        super::vehicles::add_vehicle(world, kind, position, yaw)
+    }
+}
