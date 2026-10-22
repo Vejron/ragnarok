@@ -43,6 +43,20 @@ pub fn first_hurtbox_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f3
     })?
 }
 
+/// Whether a living entity with a hurtbox has the axis of its capsule within `proximity` of `point`:
+/// what sets off a proximity fuse, as a stickman does.
+pub fn hurtbox_near(world: &World, point: [f32; 3], proximity: f32) -> bool {
+    world.entities.scan::<(&Transform, &Hurtbox, &Health), (), _>(|living| {
+        living.filter(|(_, _, health)| health.alive()).any(|(transform, hurtbox, _)| {
+            let c = hurtbox.centre(transform.position);
+            let dy = (point[1] - c[1]).clamp(-hurtbox.half_height, hurtbox.half_height);
+            let d = [point[0] - c[0], point[1] - c[1] - dy, point[2] - c[2]];
+            d.iter().map(|v| v * v).sum::<f32>() < proximity * proximity
+        })
+    })
+    .unwrap_or(false)
+}
+
 /// What a hit on entity `id` is shown as (`HIT_*`), and where the marker goes: the top of its capsule.
 pub fn hit_mark(world: &World, id: u32) -> Option<(u8, [f32; 3])> {
     let transform = world.entities.get::<Transform>(id)?;

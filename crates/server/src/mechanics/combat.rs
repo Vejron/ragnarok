@@ -139,6 +139,15 @@ pub fn first_player_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f32
     first_body_hit(world, origin, dir, max, ignore, back, |_| true)
 }
 
+/// The first living thing the ray meets within `max`: a stickman as [`first_player_hit`] finds them,
+/// or a creature with a `Hurtbox` (a rooster). Of the two at the same distance the creature is hit,
+/// as a round hits it. What strikes a body and what aims at one asks this, so nothing that can be hurt
+/// is passed through by one weapon and met by another.
+pub fn first_living_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f32, ignore: Option<u32>, back: u32) -> Option<(u32, f32)> {
+    let player = first_player_hit(world, origin, dir, max, ignore, back);
+    first_hurtbox_hit(world, origin, dir, player.map_or(max, |(_, t)| t)).or(player)
+}
+
 /// [`first_player_hit`], among the bodies `only` accepts.
 fn first_body_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f32, ignore: Option<u32>, back: u32, only: impl Fn(&Body) -> bool) -> Option<(u32, f32)> {
     // In storage order. `ray_capsule` takes a hit at the limit, so in id order the later of two at the
@@ -362,6 +371,10 @@ pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
     }
     for (id, amount) in blasted(world, blast.point, blast.radius, blast.damage) {
         damage_entity(world, id, amount);
+        // Whoever set it off sees the hit, as they do one by a round.
+        if let (Some(owner), Some((kind, at))) = (blast.attacker.filter(|&owner| world.entities.has::<Player>(owner)), hit_mark(world, id)) {
+            world.hits.push((owner, hit_at(HIT_DEALT, kind, amount, blast.weapon, BEARING_NONE, at, id)));
+        }
     }
     let mut reached = world.physics.blast_cars(blast.point, blast.radius);
     // A shell that struck a vehicle's edge may burst further from its centre than the blast reaches.
@@ -660,8 +673,8 @@ pub fn scatter(world: &mut World, dir: [f32; 3], spread: f32) -> [f32; 3] {
     norm(std::array::from_fn(|i| dir[i] + right[i] * a + above[i] * b))
 }
 
-/// The direction from `eye` to what the over-the-shoulder camera's crosshair is on: a wall or a
-/// player (as `shooter` saw them `back` ticks ago) within `range`, else the far end of its line, as
+/// The direction from `eye` to what the over-the-shoulder camera's crosshair is on: a wall, a creature
+/// or a player (as `shooter` saw them `back` ticks ago) within `range`, else the far end of its line, as
 /// seen from the camera's `pivot` (vehicle `ignore`, the shooter's own, is not in the way). The camera
 /// is a function of the pivot, yaw and pitch alone, so the server finds the same ray the player sees.
 /// Falls back to `look_dir` when the camera ray starts inside geometry or the point would send the
@@ -669,7 +682,7 @@ pub fn scatter(world: &mut World, dir: [f32; 3], spread: f32) -> [f32; 3] {
 #[allow(clippy::too_many_arguments)]
 fn crosshair_dir(world: &World, shooter: u32, back: u32, pivot: [f32; 3], eye: [f32; 3], look_dir: [f32; 3], range: f32, ignore: u32) -> [f32; 3] {
     let wall = world.physics.cast_ray(pivot, look_dir, range, ignore).unwrap_or(range);
-    let t = first_player_hit(world, pivot, look_dir, wall, Some(shooter), back).map_or(wall, |(_, t)| t);
+    let t = first_living_hit(world, pivot, look_dir, wall, Some(shooter), back).map_or(wall, |(_, t)| t);
     let to: [f32; 3] = std::array::from_fn(|i| pivot[i] + look_dir[i] * t - eye[i]);
     let len = to.iter().map(|v| v * v).sum::<f32>().sqrt();
     if len < 1e-3 {

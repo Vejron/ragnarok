@@ -55,8 +55,8 @@ pub struct Sinks {
     pub max_sink: f32,
 }
 
-/// Bursts on the first thing it meets, or where it is when its time runs out. `bodies`: stickmen in
-/// its path stop it too. `armor`: a vehicle it meets first judges it (`armor::armor_of`), and may turn
+/// Bursts on the first thing it meets, or where it is when its time runs out. `bodies`: stickmen and
+/// creatures in its path stop it too. `armor`: a vehicle it meets first judges it (`armor::armor_of`), and may turn
 /// it away. `lost_below`: under `KILL_Y` it is simply gone.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Strikes {
@@ -340,14 +340,14 @@ fn step_striking(world: &mut World, id: u32, dt: f32, strikes: Strikes) {
     let step = speed * dt;
     let hit = world.physics.cast_ray_hit(s.position, dir, step, s.source);
     let wall = hit.map(|(t, _)| t);
-    // Stickmen are not physics bodies, so test the path against each one.
-    let player = if strikes.bodies { super::combat::first_player_hit(world, s.position, dir, wall.unwrap_or(step), Some(s.owner), 0) } else { None };
+    // Stickmen and creatures are not physics bodies, so test the path against each one.
+    let body = if strikes.bodies { super::combat::first_living_hit(world, s.position, dir, wall.unwrap_or(step), Some(s.owner), 0) } else { None };
     s.ttl = s.ttl.saturating_sub(1);
-    if let Some(t) = player.map(|(_, t)| t).or(wall) {
+    if let Some(t) = body.map(|(_, t)| t).or(wall) {
         let point: [f32; 3] = std::array::from_fn(|i| s.position[i] + dir[i] * t);
         // A vehicle was hit first: its armor decides whether it bursts on it or glances off.
         let mut direct = None;
-        if let (true, None, Some((_, Some(vid)))) = (strikes.armor, player, hit) {
+        if let (true, None, Some((_, Some(vid)))) = (strikes.armor, body, hit) {
             match armor::armor_of(world, vid, s.position, dir, step) {
                 Some(Outcome::Ricochet { normal }) => {
                     let normal = world.physics.car_pose(vid).map_or(normal, |pose| pose.world_dir(normal));

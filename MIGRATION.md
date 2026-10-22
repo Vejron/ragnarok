@@ -960,3 +960,41 @@ same numbers the comparisons used.
 **Next:** Phase 3, component replication (protocol v2), or the remaining mirrors of Phase 1 (`codec`,
 `terrain.ts`, `carve.ts`). The codec is the larger part of both and also what Phase 3 replaces, so
 Phase 3 goes first.
+
+### 2026-10-22: everything that hurts stickmen hurts creatures
+
+Creatures (anything with a `Hurtbox` and `Health`; roosters today) were reached only by the paths
+written after them. A survey of every hit test:
+
+| What does the hitting | Stickmen | Creatures | World |
+|---|---|---|---|
+| Rounds, bullets in flight | yes | yes | yes |
+| Blasts | yes | yes, but the attacker saw no hit marker | yes |
+| Rockets, shells, autocannon, bombs, mortar rounds | yes | **no**: flew through | yes |
+| A vehicle running into it | yes | **no**: drove through | yes |
+| A drone's proximity fuse | yes | **no** | yes |
+| The crosshair's aim distance (over-the-shoulder shots) | yes | **no**: a shot could miss the rooster under the crosshair | yes |
+| Grenades, eggs, flares | no | no | yes (by design: they bounce or stick on the world) |
+
+The bold "no"s and the missing marker are fixed:
+
+- **`combat::first_living_hit`**: the nearest stickman or creature on a ray. A creature wins a tie,
+  as it does for a round. Projectiles that strike (`step_striking`) and `crosshair_dir` use it.
+- **`life::hurtbox_near`**: the creature half of a proximity fuse. A drone goes off near either.
+- **`vehicles::run_down_creatures`**, after `knock_players`: a car overlapping a creature at more than
+  `ROADKILL_MIN_SPEED` hurts it by the stickman's roadkill amount (`roadkill_damage`, now shared).
+  The driver sees the hit. A creature is not thrown, having no momentum to give. A drone does not
+  run anything down, as it does not throw stickmen. This needed a sim query for any capsule,
+  `Physics::car_hit_capsule`. `car_hit` (a stickman's capsule) now goes through the same code.
+- **Blasts** now give whoever set them off a hit marker for each creature they hurt, as a round's
+  hit does.
+
+Three new tests, each run first against the old code to see it fail:
+
+- a rocket bursts on a rooster in its path;
+- a car driven through a rooster at speed runs it down;
+- the proximity fuse finds a rooster, and a blast's attacker sees its hit marker.
+
+**Checks:** server 268, sim 111, client 362 tests (on a fresh WASM build), all passing; workspace
+clippy clean. `full_room_tick_cost`: `Vehicles` 31.4–34.0 µs, about 1–2 µs higher on these runs, mostly
+the new check of each living creature against the cars. Within the noise of the runs above.

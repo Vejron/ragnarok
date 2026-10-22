@@ -349,6 +349,56 @@ mod tests {
     }
 
     #[test]
+    fn a_rocket_bursts_on_a_rooster_in_its_path() {
+        use crate::mechanics::projectiles::Flying;
+        use shared::protocol::PROJECTILE_ROCKET;
+        let mut game = game();
+        let p = rooster(&game).transform.position;
+        // Level with its middle, over flat ground: without the rooster in the way it flies on.
+        let at = [p[0], p[1] + ROOSTER_CAPSULE_CENTRE, p[2] + 6.0];
+        game.world.launch(Flying { kind: PROJECTILE_ROCKET, owner: 999, source: 0, position: at, velocity: [0.0, 0.0, -30.0], ttl: 120, item: 0, back: 0, flown: 0.0 });
+        for _ in 0..30 {
+            game.step();
+        }
+        assert!(rooster(&game).health.hp < ROOSTER_HP, "the rocket burst on it");
+    }
+
+    #[test]
+    fn a_car_driven_through_a_rooster_runs_it_down() {
+        use shared::protocol::KIND_JEEP;
+        let mut game = game();
+        let p = rooster(&game).transform.position;
+        let (x, z) = (p[0], p[2] + 10.0);
+        let y = game.world.map.ground.height_at(x, z) + 1.0;
+        let vid = crate::mechanics::vehicles::add_vehicle(&mut game.world, KIND_JEEP, [x, y, z], 0.0);
+        // Yaw 0 faces -Z, at the rooster.
+        game.world.physics.set_car_velocity(vid, [0.0, 0.0, -20.0]);
+        for _ in 0..60 {
+            game.step();
+        }
+        assert!(rooster(&game).health.hp < ROOSTER_HP, "run down at speed");
+    }
+
+    #[test]
+    fn a_proximity_fuse_and_a_blasts_hit_marker_count_a_rooster_as_they_do_a_stickman() {
+        use crate::game::TEAM_BOTS;
+        use crate::mechanics::combat::{Blast, blast};
+        use crate::mechanics::life::hurtbox_near;
+        use shared::protocol::{HIT_DEALT, WEAPON_GRENADE};
+        let mut game = game();
+        let r = rooster(&game);
+        let p = r.transform.position;
+        let centre = [p[0], p[1] + ROOSTER_CAPSULE_CENTRE, p[2]];
+        assert!(hurtbox_near(&game.world, [centre[0] + 0.8, centre[1], centre[2]], 1.0));
+        assert!(!hurtbox_near(&game.world, [centre[0] + 3.0, centre[1], centre[2]], 1.0));
+
+        let bot = game.add_bot([p[0] + 30.0, p[2]], TEAM_BOTS, Vec::new()).unwrap();
+        blast(&mut game.world, Blast { point: centre, radius: 3.0, damage: 10.0, knock: 0.0, dir: [0.0, 1.0, 0.0], attacker: Some(bot), weapon: WEAPON_GRENADE });
+        assert!(rooster(&game).health.hp < ROOSTER_HP);
+        assert!(game.world.hits.iter().any(|(to, hit)| *to == bot && hit.role == HIT_DEALT && hit.target == r.id), "whoever set it off sees the hit");
+    }
+
+    #[test]
     fn killed_again_it_leaves_only_one_egg_lying_about() {
         let mut game = game();
         let id = rooster(&game).id;

@@ -826,19 +826,29 @@ impl Physics {
         self.car_touching(position)
     }
 
+    /// The car, if any, overlapping an upright capsule centred at `centre`: what a creature that is
+    /// not a stickman is run down by.
+    pub fn car_hit_capsule(&self, centre: [f32; 3], half_height: f32, radius: f32) -> Option<CarHit> {
+        self.car_touching_shape(centre, SharedShape::capsule_y(half_height, radius).as_ref())
+    }
+
     /// The car, if any, that a character centred at `position` is standing on.
     pub fn car_under(&self, position: [f32; 3]) -> Option<CarHit> {
         self.car_touching([position[0], position[1] - RIDE_PROBE, position[2]])
     }
 
     fn car_touching(&self, position: [f32; 3]) -> Option<CarHit> {
+        self.car_touching_shape(position, self.character_shape.shape())
+    }
+
+    fn car_touching_shape(&self, position: [f32; 3], shape: &dyn rapier3d::geometry::Shape) -> Option<CarHit> {
         let queries = self.broad_phase.as_query_pipeline(
             self.narrow_phase.query_dispatcher(),
             &self.bodies,
             &self.colliders,
             QueryFilter::only_dynamic(),
         );
-        let (hit, _) = queries.intersect_shape(Pose::from_translation(Vector::from(position)), self.character_shape.shape()).next()?;
+        let (hit, _) = queries.intersect_shape(Pose::from_translation(Vector::from(position)), shape).next()?;
         let (&car, body) = self.cars.iter().find(|(_, car)| car.owns(hit)).and_then(|(id, car)| Some((id, self.bodies.get(car.body)?)))?;
         Some(CarHit { car, position: body.translation().into(), velocity: body.linvel().into() })
     }

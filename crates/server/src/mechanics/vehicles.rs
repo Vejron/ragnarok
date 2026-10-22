@@ -1,12 +1,12 @@
-use crate::entities::{Health, HurtBy, With};
+use crate::entities::{Health, HurtBy, Hurtbox, Transform, With};
 use super::Mechanic;
 use crate::game::{Mounts, Player, Seat, Seats, Vehicle, World, Wreck};
 use sim::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_extents};
 use shared::consts::*;
 use shared::vehicles::{VehicleDef, vehicle_def};
 use shared::protocol::{
-    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, ShotEvent, WEAPON_CRASH, is_drone,
-    WEAPON_ROADKILL, WEAPON_SCRAPE, vehicle_hp,
+    BEARING_NONE, DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, ShotEvent, WEAPON_CRASH, is_drone,
+    HIT_DEALT, WEAPON_ROADKILL, WEAPON_SCRAPE, vehicle_hp,
 };
 use shared::quant::{to_cm, wrap_angle};
 use shared::world::WorldFile;
@@ -535,6 +535,35 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
     }
 }
 
+/// Runs down every living creature (a rooster) a car overlaps fast enough to run a stickman down, by the
+/// same amount; whoever drives sees the hit. A creature is not thrown: it has no momentum to give.
+fn run_down_creatures(world: &mut World) {
+    let mut run_down = Vec::new();
+    for id in world.entities.ids::<(With<Transform>, With<Hurtbox>, With<Health>)>() {
+        if world.entities.dead(id) {
+            continue;
+        }
+        let (transform, hurtbox) = (world.entities.of::<Transform>(id), world.entities.of::<Hurtbox>(id));
+        let Some(hit) = world.physics.car_hit_capsule(hurtbox.centre(transform.position), hurtbox.half_height, hurtbox.radius) else { continue };
+        let speed = hit.velocity[0].hypot(hit.velocity[2]);
+        if speed > ROADKILL_MIN_SPEED && !world.entities.get::<Vehicle>(hit.car).is_some_and(|vehicle| is_drone(vehicle.kind)) {
+            run_down.push((id, roadkill_damage(speed), hit.car));
+        }
+    }
+    for (id, amount, car) in run_down {
+        super::life::damage_entity(world, id, amount);
+        let driver = world.entities.get::<Seats>(car).and_then(|seats| seats.rider(0)).filter(|&driver| world.entities.has::<Player>(driver));
+        if let (Some(driver), Some((kind, at))) = (driver, super::life::hit_mark(world, id)) {
+            world.hits.push((driver, super::combat::hit_at(HIT_DEALT, kind, amount, WEAPON_ROADKILL, BEARING_NONE, at, id)));
+        }
+    }
+}
+
+/// What being run down at `speed` m/s takes off a stickman or a creature.
+fn roadkill_damage(speed: f32) -> u8 {
+    ((speed - ROADKILL_MIN_SPEED) * ROADKILL_DAMAGE_PER_SPEED).min(f32::from(PLAYER_MAX_HP)).round() as u8
+}
+
 /// Throws every standing player a car overlaps. The direction leans on the car's heading with a
 /// little outward push, so a car drives a player ahead of it and off to the side.
 fn knock_players(world: &mut World) {
@@ -567,7 +596,7 @@ fn knock_players(world: &mut World) {
         player.hit_cooldown = HIT_COOLDOWN;
         tracing::debug!(player = ?player.character.position, car = hit.car, speed, "player knocked");
         if speed > ROADKILL_MIN_SPEED {
-            let amount = ((speed - ROADKILL_MIN_SPEED) * ROADKILL_DAMAGE_PER_SPEED).min(f32::from(PLAYER_MAX_HP)).round() as u8;
+            let amount = roadkill_damage(speed);
             run_down.push((id, amount, hit.car, hit.position));
         }
     }
@@ -716,6 +745,7 @@ impl Mechanic for Vehicles {
             }
         }
         knock_players(world);
+        run_down_creatures(world);
         run_down_trees(world, &before);
         plow_trees(world, &before);
         crash(world, &before);
