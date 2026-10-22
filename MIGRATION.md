@@ -254,7 +254,102 @@ Each step is tested on its own. Only the last one changes the wire.
 
 ### Phase 4: client entity store and presenters
 
-- [ ] Store and presenters; split `game.ts`; camera and input registries.
+**Goal.** The client draws what the server's components say, without rows per family or a hub that
+knows every family. A new kind of thing is drawn by presenters chosen by its components, and what a
+seat does to the camera and the HUD is data. The adapter and v1's rows go, on both sides. The wire does
+not change.
+
+**Where it starts** (`client/src`, at `fd9533f`):
+
+- `game.ts` is 1,922 lines.
+  - It holds 15 maps and sets keyed by entity id, each cleaned up by hand when its entity goes.
+  - It has three interpolators: stickmen, vehicles and rockets, all fed v1 rows by the adapter.
+  - It has 32 `KIND_*` branches; the client as a whole has 82.
+- `frame()` is one 360-line function: the camera is an if-chain over seat kinds, and so are the HUD's
+  seat role and the boarding prompt.
+
+#### Design
+
+1. **Units are part of the schema.** Each field in `shared::replicated` names its unit:
+   - `cm`: metres on the client;
+   - `mrad`: radians, an angle;
+   - `quat`: a unit quaternion's part, with `w` rebuilt;
+   - `axis`: −1..1;
+   - `byte`: 0..1;
+   - `dm`: metres in tenths.
+
+   Rust writes the units into `components.generated.ts`. One generic function turns a wire entity into
+   game units, and one blends two of them for interpolation:
+   - `cm`, `mrad` (the short way round), `quat` (normalised, as a whole) and `axis` are interpolated;
+   - everything else (counters, flags, ids, health, gauges) is taken from the nearer snapshot.
+
+   This is v1's blending, except that a few fields it took from the later snapshot (`seats`, `held`
+   and the stance) now come from the nearer one: at most 16 ms apart.
+2. **An entity store** (`entities/store.ts`), fed every rebuilt scene by `Replica`.
+   - It keeps each entity's recent states in game units and samples them at the render tick, which
+     replaces the three interpolators.
+   - It drops whatever the newest scene no longer has.
+   - Unchanged entities share one object between scenes, so a state is converted once, not once a
+     scene.
+3. **Presenters.** A presenter says which entities it draws, by their components, and gets `update(id,
+   entity, frame)` every frame and `remove(id)` once. The store calls `remove` when an entity goes or
+   stops matching, so per-entity state lives in the presenter that uses it and is cleaned up in one
+   place.
+   - **Projectiles:** rockets, shells and flares, with trails, flare light and the burst when unlisted.
+   - **Items on the ground.**
+   - **Stickmen:** avatars and wading.
+   - **Creatures:** the rooster, and its crow.
+   - **Vehicles:** the model, plus one presenter per component:
+     - `turret`: muzzle flash, recoil and sound;
+     - `arms`: a plane's guns;
+     - `health`: smoke and the burning wreck;
+     - `damage`: wear and a shed turret;
+     - `thrust`: nozzles;
+     - wheels and engine: tyres and their sound.
+4. **Seats are data.** A seat's camera rig, its HUD role and its boarding prompt come from one table per
+   vehicle kind, beside `vehicleDef`, instead of if-chains in `frame()`, `prompt()` and the HUD.
+   - Camera rigs are a registry: chase, turret, FPV, aviator, tanker, walker, mortar, passenger and on
+     foot.
+   - Each rig's per-seat state (`wasGunner` and the rest) is the rig's own.
+5. **`game.ts` is split:**
+   - the connection and message handling;
+   - the local player (prediction, firing feedback, camera);
+   - events (shots, bullets, hits);
+   - the HUD's stats.
+
+   `Game` keeps the loop and wires these together.
+
+#### Steps
+
+- [ ] **4.1** Units in the schema, with generic conversion and blending (`entities/units.ts`). Checked
+      against v1's converters: every fixture scene converted generically must equal the adapter's
+      states, field for field.
+- [ ] **4.2** The store, with projectiles and items on the ground as its first presenters: the rocket
+      interpolator and the adapter's rocket and item lists go.
+- [ ] **4.3** Stickmen and the rooster from the store: the entity interpolator goes.
+- [ ] **4.4** Vehicles from the store, as a model presenter and component presenters: the vehicle
+      interpolator goes, along with the per-vehicle maps in `game.ts`.
+- [ ] **4.5** The adapter and v1's rows are deleted:
+  - client: `v1Rows`/`v1Scene`, `RawEntity`/`RawVehicle`, `EntityState`/`VehicleState`/`RocketState`/
+    `PickupState`;
+  - Rust: `v1_rows`, the row structs, and the server's test views built on them.
+- [ ] **4.6** Seats as data: camera rigs, the HUD's seat role and the prompt.
+- [ ] **4.7** `game.ts` split into the parts above.
+
+#### Guardrails
+
+- **Behaviour:** client tests stay green, and the interpolation tests are ported to the store. A short
+  play on a small world after 4.4 and after 4.7.
+- **Cost:** a vitest measurement of a full room's per-frame store work (64 stickmen, 20 vehicles, 30
+  projectiles), before (the interpolators) and after. It should not grow.
+- **Progress:** `game.ts` lines, its id-keyed maps, and its `KIND_*` branches, logged at each step.
+
+#### Deferred, needing wire changes
+
+These stay as Phase 3 left them, and can follow as their own steps:
+
+- owner-only components (the hotbar, the driver's motion) replacing the `self`/`drive` header;
+- seated players listed with a `Seated` component.
 
 ### Phase 5: prefabs
 
