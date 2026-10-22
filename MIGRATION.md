@@ -224,7 +224,7 @@ Each step is tested on its own. Only the last one changes the wire.
   - delete `EntityState`/`VehicleState`/`*Delta` and their codec, `delta.rs`, the projectile and
     pickup lists and `snapshot.rs`'s row building;
   - update NETWORKING.md.
-- [ ] **3.6** A headless browser session against a real server: join, walk, drive, shoot, and watch a
+- [x] **3.6** A headless browser session against a real server: join, walk, drive, shoot, and watch a
       bot and a rooster, with the client's console clean. This is also the first end-to-end run of the
       migration so far.
 
@@ -1360,3 +1360,31 @@ Snapshots now carry components. `PROTOCOL_VERSION` is 39.
 workspace clippy and `vue-tsc` clean.
 
 **Next:** 3.6, a headless browser session against a real server.
+
+### 2026-10-22: Phase 3.6, the game played end to end
+
+The release server and the Vite dev client ran on the bug world, with five scenario bots and the
+rooster, and headless Chrome drove the client through the DevTools protocol. Each step was checked
+against the scene the client rebuilt from the snapshots, read through `window.__game`:
+
+- **Join and land.** The player joined and came down under the spawn parachute.
+- **Snapshots.** About 120 ticks arrived and were rebuilt every 2 s, as 30 snapshots a second should
+  give.
+- **Others.** The bots were held as stickmen.
+- **Walk.** The player walked 10 m in the direction faced.
+- **Shoot.** 15 AK5 bullets came back as spawns.
+- **Drive.** The player boarded the nearest free vehicle: a jeep, a kind-2 vehicle and a kind-7 one
+  across runs. It drove 25–35 m and got out.
+- **Rooster.** It was held from 298 m, just inside the interest radius, on the run towards it.
+- **Death.** The bots killed the player on some runs. Respawn, and the parachute, worked.
+
+Prediction corrections stayed at 0.00 m. The console was clean apart from the browser's AudioContext
+autoplay warning, which comes from nobody clicking in a headless browser. The server log had no
+errors besides one QUIC idle timeout per killed browser. The user then played the game by hand, and
+it worked.
+
+The driver script was not kept: the bots make its boarding step flaky. If Phase 4 wants such a
+check, it should be rebuilt with respawn handling.
+
+**Next:** Phase 4, the client entity store and presenters, which removes the adapter and the v1
+rows.
