@@ -1,6 +1,12 @@
-/** Mirrors `crates/shared/src/items.rs`. Keep the two in step: `parity.spec.ts` checks this file against `fixtures/parity/gameplay.json`, which the Rust tests generate. */
+/**
+ * The items of `crates/shared/src/items.rs`. The table is built from `tables.generated.json`, which the
+ * Rust tests write from the server's (`UPDATE_PARITY=1 cargo test -p shared parity`); only how an item
+ * is held and sounds is the client's own, in `PRESENTATION`. The `ITEM_*` ids and the scalar constants
+ * below are checked against the Rust source by `consts-parity.spec.ts`.
+ */
 
 import { BUTTON_ALT, TICK_RATE } from './consts'
+import tables from './tables.generated.json'
 
 export const HOTBAR_SLOTS = 5
 
@@ -55,18 +61,32 @@ export interface ItemDef {
   falloffMin: number
 }
 
-const DEFS: Record<number, ItemDef> = {
-  [ITEM_REVOLVER]: { name: 'Revolver', kind: 'gun', auto: false, damage: 35, cooldownTicks: 30, mag: 6, reloadTicks: 2 * TICK_RATE, range: 150, aimSpeed: 0.8, scope: false, stack: 1, stance: 'pistol', weapon: 4, projectile: true, sound: 'revolver', pellets: 1, falloffStart: 30, falloffEnd: 150, falloffMin: 0.6 },
-  [ITEM_AK5]: { name: 'AK5', kind: 'gun', auto: true, damage: 12, cooldownTicks: 6, mag: 30, reloadTicks: (5 * TICK_RATE) / 2, range: 200, aimSpeed: 0.6, scope: false, stack: 1, stance: 'rifle', weapon: 0, projectile: true, sound: 'rifle', pellets: 1, falloffStart: 25, falloffEnd: 200, falloffMin: 0.5 },
-  [ITEM_SNIPER]: { name: 'Sniper', kind: 'gun', auto: false, damage: 90, cooldownTicks: 2 * TICK_RATE, mag: 5, reloadTicks: 3 * TICK_RATE, range: 400, aimSpeed: 0.4, scope: true, stack: 1, stance: 'rifle', weapon: 7, projectile: true, sound: 'sniper', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
-  [ITEM_SHOTGUN]: { name: 'Shotgun', kind: 'gun', auto: false, damage: 12, cooldownTicks: TICK_RATE, mag: 5, reloadTicks: 3 * TICK_RATE, range: 40, aimSpeed: 0.7, scope: false, stack: 1, stance: 'rifle', weapon: 13, projectile: false, sound: 'shotgun', pellets: 10, falloffStart: 8, falloffEnd: 40, falloffMin: 0.25 },
-  [ITEM_GRENADE]: { name: 'Grenade', kind: 'grenade', auto: false, damage: 0, cooldownTicks: TICK_RATE, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 3, stance: 'hold', weapon: 5, projectile: false, sound: 'rifle', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
-  [ITEM_BANDAGE]: { name: 'Bandage', kind: 'heal', auto: false, damage: 40, cooldownTicks: 0, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 5, stance: 'hold', weapon: 0, projectile: false, sound: 'rifle', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
-  [ITEM_DRONE]: { name: 'FPV drone', kind: 'drone', auto: false, damage: 0, cooldownTicks: TICK_RATE, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 1, stance: 'hold', weapon: 19, projectile: false, sound: 'rifle', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
-  [ITEM_LOITER]: { name: 'Loitering drone', kind: 'drone', auto: false, damage: 0, cooldownTicks: TICK_RATE, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 1, stance: 'hold', weapon: 21, projectile: false, sound: 'rifle', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
-  [ITEM_FLARE]: { name: 'Flare gun', kind: 'flare', auto: false, damage: 0, cooldownTicks: TICK_RATE, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 3, stance: 'pistol', weapon: 22, projectile: false, sound: 'revolver', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
-  [ITEM_GOLDEN_EGG]: { name: 'Golden egg', kind: 'heal', auto: false, damage: 255, cooldownTicks: 0, mag: 0, reloadTicks: 0, range: 0, aimSpeed: 1, scope: false, stack: 1, stance: 'hold', weapon: 0, projectile: false, sound: 'rifle', pellets: 1, falloffStart: 0, falloffEnd: 0, falloffMin: 1 },
+/** What the client adds to an item: how it is held and what it sounds like. Every item needs one. */
+type Presentation = Pick<ItemDef, 'stance' | 'sound'>
+
+const PRESENTATION: Record<number, Presentation> = {
+  [ITEM_REVOLVER]: { stance: 'pistol', sound: 'revolver' },
+  [ITEM_AK5]: { stance: 'rifle', sound: 'rifle' },
+  [ITEM_SNIPER]: { stance: 'rifle', sound: 'sniper' },
+  [ITEM_SHOTGUN]: { stance: 'rifle', sound: 'shotgun' },
+  [ITEM_GRENADE]: { stance: 'hold', sound: 'rifle' },
+  [ITEM_BANDAGE]: { stance: 'hold', sound: 'rifle' },
+  [ITEM_DRONE]: { stance: 'hold', sound: 'rifle' },
+  [ITEM_LOITER]: { stance: 'hold', sound: 'rifle' },
+  [ITEM_FLARE]: { stance: 'pistol', sound: 'revolver' },
+  [ITEM_GOLDEN_EGG]: { stance: 'hold', sound: 'rifle' },
 }
+
+/** The server's rows, as the generated table has them. */
+type ItemRow = Omit<ItemDef, 'stance' | 'sound'> & { id: number }
+
+const DEFS: Record<number, ItemDef> = Object.fromEntries(
+  (tables.items as ItemRow[]).map(({ id, ...row }) => {
+    const presentation = PRESENTATION[id]
+    if (!presentation) throw new Error(`item ${id} (${row.name}) has no PRESENTATION entry in sim/items.ts`)
+    return [id, { ...row, ...presentation }]
+  }),
+)
 
 /** The definition of `item`; undefined for an empty slot or an unknown id. */
 export const itemDef = (item: number): ItemDef | undefined => DEFS[item]

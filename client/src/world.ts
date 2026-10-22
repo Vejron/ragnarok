@@ -1,4 +1,5 @@
 import { decode } from '@msgpack/msgpack'
+import tables from './sim/tables.generated.json'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
@@ -61,8 +62,8 @@ export const TREE_ROCK_SLAB = 8
 export const TREE_BUSH = 9
 
 /**
- * How an archetype's collider is sized and whether it can fall. Mirrors `TREE_KINDS` in
- * `crates/shared/src/world.rs`; `parity.spec.ts` checks it against the server's table.
+ * How an archetype's collider is sized and whether it can fall: `TREE_KINDS` in
+ * `crates/shared/src/world.rs`, through `sim/tables.generated.json`.
  */
 export interface TreeKindDef {
   kind: number
@@ -79,22 +80,8 @@ export interface TreeKindDef {
   destructible: boolean
 }
 
-const treeKind = (kind: number, name: string, radius: number, refHeight: number): TreeKindDef => ({
-  kind, name, radius, refHeight, radiusPctOfCrown: 0, maxRadius: 60, colliderHeightPct: 50, destructible: true,
-})
-
-export const TREE_KINDS: readonly TreeKindDef[] = [
-  treeKind(TREE_BIRCH, 'Birch', 15, 1200),
-  treeKind(TREE_PINE, 'Pine', 20, 1600),
-  treeKind(TREE_SPRUCE, 'Spruce', 20, 1600),
-  treeKind(TREE_ORNAMENTAL, 'Ornamental', 10, 600),
-  treeKind(TREE_BROADLEAF, 'Broadleaf', 30, 1400),
-  treeKind(TREE_COLUMNAR, 'Columnar', 20, 1600),
-  treeKind(TREE_LOWWIDE, 'Low and wide', 15, 800),
-  { ...treeKind(TREE_ROCK_BOULDER, 'Boulder', 0, 1), radiusPctOfCrown: 80, maxRadius: 200, colliderHeightPct: 80, destructible: false },
-  { ...treeKind(TREE_ROCK_SLAB, 'Rock slab', 0, 1), radiusPctOfCrown: 85, maxRadius: 250, colliderHeightPct: 85, destructible: false },
-  treeKind(TREE_BUSH, 'Bush', 10, 100),
-]
+/** In the server's order, the birch first. */
+export const TREE_KINDS: readonly TreeKindDef[] = tables.treeKinds
 
 /** The definition of an archetype. Unknown kinds are birches, as they are drawn. */
 export const treeKindDef = (kind: number): TreeKindDef => TREE_KINDS.find((def) => def.kind === kind) ?? TREE_KINDS[0]!

@@ -84,8 +84,9 @@ Phase 3 and 4 need both.
 - [x] Branch `refactor/ecs-migration`.
 - [x] Baseline: Rust and client test suites (below).
 - [x] Baseline: `full_room_tick_cost` (below).
-- [ ] Generate the client's `items.ts` and `vehicles.ts` tables from Rust, as `consts.generated.ts`
-      already is, and drop their half of the parity fixture.
+- [x] Generate the client's `items.ts` and `vehicles.ts` tables from Rust, as `consts.generated.ts`
+      already is, and drop their half of the parity fixture (the fixture is now the generated table,
+      `client/src/sim/tables.generated.json`, with the tree kinds too).
 
 ### Phase 1 (track A): one simulation, native and WASM
 
@@ -95,8 +96,8 @@ Phase 3 and 4 need both.
       vehicle lift models in `vehicle`, `flight` and `spec`), with no tokio or salvo. It builds for
       `wasm32-unknown-unknown` unchanged. Movement rules, carve and terrain stay in `shared`, which
       `sim` depends on.
-- [ ] Re-key the lift models on spec data instead of kind (the remaining `KIND_*` matches in
-      `sim/src/vehicle.rs`).
+- [x] Re-key the lift models on spec data instead of kind (the remaining `KIND_*` matches in
+      `sim/src/vehicle.rs`): done in Phase 2's "the sim's per-kind controls and solids" step.
 - [x] One `step_character` for both sides: the server's `Movement` mechanic and (next) the client's
       prediction call the same function, ride and inherit included.
 - [x] A static scene that streams: `Physics::streamed`, `add_tile`, `remove_tile`, `refresh`, and
@@ -106,7 +107,7 @@ Phase 3 and 4 need both.
       is the server's too; then delete `sim/vehicle.ts`, the rest of `sim/physics.ts` and
       `@dimforge/rapier3d-compat`.
 - [ ] The remaining mirrors: `carve.ts` (also drawn from, so it may stay as a reader of the WASM
-      side), `terrain.ts`, the item and vehicle tables, the codec.
+      side), `terrain.ts`, the codec. (The item, vehicle and tree tables are generated.)
 
 ### Phase 2 (track B): server ECS, one family at a time
 
@@ -920,3 +921,42 @@ tests against a freshly built WASM sim, all passing; workspace clippy clean. `fu
 **Next:** Phase 0, generating the client's `items.ts` and `vehicles.ts` from the Rust tables. That
 covers most of the files a new kind touches, and the client is the half of the migration not yet
 started.
+
+### 2026-10-22: the client's item, vehicle and tree tables come from Rust
+
+`client/src/sim/items.ts`, `sim/vehicles.ts` and `world.ts` each kept a hand-written copy of a Rust
+table. `cargo test -p shared parity` wrote `fixtures/parity/gameplay.json` from the Rust tables, and a
+client test compared the copies against it. A new item or kind had to be typed in twice and the test
+said where they differed. The JSON had everything the copies held, so the client now builds its tables
+from it instead of mirroring it:
+
+- The fixture moved to `client/src/sim/tables.generated.json`. Its tables are arrays in Rust order,
+  each row carrying its id, so the client's fallbacks (`VEHICLES[0]`, `TREE_KINDS[0]`) are the server's
+  first rows, the jeep and the birch, as before.
+- The Rust test still fails while the file is stale. `UPDATE_PARITY=1 cargo test -p shared parity`
+  rewrites it. Vite bundles the JSON, and `resolveJsonModule` was already on.
+- `items.ts` keeps only what the client adds, `PRESENTATION`: how each item is held and which sample
+  it plays. A generated item with no entry throws when the module loads, naming the item, so a new
+  item fails every client test until it has one.
+- `vehicles.ts` converts each row (three-number tuples, the `crew` union) and keeps its helpers.
+  `isLegged` and `isTracked` read two new generated fields, `legged` (`body.legs > 0`) and `heavy`
+  (`body.heavy`), in place of two kind lists.
+- `world.ts`'s `TREE_KINDS` is the generated rows.
+- `parity.spec.ts` now checks what is left:
+  - every generated item has a presentation;
+  - the kind lists and fallbacks are what they were;
+  - the scalar constants still match;
+  - the trunk-radius cases, as before.
+- The `ITEM_*` ids and the scalar constants in `items.ts` stay hand-written for now.
+  `consts-parity.spec.ts` already checks their values against the Rust source.
+
+A new item is now its Rust row plus a `PRESENTATION` line; a new vehicle kind is no client table edit
+at all.
+
+**Checks:** shared 62 tests, client 362 tests (the five table comparisons became three), all passing;
+`vue-tsc` clean; `vite build` succeeds. Values are identical: the client tables are built from the
+same numbers the comparisons used.
+
+**Next:** Phase 3, component replication (protocol v2), or the remaining mirrors of Phase 1 (`codec`,
+`terrain.ts`, `carve.ts`). The codec is the larger part of both and also what Phase 3 replaces, so
+Phase 3 goes first.

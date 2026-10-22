@@ -1,48 +1,37 @@
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { KIND_HEN, KIND_JEEP, KIND_STRV, KIND_TANK, KIND_WALKER } from '../net/codec'
 import { TICK_RATE } from '../sim/consts'
 import * as items from '../sim/items'
-import { VEHICLES } from '../sim/vehicles'
-import { TREE_BIRCH, TREE_BUSH, TREE_KINDS, TREE_PINE, TREE_ROCK_BOULDER, TREE_ROCK_SLAB, trunkRadiusCm } from '../world'
+import tables from '../sim/tables.generated.json'
+import { VEHICLES, isLegged, isTracked, vehicleDef } from '../sim/vehicles'
+import { TREE_BIRCH, TREE_BUSH, TREE_KINDS, TREE_PINE, TREE_ROCK_BOULDER, TREE_ROCK_SLAB, treeKindDef, trunkRadiusCm } from '../world'
 
-// `fixtures/parity/gameplay.json` is generated from the Rust tables by `cargo test -p shared parity`
-// (`UPDATE_PARITY=1` rewrites it). A failure here means `client/src/sim/items.ts` drifted from
-// `crates/shared/src/items.rs`.
-const fixture = JSON.parse(readFileSync(resolve(process.cwd(), '../fixtures/parity/gameplay.json'), 'utf8')) as {
-  items: Record<string, Record<string, unknown>>
-  vehicles: Record<string, Record<string, unknown>>
-  treeKinds: Record<string, Record<string, unknown>>
-  consts: Record<string, number>
-}
-
-describe('gameplay tables match the server', () => {
-  it('defines every item the server does, with the same numbers', () => {
-    for (const [id, expected] of Object.entries(fixture.items)) {
-      expect(items.itemDef(Number(id)), `item ${id}`).toEqual(expect.objectContaining(expected))
+// `sim/tables.generated.json` is written from the Rust tables by `cargo test -p shared parity`
+// (`UPDATE_PARITY=1` rewrites it), which fails while it is stale. The client builds its item, vehicle
+// and tree tables from it, so what is left to check here is what the client adds and its constants.
+describe('gameplay tables come from the server', () => {
+  it('has every item the server does, each with how it is held and sounds', () => {
+    for (const row of tables.items) {
+      const def = items.itemDef(row.id)
+      expect(def, `item ${row.id}`).toEqual(expect.objectContaining({ name: row.name, damage: row.damage }))
+      expect(def!.stance && def!.sound, `item ${row.id}`).toBeTruthy()
     }
-  })
-
-  it('defines no item the server lacks', () => {
-    const ids = Object.keys(fixture.items).map(Number)
     for (let id = 1; id < 32; id++) {
-      expect(items.itemDef(id) !== undefined, `item ${id}`).toBe(ids.includes(id))
+      expect(items.itemDef(id) !== undefined, `item ${id}`).toBe(tables.items.some((row) => row.id === id))
     }
   })
 
-  it('defines every vehicle kind the server does, with the same facts', () => {
-    expect(VEHICLES.length).toBe(Object.keys(fixture.vehicles).length)
-    for (const [kind, expected] of Object.entries(fixture.vehicles)) {
-      const mirrored = VEHICLES.find((def) => def.kind === Number(kind))
-      expect(mirrored, `vehicle kind ${kind}`).toEqual(expect.objectContaining(expected))
-    }
+  it('has every vehicle kind the server does, the jeep first as the fallback', () => {
+    expect(VEHICLES.map((def) => def.kind)).toEqual(tables.vehicles.map((row) => row.kind))
+    expect(vehicleDef(999).kind).toBe(KIND_JEEP)
+    expect(VEHICLES.filter((def) => isLegged(def.kind)).map((def) => def.kind)).toEqual([KIND_WALKER, KIND_HEN])
+    expect(VEHICLES.filter((def) => isTracked(def.kind)).map((def) => def.kind)).toEqual([KIND_TANK, KIND_STRV])
+    expect(isLegged(undefined) || isTracked(undefined)).toBe(false)
   })
 
-  it('defines every tree and rock archetype the server does, with the same collider rules', () => {
-    expect(TREE_KINDS.length).toBe(Object.keys(fixture.treeKinds).length)
-    for (const [kind, expected] of Object.entries(fixture.treeKinds)) {
-      expect(TREE_KINDS.find((def) => def.kind === Number(kind)), `tree kind ${kind}`).toEqual(expect.objectContaining(expected))
-    }
+  it('has every tree and rock archetype the server does, the birch first as the fallback', () => {
+    expect(TREE_KINDS.map((def) => def.kind)).toEqual(tables.treeKinds.map((row) => row.kind))
+    expect(treeKindDef(999).kind).toBe(TREE_BIRCH)
   })
 
   it('sizes colliders like Tree::trunk_radius: trees by height, rocks by their crown', () => {
@@ -58,7 +47,7 @@ describe('gameplay tables match the server', () => {
 
   it('shares the scalar constants', () => {
     const mirrored: Record<string, number> = { ...items, TICK_RATE } as never
-    for (const [name, value] of Object.entries(fixture.consts)) {
+    for (const [name, value] of Object.entries(tables.consts)) {
       expect(mirrored[name], name).toBe(value)
     }
   })

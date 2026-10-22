@@ -4,9 +4,9 @@
 //! in `consts.rs`.
 //!
 //! Adding a kind: a `KIND_*` id in `protocol.rs`, its constants in `consts.rs`, a `VehicleDef` here
-//! (with its weapons as `mounts`, see `crate::mounts`) and in `client/src/sim/vehicles.ts`, then its
-//! physics `Spec` in `crates/sim` and its model. `fixtures/parity/gameplay.json` fails until the two
-//! tables agree.
+//! (with its weapons as `mounts`, see `crate::mounts`), then its physics `Spec` in `crates/sim` and its
+//! model. The client's table is built from `client/src/sim/tables.generated.json`, which
+//! `UPDATE_PARITY=1 cargo test -p shared parity` regenerates from this one.
 
 use crate::consts::*;
 use crate::mounts::{HELI_MOUNTS, HEN_MOUNTS, MORTAR_MOUNTS, MountDef, PLANE_MOUNTS, STRV_MOUNTS, Show, TANK_MOUNTS, WALKER_MOUNTS};
@@ -65,7 +65,7 @@ pub enum Exposure {
 }
 
 impl Exposure {
-    /// Its name in `fixtures/parity/gameplay.json`.
+    /// Its name in `client/src/sim/tables.generated.json`.
     pub fn name(self) -> &'static str {
         match self {
             Exposure::Sealed => "sealed",

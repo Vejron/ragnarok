@@ -488,10 +488,10 @@ pub const MAX_PICKUPS_PER_SNAPSHOT: usize = 24;
 mod tests {
     use super::*;
 
-    /// The item table and the scalar constants the client mirrors, as JSON. `fixtures/parity/
-    /// gameplay.json` holds the committed copy, which `client/src/__tests__/parity.spec.ts` checks the
-    /// TypeScript tables against. After an intended change, regenerate it with `UPDATE_PARITY=1 cargo
-    /// test -p shared parity` and update `client/src/sim/items.ts` to match.
+    /// The item, vehicle and tree tables, and the scalar constants the client mirrors, as JSON, each
+    /// table in its Rust order. `client/src/sim/tables.generated.json` holds the committed copy, which
+    /// the client builds its tables from (`sim/items.ts`, `sim/vehicles.ts`, `world.ts`). After a change
+    /// to a table, regenerate it with `UPDATE_PARITY=1 cargo test -p shared parity`.
     fn parity_json() -> String {
         let items: Vec<String> = (1..ITEM_COUNT)
             .map(|id| {
@@ -504,7 +504,7 @@ mod tests {
                     ItemKind::Flare => "flare",
                 };
                 format!(
-                    "    \"{id}\": {{\"name\": \"{}\", \"kind\": \"{kind}\", \"auto\": {}, \"damage\": {}, \"cooldownTicks\": {}, \"mag\": {}, \"reloadTicks\": {}, \"range\": {}, \"aimSpeed\": {}, \"scope\": {}, \"stack\": {}, \"weapon\": {}, \"projectile\": {}, \"pellets\": {}, \"falloffStart\": {}, \"falloffEnd\": {}, \"falloffMin\": {}}}",
+                    "    {{\"id\": {id}, \"name\": \"{}\", \"kind\": \"{kind}\", \"auto\": {}, \"damage\": {}, \"cooldownTicks\": {}, \"mag\": {}, \"reloadTicks\": {}, \"range\": {}, \"aimSpeed\": {}, \"scope\": {}, \"stack\": {}, \"weapon\": {}, \"projectile\": {}, \"pellets\": {}, \"falloffStart\": {}, \"falloffEnd\": {}, \"falloffMin\": {}}}",
                     d.name, d.auto, d.damage, d.cooldown_ticks, d.mag, d.reload_ticks, d.range, d.aim_speed, d.scope, d.stack, d.weapon, d.projectile, d.pellets, d.falloff.start, d.falloff.end, d.falloff.min
                 )
             })
@@ -516,8 +516,8 @@ mod tests {
                 let heads: Vec<String> = d.seat_heads.iter().map(|[x, y, z]| format!("[{x}, {y}, {z}]")).collect();
                 let heads = heads.join(", ");
                 format!(
-                    "    \"{}\": {{\"name\": \"{}\", \"hp\": {}, \"seats\": {}, \"halfExtents\": [{hx}, {hy}, {hz}], \"gun\": {}, \"arms\": {}, \"carWheels\": {}, \"trackHalf\": {}, \"axleZ\": {}, \"crew\": \"{}\", \"crewGuns\": {}, \"seatHeads\": [{}]}}",
-                    d.kind, d.name, d.hp, d.seats, d.gun(), d.arms(), d.car_wheels, d.track_half, d.axle_z, d.crew.name(), d.crew_guns, heads
+                    "    {{\"kind\": {}, \"name\": \"{}\", \"hp\": {}, \"seats\": {}, \"halfExtents\": [{hx}, {hy}, {hz}], \"gun\": {}, \"arms\": {}, \"carWheels\": {}, \"trackHalf\": {}, \"axleZ\": {}, \"crew\": \"{}\", \"crewGuns\": {}, \"seatHeads\": [{}], \"legged\": {}, \"heavy\": {}}}",
+                    d.kind, d.name, d.hp, d.seats, d.gun(), d.arms(), d.car_wheels, d.track_half, d.axle_z, d.crew.name(), d.crew_guns, heads, d.body.legs > 0.0, d.body.heavy
                 )
             })
             .collect();
@@ -525,7 +525,7 @@ mod tests {
             .iter()
             .map(|d| {
                 format!(
-                    "    \"{}\": {{\"name\": \"{}\", \"radius\": {}, \"refHeight\": {}, \"radiusPctOfCrown\": {}, \"maxRadius\": {}, \"colliderHeightPct\": {}, \"destructible\": {}}}",
+                    "    {{\"kind\": {}, \"name\": \"{}\", \"radius\": {}, \"refHeight\": {}, \"radiusPctOfCrown\": {}, \"maxRadius\": {}, \"colliderHeightPct\": {}, \"destructible\": {}}}",
                     d.kind, d.name, d.radius, d.ref_height, d.radius_pct_of_crown, d.max_radius, d.collider_height_pct, d.destructible
                 )
             })
@@ -546,7 +546,7 @@ mod tests {
         ];
         let lines: Vec<String> = consts.iter().map(|(name, value)| format!("    \"{name}\": {value}")).collect();
         format!(
-            "{{\n  \"items\": {{\n{}\n  }},\n  \"vehicles\": {{\n{}\n  }},\n  \"treeKinds\": {{\n{}\n  }},\n  \"consts\": {{\n{}\n  }}\n}}\n",
+            "{{\n  \"items\": [\n{}\n  ],\n  \"vehicles\": [\n{}\n  ],\n  \"treeKinds\": [\n{}\n  ],\n  \"consts\": {{\n{}\n  }}\n}}\n",
             items.join(",\n"),
             vehicles.join(",\n"),
             tree_kinds.join(",\n"),
@@ -556,14 +556,14 @@ mod tests {
 
     #[test]
     fn parity_fixture_matches_the_tables() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/parity/gameplay.json");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../client/src/sim/tables.generated.json");
         let actual = parity_json();
         if std::env::var_os("UPDATE_PARITY").is_some() {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, &actual).unwrap();
         }
-        let committed = std::fs::read_to_string(&path).expect("fixtures/parity/gameplay.json; regenerate with UPDATE_PARITY=1");
-        assert_eq!(committed, actual, "gameplay tables changed: regenerate the fixture and update client/src/sim/items.ts");
+        let committed = std::fs::read_to_string(&path).expect("client/src/sim/tables.generated.json; regenerate with UPDATE_PARITY=1");
+        assert_eq!(committed, actual, "gameplay tables changed: regenerate client/src/sim/tables.generated.json with UPDATE_PARITY=1");
     }
 
     #[test]

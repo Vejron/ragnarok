@@ -411,8 +411,8 @@ pub const TREE_ROCK_SLAB: u8 = 8;
 pub const TREE_BUSH: u8 = 9;
 
 /// What an archetype is: how its collider is sized and what can break it. One table for server and
-/// client (`client/src/sim/` reads the same numbers from `fixtures/parity/gameplay.json`), so a new
-/// kind of standing object is a row here, a prototype in `client/src/render/trees.ts`, and a
+/// client (`client/src/world.ts` builds its table from `client/src/sim/tables.generated.json`), so a
+/// new kind of standing object is a row here, a prototype in `client/src/render/trees.ts`, and a
 /// number in `TREE_KINDS`'s length.
 #[derive(Clone, Copy, Debug)]
 pub struct TreeKindDef {
