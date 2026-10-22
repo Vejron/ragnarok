@@ -10,7 +10,7 @@
 //! real tank. A crewman on foot (respawned, or put out) walks back to its tank and gets in.
 
 use super::*;
-use crate::game::{Crew, Mounts, Vehicle};
+use crate::game::{Crew, Mounts, Seats, Vehicle};
 use crate::mechanics::combat::position_of;
 use crate::mechanics::gunnery::aim;
 use crate::mechanics::vehicles::seat;
@@ -177,8 +177,8 @@ pub(super) enum Boarding {
 
 /// Whether crewman `id`, on foot at `at`, gets back into its tank, walks to it, or does without.
 pub(super) fn board(world: &mut World, id: u32, crew: Crew, at: [f32; 3]) -> Boarding {
-    let Some(vehicle) = world.entities.get::<Vehicle>(crew.vehicle) else { return Boarding::No };
-    if world.entities.dead(crew.vehicle) || vehicle.seats[crew.seat].is_some() {
+    let Some(seats) = world.entities.get::<Seats>(crew.vehicle) else { return Boarding::No };
+    if world.entities.dead(crew.vehicle) || seats.rider(crew.seat).is_some() {
         return Boarding::No;
     }
     let Some(pose) = world.physics.car_pose(crew.vehicle) else { return Boarding::No };
@@ -213,7 +213,7 @@ fn controls(throttle: f32, steer: f32, halt: bool, idle: InputFrame) -> InputFra
 fn drive(world: &World, bot: &mut Bot, vid: u32, pose: &CarPose, idle: InputFrame) -> InputFrame {
     let at = pose.position;
     let halt = controls(0.0, 0.0, true, idle);
-    let gunner = world.entities.get::<Vehicle>(vid).and_then(|vehicle| vehicle.seats[GUNNER]).and_then(|id| world.bots.get(&id));
+    let gunner = world.entities.get::<Seats>(vid).and_then(|seats| seats.rider(GUNNER)).and_then(|id| world.bots.get(&id));
     // How fast it may go: full speed, unless it is coming up to a sharp turn.
     let mut limit = TANK_MAX_SPEED;
     let goal = match gunner.map(|g| (g.mode, g.sees, g.last_seen)) {

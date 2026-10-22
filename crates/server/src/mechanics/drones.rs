@@ -2,7 +2,7 @@ use super::Mechanic;
 use super::combat::{Blast, blast, look};
 use super::vehicles::add_vehicle;
 use crate::entities::{HurtBy, With};
-use crate::game::{Drone, Seat, Vehicle, World};
+use crate::game::{Drone, Seat, Seats, Vehicle, World};
 use shared::consts::*;
 use shared::items::*;
 use shared::protocol::{KIND_DRONE, KIND_LOITER, ShotEvent, WEAPON_AUTOCANNON, WEAPON_SHELL};
@@ -56,7 +56,7 @@ pub fn launch(world: &mut World, id: u32, kind: u8) -> bool {
         world.physics.set_car_velocity(vid, ahead.map(|v| v * LOITER_SPEED));
     }
     let def = drone_def(kind);
-    world.entities.of_mut::<Vehicle>(vid).seats[0] = Some(id);
+    world.entities.of_mut::<Seats>(vid)[0] = Some(id);
     world.entities.insert(vid, Drone { kind, owner: id, energy: def.energy_ticks, linked: true, pilot_hp: hp, fall_left: def.fall_ticks });
     let player = world.players.get_mut(&id).expect("checked above");
     player.seat = Some(Seat { vehicle: vid, index: 0, remote: true });
@@ -69,9 +69,8 @@ pub fn launch(world: &mut World, id: u32, kind: u8) -> bool {
 fn cut(world: &mut World, vid: u32) {
     let Some(mut drone) = world.entities.get_mut::<Drone>(vid) else { return };
     drone.linked = false;
-    let mut vehicle = world.entities.of_mut::<Vehicle>(vid);
-    let pilot = vehicle.seats[0].take();
-    vehicle.controls = Default::default();
+    let pilot = world.entities.of_mut::<Seats>(vid).take(0);
+    world.entities.of_mut::<Vehicle>(vid).controls = Default::default();
     if let Some(player) = pilot.and_then(|id| world.players.get_mut(&id))
         && player.seat.is_some_and(|seat| seat.vehicle == vid)
     {

@@ -123,7 +123,8 @@ Phase 3 and 4 need both.
 - [x] Vehicles as entities, with `Mounts` and `Drone` as components of their own.
 - [x] Per-kind branches in `vehicles.rs` to data (`VehicleDef::body`).
 - [x] A vehicle's health and wreck state as `Health`, `HurtBy` and `Wreck`.
-- [ ] `Seats` out of `Vehicle`; the sim's per-kind controls and solids into its `Spec`.
+- [x] `Seats` out of `Vehicle`.
+- [ ] The sim's per-kind controls and solids into its `Spec`.
 - [ ] Players and bots.
 - [ ] Events in place of `hits`, `kills`, `noises`.
 
@@ -684,3 +685,29 @@ to a hull, and they move when those do.
 `dead()` per vehicle, which go away with cached query states.
 
 **Next:** `Seats` out of `Vehicle`, so that anything can be ridden, then players and bots.
+
+### 2026-10-22: who rides a vehicle is a component
+
+`Vehicle::seats`, a fixed `[Option<u32>; CAR_SEATS]` read through `seat_count(kind)`, is now
+`Seats`, a component on the vehicle's entity (`game/state.rs`).
+
+- It holds exactly as many seats as the kind has (`Seats::empty(vehicle_def(kind).seats)`), so nothing
+  slices by `seat_count` any more. The snapshot sends all of them, the same list as before.
+- It derefs to the slice for indexing. Code that does not know the count asks `rider(i)`, which is
+  `None` past the last seat, as the fixed array was. Gunnery's seat lookup, the crew bots and ram
+  credit do this. Other helpers: `riders`, `vacant`, `free`, `take`, `take_all`.
+- `seat`, `vacate`, `switch_seat`, `remove_vehicle`, the wreck, the turret coming off, a drone's
+  launch and cut, and the scenario's tank clearing all work on `Seats`. `Vehicle` is left with
+  driving (`kind`, `controls`, `home`, `stuck_ticks`) and what armour and crashes do to the hull.
+- One test checked a helicopter's first three seats, the third of which it never had. It now checks
+  the two it has.
+- Behaviour, order and the wire are unchanged.
+
+**Checks:** server 262 tests, all passing; clippy clean. `full_room_tick_cost`: `Vehicles` 30.9 to
+31.9 µs over two settled runs (a third ran slow across every mechanic), against 29.4 to 31.4 µs with one
+fewer component. Each component taken out of `Vehicle` adds a lookup per vehicle in the passes that
+read it. The total, about 2 µs over this step and the last, is far inside the 16.7 ms budget, but it
+is the per-call cost the open "cache query states" item is for, and that comes next.
+
+**Next:** cache query states and look-ups (a per-tick id list, `QueryState`s kept between ticks).
+Then players and bots.

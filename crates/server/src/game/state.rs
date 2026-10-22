@@ -245,8 +245,6 @@ impl Player {
 #[derive(crate::entities::Component)]
 pub struct Vehicle {
     pub kind: u8,
-    /// Player in each seat. Seat 0 is the driver.
-    pub seats: [Option<u32>; CAR_SEATS],
     pub controls: CarControls,
     /// Where it respawns after falling out of the world.
     pub home: ([f32; 3], f32),
@@ -276,6 +274,61 @@ pub struct Drone {
     pub pilot_hp: u8,
     /// Ticks a falling drone has left before it goes off by itself.
     pub fall_left: u32,
+}
+
+/// Who rides it: the player in each of its seats, as many as it has, seat 0 the driver's. A component
+/// on a vehicle's entity; the `Vehicles` mechanic seats and unseats. Indexing it past the last seat
+/// panics, so code that does not know how many there are asks `rider`.
+#[derive(crate::entities::Component, Clone, Debug, PartialEq, Eq)]
+pub struct Seats(Vec<Option<u32>>);
+
+impl Seats {
+    /// `count` seats, all free.
+    pub fn empty(count: usize) -> Self {
+        Seats(vec![None; count])
+    }
+
+    /// Who sits in seat `index`; nobody past the last seat.
+    pub fn rider(&self, index: usize) -> Option<u32> {
+        self.0.get(index).copied().flatten()
+    }
+
+    /// Everyone aboard, in seat order.
+    pub fn riders(&self) -> impl Iterator<Item = u32> + '_ {
+        self.0.iter().flatten().copied()
+    }
+
+    pub fn vacant(&self) -> bool {
+        self.0.iter().all(Option::is_none)
+    }
+
+    /// The first free seat.
+    pub fn free(&self) -> Option<usize> {
+        self.0.iter().position(Option::is_none)
+    }
+
+    /// Empties seat `index`, returning who sat there.
+    pub fn take(&mut self, index: usize) -> Option<u32> {
+        self.0.get_mut(index).and_then(Option::take)
+    }
+
+    /// Empties every seat, returning who sat in them.
+    pub fn take_all(&mut self) -> Vec<u32> {
+        self.0.iter_mut().filter_map(Option::take).collect()
+    }
+}
+
+impl std::ops::Deref for Seats {
+    type Target = [Option<u32>];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Seats {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 /// A vehicle at zero `Health` is a wreck: it burns where it lies for `left` more ticks, then the room

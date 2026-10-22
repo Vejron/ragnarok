@@ -34,7 +34,7 @@ fn join(game: &mut Game) -> (u32, mpsc::Receiver<crate::game::Outgoing>) {
 
 /// Puts `id` straight into a seat of vehicle `vid`.
 fn seat(game: &mut Game, id: u32, vid: u32, index: usize) {
-    game.world.entities.get_mut::<Vehicle>(vid).unwrap().seats[index] = Some(id);
+    game.world.entities.get_mut::<Seats>(vid).unwrap()[index] = Some(id);
     game.world.players.get_mut(&id).unwrap().seat = Some(Seat { vehicle: vid, index, remote: false });
 }
 
@@ -374,7 +374,7 @@ fn a_strv_driver_fires_the_hull_gun_and_only_elevation_follows_the_look() {
     let mut game = game();
     let (driver, _inbox) = join(&mut game);
     let vid = strv(&game);
-    assert_eq!(game.world.entities.of::<Vehicle>(vid).seats.iter().flatten().count(), 0);
+    assert_eq!(game.world.entities.of::<Seats>(vid).iter().flatten().count(), 0);
     seat(&mut game, driver, vid, 0);
     let mut seq = 0;
     let hull = game.world.physics.car_pose(vid).unwrap().yaw();

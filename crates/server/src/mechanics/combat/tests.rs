@@ -238,7 +238,7 @@ fn driver_in_the_car(game: &mut Game) -> (u32, u32) {
     let (vid, _) = game.world.entities.all::<Vehicle>().next().expect("a car is placed at the spawn point");
     let (id, inbox) = join(game);
     std::mem::forget(inbox);
-    game.world.entities.get_mut::<Vehicle>(vid).unwrap().seats[0] = Some(id);
+    game.world.entities.get_mut::<Seats>(vid).unwrap()[0] = Some(id);
     game.world.players.get_mut(&id).unwrap().seat = Some(crate::game::Seat { vehicle: vid, index: 0, remote: false });
     (vid, id)
 }
@@ -304,8 +304,7 @@ fn the_ak5_chips_a_vehicle_and_a_wreck_kills_the_crew() {
 
     damage_vehicle(&mut game.world, vid, max, Some(shooter));
     assert!(game.world.entities.dead(vid));
-    let vehicle = &game.world.entities.of::<Vehicle>(vid);
-    assert_eq!(vehicle.seats, [None; CAR_SEATS], "the crew is out of their seats");
+    assert!(game.world.entities.of::<Seats>(vid).vacant(), "the crew is out of their seats");
     assert!(!game.world.players[&driver].alive(), "and dead");
     assert_eq!(game.world.players[&shooter].kills, 1, "the credit goes to whoever wrecked it");
     assert!(game.world.shots.iter().any(|shot| shot.weapon == WEAPON_WRECK));
@@ -1163,7 +1162,7 @@ fn a_passenger_shot_dead_falls_out_of_the_seat() {
     damage(&mut game.world, rider, PLAYER_MAX_HP, None, WEAPON_RIFLE);
     assert!(!game.world.players[&rider].alive());
     assert!(game.world.players[&rider].seat.is_none());
-    assert_eq!(game.world.entities.of::<Vehicle>(vid).seats[1], None);
+    assert_eq!(game.world.entities.of::<Seats>(vid)[1], None);
 }
 
 #[test]

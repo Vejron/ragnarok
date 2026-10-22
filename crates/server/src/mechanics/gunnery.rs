@@ -3,7 +3,7 @@ use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
 use super::combat::{Round, hitscan, look, rewind_ticks, scatter};
 use super::projectiles::{self, Flying, Stage};
 use crate::entities::With;
-use crate::game::{Mount, Mounts, Vehicle, World};
+use crate::game::{Mount, Mounts, Seats, Vehicle, World};
 use sim::CarPose;
 use shared::consts::*;
 use shared::items::Falloff;
@@ -75,7 +75,7 @@ fn work(world: &mut World, vid: u32, def: &MountDef, mut mount: Mount, pose: &Ca
     if let Aim::Bore { .. } = def.aim {
         mount.yaw = 0.0;
     }
-    let Some(occupant) = world.entities.of::<Vehicle>(vid).seats[def.seat] else { return mount };
+    let Some(occupant) = world.entities.get::<Seats>(vid).and_then(|seats| seats.rider(def.seat)) else { return mount };
     let Some(input) = world.players.get(&occupant).map(|player| player.input) else { return mount };
     if !def.needs.iter().all(|&need| can_work(world, vid, need, pose)) {
         return mount;

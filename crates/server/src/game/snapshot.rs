@@ -51,7 +51,8 @@ impl Game {
                 let pose = self.world.physics.car_pose(id)?;
                 let [x, y, z] = pose.position;
                 let [qx, qy, qz] = pack_quat(pose.rotation);
-                let seats = vehicle.seats[..seat_count(vehicle.kind)].iter().map(|seat| seat.unwrap_or(0)).collect();
+                let riders = self.world.entities.get::<Seats>(id).map_or(&[][..], |seats| seats);
+                let seats = riders.iter().map(|seat| seat.unwrap_or(0)).collect();
                 // A hitched mortar is drawn folded up for travel.
                 let flags = if self.world.physics.towed_by(id).is_some() { TURRET_STOWED } else { 0 };
                 let mounts = self.world.entities.get::<Mounts>(id);
@@ -84,7 +85,7 @@ impl Game {
                 let crew = if shared::vehicles::vehicle_def(vehicle.kind).crew == shared::vehicles::Exposure::Sealed {
                     Vec::new()
                 } else {
-                    vehicle.seats[..seat_count(vehicle.kind)]
+                    riders
                         .iter()
                         .map(|seat| {
                             seat.and_then(|rider| self.world.players.get(&rider)).map_or(Rider::default(), |player| Rider { yaw: player.input.yaw, pitch: player.input.pitch(), held: player.held().item })

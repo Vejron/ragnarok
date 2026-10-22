@@ -369,7 +369,7 @@ fn a_squad_tank_comes_crewed_and_goes_once_it_is_wrecked_and_burnt_out() {
     let mut names: Vec<_> = bots(&game).iter().map(|id| game.world.players[id].name.clone()).collect();
     names.sort();
     assert_eq!(names, ["Armour 1", "Armour 2", "Armour 3"], "the crew are numbered after the squad's bots");
-    let crew: Vec<u32> = game.world.entities.of::<Vehicle>(vid).seats.iter().flatten().copied().collect();
+    let crew: Vec<u32> = game.world.entities.of::<Seats>(vid).iter().flatten().copied().collect();
     assert_eq!(crew.len(), 2, "both seats manned");
     for id in &crew {
         assert_eq!((game.world.players[id].team, game.world.bots[id].skill), (3, 0.8));

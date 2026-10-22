@@ -178,15 +178,15 @@ fn enough_damage_to_the_turret_takes_it_off_and_kills_the_gunner() {
     let mut game = game();
     let vid = of_kind(&game, KIND_TANK);
     let gunner = join(&mut game);
-    game.world.entities.get_mut::<Vehicle>(vid).unwrap().seats[1] = Some(gunner);
+    game.world.entities.get_mut::<Seats>(vid).unwrap()[1] = Some(gunner);
     game.world.players.get_mut(&gunner).unwrap().seat = Some(Seat { vehicle: vid, index: 1, remote: false });
     damage_turret(&mut game.world, vid, TANK_TURRET_HP / 2, None);
     assert_eq!(game.world.entities.of::<Vehicle>(vid).damage[DAMAGE_TURRET], 0, "still on");
-    assert_eq!(game.world.entities.of::<Vehicle>(vid).seats[1], Some(gunner));
+    assert_eq!(game.world.entities.of::<Seats>(vid)[1], Some(gunner));
     damage_turret(&mut game.world, vid, TANK_TURRET_HP, None);
     let vehicle = &game.world.entities.of::<Vehicle>(vid);
     assert_eq!(vehicle.damage[DAMAGE_TURRET], TURRET_GONE);
-    assert_eq!(vehicle.seats[1], None);
+    assert_eq!(game.world.entities.of::<Seats>(vid).rider(1), None);
     assert!(!game.world.players[&gunner].alive(), "the gunner went with it");
     assert!(game.world.shots.iter().any(|shot| shot.weapon == WEAPON_TURRET));
     assert!(!game.world.entities.dead(vid), "the tank itself is not wrecked");

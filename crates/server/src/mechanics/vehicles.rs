@@ -1,12 +1,12 @@
 use crate::entities::{Health, HurtBy, With};
 use super::Mechanic;
-use crate::game::{Mounts, Seat, Vehicle, World, Wreck};
+use crate::game::{Mounts, Seat, Seats, Vehicle, World, Wreck};
 use sim::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_extents};
 use shared::consts::*;
 use shared::vehicles::{VehicleDef, vehicle_def};
 use shared::protocol::{
     DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, ShotEvent, WEAPON_CRASH, is_drone,
-    WEAPON_ROADKILL, WEAPON_SCRAPE, seat_count, vehicle_hp,
+    WEAPON_ROADKILL, WEAPON_SCRAPE, vehicle_hp,
 };
 use shared::quant::{to_cm, wrap_angle};
 use shared::world::WorldFile;
@@ -161,7 +161,6 @@ pub(super) fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: 
         id,
         (Vehicle {
             kind,
-            seats: [None; CAR_SEATS],
             controls: CarControls::default(),
             home: (position, yaw),
             stuck_ticks: 0,
@@ -170,6 +169,7 @@ pub(super) fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: 
             scrape_in: 0,
         },
         Health::full(vehicle_hp(kind)),
+        Seats::empty(vehicle_def(kind).seats),
     ));
     if let Some(mounts) = Mounts::fresh(vehicle_def(kind).mounts) {
         world.entities.insert(id, mounts);
@@ -221,7 +221,7 @@ fn hitch(world: &mut World, id: u32) {
         return;
     }
     let nearest = world.entities.all::<Vehicle>()
-        .filter(|&(mortar, vehicle)| vehicle_def(vehicle.kind).body.towed && !world.entities.dead(mortar) && vehicle.seats.iter().all(Option::is_none))
+        .filter(|&(mortar, vehicle)| vehicle_def(vehicle.kind).body.towed && !world.entities.dead(mortar) && world.entities.get::<Seats>(mortar).is_none_or(Seats::vacant))
         .filter_map(|(mortar, _)| world.physics.tow_reach(car, mortar).map(|reach| (reach, mortar)))
         .filter(|&(reach, mortar)| reach <= HITCH_REACH && world.physics.towed_by(mortar).is_none())
         .min_by(|a, b| a.0.total_cmp(&b.0));
@@ -247,7 +247,7 @@ fn board(world: &mut World, id: u32) {
         if world.entities.dead(vid) || world.physics.towed_by(vid).is_some() || is_drone(vehicle.kind) {
             continue;
         }
-        let Some(free) = vehicle.seats[..seat_count(vehicle.kind)].iter().position(Option::is_none) else { continue };
+        let Some(free) = world.entities.get::<Seats>(vid).and_then(Seats::free) else { continue };
         let Some(pose) = world.physics.car_pose(vid) else { continue };
         let distance = boarding_point(vehicle.kind, &pose).iter().zip(here).map(|(a, b)| (a - b) * (a - b)).sum::<f32>().sqrt();
         if distance <= ENTER_RADIUS && nearest.is_none_or(|(best, ..)| distance < best) {
@@ -265,15 +265,15 @@ pub fn seat(world: &mut World, id: u32, vehicle: u32, index: usize) -> bool {
     if world.entities.dead(vehicle) {
         return false;
     }
-    let Some(mut car) = world.entities.get_mut::<Vehicle>(vehicle) else { return false };
-    if index >= seat_count(car.kind) || car.seats[index].is_some() {
+    let Some(mut seats) = world.entities.get_mut::<Seats>(vehicle) else { return false };
+    if index >= seats.len() || seats[index].is_some() {
         return false;
     }
     let Some(player) = world.players.get_mut(&id) else { return false };
     if player.seat.is_some() {
         return false;
     }
-    car.seats[index] = Some(id);
+    seats[index] = Some(id);
     player.seat = Some(Seat { vehicle, index, remote: false });
     player.character.vy = 0.0;
     player.character.ride = 0;
@@ -293,7 +293,7 @@ pub fn add_tank(world: &mut World, [x, z]: [f32; 2], yaw: f32) -> Option<u32> {
 
 /// Takes vehicle `vid` out of the world. Anyone aboard is set down beside it first.
 pub fn remove_vehicle(world: &mut World, vid: u32) {
-    let aboard: Vec<u32> = world.entities.get::<Vehicle>(vid).map(|vehicle| vehicle.seats.iter().flatten().copied().collect()).unwrap_or_default();
+    let aboard: Vec<u32> = world.entities.get::<Seats>(vid).map(|seats| seats.riders().collect()).unwrap_or_default();
     for id in aboard {
         alight(world, id);
     }
@@ -305,11 +305,11 @@ pub fn remove_vehicle(world: &mut World, vid: u32) {
 /// Empties the player's seat. Returns where they sat.
 fn vacate(world: &mut World, id: u32) -> Option<Seat> {
     let seat = world.players.get_mut(&id)?.seat.take()?;
-    if let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(seat.vehicle) {
-        vehicle.seats[seat.index] = None;
-        if seat.index == 0 {
-            vehicle.controls = CarControls::default();
-        }
+    if let Some(mut seats) = world.entities.get_mut::<Seats>(seat.vehicle) {
+        seats.take(seat.index);
+    }
+    if seat.index == 0 && let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(seat.vehicle) {
+        vehicle.controls = CarControls::default();
     }
     Some(seat)
 }
@@ -318,11 +318,11 @@ fn vacate(world: &mut World, id: u32) -> Option<Seat> {
 /// drives and a tank's seat 1 works the gun, so a lone crewman can take either job.
 fn switch_seat(world: &mut World, id: u32) {
     let Some(seat) = world.players.get(&id).and_then(|player| player.seat) else { return };
-    let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(seat.vehicle) else { return };
-    let seats = seat_count(vehicle.kind);
-    let Some(free) = (1..seats).map(|step| (seat.index + step) % seats).find(|&index| vehicle.seats[index].is_none()) else { return };
-    vehicle.seats[seat.index] = None;
-    vehicle.seats[free] = Some(id);
+    let Some(mut seats) = world.entities.get_mut::<Seats>(seat.vehicle) else { return };
+    let count = seats.len();
+    let Some(free) = (1..count).map(|step| (seat.index + step) % count).find(|&index| seats[index].is_none()) else { return };
+    seats[seat.index] = None;
+    seats[free] = Some(id);
     if let Some(player) = world.players.get_mut(&id) {
         player.seat = Some(Seat { vehicle: seat.vehicle, index: free, remote: false });
     }
@@ -532,7 +532,7 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
         }
         dent(vehicle.kind, &mut vehicle.damage, impact.local, over);
         // Whoever drove the other vehicle into it is to blame, should it go up.
-        let attacker = impact.other_car.and_then(|other| world.entities.get::<Vehicle>(other)?.seats[0]);
+        let attacker = impact.other_car.and_then(|other| world.entities.get::<Seats>(other)?.rider(0));
         world.shots.push(ShotEvent { shooter: vid, weapon: WEAPON_CRASH, x, y, z });
         super::combat::damage_vehicle(world, vid, (over * CRASH_HP_PER_DV).round().min(255.0) as u8, attacker);
     }
@@ -574,7 +574,7 @@ fn knock_players(world: &mut World) {
     }
     // Whoever is driving is to blame.
     for (id, amount, car, at) in run_down {
-        let driver = world.entities.get::<Vehicle>(car).and_then(|vehicle| vehicle.seats[0]);
+        let driver = world.entities.get::<Seats>(car).and_then(|seats| seats.rider(0));
         super::combat::damage_from(world, id, amount, driver, WEAPON_ROADKILL, Some(at));
     }
 }
@@ -694,13 +694,14 @@ impl Mechanic for Vehicles {
         // The driver's input becomes the car's controls; an empty car holds its handbrake.
         for vid in world.entities.ids::<With<Vehicle>>() {
             let hp = world.entities.of::<Health>(vid).hp;
+            let driver = world.entities.of::<Seats>(vid).rider(0);
             let mut vehicle = world.entities.of_mut::<Vehicle>(vid);
             let towed = world.physics.towed_by(vid).is_some();
             vehicle.controls = if vehicle_def(vehicle.kind).body.towed {
                 // Nothing drives a mortar: it rolls when towed, and holds its brake when it is not.
                 CarControls { handbrake: !towed, ..Default::default() }
             } else {
-                match vehicle.seats[0].and_then(|driver| world.players.get(&driver)) {
+                match driver.and_then(|driver| world.players.get(&driver)) {
                     Some(driver) => CarControls::driven(vehicle.kind, &driver.input),
                     None => CarControls { handbrake: true, ..Default::default() },
                 }
@@ -764,15 +765,14 @@ impl Mechanic for Vehicles {
                 world.physics.reset_car(vid, [x, y + rise, z], pose.yaw());
                 vehicle.stuck_ticks = 0;
             }
-            for rider in vehicle.seats.iter().flatten() {
-                // A drone's pilot stays where they stood.
-                if is_drone(vehicle.kind) {
-                    break;
-                }
-                if let Some(player) = world.players.get_mut(rider) {
-                    player.character.position = [x, y, z];
-                    player.character.yaw = pose.yaw();
-                    player.character.grounded = true;
+            // A drone's pilot stays where they stood.
+            if !is_drone(vehicle.kind) {
+                for rider in world.entities.of::<Seats>(vid).riders() {
+                    if let Some(player) = world.players.get_mut(&rider) {
+                        player.character.position = [x, y, z];
+                        player.character.yaw = pose.yaw();
+                        player.character.grounded = true;
+                    }
                 }
             }
             if fresh {

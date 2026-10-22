@@ -12,7 +12,7 @@
 //! can tell what will happen. Every kind has a profile; the Strv S's steep glacis turns shots away from
 //! well off the nose, a jeep only deflects the most grazing.
 
-use crate::game::{Vehicle, World};
+use crate::game::{Seats, Vehicle, World};
 use sim::Strike;
 use shared::consts::*;
 use shared::protocol::{DAMAGE_TURRET, KIND_STRV, KIND_TANK, KIND_PLANE, ShotEvent, TURRET_GONE, WEAPON_RICOCHET, WEAPON_TURRET, WEAPON_WRECK};
@@ -173,7 +173,7 @@ pub fn damage_turret(world: &mut World, vid: u32, damage: u8, attacker: Option<u
         return;
     }
     vehicle.damage[DAMAGE_TURRET] = TURRET_GONE;
-    let gunner = vehicle.seats[1].take();
+    let gunner = world.entities.get_mut::<Seats>(vid).and_then(|mut seats| seats.take(1));
     world.physics.set_turret(vid, false);
     if let Some(pose) = world.physics.car_pose(vid) {
         let at = pose.world_point(TANK_TURRET_PIVOT);

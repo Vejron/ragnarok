@@ -5,7 +5,7 @@ use super::life::{blasted, damage_entity, first_hurtbox_hit, hit_mark};
 use super::spawn;
 use super::projectiles::{self, Flying, Stage};
 use crate::entities::{Health, HurtBy};
-use crate::game::{Drone, Player, TEAM_NONE, Vehicle, World, Wreck, starting_hotbar};
+use crate::game::{Drone, Player, Seats, TEAM_NONE, Vehicle, World, Wreck, starting_hotbar};
 use sim::Obj;
 use shared::consts::*;
 use shared::items::*;
@@ -514,7 +514,7 @@ fn distance_to_building(world: &World, id: shared::world::ObjId, point: [f32; 3]
 
 /// Takes `amount` health off vehicle `vid`, and wrecks it at zero.
 pub fn damage_vehicle(world: &mut World, vid: u32, amount: u8, attacker: Option<u32>) {
-    let Some(seats) = world.entities.get::<Vehicle>(vid).map(|vehicle| vehicle.seats) else { return };
+    let Some(seated) = world.entities.get::<Seats>(vid).map(|seats| seats.riders().collect::<Vec<u32>>()) else { return };
     let Some(mut health) = world.entities.get_mut::<Health>(vid) else { return };
     if !health.alive() || amount == 0 {
         return;
@@ -526,7 +526,6 @@ pub fn damage_vehicle(world: &mut World, vid: u32, amount: u8, attacker: Option<
     if let Some(id) = attacker {
         world.entities.insert(vid, HurtBy(id));
     }
-    let seated: Vec<u32> = seats.iter().flatten().copied().collect();
     let at = world.physics.car_pose(vid).map(|pose| pose.position);
     let from = attacker.and_then(|id| position_of(world, id));
     let direction = at.zip(from).map_or(BEARING_NONE, |(at, from)| bearing(at, from));
@@ -559,7 +558,7 @@ fn wreck(world: &mut World, vid: u32) {
     world.entities.insert(vid, Wreck { left: WRECK_TICKS });
     let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(vid) else { return };
     vehicle.controls = Default::default();
-    let crew: Vec<u32> = vehicle.seats.iter_mut().filter_map(Option::take).collect();
+    let crew = world.entities.get_mut::<Seats>(vid).map(|mut seats| seats.take_all()).unwrap_or_default();
     for id in crew {
         if let Some(player) = world.players.get_mut(&id) {
             player.seat = None;

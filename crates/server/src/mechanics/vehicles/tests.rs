@@ -90,13 +90,13 @@ fn use_boards_the_nearest_car_and_use_again_leaves() {
 
     press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
     idle(&mut game, id, &mut seq, 3);
-    assert_eq!(game.world.entities.of::<Vehicle>(vid).seats[0], Some(id));
+    assert_eq!(game.world.entities.of::<Seats>(vid)[0], Some(id));
     assert!(game.entity_states().iter().all(|e| e.kind != shared::protocol::KIND_STICKMAN), "a seated player is not a stickman entity");
     assert_eq!(game.vehicle_states().iter().find(|v| v.id == vid).unwrap().seats[0], id);
 
     press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
     idle(&mut game, id, &mut seq, 3);
-    assert_eq!(game.world.entities.of::<Vehicle>(vid).seats, [None; CAR_SEATS]);
+    assert!(game.world.entities.of::<Seats>(vid).vacant());
     let states: Vec<_> = game.entity_states().into_iter().filter(|e| e.kind == shared::protocol::KIND_STICKMAN).collect();
     assert_eq!(states.len(), 1);
     // The stickman stands beside the car, not inside it.
@@ -133,7 +133,7 @@ fn the_driver_steers_and_passengers_ride_along() {
     idle(&mut game, driver, &mut seq_a, 3);
     press(&mut game, rider, &mut seq_b, (0, 0), BUTTON_USE, 1);
     idle(&mut game, rider, &mut seq_b, 3);
-    assert_eq!(game.world.entities.of::<Vehicle>(vid).seats[..2], [Some(driver), Some(rider)]);
+    assert_eq!(game.world.entities.of::<Seats>(vid)[..2], [Some(driver), Some(rider)]);
 
     let start = game.world.physics.car_pose(vid).unwrap().position;
     for _ in 0..180 {
@@ -176,7 +176,7 @@ fn a_pilot_lifts_off_with_one_passenger() {
         press(&mut game, id, seq, (0, 0), BUTTON_USE, 1);
         idle(&mut game, id, seq, 3);
     }
-    assert_eq!(game.world.entities.of::<Vehicle>(vid).seats[..3], [Some(pilot), Some(rider), None], "two seats, and the pilot first");
+    assert_eq!(game.world.entities.of::<Seats>(vid)[..], [Some(pilot), Some(rider)], "two seats, and the pilot first");
     assert!(game.world.players[&third].seat.is_none());
 
     // Jump climbs: a second of rotor spin-up is not needed, the lift is immediate.
@@ -204,9 +204,9 @@ fn leaving_the_game_frees_the_seat() {
     let vid = move_player_next_to_a_car(&mut game, id);
     press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
     idle(&mut game, id, &mut seq, 3);
-    assert_eq!(game.world.entities.of::<Vehicle>(vid).seats[0], Some(id));
+    assert_eq!(game.world.entities.of::<Seats>(vid)[0], Some(id));
     game.handle(Command::Leave(id));
-    assert_eq!(game.world.entities.of::<Vehicle>(vid).seats, [None; CAR_SEATS]);
+    assert!(game.world.entities.of::<Seats>(vid).vacant());
 }
 
 #[test]
@@ -251,7 +251,7 @@ fn a_driven_car_knocks_back_a_player_in_its_way() {
     let vid = move_player_next_to_a_car(&mut game, driver);
     press(&mut game, driver, &mut seq_a, (0, 0), BUTTON_USE, 1);
     idle(&mut game, driver, &mut seq_a, 3);
-    assert_eq!(game.world.entities.of::<Vehicle>(vid).seats[0], Some(driver));
+    assert_eq!(game.world.entities.of::<Seats>(vid)[0], Some(driver));
 
     // Stand the victim 12 m ahead of the nose.
     let pose = game.world.physics.car_pose(vid).unwrap();
@@ -443,16 +443,16 @@ fn a_lone_crewman_can_switch_between_driver_and_gunner() {
     game.world.players.get_mut(&id).unwrap().character.position = [pose.position[0] + 2.5, STANDING_Y, pose.position[2]];
     press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
     idle(&mut game, id, &mut seq, 3);
-    assert_eq!(game.world.entities.of::<Vehicle>(vid).seats[..2], [Some(id), None]);
+    assert_eq!(game.world.entities.of::<Seats>(vid)[..2], [Some(id), None]);
 
     press(&mut game, id, &mut seq, (0, 0), BUTTON_RELOAD, 1);
     idle(&mut game, id, &mut seq, 3);
-    assert_eq!(game.world.entities.of::<Vehicle>(vid).seats[..2], [None, Some(id)]);
+    assert_eq!(game.world.entities.of::<Seats>(vid)[..2], [None, Some(id)]);
     assert_eq!(game.world.players[&id].seat, Some(Seat { vehicle: vid, index: 1, remote: false }));
 
     press(&mut game, id, &mut seq, (0, 0), BUTTON_RELOAD, 1);
     idle(&mut game, id, &mut seq, 3);
-    assert_eq!(game.world.entities.of::<Vehicle>(vid).seats[..2], [Some(id), None]);
+    assert_eq!(game.world.entities.of::<Seats>(vid)[..2], [Some(id), None]);
 }
 
 #[test]
@@ -474,7 +474,7 @@ fn a_full_tank_has_nowhere_to_switch_to() {
     let (first, _, seq) = &mut crew[0];
     press(&mut game, *first, seq, (0, 0), BUTTON_RELOAD, 1);
     idle(&mut game, *first, seq, 3);
-    let seats = game.world.entities.of::<Vehicle>(vid).seats;
+    let seats = game.world.entities.of::<Seats>(vid);
     assert_eq!(seats[..2], [Some(crew[0].0), Some(crew[1].0)]);
 }
 
@@ -505,7 +505,7 @@ fn ramming_a_car_hurts_both_and_blames_the_driver() {
     let mut game = game();
     let (id, _inbox) = join(&mut game);
     let (a, b) = two_cars(&mut game);
-    game.world.entities.get_mut::<Vehicle>(a).unwrap().seats[0] = Some(id);
+    game.world.entities.get_mut::<Seats>(a).unwrap()[0] = Some(id);
     game.world.players.get_mut(&id).unwrap().seat = Some(Seat { vehicle: a, index: 0, remote: false });
     game.world.physics.kick_car(a, [0.0, 0.0, -22.0]);
     let events = crash_events(&mut game, 60);
@@ -669,7 +669,7 @@ fn a_roadster_driver_boosts_on_run_hops_on_jump_and_brakes_on_crouch() {
     game.world.players.get_mut(&id).unwrap().character.position = [pose.position[0], STANDING_Y, pose.position[2] + 2.0];
     press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
     idle(&mut game, id, &mut seq, 3);
-    assert_eq!(game.world.entities.of::<Vehicle>(vid).seats[0], Some(id));
+    assert_eq!(game.world.entities.of::<Seats>(vid)[0], Some(id));
 
     press(&mut game, id, &mut seq, (0, 0), BUTTON_RUN, 30);
     let controls = game.world.entities.of::<Vehicle>(vid).controls;
@@ -751,7 +751,7 @@ fn a_hen_driver_leaps_on_jump_and_the_snapshot_carries_its_stamina() {
     game.world.players.get_mut(&id).unwrap().character.position = [pose.position[0], STANDING_Y + ground, pose.position[2] + 3.0];
     press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
     idle(&mut game, id, &mut seq, 3);
-    assert_eq!(game.world.entities.of::<Vehicle>(vid).seats[0], Some(id));
+    assert_eq!(game.world.entities.of::<Seats>(vid)[0], Some(id));
 
     press(&mut game, id, &mut seq, (0, 0), BUTTON_JUMP, 20);
     let controls = game.world.entities.of::<Vehicle>(vid).controls;
