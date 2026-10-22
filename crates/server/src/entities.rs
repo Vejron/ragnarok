@@ -7,8 +7,11 @@
 //! be shot and blasted, anything with `Respawn` and `Home` comes back after dying, and `NetKind` only
 //! tells the client which model to draw.
 
-use bevy_ecs::query::QueryFilter;
+use bevy_ecs::query::{QueryData, QueryFilter, QueryIter, QueryState};
+use std::any::{Any, TypeId};
+use std::cell::{RefCell, RefMut};
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 
 pub use bevy_ecs::prelude::{Bundle, Component, Entity, Mut, With};
 
@@ -95,6 +98,9 @@ pub struct Respawned;
 pub struct Entities {
     pub ecs: bevy_ecs::world::World,
     index: HashMap<u32, Entity>,
+    /// The `QueryState` behind each kind of query asked for so far, kept between calls: making one
+    /// matches it against every archetype, which cost more than the query itself.
+    queries: RefCell<HashMap<TypeId, Box<dyn Any + Send>>>,
 }
 
 impl Default for Entities {
@@ -112,7 +118,7 @@ impl Default for Entities {
         ecs.register_component::<DropOnDeath>();
         ecs.register_component::<Respawned>();
         crate::mechanics::register_components(&mut ecs);
-        Entities { ecs, index: HashMap::new() }
+        Entities { ecs, index: HashMap::new(), queries: RefCell::default() }
     }
 }
 
@@ -164,14 +170,46 @@ impl Entities {
         self.get::<T>(id).is_some()
     }
 
+    /// The kept `QueryState` for `D` and `F`, brought up to date with the archetypes made since it was
+    /// last used. `None` while a component it needs is not registered.
+    fn query<D: QueryData + 'static, F: QueryFilter + 'static>(&self) -> Option<RefMut<'_, QueryState<D, F>>> {
+        let mut state = RefMut::filter_map(self.queries.borrow_mut(), |queries| kept::<D, F>(queries, &self.ecs)).ok()?;
+        state.update_archetypes(&self.ecs);
+        Some(state)
+    }
+
+    /// Hands `scan` every entity `D` and `F` match, in storage order (not id order: for what does not
+    /// care, such as a count or a nearest-with-ties-broken-by-id). `None` while a component it needs is
+    /// not registered.
+    ///
+    /// The state is taken out of the cache while `scan` runs, so `scan` may ask for other queries.
+    pub fn scan<D: QueryData + 'static, F: QueryFilter + 'static, R>(&self, scan: impl FnOnce(QueryIter<'_, '_, D::ReadOnly, F>) -> R) -> Option<R> {
+        let key = TypeId::of::<QueryState<D, F>>();
+        let taken = self.queries.borrow_mut().remove(&key).and_then(|state| state.downcast::<QueryState<D, F>>().ok());
+        let mut state = match taken {
+            Some(state) => state,
+            None => Box::new(QueryState::<D, F>::try_new(&self.ecs)?),
+        };
+        state.update_archetypes(&self.ecs);
+        let result = scan(state.iter_manual(&self.ecs));
+        self.queries.borrow_mut().insert(key, state);
+        Some(result)
+    }
+
+    /// The same, to change what it is handed.
+    pub fn scan_mut<D: QueryData + 'static, F: QueryFilter + 'static, R>(&mut self, scan: impl FnOnce(QueryIter<'_, '_, D, F>) -> R) -> Option<R> {
+        let state = kept::<D, F>(self.queries.get_mut(), &self.ecs)?;
+        Some(scan(state.iter_mut(&mut self.ecs)))
+    }
+
     /// How many entities have a `T`.
     pub fn count<T: Component>(&self) -> usize {
-        self.ecs.try_query::<&T>().map_or(0, |mut query| query.iter(&self.ecs).count())
+        self.query::<&T, ()>().map_or(0, |state| state.iter_manual(&self.ecs).count())
     }
 
     /// Every entity's `T` with its id, in id order.
     pub fn all<T: Component>(&self) -> std::vec::IntoIter<(u32, &T)> {
-        let mut all: Vec<(u32, &T)> = self.ecs.try_query::<(&NetId, &T)>().map_or_else(Vec::new, |mut query| query.iter(&self.ecs).map(|(id, t)| (id.0, t)).collect());
+        let mut all: Vec<(u32, &T)> = self.query::<(&NetId, &T), ()>().map_or_else(Vec::new, |state| state.iter_manual(&self.ecs).map(|(id, t)| (id.0, t)).collect());
         all.sort_unstable_by_key(|&(id, _)| id);
         all.into_iter()
     }
@@ -190,9 +228,51 @@ impl Entities {
 
     /// The ids of the entities `F` matches, in id order: a pass that draws random numbers or makes
     /// output keeps the order the old `BTreeMap`s gave it.
-    pub fn ids<F: QueryFilter>(&self) -> Vec<u32> {
-        let mut ids: Vec<u32> = self.ecs.try_query_filtered::<&NetId, F>().map_or_else(Vec::new, |mut query| query.iter(&self.ecs).map(|id| id.0).collect());
+    pub fn ids<F: QueryFilter + 'static>(&self) -> Vec<u32> {
+        let mut ids: Vec<u32> = self.query::<&NetId, F>().map_or_else(Vec::new, |state| state.iter_manual(&self.ecs).map(|id| id.0).collect());
         ids.sort_unstable();
         ids
+    }
+}
+
+/// The `QueryState` kept in `queries` for `D` and `F`, made the first time it is asked for.
+fn kept<'q, D: QueryData + 'static, F: QueryFilter + 'static>(queries: &'q mut HashMap<TypeId, Box<dyn Any + Send>>, ecs: &bevy_ecs::world::World) -> Option<&'q mut QueryState<D, F>> {
+    let state = match queries.entry(TypeId::of::<QueryState<D, F>>()) {
+        Entry::Occupied(kept) => kept.into_mut(),
+        Entry::Vacant(free) => free.insert(Box::new(QueryState::<D, F>::try_new(ecs)?)),
+    };
+    state.downcast_mut()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_kept_query_sees_entities_of_archetypes_made_after_it() {
+        let mut entities = Entities::default();
+        entities.spawn(3, Health::full(10));
+        assert_eq!(entities.ids::<With<Health>>(), [3]);
+        assert_eq!(entities.count::<Health>(), 1);
+        // New archetypes, after the queries were first kept.
+        entities.spawn(1, (Health::full(5), HurtBy(9)));
+        entities.spawn(2, (Health::full(5), Home([0.0; 2])));
+        assert_eq!(entities.ids::<With<Health>>(), [1, 2, 3], "and in id order");
+        assert_eq!(entities.count::<Health>(), 3);
+        assert_eq!(entities.all::<Health>().map(|(id, health)| (id, health.hp)).collect::<Vec<_>>(), [(1, 5), (2, 5), (3, 10)]);
+        entities.despawn(2);
+        assert_eq!(entities.ids::<With<Health>>(), [1, 3]);
+    }
+
+    #[test]
+    fn a_scan_may_ask_for_other_queries_and_scan_mut_changes_what_it_is_handed() {
+        let mut entities = Entities::default();
+        entities.spawn(1, Health::full(5));
+        entities.spawn(2, Health::full(7));
+        let nested = entities.scan::<&Health, (), _>(|outer| outer.map(|_| entities.scan::<&Health, (), _>(|inner| inner.count()).unwrap() + entities.count::<Health>()).sum::<usize>());
+        assert_eq!(nested, Some(8));
+        entities.scan_mut::<&mut Health, (), _>(|healths| healths.for_each(|mut health| health.hp -= 1));
+        assert_eq!(entities.all::<Health>().map(|(_, health)| health.hp).collect::<Vec<_>>(), [4, 6]);
+        assert_eq!(entities.scan::<&NetKind, (), _>(|kinds| kinds.count()), Some(0), "a registered component no one has");
     }
 }

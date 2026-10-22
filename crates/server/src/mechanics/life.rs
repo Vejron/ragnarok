@@ -26,21 +26,21 @@ pub(super) fn open_ground(world: &World, x: f32, z: f32) -> Option<f32> {
 /// The nearest living entity with a hurtbox that the ray meets within `max`, and how far along it is.
 /// Of two at the same distance the lower id is hit, so the outcome does not hang on storage order.
 pub fn first_hurtbox_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f32) -> Option<(u32, f32)> {
-    let ecs = &world.entities.ecs;
-    let mut query = ecs.try_query::<(&crate::entities::NetId, &Transform, &Hurtbox, &Health)>()?;
-    let mut best: Option<(u32, f32)> = None;
-    for (id, transform, hurtbox, health) in query.iter(ecs) {
-        if !health.alive() {
-            continue;
+    world.entities.scan::<(&crate::entities::NetId, &Transform, &Hurtbox, &Health), (), _>(|living| {
+        let mut best: Option<(u32, f32)> = None;
+        for (id, transform, hurtbox, health) in living {
+            if !health.alive() {
+                continue;
+            }
+            let limit = best.map_or(max, |(_, t)| t);
+            if let Some(t) = ray_capsule(origin, dir, hurtbox.centre(transform.position), hurtbox.half_height, hurtbox.radius, limit)
+                && best.is_none_or(|(other, at)| t < at || (t == at && id.0 < other))
+            {
+                best = Some((id.0, t));
+            }
         }
-        let limit = best.map_or(max, |(_, t)| t);
-        if let Some(t) = ray_capsule(origin, dir, hurtbox.centre(transform.position), hurtbox.half_height, hurtbox.radius, limit)
-            && best.is_none_or(|(other, at)| t < at || (t == at && id.0 < other))
-        {
-            best = Some((id.0, t));
-        }
-    }
-    best
+        best
+    })?
 }
 
 /// What a hit on entity `id` is shown as (`HIT_*`), and where the marker goes: the top of its capsule.

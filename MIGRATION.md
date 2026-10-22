@@ -115,8 +115,8 @@ Phase 3 and 4 need both.
       path and one blast loop for ECS entities.
 - [x] Roosters (the proof: 3 files).
 - [x] Pickups.
-- [ ] Cache query states, and keep one id-ordered list per tick, so the per-call setup cost seen in
-      the measurements below does not grow with the families that follow.
+- [x] Cache query states, so the per-call setup cost seen in the measurements below does not grow
+      with the families that follow (a per-tick id list proved unnecessary).
 - [x] Projectiles (rockets, grenades, shells, bullets, flares) as `Projectile` + fuse + burst.
 - [x] Weapon mounts as data (`shared::mounts`), worked by one routine in place of the `work_*`
       functions.
@@ -711,3 +711,51 @@ is the per-call cost the open "cache query states" item is for, and that comes n
 
 **Next:** cache query states and look-ups (a per-tick id list, `QueryState`s kept between ticks).
 Then players and bots.
+
+### 2026-10-22: query states are kept between calls
+
+The last few steps each added a little to the tick. A throwaway release measurement on the committed
+city (16 vehicles, 64 entities) showed where the time went: building the query, not running it.
+
+| Call | Before | After |
+|---|---|---|
+| `ids::<With<Vehicle>>()` | 385 ns | 56 ns |
+| `all::<Vehicle>()` | 384 ns | 59 ns |
+| `count::<Vehicle>()` | 301 ns | 15 ns |
+| `get::<Health>(id)` | 5 ns | 6 ns |
+
+`try_query` made a fresh `QueryState` on every call, matching it against every archetype.
+`Entities` now keeps one `QueryState` per query type, keyed by `TypeId`, in a `RefCell`. Each use
+brings it up to date with the archetypes made since its last use (`update_archetypes`, nearly free when
+none were made) and reads it with `iter_manual`.
+
+- `ids`, `all` and `count` use the kept states. Their signatures are unchanged, apart from
+  `ids::<F: 'static>`.
+- `scan::<D, F, _>(|iter| ..)` and `scan_mut` are new: an unordered pass over a kept query, for what
+  does not depend on order.
+- `scan` takes its state out of the cache while the closure runs, so the closure may ask for other
+  queries, including the same one.
+- The three direct `try_query` and `query` calls now use them: `first_hurtbox_hit` (once per round
+  and per blast), `projectiles::count`, and the pickup timer.
+- The plan's "one id-ordered list per tick" turned out unnecessary: sorting a few dozen ids is a few
+  nanoseconds, against the hundreds the query state cost.
+- Two new tests: a kept query sees entities of archetypes made after it, in id order and after a
+  despawn; a scan nested in a scan works, and `scan_mut` writes through.
+
+**Checks:** server 264 tests, all passing; clippy clean. `full_room_tick_cost` over three runs, before
+and after:
+
+| Mechanic | Before | After |
+|---|---|---|
+| `Combat` | 34.7–36.6 µs | 29.0–30.0 µs |
+| `Vehicles` | 30.9–31.9 µs | 27.6–28.3 µs (below the 26–29 µs it cost as a map) |
+| `Gunnery` | 1.34–1.43 µs | 0.65–0.70 µs |
+| `Drones` | 0.77–1.02 µs | 0.46–0.48 µs |
+| `Pickups` | 0.58–0.73 µs | 0.09–0.10 µs |
+| `Life` | 0.67–0.94 µs | 0.10–0.15 µs |
+| `Npcs` | 0.67–0.76 µs | 0.19–0.30 µs |
+
+The extra cost of the families that follow is now per entity, not per call.
+
+**Next:** players and bots, the largest family left, with events in place of the `hits`, `kills` and
+`noises` vectors.

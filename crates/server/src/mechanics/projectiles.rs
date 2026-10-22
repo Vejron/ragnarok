@@ -237,8 +237,7 @@ impl World {
 /// How many projectiles are in flight; `kind` counts only those of one kind. On the entities alone,
 /// so it can be asked while a player is borrowed.
 pub fn count(entities: &crate::entities::Entities, kind: Option<u8>) -> usize {
-    let Some(mut query) = entities.ecs.try_query::<&Projectile>() else { return 0 };
-    query.iter(&entities.ecs).filter(|p| kind.is_none_or(|kind| p.kind == kind)).count()
+    entities.scan::<&Projectile, (), _>(|flying| flying.filter(|p| kind.is_none_or(|kind| p.kind == kind)).count()).unwrap_or(0)
 }
 
 /// Moves every projectile of `stage` one tick, in id order, and carries out what each meets.

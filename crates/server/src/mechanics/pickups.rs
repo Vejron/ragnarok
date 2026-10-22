@@ -162,10 +162,11 @@ impl Mechanic for Pickups {
     }
 
     fn on_tick(&mut self, world: &mut World, _dt: f32) {
-        let ecs = &mut world.entities.ecs;
-        for mut pickup in ecs.query::<&mut Pickup>().iter_mut(ecs) {
-            pickup.respawn_in = pickup.respawn_in.saturating_sub(1);
-        }
+        world.entities.scan_mut::<&mut Pickup, (), _>(|pickups| {
+            for mut pickup in pickups {
+                pickup.respawn_in = pickup.respawn_in.saturating_sub(1);
+            }
+        });
         let reaching: Vec<u32> = world
             .players
             .iter()
