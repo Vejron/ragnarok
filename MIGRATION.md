@@ -218,7 +218,7 @@ Each step is tested on its own. Only the last one changes the wire.
       fixtures from Rust decode to the scenes Rust built.
 - [x] **3.4** Client: the adapter, from the store to today's states. The same fixtures must give the
       states the v1 decoder gives.
-- [ ] **3.5** Switch:
+- [x] **3.5** Switch:
   - snapshot v2 on the wire, with `PROTOCOL_VERSION` bumped;
   - client and server ship together, so there is no dual-protocol period;
   - delete `EntityState`/`VehicleState`/`*Delta` and their codec, `delta.rs`, the projectile and
@@ -1292,3 +1292,71 @@ clippy clean.
 
 **Next:** 3.5, the switch: v2 snapshots on the wire, `PROTOCOL_VERSION` bumped, v1's rows, deltas and
 codec deleted, and NETWORKING.md rewritten.
+
+### 2026-10-22: Phase 3.5, protocol v2 on the wire
+
+Snapshots now carry components. `PROTOCOL_VERSION` is 39.
+
+- **Wire.** `Snapshot` is `[1, tick, baseline, ack, ride, [update…], [removed…], drive, self,
+  [shot…], [bullet…]]`.
+  - Projectiles and items on the ground are entities in `[update…]`; their lists are gone.
+  - Shots and bullets stay events.
+  - The `drive`/`self` header stays, as decided.
+- **Server.**
+  - `send_snapshots` reads the world once a round, as `Game::replicated()`.
+  - `replication.rs` diffs each player's in-range scene against their acknowledged one with
+    `shared::replicated::diff`.
+  - Interest, hysteresis, the baseline window and shedding work as they did. Shedding order is
+    effects, projectiles, items, bullets, then the farthest of everything else, which is v1's
+    order, now by component (`worth`). The 24-nearest cap on items on the ground is kept.
+  - `snapshot.rs`'s row building is gone. `entity_states()` and the like remain for tests as views of
+    the scene through `v1_rows`.
+- **Client.**
+  - `codec.ts` decodes the v2 snapshot with `decodeUpdates`.
+  - `Replica` keeps component scenes.
+  - `game.ts` gets its states through the adapter (`v1Scene`), so drawing, prediction and
+    interpolation are untouched.
+  - The v2 decoder now refuses a field that is not an integer (or a list of them), as v1's did.
+- **Deleted:**
+  - `shared::delta` with its 6 tests;
+  - `EntityDelta` and `VehicleDelta`;
+  - v1's snapshot lists;
+  - the client's `applyDelta`, `WireDelta` and the v1 row readers;
+  - the v1 shape tests in `codec.spec.ts`.
+
+  `EntityState`, `VehicleState`, `ProjectileState`, `PickupState` and the client's
+  `RawEntity`/`RawVehicle` stay as the adapter's target until Phase 4; they are documented as no
+  longer on the wire.
+- **Tests:**
+  - Both sides' snapshot and input fixtures were regenerated. The sample has a stickman moving (as
+    differences), a dead one new to the receiver, a tank, and a repair (a cleared `damage`).
+  - The replication tests are ported. Two are new: items wait before people when a packet is full,
+    and only the nearest 24 items are listed.
+  - 3.2's oracle compared two things that are now one. It became an end-to-end test: an observer in
+    the busy room acknowledges what it rebuilt, as a client does, and decodes every snapshot.
+    - From tick 90, everything the server has within 300 m must be held exactly as the server has
+      it, and nothing held that the server has not.
+    - Over 150 of about 180 snapshots arrive as deltas, none naming a baseline it lacked.
+- **Docs.** NETWORKING.md has a new "Entities and components" section (the wire form, every component
+  with its bit, fields and meaning, and what each thing carries) and a rewritten delta section.
+  design.md §5.8 is rewritten too.
+
+**Measurements**, back to back against the last commit:
+
+| | v1 | v2 |
+|---|---|---|
+| 30 players running, per snapshot as deltas | 354 bytes | 227 bytes (−36%) |
+| The same, whole | 562 bytes | 645 bytes |
+| Snapshot round for the room (`full_room_tick_cost`) | 0.75–0.78 ms | 0.60–0.65 ms |
+
+- A whole snapshot is larger because each new entity carries its mask and every component, a
+  stickman's `motion` of zeros included. Whole snapshots come only on joining or after a stall.
+- The first v2 measurement was 0.98–1.00 ms per round. Two changes brought it under v1's:
+  - when nothing was shed, the scene the client will hold *is* the in-range scene, so it is kept
+    rather than rebuilt by applying the updates again;
+  - the per-player `HashMap` of distances is now a list beside the id-ordered scene.
+
+**Checks:** server 271, shared 67, sim 111, osm-import 81, editor 2 and client 361 tests, all passing;
+workspace clippy and `vue-tsc` clean.
+
+**Next:** 3.6, a headless browser session against a real server.

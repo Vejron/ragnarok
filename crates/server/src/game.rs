@@ -511,9 +511,11 @@ mod tests {
             .collect();
         let last = snapshots.last().expect("a snapshot every SNAPSHOT_EVERY ticks");
         assert_eq!(last.ack, 2, "both inputs acknowledged");
-        let stickmen: Vec<_> = last.new_entities.iter().filter(|e| e.kind == KIND_STICKMAN).collect();
+        // No snapshot was acknowledged, so each brings everything whole: the stickman among it.
+        let scene = shared::replicated::apply(&[], &last.updates, &last.removed);
+        let stickmen: Vec<_> = scene.iter().filter(|(_, e)| e.kind.as_ref().is_some_and(|kind| kind.kind == KIND_STICKMAN)).collect();
         assert_eq!(stickmen.len(), 1);
-        assert!(stickmen[0].z < 0, "walked towards -Z");
+        assert!(stickmen[0].1.place.unwrap().z < 0, "walked towards -Z");
     }
 
     fn profiles(outgoing: Vec<Outgoing>) -> Vec<Vec<ProfileEntry>> {

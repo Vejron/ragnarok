@@ -5,7 +5,6 @@
 
 pub mod carve;
 pub mod consts;
-pub mod delta;
 pub mod items;
 pub mod mounts;
 pub mod movement;

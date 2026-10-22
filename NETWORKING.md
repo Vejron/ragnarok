@@ -52,7 +52,7 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 | Tag | Name | Channel | Shape |
 |---|---|---|---|
 | 0 | `welcome` | reliable stream | `[0, version, entity_id u32, tick_rate u8, snapshot_every u8, world_hash u32]` |
-| 1 | `snapshot` | datagram | `[1, server_tick u32, baseline u32, ack u32, ride u32, [entity, …], [entity_delta, …], [vehicle, …], [vehicle_delta, …], [removed u32, …], drive, self, [shot, …], [projectile, …], [pickup, …], [bullet, …]]` |
+| 1 | `snapshot` | datagram | `[1, server_tick u32, baseline u32, ack u32, ride u32, [update, …], [removed u32, …], drive, self, [shot, …], [bullet, …]]` |
 | 2 | `pong` | datagram | `[2, nonce u32]` |
 | 3 | `leave` | reliable stream | `[3, entity_id u32]` |
 | 4 | `kill` | reliable stream | `[4, killer u32, victim u32, weapon u8, killer_kills u16, victim_deaths u16, style u8, yaw i16 mrad, power u8 (0.2 m/s)]`; `style` is `DEATH_*` (body, head, blast, roadkill, overkill) and `yaw`/`power` are the way and how hard the body is thrown, so every client stages the death alike |
@@ -65,15 +65,15 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 | 11 | `profiles` | reliable stream | `[11, [[id u32, name string, color u8, team u8, bot u8], …]]` |
 | 12 | `notice` | reliable stream | `[12, kind u8, text string]` |
 
-- `baseline` is the `server_tick` of the snapshot this one is a change from, or 0 when it is not. Then every entity and vehicle in range is listed in full, in `[entity, …]` and `[vehicle, …]`. See [Delta snapshots](#delta-snapshots-and-interest).
+- `baseline` is the `server_tick` of the snapshot this one is a change from, or 0 when it is not. Then every entity in range comes whole. Each `update` is one entity's components: see [Entities and components](#entities-and-components) and [Delta snapshots](#delta-snapshots-and-interest).
 - `ack` is the newest input `seq` of the receiving player already applied to this state. The client drops pending inputs up to `ack` and replays the rest.
 - `ride` is the id of the vehicle the receiving player stands on top of, or 0. The server carries riders with the car, so the client predicts them in the car's frame. Only the receiver's own value is sent: other riders are plain entities whose positions already move with the car.
 - `drive` is `nil` unless the receiving player sits in a vehicle's driver seat. Then it is the exact motion of that vehicle, which its pose does not carry, so the driver can predict it (below).
 - `self` is `[hp u8, progress u8, [slot, …]]`, only for the receiving player. `hp` is their health, 0 when dead (other players only show dead or alive, in `flags`). `progress` is how far a reload or a bandage has got, 0..255, or 0 when neither is going on. Each `slot` is `[item u8, count u8, ammo u8]`, five of them, `item` 0 for an empty slot (`1` revolver, `2` AK5, `3` grenade, `4` bandage, `5` sniper, `6` golden egg, dropped by a rooster and healing to full, `7` shotgun, `8` FPV drone). The item in another player's hands is in bits 3..6 of their entity `flags`.
 - `shot` is `[shooter u32, weapon u8, x i32, y i32, z i32]`: something since the previous snapshot, and where it ended (cm). It is only sent to a player within 300 m of where it ended. Weapon 13 (shotgun) is a muzzle blast with the sound, and each further pellet is 14, a spark where it landed; 15 is a flying bullet ending (its `shooter` is the bullet's id, see `bullet`). 16 is a shot glancing off a vehicle's armor (its `shooter` is the vehicle's id): sparks and a ping, no blast. 17 is a tank's turret being shot off (`shooter` is the tank): the turret flies away as debris. Weapons 0 (AK5) and 4 (revolver) are not sent as shots any more: their rounds are bullets. 1 (a tank shell), 6 (a helicopter autocannon round), 2 a rocket, 5 a grenade, 11 a plane's bomb, 20 a hen's egg, 19 an FPV drone's charge and 3 a vehicle wreck going up are a burst at the point. A drone shot down pops as a 6. 10 is a plane's machine-gun round that hit something, a spark at the point: every round's tracer is drawn by the clients from the gun's shot counter, so a round that hits nothing sends no event at all. It is cosmetic, so it rides the lossy datagram and is capped at 8 per snapshot, and dropped first if a snapshot would not fit.
-- `projectile` is `[id u32, kind u8, x i32, y i32, z i32, vx i16, vy i16, vz i16]`, cm and cm/s: a rocket (`kind` 0), grenade (1), tank shell (2), autocannon round (3), sniper round (4), plane's bomb (5), mortar bomb (6) or hen's egg (7) in flight. Clients interpolate it like an entity and aim a rocket along `v`. One that stops being listed has burst, and its burst arrives as a `shot` event. Gun bullets (kind 4) are not listed: see `bullet`. If a snapshot would not fit, shots are dropped first, then projectiles, then pickups, then bullets.
+- Projectiles in flight are entities like any other, with `projectile` (its `PROJECTILE_*`: a rocket (0), grenade (1), tank shell (2), autocannon round (3), plane's bomb (5), mortar bomb (6), hen's egg (7) or flare (8)), `place` and `velocity`. Clients interpolate them and aim a rocket along its velocity. One that is removed has burst, and its burst arrives as a `shot` event. Gun bullets (kind 4) are not listed: see `bullet`.
 - `bullet` is `[id u32, shooter u32, item u8, x i32, y i32, z i32, vx i16, vy i16, vz i16, tick u32]`, cm and cm/s: a gun round that left the muzzle on server tick `tick`, sent once (in two consecutive snapshots, so a lost datagram does not lose it, and clients ignore an id they have seen) to every player within 300 m of its line out to its gun's range, nearest first, at most 32. It is not listed again: it moves `v*dt` a tick and then `v.y` loses `20 * 0.25 * dt`, so a client works out `p + v*n*dt - (0, 20*0.25*dt^2*n(n+1)/2, 0)` for `n` ticks after `tick`. It ends with a `shot` of weapon 15 and `id` in `shooter`, or when its gun's range is flown. Bullets are shed after pickups when a snapshot would not fit.
-- `pickup` is `[id u32, item u8, x i32, y i32, z i32]`, cm: an item lying on the ground within 300 m, nearest first and at most 24. They are static, so there is no delta: the list is the set, and one that is no longer listed has been taken. A player takes the nearest within 2 m by sending the use bit; the server hands it over before it considers boarding a vehicle.
+- Items lying on the ground are entities with `pickup` (the `ITEM_*`) and `place`: within 300 m, the nearest 24 only. One that is removed has been taken, or the player walked away from it. A player takes the nearest within 2 m by sending the use bit; the server hands it over before it considers boarding a vehicle.
 - `kill` goes to everyone when a player dies. `killer` is 0 when the world did it (a fall). The totals are the new ones, so clients keep no tally of their own. `scores` is sent once to a player who has just joined.
 - `profiles` names players and gives their outfit colour, their team and whether they are a bot. `team` is 0 for people, who are all against all; players on the same other team are one side. A player who has just joined gets everyone's, right after `welcome`; everyone else gets the joiner's, and a bot's when it is added. Snapshots can arrive before it, so a client draws a stickman in a colour chosen by id until its profile arrives.
 - `notice` is what a world's scenario tells everyone (see BOTS.md, Scenarios). `kind` 0 is a message, shown for a few seconds; 1 is the objective, shown until the next one, and empty clears it; 2 and 3 are the scenario being won and lost. A player who has just joined gets the current objective with the catch-up. Text is at most 200 characters.
@@ -84,35 +84,55 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 - `rtc` relays proximity voice signaling. The server writes `from` itself (the sender's entity id), so it cannot be forged, and drops it silently if the receiver's queue is full: WebRTC retries. The voice itself goes peer to peer between players within about 40 m (up to 8 connections, opened at 35 m and closed at 50 m); the lower entity id sends the offer. ICE uses STUN, plus TURN from `VITE_ICE_SERVERS` if set.
 - `world_hash` is FNV-1a over `world.msgpack`. A mismatch means the client loaded a different world than the server simulates.
 
-`entity` is `[id u32, kind u8, x i32, y i32, z i32, yaw i16, vy i16, flags u8, knock_x i16, knock_z i16]`:
+## Entities and components
 
-| Field | Unit |
+Everything a snapshot shows of the world is an entity: a stickman, a creature (the Hedemora rooster),
+a vehicle, a projectile or an item on the ground. They share one id space. An entity is the components
+it has, and the client tells what a thing is from them, never from a family. Every component is
+defined once, in `crates/shared/src/replicated.rs`; the client's types and decoder schema are
+generated from it (`client/src/net/components.generated.ts`).
+
+An `update` is `[id u32, set u32, (cleared u32), fields…]`:
+
+- `set` is a bit mask of the components whose fields follow, in wire-id order. Each component's
+  fields come one after another, with no array of their own.
+- Bit 31 of `set` says a `cleared` mask follows: the components the entity no longer has, such as a
+  repaired hull's `damage`.
+- A component marked *diff* below is sent as the change from the receiver's baseline when the baseline
+  has it, and as the value itself when it does not (a new entity, or one that just gained it).
+
+| Bit | Component | Sent | Fields | Meaning |
+|---|---|---|---|---|
+| 0 | `place` | diff | `x, y, z` i32 | centimetres: a stickman's capsule centre, a vehicle's chassis centre (+X east, +Z south, +Y up) |
+| 1 | `heading` | diff | `yaw` i16 | facing, milliradians, 0 faces -Z |
+| 2 | `motion` | diff | `vy, knock_x, knock_z` i16 | a stickman's vertical speed and the slide a car's knock left them in, cm/s: what a predicted stickman resumes from |
+| 3 | `flags` | whole | `flags, stance` u8 | bit 0: grounded, bit 1: dead (lying where it fell until it respawns), bit 2: crouching, bits 3..6: the item in hand (`ITEM_*`, 0 for none), bit 7: crowing (a rooster); `stance` is `STANCE_*` (standing, prone, under a parachute) |
+| 4 | `orientation` | diff | `qx, qy, qz` i16 | the x, y, z of the orientation quaternion, scaled by 32767. The sender negates the quaternion so that `w >= 0`, and the receiver rebuilds `w = sqrt(1 − x² − y² − z²)` |
+| 5 | `steer` | diff | `steer` i8 | front-wheel angle as a fraction of full lock (the kind's `*_MAX_STEER`), −127..127, + is right |
+| 6 | `turret` | whole | `yaw, pitch` i16, `shots` u8, `range` u16, `flags` u8 | a gun on a mount (below). A plane's is the rear gunner's ring |
+| 7 | `crew` | whole | `riders`: `[yaw i16, pitch i16, held u8]` each | One `[yaw i16, pitch i16, held u8]` per seat for a vehicle whose crew show (jeep, sports car, Roadster, helicopter, triplane, mortar); absent for any other: where each rider looks (mrad, in the world, yaw 0 facing -Z) and the `ITEM_*` in their hands, all zeros for an empty seat. Seated players are not entities; clients draw them sitting from this, their heads at the kind's seat head points |
+| 8 | `thrust` | whole | `air, flags` u8 | The air left in its tank, 0..255 of full, and the nozzles firing (bit 0 the rear boost nozzles, bit 1 the lift nozzles). Other clients draw the jets from `flags`; the driver's prediction resumes from `air`. A drone sends its battery as `air` and sets bit 2 while its pilot still flies it. A hen sends its wings' stamina as `air`; bit 1 is set while it leaps or flaps, bit 3 while it glides with its wings spread and still, and bit 4 while neither foot is on the ground |
+| 9 | `arms` | whole | `shots, heat, rear_heat, bombs, flags` u8 | a plane's pilot weapons and engine, or a hen's eggs (below) |
+| 10 | `seats` | whole | `riders`: u32 each | the player id in each seat, 0 when empty. Seat 0 is the driver. A jeep has 4 seats, and a sports car and a Roadster 2; a tank has 2, the second being the gunner; a helicopter has 2, the pilot and the nose gunner; a plane has 2, the pilot (who fires the forward guns and drops the bombs) and the rear gunner; a walker, a hen and a Strv S have 1, the driver, who also fires (a hen's driver lays its eggs) (the Strv S's gun is fixed in the hull, so its `turret.yaw` is always 0 and only `pitch` moves) |
+| 11 | `health` | whole | `hp` u8 | a vehicle's health; 0 is a burning wreck nobody can board |
+| 12 | `damage` | whole | `parts`: 8 × u8 | Absent while unhurt; front, rear, left, right, then wheels FL, FR, RL, RR, each 0..255 (a wheel at 255 is gone). A tank has no wheels to hurt, so its byte 4 (`DAMAGE_TURRET`) is 255 (`TURRET_GONE`) once its turret has been shot off |
+| 13 | `velocity` | diff | `vx, vy, vz` i16 | a projectile's velocity, cm/s |
+| 14 | `kind` | whole | `kind` u8 | which model it is drawn as: 0 = stickman, 5 = Hedemora rooster, and vehicles 1 = jeep, 2 = tank, 3 = helicopter, 4 = sports car, 6 = plane, 7 = walker, 8 = Strv S, 9 = field mortar, 10 = Roadster, 11 = FPV drone, 12 = hen (5 is the rooster, an entity). A drone is listed only while it flies or falls: see [DRONES.md](DRONES.md) |
+| 15 | `projectile` | whole | `kind` u8 | what is in flight, `PROJECTILE_*` |
+| 16 | `pickup` | whole | `item` u8 | what lies on the ground, `ITEM_*` |
+
+What each carries today:
+
+| Thing | Components |
 |---|---|
-| `kind` | 0 = stickman, 5 = Hedemora rooster (an NPC: `yaw` is its heading, `flags` bit 7 is crowing) |
-| `x, y, z` | centimetres, capsule centre (+X east, +Z south, +Y up) |
-| `yaw` | milliradians |
-| `vy` | vertical velocity, cm/s (needed to resume a predicted jump) |
-| `flags` | bit 0: grounded, bit 1: dead (lying where it fell until it respawns), bit 2: crouching, bits 3..6: the item in hand (`ITEM_*`, 0 for none), bit 7: crowing (a rooster) |
-| `knock_x, knock_z` | knockback velocity, cm/s: the push a car gave the player, still sliding them. Needed to resume a predicted slide |
+| Stickman | `kind`, `place`, `heading`, `motion`, `flags` |
+| Rooster | `kind`, `place`, `heading`, `flags` |
+| Vehicle | `kind`, `place`, `orientation`, `steer`, `seats`, `health`, and whichever of `turret`, `crew`, `thrust`, `arms`, `damage` it has |
+| Projectile | `projectile`, `place`, `velocity` |
+| Item on the ground | `pickup`, `place` |
 
-Players sitting in a vehicle are **not** listed as entities. The vehicle's `seats` say where they are.
-
-`vehicle` is `[id u32, kind u8, x i32, y i32, z i32, qx i16, qy i16, qz i16, steer i8, [seat u32, …], turret, hp u8, damage, arms, thrust, crew]`:
-
-| Field | Unit |
-|---|---|
-| `id` | shares the id space with players |
-| `kind` | 1 = jeep, 2 = tank, 3 = helicopter, 4 = sports car, 6 = plane, 7 = walker, 8 = Strv S, 9 = field mortar, 10 = Roadster, 11 = FPV drone, 12 = hen (5 is the rooster, an entity). A drone is listed only while it flies or falls: see [DRONES.md](DRONES.md) |
-| `x, y, z` | centimetres, chassis centre |
-| `qx, qy, qz` | the x, y, z of the orientation quaternion, scaled by 32767. The sender negates the quaternion so that `w >= 0`, and the receiver rebuilds `w = sqrt(1 − x² − y² − z²)` |
-| `steer` | front-wheel angle as a fraction of full lock (the kind's `*_MAX_STEER`), −127..127, + is right |
-| `seat` | the player id in each seat, 0 when empty. Seat 0 is the driver. A jeep has 4 seats, and a sports car and a Roadster 2; a tank has 2, the second being the gunner; a helicopter has 2, the pilot and the nose gunner; a plane has 2, the pilot (who fires the forward guns and drops the bombs) and the rear gunner; a walker, a hen and a Strv S have 1, the driver, who also fires (a hen's driver lays its eggs) (the Strv S's gun is fixed in the hull, so its `turret.yaw` is always 0 and only `pitch` moves) |
-| `turret` | `nil` for a vehicle without a gun, else `[yaw i16, pitch i16, shots u8, range u16, flags u8]` (below). A plane's is the rear gunner's ring |
-| `hp` | health, 0 is a burning wreck nobody can board |
-| `damage` | `nil` while unhurt, else eight bytes: front, rear, left, right, then wheels FL, FR, RL, RR, each 0..255 (a wheel at 255 is gone). A tank has no wheels to hurt, so its byte 4 (`DAMAGE_TURRET`) is 255 (`TURRET_GONE`) once its turret has been shot off |
-| `arms` | `nil` for anything but a plane, else `[shots u8, heat u8, rear_heat u8, bombs u8, flags u8]` (below) |
-| `thrust` | `nil` for anything but a Roadster, a drone or a hen, else `[air u8, flags u8]`: the air left in its tank, 0..255 of full, and the nozzles firing (bit 0 the rear boost nozzles, bit 1 the lift nozzles). Other clients draw the jets from `flags`; the driver's prediction resumes from `air`. A drone sends its battery as `air` and sets bit 2 while its pilot still flies it. A hen sends its wings' stamina as `air`; bit 1 is set while it leaps or flaps, bit 3 while it glides with its wings spread and still, and bit 4 while neither foot is on the ground |
-| `crew` | One `[yaw i16, pitch i16, held u8]` per seat for a vehicle whose crew show (jeep, sports car, Roadster, helicopter, triplane, mortar), empty for any other: where each rider looks (mrad, in the world, yaw 0 facing -Z) and the `ITEM_*` in their hands, all zeros for an empty seat. Seated players are not entities; clients draw them sitting from this, their heads at the kind's seat head points |
+Players sitting in a vehicle are **not** listed as entities. The vehicle's `seats` say where they are,
+and its `crew` where they look.
 
 `turret` is `[yaw, pitch, shots, range, flags]`:
 
@@ -150,32 +170,38 @@ Boarding and leaving use the `use` button bit (4) in an input frame. It is one-s
 
 ## Delta snapshots and interest
 
-A snapshot is built per player from what is within `INTEREST_RADIUS` (300 m on the ground plane) of their stickman, and then reduced to the change from a baseline. [design.md §5.8](design.md#58-interest-management-and-delta-snapshots) says why; this is the format.
+A snapshot is built per player from what is within `INTEREST_RADIUS` (300 m on the ground plane) of
+their stickman, and then reduced to the change from a baseline. [design.md §5.8](design.md#58-interest-management-and-delta-snapshots)
+says why; this is the format.
 
-| List | Contents |
-|---|---|
-| `[entity, …]` | Entities not in the baseline, in full (shape above) |
-| `[entity_delta, …]` | Entities that were in it and changed |
-| `[vehicle, …]` | Vehicles not in the baseline, in full |
-| `[vehicle_delta, …]` | Vehicles that were in it and changed |
-| `[removed, …]` | Ids, of players or vehicles, that were in the baseline and are no longer listed: out of range, left, or gone |
-
-`entity_delta` is `[id u32, dx i32, dy i32, dz i32, dyaw i32, dvy i32, flags u8, dknock_x i32, dknock_z i32]`. Each field but `id` and `flags` is the new value minus the baseline's, in the same units as `entity`. `flags` is the new value. A change in the same entity's `kind` never happens.
-
-`vehicle_delta` is `[id u32, dx i32, dy i32, dz i32, dqx i32, dqy i32, dqz i32, dsteer i32, seats, turret, hp u8, damage, arms, thrust, crew]`. The first eight are differences of the `vehicle` fields of the same name. `seats` is `nil` when unchanged, else the new list. `turret` is `nil` when unchanged, else the new `[yaw, pitch, shots, range, flags]`. `hp` is the new value. `damage` is `nil` when unchanged, else the new eight bytes (all zeros is a repair). `arms` is `nil` when unchanged, else the new five bytes. `thrust` is `nil` when unchanged, else the new two bytes. `crew` is `nil` when unchanged, else the new list.
+- `[update, …]`: an entity not in the baseline comes whole; one that was and changed sends only the
+  components that changed, and clears those it lost.
+- `[removed, …]`: ids that were in the baseline and are no longer listed: out of range, left, taken
+  or gone.
 
 The client's scene after a snapshot is:
 
 1. Start from the scene it rebuilt for snapshot `baseline` (empty if `baseline` is 0).
 2. Remove every id in `removed`.
-3. Add the new entities and vehicles.
-4. Apply each delta to the entity or vehicle of that id. A delta for an id the scene does not hold is ignored.
+3. Apply each update to the entity of that id: clear what `cleared` names, then set each component it
+   sends, adding a *diff* one to the baseline's value when the baseline has it. An update for an id
+   the scene does not hold adds that entity.
 
-Anything not mentioned is unchanged. A client that does not hold `baseline` drops the snapshot. Keep at least the last 64 rebuilt scenes. The server uses only baselines among the last 32 snapshots it sent that player, so one it still offers is one the client still has.
+Anything not mentioned is unchanged. A client that does not hold `baseline` drops the snapshot. Keep at
+least the last 64 rebuilt scenes. The server uses only baselines among the last 32 snapshots it sent
+that player, so one it still offers is one the client still has.
 
-**The server diffs against the newest `baseline` the client acknowledged**, not against the snapshot it sent last. Loss then costs nothing but a larger next delta, and nothing has to be retransmitted. A baseline the server no longer holds (an acknowledgement over about a second old, or one that was never sent) gets a whole snapshot with `baseline` 0.
+**The server diffs against the newest `baseline` the client acknowledged**, not against the snapshot it
+sent last. Loss then costs nothing but a larger next update, and nothing has to be retransmitted. A
+baseline the server no longer holds (an acknowledgement over about a second old, or one that was never
+sent) gets a whole snapshot with `baseline` 0.
 
-**Interest has hysteresis.** A thing enters at 300 m and stays until 340 m. **The packet limit** is kept by shedding, in order, effects, rockets, then the farthest new and changed entities and vehicles; the shed ones come in a later snapshot. `removed` is never shed.
+**Interest has hysteresis.** A thing enters at 300 m and stays until 340 m. Items on the ground do not:
+only the nearest 24 within 300 m are listed.
+
+**The packet limit** is kept by shedding: effects (`shot`) first, then updates of projectiles, then of
+items on the ground, then bullets, then the farthest updates of everything else. Whatever was shed
+arrives in a later snapshot, nearest first. `removed` is never shed.
 
 ## Rates and limits
 
@@ -184,7 +210,7 @@ Anything not mentioned is unchanged. A client that does not hold `baseline` drop
 | Simulation tick | 60 Hz |
 | Snapshot rate | 30 Hz |
 | Input datagrams | 60 Hz, about 35 bytes each, so about 2 KB/s up |
-| Snapshot size | about 28 bytes of header, plus about 24 per entity or 10 per entity delta, 25 to 40 per vehicle or about 15 per vehicle delta, and 20 more for the driver. Only what is in range and has changed is sent: 30 players running in view is about 320 bytes, so about 10 KB/s down. Standing still costs nothing |
+| Snapshot size | about 25 bytes of header, plus about 19 per new stickman or 7 per moving one, 25 to 40 per new vehicle or about 10 to 15 per changing one, and 20 more for the driver. Only what is in range and has changed is sent: 30 players running in view is about 230 bytes, so about 7 KB/s down. Standing still costs nothing |
 | Max datagram | 1200 bytes; bigger ones are dropped unread |
 | Room size | 64 players |
 | Interest radius | 300 m, left at 340 m |

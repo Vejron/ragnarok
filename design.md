@@ -152,21 +152,24 @@ Measured with two headless Chrome clients and 60 ms ±30 ms latency each way plu
 
 A room of 64 can't be sent to everyone whole 30 times a second, and most of it isn't in view anyway. Each player's snapshot is built from two filters (`crates/server/src/replication.rs`).
 
-**Interest.** Only stickmen, vehicles, rockets and effects within `INTEREST_RADIUS` (300 m, on the ground plane) of the receiving player's stickman are sent. Whatever the player already holds stays until it is `INTEREST_HYSTERESIS` (40 m) further out, so something on the edge doesn't flicker. 300 m is more than a rifle (200 m) or a rocket (180 m) reaches, and the fog hides most of the rest. Out of range is not a `leave`: the server stops listing the thing, and the client drops it. Scores, kills and `leave` still go to everyone.
+**Interest.** Only what is within `INTEREST_RADIUS` (300 m, on the ground plane) of the receiving player's stickman is sent: stickmen, creatures, vehicles, projectiles, the nearest items on the ground, and effects. Whatever the player already holds stays until it is `INTEREST_HYSTERESIS` (40 m) further out, so something on the edge doesn't flicker. 300 m is more than a rifle (200 m) or a rocket (180 m) reaches, and the fog hides most of the rest. Out of range is not a `leave`: the server stops listing the thing, and the client drops it. Scores, kills and `leave` still go to everyone.
 
-**Deltas.** The server keeps, per player, the scenes it sent in the last `BASELINE_WINDOW` (32) snapshots. Every input datagram carries `baseline`, the tick of the newest snapshot the client has rebuilt. The next snapshot lists only the difference from that scene (`crates/shared/src/delta.rs`):
+**Components.** What is sent of each thing is the components it has (`crates/shared/src/replicated.rs`): `place`, `heading`, `turret`, `seats`, `damage` and so on, each with a bit of its own. A new kind of thing, or a new capability on an old one, is a new combination of components, or one new component in that one list. The client's types and decoder are generated from it, so nothing on the wire is written twice.
 
-- new entities and vehicles, in full;
-- changed ones, as differences in each field (position in cm, yaw in mrad), with nothing at all for something that did not change;
+**Deltas.** The server keeps, per player, the scenes it sent in the last `BASELINE_WINDOW` (32) snapshots. Every input datagram carries `baseline`, the tick of the newest snapshot the client has rebuilt. The next snapshot lists only the difference from that scene, one update per entity:
+
+- new entities, with every component they have;
+- changed ones, with only the components that changed; position, heading, orientation and the like as differences (cm, mrad), the rest whole; and the components they lost;
+- nothing at all for something that did not change;
 - ids that are gone or out of range.
 
-The client keeps its last 64 rebuilt scenes (`client/src/net/replica.ts`), applies the delta to the one it names and acknowledges the result. The server stores the scene *it computes by applying its own delta*, with the same integer arithmetic, so both sides agree without an echo.
+The client keeps its last 64 rebuilt scenes (`client/src/net/replica.ts`), applies the updates to the one the snapshot names and acknowledges the result. The server stores the scene the client will hold, with the same integer arithmetic, so both sides agree without an echo.
 
 Loss needs no extra machinery. A snapshot that is lost is never acknowledged, so the server keeps diffing against the older one and the next delta is just a little bigger. If the acknowledged snapshot has left the window (a stall of more than a second) the server sends a whole one, with `baseline` 0.
 
-**The datagram budget.** A snapshot still has to fit `MAX_PACKET`. If it doesn't, the server sheds in this order: effects, rockets, then the farthest newcomers and the farthest changes, and a thing that was shed arrives in a later snapshot, nearest first. Removals are never shed. A crowd of 64 in view therefore degrades to "the nearest N are up to date" and not to a dropped packet.
+**The datagram budget.** A snapshot still has to fit `MAX_PACKET`. If it doesn't, the server sheds in this order: effects, projectiles, items on the ground, bullets, then the farthest updates of everything else, and a thing that was shed arrives in a later snapshot, nearest first. Removals are never shed. A crowd of 64 in view therefore degrades to "the nearest N are up to date" and not to a dropped packet.
 
-**What it buys.** Thirty players running flat out take about 320 bytes a snapshot as deltas against 525 whole (`a_delta_is_a_good_deal_smaller_than_a_whole_snapshot`). Standing players cost nothing once acknowledged, and a parked vehicle likewise. The bigger win is the interest filter: bytes now depend on how many players are near, not how many are connected.
+**What it buys.** Thirty players running flat out take about 230 bytes a snapshot as deltas, against 645 whole (`a_delta_is_a_good_deal_smaller_than_a_whole_snapshot`); protocol v1, a row per family, took 354. Standing players cost nothing once acknowledged, and a parked vehicle likewise; a moving tank sends its pose and nothing of its unchanged turret, seats or health. The bigger win is the interest filter: bytes now depend on how many players are near, not how many are connected.
 
 ## 6. Transport mapping
 

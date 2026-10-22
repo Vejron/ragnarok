@@ -4,9 +4,6 @@
 //! but gun rounds (clients fly those from their `BulletSpawn`), and items lying on the ground.
 //! Seated players are shown by their vehicle's `seats` and `crew`.
 
-// Built and checked against v1's rows from Phase 3.2; on the wire from 3.5, which drops this.
-#![cfg_attr(not(test), allow(dead_code))]
-
 use super::*;
 use crate::entities::{Health, NetKind, Transform, With};
 use shared::mounts::Show;

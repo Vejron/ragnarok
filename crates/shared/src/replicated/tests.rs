@@ -1,5 +1,5 @@
 use super::*;
-use crate::protocol::{EntityDelta, decode, encode};
+use crate::protocol::{decode, encode};
 
 fn stickman(x: i32, yaw: i16) -> Replicated {
     Replicated {
@@ -79,9 +79,8 @@ fn a_walking_stickman_sends_only_its_moves_as_differences_and_costs_no_more_than
     assert_eq!(update.place, Some([12, 0, 0]));
     assert_eq!(update.heading, Some([30]));
     assert_eq!(Replicated::apply(Some(&base), &round_trip(&update)), now);
-    let before = encode(&EntityDelta { id: 3, dx: 12, dy: 0, dz: 0, dyaw: 30, dvy: 0, flags: 1, stance: 0, dknock_x: 0, dknock_z: 0 });
-    let after = encode(&update);
-    assert!(after.len() <= before.len(), "{} bytes now, {} before", after.len(), before.len());
+    // v1's `EntityDelta` for the same change was 11 bytes.
+    assert_eq!(encode(&update).len(), 7);
 }
 
 #[test]

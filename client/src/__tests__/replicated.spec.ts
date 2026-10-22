@@ -36,6 +36,9 @@ describe('replicated components', () => {
     expect(decodeUpdate([5, 2, 30, 99])).toBeNull()
     // A crew rider that is not three numbers.
     expect(decodeUpdate([5, 1 << 7, [[1, 2]]])).toBeNull()
+    // A field that is not an integer, or a list of them.
+    expect(decodeUpdate([5, 2, 'north'])).toBeNull()
+    expect(decodeUpdate([5, 1 << 10, [1, 'x']])).toBeNull()
     expect(decodeUpdate([5, 2, 30])).toEqual({ id: 5, cleared: 0, set: { heading: { yaw: 30 } } })
     expect(decodeUpdates('nope')).toBeNull()
   })

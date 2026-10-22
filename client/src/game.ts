@@ -70,6 +70,7 @@ import { playCrow } from './audio'
 import { VehicleSounds } from './vehicleaudio'
 import { HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, HitFeedback } from './feedback'
 import { buildGround } from './render/world'
+import { v1Scene } from './net/adapter'
 import { Replica } from './net/replica'
 import { TileStreamer } from './stream'
 import { loadManifest, NO_WATER, type WorldData } from './world'
@@ -465,17 +466,19 @@ export class Game {
         if (this.localId === null) return
         // Snapshots list what changed since a baseline. One that names a baseline we do not hold
         // is dropped; the server has no acknowledgement for it and soon sends a whole one.
-        const rebuilt = this.replica.receive(message.tick, message.baseline, message.delta)
+        const rebuilt = this.replica.receive(message.tick, message.baseline, message.updates, message.removed)
         if (!rebuilt) return
-        const { entities, vehicles } = sceneStates(rebuilt.scene)
+        // The components, as v1's states, until each has a presenter of its own (Phase 4).
+        const { wire, rockets, pickups } = v1Scene(rebuilt.scene)
+        const { entities, vehicles } = sceneStates(wire)
         this.clock.observe(message.tick, now)
         this.setHealth(message.hp, now)
         this.progress = message.progress / 255
         this.hotbar = [...message.inventory, ...emptyHotbar()].slice(0, HOTBAR_SLOTS)
-        this.pickups = message.pickups
+        this.pickups = pickups
         for (const shot of message.shots) this.pendingShots.push({ tick: message.tick, shot })
         if (this.pendingShots.length > 64) this.pendingShots.splice(0, this.pendingShots.length - 64)
-        this.trackRockets(message.tick, message.rockets)
+        this.trackRockets(message.tick, rockets)
         this.noteBullets(message.tick, message.bullets)
         const remote = entities.filter((e) => e.id !== this.localId)
         this.interp.push(message.tick, remote)

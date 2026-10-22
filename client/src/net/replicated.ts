@@ -25,14 +25,17 @@ export type Scene = ReadonlyMap<number, Components>
 
 const has = (mask: number, bit: number) => ((mask >>> bit) & 1) === 1
 
-/** A field's value as sent; a list of structs becomes a list of objects. Null if malformed. */
+const isInt = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value)
+const ints = (value: unknown): value is number[] => Array.isArray(value) && value.every(isInt)
+
+/** A field's value as sent: an integer or a list of them, or a list of structs as objects. Null if malformed. */
 function field(raw: unknown, schema: FieldSchema): unknown {
-  if (!schema.struct) return raw
+  if (!schema.struct) return isInt(raw) || ints(raw) ? raw : null
   if (!Array.isArray(raw)) return null
   const members = schema.struct
   const items: Fields[] = []
   for (const item of raw) {
-    if (!Array.isArray(item) || item.length !== members.length) return null
+    if (!ints(item) || item.length !== members.length) return null
     items.push(Object.fromEntries(members.map((member, i) => [member, item[i]])))
   }
   return items
@@ -42,12 +45,12 @@ function field(raw: unknown, schema: FieldSchema): unknown {
 export function decodeUpdate(raw: unknown): Update | null {
   if (!Array.isArray(raw) || raw.length < 2) return null
   const [id, set] = raw as [unknown, unknown]
-  if (typeof id !== 'number' || typeof set !== 'number') return null
+  if (!isInt(id) || !isInt(set)) return null
   let at = 2
   let cleared = 0
   if (has(set, 31)) {
     const mask = raw[at++]
-    if (typeof mask !== 'number') return null
+    if (!isInt(mask)) return null
     cleared = mask
   }
   const components: Update['set'] = {}

@@ -4,33 +4,27 @@ use shared::protocol::{KIND_DRONE, KIND_JEEP, PROJECTILE_ROCKET};
 use shared::world::{WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
 
-/// Whether the v2 scene says exactly what the v1 rows do, of everything in the room.
-fn same_as_v1(game: &Game) -> (usize, usize, usize, usize) {
-    let (entities, vehicles, rockets, pickups) = wire::v1_rows(&game.replicated());
-    let mut v1_entities = game.entity_states();
-    v1_entities.sort_by_key(|e| e.id);
-    assert_eq!(entities, v1_entities, "stickmen and creatures, tick {}", game.world.tick);
-    assert_eq!(vehicles, game.vehicle_states(), "vehicles, tick {}", game.world.tick);
-    assert_eq!(rockets, game.projectile_states(), "projectiles, tick {}", game.world.tick);
-    assert_eq!(pickups, game.pickup_states(), "pickups, tick {}", game.world.tick);
-    (entities.len(), vehicles.len(), rockets.len(), pickups.len())
-}
-
 #[test]
-fn the_v2_scene_says_what_the_v1_rows_do_in_a_busy_room() {
+fn a_client_rebuilds_exactly_what_the_server_has_near_it_in_a_busy_room() {
     // The committed city if it is there, for vehicles, buildings and spawn points; else open ground.
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/world/world.msgpack");
     let map = crate::read_world(&fixture).map(|(map, _)| map).unwrap_or_else(|_| WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[0, 0], [3000, 0]], ..Default::default() });
     let mut game = Game::new(map, 0).unwrap();
     let mut inboxes = Vec::new();
     let mut ids = Vec::new();
-    for _ in 0..12 {
+    for _ in 0..13 {
         let (outbox, inbox) = mpsc::channel(4096);
         let (reply, mut response) = oneshot::channel();
         game.handle(Command::Join { outbox, reply, profile: Default::default() });
         ids.push(response.try_recv().unwrap().unwrap());
         inboxes.push(inbox);
     }
+    // The last to join only watches, and acknowledges what it rebuilt as a client does.
+    let observer = ids.pop().unwrap();
+    let mut watching = inboxes.pop().unwrap();
+    let mut held: Vec<(u32, Scene)> = Vec::new();
+    let mut rebuilt = 0u32;
+    let (mut deltas, mut dropped) = (0, 0);
     let spawn = game.world.map.spawns.first().map_or([0.0, 0.0], |s| [s[0] as f32 / 100.0, s[1] as f32 / 100.0]);
     for n in 0..4 {
         game.add_bot([spawn[0] + n as f32 * 3.0, spawn[1]], TEAM_BOTS, Vec::new());
@@ -38,7 +32,6 @@ fn the_v2_scene_says_what_the_v1_rows_do_in_a_busy_room() {
     game.add_crew(["Driver".into(), "Gunner".into()], spawn, TEAM_BOTS, Vec::new());
 
     let mut seen = (0, 0, 0, 0);
-    let mut most = |counts: (usize, usize, usize, usize)| seen = (seen.0.max(counts.0), seen.1.max(counts.1), seen.2.max(counts.2), seen.3.max(counts.3));
     let (mut drones, mut hurt, mut wrecks, mut dead, mut crews) = (false, false, false, false, false);
     for t in 1..=360u32 {
         for (n, &id) in ids.iter().enumerate() {
@@ -49,6 +42,7 @@ fn the_v2_scene_says_what_the_v1_rows_do_in_a_busy_room() {
             let frame = InputFrame { seq: t, strafe: if n % 2 == 0 { 90 } else { -90 }, forward: 127, yaw: (t as i16 * 9 + n as i16 * 300) % 3000, buttons: fire | crouch, pitch: 100, view: t as u16, slot };
             game.handle(Command::Input(id, t.saturating_sub(2), vec![frame]));
         }
+        game.handle(Command::Input(observer, rebuilt, vec![InputFrame { seq: t, ..Default::default() }]));
         match t {
             // A drone in the air, a rocket in flight, a hurt car with someone in the back, a wreck, a death.
             30 => assert!(launch_drone(&mut game.world, ids[0], KIND_DRONE), "a drone goes up"),
@@ -75,8 +69,35 @@ fn the_v2_scene_says_what_the_v1_rows_do_in_a_busy_room() {
             _ => {}
         }
         game.step();
+        while let Ok(out) = watching.try_recv() {
+            let Outgoing::Datagram(bytes) = out else { continue };
+            assert!(bytes.len() <= MAX_PACKET);
+            let snapshot: Snapshot = decode(&bytes).expect("a snapshot decodes");
+            let Some(base) = (snapshot.baseline == 0).then(Vec::new).or_else(|| held.iter().find(|(tick, _)| *tick == snapshot.baseline).map(|(_, scene)| scene.clone())) else {
+                dropped += 1;
+                continue;
+            };
+            deltas += usize::from(snapshot.baseline != 0);
+            held.push((snapshot.tick, wire::apply(&base, &snapshot.updates, &snapshot.removed)));
+            rebuilt = snapshot.tick;
+        }
+        if t >= 90 && t % SNAPSHOT_EVERY == 0 {
+            // What a client holds now is exactly what the server has near it.
+            let client = &held.last().expect("snapshots arrive").1;
+            let server = game.replicated();
+            let at = game.world.entities.of::<Player>(observer).character.position;
+            let near = |e: &Replicated| e.place.is_some_and(|p| ((p.x as f32 / 100.0 - at[0]).powi(2) + (p.z as f32 / 100.0 - at[2]).powi(2)).sqrt() <= INTEREST_RADIUS);
+            for (id, entity) in server.iter().filter(|(_, e)| near(e) && e.pickup.is_none()) {
+                let mine = client.iter().find(|(held, _)| held == id).map(|(_, e)| e);
+                assert_eq!(mine, Some(entity), "entity {id} near the client, tick {t}");
+            }
+            for (id, entity) in client {
+                assert_eq!(server.iter().find(|(had, _)| had == id).map(|(_, e)| e), Some(entity), "the client holds {id} as the server has it, tick {t}");
+            }
+            let (entities, vehicles, rockets, pickups) = wire::v1_rows(client);
+            seen = (seen.0.max(entities.len()), seen.1.max(vehicles.len()), seen.2.max(rockets.len()), seen.3.max(pickups.len()));
+        }
         if t % 6 == 0 {
-            most(same_as_v1(&game));
             let vehicles = game.vehicle_states();
             drones |= vehicles.iter().any(|v| v.thrust.is_some_and(|t| t.flags & THRUST_LINKED != 0));
             hurt |= vehicles.iter().any(|v| v.damage.is_some());
@@ -86,7 +107,8 @@ fn the_v2_scene_says_what_the_v1_rows_do_in_a_busy_room() {
         }
     }
     let (entities, vehicles, rockets, _) = seen;
-    assert!(entities >= 12 && vehicles >= 2 && rockets >= 1, "the room was busy: {seen:?}");
+    assert!(entities >= 12 && vehicles >= 2 && rockets >= 1, "the client saw a busy room: {seen:?}");
+    assert!(deltas > 150 && dropped == 0, "{deltas} snapshots came as deltas on what the client acknowledged, {dropped} named a baseline it lacked");
     assert!(drones && hurt && wrecks && dead && crews, "every case was met: drone {drones}, hurt {hurt}, wreck {wrecks}, dead {dead}, crew {crews}");
     drop(inboxes);
 }

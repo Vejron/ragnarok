@@ -260,7 +260,8 @@ pub struct Welcome {
     pub world_hash: u32,
 }
 
-/// One entity in a snapshot.
+/// A stickman or a creature as protocol v1 sent it, and as the client's adapter still hands it to
+/// `game.ts` (`shared::replicated::v1_rows`). Not on the wire since v2; goes with the adapter in Phase 4.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntityState {
     /// Entity id.
@@ -284,7 +285,7 @@ pub struct EntityState {
     pub knock_z: i16,
 }
 
-/// One vehicle in a snapshot. Players sitting in a vehicle are not listed as entities: the vehicle's
+/// A vehicle as protocol v1 sent it (see `EntityState`). Players sitting in a vehicle are not listed as entities: the vehicle's
 /// seats say who is in it, `crew` where they look and what they hold, and the client draws them from that.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VehicleState {
@@ -325,47 +326,6 @@ pub struct Rider {
     pub yaw: i16,
     pub pitch: i16,
     pub held: u8,
-}
-
-/// What changed in a standing entity since the baseline: `[id, dx, dy, dz, dyaw, dvy, flags,
-/// dknock_x, dknock_z]`. Every field but `id` and `flags` is the new value minus the old one.
-/// Entities that did not change at all are not listed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EntityDelta {
-    pub id: u32,
-    pub dx: i32,
-    pub dy: i32,
-    pub dz: i32,
-    pub dyaw: i32,
-    pub dvy: i32,
-    /// `FLAG_*` bits, the new value.
-    pub flags: u8,
-    /// `STANCE_*`, the new value.
-    pub stance: u8,
-    pub dknock_x: i32,
-    pub dknock_z: i32,
-}
-
-/// What changed in a vehicle since the baseline: `[id, dx, dy, dz, dqx, dqy, dqz, dsteer, seats,
-/// turret, hp, damage, arms, thrust, crew]`. The first eight are differences; `seats`, `turret`, `damage`, `arms`,
-/// `thrust` and `crew` are `nil` when unchanged (a repaired vehicle's `damage` is all zeros), and `hp` is the new value.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VehicleDelta {
-    pub id: u32,
-    pub dx: i32,
-    pub dy: i32,
-    pub dz: i32,
-    pub dqx: i32,
-    pub dqy: i32,
-    pub dqz: i32,
-    pub dsteer: i32,
-    pub seats: Option<Vec<u32>>,
-    pub turret: Option<Turret>,
-    pub hp: u8,
-    pub damage: Option<[u8; 8]>,
-    pub arms: Option<Arms>,
-    pub thrust: Option<Thrust>,
-    pub crew: Option<Vec<Rider>>,
 }
 
 /// Indices into a vehicle's damage: the four sides of the body, then the wheels front left,
@@ -509,16 +469,18 @@ pub struct PickupState {
     pub z: i32,
 }
 
-/// `[1, server_tick, baseline, ack_input_seq, ride, [new entity, ...], [entity delta, ...],
-/// [new vehicle, ...], [vehicle delta, ...], [removed id, ...], drive, self, [shot, ...],
-/// [projectile, ...], [pickup, ...], [bullet spawn, ...]]`, sent as a datagram.
-/// `baseline` is the tick of the snapshot the lists are relative to, or 0 when they are not
-/// (everything in range is then listed as new). `ack_input_seq` is the newest input of the
-/// *receiving* player that the state already includes. `ride` is the id of the vehicle the
-/// receiving player stands on top of, or 0. It is carried with that vehicle, so the client must
-/// predict relative to it. `drive` is `nil` unless the receiving player is driving. `self` is the
-/// receiving player's own health and hotbar. `shots` are the gunshots since the previous
-/// snapshot, newest last, capped at `MAX_SHOT_EVENTS`. `pickups` are the items on the ground in range.
+/// `[1, server_tick, baseline, ack_input_seq, ride, [update, ...], [removed id, ...], drive, self,
+/// [shot, ...], [bullet spawn, ...]]`, sent as a datagram.
+///
+/// `baseline` is the tick of the snapshot the updates are relative to, or 0 when they are not (every
+/// entity in range then comes whole). Each update is one entity's components
+/// (`shared::replicated::Update`): stickmen, creatures, vehicles, projectiles and items on the ground
+/// alike. `ack_input_seq` is the newest input of the *receiving* player that the state already
+/// includes. `ride` is the id of the vehicle the receiving player stands on top of, or 0: it is carried
+/// with that vehicle, so the client must predict relative to it. `drive` is `nil` unless the receiving
+/// player is driving. `self` is the receiving player's own health and hotbar. `shots` are the effects
+/// since the previous snapshot, capped at `MAX_SHOT_EVENTS`, and `bullets` the gun rounds the client
+/// flies itself.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub tag: u8,
@@ -526,16 +488,11 @@ pub struct Snapshot {
     pub baseline: u32,
     pub ack: u32,
     pub ride: u32,
-    pub new_entities: Vec<EntityState>,
-    pub entities: Vec<EntityDelta>,
-    pub new_vehicles: Vec<VehicleState>,
-    pub vehicles: Vec<VehicleDelta>,
+    pub updates: Vec<crate::replicated::Update>,
     pub removed: Vec<u32>,
     pub drive: Option<DriveState>,
     pub me: SelfState,
     pub shots: Vec<ShotEvent>,
-    pub rockets: Vec<ProjectileState>,
-    pub pickups: Vec<PickupState>,
     /// Bullets fired since a few snapshots ago, which the client then flies itself.
     pub bullets: Vec<BulletSpawn>,
 }
@@ -687,11 +644,11 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 38, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
+        148, 0, 39, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[
-        220, 0, 16, 1, 205, 4, 210, 205, 4, 206, 42, 9, 145, 155, 7, 0, 0, 85, 206, 0, 1, 134, 160, 0, 0, 3, 0, 0, 0, 145, 154, 1, 25, 253, 40, 208, 136, 205, 2, 138, 1, 0, 209, 254, 212, 12, 146, 220, 0, 16, 10, 2, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 146, 1, 7, 149, 209, 253, 68, 204, 250, 3, 205, 4, 210, 1, 0, 192, 192, 192, 146, 147, 0, 0, 0, 147, 209, 251, 80, 205, 1, 44, 2, 220, 0, 16, 12, 6, 209, 254, 12, 205, 1, 44, 205, 3, 32, 10, 236, 30, 0, 146, 4, 0, 149, 205, 11, 184, 204, 200, 9, 0, 0, 70, 192, 149, 17, 204, 200, 0, 3, 3, 192, 144, 145, 159, 9, 100, 0, 208, 211, 3, 254, 0, 4, 148, 1, 0, 7, 0, 192, 100, 152, 0, 0, 40, 0, 0, 0, 204, 255, 3, 192, 146, 204, 200, 3, 145, 147, 15, 208, 216, 5, 146, 3, 11, 152, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 73, 204, 128, 147, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 152, 40, 1, 205, 4, 176, 204, 150, 209, 252, 224, 205, 11, 184, 0, 209, 246, 60, 145, 149, 60, 4, 209, 254, 212, 5, 205, 4, 226, 145, 154, 77, 7, 2, 120, 204, 165, 209, 244, 72, 205, 5, 220, 236, 209, 150, 136, 205, 4, 209
+        155, 1, 205, 4, 210, 205, 4, 206, 42, 9, 148, 153, 1, 7, 25, 0, 0, 208, 136, 205, 2, 138, 0, 0, 156, 7, 205, 64, 15, 0, 85, 206, 0, 1, 134, 160, 0, 0, 0, 0, 3, 0, 0, 220, 0, 17, 10, 205, 76, 113, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 209, 253, 68, 204, 250, 3, 205, 4, 210, 1, 146, 1, 7, 204, 250, 2, 147, 12, 206, 128, 0, 0, 0, 205, 16, 0, 146, 3, 11, 152, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 73, 204, 128, 147, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 154, 77, 7, 2, 120, 204, 165, 209, 244, 72, 205, 5, 220, 236, 209, 150, 136, 205, 4, 209,
     ];
 
     fn sample_input() -> ClientInput {
@@ -707,7 +664,34 @@ mod tests {
     }
 
     fn sample_snapshot() -> Snapshot {
-        Snapshot { tag: S_SNAPSHOT, tick: 1234, baseline: 1230, ack: 42, ride: 9, new_entities: vec![EntityState { id: 7, kind: KIND_STICKMAN, x: 0, y: 85, z: 100_000, yaw: 0, vy: 0, flags: FLAG_GROUNDED | FLAG_DEAD, stance: 0, knock_x: 0, knock_z: 0 }], entities: vec![EntityDelta { id: 1, dx: 25, dy: -3, dz: 40, dyaw: -120, dvy: 650, flags: FLAG_GROUNDED, stance: 0, dknock_x: -300, dknock_z: 12 }], new_vehicles: vec![VehicleState { id: 10, kind: KIND_TANK, x: 300, y: 90, z: -2000, qx: 0, qy: 700, qz: 0, steer: 32, seats: vec![1, 7], turret: Some(Turret { yaw: -700, pitch: 250, shots: 3, range: 1234, flags: TURRET_STOWED }), hp: 0, damage: None, arms: None, thrust: None, crew: vec![Rider::default(), Rider { yaw: -1200, pitch: 300, held: ITEM_AK5 }] }, VehicleState { id: 12, kind: KIND_PLANE, x: -500, y: 300, z: 800, qx: 10, qy: -20, qz: 30, steer: 0, seats: vec![4, 0], turret: Some(Turret { yaw: 3000, pitch: 200, shots: 9, range: 0, flags: 0 }), hp: 70, damage: None, arms: Some(Arms { shots: 17, heat: 200, rear_heat: 0, bombs: 3, flags: ARMS_CUT | ARMS_JAMMED }), thrust: None, crew: vec![] }], vehicles: vec![VehicleDelta { id: 9, dx: 100, dy: 0, dz: -45, dqx: 3, dqy: -2, dqz: 0, dsteer: 4, seats: Some(vec![1, 0, 7, 0]), turret: None, hp: 100, damage: Some([0, 0, 40, 0, 0, 0, 255, 3]), arms: None, thrust: Some(Thrust { air: 200, flags: THRUST_BOOST | THRUST_LIFT }), crew: Some(vec![Rider { yaw: 15, pitch: -40, held: ITEM_SNIPER }]) }], removed: vec![3, 11], drive: Some(DriveState { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }), me: SelfState { hp: 73, progress: 128, slots: vec![ItemSlot { item: ITEM_AK5, count: 1, ammo: 17 }, ItemSlot { item: ITEM_NONE, count: 0, ammo: 0 }, ItemSlot { item: ITEM_GRENADE, count: 2, ammo: 0 }] }, shots: vec![ShotEvent { shooter: 7, weapon: WEAPON_RIFLE, x: 1500, y: 160, z: -4200 }, ShotEvent { shooter: 1, weapon: WEAPON_RIFLE, x: -20, y: 90, z: 31_000 }], rockets: vec![ProjectileState { id: 40, kind: PROJECTILE_GRENADE, x: 1200, y: 150, z: -800, vx: 3000, vy: 0, vz: -2500 }], pickups: vec![PickupState { id: 60, item: ITEM_BANDAGE, x: -300, y: 5, z: 1250 }], bullets: vec![BulletSpawn { id: 77, shooter: 7, item: ITEM_AK5, x: 120, y: 165, z: -3000, vx: 1500, vy: -20, vz: -27000, tick: 1233 }] }
+        use crate::replicated::{self as wire, Replicated};
+        let walker = |x, yaw, vy| Replicated {
+            kind: Some(wire::Kind { kind: KIND_STICKMAN }),
+            place: Some(wire::Place { x, y: 85, z: 100_000 }),
+            heading: Some(wire::Heading { yaw }),
+            motion: Some(wire::Motion { vy, knock_x: 0, knock_z: 0 }),
+            flags: Some(wire::Flags { flags: FLAG_GROUNDED, stance: 0 }),
+            ..Default::default()
+        };
+        let tank = Replicated {
+            kind: Some(wire::Kind { kind: KIND_TANK }),
+            place: Some(wire::Place { x: 300, y: 90, z: -2000 }),
+            orientation: Some(wire::Orientation { qx: 0, qy: 700, qz: 0 }),
+            steer: Some(wire::Steer { steer: 32 }),
+            seats: Some(wire::Seats { riders: vec![1, 7] }),
+            turret: Some(wire::Turret { yaw: -700, pitch: 250, shots: 3, range: 1234, flags: TURRET_STOWED }),
+            health: Some(wire::Health { hp: 250 }),
+            ..Default::default()
+        };
+        let hurt = Replicated { damage: Some(wire::Damage { parts: [0, 0, 40, 0, 0, 0, 255, 3] }), ..tank.clone() };
+        let updates = vec![
+            // A stickman moving: differences. A dead one new to the receiver, whole. A tank, whole, and one repaired.
+            walker(25, -120, 650).update(1, Some(&walker(0, 0, 0))).unwrap(),
+            Replicated { flags: Some(wire::Flags { flags: FLAG_GROUNDED | FLAG_DEAD, stance: 0 }), ..walker(0, 0, 0) }.update(7, None).unwrap(),
+            tank.update(10, None).unwrap(),
+            tank.update(12, Some(&hurt)).unwrap(),
+        ];
+        Snapshot { tag: S_SNAPSHOT, tick: 1234, baseline: 1230, ack: 42, ride: 9, updates, removed: vec![3, 11], drive: Some(DriveState { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }), me: SelfState { hp: 73, progress: 128, slots: vec![ItemSlot { item: ITEM_AK5, count: 1, ammo: 17 }, ItemSlot { item: ITEM_NONE, count: 0, ammo: 0 }, ItemSlot { item: ITEM_GRENADE, count: 2, ammo: 0 }] }, shots: vec![ShotEvent { shooter: 7, weapon: WEAPON_RIFLE, x: 1500, y: 160, z: -4200 }, ShotEvent { shooter: 1, weapon: WEAPON_RIFLE, x: -20, y: 90, z: 31_000 }], bullets: vec![BulletSpawn { id: 77, shooter: 7, item: ITEM_AK5, x: 120, y: 165, z: -3000, vx: 1500, vy: -20, vz: -27000, tick: 1233 }] }
     }
 
     /// `[6, [[OBJ_TREE, 2, 3, 70000, -1571, 90]]]`, mirrored in `codec.spec.ts`.

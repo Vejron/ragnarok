@@ -1,6 +1,7 @@
 import { decode, encode } from '@msgpack/msgpack'
-import { CAR_SEATS, MAX_PACKET, PROTOCOL_VERSION, STANCE_CHUTE, STANCE_PRONE } from '@/sim/consts'
+import { MAX_PACKET, PROTOCOL_VERSION, STANCE_CHUTE, STANCE_PRONE } from '@/sim/consts'
 import { HOTBAR_SLOTS, type ItemSlot } from '@/sim/items'
+import { decodeUpdates, type Update } from './replicated'
 
 /**
  * Wire format: MessagePack arrays with a leading tag, fixed-point integers, no field names.
@@ -393,35 +394,19 @@ export interface Score {
 }
 
 /**
- * A standing entity as it travels: `[id, kind, x, y, z, yaw, vy, flags, stance, knockX, knockZ]`, all
- * integers (centimetres, milliradians, cm/s). Scenes are kept in this form so delta arithmetic is
- * exact; `entityState` converts one for the game.
+ * A stickman or a creature as protocol v1 put it on the wire: `[id, kind, x, y, z, yaw, vy, flags,
+ * stance, knockX, knockZ]`, all integers (centimetres, milliradians, cm/s). The v2 adapter
+ * (`adapter.ts`) builds these from components until Phase 4; `entityState` converts one for the game.
  */
 export type RawEntity = number[]
 
-/** A vehicle as it travels: `[id, kind, x, y, z, qx, qy, qz, steer, seats, turret | null, hp, damage | null, arms | null, thrust | null, crew]`, `crew` a `[yaw, pitch, held]` per seat. */
+/** A vehicle as protocol v1 put it on the wire (see `RawEntity`): `[id, kind, x, y, z, qx, qy, qz, steer, seats, turret | null, hp, damage | null, arms | null, thrust | null, crew]`, `crew` a `[yaw, pitch, held]` per seat. */
 export type RawVehicle = [number, number, number, number, number, number, number, number, number, number[], number[] | null, number, number[] | null, number[] | null, number[] | null, number[][]]
 
-/** `[id, dx, dy, dz, dyaw, dvy, flags, stance, dknockX, dknockZ]`: differences, except `id`, `flags` and `stance`. */
-export type RawEntityDelta = number[]
-
-/** `[id, dx, dy, dz, dqx, dqy, dqz, dsteer, seats | null, turret | null, hp, damage | null, arms | null, thrust | null, crew | null]`. */
-export type RawVehicleDelta = [number, number, number, number, number, number, number, number, number[] | null, number[] | null, number, number[] | null, number[] | null, number[] | null, number[][] | null]
-
-/** Everything a client knows of the world at one snapshot, each list ordered by id. */
+/** Protocol v1's stickmen and vehicles, as the v2 adapter (`adapter.ts`) hands them to the game, each list ordered by id. */
 export interface WireScene {
   entities: RawEntity[]
   vehicles: RawVehicle[]
-}
-
-/** What a snapshot lists, relative to the baseline it names. */
-export interface WireDelta {
-  newEntities: RawEntity[]
-  entities: RawEntityDelta[]
-  newVehicles: RawVehicle[]
-  vehicles: RawVehicleDelta[]
-  /** Ids, of either kind, that were in the baseline and are not any more. */
-  removed: number[]
 }
 
 export type ServerMessage =
@@ -429,11 +414,14 @@ export type ServerMessage =
   | {
       type: 'snapshot'
       tick: number
-      /** The tick of the snapshot `delta` is relative to; 0 means to nothing, so it lists everything in range. */
+      /** The tick of the snapshot `updates` are relative to; 0 means to nothing, so they bring everything in range whole. */
       baseline: number
       ack: number
       ride: number
-      delta: WireDelta
+      /** One per entity new or changed since `baseline` (`replicated.ts`). */
+      updates: Update[]
+      /** Ids that were in the baseline and are not any more. */
+      removed: number[]
       drive: DriveState | null
       /** The local player's own health; 0 is dead. */
       hp: number
@@ -442,8 +430,6 @@ export type ServerMessage =
       /** The local player's hotbar. */
       inventory: ItemSlot[]
       shots: ShotEvent[]
-      rockets: RocketState[]
-      pickups: PickupState[]
       bullets: BulletSpawn[]
     }
   | { type: 'pong'; nonce: number }
@@ -502,14 +488,6 @@ export function encodePing(nonce: number): Uint8Array {
 const isInt = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value)
 const ints = (values: unknown[]) => values.every(isInt)
 
-function readEntity(raw: unknown): RawEntity | null {
-  return Array.isArray(raw) && raw.length === 11 && ints(raw) ? (raw as number[]) : null
-}
-
-function readEntityDelta(raw: unknown): RawEntityDelta | null {
-  return Array.isArray(raw) && raw.length === 10 && ints(raw) ? (raw as number[]) : null
-}
-
 /** Converts a validated raw entity to source units. */
 export function entityState(raw: readonly number[]): EntityState {
   const [id, kind, x, y, z, yaw, vy, flags, stance, knockX, knockZ] = raw as number[]
@@ -542,10 +520,6 @@ export function rocketState(raw: readonly number[]): RocketState {
   return { id: id!, kind: kind!, x: x! / CM, y: y! / CM, z: z! / CM, vx: vx! / CM, vy: vy! / CM, vz: vz! / CM }
 }
 
-function decodeRocket(raw: unknown): RocketState | null {
-  return Array.isArray(raw) && raw.length === 8 && ints(raw) ? rocketState(raw as number[]) : null
-}
-
 function decodeBullet(raw: unknown): BulletSpawn | null {
   if (!Array.isArray(raw) || raw.length !== 10 || !ints(raw)) return null
   const [id, shooter, item, x, y, z, vx, vy, vz, tick] = raw as number[]
@@ -556,10 +530,6 @@ function decodeBullet(raw: unknown): BulletSpawn | null {
 export function pickupState(raw: readonly number[]): PickupState {
   const [id, item, x, y, z] = raw as number[]
   return { id: id!, item: item!, x: x! / CM, y: y! / CM, z: z! / CM }
-}
-
-function decodePickup(raw: unknown): PickupState | null {
-  return Array.isArray(raw) && raw.length === 5 && ints(raw) ? pickupState(raw as number[]) : null
 }
 
 /** `[hp, progress, [[item, count, ammo], ...]]`: what the server tells a player about themselves. */
@@ -574,12 +544,6 @@ function decodeSelf(raw: unknown): { hp: number; progress: number; inventory: It
   return { hp: raw[0], progress: raw[1], inventory }
 }
 
-/** A turret as five integers, `null` when the vehicle has none, `undefined` when malformed. */
-function readTurret(raw: unknown): number[] | null | undefined {
-  if (raw === null) return null
-  return Array.isArray(raw) && raw.length === 5 && ints(raw) ? (raw as number[]) : undefined
-}
-
 function turretState(raw: readonly number[]): Turret {
   const [yaw, pitch, shots, range, flags] = raw as number[]
   return { yaw: yaw! / MRAD, pitch: pitch! / MRAD, shots: shots!, range: range! / 10, stowed: (flags! & TURRET_STOWED) !== 0 }
@@ -590,45 +554,6 @@ function decodeDrive(raw: unknown): DriveState | null | undefined {
   if (!Array.isArray(raw) || raw.length !== 8 || !ints(raw)) return undefined
   const [vx, vy, vz, wx, wy, wz, steer, spin] = raw as number[]
   return { vx: vx! / CM, vy: vy! / CM, vz: vz! / CM, wx: wx! / MRAD, wy: wy! / MRAD, wz: wz! / MRAD, steer: steer! / MRAD, spin: spin! / MRAD }
-}
-
-function readSeats(raw: unknown): number[] | null {
-  return Array.isArray(raw) && raw.length <= CAR_SEATS && ints(raw) ? (raw as number[]) : null
-}
-
-/** `damage`: `null`, or eight bytes. */
-function isDamage(raw: unknown): boolean {
-  return raw === null || (Array.isArray(raw) && raw.length === 8 && ints(raw))
-}
-
-/** `arms`: `null`, or five bytes. */
-function isArms(raw: unknown): boolean {
-  return raw === null || (Array.isArray(raw) && raw.length === 5 && ints(raw))
-}
-
-/** `thrust`: `null`, or two bytes. */
-function isThrust(raw: unknown): boolean {
-  return raw === null || (Array.isArray(raw) && raw.length === 2 && ints(raw))
-}
-
-/** `crew`: up to `CAR_SEATS` of `[yaw, pitch, held]`. */
-function isCrew(raw: unknown): boolean {
-  return Array.isArray(raw) && raw.length <= CAR_SEATS && raw.every((rider) => Array.isArray(rider) && rider.length === 3 && ints(rider))
-}
-
-function readVehicle(raw: unknown): RawVehicle | null {
-  if (!Array.isArray(raw) || raw.length !== 16 || !isCrew(raw[15]) || !isInt(raw[11]) || !ints(raw.slice(0, 9)) || !isDamage(raw[12]) || !isArms(raw[13]) || !isThrust(raw[14])) return null
-  const seats = readSeats(raw[9])
-  const turret = readTurret(raw[10])
-  if (!seats || turret === undefined) return null
-  return raw as RawVehicle
-}
-
-function readVehicleDelta(raw: unknown): RawVehicleDelta | null {
-  if (!Array.isArray(raw) || raw.length !== 15 || (raw[14] !== null && !isCrew(raw[14])) || !isInt(raw[10]) || !ints(raw.slice(0, 8)) || !isDamage(raw[11]) || !isArms(raw[12]) || !isThrust(raw[13])) return null
-  if (raw[8] !== null && !readSeats(raw[8])) return null
-  if (raw[9] !== null && !readTurret(raw[9])) return null
-  return raw as RawVehicleDelta
 }
 
 function armsState(raw: readonly number[]): Arms {
@@ -660,41 +585,6 @@ export function sceneStates(scene: WireScene): { entities: EntityState[]; vehicl
   return { entities: scene.entities.map(entityState), vehicles: scene.vehicles.map(vehicleState) }
 }
 
-/**
- * The scene a client holds after `delta` on top of `base`. Integer arithmetic only, mirroring
- * `shared::delta::apply`, so it agrees with what the server stored for the same snapshot.
- */
-export function applyDelta(base: WireScene, delta: WireDelta): WireScene {
-  const removed = new Set(delta.removed)
-  const entityChanges = new Map(delta.entities.map((d) => [d[0]!, d]))
-  const vehicleChanges = new Map(delta.vehicles.map((d) => [d[0], d]))
-  const entities: RawEntity[] = []
-  for (const e of base.entities) {
-    if (removed.has(e[0]!)) continue
-    const d = entityChanges.get(e[0]!)
-    if (!d) {
-      entities.push(e)
-      continue
-    }
-    entities.push([e[0]!, e[1]!, e[2]! + d[1]!, e[3]! + d[2]!, e[4]! + d[3]!, e[5]! + d[4]!, e[6]! + d[5]!, d[6]!, d[7]!, e[9]! + d[8]!, e[10]! + d[9]!])
-  }
-  entities.push(...delta.newEntities)
-  const vehicles: RawVehicle[] = []
-  for (const v of base.vehicles) {
-    if (removed.has(v[0])) continue
-    const d = vehicleChanges.get(v[0])
-    if (!d) {
-      vehicles.push(v)
-      continue
-    }
-    // A damage of all zeros is a repair: the vehicle is as if it was never hurt.
-    const damage = d[11] === null ? v[12] : d[11].some((value) => value !== 0) ? d[11] : null
-    vehicles.push([v[0], v[1], v[2] + d[1], v[3] + d[2], v[4] + d[3], v[5] + d[4], v[6] + d[5], v[7] + d[6], v[8] + d[7], d[8] ?? v[9], d[9] ?? v[10], d[10], damage, d[12] ?? v[13], d[13] ?? v[14], d[14] ?? v[15]])
-  }
-  vehicles.push(...delta.newVehicles)
-  return { entities: entities.sort((a, b) => a[0]! - b[0]!), vehicles: vehicles.sort((a, b) => a[0] - b[0]) }
-}
-
 /** Decodes any server message, or returns null for anything malformed or unknown. */
 export function decodeServer(bytes: Uint8Array): ServerMessage | null {
   if (bytes.byteLength > MAX_PACKET * 4) return null
@@ -713,61 +603,28 @@ export function decodeServer(bytes: Uint8Array): ServerMessage | null {
         return { type: 'welcome', version: version!, id: id!, tickRate: tickRate!, snapshotEvery: snapshotEvery!, worldHash: worldHash! }
       }
     case S_SNAPSHOT: {
-      if (raw.length !== 16 || !isInt(raw[1]) || !isInt(raw[2]) || !isInt(raw[3]) || !isInt(raw[4])) return null
-      const [lists, removed] = [[raw[5], raw[6], raw[7], raw[8]], raw[9]]
-      if (!lists.every(Array.isArray) || !Array.isArray(removed) || !ints(removed)) return null
-      const me = decodeSelf(raw[11])
-      if (!me || !Array.isArray(raw[12]) || !Array.isArray(raw[13]) || !Array.isArray(raw[14]) || !Array.isArray(raw[15])) return null
-      const delta: WireDelta = { newEntities: [], entities: [], newVehicles: [], vehicles: [], removed: removed as number[] }
-      for (const item of raw[5] as unknown[]) {
-        const entity = readEntity(item)
-        if (!entity) return null
-        delta.newEntities.push(entity)
-      }
-      for (const item of raw[6] as unknown[]) {
-        const change = readEntityDelta(item)
-        if (!change) return null
-        delta.entities.push(change)
-      }
-      for (const item of raw[7] as unknown[]) {
-        const vehicle = readVehicle(item)
-        if (!vehicle) return null
-        delta.newVehicles.push(vehicle)
-      }
-      for (const item of raw[8] as unknown[]) {
-        const change = readVehicleDelta(item)
-        if (!change) return null
-        delta.vehicles.push(change)
-      }
-      const drive = decodeDrive(raw[10])
-      if (drive === undefined) return null
+      if (raw.length !== 11 || !isInt(raw[1]) || !isInt(raw[2]) || !isInt(raw[3]) || !isInt(raw[4])) return null
+      const updates = decodeUpdates(raw[5])
+      const removed = raw[6]
+      if (!updates || !Array.isArray(removed) || !ints(removed)) return null
+      const drive = decodeDrive(raw[7])
+      const me = decodeSelf(raw[8])
+      if (drive === undefined || !me || !Array.isArray(raw[9]) || !Array.isArray(raw[10])) return null
       const shots: ShotEvent[] = []
-      for (const item of raw[12] as unknown[]) {
+      for (const item of raw[9] as unknown[]) {
         const shot = decodeShot(item)
         if (!shot) return null
         shots.push(shot)
       }
-      const rockets: RocketState[] = []
-      for (const item of raw[13] as unknown[]) {
-        const rocket = decodeRocket(item)
-        if (!rocket) return null
-        rockets.push(rocket)
-      }
-      const pickups: PickupState[] = []
-      for (const item of raw[14] as unknown[]) {
-        const pickup = decodePickup(item)
-        if (!pickup) return null
-        pickups.push(pickup)
-      }
       const bullets: BulletSpawn[] = []
-      for (const item of raw[15] as unknown[]) {
+      for (const item of raw[10] as unknown[]) {
         const bullet = decodeBullet(item)
         if (!bullet) return null
         bullets.push(bullet)
       }
       return {
-        type: 'snapshot', tick: raw[1], baseline: raw[2], ack: raw[3], ride: raw[4], delta, drive,
-        hp: me.hp, progress: me.progress, inventory: me.inventory, shots, rockets, pickups, bullets,
+        type: 'snapshot', tick: raw[1], baseline: raw[2], ack: raw[3], ride: raw[4], updates, removed: removed as number[], drive,
+        hp: me.hp, progress: me.progress, inventory: me.inventory, shots, bullets,
       }
     }
     case S_PONG:
