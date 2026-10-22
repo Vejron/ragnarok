@@ -1,5 +1,6 @@
 import * as THREE from 'three'
-import { DAMAGE_TURRET, KIND_TANK, TURRET_GONE } from '@/net/codec'
+import { DAMAGE_TURRET, TURRET_GONE } from '@/net/codec'
+import { vehicleDef } from '@/sim/vehicles'
 import { CarModel } from '@/render/car'
 import { TankModel } from '@/render/tank'
 import type { Frame, Presenter } from '../presenter'
@@ -28,7 +29,7 @@ export class Wear implements Presenter<Frame> {
     const placed = this.vehicles.placed.get(id)
     if (!model || !placed) return
     if (model instanceof CarModel) model.wear(placed.damage, placed.hp, this.world.debris, this.vehicles.fx(id)?.velocity ?? STILL)
-    if (model instanceof TankModel && placed.kind === KIND_TANK) {
+    if (model instanceof TankModel && vehicleDef(placed.kind).shedsTurret) {
       if (placed.damage[DAMAGE_TURRET] === TURRET_GONE) this.shedTurret(id)
       else if (this.shed.delete(id)) model.setTurret(true)
     }

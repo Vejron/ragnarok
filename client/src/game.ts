@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import {
-  FLAG_GROUNDED, encodeInput, encodePing, KIND_MORTAR, toAxis, toMrad, type DriveState, type InputFrame, type ServerMessage, } from './net/codec'
+  FLAG_GROUNDED, encodeInput, encodePing, toAxis, toMrad, type DriveState, type InputFrame, type ServerMessage, } from './net/codec'
 import { Backoff } from './net/backoff'
 import { RttEstimator, ServerClock } from './net/clock'
 import { Transport } from './net/transport'
@@ -8,7 +8,7 @@ import {
   BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION, RESPAWN_TICKS,
   SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_PRONE,
   TICK_MS, TICK_RATE, } from './sim/consts'
-import { crewGun } from './sim/vehicles'
+import { crewGun, vehicleDef } from './sim/vehicles'
 import { aimSpeedScale, emptyHotbar, HOTBAR_SLOTS, ITEM_NONE, itemDef, type ItemSlot } from './sim/items'
 import { InputController } from './sim/input'
 import { SimMotor, type VehiclePose } from './sim/motor'
@@ -39,7 +39,7 @@ import { PerfReadout } from './render/perf'
 import { encodeRtc } from './net/codec'
 import { VoiceChat } from './voice'
 import { PlaneModel } from './render/plane'
-import { loadVehicleModels } from './render/vehicles'
+import { loadVehicleModels } from './kinds'
 import { Crowd } from './render/character'
 import { Events } from './events'
 import { Arcs } from './arcs'
@@ -433,7 +433,7 @@ export class Game {
         if (wasSeated !== (this.seat !== null) && this.hp > 0) this.sounds.door()
         const listed = rebuilt.scene.get(this.localId)
         const own = listed && inGameUnits(listed)
-        if (mount && this.seat?.index === 0 && mount.kind !== KIND_MORTAR && message.drive) {
+        if (mount && this.seat?.index === 0 && !vehicleDef(mount.kind).towed && message.drive) {
           // Replaying the unacknowledged inputs steps the whole physics world once each, so it waits
           // for the next frame: a backlog of snapshots (a busy main thread) is then one replay, not
           // one per snapshot, which would only make the thread busier.

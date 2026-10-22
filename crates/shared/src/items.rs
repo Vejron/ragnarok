@@ -464,8 +464,8 @@ mod tests {
                     format!("{{\"pivot\": [{px}, {py}, {pz}], \"head\": [{x}, {y}, {z}]}}")
                 });
                 format!(
-                    "    {{\"kind\": {}, \"name\": \"{}\", \"hp\": {}, \"seats\": {}, \"halfExtents\": [{hx}, {hy}, {hz}], \"gun\": {}, \"arms\": {}, \"carWheels\": {}, \"trackHalf\": {}, \"axleZ\": {}, \"crew\": \"{}\", \"crewGuns\": {}, \"seatHeads\": [{}], \"mountSeat\": {mount_seat}, \"legged\": {}, \"heavy\": {}, \"drone\": {}}}",
-                    d.kind, d.name, d.hp, d.seats, d.gun(), d.arms(), d.car_wheels, d.track_half(), d.axle_z(), d.crew.name(), d.crew_guns, heads, d.body.legs > 0.0, d.body.heavy, d.drone.is_some()
+                    "    {{\"kind\": {}, \"name\": \"{}\", \"hp\": {}, \"seats\": {}, \"halfExtents\": [{hx}, {hy}, {hz}], \"gun\": {}, \"arms\": {}, \"carWheels\": {}, \"trackHalf\": {}, \"axleZ\": {}, \"crew\": \"{}\", \"crewGuns\": {}, \"seatHeads\": [{}], \"mountSeat\": {mount_seat}, \"legged\": {}, \"heavy\": {}, \"towed\": {}, \"shedsTurret\": {}, \"drone\": {}}}",
+                    d.kind, d.name, d.hp, d.seats, d.gun(), d.arms(), d.car_wheels, d.track_half(), d.axle_z(), d.crew.name(), d.crew_guns, heads, d.body.legs > 0.0, d.body.heavy, d.body.towed, d.sheds_turret(), d.drone.is_some()
                 )
             })
             .collect();

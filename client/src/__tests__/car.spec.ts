@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import * as THREE from 'three'
+import { kindView } from '@/kinds'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { CarModel, parseCarModel } from '@/render/car'
 import {
@@ -36,7 +37,7 @@ describe.each([
   ['Roadster', KIND_ROADSTER, ROADSTER_TRACK_HALF, ROADSTER_AXLE_Z, ROADSTER_WHEEL_RADIUS, ROADSTER_RIDE_HEIGHT, ROADSTER_SEATS],
 ] as const)('the %s model', (_name, kind, trackHalf, axleZ, radius, ride, seats) => {
   it('has its wheels where the physics has them, touching the ground at its ride height', () => {
-    const car = new CarModel(kind, 1)
+    const car = (kindView(kind).model(1) as CarModel)
     car.update([0, 0, 0], IDENTITY, 0)
     car.root.updateMatrixWorld(true)
     for (const [tag, x, z] of [['FL', -trackHalf, -axleZ], ['FR', trackHalf, -axleZ], ['RL', -trackHalf, axleZ], ['RR', trackHalf, axleZ]] as const) {
@@ -51,7 +52,7 @@ describe.each([
   })
 
   it('has a seat marker where the server puts each rider\'s head', () => {
-    const car = new CarModel(kind, 1)
+    const car = (kindView(kind).model(1) as CarModel)
     const heads = vehicleDef(kind).seatHeads
     expect(car.seatMarkers).toHaveLength(seats)
     expect(heads).toHaveLength(seats)
@@ -62,7 +63,7 @@ describe.each([
   })
 
   it('steers the front wheels only and stays low-poly', () => {
-    const car = new CarModel(kind, 1)
+    const car = (kindView(kind).model(1) as CarModel)
     car.update([0, 0, 0], IDENTITY, 1)
     expect(car.root.getObjectByName('pivot_FL')!.rotation.y).toBeLessThan(-0.3)
     expect(car.root.getObjectByName('pivot_RL')!.rotation.y).toBe(0)
@@ -80,7 +81,7 @@ describe('the two cars', () => {
 
 describe('the Roadster model', () => {
   it('has four rear nozzles blowing back and six lift nozzles blowing down, at the body', () => {
-    const car = new CarModel(KIND_ROADSTER, 1)
+    const car = (kindView(KIND_ROADSTER).model(1) as CarModel)
     car.update([10, 2, -5], IDENTITY, 0)
     expect(car.jets(0)).toHaveLength(0)
     const rear = car.jets(THRUST_BOOST)

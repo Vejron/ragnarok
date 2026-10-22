@@ -1,7 +1,8 @@
 /**
  * What each vehicle kind is, in one table: built from `tables.generated.json`, which the Rust tests
  * write from `crates/shared/src/vehicles.rs` (`UPDATE_PARITY=1 cargo test -p shared parity`). Kind-specific
- * physics is the server's (`crates/sim`, run here through `motor.ts`) and models are in `render/`.
+ * physics is the server's (`crates/sim`, run here through `motor.ts`), and how this client presents each
+ * kind (model, seats, sound, effects) is its file in `kinds/`.
  */
 
 import tables from './tables.generated.json'
@@ -35,6 +36,10 @@ export interface VehicleDef {
   legged: boolean
   /** Tracked and heavy: turns on the spot, ruts soft ground, rumbles, and plows through trees. */
   heavy: boolean
+  /** Nobody drives it: it is towed, and has no engine. */
+  towed: boolean
+  /** Its turret can be shot off. */
+  shedsTurret: boolean
   /** Flown from afar by whoever launched it. */
   drone: boolean
 }

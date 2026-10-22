@@ -1,7 +1,8 @@
 import { Vec3 } from '@ragnarok/engine'
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
-import { tyreSlip, wheelLayout } from '@/sim/slip'
+import { kindView } from '@/kinds'
+import { tyreSlip } from '@/sim/slip'
 import { rasterSurface, Surfaces, SURFACE_ASPHALT, SURFACE_DIRT, SURFACE_GRASS, SURFACE_WATER } from '@/sim/surface'
 import { Skidmarks, SKID_LIFE } from '@/render/skidmarks'
 import { Particles } from '@/render/particles'
@@ -30,15 +31,15 @@ describe('tyreSlip', () => {
   })
 
   it('knows the wheels of every kind but the helicopter', () => {
-    expect(wheelLayout(KIND_JEEP)!.contacts).toHaveLength(4)
-    expect(wheelLayout(KIND_SPORTS)!.steered).toBe(2)
-    expect(wheelLayout(KIND_TANK)!.steered).toBe(0)
-    expect(wheelLayout(KIND_HELI)).toBeNull()
+    expect(kindView(KIND_JEEP).fx.wheels!.contacts).toHaveLength(4)
+    expect(kindView(KIND_SPORTS).fx.wheels!.steered).toBe(2)
+    expect(kindView(KIND_TANK).fx.wheels!.steered).toBe(0)
+    expect(kindView(KIND_HELI).fx.wheels).toBeNull()
     // A plane steers its main wheels and drags its tail skid.
-    expect(wheelLayout(KIND_PLANE)!.steered).toBe(2)
-    expect(wheelLayout(KIND_PLANE)!.contacts[2]![2]).toBeGreaterThan(2)
+    expect(kindView(KIND_PLANE).fx.wheels!.steered).toBe(2)
+    expect(kindView(KIND_PLANE).fx.wheels!.contacts[2]![2]).toBeGreaterThan(2)
     // Front first: the front pair is towards -Z.
-    expect(wheelLayout(KIND_JEEP)!.contacts[0]![2]).toBeLessThan(0)
+    expect(kindView(KIND_JEEP).fx.wheels!.contacts[0]![2]).toBeLessThan(0)
   })
 })
 

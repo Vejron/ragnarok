@@ -426,7 +426,7 @@ Client:
 - [x] **5.1** One Rust definition per kind, physics and armour included; the sim and `armor.rs` read
       it.
 - [x] **5.2** The server and the sim kind-free. Kind ids generated for the client.
-- [ ] **5.3** One client presentation per kind. Sound, tyres, smoke, models and the editor read it.
+- [x] **5.3** One client presentation per kind. Sound, tyres, smoke, models and the editor read it.
 - [ ] **5.4** Measure: add a trial kind in a scratch worktree and count the files it touches.
       Document how to add a kind.
 
@@ -2053,3 +2053,74 @@ re-exports it.
 **Checks:** server 271, shared 68, sim 111, client 401; clippy, `vue-tsc` and oxlint add nothing.
 
 **Next:** 5.3, one client presentation per kind.
+
+### 2026-10-22: Phase 5.3, one client presentation per kind
+
+**The presentations.** `client/src/kinds/` has one file per kind. Each exports a `VehicleKind` (`kind.ts`) holding:
+
+- `model` and `load`: its model, and what that is built from;
+- `ride`: its seats, the old `seats.ts` row;
+- `sound`: its voices, the tone filter's resonance, the filter on the noise its blades or tracks chop,
+  and its `Engine`;
+- `fx`: its wheel layout, which wheels are driven, its exhaust, a backfire, and where its engine is.
+
+`kinds/index.ts` lists them in the server's order. `kindView(kind)` falls back to the jeep, as every
+lookup it replaces did.
+
+**The sound as data.** `Engine` (`sim/engine.ts`) says how a kind's engine is heard:
+
+| `Engine` | Kinds |
+|---|---|
+| `none` | walker, hen, mortar |
+| `gears` (shifts, top speed, pitch, level, tracks) | jeep, sports car, Roadster, tank, Strv S |
+| `rotary` | the plane |
+| `rotor` | the helicopter |
+| `props` | the FPV drone |
+| `twostroke` | the loitering drone |
+
+`mixOf(input, engine)` and `gearing(engine, speed)` take it in place of a kind, and stay pure. The
+tables `SHIFTS`, `BASE_HZ` and `BASE_LEVEL` and the 11 branches are gone.
+
+**What reads the presentation:**
+
+| Was | Now |
+|---|---|
+| `createVehicleModel`, 9 branches (`render/vehicles.ts`, deleted) | `kindView(kind).model(id)` |
+| `loadVehicleModels`, a list of loaders | every kind's `load`, without repeats |
+| `CarModel(kind)`, choosing its body by kind | `CarModel('jeep' / 'sports' / 'roadster')` |
+| `seats.ts`'s `RIDES` | each kind's `ride`; `seats.ts` keeps the types, `rideView` and `seatView` |
+| `Voice`'s three ternaries over kinds | `sound.voices`, `q`, `chop` |
+| `wheelLayout(kind)` (`slip.ts`) | `fx.wheels`: `JEEP_WHEELS`, `SPORTS_WHEELS`, `TRACK_WHEELS`, `PLANE_WHEELS` |
+| `VehicleFx`'s helicopter, plane, Roadster and sports car branches | `fx.wheels` (none: rotor dust), `drivenFrom`, `exhaust`, `backfire` |
+| `engineBay(kind)` (`vehiclesmoke.ts`) | `fx.bay` |
+| a mortar has no engine (`presenters/vehicles.ts`) and is not predicted (`game.ts`) | `vehicleDef(kind).towed` |
+| only a tank sheds its turret (`presenters/wear.ts`) | `vehicleDef(kind).shedsTurret` |
+
+The generated table gains `towed` and `shedsTurret`.
+
+**Behaviour kept.** `kinds.spec.ts` holds every kind to what the old if-chains said, kept in
+`kinds.before.ts` as `seats.spec.ts` keeps the seats':
+
+- the sound: voices, resonance and chop filter, and `mixOf` over 3,780 inputs per kind (speeds,
+  throttle, climb, health, power, ground, surface, slip, wheel damage, the blip switch and jets);
+- the effects: the wheel layout, which wheels are driven, the exhaust, the backfire and the engine bay.
+
+It also holds the kinds to being the server's, one each, in its order. The walker, the hen, the drones
+and the mortar keep the jeep's wheel points, voices and exhaust that the old fallbacks gave them; their
+files say so, where the fallback hid it.
+
+**Not moved:** the editor's palette (`editor/placements.ts`) stays a hand-written list. It is the level
+designer's choice of what can be placed, as the spawn mix is the world's. The editor is its own bundle,
+and the kinds would pull every model into it.
+
+**Progress:** client kind branches went from 47 to 2. Both left choose a creature's presenter (the
+stickman's and the rooster's), not a vehicle's. No client code branches on a vehicle kind.
+
+**Checks:**
+
+- client 427 passing (58 files);
+- server 271, shared 68, sim 111;
+- clippy, `vue-tsc` and oxlint add nothing (the same 7 oxlint warnings as before);
+- `npm run build` succeeds.
+
+**Next:** 5.4, measure: a trial kind in a scratch worktree.

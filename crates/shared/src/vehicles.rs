@@ -4,9 +4,9 @@
 //! which `crates/sim` runs on the server and in the client's prediction) and its armour.
 //!
 //! Adding a kind: its `KIND_*` id in `consts.rs` (which the client's copy is generated from), its
-//! file here and its place in `VEHICLES`, and its model. Nothing in the server or the sim branches on
-//! a kind: what a kind does is its fields. A new way of moving is a `Lift` and its system in
-//! `crates/sim`. The client's table is built from `client/src/sim/tables.generated.json`, which
+//! file here and its place in `VEHICLES`, and its presentation on the client, `client/src/kinds/`,
+//! with its model. Nothing in the server, the sim or the client branches on a kind: what a kind does
+//! is its fields. A new way of moving is a `Lift` and its system in `crates/sim`. The client's table is built from `client/src/sim/tables.generated.json`, which
 //! `UPDATE_PARITY=1 cargo test -p shared parity` regenerates from this one.
 
 use crate::consts::*;

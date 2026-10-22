@@ -1,16 +1,17 @@
 import * as THREE from 'three'
 import type { Node, PointLights } from '@ragnarok/engine'
-import { KIND_MORTAR, ARMS_CUT, DAMAGE_WHEELS } from '@/net/codec'
+import { ARMS_CUT, DAMAGE_WHEELS } from '@/net/codec'
 import type { Debris } from '@/render/debris'
 import type { Effects } from '@/render/effects'
 import { HenModel } from '@/render/hen'
 import { VehicleFx, type FxWorld } from '@/render/tyres'
-import { createVehicleModel } from '@/render/vehicles'
+import { kindView } from '@/kinds'
 import { WalkerModel } from '@/render/walker'
 import type { VehicleModel } from '@/render/car'
 import type { DrivenPose } from '@/sim/driver'
 import type { VehiclePose } from '@/sim/motor'
 import { vehicleMaxHp } from '@/sim/consts'
+import { vehicleDef } from '@/sim/vehicles'
 import type { VehicleSounds } from '@/vehicleaudio'
 import type { Frame, Presenter } from '../presenter'
 import type { Sampled } from '../store'
@@ -109,7 +110,7 @@ export class Vehicles implements Presenter<Frame> {
     const kind = entity.kind!.kind
     let model = this.models.get(id)
     if (!model) {
-      model = createVehicleModel(kind, id)
+      model = kindView(kind).model(id)
       this.models.set(id, model)
       this.world.root.add(model.root)
     }
@@ -165,7 +166,8 @@ export class Vehicles implements Presenter<Frame> {
       this.motion.set(id, fx)
     }
     const position: [number, number, number] = [placed.x, placed.y, placed.z]
-    const powered = (seats[0] ?? 0) !== 0 && hp > 0 && kind !== KIND_MORTAR
+    // A towed gun has no engine, whoever sits at it.
+    const powered = (seats[0] ?? 0) !== 0 && hp > 0 && !vehicleDef(kind).towed
     fx.update(this.world.fx(), position, placed.rotation, placed.steer, powered, dt)
     // The driver's own car is drawn from its prediction, so what is heard follows the wheel at once.
     const landing = fx.takeLanding()

@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { parseToonModel, unlitMaterial } from './models'
 import { toonMaterial } from './toon'
 import { JEEP_MAX_STEER, JEEP_WHEEL_RADIUS, ROADSTER_MAX_STEER, ROADSTER_SEATS, ROADSTER_WHEEL_RADIUS, SPORTS_MAX_STEER, SPORTS_SEATS, SPORTS_WHEEL_RADIUS, CAR_SEATS } from '@/sim/consts'
-import { KIND_ROADSTER, KIND_SPORTS, THRUST_BOOST, THRUST_LIFT } from '@/net/codec'
+import { KIND_JEEP, KIND_ROADSTER, KIND_SPORTS, THRUST_BOOST, THRUST_LIFT } from '@/net/codec'
 import type { Arms, Turret } from '@/entities/units'
 import { CarWear } from './carwear'
 import type { Debris } from './debris'
@@ -23,13 +23,13 @@ export interface VehicleModel {
   dispose(): void
 }
 
-type CarKind = 'jeep' | 'sports' | 'roadster'
+export type CarKind = 'jeep' | 'sports' | 'roadster'
 
-/** Per-kind facts the model needs: where its mesh is, how big its wheels are and how far they steer. */
-const KINDS: Record<CarKind, { url: string; wheelRadius: number; maxSteer: number; seats: number }> = {
-  jeep: { url: `${import.meta.env.BASE_URL}models/jeep.glb`, wheelRadius: JEEP_WHEEL_RADIUS, maxSteer: JEEP_MAX_STEER, seats: CAR_SEATS },
-  sports: { url: `${import.meta.env.BASE_URL}models/sports.glb`, wheelRadius: SPORTS_WHEEL_RADIUS, maxSteer: SPORTS_MAX_STEER, seats: SPORTS_SEATS },
-  roadster: { url: `${import.meta.env.BASE_URL}models/roadster.glb`, wheelRadius: ROADSTER_WHEEL_RADIUS, maxSteer: ROADSTER_MAX_STEER, seats: ROADSTER_SEATS },
+/** Per-body facts the model needs: its vehicle kind, where its mesh is, how big its wheels are and how far they steer. */
+const KINDS: Record<CarKind, { kind: number; url: string; wheelRadius: number; maxSteer: number; seats: number }> = {
+  jeep: { kind: KIND_JEEP, url: `${import.meta.env.BASE_URL}models/jeep.glb`, wheelRadius: JEEP_WHEEL_RADIUS, maxSteer: JEEP_MAX_STEER, seats: CAR_SEATS },
+  sports: { kind: KIND_SPORTS, url: `${import.meta.env.BASE_URL}models/sports.glb`, wheelRadius: SPORTS_WHEEL_RADIUS, maxSteer: SPORTS_MAX_STEER, seats: SPORTS_SEATS },
+  roadster: { kind: KIND_ROADSTER, url: `${import.meta.env.BASE_URL}models/roadster.glb`, wheelRadius: ROADSTER_WHEEL_RADIUS, maxSteer: ROADSTER_MAX_STEER, seats: ROADSTER_SEATS },
 }
 
 const BODY_COLORS = [0xff9f1c, 0x2ec4b6, 0xe71d36, 0x5aa9e6, 0xb5e48c, 0xf15bb5, 0xffd23f, 0x9d4edd]
@@ -84,12 +84,11 @@ export class CarModel implements VehicleModel {
   /** A Roadster's nozzles in the car's frame (`nozzle_rear_N` push it forward, `nozzle_lift_N` up). */
   private readonly nozzles: { at: THREE.Vector3; lift: boolean }[] = []
 
-  /** `kind` is a vehicle kind off the wire; anything but the sports car and the Roadster is a jeep. */
-  constructor(kind: number, id: number) {
-    const name: CarKind = kind === KIND_SPORTS ? 'sports' : kind === KIND_ROADSTER ? 'roadster' : 'jeep'
+  /** `name` is which of the car bodies it is. */
+  constructor(name: CarKind, id: number) {
     const asset = assets.get(name)
     if (!asset) throw new Error('loadCarModels() must finish before cars are created')
-    const { wheelRadius, maxSteer, seats } = KINDS[name]
+    const { kind, wheelRadius, maxSteer, seats } = KINDS[name]
     this.wheelRadius = wheelRadius
     this.maxSteer = maxSteer
     const model = asset.clone()

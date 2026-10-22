@@ -1,23 +1,13 @@
 /**
- * What sitting in each seat of each vehicle means on this client: where the camera goes, what the HUD
- * calls the seat and shows, what E says to board it, and what the seat aims. One row per vehicle kind,
- * in seat order, so a new vehicle is one row here rather than a branch in the camera, the HUD and the
- * prompt. What a seat does in the game (who drives, who fires what) is the server's, in `VehicleDef`.
+ * What sitting in each seat of a vehicle means on this client: where the camera goes, what the HUD
+ * calls the seat and shows, what E says to board it, and what the seat aims. Each kind's seats, in seat
+ * order, are its `ride` in `kinds/`, so a new vehicle is its rows there rather than a branch in the
+ * camera, the HUD and the prompt. What a seat does in the game (who drives, who fires what) is the
+ * server's, in `VehicleDef`.
  */
 
-import { KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
 import type { HudStats } from '@/hud'
-import { DRIVING_DISTANCE, DRONE_DISTANCE, HELI_DISTANCE, HEN_DISTANCE, LOITER_DISTANCE, MORTAR_DISTANCE, PLANE_DISTANCE, STRV_DISTANCE, TANK_DISTANCE, WALKER_DISTANCE } from '@/render/scene'
-import {
-  HELI_GUN_COOLDOWN_TICKS, HELI_GUN_PITCH_MAX, HELI_GUN_PITCH_MIN, HELI_GUN_YAW_LIMIT, MORTAR_COOLDOWN_TICKS, PLANE_REAR_PITCH_MAX, PLANE_REAR_PITCH_MIN,
-  SHELL_COOLDOWN_TICKS, TANK_BARREL_MAX, TANK_BARREL_MIN, WALKER_GUN_COOLDOWN_TICKS,
-} from '@/sim/consts'
-import { DRONE_RANGE, LOITER_RANGE } from '@/sim/items'
-
-/** A loitering drone's look is kept between these pitches, radians: steep enough to dive, not to loop. */
-const LOITER_PITCH: readonly [number, number] = [-1.2, 0.6]
-/** An FPV drone's. */
-const DRONE_PITCH: readonly [number, number] = [-1.4, 1.0]
+import { kindView } from '@/kinds'
 
 /** How the camera follows from a seat (`cameras.ts`). */
 export type Rig =
@@ -65,39 +55,8 @@ export interface RideView {
   downwash?: { reach: number; radius: number }
 }
 
-const DRIVE: Rig = { name: 'drive' }
-const RIDE_ALONG: SeatView = { rig: { name: 'passenger' }, role: 'passenger', board: 'E: ride along' }
-
-/** Every vehicle kind's seats, as this client presents them. */
-const RIDES: Record<number, RideView> = {
-  [KIND_JEEP]: { distance: DRIVING_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the jeep', chase: true }, RIDE_ALONG, RIDE_ALONG, RIDE_ALONG] },
-  [KIND_SPORTS]: { distance: DRIVING_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the sports car', chase: true }, RIDE_ALONG] },
-  [KIND_ROADSTER]: { distance: DRIVING_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: DRIVE, role: 'roadster', board: 'E: drive the Roadster', chase: true, gauges: ['air'] }, RIDE_ALONG] },
-  [KIND_TANK]: {
-    distance: TANK_DISTANCE, reload: SHELL_COOLDOWN_TICKS,
-    seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the tank', chase: true }, { rig: { name: 'gun', level: [TANK_BARREL_MIN, TANK_BARREL_MAX] }, role: 'gunner', board: 'E: man the gun', sight: true }],
-  },
-  [KIND_HELI]: {
-    distance: HELI_DISTANCE, reload: HELI_GUN_COOLDOWN_TICKS, downwash: { reach: 18, radius: 6 },
-    seats: [{ rig: DRIVE, role: 'pilot', board: 'E: fly' }, { rig: { name: 'gun', hull: [HELI_GUN_YAW_LIMIT, HELI_GUN_PITCH_MIN, HELI_GUN_PITCH_MAX] }, role: 'gunner', board: 'E: man the nose gun' }],
-  },
-  [KIND_PLANE]: {
-    distance: PLANE_DISTANCE, reload: null,
-    seats: [
-      { rig: { name: 'aviator' }, role: 'aviator', board: 'E: fly the triplane', gauges: ['cockpit'], arc: 'bombs' },
-      { rig: { name: 'gun', hull: [Math.PI, PLANE_REAR_PITCH_MIN, PLANE_REAR_PITCH_MAX] }, role: 'gunner', board: 'E: man the rear gun', gauges: ['cockpit'] },
-    ],
-  },
-  [KIND_WALKER]: { distance: WALKER_DISTANCE, reload: WALKER_GUN_COOLDOWN_TICKS, seats: [{ rig: { name: 'walker' }, role: 'walker', board: 'E: drive the walker', chase: true }] },
-  [KIND_STRV]: { distance: STRV_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: { name: 'tanker' }, role: 'strv', board: 'E: drive the Strv S', chase: true, sight: true }] },
-  [KIND_MORTAR]: { distance: MORTAR_DISTANCE, reload: MORTAR_COOLDOWN_TICKS, seats: [{ rig: { name: 'mortar' }, role: 'mortar', board: 'E: man the mortar', gauges: ['range'], arc: 'mortar' }] },
-  [KIND_HEN]: { distance: HEN_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: DRIVE, role: 'hen', board: 'E: drive the hen', chase: true, gauges: ['air', 'eggs'] }] },
-  [KIND_DRONE]: { distance: DRONE_DISTANCE, reload: SHELL_COOLDOWN_TICKS, downwash: { reach: 4, radius: 1.5 }, seats: [{ rig: { name: 'fpv', pitch: DRONE_PITCH, link: DRONE_RANGE }, role: 'drone' }] },
-  [KIND_LOITER]: { distance: LOITER_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: { name: 'fpv', pitch: LOITER_PITCH, link: LOITER_RANGE, belly: true }, role: 'loiter' }] },
-}
-
 /** How a vehicle of `kind` is presented. Unknown kinds are jeeps. */
-export const rideView = (kind: number): RideView => RIDES[kind] ?? RIDES[KIND_JEEP]!
+export const rideView = (kind: number): RideView => kindView(kind).ride
 
 /** How seat `index` of a vehicle of `kind` is presented: its own row, or the last seat's. */
 export function seatView(kind: number, index: number): SeatView {

@@ -104,9 +104,10 @@ Remote entities are drawn in the past, at `renderTick = estServerTick − interp
 - **Past the newest snapshot** the entity holds its last state; there is no extrapolation yet.
 - **Ending.** An entity the newest snapshot no longer has ends at that tick, and goes when the picture gets there.
 - **Presenters** (`entities/presenters/`) draw what the store holds, each chosen by the components an entity has: projectiles, items, stickmen, riders in their seats, the rooster, vehicles, and one per vehicle component (guns, wear, smoke, jets).
+- **Kinds.** How the client presents each vehicle kind is its file in `client/src/kinds/`: its model, its seats (camera rig, HUD role, prompt), its sound and what it leaves on the ground. What a kind is in the game is its Rust definition, one file per kind in `crates/shared/src/vehicles/`, which reaches the client as `vehicleDef`.
 - **Around them**, `client/src/game.ts` keeps the loop and wires the rest together:
   - `events.ts` plays shots, blasts and bullets when the picture reaches them;
-  - `seats.ts` says what each seat of each vehicle means (camera rig, HUD role, prompt), and `cameras.ts` holds the rigs;
+  - `seats.ts` holds the types of a seat's presentation, and `cameras.ts` holds the camera rigs;
   - `surroundings.ts` does splashes, wading, grass and contact shadows;
   - `prompt.ts`, `gauges.ts` and `arcs.ts` hold the E prompt, a plane's gauges and sights, and the arcs drawn ahead of a throw or a bomb.
 

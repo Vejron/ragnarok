@@ -1,5 +1,3 @@
-import { KIND_DRONE, KIND_HELI, KIND_LOITER, KIND_HEN, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
-import { JEEP_MAX_SPEED, ROADSTER_MAX_SPEED, SPORTS_MAX_SPEED, STRV_MAX_SPEED, TANK_MAX_SPEED } from './consts'
 import { SURFACE_ASPHALT, SURFACE_GRASS, SURFACE_WATER } from './surface'
 
 /**
@@ -7,24 +5,27 @@ import { SURFACE_ASPHALT, SURFACE_GRASS, SURFACE_WATER } from './surface'
  * each layer of its sound is. `vehicleaudio.ts` turns them into Web Audio nodes.
  */
 
-/** Where each gear starts, as a fraction of top speed. A tank has the one, and so has the Roadster's electric motor. */
-const SHIFTS: Record<number, readonly number[]> = {
-  [KIND_SPORTS]: [0, 0.16, 0.32, 0.5, 0.72],
-  [KIND_ROADSTER]: [0],
-  [KIND_TANK]: [0],
-  [KIND_STRV]: [0],
-}
-const JEEP_SHIFTS = [0, 0.22, 0.45, 0.7]
+/** How a kind's engine is heard (each kind's is in `kinds/`). */
+export type Engine =
+  /** No engine to hear: legs, or a towed gun. */
+  | { name: 'none' }
+  /**
+   * Pistons through a gearbox, or an electric motor's one gear: `shifts` is where each gear starts as a
+   * fraction of `top` speed (m/s), `hz` the fundamental at idle and `level` its loudness. `tracks` adds
+   * their clatter.
+   */
+  | { name: 'gears'; shifts: readonly number[]; top: number; hz: number; level: number; tracks?: true }
+  /** A rotary and its propeller: no gears, its note rising with the airspeed (to `top`) and the throttle, and the wind in the wires aloft. */
+  | { name: 'rotary'; top: number; hz: number; level: number }
+  /** A helicopter's turbine and the beat of its blades. */
+  | { name: 'rotor'; hz: number; level: number }
+  /** A drone's four props: a thin, high whine. */
+  | { name: 'props'; hz: number }
+  /** A small two-stroke flat out all the time, its note rising a little with the airspeed (to `top`). */
+  | { name: 'twostroke'; top: number; hz: number }
 
-/** Fundamental of the engine at idle revs, Hz, and how far it climbs to the redline. */
-const BASE_HZ: Record<number, number> = { [KIND_SPORTS]: 62, [KIND_ROADSTER]: 150, [KIND_TANK]: 30, [KIND_STRV]: 36, [KIND_HELI]: 40, [KIND_PLANE]: 85 }
-const JEEP_HZ = 44
 /** Revs just after a shift, as a fraction of the range (idle is 0.25). */
 const AFTER_SHIFT = 0.5
-
-function topSpeed(kind: number) {
-  return kind === KIND_SPORTS ? SPORTS_MAX_SPEED : kind === KIND_ROADSTER ? ROADSTER_MAX_SPEED : kind === KIND_TANK ? TANK_MAX_SPEED : kind === KIND_STRV ? STRV_MAX_SPEED : JEEP_MAX_SPEED
-}
 
 export interface Gearing {
   gear: number
@@ -36,9 +37,9 @@ export interface Gearing {
  * The gear a car is in at `speed` m/s (either direction) and the engine speed in it. Revs climb
  * within a gear and fall back a step at each shift, which is what makes acceleration sound quick.
  */
-export function gearing(kind: number, speed: number): Gearing {
-  const shifts = SHIFTS[kind] ?? JEEP_SHIFTS
-  const fraction = Math.min(1, Math.abs(speed) / topSpeed(kind))
+export function gearing(engine: { shifts: readonly number[]; top: number }, speed: number): Gearing {
+  const { shifts } = engine
+  const fraction = Math.min(1, Math.abs(speed) / engine.top)
   let gear = 0
   while (gear + 1 < shifts.length && fraction >= shifts[gear + 1]!) gear++
   const low = shifts[gear]!
@@ -101,15 +102,6 @@ export interface SoundMix {
   cut: boolean
 }
 
-/** A drone's props at hover, Hz. */
-const DRONE_HZ = 190
-/** A loitering drone's two-stroke at cruise, Hz: the moped buzz. */
-const LOITER_HZ = 80
-/** Its top speed, m/s, for the pitch. */
-const LOITER_TOP = 45
-const BASE_LEVEL: Record<number, number> = { [KIND_SPORTS]: 0.2, [KIND_ROADSTER]: 0.1, [KIND_TANK]: 0.3, [KIND_STRV]: 0.3, [KIND_HELI]: 0.3, [KIND_PLANE]: 0.28 }
-/** A plane's top speed, m/s, for the pitch of its engine and the rush of the wind. */
-const PLANE_TOP = 45
 /** A propeller's two blades pass this many times per firing stroke of the nine-cylinder rotary. */
 const PROP_BEAT = 2 / 4.5
 
@@ -141,76 +133,90 @@ export function crashSize(speed: number): 0 | 1 | 2 {
   return speed < 8 ? 0 : speed < 16 ? 1 : 2
 }
 
-export function mixOf(input: SoundInput): SoundMix {
-  const { kind, speed, accel, climb, powered, hp, maxHp } = input
+/** Whether a vehicle with `engine` rolls on wheels or tracks, which squeal and rumble on the ground. */
+const rolls = (engine: Engine) => engine.name === 'gears' || engine.name === 'rotary'
+
+/** What a vehicle with `engine` sounds like, moving and in the state `input` says. */
+export function mixOf(input: SoundInput, engine: Engine): SoundMix {
+  const { speed, accel, climb, powered, hp, maxHp } = input
   const alive = hp > 0
   const quiet: SoundMix = {
     pitch: 40, engine: 0, tone: 400, chop: 0, chopLevel: 0, stutter: 0, squeal: 0, squealHz: 1200, ground: 0, groundHz: 600, hiss: 0, rattle: 0, fire: !alive, cut: false,
   }
   if (!alive) return quiet
-  // A walker or a hen has no engine to hum, no tyres on the ground: its feet are heard by the footfalls. A mortar is towed, with no engine at all.
-  if (kind === KIND_WALKER || kind === KIND_HEN || kind === KIND_MORTAR) return quiet
+  // Legs have no engine to hum and no tyres on the ground: their feet are heard by the footfalls.
+  if (engine.name === 'none') return quiet
   const lost = input.wheels ? input.wheels.filter((wear) => wear >= 255).length : 0
   const bent = input.wheels ? input.wheels.filter((wear) => wear >= 128 && wear < 255).length : 0
   const mix: SoundMix = { ...quiet }
   const rolling = input.grounded ? clamp(Math.abs(speed) / 10) : 0
   mix.rattle = Math.min(0.8, lost * 0.4 * rolling + bent * 0.1 * rolling)
-  if (kind !== KIND_HELI && kind !== KIND_DRONE && kind !== KIND_LOITER) {
+  if (rolls(engine)) {
     mix.squeal = input.grounded ? squealGain(input.slip, input.surface, speed) : 0
     mix.squealHz = 900 + 700 * clamp(input.slip) + 4 * Math.abs(speed)
     mix.ground = input.grounded ? groundGain(speed, input.surface) : 0
     mix.groundHz = input.surface === SURFACE_ASPHALT ? 400 : 900 + 40 * Math.abs(speed)
   }
-  if (kind === KIND_PLANE && !input.grounded) {
+  if (engine.name === 'rotary' && !input.grounded) {
     // In the air the wind in the wires takes the place of the ground under the wheels.
-    mix.ground = 0.6 * clamp(Math.abs(speed) / PLANE_TOP) ** 1.5
+    mix.ground = 0.6 * clamp(Math.abs(speed) / engine.top) ** 1.5
     mix.groundHz = 250 + 30 * Math.abs(speed)
   }
   if (!powered) return mix
 
   const health = maxHp > 0 ? hp / maxHp : 1
-  if (kind === KIND_PLANE) {
-    // A rotary has no gears: its note rises with the airspeed and the throttle, and sags when the blip
-    // switch cuts it and the propeller windmills.
-    const cut = input.cut === true
-    const air = clamp(Math.abs(speed) / PLANE_TOP)
-    const load = cut ? 0 : clamp(0.55 + accel / 6 + climb / 20)
-    mix.pitch = BASE_HZ[KIND_PLANE]! * (0.7 + 0.35 * air + 0.2 * load) * (cut ? 0.85 : 1)
-    mix.chop = mix.pitch * PROP_BEAT
-    mix.chopLevel = 0.35
-    mix.engine = BASE_LEVEL[KIND_PLANE]! * (0.5 + 0.5 * load)
-    mix.tone = 900 + 1800 * load
-    mix.cut = cut
-  } else if (kind === KIND_DRONE) {
-    // Four small props: a thin, high whine that climbs with the work they do.
-    const load = clamp(0.3 + Math.abs(climb) / 10 + Math.abs(speed) / 30)
-    mix.pitch = DRONE_HZ * (0.85 + 0.6 * load)
-    mix.engine = 0.14 * (0.6 + 0.4 * load)
-    mix.tone = 2200 + 2000 * load
-  } else if (kind === KIND_LOITER) {
-    // One small engine flat out all the time: its note rises a little with the airspeed and the climb.
-    const load = clamp(0.6 + climb / 15 + accel / 10)
-    mix.pitch = LOITER_HZ * (0.8 + 0.45 * clamp(Math.abs(speed) / LOITER_TOP) + 0.15 * load)
-    mix.engine = 0.3 * (0.7 + 0.3 * load)
-    mix.tone = 1200 + 1200 * load
-  } else if (kind === KIND_HELI) {
-    const load = clamp(0.35 + Math.abs(climb) / 6 + Math.abs(speed) / 40)
-    mix.pitch = BASE_HZ[KIND_HELI]! * (0.85 + 0.5 * load)
-    mix.chop = 9 + 6 * load
-    mix.chopLevel = 1
-    mix.engine = BASE_LEVEL[KIND_HELI]! * (0.5 + 0.5 * load)
-    mix.tone = 500 + 800 * load
-  } else {
-    const { revs } = gearing(kind, speed)
-    // Gas held when accelerating or holding speed, off when braking hard or lifting.
-    const load = accel < -2 ? 0.05 : clamp(0.3 + accel / 4)
-    const base = BASE_HZ[kind] ?? JEEP_HZ
-    mix.pitch = base * (0.7 + 1.9 * revs)
-    mix.engine = (BASE_LEVEL[kind] ?? 0.22) * (0.4 + 0.6 * load)
-    mix.tone = 350 + 1500 * load + 700 * revs
-    if (kind === KIND_TANK || kind === KIND_STRV) {
-      mix.chop = 5 + 1.5 * Math.abs(speed)
-      mix.chopLevel = 0.9 * clamp(Math.abs(speed) / 4)
+  switch (engine.name) {
+    case 'rotary': {
+      // A rotary has no gears: its note rises with the airspeed and the throttle, and sags when the blip
+      // switch cuts it and the propeller windmills.
+      const cut = input.cut === true
+      const air = clamp(Math.abs(speed) / engine.top)
+      const load = cut ? 0 : clamp(0.55 + accel / 6 + climb / 20)
+      mix.pitch = engine.hz * (0.7 + 0.35 * air + 0.2 * load) * (cut ? 0.85 : 1)
+      mix.chop = mix.pitch * PROP_BEAT
+      mix.chopLevel = 0.35
+      mix.engine = engine.level * (0.5 + 0.5 * load)
+      mix.tone = 900 + 1800 * load
+      mix.cut = cut
+      break
+    }
+    case 'props': {
+      // Four small props: a thin, high whine that climbs with the work they do.
+      const load = clamp(0.3 + Math.abs(climb) / 10 + Math.abs(speed) / 30)
+      mix.pitch = engine.hz * (0.85 + 0.6 * load)
+      mix.engine = 0.14 * (0.6 + 0.4 * load)
+      mix.tone = 2200 + 2000 * load
+      break
+    }
+    case 'twostroke': {
+      // One small engine flat out all the time: its note rises a little with the airspeed and the climb.
+      const load = clamp(0.6 + climb / 15 + accel / 10)
+      mix.pitch = engine.hz * (0.8 + 0.45 * clamp(Math.abs(speed) / engine.top) + 0.15 * load)
+      mix.engine = 0.3 * (0.7 + 0.3 * load)
+      mix.tone = 1200 + 1200 * load
+      break
+    }
+    case 'rotor': {
+      const load = clamp(0.35 + Math.abs(climb) / 6 + Math.abs(speed) / 40)
+      mix.pitch = engine.hz * (0.85 + 0.5 * load)
+      mix.chop = 9 + 6 * load
+      mix.chopLevel = 1
+      mix.engine = engine.level * (0.5 + 0.5 * load)
+      mix.tone = 500 + 800 * load
+      break
+    }
+    case 'gears': {
+      const { revs } = gearing(engine, speed)
+      // Gas held when accelerating or holding speed, off when braking hard or lifting.
+      const load = accel < -2 ? 0.05 : clamp(0.3 + accel / 4)
+      mix.pitch = engine.hz * (0.7 + 1.9 * revs)
+      mix.engine = engine.level * (0.4 + 0.6 * load)
+      mix.tone = 350 + 1500 * load + 700 * revs
+      if (engine.tracks) {
+        mix.chop = 5 + 1.5 * Math.abs(speed)
+        mix.chopLevel = 0.9 * clamp(Math.abs(speed) / 4)
+      }
+      break
     }
   }
   if (health < 0.4) mix.stutter = ((0.4 - health) / 0.4) * 6

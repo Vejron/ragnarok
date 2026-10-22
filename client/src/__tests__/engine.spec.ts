@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { crashSize, gearing, groundGain, landingThud, mixOf, squealGain, type SoundInput } from '@/sim/engine'
+import { kindView } from '@/kinds'
+import { crashSize, gearing as gearingOf, groundGain, landingThud, mixOf as mixWith, squealGain, type SoundInput } from '@/sim/engine'
 import { SPORTS_MAX_SPEED } from '@/sim/consts'
 import { KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_TANK } from '@/net/codec'
 import { SURFACE_ASPHALT, SURFACE_DIRT, SURFACE_WATER } from '@/sim/surface'
+
+/** The mix of the kind `input` names. */
+const mixOf = (input: SoundInput) => mixWith(input, kindView(input.kind).sound.engine)
+
+/** The gears of `kind`, a car or a tank. */
+function gearing(kind: number, speed: number) {
+  const engine = kindView(kind).sound.engine
+  if (engine.name !== 'gears') throw new Error(`kind ${kind} has no gears`)
+  return gearingOf(engine, speed)
+}
 
 const running = (over: Partial<SoundInput> = {}): SoundInput => ({
   kind: KIND_JEEP, speed: 10, accel: 1, climb: 0, powered: true, hp: 100, maxHp: 100, slip: 0, surface: SURFACE_ASPHALT, grounded: true, wheels: null, ...over,
