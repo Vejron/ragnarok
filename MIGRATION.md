@@ -278,8 +278,8 @@ not change.
    - `byte`: 0..1;
    - `dm`: metres in tenths.
 
-   Rust writes the units into `components.generated.ts`. One generic function turns a wire entity into
-   game units, and one blends two of them for interpolation:
+   Rust writes the units into `components.generated.ts`, and from them it writes `toGame`, which turns
+   a wire entity into game units, and `blend`, which interpolates between two (`units.generated.ts`):
    - `cm`, `mrad` (the short way round), `quat` (normalised, as a whole) and `axis` are interpolated;
    - everything else (counters, flags, ids, health, gauges) is taken from the nearer snapshot.
 
@@ -324,7 +324,7 @@ not change.
 - [x] **4.1** Units in the schema, with generic conversion and blending (`entities/units.ts`). Checked
       against v1's converters: every fixture scene converted generically must equal the adapter's
       states, field for field.
-- [ ] **4.2** The store, with projectiles and items on the ground as its first presenters: the rocket
+- [x] **4.2** The store, with projectiles and items on the ground as its first presenters: the rocket
       interpolator and the adapter's rocket and item lists go.
 - [ ] **4.3** Stickmen and the rooster from the store: the entity interpolator goes.
 - [ ] **4.4** Vehicles from the store, as a model presenter and component presenters: the vehicle
@@ -340,8 +340,9 @@ not change.
 
 - **Behaviour:** client tests stay green, and the interpolation tests are ported to the store. A short
   play on a small world after 4.4 and after 4.7.
-- **Cost:** a vitest measurement of a full room's per-frame store work (64 stickmen, 20 vehicles, 30
-  projectiles), before (the interpolators) and after. It should not grow.
+- **Cost:** a full room (64 stickmen, 20 vehicles, 30 projectiles) for a second of play: 30 snapshots
+  taken in and 60 frames sampled. Before is the adapter and the interpolators; after is the store. It
+  should not grow.
 - **Progress:** `game.ts` lines, its id-keyed maps, and its `KIND_*` branches, logged at each step.
 
 #### Deferred, needing wire changes
@@ -1514,3 +1515,73 @@ family and its edge cases:
 `vue-tsc` and oxlint add nothing.
 
 **Next:** 4.2, the store, with projectiles and items on the ground as its first presenters.
+
+### 2026-10-22: Phase 4.2, the entity store; projectiles and items as presenters
+
+**Store.** `entities/store.ts` keeps every replicated entity's recent snapshots in the game's units and
+samples them at the render tick.
+
+- It is fed every scene `Replica` rebuilds.
+- An entity the newest scene lacks ends at that scene's tick, and is drawn until the picture gets
+  there. This is how rockets already ended, so that they burst where they were last drawn. It is now
+  the rule for everything.
+- An entity unchanged between scenes is the same wire object, so it is converted once (a `WeakMap`).
+  Blending a state with itself is free.
+
+**Presenters.** `entities/presenter.ts` has the `Presenter` interface (`wants`, `update`, `remove`, and
+optional `begin`/`end`) and `Presenters`, which runs them in order over the sampled store. When an
+entity goes, or stops matching, `remove` is called once.
+
+- **Projectiles** (`presenters/projectiles.ts`): the model, the trail, a motor's smoke and a flare's
+  light, moved out of `game.ts`.
+- **Items on the ground** (`presenters/pickups.ts`): the drawn set, and the list the E prompt reads.
+
+Gone from `game.ts`:
+
+- the rocket interpolator, `rocketEnds`, `trailOwed` and `pickups`;
+- `trackRockets`, `drawRockets` and `burnFlare`;
+- its use of the adapter's rocket and item lists.
+
+**Conversion and blending are generated.** A first version walked the schema and cost 7× the
+interpolators per frame (62 µs against 9 for a full room), because it built objects field by field
+from names. Rust now writes `entities/units.generated.ts`:
+
+- `toGame`, which keeps a component with no units as the wire object itself, so it costs nothing and
+  keeps its identity;
+- `blend`, which takes a component in which nothing moves (`flags`, `seats`, `health`…) whole from the
+  nearer snapshot, and keeps a moving component that did not change rather than allocating it again.
+
+Every entity comes out with all 17 components as properties, so they all share one shape and the code
+that reads them stays monomorphic. `units.ts` keeps the types and `blending.ts` the helpers.
+
+**Measurements.** A full room for a second, built with esbuild and run by Node:
+
+| | Before (adapter + interpolators) | Store |
+|---|---|---|
+| Snapshots taken in | 0.46–0.49 ms | 0.17–0.18 ms |
+| Frames sampled | 0.51–0.56 ms | 0.38–0.40 ms |
+
+- Under vitest the two come out about even and swing by a tenth, so `store.spec.ts` asserts only
+  against a real step back (under 1.25× before).
+- Blending a stickman is 61 ns against v1's 30, the price of the fixed shape. It is more than repaid by
+  converting once rather than every snapshot.
+
+**Changes in behaviour, all within one snapshot interval:**
+
+- Items on the ground go when the picture reaches the snapshot without them, not on arrival.
+- A rocket is marked on the minimap when first drawn.
+- `Sampled` has no `speed`: nothing read it.
+
+**Tests:**
+
+- `store.spec.ts` ports the interpolator's tests. It adds ending at the picture's tick, coming back
+  before the end, converting once, presenters being told once in order, and the cost comparison.
+- `presenters.spec.ts` covers the projectile and item presenters, against stand-ins for what they
+  draw into.
+
+**Progress:** `game.ts` is 1,855 lines (from 1,922), with 13 id-keyed maps and sets (15) and 32 `KIND_*`
+branches.
+
+**Checks:** shared 68 and client 383, all passing; clippy, `vue-tsc` and oxlint add nothing.
+
+**Next:** 4.3, stickmen and the rooster from the store.

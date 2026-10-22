@@ -195,6 +195,108 @@ fn components_ts() -> String {
     out
 }
 
+/// What one of a unit's integers is worth in the client's units (`UNITS`).
+fn scale(unit: &str) -> Option<u32> {
+    match unit {
+        "cm" => Some(100),
+        "mrad" => Some(1000),
+        "quat" => Some(32767),
+        "axis" => Some(127),
+        "byte" => Some(255),
+        "dm" => Some(10),
+        _ => None,
+    }
+}
+
+fn struct_of(rust: &str) -> Option<&'static [(&'static str, &'static str)]> {
+    let rust = rust.replace(' ', "");
+    STRUCTS.iter().find(|(known, _)| rust.contains(known)).map(|(_, members)| *members)
+}
+
+/// A field's value `w` (a TypeScript expression) in the client's units.
+fn convert_field_ts(w: &str, rust: &str, unit: &str) -> String {
+    if let Some(members) = struct_of(rust) {
+        let fields: Vec<String> = members.iter().map(|(member, unit)| format!("{member}: {}", convert_field_ts(&format!("r.{member}"), "", unit))).collect();
+        return format!("{w}.map((r) => ({{ {} }}))", fields.join(", "));
+    }
+    let list = rust.starts_with("Vec<") || rust.starts_with('[');
+    let one = |v: &str| match (unit, scale(unit)) {
+        ("axis", Some(s)) => format!("Math.max(-1, Math.min(1, {v} / {s}))"),
+        (_, Some(s)) => format!("{v} / {s}"),
+        _ => v.to_string(),
+    };
+    match (list, scale(unit)) {
+        (_, None) => w.to_string(),
+        (true, Some(_)) => format!("{w}.map((v) => {})", one("v")),
+        (false, Some(_)) => one(w),
+    }
+}
+
+/// How a field of two snapshots, `a` and `b` (TypeScript expressions), blends a fraction `t` of the way,
+/// as its unit says (`UNITS`): positions and steering are lerped, angles turned the short way round, and
+/// everything else is the nearer snapshot's.
+fn blend_field_ts(a: &str, b: &str, rust: &str, unit: &str) -> String {
+    if let Some(members) = struct_of(rust) {
+        let fields: Vec<String> = members.iter().map(|(member, unit)| format!("{member}: {}", blend_field_ts(&format!("p.{member}"), &format!("q.{member}"), "", unit))).collect();
+        return format!("items({a}, {b}, (p, q) => ({{ {} }}))", fields.join(", "));
+    }
+    match unit {
+        "cm" | "axis" => format!("lerp({a}, {b}, t)"),
+        "mrad" => format!("angle({a}, {b}, t)"),
+        _ => format!("t < 0.5 ? {a} : {b}"),
+    }
+}
+
+/// The client's conversion of a replicated entity into its units, and its blend of two snapshots of
+/// one. Generated rather than walked from the schema: they run for every entity every snapshot and
+/// every frame, and code that builds objects of one fixed shape is several times faster than code that
+/// builds them field by field from names. Every entity comes out with every component as a property,
+/// `undefined` for one it does not have, so all of them share one shape.
+fn units_ts() -> String {
+    let mut out = String::from("// GENERATED from crates/shared/src/replicated.rs by its tests. Do not edit: change the Rust and\n// run `UPDATE_PARITY=1 cargo test -p shared`. What each unit means, and how it blends, is documented\n// at `UNITS` there.\n\n");
+    out += "import { angle, items, lerp, rotation, rotationOf } from './blending'\nimport type { Components } from '@/net/components.generated'\nimport type { Entity } from './units'\n\n";
+    let schema = schema();
+    let has_unit = |fields: &[Field]| fields.iter().any(|(_, rust, unit)| !unit.is_empty() || struct_of(rust).is_some_and(|members| members.iter().any(|(_, unit)| !unit.is_empty())));
+    out += "/** Entity `w`, as the wire has it, in the game's units. A component with no units is `w`'s own. */\nexport function toGame(w: Components): Entity {\n  return {\n";
+    for (_, name, _, _, fields) in &schema {
+        let converted = if fields.iter().all(|(_, _, unit)| *unit == "quat") {
+            let parts: Vec<String> = fields.iter().map(|(field, _, _)| format!("w.{name}.{field}")).collect();
+            format!("rotationOf({})", parts.join(", "))
+        } else if !has_unit(fields) {
+            out += &format!("    {name}: w.{name},\n");
+            continue;
+        } else {
+            let parts: Vec<String> = fields.iter().map(|(field, rust, unit)| format!("{field}: {}", convert_field_ts(&format!("w.{name}.{field}"), rust, unit))).collect();
+            format!("{{ {} }}", parts.join(", "))
+        };
+        out += &format!("    {name}: w.{name} && {converted},\n");
+    }
+    out += "  }\n}\n\n";
+    out += "/**\n * `a` and `b`, two snapshots of one entity, a fraction `t` of the way from `a` to `b`. A component only\n * one of them has is the nearer snapshot's to have or not.\n */\n";
+    out += "export function blend(a: Entity, b: Entity, t: number): Entity {\n  if (a === b) return a\n  const near = t < 0.5 ? a : b\n  return {\n";
+    for (_, name, _, _, fields) in &schema {
+        let moves = |(_, rust, unit): &&Field| matches!(*unit, "cm" | "axis" | "mrad" | "quat") || struct_of(rust).is_some();
+        if !fields.iter().any(|field| moves(&field)) {
+            // Nothing in it moves: the nearer snapshot's, whole.
+            out += &format!("    {name}: near.{name},\n");
+            continue;
+        }
+        // Unchanged, as a moving entity's other components mostly are, it is the same object: no new one.
+        let same: Vec<String> = fields.iter().filter(|(_, rust, _)| struct_of(rust).is_none()).map(|(field, _, _)| format!("a.{name}.{field} === b.{name}.{field}")).collect();
+        let same = if same.len() == fields.len() { format!("a.{name} === b.{name} || ({})", same.join(" && ")) } else { format!("a.{name} === b.{name}") };
+        let both = format!("a.{name} && b.{name} ? ({same} ? b.{name} : ");
+        let blended = if fields.iter().all(|(_, _, unit)| *unit == "quat") {
+            format!("rotation(a.{name}, b.{name}, t)")
+        } else {
+            let parts: Vec<String> = fields.iter().map(|(field, rust, unit)| format!("{field}: {}", blend_field_ts(&format!("a.{name}.{field}"), &format!("b.{name}.{field}"), rust, unit))).collect();
+            format!("{{ {} }}", parts.join(", "))
+        };
+        out += &format!("    {name}: {both}{blended}) : near.{name},\n");
+    }
+    out += "  }\n}\n";
+    out
+}
+
 /// One `FieldSchema`, as TypeScript.
 fn field_ts(name: &str, unit: &str) -> String {
     if unit.is_empty() { format!("{{ name: '{name}' }}") } else { format!("{{ name: '{name}', unit: '{unit}' }}") }
@@ -281,6 +383,7 @@ fn adapter_fixture_json() -> String {
 #[test]
 fn the_clients_components_and_fixture_are_generated_from_these() {
     generated("client/src/net/components.generated.ts", &components_ts());
+    generated("client/src/entities/units.generated.ts", &units_ts());
     generated("client/src/__tests__/replicated.fixture.json", &fixture_json());
     generated("client/src/__tests__/adapter.fixture.json", &adapter_fixture_json());
 }

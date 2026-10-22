@@ -66,9 +66,10 @@ describe('replicated components in the game’s units', () => {
     for (const pickup of pickups) expect({ item: game(pickup.id).pickup!.item, ...game(pickup.id).place }).toEqual({ item: pickup.item, x: pickup.x, y: pickup.y, z: pickup.z })
   })
 
-  it('are converted once, however many scenes hold them', () => {
+  it('keep a component with no units as the wire has it', () => {
     const wire = scene.get(4)!
-    expect(toGame(wire).place).toBe(toGame({ ...wire }).place)
+    expect(toGame(wire).seats).toBe(wire.seats)
+    expect(toGame(wire).place).not.toBe(wire.place)
   })
 
   for (const t of [0, 0.3, 0.7, 1]) {

@@ -2,10 +2,10 @@ import type { Node } from '@ragnarok/engine'
 import * as THREE from 'three'
 import {
   ARMS_CUT, ARMS_JAMMED, ARMS_REAR_JAMMED, DAMAGE_TURRET, DAMAGE_WHEELS, encodeInput, encodePing, isDrone, KIND_DRONE, KIND_HELI, KIND_LOITER, KIND_HEN, KIND_PLANE, KIND_MORTAR, KIND_ROADSTER, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_STRV, KIND_TANK, KIND_WALKER, sceneStates, toAxis, toMrad, TURRET_GONE, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RICOCHET, WEAPON_TURRET,
-  PROJECTILE_BULLET, PROJECTILE_FLARE, WEAPON_BULLET, WEAPON_FLARE, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LOITER, WEAPON_BOMB, WEAPON_EGG, WEAPON_CRASH, WEAPON_MG, WEAPON_PELLET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_WRECK,
-  type Arms, type BulletSpawn, type DriveState, type EntityState, type InputFrame, type PickupState, type RocketState, type Rider, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
+  PROJECTILE_BULLET, WEAPON_BULLET, WEAPON_FLARE, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LOITER, WEAPON_BOMB, WEAPON_EGG, WEAPON_CRASH, WEAPON_MG, WEAPON_PELLET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_WRECK,
+  type Arms, type BulletSpawn, type DriveState, type EntityState, type InputFrame, type Rider, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
 } from './net/codec'
-import { blendEntity, blendRocket, blendVehicle, Interpolator } from './net/interp'
+import { blendEntity, blendVehicle, Interpolator } from './net/interp'
 import { Backoff } from './net/backoff'
 import { RttEstimator, ServerClock } from './net/clock'
 import { Transport } from './net/transport'
@@ -34,7 +34,7 @@ import { Particles } from './render/particles'
 import { Skidmarks } from './render/skidmarks'
 import { coldGas, crashBurst, scrapeSparks, VehicleFx, type FxWorld } from './render/tyres'
 import { Debris } from './render/debris'
-import { damageSmoke, rocketTrail } from './render/vehiclesmoke'
+import { damageSmoke } from './render/vehiclesmoke'
 import { BLASTS, explosion, type ExplosionProfile } from './render/explosion'
 import { Gore } from './render/gore'
 import { Surfaces, SURFACE_GRASS } from './sim/surface'
@@ -72,6 +72,10 @@ import { HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, HitFeedback }
 import { buildGround } from './render/world'
 import { v1Scene } from './net/adapter'
 import { Replica } from './net/replica'
+import { EntityStore } from './entities/store'
+import { Presenters, type Frame } from './entities/presenter'
+import { Projectiles } from './entities/presenters/projectiles'
+import { Pickups as LyingItems, type Lying } from './entities/presenters/pickups'
 import { TileStreamer } from './stream'
 import { loadManifest, NO_WATER, type WorldData } from './world'
 import { WorldView } from './worldview'
@@ -89,10 +93,6 @@ export type { Blip } from './blips'
 /** How the minimap tells sides apart. */
 /** Feet this deep (metres) under the surface are in the water. */
 const WADE_DEPTH = 0.15
-/** A burning flare's light: warm white, strong enough to light a field from where it hangs. */
-const FLARE_LIGHT = 0xffe8c8
-const FLARE_INTENSITY = 2
-const FLARE_LIGHT_RADIUS = 120
 /** Falling this high (metres) over the ground, a hint offers the parachute. */
 const CHUTE_PROMPT_HEIGHT = 4
 /** Wading ripples are drawn within this many metres of the camera. */
@@ -186,6 +186,9 @@ export class Game {
   private readonly roosters = new Map<number, RoosterModel>()
   /** Rebuilds snapshots from deltas, and says which one to diff the next against. */
   private readonly replica = new Replica()
+  /** Every replicated entity in the game's units, sampled at the render tick for the presenters. */
+  private readonly store = new EntityStore()
+  private readonly presenters = new Presenters<Frame>(this.store)
   private tiles: TileStreamer | null = null
   /** The streamed tiles, what is solid in them, and what the server has brought down. */
   private readonly view: WorldView
@@ -212,12 +215,9 @@ export class Game {
   private readonly gore = new Gore(this.debris, this.smoke, this.effects)
   /** Seconds since the last frame, for what is drawn per vehicle. */
   private frameDt = 0
-  private readonly rocketInterp = new Interpolator<RocketState>(blendRocket)
   private readonly rocketModels = new Rockets()
   /** Ribbons behind rockets, shells and bullets in flight. */
   private readonly trails = new ProjectileTrails()
-  /** The tick a rocket was last listed in, once it stops being listed: it bursts then. */
-  private readonly rocketEnds = new Map<number, number>()
   /** Shot and burst events wait here until the render tick reaches them, so they line up with what is drawn. */
   private pendingShots: { tick: number; shot: ShotEvent }[] = []
   /** Bullets in flight, flown from their spawn alone (`sim/ballistics.ts`); the server lists none after announcing them. */
@@ -228,11 +228,11 @@ export class Game {
   private readonly smokeOwed = new Map<number, number>()
   private readonly chase = new ChaseCam()
   private readonly pickupModels = new Pickups()
+  /** Items on the ground, as drawn. */
+  private readonly lying = new LyingItems(this.pickupModels)
   /** The arc a grenade in hand would take, drawn while one is held. */
   private readonly trajectory = new TrajectoryView()
   private readonly mortarArc = new MortarArc()
-  /** The items on the ground in the newest snapshot, for the prompt and the drawing. */
-  private pickups: PickupState[] = []
   /** The local player's hotbar and reload/bandage progress, from the newest snapshot. */
   private hotbar: ItemSlot[] = emptyHotbar()
   private progress = 0
@@ -344,6 +344,10 @@ export class Game {
         if (status === 'OFFLINE') this.onDisconnect()
       },
     )
+    this.presenters.add(new Projectiles({
+      models: this.rocketModels, trails: this.trails, glow: this.glow, lights: this.scene.scene.lights, fx: () => this.fxWorld, blips: this.blips,
+    }))
+    this.presenters.add(this.lying)
     // Dev-only handle for poking at the game from the console or a test driver.
     if (import.meta.env.DEV) (window as unknown as { __game?: Game }).__game = this
   }
@@ -414,9 +418,9 @@ export class Game {
     this.interp.clear()
     this.vehicleInterp.clear()
     this.replica.reset()
-    this.clearRockets()
-    this.pickups = []
-    this.pickupModels.clear()
+    this.presenters.clear()
+    this.store.clear()
+    this.clearBullets()
     this.hotbar = emptyHotbar()
     this.progress = 0
     this.pendingShots = []
@@ -469,16 +473,15 @@ export class Game {
         const rebuilt = this.replica.receive(message.tick, message.baseline, message.updates, message.removed)
         if (!rebuilt) return
         // The components, as v1's states, until each has a presenter of its own (Phase 4).
-        const { wire, rockets, pickups } = v1Scene(rebuilt.scene)
+        this.store.push(message.tick, rebuilt.scene, rebuilt.latest)
+        const { wire } = v1Scene(rebuilt.scene)
         const { entities, vehicles } = sceneStates(wire)
         this.clock.observe(message.tick, now)
         this.setHealth(message.hp, now)
         this.progress = message.progress / 255
         this.hotbar = [...message.inventory, ...emptyHotbar()].slice(0, HOTBAR_SLOTS)
-        this.pickups = pickups
         for (const shot of message.shots) this.pendingShots.push({ tick: message.tick, shot })
         if (this.pendingShots.length > 64) this.pendingShots.splice(0, this.pendingShots.length - 64)
-        this.trackRockets(message.tick, rockets)
         this.noteBullets(message.tick, message.bullets)
         const remote = entities.filter((e) => e.id !== this.localId)
         this.interp.push(message.tick, remote)
@@ -834,10 +837,8 @@ export class Game {
     // Streaming follows what the camera is on: the car when seated, else the stickman.
     this.tiles?.update(ride ? ride.x : position[0], ride ? ride.z : position[2])
     this.playShots(renderTick)
-    this.drawRockets(renderTick)
+    this.presenters.run(renderTick, { tick: renderTick, dt, now })
     this.drawBullets(renderTick)
-    this.pickupModels.set(this.pickups)
-    this.pickupModels.update(now / 1000)
     this.aimGrenade(position, seated)
     this.effects.update(dt)
     this.trails.update(dt)
@@ -1198,41 +1199,6 @@ export class Game {
     if (played > 0) this.pendingShots.splice(0, played)
   }
 
-  /** Buffers the rockets of a snapshot, and notes the ones it no longer lists as burst at that tick. */
-  private trackRockets(tick: number, rockets: readonly RocketState[]) {
-    const known = new Set(this.rocketInterp.ids())
-    // Nobody is named as a rocket's shooter: the map marks it as gunfire from where it was first seen.
-    for (const rocket of rockets) if (!known.has(rocket.id)) this.blips.fired(0, rocket.x, rocket.z, performance.now())
-    this.rocketInterp.push(tick, rockets)
-    const listed = new Set(rockets.map((rocket) => rocket.id))
-    for (const id of this.rocketInterp.ids()) {
-      if (!listed.has(id) && !this.rocketEnds.has(id)) this.rocketEnds.set(id, tick)
-    }
-  }
-
-  private drawRockets(renderTick: number) {
-    for (const id of this.rocketInterp.ids()) {
-      const ends = this.rocketEnds.get(id)
-      if (ends !== undefined && renderTick >= ends) {
-        this.rocketInterp.remove(id)
-        this.rocketEnds.delete(id)
-        this.rocketModels.remove(id)
-        this.trails.end('r', id)
-        this.trailOwed.delete(id)
-        continue
-      }
-      const state = this.rocketInterp.sample(id, renderTick)
-      if (!state) continue
-      this.rocketModels.place(id, state.kind, [state.x, state.y, state.z], [state.vx, state.vy, state.vz])
-      this.trails.follow('r', id, state.kind, state.x, state.y, state.z)
-      if (state.kind === PROJECTILE_FLARE) this.burnFlare(id, state.x, state.y, state.z)
-      // Only a motor-driven rocket (kind 0) leaves a flame and a smoke trail.
-      if (state.kind === 0) {
-        this.trailOwed.set(id, rocketTrail(this.fxWorld, [state.x, state.y, state.z], [state.vx, state.vy, state.vz], this.frameDt, this.trailOwed.get(id) ?? 0))
-      }
-    }
-  }
-
   /** Starts the bullets of a snapshot that are new; each is sent in two, in case one is lost. */
   private noteBullets(tick: number, spawns: readonly BulletSpawn[]) {
     for (const spawn of spawns) {
@@ -1290,42 +1256,9 @@ export class Game {
     this.sounds.gunshot([heard.x, heard.y, heard.z], gun?.sound ?? 'rifle')
   }
 
-  /**
-   * A burning flare, drawn each frame it is listed: a blooming halo, sparks dripping off it, and a strong,
-   * gently flickering light on everything below. The halo lives two frames, so it looks the same at any frame rate.
-   */
-  private burnFlare(id: number, x: number, y: number, z: number) {
-    const now = performance.now()
-    const flicker = 0.85 + 0.15 * Math.sin(now * 0.031 + id) * Math.sin(now * 0.0117 + id * 2.3)
-    this.scene.scene.lights.hold(x, y, z, { color: FLARE_LIGHT, intensity: FLARE_INTENSITY * flicker, radius: FLARE_LIGHT_RADIUS })
-    const life = Math.max(this.frameDt, 1 / 240) * 2
-    this.glow.spawn({ position: [x, y, z], velocity: [0, 0, 0], life, size: [1.6 * flicker, 1.4], color: 0xfff2dc, alpha: 0.6, glow: 2 })
-    this.glow.spawn({ position: [x, y, z], velocity: [0, 0, 0], life, size: [0.5, 0.45], color: 0xffffff, alpha: 1, glow: 4 })
-    if (Math.random() < this.frameDt * 10) {
-      this.glow.spawn({
-        position: [x, y, z],
-        velocity: [(Math.random() - 0.5) * 1.5, -0.5 - Math.random(), (Math.random() - 0.5) * 1.5],
-        life: 0.6 + Math.random() * 0.6,
-        size: [0.14, 0.04],
-        color: 0xffc46a,
-        alpha: 1,
-        gravity: 6,
-        drag: 0.5,
-        glow: 3,
-      })
-    }
-  }
-
-  /** The unspent fraction of a smoke puff, per rocket in flight. */
-  private readonly trailOwed = new Map<number, number>()
-
-  private clearRockets() {
-    this.trailOwed.clear()
+  private clearBullets() {
     this.bullets.clear()
     this.seenBullets.clear()
-    for (const id of this.rocketInterp.ids()) this.rocketModels.remove(id)
-    this.rocketInterp.clear()
-    this.rocketEnds.clear()
   }
 
   /** Draws where a grenade thrown now would go, while one is in hand and the player is free to throw it. */
@@ -1821,10 +1754,10 @@ export class Game {
   }
 
   /** The nearest item on the ground within reach of `position`, as the server will judge it. */
-  private pickupInReach(position: readonly number[]): PickupState | null {
-    let best: PickupState | null = null
+  private pickupInReach(position: readonly number[]): Lying | null {
+    let best: Lying | null = null
     let bestDistance = PICKUP_RADIUS
-    for (const pickup of this.pickups) {
+    for (const pickup of this.lying.lying) {
       if (Math.abs(pickup.y - position[1]!) > 2.5) continue
       const distance = Math.hypot(pickup.x - position[0]!, pickup.z - position[2]!)
       if (distance <= bestDistance) {
