@@ -140,26 +140,122 @@ fn diff_and_apply_rebuild_the_new_scene() {
     assert_eq!(apply(&[], &all, &[]), now, "against nothing, everything is new");
 }
 
-/// The components as the client decodes them, as JSON. `client/src/net/schema.generated.json` holds
-/// the committed copy; `UPDATE_PARITY=1 cargo test -p shared` rewrites it.
-fn schema_json() -> String {
-    let components: Vec<String> = schema()
+/// A field's TypeScript type, from its Rust one.
+fn ts_type(rust: &str) -> String {
+    match rust {
+        "i8" | "i16" | "i32" | "u8" | "u16" | "u32" => "number".into(),
+        list if list.starts_with("Vec<") || list.starts_with('[') => {
+            let inner = list.trim_start_matches("Vec<").trim_start_matches('[').split([';', '>', ']']).next().unwrap();
+            format!("{}[]", ts_type(inner))
+        }
+        name => {
+            assert!(STRUCTS.iter().any(|(known, _)| *known == name), "a field of type {name}, which STRUCTS does not list");
+            name.into()
+        }
+    }
+}
+
+/// The client's half of the components: their types and the schema its decoder walks.
+/// `client/src/net/components.generated.ts` holds the committed copy; `UPDATE_PARITY=1 cargo test -p
+/// shared` rewrites it.
+fn components_ts() -> String {
+    let mut out = String::from("// GENERATED from crates/shared/src/replicated.rs by its tests. Do not edit: change the Rust and\n// run `UPDATE_PARITY=1 cargo test -p shared`. What each component means is documented there.\n\n");
+    out += &format!("/** Bit 31 of an update's `set` mask: a `cleared` mask follows it. */\nexport const CLEARED = {CLEARED}\n\n");
+    for (name, fields) in STRUCTS {
+        let fields: Vec<String> = fields.iter().map(|field| format!("{field}: number")).collect();
+        out += &format!("export interface {name} {{\n  {}\n}}\n\n", fields.join("\n  "));
+    }
+    let schema = schema();
+    for (_, _, ty, _, fields) in &schema {
+        let fields: Vec<String> = fields.iter().map(|(field, rust)| format!("{field}: {}", ts_type(&rust.replace(' ', "")))).collect();
+        out += &format!("export interface {ty} {{\n  {}\n}}\n\n", fields.join("\n  "));
+    }
+    out += "/** An entity as it is replicated: the components it has. */\nexport interface Components {\n";
+    for (_, name, ty, ..) in &schema {
+        out += &format!("  {name}?: {ty}\n");
+    }
+    out += "}\n\nexport type ComponentName = keyof Components\n\n";
+    out += "/** A component's fields in wire order; one holding a list of structs names the struct's fields. */\nexport interface FieldSchema {\n  name: string\n  struct?: readonly string[]\n}\n\n";
+    out += "/** Every component in wire-id order: its bit, whether it is sent as a difference, and its fields. */\nexport const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; fields: readonly FieldSchema[] }[] = [\n";
+    for (id, name, _, diff, fields) in &schema {
+        let fields: Vec<String> = fields
+            .iter()
+            .map(|(field, rust)| {
+                let rust = rust.replace(' ', "");
+                match STRUCTS.iter().find(|(known, _)| rust.contains(known)) {
+                    Some((_, members)) => format!("{{ name: '{field}', struct: [{}] }}", members.iter().map(|m| format!("'{m}'")).collect::<Vec<_>>().join(", ")),
+                    None => format!("{{ name: '{field}' }}"),
+                }
+            })
+            .collect();
+        out += &format!("  {{ id: {id}, name: '{name}', diff: {diff}, fields: [{}] }},\n", fields.join(", "));
+    }
+    out += "]\n";
+    out
+}
+
+fn scene_json(scene: &[(u32, Replicated)]) -> String {
+    format!("[{}]", scene.iter().map(|(id, entity)| format!("[{id}, {}]", entity.json())).collect::<Vec<_>>().join(", "))
+}
+
+/// Byte-for-byte cases for the client's decoder: a baseline scene, the encoded updates against it, the
+/// ids removed, and the scene they must make.
+fn fixture_json() -> String {
+    let all = Replicated {
+        place: Some(Place { x: -12_345, y: 678, z: 90_000 }),
+        heading: Some(Heading { yaw: -3141 }),
+        motion: Some(Motion { vy: -500, knock_x: 120, knock_z: -80 }),
+        flags: Some(Flags { flags: 0b1000_0101, stance: 1 }),
+        orientation: Some(Orientation { qx: -32767, qy: 5, qz: 32767 }),
+        steer: Some(Steer { steer: -127 }),
+        turret: Some(Turret { yaw: 100, pitch: -50, shots: 255, range: 65535, flags: 1 }),
+        crew: Some(Crew { riders: vec![Rider { yaw: 1, pitch: -2, held: 3 }, Rider::default()] }),
+        thrust: Some(Thrust { air: 200, flags: 3 }),
+        arms: Some(Arms { shots: 9, heat: 10, rear_heat: 11, bombs: 4, flags: 2 }),
+        seats: Some(Seats { riders: vec![1, 0, 70_000] }),
+        health: Some(Health { hp: 70 }),
+        damage: Some(Damage { parts: [1, 2, 3, 4, 5, 6, 7, 255] }),
+        velocity: Some(Velocity { vx: 30_000, vy: -30_000, vz: 0 }),
+        kind: Some(Kind { kind: 6 }),
+        projectile: Some(Projectile { kind: 2 }),
+        pickup: Some(Pickup { item: 7 }),
+    };
+    let first: Scene = vec![(1, stickman(1000, 200)), (4, tank(0, 0)), (70_000, all.clone())];
+    let hurt = Replicated { damage: Some(Damage { parts: [0, 0, 90, 0, 0, 0, 0, 0] }), ..tank(40, 12) };
+    let second: Scene = vec![(1, stickman(1012, 230)), (3, stickman(-20, 7)), (4, hurt), (70_000, Replicated { heading: Some(Heading { yaw: 3141 }), steer: Some(Steer { steer: 127 }), ..all.clone() })];
+    let third: Scene = vec![(1, stickman(1012, 230)), (3, Replicated { velocity: Some(Velocity { vx: 9, vy: -9, vz: 1 }), ..stickman(-20, 7) }), (4, tank(40, 12))];
+    let steps = [("everything new, against nothing", Vec::new(), first.clone()), ("moves, an arrival and new damage", first, second.clone()), ("a repair, a departure and a component gained whole", second, third)];
+    let cases: Vec<String> = steps
         .iter()
-        .map(|(id, name, diff, fields)| {
-            let fields: Vec<String> = fields.iter().map(|(field, ty)| format!("[\"{field}\", \"{}\"]", ty.replace(' ', ""))).collect();
-            format!("    {{\"id\": {id}, \"name\": \"{name}\", \"diff\": {diff}, \"fields\": [{}]}}", fields.join(", "))
+        .map(|(name, base, now)| {
+            let (updates, removed) = diff(base, now);
+            assert_eq!(&apply(base, &updates, &removed), now);
+            let bytes: Vec<String> = encode(&updates).iter().map(u8::to_string).collect();
+            format!("    {{\"name\": \"{name}\", \"base\": {}, \"bytes\": [{}], \"removed\": {:?}, \"expected\": {}}}", scene_json(base), bytes.join(", "), removed, scene_json(now))
         })
         .collect();
-    format!("{{\n  \"cleared\": {CLEARED},\n  \"components\": [\n{}\n  ]\n}}\n", components.join(",\n"))
+    format!("{{\n  \"cases\": [\n{}\n  ]\n}}\n", cases.join(",\n"))
+}
+
+/// Writes `contents` to `path` (from the repository root) when `UPDATE_PARITY` is set, then fails while
+/// the committed copy differs.
+fn generated(path: &str, contents: &str) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(path);
+    if std::env::var_os("UPDATE_PARITY").is_some() {
+        std::fs::write(&path, contents).unwrap();
+    }
+    let committed = std::fs::read_to_string(&path).unwrap_or_default();
+    assert_eq!(committed, contents, "{} is stale: regenerate it with UPDATE_PARITY=1 cargo test -p shared", path.display());
 }
 
 #[test]
-fn the_client_schema_matches_the_components() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../client/src/net/schema.generated.json");
-    let actual = schema_json();
-    if std::env::var_os("UPDATE_PARITY").is_some() {
-        std::fs::write(&path, &actual).unwrap();
-    }
-    let committed = std::fs::read_to_string(&path).expect("client/src/net/schema.generated.json; regenerate with UPDATE_PARITY=1");
-    assert_eq!(committed, actual, "replicated components changed: regenerate client/src/net/schema.generated.json with UPDATE_PARITY=1");
+fn the_clients_components_and_fixture_are_generated_from_these() {
+    generated("client/src/net/components.generated.ts", &components_ts());
+    generated("client/src/__tests__/replicated.fixture.json", &fixture_json());
+}
+
+#[test]
+fn a_struct_in_a_list_goes_on_the_wire_as_its_fields_in_order() {
+    let bytes = encode(&Rider { yaw: 1, pitch: 2, held: 3 });
+    assert_eq!(decode::<(i16, i16, u8)>(&bytes), Some((1, 2, 3)), "STRUCTS says Rider is [yaw, pitch, held]");
 }

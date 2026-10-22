@@ -89,6 +89,14 @@ macro_rules! component {
                 Ok(wire)
             }
         }
+
+        #[cfg(test)]
+        impl $Name {
+            fn json(&self) -> String {
+                let fields: Vec<String> = vec![$( format!("\"{}\": {}", stringify!($f), json::Json::json(&self.$f)) ),*];
+                format!("{{{}}}", fields.join(", "))
+            }
+        }
     };
     (set $id:literal $(#[$meta:meta])* $Name:ident { $( $(#[$fmeta:meta])* $f:ident : $t:ty ),* $(,)? }) => {
         $(#[$meta])*
@@ -115,6 +123,14 @@ macro_rules! component {
             }
             fn read<'de, A: SeqAccess<'de>>(seq: &mut A) -> Result<Self, A::Error> {
                 Ok($Name { $( $f: next(seq)? ),* })
+            }
+        }
+
+        #[cfg(test)]
+        impl $Name {
+            fn json(&self) -> String {
+                let fields: Vec<String> = vec![$( format!("\"{}\": {}", stringify!($f), json::Json::json(&self.$f)) ),*];
+                format!("{{{}}}", fields.join(", "))
             }
         }
     };
@@ -229,9 +245,20 @@ macro_rules! replicated {
             }
         }
 
-        /// Each component as the client decodes it: `(wire id, name, sent as a difference, fields)`.
-        pub fn schema() -> Vec<(u8, &'static str, bool, &'static [(&'static str, &'static str)])> {
-            vec![$( (<$Name as Component>::ID, stringify!($field), <$Name as Component>::DIFF, <$Name as Component>::FIELDS) ),*]
+        #[cfg(test)]
+        impl Replicated {
+            /// The entity as JSON: each component it has by name, as an object of its fields.
+            fn json(&self) -> String {
+                let mut parts: Vec<String> = Vec::new();
+                $( if let Some(component) = &self.$field { parts.push(format!("\"{}\": {}", stringify!($field), component.json())); } )*
+                format!("{{{}}}", parts.join(", "))
+            }
+        }
+
+        /// Each component as the client decodes it: `(wire id, name, struct name, sent as a difference,
+        /// fields)`.
+        pub fn schema() -> Vec<(u8, &'static str, &'static str, bool, &'static [(&'static str, &'static str)])> {
+            vec![$( (<$Name as Component>::ID, stringify!($field), stringify!($Name), <$Name as Component>::DIFF, <$Name as Component>::FIELDS) ),*]
         }
     };
 }
@@ -305,6 +332,37 @@ replicated! {
     set 16 pickup
     /// `ITEM_*`: what lies on the ground here.
     Pickup { item: u8 }
+}
+
+/// The structs a component field can hold a list of, with their fields in wire order: they go on the
+/// wire as arrays, which the client turns back into objects.
+pub const STRUCTS: &[(&str, &[&str])] = &[("Rider", &["yaw", "pitch", "held"])];
+
+/// JSON for the client's fixtures.
+#[cfg(test)]
+mod json {
+    pub trait Json {
+        fn json(&self) -> String;
+    }
+    macro_rules! number {
+        ($($t:ty),*) => { $( impl Json for $t { fn json(&self) -> String { self.to_string() } } )* };
+    }
+    number!(i8, i16, i32, u8, u16, u32);
+    impl<T: Json> Json for Vec<T> {
+        fn json(&self) -> String {
+            format!("[{}]", self.iter().map(Json::json).collect::<Vec<_>>().join(", "))
+        }
+    }
+    impl<T: Json, const N: usize> Json for [T; N] {
+        fn json(&self) -> String {
+            format!("[{}]", self.iter().map(Json::json).collect::<Vec<_>>().join(", "))
+        }
+    }
+    impl Json for crate::protocol::Rider {
+        fn json(&self) -> String {
+            format!("{{\"yaw\": {}, \"pitch\": {}, \"held\": {}}}", self.yaw, self.pitch, self.held)
+        }
+    }
 }
 
 /// What a receiver holds: every entity it has been told of, by id.

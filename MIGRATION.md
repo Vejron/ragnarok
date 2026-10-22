@@ -214,7 +214,7 @@ Each step is tested on its own. Only the last one changes the wire.
 - [x] **3.2** Server: the component scene built from the ECS. Parity oracle: for the full-room
       scenario, converting it to today's rows must equal what `snapshot.rs` builds, entity for
       entity.
-- [ ] **3.3** Client: the generated schema, the generic decoder, the store and its `apply`. Byte
+- [x] **3.3** Client: the generated schema, the generic decoder, the store and its `apply`. Byte
       fixtures from Rust decode to the scenes Rust built.
 - [ ] **3.4** Client: the adapter, from the store to today's states. The same fixtures must give the
       states the v1 decoder gives.
@@ -1221,3 +1221,39 @@ measurement matters.
 **Checks:** server 269 tests, all passing; clippy clean.
 
 **Next:** 3.3, the client's schema-driven decoder and entity store.
+
+### 2026-10-22: Phase 3.3, the client decodes components from a generated schema
+
+- **Generated types and schema.** The Rust tests now generate `client/src/net/components.generated.ts`
+  in place of 3.1's JSON schema. It holds:
+  - a TypeScript interface for every component, and for `Rider`, the one struct a field holds a list
+    of;
+  - `Components`, an entity as the components it has;
+  - `SCHEMA`: each component's bit, whether it is a difference, and its fields in wire order.
+
+  The client so gets its component types from Rust too, and has no hand-kept mirror of them.
+  `STRUCTS` in `replicated.rs` names a struct's fields for this, and a test pins that `Rider` goes on
+  the wire in that order.
+- **`net/replicated.ts`** decodes and applies updates by walking `SCHEMA`, naming no component.
+  - `decodeUpdate` refuses anything malformed: too few or too many fields, a rider that is not three
+    numbers.
+  - `applyUpdate` adds a `diff` component to the baseline's when there is one, and otherwise takes it
+    as the value.
+  - `applyUpdates` makes a new scene and leaves the baseline alone, as the client keeps a window of
+    them.
+- **Byte fixture.** `client/src/__tests__/replicated.fixture.json` is written by the Rust tests from
+  the server's own encoder. It has three cases:
+  - every component on an entity new against nothing;
+  - moves, an arrival and new damage;
+  - a repair, a departure and a component gained whole.
+
+  Each is a baseline, the bytes of the updates and the scene they must make. `replicated.spec.ts`
+  decodes and applies each with the client's code and requires that scene exactly. It also checks
+  that the baseline is left untouched and that malformed updates are refused.
+- The store is the `Scene`, a map from id to `Components`, one kept per snapshot as `Replica` keeps
+  v1's. It goes into use in 3.4 and 3.5.
+
+**Checks:** shared 73 and client 367 tests, all passing; `vue-tsc` and clippy clean.
+
+**Next:** 3.4, the adapter from a `Scene` to v1's `EntityState`, `VehicleState`, rocket and pickup
+states, checked against the v1 decoder on the same world.
