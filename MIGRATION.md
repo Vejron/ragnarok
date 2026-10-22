@@ -423,7 +423,7 @@ Client:
 
 #### Steps
 
-- [ ] **5.1** One Rust definition per kind, physics and armour included; the sim and `armor.rs` read
+- [x] **5.1** One Rust definition per kind, physics and armour included; the sim and `armor.rs` read
       it.
 - [ ] **5.2** The server and the sim kind-free. Kind ids generated for the client.
 - [ ] **5.3** One client presentation per kind. Sound, tyres, smoke, models and the editor read it.
@@ -1975,3 +1975,49 @@ moves in a new way. The phases still open:
 
 - Phase 1's remaining mirrors: the codec, `terrain.ts` and `carve.ts`;
 - the deferred wire changes: owner-only components, and a `Seated` component.
+
+### 2026-10-22: Phase 5.1, one Rust definition per kind
+
+**The definitions.** `crates/shared/src/vehicles/` has one file per kind (`jeep.rs`, `tank.rs` and the
+rest), each holding the kind's whole `VehicleDef`:
+
+- its facts, crew, body and seat heads, as before;
+- its mounts, moved from `mounts.rs`, which keeps the mount types and their tests;
+- `spec`: the physics tuning, moved from the sim's `spec.rs`. `Spec`, `Lift`, `Buttons`, `Solid`,
+  `Shape` and `Role` are now plain data in `shared::vehicles::spec`;
+- `armor`: its armour, moved from the server's `armor.rs`. `Armor` and `WeakSpot` are the old
+  `Profile` and `WeakSpot`; `LIGHT` and `SOFT` are shared defaults.
+
+`vehicles.rs` keeps the types, the shared bodies and armour, `VEHICLES`, and the helpers.
+
+**What reads them:**
+
+- The sim's `spec(kind)` is `&vehicle_def(kind).spec`. Its 11-arm match is gone, and `Solid::shape`
+  (which makes a Rapier shape) became the sim's `Collide` trait.
+- `armor::judge` reads `vehicle_def(kind).armor`. Its match over kinds is gone.
+- `vehicle_def` looks the kind up in a 256-entry table built at compile time, instead of searching.
+  A test holds `VEHICLES` in id order.
+
+**Duplicates gone.**
+
+- The chassis half extents were in both the definition and the spec; they are now the spec's only, as
+  `half_extents()`.
+- So were a car's track and axle: `track_half()` and `axle_z()` read the spec.
+- The generated table changes in one way: `trackHalf` and `axleZ` now show the spec's values for
+  every kind, where non-car kinds showed 0. The client reads them only for kinds with `carWheels`,
+  whose values are unchanged.
+
+**Behaviour:** the definitions' numbers moved unchanged, and every physics fixture in `crates/sim`
+holds as it was.
+
+**Cost:** `full_room_tick_cost`, run alternately on the commit before and on this one, three times each.
+Mechanics took 1.66 to 1.79 ms before and 1.65 to 1.67 ms after: no change beyond noise.
+
+**Progress:** Rust kind branches went from 33 to 19. Of those left:
+
+- 8 are the world's spawn mix and its runways in `vehicles.rs`, which stay;
+- the rest are 5.2's.
+
+**Checks:** server 271, shared 68, sim 111, client 401; clippy clean.
+
+**Next:** 5.2, the server and the sim kind-free.

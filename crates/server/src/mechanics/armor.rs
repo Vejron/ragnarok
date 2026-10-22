@@ -9,14 +9,15 @@
 //! - otherwise it does `cos(incidence)` of its damage, times the zone's multiplier and a weak spot's.
 //!
 //! No dice: the same shot at the same place always does the same thing, so the client and the tests
-//! can tell what will happen. Every kind has a profile; the Strv S's steep glacis turns shots away from
+//! can tell what will happen. Every kind has its armour in its definition (`shared::vehicles`); the Strv S's steep glacis turns shots away from
 //! well off the nose, a jeep only deflects the most grazing.
 
 use crate::game::{Player, Seats, Vehicle, World};
 use sim::Strike;
 use shared::consts::*;
-use shared::protocol::{DAMAGE_TURRET, KIND_STRV, KIND_TANK, KIND_PLANE, ShotEvent, TURRET_GONE, WEAPON_RICOCHET, WEAPON_TURRET, WEAPON_WRECK};
+use shared::protocol::{DAMAGE_TURRET, KIND_TANK, ShotEvent, TURRET_GONE, WEAPON_RICOCHET, WEAPON_TURRET, WEAPON_WRECK};
 use shared::quant::to_cm;
+use shared::vehicles::vehicle_def;
 
 /// A direct hit lands this much of the shell's blast damage, before armor: a blast scaled by its distance
 /// from the vehicle's centre would punish a hit on the hull's near face.
@@ -35,49 +36,8 @@ pub enum Zone {
     Top = 3,
 }
 
-/// A box on the hull where a hit does extra: an engine deck, a roof hatch.
-#[derive(Clone, Copy)]
-struct WeakSpot {
-    centre: [f32; 3],
-    half: [f32; 3],
-    mult: f32,
-}
-
-#[derive(Clone, Copy)]
-struct Profile {
-    /// How far the front plate leans back from upright, radians.
-    front_slope: f32,
-    /// Incidence beyond which a shot glances off, by zone (degrees).
-    ricochet: [f32; 4],
-    /// Damage multiplier by zone.
-    mult: [f32; 4],
-    weak: &'static [WeakSpot],
-}
-
-const NONE: [WeakSpot; 0] = [];
-
-/// A tank's engine deck, over the back of the hull.
-const TANK_WEAK: [WeakSpot; 1] = [WeakSpot { centre: [0.0, 0.3, 2.0], half: [1.1, 0.4, 0.6], mult: 1.5 }];
-/// The Strv S carries its engine at the back too, under a thin deck.
-const STRV_WEAK: [WeakSpot; 2] = [WeakSpot { centre: [0.0, 0.2, 2.0], half: [1.1, 0.4, 0.7], mult: 1.6 }, WeakSpot { centre: [0.0, 0.6, -0.3], half: [0.7, 0.2, 0.9], mult: 1.3 }];
-
-const STRV: Profile = Profile { front_slope: 0.96, ricochet: [58.0, 72.0, 75.0, 78.0], mult: [1.0, 1.0, 1.4, 1.3], weak: &STRV_WEAK };
-const TANK: Profile = Profile { front_slope: 0.35, ricochet: [66.0, 74.0, 78.0, 80.0], mult: [1.0, 1.0, 1.35, 1.3], weak: &TANK_WEAK };
-/// Cars, the helicopter and the walker: only the most grazing hit glances off.
-const LIGHT: Profile = Profile { front_slope: 0.0, ricochet: [82.0, 82.0, 82.0, 82.0], mult: [1.0; 4], weak: &NONE };
-/// Canvas and wood: nothing glances off.
-const SOFT: Profile = Profile { front_slope: 0.0, ricochet: [91.0; 4], mult: [1.0; 4], weak: &NONE };
 /// A tank's turret is a drum with a rounded face: it turns shots a little more readily than the roof.
 const TURRET_RICOCHET: f32 = 68.0;
-
-fn profile(kind: u8) -> &'static Profile {
-    match kind {
-        KIND_STRV => &STRV,
-        KIND_TANK => &TANK,
-        KIND_PLANE => &SOFT,
-        _ => &LIGHT,
-    }
-}
 
 /// What armor makes of a shot.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -106,7 +66,7 @@ fn zone_of(normal: [f32; 3]) -> Zone {
 
 /// Judges a shot travelling along `dir` (a unit vector, in the hull frame) that met a `kind` at `strike`.
 pub fn judge(kind: u8, strike: &Strike, dir: [f32; 3]) -> Outcome {
-    let profile = profile(kind);
+    let profile = &vehicle_def(kind).armor;
     let len = dot(strike.normal, strike.normal).sqrt();
     // A shot that began inside a solid has no surface to glance off.
     if len < 0.5 {

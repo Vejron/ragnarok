@@ -512,12 +512,12 @@ mod tests {
         let vehicles: Vec<String> = crate::vehicles::VEHICLES
             .iter()
             .map(|d| {
-                let [hx, hy, hz] = d.half_extents;
+                let [hx, hy, hz] = d.half_extents();
                 let heads: Vec<String> = d.seat_heads.iter().map(|[x, y, z]| format!("[{x}, {y}, {z}]")).collect();
                 let heads = heads.join(", ");
                 format!(
                     "    {{\"kind\": {}, \"name\": \"{}\", \"hp\": {}, \"seats\": {}, \"halfExtents\": [{hx}, {hy}, {hz}], \"gun\": {}, \"arms\": {}, \"carWheels\": {}, \"trackHalf\": {}, \"axleZ\": {}, \"crew\": \"{}\", \"crewGuns\": {}, \"seatHeads\": [{}], \"legged\": {}, \"heavy\": {}}}",
-                    d.kind, d.name, d.hp, d.seats, d.gun(), d.arms(), d.car_wheels, d.track_half, d.axle_z, d.crew.name(), d.crew_guns, heads, d.body.legs > 0.0, d.body.heavy
+                    d.kind, d.name, d.hp, d.seats, d.gun(), d.arms(), d.car_wheels, d.track_half(), d.axle_z(), d.crew.name(), d.crew_guns, heads, d.body.legs > 0.0, d.body.heavy
                 )
             })
             .collect();

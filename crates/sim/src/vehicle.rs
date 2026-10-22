@@ -18,7 +18,7 @@ use super::{Obj, Physics};
 use rapier3d::control::{DynamicRayCastVehicleController, WheelTuning};
 use rapier3d::prelude::*;
 use shared::consts::*;
-use shared::protocol::{DAMAGE_WHEELS, THRUST_AIR, THRUST_BOOST, THRUST_GLIDE, THRUST_LIFT, KIND_DRONE, KIND_HELI, KIND_LOITER, KIND_HEN, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, WHEEL_GONE, is_drone, vehicle_hp};
+use shared::protocol::{DAMAGE_WHEELS, THRUST_AIR, THRUST_BOOST, THRUST_GLIDE, THRUST_LIFT, WHEEL_GONE, is_drone, vehicle_hp};
 
 
 mod flight;
@@ -291,9 +291,14 @@ pub(crate) fn extra_solids(kind: u8) -> Vec<ColliderBuilder> {
     if heavy(kind) { solids.map(|collider| collider.collision_groups(super::plows_trees())).collect() } else { solids.collect() }
 }
 
-impl Solid {
+/// A solid's collision shape.
+pub(crate) trait Collide {
     /// Its shape, grown by `margin` on every side.
-    pub(crate) fn shape(&self, margin: f32) -> SharedShape {
+    fn shape(&self, margin: f32) -> SharedShape;
+}
+
+impl Collide for Solid {
+    fn shape(&self, margin: f32) -> SharedShape {
         match self.shape {
             Shape::Cylinder { half_height, radius } => SharedShape::cylinder(half_height + margin, radius + margin),
             Shape::Cuboid([x, y, z]) => SharedShape::cuboid(x + margin, y + margin, z + margin),

@@ -1,6 +1,6 @@
 use super::*;
 use shared::consts::TICK_DT;
-use shared::protocol::{KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_TANK, KIND_WALKER};
+use shared::protocol::{KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER};
 use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 
 fn flat() -> WorldFile {

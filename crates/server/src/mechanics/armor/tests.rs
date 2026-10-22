@@ -2,7 +2,7 @@ use super::*;
 use crate::entities::Health;
 use super::super::projectiles::Flying;
 use crate::game::{Command, Game, Seat};
-use shared::protocol::{KIND_JEEP, KIND_STRV, PROJECTILE_SHELL, WEAPON_SHELL};
+use shared::protocol::{KIND_JEEP, KIND_PLANE, KIND_STRV, PROJECTILE_SHELL, WEAPON_SHELL};
 use shared::world::{Road, WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
 

@@ -1,11 +1,8 @@
 //! What a vehicle fires, as data: each kind's `VehicleDef::mounts` lists its weapon mounts, and the
 //! server's `Gunnery` mechanic works every one of them with the same code. A mount says who works it
 //! (`seat`), how their look turns it (`Aim`), where its rounds leave (`Muzzle`), what leaves (`Fire`),
-//! how often, what it runs out of and what stops it. Arming a new vehicle is a row here; a new way of
-//! aiming or firing is a variant and its arm in `Gunnery`.
-
-use crate::consts::*;
-use crate::protocol::{PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_MORTAR, PROJECTILE_SHELL, WEAPON_MG};
+//! how often, what it runs out of and what stops it. Arming a vehicle is a row in its definition
+//! (`crate::vehicles`); a new way of aiming or firing is a variant here and its arm in `Gunnery`.
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MountDef {
@@ -130,177 +127,15 @@ impl Show {
     }
 }
 
-const SHELL: Fire = Fire::Shell { kind: PROJECTILE_SHELL, speed: SHELL_SPEED, length: TANK_BARREL_LENGTH, ttl: SHELL_TTL_TICKS };
-
-pub const TANK_MOUNTS: &[MountDef] = &[MountDef {
-    seat: 1,
-    aim: Aim::Turret { slew: TANK_TURRET_SLEW, pitch: (TANK_BARREL_MIN, TANK_BARREL_MAX), pitch_slew: TANK_BARREL_SLEW },
-    muzzle: Muzzle::One(TANK_TURRET_PIVOT),
-    fire: SHELL,
-    trigger: BUTTON_FIRE,
-    cooldown: SHELL_COOLDOWN_TICKS,
-    spread: 0.0,
-    recoil: SHELL_RECOIL,
-    heat: 0.0,
-    ammo: None,
-    needs: &[Need::Turret],
-    show: Show::Turret,
-}];
-
-/// The gunner's nose autocannon, whose rounds are shells in miniature, and the pilot's rocket pods.
-pub const HELI_MOUNTS: &[MountDef] = &[
-    MountDef {
-        seat: 1,
-        aim: Aim::Mount { yaw_limit: Some(HELI_GUN_YAW_LIMIT), pitch: (HELI_GUN_PITCH_MIN, HELI_GUN_PITCH_MAX), slew: HELI_GUN_SLEW },
-        muzzle: Muzzle::One(HELI_GUN_PIVOT),
-        fire: Fire::Shell { kind: PROJECTILE_CANNON, speed: SHELL_SPEED, length: HELI_GUN_LENGTH, ttl: SHELL_TTL_TICKS },
-        trigger: BUTTON_FIRE,
-        cooldown: HELI_GUN_COOLDOWN_TICKS,
-        spread: HELI_GUN_SPREAD,
-        recoil: 0.0,
-        heat: 0.0,
-        ammo: None,
-        needs: &[],
-        show: Show::Turret,
-    },
-    MountDef {
-        seat: 0,
-        aim: Aim::Fixed,
-        muzzle: Muzzle::Turns(&HELI_POD_PIVOTS),
-        fire: Fire::Rocket { speed: HELI_ROCKET_LAUNCH_SPEED, ttl: ROCKET_TTL_TICKS },
-        trigger: BUTTON_FIRE,
-        cooldown: HELI_ROCKET_COOLDOWN_TICKS,
-        spread: 0.0,
-        recoil: 0.0,
-        heat: 0.0,
-        ammo: None,
-        needs: &[],
-        show: Show::Hidden,
-    },
-];
-
-/// The gunner's ring mount behind the cockpit, the pilot's two forward guns, which take turns, and
-/// the bomb rack, which drops on crouch.
-pub const PLANE_MOUNTS: &[MountDef] = &[
-    MountDef {
-        seat: 1,
-        aim: Aim::Mount { yaw_limit: None, pitch: (PLANE_REAR_PITCH_MIN, PLANE_REAR_PITCH_MAX), slew: PLANE_REAR_SLEW },
-        muzzle: Muzzle::One(PLANE_REAR_PIVOT),
-        fire: PLANE_GUN.with_length(PLANE_REAR_LENGTH),
-        trigger: BUTTON_FIRE,
-        cooldown: PLANE_REAR_COOLDOWN_TICKS,
-        spread: PLANE_GUN_SPREAD,
-        recoil: 0.0,
-        heat: PLANE_REAR_HEAT,
-        ammo: None,
-        needs: &[Need::Clear(PLANE_REAR_DEAD_ZONE)],
-        show: Show::Turret,
-    },
-    MountDef {
-        seat: 0,
-        aim: Aim::Fixed,
-        muzzle: Muzzle::Turns(&PLANE_GUN_PIVOTS),
-        fire: PLANE_GUN,
-        trigger: BUTTON_FIRE,
-        cooldown: PLANE_GUN_COOLDOWN_TICKS,
-        spread: PLANE_GUN_SPREAD,
-        recoil: 0.0,
-        heat: PLANE_GUN_HEAT,
-        ammo: None,
-        needs: &[],
-        show: Show::Guns,
-    },
-    MountDef {
-        seat: 0,
-        aim: Aim::Fixed,
-        muzzle: Muzzle::One(PLANE_BOMB_PIVOT),
-        fire: Fire::Drop { kind: PROJECTILE_BOMB, toss: [0.0; 3], ttl: SHELL_TTL_TICKS * 2 },
-        trigger: BUTTON_CROUCH,
-        cooldown: PLANE_BOMB_COOLDOWN_TICKS,
-        spread: 0.0,
-        recoil: 0.0,
-        heat: 0.0,
-        ammo: Some(Ammo { full: PLANE_BOMBS, refill: Refill::Parked(PLANE_REARM_TICKS) }),
-        // The rack only lets go in the air, where the bomb has room to fall clear.
-        needs: &[Need::Height(PLANE_BOMB_MIN_HEIGHT)],
-        show: Show::Rack,
-    },
-];
-
-const PLANE_GUN: Fire = Fire::Hitscan { length: 0.0, damage: PLANE_GUN_DAMAGE, vehicle: PLANE_GUN_VEHICLE_DAMAGE, plane: PLANE_GUN_PLANE_DAMAGE, weapon: WEAPON_MG, range: PLANE_GUN_RANGE };
-
 impl Fire {
-    const fn with_length(self, length: f32) -> Fire {
+    /// The same machine gun round from a barrel `length` long.
+    pub(crate) const fn with_length(self, length: f32) -> Fire {
         match self {
             Fire::Hitscan { damage, vehicle, plane, weapon, range, .. } => Fire::Hitscan { length, damage, vehicle, plane, weapon, range },
             other => other,
         }
     }
 }
-
-/// The driver's chin guns: the upper body turns within `WALKER_TORSO_LIMIT` of the legs.
-pub const WALKER_MOUNTS: &[MountDef] = &[MountDef {
-    seat: 0,
-    aim: Aim::Mount { yaw_limit: Some(WALKER_TORSO_LIMIT), pitch: (WALKER_GUN_PITCH_MIN, WALKER_GUN_PITCH_MAX), slew: WALKER_GUN_SLEW },
-    muzzle: Muzzle::Twin { pivot: WALKER_GUN_PIVOT, x: WALKER_GUN_BARREL_X, drop: WALKER_GUN_BARREL_DROP },
-    fire: Fire::Shell { kind: PROJECTILE_CANNON, speed: SHELL_SPEED, length: WALKER_GUN_LENGTH, ttl: SHELL_TTL_TICKS },
-    trigger: BUTTON_FIRE,
-    cooldown: WALKER_GUN_COOLDOWN_TICKS,
-    spread: WALKER_GUN_SPREAD,
-    recoil: 0.0,
-    heat: 0.0,
-    ammo: None,
-    needs: &[Need::Upright],
-    show: Show::Turret,
-}];
-
-/// The driver's main gun, fixed in the hull.
-pub const STRV_MOUNTS: &[MountDef] = &[MountDef {
-    seat: 0,
-    aim: Aim::Bore { pitch: (STRV_BARREL_MIN, STRV_BARREL_MAX), slew: STRV_BARREL_SLEW },
-    muzzle: Muzzle::One(STRV_GUN_PIVOT),
-    fire: Fire::Shell { kind: PROJECTILE_SHELL, speed: SHELL_SPEED, length: STRV_BARREL_LENGTH, ttl: SHELL_TTL_TICKS },
-    trigger: BUTTON_FIRE,
-    cooldown: SHELL_COOLDOWN_TICKS,
-    spread: 0.0,
-    recoil: SHELL_RECOIL,
-    heat: 0.0,
-    ammo: None,
-    needs: &[],
-    show: Show::Turret,
-}];
-
-/// The tube, which a towed mortar cannot fire: it is being pulled.
-pub const MORTAR_MOUNTS: &[MountDef] = &[MountDef {
-    seat: 0,
-    aim: Aim::Lob { slew: MORTAR_TRAVERSE_SLEW },
-    muzzle: Muzzle::One(MORTAR_GUN_PIVOT),
-    fire: Fire::Shell { kind: PROJECTILE_MORTAR, speed: MORTAR_SHELL_SPEED, length: MORTAR_BARREL_LENGTH, ttl: MORTAR_SHELL_TTL_TICKS },
-    trigger: BUTTON_FIRE,
-    cooldown: MORTAR_COOLDOWN_TICKS,
-    spread: 0.0,
-    recoil: MORTAR_RECOIL,
-    heat: 0.0,
-    ammo: None,
-    needs: &[Need::Untowed],
-    show: Show::Turret,
-}];
-
-/// The clutch: an egg from under the tail, with the hull's velocity and a little backwards.
-pub const HEN_MOUNTS: &[MountDef] = &[MountDef {
-    seat: 0,
-    aim: Aim::Fixed,
-    muzzle: Muzzle::One(HEN_VENT),
-    fire: Fire::Drop { kind: PROJECTILE_EGG, toss: [0.0, 0.0, HEN_EGG_TOSS], ttl: HEN_EGG_FUSE_TICKS },
-    trigger: BUTTON_FIRE,
-    cooldown: HEN_EGG_COOLDOWN_TICKS,
-    spread: 0.0,
-    recoil: 0.0,
-    heat: 0.0,
-    ammo: Some(Ammo { full: HEN_EGGS, refill: Refill::Regrow(HEN_EGG_REGROW_TICKS) }),
-    needs: &[Need::Upright],
-    show: Show::Rack,
-}];
 
 #[cfg(test)]
 mod tests {

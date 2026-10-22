@@ -1,16 +1,35 @@
-//! What each vehicle kind is, in one table: the gameplay facts both the server and the client need
-//! (health, seats, size, what it carries). The physics tuning is in `crates/sim`'s `Spec`s, which the
-//! server and the client's prediction both run; a kind's wheel layout and extents are the constants
-//! in `consts.rs`.
+//! What each vehicle kind is: one definition per kind, in `vehicles/<kind>.rs`, holding everything
+//! the game knows about it. That is its facts (health, seats), its crew, its weapons as `mounts` (see
+//! `crate::mounts`), how it stands and meets the world (`Body`), what the physics makes of it (`Spec`,
+//! which `crates/sim` runs on the server and in the client's prediction) and its armour.
 //!
-//! Adding a kind: a `KIND_*` id in `protocol.rs`, its constants in `consts.rs`, a `VehicleDef` here
-//! (with its weapons as `mounts`, see `crate::mounts`), then its physics `Spec` in `crates/sim` and its
-//! model. The client's table is built from `client/src/sim/tables.generated.json`, which
-//! `UPDATE_PARITY=1 cargo test -p shared parity` regenerates from this one.
+//! Adding a kind: a `KIND_*` id in `protocol.rs`, its file here and a place in `VEHICLES`, the
+//! constants the client needs too in `consts.rs`, and its model. A new way of moving is a `Lift` and
+//! its system in `crates/sim`. The client's table is built from `client/src/sim/tables.generated.json`,
+//! which `UPDATE_PARITY=1 cargo test -p shared parity` regenerates from this one.
 
 use crate::consts::*;
-use crate::mounts::{HELI_MOUNTS, HEN_MOUNTS, MORTAR_MOUNTS, MountDef, PLANE_MOUNTS, STRV_MOUNTS, Show, TANK_MOUNTS, WALKER_MOUNTS};
-use crate::protocol::{KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER};
+use crate::mounts::{Aim, Ammo, Fire, MountDef, Muzzle, Need, Refill, Show};
+use crate::protocol::{
+    KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON,
+    PROJECTILE_EGG, PROJECTILE_MORTAR, PROJECTILE_SHELL, WEAPON_MG,
+};
+
+mod drone;
+mod heli;
+mod hen;
+mod jeep;
+mod loiter;
+mod mortar;
+mod plane;
+mod roadster;
+mod spec;
+mod sports;
+mod strv;
+mod tank;
+mod walker;
+
+pub use spec::{Buttons, Lift, Role, Shape, Solid, Spec};
 
 #[derive(Clone, Copy, Debug)]
 pub struct VehicleDef {
@@ -21,14 +40,10 @@ pub struct VehicleDef {
     /// Seat 0 is the driver (a helicopter's or a plane's pilot, and a walker's, who also aims its guns);
     /// a tank's, helicopter's and plane's seat 1 is the gunner.
     pub seats: usize,
-    /// Half extents of the chassis box, metres.
-    pub half_extents: [f32; 3],
     /// What it fires, worked in this order every tick (`crate::mounts`).
     pub mounts: &'static [MountDef],
     /// A car's four wheels, which can be bent and shot off. Then `track_half` and `axle_z` place them.
     pub car_wheels: bool,
-    pub track_half: f32,
-    pub axle_z: f32,
     /// Whether its crew can be shot, and through what.
     pub crew: Exposure,
     /// Each seat's head point in the hull frame, for kinds whose crew show (`crew` is not `Sealed`).
@@ -38,9 +53,28 @@ pub struct VehicleDef {
     pub crew_guns: bool,
     /// How it stands and meets the world.
     pub body: Body,
+    /// What the physics makes of it.
+    pub spec: Spec,
+    /// What a shot does to it, by where it lands and at what angle.
+    pub armor: Armor,
 }
 
 impl VehicleDef {
+    /// Half extents of the chassis box, metres.
+    pub fn half_extents(&self) -> [f32; 3] {
+        self.spec.half_extents
+    }
+
+    /// How far either side of the centre line its wheels are, metres.
+    pub fn track_half(&self) -> f32 {
+        self.spec.track_half
+    }
+
+    /// How far fore and aft of the centre a car's axles are, metres.
+    pub fn axle_z(&self) -> f32 {
+        self.spec.axles.last().copied().unwrap_or(0.0)
+    }
+
     /// Whether the snapshot carries a turret for it (the `turret` component).
     pub fn gun(&self) -> bool {
         self.mounts.iter().any(|mount| mount.show == Show::Turret)
@@ -107,203 +141,58 @@ const WINGS: Body = Body { drop_y: 1.5, crash: 2.0, flies: true, ..CAR };
 const LEGS: Body = Body { drop_y: WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1], legs: WALKER_LEG_LENGTH, ..CAR };
 const TOWED: Body = Body { towed: true, ..CAR };
 
-const JEEP: VehicleDef = VehicleDef {
-    kind: KIND_JEEP,
-    name: "Jeep",
-    hp: 100,
-    seats: CAR_SEATS,
-    half_extents: JEEP_HALF_EXTENTS,
-    mounts: &[],
-    car_wheels: true,
-    track_half: JEEP_TRACK_HALF,
-    axle_z: JEEP_AXLE_Z,
-    crew: Exposure::Open,
-    seat_heads: &JEEP_SEAT_HEADS,
-    crew_guns: true,
-    body: CAR,
-};
+/// A vehicle's armour. A hit is judged in the hull's frame: the side it lands on is the zone, in the
+/// order front, side, back and top (the server's `armor.rs`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Armor {
+    /// How far the front plate leans back from upright, radians.
+    pub front_slope: f32,
+    /// Incidence beyond which a shot glances off, by zone (degrees).
+    pub ricochet: [f32; 4],
+    /// Damage multiplier by zone.
+    pub mult: [f32; 4],
+    pub weak: &'static [WeakSpot],
+}
 
-const TANK: VehicleDef = VehicleDef {
-    kind: KIND_TANK,
-    name: "Tank",
-    hp: 250,
-    seats: TANK_SEATS,
-    half_extents: TANK_HALF_EXTENTS,
-    mounts: TANK_MOUNTS,
-    car_wheels: false,
-    track_half: 0.0,
-    axle_z: 0.0,
-    crew: Exposure::Sealed,
-    seat_heads: &[],
-    crew_guns: false,
-    body: TRACKS,
-};
+/// A box on the hull where a hit does extra: an engine deck, a roof hatch.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WeakSpot {
+    pub centre: [f32; 3],
+    pub half: [f32; 3],
+    pub mult: f32,
+}
 
-const HELI: VehicleDef = VehicleDef {
-    kind: KIND_HELI,
-    name: "Helicopter",
-    hp: 100,
-    seats: HELI_SEATS,
-    half_extents: HELI_HALF_EXTENTS,
-    mounts: HELI_MOUNTS,
-    car_wheels: false,
-    track_half: 0.0,
-    axle_z: 0.0,
-    crew: Exposure::Glazed,
-    seat_heads: &HELI_SEAT_HEADS,
-    crew_guns: false,
-    body: ROTOR,
-};
-
-const SPORTS: VehicleDef = VehicleDef {
-    kind: KIND_SPORTS,
-    name: "Sports car",
-    hp: 100,
-    seats: SPORTS_SEATS,
-    half_extents: SPORTS_HALF_EXTENTS,
-    mounts: &[],
-    car_wheels: true,
-    track_half: SPORTS_TRACK_HALF,
-    axle_z: SPORTS_AXLE_Z,
-    crew: Exposure::Open,
-    seat_heads: &SPORTS_SEAT_HEADS,
-    crew_guns: true,
-    body: CAR,
-};
-
-const PLANE: VehicleDef = VehicleDef {
-    kind: KIND_PLANE,
-    name: "Triplane",
-    hp: 70,
-    seats: PLANE_SEATS,
-    half_extents: PLANE_HALF_EXTENTS,
-    mounts: PLANE_MOUNTS,
-    car_wheels: false,
-    track_half: 0.0,
-    axle_z: 0.0,
-    crew: Exposure::Open,
-    seat_heads: &PLANE_SEAT_HEADS,
-    crew_guns: false,
-    body: WINGS,
-};
-
-const WALKER: VehicleDef = VehicleDef {
-    kind: KIND_WALKER,
-    name: "Walker",
-    hp: 200,
-    seats: WALKER_SEATS,
-    half_extents: WALKER_HALF_EXTENTS,
-    mounts: WALKER_MOUNTS,
-    car_wheels: false,
-    track_half: 0.0,
-    axle_z: 0.0,
-    crew: Exposure::Sealed,
-    seat_heads: &[],
-    crew_guns: false,
-    body: LEGS,
-};
-
-const STRV: VehicleDef = VehicleDef {
-    kind: KIND_STRV,
-    name: "Strv S",
-    hp: 220,
-    seats: STRV_SEATS,
-    half_extents: STRV_HALF_EXTENTS,
-    mounts: STRV_MOUNTS,
-    car_wheels: false,
-    track_half: 0.0,
-    axle_z: 0.0,
-    crew: Exposure::Sealed,
-    seat_heads: &[],
-    crew_guns: false,
-    body: TRACKS,
-};
-
-const MORTAR: VehicleDef = VehicleDef {
-    kind: KIND_MORTAR,
-    name: "Field mortar",
-    hp: 150,
-    seats: MORTAR_SEATS,
-    half_extents: MORTAR_HALF_EXTENTS,
-    mounts: MORTAR_MOUNTS,
-    car_wheels: false,
-    track_half: 0.0,
-    axle_z: 0.0,
-    crew: Exposure::Open,
-    seat_heads: &[],
-    crew_guns: false,
-    body: TOWED,
-};
-
-const ROADSTER: VehicleDef = VehicleDef {
-    kind: KIND_ROADSTER,
-    name: "Roadster",
-    hp: 100,
-    seats: ROADSTER_SEATS,
-    half_extents: ROADSTER_HALF_EXTENTS,
-    mounts: &[],
-    car_wheels: true,
-    track_half: ROADSTER_TRACK_HALF,
-    axle_z: ROADSTER_AXLE_Z,
-    crew: Exposure::Open,
-    seat_heads: &ROADSTER_SEAT_HEADS,
-    crew_guns: true,
-    body: CAR,
-};
-
-/// One hit brings it down.
-const DRONE: VehicleDef = VehicleDef {
-    kind: KIND_DRONE,
-    name: "FPV drone",
-    hp: 1,
-    seats: DRONE_SEATS,
-    half_extents: DRONE_HALF_EXTENTS,
-    mounts: &[],
-    car_wheels: false,
-    track_half: 0.0,
-    axle_z: 0.0,
-    crew: Exposure::Sealed,
-    seat_heads: &[],
-    crew_guns: false,
-    body: ROTOR,
-};
-
-/// The walker's legs and hull, with wings and eggs in place of guns.
-const HEN: VehicleDef = VehicleDef {
-    kind: KIND_HEN,
-    name: "Hen",
-    hp: 180,
-    seats: HEN_SEATS,
-    half_extents: HEN_HALF_EXTENTS,
-    mounts: HEN_MOUNTS,
-    car_wheels: false,
-    track_half: 0.0,
-    axle_z: 0.0,
-    crew: Exposure::Sealed,
-    seat_heads: &[],
-    crew_guns: false,
-    body: LEGS,
-};
-
-/// Takes a few rifle rounds to bring down.
-const LOITER: VehicleDef = VehicleDef {
-    kind: KIND_LOITER,
-    name: "Loitering drone",
-    hp: 40,
-    seats: LOITER_SEATS,
-    half_extents: LOITER_HALF_EXTENTS,
-    mounts: &[],
-    car_wheels: false,
-    track_half: 0.0,
-    axle_z: 0.0,
-    crew: Exposure::Sealed,
-    seat_heads: &[],
-    crew_guns: false,
-    body: ROTOR,
-};
+/// Cars, the helicopter and the walker: only the most grazing hit glances off.
+const LIGHT: Armor = Armor { front_slope: 0.0, ricochet: [82.0, 82.0, 82.0, 82.0], mult: [1.0; 4], weak: &[] };
+/// Canvas and wood: nothing glances off.
+const SOFT: Armor = Armor { front_slope: 0.0, ricochet: [91.0; 4], mult: [1.0; 4], weak: &[] };
 
 /// Every vehicle kind, in id order.
-pub const VEHICLES: [VehicleDef; 12] = [JEEP, TANK, HELI, SPORTS, PLANE, WALKER, STRV, MORTAR, ROADSTER, DRONE, HEN, LOITER];
+pub static VEHICLES: [VehicleDef; 12] = [
+    jeep::JEEP,
+    tank::TANK,
+    heli::HELI,
+    sports::SPORTS,
+    plane::PLANE,
+    walker::WALKER,
+    strv::STRV,
+    mortar::MORTAR,
+    roadster::ROADSTER,
+    drone::DRONE,
+    hen::HEN,
+    loiter::LOITER,
+];
+
+/// Where each kind id's definition is in `VEHICLES`: 0, the jeep's, for ids that are not a vehicle.
+static BY_KIND: [u8; 256] = {
+    let mut table = [0; 256];
+    let mut index = 0;
+    while index < VEHICLES.len() {
+        table[VEHICLES[index].kind as usize] = index as u8;
+        index += 1;
+    }
+    table
+};
 
 /// The seat whose occupant aims and fires `kind`'s gun: a tank's, helicopter's and plane's seat 1, but
 /// the driver's seat 0 where the vehicle has only one (a walker, a Strv S).
@@ -334,7 +223,7 @@ pub fn crew_gun(kind: u8, index: usize) -> bool {
 
 /// The definition of a vehicle `kind`. Unknown kinds are jeeps.
 pub fn vehicle_def(kind: u8) -> &'static VehicleDef {
-    VEHICLES.iter().find(|def| def.kind == kind).unwrap_or(&VEHICLES[0])
+    &VEHICLES[BY_KIND[kind as usize] as usize]
 }
 
 #[cfg(test)]
@@ -344,6 +233,7 @@ mod tests {
     #[test]
     fn every_kind_has_a_distinct_definition() {
         for (index, def) in VEHICLES.iter().enumerate() {
+            assert!(index == 0 || def.kind > VEHICLES[index - 1].kind, "{} is in id order", def.name);
             assert!(def.seats >= 1 && def.seats <= CAR_SEATS, "{} fits the seat array", def.name);
             assert!(def.hp > 0, "{} starts alive", def.name);
             assert_eq!(vehicle_def(def.kind).kind, def.kind);

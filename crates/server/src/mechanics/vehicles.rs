@@ -3,7 +3,7 @@ use super::Mechanic;
 use crate::game::{Mounts, Player, Seat, Seats, Vehicle, World, Wreck};
 use sim::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_extents};
 use shared::consts::*;
-use shared::vehicles::{VehicleDef, vehicle_def};
+use shared::vehicles::vehicle_def;
 use shared::protocol::{
     BEARING_NONE, DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, ShotEvent, WEAPON_CRASH, is_drone,
     HIT_DEALT, WEAPON_ROADKILL, WEAPON_SCRAPE, vehicle_hp,
@@ -431,7 +431,8 @@ fn has_car_wheels(kind: u8) -> bool {
 
 /// Where a car's wheels touch, in its own frame (`x`, `z`): front left, front right, rear left, rear right.
 fn wheel_spots(kind: u8) -> [[f32; 2]; 4] {
-    let VehicleDef { track_half: track, axle_z: axle, .. } = *vehicle_def(kind);
+    let def = vehicle_def(kind);
+    let (track, axle) = (def.track_half(), def.axle_z());
     [[-track, -axle], [track, -axle], [-track, axle], [track, axle]]
 }
 
