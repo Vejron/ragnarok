@@ -19,7 +19,8 @@ import { blend, toGame, type Entity } from './units'
  */
 const converted = new WeakMap<Components, Entity>()
 
-function inGameUnits(wire: Components): Entity {
+/** Entity `wire` in the game's units, converted once. */
+export function inGameUnits(wire: Components): Entity {
   let entity = converted.get(wire)
   if (!entity) converted.set(wire, (entity = toGame(wire)))
   return entity

@@ -1,17 +1,17 @@
 import type { Node } from '@ragnarok/engine'
 import * as THREE from 'three'
 import {
-  ARMS_CUT, ARMS_JAMMED, ARMS_REAR_JAMMED, DAMAGE_TURRET, DAMAGE_WHEELS, encodeInput, encodePing, isDrone, KIND_DRONE, KIND_HELI, KIND_LOITER, KIND_HEN, KIND_PLANE, KIND_MORTAR, KIND_ROADSTER, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_STRV, KIND_TANK, KIND_WALKER, sceneStates, toAxis, toMrad, TURRET_GONE, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RICOCHET, WEAPON_TURRET,
+  ARMS_CUT, ARMS_JAMMED, FLAG_GROUNDED, ARMS_REAR_JAMMED, DAMAGE_TURRET, DAMAGE_WHEELS, encodeInput, encodePing, isDrone, KIND_DRONE, KIND_HELI, KIND_LOITER, KIND_HEN, KIND_PLANE, KIND_MORTAR, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, sceneStates, toAxis, toMrad, TURRET_GONE, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RICOCHET, WEAPON_TURRET,
   PROJECTILE_BULLET, WEAPON_BULLET, WEAPON_FLARE, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LOITER, WEAPON_BOMB, WEAPON_EGG, WEAPON_CRASH, WEAPON_MG, WEAPON_PELLET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_WRECK,
-  type Arms, type BulletSpawn, type DriveState, type EntityState, type InputFrame, type Rider, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
+  type Arms, type BulletSpawn, type DriveState, type InputFrame, type Rider, type ServerMessage, type ShotEvent, type Turret, type VehicleState,
 } from './net/codec'
-import { blendEntity, blendVehicle, Interpolator } from './net/interp'
+import { blendVehicle, Interpolator } from './net/interp'
 import { Backoff } from './net/backoff'
 import { RttEstimator, ServerClock } from './net/clock'
 import { Transport } from './net/transport'
 import {
   BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, ENTER_RADIUS, EXPLOSION_RADIUS, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION, RESPAWN_TICKS,
-  ROCKET_BLAST_RADIUS, SHELL_COOLDOWN_TICKS, STANDING_Y,
+  ROCKET_BLAST_RADIUS, SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_PRONE,
   CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS,
   HELI_GUN_COOLDOWN_TICKS, HELI_GUN_LENGTH, HELI_GUN_PITCH_MAX, HELI_GUN_PITCH_MIN, HELI_GUN_YAW_LIMIT, CANNON_RADIUS,
   SHELL_SPEED, GRAVITY, MORTAR_BARREL_LENGTH, MORTAR_COOLDOWN_TICKS, MORTAR_RADIUS, MORTAR_SHELL_SPEED, MORTAR_SHELL_TTL_TICKS, STRV_BARREL_LENGTH, STRV_BARREL_MAX, STRV_BARREL_MIN, TANK_BARREL_LENGTH, TANK_BARREL_MAX, TANK_BARREL_MIN, WALKER_GUN_COOLDOWN_TICKS, WALKER_GUN_LENGTH, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_LEG_LENGTH, WALKER_TORSO_LIMIT, TICK_MS, TICK_RATE, vehicleMaxHp, WRECK_BLAST_RADIUS,
@@ -64,18 +64,20 @@ import { TankModel } from './render/tank'
 import { WalkerModel } from './render/walker'
 import { HenModel } from './render/hen'
 import { cameraDistance, createVehicleModel, loadVehicleModels } from './render/vehicles'
-import { Character, Crowd } from './render/character'
-import { loadRoosterModel, RoosterModel } from './render/rooster'
-import { playCrow } from './audio'
+import { Crowd } from './render/character'
+import { loadRoosterModel } from './render/rooster'
 import { VehicleSounds } from './vehicleaudio'
 import { HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, HitFeedback } from './feedback'
 import { buildGround } from './render/world'
 import { v1Scene } from './net/adapter'
 import { Replica } from './net/replica'
-import { EntityStore } from './entities/store'
+import { EntityStore, inGameUnits } from './entities/store'
 import { Presenters, type Frame } from './entities/presenter'
+import { Avatars } from './entities/avatars'
 import { Projectiles } from './entities/presenters/projectiles'
 import { Pickups as LyingItems, type Lying } from './entities/presenters/pickups'
+import { Stickmen } from './entities/presenters/people'
+import { Roosters } from './entities/presenters/roosters'
 import { TileStreamer } from './stream'
 import { loadManifest, NO_WATER, type WorldData } from './world'
 import { WorldView } from './worldview'
@@ -133,8 +135,6 @@ const riders = (cars: ReadonlyMap<number, CarPlacement>, seen: ReadonlySet<numbe
 /** Fixed ticks run per animation frame at most, so a backgrounded tab does not spiral. */
 const MAX_TICKS_PER_FRAME = 8
 const PING_INTERVAL_MS = 1000
-/** A crow can be heard this far off, metres. */
-const ROOSTER_HEARING = 45
 /** A bullet in flight on this client. */
 interface LiveBullet {
   spawn: BulletSpawn
@@ -178,17 +178,20 @@ export class Game {
   private readonly voice = new VoiceChat((peer, kind, json) => this.transport.sendReliable(encodeRtc(peer, kind, json)))
   private readonly clock = new ServerClock()
   private readonly rtt = new RttEstimator()
-  private readonly interp = new Interpolator<EntityState>(blendEntity)
   private readonly vehicleInterp = new Interpolator<VehicleState>(blendVehicle)
   /** Every stickman is drawn by this one set of instanced meshes. */
   private readonly crowd = new Crowd()
-  private readonly avatars = new Map<number, Character>()
-  private readonly roosters = new Map<number, RoosterModel>()
+  /** Every player's stickman, whoever draws it. */
+  private readonly avatars = new Avatars(this.crowd)
   /** Rebuilds snapshots from deltas, and says which one to diff the next against. */
   private readonly replica = new Replica()
   /** Every replicated entity in the game's units, sampled at the render tick for the presenters. */
   private readonly store = new EntityStore()
-  private readonly presenters = new Presenters<Frame>(this.store)
+  /** What is drawn in flight and on the ground, before the lights are updated: a flare holds one. */
+  private readonly flying = new Presenters<Frame>()
+  /** Everyone else on foot, and the creatures, where the contact shadows are gathered. */
+  private readonly people = new Presenters<Frame>()
+  private readonly stickmen: Stickmen
   private tiles: TileStreamer | null = null
   /** The streamed tiles, what is solid in them, and what the server has brought down. */
   private readonly view: WorldView
@@ -344,10 +347,13 @@ export class Game {
         if (status === 'OFFLINE') this.onDisconnect()
       },
     )
-    this.presenters.add(new Projectiles({
+    this.flying.add(new Projectiles({
       models: this.rocketModels, trails: this.trails, glow: this.glow, lights: this.scene.scene.lights, fx: () => this.fxWorld, blips: this.blips,
     }))
-    this.presenters.add(this.lying)
+    this.flying.add(this.lying)
+    const blobFoot = (x: number, y: number, z: number) => this.blobFoot(this.scene.contact, x, y, z)
+    this.stickmen = this.people.add(new Stickmen({ avatars: this.avatars, blobFoot, wade: (id, x, y, z, speed, dt) => this.wade(id, x, y, z, speed, dt) }))
+    this.people.add(new Roosters({ root: this.scene.scene, listener: () => this.predictor?.state.position ?? [0, 0, 0], blobFoot }))
     // Dev-only handle for poking at the game from the console or a test driver.
     if (import.meta.env.DEV) (window as unknown as { __game?: Game }).__game = this
   }
@@ -381,7 +387,7 @@ export class Game {
     await this.tiles.prime(x, z)
     this.predictor = new Predictor(motor.stepper, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false })
     this.predictor.speedScale = (input) => aimSpeedScale(this.hotbar[Math.min(input.slot, HOTBAR_SLOTS - 1)]?.item ?? ITEM_NONE, input.buttons)
-    this.avatar(0)
+    this.avatars.local()
     if (this.disposed) return
     this.lastFrame = performance.now()
     this.frameHandle = requestAnimationFrame((now) => this.frame(now))
@@ -415,10 +421,10 @@ export class Game {
     this.diedAt = null
     this.driverSnapshot = null
     this.driver?.leave()
-    this.interp.clear()
     this.vehicleInterp.clear()
     this.replica.reset()
-    this.presenters.clear()
+    this.flying.clear()
+    this.people.clear()
     this.store.clear()
     this.clearBullets()
     this.hotbar = emptyHotbar()
@@ -427,14 +433,7 @@ export class Game {
     this.blips.clear()
     this.motor?.setVehicles([])
     this.clock.reset()
-    for (const [id, avatar] of this.avatars) {
-      if (id !== 0) {
-        avatar.dispose()
-        this.avatars.delete(id)
-      }
-    }
-    for (const model of this.roosters.values()) model.dispose()
-    this.roosters.clear()
+    this.avatars.forgetOthers()
     if (!this.disposed && !this.halted) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = window.setTimeout(() => void this.connect(), this.backoff.next())
@@ -453,12 +452,11 @@ export class Game {
         }
         if (message.worldHash !== this.worldHash) this.warning = 'Server world differs from this page’s world.msgpack. Reload.'
         this.backoff.reset()
-        this.localId = message.id
+        this.localId = this.avatars.localId = message.id
         this.awaitingCatchUp = true
         this.replica.reset()
         // Recreate the local stickman in this player's colour.
-        this.avatars.get(0)?.dispose()
-        this.avatars.delete(0)
+        this.avatars.forgetLocal()
         // Inputs made before joining were never sent; they must not be replayed on server state.
         this.predictor?.clearPending()
         this.driver?.clearPending()
@@ -475,7 +473,7 @@ export class Game {
         // The components, as v1's states, until each has a presenter of its own (Phase 4).
         this.store.push(message.tick, rebuilt.scene, rebuilt.latest)
         const { wire } = v1Scene(rebuilt.scene)
-        const { entities, vehicles } = sceneStates(wire)
+        const { vehicles } = sceneStates(wire)
         this.clock.observe(message.tick, now)
         this.setHealth(message.hp, now)
         this.progress = message.progress / 255
@@ -483,14 +481,10 @@ export class Game {
         for (const shot of message.shots) this.pendingShots.push({ tick: message.tick, shot })
         if (this.pendingShots.length > 64) this.pendingShots.splice(0, this.pendingShots.length - 64)
         this.noteBullets(message.tick, message.bullets)
-        const remote = entities.filter((e) => e.id !== this.localId)
-        this.interp.push(message.tick, remote)
         this.vehicleInterp.push(message.tick, vehicles)
         if (rebuilt.latest) {
           // Out of range is not a leave: the server just stops listing them. Whatever is no longer
           // in the newest scene is dropped now instead of hanging in the air until it goes stale.
-          const present = new Set(remote.map((e) => e.id))
-          for (const id of this.interp.ids()) if (!present.has(id)) this.interp.remove(id)
           const parked = new Set(vehicles.map((v) => v.id))
           for (const id of this.vehicleInterp.ids()) if (!parked.has(id)) this.vehicleInterp.remove(id)
         }
@@ -503,15 +497,13 @@ export class Game {
             return { ...vehicle, vx, vz }
           }),
         )
-        // Seated players are not listed as entities; whatever track they left behind is stale.
         const mount = vehicles.find((vehicle) => vehicle.seats.includes(this.localId!))
         const wasSeated = this.seat !== null
         this.seat = mount ? { vehicle: mount.id, kind: mount.kind, index: mount.seats.indexOf(this.localId!) } : null
         // A door closing, for getting in or out (not for hopping seats).
         if (wasSeated !== (this.seat !== null) && this.hp > 0) this.sounds.door()
-        // A drone's pilot is still listed, kneeling where they launched it.
-        for (const vehicle of vehicles) if (!isDrone(vehicle.kind)) for (const rider of vehicle.seats) if (rider !== 0) this.interp.remove(rider)
-        const own = entities.find((e) => e.id === this.localId)
+        const listed = rebuilt.scene.get(this.localId)
+        const own = listed && inGameUnits(listed)
         if (mount && this.seat?.index === 0 && mount.kind !== KIND_MORTAR && message.drive) {
           // Replaying the unacknowledged inputs steps the whole physics world once each, so it waits
           // for the next frame: a backlog of snapshots (a busy main thread) is then one replay, not
@@ -526,8 +518,13 @@ export class Game {
         if (this.seat) {
           // The stickman is parked inside the car. Inputs still go out; the server just applies them to the car.
           this.predictor?.acknowledge(message.ack)
-        } else if (own && this.predictor) {
-          this.predictor.reconcile(message.ack, { position: [own.x, own.y, own.z], yaw: own.yaw, vy: own.vy, grounded: own.grounded, knock: [own.knockX, own.knockZ], ride: message.ride, prone: own.prone, chute: own.chute })
+        } else if (own?.place && own.flags && this.predictor) {
+          const { x, y, z } = own.place
+          const { flags, stance } = own.flags
+          this.predictor.reconcile(message.ack, {
+            position: [x, y, z], yaw: own.heading?.yaw ?? 0, vy: own.motion?.vy ?? 0, grounded: (flags & FLAG_GROUNDED) !== 0,
+            knock: [own.motion?.knock_x ?? 0, own.motion?.knock_z ?? 0], ride: message.ride, prone: stance === STANCE_PRONE, chute: stance === STANCE_CHUTE,
+          })
         }
         break
       }
@@ -539,7 +536,7 @@ export class Game {
         break
       case 'leave':
         this.voice.forget(message.id)
-        this.interp.remove(message.id)
+        this.store.remove(message.id)
         this.board.forget(message.id)
         forgetPlayer(message.id)
         break
@@ -562,7 +559,7 @@ export class Game {
         for (const { id, name, color, team, bot } of message.players) {
           setPlayer(id, name, color, team, bot)
           // Snapshots come by datagram and can overtake this, so a stickman may already be drawn.
-          this.avatars.get(id === this.localId ? 0 : id)?.setColor(colorFor(id))
+          this.avatars.of(id)?.setColor(colorFor(id))
         }
         break
       case 'hit': {
@@ -581,7 +578,7 @@ export class Game {
         this.notices.receive(message.kind, message.text, now)
         break
       case 'kill': {
-        const body = this.avatars.get(message.victim === this.localId ? 0 : message.victim)
+        const body = this.avatars.of(message.victim)
         if (body?.visible) this.gore.die(body, message.style, message.yaw, message.power, (x, z) => this.scene.groundAt(x, z))
         this.board.kill(message, now)
         break
@@ -660,7 +657,8 @@ export class Game {
     const local = predictor.state
     const localVx = (local.position[0] - predictor.previous.position[0]) / (TICK_MS / 1000)
     const localVz = (local.position[2] - predictor.previous.position[2]) / (TICK_MS / 1000)
-    const me = this.avatar(0)
+    this.avatars.begin()
+    const me = this.avatars.local()
     // A car's passenger fires their own guns from their seat, as one on foot does.
     const passenger = this.seat !== null && crewGun(this.seat.kind, this.seat.index)
     const hands = !seated || passenger
@@ -837,7 +835,9 @@ export class Game {
     // Streaming follows what the camera is on: the car when seated, else the stickman.
     this.tiles?.update(ride ? ride.x : position[0], ride ? ride.z : position[2])
     this.playShots(renderTick)
-    this.presenters.run(renderTick, { tick: renderTick, dt, now })
+    const sampled = this.store.sampleAll(renderTick)
+    const frame: Frame = { tick: renderTick, dt, now, localId: this.localId }
+    this.flying.run(sampled, frame)
     this.drawBullets(renderTick)
     this.aimGrenade(position, seated)
     this.effects.update(dt)
@@ -862,28 +862,8 @@ export class Game {
       blobs.add(car.x, car.z, hx * 1.2, hz * 1.1, car.yaw, Math.max(0, height))
     }
 
-    const seen = new Set<number>([0])
-    const nearby: Array<{ id: number; x: number; y: number; z: number }> = []
-    const roosters = new Set<number>()
-    for (const id of this.interp.ids()) {
-      const state = this.interp.sample(id, renderTick)
-      if (state?.kind === KIND_ROOSTER) {
-        roosters.add(id)
-        this.rooster(id, state, dt, position)
-        if (!state.dead) this.blobFoot(blobs, state.x, state.y + CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS, state.z)
-        continue
-      }
-      if (!state || state.kind !== KIND_STICKMAN) continue
-      seen.add(id)
-      nearby.push({ id, x: state.x, y: state.y, z: state.z })
-      const avatar = this.avatar(id)
-      avatar.dead = state.dead
-      avatar.held = state.held
-      if (!state.dead) this.blobFoot(blobs, state.x, state.y, state.z)
-      avatar.update([state.x, state.y, state.z], state.yaw, state.velocity[0], state.velocity[1], state.grounded, dt, 0, state.crouching,
-        state.crouching && state.grounded && Math.hypot(state.knockX, state.knockZ) > SLIDE_MIN_SPEED, state.prone, state.chute)
-      if (!state.dead) this.wade(id, state.x, state.y, state.z, Math.hypot(state.velocity[0], state.velocity[1]), dt)
-    }
+    this.people.run(sampled, frame)
+    const nearby = this.stickmen.nearby
     this.bendGrass(position, !seated, nearby, cars)
     // Everyone else sitting where they show: in their seat, turned where they look.
     for (const [id, car] of cars) {
@@ -892,28 +872,14 @@ export class Game {
       car.seats.forEach((rider, index) => {
         if (rider === 0 || rider === this.localId || !this.seatFrame(model, car.kind, index, this.seatAt, this.seatTurn)) return
         const look = car.crew[index]
-        seen.add(rider)
         nearby.push({ id: rider, x: this.seatAt.x, y: this.seatAt.y, z: this.seatAt.z })
-        const avatar = this.avatar(rider)
+        const avatar = this.avatars.draw(rider)
         avatar.dead = false
         avatar.held = look?.held ?? ITEM_NONE
         avatar.seat(this.seatAt, this.seatTurn, look?.yaw ?? car.yaw, look?.pitch ?? 0, dt)
       })
     }
-    for (const [id, avatar] of this.avatars) {
-      if (!seen.has(id)) {
-        this.wading.delete(id)
-        avatar.dispose()
-        this.avatars.delete(id)
-      }
-    }
-
-    for (const [id, model] of this.roosters) {
-      if (!roosters.has(id)) {
-        model.dispose()
-        this.roosters.delete(id)
-      }
-    }
+    this.avatars.sweep((key) => this.wading.delete(key))
 
     this.voice.setTalking(this.localId !== null && this.hp > 0 && this.input.isHeld('KeyV'))
     this.voice.update(this.localId, position, nearby)
@@ -928,7 +894,7 @@ export class Game {
       status: this.transport.status,
       rtt: this.rtt.rtt,
       voice: this.voice.status,
-      players: this.localId === null ? 1 : seen.size + riders(cars, seen, this.localId),
+      players: this.localId === null ? 1 : this.avatars.drawn.size + riders(cars, this.avatars.drawn, this.localId),
       interpDelayMs: (this.clock.interpDelay * TICK_MS),
       tiles: this.tiles?.loaded ?? 0,
       correction: this.driver?.driving ? this.driver.lastCorrection : predictor.lastCorrection,
@@ -972,7 +938,7 @@ export class Game {
       deaths: this.board.deaths(this.localId),
       feed: this.board.recent(now, this.localId),
       notices: this.notices.view(now),
-      board: this.input.isHeld('Tab') ? sides(this.board.rows(this.localId, this.interp.ids()), teamFor) : [],
+      board: this.input.isHeld('Tab') ? sides(this.board.rows(this.localId, this.stickmen.inView), teamFor) : [],
       hitMarker: hitView.marker,
       hurt: hitView.vignette,
       hurtArcs: hitView.arcs,
@@ -989,8 +955,8 @@ export class Game {
   private alliesInView(): { id: number; x: number; z: number }[] {
     if (this.localId === null || teamFor(this.localId) === 0) return []
     const found: { id: number; x: number; z: number }[] = []
-    for (const id of this.interp.ids()) {
-      const avatar = this.avatars.get(id)
+    for (const id of this.stickmen.inView) {
+      const avatar = this.avatars.of(id)
       if (avatar?.visible && allies(this.localId, id)) found.push({ id, x: avatar.position.x, z: avatar.position.z })
     }
     return found
@@ -1004,7 +970,7 @@ export class Game {
 
   /** Where a player's rifle leaves: the end of the barrel it is drawn holding, else its eye. */
   private muzzleOf(shooter: number): THREE.Vector3 | null {
-    const avatar = this.avatars.get(shooter === this.localId ? 0 : shooter)
+    const avatar = this.avatars.of(shooter)
     if (!avatar || !avatar.visible) return null
     return avatar.muzzle() ?? avatar.position.clone().add(new THREE.Vector3(0, EYE_HEIGHT, 0))
   }
@@ -1035,7 +1001,7 @@ export class Game {
       this.sounds.explosion([to.x, to.y, to.z])
     } else if (shot.weapon === WEAPON_FLARE) {
       // The flare itself is a projectile; this is the gun going off.
-      this.avatars.get(shot.shooter === this.localId ? 0 : shot.shooter)?.fire()
+      this.avatars.of(shot.shooter)?.fire()
       const from = this.muzzleOf(shot.shooter) ?? to
       this.effects.muzzle(from)
       this.muzzleLight(from, 0xffa060, 2.5, 8)
@@ -1091,7 +1057,7 @@ export class Game {
       if (!this.watery(to, 0.45)) this.effects.burst(to, 0.8)
     } else if ((gun = hitscanGunFor(shot.weapon))) {
       const from = this.muzzleOf(shot.shooter)
-      this.avatars.get(shot.shooter === this.localId ? 0 : shot.shooter)?.fire()
+      this.avatars.of(shot.shooter)?.fire()
       if (from) {
         this.blips.fired(shot.shooter, from.x, from.z, performance.now())
         const landed = from.distanceTo(to) < gun.range - 1
@@ -1189,7 +1155,7 @@ export class Game {
     // Debris flies back towards the shooter, as it would from a round that came in.
     const back = this.scene.camera.position.clone().sub(at).normalize()
     this.effects.impact(at, kind === 'kill' ? 'kill' : kind === 'vehicle' ? 'vehicle' : 'body', back)
-    this.avatars.get(hit.target)?.flash()
+    this.avatars.of(hit.target)?.flash()
   }
 
   /** Plays the events whose tick the picture has reached. */
@@ -1246,7 +1212,7 @@ export class Game {
   private bulletLeft(bullet: LiveBullet, at: readonly number[]) {
     const { shooter, item } = bullet.spawn
     const gun = itemDef(item)
-    this.avatars.get(shooter === this.localId ? 0 : shooter)?.fire()
+    this.avatars.of(shooter)?.fire()
     const muzzle = this.muzzleOf(shooter)
     if (muzzle) {
       bullet.offset = muzzle.clone().sub(new THREE.Vector3(at[0], at[1], at[2]))
@@ -1332,8 +1298,8 @@ export class Game {
     const pitch = this.input.pitch
     const flat = Math.cos(pitch)
     const direction = new THREE.Vector3(-Math.sin(yaw) * flat, Math.sin(pitch), -Math.cos(yaw) * flat)
-    const me = this.avatars.get(0)
-    me?.fire()
+    const me = this.avatars.local()
+    me.fire()
     const barrel = me?.muzzle()
     this.effects.muzzle(barrel ?? new THREE.Vector3(x, y + EYE_HEIGHT, z).addScaledVector(direction, 0.6))
   }
@@ -1801,30 +1767,6 @@ export class Game {
     return best.driverSeatFree ? 'E: drive the jeep' : 'E: ride along'
   }
 
-  /** Places and animates rooster `id`, and lets it be heard when it crows: louder the nearer it is. */
-  private rooster(id: number, state: { x: number; y: number; z: number; yaw: number; crowing: boolean }, dt: number, listener: readonly number[]) {
-    let model = this.roosters.get(id)
-    if (!model) {
-      model = new RoosterModel()
-      this.roosters.set(id, model)
-      this.scene.scene.add(model.root)
-    }
-    if (model.update([state.x, state.y, state.z], state.yaw, state.crowing, dt)) {
-      const distance = Math.hypot(state.x - listener[0]!, state.z - listener[2]!)
-      playCrow((1 - Math.min(1, distance / ROOSTER_HEARING)) ** 2)
-    }
-  }
-
-  /** The stickman for an entity; id 0 is the local player. */
-  private avatar(id: number) {
-    let avatar = this.avatars.get(id)
-    if (!avatar) {
-      avatar = new Character(this.crowd, id === 0 ? (this.localId ?? 0) : id)
-      this.avatars.set(id, avatar)
-    }
-    return avatar
-  }
-
   dispose() {
     this.disposed = true
     this.perf.dispose()
@@ -1847,7 +1789,7 @@ export class Game {
     this.view.dispose()
     this.rocketModels.dispose()
     this.pickupModels.dispose()
-    for (const model of this.roosters.values()) model.dispose()
+    this.people.clear()
     this.trajectory.dispose()
     this.mortarArc.dispose()
     this.scene.dispose()

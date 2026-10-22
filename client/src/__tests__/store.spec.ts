@@ -109,19 +109,19 @@ class Recorder implements Presenter<Frame> {
 }
 
 describe('Presenters', () => {
-  const frame = (tick: number): Frame => ({ tick, dt: 1 / 60, now: 0 })
+  const frame = (tick: number): Frame => ({ tick, dt: 1 / 60, now: 0, localId: null })
 
   it('draw what each is for, and let go once when it goes or stops being what they are for', () => {
     const store = new EntityStore()
-    const presenters = new Presenters<Frame>(store)
+    const presenters = new Presenters<Frame>()
     const standing = presenters.add(new Recorder((e) => e.flags!.flags === 1))
     const everyone = presenters.add(new Recorder(() => true))
     store.push(10, scene([[7, person(0)], [8, person(1)]]), true)
-    presenters.run(10, frame(10))
+    presenters.run(store.sampleAll(10), frame(10))
     // 8 falls over, and 7 goes out of range.
     store.push(12, scene([[8, { ...person(1), flags: { flags: 0, stance: 0 } }]]), true)
-    presenters.run(12, frame(12))
-    presenters.run(13, frame(13))
+    presenters.run(store.sampleAll(12), frame(12))
+    presenters.run(store.sampleAll(13), frame(13))
     expect(standing.log).toEqual(['update 7', 'update 8', 'remove 8', 'remove 7'])
     expect(everyone.log).toEqual(['update 7', 'update 8', 'update 8', 'remove 7', 'update 8'])
     presenters.clear()

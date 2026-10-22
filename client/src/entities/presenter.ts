@@ -1,12 +1,16 @@
 /**
  * Presenters draw entities: each says which entities it is for, by the components they have, and keeps
- * whatever it needs per entity (a model, a trail, a sound) itself. `Presenters` runs them every frame
- * over the store sampled at the render tick, and tells each once when an entity it drew has gone, or no
- * longer has what it is for, so that per-entity state is cleaned up in one place.
+ * whatever it needs per entity (a model, a trail, a sound) itself. `Presenters` runs a group of them
+ * over the store as sampled at the render tick, and tells each once when an entity it drew has gone,
+ * or no longer has what it is for, so that per-entity state is cleaned up in one place.
+ *
+ * The store is sampled once a frame (`EntityStore.sampleAll`), and the groups run from it at their
+ * places in the frame: what is drawn in flight before the lights are updated, people where the
+ * contact shadows are gathered, and so on.
  */
 
 import type { Entity } from './units'
-import type { EntityStore, Sampled } from './store'
+import type { Sampled } from './store'
 
 /** What every presenter is told each frame. */
 export interface Frame {
@@ -16,6 +20,8 @@ export interface Frame {
   dt: number
   /** `performance.now()` of this frame. */
   now: number
+  /** The local player's id, once the server has given one. */
+  localId: number | null
 }
 
 export interface Presenter<F> {
@@ -34,17 +40,14 @@ export interface Presenter<F> {
 export class Presenters<F> {
   private readonly drawn = new Map<Presenter<F>, Set<number>>()
 
-  constructor(private readonly store: EntityStore) {}
-
   /** Adds `presenter`, run after those added before it. */
   add<P extends Presenter<F>>(presenter: P): P {
     this.drawn.set(presenter, new Set())
     return presenter
   }
 
-  /** Draws everything at render tick `tick`, presenter by presenter in the order they were added. */
-  run(tick: number, frame: F) {
-    const sampled = this.store.sampleAll(tick)
+  /** Draws `sampled`, the store at the render tick, presenter by presenter in the order they were added. */
+  run(sampled: ReadonlyMap<number, Sampled>, frame: F) {
     for (const [presenter, drawn] of this.drawn) {
       presenter.begin?.(frame)
       for (const [id, state] of sampled) {

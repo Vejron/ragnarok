@@ -326,7 +326,7 @@ not change.
       states, field for field.
 - [x] **4.2** The store, with projectiles and items on the ground as its first presenters: the rocket
       interpolator and the adapter's rocket and item lists go.
-- [ ] **4.3** Stickmen and the rooster from the store: the entity interpolator goes.
+- [x] **4.3** Stickmen and the rooster from the store: the entity interpolator goes.
 - [ ] **4.4** Vehicles from the store, as a model presenter and component presenters: the vehicle
       interpolator goes, along with the per-vehicle maps in `game.ts`.
 - [ ] **4.5** The adapter and v1's rows are deleted:
@@ -1585,3 +1585,53 @@ branches.
 **Checks:** shared 68 and client 383, all passing; clippy, `vue-tsc` and oxlint add nothing.
 
 **Next:** 4.3, stickmen and the rooster from the store.
+
+### 2026-10-22: Phase 4.3, stickmen and the rooster from the store
+
+The entity interpolator is gone. Other players on foot and the rooster are presenters:
+
+- **`Stickmen`** (`presenters/people.ts`) reads `flags`, `motion` and `heading`: dead, grounded,
+  crouching, sliding, prone, parachute and the item held. It also gathers the frame's `nearby`
+  (for the grass and the voices) and the ids `inView` (for the scoreboard and the minimap's allies).
+- **`Roosters`** (`presenters/roosters.ts`) draws the model, the crow at a volume set by distance,
+  and the contact shadow.
+
+**`Avatars`** (`entities/avatars.ts`) is a registry of every player's stickman. A player keeps one
+stickman as they get in and out, and two parts of the frame draw it: the stickmen presenter on foot,
+the vehicles' seats when seated. So it is shared rather than owned by a presenter, and swept each
+frame: one nobody drew is let go, with its wading state. The local player's stickman is key 0 as
+before, and `of(id)` replaces the `id === localId ? 0 : id` lookups.
+
+**Presenter groups.** The store is sampled once a frame, and groups of presenters run from that at
+their places in the frame:
+
+- `flying` (projectiles and items) runs before the lights are updated. A flare holds a light, which
+  lives through exactly one update, so drawing it after would show two.
+- `people` runs where the contact shadows are gathered.
+
+`Frame` now carries `localId`.
+
+**The snapshot handler** reconciles the local player from their entity in the rebuilt scene (in game
+units), not from v1's row. It no longer prunes the interpolator or removes seated riders from it.
+Seated players are not in the scene, so their on-foot stickman ends at the tick they sat down, when
+their seat in the vehicle takes it over.
+
+**Changes in behaviour:**
+
+- Someone leaving range on foot goes when the picture reaches it, as everything now does (4.2).
+- Getting into a seat: the same stickman is drawn on foot until that tick and seated from then, with
+  no gap. Before, it was removed on arrival.
+- The scoreboard's "in view" ids are the stickmen in view. Before, they included the rooster.
+
+**Tests:**
+
+- `presenters.spec.ts` decodes a crouched, sliding, lying stickman holding a rifle and a dead one,
+  skips the local player and the rooster, and checks the shadows.
+- `avatars.spec.ts` checks the same stickman across a walk-to-seat handover, the sweep of one nobody
+  drew, and that the local player's is kept.
+
+**Progress:** `game.ts` is 1,797 lines, with 11 id-keyed maps and sets and 31 `KIND_*` branches.
+
+**Checks:** client 385 passing; `vue-tsc` and oxlint add nothing.
+
+**Next:** 4.4, vehicles from the store.
