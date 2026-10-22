@@ -160,13 +160,15 @@ fn ts_type(rust: &str) -> String {
 fn components_ts() -> String {
     let mut out = String::from("// GENERATED from crates/shared/src/replicated.rs by its tests. Do not edit: change the Rust and\n// run `UPDATE_PARITY=1 cargo test -p shared`. What each component means is documented there.\n\n");
     out += &format!("/** Bit 31 of an update's `set` mask: a `cleared` mask follows it. */\nexport const CLEARED = {CLEARED}\n\n");
+    let units: Vec<String> = UNITS.iter().map(|unit| format!("'{unit}'")).collect();
+    out += &format!("/** What a field's integer counts (`UNITS` in the Rust): how the client turns it into its own units, and blends it. */\nexport type Unit = {}\n\n", units.join(" | "));
     for (name, fields) in STRUCTS {
-        let fields: Vec<String> = fields.iter().map(|field| format!("{field}: number")).collect();
+        let fields: Vec<String> = fields.iter().map(|(field, _)| format!("{field}: number")).collect();
         out += &format!("export interface {name} {{\n  {}\n}}\n\n", fields.join("\n  "));
     }
     let schema = schema();
     for (_, _, ty, _, fields) in &schema {
-        let fields: Vec<String> = fields.iter().map(|(field, rust)| format!("{field}: {}", ts_type(&rust.replace(' ', "")))).collect();
+        let fields: Vec<String> = fields.iter().map(|(field, rust, _)| format!("{field}: {}", ts_type(&rust.replace(' ', "")))).collect();
         out += &format!("export interface {ty} {{\n  {}\n}}\n\n", fields.join("\n  "));
     }
     out += "/** An entity as it is replicated: the components it has. */\nexport interface Components {\n";
@@ -174,16 +176,16 @@ fn components_ts() -> String {
         out += &format!("  {name}?: {ty}\n");
     }
     out += "}\n\nexport type ComponentName = keyof Components\n\n";
-    out += "/** A component's fields in wire order; one holding a list of structs names the struct's fields. */\nexport interface FieldSchema {\n  name: string\n  struct?: readonly string[]\n}\n\n";
+    out += "/** A field, in wire order: its unit if it has one, and the struct's fields if it holds a list of structs. */\nexport interface FieldSchema {\n  name: string\n  unit?: Unit\n  struct?: readonly FieldSchema[]\n}\n\n";
     out += "/** Every component in wire-id order: its bit, whether it is sent as a difference, and its fields. */\nexport const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; fields: readonly FieldSchema[] }[] = [\n";
     for (id, name, _, diff, fields) in &schema {
         let fields: Vec<String> = fields
             .iter()
-            .map(|(field, rust)| {
+            .map(|(field, rust, unit)| {
                 let rust = rust.replace(' ', "");
                 match STRUCTS.iter().find(|(known, _)| rust.contains(known)) {
-                    Some((_, members)) => format!("{{ name: '{field}', struct: [{}] }}", members.iter().map(|m| format!("'{m}'")).collect::<Vec<_>>().join(", ")),
-                    None => format!("{{ name: '{field}' }}"),
+                    Some((_, members)) => format!("{{ name: '{field}', struct: [{}] }}", members.iter().map(|(member, unit)| field_ts(member, unit)).collect::<Vec<_>>().join(", ")),
+                    None => field_ts(field, unit),
                 }
             })
             .collect();
@@ -191,6 +193,11 @@ fn components_ts() -> String {
     }
     out += "]\n";
     out
+}
+
+/// One `FieldSchema`, as TypeScript.
+fn field_ts(name: &str, unit: &str) -> String {
+    if unit.is_empty() { format!("{{ name: '{name}' }}") } else { format!("{{ name: '{name}', unit: '{unit}' }}") }
 }
 
 fn scene_json(scene: &[(u32, Replicated)]) -> String {
@@ -282,4 +289,13 @@ fn the_clients_components_and_fixture_are_generated_from_these() {
 fn a_struct_in_a_list_goes_on_the_wire_as_its_fields_in_order() {
     let bytes = encode(&Rider { yaw: 1, pitch: 2, held: 3 });
     assert_eq!(decode::<(i16, i16, u8)>(&bytes), Some((1, 2, 3)), "STRUCTS says Rider is [yaw, pitch, held]");
+}
+
+#[test]
+fn every_field_with_a_unit_names_a_known_one() {
+    let fields = schema().into_iter().flat_map(|(_, component, _, _, fields)| fields.iter().map(move |(field, _, unit)| (component, *field, *unit)));
+    let members = STRUCTS.iter().flat_map(|(name, members)| members.iter().map(move |(member, unit)| (*name, *member, *unit)));
+    for (owner, field, unit) in fields.chain(members) {
+        assert!(unit.is_empty() || UNITS.contains(&unit), "{owner}.{field} counts in {unit}, which UNITS does not list");
+    }
 }

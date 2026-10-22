@@ -321,7 +321,7 @@ not change.
 
 #### Steps
 
-- [ ] **4.1** Units in the schema, with generic conversion and blending (`entities/units.ts`). Checked
+- [x] **4.1** Units in the schema, with generic conversion and blending (`entities/units.ts`). Checked
       against v1's converters: every fixture scene converted generically must equal the adapter's
       states, field for field.
 - [ ] **4.2** The store, with projectiles and items on the ground as its first presenters: the rocket
@@ -1483,3 +1483,34 @@ check, it should be rebuilt with respawn handling.
 
 **Next:** Phase 4, the client entity store and presenters, which removes the adapter and the v1
 rows.
+
+### 2026-10-22: Phase 4.1, units in the schema
+
+Each field of a replicated component now names its unit in the `replicated!` list (`x: i32 as cm`).
+The units are `cm`, `mrad`, `quat`, `axis`, `byte` and `dm`, listed in `UNITS`, and a list of structs
+names its members' units in `STRUCTS`. `components.generated.ts` carries them: a `Unit` type, and a
+`unit` on each `FieldSchema`. The wire does not change, and the fixtures came out byte for byte the
+same.
+
+`client/src/entities/units.ts` has two functions, both driven only by the schema:
+
+- **`toGame`** turns a wire entity into the game's units and rebuilds a rotation's `w`.
+  - A converted component is cached by the wire object it came from.
+  - A component that did not change is the same object from one rebuilt scene to the next, so it is
+    converted once.
+- **`blend`** interpolates between two snapshots:
+  - it lerps `cm` and `axis`, `mrad` the short way round, and a rotation as a whole (normalised);
+  - it takes everything else from the nearer snapshot, as it does a component only one of them has.
+
+`units.spec.ts` holds both to v1's hand-written code on the adapter fixture's scene, which has every
+family and its edge cases:
+
+- the conversions equal `entityState`, `vehicleState`, `rocketState` and `pickupState`;
+- blends at 0, 0.3, 0.7 and 1 equal `blendEntity`, `blendVehicle` and `blendRocket`, with turns
+  crossing ±π and a quaternion changing sign;
+- changing the angle blend to a plain lerp fails three of the cases.
+
+**Checks:** shared 68 (one new: every unit named is a known one), client 370, all passing; clippy,
+`vue-tsc` and oxlint add nothing.
+
+**Next:** 4.2, the store, with projectiles and items on the ground as its first presenters.

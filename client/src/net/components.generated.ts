@@ -4,6 +4,9 @@
 /** Bit 31 of an update's `set` mask: a `cleared` mask follows it. */
 export const CLEARED = 2147483648
 
+/** What a field's integer counts (`UNITS` in the Rust): how the client turns it into its own units, and blends it. */
+export type Unit = 'cm' | 'mrad' | 'quat' | 'axis' | 'byte' | 'dm'
+
 export interface Rider {
   yaw: number
   pitch: number
@@ -119,28 +122,29 @@ export interface Components {
 
 export type ComponentName = keyof Components
 
-/** A component's fields in wire order; one holding a list of structs names the struct's fields. */
+/** A field, in wire order: its unit if it has one, and the struct's fields if it holds a list of structs. */
 export interface FieldSchema {
   name: string
-  struct?: readonly string[]
+  unit?: Unit
+  struct?: readonly FieldSchema[]
 }
 
 /** Every component in wire-id order: its bit, whether it is sent as a difference, and its fields. */
 export const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; fields: readonly FieldSchema[] }[] = [
-  { id: 0, name: 'place', diff: true, fields: [{ name: 'x' }, { name: 'y' }, { name: 'z' }] },
-  { id: 1, name: 'heading', diff: true, fields: [{ name: 'yaw' }] },
-  { id: 2, name: 'motion', diff: true, fields: [{ name: 'vy' }, { name: 'knock_x' }, { name: 'knock_z' }] },
+  { id: 0, name: 'place', diff: true, fields: [{ name: 'x', unit: 'cm' }, { name: 'y', unit: 'cm' }, { name: 'z', unit: 'cm' }] },
+  { id: 1, name: 'heading', diff: true, fields: [{ name: 'yaw', unit: 'mrad' }] },
+  { id: 2, name: 'motion', diff: true, fields: [{ name: 'vy', unit: 'cm' }, { name: 'knock_x', unit: 'cm' }, { name: 'knock_z', unit: 'cm' }] },
   { id: 3, name: 'flags', diff: false, fields: [{ name: 'flags' }, { name: 'stance' }] },
-  { id: 4, name: 'orientation', diff: true, fields: [{ name: 'qx' }, { name: 'qy' }, { name: 'qz' }] },
-  { id: 5, name: 'steer', diff: true, fields: [{ name: 'steer' }] },
-  { id: 6, name: 'turret', diff: false, fields: [{ name: 'yaw' }, { name: 'pitch' }, { name: 'shots' }, { name: 'range' }, { name: 'flags' }] },
-  { id: 7, name: 'crew', diff: false, fields: [{ name: 'riders', struct: ['yaw', 'pitch', 'held'] }] },
-  { id: 8, name: 'thrust', diff: false, fields: [{ name: 'air' }, { name: 'flags' }] },
-  { id: 9, name: 'arms', diff: false, fields: [{ name: 'shots' }, { name: 'heat' }, { name: 'rear_heat' }, { name: 'bombs' }, { name: 'flags' }] },
+  { id: 4, name: 'orientation', diff: true, fields: [{ name: 'qx', unit: 'quat' }, { name: 'qy', unit: 'quat' }, { name: 'qz', unit: 'quat' }] },
+  { id: 5, name: 'steer', diff: true, fields: [{ name: 'steer', unit: 'axis' }] },
+  { id: 6, name: 'turret', diff: false, fields: [{ name: 'yaw', unit: 'mrad' }, { name: 'pitch', unit: 'mrad' }, { name: 'shots' }, { name: 'range', unit: 'dm' }, { name: 'flags' }] },
+  { id: 7, name: 'crew', diff: false, fields: [{ name: 'riders', struct: [{ name: 'yaw', unit: 'mrad' }, { name: 'pitch', unit: 'mrad' }, { name: 'held' }] }] },
+  { id: 8, name: 'thrust', diff: false, fields: [{ name: 'air', unit: 'byte' }, { name: 'flags' }] },
+  { id: 9, name: 'arms', diff: false, fields: [{ name: 'shots' }, { name: 'heat', unit: 'byte' }, { name: 'rear_heat', unit: 'byte' }, { name: 'bombs' }, { name: 'flags' }] },
   { id: 10, name: 'seats', diff: false, fields: [{ name: 'riders' }] },
   { id: 11, name: 'health', diff: false, fields: [{ name: 'hp' }] },
   { id: 12, name: 'damage', diff: false, fields: [{ name: 'parts' }] },
-  { id: 13, name: 'velocity', diff: true, fields: [{ name: 'vx' }, { name: 'vy' }, { name: 'vz' }] },
+  { id: 13, name: 'velocity', diff: true, fields: [{ name: 'vx', unit: 'cm' }, { name: 'vy', unit: 'cm' }, { name: 'vz', unit: 'cm' }] },
   { id: 14, name: 'kind', diff: false, fields: [{ name: 'kind' }] },
   { id: 15, name: 'projectile', diff: false, fields: [{ name: 'kind' }] },
   { id: 16, name: 'pickup', diff: false, fields: [{ name: 'item' }] },

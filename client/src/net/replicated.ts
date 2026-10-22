@@ -36,7 +36,7 @@ function field(raw: unknown, schema: FieldSchema): unknown {
   const items: Fields[] = []
   for (const item of raw) {
     if (!ints(item) || item.length !== members.length) return null
-    items.push(Object.fromEntries(members.map((member, i) => [member, item[i]])))
+    items.push(Object.fromEntries(members.map((member, i) => [member.name, item[i]])))
   }
   return items
 }

@@ -32,8 +32,8 @@ pub trait Component: Clone + PartialEq {
     const ID: u8;
     /// Sent as a difference from the baseline's, rather than whole.
     const DIFF: bool;
-    /// Its fields' names and Rust types, in wire order.
-    const FIELDS: &'static [(&'static str, &'static str)];
+    /// Its fields in wire order.
+    const FIELDS: &'static [Field];
     /// How it goes on the wire: itself for a `set` component, its fields as `i32` for a `diff` one.
     type Wire: Clone + PartialEq + std::fmt::Debug;
     /// The whole value, for a receiver whose baseline does not have it.
@@ -46,6 +46,21 @@ pub trait Component: Clone + PartialEq {
     fn read<'de, A: SeqAccess<'de>>(seq: &mut A) -> Result<Self::Wire, A::Error>;
 }
 
+/// A component's field: its name, its Rust type, and its unit (`UNITS`), or `""` for a count, a set of
+/// bits or an id, which have none.
+pub type Field = (&'static str, &'static str, &'static str);
+
+/// What a field's integer counts, and so how the client turns it into its own units and whether it
+/// blends two snapshots' values or takes the nearer one's:
+///
+/// - `cm`: centimetres (or cm/s), metres on the client; blended.
+/// - `mrad`: milliradians, an angle; blended the short way round.
+/// - `quat`: part of a unit quaternion scaled by 32767, `w >= 0` left out; blended as a rotation.
+/// - `axis`: -127..=127 for -1..=1; blended.
+/// - `byte`: 0..=255 for 0..=1, a gauge; the nearer snapshot's.
+/// - `dm`: tenths of a metre; the nearer snapshot's.
+pub const UNITS: &[&str] = &["cm", "mrad", "quat", "axis", "byte", "dm"];
+
 fn next<'de, T: Deserialize<'de>, A: SeqAccess<'de>>(seq: &mut A) -> Result<T, A::Error> {
     seq.next_element()?.ok_or_else(|| de::Error::custom("an update cut short"))
 }
@@ -57,7 +72,7 @@ macro_rules! count {
 
 /// One component's struct and its `Component` impl.
 macro_rules! component {
-    (diff $id:literal $(#[$meta:meta])* $Name:ident { $( $(#[$fmeta:meta])* $f:ident : $t:ty ),* $(,)? }) => {
+    (diff $id:literal $(#[$meta:meta])* $Name:ident { $( $(#[$fmeta:meta])* $f:ident : $t:ty $(as $unit:ident)? ),* $(,)? }) => {
         $(#[$meta])*
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
         pub struct $Name { $( $(#[$fmeta])* pub $f: $t, )* }
@@ -65,7 +80,7 @@ macro_rules! component {
         impl Component for $Name {
             const ID: u8 = $id;
             const DIFF: bool = true;
-            const FIELDS: &'static [(&'static str, &'static str)] = &[$( (stringify!($f), stringify!($t)) ),*];
+            const FIELDS: &'static [Field] = &[$( (stringify!($f), stringify!($t), stringify!($($unit)?)) ),*];
             type Wire = [i32; count!($($f)*)];
             fn full(&self) -> Self::Wire {
                 [$( self.$f as i32 ),*]
@@ -98,7 +113,7 @@ macro_rules! component {
             }
         }
     };
-    (set $id:literal $(#[$meta:meta])* $Name:ident { $( $(#[$fmeta:meta])* $f:ident : $t:ty ),* $(,)? }) => {
+    (set $id:literal $(#[$meta:meta])* $Name:ident { $( $(#[$fmeta:meta])* $f:ident : $t:ty $(as $unit:ident)? ),* $(,)? }) => {
         $(#[$meta])*
         #[derive(Clone, Debug, Default, PartialEq, Eq)]
         pub struct $Name { $( $(#[$fmeta])* pub $f: $t, )* }
@@ -106,7 +121,7 @@ macro_rules! component {
         impl Component for $Name {
             const ID: u8 = $id;
             const DIFF: bool = false;
-            const FIELDS: &'static [(&'static str, &'static str)] = &[$( (stringify!($f), stringify!($t)) ),*];
+            const FIELDS: &'static [Field] = &[$( (stringify!($f), stringify!($t), stringify!($($unit)?)) ),*];
             type Wire = Self;
             fn full(&self) -> Self {
                 self.clone()
@@ -257,7 +272,7 @@ macro_rules! replicated {
 
         /// Each component as the client decodes it: `(wire id, name, struct name, sent as a difference,
         /// fields)`.
-        pub fn schema() -> Vec<(u8, &'static str, &'static str, bool, &'static [(&'static str, &'static str)])> {
+        pub fn schema() -> Vec<(u8, &'static str, &'static str, bool, &'static [Field])> {
             vec![$( (<$Name as Component>::ID, stringify!($field), stringify!($Name), <$Name as Component>::DIFF, <$Name as Component>::FIELDS) ),*]
         }
     };
@@ -266,16 +281,16 @@ macro_rules! replicated {
 replicated! {
     diff 0 place
     /// Where it is, centimetres: a stickman's capsule centre, a vehicle's chassis centre.
-    Place { x: i32, y: i32, z: i32 }
+    Place { x: i32 as cm, y: i32 as cm, z: i32 as cm }
 
     diff 1 heading
     /// Its facing, milliradians, 0 facing -Z.
-    Heading { yaw: i16 }
+    Heading { yaw: i16 as mrad }
 
     diff 2 motion
     /// What a predicted stickman resumes from: vertical speed, and the slide a car's knock left
     /// them in, cm/s.
-    Motion { vy: i16, knock_x: i16, knock_z: i16 }
+    Motion { vy: i16 as cm, knock_x: i16 as cm, knock_z: i16 as cm }
 
     set 3 flags
     /// `FLAG_*` bits and the `STANCE_*`.
@@ -283,15 +298,15 @@ replicated! {
 
     diff 4 orientation
     /// A vehicle's chassis as the x, y, z of a unit quaternion scaled by 32767, `w >= 0`.
-    Orientation { qx: i16, qy: i16, qz: i16 }
+    Orientation { qx: i16 as quat, qy: i16 as quat, qz: i16 as quat }
 
     diff 5 steer
     /// Front wheels as a fraction of full lock, -127..=127, + is right.
-    Steer { steer: i8 }
+    Steer { steer: i8 as axis }
 
     set 6 turret
     /// A gun on a mount, as `protocol::Turret`.
-    Turret { yaw: i16, pitch: i16, shots: u8, range: u16, flags: u8 }
+    Turret { yaw: i16 as mrad, pitch: i16 as mrad, shots: u8, range: u16 as dm, flags: u8 }
 
     set 7 crew
     /// Where each seat's rider looks and what they hold, for a vehicle whose crew show.
@@ -299,11 +314,11 @@ replicated! {
 
     set 8 thrust
     /// Air, stamina or battery left, 0..=255, and the `THRUST_*` nozzles firing.
-    Thrust { air: u8, flags: u8 }
+    Thrust { air: u8 as byte, flags: u8 }
 
     set 9 arms
     /// A plane's pilot weapons and engine, or a hen's eggs, as `protocol::Arms`.
-    Arms { shots: u8, heat: u8, rear_heat: u8, bombs: u8, flags: u8 }
+    Arms { shots: u8, heat: u8 as byte, rear_heat: u8 as byte, bombs: u8, flags: u8 }
 
     set 10 seats
     /// The player in each seat, 0 for an empty one; seat 0 drives.
@@ -319,7 +334,7 @@ replicated! {
 
     diff 13 velocity
     /// A projectile's velocity, cm/s.
-    Velocity { vx: i16, vy: i16, vz: i16 }
+    Velocity { vx: i16 as cm, vy: i16 as cm, vz: i16 as cm }
 
     set 14 kind
     /// `KIND_*`: which model a stickman, a creature or a vehicle is drawn as.
@@ -334,9 +349,9 @@ replicated! {
     Pickup { item: u8 }
 }
 
-/// The structs a component field can hold a list of, with their fields in wire order: they go on the
-/// wire as arrays, which the client turns back into objects.
-pub const STRUCTS: &[(&str, &[&str])] = &[("Rider", &["yaw", "pitch", "held"])];
+/// The structs a component field can hold a list of, with their fields in wire order and each one's
+/// unit (`UNITS`): they go on the wire as arrays, which the client turns back into objects.
+pub const STRUCTS: &[(&str, &[(&str, &str)])] = &[("Rider", &[("yaw", "mrad"), ("pitch", "mrad"), ("held", "")])];
 
 /// JSON for the client's fixtures.
 #[cfg(test)]
