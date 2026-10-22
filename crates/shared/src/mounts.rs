@@ -144,7 +144,7 @@ mod tests {
 
     #[test]
     fn every_mount_is_worked_from_a_seat_its_vehicle_has() {
-        for def in &VEHICLES {
+        for def in VEHICLES {
             for mount in def.mounts {
                 assert!(mount.seat < def.seats, "{}: a mount for seat {}", def.name, mount.seat);
             }
@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn a_vehicle_shows_at_most_one_turret_and_one_of_each_part_of_its_arms() {
-        for def in &VEHICLES {
+        for def in VEHICLES {
             for show in [Show::Turret, Show::Guns, Show::Rack] {
                 assert!(def.mounts.iter().filter(|m| m.show == show).count() <= 1, "{}: two {show:?} mounts", def.name);
             }
@@ -162,7 +162,7 @@ mod tests {
 
     #[test]
     fn a_mount_that_must_point_clear_can_turn_and_one_that_runs_out_carries_some() {
-        for def in &VEHICLES {
+        for def in VEHICLES {
             for mount in def.mounts {
                 if mount.needs.iter().any(|need| matches!(need, Need::Clear(_))) {
                     assert!(matches!(mount.aim, Aim::Mount { .. }), "{}", def.name);

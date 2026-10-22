@@ -6,7 +6,8 @@ import { isDrone, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_LOITER, KIND_MORTAR, KIN
 import type { Placed } from '@/entities/presenters/vehicles'
 import { rideView, seatView } from '@/seats'
 import { HELI_GUN_COOLDOWN_TICKS, MORTAR_COOLDOWN_TICKS, SHELL_COOLDOWN_TICKS, WALKER_GUN_COOLDOWN_TICKS } from '@/sim/consts'
-import { VEHICLES, vehicleDef } from '@/sim/vehicles'
+import { vehicleDef } from '@/sim/vehicles'
+import { BEFORE } from './kinds.before'
 
 // What the if-chains in `game.ts` said before the seats became a table, kept here to hold the table to them.
 const before = {
@@ -32,7 +33,7 @@ const before = {
 }
 
 describe('the seats table', () => {
-  for (const def of VEHICLES) {
+  for (const def of BEFORE.map(vehicleDef)) {
     it(`says what the camera, the HUD and the prompt did for the ${def.name}`, () => {
       const ride = rideView(def.kind)
       expect(ride.seats).toHaveLength(def.seats)

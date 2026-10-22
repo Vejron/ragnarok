@@ -8,6 +8,9 @@ import { JEEP_WHEELS, PLANE_WHEELS, SPORTS_WHEELS, TRACK_WHEELS } from '@/sim/sl
 import { SURFACE_ASPHALT } from '@/sim/surface'
 import { isTracked } from '@/sim/vehicles'
 
+/** The kinds there were then, which these hold to what they did; a kind added since has nothing to keep. */
+export const BEFORE = [1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13]
+
 /** Where each gear starts, as a fraction of top speed. A tank has the one, and so has the Roadster's electric motor. */
 const SHIFTS: Record<number, readonly number[]> = {
   [KIND_SPORTS]: [0, 0.16, 0.32, 0.5, 0.72],

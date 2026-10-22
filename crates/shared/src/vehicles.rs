@@ -220,7 +220,7 @@ const LIGHT: Armor = Armor { front_slope: 0.0, ricochet: [82.0, 82.0, 82.0, 82.0
 const SOFT: Armor = Armor { front_slope: 0.0, ricochet: [91.0; 4], mult: [1.0; 4], weak: &[], canvas: true };
 
 /// Every vehicle kind, in id order.
-pub static VEHICLES: [VehicleDef; 12] = [
+pub static VEHICLES: &[VehicleDef] = &[
     jeep::JEEP,
     tank::TANK,
     heli::HELI,

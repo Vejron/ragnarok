@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { KINDS, kindView } from '@/kinds'
 import { mixOf, type SoundInput } from '@/sim/engine'
 import { SURFACE_ASPHALT, SURFACE_DIRT, SURFACE_WATER } from '@/sim/surface'
-import { VEHICLES } from '@/sim/vehicles'
+import { VEHICLES, vehicleDef } from '@/sim/vehicles'
 import * as before from './kinds.before'
 
 describe('the kinds', () => {
@@ -27,8 +27,8 @@ function* inputs(kind: number): Generator<SoundInput> {
                 yield { kind, speed, accel, climb, powered, hp, maxHp: 100, slip, surface, grounded, wheels, cut, jets }
 }
 
-describe('each kind', () => {
-  for (const def of VEHICLES) {
+describe('each kind there was before kinds were files', () => {
+  for (const def of before.BEFORE.map(vehicleDef)) {
     const view = kindView(def.kind)
 
     it(`sounds as the ${def.name} did`, () => {
