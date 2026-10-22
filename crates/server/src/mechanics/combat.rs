@@ -1,14 +1,14 @@
 use super::Mechanic;
 use super::armor::Outcome;
 use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
-use super::npcs::{damage_rooster, first_rooster_hit};
+use super::life::{blasted, damage_entity, first_hurtbox_hit, hit_mark};
 use super::spawn;
 use crate::game::{Player, Rocket, TEAM_NONE, World, starting_hotbar};
 use crate::physics::Obj;
 use shared::consts::*;
 use shared::items::*;
 use shared::vehicles::{Exposure, crew_gun, vehicle_def};
-use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_ROOSTER, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, KIND_PLANE, Kill, S_HIT, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_EGG, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, BulletSpawn, WEAPON_BULLET, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_PELLET, WEAPON_ROADKILL, WEAPON_WRECK,
+use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, KIND_PLANE, Kill, S_HIT, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_EGG, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_CANNON, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, S_KILL, ShotEvent, BulletSpawn, WEAPON_BULLET, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_PELLET, WEAPON_ROADKILL, WEAPON_WRECK,
     DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_EGG, WEAPON_FLARE, WEAPON_LOITER, WEAPON_SHELL};
 use shared::quant::{from_mrad, to_cm, to_cm_i16, to_mrad};
 
@@ -341,18 +341,8 @@ pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
     for (id, amount) in hurt {
         damage_from(world, id, amount, blast.attacker, blast.weapon, Some(blast.point));
     }
-    let roosters: Vec<(u32, u8)> = world
-        .roosters
-        .iter()
-        .filter(|(_, r)| r.alive())
-        .filter_map(|(&id, r)| {
-            let centre = [r.position[0], r.position[1] + ROOSTER_CAPSULE_CENTRE, r.position[2]];
-            let distance = (0..3).map(|i| (centre[i] - blast.point[i]).powi(2)).sum::<f32>().sqrt();
-            (distance < blast.radius).then(|| (id, (blast.damage * (1.0 - distance / blast.radius)).round().min(255.0) as u8))
-        })
-        .collect();
-    for (id, amount) in roosters {
-        damage_rooster(world, id, amount);
+    for (id, amount) in blasted(world, blast.point, blast.radius, blast.damage) {
+        damage_entity(world, id, amount);
     }
     let mut reached = world.physics.blast_cars(blast.point, blast.radius);
     // A shell that struck a vehicle's edge may burst further from its centre than the blast reaches.
@@ -656,20 +646,19 @@ fn step_bullet(world: &mut World, id: u32, dt: f32) {
     let wall = world.physics.cast_ray_hit(bullet.position, dir, step, bullet.source);
     let reach = wall.map_or(step, |(t, _)| t);
     let hit = round_hit(world, bullet.position, dir, reach, wall.and_then(|(_, car)| car), step, Some(bullet.owner), bullet.back);
-    let rooster = first_rooster_hit(world, bullet.position, dir, hit.map_or(reach, |(_, t)| t.min(reach)));
+    let creature = first_hurtbox_hit(world, bullet.position, dir, hit.map_or(reach, |(_, t)| t.min(reach)));
     bullet.ttl = bullet.ttl.saturating_sub(1);
-    if hit.is_some() || rooster.is_some() || wall.is_some() {
+    if hit.is_some() || creature.is_some() || wall.is_some() {
         world.rockets.remove(&id);
-        let end = rooster.map(|(_, t)| t).or(hit.map(|(_, t)| t)).unwrap_or(reach);
+        let end = creature.map(|(_, t)| t).or(hit.map(|(_, t)| t)).unwrap_or(reach);
         let point: [f32; 3] = std::array::from_fn(|i| bullet.position[i] + dir[i] * end);
         let (base, falloff, weapon) = item.map_or((0, Falloff::NONE, WEAPON_RIFLE), |d| (d.damage, d.falloff, d.weapon));
         let damage_dealt = falloff.apply(base, bullet.flown + end);
         let attacker = world.players.contains_key(&bullet.owner).then_some(bullet.owner);
-        if let Some((target, _)) = rooster {
-            damage_rooster(world, target, damage_dealt);
-            if let Some(owner) = attacker {
-                let at = world.roosters.get(&target).map_or([0.0; 3], |r| [r.position[0], r.position[1] + 0.5, r.position[2]]);
-                world.hits.push((owner, hit_at(HIT_DEALT, HIT_ROOSTER, damage_dealt, weapon, BEARING_NONE, at, target)));
+        if let Some((target, _)) = creature {
+            damage_entity(world, target, damage_dealt);
+            if let (Some(owner), Some((kind, at))) = (attacker, hit_mark(world, target)) {
+                world.hits.push((owner, hit_at(HIT_DEALT, kind, damage_dealt, weapon, BEARING_NONE, at, target)));
             }
         } else if let Some((victim, _)) = hit {
             let head = hit.is_some_and(|(_, t)| is_headshot(world, victim, bullet.position, dir, t, bullet.back));
@@ -912,14 +901,15 @@ pub fn hitscan(world: &mut World, shooter: u32, origin: [f32; 3], dir: [f32; 3],
     let wall = world.physics.cast_ray_hit(origin, dir, round.range, ignore);
     let reach = wall.map_or(round.range, |(t, _)| t);
     let hit = round_hit(world, origin, dir, reach, wall.and_then(|(_, car)| car), round.range, Some(shooter), back);
-    // A rooster nearer than the player (or with no player behind it) takes the shot.
-    let rooster = first_rooster_hit(world, origin, dir, hit.map_or(reach, |(_, t)| t.min(reach)));
-    let end = rooster.map(|(_, t)| t).or(hit.map(|(_, t)| t)).unwrap_or(reach);
-    if let Some((target, _)) = rooster {
+    // A creature (a rooster) nearer than the player (or with no player behind it) takes the shot.
+    let creature = first_hurtbox_hit(world, origin, dir, hit.map_or(reach, |(_, t)| t.min(reach)));
+    let end = creature.map(|(_, t)| t).or(hit.map(|(_, t)| t)).unwrap_or(reach);
+    if let Some((target, _)) = creature {
         let dealt = round.falloff.apply(round.damage, end);
-        damage_rooster(world, target, dealt);
-        let at = world.roosters.get(&target).map_or([0.0; 3], |r| [r.position[0], r.position[1] + 0.5, r.position[2]]);
-        world.hits.push((shooter, hit_at(HIT_DEALT, HIT_ROOSTER, dealt, round.weapon, BEARING_NONE, at, target)));
+        damage_entity(world, target, dealt);
+        if let Some((kind, at)) = hit_mark(world, target) {
+            world.hits.push((shooter, hit_at(HIT_DEALT, kind, dealt, round.weapon, BEARING_NONE, at, target)));
+        }
     } else if let Some((victim, _)) = hit {
         let head = hit.is_some_and(|(_, t)| is_headshot(world, victim, origin, dir, t, back));
         damage_hit(world, victim, round.falloff.apply(round.damage, end), Some(shooter), round.weapon, None, head);
@@ -938,7 +928,7 @@ pub fn hitscan(world: &mut World, shooter: u32, origin: [f32; 3], dir: [f32; 3],
     } else if wall.is_some() {
         hit_object(world, origin, dir, reach, round.damage);
     }
-    (end, rooster.is_some() || hit.is_some() || wall.is_some())
+    (end, creature.is_some() || hit.is_some() || wall.is_some())
 }
 
 /// Throws a grenade from player `id`'s eye, a little above where they look so it arcs.

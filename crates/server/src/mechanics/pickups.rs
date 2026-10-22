@@ -1,5 +1,6 @@
 use super::Mechanic;
-use crate::game::{Pickup, World};
+use crate::entities::{Component, Transform, With};
+use crate::game::World;
 use shared::consts::BUTTON_USE;
 use shared::items::*;
 use shared::protocol::ItemSlot;
@@ -13,6 +14,63 @@ use shared::quant::from_cm;
 /// swaps with the slot in hand, leaving what was in hand on the ground. It runs before `Vehicles`
 /// and consumes the use button, so a car parked next to a gun is not boarded by reaching for it.
 pub struct Pickups;
+
+/// An item lying on the ground, at its entity's `Transform`. A taken one stays, out of sight, until it
+/// comes back.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct Pickup {
+    pub item: u8,
+    /// How many of the item taking it gives.
+    pub count: u8,
+    /// Ticks until it reappears; zero when it is lying there to be taken.
+    pub respawn_in: u32,
+    /// Dropped by something that died (a rooster's egg): gone once taken, instead of coming back.
+    pub dropped: bool,
+}
+
+impl World {
+    /// Lays `count` of `item` on the ground at `position`; returns its id.
+    pub fn add_pickup(&mut self, position: [f32; 3], item: u8, count: u8, dropped: bool) -> u32 {
+        let id = self.alloc_id();
+        self.entities.spawn(id, (Transform { position, yaw: 0.0 }, Pickup { item, count, respawn_in: 0, dropped }));
+        id
+    }
+
+    /// Every item on the ground, taken or not, in id order.
+    pub fn pickup_ids(&self) -> Vec<u32> {
+        self.entities.ids::<With<Pickup>>()
+    }
+
+    pub fn pickup(&self, id: u32) -> Option<&Pickup> {
+        self.entities.get::<Pickup>(id)
+    }
+
+    #[cfg(test)]
+    pub fn pickup_mut(&mut self, id: u32) -> Option<crate::entities::Mut<'_, Pickup>> {
+        self.entities.get_mut::<Pickup>(id)
+    }
+
+    /// Where item `id` lies.
+    pub fn pickup_position(&self, id: u32) -> Option<[f32; 3]> {
+        self.entities.get::<Pickup>(id)?;
+        self.entities.get::<Transform>(id).map(|transform| transform.position)
+    }
+
+    /// Takes the items off the ground for good: those `keep` turns down.
+    pub fn remove_pickups(&mut self, mut keep: impl FnMut(&Pickup) -> bool) {
+        for id in self.pickup_ids() {
+            if self.pickup(id).is_some_and(|pickup| !keep(pickup)) {
+                self.entities.despawn(id);
+            }
+        }
+    }
+
+    /// Takes every item off the ground.
+    #[cfg(test)]
+    pub fn clear_pickups(&mut self) {
+        self.remove_pickups(|_| false);
+    }
+}
 
 /// How far from a spawn point an item may be dropped, metres.
 const SCATTER: f32 = 25.0;
@@ -84,8 +142,7 @@ impl Mechanic for Pickups {
                 let ground = world.map.ground.height_at(x, z);
                 let top = ground + 40.0;
                 let floor = world.physics.cast_ray([x, top, z], [0.0, -1.0, 0.0], 80.0, 0).map_or(ground, |t| top - t);
-                let id = world.alloc_id();
-                world.pickups.insert(id, Pickup { item: spot.item, count: spot.count, position: [x, floor + FLOAT, z], respawn_in: 0, dropped: false });
+                world.add_pickup([x, floor + FLOAT, z], spot.item, spot.count, false);
                 placed += 1;
             }
             tracing::info!(pickups = placed, "pickups placed from the editor");
@@ -96,8 +153,7 @@ impl Mechanic for Pickups {
                 let Some(position) = pick_spot(world) else { continue };
                 let item = pick_item(world);
                 let count = def(item).map_or(1, |d| if d.kind == ItemKind::Gun { 1 } else { d.stack.min(2) });
-                let id = world.alloc_id();
-                world.pickups.insert(id, Pickup { item, count, position, respawn_in: 0, dropped: false });
+                world.add_pickup(position, item, count, false);
                 placed += 1;
                 break;
             }
@@ -106,7 +162,8 @@ impl Mechanic for Pickups {
     }
 
     fn on_tick(&mut self, world: &mut World, _dt: f32) {
-        for pickup in world.pickups.values_mut() {
+        let ecs = &mut world.entities.ecs;
+        for mut pickup in ecs.query::<&mut Pickup>().iter_mut(ecs) {
             pickup.respawn_in = pickup.respawn_in.saturating_sub(1);
         }
         let reaching: Vec<u32> = world
@@ -118,24 +175,26 @@ impl Mechanic for Pickups {
         for id in reaching {
             let Some(at) = world.players.get(&id).map(|player| player.character.position) else { continue };
             let nearest = world
-                .pickups
-                .iter()
-                .filter(|(_, p)| p.respawn_in == 0 && (p.position[1] - at[1]).abs() <= REACH_Y)
-                .map(|(&pid, p)| (pid, (p.position[0] - at[0]).hypot(p.position[2] - at[2])))
+                .pickup_ids()
+                .into_iter()
+                .filter(|&pid| world.pickup(pid).is_some_and(|p| p.respawn_in == 0))
+                .filter_map(|pid| world.pickup_position(pid).map(|position| (pid, position)))
+                .filter(|(_, position)| (position[1] - at[1]).abs() <= REACH_Y)
+                .map(|(pid, position)| (pid, (position[0] - at[0]).hypot(position[2] - at[2])))
                 .filter(|(_, d)| *d <= PICKUP_RADIUS)
                 .min_by(|a, b| a.1.total_cmp(&b.1));
             let Some((pid, _)) = nearest else { continue };
-            let Some(pickup) = world.pickups.get(&pid).copied() else { continue };
+            let Some(pickup) = world.pickup(pid).copied() else { continue };
             let Some(player) = world.players.get_mut(&id) else { continue };
             // The reach is spent: the car beside the gun stays unboarded.
             player.input.buttons &= !BUTTON_USE;
             let left = store(&mut player.hotbar, pickup.item, pickup.count);
             if left == 0 && pickup.dropped {
                 // A dropped item is spent for good.
-                world.pickups.remove(&pid);
+                world.entities.despawn(pid);
                 continue;
             }
-            let Some(entry) = world.pickups.get_mut(&pid) else { continue };
+            let Some(mut entry) = world.entities.get_mut::<Pickup>(pid) else { continue };
             if left == 0 {
                 entry.respawn_in = PICKUP_RESPAWN_TICKS;
             } else if left < pickup.count {
@@ -174,7 +233,7 @@ mod tests {
         let (reply, mut response) = oneshot::channel();
         game.handle(Command::Join { outbox, reply, profile: Default::default() });
         let id = response.try_recv().unwrap().unwrap();
-        game.world.pickups.clear();
+        game.world.clear_pickups();
         // These tests are about taking things, so they start with room to take them.
         game.world.players.get_mut(&id).unwrap().hotbar = Default::default();
         (game, id, inbox)
@@ -192,18 +251,17 @@ mod tests {
 
     fn drop_at_feet(game: &mut Game, id: u32, item: u8, count: u8) -> u32 {
         let at = game.world.players[&id].character.position;
-        let pid = game.world.alloc_id();
-        game.world.pickups.insert(pid, Pickup { item, count, position: at, respawn_in: 0, dropped: false });
-        pid
+        game.world.add_pickup(at, item, count, false)
     }
 
     #[test]
     fn scattering_places_items_on_the_ground() {
         let (mut game, ..) = game();
         Pickups.on_start(&mut game.world);
-        assert!(!game.world.pickups.is_empty());
-        assert!(game.world.pickups.len() <= PICKUP_COUNT);
-        assert!(game.world.pickups.values().all(|p| def(p.item).is_some()));
+        let ids = game.world.pickup_ids();
+        assert!(!ids.is_empty());
+        assert!(ids.len() <= PICKUP_COUNT);
+        assert!(ids.iter().all(|&pid| def(game.world.pickup(pid).unwrap().item).is_some()));
     }
 
     #[test]
@@ -211,14 +269,15 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/world/world.msgpack");
         let (world, hash) = crate::read_world(&path).unwrap();
         let game = Game::new(world, hash).unwrap();
-        let placed = game.world.pickups.len();
+        let ids = game.world.pickup_ids();
+        let placed = ids.len();
         assert!(placed >= PICKUP_COUNT * 3 / 4, "only {placed} of {PICKUP_COUNT} found a spot");
-        for pickup in game.world.pickups.values() {
-            let [x, y, z] = pickup.position;
+        for &pid in &ids {
+            let [x, y, z] = game.world.pickup_position(pid).unwrap();
             let ground = game.world.map.ground.height_at(x, z);
             assert!((y - ground - FLOAT).abs() < 0.6, "item at {x},{z} floats {} m above the ground", y - ground);
         }
-        let kinds: std::collections::BTreeSet<u8> = game.world.pickups.values().map(|p| p.item).collect();
+        let kinds: std::collections::BTreeSet<u8> = ids.iter().map(|&pid| game.world.pickup(pid).unwrap().item).collect();
         assert!(kinds.len() >= 3, "a spread of items, got {kinds:?}");
     }
 
@@ -230,10 +289,10 @@ mod tests {
         press_use(&mut game, id, &mut seq, 0);
         let slot = game.world.players[&id].hotbar[0];
         assert_eq!(slot, ItemSlot { item: ITEM_AK5, count: 1, ammo: def(ITEM_AK5).unwrap().mag });
-        assert!(game.world.pickups[&pid].respawn_in > 0);
+        assert!(game.world.pickup(pid).unwrap().respawn_in > 0);
         assert!(game.pickup_states().is_empty(), "a taken item is not shown");
 
-        game.world.pickups.get_mut(&pid).unwrap().respawn_in = 1;
+        game.world.pickup_mut(pid).unwrap().respawn_in = 1;
         game.step();
         assert_eq!(game.pickup_states().len(), 1);
     }
@@ -247,8 +306,8 @@ mod tests {
         press_use(&mut game, id, &mut seq, 0);
         let grenades = def(ITEM_GRENADE).unwrap().stack;
         assert_eq!(game.world.players[&id].hotbar[0].count, grenades);
-        assert_eq!(game.world.pickups[&pid].count, 2 - (grenades - 2));
-        assert_eq!(game.world.pickups[&pid].respawn_in, 0, "what did not fit is still there");
+        assert_eq!(game.world.pickup(pid).unwrap().count, 2 - (grenades - 2));
+        assert_eq!(game.world.pickup(pid).unwrap().respawn_in, 0, "what did not fit is still there");
     }
 
     #[test]
@@ -257,14 +316,14 @@ mod tests {
         game.world.players.get_mut(&id).unwrap().hotbar =
             [ItemSlot { item: ITEM_REVOLVER, count: 1, ammo: 6 }, ItemSlot { item: ITEM_AK5, count: 1, ammo: 30 }, ItemSlot { item: ITEM_GRENADE, count: 3, ammo: 0 }, ItemSlot { item: ITEM_BANDAGE, count: 5, ammo: 0 }, ItemSlot { item: ITEM_REVOLVER, count: 1, ammo: 2 }];
         let pid = drop_at_feet(&mut game, id, ITEM_AK5, 1);
-        game.world.pickups.get_mut(&pid).unwrap().count = 1;
+        game.world.pickup_mut(pid).unwrap().count = 1;
         // Everything but the AK5 slot is full of other things; hold slot 2 (grenades) and swap.
         game.world.players.get_mut(&id).unwrap().hotbar[1] = ItemSlot { item: ITEM_BANDAGE, count: 5, ammo: 0 };
         let mut seq = 0;
         press_use(&mut game, id, &mut seq, 2);
         let player = &game.world.players[&id];
         assert_eq!(player.hotbar[2].item, ITEM_AK5);
-        let on_ground = &game.world.pickups[&pid];
+        let on_ground = game.world.pickup(pid).unwrap();
         assert_eq!((on_ground.item, on_ground.count, on_ground.respawn_in), (ITEM_GRENADE, 3, 0));
     }
 
@@ -282,10 +341,10 @@ mod tests {
     fn out_of_reach_items_are_left_alone() {
         let (mut game, id, _inbox) = game();
         let pid = drop_at_feet(&mut game, id, ITEM_AK5, 1);
-        game.world.pickups.get_mut(&pid).unwrap().position[0] += PICKUP_RADIUS + 1.0;
+        game.world.entities.get_mut::<Transform>(pid).unwrap().position[0] += PICKUP_RADIUS + 1.0;
         let mut seq = 0;
         press_use(&mut game, id, &mut seq, 0);
         assert_eq!(game.world.players[&id].hotbar[0].item, ITEM_NONE);
-        assert_eq!(game.world.pickups[&pid].respawn_in, 0);
+        assert_eq!(game.world.pickup(pid).unwrap().respawn_in, 0);
     }
 }

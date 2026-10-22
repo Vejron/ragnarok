@@ -19,7 +19,7 @@ fn game() -> Game {
     };
     // Loose items would take a test's use button.
     let mut game = Game::new(map, 0).unwrap();
-    game.world.pickups.clear();
+    game.world.clear_pickups();
     game
 }
 

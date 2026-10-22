@@ -1,4 +1,4 @@
-//! The state the game loop owns: players, vehicles, roosters, rockets and the `World` that holds them,
+//! The state the game loop owns: players, vehicles, rockets, the ECS entities and the `World` that holds them,
 //! and the `Command`/`Outgoing` messages the sessions exchange with it.
 
 use super::*;
@@ -239,49 +239,6 @@ impl Player {
     }
 }
 
-/// An item lying on the ground. A taken one stays in the map, out of sight, until it comes back.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Pickup {
-    pub item: u8,
-    /// How many of the item taking it gives.
-    pub count: u8,
-    pub position: [f32; 3],
-    /// Ticks until it reappears; zero when it is lying there to be taken.
-    pub respawn_in: u32,
-    /// Dropped by something that died (a rooster's egg): gone once taken, instead of coming back.
-    pub dropped: bool,
-}
-
-/// What a rooster is doing. Its `mode_left` counts ticks down to the next decision.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RoosterMode {
-    Idle,
-    Wander,
-    Crow,
-}
-
-/// A Hedemora rooster: an NPC that meanders around `home`, crows, and drops a golden egg when it
-/// dies. It shares the id space with players. At zero `hp` it is dead and `respawn_in` counts down.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Rooster {
-    /// Feet.
-    pub position: [f32; 3],
-    pub yaw: f32,
-    pub hp: u8,
-    pub mode: RoosterMode,
-    pub mode_left: u32,
-    /// Where it is walking to, `[x, z]`.
-    pub target: [f32; 2],
-    pub home: [f32; 2],
-    pub respawn_in: u32,
-}
-
-impl Rooster {
-    pub fn alive(&self) -> bool {
-        self.hp > 0
-    }
-}
-
 /// Game-side state of a vehicle. Its rigid body lives in `Physics`, under the same id.
 pub struct Vehicle {
     pub kind: u8,
@@ -440,10 +397,9 @@ pub struct World {
     pub vehicles: BTreeMap<u32, Vehicle>,
     /// Rockets in flight, which share the id space too.
     pub rockets: BTreeMap<u32, Rocket>,
-    /// Items on the ground, which share the id space too.
-    pub pickups: BTreeMap<u32, Pickup>,
-    /// Roosters, which share the id space too.
-    pub roosters: BTreeMap<u32, Rooster>,
+    /// The families moved to components so far (roosters, items on the ground), which share the id
+    /// space too.
+    pub entities: crate::entities::Entities,
     /// The minds of the players that are bots, by player id.
     pub bots: BTreeMap<u32, Bot>,
     /// Where a stickman can walk, built as the bots look for ways round things.

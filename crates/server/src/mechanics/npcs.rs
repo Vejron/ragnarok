@@ -1,43 +1,85 @@
 use super::Mechanic;
-use super::combat::ray_capsule;
-use crate::game::{Pickup, Rooster, RoosterMode, World};
+use super::life::{open_ground, place_at_home};
+use crate::entities::{Component, DropOnDeath, Health, Home, Hurtbox, NetKind, Respawn, Respawned, Transform, With};
+use crate::game::World;
 use shared::consts::*;
 use shared::items::ITEM_GOLDEN_EGG;
+use shared::protocol::{HIT_ROOSTER, KIND_ROOSTER};
 use shared::quant::from_cm;
 use shared::world::project;
 use std::f32::consts::{PI, TAU};
 
-/// The Hedemora rooster. It stands about, walks to a random spot within `ROOSTER_WANDER_RADIUS` of
-/// its home, stands about again, and now and then stops to crow (`FLAG_CROWING`, which the client
-/// turns into the `crow` animation and a "kokoo!"). Shot dead it drops a golden egg, and a minute
-/// later a new rooster is at home.
+/// Creatures that wander about their home. The Hedemora rooster is one: it stands about, walks to a
+/// random spot within its gait's radius of home, stands about again, and now and then stops to crow
+/// (`FLAG_CROWING`, which the client turns into the `crow` animation and a "kokoo!"). Being shot,
+/// dying, dropping its golden egg and coming back a minute later are `Life`'s, from its components.
 pub struct Npcs;
 
-/// How high above the ground the egg floats, metres, as pickups do.
-const EGG_FLOAT: f32 = 0.5;
 /// Tries to find an open spot to walk to before it stays put.
 const TARGET_ATTEMPTS: usize = 8;
-/// Gives up on a walk after this many ticks, so a rooster that cannot get there does not stand
-/// and push for ever.
+/// Gives up on a walk after this many ticks, so a creature that cannot get there does not stand and
+/// push for ever.
 const WALK_TIMEOUT_TICKS: u32 = 12 * TICK_RATE;
 /// Standing about lasts this long, ticks.
 const IDLE_MIN_TICKS: u32 = TICK_RATE;
 const IDLE_SPAN_TICKS: u32 = 3 * TICK_RATE;
-/// One in this many stops is a crow.
-const CROW_ONE_IN: u64 = 3;
 /// A wall this far ahead (at body height) ends a walk, metres.
 const WALL_AHEAD: f32 = 0.5;
 const ARRIVED: f32 = 0.3;
 
-/// Ground height at `x`, `z` if it is open ground (nothing, such as a roof, above it).
-pub(super) fn open_ground(world: &World, x: f32, z: f32) -> Option<f32> {
-    if !world.map.is_inside((x * 100.0) as i32, (z * 100.0) as i32) {
-        return None;
+/// How a wandering creature moves and calls.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Gait {
+    /// How far from home it walks, metres.
+    pub radius: f32,
+    pub speed: f32,
+    /// rad/s.
+    pub turn_rate: f32,
+    /// How long a call lasts, ticks, and one in how many stops is one.
+    pub call_ticks: u32,
+    pub call_one_in: u64,
+}
+
+pub const ROOSTER_GAIT: Gait = Gait { radius: ROOSTER_WANDER_RADIUS, speed: ROOSTER_SPEED, turn_rate: ROOSTER_TURN_RATE, call_ticks: ROOSTER_CROW_TICKS, call_one_in: 3 };
+
+/// What a wandering creature is doing. `mode_left` counts ticks down to the next decision.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WanderMode {
+    Idle,
+    Walk,
+    /// A rooster's crow.
+    Call,
+}
+
+/// The mind of a creature that wanders about its `Home`.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct Wander {
+    pub gait: Gait,
+    pub mode: WanderMode,
+    pub mode_left: u32,
+    /// Where it is walking to, `[x, z]`.
+    pub target: [f32; 2],
+}
+
+impl Wander {
+    pub fn new(gait: Gait, home: [f32; 2]) -> Self {
+        Wander { gait, mode: WanderMode::Idle, mode_left: IDLE_MIN_TICKS, target: home }
     }
-    let ground = world.map.ground.height_at(x, z);
-    let top = ground + 40.0;
-    let floor = world.physics.cast_ray([x, top, z], [0.0, -1.0, 0.0], 80.0, 0).map(|t| top - t)?;
-    ((floor - ground).abs() < 0.5).then_some(floor)
+}
+
+/// A Hedemora rooster at `home`: shot dead it drops a golden egg (one lying about at a time), and a
+/// minute later it is back at home.
+pub fn rooster(home: [f32; 2]) -> impl crate::entities::Bundle {
+    (
+        NetKind(KIND_ROOSTER),
+        Transform { position: [home[0], 0.0, home[1]], yaw: 0.0 },
+        Health::full(ROOSTER_HP),
+        Hurtbox { centre_y: ROOSTER_CAPSULE_CENTRE, half_height: ROOSTER_CAPSULE_HALF_HEIGHT, radius: ROOSTER_CAPSULE_RADIUS, hit_kind: HIT_ROOSTER },
+        Home(home),
+        Respawn { delay: ROOSTER_RESPAWN_TICKS, left: 0 },
+        DropOnDeath { item: ITEM_GOLDEN_EGG, count: 1, unique: true },
+        Wander::new(ROOSTER_GAIT, home),
+    )
 }
 
 /// Where the rooster lives: `ROOSTER_HOME` if that is inside the world, else the first spawn.
@@ -54,11 +96,11 @@ fn random_between(world: &mut World, low: f32, high: f32) -> f32 {
     low + world.rng.next_f64() as f32 * (high - low)
 }
 
-/// A random open spot within the wander radius of `home`.
-fn pick_target(world: &mut World, home: [f32; 2]) -> Option<[f32; 2]> {
+/// A random open spot within `radius` of `home`.
+fn pick_target(world: &mut World, home: [f32; 2], radius: f32) -> Option<[f32; 2]> {
     for _ in 0..TARGET_ATTEMPTS {
         let angle = random_between(world, 0.0, TAU);
-        let distance = random_between(world, 1.0, ROOSTER_WANDER_RADIUS);
+        let distance = random_between(world, 1.0, radius);
         let at = [home[0] + angle.cos() * distance, home[1] + angle.sin() * distance];
         if open_ground(world, at[0], at[1]).is_some() {
             return Some(at);
@@ -69,54 +111,15 @@ fn pick_target(world: &mut World, home: [f32; 2]) -> Option<[f32; 2]> {
 
 fn stand_about(world: &mut World, id: u32) {
     let ticks = IDLE_MIN_TICKS + (world.rng.next_u64() % IDLE_SPAN_TICKS as u64) as u32;
-    if let Some(rooster) = world.roosters.get_mut(&id) {
-        rooster.mode = RoosterMode::Idle;
-        rooster.mode_left = ticks;
+    if let Some(mut wander) = world.entities.get_mut::<Wander>(id) {
+        wander.mode = WanderMode::Idle;
+        wander.mode_left = ticks;
     }
 }
 
-/// Puts a rooster at home, alive, standing about.
-fn place(world: &mut World, id: u32) {
-    let Some(home) = world.roosters.get(&id).map(|r| r.home) else { return };
-    let y = open_ground(world, home[0], home[1]).unwrap_or_else(|| world.map.ground.height_at(home[0], home[1]));
-    let Some(rooster) = world.roosters.get_mut(&id) else { return };
-    rooster.position = [home[0], y, home[1]];
-    rooster.hp = ROOSTER_HP;
-    rooster.respawn_in = 0;
-    stand_about(world, id);
-}
-
-/// The nearest living rooster the ray meets within `max`, and how far along it is.
-pub fn first_rooster_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f32) -> Option<(u32, f32)> {
-    let mut best: Option<(u32, f32)> = None;
-    for (&id, rooster) in world.roosters.iter().filter(|(_, r)| r.alive()) {
-        let [x, y, z] = rooster.position;
-        let centre = [x, y + ROOSTER_CAPSULE_CENTRE, z];
-        let limit = best.map_or(max, |(_, t)| t);
-        if let Some(t) = ray_capsule(origin, dir, centre, ROOSTER_CAPSULE_HALF_HEIGHT, ROOSTER_CAPSULE_RADIUS, limit) {
-            best = Some((id, t));
-        }
-    }
-    best
-}
-
-/// Takes `amount` health off rooster `id`. At zero it dies: a golden egg is left where it fell.
-pub fn damage_rooster(world: &mut World, id: u32, amount: u8) {
-    let Some(rooster) = world.roosters.get_mut(&id) else { return };
-    if !rooster.alive() || amount == 0 {
-        return;
-    }
-    rooster.hp = rooster.hp.saturating_sub(amount);
-    if rooster.hp > 0 {
-        return;
-    }
-    rooster.respawn_in = ROOSTER_RESPAWN_TICKS;
-    let [x, y, z] = rooster.position;
-    // One uncollected egg at a time: a rooster killed over and over does not carpet the field.
-    world.pickups.retain(|_, p| !(p.dropped && p.item == ITEM_GOLDEN_EGG));
-    let egg = world.alloc_id();
-    world.pickups.insert(egg, Pickup { item: ITEM_GOLDEN_EGG, count: 1, position: [x, y + EGG_FLOAT, z], respawn_in: 0, dropped: true });
-    tracing::debug!(rooster = id, egg, "rooster killed");
+/// Whether entity `id` is calling (a rooster crowing), which the snapshot shows as `FLAG_CROWING`.
+pub fn calling(world: &World, id: u32) -> bool {
+    world.entities.get::<Wander>(id).is_some_and(|wander| wander.mode == WanderMode::Call)
 }
 
 /// Turns `yaw` towards `want` by at most `step`, the short way round.
@@ -125,88 +128,94 @@ pub(super) fn turn_towards(yaw: f32, want: f32, step: f32) -> f32 {
     yaw + delta.clamp(-step, step)
 }
 
-fn step_rooster(world: &mut World, id: u32, dt: f32) {
-    let Some(mut rooster) = world.roosters.get(&id).copied() else { return };
-    if !rooster.alive() {
-        rooster.respawn_in = rooster.respawn_in.saturating_sub(1);
-        world.roosters.insert(id, rooster);
-        if rooster.respawn_in == 0 {
-            place(world, id);
-        }
+fn step_wanderer(world: &mut World, id: u32, dt: f32) {
+    let (Some(mut wander), Some(mut transform), Some(Home(home))) =
+        (world.entities.get::<Wander>(id).copied(), world.entities.get::<Transform>(id).copied(), world.entities.get::<Home>(id).copied())
+    else {
         return;
-    }
-    rooster.mode_left = rooster.mode_left.saturating_sub(1);
-    match rooster.mode {
-        RoosterMode::Idle => {
-            if rooster.mode_left == 0 {
-                if world.rng.next_u64().is_multiple_of(CROW_ONE_IN) {
-                    rooster.mode = RoosterMode::Crow;
-                    rooster.mode_left = ROOSTER_CROW_TICKS;
-                } else if let Some(target) = pick_target(world, rooster.home) {
-                    rooster.mode = RoosterMode::Wander;
-                    rooster.mode_left = WALK_TIMEOUT_TICKS;
-                    rooster.target = target;
+    };
+    let gait = wander.gait;
+    wander.mode_left = wander.mode_left.saturating_sub(1);
+    match wander.mode {
+        WanderMode::Idle => {
+            if wander.mode_left == 0 {
+                if world.rng.next_u64().is_multiple_of(gait.call_one_in) {
+                    wander.mode = WanderMode::Call;
+                    wander.mode_left = gait.call_ticks;
+                } else if let Some(target) = pick_target(world, home, gait.radius) {
+                    wander.mode = WanderMode::Walk;
+                    wander.mode_left = WALK_TIMEOUT_TICKS;
+                    wander.target = target;
                 } else {
-                    rooster.mode_left = IDLE_MIN_TICKS;
+                    wander.mode_left = IDLE_MIN_TICKS;
                 }
             }
         }
-        RoosterMode::Crow => {
-            if rooster.mode_left == 0 {
-                rooster.mode = RoosterMode::Idle;
-                rooster.mode_left = IDLE_MIN_TICKS;
+        WanderMode::Call => {
+            if wander.mode_left == 0 {
+                wander.mode = WanderMode::Idle;
+                wander.mode_left = IDLE_MIN_TICKS;
             }
         }
-        RoosterMode::Wander => {
-            let [x, y, z] = rooster.position;
-            let (dx, dz) = (rooster.target[0] - x, rooster.target[1] - z);
+        WanderMode::Walk => {
+            let [x, y, z] = transform.position;
+            let (dx, dz) = (wander.target[0] - x, wander.target[1] - z);
             let distance = dx.hypot(dz);
             // Yaw 0 faces -Z, as for players: forward is (-sin yaw, -cos yaw).
             let want = (-dx).atan2(-dz);
-            rooster.yaw = turn_towards(rooster.yaw, want, ROOSTER_TURN_RATE * dt);
-            let forward = [-rooster.yaw.sin(), -rooster.yaw.cos()];
-            let aligned = (turn_towards(rooster.yaw, want, PI) - rooster.yaw).abs() < 0.5 || distance < ARRIVED;
-            let blocked = aligned
-                && world.physics.cast_ray_hit([x, y + ROOSTER_CAPSULE_CENTRE, z], [forward[0], 0.0, forward[1]], WALL_AHEAD, 0).is_some();
-            if distance < ARRIVED || blocked || rooster.mode_left == 0 {
-                world.roosters.insert(id, rooster);
+            transform.yaw = turn_towards(transform.yaw, want, gait.turn_rate * dt);
+            let forward = [-transform.yaw.sin(), -transform.yaw.cos()];
+            let aligned = (turn_towards(transform.yaw, want, PI) - transform.yaw).abs() < 0.5 || distance < ARRIVED;
+            let body = world.entities.get::<Hurtbox>(id).map_or(0.0, |hurtbox| hurtbox.centre_y);
+            let blocked = aligned && world.physics.cast_ray_hit([x, y + body, z], [forward[0], 0.0, forward[1]], WALL_AHEAD, 0).is_some();
+            if distance < ARRIVED || blocked || wander.mode_left == 0 {
+                write(world, id, wander, transform);
                 stand_about(world, id);
                 return;
             }
-            // A rooster only walks once it faces where it is going.
+            // It only walks once it faces where it is going.
             if aligned {
-                let step = (ROOSTER_SPEED * dt).min(distance);
+                let step = (gait.speed * dt).min(distance);
                 let (nx, nz) = (x + forward[0] * step, z + forward[1] * step);
-                rooster.position = [nx, world.map.ground.height_at(nx, nz), nz];
+                transform.position = [nx, world.map.ground.height_at(nx, nz), nz];
             }
         }
     }
-    world.roosters.insert(id, rooster);
+    write(world, id, wander, transform);
+}
+
+fn write(world: &mut World, id: u32, wander: Wander, transform: Transform) {
+    if let Some(mut slot) = world.entities.get_mut::<Wander>(id) {
+        *slot = wander;
+    }
+    if let Some(mut slot) = world.entities.get_mut::<Transform>(id) {
+        *slot = transform;
+    }
 }
 
 impl Mechanic for Npcs {
     fn on_start(&mut self, world: &mut World) {
         let home = home(world);
         let id = world.alloc_id();
-        let rooster = Rooster {
-            position: [home[0], 0.0, home[1]],
-            yaw: 0.0,
-            hp: ROOSTER_HP,
-            mode: RoosterMode::Idle,
-            mode_left: IDLE_MIN_TICKS,
-            target: home,
-            home,
-            respawn_in: 0,
-        };
-        world.roosters.insert(id, rooster);
-        place(world, id);
+        world.entities.spawn(id, rooster(home));
+        place_at_home(world, id);
+        // Placed, it starts out standing about, as after any respawn.
+        world.entities.remove::<Respawned>(id);
+        stand_about(world, id);
         tracing::info!(x = home[0], z = home[1], "rooster placed");
     }
 
     fn on_tick(&mut self, world: &mut World, dt: f32) {
-        let ids: Vec<u32> = world.roosters.keys().copied().collect();
-        for id in ids {
-            step_rooster(world, id, dt);
+        for id in world.entities.ids::<With<Wander>>() {
+            // Back from the dead this tick (`Life` put it home): it stands about before anything else.
+            if world.entities.get::<Respawned>(id).is_some() {
+                world.entities.remove::<Respawned>(id);
+                stand_about(world, id);
+                continue;
+            }
+            if world.entities.get::<Health>(id).is_some_and(Health::alive) {
+                step_wanderer(world, id, dt);
+            }
         }
     }
 }
@@ -215,6 +224,7 @@ impl Mechanic for Npcs {
 mod tests {
     use super::*;
     use crate::game::Game;
+    use crate::mechanics::life::{damage_entity, first_hurtbox_hit};
     use shared::items::def;
     use shared::world::{WORLD_VERSION, WorldFile};
 
@@ -223,24 +233,41 @@ mod tests {
         Game::new(map, 0).unwrap()
     }
 
-    fn rooster(game: &Game) -> (u32, Rooster) {
-        game.world.roosters.iter().next().map(|(&id, &r)| (id, r)).expect("a rooster is placed on start")
+    /// The rooster as its parts: id, where it stands, its health, its home and its mind.
+    struct Seen {
+        id: u32,
+        transform: Transform,
+        health: Health,
+        home: [f32; 2],
+        wander: Wander,
+    }
+
+    fn rooster(game: &Game) -> Seen {
+        let entities = &game.world.entities;
+        let id = *entities.ids::<With<Wander>>().first().expect("a rooster is placed on start");
+        Seen {
+            id,
+            transform: *entities.get::<Transform>(id).unwrap(),
+            health: *entities.get::<Health>(id).unwrap(),
+            home: entities.get::<Home>(id).unwrap().0,
+            wander: *entities.get::<Wander>(id).unwrap(),
+        }
     }
 
     #[test]
     fn it_lives_at_the_first_spawn_when_its_home_is_outside_the_world() {
         // The default origin is (0, 0) degrees: the coordinate is millions of metres outside.
         let game = game();
-        let (_, r) = rooster(&game);
+        let r = rooster(&game);
         assert_eq!(r.home, [10.0, -5.0]);
-        assert_eq!(r.hp, ROOSTER_HP);
+        assert_eq!(r.health.hp, ROOSTER_HP);
     }
 
     #[test]
     fn it_lives_at_its_coordinate_when_the_world_covers_it() {
         let map = WorldFile { version: WORLD_VERSION, origin: (63.8372, 20.3261), half_extent: 112_500, spawns: vec![[0, 0]], ..Default::default() };
         let game = Game::new(map, 0).unwrap();
-        let (_, r) = rooster(&game);
+        let r = rooster(&game);
         // About 396 m north (-Z) and 15 m east of the dev world's centre.
         assert!((r.home[0] - 15.2).abs() < 1.0, "x {}", r.home[0]);
         assert!((r.home[1] + 396.2).abs() < 1.0, "z {}", r.home[1]);
@@ -249,46 +276,61 @@ mod tests {
     #[test]
     fn it_meanders_near_home_and_stops_to_crow() {
         let mut game = game();
-        let (id, start) = rooster(&game);
+        let start = rooster(&game);
         let mut crowed = false;
         let mut walked = false;
         for _ in 0..(120 * TICK_RATE) {
             game.step();
-            let r = game.world.roosters[&id];
-            let from_home = (r.position[0] - r.home[0]).hypot(r.position[2] - r.home[1]);
+            let r = rooster(&game);
+            let from_home = (r.transform.position[0] - r.home[0]).hypot(r.transform.position[2] - r.home[1]);
             assert!(from_home <= ROOSTER_WANDER_RADIUS + 1.0, "strayed {from_home} m");
-            crowed |= r.mode == RoosterMode::Crow;
-            walked |= r.mode == RoosterMode::Wander;
+            crowed |= r.wander.mode == WanderMode::Call;
+            walked |= r.wander.mode == WanderMode::Walk;
         }
         assert!(crowed, "never crowed");
         assert!(walked, "never walked");
-        let now = game.world.roosters[&id].position;
-        assert_ne!(now, start.position);
+        assert_ne!(rooster(&game).transform.position, start.transform.position);
     }
 
     #[test]
     fn a_shot_rooster_drops_a_golden_egg_and_comes_back() {
         let mut game = game();
-        let (id, r) = rooster(&game);
-        game.world.pickups.clear();
+        let r = rooster(&game);
+        game.world.clear_pickups();
         // A ray through the middle of it.
-        let centre = [r.position[0], r.position[1] + ROOSTER_CAPSULE_CENTRE, r.position[2]];
-        let hit = first_rooster_hit(&game.world, [centre[0], centre[1], centre[2] + 5.0], [0.0, 0.0, -1.0], 20.0);
-        assert_eq!(hit.map(|(who, _)| who), Some(id));
+        let p = r.transform.position;
+        let centre = [p[0], p[1] + ROOSTER_CAPSULE_CENTRE, p[2]];
+        let hit = first_hurtbox_hit(&game.world, [centre[0], centre[1], centre[2] + 5.0], [0.0, 0.0, -1.0], 20.0);
+        assert_eq!(hit.map(|(who, _)| who), Some(r.id));
 
-        damage_rooster(&mut game.world, id, ROOSTER_HP);
-        assert!(!game.world.roosters[&id].alive());
-        let eggs: Vec<_> = game.world.pickups.values().filter(|p| p.item == ITEM_GOLDEN_EGG).collect();
+        assert!(damage_entity(&mut game.world, r.id, ROOSTER_HP));
+        assert!(!rooster(&game).health.alive());
+        let eggs: Vec<_> = game.world.pickup_ids().into_iter().filter_map(|pid| game.world.pickup(pid).copied()).filter(|p| p.item == ITEM_GOLDEN_EGG).collect();
         assert_eq!(eggs.len(), 1);
         assert!(eggs[0].dropped);
-        assert!(first_rooster_hit(&game.world, [centre[0], centre[1], centre[2] + 5.0], [0.0, 0.0, -1.0], 20.0).is_none(), "dead is not hit");
-        assert!(game.entity_states().iter().all(|e| e.kind != shared::protocol::KIND_ROOSTER));
+        assert!(first_hurtbox_hit(&game.world, [centre[0], centre[1], centre[2] + 5.0], [0.0, 0.0, -1.0], 20.0).is_none(), "dead is not hit");
+        assert!(game.entity_states().iter().all(|e| e.kind != KIND_ROOSTER));
 
         for _ in 0..ROOSTER_RESPAWN_TICKS {
             game.step();
         }
-        assert!(game.world.roosters[&id].alive());
-        assert!(game.entity_states().iter().any(|e| e.kind == shared::protocol::KIND_ROOSTER));
+        let back = rooster(&game);
+        assert!(back.health.alive());
+        assert_eq!(back.wander.mode, WanderMode::Idle, "back from the dead it stands about first");
+        assert!(game.entity_states().iter().any(|e| e.kind == KIND_ROOSTER));
+    }
+
+    #[test]
+    fn killed_again_it_leaves_only_one_egg_lying_about() {
+        let mut game = game();
+        let id = rooster(&game).id;
+        game.world.clear_pickups();
+        for _ in 0..3 {
+            assert!(damage_entity(&mut game.world, id, ROOSTER_HP));
+            crate::mechanics::life::place_at_home(&mut game.world, id);
+        }
+        let eggs = game.world.pickup_ids().into_iter().filter(|&pid| game.world.pickup(pid).is_some_and(|p| p.item == ITEM_GOLDEN_EGG)).count();
+        assert_eq!(eggs, 1);
     }
 
     #[test]

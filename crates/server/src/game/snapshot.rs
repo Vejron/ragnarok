@@ -4,16 +4,20 @@
 use super::*;
 
 impl Game {
-    /// Standing players (and those flying a drone, who kneel where they stood), then the living
-    /// roosters. Seated players are shown by their vehicle instead.
+    /// Standing players (and those flying a drone, who kneel where they stood), then the living ECS
+    /// creatures (roosters). Seated players are shown by their vehicle instead.
     pub fn entity_states(&self) -> Vec<EntityState> {
-        let roosters = self.world.roosters.iter().filter(|(_, rooster)| rooster.alive()).map(|(&id, rooster)| {
-            let [x, y, z] = rooster.position;
+        use crate::entities::{Health, NetKind, Transform, With};
+        let entities = &self.world.entities;
+        let creatures = entities.ids::<(With<NetKind>, With<Transform>, With<Health>)>().into_iter().filter_map(|id| {
+            entities.get::<Health>(id).filter(|health| health.alive())?;
+            let (NetKind(kind), transform) = (*entities.get::<NetKind>(id)?, entities.get::<Transform>(id)?);
+            let [x, y, z] = transform.position;
             let mut flags = FLAG_GROUNDED;
-            if rooster.mode == RoosterMode::Crow {
+            if crate::mechanics::calling(&self.world, id) {
                 flags |= FLAG_CROWING;
             }
-            EntityState { id, kind: KIND_ROOSTER, x: to_cm(x), y: to_cm(y), z: to_cm(z), yaw: to_mrad(rooster.yaw), vy: 0, flags, stance: STANCE_STANDING, knock_x: 0, knock_z: 0 }
+            Some(EntityState { id, kind, x: to_cm(x), y: to_cm(y), z: to_cm(z), yaw: to_mrad(transform.yaw), vy: 0, flags, stance: STANCE_STANDING, knock_x: 0, knock_z: 0 })
         });
         self.world
             .players
@@ -35,7 +39,7 @@ impl Game {
                 flags |= (player.held().item << FLAG_HELD_SHIFT) & FLAG_HELD_MASK;
                 EntityState { id, kind: KIND_STICKMAN, x: to_cm(c.position[0]), y: to_cm(c.position[1]), z: to_cm(c.position[2]), yaw: to_mrad(c.yaw), vy: to_cm_i16(c.vy), flags, stance: if c.chute { STANCE_CHUTE } else if c.prone { STANCE_PRONE } else { STANCE_STANDING }, knock_x: to_cm_i16(c.knock[0]), knock_z: to_cm_i16(c.knock[1]) }
             })
-            .chain(roosters)
+            .chain(creatures)
             .collect()
     }
 
@@ -102,13 +106,14 @@ impl Game {
 
     /// Items lying on the ground, ordered by id.
     pub fn pickup_states(&self) -> Vec<PickupState> {
-        self.world
-            .pickups
-            .iter()
-            .filter(|(_, pickup)| pickup.respawn_in == 0)
-            .map(|(&id, pickup)| {
-                let [x, y, z] = pickup.position.map(to_cm);
-                PickupState { id, item: pickup.item, x, y, z }
+        let world = &self.world;
+        world
+            .pickup_ids()
+            .into_iter()
+            .filter_map(|id| {
+                let pickup = world.pickup(id).filter(|pickup| pickup.respawn_in == 0)?;
+                let [x, y, z] = world.pickup_position(id)?.map(to_cm);
+                Some(PickupState { id, item: pickup.item, x, y, z })
             })
             .collect()
     }

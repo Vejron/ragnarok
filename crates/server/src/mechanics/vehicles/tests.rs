@@ -18,7 +18,7 @@ fn game() -> Game {
     };
     // Loose items would take a test's use button.
     let mut game = Game::new(map, 0).unwrap();
-    game.world.pickups.clear();
+    game.world.clear_pickups();
     game
 }
 
@@ -701,7 +701,7 @@ fn drive_into_a_pine(kind: u8, speed: f32) -> Option<(f32, f32)> {
         ..Default::default()
     };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.pickups.clear();
+    game.world.clear_pickups();
     let vid = *game.world.vehicles.iter().find(|(_, vehicle)| vehicle.kind == kind).unwrap().0;
     game.world.physics.reset_car(vid, [15.0, 1.0, 5.5], 0.0);
     for _ in 0..60 {

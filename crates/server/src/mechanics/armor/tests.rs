@@ -94,7 +94,7 @@ fn game() -> Game {
         ..Default::default()
     };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.pickups.clear();
+    game.world.clear_pickups();
     for _ in 0..90 {
         game.step();
     }

@@ -86,8 +86,7 @@ impl Game {
                 players: BTreeMap::new(),
                 vehicles: BTreeMap::new(),
                 rockets: BTreeMap::new(),
-                pickups: BTreeMap::new(),
-                roosters: BTreeMap::new(),
+                entities: Default::default(),
                 bots: BTreeMap::new(),
                 nav: Default::default(),
                 next_id: 1,
@@ -106,6 +105,8 @@ impl Game {
             world_hash,
             scenario: None,
         };
+        let names: Vec<&str> = game.mechanics.iter().map(|mechanic| mechanic.name()).collect();
+        tracing::debug!(mechanics = ?names, "room created");
         for mechanic in &mut game.mechanics {
             mechanic.on_start(&mut game.world);
         }
@@ -620,7 +621,7 @@ mod tests {
         };
         println!("world half extent {} m, {} buildings, {} trees", map.half_extent / 100, map.buildings.len(), map.trees.len());
         let mut game = Game::new(map, 0).unwrap();
-        game.world.pickups.clear();
+        game.world.clear_pickups();
         let mut inboxes = Vec::new();
         let mut ids = Vec::new();
         for _ in 0..MAX_PLAYERS {
@@ -708,7 +709,8 @@ mod tests {
             println!("tank {vid}: drove {:.0} m, fired {gun}", (pose.position[0] - start[0]).hypot(pose.position[2] - start[2]));
         }
         let budget = Duration::from_secs_f64(1.0 / TICK_RATE as f64);
-        println!("per mechanic per tick (Bots, Spawn, Pickups, Drones, Vehicles, Gunnery, Movement, Npcs, Combat): {:?}", per_mechanic.iter().map(|d| *d / ticks).collect::<Vec<_>>());
+        let names: Vec<&str> = game.mechanics.iter().map(|mechanic| mechanic.name()).collect();
+        println!("per mechanic per tick ({}): {:?}", names.join(", "), per_mechanic.iter().map(|d| *d / ticks).collect::<Vec<_>>());
         println!("mechanics: avg {:?}, worst {:?}; snapshots for the room: avg {:?} per call (every {SNAPSHOT_EVERY} ticks); budget {budget:?}", step_total / ticks, step_max, snap_total / (ticks / SNAPSHOT_EVERY));
     }
 }

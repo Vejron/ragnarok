@@ -21,7 +21,7 @@ fn game(wall: bool) -> Game {
         map.collision = CollisionMesh { vertices, triangles };
     }
     let mut game = Game::new(map, 0).unwrap();
-    game.world.pickups.clear();
+    game.world.clear_pickups();
     game
 }
 

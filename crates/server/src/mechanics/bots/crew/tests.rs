@@ -20,7 +20,7 @@ fn game(wall: bool, roads: Vec<Road>) -> Game {
         map.collision = CollisionMesh { vertices, triangles };
     }
     let mut game = Game::new(map, 0).unwrap();
-    game.world.pickups.clear();
+    game.world.clear_pickups();
     game
 }
 

@@ -6,6 +6,7 @@ mod bots;
 mod combat;
 mod drones;
 mod gunnery;
+mod life;
 mod movement;
 mod npcs;
 mod pickups;
@@ -18,8 +19,9 @@ pub use combat::{Combat, position_of};
 pub use combat::damage_vehicle;
 pub use drones::Drones;
 pub use gunnery::Gunnery;
+pub use life::Life;
 pub use movement::Movement;
-pub use npcs::Npcs;
+pub use npcs::{Npcs, calling};
 pub use pickups::Pickups;
 pub use spawn::{Spawn, usable as spawn_usable};
 pub use vehicles::{Vehicles, add_tank, remove_vehicle, seat};
@@ -27,6 +29,11 @@ pub use vehicles::{Vehicles, add_tank, remove_vehicle, seat};
 use crate::game::World;
 
 pub trait Mechanic: Send {
+    /// Its name, for timings and logs.
+    fn name(&self) -> &'static str {
+        let path = std::any::type_name::<Self>();
+        path.rsplit("::").next().unwrap_or(path)
+    }
     /// The room was just created, before any player joined.
     fn on_start(&mut self, _world: &mut World) {}
     /// A player entity was just created (at the origin, with no input yet).
@@ -37,8 +44,14 @@ pub trait Mechanic: Send {
     fn on_tick(&mut self, _world: &mut World, _dt: f32) {}
 }
 
+/// Registers the components mechanics own with the room's ECS world (see `entities`).
+pub fn register_components(ecs: &mut bevy_ecs::world::World) {
+    ecs.register_component::<npcs::Wander>();
+    ecs.register_component::<pickups::Pickup>();
+}
+
 /// The mechanics a room runs, in tick order. `Bots` goes first: it writes the bots' input, which
-/// everything after reads as it reads anyone's.
+/// everything after reads as it reads anyone's. `Life` brings the dead back before `Npcs` moves them.
 pub fn default_mechanics() -> Vec<Box<dyn Mechanic>> {
-    vec![Box::new(Bots), Box::new(Spawn), Box::new(Pickups), Box::new(Drones), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement), Box::new(Npcs), Box::new(Combat)]
+    vec![Box::new(Bots), Box::new(Spawn), Box::new(Pickups), Box::new(Drones), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement), Box::new(Life), Box::new(Npcs), Box::new(Combat)]
 }

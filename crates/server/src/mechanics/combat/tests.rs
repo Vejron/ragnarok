@@ -10,7 +10,7 @@ fn game() -> Game {
     let map = WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[0, 0]], ..Default::default() };
     // Loose items would take a test's use button.
     let mut game = Game::new(map, 0).unwrap();
-    game.world.pickups.clear();
+    game.world.clear_pickups();
     game
 }
 
@@ -656,7 +656,7 @@ fn game_with_tree() -> (Game, Obj) {
     let id = ObjId { col: 2, row: 3, index: 0 };
     let map = WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[0, 0]], trees: vec![tree], tree_ids: vec![id], ..Default::default() };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.pickups.clear();
+    game.world.clear_pickups();
     (game, Obj::Tree(id))
 }
 
@@ -708,7 +708,7 @@ fn a_car_at_speed_fells_the_tree_it_drives_into() {
     let tree_ids = (0..4).map(|index| ObjId { col: 2, row: 3, index }).collect();
     let map = WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[0, 0]], trees, tree_ids, ..Default::default() };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.pickups.clear();
+    game.world.clear_pickups();
     let (_, driver) = driver_in_the_car(&mut game);
     for seq in 1..=TICK_RATE * 6 {
         game.handle(Command::Input(driver, 0, vec![InputFrame { seq, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
@@ -787,7 +787,7 @@ fn game_with_house() -> (Game, Obj) {
         ..Default::default()
     };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.pickups.clear();
+    game.world.clear_pickups();
     (game, Obj::Building(id))
 }
 

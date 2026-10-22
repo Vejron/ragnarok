@@ -18,7 +18,8 @@ pub use crew::{DRIVER, GUNNER, nearest_waypoint};
 
 use super::Mechanic;
 use super::combat::same_team;
-use super::npcs::{open_ground, turn_towards};
+use super::life::open_ground;
+use super::npcs::turn_towards;
 use crate::game::{Bot, BotMode, Noise, World};
 use shared::consts::*;
 use shared::items::{HOTBAR_SLOTS, ITEM_AK5, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, ItemDef, ItemKind, def};
