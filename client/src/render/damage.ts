@@ -40,7 +40,7 @@ const FALLEN_CELLS = 108
 /** How hard a broken piece is thrown from the blast, m/s. */
 const THROW = 3
 /** How fast a piece that lost its hold slides towards the gap, metres a second. */
-const LEAN_SPEED = 1.6
+const LEAN_SPEED = 0.7
 
 /** A shard that broke away, on its way down or lying where it fell. */
 interface Falling {
@@ -352,7 +352,7 @@ export class BuildingDamage {
       // A piece that lost its hold tips over towards the gap, top first, and slides that way a little.
       const lean = falls ? leanOf(shell, group, removed) : null
       if (lean) {
-        const rate = 0.7 + this.rand() * 0.6
+        const rate = 0.3 + this.rand() * 0.3
         spin.x += lean[1] * rate
         spin.z -= lean[0] * rate
         velocity.x += lean[0] * LEAN_SPEED * (0.6 + this.rand() * 0.8)

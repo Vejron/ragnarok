@@ -73,13 +73,13 @@ pub struct Hold {
 /// The `span` of a cell no chain of cells joins to an anchor.
 const UNHELD: u16 = u16::MAX;
 /// How much longer a cell's chain to an anchor may get than in the whole building before it lets
-/// go: 5 cells sideways, about 3.6 m of roof or floor hanging out past its last support.
-const SPAN_SLACK: u16 = 10;
+/// go: 6 cells sideways, about 4.3 m of roof or floor hanging out past its last support.
+const SPAN_SLACK: u16 = 12;
 /// A cell fails when it carries more than `LOAD_FACTOR_PERCENT` percent of what it did in the whole building,
 /// plus `LOAD_SLACK`: the pillar left holding up a roof that a wall shared with it.
-const LOAD_FACTOR_PERCENT: u32 = 250;
+const LOAD_FACTOR_PERCENT: u32 = 300;
 /// Most that one check takes of the cells standing, percent, and at least this many cells.
-const SHED_SHARE: usize = 8;
+const SHED_SHARE: usize = 5;
 const SHED_LEAST: usize = 40;
 const LOAD_SLACK: u32 = 4;
 
@@ -1122,7 +1122,7 @@ mod tests {
         let cut = shell.strain(&mut removed, &whole);
         assert!(!cut.fell.is_empty(), "the roof hangs 12 m from its ends");
         assert!(cut.blasted.is_empty());
-        assert!(cut.fell.iter().filter(|&&id| shell.is_roof(id)).count() > 100, "the roof comes down");
+        assert!(cut.fell.iter().any(|&id| shell.is_roof(id)), "the roof starts to come down");
         assert_eq!(shell.standing(&removed), before - cut.fell.len());
         // It keeps shedding what it cannot hold, a round at a time, and ends standing.
         let mut rounds = 0;
@@ -1131,6 +1131,8 @@ mod tests {
             assert!(rounds < 50, "never settles");
         }
         assert!(shell.standing(&removed) > 0, "the ends and what hangs from them are left");
+        let roof_left = shell.solid_cells().into_iter().filter(|&id| shell.is_roof(id) && !removed[id as usize]).count();
+        assert!(roof_left < shell.solid_cells().into_iter().filter(|&id| shell.is_roof(id)).count() * 2 / 3, "the middle of the roof is gone: {roof_left}");
     }
 
     #[test]
