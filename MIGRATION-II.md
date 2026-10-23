@@ -116,14 +116,14 @@ touches no file under `mechanics/combat*`.
 everything else. Measure: `SelfState`, `DriveState` and the `me`/`drive` snapshot fields are gone.
 A new private fact is one component with an `owner` flag.
 
-- [ ] 3.1 An `owner_only` marker in the replicated schema (`shared::replicated`): such a component
+- [x] 3.1 An `owner_only` marker in the replicated schema (`shared::replicated`): such a component
       goes only to the receiver who owns the entity. The owner is the player's own entity, or the
       vehicle they drive. The marker is generated to the client like the rest.
-- [ ] 3.2 `Vitals { hp, progress }` and `Hotbar { slots }` on the player's entity, owner-only. Health
+- [x] 3.2 `Vitals { hp, progress }` and `Hotbar { slots }` on the player's entity, owner-only. Health
       may then simply be `Vitals`; decide when Phase 2's `Health` is in.
-- [ ] 3.3 `Motion { v, w, steer, spin }` on a driven vehicle, owner-only to its driver.
+- [x] 3.3 `Motion { v, w, steer, spin }` on a driven vehicle, owner-only to its driver.
       `VehicleDriver` reads it from the entity store.
-- [ ] 3.4 Remove `me` and `drive` from `Snapshot` and the codec; bump `PROTOCOL_VERSION`. Measure
+- [x] 3.4 Remove `me` and `drive` from `Snapshot` and the codec; bump `PROTOCOL_VERSION`. Measure
       bytes: the hotbar is now sent when it changes, not every snapshot, so they should fall.
 
 `ack` and `ride` stay in the header: they are facts about the receiver's connection, not about an
@@ -278,4 +278,36 @@ boxes by pointing them here.
 
 Phases 1 and 2 are done: no `World::hits`, `kills` or `noises`, and one hit test, one damage path and
 one death for everything that can be hurt. Not played yet: the merge play session at the end
-(see **After**) is where these get tried by hand.
+(see **After**) is where these get tried by hand. The user played them on 2026-10-23: they work.
+
+- **3.1 to 3.4.** Owner-only components, protocol 40. An entry in `replicated!` marked `[owner]`
+  (`Component::OWNER`, `OWNER_MASK`, and `owner` in the client's `SCHEMA`) goes only to the player who
+  owns the entity: themself, and the vehicle they drive (`Game::owned`). `Replicated::public` is the
+  entity without them, which is what everyone else is sent.
+  - Three components: `Vitals { hp, progress }` and `Hotbar { slots }` on every player's entity, and
+    `Drive { vx, vy, vz, wx, wy, wz, steer, spin }` on a vehicle a player drives. `SelfState`,
+    `DriveState` and the snapshot's `me` and `drive` are gone, and the snapshot is nine fields. The
+    client reads its health and hotbar from its own entity and its car's motion from the car
+    (`DriveState` is now `Entity['drive']`, in game units, from `units.ts`).
+  - Names: the plan's `Motion` is `Drive`, since `Motion` is the stickman's. `Vitals` stays apart from
+    `Health`: owner-only is per component, and a vehicle's health is public.
+  - `Drive` is sent whole, not as a difference: its difference form made every `Update` 36 bytes
+    bigger for something only drivers get. `Hotbar` holds `[ItemSlot; HOTBAR_SLOTS]`, not a `Vec`,
+    so copying one costs no allocation; the wire is the same five slots.
+  - A seated player is listed with their owner components only (no `place`), so the client still gets
+    them; presenters want a `place`, so it draws nothing. What a player owns is sent to them wherever it
+    is. One change: a loitering drone's pilot is now always sent their own body, which interest could
+    leave out before. Their client draws that body itself, so nothing shows differently.
+  - Performance. With the three components, `Replicated` grew from 136 to 184 bytes, and copying it
+    got twice as dear (a micro-benchmark: 1.2 to 2.6 µs a scene of 150). Just one more two-byte
+    component costs most of that, so it is the copy and not the data. Snapshots for the room went
+    from about 570 to 670 µs a call. So the copies are gone: `replication::ready` puts each entity
+    in an `Arc` once a round (public, and whole for its owner), and every receiver's scene and stored
+    baseline share them. `diff` takes either form. Snapshots are encoded from borrowed lists
+    (`SnapshotOut`), not copied for each try at fitting.
+  - Measured against the previous commit in a worktree, alternating, three rounds: snapshots for the
+    room 484 to 497 µs a call against 644 to 668 µs (25% less). `full_room_tick_cost` now also counts
+    bytes: 810 to 814 a player a snapshot against 833 to 837. The header's hotbar was sent every
+    snapshot; now it is sent when it changes. 30 runners: 222 bytes a snapshot against 227. Mechanics
+    untouched, 1.63 to 1.76 ms with the machine's noise. Server tests 275 (one new), shared 70 (one
+    new), client 58 files, 428 tests; clippy clean.

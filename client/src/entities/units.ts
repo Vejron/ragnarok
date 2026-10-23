@@ -29,6 +29,12 @@ export type Entity = Omit<Components, 'orientation'> & { orientation?: Rotation 
 export type Turret = NonNullable<Entity['turret']>
 /** A plane's pilot weapons and engine, or a hen's eggs (`arms`), heat as 0..1. */
 export type Arms = NonNullable<Entity['arms']>
+/**
+ * The exact motion of the vehicle the local player drives, which its pose does not carry (`drive`, sent
+ * to its driver alone): m/s, rad/s, the front wheels' angle (+ is right) and the yaw rate a tank has
+ * ramped to (+ is clockwise).
+ */
+export type DriveState = NonNullable<Entity['drive']>
 /** Where a seat's rider looks, in radians, and what they hold (`crew`). */
 export type Rider = NonNullable<Entity['crew']>['riders'][number]
 

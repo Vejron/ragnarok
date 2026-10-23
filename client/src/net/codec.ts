@@ -1,6 +1,5 @@
 import { decode, encode } from '@msgpack/msgpack'
 import { MAX_PACKET, PROTOCOL_VERSION } from '@/sim/consts'
-import { HOTBAR_SLOTS, type ItemSlot } from '@/sim/items'
 import { decodeUpdates, type Update } from './replicated'
 
 /**
@@ -180,23 +179,6 @@ export interface BulletSpawn {
   tick: number
 }
 
-/**
- * The exact motion of the vehicle the local player drives, which its pose does not carry. Present
- * only in the driver's snapshots. Source units: m/s, rad/s, radians.
- */
-export interface DriveState {
-  vx: number
-  vy: number
-  vz: number
-  wx: number
-  wy: number
-  wz: number
-  /** Front wheel angle, + is right. */
-  steer: number
-  /** The yaw rate a tank has ramped to, + is clockwise. */
-  spin: number
-}
-
 /** A rifle shot, for drawing its tracer: from the shooter to where it ended, in metres. */
 /** Something that happened: a rifle shot (a tracer to x, y, z), or a rocket or wreck bursting there. */
 export interface ShotEvent {
@@ -263,13 +245,6 @@ export type ServerMessage =
       updates: Update[]
       /** Ids that were in the baseline and are not any more. */
       removed: number[]
-      drive: DriveState | null
-      /** The local player's own health; 0 is dead. */
-      hp: number
-      /** How far a reload or a bandage has got, 0..255, or 0 when neither is going on. */
-      progress: number
-      /** The local player's hotbar. */
-      inventory: ItemSlot[]
       shots: ShotEvent[]
       bullets: BulletSpawn[]
     }
@@ -343,29 +318,6 @@ function decodeBullet(raw: unknown): BulletSpawn | null {
 }
 
 
-/** `[hp, progress, [[item, count, ammo], ...]]`: what the server tells a player about themselves. */
-function decodeSelf(raw: unknown): { hp: number; progress: number; inventory: ItemSlot[] } | null {
-  if (!Array.isArray(raw) || raw.length !== 3 || !isInt(raw[0]) || !isInt(raw[1]) || !Array.isArray(raw[2])) return null
-  if (raw[2].length > HOTBAR_SLOTS) return null
-  const inventory: ItemSlot[] = []
-  for (const slot of raw[2] as unknown[]) {
-    if (!Array.isArray(slot) || slot.length !== 3 || !ints(slot)) return null
-    inventory.push({ item: slot[0] as number, count: slot[1] as number, ammo: slot[2] as number })
-  }
-  return { hp: raw[0], progress: raw[1], inventory }
-}
-
-
-function decodeDrive(raw: unknown): DriveState | null | undefined {
-  if (raw === null) return null
-  if (!Array.isArray(raw) || raw.length !== 8 || !ints(raw)) return undefined
-  const [vx, vy, vz, wx, wy, wz, steer, spin] = raw as number[]
-  return { vx: vx! / CM, vy: vy! / CM, vz: vz! / CM, wx: wx! / MRAD, wy: wy! / MRAD, wz: wz! / MRAD, steer: steer! / MRAD, spin: spin! / MRAD }
-}
-
-
-
-
 /** Decodes any server message, or returns null for anything malformed or unknown. */
 export function decodeServer(bytes: Uint8Array): ServerMessage | null {
   if (bytes.byteLength > MAX_PACKET * 4) return null
@@ -384,28 +336,24 @@ export function decodeServer(bytes: Uint8Array): ServerMessage | null {
         return { type: 'welcome', version: version!, id: id!, tickRate: tickRate!, snapshotEvery: snapshotEvery!, worldHash: worldHash! }
       }
     case S_SNAPSHOT: {
-      if (raw.length !== 11 || !isInt(raw[1]) || !isInt(raw[2]) || !isInt(raw[3]) || !isInt(raw[4])) return null
+      if (raw.length !== 9 || !isInt(raw[1]) || !isInt(raw[2]) || !isInt(raw[3]) || !isInt(raw[4])) return null
       const updates = decodeUpdates(raw[5])
       const removed = raw[6]
-      if (!updates || !Array.isArray(removed) || !ints(removed)) return null
-      const drive = decodeDrive(raw[7])
-      const me = decodeSelf(raw[8])
-      if (drive === undefined || !me || !Array.isArray(raw[9]) || !Array.isArray(raw[10])) return null
+      if (!updates || !Array.isArray(removed) || !ints(removed) || !Array.isArray(raw[7]) || !Array.isArray(raw[8])) return null
       const shots: ShotEvent[] = []
-      for (const item of raw[9] as unknown[]) {
+      for (const item of raw[7] as unknown[]) {
         const shot = decodeShot(item)
         if (!shot) return null
         shots.push(shot)
       }
       const bullets: BulletSpawn[] = []
-      for (const item of raw[10] as unknown[]) {
+      for (const item of raw[8] as unknown[]) {
         const bullet = decodeBullet(item)
         if (!bullet) return null
         bullets.push(bullet)
       }
       return {
-        type: 'snapshot', tick: raw[1], baseline: raw[2], ack: raw[3], ride: raw[4], updates, removed: removed as number[], drive,
-        hp: me.hp, progress: me.progress, inventory: me.inventory, shots, bullets,
+        type: 'snapshot', tick: raw[1], baseline: raw[2], ack: raw[3], ride: raw[4], updates, removed: removed as number[], shots, bullets,
       }
     }
     case S_PONG:

@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import {
-  FLAG_GROUNDED, encodeInput, encodePing, toAxis, toMrad, type DriveState, type InputFrame, type ServerMessage, } from './net/codec'
+  FLAG_GROUNDED, encodeInput, encodePing, toAxis, toMrad, type InputFrame, type ServerMessage, } from './net/codec'
+import type { DriveState } from './entities/units'
 import { Backoff } from './net/backoff'
 import { RttEstimator, ServerClock } from './net/clock'
 import { Transport } from './net/transport'
@@ -407,21 +408,27 @@ export class Game {
         if (!rebuilt) return
         this.store.push(message.tick, rebuilt.scene, rebuilt.latest)
         this.clock.observe(message.tick, now)
-        this.setHealth(message.hp, now)
-        this.progress = message.progress / 255
-        this.hotbar = [...message.inventory, ...emptyHotbar()].slice(0, HOTBAR_SLOTS)
+        // What only we are told comes as our own entity's components, sent to us wherever we are.
+        const listed = rebuilt.scene.get(this.localId)
+        const own = listed && inGameUnits(listed)
+        if (own?.vitals) {
+          this.setHealth(own.vitals.hp, now)
+          this.progress = own.vitals.progress
+        }
+        if (own?.hotbar) this.hotbar = [...own.hotbar.slots, ...emptyHotbar()].slice(0, HOTBAR_SLOTS)
         this.events.receive(message.tick, message.shots, message.bullets)
         // Vehicles are solid to the predicted stickman, at the pose of the newest snapshot.
         this.refPoses.clear()
         let mount: VehiclePose | null = null
         let index = -1
+        let drive: DriveState | undefined
         for (const [id, wire] of rebuilt.scene) {
           if (!wire.orientation || !wire.place) continue
           const vehicle = inGameUnits(wire)
           const pose = poseOf(id, vehicle)
           this.refPoses.set(id, pose)
           const seat = vehicle.seats?.riders.indexOf(this.localId) ?? -1
-          if (seat >= 0) [mount, index] = [pose, seat]
+          if (seat >= 0) [mount, index, drive] = [pose, seat, vehicle.drive]
         }
         this.motor?.setVehicles([...this.refPoses.values()].map((pose) => {
           const [vx, vz] = this.store.latestVelocity(pose.id) ?? [0, 0]
@@ -431,14 +438,12 @@ export class Game {
         this.seat = mount ? { vehicle: mount.id, kind: mount.kind, index } : null
         // A door closing, for getting in or out (not for hopping seats).
         if (wasSeated !== (this.seat !== null) && this.hp > 0) this.sounds.door()
-        const listed = rebuilt.scene.get(this.localId)
-        const own = listed && inGameUnits(listed)
-        if (mount && this.seat?.index === 0 && !vehicleDef(mount.kind).towed && message.drive) {
+        if (mount && this.seat?.index === 0 && !vehicleDef(mount.kind).towed && drive) {
           // Replaying the unacknowledged inputs steps the whole physics world once each, so it waits
           // for the next frame: a backlog of snapshots (a busy main thread) is then one replay, not
           // one per snapshot, which would only make the thread busier.
           this.driver?.acknowledge(message.ack)
-          this.driverSnapshot = { ack: message.ack, vehicle: mount, drive: message.drive }
+          this.driverSnapshot = { ack: message.ack, vehicle: mount, drive }
         } else {
           this.driverSnapshot = null
           this.driver?.leave()

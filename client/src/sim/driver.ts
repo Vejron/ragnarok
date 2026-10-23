@@ -1,7 +1,8 @@
 import * as THREE from 'three'
 import { TICK_DT, ROADSTER_AIR } from './consts'
 import { controlsOf, type CarBodyState, type SimMotor, type VehiclePose } from './motor'
-import type { DriveState, InputFrame } from '@/net/codec'
+import type { InputFrame } from '@/net/codec'
+import type { DriveState } from '@/entities/units'
 
 /** A correction larger than this is a teleport (respawn, unflip), not a misprediction: snap. */
 const SNAP_DISTANCE = 3

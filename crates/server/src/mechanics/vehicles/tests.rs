@@ -152,10 +152,10 @@ fn the_driver_steers_and_passengers_ride_along() {
     assert_eq!(rider_at, end.position, "passengers move with the car");
 
     // Only the driver is told the car's exact motion, so they can predict it.
-    let drive = game.drive_state(driver).expect("the driver gets the car's motion");
+    let drive = game.told(driver, vid).and_then(|car| car.drive).expect("the driver gets the car's motion");
     let speed_cm = (drive.vx as f32).hypot(drive.vz as f32);
     assert!(speed_cm > 500.0, "driving at over 5 m/s: {drive:?}");
-    assert_eq!(game.drive_state(rider), None);
+    assert_eq!(game.told(rider, vid).expect("the rider sees the car").drive, None);
 }
 
 #[test]
@@ -185,7 +185,7 @@ fn a_pilot_lifts_off_with_one_passenger() {
     let end = game.world.physics.car_pose(vid).unwrap();
     assert!(end.position[1] > start.position[1] + 3.0, "climbed from {} to {}", start.position[1], end.position[1]);
     assert_eq!(game.world.entities.of::<Player>(rider).character.position, end.position, "the passenger goes up with it");
-    let drive = game.drive_state(pilot).expect("the pilot gets the motion");
+    let drive = game.told(pilot, vid).and_then(|heli| heli.drive).expect("the pilot gets the motion");
     assert!(drive.vy > 100, "climbing at over 1 m/s: {drive:?}");
 
     // Let go of the stick: it hovers where it is.
@@ -630,7 +630,7 @@ fn a_pilot_and_a_gunner_take_a_plane_off_and_a_third_stays_behind() {
     let flying = game.world.physics.car_pose(vid).unwrap();
     assert!(flying.position[1] > start.position[1] + 5.0 && flying.forward_speed > PLANE_STALL_SPEED, "{start:?} -> {flying:?}");
     assert_eq!(game.world.entities.of::<Player>(gunner).character.position, flying.position, "the gunner goes up with it");
-    assert!(game.drive_state(pilot).is_some(), "the pilot predicts the plane");
+    assert!(game.told(pilot, vid).and_then(|plane| plane.drive).is_some(), "the pilot predicts the plane");
 }
 
 #[test]

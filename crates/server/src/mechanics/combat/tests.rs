@@ -223,9 +223,12 @@ fn snapshots_carry_own_health_and_shot_events() {
         })
         .collect();
     assert!(!snapshots.is_empty());
-    assert!(snapshots.iter().all(|s| s.me.hp == PLAYER_MAX_HP));
-    let last = snapshots.last().unwrap();
-    assert_eq!(last.me.slots[0], ItemSlot { item: ITEM_AK5, count: 1, ammo: ak5().mag - 1 }, "own hotbar, with a round fired");
+    // Own health and hotbar come as the shooter's own components, whole when they change.
+    let mine: Vec<_> = snapshots.iter().filter_map(|s| s.updates.iter().find(|update| update.id == shooter)).collect();
+    assert!(mine[0].vitals.is_some() && mine[0].hotbar.is_some(), "the first brings them");
+    assert!(mine.iter().filter_map(|update| update.vitals.as_ref()).all(|vitals| vitals.hp == PLAYER_MAX_HP));
+    let hotbar = mine.iter().rev().find_map(|update| update.hotbar.as_ref()).unwrap();
+    assert_eq!(hotbar.slots[0], ItemSlot { item: ITEM_AK5, count: 1, ammo: ak5().mag - 1 }, "own hotbar, with a round fired");
     let shots: Vec<_> = snapshots.iter().flat_map(|s| s.shots.iter()).collect();
     assert_eq!(shots.len(), 1, "one shot in six ticks at this cooldown, announced where it landed");
     assert_eq!(shots[0].weapon, WEAPON_BULLET);

@@ -26,6 +26,9 @@ export function toGame(w: Components): Entity {
     kind: w.kind,
     projectile: w.projectile,
     pickup: w.pickup,
+    vitals: w.vitals && { hp: w.vitals.hp, progress: w.vitals.progress / 255 },
+    hotbar: w.hotbar,
+    drive: w.drive && { vx: w.drive.vx / 100, vy: w.drive.vy / 100, vz: w.drive.vz / 100, wx: w.drive.wx / 1000, wy: w.drive.wy / 1000, wz: w.drive.wz / 1000, steer: w.drive.steer / 1000, spin: w.drive.spin / 1000 },
   }
 }
 
@@ -54,5 +57,8 @@ export function blend(a: Entity, b: Entity, t: number): Entity {
     kind: near.kind,
     projectile: near.projectile,
     pickup: near.pickup,
+    vitals: near.vitals,
+    hotbar: a.hotbar && b.hotbar ? (a.hotbar === b.hotbar ? b.hotbar : { slots: items(a.hotbar.slots, b.hotbar.slots, (p, q) => ({ item: t < 0.5 ? p.item : q.item, count: t < 0.5 ? p.count : q.count, ammo: t < 0.5 ? p.ammo : q.ammo })) }) : near.hotbar,
+    drive: a.drive && b.drive ? (a.drive === b.drive || (a.drive.vx === b.drive.vx && a.drive.vy === b.drive.vy && a.drive.vz === b.drive.vz && a.drive.wx === b.drive.wx && a.drive.wy === b.drive.wy && a.drive.wz === b.drive.wz && a.drive.steer === b.drive.steer && a.drive.spin === b.drive.spin) ? b.drive : { vx: lerp(a.drive.vx, b.drive.vx, t), vy: lerp(a.drive.vy, b.drive.vy, t), vz: lerp(a.drive.vz, b.drive.vz, t), wx: angle(a.drive.wx, b.drive.wx, t), wy: angle(a.drive.wy, b.drive.wy, t), wz: angle(a.drive.wz, b.drive.wz, t), steer: angle(a.drive.steer, b.drive.steer, t), spin: angle(a.drive.spin, b.drive.spin, t) }) : near.drive,
   }
 }

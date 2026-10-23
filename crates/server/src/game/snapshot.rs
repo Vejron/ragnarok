@@ -1,5 +1,4 @@
-//! Sending each player's snapshot: the world as components (`replicate.rs`) and the per-player part
-//! (own state, driver motion) that goes with it.
+//! Sending each player's snapshot: the world as components (`replicate.rs`), with what only they own.
 
 use super::*;
 
@@ -7,14 +6,20 @@ use super::*;
 /// what a client is shown.
 #[cfg(test)]
 impl Game {
-    /// What a client is told of entity `id`, if anything.
+    /// What a client other than its owner is told of entity `id`, if anything.
     pub fn seen(&self, id: u32) -> Option<shared::replicated::Replicated> {
-        self.replicated().into_iter().find(|(seen, _)| *seen == id).map(|(_, entity)| entity)
+        self.seen_where(|_| true).into_iter().find(|(seen, _)| *seen == id).map(|(_, entity)| entity)
     }
 
-    /// The replicated entities `which` picks, by id.
+    /// What player `receiver` is told of entity `id`, if anything: all of it if they own it.
+    pub fn told(&self, receiver: u32, id: u32) -> Option<shared::replicated::Replicated> {
+        let entity = self.replicated().into_iter().find(|(seen, _)| *seen == id)?.1;
+        if self.owned(receiver).contains(&Some(id)) { Some(entity) } else { Some(entity.public()).filter(|entity| entity.place.is_some()) }
+    }
+
+    /// The replicated entities `which` picks, by id, as anyone but their owner is told them.
     pub fn seen_where(&self, which: impl Fn(&shared::replicated::Replicated) -> bool) -> Vec<(u32, shared::replicated::Replicated)> {
-        self.replicated().into_iter().filter(|(_, entity)| which(entity)).collect()
+        self.replicated().into_iter().map(|(id, entity)| (id, entity.public())).filter(|(_, entity)| entity.place.is_some() && which(entity)).collect()
     }
 
     /// Stickmen and creatures of `kind` on foot.
@@ -36,20 +41,8 @@ impl Game {
 }
 
 impl Game {
-    /// The motion of the vehicle `id` drives, for their own prediction; `None` for anyone else.
-    pub(crate) fn drive_state(&self, id: u32) -> Option<DriveState> {
-        let seat = self.world.entities.get::<Player>(id)?.seat?;
-        if seat.index != 0 {
-            return None;
-        }
-        let motion = self.world.physics.car_motion(seat.vehicle)?;
-        let [vx, vy, vz] = motion.linvel.map(to_cm_i16);
-        let [wx, wy, wz] = motion.angvel.map(to_milli_i16);
-        Some(DriveState { vx, vy, vz, wx, wy, wz, steer: to_milli_i16(motion.steer), spin: to_milli_i16(motion.spin) })
-    }
-
     pub(super) fn send_snapshots(&mut self) {
-        let scene = self.replicated();
+        let scene = crate::replication::ready(self.replicated());
         let mut shots = std::mem::take(&mut self.world.shots);
         shots.truncate(MAX_SHOT_EVENTS);
         // Each bullet goes out in a couple of snapshots, so a lost datagram does not lose it.
@@ -60,12 +53,9 @@ impl Game {
         let ids: Vec<u32> = self.outboxes.keys().copied().collect();
         for id in ids {
             let Some(player) = self.world.entities.get::<Player>(id) else { continue };
-            let own = Own { tick: self.world.tick, ack: player.ack, ride: player.character.ride, drive: self.drive_state(id),
-                me: SelfState { hp: self.world.entities.get::<crate::entities::Health>(id).map_or(0, |health| health.hp), progress: progress(player), slots: player.hotbar.to_vec() },
-            };
+            let own = Own { tick: self.world.tick, ack: player.ack, ride: player.character.ride, owned: self.owned(id) };
             // Seated players ride with their vehicle, so the vehicle's position is theirs. A drone's
-            // pilot sees what it sees. An FPV drone's range keeps their body in the picture too; a
-            // loitering drone can take it out, which their client, drawing the body itself, does not mind.
+            // pilot sees what it sees; what they own (their body among it) is sent wherever it is.
             let remote = player.seat.filter(|seat| seat.remote).and_then(|seat| self.world.physics.car_pose(seat.vehicle));
             let here = remote.map_or(player.character.position, |pose| pose.position);
             let at = [here[0], here[2]];
@@ -75,18 +65,4 @@ impl Game {
             let _ = outbox.try_send(Outgoing::Datagram(snapshot.into()));
         }
     }
-}
-
-/// How far the player's reload or bandage has got, 0..=255, or 0 when neither is going on.
-fn progress(player: &Player) -> u8 {
-    use shared::items::{BANDAGE_TICKS, def};
-    let (left, total) = if player.channel_left > 0 {
-        (player.channel_left, BANDAGE_TICKS)
-    } else if player.reload_left > 0 {
-        (player.reload_left, def(player.held().item).map_or(1, |d| d.reload_ticks.max(1)))
-    } else {
-        return 0;
-    };
-    let done = 1.0 - left as f32 / total as f32;
-    ((done * 255.0).round() as u8).max(1)
 }

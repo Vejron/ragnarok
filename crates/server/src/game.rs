@@ -675,6 +675,7 @@ mod tests {
         println!("{} people, {bots} bots, {} tanks", ids.len(), crews.len());
         let (mut step_total, mut step_max, mut snap_total) = (Duration::ZERO, Duration::ZERO, Duration::ZERO);
         let mut after_total = Duration::ZERO;
+        let (mut datagram_bytes, mut datagrams) = (0usize, 0usize);
         let ticks = 600u32;
         let mut per_mechanic = vec![Duration::ZERO; game.mechanics.len()];
         for t in 1..=ticks {
@@ -717,7 +718,11 @@ mod tests {
                 snap_total += started.elapsed();
             }
             for inbox in &mut inboxes {
-                while inbox.try_recv().is_ok() {}
+                while let Ok(out) = inbox.try_recv() {
+                    if let Outgoing::Datagram(bytes) = out {
+                        (datagram_bytes, datagrams) = (datagram_bytes + bytes.len(), datagrams + 1);
+                    }
+                }
             }
         }
         for (vid, start) in crews {
@@ -730,6 +735,7 @@ mod tests {
         println!("per mechanic per tick ({}): {:?}", names.join(", "), per_mechanic.iter().map(|d| *d / ticks).collect::<Vec<_>>());
         println!("after the mechanics (reactions, feedback, events, trails): {:?}", after_total / ticks);
         println!("tick: avg {:?}, worst {:?}; snapshots for the room: avg {:?} per call (every {SNAPSHOT_EVERY} ticks); budget {budget:?}", step_total / ticks, step_max, snap_total / (ticks / SNAPSHOT_EVERY));
+        println!("snapshot bytes: {} a player a snapshot, over {datagrams}", datagram_bytes / datagrams.max(1));
         // What reading the world for snapshots costs, once per snapshot.
         let runs = 200u32;
         let started = Instant::now();

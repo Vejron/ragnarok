@@ -3,6 +3,10 @@
 //! flying a drone, who kneel where they stood), living creatures, vehicles with a body, projectiles
 //! but gun rounds (clients fly those from their `BulletSpawn`), and items lying on the ground.
 //! Seated players are shown by their vehicle's `seats` and `crew`.
+//!
+//! Every player also carries their own `vitals` and `hotbar`, and a driven vehicle its `drive`: the
+//! `[owner]` components, which `Replica::snapshot` sends to the owner alone (`Game::owned`). A seated
+//! player is listed with those only, and nobody else is told of them.
 
 use super::*;
 use crate::entities::{Health, NetKind, Transform, With};
@@ -14,7 +18,11 @@ impl Game {
     /// Everything replicated, ordered by id.
     pub fn replicated(&self) -> Scene {
         let mut scene: Scene = Vec::new();
-        scene.extend(self.world.entities.all::<Player>().filter(|(_, player)| player.embodied()).map(|(id, player)| (id, stickman(player, self.world.entities.alive(id)))));
+        scene.extend(self.world.entities.all::<Player>().map(|(id, player)| {
+            let shown = if player.embodied() { stickman(player, self.world.entities.alive(id)) } else { Replicated::default() };
+            let hp = self.world.entities.get::<Health>(id).map_or(0, |health| health.hp);
+            (id, Replicated { vitals: Some(wire::Vitals { hp, progress: progress(player) }), hotbar: Some(wire::Hotbar { slots: player.hotbar }), ..shown })
+        }));
         scene.extend(self.creatures());
         scene.extend(self.world.entities.all::<Vehicle>().filter_map(|(id, vehicle)| Some((id, self.vehicle(id, vehicle)?))));
         scene.extend(self.world.in_flight().into_iter().filter(|(_, flying)| flying.kind != PROJECTILE_BULLET).map(|(id, flying)| {
@@ -108,8 +116,23 @@ impl Game {
             arms,
             health: Some(wire::Health { hp: entities.get::<Health>(id).map_or(0, |health| health.hp) }),
             damage: (vehicle.damage != [0; 8]).then_some(wire::Damage { parts: vehicle.damage }),
+            drive: riders.first().copied().flatten().filter(|&driver| entities.has::<Player>(driver)).and_then(|_| self.drive(id)),
             ..Default::default()
         })
+    }
+
+    /// The exact motion of vehicle `id`, for its driver's own prediction.
+    fn drive(&self, id: u32) -> Option<wire::Drive> {
+        let motion = self.world.physics.car_motion(id)?;
+        let [vx, vy, vz] = motion.linvel.map(to_cm_i16);
+        let [wx, wy, wz] = motion.angvel.map(to_milli_i16);
+        Some(wire::Drive { vx, vy, vz, wx, wy, wz, steer: to_milli_i16(motion.steer), spin: to_milli_i16(motion.spin) })
+    }
+
+    /// The entities player `id` owns: themself, and the vehicle they drive.
+    pub(crate) fn owned(&self, id: u32) -> [Option<u32>; 2] {
+        let driving = self.world.entities.get::<Player>(id).and_then(|player| player.seat).filter(|seat| seat.index == 0).map(|seat| seat.vehicle);
+        [Some(id), driving]
     }
 }
 
@@ -137,6 +160,20 @@ fn stickman(player: &Player, alive: bool) -> Replicated {
         flags: Some(wire::Flags { flags, stance }),
         ..Default::default()
     }
+}
+
+/// How far the player's reload or bandage has got, 0..=255, or 0 when neither is going on.
+fn progress(player: &Player) -> u8 {
+    use shared::items::{BANDAGE_TICKS, def};
+    let (left, total) = if player.channel_left > 0 {
+        (player.channel_left, BANDAGE_TICKS)
+    } else if player.reload_left > 0 {
+        (player.reload_left, def(player.held().item).map_or(1, |d| d.reload_ticks.max(1)))
+    } else {
+        return 0;
+    };
+    let done = 1.0 - left as f32 / total as f32;
+    ((done * 255.0).round() as u8).max(1)
 }
 
 #[cfg(test)]

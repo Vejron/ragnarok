@@ -13,6 +13,12 @@ export interface Rider {
   held: number
 }
 
+export interface ItemSlot {
+  item: number
+  count: number
+  ammo: number
+}
+
 export interface Place {
   x: number
   y: number
@@ -99,6 +105,26 @@ export interface Pickup {
   item: number
 }
 
+export interface Vitals {
+  hp: number
+  progress: number
+}
+
+export interface Hotbar {
+  slots: ItemSlot[]
+}
+
+export interface Drive {
+  vx: number
+  vy: number
+  vz: number
+  wx: number
+  wy: number
+  wz: number
+  steer: number
+  spin: number
+}
+
 /** An entity as it is replicated: the components it has. */
 export interface Components {
   place?: Place
@@ -118,6 +144,9 @@ export interface Components {
   kind?: Kind
   projectile?: Projectile
   pickup?: Pickup
+  vitals?: Vitals
+  hotbar?: Hotbar
+  drive?: Drive
 }
 
 export type ComponentName = keyof Components
@@ -129,23 +158,26 @@ export interface FieldSchema {
   struct?: readonly FieldSchema[]
 }
 
-/** Every component in wire-id order: its bit, whether it is sent as a difference, and its fields. */
-export const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; fields: readonly FieldSchema[] }[] = [
-  { id: 0, name: 'place', diff: true, fields: [{ name: 'x', unit: 'cm' }, { name: 'y', unit: 'cm' }, { name: 'z', unit: 'cm' }] },
-  { id: 1, name: 'heading', diff: true, fields: [{ name: 'yaw', unit: 'mrad' }] },
-  { id: 2, name: 'motion', diff: true, fields: [{ name: 'vy', unit: 'cm' }, { name: 'knock_x', unit: 'cm' }, { name: 'knock_z', unit: 'cm' }] },
-  { id: 3, name: 'flags', diff: false, fields: [{ name: 'flags' }, { name: 'stance' }] },
-  { id: 4, name: 'orientation', diff: true, fields: [{ name: 'qx', unit: 'quat' }, { name: 'qy', unit: 'quat' }, { name: 'qz', unit: 'quat' }] },
-  { id: 5, name: 'steer', diff: true, fields: [{ name: 'steer', unit: 'axis' }] },
-  { id: 6, name: 'turret', diff: false, fields: [{ name: 'yaw', unit: 'mrad' }, { name: 'pitch', unit: 'mrad' }, { name: 'shots' }, { name: 'range', unit: 'dm' }, { name: 'flags' }] },
-  { id: 7, name: 'crew', diff: false, fields: [{ name: 'riders', struct: [{ name: 'yaw', unit: 'mrad' }, { name: 'pitch', unit: 'mrad' }, { name: 'held' }] }] },
-  { id: 8, name: 'thrust', diff: false, fields: [{ name: 'air', unit: 'byte' }, { name: 'flags' }] },
-  { id: 9, name: 'arms', diff: false, fields: [{ name: 'shots' }, { name: 'heat', unit: 'byte' }, { name: 'rear_heat', unit: 'byte' }, { name: 'bombs' }, { name: 'flags' }] },
-  { id: 10, name: 'seats', diff: false, fields: [{ name: 'riders' }] },
-  { id: 11, name: 'health', diff: false, fields: [{ name: 'hp' }] },
-  { id: 12, name: 'damage', diff: false, fields: [{ name: 'parts' }] },
-  { id: 13, name: 'velocity', diff: true, fields: [{ name: 'vx', unit: 'cm' }, { name: 'vy', unit: 'cm' }, { name: 'vz', unit: 'cm' }] },
-  { id: 14, name: 'kind', diff: false, fields: [{ name: 'kind' }] },
-  { id: 15, name: 'projectile', diff: false, fields: [{ name: 'kind' }] },
-  { id: 16, name: 'pickup', diff: false, fields: [{ name: 'item' }] },
+/** Every component in wire-id order: its bit, whether it is sent as a difference and only to its owner, and its fields. */
+export const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; owner: boolean; fields: readonly FieldSchema[] }[] = [
+  { id: 0, name: 'place', diff: true, owner: false, fields: [{ name: 'x', unit: 'cm' }, { name: 'y', unit: 'cm' }, { name: 'z', unit: 'cm' }] },
+  { id: 1, name: 'heading', diff: true, owner: false, fields: [{ name: 'yaw', unit: 'mrad' }] },
+  { id: 2, name: 'motion', diff: true, owner: false, fields: [{ name: 'vy', unit: 'cm' }, { name: 'knock_x', unit: 'cm' }, { name: 'knock_z', unit: 'cm' }] },
+  { id: 3, name: 'flags', diff: false, owner: false, fields: [{ name: 'flags' }, { name: 'stance' }] },
+  { id: 4, name: 'orientation', diff: true, owner: false, fields: [{ name: 'qx', unit: 'quat' }, { name: 'qy', unit: 'quat' }, { name: 'qz', unit: 'quat' }] },
+  { id: 5, name: 'steer', diff: true, owner: false, fields: [{ name: 'steer', unit: 'axis' }] },
+  { id: 6, name: 'turret', diff: false, owner: false, fields: [{ name: 'yaw', unit: 'mrad' }, { name: 'pitch', unit: 'mrad' }, { name: 'shots' }, { name: 'range', unit: 'dm' }, { name: 'flags' }] },
+  { id: 7, name: 'crew', diff: false, owner: false, fields: [{ name: 'riders', struct: [{ name: 'yaw', unit: 'mrad' }, { name: 'pitch', unit: 'mrad' }, { name: 'held' }] }] },
+  { id: 8, name: 'thrust', diff: false, owner: false, fields: [{ name: 'air', unit: 'byte' }, { name: 'flags' }] },
+  { id: 9, name: 'arms', diff: false, owner: false, fields: [{ name: 'shots' }, { name: 'heat', unit: 'byte' }, { name: 'rear_heat', unit: 'byte' }, { name: 'bombs' }, { name: 'flags' }] },
+  { id: 10, name: 'seats', diff: false, owner: false, fields: [{ name: 'riders' }] },
+  { id: 11, name: 'health', diff: false, owner: false, fields: [{ name: 'hp' }] },
+  { id: 12, name: 'damage', diff: false, owner: false, fields: [{ name: 'parts' }] },
+  { id: 13, name: 'velocity', diff: true, owner: false, fields: [{ name: 'vx', unit: 'cm' }, { name: 'vy', unit: 'cm' }, { name: 'vz', unit: 'cm' }] },
+  { id: 14, name: 'kind', diff: false, owner: false, fields: [{ name: 'kind' }] },
+  { id: 15, name: 'projectile', diff: false, owner: false, fields: [{ name: 'kind' }] },
+  { id: 16, name: 'pickup', diff: false, owner: false, fields: [{ name: 'item' }] },
+  { id: 17, name: 'vitals', diff: false, owner: true, fields: [{ name: 'hp' }, { name: 'progress', unit: 'byte' }] },
+  { id: 18, name: 'hotbar', diff: false, owner: true, fields: [{ name: 'slots', struct: [{ name: 'item' }, { name: 'count' }, { name: 'ammo' }] }] },
+  { id: 19, name: 'drive', diff: false, owner: true, fields: [{ name: 'vx', unit: 'cm' }, { name: 'vy', unit: 'cm' }, { name: 'vz', unit: 'cm' }, { name: 'wx', unit: 'mrad' }, { name: 'wy', unit: 'mrad' }, { name: 'wz', unit: 'mrad' }, { name: 'steer', unit: 'mrad' }, { name: 'spin', unit: 'mrad' }] },
 ]

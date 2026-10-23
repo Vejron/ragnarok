@@ -1,5 +1,5 @@
 use super::*;
-use crate::protocol::{decode, encode};
+use crate::protocol::{ItemSlot, decode, encode};
 
 fn stickman(x: i32, yaw: i16) -> Replicated {
     Replicated {
@@ -31,7 +31,7 @@ fn round_trip(update: &Update) -> Update {
 
 #[test]
 fn every_component_has_its_own_bit_in_wire_order() {
-    let ids: Vec<u8> = schema().iter().map(|(id, ..)| *id).collect();
+    let ids: Vec<u8> = schema().iter().map(|component| component.id).collect();
     assert!(ids.windows(2).all(|pair| pair[0] < pair[1]), "listed in ascending wire-id order: {ids:?}");
     assert!(ids.iter().all(|&id| id < 31), "bit 31 is CLEARED");
 }
@@ -56,6 +56,9 @@ fn a_new_entity_brings_everything_it_has_and_decodes_back() {
         kind: Some(Kind { kind: 6 }),
         projectile: Some(Projectile { kind: 2 }),
         pickup: Some(Pickup { item: 7 }),
+        vitals: Some(Vitals { hp: 73, progress: 128 }),
+        hotbar: Some(Hotbar { slots: [ItemSlot { item: 3, count: 1, ammo: 17 }, ItemSlot::default(), ItemSlot { item: 9, count: 2, ammo: 0 }, ItemSlot::default(), ItemSlot { item: 1, count: 255, ammo: 255 }] }),
+        drive: Some(Drive { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }),
     };
     let update = everything.update(42, None).expect("a new entity is always sent");
     assert_eq!(update.set(), everything.mask(), "everything it has is set");
@@ -63,6 +66,14 @@ fn a_new_entity_brings_everything_it_has_and_decodes_back() {
     let decoded = round_trip(&update);
     assert_eq!(decoded, update);
     assert_eq!(Replicated::apply(None, &decoded), everything);
+}
+
+#[test]
+fn anyone_but_the_owner_is_told_everything_but_the_owners_components() {
+    let own = Replicated { vitals: Some(Vitals { hp: 40, progress: 0 }), hotbar: Some(Hotbar::default()), drive: Some(Drive::default()), ..tank(0, 0) };
+    assert_eq!(own.public(), tank(0, 0));
+    let owned: Vec<&str> = schema().iter().filter(|component| component.owner).map(|component| component.name).collect();
+    assert_eq!(owned, ["vitals", "hotbar", "drive"]);
 }
 
 #[test]
@@ -134,7 +145,7 @@ fn diff_and_apply_rebuild_the_new_scene() {
     assert_eq!(updates.iter().map(|update| update.id).collect::<Vec<_>>(), vec![3, 4, 9, 12], "the unchanged one is not listed");
     let decoded: Vec<Update> = updates.iter().map(round_trip).collect();
     assert_eq!(apply(&base, &decoded, &removed), now);
-    let (all, none) = diff(&[], &now);
+    let (all, none) = diff::<Replicated, _>(&[], &now);
     assert!(none.is_empty());
     assert_eq!(apply(&[], &all, &[]), now, "against nothing, everything is new");
 }
@@ -167,18 +178,18 @@ fn components_ts() -> String {
         out += &format!("export interface {name} {{\n  {}\n}}\n\n", fields.join("\n  "));
     }
     let schema = schema();
-    for (_, _, ty, _, fields) in &schema {
+    for Schema { ty, fields, .. } in &schema {
         let fields: Vec<String> = fields.iter().map(|(field, rust, _)| format!("{field}: {}", ts_type(&rust.replace(' ', "")))).collect();
         out += &format!("export interface {ty} {{\n  {}\n}}\n\n", fields.join("\n  "));
     }
     out += "/** An entity as it is replicated: the components it has. */\nexport interface Components {\n";
-    for (_, name, ty, ..) in &schema {
+    for Schema { name, ty, .. } in &schema {
         out += &format!("  {name}?: {ty}\n");
     }
     out += "}\n\nexport type ComponentName = keyof Components\n\n";
     out += "/** A field, in wire order: its unit if it has one, and the struct's fields if it holds a list of structs. */\nexport interface FieldSchema {\n  name: string\n  unit?: Unit\n  struct?: readonly FieldSchema[]\n}\n\n";
-    out += "/** Every component in wire-id order: its bit, whether it is sent as a difference, and its fields. */\nexport const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; fields: readonly FieldSchema[] }[] = [\n";
-    for (id, name, _, diff, fields) in &schema {
+    out += "/** Every component in wire-id order: its bit, whether it is sent as a difference and only to its owner, and its fields. */\nexport const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; owner: boolean; fields: readonly FieldSchema[] }[] = [\n";
+    for Schema { id, name, diff, owner, fields, .. } in &schema {
         let fields: Vec<String> = fields
             .iter()
             .map(|(field, rust, unit)| {
@@ -189,7 +200,7 @@ fn components_ts() -> String {
                 }
             })
             .collect();
-        out += &format!("  {{ id: {id}, name: '{name}', diff: {diff}, fields: [{}] }},\n", fields.join(", "));
+        out += &format!("  {{ id: {id}, name: '{name}', diff: {diff}, owner: {owner}, fields: [{}] }},\n", fields.join(", "));
     }
     out += "]\n";
     out
@@ -258,7 +269,7 @@ fn units_ts() -> String {
     let schema = schema();
     let has_unit = |fields: &[Field]| fields.iter().any(|(_, rust, unit)| !unit.is_empty() || struct_of(rust).is_some_and(|members| members.iter().any(|(_, unit)| !unit.is_empty())));
     out += "/** Entity `w`, as the wire has it, in the game's units. A component with no units is `w`'s own. */\nexport function toGame(w: Components): Entity {\n  return {\n";
-    for (_, name, _, _, fields) in &schema {
+    for Schema { name, fields, .. } in &schema {
         let converted = if fields.iter().all(|(_, _, unit)| *unit == "quat") {
             let parts: Vec<String> = fields.iter().map(|(field, _, _)| format!("w.{name}.{field}")).collect();
             format!("rotationOf({})", parts.join(", "))
@@ -274,7 +285,7 @@ fn units_ts() -> String {
     out += "  }\n}\n\n";
     out += "/**\n * `a` and `b`, two snapshots of one entity, a fraction `t` of the way from `a` to `b`. A component only\n * one of them has is the nearer snapshot's to have or not.\n */\n";
     out += "export function blend(a: Entity, b: Entity, t: number): Entity {\n  if (a === b) return a\n  const near = t < 0.5 ? a : b\n  return {\n";
-    for (_, name, _, _, fields) in &schema {
+    for Schema { name, fields, .. } in &schema {
         let moves = |(_, rust, unit): &&Field| matches!(*unit, "cm" | "axis" | "mrad" | "quat") || struct_of(rust).is_some();
         if !fields.iter().any(|field| moves(&field)) {
             // Nothing in it moves: the nearer snapshot's, whole.
@@ -330,6 +341,9 @@ fn fixture_json() -> String {
         kind: Some(Kind { kind: 6 }),
         projectile: Some(Projectile { kind: 2 }),
         pickup: Some(Pickup { item: 7 }),
+        vitals: Some(Vitals { hp: 73, progress: 128 }),
+        hotbar: Some(Hotbar { slots: [ItemSlot { item: 3, count: 1, ammo: 17 }, ItemSlot::default(), ItemSlot { item: 9, count: 2, ammo: 0 }, ItemSlot::default(), ItemSlot { item: 1, count: 255, ammo: 255 }] }),
+        drive: Some(Drive { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }),
     };
     let first: Scene = vec![(1, stickman(1000, 200)), (4, tank(0, 0)), (70_000, all.clone())];
     let hurt = Replicated { damage: Some(Damage { parts: [0, 0, 90, 0, 0, 0, 0, 0] }), ..tank(40, 12) };
@@ -373,7 +387,9 @@ fn scene_fixture_json() -> String {
         // A plane: crew showing, arms, hurt.
         (6, Replicated { turret: Some(Turret { yaw: 3000, pitch: -100, shots: 17, range: 0, flags: 0 }), crew: Some(Crew { riders: vec![Rider { yaw: 100, pitch: 50, held: 0 }, Rider { yaw: -3000, pitch: -40, held: 2 }] }), arms: Some(Arms { shots: 200, heat: 128, rear_heat: 3, bombs: 4, flags: 2 }), damage: Some(Damage { parts: [0, 9, 0, 0, 0, 0, 0, 0] }), seats: Some(Seats { riders: vec![1, 0] }), ..vehicle(6) }),
         // A drone, linked, its battery as air; a wreck.
-        (7, Replicated { thrust: Some(Thrust { air: 99, flags: 4 }), seats: Some(Seats { riders: vec![1] }), ..vehicle(11) }),
+        (7, Replicated { thrust: Some(Thrust { air: 99, flags: 4 }), seats: Some(Seats { riders: vec![1] }), drive: Some(Drive { vx: -250, vy: 3, vz: 1200, wx: 10, wy: -3500, wz: 0, steer: -300, spin: 700 }), ..vehicle(11) }),
+        // The receiver themself, seated: only what is theirs.
+        (11, Replicated { vitals: Some(Vitals { hp: 55, progress: 255 }), hotbar: Some(Hotbar { slots: [ItemSlot { item: 2, count: 1, ammo: 30 }, ItemSlot::default(), ItemSlot::default(), ItemSlot::default(), ItemSlot::default()] }), ..Default::default() }),
         (8, Replicated { health: Some(Health { hp: 0 }), ..vehicle(1) }),
         (9, Replicated { projectile: Some(Projectile { kind: 0 }), place: Some(Place { x: 1, y: 2000, z: 3 }), velocity: Some(Velocity { vx: -4000, vy: 50, vz: 0 }), ..Default::default() }),
         (10, Replicated { pickup: Some(Pickup { item: 7 }), place: Some(Place { x: -5, y: 30, z: 5 }), ..Default::default() }),
@@ -397,7 +413,7 @@ fn a_struct_in_a_list_goes_on_the_wire_as_its_fields_in_order() {
 
 #[test]
 fn every_field_with_a_unit_names_a_known_one() {
-    let fields = schema().into_iter().flat_map(|(_, component, _, _, fields)| fields.iter().map(move |(field, _, unit)| (component, *field, *unit)));
+    let fields = schema().into_iter().flat_map(|component| component.fields.iter().map(move |(field, _, unit)| (component.name, *field, *unit)));
     let members = STRUCTS.iter().flat_map(|(name, members)| members.iter().map(move |(member, unit)| (*name, *member, *unit)));
     for (owner, field, unit) in fields.chain(members) {
         assert!(unit.is_empty() || UNITS.contains(&unit), "{owner}.{field} counts in {unit}, which UNITS does not list");

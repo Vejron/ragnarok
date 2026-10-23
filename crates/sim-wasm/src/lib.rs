@@ -189,7 +189,7 @@ impl ClientSim {
         }
     }
 
-    /// Puts vehicle `id` in the state a snapshot reports: pose, motion (`DriveState`), its tank
+    /// Puts vehicle `id` in the state a snapshot reports: pose, motion (its `drive` component), its tank
     /// (NaN to leave it), and the wear its health and damage mean, turret included.
     #[allow(clippy::too_many_arguments)]
     #[wasm_bindgen(js_name = setCarState)]

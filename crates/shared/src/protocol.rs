@@ -275,24 +275,6 @@ pub const THRUST_GLIDE: u8 = 1 << 3;
 /// A hen's: neither foot is on the ground.
 pub const THRUST_AIR: u8 = 1 << 4;
 
-/// The motion a driver needs to predict their own vehicle, which the vehicle's pose does not
-/// carry. Sent only to the player in the driver seat: `[vx, vy, vz, wx, wy, wz, steer, spin]`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DriveState {
-    /// Linear velocity, cm/s.
-    pub vx: i16,
-    pub vy: i16,
-    pub vz: i16,
-    /// Angular velocity about the world axes, milliradians per second.
-    pub wx: i16,
-    pub wy: i16,
-    pub wz: i16,
-    /// Front wheel angle, milliradians, + is right.
-    pub steer: i16,
-    /// Yaw rate a tank has ramped to, milliradians per second, + is clockwise.
-    pub spin: i16,
-}
-
 /// Something that just happened, for drawing: `[shooter, weapon, x, y, z]`, where `x, y, z` is
 /// where it ended, in centimetres. A rifle shot is a tracer from the shooter's own position to
 /// there; a rocket or a wreck is a burst at there (the shooter is 0 for a wreck with no culprit).
@@ -314,26 +296,17 @@ pub struct ItemSlot {
     pub ammo: u8,
 }
 
-/// What only the receiving player is told about themselves: `[hp, progress, [slot, ...]]`.
-/// `hp` is their health, `0` is dead. `progress` is how far a reload or a bandage has got, 0..=255,
-/// or 0 when neither is going on.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SelfState {
-    pub hp: u8,
-    pub progress: u8,
-    pub slots: Vec<ItemSlot>,
-}
-
-/// `[1, server_tick, baseline, ack_input_seq, ride, [update, ...], [removed id, ...], drive, self,
-/// [shot, ...], [bullet spawn, ...]]`, sent as a datagram.
+/// `[1, server_tick, baseline, ack_input_seq, ride, [update, ...], [removed id, ...], [shot, ...],
+/// [bullet spawn, ...]]`, sent as a datagram.
 ///
 /// `baseline` is the tick of the snapshot the updates are relative to, or 0 when they are not (every
 /// entity in range then comes whole). Each update is one entity's components
 /// (`shared::replicated::Update`): stickmen, creatures, vehicles, projectiles and items on the ground
 /// alike. `ack_input_seq` is the newest input of the *receiving* player that the state already
 /// includes. `ride` is the id of the vehicle the receiving player stands on top of, or 0: it is carried
-/// with that vehicle, so the client must predict relative to it. `drive` is `nil` unless the receiving
-/// player is driving. `self` is the receiving player's own health and hotbar. `shots` are the effects
+/// with that vehicle, so the client must predict relative to it. What only the receiving player is told
+/// (their health and hotbar, the exact motion of what they drive) are `[owner]` components of their own
+/// entity and their vehicle's, among the updates. `shots` are the effects
 /// since the previous snapshot, capped at `MAX_SHOT_EVENTS`, and `bullets` the gun rounds the client
 /// flies itself.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -345,11 +318,24 @@ pub struct Snapshot {
     pub ride: u32,
     pub updates: Vec<crate::replicated::Update>,
     pub removed: Vec<u32>,
-    pub drive: Option<DriveState>,
-    pub me: SelfState,
     pub shots: Vec<ShotEvent>,
     /// Bullets fired since a few snapshots ago, which the client then flies itself.
     pub bullets: Vec<BulletSpawn>,
+}
+
+/// A `Snapshot` as the server sends it, borrowing its lists: the same bytes, with nothing copied to
+/// encode them.
+#[derive(Serialize)]
+pub struct SnapshotOut<'a> {
+    pub tag: u8,
+    pub tick: u32,
+    pub baseline: u32,
+    pub ack: u32,
+    pub ride: u32,
+    pub updates: &'a [crate::replicated::Update],
+    pub removed: &'a [u32],
+    pub shots: &'a [ShotEvent],
+    pub bullets: &'a [BulletSpawn],
 }
 
 /// `[2, nonce]`.
@@ -499,11 +485,11 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 39, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
+        148, 0, 40, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[
-        155, 1, 205, 4, 210, 205, 4, 206, 42, 9, 148, 153, 1, 7, 25, 0, 0, 208, 136, 205, 2, 138, 0, 0, 156, 7, 205, 64, 15, 0, 85, 206, 0, 1, 134, 160, 0, 0, 0, 0, 3, 0, 0, 220, 0, 17, 10, 205, 76, 113, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 209, 253, 68, 204, 250, 3, 205, 4, 210, 1, 146, 1, 7, 204, 250, 2, 147, 12, 206, 128, 0, 0, 0, 205, 16, 0, 146, 3, 11, 152, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 73, 204, 128, 147, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 154, 77, 7, 2, 120, 204, 165, 209, 244, 72, 205, 5, 220, 236, 209, 150, 136, 205, 4, 209,
+        153, 1, 205, 4, 210, 205, 4, 206, 42, 9, 148, 156, 1, 206, 0, 6, 0, 7, 25, 0, 0, 208, 136, 205, 2, 138, 0, 0, 73, 204, 128, 149, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 147, 0, 0, 0, 147, 0, 0, 0, 156, 7, 205, 64, 15, 0, 85, 206, 0, 1, 134, 160, 0, 0, 0, 0, 3, 0, 0, 220, 0, 25, 10, 206, 0, 8, 76, 113, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 209, 253, 68, 204, 250, 3, 205, 4, 210, 1, 146, 1, 7, 204, 250, 2, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 12, 206, 128, 0, 0, 0, 205, 16, 0, 146, 3, 11, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 154, 77, 7, 2, 120, 204, 165, 209, 244, 72, 205, 5, 220, 236, 209, 150, 136, 205, 4, 209,
     ];
 
     fn sample_input() -> ClientInput {
@@ -541,12 +527,13 @@ mod tests {
         let hurt = Replicated { damage: Some(wire::Damage { parts: [0, 0, 40, 0, 0, 0, 255, 3] }), ..tank.clone() };
         let updates = vec![
             // A stickman moving: differences. A dead one new to the receiver, whole. A tank, whole, and one repaired.
-            walker(25, -120, 650).update(1, Some(&walker(0, 0, 0))).unwrap(),
+            // The receiver themself, with what only they are told, and the tank they drive.
+            Replicated { vitals: Some(wire::Vitals { hp: 73, progress: 128 }), hotbar: Some(wire::Hotbar { slots: [ItemSlot { item: ITEM_AK5, count: 1, ammo: 17 }, ItemSlot { item: ITEM_NONE, count: 0, ammo: 0 }, ItemSlot { item: ITEM_GRENADE, count: 2, ammo: 0 }, ItemSlot::default(), ItemSlot::default()] }), ..walker(25, -120, 650) }.update(1, Some(&walker(0, 0, 0))).unwrap(),
             Replicated { flags: Some(wire::Flags { flags: FLAG_GROUNDED | FLAG_DEAD, stance: 0 }), ..walker(0, 0, 0) }.update(7, None).unwrap(),
-            tank.update(10, None).unwrap(),
+            Replicated { drive: Some(wire::Drive { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }), ..tank.clone() }.update(10, None).unwrap(),
             tank.update(12, Some(&hurt)).unwrap(),
         ];
-        Snapshot { tag: S_SNAPSHOT, tick: 1234, baseline: 1230, ack: 42, ride: 9, updates, removed: vec![3, 11], drive: Some(DriveState { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }), me: SelfState { hp: 73, progress: 128, slots: vec![ItemSlot { item: ITEM_AK5, count: 1, ammo: 17 }, ItemSlot { item: ITEM_NONE, count: 0, ammo: 0 }, ItemSlot { item: ITEM_GRENADE, count: 2, ammo: 0 }] }, shots: vec![ShotEvent { shooter: 7, weapon: WEAPON_RIFLE, x: 1500, y: 160, z: -4200 }, ShotEvent { shooter: 1, weapon: WEAPON_RIFLE, x: -20, y: 90, z: 31_000 }], bullets: vec![BulletSpawn { id: 77, shooter: 7, item: ITEM_AK5, x: 120, y: 165, z: -3000, vx: 1500, vy: -20, vz: -27000, tick: 1233 }] }
+        Snapshot { tag: S_SNAPSHOT, tick: 1234, baseline: 1230, ack: 42, ride: 9, updates, removed: vec![3, 11], shots: vec![ShotEvent { shooter: 7, weapon: WEAPON_RIFLE, x: 1500, y: 160, z: -4200 }, ShotEvent { shooter: 1, weapon: WEAPON_RIFLE, x: -20, y: 90, z: 31_000 }], bullets: vec![BulletSpawn { id: 77, shooter: 7, item: ITEM_AK5, x: 120, y: 165, z: -3000, vx: 1500, vy: -20, vz: -27000, tick: 1233 }] }
     }
 
     /// `[6, [[OBJ_TREE, 2, 3, 70000, -1571, 90]]]`, mirrored in `codec.spec.ts`.
@@ -631,6 +618,9 @@ mod tests {
         assert_eq!(encode(&sample_snapshot()), SNAPSHOT_FIXTURE);
         assert_eq!(decode::<Snapshot>(SNAPSHOT_FIXTURE), Some(sample_snapshot()));
         assert_eq!(peek_tag(SNAPSHOT_FIXTURE), Some(S_SNAPSHOT));
+        let Snapshot { tag, tick, baseline, ack, ride, updates, removed, shots, bullets } = sample_snapshot();
+        let out = SnapshotOut { tag, tick, baseline, ack, ride, updates: &updates, removed: &removed, shots: &shots, bullets: &bullets };
+        assert_eq!(encode(&out), SNAPSHOT_FIXTURE, "sent borrowed, it is the same bytes");
     }
 
     #[test]
