@@ -8,7 +8,12 @@
 //! tick with its own `MessageCursor` (as the bots hear noises at the start of the next one) sees each
 //! event exactly once; one that reads before `update` (the reactions, the feedback) reads this tick's
 //! with `iter_current_update_messages`.
+//!
+//! A reaction that something later in the same tick must see (a bandage spoiled, a dead rider out of
+//! their seat) cannot wait for the end of it: it is a hook (`Hooks`), which the damage path runs the
+//! moment it sends the event.
 
+use crate::game::World;
 use bevy_ecs::message::{Message, Messages};
 
 /// Something loud a bot may hear: where it was, who made it (none for a wreck going up, say), and
@@ -41,16 +46,39 @@ pub struct Damaged {
     pub aboard: Vec<u32>,
 }
 
-/// Player `victim` died. `killer` is whoever is credited, if anyone other than the victim; the rest
-/// is how the body goes down: `DEATH_*`, the way it is thrown (yaw, milliradians) and how hard.
-#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+/// Entity `victim` died, of `weapon`. `killer` is whoever is credited, if anyone other than the
+/// victim; `style` (`DEATH_*`) is how it went down, and `from` where the killing blow came from.
+#[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub struct Died {
     pub victim: u32,
     pub killer: Option<u32>,
     pub weapon: u8,
     pub style: u8,
-    pub yaw: i16,
-    pub power: u8,
+    pub from: Option<[f32; 3]>,
+}
+
+/// The reactions run at once (see the module's doc), in the order the mechanics that register them
+/// (`Mechanic::hooks`) run. Each guards itself: a hook for players looks for a `Player` first.
+#[derive(Clone, Default)]
+pub struct Hooks {
+    pub damaged: Vec<fn(&mut World, &Damaged)>,
+    pub died: Vec<fn(&mut World, &Died)>,
+}
+
+/// Sends `damaged`, and runs the hooks on it.
+pub fn damaged(world: &mut World, damaged: Damaged) {
+    for at in 0..world.hooks.damaged.len() {
+        (world.hooks.damaged[at])(world, &damaged);
+    }
+    world.send(damaged);
+}
+
+/// Sends `died`, and runs the hooks on it.
+pub fn died(world: &mut World, died: Died) {
+    for at in 0..world.hooks.died.len() {
+        (world.hooks.died[at])(world, &died);
+    }
+    world.send(died);
 }
 
 /// Adds a queue for every kind of event to the room's ECS world.

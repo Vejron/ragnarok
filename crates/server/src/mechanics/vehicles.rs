@@ -1,6 +1,6 @@
 use crate::entities::{Health, HurtBy, Hurtbox, Transform, With};
 use super::Mechanic;
-use crate::game::{Mounts, Player, Seat, Seats, Vehicle, World, Wreck};
+use crate::game::{Died, Mounts, Player, Seat, Seats, Vehicle, World, Wreck};
 use sim::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_extents};
 use shared::consts::*;
 use shared::vehicles::vehicle_def;
@@ -553,7 +553,7 @@ fn run_down_creatures(world: &mut World) {
     }
     for (id, amount, car) in run_down {
         let driver = world.entities.get::<Seats>(car).and_then(|seats| seats.rider(0)).filter(|&driver| world.entities.has::<Player>(driver));
-        super::life::damage_entity(world, id, amount, driver, WEAPON_ROADKILL, None);
+        super::life::damage_entity(world, id, super::life::Harm::new(amount, driver, WEAPON_ROADKILL));
     }
 }
 
@@ -602,11 +602,22 @@ fn knock_players(world: &mut World) {
     // Whoever is driving is to blame.
     for (id, amount, car, at) in run_down {
         let driver = world.entities.get::<Seats>(car).and_then(|seats| seats.rider(0));
-        super::combat::damage_from(world, id, amount, driver, WEAPON_ROADKILL, Some(at));
+        super::life::damage_entity(world, id, super::life::Harm::new(amount, driver, WEAPON_ROADKILL).from(at));
+    }
+}
+
+/// Shot in their seat, a rider falls out of the vehicle beside it, dead.
+fn fall_out(world: &mut World, died: &Died) {
+    if world.entities.get::<Player>(died.victim).and_then(|player| player.seat).is_some_and(|seat| !seat.remote) {
+        alight(world, died.victim);
     }
 }
 
 impl Mechanic for Vehicles {
+    fn hooks(&self, hooks: &mut crate::events::Hooks) {
+        hooks.died.push(fall_out);
+    }
+
     fn on_start(&mut self, world: &mut World) {
         // Vehicles placed in the map editor replace the scatter over the spawn points.
         if !world.map.placed_vehicles.is_empty() {

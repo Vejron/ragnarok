@@ -1,5 +1,5 @@
 use super::*;
-use crate::mechanics::for_tests::{Flying, add_vehicle, damage, launch_drone};
+use crate::mechanics::for_tests::{Flying, Harm, add_vehicle, damage_entity, launch_drone};
 use shared::protocol::{KIND_DRONE, KIND_JEEP, PROJECTILE_ROCKET};
 use shared::world::{WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
@@ -65,7 +65,9 @@ fn a_client_rebuilds_exactly_what_the_server_has_near_it_in_a_busy_room() {
                     crate::mechanics::damage_vehicle(&mut game.world, vid, 255, Some(ids[3]));
                 }
             }
-            80 => damage(&mut game.world, ids[4], PLAYER_MAX_HP, Some(ids[5]), shared::protocol::WEAPON_RIFLE),
+            80 => {
+                damage_entity(&mut game.world, ids[4], Harm::new(PLAYER_MAX_HP, Some(ids[5]), shared::protocol::WEAPON_RIFLE));
+            }
             _ => {}
         }
         game.step();

@@ -99,7 +99,7 @@ touches no file under `mechanics/combat*`.
       component (the last few ticks of the hurtbox's centre). The generic test takes `back` and
       reads it, so a lagging shooter hits a rooster where they saw it too. This changes rooster
       behaviour slightly, and the change is the point; say so in the log.
-- [ ] 2.4 One damage path: `damage_entity` takes the attacker, weapon, source and headshot flag,
+- [x] 2.4 One damage path: `damage_entity` takes the attacker, weapon, source and headshot flag,
       applies teams, the multiplier and armour, and sends Phase 1's events. The player-only
       consequences become reactions to `Died`, guarded by `With<Player>`:
       - getting out of the seat;
@@ -107,7 +107,7 @@ touches no file under `mechanics/combat*`.
       - `fire_cooldown`;
       - the death style and throw.
       `DropOnDeath` and `Respawn` stay generic.
-- [ ] 2.5 Delete the player-only functions; `first_living_hit` becomes `first_hurtbox_hit`.
+- [x] 2.5 Delete the player-only functions; `first_living_hit` becomes `first_hurtbox_hit`.
       Measure the full room: the hit scans now cover players and creatures in one pass.
 
 ## Phase 3: owner-only components (protocol v2.1)
@@ -248,3 +248,34 @@ boxes by pointing them here.
     previous commit in a worktree. Mechanics 1.69 to 1.72 ms, `Combat` 31.5 to 33.2 µs (the machine
     was noisy: `Vehicles` and `Movement`, untouched, rose as much). Server tests 273 (one new); clippy
     clean.
+- **2.4, 2.5.** One damage path. `life::damage_entity(world, id, Harm)` hurts anything with `Health`.
+  `Harm { amount, attacker, weapon, from, head }` says how much, by whom, with what, from where, and
+  whether it struck the head. The path spares the attacker's team, multiplies a headshot, sends
+  `Damaged`, and at zero starts the `Respawn`, leaves the `DropOnDeath` and sends `Died`. `Died`
+  carries the death style (from the weapon, the head and overkill, the same for anything) and where
+  the blow came from. `damage`, `damage_from` and `damage_hit` are gone. So is the player loop in
+  `blast`'s damage: `blasted` and `hurtbox_near` now cover every body out in the open, so
+  `drones::near_someone` is gone too.
+  - Hooks: `events::Hooks` holds the reactions that cannot wait for the end of the tick, because a
+    mechanic later in the same tick reads what they change. `Mechanic::hooks` registers them, and the
+    damage path runs them the moment it sends the event. There are three, all guarded by a `Player`.
+    `Combat` spoils a bandage on any hurt and lets go of a reload, a bandage and the fire cooldown on
+    death. `Vehicles` takes a dead rider out of their seat. Moving these to the end-of-tick `react`
+    would have let a dead gunner fire in the tick they died, and a spoiled bandage still finish.
+  - The throw of the body (the `Kill`'s yaw and power) is presentation, so `feedback::kills` works it
+    out at the end of the tick from the body's knock and place and `Died::from`. A dead body is not
+    moved again within its tick: blasts, cars and `Movement` pass over the dead, and the seat is
+    left at once, as before.
+  - A rooster's death is a `Died` too. `Scores` and the kill feed count only players' deaths (new
+    test).
+  - One small change: a blast now hurts stickmen and creatures in one pass in id order. Before, all the
+    stickmen were hurt first, so a player who blasts a player and a rooster at once may get the two
+    hit markers in the other order.
+  - Tests: the damage calls use `damage_entity(.., Harm::new(..))`; `for_tests` exports it.
+  - `full_room_tick_cost`, three runs: mechanics 1.69 to 1.76 ms, `Combat` 32.7 to 34.5 µs, after the
+    mechanics 2.0 to 2.3 µs. All within the noise of the steps before. Server tests 274 (one new),
+    client 58 files, 428 tests; clippy clean.
+
+Phases 1 and 2 are done: no `World::hits`, `kills` or `noises`, and one hit test, one damage path and
+one death for everything that can be hurt. Not played yet: the merge play session at the end
+(see **After**) is where these get tried by hand.

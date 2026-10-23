@@ -1,6 +1,6 @@
 use super::*;
 use crate::game::{Command, Game, MAX_BOTS, Profile, TEAM_BOTS, TEAM_NONE};
-use crate::mechanics::combat::damage;
+use crate::mechanics::life::{Harm, damage_entity};
 use shared::protocol::KIND_STICKMAN;
 use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
@@ -174,14 +174,14 @@ fn bots_ignore_their_own_team_and_cannot_hurt_it() {
     let b = game.add_bot([0.0, -10.0], TEAM_BOTS, vec![[0.0, -10.0]]).unwrap();
     run(&mut game, 1.0);
     assert_eq!(game.world.entities.of::<Bot>(a).mode, BotMode::Patrol);
-    damage(&mut game.world, b, 50, Some(a), 0);
+    damage_entity(&mut game.world, b, Harm::new(50, Some(a), 0));
     assert_eq!(game.world.entities.of::<crate::entities::Health>(b).hp, PLAYER_MAX_HP);
     // People are on no team: they still hurt each other, and bots.
     let human = join(&mut game);
     let other = join(&mut game);
     assert_eq!(game.world.entities.of::<Player>(human).team, TEAM_NONE);
-    damage(&mut game.world, other, 10, Some(human), 0);
-    damage(&mut game.world, b, 10, Some(human), 0);
+    damage_entity(&mut game.world, other, Harm::new(10, Some(human), 0));
+    damage_entity(&mut game.world, b, Harm::new(10, Some(human), 0));
     assert_eq!(game.world.entities.of::<crate::entities::Health>(other).hp, PLAYER_MAX_HP - 10);
     assert_eq!(game.world.entities.of::<crate::entities::Health>(b).hp, PLAYER_MAX_HP - 10);
 }
@@ -204,7 +204,7 @@ fn a_killed_bot_comes_back_at_home_on_patrol() {
     run(&mut game, 0.5);
     assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Pursue);
     put(&mut game, human, [-80.0, 80.0]);
-    damage(&mut game.world, bot, PLAYER_MAX_HP, Some(human), 0);
+    damage_entity(&mut game.world, bot, Harm::new(PLAYER_MAX_HP, Some(human), 0));
     run(&mut game, RESPAWN_TICKS as f32 / TICK_RATE as f32 + 0.2);
     assert!(game.world.entities.alive(bot));
     assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Patrol);
@@ -400,7 +400,7 @@ fn a_calm_bot_shot_from_behind_turns_round_and_fights_back() {
     put(&mut game, human, [0.0, 30.0]);
     run(&mut game, 1.0);
     assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Patrol, "it does not see behind it");
-    damage(&mut game.world, bot, 10, Some(human), 0);
+    damage_entity(&mut game.world, bot, Harm::new(10, Some(human), 0));
     run(&mut game, 1.0);
     let mind = &game.world.entities.of::<Bot>(bot);
     assert_eq!((mind.mode, mind.target, mind.sees), (BotMode::Pursue, Some(human), true));

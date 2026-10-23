@@ -438,6 +438,8 @@ pub struct World {
     pub shots: Vec<ShotEvent>,
     /// Bullets fired in the last few ticks, each sent to the clients near it in a couple of snapshots.
     pub bullets: Vec<BulletSpawn>,
+    /// What the damage path runs the moment something is hurt or dies, from the mechanics' `hooks`.
+    pub hooks: crate::events::Hooks,
     /// Solid trees by identity, to look their size up from a collider hit.
     pub(super) trees_by_id: HashMap<ObjId, usize>,
     /// Buildings by identity.

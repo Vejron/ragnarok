@@ -2,7 +2,7 @@ use super::*;
 use crate::entities::Health;
 use crate::game::{Command, Game, Outgoing};
 use sim::STANDING_Y;
-use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_TAKEN, InputFrame, Snapshot, WEAPON_BULLET, WEAPON_FLARE, WEAPON_REVOLVER, WEAPON_PELLET, WEAPON_SHOTGUN, decode};
+use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_TAKEN, InputFrame, Snapshot, WEAPON_GRENADE, WEAPON_ROCKET, WEAPON_BULLET, WEAPON_FLARE, WEAPON_REVOLVER, WEAPON_PELLET, WEAPON_SHOTGUN, decode};
 use shared::quant::to_mrad;
 use shared::world::{WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
@@ -150,7 +150,7 @@ fn a_hit_is_reported_to_the_shooter_and_the_victim_with_a_bearing() {
     game.world.entities.get_mut::<Player>(shooter).unwrap().character.position = [0.0, STANDING_Y, 0.0];
     game.world.entities.get_mut::<Player>(target).unwrap().character.position = [0.0, STANDING_Y, -20.0];
     crate::events::update(&mut game.world.entities.ecs);
-    damage(&mut game.world, target, 30, Some(shooter), WEAPON_RIFLE);
+    damage_entity(&mut game.world, target, Harm::new(30, Some(shooter), WEAPON_RIFLE));
     let hits = crate::game::feedback::hits(&game.world);
     assert_eq!(hits.len(), 2);
     // The shooter is straight ahead of nobody: from the victim at -20 the shooter is at +z.
@@ -160,7 +160,7 @@ fn a_hit_is_reported_to_the_shooter_and_the_victim_with_a_bearing() {
     assert_eq!(hits[1].1.z, to_cm(-20.0));
     // The finishing blow is a kill, and amounts are what was actually lost.
     crate::events::update(&mut game.world.entities.ecs);
-    damage(&mut game.world, target, 255, Some(shooter), WEAPON_RIFLE);
+    damage_entity(&mut game.world, target, Harm::new(255, Some(shooter), WEAPON_RIFLE));
     let hits = crate::game::feedback::hits(&game.world);
     let last = &hits[1].1;
     assert_eq!((last.role, last.kind, last.amount), (HIT_DEALT, HIT_KILL, PLAYER_MAX_HP - 30));
@@ -170,7 +170,7 @@ fn a_hit_is_reported_to_the_shooter_and_the_victim_with_a_bearing() {
 fn hurting_yourself_reports_no_dealt_hit() {
     let (mut game, shooter, _, _, _) = duel();
     crate::events::update(&mut game.world.entities.ecs);
-    damage(&mut game.world, shooter, 5, Some(shooter), WEAPON_RIFLE);
+    damage_entity(&mut game.world, shooter, Harm::new(5, Some(shooter), WEAPON_RIFLE));
     let hits = crate::game::feedback::hits(&game.world);
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].1.role, HIT_TAKEN);
@@ -180,7 +180,7 @@ fn hurting_yourself_reports_no_dealt_hit() {
 #[test]
 fn dead_players_do_not_fire_and_cannot_be_hit_until_they_respawn() {
     let (mut game, shooter, target, mut seq, mut seq_t) = duel();
-    damage(&mut game.world, target, PLAYER_MAX_HP, Some(shooter), WEAPON_RIFLE);
+    damage_entity(&mut game.world, target, Harm::new(PLAYER_MAX_HP, Some(shooter), WEAPON_RIFLE));
     let died: Vec<_> = game.world.happened::<crate::game::Died>().collect();
     assert_eq!(died.len(), 1);
     assert_eq!(died[0].killer, Some(shooter));
@@ -631,7 +631,7 @@ fn being_hit_spoils_a_bandage_and_full_health_does_not_start_one() {
     hold_slot(&mut game, shooter, &mut seq, 0, 3, 5);
     hold_slot(&mut game, shooter, &mut seq, BUTTON_FIRE, 3, 1);
     assert!(game.world.entities.of::<Player>(shooter).channel_left > 0);
-    damage(&mut game.world, shooter, 5, Some(target), WEAPON_RIFLE);
+    damage_entity(&mut game.world, shooter, Harm::new(5, Some(target), WEAPON_RIFLE));
     assert_eq!(game.world.entities.of::<Player>(shooter).channel_left, 0);
     hold_slot(&mut game, shooter, &mut seq, 0, 3, BANDAGE_TICKS + 1);
     assert_eq!(game.world.entities.of::<crate::entities::Health>(shooter).hp, 45);
@@ -642,7 +642,7 @@ fn being_hit_spoils_a_bandage_and_full_health_does_not_start_one() {
 fn a_new_life_starts_with_the_standard_loadout() {
     let (mut game, shooter, target, mut seq, mut seq_t) = duel();
     give(&mut game, target, 4, ITEM_BANDAGE, 2);
-    damage(&mut game.world, target, PLAYER_MAX_HP, Some(shooter), WEAPON_RIFLE);
+    damage_entity(&mut game.world, target, Harm::new(PLAYER_MAX_HP, Some(shooter), WEAPON_RIFLE));
     hold(&mut game, target, &mut seq_t, 0.0, 0, RESPAWN_TICKS);
     assert!(game.world.entities.alive(target));
     let hotbar = game.world.entities.of::<Player>(target).hotbar;
@@ -1164,7 +1164,7 @@ fn a_seated_players_head_is_rewound_like_a_standing_ones() {
 #[test]
 fn a_passenger_shot_dead_falls_out_of_the_seat() {
     let (mut game, vid, rider) = rider_in(shared::protocol::KIND_JEEP, 1);
-    damage(&mut game.world, rider, PLAYER_MAX_HP, None, WEAPON_RIFLE);
+    damage_entity(&mut game.world, rider, Harm::new(PLAYER_MAX_HP, None, WEAPON_RIFLE));
     assert!(!game.world.entities.alive(rider));
     assert!(game.world.entities.of::<Player>(rider).seat.is_none());
     assert_eq!(game.world.entities.of::<Seats>(vid)[1], None);
@@ -1236,8 +1236,8 @@ fn two_kills_in_one_tick_are_told_with_the_score_after_each() {
     let (other, _inbox) = join(&mut game);
     std::mem::forget(_inbox);
     crate::events::update(&mut game.world.entities.ecs);
-    damage(&mut game.world, target, PLAYER_MAX_HP, Some(shooter), WEAPON_RIFLE);
-    damage(&mut game.world, other, PLAYER_MAX_HP, Some(shooter), WEAPON_RIFLE);
+    damage_entity(&mut game.world, target, Harm::new(PLAYER_MAX_HP, Some(shooter), WEAPON_RIFLE));
+    damage_entity(&mut game.world, other, Harm::new(PLAYER_MAX_HP, Some(shooter), WEAPON_RIFLE));
     let mut scores = crate::mechanics::Scores;
     crate::mechanics::Mechanic::react(&mut scores, &mut game.world);
     let kills = crate::game::feedback::kills(&game.world);

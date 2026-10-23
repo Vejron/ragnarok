@@ -93,6 +93,7 @@ impl Game {
                 rng: Rng::from_time(),
                 shots: Vec::new(),
                 bullets: Vec::new(),
+                hooks: Default::default(),
             },
             mechanics: default_mechanics(),
             outboxes: BTreeMap::new(),
@@ -103,6 +104,9 @@ impl Game {
         };
         let names: Vec<&str> = game.mechanics.iter().map(|mechanic| mechanic.name()).collect();
         tracing::debug!(mechanics = ?names, "room created");
+        for mechanic in &game.mechanics {
+            mechanic.hooks(&mut game.world.hooks);
+        }
         for mechanic in &mut game.mechanics {
             mechanic.on_start(&mut game.world);
         }

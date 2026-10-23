@@ -45,6 +45,8 @@ pub trait Mechanic: Send {
     fn on_leave(&mut self, _world: &mut World, _id: u32) {}
     /// One fixed simulation tick. Each player's input for this tick is already in `Player::input`.
     fn on_tick(&mut self, _world: &mut World, _dt: f32) {}
+    /// The reactions it needs run the moment something is hurt or dies (see `crate::events::Hooks`).
+    fn hooks(&self, _hooks: &mut crate::events::Hooks) {}
     /// After every mechanic's tick and the scenario's: what this tick's events say happened
     /// (`World::happened`), for a mechanic that answers it, before the players are told.
     fn react(&mut self, _world: &mut World) {}
@@ -73,7 +75,7 @@ pub fn default_mechanics() -> Vec<Box<dyn Mechanic>> {
 /// What tests outside the mechanics reach in for: setting up a busy room without playing it.
 #[cfg(test)]
 pub(crate) mod for_tests {
-    pub use super::combat::damage;
+    pub use super::life::{Harm, damage_entity};
     pub use super::drones::launch as launch_drone;
     pub use super::projectiles::Flying;
 

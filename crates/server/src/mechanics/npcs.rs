@@ -225,7 +225,7 @@ impl Mechanic for Npcs {
 mod tests {
     use super::*;
     use crate::game::Game;
-    use crate::mechanics::life::{damage_entity, first_hurtbox_hit};
+    use crate::mechanics::life::{Harm, damage_entity, first_hurtbox_hit};
     use shared::items::def;
     use shared::world::{WORLD_VERSION, WorldFile};
 
@@ -294,6 +294,20 @@ mod tests {
     }
 
     #[test]
+    fn a_rooster_shot_dead_dies_as_anything_does_but_scores_nothing() {
+        use crate::mechanics::Mechanic;
+        let mut game = game();
+        let r = rooster(&game);
+        let shooter = game.add_bot([0.0, 0.0], crate::game::TEAM_BOTS, Vec::new()).unwrap();
+        assert!(damage_entity(&mut game.world, r.id, Harm::new(ROOSTER_HP, Some(shooter), shared::protocol::WEAPON_RIFLE)));
+        let died: Vec<_> = game.world.happened::<crate::game::Died>().copied().collect();
+        assert_eq!(died.iter().map(|death| (death.victim, death.killer)).collect::<Vec<_>>(), [(r.id, Some(shooter))]);
+        crate::mechanics::Scores.react(&mut game.world);
+        assert_eq!(game.world.entities.of::<crate::game::Player>(shooter).kills, 0, "a rooster is not a kill");
+        assert!(crate::game::feedback::kills(&game.world).is_empty(), "nor news for the kill feed");
+    }
+
+    #[test]
     fn a_lagging_shooter_hits_a_rooster_where_they_saw_it() {
         let mut game = game();
         game.step();
@@ -318,7 +332,7 @@ mod tests {
         let hit = first_hurtbox_hit(&game.world, [centre[0], centre[1], centre[2] + 5.0], [0.0, 0.0, -1.0], 20.0, None, 0, None);
         assert_eq!(hit.map(|(who, _)| who), Some(r.id));
 
-        assert!(damage_entity(&mut game.world, r.id, ROOSTER_HP, None, 0, None));
+        assert!(damage_entity(&mut game.world, r.id, Harm::new(ROOSTER_HP, None, 0)));
         assert!(!rooster(&game).health.alive());
         let eggs: Vec<_> = game.world.pickup_ids().into_iter().filter_map(|pid| game.world.pickup(pid).copied()).filter(|p| p.item == ITEM_GOLDEN_EGG).collect();
         assert_eq!(eggs.len(), 1);
@@ -404,8 +418,8 @@ mod tests {
         let r = rooster(&game);
         let p = r.transform.position;
         let centre = [p[0], p[1] + ROOSTER_CAPSULE_CENTRE, p[2]];
-        assert!(hurtbox_near(&game.world, [centre[0] + 0.8, centre[1], centre[2]], 1.0));
-        assert!(!hurtbox_near(&game.world, [centre[0] + 3.0, centre[1], centre[2]], 1.0));
+        assert!(hurtbox_near(&game.world, [centre[0] + 0.8, centre[1], centre[2]], 1.0, None));
+        assert!(!hurtbox_near(&game.world, [centre[0] + 3.0, centre[1], centre[2]], 1.0, None));
 
         let bot = game.add_bot([p[0] + 30.0, p[2]], TEAM_BOTS, Vec::new()).unwrap();
         blast(&mut game.world, Blast { point: centre, radius: 3.0, damage: 10.0, knock: 0.0, dir: [0.0, 1.0, 0.0], attacker: Some(bot), weapon: WEAPON_GRENADE });
@@ -419,7 +433,7 @@ mod tests {
         let id = rooster(&game).id;
         game.world.clear_pickups();
         for _ in 0..3 {
-            assert!(damage_entity(&mut game.world, id, ROOSTER_HP, None, 0, None));
+            assert!(damage_entity(&mut game.world, id, Harm::new(ROOSTER_HP, None, 0)));
             crate::mechanics::life::place_at_home(&mut game.world, id);
         }
         let eggs = game.world.pickup_ids().into_iter().filter(|&pid| game.world.pickup(pid).is_some_and(|p| p.item == ITEM_GOLDEN_EGG)).count();

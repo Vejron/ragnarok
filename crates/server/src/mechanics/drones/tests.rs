@@ -205,7 +205,7 @@ fn a_hurt_pilot_loses_the_link() {
     let mut game = game();
     let (id, mut seq) = pilot(&mut game);
     let vid = launch_drone(&mut game, id, &mut seq);
-    super::super::combat::damage(&mut game.world, id, 10, None, WEAPON_RIFLE);
+    super::super::life::damage_entity(&mut game.world, id, super::super::life::Harm::new(10, None, WEAPON_RIFLE));
     idle(&mut game, id, &mut seq, 1);
     assert_eq!(game.world.entities.of::<Player>(id).seat, None);
     assert!(drone(&game, vid).is_some_and(|drone| !drone.linked));

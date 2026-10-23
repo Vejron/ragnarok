@@ -117,16 +117,6 @@ fn burst(world: &mut World, vid: u32, attacker: Option<u32>, shown_as: u8, def: 
     blast(world, Blast { point: pose.position, radius, damage, knock, dir: [0.0, 1.0, 0.0], attacker, weapon: def.weapon });
 }
 
-/// Whether `point` is within `proximity` of the axis of a living stickman other than `owner`.
-fn near_someone(world: &World, point: [f32; 3], owner: u32, proximity: f32) -> bool {
-    world.entities.all::<Player>().filter(|&(id, player)| id != owner && player.embodied() && world.entities.alive(id)).any(|(_, player)| {
-        let c = player.character.position;
-        let dy = (point[1] - c[1]).clamp(-CAPSULE_HALF_HEIGHT, CAPSULE_HALF_HEIGHT);
-        let d = [point[0] - c[0], point[1] - c[1] - dy, point[2] - c[2]];
-        d.iter().map(|v| v * v).sum::<f32>() < proximity * proximity
-    })
-}
-
 /// What becomes of drone `vid` this tick.
 enum Fate {
     Flies,
@@ -189,7 +179,7 @@ impl Mechanic for Drones {
                     tracing::debug!(vid, "drone recalled");
                 }
                 Fate::Detonate => detonate(world, vid),
-                _ if hit || near_someone(world, pose.position, drone.owner, def.proximity) || super::life::hurtbox_near(world, pose.position, def.proximity) => detonate(world, vid),
+                _ if hit || super::life::hurtbox_near(world, pose.position, def.proximity, Some(drone.owner)) => detonate(world, vid),
                 Fate::Cut => cut(world, vid),
                 Fate::Flies => {
                     let Some(mut drone) = world.entities.get_mut::<Drone>(vid) else { continue };

@@ -1,12 +1,18 @@
-//! Life and death for ECS entities, whatever they are: the one hit test, the one damage path and the
-//! one blast gather for everything with a `Hurtbox` and `Health`, and coming back at `Home` for
-//! everything with a `Respawn`. Players keep their own `combat::damage` for now.
+//! Life and death for everything that can be hurt, whatever it is: where its body is, the one hit test,
+//! the one damage path and the one blast gather for everything with a `Hurtbox` and `Health`, players
+//! and creatures alike, and the count back to life for everything with a `Respawn` (at its `Home`, or
+//! a player where `Combat` puts them).
 
 use super::Mechanic;
-use super::combat::{position_of, ray_capsule};
+use super::combat::{position_of, ray_capsule, same_team};
 use crate::entities::{DropOnDeath, Health, Home, Hurtbox, NetId, Respawn, Respawned, Trail, Transform, With};
-use crate::game::{Damaged, Player, World};
-use shared::consts::{MAX_REWIND_TICKS, SEATED_CENTRE_DROP, SEATED_HALF_HEIGHT, SEATED_HEAD_ZONE, SEATED_RADIUS};
+use crate::events;
+use crate::game::{Damaged, Died, Player, World};
+use shared::consts::{HEADSHOT_MULT, MAX_REWIND_TICKS, SEATED_CENTRE_DROP, SEATED_HALF_HEIGHT, SEATED_HEAD_ZONE, SEATED_RADIUS};
+use shared::protocol::{
+    DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_EGG, WEAPON_GRENADE, WEAPON_LOITER, WEAPON_ROADKILL, WEAPON_ROCKET,
+    WEAPON_SHELL, WEAPON_WRECK,
+};
 
 pub struct Life;
 
@@ -118,18 +124,21 @@ pub fn record_trails(world: &mut World) {
     }
 }
 
-/// Whether a living entity with a hurtbox has the axis of its capsule within `proximity` of `point`:
-/// what sets off a proximity fuse, as a stickman does.
-pub fn hurtbox_near(world: &World, point: [f32; 3], proximity: f32) -> bool {
-    world.entities.scan::<(&Transform, &Hurtbox, &Health), (), _>(|living| {
-        living.filter(|(_, _, health)| health.alive()).any(|(transform, hurtbox, _)| {
-            let c = hurtbox.centre(transform.position);
-            let dy = (point[1] - c[1]).clamp(-hurtbox.half_height, hurtbox.half_height);
-            let d = [point[0] - c[0], point[1] - c[1] - dy, point[2] - c[2]];
-            d.iter().map(|v| v * v).sum::<f32>() < proximity * proximity
+/// Whether a living body out in the open (not in a seat) other than `ignore` has the axis of its
+/// capsule within `proximity` of `point`: what sets off a proximity fuse.
+pub fn hurtbox_near(world: &World, point: [f32; 3], proximity: f32, ignore: Option<u32>) -> bool {
+    world
+        .entities
+        .scan::<(&NetId, &Hurtbox, &Health, Option<&Transform>, Option<&Player>), (), _>(|living| {
+            living.filter(|&(&NetId(id), _, health, ..)| health.alive() && Some(id) != ignore).any(|(&NetId(id), hurtbox, _, transform, player)| {
+                let Some(body) = body_of(world, id, hurtbox, transform, player, None, 0).filter(|body| body.vehicle.is_none()) else { return false };
+                let c = body.centre;
+                let dy = (point[1] - c[1]).clamp(-body.half_height, body.half_height);
+                let d = [point[0] - c[0], point[1] - c[1] - dy, point[2] - c[2]];
+                d.iter().map(|v| v * v).sum::<f32>() < proximity * proximity
+            })
         })
-    })
-    .unwrap_or(false)
+        .unwrap_or(false)
 }
 
 /// Where a hit on living entity `id` is shown (its body's `mark`), or, with no body out in the world,
@@ -138,17 +147,14 @@ pub fn mark(world: &World, id: u32) -> [f32; 3] {
     body(world, id, 0).map(|body| body.mark).or_else(|| position_of(world, id)).unwrap_or_default()
 }
 
-/// The living entities with a hurtbox within `radius` of `point` (measured to the capsule's centre),
-/// in id order, each with the damage that reaches it.
+/// The living bodies out in the open (not in a seat: a vehicle takes the blast for its crew) within
+/// `radius` of `point`, measured to the capsule's centre, in id order, each with the damage that
+/// reaches it.
 pub fn blasted(world: &World, point: [f32; 3], radius: f32, damage: f32) -> Vec<(u32, u8)> {
     let mut reached = Vec::new();
-    for id in world.entities.ids::<(With<Transform>, With<Hurtbox>, With<Health>)>() {
-        let (Some(transform), Some(hurtbox), Some(health)) = (world.entities.get::<Transform>(id), world.entities.get::<Hurtbox>(id), world.entities.get::<Health>(id)) else { continue };
-        if !health.alive() {
-            continue;
-        }
-        let centre = hurtbox.centre(transform.position);
-        let distance = (0..3).map(|i| (centre[i] - point[i]).powi(2)).sum::<f32>().sqrt();
+    for id in world.entities.ids::<(With<Hurtbox>, With<Health>)>() {
+        let Some(body) = body(world, id, 0).filter(|body| body.vehicle.is_none()) else { continue };
+        let distance = (0..3).map(|i| (body.centre[i] - point[i]).powi(2)).sum::<f32>().sqrt();
         if distance < radius {
             reached.push((id, (damage * (1.0 - distance / radius)).round().min(255.0) as u8));
         }
@@ -156,11 +162,49 @@ pub fn blasted(world: &World, point: [f32; 3], radius: f32, damage: f32) -> Vec<
     reached
 }
 
-/// Takes `amount` health off entity `id`, by `attacker` with `weapon`, and says so (`Damaged`); the
-/// harm came `from` there, or from where the attacker is. At zero it dies: its `Respawn` starts
-/// counting and its `DropOnDeath` is left where it fell. Returns whether this killed it; does nothing
-/// to the dead.
-pub fn damage_entity(world: &mut World, id: u32, amount: u8, attacker: Option<u32>, weapon: u8, from: Option<[f32; 3]>) -> bool {
+/// Harm done to something: how much, by whom (if anyone) with what (`WEAPON_*`), where it came from if
+/// not from where the attacker is (a blast's centre), and whether a round struck the head.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Harm {
+    pub amount: u8,
+    pub attacker: Option<u32>,
+    pub weapon: u8,
+    pub from: Option<[f32; 3]>,
+    pub head: bool,
+}
+
+impl Harm {
+    pub fn new(amount: u8, attacker: Option<u32>, weapon: u8) -> Self {
+        Harm { amount, attacker, weapon, from: None, head: false }
+    }
+
+    /// The same, come from `point`.
+    pub fn from(self, point: [f32; 3]) -> Self {
+        Harm { from: Some(point), ..self }
+    }
+
+    /// The same, to the head when `head`.
+    pub fn head(self, head: bool) -> Self {
+        Harm { head, ..self }
+    }
+}
+
+/// The weapons whose kill throws the body down as a blast does.
+const BLASTS: [u8; 9] = [WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK, WEAPON_GRENADE, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_LOITER, WEAPON_EGG];
+
+/// The one place health goes down, for anything with `Health` and a body: takes `harm` off entity
+/// `id`, and says so (`Damaged`). A blow to the head does `HEADSHOT_MULT` times the damage, and the
+/// attacker's own team is spared. At zero it dies (`Died`, crediting the attacker if it was anyone
+/// other than itself): its `Respawn` starts counting and its `DropOnDeath` is left where it fell.
+/// Returns whether this killed it; does nothing to the dead.
+pub fn damage_entity(world: &mut World, id: u32, harm: Harm) -> bool {
+    let Harm { amount, attacker, weapon, from, head } = harm;
+    let amount = if head { (f32::from(amount) * HEADSHOT_MULT).min(255.0) as u8 } else { amount };
+    let other = attacker.filter(|&by| by != id);
+    if other.is_some_and(|by| same_team(world, by, id)) {
+        return false;
+    }
+    let from = from.or_else(|| other.and_then(|by| position_of(world, by)));
     let at = mark(world, id);
     let Some(mut health) = world.entities.get_mut::<Health>(id) else { return false };
     if !health.alive() || amount == 0 {
@@ -169,8 +213,7 @@ pub fn damage_entity(world: &mut World, id: u32, amount: u8, attacker: Option<u3
     let before = health.hp;
     health.hp = health.hp.saturating_sub(amount);
     let (lost, killed) = (before - health.hp, !health.alive());
-    let from = from.or_else(|| attacker.and_then(|by| position_of(world, by)));
-    world.send(Damaged { victim: id, lost, attacker, weapon, from, at, head: false, killed, aboard: Vec::new() });
+    events::damaged(world, Damaged { victim: id, lost, attacker, weapon, from, at, head, killed, aboard: Vec::new() });
     if !killed {
         return false;
     }
@@ -178,14 +221,23 @@ pub fn damage_entity(world: &mut World, id: u32, amount: u8, attacker: Option<u3
         respawn.left = respawn.delay;
     }
     let drop = world.entities.get::<DropOnDeath>(id).copied();
-    let at = world.entities.get::<Transform>(id).map(|transform| transform.position);
-    if let (Some(drop), Some([x, y, z])) = (drop, at) {
+    let feet = world.entities.get::<Transform>(id).map(|transform| transform.position);
+    if let (Some(drop), Some([x, y, z])) = (drop, feet) {
         if drop.unique {
             world.remove_pickups(|p| !(p.dropped && p.item == drop.item));
         }
         let item = world.add_pickup([x, y + DROP_FLOAT, z], drop.item, drop.count, true);
         tracing::debug!(id, item, "dropped on death");
     }
+    let style = match weapon {
+        WEAPON_ROADKILL => DEATH_ROADKILL,
+        _ if BLASTS.contains(&weapon) => DEATH_BLAST,
+        _ if head => DEATH_HEAD,
+        _ if amount > before.saturating_mul(2) => DEATH_OVERKILL,
+        _ => DEATH_BODY,
+    };
+    events::died(world, Died { victim: id, killer: other, weapon, style, from });
+    tracing::debug!(id, killer = other, weapon, "killed");
     true
 }
 
