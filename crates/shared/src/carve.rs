@@ -75,9 +75,12 @@ const UNHELD: u16 = u16::MAX;
 /// How much longer a cell's chain to an anchor may get than in the whole building before it lets
 /// go: 5 cells sideways, about 3.6 m of roof or floor hanging out past its last support.
 const SPAN_SLACK: u16 = 10;
-/// A cell fails when it carries more than `LOAD_FACTOR` times what it did in the whole building,
+/// A cell fails when it carries more than `LOAD_FACTOR_PERCENT` percent of what it did in the whole building,
 /// plus `LOAD_SLACK`: the pillar left holding up a roof that a wall shared with it.
-const LOAD_FACTOR: u32 = 2;
+const LOAD_FACTOR_PERCENT: u32 = 250;
+/// Most that one check takes of the cells standing, percent, and at least this many cells.
+const SHED_SHARE: usize = 8;
+const SHED_LEAST: usize = 40;
 const LOAD_SLACK: u32 = 4;
 
 /// Longest gap between the points a wall or roof is sampled at to find the cells it passes
@@ -497,19 +500,31 @@ impl Shell {
     /// it was built.
     pub fn strain(&self, removed: &mut [bool], whole: &Hold) -> Cut {
         let now = self.hold(removed);
-        let weak: Vec<u32> = (0..self.solid.len())
-            .filter(|&i| self.solid[i] && !removed[i])
-            .filter(|&i| now.span[i] > whole.span[i].saturating_add(SPAN_SLACK) || now.load[i] > whole.load[i].saturating_mul(LOAD_FACTOR).saturating_add(LOAD_SLACK))
-            .map(|i| i as u32)
-            .collect();
+        // How far past its limit each failing cell is, in percent of the limit: a cell no chain reaches is past any.
+        let mut weak: Vec<(u32, u32)> = Vec::new();
+        for i in (0..self.solid.len()).filter(|&i| self.solid[i] && !removed[i]) {
+            let reach = u32::from(whole.span[i]) + u32::from(SPAN_SLACK);
+            let carry = whole.load[i].saturating_mul(LOAD_FACTOR_PERCENT) / 100 + LOAD_SLACK;
+            let over_span = if now.span[i] == UNHELD { u32::MAX } else { (u32::from(now.span[i]).saturating_sub(reach)) * 100 / reach.max(1) };
+            let over_load = now.load[i].saturating_sub(carry).saturating_mul(100) / carry.max(1);
+            let over = over_span.max(over_load);
+            if over > 0 {
+                weak.push((over, i as u32));
+            }
+        }
         let mut cut = Cut::default();
         if weak.is_empty() {
             return cut;
         }
-        for &id in &weak {
+        // A check lets go of the worst part, not all of it: what is left then carries more, and is looked at again.
+        let cutoff = self.standing(removed) * SHED_SHARE / 100 + SHED_LEAST;
+        weak.sort_unstable_by_key(|&(over, id)| (std::cmp::Reverse(over), id));
+        let unheld = weak.iter().take_while(|&&(over, _)| over == u32::MAX).count();
+        weak.truncate(cutoff.max(unheld));
+        for &(_, id) in &weak {
             removed[id as usize] = true;
         }
-        cut.fell = weak;
+        cut.fell = weak.into_iter().map(|(_, id)| id).collect();
         cut.fell.extend(self.unsupported_after(removed, &cut.fell));
         for &id in &cut.fell {
             removed[id as usize] = true;

@@ -9,7 +9,7 @@ import { Fracture, shardGeometry } from './fracture'
 import { random } from './rubble'
 
 /** Most pieces thrown from a building at once, and how long they lie where they land, seconds. */
-const MAX_FALLING = 32
+const MAX_FALLING = 48
 const FALLEN_SECONDS = 10
 const GRAVITY = 9.8
 /** A building about to collapse sheds dust about this often, seconds, and only this near the camera, metres. */
@@ -327,11 +327,14 @@ export class BuildingDamage {
    * `point`, ones that were left hanging (`falls`) drop where they were.
    */
   private throwCells(drawn: Drawn, fracture: Fracture, shell: NonNullable<Fracture['shell']>, floor: number, cells: readonly number[], point: Mark | null, falls: boolean) {
-    for (const group of shell.clusters(cells, falls ? FALLEN_CELLS : THROWN_CELLS)) {
+    // A big swath is thrown in bigger chunks rather than dropped past the limit: pieces still falling from the last round take places too.
+    const room = Math.max(MAX_FALLING - drawn.falling.length, 8)
+    const most = Math.max(falls ? FALLEN_CELLS : THROWN_CELLS, Math.ceil(cells.length / room))
+    for (const group of shell.clusters(cells, most)) {
       const chunk = fracture.chunk(new Set(group))
       if (!chunk) continue
       this.puffs.push({ at: chunk.pivot.clone(), size: falls ? 3 + this.rand() * 2 : 1.4 + this.rand() * 1.4 })
-      if (drawn.falling.length >= MAX_FALLING) continue
+      if (drawn.falling.length >= MAX_FALLING * 2) continue
       const mesh = new Mesh(shardGeometry(chunk.positions, chunk.colors), pieceMaterial)
       mesh.position.copy(chunk.pivot)
       mesh.castShadow = true
