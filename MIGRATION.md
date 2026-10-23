@@ -4,7 +4,7 @@ A running record of moving Ragnarok from per-family structs and kind switches to
 architecture, and from a hand-mirrored client simulation to one shared simulation. It holds the plan,
 the rules every step keeps, and a log of what has been done. Update it in the same commit as the work.
 
-Branch: `refactor/ecs-migration`.
+Branch: `refactor/ecs-migration`, merged to `master` at `5c755f3`. The open items continue in `MIGRATION-II.md`.
 
 ## Why
 
