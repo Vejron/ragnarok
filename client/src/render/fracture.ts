@@ -12,6 +12,8 @@ const CHAR_FAR = 0.35
 const CHAR_DENT = 0.6
 /** Soot, as a share of the wall's own colour that is left when fully burnt. */
 const SOOT = 0.12
+/** Cells along a side of a brick: a building is drawn in cubes of these, so a hit redraws only the ones it touched. */
+const BRICK = 16
 /** How much of their colour thrown pieces keep. */
 const THROWN = 0.9
 
