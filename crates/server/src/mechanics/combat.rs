@@ -1,10 +1,10 @@
 use super::Mechanic;
 use super::armor::Outcome;
 use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
-use super::life::{blasted, damage_entity, first_hurtbox_hit};
+use super::life::{blasted, body, damage_entity, first_hurtbox_hit, mark};
 use super::spawn;
 use super::projectiles::{self, Flying, Stage};
-use crate::entities::{Health, HurtBy, NetId, Respawn, With};
+use crate::entities::{Health, HurtBy, Respawn, With};
 use crate::game::{Bot, Damaged, Died, Drone, Player, Seats, TEAM_NONE, Vehicle, World, Wreck, starting_hotbar};
 use sim::Obj;
 use shared::consts::*;
@@ -93,98 +93,6 @@ pub fn rewind_ticks(now: u32, view: u16) -> u32 {
     (back.max(0) as u32).min(MAX_REWIND_TICKS)
 }
 
-/// What of a living player a round can hit: an upright capsule (`half_height` above and below
-/// `centre`, plus `radius`), with the head above `head_y`. Standing, it is the stickman's capsule;
-/// seated in a vehicle whose crew show, a short one from the head down to the waist, in `vehicle`.
-#[derive(Clone, Copy, Debug)]
-pub struct Body {
-    pub centre: [f32; 3],
-    pub half_height: f32,
-    pub radius: f32,
-    pub head_y: f32,
-    pub vehicle: Option<u32>,
-}
-
-/// Player `id`'s body as it was `back` ticks ago, if a round can hit them: alive, and standing or
-/// sitting where they show. A crew inside armour (`Exposure::Sealed`) has none.
-pub fn body_of(world: &World, id: u32, back: u32) -> Option<Body> {
-    body(world, id, world.entities.get::<Player>(id)?, back)
-}
-
-/// [`body_of`], for player `id` already in hand.
-fn body(world: &World, id: u32, player: &Player, back: u32) -> Option<Body> {
-    if !world.entities.alive(id) {
-        return None;
-    }
-    if player.embodied() {
-        let now = player.character.position;
-        let at = if back == 0 { now } else { world.position_at(id, back).unwrap_or(now) };
-        return Some(Body { centre: at, half_height: CAPSULE_HALF_HEIGHT, radius: CAPSULE_RADIUS, head_y: at[1] + HEAD_ZONE_Y, vehicle: None });
-    }
-    let (vehicle, now) = world.seated_head(id)?;
-    let head = if back == 0 { now } else { world.head_at(id, back).unwrap_or(now) };
-    Some(Body {
-        centre: [head[0], head[1] - SEATED_CENTRE_DROP, head[2]],
-        half_height: SEATED_HALF_HEIGHT,
-        radius: SEATED_RADIUS,
-        head_y: head[1] - SEATED_HEAD_ZONE,
-        vehicle: Some(vehicle),
-    })
-}
-
-/// The nearest living player the ray meets within `max`, standing or seated in the open, and how far
-/// along it is. `ignore` is the shooter. Stickmen are not physics bodies, so this is the only way to
-/// hit one. Players are tested where they were `back` ticks ago, which is where a shooter with that
-/// much lag saw them.
-pub fn first_player_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f32, ignore: Option<u32>, back: u32) -> Option<(u32, f32)> {
-    first_body_hit(world, origin, dir, max, ignore, back, |_| true)
-}
-
-/// The first living thing the ray meets within `max`: a stickman as [`first_player_hit`] finds them,
-/// or a creature with a `Hurtbox` (a rooster). Of the two at the same distance the creature is hit,
-/// as a round hits it. What strikes a body and what aims at one asks this, so nothing that can be hurt
-/// is passed through by one weapon and met by another.
-pub fn first_living_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f32, ignore: Option<u32>, back: u32) -> Option<(u32, f32)> {
-    let player = first_player_hit(world, origin, dir, max, ignore, back);
-    first_hurtbox_hit(world, origin, dir, player.map_or(max, |(_, t)| t)).or(player)
-}
-
-/// [`first_player_hit`], among the bodies `only` accepts.
-fn first_body_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f32, ignore: Option<u32>, back: u32, only: impl Fn(&Body) -> bool) -> Option<(u32, f32)> {
-    // In storage order. `ray_capsule` takes a hit at the limit, so in id order the later of two at the
-    // same distance won: the higher id is hit, as it was.
-    world.entities.scan::<(&NetId, &Player), (), _>(|players| {
-        let mut best: Option<(u32, f32)> = None;
-        for (&NetId(id), player) in players {
-            if Some(id) == ignore {
-                continue;
-            }
-            let Some(body) = body(world, id, player, back).filter(&only) else { continue };
-            let limit = best.map_or(max, |(_, t)| t);
-            if let Some(t) = ray_capsule(origin, dir, body.centre, body.half_height, body.radius, limit)
-                && best.is_none_or(|(other, at)| t < at || id > other)
-            {
-                best = Some((id, t));
-            }
-        }
-        best
-    })?
-}
-
-/// The player a round meets: the first within `reach`, where the world (`wall`, the vehicle it struck
-/// if any) stops it. A round that strikes a glazed vehicle (`Exposure::Glazed`) goes on through the
-/// glass to its crew, as far as whatever is behind them. `range` bounds that second look.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn round_hit(world: &World, origin: [f32; 3], dir: [f32; 3], reach: f32, wall: Option<u32>, range: f32, shooter: Option<u32>, back: u32) -> Option<(u32, f32)> {
-    let hit = first_player_hit(world, origin, dir, reach, shooter, back);
-    if hit.is_some() {
-        return hit;
-    }
-    let car = wall.filter(|car| world.entities.get::<Vehicle>(*car).is_some_and(|vehicle| vehicle_def(vehicle.kind).crew == Exposure::Glazed))?;
-    let beyond = world.physics.cast_ray(origin, dir, range, car).unwrap_or(range);
-    first_body_hit(world, origin, dir, beyond, shooter, back, |body| body.vehicle == Some(car))
-}
-
 /// Where player `id` is: on foot (or flying a drone) where they stand, seated where their vehicle is.
 pub fn position_of(world: &World, id: u32) -> Option<[f32; 3]> {
     let player = world.entities.get::<Player>(id)?;
@@ -217,10 +125,10 @@ pub fn damage_from(world: &mut World, victim: u32, amount: u8, attacker: Option<
     damage_hit(world, victim, amount, attacker, weapon, source, false);
 }
 
-/// Whether a round that reaches `t` along `dir` from `origin` hits `victim` (where they stood `back`
+/// Whether a round that reaches `t` along `dir` from `origin` hits `victim` (where it stood `back`
 /// ticks ago) in the head.
 pub(super) fn is_headshot(world: &World, victim: u32, origin: [f32; 3], dir: [f32; 3], t: f32, back: u32) -> bool {
-    body_of(world, victim, back).is_some_and(|body| origin[1] + dir[1] * t > body.head_y)
+    body(world, victim, back).and_then(|body| body.head_y).is_some_and(|head_y| origin[1] + dir[1] * t > head_y)
 }
 
 /// `damage_from`, for a round that hit the head when `head`: it does `HEADSHOT_MULT` times the
@@ -235,6 +143,8 @@ pub fn damage_hit(world: &mut World, victim: u32, amount: u8, attacker: Option<u
     if !world.entities.has::<Player>(victim) {
         return;
     }
+    // Where a number or a flash belongs: the chest, or the seat for one sitting in the open.
+    let chest = mark(world, victim);
     let Some(mut health) = world.entities.get_mut::<Health>(victim) else { return };
     if !health.alive() || amount == 0 {
         return;
@@ -244,14 +154,6 @@ pub fn damage_hit(world: &mut World, victim: u32, amount: u8, attacker: Option<u
     let (lost, killed) = (before - health.hp, !health.alive());
     // A bandage needs a steady hand.
     world.entities.of_mut::<Player>(victim).channel_left = 0;
-    // Chest height, where a number or a flash belongs: in the seat, for one sitting in the open.
-    let chest = match world.seated_head(victim) {
-        Some((_, head)) => [head[0], head[1] - SEATED_CENTRE_DROP, head[2]],
-        None => {
-            let at = world.entities.get::<Player>(victim).map_or([0.0; 3], |player| player.character.position);
-            [at[0], at[1] + 0.9, at[2]]
-        }
-    };
     world.send(Damaged { victim, lost, attacker, weapon, from, at: chest, head, killed, aboard: Vec::new() });
     if !killed {
         return;
@@ -651,7 +553,7 @@ pub fn scatter(world: &mut World, dir: [f32; 3], spread: f32) -> [f32; 3] {
 #[allow(clippy::too_many_arguments)]
 fn crosshair_dir(world: &World, shooter: u32, back: u32, pivot: [f32; 3], eye: [f32; 3], look_dir: [f32; 3], range: f32, ignore: u32) -> [f32; 3] {
     let wall = world.physics.cast_ray(pivot, look_dir, range, ignore).unwrap_or(range);
-    let t = first_living_hit(world, pivot, look_dir, wall, Some(shooter), back).map_or(wall, |(_, t)| t);
+    let t = first_hurtbox_hit(world, pivot, look_dir, wall, Some(shooter), back, None).map_or(wall, |(_, t)| t);
     let to: [f32; 3] = std::array::from_fn(|i| pivot[i] + look_dir[i] * t - eye[i]);
     let len = to.iter().map(|v| v * v).sum::<f32>().sqrt();
     if len < 1e-3 {
@@ -809,9 +711,7 @@ pub struct Strike {
     wall: Option<(f32, Option<u32>)>,
     /// How far the stretch goes: to the wall, or the whole range.
     reach: f32,
-    /// A rooster, or any other creature with a `Hurtbox`, nearer than any stickman.
-    creature: Option<u32>,
-    /// The stickman met, and how far along.
+    /// The body met (a stickman, a rooster), and how far along.
     hit: Option<(u32, f32)>,
     /// Where it stops.
     pub end: f32,
@@ -820,33 +720,36 @@ pub struct Strike {
 impl Strike {
     /// Whether it met anything at all.
     pub fn any(&self) -> bool {
-        self.creature.is_some() || self.hit.is_some() || self.wall.is_some()
+        self.hit.is_some() || self.wall.is_some()
     }
 }
 
 /// What a round flying `range` metres along `flight` meets, `wall` being what the world's ray met: the
-/// first of a creature, a stickman (seen through glass too), a vehicle, a building or a tree.
+/// first of a body (a stickman, a rooster), a vehicle, a building or a tree. A round that strikes a
+/// glazed vehicle (`Exposure::Glazed`) goes on through the glass to its crew, as far as whatever is
+/// behind them.
 pub fn strike(world: &World, flight: &Flight, wall: Option<(f32, Option<u32>)>, range: f32) -> Strike {
     let Flight { origin, dir, shooter, back, .. } = *flight;
     let reach = wall.map_or(range, |(t, _)| t);
-    let hit = round_hit(world, origin, dir, reach, wall.and_then(|(_, car)| car), range, shooter, back);
-    // A creature (a rooster) nearer than the player (or with no player behind it) takes the shot.
-    let creature = first_hurtbox_hit(world, origin, dir, hit.map_or(reach, |(_, t)| t.min(reach)));
-    let end = creature.map(|(_, t)| t).or(hit.map(|(_, t)| t)).unwrap_or(reach);
-    Strike { wall, reach, creature: creature.map(|(id, _)| id), hit, end }
+    let glazed = wall.and_then(|(_, car)| car).filter(|car| world.entities.get::<Vehicle>(*car).is_some_and(|vehicle| vehicle_def(vehicle.kind).crew == Exposure::Glazed));
+    let through = glazed.map(|car| (car, world.physics.cast_ray(origin, dir, range, car).unwrap_or(range)));
+    let hit = first_hurtbox_hit(world, origin, dir, reach, shooter, back, through);
+    Strike { wall, reach, hit, end: hit.map_or(reach, |(_, t)| t) }
 }
 
 /// Hurts what `met` says the round met, by `round`'s damage less what the distance flown takes off. A
 /// hitscan round and a bullet in flight both end here.
 pub fn land(world: &mut World, flight: &Flight, met: &Strike, round: &Round) {
     let Flight { origin, dir, attacker, back, flown, .. } = *flight;
-    let &Strike { wall, reach, creature, hit, end } = met;
+    let &Strike { wall, reach, hit, end } = met;
     let dealt = round.falloff.apply(round.damage, flown + end);
-    if let Some(target) = creature {
-        damage_entity(world, target, dealt, attacker, round.weapon, None);
-    } else if let Some((victim, t)) = hit {
-        let head = is_headshot(world, victim, origin, dir, t, back);
-        damage_hit(world, victim, dealt, attacker, round.weapon, None, head);
+    if let Some((victim, t)) = hit {
+        if world.entities.has::<Player>(victim) {
+            let head = is_headshot(world, victim, origin, dir, t, back);
+            damage_hit(world, victim, dealt, attacker, round.weapon, None, head);
+        } else {
+            damage_entity(world, victim, dealt, attacker, round.weapon, None);
+        }
     } else if let Some((_, Some(car))) = wall {
         let canvas = world.entities.get::<Vehicle>(car).is_some_and(|vehicle| vehicle_def(vehicle.kind).armor.canvas);
         let point = std::array::from_fn(|i| origin[i] + dir[i] * reach);

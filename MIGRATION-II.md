@@ -89,13 +89,13 @@ touches no file under `mechanics/combat*`.
 - [x] 2.1 `Health` on players, with `Player::hp` removed. The respawn countdown becomes `Respawn`
       (players respawn at a spawn point, not at `Home`: a `Respawn` with a `SpawnPoint` choice in
       place of `Home`, or a player-only reaction to the countdown finishing).
-- [ ] 2.2 The hurtbox learns what players need:
+- [x] 2.2 The hurtbox learns what players need:
       - a head zone (`head: Option<f32>`, height above the centre; roosters have none);
       - a body kept up to date each tick by posture: standing, seated in the open (from
         `seated_head`), or none while sealed;
       - the vehicle it sits in, for the glazed second look.
       Players get one, set by `Movement` and the seating code.
-- [ ] 2.3 Lag compensation for every hurtbox. `World::position_at`/`head_at` become a `Trail`
+- [x] 2.3 Lag compensation for every hurtbox. `World::position_at`/`head_at` become a `Trail`
       component (the last few ticks of the hurtbox's centre). The generic test takes `back` and
       reads it, so a lagging shooter hits a rooster where they saw it too. This changes rooster
       behaviour slightly, and the change is the point; say so in the log.
@@ -222,3 +222,29 @@ boxes by pointing them here.
   - `full_room_tick_cost`, three runs: mechanics 1.65 to 1.68 ms, `Combat` 32.7 to 33.3 µs (29.5 to
     31.1 after Phase 1: the `Health` look-ups), `Life` 0.58 to 0.67 µs (0.24 to 0.37: players are
     counted too). Server tests 272; clippy clean.
+- **2.2, 2.3.** Every body is found by one scan. A player's entity carries a `Hurtbox` (their capsule,
+  with `head: Some(HEAD_ZONE_Y)` and a marker at the chest) and a `Trail`; roosters carry a `Trail`
+  too. `life::body(world, id, back)` says where any body is.
+  - It is read live, not cached: over a `Transform`'s feet, at a stickman's centre on foot, at their
+    head's short capsule in a seat whose crew show, and nowhere while sealed in armour. Keeping a posture
+    up to date each tick, as the plan first had it, was rejected: about a dozen places seat, unseat and
+    move a player, and `Gunnery` runs before `Movement`, so a stale body would be a wrong hit.
+  - `life::first_hurtbox_hit(.., ignore, back, through)` is the one hit test. `through` is the glazed
+    vehicle a round struck and how far it goes on behind the glass, so that vehicle's crew are met
+    out to there and everyone else out to the wall. That is what `round_hit`'s second look did, and
+    taking the nearest body over both limits gives the same answer. `Body`, `body_of`,
+    `first_player_hit`, `first_body_hit`, `round_hit` and `first_living_hit` are gone, and
+    `Strike::creature` with them. The hit marker's place is the body's `mark` (`life::mark`), which
+    replaces `hit_mark` and the chest arithmetic in `damage_hit`.
+  - `World::history`, `position_at`, `head_at` and `record_history` are gone. `life::record_trails`
+    notes every living body's anchor in its own `Trail` once a tick, with whether it was seated, so a
+    seated player's head is rewound as before. Roosters are now lag-compensated too: a lagging
+    shooter hits one where they saw it. That is a deliberate change (new test).
+  - One small change: two bodies at exactly the same distance along a ray now go to the lower id. Before,
+    the higher of two players won, and a creature won over a player.
+  - `full_room_tick_cost` now also runs and times what `step` does after the mechanics (reactions,
+    feedback, events, trails); before, it left them out and let events pile up. That costs 1.9 to
+    2.1 µs a tick with trails, against 3.3 to 4.4 µs with `history`, timed the same way on the
+    previous commit in a worktree. Mechanics 1.69 to 1.72 ms, `Combat` 31.5 to 33.2 µs (the machine
+    was noisy: `Vehicles` and `Movement`, untouched, rose as much). Server tests 273 (one new); clippy
+    clean.

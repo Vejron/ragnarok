@@ -341,7 +341,7 @@ fn step_striking(world: &mut World, id: u32, dt: f32, strikes: Strikes) {
     let hit = world.physics.cast_ray_hit(s.position, dir, step, s.source);
     let wall = hit.map(|(t, _)| t);
     // Stickmen and creatures are not physics bodies, so test the path against each one.
-    let body = if strikes.bodies { super::combat::first_living_hit(world, s.position, dir, wall.unwrap_or(step), Some(s.owner), 0) } else { None };
+    let body = if strikes.bodies { super::life::first_hurtbox_hit(world, s.position, dir, wall.unwrap_or(step), Some(s.owner), 0, None) } else { None };
     s.ttl = s.ttl.saturating_sub(1);
     if let Some(t) = body.map(|(_, t)| t).or(wall) {
         let point: [f32; 3] = std::array::from_fn(|i| s.position[i] + dir[i] * t);

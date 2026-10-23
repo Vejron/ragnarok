@@ -74,11 +74,12 @@ pub fn rooster(home: [f32; 2]) -> impl crate::entities::Bundle {
         NetKind(KIND_ROOSTER),
         Transform { position: [home[0], 0.0, home[1]], yaw: 0.0 },
         Health::full(ROOSTER_HP),
-        Hurtbox { centre_y: ROOSTER_CAPSULE_CENTRE, half_height: ROOSTER_CAPSULE_HALF_HEIGHT, radius: ROOSTER_CAPSULE_RADIUS, hit_kind: HIT_ROOSTER },
+        Hurtbox { centre_y: ROOSTER_CAPSULE_CENTRE, half_height: ROOSTER_CAPSULE_HALF_HEIGHT, radius: ROOSTER_CAPSULE_RADIUS, head: None, mark_y: ROOSTER_CAPSULE_HALF_HEIGHT, hit_kind: HIT_ROOSTER },
         Home(home),
         Respawn { delay: ROOSTER_RESPAWN_TICKS, left: 0 },
         DropOnDeath { item: ITEM_GOLDEN_EGG, count: 1, unique: true },
         Wander::new(ROOSTER_GAIT, home),
+        crate::entities::Trail::default(),
     )
 }
 
@@ -293,6 +294,20 @@ mod tests {
     }
 
     #[test]
+    fn a_lagging_shooter_hits_a_rooster_where_they_saw_it() {
+        let mut game = game();
+        game.step();
+        game.step();
+        let r = rooster(&game);
+        let p = game.world.entities.of::<crate::entities::Trail>(r.id).at(game.world.tick.wrapping_sub(1), false).expect("a tick of trail");
+        // A ray through the middle of where it stood a tick ago, after it has stepped 2 m aside.
+        let then = [p[0], p[1] + ROOSTER_CAPSULE_CENTRE, p[2] + 5.0];
+        game.world.entities.get_mut::<Transform>(r.id).unwrap().position = [p[0] + 2.0, p[1], p[2]];
+        assert!(first_hurtbox_hit(&game.world, then, [0.0, 0.0, -1.0], 20.0, None, 0, None).is_none(), "it is not there now");
+        assert_eq!(first_hurtbox_hit(&game.world, then, [0.0, 0.0, -1.0], 20.0, None, 1, None).map(|(who, _)| who), Some(r.id), "it was a tick ago");
+    }
+
+    #[test]
     fn a_shot_rooster_drops_a_golden_egg_and_comes_back() {
         let mut game = game();
         let r = rooster(&game);
@@ -300,7 +315,7 @@ mod tests {
         // A ray through the middle of it.
         let p = r.transform.position;
         let centre = [p[0], p[1] + ROOSTER_CAPSULE_CENTRE, p[2]];
-        let hit = first_hurtbox_hit(&game.world, [centre[0], centre[1], centre[2] + 5.0], [0.0, 0.0, -1.0], 20.0);
+        let hit = first_hurtbox_hit(&game.world, [centre[0], centre[1], centre[2] + 5.0], [0.0, 0.0, -1.0], 20.0, None, 0, None);
         assert_eq!(hit.map(|(who, _)| who), Some(r.id));
 
         assert!(damage_entity(&mut game.world, r.id, ROOSTER_HP, None, 0, None));
@@ -308,7 +323,7 @@ mod tests {
         let eggs: Vec<_> = game.world.pickup_ids().into_iter().filter_map(|pid| game.world.pickup(pid).copied()).filter(|p| p.item == ITEM_GOLDEN_EGG).collect();
         assert_eq!(eggs.len(), 1);
         assert!(eggs[0].dropped);
-        assert!(first_hurtbox_hit(&game.world, [centre[0], centre[1], centre[2] + 5.0], [0.0, 0.0, -1.0], 20.0).is_none(), "dead is not hit");
+        assert!(first_hurtbox_hit(&game.world, [centre[0], centre[1], centre[2] + 5.0], [0.0, 0.0, -1.0], 20.0, None, 0, None).is_none(), "dead is not hit");
         assert!(game.seen_people(KIND_ROOSTER).is_empty());
 
         for _ in 0..ROOSTER_RESPAWN_TICKS {

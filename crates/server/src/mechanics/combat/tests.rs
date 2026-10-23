@@ -1155,9 +1155,10 @@ fn a_helicopters_gunner_is_shot_through_the_glass() {
 fn a_seated_players_head_is_rewound_like_a_standing_ones() {
     let (game, _, rider) = rider_in(shared::protocol::KIND_JEEP, 1);
     let (_, now) = game.world.seated_head(rider).unwrap();
-    let then = game.world.head_at(rider, 1).expect("the record has them seated");
+    let (trail, tick) = (game.world.entities.of::<crate::entities::Trail>(rider), game.world.tick.wrapping_sub(1));
+    let then = trail.at(tick, true).expect("the record has them seated");
     assert!((0..3).all(|i| (now[i] - then[i]).abs() < 0.05), "a parked jeep has not moved: {now:?} {then:?}");
-    assert!(game.world.position_at(rider, 1).is_none(), "and not standing");
+    assert!(trail.at(tick, false).is_none(), "and not standing");
 }
 
 #[test]

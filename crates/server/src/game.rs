@@ -16,7 +16,7 @@ use shared::items::{HOTBAR_SLOTS, ITEM_AK5, ITEM_DRONE, ITEM_FLARE, ITEM_LOITER,
 use shared::protocol::*;
 use shared::quant::{from_cm, pack_quat, to_axis, to_cm, to_cm_i16, to_milli_i16, to_mrad};
 use shared::world::{Building, ObjId, Tree, WorldFile};
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{MissedTickBehavior, interval};
@@ -93,7 +93,6 @@ impl Game {
                 rng: Rng::from_time(),
                 shots: Vec::new(),
                 bullets: Vec::new(),
-                history: VecDeque::new(),
             },
             mechanics: default_mechanics(),
             outboxes: BTreeMap::new(),
@@ -373,7 +372,7 @@ impl Game {
         self.drop_stalled();
         crate::events::update(&mut self.world.entities.ecs);
         self.world.tick = self.world.tick.wrapping_add(1);
-        self.world.record_history();
+        crate::mechanics::record_trails(&mut self.world);
         if self.world.tick.is_multiple_of(SNAPSHOT_EVERY) {
             self.send_snapshots();
         }
@@ -671,6 +670,7 @@ mod tests {
         }
         println!("{} people, {bots} bots, {} tanks", ids.len(), crews.len());
         let (mut step_total, mut step_max, mut snap_total) = (Duration::ZERO, Duration::ZERO, Duration::ZERO);
+        let mut after_total = Duration::ZERO;
         let ticks = 600u32;
         let mut per_mechanic = vec![Duration::ZERO; game.mechanics.len()];
         for t in 1..=ticks {
@@ -693,7 +693,17 @@ mod tests {
                 mechanic.on_tick(&mut game.world, TICK_DT);
                 per_mechanic[index] += at.elapsed();
             }
+            // What `step` does after the mechanics, but for sending: the reactions, the hits and kills
+            // built from the events, and the trails.
+            let at = Instant::now();
+            for mechanic in &mut game.mechanics {
+                mechanic.react(&mut game.world);
+            }
+            std::hint::black_box((feedback::hits(&game.world), feedback::kills(&game.world)));
+            crate::events::update(&mut game.world.entities.ecs);
             game.world.tick = game.world.tick.wrapping_add(1);
+            crate::mechanics::record_trails(&mut game.world);
+            after_total += at.elapsed();
             let took = started.elapsed();
             step_total += took;
             step_max = step_max.max(took);
@@ -714,7 +724,8 @@ mod tests {
         let budget = Duration::from_secs_f64(1.0 / TICK_RATE as f64);
         let names: Vec<&str> = game.mechanics.iter().map(|mechanic| mechanic.name()).collect();
         println!("per mechanic per tick ({}): {:?}", names.join(", "), per_mechanic.iter().map(|d| *d / ticks).collect::<Vec<_>>());
-        println!("mechanics: avg {:?}, worst {:?}; snapshots for the room: avg {:?} per call (every {SNAPSHOT_EVERY} ticks); budget {budget:?}", step_total / ticks, step_max, snap_total / (ticks / SNAPSHOT_EVERY));
+        println!("after the mechanics (reactions, feedback, events, trails): {:?}", after_total / ticks);
+        println!("tick: avg {:?}, worst {:?}; snapshots for the room: avg {:?} per call (every {SNAPSHOT_EVERY} ticks); budget {budget:?}", step_total / ticks, step_max, snap_total / (ticks / SNAPSHOT_EVERY));
         // What reading the world for snapshots costs, once per snapshot.
         let runs = 200u32;
         let started = Instant::now();

@@ -10,7 +10,7 @@
 use bevy_ecs::query::{QueryData, QueryFilter, QueryIter, QueryState};
 use std::any::{Any, TypeId};
 use std::cell::{RefCell, RefMut};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::hash::{BuildHasherDefault, Hasher};
 use std::collections::hash_map::Entry;
 
@@ -52,14 +52,20 @@ impl Health {
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HurtBy(pub u32);
 
-/// What a round or a blast can meet: an upright capsule over the feet. `hit_kind` is the `HIT_*` the
-/// shooter is told they hit.
+/// What a round or a blast can meet: an upright capsule over what it stands on (see `life::body` for
+/// where that is, and the short capsule of a stickman in a seat). `hit_kind` is the `HIT_*` the shooter
+/// is told they hit.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Hurtbox {
-    /// Height of the capsule's centre above the feet, metres.
+    /// Height of the capsule's centre above the point it hangs from, metres.
     pub centre_y: f32,
     pub half_height: f32,
     pub radius: f32,
+    /// Height above the capsule's centre where the head begins: a round that strikes above it is a
+    /// headshot. `None` for something with no head to aim at.
+    pub head: Option<f32>,
+    /// Height above the capsule's centre where a hit on it is shown.
+    pub mark_y: f32,
     pub hit_kind: u8,
 }
 
@@ -67,6 +73,28 @@ impl Hurtbox {
     /// The capsule's centre for something standing at `feet`.
     pub fn centre(&self, feet: [f32; 3]) -> [f32; 3] {
         [feet[0], feet[1] + self.centre_y, feet[2]]
+    }
+}
+
+/// Where it was at the end of each of the last few ticks, newest last, under the tick number a snapshot
+/// of that moment carries: the point its body hangs from (see `life::body`), and whether it sat in a
+/// seat. A round fired by someone who saw the world late is tested against it (lag compensation).
+#[derive(Component, Clone, Debug, Default, PartialEq)]
+pub struct Trail(VecDeque<(u32, [f32; 3], bool)>);
+
+impl Trail {
+    /// Notes where it was at the end of `tick`, keeping that and the `keep` ticks before it.
+    pub fn record(&mut self, tick: u32, at: [f32; 3], seated: bool, keep: usize) {
+        if self.0.len() > keep {
+            self.0.pop_front();
+        }
+        self.0.push_back((tick, at, seated));
+    }
+
+    /// Where it was at the end of `tick`, if the trail goes back that far and it was `seated`, or not,
+    /// then.
+    pub fn at(&self, tick: u32, seated: bool) -> Option<[f32; 3]> {
+        self.0.iter().rev().find(|(t, ..)| *t == tick).filter(|(.., was)| *was == seated).map(|&(_, at, _)| at)
     }
 }
 
@@ -114,6 +142,7 @@ impl Default for Entities {
         ecs.register_component::<Health>();
         ecs.register_component::<HurtBy>();
         ecs.register_component::<Hurtbox>();
+        ecs.register_component::<Trail>();
         ecs.register_component::<Home>();
         ecs.register_component::<Respawn>();
         ecs.register_component::<DropOnDeath>();

@@ -21,7 +21,7 @@ pub use combat::{Combat, bearing, position_of};
 pub use combat::damage_vehicle;
 pub use drones::Drones;
 pub use gunnery::Gunnery;
-pub use life::Life;
+pub use life::{Life, record_trails};
 pub use movement::Movement;
 pub use npcs::{Npcs, calling};
 pub use pickups::Pickups;

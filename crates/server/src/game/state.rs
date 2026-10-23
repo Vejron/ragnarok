@@ -209,10 +209,16 @@ impl Bot {
     }
 }
 
-/// What a player's entity carries besides the `Player` to live and die by: full health, and coming back
-/// `RESPAWN_TICKS` after dying.
-pub fn stickman_life() -> (crate::entities::Health, crate::entities::Respawn) {
-    (crate::entities::Health::full(PLAYER_MAX_HP), crate::entities::Respawn { delay: RESPAWN_TICKS, left: 0 })
+/// Where a hit on a standing stickman is shown: their chest, this far above the capsule's centre.
+const CHEST_Y: f32 = 0.9;
+
+/// What a player's entity carries besides the `Player` to live and die by: full health, coming back
+/// `RESPAWN_TICKS` after dying, and a body to hit (their capsule, with the head at the top) with a
+/// trail of where it was.
+pub fn stickman_life() -> impl crate::entities::Bundle {
+    use crate::entities::{Health, Hurtbox, Respawn, Trail};
+    let body = Hurtbox { centre_y: 0.0, half_height: CAPSULE_HALF_HEIGHT, radius: CAPSULE_RADIUS, head: Some(HEAD_ZONE_Y), mark_y: CHEST_Y, hit_kind: HIT_BODY };
+    (Health::full(PLAYER_MAX_HP), Respawn { delay: RESPAWN_TICKS, left: 0 }, body, Trail::default())
 }
 
 impl Player {
@@ -416,11 +422,6 @@ pub(super) fn battery_byte(drone: &Drone) -> u8 {
     (drone.energy as f32 / shared::vehicles::drone_def(drone.kind).energy_ticks as f32 * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
-/// Where the standing, living players were at the end of one tick: `(tick, [(id, position)])`.
-/// A tick and where everyone was at its end: each player's capsule centre, or their head point when
-/// seated (`true`) in a vehicle whose crew show.
-type Frame = (u32, Vec<(u32, [f32; 3], bool)>);
-
 /// Everything mechanics may read and change.
 pub struct World {
     pub tick: u32,
@@ -455,10 +456,6 @@ pub struct World {
     /// Bites taken since the last tick, for `Game::step` to broadcast: the building, where the
     /// blast was (centimetres) and the cells it broke and left hanging.
     pub fresh_carved: Vec<FreshCarve>,
-    /// Where each living player was at the end of each of the last few ticks (standing, or their head
-    /// where they sit in the open), newest last, labelled with the tick number a snapshot of that state carries. Lag compensation
-    /// rewinds shots against it.
-    pub(super) history: VecDeque<Frame>,
 }
 
 impl World {
@@ -475,34 +472,6 @@ impl World {
     /// The events of kind `E` sent this tick, in the order they were sent.
     pub fn happened<E: Message>(&self) -> impl ExactSizeIterator<Item = &E> {
         self.events::<E>().iter_current_update_messages()
-    }
-
-    /// Notes where everyone stands, once a tick has finished.
-    pub(super) fn record_history(&mut self) {
-        let positions = self
-            .entities
-            .all::<Player>()
-            .filter(|&(id, _)| self.entities.alive(id))
-            .filter_map(|(id, p)| if p.embodied() { Some((id, p.character.position, false)) } else { self.seated_head(id).map(|(_, head)| (id, head, true)) })
-            .collect();
-        if self.history.len() > MAX_REWIND_TICKS as usize {
-            self.history.pop_front();
-        }
-        self.history.push_back((self.tick, positions));
-    }
-
-    /// Where player `id` was `back` ticks ago, if the record goes that far and had them in it.
-    pub fn position_at(&self, id: u32, back: u32) -> Option<[f32; 3]> {
-        let tick = self.tick.wrapping_sub(back);
-        let (_, positions) = self.history.iter().rev().find(|(t, _)| *t == tick)?;
-        positions.iter().find(|(who, _, seated)| *who == id && !seated).map(|(_, position, _)| *position)
-    }
-
-    /// Where seated player `id`'s head was `back` ticks ago, if the record goes that far and had them seated in it.
-    pub fn head_at(&self, id: u32, back: u32) -> Option<[f32; 3]> {
-        let tick = self.tick.wrapping_sub(back);
-        let (_, positions) = self.history.iter().rev().find(|(t, _)| *t == tick)?;
-        positions.iter().find(|(who, _, seated)| *who == id && *seated).map(|(_, head, _)| *head)
     }
 
     /// The vehicle player `id` sits in and where their head is in the world, if they sit in it (not
