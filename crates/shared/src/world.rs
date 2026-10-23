@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 12;
+pub const WORLD_VERSION: u8 = 13;
 
 /// Metres per degree of latitude; longitude is scaled by cos(latitude).
 pub const METRES_PER_DEG_LAT: f64 = 110_540.0;
