@@ -183,13 +183,13 @@ fn the_gunner_shells_someone_it_sees_all_round_and_the_tank_holds_still() {
         if fighting && tank(&game, vid).forward_speed.abs() < 0.3 {
             halted = true;
         }
-        if !game.world.entities.of::<Player>(person).alive() {
+        if !game.world.entities.alive(person) {
             break;
         }
         put(&mut game, person, [10.0, 70.0]);
     }
     assert!(shells_fired(&game, vid) > 0, "it fired");
-    assert!(!game.world.entities.of::<Player>(person).alive(), "and got them in the end");
+    assert!(!game.world.entities.alive(person), "and got them in the end");
     assert!(halted, "the driver held still while the gunner fought");
 }
 
@@ -200,7 +200,7 @@ fn it_leaves_its_own_team_alone() {
     let friend = game.add_bot([0.0, -40.0], TEAM_BOTS, vec![[0.0, -40.0]]).unwrap();
     run(&mut game, 8.0);
     assert_eq!(shells_fired(&game, vid), 0);
-    assert!(game.world.entities.of::<Player>(friend).alive());
+    assert!(game.world.entities.alive(friend));
 }
 
 #[test]
@@ -246,7 +246,7 @@ fn a_crew_gets_back_in_when_their_wrecked_tank_comes_back() {
     run(&mut game, 1.0);
     damage_vehicle(&mut game.world, vid, 255, None);
     game.step();
-    assert!(!game.world.entities.of::<Player>(driver).alive() && !game.world.entities.of::<Player>(gunner).alive(), "the crew die in the wreck");
+    assert!(!game.world.entities.alive(driver) && !game.world.entities.alive(gunner), "the crew die in the wreck");
     assert_eq!(seated(&game, driver), None);
     // They come back in 3 s, beside it; the tank is put back after `WRECK_TICKS`.
     run(&mut game, WRECK_TICKS as f32 / TICK_RATE as f32 + 6.0);
@@ -264,8 +264,8 @@ fn a_crewman_put_out_of_reach_of_its_tank_fights_on_foot() {
     put(&mut game, person, [0.0, -10.0]);
     run(&mut game, 5.0);
     assert_eq!(seated(&game, driver), None);
-    let hurt = &game.world.entities.of::<Player>(person);
-    assert!(hurt.hp < shared::consts::PLAYER_MAX_HP || hurt.deaths > 0, "it shot them on foot");
+    let hp = game.world.entities.of::<crate::entities::Health>(person).hp;
+    assert!(hp < shared::consts::PLAYER_MAX_HP || game.world.entities.of::<Player>(person).deaths > 0, "it shot them on foot");
 }
 
 /// Not a regression test: tank crews let loose on the committed fixture city with no one about, to

@@ -130,7 +130,7 @@ fn fire_sets_the_charge_off_and_hurts_who_is_near() {
     fly(&mut game, id, &mut seq, 0, 0.0, BUTTON_FIRE, 3);
     assert!(!game.world.entities.has::<Vehicle>(vid), "the drone is gone");
     assert_eq!(game.world.entities.of::<Player>(id).seat, None, "the pilot is back in their body");
-    assert!(game.world.entities.of::<Player>(target).hp < PLAYER_MAX_HP, "the blast reached the bystander");
+    assert!(game.world.entities.of::<crate::entities::Health>(target).hp < PLAYER_MAX_HP, "the blast reached the bystander");
 }
 
 #[test]
@@ -151,7 +151,7 @@ fn flying_into_someone_kills_them_and_credits_the_pilot() {
         fly(&mut game, id, &mut seq, 127, pitch, 0, 1);
     }
     assert!(!game.world.entities.has::<Vehicle>(vid), "it went off");
-    assert_eq!(game.world.entities.of::<Player>(target).hp, 0, "right on them, the blast kills");
+    assert_eq!(game.world.entities.of::<crate::entities::Health>(target).hp, 0, "right on them, the blast kills");
     assert_eq!(game.world.entities.of::<Player>(id).kills, 1);
 }
 
@@ -167,7 +167,7 @@ fn use_recalls_the_drone_without_a_blast() {
     assert_eq!(game.world.entities.count::<Vehicle>(), vehicles - 1);
     let player = &game.world.entities.of::<Player>(id);
     assert_eq!(player.seat, None, "back in the body, and not in some other vehicle");
-    assert_eq!(player.hp, PLAYER_MAX_HP);
+    assert_eq!(game.world.entities.of::<crate::entities::Health>(id).hp, PLAYER_MAX_HP);
     assert!(game.seen(vid).is_none(), "no longer listed");
 }
 
@@ -184,7 +184,7 @@ fn a_flat_battery_drops_the_drone_which_goes_off_where_it_lands() {
     assert!(drone(&game, vid).is_some_and(|drone| !drone.linked), "and the drone falls");
     idle(&mut game, id, &mut seq, DRONE_FALL_TICKS + 10);
     assert!(!game.world.entities.has::<Vehicle>(vid), "it went off");
-    assert_eq!(game.world.entities.of::<Player>(id).hp, PLAYER_MAX_HP, "far from the pilot");
+    assert_eq!(game.world.entities.of::<crate::entities::Health>(id).hp, PLAYER_MAX_HP, "far from the pilot");
 }
 
 #[test]
@@ -197,7 +197,7 @@ fn one_hit_pops_the_drone_and_frees_the_pilot() {
     super::super::combat::damage_vehicle(&mut game.world, vid, 1, Some(shooter));
     assert!(!game.world.entities.has::<Vehicle>(vid));
     assert_eq!(game.world.entities.of::<Player>(id).seat, None);
-    assert_eq!(game.world.entities.of::<Player>(id).hp, PLAYER_MAX_HP, "nobody in the drone died with it");
+    assert_eq!(game.world.entities.of::<crate::entities::Health>(id).hp, PLAYER_MAX_HP, "nobody in the drone died with it");
 }
 
 #[test]
@@ -285,7 +285,7 @@ fn a_loitering_drones_warhead_reaches_far() {
     fly(&mut game, id, &mut seq, 0, 0.0, BUTTON_FIRE, 3);
     assert!(!game.world.entities.has::<Vehicle>(vid), "it went off");
     assert_eq!(game.world.entities.of::<Player>(id).seat, None);
-    assert!(game.world.entities.of::<Player>(target).hp < PLAYER_MAX_HP, "8 m out, the blast still hurts");
+    assert!(game.world.entities.of::<crate::entities::Health>(target).hp < PLAYER_MAX_HP, "8 m out, the blast still hurts");
 }
 
 #[test]

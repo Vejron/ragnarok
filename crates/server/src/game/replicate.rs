@@ -14,7 +14,7 @@ impl Game {
     /// Everything replicated, ordered by id.
     pub fn replicated(&self) -> Scene {
         let mut scene: Scene = Vec::new();
-        scene.extend(self.world.entities.all::<Player>().filter(|(_, player)| player.embodied()).map(|(id, player)| (id, stickman(player))));
+        scene.extend(self.world.entities.all::<Player>().filter(|(_, player)| player.embodied()).map(|(id, player)| (id, stickman(player, self.world.entities.alive(id)))));
         scene.extend(self.creatures());
         scene.extend(self.world.entities.all::<Vehicle>().filter_map(|(id, vehicle)| Some((id, self.vehicle(id, vehicle)?))));
         scene.extend(self.world.in_flight().into_iter().filter(|(_, flying)| flying.kind != PROJECTILE_BULLET).map(|(id, flying)| {
@@ -114,13 +114,13 @@ impl Game {
 }
 
 /// A standing player (or one flying a drone, kneeling over the controls).
-fn stickman(player: &Player) -> Replicated {
+fn stickman(player: &Player, alive: bool) -> Replicated {
     let c = &player.character;
     let mut flags = 0;
     if c.grounded {
         flags |= FLAG_GROUNDED;
     }
-    if !player.alive() {
+    if !alive {
         flags |= FLAG_DEAD;
     }
     if player.input.buttons() & BUTTON_CROUCH != 0 || player.seat.is_some() {

@@ -61,7 +61,7 @@ impl Game {
         for id in ids {
             let Some(player) = self.world.entities.get::<Player>(id) else { continue };
             let own = Own { tick: self.world.tick, ack: player.ack, ride: player.character.ride, drive: self.drive_state(id),
-                me: SelfState { hp: player.hp, progress: progress(player), slots: player.hotbar.to_vec() },
+                me: SelfState { hp: self.world.entities.get::<crate::entities::Health>(id).map_or(0, |health| health.hp), progress: progress(player), slots: player.hotbar.to_vec() },
             };
             // Seated players ride with their vehicle, so the vehicle's position is theirs. A drone's
             // pilot sees what it sees. An FPV drone's range keeps their body in the picture too; a

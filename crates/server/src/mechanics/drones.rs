@@ -32,10 +32,10 @@ pub struct Drones;
 /// up: not when they are dead or seated, with no room for it where it starts, or at `MAX_VEHICLES`.
 pub fn launch(world: &mut World, id: u32, kind: u8) -> bool {
     let Some(player) = world.entities.get::<Player>(id) else { return false };
-    if !player.alive() || player.seat.is_some() || world.entities.count::<Vehicle>() >= MAX_VEHICLES {
+    if !world.entities.alive(id) || player.seat.is_some() || world.entities.count::<Vehicle>() >= MAX_VEHICLES {
         return false;
     }
-    let (input, c, hp) = (player.input, player.character, player.hp);
+    let (input, c, hp) = (player.input, player.character, world.entities.get::<crate::entities::Health>(id).map_or(0, |health| health.hp));
     let yaw = from_mrad(input.yaw);
     let eye = [c.position[0], c.position[1] + eye_height(input.buttons(), c.prone), c.position[2]];
     let ahead = look(yaw, 0.0);
@@ -119,7 +119,7 @@ fn burst(world: &mut World, vid: u32, attacker: Option<u32>, shown_as: u8, def: 
 
 /// Whether `point` is within `proximity` of the axis of a living stickman other than `owner`.
 fn near_someone(world: &World, point: [f32; 3], owner: u32, proximity: f32) -> bool {
-    world.entities.all::<Player>().filter(|&(id, player)| id != owner && player.embodied() && player.alive()).any(|(_, player)| {
+    world.entities.all::<Player>().filter(|&(id, player)| id != owner && player.embodied() && world.entities.alive(id)).any(|(_, player)| {
         let c = player.character.position;
         let dy = (point[1] - c[1]).clamp(-CAPSULE_HALF_HEIGHT, CAPSULE_HALF_HEIGHT);
         let d = [point[0] - c[0], point[1] - c[1] - dy, point[2] - c[2]];
@@ -163,7 +163,7 @@ impl Mechanic for Drones {
                     Fate::Detonate
                 } else if buttons & BUTTON_USE != 0 {
                     Fate::Abort
-                } else if !pilot.alive() || pilot.hp < drone.pilot_hp || drone.energy <= 1 || away > def.range {
+                } else if world.entities.get::<crate::entities::Health>(drone.owner).is_none_or(|health| !health.alive() || health.hp < drone.pilot_hp) || drone.energy <= 1 || away > def.range {
                     Fate::Cut
                 } else {
                     Fate::Flies

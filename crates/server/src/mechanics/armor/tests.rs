@@ -187,7 +187,7 @@ fn enough_damage_to_the_turret_takes_it_off_and_kills_the_gunner() {
     let vehicle = &game.world.entities.of::<Vehicle>(vid);
     assert_eq!(vehicle.damage[DAMAGE_TURRET], TURRET_GONE);
     assert_eq!(game.world.entities.of::<Seats>(vid).rider(1), None);
-    assert!(!game.world.entities.of::<Player>(gunner).alive(), "the gunner went with it");
+    assert!(!game.world.entities.alive(gunner), "the gunner went with it");
     assert!(game.world.shots.iter().any(|shot| shot.weapon == WEAPON_TURRET));
     assert!(!game.world.entities.dead(vid), "the tank itself is not wrecked");
 }

@@ -163,6 +163,11 @@ impl Entities {
         self.get_mut::<T>(id).unwrap_or_else(|| panic!("entity {id} has no {}", std::any::type_name::<T>()))
     }
 
+    /// Whether entity `id` has `Health` and some of it left: a living player or rooster.
+    pub fn alive(&self, id: u32) -> bool {
+        self.get::<Health>(id).is_some_and(Health::alive)
+    }
+
     /// Whether entity `id` has `Health` and none of it left: a dead rooster, a wrecked vehicle.
     pub fn dead(&self, id: u32) -> bool {
         self.get::<Health>(id).is_some_and(|health| !health.alive())

@@ -273,7 +273,7 @@ fn a_driven_car_knocks_back_a_player_in_its_way() {
         let character = game.world.entities.of::<Player>(victim).character;
         peak_knock = peak_knock.max(character.knock[0].hypot(character.knock[1]));
         hopped |= character.position[1] > STANDING_Y + 0.3;
-        lowest_hp = lowest_hp.min(game.world.entities.of::<Player>(victim).hp);
+        lowest_hp = lowest_hp.min(game.world.entities.of::<crate::entities::Health>(victim).hp);
     }
     assert!(lowest_hp < PLAYER_MAX_HP, "a car at speed hurts: lowest hp {lowest_hp}");
     assert!(peak_knock > KNOCK_MIN_PUSH, "peak knockback {peak_knock}");

@@ -167,7 +167,7 @@ impl Mechanic for Pickups {
                 pickup.respawn_in = pickup.respawn_in.saturating_sub(1);
             }
         });
-        let reaching = world.entities.ids_where::<Player>(|_, p| p.alive() && p.seat.is_none() && p.input.buttons() & BUTTON_USE != 0);
+        let reaching = world.entities.ids_where::<Player>(|id, p| world.entities.alive(id) && p.seat.is_none() && p.input.buttons() & BUTTON_USE != 0);
         for id in reaching {
             let Some(at) = world.entities.get::<Player>(id).map(|player| player.character.position) else { continue };
             let nearest = world

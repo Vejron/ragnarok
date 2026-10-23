@@ -56,9 +56,6 @@ pub struct Player {
     pub inputs: JitterBuffer,
     /// Newest client input sequence already applied, echoed in snapshots for reconciliation.
     pub ack: u32,
-    /// Health; zero means dead and waiting for `respawn_in` to run out.
-    pub hp: u8,
-    pub respawn_in: u32,
     /// What is in each hotbar slot: `[item, count, ammo]`.
     pub hotbar: [ItemSlot; HOTBAR_SLOTS],
     /// The slot in hand, as of the last tick.
@@ -212,11 +209,13 @@ impl Bot {
     }
 }
 
-impl Player {
-    pub fn alive(&self) -> bool {
-        self.hp > 0
-    }
+/// What a player's entity carries besides the `Player` to live and die by: full health, and coming back
+/// `RESPAWN_TICKS` after dying.
+pub fn stickman_life() -> (crate::entities::Health, crate::entities::Respawn) {
+    (crate::entities::Health::full(PLAYER_MAX_HP), crate::entities::Respawn { delay: RESPAWN_TICKS, left: 0 })
+}
 
+impl Player {
     /// Whether the stickman is out in the world, to be seen, hit and blasted: on foot, or standing
     /// still while flying a drone.
     pub fn embodied(&self) -> bool {
@@ -483,7 +482,7 @@ impl World {
         let positions = self
             .entities
             .all::<Player>()
-            .filter(|(_, p)| p.alive())
+            .filter(|&(id, _)| self.entities.alive(id))
             .filter_map(|(id, p)| if p.embodied() { Some((id, p.character.position, false)) } else { self.seated_head(id).map(|(_, head)| (id, head, true)) })
             .collect();
         if self.history.len() > MAX_REWIND_TICKS as usize {

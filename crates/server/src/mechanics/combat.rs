@@ -4,7 +4,7 @@ use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
 use super::life::{blasted, damage_entity, first_hurtbox_hit};
 use super::spawn;
 use super::projectiles::{self, Flying, Stage};
-use crate::entities::{Health, HurtBy, NetId, With};
+use crate::entities::{Health, HurtBy, NetId, Respawn, With};
 use crate::game::{Bot, Damaged, Died, Drone, Player, Seats, TEAM_NONE, Vehicle, World, Wreck, starting_hotbar};
 use sim::Obj;
 use shared::consts::*;
@@ -113,7 +113,7 @@ pub fn body_of(world: &World, id: u32, back: u32) -> Option<Body> {
 
 /// [`body_of`], for player `id` already in hand.
 fn body(world: &World, id: u32, player: &Player, back: u32) -> Option<Body> {
-    if !player.alive() {
+    if !world.entities.alive(id) {
         return None;
     }
     if player.embodied() {
@@ -232,15 +232,18 @@ pub fn damage_hit(world: &mut World, victim: u32, amount: u8, attacker: Option<u
         return;
     }
     let from = source.or_else(|| other.and_then(|id| position_of(world, id)));
-    let Some(mut player) = world.entities.get_mut::<Player>(victim) else { return };
-    if !player.alive() || amount == 0 {
+    if !world.entities.has::<Player>(victim) {
         return;
     }
-    let before = player.hp;
-    player.hp = player.hp.saturating_sub(amount);
+    let Some(mut health) = world.entities.get_mut::<Health>(victim) else { return };
+    if !health.alive() || amount == 0 {
+        return;
+    }
+    let before = health.hp;
+    health.hp = health.hp.saturating_sub(amount);
+    let (lost, killed) = (before - health.hp, !health.alive());
     // A bandage needs a steady hand.
-    player.channel_left = 0;
-    let (lost, killed) = (before - player.hp, player.hp == 0);
+    world.entities.of_mut::<Player>(victim).channel_left = 0;
     // Chest height, where a number or a flash belongs: in the seat, for one sitting in the open.
     let chest = match world.seated_head(victim) {
         Some((_, head)) => [head[0], head[1] - SEATED_CENTRE_DROP, head[2]],
@@ -253,8 +256,10 @@ pub fn damage_hit(world: &mut World, victim: u32, amount: u8, attacker: Option<u
     if !killed {
         return;
     }
+    if let Some(mut respawn) = world.entities.get_mut::<Respawn>(victim) {
+        respawn.left = respawn.delay;
+    }
     let mut player = world.entities.of_mut::<Player>(victim);
-    player.respawn_in = RESPAWN_TICKS;
     player.fire_cooldown = 0;
     player.interrupt();
     // Shot in their seat, they fall out of the vehicle beside it.
@@ -319,8 +324,11 @@ pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
     make_noise(world, blast.point, blast.attacker, HEAR_BLAST);
     let mut hurt = Vec::new();
     for id in world.entities.ids::<With<Player>>() {
+        if !world.entities.alive(id) {
+            continue;
+        }
         let mut player = world.entities.of_mut::<Player>(id);
-        if !player.embodied() || !player.alive() {
+        if !player.embodied() {
             continue;
         }
         let c = &mut player.character;
@@ -909,6 +917,7 @@ fn spend(slot: &mut ItemSlot) {
 /// reloading, and what fire does.
 fn use_item(world: &mut World, id: u32) {
     let Some(seat) = world.entities.get::<Player>(id).map(|player| player.seat) else { return };
+    let hp = world.entities.get::<Health>(id).map_or(0, |health| health.hp);
     let passenger = seat.is_some_and(|seat| !seat.remote && world.entities.get::<Vehicle>(seat.vehicle).is_some_and(|vehicle| crew_gun(vehicle.kind, seat.index)));
     let mut player = world.entities.of_mut::<Player>(id);
     let buttons = player.input.buttons();
@@ -979,10 +988,11 @@ fn use_item(world: &mut World, id: u32) {
             if player.channel_left > 0 {
                 player.channel_left -= 1;
                 if player.channel_left == 0 {
-                    player.hp = player.hp.saturating_add(item.damage).min(PLAYER_MAX_HP);
                     spend(&mut player.hotbar[slot]);
+                    let mut health = world.entities.of_mut::<Health>(id);
+                    health.hp = health.hp.saturating_add(item.damage).min(PLAYER_MAX_HP);
                 }
-            } else if fresh && player.hp < PLAYER_MAX_HP {
+            } else if fresh && hp < PLAYER_MAX_HP {
                 player.channel_left = BANDAGE_TICKS;
             }
         }
@@ -994,15 +1004,19 @@ impl Mechanic for Combat {
         let ids = world.entities.ids::<With<Player>>();
         for id in ids {
             let loadout = world.entities.get::<Bot>(id).and_then(|bot| bot.loadout);
+            let alive = world.entities.alive(id);
+            // `Life` counts a dead player's `Respawn` down; at zero they come back here, at a spawn point.
+            let due = !alive && world.entities.get::<Respawn>(id).is_some_and(|respawn| respawn.left == 0);
             let Some(mut player) = world.entities.get_mut::<Player>(id) else { continue };
             player.fire_cooldown = player.fire_cooldown.saturating_sub(1);
-            if !player.alive() {
-                player.respawn_in = player.respawn_in.saturating_sub(1);
-                if player.respawn_in == 0 {
-                    player.hp = PLAYER_MAX_HP;
+            if !alive {
+                if due {
                     // A fresh life starts with the standard loadout, or a scenario bot's own.
                     player.hotbar = loadout.unwrap_or_else(starting_hotbar);
                     player.interrupt();
+                    if let Some(mut health) = world.entities.get_mut::<Health>(id) {
+                        health.hp = health.max;
+                    }
                     spawn::place(world, id);
                 }
                 continue;

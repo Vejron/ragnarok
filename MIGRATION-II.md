@@ -86,7 +86,7 @@ touches no file under `mechanics/combat*`.
 `first_player_hit`, `body_of`, `damage`, `damage_from`, `damage_hit` and `Player::hp` are gone;
 `first_living_hit` is a single scan.
 
-- [ ] 2.1 `Health` on players, with `Player::hp` removed. The respawn countdown becomes `Respawn`
+- [x] 2.1 `Health` on players, with `Player::hp` removed. The respawn countdown becomes `Respawn`
       (players respawn at a spawn point, not at `Home`: a `Respawn` with a `SpawnPoint` choice in
       place of `Home`, or a player-only reaction to the countdown finishing).
 - [ ] 2.2 The hurtbox learns what players need:
@@ -208,3 +208,17 @@ boxes by pointing them here.
     a damage function directly and then read a score now check the `Died` event and step once.
   - `full_room_tick_cost`, release, three runs: mechanics 1.63 to 1.68 ms, snapshots 611 to 628 µs,
     `Combat` 29.5 to 31.1 µs, `Scores` 15 to 17 ns. Server tests 272 (one new); clippy clean.
+- **2.1.** A player's entity carries `Health` and `Respawn` (`game::stickman_life`). `Player::hp`,
+  `Player::respawn_in` and `Player::alive` are gone, and `Entities::alive(id)` asks any entity.
+  - `Life` counts every `Respawn` down, players' included. At zero, an entity with a `Home` comes back
+    there as before. A player has no `Home`: `Combat` brings them back at a spawn point when it finds
+    them dead with the count at zero, at its old place in the tick, so `world.rng` is drawn in the same
+    order. That is the plan's "player-only reaction to the countdown finishing".
+  - One small change. The countdown used to run inside `Combat`'s pass over the players, so a player
+    killed by someone with a lower id earlier in that pass was counted once in the tick they died. Now
+    `Life`, earlier in the tick, counts. A player killed after `Life` (in `Npcs` or `Combat`) comes back
+    one tick (17 ms) later than before; one killed before it, as before.
+  - Tests: about 80 reads of `Player::hp` and `alive()` now ask `Health` and `Entities::alive`.
+  - `full_room_tick_cost`, three runs: mechanics 1.65 to 1.68 ms, `Combat` 32.7 to 33.3 µs (29.5 to
+    31.1 after Phase 1: the `Health` look-ups), `Life` 0.58 to 0.67 µs (0.24 to 0.37: players are
+    counted too). Server tests 272; clippy clean.

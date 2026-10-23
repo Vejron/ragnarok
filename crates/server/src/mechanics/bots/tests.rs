@@ -175,15 +175,15 @@ fn bots_ignore_their_own_team_and_cannot_hurt_it() {
     run(&mut game, 1.0);
     assert_eq!(game.world.entities.of::<Bot>(a).mode, BotMode::Patrol);
     damage(&mut game.world, b, 50, Some(a), 0);
-    assert_eq!(game.world.entities.of::<Player>(b).hp, PLAYER_MAX_HP);
+    assert_eq!(game.world.entities.of::<crate::entities::Health>(b).hp, PLAYER_MAX_HP);
     // People are on no team: they still hurt each other, and bots.
     let human = join(&mut game);
     let other = join(&mut game);
     assert_eq!(game.world.entities.of::<Player>(human).team, TEAM_NONE);
     damage(&mut game.world, other, 10, Some(human), 0);
     damage(&mut game.world, b, 10, Some(human), 0);
-    assert_eq!(game.world.entities.of::<Player>(other).hp, PLAYER_MAX_HP - 10);
-    assert_eq!(game.world.entities.of::<Player>(b).hp, PLAYER_MAX_HP - 10);
+    assert_eq!(game.world.entities.of::<crate::entities::Health>(other).hp, PLAYER_MAX_HP - 10);
+    assert_eq!(game.world.entities.of::<crate::entities::Health>(b).hp, PLAYER_MAX_HP - 10);
 }
 
 #[test]
@@ -206,7 +206,7 @@ fn a_killed_bot_comes_back_at_home_on_patrol() {
     put(&mut game, human, [-80.0, 80.0]);
     damage(&mut game.world, bot, PLAYER_MAX_HP, Some(human), 0);
     run(&mut game, RESPAWN_TICKS as f32 / TICK_RATE as f32 + 0.2);
-    assert!(game.world.entities.of::<Player>(bot).alive());
+    assert!(game.world.entities.alive(bot));
     assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Patrol);
     assert!(distance_2d(feet(&game, bot), [5.0, 0.0, 5.0]) < 2.0, "back home");
 }
@@ -219,7 +219,7 @@ fn it_shoots_someone_it_sees_dead() {
     let human = join(&mut game);
     put(&mut game, human, [0.0, -25.0]);
     run(&mut game, 6.0);
-    assert!(game.world.entities.of::<Player>(human).deaths >= 1, "still on {} hp", game.world.entities.of::<Player>(human).hp);
+    assert!(game.world.entities.of::<Player>(human).deaths >= 1, "still on {} hp", game.world.entities.of::<crate::entities::Health>(human).hp);
     assert_eq!(game.world.entities.of::<Player>(bot).kills, game.world.entities.of::<Player>(human).deaths);
 }
 
@@ -254,9 +254,9 @@ fn a_better_shot_hits_more() {
             let x = 10.0 - ((t * 4.0) % 40.0 - 20.0).abs();
             put(&mut game, human, [x, -25.0]);
             game.step();
-            let hp = game.world.entities.of::<Player>(human).hp;
+            let hp = game.world.entities.of::<crate::entities::Health>(human).hp;
             dealt += u32::from(PLAYER_MAX_HP - hp);
-            game.world.entities.get_mut::<Player>(human).unwrap().hp = PLAYER_MAX_HP;
+            game.world.entities.get_mut::<crate::entities::Health>(human).unwrap().hp = PLAYER_MAX_HP;
         }
         let _ = bot;
         dealt
@@ -308,7 +308,7 @@ fn it_stands_off_at_the_distance_its_gun_is_good_at() {
     run(&mut game, 0.3);
     // Someone who cannot die, standing still.
     for _ in 0..8 * TICK_RATE {
-        game.world.entities.get_mut::<Player>(human).unwrap().hp = PLAYER_MAX_HP;
+        game.world.entities.get_mut::<crate::entities::Health>(human).unwrap().hp = PLAYER_MAX_HP;
         game.step();
     }
     let gap = distance_2d(feet(&game, bot), feet(&game, human));
@@ -494,7 +494,7 @@ fn a_bot_sent_far_from_home_fights_at_the_end_of_its_route() {
     let human = join(&mut game);
     put(&mut game, human, [80.0, -25.0]);
     run(&mut game, 6.0);
-    assert!(game.world.entities.of::<Player>(human).deaths >= 1, "still on {} hp", game.world.entities.of::<Player>(human).hp);
+    assert!(game.world.entities.of::<Player>(human).deaths >= 1, "still on {} hp", game.world.entities.of::<crate::entities::Health>(human).hp);
 }
 
 #[test]
@@ -541,7 +541,7 @@ fn a_squad_fighting_one_target_does_not_stack_up_on_one_line() {
     let human = join(&mut game);
     put(&mut game, human, [0.0, -40.0]);
     for _ in 0..10 * TICK_RATE {
-        game.world.entities.get_mut::<Player>(human).unwrap().hp = PLAYER_MAX_HP;
+        game.world.entities.get_mut::<crate::entities::Health>(human).unwrap().hp = PLAYER_MAX_HP;
         game.step();
     }
     let gap = closest(&game, &ids);

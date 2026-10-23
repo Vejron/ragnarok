@@ -438,7 +438,7 @@ impl Scenario {
                 continue;
             }
             members.retain(|&id| {
-                let stays = game.world.entities.get::<Player>(id).is_some_and(|p| p.alive() || p.respawn_in > 1);
+                let stays = game.world.entities.has::<Player>(id) && (game.world.entities.alive(id) || game.world.entities.get::<crate::entities::Respawn>(id).is_some_and(|respawn| respawn.left > 1));
                 if !stays {
                     game.remove_bot(id);
                 }
@@ -476,14 +476,14 @@ impl Scenario {
             Condition::Enter { area, by } => {
                 let Area { at, radius } = self.areas[area];
                 let inside = |id: &u32| {
-                    world.entities.get::<Player>(*id).is_some_and(|p| p.alive()) && position_of(world, *id).is_some_and(|p| (p[0] - at[0]).hypot(p[2] - at[1]) <= radius)
+                    world.entities.has::<Player>(*id) && world.entities.alive(*id) && position_of(world, *id).is_some_and(|p| (p[0] - at[0]).hypot(p[2] - at[1]) <= radius)
                 };
                 match by {
                     Some(squad) => progress.members[squad].iter().any(inside),
                     None => world.entities.ids::<With<Player>>().iter().filter(|id| !world.entities.has::<Bot>(**id)).any(inside),
                 }
             }
-            Condition::Cleared(squad) => progress.spawned[squad] && !progress.members[squad].iter().any(|id| world.entities.get::<Player>(*id).is_some_and(|p| p.alive())),
+            Condition::Cleared(squad) => progress.spawned[squad] && !progress.members[squad].iter().any(|id| world.entities.has::<Player>(*id) && world.entities.alive(*id)),
             Condition::Done(trigger) => {
                 let (times, fired) = (self.triggers[trigger].times, progress.fired[trigger]);
                 fired >= times.max(1)

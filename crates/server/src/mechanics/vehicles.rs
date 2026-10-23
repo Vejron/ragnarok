@@ -567,9 +567,10 @@ fn roadkill_damage(speed: f32) -> u8 {
 fn knock_players(world: &mut World) {
     let mut run_down = Vec::new();
     for id in world.entities.ids::<With<Player>>() {
+        let alive = world.entities.alive(id);
         let mut player = world.entities.of_mut::<Player>(id);
         player.hit_cooldown = player.hit_cooldown.saturating_sub(1);
-        if !player.embodied() || !player.alive() || player.character.ride != 0 || player.hit_cooldown > 0 {
+        if !player.embodied() || !alive || player.character.ride != 0 || player.hit_cooldown > 0 {
             continue;
         }
         let Some(hit) = world.physics.car_hit(player.character.position) else { continue };
@@ -690,7 +691,7 @@ impl Mechanic for Vehicles {
 
     fn on_tick(&mut self, world: &mut World, dt: f32) {
         // Boarding and leaving.
-        let pressed = world.entities.ids_where::<Player>(|_, player| player.alive() && player.input.buttons() & BUTTON_USE != 0);
+        let pressed = world.entities.ids_where::<Player>(|id, player| world.entities.alive(id) && player.input.buttons() & BUTTON_USE != 0);
         for id in pressed {
             if world.entities.of::<Player>(id).seat.is_some() {
                 alight(world, id);
@@ -699,13 +700,13 @@ impl Mechanic for Vehicles {
             }
         }
         // A driver hitches or unhitches the mortar behind the car.
-        let hitching = world.entities.ids_where::<Player>(|_, player| player.alive() && player.input.buttons() & BUTTON_HITCH != 0);
+        let hitching = world.entities.ids_where::<Player>(|id, player| world.entities.alive(id) && player.input.buttons() & BUTTON_HITCH != 0);
         for id in hitching {
             hitch(world, id);
         }
         // Reload moves to the other seat, unless it is a passenger's to reload their own gun with.
         let switching = world.entities.ids_where::<Player>(|id, player| {
-            player.alive() && player.seat.is_some() && player.input.buttons() & (BUTTON_RELOAD | BUTTON_USE) == BUTTON_RELOAD && !super::combat::reloads_in_seat(world, id)
+            world.entities.alive(id) && player.seat.is_some() && player.input.buttons() & (BUTTON_RELOAD | BUTTON_USE) == BUTTON_RELOAD && !super::combat::reloads_in_seat(world, id)
         });
         for id in switching {
             switch_seat(world, id);

@@ -163,8 +163,6 @@ impl Game {
                 input: InputFrame::default(),
                 inputs: JitterBuffer::default(),
                 ack: 0,
-                hp: PLAYER_MAX_HP,
-                respawn_in: 0,
                 hotbar: starting_hotbar(),
                 selected: 0,
                 fire_cooldown: 0,
@@ -180,6 +178,7 @@ impl Game {
                 team: TEAM_NONE,
             },
         );
+        self.world.entities.insert(id, stickman_life());
         let profiles = self.world.entities.ids::<With<Player>>().into_iter().map(|id| profile_entry(&self.world, id)).collect();
         let _ = outbox.try_send(Outgoing::Reliable(encode(&Profiles(S_PROFILES, profiles)).into()));
         let joiner = Bytes::from(encode(&Profiles(S_PROFILES, vec![profile_entry(&self.world, id)])));
@@ -268,8 +267,6 @@ impl Game {
                 input: InputFrame::default(),
                 inputs: JitterBuffer::default(),
                 ack: 0,
-                hp: PLAYER_MAX_HP,
-                respawn_in: 0,
                 hotbar: starting_hotbar(),
                 selected: 0,
                 fire_cooldown: 0,
@@ -286,7 +283,7 @@ impl Game {
                 team,
             },
         );
-        self.world.entities.insert(id, Bot::new(home, route));
+        self.world.entities.insert(id, (stickman_life(), Bot::new(home, route)));
         for mechanic in &mut self.mechanics {
             mechanic.on_join(&mut self.world, id);
         }

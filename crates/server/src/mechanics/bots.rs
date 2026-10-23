@@ -249,7 +249,7 @@ fn spot(world: &World, id: u32, eye: [f32; 3], yaw: f32, alert: bool) -> Option<
     let facing = [-yaw.sin(), -yaw.cos()];
     let mut best: Option<(u32, [f32; 3], f32)> = None;
     for (other, player) in world.entities.all::<Player>() {
-        if other == id || !player.alive() || !player.embodied() || same_team(world, id, other) {
+        if other == id || !world.entities.alive(other) || !player.embodied() || same_team(world, id, other) {
             continue;
         }
         let at = player.character.position;
@@ -457,7 +457,7 @@ fn reload(world: &World, id: u32, bot: &Bot, mut input: InputFrame) -> InputFram
 fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], crowd: &[(u32, [f32; 2])], budget: &mut usize) -> InputFrame {
     let idle = InputFrame { yaw: to_mrad(bot.yaw), pitch: to_mrad(bot.pitch), view: world.tick as u16, slot: bot.slot, ..Default::default() };
     let Some(player) = world.entities.get::<Player>(id) else { return idle };
-    if !player.alive() {
+    if !world.entities.alive(id) {
         // Whatever it was doing died with it; it comes back at home, on its route.
         bot.mode = BotMode::Patrol;
         bot.target = None;
@@ -648,7 +648,7 @@ impl Mechanic for Bots {
         // Where every bot on its feet stands as the tick begins, for them to steer clear of each other.
         let crowd: Vec<(u32, [f32; 2])> = ids
             .iter()
-            .filter_map(|id| world.entities.get::<Player>(*id).filter(|p| p.alive() && p.seat.is_none()).map(|p| (*id, [p.character.position[0], p.character.position[2]])))
+            .filter_map(|id| world.entities.get::<Player>(*id).filter(|p| world.entities.alive(*id) && p.seat.is_none()).map(|p| (*id, [p.character.position[0], p.character.position[2]])))
             .collect();
         for id in ids {
             // Taken out to think with the world in hand, an empty mind in its place: what a bot thinks
