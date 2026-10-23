@@ -106,8 +106,8 @@ Phase 3 and 4 need both.
 - [x] Move vehicle prediction to it (`VehicleDriver`, `CarSim`), so the client's second Rapier world
       is the server's too; then delete `sim/vehicle.ts`, the rest of `sim/physics.ts` and
       `@dimforge/rapier3d-compat`.
-- [ ] The remaining mirrors: `carve.ts` (also drawn from, so it may stay as a reader of the WASM
-      side), `terrain.ts`, the codec. (The item, vehicle and tree tables are generated.)
+- [ ] The remaining mirrors: the codec, and `terrain.ts`, which stays (see Phase 6). `carve.ts` reads
+      Rust's carving through WebAssembly since Phase 6. (The item, vehicle and tree tables are generated.)
 
 ### Phase 2 (track B): server ECS, one family at a time
 
@@ -480,9 +480,9 @@ work to WebAssembly as it is could make re-meshing big buildings slower.
 
 - [x] **6.1** Sparse `greedy` in Rust, held to the dense one over random grids and fixture buildings;
       timed on a large building.
-- [ ] **6.2** The carve functions in `sim-wasm`; the client's `Shell`, `voxels.ts` and the renderers
+- [x] **6.2** The carve functions in `sim-wasm`; the client's `Shell`, `voxels.ts` and the renderers
       on them; the copy deleted.
-- [ ] **6.3** Measure: `carve.ts` lines, building a tile's shells, and re-meshing a hit building, in
+- [x] **6.3** Measure: `carve.ts` lines, building a tile's shells, and re-meshing a hit building, in
       TypeScript before and WebAssembly after.
 
 #### Guardrails
@@ -2261,3 +2261,68 @@ The face fixtures (`cell_numbers_match_the_fixture` and the client's `carve.spec
 **Checks:** shared 69 (one more), server 271, sim 111; clippy clean.
 
 **Next:** 6.2, the carve functions in `sim-wasm`, and the client on them.
+
+### 2026-10-23: Phase 6.2 and 6.3, the client carves with Rust
+
+**The functions.** `crates/sim-wasm` exports four stateless carve functions. They take and return
+typed arrays, so nothing is left in WebAssembly memory to free.
+
+| Function | Does |
+|---|---|
+| `carve_cut(walls, roof)` | `Shell::new`: the cells of a building cut from its triangles, as a `CarvedCells` (origin, dims, solid and roof flags), freed at once |
+| `carve_unpack(packed, count, layer)` | `unpack`: the cells the importer baked |
+| `carve_faces(origin, dims, keys)` | `faces_of`: the merged faces of a grid of keyed cells, ten numbers a triangle (corners, then key) |
+| `carve_nearest(origin, dims, solid, removed, x, y, z)` | `nearest_standing`: the cell a round struck, as `chip` finds it |
+
+`faces_of` and `nearest_standing` were factored out of `Shell::faces` and `Shell::chip` so they work
+on plain arrays. `Shell` gained `solid_flags()` and `roof_flags()`.
+
+**The client.**
+
+- `carve.ts` keeps `Shell`'s interface, so its callers (`render/world.ts`, `damage.ts`,
+  `fracture.ts`, `worldview.ts`) are unchanged. It holds the flags Rust made, and answers only
+  the client's own questions: `isSolid`, `isRoof`, `index`, `centre`, `cells`, `cellAt` and
+  `clusters`.
+- Deleted from it: `sample`, `closeGaps`, `cellOfPoint`, `unpackListed`, `greedyFaces`, the face
+  corners and winding, `standing`, and `boxes` (which only a test still used).
+- `voxels.ts` draws the faces Rust merged, keyed by colour. Its own corner and winding code is gone.
+- `nearestCell` now rounds the point to whole centimetres, as the server's `to_cm` does, where it
+  floored a fractional one.
+
+**Tests.** `carve.spec.ts` keeps its fixtures, which now check Rust through WebAssembly.
+
+- The boxes checks are gone: the client no longer makes boxes, and `cell_numbers_match_the_fixture`
+  pins them in Rust.
+- New: the roof's triangles are told apart from the walls'; the struck cell is the one in front of a
+  round, and the next one once that is out; nothing is struck out of reach.
+- The destruction tests, which compare what the client draws with what the server's physics cuts,
+  pass unchanged.
+
+**Cost**, with the same timing script before and after (Node, three runs each; the script was removed
+afterwards):
+
+| | TypeScript | WebAssembly |
+|---|---|---|
+| The fixture tiles' 228 buildings, decoded, unpacked and meshed | 27.3 to 28.5 ms | 27.1 to 27.8 ms |
+| A 120 × 40 × 80 m building cut from its triangles | 3.5 to 3.7 ms | 3.4 ms |
+| That building re-meshed with a colour per cell | 12.8 to 13.4 ms | 12.2 to 12.5 ms |
+| The cell a round struck | 1 µs | 13 µs |
+
+Finding the struck cell is slower because the building's flags are copied in on each call. That
+happens once per round that hits a building, so it is far from mattering against a 16.7 ms frame.
+Everything else is the same or a little quicker.
+
+**Progress:** `carve.ts` went from 563 lines to 238, and `voxels.ts` from 52 to 35. How a building is
+cut, unpacked and meshed, and which cell a round strikes, is now written once, in Rust.
+
+**Checks:** client 429 passing (58 files); server 271, shared 69, sim 111; clippy, `vue-tsc` and
+oxlint add nothing; `npm run build` succeeds.
+
+### Phase 6 done
+
+Of the copies Phase 1 left, `carve.ts` has gone to Rust. Still open:
+
+- `terrain.ts`, which stays: 84 lines of height lookup called from 38 places, many every frame, and
+  pinned to Rust by a fixture. A call into WebAssembly each time would cost more than the copy does.
+- The codec's remaining hand-written message types.
+- The deferred wire changes: owner-only components, and a `Seated` component.

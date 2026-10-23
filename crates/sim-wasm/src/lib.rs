@@ -1,7 +1,8 @@
 //! The client's handle on `sim`: the server's physics, built a tile at a time from the same files the
 //! client streams, with snapshot vehicles as solids, stepping the local stickman exactly as the server
-//! steps it. Everything crosses the boundary as numbers and byte slices; `client/src/sim/motor.ts`
-//! wraps it in the client's own types.
+//! steps it; and how a building is cut into cells, which the client draws (`carve_*`). Everything
+//! crosses the boundary as numbers and byte slices; `client/src/sim/motor.ts` and `client/src/sim/carve.ts`
+//! wrap it in the client's own types.
 
 use shared::protocol::InputFrame;
 use shared::world::{Manifest, ObjId, Tile};
@@ -247,6 +248,95 @@ impl ClientSim {
     pub fn cast_ray(&self, ox: f32, oy: f32, oz: f32, dx: f32, dy: f32, dz: f32, max: f32) -> Vec<f32> {
         self.physics.cast_ray_normal([ox, oy, oz], [dx, dy, dz], max).map_or_else(Vec::new, |(t, [nx, ny, nz])| vec![t, nx, ny, nz])
     }
+}
+
+/// A building cut into cells from its triangles (`carve_cut`): the corner of its grid, its size in
+/// cells, and for each cell, in cell number order, 1 when it is solid and 1 when the roof passes
+/// through it.
+#[wasm_bindgen]
+pub struct CarvedCells {
+    origin: [i32; 3],
+    dims: [u32; 3],
+    solid: Vec<u8>,
+    roof: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl CarvedCells {
+    #[wasm_bindgen(getter)]
+    pub fn origin(&self) -> Vec<i32> {
+        self.origin.to_vec()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn dims(&self) -> Vec<u32> {
+        self.dims.to_vec()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn solid(&self) -> Vec<u8> {
+        self.solid.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn roof(&self) -> Vec<u8> {
+        self.roof.clone()
+    }
+}
+
+fn bytes(flags: &[bool]) -> Vec<u8> {
+    flags.iter().map(|&flag| u8::from(flag)).collect()
+}
+
+fn grid(dims: &[u32]) -> [usize; 3] {
+    [0, 1, 2].map(|a| dims.get(a).copied().unwrap_or(0) as usize)
+}
+
+fn corner(origin: &[i32]) -> [i32; 3] {
+    [0, 1, 2].map(|a| origin.get(a).copied().unwrap_or(0))
+}
+
+/// Cuts a building into cells from its wall and roof triangles (nine centimetre numbers each), as the
+/// importer does (`shared::carve::Shell::new`). `None` when it has none, or is too big to cut.
+#[wasm_bindgen]
+pub fn carve_cut(walls: &[i32], roof: &[i32]) -> Option<CarvedCells> {
+    let tris = |flat: &[i32]| flat.chunks_exact(9).map(|t| std::array::from_fn(|k| t[k])).collect::<Vec<shared::carve::Tri>>();
+    let shell = shared::carve::Shell::new(&tris(walls), &tris(roof))?;
+    Some(CarvedCells { origin: shell.origin, dims: shell.dims.map(|d| d as u32), solid: bytes(shell.solid_flags()), roof: bytes(shell.roof_flags()) })
+}
+
+/// `count` flags, one a cell (1 or 0), from the bytes the importer packed them into, a layer being
+/// `layer` cells (`shared::carve::unpack`).
+#[wasm_bindgen]
+pub fn carve_unpack(packed: &[u8], count: u32, layer: u32) -> Vec<u8> {
+    bytes(&shared::carve::unpack(packed, count as usize, layer as usize))
+}
+
+/// What a grid of keyed cells (one key a cell, -1 for none) is drawn as (`shared::carve::faces_of`):
+/// ten numbers a triangle, its corners in centimetres and then its key.
+#[wasm_bindgen]
+pub fn carve_faces(origin: &[i32], dims: &[u32], keys: &[i32]) -> Vec<i32> {
+    let dims = grid(dims);
+    if keys.len() != dims[0] * dims[1] * dims[2] {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    shared::carve::faces_of(corner(origin), dims, keys, |tri, key| {
+        out.extend_from_slice(&tri);
+        out.push(key);
+    });
+    out
+}
+
+/// The cell a round that landed at `(x, y, z)` (centimetres) struck, as the server's `chip` finds it:
+/// the standing cell nearest it, one solid in `solid` and not in `removed`, or -1 for none in reach.
+#[wasm_bindgen]
+pub fn carve_nearest(origin: &[i32], dims: &[u32], solid: &[u8], removed: &[u32], x: i32, y: i32, z: i32) -> i32 {
+    let dims = grid(dims);
+    let mut removed = removed.to_vec();
+    removed.sort_unstable();
+    let standing = |id: u32| solid.get(id as usize).is_some_and(|&flag| flag != 0) && removed.binary_search(&id).is_err();
+    shared::carve::nearest_standing(corner(origin), dims, [x, y, z], standing).map_or(-1, |id| id as i32)
 }
 
 #[cfg(test)]
