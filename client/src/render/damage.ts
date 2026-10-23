@@ -5,6 +5,7 @@ import { DAMAGE_STAGES } from '@/sim/consts'
 import type { TileData } from '@/world'
 import { shellOf, type Shell } from '@/sim/carve'
 import type { Effects } from './effects'
+import type { Particles } from './particles'
 import { Fracture, shardGeometry } from './fracture'
 import { random } from './rubble'
 
@@ -12,9 +13,14 @@ import { random } from './rubble'
 const MAX_FALLING = 48
 const FALLEN_SECONDS = 10
 const GRAVITY = 9.8
-/** A building about to collapse sheds dust about this often, seconds, and only this near the camera, metres. */
-const SHED_SECONDS = 0.45
-const SHED_RANGE = 160
+/** A building that was just hit or just lost its hold smoulders this long, easing out, seconds; only this near the camera, metres. */
+const SMOULDER_SECONDS = 60
+const SMOULDER_RANGE = 160
+/** The gap between puffs, seconds, when it burns hottest, and how much longer it grows as it dies away. */
+const PUFF_SECONDS = 0.5
+const PUFF_STRETCH = 6
+/** How dark smoke is at night, against its daytime colour: it is not lit, so it is dimmed by hand. */
+const NIGHT_SMOKE = 0.28
 
 /** A point `(x, y, z)`, metres. */
 type Mark = readonly [number, number, number]
@@ -25,6 +31,8 @@ interface Hurt {
   removed: Set<number>
   /** Damage this player's own rounds have done to cells that still stand: they are drawn pushed in. */
   dents: Map<number, number>
+  /** Seconds it will still smoulder; 0 when it does not. */
+  heat: number
 }
 
 /** A bite that just happened: what to throw, and from where. */
@@ -61,7 +69,8 @@ interface Drawn {
   stale: Hurt | null
   dirty: Set<number>
   falling: Falling[]
-  shed: number
+  /** Seconds to the next puff of smoke. */
+  puff: number
 }
 
 interface Loaded {
@@ -125,7 +134,7 @@ function wallsOf(tile: TileData, index: number): Wall[] {
 }
 
 /**
- * What a hurt building looks like beyond being whole. Just before it falls it sheds dust. Once cells have been blasted out of it, or this player's rounds have
+ * What a hurt building looks like beyond being whole. Just hit or about to fall, it smoulders for a minute. Once cells have been blasted out of it, or this player's rounds have
  * dented some, its walls and roof are redrawn from their cells (`Fracture`) without those that are
  * gone, and the pieces fly and fall. Pieces live in `root` in world coordinates; what a
  * building has suffered is kept, so a tile that streams back in is hurt as it was. Buildings drawn
@@ -140,14 +149,17 @@ export class BuildingDamage {
   private readonly rand = random(99)
 
   /**
-   * Building `index` of tile `key` is now at damage `stage`; one about to fall sheds dust.
+   * Building `index` of tile `key` is now at damage `stage`; one on the point of falling smoulders.
    */
   hurtBuilding(key: number, index: number, stage: number) {
     const buildings = this.hurt.get(key) ?? new Map<number, Hurt>()
     this.hurt.set(key, buildings)
-    const state = buildings.get(index) ?? { stage: 0, removed: new Set<number>(), dents: new Map<number, number>() }
+    const state = buildings.get(index) ?? { stage: 0, removed: new Set<number>(), dents: new Map<number, number>(), heat: 0 }
     buildings.set(index, state)
+    const before = state.stage
     state.stage = Math.max(state.stage, Math.min(stage, DAMAGE_STAGES))
+    // Reaching the last stage is what sets it smouldering; the stages it passed through on the way do not.
+    if (before < DAMAGE_STAGES && state.stage === DAMAGE_STAGES) state.heat = SMOULDER_SECONDS
     const loaded = this.loaded.get(key)
     if (loaded) this.draw(key, index, loaded, state, true, null)
   }
@@ -161,7 +173,7 @@ export class BuildingDamage {
   dent(key: number, index: number, cell: number, damage: number): boolean {
     const buildings = this.hurt.get(key) ?? new Map<number, Hurt>()
     this.hurt.set(key, buildings)
-    const state = buildings.get(index) ?? { stage: 0, removed: new Set<number>(), dents: new Map<number, number>() }
+    const state = buildings.get(index) ?? { stage: 0, removed: new Set<number>(), dents: new Map<number, number>(), heat: 0 }
     buildings.set(index, state)
     const wasWhole = state.removed.size === 0 && state.dents.size === 0
     if (state.removed.has(cell)) return false
@@ -179,11 +191,13 @@ export class BuildingDamage {
   carve(key: number, index: number, blasted: readonly number[], fell: readonly number[], point: Mark | null, live: boolean): boolean {
     const buildings = this.hurt.get(key) ?? new Map<number, Hurt>()
     this.hurt.set(key, buildings)
-    const state = buildings.get(index) ?? { stage: 0, removed: new Set<number>(), dents: new Map<number, number>() }
+    const state = buildings.get(index) ?? { stage: 0, removed: new Set<number>(), dents: new Map<number, number>(), heat: 0 }
     buildings.set(index, state)
     const wasWhole = state.removed.size === 0 && state.dents.size === 0
     const fresh = { blasted: blasted.filter((c) => !state.removed.has(c)), fell: fell.filter((c) => !state.removed.has(c)), point }
     for (const cell of [...blasted, ...fell]) state.removed.add(cell)
+    // Something fresh was lost, now: it smoulders from here. The catch-up on joining shows only what is left, cold.
+    if (live && (fresh.blasted.length > 0 || fresh.fell.length > 0)) state.heat = SMOULDER_SECONDS
     const loaded = this.loaded.get(key)
     if (loaded) this.draw(key, index, loaded, state, live, fresh, [...fresh.blasted, ...fresh.fell])
     for (const cell of state.removed) state.dents.delete(cell)
@@ -231,8 +245,11 @@ export class BuildingDamage {
     return { cells: this.hurt.get(key)?.get(index)?.removed.size ?? 0 }
   }
 
-  /** Pieces fall and rest, and buildings on the point of collapse shed dust when `near` (the camera) is close enough to see it. */
-  update(dt: number, effects: Effects, near: THREE.Vector3) {
+  /**
+   * Pieces fall and rest, and buildings that were just hit or lost their hold smoulder when `near` (the camera) is close enough to
+   * see it, easing out over `SMOULDER_SECONDS`. `light` is how bright the day is, 1 at noon and 0 at midnight: smoke is not lit, so it is dimmed by it.
+   */
+  update(dt: number, effects: Effects, near: THREE.Vector3, smoke?: Pick<Particles, 'spawn'>, light = 1) {
     for (const puff of this.puffs.splice(0)) effects.dust(puff.at, puff.size)
     for (const [key, buildings] of this.drawn) {
       const loaded = this.loaded.get(key)
@@ -240,16 +257,24 @@ export class BuildingDamage {
       for (const [index, drawn] of buildings) {
         if (drawn.stale) this.redraw(drawn, drawn.stale)
         this.fall(drawn, loaded.tile.buildings[index]?.base ?? 0, dt)
-        if ((this.hurt.get(key)?.get(index)?.stage ?? 0) < DAMAGE_STAGES) continue
-        drawn.shed -= dt
-        if (drawn.shed > 0) continue
-        drawn.shed = SHED_SECONDS * (0.6 + this.rand() * 0.8)
+        const state = this.hurt.get(key)?.get(index)
+        if (!state || state.heat <= 0) continue
+        state.heat = Math.max(0, state.heat - dt)
+        // How hot it still is: 1 at the start, easing to 0 at the end.
+        const heat = (state.heat / SMOULDER_SECONDS) ** 2
+        drawn.puff -= dt
+        if (drawn.puff > 0 || !smoke) continue
+        drawn.puff = PUFF_SECONDS * (0.7 + this.rand() * 0.6) * (1 + PUFF_STRETCH * (1 - heat))
         const walls = wallsOf(loaded.tile, index)
-        const wall = walls[Math.floor(this.rand() * walls.length)]
-        if (!wall) continue
-        const at = this.pointOn(wall)
-        if (at.distanceToSquared(near) > SHED_RANGE * SHED_RANGE) continue
-        effects.dust(at.addScaledVector(wall.normal, 0.3), 1.2 + this.rand() * 1.4)
+        if (walls.length === 0) continue
+        // From the top of the building, where the roof is open or gone.
+        let at = this.pointOn(walls[Math.floor(this.rand() * walls.length)]!)
+        for (let i = 0; i < 2; i++) {
+          const other = this.pointOn(walls[Math.floor(this.rand() * walls.length)]!)
+          if (other.y > at.y) at = other
+        }
+        if (at.distanceToSquared(near) > SMOULDER_RANGE * SMOULDER_RANGE) continue
+        smolder(smoke, at, heat, light)
       }
     }
   }
@@ -270,7 +295,7 @@ export class BuildingDamage {
     const walls = wallsOf(loaded.tile, index)
     if (walls.length === 0) return
     if (!drawn) {
-      drawn = { group: new Group(), fracture: null, bricks: new Map(), stale: null, dirty: new Set(), falling: [], shed: SHED_SECONDS }
+      drawn = { group: new Group(), fracture: null, bricks: new Map(), stale: null, dirty: new Set(), falling: [], puff: 0 }
       buildings.set(index, drawn)
       this.root.add(drawn.group)
     }
@@ -440,4 +465,27 @@ function leanOf(shell: NonNullable<Fracture['shell']>, group: readonly number[],
 function pointInTriangle(triangle: THREE.Triangle, u: number, v: number) {
   if (u + v > 1) [u, v] = [1 - u, 1 - v]
   return triangle.a.clone().addScaledVector(triangle.b.clone().sub(triangle.a), u).addScaledVector(triangle.c.clone().sub(triangle.a), v)
+}
+
+/** A puff of smoke rising from `at`: dark, thick and big while it is hot, thin and grey as it dies. `light` dims it for the night. */
+function smolder(smoke: Pick<Particles, 'spawn'>, at: THREE.Vector3, heat: number, light: number) {
+  const dim = NIGHT_SMOKE + (1 - NIGHT_SMOKE) * light
+  const tone = (grey: number) => {
+    const level = Math.round(grey * dim)
+    return (level << 16) | (level << 8) | level
+  }
+  const rand = (min: number, max: number) => min + Math.random() * (max - min)
+  smoke.spawn({
+    position: [at.x, at.y, at.z],
+    velocity: [rand(-0.4, 0.4), rand(1.2, 2.2), rand(-0.4, 0.4)],
+    life: rand(4, 7),
+    size: [0.6 + heat * 0.6, 1.8 + heat * 2.4],
+    color: tone(0x30 + 0x20 * (1 - heat)),
+    colorEnd: tone(0x8a),
+    shape: 'puff',
+    spin: [-0.4, 0.4],
+    alpha: 0.12 + 0.38 * heat,
+    gravity: -0.6,
+    drag: 0.7,
+  })
 }

@@ -580,7 +580,10 @@ export class Game {
     const predictor = this.predictor!
     const renderTick = this.clock.tickAt(now) - this.clock.interpDelay
     // The time of day runs on the server's clock, so every player sees the same sky.
-    if (this.clock.synced) this.scene.setTimeOfDay(dayPhase(renderTick, TICK_RATE))
+    if (this.clock.synced) {
+      this.scene.setTimeOfDay(dayPhase(renderTick, TICK_RATE))
+      this.view.daylight = this.scene.daylight
+    }
     const seat = this.seat
     const seated = seat !== null
     const view = seat ? seatView(seat.kind, seat.index) : null

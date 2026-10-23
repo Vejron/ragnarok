@@ -91,6 +91,11 @@ export class Scene {
   private readonly sky = createSky()
   private readonly glint = new Color()
   /** Where the sun stands relative to what it follows, metres; moves with the time of day. */
+  /** How bright the day is, 1 at noon and 0 at midnight. */
+  get daylight() {
+    return Math.min(1, Math.max(0, (this.sky.hemiIntensity / this.palette.hemiIntensity - 0.35) / 0.65))
+  }
+
   private readonly sunOffset = [0, SUN_DISTANCE, 0]
   private disposed = false
 
