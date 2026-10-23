@@ -148,7 +148,7 @@ The marks are kept by `Blips` (`client/src/blips.ts`), and the board is split by
 - **Moving.** It turns at up to 6 rad/s and only walks once it is facing roughly where it is going. It walks on patrol and runs when pursuing. It walks the way it finds (see [Finding the way](#finding-the-way)), one corner at a time. If something the grid does not know about, such as a vehicle, is within 1.2 m ahead, it tries headings up to ±1.8 rad off. When it has not got 0.5 m closer to the next corner in 3 s, it gives up the goal: on patrol it moves on to the next waypoint, and in a pursuit it starts searching.
 - **Unarmed.** A bot with no gun runs at the target, stops 3 m away and faces them.
 - **Dying.** A bot dies, is scored and respawns like anyone else (after 3 s, at its home). It comes back on patrol, with whatever it was doing forgotten.
-- **Teams.** `Player::team` is `TEAM_NONE` (0) for people, who still all fight each other, so people and bots are always enemies. Friendly fire is off for any non-zero team. That covers bullets, blasts and roadkill, since they all go through `combat::damage_hit`.
+- **Teams.** `Player::team` is `TEAM_NONE` (0) for people, who still all fight each other, so people and bots are always enemies. Friendly fire is off for any non-zero team. That covers bullets, blasts and roadkill, since they all go through `life::damage_entity`.
 
 ## Fighting
 
@@ -167,7 +167,7 @@ A bot's shot leaves its eye along its look direction (`combat::fire_gun`). A per
 
 ## Hearing
 
-Each tick a bot listens to the noises made since it last listened (`World::noises`). It does not listen while it is fighting someone it can see.
+Each tick a bot listens to the noises made since it last listened (`Noise` events, see `crate::events`). It does not listen while it is fighting someone it can see.
 
 | Noise | Carries | Made in |
 |---|---|---|
@@ -180,8 +180,8 @@ Each tick a bot listens to the noises made since it last listened (`World::noise
 - **Whose noise.** It ignores only its own. A teammate's gunfire brings it to help, and so does an enemy's.
 - **Busy.** Already on its way to look somewhere, it changes its mind only for a noise at least 10 m nearer. In a busy fight the nearest shot jumps from one shooter to another each tick, and every change of goal is a new search for a way.
 - **Too far.** It ignores a noise more than 150 m from its route, where it would give up the chase on the way. The leash is measured from the nearest waypoint, not from home, so a squad sent 200 m to attack still fights when it gets there.
-- **Being hit.** A hit sends it to look where the hit came from: the attacker, or the centre of a blast (`combat::damage_hit` sets `Bot::hit_from`). So a calm bot shot from behind turns round, and if it can see the attacker it fights back. A hit counts for more than a noise, but not while it is fighting someone it can see.
-- `combat::damage_hit` sets `Bot::hit_from` directly. Noises are made through `bots::make_noise`, which keeps nothing when there are no bots, and `Bots` empties the list at the start of each tick.
+- **Being hit.** A hit sends it to look where the hit came from: the attacker, or the centre of a blast (`Bots::react` sets `Bot::hit_from` from the `Damaged` event). So a calm bot shot from behind turns round, and if it can see the attacker it fights back. A hit counts for more than a noise, but not while it is fighting someone it can see.
+- `Bots::react` sets `Bot::hit_from` from the `Damaged` events of the tick. Noises are made through `bots::make_noise`, which sends a `Noise` event only when there are bots; each bot reads them once, at the start of the next tick.
 
 ## Finding the way
 

@@ -2,7 +2,12 @@
 //! (`shared::replicated`), read from the ECS. Who is listed is as in v1: standing players (and those
 //! flying a drone, who kneel where they stood), living creatures, vehicles with a body, projectiles
 //! but gun rounds (clients fly those from their `BulletSpawn`), and items lying on the ground.
-//! Seated players are shown by their vehicle's `seats` and `crew`.
+//! A seated player is a stickman with `seated` and no `place`, sent wherever their vehicle is
+//! (`Replica::snapshot`); one whose crew shows also says where they look and what they hold. A drone's
+//! pilot stands where they were as well, with their seat.
+//!
+//! Every player also carries their own `vitals` and `hotbar`, and a driven vehicle its `drive`: the
+//! `[owner]` components, which `Replica::snapshot` sends to the owner alone (`Game::owned`).
 
 use super::*;
 use crate::entities::{Health, NetKind, Transform, With};
@@ -14,7 +19,13 @@ impl Game {
     /// Everything replicated, ordered by id.
     pub fn replicated(&self) -> Scene {
         let mut scene: Scene = Vec::new();
-        scene.extend(self.world.entities.all::<Player>().filter(|(_, player)| player.embodied()).map(|(id, player)| (id, stickman(player))));
+        scene.extend(self.world.entities.all::<Player>().map(|(id, player)| {
+            let shown = if player.embodied() { stickman(player, self.world.entities.alive(id)) } else { self.rider(player) };
+            let seated = player.seat.map(|seat| wire::Seated { vehicle: seat.vehicle, seat: seat.index as u8 });
+            let shown = Replicated { seated, ..shown };
+            let hp = self.world.entities.get::<Health>(id).map_or(0, |health| health.hp);
+            (id, Replicated { vitals: Some(wire::Vitals { hp, progress: progress(player) }), hotbar: Some(wire::Hotbar { slots: player.hotbar }), ..shown })
+        }));
         scene.extend(self.creatures());
         scene.extend(self.world.entities.all::<Vehicle>().filter_map(|(id, vehicle)| Some((id, self.vehicle(id, vehicle)?))));
         scene.extend(self.world.in_flight().into_iter().filter(|(_, flying)| flying.kind != PROJECTILE_BULLET).map(|(id, flying)| {
@@ -29,6 +40,24 @@ impl Game {
         }));
         scene.sort_unstable_by_key(|(id, _)| *id);
         scene
+    }
+
+    /// A player sitting in a vehicle, but for their seat: where they look and what they hold when their
+    /// crew shows, and only that they are a stickman when it does not.
+    fn rider(&self, player: &Player) -> Replicated {
+        let kind = Some(wire::Kind { kind: KIND_STICKMAN });
+        let vehicle = player.seat.and_then(|seat| self.world.entities.get::<Vehicle>(seat.vehicle));
+        if vehicle.is_none_or(|vehicle| vehicle_def(vehicle.kind).crew == Exposure::Sealed) {
+            return Replicated { kind, ..Default::default() };
+        }
+        let flags = FLAG_CROUCHING | ((player.held().item << FLAG_HELD_SHIFT) & FLAG_HELD_MASK);
+        Replicated {
+            kind,
+            heading: Some(wire::Heading { yaw: player.input.yaw }),
+            look: Some(wire::Look { pitch: player.input.pitch() }),
+            flags: Some(wire::Flags { flags, stance: STANCE_STANDING }),
+            ..Default::default()
+        }
     }
 
     /// The living ECS creatures (roosters): standing where they are, calling or not.
@@ -63,7 +92,7 @@ impl Game {
         let [x, y, z] = pose.position.map(to_cm);
         let [qx, qy, qz] = pack_quat(pose.rotation);
         let def = vehicle_def(vehicle.kind);
-        let riders = entities.get::<Seats>(id).map_or(&[][..], |seats| seats);
+        let driver = entities.get::<Seats>(id).and_then(|seats| seats.rider(0));
         let mounts = entities.get::<Mounts>(id);
         let shown = |show| mounts.and_then(|mounts| mounts.shown(show)).copied();
         // A hitched mortar is drawn folded up for travel.
@@ -89,38 +118,44 @@ impl Game {
             Some(drone) => Some(wire::Thrust { air: battery_byte(drone), flags: if drone.linked { THRUST_LINKED } else { 0 } }),
             None => self.world.physics.car_thrust(id).map(|(tank, flags)| wire::Thrust { air: air_byte(tank), flags }),
         };
-        // Where each of a crew that shows looks, and what they hold, so they can be drawn sitting.
-        let crew = (def.crew != Exposure::Sealed).then(|| wire::Crew {
-            riders: riders
-                .iter()
-                .map(|seat| seat.and_then(|rider| entities.get::<Player>(rider)).map_or(Rider::default(), |player| Rider { yaw: player.input.yaw, pitch: player.input.pitch(), held: player.held().item }))
-                .collect(),
-        });
         Some(Replicated {
             kind: Some(wire::Kind { kind: vehicle.kind }),
             place: Some(wire::Place { x, y, z }),
             orientation: Some(wire::Orientation { qx, qy, qz }),
             steer: Some(wire::Steer { steer: to_axis(pose.steer) }),
-            seats: Some(wire::Seats { riders: riders.iter().map(|seat| seat.unwrap_or(0)).collect() }),
             turret,
-            crew,
             thrust,
             arms,
             health: Some(wire::Health { hp: entities.get::<Health>(id).map_or(0, |health| health.hp) }),
             damage: (vehicle.damage != [0; 8]).then_some(wire::Damage { parts: vehicle.damage }),
+            drive: driver.filter(|&driver| entities.has::<Player>(driver)).and_then(|_| self.drive(id)),
             ..Default::default()
         })
+    }
+
+    /// The exact motion of vehicle `id`, for its driver's own prediction.
+    fn drive(&self, id: u32) -> Option<wire::Drive> {
+        let motion = self.world.physics.car_motion(id)?;
+        let [vx, vy, vz] = motion.linvel.map(to_cm_i16);
+        let [wx, wy, wz] = motion.angvel.map(to_milli_i16);
+        Some(wire::Drive { vx, vy, vz, wx, wy, wz, steer: to_milli_i16(motion.steer), spin: to_milli_i16(motion.spin) })
+    }
+
+    /// The entities player `id` owns: themself, and the vehicle they drive.
+    pub(crate) fn owned(&self, id: u32) -> [Option<u32>; 2] {
+        let driving = self.world.entities.get::<Player>(id).and_then(|player| player.seat).filter(|seat| seat.index == 0).map(|seat| seat.vehicle);
+        [Some(id), driving]
     }
 }
 
 /// A standing player (or one flying a drone, kneeling over the controls).
-fn stickman(player: &Player) -> Replicated {
+fn stickman(player: &Player, alive: bool) -> Replicated {
     let c = &player.character;
     let mut flags = 0;
     if c.grounded {
         flags |= FLAG_GROUNDED;
     }
-    if !player.alive() {
+    if !alive {
         flags |= FLAG_DEAD;
     }
     if player.input.buttons() & BUTTON_CROUCH != 0 || player.seat.is_some() {
@@ -137,6 +172,20 @@ fn stickman(player: &Player) -> Replicated {
         flags: Some(wire::Flags { flags, stance }),
         ..Default::default()
     }
+}
+
+/// How far the player's reload or bandage has got, 0..=255, or 0 when neither is going on.
+fn progress(player: &Player) -> u8 {
+    use shared::items::{BANDAGE_TICKS, def};
+    let (left, total) = if player.channel_left > 0 {
+        (player.channel_left, BANDAGE_TICKS)
+    } else if player.reload_left > 0 {
+        (player.reload_left, def(player.held().item).map_or(1, |d| d.reload_ticks.max(1)))
+    } else {
+        return 0;
+    };
+    let done = 1.0 - left as f32 / total as f32;
+    ((done * 255.0).round() as u8).max(1)
 }
 
 #[cfg(test)]

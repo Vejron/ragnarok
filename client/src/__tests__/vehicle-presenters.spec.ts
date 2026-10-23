@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { Presenters, type Frame } from '@/entities/presenter'
 import { Turrets } from '@/entities/presenters/guns'
 import { Smoke } from '@/entities/presenters/smoke'
+import { Seating } from '@/entities/presenters/seating'
 import { Vehicles, type Driven, type VehicleWorld } from '@/entities/presenters/vehicles'
 import { Wear } from '@/entities/presenters/wear'
 import { EntityStore } from '@/entities/store'
@@ -21,14 +22,17 @@ beforeAll(async () => {
   await parseTankModel(copy.buffer)
 })
 
-/** A tank as the wire has it: `gunner` in seat 1, its gun fired `shots` times, `hp` left. */
-function tank(x: number, { shots = 0, hp = 250, gunner = 0, damage }: { shots?: number; hp?: number; gunner?: number; damage?: number[] } = {}): Components {
+/** A tank as the wire has it: its gun fired `shots` times, `hp` left. */
+function tank(x: number, { shots = 0, hp = 250, damage }: { shots?: number; hp?: number; damage?: number[] } = {}): Components {
   return {
     kind: { kind: KIND_TANK }, place: { x: x * 100, y: 120, z: 0 }, orientation: { qx: 0, qy: 0, qz: 0 }, steer: { steer: 0 },
-    turret: { yaw: 0, pitch: 0, shots, range: 0, flags: 0 }, seats: { riders: [0, gunner] }, health: { hp },
+    turret: { yaw: 0, pitch: 0, shots, range: 0, flags: 0 }, health: { hp },
     ...(damage ? { damage: { parts: damage } } : {}),
   }
 }
+
+/** Someone sitting in seat `seat` of vehicle `vehicle`. */
+const rider = (vehicle: number, seat: number): Components => ({ kind: { kind: 0 }, seated: { vehicle, seat } })
 
 /** Vehicles drawn into stand-ins that record what is heard, flashed and thrown. */
 function harness(driven: Driven | null = null) {
@@ -49,7 +53,7 @@ function harness(driven: Driven | null = null) {
   }
   const store = new EntityStore()
   const machines = new Presenters<Frame>()
-  const vehicles = machines.add(new Vehicles(world))
+  const vehicles = machines.add(new Vehicles(world, machines.add(new Seating())))
   const wear = machines.add(new Wear(world, vehicles))
   machines.add(new Smoke(world, vehicles))
   machines.add(new Turrets(world, vehicles))
@@ -71,10 +75,10 @@ describe('the vehicle presenters', () => {
 
   it('flash, bang and recoil when a gun’s counter moves, and not at first sight', () => {
     const { log, store, draw } = harness()
-    store.push(10, new Map([[3, tank(1, { shots: 5, gunner: 7 })]]), true)
+    store.push(10, new Map([[3, tank(1, { shots: 5 })], [7, rider(3, 1)]]), true)
     draw(10)
     expect(log).toEqual([])
-    store.push(12, new Map([[3, tank(1, { shots: 6, gunner: 7 })]]), true)
+    store.push(12, new Map([[3, tank(1, { shots: 6 })], [7, rider(3, 1)]]), true)
     draw(12)
     // The local player (7) mans the gun, so the HUD's reload starts.
     expect(log).toEqual(['flash', 'muzzle light', 'cannon', 'own shot'])

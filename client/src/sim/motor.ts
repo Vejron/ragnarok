@@ -1,5 +1,6 @@
 import init, { ClientSim } from './wasm/sim'
-import { DAMAGE_TURRET, TURRET_GONE, type DriveState, type InputFrame } from '@/net/codec'
+import { DAMAGE_TURRET, TURRET_GONE, type InputFrame } from '@/net/codec'
+import type { DriveState } from '@/entities/units'
 import type { TileRef } from '@/world'
 import { ROADSTER_AIR } from './consts'
 

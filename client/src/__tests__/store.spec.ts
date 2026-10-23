@@ -133,7 +133,7 @@ function room(n: number): Map<number, Components> {
   for (let i = 0; i < 20; i++) {
     entries.push([100 + i, {
       kind: { kind: 2 }, place: { x: i * 500 + n * 30, y: 120, z: 0 }, orientation: { qx: 0, qy: 1000 + n * 10, qz: 0 }, steer: { steer: n % 50 },
-      turret: { yaw: n * 5, pitch: 100, shots: n, range: 0, flags: 0 }, seats: { riders: [i + 1, 0] }, health: { hp: 200 },
+      turret: { yaw: n * 5, pitch: 100, shots: n, range: 0, flags: 0 }, health: { hp: 200 },
     }])
   }
   for (let i = 0; i < 30; i++) entries.push([200 + i, { projectile: { kind: 0 }, place: { x: i * 100 + n * 800, y: 2000, z: 0 }, velocity: { vx: 24000, vy: 0, vz: 0 } }])
@@ -157,7 +157,7 @@ describe('a full room', () => {
     for (let i = 0; i < 5; i++) second()
     const best = Math.min(...Array.from({ length: 7 }, second))
     console.log(`a full room for a second: store ${best.toFixed(2)} ms`)
-    // Built and run by Node alone it is about 0.6 ms, under vitest about 1 (MIGRATION.md, 4.2); the
+    // Built and run by Node alone it is about 0.6 ms, under vitest about 1 (measured when the entity store was written); the
     // adapter and interpolators it replaced took about 1.0 ms. This catches a real step back.
     expect(best).toBeLessThan(3)
   })

@@ -1,4 +1,4 @@
-//! Protocol v2's entity state: what each replicated thing is, as components (MIGRATION.md, Phase 3).
+//! Protocol v2's entity state: what each replicated thing is, as components (design.md §2.1).
 //!
 //! An entity on the wire is the components it has, not a row of its family. Every component is listed
 //! once, in the `replicated!` invocation below: its wire id, its fields, and whether it is sent as a
@@ -18,8 +18,10 @@
 //!
 //! An update for an id not in the baseline brings the whole entity: everything it has is set.
 
-use crate::protocol::Rider;
+use crate::items::HOTBAR_SLOTS;
+use crate::protocol::ItemSlot;
 use serde::de::{self, SeqAccess, Visitor};
+use std::borrow::Borrow;
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -32,6 +34,9 @@ pub trait Component: Clone + PartialEq {
     const ID: u8;
     /// Sent as a difference from the baseline's, rather than whole.
     const DIFF: bool;
+    /// Sent only to the receiver who owns the entity (`Replicated::public` leaves it out for anyone
+    /// else): the player's own entity, or the vehicle they drive.
+    const OWNER: bool;
     /// Its fields in wire order.
     const FIELDS: &'static [Field];
     /// How it goes on the wire: itself for a `set` component, its fields as `i32` for a `diff` one.
@@ -61,8 +66,30 @@ pub type Field = (&'static str, &'static str, &'static str);
 /// - `dm`: tenths of a metre; the nearer snapshot's.
 pub const UNITS: &[&str] = &["cm", "mrad", "quat", "axis", "byte", "dm"];
 
+/// One component as `schema` lists it: its wire id, its field in `Replicated`, its struct, whether it
+/// is sent as a difference and only to its owner, and its fields.
+#[derive(Clone, Copy, Debug)]
+pub struct Schema {
+    pub id: u8,
+    pub name: &'static str,
+    pub ty: &'static str,
+    pub diff: bool,
+    pub owner: bool,
+    pub fields: &'static [Field],
+}
+
 fn next<'de, T: Deserialize<'de>, A: SeqAccess<'de>>(seq: &mut A) -> Result<T, A::Error> {
     seq.next_element()?.ok_or_else(|| de::Error::custom("an update cut short"))
+}
+
+/// Whether a component's entry in `replicated!` is marked `[owner]`.
+macro_rules! owner {
+    () => {
+        false
+    };
+    (owner) => {
+        true
+    };
 }
 
 macro_rules! count {
@@ -72,7 +99,7 @@ macro_rules! count {
 
 /// One component's struct and its `Component` impl.
 macro_rules! component {
-    (diff $id:literal $(#[$meta:meta])* $Name:ident { $( $(#[$fmeta:meta])* $f:ident : $t:ty $(as $unit:ident)? ),* $(,)? }) => {
+    (diff $id:literal $owner:tt $(#[$meta:meta])* $Name:ident { $( $(#[$fmeta:meta])* $f:ident : $t:ty $(as $unit:ident)? ),* $(,)? }) => {
         $(#[$meta])*
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
         pub struct $Name { $( $(#[$fmeta])* pub $f: $t, )* }
@@ -80,6 +107,7 @@ macro_rules! component {
         impl Component for $Name {
             const ID: u8 = $id;
             const DIFF: bool = true;
+            const OWNER: bool = $owner;
             const FIELDS: &'static [Field] = &[$( (stringify!($f), stringify!($t), stringify!($($unit)?)) ),*];
             type Wire = [i32; count!($($f)*)];
             fn full(&self) -> Self::Wire {
@@ -113,7 +141,7 @@ macro_rules! component {
             }
         }
     };
-    (set $id:literal $(#[$meta:meta])* $Name:ident { $( $(#[$fmeta:meta])* $f:ident : $t:ty $(as $unit:ident)? ),* $(,)? }) => {
+    (set $id:literal $owner:tt $(#[$meta:meta])* $Name:ident { $( $(#[$fmeta:meta])* $f:ident : $t:ty $(as $unit:ident)? ),* $(,)? }) => {
         $(#[$meta])*
         #[derive(Clone, Debug, Default, PartialEq, Eq)]
         pub struct $Name { $( $(#[$fmeta])* pub $f: $t, )* }
@@ -121,6 +149,7 @@ macro_rules! component {
         impl Component for $Name {
             const ID: u8 = $id;
             const DIFF: bool = false;
+            const OWNER: bool = $owner;
             const FIELDS: &'static [Field] = &[$( (stringify!($f), stringify!($t), stringify!($($unit)?)) ),*];
             type Wire = Self;
             fn full(&self) -> Self {
@@ -154,8 +183,8 @@ macro_rules! component {
 /// Every component, and the `Replicated` and `Update` structs that hold them. Listed in wire-id
 /// order, which is the order their fields go on the wire.
 macro_rules! replicated {
-    ($( $mode:ident $id:literal $field:ident $(#[$meta:meta])* $Name:ident { $($body:tt)* } )*) => {
-        $( component!($mode $id $(#[$meta])* $Name { $($body)* }); )*
+    ($( $mode:ident $id:literal $field:ident $([$owner:ident])? $(#[$meta:meta])* $Name:ident { $($body:tt)* } )*) => {
+        $( component!($mode $id { owner!($($owner)?) } $(#[$meta])* $Name { $($body)* }); )*
 
         /// An entity as it is replicated: the components it has.
         #[derive(Clone, Debug, Default, PartialEq)]
@@ -173,10 +202,18 @@ macro_rules! replicated {
             $( pub $field: Option<<$Name as Component>::Wire>, )*
         }
 
+        /// Bits of the `[owner]` components.
+        pub const OWNER_MASK: u32 = 0 $( | if <$Name as Component>::OWNER { 1 << <$Name as Component>::ID } else { 0 } )*;
+
         impl Replicated {
             /// Bits of the components it has.
             pub fn mask(&self) -> u32 {
                 0 $( | if self.$field.is_some() { 1 << <$Name as Component>::ID } else { 0 } )*
+            }
+
+            /// What anyone but its owner is told of it: everything but the `[owner]` components.
+            pub fn public(&self) -> Replicated {
+                Replicated { $( $field: if <$Name as Component>::OWNER { None } else { self.$field.clone() }, )* }
             }
 
             /// What entity `id` being `self` says to a receiver whose baseline holds it as `base` (or
@@ -270,10 +307,9 @@ macro_rules! replicated {
             }
         }
 
-        /// Each component as the client decodes it: `(wire id, name, struct name, sent as a difference,
-        /// fields)`.
-        pub fn schema() -> Vec<(u8, &'static str, &'static str, bool, &'static [Field])> {
-            vec![$( (<$Name as Component>::ID, stringify!($field), stringify!($Name), <$Name as Component>::DIFF, <$Name as Component>::FIELDS) ),*]
+        /// Each component as the client decodes it.
+        pub fn schema() -> Vec<Schema> {
+            vec![$( Schema { id: <$Name as Component>::ID, name: stringify!($field), ty: stringify!($Name), diff: <$Name as Component>::DIFF, owner: <$Name as Component>::OWNER, fields: <$Name as Component>::FIELDS } ),*]
         }
     };
 }
@@ -310,10 +346,6 @@ replicated! {
     /// a field mortar's range dial; and `TURRET_*` flags.
     Turret { yaw: i16 as mrad, pitch: i16 as mrad, shots: u8, range: u16 as dm, flags: u8 }
 
-    set 7 crew
-    /// Where each seat's rider looks and what they hold, for a vehicle whose crew show.
-    Crew { riders: Vec<Rider> }
-
     set 8 thrust
     /// What is left of a Roadster's air, a hen's wings' stamina or a drone's battery, 0..=255 of full,
     /// and the `THRUST_*` flags: the nozzles firing, a hen's glide or lift, a drone still linked.
@@ -324,10 +356,6 @@ replicated! {
     /// rounds modulo 256 (the left gun fires the even ones), the heat of both sets of guns (they jam at
     /// 255), the bombs on the rack, and `ARMS_*` flags. A hen sends its clutch of eggs as `bombs`.
     Arms { shots: u8, heat: u8 as byte, rear_heat: u8 as byte, bombs: u8, flags: u8 }
-
-    set 10 seats
-    /// The player in each seat, 0 for an empty one; seat 0 drives.
-    Seats { riders: Vec<u32> }
 
     set 11 health
     /// A vehicle's health; 0 is a burning wreck.
@@ -354,11 +382,37 @@ replicated! {
     set 16 pickup
     /// `ITEM_*`: what lies on the ground here.
     Pickup { item: u8 }
+
+    set 17 vitals [owner]
+    /// A player's own health (0 is dead), and how far their reload or bandage has got, 0..=255 of done,
+    /// or 0 when neither is going on.
+    Vitals { hp: u8, progress: u8 as byte }
+
+    set 18 hotbar [owner]
+    /// A player's own hotbar.
+    Hotbar { slots: [ItemSlot; HOTBAR_SLOTS] }
+
+    set 19 drive [owner]
+    /// The exact motion of a vehicle, which its pose does not carry, for its driver's prediction:
+    /// velocity, cm/s; angular velocity about the world axes, mrad/s; the front wheels' angle, mrad,
+    /// + is right; and the yaw rate a tank has ramped to, mrad/s, + is clockwise.
+    Drive { vx: i16 as cm, vy: i16 as cm, vz: i16 as cm, wx: i16 as mrad, wy: i16 as mrad, wz: i16 as mrad, steer: i16 as mrad, spin: i16 as mrad }
+
+    set 20 seated
+    /// A player sitting in seat `seat` of vehicle `vehicle` (0 drives). They have no `place` of their
+    /// own unless their body stays behind (a drone's pilot): they are where the kind's seat puts them.
+    /// Ids 7 and 10 were the vehicle's `crew` and `seats`, which this replaced.
+    Seated { vehicle: u32, seat: u8 }
+
+    diff 21 look
+    /// How far a rider whose crew show looks up (+) or down, milliradians; their `heading` is where
+    /// they look about, in the world.
+    Look { pitch: i16 as mrad }
 }
 
 /// The structs a component field can hold a list of, with their fields in wire order and each one's
 /// unit (`UNITS`): they go on the wire as arrays, which the client turns back into objects.
-pub const STRUCTS: &[(&str, &[(&str, &str)])] = &[("Rider", &[("yaw", "mrad"), ("pitch", "mrad"), ("held", "")])];
+pub const STRUCTS: &[(&str, &[(&str, &str)])] = &[("ItemSlot", &[("item", ""), ("count", ""), ("ammo", "")])];
 
 /// JSON for the client's fixtures.
 #[cfg(test)]
@@ -380,9 +434,9 @@ mod json {
             format!("[{}]", self.iter().map(Json::json).collect::<Vec<_>>().join(", "))
         }
     }
-    impl Json for crate::protocol::Rider {
+    impl Json for crate::protocol::ItemSlot {
         fn json(&self) -> String {
-            format!("{{\"yaw\": {}, \"pitch\": {}, \"held\": {}}}", self.yaw, self.pitch, self.held)
+            format!("{{\"item\": {}, \"count\": {}, \"ammo\": {}}}", self.item, self.count, self.ammo)
         }
     }
 }
@@ -391,8 +445,9 @@ mod json {
 pub type Scene = Vec<(u32, Replicated)>;
 
 /// What turns `base` into `now` (both ordered by id): an update for every entity that is new or
-/// changed, in id order, and the ids gone.
-pub fn diff(base: &[(u32, Replicated)], now: &[(u32, Replicated)]) -> (Vec<Update>, Vec<u32>) {
+/// changed, in id order, and the ids gone. Either may hold its entities shared (`Arc<Replicated>`), as
+/// the server's do.
+pub fn diff<B: Borrow<Replicated>, N: Borrow<Replicated>>(base: &[(u32, B)], now: &[(u32, N)]) -> (Vec<Update>, Vec<u32>) {
     let mut updates = Vec::new();
     let mut removed = Vec::new();
     let mut held = base.iter().peekable();
@@ -400,8 +455,8 @@ pub fn diff(base: &[(u32, Replicated)], now: &[(u32, Replicated)]) -> (Vec<Updat
         while let Some((gone, _)) = held.next_if(|(was, _)| was < id) {
             removed.push(*gone);
         }
-        let was = held.next_if(|(was, _)| was == id).map(|(_, was)| was);
-        updates.extend(entity.update(*id, was));
+        let was = held.next_if(|(was, _)| was == id).map(|(_, was)| was.borrow());
+        updates.extend(entity.borrow().update(*id, was));
     }
     removed.extend(held.map(|(gone, _)| *gone));
     (updates, removed)
@@ -421,4 +476,4 @@ pub fn apply(base: &[(u32, Replicated)], updates: &[Update], removed: &[u32]) ->
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

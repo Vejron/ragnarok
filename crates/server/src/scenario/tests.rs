@@ -34,7 +34,7 @@ fn join(game: &mut Game) -> (u32, mpsc::Receiver<Outgoing>) {
 fn notices(inbox: &mut mpsc::Receiver<Outgoing>) -> Vec<(u8, String)> {
     std::iter::from_fn(|| inbox.try_recv().ok())
         .filter_map(|out| match out {
-            Outgoing::Reliable(bytes) if peek_tag(&bytes) == Some(S_NOTICE) => decode::<Notice>(&bytes).map(|Notice(_, kind, text)| (kind, text)),
+            Outgoing::Reliable(bytes) if peek_tag(&bytes) == Some(S_NOTICE) => decode::<Notice>(&bytes).map(|notice| (notice.kind, notice.text)),
             _ => None,
         })
         .collect()
@@ -51,14 +51,13 @@ fn bots(game: &Game) -> Vec<u32> {
 }
 
 fn alive_bots(game: &Game) -> Vec<u32> {
-    bots(game).into_iter().filter(|id| game.world.entities.of::<Player>(*id).alive()).collect()
+    bots(game).into_iter().filter(|id| game.world.entities.alive(*id)).collect()
 }
 
 /// Kills player `id` as anything would: down to nothing, and back after the usual wait.
 fn kill(game: &mut Game, id: u32) {
-    let mut player = game.world.entities.get_mut::<Player>(id).unwrap();
-    player.hp = 0;
-    player.respawn_in = RESPAWN_TICKS;
+    game.world.entities.get_mut::<crate::entities::Health>(id).unwrap().hp = 0;
+    game.world.entities.get_mut::<crate::entities::Respawn>(id).unwrap().left = RESPAWN_TICKS;
 }
 
 fn put(game: &mut Game, id: u32, [x, z]: [f32; 2]) {
@@ -260,8 +259,8 @@ fn a_squad_that_respawns_comes_back_with_its_own_loadout() {
     let [id] = bots(&game)[..] else { panic!("one bot") };
     kill(&mut game, id);
     run(&mut game, RESPAWN_TICKS as f32 / TICK_RATE as f32 + 0.5);
+    assert!(game.world.entities.alive(id), "back");
     let player = &game.world.entities.of::<Player>(id);
-    assert!(player.alive(), "back");
     assert_eq!(player.hotbar[0].item, ITEM_SNIPER);
     assert_eq!(player.hotbar[1].item, ITEM_NONE, "not the standard loadout");
 }

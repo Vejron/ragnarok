@@ -74,11 +74,12 @@ pub fn rooster(home: [f32; 2]) -> impl crate::entities::Bundle {
         NetKind(KIND_ROOSTER),
         Transform { position: [home[0], 0.0, home[1]], yaw: 0.0 },
         Health::full(ROOSTER_HP),
-        Hurtbox { centre_y: ROOSTER_CAPSULE_CENTRE, half_height: ROOSTER_CAPSULE_HALF_HEIGHT, radius: ROOSTER_CAPSULE_RADIUS, hit_kind: HIT_ROOSTER },
+        Hurtbox { centre_y: ROOSTER_CAPSULE_CENTRE, half_height: ROOSTER_CAPSULE_HALF_HEIGHT, radius: ROOSTER_CAPSULE_RADIUS, head: None, mark_y: ROOSTER_CAPSULE_HALF_HEIGHT, hit_kind: HIT_ROOSTER },
         Home(home),
         Respawn { delay: ROOSTER_RESPAWN_TICKS, left: 0 },
         DropOnDeath { item: ITEM_GOLDEN_EGG, count: 1, unique: true },
         Wander::new(ROOSTER_GAIT, home),
+        crate::entities::Trail::default(),
     )
 }
 
@@ -224,7 +225,7 @@ impl Mechanic for Npcs {
 mod tests {
     use super::*;
     use crate::game::Game;
-    use crate::mechanics::life::{damage_entity, first_hurtbox_hit};
+    use crate::mechanics::life::{Harm, damage_entity, first_hurtbox_hit};
     use shared::items::def;
     use shared::world::{WORLD_VERSION, WorldFile};
 
@@ -293,6 +294,34 @@ mod tests {
     }
 
     #[test]
+    fn a_rooster_shot_dead_dies_as_anything_does_but_scores_nothing() {
+        use crate::mechanics::Mechanic;
+        let mut game = game();
+        let r = rooster(&game);
+        let shooter = game.add_bot([0.0, 0.0], crate::game::TEAM_BOTS, Vec::new()).unwrap();
+        assert!(damage_entity(&mut game.world, r.id, Harm::new(ROOSTER_HP, Some(shooter), shared::protocol::WEAPON_RIFLE)));
+        let died: Vec<_> = game.world.happened::<crate::game::Died>().copied().collect();
+        assert_eq!(died.iter().map(|death| (death.victim, death.killer)).collect::<Vec<_>>(), [(r.id, Some(shooter))]);
+        crate::mechanics::Scores.react(&mut game.world);
+        assert_eq!(game.world.entities.of::<crate::game::Player>(shooter).kills, 0, "a rooster is not a kill");
+        assert!(crate::game::feedback::kills(&game.world).is_empty(), "nor news for the kill feed");
+    }
+
+    #[test]
+    fn a_lagging_shooter_hits_a_rooster_where_they_saw_it() {
+        let mut game = game();
+        game.step();
+        game.step();
+        let r = rooster(&game);
+        let p = game.world.entities.of::<crate::entities::Trail>(r.id).at(game.world.tick.wrapping_sub(1), false).expect("a tick of trail");
+        // A ray through the middle of where it stood a tick ago, after it has stepped 2 m aside.
+        let then = [p[0], p[1] + ROOSTER_CAPSULE_CENTRE, p[2] + 5.0];
+        game.world.entities.get_mut::<Transform>(r.id).unwrap().position = [p[0] + 2.0, p[1], p[2]];
+        assert!(first_hurtbox_hit(&game.world, then, [0.0, 0.0, -1.0], 20.0, None, 0, None).is_none(), "it is not there now");
+        assert_eq!(first_hurtbox_hit(&game.world, then, [0.0, 0.0, -1.0], 20.0, None, 1, None).map(|(who, _)| who), Some(r.id), "it was a tick ago");
+    }
+
+    #[test]
     fn a_shot_rooster_drops_a_golden_egg_and_comes_back() {
         let mut game = game();
         let r = rooster(&game);
@@ -300,15 +329,15 @@ mod tests {
         // A ray through the middle of it.
         let p = r.transform.position;
         let centre = [p[0], p[1] + ROOSTER_CAPSULE_CENTRE, p[2]];
-        let hit = first_hurtbox_hit(&game.world, [centre[0], centre[1], centre[2] + 5.0], [0.0, 0.0, -1.0], 20.0);
+        let hit = first_hurtbox_hit(&game.world, [centre[0], centre[1], centre[2] + 5.0], [0.0, 0.0, -1.0], 20.0, None, 0, None);
         assert_eq!(hit.map(|(who, _)| who), Some(r.id));
 
-        assert!(damage_entity(&mut game.world, r.id, ROOSTER_HP));
+        assert!(damage_entity(&mut game.world, r.id, Harm::new(ROOSTER_HP, None, 0)));
         assert!(!rooster(&game).health.alive());
         let eggs: Vec<_> = game.world.pickup_ids().into_iter().filter_map(|pid| game.world.pickup(pid).copied()).filter(|p| p.item == ITEM_GOLDEN_EGG).collect();
         assert_eq!(eggs.len(), 1);
         assert!(eggs[0].dropped);
-        assert!(first_hurtbox_hit(&game.world, [centre[0], centre[1], centre[2] + 5.0], [0.0, 0.0, -1.0], 20.0).is_none(), "dead is not hit");
+        assert!(first_hurtbox_hit(&game.world, [centre[0], centre[1], centre[2] + 5.0], [0.0, 0.0, -1.0], 20.0, None, 0, None).is_none(), "dead is not hit");
         assert!(game.seen_people(KIND_ROOSTER).is_empty());
 
         for _ in 0..ROOSTER_RESPAWN_TICKS {
@@ -336,7 +365,7 @@ mod tests {
         let (_, struck) = hitscan(&mut game.world, shooter, [p[0], p[1] + ROOSTER_CAPSULE_CENTRE, p[2] + 5.0], [0.0, 0.0, -1.0], &round, 0, 0);
         assert!(struck);
         assert_eq!(rooster(&game).health.hp, ROOSTER_HP - 1);
-        assert!(game.world.hits.iter().any(|(to, hit)| *to == shooter && hit.role == HIT_DEALT && hit.target == r.id), "the shooter sees the hit");
+        assert!(crate::game::feedback::hits(&game.world).iter().any(|(to, hit)| *to == shooter && hit.role == HIT_DEALT && hit.target == r.id), "the shooter sees the hit");
 
         let mut game = self::game();
         let r = rooster(&game);
@@ -389,13 +418,13 @@ mod tests {
         let r = rooster(&game);
         let p = r.transform.position;
         let centre = [p[0], p[1] + ROOSTER_CAPSULE_CENTRE, p[2]];
-        assert!(hurtbox_near(&game.world, [centre[0] + 0.8, centre[1], centre[2]], 1.0));
-        assert!(!hurtbox_near(&game.world, [centre[0] + 3.0, centre[1], centre[2]], 1.0));
+        assert!(hurtbox_near(&game.world, [centre[0] + 0.8, centre[1], centre[2]], 1.0, None));
+        assert!(!hurtbox_near(&game.world, [centre[0] + 3.0, centre[1], centre[2]], 1.0, None));
 
         let bot = game.add_bot([p[0] + 30.0, p[2]], TEAM_BOTS, Vec::new()).unwrap();
         blast(&mut game.world, Blast { point: centre, radius: 3.0, damage: 10.0, knock: 0.0, dir: [0.0, 1.0, 0.0], attacker: Some(bot), weapon: WEAPON_GRENADE });
         assert!(rooster(&game).health.hp < ROOSTER_HP);
-        assert!(game.world.hits.iter().any(|(to, hit)| *to == bot && hit.role == HIT_DEALT && hit.target == r.id), "whoever set it off sees the hit");
+        assert!(crate::game::feedback::hits(&game.world).iter().any(|(to, hit)| *to == bot && hit.role == HIT_DEALT && hit.target == r.id), "whoever set it off sees the hit");
     }
 
     #[test]
@@ -404,7 +433,7 @@ mod tests {
         let id = rooster(&game).id;
         game.world.clear_pickups();
         for _ in 0..3 {
-            assert!(damage_entity(&mut game.world, id, ROOSTER_HP));
+            assert!(damage_entity(&mut game.world, id, Harm::new(ROOSTER_HP, None, 0)));
             crate::mechanics::life::place_at_home(&mut game.world, id);
         }
         let eggs = game.world.pickup_ids().into_iter().filter(|&pid| game.world.pickup(pid).is_some_and(|p| p.item == ITEM_GOLDEN_EGG)).count();

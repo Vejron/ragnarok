@@ -2,6 +2,7 @@
 //! and the `Command`/`Outgoing` messages the sessions exchange with it.
 
 use super::*;
+use bevy_ecs::message::{Message, Messages};
 use shared::mounts::{MountDef, Show};
 pub use crate::profile::Profile;
 
@@ -55,9 +56,6 @@ pub struct Player {
     pub inputs: JitterBuffer,
     /// Newest client input sequence already applied, echoed in snapshots for reconciliation.
     pub ack: u32,
-    /// Health; zero means dead and waiting for `respawn_in` to run out.
-    pub hp: u8,
-    pub respawn_in: u32,
     /// What is in each hotbar slot: `[item, count, ammo]`.
     pub hotbar: [ItemSlot; HOTBAR_SLOTS],
     /// The slot in hand, as of the last tick.
@@ -173,15 +171,6 @@ pub struct Crew {
     pub seat: usize,
 }
 
-/// Something loud a bot may hear: where it was, who made it (none for a wreck going up, say), and
-/// how far it carries, metres. Walls do not stop it.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Noise {
-    pub at: [f32; 3],
-    pub by: Option<u32>,
-    pub reach: f32,
-}
-
 impl Bot {
     pub fn new(home: [f32; 2], route: Vec<[f32; 2]>) -> Self {
         Self {
@@ -220,11 +209,19 @@ impl Bot {
     }
 }
 
-impl Player {
-    pub fn alive(&self) -> bool {
-        self.hp > 0
-    }
+/// Where a hit on a standing stickman is shown: their chest, this far above the capsule's centre.
+const CHEST_Y: f32 = 0.9;
 
+/// What a player's entity carries besides the `Player` to live and die by: full health, coming back
+/// `RESPAWN_TICKS` after dying, and a body to hit (their capsule, with the head at the top) with a
+/// trail of where it was.
+pub fn stickman_life() -> impl crate::entities::Bundle {
+    use crate::entities::{Health, Hurtbox, Respawn, Trail};
+    let body = Hurtbox { centre_y: 0.0, half_height: CAPSULE_HALF_HEIGHT, radius: CAPSULE_RADIUS, head: Some(HEAD_ZONE_Y), mark_y: CHEST_Y, hit_kind: HIT_BODY };
+    (Health::full(PLAYER_MAX_HP), Respawn { delay: RESPAWN_TICKS, left: 0 }, body, Trail::default())
+}
+
+impl Player {
     /// Whether the stickman is out in the world, to be seen, hit and blasted: on foot, or standing
     /// still while flying a drone.
     pub fn embodied(&self) -> bool {
@@ -425,11 +422,6 @@ pub(super) fn battery_byte(drone: &Drone) -> u8 {
     (drone.energy as f32 / shared::vehicles::drone_def(drone.kind).energy_ticks as f32 * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
-/// Where the standing, living players were at the end of one tick: `(tick, [(id, position)])`.
-/// A tick and where everyone was at its end: each player's capsule centre, or their head point when
-/// seated (`true`) in a vehicle whose crew show.
-type Frame = (u32, Vec<(u32, [f32; 3], bool)>);
-
 /// Everything mechanics may read and change.
 pub struct World {
     pub tick: u32,
@@ -446,13 +438,8 @@ pub struct World {
     pub shots: Vec<ShotEvent>,
     /// Bullets fired in the last few ticks, each sent to the clients near it in a couple of snapshots.
     pub bullets: Vec<BulletSpawn>,
-    /// Kills since the last tick. Drained and broadcast reliably by `Game::step`.
-    pub kills: Vec<Kill>,
-    /// Hits since the last tick, each with the player it is for. Drained, summed and sent
-    /// reliably to that player by `Game::step`.
-    pub hits: Vec<(u32, Hit)>,
-    /// Gunshots and blasts since the bots last listened. Drained by `Bots` at the start of each tick.
-    pub noises: Vec<Noise>,
+    /// What the damage path runs the moment something is hurt or dies, from the mechanics' `hooks`.
+    pub hooks: crate::events::Hooks,
     /// Solid trees by identity, to look their size up from a collider hit.
     pub(super) trees_by_id: HashMap<ObjId, usize>,
     /// Buildings by identity.
@@ -471,39 +458,22 @@ pub struct World {
     /// Bites taken since the last tick, for `Game::step` to broadcast: the building, where the
     /// blast was (centimetres) and the cells it broke and left hanging.
     pub fresh_carved: Vec<FreshCarve>,
-    /// Where each living player was at the end of each of the last few ticks (standing, or their head
-    /// where they sit in the open), newest last, labelled with the tick number a snapshot of that state carries. Lag compensation
-    /// rewinds shots against it.
-    pub(super) history: VecDeque<Frame>,
 }
 
 impl World {
-    /// Notes where everyone stands, once a tick has finished.
-    pub(super) fn record_history(&mut self) {
-        let positions = self
-            .entities
-            .all::<Player>()
-            .filter(|(_, p)| p.alive())
-            .filter_map(|(id, p)| if p.embodied() { Some((id, p.character.position, false)) } else { self.seated_head(id).map(|(_, head)| (id, head, true)) })
-            .collect();
-        if self.history.len() > MAX_REWIND_TICKS as usize {
-            self.history.pop_front();
-        }
-        self.history.push_back((self.tick, positions));
+    /// Says that `event` happened, for whoever reads that kind (see `crate::events`).
+    pub fn send<E: Message>(&mut self, event: E) {
+        self.entities.ecs.resource_mut::<Messages<E>>().write(event);
     }
 
-    /// Where player `id` was `back` ticks ago, if the record goes that far and had them in it.
-    pub fn position_at(&self, id: u32, back: u32) -> Option<[f32; 3]> {
-        let tick = self.tick.wrapping_sub(back);
-        let (_, positions) = self.history.iter().rev().find(|(t, _)| *t == tick)?;
-        positions.iter().find(|(who, _, seated)| *who == id && !seated).map(|(_, position, _)| *position)
+    /// The queue of events of kind `E`, for a reader with its own cursor.
+    pub fn events<E: Message>(&self) -> &Messages<E> {
+        self.entities.ecs.resource::<Messages<E>>()
     }
 
-    /// Where seated player `id`'s head was `back` ticks ago, if the record goes that far and had them seated in it.
-    pub fn head_at(&self, id: u32, back: u32) -> Option<[f32; 3]> {
-        let tick = self.tick.wrapping_sub(back);
-        let (_, positions) = self.history.iter().rev().find(|(t, _)| *t == tick)?;
-        positions.iter().find(|(who, _, seated)| *who == id && *seated).map(|(_, head, _)| *head)
+    /// The events of kind `E` sent this tick, in the order they were sent.
+    pub fn happened<E: Message>(&self) -> impl ExactSizeIterator<Item = &E> {
+        self.events::<E>().iter_current_update_messages()
     }
 
     /// The vehicle player `id` sits in and where their head is in the world, if they sit in it (not

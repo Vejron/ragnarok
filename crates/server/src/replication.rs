@@ -10,8 +10,13 @@
 use shared::consts::*;
 use shared::items::{MAX_PICKUPS_PER_SNAPSHOT, def};
 use shared::protocol::*;
-use shared::replicated::{Replicated, Scene, Update, apply, diff};
+use shared::replicated::{OWNER_MASK, Replicated, Scene, Update, diff};
 use std::collections::VecDeque;
+use std::sync::Arc;
+
+/// What a client holds after a snapshot, as the server keeps it: its entities shared with the world's
+/// scene and every other receiver's, not copied into each.
+type Held = Vec<(u32, Arc<Replicated>)>;
 
 /// One player's replication state.
 #[derive(Default)]
@@ -19,12 +24,42 @@ pub struct Replica {
     /// Newest snapshot tick the client says it holds; 0 for none.
     acked: u32,
     /// What the client held after each recent snapshot, oldest first.
-    sent: VecDeque<(u32, Scene)>,
+    sent: VecDeque<(u32, Held)>,
 }
 
-/// What a snapshot is built from: everything replicated (ordered by id), and this snapshot's effects.
+/// One entity of the world, made ready to send: what anyone is told of it, and all of it, for its
+/// owner, when it has `[owner]` components.
+pub struct Ready {
+    pub id: u32,
+    pub public: Arc<Replicated>,
+    pub whole: Option<Arc<Replicated>>,
+    /// For a rider with no place of their own, their vehicle's index in the scene: they are sent to
+    /// whoever is sent it.
+    pub rides: Option<usize>,
+}
+
+/// The world's scene (ordered by id) made ready to send to everyone.
+pub fn ready(scene: Scene) -> Vec<Ready> {
+    let rides: Vec<Option<usize>> = scene
+        .iter()
+        .map(|(_, entity)| {
+            let vehicle = entity.seated.as_ref().filter(|_| entity.place.is_none())?.vehicle;
+            scene.binary_search_by_key(&vehicle, |(id, _)| *id).ok()
+        })
+        .collect();
+    scene
+        .into_iter()
+        .zip(rides)
+        .map(|((id, entity), rides)| match entity.mask() & OWNER_MASK {
+            0 => Ready { id, public: Arc::new(entity), whole: None, rides },
+            _ => Ready { id, public: Arc::new(entity.public()), whole: Some(Arc::new(entity)), rides },
+        })
+        .collect()
+}
+
+/// What a snapshot is built from: everything replicated (`ready`), and this snapshot's effects.
 pub struct Everything<'a> {
-    pub scene: &'a Scene,
+    pub scene: &'a [Ready],
     pub shots: &'a [ShotEvent],
     pub bullets: &'a [BulletSpawn],
 }
@@ -35,8 +70,9 @@ pub struct Own {
     pub tick: u32,
     pub ack: u32,
     pub ride: u32,
-    pub drive: Option<DriveState>,
-    pub me: SelfState,
+    /// The entities the player owns (themself, the vehicle they drive), whose `[owner]` components they
+    /// alone are sent, and which they are sent wherever they are.
+    pub owned: [Option<u32>; 2],
 }
 
 /// How much an update is worth keeping when a snapshot will not fit, highest first: everything else,
@@ -62,7 +98,7 @@ impl Replica {
         }
     }
 
-    fn baseline(&self) -> Option<&(u32, Scene)> {
+    fn baseline(&self) -> Option<&(u32, Held)> {
         if self.acked == 0 {
             return None;
         }
@@ -72,13 +108,14 @@ impl Replica {
     /// Builds the snapshot for the player standing at `at` (`[x, z]`, metres) and remembers what
     /// it leaves the client holding.
     ///
-    /// Everything within `INTEREST_RADIUS` is a candidate, and what was already held stays until it is
-    /// `INTEREST_HYSTERESIS` further out; of items on the ground, only the nearest
+    /// What the player owns (`Own::owned`) is always sent, with its `[owner]` components; of everything
+    /// else, only what anyone is told (`Replicated::public`). A rider with no place goes with their
+    /// vehicle, at its distance. Everything within `INTEREST_RADIUS` is a candidate, and what was already held stays until it is `INTEREST_HYSTERESIS` further out; of items on the ground, only the nearest
     /// `MAX_PICKUPS_PER_SNAPSHOT`. If the encoded datagram would exceed `MAX_PACKET`, effects are left out
     /// first, then the least worth keeping (`worth`), farthest first; whatever did not fit simply
     /// arrives in a later snapshot.
     pub fn snapshot(&mut self, at: [f32; 2], world: &Everything, own: Own) -> Vec<u8> {
-        let empty = Scene::default();
+        let empty = Held::default();
         let (baseline_tick, baseline) = match self.baseline() {
             Some((tick, scene)) => (*tick, scene),
             None => (0, &empty),
@@ -91,8 +128,18 @@ impl Replica {
         // are static and many, so only the nearest few are listed: the rest arrive as the player walks up.
         let mut near: Vec<(usize, f32)> = Vec::new();
         let mut pickups: Vec<(usize, f32)> = Vec::new();
-        for (index, (id, entity)) in world.scene.iter().enumerate() {
-            let Some(place) = entity.place else { continue };
+        let owned = |id: u32| own.owned.contains(&Some(id));
+        // Riders with no place (by index), with their vehicle's.
+        let mut riding: Vec<(usize, usize)> = Vec::new();
+        for (index, Ready { id, public: entity, rides, .. }) in world.scene.iter().enumerate() {
+            if owned(*id) {
+                near.push((index, entity.place.map_or(0.0, |place| distance(place.x, place.z))));
+                continue;
+            }
+            let Some(place) = entity.place else {
+                riding.extend(rides.map(|vehicle| (index, vehicle)));
+                continue;
+            };
             let d = distance(place.x, place.z);
             if entity.pickup.is_some() {
                 if d <= INTEREST_RADIUS {
@@ -105,7 +152,18 @@ impl Replica {
         pickups.sort_by(|a, b| a.1.total_cmp(&b.1));
         near.extend(pickups.into_iter().take(MAX_PICKUPS_PER_SNAPSHOT));
         near.sort_unstable_by_key(|(index, _)| *index);
-        let now: Scene = near.iter().map(|&(index, _)| world.scene[index].clone()).collect();
+        let riders: Vec<(usize, f32)> = riding.into_iter().filter_map(|(index, vehicle)| Some((index, near[near.binary_search_by_key(&vehicle, |(index, _)| *index).ok()?].1))).collect();
+        if !riders.is_empty() {
+            near.extend(riders);
+            near.sort_unstable_by_key(|(index, _)| *index);
+        }
+        let now: Held = near
+            .iter()
+            .map(|&(index, _)| {
+                let Ready { id, public, whole, .. } = &world.scene[index];
+                (*id, Arc::clone(whole.as_ref().filter(|_| owned(*id)).unwrap_or(public)))
+            })
+            .collect();
         // `now` is ordered by id, as the world's scene is; this is how far each of it is.
         let distances: Vec<f32> = near.iter().map(|&(_, d)| d).collect();
 
@@ -138,7 +196,7 @@ impl Replica {
         let distance_of = |id: u32| now.binary_search_by_key(&id, |(held, _)| *held).map_or(0.0, |at| distances[at]);
         updates.sort_by_cached_key(|update| distance_of(update.id).to_bits());
         let encode_with = |updates: &[Update], shots: &[ShotEvent], bullets: &[BulletSpawn]| {
-            encode(&Snapshot { tag: S_SNAPSHOT, tick: own.tick, baseline: baseline_tick, ack: own.ack, ride: own.ride, updates: updates.to_vec(), removed: removed.clone(), drive: own.drive, me: own.me.clone(), shots: shots.to_vec(), bullets: bullets.to_vec() })
+            encode(&SnapshotOut { tag: S_SNAPSHOT, tick: own.tick, baseline: baseline_tick, ack: own.ack, ride: own.ride, updates, removed: &removed, shots, bullets })
         };
         let mut bytes = encode_with(&updates, &shots, &bullets);
         let mut trimmed = false;
@@ -184,13 +242,26 @@ impl Replica {
         }
         // What the client holds now is the baseline with the updates applied: what is in range, unless
         // some were trimmed.
-        let held = if trimmed { apply(baseline, &updates, &removed) } else { now };
+        let held = if trimmed { apply_held(baseline, &updates, &removed) } else { now };
         self.sent.push_back((own.tick, held));
         while self.sent.len() > BASELINE_WINDOW {
             self.sent.pop_front();
         }
         bytes
     }
+}
+
+/// What `updates` and `removed` make of `base`, as `shared::replicated::apply` does, sharing what they
+/// leave as it was.
+fn apply_held(base: &Held, updates: &[Update], removed: &[u32]) -> Held {
+    let mut scene: Held = base.iter().filter(|(id, _)| !removed.contains(id)).cloned().collect();
+    for update in updates {
+        match scene.binary_search_by_key(&update.id, |(id, _)| *id) {
+            Ok(at) => scene[at].1 = Arc::new(Replicated::apply(Some(&scene[at].1), update)),
+            Err(at) => scene.insert(at, (update.id, Arc::new(Replicated::apply(None, update)))),
+        }
+    }
+    scene
 }
 
 /// What `item` takes up inside an encoded message.

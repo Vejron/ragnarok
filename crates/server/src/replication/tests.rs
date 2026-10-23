@@ -1,5 +1,5 @@
 use super::*;
-use shared::replicated::{self as wire, Replicated};
+use shared::replicated::{self as wire, Replicated, apply};
 
 fn person(id: u32, x_m: f32, z_m: f32) -> (u32, Replicated) {
     (
@@ -29,7 +29,8 @@ fn sorted(mut scene: Scene) -> Scene {
 }
 
 fn snapshot(replica: &mut Replica, tick: u32, scene: &Scene) -> Snapshot {
-    let world = Everything { scene, shots: &[], bullets: &[] };
+    let scene = ready(scene.clone());
+    let world = Everything { scene: &scene, shots: &[], bullets: &[] };
     let bytes = replica.snapshot([0.0, 0.0], &world, Own { tick, ..Default::default() });
     assert!(bytes.len() <= MAX_PACKET);
     decode(&bytes).unwrap()
@@ -66,6 +67,23 @@ fn only_the_near_are_sent_and_the_far_come_in_as_you_approach() {
     let fourth = snapshot(&mut replica, 8, &vec![near.clone(), gone]);
     assert_eq!(fourth.removed, vec![2]);
     assert_eq!(rebuild(&mut held, &fourth), vec![near]);
+}
+
+#[test]
+fn a_rider_is_sent_with_their_vehicle_wherever_it_goes() {
+    let car = |id: u32, x_m: f32| (id, Replicated { orientation: Some(wire::Orientation::default()), ..person(id, x_m, 0.0).1 });
+    let rider = |id: u32, vehicle: u32| (id, Replicated { kind: Some(wire::Kind { kind: KIND_STICKMAN }), seated: Some(wire::Seated { vehicle, seat: 1 }), ..Default::default() });
+    let mut replica = Replica::default();
+    let mut held = Vec::new();
+    // The rider's id comes before their vehicle's, as a player's does.
+    let near = sorted(vec![rider(3, 20), car(20, 30.0)]);
+    let first = snapshot(&mut replica, 2, &near);
+    assert_eq!(rebuild(&mut held, &first), near, "the car is near, so its rider is");
+    replica.acknowledge(2);
+    let gone = sorted(vec![rider(3, 20), car(20, INTEREST_RADIUS + INTEREST_HYSTERESIS + 10.0)]);
+    let second = snapshot(&mut replica, 4, &gone);
+    assert_eq!(second.removed, vec![3, 20], "they leave together");
+    assert!(rebuild(&mut held, &second).is_empty());
 }
 
 #[test]
@@ -172,7 +190,7 @@ fn effects_out_of_range_are_not_sent() {
     let mut replica = Replica::default();
     let near = ShotEvent { shooter: 3, weapon: WEAPON_RIFLE, x: 500, y: 90, z: 0 };
     let far = ShotEvent { shooter: 3, weapon: WEAPON_RIFLE, x: 90_000, y: 90, z: 0 };
-    let world = Everything { scene: &Vec::new(), shots: &[near, far], bullets: &[] };
+    let world = Everything { scene: &[], shots: &[near, far], bullets: &[] };
     let bytes = replica.snapshot([0.0, 0.0], &world, Own { tick: 2, ..Default::default() });
     let snap: Snapshot = decode(&bytes).unwrap();
     assert_eq!(snap.shots, vec![near]);
@@ -185,6 +203,7 @@ fn a_bullet_goes_to_whoever_its_line_crosses() {
     // Fired from the origin along -Z, out to the AK5's 200 m.
     let bullet = BulletSpawn { id: 9, shooter: 3, item: ITEM_AK5, x: 0, y: 165, z: 0, vx: 0, vy: 0, vz: -27_900, tick: 10 };
     let nothing = Vec::new();
+    let nothing = ready(nothing);
     let world = Everything { scene: &nothing, shots: &[], bullets: &[bullet] };
     // A player 150 m down its line sees it.
     let down_the_line: Snapshot = decode(&replica.snapshot([0.0, -150.0], &world, Own { tick: 12, ..Default::default() })).unwrap();
@@ -220,6 +239,7 @@ fn a_delta_is_a_good_deal_smaller_than_a_whole_snapshot() {
     for step in 0..60 {
         let tick = 2 + step as u32 * 2;
         let people = runners(step);
+        let people = ready(people.clone());
         let world = Everything { scene: &people, shots: &[], bullets: &[] };
         let own = || Own { tick, ..Default::default() };
         let a = replica.snapshot([0.0, 0.0], &world, own());

@@ -4,7 +4,8 @@ import { controlsOf, SimMotor, type CarControls, type VehiclePose } from '@/sim/
 import { heightIn, type TileGround } from '@/sim/terrain'
 import { f32 } from '@/sim/round'
 import { BUTTON_CROUCH, BUTTON_JUMP, BUTTON_RUN, LOITER_SPEED, TICK_DT, vehicleMaxHp } from '@/sim/consts'
-import { KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, type DriveState, type InputFrame } from '@/net/codec'
+import { KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, type InputFrame } from '@/net/codec'
+import type { DriveState } from '@/entities/units'
 import { manifestBytes, tileBytes } from './worlds'
 
 // Every vehicle here is driven by the server's own physics (`crates/sim`, built to WASM), and the

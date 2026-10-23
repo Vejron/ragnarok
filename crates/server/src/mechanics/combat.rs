@@ -1,24 +1,24 @@
 use super::Mechanic;
 use super::armor::Outcome;
 use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
-use super::life::{blasted, damage_entity, first_hurtbox_hit, hit_mark};
+use super::life::{Harm, blasted, body, damage_entity, first_hurtbox_hit};
 use super::spawn;
 use super::projectiles::{self, Flying, Stage};
-use crate::entities::{Health, HurtBy, NetId, With};
-use crate::game::{Bot, Drone, Player, Seats, TEAM_NONE, Vehicle, World, Wreck, starting_hotbar};
+use crate::entities::{Health, HurtBy, Respawn, With};
+use crate::events::Hooks;
+use crate::game::{Bot, Damaged, Died, Drone, Player, Seats, TEAM_NONE, Vehicle, World, Wreck, starting_hotbar};
 use sim::Obj;
 use shared::consts::*;
 use shared::items::*;
 use shared::vehicles::{Exposure, crew_gun, vehicle_def};
-use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_TAKEN, HIT_VEHICLE, Hit, ItemSlot, Kill, S_HIT, PROJECTILE_BULLET, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_ROCKET, S_KILL, ShotEvent, BulletSpawn, WEAPON_GRENADE, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_PELLET, WEAPON_ROADKILL, WEAPON_WRECK,
-    DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_EGG, WEAPON_FLARE, WEAPON_LOITER, WEAPON_SHELL};
+use shared::protocol::{BulletSpawn, ItemSlot, PROJECTILE_BULLET, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_ROCKET, ShotEvent, WEAPON_FLARE, WEAPON_PELLET, WEAPON_RIFLE, WEAPON_WRECK};
 use shared::quant::{from_mrad, to_cm, to_cm_i16, to_mrad};
 
 /// Health, death, the items in the hotbar and what blasts do to people and vehicles.
 ///
-/// Every player has `hp`. `damage` is the one place health goes down: at zero the player dies,
-/// the attacker is credited, and a `Kill` is queued for the reliable stream. A dead player lies
-/// where they fell, can be neither hit nor hurt, and respawns after `RESPAWN_TICKS` with full health.
+/// Players live by `Health`, hurt through `life::damage_entity` as everything is. A dead player lies
+/// where they fell, can be neither hit nor hurt, and comes back at a spawn point when their `Respawn`
+/// has counted down, with full health and a fresh loadout.
 ///
 /// What `BUTTON_FIRE` does depends on the item in the selected hotbar slot: a gun is a hitscan
 /// from the eye along the look direction, a grenade is thrown, a bandage is applied. Seated
@@ -26,8 +26,6 @@ use shared::quant::{from_mrad, to_cm, to_cm_i16, to_mrad};
 /// their own guns from their seat.
 pub struct Combat;
 
-/// How hard (m/s) a bullet's killing blow throws the body, when nothing else was pushing it.
-const BULLET_DEATH_PUSH: f32 = 4.0;
 /// Hop given to a stickman at the centre of a blast; it fades with distance.
 const BLAST_HOP: f32 = 7.0;
 const BLAST_HOP_MIN: f32 = 3.0;
@@ -92,98 +90,6 @@ pub fn rewind_ticks(now: u32, view: u16) -> u32 {
     (back.max(0) as u32).min(MAX_REWIND_TICKS)
 }
 
-/// What of a living player a round can hit: an upright capsule (`half_height` above and below
-/// `centre`, plus `radius`), with the head above `head_y`. Standing, it is the stickman's capsule;
-/// seated in a vehicle whose crew show, a short one from the head down to the waist, in `vehicle`.
-#[derive(Clone, Copy, Debug)]
-pub struct Body {
-    pub centre: [f32; 3],
-    pub half_height: f32,
-    pub radius: f32,
-    pub head_y: f32,
-    pub vehicle: Option<u32>,
-}
-
-/// Player `id`'s body as it was `back` ticks ago, if a round can hit them: alive, and standing or
-/// sitting where they show. A crew inside armour (`Exposure::Sealed`) has none.
-pub fn body_of(world: &World, id: u32, back: u32) -> Option<Body> {
-    body(world, id, world.entities.get::<Player>(id)?, back)
-}
-
-/// [`body_of`], for player `id` already in hand.
-fn body(world: &World, id: u32, player: &Player, back: u32) -> Option<Body> {
-    if !player.alive() {
-        return None;
-    }
-    if player.embodied() {
-        let now = player.character.position;
-        let at = if back == 0 { now } else { world.position_at(id, back).unwrap_or(now) };
-        return Some(Body { centre: at, half_height: CAPSULE_HALF_HEIGHT, radius: CAPSULE_RADIUS, head_y: at[1] + HEAD_ZONE_Y, vehicle: None });
-    }
-    let (vehicle, now) = world.seated_head(id)?;
-    let head = if back == 0 { now } else { world.head_at(id, back).unwrap_or(now) };
-    Some(Body {
-        centre: [head[0], head[1] - SEATED_CENTRE_DROP, head[2]],
-        half_height: SEATED_HALF_HEIGHT,
-        radius: SEATED_RADIUS,
-        head_y: head[1] - SEATED_HEAD_ZONE,
-        vehicle: Some(vehicle),
-    })
-}
-
-/// The nearest living player the ray meets within `max`, standing or seated in the open, and how far
-/// along it is. `ignore` is the shooter. Stickmen are not physics bodies, so this is the only way to
-/// hit one. Players are tested where they were `back` ticks ago, which is where a shooter with that
-/// much lag saw them.
-pub fn first_player_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f32, ignore: Option<u32>, back: u32) -> Option<(u32, f32)> {
-    first_body_hit(world, origin, dir, max, ignore, back, |_| true)
-}
-
-/// The first living thing the ray meets within `max`: a stickman as [`first_player_hit`] finds them,
-/// or a creature with a `Hurtbox` (a rooster). Of the two at the same distance the creature is hit,
-/// as a round hits it. What strikes a body and what aims at one asks this, so nothing that can be hurt
-/// is passed through by one weapon and met by another.
-pub fn first_living_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f32, ignore: Option<u32>, back: u32) -> Option<(u32, f32)> {
-    let player = first_player_hit(world, origin, dir, max, ignore, back);
-    first_hurtbox_hit(world, origin, dir, player.map_or(max, |(_, t)| t)).or(player)
-}
-
-/// [`first_player_hit`], among the bodies `only` accepts.
-fn first_body_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f32, ignore: Option<u32>, back: u32, only: impl Fn(&Body) -> bool) -> Option<(u32, f32)> {
-    // In storage order. `ray_capsule` takes a hit at the limit, so in id order the later of two at the
-    // same distance won: the higher id is hit, as it was.
-    world.entities.scan::<(&NetId, &Player), (), _>(|players| {
-        let mut best: Option<(u32, f32)> = None;
-        for (&NetId(id), player) in players {
-            if Some(id) == ignore {
-                continue;
-            }
-            let Some(body) = body(world, id, player, back).filter(&only) else { continue };
-            let limit = best.map_or(max, |(_, t)| t);
-            if let Some(t) = ray_capsule(origin, dir, body.centre, body.half_height, body.radius, limit)
-                && best.is_none_or(|(other, at)| t < at || id > other)
-            {
-                best = Some((id, t));
-            }
-        }
-        best
-    })?
-}
-
-/// The player a round meets: the first within `reach`, where the world (`wall`, the vehicle it struck
-/// if any) stops it. A round that strikes a glazed vehicle (`Exposure::Glazed`) goes on through the
-/// glass to its crew, as far as whatever is behind them. `range` bounds that second look.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn round_hit(world: &World, origin: [f32; 3], dir: [f32; 3], reach: f32, wall: Option<u32>, range: f32, shooter: Option<u32>, back: u32) -> Option<(u32, f32)> {
-    let hit = first_player_hit(world, origin, dir, reach, shooter, back);
-    if hit.is_some() {
-        return hit;
-    }
-    let car = wall.filter(|car| world.entities.get::<Vehicle>(*car).is_some_and(|vehicle| vehicle_def(vehicle.kind).crew == Exposure::Glazed))?;
-    let beyond = world.physics.cast_ray(origin, dir, range, car).unwrap_or(range);
-    first_body_hit(world, origin, dir, beyond, shooter, back, |body| body.vehicle == Some(car))
-}
-
 /// Where player `id` is: on foot (or flying a drone) where they stand, seated where their vehicle is.
 pub fn position_of(world: &World, id: u32) -> Option<[f32; 3]> {
     let player = world.entities.get::<Player>(id)?;
@@ -199,115 +105,15 @@ pub fn same_team(world: &World, a: u32, b: u32) -> bool {
     team(a) != TEAM_NONE && team(a) == team(b)
 }
 
-/// A `Hit` for `target`, which is about `at`.
-pub(super) fn hit_at(role: u8, kind: u8, amount: u8, weapon: u8, bearing: i16, at: [f32; 3], target: u32) -> Hit {
-    let [x, y, z] = at.map(to_cm);
-    Hit { tag: S_HIT, role, kind, amount, weapon, bearing, x, y, z, target }
-}
-
 /// Yaw (0 faces -Z, as for a look) from `at` towards `from`, in milliradians.
-fn bearing(at: [f32; 3], from: [f32; 3]) -> i16 {
+pub fn bearing(at: [f32; 3], from: [f32; 3]) -> i16 {
     to_mrad((-(from[0] - at[0])).atan2(-(from[2] - at[2])))
 }
 
-/// Takes `amount` health off `victim`. At zero they die: the attacker (a player id, if any other
-/// than the victim) is credited and a kill is queued. Does nothing to the dead. The victim and the
-/// attacker are each sent a `Hit`.
-pub fn damage(world: &mut World, victim: u32, amount: u8, attacker: Option<u32>, weapon: u8) {
-    damage_from(world, victim, amount, attacker, weapon, None);
-}
-
-/// `damage`, for harm that came from `source` (a blast's centre) rather than from the attacker's
-/// own position, which is what the victim's hit direction points at when `source` is `None`.
-pub fn damage_from(world: &mut World, victim: u32, amount: u8, attacker: Option<u32>, weapon: u8, source: Option<[f32; 3]>) {
-    damage_hit(world, victim, amount, attacker, weapon, source, false);
-}
-
-/// Whether a round that reaches `t` along `dir` from `origin` hits `victim` (where they stood `back`
+/// Whether a round that reaches `t` along `dir` from `origin` hits `victim` (where it stood `back`
 /// ticks ago) in the head.
 pub(super) fn is_headshot(world: &World, victim: u32, origin: [f32; 3], dir: [f32; 3], t: f32, back: u32) -> bool {
-    body_of(world, victim, back).is_some_and(|body| origin[1] + dir[1] * t > body.head_y)
-}
-
-/// `damage_from`, for a round that hit the head when `head`: it does `HEADSHOT_MULT` times the
-/// damage, and the kill is staged as a headshot.
-pub fn damage_hit(world: &mut World, victim: u32, amount: u8, attacker: Option<u32>, weapon: u8, source: Option<[f32; 3]>, head: bool) {
-    let amount = if head { (f32::from(amount) * HEADSHOT_MULT).min(255.0) as u8 } else { amount };
-    let other = attacker.filter(|&id| id != victim);
-    if other.is_some_and(|id| same_team(world, id, victim)) {
-        return;
-    }
-    let from = source.or_else(|| other.and_then(|id| position_of(world, id)));
-    let Some(mut player) = world.entities.get_mut::<Player>(victim) else { return };
-    if !player.alive() || amount == 0 {
-        return;
-    }
-    let before = player.hp;
-    player.hp = player.hp.saturating_sub(amount);
-    // A bandage needs a steady hand.
-    player.channel_left = 0;
-    let kind = if player.hp == 0 { HIT_KILL } else { HIT_BODY };
-    if let Some(mut bot) = world.entities.get_mut::<Bot>(victim)
-        && from.is_some()
-    {
-        bot.hit_from = from;
-    }
-    // Chest height, where a number or a flash belongs: in the seat, for one sitting in the open.
-    let chest = match world.seated_head(victim) {
-        Some((_, head)) => [head[0], head[1] - SEATED_CENTRE_DROP, head[2]],
-        None => {
-            let at = world.entities.get::<Player>(victim).map_or([0.0; 3], |player| player.character.position);
-            [at[0], at[1] + 0.9, at[2]]
-        }
-    };
-    let direction = from.map_or(BEARING_NONE, |from| bearing(chest, from));
-    let Some(mut player) = world.entities.get_mut::<Player>(victim) else { return };
-    let lost = before - player.hp;
-    world.hits.push((victim, hit_at(HIT_TAKEN, kind, lost, weapon, direction, chest, victim)));
-    if let Some(id) = other {
-        world.hits.push((id, hit_at(HIT_DEALT, kind, lost, weapon, BEARING_NONE, chest, victim)));
-    }
-    if player.hp > 0 {
-        return;
-    }
-    player.respawn_in = RESPAWN_TICKS;
-    player.deaths = player.deaths.saturating_add(1);
-    player.fire_cooldown = 0;
-    player.interrupt();
-    let deaths = player.deaths;
-    // Shot in their seat, they fall out of the vehicle beside it.
-    if player.seat.is_some_and(|seat| !seat.remote) {
-        super::vehicles::alight(world, victim);
-    }
-    let Some(player) = world.entities.get::<Player>(victim) else { return };
-    let (knock, died_at) = (player.character.knock, player.character.position);
-    let mut killer_kills = 0;
-    let mut killer_id = 0;
-    if let Some(mut killer) = attacker.filter(|&id| id != victim).and_then(|id| world.entities.get_mut::<Player>(id).map(|p| (id, p))) {
-        killer.1.kills = killer.1.kills.saturating_add(1);
-        killer_kills = killer.1.kills;
-        killer_id = killer.0;
-    }
-    let style = match weapon {
-        WEAPON_ROADKILL => DEATH_ROADKILL,
-        WEAPON_ROCKET | WEAPON_SHELL | WEAPON_WRECK | WEAPON_GRENADE | WEAPON_AUTOCANNON | WEAPON_BOMB | WEAPON_DRONE | WEAPON_LOITER | WEAPON_EGG => DEATH_BLAST,
-        _ if head => DEATH_HEAD,
-        _ if lost > 0 && amount > before.saturating_mul(2) => DEATH_OVERKILL,
-        _ => DEATH_BODY,
-    };
-    // A shove already on the body (a blast, a car) is the way it is thrown; a bullet pushes it away
-    // from where it came from.
-    let [kx, kz] = knock;
-    let pushed = kx.hypot(kz);
-    let (yaw, power) = if pushed > 0.5 {
-        (to_mrad((-kx).atan2(-kz)), pushed)
-    } else {
-        let toward = from.map_or(0, |from| bearing(died_at, from));
-        (toward.wrapping_add(3142), BULLET_DEATH_PUSH)
-    };
-    let power = (power * 5.0).round().min(255.0) as u8;
-    world.kills.push(Kill { tag: S_KILL, killer: killer_id, victim, weapon, killer_kills, victim_deaths: deaths, style, yaw, power });
-    tracing::debug!(victim, killer = killer_id, weapon, "player killed");
+    body(world, victim, back).and_then(|body| body.head_y).is_some_and(|head_y| origin[1] + dir[1] * t > head_y)
 }
 
 /// What a blast does where it lands.
@@ -342,10 +148,13 @@ pub fn blast(world: &mut World, blast: Blast) {
 /// [`blast`], for a shell that struck vehicle `direct.vehicle` itself.
 pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
     make_noise(world, blast.point, blast.attacker, HEAR_BLAST);
-    let mut hurt = Vec::new();
+    // Stickmen are thrown; everything in the open is hurt, below.
     for id in world.entities.ids::<With<Player>>() {
+        if !world.entities.alive(id) {
+            continue;
+        }
         let mut player = world.entities.of_mut::<Player>(id);
-        if !player.embodied() || !player.alive() {
+        if !player.embodied() {
             continue;
         }
         let c = &mut player.character;
@@ -363,18 +172,10 @@ pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
         c.vy = BLAST_HOP_MIN + (BLAST_HOP - BLAST_HOP_MIN) * falloff;
         c.grounded = false;
         c.ride = 0;
-        hurt.push((id, (blast.damage * falloff).round().min(255.0) as u8));
         tracing::debug!(distance, power, "player blasted");
     }
-    for (id, amount) in hurt {
-        damage_from(world, id, amount, blast.attacker, blast.weapon, Some(blast.point));
-    }
     for (id, amount) in blasted(world, blast.point, blast.radius, blast.damage) {
-        damage_entity(world, id, amount);
-        // Whoever set it off sees the hit, as they do one by a round.
-        if let (Some(owner), Some((kind, at))) = (blast.attacker.filter(|&owner| world.entities.has::<Player>(owner)), hit_mark(world, id)) {
-            world.hits.push((owner, hit_at(HIT_DEALT, kind, amount, blast.weapon, BEARING_NONE, at, id)));
-        }
+        damage_entity(world, id, Harm::new(amount, blast.attacker, blast.weapon).from(blast.point));
     }
     let mut reached = world.physics.blast_cars(blast.point, blast.radius);
     // A shell that struck a vehicle's edge may burst further from its centre than the blast reaches.
@@ -542,7 +343,7 @@ fn distance_to_building(world: &World, id: shared::world::ObjId, point: [f32; 3]
     Some((dx * dx + dy * dy + dz * dz).sqrt())
 }
 
-/// Takes `amount` health off vehicle `vid`, and wrecks it at zero.
+/// Takes `amount` health off vehicle `vid`, and says so (`Damaged`, with who was aboard). Wrecks it at zero.
 pub fn damage_vehicle(world: &mut World, vid: u32, amount: u8, attacker: Option<u32>) {
     let Some(seated) = world.entities.get::<Seats>(vid).map(|seats| seats.riders().collect::<Vec<u32>>()) else { return };
     let Some(mut health) = world.entities.get_mut::<Health>(vid) else { return };
@@ -558,18 +359,8 @@ pub fn damage_vehicle(world: &mut World, vid: u32, amount: u8, attacker: Option<
     }
     let at = world.physics.car_pose(vid).map(|pose| pose.position);
     let from = attacker.and_then(|id| position_of(world, id));
-    let direction = at.zip(from).map_or(BEARING_NONE, |(at, from)| bearing(at, from));
     let centre = at.map_or([0.0; 3], |p| [p[0], p[1] + 0.8, p[2]]);
-    for &id in &seated {
-        world.hits.push((id, hit_at(HIT_TAKEN, HIT_VEHICLE, lost, 0, direction, centre, vid)));
-        // A crew turns to where the hit on their vehicle came from, as one on foot would.
-        if let (Some(mut bot), Some(from)) = (world.entities.get_mut::<Bot>(id), from) {
-            bot.hit_from = Some(from);
-        }
-    }
-    if let Some(id) = attacker.filter(|id| !seated.contains(id) && world.entities.has::<Player>(*id)) {
-        world.hits.push((id, hit_at(HIT_DEALT, HIT_VEHICLE, lost, 0, BEARING_NONE, centre, vid)));
-    }
+    crate::events::damaged(world, Damaged { victim: vid, lost, attacker, weapon: 0, from, at: centre, head: false, killed: wrecked, aboard: seated });
     if wrecked {
         wreck(world, vid);
     }
@@ -594,7 +385,7 @@ fn wreck(world: &mut World, vid: u32) {
             player.seat = None;
             player.character.position = pose.position;
         }
-        damage(world, id, PLAYER_MAX_HP, attacker, WEAPON_WRECK);
+        damage_entity(world, id, Harm::new(PLAYER_MAX_HP, attacker, WEAPON_WRECK));
     }
     let [x, y, z] = pose.position.map(to_cm);
     world.shots.push(ShotEvent { shooter: attacker.unwrap_or(0), weapon: WEAPON_WRECK, x, y, z });
@@ -682,7 +473,7 @@ pub fn scatter(world: &mut World, dir: [f32; 3], spread: f32) -> [f32; 3] {
 #[allow(clippy::too_many_arguments)]
 fn crosshair_dir(world: &World, shooter: u32, back: u32, pivot: [f32; 3], eye: [f32; 3], look_dir: [f32; 3], range: f32, ignore: u32) -> [f32; 3] {
     let wall = world.physics.cast_ray(pivot, look_dir, range, ignore).unwrap_or(range);
-    let t = first_living_hit(world, pivot, look_dir, wall, Some(shooter), back).map_or(wall, |(_, t)| t);
+    let t = first_hurtbox_hit(world, pivot, look_dir, wall, Some(shooter), back, None).map_or(wall, |(_, t)| t);
     let to: [f32; 3] = std::array::from_fn(|i| pivot[i] + look_dir[i] * t - eye[i]);
     let len = to.iter().map(|v| v * v).sum::<f32>().sqrt();
     if len < 1e-3 {
@@ -840,9 +631,7 @@ pub struct Strike {
     wall: Option<(f32, Option<u32>)>,
     /// How far the stretch goes: to the wall, or the whole range.
     reach: f32,
-    /// A rooster, or any other creature with a `Hurtbox`, nearer than any stickman.
-    creature: Option<u32>,
-    /// The stickman met, and how far along.
+    /// The body met (a stickman, a rooster), and how far along.
     hit: Option<(u32, f32)>,
     /// Where it stops.
     pub end: f32,
@@ -851,36 +640,32 @@ pub struct Strike {
 impl Strike {
     /// Whether it met anything at all.
     pub fn any(&self) -> bool {
-        self.creature.is_some() || self.hit.is_some() || self.wall.is_some()
+        self.hit.is_some() || self.wall.is_some()
     }
 }
 
 /// What a round flying `range` metres along `flight` meets, `wall` being what the world's ray met: the
-/// first of a creature, a stickman (seen through glass too), a vehicle, a building or a tree.
+/// first of a body (a stickman, a rooster), a vehicle, a building or a tree. A round that strikes a
+/// glazed vehicle (`Exposure::Glazed`) goes on through the glass to its crew, as far as whatever is
+/// behind them.
 pub fn strike(world: &World, flight: &Flight, wall: Option<(f32, Option<u32>)>, range: f32) -> Strike {
     let Flight { origin, dir, shooter, back, .. } = *flight;
     let reach = wall.map_or(range, |(t, _)| t);
-    let hit = round_hit(world, origin, dir, reach, wall.and_then(|(_, car)| car), range, shooter, back);
-    // A creature (a rooster) nearer than the player (or with no player behind it) takes the shot.
-    let creature = first_hurtbox_hit(world, origin, dir, hit.map_or(reach, |(_, t)| t.min(reach)));
-    let end = creature.map(|(_, t)| t).or(hit.map(|(_, t)| t)).unwrap_or(reach);
-    Strike { wall, reach, creature: creature.map(|(id, _)| id), hit, end }
+    let glazed = wall.and_then(|(_, car)| car).filter(|car| world.entities.get::<Vehicle>(*car).is_some_and(|vehicle| vehicle_def(vehicle.kind).crew == Exposure::Glazed));
+    let through = glazed.map(|car| (car, world.physics.cast_ray(origin, dir, range, car).unwrap_or(range)));
+    let hit = first_hurtbox_hit(world, origin, dir, reach, shooter, back, through);
+    Strike { wall, reach, hit, end: hit.map_or(reach, |(_, t)| t) }
 }
 
 /// Hurts what `met` says the round met, by `round`'s damage less what the distance flown takes off. A
 /// hitscan round and a bullet in flight both end here.
 pub fn land(world: &mut World, flight: &Flight, met: &Strike, round: &Round) {
     let Flight { origin, dir, attacker, back, flown, .. } = *flight;
-    let &Strike { wall, reach, creature, hit, end } = met;
+    let &Strike { wall, reach, hit, end } = met;
     let dealt = round.falloff.apply(round.damage, flown + end);
-    if let Some(target) = creature {
-        damage_entity(world, target, dealt);
-        if let (Some(owner), Some((kind, at))) = (attacker, hit_mark(world, target)) {
-            world.hits.push((owner, hit_at(HIT_DEALT, kind, dealt, round.weapon, BEARING_NONE, at, target)));
-        }
-    } else if let Some((victim, t)) = hit {
+    if let Some((victim, t)) = hit {
         let head = is_headshot(world, victim, origin, dir, t, back);
-        damage_hit(world, victim, dealt, attacker, round.weapon, None, head);
+        damage_entity(world, victim, Harm::new(dealt, attacker, round.weapon).head(head));
     } else if let Some((_, Some(car))) = wall {
         let canvas = world.entities.get::<Vehicle>(car).is_some_and(|vehicle| vehicle_def(vehicle.kind).armor.canvas);
         let point = std::array::from_fn(|i| origin[i] + dir[i] * reach);
@@ -951,6 +736,7 @@ fn spend(slot: &mut ItemSlot) {
 /// reloading, and what fire does.
 fn use_item(world: &mut World, id: u32) {
     let Some(seat) = world.entities.get::<Player>(id).map(|player| player.seat) else { return };
+    let hp = world.entities.get::<Health>(id).map_or(0, |health| health.hp);
     let passenger = seat.is_some_and(|seat| !seat.remote && world.entities.get::<Vehicle>(seat.vehicle).is_some_and(|vehicle| crew_gun(vehicle.kind, seat.index)));
     let mut player = world.entities.of_mut::<Player>(id);
     let buttons = player.input.buttons();
@@ -1021,36 +807,61 @@ fn use_item(world: &mut World, id: u32) {
             if player.channel_left > 0 {
                 player.channel_left -= 1;
                 if player.channel_left == 0 {
-                    player.hp = player.hp.saturating_add(item.damage).min(PLAYER_MAX_HP);
                     spend(&mut player.hotbar[slot]);
+                    let mut health = world.entities.of_mut::<Health>(id);
+                    health.hp = health.hp.saturating_add(item.damage).min(PLAYER_MAX_HP);
                 }
-            } else if fresh && player.hp < PLAYER_MAX_HP {
+            } else if fresh && hp < PLAYER_MAX_HP {
                 player.channel_left = BANDAGE_TICKS;
             }
         }
     }
 }
 
+/// A bandage needs a steady hand: any hurt spoils one being put on.
+fn spoil_bandage(world: &mut World, damaged: &Damaged) {
+    if let Some(mut player) = world.entities.get_mut::<Player>(damaged.victim) {
+        player.channel_left = 0;
+    }
+}
+
+/// The dead let go of what they held: a reload or a bandage half done, and the wait to fire again.
+fn let_go(world: &mut World, died: &Died) {
+    if let Some(mut player) = world.entities.get_mut::<Player>(died.victim) {
+        player.fire_cooldown = 0;
+        player.interrupt();
+    }
+}
+
 impl Mechanic for Combat {
+    fn hooks(&self, hooks: &mut Hooks) {
+        hooks.damaged.push(spoil_bandage);
+        hooks.died.push(let_go);
+    }
+
     fn on_tick(&mut self, world: &mut World, dt: f32) {
         let ids = world.entities.ids::<With<Player>>();
         for id in ids {
             let loadout = world.entities.get::<Bot>(id).and_then(|bot| bot.loadout);
+            let alive = world.entities.alive(id);
+            // `Life` counts a dead player's `Respawn` down; at zero they come back here, at a spawn point.
+            let due = !alive && world.entities.get::<Respawn>(id).is_some_and(|respawn| respawn.left == 0);
             let Some(mut player) = world.entities.get_mut::<Player>(id) else { continue };
             player.fire_cooldown = player.fire_cooldown.saturating_sub(1);
-            if !player.alive() {
-                player.respawn_in = player.respawn_in.saturating_sub(1);
-                if player.respawn_in == 0 {
-                    player.hp = PLAYER_MAX_HP;
+            if !alive {
+                if due {
                     // A fresh life starts with the standard loadout, or a scenario bot's own.
                     player.hotbar = loadout.unwrap_or_else(starting_hotbar);
                     player.interrupt();
+                    if let Some(mut health) = world.entities.get_mut::<Health>(id) {
+                        health.hp = health.max;
+                    }
                     spawn::place(world, id);
                 }
                 continue;
             }
             if player.character.position[1] < KILL_Y {
-                damage(world, id, PLAYER_MAX_HP, None, WEAPON_RIFLE);
+                damage_entity(world, id, Harm::new(PLAYER_MAX_HP, None, WEAPON_RIFLE));
                 continue;
             }
             use_item(world, id);

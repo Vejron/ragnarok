@@ -304,7 +304,7 @@ fn next_waypoint(bot: &mut Bot) {
 fn spot_from_turret(world: &World, id: u32, vid: u32, eye: [f32; 3]) -> Option<(u32, [f32; 3])> {
     let mut best: Option<(u32, [f32; 3], f32)> = None;
     for (other, player) in world.entities.all::<Player>() {
-        if other == id || !player.alive() || same_team(world, id, other) {
+        if other == id || !world.entities.alive(other) || same_team(world, id, other) {
             continue;
         }
         let riding = player.seat.filter(|seat| !seat.remote).map(|seat| seat.vehicle);

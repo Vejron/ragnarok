@@ -1,5 +1,5 @@
 use super::*;
-use crate::mechanics::for_tests::{Flying, add_vehicle, damage, launch_drone};
+use crate::mechanics::for_tests::{Flying, Harm, add_vehicle, damage_entity, launch_drone};
 use shared::protocol::{KIND_DRONE, KIND_JEEP, PROJECTILE_ROCKET};
 use shared::world::{WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
@@ -65,7 +65,9 @@ fn a_client_rebuilds_exactly_what_the_server_has_near_it_in_a_busy_room() {
                     crate::mechanics::damage_vehicle(&mut game.world, vid, 255, Some(ids[3]));
                 }
             }
-            80 => damage(&mut game.world, ids[4], PLAYER_MAX_HP, Some(ids[5]), shared::protocol::WEAPON_RIFLE),
+            80 => {
+                damage_entity(&mut game.world, ids[4], Harm::new(PLAYER_MAX_HP, Some(ids[5]), shared::protocol::WEAPON_RIFLE));
+            }
             _ => {}
         }
         game.step();
@@ -84,7 +86,9 @@ fn a_client_rebuilds_exactly_what_the_server_has_near_it_in_a_busy_room() {
         if t >= 90 && t % SNAPSHOT_EVERY == 0 {
             // What a client holds now is exactly what the server has near it.
             let client = &held.last().expect("snapshots arrive").1;
-            let server = game.replicated();
+            // As the observer is told it: all of what they own, only the public rest of everything else.
+            let owned = game.owned(observer);
+            let server: Vec<(u32, Replicated)> = game.replicated().into_iter().map(|(id, e)| (id, if owned.contains(&Some(id)) { e } else { e.public() })).collect();
             let at = game.world.entities.of::<Player>(observer).character.position;
             let near = |e: &Replicated| e.place.is_some_and(|p| ((p.x as f32 / 100.0 - at[0]).powi(2) + (p.z as f32 / 100.0 - at[2]).powi(2)).sqrt() <= INTEREST_RADIUS);
             for (id, entity) in server.iter().filter(|(_, e)| near(e) && e.pickup.is_none()) {
@@ -104,7 +108,7 @@ fn a_client_rebuilds_exactly_what_the_server_has_near_it_in_a_busy_room() {
             drones |= vehicles.iter().any(|(_, v)| v.thrust.as_ref().is_some_and(|t| t.flags & THRUST_LINKED != 0));
             hurt |= vehicles.iter().any(|(_, v)| v.damage.is_some());
             wrecks |= vehicles.iter().any(|(_, v)| v.health.as_ref().is_some_and(|h| h.hp == 0));
-            crews |= vehicles.iter().any(|(_, v)| v.crew.as_ref().is_some_and(|crew| crew.riders.iter().any(|rider| rider.held != 0)));
+            crews |= vehicles.iter().any(|(vid, _)| game.seen_riders(*vid).iter().any(|(_, rider)| rider.look.is_some() && rider.flags.as_ref().is_some_and(|f| f.flags & FLAG_HELD_MASK != 0)));
             dead |= game.seen_people(KIND_STICKMAN).iter().any(|(_, e)| e.flags.as_ref().is_some_and(|f| f.flags & FLAG_DEAD != 0));
         }
     }
@@ -113,4 +117,37 @@ fn a_client_rebuilds_exactly_what_the_server_has_near_it_in_a_busy_room() {
     assert!(deltas > 150 && dropped == 0, "{deltas} snapshots came as deltas on what the client acknowledged, {dropped} named a baseline it lacked");
     assert!(drones && hurt && wrecks && dead && crews, "every case was met: drone {drones}, hurt {hurt}, wreck {wrecks}, dead {dead}, crew {crews}");
     drop(inboxes);
+}
+
+#[test]
+fn what_a_player_owns_is_told_to_them_alone_and_wherever_they_sit() {
+    let map = WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[0, 0], [3000, 0]], ..Default::default() };
+    let mut game = Game::new(map, 0).unwrap();
+    let mut join = || {
+        let (outbox, inbox) = mpsc::channel(4096);
+        let (reply, mut response) = oneshot::channel();
+        game.handle(Command::Join { outbox, reply, profile: Default::default() });
+        (response.try_recv().unwrap().unwrap(), inbox)
+    };
+    let ((driver, mut theirs), (other, mut others)) = (join(), join());
+    let at = game.world.entities.of::<Player>(driver).character.position;
+    let jeep = add_vehicle(&mut game.world, KIND_JEEP, [at[0] + 4.0, at[1] + 1.0, at[2]], 0.0);
+    crate::mechanics::seat(&mut game.world, driver, jeep, 0);
+    for _ in 0..SNAPSHOT_EVERY * 3 {
+        game.step();
+    }
+    let snapshots = |inbox: &mut mpsc::Receiver<Outgoing>| -> Vec<Snapshot> {
+        std::iter::from_fn(|| inbox.try_recv().ok()).filter_map(|out| if let Outgoing::Datagram(bytes) = out { decode(&bytes) } else { None }).collect()
+    };
+    let (theirs, others) = (snapshots(&mut theirs), snapshots(&mut others));
+    let last = theirs.last().expect("the driver is sent snapshots");
+    let me = last.updates.iter().find(|update| update.id == driver).expect("seated, the driver is still told of themself");
+    assert_eq!(me.vitals.as_ref().map(|vitals| vitals.hp), Some(PLAYER_MAX_HP));
+    assert!(me.hotbar.is_some() && me.place.is_none(), "their health and hotbar, and no body: they sit in the jeep");
+    assert!(last.updates.iter().any(|update| update.id == jeep && update.drive.is_some()), "the jeep's motion, to its driver");
+    for update in others.iter().flat_map(|snapshot| &snapshot.updates) {
+        let private = update.vitals.is_some() || update.hotbar.is_some() || update.drive.is_some();
+        assert!(!private || update.id == other, "{} is told only what is theirs: {update:?}", other);
+    }
+    assert!(others.iter().flat_map(|snapshot| &snapshot.updates).any(|update| update.id == jeep), "the jeep itself is public");
 }

@@ -14,8 +14,9 @@ pub struct Movement;
 impl Mechanic for Movement {
     fn on_tick(&mut self, world: &mut World, dt: f32) {
         for id in world.entities.ids::<With<Player>>() {
+            let alive = world.entities.alive(id);
             let mut player = world.entities.of_mut::<Player>(id);
-            if player.seat.is_some() || !player.alive() {
+            if player.seat.is_some() || !alive {
                 continue;
             }
             let player = &mut *player;

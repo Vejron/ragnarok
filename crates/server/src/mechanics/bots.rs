@@ -17,18 +17,23 @@ pub use crew::road_route;
 pub use crew::{DRIVER, GUNNER, nearest_waypoint};
 
 use super::Mechanic;
+use bevy_ecs::message::MessageCursor;
 use crate::entities::With;
 use super::combat::same_team;
 use super::life::open_ground;
 use super::npcs::turn_towards;
-use crate::game::{Bot, BotMode, Noise, Player, World};
+use crate::game::{Bot, BotMode, Damaged, Noise, Player, World};
 use shared::consts::*;
 use shared::items::{HOTBAR_SLOTS, ITEM_AK5, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, ItemDef, ItemKind, def};
 use shared::protocol::{InputFrame, ItemSlot};
 use shared::quant::to_mrad;
 use std::f32::consts::{PI, TAU};
 
-pub struct Bots;
+#[derive(Default)]
+pub struct Bots {
+    /// How far through the noises it has listened.
+    heard: MessageCursor<Noise>,
+}
 
 /// How far a bot sees, metres.
 pub const SIGHT_RANGE: f32 = 60.0;
@@ -244,7 +249,7 @@ fn spot(world: &World, id: u32, eye: [f32; 3], yaw: f32, alert: bool) -> Option<
     let facing = [-yaw.sin(), -yaw.cos()];
     let mut best: Option<(u32, [f32; 3], f32)> = None;
     for (other, player) in world.entities.all::<Player>() {
-        if other == id || !player.alive() || !player.embodied() || same_team(world, id, other) {
+        if other == id || !world.entities.alive(other) || !player.embodied() || same_team(world, id, other) {
             continue;
         }
         let at = player.character.position;
@@ -269,7 +274,7 @@ fn spot(world: &World, id: u32, eye: [f32; 3], yaw: f32, alert: bool) -> Option<
 /// tick. With no bots to hear it, it is not kept.
 pub fn make_noise(world: &mut World, at: [f32; 3], by: Option<u32>, reach: f32) {
     if world.entities.count::<Bot>() > 0 {
-        world.noises.push(Noise { at, by, reach });
+        world.send(Noise { at, by, reach });
     }
 }
 
@@ -452,7 +457,7 @@ fn reload(world: &World, id: u32, bot: &Bot, mut input: InputFrame) -> InputFram
 fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], crowd: &[(u32, [f32; 2])], budget: &mut usize) -> InputFrame {
     let idle = InputFrame { yaw: to_mrad(bot.yaw), pitch: to_mrad(bot.pitch), view: world.tick as u16, slot: bot.slot, ..Default::default() };
     let Some(player) = world.entities.get::<Player>(id) else { return idle };
-    if !player.alive() {
+    if !world.entities.alive(id) {
         // Whatever it was doing died with it; it comes back at home, on its route.
         bot.mode = BotMode::Patrol;
         bot.target = None;
@@ -619,17 +624,31 @@ impl Mechanic for Bots {
         world.entities.remove::<Bot>(id);
     }
 
+    /// A bot hurt, or in a vehicle that was, turns to where it came from.
+    fn react(&mut self, world: &mut World) {
+        let hurt: Vec<(u32, [f32; 3])> = world
+            .happened::<Damaged>()
+            .filter_map(|damaged| Some((damaged, damaged.from?)))
+            .flat_map(|(damaged, from)| std::iter::once(damaged.victim).chain(damaged.aboard.iter().copied()).map(move |id| (id, from)))
+            .collect();
+        for (id, from) in hurt {
+            if let Some(mut bot) = world.entities.get_mut::<Bot>(id) {
+                bot.hit_from = Some(from);
+            }
+        }
+    }
+
     fn on_tick(&mut self, world: &mut World, dt: f32) {
         for area in world.physics.take_changed() {
             world.nav.forget(area);
         }
-        let noises = std::mem::take(&mut world.noises);
+        let noises: Vec<Noise> = self.heard.read(world.events::<Noise>()).copied().collect();
         let mut budget = SEARCH_PER_TICK;
         let ids = world.entities.ids::<With<Bot>>();
         // Where every bot on its feet stands as the tick begins, for them to steer clear of each other.
         let crowd: Vec<(u32, [f32; 2])> = ids
             .iter()
-            .filter_map(|id| world.entities.get::<Player>(*id).filter(|p| p.alive() && p.seat.is_none()).map(|p| (*id, [p.character.position[0], p.character.position[2]])))
+            .filter_map(|id| world.entities.get::<Player>(*id).filter(|p| world.entities.alive(*id) && p.seat.is_none()).map(|p| (*id, [p.character.position[0], p.character.position[2]])))
             .collect();
         for id in ids {
             // Taken out to think with the world in hand, an empty mind in its place: what a bot thinks

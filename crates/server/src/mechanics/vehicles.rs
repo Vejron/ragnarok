@@ -1,12 +1,12 @@
 use crate::entities::{Health, HurtBy, Hurtbox, Transform, With};
 use super::Mechanic;
-use crate::game::{Mounts, Player, Seat, Seats, Vehicle, World, Wreck};
+use crate::game::{Died, Mounts, Player, Seat, Seats, Vehicle, World, Wreck};
 use sim::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_extents};
 use shared::consts::*;
 use shared::vehicles::vehicle_def;
 use shared::protocol::{
-    BEARING_NONE, DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, ShotEvent, WEAPON_CRASH, is_drone,
-    HIT_DEALT, WEAPON_ROADKILL, WEAPON_SCRAPE, vehicle_hp,
+    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, ShotEvent, WEAPON_CRASH, is_drone,
+    WEAPON_ROADKILL, WEAPON_SCRAPE, vehicle_hp,
 };
 use shared::quant::{to_cm, wrap_angle};
 use shared::world::WorldFile;
@@ -552,11 +552,8 @@ fn run_down_creatures(world: &mut World) {
         }
     }
     for (id, amount, car) in run_down {
-        super::life::damage_entity(world, id, amount);
         let driver = world.entities.get::<Seats>(car).and_then(|seats| seats.rider(0)).filter(|&driver| world.entities.has::<Player>(driver));
-        if let (Some(driver), Some((kind, at))) = (driver, super::life::hit_mark(world, id)) {
-            world.hits.push((driver, super::combat::hit_at(HIT_DEALT, kind, amount, WEAPON_ROADKILL, BEARING_NONE, at, id)));
-        }
+        super::life::damage_entity(world, id, super::life::Harm::new(amount, driver, WEAPON_ROADKILL));
     }
 }
 
@@ -570,9 +567,10 @@ fn roadkill_damage(speed: f32) -> u8 {
 fn knock_players(world: &mut World) {
     let mut run_down = Vec::new();
     for id in world.entities.ids::<With<Player>>() {
+        let alive = world.entities.alive(id);
         let mut player = world.entities.of_mut::<Player>(id);
         player.hit_cooldown = player.hit_cooldown.saturating_sub(1);
-        if !player.embodied() || !player.alive() || player.character.ride != 0 || player.hit_cooldown > 0 {
+        if !player.embodied() || !alive || player.character.ride != 0 || player.hit_cooldown > 0 {
             continue;
         }
         let Some(hit) = world.physics.car_hit(player.character.position) else { continue };
@@ -604,11 +602,22 @@ fn knock_players(world: &mut World) {
     // Whoever is driving is to blame.
     for (id, amount, car, at) in run_down {
         let driver = world.entities.get::<Seats>(car).and_then(|seats| seats.rider(0));
-        super::combat::damage_from(world, id, amount, driver, WEAPON_ROADKILL, Some(at));
+        super::life::damage_entity(world, id, super::life::Harm::new(amount, driver, WEAPON_ROADKILL).from(at));
+    }
+}
+
+/// Shot in their seat, a rider falls out of the vehicle beside it, dead.
+fn fall_out(world: &mut World, died: &Died) {
+    if world.entities.get::<Player>(died.victim).and_then(|player| player.seat).is_some_and(|seat| !seat.remote) {
+        alight(world, died.victim);
     }
 }
 
 impl Mechanic for Vehicles {
+    fn hooks(&self, hooks: &mut crate::events::Hooks) {
+        hooks.died.push(fall_out);
+    }
+
     fn on_start(&mut self, world: &mut World) {
         // Vehicles placed in the map editor replace the scatter over the spawn points.
         if !world.map.placed_vehicles.is_empty() {
@@ -693,7 +702,7 @@ impl Mechanic for Vehicles {
 
     fn on_tick(&mut self, world: &mut World, dt: f32) {
         // Boarding and leaving.
-        let pressed = world.entities.ids_where::<Player>(|_, player| player.alive() && player.input.buttons() & BUTTON_USE != 0);
+        let pressed = world.entities.ids_where::<Player>(|id, player| world.entities.alive(id) && player.input.buttons() & BUTTON_USE != 0);
         for id in pressed {
             if world.entities.of::<Player>(id).seat.is_some() {
                 alight(world, id);
@@ -702,13 +711,13 @@ impl Mechanic for Vehicles {
             }
         }
         // A driver hitches or unhitches the mortar behind the car.
-        let hitching = world.entities.ids_where::<Player>(|_, player| player.alive() && player.input.buttons() & BUTTON_HITCH != 0);
+        let hitching = world.entities.ids_where::<Player>(|id, player| world.entities.alive(id) && player.input.buttons() & BUTTON_HITCH != 0);
         for id in hitching {
             hitch(world, id);
         }
         // Reload moves to the other seat, unless it is a passenger's to reload their own gun with.
         let switching = world.entities.ids_where::<Player>(|id, player| {
-            player.alive() && player.seat.is_some() && player.input.buttons() & (BUTTON_RELOAD | BUTTON_USE) == BUTTON_RELOAD && !super::combat::reloads_in_seat(world, id)
+            world.entities.alive(id) && player.seat.is_some() && player.input.buttons() & (BUTTON_RELOAD | BUTTON_USE) == BUTTON_RELOAD && !super::combat::reloads_in_seat(world, id)
         });
         for id in switching {
             switch_seat(world, id);

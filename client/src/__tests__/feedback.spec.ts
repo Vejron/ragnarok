@@ -57,8 +57,8 @@ describe('hit message', () => {
     expect(decode(bytes)).toEqual({ type: 'hit', role: 1, kind: 0, amount: 25, weapon: 0, bearing: -1.571, x: 1.2, y: 0.9, z: -3, target: 7 })
   })
 
-  it('decodes the no-direction marker as null and rejects a short message', () => {
-    expect(decode(encode([8, 0, 2, 100, 7, -32768, 0, 0, 0, 0]))).toMatchObject({ type: 'hit', bearing: null })
+  it('decodes no bearing as null and rejects a short message', () => {
+    expect(decode(encode([8, 0, 2, 100, 7, null, 0, 0, 0, 0]))).toMatchObject({ type: 'hit', bearing: null })
     expect(decode(encode([8, 0, 2]))).toBeNull()
   })
 })

@@ -144,7 +144,7 @@ pub fn damage_turret(world: &mut World, vid: u32, damage: u8, attacker: Option<u
                 player.seat = None;
                 player.character.position = at;
             }
-            super::combat::damage(world, id, PLAYER_MAX_HP, attacker, WEAPON_WRECK);
+            super::life::damage_entity(world, id, super::life::Harm::new(PLAYER_MAX_HP, attacker, WEAPON_WRECK));
         }
     }
 }

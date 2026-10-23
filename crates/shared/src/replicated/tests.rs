@@ -1,5 +1,5 @@
 use super::*;
-use crate::protocol::{decode, encode};
+use crate::protocol::{ItemSlot, decode, encode};
 
 fn stickman(x: i32, yaw: i16) -> Replicated {
     Replicated {
@@ -18,7 +18,6 @@ fn tank(x: i32, turret_yaw: i16) -> Replicated {
         place: Some(Place { x, y: 120, z: 0 }),
         orientation: Some(Orientation { qx: 0, qy: 1200, qz: 0 }),
         steer: Some(Steer::default()),
-        seats: Some(Seats { riders: vec![7, 0] }),
         turret: Some(Turret { yaw: turret_yaw, pitch: 40, shots: 3, range: 3000, flags: 0 }),
         health: Some(Health { hp: 250 }),
         ..Default::default()
@@ -31,7 +30,7 @@ fn round_trip(update: &Update) -> Update {
 
 #[test]
 fn every_component_has_its_own_bit_in_wire_order() {
-    let ids: Vec<u8> = schema().iter().map(|(id, ..)| *id).collect();
+    let ids: Vec<u8> = schema().iter().map(|component| component.id).collect();
     assert!(ids.windows(2).all(|pair| pair[0] < pair[1]), "listed in ascending wire-id order: {ids:?}");
     assert!(ids.iter().all(|&id| id < 31), "bit 31 is CLEARED");
 }
@@ -46,16 +45,19 @@ fn a_new_entity_brings_everything_it_has_and_decodes_back() {
         orientation: Some(Orientation { qx: -32767, qy: 5, qz: 32767 }),
         steer: Some(Steer { steer: -127 }),
         turret: Some(Turret { yaw: 100, pitch: -50, shots: 255, range: 65535, flags: 1 }),
-        crew: Some(Crew { riders: vec![Rider { yaw: 1, pitch: -2, held: 3 }, Rider::default()] }),
         thrust: Some(Thrust { air: 200, flags: 3 }),
         arms: Some(Arms { shots: 9, heat: 10, rear_heat: 11, bombs: 4, flags: 2 }),
-        seats: Some(Seats { riders: vec![1, 0, 70_000] }),
         health: Some(Health { hp: 70 }),
         damage: Some(Damage { parts: [1, 2, 3, 4, 5, 6, 7, 255] }),
         velocity: Some(Velocity { vx: 30_000, vy: -30_000, vz: 0 }),
         kind: Some(Kind { kind: 6 }),
         projectile: Some(Projectile { kind: 2 }),
         pickup: Some(Pickup { item: 7 }),
+        vitals: Some(Vitals { hp: 73, progress: 128 }),
+        hotbar: Some(Hotbar { slots: [ItemSlot { item: 3, count: 1, ammo: 17 }, ItemSlot::default(), ItemSlot { item: 9, count: 2, ammo: 0 }, ItemSlot::default(), ItemSlot { item: 1, count: 255, ammo: 255 }] }),
+        drive: Some(Drive { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }),
+        seated: Some(Seated { vehicle: 70_000, seat: 2 }),
+        look: Some(Look { pitch: -1570 }),
     };
     let update = everything.update(42, None).expect("a new entity is always sent");
     assert_eq!(update.set(), everything.mask(), "everything it has is set");
@@ -63,6 +65,14 @@ fn a_new_entity_brings_everything_it_has_and_decodes_back() {
     let decoded = round_trip(&update);
     assert_eq!(decoded, update);
     assert_eq!(Replicated::apply(None, &decoded), everything);
+}
+
+#[test]
+fn anyone_but_the_owner_is_told_everything_but_the_owners_components() {
+    let own = Replicated { vitals: Some(Vitals { hp: 40, progress: 0 }), hotbar: Some(Hotbar::default()), drive: Some(Drive::default()), ..tank(0, 0) };
+    assert_eq!(own.public(), tank(0, 0));
+    let owned: Vec<&str> = schema().iter().filter(|component| component.owner).map(|component| component.name).collect();
+    assert_eq!(owned, ["vitals", "hotbar", "drive"]);
 }
 
 #[test]
@@ -86,7 +96,7 @@ fn a_walking_stickman_sends_only_its_moves_as_differences_and_costs_no_more_than
 #[test]
 fn a_turret_that_did_not_move_is_not_resent() {
     let update = tank(130, 0).update(9, Some(&tank(100, 0))).unwrap();
-    assert!(update.turret.is_none() && update.seats.is_none() && update.health.is_none());
+    assert!(update.turret.is_none() && update.health.is_none());
     assert_eq!(update.place, Some([30, 0, 0]));
     let turned = tank(100, 15).update(9, Some(&tank(100, 0))).unwrap();
     assert_eq!(turned.set(), 1 << Turret::ID);
@@ -134,7 +144,7 @@ fn diff_and_apply_rebuild_the_new_scene() {
     assert_eq!(updates.iter().map(|update| update.id).collect::<Vec<_>>(), vec![3, 4, 9, 12], "the unchanged one is not listed");
     let decoded: Vec<Update> = updates.iter().map(round_trip).collect();
     assert_eq!(apply(&base, &decoded, &removed), now);
-    let (all, none) = diff(&[], &now);
+    let (all, none) = diff::<Replicated, _>(&[], &now);
     assert!(none.is_empty());
     assert_eq!(apply(&[], &all, &[]), now, "against nothing, everything is new");
 }
@@ -167,18 +177,18 @@ fn components_ts() -> String {
         out += &format!("export interface {name} {{\n  {}\n}}\n\n", fields.join("\n  "));
     }
     let schema = schema();
-    for (_, _, ty, _, fields) in &schema {
+    for Schema { ty, fields, .. } in &schema {
         let fields: Vec<String> = fields.iter().map(|(field, rust, _)| format!("{field}: {}", ts_type(&rust.replace(' ', "")))).collect();
         out += &format!("export interface {ty} {{\n  {}\n}}\n\n", fields.join("\n  "));
     }
     out += "/** An entity as it is replicated: the components it has. */\nexport interface Components {\n";
-    for (_, name, ty, ..) in &schema {
+    for Schema { name, ty, .. } in &schema {
         out += &format!("  {name}?: {ty}\n");
     }
     out += "}\n\nexport type ComponentName = keyof Components\n\n";
     out += "/** A field, in wire order: its unit if it has one, and the struct's fields if it holds a list of structs. */\nexport interface FieldSchema {\n  name: string\n  unit?: Unit\n  struct?: readonly FieldSchema[]\n}\n\n";
-    out += "/** Every component in wire-id order: its bit, whether it is sent as a difference, and its fields. */\nexport const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; fields: readonly FieldSchema[] }[] = [\n";
-    for (id, name, _, diff, fields) in &schema {
+    out += "/** Every component in wire-id order: its bit, whether it is sent as a difference and only to its owner, and its fields. */\nexport const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; owner: boolean; fields: readonly FieldSchema[] }[] = [\n";
+    for Schema { id, name, diff, owner, fields, .. } in &schema {
         let fields: Vec<String> = fields
             .iter()
             .map(|(field, rust, unit)| {
@@ -189,7 +199,7 @@ fn components_ts() -> String {
                 }
             })
             .collect();
-        out += &format!("  {{ id: {id}, name: '{name}', diff: {diff}, fields: [{}] }},\n", fields.join(", "));
+        out += &format!("  {{ id: {id}, name: '{name}', diff: {diff}, owner: {owner}, fields: [{}] }},\n", fields.join(", "));
     }
     out += "]\n";
     out
@@ -258,7 +268,7 @@ fn units_ts() -> String {
     let schema = schema();
     let has_unit = |fields: &[Field]| fields.iter().any(|(_, rust, unit)| !unit.is_empty() || struct_of(rust).is_some_and(|members| members.iter().any(|(_, unit)| !unit.is_empty())));
     out += "/** Entity `w`, as the wire has it, in the game's units. A component with no units is `w`'s own. */\nexport function toGame(w: Components): Entity {\n  return {\n";
-    for (_, name, _, _, fields) in &schema {
+    for Schema { name, fields, .. } in &schema {
         let converted = if fields.iter().all(|(_, _, unit)| *unit == "quat") {
             let parts: Vec<String> = fields.iter().map(|(field, _, _)| format!("w.{name}.{field}")).collect();
             format!("rotationOf({})", parts.join(", "))
@@ -274,7 +284,7 @@ fn units_ts() -> String {
     out += "  }\n}\n\n";
     out += "/**\n * `a` and `b`, two snapshots of one entity, a fraction `t` of the way from `a` to `b`. A component only\n * one of them has is the nearer snapshot's to have or not.\n */\n";
     out += "export function blend(a: Entity, b: Entity, t: number): Entity {\n  if (a === b) return a\n  const near = t < 0.5 ? a : b\n  return {\n";
-    for (_, name, _, _, fields) in &schema {
+    for Schema { name, fields, .. } in &schema {
         let moves = |(_, rust, unit): &&Field| matches!(*unit, "cm" | "axis" | "mrad" | "quat") || struct_of(rust).is_some();
         if !fields.iter().any(|field| moves(&field)) {
             // Nothing in it moves: the nearer snapshot's, whole.
@@ -320,16 +330,19 @@ fn fixture_json() -> String {
         orientation: Some(Orientation { qx: -32767, qy: 5, qz: 32767 }),
         steer: Some(Steer { steer: -127 }),
         turret: Some(Turret { yaw: 100, pitch: -50, shots: 255, range: 65535, flags: 1 }),
-        crew: Some(Crew { riders: vec![Rider { yaw: 1, pitch: -2, held: 3 }, Rider::default()] }),
         thrust: Some(Thrust { air: 200, flags: 3 }),
         arms: Some(Arms { shots: 9, heat: 10, rear_heat: 11, bombs: 4, flags: 2 }),
-        seats: Some(Seats { riders: vec![1, 0, 70_000] }),
         health: Some(Health { hp: 70 }),
         damage: Some(Damage { parts: [1, 2, 3, 4, 5, 6, 7, 255] }),
         velocity: Some(Velocity { vx: 30_000, vy: -30_000, vz: 0 }),
         kind: Some(Kind { kind: 6 }),
         projectile: Some(Projectile { kind: 2 }),
         pickup: Some(Pickup { item: 7 }),
+        vitals: Some(Vitals { hp: 73, progress: 128 }),
+        hotbar: Some(Hotbar { slots: [ItemSlot { item: 3, count: 1, ammo: 17 }, ItemSlot::default(), ItemSlot { item: 9, count: 2, ammo: 0 }, ItemSlot::default(), ItemSlot { item: 1, count: 255, ammo: 255 }] }),
+        drive: Some(Drive { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }),
+        seated: Some(Seated { vehicle: 70_000, seat: 2 }),
+        look: Some(Look { pitch: -1570 }),
     };
     let first: Scene = vec![(1, stickman(1000, 200)), (4, tank(0, 0)), (70_000, all.clone())];
     let hurt = Replicated { damage: Some(Damage { parts: [0, 0, 90, 0, 0, 0, 0, 0] }), ..tank(40, 12) };
@@ -350,7 +363,7 @@ fn fixture_json() -> String {
 
 /// Writes `contents` to `path` (from the repository root) when `UPDATE_PARITY` is set, then fails while
 /// the committed copy differs.
-fn generated(path: &str, contents: &str) {
+pub(crate) fn generated(path: &str, contents: &str) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(path);
     if std::env::var_os("UPDATE_PARITY").is_some() {
         std::fs::write(&path, contents).unwrap();
@@ -361,7 +374,7 @@ fn generated(path: &str, contents: &str) {
 
 /// A scene with every family and the edge cases of each, for the client's conversion into its units.
 fn scene_fixture_json() -> String {
-    let vehicle = |kind: u8| Replicated { kind: Some(Kind { kind }), place: Some(Place { x: 500, y: 80, z: -900 }), orientation: Some(Orientation { qx: 10, qy: -2000, qz: 30 }), steer: Some(Steer { steer: 40 }), seats: Some(Seats { riders: vec![0, 0] }), health: Some(Health { hp: 100 }), ..Default::default() };
+    let vehicle = |kind: u8| Replicated { kind: Some(Kind { kind }), place: Some(Place { x: 500, y: 80, z: -900 }), orientation: Some(Orientation { qx: 10, qy: -2000, qz: 30 }), steer: Some(Steer { steer: 40 }), health: Some(Health { hp: 100 }), ..Default::default() };
     let scene: Scene = vec![
         // Prone, knocked, crouching, holding a gun (flags carry the held item).
         (1, Replicated { motion: Some(Motion { vy: -320, knock_x: 150, knock_z: -40 }), flags: Some(Flags { flags: 0b0001_0101, stance: 1 }), ..stickman(-700, -1500) }),
@@ -369,11 +382,17 @@ fn scene_fixture_json() -> String {
         (2, Replicated { kind: Some(Kind { kind: 5 }), place: Some(Place { x: 10, y: 0, z: 20 }), heading: Some(Heading { yaw: 900 }), flags: Some(Flags { flags: 0b1000_0001, stance: 0 }), ..Default::default() }),
         (4, tank(300, -700)),
         // A field mortar, hitched: its turret stowed, its crew showing and empty.
-        (5, Replicated { turret: Some(Turret { yaw: 0, pitch: 600, shots: 0, range: 1500, flags: 1 }), crew: Some(Crew { riders: vec![Rider::default()] }), seats: Some(Seats { riders: vec![0] }), ..vehicle(9) }),
+        (5, Replicated { turret: Some(Turret { yaw: 0, pitch: 600, shots: 0, range: 1500, flags: 1 }), ..vehicle(9) }),
         // A plane: crew showing, arms, hurt.
-        (6, Replicated { turret: Some(Turret { yaw: 3000, pitch: -100, shots: 17, range: 0, flags: 0 }), crew: Some(Crew { riders: vec![Rider { yaw: 100, pitch: 50, held: 0 }, Rider { yaw: -3000, pitch: -40, held: 2 }] }), arms: Some(Arms { shots: 200, heat: 128, rear_heat: 3, bombs: 4, flags: 2 }), damage: Some(Damage { parts: [0, 9, 0, 0, 0, 0, 0, 0] }), seats: Some(Seats { riders: vec![1, 0] }), ..vehicle(6) }),
+        (6, Replicated { turret: Some(Turret { yaw: 3000, pitch: -100, shots: 17, range: 0, flags: 0 }), arms: Some(Arms { shots: 200, heat: 128, rear_heat: 3, bombs: 4, flags: 2 }), damage: Some(Damage { parts: [0, 9, 0, 0, 0, 0, 0, 0] }), ..vehicle(6) }),
         // A drone, linked, its battery as air; a wreck.
-        (7, Replicated { thrust: Some(Thrust { air: 99, flags: 4 }), seats: Some(Seats { riders: vec![1] }), ..vehicle(11) }),
+        (7, Replicated { thrust: Some(Thrust { air: 99, flags: 4 }), drive: Some(Drive { vx: -250, vy: 3, vz: 1200, wx: 10, wy: -3500, wz: 0, steer: -300, spin: 700 }), ..vehicle(11) }),
+        // The receiver themself, piloting the plane: what is theirs, and their seat.
+        (11, Replicated { kind: Some(Kind { kind: 0 }), seated: Some(Seated { vehicle: 6, seat: 0 }), vitals: Some(Vitals { hp: 55, progress: 255 }), hotbar: Some(Hotbar { slots: [ItemSlot { item: 2, count: 1, ammo: 30 }, ItemSlot::default(), ItemSlot::default(), ItemSlot::default(), ItemSlot::default()] }), ..Default::default() }),
+        // Their gunner, looking back and down, holding a gun.
+        (12, Replicated { kind: Some(Kind { kind: 0 }), seated: Some(Seated { vehicle: 6, seat: 1 }), heading: Some(Heading { yaw: -3000 }), look: Some(Look { pitch: -40 }), flags: Some(Flags { flags: 0b0001_0100, stance: 0 }), ..Default::default() }),
+        // A drone's pilot, kneeling where they stood.
+        (13, Replicated { seated: Some(Seated { vehicle: 7, seat: 0 }), ..stickman(40, 0) }),
         (8, Replicated { health: Some(Health { hp: 0 }), ..vehicle(1) }),
         (9, Replicated { projectile: Some(Projectile { kind: 0 }), place: Some(Place { x: 1, y: 2000, z: 3 }), velocity: Some(Velocity { vx: -4000, vy: 50, vz: 0 }), ..Default::default() }),
         (10, Replicated { pickup: Some(Pickup { item: 7 }), place: Some(Place { x: -5, y: 30, z: 5 }), ..Default::default() }),
@@ -391,13 +410,13 @@ fn the_clients_components_and_fixture_are_generated_from_these() {
 
 #[test]
 fn a_struct_in_a_list_goes_on_the_wire_as_its_fields_in_order() {
-    let bytes = encode(&Rider { yaw: 1, pitch: 2, held: 3 });
-    assert_eq!(decode::<(i16, i16, u8)>(&bytes), Some((1, 2, 3)), "STRUCTS says Rider is [yaw, pitch, held]");
+    let bytes = encode(&ItemSlot { item: 1, count: 2, ammo: 3 });
+    assert_eq!(decode::<(u8, u8, u8)>(&bytes), Some((1, 2, 3)), "STRUCTS says ItemSlot is [item, count, ammo]");
 }
 
 #[test]
 fn every_field_with_a_unit_names_a_known_one() {
-    let fields = schema().into_iter().flat_map(|(_, component, _, _, fields)| fields.iter().map(move |(field, _, unit)| (component, *field, *unit)));
+    let fields = schema().into_iter().flat_map(|component| component.fields.iter().map(move |(field, _, unit)| (component.name, *field, *unit)));
     let members = STRUCTS.iter().flat_map(|(name, members)| members.iter().map(move |(member, unit)| (*name, *member, *unit)));
     for (owner, field, unit) in fields.chain(members) {
         assert!(unit.is_empty() || UNITS.contains(&unit), "{owner}.{field} counts in {unit}, which UNITS does not list");
