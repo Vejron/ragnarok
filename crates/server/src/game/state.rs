@@ -460,6 +460,8 @@ pub struct World {
     pub fresh_carved: Vec<FreshCarve>,
     /// Carved buildings waiting to have their structure checked (`settle`), by the tick they are due.
     pub strained: HashMap<ObjId, u32>,
+    /// Cells that have lost their hold and are still falling: where each column of them lands and when.
+    pub rubble: Vec<Rubble>,
 }
 
 impl World {
@@ -536,9 +538,33 @@ impl World {
         let standing = sim::solid_of(&carving.shell.boxes(&carving.removed), &carving.floor);
         self.physics.replace_building(Obj::Building(id), standing);
         self.fresh_carved.push((id, at, cut.clone()));
+        self.drop_rubble(id, &cut.fell);
         // Whatever it lost is looked at again in a moment: the first cut sets the time, not each one.
         self.strained.entry(id).or_insert(self.tick.wrapping_add(STRAIN_DELAY));
         Some(cut)
+    }
+
+    /// Starts the cells `fell` of building `id` falling: one `Rubble` for each column of them, landing
+    /// when something let go at that height would reach the building's base.
+    fn drop_rubble(&mut self, id: ObjId, fell: &[u32]) {
+        let (Some(carving), Some(base)) = (self.carves.get(&id), self.building(id).map(|b| b.base as f32 / 100.0)) else { return };
+        let mut columns: HashMap<(i32, i32), (f32, u32)> = HashMap::new();
+        for &cell in fell {
+            let c = carving.shell.centre(cell);
+            let column = columns.entry((c[0], c[2])).or_insert((f32::MIN, 0));
+            column.0 = column.0.max(c[1] as f32 / 100.0);
+            column.1 += 1;
+        }
+        let mut landing: Vec<Rubble> = columns
+            .into_iter()
+            .map(|((x, z), (top, cells))| {
+                let fall = (top - base).max(0.0);
+                let due = self.tick.wrapping_add((((2.0 * fall / 9.8).sqrt()) * shared::consts::TICK_RATE as f32).ceil() as u32 + 1);
+                Rubble { due, at: [x as f32 / 100.0, z as f32 / 100.0], top, ground: base, cells }
+            })
+            .collect();
+        landing.sort_unstable_by(|a, b| (a.due, a.at[0].to_bits(), a.at[1].to_bits()).cmp(&(b.due, b.at[0].to_bits(), b.at[1].to_bits())));
+        self.rubble.extend(landing);
     }
 
     /// Checks the structure of the carved buildings that are due, at most `STRAIN_PER_TICK` a tick
@@ -609,6 +635,17 @@ pub struct Carving {
 pub const STRAIN_DELAY: u32 = 30;
 /// Most buildings whose structure is checked in one tick.
 pub const STRAIN_PER_TICK: usize = 2;
+
+/// A column of cells falling from a building: where it comes down (metres), the height of its top and
+/// of the ground under it, how many cells are in it, and the tick it lands.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rubble {
+    pub due: u32,
+    pub at: [f32; 2],
+    pub top: f32,
+    pub ground: f32,
+    pub cells: u32,
+}
 
 /// A building bitten: its identity, where the blast was (cm) and the cells it took.
 pub type FreshCarve = (ObjId, [i32; 3], Cut);

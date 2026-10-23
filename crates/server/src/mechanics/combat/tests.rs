@@ -1044,6 +1044,32 @@ fn a_house_with_most_of_its_walls_gone_sheds_its_roof_a_moment_later() {
     assert!(game.world.strained.is_empty(), "and it settles");
 }
 
+/// Two players, one under the house's roof and one well away from it, after three walls are bitten out
+/// and the house has had ten seconds to come down: their health.
+fn rubble_toll() -> (u8, u8) {
+    let (mut game, house) = game_with_house();
+    let Obj::Building(id) = house else { unreachable!() };
+    let (inside, _inbox) = join(&mut game);
+    let (outside, _other) = join(&mut game);
+    game.world.entities.get_mut::<Player>(inside).unwrap().character.position = [20.0, STANDING_Y, 0.0];
+    game.world.entities.get_mut::<Player>(outside).unwrap().character.position = [-30.0, STANDING_Y, 0.0];
+    for point in [[15.0, 1.0, 0.0], [25.0, 1.0, 0.0], [20.0, 1.0, -5.0]] {
+        game.world.carve(id, point, 5.0);
+    }
+    for _ in 0..600 {
+        game.step();
+    }
+    let hp = |id| game.world.entities.of::<crate::entities::Health>(id).hp;
+    (hp(inside), hp(outside))
+}
+
+#[test]
+fn a_roof_coming_down_hurts_whoever_is_under_it_and_nobody_else() {
+    let (inside, outside) = rubble_toll();
+    assert_eq!(outside, PLAYER_MAX_HP, "nothing fell on them");
+    assert!(inside < PLAYER_MAX_HP, "the roof came down on them: {inside}");
+}
+
 #[test]
 fn a_rocket_bites_a_hole_in_the_wall_that_a_ray_goes_through() {
     let (mut game, house) = game_with_house();

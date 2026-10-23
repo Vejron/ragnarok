@@ -128,6 +128,8 @@ pub const WEAPON_EGG: u8 = 20;
 pub const WEAPON_LOITER: u8 = 21;
 /// Shot events only: a flare gun fired from `shooter`'s hand, at `x, y, z`.
 pub const WEAPON_FLARE: u8 = 22;
+/// Falling masonry: cells of a building that lost their hold, landing on someone. Only ever the weapon of a kill.
+pub const WEAPON_RUBBLE: u8 = 23;
 
 /// How a stickman died, as sent in a `Kill`, so every client can stage the death to match.
 pub const DEATH_BODY: u8 = 0;

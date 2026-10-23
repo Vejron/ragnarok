@@ -92,6 +92,7 @@ impl Game {
                 carves: HashMap::new(),
                 fresh_carved: Vec::new(),
                 strained: HashMap::new(),
+                rubble: Vec::new(),
                 map,
                 entities: Default::default(),
                 nav: Default::default(),
