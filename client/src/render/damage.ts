@@ -53,9 +53,11 @@ interface Drawn {
   group: Group
   /** The building's walls and roof as cells, once it is hurt, and what is drawn of them. */
   fracture: Fracture | null
-  body: Mesh | null
-  /** The state `body` is to be redrawn for at the next `update`: a barrage redraws a building once a frame, not once a hit. */
+  /** What is drawn of the cells still standing, a mesh a brick (`Fracture.bricksNear`). */
+  bricks: Map<number, Mesh>
+  /** The state the bricks in `dirty` are to be redrawn for at the next `update`: a barrage redraws a building once a frame, not once a hit. */
   stale: Hurt | null
+  dirty: Set<number>
   falling: Falling[]
   shed: number
 }
@@ -163,7 +165,7 @@ export class BuildingDamage {
     if (state.removed.has(cell)) return false
     state.dents.set(cell, (state.dents.get(cell) ?? 0) + damage)
     const loaded = this.loaded.get(key)
-    if (loaded) this.draw(key, index, loaded, state, false, null)
+    if (loaded) this.draw(key, index, loaded, state, false, null, [cell])
     return wasWhole
   }
 
@@ -181,7 +183,7 @@ export class BuildingDamage {
     const fresh = { blasted: blasted.filter((c) => !state.removed.has(c)), fell: fell.filter((c) => !state.removed.has(c)), point }
     for (const cell of [...blasted, ...fell]) state.removed.add(cell)
     const loaded = this.loaded.get(key)
-    if (loaded) this.draw(key, index, loaded, state, live, fresh)
+    if (loaded) this.draw(key, index, loaded, state, live, fresh, [...fresh.blasted, ...fresh.fell])
     for (const cell of state.removed) state.dents.delete(cell)
     return wasWhole && state.removed.size > 0
   }
@@ -259,27 +261,28 @@ export class BuildingDamage {
   }
 
   /** Brings tile `key`'s building `index` up to `state`; `live` when it is happening now, to be seen. */
-  private draw(key: number, index: number, loaded: Loaded, state: Hurt, live: boolean, burst: Burst | null) {
+  private draw(key: number, index: number, loaded: Loaded, state: Hurt, live: boolean, burst: Burst | null, cells: readonly number[] = []) {
     const buildings = this.drawn.get(key) ?? new Map<number, Drawn>()
     this.drawn.set(key, buildings)
     let drawn = buildings.get(index)
     const walls = wallsOf(loaded.tile, index)
     if (walls.length === 0) return
     if (!drawn) {
-      drawn = { group: new Group(), fracture: null, body: null, stale: null, falling: [], shed: SHED_SECONDS }
+      drawn = { group: new Group(), fracture: null, bricks: new Map(), stale: null, dirty: new Set(), falling: [], shed: SHED_SECONDS }
       buildings.set(index, drawn)
       this.root.add(drawn.group)
     }
-    if (state.removed.size > 0 || state.dents.size > 0) this.shatter(drawn, key, index, loaded, state, live, burst)
+    if (state.removed.size > 0 || state.dents.size > 0) this.shatter(drawn, key, index, loaded, state, live, burst, cells)
   }
 
   /** Redraws the building without the cells that are gone and with the ones that were shot pushed in. */
-  private shatter(drawn: Drawn, key: number, index: number, loaded: Loaded, state: Hurt, live: boolean, burst: Burst | null) {
+  private shatter(drawn: Drawn, key: number, index: number, loaded: Loaded, state: Hurt, live: boolean, burst: Burst | null, cells: readonly number[]) {
     const building = loaded.tile.buildings[index]!
     // Cubes: through a hole you see the inner faces of the walls round it, so no room needs drawing.
     drawn.fracture ??= new Fracture(loaded.tile, index, loaded.salt)
     // The first time it is drawn now, so the tile's own drawing of the building can stop; after that a live hit waits for the frame's end.
-    if (drawn.body && live) drawn.stale = state
+    for (const brick of drawn.fracture.bricksNear(cells)) drawn.dirty.add(brick)
+    if (drawn.bricks.size > 0 && live) drawn.stale = state
     else this.redraw(drawn, state)
     const shell = drawn.fracture.shell
     if (!live || !burst || !shell) return
@@ -287,20 +290,36 @@ export class BuildingDamage {
     this.throwCells(drawn, drawn.fracture, shell, building.base, burst.fell, burst.point, true)
   }
 
-  /** Draws the cells of `drawn` that are standing, as `state` has them. */
+  /** Draws the bricks of `drawn` that changed, as `state` has the cells; all of them the first time. */
   private redraw(drawn: Drawn, state: Hurt) {
-    if (!drawn.fracture) return
+    const fracture = drawn.fracture
+    if (!fracture) return
     drawn.stale = null
-    const built = drawn.fracture.build(state.removed, state.dents)
-    if (!drawn.body) {
-      drawn.body = new Mesh(shardGeometry(built.positions, built.colors), hurtMaterial)
-      drawn.body.castShadow = true
-      drawn.body.receiveShadow = true
-      drawn.group.add(drawn.body)
-    } else {
-      drawn.body.geometry.dispose()
-      drawn.body.geometry = shardGeometry(built.positions, built.colors)
+    const first = drawn.bricks.size === 0
+    const todo = first ? fracture.allBricks() : drawn.dirty
+    for (const key of todo) {
+      const built = fracture.buildBrick(key, state.removed, state.dents)
+      const old = drawn.bricks.get(key)
+      if (!built) {
+        if (old) {
+          old.geometry.dispose()
+          old.removeFromParent()
+          drawn.bricks.delete(key)
+        }
+        continue
+      }
+      if (old) {
+        old.geometry.dispose()
+        old.geometry = shardGeometry(built.positions, built.colors)
+        continue
+      }
+      const mesh = new Mesh(shardGeometry(built.positions, built.colors), hurtMaterial)
+      mesh.castShadow = true
+      mesh.receiveShadow = true
+      drawn.group.add(mesh)
+      drawn.bricks.set(key, mesh)
     }
+    drawn.dirty.clear()
   }
 
   /**
@@ -359,7 +378,7 @@ export class BuildingDamage {
   }
 
   private release(drawn: Drawn) {
-    for (const mesh of [drawn.body, ...drawn.falling.map((f) => f.mesh)]) mesh?.geometry.dispose()
+    for (const mesh of [...drawn.bricks.values(), ...drawn.falling.map((f) => f.mesh)]) mesh.geometry.dispose()
     this.root.remove(drawn.group)
   }
 

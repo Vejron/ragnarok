@@ -2,7 +2,7 @@ import { Geometry } from '@ragnarok/engine'
 import * as THREE from 'three'
 import type { TileData } from '@/world'
 import { CELL_HP, shellOf, type Shell } from '@/sim/carve'
-import { voxelFaces, type Soup } from './voxels'
+import { voxelBrick, voxelFaces, type Soup } from './voxels'
 import { buildingColors } from './world'
 
 /** How much of its colour a cell right beside a hole loses to the burn, and the next one out. */
@@ -57,14 +57,10 @@ export class Fracture {
   private readonly levels = new Map<number, number>()
   private readonly burnt = new Set<number>()
 
-  /**
-   * How burnt each standing cell is, 0 to 1: the cells touching a hole are black and the ring beyond
-   * is half way, ragged by cell. Worked out from the cells that are gone alone, so every client, and a
-   * player who joined after the blast, sees the same.
-   */
-  private burn(removed: ReadonlySet<number>): Map<number, number> {
+  /** Takes the holes in `removed` that are new since the last call into the burn. */
+  private absorb(removed: ReadonlySet<number>) {
     const shell = this.shell
-    if (!shell || removed.size === 0) return new Map()
+    if (!shell || removed.size === 0) return
     // Kept between builds and only added to for the cells gone since the last: a hole is worked out
     // once, not again at every hit on the building.
     if (this.burnt.size > removed.size) {
@@ -93,13 +89,79 @@ export class Fracture {
         }
       }
     }
+  }
+
+  /** How burnt cell `id` is, 0 to 1, ragged by cell. */
+  private burnOf(id: number): number {
+    const level = this.levels.get(id)
+    if (level === undefined) return 0
+    const a = Math.sin(id * 91.7 + 3.1) * 43758.5453
+    return Math.min(1, level * (0.6 + 0.8 * (a - Math.floor(a))))
+  }
+
+  /**
+   * How burnt each standing cell is, 0 to 1: the cells touching a hole are black and the ring beyond
+   * is half way, ragged by cell. Worked out from the cells that are gone alone, so every client, and a
+   * player who joined after the blast, sees the same.
+   */
+  private burn(removed: ReadonlySet<number>): Map<number, number> {
+    this.absorb(removed)
     const out = new Map<number, number>()
-    for (const [cell, level] of this.levels) {
-      if (removed.has(cell)) continue
-      const a = Math.sin(cell * 91.7 + 3.1) * 43758.5453
-      out.set(cell, Math.min(1, level * (0.6 + 0.8 * (a - Math.floor(a)))))
+    for (const cell of this.levels.keys()) if (!removed.has(cell)) out.set(cell, this.burnOf(cell))
+    return out
+  }
+
+  /** The bricks (`BRICK` cells a side, numbered from 0) holding a cell, or within the burn's reach of it, for each of `cells`. */
+  bricksNear(cells: Iterable<number>): Set<number> {
+    const out = new Set<number>()
+    const shell = this.shell
+    if (!shell) return out
+    for (const id of cells) {
+      const at = shell.coords(id)
+      const lo = at.map((v) => Math.max(0, Math.floor((v - 2) / BRICK)))
+      const hi = at.map((v, a) => Math.min(Math.floor((shell.dims[a]! - 1) / BRICK), Math.floor((v + 2) / BRICK)))
+      for (let y = lo[1]!; y <= hi[1]!; y++) for (let z = lo[2]!; z <= hi[2]!; z++) for (let x = lo[0]!; x <= hi[0]!; x++) out.add(this.brick(x, y, z))
     }
     return out
+  }
+
+  /** Every brick of the building. */
+  allBricks(): Set<number> {
+    const out = new Set<number>()
+    const shell = this.shell
+    if (!shell) return out
+    const n = shell.dims.map((d) => Math.ceil(d / BRICK))
+    for (let y = 0; y < n[1]!; y++) for (let z = 0; z < n[2]!; z++) for (let x = 0; x < n[0]!; x++) out.add(this.brick(x, y, z))
+    return out
+  }
+
+  private brick(x: number, y: number, z: number): number {
+    const shell = this.shell!
+    const nx = Math.ceil(shell.dims[0] / BRICK)
+    const nz = Math.ceil(shell.dims[2] / BRICK)
+    return (y * nz + z) * nx + x
+  }
+
+  /**
+   * Brick `key` of the building as `build` draws it, in world coordinates; null when nothing stands in it.
+   * Call `bricksNear` for the cells that changed first: the holes are taken into the burn here.
+   */
+  buildBrick(key: number, removed: ReadonlySet<number>, dents: ReadonlyMap<number, number>): Fractured | null {
+    const shell = this.shell
+    if (!shell) return null
+    this.absorb(removed)
+    const nx = Math.ceil(shell.dims[0] / BRICK)
+    const nz = Math.ceil(shell.dims[2] / BRICK)
+    const x = key % nx
+    const z = Math.floor(key / nx) % nz
+    const y = Math.floor(key / (nx * nz))
+    const lo = [x * BRICK, y * BRICK, z * BRICK]
+    const hi = [lo[0]! + BRICK, lo[1]! + BRICK, lo[2]! + BRICK]
+    const shade = (id: number, extra = 0) => 1 - Math.min(1, this.burnOf(id) + extra) * (1 - SOOT)
+    const worn = (id: number) => Math.min(0.95, (dents.get(id) ?? 0) / CELL_HP) * CHAR_DENT
+    const soup: Soup = { positions: [], colors: [] }
+    voxelBrick(shell, lo, hi, (id) => !removed.has(id), (id) => pack(this.colorOf(id), shade(id, worn(id))), soup)
+    return soup.positions.length === 0 ? null : arrays(soup)
   }
 
   /**
