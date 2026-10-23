@@ -9,9 +9,9 @@
 use bevy_ecs::query::{QueryData, QueryFilter, QueryIter, QueryState};
 use std::any::{Any, TypeId};
 use std::cell::{RefCell, RefMut};
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
 use std::hash::{BuildHasherDefault, Hasher};
-use std::collections::hash_map::Entry;
 
 pub use bevy_ecs::prelude::{Bundle, Component, Entity, Mut, With};
 
