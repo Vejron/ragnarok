@@ -39,6 +39,8 @@ const THROWN_CELLS = 14
 const FALLEN_CELLS = 108
 /** How hard a broken piece is thrown from the blast, m/s. */
 const THROW = 3
+/** How fast a piece that lost its hold slides towards the gap, metres a second. */
+const LEAN_SPEED = 1.6
 
 /** A shard that broke away, on its way down or lying where it fell. */
 interface Falling {
@@ -286,8 +288,8 @@ export class BuildingDamage {
     else this.redraw(drawn, state)
     const shell = drawn.fracture.shell
     if (!live || !burst || !shell) return
-    this.throwCells(drawn, drawn.fracture, shell, building.base, burst.blasted, burst.point, false)
-    this.throwCells(drawn, drawn.fracture, shell, building.base, burst.fell, burst.point, true)
+    this.throwCells(drawn, drawn.fracture, shell, building.base, burst.blasted, burst.point, false, state.removed)
+    this.throwCells(drawn, drawn.fracture, shell, building.base, burst.fell, burst.point, true, state.removed)
   }
 
   /** Draws the bricks of `drawn` that changed, as `state` has the cells; all of them the first time. */
@@ -326,7 +328,7 @@ export class BuildingDamage {
    * Throws the wall and roof in `cells` out of the building as chunks: blasted ones fly away from
    * `point`, ones that were left hanging (`falls`) drop where they were.
    */
-  private throwCells(drawn: Drawn, fracture: Fracture, shell: NonNullable<Fracture['shell']>, floor: number, cells: readonly number[], point: Mark | null, falls: boolean) {
+  private throwCells(drawn: Drawn, fracture: Fracture, shell: NonNullable<Fracture['shell']>, floor: number, cells: readonly number[], point: Mark | null, falls: boolean, removed: ReadonlySet<number>) {
     // A big swath is thrown in bigger chunks rather than dropped past the limit: pieces still falling from the last round take places too.
     const room = Math.max(MAX_FALLING - drawn.falling.length, 8)
     const most = Math.max(falls ? FALLEN_CELLS : THROWN_CELLS, Math.ceil(cells.length / room))
@@ -346,10 +348,20 @@ export class BuildingDamage {
         velocity.normalize().multiplyScalar(THROW * (0.5 + this.rand())).y += 1 + this.rand() * 2
       }
       const tumble = falls ? 0.6 : 5
+      const spin = new THREE.Vector3((this.rand() - 0.5) * tumble, (this.rand() - 0.5) * tumble, (this.rand() - 0.5) * tumble)
+      // A piece that lost its hold tips over towards the gap, top first, and slides that way a little.
+      const lean = falls ? leanOf(shell, group, removed) : null
+      if (lean) {
+        const rate = 0.7 + this.rand() * 0.6
+        spin.x += lean[1] * rate
+        spin.z -= lean[0] * rate
+        velocity.x += lean[0] * LEAN_SPEED * (0.6 + this.rand() * 0.8)
+        velocity.z += lean[1] * LEAN_SPEED * (0.6 + this.rand() * 0.8)
+      }
       drawn.falling.push({
         mesh,
         velocity,
-        spin: new THREE.Vector3((this.rand() - 0.5) * tumble, (this.rand() - 0.5) * tumble, (this.rand() - 0.5) * tumble),
+        spin,
         age: 0,
         resting: mesh.position.y <= floor + 0.15,
       })
@@ -388,6 +400,40 @@ export class BuildingDamage {
   private pointOn(wall: Wall) {
     return pointInTriangle(wall.triangle, this.rand(), this.rand())
   }
+}
+
+/**
+ * The way a piece of cells `group` that has lost its hold leans: the horizontal unit vector `[x, z]`
+ * from the piece towards the cells gone from round it (within 3 cells), which is what held it.
+ * Null when they are all round it or none are.
+ */
+function leanOf(shell: NonNullable<Fracture['shell']>, group: readonly number[], removed: ReadonlySet<number>): [number, number] | null {
+  const own = new Set(group)
+  const reach = 3
+  let [cx, cz] = [0, 0]
+  const low = [Infinity, Infinity, Infinity]
+  const high = [-Infinity, -Infinity, -Infinity]
+  for (const id of group) {
+    const c = shell.coords(id)
+    cx += c[0]
+    cz += c[2]
+    for (let a = 0; a < 3; a++) {
+      low[a] = Math.min(low[a]!, c[a]!)
+      high[a] = Math.max(high[a]!, c[a]!)
+    }
+  }
+  cx /= group.length
+  cz /= group.length
+  let [sx, sz] = [0, 0]
+  for (const id of removed) {
+    if (own.has(id)) continue
+    const c = shell.coords(id)
+    if ([0, 1, 2].some((a) => c[a]! < low[a]! - reach || c[a]! > high[a]! + reach)) continue
+    sx += c[0] - cx
+    sz += c[2] - cz
+  }
+  const length = Math.hypot(sx, sz)
+  return length < 1e-3 ? null : [sx / length, sz / length]
 }
 
 /** A point of `triangle`, uniform for uniform `u` and `v`. */

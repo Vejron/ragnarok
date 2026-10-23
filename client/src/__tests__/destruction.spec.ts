@@ -316,6 +316,25 @@ describe('a hurt building', () => {
     expect(positions()).toEqual(positions())
   })
 
+  it('lets a piece that lost its hold tip towards the gap, not straight down', () => {
+    const tile = tileWith()
+    const shell = shellOf(tile, 0)!
+    // A solid cell, and the next one along the wall that is solid too: that one is cut out, this one hangs on.
+    const hung = shell.cellAt(0, 2, 0)
+    const [hx, hy, hz] = shell.coords(hung)
+    const gap = [shell.index(hx + 1, hy, hz), shell.index(hx - 1, hy, hz), shell.index(hx, hy, hz + 1), shell.index(hx, hy, hz - 1)].find((id) => shell.isSolid(id))!
+    const [gx, , gz] = shell.coords(gap)
+    const damage = new BuildingDamage()
+    damage.attach(key, tile)
+    damage.carve(key, 0, [gap], [hung], [0, 2, 0], true)
+    const pieces = damage.root.children[0]!.children.filter((c) => c instanceof Mesh && c.geometry.colors && c.position.lengthSq() > 0) as Mesh[]
+    const start = pieces.map((m) => m.position.clone())
+    for (let i = 0; i < 30; i++) damage.update(0.02, { dust() {} } as never, new THREE.Vector3(1e6, 0, 0))
+    const moved = pieces.map((m, i) => m.position.clone().sub(start[i]!))
+    const towards = moved.some((d) => d.x * Math.sign(gx - hx) + d.z * Math.sign(gz - hz) > 0.2)
+    expect(towards).toBe(true)
+  })
+
   it('is cleared when it collapses, and not drawn again when the tile returns', () => {
     const damage = new BuildingDamage()
     damage.attach(key, tileWith())
