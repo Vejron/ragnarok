@@ -427,7 +427,7 @@ Client:
       it.
 - [x] **5.2** The server and the sim kind-free. Kind ids generated for the client.
 - [x] **5.3** One client presentation per kind. Sound, tyres, smoke, models and the editor read it.
-- [ ] **5.4** Measure: add a trial kind in a scratch worktree and count the files it touches.
+- [x] **5.4** Measure: add a trial kind in a scratch worktree and count the files it touches.
       Document how to add a kind.
 
 #### Guardrails
@@ -2124,3 +2124,62 @@ stickman's and the rooster's), not a vehicle's. No client code branches on a veh
 - `npm run build` succeeds.
 
 **Next:** 5.4, measure: a trial kind in a scratch worktree.
+
+### 2026-10-23: Phase 5.4, measured with a trial kind
+
+**The trial.** A van, which moves like a jeep, was added in a scratch worktree and then thrown away.
+It had its own health, three seats, its own seat heads, a heavier and slower chassis
+(`..JEEP.spec` with three fields changed), its own prompt and its own gearbox sound. The files it
+touched:
+
+| File | What |
+|---|---|
+| `crates/shared/src/consts.rs` | `KIND_VAN = 14` |
+| `crates/shared/src/vehicles/van.rs` (new) | its definition |
+| `crates/shared/src/vehicles.rs` | `mod van;` and its place in `VEHICLES` |
+| `client/src/kinds/van.ts` (new) | its presentation |
+| `client/src/kinds/index.ts` | its import and its place in `KINDS` |
+
+There were also two generated files (`tables.generated.json`, `consts.generated.ts`), and nothing else:
+no file under `net/`, `entities/` or `crates/sim`, and neither `game.ts` nor `protocol.rs`.
+
+The van reused the jeep's body. A kind with a model of its own adds its model file, so **5 files by
+hand, 6 with a new model**, against 38 for the loitering drone. A kind that moves in a new way adds a
+`Lift` and its system in `crates/sim` on top.
+
+**Checked in the trial:**
+
+- every suite passed with the van in: server 271, shared 68, sim 111, client 427;
+- `vue-tsc` was clean;
+- a throwaway sim test drove it 56 m in 5 s on flat ground, settled on its wheels.
+
+**Two fixes it called for**, made on the branch before the trial:
+
+- `seats.spec.ts` and `kinds.spec.ts` compared every kind with the old if-chains, so a new kind
+  would have failed them. They now cover only the twelve kinds the chains knew (`BEFORE`).
+- `VEHICLES` was `[VehicleDef; 12]`, so adding a kind meant editing that count. It is now a slice.
+
+**Optional for a new kind:**
+
+- the world's spawn mix (`mechanics/vehicles.rs`), so that it appears in worlds that are not edited;
+- the editor's palette (`editor/placements.ts`), so that it can be placed by hand;
+- HUD hints in `App.vue`, only for a new seat role.
+
+### Phase 5 done
+
+A vehicle kind is one Rust definition, one client presentation and one model:
+
+- the definition is its facts, crew, body, mounts, physics, armour and drone;
+- the presentation is its model, seats, sound and effects;
+- a lift system is new only when the kind moves in a new way.
+
+| | Start of Phase 5 | Now |
+|---|---|---|
+| Rust branches on a kind | 33 | 8, all the world's spawn mix |
+| Client branches on a kind | 49 | 2, both choosing a creature's presenter |
+| Files a new kind touches by hand | 15 to 17 (38 for the loitering drone) | 5, 6 with a model |
+
+**Still open:**
+
+- Phase 1's remaining mirrors: the codec, `terrain.ts` and `carve.ts`;
+- the deferred wire changes: owner-only components, and a `Seated` component.
