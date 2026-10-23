@@ -440,6 +440,59 @@ Client:
 - **Cost:** `full_room_tick_cost` before and after 5.1.
 - **Progress:** kind branches and files touched per new kind, logged at each step.
 
+### Phase 6: carving from one source
+
+**Goal.** How a building is cut into cells is written once, in Rust (`shared::carve`). The client gets
+it through the WebAssembly build, as its physics already does. `carve.ts` keeps only what the client
+alone asks of a building's cells.
+
+**Where it starts** (at `6091a29`). The client's physics already cuts buildings with Rust
+(`ClientSim::carve_building`). The renderer still has its own copy, about 250 of `carve.ts`'s 563 lines:
+
+- cutting walls and roof into cells: `sample`, `closeGaps`, `cellOfPoint`, `Shell.ofFlat`;
+- unpacking the cells the importer baked: `unpack`, `unpackListed`;
+- merging faces: `greedyFaces`, and `facesWithRoof`'s corners and winding;
+- `boxes`, which the client no longer uses;
+- finding the cell a round struck, the server's `chip`: `nearestCell`.
+
+Fixtures and cross-language tests hold the copy to Rust, so this phase is about writing a rule once,
+not about fixing drift.
+
+**A difference to settle first.** The client's `greedyFaces` visits only the standing cells, because a
+big building's grid is mostly empty. Rust's `greedy` walks every cell of every layer, so moving the
+work to WebAssembly as it is could make re-meshing big buildings slower.
+
+#### Design
+
+1. **Rust's `greedy` visits only the standing cells**, as the client's does, with the same faces in the
+   same order. The present dense version stays in the tests as the oracle.
+2. **Stateless WebAssembly functions** in `sim-wasm`, which take arrays and return typed arrays, so
+   nothing in WebAssembly memory has to be freed:
+   - the cells of a baked building, unpacked;
+   - the cells of a building cut from its triangles;
+   - the merged faces of a grid of keyed cells, as triangles with their keys;
+   - the standing cell nearest a point, as `chip` finds it.
+3. **`carve.ts` keeps the client's own queries** over flags Rust made: `isSolid`, `isRoof`, `centre`,
+   `cellAt`, `clusters` and `cells`. `voxels.ts` and `facesWithRoof` draw the faces Rust merged. The
+   renderer runs after `SimMotor.create` has initialised the module, so the calls can be synchronous.
+
+#### Steps
+
+- [ ] **6.1** Sparse `greedy` in Rust, held to the dense one over random grids and fixture buildings;
+      timed on a large building.
+- [ ] **6.2** The carve functions in `sim-wasm`; the client's `Shell`, `voxels.ts` and the renderers
+      on them; the copy deleted.
+- [ ] **6.3** Measure: `carve.ts` lines, building a tile's shells, and re-meshing a hit building, in
+      TypeScript before and WebAssembly after.
+
+#### Guardrails
+
+- `carve.spec.ts` and the destruction tests hold. The fixtures they compare with now test Rust through
+  WebAssembly, and the cross-language checks hold as before.
+- **Cost.** A tile's shells and a hit building's re-mesh must not get slower. If the copying in and out
+  of WebAssembly costs more than it saves, the merging stays in TypeScript, and only cutting, unpacking
+  and `chip` move.
+
 ## Baselines
 
 Taken on `refactor/ecs-migration` before any change (`b832836`), macOS arm64, Rust 1.97.1, Node 24.16.
