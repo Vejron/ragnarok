@@ -1,6 +1,8 @@
 use super::*;
-use crate::game::{Command, Game, Rocket, Seat};
-use shared::protocol::{KIND_JEEP, KIND_STRV, PROJECTILE_SHELL, WEAPON_SHELL};
+use crate::entities::Health;
+use super::super::projectiles::Flying;
+use crate::game::{Command, Game, Seat};
+use shared::protocol::{KIND_JEEP, KIND_PLANE, KIND_STRV, PROJECTILE_SHELL, WEAPON_SHELL};
 use shared::world::{Road, WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
 
@@ -94,7 +96,7 @@ fn game() -> Game {
         ..Default::default()
     };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.pickups.clear();
+    game.world.clear_pickups();
     for _ in 0..90 {
         game.step();
     }
@@ -102,7 +104,7 @@ fn game() -> Game {
 }
 
 fn of_kind(game: &Game, kind: u8) -> u32 {
-    *game.world.vehicles.iter().find(|(_, v)| v.kind == kind).expect("placed").0
+    game.world.entities.all::<Vehicle>().find(|(_, v)| v.kind == kind).expect("placed").0
 }
 
 /// Fires a shell at the middle of vehicle `vid` from 12 m away in the hull-frame direction `local_from`.
@@ -120,12 +122,12 @@ fn shoot_at(game: &mut Game, vid: u32, target: [f32; 3], local_from: [f32; 3]) -
     let len = flat.iter().map(|v| v * v).sum::<f32>().sqrt();
     let dir = flat.map(|v| v / len);
     let id = game.world.alloc_id();
-    game.world.rockets.insert(id, Rocket { kind: PROJECTILE_SHELL, owner: 0, source: 0, position: from, velocity: dir.map(|v| v * SHELL_SPEED), ttl: SHELL_TTL_TICKS, item: 0, back: 0, flown: 0.0 });
+    game.world.launch_as(id, Flying { kind: PROJECTILE_SHELL, owner: 0, source: 0, position: from, velocity: dir.map(|v| v * SHELL_SPEED), ttl: SHELL_TTL_TICKS, item: 0, back: 0, flown: 0.0 });
     let mut events = Vec::new();
     for _ in 0..40 {
         game.step();
         events.extend(game.world.shots.iter().copied());
-        if !game.world.rockets.contains_key(&id) {
+        if !game.world.in_flight().contains_key(&id) {
             break;
         }
     }
@@ -136,10 +138,10 @@ fn shoot_at(game: &mut Game, vid: u32, target: [f32; 3], local_from: [f32; 3]) -
 fn a_shell_into_the_side_of_a_strv_hurts_and_one_into_its_glacis_off_axis_glances_off() {
     let mut game = game();
     let vid = of_kind(&game, KIND_STRV);
-    let full = game.world.vehicles[&vid].hp;
+    let full = game.world.entities.of::<Health>(vid).hp;
     // Square onto its left side.
     shoot(&mut game, vid, [-1.0, 0.0, 0.0]);
-    let after_side = game.world.vehicles[&vid].hp;
+    let after_side = game.world.entities.of::<Health>(vid).hp;
     let side_damage = full - after_side;
     assert!(side_damage >= 90, "a square side hit hurts: {side_damage}");
     // 40 degrees off the nose at the middle of the glacis: a glancing blow.
@@ -147,19 +149,19 @@ fn a_shell_into_the_side_of_a_strv_hurts_and_one_into_its_glacis_off_axis_glance
     let events = shoot_at(&mut game, vid, [0.0, 0.0, -STRV_HALF_EXTENTS[2] + 0.05], [s, 0.0, -c]);
     assert!(events.iter().any(|e| e.weapon == WEAPON_RICOCHET && e.shooter == vid), "{events:?}");
     assert!(!events.iter().any(|e| e.weapon == WEAPON_SHELL), "a ricochet does not burst: {events:?}");
-    assert_eq!(game.world.vehicles[&vid].hp, after_side);
+    assert_eq!(game.world.entities.of::<Health>(vid).hp, after_side);
 }
 
 #[test]
 fn a_hit_from_behind_costs_more_than_one_into_the_nose() {
     let mut game = game();
     let vid = of_kind(&game, KIND_STRV);
-    let full = game.world.vehicles[&vid].hp;
+    let full = game.world.entities.of::<Health>(vid).hp;
     shoot(&mut game, vid, [0.0, 0.0, -1.0]);
-    let nose = full - game.world.vehicles[&vid].hp;
-    let before = game.world.vehicles[&vid].hp;
+    let nose = full - game.world.entities.of::<Health>(vid).hp;
+    let before = game.world.entities.of::<Health>(vid).hp;
     shoot(&mut game, vid, [0.0, 0.0, 1.0]);
-    let tail = before - game.world.vehicles[&vid].hp;
+    let tail = before - game.world.entities.of::<Health>(vid).hp;
     assert!(nose > 0 && tail > nose * 2, "nose {nose}, tail {tail}");
 }
 
@@ -176,18 +178,18 @@ fn enough_damage_to_the_turret_takes_it_off_and_kills_the_gunner() {
     let mut game = game();
     let vid = of_kind(&game, KIND_TANK);
     let gunner = join(&mut game);
-    game.world.vehicles.get_mut(&vid).unwrap().seats[1] = Some(gunner);
-    game.world.players.get_mut(&gunner).unwrap().seat = Some(Seat { vehicle: vid, index: 1, remote: false });
+    game.world.entities.get_mut::<Seats>(vid).unwrap()[1] = Some(gunner);
+    game.world.entities.get_mut::<Player>(gunner).unwrap().seat = Some(Seat { vehicle: vid, index: 1, remote: false });
     damage_turret(&mut game.world, vid, TANK_TURRET_HP / 2, None);
-    assert_eq!(game.world.vehicles[&vid].damage[DAMAGE_TURRET], 0, "still on");
-    assert_eq!(game.world.vehicles[&vid].seats[1], Some(gunner));
+    assert_eq!(game.world.entities.of::<Vehicle>(vid).damage[DAMAGE_TURRET], 0, "still on");
+    assert_eq!(game.world.entities.of::<Seats>(vid)[1], Some(gunner));
     damage_turret(&mut game.world, vid, TANK_TURRET_HP, None);
-    let vehicle = &game.world.vehicles[&vid];
+    let vehicle = &game.world.entities.of::<Vehicle>(vid);
     assert_eq!(vehicle.damage[DAMAGE_TURRET], TURRET_GONE);
-    assert_eq!(vehicle.seats[1], None);
-    assert!(!game.world.players[&gunner].alive(), "the gunner went with it");
+    assert_eq!(game.world.entities.of::<Seats>(vid).rider(1), None);
+    assert!(!game.world.entities.of::<Player>(gunner).alive(), "the gunner went with it");
     assert!(game.world.shots.iter().any(|shot| shot.weapon == WEAPON_TURRET));
-    assert!(vehicle.hp > 0, "the tank itself is not wrecked");
+    assert!(!game.world.entities.dead(vid), "the tank itself is not wrecked");
 }
 
 #[test]
@@ -195,13 +197,13 @@ fn a_tank_without_its_turret_cannot_fire_and_gets_one_back_on_respawn() {
     let mut game = game();
     let vid = of_kind(&game, KIND_TANK);
     damage_turret(&mut game.world, vid, 255, None);
-    assert_eq!(game.world.vehicles[&vid].damage[DAMAGE_TURRET], TURRET_GONE);
+    assert_eq!(game.world.entities.of::<Vehicle>(vid).damage[DAMAGE_TURRET], TURRET_GONE);
     // Wrecked and put back: the turret is on again.
     super::super::combat::damage_vehicle(&mut game.world, vid, 255, None);
     for _ in 0..(WRECK_TICKS + 5) {
         game.step();
     }
-    let vehicle = &game.world.vehicles[&vid];
+    let vehicle = &game.world.entities.of::<Vehicle>(vid);
     assert_eq!(vehicle.damage[DAMAGE_TURRET], 0);
     assert_eq!(vehicle.turret_hp, TANK_TURRET_HP);
 }
@@ -217,9 +219,9 @@ fn a_shell_into_a_tanks_turret_damages_the_turret() {
     let dir = [target[0] - from[0], target[1] - from[1], target[2] - from[2]];
     let len = dir.iter().map(|v| v * v).sum::<f32>().sqrt();
     let id = game.world.alloc_id();
-    game.world.rockets.insert(id, Rocket { kind: PROJECTILE_SHELL, owner: 0, source: 0, position: from, velocity: dir.map(|v| v / len * SHELL_SPEED), ttl: SHELL_TTL_TICKS, item: 0, back: 0, flown: 0.0 });
+    game.world.launch_as(id, Flying { kind: PROJECTILE_SHELL, owner: 0, source: 0, position: from, velocity: dir.map(|v| v / len * SHELL_SPEED), ttl: SHELL_TTL_TICKS, item: 0, back: 0, flown: 0.0 });
     for _ in 0..40 {
         game.step();
     }
-    assert!(game.world.vehicles[&vid].turret_hp < TANK_TURRET_HP, "turret took the hit");
+    assert!(game.world.entities.of::<Vehicle>(vid).turret_hp < TANK_TURRET_HP, "turret took the hit");
 }

@@ -1,7 +1,7 @@
 //! Items a player can carry in the hotbar. Mirrored in `client/src/sim/items.ts`.
 
 use crate::consts::TICK_RATE;
-use crate::protocol::{KIND_LOITER, WEAPON_DRONE, WEAPON_FLARE, WEAPON_GRENADE, WEAPON_LOITER, WEAPON_REVOLVER, WEAPON_RIFLE, WEAPON_SHOTGUN, WEAPON_SNIPER};
+use crate::protocol::{KIND_DRONE, KIND_LOITER, WEAPON_DRONE, WEAPON_FLARE, WEAPON_GRENADE, WEAPON_LOITER, WEAPON_REVOLVER, WEAPON_RIFLE, WEAPON_SHOTGUN, WEAPON_SNIPER};
 
 /// Slots in the hotbar. A player picks one with the `slot` field of their input.
 pub const HOTBAR_SLOTS: usize = 5;
@@ -33,9 +33,8 @@ pub enum ItemKind {
     Grenade,
     /// Used over time to restore health.
     Heal,
-    /// Launched, then flown by its owner as a drone vehicle, `KIND_DRONE` or `KIND_LOITER` (see the
-    /// `Drones` mechanic).
-    Drone,
+    /// Launched, then flown by its owner as a drone vehicle of this kind (see the `Drones` mechanic).
+    Drone(u8),
     /// Fires a flare: light, not harm.
     Flare,
 }
@@ -253,7 +252,7 @@ const GOLDEN_EGG: ItemDef = ItemDef {
 
 const DRONE: ItemDef = ItemDef {
     name: "FPV drone",
-    kind: ItemKind::Drone,
+    kind: ItemKind::Drone(KIND_DRONE),
     auto: false,
     // The blast's is `DRONE_DAMAGE`.
     damage: 0,
@@ -274,9 +273,9 @@ const DRONE: ItemDef = ItemDef {
 
 const LOITER: ItemDef = ItemDef {
     name: "Loitering drone",
-    kind: ItemKind::Drone,
+    kind: ItemKind::Drone(KIND_LOITER),
     auto: false,
-    // The blast's is `LOITER.damage` in `drone_def`.
+    // The blast's is its vehicle's `DroneDef::damage`.
     damage: 0,
     cooldown_ticks: TICK_RATE,
     mag: 0,
@@ -421,61 +420,6 @@ pub const LOITER_IMPACT_DV: f32 = 4.0;
 pub const LOITER_PROXIMITY: f32 = 2.0;
 pub const LOITER_FALL_TICKS: u32 = 8 * TICK_RATE;
 
-/// What a drone kind does in the `Drones` mechanic: how long and how far it flies, and its charge.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct DroneDef {
-    pub energy_ticks: u32,
-    pub range: f32,
-    pub blast_radius: f32,
-    pub damage: f32,
-    pub knock: f32,
-    pub pop_radius: f32,
-    pub pop_damage: f32,
-    pub impact_dv: f32,
-    pub proximity: f32,
-    pub fall_ticks: u32,
-    /// What its blast is credited as.
-    pub weapon: u8,
-}
-
-const FPV: DroneDef = DroneDef {
-    energy_ticks: DRONE_ENERGY_TICKS,
-    range: DRONE_RANGE,
-    blast_radius: DRONE_BLAST_RADIUS,
-    damage: DRONE_DAMAGE,
-    knock: DRONE_KNOCK,
-    pop_radius: DRONE_POP_RADIUS,
-    pop_damage: DRONE_POP_DAMAGE,
-    impact_dv: DRONE_IMPACT_DV,
-    proximity: DRONE_PROXIMITY,
-    fall_ticks: DRONE_FALL_TICKS,
-    weapon: WEAPON_DRONE,
-};
-
-const LOITERING: DroneDef = DroneDef {
-    energy_ticks: LOITER_ENERGY_TICKS,
-    range: LOITER_RANGE,
-    blast_radius: LOITER_BLAST_RADIUS,
-    damage: LOITER_DAMAGE,
-    knock: LOITER_KNOCK,
-    pop_radius: LOITER_POP_RADIUS,
-    pop_damage: LOITER_POP_DAMAGE,
-    impact_dv: LOITER_IMPACT_DV,
-    proximity: LOITER_PROXIMITY,
-    fall_ticks: LOITER_FALL_TICKS,
-    weapon: WEAPON_LOITER,
-};
-
-/// The drone def of vehicle `kind`: a loitering drone's, else the FPV drone's.
-pub fn drone_def(kind: u8) -> &'static DroneDef {
-    if kind == KIND_LOITER { &LOITERING } else { &FPV }
-}
-
-/// The drone vehicle kind item `item` launches.
-pub fn drone_kind(item: u8) -> u8 {
-    if item == ITEM_LOITER { KIND_LOITER } else { crate::protocol::KIND_DRONE }
-}
-
 /// Ground pickups. A player in `PICKUP_RADIUS` of one who presses use takes it.
 pub const PICKUP_RADIUS: f32 = 2.0;
 /// Pickups in the world, and how long a taken one stays away.
@@ -488,10 +432,10 @@ pub const MAX_PICKUPS_PER_SNAPSHOT: usize = 24;
 mod tests {
     use super::*;
 
-    /// The item table and the scalar constants the client mirrors, as JSON. `fixtures/parity/
-    /// gameplay.json` holds the committed copy, which `client/src/__tests__/parity.spec.ts` checks the
-    /// TypeScript tables against. After an intended change, regenerate it with `UPDATE_PARITY=1 cargo
-    /// test -p shared parity` and update `client/src/sim/items.ts` to match.
+    /// The item, vehicle and tree tables, and the scalar constants the client mirrors, as JSON, each
+    /// table in its Rust order. `client/src/sim/tables.generated.json` holds the committed copy, which
+    /// the client builds its tables from (`sim/items.ts`, `sim/vehicles.ts`, `world.ts`). After a change
+    /// to a table, regenerate it with `UPDATE_PARITY=1 cargo test -p shared parity`.
     fn parity_json() -> String {
         let items: Vec<String> = (1..ITEM_COUNT)
             .map(|id| {
@@ -500,11 +444,11 @@ mod tests {
                     ItemKind::Gun => "gun",
                     ItemKind::Grenade => "grenade",
                     ItemKind::Heal => "heal",
-                    ItemKind::Drone => "drone",
+                    ItemKind::Drone(_) => "drone",
                     ItemKind::Flare => "flare",
                 };
                 format!(
-                    "    \"{id}\": {{\"name\": \"{}\", \"kind\": \"{kind}\", \"auto\": {}, \"damage\": {}, \"cooldownTicks\": {}, \"mag\": {}, \"reloadTicks\": {}, \"range\": {}, \"aimSpeed\": {}, \"scope\": {}, \"stack\": {}, \"weapon\": {}, \"projectile\": {}, \"pellets\": {}, \"falloffStart\": {}, \"falloffEnd\": {}, \"falloffMin\": {}}}",
+                    "    {{\"id\": {id}, \"name\": \"{}\", \"kind\": \"{kind}\", \"auto\": {}, \"damage\": {}, \"cooldownTicks\": {}, \"mag\": {}, \"reloadTicks\": {}, \"range\": {}, \"aimSpeed\": {}, \"scope\": {}, \"stack\": {}, \"weapon\": {}, \"projectile\": {}, \"pellets\": {}, \"falloffStart\": {}, \"falloffEnd\": {}, \"falloffMin\": {}}}",
                     d.name, d.auto, d.damage, d.cooldown_ticks, d.mag, d.reload_ticks, d.range, d.aim_speed, d.scope, d.stack, d.weapon, d.projectile, d.pellets, d.falloff.start, d.falloff.end, d.falloff.min
                 )
             })
@@ -512,12 +456,16 @@ mod tests {
         let vehicles: Vec<String> = crate::vehicles::VEHICLES
             .iter()
             .map(|d| {
-                let [hx, hy, hz] = d.half_extents;
+                let [hx, hy, hz] = d.half_extents();
                 let heads: Vec<String> = d.seat_heads.iter().map(|[x, y, z]| format!("[{x}, {y}, {z}]")).collect();
                 let heads = heads.join(", ");
+                let mount_seat = d.mount_seat.map_or("null".to_string(), |seat| {
+                    let ([px, py, pz], [x, y, z]) = (seat.pivot, seat.head);
+                    format!("{{\"pivot\": [{px}, {py}, {pz}], \"head\": [{x}, {y}, {z}]}}")
+                });
                 format!(
-                    "    \"{}\": {{\"name\": \"{}\", \"hp\": {}, \"seats\": {}, \"halfExtents\": [{hx}, {hy}, {hz}], \"gun\": {}, \"arms\": {}, \"carWheels\": {}, \"trackHalf\": {}, \"axleZ\": {}, \"crew\": \"{}\", \"crewGuns\": {}, \"seatHeads\": [{}]}}",
-                    d.kind, d.name, d.hp, d.seats, d.gun, d.arms, d.car_wheels, d.track_half, d.axle_z, d.crew.name(), d.crew_guns, heads
+                    "    {{\"kind\": {}, \"name\": \"{}\", \"hp\": {}, \"seats\": {}, \"halfExtents\": [{hx}, {hy}, {hz}], \"gun\": {}, \"arms\": {}, \"carWheels\": {}, \"trackHalf\": {}, \"axleZ\": {}, \"crew\": \"{}\", \"crewGuns\": {}, \"seatHeads\": [{}], \"mountSeat\": {mount_seat}, \"legged\": {}, \"heavy\": {}, \"towed\": {}, \"shedsTurret\": {}, \"drone\": {}}}",
+                    d.kind, d.name, d.hp, d.seats, d.gun(), d.arms(), d.car_wheels, d.track_half(), d.axle_z(), d.crew.name(), d.crew_guns, heads, d.body.legs > 0.0, d.body.heavy, d.body.towed, d.sheds_turret(), d.drone.is_some()
                 )
             })
             .collect();
@@ -525,7 +473,7 @@ mod tests {
             .iter()
             .map(|d| {
                 format!(
-                    "    \"{}\": {{\"name\": \"{}\", \"radius\": {}, \"refHeight\": {}, \"radiusPctOfCrown\": {}, \"maxRadius\": {}, \"colliderHeightPct\": {}, \"destructible\": {}}}",
+                    "    {{\"kind\": {}, \"name\": \"{}\", \"radius\": {}, \"refHeight\": {}, \"radiusPctOfCrown\": {}, \"maxRadius\": {}, \"colliderHeightPct\": {}, \"destructible\": {}}}",
                     d.kind, d.name, d.radius, d.ref_height, d.radius_pct_of_crown, d.max_radius, d.collider_height_pct, d.destructible
                 )
             })
@@ -546,7 +494,7 @@ mod tests {
         ];
         let lines: Vec<String> = consts.iter().map(|(name, value)| format!("    \"{name}\": {value}")).collect();
         format!(
-            "{{\n  \"items\": {{\n{}\n  }},\n  \"vehicles\": {{\n{}\n  }},\n  \"treeKinds\": {{\n{}\n  }},\n  \"consts\": {{\n{}\n  }}\n}}\n",
+            "{{\n  \"items\": [\n{}\n  ],\n  \"vehicles\": [\n{}\n  ],\n  \"treeKinds\": [\n{}\n  ],\n  \"consts\": {{\n{}\n  }}\n}}\n",
             items.join(",\n"),
             vehicles.join(",\n"),
             tree_kinds.join(",\n"),
@@ -556,14 +504,14 @@ mod tests {
 
     #[test]
     fn parity_fixture_matches_the_tables() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/parity/gameplay.json");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../client/src/sim/tables.generated.json");
         let actual = parity_json();
         if std::env::var_os("UPDATE_PARITY").is_some() {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, &actual).unwrap();
         }
-        let committed = std::fs::read_to_string(&path).expect("fixtures/parity/gameplay.json; regenerate with UPDATE_PARITY=1");
-        assert_eq!(committed, actual, "gameplay tables changed: regenerate the fixture and update client/src/sim/items.ts");
+        let committed = std::fs::read_to_string(&path).expect("client/src/sim/tables.generated.json; regenerate with UPDATE_PARITY=1");
+        assert_eq!(committed, actual, "gameplay tables changed: regenerate client/src/sim/tables.generated.json with UPDATE_PARITY=1");
     }
 
     #[test]

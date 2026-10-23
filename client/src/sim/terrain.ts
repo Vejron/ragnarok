@@ -1,5 +1,5 @@
 import type { TileData, TileRef, WorldData } from '@/world'
-import { f32 } from './movement'
+import { f32 } from './round'
 
 /**
  * One tile's ground, positioned in the world. `heights` is row-major, rows along +Z, with `side`

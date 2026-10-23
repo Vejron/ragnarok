@@ -1,6 +1,7 @@
 import { audioContext } from './audio'
 import { SampleBank } from './sfx'
-import { KIND_DRONE, KIND_HELI, KIND_LOITER, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK } from '@/net/codec'
+import { kindView } from '@/kinds'
+import type { KindSound } from '@/kinds/kind'
 import { crashSize, landingThud, mixOf, type SoundInput, type SoundMix } from '@/sim/engine'
 
 /**
@@ -81,7 +82,7 @@ class Voice {
 
   constructor(
     private readonly ctx: BaseAudioContext,
-    kind: number,
+    sound: KindSound,
     master: AudioNode,
   ) {
     this.fade = ctx.createGain()
@@ -97,24 +98,8 @@ class Voice {
     this.engine.connect(this.stutter)
     this.tone = ctx.createBiquadFilter()
     this.tone.type = 'lowpass'
-    // A rotary's buzz is in its harmonics, with a nasal peak on them.
-    this.tone.Q.value = kind === KIND_PLANE ? 2.5 : 1.2
-    this.tone.frequency.value = 400
-    this.tone.connect(this.engine)
-    const parts: [OscillatorType, number, number][] =
-      kind === KIND_HELI ? [['sawtooth', 1, 0.5], ['square', 0.5, 0.3]]
-      : kind === KIND_PLANE ? [['square', 1, 0.4], ['sawtooth', 2, 0.22], ['square', 0.5, 0.3], ['sawtooth', 4.02, 0.08]]
-      : kind === KIND_TANK ? [['sawtooth', 1, 0.5], ['square', 0.5, 0.4], ['sawtooth', 1.51, 0.12]]
-      : kind === KIND_STRV ? [['sawtooth', 1, 0.5], ['square', 0.5, 0.3], ['sawtooth', 2.01, 0.15]]
-      : kind === KIND_SPORTS ? [['sawtooth', 1, 0.42], ['square', 0.5, 0.25], ['triangle', 3.02, 0.2]]
-      // An electric motor: a clean whine and its inverter's harmonic, no combustion.
-      : kind === KIND_ROADSTER ? [['sine', 1, 0.5], ['triangle', 2, 0.25], ['sine', 7.03, 0.06]]
-      // A drone's props, slightly out of step with each other, so the whine beats.
-      : kind === KIND_DRONE ? [['sawtooth', 1, 0.35], ['sawtooth', 1.013, 0.3], ['square', 2.01, 0.12]]
-      // A loitering drone's small two-stroke: a rasping buzz, its cylinders a little out of step.
-      : kind === KIND_LOITER ? [['sawtooth', 1, 0.5], ['sawtooth', 1.021, 0.35], ['square', 2, 0.2], ['square', 0.5, 0.25]]
-      : [['sawtooth', 1, 0.5], ['square', 0.5, 0.35], ['sawtooth', 1.5, 0.15]]
-    for (const [type, ratio, level] of parts) {
+    this.tone.Q.value = sound.q
+    for (const [type, ratio, level] of sound.voices) {
       const node = ctx.createOscillator()
       node.type = type
       node.frequency.value = 50 * ratio
@@ -149,8 +134,8 @@ class Voice {
     const chopped = ctx.createGain()
     chopped.gain.value = 0
     const chopFilter = ctx.createBiquadFilter()
-    chopFilter.type = kind === KIND_TANK || kind === KIND_STRV || kind === KIND_PLANE ? 'bandpass' : 'lowpass'
-    chopFilter.frequency.value = kind === KIND_TANK || kind === KIND_STRV ? 650 : kind === KIND_PLANE ? 220 : 260
+    chopFilter.type = sound.chop.type
+    chopFilter.frequency.value = sound.chop.hz
     noise.connect(chopFilter).connect(chopped).connect(this.tone)
     this.beat = ctx.createOscillator()
     this.beat.frequency.value = 10
@@ -331,7 +316,7 @@ export class VehicleSounds {
         (velocity[0] - this.listenerVelocity[0]) * away[0] + (velocity[1] - this.listenerVelocity[1]) * away[1] + (velocity[2] - this.listenerVelocity[2]) * away[2]
       doppler = Math.min(1.25, Math.max(0.8, SPEED_OF_SOUND / (SPEED_OF_SOUND - Math.min(closing, 250))))
     }
-    this.candidates.push({ id, kind: input.kind, distance, own, mix: mixOf(input), position, doppler })
+    this.candidates.push({ id, kind: input.kind, distance, own, mix: mixOf(input, kindView(input.kind).sound.engine), position, doppler })
   }
 
   /** Starts, updates and stops voices for what was reported since `begin`. */
@@ -345,7 +330,7 @@ export class VehicleSounds {
       chosen.add(candidate.id)
       let voice = this.voices.get(candidate.id)
       if (!voice) {
-        voice = new Voice(ctx, candidate.kind, this.master)
+        voice = new Voice(ctx, kindView(candidate.kind).sound, this.master)
         this.voices.set(candidate.id, voice)
       }
       voice.moveTo(candidate.own ? this.listener : candidate.position)

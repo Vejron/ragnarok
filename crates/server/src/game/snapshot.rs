@@ -1,120 +1,44 @@
-//! Building each player's snapshot: what the world looks like on the wire, per entity kind, and
-//! the per-player part (own state, driver motion) that goes with it.
+//! Sending each player's snapshot: the world as components (`replicate.rs`) and the per-player part
+//! (own state, driver motion) that goes with it.
 
 use super::*;
 
+/// The world as a client is told it (`Game::replicated`), by what each thing is, for tests that ask
+/// what a client is shown.
+#[cfg(test)]
 impl Game {
-    /// Standing players (and those flying a drone, who kneel where they stood), then the living
-    /// roosters. Seated players are shown by their vehicle instead.
-    pub fn entity_states(&self) -> Vec<EntityState> {
-        let roosters = self.world.roosters.iter().filter(|(_, rooster)| rooster.alive()).map(|(&id, rooster)| {
-            let [x, y, z] = rooster.position;
-            let mut flags = FLAG_GROUNDED;
-            if rooster.mode == RoosterMode::Crow {
-                flags |= FLAG_CROWING;
-            }
-            EntityState { id, kind: KIND_ROOSTER, x: to_cm(x), y: to_cm(y), z: to_cm(z), yaw: to_mrad(rooster.yaw), vy: 0, flags, stance: STANCE_STANDING, knock_x: 0, knock_z: 0 }
-        });
-        self.world
-            .players
-            .iter()
-            .filter(|(_, player)| player.embodied())
-            .map(|(&id, player)| {
-                let c = &player.character;
-                let mut flags = 0;
-                if c.grounded {
-                    flags |= FLAG_GROUNDED;
-                }
-                if !player.alive() {
-                    flags |= FLAG_DEAD;
-                }
-                // Flying a drone, the body kneels over the controls.
-                if player.input.buttons() & BUTTON_CROUCH != 0 || player.seat.is_some() {
-                    flags |= FLAG_CROUCHING;
-                }
-                flags |= (player.held().item << FLAG_HELD_SHIFT) & FLAG_HELD_MASK;
-                EntityState { id, kind: KIND_STICKMAN, x: to_cm(c.position[0]), y: to_cm(c.position[1]), z: to_cm(c.position[2]), yaw: to_mrad(c.yaw), vy: to_cm_i16(c.vy), flags, stance: if c.chute { STANCE_CHUTE } else if c.prone { STANCE_PRONE } else { STANCE_STANDING }, knock_x: to_cm_i16(c.knock[0]), knock_z: to_cm_i16(c.knock[1]) }
-            })
-            .chain(roosters)
-            .collect()
+    /// What a client is told of entity `id`, if anything.
+    pub fn seen(&self, id: u32) -> Option<shared::replicated::Replicated> {
+        self.replicated().into_iter().find(|(seen, _)| *seen == id).map(|(_, entity)| entity)
     }
 
-    pub fn vehicle_states(&self) -> Vec<VehicleState> {
-        self.world
-            .vehicles
-            .iter()
-            .filter_map(|(&id, vehicle)| {
-                let pose = self.world.physics.car_pose(id)?;
-                let [x, y, z] = pose.position;
-                let [qx, qy, qz] = pack_quat(pose.rotation);
-                let seats = vehicle.seats[..seat_count(vehicle.kind)].iter().map(|seat| seat.unwrap_or(0)).collect();
-                // A hitched mortar is drawn folded up for travel.
-                let flags = if self.world.physics.towed_by(id).is_some() { TURRET_STOWED } else { 0 };
-                let turret = vehicle.gun.map(|gun| Turret { yaw: to_mrad(gun.yaw), pitch: to_mrad(gun.pitch), shots: gun.shots, range: (gun.range * 10.0).round().clamp(0.0, u16::MAX as f32) as u16, flags });
-                let damage = (vehicle.damage != [0; 8]).then_some(vehicle.damage);
-                let arms = vehicle.arms.map(|arms| {
-                    let rear = vehicle.gun.unwrap_or_default();
-                    let mut flags = 0;
-                    if vehicle.controls.powered && vehicle.controls.lift < -0.5 {
-                        flags |= ARMS_CUT;
-                    }
-                    if arms.jammed {
-                        flags |= ARMS_JAMMED;
-                    }
-                    if rear.jammed {
-                        flags |= ARMS_REAR_JAMMED;
-                    }
-                    Arms { shots: arms.shots, heat: heat_byte(arms.heat), rear_heat: heat_byte(rear.heat), bombs: arms.bombs, flags }
-                });
-                let thrust = match vehicle.drone {
-                    Some(drone) => Some(Thrust { air: battery_byte(&drone), flags: if drone.linked { THRUST_LINKED } else { 0 } }),
-                    None => self.world.physics.car_thrust(id).map(|(tank, flags)| Thrust { air: air_byte(tank), flags }),
-                };
-                // Where each of a crew that shows looks, and what they hold, so they can be drawn sitting.
-                let crew = if shared::vehicles::vehicle_def(vehicle.kind).crew == shared::vehicles::Exposure::Sealed {
-                    Vec::new()
-                } else {
-                    vehicle.seats[..seat_count(vehicle.kind)]
-                        .iter()
-                        .map(|seat| {
-                            seat.and_then(|rider| self.world.players.get(&rider)).map_or(Rider::default(), |player| Rider { yaw: player.input.yaw, pitch: player.input.pitch(), held: player.held().item })
-                        })
-                        .collect()
-                };
-                Some(VehicleState { id, kind: vehicle.kind, x: to_cm(x), y: to_cm(y), z: to_cm(z), qx, qy, qz, steer: to_axis(pose.steer), seats, turret, hp: vehicle.hp, damage, arms, thrust, crew })
-            })
-            .collect()
+    /// The replicated entities `which` picks, by id.
+    pub fn seen_where(&self, which: impl Fn(&shared::replicated::Replicated) -> bool) -> Vec<(u32, shared::replicated::Replicated)> {
+        self.replicated().into_iter().filter(|(_, entity)| which(entity)).collect()
     }
 
+    /// Stickmen and creatures of `kind` on foot.
+    pub fn seen_people(&self, kind: u8) -> Vec<(u32, shared::replicated::Replicated)> {
+        self.seen_where(|e| e.orientation.is_none() && e.projectile.is_none() && e.pickup.is_none() && e.kind.as_ref().is_some_and(|k| k.kind == kind))
+    }
+
+    pub fn seen_vehicles(&self) -> Vec<(u32, shared::replicated::Replicated)> {
+        self.seen_where(|e| e.orientation.is_some())
+    }
+
+    pub fn seen_projectiles(&self) -> Vec<(u32, shared::replicated::Replicated)> {
+        self.seen_where(|e| e.projectile.is_some())
+    }
+
+    pub fn seen_pickups(&self) -> Vec<(u32, shared::replicated::Replicated)> {
+        self.seen_where(|e| e.pickup.is_some())
+    }
+}
+
+impl Game {
     /// The motion of the vehicle `id` drives, for their own prediction; `None` for anyone else.
-    pub fn projectile_states(&self) -> Vec<ProjectileState> {
-        self.world
-            .rockets
-            .iter()
-            .filter(|(_, rocket)| rocket.kind != PROJECTILE_BULLET)
-            .map(|(&id, rocket)| {
-                let [x, y, z] = rocket.position.map(to_cm);
-                let [vx, vy, vz] = rocket.velocity.map(to_cm_i16);
-                ProjectileState { id, kind: rocket.kind, x, y, z, vx, vy, vz }
-            })
-            .collect()
-    }
-
-    /// Items lying on the ground, ordered by id.
-    pub fn pickup_states(&self) -> Vec<PickupState> {
-        self.world
-            .pickups
-            .iter()
-            .filter(|(_, pickup)| pickup.respawn_in == 0)
-            .map(|(&id, pickup)| {
-                let [x, y, z] = pickup.position.map(to_cm);
-                PickupState { id, item: pickup.item, x, y, z }
-            })
-            .collect()
-    }
-
     pub(crate) fn drive_state(&self, id: u32) -> Option<DriveState> {
-        let seat = self.world.players.get(&id)?.seat?;
+        let seat = self.world.entities.get::<Player>(id)?.seat?;
         if seat.index != 0 {
             return None;
         }
@@ -125,20 +49,17 @@ impl Game {
     }
 
     pub(super) fn send_snapshots(&mut self) {
-        let entities = self.entity_states();
-        let vehicles = self.vehicle_states();
-        let rockets = self.projectile_states();
-        let pickups = self.pickup_states();
+        let scene = self.replicated();
         let mut shots = std::mem::take(&mut self.world.shots);
         shots.truncate(MAX_SHOT_EVENTS);
         // Each bullet goes out in a couple of snapshots, so a lost datagram does not lose it.
         let now = self.world.tick;
         self.world.bullets.retain(|b| now.wrapping_sub(b.tick) <= 2 * SNAPSHOT_EVERY);
         let bullets = self.world.bullets.clone();
-        let everything = Everything { entities: &entities, vehicles: &vehicles, shots: &shots, rockets: &rockets, pickups: &pickups, bullets: &bullets };
+        let everything = Everything { scene: &scene, shots: &shots, bullets: &bullets };
         let ids: Vec<u32> = self.outboxes.keys().copied().collect();
         for id in ids {
-            let Some(player) = self.world.players.get(&id) else { continue };
+            let Some(player) = self.world.entities.get::<Player>(id) else { continue };
             let own = Own { tick: self.world.tick, ack: player.ack, ride: player.character.ride, drive: self.drive_state(id),
                 me: SelfState { hp: player.hp, progress: progress(player), slots: player.hotbar.to_vec() },
             };

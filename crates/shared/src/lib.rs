@@ -5,11 +5,12 @@
 
 pub mod carve;
 pub mod consts;
-pub mod delta;
 pub mod items;
+pub mod mounts;
 pub mod movement;
 pub mod protocol;
 pub mod quant;
+pub mod replicated;
 pub mod terrain;
 pub mod vehicles;
 pub mod world;

@@ -35,7 +35,18 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: client/package-lock.json
+      # The stickman's prediction runs the server's physics, built to WASM from crates/sim-wasm.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          # The version crates/sim-wasm/Cargo.toml pins.
+          tool: wasm-bindgen@0.2.129
       - run: npm ci
+      - name: Build WASM
+        run: npm run build:wasm
       - name: Type-check
         run: npm run type-check
       - name: Lint

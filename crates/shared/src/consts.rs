@@ -1,7 +1,35 @@
 //! Simulation and network constants. `client/scripts/gen-consts.ts` generates the client's copy from this file: run `npm run gen:consts` in `client` after editing.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 38;
+pub const PROTOCOL_VERSION: u8 = 39;
+
+/// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
+/// `crate::vehicles`.
+pub const KIND_STICKMAN: u8 = 0;
+/// A Hedemora rooster, an NPC. Replicated like a stickman, with its own model.
+pub const KIND_ROOSTER: u8 = 5;
+/// Vehicle kinds: replicated with an `orientation`.
+pub const KIND_JEEP: u8 = 1;
+pub const KIND_TANK: u8 = 2;
+pub const KIND_HELI: u8 = 3;
+pub const KIND_SPORTS: u8 = 4;
+/// The triplane. 5 is the rooster's.
+pub const KIND_PLANE: u8 = 6;
+/// The two-legged walker. 5 is the rooster's.
+pub const KIND_WALKER: u8 = 7;
+/// The turretless Strv S tank, one seat.
+pub const KIND_STRV: u8 = 8;
+/// The towed field mortar, one seat for its gunner.
+pub const KIND_MORTAR: u8 = 9;
+/// The Tesla Roadster, a sports car with cold-gas thrusters: boost, hop and hover. Two seats.
+pub const KIND_ROADSTER: u8 = 10;
+/// An FPV drone, flown from afar by the player who launched it. Gone once it blows up or its pilot lets go.
+pub const KIND_DRONE: u8 = 11;
+/// The hen: a giant robot hen on the walker's legs that jumps, flaps and glides, and lays egg bombs. One seat.
+pub const KIND_HEN: u8 = 12;
+/// A loitering drone: a Shahed-sized delta wing with a big warhead, flown from afar like an FPV drone
+/// but launched high above and behind its pilot, and always cruising forward.
+pub const KIND_LOITER: u8 = 13;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -106,7 +134,7 @@ pub const PRONE_RADIUS: f32 = 0.3;
 /// Capsule-centre height above the feet, standing and prone.
 pub const STAND_CENTRE: f32 = CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS;
 pub const PRONE_CENTRE: f32 = PRONE_RADIUS;
-/// Stance, as `EntityState::stance` on the wire. Crouching is a held button, not a stance.
+/// Stance, as `replicated::Flags::stance` on the wire. Crouching is a held button, not a stance.
 pub const STANCE_STANDING: u8 = 0;
 pub const STANCE_PRONE: u8 = 1;
 /// Hanging under an open parachute.
@@ -297,6 +325,9 @@ pub const WALKER_GRIP: f32 = 8.0;
 /// Yaw rate at full stick, rad/s, and the angular acceleration towards it, rad/s².
 pub const WALKER_TURN_RATE: f32 = 1.7;
 pub const WALKER_TURN_ACCEL: f32 = 8.0;
+/// Gravity acting on vehicle bodies. Stickmen use `GRAVITY`; the ray-cast suspension is tuned
+/// around the real-world value.
+pub const CAR_GRAVITY: f32 = 9.81;
 /// Leg spring and damper, per kilogram of the whole body for the pair: the spring settles at
 /// `CAR_GRAVITY / WALKER_LEG_SPRING` of compression.
 pub const WALKER_LEG_SPRING: f32 = 80.0;

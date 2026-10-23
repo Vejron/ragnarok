@@ -4,10 +4,11 @@
 //! A building's walls and roof (the triangles `osm-import` made) are turned into cubes: the cells
 //! of a regular grid they pass through. The building is drawn and collided with as those cubes.
 //! The server decides which cells a blast removes and which are left unsupported, and tells
-//! everyone the cell numbers; the clients cut the same cells the same way and draw and collide
-//! with what is left. Everything that both sides must agree on is integer arithmetic on
-//! centimetres, so a cell and the faces of the cubes are the same in Rust and in
-//! `client/src/sim/carve.ts` (pinned by `cell_numbers_match_the_fixture` and `carve.spec.ts`).
+//! everyone the cell numbers; the clients cut the same cells with this same code, built to
+//! WebAssembly (`crates/sim-wasm`: the physics through `ClientSim`, the drawing through the `carve_*`
+//! functions that `client/src/sim/carve.ts` wraps), and draw and collide with what is left. It is
+//! integer arithmetic on centimetres, and `cell_numbers_match_the_fixture` and `carve.spec.ts` pin
+//! the numbers.
 //!
 //! The floor is not carved: it is never part of the cells.
 //!
@@ -362,31 +363,7 @@ impl Shell {
     /// nothing, and the result is empty.
     pub fn chip(&self, removed: &mut [bool], hp: &mut [u8], at: [i32; 3], amount: u8) -> Cut {
         let mut cut = Cut::default();
-        let range = |a: usize| {
-            let lo = ((at[a] as i64 - self.cell as i64 - self.origin[a] as i64).div_euclid(self.cell as i64)).clamp(0, self.dims[a] as i64 - 1);
-            let hi = ((at[a] as i64 + self.cell as i64 - self.origin[a] as i64).div_euclid(self.cell as i64)).clamp(0, self.dims[a] as i64 - 1);
-            lo as usize..=hi as usize
-        };
-        let mut nearest: Option<(i64, u32)> = None;
-        for y in range(1) {
-            for z in range(2) {
-                for x in range(0) {
-                    let id = self.index(x, y, z);
-                    if !self.solid[id as usize] || removed[id as usize] {
-                        continue;
-                    }
-                    let c = self.centre(id);
-                    let d = (0..3).map(|a| (c[a] as i64 - at[a] as i64).pow(2)).sum::<i64>();
-                    if nearest.is_none_or(|(best, _)| d < best) {
-                        nearest = Some((d, id));
-                    }
-                }
-            }
-        }
-        let Some((d, id)) = nearest else { return cut };
-        if d > (self.cell as i64) * (self.cell as i64) * 3 / 2 {
-            return cut;
-        }
+        let Some(id) = nearest_standing(self.origin, self.dims, at, |id| self.solid[id as usize] && !removed[id as usize]) else { return cut };
         let left = hp[id as usize].saturating_sub(amount);
         hp[id as usize] = left;
         if left > 0 {
@@ -433,28 +410,22 @@ impl Shell {
     /// in `removed`) that look onto a cell with nothing standing in it, as triangles in centimetres,
     /// wound counter-clockwise seen from outside the cube. Neighbouring faces of wall cubes, and of
     /// roof cubes, are merged into rectangles as `greedy` does, so a plain wall is two triangles a
-    /// side, and the clients draw the same faces in the wall's and the roof's colours. Mirrored by
-    /// `Shell.faces`.
+    /// side, and the clients draw the same faces in the wall's and the roof's colours (`faces_of`).
     pub fn faces(&self, removed: &[bool]) -> Vec<Tri> {
         let keys: Vec<i32> = (0..self.solid.len()).map(|i| if self.solid[i] && !removed[i] { i32::from(self.roof[i]) } else { -1 }).collect();
         let mut out = Vec::new();
-        greedy(self.dims, &keys, |face| {
-            let corner = |du: usize, dv: usize| {
-                let mut p = [0i32; 3];
-                p[face.d] = self.origin[face.d] + (face.i + usize::from(face.side > 0)) as i32 * self.cell;
-                p[face.u] = self.origin[face.u] + (face.a + du * face.w) as i32 * self.cell;
-                p[face.v] = self.origin[face.v] + (face.b + dv * face.h) as i32 * self.cell;
-                p
-            };
-            let [p0, p1, p2, p3] = [corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1)];
-            let tri = |a: [i32; 3], b: [i32; 3], c: [i32; 3]| [a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]];
-            if face.side > 0 {
-                out.extend([tri(p0, p1, p2), tri(p0, p2, p3)]);
-            } else {
-                out.extend([tri(p0, p2, p1), tri(p0, p3, p2)]);
-            }
-        });
+        faces_of(self.origin, self.dims, &keys, |tri, _| out.push(tri));
         out
+    }
+
+    /// Whether each cell holds a piece of wall or roof, in cell number order.
+    pub fn solid_flags(&self) -> &[bool] {
+        &self.solid
+    }
+
+    /// Whether the roof passes through each cell, in cell number order.
+    pub fn roof_flags(&self) -> &[bool] {
+        &self.roof
     }
 
     /// What the building is collided with: its standing cubes (solid, not in `removed`) merged into
@@ -462,7 +433,6 @@ impl Shell {
     /// cells in number order, each standing cell not yet in a box starts one, which grows first
     /// along x, then along z while the whole row is standing and free, then up while the whole layer
     /// is. A wall is then a box or two a floor, where its faces would be hundreds of triangles.
-    /// Mirrored by `Shell.boxes`.
     pub fn boxes(&self, removed: &[bool]) -> Vec<[i32; 6]> {
         let [nx, ny, nz] = self.dims;
         let mut free: Vec<bool> = (0..self.solid.len()).map(|i| self.solid[i] && !removed[i]).collect();
@@ -509,11 +479,63 @@ impl Shell {
     }
 }
 
+/// The standing cell nearest `at` (centimetres) of a grid of `dims` cells from `origin`, looking at the
+/// cell `at` is in and those around it, if its middle is within a cell's reach: where a round that
+/// landed there struck. The first in cell order wins a tie.
+pub fn nearest_standing(origin: [i32; 3], dims: [usize; 3], at: [i32; 3], standing: impl Fn(u32) -> bool) -> Option<u32> {
+    let cell = i64::from(CELL);
+    let range = |a: usize| {
+        let lo = ((i64::from(at[a]) - cell - i64::from(origin[a])).div_euclid(cell)).clamp(0, dims[a] as i64 - 1);
+        let hi = ((i64::from(at[a]) + cell - i64::from(origin[a])).div_euclid(cell)).clamp(0, dims[a] as i64 - 1);
+        lo as usize..=hi as usize
+    };
+    let mut nearest: Option<(i64, u32)> = None;
+    for y in range(1) {
+        for z in range(2) {
+            for x in range(0) {
+                let id = ((y * dims[2] + z) * dims[0] + x) as u32;
+                if !standing(id) {
+                    continue;
+                }
+                let centre = [x, y, z].map(|c| c as i64 * cell + cell / 2);
+                let d = (0..3).map(|a| (i64::from(origin[a]) + centre[a] - i64::from(at[a])).pow(2)).sum::<i64>();
+                if nearest.is_none_or(|(best, _)| d < best) {
+                    nearest = Some((d, id));
+                }
+            }
+        }
+    }
+    nearest.filter(|&(d, _)| d <= cell * cell * 3 / 2).map(|(_, id)| id)
+}
+
+/// What a grid of keyed cells is drawn as: the faces `greedy` merges (`keys` as it takes them), two
+/// triangles each, in centimetres from the grid's corner at `origin`, wound counter-clockwise seen
+/// from outside the cube. Calls `emit` with each triangle and its face's key.
+pub fn faces_of(origin: [i32; 3], dims: [usize; 3], keys: &[i32], mut emit: impl FnMut(Tri, i32)) {
+    greedy(dims, keys, |face| {
+        let corner = |du: usize, dv: usize| {
+            let mut p = [0i32; 3];
+            p[face.d] = origin[face.d] + (face.i + usize::from(face.side > 0)) as i32 * CELL;
+            p[face.u] = origin[face.u] + (face.a + du * face.w) as i32 * CELL;
+            p[face.v] = origin[face.v] + (face.b + dv * face.h) as i32 * CELL;
+            p
+        };
+        let [p0, p1, p2, p3] = [corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1)];
+        let tri = |a: [i32; 3], b: [i32; 3], c: [i32; 3]| [a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]];
+        if face.side > 0 {
+            emit(tri(p0, p1, p2), face.key);
+            emit(tri(p0, p2, p3), face.key);
+        } else {
+            emit(tri(p0, p2, p1), face.key);
+            emit(tri(p0, p3, p2), face.key);
+        }
+    });
+}
+
 /// Packs one flag a cell (`Shell::index` order, `layer` cells to a layer of y) small for a tile
 /// file: each flag is XORed with the one under it, so a wall, the same all the way up, leaves only
 /// its bottom layer; the flags go eight to a byte, least significant bit first; and each run of
 /// zero bytes is written as a 0 and the run's length less one, as an unsigned LEB128 number.
-/// Mirrored (unpacking only) by `unpack` in `client/src/sim/carve.ts`.
 pub fn pack(flags: &[bool], layer: usize) -> Vec<u8> {
     let mut bytes = vec![0u8; flags.len().div_ceil(8)];
     for i in 0..flags.len() {
@@ -579,7 +601,7 @@ pub fn unpack(packed: &[u8], count: usize, layer: usize) -> Vec<bool> {
 /// One merged face of `greedy`: `w × h` cells from `(a, b)` of layer `i` along axis `d`, facing
 /// `side` (1 towards +d, -1 towards -d). `u` and `v` are the next axes round from `d`, so `u × v`
 /// points along +d.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Face {
     pub d: usize,
     pub u: usize,
@@ -597,54 +619,75 @@ pub struct Face {
 /// order), or -1 for an empty one. For each axis, each side and each layer of cells, the faces of
 /// cells that look onto an empty cell (or out of the grid) are merged into rectangles of one key:
 /// each grows first along `u`, then along `v` while the whole row matches. Calls `emit` with each,
-/// in a fixed order, so the clients (`greedyFaces` in `client/src/sim/carve.ts`) make the same ones.
+/// in a fixed order: by axis, side and layer, then by where it starts, row by row.
+///
+/// Only the standing cells are visited after the first pass over `keys`, as a big building's grid
+/// is mostly empty: each layer's exposed faces are bucketed and sorted, rather than every cell of
+/// every layer looked at.
 pub fn greedy(dims: [usize; 3], keys: &[i32], mut emit: impl FnMut(Face)) {
+    let [nx, _, nz] = dims;
+    let ids: Vec<usize> = (0..keys.len()).filter(|&id| keys[id] >= 0).collect();
+    // Each standing cell's x, y and z.
+    let at: [Vec<usize>; 3] = [ids.iter().map(|&id| id % nx).collect(), ids.iter().map(|&id| id / (nx * nz)).collect(), ids.iter().map(|&id| (id / nx) % nz).collect()];
     // Step in the cell number for one cell along x, y and z.
-    let stride = [1, dims[0] * dims[2], dims[0]];
+    let stride = [1, nx * nz, nx];
+    let (mut layer, mut place, mut sorted) = (vec![0; ids.len()], vec![0; ids.len()], vec![0; ids.len()]);
     for d in 0..3 {
         let (u, v) = ((d + 1) % 3, (d + 2) % 3);
         let (nu, nv, nd) = (dims[u], dims[v], dims[d]);
         let (su, sv, sd) = (stride[u], stride[v], stride[d]);
         let mut mask = vec![-1i32; nu * nv];
         for side in [1i32, -1] {
-            for i in 0..nd {
-                let j = i as i64 + side as i64;
-                let beyond = j >= 0 && j < nd as i64;
-                let mut any = false;
-                for b in 0..nv {
-                    for a in 0..nu {
-                        let id = i * sd + a * su + b * sv;
-                        let key = keys[id];
-                        let covered = beyond && keys[(id as i64 + side as i64 * sd as i64) as usize] >= 0;
-                        mask[b * nu + a] = if key >= 0 && !covered { key } else { -1 };
-                        any |= mask[b * nu + a] >= 0;
-                    }
-                }
-                if !any {
+            // The faces looking out, as `b * nu + a`, bucketed by layer and then sorted.
+            let mut starts = vec![0; nd + 1];
+            let mut exposed = 0;
+            for (n, &id) in ids.iter().enumerate() {
+                let i = at[d][n];
+                let j = i as i64 + i64::from(side);
+                if j >= 0 && (j as usize) < nd && keys[(id as i64 + i64::from(side) * sd as i64) as usize] >= 0 {
                     continue;
                 }
-                for b in 0..nv {
-                    let mut a = 0;
-                    while a < nu {
-                        let key = mask[b * nu + a];
-                        if key < 0 {
-                            a += 1;
-                            continue;
-                        }
-                        let mut w = 1;
-                        while a + w < nu && mask[b * nu + a + w] == key {
-                            w += 1;
-                        }
-                        let mut h = 1;
-                        while b + h < nv && (0..w).all(|k| mask[(b + h) * nu + a + k] == key) {
-                            h += 1;
-                        }
-                        for r in 0..h {
-                            mask[(b + r) * nu + a..(b + r) * nu + a + w].fill(-1);
-                        }
-                        emit(Face { d, u, v, side, i, a, b, w, h, key });
-                        a += w;
+                layer[exposed] = i;
+                place[exposed] = at[v][n] * nu + at[u][n];
+                exposed += 1;
+                starts[i + 1] += 1;
+            }
+            for i in 0..nd {
+                starts[i + 1] += starts[i];
+            }
+            let mut next = starts[..nd].to_vec();
+            for n in 0..exposed {
+                sorted[next[layer[n]]] = place[n];
+                next[layer[n]] += 1;
+            }
+            for i in 0..nd {
+                let faces = &mut sorted[starts[i]..starts[i + 1]];
+                if faces.is_empty() {
+                    continue;
+                }
+                faces.sort_unstable();
+                let plane = i * sd;
+                for &p in faces.iter() {
+                    mask[p] = keys[plane + (p % nu) * su + (p / nu) * sv];
+                }
+                for &p in faces.iter() {
+                    let key = mask[p];
+                    if key < 0 {
+                        continue;
                     }
+                    let (a, b) = (p % nu, p / nu);
+                    let mut w = 1;
+                    while a + w < nu && mask[p + w] == key {
+                        w += 1;
+                    }
+                    let mut h = 1;
+                    while b + h < nv && (0..w).all(|k| mask[p + h * nu + k] == key) {
+                        h += 1;
+                    }
+                    for r in 0..h {
+                        mask[p + r * nu..p + r * nu + w].fill(-1);
+                    }
+                    emit(Face { d, u, v, side, i, a, b, w, h, key });
                 }
             }
         }
@@ -654,6 +697,115 @@ pub fn greedy(dims: [usize; 3], keys: &[i32], mut emit: impl FnMut(Face)) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `greedy` as it was, visiting every cell of every layer: the oracle the sparse one is held to.
+    fn dense_greedy(dims: [usize; 3], keys: &[i32], mut emit: impl FnMut(Face)) {
+        // Step in the cell number for one cell along x, y and z.
+        let stride = [1, dims[0] * dims[2], dims[0]];
+        for d in 0..3 {
+            let (u, v) = ((d + 1) % 3, (d + 2) % 3);
+            let (nu, nv, nd) = (dims[u], dims[v], dims[d]);
+            let (su, sv, sd) = (stride[u], stride[v], stride[d]);
+            let mut mask = vec![-1i32; nu * nv];
+            for side in [1i32, -1] {
+                for i in 0..nd {
+                    let j = i as i64 + side as i64;
+                    let beyond = j >= 0 && j < nd as i64;
+                    let mut any = false;
+                    for b in 0..nv {
+                        for a in 0..nu {
+                            let id = i * sd + a * su + b * sv;
+                            let key = keys[id];
+                            let covered = beyond && keys[(id as i64 + side as i64 * sd as i64) as usize] >= 0;
+                            mask[b * nu + a] = if key >= 0 && !covered { key } else { -1 };
+                            any |= mask[b * nu + a] >= 0;
+                        }
+                    }
+                    if !any {
+                        continue;
+                    }
+                    for b in 0..nv {
+                        let mut a = 0;
+                        while a < nu {
+                            let key = mask[b * nu + a];
+                            if key < 0 {
+                                a += 1;
+                                continue;
+                            }
+                            let mut w = 1;
+                            while a + w < nu && mask[b * nu + a + w] == key {
+                                w += 1;
+                            }
+                            let mut h = 1;
+                            while b + h < nv && (0..w).all(|k| mask[(b + h) * nu + a + k] == key) {
+                                h += 1;
+                            }
+                            for r in 0..h {
+                                mask[(b + r) * nu + a..(b + r) * nu + a + w].fill(-1);
+                            }
+                            emit(Face { d, u, v, side, i, a, b, w, h, key });
+                            a += w;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A grid of `dims` with cells standing at random, keyed 0 to `kinds - 1`, from `seed`.
+    fn random_keys(dims: [usize; 3], fill: u64, kinds: i32, seed: u64) -> Vec<i32> {
+        let mut state = seed;
+        (0..dims[0] * dims[1] * dims[2])
+            .map(|_| {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                if (state >> 33) % 100 < fill { ((state >> 20) % kinds as u64) as i32 } else { -1 }
+            })
+            .collect()
+    }
+
+    /// A way of meshing a grid: `greedy` or `dense_greedy`.
+    type Mesher = fn([usize; 3], &[i32], &mut dyn FnMut(Face));
+
+    fn faces_of(dims: [usize; 3], keys: &[i32], mesh: Mesher) -> Vec<Face> {
+        let mut out = Vec::new();
+        mesh(dims, keys, &mut |face| out.push(face));
+        out
+    }
+
+    #[test]
+    fn sparse_greedy_makes_the_dense_ones_faces_in_its_order() {
+        let shapes = [[1, 1, 1], [3, 1, 1], [1, 4, 1], [1, 1, 5], [4, 3, 5], [7, 2, 3], [9, 9, 9], [16, 5, 11]];
+        for (n, &dims) in shapes.iter().enumerate() {
+            for (fill, kinds) in [(10, 1), (50, 1), (50, 3), (90, 2), (100, 1), (0, 1)] {
+                let keys = random_keys(dims, fill, kinds, n as u64 * 31 + fill);
+                let sparse = faces_of(dims, &keys, |d, k, e| greedy(d, k, e));
+                let dense = faces_of(dims, &keys, |d, k, e| dense_greedy(d, k, e));
+                assert_eq!(sparse, dense, "{dims:?} {fill}% {kinds} keys");
+            }
+        }
+        // A real building, roofed and blasted.
+        let shell = Shell::new(&boxed(10, 8, 6), &roof(10, 8, 6)).unwrap();
+        let mut removed = shell.untouched();
+        shell.blast(&mut removed, [500, 300, 0], 150);
+        let keys: Vec<i32> = (0..shell.solid.len()).map(|i| if shell.solid[i] && !removed[i] { i32::from(shell.roof[i]) } else { -1 }).collect();
+        assert_eq!(faces_of(shell.dims, &keys, |d, k, e| greedy(d, k, e)), faces_of(shell.dims, &keys, |d, k, e| dense_greedy(d, k, e)));
+    }
+
+    /// Not a regression test: the two on a big hollow building. `cargo test --release -p shared -- --ignored --nocapture greedy_cost`
+    #[test]
+    #[ignore]
+    fn greedy_cost() {
+        let shell = Shell::new(&boxed(120, 80, 40), &roof(120, 80, 40)).unwrap();
+        let keys: Vec<i32> = (0..shell.solid.len()).map(|i| if shell.solid[i] { i32::from(shell.roof[i]) } else { -1 }).collect();
+        for (name, mesh) in [("sparse", (|d, k, e| greedy(d, k, e)) as Mesher), ("dense", |d, k, e| dense_greedy(d, k, e))] {
+            let start = std::time::Instant::now();
+            let mut faces = 0;
+            for _ in 0..10 {
+                faces = faces_of(shell.dims, &keys, mesh).len();
+            }
+            println!("{name}: {:?} a building of {} cells ({} standing), {faces} faces", start.elapsed() / 10, keys.len(), shell.solid_count());
+        }
+    }
 
     /// A box `w × d × h` metres, walls only (two triangles a face side), corner at the origin.
     fn boxed(w: i32, d: i32, h: i32) -> Vec<Tri> {
@@ -788,7 +940,7 @@ mod tests {
         }
     }
 
-    /// Mirrored number for number by `client/src/__tests__/carve.spec.ts`.
+    /// Checked number for number through WebAssembly by `client/src/__tests__/carve.spec.ts`.
     #[test]
     fn cell_numbers_match_the_fixture() {
         let shell = Shell::new(&boxed(5, 4, 3), &roof(5, 4, 3)).unwrap();
@@ -827,7 +979,7 @@ mod tests {
         assert_eq!(unpack(&packed, flags.len(), 8 * 300), flags);
     }
 
-    /// Mirrored by `client/src/__tests__/carve.spec.ts`, which unpacks these bytes.
+    /// `client/src/__tests__/carve.spec.ts` unpacks these bytes too, through WebAssembly.
     #[test]
     fn packed_cells_match_the_fixture() {
         let shell = Shell::new(&boxed(5, 4, 3), &roof(5, 4, 3)).unwrap();

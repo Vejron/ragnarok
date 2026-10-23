@@ -17,9 +17,11 @@ pub use crew::road_route;
 pub use crew::{DRIVER, GUNNER, nearest_waypoint};
 
 use super::Mechanic;
+use crate::entities::With;
 use super::combat::same_team;
-use super::npcs::{open_ground, turn_towards};
-use crate::game::{Bot, BotMode, Noise, World};
+use super::life::open_ground;
+use super::npcs::turn_towards;
+use crate::game::{Bot, BotMode, Noise, Player, World};
 use shared::consts::*;
 use shared::items::{HOTBAR_SLOTS, ITEM_AK5, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, ItemDef, ItemKind, def};
 use shared::protocol::{InputFrame, ItemSlot};
@@ -241,7 +243,7 @@ fn make_route(world: &mut World, home: [f32; 2]) -> Vec<[f32; 2]> {
 fn spot(world: &World, id: u32, eye: [f32; 3], yaw: f32, alert: bool) -> Option<(u32, [f32; 3])> {
     let facing = [-yaw.sin(), -yaw.cos()];
     let mut best: Option<(u32, [f32; 3], f32)> = None;
-    for (&other, player) in &world.players {
+    for (other, player) in world.entities.all::<Player>() {
         if other == id || !player.alive() || !player.embodied() || same_team(world, id, other) {
             continue;
         }
@@ -266,7 +268,7 @@ fn spot(world: &World, id: u32, eye: [f32; 3], yaw: f32, alert: bool) -> Option<
 /// Notes a noise at `at` made by `by` that carries `reach` metres, for the bots to hear on the next
 /// tick. With no bots to hear it, it is not kept.
 pub fn make_noise(world: &mut World, at: [f32; 3], by: Option<u32>, reach: f32) {
-    if !world.bots.is_empty() {
+    if world.entities.count::<Bot>() > 0 {
         world.noises.push(Noise { at, by, reach });
     }
 }
@@ -316,7 +318,7 @@ fn new_goal(bot: &mut Bot) {
 /// there is some of this tick's `budget` of cells left. With no way found it heads straight for the goal.
 fn follow(world: &mut World, bot: &mut Bot, at: [f32; 3], goal: [f32; 3], budget: &mut usize) -> [f32; 3] {
     let (here, to) = ([at[0], at[2]], [goal[0], goal[2]]);
-    let feet = |p: [f32; 3]| [p[0], p[1] - crate::physics::STANDING_Y, p[2]];
+    let feet = |p: [f32; 3]| [p[0], p[1] - sim::STANDING_Y, p[2]];
     bot.replan_in = bot.replan_in.saturating_sub(1);
     let moved = (to[0] - bot.path_to[0]).hypot(to[1] - bot.path_to[1]) > GOAL_MOVED;
     if (bot.path.is_empty() || moved || bot.replan_in == 0) && *budget > 0 {
@@ -367,7 +369,7 @@ fn steer(world: &World, at: [f32; 3], want: f32) -> f32 {
 /// fires once it has reacted and is on aim.
 #[allow(clippy::too_many_arguments)]
 fn fight(world: &mut World, id: u32, bot: &mut Bot, eye: [f32; 3], slot: u8, distance: f32, dt: f32, away: [f32; 2]) -> InputFrame {
-    let Some(player) = world.players.get(&id) else { return InputFrame::default() };
+    let Some(player) = world.entities.get::<Player>(id) else { return InputFrame::default() };
     let held = player.hotbar[slot as usize];
     let (trigger_held, reloading) = (player.trigger_held, player.reload_left > 0);
     let Some(gun) = def(held.item).copied() else { return InputFrame::default() };
@@ -436,7 +438,7 @@ fn fight(world: &mut World, id: u32, bot: &mut Bot, eye: [f32; 3], slot: u8, dis
 
 /// Adds a reload to `input` when the gun in hand is empty, or is not full and there is no one in sight.
 fn reload(world: &World, id: u32, bot: &Bot, mut input: InputFrame) -> InputFrame {
-    let Some(player) = world.players.get(&id) else { return input };
+    let Some(player) = world.entities.get::<Player>(id) else { return input };
     let held = player.hotbar[(input.slot as usize).min(HOTBAR_SLOTS - 1)];
     let Some(gun) = def(held.item).filter(|d| d.kind == ItemKind::Gun) else { return input };
     if player.reload_left == 0 && (held.ammo == 0 || (!bot.sees && held.ammo < gun.mag)) {
@@ -449,7 +451,7 @@ fn reload(world: &World, id: u32, bot: &Bot, mut input: InputFrame) -> InputFram
 /// One tick of bot `id`'s thinking: what it does now, as the input a player would send.
 fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], crowd: &[(u32, [f32; 2])], budget: &mut usize) -> InputFrame {
     let idle = InputFrame { yaw: to_mrad(bot.yaw), pitch: to_mrad(bot.pitch), view: world.tick as u16, slot: bot.slot, ..Default::default() };
-    let Some(player) = world.players.get(&id) else { return idle };
+    let Some(player) = world.entities.get::<Player>(id) else { return idle };
     if !player.alive() {
         // Whatever it was doing died with it; it comes back at home, on its route.
         bot.mode = BotMode::Patrol;
@@ -526,7 +528,7 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
             None => bot.sees = false,
         }
     }
-    let Some(player) = world.players.get(&id) else { return idle };
+    let Some(player) = world.entities.get::<Player>(id) else { return idle };
     let fighting = bot.mode == BotMode::Pursue && bot.sees;
     if !fighting {
         bot.pitch = turn_towards(bot.pitch, 0.0, TURN_RATE * dt);
@@ -614,7 +616,7 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
 
 impl Mechanic for Bots {
     fn on_leave(&mut self, world: &mut World, id: u32) {
-        world.bots.remove(&id);
+        world.entities.remove::<Bot>(id);
     }
 
     fn on_tick(&mut self, world: &mut World, dt: f32) {
@@ -623,18 +625,21 @@ impl Mechanic for Bots {
         }
         let noises = std::mem::take(&mut world.noises);
         let mut budget = SEARCH_PER_TICK;
-        let ids: Vec<u32> = world.bots.keys().copied().collect();
+        let ids = world.entities.ids::<With<Bot>>();
         // Where every bot on its feet stands as the tick begins, for them to steer clear of each other.
         let crowd: Vec<(u32, [f32; 2])> = ids
             .iter()
-            .filter_map(|id| world.players.get(id).filter(|p| p.alive() && p.seat.is_none()).map(|p| (*id, [p.character.position[0], p.character.position[2]])))
+            .filter_map(|id| world.entities.get::<Player>(*id).filter(|p| p.alive() && p.seat.is_none()).map(|p| (*id, [p.character.position[0], p.character.position[2]])))
             .collect();
         for id in ids {
-            let Some(mut bot) = world.bots.remove(&id) else { continue };
+            // Taken out to think with the world in hand, an empty mind in its place: what a bot thinks
+            // reads only other bots' minds (a driver its gunner's).
+            let Some(mut mind) = world.entities.get_mut::<Bot>(id) else { continue };
+            let mut bot = std::mem::replace(&mut *mind, Bot::new([0.0; 2], Vec::new()));
             let input = think(world, id, &mut bot, dt, &noises, &crowd, &mut budget);
             let input = reload(world, id, &bot, input);
-            world.bots.insert(id, bot);
-            if let Some(player) = world.players.get_mut(&id) {
+            *world.entities.of_mut::<Bot>(id) = bot;
+            if let Some(mut player) = world.entities.get_mut::<Player>(id) {
                 player.input = input;
             }
         }

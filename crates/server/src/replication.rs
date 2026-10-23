@@ -3,14 +3,15 @@
 //!
 //! The server keeps, per player, the scenes of its last `BASELINE_WINDOW` snapshots. The client
 //! says in every input which snapshot it has rebuilt (`baseline`); the next snapshot is the
-//! difference between that scene and the one in range now. The client runs `delta::apply` over the
-//! same lists, so what it holds is what the server stored, with no echo needed.
+//! difference between that scene and the one in range now, one update per entity
+//! (`shared::replicated`). The client applies the same updates, so what it holds is what the server
+//! stored, with no echo needed.
 
 use shared::consts::*;
-use shared::delta::{Delta, Scene, apply, diff};
 use shared::items::{MAX_PICKUPS_PER_SNAPSHOT, def};
 use shared::protocol::*;
-use std::collections::{HashMap, VecDeque};
+use shared::replicated::{Replicated, Scene, Update, apply, diff};
+use std::collections::VecDeque;
 
 /// One player's replication state.
 #[derive(Default)]
@@ -21,13 +22,10 @@ pub struct Replica {
     sent: VecDeque<(u32, Scene)>,
 }
 
-/// What a snapshot is built from: the whole world, each list ordered by id.
+/// What a snapshot is built from: everything replicated (ordered by id), and this snapshot's effects.
 pub struct Everything<'a> {
-    pub entities: &'a [EntityState],
-    pub vehicles: &'a [VehicleState],
+    pub scene: &'a Scene,
     pub shots: &'a [ShotEvent],
-    pub rockets: &'a [ProjectileState],
-    pub pickups: &'a [PickupState],
     pub bullets: &'a [BulletSpawn],
 }
 
@@ -40,6 +38,20 @@ pub struct Own {
     pub drive: Option<DriveState>,
     pub me: SelfState,
 }
+
+/// How much an update is worth keeping when a snapshot will not fit, highest first: everything else,
+/// then items lying on the ground, then projectiles, which a later snapshot catches up on soonest.
+/// Bullets come between the first two, and effects (`shots`) last of all.
+fn worth(entity: &Replicated) -> u8 {
+    if entity.projectile.is_some() {
+        0
+    } else if entity.pickup.is_some() {
+        1
+    } else {
+        3
+    }
+}
+const BULLETS_WORTH: u8 = 2;
 
 impl Replica {
     /// Notes the newest snapshot the client reports holding. Only ever moves forward.
@@ -61,39 +73,44 @@ impl Replica {
     /// it leaves the client holding.
     ///
     /// Everything within `INTEREST_RADIUS` is a candidate, and what was already held stays until it is
-    /// `INTEREST_HYSTERESIS` further out. If the encoded datagram would exceed `MAX_PACKET`, the
-    /// farthest things are left out of it, cosmetic effects first; a thing that did not fit simply
-    /// arrives in a later snapshot, nearest first.
+    /// `INTEREST_HYSTERESIS` further out; of items on the ground, only the nearest
+    /// `MAX_PICKUPS_PER_SNAPSHOT`. If the encoded datagram would exceed `MAX_PACKET`, effects are left out
+    /// first, then the least worth keeping (`worth`), farthest first; whatever did not fit simply
+    /// arrives in a later snapshot.
     pub fn snapshot(&mut self, at: [f32; 2], world: &Everything, own: Own) -> Vec<u8> {
         let empty = Scene::default();
         let (baseline_tick, baseline) = match self.baseline() {
             Some((tick, scene)) => (*tick, scene),
             None => (0, &empty),
         };
-        let held_entity = |id: u32| baseline.entities.binary_search_by_key(&id, |e| e.id).is_ok();
-        let held_vehicle = |id: u32| baseline.vehicles.binary_search_by_key(&id, |v| v.id).is_ok();
+        let held = |id: u32| baseline.binary_search_by_key(&id, |(held, _)| *held).is_ok();
         let distance = |x: i32, z: i32| ((x as f32 / 100.0 - at[0]).powi(2) + (z as f32 / 100.0 - at[1]).powi(2)).sqrt();
         let within = |held: bool, d: f32| d <= INTEREST_RADIUS + if held { INTEREST_HYSTERESIS } else { 0.0 };
 
-        // Nearest first, so trimming the tail drops the farthest.
-        let mut entities: Vec<(f32, EntityState)> = world
-            .entities
-            .iter()
-            .map(|e| (distance(e.x, e.z), *e))
-            .filter(|(d, e)| within(held_entity(e.id), *d))
-            .collect();
-        let mut vehicles: Vec<(f32, VehicleState)> = world
-            .vehicles
-            .iter()
-            .map(|v| (distance(v.x, v.z), v.clone()))
-            .filter(|(d, v)| within(held_vehicle(v.id), *d))
-            .collect();
-        entities.sort_by(|a, b| a.0.total_cmp(&b.0));
-        vehicles.sort_by(|a, b| a.0.total_cmp(&b.0));
+        // What is in range (by its index in the world's scene), with how far it is. Items on the ground
+        // are static and many, so only the nearest few are listed: the rest arrive as the player walks up.
+        let mut near: Vec<(usize, f32)> = Vec::new();
+        let mut pickups: Vec<(usize, f32)> = Vec::new();
+        for (index, (id, entity)) in world.scene.iter().enumerate() {
+            let Some(place) = entity.place else { continue };
+            let d = distance(place.x, place.z);
+            if entity.pickup.is_some() {
+                if d <= INTEREST_RADIUS {
+                    pickups.push((index, d));
+                }
+            } else if within(held(*id), d) {
+                near.push((index, d));
+            }
+        }
+        pickups.sort_by(|a, b| a.1.total_cmp(&b.1));
+        near.extend(pickups.into_iter().take(MAX_PICKUPS_PER_SNAPSHOT));
+        near.sort_unstable_by_key(|(index, _)| *index);
+        let now: Scene = near.iter().map(|&(index, _)| world.scene[index].clone()).collect();
+        // `now` is ordered by id, as the world's scene is; this is how far each of it is.
+        let distances: Vec<f32> = near.iter().map(|&(_, d)| d).collect();
 
         let mut shots: Vec<ShotEvent> = world.shots.iter().filter(|s| distance(s.x, s.z) <= INTEREST_RADIUS).copied().collect();
         shots.truncate(MAX_SHOT_EVENTS);
-        let mut rockets: Vec<ProjectileState> = world.rockets.iter().filter(|r| distance(r.x, r.z) <= INTEREST_RADIUS).copied().collect();
         // A bullet is wanted by everyone whose view its line crosses, not only by those near the muzzle:
         // it flies up to its gun's range, mostly level.
         let mut bullets: Vec<(f32, BulletSpawn)> = world
@@ -114,94 +131,60 @@ impl Replica {
         bullets.sort_by(|a, b| a.0.total_cmp(&b.0));
         bullets.truncate(MAX_BULLET_SPAWNS);
         let mut bullets: Vec<BulletSpawn> = bullets.into_iter().map(|(_, b)| b).collect();
-        // Items on the ground are static, so only the nearest few are listed: the rest arrive as the player walks up.
-        let mut pickups: Vec<(f32, PickupState)> = world.pickups.iter().map(|p| (distance(p.x, p.z), *p)).filter(|(d, _)| *d <= INTEREST_RADIUS).collect();
-        pickups.sort_by(|a, b| a.0.total_cmp(&b.0));
-        pickups.truncate(MAX_PICKUPS_PER_SNAPSHOT);
-        let mut pickups: Vec<PickupState> = pickups.into_iter().map(|(_, p)| p).collect();
 
-        let by_id = |entities: &[(f32, EntityState)]| {
-            let mut list: Vec<EntityState> = entities.iter().map(|(_, e)| *e).collect();
-            list.sort_by_key(|e| e.id);
-            list
+        let (mut updates, removed) = diff(baseline, &now);
+        // Nearest first, so what is kept when trimming is the nearest. Each distance is looked up once:
+        // they are never negative, and the bits of a positive float sort as the float does.
+        let distance_of = |id: u32| now.binary_search_by_key(&id, |(held, _)| *held).map_or(0.0, |at| distances[at]);
+        updates.sort_by_cached_key(|update| distance_of(update.id).to_bits());
+        let encode_with = |updates: &[Update], shots: &[ShotEvent], bullets: &[BulletSpawn]| {
+            encode(&Snapshot { tag: S_SNAPSHOT, tick: own.tick, baseline: baseline_tick, ack: own.ack, ride: own.ride, updates: updates.to_vec(), removed: removed.clone(), drive: own.drive, me: own.me.clone(), shots: shots.to_vec(), bullets: bullets.to_vec() })
         };
-        let scene_of = |entities: &[(f32, EntityState)], vehicles: &[(f32, VehicleState)]| {
-            let mut v: Vec<VehicleState> = vehicles.iter().map(|(_, v)| v.clone()).collect();
-            v.sort_by_key(|v| v.id);
-            Scene { entities: by_id(entities), vehicles: v }
-        };
-
-        let mut delta = diff(baseline, &scene_of(&entities, &vehicles));
-        // Distances by id, to order the delta lists nearest-first.
-        let entity_distances: HashMap<u32, f32> = entities.iter().map(|(d, e)| (e.id, *d)).collect();
-        let vehicle_distances: HashMap<u32, f32> = vehicles.iter().map(|(d, v)| (v.id, *d)).collect();
-        let entity_distance = |id: u32| entity_distances.get(&id).copied().unwrap_or(0.0);
-        let vehicle_distance = |id: u32| vehicle_distances.get(&id).copied().unwrap_or(0.0);
-        // Each distance looked up once, not at every comparison. They are never negative, and the bits
-        // of a positive float sort as the float does.
-        delta.new_entities.sort_by_cached_key(|e| entity_distance(e.id).to_bits());
-        delta.entities.sort_by_cached_key(|e| entity_distance(e.id).to_bits());
-        delta.new_vehicles.sort_by_cached_key(|v| vehicle_distance(v.id).to_bits());
-        delta.vehicles.sort_by_cached_key(|v| vehicle_distance(v.id).to_bits());
-
-        let encode_with = |delta: &Delta, shots: &[ShotEvent], rockets: &[ProjectileState], pickups: &[PickupState], bullets: &[BulletSpawn]| {
-            encode(&Snapshot { tag: S_SNAPSHOT, tick: own.tick, baseline: baseline_tick, ack: own.ack, ride: own.ride, new_entities: delta.new_entities.clone(), entities: delta.entities.clone(), new_vehicles: delta.new_vehicles.clone(), vehicles: delta.vehicles.clone(), removed: delta.removed.clone(), drive: own.drive, me: own.me.clone(), shots: shots.to_vec(), rockets: rockets.to_vec(), pickups: pickups.to_vec(), bullets: bullets.to_vec() })
-        };
-        let mut bytes = encode_with(&delta, &shots, &rockets, &pickups, &bullets);
-        // Shed what can be shed: effects (cosmetic) first, then rockets, then the farthest
-        // newcomers and changes. `removed` is never shed: stale things would linger.
-        while bytes.len() > MAX_PACKET && !(shots.is_empty() && rockets.is_empty() && pickups.is_empty() && bullets.is_empty()) {
-            // Effects go first, as many at a time as the excess calls for (by the most one can take on
-            // the wire): a crowd of bullets would otherwise cost an encode per bullet shed.
+        let mut bytes = encode_with(&updates, &shots, &bullets);
+        let mut trimmed = false;
+        // Effects are cosmetic: they go first, as many at a time as the excess calls for.
+        while bytes.len() > MAX_PACKET && !shots.is_empty() {
             let excess = bytes.len() - MAX_PACKET;
-            let shed = |count: usize, most: usize| count.min(excess.div_ceil(most)).max(1);
-            if !shots.is_empty() {
-                shots.truncate(shots.len() - shed(shots.len(), 10));
-            } else if !rockets.is_empty() {
-                rockets.truncate(rockets.len() - shed(rockets.len(), 20));
-            } else if !pickups.is_empty() {
-                pickups.truncate(pickups.len() - shed(pickups.len(), 14));
-            } else {
-                bullets.truncate(bullets.len() - shed(bullets.len(), 41));
-            }
-            bytes = encode_with(&delta, &shots, &rockets, &pickups, &bullets);
+            shots.truncate(shots.len() - shots.len().min(excess.div_ceil(10)).max(1));
+            bytes = encode_with(&updates, &shots, &bullets);
         }
-        // Then the farthest newcomers and changes, whichever list they are in: what stays is the
-        // nearest of them, as many as fit. Each list goes on the wire as a MessagePack array, its
-        // header and then its items one after another, so what fits is worked out from each item's
-        // size and the snapshot with the lists empty: two encodes, rather than one per thing shed
-        // (a crowd sheds dozens).
+        // Then whatever is worth least, farthest first. Each list goes on the wire as a MessagePack
+        // array, its header and then its items one after another, so what fits is worked out from each
+        // item's size and the snapshot with the lists empty: two encodes, rather than one per thing shed.
+        // `removed` is never shed: stale things would linger.
         if bytes.len() > MAX_PACKET {
             let mut buffer = Vec::new();
-            // (distance, which list, bytes on the wire)
-            let mut order: Vec<(f32, usize, usize)> = Vec::new();
-            order.extend(delta.new_entities.iter().map(|e| (entity_distance(e.id), 0, wire_size(e, &mut buffer))));
-            order.extend(delta.entities.iter().map(|e| (entity_distance(e.id), 1, wire_size(e, &mut buffer))));
-            order.extend(delta.new_vehicles.iter().map(|v| (vehicle_distance(v.id), 2, wire_size(v, &mut buffer))));
-            order.extend(delta.vehicles.iter().map(|v| (vehicle_distance(v.id), 3, wire_size(v, &mut buffer))));
-            // Stable, and each list is already nearest-first, so what is kept is a prefix of each.
-            order.sort_by(|a, b| a.0.total_cmp(&b.0));
-            let bare = Delta { removed: delta.removed.clone(), ..Default::default() };
-            let mut total = encode_with(&bare, &shots, &rockets, &pickups, &bullets).len();
-            let mut counts = [0; 4];
-            for &(_, list, size) in &order {
-                let grown = total + size + array_header(counts[list] + 1) - array_header(counts[list]);
+            let worth_of = |id: u32| now.binary_search_by_key(&id, |(held, _)| *held).map_or(3, |at| worth(&now[at].1));
+            // (worth, distance, an update's index or a bullet's, bytes on the wire)
+            let mut order: Vec<(u8, f32, Option<usize>, usize)> = Vec::new();
+            order.extend(updates.iter().enumerate().map(|(i, update)| (worth_of(update.id), distance_of(update.id), Some(i), wire_size(update, &mut buffer))));
+            order.extend(bullets.iter().map(|bullet| (BULLETS_WORTH, 0.0, None, wire_size(bullet, &mut buffer))));
+            // Most worth first, then nearest; stable, so bullets keep their nearest-first order.
+            order.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.total_cmp(&b.1)));
+            let mut total = encode_with(&[], &shots, &[]).len();
+            let (mut kept, mut kept_bullets) = (Vec::new(), 0);
+            for &(_, _, index, size) in &order {
+                let count = if index.is_some() { kept.len() } else { kept_bullets };
+                let grown = total + size + array_header(count + 1) - array_header(count);
                 if grown > MAX_PACKET {
                     break;
                 }
                 total = grown;
-                counts[list] += 1;
+                match index {
+                    Some(i) => kept.push(i),
+                    None => kept_bullets += 1,
+                }
             }
-            delta.new_entities.truncate(counts[0]);
-            delta.entities.truncate(counts[1]);
-            delta.new_vehicles.truncate(counts[2]);
-            delta.vehicles.truncate(counts[3]);
-            bytes = encode_with(&delta, &shots, &rockets, &pickups, &bullets);
+            kept.sort_unstable();
+            trimmed = kept.len() < updates.len();
+            updates = kept.into_iter().map(|i| updates[i].clone()).collect();
+            bullets.truncate(kept_bullets);
+            bytes = encode_with(&updates, &shots, &bullets);
             debug_assert_eq!(bytes.len(), total, "the worked-out size is the encoded size");
         }
-
-        // What the client holds now is the baseline with the (possibly trimmed) delta applied.
-        let held = apply(baseline, &delta);
+        // What the client holds now is the baseline with the updates applied: what is in range, unless
+        // some were trimmed.
+        let held = if trimmed { apply(baseline, &updates, &removed) } else { now };
         self.sent.push_back((own.tick, held));
         while self.sent.len() > BASELINE_WINDOW {
             self.sent.pop_front();
@@ -227,197 +210,4 @@ fn array_header(len: usize) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn person(id: u32, x_m: f32, z_m: f32) -> EntityState {
-        EntityState { id, kind: KIND_STICKMAN, x: (x_m * 100.0) as i32, y: 90, z: (z_m * 100.0) as i32, yaw: 0, vy: 0, flags: FLAG_GROUNDED, stance: 0, knock_x: 0, knock_z: 0 }
-    }
-
-    fn snapshot(replica: &mut Replica, tick: u32, entities: &[EntityState]) -> Snapshot {
-        let world = Everything { entities, vehicles: &[], shots: &[], rockets: &[], pickups: &[], bullets: &[] };
-        let bytes = replica.snapshot([0.0, 0.0], &world, Own { tick, ..Default::default() });
-        assert!(bytes.len() <= MAX_PACKET);
-        decode(&bytes).unwrap()
-    }
-
-    /// What a client rebuilds from `snapshot`, given the scenes it holds.
-    fn rebuild(held: &mut Vec<(u32, Scene)>, snapshot: &Snapshot) -> Scene {
-        let base = held.iter().find(|(tick, _)| *tick == snapshot.baseline).map(|(_, s)| s.clone()).unwrap_or_default();
-        let delta = Delta {
-            new_entities: snapshot.new_entities.clone(),
-            entities: snapshot.entities.clone(),
-            new_vehicles: snapshot.new_vehicles.clone(),
-            vehicles: snapshot.vehicles.clone(),
-            removed: snapshot.removed.clone(),
-        };
-        let scene = apply(&base, &delta);
-        held.push((snapshot.tick, scene.clone()));
-        scene
-    }
-
-    #[test]
-    fn only_the_near_are_sent_and_the_far_come_in_as_you_approach() {
-        let mut replica = Replica::default();
-        let mut held = Vec::new();
-        let near = person(1, 10.0, 0.0);
-        let far = person(2, INTEREST_RADIUS + 20.0, 0.0);
-        let first = snapshot(&mut replica, 2, &[near, far]);
-        assert_eq!(rebuild(&mut held, &first).entities, vec![near]);
-
-        // Moves into range, but stays listed once in: the edge does not flicker.
-        replica.acknowledge(2);
-        let closer = person(2, INTEREST_RADIUS - 10.0, 0.0);
-        let second = snapshot(&mut replica, 4, &[near, closer]);
-        assert_eq!(second.baseline, 2, "diffed against the acknowledged snapshot");
-        assert_eq!(rebuild(&mut held, &second).entities, vec![near, closer]);
-
-        replica.acknowledge(4);
-        let edge = person(2, INTEREST_RADIUS + 10.0, 0.0);
-        let third = snapshot(&mut replica, 6, &[near, edge]);
-        assert_eq!(rebuild(&mut held, &third).entities, vec![near, edge], "kept inside the hysteresis band");
-
-        replica.acknowledge(6);
-        let gone = person(2, INTEREST_RADIUS + INTEREST_HYSTERESIS + 10.0, 0.0);
-        let fourth = snapshot(&mut replica, 8, &[near, gone]);
-        assert_eq!(fourth.removed, vec![2]);
-        assert_eq!(rebuild(&mut held, &fourth).entities, vec![near]);
-    }
-
-    #[test]
-    fn a_standing_player_costs_nothing_once_acknowledged() {
-        let mut replica = Replica::default();
-        let people: Vec<EntityState> = (1..=20).map(|id| person(id, id as f32, 0.0)).collect();
-        let full = snapshot(&mut replica, 2, &people);
-        assert_eq!(full.new_entities.len(), 20);
-        replica.acknowledge(2);
-        let again = snapshot(&mut replica, 4, &people);
-        assert_eq!(again.baseline, 2);
-        assert!(again.new_entities.is_empty() && again.entities.is_empty() && again.removed.is_empty());
-    }
-
-    #[test]
-    fn without_an_acknowledgement_every_snapshot_is_whole() {
-        let mut replica = Replica::default();
-        let people = [person(1, 1.0, 0.0), person(2, 2.0, 0.0)];
-        snapshot(&mut replica, 2, &people);
-        let second = snapshot(&mut replica, 4, &people);
-        assert_eq!(second.baseline, 0);
-        assert_eq!(second.new_entities.len(), 2);
-    }
-
-    #[test]
-    fn an_acknowledgement_of_something_never_sent_falls_back_to_whole() {
-        let mut replica = Replica::default();
-        replica.acknowledge(999);
-        let snap = snapshot(&mut replica, 2, &[person(1, 1.0, 0.0)]);
-        assert_eq!(snap.baseline, 0);
-    }
-
-    #[test]
-    fn an_old_baseline_falls_out_of_the_window() {
-        let mut replica = Replica::default();
-        let people = [person(1, 1.0, 0.0)];
-        snapshot(&mut replica, 2, &people);
-        replica.acknowledge(2);
-        for i in 0..(BASELINE_WINDOW as u32 + 2) {
-            snapshot(&mut replica, 4 + i * 2, &people);
-        }
-        let late = snapshot(&mut replica, 1000, &people);
-        assert_eq!(late.baseline, 0, "the acknowledged snapshot is long gone: start over");
-    }
-
-    #[test]
-    fn a_crowded_room_is_trimmed_to_the_packet_nearest_first() {
-        let mut replica = Replica::default();
-        // Busy ones, far from the origin, so each takes its full width on the wire.
-        let people: Vec<EntityState> = (1..=MAX_PLAYERS as u32)
-            .map(|id| {
-                let mut e = person(id, id as f32 * 3.0, -(id as f32));
-                e.yaw = -2000;
-                e.vy = -650;
-                e.knock_x = 700;
-                e.knock_z = -700;
-                e
-            })
-            .collect();
-        let first = snapshot(&mut replica, 2, &people);
-        assert!(first.new_entities.len() < MAX_PLAYERS, "a packet cannot hold {MAX_PLAYERS} whole entities");
-        let ids: Vec<u32> = first.new_entities.iter().map(|e| e.id).collect();
-        assert!(ids.contains(&1), "the nearest got in");
-        // The rest follow, each acknowledged snapshot bringing the next nearest.
-        let mut held = Vec::new();
-        let mut scene = rebuild(&mut held, &first);
-        let mut tick = 2;
-        for _ in 0..8 {
-            replica.acknowledge(tick);
-            tick += 2;
-            let next = snapshot(&mut replica, tick, &people);
-            scene = rebuild(&mut held, &next);
-        }
-        assert_eq!(scene.entities.len(), MAX_PLAYERS);
-    }
-
-    #[test]
-    fn effects_out_of_range_are_not_sent() {
-        let mut replica = Replica::default();
-        let near = ShotEvent { shooter: 3, weapon: WEAPON_RIFLE, x: 500, y: 90, z: 0 };
-        let far = ShotEvent { shooter: 3, weapon: WEAPON_RIFLE, x: 90_000, y: 90, z: 0 };
-        let world = Everything { entities: &[], vehicles: &[], shots: &[near, far], rockets: &[], pickups: &[], bullets: &[] };
-        let bytes = replica.snapshot([0.0, 0.0], &world, Own { tick: 2, ..Default::default() });
-        let snap: Snapshot = decode(&bytes).unwrap();
-        assert_eq!(snap.shots, vec![near]);
-    }
-
-    #[test]
-    fn a_bullet_goes_to_whoever_its_line_crosses() {
-        use shared::items::ITEM_AK5;
-        let mut replica = Replica::default();
-        // Fired from the origin along -Z, out to the AK5's 200 m.
-        let bullet = BulletSpawn { id: 9, shooter: 3, item: ITEM_AK5, x: 0, y: 165, z: 0, vx: 0, vy: 0, vz: -27_900, tick: 10 };
-        let world = Everything { entities: &[], vehicles: &[], shots: &[], rockets: &[], pickups: &[], bullets: &[bullet] };
-        // A player 150 m down its line sees it.
-        let down_the_line: Snapshot = decode(&replica.snapshot([0.0, -150.0], &world, Own { tick: 12, ..Default::default() })).unwrap();
-        assert_eq!(down_the_line.bullets, vec![bullet]);
-        // Beside it, 400 m off to the side, it never comes near.
-        let mut replica = Replica::default();
-        let aside: Snapshot = decode(&replica.snapshot([400.0, -100.0], &world, Own { tick: 12, ..Default::default() })).unwrap();
-        assert!(aside.bullets.is_empty());
-        // Behind the muzzle, out of reach.
-        let mut replica = Replica::default();
-        let behind: Snapshot = decode(&replica.snapshot([0.0, 500.0], &world, Own { tick: 12, ..Default::default() })).unwrap();
-        assert!(behind.bullets.is_empty());
-    }
-
-    /// Thirty players running about, snapshot after acknowledged snapshot.
-    #[test]
-    fn a_delta_is_a_good_deal_smaller_than_a_whole_snapshot() {
-        let mut replica = Replica::default();
-        let mut whole = Replica::default();
-        let runners = |step: i32| -> Vec<EntityState> {
-            (1..=30u32)
-                .map(|id| {
-                    let phase = id as i32 * 37;
-                    // About 7.5 m/s at 30 snapshots a second is 25 cm a snapshot.
-                    EntityState { id, kind: KIND_STICKMAN, x: 5_000 + phase * 20 + step * 25, y: 87, z: -3_000 + phase * 10 - step * 9, yaw: ((step + phase) % 6000 - 3000) as i16, vy: 0, flags: FLAG_GROUNDED, stance: 0, knock_x: 0, knock_z: 0 }
-                })
-                .collect()
-        };
-        let (mut delta_bytes, mut whole_bytes) = (0, 0);
-        for step in 0..60 {
-            let tick = 2 + step as u32 * 2;
-            let people = runners(step);
-            let world = Everything { entities: &people, vehicles: &[], shots: &[], rockets: &[], pickups: &[], bullets: &[] };
-            let own = || Own { tick, ..Default::default() };
-            let a = replica.snapshot([0.0, 0.0], &world, own());
-            let b = whole.snapshot([0.0, 0.0], &world, own());
-            replica.acknowledge(tick);
-            if step >= 1 {
-                delta_bytes += a.len();
-                whole_bytes += b.len();
-            }
-        }
-        println!("30 runners: {} bytes a snapshot as deltas, {} whole", delta_bytes / 59, whole_bytes / 59);
-        assert!(delta_bytes * 10 < whole_bytes * 7, "deltas {delta_bytes} vs whole {whole_bytes}");
-    }
-}
+mod tests;

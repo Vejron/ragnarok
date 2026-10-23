@@ -1,9 +1,10 @@
 import type { Vec3 } from '@ragnarok/engine'
 import * as THREE from 'three'
-import { KIND_HELI, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS } from '@/net/codec'
+import { kindView } from '@/kinds'
+import type { KindFx } from '@/kinds/kind'
 import { isTracked } from '@/sim/vehicles'
 import { halfExtentsOf } from '@/sim/kinds'
-import { tyreSlip, wheelLayout, type WheelLayout } from '@/sim/slip'
+import { tyreSlip, type WheelLayout } from '@/sim/slip'
 import { SURFACE_ASPHALT, SURFACE_DIRT, SURFACE_GRASS, SURFACE_SAND, SURFACE_WATER } from '@/sim/surface'
 import type { Particles } from './particles'
 import { splash } from './splash'
@@ -49,7 +50,7 @@ const rand = (low: number, high: number) => low + Math.random() * (high - low)
  * when a sports car lifts off. A helicopter only blows dust up when it is low.
  */
 export class VehicleFx {
-  private readonly layout: WheelLayout | null
+  private readonly fx: KindFx
   private readonly last: (THREE.Vector3 | null)[] = []
   private readonly slips: number[] = []
   private lastPosition: THREE.Vector3 | null = null
@@ -115,7 +116,7 @@ export class VehicleFx {
     private readonly id: number,
     readonly kind: number,
   ) {
-    this.layout = wheelLayout(kind)
+    this.fx = kindView(kind).fx
   }
 
   /**
@@ -150,15 +151,15 @@ export class VehicleFx {
       return
     }
     const particles = distance < PARTICLE_RANGE
-    if (this.kind === KIND_HELI) {
+    const layout = this.fx.wheels
+    if (!layout) {
       if (powered && particles) this.downwash(world, here, dt)
       return
     }
-    this.wheels(world, steer, particles, dt)
+    this.wheels(world, layout, steer, particles, dt)
     if (powered && particles) {
-      if (this.kind === KIND_PLANE) this.castorOil(world, here, dt)
-      // The Roadster is electric: nothing comes out of it but its thrusters' air.
-      else if (this.kind !== KIND_ROADSTER) this.exhaust(world, here, dt)
+      if (this.fx.exhaust === 'castor') this.castorOil(world, here, dt)
+      else if (this.fx.exhaust === 'pipe') this.exhaust(world, here, dt)
     }
   }
 
@@ -179,8 +180,7 @@ export class VehicleFx {
     })
   }
 
-  private wheels(world: FxWorld, steer: number, particles: boolean, dt: number) {
-    const layout = this.layout!
+  private wheels(world: FxWorld, layout: WheelLayout, steer: number, particles: boolean, dt: number) {
     const upright = new THREE.Vector3(0, 1, 0).applyQuaternion(this.q).y > 0.5
     let touching = !upright
     const wet: THREE.Vector3[] = []
@@ -194,7 +194,7 @@ export class VehicleFx {
       const sideways = before ? contact.clone().sub(before).divideScalar(dt).dot(this.side) : 0
       this.last[wheel] = contact.clone()
       // Every wheel of a jeep and a tank is driven; a sports car pushes with its rear pair, and a plane with its propeller.
-      const driven = this.kind !== KIND_PLANE && (this.kind !== KIND_SPORTS || wheel >= 2)
+      const driven = this.fx.drivenFrom !== null && wheel >= this.fx.drivenFrom
       const wanted = tyreSlip(sideways, this.speed, this.accel, driven)
       const slip = (this.slips[wheel] ?? 0) + (wanted - (this.slips[wheel] ?? 0)) * Math.min(1, dt * SMOOTHING)
       this.slips[wheel] = slip
@@ -319,7 +319,7 @@ export class VehicleFx {
       })
     }
     this.peakAccel = Math.max(this.accel, this.peakAccel - dt * 6)
-    if (this.kind === KIND_SPORTS && this.peakAccel > 3 && this.accel < -0.5 && this.speed > 15) {
+    if (this.fx.backfire && this.peakAccel > 3 && this.accel < -0.5 && this.speed > 15) {
       this.peakAccel = 0
       for (let i = 0; i < 6; i++) {
         world.glow.spawn({

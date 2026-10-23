@@ -37,7 +37,7 @@ describe('StrvModel', () => {
 
   it('nods the gun with the pitch and never turns it sideways', () => {
     const tank = new StrvModel(1)
-    tank.update([0, 1, 0], IDENTITY, 0, [0], { yaw: 1.2, pitch: 0.25, shots: 0, range: 0, stowed: false })
+    tank.update([0, 1, 0], IDENTITY, 0, [0], { yaw: 1.2, pitch: 0.25, shots: 0, range: 0, flags: 0 })
     const { origin, direction } = tank.barrel()
     expect(origin.y).toBeCloseTo(1 + STRV_GUN_PIVOT[1], 3)
     expect(direction.y).toBeCloseTo(Math.sin(0.25), 3)

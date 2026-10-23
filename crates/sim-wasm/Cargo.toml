@@ -1,0 +1,16 @@
+[package]
+name = "sim-wasm"
+version.workspace = true
+edition.workspace = true
+
+# `sim` for the browser: the client's prediction runs the server's own physics through these bindings.
+# Built by `client/scripts/build-wasm.ts` (npm run build:wasm) into `client/src/sim/wasm/`.
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+shared.workspace = true
+sim.workspace = true
+# Must be the version of the installed `wasm-bindgen` CLI.
+wasm-bindgen = "=0.2.129"

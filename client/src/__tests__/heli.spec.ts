@@ -39,7 +39,7 @@ describe('HeliModel', () => {
 
   it('swings the gun with the turret angles and ends the barrel at the muzzle', () => {
     const heli = new HeliModel(1)
-    heli.update([10, 2, 5], IDENTITY, 0, [0, 0], { yaw: 0, pitch: 0, shots: 0, range: 0, stowed: false })
+    heli.update([10, 2, 5], IDENTITY, 0, [0, 0], { yaw: 0, pitch: 0, shots: 0, range: 0, flags: 0 })
     const level = heli.barrel()
     expect(level.direction.z).toBeCloseTo(-1, 3)
     expect(level.origin.y).toBeCloseTo(2 + HELI_GUN_PIVOT[1], 3)
@@ -47,7 +47,7 @@ describe('HeliModel', () => {
     expect(bounds.min.z).toBeCloseTo(5 + HELI_GUN_PIVOT[2] - HELI_GUN_LENGTH, 1)
     expect(heli.muzzle().z).toBeCloseTo(5 + HELI_GUN_PIVOT[2] - HELI_GUN_LENGTH, 3)
 
-    heli.update([10, 2, 5], IDENTITY, 0, [0, 0], { yaw: Math.PI / 4, pitch: -0.4, shots: 0, range: 0, stowed: false })
+    heli.update([10, 2, 5], IDENTITY, 0, [0, 0], { yaw: Math.PI / 4, pitch: -0.4, shots: 0, range: 0, flags: 0 })
     const turned = heli.barrel().direction
     // A turn to the left points towards -X, and the nod lowers it.
     expect(turned.x).toBeLessThan(-0.5)

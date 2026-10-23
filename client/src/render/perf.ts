@@ -1,5 +1,5 @@
 import type { Renderer } from '@ragnarok/engine'
-import { physicsClock } from '../sim/physics'
+import { physicsClock } from '../sim/motor'
 
 /** Samples kept for the averages: about two seconds at 60 fps. */
 const WINDOW = 120

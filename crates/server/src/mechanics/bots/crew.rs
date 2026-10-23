@@ -10,11 +10,11 @@
 //! real tank. A crewman on foot (respawned, or put out) walks back to its tank and gets in.
 
 use super::*;
-use crate::game::Crew;
+use crate::game::{Crew, Mounts, Player, Seats, Vehicle};
 use crate::mechanics::combat::position_of;
 use crate::mechanics::gunnery::aim;
 use crate::mechanics::vehicles::seat;
-use crate::physics::CarPose;
+use sim::CarPose;
 use shared::protocol::{DAMAGE_TURRET, TURRET_GONE};
 use shared::quant::wrap_angle;
 use shared::world::WorldFile;
@@ -177,8 +177,8 @@ pub(super) enum Boarding {
 
 /// Whether crewman `id`, on foot at `at`, gets back into its tank, walks to it, or does without.
 pub(super) fn board(world: &mut World, id: u32, crew: Crew, at: [f32; 3]) -> Boarding {
-    let Some(vehicle) = world.vehicles.get(&crew.vehicle) else { return Boarding::No };
-    if vehicle.wrecked() || vehicle.seats[crew.seat].is_some() {
+    let Some(seats) = world.entities.get::<Seats>(crew.vehicle) else { return Boarding::No };
+    if world.entities.dead(crew.vehicle) || seats.rider(crew.seat).is_some() {
         return Boarding::No;
     }
     let Some(pose) = world.physics.car_pose(crew.vehicle) else { return Boarding::No };
@@ -213,7 +213,7 @@ fn controls(throttle: f32, steer: f32, halt: bool, idle: InputFrame) -> InputFra
 fn drive(world: &World, bot: &mut Bot, vid: u32, pose: &CarPose, idle: InputFrame) -> InputFrame {
     let at = pose.position;
     let halt = controls(0.0, 0.0, true, idle);
-    let gunner = world.vehicles.get(&vid).and_then(|vehicle| vehicle.seats[GUNNER]).and_then(|id| world.bots.get(&id));
+    let gunner = world.entities.get::<Seats>(vid).and_then(|seats| seats.rider(GUNNER)).and_then(|id| world.entities.get::<Bot>(id));
     // How fast it may go: full speed, unless it is coming up to a sharp turn.
     let mut limit = TANK_MAX_SPEED;
     let goal = match gunner.map(|g| (g.mode, g.sees, g.last_seen)) {
@@ -303,7 +303,7 @@ fn next_waypoint(bot: &mut Bot) {
 /// foot, or in a vehicle (but not its own). With where to lay the gun on them.
 fn spot_from_turret(world: &World, id: u32, vid: u32, eye: [f32; 3]) -> Option<(u32, [f32; 3])> {
     let mut best: Option<(u32, [f32; 3], f32)> = None;
-    for (&other, player) in &world.players {
+    for (other, player) in world.entities.all::<Player>() {
         if other == id || !player.alive() || same_team(world, id, other) {
             continue;
         }
@@ -360,8 +360,8 @@ fn gun(world: &mut World, id: u32, bot: &mut Bot, vid: u32, pose: &CarPose, nois
     let at = pose.position;
     let eye = pose.world_point(TURRET_EYE);
     let chase = (CHASE * TICK_RATE as f32) as u32;
-    let Some(vehicle) = world.vehicles.get(&vid) else { return idle };
-    let turret = vehicle.gun.unwrap_or_default();
+    let Some(vehicle) = world.entities.get::<Vehicle>(vid) else { return idle };
+    let turret = world.entities.get::<Mounts>(vid).and_then(Mounts::turret).copied().unwrap_or_default();
     let turret_on = vehicle.damage[DAMAGE_TURRET] != TURRET_GONE;
 
     // A hit on the tank, or a fight heard, sends it after where that came from.
@@ -450,7 +450,7 @@ fn gun(world: &mut World, id: u32, bot: &mut Bot, vid: u32, pose: &CarPose, nois
     let mut buttons = 0;
     if fire && laid && in_reach && turret_on && turret.cooldown == 0 {
         let (muzzle, _) = aim(pose, turret.yaw, turret.pitch);
-        let target = bot.target.and_then(|t| world.players.get(&t)).and_then(|p| p.seat).filter(|s| !s.remote).map(|s| s.vehicle);
+        let target = bot.target.and_then(|t| world.entities.get::<Player>(t)).and_then(|p| p.seat).filter(|s| !s.remote).map(|s| s.vehicle);
         if clear_shot(world, muzzle, bot.last_seen, vid, target) {
             buttons |= BUTTON_FIRE;
         }

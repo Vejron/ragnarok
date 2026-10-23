@@ -1,6 +1,6 @@
 use super::Mechanic;
-use crate::game::World;
-use crate::physics::{Character, STANDING_Y};
+use crate::game::{Bot, Player, World};
+use sim::{Character, STANDING_Y};
 use shared::consts::SPAWN_ALTITUDE;
 use shared::quant::from_cm;
 use shared::world::{Building, WorldFile};
@@ -51,7 +51,7 @@ fn near_building(building: &Building, point: [i32; 2]) -> bool {
 }
 
 pub(super) fn place(world: &mut World, id: u32) {
-    let own = world.players.get_mut(&id).filter(|player| !player.spawns.is_empty()).map(|player| {
+    let own = world.entities.get_mut::<Player>(id).filter(|player| !player.spawns.is_empty()).map(|mut player| {
         let point = player.spawns[player.next_spawn % player.spawns.len()];
         player.next_spawn = player.next_spawn.wrapping_add(1);
         point
@@ -66,8 +66,8 @@ pub(super) fn place(world: &mut World, id: u32) {
         world.map.spawns[index]
     };
     // Bots cannot steer a canopy, so they start on the ground.
-    let drop = !world.bots.contains_key(&id);
-    if let Some(player) = world.players.get_mut(&id) {
+    let drop = !world.entities.has::<Bot>(id);
+    if let Some(mut player) = world.entities.get_mut::<Player>(id) {
         let (x, z) = (from_cm(point[0]), from_cm(point[1]));
         let ground = world.map.ground.height_at(x, z);
         player.character = Character {
@@ -122,7 +122,7 @@ mod tests {
     }
 
     fn at(game: &Game, id: u32) -> [i32; 2] {
-        let [x, _, z] = game.world.players[&id].character.position;
+        let [x, _, z] = game.world.entities.of::<Player>(id).character.position;
         [(x * 100.0).round() as i32, (z * 100.0).round() as i32]
     }
 
@@ -131,7 +131,7 @@ mod tests {
         let mut game = Game::new(map(), 0).unwrap();
         let (a, b) = ([2_000, 0], [-2_000, 3_000]);
         let id = join(&mut game, vec![a, [5_000, 5_000], b]);
-        assert_eq!(game.world.players[&id].spawns, vec![a, b], "the one in the house is dropped");
+        assert_eq!(game.world.entities.of::<Player>(id).spawns, vec![a, b], "the one in the house is dropped");
         assert_eq!(at(&game, id), a);
         place(&mut game.world, id);
         assert_eq!(at(&game, id), b);
@@ -143,7 +143,7 @@ mod tests {
     fn a_player_with_no_usable_spawn_gets_the_worlds() {
         let mut game = Game::new(map(), 0).unwrap();
         let id = join(&mut game, vec![[-5_000, -5_000]]);
-        assert!(game.world.players[&id].spawns.is_empty());
+        assert!(game.world.entities.of::<Player>(id).spawns.is_empty());
         assert_eq!(at(&game, id), [0, 0]);
     }
 
@@ -151,11 +151,11 @@ mod tests {
     fn a_player_drops_in_under_an_open_chute_and_a_bot_starts_on_the_ground() {
         let mut game = Game::new(map(), 0).unwrap();
         let id = join(&mut game, vec![]);
-        let character = game.world.players[&id].character;
+        let character = game.world.entities.of::<Player>(id).character;
         assert!(character.chute && !character.grounded);
         assert!((character.position[1] - (STANDING_Y + SPAWN_ALTITUDE)).abs() < 1e-3);
         let bot = game.add_bot([0.0, 0.0], 1, vec![]).unwrap();
-        let character = game.world.players[&bot].character;
+        let character = game.world.entities.of::<Player>(bot).character;
         assert!(!character.chute && character.position[1] < 2.0);
     }
 }

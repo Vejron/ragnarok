@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { KIND_HELI, KIND_PLANE, KIND_STRV, KIND_TANK } from '@/net/codec'
+import { kindView } from '@/kinds'
 import type { FxWorld } from './tyres'
 
 /** Past this the plume is not drawn at all, metres; past HALF_RANGE it is thinned. */
@@ -10,15 +10,6 @@ const WIND = new THREE.Vector3(1.1, 0, 0.5)
 
 const rand = (low: number, high: number) => low + Math.random() * (high - low)
 const pick = <T>(items: readonly T[]) => items[Math.floor(Math.random() * items.length)]!
-
-/** Where the engine sits in the hull's frame: the front of a car, the rear of a tank, the top of a heli. */
-function engineBay(kind: number): [number, number, number] {
-  if (kind === KIND_TANK) return [0, 1.3, 1.6]
-  if (kind === KIND_STRV) return [0, 1.1, 1.8]
-  if (kind === KIND_HELI) return [0, 1.6, 0.4]
-  if (kind === KIND_PLANE) return [0, 0.5, -1.8]
-  return [0, 0.75, -1.35]
-}
 
 const WHITE = [0xd8d8d4, 0xc4c4c0, 0xb0b0ac] as const
 const GREY = [0x8a8885, 0x777572, 0x686663] as const
@@ -50,7 +41,7 @@ export function damageSmoke(
   // Puffs per second: a trickle when scuffed, a rolling column when ablaze.
   const owed = carried + dt * (6 + level * 26) * thin
   const puffs = Math.floor(owed)
-  const bay = new THREE.Vector3(...engineBay(kind)).applyQuaternion(rotation).add(at)
+  const bay = new THREE.Vector3(...kindView(kind).fx.bay).applyQuaternion(rotation).add(at)
   const palette = wreck ? SOOT : level > 0.65 ? DARK : level > 0.3 ? GREY : WHITE
   const speed = Math.hypot(velocity.x, velocity.z)
   for (let i = 0; i < puffs; i++) {

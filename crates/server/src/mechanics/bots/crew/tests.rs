@@ -20,7 +20,7 @@ fn game(wall: bool, roads: Vec<Road>) -> Game {
         map.collision = CollisionMesh { vertices, triangles };
     }
     let mut game = Game::new(map, 0).unwrap();
-    game.world.pickups.clear();
+    game.world.clear_pickups();
     game
 }
 
@@ -37,8 +37,8 @@ fn join(game: &mut Game) -> u32 {
 }
 
 fn put(game: &mut Game, id: u32, [x, z]: [f32; 2]) {
-    let y = game.world.map.ground.height_at(x, z) + crate::physics::STANDING_Y;
-    game.world.players.get_mut(&id).unwrap().character.position = [x, y, z];
+    let y = game.world.map.ground.height_at(x, z) + sim::STANDING_Y;
+    game.world.entities.get_mut::<Player>(id).unwrap().character.position = [x, y, z];
 }
 
 fn run(game: &mut Game, seconds: f32) {
@@ -52,21 +52,21 @@ fn tank(game: &Game, vid: u32) -> CarPose {
 }
 
 fn seated(game: &Game, id: u32) -> Option<(u32, usize)> {
-    game.world.players[&id].seat.map(|seat| (seat.vehicle, seat.index))
+    game.world.entities.of::<Player>(id).seat.map(|seat| (seat.vehicle, seat.index))
 }
 
 fn shells_fired(game: &Game, vid: u32) -> u8 {
-    game.world.vehicles[&vid].gun.unwrap().shots
+    game.world.entities.of::<crate::game::Mounts>(vid).turret().unwrap().shots
 }
 
 #[test]
 fn a_crew_is_two_bots_in_their_seats_of_a_fresh_tank() {
     let mut game = game(false, vec![]);
     let (vid, [driver, gunner]) = crew(&mut game, [0.0, 0.0], vec![[0.0, 0.0], [0.0, -40.0]]);
-    assert_eq!(game.world.vehicles[&vid].kind, shared::protocol::KIND_TANK);
+    assert_eq!(game.world.entities.of::<Vehicle>(vid).kind, shared::protocol::KIND_TANK);
     assert_eq!(seated(&game, driver), Some((vid, DRIVER)));
     assert_eq!(seated(&game, gunner), Some((vid, GUNNER)));
-    assert_eq!(game.world.bots[&driver].crew, Some(Crew { vehicle: vid, seat: DRIVER }));
+    assert_eq!(game.world.entities.of::<Bot>(driver).crew, Some(Crew { vehicle: vid, seat: DRIVER }));
 }
 
 #[test]
@@ -77,12 +77,12 @@ fn the_driver_drives_its_route_round_and_round() {
     let mut visited = [false; 4];
     for _ in 0..(90 * TICK_RATE) {
         game.step();
-        visited[game.world.bots[&driver].next] = true;
+        visited[game.world.entities.of::<Bot>(driver).next] = true;
         let [x, _, z] = tank(&game, vid).position;
         assert!(x > -10.0 && x < 60.0 && z > -10.0 && z < 60.0, "keeps to its route: {x}, {z}");
     }
     assert_eq!(visited, [true; 4], "drove to every waypoint");
-    assert!(game.world.bots[&driver].tries == 0 || game.world.bots[&driver].tries < TRIES, "never stuck on open ground");
+    assert!(game.world.entities.of::<Bot>(driver).tries == 0 || game.world.entities.of::<Bot>(driver).tries < TRIES, "never stuck on open ground");
 }
 
 /// A road from (-200, -20) east to (200, -20), then north to (200, 100).
@@ -144,7 +144,7 @@ fn with_no_route_it_drives_along_the_nearest_road() {
     let mut game = game(false, vec![road()]);
     let (vid, [driver, _]) = crew(&mut game, [0.0, -20.0], vec![]);
     let points: Vec<[f32; 2]> = road().points.iter().map(|p| [p[0] as f32 / 100.0, p[1] as f32 / 100.0]).collect();
-    assert!(game.world.bots[&driver].route.len() > 4);
+    assert!(game.world.entities.of::<Bot>(driver).route.len() > 4);
     let start = tank(&game, vid).position;
     let mut furthest: f32 = 0.0;
     for _ in 0..60 {
@@ -172,24 +172,24 @@ fn the_shell_laid_for_a_mark_lands_on_it() {
 fn the_gunner_shells_someone_it_sees_all_round_and_the_tank_holds_still() {
     let mut game = game(false, vec![]);
     let (vid, [_, gunner]) = crew(&mut game, [0.0, 0.0], vec![[0.0, 0.0], [0.0, -60.0]]);
-    game.world.bots.get_mut(&gunner).unwrap().skill = 1.0;
+    game.world.entities.get_mut::<Bot>(gunner).unwrap().skill = 1.0;
     let person = join(&mut game);
     // Behind the tank, which first heads the other way.
     put(&mut game, person, [10.0, 70.0]);
     let mut halted = false;
     for _ in 0..(20 * TICK_RATE) {
         game.step();
-        let fighting = game.world.bots[&gunner].sees;
+        let fighting = game.world.entities.of::<Bot>(gunner).sees;
         if fighting && tank(&game, vid).forward_speed.abs() < 0.3 {
             halted = true;
         }
-        if !game.world.players[&person].alive() {
+        if !game.world.entities.of::<Player>(person).alive() {
             break;
         }
         put(&mut game, person, [10.0, 70.0]);
     }
     assert!(shells_fired(&game, vid) > 0, "it fired");
-    assert!(!game.world.players[&person].alive(), "and got them in the end");
+    assert!(!game.world.entities.of::<Player>(person).alive(), "and got them in the end");
     assert!(halted, "the driver held still while the gunner fought");
 }
 
@@ -200,20 +200,20 @@ fn it_leaves_its_own_team_alone() {
     let friend = game.add_bot([0.0, -40.0], TEAM_BOTS, vec![[0.0, -40.0]]).unwrap();
     run(&mut game, 8.0);
     assert_eq!(shells_fired(&game, vid), 0);
-    assert!(game.world.players[&friend].alive());
+    assert!(game.world.entities.of::<Player>(friend).alive());
 }
 
 #[test]
 fn it_does_not_fire_on_someone_close_enough_for_the_burst_to_reach_it() {
     let mut game = game(false, vec![]);
     let (vid, [_, gunner]) = crew(&mut game, [0.0, 0.0], vec![[0.0, 0.0]]);
-    game.world.bots.get_mut(&gunner).unwrap().skill = 1.0;
+    game.world.entities.get_mut::<Bot>(gunner).unwrap().skill = 1.0;
     let person = join(&mut game);
     for _ in 0..(6 * TICK_RATE) {
         put(&mut game, person, [6.0, -6.0]);
         game.step();
     }
-    assert!(game.world.bots[&gunner].sees, "it sees them");
+    assert!(game.world.entities.of::<Bot>(gunner).sees, "it sees them");
     assert_eq!(shells_fired(&game, vid), 0, "but holds its fire");
 }
 
@@ -229,7 +229,7 @@ fn a_stuck_tank_backs_out_and_gives_the_waypoint_up() {
         reversed |= tank(&game, vid).forward_speed < -1.0;
         let [x, _, z] = tank(&game, vid).position;
         assert!(x < 21.0, "never through the wall: {x}");
-        if game.world.bots[&driver].next == 2 && reversed {
+        if game.world.entities.of::<Bot>(driver).next == 2 && reversed {
             gave_up = true;
         }
         if gave_up && x.hypot(z + 50.0) < WAYPOINT_REACHED + 1.0 {
@@ -246,7 +246,7 @@ fn a_crew_gets_back_in_when_their_wrecked_tank_comes_back() {
     run(&mut game, 1.0);
     damage_vehicle(&mut game.world, vid, 255, None);
     game.step();
-    assert!(!game.world.players[&driver].alive() && !game.world.players[&gunner].alive(), "the crew die in the wreck");
+    assert!(!game.world.entities.of::<Player>(driver).alive() && !game.world.entities.of::<Player>(gunner).alive(), "the crew die in the wreck");
     assert_eq!(seated(&game, driver), None);
     // They come back in 3 s, beside it; the tank is put back after `WRECK_TICKS`.
     run(&mut game, WRECK_TICKS as f32 / TICK_RATE as f32 + 6.0);
@@ -264,7 +264,7 @@ fn a_crewman_put_out_of_reach_of_its_tank_fights_on_foot() {
     put(&mut game, person, [0.0, -10.0]);
     run(&mut game, 5.0);
     assert_eq!(seated(&game, driver), None);
-    let hurt = &game.world.players[&person];
+    let hurt = &game.world.entities.of::<Player>(person);
     assert!(hurt.hp < shared::consts::PLAYER_MAX_HP || hurt.deaths > 0, "it shot them on foot");
 }
 
@@ -294,11 +294,11 @@ fn tanks_drive_the_fixture_city() {
         for (crew, was) in crews.iter_mut().zip(before) {
             let now = tank(&game, crew.0).position;
             crew.3 += (now[0] - was[0]).hypot(now[2] - was[2]);
-            crew.4 = crew.4.max(game.world.bots[&crew.1].tries);
+            crew.4 = crew.4.max(game.world.entities.of::<Bot>(crew.1).tries);
         }
     }
     for (vid, driver, start, driven, tries) in crews {
-        let bot = &game.world.bots[&driver];
+        let bot = &game.world.entities.of::<Bot>(driver);
         let pose = tank(&game, vid);
         println!(
             "tank {vid}: {} waypoints, at {} now, drove {driven:.0} m, {:.0} m from start, most tries {tries}, upright {:.2}",

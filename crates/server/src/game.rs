@@ -1,9 +1,10 @@
 //! The authoritative game loop: one task owns the whole world and steps it at a fixed rate.
 //! Sessions talk to it only through `Command`s in and `Outgoing` messages out.
 
+use crate::entities::With;
 use crate::jitter::JitterBuffer;
 use crate::mechanics::{Mechanic, default_mechanics};
-use crate::physics::{CarControls, Character, Obj, Physics};
+use sim::{CarControls, Character, Obj, Physics};
 use crate::replication::{Everything, Own, Replica};
 use crate::rng::Rng;
 use crate::scenario::Scenario;
@@ -20,6 +21,7 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{MissedTickBehavior, interval};
 
+mod replicate;
 mod snapshot;
 mod state;
 
@@ -36,8 +38,8 @@ fn destroyed_entry(object: Obj, yaw: i16, force: u8) -> (u8, u16, u16, u32, i16,
 /// Building `id`'s damage `stage`, and where a blast marked it, as a `Damaged` entry.
 /// Player `id`'s `Profiles` entry: who they are, and which side.
 fn profile_entry(world: &World, id: u32) -> ProfileEntry {
-    let player = &world.players[&id];
-    (id, player.name.clone(), player.color, player.team, world.bots.contains_key(&id) as u8)
+    let player = &world.entities.of::<Player>(id);
+    (id, player.name.clone(), player.color, player.team, world.entities.has::<Bot>(id) as u8)
 }
 
 fn damaged_entry(id: ObjId, stage: u8, mark: Option<[f32; 3]>) -> DamagedEntry {
@@ -83,12 +85,7 @@ impl Game {
                 carves: HashMap::new(),
                 fresh_carved: Vec::new(),
                 map,
-                players: BTreeMap::new(),
-                vehicles: BTreeMap::new(),
-                rockets: BTreeMap::new(),
-                pickups: BTreeMap::new(),
-                roosters: BTreeMap::new(),
-                bots: BTreeMap::new(),
+                entities: Default::default(),
                 nav: Default::default(),
                 next_id: 1,
                 rng: Rng::from_time(),
@@ -106,13 +103,15 @@ impl Game {
             world_hash,
             scenario: None,
         };
+        let names: Vec<&str> = game.mechanics.iter().map(|mechanic| mechanic.name()).collect();
+        tracing::debug!(mechanics = ?names, "room created");
         for mechanic in &mut game.mechanics {
             mechanic.on_start(&mut game.world);
         }
         for bot in std::mem::take(&mut game.world.map.placed_bots) {
             let route = bot.route.iter().map(|point| point.map(from_cm)).collect();
             match game.add_bot(bot.at.map(from_cm), bot.team, route) {
-                Some(id) => game.world.bots.get_mut(&id).expect("just added").skill = bot.skill.clamp(0.0, 1.0),
+                Some(id) => game.world.entities.get_mut::<Bot>(id).expect("just added").skill = bot.skill.clamp(0.0, 1.0),
                 None => tracing::warn!(MAX_BOTS, "too many bots, placed bot skipped"),
             }
         }
@@ -128,14 +127,15 @@ impl Game {
             Command::Rtc { from, to, kind, json } => {
                 // Signaling is retried by WebRTC itself, so a full outbox just sheds it: unlike
                 // game state it must not cost the receiver their session.
-                if from != to && self.world.players.contains_key(&from) {
-                    if let Some(outbox) = self.outboxes.get(&to) {
-                        let _ = outbox.try_send(Outgoing::Reliable(encode(&Rtc(S_RTC, from, kind, json)).into()));
-                    }
+                if from != to
+                    && self.world.entities.has::<Player>(from)
+                    && let Some(outbox) = self.outboxes.get(&to)
+                {
+                    let _ = outbox.try_send(Outgoing::Reliable(encode(&Rtc(S_RTC, from, kind, json)).into()));
                 }
             }
             Command::Input(id, baseline, frames) => {
-                if let Some(player) = self.world.players.get_mut(&id) {
+                if let Some(mut player) = self.world.entities.get_mut::<Player>(id) {
                     player.inputs.push(&frames);
                 }
                 if let Some(replica) = self.replicas.get_mut(&id) {
@@ -155,7 +155,7 @@ impl Game {
         if outbox.try_send(Outgoing::Reliable(welcome.into())).is_err() {
             return None;
         }
-        self.world.players.insert(
+        self.world.entities.spawn(
             id,
             Player {
                 character: Character::default(),
@@ -181,13 +181,13 @@ impl Game {
                 team: TEAM_NONE,
             },
         );
-        let profiles = self.world.players.keys().map(|&id| profile_entry(&self.world, id)).collect();
+        let profiles = self.world.entities.ids::<With<Player>>().into_iter().map(|id| profile_entry(&self.world, id)).collect();
         let _ = outbox.try_send(Outgoing::Reliable(encode(&Profiles(S_PROFILES, profiles)).into()));
         let joiner = Bytes::from(encode(&Profiles(S_PROFILES, vec![profile_entry(&self.world, id)])));
         for (&to, other) in &self.outboxes {
             send_reliable(other, to, &joiner, &mut self.stalled);
         }
-        let scores = self.world.players.iter().map(|(&id, player)| (id, player.kills, player.deaths)).collect();
+        let scores = self.world.entities.all::<Player>().map(|(id, player)| (id, player.kills, player.deaths)).collect();
         let _ = outbox.try_send(Outgoing::Reliable(encode(&Scores(S_SCORES, scores)).into()));
         // Always sent, even empty: the client takes the first one after the welcome as the catch-up
         // (not news to animate), and snapshots on the datagram channel can overtake it.
@@ -223,44 +223,44 @@ impl Game {
         for mechanic in &mut self.mechanics {
             mechanic.on_join(&mut self.world, id);
         }
-        let player = &self.world.players[&id];
-        tracing::info!(id, name = %player.name, spawns = player.spawns.len(), players = self.world.players.len(), "player joined");
+        let player = &self.world.entities.of::<Player>(id);
+        tracing::info!(id, name = %player.name, spawns = player.spawns.len(), players = self.world.entities.count::<Player>(), "player joined");
         Some(id)
     }
 
     fn leave(&mut self, id: u32) {
-        if !self.world.players.contains_key(&id) {
+        if !self.world.entities.has::<Player>(id) {
             return;
         }
         for mechanic in &mut self.mechanics {
             mechanic.on_leave(&mut self.world, id);
         }
-        self.world.players.remove(&id);
+        self.world.entities.despawn(id);
         self.outboxes.remove(&id);
         self.replicas.remove(&id);
         let leave = Bytes::from(encode(&Leave(S_LEAVE, id)));
         for (&to, outbox) in &self.outboxes {
             send_reliable(outbox, to, &leave, &mut self.stalled);
         }
-        tracing::info!(id, players = self.world.players.len(), "player left");
+        tracing::info!(id, players = self.world.entities.count::<Player>(), "player left");
     }
 
     /// Adds a bot living at `home` on `team` (`TEAM_BOTS` or above) that walks round `route`
     /// (`[x, z]`, metres; empty makes one up). It is a player with no connection: `Bots` writes its
     /// input, and everything else treats it as anyone else. `None` when there are `MAX_BOTS` already.
     pub fn add_bot(&mut self, home: [f32; 2], team: u8, route: Vec<[f32; 2]>) -> Option<u32> {
-        let name = format!("Bot {}", self.world.bots.len() + 1);
+        let name = format!("Bot {}", self.world.entities.count::<Bot>() + 1);
         self.add_bot_as(name, home, team, route)
     }
 
     /// `add_bot`, under `name`.
     pub fn add_bot_as(&mut self, name: String, home: [f32; 2], team: u8, route: Vec<[f32; 2]>) -> Option<u32> {
-        if self.world.bots.len() >= MAX_BOTS {
+        if self.world.entities.count::<Bot>() >= MAX_BOTS {
             return None;
         }
         let id = self.world.alloc_id();
         let team = team.max(TEAM_BOTS);
-        self.world.players.insert(
+        self.world.entities.spawn(
             id,
             Player {
                 character: Character::default(),
@@ -287,7 +287,7 @@ impl Game {
                 team,
             },
         );
-        self.world.bots.insert(id, Bot::new(home, route));
+        self.world.entities.insert(id, Bot::new(home, route));
         for mechanic in &mut self.mechanics {
             mechanic.on_join(&mut self.world, id);
         }
@@ -307,7 +307,7 @@ impl Game {
     /// more bots or for the tank, or it does not fit there.
     pub fn add_crew(&mut self, names: [String; 2], at: [f32; 2], team: u8, route: Vec<[f32; 2]>) -> Option<(u32, [u32; 2])> {
         use crate::mechanics::{DRIVER, GUNNER, add_tank, nearest_waypoint, road_route, seat};
-        if self.world.bots.len() + 2 > MAX_BOTS {
+        if self.world.entities.count::<Bot>() + 2 > MAX_BOTS {
             return None;
         }
         let route = if route.is_empty() { road_route(&self.world.map, at) } else { route };
@@ -323,7 +323,7 @@ impl Game {
         let mut crew = [0; 2];
         for (slot, (name, index)) in [(driver_name, DRIVER), (gunner_name, GUNNER)].into_iter().enumerate() {
             let id = self.add_bot_as(name, home, team, route.clone()).expect("room checked above");
-            let bot = self.world.bots.get_mut(&id).expect("just added");
+            let mut bot = self.world.entities.get_mut::<Bot>(id).expect("just added");
             bot.crew = Some(Crew { vehicle: vid, seat: index });
             bot.next = next;
             bot.yaw = yaw;
@@ -336,7 +336,7 @@ impl Game {
 
     /// Takes bot `id` out of the game, as if it had left. Anyone else is left alone.
     pub fn remove_bot(&mut self, id: u32) {
-        if self.world.bots.contains_key(&id) {
+        if self.world.entities.has::<Bot>(id) {
             self.leave(id);
         }
     }
@@ -351,7 +351,8 @@ impl Game {
 
     /// One fixed simulation step.
     pub fn step(&mut self) {
-        for player in self.world.players.values_mut() {
+        for id in self.world.entities.ids::<With<Player>>() {
+            let mut player = self.world.entities.of_mut::<Player>(id);
             let consumed = player.inputs.pop();
             player.input = consumed.input;
             if consumed.fresh {
@@ -510,9 +511,11 @@ mod tests {
             .collect();
         let last = snapshots.last().expect("a snapshot every SNAPSHOT_EVERY ticks");
         assert_eq!(last.ack, 2, "both inputs acknowledged");
-        let stickmen: Vec<_> = last.new_entities.iter().filter(|e| e.kind == KIND_STICKMAN).collect();
+        // No snapshot was acknowledged, so each brings everything whole: the stickman among it.
+        let scene = shared::replicated::apply(&[], &last.updates, &last.removed);
+        let stickmen: Vec<_> = scene.iter().filter(|(_, e)| e.kind.as_ref().is_some_and(|kind| kind.kind == KIND_STICKMAN)).collect();
         assert_eq!(stickmen.len(), 1);
-        assert!(stickmen[0].z < 0, "walked towards -Z");
+        assert!(stickmen[0].1.place.unwrap().z < 0, "walked towards -Z");
     }
 
     fn profiles(outgoing: Vec<Outgoing>) -> Vec<Vec<ProfileEntry>> {
@@ -572,7 +575,7 @@ mod tests {
         // The welcome already fills the one slot, so the next reliable message cannot be queued.
         game.world.fresh_destroyed.push((Obj::Tree(Default::default()), 0, 0));
         game.step();
-        assert!(!game.world.players.contains_key(&id));
+        assert!(!game.world.entities.has::<Player>(id));
     }
 
     #[test]
@@ -599,7 +602,7 @@ mod tests {
         game.handle(Command::Leave(first));
         let Some(Outgoing::Reliable(leave)) = drain(&mut b).into_iter().next() else { panic!("no leave") };
         assert_eq!(decode::<Leave>(&leave), Some(Leave(S_LEAVE, first)));
-        assert_eq!(game.entity_states().iter().filter(|e| e.kind == KIND_STICKMAN).count(), 1);
+        assert_eq!(game.seen_people(KIND_STICKMAN).len(), 1);
     }
 
     /// Not a regression test: a rough cost of one tick with a full room, to aim optimisation at. Players
@@ -620,7 +623,7 @@ mod tests {
         };
         println!("world half extent {} m, {} buildings, {} trees", map.half_extent / 100, map.buildings.len(), map.trees.len());
         let mut game = Game::new(map, 0).unwrap();
-        game.world.pickups.clear();
+        game.world.clear_pickups();
         let mut inboxes = Vec::new();
         let mut ids = Vec::new();
         for _ in 0..MAX_PLAYERS {
@@ -635,7 +638,7 @@ mod tests {
         let spawns: Vec<[f32; 2]> = game.world.map.spawns.iter().map(|s| [s[0] as f32 / 100.0, s[1] as f32 / 100.0]).collect();
         println!("{} spawn points", spawns.len());
         for (n, id) in ids.iter().enumerate() {
-            let player = game.world.players.get_mut(id).unwrap();
+            let mut player = game.world.entities.get_mut::<Player>(*id).unwrap();
             if spawns.is_empty() {
                 player.character.position[0] = (n % 8) as f32 * 70.0 - 250.0;
                 player.character.position[2] = (n / 8) as f32 * 70.0 - 250.0;
@@ -647,7 +650,7 @@ mod tests {
                 player.character.position[2] = sz;
             }
             let (x, z) = (player.character.position[0], player.character.position[2]);
-            player.character.position[1] = game.world.map.ground.height_at(x, z) + crate::physics::STANDING_Y + 0.5;
+            player.character.position[1] = game.world.map.ground.height_at(x, z) + sim::STANDING_Y + 0.5;
         }
         // `BOTS=n`: that many bots as well, spread over the spawn points among the players, on made-up loops.
         let bots: usize = std::env::var("BOTS").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
@@ -677,7 +680,8 @@ mod tests {
                 game.handle(Command::Input(*id, t.saturating_sub(2), vec![frame]));
             }
             let started = Instant::now();
-            for player in game.world.players.values_mut() {
+            for id in game.world.entities.ids::<With<Player>>() {
+                let mut player = game.world.entities.of_mut::<Player>(id);
                 let consumed = player.inputs.pop();
                 player.input = consumed.input;
                 if consumed.fresh {
@@ -704,11 +708,19 @@ mod tests {
         }
         for (vid, start) in crews {
             let (Some(start), Some(pose)) = (start, game.world.physics.car_pose(vid)) else { continue };
-            let gun = game.world.vehicles.get(&vid).and_then(|vehicle| vehicle.gun).map_or(0, |gun| gun.shots);
+            let gun = game.world.entities.get::<Mounts>(vid).and_then(Mounts::turret).map_or(0, |gun| gun.shots);
             println!("tank {vid}: drove {:.0} m, fired {gun}", (pose.position[0] - start[0]).hypot(pose.position[2] - start[2]));
         }
         let budget = Duration::from_secs_f64(1.0 / TICK_RATE as f64);
-        println!("per mechanic per tick (Bots, Spawn, Pickups, Drones, Vehicles, Gunnery, Movement, Npcs, Combat): {:?}", per_mechanic.iter().map(|d| *d / ticks).collect::<Vec<_>>());
+        let names: Vec<&str> = game.mechanics.iter().map(|mechanic| mechanic.name()).collect();
+        println!("per mechanic per tick ({}): {:?}", names.join(", "), per_mechanic.iter().map(|d| *d / ticks).collect::<Vec<_>>());
         println!("mechanics: avg {:?}, worst {:?}; snapshots for the room: avg {:?} per call (every {SNAPSHOT_EVERY} ticks); budget {budget:?}", step_total / ticks, step_max, snap_total / (ticks / SNAPSHOT_EVERY));
+        // What reading the world for snapshots costs, once per snapshot.
+        let runs = 200u32;
+        let started = Instant::now();
+        for _ in 0..runs {
+            std::hint::black_box(game.replicated());
+        }
+        println!("reading the world as components: {:?}", started.elapsed() / runs);
     }
 }

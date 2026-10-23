@@ -13,7 +13,7 @@
 //! The grid is built a chunk of 16 x 16 cells at a time, when a search first looks there, and a
 //! chunk is built again after a building in it is bitten or comes down (`forget`).
 
-use crate::physics::Physics;
+use sim::Physics;
 use shared::consts::CAPSULE_RADIUS;
 use shared::world::WorldFile;
 use std::cmp::Reverse;

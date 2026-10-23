@@ -1,7 +1,8 @@
-import { applyDelta, type WireDelta, type WireScene } from './codec'
+import type { Components } from './components.generated'
+import { applyUpdates, type Scene, type Update } from './replicated'
 import { BASELINE_WINDOW_CLIENT } from '@/sim/consts'
 
-const EMPTY: WireScene = { entities: [], vehicles: [] }
+const EMPTY: Scene = new Map()
 
 /**
  * The client's half of delta compression. Snapshots list only what changed since a baseline, so
@@ -9,7 +10,7 @@ const EMPTY: WireScene = { entities: [], vehicles: [] }
  * newest tick held is sent back with every input, and the server diffs against that.
  */
 export class Replica {
-  private readonly held = new Map<number, WireScene>()
+  private readonly held = new Map<number, Map<number, Components>>()
   private newest = 0
 
   /** The tick of the newest snapshot rebuilt, to acknowledge: 0 until there is one. */
@@ -18,16 +19,17 @@ export class Replica {
   }
 
   /**
-   * Rebuilds the scene of snapshot `tick` from `delta` on top of snapshot `baseline`, and keeps it.
+   * Rebuilds the scene of snapshot `tick` from its `updates` and `removed` on top of snapshot
+   * `baseline`, and keeps it.
    * Returns null when it names a baseline this client does not hold (it was never received, or is
    * too old), in which case the snapshot is dropped and the server, which sees no acknowledgement
    * of it, will fall back to a whole one. `latest` says whether this is the newest snapshot so
    * far, as datagrams can arrive out of order.
    */
-  receive(tick: number, baseline: number, delta: WireDelta): { scene: WireScene; latest: boolean } | null {
+  receive(tick: number, baseline: number, updates: readonly Update[], removed: readonly number[]): { scene: Scene; latest: boolean } | null {
     const base = baseline === 0 ? EMPTY : this.held.get(baseline)
     if (!base) return null
-    const scene = applyDelta(base, delta)
+    const scene = applyUpdates(base, updates, removed)
     this.held.set(tick, scene)
     const latest = tick > this.newest
     if (latest) this.newest = tick

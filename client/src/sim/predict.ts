@@ -1,5 +1,5 @@
 import { TICK_DT } from './consts'
-import { stepCharacter, type CharacterMotor, type CharacterState, type Vec3 } from './physics'
+import type { CharacterState, Stepper, Vec3 } from './motor'
 import type { InputFrame } from '@/net/codec'
 
 /** Inputs older than this are discarded even if never acknowledged (the server dropped them). */
@@ -32,7 +32,7 @@ export class Predictor {
   /** Walking speed multiplier for an input, e.g. slower aiming a gun. The game sets it from the hotbar. */
   speedScale: (input: InputFrame) => number = () => 1
 
-  constructor(private readonly motor: CharacterMotor, initial: CharacterState) {
+  constructor(private readonly step: Stepper, initial: CharacterState) {
     this.state = cloneState(initial)
     this.previous = cloneState(initial)
   }
@@ -40,7 +40,7 @@ export class Predictor {
   /** Applies one new input locally. */
   apply(input: InputFrame) {
     this.previous = this.state
-    this.state = stepCharacter(this.motor, this.state, input, TICK_DT, this.speedScale(input))
+    this.state = this.step(this.state, input, TICK_DT, this.speedScale(input))
     this.pending.push(input)
     if (this.pending.length > MAX_PENDING) this.pending.shift()
   }
@@ -77,7 +77,7 @@ export class Predictor {
     let previous = state
     for (const input of this.pending) {
       previous = state
-      state = stepCharacter(this.motor, state, input, TICK_DT, this.speedScale(input))
+      state = this.step(state, input, TICK_DT, this.speedScale(input))
     }
     const delta: Vec3 = [before[0] - state.position[0], before[1] - state.position[1], before[2] - state.position[2]]
     this.lastCorrection = Math.hypot(...delta)

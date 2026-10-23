@@ -3,6 +3,7 @@
 A browser multiplayer game: goofy stickmen in a real city built from OpenStreetMap. There's a server-authoritative Rust game server (Salvo, WebTransport, Rapier) and a Vue 3 + WebGPU client (drawn by the [engine](engine/README.md)) with client-side prediction and snapshot interpolation.
 
 - [design.md](design.md): architecture, netcode, world pipeline and roadmap
+- [MIGRATION.md](MIGRATION.md): the move to entities and components (ECS) and one shared simulation: plan, rules and log
 - [WORLD.md](WORLD.md): generating the world: data sources, credentials, download cache
 - [NETWORKING.md](NETWORKING.md): wire protocol
 - [SERVER-PERFORMANCE.md](SERVER-PERFORMANCE.md): what a full room costs per tick, how it is measured, what is and is not worth optimising
@@ -20,7 +21,8 @@ A browser multiplayer game: goofy stickmen in a real city built from OpenStreetM
 
 ## Requirements
 
-- Rust 1.85+ (edition 2024)
+- Rust 1.85+ (edition 2024), with the WASM target: `rustup target add wasm32-unknown-unknown`
+- `wasm-bindgen` of the version `crates/sim-wasm/Cargo.toml` pins: `cargo install wasm-bindgen-cli --version 0.2.129 --locked`. The client's prediction runs the server's own physics (`crates/sim`) built to WASM; `npm run dev`, `npm test`, `npm run type-check` and `npm run build` build it first (`npm run build:wasm`).
 - Node 22.18+ or 24.12+
 - A browser with WebTransport: Chrome, Edge or Firefox
 

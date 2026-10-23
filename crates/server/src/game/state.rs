@@ -1,7 +1,8 @@
-//! The state the game loop owns: players, vehicles, roosters, rockets and the `World` that holds them,
+//! The state the game loop owns: players, vehicles, rockets, the ECS entities and the `World` that holds them,
 //! and the `Command`/`Outgoing` messages the sessions exchange with it.
 
 use super::*;
+use shared::mounts::{MountDef, Show};
 pub use crate::profile::Profile;
 
 pub enum Command {
@@ -40,6 +41,9 @@ pub fn starting_hotbar() -> [ItemSlot; HOTBAR_SLOTS] {
     [full(ITEM_AK5), full(ITEM_SNIPER), full(ITEM_FLARE), full(ITEM_DRONE), full(ITEM_LOITER)]
 }
 
+/// A stickman, a connected player's or a bot's: a component on the player's entity. Passes over players
+/// go by `Entities::ids::<With<Player>>()`, in id order as the map they were kept in gave them.
+#[derive(crate::entities::Component)]
 pub struct Player {
     pub character: Character,
     /// While seated the stickman is hidden and rides with the vehicle; input drives the seat.
@@ -103,7 +107,7 @@ pub enum BotMode {
 
 /// The mind of a bot. Its body is the `Player` with the same id; `Bots` writes that player's input
 /// each tick, so it walks, rides and dies exactly as a person does.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(crate::entities::Component, Clone, Debug, PartialEq)]
 pub struct Bot {
     pub home: [f32; 2],
     /// Waypoints `[x, z]`, walked round in order.
@@ -239,82 +243,29 @@ impl Player {
     }
 }
 
-/// An item lying on the ground. A taken one stays in the map, out of sight, until it comes back.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Pickup {
-    pub item: u8,
-    /// How many of the item taking it gives.
-    pub count: u8,
-    pub position: [f32; 3],
-    /// Ticks until it reappears; zero when it is lying there to be taken.
-    pub respawn_in: u32,
-    /// Dropped by something that died (a rooster's egg): gone once taken, instead of coming back.
-    pub dropped: bool,
-}
-
-/// What a rooster is doing. Its `mode_left` counts ticks down to the next decision.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RoosterMode {
-    Idle,
-    Wander,
-    Crow,
-}
-
-/// A Hedemora rooster: an NPC that meanders around `home`, crows, and drops a golden egg when it
-/// dies. It shares the id space with players. At zero `hp` it is dead and `respawn_in` counts down.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Rooster {
-    /// Feet.
-    pub position: [f32; 3],
-    pub yaw: f32,
-    pub hp: u8,
-    pub mode: RoosterMode,
-    pub mode_left: u32,
-    /// Where it is walking to, `[x, z]`.
-    pub target: [f32; 2],
-    pub home: [f32; 2],
-    pub respawn_in: u32,
-}
-
-impl Rooster {
-    pub fn alive(&self) -> bool {
-        self.hp > 0
-    }
-}
-
-/// Game-side state of a vehicle. Its rigid body lives in `Physics`, under the same id.
+/// Game-side state of a vehicle, an entity's component. Its rigid body lives in `Physics`, under the
+/// same id.
+#[derive(crate::entities::Component)]
 pub struct Vehicle {
     pub kind: u8,
-    /// Player in each seat. Seat 0 is the driver.
-    pub seats: [Option<u32>; CAR_SEATS],
     pub controls: CarControls,
     /// Where it respawns after falling out of the world.
     pub home: ([f32; 3], f32),
     /// Consecutive ticks spent on its side or roof and not moving.
     pub stuck_ticks: u32,
-    /// The turret, for a vehicle that has one (a plane's is the gunner's ring mount).
-    pub gun: Option<Gun>,
-    /// A plane's forward guns and bombs.
-    pub arms: Option<PlaneArms>,
-    /// Health. At zero it is a wreck for `WRECK_TICKS`, then it is put back at `home`.
-    pub hp: u8,
-    pub wreck_in: u32,
-    /// Whoever last hurt it, who is credited with the deaths when it blows up.
-    pub last_attacker: Option<u32>,
     /// What a tank's turret has left before it comes off (`TANK_TURRET_HP` when whole).
     pub turret_hp: u8,
     /// Crash damage as the snapshot carries it (`DAMAGE_*`); all zeros when unhurt.
     pub damage: [u8; 8],
     /// Ticks before it may throw sparks again.
     pub scrape_in: u8,
-    /// A drone's link to its pilot and its battery; `None` for anything else.
-    pub drone: Option<Drone>,
 }
 
-/// What a drone carries beyond being a vehicle. The `Drones` mechanic owns it.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// What a drone carries beyond being a vehicle: a component on the vehicle's entity. The `Drones`
+/// mechanic owns it.
+#[derive(crate::entities::Component, Clone, Copy, Debug, PartialEq)]
 pub struct Drone {
-    /// `KIND_DRONE` or `KIND_LOITER`, which picks its `shared::items::drone_def`.
+    /// `KIND_DRONE` or `KIND_LOITER`, which picks its `shared::vehicles::drone_def`.
     pub kind: u8,
     /// Who launched it, credited with what it blows up.
     pub owner: u32,
@@ -328,83 +279,132 @@ pub struct Drone {
     pub fall_left: u32,
 }
 
-impl Vehicle {
-    pub fn wrecked(&self) -> bool {
-        self.hp == 0
+/// Who rides it: the player in each of its seats, as many as it has, seat 0 the driver's. A component
+/// on a vehicle's entity; the `Vehicles` mechanic seats and unseats. Indexing it past the last seat
+/// panics, so code that does not know how many there are asks `rider`.
+#[derive(crate::entities::Component, Clone, Debug, PartialEq, Eq)]
+pub struct Seats(Vec<Option<u32>>);
+
+impl Seats {
+    /// `count` seats, all free.
+    pub fn empty(count: usize) -> Self {
+        Seats(vec![None; count])
+    }
+
+    /// Who sits in seat `index`; nobody past the last seat.
+    pub fn rider(&self, index: usize) -> Option<u32> {
+        self.0.get(index).copied().flatten()
+    }
+
+    /// Everyone aboard, in seat order.
+    pub fn riders(&self) -> impl Iterator<Item = u32> + '_ {
+        self.0.iter().flatten().copied()
+    }
+
+    pub fn vacant(&self) -> bool {
+        self.0.iter().all(Option::is_none)
+    }
+
+    /// The first free seat.
+    pub fn free(&self) -> Option<usize> {
+        self.0.iter().position(Option::is_none)
+    }
+
+    /// Empties seat `index`, returning who sat there.
+    pub fn take(&mut self, index: usize) -> Option<u32> {
+        self.0.get_mut(index).and_then(Option::take)
+    }
+
+    /// Empties every seat, returning who sat in them.
+    pub fn take_all(&mut self) -> Vec<u32> {
+        self.0.iter_mut().filter_map(Option::take).collect()
     }
 }
 
-/// A rocket, a grenade or a tank shell in flight. The `Combat` mechanic steps rockets and grenades,
-/// `Gunnery` steps shells. A rocket flies straight and bursts on contact; a grenade falls, bounces,
-/// and bursts when `ttl` runs out; a shell falls in an arc and bursts on contact.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Rocket {
-    /// `PROJECTILE_*`.
-    pub kind: u8,
-    pub owner: u32,
-    /// The vehicle it left, which it flies through; 0 for none.
-    pub source: u32,
-    pub position: [f32; 3],
-    pub velocity: [f32; 3],
-    pub ttl: u32,
-    /// For a `PROJECTILE_BULLET`: the gun it came from (`ITEM_*`), whose damage, falloff and weapon id it
-    /// carries; 0 otherwise.
-    pub item: u8,
-    /// For a bullet: how many ticks back the shooter saw the world, so it meets stickmen where they
-    /// were in the picture it was aimed in.
-    pub back: u32,
-    /// For a bullet: metres flown, which its damage falls off with.
-    pub flown: f32,
+impl std::ops::Deref for Seats {
+    type Target = [Option<u32>];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
-/// A vehicle's gun: where it points and when it can fire again. The `Gunnery` mechanic owns it.
+impl std::ops::DerefMut for Seats {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+/// A vehicle at zero `Health` is a wreck: it burns where it lies for `left` more ticks, then the room
+/// puts a fresh one back at its `home`. The `Vehicles` mechanic owns it.
+#[derive(crate::entities::Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Wreck {
+    pub left: u32,
+}
+
+/// What a weapon mount (`shared::mounts::MountDef`) is doing: where it points, when it can fire
+/// again and what it has left. The `Gunnery` mechanic owns it.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Gun {
-    /// Turret yaw relative to the hull, radians, + turns left.
+pub struct Mount {
+    /// Yaw relative to the hull, radians, + turns left.
     pub yaw: f32,
-    /// Barrel elevation, radians, + is up.
+    /// Elevation, radians, + is up.
     pub pitch: f32,
-    /// Ticks until the next shell can be fired.
+    /// Ticks until the next round.
     pub cooldown: u32,
-    /// Shells fired so far, modulo 256.
+    /// Rounds fired so far, modulo 256: which barrel of several is next, and how the client knows to
+    /// draw one.
     pub shots: u8,
-    /// Unused: shells fly now, so there is no distance to report. Kept so the wire does not change.
+    /// A mortar's range dial, metres; 0 until it is first dialled.
     pub range: f32,
     /// A machine gun's heat, 0..=255: at 255 it jams until it has cooled to `GUN_UNJAM`.
     pub heat: f32,
     pub jammed: bool,
-    /// A helicopter's rocket pods: ticks until the next rocket, and rockets fired (which tube is next).
-    pub pod_cooldown: u32,
-    pub pod_shots: u8,
+    /// Rounds left, for a mount that can run out.
+    pub ammo: u8,
+    /// Ticks towards more ammo (`shared::mounts::Refill`).
+    pub refill: u32,
 }
 
-/// What a plane's pilot fires: the two forward guns, which take turns, and the bomb rack. The
-/// `Gunnery` mechanic owns it.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PlaneArms {
-    /// Ticks until the next round.
-    pub cooldown: u32,
-    /// Rounds fired so far, modulo 256; the left gun fires the even ones.
-    pub shots: u8,
-    pub heat: f32,
-    pub jammed: bool,
-    pub bombs: u8,
-    /// Ticks until the next bomb can drop.
-    pub bomb_cooldown: u32,
-    /// Ticks the plane has stood still on the ground, towards a full rack.
-    pub rearm: u32,
-}
-
-impl Default for PlaneArms {
-    fn default() -> Self {
-        PlaneArms { cooldown: 0, shots: 0, heat: 0.0, jammed: false, bombs: PLANE_BOMBS, bomb_cooldown: 0, rearm: 0 }
+impl Mount {
+    /// A mount of `def` as a fresh vehicle has it.
+    pub fn fresh(def: &MountDef) -> Self {
+        Mount { ammo: def.ammo.map_or(0, |ammo| ammo.full), ..Mount::default() }
     }
 }
 
-impl PlaneArms {
-    /// A full rack for a vehicle of `kind`: a plane's bombs, or a hen's clutch of eggs.
-    pub fn fresh(kind: u8) -> Self {
-        PlaneArms { bombs: if kind == KIND_HEN { HEN_EGGS } else { PLANE_BOMBS }, ..PlaneArms::default() }
+/// A vehicle's weapons: a component on the entities of the vehicles that have any, holding the mounts'
+/// definitions (`VehicleDef::mounts` for a kind's own) and what each is doing, in the order they are
+/// worked. The `Gunnery` mechanic owns it.
+#[derive(crate::entities::Component, Clone, Debug, PartialEq)]
+pub struct Mounts {
+    pub defs: &'static [MountDef],
+    pub state: Vec<Mount>,
+}
+
+impl Mounts {
+    /// Mounts of `defs` as a fresh vehicle has them; `None` for no mounts at all.
+    pub fn fresh(defs: &'static [MountDef]) -> Option<Self> {
+        (!defs.is_empty()).then(|| Mounts { defs, state: defs.iter().map(Mount::fresh).collect() })
+    }
+
+    /// The mount the snapshot shows as `show`, if there is one.
+    pub fn shown(&self, show: Show) -> Option<&Mount> {
+        self.defs.iter().zip(&self.state).find(|(def, _)| def.show == show).map(|(_, mount)| mount)
+    }
+
+    /// The mount the snapshot shows as the turret.
+    pub fn turret(&self) -> Option<&Mount> {
+        self.shown(Show::Turret)
+    }
+
+    /// Puts the pilot's arms back as a fresh vehicle's: guns cool and racks full. A turret keeps its
+    /// aim and its count.
+    pub fn restock(&mut self) {
+        for (def, mount) in self.defs.iter().zip(&mut self.state) {
+            if def.show.arms() {
+                *mount = Mount::fresh(def);
+            }
+        }
     }
 }
 
@@ -414,14 +414,15 @@ pub(super) fn heat_byte(heat: f32) -> u8 {
 }
 
 /// A Roadster's air tank, or a hen's stamina, on the wire: 0..=255 of full (`ROADSTER_AIR` and
-/// `HEN_STAMINA` are both 1). Mirrored by `airOf` in `vehicle.ts`.
+/// `HEN_STAMINA` are both 1). The client's codec divides it back (`thrust.air`), and `SimMotor`
+/// scales that by `ROADSTER_AIR` for the prediction.
 pub(super) fn air_byte(tank: f32) -> u8 {
     (tank / ROADSTER_AIR * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
 /// A drone's battery on the wire: 0..=255 of full. Mirrored by the client's drone gauge.
 pub(super) fn battery_byte(drone: &Drone) -> u8 {
-    (drone.energy as f32 / shared::items::drone_def(drone.kind).energy_ticks as f32 * 255.0).round().clamp(0.0, 255.0) as u8
+    (drone.energy as f32 / shared::vehicles::drone_def(drone.kind).energy_ticks as f32 * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
 /// Where the standing, living players were at the end of one tick: `(tick, [(id, position)])`.
@@ -434,18 +435,9 @@ pub struct World {
     pub tick: u32,
     pub map: WorldFile,
     pub physics: Physics,
-    /// Ordered by id so every pass over players is deterministic.
-    pub players: BTreeMap<u32, Player>,
-    /// Vehicles share the id space with players.
-    pub vehicles: BTreeMap<u32, Vehicle>,
-    /// Rockets in flight, which share the id space too.
-    pub rockets: BTreeMap<u32, Rocket>,
-    /// Items on the ground, which share the id space too.
-    pub pickups: BTreeMap<u32, Pickup>,
-    /// Roosters, which share the id space too.
-    pub roosters: BTreeMap<u32, Rooster>,
-    /// The minds of the players that are bots, by player id.
-    pub bots: BTreeMap<u32, Bot>,
+    /// The families moved to components so far: players (and bots' minds, a `Bot` on the player's
+    /// entity), roosters, items on the ground, projectiles and vehicles, in one id space.
+    pub entities: crate::entities::Entities,
     /// Where a stickman can walk, built as the bots look for ways round things.
     pub nav: crate::navigation::NavGrid,
     pub(super) next_id: u32,
@@ -489,10 +481,10 @@ impl World {
     /// Notes where everyone stands, once a tick has finished.
     pub(super) fn record_history(&mut self) {
         let positions = self
-            .players
-            .iter()
+            .entities
+            .all::<Player>()
             .filter(|(_, p)| p.alive())
-            .filter_map(|(&id, p)| if p.embodied() { Some((id, p.character.position, false)) } else { self.seated_head(id).map(|(_, head)| (id, head, true)) })
+            .filter_map(|(id, p)| if p.embodied() { Some((id, p.character.position, false)) } else { self.seated_head(id).map(|(_, head)| (id, head, true)) })
             .collect();
         if self.history.len() > MAX_REWIND_TICKS as usize {
             self.history.pop_front();
@@ -517,9 +509,9 @@ impl World {
     /// The vehicle player `id` sits in and where their head is in the world, if they sit in it (not
     /// flying it from afar) and its crew show (`shared::vehicles::seat_head`).
     pub fn seated_head(&self, id: u32) -> Option<(u32, [f32; 3])> {
-        let seat = self.players.get(&id)?.seat.filter(|seat| !seat.remote)?;
-        let vehicle = self.vehicles.get(&seat.vehicle)?;
-        let local = shared::vehicles::seat_head(vehicle.kind, seat.index, vehicle.gun.as_ref().map_or(0.0, |gun| gun.yaw))?;
+        let seat = self.entities.get::<Player>(id)?.seat.filter(|seat| !seat.remote)?;
+        let vehicle = self.entities.get::<Vehicle>(seat.vehicle)?;
+        let local = shared::vehicles::seat_head(vehicle.kind, seat.index, self.entities.get::<Mounts>(seat.vehicle).and_then(Mounts::turret).map_or(0.0, |gun| gun.yaw))?;
         Some((seat.vehicle, self.physics.car_pose(seat.vehicle)?.world_point(local)))
     }
 
@@ -569,7 +561,7 @@ impl World {
             return None;
         }
         let carving = self.carves.get(&id)?;
-        let standing = crate::physics::solid_of(&carving.shell.boxes(&carving.removed), &carving.floor);
+        let standing = sim::solid_of(&carving.shell.boxes(&carving.removed), &carving.floor);
         self.physics.replace_building(Obj::Building(id), standing);
         self.fresh_carved.push((id, at, cut.clone()));
         Some(cut)
@@ -578,7 +570,7 @@ impl World {
     /// Building `id` cut into cells, as `physics::building_shell`.
     fn cut_building(&self, id: ObjId) -> Option<Carving> {
         let index = *self.buildings_by_id.get(&id)?;
-        let (shell, floor) = crate::physics::building_shell(&self.map, index)?;
+        let (shell, floor) = sim::building_shell(&self.map, index)?;
         let removed = shell.untouched();
         let hp = shell.fresh_hp();
         Some(Carving { shell, removed, hp, floor })
