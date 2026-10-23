@@ -20,9 +20,9 @@ use crate::world::{Bits, Cells};
 
 /// Side of a cell, centimetres: every building is cut into cubes of this size, on one lattice for
 /// the whole world (cell corners at multiples of it), so neighbouring buildings' cells line up.
-pub const CELL: i32 = 25;
+pub const CELL: i32 = 50;
 /// Most cells in one building's grid (its bounding box). A building bigger than this is not carved.
-pub const MAX_CELLS: usize = 64_000_000;
+pub const MAX_CELLS: usize = 16_000_000;
 
 /// Health of one cell against bullets: a rifle needs a few rounds to break out a piece of wall.
 /// Blasts take cells outright.

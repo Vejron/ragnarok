@@ -370,7 +370,13 @@ describe('carved message', () => {
 
 describe('a building with cells blasted out of it', () => {
   const key = 5
-  const bodyOf = (damage: BuildingDamage) => damage.root.children[0]!.children.find((c) => c instanceof Mesh && c.castShadow && c.geometry.colors) as Mesh
+  /** The building's standing cells are drawn as several bricks (they receive shadow, the thrown pieces do not); this is them as one mesh. */
+  const bodyOf = (damage: BuildingDamage) => {
+    const bricks = damage.root.children[0]!.children.filter((c) => c instanceof Mesh && c.receiveShadow && c.geometry.colors) as Mesh[]
+    const join = (pick: (m: Mesh) => ArrayLike<number>) => Float32Array.from(bricks.flatMap((m) => Array.from(pick(m))))
+    const positions = join((m) => m.geometry.positions)
+    return { geometry: { positions, colors: join((m) => m.geometry.colors!), vertexCount: positions.length / 3 } }
+  }
   const effects = () => new Effects()
 
   it('is drawn as pieces from the first bite, and says so only once', () => {
@@ -442,7 +448,7 @@ describe('a building with cells blasted out of it', () => {
     damage.attach(key, twoHouses())
     damage.carve(key, 0, [1, 2, 3, 4, 5, 6], [], null, false)
     const group = damage.root.children[0]!
-    const pieces = group.children.filter((c) => c instanceof Mesh && c.castShadow && c !== bodyOf(damage))
+    const pieces = group.children.filter((c) => c instanceof Mesh && c.castShadow && !c.receiveShadow)
     expect(pieces.length).toBe(0)
     const before = bodyOf(damage).geometry.vertexCount
     damage.detach(key)
