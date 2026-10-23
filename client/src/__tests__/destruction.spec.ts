@@ -322,11 +322,15 @@ describe('a hurt building', () => {
     // A solid cell, and the next one along the wall that is solid too: that one is cut out, this one hangs on.
     const hung = shell.cellAt(0, 2, 0)
     const [hx, hy, hz] = shell.coords(hung)
-    const gap = [shell.index(hx + 1, hy, hz), shell.index(hx - 1, hy, hz), shell.index(hx, hy, hz + 1), shell.index(hx, hy, hz - 1)].find((id) => shell.isSolid(id))!
+    const inside = ([x, z]: number[]) => x! >= 0 && z! >= 0 && x! < shell.dims[0] && z! < shell.dims[2]
+    const next = [[hx + 1, hz], [hx - 1, hz], [hx, hz + 1], [hx, hz - 1]].filter(inside).map(([x, z]) => shell.index(x!, hy, z!))
+    const gap = next.find((id) => shell.isSolid(id))!
     const [gx, , gz] = shell.coords(gap)
     const damage = new BuildingDamage()
     damage.attach(key, tile)
-    damage.carve(key, 0, [gap], [hung], [0, 2, 0], true)
+    // The gap was cut earlier (no animation); now the piece beside it loses its hold.
+    damage.carve(key, 0, [gap], [], null, false)
+    damage.carve(key, 0, [], [hung], [0, 2, 0], true)
     const pieces = damage.root.children[0]!.children.filter((c) => c instanceof Mesh && c.geometry.colors && c.position.lengthSq() > 0) as Mesh[]
     const start = pieces.map((m) => m.position.clone())
     for (let i = 0; i < 30; i++) damage.update(0.02, { dust() {} } as never, new THREE.Vector3(1e6, 0, 0))
