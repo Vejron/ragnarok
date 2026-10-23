@@ -54,18 +54,28 @@ export class Fracture {
     return this.shell?.isRoof(id) ? this.roofColor : this.wallColor
   }
 
+  private readonly levels = new Map<number, number>()
+  private readonly burnt = new Set<number>()
+
   /**
    * How burnt each standing cell is, 0 to 1: the cells touching a hole are black and the ring beyond
    * is half way, ragged by cell. Worked out from the cells that are gone alone, so every client, and a
    * player who joined after the blast, sees the same.
    */
   private burn(removed: ReadonlySet<number>): Map<number, number> {
-    const out = new Map<number, number>()
     const shell = this.shell
-    if (!shell || removed.size === 0) return out
+    if (!shell || removed.size === 0) return new Map()
+    // Kept between builds and only added to for the cells gone since the last: a hole is worked out
+    // once, not again at every hit on the building.
+    if (this.burnt.size > removed.size) {
+      this.burnt.clear()
+      this.levels.clear()
+    }
     const [nx, ny, nz] = shell.dims
     const reach = 2
     for (const id of removed) {
+      if (this.burnt.has(id)) continue
+      this.burnt.add(id)
       const x = id % nx
       const z = Math.floor(id / nx) % nz
       const y = Math.floor(id / (nx * nz))
@@ -78,12 +88,14 @@ export class Fracture {
             if (removed.has(near) || !shell.isSolid(near)) continue
             const ring = Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz))
             const level = ring === 1 ? CHAR_NEAR : CHAR_FAR
-            if (level > (out.get(near) ?? 0)) out.set(near, level)
+            if (level > (this.levels.get(near) ?? 0)) this.levels.set(near, level)
           }
         }
       }
     }
-    for (const [cell, level] of out) {
+    const out = new Map<number, number>()
+    for (const [cell, level] of this.levels) {
+      if (removed.has(cell)) continue
       const a = Math.sin(cell * 91.7 + 3.1) * 43758.5453
       out.set(cell, Math.min(1, level * (0.6 + 0.8 * (a - Math.floor(a)))))
     }
@@ -126,7 +138,7 @@ export class Fracture {
     if (n === 0) return null
     pivot.divideScalar(n)
     const soup: Soup = { positions: [], colors: [] }
-    voxelFaces(shell, (id) => cells.has(id) && shell.isSolid(id), (id) => pack(this.colorOf(id), THROWN), soup, [pivot.x, pivot.y, pivot.z])
+    voxelFaces(shell, (id) => cells.has(id) && shell.isSolid(id), (id) => pack(this.colorOf(id), THROWN), soup, [pivot.x, pivot.y, pivot.z], cells)
     return { ...arrays(soup), pivot }
   }
 }

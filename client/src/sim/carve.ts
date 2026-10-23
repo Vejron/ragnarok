@@ -92,6 +92,13 @@ export class Shell {
     return (y * this.dims[2] + z) * this.dims[0] + x
   }
 
+  /** The grid position `[x, y, z]` of cell `id`. */
+  coords(id: number): [number, number, number] {
+    const x = id % this.dims[0]
+    const z = Math.floor(id / this.dims[0]) % this.dims[2]
+    return [x, Math.floor(id / (this.dims[0] * this.dims[2])), z]
+  }
+
   /** The middle of cell `id`, centimetres. */
   centre(id: number): [number, number, number] {
     const x = id % this.dims[0]
