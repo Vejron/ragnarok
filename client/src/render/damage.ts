@@ -54,6 +54,8 @@ interface Drawn {
   /** The building's walls and roof as cells, once it is hurt, and what is drawn of them. */
   fracture: Fracture | null
   body: Mesh | null
+  /** The state `body` is to be redrawn for at the next `update`: a barrage redraws a building once a frame, not once a hit. */
+  stale: Hurt | null
   falling: Falling[]
   shed: number
 }
@@ -232,6 +234,7 @@ export class BuildingDamage {
       const loaded = this.loaded.get(key)
       if (!loaded) continue
       for (const [index, drawn] of buildings) {
+        if (drawn.stale) this.redraw(drawn, drawn.stale)
         this.fall(drawn, loaded.tile.buildings[index]?.base ?? 0, dt)
         if ((this.hurt.get(key)?.get(index)?.stage ?? 0) < DAMAGE_STAGES) continue
         drawn.shed -= dt
@@ -263,7 +266,7 @@ export class BuildingDamage {
     const walls = wallsOf(loaded.tile, index)
     if (walls.length === 0) return
     if (!drawn) {
-      drawn = { group: new Group(), fracture: null, body: null, falling: [], shed: SHED_SECONDS }
+      drawn = { group: new Group(), fracture: null, body: null, stale: null, falling: [], shed: SHED_SECONDS }
       buildings.set(index, drawn)
       this.root.add(drawn.group)
     }
@@ -275,6 +278,19 @@ export class BuildingDamage {
     const building = loaded.tile.buildings[index]!
     // Cubes: through a hole you see the inner faces of the walls round it, so no room needs drawing.
     drawn.fracture ??= new Fracture(loaded.tile, index, loaded.salt)
+    // The first time it is drawn now, so the tile's own drawing of the building can stop; after that a live hit waits for the frame's end.
+    if (drawn.body && live) drawn.stale = state
+    else this.redraw(drawn, state)
+    const shell = drawn.fracture.shell
+    if (!live || !burst || !shell) return
+    this.throwCells(drawn, drawn.fracture, shell, building.base, burst.blasted, burst.point, false)
+    this.throwCells(drawn, drawn.fracture, shell, building.base, burst.fell, burst.point, true)
+  }
+
+  /** Draws the cells of `drawn` that are standing, as `state` has them. */
+  private redraw(drawn: Drawn, state: Hurt) {
+    if (!drawn.fracture) return
+    drawn.stale = null
     const built = drawn.fracture.build(state.removed, state.dents)
     if (!drawn.body) {
       drawn.body = new Mesh(shardGeometry(built.positions, built.colors), hurtMaterial)
@@ -285,10 +301,6 @@ export class BuildingDamage {
       drawn.body.geometry.dispose()
       drawn.body.geometry = shardGeometry(built.positions, built.colors)
     }
-    const shell = drawn.fracture.shell
-    if (!live || !burst || !shell) return
-    this.throwCells(drawn, drawn.fracture, shell, building.base, burst.blasted, burst.point, false)
-    this.throwCells(drawn, drawn.fracture, shell, building.base, burst.fell, burst.point, true)
   }
 
   /**

@@ -390,6 +390,10 @@ describe('a building with cells blasted out of it', () => {
     // Every cell of the house: nothing of its walls is drawn.
     const all = Array.from({ length: 64_000 }, (_, i) => i)
     damage.carve(key, 0, all, [], [-1, 2, 0], true)
+    // A hit on a building already drawn as shards is drawn at the next frame.
+    const e = effects()
+    damage.update(0, e, new THREE.Vector3(500, 0, 0))
+    e.dispose()
     expect(bodyOf(damage).geometry.vertexCount).toBeLessThan(whole)
   })
 

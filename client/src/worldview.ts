@@ -47,6 +47,8 @@ export class WorldView {
   private readonly fallingTrees = new FallingTrees()
   private readonly goneBuildings = new Map<number, Map<number, number>>()
   private readonly collapses = new Collapses()
+  /** Carved buildings, by tile, whose colliders are to be reshaped at the next `update`: a barrage does it once a frame, not once a hit. */
+  private readonly reshape = new Map<number, Set<number>>()
 
   constructor(private readonly scene: Scene) {}
 
@@ -60,6 +62,8 @@ export class WorldView {
     this.fallingTrees.update(dt, fx)
     this.collapses.update(dt, effects)
     this.damage.update(dt, effects, camera)
+    for (const [key, indices] of this.reshape) this.dropBuildingColliders(key, indices)
+    this.reshape.clear()
   }
 
   /** Draws a streamed-in tile and makes it solid for both predicted simulations. Returns how to undo it. */
@@ -136,18 +140,18 @@ export class WorldView {
    * `live` is false for the catch-up on joining.
    */
   carved(buildings: readonly CarvedBuilding[], live: boolean) {
-    const touched = new Set<number>()
     for (const b of buildings) {
       const key = tileKey(b.col, b.row)
       if (this.goneBuildings.get(key)?.has(b.index)) continue
       const first = this.damage.carve(key, b.index, b.blasted, b.fell, live ? b.point : null, live)
-      touched.add(key)
+      const dirty = this.reshape.get(key) ?? new Set<number>()
+      dirty.add(b.index)
+      this.reshape.set(key, dirty)
       if (!first) continue
       const group = this.groups.get(key)
       const loaded = this.loaded.get(key)
       if (group && loaded) rebuildBuildings(group, loaded.tile, loaded.salt, this.undrawnBuildings(key))
     }
-    for (const key of touched) this.dropBuildingColliders(key)
   }
 
   /**
@@ -220,12 +224,14 @@ export class WorldView {
     return out
   }
 
-  /** Rebuilds tile `key`'s building colliders in both simulations without the buildings that fell. */
-  private dropBuildingColliders(key: number) {
+  /** Rebuilds tile `key`'s building colliders in both simulations without the buildings that fell, or just the carved buildings `only`. */
+  private dropBuildingColliders(key: number, only?: ReadonlySet<number>) {
     const loaded = this.loaded.get(key)
     if (!loaded || loaded.tile.collision.triangles.length === 0) return
-    const down = new Set(this.goneBuildings.get(key)?.keys())
+    // Given `only`, just those carved buildings are reshaped; the rest are as they were.
+    const down = only ? new Set<number>() : new Set(this.goneBuildings.get(key)?.keys())
     const carved = this.damage.carved(key)
+    if (only) for (const index of carved.keys()) if (!only.has(index)) carved.delete(index)
     const { col, row } = tileOf(key)
     this.motor?.setBuildings(col, row, down, carved)
   }

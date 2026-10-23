@@ -393,3 +393,33 @@ fn walls_follow_the_edge_of_an_l_shaped_world() {
     }
     assert!(character.position[0] > 50.0 && character.position[0] < 100.0, "{:?}", character.position);
 }
+
+#[test]
+fn zz_bench() {
+    use shared::carve::{Shell, Tri};
+    let q = |a: [i32; 3], b: [i32; 3], c: [i32; 3], e: [i32; 3]| -> [Tri; 2] {
+        [[a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]], [a[0], a[1], a[2], c[0], c[1], c[2], e[0], e[1], e[2]]]
+    };
+    let (w, d, h) = (8000, 2500, 1000);
+    let walls: Vec<Tri> = [q([0, 0, 0], [w, 0, 0], [w, h, 0], [0, h, 0]), q([w, 0, 0], [w, 0, d], [w, h, d], [w, h, 0]), q([w, 0, d], [0, 0, d], [0, h, d], [w, h, d]), q([0, 0, d], [0, 0, 0], [0, h, 0], [0, h, d])].concat();
+    let roof = q([0, h, 0], [w, h, 0], [w, h, d], [0, h, d]).to_vec();
+    let shell = Shell::new(&walls, &roof).unwrap();
+    eprintln!("ZZ dims {:?} solid {}", shell.dims, shell.solid_count());
+    let mut removed = shell.untouched();
+    let mut seed = 12345u64;
+    let mut r = || { seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); (seed >> 33) as i32 };
+    for i in 0..60 {
+        let at = [r() % w, r() % h, if r() % 2 == 0 { 0 } else { d }];
+        let t = std::time::Instant::now();
+        let cut = shell.blast(&mut removed, at, 450);
+        let t1 = t.elapsed();
+        let t = std::time::Instant::now();
+        let boxes = shell.boxes(&removed);
+        let t2 = t.elapsed();
+        let t = std::time::Instant::now();
+        let shape = solid_of(&boxes, &[]);
+        let t3 = t.elapsed();
+        if i % 6 == 5 { eprintln!("ZZ hit {i}: blast {t1:?} boxes {t2:?} ({}) solid_of {t3:?} cut {}", boxes.len(), cut.blasted.len()); }
+        drop(shape);
+    }
+}
