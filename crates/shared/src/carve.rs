@@ -349,7 +349,7 @@ impl Shell {
                 _ => return cut,
             }
         }
-        cut.fell = self.unsupported(removed);
+        cut.fell = self.unsupported_after(removed, &cut.blasted);
         for &id in &cut.fell {
             removed[id as usize] = true;
         }
@@ -371,14 +371,58 @@ impl Shell {
         }
         removed[id as usize] = true;
         cut.blasted.push(id);
-        cut.fell = self.unsupported(removed);
+        cut.fell = self.unsupported_after(removed, &cut.blasted);
         for &lost in &cut.fell {
             removed[lost as usize] = true;
         }
         cut
     }
 
+    /// As `unsupported`, for when everything was held before `taken` came out of `removed`: only the
+    /// cells beside those can have lost their hold, so each is followed until it reaches an anchor
+    /// (it and every cell on the way are held) or runs out of cells (all it reached fell). The work
+    /// is the size of what is looked at, not of the building's grid. Sorted by cell number.
+    fn unsupported_after(&self, removed: &[bool], taken: &[u32]) -> Vec<u32> {
+        let standing = |id: u32| self.solid[id as usize] && !removed[id as usize];
+        let mut held: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        let mut fell: Vec<u32> = Vec::new();
+        let mut seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        for &gone in taken {
+            for seed in self.around(gone) {
+                if !standing(seed) || held.contains(&seed) || seen.contains(&seed) {
+                    continue;
+                }
+                let mut piece = vec![seed];
+                let mut visited: std::collections::HashSet<u32> = std::collections::HashSet::from([seed]);
+                let mut at = 0;
+                let mut safe = false;
+                while at < piece.len() && !safe {
+                    let id = piece[at];
+                    at += 1;
+                    if self.anchored[id as usize] || held.contains(&id) {
+                        safe = true;
+                        break;
+                    }
+                    for next in self.around(id) {
+                        if standing(next) && visited.insert(next) {
+                            piece.push(next);
+                        }
+                    }
+                }
+                if safe {
+                    held.extend(visited);
+                } else {
+                    seen.extend(visited);
+                    fell.extend(piece);
+                }
+            }
+        }
+        fell.sort_unstable();
+        fell
+    }
+
     /// The standing cells that no chain of standing cells joins to an anchor.
+    #[cfg(test)]
     fn unsupported(&self, removed: &[bool]) -> Vec<u32> {
         let n = self.solid.len();
         let mut held = vec![false; n];
@@ -824,6 +868,31 @@ mod tests {
     fn roof(w: i32, d: i32, h: i32) -> Vec<Tri> {
         let (w, d, h) = (w * 100, d * 100, h * 100);
         vec![[0, h, 0, w, h, 0, w, h, d], [0, h, 0, w, h, d, 0, h, d]]
+    }
+
+    /// The cells that fall are the ones the whole-grid search finds, blast after blast.
+    #[test]
+    fn what_falls_is_what_the_whole_grid_search_finds() {
+        let shell = Shell::new(&boxed(20, 12, 8), &roof(20, 12, 8)).unwrap();
+        let mut removed = shell.untouched();
+        let mut state = 7u64;
+        let mut next = |m: i32| {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((state >> 33) % m as u64) as i32
+        };
+        let mut fallen = 0;
+        for _ in 0..80 {
+            let at = [next(2000), next(800), if next(2) == 0 { 0 } else { 1200 }];
+            let before = removed.clone();
+            let cut = shell.blast(&mut removed, at, 100 + next(300));
+            let mut without = before.clone();
+            for &id in &cut.blasted {
+                without[id as usize] = true;
+            }
+            assert_eq!(cut.fell, shell.unsupported(&without), "blast at {at:?}");
+            fallen += cut.fell.len();
+        }
+        assert!(fallen > 0, "nothing ever fell");
     }
 
     #[test]
