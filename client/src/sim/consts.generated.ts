@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 41
+export const PROTOCOL_VERSION = 42
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is

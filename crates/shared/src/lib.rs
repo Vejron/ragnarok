@@ -1,7 +1,9 @@
 //! Types and constants shared by the Ragnarok server and tools.
 //!
-//! The browser client mirrors everything in here by hand (`client/src/net/codec.ts`,
-//! `client/src/sim/consts.ts`); byte-fixture tests on both sides pin the two together.
+//! The browser client's copies are generated from here: the messages and components
+//! (`client/src/net/*.generated.ts`, by this crate's tests), the constants (`consts.generated.ts`, by
+//! `npm run gen:consts`) and the tables (`tables.generated.json`). The flag and kind constants in
+//! `client/src/net/codec.ts` are checked against these by `consts-parity.spec.ts`.
 
 pub mod carve;
 pub mod consts;

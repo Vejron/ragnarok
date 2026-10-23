@@ -466,7 +466,7 @@ export class Game {
         this.rtt.pong(message.nonce, now)
         break
       case 'rtc':
-        void this.voice.receive(message.from, message.kind, message.json)
+        void this.voice.receive(message.peer, message.kind, message.json)
         break
       case 'leave':
         this.voice.forget(message.id)

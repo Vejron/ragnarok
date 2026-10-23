@@ -30,23 +30,28 @@ pub use crate::events::{Damaged, Died, Noise};
 pub use state::*;
 
 /// `object` as a `Destroyed` entry.
-fn destroyed_entry(object: Obj, yaw: i16, force: u8) -> (u8, u16, u16, u32, i16, u8) {
-    match object {
-        Obj::Tree(id) => (OBJ_TREE, id.col, id.row, id.index, yaw, force),
-        Obj::Building(id) => (OBJ_BUILDING, id.col, id.row, id.index, yaw, force),
-    }
+fn destroyed_entry(object: Obj, yaw: i16, force: u8) -> DestroyedObject {
+    let (kind, id) = match object {
+        Obj::Tree(id) => (OBJ_TREE, id),
+        Obj::Building(id) => (OBJ_BUILDING, id),
+    };
+    DestroyedObject { kind, col: id.col, row: id.row, index: id.index, yaw, force }
 }
 
-/// Building `id`'s damage `stage`, and where a blast marked it, as a `Damaged` entry.
 /// Player `id`'s `Profiles` entry: who they are, and which side.
 fn profile_entry(world: &World, id: u32) -> ProfileEntry {
     let player = &world.entities.of::<Player>(id);
-    (id, player.name.clone(), player.color, player.team, world.entities.has::<Bot>(id) as u8)
+    ProfileEntry { id, name: player.name.clone(), color: player.color, team: player.team, bot: world.entities.has::<Bot>(id) }
 }
 
-fn damaged_entry(id: ObjId, stage: u8, mark: Option<[f32; 3]>) -> DamagedEntry {
-    let [x, y, z] = mark.map(|p| p.map(|v| (v * 100.0).round() as i32)).unwrap_or([0; 3]);
-    (id.col, id.row, id.index, stage, mark.is_some() as u8, x, y, z)
+/// Building `id`'s damage `stage`, and where a blast marked it, as a `Damaged` entry.
+fn damaged_entry(id: ObjId, stage: u8, mark: Option<[f32; 3]>) -> DamagedBuilding {
+    DamagedBuilding { col: id.col, row: id.row, index: id.index, stage, mark: mark.map(|p| p.map(|v| (v * 100.0).round() as i32)) }
+}
+
+/// Building `id`'s cells `blasted` and `fell`, by a blast `at` (cm), as a `Carved` entry.
+fn carved_entry(id: ObjId, point: [i32; 3], blasted: Vec<u32>, fell: Vec<u32>) -> CarvedBuilding {
+    CarvedBuilding { col: id.col, row: id.row, index: id.index, point, blasted, fell }
 }
 
 pub struct Game {
@@ -133,7 +138,7 @@ impl Game {
                     && self.world.entities.has::<Player>(from)
                     && let Some(outbox) = self.outboxes.get(&to)
                 {
-                    let _ = outbox.try_send(Outgoing::Reliable(encode(&Rtc(S_RTC, from, kind, json)).into()));
+                    let _ = outbox.try_send(Outgoing::Reliable(encode(&Rtc { tag: S_RTC, peer: from, kind, json }).into()));
                 }
             }
             Command::Input(id, baseline, frames) => {
@@ -183,16 +188,16 @@ impl Game {
         );
         self.world.entities.insert(id, stickman_life());
         let profiles = self.world.entities.ids::<With<Player>>().into_iter().map(|id| profile_entry(&self.world, id)).collect();
-        let _ = outbox.try_send(Outgoing::Reliable(encode(&Profiles(S_PROFILES, profiles)).into()));
-        let joiner = Bytes::from(encode(&Profiles(S_PROFILES, vec![profile_entry(&self.world, id)])));
+        let _ = outbox.try_send(Outgoing::Reliable(encode(&Profiles { tag: S_PROFILES, players: profiles }).into()));
+        let joiner = Bytes::from(encode(&Profiles { tag: S_PROFILES, players: vec![profile_entry(&self.world, id)] }));
         for (&to, other) in &self.outboxes {
             send_reliable(other, to, &joiner, &mut self.stalled);
         }
-        let scores = self.world.entities.all::<Player>().map(|(id, player)| (id, player.kills, player.deaths)).collect();
-        let _ = outbox.try_send(Outgoing::Reliable(encode(&Scores(S_SCORES, scores)).into()));
+        let scores = self.world.entities.all::<Player>().map(|(id, player)| Score { id, kills: player.kills, deaths: player.deaths }).collect();
+        let _ = outbox.try_send(Outgoing::Reliable(encode(&Scores { tag: S_SCORES, scores }).into()));
         // Always sent, even empty: the client takes the first one after the welcome as the catch-up
         // (not news to animate), and snapshots on the datagram channel can overtake it.
-        let message = Destroyed(S_DESTROYED, self.world.destroyed.iter().map(|&(object, yaw)| destroyed_entry(object, yaw, 0)).collect());
+        let message = Destroyed { tag: S_DESTROYED, objects: self.world.destroyed.iter().map(|&(object, yaw)| destroyed_entry(object, yaw, 0)).collect() };
         let _ = outbox.try_send(Outgoing::Reliable(encode(&message).into()));
         let hurt: Vec<_> = self.world.object_hp.keys().filter_map(|&object| self.world.damage_stage(object).map(|stage| (object, stage))).collect();
         let hurt: Vec<_> = hurt.into_iter().filter_map(|(object, stage)| match object {
@@ -200,7 +205,7 @@ impl Game {
             _ => None,
         }).collect();
         if !hurt.is_empty() {
-            let _ = outbox.try_send(Outgoing::Reliable(encode(&Damaged(S_DAMAGED, hurt)).into()));
+            let _ = outbox.try_send(Outgoing::Reliable(encode(&shared::protocol::Damaged { tag: S_DAMAGED, buildings: hurt }).into()));
         }
         // Cells already gone, as state: the building they were taken from is still standing.
         let carved: Vec<_> = self
@@ -210,14 +215,14 @@ impl Game {
             .filter(|(object_id, _)| !self.world.destroyed.iter().any(|&(done, _)| done == Obj::Building(**object_id)))
             .filter_map(|(object_id, carving)| {
                 let gone: Vec<u32> = (0..carving.removed.len()).filter(|&i| carving.removed[i]).map(|i| i as u32).collect();
-                (!gone.is_empty()).then(|| (object_id.col, object_id.row, object_id.index, 0, 0, 0, gone, Vec::new()))
+                (!gone.is_empty()).then(|| carved_entry(*object_id, [0; 3], gone, Vec::new()))
             })
             .collect();
         if !carved.is_empty() {
-            let _ = outbox.try_send(Outgoing::Reliable(encode(&Carved(S_CARVED, 0, carved)).into()));
+            let _ = outbox.try_send(Outgoing::Reliable(encode(&Carved { tag: S_CARVED, live: false, buildings: carved }).into()));
         }
         if let Some(objective) = self.scenario.as_ref().map(Scenario::objective).filter(|o| !o.is_empty()) {
-            let _ = outbox.try_send(Outgoing::Reliable(encode(&Notice(S_NOTICE, NOTICE_OBJECTIVE, objective.into())).into()));
+            let _ = outbox.try_send(Outgoing::Reliable(encode(&Notice { tag: S_NOTICE, kind: NOTICE_OBJECTIVE, text: objective.into() }).into()));
         }
         self.outboxes.insert(id, outbox);
         self.replicas.insert(id, Replica::default());
@@ -239,7 +244,7 @@ impl Game {
         self.world.entities.despawn(id);
         self.outboxes.remove(&id);
         self.replicas.remove(&id);
-        let leave = Bytes::from(encode(&Leave(S_LEAVE, id)));
+        let leave = Bytes::from(encode(&Leave { tag: S_LEAVE, id }));
         for (&to, outbox) in &self.outboxes {
             send_reliable(outbox, to, &leave, &mut self.stalled);
         }
@@ -291,7 +296,7 @@ impl Game {
             mechanic.on_join(&mut self.world, id);
         }
         // Scores are only ever sent whole, to joiners; a bot's starts at zero on every client anyway.
-        let profile = Bytes::from(encode(&Profiles(S_PROFILES, vec![profile_entry(&self.world, id)])));
+        let profile = Bytes::from(encode(&Profiles { tag: S_PROFILES, players: vec![profile_entry(&self.world, id)] }));
         for (&to, outbox) in &self.outboxes {
             send_reliable(outbox, to, &profile, &mut self.stalled);
         }
@@ -342,7 +347,7 @@ impl Game {
 
     /// Tells everyone something: a `Notice` of `kind` (`NOTICE_*`).
     pub fn notice(&mut self, kind: u8, text: &str) {
-        let bytes = Bytes::from(encode(&Notice(S_NOTICE, kind, text.into())));
+        let bytes = Bytes::from(encode(&Notice { tag: S_NOTICE, kind, text: text.into() }));
         for (&to, outbox) in &self.outboxes {
             send_reliable(outbox, to, &bytes, &mut self.stalled);
         }
@@ -398,7 +403,7 @@ impl Game {
             return;
         }
         let entries = self.world.fresh_destroyed.drain(..).map(|(object, yaw, force)| destroyed_entry(object, yaw, force)).collect();
-        let bytes = Bytes::from(encode(&Destroyed(S_DESTROYED, entries)));
+        let bytes = Bytes::from(encode(&Destroyed { tag: S_DESTROYED, objects: entries }));
         for (&to, outbox) in &self.outboxes {
             send_reliable(outbox, to, &bytes, &mut self.stalled);
         }
@@ -409,8 +414,8 @@ impl Game {
         if self.world.fresh_carved.is_empty() {
             return;
         }
-        let entries = self.world.fresh_carved.drain(..).map(|(id, at, cut)| (id.col, id.row, id.index, at[0], at[1], at[2], cut.blasted, cut.fell)).collect();
-        let bytes = Bytes::from(encode(&Carved(S_CARVED, 1, entries)));
+        let entries = self.world.fresh_carved.drain(..).map(|(id, at, cut)| carved_entry(id, at, cut.blasted, cut.fell)).collect();
+        let bytes = Bytes::from(encode(&Carved { tag: S_CARVED, live: true, buildings: entries }));
         for (&to, outbox) in &self.outboxes {
             send_reliable(outbox, to, &bytes, &mut self.stalled);
         }
@@ -422,7 +427,7 @@ impl Game {
             return;
         }
         let entries = self.world.fresh_damaged.drain(..).map(|(id, stage, mark)| damaged_entry(id, stage, mark)).collect();
-        let bytes = Bytes::from(encode(&Damaged(S_DAMAGED, entries)));
+        let bytes = Bytes::from(encode(&shared::protocol::Damaged { tag: S_DAMAGED, buildings: entries }));
         for (&to, outbox) in &self.outboxes {
             send_reliable(outbox, to, &bytes, &mut self.stalled);
         }
@@ -521,11 +526,15 @@ mod tests {
         assert!(stickmen[0].1.place.unwrap().z < 0, "walked towards -Z");
     }
 
-    fn profiles(outgoing: Vec<Outgoing>) -> Vec<Vec<ProfileEntry>> {
+    /// A `Profiles` entry as `(id, name, color, team, bot)`.
+    type Told = (u32, String, u8, u8, u8);
+
+    /// Every `Profiles` message sent.
+    fn profiles(outgoing: Vec<Outgoing>) -> Vec<Vec<Told>> {
         outgoing
             .into_iter()
             .filter_map(|out| match out {
-                Outgoing::Reliable(bytes) if peek_tag(&bytes) == Some(S_PROFILES) => decode::<Profiles>(&bytes).map(|Profiles(_, list)| list),
+                Outgoing::Reliable(bytes) if peek_tag(&bytes) == Some(S_PROFILES) => decode::<Profiles>(&bytes).map(|profiles| profiles.players.into_iter().map(|p| (p.id, p.name, p.color, p.team, p.bot as u8)).collect()),
                 _ => None,
             })
             .collect()
@@ -589,7 +598,7 @@ mod tests {
         drain(&mut inbox_b);
         game.handle(Command::Rtc { from: a, to: b, kind: RTC_OFFER, json: "{}".into() });
         let Some(Outgoing::Reliable(bytes)) = drain(&mut inbox_b).into_iter().next() else { panic!("no rtc") };
-        assert_eq!(decode::<Rtc>(&bytes), Some(Rtc(S_RTC, a, RTC_OFFER, "{}".into())));
+        assert_eq!(decode::<Rtc>(&bytes), Some(Rtc { tag: S_RTC, peer: a, kind: RTC_OFFER, json: "{}".into() }));
         // Nobody to relay to, and to oneself, is a no-op.
         game.handle(Command::Rtc { from: a, to: 9999, kind: RTC_ICE, json: String::new() });
         game.handle(Command::Rtc { from: b, to: b, kind: RTC_ICE, json: String::new() });
@@ -604,7 +613,7 @@ mod tests {
         drain(&mut b);
         game.handle(Command::Leave(first));
         let Some(Outgoing::Reliable(leave)) = drain(&mut b).into_iter().next() else { panic!("no leave") };
-        assert_eq!(decode::<Leave>(&leave), Some(Leave(S_LEAVE, first)));
+        assert_eq!(decode::<Leave>(&leave), Some(Leave { tag: S_LEAVE, id: first }));
         assert_eq!(game.seen_people(KIND_STICKMAN).len(), 1);
     }
 

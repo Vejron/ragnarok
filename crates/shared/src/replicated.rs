@@ -476,4 +476,4 @@ pub fn apply(base: &[(u32, Replicated)], updates: &[Update], removed: &[u32]) ->
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

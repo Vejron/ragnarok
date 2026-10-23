@@ -1,52 +1,50 @@
 import { describe, expect, it } from 'vitest'
 import { encode } from '@msgpack/msgpack'
-import { decodeServer, NOTICE_OBJECTIVE, encodeInput, encodePing, encodeRtc, RTC_ICE, FLAG_DEAD, FLAG_GROUNDED, toMrad, TURRET_STOWED } from '@/net/codec'
+import { decodeServer, NOTICE_OBJECTIVE, encodeInput, encodePing, encodeRtc, RTC_ICE, FLAG_DEAD, FLAG_GROUNDED, toMrad, TURRET_STOWED, DEATH_ROADKILL, WEAPON_ROADKILL, WEAPON_SNIPER } from '@/net/codec'
 import { Replica } from '@/net/replica'
 import type { Update } from '@/net/replicated'
-import { BUTTON_FIRE, BUTTON_JUMP, BUTTON_RUN } from '@/sim/consts'
+import { BUTTON_FIRE, BUTTON_JUMP, BUTTON_RUN, PROTOCOL_VERSION } from '@/sim/consts'
+import fixture from './messages.fixture.json'
 
-// Byte-for-byte copies of the fixtures in `crates/shared/src/protocol.rs`. If these break, the
-// TypeScript and Rust encoders have drifted apart.
-const INPUT_FIXTURE = [148, 0, 41, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3]
-const SNAPSHOT_FIXTURE = [153, 1, 205, 4, 210, 205, 4, 206, 42, 9, 149, 156, 1, 206, 0, 6, 0, 7, 25, 0, 0, 208, 136, 205, 2, 138, 0, 0, 73, 204, 128, 149, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 147, 0, 0, 0, 147, 0, 0, 0, 156, 7, 205, 64, 15, 0, 85, 206, 0, 1, 134, 160, 0, 0, 0, 0, 3, 0, 0, 220, 0, 24, 10, 206, 0, 8, 72, 113, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 209, 253, 68, 204, 250, 3, 205, 4, 210, 1, 204, 250, 2, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 12, 206, 128, 0, 0, 0, 205, 16, 0, 153, 13, 206, 128, 48, 0, 10, 5, 205, 3, 132, 4, 0, 12, 1, 208, 196, 146, 3, 11, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 154, 77, 7, 2, 120, 204, 165, 209, 244, 72, 205, 5, 220, 236, 209, 150, 136, 205, 4, 209]
+// `messages.fixture.json` holds every message as the Rust tests encode it (`crates/shared/src/protocol/tests.rs`).
+// If these break, the generated codec and the Rust have drifted apart.
+const bytes = (message: keyof typeof fixture) => new Uint8Array(fixture[message])
 
 describe('codec', () => {
   it('encodes inputs exactly like the server expects', () => {
-    const bytes = encodeInput(
+    const encoded = encodeInput(
       [
         { seq: 41, strafe: 127, forward: 0, yaw: 1571, buttons: 0, pitch: 300, view: 61000, slot: 0 },
         { seq: 42, strafe: -127, forward: 127, yaw: -1950, buttons: BUTTON_JUMP | BUTTON_RUN | BUTTON_FIRE, pitch: -150, view: 7, slot: 3 },
       ],
       1230,
     )
-    expect([...bytes]).toEqual(INPUT_FIXTURE)
+    expect([...encoded]).toEqual(fixture.input)
   })
 
   it('matches the voice signaling fixture and rejects a malformed one', () => {
-    // `Rtc(S_RTC, 5, RTC_ICE, "x")` in `crates/shared/src/protocol.rs`.
-    const fixture = [148, 9, 5, 2, 161, 120]
-    expect(decodeServer(new Uint8Array(fixture))).toEqual({ type: 'rtc', from: 5, kind: RTC_ICE, json: 'x' })
+    expect(decodeServer(bytes('rtc'))).toEqual({ type: 'rtc', peer: 5, kind: RTC_ICE, json: 'x' })
     expect(decodeServer(new Uint8Array([148, 9, 5, 2, 1]))).toBeNull()
-    expect([...encodeRtc(5, RTC_ICE, 'x')]).toEqual([148, 2, 5, 2, 161, 120])
+    expect([...encodeRtc(5, RTC_ICE, 'x')]).toEqual(fixture.rtcOut)
   })
 
   it('matches the profiles fixture and rejects a malformed one', () => {
-    // `PROFILES_FIXTURE` in crates/shared/src/protocol.rs.
-    const fixture = [146, 11, 145, 149, 7, 164, 195, 133, 115, 97, 3, 2, 1]
-    expect(decodeServer(new Uint8Array(fixture))).toEqual({ type: 'profiles', players: [{ id: 7, name: 'Åsa', color: 3, team: 2, bot: true }] })
-    expect(decodeServer(encode([11, [[7, 3, 3, 0, 0]]]))).toBeNull()
+    expect(decodeServer(bytes('profiles'))).toEqual({
+      type: 'profiles', players: [{ id: 7, name: 'Åsa', color: 3, team: 2, bot: true }, { id: 8, name: '', color: 0, team: 0, bot: false }],
+    })
+    expect(decodeServer(encode([11, [[7, 3, 3, 0, false]]]))).toBeNull()
+    expect(decodeServer(encode([11, [[7, 'Åsa', 3, 0, 1]]])), 'a bot is true or false').toBeNull()
     expect(decodeServer(encode([11, [[7, 'Åsa', 3]]]))).toBeNull()
   })
 
   it('matches the notice fixture and rejects a malformed one', () => {
-    // `NOTICE_FIXTURE` in crates/shared/src/protocol.rs.
-    expect(decodeServer(new Uint8Array([147, 12, 1, 162, 71, 111]))).toEqual({ type: 'notice', kind: NOTICE_OBJECTIVE, text: 'Go' })
+    expect(decodeServer(bytes('notice'))).toEqual({ type: 'notice', kind: NOTICE_OBJECTIVE, text: 'Go' })
     expect(decodeServer(encode([12, 1]))).toBeNull()
     expect(decodeServer(encode([12, 1, 5]))).toBeNull()
   })
 
   it('decodes the server snapshot fixture', () => {
-    const message = decodeServer(new Uint8Array(SNAPSHOT_FIXTURE))
+    const message = decodeServer(bytes('snapshot'))
     expect(message).toEqual({
       type: 'snapshot',
       tick: 1234,
@@ -104,20 +102,33 @@ describe('codec', () => {
     expect(message).toMatchObject({ type: 'snapshot', tick: 5, baseline: 3, ack: 2, updates: [], removed: [] })
   })
 
+  it('decodes the welcome, pongs and leaving', () => {
+    expect(decodeServer(bytes('welcome'))).toEqual({ type: 'welcome', version: PROTOCOL_VERSION, id: 70000, tickRate: 60, snapshotEvery: 2, worldHash: 0xdeadbeef })
+    expect(decodeServer(bytes('pong'))).toEqual({ type: 'pong', nonce: 5 })
+    expect(decodeServer(bytes('leave'))).toEqual({ type: 'leave', id: 9 })
+    expect(decodeServer(encode([0, 1, 2, 3, 4]))).toBeNull()
+  })
+
+  it('decodes hits, with a bearing and without', () => {
+    expect(decodeServer(bytes('hit'))).toEqual({ type: 'hit', role: 1, kind: 0, amount: 25, weapon: 0, bearing: -1.571, x: 1, y: 0.9, z: -2.5, target: 7 })
+    expect(decodeServer(bytes('hitNowhere'))).toEqual({ type: 'hit', role: 0, kind: 2, amount: 100, weapon: WEAPON_SNIPER, bearing: null, x: 0, y: 0, z: 0, target: 0 })
+    expect(decodeServer(encode([8, 0, 0, 1, 0, 'x', 0, 0, 0, 0]))).toBeNull()
+  })
+
   it('decodes kills and the score table', () => {
-    expect(decodeServer(encode([4, 7, 3, 12, 5, 2, 3, -1571, 100]))).toEqual({
-      type: 'kill', killer: 7, victim: 3, weapon: 12, killerKills: 5, victimDeaths: 2, style: 3, yaw: -1.571, power: 20,
+    expect(decodeServer(bytes('kill'))).toEqual({
+      type: 'kill', killer: 7, victim: 3, weapon: WEAPON_ROADKILL, killerKills: 5, victimDeaths: 2, style: DEATH_ROADKILL, yaw: -1.571, power: 20,
     })
-    expect(decodeServer(encode([5, [[1, 2, 3], [4, 0, 9]]]))).toEqual({
+    expect(decodeServer(bytes('scores'))).toEqual({
       type: 'scores',
-      scores: [{ id: 1, kills: 2, deaths: 3 }, { id: 4, kills: 0, deaths: 9 }],
+      scores: [{ id: 1, kills: 2, deaths: 3 }, { id: 4, kills: 0, deaths: 900 }],
     })
     expect(decodeServer(encode([4, 7, 3]))).toBeNull()
     expect(decodeServer(encode([5, [[1, 2]]]))).toBeNull()
   })
 
   it('round-trips pings and wraps angles', () => {
-    expect([...encodePing(5)]).toEqual([0x92, 1, 5])
+    expect([...encodePing(5)]).toEqual(fixture.ping)
     expect(toMrad(Math.PI * 2 + 1)).toBe(1000)
     expect(Math.abs(toMrad(1e6))).toBeLessThanOrEqual(3142)
   })

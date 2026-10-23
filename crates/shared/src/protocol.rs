@@ -2,9 +2,14 @@
 //!
 //! The structs have named fields for the code's sake, but `rmp_serde::to_vec` writes a struct as an
 //! array of its fields in declaration order, so **the order of the fields is the wire format**:
-//! never reorder or insert one without bumping `PROTOCOL_VERSION` and the byte fixtures below.
-//! See NETWORKING.md for the full table; `client/src/net/codec.ts` mirrors this file.
+//! never reorder or insert one without bumping `PROTOCOL_VERSION`.
+//!
+//! Every message is listed once, in the `messages!` invocation below. The client's codec is generated
+//! from it (`client/src/net/messages.generated.ts`, refreshed with `UPDATE_PARITY=1 cargo test -p
+//! shared`), with the bytes of every message as Rust encodes them (`messages.fixture.json`), so a new
+//! message is one entry there. See NETWORKING.md for the full table.
 
+use crate::replicated::Update;
 use serde::{Deserialize, Serialize};
 
 /// Client → server tags.
@@ -40,9 +45,6 @@ pub const HIT_VEHICLE: u8 = 1;
 /// A stickman or rooster that this hit finished.
 pub const HIT_KILL: u8 = 2;
 pub const HIT_ROOSTER: u8 = 3;
-
-/// A `Hit` bearing for damage with no direction: a fall, a crash.
-pub const BEARING_NONE: i16 = i16::MIN;
 
 /// `Destroyed` entry kinds: what part of the static world fell.
 pub const OBJ_TREE: u8 = 0;
@@ -153,47 +155,204 @@ pub const PROJECTILE_EGG: u8 = 7;
 /// out where it lies. It hurts nobody.
 pub const PROJECTILE_FLARE: u8 = 8;
 
-/// A bullet leaving a gun: `[id, shooter, item, x, y, z, vx, vy, vz, tick]`, centimetres and cm/s.
-/// Sent once (in two snapshots, in case one is lost) and not listed again: the path is
-/// deterministic, so a client works out where the bullet is from `tick` on. It moves `v * dt` a
-/// tick and then `v.y` loses `GRAVITY * BULLET_GRAVITY_SCALE * dt`, so after `n` ticks it is at
-/// `p + v * n * dt - (0, g * dt^2 * n * (n + 1) / 2, 0)` with `g = GRAVITY * BULLET_GRAVITY_SCALE`.
-/// It ends with a `ShotEvent` of `WEAPON_BULLET` carrying `id`, or when `item`'s range runs out.
-/// `item` is the gun, so a client knows its range and look. `tick` is the server tick it was fired on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BulletSpawn {
-    pub id: u32,
-    pub shooter: u32,
-    pub item: u8,
-    pub x: i32,
-    pub y: i32,
-    pub z: i32,
-    pub vx: i16,
-    pub vy: i16,
-    pub vz: i16,
-    pub tick: u32,
+/// A message's field: its name, its Rust type and its unit (`UNITS`), or `""` for a count, a set of
+/// bits, an id or text, which have none.
+pub type Field = (&'static str, &'static str, &'static str);
+
+/// What a field's integer counts, and so how the client turns it into its own units:
+///
+/// - `cm`: centimetres (or cm/s), metres on the client.
+/// - `mrad`: milliradians, radians on the client.
+/// - `byte`: 0..=255 for 0..=1.
+/// - `fifth`: fifths of a metre a second, m/s on the client.
+pub const UNITS: &[&str] = &["cm", "mrad", "byte", "fifth"];
+
+/// One message, or one struct of a message's lists, as `messages!` lists it: its name, its tags (the
+/// constants that name it on the wire, `C_*` to the server and `S_*` from it; none for a struct) and its
+/// fields after the tag, in wire order.
+#[derive(Clone, Copy, Debug)]
+pub struct Message {
+    pub name: &'static str,
+    pub tags: &'static [(&'static str, u8)],
+    pub fields: &'static [Field],
 }
 
-/// One simulation tick of player intent. The client predicts with exactly these quantized values,
-/// so client and server feed the simulation identical inputs.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InputFrame {
-    /// Monotonic per-connection sequence number, starting at 1. One frame per client tick.
-    pub seq: u32,
-    /// Strafe axis, -127 (left) ..= 127 (right).
-    pub strafe: i8,
-    /// Forward axis, -127 (back) ..= 127 (forward).
-    pub forward: i8,
-    /// Facing in milliradians, `[-π, π)`. 0 faces -Z.
-    pub yaw: i16,
-    /// `BUTTON_*` bits.
-    pub buttons: u16,
-    /// Where the player looks up or down, milliradians (+ is up). Used by a tank gunner and the rifle.
-    pub pitch: i16,
-    /// The server tick this frame's picture showed, modulo 65536: the interpolated world the player was looking at when they pulled the trigger. The server rewinds other players to it.
-    pub view: u16,
-    /// The hotbar slot the player has selected, `0..HOTBAR_SLOTS`.
-    pub slot: u8,
+/// One message's struct: a leading `tag` when it has tags.
+macro_rules! message {
+    ([] $(#[$meta:meta])* $Name:ident { $( $(#[$fmeta:meta])* $f:ident : $t:ty ),* }) => {
+        $(#[$meta])*
+        #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+        pub struct $Name { $( $(#[$fmeta])* pub $f: $t, )* }
+    };
+    ([$($tag:ident),+] $(#[$meta:meta])* $Name:ident { $( $(#[$fmeta:meta])* $f:ident : $t:ty ),* }) => {
+        $(#[$meta])*
+        #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+        pub struct $Name {
+            /// Which message it is: one of its tags.
+            pub tag: u8,
+            $( $(#[$fmeta])* pub $f: $t, )*
+        }
+    };
+}
+
+/// Every message and the structs of their lists, and the `MESSAGES` schema the client's codec is
+/// generated from (`client/src/net/messages.generated.ts`). Each is a MessagePack array of its fields
+/// in the order listed, after its tag.
+macro_rules! messages {
+    ($( $(#[$meta:meta])* [$($tag:ident),*] $Name:ident { $( $(#[$fmeta:meta])* $f:ident : $t:ty $(as $unit:ident)? ),* $(,)? } )*) => {
+        $( message!([$($tag),*] $(#[$meta])* $Name { $( $(#[$fmeta])* $f : $t ),* }); )*
+
+        /// Every message and struct, in the order `messages!` lists them.
+        pub const MESSAGES: &[Message] = &[$(
+            Message { name: stringify!($Name), tags: &[$( (stringify!($tag), $tag) ),*], fields: &[$( (stringify!($f), stringify!($t), stringify!($($unit)?)) ),*] }
+        ),*];
+    };
+}
+
+messages! {
+    /// A bullet leaving a gun, in centimetres and cm/s. Sent once (in two snapshots, in case one is
+    /// lost) and not listed again: the path is deterministic, so a client works out where the bullet is
+    /// from `tick` on. It moves `v * dt` a tick and then `v.y` loses `GRAVITY * BULLET_GRAVITY_SCALE *
+    /// dt`, so after `n` ticks it is at `p + v * n * dt - (0, g * dt^2 * n * (n + 1) / 2, 0)` with `g =
+    /// GRAVITY * BULLET_GRAVITY_SCALE`. It ends with a `ShotEvent` of `WEAPON_BULLET` carrying `id`, or
+    /// when `item`'s range runs out. `item` is the gun, so a client knows its range and look. `tick` is
+    /// the server tick it was fired on.
+    #[derive(Copy, Eq)]
+    [] BulletSpawn { id: u32, shooter: u32, item: u8, x: i32 as cm, y: i32 as cm, z: i32 as cm, vx: i16 as cm, vy: i16 as cm, vz: i16 as cm, tick: u32 }
+
+    /// One simulation tick of player intent. The client predicts with exactly these quantized values,
+    /// so client and server feed the simulation identical inputs.
+    #[derive(Copy, Default, Eq)]
+    [] InputFrame {
+        /// Monotonic per-connection sequence number, starting at 1. One frame per client tick.
+        seq: u32,
+        /// Strafe axis, -127 (left) ..= 127 (right).
+        strafe: i8,
+        /// Forward axis, -127 (back) ..= 127 (forward).
+        forward: i8,
+        /// Facing in milliradians, `[-π, π)`. 0 faces -Z.
+        yaw: i16,
+        /// `BUTTON_*` bits.
+        buttons: u16,
+        /// Where the player looks up or down, milliradians (+ is up). Used by a tank gunner and the rifle.
+        pitch: i16,
+        /// The server tick this frame's picture showed, modulo 65536: the interpolated world the player was looking at when they pulled the trigger. The server rewinds other players to it.
+        view: u16,
+        /// The hotbar slot the player has selected, `0..HOTBAR_SLOTS`.
+        slot: u8,
+    }
+
+    /// The newest `INPUT_REDUNDANCY` frames, oldest first. `baseline` is the tick of the newest snapshot
+    /// the client has rebuilt, or 0 for none: the server diffs the next snapshot against it.
+    [C_INPUT] ClientInput { version: u8, baseline: u32, frames: Vec<InputFrame> }
+
+    /// A latency probe, echoed as a `Pong`.
+    [C_PING] Ping { nonce: u32 }
+
+    /// Sent once on a reliable stream.
+    [S_WELCOME] Welcome { version: u8, id: u32, tick_rate: u8, snapshot_every: u8, world_hash: u32 }
+
+    /// Something that just happened, for drawing; `x, y, z` is where it ended. A rifle shot is a tracer
+    /// from the shooter's own position to there; a rocket or a wreck is a burst at there (the shooter is
+    /// 0 for a wreck with no culprit).
+    #[derive(Copy, Eq)]
+    [] ShotEvent { shooter: u32, weapon: u8, x: i32 as cm, y: i32 as cm, z: i32 as cm }
+
+    /// Sent as a datagram. `baseline` is the tick of the snapshot the updates are relative to, or 0
+    /// when they are not (every entity in range then comes whole). Each update is one entity's
+    /// components (`shared::replicated::Update`): stickmen, creatures, vehicles, projectiles and items
+    /// on the ground alike. `ack` is the newest input of the *receiving* player that the state already
+    /// includes. `ride` is the id of the vehicle the receiving player stands on top of, or 0: it is
+    /// carried with that vehicle, so the client must predict relative to it. What only the receiving
+    /// player is told (their health and hotbar, the exact motion of what they drive) are `[owner]`
+    /// components of their own entity and their vehicle's, among the updates. `shots` are the effects
+    /// since the previous snapshot, capped at `MAX_SHOT_EVENTS`, and `bullets` the gun rounds fired
+    /// since a few snapshots ago, which the client then flies itself.
+    [S_SNAPSHOT] Snapshot { tick: u32, baseline: u32, ack: u32, ride: u32, updates: Vec<Update>, removed: Vec<u32>, shots: Vec<ShotEvent>, bullets: Vec<BulletSpawn> }
+
+    [S_PONG] Pong { nonce: u32 }
+
+    /// Sent on a reliable stream when a player leaves.
+    [S_LEAVE] Leave { id: u32 }
+
+    /// Sent on a reliable stream to everyone. `killer` is 0 when the world did it (a fall); the totals
+    /// are the new ones, so clients keep no tally of their own. `style` is `DEATH_*`; `yaw` (0 faces
+    /// -Z, as for a look) is the way the body is thrown and `power` how hard.
+    #[derive(Eq)]
+    [S_KILL] Kill { killer: u32, victim: u32, weapon: u8, killer_kills: u16, victim_deaths: u16, style: u8, yaw: i16 as mrad, power: u8 as fifth }
+
+    #[derive(Eq)]
+    [] Score { id: u32, kills: u16, deaths: u16 }
+
+    /// Sent on a reliable stream to a player who just joined.
+    #[derive(Eq)]
+    [S_SCORES] Scores { scores: Vec<Score> }
+
+    /// What a player chose. `color` indexes `PLAYER_COLOR_COUNT` colours. `team` is 0 for people, who
+    /// are all against all; players on the same other team are on one side. `bot` is a bot (see BOTS.md).
+    #[derive(Eq)]
+    [] ProfileEntry { id: u32, name: String, color: u8, team: u8, bot: bool }
+
+    /// Sent on a reliable stream: to a player who just joined with everyone's, and to everyone else with
+    /// the joiner's (a bot's when it is added).
+    #[derive(Eq)]
+    [S_PROFILES] Profiles { players: Vec<ProfileEntry> }
+
+    /// Sent on a reliable stream to everyone when a world's scenario has something to say (see
+    /// BOTS.md). `kind` is `NOTICE_*`.
+    #[derive(Eq)]
+    [S_NOTICE] Notice { kind: u8, text: String }
+
+    /// A building or tree that is gone. `kind` is `OBJ_*`; `(col, row, index)` is the object's `ObjId`;
+    /// `yaw` is the way a tree falls, or the direction a blast came from for a building; `force` how
+    /// violently it went (0 for a joiner's catch-up).
+    #[derive(Eq)]
+    [] DestroyedObject { kind: u8, col: u16, row: u16, index: u32, yaw: i16 as mrad, force: u8 as byte }
+
+    /// Sent on a reliable stream: to everyone when buildings or trees are destroyed, and to a player who
+    /// just joined with all that already are.
+    #[derive(Eq)]
+    [S_DESTROYED] Destroyed { objects: Vec<DestroyedObject> }
+
+    /// A building that is hurt but stands. `(col, row, index)` is its `ObjId`; `stage` is
+    /// `0..=DAMAGE_STAGES` (higher is worse, the last is about to collapse); `mark` is where a blast
+    /// landed and left a scorch mark, if one did.
+    #[derive(Eq)]
+    [] DamagedBuilding { col: u16, row: u16, index: u32, stage: u8, mark: Option<[i32; 3]> as cm }
+
+    /// Sent on a reliable stream: to everyone when buildings are hurt but still stand, and to a player
+    /// who just joined with every hurt one.
+    #[derive(Eq)]
+    [S_DAMAGED] Damaged { buildings: Vec<DamagedBuilding> }
+
+    /// Cells a blast took out of a standing building. `(col, row, index)` is the building's `ObjId`;
+    /// `point` is where the blast landed; `blasted` are the cells it broke and `fell` the cells it left
+    /// unsupported (`carve::Shell::index`).
+    #[derive(Eq)]
+    [] CarvedBuilding { col: u16, row: u16, index: u32, point: [i32; 3] as cm, blasted: Vec<u32>, fell: Vec<u32> }
+
+    /// Sent on a reliable stream: to everyone when a blast takes cells out of a standing building, and
+    /// to a player who just joined with every cell already gone (`live` false, so it is state and not
+    /// news). A joiner's catch-up lists every removed cell under `blasted`.
+    #[derive(Eq)]
+    [S_CARVED] Carved { live: bool, buildings: Vec<CarvedBuilding> }
+
+    /// Sent on a reliable stream to the one player it is about, once per tick per `(role, kind)` with
+    /// the amounts summed. `role` is `HIT_*`: dealt (you hurt something) or taken (something hurt you
+    /// or your vehicle); `kind` is `HIT_*` too; `amount` is the health lost; `weapon` is `WEAPON_*`. For
+    /// a taken hit `bearing` is the yaw (0 faces -Z, as for a look) from you towards where it came
+    /// from, if it came from anywhere. `(x, y, z)` is about where the thing hit is, chest height for a
+    /// stickman, and `target` is its id, so clients can show a number and a flash on it.
+    #[derive(Eq)]
+    [S_HIT] Hit { role: u8, kind: u8, amount: u8, weapon: u8, bearing: Option<i16> as mrad, x: i32 as cm, y: i32 as cm, z: i32 as cm, target: u32 }
+
+    /// WebRTC signaling for proximity voice, relayed by the server and never interpreted. Client →
+    /// server (`C_RTC`, on a reliable stream) `peer` is the player it is for; server → client (`S_RTC`,
+    /// on the reliable stream) `peer` is the player it is from, which the server fills in, so it cannot
+    /// be forged. `kind` is `RTC_*` and `json` the session description or ICE candidate as a JSON
+    /// string. The voice itself goes peer to peer.
+    #[derive(Eq)]
+    [C_RTC, S_RTC] Rtc { peer: u32, kind: u8, json: String }
 }
 
 impl InputFrame {
@@ -212,27 +371,6 @@ impl InputFrame {
     pub fn slot(&self) -> u8 {
         self.slot
     }
-}
-
-/// `[0, version, baseline, [frame, ...]]`: the newest `INPUT_REDUNDANCY` frames, oldest first.
-/// `baseline` is the tick of the newest snapshot the client has rebuilt, or 0 for none: the server
-/// diffs the next snapshot against it.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct ClientInput(pub u8, pub u8, pub u32, pub Vec<InputFrame>);
-
-/// `[1, nonce]`: latency probe, echoed as a `Pong`.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Ping(pub u8, pub u32);
-
-/// `[0, version, entity_id, tick_rate, snapshot_every, world_hash]`, sent once on a reliable stream.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Welcome {
-    pub tag: u8,
-    pub version: u8,
-    pub id: u32,
-    pub tick_rate: u8,
-    pub snapshot_every: u8,
-    pub world_hash: u32,
 }
 
 /// Indices into a vehicle's damage: the four sides of the body, then the wheels front left,
@@ -266,18 +404,6 @@ pub const THRUST_GLIDE: u8 = 1 << 3;
 /// A hen's: neither foot is on the ground.
 pub const THRUST_AIR: u8 = 1 << 4;
 
-/// Something that just happened, for drawing: `[shooter, weapon, x, y, z]`, where `x, y, z` is
-/// where it ended, in centimetres. A rifle shot is a tracer from the shooter's own position to
-/// there; a rocket or a wreck is a burst at there (the shooter is 0 for a wreck with no culprit).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ShotEvent {
-    pub shooter: u32,
-    pub weapon: u8,
-    pub x: i32,
-    pub y: i32,
-    pub z: i32,
-}
-
 /// One hotbar slot: `[item, count, ammo]`. `item` is `ITEM_NONE` for an empty slot; `ammo` is the
 /// rounds left in the magazine of a gun.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -285,33 +411,6 @@ pub struct ItemSlot {
     pub item: u8,
     pub count: u8,
     pub ammo: u8,
-}
-
-/// `[1, server_tick, baseline, ack_input_seq, ride, [update, ...], [removed id, ...], [shot, ...],
-/// [bullet spawn, ...]]`, sent as a datagram.
-///
-/// `baseline` is the tick of the snapshot the updates are relative to, or 0 when they are not (every
-/// entity in range then comes whole). Each update is one entity's components
-/// (`shared::replicated::Update`): stickmen, creatures, vehicles, projectiles and items on the ground
-/// alike. `ack_input_seq` is the newest input of the *receiving* player that the state already
-/// includes. `ride` is the id of the vehicle the receiving player stands on top of, or 0: it is carried
-/// with that vehicle, so the client must predict relative to it. What only the receiving player is told
-/// (their health and hotbar, the exact motion of what they drive) are `[owner]` components of their own
-/// entity and their vehicle's, among the updates. `shots` are the effects
-/// since the previous snapshot, capped at `MAX_SHOT_EVENTS`, and `bullets` the gun rounds the client
-/// flies itself.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Snapshot {
-    pub tag: u8,
-    pub tick: u32,
-    pub baseline: u32,
-    pub ack: u32,
-    pub ride: u32,
-    pub updates: Vec<crate::replicated::Update>,
-    pub removed: Vec<u32>,
-    pub shots: Vec<ShotEvent>,
-    /// Bullets fired since a few snapshots ago, which the client then flies itself.
-    pub bullets: Vec<BulletSpawn>,
 }
 
 /// A `Snapshot` as the server sends it, borrowing its lists: the same bytes, with nothing copied to
@@ -323,50 +422,11 @@ pub struct SnapshotOut<'a> {
     pub baseline: u32,
     pub ack: u32,
     pub ride: u32,
-    pub updates: &'a [crate::replicated::Update],
+    pub updates: &'a [Update],
     pub removed: &'a [u32],
     pub shots: &'a [ShotEvent],
     pub bullets: &'a [BulletSpawn],
 }
-
-/// `[2, nonce]`.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Pong(pub u8, pub u32);
-
-/// `[3, entity_id]`, sent on a reliable stream when a player leaves.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Leave(pub u8, pub u32);
-
-/// `[4, killer, victim, weapon, killer_kills, victim_deaths, style, yaw, power]`, sent on a reliable
-/// stream to everyone. `killer` is 0 when the world did it (a fall); the totals are the new ones, so
-/// clients keep no tally of their own. `style` is `DEATH_*`; `yaw` (milliradians, 0 faces -Z, as for
-/// a look) is the way the body is thrown and `power` how hard, in units of 0.2 m/s.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Kill {
-    pub tag: u8,
-    pub killer: u32,
-    pub victim: u32,
-    pub weapon: u8,
-    pub killer_kills: u16,
-    pub victim_deaths: u16,
-    pub style: u8,
-    pub yaw: i16,
-    pub power: u8,
-}
-
-/// `[5, [[id, kills, deaths], ...]]`, sent on a reliable stream to a player who just joined.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Scores(pub u8, pub Vec<(u32, u16, u16)>);
-
-/// `[11, [[id, name, color, team, bot], ...]]`, sent on a reliable stream: to a player who just joined
-/// with everyone's, and to everyone else with the joiner's (a bot's when it is added). `color` indexes
-/// `PLAYER_COLOR_COUNT` colours. `team` is 0 for people, who are all against all; players on the same
-/// other team are on one side. `bot` is 1 for a bot (see BOTS.md).
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Profiles(pub u8, pub Vec<ProfileEntry>);
-
-/// One `Profiles` entry: `(id, name, color, team, bot)`.
-pub type ProfileEntry = (u32, String, u8, u8, u8);
 
 /// `Notice` kinds: what a scenario is telling everyone.
 /// A message, shown for a few seconds.
@@ -377,76 +437,12 @@ pub const NOTICE_OBJECTIVE: u8 = 1;
 pub const NOTICE_WON: u8 = 2;
 pub const NOTICE_LOST: u8 = 3;
 
-/// `[12, kind, text]`, sent on a reliable stream to everyone when a world's scenario has something to
-/// say (see BOTS.md). `kind` is `NOTICE_*`.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Notice(pub u8, pub u8, pub String);
-
-/// `[6, [[kind, col, row, index, yaw], ...]]`, sent on a reliable stream: to everyone when
-/// buildings or trees are destroyed, and to a player who just joined with all that already are.
-/// `kind` is `OBJ_*`; `(col, row, index)` is the object's `ObjId`; `yaw` (milliradians, as
-/// elsewhere) is the way a tree falls, or the direction a blast came from for a building.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Destroyed(pub u8, pub Vec<(u8, u16, u16, u32, i16, u8)>);
-
-/// `[7, [[col, row, index, stage, marked, x, y, z], ...]]`, sent on a reliable stream: to everyone
-/// when buildings are hurt but still stand, and to a player who just joined with every hurt one.
-/// `(col, row, index)` is the building's `ObjId`; `stage` is `0..=DAMAGE_STAGES` (higher is worse,
-/// the last is about to collapse). When `marked` is 1, a blast landed at `(x, y, z)` (cm, as in
-/// `ShotEvent`) and leaves a scorch mark there; otherwise the position is zero.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Damaged(pub u8, pub Vec<DamagedEntry>);
-
-/// One `Damaged` entry: `(col, row, index, stage, marked, x, y, z)`.
-pub type DamagedEntry = (u16, u16, u32, u8, u8, i32, i32, i32);
-
-/// `[10, live, [[col, row, index, x, y, z, [blasted, ...], [fell, ...]], ...]]`, sent on a reliable
-/// stream: to everyone when a blast takes cells out of a standing building, and to a player who just
-/// joined with every cell already gone (`live` 0, so it is state and not news). `(col, row, index)`
-/// is the building's `ObjId`; `(x, y, z)` (cm) is where the blast landed; `blasted` are the cells it
-/// broke and `fell` the cells it left unsupported (`carve::Shell::index`). A joiner's catch-up lists
-/// every removed cell under `blasted`.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Carved(pub u8, pub u8, pub Vec<CarvedEntry>);
-
-/// One `Carved` entry.
-pub type CarvedEntry = (u16, u16, u32, i32, i32, i32, Vec<u32>, Vec<u32>);
-
-/// `[8, role, kind, amount, weapon, bearing, x, y, z, target]`, sent on a reliable stream to the one player it is
-/// about, once per tick per `(role, kind)` with the amounts summed. `role` is `HIT_*`: dealt (you
-/// hurt something) or taken (something hurt you or your vehicle); `kind` is `HIT_*` too; `amount`
-/// is the health lost; `weapon` is `WEAPON_*`. For a taken hit `bearing` is the yaw (milliradians,
-/// 0 faces -Z, as for a look) from you towards where it came from, or `BEARING_NONE`. `(x, y, z)`
-/// (cm, as in `ShotEvent`) is about where the thing hit is, chest height for a stickman, and
-/// `target` is its id, so clients can show a number and a flash on it.
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Hit {
-    pub tag: u8,
-    pub role: u8,
-    pub kind: u8,
-    pub amount: u8,
-    pub weapon: u8,
-    pub bearing: i16,
-    pub x: i32,
-    pub y: i32,
-    pub z: i32,
-    pub target: u32,
-}
-
 /// `RTC_*` kinds: what an `Rtc` payload is.
 pub const RTC_OFFER: u8 = 0;
 pub const RTC_ANSWER: u8 = 1;
 pub const RTC_ICE: u8 = 2;
 /// Longest `Rtc` payload the server relays, bytes. A voice-only SDP is under 2 KiB.
 pub const RTC_MAX_PAYLOAD: usize = 8192;
-
-/// `[2 | 9, peer, kind, json]`: WebRTC signaling for proximity voice, relayed by the server and never
-/// interpreted. Client → server (tag `C_RTC`, on a reliable stream) `peer` is the player it is for;
-/// server → client (tag `S_RTC`, on the reliable stream) `peer` is the player it is from, which the
-/// server fills in, so it cannot be forged. `kind` is `RTC_*` and `json` the session description or
-/// ICE candidate as a JSON string. The voice itself goes peer to peer.
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Rtc(pub u8, pub u32, pub u8, pub String);
 
 /// Reads the tag of a `[tag, ...]` message without decoding the rest. Every message is an array
 /// (a fixarray header, or array16 once there are more than 15 fields, as a snapshot has) whose
@@ -467,167 +463,4 @@ pub fn decode<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Option<T> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::consts::*;
-    use crate::items::*;
-
-    // These fixtures are duplicated in `client/src/__tests__/codec.spec.ts`. If either side
-    // changes, both tests must be updated together.
-
-    pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 41, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
-    ];
-
-    pub const SNAPSHOT_FIXTURE: &[u8] = &[
-        153, 1, 205, 4, 210, 205, 4, 206, 42, 9, 149, 156, 1, 206, 0, 6, 0, 7, 25, 0, 0, 208, 136, 205, 2, 138, 0, 0, 73, 204, 128, 149, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 147, 0, 0, 0, 147, 0, 0, 0, 156, 7, 205, 64, 15, 0, 85, 206, 0, 1, 134, 160, 0, 0, 0, 0, 3, 0, 0, 220, 0, 24, 10, 206, 0, 8, 72, 113, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 209, 253, 68, 204, 250, 3, 205, 4, 210, 1, 204, 250, 2, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 12, 206, 128, 0, 0, 0, 205, 16, 0, 153, 13, 206, 128, 48, 0, 10, 5, 205, 3, 132, 4, 0, 12, 1, 208, 196, 146, 3, 11, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 154, 77, 7, 2, 120, 204, 165, 209, 244, 72, 205, 5, 220, 236, 209, 150, 136, 205, 4, 209,
-    ];
-
-    fn sample_input() -> ClientInput {
-        ClientInput(
-            C_INPUT,
-            PROTOCOL_VERSION,
-            1230,
-            vec![
-                InputFrame { seq: 41, strafe: 127, forward: 0, yaw: 1571, buttons: 0, pitch: 300, view: 61_000, slot: 0 },
-                InputFrame { seq: 42, strafe: -127, forward: 127, yaw: -1950, buttons: BUTTON_JUMP | BUTTON_RUN | BUTTON_FIRE, pitch: -150, view: 7, slot: 3 },
-            ],
-        )
-    }
-
-    fn sample_snapshot() -> Snapshot {
-        use crate::replicated::{self as wire, Replicated};
-        let walker = |x, yaw, vy| Replicated {
-            kind: Some(wire::Kind { kind: KIND_STICKMAN }),
-            place: Some(wire::Place { x, y: 85, z: 100_000 }),
-            heading: Some(wire::Heading { yaw }),
-            motion: Some(wire::Motion { vy, knock_x: 0, knock_z: 0 }),
-            flags: Some(wire::Flags { flags: FLAG_GROUNDED, stance: 0 }),
-            ..Default::default()
-        };
-        let tank = Replicated {
-            kind: Some(wire::Kind { kind: KIND_TANK }),
-            place: Some(wire::Place { x: 300, y: 90, z: -2000 }),
-            orientation: Some(wire::Orientation { qx: 0, qy: 700, qz: 0 }),
-            steer: Some(wire::Steer { steer: 32 }),
-            turret: Some(wire::Turret { yaw: -700, pitch: 250, shots: 3, range: 1234, flags: TURRET_STOWED }),
-            health: Some(wire::Health { hp: 250 }),
-            ..Default::default()
-        };
-        let hurt = Replicated { damage: Some(wire::Damage { parts: [0, 0, 40, 0, 0, 0, 255, 3] }), ..tank.clone() };
-        let updates = vec![
-            // A stickman moving: differences. A dead one new to the receiver, whole. A tank, whole, and one repaired.
-            // The receiver themself, with what only they are told, and the tank they drive.
-            Replicated { vitals: Some(wire::Vitals { hp: 73, progress: 128 }), hotbar: Some(wire::Hotbar { slots: [ItemSlot { item: ITEM_AK5, count: 1, ammo: 17 }, ItemSlot { item: ITEM_NONE, count: 0, ammo: 0 }, ItemSlot { item: ITEM_GRENADE, count: 2, ammo: 0 }, ItemSlot::default(), ItemSlot::default()] }), ..walker(25, -120, 650) }.update(1, Some(&walker(0, 0, 0))).unwrap(),
-            Replicated { flags: Some(wire::Flags { flags: FLAG_GROUNDED | FLAG_DEAD, stance: 0 }), ..walker(0, 0, 0) }.update(7, None).unwrap(),
-            Replicated { drive: Some(wire::Drive { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }), ..tank.clone() }.update(10, None).unwrap(),
-            tank.update(12, Some(&hurt)).unwrap(),
-            // Someone sitting in the tank they just got into: where they look, and no place.
-            Replicated {
-                kind: Some(wire::Kind { kind: KIND_STICKMAN }),
-                seated: Some(wire::Seated { vehicle: 12, seat: 1 }),
-                heading: Some(wire::Heading { yaw: 900 }),
-                look: Some(wire::Look { pitch: -60 }),
-                flags: Some(wire::Flags { flags: FLAG_CROUCHING, stance: 0 }),
-                ..Default::default()
-            }
-            .update(13, Some(&walker(0, 0, 0)))
-            .unwrap(),
-        ];
-        Snapshot { tag: S_SNAPSHOT, tick: 1234, baseline: 1230, ack: 42, ride: 9, updates, removed: vec![3, 11], shots: vec![ShotEvent { shooter: 7, weapon: WEAPON_RIFLE, x: 1500, y: 160, z: -4200 }, ShotEvent { shooter: 1, weapon: WEAPON_RIFLE, x: -20, y: 90, z: 31_000 }], bullets: vec![BulletSpawn { id: 77, shooter: 7, item: ITEM_AK5, x: 120, y: 165, z: -3000, vx: 1500, vy: -20, vz: -27000, tick: 1233 }] }
-    }
-
-    /// `[6, [[OBJ_TREE, 2, 3, 70000, -1571, 90]]]`, mirrored in `codec.spec.ts`.
-    pub const DESTROYED_FIXTURE: &[u8] = &[146, 6, 145, 150, 0, 2, 3, 206, 0, 1, 17, 112, 209, 249, 221, 90];
-
-    /// `[7, [[2, 3, 70000, 3, 1, 1000, 20, -1000]]]`, mirrored in `destruction.spec.ts`.
-    pub const DAMAGED_FIXTURE: &[u8] = &[146, 7, 145, 152, 2, 3, 206, 0, 1, 17, 112, 3, 1, 205, 3, 232, 20, 209, 252, 24];
-
-    #[test]
-    fn damaged_message_matches_the_fixture() {
-        let message = Damaged(S_DAMAGED, vec![(2, 3, 70_000, 3, 1, 1000, 20, -1000)]);
-        assert_eq!(encode(&message), DAMAGED_FIXTURE);
-        assert_eq!(decode::<Damaged>(DAMAGED_FIXTURE), Some(message));
-        assert_eq!(peek_tag(DAMAGED_FIXTURE), Some(S_DAMAGED));
-    }
-
-    /// `[10, 1, [[2, 3, 70000, 1000, 20, -1000, [5, 300], [9]]]]`, mirrored in `destruction.spec.ts`.
-    pub const CARVED_FIXTURE: &[u8] = &[147, 10, 1, 145, 152, 2, 3, 206, 0, 1, 17, 112, 205, 3, 232, 20, 209, 252, 24, 146, 5, 205, 1, 44, 145, 9];
-
-    #[test]
-    fn carved_message_matches_the_fixture() {
-        let message = Carved(S_CARVED, 1, vec![(2, 3, 70_000, 1000, 20, -1000, vec![5, 300], vec![9])]);
-        assert_eq!(encode(&message), CARVED_FIXTURE);
-        assert_eq!(decode::<Carved>(CARVED_FIXTURE), Some(message));
-        assert_eq!(peek_tag(CARVED_FIXTURE), Some(S_CARVED));
-    }
-
-    #[test]
-    fn hit_round_trips() {
-        let message = Hit { tag: S_HIT, role: HIT_TAKEN, kind: HIT_BODY, amount: 25, weapon: WEAPON_RIFLE, bearing: -1571, x: 100, y: 90, z: -250, target: 7 };
-        assert_eq!(decode::<Hit>(&encode(&message)), Some(message));
-        assert_eq!(peek_tag(&encode(&Hit { tag: S_HIT, role: HIT_DEALT, kind: HIT_KILL, amount: 100, weapon: WEAPON_SNIPER, bearing: BEARING_NONE, x: 0, y: 0, z: 0, target: 0 })), Some(S_HIT));
-    }
-
-    #[test]
-    fn destroyed_matches_fixture() {
-        let message = Destroyed(S_DESTROYED, vec![(OBJ_TREE, 2, 3, 70_000, -1571, 90)]);
-        assert_eq!(encode(&message), DESTROYED_FIXTURE);
-        assert_eq!(decode::<Destroyed>(DESTROYED_FIXTURE), Some(message));
-        assert_eq!(peek_tag(DESTROYED_FIXTURE), Some(S_DESTROYED));
-    }
-
-    /// `[11, [[7, "Åsa", 3, 2, 1]]]`, mirrored in `codec.spec.ts`.
-    pub const PROFILES_FIXTURE: &[u8] = &[146, 11, 145, 149, 7, 164, 195, 133, 115, 97, 3, 2, 1];
-
-    #[test]
-    fn profiles_match_fixture() {
-        let message = Profiles(S_PROFILES, vec![(7, "Åsa".into(), 3, 2, 1)]);
-        assert_eq!(encode(&message), PROFILES_FIXTURE);
-        assert_eq!(decode::<Profiles>(PROFILES_FIXTURE), Some(message));
-        assert_eq!(peek_tag(PROFILES_FIXTURE), Some(S_PROFILES));
-    }
-
-    /// `[12, 1, "Go"]`, mirrored in `codec.spec.ts`.
-    pub const NOTICE_FIXTURE: &[u8] = &[147, 12, 1, 162, 71, 111];
-
-    #[test]
-    fn notice_matches_fixture() {
-        let message = Notice(S_NOTICE, NOTICE_OBJECTIVE, "Go".into());
-        assert_eq!(encode(&message), NOTICE_FIXTURE);
-        assert_eq!(decode::<Notice>(NOTICE_FIXTURE), Some(message));
-        assert_eq!(peek_tag(NOTICE_FIXTURE), Some(S_NOTICE));
-    }
-
-    #[test]
-    fn rtc_matches_fixture() {
-        // Copied byte for byte in `client/src/__tests__/codec.spec.ts`.
-        assert_eq!(encode(&Rtc(S_RTC, 5, RTC_ICE, "x".into())), [148, 9, 5, 2, 161, 120]);
-        assert_eq!(decode::<Rtc>(&[148, 2, 5, 2, 161, 120]), Some(Rtc(C_RTC, 5, RTC_ICE, "x".into())));
-    }
-
-    #[test]
-    fn input_matches_fixture() {
-        assert_eq!(encode(&sample_input()), INPUT_FIXTURE);
-        assert_eq!(decode::<ClientInput>(INPUT_FIXTURE), Some(sample_input()));
-        assert_eq!(peek_tag(INPUT_FIXTURE), Some(C_INPUT));
-    }
-
-
-    #[test]
-    fn snapshot_matches_fixture() {
-        assert_eq!(encode(&sample_snapshot()), SNAPSHOT_FIXTURE);
-        assert_eq!(decode::<Snapshot>(SNAPSHOT_FIXTURE), Some(sample_snapshot()));
-        assert_eq!(peek_tag(SNAPSHOT_FIXTURE), Some(S_SNAPSHOT));
-        let Snapshot { tag, tick, baseline, ack, ride, updates, removed, shots, bullets } = sample_snapshot();
-        let out = SnapshotOut { tag, tick, baseline, ack, ride, updates: &updates, removed: &removed, shots: &shots, bullets: &bullets };
-        assert_eq!(encode(&out), SNAPSHOT_FIXTURE, "sent borrowed, it is the same bytes");
-    }
-
-    #[test]
-    fn peek_rejects_garbage() {
-        assert_eq!(peek_tag(&[]), None);
-        assert_eq!(peek_tag(&[0x90]), None);
-        assert_eq!(peek_tag(&[0x92, 0xcc, 0x01]), None);
-    }
-}
+mod tests;

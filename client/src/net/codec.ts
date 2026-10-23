@@ -1,36 +1,22 @@
 import { decode, encode } from '@msgpack/msgpack'
 import { MAX_PACKET, PROTOCOL_VERSION } from '@/sim/consts'
-import { decodeUpdates, type Update } from './replicated'
+import { decodeMessage, writeClientInput, writePing, writeRtc, type InputFrame, type ServerMessage } from './messages.generated'
 
 /**
- * Wire format: MessagePack arrays with a leading tag, fixed-point integers, no field names.
- * Mirrors `crates/shared/src/protocol.rs`; NETWORKING.md documents every message.
+ * Wire format: MessagePack arrays with a leading tag, fixed-point integers, no field names. The
+ * messages and their decoders are generated from `crates/shared/src/protocol.rs`
+ * (`messages.generated.ts`); this is their framing. NETWORKING.md documents every message.
  */
 
-const C_INPUT = 0
-const C_PING = 1
-const C_RTC = 2
+export type {
+  BulletSpawn, CarvedBuilding, DamagedBuilding, DestroyedObject, InputFrame, ProfileEntry, Score, ServerMessage, ShotEvent,
+} from './messages.generated'
 
-const S_WELCOME = 0
-const S_SNAPSHOT = 1
-const S_PONG = 2
-const S_LEAVE = 3
-const S_KILL = 4
-const S_SCORES = 5
-const S_DESTROYED = 6
-const S_DAMAGED = 7
-const S_HIT = 8
-const S_RTC = 9
-const S_CARVED = 10
-const S_PROFILES = 11
-const S_NOTICE = 12
 /** `Notice` kinds: what a world's scenario is telling everyone. */
 export const NOTICE_SAY = 0
 export const NOTICE_OBJECTIVE = 1
 export const NOTICE_WON = 2
 export const NOTICE_LOST = 3
-/** A `Hit` bearing for harm with no direction. */
-const BEARING_NONE = -32768
 
 /** `Destroyed` entry kinds: what part of the static world fell. */
 export const OBJ_TREE = 0
@@ -143,134 +129,6 @@ export const THRUST_GLIDE = 1 << 3
 /** A hen's: neither foot is on the ground. */
 export const THRUST_AIR = 1 << 4
 
-/** One tick of player intent, already quantized: what the client predicts with is what it sends. */
-export interface InputFrame {
-  seq: number
-  /** -127 ..= 127 */
-  strafe: number
-  /** -127 ..= 127 */
-  forward: number
-  /** milliradians, [-π, π) */
-  yaw: number
-  buttons: number
-  /** milliradians, + is up. Aims a tank's gun and the rifle. */
-  pitch: number
-  /** The server tick the picture showed, modulo 65536, so the server can rewind shots to it. */
-  view: number
-  /** The hotbar slot in hand, 0..HOTBAR_SLOTS. */
-  slot: number
-}
-
-/**
- * A bullet leaving a gun, in metres and m/s. It is announced once and flown by the client from this
- * (`sim/ballistics.ts`); `tick` is the server tick it was fired on.
- */
-export interface BulletSpawn {
-  id: number
-  shooter: number
-  /** The gun, `ITEM_*`. */
-  item: number
-  x: number
-  y: number
-  z: number
-  vx: number
-  vy: number
-  vz: number
-  tick: number
-}
-
-/** A rifle shot, for drawing its tracer: from the shooter to where it ended, in metres. */
-/** Something that happened: a rifle shot (a tracer to x, y, z), or a rocket or wreck bursting there. */
-export interface ShotEvent {
-  shooter: number
-  weapon: number
-  x: number
-  y: number
-  z: number
-}
-
-/** A building or tree that is gone, named by its tile and index in the tile's list. */
-export interface DestroyedObject {
-  /** `OBJ_*`. */
-  kind: number
-  col: number
-  row: number
-  index: number
-  /** Radians: the way a tree falls (yaw 0 faces -Z, as everywhere), or where a blast came from. */
-  yaw: number
-  /** 0..1: how violently it went. A tank plowing through it or a rocket is near 1; 0 for the catch-up on joining. */
-  force: number
-}
-
-/** A building that is hurt but stands: how badly, and where a blast marked it. */
-export interface DamagedBuilding {
-  col: number
-  row: number
-  index: number
-  /** 0 (untouched) to `DAMAGE_STAGES`; the last is about to collapse. */
-  stage: number
-  /** Where a blast landed, in metres, when it leaves a scorch mark. */
-  mark: [number, number, number] | null
-}
-
-/** Cells a blast took out of a standing building, by `Shell` cell number (`sim/carve.ts`). */
-export interface CarvedBuilding {
-  col: number
-  row: number
-  index: number
-  /** Where the blast landed, metres. */
-  point: [number, number, number]
-  /** The cells it broke. */
-  blasted: number[]
-  /** The cells it left with nothing under them, which came down. */
-  fell: number[]
-}
-
-export interface Score {
-  id: number
-  kills: number
-  deaths: number
-}
-
-export type ServerMessage =
-  | { type: 'welcome'; version: number; id: number; tickRate: number; snapshotEvery: number; worldHash: number }
-  | {
-      type: 'snapshot'
-      tick: number
-      /** The tick of the snapshot `updates` are relative to; 0 means to nothing, so they bring everything in range whole. */
-      baseline: number
-      ack: number
-      ride: number
-      /** One per entity new or changed since `baseline` (`replicated.ts`). */
-      updates: Update[]
-      /** Ids that were in the baseline and are not any more. */
-      removed: number[]
-      shots: ShotEvent[]
-      bullets: BulletSpawn[]
-    }
-  | { type: 'pong'; nonce: number }
-  | { type: 'leave'; id: number }
-  /**
-   * `killer` is 0 when the world did it. Totals are the new ones. `style` is `DEATH_*`; `yaw` is the way
-   * the body is thrown (0 faces -Z, as for a look) and `power` how fast, m/s.
-   */
-  | { type: 'kill'; killer: number; victim: number; weapon: number; killerKills: number; victimDeaths: number; style: number; yaw: number; power: number }
-  | { type: 'scores'; scores: Score[] }
-  /** What players chose: everyone's for a joiner, then each new player's. `color` indexes `PLAYER_COLORS`. */
-  | { type: 'profiles'; players: { id: number; name: string; color: number; team: number; bot: boolean }[] }
-  /** The scenario says something (`NOTICE_*`): a message, the objective (empty clears it), or that it was won or lost. */
-  | { type: 'notice'; kind: number; text: string }
-  /** Buildings and trees destroyed since the last such message; the first one a joiner gets is all of them. */
-  | { type: 'destroyed'; objects: DestroyedObject[] }
-  /** Buildings hurt since the last such message; the first one a joiner gets is every hurt one. */
-  | { type: 'damaged'; buildings: DamagedBuilding[] }
-  /** Cells blasted out of standing buildings. `live` is false for the joiner's catch-up: state, not news. */
-  | { type: 'carved'; live: boolean; buildings: CarvedBuilding[] }
-  /** Damage you dealt (role 0) or took (role 1); `bearing` is where a taken hit came from, null if nowhere. */
-  /** Voice signaling from player `from`, relayed by the server: a session description or ICE candidate as JSON. */
-  | { type: 'rtc'; from: number; kind: number; json: string }
-  | { type: 'hit'; role: number; kind: number; amount: number; weapon: number; bearing: number | null; x: number; y: number; z: number; target: number }
-
 const CM = 100
 const MRAD = 1000
 
@@ -283,7 +141,7 @@ export const fromAxis = (value: number) => Math.max(-1, Math.min(1, value / 127)
 
 /** `baseline` is the tick of the newest snapshot rebuilt so far, or 0: the server diffs against it. */
 export function encodeInput(frames: readonly InputFrame[], baseline = 0): Uint8Array {
-  return encode([C_INPUT, PROTOCOL_VERSION, baseline, frames.map((f) => [f.seq, f.strafe, f.forward, f.yaw, f.buttons, f.pitch, f.view, f.slot])])
+  return encode(writeClientInput({ version: PROTOCOL_VERSION, baseline, frames: frames as InputFrame[] }))
 }
 
 /** `Rtc` kinds. */
@@ -293,30 +151,12 @@ export const RTC_ICE = 2
 
 /** Voice signaling for player `peer`. Goes down the signaling stream, not as a datagram. */
 export function encodeRtc(peer: number, kind: number, json: string): Uint8Array {
-  return encode([C_RTC, peer, kind, json])
+  return encode(writeRtc({ peer, kind, json }))
 }
 
 export function encodePing(nonce: number): Uint8Array {
-  return encode([C_PING, nonce])
+  return encode(writePing({ nonce }))
 }
-
-const isInt = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value)
-const ints = (values: unknown[]) => values.every(isInt)
-
-
-function decodeShot(raw: unknown): ShotEvent | null {
-  if (!Array.isArray(raw) || raw.length !== 5 || !ints(raw)) return null
-  const [shooter, weapon, x, y, z] = raw as number[]
-  return { shooter: shooter!, weapon: weapon!, x: x! / CM, y: y! / CM, z: z! / CM }
-}
-
-
-function decodeBullet(raw: unknown): BulletSpawn | null {
-  if (!Array.isArray(raw) || raw.length !== 10 || !ints(raw)) return null
-  const [id, shooter, item, x, y, z, vx, vy, vz, tick] = raw as number[]
-  return { id: id!, shooter: shooter!, item: item!, x: x! / CM, y: y! / CM, z: z! / CM, vx: vx! / CM, vy: vy! / CM, vz: vz! / CM, tick: tick! }
-}
-
 
 /** Decodes any server message, or returns null for anything malformed or unknown. */
 export function decodeServer(bytes: Uint8Array): ServerMessage | null {
@@ -327,107 +167,5 @@ export function decodeServer(bytes: Uint8Array): ServerMessage | null {
   } catch {
     return null
   }
-  if (!Array.isArray(raw) || !isInt(raw[0])) return null
-  switch (raw[0]) {
-    case S_WELCOME:
-      if (raw.length !== 6 || !ints(raw)) return null
-      {
-        const [, version, id, tickRate, snapshotEvery, worldHash] = raw as number[]
-        return { type: 'welcome', version: version!, id: id!, tickRate: tickRate!, snapshotEvery: snapshotEvery!, worldHash: worldHash! }
-      }
-    case S_SNAPSHOT: {
-      if (raw.length !== 9 || !isInt(raw[1]) || !isInt(raw[2]) || !isInt(raw[3]) || !isInt(raw[4])) return null
-      const updates = decodeUpdates(raw[5])
-      const removed = raw[6]
-      if (!updates || !Array.isArray(removed) || !ints(removed) || !Array.isArray(raw[7]) || !Array.isArray(raw[8])) return null
-      const shots: ShotEvent[] = []
-      for (const item of raw[7] as unknown[]) {
-        const shot = decodeShot(item)
-        if (!shot) return null
-        shots.push(shot)
-      }
-      const bullets: BulletSpawn[] = []
-      for (const item of raw[8] as unknown[]) {
-        const bullet = decodeBullet(item)
-        if (!bullet) return null
-        bullets.push(bullet)
-      }
-      return {
-        type: 'snapshot', tick: raw[1], baseline: raw[2], ack: raw[3], ride: raw[4], updates, removed: removed as number[], shots, bullets,
-      }
-    }
-    case S_PONG:
-      return raw.length === 2 && isInt(raw[1]) ? { type: 'pong', nonce: raw[1] } : null
-    case S_LEAVE:
-      return raw.length === 2 && isInt(raw[1]) ? { type: 'leave', id: raw[1] } : null
-    case S_KILL:
-      if (raw.length !== 9 || !ints(raw)) return null
-      return {
-        type: 'kill', killer: raw[1] as number, victim: raw[2] as number, weapon: raw[3] as number, killerKills: raw[4] as number, victimDeaths: raw[5] as number,
-        style: raw[6] as number, yaw: (raw[7] as number) / MRAD, power: (raw[8] as number) / 5,
-      }
-    case S_SCORES: {
-      if (raw.length !== 2 || !Array.isArray(raw[1])) return null
-      const scores: Score[] = []
-      for (const item of raw[1] as unknown[]) {
-        if (!Array.isArray(item) || item.length !== 3 || !ints(item)) return null
-        scores.push({ id: item[0] as number, kills: item[1] as number, deaths: item[2] as number })
-      }
-      return { type: 'scores', scores }
-    }
-    case S_PROFILES: {
-      if (raw.length !== 2 || !Array.isArray(raw[1])) return null
-      const players: { id: number; name: string; color: number; team: number; bot: boolean }[] = []
-      for (const item of raw[1] as unknown[]) {
-        if (!Array.isArray(item) || item.length !== 5 || !isInt(item[0]) || typeof item[1] !== 'string' || !isInt(item[2]) || !isInt(item[3]) || !isInt(item[4])) return null
-        players.push({ id: item[0], name: item[1], color: item[2], team: item[3], bot: item[4] === 1 })
-      }
-      return { type: 'profiles', players }
-    }
-    case S_NOTICE:
-      if (raw.length !== 3 || !isInt(raw[1]) || typeof raw[2] !== 'string') return null
-      return { type: 'notice', kind: raw[1], text: raw[2] }
-    case S_DESTROYED: {
-      if (raw.length !== 2 || !Array.isArray(raw[1])) return null
-      const objects: DestroyedObject[] = []
-      for (const item of raw[1] as unknown[]) {
-        if (!Array.isArray(item) || item.length !== 6 || !ints(item)) return null
-        objects.push({ kind: item[0] as number, col: item[1] as number, row: item[2] as number, index: item[3] as number, yaw: (item[4] as number) / MRAD, force: (item[5] as number) / 255 })
-      }
-      return { type: 'destroyed', objects }
-    }
-    case S_DAMAGED: {
-      if (raw.length !== 2 || !Array.isArray(raw[1])) return null
-      const buildings: DamagedBuilding[] = []
-      for (const item of raw[1] as unknown[]) {
-        if (!Array.isArray(item) || item.length !== 8 || !ints(item)) return null
-        const [col, row, index, stage, marked, x, y, z] = item as number[]
-        buildings.push({ col: col!, row: row!, index: index!, stage: stage!, mark: marked ? [x! / CM, y! / CM, z! / CM] : null })
-      }
-      return { type: 'damaged', buildings }
-    }
-    case S_CARVED: {
-      if (raw.length !== 3 || !isInt(raw[1]) || !Array.isArray(raw[2])) return null
-      const buildings: CarvedBuilding[] = []
-      for (const item of raw[2] as unknown[]) {
-        if (!Array.isArray(item) || item.length !== 8) return null
-        const [col, row, index, x, y, z, blasted, fell] = item as [number, number, number, number, number, number, unknown, unknown]
-        if (!ints([col, row, index, x, y, z]) || !Array.isArray(blasted) || !Array.isArray(fell) || !ints(blasted) || !ints(fell)) return null
-        buildings.push({ col, row, index, point: [x / CM, y / CM, z / CM], blasted: blasted as number[], fell: fell as number[] })
-      }
-      return { type: 'carved', live: raw[1] !== 0, buildings }
-    }
-    case S_RTC:
-      if (raw.length !== 4 || !isInt(raw[1]) || !isInt(raw[2]) || typeof raw[3] !== 'string') return null
-      return { type: 'rtc', from: raw[1], kind: raw[2], json: raw[3] }
-    case S_HIT:
-      if (raw.length !== 10 || !ints(raw)) return null
-      return {
-        type: 'hit', role: raw[1] as number, kind: raw[2] as number, amount: raw[3] as number, weapon: raw[4] as number,
-        bearing: raw[5] === BEARING_NONE ? null : (raw[5] as number) / MRAD,
-        x: (raw[6] as number) / CM, y: (raw[7] as number) / CM, z: (raw[8] as number) / CM, target: raw[9] as number,
-      }
-    default:
-      return null
-  }
+  return (Array.isArray(raw) && decodeMessage(raw)) || null
 }

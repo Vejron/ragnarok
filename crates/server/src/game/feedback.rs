@@ -23,13 +23,13 @@ pub fn hits(world: &World) -> Vec<(u32, Hit)> {
         };
         let [x, y, z] = at.map(to_cm);
         let hit = |role, bearing| Hit { tag: S_HIT, role, kind, amount: lost, weapon, bearing, x, y, z, target: victim };
-        let towards = from.map_or(BEARING_NONE, |from| bearing(at, from));
+        let towards = from.map(|from| bearing(at, from));
         if world.entities.has::<Player>(victim) {
             hits.push((victim, hit(HIT_TAKEN, towards)));
         }
         hits.extend(damaged.aboard.iter().map(|&rider| (rider, hit(HIT_TAKEN, towards))));
         if let Some(by) = attacker.filter(|&by| by != victim && !damaged.aboard.contains(&by)) {
-            hits.push((by, hit(HIT_DEALT, BEARING_NONE)));
+            hits.push((by, hit(HIT_DEALT, None)));
         }
     }
     hits

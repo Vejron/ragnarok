@@ -34,7 +34,7 @@ fn join(game: &mut Game) -> (u32, mpsc::Receiver<Outgoing>) {
 fn notices(inbox: &mut mpsc::Receiver<Outgoing>) -> Vec<(u8, String)> {
     std::iter::from_fn(|| inbox.try_recv().ok())
         .filter_map(|out| match out {
-            Outgoing::Reliable(bytes) if peek_tag(&bytes) == Some(S_NOTICE) => decode::<Notice>(&bytes).map(|Notice(_, kind, text)| (kind, text)),
+            Outgoing::Reliable(bytes) if peek_tag(&bytes) == Some(S_NOTICE) => decode::<Notice>(&bytes).map(|notice| (notice.kind, notice.text)),
             _ => None,
         })
         .collect()

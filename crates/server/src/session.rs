@@ -165,7 +165,7 @@ impl Transport {
                                 }
                                 rtc_window.1 += 1;
                                 if rtc_window.1 > MAX_RTC_PER_SECOND { continue; }
-                                let Some(Rtc(tag, to, kind, json)) = decode(&frame) else { continue };
+                                let Some(Rtc { tag, peer: to, kind, json }) = decode(&frame) else { continue };
                                 if tag != C_RTC || kind > RTC_ICE || json.len() > RTC_MAX_PAYLOAD { continue; }
                                 match self.commands.try_send(Command::Rtc { from: id, to, kind, json }) {
                                     Err(mpsc::error::TrySendError::Closed(_)) => return Ok(()),
@@ -224,7 +224,7 @@ impl Transport {
                 match peek_tag(&payload) {
                     Some(C_INPUT) => {
                         if last_input.elapsed() < MIN_INPUT_GAP { continue; }
-                        let Some(ClientInput(_, version, baseline, frames)) = decode(&payload) else { continue };
+                        let Some(ClientInput { version, baseline, frames, .. }) = decode(&payload) else { continue };
                         if version != PROTOCOL_VERSION {
                             tracing::info!(id, version, "client speaks another protocol version, dropping");
                             return Ok(());
@@ -239,9 +239,9 @@ impl Transport {
                     }
                     Some(C_PING) => {
                         if last_ping.elapsed() < MIN_PING_GAP { continue; }
-                        let Some(Ping(_, nonce)) = decode(&payload) else { continue };
+                        let Some(Ping { nonce, .. }) = decode(&payload) else { continue };
                         last_ping = Instant::now();
-                        let pong = Bytes::from(encode(&Pong(S_PONG, nonce)));
+                        let pong = Bytes::from(encode(&Pong { tag: S_PONG, nonce }));
                         if netem {
                             delayed_out.push(pong, Instant::now());
                         } else if sender.send_datagram(pong).is_err() {

@@ -363,7 +363,7 @@ fn fixture_json() -> String {
 
 /// Writes `contents` to `path` (from the repository root) when `UPDATE_PARITY` is set, then fails while
 /// the committed copy differs.
-fn generated(path: &str, contents: &str) {
+pub(crate) fn generated(path: &str, contents: &str) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(path);
     if std::env::var_os("UPDATE_PARITY").is_some() {
         std::fs::write(&path, contents).unwrap();

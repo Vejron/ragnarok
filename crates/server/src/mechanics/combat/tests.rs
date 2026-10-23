@@ -2,7 +2,7 @@ use super::*;
 use crate::entities::Health;
 use crate::game::{Command, Game, Outgoing};
 use sim::STANDING_Y;
-use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_TAKEN, InputFrame, Snapshot, WEAPON_GRENADE, WEAPON_ROCKET, WEAPON_BULLET, WEAPON_FLARE, WEAPON_REVOLVER, WEAPON_PELLET, WEAPON_SHOTGUN, decode};
+use shared::protocol::{HIT_BODY, HIT_DEALT, HIT_KILL, HIT_TAKEN, InputFrame, Snapshot, WEAPON_GRENADE, WEAPON_ROCKET, WEAPON_BULLET, WEAPON_FLARE, WEAPON_REVOLVER, WEAPON_PELLET, WEAPON_SHOTGUN, decode};
 use shared::quant::to_mrad;
 use shared::world::{WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
@@ -154,8 +154,8 @@ fn a_hit_is_reported_to_the_shooter_and_the_victim_with_a_bearing() {
     let hits = crate::game::feedback::hits(&game.world);
     assert_eq!(hits.len(), 2);
     // The shooter is straight ahead of nobody: from the victim at -20 the shooter is at +z.
-    assert_eq!((hits[0].0, hits[0].1.role, hits[0].1.kind, hits[0].1.amount, hits[0].1.bearing, hits[0].1.target), (target, HIT_TAKEN, HIT_BODY, 30, to_mrad(std::f32::consts::PI), target));
-    assert_eq!((hits[1].0, hits[1].1.role, hits[1].1.amount, hits[1].1.bearing, hits[1].1.target), (shooter, HIT_DEALT, 30, BEARING_NONE, target));
+    assert_eq!((hits[0].0, hits[0].1.role, hits[0].1.kind, hits[0].1.amount, hits[0].1.bearing, hits[0].1.target), (target, HIT_TAKEN, HIT_BODY, 30, Some(to_mrad(std::f32::consts::PI)), target));
+    assert_eq!((hits[1].0, hits[1].1.role, hits[1].1.amount, hits[1].1.bearing, hits[1].1.target), (shooter, HIT_DEALT, 30, None, target));
     // The number belongs at the target's chest.
     assert_eq!(hits[1].1.z, to_cm(-20.0));
     // The finishing blow is a kill, and amounts are what was actually lost.
@@ -174,7 +174,7 @@ fn hurting_yourself_reports_no_dealt_hit() {
     let hits = crate::game::feedback::hits(&game.world);
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].1.role, HIT_TAKEN);
-    assert_eq!(hits[0].1.bearing, BEARING_NONE);
+    assert_eq!(hits[0].1.bearing, None);
 }
 
 #[test]
@@ -738,8 +738,9 @@ fn a_blast_fells_a_tree_in_reach_and_everyone_hears_of_it() {
     while let Ok(Outgoing::Reliable(bytes)) = inbox.try_recv() {
         if shared::protocol::peek_tag(&bytes) == Some(shared::protocol::S_DESTROYED) {
             let message: shared::protocol::Destroyed = decode(&bytes).unwrap();
-            assert_eq!(message.1.len(), 1);
-            assert_eq!((message.1[0].0, message.1[0].1, message.1[0].2, message.1[0].3), (shared::protocol::OBJ_TREE, 2, 3, 0));
+            assert_eq!(message.objects.len(), 1);
+            let tree = &message.objects[0];
+            assert_eq!((tree.kind, tree.col, tree.row, tree.index), (shared::protocol::OBJ_TREE, 2, 3, 0));
             told = true;
         }
     }
@@ -833,7 +834,10 @@ fn damaged_told(inbox: &mut mpsc::Receiver<Outgoing>) -> Vec<(u8, u8, i32, i32, 
     let mut out = Vec::new();
     while let Ok(Outgoing::Reliable(bytes)) = inbox.try_recv() {
         if shared::protocol::peek_tag(&bytes) == Some(shared::protocol::S_DAMAGED) {
-            out.extend(decode::<shared::protocol::Damaged>(&bytes).unwrap().1.into_iter().map(|e| (e.3, e.4, e.5, e.6, e.7)));
+            out.extend(decode::<shared::protocol::Damaged>(&bytes).unwrap().buildings.into_iter().map(|e| {
+                let [x, y, z] = e.mark.unwrap_or([0; 3]);
+                (e.stage, e.mark.is_some() as u8, x, y, z)
+            }));
         }
     }
     out
@@ -1011,7 +1015,7 @@ fn carved_told(inbox: &mut mpsc::Receiver<Outgoing>) -> Vec<(u8, usize, usize)> 
     while let Ok(Outgoing::Reliable(bytes)) = inbox.try_recv() {
         if shared::protocol::peek_tag(&bytes) == Some(shared::protocol::S_CARVED) {
             let message = decode::<shared::protocol::Carved>(&bytes).unwrap();
-            out.extend(message.2.into_iter().map(|e| (message.1, e.6.len(), e.7.len())));
+            out.extend(message.buildings.into_iter().map(|e| (message.live as u8, e.blasted.len(), e.fell.len())));
         }
     }
     out

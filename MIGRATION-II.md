@@ -149,16 +149,17 @@ on `embodied()`.
 the `decodeServer` dispatch and the input encoder's packing, and no field lists. A new message is
 one Rust struct.
 
-- [ ] 5.1 Generate a schema for each message struct in `protocol.rs` (field names and types, the
+- [x] 5.1 Generate a schema for each message struct in `protocol.rs` (field names and types, the
       order MessagePack arrays use), as `replicated.rs`'s tests generate `components.generated.ts`:
       `client/src/net/messages.generated.ts`, refreshed with `UPDATE_PARITY=1 cargo test -p shared`.
-- [ ] 5.2 Decode the reliable messages (`S_KILL`, `S_HIT`, `S_SCORES`, `S_DESTROYED`, `S_DAMAGED`,
+- [x] 5.2 Decode the reliable messages (`S_KILL`, `S_HIT`, `S_SCORES`, `S_DESTROYED`, `S_DAMAGED`,
       `S_CARVED`, `S_PROFILES`, `S_NOTICE`, `S_LEAVE`) from the schema. A fixture of every message
       encoded by Rust, decoded by the old code and the new, must match before the old is deleted.
-- [ ] 5.3 The same for `S_WELCOME`, the snapshot's fields and the client's `C_INPUT`, `C_PING` and
+- [x] 5.3 The same for `S_WELCOME`, the snapshot's fields and the client's `C_INPUT`, `C_PING` and
       `C_RTC`, under the same fixture. Measure decode time on a recorded snapshot stream; the hot
       path must not slow.
-- [ ] 5.4 Not planned unless 5.3's measurement says so: decoding snapshots in Rust through wasm.
+- [x] 5.4 Not planned unless 5.3's measurement says so: decoding snapshots in Rust through wasm.
+      It did not: not done.
 
 ## After
 
@@ -334,3 +335,31 @@ one death for everything that can be hurt. Not played yet: the merge play sessio
     Each rider's look changes alone now, as small differences, instead of the vehicle's whole `crew`
     list. Mechanics untouched, 1.62 to 1.66 ms. `NETWORKING.md` caught up with Phases 3 and 4. Server tests 276 (one new), shared 70, client 58
     files, 428 tests; clippy clean.
+- **5.1 to 5.4.** Generated messages, protocol 42. Every message, and every struct in a message's
+  lists, is one entry of `messages!` in `protocol.rs`: its tags (`C_*`, `S_*`, both for `Rtc`, none
+  for a struct), its fields in wire order and their units (`cm`, `mrad`, `byte`, `fifth`). The macro
+  makes the struct, with a leading `tag` for a message, and the `MESSAGES` schema. `protocol/tests.rs`
+  generates from it `client/src/net/messages.generated.ts` (the types, a decoder for each message
+  the server sends, a writer for each the client sends, the tags) and `messages.fixture.json`, the
+  bytes of one of every message. The decoders are straight-line code, as `units.generated.ts` is,
+  built on readers in `net/wire.ts`. `codec.ts` keeps the framing and the constants, 171 lines from
+  433, with no field lists. The hand-copied byte fixtures on both sides are gone: the client's tests
+  decode the generated fixture.
+  - The tuple messages and entries became named structs (`Score`, `ProfileEntry`, `DestroyedObject`,
+    `DamagedBuilding`, `CarvedBuilding`), so a field has a name to generate from. The tags are
+    unchanged. Client field names are camelCase (`killerKills`, `tickRate`), as the hand-written ones were.
+  - Wire changes, so the schema needs no special cases: a hit with no bearing sends nil, not
+    `BEARING_NONE` (removed); a damaged building's mark is `[x, y, z]` or nil, not a flag and three
+    zeros; a carve's point is `[x, y, z]`; `live` and `bot` are booleans. `rtc`'s `from` is `peer` on
+    the client, as in Rust. `NETWORKING.md` updated, and its `destroyed` row gained the `force` it lacked.
+  - Before the old codec went: every message of the fixture, decoded by the new codec, and turned back
+    into protocol 41's layout and decoded by the old, gave equal results (14 server messages), and the
+    two encoders wrote the same bytes for input, ping and rtc. A temporary test, not kept.
+  - Decode time: 120 snapshots recorded from the 30-runner test plus the fixture snapshot, 400 rounds
+    each: 5.60 to 5.66 µs a snapshot with the old codec, 5.66 to 5.68 µs with the new, the same within
+    noise. Updates, most of the time, are decoded as before. So 5.4 is not needed.
+  - Server: snapshots unchanged in bytes (808 to 814 a player a snapshot). Snapshots for the room
+    414 to 441 µs a call, and Phase 4 (`2d7db19`) measured again the same hour in a worktree 417 to
+    440 µs: the machine is slower today than when Phase 4's 405 to 410 µs were taken. Ticks 1.64 to
+    1.66 ms. Server tests 276, shared 65 (the hand fixtures folded into one generated set), client 58
+    files, 430 tests; clippy clean, oxlint adds nothing.

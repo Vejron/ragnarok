@@ -1,22 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import { Group, InstancedMesh, Mesh } from '@ragnarok/engine'
 import * as THREE from 'three'
+import { encode } from '@msgpack/msgpack'
 import { decodeServer, OBJ_TREE } from '@/net/codec'
 import { BuildingDamage } from '@/render/damage'
 import { buildTrees } from '@/render/trees'
 import { FallingTrees } from '@/render/falling'
 import { TREE_PINE, type TileData, type Tree } from '@/world'
-
-// A copy of `DESTROYED_FIXTURE` in `crates/shared/src/protocol.rs`.
-const DESTROYED_FIXTURE = [146, 6, 145, 150, 0, 2, 3, 206, 0, 1, 17, 112, 209, 249, 221, 90]
+import fixture from './messages.fixture.json'
 
 const tree = (x: number, solid: boolean): Tree => ({ x, z: 0, base: 0, height: 16, crown: 3, kind: TREE_PINE, solid, trunkRadius: 0.2, trunkHeight: 8 })
 
 describe('destroyed message', () => {
   it('decodes the bytes the server sends', () => {
-    expect(decodeServer(new Uint8Array(DESTROYED_FIXTURE))).toEqual({
+    // `messages.fixture.json` holds every message as the Rust tests encode it.
+    expect(decodeServer(new Uint8Array(fixture.destroyed))).toEqual({
       type: 'destroyed',
-      objects: [{ kind: OBJ_TREE, col: 2, row: 3, index: 70000, yaw: -1.571, force: 90 / 255 }],
+      objects: [{ kind: OBJ_TREE, col: 2, row: 3, index: 70000, yaw: -1.571, force: 0.2 }],
     })
   })
 
@@ -257,23 +257,16 @@ describe('a building collapsing', () => {
   })
 })
 
-// A copy of `DAMAGED_FIXTURE` in `crates/shared/src/protocol.rs`.
-const DAMAGED_FIXTURE = [146, 7, 145, 152, 2, 3, 206, 0, 1, 17, 112, 3, 1, 205, 3, 232, 20, 209, 252, 24]
-
 describe('damaged message', () => {
-  it('decodes the bytes the server sends', () => {
-    expect(decodeServer(new Uint8Array(DAMAGED_FIXTURE))).toEqual({
+  it('decodes the bytes the server sends, with a mark and without', () => {
+    expect(decodeServer(new Uint8Array(fixture.damaged))).toEqual({
       type: 'damaged',
-      buildings: [{ col: 2, row: 3, index: 70000, stage: 3, mark: [10, 0.2, -10] }],
+      buildings: [{ col: 2, row: 3, index: 70000, stage: 3, mark: [10, 0.2, -10] }, { col: 0, row: 1, index: 4, stage: 1, mark: null }],
     })
   })
 
-  it('has no mark when the flag is clear', () => {
-    // [7, [[2, 3, 4, 1, 0, 0, 0, 0]]]
-    expect(decodeServer(new Uint8Array([146, 7, 145, 152, 2, 3, 4, 1, 0, 0, 0, 0]))).toEqual({
-      type: 'damaged',
-      buildings: [{ col: 2, row: 3, index: 4, stage: 1, mark: null }],
-    })
+  it('refuses a mark that is not a point', () => {
+    expect(decodeServer(encode([7, [[2, 3, 4, 1, [0, 0]]]]))).toBeNull()
   })
 })
 
@@ -361,12 +354,9 @@ describe('a hurt building', () => {
   })
 })
 
-// A copy of `CARVED_FIXTURE` in `crates/shared/src/protocol.rs`.
-const CARVED_FIXTURE = [147, 10, 1, 145, 152, 2, 3, 206, 0, 1, 17, 112, 205, 3, 232, 20, 209, 252, 24, 146, 5, 205, 1, 44, 145, 9]
-
 describe('carved message', () => {
   it('decodes the bytes the server sends', () => {
-    expect(decodeServer(new Uint8Array(CARVED_FIXTURE))).toEqual({
+    expect(decodeServer(new Uint8Array(fixture.carved))).toEqual({
       type: 'carved',
       live: true,
       buildings: [{ col: 2, row: 3, index: 70000, point: [10, 0.2, -10], blasted: [5, 300], fell: [9] }],
@@ -374,8 +364,7 @@ describe('carved message', () => {
   })
 
   it('refuses a cell list that is not numbers', () => {
-    // [10, 1, [[1, 2, 3, 0, 0, 0, ["x"], []]]]
-    expect(decodeServer(new Uint8Array([147, 10, 1, 145, 152, 1, 2, 3, 0, 0, 0, 145, 161, 120, 144]))).toBeNull()
+    expect(decodeServer(encode([10, true, [[1, 2, 3, [0, 0, 0], ['x'], []]]]))).toBeNull()
   })
 })
 
