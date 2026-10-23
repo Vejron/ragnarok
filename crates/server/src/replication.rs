@@ -33,15 +33,26 @@ pub struct Ready {
     pub id: u32,
     pub public: Arc<Replicated>,
     pub whole: Option<Arc<Replicated>>,
+    /// For a rider with no place of their own, their vehicle's index in the scene: they are sent to
+    /// whoever is sent it.
+    pub rides: Option<usize>,
 }
 
 /// The world's scene (ordered by id) made ready to send to everyone.
 pub fn ready(scene: Scene) -> Vec<Ready> {
+    let rides: Vec<Option<usize>> = scene
+        .iter()
+        .map(|(_, entity)| {
+            let vehicle = entity.seated.as_ref().filter(|_| entity.place.is_none())?.vehicle;
+            scene.binary_search_by_key(&vehicle, |(id, _)| *id).ok()
+        })
+        .collect();
     scene
         .into_iter()
-        .map(|(id, entity)| match entity.mask() & OWNER_MASK {
-            0 => Ready { id, public: Arc::new(entity), whole: None },
-            _ => Ready { id, public: Arc::new(entity.public()), whole: Some(Arc::new(entity)) },
+        .zip(rides)
+        .map(|((id, entity), rides)| match entity.mask() & OWNER_MASK {
+            0 => Ready { id, public: Arc::new(entity), whole: None, rides },
+            _ => Ready { id, public: Arc::new(entity.public()), whole: Some(Arc::new(entity)), rides },
         })
         .collect()
 }
@@ -98,8 +109,8 @@ impl Replica {
     /// it leaves the client holding.
     ///
     /// What the player owns (`Own::owned`) is always sent, with its `[owner]` components; of everything
-    /// else, only what anyone is told (`Replicated::public`). Everything within `INTEREST_RADIUS` is a
-    /// candidate, and what was already held stays until it is `INTEREST_HYSTERESIS` further out; of items on the ground, only the nearest
+    /// else, only what anyone is told (`Replicated::public`). A rider with no place goes with their
+    /// vehicle, at its distance. Everything within `INTEREST_RADIUS` is a candidate, and what was already held stays until it is `INTEREST_HYSTERESIS` further out; of items on the ground, only the nearest
     /// `MAX_PICKUPS_PER_SNAPSHOT`. If the encoded datagram would exceed `MAX_PACKET`, effects are left out
     /// first, then the least worth keeping (`worth`), farthest first; whatever did not fit simply
     /// arrives in a later snapshot.
@@ -118,12 +129,17 @@ impl Replica {
         let mut near: Vec<(usize, f32)> = Vec::new();
         let mut pickups: Vec<(usize, f32)> = Vec::new();
         let owned = |id: u32| own.owned.contains(&Some(id));
-        for (index, Ready { id, public: entity, .. }) in world.scene.iter().enumerate() {
+        // Riders with no place (by index), with their vehicle's.
+        let mut riding: Vec<(usize, usize)> = Vec::new();
+        for (index, Ready { id, public: entity, rides, .. }) in world.scene.iter().enumerate() {
             if owned(*id) {
                 near.push((index, entity.place.map_or(0.0, |place| distance(place.x, place.z))));
                 continue;
             }
-            let Some(place) = entity.place else { continue };
+            let Some(place) = entity.place else {
+                riding.extend(rides.map(|vehicle| (index, vehicle)));
+                continue;
+            };
             let d = distance(place.x, place.z);
             if entity.pickup.is_some() {
                 if d <= INTEREST_RADIUS {
@@ -136,10 +152,15 @@ impl Replica {
         pickups.sort_by(|a, b| a.1.total_cmp(&b.1));
         near.extend(pickups.into_iter().take(MAX_PICKUPS_PER_SNAPSHOT));
         near.sort_unstable_by_key(|(index, _)| *index);
+        let riders: Vec<(usize, f32)> = riding.into_iter().filter_map(|(index, vehicle)| Some((index, near[near.binary_search_by_key(&vehicle, |(index, _)| *index).ok()?].1))).collect();
+        if !riders.is_empty() {
+            near.extend(riders);
+            near.sort_unstable_by_key(|(index, _)| *index);
+        }
         let now: Held = near
             .iter()
             .map(|&(index, _)| {
-                let Ready { id, public, whole } = &world.scene[index];
+                let Ready { id, public, whole, .. } = &world.scene[index];
                 (*id, Arc::clone(whole.as_ref().filter(|_| owned(*id)).unwrap_or(public)))
             })
             .collect();

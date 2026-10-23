@@ -24,7 +24,7 @@ export interface PeopleWorld {
 /**
  * Everyone else on foot: their stickman, running, crouching, lying down or hanging from a parachute as
  * their flags say, holding what they hold. The local player is drawn from their prediction instead,
- * and riders by the vehicle they sit in.
+ * and riders by `Riders`, in their seats.
  */
 export class Stickmen implements Presenter<Frame> {
   /** Who stands about this frame; the vehicles add their riders. */

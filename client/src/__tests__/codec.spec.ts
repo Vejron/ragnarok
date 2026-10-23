@@ -7,8 +7,8 @@ import { BUTTON_FIRE, BUTTON_JUMP, BUTTON_RUN } from '@/sim/consts'
 
 // Byte-for-byte copies of the fixtures in `crates/shared/src/protocol.rs`. If these break, the
 // TypeScript and Rust encoders have drifted apart.
-const INPUT_FIXTURE = [148, 0, 40, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3]
-const SNAPSHOT_FIXTURE = [153, 1, 205, 4, 210, 205, 4, 206, 42, 9, 148, 156, 1, 206, 0, 6, 0, 7, 25, 0, 0, 208, 136, 205, 2, 138, 0, 0, 73, 204, 128, 149, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 147, 0, 0, 0, 147, 0, 0, 0, 156, 7, 205, 64, 15, 0, 85, 206, 0, 1, 134, 160, 0, 0, 0, 0, 3, 0, 0, 220, 0, 25, 10, 206, 0, 8, 76, 113, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 209, 253, 68, 204, 250, 3, 205, 4, 210, 1, 146, 1, 7, 204, 250, 2, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 12, 206, 128, 0, 0, 0, 205, 16, 0, 146, 3, 11, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 154, 77, 7, 2, 120, 204, 165, 209, 244, 72, 205, 5, 220, 236, 209, 150, 136, 205, 4, 209]
+const INPUT_FIXTURE = [148, 0, 41, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3]
+const SNAPSHOT_FIXTURE = [153, 1, 205, 4, 210, 205, 4, 206, 42, 9, 149, 156, 1, 206, 0, 6, 0, 7, 25, 0, 0, 208, 136, 205, 2, 138, 0, 0, 73, 204, 128, 149, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 147, 0, 0, 0, 147, 0, 0, 0, 156, 7, 205, 64, 15, 0, 85, 206, 0, 1, 134, 160, 0, 0, 0, 0, 3, 0, 0, 220, 0, 24, 10, 206, 0, 8, 72, 113, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 209, 253, 68, 204, 250, 3, 205, 4, 210, 1, 204, 250, 2, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 12, 206, 128, 0, 0, 0, 205, 16, 0, 153, 13, 206, 128, 48, 0, 10, 5, 205, 3, 132, 4, 0, 12, 1, 208, 196, 146, 3, 11, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 154, 77, 7, 2, 120, 204, 165, 209, 244, 72, 205, 5, 220, 236, 209, 150, 136, 205, 4, 209]
 
 describe('codec', () => {
   it('encodes inputs exactly like the server expects', () => {
@@ -55,7 +55,7 @@ describe('codec', () => {
       ride: 9,
       updates: [
         // The receiver moving, as differences, with what only they are told; a dead stickman new to the
-        // receiver, whole; the tank the receiver drives, whole, with its motion; a repair.
+        // receiver, whole; the tank the receiver drives, whole, with its motion; a repair; a rider.
         {
           id: 1, cleared: 0,
           set: {
@@ -66,11 +66,13 @@ describe('codec', () => {
         { id: 7, cleared: 0, set: { place: { x: 0, y: 85, z: 100000 }, heading: { yaw: 0 }, motion: { vy: 0, knock_x: 0, knock_z: 0 }, flags: { flags: FLAG_GROUNDED | FLAG_DEAD, stance: 0 }, kind: { kind: 0 } } },
         {
           id: 10, cleared: 0,
-          set: { place: { x: 300, y: 90, z: -2000 }, orientation: { qx: 0, qy: 700, qz: 0 }, steer: { steer: 32 }, turret: { yaw: -700, pitch: 250, shots: 3, range: 1234, flags: TURRET_STOWED }, seats: { riders: [1, 7] }, health: { hp: 250 }, kind: { kind: 2 },
+          set: { place: { x: 300, y: 90, z: -2000 }, orientation: { qx: 0, qy: 700, qz: 0 }, steer: { steer: 32 }, turret: { yaw: -700, pitch: 250, shots: 3, range: 1234, flags: TURRET_STOWED }, health: { hp: 250 }, kind: { kind: 2 },
             drive: { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 },
           },
         },
         { id: 12, cleared: 1 << 12, set: {} },
+        // Someone sitting in the tank: no longer anywhere, but in their seat, looking about.
+        { id: 13, cleared: 1 << 0 | 1 << 2, set: { heading: { yaw: 900 }, flags: { flags: 4, stance: 0 }, seated: { vehicle: 12, seat: 1 }, look: { pitch: -60 } } },
       ],
       removed: [3, 11],
       shots: [

@@ -19,7 +19,7 @@
 //! An update for an id not in the baseline brings the whole entity: everything it has is set.
 
 use crate::items::HOTBAR_SLOTS;
-use crate::protocol::{ItemSlot, Rider};
+use crate::protocol::ItemSlot;
 use serde::de::{self, SeqAccess, Visitor};
 use std::borrow::Borrow;
 use serde::ser::SerializeSeq;
@@ -346,10 +346,6 @@ replicated! {
     /// a field mortar's range dial; and `TURRET_*` flags.
     Turret { yaw: i16 as mrad, pitch: i16 as mrad, shots: u8, range: u16 as dm, flags: u8 }
 
-    set 7 crew
-    /// Where each seat's rider looks and what they hold, for a vehicle whose crew show.
-    Crew { riders: Vec<Rider> }
-
     set 8 thrust
     /// What is left of a Roadster's air, a hen's wings' stamina or a drone's battery, 0..=255 of full,
     /// and the `THRUST_*` flags: the nozzles firing, a hen's glide or lift, a drone still linked.
@@ -360,10 +356,6 @@ replicated! {
     /// rounds modulo 256 (the left gun fires the even ones), the heat of both sets of guns (they jam at
     /// 255), the bombs on the rack, and `ARMS_*` flags. A hen sends its clutch of eggs as `bombs`.
     Arms { shots: u8, heat: u8 as byte, rear_heat: u8 as byte, bombs: u8, flags: u8 }
-
-    set 10 seats
-    /// The player in each seat, 0 for an empty one; seat 0 drives.
-    Seats { riders: Vec<u32> }
 
     set 11 health
     /// A vehicle's health; 0 is a burning wreck.
@@ -405,11 +397,22 @@ replicated! {
     /// velocity, cm/s; angular velocity about the world axes, mrad/s; the front wheels' angle, mrad,
     /// + is right; and the yaw rate a tank has ramped to, mrad/s, + is clockwise.
     Drive { vx: i16 as cm, vy: i16 as cm, vz: i16 as cm, wx: i16 as mrad, wy: i16 as mrad, wz: i16 as mrad, steer: i16 as mrad, spin: i16 as mrad }
+
+    set 20 seated
+    /// A player sitting in seat `seat` of vehicle `vehicle` (0 drives). They have no `place` of their
+    /// own unless their body stays behind (a drone's pilot): they are where the kind's seat puts them.
+    /// Ids 7 and 10 were the vehicle's `crew` and `seats`, which this replaced.
+    Seated { vehicle: u32, seat: u8 }
+
+    diff 21 look
+    /// How far a rider whose crew show looks up (+) or down, milliradians; their `heading` is where
+    /// they look about, in the world.
+    Look { pitch: i16 as mrad }
 }
 
 /// The structs a component field can hold a list of, with their fields in wire order and each one's
 /// unit (`UNITS`): they go on the wire as arrays, which the client turns back into objects.
-pub const STRUCTS: &[(&str, &[(&str, &str)])] = &[("Rider", &[("yaw", "mrad"), ("pitch", "mrad"), ("held", "")]), ("ItemSlot", &[("item", ""), ("count", ""), ("ammo", "")])];
+pub const STRUCTS: &[(&str, &[(&str, &str)])] = &[("ItemSlot", &[("item", ""), ("count", ""), ("ammo", "")])];
 
 /// JSON for the client's fixtures.
 #[cfg(test)]
@@ -429,11 +432,6 @@ mod json {
     impl<T: Json, const N: usize> Json for [T; N] {
         fn json(&self) -> String {
             format!("[{}]", self.iter().map(Json::json).collect::<Vec<_>>().join(", "))
-        }
-    }
-    impl Json for crate::protocol::Rider {
-        fn json(&self) -> String {
-            format!("{{\"yaw\": {}, \"pitch\": {}, \"held\": {}}}", self.yaw, self.pitch, self.held)
         }
     }
     impl Json for crate::protocol::ItemSlot {

@@ -61,6 +61,7 @@ import { Projectiles } from './entities/presenters/projectiles'
 import { Pickups as LyingItems } from './entities/presenters/pickups'
 import { Stickmen } from './entities/presenters/people'
 import { Riders, seatFrame } from './entities/presenters/riders'
+import { Seating } from './entities/presenters/seating'
 import { poseOf, Vehicles, type Placed, type VehicleWorld } from './entities/presenters/vehicles'
 import { PlaneGuns, Turrets } from './entities/presenters/guns'
 import { Wear } from './entities/presenters/wear'
@@ -272,7 +273,7 @@ export class Game {
       ownShot: () => (this.lastShotAt = performance.now()),
     }
     this.surroundings = new Surroundings(this.scene, this.effects, () => this.fxWorld)
-    this.vehicles = this.machines.add(new Vehicles(world))
+    this.vehicles = this.machines.add(new Vehicles(world, this.machines.add(new Seating())))
     this.wear = this.machines.add(new Wear(world, this.vehicles))
     this.events = new Events({
       scene: this.scene, effects: this.effects, sounds: this.sounds, debris: this.debris, damageNumbers: this.damageNumbers, rockets: this.rocketModels, trails: this.trails,
@@ -419,17 +420,16 @@ export class Game {
         this.events.receive(message.tick, message.shots, message.bullets)
         // Vehicles are solid to the predicted stickman, at the pose of the newest snapshot.
         this.refPoses.clear()
-        let mount: VehiclePose | null = null
-        let index = -1
         let drive: DriveState | undefined
         for (const [id, wire] of rebuilt.scene) {
           if (!wire.orientation || !wire.place) continue
           const vehicle = inGameUnits(wire)
-          const pose = poseOf(id, vehicle)
-          this.refPoses.set(id, pose)
-          const seat = vehicle.seats?.riders.indexOf(this.localId) ?? -1
-          if (seat >= 0) [mount, index, drive] = [pose, seat, vehicle.drive]
+          this.refPoses.set(id, poseOf(id, vehicle))
+          if (id === own?.seated?.vehicle) drive = vehicle.drive
         }
+        // Where the local player sits, if they do: their own `seated`, once their vehicle is in view.
+        const mount = (own?.seated && this.refPoses.get(own.seated.vehicle)) || null
+        const index = own?.seated?.seat ?? -1
         this.motor?.setVehicles([...this.refPoses.values()].map((pose) => {
           const [vx, vz] = this.store.latestVelocity(pose.id) ?? [0, 0]
           return { ...pose, vx, vz }

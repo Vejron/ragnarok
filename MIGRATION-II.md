@@ -135,11 +135,11 @@ entity.
 client no longer derives riders from the vehicle's seat list, and `replicate.rs` no longer filters
 on `embodied()`.
 
-- [ ] 4.1 `Seated { vehicle, seat }` replicated on a seated player's entity, with no `Place` (where
+- [x] 4.1 `Seated { vehicle, seat }` replicated on a seated player's entity, with no `Place` (where
       they are follows from the vehicle and the kind's seat). Interest uses the vehicle's place.
-- [ ] 4.2 The client's seated stickman is drawn from `Seated` by the stickman presenter, using
+- [x] 4.2 The client's seated stickman is drawn from `Seated` by the stickman presenter, using
       `seatView`/`seat_head`. The vehicle presenter stops placing riders.
-- [ ] 4.3 Drop the riders from the vehicle's replicated `Seats`, if nothing else reads them (the
+- [x] 4.3 Drop the riders from the vehicle's replicated `Seats`, if nothing else reads them (the
       server's `Seats` stays authoritative). Bump `PROTOCOL_VERSION` with Phase 3's if they land
       together. Measure bytes against Phase 3's.
 
@@ -311,3 +311,26 @@ one death for everything that can be hurt. Not played yet: the merge play sessio
     snapshot; now it is sent when it changes. 30 runners: 222 bytes a snapshot against 227. Mechanics
     untouched, 1.63 to 1.76 ms with the machine's noise. Server tests 275 (one new), shared 70 (one
     new), client 58 files, 428 tests; clippy clean.
+- **4.1 to 4.3.** `Seated`, protocol 41. A seated player is a stickman with `seated { vehicle, seat }`
+  and no `place`; one whose crew shows also sends `heading` (where they look about), the new `look
+  { pitch }` (a `diff` component) and `flags` (what they hold). One in a sealed vehicle sends only
+  `kind` and `seated`, as their `crew` entry was left out before. A drone's pilot keeps their stickman,
+  kneeling where they stood, and gains `seated`. The vehicle's `seats` and `crew` are gone (ids 7 and
+  10 are not reused), and with them `Rider`; the server's `Seats` stays authoritative.
+  - Interest: `replication::ready` notes, for a rider with no place, their vehicle's index in the
+    scene (`Ready::rides`), and `Replica::snapshot` sends them to whoever it sends the vehicle, at its
+    distance. New test `a_rider_is_sent_with_their_vehicle_wherever_it_goes`.
+  - Client: `Seating` (a presenter run before `Vehicles`) gathers who sits where from every `seated`,
+    and `Vehicles` builds `Placed.seats` from it, so the models, the prompts, the gun flashes and the
+    player count read seats as before. `Riders` draws each rider from their own entity
+    (`wants`: `seated` and no `place`): still its own presenter rather than `Stickmen`'s, since sitting
+    is drawn from the seat's frame and not from a place. The local seat comes from the player's own `seated`, the drive
+    state from that vehicle.
+  - The measure says `replicate.rs` no longer filters on `embodied()`: it still picks between a
+    standing stickman and a rider by it, since a drone's pilot is both. What went is the special case
+    (seated players hidden, shown by their vehicle).
+  - Measured against Phase 3 (`565382e`) in a worktree, three rounds each: snapshots for the room 405
+    to 410 µs a call against 433 to 441 µs; bytes 811 to 813 a player a snapshot against 813 to 816.
+    Each rider's look changes alone now, as small differences, instead of the vehicle's whole `crew`
+    list. Mechanics untouched, 1.62 to 1.66 ms. `NETWORKING.md` caught up with Phases 3 and 4. Server tests 276 (one new), shared 70, client 58
+    files, 428 tests; clippy clean.

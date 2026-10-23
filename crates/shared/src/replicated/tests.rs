@@ -18,7 +18,6 @@ fn tank(x: i32, turret_yaw: i16) -> Replicated {
         place: Some(Place { x, y: 120, z: 0 }),
         orientation: Some(Orientation { qx: 0, qy: 1200, qz: 0 }),
         steer: Some(Steer::default()),
-        seats: Some(Seats { riders: vec![7, 0] }),
         turret: Some(Turret { yaw: turret_yaw, pitch: 40, shots: 3, range: 3000, flags: 0 }),
         health: Some(Health { hp: 250 }),
         ..Default::default()
@@ -46,10 +45,8 @@ fn a_new_entity_brings_everything_it_has_and_decodes_back() {
         orientation: Some(Orientation { qx: -32767, qy: 5, qz: 32767 }),
         steer: Some(Steer { steer: -127 }),
         turret: Some(Turret { yaw: 100, pitch: -50, shots: 255, range: 65535, flags: 1 }),
-        crew: Some(Crew { riders: vec![Rider { yaw: 1, pitch: -2, held: 3 }, Rider::default()] }),
         thrust: Some(Thrust { air: 200, flags: 3 }),
         arms: Some(Arms { shots: 9, heat: 10, rear_heat: 11, bombs: 4, flags: 2 }),
-        seats: Some(Seats { riders: vec![1, 0, 70_000] }),
         health: Some(Health { hp: 70 }),
         damage: Some(Damage { parts: [1, 2, 3, 4, 5, 6, 7, 255] }),
         velocity: Some(Velocity { vx: 30_000, vy: -30_000, vz: 0 }),
@@ -59,6 +56,8 @@ fn a_new_entity_brings_everything_it_has_and_decodes_back() {
         vitals: Some(Vitals { hp: 73, progress: 128 }),
         hotbar: Some(Hotbar { slots: [ItemSlot { item: 3, count: 1, ammo: 17 }, ItemSlot::default(), ItemSlot { item: 9, count: 2, ammo: 0 }, ItemSlot::default(), ItemSlot { item: 1, count: 255, ammo: 255 }] }),
         drive: Some(Drive { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }),
+        seated: Some(Seated { vehicle: 70_000, seat: 2 }),
+        look: Some(Look { pitch: -1570 }),
     };
     let update = everything.update(42, None).expect("a new entity is always sent");
     assert_eq!(update.set(), everything.mask(), "everything it has is set");
@@ -97,7 +96,7 @@ fn a_walking_stickman_sends_only_its_moves_as_differences_and_costs_no_more_than
 #[test]
 fn a_turret_that_did_not_move_is_not_resent() {
     let update = tank(130, 0).update(9, Some(&tank(100, 0))).unwrap();
-    assert!(update.turret.is_none() && update.seats.is_none() && update.health.is_none());
+    assert!(update.turret.is_none() && update.health.is_none());
     assert_eq!(update.place, Some([30, 0, 0]));
     let turned = tank(100, 15).update(9, Some(&tank(100, 0))).unwrap();
     assert_eq!(turned.set(), 1 << Turret::ID);
@@ -331,10 +330,8 @@ fn fixture_json() -> String {
         orientation: Some(Orientation { qx: -32767, qy: 5, qz: 32767 }),
         steer: Some(Steer { steer: -127 }),
         turret: Some(Turret { yaw: 100, pitch: -50, shots: 255, range: 65535, flags: 1 }),
-        crew: Some(Crew { riders: vec![Rider { yaw: 1, pitch: -2, held: 3 }, Rider::default()] }),
         thrust: Some(Thrust { air: 200, flags: 3 }),
         arms: Some(Arms { shots: 9, heat: 10, rear_heat: 11, bombs: 4, flags: 2 }),
-        seats: Some(Seats { riders: vec![1, 0, 70_000] }),
         health: Some(Health { hp: 70 }),
         damage: Some(Damage { parts: [1, 2, 3, 4, 5, 6, 7, 255] }),
         velocity: Some(Velocity { vx: 30_000, vy: -30_000, vz: 0 }),
@@ -344,6 +341,8 @@ fn fixture_json() -> String {
         vitals: Some(Vitals { hp: 73, progress: 128 }),
         hotbar: Some(Hotbar { slots: [ItemSlot { item: 3, count: 1, ammo: 17 }, ItemSlot::default(), ItemSlot { item: 9, count: 2, ammo: 0 }, ItemSlot::default(), ItemSlot { item: 1, count: 255, ammo: 255 }] }),
         drive: Some(Drive { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }),
+        seated: Some(Seated { vehicle: 70_000, seat: 2 }),
+        look: Some(Look { pitch: -1570 }),
     };
     let first: Scene = vec![(1, stickman(1000, 200)), (4, tank(0, 0)), (70_000, all.clone())];
     let hurt = Replicated { damage: Some(Damage { parts: [0, 0, 90, 0, 0, 0, 0, 0] }), ..tank(40, 12) };
@@ -375,7 +374,7 @@ fn generated(path: &str, contents: &str) {
 
 /// A scene with every family and the edge cases of each, for the client's conversion into its units.
 fn scene_fixture_json() -> String {
-    let vehicle = |kind: u8| Replicated { kind: Some(Kind { kind }), place: Some(Place { x: 500, y: 80, z: -900 }), orientation: Some(Orientation { qx: 10, qy: -2000, qz: 30 }), steer: Some(Steer { steer: 40 }), seats: Some(Seats { riders: vec![0, 0] }), health: Some(Health { hp: 100 }), ..Default::default() };
+    let vehicle = |kind: u8| Replicated { kind: Some(Kind { kind }), place: Some(Place { x: 500, y: 80, z: -900 }), orientation: Some(Orientation { qx: 10, qy: -2000, qz: 30 }), steer: Some(Steer { steer: 40 }), health: Some(Health { hp: 100 }), ..Default::default() };
     let scene: Scene = vec![
         // Prone, knocked, crouching, holding a gun (flags carry the held item).
         (1, Replicated { motion: Some(Motion { vy: -320, knock_x: 150, knock_z: -40 }), flags: Some(Flags { flags: 0b0001_0101, stance: 1 }), ..stickman(-700, -1500) }),
@@ -383,13 +382,17 @@ fn scene_fixture_json() -> String {
         (2, Replicated { kind: Some(Kind { kind: 5 }), place: Some(Place { x: 10, y: 0, z: 20 }), heading: Some(Heading { yaw: 900 }), flags: Some(Flags { flags: 0b1000_0001, stance: 0 }), ..Default::default() }),
         (4, tank(300, -700)),
         // A field mortar, hitched: its turret stowed, its crew showing and empty.
-        (5, Replicated { turret: Some(Turret { yaw: 0, pitch: 600, shots: 0, range: 1500, flags: 1 }), crew: Some(Crew { riders: vec![Rider::default()] }), seats: Some(Seats { riders: vec![0] }), ..vehicle(9) }),
+        (5, Replicated { turret: Some(Turret { yaw: 0, pitch: 600, shots: 0, range: 1500, flags: 1 }), ..vehicle(9) }),
         // A plane: crew showing, arms, hurt.
-        (6, Replicated { turret: Some(Turret { yaw: 3000, pitch: -100, shots: 17, range: 0, flags: 0 }), crew: Some(Crew { riders: vec![Rider { yaw: 100, pitch: 50, held: 0 }, Rider { yaw: -3000, pitch: -40, held: 2 }] }), arms: Some(Arms { shots: 200, heat: 128, rear_heat: 3, bombs: 4, flags: 2 }), damage: Some(Damage { parts: [0, 9, 0, 0, 0, 0, 0, 0] }), seats: Some(Seats { riders: vec![1, 0] }), ..vehicle(6) }),
+        (6, Replicated { turret: Some(Turret { yaw: 3000, pitch: -100, shots: 17, range: 0, flags: 0 }), arms: Some(Arms { shots: 200, heat: 128, rear_heat: 3, bombs: 4, flags: 2 }), damage: Some(Damage { parts: [0, 9, 0, 0, 0, 0, 0, 0] }), ..vehicle(6) }),
         // A drone, linked, its battery as air; a wreck.
-        (7, Replicated { thrust: Some(Thrust { air: 99, flags: 4 }), seats: Some(Seats { riders: vec![1] }), drive: Some(Drive { vx: -250, vy: 3, vz: 1200, wx: 10, wy: -3500, wz: 0, steer: -300, spin: 700 }), ..vehicle(11) }),
-        // The receiver themself, seated: only what is theirs.
-        (11, Replicated { vitals: Some(Vitals { hp: 55, progress: 255 }), hotbar: Some(Hotbar { slots: [ItemSlot { item: 2, count: 1, ammo: 30 }, ItemSlot::default(), ItemSlot::default(), ItemSlot::default(), ItemSlot::default()] }), ..Default::default() }),
+        (7, Replicated { thrust: Some(Thrust { air: 99, flags: 4 }), drive: Some(Drive { vx: -250, vy: 3, vz: 1200, wx: 10, wy: -3500, wz: 0, steer: -300, spin: 700 }), ..vehicle(11) }),
+        // The receiver themself, piloting the plane: what is theirs, and their seat.
+        (11, Replicated { kind: Some(Kind { kind: 0 }), seated: Some(Seated { vehicle: 6, seat: 0 }), vitals: Some(Vitals { hp: 55, progress: 255 }), hotbar: Some(Hotbar { slots: [ItemSlot { item: 2, count: 1, ammo: 30 }, ItemSlot::default(), ItemSlot::default(), ItemSlot::default(), ItemSlot::default()] }), ..Default::default() }),
+        // Their gunner, looking back and down, holding a gun.
+        (12, Replicated { kind: Some(Kind { kind: 0 }), seated: Some(Seated { vehicle: 6, seat: 1 }), heading: Some(Heading { yaw: -3000 }), look: Some(Look { pitch: -40 }), flags: Some(Flags { flags: 0b0001_0100, stance: 0 }), ..Default::default() }),
+        // A drone's pilot, kneeling where they stood.
+        (13, Replicated { seated: Some(Seated { vehicle: 7, seat: 0 }), ..stickman(40, 0) }),
         (8, Replicated { health: Some(Health { hp: 0 }), ..vehicle(1) }),
         (9, Replicated { projectile: Some(Projectile { kind: 0 }), place: Some(Place { x: 1, y: 2000, z: 3 }), velocity: Some(Velocity { vx: -4000, vy: 50, vz: 0 }), ..Default::default() }),
         (10, Replicated { pickup: Some(Pickup { item: 7 }), place: Some(Place { x: -5, y: 30, z: 5 }), ..Default::default() }),
@@ -407,8 +410,8 @@ fn the_clients_components_and_fixture_are_generated_from_these() {
 
 #[test]
 fn a_struct_in_a_list_goes_on_the_wire_as_its_fields_in_order() {
-    let bytes = encode(&Rider { yaw: 1, pitch: 2, held: 3 });
-    assert_eq!(decode::<(i16, i16, u8)>(&bytes), Some((1, 2, 3)), "STRUCTS says Rider is [yaw, pitch, held]");
+    let bytes = encode(&ItemSlot { item: 1, count: 2, ammo: 3 });
+    assert_eq!(decode::<(u8, u8, u8)>(&bytes), Some((1, 2, 3)), "STRUCTS says ItemSlot is [item, count, ammo]");
 }
 
 #[test]

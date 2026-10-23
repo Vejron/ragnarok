@@ -15,7 +15,8 @@ import { vehicleDef } from '@/sim/vehicles'
 import type { VehicleSounds } from '@/vehicleaudio'
 import type { Frame, Presenter } from '../presenter'
 import type { Sampled } from '../store'
-import type { Arms, Entity, Rider, Turret } from '../units'
+import type { Arms, Entity, Turret } from '../units'
+import type { Seating } from './seating'
 
 /** Damage parts of a vehicle that is not hurt. */
 const UNHURT: readonly number[] = [0, 0, 0, 0, 0, 0, 0, 0]
@@ -30,11 +31,10 @@ export interface Placed {
   yaw: number
   rotation: readonly [number, number, number, number]
   steer: number
+  /** The player in each seat, 0 for an empty one (`Seating`). */
   seats: readonly number[]
   turret: Turret | null
   arms: Arms | null
-  /** Where each rider looks and what they hold. */
-  crew: readonly Rider[]
   hp: number
   /** `VehicleState::damage`'s parts; all 0 while unhurt. */
   damage: readonly number[]
@@ -84,7 +84,7 @@ export class Vehicles implements Presenter<Frame> {
   private readonly models = new Map<number, VehicleModel>()
   private readonly motion = new Map<number, VehicleFx>()
 
-  constructor(private readonly world: VehicleWorld) {}
+  constructor(private readonly world: VehicleWorld, private readonly seating: Seating) {}
 
   /** Vehicle `id`'s model, while it is drawn. */
   model(id: number): VehicleModel | undefined {
@@ -122,7 +122,7 @@ export class Vehicles implements Presenter<Frame> {
     const rotation = mine ? mine.pose.rotation : ([q.qx, q.qy, q.qz, q.qw] as const)
     const steer = mine ? mine.pose.steer : (entity.steer?.steer ?? 0)
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion(...rotation))
-    const seats = entity.seats?.riders ?? []
+    const seats = this.seating.of(id, kind)
     const turret = entity.turret ?? null
     const arms = entity.arms ?? null
     const jets = mine ? mine.jets : (entity.thrust?.flags ?? 0)
@@ -139,7 +139,7 @@ export class Vehicles implements Presenter<Frame> {
     }
     const placed: Placed = {
       kind, x, y, z, yaw: Math.atan2(-forward.x, -forward.z), rotation, steer, seats, turret, arms,
-      crew: entity.crew?.riders ?? [], hp: entity.health?.hp ?? 0, damage: entity.damage?.parts ?? UNHURT, jets, air: entity.thrust?.air ?? null,
+      hp: entity.health?.hp ?? 0, damage: entity.damage?.parts ?? UNHURT, jets, air: entity.thrust?.air ?? null,
     }
     this.placed.set(id, placed)
     this.tyres(id, placed, frame.dt, entity.arms ? (entity.arms.flags & ARMS_CUT) !== 0 : false)

@@ -70,6 +70,23 @@ fn only_the_near_are_sent_and_the_far_come_in_as_you_approach() {
 }
 
 #[test]
+fn a_rider_is_sent_with_their_vehicle_wherever_it_goes() {
+    let car = |id: u32, x_m: f32| (id, Replicated { orientation: Some(wire::Orientation::default()), ..person(id, x_m, 0.0).1 });
+    let rider = |id: u32, vehicle: u32| (id, Replicated { kind: Some(wire::Kind { kind: KIND_STICKMAN }), seated: Some(wire::Seated { vehicle, seat: 1 }), ..Default::default() });
+    let mut replica = Replica::default();
+    let mut held = Vec::new();
+    // The rider's id comes before their vehicle's, as a player's does.
+    let near = sorted(vec![rider(3, 20), car(20, 30.0)]);
+    let first = snapshot(&mut replica, 2, &near);
+    assert_eq!(rebuild(&mut held, &first), near, "the car is near, so its rider is");
+    replica.acknowledge(2);
+    let gone = sorted(vec![rider(3, 20), car(20, INTEREST_RADIUS + INTEREST_HYSTERESIS + 10.0)]);
+    let second = snapshot(&mut replica, 4, &gone);
+    assert_eq!(second.removed, vec![3, 20], "they leave together");
+    assert!(rebuild(&mut held, &second).is_empty());
+}
+
+#[test]
 fn a_standing_player_costs_nothing_once_acknowledged() {
     let mut replica = Replica::default();
     let people: Scene = (1..=20).map(|id| person(id, id as f32, 0.0)).collect();

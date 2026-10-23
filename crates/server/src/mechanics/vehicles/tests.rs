@@ -91,8 +91,9 @@ fn use_boards_the_nearest_car_and_use_again_leaves() {
     press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
     idle(&mut game, id, &mut seq, 3);
     assert_eq!(game.world.entities.of::<Seats>(vid)[0], Some(id));
-    assert!(game.seen_people(shared::protocol::KIND_STICKMAN).is_empty(), "a seated player is not a stickman entity");
-    assert_eq!(game.seen(vid).unwrap().seats.unwrap().riders[0], id);
+    assert!(game.seen_people(shared::protocol::KIND_STICKMAN).is_empty(), "a seated player is not a stickman on foot");
+    assert_eq!(game.seen(id).unwrap().seated, Some(shared::replicated::Seated { vehicle: vid, seat: 0 }));
+    assert!(game.seen(id).unwrap().place.is_none(), "they are where their seat is");
 
     press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
     idle(&mut game, id, &mut seq, 3);
@@ -429,7 +430,7 @@ fn a_tank_has_a_driver_and_a_gunner_and_no_third_seat() {
     let seated: Vec<_> = crew.iter().map(|(id, ..)| game.world.entities.of::<Player>(*id).seat.map(|seat| (seat.vehicle, seat.index))).collect();
     assert_eq!(seated, [Some((vid, 0)), Some((vid, 1)), None], "two seats, the third stays outside");
     let state = game.seen(vid).unwrap();
-    assert_eq!(state.seats.unwrap().riders.len(), 2);
+    assert_eq!(game.seen_riders(vid).len(), 2);
     assert!(state.turret.is_some(), "a tank reports its turret");
 }
 

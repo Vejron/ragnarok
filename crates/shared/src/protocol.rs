@@ -235,15 +235,6 @@ pub struct Welcome {
     pub world_hash: u32,
 }
 
-/// Where a seated player looks and what they hold, so others can draw them sitting: `[yaw, pitch,
-/// held]`, milliradians in the world (yaw 0 faces -Z) and an `ITEM_*`. All zeros for an empty seat.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Rider {
-    pub yaw: i16,
-    pub pitch: i16,
-    pub held: u8,
-}
-
 /// Indices into a vehicle's damage: the four sides of the body, then the wheels front left,
 /// front right, rear left, rear right (a tank's and a helicopter's wheels are never hurt).
 pub const DAMAGE_FRONT: usize = 0;
@@ -485,11 +476,11 @@ mod tests {
     // changes, both tests must be updated together.
 
     pub const INPUT_FIXTURE: &[u8] = &[
-        148, 0, 40, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
+        148, 0, 41, 205, 4, 206, 146, 152, 41, 127, 0, 205, 6, 35, 0, 205, 1, 44, 205, 238, 72, 0, 152, 42, 208, 129, 127, 209, 248, 98, 11, 209, 255, 106, 7, 3
     ];
 
     pub const SNAPSHOT_FIXTURE: &[u8] = &[
-        153, 1, 205, 4, 210, 205, 4, 206, 42, 9, 148, 156, 1, 206, 0, 6, 0, 7, 25, 0, 0, 208, 136, 205, 2, 138, 0, 0, 73, 204, 128, 149, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 147, 0, 0, 0, 147, 0, 0, 0, 156, 7, 205, 64, 15, 0, 85, 206, 0, 1, 134, 160, 0, 0, 0, 0, 3, 0, 0, 220, 0, 25, 10, 206, 0, 8, 76, 113, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 209, 253, 68, 204, 250, 3, 205, 4, 210, 1, 146, 1, 7, 204, 250, 2, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 12, 206, 128, 0, 0, 0, 205, 16, 0, 146, 3, 11, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 154, 77, 7, 2, 120, 204, 165, 209, 244, 72, 205, 5, 220, 236, 209, 150, 136, 205, 4, 209,
+        153, 1, 205, 4, 210, 205, 4, 206, 42, 9, 149, 156, 1, 206, 0, 6, 0, 7, 25, 0, 0, 208, 136, 205, 2, 138, 0, 0, 73, 204, 128, 149, 147, 2, 1, 17, 147, 0, 0, 0, 147, 3, 2, 0, 147, 0, 0, 0, 147, 0, 0, 0, 156, 7, 205, 64, 15, 0, 85, 206, 0, 1, 134, 160, 0, 0, 0, 0, 3, 0, 0, 220, 0, 24, 10, 206, 0, 8, 72, 113, 205, 1, 44, 90, 209, 248, 48, 0, 205, 2, 188, 0, 32, 209, 253, 68, 204, 250, 3, 205, 4, 210, 1, 204, 250, 2, 120, 251, 209, 246, 60, 30, 209, 254, 112, 15, 204, 250, 209, 253, 168, 147, 12, 206, 128, 0, 0, 0, 205, 16, 0, 153, 13, 206, 128, 48, 0, 10, 5, 205, 3, 132, 4, 0, 12, 1, 208, 196, 146, 3, 11, 146, 149, 7, 0, 205, 5, 220, 204, 160, 209, 239, 152, 149, 1, 0, 236, 90, 205, 121, 24, 145, 154, 77, 7, 2, 120, 204, 165, 209, 244, 72, 205, 5, 220, 236, 209, 150, 136, 205, 4, 209,
     ];
 
     fn sample_input() -> ClientInput {
@@ -519,7 +510,6 @@ mod tests {
             place: Some(wire::Place { x: 300, y: 90, z: -2000 }),
             orientation: Some(wire::Orientation { qx: 0, qy: 700, qz: 0 }),
             steer: Some(wire::Steer { steer: 32 }),
-            seats: Some(wire::Seats { riders: vec![1, 7] }),
             turret: Some(wire::Turret { yaw: -700, pitch: 250, shots: 3, range: 1234, flags: TURRET_STOWED }),
             health: Some(wire::Health { hp: 250 }),
             ..Default::default()
@@ -532,6 +522,17 @@ mod tests {
             Replicated { flags: Some(wire::Flags { flags: FLAG_GROUNDED | FLAG_DEAD, stance: 0 }), ..walker(0, 0, 0) }.update(7, None).unwrap(),
             Replicated { drive: Some(wire::Drive { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }), ..tank.clone() }.update(10, None).unwrap(),
             tank.update(12, Some(&hurt)).unwrap(),
+            // Someone sitting in the tank they just got into: where they look, and no place.
+            Replicated {
+                kind: Some(wire::Kind { kind: KIND_STICKMAN }),
+                seated: Some(wire::Seated { vehicle: 12, seat: 1 }),
+                heading: Some(wire::Heading { yaw: 900 }),
+                look: Some(wire::Look { pitch: -60 }),
+                flags: Some(wire::Flags { flags: FLAG_CROUCHING, stance: 0 }),
+                ..Default::default()
+            }
+            .update(13, Some(&walker(0, 0, 0)))
+            .unwrap(),
         ];
         Snapshot { tag: S_SNAPSHOT, tick: 1234, baseline: 1230, ack: 42, ride: 9, updates, removed: vec![3, 11], shots: vec![ShotEvent { shooter: 7, weapon: WEAPON_RIFLE, x: 1500, y: 160, z: -4200 }, ShotEvent { shooter: 1, weapon: WEAPON_RIFLE, x: -20, y: 90, z: 31_000 }], bullets: vec![BulletSpawn { id: 77, shooter: 7, item: ITEM_AK5, x: 120, y: 165, z: -3000, vx: 1500, vy: -20, vz: -27000, tick: 1233 }] }
     }

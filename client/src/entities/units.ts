@@ -35,7 +35,5 @@ export type Arms = NonNullable<Entity['arms']>
  * ramped to (+ is clockwise).
  */
 export type DriveState = NonNullable<Entity['drive']>
-/** Where a seat's rider looks, in radians, and what they hold (`crew`). */
-export type Rider = NonNullable<Entity['crew']>['riders'][number]
 
 export { blend, toGame } from './units.generated'

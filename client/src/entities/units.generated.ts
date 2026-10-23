@@ -16,10 +16,8 @@ export function toGame(w: Components): Entity {
     orientation: w.orientation && rotationOf(w.orientation.qx, w.orientation.qy, w.orientation.qz),
     steer: w.steer && { steer: Math.max(-1, Math.min(1, w.steer.steer / 127)) },
     turret: w.turret && { yaw: w.turret.yaw / 1000, pitch: w.turret.pitch / 1000, shots: w.turret.shots, range: w.turret.range / 10, flags: w.turret.flags },
-    crew: w.crew && { riders: w.crew.riders.map((r) => ({ yaw: r.yaw / 1000, pitch: r.pitch / 1000, held: r.held })) },
     thrust: w.thrust && { air: w.thrust.air / 255, flags: w.thrust.flags },
     arms: w.arms && { shots: w.arms.shots, heat: w.arms.heat / 255, rear_heat: w.arms.rear_heat / 255, bombs: w.arms.bombs, flags: w.arms.flags },
-    seats: w.seats,
     health: w.health,
     damage: w.damage,
     velocity: w.velocity && { vx: w.velocity.vx / 100, vy: w.velocity.vy / 100, vz: w.velocity.vz / 100 },
@@ -29,6 +27,8 @@ export function toGame(w: Components): Entity {
     vitals: w.vitals && { hp: w.vitals.hp, progress: w.vitals.progress / 255 },
     hotbar: w.hotbar,
     drive: w.drive && { vx: w.drive.vx / 100, vy: w.drive.vy / 100, vz: w.drive.vz / 100, wx: w.drive.wx / 1000, wy: w.drive.wy / 1000, wz: w.drive.wz / 1000, steer: w.drive.steer / 1000, spin: w.drive.spin / 1000 },
+    seated: w.seated,
+    look: w.look && { pitch: w.look.pitch / 1000 },
   }
 }
 
@@ -47,10 +47,8 @@ export function blend(a: Entity, b: Entity, t: number): Entity {
     orientation: a.orientation && b.orientation ? (a.orientation === b.orientation || (a.orientation.qx === b.orientation.qx && a.orientation.qy === b.orientation.qy && a.orientation.qz === b.orientation.qz && a.orientation.qw === b.orientation.qw) ? b.orientation : rotation(a.orientation, b.orientation, t)) : near.orientation,
     steer: a.steer && b.steer ? (a.steer === b.steer || (a.steer.steer === b.steer.steer) ? b.steer : { steer: lerp(a.steer.steer, b.steer.steer, t) }) : near.steer,
     turret: a.turret && b.turret ? (a.turret === b.turret || (a.turret.yaw === b.turret.yaw && a.turret.pitch === b.turret.pitch && a.turret.shots === b.turret.shots && a.turret.range === b.turret.range && a.turret.flags === b.turret.flags) ? b.turret : { yaw: angle(a.turret.yaw, b.turret.yaw, t), pitch: angle(a.turret.pitch, b.turret.pitch, t), shots: t < 0.5 ? a.turret.shots : b.turret.shots, range: t < 0.5 ? a.turret.range : b.turret.range, flags: t < 0.5 ? a.turret.flags : b.turret.flags }) : near.turret,
-    crew: a.crew && b.crew ? (a.crew === b.crew ? b.crew : { riders: items(a.crew.riders, b.crew.riders, (p, q) => ({ yaw: angle(p.yaw, q.yaw, t), pitch: angle(p.pitch, q.pitch, t), held: t < 0.5 ? p.held : q.held })) }) : near.crew,
     thrust: near.thrust,
     arms: near.arms,
-    seats: near.seats,
     health: near.health,
     damage: near.damage,
     velocity: a.velocity && b.velocity ? (a.velocity === b.velocity || (a.velocity.vx === b.velocity.vx && a.velocity.vy === b.velocity.vy && a.velocity.vz === b.velocity.vz) ? b.velocity : { vx: lerp(a.velocity.vx, b.velocity.vx, t), vy: lerp(a.velocity.vy, b.velocity.vy, t), vz: lerp(a.velocity.vz, b.velocity.vz, t) }) : near.velocity,
@@ -60,5 +58,7 @@ export function blend(a: Entity, b: Entity, t: number): Entity {
     vitals: near.vitals,
     hotbar: a.hotbar && b.hotbar ? (a.hotbar === b.hotbar ? b.hotbar : { slots: items(a.hotbar.slots, b.hotbar.slots, (p, q) => ({ item: t < 0.5 ? p.item : q.item, count: t < 0.5 ? p.count : q.count, ammo: t < 0.5 ? p.ammo : q.ammo })) }) : near.hotbar,
     drive: a.drive && b.drive ? (a.drive === b.drive || (a.drive.vx === b.drive.vx && a.drive.vy === b.drive.vy && a.drive.vz === b.drive.vz && a.drive.wx === b.drive.wx && a.drive.wy === b.drive.wy && a.drive.wz === b.drive.wz && a.drive.steer === b.drive.steer && a.drive.spin === b.drive.spin) ? b.drive : { vx: lerp(a.drive.vx, b.drive.vx, t), vy: lerp(a.drive.vy, b.drive.vy, t), vz: lerp(a.drive.vz, b.drive.vz, t), wx: angle(a.drive.wx, b.drive.wx, t), wy: angle(a.drive.wy, b.drive.wy, t), wz: angle(a.drive.wz, b.drive.wz, t), steer: angle(a.drive.steer, b.drive.steer, t), spin: angle(a.drive.spin, b.drive.spin, t) }) : near.drive,
+    seated: near.seated,
+    look: a.look && b.look ? (a.look === b.look || (a.look.pitch === b.look.pitch) ? b.look : { pitch: angle(a.look.pitch, b.look.pitch, t) }) : near.look,
   }
 }

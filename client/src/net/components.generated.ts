@@ -7,12 +7,6 @@ export const CLEARED = 2147483648
 /** What a field's integer counts (`UNITS` in the Rust): how the client turns it into its own units, and blends it. */
 export type Unit = 'cm' | 'mrad' | 'quat' | 'axis' | 'byte' | 'dm'
 
-export interface Rider {
-  yaw: number
-  pitch: number
-  held: number
-}
-
 export interface ItemSlot {
   item: number
   count: number
@@ -58,10 +52,6 @@ export interface Turret {
   flags: number
 }
 
-export interface Crew {
-  riders: Rider[]
-}
-
 export interface Thrust {
   air: number
   flags: number
@@ -73,10 +63,6 @@ export interface Arms {
   rear_heat: number
   bombs: number
   flags: number
-}
-
-export interface Seats {
-  riders: number[]
 }
 
 export interface Health {
@@ -125,6 +111,15 @@ export interface Drive {
   spin: number
 }
 
+export interface Seated {
+  vehicle: number
+  seat: number
+}
+
+export interface Look {
+  pitch: number
+}
+
 /** An entity as it is replicated: the components it has. */
 export interface Components {
   place?: Place
@@ -134,10 +129,8 @@ export interface Components {
   orientation?: Orientation
   steer?: Steer
   turret?: Turret
-  crew?: Crew
   thrust?: Thrust
   arms?: Arms
-  seats?: Seats
   health?: Health
   damage?: Damage
   velocity?: Velocity
@@ -147,6 +140,8 @@ export interface Components {
   vitals?: Vitals
   hotbar?: Hotbar
   drive?: Drive
+  seated?: Seated
+  look?: Look
 }
 
 export type ComponentName = keyof Components
@@ -167,10 +162,8 @@ export const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; 
   { id: 4, name: 'orientation', diff: true, owner: false, fields: [{ name: 'qx', unit: 'quat' }, { name: 'qy', unit: 'quat' }, { name: 'qz', unit: 'quat' }] },
   { id: 5, name: 'steer', diff: true, owner: false, fields: [{ name: 'steer', unit: 'axis' }] },
   { id: 6, name: 'turret', diff: false, owner: false, fields: [{ name: 'yaw', unit: 'mrad' }, { name: 'pitch', unit: 'mrad' }, { name: 'shots' }, { name: 'range', unit: 'dm' }, { name: 'flags' }] },
-  { id: 7, name: 'crew', diff: false, owner: false, fields: [{ name: 'riders', struct: [{ name: 'yaw', unit: 'mrad' }, { name: 'pitch', unit: 'mrad' }, { name: 'held' }] }] },
   { id: 8, name: 'thrust', diff: false, owner: false, fields: [{ name: 'air', unit: 'byte' }, { name: 'flags' }] },
   { id: 9, name: 'arms', diff: false, owner: false, fields: [{ name: 'shots' }, { name: 'heat', unit: 'byte' }, { name: 'rear_heat', unit: 'byte' }, { name: 'bombs' }, { name: 'flags' }] },
-  { id: 10, name: 'seats', diff: false, owner: false, fields: [{ name: 'riders' }] },
   { id: 11, name: 'health', diff: false, owner: false, fields: [{ name: 'hp' }] },
   { id: 12, name: 'damage', diff: false, owner: false, fields: [{ name: 'parts' }] },
   { id: 13, name: 'velocity', diff: true, owner: false, fields: [{ name: 'vx', unit: 'cm' }, { name: 'vy', unit: 'cm' }, { name: 'vz', unit: 'cm' }] },
@@ -180,4 +173,6 @@ export const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; 
   { id: 17, name: 'vitals', diff: false, owner: true, fields: [{ name: 'hp' }, { name: 'progress', unit: 'byte' }] },
   { id: 18, name: 'hotbar', diff: false, owner: true, fields: [{ name: 'slots', struct: [{ name: 'item' }, { name: 'count' }, { name: 'ammo' }] }] },
   { id: 19, name: 'drive', diff: false, owner: true, fields: [{ name: 'vx', unit: 'cm' }, { name: 'vy', unit: 'cm' }, { name: 'vz', unit: 'cm' }, { name: 'wx', unit: 'mrad' }, { name: 'wy', unit: 'mrad' }, { name: 'wz', unit: 'mrad' }, { name: 'steer', unit: 'mrad' }, { name: 'spin', unit: 'mrad' }] },
+  { id: 20, name: 'seated', diff: false, owner: false, fields: [{ name: 'vehicle' }, { name: 'seat' }] },
+  { id: 21, name: 'look', diff: true, owner: false, fields: [{ name: 'pitch', unit: 'mrad' }] },
 ]

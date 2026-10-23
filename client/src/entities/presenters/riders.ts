@@ -1,10 +1,11 @@
 import * as THREE from 'three'
 import type { VehicleModel } from '@/render/car'
 import { MortarModel } from '@/render/mortar'
-import { ITEM_NONE } from '@/sim/items'
+import { FLAG_HELD_MASK, FLAG_HELD_SHIFT } from '@/net/codec'
 import { seatHead } from '@/sim/vehicles'
 import type { Avatars } from '../avatars'
 import type { Frame, Presenter } from '../presenter'
+import type { Sampled } from '../store'
 import type { Entity } from '../units'
 import type { Nearby } from './people'
 import type { Vehicles } from './vehicles'
@@ -32,9 +33,10 @@ export function seatFrame(model: VehicleModel, kind: number, index: number, head
 }
 
 /**
- * Everyone else sitting in a vehicle whose crew show (`seats` and `crew`): their stickman in the seat,
- * turned where they look, holding what they hold. The local player is drawn from their own camera.
- * Runs after the vehicles are placed, since a rider sits where the model is drawn.
+ * Everyone else sitting in a vehicle whose crew show (`seated`, with no place of their own): their
+ * stickman in the seat, turned where they look (`heading`, `look`), holding what they hold (`flags`).
+ * The local player is drawn from their own camera. Runs after the vehicles are placed, since a rider
+ * sits where the model is drawn.
  */
 export class Riders implements Presenter<Frame> {
   /** Who sits where they can be heard this frame. */
@@ -44,27 +46,24 @@ export class Riders implements Presenter<Frame> {
 
   constructor(private readonly avatars: Avatars, private readonly vehicles: Vehicles) {}
 
-  wants(entity: Entity) {
-    return entity.orientation !== undefined && entity.seats !== undefined
+  wants(entity: Entity, id: number, frame: Frame) {
+    return id !== frame.localId && entity.seated !== undefined && entity.place === undefined
   }
 
   begin() {
     this.seated.length = 0
   }
 
-  update(id: number, _: unknown, frame: Frame) {
-    const model = this.vehicles.model(id)
-    const car = this.vehicles.placed.get(id)
-    if (!model || !car) return
-    car.seats.forEach((rider, index) => {
-      if (rider === 0 || rider === frame.localId || !seatFrame(model, car.kind, index, this.head, this.turn)) return
-      const look = car.crew[index]
-      this.seated.push({ id: rider, x: this.head.x, y: this.head.y, z: this.head.z })
-      const avatar = this.avatars.draw(rider)
-      avatar.dead = false
-      avatar.held = look?.held ?? ITEM_NONE
-      avatar.seat(this.head, this.turn, look?.yaw ?? car.yaw, look?.pitch ?? 0, frame.dt)
-    })
+  update(id: number, { entity }: Sampled, frame: Frame) {
+    const { vehicle, seat } = entity.seated!
+    const model = this.vehicles.model(vehicle)
+    const car = this.vehicles.placed.get(vehicle)
+    if (!model || !car || !seatFrame(model, car.kind, seat, this.head, this.turn)) return
+    this.seated.push({ id, x: this.head.x, y: this.head.y, z: this.head.z })
+    const avatar = this.avatars.draw(id)
+    avatar.dead = false
+    avatar.held = ((entity.flags?.flags ?? 0) & FLAG_HELD_MASK) >> FLAG_HELD_SHIFT
+    avatar.seat(this.head, this.turn, entity.heading?.yaw ?? car.yaw, entity.look?.pitch ?? 0, frame.dt)
   }
 
   // Their stickman is let go by `Avatars.sweep` once nobody draws it.

@@ -43,7 +43,7 @@ Each shot gives the hull a 1.6 m/s kick backwards along the barrel (level, so it
 
 - `InputFrame` gained `pitch` (milliradians, + looks up) and `BUTTON_FIRE` (8). Every player sends their look pitch; only a gunner's means anything.
 - `VehicleState` gained `turret`: `nil` for cars, else `[yaw i16, pitch i16, shots u8, range u16]`. The range is in decimetres. A car pays one byte for the `nil`. The worst-case snapshot test now gives every vehicle a turret and a full seat list, and still fits 1200 bytes.
-- `KIND_TANK = 2`. A tank's `seats` list has two entries.
+- `KIND_TANK = 2`. A tank has two seats.
 - The byte fixtures in `protocol.rs` and `codec.spec.ts` were regenerated and now contain a car and a tank.
 
 ## Client
