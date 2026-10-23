@@ -20,9 +20,9 @@ use crate::world::{Bits, Cells};
 
 /// Side of a cell, centimetres: every building is cut into cubes of this size, on one lattice for
 /// the whole world (cell corners at multiples of it), so neighbouring buildings' cells line up.
-pub const CELL: i32 = 100;
+pub const CELL: i32 = 72;
 /// Most cells in one building's grid (its bounding box). A building bigger than this is not carved.
-pub const MAX_CELLS: usize = 4_000_000;
+pub const MAX_CELLS: usize = 8_000_000;
 
 /// Health of one cell against bullets: a rifle needs a few rounds to break out a piece of wall.
 /// Blasts take cells outright.
@@ -349,7 +349,7 @@ impl Shell {
                 _ => return cut,
             }
         }
-        cut.fell = self.unsupported(removed);
+        cut.fell = self.unsupported_after(removed, &cut.blasted);
         for &id in &cut.fell {
             removed[id as usize] = true;
         }
@@ -371,14 +371,58 @@ impl Shell {
         }
         removed[id as usize] = true;
         cut.blasted.push(id);
-        cut.fell = self.unsupported(removed);
+        cut.fell = self.unsupported_after(removed, &cut.blasted);
         for &lost in &cut.fell {
             removed[lost as usize] = true;
         }
         cut
     }
 
+    /// As `unsupported`, for when everything was held before `taken` came out of `removed`: only the
+    /// cells beside those can have lost their hold, so each is followed until it reaches an anchor
+    /// (it and every cell on the way are held) or runs out of cells (all it reached fell). The work
+    /// is the size of what is looked at, not of the building's grid. Sorted by cell number.
+    fn unsupported_after(&self, removed: &[bool], taken: &[u32]) -> Vec<u32> {
+        let standing = |id: u32| self.solid[id as usize] && !removed[id as usize];
+        let mut held: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        let mut fell: Vec<u32> = Vec::new();
+        let mut seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        for &gone in taken {
+            for seed in self.around(gone) {
+                if !standing(seed) || held.contains(&seed) || seen.contains(&seed) {
+                    continue;
+                }
+                let mut piece = vec![seed];
+                let mut visited: std::collections::HashSet<u32> = std::collections::HashSet::from([seed]);
+                let mut at = 0;
+                let mut safe = false;
+                while at < piece.len() && !safe {
+                    let id = piece[at];
+                    at += 1;
+                    if self.anchored[id as usize] || held.contains(&id) {
+                        safe = true;
+                        break;
+                    }
+                    for next in self.around(id) {
+                        if standing(next) && visited.insert(next) {
+                            piece.push(next);
+                        }
+                    }
+                }
+                if safe {
+                    held.extend(visited);
+                } else {
+                    seen.extend(visited);
+                    fell.extend(piece);
+                }
+            }
+        }
+        fell.sort_unstable();
+        fell
+    }
+
     /// The standing cells that no chain of standing cells joins to an anchor.
+    #[cfg(test)]
     fn unsupported(&self, removed: &[bool]) -> Vec<u32> {
         let n = self.solid.len();
         let mut held = vec![false; n];
@@ -826,6 +870,31 @@ mod tests {
         vec![[0, h, 0, w, h, 0, w, h, d], [0, h, 0, w, h, d, 0, h, d]]
     }
 
+    /// The cells that fall are the ones the whole-grid search finds, blast after blast.
+    #[test]
+    fn what_falls_is_what_the_whole_grid_search_finds() {
+        let shell = Shell::new(&boxed(20, 12, 8), &roof(20, 12, 8)).unwrap();
+        let mut removed = shell.untouched();
+        let mut state = 7u64;
+        let mut next = |m: i32| {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((state >> 33) % m as u64) as i32
+        };
+        let mut fallen = 0;
+        for _ in 0..80 {
+            let at = [next(2000), next(800), if next(2) == 0 { 0 } else { 1200 }];
+            let before = removed.clone();
+            let cut = shell.blast(&mut removed, at, 100 + next(300));
+            let mut without = before.clone();
+            for &id in &cut.blasted {
+                without[id as usize] = true;
+            }
+            assert_eq!(cut.fell, shell.unsupported(&without), "blast at {at:?}");
+            fallen += cut.fell.len();
+        }
+        assert!(fallen > 0, "nothing ever fell");
+    }
+
     #[test]
     fn a_blast_on_the_wall_makes_a_hole_and_leaves_the_rest() {
         let shell = Shell::new(&boxed(10, 8, 6), &roof(10, 8, 6)).unwrap();
@@ -906,9 +975,9 @@ mod tests {
                 }
             }
         }
-        assert_eq!((lo, hi), ([0, 0, 0], [600, 400, 600]));
+        assert_eq!((lo, hi), ([0, 0, 0], [648, 432, 648]));
         // The top: the whole roof, one rectangle at its height.
-        let top = faces.iter().filter(|t| t[1] == 400 && t[4] == 400 && t[7] == 400).count();
+        let top = faces.iter().filter(|t| t[1] == 432 && t[4] == 432 && t[7] == 432).count();
         assert_eq!(top, 2);
         // A hole lets you in: more faces, the hole's sides.
         let mut removed = shell.untouched();
@@ -944,24 +1013,24 @@ mod tests {
     #[test]
     fn cell_numbers_match_the_fixture() {
         let shell = Shell::new(&boxed(5, 4, 3), &roof(5, 4, 3)).unwrap();
-        assert_eq!(shell.cell, 100);
-        assert_eq!(shell.dims, [5, 3, 4]);
+        assert_eq!(shell.cell, 72);
+        assert_eq!(shell.dims, [7, 5, 6]);
         let faces = shell.faces(&shell.untouched());
         let sum: i64 = faces.iter().flatten().enumerate().map(|(i, &v)| v as i64 * (i % 9 + 1) as i64).sum();
-        assert_eq!((faces.len(), shell.solid_count(), sum), (36, 48, 352_800));
+        assert_eq!((faces.len(), shell.solid_count(), sum), (36, 130, 393_120));
         let diagonal = Shell::new(&slanted(), &[]).unwrap();
         let cells: u64 = diagonal.solid_cells().iter().map(|&id| id as u64).sum();
-        assert_eq!((diagonal.origin, diagonal.dims, diagonal.solid_count(), cells), ([-100, 0, 0], [9, 3, 6], 42, 3309));
+        assert_eq!((diagonal.origin, diagonal.dims, diagonal.solid_count(), cells), ([-72, 0, 0], [11, 5, 8], 90, 19_505));
         let faces = diagonal.faces(&diagonal.untouched());
         let sum: i64 = faces.iter().flatten().enumerate().map(|(i, &v)| v as i64 * (i % 9 + 1) as i64).sum();
-        assert_eq!((faces.len(), sum), (72, 960_300));
+        assert_eq!((faces.len(), sum), (92, 1_179_144));
         // The boxes, summed the same way: each number by its place in its box.
         let boxes = |shell: &Shell| {
             let boxes = shell.boxes(&shell.untouched());
             let sum: i64 = boxes.iter().flatten().enumerate().map(|(i, &v)| v as i64 * (i % 6 + 1) as i64).sum();
             (boxes.len(), sum)
         };
-        assert_eq!((boxes(&shell), boxes(&diagonal)), ((5, 27_500), (6, 40_200)));
+        assert_eq!((boxes(&shell), boxes(&diagonal)), ((5, 30_024), (8, 52_704)));
     }
 
     #[test]
@@ -984,9 +1053,9 @@ mod tests {
     fn packed_cells_match_the_fixture() {
         let shell = Shell::new(&boxed(5, 4, 3), &roof(5, 4, 3)).unwrap();
         let cells = shell.cells();
-        assert_eq!(cells.solid.0, vec![63, 198, 15, 0, 1, 192, 57, 0, 0]);
-        // The roof is the top layer: five bytes of nothing, then twenty cells of roof.
-        assert_eq!(cells.roof.0, vec![0, 4, 255, 255, 15]);
+        assert_eq!(cells.solid.0, vec![255, 96, 48, 24, 252, 3, 0, 15, 159, 207, 231, 3, 0, 0]);
+        // The roof is the top layer: twenty-one bytes of nothing, then forty-nine cells of roof.
+        assert_eq!(cells.roof.0, vec![0, 20, 255, 255, 255, 255, 255, 3]);
     }
 
     /// A wall 3 m high from (-37, 0, 12) to (712, 0, 530) cm, slanting across the grid.

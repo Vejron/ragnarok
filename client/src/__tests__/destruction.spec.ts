@@ -207,9 +207,9 @@ describe('the building collider without a fallen building', () => {
       if (v[i + 1] === 6) v[i + 1] = 5.4
     }
     const motor = await solidTile(tile)
-    // Standing on the roof is standing on the top of its cubes, 6 m up, as drawn.
+    // Standing on the roof is standing on the top of its cubes, 5.76 m up, as drawn.
     const down = motor.castRay([5, 20, 0], [0, -1, 0], 30)!
-    expect(20 - down.t).toBeCloseTo(6, 4)
+    expect(20 - down.t).toBeCloseTo(5.76, 4)
     // And walking into the wall stops at the cubes' face, x = 0.
     expect(along(motor, -2)!.t - 2).toBeCloseTo(0, 4)
   })
@@ -370,7 +370,13 @@ describe('carved message', () => {
 
 describe('a building with cells blasted out of it', () => {
   const key = 5
-  const bodyOf = (damage: BuildingDamage) => damage.root.children[0]!.children.find((c) => c instanceof Mesh && c.castShadow && c.geometry.colors) as Mesh
+  /** The building's standing cells are drawn as several bricks (they receive shadow, the thrown pieces do not); this is them as one mesh. */
+  const bodyOf = (damage: BuildingDamage) => {
+    const bricks = damage.root.children[0]!.children.filter((c) => c instanceof Mesh && c.receiveShadow && c.geometry.colors) as Mesh[]
+    const join = (pick: (m: Mesh) => ArrayLike<number>) => Float32Array.from(bricks.flatMap((m) => Array.from(pick(m))))
+    const positions = join((m) => m.geometry.positions)
+    return { geometry: { positions, colors: join((m) => m.geometry.colors!), vertexCount: positions.length / 3 } }
+  }
   const effects = () => new Effects()
 
   it('is drawn as pieces from the first bite, and says so only once', () => {
@@ -388,8 +394,12 @@ describe('a building with cells blasted out of it', () => {
     damage.dent(key, 0, 0, 1)
     const whole = bodyOf(damage).geometry.vertexCount
     // Every cell of the house: nothing of its walls is drawn.
-    const all = Array.from({ length: 4000 }, (_, i) => i)
+    const all = Array.from({ length: 64_000 }, (_, i) => i)
     damage.carve(key, 0, all, [], [-1, 2, 0], true)
+    // A hit on a building already drawn as shards is drawn at the next frame.
+    const e = effects()
+    damage.update(0, e, new THREE.Vector3(500, 0, 0))
+    e.dispose()
     expect(bodyOf(damage).geometry.vertexCount).toBeLessThan(whole)
   })
 
@@ -438,7 +448,7 @@ describe('a building with cells blasted out of it', () => {
     damage.attach(key, twoHouses())
     damage.carve(key, 0, [1, 2, 3, 4, 5, 6], [], null, false)
     const group = damage.root.children[0]!
-    const pieces = group.children.filter((c) => c instanceof Mesh && c.castShadow && c !== bodyOf(damage))
+    const pieces = group.children.filter((c) => c instanceof Mesh && c.castShadow && !c.receiveShadow)
     expect(pieces.length).toBe(0)
     const before = bodyOf(damage).geometry.vertexCount
     damage.detach(key)

@@ -25,9 +25,10 @@ fn streamed(manifest: &Manifest, tiles: &[(u16, u16, Tile)]) -> Physics {
 fn probes(half: f32) -> Vec<([f32; 3], [f32; 3])> {
     let mut rays = Vec::new();
     let step = half / 12.0;
-    let mut x = -half + step / 2.0;
+    // Off the lattice the buildings' cubes lie on, so no ray runs along a seam between two boxes.
+    let mut x = -half + step / 2.0 + 0.07;
     while x < half {
-        let mut z = -half + step / 2.0;
+        let mut z = -half + step / 2.0 + 0.07;
         while z < half {
             rays.push(([x, 80.0, z], [0.0, -1.0, 0.0]));
             z += step;

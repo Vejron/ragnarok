@@ -21,6 +21,9 @@ pub(crate) struct Obstacle {
 pub(crate) struct StreamedTile {
     handles: Vec<ColliderHandle>,
     world: WorldFile,
+    /// Buildings already cut into cells, by their number in `world`, with their floors: unpacking a
+    /// big one is most of the work of a hit, so it is done once. `None` for one that cannot be cut.
+    shells: std::collections::HashMap<usize, Option<(shared::carve::Shell, Vec<shared::carve::Tri>)>>,
 }
 
 /// The manifest's world with nothing in it and no terrain: enough for the slab, the walls and one
@@ -78,7 +81,7 @@ impl Physics {
         for (collider, object) in object_colliders(&world)? {
             handles.push(self.insert_static(collider, object));
         }
-        self.tiles.insert((col, row), StreamedTile { handles, world });
+        self.tiles.insert((col, row), StreamedTile { handles, world, shells: Default::default() });
         self.refresh();
         Ok(())
     }
@@ -102,16 +105,17 @@ impl Physics {
     /// on the server. Takes effect at the next `refresh`. Does nothing for a building that is not
     /// standing or cannot be cut into cells.
     pub fn carve_building(&mut self, col: u16, row: u16, index: u32, removed: &[u32]) {
-        let Some(tile) = self.tiles.get(&(col, row)) else { return };
+        let Some(tile) = self.tiles.get_mut(&(col, row)) else { return };
         let Some(at) = tile.world.building_ids.iter().position(|id| id.index == index) else { return };
-        let Some((shell, floor)) = building_shell(&tile.world, at) else { return };
+        let world = &tile.world;
+        let Some((shell, floor)) = tile.shells.entry(at).or_insert_with(|| building_shell(world, at)).as_ref() else { return };
         let mut gone = shell.untouched();
         for &cell in removed {
             if let Some(flag) = gone.get_mut(cell as usize) {
                 *flag = true;
             }
         }
-        let shape = solid_of(&shell.boxes(&gone), &floor);
+        let shape = solid_of(&shell.boxes(&gone), floor);
         self.replace_building(Obj::Building(shared::world::ObjId { col, row, index }), shape);
     }
 

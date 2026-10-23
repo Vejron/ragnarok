@@ -9,11 +9,11 @@
 import { carve_cut, carve_faces, carve_nearest, carve_unpack } from './wasm/sim'
 
 /** Side of a cell, centimetres, on one lattice for the whole world. Mirrors `CELL`. */
-export const CELL = 100
+export const CELL = 72
 /** Health of a cell against bullets. Mirrors `CELL_HP`. */
 export const CELL_HP = 40
 /** Mirrors `MAX_CELLS`. */
-export const MAX_CELLS = 4_000_000
+export const MAX_CELLS = 8_000_000
 
 /** A triangle: three corners `[x, y, z]`, centimetres, flattened. */
 export type Tri = [number, number, number, number, number, number, number, number, number]
@@ -90,6 +90,13 @@ export class Shell {
   /** The number of the cell at `(x, y, z)`, as `Shell::index`. */
   index(x: number, y: number, z: number): number {
     return (y * this.dims[2] + z) * this.dims[0] + x
+  }
+
+  /** The grid position `[x, y, z]` of cell `id`. */
+  coords(id: number): [number, number, number] {
+    const x = id % this.dims[0]
+    const z = Math.floor(id / this.dims[0]) % this.dims[2]
+    return [x, Math.floor(id / (this.dims[0] * this.dims[2])), z]
   }
 
   /** The middle of cell `id`, centimetres. */

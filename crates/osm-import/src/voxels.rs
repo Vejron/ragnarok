@@ -136,7 +136,7 @@ mod tests {
         let mut tile = Tile { buildings: vec![a, b], bridges: vec![Bridge { first: bridge_first, deck: 1, steel: 0 }], collision: mesh, ..Default::default() };
         bake(&mut tile);
         let shell = Shell::from_cells(&tile.buildings[0].cells).unwrap();
-        assert_eq!(shell.dims, [5, 3, 4]);
+        assert_eq!(shell.dims, [7, 5, 6]);
         let [a, b] = [&tile.buildings[0], &tile.buildings[1]];
         // Each house is its floor alone, then the bridge, then the other house the same way.
         assert_eq!((a.first, a.walls, a.roof), (0, 0, 0));
@@ -155,25 +155,25 @@ mod tests {
 
     #[test]
     fn houses_wall_to_wall_share_the_cubes_where_they_meet() {
-        // Two 5 × 4 × 3 m houses, in different tiles, whose walls at x = 5 and 4.5 m are in the same
-        // cubes (x 4..5 m); a third far off.
+        // Two 5 × 4 × 3 m houses, in different tiles, whose walls at x = 5 and 4.4 m are in the same
+        // cubes (x 4.32..5.04 m); a third far off.
         let (mut one, mut two) = (CollisionMesh::default(), CollisionMesh::default());
         let a = house(&mut one, 0);
         let far = house(&mut one, 3000);
-        let b = house(&mut two, 450);
+        let b = house(&mut two, 440);
         let mut first = Tile { buildings: vec![a, far], collision: one, ..Default::default() };
         let mut second = Tile { buildings: vec![b], collision: two, ..Default::default() };
         bake(&mut first);
         bake(&mut second);
         let count = |tile: &Tile, i: usize| Shell::from_cells(&tile.buildings[i].cells).unwrap().solid_count();
         let whole = [count(&first, 0), count(&first, 1), count(&second, 0)];
-        // The wall at x = 4..5 m: 3 m high and 4 m deep.
-        assert_eq!(share(&mut [&mut first, &mut second]), 12);
-        assert_eq!([count(&first, 0), count(&first, 1), count(&second, 0)], [whole[0], whole[1], whole[2] - 12]);
+        // The wall at x = 4.32..5.04 m: 3 m high and 4 m deep, in 72 cm cubes.
+        assert_eq!(share(&mut [&mut first, &mut second]), 5 * 6);
+        assert_eq!([count(&first, 0), count(&first, 1), count(&second, 0)], [whole[0], whole[1], whole[2] - 30]);
         let shell = Shell::from_cells(&second.buildings[0].cells).unwrap();
         assert!(!shell.is_solid(shell.index(0, 1, 1)), "the shared wall is the first house's");
-        assert_eq!(shell.origin[0], 400);
-        assert!(shell.is_solid(shell.index(5, 1, 1)), "its own far wall stays");
+        assert_eq!(shell.origin[0], 432);
+        assert!(shell.is_solid(shell.index(7, 1, 1)), "its own far wall stays");
         assert_eq!(share(&mut [&mut first, &mut second]), 0, "sharing twice");
     }
 }
