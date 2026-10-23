@@ -478,7 +478,7 @@ work to WebAssembly as it is could make re-meshing big buildings slower.
 
 #### Steps
 
-- [ ] **6.1** Sparse `greedy` in Rust, held to the dense one over random grids and fixture buildings;
+- [x] **6.1** Sparse `greedy` in Rust, held to the dense one over random grids and fixture buildings;
       timed on a large building.
 - [ ] **6.2** The carve functions in `sim-wasm`; the client's `Shell`, `voxels.ts` and the renderers
       on them; the copy deleted.
@@ -2236,3 +2236,28 @@ A vehicle kind is one Rust definition, one client presentation and one model:
 
 - Phase 1's remaining mirrors: the codec, `terrain.ts` and `carve.ts`;
 - the deferred wire changes: owner-only components, and a `Seated` component.
+
+### 2026-10-23: Phase 6.1, Rust's face merging visits only the standing cells
+
+`shared::carve::greedy` now works as the client's `greedyFaces` does:
+
+- one pass over the keys finds the standing cells;
+- for each axis and side, the exposed faces are bucketed by layer and sorted;
+- only those positions are filled in the mask and merged.
+
+The dense version, which looked at every cell of every layer, stays in the tests as `dense_greedy`.
+
+**Same faces in the same order.** `sparse_greedy_makes_the_dense_ones_faces_in_its_order` compares
+the two on:
+
+- 8 grid shapes, from a single cell to 16 × 5 × 11, each at 6 fills (0 to 100%) and with 1 to 3 keys;
+- a roofed building with a blast taken out of it.
+
+The face fixtures (`cell_numbers_match_the_fixture` and the client's `carve.spec.ts`) hold.
+
+**Cost** (`greedy_cost`, release): a hollow building 120 × 40 × 80 m, which is 384,000 cells of which
+25,044 stand, takes 1.47 ms where the dense version took 2.41 ms.
+
+**Checks:** shared 69 (one more), server 271, sim 111; clippy clean.
+
+**Next:** 6.2, the carve functions in `sim-wasm`, and the client on them.

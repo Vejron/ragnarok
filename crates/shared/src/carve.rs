@@ -579,7 +579,7 @@ pub fn unpack(packed: &[u8], count: usize, layer: usize) -> Vec<bool> {
 /// One merged face of `greedy`: `w × h` cells from `(a, b)` of layer `i` along axis `d`, facing
 /// `side` (1 towards +d, -1 towards -d). `u` and `v` are the next axes round from `d`, so `u × v`
 /// points along +d.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Face {
     pub d: usize,
     pub u: usize,
@@ -597,54 +597,75 @@ pub struct Face {
 /// order), or -1 for an empty one. For each axis, each side and each layer of cells, the faces of
 /// cells that look onto an empty cell (or out of the grid) are merged into rectangles of one key:
 /// each grows first along `u`, then along `v` while the whole row matches. Calls `emit` with each,
-/// in a fixed order, so the clients (`greedyFaces` in `client/src/sim/carve.ts`) make the same ones.
+/// in a fixed order: by axis, side and layer, then by where it starts, row by row.
+///
+/// Only the standing cells are visited after the first pass over `keys`, as a big building's grid
+/// is mostly empty: each layer's exposed faces are bucketed and sorted, rather than every cell of
+/// every layer looked at.
 pub fn greedy(dims: [usize; 3], keys: &[i32], mut emit: impl FnMut(Face)) {
+    let [nx, _, nz] = dims;
+    let ids: Vec<usize> = (0..keys.len()).filter(|&id| keys[id] >= 0).collect();
+    // Each standing cell's x, y and z.
+    let at: [Vec<usize>; 3] = [ids.iter().map(|&id| id % nx).collect(), ids.iter().map(|&id| id / (nx * nz)).collect(), ids.iter().map(|&id| (id / nx) % nz).collect()];
     // Step in the cell number for one cell along x, y and z.
-    let stride = [1, dims[0] * dims[2], dims[0]];
+    let stride = [1, nx * nz, nx];
+    let (mut layer, mut place, mut sorted) = (vec![0; ids.len()], vec![0; ids.len()], vec![0; ids.len()]);
     for d in 0..3 {
         let (u, v) = ((d + 1) % 3, (d + 2) % 3);
         let (nu, nv, nd) = (dims[u], dims[v], dims[d]);
         let (su, sv, sd) = (stride[u], stride[v], stride[d]);
         let mut mask = vec![-1i32; nu * nv];
         for side in [1i32, -1] {
-            for i in 0..nd {
-                let j = i as i64 + side as i64;
-                let beyond = j >= 0 && j < nd as i64;
-                let mut any = false;
-                for b in 0..nv {
-                    for a in 0..nu {
-                        let id = i * sd + a * su + b * sv;
-                        let key = keys[id];
-                        let covered = beyond && keys[(id as i64 + side as i64 * sd as i64) as usize] >= 0;
-                        mask[b * nu + a] = if key >= 0 && !covered { key } else { -1 };
-                        any |= mask[b * nu + a] >= 0;
-                    }
-                }
-                if !any {
+            // The faces looking out, as `b * nu + a`, bucketed by layer and then sorted.
+            let mut starts = vec![0; nd + 1];
+            let mut exposed = 0;
+            for (n, &id) in ids.iter().enumerate() {
+                let i = at[d][n];
+                let j = i as i64 + i64::from(side);
+                if j >= 0 && (j as usize) < nd && keys[(id as i64 + i64::from(side) * sd as i64) as usize] >= 0 {
                     continue;
                 }
-                for b in 0..nv {
-                    let mut a = 0;
-                    while a < nu {
-                        let key = mask[b * nu + a];
-                        if key < 0 {
-                            a += 1;
-                            continue;
-                        }
-                        let mut w = 1;
-                        while a + w < nu && mask[b * nu + a + w] == key {
-                            w += 1;
-                        }
-                        let mut h = 1;
-                        while b + h < nv && (0..w).all(|k| mask[(b + h) * nu + a + k] == key) {
-                            h += 1;
-                        }
-                        for r in 0..h {
-                            mask[(b + r) * nu + a..(b + r) * nu + a + w].fill(-1);
-                        }
-                        emit(Face { d, u, v, side, i, a, b, w, h, key });
-                        a += w;
+                layer[exposed] = i;
+                place[exposed] = at[v][n] * nu + at[u][n];
+                exposed += 1;
+                starts[i + 1] += 1;
+            }
+            for i in 0..nd {
+                starts[i + 1] += starts[i];
+            }
+            let mut next = starts[..nd].to_vec();
+            for n in 0..exposed {
+                sorted[next[layer[n]]] = place[n];
+                next[layer[n]] += 1;
+            }
+            for i in 0..nd {
+                let faces = &mut sorted[starts[i]..starts[i + 1]];
+                if faces.is_empty() {
+                    continue;
+                }
+                faces.sort_unstable();
+                let plane = i * sd;
+                for &p in faces.iter() {
+                    mask[p] = keys[plane + (p % nu) * su + (p / nu) * sv];
+                }
+                for &p in faces.iter() {
+                    let key = mask[p];
+                    if key < 0 {
+                        continue;
                     }
+                    let (a, b) = (p % nu, p / nu);
+                    let mut w = 1;
+                    while a + w < nu && mask[p + w] == key {
+                        w += 1;
+                    }
+                    let mut h = 1;
+                    while b + h < nv && (0..w).all(|k| mask[p + h * nu + k] == key) {
+                        h += 1;
+                    }
+                    for r in 0..h {
+                        mask[p + r * nu..p + r * nu + w].fill(-1);
+                    }
+                    emit(Face { d, u, v, side, i, a, b, w, h, key });
                 }
             }
         }
@@ -654,6 +675,115 @@ pub fn greedy(dims: [usize; 3], keys: &[i32], mut emit: impl FnMut(Face)) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `greedy` as it was, visiting every cell of every layer: the oracle the sparse one is held to.
+    fn dense_greedy(dims: [usize; 3], keys: &[i32], mut emit: impl FnMut(Face)) {
+        // Step in the cell number for one cell along x, y and z.
+        let stride = [1, dims[0] * dims[2], dims[0]];
+        for d in 0..3 {
+            let (u, v) = ((d + 1) % 3, (d + 2) % 3);
+            let (nu, nv, nd) = (dims[u], dims[v], dims[d]);
+            let (su, sv, sd) = (stride[u], stride[v], stride[d]);
+            let mut mask = vec![-1i32; nu * nv];
+            for side in [1i32, -1] {
+                for i in 0..nd {
+                    let j = i as i64 + side as i64;
+                    let beyond = j >= 0 && j < nd as i64;
+                    let mut any = false;
+                    for b in 0..nv {
+                        for a in 0..nu {
+                            let id = i * sd + a * su + b * sv;
+                            let key = keys[id];
+                            let covered = beyond && keys[(id as i64 + side as i64 * sd as i64) as usize] >= 0;
+                            mask[b * nu + a] = if key >= 0 && !covered { key } else { -1 };
+                            any |= mask[b * nu + a] >= 0;
+                        }
+                    }
+                    if !any {
+                        continue;
+                    }
+                    for b in 0..nv {
+                        let mut a = 0;
+                        while a < nu {
+                            let key = mask[b * nu + a];
+                            if key < 0 {
+                                a += 1;
+                                continue;
+                            }
+                            let mut w = 1;
+                            while a + w < nu && mask[b * nu + a + w] == key {
+                                w += 1;
+                            }
+                            let mut h = 1;
+                            while b + h < nv && (0..w).all(|k| mask[(b + h) * nu + a + k] == key) {
+                                h += 1;
+                            }
+                            for r in 0..h {
+                                mask[(b + r) * nu + a..(b + r) * nu + a + w].fill(-1);
+                            }
+                            emit(Face { d, u, v, side, i, a, b, w, h, key });
+                            a += w;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A grid of `dims` with cells standing at random, keyed 0 to `kinds - 1`, from `seed`.
+    fn random_keys(dims: [usize; 3], fill: u64, kinds: i32, seed: u64) -> Vec<i32> {
+        let mut state = seed;
+        (0..dims[0] * dims[1] * dims[2])
+            .map(|_| {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                if (state >> 33) % 100 < fill { ((state >> 20) % kinds as u64) as i32 } else { -1 }
+            })
+            .collect()
+    }
+
+    /// A way of meshing a grid: `greedy` or `dense_greedy`.
+    type Mesher = fn([usize; 3], &[i32], &mut dyn FnMut(Face));
+
+    fn faces_of(dims: [usize; 3], keys: &[i32], mesh: Mesher) -> Vec<Face> {
+        let mut out = Vec::new();
+        mesh(dims, keys, &mut |face| out.push(face));
+        out
+    }
+
+    #[test]
+    fn sparse_greedy_makes_the_dense_ones_faces_in_its_order() {
+        let shapes = [[1, 1, 1], [3, 1, 1], [1, 4, 1], [1, 1, 5], [4, 3, 5], [7, 2, 3], [9, 9, 9], [16, 5, 11]];
+        for (n, &dims) in shapes.iter().enumerate() {
+            for (fill, kinds) in [(10, 1), (50, 1), (50, 3), (90, 2), (100, 1), (0, 1)] {
+                let keys = random_keys(dims, fill, kinds, n as u64 * 31 + fill);
+                let sparse = faces_of(dims, &keys, |d, k, e| greedy(d, k, e));
+                let dense = faces_of(dims, &keys, |d, k, e| dense_greedy(d, k, e));
+                assert_eq!(sparse, dense, "{dims:?} {fill}% {kinds} keys");
+            }
+        }
+        // A real building, roofed and blasted.
+        let shell = Shell::new(&boxed(10, 8, 6), &roof(10, 8, 6)).unwrap();
+        let mut removed = shell.untouched();
+        shell.blast(&mut removed, [500, 300, 0], 150);
+        let keys: Vec<i32> = (0..shell.solid.len()).map(|i| if shell.solid[i] && !removed[i] { i32::from(shell.roof[i]) } else { -1 }).collect();
+        assert_eq!(faces_of(shell.dims, &keys, |d, k, e| greedy(d, k, e)), faces_of(shell.dims, &keys, |d, k, e| dense_greedy(d, k, e)));
+    }
+
+    /// Not a regression test: the two on a big hollow building. `cargo test --release -p shared -- --ignored --nocapture greedy_cost`
+    #[test]
+    #[ignore]
+    fn greedy_cost() {
+        let shell = Shell::new(&boxed(120, 80, 40), &roof(120, 80, 40)).unwrap();
+        let keys: Vec<i32> = (0..shell.solid.len()).map(|i| if shell.solid[i] { i32::from(shell.roof[i]) } else { -1 }).collect();
+        for (name, mesh) in [("sparse", (|d, k, e| greedy(d, k, e)) as Mesher), ("dense", |d, k, e| dense_greedy(d, k, e))] {
+            let start = std::time::Instant::now();
+            let mut faces = 0;
+            for _ in 0..10 {
+                faces = faces_of(shell.dims, &keys, mesh).len();
+            }
+            println!("{name}: {:?} a building of {} cells ({} standing), {faces} faces", start.elapsed() / 10, keys.len(), shell.solid_count());
+        }
+    }
 
     /// A box `w × d × h` metres, walls only (two triangles a face side), corner at the origin.
     fn boxed(w: i32, d: i32, h: i32) -> Vec<Tri> {
