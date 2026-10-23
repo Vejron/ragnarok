@@ -11,11 +11,12 @@ mod movement;
 mod npcs;
 mod pickups;
 mod projectiles;
+mod scores;
 mod spawn;
 mod vehicles;
 
 pub use bots::{Bots, DRIVER, GUNNER, nearest_waypoint, road_route};
-pub use combat::{Combat, position_of};
+pub use combat::{Combat, bearing, position_of};
 #[cfg(test)]
 pub use combat::damage_vehicle;
 pub use drones::Drones;
@@ -24,6 +25,7 @@ pub use life::Life;
 pub use movement::Movement;
 pub use npcs::{Npcs, calling};
 pub use pickups::Pickups;
+pub use scores::Scores;
 pub use spawn::{Spawn, usable as spawn_usable};
 pub use vehicles::{Vehicles, add_tank, remove_vehicle, seat};
 
@@ -43,6 +45,9 @@ pub trait Mechanic: Send {
     fn on_leave(&mut self, _world: &mut World, _id: u32) {}
     /// One fixed simulation tick. Each player's input for this tick is already in `Player::input`.
     fn on_tick(&mut self, _world: &mut World, _dt: f32) {}
+    /// After every mechanic's tick and the scenario's: what this tick's events say happened
+    /// (`World::happened`), for a mechanic that answers it, before the players are told.
+    fn react(&mut self, _world: &mut World) {}
 }
 
 /// Registers the components mechanics own with the room's ECS world (see `entities`).
@@ -62,7 +67,7 @@ pub fn register_components(ecs: &mut bevy_ecs::world::World) {
 /// The mechanics a room runs, in tick order. `Bots` goes first: it writes the bots' input, which
 /// everything after reads as it reads anyone's. `Life` brings the dead back before `Npcs` moves them.
 pub fn default_mechanics() -> Vec<Box<dyn Mechanic>> {
-    vec![Box::<Bots>::default(), Box::new(Spawn), Box::new(Pickups), Box::new(Drones), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement), Box::new(Life), Box::new(Npcs), Box::new(Combat)]
+    vec![Box::<Bots>::default(), Box::new(Spawn), Box::new(Pickups), Box::new(Drones), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement), Box::new(Life), Box::new(Npcs), Box::new(Combat), Box::new(Scores)]
 }
 
 /// What tests outside the mechanics reach in for: setting up a busy room without playing it.

@@ -1,11 +1,11 @@
 //! Life and death for ECS entities, whatever they are: the one hit test, the one damage path and the
 //! one blast gather for everything with a `Hurtbox` and `Health`, and coming back at `Home` for
-//! everything with a `Respawn`. Players are not ECS entities yet and keep `combat::damage`.
+//! everything with a `Respawn`. Players keep their own `combat::damage` for now.
 
 use super::Mechanic;
-use super::combat::ray_capsule;
+use super::combat::{position_of, ray_capsule};
 use crate::entities::{DropOnDeath, Health, Home, Hurtbox, Respawn, Respawned, Transform, With};
-use crate::game::World;
+use crate::game::{Damaged, World};
 
 pub struct Life;
 
@@ -57,12 +57,12 @@ pub fn hurtbox_near(world: &World, point: [f32; 3], proximity: f32) -> bool {
     .unwrap_or(false)
 }
 
-/// What a hit on entity `id` is shown as (`HIT_*`), and where the marker goes: the top of its capsule.
-pub fn hit_mark(world: &World, id: u32) -> Option<(u8, [f32; 3])> {
+/// Where a hit on entity `id` is shown: the top of its capsule.
+fn hit_mark(world: &World, id: u32) -> Option<[f32; 3]> {
     let transform = world.entities.get::<Transform>(id)?;
     let hurtbox = world.entities.get::<Hurtbox>(id)?;
     let [x, y, z] = transform.position;
-    Some((hurtbox.hit_kind, [x, y + hurtbox.centre_y + hurtbox.half_height, z]))
+    Some([x, y + hurtbox.centre_y + hurtbox.half_height, z])
 }
 
 /// The living entities with a hurtbox within `radius` of `point` (measured to the capsule's centre),
@@ -83,15 +83,22 @@ pub fn blasted(world: &World, point: [f32; 3], radius: f32, damage: f32) -> Vec<
     reached
 }
 
-/// Takes `amount` health off entity `id`. At zero it dies: its `Respawn` starts counting and its
-/// `DropOnDeath` is left where it fell. Returns whether this killed it; does nothing to the dead.
-pub fn damage_entity(world: &mut World, id: u32, amount: u8) -> bool {
+/// Takes `amount` health off entity `id`, by `attacker` with `weapon`, and says so (`Damaged`); the
+/// harm came `from` there, or from where the attacker is. At zero it dies: its `Respawn` starts
+/// counting and its `DropOnDeath` is left where it fell. Returns whether this killed it; does nothing
+/// to the dead.
+pub fn damage_entity(world: &mut World, id: u32, amount: u8, attacker: Option<u32>, weapon: u8, from: Option<[f32; 3]>) -> bool {
     let Some(mut health) = world.entities.get_mut::<Health>(id) else { return false };
     if !health.alive() || amount == 0 {
         return false;
     }
+    let before = health.hp;
     health.hp = health.hp.saturating_sub(amount);
-    if health.alive() {
+    let (lost, killed) = (before - health.hp, !health.alive());
+    let from = from.or_else(|| attacker.and_then(|by| position_of(world, by)));
+    let at = hit_mark(world, id).unwrap_or_default();
+    world.send(Damaged { victim: id, lost, attacker, weapon, from, at, head: false, killed, aboard: Vec::new() });
+    if !killed {
         return false;
     }
     if let Some(mut respawn) = world.entities.get_mut::<Respawn>(id) {

@@ -21,11 +21,12 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{MissedTickBehavior, interval};
 
+pub(crate) mod feedback;
 mod replicate;
 mod snapshot;
 mod state;
 
-pub use crate::events::Noise;
+pub use crate::events::{Damaged, Died, Noise};
 pub use state::*;
 
 /// `object` as a `Destroyed` entry.
@@ -92,8 +93,6 @@ impl Game {
                 rng: Rng::from_time(),
                 shots: Vec::new(),
                 bullets: Vec::new(),
-                kills: Vec::new(),
-                hits: Vec::new(),
                 history: VecDeque::new(),
             },
             mechanics: default_mechanics(),
@@ -366,6 +365,9 @@ impl Game {
             scenario.tick(self);
             self.scenario = Some(scenario);
         }
+        for mechanic in &mut self.mechanics {
+            mechanic.react(&mut self.world);
+        }
         self.broadcast_kills();
         self.send_hits();
         self.broadcast_destroyed();
@@ -429,7 +431,7 @@ impl Game {
     /// Tells each player about the hits they dealt or took this tick, amounts summed per kind.
     fn send_hits(&mut self) {
         let mut merged: Vec<(u32, Hit)> = Vec::new();
-        for (to, hit) in self.world.hits.drain(..) {
+        for (to, hit) in feedback::hits(&self.world) {
             match merged.iter_mut().find(|(t, h)| *t == to && h.role == hit.role && h.kind == hit.kind && h.target == hit.target) {
                 Some((_, sum)) => sum.amount = sum.amount.saturating_add(hit.amount),
                 None => merged.push((to, hit)),
@@ -444,7 +446,7 @@ impl Game {
 
     /// Tells everyone about the kills mechanics recorded this tick.
     fn broadcast_kills(&mut self) {
-        for kill in self.world.kills.drain(..) {
+        for kill in feedback::kills(&self.world) {
             let bytes = Bytes::from(encode(&kill));
             for (&to, outbox) in &self.outboxes {
                 send_reliable(outbox, to, &bytes, &mut self.stalled);

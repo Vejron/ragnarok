@@ -73,12 +73,12 @@ touches no file under `mechanics/combat*`.
       cheaper unless the difference is noise.
 - [x] 1.2 `Noise` as an event: `make_noise` sends it, `Bots` reads it. Smallest family first, as
       roosters were in Phase 2.
-- [ ] 1.3 `Damaged { victim, amount, lost, attacker, weapon, from, at, head, kind }` and
+- [x] 1.3 `Damaged { victim, amount, lost, attacker, weapon, from, at, head, kind }` and
       `Died { victim, killer, weapon, style, yaw, power }` events, sent where `damage_hit` and
       `npcs.rs` push now. A `Feedback` step in `Game::step` turns them into `Hit` and `Kill` wire
       messages, summed and ordered as `hits` and `kills` are now. Kill credit (`kills`, `deaths`)
       moves to a reaction on `Died`; the bot's `hit_from` moves to a reaction on `Damaged`.
-- [ ] 1.4 Delete the three lists; rewrite the 19 test sites to read events.
+- [x] 1.4 Delete the three lists; rewrite the 19 test sites to read events.
 
 ## Phase 2: a player's life is the generic one
 
@@ -186,3 +186,25 @@ boxes by pointing them here.
   - `full_room_tick_cost`, release, three runs: mechanics 1.65 to 1.68 ms (baseline today 1.75 to 1.79),
     snapshots 601 to 620 µs (651 to 669), `Bots` 156 to 229 ns (170 to 188). Within the machine's noise.
     Server tests 271, unchanged; clippy clean.
+- **1.3, 1.4.** `Damaged { victim, lost, attacker, weapon, from, at, head, killed, aboard }` is sent by
+  every damage path (`combat::damage_hit`, `damage_vehicle`, `life::damage_entity`), and
+  `Died { victim, killer, weapon, style, yaw, power }` by a player's death. `World::hits` and
+  `World::kills` are gone.
+  - `Mechanic::react` runs after every mechanic's tick and the scenario's, before the players are told.
+    Two mechanics answer events through it. `Scores` (new, `mechanics/scores.rs`) counts kills and
+    deaths from `Died`. `Bots` turns a hurt bot, or one aboard a hurt vehicle, towards `from`.
+    A new reaction to a death is a `react`; nothing under `mechanics/combat*` changes.
+  - `game::feedback` builds the wire messages from the events: `hits` (taken by the victim if a player
+    and by whoever was aboard, dealt to the attacker if not themself or aboard; the kind from the
+    victim's components) and `kills`. `Game::step` sums and sends them as before. Scores are counted
+    for the whole tick before the `Kill`s are built, so each `Kill` takes back off any later kill of the
+    same tick. Two kills in one tick still read 1 and then 2 (new test).
+  - `life::damage_entity` takes the attacker, weapon and source, so roosters' markers come from the
+    same events (Phase 2 joins the rest). `hit_mark` is private to it, and `combat::hit_at` is gone.
+  - Two small changes, both to a creature's marker. A rooster's marker now shows the health it lost,
+    not the damage asked for, so a 30-damage round on a rooster with 2 hp left reads 2, as a player's
+    does. A round whose damage had fallen off to 0 no longer shows a marker of 0.
+  - Tests: the 19 sites read the events (`World::happened`) or `feedback::hits`. Two tests that called
+    a damage function directly and then read a score now check the `Died` event and step once.
+  - `full_room_tick_cost`, release, three runs: mechanics 1.63 to 1.68 ms, snapshots 611 to 628 µs,
+    `Combat` 29.5 to 31.1 µs, `Scores` 15 to 17 ns. Server tests 272 (one new); clippy clean.

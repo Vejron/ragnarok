@@ -5,8 +5,8 @@ use sim::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_ex
 use shared::consts::*;
 use shared::vehicles::vehicle_def;
 use shared::protocol::{
-    BEARING_NONE, DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, ShotEvent, WEAPON_CRASH, is_drone,
-    HIT_DEALT, WEAPON_ROADKILL, WEAPON_SCRAPE, vehicle_hp,
+    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, ShotEvent, WEAPON_CRASH, is_drone,
+    WEAPON_ROADKILL, WEAPON_SCRAPE, vehicle_hp,
 };
 use shared::quant::{to_cm, wrap_angle};
 use shared::world::WorldFile;
@@ -552,11 +552,8 @@ fn run_down_creatures(world: &mut World) {
         }
     }
     for (id, amount, car) in run_down {
-        super::life::damage_entity(world, id, amount);
         let driver = world.entities.get::<Seats>(car).and_then(|seats| seats.rider(0)).filter(|&driver| world.entities.has::<Player>(driver));
-        if let (Some(driver), Some((kind, at))) = (driver, super::life::hit_mark(world, id)) {
-            world.hits.push((driver, super::combat::hit_at(HIT_DEALT, kind, amount, WEAPON_ROADKILL, BEARING_NONE, at, id)));
-        }
+        super::life::damage_entity(world, id, amount, driver, WEAPON_ROADKILL, None);
     }
 }
 

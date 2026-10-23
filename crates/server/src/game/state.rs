@@ -438,11 +438,6 @@ pub struct World {
     pub shots: Vec<ShotEvent>,
     /// Bullets fired in the last few ticks, each sent to the clients near it in a couple of snapshots.
     pub bullets: Vec<BulletSpawn>,
-    /// Kills since the last tick. Drained and broadcast reliably by `Game::step`.
-    pub kills: Vec<Kill>,
-    /// Hits since the last tick, each with the player it is for. Drained, summed and sent
-    /// reliably to that player by `Game::step`.
-    pub hits: Vec<(u32, Hit)>,
     /// Solid trees by identity, to look their size up from a collider hit.
     pub(super) trees_by_id: HashMap<ObjId, usize>,
     /// Buildings by identity.
@@ -476,6 +471,11 @@ impl World {
     /// The queue of events of kind `E`, for a reader with its own cursor.
     pub fn events<E: Message>(&self) -> &Messages<E> {
         self.entities.ecs.resource::<Messages<E>>()
+    }
+
+    /// The events of kind `E` sent this tick, in the order they were sent.
+    pub fn happened<E: Message>(&self) -> impl ExactSizeIterator<Item = &E> {
+        self.events::<E>().iter_current_update_messages()
     }
 
     /// Notes where everyone stands, once a tick has finished.

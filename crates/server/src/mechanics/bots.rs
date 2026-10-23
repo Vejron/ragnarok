@@ -22,7 +22,7 @@ use crate::entities::With;
 use super::combat::same_team;
 use super::life::open_ground;
 use super::npcs::turn_towards;
-use crate::game::{Bot, BotMode, Noise, Player, World};
+use crate::game::{Bot, BotMode, Damaged, Noise, Player, World};
 use shared::consts::*;
 use shared::items::{HOTBAR_SLOTS, ITEM_AK5, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, ItemDef, ItemKind, def};
 use shared::protocol::{InputFrame, ItemSlot};
@@ -622,6 +622,20 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
 impl Mechanic for Bots {
     fn on_leave(&mut self, world: &mut World, id: u32) {
         world.entities.remove::<Bot>(id);
+    }
+
+    /// A bot hurt, or in a vehicle that was, turns to where it came from.
+    fn react(&mut self, world: &mut World) {
+        let hurt: Vec<(u32, [f32; 3])> = world
+            .happened::<Damaged>()
+            .filter_map(|damaged| Some((damaged, damaged.from?)))
+            .flat_map(|(damaged, from)| std::iter::once(damaged.victim).chain(damaged.aboard.iter().copied()).map(move |id| (id, from)))
+            .collect();
+        for (id, from) in hurt {
+            if let Some(mut bot) = world.entities.get_mut::<Bot>(id) {
+                bot.hit_from = Some(from);
+            }
+        }
     }
 
     fn on_tick(&mut self, world: &mut World, dt: f32) {

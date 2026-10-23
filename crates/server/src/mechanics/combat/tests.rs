@@ -2,7 +2,7 @@ use super::*;
 use crate::entities::Health;
 use crate::game::{Command, Game, Outgoing};
 use sim::STANDING_Y;
-use shared::protocol::{InputFrame, Snapshot, WEAPON_BULLET, WEAPON_FLARE, WEAPON_REVOLVER, WEAPON_PELLET, WEAPON_SHOTGUN, decode};
+use shared::protocol::{BEARING_NONE, HIT_BODY, HIT_DEALT, HIT_KILL, HIT_TAKEN, InputFrame, Snapshot, WEAPON_BULLET, WEAPON_FLARE, WEAPON_REVOLVER, WEAPON_PELLET, WEAPON_SHOTGUN, decode};
 use shared::quant::to_mrad;
 use shared::world::{WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
@@ -149,9 +149,9 @@ fn a_hit_is_reported_to_the_shooter_and_the_victim_with_a_bearing() {
     let (mut game, shooter, target, _, _) = duel();
     game.world.entities.get_mut::<Player>(shooter).unwrap().character.position = [0.0, STANDING_Y, 0.0];
     game.world.entities.get_mut::<Player>(target).unwrap().character.position = [0.0, STANDING_Y, -20.0];
-    game.world.hits.clear();
+    crate::events::update(&mut game.world.entities.ecs);
     damage(&mut game.world, target, 30, Some(shooter), WEAPON_RIFLE);
-    let hits = &game.world.hits;
+    let hits = crate::game::feedback::hits(&game.world);
     assert_eq!(hits.len(), 2);
     // The shooter is straight ahead of nobody: from the victim at -20 the shooter is at +z.
     assert_eq!((hits[0].0, hits[0].1.role, hits[0].1.kind, hits[0].1.amount, hits[0].1.bearing, hits[0].1.target), (target, HIT_TAKEN, HIT_BODY, 30, to_mrad(std::f32::consts::PI), target));
@@ -159,28 +159,31 @@ fn a_hit_is_reported_to_the_shooter_and_the_victim_with_a_bearing() {
     // The number belongs at the target's chest.
     assert_eq!(hits[1].1.z, to_cm(-20.0));
     // The finishing blow is a kill, and amounts are what was actually lost.
-    game.world.hits.clear();
+    crate::events::update(&mut game.world.entities.ecs);
     damage(&mut game.world, target, 255, Some(shooter), WEAPON_RIFLE);
-    let last = &game.world.hits[1].1;
+    let hits = crate::game::feedback::hits(&game.world);
+    let last = &hits[1].1;
     assert_eq!((last.role, last.kind, last.amount), (HIT_DEALT, HIT_KILL, PLAYER_MAX_HP - 30));
 }
 
 #[test]
 fn hurting_yourself_reports_no_dealt_hit() {
     let (mut game, shooter, _, _, _) = duel();
-    game.world.hits.clear();
+    crate::events::update(&mut game.world.entities.ecs);
     damage(&mut game.world, shooter, 5, Some(shooter), WEAPON_RIFLE);
-    assert_eq!(game.world.hits.len(), 1);
-    assert_eq!(game.world.hits[0].1.role, HIT_TAKEN);
-    assert_eq!(game.world.hits[0].1.bearing, BEARING_NONE);
+    let hits = crate::game::feedback::hits(&game.world);
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].1.role, HIT_TAKEN);
+    assert_eq!(hits[0].1.bearing, BEARING_NONE);
 }
 
 #[test]
 fn dead_players_do_not_fire_and_cannot_be_hit_until_they_respawn() {
     let (mut game, shooter, target, mut seq, mut seq_t) = duel();
     damage(&mut game.world, target, PLAYER_MAX_HP, Some(shooter), WEAPON_RIFLE);
-    assert_eq!(game.world.kills.len(), 1);
-    assert_eq!(game.world.kills[0].killer, shooter);
+    let died: Vec<_> = game.world.happened::<crate::game::Died>().collect();
+    assert_eq!(died.len(), 1);
+    assert_eq!(died[0].killer, Some(shooter));
     // The dead hold fire at the shooter; nothing happens.
     hold(&mut game, target, &mut seq_t, std::f32::consts::PI, BUTTON_FIRE, 30);
     assert_eq!(game.world.entities.of::<Player>(shooter).hp, PLAYER_MAX_HP);
@@ -306,8 +309,10 @@ fn the_ak5_chips_a_vehicle_and_a_wreck_kills_the_crew() {
     assert!(game.world.entities.dead(vid));
     assert!(game.world.entities.of::<Seats>(vid).vacant(), "the crew is out of their seats");
     assert!(!game.world.entities.of::<Player>(driver).alive(), "and dead");
-    assert_eq!(game.world.entities.of::<Player>(shooter).kills, 1, "the credit goes to whoever wrecked it");
+    assert!(game.world.happened::<crate::game::Died>().any(|died| died.victim == driver && died.killer == Some(shooter)), "the credit goes to whoever wrecked it");
     assert!(game.world.shots.iter().any(|shot| shot.weapon == WEAPON_WRECK));
+    game.step();
+    assert_eq!(game.world.entities.of::<Player>(shooter).kills, 1, "and is counted at the end of the tick");
 }
 
 #[test]
@@ -1223,4 +1228,18 @@ fn a_passenger_reloads_a_gun_that_is_not_full_and_otherwise_changes_seat() {
     let seat = game.world.entities.of::<Player>(rider).seat.unwrap();
     assert_eq!(seat.vehicle, vid);
     assert_ne!(seat.index, 1, "with a full gun, reload moves them on");
+}
+
+#[test]
+fn two_kills_in_one_tick_are_told_with_the_score_after_each() {
+    let (mut game, shooter, target, _, _) = duel();
+    let (other, _inbox) = join(&mut game);
+    std::mem::forget(_inbox);
+    crate::events::update(&mut game.world.entities.ecs);
+    damage(&mut game.world, target, PLAYER_MAX_HP, Some(shooter), WEAPON_RIFLE);
+    damage(&mut game.world, other, PLAYER_MAX_HP, Some(shooter), WEAPON_RIFLE);
+    let mut scores = crate::mechanics::Scores;
+    crate::mechanics::Mechanic::react(&mut scores, &mut game.world);
+    let kills = crate::game::feedback::kills(&game.world);
+    assert_eq!(kills.iter().map(|kill| (kill.killer, kill.victim, kill.killer_kills, kill.victim_deaths)).collect::<Vec<_>>(), [(shooter, target, 1, 1), (shooter, other, 2, 1)]);
 }

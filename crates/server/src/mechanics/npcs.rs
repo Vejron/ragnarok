@@ -303,7 +303,7 @@ mod tests {
         let hit = first_hurtbox_hit(&game.world, [centre[0], centre[1], centre[2] + 5.0], [0.0, 0.0, -1.0], 20.0);
         assert_eq!(hit.map(|(who, _)| who), Some(r.id));
 
-        assert!(damage_entity(&mut game.world, r.id, ROOSTER_HP));
+        assert!(damage_entity(&mut game.world, r.id, ROOSTER_HP, None, 0, None));
         assert!(!rooster(&game).health.alive());
         let eggs: Vec<_> = game.world.pickup_ids().into_iter().filter_map(|pid| game.world.pickup(pid).copied()).filter(|p| p.item == ITEM_GOLDEN_EGG).collect();
         assert_eq!(eggs.len(), 1);
@@ -336,7 +336,7 @@ mod tests {
         let (_, struck) = hitscan(&mut game.world, shooter, [p[0], p[1] + ROOSTER_CAPSULE_CENTRE, p[2] + 5.0], [0.0, 0.0, -1.0], &round, 0, 0);
         assert!(struck);
         assert_eq!(rooster(&game).health.hp, ROOSTER_HP - 1);
-        assert!(game.world.hits.iter().any(|(to, hit)| *to == shooter && hit.role == HIT_DEALT && hit.target == r.id), "the shooter sees the hit");
+        assert!(crate::game::feedback::hits(&game.world).iter().any(|(to, hit)| *to == shooter && hit.role == HIT_DEALT && hit.target == r.id), "the shooter sees the hit");
 
         let mut game = self::game();
         let r = rooster(&game);
@@ -395,7 +395,7 @@ mod tests {
         let bot = game.add_bot([p[0] + 30.0, p[2]], TEAM_BOTS, Vec::new()).unwrap();
         blast(&mut game.world, Blast { point: centre, radius: 3.0, damage: 10.0, knock: 0.0, dir: [0.0, 1.0, 0.0], attacker: Some(bot), weapon: WEAPON_GRENADE });
         assert!(rooster(&game).health.hp < ROOSTER_HP);
-        assert!(game.world.hits.iter().any(|(to, hit)| *to == bot && hit.role == HIT_DEALT && hit.target == r.id), "whoever set it off sees the hit");
+        assert!(crate::game::feedback::hits(&game.world).iter().any(|(to, hit)| *to == bot && hit.role == HIT_DEALT && hit.target == r.id), "whoever set it off sees the hit");
     }
 
     #[test]
@@ -404,7 +404,7 @@ mod tests {
         let id = rooster(&game).id;
         game.world.clear_pickups();
         for _ in 0..3 {
-            assert!(damage_entity(&mut game.world, id, ROOSTER_HP));
+            assert!(damage_entity(&mut game.world, id, ROOSTER_HP, None, 0, None));
             crate::mechanics::life::place_at_home(&mut game.world, id);
         }
         let eggs = game.world.pickup_ids().into_iter().filter(|&pid| game.world.pickup(pid).is_some_and(|p| p.item == ITEM_GOLDEN_EGG)).count();
