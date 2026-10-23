@@ -64,6 +64,22 @@ The client's prediction, of the stickman and of the vehicle it drives, runs the 
 
 **Cost.** A full room of 64 costs about 1.7 ms of the 16.7 ms tick (`cargo test --release -p server -- --ignored --nocapture full_room`), about 420 µs for its snapshots, about 810 bytes a player a snapshot. The client decodes a snapshot in about 5.7 µs. [SERVER-PERFORMANCE.md](SERVER-PERFORMANCE.md) has the method. Changes to the server should be measured against these.
 
+### 2.2 Adding things
+
+Rust is the source of truth, so start there; the client's copies are regenerated (`UPDATE_PARITY=1 cargo test -p shared`, and `npm run gen:consts` for constants) and the parity specs say what is stale. Tests stay green and clippy clean at each step; measure `full_room` if a tick path changes.
+
+**A vehicle.** The five files of §2.1. Copy the nearest kind (`jeep.rs` for a wheeled one, `heli.rs`, `plane.rs`, `walker.rs`, `loiter.rs` for the others): the definition holds its health, seats, body traits, mounts (weapons, see below), physics `Spec`, armour and drone link. On the client copy the nearest `kinds/<kind>.ts` and its model. Run the shared tests with `UPDATE_PARITY=1` and check the sim, server and client suites.
+
+**A weapon.** On foot: a row in `crates/shared/src/items.rs` (an `ITEM_*` id, an `ItemDef`, `ITEM_COUNT`): damage, cooldown, magazine, spread, falloff, projectile or hitscan, pellets, stack, weight in the pickup mix. The client's table is regenerated; add a hand model, sound or HUD icon if it needs one. Anything that needs a new way to fire is a new `ItemKind` handled in `mechanics/combat.rs` (`fire_gun`, `use_item`). On a vehicle: a mount row in `shared::mounts` on its definition. A projectile is an entity made of what it does (`Projectile`, `Velocity`, a fall, a fuse, a `Burst`; see `mechanics/projectiles.rs`), so a new one is a new combination, plus a `PROJECTILE_*` id and, if it looks new, a branch in `entities/presenters/projectiles.ts`.
+
+**An NPC.** A bundle of components (see `rooster()` in `mechanics/npcs.rs`): `NetKind`, `Transform`, `Health`, `Hurtbox`, `Home`, `Respawn`, `DropOnDeath`, `Trail`, plus a mind component of its own (`Wander` for the rooster; a bot is a player with `Bot`). Being shot, dying, dropping an item and coming back are then `Life`'s and need no code. Write a mechanic with `on_start` to place it and `on_tick` to move it, and add it to `mechanics::default_mechanics`. Give it a `KIND_*` id in `consts.rs`, a presenter in `client/src/entities/presenters/` (`wants` says which components it draws; copy `roosters.ts`) and register it in `game.ts`. If it sends something new to the client, that is a component (below).
+
+**A rule or reaction.** A mechanic that answers `Damaged`, `Died` or `Noise` in `react` (§2.1). Mechanics that count or score are like `Scores`; nothing in combat changes.
+
+**A replicated component.** An entry in `replicated!` in `crates/shared/src/replicated.rs` with an id, a name, whether it is `diff` or `set`, `[owner]` if only its owner should be told, and fields with their units. Fill it where the server builds the entity's state (`game/replicate.rs`), regenerate, and read it in a presenter. Bump `PROTOCOL_VERSION`.
+
+**A message.** An entry in `messages!` in `protocol.rs` with its tags, fields and units. The client decoder or writer and the fixture are generated; add the handling in `net/` or `game.ts`, update [NETWORKING.md](NETWORKING.md) and bump `PROTOCOL_VERSION`.
+
 Transport, TLS and deployment follow [flax3d](https://github.com/Vejron/flax3d):
 - In development, a self-signed certificate is pinned through `serverCertificateHashes`, and Vite proxies the hash.
 - In production, an ACME certificate comes from certon, with the built client served by the same binary.
