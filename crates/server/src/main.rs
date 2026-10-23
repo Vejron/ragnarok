@@ -1,4 +1,5 @@
 mod entities;
+mod events;
 mod game;
 mod jitter;
 mod mechanics;

@@ -119,6 +119,7 @@ impl Default for Entities {
         ecs.register_component::<DropOnDeath>();
         ecs.register_component::<Respawned>();
         crate::mechanics::register_components(&mut ecs);
+        crate::events::register(&mut ecs);
         Entities { ecs, index: HashMap::default(), queries: RefCell::default() }
     }
 }

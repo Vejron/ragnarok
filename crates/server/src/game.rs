@@ -25,6 +25,7 @@ mod replicate;
 mod snapshot;
 mod state;
 
+pub use crate::events::Noise;
 pub use state::*;
 
 /// `object` as a `Destroyed` entry.
@@ -93,7 +94,6 @@ impl Game {
                 bullets: Vec::new(),
                 kills: Vec::new(),
                 hits: Vec::new(),
-                noises: Vec::new(),
                 history: VecDeque::new(),
             },
             mechanics: default_mechanics(),
@@ -372,6 +372,7 @@ impl Game {
         self.broadcast_damaged();
         self.broadcast_carved();
         self.drop_stalled();
+        crate::events::update(&mut self.world.entities.ecs);
         self.world.tick = self.world.tick.wrapping_add(1);
         self.world.record_history();
         if self.world.tick.is_multiple_of(SNAPSHOT_EVERY) {

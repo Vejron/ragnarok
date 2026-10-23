@@ -67,11 +67,11 @@ Those of `MIGRATION.md`, unchanged:
 messages. Measure: no `world.hits`, `world.kills` or `world.noises` left. Adding a reaction to a death
 touches no file under `mechanics/combat*`.
 
-- [ ] 1.1 Choose the queue. Either bevy's `Messages<T>` as a resource of the ECS world or a small
+- [x] 1.1 Choose the queue. Either bevy's `Messages<T>` as a resource of the ECS world or a small
       `Events<T>` of our own on `World`. Both must keep send order and be cleared once a tick, after
       `Game::step` has read them. Measure an empty tick and the full room with each; take the
       cheaper unless the difference is noise.
-- [ ] 1.2 `Noise` as an event: `make_noise` sends it, `Bots` reads it. Smallest family first, as
+- [x] 1.2 `Noise` as an event: `make_noise` sends it, `Bots` reads it. Smallest family first, as
       roosters were in Phase 2.
 - [ ] 1.3 `Damaged { victim, amount, lost, attacker, weapon, from, at, head, kind }` and
       `Died { victim, killer, weapon, style, yaw, power }` events, sent where `damage_hit` and
@@ -172,3 +172,17 @@ boxes by pointing them here.
 
 - Merged `refactor/ecs-migration` into `master` (`5c755f3`, no fast-forward) after the user played
   Phases 5 and 6. Branched `refactor/ecs-migration-ii`; wrote this plan.
+
+- **1.1, 1.2.** `crate::events` holds the event kinds, each a `bevy_ecs` `Messages` resource in the
+  room's ECS world; `World::send` and `World::events` reach them, and `Game::step` moves every queue on
+  once a tick (`events::update`), after the reliable messages are sent. `Noise` is the first: `make_noise`
+  sends it, and `Bots` hears it at the start of the next tick through its own `MessageCursor`, so each
+  noise is heard once, as `std::mem::take` gave it. `World::noises` is gone.
+  - The queue was chosen by measurement (a throwaway release micro-benchmark, three rounds). Four sends
+    and a read per tick cost 19 to 22 ns with a `Vec` and 36 to 45 ns with `Messages`. Reading and
+    moving on an empty queue costs 19 to 21 ns. Against a 1.7 ms tick both are noise, so `Messages` was
+    taken: it gives every reader its own cursor and keeps send order, which a reaction needs and a
+    drained `Vec` does not.
+  - `full_room_tick_cost`, release, three runs: mechanics 1.65 to 1.68 ms (baseline today 1.75 to 1.79),
+    snapshots 601 to 620 µs (651 to 669), `Bots` 156 to 229 ns (170 to 188). Within the machine's noise.
+    Server tests 271, unchanged; clippy clean.

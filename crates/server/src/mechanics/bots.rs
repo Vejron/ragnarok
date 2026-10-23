@@ -17,6 +17,7 @@ pub use crew::road_route;
 pub use crew::{DRIVER, GUNNER, nearest_waypoint};
 
 use super::Mechanic;
+use bevy_ecs::message::MessageCursor;
 use crate::entities::With;
 use super::combat::same_team;
 use super::life::open_ground;
@@ -28,7 +29,11 @@ use shared::protocol::{InputFrame, ItemSlot};
 use shared::quant::to_mrad;
 use std::f32::consts::{PI, TAU};
 
-pub struct Bots;
+#[derive(Default)]
+pub struct Bots {
+    /// How far through the noises it has listened.
+    heard: MessageCursor<Noise>,
+}
 
 /// How far a bot sees, metres.
 pub const SIGHT_RANGE: f32 = 60.0;
@@ -269,7 +274,7 @@ fn spot(world: &World, id: u32, eye: [f32; 3], yaw: f32, alert: bool) -> Option<
 /// tick. With no bots to hear it, it is not kept.
 pub fn make_noise(world: &mut World, at: [f32; 3], by: Option<u32>, reach: f32) {
     if world.entities.count::<Bot>() > 0 {
-        world.noises.push(Noise { at, by, reach });
+        world.send(Noise { at, by, reach });
     }
 }
 
@@ -623,7 +628,7 @@ impl Mechanic for Bots {
         for area in world.physics.take_changed() {
             world.nav.forget(area);
         }
-        let noises = std::mem::take(&mut world.noises);
+        let noises: Vec<Noise> = self.heard.read(world.events::<Noise>()).copied().collect();
         let mut budget = SEARCH_PER_TICK;
         let ids = world.entities.ids::<With<Bot>>();
         // Where every bot on its feet stands as the tick begins, for them to steer clear of each other.

@@ -2,6 +2,7 @@
 //! and the `Command`/`Outgoing` messages the sessions exchange with it.
 
 use super::*;
+use bevy_ecs::message::{Message, Messages};
 use shared::mounts::{MountDef, Show};
 pub use crate::profile::Profile;
 
@@ -171,15 +172,6 @@ pub struct Bot {
 pub struct Crew {
     pub vehicle: u32,
     pub seat: usize,
-}
-
-/// Something loud a bot may hear: where it was, who made it (none for a wreck going up, say), and
-/// how far it carries, metres. Walls do not stop it.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Noise {
-    pub at: [f32; 3],
-    pub by: Option<u32>,
-    pub reach: f32,
 }
 
 impl Bot {
@@ -451,8 +443,6 @@ pub struct World {
     /// Hits since the last tick, each with the player it is for. Drained, summed and sent
     /// reliably to that player by `Game::step`.
     pub hits: Vec<(u32, Hit)>,
-    /// Gunshots and blasts since the bots last listened. Drained by `Bots` at the start of each tick.
-    pub noises: Vec<Noise>,
     /// Solid trees by identity, to look their size up from a collider hit.
     pub(super) trees_by_id: HashMap<ObjId, usize>,
     /// Buildings by identity.
@@ -478,6 +468,16 @@ pub struct World {
 }
 
 impl World {
+    /// Says that `event` happened, for whoever reads that kind (see `crate::events`).
+    pub fn send<E: Message>(&mut self, event: E) {
+        self.entities.ecs.resource_mut::<Messages<E>>().write(event);
+    }
+
+    /// The queue of events of kind `E`, for a reader with its own cursor.
+    pub fn events<E: Message>(&self) -> &Messages<E> {
+        self.entities.ecs.resource::<Messages<E>>()
+    }
+
     /// Notes where everyone stands, once a tick has finished.
     pub(super) fn record_history(&mut self) {
         let positions = self

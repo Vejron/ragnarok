@@ -62,7 +62,7 @@ pub fn register_components(ecs: &mut bevy_ecs::world::World) {
 /// The mechanics a room runs, in tick order. `Bots` goes first: it writes the bots' input, which
 /// everything after reads as it reads anyone's. `Life` brings the dead back before `Npcs` moves them.
 pub fn default_mechanics() -> Vec<Box<dyn Mechanic>> {
-    vec![Box::new(Bots), Box::new(Spawn), Box::new(Pickups), Box::new(Drones), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement), Box::new(Life), Box::new(Npcs), Box::new(Combat)]
+    vec![Box::<Bots>::default(), Box::new(Spawn), Box::new(Pickups), Box::new(Drones), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement), Box::new(Life), Box::new(Npcs), Box::new(Combat)]
 }
 
 /// What tests outside the mechanics reach in for: setting up a busy room without playing it.
