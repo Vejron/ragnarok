@@ -372,7 +372,7 @@ Notes:
 buildings, roads, collision mesh, ground heights, cover, trees, water, streams, bridges, detail
 and railway tracks, in world-absolute centimetres.
 
-Every building is baked into 50 cm cubes (`shared::carve::CELL`) as the tiles are written (`voxels.rs`, `Built::into_files`):
+Every building is baked into 72 cm cubes (`shared::carve::CELL`) as the tiles are written (`voxels.rs`, `Built::into_files`):
 its `cells` hold the grid and two flags a cell (a cube is there; it is roof), packed by
 `carve::pack` (each flag XORed with the one below it, then runs of zero bytes shortened), and its
 walls and roof leave the collision mesh, which keeps only its floor. The server and the clients

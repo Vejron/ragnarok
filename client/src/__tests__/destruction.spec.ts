@@ -207,9 +207,9 @@ describe('the building collider without a fallen building', () => {
       if (v[i + 1] === 6) v[i + 1] = 5.4
     }
     const motor = await solidTile(tile)
-    // Standing on the roof is standing on the top of its cubes, 5.5 m up, as drawn.
+    // Standing on the roof is standing on the top of its cubes, 5.76 m up, as drawn.
     const down = motor.castRay([5, 20, 0], [0, -1, 0], 30)!
-    expect(20 - down.t).toBeCloseTo(5.5, 4)
+    expect(20 - down.t).toBeCloseTo(5.76, 4)
     // And walking into the wall stops at the cubes' face, x = 0.
     expect(along(motor, -2)!.t - 2).toBeCloseTo(0, 4)
   })

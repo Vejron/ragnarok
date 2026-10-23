@@ -128,18 +128,18 @@ fn a_ray_names_the_building_and_destroying_it_opens_the_wall() {
     assert!(character.position[0] > 6.0, "walked through: x = {}", character.position[0]);
 }
 
-/// A building that is only cubes: a platform a metre high, 8 m wide at z -5..-3 and 4 m wide at
-/// z -3..5, so it is two boxes meeting along z = -3. Its floor is two triangles at y = 0.
+/// A building that is only cubes: a platform 72 cm high, 7.92 m wide at z -5.04..-2.88 and 4.32 m
+/// wide at z -2.88..5.04, so it is two boxes meeting along z = -3. Its floor is two triangles at y = 0.
 fn world_with_platform() -> WorldFile {
-    let (origin, dims) = ([-200, 0, -500], [16usize, 2, 20]);
-    let solid: Vec<bool> = (0..dims[0] * dims[1] * dims[2]).map(|id| (id / dims[0]) % dims[2] < 4 || id % dims[0] < 8).collect();
+    let (origin, dims) = ([-216, 0, -504], [11usize, 1, 14]);
+    let solid: Vec<bool> = (0..dims[0] * dims[1] * dims[2]).map(|id| (id / dims[0]) % dims[2] < 3 || id % dims[0] < 6).collect();
     let cells = shared::world::Cells {
         origin,
         dims: dims.map(|d| d as u32),
         solid: shared::world::Bits(shared::carve::pack(&solid, dims[0] * dims[2])),
         roof: shared::world::Bits(shared::carve::pack(&vec![false; solid.len()], dims[0] * dims[2])),
     };
-    let vertices = vec![[-200, 0, -500], [600, 0, -500], [600, 0, 500], [-200, 0, 500]];
+    let vertices = vec![[-216, 0, -504], [576, 0, -504], [576, 0, 504], [-216, 0, 504]];
     WorldFile {
         collision: CollisionMesh { vertices, triangles: vec![[0, 2, 1], [0, 3, 2]] },
         buildings: vec![shared::world::Building { cells, ..Default::default() }],
@@ -155,12 +155,12 @@ fn walking_over_the_cubes_stays_on_top_across_where_two_boxes_meet() {
     let (shell, _) = building_shell(&world, 0).unwrap();
     assert_eq!(shell.boxes(&shell.untouched()).len(), 2);
     let physics = Physics::new(&world).unwrap();
-    let mut character = Character { position: [0.0, 1.0 + STANDING_Y, 4.5], grounded: true, ..Default::default() };
-    // Forward is towards -z: 2 s at walking speed, over the seam at z = -3 to z = -3.5.
+    let mut character = Character { position: [0.0, 0.72 + STANDING_Y, 4.5], grounded: true, ..Default::default() };
+    // Forward is towards -z: 2 s at walking speed, over the seam at z = -2.88.
     for tick in 0..TICK_RATE * 2 {
         physics.move_character(&mut character, &held(0, 127), TICK_DT);
         assert!(character.grounded, "tick {tick}: {:?}", character.position);
-        assert!((character.position[1] - (1.0 + STANDING_Y)).abs() < 0.01, "tick {tick}: sank or rose to {:?}", character.position);
+        assert!((character.position[1] - (0.72 + STANDING_Y)).abs() < 0.01, "tick {tick}: sank or rose to {:?}", character.position);
     }
     assert!((character.position[2] - (4.5 - 2.0 * WALK_SPEED)).abs() < 0.2, "caught on the seam: {:?}", character.position);
 }

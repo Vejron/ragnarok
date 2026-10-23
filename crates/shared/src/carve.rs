@@ -20,9 +20,9 @@ use crate::world::{Bits, Cells};
 
 /// Side of a cell, centimetres: every building is cut into cubes of this size, on one lattice for
 /// the whole world (cell corners at multiples of it), so neighbouring buildings' cells line up.
-pub const CELL: i32 = 50;
+pub const CELL: i32 = 72;
 /// Most cells in one building's grid (its bounding box). A building bigger than this is not carved.
-pub const MAX_CELLS: usize = 16_000_000;
+pub const MAX_CELLS: usize = 8_000_000;
 
 /// Health of one cell against bullets: a rifle needs a few rounds to break out a piece of wall.
 /// Blasts take cells outright.
@@ -975,9 +975,9 @@ mod tests {
                 }
             }
         }
-        assert_eq!((lo, hi), ([0, 0, 0], [600, 400, 600]));
+        assert_eq!((lo, hi), ([0, 0, 0], [648, 432, 648]));
         // The top: the whole roof, one rectangle at its height.
-        let top = faces.iter().filter(|t| t[1] == 400 && t[4] == 400 && t[7] == 400).count();
+        let top = faces.iter().filter(|t| t[1] == 432 && t[4] == 432 && t[7] == 432).count();
         assert_eq!(top, 2);
         // A hole lets you in: more faces, the hole's sides.
         let mut removed = shell.untouched();
@@ -1013,24 +1013,24 @@ mod tests {
     #[test]
     fn cell_numbers_match_the_fixture() {
         let shell = Shell::new(&boxed(5, 4, 3), &roof(5, 4, 3)).unwrap();
-        assert_eq!(shell.cell, 50);
-        assert_eq!(shell.dims, [10, 6, 8]);
+        assert_eq!(shell.cell, 72);
+        assert_eq!(shell.dims, [7, 5, 6]);
         let faces = shell.faces(&shell.untouched());
         let sum: i64 = faces.iter().flatten().enumerate().map(|(i, &v)| v as i64 * (i % 9 + 1) as i64).sum();
-        assert_eq!((faces.len(), shell.solid_count(), sum), (36, 240, 365_700));
+        assert_eq!((faces.len(), shell.solid_count(), sum), (36, 130, 393_120));
         let diagonal = Shell::new(&slanted(), &[]).unwrap();
         let cells: u64 = diagonal.solid_cells().iter().map(|&id| id as u64).sum();
-        assert_eq!((diagonal.origin, diagonal.dims, diagonal.solid_count(), cells), ([-50, 0, 0], [16, 6, 11], 156, 82_200));
+        assert_eq!((diagonal.origin, diagonal.dims, diagonal.solid_count(), cells), ([-72, 0, 0], [11, 5, 8], 90, 19_505));
         let faces = diagonal.faces(&diagonal.untouched());
         let sum: i64 = faces.iter().flatten().enumerate().map(|(i, &v)| v as i64 * (i % 9 + 1) as i64).sum();
-        assert_eq!((faces.len(), sum), (132, 1_600_200));
+        assert_eq!((faces.len(), sum), (92, 1_179_144));
         // The boxes, summed the same way: each number by its place in its box.
         let boxes = |shell: &Shell| {
             let boxes = shell.boxes(&shell.untouched());
             let sum: i64 = boxes.iter().flatten().enumerate().map(|(i, &v)| v as i64 * (i % 6 + 1) as i64).sum();
             (boxes.len(), sum)
         };
-        assert_eq!((boxes(&shell), boxes(&diagonal)), ((5, 27_450), (11, 66_000)));
+        assert_eq!((boxes(&shell), boxes(&diagonal)), ((5, 30_024), (8, 52_704)));
     }
 
     #[test]
@@ -1053,9 +1053,9 @@ mod tests {
     fn packed_cells_match_the_fixture() {
         let shell = Shell::new(&boxed(5, 4, 3), &roof(5, 4, 3)).unwrap();
         let cells = shell.cells();
-        assert_eq!(cells.solid.0, vec![255, 7, 24, 96, 128, 1, 6, 24, 224, 255, 0, 40, 248, 231, 159, 127, 254, 249, 231, 31, 0, 0]);
-        // The roof is the top layer: fifty bytes of nothing, then eighty cells of roof.
-        assert_eq!(cells.roof.0, vec![0, 49, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]);
+        assert_eq!(cells.solid.0, vec![255, 96, 48, 24, 252, 3, 0, 15, 159, 207, 231, 3, 0, 0]);
+        // The roof is the top layer: twenty-one bytes of nothing, then forty-nine cells of roof.
+        assert_eq!(cells.roof.0, vec![0, 20, 255, 255, 255, 255, 255, 3]);
     }
 
     /// A wall 3 m high from (-37, 0, 12) to (712, 0, 530) cm, slanting across the grid.

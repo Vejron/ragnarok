@@ -34,19 +34,19 @@ describe('carve', () => {
   it('cuts a building into the same cells as the server', () => {
     // Pinned by `cell_numbers_match_the_fixture` in crates/shared/src/carve.rs.
     const shell = Shell.of(boxed(5, 4, 3), roof(5, 4, 3))!
-    expect(shell.cell).toBe(50)
-    expect(shell.dims).toEqual([10, 6, 8])
-    expect(shell.solidCount).toBe(240)
+    expect(shell.cell).toBe(72)
+    expect(shell.dims).toEqual([7, 5, 6])
+    expect(shell.solidCount).toBe(130)
     // The faces, as `cell_numbers_match_the_fixture` sums them: each number by its place in its triangle.
     const sum = (faces: Int32Array) => faces.reduce((n, v, i) => n + v * ((i % 9) + 1), 0)
     const faces = shell.faces(new Set())
-    expect([faces.length / 9, sum(faces)]).toEqual([36, 365_700])
+    expect([faces.length / 9, sum(faces)]).toEqual([36, 393_120])
     const diagonal = Shell.of(slanted(), [])!
     let cells = 0
     for (let id = 0; id < diagonal.dims[0] * diagonal.dims[1] * diagonal.dims[2]; id++) if (diagonal.isSolid(id)) cells += id
-    expect([diagonal.origin, diagonal.dims, diagonal.solidCount, cells]).toEqual([[-50, 0, 0], [16, 6, 11], 156, 82_200])
+    expect([diagonal.origin, diagonal.dims, diagonal.solidCount, cells]).toEqual([[-72, 0, 0], [11, 5, 8], 90, 19_505])
     const slant = diagonal.faces(new Set())
-    expect([slant.length / 9, sum(slant)]).toEqual([132, 1_600_200])
+    expect([slant.length / 9, sum(slant)]).toEqual([92, 1_179_144])
   })
 
   it('unpacks the cells the importer baked', () => {
@@ -54,15 +54,15 @@ describe('carve', () => {
     const cut = Shell.of(boxed(5, 4, 3), roof(5, 4, 3))!
     const baked = Shell.fromCells({
       origin: [0, 0, 0],
-      dims: [10, 6, 8],
-      solid: Uint8Array.from([255, 7, 24, 96, 128, 1, 6, 24, 224, 255, 0, 40, 248, 231, 159, 127, 254, 249, 231, 31, 0, 0]),
-      roof: Uint8Array.from([0, 49, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]),
+      dims: [7, 5, 6],
+      solid: Uint8Array.from([255, 96, 48, 24, 252, 3, 0, 15, 159, 207, 231, 3, 0, 0]),
+      roof: Uint8Array.from([0, 20, 255, 255, 255, 255, 255, 3]),
     })!
-    for (let id = 0; id < 480; id++) {
+    for (let id = 0; id < 210; id++) {
       expect([baked.isSolid(id), baked.isRoof(id)]).toEqual([cut.isSolid(id), cut.isRoof(id)])
     }
     expect(baked.faces(new Set())).toEqual(cut.faces(new Set()))
-    expect([...baked.cells]).toEqual([...Array(480).keys()].filter((id) => cut.isSolid(id)))
+    expect([...baked.cells]).toEqual([...Array(210).keys()].filter((id) => cut.isSolid(id)))
     // A run of zero bytes over several layers repeats the layer below it.
     const tower = unpack(Uint8Array.from([1, 0, 4]), 48, 8)
     expect([...tower.keys()].filter((i) => tower[i])).toEqual([0, 8, 16, 24, 32, 40])
@@ -84,10 +84,10 @@ describe('carve', () => {
 
   it('finds the cell a round struck as the server does, skipping those already out', () => {
     const shell = Shell.of(boxed(5, 4, 3), roof(5, 4, 3))!
-    // A round on the front wall, a fifth of a metre out of it, in the middle of the cell at (5, 3, 0).
-    const hit = shell.nearestCell(2.75, 1.75, -0.1, new Set())
-    expect(hit).toBe(shell.index(5, 3, 0))
-    const next = shell.nearestCell(2.75, 1.75, -0.1, new Set([hit!]))
+    // A round on the front wall, a tenth of a metre out of it, in the middle of the cell at (3, 2, 0).
+    const hit = shell.nearestCell(2.52, 1.8, -0.1, new Set())
+    expect(hit).toBe(shell.index(3, 2, 0))
+    const next = shell.nearestCell(2.52, 1.8, -0.1, new Set([hit!]))
     expect(next).not.toBeNull()
     expect(next).not.toBe(hit)
     // Out of a cell's reach of every cube.

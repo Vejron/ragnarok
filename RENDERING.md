@@ -67,7 +67,7 @@ scene:
 | Piece | File | What it is |
 |---|---|---|
 | Ground plane | `world.ts` `buildGround` | One grass plane under the world; shows only where a tile is late. |
-| Tiles | `world.ts` `buildTile` | Terrain mesh, buildings (as 50 cm cubes, `voxels.ts`), roads and trees of one 250 m tile. Streamed in and out around the player. |
+| Tiles | `world.ts` `buildTile` | Terrain mesh, buildings (as 72 cm cubes, `voxels.ts`), roads and trees of one 250 m tile. Streamed in and out around the player. |
 | Vehicles | `car.ts`, `tank.ts`, `heli.ts`, `plane.ts`, `walker.ts`, `strvs.ts`, `mortar.ts` | glTF models from `client/public/models/`, one clone per vehicle (the mortar is built by hand). |
 | Characters | `character.ts` | Skinned clones of one shared model (`Crowd`), outfit colour by player id. |
 | Items, pickups, rockets | `items.ts`, `pickups.ts`, `rockets.ts` | Small hand-built meshes. |

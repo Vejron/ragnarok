@@ -35,8 +35,8 @@ interface Burst {
 }
 
 /** The most cells in one piece thrown from a blast, and in one chunk that falls whole. */
-const THROWN_CELLS = 40
-const FALLEN_CELLS = 320
+const THROWN_CELLS = 14
+const FALLEN_CELLS = 108
 /** How hard a broken piece is thrown from the blast, m/s. */
 const THROW = 3
 
