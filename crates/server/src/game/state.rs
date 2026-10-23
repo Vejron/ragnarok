@@ -606,7 +606,7 @@ pub struct Carving {
 
 /// Ticks between a carved building being hurt and its structure being checked: long enough to
 /// groan, short enough to be blamed on the blast.
-pub const STRAIN_DELAY: u32 = 45;
+pub const STRAIN_DELAY: u32 = 30;
 /// Most buildings whose structure is checked in one tick.
 pub const STRAIN_PER_TICK: usize = 2;
 
