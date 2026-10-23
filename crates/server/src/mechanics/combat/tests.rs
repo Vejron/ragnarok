@@ -1030,9 +1030,9 @@ fn a_rocket_bites_a_hole_in_the_wall_that_a_ray_goes_through() {
     assert!((hit - 3.0).abs() < 0.1, "the near wall is at x = 15: {hit}");
     rocket_at(&mut game, [14.5, 1.0, 0.0]);
     game.step();
-    // The wall is open at the hole, and the ray carries on to the far wall: its cubes, x = 24 to 25.
+    // The wall is open at the hole, and the ray carries on to the far wall: its cubes, x = 24.5 to 25.
     let (hit, _) = game.world.physics.cast_ray_object([12.0, 1.0, 0.0], [1.0, 0.0, 0.0], 40.0).unwrap();
-    assert!((hit - 12.0).abs() < 0.1, "the bite did not open the wall: {hit}");
+    assert!((hit - 12.5).abs() < 0.1, "the bite did not open the wall: {hit}");
     assert!(game.world.destroyed.is_empty(), "a bite is not a collapse");
     assert!(game.world.object_hp.get(&house).is_some_and(|&hp| hp < 150), "and it still hurts");
     let told = carved_told(&mut inbox);

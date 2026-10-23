@@ -207,9 +207,9 @@ describe('the building collider without a fallen building', () => {
       if (v[i + 1] === 6) v[i + 1] = 5.4
     }
     const motor = await solidTile(tile)
-    // Standing on the roof is standing on the top of its cubes, 6 m up, as drawn.
+    // Standing on the roof is standing on the top of its cubes, 5.5 m up, as drawn.
     const down = motor.castRay([5, 20, 0], [0, -1, 0], 30)!
-    expect(20 - down.t).toBeCloseTo(6, 4)
+    expect(20 - down.t).toBeCloseTo(5.5, 4)
     // And walking into the wall stops at the cubes' face, x = 0.
     expect(along(motor, -2)!.t - 2).toBeCloseTo(0, 4)
   })
@@ -388,7 +388,7 @@ describe('a building with cells blasted out of it', () => {
     damage.dent(key, 0, 0, 1)
     const whole = bodyOf(damage).geometry.vertexCount
     // Every cell of the house: nothing of its walls is drawn.
-    const all = Array.from({ length: 4000 }, (_, i) => i)
+    const all = Array.from({ length: 64_000 }, (_, i) => i)
     damage.carve(key, 0, all, [], [-1, 2, 0], true)
     expect(bodyOf(damage).geometry.vertexCount).toBeLessThan(whole)
   })

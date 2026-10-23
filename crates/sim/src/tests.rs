@@ -131,13 +131,13 @@ fn a_ray_names_the_building_and_destroying_it_opens_the_wall() {
 /// A building that is only cubes: a platform a metre high, 8 m wide at z -5..-3 and 4 m wide at
 /// z -3..5, so it is two boxes meeting along z = -3. Its floor is two triangles at y = 0.
 fn world_with_platform() -> WorldFile {
-    let (origin, dims) = ([-200, 0, -500], [8usize, 1, 10]);
-    let solid: Vec<bool> = (0..dims[0] * dims[2]).map(|id| id / dims[0] < 2 || id % dims[0] < 4).collect();
+    let (origin, dims) = ([-200, 0, -500], [16usize, 2, 20]);
+    let solid: Vec<bool> = (0..dims[0] * dims[1] * dims[2]).map(|id| (id / dims[0]) % dims[2] < 4 || id % dims[0] < 8).collect();
     let cells = shared::world::Cells {
         origin,
         dims: dims.map(|d| d as u32),
-        solid: shared::world::Bits(shared::carve::pack(&solid, solid.len())),
-        roof: shared::world::Bits(shared::carve::pack(&vec![false; solid.len()], solid.len())),
+        solid: shared::world::Bits(shared::carve::pack(&solid, dims[0] * dims[2])),
+        roof: shared::world::Bits(shared::carve::pack(&vec![false; solid.len()], dims[0] * dims[2])),
     };
     let vertices = vec![[-200, 0, -500], [600, 0, -500], [600, 0, 500], [-200, 0, 500]];
     WorldFile {
