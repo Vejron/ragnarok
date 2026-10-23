@@ -63,6 +63,23 @@ impl Cut {
     }
 }
 
+/// How a building's standing cells are held up (`Shell::hold`), one number per cell.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Hold {
+    span: Vec<u16>,
+    load: Vec<u32>,
+}
+
+/// The `span` of a cell no chain of cells joins to an anchor.
+const UNHELD: u16 = u16::MAX;
+/// How much longer a cell's chain to an anchor may get than in the whole building before it lets
+/// go: 4 cells sideways, about 2.9 m of roof or floor hanging out past its last support.
+const SPAN_SLACK: u16 = 8;
+/// A cell fails when it carries more than `LOAD_FACTOR` times what it did in the whole building,
+/// plus `LOAD_SLACK`: the pillar left holding up a roof that a wall shared with it.
+const LOAD_FACTOR: u32 = 3;
+const LOAD_SLACK: u32 = 6;
+
 /// Longest gap between the points a wall or roof is sampled at to find the cells it passes
 /// through, centimetres: half a cell, so it misses no cell it crosses by much.
 const SAMPLE: i64 = CELL as i64 / 2;
@@ -419,6 +436,86 @@ impl Shell {
         }
         fell.sort_unstable();
         fell
+    }
+
+    /// How the standing cells are held up, given `removed`: `Hold`.
+    ///
+    /// `span` is the cost of the cheapest chain of standing cells from an anchor: a step up costs
+    /// nothing (a wall stands on what is under it), a step down 1 (it hangs), a step sideways 2
+    /// (it is carried like a beam). `load` is the weight each cell carries: its own, and a share of
+    /// every cell that leans on it, each cell giving all it carries in equal parts to the cells
+    /// nearer an anchor that it touches. A cell no chain reaches has the span `UNHELD`.
+    pub fn hold(&self, removed: &[bool]) -> Hold {
+        use std::cmp::Reverse;
+        let n = self.solid.len();
+        let standing = |i: usize| self.solid[i] && !removed[i];
+        let mut span = vec![UNHELD; n];
+        let mut heap = std::collections::BinaryHeap::new();
+        for i in (0..n).filter(|&i| self.anchored[i] && standing(i)) {
+            span[i] = 0;
+            heap.push(Reverse((0u16, i as u32)));
+        }
+        let mut held = Vec::new();
+        while let Some(Reverse((d, id))) = heap.pop() {
+            if d > span[id as usize] {
+                continue;
+            }
+            held.push(id);
+            let from = self.coords(id);
+            for next in self.around(id).filter(|&next| standing(next as usize)) {
+                let to = self.coords(next);
+                let cost = if to[0] == from[0] && to[2] == from[2] { u16::from(to[1] < from[1]) } else { 2 };
+                if d + cost < span[next as usize] {
+                    span[next as usize] = d + cost;
+                    heap.push(Reverse((d + cost, next)));
+                }
+            }
+        }
+        // Farthest from an anchor first, the higher first among equals: whatever leans on a cell has come before it.
+        held.sort_unstable_by_key(|&id| Reverse((span[id as usize], self.coords(id)[1], id)));
+        let mut load = vec![0u32; n];
+        for &id in &held {
+            load[id as usize] += 1;
+            let (mine, y) = (span[id as usize], self.coords(id)[1]);
+            let nearer = |next: &u32| standing(*next as usize) && (span[*next as usize] < mine || (span[*next as usize] == mine && self.coords(*next)[1] < y));
+            let count = self.around(id).filter(nearer).count() as u32;
+            if count == 0 {
+                continue;
+            }
+            let (share, extra) = (load[id as usize] / count, (load[id as usize] % count) as usize);
+            for (k, next) in self.around(id).filter(nearer).enumerate() {
+                load[next as usize] += share + u32::from(k < extra);
+            }
+        }
+        Hold { span, load }
+    }
+
+    /// What the building cannot go on holding: the standing cells that are held much more thinly
+    /// or carry much more than they did when it was whole (`whole`, from `hold` of `untouched`),
+    /// and whatever that leaves cut off. They are taken out of `removed` and returned as `fell`.
+    /// Measured against the whole building, so one that nobody has touched never fails however
+    /// it was built.
+    pub fn strain(&self, removed: &mut [bool], whole: &Hold) -> Cut {
+        let now = self.hold(removed);
+        let weak: Vec<u32> = (0..self.solid.len())
+            .filter(|&i| self.solid[i] && !removed[i])
+            .filter(|&i| now.span[i] > whole.span[i].saturating_add(SPAN_SLACK) || now.load[i] > whole.load[i].saturating_mul(LOAD_FACTOR).saturating_add(LOAD_SLACK))
+            .map(|i| i as u32)
+            .collect();
+        let mut cut = Cut::default();
+        if weak.is_empty() {
+            return cut;
+        }
+        for &id in &weak {
+            removed[id as usize] = true;
+        }
+        cut.fell = weak;
+        cut.fell.extend(self.unsupported_after(removed, &cut.fell));
+        for &id in &cut.fell {
+            removed[id as usize] = true;
+        }
+        cut.fell.sort_unstable();
+        cut
     }
 
     /// The standing cells that no chain of standing cells joins to an anchor.
@@ -835,6 +932,24 @@ mod tests {
         assert_eq!(faces_of(shell.dims, &keys, |d, k, e| greedy(d, k, e)), faces_of(shell.dims, &keys, |d, k, e| dense_greedy(d, k, e)));
     }
 
+    /// Not a regression test: what one structure check costs. `cargo test --release -p shared -- --ignored --nocapture strain_cost`
+    #[test]
+    #[ignore]
+    fn strain_cost() {
+        for (w, d, h) in [(10, 8, 6), (30, 12, 8), (120, 80, 40)] {
+            let shell = Shell::new(&boxed(w, d, h), &roof(w, d, h)).unwrap();
+            let whole = shell.hold(&shell.untouched());
+            let mut removed = shell.untouched();
+            shell.blast(&mut removed, [300, 100, 0], 150);
+            let start = std::time::Instant::now();
+            for _ in 0..10 {
+                let mut again = removed.clone();
+                shell.strain(&mut again, &whole);
+            }
+            println!("{w}x{d}x{h} m: {:?} for {} standing cells", start.elapsed() / 10, shell.standing(&removed));
+        }
+    }
+
     /// Not a regression test: the two on a big hollow building. `cargo test --release -p shared -- --ignored --nocapture greedy_cost`
     #[test]
     #[ignore]
@@ -951,6 +1066,73 @@ mod tests {
         }
         assert_eq!(rounds, 4, "40 health, 12 a round");
         assert!(shell.chip(&mut removed, &mut hp, [500, 300, 0], 12).is_empty() || shell.standing(&removed) < shell.solid_count());
+    }
+
+    #[test]
+    fn a_building_nobody_touched_is_never_strained() {
+        for (w, d, h) in [(6, 6, 4), (10, 8, 6), (30, 12, 8), (60, 9, 20)] {
+            let shell = Shell::new(&boxed(w, d, h), &roof(w, d, h)).unwrap();
+            let whole = shell.hold(&shell.untouched());
+            let mut removed = shell.untouched();
+            assert!(shell.strain(&mut removed, &whole).is_empty(), "{w}x{d}x{h}");
+        }
+    }
+
+    #[test]
+    fn a_hole_in_a_wall_is_no_strain() {
+        let shell = Shell::new(&boxed(10, 8, 6), &roof(10, 8, 6)).unwrap();
+        let whole = shell.hold(&shell.untouched());
+        let mut removed = shell.untouched();
+        shell.blast(&mut removed, [500, 300, 0], 150);
+        assert!(shell.strain(&mut removed, &whole).is_empty());
+    }
+
+    /// Takes the walls along both long sides out, leaving the roof on the two ends.
+    fn without_long_walls(shell: &Shell, removed: &mut [bool]) {
+        for id in shell.solid_cells() {
+            let [_, _, z] = shell.coords(id);
+            if !shell.is_roof(id) && (z == 0 || z == shell.dims[2] - 1) {
+                removed[id as usize] = true;
+            }
+        }
+    }
+
+    #[test]
+    fn a_roof_with_its_long_walls_gone_comes_down_in_the_middle_and_then_holds() {
+        let shell = Shell::new(&boxed(30, 12, 6), &roof(30, 12, 6)).unwrap();
+        let whole = shell.hold(&shell.untouched());
+        let mut removed = shell.untouched();
+        without_long_walls(&shell, &mut removed);
+        let before = shell.standing(&removed);
+        let cut = shell.strain(&mut removed, &whole);
+        assert!(!cut.fell.is_empty(), "the roof hangs 12 m from its ends");
+        assert!(cut.blasted.is_empty());
+        assert!(cut.fell.iter().filter(|&&id| shell.is_roof(id)).count() > 100, "the roof comes down");
+        assert_eq!(shell.standing(&removed), before - cut.fell.len());
+        // It keeps shedding what it cannot hold, a round at a time, and ends standing.
+        let mut rounds = 0;
+        while !shell.strain(&mut removed, &whole).is_empty() {
+            rounds += 1;
+            assert!(rounds < 50, "never settles");
+        }
+        assert!(shell.standing(&removed) > 0, "the ends and what hangs from them are left");
+    }
+
+    #[test]
+    fn a_wall_standing_on_a_cut_foot_leans_on_the_rest() {
+        // A tall tower with all but one corner column of its lowest rows gone: the load is far above
+        // what that column carried when the tower was whole.
+        let shell = Shell::new(&boxed(4, 4, 30), &roof(4, 4, 30)).unwrap();
+        let whole = shell.hold(&shell.untouched());
+        let mut removed = shell.untouched();
+        for id in shell.solid_cells() {
+            let [x, y, z] = shell.coords(id);
+            if y < 3 && (x, z) != (0, 0) {
+                removed[id as usize] = true;
+            }
+        }
+        let cut = shell.strain(&mut removed, &whole);
+        assert!(cut.fell.len() > 10, "{}", cut.fell.len());
     }
 
     #[test]

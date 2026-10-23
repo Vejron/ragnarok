@@ -91,6 +91,7 @@ impl Game {
                 fresh_damaged: Vec::new(),
                 carves: HashMap::new(),
                 fresh_carved: Vec::new(),
+                strained: HashMap::new(),
                 map,
                 entities: Default::default(),
                 nav: Default::default(),
@@ -615,6 +616,50 @@ mod tests {
         let Some(Outgoing::Reliable(leave)) = drain(&mut b).into_iter().next() else { panic!("no leave") };
         assert_eq!(decode::<Leave>(&leave), Some(Leave { tag: S_LEAVE, id: first }));
         assert_eq!(game.seen_people(KIND_STICKMAN).len(), 1);
+    }
+
+    /// Every building of the world (`RAGNAROK_WORLD`, else the committed city), whole, must pass the
+    /// structure check, and a bite out of the middle of each must not bring more than a bite's worth
+    /// down. Prints the cost of a check on the biggest.
+    /// `RAGNAROK_WORLD=worlds/ersboda-alidhem/world.msgpack cargo test --release -p server -- --ignored --nocapture whole_buildings_hold`
+    #[test]
+    #[ignore]
+    fn whole_buildings_hold() {
+        let path = std::env::var_os("RAGNAROK_WORLD")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/world/world.msgpack"));
+        let (map, _) = crate::read_world(&path).unwrap();
+        // `RAGNAROK_BITE`: the blast's radius, centimetres.
+        let bite: i32 = std::env::var("RAGNAROK_BITE").ok().and_then(|v| v.parse().ok()).unwrap_or(300);
+        let (mut checked, mut failed, mut worst) = (0, 0, std::time::Duration::ZERO);
+        let (mut bitten, mut crumbled, mut lost) = (0, 0, 0.0);
+        for index in 0..map.buildings.len() {
+            let Some((shell, _)) = sim::building_shell(&map, index) else { continue };
+            let whole = shell.hold(&shell.untouched());
+            let mut removed = shell.untouched();
+            let start = std::time::Instant::now();
+            let cut = shell.strain(&mut removed, &whole);
+            worst = worst.max(start.elapsed());
+            checked += 1;
+            if !cut.is_empty() {
+                failed += 1;
+                println!("building {index}: {} of {} cells fail whole", cut.fell.len(), shell.solid_count());
+            }
+            // A rocket's bite at the middle of the wall's height, from the side.
+            let (lo, size) = (shell.origin, shell.dims.map(|d| d as i32 * shell.cell));
+            let mut removed = shell.untouched();
+            let bite = shell.blast(&mut removed, [lo[0], lo[1] + size[1] / 3, lo[2] + size[2] / 2], bite);
+            if !bite.blasted.is_empty() {
+                bitten += 1;
+                let more = shell.strain(&mut removed, &whole).fell.len();
+                if more > 0 {
+                    crumbled += 1;
+                    lost += more as f64 / shell.solid_count() as f64;
+                }
+            }
+        }
+        println!("{checked} buildings checked whole, {failed} failed; slowest check {worst:?}; {bitten} bitten at one side, {crumbled} of them crumbled further, {:.1}% of their cells on average", 100.0 * lost / crumbled.max(1) as f64);
+        assert_eq!(failed, 0);
     }
 
     /// Not a regression test: a rough cost of one tick with a full room, to aim optimisation at. Players

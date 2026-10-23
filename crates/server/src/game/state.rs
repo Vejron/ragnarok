@@ -458,6 +458,8 @@ pub struct World {
     /// Bites taken since the last tick, for `Game::step` to broadcast: the building, where the
     /// blast was (centimetres) and the cells it broke and left hanging.
     pub fresh_carved: Vec<FreshCarve>,
+    /// Carved buildings waiting to have their structure checked (`settle`), by the tick they are due.
+    pub strained: HashMap<ObjId, u32>,
 }
 
 impl World {
@@ -534,7 +536,34 @@ impl World {
         let standing = sim::solid_of(&carving.shell.boxes(&carving.removed), &carving.floor);
         self.physics.replace_building(Obj::Building(id), standing);
         self.fresh_carved.push((id, at, cut.clone()));
+        // Whatever it lost is looked at again in a moment: the first cut sets the time, not each one.
+        self.strained.entry(id).or_insert(self.tick.wrapping_add(STRAIN_DELAY));
         Some(cut)
+    }
+
+    /// Checks the structure of the carved buildings that are due, at most `STRAIN_PER_TICK` a tick
+    /// and the longest overdue first, so a room full of wrecks spreads the work over ticks. What a
+    /// building cannot hold up crumbles (a `Cut` with only `fell`, told like any other), and it is
+    /// looked at again after `STRAIN_DELAY`, until nothing more goes.
+    pub fn settle(&mut self) {
+        let tick = self.tick;
+        let mut due: Vec<(u32, ObjId)> = self.strained.iter().map(|(&id, &at)| (tick.wrapping_sub(at), id)).filter(|&(late, _)| late < u32::MAX / 2).collect();
+        due.sort_unstable_by_key(|&(late, id)| (std::cmp::Reverse(late), id));
+        for (_, id) in due.into_iter().take(STRAIN_PER_TICK) {
+            self.strained.remove(&id);
+            let Some(carving) = self.carves.get_mut(&id) else { continue };
+            let cut = carving.shell.strain(&mut carving.removed, &carving.whole);
+            if cut.is_empty() {
+                continue;
+            }
+            let [x, y, z] = cut.fell.iter().fold([0i64; 3], |sum, &cell| {
+                let c = carving.shell.centre(cell);
+                [sum[0] + i64::from(c[0]), sum[1] + i64::from(c[1]), sum[2] + i64::from(c[2])]
+            });
+            let n = cut.fell.len() as i64;
+            let at = [(x / n) as i32, (y / n) as i32, (z / n) as i32];
+            self.finish_cut(id, at, cut);
+        }
     }
 
     /// Building `id` cut into cells, as `physics::building_shell`.
@@ -543,7 +572,8 @@ impl World {
         let (shell, floor) = sim::building_shell(&self.map, index)?;
         let removed = shell.untouched();
         let hp = shell.fresh_hp();
-        Some(Carving { shell, removed, hp, floor })
+        let whole = shell.hold(&removed);
+        Some(Carving { shell, removed, hp, floor, whole })
     }
 
     /// The building `id` names.
@@ -570,7 +600,15 @@ pub struct Carving {
     pub hp: Vec<u8>,
     /// The floor's triangles, which are never carved but stay in the building's collider.
     pub floor: Vec<Tri>,
+    /// How the building was held up when whole, to measure what is left against (`Shell::strain`).
+    pub whole: shared::carve::Hold,
 }
+
+/// Ticks between a carved building being hurt and its structure being checked: long enough to
+/// groan, short enough to be blamed on the blast.
+pub const STRAIN_DELAY: u32 = 45;
+/// Most buildings whose structure is checked in one tick.
+pub const STRAIN_PER_TICK: usize = 2;
 
 /// A building bitten: its identity, where the blast was (cm) and the cells it took.
 pub type FreshCarve = (ObjId, [i32; 3], Cut);

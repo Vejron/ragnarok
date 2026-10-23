@@ -1022,6 +1022,29 @@ fn carved_told(inbox: &mut mpsc::Receiver<Outgoing>) -> Vec<(u8, usize, usize)> 
 }
 
 #[test]
+fn a_house_with_most_of_its_walls_gone_sheds_its_roof_a_moment_later() {
+    let (mut game, house) = game_with_house();
+    let Obj::Building(id) = house else { unreachable!() };
+    let (_, mut inbox) = join(&mut game);
+    while inbox.try_recv().is_ok() {}
+    // Three walls bitten down to head height, the roof left on the fourth.
+    for point in [[15.0, 1.0, 0.0], [25.0, 1.0, 0.0], [20.0, 1.0, -5.0]] {
+        game.world.carve(id, point, 5.0);
+    }
+    game.step();
+    let first = carved_told(&mut inbox);
+    assert!(first.iter().all(|&(live, _, _)| live == 1) && !first.is_empty());
+    assert!(first.iter().all(|&(_, blasted, _)| blasted > 0), "only the blasts so far: {first:?}");
+    let mut later = Vec::new();
+    for _ in 0..600 {
+        game.step();
+        later.extend(carved_told(&mut inbox));
+    }
+    assert!(later.iter().any(|&(live, blasted, fell)| live == 1 && blasted == 0 && fell > 0), "nothing crumbled by itself: {later:?}");
+    assert!(game.world.strained.is_empty(), "and it settles");
+}
+
+#[test]
 fn a_rocket_bites_a_hole_in_the_wall_that_a_ray_goes_through() {
     let (mut game, house) = game_with_house();
     let (_, mut inbox) = join(&mut game);
