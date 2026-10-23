@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { toonMaterial } from './toon'
 import type { TileData } from '@/world'
 import type { Effects } from './effects'
+import { dustCloud, type Particles } from './particles'
 import { buildingColors, collapsingBuilding } from './world'
 
 /** How long the walls take to come down, seconds. */
@@ -149,7 +150,7 @@ export class Collapses {
     group.add(heapOf(tile, index, 1).heap)
   }
 
-  update(dt: number, effects: Effects) {
+  update(dt: number, effects: Effects, smoke?: Pick<Particles, 'spawn'>) {
     for (let i = this.active.length - 1; i >= 0; i--) {
       const c = this.active[i]!
       c.age += dt
@@ -169,7 +170,9 @@ export class Collapses {
           c.puffs++
           const angle = c.puffs * 2.4
           const reach = c.spread * 0.45
-          effects.dust(new THREE.Vector3(c.centre.x + Math.cos(angle) * reach, c.centre.y + 0.5, c.centre.z + Math.sin(angle) * reach), 3 + c.spread * 0.3)
+          const at = new THREE.Vector3(c.centre.x + Math.cos(angle) * reach, c.centre.y + 0.5, c.centre.z + Math.sin(angle) * reach)
+          if (smoke) dustCloud(smoke, at, 3 + c.spread * 0.3)
+          else effects.dust(at, 3 + c.spread * 0.3)
         }
       } else if (c.body.parent) {
         c.heap.scale.y = c.heapHeight

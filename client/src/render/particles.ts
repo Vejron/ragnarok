@@ -150,3 +150,25 @@ export class Particles {
     this.root.removeFromParent()
   }
 }
+
+/** A billow of dust about `size` metres across at `at`: soft, uneven puffs that swell, rise and thin out, not one round ball. */
+export function dustCloud(smoke: Pick<Particles, 'spawn'>, at: { x: number; y: number; z: number }, size: number) {
+  const rand = (min: number, max: number) => min + Math.random() * (max - min)
+  const count = Math.min(7, 2 + Math.round(size))
+  for (let i = 0; i < count; i++) {
+    const r = size * 0.3
+    smoke.spawn({
+      position: [at.x + rand(-r, r), at.y + rand(0, r * 0.5), at.z + rand(-r, r)],
+      velocity: [rand(-0.8, 0.8), rand(0.3, 1.2), rand(-0.8, 0.8)],
+      life: rand(1.6, 3),
+      size: [size * 0.15, size * rand(0.35, 0.6)],
+      color: i % 2 ? 0xb5a88c : 0xcbc2b0,
+      colorEnd: 0x9a9080,
+      alpha: 0.35,
+      gravity: -0.15,
+      drag: 1.4,
+      spin: [-0.5, 0.5],
+      shape: 'puff',
+    })
+  }
+}

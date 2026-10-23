@@ -5,7 +5,7 @@ import { DAMAGE_STAGES } from '@/sim/consts'
 import type { TileData } from '@/world'
 import { shellOf, type Shell } from '@/sim/carve'
 import type { Effects } from './effects'
-import type { Particles } from './particles'
+import { dustCloud, type Particles } from './particles'
 import { Fracture, shardGeometry } from './fracture'
 import { random } from './rubble'
 
@@ -247,7 +247,10 @@ export class BuildingDamage {
    * see it, easing out over `SMOULDER_SECONDS`.
    */
   update(dt: number, effects: Effects, near: THREE.Vector3, smoke?: Pick<Particles, 'spawn'>) {
-    for (const puff of this.puffs.splice(0)) effects.dust(puff.at, puff.size)
+    for (const puff of this.puffs.splice(0)) {
+      if (smoke) dustCloud(smoke, puff.at, puff.size)
+      else effects.dust(puff.at, puff.size)
+    }
     for (const [key, buildings] of this.drawn) {
       const loaded = this.loaded.get(key)
       if (!loaded) continue

@@ -60,7 +60,7 @@ export class WorldView {
   /** Advances the falling trees, collapsing buildings and shards. */
   update(dt: number, effects: Effects, camera: THREE.Vector3, fx: TreeFx) {
     this.fallingTrees.update(dt, fx)
-    this.collapses.update(dt, effects)
+    this.collapses.update(dt, effects, fx.smoke)
     this.damage.update(dt, effects, camera, fx.smoke)
     for (const [key, indices] of this.reshape) this.dropBuildingColliders(key, indices)
     this.reshape.clear()
