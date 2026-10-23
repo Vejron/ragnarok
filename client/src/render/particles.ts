@@ -29,6 +29,17 @@ export interface ParticleSpec {
   shape?: 'round' | 'puff'
 }
 
+/** The darkest a particle gets at night, against its colour by day. */
+const NIGHT_LEVEL = 0.28
+
+/** `color` as it looks in `light` (1 by day, 0 at night). */
+export function dimmed(color: number, light: number): number {
+  if (light >= 1) return color
+  const k = NIGHT_LEVEL + (1 - NIGHT_LEVEL) * Math.max(0, light)
+  const channel = (shift: number) => Math.round(((color >> shift) & 0xff) * k) << shift
+  return channel(16) | channel(8) | channel(0)
+}
+
 /** The height field particles bounce on is sampled this far to a side of the camera, metres, at `CELL` spacing. */
 const REACH = 128
 const CELL = 2
@@ -48,6 +59,8 @@ export class Particles {
   readonly capacity: number
   /** Ground height under a point, for particles that bounce. */
   groundAt: (x: number, z: number) => number = () => 0
+  /** How bright the day is, 1 at noon and 0 at midnight. Particles are not lit, so the plain ones are dimmed by it as they are born. */
+  light = 1
   private readonly blend: 'alpha' | 'additive'
   /** When each live particle dies, by the clock below: a tally of what the GPU is holding, for budgets and tests. */
   private readonly deaths: number[] = []
@@ -79,18 +92,19 @@ export class Particles {
     if (this.deaths.length >= this.capacity) return
     this.deaths.push(this.clock + spec.life)
     if (spec.bounce) this.bounces = true
+    const dim = this.blend === 'alpha' ? (c: number) => dimmed(c, this.light) : (c: number) => c
     const engine: EngineSpec = {
       position: spec.position,
       velocity: spec.velocity,
       life: spec.life,
       size: spec.size,
-      color: spec.color,
+      color: dim(spec.color),
       alpha: spec.alpha,
       gravity: spec.gravity,
       drag: spec.drag,
       bounce: spec.bounce,
       blend: this.blend,
-      colorEnd: spec.colorEnd,
+      colorEnd: spec.colorEnd === undefined ? undefined : dim(spec.colorEnd),
       spin: spec.spin,
       stretch: spec.stretch,
       glow: spec.glow,

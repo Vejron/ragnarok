@@ -19,9 +19,6 @@ const SMOULDER_RANGE = 160
 /** The gap between puffs, seconds, when it burns hottest, and how much longer it grows as it dies away. */
 const PUFF_SECONDS = 0.5
 const PUFF_STRETCH = 6
-/** How dark smoke is at night, against its daytime colour: it is not lit, so it is dimmed by hand. */
-const NIGHT_SMOKE = 0.28
-
 /** A point `(x, y, z)`, metres. */
 type Mark = readonly [number, number, number]
 
@@ -247,9 +244,9 @@ export class BuildingDamage {
 
   /**
    * Pieces fall and rest, and buildings that were just hit or lost their hold smoulder when `near` (the camera) is close enough to
-   * see it, easing out over `SMOULDER_SECONDS`. `light` is how bright the day is, 1 at noon and 0 at midnight: smoke is not lit, so it is dimmed by it.
+   * see it, easing out over `SMOULDER_SECONDS`.
    */
-  update(dt: number, effects: Effects, near: THREE.Vector3, smoke?: Pick<Particles, 'spawn'>, light = 1) {
+  update(dt: number, effects: Effects, near: THREE.Vector3, smoke?: Pick<Particles, 'spawn'>) {
     for (const puff of this.puffs.splice(0)) effects.dust(puff.at, puff.size)
     for (const [key, buildings] of this.drawn) {
       const loaded = this.loaded.get(key)
@@ -274,7 +271,7 @@ export class BuildingDamage {
           if (other.y > at.y) at = other
         }
         if (at.distanceToSquared(near) > SMOULDER_RANGE * SMOULDER_RANGE) continue
-        smolder(smoke, at, heat, light)
+        smolder(smoke, at, heat)
       }
     }
   }
@@ -467,13 +464,9 @@ function pointInTriangle(triangle: THREE.Triangle, u: number, v: number) {
   return triangle.a.clone().addScaledVector(triangle.b.clone().sub(triangle.a), u).addScaledVector(triangle.c.clone().sub(triangle.a), v)
 }
 
-/** A puff of smoke rising from `at`: dark, thick and big while it is hot, thin and grey as it dies. `light` dims it for the night. */
-function smolder(smoke: Pick<Particles, 'spawn'>, at: THREE.Vector3, heat: number, light: number) {
-  const dim = NIGHT_SMOKE + (1 - NIGHT_SMOKE) * light
-  const tone = (grey: number) => {
-    const level = Math.round(grey * dim)
-    return (level << 16) | (level << 8) | level
-  }
+/** A puff of smoke rising from `at`: dark, thick and big while it is hot, thin and grey as it dies. */
+function smolder(smoke: Pick<Particles, 'spawn'>, at: THREE.Vector3, heat: number) {
+  const tone = (grey: number) => (grey << 16) | (grey << 8) | grey
   const rand = (min: number, max: number) => min + Math.random() * (max - min)
   smoke.spawn({
     position: [at.x, at.y, at.z],

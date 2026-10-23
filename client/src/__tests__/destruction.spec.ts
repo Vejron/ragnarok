@@ -479,8 +479,8 @@ describe('a building with cells blasted out of it', () => {
     expect(bodyOf(damage).geometry.vertexCount).toBe(before)
   })
 
-  it('smoulders for a minute after being hit, thinning out, dimmer at night, and then stops', () => {
-    const smoulder = (light: number) => {
+  it('smoulders for a minute after being hit, thinning out, and then stops', () => {
+    const smoulder = () => {
       const damage = new BuildingDamage()
       damage.attach(key, twoHouses())
       damage.dent(key, 0, 0, 1)
@@ -488,17 +488,14 @@ describe('a building with cells blasted out of it', () => {
       const puffs: { alpha: number; color: number; at: number }[] = []
       const smoke = { spawn: (spec: { alpha: number; color: number }) => puffs.push({ alpha: spec.alpha, color: spec.color, at: seconds }) }
       let seconds = 0
-      for (; seconds < 90; seconds += 0.1) damage.update(0.1, { dust() {} } as never, new THREE.Vector3(0, 0, 0), smoke, light)
+      for (; seconds < 90; seconds += 0.1) damage.update(0.1, { dust() {} } as never, new THREE.Vector3(0, 0, 0), smoke)
       return puffs
     }
-    const day = smoulder(1)
+    const day = smoulder()
     expect(day.length).toBeGreaterThan(10)
     // Thick at first, thin towards the end, and nothing once the minute is up.
     expect(day[0]!.alpha).toBeGreaterThan(day[day.length - 1]!.alpha)
     expect(Math.max(...day.map((p) => p.at))).toBeLessThanOrEqual(60.1)
     expect(day.filter((p) => p.at < 30).length).toBeGreaterThan(day.filter((p) => p.at >= 30).length)
-    // Unlit smoke is dimmed by hand: at night the same puff is darker.
-    const night = smoulder(0)
-    expect(night[0]!.color & 0xff).toBeLessThan(day[0]!.color & 0xff)
   })
 })

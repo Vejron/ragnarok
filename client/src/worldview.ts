@@ -50,9 +50,6 @@ export class WorldView {
   /** Carved buildings, by tile, whose colliders are to be reshaped at the next `update`: a barrage does it once a frame, not once a hit. */
   private readonly reshape = new Map<number, Set<number>>()
 
-  /** How bright the day is, 1 at noon and 0 at midnight: smoke is not lit, so what draws it is dimmed by this. */
-  daylight = 1
-
   constructor(private readonly scene: Scene) {}
 
   /** Told when a felled tree cracks and lands, to be heard. */
@@ -64,7 +61,7 @@ export class WorldView {
   update(dt: number, effects: Effects, camera: THREE.Vector3, fx: TreeFx) {
     this.fallingTrees.update(dt, fx)
     this.collapses.update(dt, effects)
-    this.damage.update(dt, effects, camera, fx.smoke, this.daylight)
+    this.damage.update(dt, effects, camera, fx.smoke)
     for (const [key, indices] of this.reshape) this.dropBuildingColliders(key, indices)
     this.reshape.clear()
   }
