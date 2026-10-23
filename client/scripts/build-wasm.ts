@@ -1,7 +1,7 @@
 // Builds `crates/sim-wasm` for the browser into `src/sim/wasm/` (git-ignored): the server's own physics,
 // which the client's prediction runs. `npm run build:wasm`; the dev server, the tests, the type check
 // and the build run it first. Needs the `wasm32-unknown-unknown` target and the `wasm-bindgen` CLI of
-// the version `crates/sim-wasm/Cargo.toml` pins (see MIGRATION.md).
+// the version `crates/sim-wasm/Cargo.toml` pins (see README.md).
 import { execFileSync } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'

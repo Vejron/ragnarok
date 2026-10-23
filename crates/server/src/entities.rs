@@ -1,7 +1,6 @@
 //! The dynamic entities of a room as components in a `bevy_ecs` world, and the index from the wire id
-//! (`NetId`) to the ECS `Entity`. Families move here from their own maps in `World` one at a time (see
-//! MIGRATION.md); roosters are the first. Only `bevy_ecs`'s storage and queries are used: the ordered
-//! `Mechanic` list is still the schedule.
+//! (`NetId`) to the ECS `Entity` (design.md §2.1). Only `bevy_ecs`'s storage and queries are used: the
+//! ordered `Mechanic` list is the schedule.
 //!
 //! A thing is what its components say it is, not its kind: anything with a `Hurtbox` and `Health` can
 //! be shot and blasted, anything with `Respawn` and `Home` comes back after dying, and `NetKind` only

@@ -157,7 +157,7 @@ describe('a full room', () => {
     for (let i = 0; i < 5; i++) second()
     const best = Math.min(...Array.from({ length: 7 }, second))
     console.log(`a full room for a second: store ${best.toFixed(2)} ms`)
-    // Built and run by Node alone it is about 0.6 ms, under vitest about 1 (MIGRATION.md, 4.2); the
+    // Built and run by Node alone it is about 0.6 ms, under vitest about 1 (measured when the entity store was written); the
     // adapter and interpolators it replaced took about 1.0 ms. This catches a real step back.
     expect(best).toBeLessThan(3)
   })

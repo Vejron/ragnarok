@@ -1,4 +1,4 @@
-//! Protocol v2's entity state: what each replicated thing is, as components (MIGRATION.md, Phase 3).
+//! Protocol v2's entity state: what each replicated thing is, as components (design.md §2.1).
 //!
 //! An entity on the wire is the components it has, not a row of its family. Every component is listed
 //! once, in the `replicated!` invocation below: its wire id, its fields, and whether it is sent as a
