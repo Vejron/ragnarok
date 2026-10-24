@@ -265,7 +265,7 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
     <p>{{ stats.touch ? 'Tap to play' : 'Click to play' }}</p>
     <p><a class="settings" :href="settingsUrl" @click.stop>Name, colour and spawn points</a></p>
     <p v-if="stats.touch" class="keys">Left thumb moves · Drag the right side to look · Buttons jump, crouch, fire, reload and use · Tap the slots to switch items</p>
-    <p v-else class="keys">WASD move · Shift run · Space jump · E take, drive, ride or man a gun · 1-5 or wheel pick an item · Mouse look · Click fire · Right mouse aim (scope with the sniper) · R reload · V talk · M map · Tab scores · Esc release</p>
+    <p v-else class="keys">WASD move · Shift run · Space jump · E take, drive, ride or man a gun · 1-5 or wheel pick an item · Mouse look · Click fire · Right mouse aim (scope with the sniper or Carl Gustaf) · R reload · V talk · M map · Tab scores · Esc release</p>
   </div>
 </template>
 

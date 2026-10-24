@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { Canopy } from './canopy'
 import { toonMaterial } from './toon'
 import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, PRONE_CENTRE, RUN_SPEED, STAND_CENTRE, WALK_SPEED } from '@/sim/consts'
-import { ITEM_AK5, ITEM_BANDAGE, ITEM_BRICKS, ITEM_FLARE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, itemDef, type ItemDef } from '@/sim/items'
+import { ITEM_AK5, ITEM_BANDAGE, ITEM_BRICKS, ITEM_CARL_GUSTAF, ITEM_FLARE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, itemDef, type ItemDef } from '@/sim/items'
 import { type Limb, poseLimb, splitLimbs } from './gibs'
 import { colorFor } from '@/profile'
 
@@ -20,7 +20,7 @@ const DIRECTIONS: Direction[] = ['fwd', 'back', 'left', 'right']
 type Stance = ItemDef['stance']
 
 /** Clip name prefix per stance, and the weapon mesh each item shows. Mirrors build_character.py. */
-const PREFIX: Record<Stance, string> = { rifle: '', pistol: 'pistol_', hold: 'hold_' }
+const PREFIX: Record<Stance, string> = { rifle: '', pistol: 'pistol_', hold: 'hold_', shoulder: 'shoulder_' }
 const WEAPON_MESH: Record<number, string> = {
   [ITEM_AK5]: 'weapon_ak5',
   [ITEM_SNIPER]: 'weapon_sniper',
@@ -33,9 +33,10 @@ const WEAPON_MESH: Record<number, string> = {
   [ITEM_FLARE]: 'weapon_revolver',
   // A block in the hand, as a bandage roll is.
   [ITEM_BRICKS]: 'weapon_bandage',
+  [ITEM_CARL_GUSTAF]: 'weapon_carl_gustaf',
 }
 /** The muzzle bone of the stance whose hand pose a gun is modelled in; none for the hands-low stance. */
-const MUZZLE_BONE: Record<Stance, string | null> = { rifle: 'muzzle', pistol: 'muzzle_pistol', hold: null }
+const MUZZLE_BONE: Record<Stance, string | null> = { rifle: 'muzzle', pistol: 'muzzle_pistol', hold: null, shoulder: 'muzzle_shoulder' }
 
 /**
  * Clips baked by `tools/character/build_character.py`, with the ground speed (m/s) at which their

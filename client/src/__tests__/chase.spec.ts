@@ -69,6 +69,16 @@ describe('ChaseCam', () => {
     expect(worst).toBe(0)
   })
 
+  it('shakes on foot too, following no car, and a reset does not stop it', () => {
+    const cam = new ChaseCam()
+    cam.kick(0.7)
+    cam.reset()
+    expect(Math.abs(cam.tremble(DT, () => 1)[1])).toBeGreaterThan(0.05)
+    let shake = [1, 1, 1]
+    for (let i = 0; i < 120; i++) shake = cam.tremble(DT, () => 1)
+    expect(Math.abs(shake[1]!)).toBeLessThan(1e-3)
+  })
+
   it('is quiet on a smooth cruise', () => {
     const { view } = drive(new ChaseCam(), 2, () => 20)
     expect(view.shake.every((value) => Math.abs(value) < 1e-6)).toBe(true)

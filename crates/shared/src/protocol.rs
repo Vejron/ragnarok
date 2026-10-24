@@ -131,6 +131,9 @@ pub const WEAPON_LOITER: u8 = 21;
 pub const WEAPON_FLARE: u8 = 22;
 /// Falling masonry: cells of a building that lost their hold, landing on someone. Only ever the weapon of a kill.
 pub const WEAPON_RUBBLE: u8 = 23;
+/// Shot events only: a Carl Gustaf fired from `shooter`'s shoulder, its rocket leaving at `x, y, z`.
+/// What the rocket does is `WEAPON_ROCKET`'s.
+pub const WEAPON_LAUNCHER: u8 = 24;
 
 /// How a stickman died, as sent in a `Kill`, so every client can stage the death to match.
 pub const DEATH_BODY: u8 = 0;

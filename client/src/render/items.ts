@@ -1,6 +1,6 @@
 import { Group, Material, Mesh, boxGeometry, sphereGeometry, type Geometry } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
-import { ITEM_AK5, ITEM_BANDAGE, ITEM_BRICKS, ITEM_DRONE, ITEM_FLARE, ITEM_GOLDEN_EGG, ITEM_LOITER, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER } from '@/sim/items'
+import { ITEM_AK5, ITEM_BANDAGE, ITEM_BRICKS, ITEM_CARL_GUSTAF, ITEM_DRONE, ITEM_FLARE, ITEM_GOLDEN_EGG, ITEM_LOITER, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER } from '@/sim/items'
 
 const GUN_METAL = 0x3b3f47
 const GUN_TRIM = 0xf2a33a
@@ -11,6 +11,7 @@ const CROSS = 0xd93a3a
 const GOLD = 0xffc933
 const FLARE_ORANGE = 0xf26a1b
 const BRICK = 0xc0583e
+const TUBE = 0x55613a
 
 const materials = new Map<number, Material>()
 const boxes = new Map<string, Geometry>()
@@ -105,6 +106,15 @@ export function buildItem(item: number): Group {
       // Two bricks, the top one turned across the bottom one.
       box(group, [0.1, 0.06, 0.2], [0, 0, 0], BRICK)
       box(group, [0.2, 0.06, 0.1], [0, 0.065, 0], BRICK)
+      break
+    case ITEM_CARL_GUSTAF:
+      // A long olive tube, its venturi flaring behind, with the grips and the sight on its left.
+      box(group, [0.1, 0.1, 1.0], [0, 0.2, 0.2], TUBE)
+      box(group, [0.15, 0.15, 0.1], [0, 0.2, 0.74], GUN_METAL)
+      box(group, [0.115, 0.115, 0.06], [0, 0.2, -0.31], GUN_METAL)
+      box(group, [0.04, 0.15, 0.05], [0, 0.07, 0.02], GUN_TRIM)
+      box(group, [0.035, 0.12, 0.04], [0, 0.1, -0.2], GUN_METAL)
+      box(group, [0.04, 0.05, 0.12], [-0.08, 0.23, 0.06], GUN_METAL)
       break
     case ITEM_GOLDEN_EGG: {
       sphere ??= sphereGeometry(0.06, 10, 8)

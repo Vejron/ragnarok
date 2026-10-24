@@ -11,7 +11,7 @@ import type { Wear } from '@/entities/presenters/wear'
 import type { Blips } from '@/blips'
 import { HIT_KILL, HIT_ROOSTER, HIT_VEHICLE } from '@/feedback'
 import {
-  PROJECTILE_BULLET, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_BULLET, WEAPON_CRASH, WEAPON_DRONE, WEAPON_EGG, WEAPON_FLARE, WEAPON_GRENADE, WEAPON_LOITER, WEAPON_MG, WEAPON_MORTAR,
+  PROJECTILE_BULLET, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_BULLET, WEAPON_CRASH, WEAPON_DRONE, WEAPON_EGG, WEAPON_FLARE, WEAPON_GRENADE, WEAPON_LAUNCHER, WEAPON_LOITER, WEAPON_MG, WEAPON_MORTAR,
   WEAPON_PELLET, WEAPON_RICOCHET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_TURRET, WEAPON_WRECK,
   type BulletSpawn, type ShotEvent,
 } from '@/net/codec'
@@ -36,6 +36,10 @@ import type { WorldView } from '@/worldview'
 const STILL = new THREE.Vector3()
 /** Events wait at most this many deep for the picture to reach them. */
 const MAX_PENDING = 64
+/** From a Carl Gustaf's muzzle back to its venturi, metres: where the backblast leaves. */
+const LAUNCHER_LENGTH = 1.05
+/** How hard a Carl Gustaf shakes its own shooter's view (`ChaseCam.kick`): trauma 0.7 is about a 17 cm shake. */
+const LAUNCHER_KICK = 0.7
 
 /** A bullet in flight on this client. */
 interface LiveBullet {
@@ -187,6 +191,24 @@ export class Events {
       effects.muzzle(from)
       this.muzzleLight(from, 0xffa060, 2.5, 8)
       sounds.gunshot([from.x, from.y, from.z], 'revolver')
+    } else if (shot.weapon === WEAPON_LAUNCHER) {
+      // A Carl Gustaf going off: the rocket is a projectile of its own; this is the flash at the
+      // muzzle and the backblast out of the venturi behind the shooter's shoulder.
+      const avatar = avatars.of(shot.shooter)
+      avatar?.fire()
+      const from = this.muzzleOf(shot.shooter) ?? to
+      const eye = avatar ? avatar.position.clone().add(new THREE.Vector3(0, EYE_HEIGHT, 0)) : from
+      const along = to.clone().sub(eye)
+      const forward = along.lengthSq() > 1e-4 ? along.normalize() : new THREE.Vector3(0, 0, -1)
+      const back = forward.clone().negate()
+      const venturi = from.clone().addScaledVector(back, LAUNCHER_LENGTH)
+      effects.muzzleFlash(from, forward)
+      effects.blast(venturi, back)
+      effects.dust(venturi.clone().addScaledVector(back, 1.5), 2.5)
+      this.muzzleLight(from, 0xffb060, 3, 10)
+      this.world.blips.fired(shot.shooter, from.x, from.z, performance.now())
+      sounds.blast([from.x, from.y, from.z], 'small')
+      if (shot.shooter === local) chase.kick(LAUNCHER_KICK)
     } else if (shot.weapon === WEAPON_AUTOCANNON) {
       this.blast(to, CANNON_RADIUS, BLASTS.cannon)
       sounds.blast([to.x, to.y, to.z], 'small')

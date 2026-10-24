@@ -128,8 +128,9 @@ pub fn register(ecs: &mut bevy_ecs::world::World) {
     ecs.register_component::<GunStage>();
 }
 
-/// A projectile as it is launched, and as it is seen in flight (`World::in_flight`). `item`, `back`
-/// and `flown` are a round's (`PROJECTILE_BULLET`), zero for anything else.
+/// A projectile as it is launched, and as it is seen in flight (`World::in_flight`). `back` and `flown`
+/// are a round's (`PROJECTILE_BULLET`), zero for anything else; so is `item` once it flies, though a
+/// launcher's rocket is launched with its item, whose damage its blast takes (`burst_for`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Flying {
     pub kind: u8,
@@ -161,12 +162,23 @@ pub fn burst_of(kind: u8) -> Option<Burst> {
     })
 }
 
+/// What a projectile of `kind` fired from `item` (or 0) does when it bursts: `burst_of`'s, with the
+/// item's own damage when it has one (a Carl Gustaf's rocket hits harder than a helicopter's).
+pub fn burst_for(kind: u8, item: u8) -> Option<Burst> {
+    let burst = burst_of(kind)?;
+    Some(match def(item) {
+        Some(d) if d.damage > 0 => Burst { damage: f32::from(d.damage), ..burst },
+        _ => burst,
+    })
+}
+
 /// A vehicle gun's shell, bomb or mortar round: falls, and bursts on what it meets, through its armor.
 const SHELL: Strikes = Strikes { bodies: true, armor: true, lost_below: true };
 
 /// How a projectile of `kind` flies and what meeting something does, beyond where it is and how fast
 /// it goes. Its `Burst` is `burst_of`'s.
 fn prefab(kind: u8, round: Round, entity: &mut bevy_ecs::world::EntityWorldMut) {
+    let burst = burst_for(kind, round.item);
     match kind {
         PROJECTILE_ROCKET => {
             entity.insert((Motor { accel: ROCKET_ACCEL, top: ROCKET_MAX_SPEED }, Strikes { bodies: true, armor: false, lost_below: false }));
@@ -188,15 +200,15 @@ fn prefab(kind: u8, round: Round, entity: &mut bevy_ecs::world::EntityWorldMut) 
         }
         _ => tracing::warn!(kind, "a projectile of no known kind does nothing"),
     }
-    if let Some(burst) = burst_of(kind) {
+    if let Some(burst) = burst {
         entity.insert(burst);
     }
 }
 
-/// Sets off what a projectile of `kind` from `owner` does when it bursts, at `point` heading along
-/// `dir`, without it ever flying: one fired into a wall it starts against.
-pub fn burst_at(world: &mut World, kind: u8, owner: u32, point: [f32; 3], dir: [f32; 3]) {
-    if let Some(burst) = burst_of(kind) {
+/// Sets off what a projectile of `kind` from `owner`'s `item` (or 0) does when it bursts, at `point`
+/// heading along `dir`, without it ever flying: one fired into a wall it starts against.
+pub fn burst_at(world: &mut World, kind: u8, item: u8, owner: u32, point: [f32; 3], dir: [f32; 3]) {
+    if let Some(burst) = burst_for(kind, item) {
         set_off(world, burst, owner, point, dir, None);
     }
 }

@@ -634,6 +634,8 @@ export class Game {
     this.input.lookScale = sighted ? SIGHT_LOOK_SCALE : scoped ? SCOPE_LOOK_SCALE : aiming ? AIM_LOOK_SCALE : 1
     const chase = ride && view?.chase ? this.chase.update([ride.x, ride.y, ride.z], ride.yaw, dt, distance) : null
     if (!chase) this.chase.reset()
+    // A kick shakes the on-foot view too; a car's chase camera shakes with its own.
+    const shake = chase ? undefined : this.chase.tremble(dt)
     this.scene.zoomTo(this.cameras.zoom(view, this.input.aimHeld, sighted, scoped, aiming), dt, chase?.fovBoost ?? 0)
     me.hidden = (seated && !flying && !sitting) || scoped
     me.dead = this.hp === 0
@@ -653,9 +655,9 @@ export class Game {
       }, seat.index)
     } else {
       this.cameras.leave(now)
-      if (scoped) this.scene.scopeFrom([position[0]!, position[1]! + this.eyeHeight(), position[2]!], this.input.yaw, this.input.pitch)
+      if (scoped) this.scene.scopeFrom([position[0]!, position[1]! + this.eyeHeight(), position[2]!], this.input.yaw, this.input.pitch, shake)
       // Only the distance changes: the pivot is what the server's crosshair ray is built from.
-      else this.scene.follow(position, this.input.yaw, this.input.pitch, ON_FOOT_DISTANCE * (1 - (1 - AIM_DISTANCE_SCALE) * this.aimBlend), ON_FOOT_SHOULDER, ON_FOOT_HEIGHT)
+      else this.scene.follow(position, this.input.yaw, this.input.pitch, ON_FOOT_DISTANCE * (1 - (1 - AIM_DISTANCE_SCALE) * this.aimBlend), ON_FOOT_SHOULDER, ON_FOOT_HEIGHT, shake)
     }
     // Streaming follows what the camera is on: the car when seated, else the stickman.
     this.tiles?.update(ride ? ride.x : position[0], ride ? ride.z : position[2])

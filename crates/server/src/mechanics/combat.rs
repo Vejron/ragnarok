@@ -431,28 +431,30 @@ fn wreck(world: &mut World, vid: u32) {
 }
 
 
-/// Launches a rocket from player `id`'s eye. No item does this yet; it is kept for a launcher pickup.
-#[allow(dead_code)]
-fn fire_rocket(world: &mut World, id: u32) {
-    let Some(player) = world.entities.get::<Player>(id) else { return };
-    let input = player.input;
-    let c = player.character;
-    let pitch = from_mrad(input.pitch()).clamp(-MAX_PITCH, MAX_PITCH);
-    let dir = look(from_mrad(input.yaw), pitch);
-    let eye = [c.position[0], c.position[1] + eye_height(input.buttons(), c.prone), c.position[2]];
+/// Fires a rocket from player `id`'s launcher `launcher` (an `ITEM_*`), from the eye towards what the
+/// crosshair is on (along the look down its sight). The launch is a shot event of the launcher's weapon
+/// where the rocket leaves, and the blast is as hard as the launcher's damage.
+fn fire_rocket(world: &mut World, id: u32, launcher: u8) {
+    let Some(item) = def(launcher) else { return };
+    let Some(Aim { origin: eye, dir, .. }) = aim(world, id, item) else { return };
     // Up against a wall it bursts right there instead of starting on its far side.
-    if let Some(t) = world.physics.cast_ray(eye, dir, ROCKET_MUZZLE, 0) {
-        projectiles::burst_at(world, PROJECTILE_ROCKET, id, std::array::from_fn(|i| eye[i] + dir[i] * t), dir);
+    let reach = world.physics.cast_ray(eye, dir, ROCKET_MUZZLE, 0);
+    let start: [f32; 3] = std::array::from_fn(|i| eye[i] + dir[i] * reach.unwrap_or(ROCKET_MUZZLE));
+    let [x, y, z] = start.map(to_cm);
+    world.shots.push(ShotEvent { shooter: id, weapon: item.weapon, x, y, z });
+    make_noise(world, eye, Some(id), HEAR_BLAST);
+    if reach.is_some() {
+        projectiles::burst_at(world, PROJECTILE_ROCKET, launcher, id, start, dir);
         return;
     }
     world.launch(Flying {
         kind: PROJECTILE_ROCKET,
         owner: id,
         source: 0,
-        position: std::array::from_fn(|i| eye[i] + dir[i] * ROCKET_MUZZLE),
+        position: start,
         velocity: dir.map(|v| v * ROCKET_SPEED),
         ttl: ROCKET_TTL_TICKS,
-        item: 0,
+        item: launcher,
         back: 0,
         flown: 0.0,
     });
@@ -537,9 +539,19 @@ pub fn reloads_in_seat(world: &World, id: u32) -> bool {
         && def(held.item).is_some_and(|item| item.kind == ItemKind::Gun && held.ammo < item.mag)
 }
 
-/// Fires gun `item` from player `id`'s eye (their head, in a seat), towards what the crosshair is on.
-fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
-    let Some(player) = world.entities.get::<Player>(id) else { return };
+/// Where a shot from a player's hands leaves, which way it goes, the vehicle it is fired from (or 0),
+/// and how many ticks back the shooter saw the world.
+struct Aim {
+    origin: [f32; 3],
+    dir: [f32; 3],
+    vehicle: u32,
+    back: u32,
+}
+
+/// How player `id` aims `item`: from their eye (their head, in a seat) towards what the crosshair is
+/// on, scattered over the item's cone; or, looking down its scope, straight along the look.
+fn aim(world: &mut World, id: u32, item: &ItemDef) -> Option<Aim> {
+    let player = world.entities.get::<Player>(id)?;
     let input = player.input;
     let c = player.character;
     let pitch = from_mrad(input.pitch()).clamp(-MAX_PITCH, MAX_PITCH);
@@ -557,7 +569,6 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
             0,
         ),
     };
-    make_noise(world, origin, Some(id), HEAR_SHOT);
     // Looking down a scope the camera is the eye, so the shot goes straight along the look
     // direction, true.
     let scoped = item.scope && input.buttons() & BUTTON_ALT != 0;
@@ -568,6 +579,14 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
         let aim = if world.entities.has::<Bot>(id) { look_dir } else { crosshair_dir(world, id, back, pivot, origin, look_dir, item.range, vehicle) };
         scatter(world, aim, effective_spread(item, input.buttons()))
     };
+    Some(Aim { origin, dir, vehicle, back })
+}
+
+/// Fires gun `item` from player `id`'s eye (their head, in a seat), towards what the crosshair is on.
+fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
+    let Some(Aim { origin, dir, vehicle, back }) = aim(world, id, item) else { return };
+    let buttons = world.entities.get::<Player>(id).map_or(0, |player| player.input.buttons());
+    make_noise(world, origin, Some(id), HEAR_SHOT);
 
     if item.projectile {
         // The round leaves the eye and flies on its own, so it takes time to arrive and drops a little.
@@ -596,7 +615,7 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     // Every pellet is its own ray through the same rewound world. The first goes along the aim as it
     // is (scattered once, above), the rest are scattered around it. Each is announced where it ended,
     // so a client can show where a spread landed; only the first carries the gun's own weapon id.
-    let spread = effective_spread(item, input.buttons());
+    let spread = effective_spread(item, buttons);
     for pellet in 0..item.pellets {
         let ray = if pellet == 0 { dir } else { scatter(world, dir, spread) };
         let (end, _) = hitscan(world, id, origin, ray, &round, vehicle, back);
@@ -806,6 +825,14 @@ fn use_item(world: &mut World, id: u32) {
                 player.fire_cooldown = item.cooldown_ticks;
                 spend(&mut player.hotbar[slot]);
                 throw_grenade(world, id);
+            }
+        }
+        ItemKind::Launcher => {
+            if fresh && player.fire_cooldown == 0 && projectiles::count(&world.entities, Some(PROJECTILE_ROCKET)) < MAX_ROCKETS {
+                let mut player = world.entities.of_mut::<Player>(id);
+                player.fire_cooldown = item.cooldown_ticks;
+                spend(&mut player.hotbar[slot]);
+                fire_rocket(world, id, held.item);
             }
         }
         ItemKind::Flare => {

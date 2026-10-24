@@ -27,8 +27,10 @@ export const ITEM_LOITER = 9
 export const ITEM_FLARE = 10
 /** Bricks: fire puts a cube where the crosshair is, aim and fire digs one out. Never used up. */
 export const ITEM_BRICKS = 11
+/** A Carl Gustaf over the shoulder: each shot a rocket, gone after the last; aim looks down its sight. */
+export const ITEM_CARL_GUSTAF = 12
 
-export type ItemKind = 'gun' | 'grenade' | 'heal' | 'drone' | 'flare' | 'build'
+export type ItemKind = 'gun' | 'grenade' | 'heal' | 'drone' | 'flare' | 'build' | 'launcher'
 
 export interface ItemDef {
   name: string
@@ -48,7 +50,7 @@ export interface ItemDef {
   scope: boolean
   stack: number
   /** What the player holds it as: picks the pose and the model. */
-  stance: 'rifle' | 'pistol' | 'hold'
+  stance: 'rifle' | 'pistol' | 'hold' | 'shoulder'
   /** The `WEAPON_*` id its shot and kill events carry (`codec.ts`; not imported here, which would be a cycle). */
   weapon: number
   /** Fires a round that flies and hits on arrival, rather than a hitscan. */
@@ -78,6 +80,7 @@ const PRESENTATION: Record<number, Presentation> = {
   [ITEM_FLARE]: { stance: 'pistol', sound: 'revolver' },
   [ITEM_GOLDEN_EGG]: { stance: 'hold', sound: 'rifle' },
   [ITEM_BRICKS]: { stance: 'hold', sound: 'rifle' },
+  [ITEM_CARL_GUSTAF]: { stance: 'shoulder', sound: 'sniper' },
 }
 
 /** The server's rows, as the generated table has them. */
@@ -106,10 +109,10 @@ export const falloffDamage = (def: ItemDef, distance: number): number => {
   return Math.max(1, Math.round(def.damage * (1 - (1 - def.falloffMin) * along)))
 }
 
-/** Walking speed multiplier for `item` in hand with `buttons`: a gun slows its holder while aim is held. Mirrors `aim_speed_scale`. */
+/** Walking speed multiplier for `item` in hand with `buttons`: a gun or a launcher slows its holder while aim is held. Mirrors `aim_speed_scale`. */
 export const aimSpeedScale = (item: number, buttons: number): number => {
   const d = DEFS[item]
-  return d?.kind === 'gun' && (buttons & BUTTON_ALT) !== 0 ? d.aimSpeed : 1
+  return (d?.kind === 'gun' || d?.kind === 'launcher') && (buttons & BUTTON_ALT) !== 0 ? d.aimSpeed : 1
 }
 
 /** Ticks a bandage takes to apply. */

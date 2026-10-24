@@ -47,10 +47,18 @@ export class ChaseCam {
   private trauma = 0
   private time = 0
 
-  /** Forgets the car followed so far, e.g. on leaving it. */
+  /** Forgets the car followed so far, e.g. on leaving it. A shake under way goes on: it is the camera's, not the car's. */
   reset() {
     this.last = null
-    this.speed = this.accel = this.yawRate = this.pull = this.trauma = 0
+    this.speed = this.accel = this.yawRate = this.pull = 0
+  }
+
+  /** The shake `dt` seconds on, as an offset of the camera's position in metres, for a camera following no car (on foot). */
+  tremble(dt: number, random: () => number = Math.random): [number, number, number] {
+    this.trauma = Math.max(0, this.trauma - TRAUMA_DECAY * dt)
+    const shake = this.trauma * this.trauma * SHAKE_METRES
+    const wobble = () => (random() * 2 - 1) * shake
+    return [wobble(), wobble(), wobble()]
   }
 
   /** Shakes the camera, `amount` 0..1 (1 is a heavy crash). */
@@ -78,16 +86,13 @@ export class ChaseCam {
     }
     this.last = [position[0], position[1], position[2]]
     this.lastYaw = yaw
-    this.trauma = Math.max(0, this.trauma - TRAUMA_DECAY * dt)
 
     const pace = Math.min(1, Math.abs(this.speed) / FULL_SPEED)
-    const shake = this.trauma * this.trauma * SHAKE_METRES
-    const wobble = () => (random() * 2 - 1) * shake
     return {
       fovBoost: MAX_FOV_BOOST * Math.pow(pace, 1.3),
       distance: baseDistance * SPEED_STRETCH * pace + this.pull,
       lean: Math.max(-LEAN_MAX, Math.min(LEAN_MAX, this.yawRate * LEAN_PER_YAW_RATE)),
-      shake: [wobble(), wobble(), wobble()],
+      shake: this.tremble(dt, random),
     }
   }
 }

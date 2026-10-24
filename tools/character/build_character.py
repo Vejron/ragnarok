@@ -15,9 +15,10 @@ Conventions
   * Two materials, so two draw calls per player: `outfit` (vertex colours are shades of white, tinted
     per player at runtime) and `gear` (skin, boots; vertex colours are the final colours). Each weapon
     is its own mesh, `weapon_<name>`, skinned to the right hand and made in the pose it is held in.
-  * Stances say how the arms hold things: `rifle` (both hands on the gun), `pistol` (both hands, out in front) and
-    `hold` (hands low, in front). Clips are baked per stance: the rifle's are named plainly (`idle`,
-    `walk_fwd`, ...), the others carry a `pistol_` / `hold_` prefix. `death` is shared.
+  * Stances say how the arms hold things: `rifle` (both hands on the gun), `pistol` (both hands, out in front),
+    `hold` (hands low, in front) and `shoulder` (a launcher tube on the right shoulder). Clips are baked per
+    stance: the rifle's are named plainly (`idle`, `walk_fwd`, ...), the others carry a `pistol_` / `hold_` /
+    `shoulder_` prefix. `death` is shared.
   * Clips: idle, walk_fwd/back/left/right, run_fwd/back/left/right, crouch_idle, crouch_fwd/back/left/
     right, crawl_idle, crawl_fwd/back/left/right, slide, jump_air, sit, death. The crawl is an army
     crawl lying face down along -Y, resting on the ground at the origin's height. `sit` is a seat in a
@@ -81,8 +82,14 @@ STANCES = {
         R=Vector((-0.19, -0.30, 1.05)), L=Vector((0.21, -0.22, 1.03)),
         pole_r=Vector((-0.7, 0.2, -1.0)), pole_l=Vector((0.7, 0.2, -1.0)),
     ),
+    # A recoilless rifle over the right shoulder: the right hand on the pistol grip under the tube, just
+    # ahead of the shoulder, the left reaching across to the front grip.
+    "shoulder": dict(
+        R=Vector((-0.19, -0.27, 1.32)), L=Vector((-0.13, -0.47, 1.36)),
+        pole_r=Vector((-0.6, 0.3, -1.0)), pole_l=Vector((0.6, 0.1, -1.0)),
+    ),
 }
-STANCE_PREFIX = {"rifle": "", "pistol": "pistol_", "hold": "hold_"}
+STANCE_PREFIX = {"rifle": "", "pistol": "pistol_", "hold": "hold_", "shoulder": "shoulder_"}
 
 
 def srgb(h):
@@ -109,6 +116,7 @@ GUN_BODY = srgb(0x3B3F47)
 GUN_TRIM = srgb(0xF2A33A)
 WOOD = srgb(0x7A4A2A)
 OLIVE = srgb(0x4F5D2E)
+TUBE = srgb(0x55613A)
 CLOTH = srgb(0xF2F2EE)
 CROSS = srgb(0xD93A3A)
 VISOR = srgb(0x7FD8F0)
@@ -374,12 +382,17 @@ def pose_to_rest(stance):
 
 
 def build_weapon(parts, stance):
-    """`parts`: (kind, centre offset from the grip, size, colour) in the stance's pose space."""
+    """`parts`: (kind, centre offset from the grip, size, colour) in the stance's pose space. A `tube` runs
+    along the body's forward axis: its size is (radius at the back, radius at the front, length)."""
     rest_from_pose = pose_to_rest(stance)
     g = STANCES[stance]["R"]
     for kind, off, size, color in parts:
         if kind == "box":
             box(g + Vector(off), size, "hand_R", MAT_GEAR, color, transform=rest_from_pose)
+        elif kind == "tube":
+            back, front, length = size
+            c = g + Vector(off)
+            prism(c + Vector((0, length / 2, 0)), c - Vector((0, length / 2, 0)), back, front, "hand_R", MAT_GEAR, color, sides=8, transform=rest_from_pose)
         else:
             blob(g + Vector(off), size, "hand_R", MAT_GEAR, color, transform=rest_from_pose)
 
@@ -444,6 +457,23 @@ WEAPONS = [
             ("box", (0, -0.03, 0.0), (0.02, 0.075, 0.065), CROSS),
         ],
         None,
+    ),
+    (
+        # Carl Gustaf: an olive tube over the shoulder, the venturi flaring out behind, a sight on its left.
+        "carl_gustaf",
+        "shoulder",
+        [
+            ("tube", (-0.03, 0.20, 0.20), (0.05, 0.05, 1.0), TUBE),  # barrel
+            ("tube", (-0.03, 0.74, 0.20), (0.075, 0.052, 0.10), DARK),  # venturi
+            ("tube", (-0.03, -0.31, 0.20), (0.058, 0.058, 0.06), DARK),  # muzzle ring
+            ("tube", (-0.03, 0.20, 0.20), (0.058, 0.058, 0.07), DARK),  # shoulder piece band
+            ("box", (-0.01, -0.02, 0.07), (0.04, 0.05, 0.15), GUN_TRIM),  # pistol grip
+            ("box", (-0.02, -0.20, 0.10), (0.035, 0.04, 0.12), DARK),  # front grip
+            ("box", (0.05, -0.06, 0.23), (0.04, 0.12, 0.05), DARK),  # sight
+            ("box", (0.05, 0.01, 0.23), (0.05, 0.03, 0.055), DARK),  # sight eyepiece
+            ("box", (-0.03, 0.30, 0.14), (0.05, 0.12, 0.03), DARK),  # shoulder rest
+        ],
+        (-0.03, -0.34, 0.20),
     ),
 ]
 
@@ -797,7 +827,7 @@ def reach(side, wrist, hand, pole):
 
 # Lying down, where the right wrist holds each gun, from the right shoulder: the rifle under the chin,
 # the revolver further out and nearer the middle, where both hands meet on it.
-GUN_AHEAD = {"rifle": Vector((0.17, -0.3, -0.12)), "pistol": Vector((0.2, -0.4, -0.1))}
+GUN_AHEAD = {"rifle": Vector((0.17, -0.3, -0.12)), "pistol": Vector((0.2, -0.4, -0.1)), "shoulder": Vector((0.12, -0.3, -0.12))}
 
 
 def lying_arms(t, moving, back=False):
@@ -1051,7 +1081,7 @@ def preview(directory):
             at(clip, i * (18 if "fwd" in clip or "right" in clip else 60))
             shoot(f"{clip}_{view}_{i}", view)
     # Lying down in each stance: still from three sides, and a crawl cycle in four steps.
-    for stance, item in (("", "ak5"), ("pistol_", "revolver"), ("hold_", "grenade")):
+    for stance, item in (("", "ak5"), ("pistol_", "revolver"), ("hold_", "grenade"), ("shoulder_", "carl_gustaf")):
         for obj in weapon_objects:
             obj.hide_render = obj.name != f"weapon_{item}"
         at(f"{stance}crawl_idle", 0)
@@ -1071,7 +1101,7 @@ def preview(directory):
             obj.hide_render = obj.name != f"weapon_{wname}"
         for clip in ("idle", "run_fwd"):
             at(STANCE_PREFIX[wstance] + clip, 6)
-            for view in ("side", "three"):
+            for view in ("side", "three", "front"):
                 shoot(f"held_{wname}_{clip}_{view}", view)
     for obj in weapon_objects:
         obj.hide_render = False

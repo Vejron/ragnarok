@@ -52,6 +52,8 @@ const NOON = 0.5
 const SHADOW_NEAR = { span: 100, size: 2048, depth: 200 }
 const SHADOW_FAR = { span: 300, size: 4096, depth: 300 }
 
+/** Radians a scoped view swings per metre of camera shake: the zoomed view magnifies it, so a little goes a long way. */
+const SCOPE_SHAKE = 0.25
 /** Vertical field of view, degrees: normal, aiming a gun, and looking down a scope. */
 const DEFAULT_FOV = 75
 /** An FPV camera's wide lens. */
@@ -252,12 +254,14 @@ export class Scene {
    * A first-person view from `eye` along yaw/pitch, for looking down a scope. The shot leaves the
    * eye along this line, which is what the server fires when aim is held.
    */
-  scopeFrom(eye: readonly number[], yaw: number, pitch: number) {
+  scopeFrom(eye: readonly number[], yaw: number, pitch: number, shake?: readonly number[]) {
     this.camera.position.set(eye[0]!, eye[1]!, eye[2]!)
+    // A shake swings the view rather than moving the eye: offsetting a point a metre ahead turns it.
+    const swing = (axis: number) => (shake ? shake[axis]! * SCOPE_SHAKE : 0)
     this.camera.lookAt(
-      eye[0]! - Math.sin(yaw) * Math.cos(pitch),
-      eye[1]! + Math.sin(pitch),
-      eye[2]! - Math.cos(yaw) * Math.cos(pitch),
+      eye[0]! - Math.sin(yaw) * Math.cos(pitch) + swing(0),
+      eye[1]! + Math.sin(pitch) + swing(1),
+      eye[2]! - Math.cos(yaw) * Math.cos(pitch) + swing(2),
     )
     this.sunOver(eye[0]!, eye[1]!, eye[2]!)
   }

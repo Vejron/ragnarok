@@ -235,7 +235,7 @@ fn fire(world: &mut World, kind: u8, vid: u32, origin: [f32; 3], dir: [f32; 3], 
     make_noise(world, origin, Some(gunner), HEAR_BLAST);
     // A barrel poking into a wall bursts the shell there, instead of starting it on the far side.
     if let Some(t) = world.physics.cast_ray(origin, dir, length, vid) {
-        projectiles::burst_at(world, kind, gunner, std::array::from_fn(|i| origin[i] + dir[i] * t), dir);
+        projectiles::burst_at(world, kind, 0, gunner, std::array::from_fn(|i| origin[i] + dir[i] * t), dir);
         return;
     }
     world.launch(Flying { kind, owner: gunner, source: vid, position: std::array::from_fn(|i| origin[i] + dir[i] * length), velocity: dir.map(|v| v * speed), ttl, item: 0, back: 0, flown: 0.0 });

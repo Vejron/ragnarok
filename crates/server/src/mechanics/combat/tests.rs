@@ -2,7 +2,7 @@ use super::*;
 use crate::entities::Health;
 use crate::game::{Command, Game, Outgoing};
 use sim::STANDING_Y;
-use shared::protocol::{HIT_BODY, HIT_DEALT, HIT_KILL, HIT_TAKEN, InputFrame, Snapshot, WEAPON_GRENADE, WEAPON_ROCKET, WEAPON_BULLET, WEAPON_FLARE, WEAPON_REVOLVER, WEAPON_PELLET, WEAPON_SHOTGUN, decode};
+use shared::protocol::{HIT_BODY, HIT_DEALT, HIT_KILL, HIT_TAKEN, InputFrame, Snapshot, WEAPON_GRENADE, WEAPON_LAUNCHER, WEAPON_ROCKET, WEAPON_BULLET, WEAPON_FLARE, WEAPON_REVOLVER, WEAPON_PELLET, WEAPON_SHOTGUN, decode};
 use shared::quant::to_mrad;
 use shared::world::{WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
@@ -251,10 +251,10 @@ fn driver_in_the_car(game: &mut Game) -> (u32, u32) {
 #[test]
 fn a_rocket_flies_and_bursts_on_the_target_and_hurts_it() {
     let (mut game, shooter, target, mut seq, _) = duel();
-    // A rocket flies along the look direction from the eye, so it is the target that stands in its line.
+    // Down the sight a rocket flies along the look direction from the eye, so it is the target that stands in its line.
     game.world.entities.get_mut::<Player>(target).unwrap().character.position[0] = 100.0;
-    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 0, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 };
-    fire_rocket(&mut game.world, shooter);
+    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 0, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_ALT, pitch: 0, view: 0, slot: 0 };
+    fire_rocket(&mut game.world, shooter, ITEM_CARL_GUSTAF);
     // 20 m at 45 m/s is under half a second.
     for _ in 0..40 {
         seq += 1;
@@ -275,8 +275,8 @@ fn a_rocket_flies_and_bursts_on_the_target_and_hurts_it() {
 fn a_rocket_into_a_wall_next_to_you_hurts_you_and_credits_nobody() {
     let (mut game, shooter, _, mut seq, _) = duel();
     // Straight down at the feet: bursts a metre or so away.
-    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: to_mrad(-1.4), view: 0, slot: 0 };
-    fire_rocket(&mut game.world, shooter);
+    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_ALT, pitch: to_mrad(-1.4), view: 0, slot: 0 };
+    fire_rocket(&mut game.world, shooter, ITEM_CARL_GUSTAF);
     for _ in 0..4 {
         seq += 1;
         game.handle(Command::Input(shooter, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: to_mrad(-1.4), view: 0, slot: 0 }]));
@@ -355,8 +355,8 @@ fn a_wreck_cannot_be_boarded_and_comes_back_whole() {
 #[test]
 fn a_rocket_in_flight_is_in_the_snapshot() {
     let (mut game, shooter, _, mut seq, _) = duel();
-    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 0, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 };
-    fire_rocket(&mut game.world, shooter);
+    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 0, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_ALT, pitch: 0, view: 0, slot: 0 };
+    fire_rocket(&mut game.world, shooter, ITEM_CARL_GUSTAF);
     hold(&mut game, shooter, &mut seq, 0.0, 0, 1);
     let rockets = game.seen_projectiles();
     assert_eq!(rockets.len(), 1);
@@ -557,6 +557,42 @@ fn a_flare_gun_spends_a_flare_and_fires_it() {
     let speed = flare.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
     assert!((flare.velocity[1] / speed - FLARE_LOFT.sin()).abs() < 0.02, "{:?}", flare.velocity);
     assert!(game.world.shots.iter().any(|s| s.weapon == WEAPON_FLARE && s.shooter == shooter));
+}
+
+#[test]
+fn a_carl_gustaf_fires_three_rockets_a_reload_apart_and_is_gone() {
+    let (mut game, shooter, _, mut seq, _) = duel();
+    give(&mut game, shooter, 2, ITEM_CARL_GUSTAF, def(ITEM_CARL_GUSTAF).unwrap().stack);
+    let cooldown = def(ITEM_CARL_GUSTAF).unwrap().cooldown_ticks;
+    let mut launched = 0;
+    for left in (0..3).rev() {
+        let before = game.world.in_flight().len();
+        hold_slot(&mut game, shooter, &mut seq, BUTTON_FIRE | BUTTON_ALT, 2, 1);
+        launched += game.world.in_flight().len() - before;
+        assert_eq!(game.world.entities.of::<Player>(shooter).hotbar[2].count, left);
+        // Held, or pressed again before the next round is loaded, it does not fire.
+        hold_slot(&mut game, shooter, &mut seq, 0, 2, 1);
+        hold_slot(&mut game, shooter, &mut seq, BUTTON_FIRE, 2, 1);
+        assert_eq!(game.world.entities.of::<Player>(shooter).hotbar[2].count, left);
+        hold_slot(&mut game, shooter, &mut seq, 0, 2, cooldown);
+    }
+    assert_eq!(game.world.entities.of::<Player>(shooter).hotbar[2].item, ITEM_NONE, "the empty tube is dropped");
+    assert_eq!(launched, 3, "a rocket for every round");
+}
+
+#[test]
+fn a_carl_gustaf_launch_is_announced_where_the_rocket_leaves() {
+    let (mut game, shooter, _, _, _) = duel();
+    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 0, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_ALT, pitch: 0, view: 0, slot: 0 };
+    game.world.shots.clear();
+    fire_rocket(&mut game.world, shooter, ITEM_CARL_GUSTAF);
+    let shot = game.world.shots.iter().find(|s| s.weapon == WEAPON_LAUNCHER).expect("the launch is announced");
+    let (&id, &rocket) = game.world.in_flight().iter().find(|(_, p)| p.kind == PROJECTILE_ROCKET).expect("in flight");
+    assert_eq!(shot.shooter, shooter);
+    assert_eq!([shot.x, shot.y, shot.z], rocket.position.map(to_cm));
+    // Its blast is the launcher's, harder than a helicopter rocket's.
+    assert_eq!(game.world.entities.get::<projectiles::Burst>(id).unwrap().damage, f32::from(def(ITEM_CARL_GUSTAF).unwrap().damage));
+    assert_eq!(projectiles::burst_for(PROJECTILE_ROCKET, 0).unwrap().damage, ROCKET_DAMAGE);
 }
 
 #[test]

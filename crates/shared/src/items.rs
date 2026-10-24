@@ -1,7 +1,7 @@
 //! Items a player can carry in the hotbar. Mirrored in `client/src/sim/items.ts`.
 
 use crate::consts::TICK_RATE;
-use crate::protocol::{KIND_DRONE, KIND_LOITER, WEAPON_DRONE, WEAPON_FLARE, WEAPON_GRENADE, WEAPON_LOITER, WEAPON_REVOLVER, WEAPON_RIFLE, WEAPON_SHOTGUN, WEAPON_SNIPER};
+use crate::protocol::{KIND_DRONE, KIND_LOITER, WEAPON_DRONE, WEAPON_FLARE, WEAPON_GRENADE, WEAPON_LAUNCHER, WEAPON_LOITER, WEAPON_REVOLVER, WEAPON_RIFLE, WEAPON_SHOTGUN, WEAPON_SNIPER};
 
 /// Slots in the hotbar. A player picks one with the `slot` field of their input.
 pub const HOTBAR_SLOTS: usize = 5;
@@ -25,8 +25,11 @@ pub const ITEM_FLARE: u8 = 10;
 /// Bricks: fire puts a cube where the crosshair is, aim and fire digs one out (`crate::construct`).
 /// Never used up.
 pub const ITEM_BRICKS: u8 = 11;
+/// A Carl Gustaf recoilless rifle, over the shoulder: each shot is a rocket (`PROJECTILE_ROCKET`), and
+/// it goes when the last of its `stack` is fired. Aim held looks down its sight.
+pub const ITEM_CARL_GUSTAF: u8 = 12;
 /// One past the largest item id.
-pub const ITEM_COUNT: u8 = 12;
+pub const ITEM_COUNT: u8 = 13;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ItemKind {
@@ -42,6 +45,8 @@ pub enum ItemKind {
     Flare,
     /// Places and digs out cubes (`crate::construct`).
     Build,
+    /// Fires a rocket from the eye towards the crosshair, or along the look down its sight.
+    Launcher,
 }
 
 /// How a hitscan round loses damage with distance: all of it up to `start` metres, then a straight
@@ -340,6 +345,31 @@ const BRICKS: ItemDef = ItemDef {
     weight: 0,
 };
 
+const CARL_GUSTAF: ItemDef = ItemDef {
+    name: "Carl Gustaf",
+    kind: ItemKind::Launcher,
+    auto: false,
+    // Its rocket's blast, in place of a helicopter rocket's `ROCKET_DAMAGE`.
+    damage: 160,
+    // Loading the next round.
+    cooldown_ticks: 5 * TICK_RATE / 2,
+    mag: 0,
+    reload_ticks: 0,
+    // How far out the crosshair is looked for: the rocket itself flies until `ROCKET_TTL_TICKS` run out.
+    range: 400.0,
+    // Off the shoulder from the hip it wanders; down the sight it goes true.
+    spread: 0.03,
+    projectile: false,
+    pellets: 1,
+    falloff: Falloff::NONE,
+    aim_speed: 0.4,
+    scope: true,
+    // Rounds left; the tube goes when the last is fired.
+    stack: 3,
+    weapon: WEAPON_LAUNCHER,
+    weight: 1,
+};
+
 /// The definition of `item`; `None` for an empty slot or an unknown id.
 pub fn def(item: u8) -> Option<&'static ItemDef> {
     match item {
@@ -354,6 +384,7 @@ pub fn def(item: u8) -> Option<&'static ItemDef> {
         ITEM_LOITER => Some(&LOITER),
         ITEM_FLARE => Some(&FLARE),
         ITEM_BRICKS => Some(&BRICKS),
+        ITEM_CARL_GUSTAF => Some(&CARL_GUSTAF),
         _ => None,
     }
 }
@@ -363,11 +394,11 @@ pub fn gun_for_weapon(weapon: u8) -> u8 {
     (1..ITEM_COUNT).find(|&i| def(i).is_some_and(|d| d.kind == ItemKind::Gun && d.weapon == weapon)).unwrap_or(ITEM_NONE)
 }
 
-/// How much slower the player of `item` (in hand, or 0 for none) walks with `buttons`: only a gun
-/// slows its holder, and only while aim is held. Applied to walk, run and crouch speed alike.
+/// How much slower the player of `item` (in hand, or 0 for none) walks with `buttons`: only a gun or a
+/// launcher slows its holder, and only while aim is held. Applied to walk, run and crouch speed alike.
 pub fn aim_speed_scale(item: u8, buttons: u16) -> f32 {
     match def(item) {
-        Some(d) if d.kind == ItemKind::Gun && buttons & crate::consts::BUTTON_ALT != 0 => d.aim_speed,
+        Some(d) if matches!(d.kind, ItemKind::Gun | ItemKind::Launcher) && buttons & crate::consts::BUTTON_ALT != 0 => d.aim_speed,
         _ => 1.0,
     }
 }
@@ -475,6 +506,7 @@ mod tests {
                     ItemKind::Drone(_) => "drone",
                     ItemKind::Flare => "flare",
                     ItemKind::Build => "build",
+                    ItemKind::Launcher => "launcher",
                 };
                 format!(
                     "    {{\"id\": {id}, \"name\": \"{}\", \"kind\": \"{kind}\", \"auto\": {}, \"damage\": {}, \"cooldownTicks\": {}, \"mag\": {}, \"reloadTicks\": {}, \"range\": {}, \"aimSpeed\": {}, \"scope\": {}, \"stack\": {}, \"weapon\": {}, \"projectile\": {}, \"pellets\": {}, \"falloffStart\": {}, \"falloffEnd\": {}, \"falloffMin\": {}}}",
@@ -556,6 +588,7 @@ mod tests {
         assert_eq!(aim_speed_scale(ITEM_AK5, BUTTON_ALT), AK5.aim_speed);
         assert!(aim_speed_scale(ITEM_SNIPER, BUTTON_ALT) < aim_speed_scale(ITEM_REVOLVER, BUTTON_ALT));
         assert_eq!(aim_speed_scale(ITEM_GRENADE, BUTTON_ALT), 1.0);
+        assert_eq!(aim_speed_scale(ITEM_CARL_GUSTAF, BUTTON_ALT), CARL_GUSTAF.aim_speed);
         assert_eq!(aim_speed_scale(ITEM_NONE, BUTTON_ALT), 1.0);
     }
 

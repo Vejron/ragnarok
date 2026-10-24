@@ -77,6 +77,7 @@ export const WEAPON_LOITER = 21
 /** A flare gun fired from `shooter`'s hand. */
 export const WEAPON_FLARE = 22
 export const WEAPON_RUBBLE = 23
+export const WEAPON_LAUNCHER = 24
 
 /** How a stickman died, as in a `Kill`. Mirrors `DEATH_*`. */
 export const DEATH_BODY = 0
