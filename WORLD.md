@@ -19,7 +19,7 @@ Umeå tree register ───────┘  planted trees ────► arch
 
 ```sh
 set -a; . ./.env.local; set +a        # credentials, see below
-cargo run -p osm-import               # 8.6 km square of central Umeå, Backen to Nydala, 250 m tiles
+cargo run -p osm-import               # 8.6 km square of central Umeå, Backen to Nydala, 256 m tiles
 scripts/world.sh                      # the same: loads .env.local, builds in release mode
 ```
 
@@ -30,8 +30,8 @@ Restart the server afterwards: it reads the whole world at start. The importer c
 |---|---|
 | `--center lat,lon --half m` | Square around a point (default 63.8225,20.235, 4300 m: Backen to Nydala; any more takes in a hill over the 100 m relief limit). The world is always a square: `--bbox` uses the largest one around its centre. |
 | `--bbox s,w,n,e` | An exact box; overrides `--center`/`--half`. |
-| `--tile m` | Tile side, default 250 m. |
-| `--cell m` | Terrain sample spacing, default 5 m, must divide `--tile`. `0` is flat ground and needs no credentials. |
+| `--tile m` | Tile side, default 256 m (the editor grid's). |
+| `--cell m` | Terrain sample spacing, default 4 m (or an `--area` world's `cell`), must divide `--tile`; 1, 2 or 4 m make a 256 m tile `2^k + 1` samples a side, which the client simplifies best. `0` is flat ground and needs no credentials. |
 | `--dem file.tif` | Take elevation from a local DTM GeoTIFF instead of Lantmäteriet. |
 | `--no-water` | Leave out lakes, rivers and streams (skips the water download). |
 | `--osm-water` | Take lakes, rivers, streams and the sea from OpenStreetMap instead of Hydrografi. Slower (Overpass, one query per block), but it has the sea. |
@@ -62,9 +62,9 @@ Without credentials the importer says so and builds buildings as boxes; terrain 
 
 | World | Where | Size | Made by | Used for |
 |---|---|---|---|---|
-| **Dev** | `client/public/dev/` (git-ignored) | ~7.9 km², 2.8 km square around 63.83976, 20.31514 (Mariehem, Umeå), 121 tiles of 256 m, ground every 4 m plus a 1 m slope map (`--cell 4 --detail 1`) | `scripts/world-dev.sh` | day-to-day development: quick to import, load and stream |
+| **Dev** | `client/public/dev/` (git-ignored) | ~7.9 km², 2.8 km square around 63.83976, 20.31514 (Mariehem, Umeå), 121 tiles of 256 m, ground every 1 m (`--cell 1`) | `scripts/world-dev.sh` | day-to-day development: quick to import, load and stream |
 | **Big** | `client/public/world.msgpack` + `tiles/` + `minimap.png` (git-ignored) | 8.6 km square, Backen to Nydala | `scripts/world.sh` | production (what `Dockerfile` and `scripts/deploy.sh` ship), and checking things at full scale |
-| **Editor worlds** | `worlds/<name>/` (`area.json` is committed, the generated files are git-ignored) | any shape: the painted 250 m tiles of the global grid | the map editor (below), or `osm-import --area worlds/<name>/area.json --out worlds/<name>/world.msgpack` | playing a chosen part of the map |
+| **Editor worlds** | `worlds/<name>/` (`area.json` is committed, the generated files are git-ignored) | any shape: the painted 256 m tiles of the global grid, ground at the world's `cell` (1, 2 or 4 m) | the map editor (below), or `osm-import --area worlds/<name>/area.json --out worlds/<name>/world.msgpack` | playing a chosen part of the map |
 | **Fixture** | `fixtures/world/` (committed) | small synthetic city | `--synthetic --out fixtures/world/world.msgpack` | server and client tests only |
 
 They never touch each other's files: the dev world lives in its own directory, and all of them share
@@ -101,7 +101,7 @@ WORLD_DIR=client/public/dev scripts/deploy.sh   # ship another world (e.g. the d
 ```
 
 `scripts/world.sh` loads `.env.local`, then runs the importer in release mode with the defaults
-(`--center 63.8225,20.235 --half 4300`, 250 m tiles, 5 m terrain cells). The output is
+(`--center 63.8225,20.235 --half 4300`, 256 m tiles, 4 m terrain cells). The output is
 `client/public/world.msgpack`, `client/public/tiles/` and `client/public/minimap.png`. The world is
 not committed, so it must exist before a build: `Dockerfile` copies `world.msgpack` and `tiles/`
 into the image and sets `RAGNAROK_WORLD=/app/world.msgpack`, and `scripts/deploy.sh` stops if they
@@ -127,7 +127,7 @@ cargo run -p editor                 # API on :8700 (reads LM_USER/LM_PASS from .
 cd client && npm run dev            # open http://localhost:5173/editor.html
 ```
 
-Paint 250 m tiles on OpenStreetMap, name the world and save it (`worlds/<name>/area.json`, a list of
+Paint 256 m tiles on OpenStreetMap, name the world and save it (`worlds/<name>/area.json`, a list of
 `{gx, gy}` tiles of the global grid). **Download** fills the importer's cache for the blocks the
 tiles lie in, **Generate world** runs `osm-import --area` on it, and **use** makes it the active
 world: restart the server (it reads `worlds/active.json`, unless `RAGNAROK_WORLD` is set) and reload the
@@ -159,7 +159,7 @@ scripts/world.sh --center 63.83976,20.31514 --half 1375 --out client/public/dev/
 ```
 
 - `--half` is half the side in metres, so the world is `2 × half` square. `--tile` must divide that
-  side (250 m tiles: 2750 m is 11 tiles); `--cell` must divide `--tile`. Relief is limited to 100 m
+  side (256 m tiles: 2816 m is 11 tiles); `--cell` must divide `--tile`. Relief is limited to 100 m
   across the world.
 - Run the server and client against it as above (`VITE_WORLD_BASE` is the directory under
   `client/public/`, with slashes: `/mine/`).

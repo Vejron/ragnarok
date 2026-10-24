@@ -29,7 +29,7 @@ A browser multiplayer game: goofy stickmen in a real city built from OpenStreetM
 
 ```sh
 # 1. World (generated, not committed; scripts/world.sh does the same as the first lines here)
-cargo run -p osm-import                       # default: 8.6 km square of central Umeå, Backen to Nydala, in 250 m tiles
+cargo run -p osm-import                       # default: 8.6 km square of central Umeå, Backen to Nydala, in 256 m tiles
 cargo run -p osm-import -- --center 59.3167,18.0613 --half 600   # any lat,lon and half-side in metres
 cargo run -p osm-import -- --bbox 59.3290,18.0600,59.3345,18.0705   # any south,west,north,east
 cargo run -p osm-import -- --synthetic        # offline grid city, with hills
@@ -40,7 +40,7 @@ cargo run -p osm-import -- --synthetic        # offline grid city, with hills
 set -a; . ./.env.local; set +a
 cargo run -p osm-import                       # terrain, roofs and trees
 cargo run -p osm-import -- --dem m708_75.tif  # or from a DTM GeoTIFF you already have
-cargo run -p osm-import -- --cell 0           # flat ground, no elevation (--cell is the sample spacing, 5 m)
+cargo run -p osm-import -- --cell 0           # flat ground, no elevation (--cell is the sample spacing, 4 m)
 
 # 1b. Or the small dev world (~7.6 km² around Mariehem, much faster; written to client/public/dev/)
 scripts/world-dev.sh                          # --synthetic works here too; see WORLD.md, "Dev world"
@@ -65,7 +65,7 @@ The world is `client/public/world.msgpack` plus `client/public/tiles/`, git-igno
 
 **Player settings:** open `/settings.html` (or use the link on the click-to-play screen) to set your name, outfit colour and up to 5 spawn points on the world's map. You start at the first and spawn at the next one each time you die. Spots in water or inside a building are skipped. Settings are kept in the browser and sent when the game connects, so return to the game (or reload it) after changing them.
 
-**Map editor:** `cargo run -p editor`, then open `/editor.html` on the Vite dev server to paint which 250 m tiles of the map make up a world, see which of them are cached, and keep several worlds to switch between (see `EDITOR.md` and `WORLD.md`).
+**Map editor:** `cargo run -p editor`, then open `/editor.html` on the Vite dev server to paint which 256 m tiles of the map make up a world, see which of them are cached, and keep several worlds to switch between (see `EDITOR.md` and `WORLD.md`).
 
 ## Test
 

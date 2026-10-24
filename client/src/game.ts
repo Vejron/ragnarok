@@ -330,9 +330,14 @@ export class Game {
     this.driver = new VehicleDriver(motor)
     await Promise.all([this.crowd.load(), loadVehicleModels(), loadRoosterModel()])
     // The buildings arrive as tiles, around wherever the player is.
-    this.tiles = new TileStreamer(world, { attach: (ref, tile) => this.view.attachTile(ref, tile) })
+    this.tiles = new TileStreamer(world, {
+      prepare: (ref, tile) => this.view.prepareTile(ref, tile),
+      attach: (ref, tile) => this.view.attachTile(ref, tile),
+      discard: (ref) => this.view.discardTile(ref),
+    })
     // Until the server places us, walk around solo from the first spawn point.
     const [x, z] = world.spawns[0] ?? [0, 0]
+    this.view.focus(x, z)
     await this.tiles.prime(x, z)
     this.predictor = new Predictor(motor.stepper, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false })
     this.predictor.speedScale = (input) => aimSpeedScale(this.hotbar[Math.min(input.slot, HOTBAR_SLOTS - 1)]?.item ?? ITEM_NONE, input.buttons)

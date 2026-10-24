@@ -51,15 +51,22 @@ describe('terrain mesh', () => {
     const { buildTile } = await import('@/render/world')
     const tile: TileData = { buildings: [], roads: [], cover: [], trees: [], collision: { vertices: new Float32Array(), triangles: new Uint32Array() }, ground: new Float32Array(), water: new Float32Array(), streams: [], bridges: [], rails: [] }
     const group = buildTile(tile, 0, bumpy())
-    const { geometry } = group.children[0] as Mesh
+    const mesh = group.children[0] as Mesh
+    const { geometry } = mesh
     const position = geometry.positions
     const normal = geometry.normals!
-    expect(geometry.vertexCount).toBe(81)
     for (let i = 0; i < geometry.vertexCount; i++) expect(normal[i * 3 + 1], `vertex ${i}`).toBeGreaterThan(0)
-    // Vertex (column 2, row 3) sits at x = 10, z = 15 with that sample's height.
-    const v = 3 * 9 + 2
-    expect(position[v * 3]).toBe(10)
-    expect(position[v * 3 + 2]).toBe(15)
-    expect(position[v * 3 + 1]).toBeCloseTo(bumpy().heights[v]!, 5)
+    // Every vertex on the surface sits on its sample (skirt vertices hang below theirs).
+    let onSamples = 0
+    for (let i = 0; i < geometry.vertexCount; i++) {
+      const [x, y, z] = [position[i * 3]!, position[i * 3 + 1]!, position[i * 3 + 2]!]
+      const sample = bumpy().heights[(z / 5) * 9 + x / 5]!
+      expect(y).toBeLessThanOrEqual(sample + 1e-5)
+      if (Math.abs(y - sample) < 1e-5) onSamples++
+    }
+    expect(onSamples).toBeGreaterThan(4)
+    // Shaded by its relief map, one texel a cell.
+    expect(mesh.material.normalMap?.width).toBe(8)
+    expect(mesh.material.normalMapTone).toBe(true)
   })
 })

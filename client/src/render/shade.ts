@@ -38,7 +38,7 @@ const LIGHT = (() => {
 })()
 const FLAT_LIGHT = LIGHT[1]
 /** Distance to the ring of samples the cavity term compares against, metres. */
-const CAVITY_RADIUS = 6
+export const CAVITY_RADIUS = 6
 
 const smooth = (low: number, high: number, v: number) => {
   const t = Math.min(Math.max((v - low) / (high - low), 0), 1)
@@ -46,19 +46,27 @@ const smooth = (low: number, high: number, v: number) => {
 }
 
 /**
- * A brightness multiplier baked into the terrain's vertices: hillshade from a low light, darker
- * on steep ground and in hollows, brighter on rises, and a faint low-frequency wobble so a big
- * lawn is not one flat tone. The live sun still lights it; this is the form the sun alone misses.
+ * A brightness multiplier baked into the terrain: hillshade from a low light, darker on steep
+ * ground and in hollows, brighter on rises, and a faint low-frequency wobble so a big lawn is not
+ * one flat tone. The live sun still lights it; this is the form the sun alone misses.
  */
 export function toneAt(height: Height, x: number, z: number, normal: readonly [number, number, number]): number {
+  return toneOf(normal, height(x, z), ringMean(height, x, z), x, z)
+}
+
+/** The mean height on a ring `CAVITY_RADIUS` round `(x, z)`, which `toneOf` compares the ground with. */
+export function ringMean(height: Height, x: number, z: number): number {
+  const r = CAVITY_RADIUS
+  const d = r * Math.SQRT1_2
+  return (height(x + r, z) + height(x - r, z) + height(x, z + r) + height(x, z - r) + height(x + d, z + d) + height(x - d, z + d) + height(x + d, z - d) + height(x - d, z - d)) / 8
+}
+
+/** `toneAt` from its parts: the normal and height at `(x, z)` and the ring's mean height there (`ringMean`). */
+export function toneOf(normal: readonly [number, number, number], height: number, mean: number, x: number, z: number): number {
   const [nx, ny, nz] = normal
   const shade = 1 + 0.45 * (nx * LIGHT[0] + ny * LIGHT[1] + nz * LIGHT[2] - FLAT_LIGHT)
   const steep = 1 - 0.3 * smooth(0.02, 0.25, 1 - ny)
-  const r = CAVITY_RADIUS
-  const d = r * Math.SQRT1_2
-  const mean =
-    (height(x + r, z) + height(x - r, z) + height(x, z + r) + height(x, z - r) + height(x + d, z + d) + height(x - d, z + d) + height(x + d, z - d) + height(x - d, z - d)) / 8
-  const cavity = 1 + Math.min(Math.max((height(x, z) - mean) * 0.05, -0.18), 0.08)
+  const cavity = 1 + Math.min(Math.max((height - mean) * 0.05, -0.18), 0.08)
   const wobble = 1 + 0.03 * (Math.sin(x * 0.043 + 1.3) * Math.sin(z * 0.057) + 0.5 * Math.sin((x - z) * 0.09 + 0.7))
   return Math.min(Math.max(shade * steep * cavity * wobble, 0.55), 1.2)
 }

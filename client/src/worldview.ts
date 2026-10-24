@@ -6,7 +6,9 @@ import { FallingTrees, type TreeFx, type TreeNoise } from './render/falling'
 import { BuildingDamage } from './render/damage'
 import { ConstructView } from './render/construct'
 import { Collapses } from './render/rubble'
-import { buildTile, disposeTile, rebuildBuildings, restitchTerrain } from './render/world'
+import { buildTile, disposeTile, rebuildBuildings, remeshTerrain, restitchTerrain, shadeTerrain } from './render/world'
+import { TerrainWorker, type PreparedTerrain } from './render/terrainworker'
+import { terrainLevel, type Pixels } from './render/terrainmesh'
 import { buildWater, disposeWater } from './render/water'
 import { shellOf } from './sim/carve'
 import { CHUNK, Construct, cellAt, chunkKey, chunkOf, cubeCentre, posKey, type Cube, type Pos } from './sim/construct'
@@ -59,6 +61,18 @@ export class WorldView {
   private readonly rebuilt = new Set<string>()
   /** Chunks of cubes the physics has not been given yet: all of them until the simulation exists. */
   private readonly unsolid = new Set<string>()
+  /** Builds the terrain off the main thread; null where there are no workers, undefined until the world is known. */
+  private builder: TerrainWorker | null | undefined = undefined
+  /** Terrain the worker has built for tiles that are not attached yet, by tile. */
+  private readonly prepared = new Map<number, PreparedTerrain>()
+  /** The level of detail each attached tile's terrain is drawn at, for tiles the worker built. */
+  private readonly levels = new Map<number, number>()
+  /** Tiles whose terrain the worker is meshing at another level now. */
+  private readonly remeshing = new Set<number>()
+  /** Where the viewer is, `(x, z)`: what picks the tiles' levels of detail. */
+  private eye: [number, number] | null = null
+  /** Where the levels were last checked from. */
+  private detailAt: [number, number] | null = null
 
   constructor(private readonly scene: Scene) {}
 
@@ -75,6 +89,49 @@ export class WorldView {
     for (const [key, indices] of this.reshape) this.dropBuildingColliders(key, indices)
     this.reshape.clear()
     this.updateCubes(dt, effects)
+    this.focus(camera.x, camera.z)
+  }
+
+  /** The viewer is at `(x, z)`: tiles that came nearer or went further are meshed at their new level of detail. */
+  focus(x: number, z: number) {
+    this.eye = [x, z]
+    const builder = this.builder
+    if (!builder || (this.detailAt && Math.hypot(x - this.detailAt[0], z - this.detailAt[1]) < 8)) return
+    this.detailAt = [x, z]
+    for (const [key, group] of this.groups) {
+      const current = this.levels.get(key)
+      if (current === undefined || this.remeshing.has(key)) continue
+      const level = terrainLevel(this.tileDistance(key), current)
+      if (level === current) continue
+      this.remeshing.add(key)
+      const { col, row } = tileOf(key)
+      builder
+        .remesh(col, row, level)
+        .then(
+          (buffers) => {
+            if (this.groups.get(key) !== group) return
+            remeshTerrain(group, buffers)
+            this.levels.set(key, level)
+          },
+          () => {},
+        )
+        .finally(() => {
+          this.remeshing.delete(key)
+          // The viewer may have moved on meanwhile: look again.
+          this.detailAt = null
+        })
+    }
+  }
+
+  /** Horizontal distance from the viewer to tile `key`'s nearest edge, metres. */
+  private tileDistance(key: number) {
+    if (!this.world || !this.eye) return 0
+    const { col, row } = tileOf(key)
+    const size = this.world.tileSize
+    const x0 = -this.world.halfExtent + col * size
+    const z0 = -this.world.halfExtent + row * size
+    const [x, z] = this.eye
+    return Math.hypot(Math.max(x0 - x, 0, x - (x0 + size)), Math.max(z0 - z, 0, z - (z0 + size)))
   }
 
   /**
@@ -216,15 +273,37 @@ export class WorldView {
     this.cubes.update(dt, effects)
   }
 
+  /** Builds a streamed-in tile's terrain in the worker, before `attachTile`, so the frame that attaches it only uploads it. */
+  async prepareTile(ref: TileRef, tile: TileData) {
+    const ground = this.world ? groundOf(this.world, ref, tile) : null
+    const builder = ground ? this.terrainBuilder() : null
+    if (!ground || !builder) return
+    try {
+      const key = tileKey(ref.col, ref.row)
+      this.prepared.set(key, await builder.build(ref.col, ref.row, terrainLevel(this.tileDistance(key)), ground, tile))
+    } catch (error) {
+      // `attachTile` builds it on the main thread instead.
+      console.warn('terrain worker failed', ref, error)
+    }
+  }
+
+  /** A prepared tile that will not be attached after all. */
+  discardTile(ref: TileRef) {
+    this.prepared.delete(tileKey(ref.col, ref.row))
+    this.builder?.drop(ref.col, ref.row)
+  }
+
   /** Draws a streamed-in tile and makes it solid for both predicted simulations. Returns how to undo it. */
   attachTile(ref: TileRef, tile: TileData) {
     const ground = this.world ? groundOf(this.world, ref, tile) : null
     const salt = ref.col * 31 + ref.row * 17
     const key = tileKey(ref.col, ref.row)
+    const prepared = this.prepared.get(key)
+    this.prepared.delete(key)
     // Buildings that fell before this tile streamed in (or while it was away) are not drawn.
     const down = new Set(this.goneBuildings.get(key)?.keys())
     // Buildings that are hurt are drawn by `damage`, as shards, not with the tile.
-    const group = buildTile(tile, salt, ground, this.terrain ?? undefined, this.undrawnBuildings(key))
+    const group = buildTile(tile, salt, ground, this.terrain ?? undefined, this.undrawnBuildings(key), prepared)
     this.scene.add(group)
     const water = ground ? buildWater(tile, ground, this.terrain ?? undefined) : null
     if (water) this.waterRoot.add(water)
@@ -233,8 +312,10 @@ export class WorldView {
     this.grass?.addTile(ref, tile, ground)
     this.waters?.set(ref, ground, tile.water)
     this.groups.set(key, group)
-    // Tiles already in place were shaded without this one beside them: close the seams.
-    if (this.terrain && ground) {
+    if (prepared) this.levels.set(key, prepared.level)
+    // Tiles already in place were shaded without this one beside them: close the seams. The worker
+    // does that itself for the tiles it built (`onShaded`).
+    if (this.terrain && ground && !prepared) {
       for (const [dc, dr] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]] as const) {
         const next = this.groups.get(tileKey(ref.col + dc, ref.row + dr))
         if (next) restitchTerrain(next, this.terrain)
@@ -255,12 +336,30 @@ export class WorldView {
       disposeTile(group)
       if (water) disposeWater(water)
       this.groups.delete(key)
+      this.levels.delete(key)
       this.terrain?.delete(ref)
       this.surfaces?.delete(ref)
       this.grass?.removeTile(ref)
       this.waters?.delete(ref)
       this.motor?.removeTile(ref)
+      this.builder?.drop(ref.col, ref.row)
     }
+  }
+
+  private terrainBuilder(): TerrainWorker | null {
+    if (this.builder === undefined && this.world) {
+      this.builder = TerrainWorker.create(this.world.halfExtent, this.world.tileSize)
+      if (this.builder) this.builder.onShaded = (col, row, relief) => this.reshade(tileKey(col, row), relief)
+    }
+    return this.builder ?? null
+  }
+
+  /** A new relief map from the worker for tile `key`, attached or still waiting to be. */
+  private reshade(key: number, relief: Pixels) {
+    const group = this.groups.get(key)
+    if (group) shadeTerrain(group, relief)
+    const waiting = this.prepared.get(key)
+    if (waiting) waiting.relief = relief
   }
 
   /** The server says these buildings and trees are gone. `animate` is false for the catch-up on joining. */
@@ -353,6 +452,7 @@ export class WorldView {
   dispose() {
     this.damage.dispose()
     this.cubes.dispose()
+    this.builder?.dispose()
   }
 
   /**

@@ -4,7 +4,7 @@ import { SimMotor } from '@/sim/motor'
 import { manifestBytes } from './worlds'
 
 // The values `GET /api/grid` returns: the importer's fixed global grid.
-const grid: GridInfo = { origin: [63.8225, 20.235], tile: 250, blockTiles: 8, metresPerDegLat: 110540, metresPerDegLon: 111320 }
+const grid: GridInfo = { origin: [63.8225, 20.235], tile: 256, cells: [1, 2, 4], blockTiles: 8, metresPerDegLat: 110540, metresPerDegLon: 111320 }
 
 describe('editor grid', () => {
   it('puts the origin on a corner of four tiles, as osm-import does', () => {
@@ -15,7 +15,7 @@ describe('editor grid', () => {
   it('finds a tile inside its own bounds', () => {
     const [s, w, n, e] = rectBounds(grid, 7, -13)
     expect(tileAt(grid, (s + n) / 2, (w + e) / 2)).toEqual({ gx: 7, gy: -13 })
-    expect(n - s).toBeCloseTo(250 / 110540, 9)
+    expect(n - s).toBeCloseTo(256 / 110540, 9)
   })
 
   it('groups tiles into blocks with negative indices', () => {

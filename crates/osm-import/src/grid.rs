@@ -1,8 +1,8 @@
 //! The fixed global tile grid every world is painted on.
 //!
-//! The grid is anchored at one reference point (`ORIGIN`) and cut into 250 m tiles with signed
+//! The grid is anchored at one reference point (`ORIGIN`) and cut into 256 m tiles with signed
 //! indices `(gx, gy)`: +X east, +Z south, as in the world's own frame. Tiles are grouped in
-//! `BLOCK_TILES` x `BLOCK_TILES` blocks (2 km), and downloads are made per block. Because blocks
+//! `BLOCK_TILES` x `BLOCK_TILES` blocks (about 2 km), and downloads are made per block. Because blocks
 //! sit at fixed places, a request's cache key depends only on the block and never on which world
 //! asked for it: two worlds that share a block share its cache entries, and a block's state can be
 //! probed without downloading anything.
@@ -12,8 +12,9 @@ use serde::{Deserialize, Serialize};
 
 /// The grid's anchor: central Umeå, the importer's default centre.
 pub const ORIGIN: (f64, f64) = (63.8225, 20.235);
-/// Side of a tile, metres.
-pub const TILE: f64 = 250.0;
+/// Side of a tile, metres. A power of two, so a tile sampled every 1, 2 or 4 m is `2^k + 1` samples a
+/// side: the size the client's terrain simplification (RTIN) fits exactly.
+pub const TILE: f64 = 256.0;
 /// Tiles along one side of a download block.
 pub const BLOCK_TILES: i32 = 8;
 
@@ -176,12 +177,12 @@ mod tests {
         // An L: three tiles in a row and one below the first.
         let tiles = [Tile { gx: 4, gy: 10 }, Tile { gx: 5, gy: 10 }, Tile { gx: 6, gy: 10 }, Tile { gx: 4, gy: 11 }];
         let layout = layout(&tiles).unwrap();
-        assert_eq!(layout.half, 375.0);
+        assert_eq!(layout.half, 1.5 * TILE);
         let (origin, half) = assemble::frame(layout.bbox);
-        assert_eq!(half, 375.0);
+        assert_eq!(half, 1.5 * TILE);
         // The square's corner is the first painted tile's corner, on the global grid.
         let [x, z] = assemble::project(origin, tiles[0].bbox()[2], tiles[0].bbox()[1]);
-        assert!((x + 375.0).abs() < 0.2 && (z + 375.0).abs() < 0.2, "{x} {z}");
+        assert!((x + 1.5 * TILE).abs() < 0.2 && (z + 1.5 * TILE).abs() < 0.2, "{x} {z}");
         assert_eq!(layout.mask.iter().copied().collect::<Vec<_>>(), vec![(0, 0), (0, 1), (1, 0), (2, 0)]);
     }
 

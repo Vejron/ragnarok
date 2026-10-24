@@ -31,6 +31,12 @@ export const heading = ref(0)
 export const itemKind = ref(ITEM_KINDS[0]!.item)
 export const worlds = ref<WorldSummary[]>([])
 export const name = ref('')
+/** What a new world's ground is sampled at, metres: the finest the client draws well. */
+const NEW_WORLD_CELL = 1
+/** What the importer samples a world's ground at when its `area.json` does not say (`DEFAULT_CELL` there). */
+const IMPORTER_CELL = 4
+/** Metres between the world's ground height samples: one of `grid.cells`. */
+export const cell = ref(NEW_WORLD_CELL)
 export const dirty = ref(false)
 export const job = ref<Job>()
 export const message = ref('')
@@ -263,6 +269,7 @@ export async function openWorld(world: string) {
   const loaded = await api.world(world)
   const tiles = loaded.tiles
   name.value = world
+  cell.value = loaded.cell ?? IMPORTER_CELL
   placements.value = { spawns: loaded.spawns ?? [], vehicles: loaded.vehicles ?? [], items: loaded.items ?? [], bots: loaded.bots ?? [] }
   setTiles(new Map(tiles.map((t) => [tileKey(t.gx, t.gy), t])))
   dirty.value = false
@@ -287,7 +294,7 @@ export async function save(): Promise<boolean> {
   }
   name.value = world
   try {
-    await api.save(world, [...painted.value.values()], placements.value)
+    await api.save(world, [...painted.value.values()], cell.value, placements.value)
     dirty.value = false
     message.value = `Saved ${world}.`
     await loadWorlds()
@@ -316,6 +323,7 @@ export function newWorld() {
   scenario.value = emptyScenario()
   scenarioDirty.value = false
   name.value = ''
+  cell.value = NEW_WORLD_CELL
   placements.value = emptyPlacements()
   setTiles(new Map())
   dirty.value = false

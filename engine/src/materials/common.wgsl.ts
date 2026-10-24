@@ -49,6 +49,7 @@ const MAT_LIT = 1u;
 const MAT_VERTEX_COLORS = 2u;
 const MAT_FOG = 4u;
 const MAT_NORMAL_MAP = 8u;
+const MAT_NORMAL_TONE = 16u;
 const OBJ_RECEIVE_SHADOW = 1u;
 const PI = 3.141592653589793;
 

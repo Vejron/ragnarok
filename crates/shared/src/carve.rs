@@ -296,32 +296,36 @@ impl Shell {
 
     /// Marks the cells that hold the building up: those in its lowest layer, and every cell of a
     /// piece that does not touch that layer at all (which the importer made, and nobody cut).
+    ///
+    /// One flood from the lowest layer (through faces, edges and corners, as `around`) finds every
+    /// piece that touches it; a solid cell it never reaches is in a piece that does not.
     fn anchor(&mut self) {
-        let n = self.solid.len();
-        self.anchored = vec![false; n];
-        let mut seen = vec![false; n];
-        for start in 0..n {
-            if !self.solid[start] || seen[start] {
-                continue;
-            }
-            let mut piece = vec![start as u32];
-            seen[start] = true;
-            let mut at = 0;
-            while at < piece.len() {
-                let id = piece[at];
-                at += 1;
-                for next in self.around(id) {
-                    if self.solid[next as usize] && !seen[next as usize] {
-                        seen[next as usize] = true;
-                        piece.push(next);
+        let [nx, ny, nz] = self.dims;
+        let layer = nx * nz;
+        let mut reached = vec![false; self.solid.len()];
+        let mut queue: Vec<usize> = (0..layer).filter(|&i| self.solid[i]).collect();
+        for &i in &queue {
+            reached[i] = true;
+        }
+        let mut at = 0;
+        while at < queue.len() {
+            let id = queue[at];
+            at += 1;
+            let (x, z, y) = (id % nx, (id / nx) % nz, id / layer);
+            for yy in y.saturating_sub(1)..(y + 2).min(ny) {
+                for zz in z.saturating_sub(1)..(z + 2).min(nz) {
+                    let row = (yy * nz + zz) * nx;
+                    for xx in x.saturating_sub(1)..(x + 2).min(nx) {
+                        let next = row + xx;
+                        if self.solid[next] && !reached[next] {
+                            reached[next] = true;
+                            queue.push(next);
+                        }
                     }
                 }
             }
-            let grounded = piece.iter().any(|&id| self.coords(id)[1] == 0);
-            for id in piece {
-                self.anchored[id as usize] = !grounded || self.coords(id)[1] == 0;
-            }
         }
+        self.anchored = (0..self.solid.len()).map(|i| self.solid[i] && (i < layer || !reached[i])).collect();
     }
 
     /// Takes the cells within `radius` centimetres of `at` out of `removed` (one flag per cell),
@@ -603,6 +607,18 @@ impl Shell {
     pub fn untouched(&self) -> Vec<bool> {
         vec![false; self.solid.len()]
     }
+}
+
+/// What a building the importer cut is collided with while nothing is gone from it: `Shell::boxes`
+/// of `untouched`, straight from its baked solid flags, without the rest of a `Shell` (the roof
+/// flags and the anchors), which only carving needs. `None` when it has no cells.
+pub fn whole_boxes(cells: &Cells) -> Option<Vec<[i32; 6]>> {
+    let dims = cells.dims.map(|d| d as usize);
+    let n = dims[0] * dims[1] * dims[2];
+    if n == 0 || n > MAX_CELLS {
+        return None;
+    }
+    Some(boxes_of(cells.origin, dims, unpack(&cells.solid.0, n, dims[0] * dims[2])))
 }
 
 /// The cells of a grid of `dims` cells from `origin` that are `free` (one flag a cell, `Shell::index`
@@ -1241,11 +1257,57 @@ mod tests {
         assert_eq!((boxes(&shell), boxes(&diagonal)), ((5, 30_024), (8, 52_704)));
     }
 
+    /// `anchor` floods once from the lowest layer; this is the plain rule, piece by piece.
+    #[test]
+    fn anchors_are_the_lowest_layer_and_pieces_that_never_reach_it() {
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        for _ in 0..200 {
+            let mut next = || {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                seed
+            };
+            let dims = [1 + next() as usize % 7, 1 + next() as usize % 7, 1 + next() as usize % 7];
+            let n = dims[0] * dims[1] * dims[2];
+            let density = next() % 60;
+            let solid: Vec<bool> = (0..n).map(|_| next() % 100 < density).collect();
+            let mut shell = Shell { origin: [0; 3], cell: CELL, dims, solid, roof: vec![false; n], anchored: Vec::new() };
+            shell.anchor();
+            let mut expected = vec![false; n];
+            let mut seen = vec![false; n];
+            for start in (0..n as u32).filter(|&i| shell.solid[i as usize]) {
+                if seen[start as usize] {
+                    continue;
+                }
+                seen[start as usize] = true;
+                let mut piece = vec![start];
+                let mut at = 0;
+                while at < piece.len() {
+                    for next in shell.around(piece[at]).collect::<Vec<_>>() {
+                        if shell.solid[next as usize] && !seen[next as usize] {
+                            seen[next as usize] = true;
+                            piece.push(next);
+                        }
+                    }
+                    at += 1;
+                }
+                let grounded = piece.iter().any(|&id| shell.coords(id)[1] == 0);
+                for id in piece {
+                    expected[id as usize] = !grounded || shell.coords(id)[1] == 0;
+                }
+            }
+            assert_eq!(shell.anchored, expected, "dims {dims:?}");
+        }
+    }
+
     #[test]
     fn baked_cells_come_back_as_they_were() {
         for shell in [Shell::new(&boxed(5, 4, 3), &roof(5, 4, 3)).unwrap(), Shell::new(&slanted(), &[]).unwrap()] {
             let back = Shell::from_cells(&shell.cells()).unwrap();
             assert_eq!((back.origin, back.dims, &back.solid, &back.roof), (shell.origin, shell.dims, &shell.solid, &shell.roof));
+            assert_eq!(back.anchored, shell.anchored);
+            assert_eq!(whole_boxes(&shell.cells()).unwrap(), shell.boxes(&shell.untouched()));
         }
         // A long run of zeros takes a two-byte length.
         let mut flags = vec![false; 8 * 300];

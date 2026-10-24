@@ -16,7 +16,7 @@ The Vite dev server proxies `/api` to the editor API.
 
 ### 1. Paint a world
 
-The map is OpenStreetMap under a grid of 250 m tiles. Paint the tiles that should be part of the
+The map is OpenStreetMap under a grid of 256 m tiles. Paint the tiles that should be part of the
 world; the importer builds the smallest centred square that holds them and only the painted tiles
 get ground (see `WORLD.md`, "Painting a world").
 
@@ -72,7 +72,7 @@ The side panel keeps several named worlds:
 
 - **Save** writes `worlds/<name>/area.json` (the button shows `*` when there are unsaved changes).
   **New** starts an empty world, **Clear** empties the current one, **×** deletes a world.
-- **Download** fills the importer's cache for the 2 km blocks the painted tiles lie in. The map
+- **Download** fills the importer's cache for the 2 km (8 × 8 tile) blocks the painted tiles lie in. The map
   shows which blocks are already cached.
 - **Generate world** runs `osm-import --area` on the world and writes `world.msgpack` and its
   tiles next to `area.json`. A job panel shows the stage and download progress.
@@ -87,6 +87,7 @@ they survive the world being re-centred when tiles are added or removed:
 ```json
 {
   "tiles":    [{ "gx": 0, "gy": 0 }],
+  "cell":     1,
   "spawns":   [{ "lat": 63.8258, "lon": 20.2630 }],
   "vehicles": [{ "kind": 1, "lat": 63.8259, "lon": 20.2631, "yaw": 0.0 }],
   "items":    [{ "item": 2, "count": 1, "lat": 63.8257, "lon": 20.2629 }],
@@ -95,7 +96,7 @@ they survive the world being re-centred when tiles are added or removed:
 }
 ```
 
-`spawns`, `vehicles`, `items` and `bots` are optional; older files without them still load. A
+`cell` is the ground's resolution, metres between height samples: 1, 2 or 4, picked in the World panel (new worlds take 1 m) and applied the next time the world is generated. Each makes a tile `2^k + 1` samples a side, which the client simplifies best; 1 m shows every ditch and bank, and a tile's heights weigh about 130 KB. Without it the importer uses 4 m. `spawns`, `vehicles`, `items` and `bots` are optional; older files without them still load. A
 bot's `team`, `skill` and `route` are optional as well (1, 0.5 and none); the editor always
 writes all three. `yaw` is in
 radians as the simulation counts it (0 faces north, positive turns left); the editor stores

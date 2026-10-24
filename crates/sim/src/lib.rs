@@ -278,6 +278,11 @@ pub fn building_shell(world: &WorldFile, index: usize) -> Option<(Shell, Vec<Tri
 /// merged into boxes and its floor (`solid_of`). `None` when it has no cubes, and is collided with
 /// as its own triangles.
 pub fn building_shape(world: &WorldFile, index: usize) -> Option<SharedShape> {
+    // Baked cells are merged as they are: building their whole `Shell` waits until one is carved.
+    if let Some(boxes) = shared::carve::whole_boxes(&world.buildings.get(index)?.cells) {
+        let [_, _, floor] = building_parts(world, index)?;
+        return solid_of(&boxes, &floor);
+    }
     let (shell, floor) = building_shell(world, index)?;
     solid_of(&shell.boxes(&shell.untouched()), &floor)
 }

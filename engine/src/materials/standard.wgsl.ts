@@ -27,7 +27,8 @@ ${SUN_SHADOW_WGSL}
 fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   // Sampled before any branching: implicit-derivative sampling must be in uniform control flow.
   let texel = textureSample(colorMap, mapSampler, in.uv);
-  let mapped = textureSample(normalMap, mapSampler, in.uv).xyz * 2.0 - 1.0;
+  let normalTexel = textureSample(normalMap, mapSampler, in.uv);
+  let mapped = normalTexel.xyz * 2.0 - 1.0;
   let material = materials[in.ids.x];
   let flags = material.params.x;
   // Mirroring for a reflection: what is under the water plane is not part of the picture.
@@ -35,6 +36,9 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
     discard;
   }
   var rgb = in.color.rgb * texel.rgb;
+  if ((flags & MAT_NORMAL_TONE) != 0u) {
+    rgb *= normalTexel.a * 2.0;
+  }
   if ((flags & MAT_LIT) != 0u) {
     var n = normalize(in.normal);
     if ((flags & MAT_NORMAL_MAP) != 0u) {

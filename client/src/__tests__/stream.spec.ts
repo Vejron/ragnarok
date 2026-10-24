@@ -118,6 +118,53 @@ describe('TileStreamer', () => {
     now = 10_000
     streamer.update(0, 0)
     await new Promise((resolve) => setTimeout(resolve, 0))
+    // Fetched; attached on the next frame.
+    streamer.update(0, 0)
     expect(attached).toEqual(['5_5'])
+  })
+
+  it('attaches arrived tiles a few a frame, within the budget', async () => {
+    let now = 0
+    const attached: string[] = []
+    const streamer = new TileStreamer(
+      grid(),
+      {
+        attach: (ref) => {
+          // Every tile takes 3 ms to attach, so the 4 ms budget fits two.
+          now += 3
+          attached.push(`${ref.col}_${ref.row}`)
+          return () => {}
+        },
+      },
+      async () => empty,
+      () => now,
+    )
+    streamer.update(0, 0)
+    for (let i = 0; i < 4; i++) await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(attached).toEqual([])
+    streamer.update(0, 0)
+    expect(attached.length).toBe(2)
+    // Nearest first: the four tiles meeting at the player.
+    expect(attached.every((name) => ['4_4', '4_5', '5_4', '5_5'].includes(name))).toBe(true)
+  })
+
+  it('prepares a tile before attaching it, and discards it if the player left meanwhile', async () => {
+    const calls: string[] = []
+    const world = { ...grid(), tiles: [{ col: 0, row: 0, hash: 0 }] }
+    const streamer = new TileStreamer(
+      world,
+      {
+        prepare: async (ref) => void calls.push(`prepare ${ref.col}_${ref.row}`),
+        attach: (ref) => (calls.push(`attach ${ref.col}_${ref.row}`), () => {}),
+        discard: (ref) => void calls.push(`discard ${ref.col}_${ref.row}`),
+      },
+      async () => empty,
+    )
+    streamer.update(-450, -450)
+    for (let i = 0; i < 4; i++) await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(calls).toEqual(['prepare 0_0'])
+    streamer.update(450, 450)
+    expect(calls).toEqual(['prepare 0_0', 'discard 0_0'])
+    expect(streamer.loaded).toBe(0)
   })
 })

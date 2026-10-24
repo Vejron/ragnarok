@@ -11,7 +11,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# 2816 m = eleven 256 m tiles. The ground is sampled every 4 m (what is simulated and what the mesh
-# follows; 256 / 4 = 64 cells a tile) and a 1 m slope map is baked into each tile for the lighting.
-# Override with --cell / --tile / --detail (--detail 0 leaves the slope map out).
-exec scripts/world.sh --center 63.83976,20.31514 --half 1408 --tile 256 --cell 4 --detail 1 --out client/public/dev/world.msgpack "$@"
+# 2816 m = eleven 256 m tiles. The ground is sampled every 1 m (what is simulated, and what the
+# client's simplified mesh and relief map follow; 256 / 1 = 256 cells a tile). Override with --cell.
+exec scripts/world.sh --center 63.83976,20.31514 --half 1408 --cell 1 --out client/public/dev/world.msgpack "$@"

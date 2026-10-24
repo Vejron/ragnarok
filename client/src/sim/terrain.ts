@@ -69,6 +69,11 @@ export class Terrain {
     this.tiles.delete(this.key(ref.col, ref.row))
   }
 
+  /** The ground of tile `(col, row)`, if it is loaded. */
+  get(col: number, row: number): TileGround | undefined {
+    return this.tiles.get(this.key(col, row))
+  }
+
   /** Ground height under `(x, z)`, or null where its tile is not loaded. */
   sample(x: number, z: number): number | null {
     const grid = Math.max(1, Math.ceil((2 * this.halfExtent) / this.tileSize))

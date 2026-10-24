@@ -37,15 +37,20 @@ struct Args {
     /// south,west,north,east in degrees. Overrides `--center` and `--half`.
     #[arg(long)]
     bbox: Option<String>,
-    /// A map editor world (`worlds/<name>/area.json`): build exactly its painted 250 m tiles of the
-    /// global grid. Overrides `--center`, `--half` and `--bbox`; `--tile` stays 250.
+    /// A map editor world (`worlds/<name>/area.json`): build exactly its painted tiles of the global
+    /// grid (`grid::TILE`), with the ground sampled at the file's `cell` unless `--cell` is given.
+    /// Overrides `--center`, `--half` and `--bbox`; `--tile` stays the grid's.
     #[arg(long)]
     area: Option<PathBuf>,
     /// Side of a tile, metres.
-    #[arg(long, default_value_t = 250.0)]
+    #[arg(long, default_value_t = grid::TILE)]
     tile: f64,
-    /// Distance between terrain height samples, metres; must divide `--tile`. 0 makes the ground flat.
-    #[arg(long, default_value_t = 5.0)]
+    /// Distance between terrain height samples, metres; must divide `--tile`. 0 makes the ground
+    /// flat. Default `DEFAULT_CELL`, or an `--area` world's own.
+    #[arg(long = "cell")]
+    cell_arg: Option<f64>,
+    /// `--cell` as given, else the area's, else `DEFAULT_CELL`.
+    #[arg(skip)]
     cell: f64,
     /// Spacing of the slope map baked into each tile for the client's lighting, metres; must
     /// divide `--tile`. Finer than `--cell`, so a coarse ground can still be shaded by the 1 m height
@@ -357,8 +362,27 @@ fn bake_world(path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+/// Distance between terrain height samples when neither `--cell` nor the area says, metres: a
+/// power of two, so a 256 m tile is `2^k + 1` samples a side, which the client simplifies best.
+const DEFAULT_CELL: f64 = 4.0;
+
+/// The ground resolution an editor world asks for (`cell` in its `area.json`), if any.
+fn area_cell(path: &std::path::Path) -> Result<Option<f64>> {
+    #[derive(serde::Deserialize)]
+    struct File {
+        cell: Option<f64>,
+    }
+    let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    Ok(serde_json::from_str::<File>(&text).with_context(|| format!("parsing {}", path.display()))?.cell)
+}
+
 fn main() -> Result<()> {
-    let args = Args::parse();
+    let mut args = Args::parse();
+    let from_area = match &args.area {
+        Some(path) => area_cell(path)?,
+        None => None,
+    };
+    args.cell = args.cell_arg.or(from_area).unwrap_or(DEFAULT_CELL);
     if let Some(path) = &args.bake {
         return bake_world(path);
     }

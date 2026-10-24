@@ -30,6 +30,10 @@ fn valid(name: &str) -> bool {
 #[derive(Deserialize, Serialize)]
 struct Area {
     tiles: Vec<Tile>,
+    /// Metres between the ground's height samples (`--cell`): one of `CELLS`. Absent, the importer
+    /// picks (`DEFAULT_CELL` there).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cell: Option<f64>,
     /// Hand-placed spawn points, vehicles, items and bots (latitude/longitude). The server reads
     /// these from the same file; the importer ignores them.
     #[serde(default)]
@@ -41,6 +45,10 @@ struct Area {
     #[serde(default)]
     bots: Vec<serde_json::Value>,
 }
+
+/// The ground resolutions a world can be built at, metres. Each divides the grid's tile into a power
+/// of two of cells, which the client's terrain simplification fits exactly; finer is more memory.
+const CELLS: [f64; 3] = [1.0, 2.0, 4.0];
 
 fn read_area(name: &str) -> Option<Area> {
     let text = std::fs::read_to_string(worlds_dir().join(name).join("area.json")).ok()?;
@@ -67,6 +75,7 @@ async fn grid_info(res: &mut Response) {
     res.render(Json(serde_json::json!({
         "origin": [grid::ORIGIN.0, grid::ORIGIN.1],
         "tile": grid::TILE,
+        "cells": CELLS,
         "blockTiles": BLOCK_TILES,
         "metresPerDegLat": 110_540.0,
         "metresPerDegLon": 111_320.0,
@@ -95,7 +104,7 @@ async fn list_worlds(res: &mut Response) {
 async fn get_world(req: &mut Request, res: &mut Response) {
     let Some(name) = name_of(req, res) else { return };
     match read_area(&name) {
-        Some(area) => res.render(Json(serde_json::json!({ "name": name, "tiles": area.tiles, "spawns": area.spawns, "vehicles": area.vehicles, "items": area.items, "bots": area.bots }))),
+        Some(area) => res.render(Json(serde_json::json!({ "name": name, "tiles": area.tiles, "cell": area.cell, "spawns": area.spawns, "vehicles": area.vehicles, "items": area.items, "bots": area.bots }))),
         None => fail(res, StatusCode::NOT_FOUND, "no such world"),
     }
 }
@@ -104,6 +113,9 @@ async fn get_world(req: &mut Request, res: &mut Response) {
 async fn put_world(req: &mut Request, res: &mut Response) {
     let Some(name) = name_of(req, res) else { return };
     let Ok(mut area) = req.parse_json::<Area>().await else { return fail(res, StatusCode::BAD_REQUEST, "expected {\"tiles\": [{\"gx\":0,\"gy\":0}]}") };
+    if area.cell.is_some_and(|cell| !CELLS.contains(&cell)) {
+        return fail(res, StatusCode::BAD_REQUEST, &format!("cell must be one of {CELLS:?} metres"));
+    }
     area.tiles.sort();
     area.tiles.dedup();
     let dir = worlds_dir().join(&name);
@@ -451,8 +463,20 @@ mod tests {
         let bot = &saved["bots"][0];
         assert_eq!((bot["team"].as_u64(), bot["skill"].as_f64()), (Some(2), Some(0.8)));
         assert_eq!(bot["route"].as_array().map(Vec::len), Some(2));
-        // An area saved before bots could be placed still loads.
+        // An area saved before bots could be placed, or before it had a ground resolution, still loads.
         let old: Area = serde_json::from_str(r#"{"tiles":[]}"#).unwrap();
         assert!(old.bots.is_empty());
+        assert_eq!(old.cell, None);
+        assert!(!String::from_utf8(serde_json::to_vec(&old).unwrap()).unwrap().contains("cell"));
+    }
+
+    #[test]
+    fn every_resolution_divides_a_tile_into_a_power_of_two_of_cells() {
+        for cell in CELLS {
+            let cells = (grid::TILE / cell).round() as u32;
+            assert!((f64::from(cells) * cell - grid::TILE).abs() < 1e-9 && cells.is_power_of_two(), "{cell} m");
+        }
+        let area: Area = serde_json::from_str(r#"{"tiles":[],"cell":1}"#).unwrap();
+        assert_eq!(area.cell, Some(1.0));
     }
 }

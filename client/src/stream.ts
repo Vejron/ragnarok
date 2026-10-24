@@ -12,14 +12,26 @@ const RETRY_MS = 5000
 const PRIME_TIMEOUT_MS = 20000
 /** Wanted tiles are recomputed once the player has moved this far, metres. */
 const RECHECK_DISTANCE = 12
+/**
+ * Main-thread time a frame may spend attaching tiles, ms. One tile is always attached, however
+ * long it takes; more only while the frame is under this.
+ */
+const ATTACH_BUDGET_MS = 4
 
-/** What a loaded tile is attached to. `attach` returns the function that detaches it again. */
+/**
+ * What a loaded tile is attached to. `attach` returns the function that detaches it again.
+ * `prepare`, if there is one, runs first and off the frame (in a worker, say); a prepared tile that
+ * is no longer wanted by the time it would be attached is handed to `discard` instead.
+ */
 export interface TileSink {
+  prepare?(ref: TileRef, tile: TileData): Promise<void>
   attach(ref: TileRef, tile: TileData): () => void
+  discard?(ref: TileRef): void
 }
 
 interface Entry {
   ref: TileRef
+  /** `loading` lasts from the fetch until the tile is attached, through `prepare` and the queue. */
   state: 'idle' | 'loading' | 'loaded'
   detach: (() => void) | null
   retryAt: number
@@ -33,6 +45,8 @@ interface Entry {
 export class TileStreamer {
   private readonly entries = new Map<number, Entry>()
   private readonly waiting: Array<() => void> = []
+  /** Fetched and prepared, waiting for a frame with time to attach them. */
+  private readonly ready: Array<{ entry: Entry; tile: TileData }> = []
   private x = Infinity
   private z = Infinity
   private checkedAt: [number, number] | null = null
@@ -55,10 +69,11 @@ export class TileStreamer {
     return count
   }
 
-  /** Tells the streamer where the player is. Cheap to call every frame. */
+  /** Tells the streamer where the player is, and attaches what has arrived. Cheap to call every frame. */
   update(x: number, z: number) {
     this.x = x
     this.z = z
+    this.drain(ATTACH_BUDGET_MS)
     const last = this.checkedAt
     if (last && Math.hypot(x - last[0], z - last[1]) < RECHECK_DISTANCE && this.inFlight === 0 && !this.hasRetries()) return
     this.checkedAt = [x, z]
@@ -69,7 +84,8 @@ export class TileStreamer {
   async prime(x: number, z: number, timeoutMs = PRIME_TIMEOUT_MS) {
     this.update(x, z)
     const deadline = this.now() + timeoutMs
-    while (!this.disposed && this.pending() > 0 && this.now() < deadline) {
+    // Nothing is drawn yet, so there is no frame to keep: attach everything as it arrives.
+    while (!this.disposed && (this.drain(Infinity), this.pending() > 0) && this.now() < deadline) {
       // Woken when a fetch ends; the timer is for failed tiles, which wait out their retry delay.
       await new Promise<void>((resolve) => {
         this.waiting.push(resolve)
@@ -85,7 +101,28 @@ export class TileStreamer {
       entry.detach?.()
       entry.detach = null
     }
+    for (const { entry } of this.ready.splice(0)) this.sink.discard?.(entry.ref)
     this.waiting.splice(0).forEach((resolve) => resolve())
+  }
+
+  /** Attaches queued tiles, nearest first, for up to `budgetMs` (always at least one). */
+  private drain(budgetMs: number) {
+    if (this.ready.length === 0) return
+    const start = this.now()
+    this.ready.sort((a, b) => this.distance(a.entry.ref) - this.distance(b.entry.ref))
+    while (this.ready.length > 0) {
+      const { entry, tile } = this.ready.shift()!
+      // The player may have walked away while it waited.
+      if (this.disposed || this.distance(entry.ref) > UNLOAD_RADIUS) {
+        this.sink.discard?.(entry.ref)
+        entry.state = 'idle'
+        continue
+      }
+      entry.detach = this.sink.attach(entry.ref, tile)
+      entry.state = 'loaded'
+      entry.retryAt = 0
+      if (this.now() - start >= budgetMs) break
+    }
   }
 
   /** Loaded tiles are not counted as pending: only wanted ones that are not there yet. */
@@ -143,9 +180,10 @@ export class TileStreamer {
       const tile = await this.fetcher(entry.ref)
       // The player may have walked away while it travelled.
       if (!this.disposed && this.distance(entry.ref) <= UNLOAD_RADIUS) {
-        entry.detach = this.sink.attach(entry.ref, tile)
-        entry.state = 'loaded'
-        entry.retryAt = 0
+        await this.sink.prepare?.(entry.ref, tile)
+        // Attached on the next frame with time for it (`drain`), not here, mid-frame.
+        if (this.disposed) this.sink.discard?.(entry.ref)
+        else this.ready.push({ entry, tile })
       } else {
         entry.state = 'idle'
       }

@@ -48,8 +48,8 @@ const json = (method: string, body: unknown): RequestInit => ({
 export const api = {
   grid: () => call<import('./grid').GridInfo>('/grid'),
   worlds: async () => (await call<{ worlds: WorldSummary[] }>('/worlds')).worlds,
-  world: (name: string) => call<{ tiles: TileId[] } & Partial<Placements>>(`/worlds/${name}`),
-  save: (name: string, tiles: TileId[], placements: Placements) => call(`/worlds/${name}`, json('PUT', { tiles, ...placements })),
+  world: (name: string) => call<{ tiles: TileId[]; cell?: number | null } & Partial<Placements>>(`/worlds/${name}`),
+  save: (name: string, tiles: TileId[], cell: number, placements: Placements) => call(`/worlds/${name}`, json('PUT', { tiles, cell, ...placements })),
   remove: (name: string) => call(`/worlds/${name}`, { method: 'DELETE' }),
   activate: (name: string) => call(`/worlds/${name}/activate`, { method: 'POST' }),
   generate: (name: string) => call<Job>(`/worlds/${name}/generate`, { method: 'POST' }),

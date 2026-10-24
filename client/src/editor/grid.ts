@@ -3,6 +3,8 @@
 export interface GridInfo {
   origin: [number, number]
   tile: number
+  /** The ground resolutions a world can be built at, metres between height samples. */
+  cells: number[]
   blockTiles: number
   metresPerDegLat: number
   metresPerDegLon: number

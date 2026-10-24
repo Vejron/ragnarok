@@ -28,6 +28,8 @@ export interface MaterialParams {
   map?: Texture | null
   /** An object-space normal map (as three's ObjectSpaceNormalMap): the texel is the normal in the mesh's own space. */
   normalMap?: Texture | null
+  /** The normal map's alpha scales the colour: alpha × 2, so 0.5 leaves it as it is (baked shading, say). */
+  normalMapTone?: boolean
   ramp?: Ramp | null
   blend?: Blend
   side?: Side
@@ -55,6 +57,7 @@ export class Material {
   vertexColors: boolean
   map: Texture | null
   normalMap: Texture | null
+  normalMapTone: boolean
   ramp: Ramp | null
   blend: Blend
   side: Side
@@ -78,6 +81,7 @@ export class Material {
     this.vertexColors = params.vertexColors ?? false
     this.map = params.map ?? null
     this.normalMap = params.normalMap ?? null
+    this.normalMapTone = params.normalMapTone ?? false
     this.ramp = params.ramp ?? null
     this.blend = params.blend ?? 'opaque'
     this.side = params.side ?? 'front'
@@ -105,6 +109,7 @@ export class Material {
       vertexColors: this.vertexColors,
       map: this.map,
       normalMap: this.normalMap,
+      normalMapTone: this.normalMapTone,
       ramp: this.ramp,
       blend: this.blend,
       side: this.side,

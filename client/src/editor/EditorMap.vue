@@ -10,7 +10,7 @@ import {
   vehicleKind, zoom, loadWorlds, openWorld, worlds,
 } from './state'
 
-/** The 250 m grid lines are drawn from this zoom up. */
+/** The tile grid's lines are drawn from this zoom up. */
 const GRID_ZOOM = 14
 /** How close a click must be to a marker to pick it, in pixels. */
 const PICK_REACH = 16

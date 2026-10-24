@@ -4,10 +4,12 @@ import { toonMaterial } from './toon'
 import type { TileGround } from '@/sim/terrain'
 import { ROOF_FLAT, type TileData } from '@/world'
 import { shellOf } from '@/sim/carve'
-import { GRASS_COLOR, bakeNormalMap, bakeTerrainTexture } from './cover'
+import { GRASS_COLOR, bakeTerrainTexture, coverTexture, reliefTexture } from './cover'
 import { buildRails } from './rails'
 import { buildRoads } from './roads'
-import { heightSampler, normalAt, toneAt, type HeightSource } from './shade'
+import { heightSampler, type HeightSource } from './shade'
+import { reliefPixels, terrainBuffers, TERRAIN_LOD_ERRORS, type Pixels, type TerrainBuffers } from './terrainmesh'
+import type { PreparedTerrain } from './terrainworker'
 import { buildTrees } from './trees'
 import { TERRAIN_RAMP } from './groundlight'
 
@@ -27,14 +29,11 @@ const buildingMaterial = toonMaterial({ vertexColors: true })
 
 /** Materials are shared by every tile, so streaming one in or out never compiles a shader. */
 const materials = new Map<string, Material>()
-function material(kind: 'terrain' | 'building', color: number) {
+function material(kind: 'building', color: number) {
   const key = `${kind}:${color}`
   let found = materials.get(key)
   if (!found) {
-    found =
-      kind === 'terrain'
-        ? toonMaterial({ color, ramp: TERRAIN_RAMP, vertexColors: true })
-        : toonMaterial({ color })
+    found = toonMaterial({ color })
     materials.set(key, found)
   }
   return found
@@ -52,91 +51,51 @@ export function buildGround(halfExtent: number, y = 0): Mesh {
 }
 
 /**
- * One tile's terrain, as indexed triangles split the way the collider's are (each cell along its
- * `(x0, z1)`–`(x1, z0)` diagonal). UVs run 0..1 over the tile, for a texture baked per tile later.
+ * One tile's terrain (`terrainBuffers`), from what the terrain worker made of it or, without one,
+ * built here and now at the finest level. Its colour is the painted cover and its shading the relief
+ * map, both the tile's own, so the mesh can be simplified without losing either.
  */
-function buildTerrain(tile: Pick<TileData, 'cover' | 'detail'>, ground: TileGround, around?: HeightSource): Mesh {
-  const { x0, z0, cell, side, heights } = ground
-  const positions = new Float32Array(side * side * 3)
-  const uvs = new Float32Array(side * side * 2)
-  for (let row = 0; row < side; row++) {
-    for (let column = 0; column < side; column++) {
-      const at = row * side + column
-      positions.set([x0 + column * cell, heights[at]!, z0 + row * cell], at * 3)
-      uvs.set([column / (side - 1), row / (side - 1)], at * 2)
-    }
-  }
-  const indices = new Uint32Array((side - 1) * (side - 1) * 6)
-  let n = 0
-  for (let row = 0; row < side - 1; row++) {
-    for (let column = 0; column < side - 1; column++) {
-      const p00 = row * side + column
-      const p01 = p00 + 1 // (x1, z0)
-      const p10 = p00 + side // (x0, z1)
-      const p11 = p10 + 1
-      // Counter-clockwise seen from above (+Y), so the faces point up.
-      indices.set([p00, p10, p01, p10, p11, p01], n)
-      n += 6
-    }
-  }
-  const shading = terrainShading(ground, around)
-  const geometry = new Geometry({ positions, uvs, normals: shading.normals, colors: shading.colors, indices })
-  // The cover is painted into this tile's own texture; the material is the tile's too.
-  const map = bakeTerrainTexture(tile, x0, z0, cell * (side - 1))
-  // Finer relief than the mesh has, as lighting only.
-  const normalMap = bakeNormalMap(tile.detail)
-  const owned = map !== null || normalMap !== null
-  const mesh = new Mesh(
-    geometry,
-    owned
-      ? toonMaterial({
-          ...(map ? { map } : { color: GRASS_COLOR }),
-          ...(normalMap ? { normalMap } : {}),
-          ramp: TERRAIN_RAMP,
-          vertexColors: true,
-        })
-      : material('terrain', GRASS_COLOR),
-  )
-  mesh.userData.ownsMaterial = owned
+function buildTerrain(tile: Pick<TileData, 'cover' | 'detail'>, ground: TileGround, around?: HeightSource, prepared?: PreparedTerrain): Mesh {
+  const { x0, z0, cell, side } = ground
+  const geometry = new Geometry(prepared?.buffers ?? terrainBuffers(ground, TERRAIN_LOD_ERRORS[0]))
+  const map = prepared ? (prepared.cover ? coverTexture(prepared.cover) : null) : bakeTerrainTexture(tile, x0, z0, cell * (side - 1))
+  const normalMap = reliefTexture(prepared?.relief ?? reliefPixels(ground, around, tile.detail))
+  const mesh = new Mesh(geometry, toonMaterial({ ...(map ? { map } : { color: GRASS_COLOR }), normalMap, normalMapTone: true, ramp: TERRAIN_RAMP }))
+  mesh.userData.ownsMaterial = true
   mesh.userData.ground = ground
+  mesh.userData.detail = tile.detail
   mesh.receiveShadow = true
   return mesh
 }
 
-/**
- * Smooth per-vertex normals and the baked tone (`toneAt`). Past the tile's edge the height comes
- * from `around` (the neighbouring tile), so both sides of a seam agree; where there is no
- * neighbour the edge height stands in, which leans the normal one-sidedly.
- */
-function terrainShading(ground: TileGround, around?: HeightSource) {
-  const { x0, z0, cell, side } = ground
-  const height = heightSampler(ground, around)
-  const normals = new Float32Array(side * side * 3)
-  const colors = new Float32Array(side * side * 3)
-  for (let row = 0; row < side; row++) {
-    for (let column = 0; column < side; column++) {
-      const [x, z] = [x0 + column * cell, z0 + row * cell]
-      const normal = normalAt(height, x, z, cell)
-      const tone = toneAt(height, x, z, normal)
-      const at = (row * side + column) * 3
-      normals.set(normal, at)
-      colors.set([tone, tone, tone], at)
-    }
-  }
-  return { normals, colors }
+/** A tile's terrain mesh, if it has one. */
+function terrainMesh(group: Group): Mesh | null {
+  for (const child of group.children) if (child.userData.ground && child instanceof Mesh) return child
+  return null
 }
 
-/** Recomputes a terrain mesh's normals once a neighbouring tile has arrived, so the seam closes. */
+/** Works out a terrain mesh's relief along its edges again once a neighbouring tile has arrived, so the seam closes. */
 export function restitchTerrain(group: Group, around: HeightSource) {
-  for (const child of group.children) {
-    const ground = child.userData.ground as TileGround | undefined
-    if (!ground || !(child instanceof Mesh)) continue
-    const { normals, colors } = terrainShading(ground, around)
-    child.geometry.normals!.set(normals)
-    child.geometry.colors!.set(colors)
-    // Only the shading changed, not the shape, so the vertices go up again but the bounds stand.
-    child.geometry.needsUpdateRange(0, child.geometry.vertexCount)
-  }
+  const mesh = terrainMesh(group)
+  const relief = mesh?.material.normalMap
+  if (!mesh || !relief) return
+  shadeTerrain(group, reliefPixels(mesh.userData.ground as TileGround, around, mesh.userData.detail as Int8Array | undefined, relief.source as Pixels))
+}
+
+/** Gives a tile's terrain a new relief map, as `restitchTerrain` or the terrain worker made it. */
+export function shadeTerrain(group: Group, relief: Pixels) {
+  const texture = terrainMesh(group)?.material.normalMap
+  if (!texture) return
+  texture.source = relief
+  texture.needsUpdate()
+}
+
+/** Gives a tile's terrain a new mesh: the same ground at another level of detail. */
+export function remeshTerrain(group: Group, buffers: TerrainBuffers) {
+  const mesh = terrainMesh(group)
+  if (!mesh) return
+  mesh.geometry.dispose()
+  mesh.geometry = new Geometry(buffers)
 }
 
 /**
@@ -144,10 +103,17 @@ export function restitchTerrain(group: Group, around: HeightSource) {
  * of draw calls. `salt` keeps colours stable between reloads and varied across tiles. Roads and
  * tracks are ribbons draped on the terrain; ground cover is painted into the terrain's texture.
  */
-export function buildTile(tile: TileData, salt: number, ground: TileGround | null = null, around?: HeightSource, destroyed: ReadonlySet<number> = NONE): Group {
+export function buildTile(
+  tile: TileData,
+  salt: number,
+  ground: TileGround | null = null,
+  around?: HeightSource,
+  destroyed: ReadonlySet<number> = NONE,
+  terrain?: PreparedTerrain,
+): Group {
   const group = new Group()
   if (ground) {
-    group.add(buildTerrain(tile, ground, around))
+    group.add(buildTerrain(tile, ground, around, terrain))
     const size = (ground.side - 1) * ground.cell
     const height = heightSampler(ground, around)
     const border = [ground.x0, ground.z0, ground.x0 + size, ground.z0 + size] as const
