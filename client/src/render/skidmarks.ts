@@ -1,5 +1,6 @@
 import { Color, Geometry, Mesh, ShaderMaterial } from '@ragnarok/engine'
 import type * as THREE from 'three'
+import { GROUND_LIGHT_WGSL } from './groundlight'
 
 /** Seconds a mark takes to fade away. */
 export const SKID_LIFE = 15
@@ -11,10 +12,14 @@ const MAX_STEP = 4
 const LIFT = 0.03
 
 // Each vertex carries its tint (colour and alpha) as a vertex colour and its birth time in `custom.x`.
+// Lit as the flat ground under it is, so a mark darkens with the road at night and shows in headlights.
 const WGSL = /* wgsl */ `
+${GROUND_LIGHT_WGSL}
+
 fn surface(s: Surface) -> vec4f {
   let age = clamp((params.now - s.custom.x) / params.life, 0.0, 1.0);
-  return vec4f(s.color.rgb, s.color.a * (1.0 - age));
+  let lit = groundLight(s.world, vec3f(0.0, 1.0, 0.0), 1.0);
+  return vec4f(s.color.rgb / PI * lit, s.color.a * (1.0 - age));
 }
 `
 

@@ -90,12 +90,12 @@ export class Scene {
   private dayPhase = NOON
   private readonly sky = createSky()
   private readonly glint = new Color()
-  /** Where the sun stands relative to what it follows, metres; moves with the time of day. */
-  /** How bright the day is, 1 at noon and 0 at midnight. */
-  get daylight() {
-    return Math.min(1, Math.max(0, (this.sky.hemiIntensity / this.palette.hemiIntensity - 0.35) / 0.65))
+  /** The light on flat ground against noon's, per channel: white at noon, dark blue at midnight (see `Sky.tint`). */
+  get groundLight(): Readonly<Color> {
+    return this.sky.tint
   }
 
+  /** Where the sun stands relative to what it follows, metres; moves with the time of day. */
   private readonly sunOffset = [0, SUN_DISTANCE, 0]
   private disposed = false
 
@@ -189,7 +189,8 @@ export class Scene {
     for (let i = 0; i < 3; i++) this.sunOffset[i] = sky.lightDir[i]! * SUN_DISTANCE
     // The water's glint is the light's colour scaled by its strength against the noon sun's.
     this.glint.copy(sky.lightColor).multiplyScalar(sky.lightIntensity / this.palette.sunIntensity)
-    setWaterLight(sky.sky.getHex(), this.glint.getHex())
+    // Clouds mirrored in the water are lit as the ground is.
+    setWaterLight(sky.sky.getHex(), this.glint.getHex(), sky.tint)
     const target = scene.sun.target
     this.sunOver(target.x, target.y, target.z)
   }

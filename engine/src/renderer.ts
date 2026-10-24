@@ -118,8 +118,8 @@ export class Renderer {
   private readonly textures: TextureStore
   private readonly resources: MaterialResources
   private readonly pipelines: GPURenderPipeline[] = []
-  /** Per pipeline: true for ShaderMaterial pipelines, whose group 1 is the material's own. */
-  private readonly customPipeline: boolean[] = []
+  /** Per pipeline: 'standard', a ShaderMaterial's ('custom', whose group 1 is the material's own), or one that also takes the lighting group at 2 ('shadowed'). */
+  private readonly pipelineKind: ('standard' | 'custom' | 'shadowed')[] = []
   private readonly pipelineKeys = new Map<string, number>()
   private readonly materialPipelines = new Map<number, { version: number; overlay: boolean; pipeline: number }>()
   private readonly shadowPipelines: GPURenderPipeline[]
@@ -526,10 +526,10 @@ export class Renderer {
     if (pipeline === undefined) {
       pipeline = this.pipelines.length
       const layout = program
-        ? this.device.createPipelineLayout({ bindGroupLayouts: [this.sceneLayout, program.groupLayout] })
+        ? this.device.createPipelineLayout({ bindGroupLayouts: (material as ShaderMaterial).shadows ? [this.sceneLayout, program.groupLayout, this.lightingLayout] : [this.sceneLayout, program.groupLayout] })
         : this.mainLayout
       this.pipelines.push(this.makePipeline(material, overlay, program ? 'shader material' : state, program?.module ?? this.standardModule, layout))
-      this.customPipeline.push(program !== null)
+      this.pipelineKind.push(program === null ? 'standard' : (material as ShaderMaterial).shadows ? 'shadowed' : 'custom')
       this.pipelineKeys.set(key, pipeline)
     }
     this.materialPipelines.set(material.id, { version: material.version, overlay, pipeline })
@@ -855,7 +855,7 @@ export class Renderer {
     pass.setVertexBuffer(0, this.arena.vertexBuffer)
     pass.setIndexBuffer(this.arena.indexBuffer, 'uint32')
     let current = -1
-    // What is bound at groups 1 and 2: -1 for the lighting group at 1, else a resource group id.
+    // What is bound at groups 1 and 2: -1 for the lighting group, else a resource group id.
     let group1 = -2
     let group2 = -2
     for (let i = from; i < to; i++) {
@@ -864,10 +864,15 @@ export class Renderer {
         pass.setPipeline(this.pipelines[batch.pipeline]!)
         current = batch.pipeline
       }
-      if (this.customPipeline[batch.pipeline]) {
+      const kind = this.pipelineKind[batch.pipeline]
+      if (kind !== 'standard') {
         if (group1 !== batch.group) {
           pass.setBindGroup(1, this.resources.group(batch.group))
           group1 = batch.group
+        }
+        if (kind === 'shadowed' && group2 !== -1) {
+          pass.setBindGroup(2, this.lightingGroup!)
+          group2 = -1
         }
       } else {
         if (group1 !== -1) {

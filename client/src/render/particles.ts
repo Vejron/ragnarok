@@ -1,4 +1,5 @@
-import { ParticleSystem, type ParticleSpec as EngineSpec } from '@ragnarok/engine'
+import { Color, ParticleSystem, type ParticleSpec as EngineSpec } from '@ragnarok/engine'
+import { tinted } from './groundlight'
 
 /** How one particle moves and looks over its life. */
 export interface ParticleSpec {
@@ -29,16 +30,8 @@ export interface ParticleSpec {
   shape?: 'round' | 'puff'
 }
 
-/** The darkest a particle gets at night, against its colour by day. */
-const NIGHT_LEVEL = 0.28
-
-/** `color` as it looks in `light` (1 by day, 0 at night). */
-export function dimmed(color: number, light: number): number {
-  if (light >= 1) return color
-  const k = NIGHT_LEVEL + (1 - NIGHT_LEVEL) * Math.max(0, light)
-  const channel = (shift: number) => Math.round(((color >> shift) & 0xff) * k) << shift
-  return channel(16) | channel(8) | channel(0)
-}
+/** The darkest a particle gets at night, against its colour by day, so smoke and dust stay readable. */
+export const NIGHT_FLOOR = 0.05
 
 /** The height field particles bounce on is sampled this far to a side of the camera, metres, at `CELL` spacing. */
 const REACH = 128
@@ -59,8 +52,8 @@ export class Particles {
   readonly capacity: number
   /** Ground height under a point, for particles that bounce. */
   groundAt: (x: number, z: number) => number = () => 0
-  /** How bright the day is, 1 at noon and 0 at midnight. Particles are not lit, so the plain ones are dimmed by it as they are born. */
-  light = 1
+  /** The light on the ground against noon's (`Sky.tint`). Particles are not lit, so the plain ones are tinted by it as they are born. */
+  readonly light = new Color()
   private readonly blend: 'alpha' | 'additive'
   /** When each live particle dies, by the clock below: a tally of what the GPU is holding, for budgets and tests. */
   private readonly deaths: number[] = []
@@ -92,7 +85,7 @@ export class Particles {
     if (this.deaths.length >= this.capacity) return
     this.deaths.push(this.clock + spec.life)
     if (spec.bounce) this.bounces = true
-    const dim = this.blend === 'alpha' ? (c: number) => dimmed(c, this.light) : (c: number) => c
+    const dim = this.blend === 'alpha' ? (c: number) => tinted(c, this.light, NIGHT_FLOOR) : (c: number) => c
     const engine: EngineSpec = {
       position: spec.position,
       velocity: spec.velocity,

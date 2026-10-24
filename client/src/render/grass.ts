@@ -3,6 +3,8 @@ import { COVER_INDUSTRIAL, COVER_PARK, COVER_URBAN, COVER_WOOD, type Point2, typ
 import { rasterSurface, SURFACE_CELL, SURFACE_GRASS } from '@/sim/surface'
 import type { TileGround } from '@/sim/terrain'
 import { COVER_COLORS, GRASS_COLOR } from './cover'
+import { GROUND_LIGHT_WGSL } from './groundlight'
+import { normalAt } from './shade'
 
 /**
  * Grass: short blades near the camera that lean with the wind, part around whoever walks or drives
@@ -157,6 +159,8 @@ export interface Blade {
   shade: number
   /** Brightness, around 1. */
   tone: number
+  /** The ground's normal at the root, so the blade is lit as the slope it grows on. */
+  normal: readonly [number, number, number]
 }
 
 /** Smooth noise in 0..1 on a lattice of unit cells. */
@@ -210,11 +214,15 @@ export function chunkBlades(cx: number, cz: number, perMetre: number, share: num
     if (shade === 0) continue
     const y = heightAt(x, z)
     if (y === null) continue
+    const normal = normalAt((nx, nz) => heightAt(nx, nz) ?? y, x, z, NORMAL_STEP)
     // Taller in the thick of a patch, short at its edge.
-    blades.push({ x, z, y, height: height * (0.55 + 0.6 * patch), turn, rank: i / total, shade, tone })
+    blades.push({ x, z, y, height: height * (0.55 + 0.6 * patch), turn, rank: i / total, shade, tone, normal })
   }
   return blades
 }
+
+/** Metres either side of a root the ground is sampled at for its slope: about the terrain's own grid. */
+const NORMAL_STEP = 2
 
 /** Bend, as tip offset per metre of blade, a mover or blast can give before it stops adding. */
 const MAX_BEND = 1.35
@@ -228,6 +236,7 @@ const MAX_BEND = 1.35
 export function bladeGeometry(blades: readonly Blade[], simple = false): Geometry {
   const perBlade = simple ? 3 : 5
   const positions = new Float32Array(blades.length * perBlade * 3)
+  const normals = new Float32Array(blades.length * perBlade * 3)
   const colors = new Float32Array(blades.length * perBlade * 4)
   const custom = new Float32Array(blades.length * perBlade * 4)
   const triangles = simple ? 1 : 3
@@ -244,6 +253,7 @@ export function bladeGeometry(blades: readonly Blade[], simple = false): Geometr
     const first = v
     const put = (x: number, y: number, z: number, along: number, light: number) => {
       positions.set([x, y, z], v * 3)
+      normals.set(b.normal, v * 3)
       // Darker at the root, where it meets the ground's own colour, lighter toward the tip.
       const k = b.tone * light
       colors.set([color.r * k, color.g * k, color.b * k, Math.min(1, b.height)], v * 4)
@@ -261,7 +271,7 @@ export function bladeGeometry(blades: readonly Blade[], simple = false): Geometr
     else indices.set([first, first + 1, first + 2, first + 1, first + 3, first + 2, first + 2, first + 3, first + 4], n)
     n += triangles * 3
   }
-  const geometry = new Geometry({ positions, colors, custom, indices })
+  const geometry = new Geometry({ positions, normals, colors, custom, indices })
   // The blades bend outside where they stand: grow the bounds so the chunk is not culled too soon.
   geometry.bounds = { ...geometry.bounds, radius: geometry.bounds.radius + MAX_BEND }
   return geometry
@@ -350,17 +360,18 @@ fn displace(world: vec3f, custom: vec4f, color: vec4f) -> vec3f {
 `
 
 /**
- * Lit as the terrain under it is (up-facing, with the terrain's own eight-band ramp), so the root
- * melts into the ground and only the colour toward the tip tells a blade from the earth.
+ * Lit as the terrain under it is (by the ground's normal at the root, with the terrain's own
+ * eight-band ramp, and in its shadows), so the root melts into the ground and only the colour
+ * toward the tip tells a blade from the earth.
  */
 const GRASS_WGSL = /* wgsl */ `
-const RAMP_AT = array<f32, 8>(0.353, 0.392, 0.451, 0.549, 0.706, 0.816, 0.922, 1.0);
+${GROUND_LIGHT_WGSL}
 
 fn surface(s: Surface) -> vec4f {
-  let up = vec3f(0.0, 1.0, 0.0);
-  let band = u32(clamp(dot(up, frame.sunDir.xyz) * 0.5 + 0.5, 0.0, 0.999) * 8.0);
-  var ramp = RAMP_AT;
-  let lit = frame.sunColor.rgb * ramp[band] + frame.hemiSky.rgb + pointLight(s.world, up);
+  // The ground's normal, as the blade carries it: not turned over on the blade's back face.
+  let ground = select(-s.normal, s.normal, s.front);
+  // In the shadows the ground lies in: one tap, as the blades cover a lot of the screen.
+  let lit = groundLight(s.world, ground, sunShadowTap(s.world, ground));
   var c = s.color.rgb;
   // Washed out with distance: the dark roots and bright tips even out, and the green pales and greys
   // a little toward the sky, so far grass is a soft haze over the ground rather than a field of lines.
@@ -418,7 +429,7 @@ export class Grass {
     const uniforms: ShaderMaterial['uniforms'] = { wind: [0.8, 0.6, 0.18, 0], fade: [0, 0, 1, 0], wash: [0, 1] }
     for (let i = 0; i < BENDERS; i++) uniforms[`b${i}`] = [0, 0, 0, 0]
     for (let i = 0; i < BLASTS; i++) uniforms[`e${i}`] = [0, 0, -1000, 0]
-    this.material = new ShaderMaterial({ wgsl: GRASS_WGSL, vertex: GRASS_VERTEX_WGSL, uniforms, side: 'double', vertexColors: true })
+    this.material = new ShaderMaterial({ wgsl: GRASS_WGSL, vertex: GRASS_VERTEX_WGSL, uniforms, side: 'double', vertexColors: true, shadows: true })
     this.applyDensity()
   }
 

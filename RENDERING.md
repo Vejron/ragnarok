@@ -209,6 +209,12 @@ once the clock has synced; the editor never does, so it stays at noon.
   held at least 25° up so it never shines from under the ground and shadows keep working.
 - Sky and fill blend from night blues through a golden hour near the horizon to the palette's day.
 - `?time=0.27` in the address pins the time of day (here, just after sunrise), to look at one time.
+- What the engine does not light follows the ground's light so it darkens with it. Custom shaders
+  drawn on or over the terrain (grass, water, skid marks) light themselves with `GROUND_LIGHT_WGSL`
+  (`render/groundlight.ts`): the sun through the terrain's ramp, the hemisphere and point lights. Grass
+  also takes the sun's shadow (`ShaderMaterial({ shadows: true })`, one tap). Unlit particles and smoke
+  are tinted as they are born by `Sky.tint` (`Scene.groundLight`): the light on flat ground against
+  noon's per channel, white at noon and dark blue at midnight.
 
 The sun's shadow map is a square orthographic frustum centred on the camera's target. Its centre is
 snapped to whole texels in the light's view, so the edges do not crawl as the target moves, and the

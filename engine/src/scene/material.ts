@@ -155,6 +155,11 @@ export interface ShaderMaterialParams extends Omit<MaterialParams, 'lit' | 'map'
   vertex?: string
   uniforms?: Record<string, UniformValue>
   textures?: Record<string, Texture>
+  /**
+   * Binds the sun's shadow map and puts `fn sunShadow(world: vec3f, normal: vec3f) -> f32` (3×3 PCF, as
+   * standard materials take it) and the cheaper single-tap `sunShadowTap` in scope: 0 in shadow, 1 lit.
+   */
+  shadows?: boolean
 }
 
 /**
@@ -167,6 +172,7 @@ export class ShaderMaterial extends Material {
   readonly vertex: string | undefined
   readonly uniforms: Record<string, UniformValue>
   readonly textures: Record<string, Texture>
+  readonly shadows: boolean
 
   constructor(params: ShaderMaterialParams) {
     super({ ...params, lit: false })
@@ -174,5 +180,6 @@ export class ShaderMaterial extends Material {
     this.vertex = params.vertex
     this.uniforms = { ...params.uniforms }
     this.textures = { ...params.textures }
+    this.shadows = params.shadows ?? false
   }
 }

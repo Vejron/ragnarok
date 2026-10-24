@@ -1,6 +1,7 @@
 import { Color } from '../math/vec'
 import type { ShaderMaterial, UniformValue } from '../scene/material'
 import { COMMON_WGSL } from './common.wgsl'
+import { SUN_SHADOW_WGSL } from './sunshadow.wgsl'
 import { vertexWgsl } from './vertex.wgsl'
 
 /** What a ShaderMaterial compiles to: its shader, and how its uniforms pack into a buffer. */
@@ -29,6 +30,13 @@ function typeOf(value: UniformValue): Field['type'] {
   return (['vec2f', 'vec3f', 'vec4f'] as const)[value.length - 2]!
 }
 
+/** A material with `shadows` takes the renderer's lighting group (see standard.wgsl) at group 2. */
+const SHADOW_BINDINGS = /* wgsl */ `
+@group(2) @binding(1) var shadowMap: texture_depth_2d;
+@group(2) @binding(2) var shadowSampler: sampler_comparison;
+${SUN_SHADOW_WGSL}
+`
+
 /** Builds the WGSL and uniform packing for a ShaderMaterial (fields laid out by WGSL's uniform rules). */
 export function compileCustom(material: ShaderMaterial): CustomShader {
   const fields: Field[] = []
@@ -56,6 +64,7 @@ ${struct}
 @group(1) @binding(0) var<uniform> params: Params;
 @group(1) @binding(1) var materialSampler: sampler;
 ${textures}
+${material.shadows ? SHADOW_BINDINGS : ''}
 
 ${material.vertex ?? ''}
 ${vertexWgsl(material.vertex !== undefined)}
@@ -86,7 +95,7 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   return vec4f(applyFog(c.rgb, flags, in.viewDepth), c.a);
 }
 `
-  const key = `${material.wgsl}|${material.vertex ?? ''}|${fields.map((f) => `${f.name}:${f.type}`).join(',')}|${textureNames.join(',')}`
+  const key = `${material.wgsl}|${material.vertex ?? ''}|${material.shadows}|${fields.map((f) => `${f.name}:${f.type}`).join(',')}|${textureNames.join(',')}`
   return {
     key,
     code,

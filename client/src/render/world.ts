@@ -1,4 +1,4 @@
-import { Geometry, Group, Material, Mesh, Ramp, planeGeometry, type Node } from '@ragnarok/engine'
+import { Geometry, Group, Material, Mesh, planeGeometry, type Node } from '@ragnarok/engine'
 import * as THREE from 'three'
 import { toonMaterial } from './toon'
 import type { TileGround } from '@/sim/terrain'
@@ -9,6 +9,7 @@ import { buildRails } from './rails'
 import { buildRoads } from './roads'
 import { heightSampler, normalAt, toneAt, type HeightSource } from './shade'
 import { buildTrees } from './trees'
+import { TERRAIN_RAMP } from './groundlight'
 
 export type { HeightSource }
 
@@ -20,13 +21,6 @@ const BUILDING_COLORS = [0xffd6a5, 0xfdffb6, 0xcaffbf, 0x9bf6ff, 0xa0c4ff, 0xbdb
 /** Roofs: slate, tile and timber for pitched ones, concrete grey for flat ones. */
 const ROOF_COLORS = [0xb5543f, 0x6d7a8c, 0x8d6e63, 0x4f5d6b, 0x9c4a3c]
 const FLAT_ROOF_COLORS = [0xb0b4ba, 0x9aa0a6, 0xc4c7cc]
-
-/**
- * The terrain's toon ramp: eight steps over three's half-Lambert coordinate (`N·L * 0.5 + 0.5`),
- * dark and coarse in shade and fine near the light. Flat ground under the sun (about 0.83) sits
- * in the middle of step 6, so a few degrees of slope tip it one step either way instead of flickering.
- */
-const TERRAIN_RAMP = new Ramp(new Uint8Array([90, 100, 115, 140, 180, 208, 235, 255]))
 
 /** Every tile's buildings share this one; each vertex carries its colour. */
 const buildingMaterial = toonMaterial({ vertexColors: true })

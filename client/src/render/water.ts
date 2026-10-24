@@ -2,6 +2,7 @@ import { Color, Geometry, Group, Mesh, ShaderMaterial, Texture } from '@ragnarok
 import type { TileGround } from '@/sim/terrain'
 import { NO_WATER, type Stream, type TileData } from '@/world'
 import { heightSampler, type Height, type HeightSource } from './shade'
+import { GROUND_LIGHT_WGSL } from './groundlight'
 
 /**
  * Water: lakes and rivers are a surface mesh per tile at the importer's water level, streams are
@@ -25,6 +26,8 @@ const STREAM_DEPTH = 0.45
 const FLOW_SPEED = 1.4
 
 const WGSL = /* wgsl */ `
+${GROUND_LIGHT_WGSL}
+
 fn bands(p: vec2f, t: f32) -> f32 {
   let a = sin(p.x * 0.9 + p.y * 0.35 + t * 0.9);
   let b = sin(p.x * -0.4 + p.y * 1.1 - t * 0.7);
@@ -47,7 +50,7 @@ fn skyAt(r: vec3f, t: f32) -> vec3f {
   var c = mix(params.sky, params.sky * vec3f(0.55, 0.75, 1.05), pow(up, 0.55));
   let cp = r.xz / (r.y + 0.3) * 0.9 + vec2f(t * 0.03, 0.0);
   let cloud = smoothstep(0.5, 0.95, 0.5 + 0.3 * sin(cp.x * 1.3 + sin(cp.y * 1.1) * 1.6) + 0.25 * sin(cp.y * 2.1 + sin(cp.x * 1.7) * 1.2));
-  c = mix(c, vec3f(1.0), cloud * 0.4 * smoothstep(0.02, 0.3, r.y));
+  c = mix(c, params.cloud, cloud * 0.4 * smoothstep(0.02, 0.3, r.y));
   let s = max(dot(r, frame.sunDir.xyz), 0.0);
   return c + params.sun * (pow(s, 6.0) * 0.12 + pow(s, 200.0) * 1.2);
 }
@@ -80,6 +83,9 @@ fn surface(s: Surface) -> vec4f {
   color = mix(color, params.bed, clear * 0.45);
   color += params.foam * web * clear * 0.35;
   color = mix(color, params.foam, band * 0.12);
+  // The water's own colour and its foam are lit as the flat ground is, so a lake darkens with the shore at night.
+  let ground = groundLight(s.world, vec3f(0.0, 1.0, 0.0), 1.0) / PI;
+  color *= ground;
 
   let e = 0.15;
   let q = select(world * 0.8, p, stream);
@@ -120,7 +126,7 @@ fn surface(s: Surface) -> vec4f {
   let shore = ${FOAM_DEPTH.toFixed(2)} + 0.08 * sin(time * 1.3 + world.x * 0.6 + world.y * 0.45);
   let foam = 1.0 - smoothstep(shore * 0.55, shore, depth);
   let lace = smoothstep(0.1, 0.55, bands(world * 2.1, time * 1.6) * 0.5 + 0.5);
-  color = mix(color, params.foam, foam * mix(0.55, 1.0, lace));
+  color = mix(color, params.foam * ground, foam * mix(0.55, 1.0, lace));
 
   var alpha = smoothstep(0.0, 0.1, depth) * mix(0.62, 0.9, deep);
   alpha = clamp(alpha - clear * 0.12 + fresnel * 0.35 + spark * 0.4, 0.0, 1.0);
@@ -144,6 +150,7 @@ function material(): ShaderMaterial {
       bed: Color.hex(0xd9cf9a),
       sky: Color.hex(0xffffff),
       sun: Color.hex(0xffffff),
+      cloud: Color.hex(0xffffff),
       // Height of the mirrored plane, and 1 while there is one.
       plane: [0, 0],
     },
@@ -176,11 +183,12 @@ export function setWaterPlane(height: number | null) {
   material().needsUpdate()
 }
 
-/** Points the reflection and glint at the scene's sky and sun colours (sRGB hex). */
-export function setWaterLight(sky: number, sun: number) {
+/** Points the reflection and glint at the scene's sky and sun colours (sRGB hex), and the mirrored clouds at `cloud` (linear). */
+export function setWaterLight(sky: number, sun: number, cloud: Readonly<Color>) {
   const uniforms = material().uniforms
   ;(uniforms.sky as Color).setHex(sky)
   ;(uniforms.sun as Color).setHex(sun)
+  ;(uniforms.cloud as Color).copy(cloud)
   material().needsUpdate()
 }
 

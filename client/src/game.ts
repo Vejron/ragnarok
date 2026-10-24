@@ -582,7 +582,8 @@ export class Game {
     // The time of day runs on the server's clock, so every player sees the same sky.
     if (this.clock.synced) {
       this.scene.setTimeOfDay(dayPhase(renderTick, TICK_RATE))
-      this.smoke.light = this.effects.light = this.scene.daylight
+      this.smoke.light.copy(this.scene.groundLight)
+      this.effects.light.copy(this.scene.groundLight)
     }
     const seat = this.seat
     const seated = seat !== null

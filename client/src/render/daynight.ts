@@ -1,4 +1,5 @@
 import { Color } from '@ragnarok/engine'
+import { flatGroundLight } from './groundlight'
 import type { Palette } from './look'
 
 /** A whole day, midnight to midnight, in seconds of server time. */
@@ -53,9 +54,15 @@ export interface Sky {
   readonly hemiSky: Color
   readonly hemiGround: Color
   hemiIntensity: number
+  /**
+   * The light on flat ground now against noon's, per channel (linear): exactly white at noon, dark and
+   * blue at night. Whatever is not lit by the engine (smoke, dust) is multiplied by it to match the ground.
+   */
+  readonly tint: Color
 }
 
 const dayColor = { sky: new Color(), hemiSky: new Color(), hemiGround: new Color(), sun: new Color() }
+const ground = { sun: new Color(), hemi: new Color(), noon: new Color() }
 
 /** The light at `phase` (see `dayPhase`) for `palette`, written into `out`. At noon it is the palette exactly. */
 export function skyAt(phase: number, palette: Palette, out: Sky = createSky()): Sky {
@@ -106,6 +113,14 @@ export function skyAt(phase: number, palette: Palette, out: Sky = createSky()): 
     out.lightColor.copy(MOON)
     out.lightIntensity = MOON_INTENSITY * smoothstep(0, 0.2, -height)
   }
+
+  ground.sun.copy(out.lightColor).multiplyScalar(out.lightIntensity)
+  ground.hemi.copy(out.hemiSky).multiplyScalar(out.hemiIntensity)
+  flatGroundLight(ground.sun, dir[1], ground.hemi, out.tint)
+  ground.sun.copy(dayColor.sun).multiplyScalar(palette.sunIntensity)
+  ground.hemi.copy(dayColor.hemiSky).multiplyScalar(palette.hemiIntensity)
+  const noon = flatGroundLight(ground.sun, noonHeight, ground.hemi, ground.noon)
+  out.tint.set(out.tint.r / noon.r, out.tint.g / noon.g, out.tint.b / noon.b)
   return out
 }
 
@@ -118,6 +133,7 @@ export function createSky(): Sky {
     hemiSky: new Color(),
     hemiGround: new Color(),
     hemiIntensity: 1,
+    tint: new Color(),
   }
 }
 

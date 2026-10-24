@@ -1,5 +1,6 @@
-import { FlashEffects } from '@ragnarok/engine'
-import { dimmed } from './particles'
+import { Color, FlashEffects } from '@ragnarok/engine'
+import { tinted } from './groundlight'
+import { NIGHT_FLOOR } from './particles'
 
 /** Anything with x, y and z: three's Vector3 or the engine's. */
 type V = { x: number; y: number; z: number }
@@ -21,8 +22,8 @@ const spread = (): V => ({ x: Math.random() - 0.5, y: Math.random() - 0.5, z: Ma
  */
 export class Effects {
   readonly root: FlashEffects
-  /** How bright the day is, 1 at noon and 0 at midnight: smoke and dust are not lit, so they are dimmed by it. */
-  light = 1
+  /** The light on the ground against noon's (`Sky.tint`): smoke and dust are not lit, so they are tinted by it. */
+  readonly light = new Color()
 
   constructor(capacity = 8192) {
     this.root = new FlashEffects(capacity)
@@ -146,12 +147,12 @@ export class Effects {
   /** A puff of smoke from a damaged vehicle, drifting up. Black and bigger for a wreck. */
   smoke(at: V, wreck: boolean) {
     const size = wreck ? 1.1 : 0.7
-    this.root.spawn({ at, lift: 3, size: size * 0.5, grow: size, life: wreck ? 1.4 : 1.0, color: dimmed(wreck ? 0x222222 : 0x777777, this.light) })
+    this.root.spawn({ at, lift: 3, size: size * 0.5, grow: size, life: wreck ? 1.4 : 1.0, color: tinted(wreck ? 0x222222 : 0x777777, this.light, NIGHT_FLOOR) })
   }
 
   /** A cloud of dust of about `size` metres across at `at`, swelling and rising as it thins. */
   dust(at: V, size: number) {
-    this.root.spawn({ at, lift: size * 0.5, size: size * 0.35, grow: size * 0.65, life: 2.2, color: dimmed(0xcbc2b0, this.light) })
+    this.root.spawn({ at, lift: size * 0.5, size: size * 0.35, grow: size * 0.65, life: 2.2, color: tinted(0xcbc2b0, this.light, NIGHT_FLOOR) })
   }
 
   /** Just the muzzle flash, for the local player's own shot before the server confirms it. */

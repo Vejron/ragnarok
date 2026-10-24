@@ -13,6 +13,18 @@ describe('day and night', () => {
       expect(sky.lightColor.getHex()).toBe(palette.sun)
       expect(sky.lightIntensity).toBeCloseTo(palette.sunIntensity)
       expect(sky.hemiIntensity).toBeCloseTo(palette.hemiIntensity)
+      expect(sky.tint.r).toBeCloseTo(1)
+      expect(sky.tint.g).toBeCloseTo(1)
+      expect(sky.tint.b).toBeCloseTo(1)
+    }
+  })
+
+  it('tints the ground light dark and blue at night', () => {
+    for (const palette of [CLASSIC, SOFT]) {
+      const { tint } = skyAt(0, palette)
+      expect(tint.r).toBeLessThan(0.15)
+      expect(tint.b).toBeGreaterThan(tint.r)
+      expect(tint.b).toBeLessThan(0.4)
     }
   })
 
