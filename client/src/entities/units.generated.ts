@@ -24,7 +24,7 @@ export function toGame(w: Components): Entity {
     kind: w.kind,
     projectile: w.projectile,
     pickup: w.pickup,
-    vitals: w.vitals && { hp: w.vitals.hp, progress: w.vitals.progress / 255 },
+    vitals: w.vitals && { hp: w.vitals.hp, progress: w.vitals.progress / 255, spent: w.vitals.spent, winded: w.vitals.winded },
     hotbar: w.hotbar,
     drive: w.drive && { vx: w.drive.vx / 100, vy: w.drive.vy / 100, vz: w.drive.vz / 100, wx: w.drive.wx / 1000, wy: w.drive.wy / 1000, wz: w.drive.wz / 1000, steer: w.drive.steer / 1000, spin: w.drive.spin / 1000 },
     seated: w.seated,

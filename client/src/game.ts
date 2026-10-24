@@ -8,7 +8,8 @@ import { Transport } from './net/transport'
 import {
   BUTTON_ALT, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION, RESPAWN_TICKS,
   SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_PRONE,
-  TICK_MS, TICK_RATE, BUILD_REACH, } from './sim/consts'
+  TICK_MS, TICK_RATE, BUILD_REACH, STAMINA_FULL, } from './sim/consts'
+import { easeSway, sway, swayAmplitude } from './sway'
 import { CELL } from './sim/carve'
 import { MATERIAL_BRICK, cellAt, cubeCentre, type Pos } from './sim/construct'
 import { BrickTrigger, mayPlace, type BuildWorld } from './sim/bricks'
@@ -192,6 +193,9 @@ export class Game {
   /** Aiming a gun over the shoulder this frame, and how far the camera has eased in (0..1). */
   private aiming = false
   private aimBlend = 0
+  /** A tired player's gun wandering this frame, `[yaw, pitch]` radians: added to the look shown and sent. */
+  private sway: [number, number] = [0, 0]
+  private swaySize = 0
   private lastShotAt = -Infinity
   /** Scratch for a seat's head point and its vehicle's turn. */
   private readonly seatAt = new THREE.Vector3()
@@ -330,7 +334,7 @@ export class Game {
     // Until the server places us, walk around solo from the first spawn point.
     const [x, z] = world.spawns[0] ?? [0, 0]
     await this.tiles.prime(x, z)
-    this.predictor = new Predictor(motor.stepper, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false })
+    this.predictor = new Predictor(motor.stepper, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false })
     this.predictor.speedScale = (input) => aimSpeedScale(this.hotbar[Math.min(input.slot, HOTBAR_SLOTS - 1)]?.item ?? ITEM_NONE, input.buttons)
     this.avatars.local()
     if (this.disposed) return
@@ -465,6 +469,7 @@ export class Game {
           this.predictor.reconcile(message.ack, {
             position: [x, y, z], yaw: own.heading?.yaw ?? 0, vy: own.motion?.vy ?? 0, grounded: (flags & FLAG_GROUNDED) !== 0,
             knock: [own.motion?.knock_x ?? 0, own.motion?.knock_z ?? 0], ride: message.ride, prone: stance === STANCE_PRONE, chute: stance === STANCE_CHUTE,
+            spent: own.vitals?.spent ?? 0, winded: own.vitals?.winded === 1,
           })
         }
         break
@@ -539,9 +544,9 @@ export class Game {
       seq: ++this.seq,
       strafe: toAxis(sample.strafe),
       forward: toAxis(sample.forward),
-      yaw: toMrad(sample.yaw),
+      yaw: toMrad(sample.yaw + this.sway[0]),
       buttons: sample.buttons,
-      pitch: toMrad(sample.pitch),
+      pitch: toMrad(sample.pitch + this.sway[1]),
       view: this.viewTick(),
       slot: sample.slot,
     }
@@ -627,6 +632,14 @@ export class Game {
     const aiming = !scoped && this.localId !== null && hands && this.hp > 0 && this.input.aimHeld && itemDef(this.held().item)?.kind === 'gun'
     this.aiming = aiming
     this.aimBlend += ((aiming ? 1 : 0) - this.aimBlend) * Math.min(1, dt * 14)
+    // Out of breath, a gun in hand on foot wanders. The look sent with each input carries it, so shots go where it is shown.
+    const gun = itemDef(this.held().item)?.kind
+    const steadying = !seated && this.localId !== null && this.hp > 0 && (gun === 'gun' || gun === 'launcher')
+    // Seated it stops at once: a vehicle's aim must not pick up a fading wobble.
+    this.swaySize = seated ? 0 : easeSway(this.swaySize, steadying ? swayAmplitude(local.spent, local.winded) : 0, dt)
+    this.sway = sway(now / 1000, this.swaySize)
+    const lookYaw = this.input.yaw + this.sway[0]
+    const lookPitch = this.input.pitch + this.sway[1]
     const ride = seat ? cars.get(seat.vehicle) : undefined
     const distance = ride ? rideView(ride.kind).distance : 0
     // Aim held at a gun with a sight (a tank's, a Strv S's): look down it, which shows where the barrel really points.
@@ -642,7 +655,7 @@ export class Game {
     me.held = this.hotbar[this.input.selectedSlot]?.item ?? ITEM_NONE
     // Face where the camera looks, immediately, rather than the last ticked yaw.
     if (sitting) me.seat(this.seatAt, this.seatTurn, this.input.yaw, this.input.pitch, dt)
-    else me.update(position, flying ? local.yaw : this.input.yaw, localVx, localVz, local.grounded, dt, flying ? 0 : this.input.pitch, this.crouching || flying,
+    else me.update(position, flying ? local.yaw : lookYaw, localVx, localVz, local.grounded, dt, flying ? 0 : lookPitch, this.crouching || flying,
       this.crouching && local.grounded && Math.hypot(local.knock[0], local.knock[1]) > SLIDE_MIN_SPEED, local.prone, local.chute)
     if (!seated && this.hp > 0) this.surroundings.wade(0, position[0], position[1], position[2], Math.hypot(localVx, localVz), dt)
     else this.surroundings.dry(0)
@@ -655,9 +668,9 @@ export class Game {
       }, seat.index)
     } else {
       this.cameras.leave(now)
-      if (scoped) this.scene.scopeFrom([position[0]!, position[1]! + this.eyeHeight(), position[2]!], this.input.yaw, this.input.pitch, shake)
+      if (scoped) this.scene.scopeFrom([position[0]!, position[1]! + this.eyeHeight(), position[2]!], lookYaw, lookPitch, shake)
       // Only the distance changes: the pivot is what the server's crosshair ray is built from.
-      else this.scene.follow(position, this.input.yaw, this.input.pitch, ON_FOOT_DISTANCE * (1 - (1 - AIM_DISTANCE_SCALE) * this.aimBlend), ON_FOOT_SHOULDER, ON_FOOT_HEIGHT, shake)
+      else this.scene.follow(position, lookYaw, lookPitch, ON_FOOT_DISTANCE * (1 - (1 - AIM_DISTANCE_SCALE) * this.aimBlend), ON_FOOT_SHOULDER, ON_FOOT_HEIGHT, shake)
     }
     // Streaming follows what the camera is on: the car when seated, else the stickman.
     this.tiles?.update(ride ? ride.x : position[0], ride ? ride.z : position[2])
@@ -731,6 +744,7 @@ export class Game {
       reload: this.reloaded(now, ride ? rideView(ride.kind).reload : SHELL_COOLDOWN_TICKS),
       ...cockpit(view?.gauges?.includes('cockpit') ? (ride?.arms ?? null) : null, aviator, seat ? this.vehicles.fx(seat.vehicle) : undefined),
       air: view?.gauges?.includes('air') ? (this.driver?.thrust?.air ?? null) : null,
+      stamina: !seated && this.localId !== null && this.hp > 0 ? { left: 1 - local.spent / STAMINA_FULL, winded: local.winded } : null,
       eggs: view?.gauges?.includes('eggs') ? (ride?.arms?.bombs ?? null) : null,
       drone: link && ride
         ? {
@@ -827,8 +841,8 @@ export class Game {
     if (now - this.lastFireAt < item.cooldownTicks * TICK_MS) return
     this.lastFireAt = now
     const [x, y, z] = this.predictor!.state.position
-    const yaw = this.input.yaw
-    const pitch = this.input.pitch
+    const yaw = frame.yaw / 1000
+    const pitch = frame.pitch / 1000
     const flat = Math.cos(pitch)
     const direction = new THREE.Vector3(-Math.sin(yaw) * flat, Math.sin(pitch), -Math.cos(yaw) * flat)
     const me = this.avatars.local()

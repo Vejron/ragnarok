@@ -100,7 +100,19 @@ pub const SLIDE_KEEP: f32 = 0.96;
 pub const SLIDE_RETRIGGER: f32 = 1.0;
 /// Above this much leftover velocity, a grounded crouching player is sliding.
 pub const SLIDE_MIN_SPEED: f32 = 2.0;
-pub const JUMP_SPEED: f32 = 6.5;
+/// A rested jump's take-off speed, m/s: 1.6 times the height of a winded one (`JUMP_SPEED_WINDED`), as height goes by its square.
+pub const JUMP_SPEED: f32 = 8.22;
+pub const JUMP_SPEED_WINDED: f32 = 6.5;
+/// Stamina on foot, in whole points so the server and the prediction agree on it exactly. Running on the
+/// ground spends `STAMINA_RUN_DRAIN` a tick (a full bar lasts 5 s) and a jump `STAMINA_JUMP_COST`;
+/// otherwise, with a foot down, `STAMINA_REFILL` a tick comes back. In the air it neither drains nor fills.
+pub const STAMINA_FULL: u16 = 6000;
+pub const STAMINA_RUN_DRAIN: u16 = 20;
+pub const STAMINA_JUMP_COST: u16 = 900;
+pub const STAMINA_REFILL: u16 = 15;
+/// Once it runs out the player is winded: running is walking and a jump is a `JUMP_SPEED_WINDED` one,
+/// until this much has come back.
+pub const STAMINA_RECOVER: u16 = 1800;
 pub const GRAVITY: f32 = 20.0;
 /// Knockback (a car hitting a stickman) is a horizontal velocity added to the walking velocity.
 /// Each tick it keeps this fraction of itself: quickly on the ground, barely in the air.

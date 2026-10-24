@@ -17,7 +17,7 @@ beforeAll(async () => {
 })
 const stepCharacter = (step: Stepper, state: CharacterState, input: InputFrame, dt: number, speedScale = 1) => step(state, input, dt, speedScale)
 
-const standing = (): CharacterState => ({ position: [0, STANDING_Y, 0], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false })
+const standing = (): CharacterState => ({ position: [0, STANDING_Y, 0], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false })
 const forward = (seq: number, buttons = 0): InputFrame => ({ seq, strafe: 0, forward: 127, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 })
 
 /** What the server would compute: the same inputs from the same start. */
@@ -48,7 +48,7 @@ describe('Predictor', () => {
     predictor.acknowledge(3)
     expect(predictor.pendingCount).toBe(2)
     // The server stepped the player out at seq 3 and reports where; 4 and 5 walk on from there.
-    const outside: CharacterState = { position: [10, STANDING_Y, 10], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false }
+    const outside: CharacterState = { position: [10, STANDING_Y, 10], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false }
     predictor.reconcile(3, outside)
     const expected = [forward(4), forward(5)].reduce((state, input) => stepCharacter(flat, state, input, TICK_DT), outside)
     expect(predictor.state.position).toEqual(expected.position)
@@ -144,7 +144,7 @@ describe('knockback and cars', () => {
     const idle = (seq: number): InputFrame => ({ seq, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 })
     for (let seq = 1; seq <= 6; seq++) predictor.apply(idle(seq))
     // By input 3 a car had thrown the player 4 m/s towards +X and up.
-    const hit: CharacterState = { position: [0.2, STANDING_Y + 0.3, 0], yaw: 0, vy: 3, grounded: false, knock: [4, 0], ride: 0, prone: false, chute: false }
+    const hit: CharacterState = { position: [0.2, STANDING_Y + 0.3, 0], yaw: 0, vy: 3, grounded: false, knock: [4, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false }
     predictor.reconcile(3, hit)
     const expected = [4, 5, 6].reduce((state, seq) => stepCharacter(flat, state, idle(seq), TICK_DT), hit)
     expect(predictor.state.position).toEqual(expected.position)
@@ -225,10 +225,10 @@ describe('cross-language physics', () => {
     // tick, but tiny differences accumulate. Reconciliation only ever replays about an RTT of
     // ticks on top of fresh server state, so the short-horizon checkpoints are what matter.
     const checkpoints = new Map<number, { position: Vec3; tolerance: number }>([
-      [30, { position: [1.8138, 0.9722, 0.748], tolerance: 0.01 }],
-      [60, { position: [3.7758, 1.4722, 0.7701], tolerance: 0.01 }],
-      [90, { position: [4.6299, 0.8649, 0.0827], tolerance: 0.03 }],
-      [300, { position: [4.6295, 0.9728, 0.4872], tolerance: 0.15 }],
+      [30, { position: [1.8138, 1.0009, 0.748], tolerance: 0.01 }],
+      [60, { position: [3.7758, 2.3609, 0.7701], tolerance: 0.01 }],
+      [90, { position: [4.6299, 0.8701, 0.0624], tolerance: 0.03 }],
+      [300, { position: [21.9144, 1.0038, 0.5827], tolerance: 0.15 }],
     ])
     for (let seq = 1; seq <= 300; seq++) {
       state = motor.step(state, scripted(seq), TICK_DT)
@@ -267,9 +267,9 @@ describe('cross-language terrain', () => {
     // `RAMP_CHECKPOINTS` in physics.rs.
     const checkpoints = new Map<number, Vec3>([
       [30, [-0.018, 50.4969, 36.2721]],
-      [60, [-0.0733, 50.4621, 32.5448]],
-      [120, [-0.2956, 46.4279, 25.0934]],
-      [240, [-0.4475, 45.1151, 21.4869]],
+      [60, [-0.0733, 50.7774, 32.5448]],
+      [120, [-0.2956, 46.428, 25.0937]],
+      [240, [-0.4475, 45.1152, 21.4872]],
     ])
     for (let seq = 1; seq <= 240; seq++) {
       const buttons = seq === 50 ? BUTTON_RUN | BUTTON_JUMP : seq < 150 ? BUTTON_RUN : 0

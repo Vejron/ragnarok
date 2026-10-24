@@ -144,7 +144,26 @@ export const SLIDE_RETRIGGER = 1.0
 
 /** Above this much leftover velocity, a grounded crouching player is sliding. */
 export const SLIDE_MIN_SPEED = 2.0
-export const JUMP_SPEED = 6.5
+
+/** A rested jump's take-off speed, m/s: 1.6 times the height of a winded one (`JUMP_SPEED_WINDED`), as height goes by its square. */
+export const JUMP_SPEED = 8.22
+export const JUMP_SPEED_WINDED = 6.5
+
+/**
+ * Stamina on foot, in whole points so the server and the prediction agree on it exactly. Running on the
+ * ground spends `STAMINA_RUN_DRAIN` a tick (a full bar lasts 5 s) and a jump `STAMINA_JUMP_COST`;
+ * otherwise, with a foot down, `STAMINA_REFILL` a tick comes back. In the air it neither drains nor fills.
+ */
+export const STAMINA_FULL = 6000
+export const STAMINA_RUN_DRAIN = 20
+export const STAMINA_JUMP_COST = 900
+export const STAMINA_REFILL = 15
+
+/**
+ * Once it runs out the player is winded: running is walking and a jump is a `JUMP_SPEED_WINDED` one,
+ * until this much has come back.
+ */
+export const STAMINA_RECOVER = 1800
 export const GRAVITY = 20.0
 
 /**

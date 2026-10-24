@@ -24,7 +24,7 @@ impl Game {
             let seated = player.seat.map(|seat| wire::Seated { vehicle: seat.vehicle, seat: seat.index as u8 });
             let shown = Replicated { seated, ..shown };
             let hp = self.world.entities.get::<Health>(id).map_or(0, |health| health.hp);
-            (id, Replicated { vitals: Some(wire::Vitals { hp, progress: progress(player) }), hotbar: Some(wire::Hotbar { slots: player.hotbar }), ..shown })
+            (id, Replicated { vitals: Some(wire::Vitals { hp, progress: progress(player), spent: player.character.spent, winded: player.character.winded.into() }), hotbar: Some(wire::Hotbar { slots: player.hotbar }), ..shown })
         }));
         scene.extend(self.creatures());
         scene.extend(self.world.entities.all::<Vehicle>().filter_map(|(id, vehicle)| Some((id, self.vehicle(id, vehicle)?))));

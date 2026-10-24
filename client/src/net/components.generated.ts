@@ -94,6 +94,8 @@ export interface Pickup {
 export interface Vitals {
   hp: number
   progress: number
+  spent: number
+  winded: number
 }
 
 export interface Hotbar {
@@ -170,7 +172,7 @@ export const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; 
   { id: 14, name: 'kind', diff: false, owner: false, fields: [{ name: 'kind' }] },
   { id: 15, name: 'projectile', diff: false, owner: false, fields: [{ name: 'kind' }] },
   { id: 16, name: 'pickup', diff: false, owner: false, fields: [{ name: 'item' }] },
-  { id: 17, name: 'vitals', diff: false, owner: true, fields: [{ name: 'hp' }, { name: 'progress', unit: 'byte' }] },
+  { id: 17, name: 'vitals', diff: false, owner: true, fields: [{ name: 'hp' }, { name: 'progress', unit: 'byte' }, { name: 'spent' }, { name: 'winded' }] },
   { id: 18, name: 'hotbar', diff: false, owner: true, fields: [{ name: 'slots', struct: [{ name: 'item' }, { name: 'count' }, { name: 'ammo' }] }] },
   { id: 19, name: 'drive', diff: false, owner: true, fields: [{ name: 'vx', unit: 'cm' }, { name: 'vy', unit: 'cm' }, { name: 'vz', unit: 'cm' }, { name: 'wx', unit: 'mrad' }, { name: 'wy', unit: 'mrad' }, { name: 'wz', unit: 'mrad' }, { name: 'steer', unit: 'mrad' }, { name: 'spin', unit: 'mrad' }] },
   { id: 20, name: 'seated', diff: false, owner: false, fields: [{ name: 'vehicle' }, { name: 'seat' }] },

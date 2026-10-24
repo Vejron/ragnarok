@@ -188,6 +188,9 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
     </div>
   </template>
   <div v-if="stats && stats.feedLost > 0.01" class="fpv-lost" :style="{ opacity: stats.feedLost }"><span>SIGNAL LOST</span></div>
+  <div v-if="stats?.stamina && (stats.stamina.left < 1 || stats.stamina.winded)" class="gauges">
+    <div class="heat stamina" :class="{ jammed: stats.stamina.winded }"><div :style="{ width: stats.stamina.left * 100 + '%' }" /><span>{{ stats.stamina.winded ? 'WINDED' : 'STAMINA' }}</span></div>
+  </div>
   <div v-if="stats && stats.air !== null" class="gauges">
     <div class="heat air" :class="{ jammed: stats.air < 0.15 }"><div :style="{ width: stats.air * 100 + '%' }" /><span>{{ stats.seat === 'hen' ? (stats.air < 0.15 ? 'GLIDE' : 'WINGS') : stats.air < 0.15 ? 'AIR LOW' : 'AIR' }}</span></div>
     <div v-if="stats.eggs !== null" class="eggs"><i v-for="k in HEN_EGGS" :key="k" :class="{ gone: k > (stats.eggs ?? 0) }" /></div>
@@ -363,6 +366,8 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
 .heat.jammed div { background: #ff5a5f; }
 .heat.air div { background: linear-gradient(90deg, #9fd8ff, #e8f6ff); }
 .heat.air.jammed div { background: #ff5a5f; }
+.heat.stamina div { background: linear-gradient(90deg, #8fd16a, #d9f5a8); }
+.heat.stamina.jammed div { background: #ff5a5f; }
 .heat span { position: absolute; inset: 0; display: grid; place-content: center; font-size: 11px; font-weight: 800; color: #1d2b36; }
 .bombs { display: flex; gap: 5px; }
 .bombs i { width: 10px; height: 22px; border-radius: 5px 5px 2px 2px; background: #2b2b26; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.7); }

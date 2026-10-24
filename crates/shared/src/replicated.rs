@@ -384,9 +384,10 @@ replicated! {
     Pickup { item: u8 }
 
     set 17 vitals [owner]
-    /// A player's own health (0 is dead), and how far their reload or bandage has got, 0..=255 of done,
-    /// or 0 when neither is going on.
-    Vitals { hp: u8, progress: u8 as byte }
+    /// A player's own health (0 is dead), how far their reload or bandage has got, 0..=255 of done,
+    /// or 0 when neither is going on, and their stamina on foot as their prediction steps it: the points
+    /// spent (0 is rested, `STAMINA_FULL` is out) and whether they are winded, 0 or 1.
+    Vitals { hp: u8, progress: u8 as byte, spent: u16, winded: u8 }
 
     set 18 hotbar [owner]
     /// A player's own hotbar.

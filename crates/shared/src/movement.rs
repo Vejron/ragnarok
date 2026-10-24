@@ -65,13 +65,38 @@ pub fn steer_chute(knock: [f32; 2], input: &InputFrame) -> [f32; 2] {
     [knock[0] + (wx - knock[0]) * CHUTE_STEER, knock[1] + (wz - knock[1]) * CHUTE_STEER]
 }
 
+/// One tick of stamina on foot: the points spent after it, whether the player is winded, and the speed
+/// a jump this tick takes off at. Running on the ground (moving, with run held, standing up and not
+/// winded) spends it, and so does a rested jump; anything else with a foot down gets it back. Running
+/// out leaves the player winded until `STAMINA_RECOVER` has come back.
+pub fn spend_stamina(spent: u16, winded: bool, grounded: bool, prone: bool, input: &InputFrame) -> (u16, bool, f32) {
+    let buttons = input.buttons();
+    let jump_speed = if winded { JUMP_SPEED_WINDED } else { JUMP_SPEED };
+    let jumping = grounded && buttons & BUTTON_JUMP != 0;
+    let moving = input.forward != 0 || input.strafe != 0;
+    let running = grounded && !winded && !prone && moving && buttons & BUTTON_RUN != 0 && buttons & (BUTTON_CROUCH | BUTTON_PRONE) == 0;
+    let mut spent = spent;
+    if jumping && !winded {
+        spent = spent.saturating_add(STAMINA_JUMP_COST);
+    }
+    if running {
+        spent = spent.saturating_add(STAMINA_RUN_DRAIN);
+    } else if grounded && !jumping {
+        spent = spent.saturating_sub(STAMINA_REFILL);
+    }
+    let spent = spent.min(STAMINA_FULL);
+    let winded = spent == STAMINA_FULL || (winded && STAMINA_FULL - spent < STAMINA_RECOVER);
+    (spent, winded, jump_speed)
+}
+
 /// The first half of a movement step: the new vertical velocity and the translation to hand to
 /// the character controller. `knock` is the leftover knockback velocity, `[x, z]` in m/s. Under an open
-/// `chute` it is the glide, and walking does not add to it.
-pub fn desired_translation(vy: f32, grounded: bool, knock: [f32; 2], input: &InputFrame, dt: f32, speed_scale: f32, chute: bool) -> (f32, [f32; 3]) {
+/// `chute` it is the glide, and walking does not add to it. A jump takes off at `jump_speed`.
+#[allow(clippy::too_many_arguments)]
+pub fn desired_translation(vy: f32, grounded: bool, knock: [f32; 2], input: &InputFrame, dt: f32, speed_scale: f32, chute: bool, jump_speed: f32) -> (f32, [f32; 3]) {
     let mut vy = vy;
     if grounded && input.buttons() & BUTTON_JUMP != 0 {
-        vy = JUMP_SPEED;
+        vy = jump_speed;
     }
     if chute {
         let target = -CHUTE_DESCENT;
@@ -167,14 +192,59 @@ mod tests {
     #[test]
     fn jump_only_from_ground() {
         let jump = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_JUMP, pitch: 0, view: 0, slot: 0 };
-        assert!(desired_translation(0.0, true, [0.0; 2], &jump, TICK_DT, 1.0, false).0 > 0.0);
-        assert!(desired_translation(0.0, false, [0.0; 2], &jump, TICK_DT, 1.0, false).0 < 0.0);
+        assert!(desired_translation(0.0, true, [0.0; 2], &jump, TICK_DT, 1.0, false, JUMP_SPEED).0 > 0.0);
+        assert!(desired_translation(0.0, false, [0.0; 2], &jump, TICK_DT, 1.0, false, JUMP_SPEED).0 < 0.0);
+    }
+
+    #[test]
+    fn a_rested_jump_goes_1_6_times_as_high_as_a_winded_one() {
+        let ratio = (JUMP_SPEED * JUMP_SPEED) / (JUMP_SPEED_WINDED * JUMP_SPEED_WINDED);
+        assert!((ratio - 1.6).abs() < 0.01, "{ratio}");
+    }
+
+    #[test]
+    fn running_spends_stamina_and_walking_or_standing_gets_it_back() {
+        let run = frame(127, BUTTON_RUN);
+        assert_eq!(spend_stamina(0, false, true, false, &run), (STAMINA_RUN_DRAIN, false, JUMP_SPEED));
+        // Run held without moving, crouched, or in the air is not running.
+        assert_eq!(spend_stamina(0, false, true, false, &frame(0, BUTTON_RUN)).0, 0);
+        assert_eq!(spend_stamina(100, false, true, false, &frame(127, BUTTON_RUN | BUTTON_CROUCH)).0, 100 - STAMINA_REFILL);
+        assert_eq!(spend_stamina(100, false, false, false, &run).0, 100, "in the air nothing changes");
+        assert_eq!(spend_stamina(100, false, true, false, &frame(127, 0)).0, 100 - STAMINA_REFILL);
+        assert_eq!(spend_stamina(100, false, true, false, &frame(0, 0)).0, 100 - STAMINA_REFILL);
+        assert_eq!(spend_stamina(5, false, true, false, &frame(0, 0)).0, 0);
+    }
+
+    #[test]
+    fn a_rested_jump_costs_stamina_and_a_winded_one_is_lower_and_free() {
+        let jump = frame(0, BUTTON_JUMP);
+        assert_eq!(spend_stamina(0, false, true, false, &jump), (STAMINA_JUMP_COST, false, JUMP_SPEED));
+        assert_eq!(spend_stamina(STAMINA_FULL, true, true, false, &jump), (STAMINA_FULL, true, JUMP_SPEED_WINDED));
+        // A jump that empties the bar is still a full one, and leaves the player winded.
+        assert_eq!(spend_stamina(STAMINA_FULL - 10, false, true, false, &jump), (STAMINA_FULL, true, JUMP_SPEED));
+    }
+
+    #[test]
+    fn running_out_winds_the_player_until_enough_comes_back() {
+        let run = frame(127, BUTTON_RUN);
+        let (spent, winded, _) = spend_stamina(STAMINA_FULL - 1, false, true, false, &run);
+        assert!(winded && spent == STAMINA_FULL);
+        // Winded, run held is walking: it refills, but the player stays winded until `STAMINA_RECOVER`.
+        let (mut spent, mut winded, _) = spend_stamina(spent, winded, true, false, &run);
+        assert!(winded && spent == STAMINA_FULL - STAMINA_REFILL);
+        let mut ticks = 1;
+        while winded {
+            (spent, winded, _) = spend_stamina(spent, winded, true, false, &run);
+            ticks += 1;
+        }
+        assert!(STAMINA_FULL - spent >= STAMINA_RECOVER);
+        assert_eq!(ticks, STAMINA_RECOVER.div_ceil(STAMINA_REFILL));
     }
 
     #[test]
     fn knockback_adds_to_walking_and_dies_out() {
         let idle = InputFrame::default();
-        let (_, pushed) = desired_translation(0.0, true, [6.0, -3.0], &idle, TICK_DT, 1.0, false);
+        let (_, pushed) = desired_translation(0.0, true, [6.0, -3.0], &idle, TICK_DT, 1.0, false, JUMP_SPEED);
         assert!((pushed[0] - 6.0 * TICK_DT).abs() < 1e-6 && (pushed[2] + 3.0 * TICK_DT).abs() < 1e-6);
         let mut knock = [6.0, -3.0];
         for _ in 0..TICK_RATE * 3 {
@@ -206,11 +276,11 @@ mod tests {
         let idle = frame(0, 0);
         let mut vy = -40.0;
         for _ in 0..TICK_RATE * 3 {
-            vy = desired_translation(vy, false, [0.0; 2], &idle, TICK_DT, 1.0, true).0;
+            vy = desired_translation(vy, false, [0.0; 2], &idle, TICK_DT, 1.0, true, JUMP_SPEED).0;
         }
         assert!((vy + CHUTE_DESCENT).abs() < 1e-4, "settled at {vy}");
         // Without it the fall only speeds up.
-        assert!(desired_translation(-40.0, false, [0.0; 2], &idle, TICK_DT, 1.0, false).0 < -40.0);
+        assert!(desired_translation(-40.0, false, [0.0; 2], &idle, TICK_DT, 1.0, false, JUMP_SPEED).0 < -40.0);
     }
 
     #[test]
@@ -224,7 +294,7 @@ mod tests {
         let braked = steer_chute(knock, &frame(-127, 0));
         assert!((braked[1] - knock[1]).abs() < 1.0);
         // Walking does not add to the glide.
-        let (_, moved) = desired_translation(-CHUTE_DESCENT, false, knock, &frame(127, BUTTON_RUN), TICK_DT, 1.0, true);
+        let (_, moved) = desired_translation(-CHUTE_DESCENT, false, knock, &frame(127, BUTTON_RUN), TICK_DT, 1.0, true, JUMP_SPEED);
         assert!((moved[2] - knock[1] * TICK_DT).abs() < 1e-6);
     }
 }

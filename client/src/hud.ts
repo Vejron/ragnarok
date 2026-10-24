@@ -28,6 +28,8 @@ export interface HudStats {
   seat: 'driver' | 'roadster' | 'pilot' | 'aviator' | 'walker' | 'hen' | 'strv' | 'mortar' | 'drone' | 'loiter' | 'passenger' | 'gunner' | null
   /** A Roadster's driver: what is left in the air tank, 0..1; a hen's: its wings' stamina; null elsewhere. */
   air: number | null
+  /** On foot: stamina left, 0..1, and whether they are winded (running is walking, jumps are low); null elsewhere. */
+  stamina: { left: number; winded: boolean } | null
   /**
    * Flying a drone: its battery, 0..1, and the link's strength, 1 at the pilot's side to 0 at the edge of its range;
    * for a loitering drone also which camera is watched (null for an FPV drone's one); null when not flying one.

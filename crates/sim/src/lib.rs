@@ -12,7 +12,7 @@ use rapier3d::parry::utils::Array2;
 use rapier3d::prelude::*;
 use shared::carve::{Shell, Tri};
 use shared::consts::*;
-use shared::movement::{begin_slide, decay_knock, desired_translation, settle_vertical, steer_chute, toggle_chute};
+use shared::movement::{begin_slide, decay_knock, desired_translation, settle_vertical, spend_stamina, steer_chute, toggle_chute};
 use shared::protocol::InputFrame;
 use shared::quant::from_cm;
 use shared::world::{ObjId, WorldFile};
@@ -44,6 +44,10 @@ pub struct Character {
     pub prone: bool,
     /// Hanging under an open parachute. `knock` is then the glide.
     pub chute: bool,
+    /// Stamina used up, 0 (rested) to `STAMINA_FULL`, in whole points (`spend_stamina`).
+    pub spent: u16,
+    /// Ran out of stamina and has not got enough back: running is walking, jumps are low.
+    pub winded: bool,
 }
 
 pub struct Physics {
@@ -562,7 +566,12 @@ impl Physics {
         character.chute = toggle_chute(character.chute, character.grounded, character.prone, input);
         self.change_stance(character, input.buttons() & BUTTON_PRONE != 0 && !character.chute);
         character.knock = if character.chute { steer_chute(character.knock, input) } else { begin_slide(character.knock, character.grounded, input) };
-        let (vy, desired) = desired_translation(character.vy, character.grounded, character.knock, input, dt, speed_scale, character.chute);
+        let (spent, winded, jump_speed) = spend_stamina(character.spent, character.winded, character.grounded, character.prone, input);
+        character.spent = spent;
+        character.winded = winded;
+        // Winded, run held is a walk.
+        let input = &if winded { InputFrame { buttons: input.buttons & !BUTTON_RUN, ..*input } } else { *input };
+        let (vy, desired) = desired_translation(character.vy, character.grounded, character.knock, input, dt, speed_scale, character.chute, jump_speed);
         let queries = self.broad_phase.as_query_pipeline(
             self.narrow_phase.query_dispatcher(),
             &self.bodies,

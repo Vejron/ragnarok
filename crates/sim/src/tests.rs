@@ -75,6 +75,44 @@ fn sliding_carries_a_runner_much_further_than_crouch_walking() {
 }
 
 #[test]
+fn a_long_sprint_runs_out_of_stamina_and_slows_to_a_walk() {
+    let physics = Physics::new(&flat_world()).unwrap();
+    let mut character = standing();
+    let sprint = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0 };
+    let ticks = STAMINA_FULL.div_ceil(STAMINA_RUN_DRAIN);
+    for _ in 0..ticks - 1 {
+        physics.move_character(&mut character, &sprint, TICK_DT);
+    }
+    assert!(!character.winded);
+    let before = character.position[2];
+    physics.move_character(&mut character, &sprint, TICK_DT);
+    assert!(character.winded && character.spent == STAMINA_FULL);
+    // The tick it ran out is already a walk, and so is every one after it until it has recovered.
+    assert!((before - character.position[2] - WALK_SPEED * TICK_DT).abs() < 1e-3);
+    let before = character.position[2];
+    physics.move_character(&mut character, &sprint, TICK_DT);
+    assert!((before - character.position[2] - WALK_SPEED * TICK_DT).abs() < 1e-3);
+}
+
+#[test]
+fn a_winded_jump_is_lower_than_a_rested_one() {
+    let physics = Physics::new(&flat_world()).unwrap();
+    let jump = InputFrame { seq: 1, buttons: BUTTON_JUMP, ..Default::default() };
+    let peak = |mut character: Character| {
+        physics.move_character(&mut character, &jump, TICK_DT);
+        let mut top = character.position[1];
+        for _ in 0..TICK_RATE {
+            physics.move_character(&mut character, &InputFrame::default(), TICK_DT);
+            top = top.max(character.position[1]);
+        }
+        top - STANDING_Y
+    };
+    let rested = peak(standing());
+    let winded = peak(Character { spent: STAMINA_FULL, winded: true, ..standing() });
+    assert!((rested / winded - 1.6).abs() < 0.1, "{rested} vs {winded}");
+}
+
+#[test]
 fn jumps_and_comes_back_down() {
     let physics = Physics::new(&flat_world()).unwrap();
     let mut character = standing();
@@ -190,7 +228,7 @@ fn boundary_walls_keep_players_in() {
     assert!(character.position[2] > -100.0, "{:?}", character.position);
 }
 
-/// A scripted run against the wall box: walking, wall sliding and jumps. `predict.spec.ts` replays
+/// A scripted run against the wall box: walking, wall sliding and jumps, the last of which clears it. `predict.spec.ts` replays
 /// the same script in WASM Rapier and checks it against `SCRIPTED_CHECKPOINTS`.
 pub fn scripted_input(seq: u32) -> InputFrame {
     let yaw = -1571 + ((seq as i32 * 13) % 1200 - 600) as i16;
@@ -200,10 +238,10 @@ pub fn scripted_input(seq: u32) -> InputFrame {
 
 /// `(tick, position)` after `scripted_input`, mirrored in `predict.spec.ts`.
 const SCRIPTED_CHECKPOINTS: [(u32, [f32; 3]); 4] = [
-    (30, [1.8138, 0.9722, 0.7480]),
-    (60, [3.7758, 1.4722, 0.7701]),
-    (90, [4.6299, 0.8649, 0.0827]),
-    (300, [4.6295, 0.9728, 0.4872]),
+    (30, [1.8138, 1.0009, 0.7480]),
+    (60, [3.7758, 2.3609, 0.7701]),
+    (90, [4.6299, 0.8701, 0.0624]),
+    (300, [21.9144, 1.0038, 0.5827]),
 ];
 
 #[test]
@@ -271,9 +309,9 @@ pub fn ramp_input(seq: u32) -> InputFrame {
 /// `(tick, position)` after `ramp_input` from `RAMP_START`, mirrored in `predict.spec.ts`.
 const RAMP_CHECKPOINTS: [(u32, [f32; 3]); 4] = [
     (30, [-0.0180, 50.4969, 36.2721]),
-    (60, [-0.0733, 50.4621, 32.5448]),
-    (120, [-0.2956, 46.4279, 25.0934]),
-    (240, [-0.4475, 45.1151, 21.4869]),
+    (60, [-0.0733, 50.7774, 32.5448]),
+    (120, [-0.2956, 46.4280, 25.0937]),
+    (240, [-0.4475, 45.1152, 21.4872]),
 ];
 const RAMP_START: [f32; 2] = [0.0, 40.0];
 
