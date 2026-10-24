@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 42
+export const PROTOCOL_VERSION = 43
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -1004,6 +1004,29 @@ export const PRONE_EYE_HEIGHT = 0.2 - PRONE_CENTRE
  */
 export const ON_FOOT_SHOULDER = 0.9
 export const ON_FOOT_HEIGHT = 1.5
+
+/**
+ * Building with bricks (`ITEM_BRICKS`, `crate::construct`). Fire puts a cube where the crosshair ray
+ * from the on-foot camera pivot meets the world, on the near side of the face it meets; aim (`BUTTON_ALT`)
+ * with fire digs the placed cube there out instead. Neither reaches further than `BUILD_REACH` metres
+ * from the eye to the cube's middle.
+ */
+export const BUILD_REACH = 6.0
+
+/** Ticks between two cubes placed or dug by one player while fire is held. */
+export const BUILD_COOLDOWN_TICKS = Math.trunc(TICK_RATE / 6)
+
+/**
+ * Most cubes placed in the whole world at once: past it bricks place nothing until some are dug or
+ * blasted. It bounds the memory, the catch-up a joiner gets and what is drawn.
+ */
+export const MAX_BUILT = 200000
+
+/**
+ * A piece of cubes cut off from what held it is looked through no further than this many cubes; a
+ * bigger one is taken as held, so one blast never costs a long tick.
+ */
+export const BUILD_SUPPORT_SEARCH = 4096
 
 /**
  * Seated players. Each seat of a vehicle with open seats has a head point in the hull frame, where

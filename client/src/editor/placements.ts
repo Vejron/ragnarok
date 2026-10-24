@@ -60,6 +60,7 @@ export const ITEM_KINDS: { item: number; name: string; count: number }[] = [
   { item: 8, name: 'FPV drone', count: 1 },
   { item: 9, name: 'Loitering drone', count: 1 },
   { item: 10, name: 'Flare gun', count: 2 },
+  { item: 11, name: 'Bricks', count: 1 },
 ]
 
 /** The teams a bot can be put on, and the colour each is drawn in. */

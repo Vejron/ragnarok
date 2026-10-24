@@ -36,10 +36,11 @@ pub struct Seat {
 }
 
 /// What a player holds at the start of every life: the AK5 and the sniper rifle with full magazines,
-/// a flare gun with a full stack of flares, an FPV drone and a loitering drone.
+/// a flare gun with a full stack of flares, an FPV drone and bricks to build with. The loitering drone
+/// is found lying about.
 pub fn starting_hotbar() -> [ItemSlot; HOTBAR_SLOTS] {
     let full = |item: u8| ItemSlot { item, count: def(item).map_or(1, |d| d.stack), ammo: def(item).map_or(0, |d| d.mag) };
-    [full(ITEM_AK5), full(ITEM_SNIPER), full(ITEM_FLARE), full(ITEM_DRONE), full(ITEM_LOITER)]
+    [full(ITEM_AK5), full(ITEM_SNIPER), full(ITEM_FLARE), full(ITEM_DRONE), full(ITEM_BRICKS)]
 }
 
 /// A stickman, a connected player's or a bot's: a component on the player's entity. Passes over players
@@ -462,6 +463,12 @@ pub struct World {
     pub strained: HashMap<ObjId, u32>,
     /// Cells that have lost their hold and are still falling: where each column of them lands and when.
     pub rubble: Vec<Rubble>,
+    /// The cubes players have placed with bricks (`game/construct.rs`).
+    pub construct: shared::construct::Construct,
+    /// What happened to the cubes since the last tick, for `Game::step` to broadcast as one `Built`.
+    pub fresh_built: FreshBuilt,
+    /// Chunks of cubes whose colliders are out of date, rebuilt once a tick however many cubes changed.
+    pub construct_dirty: std::collections::BTreeSet<shared::construct::Pos>,
 }
 
 impl World {
@@ -539,6 +546,7 @@ impl World {
         self.physics.replace_building(Obj::Building(id), standing);
         self.fresh_carved.push((id, at, cut.clone()));
         self.drop_rubble(id, &cut.fell);
+        self.loosen_beside_cells(id, &cut);
         // Whatever it lost is looked at again in a moment: the first cut sets the time, not each one.
         self.strained.entry(id).or_insert(self.tick.wrapping_add(STRAIN_DELAY));
         Some(cut)
@@ -593,7 +601,7 @@ impl World {
     }
 
     /// Building `id` cut into cells, as `physics::building_shell`.
-    fn cut_building(&self, id: ObjId) -> Option<Carving> {
+    pub(super) fn cut_building(&self, id: ObjId) -> Option<Carving> {
         let index = *self.buildings_by_id.get(&id)?;
         let (shell, floor) = sim::building_shell(&self.map, index)?;
         let removed = shell.untouched();
@@ -645,6 +653,20 @@ pub struct Rubble {
     pub top: f32,
     pub ground: f32,
     pub cells: u32,
+}
+
+/// Cubes placed (what each is), dug out, shot or blasted, and fallen, since the last tick.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FreshBuilt {
+    pub placed: Vec<(shared::construct::Pos, shared::construct::Cube)>,
+    pub removed: Vec<shared::construct::Pos>,
+    pub fell: Vec<shared::construct::Pos>,
+}
+
+impl FreshBuilt {
+    pub fn is_empty(&self) -> bool {
+        self.placed.is_empty() && self.removed.is_empty() && self.fell.is_empty()
+    }
 }
 
 /// A building bitten: its identity, where the blast was (cm) and the cells it took.

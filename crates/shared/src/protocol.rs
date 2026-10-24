@@ -32,6 +32,7 @@ pub const S_RTC: u8 = 9;
 pub const S_CARVED: u8 = 10;
 pub const S_PROFILES: u8 = 11;
 pub const S_NOTICE: u8 = 12;
+pub const S_BUILT: u8 = 13;
 
 /// `Hit` roles: whose feedback it is.
 /// You hurt something.
@@ -338,6 +339,23 @@ messages! {
     /// news). A joiner's catch-up lists every removed cell under `blasted`.
     #[derive(Eq)]
     [S_CARVED] Carved { live: bool, buildings: Vec<CarvedBuilding> }
+
+    /// A cube placed with bricks: its place on the world lattice (`construct::Pos`, so its corner is
+    /// `CELL` centimetres times it), its colour, the builder's (`PLAYER_COLOR_COUNT` colours), and its
+    /// material (`construct::MATERIALS`).
+    #[derive(Copy, Eq)]
+    [] BuiltCube { x: i32, y: i32, z: i32, color: u8, material: u8 }
+
+    /// A place on the world lattice of cubes (`construct::Pos`).
+    #[derive(Copy, Eq)]
+    [] CubePos { x: i32, y: i32, z: i32 }
+
+    /// Sent on a reliable stream: to everyone when cubes are placed, dug out, blasted or fall, and to
+    /// a player who just joined with every cube there is (`live` false, so it is state and not news).
+    /// `placed` are new cubes; `removed` the cubes dug out or blasted, and `fell` those left with
+    /// nothing holding them up, which come down; both as lattice places (`construct::Pos`).
+    #[derive(Eq)]
+    [S_BUILT] Built { live: bool, placed: Vec<BuiltCube>, removed: Vec<CubePos>, fell: Vec<CubePos> }
 
     /// Sent on a reliable stream to the one player it is about, once per tick per `(role, kind)` with
     /// the amounts summed. `role` is `HIT_*`: dealt (you hurt something) or taken (something hurt you

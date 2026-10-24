@@ -20,6 +20,7 @@ export const S_RTC = 9
 export const S_CARVED = 10
 export const S_PROFILES = 11
 export const S_NOTICE = 12
+export const S_BUILT = 13
 
 export interface BulletSpawn {
   id: number
@@ -178,6 +179,28 @@ export interface Carved {
   buildings: CarvedBuilding[]
 }
 
+export interface BuiltCube {
+  x: number
+  y: number
+  z: number
+  color: number
+  material: number
+}
+
+export interface CubePos {
+  x: number
+  y: number
+  z: number
+}
+
+export interface Built {
+  type: 'built'
+  live: boolean
+  placed: BuiltCube[]
+  removed: CubePos[]
+  fell: CubePos[]
+}
+
 export interface Hit {
   type: 'hit'
   role: number
@@ -198,7 +221,7 @@ export interface Rtc {
   json: string
 }
 
-export type ServerMessage = Welcome | Snapshot | Pong | Leave | Kill | Scores | Profiles | Notice | Destroyed | Damaged | Carved | Hit | Rtc
+export type ServerMessage = Welcome | Snapshot | Pong | Leave | Kill | Scores | Profiles | Notice | Destroyed | Damaged | Carved | Built | Hit | Rtc
 
 function decodeBulletSpawn(r: unknown): BulletSpawn | undefined {
   if (!Array.isArray(r) || r.length !== 10) return undefined
@@ -280,6 +303,26 @@ function decodeCarvedBuilding(r: unknown): CarvedBuilding | undefined {
   const fell = w.ints(r[5])
   if (col === undefined || row === undefined || index === undefined || point === undefined || blasted === undefined || fell === undefined) return undefined
   return { col, row, index, point: point.map((v) => v / 100) as [number, number, number], blasted, fell }
+}
+
+function decodeBuiltCube(r: unknown): BuiltCube | undefined {
+  if (!Array.isArray(r) || r.length !== 5) return undefined
+  const x = w.int(r[0])
+  const y = w.int(r[1])
+  const z = w.int(r[2])
+  const color = w.int(r[3])
+  const material = w.int(r[4])
+  if (x === undefined || y === undefined || z === undefined || color === undefined || material === undefined) return undefined
+  return { x, y, z, color, material }
+}
+
+function decodeCubePos(r: unknown): CubePos | undefined {
+  if (!Array.isArray(r) || r.length !== 3) return undefined
+  const x = w.int(r[0])
+  const y = w.int(r[1])
+  const z = w.int(r[2])
+  if (x === undefined || y === undefined || z === undefined) return undefined
+  return { x, y, z }
 }
 
 function decodeWelcome(r: readonly unknown[]): Welcome | undefined {
@@ -379,6 +422,16 @@ function decodeCarved(r: readonly unknown[]): Carved | undefined {
   return { type: 'carved', live, buildings }
 }
 
+function decodeBuilt(r: readonly unknown[]): Built | undefined {
+  if (r.length !== 5) return undefined
+  const live = w.bool(r[1])
+  const placed = w.list(r[2], decodeBuiltCube)
+  const removed = w.list(r[3], decodeCubePos)
+  const fell = w.list(r[4], decodeCubePos)
+  if (live === undefined || placed === undefined || removed === undefined || fell === undefined) return undefined
+  return { type: 'built', live, placed, removed, fell }
+}
+
 function decodeHit(r: readonly unknown[]): Hit | undefined {
   if (r.length !== 10) return undefined
   const role = w.int(r[1])
@@ -428,6 +481,8 @@ export function decodeMessage(r: readonly unknown[]): ServerMessage | undefined 
       return decodeDamaged(r)
     case S_CARVED:
       return decodeCarved(r)
+    case S_BUILT:
+      return decodeBuilt(r)
     case S_HIT:
       return decodeHit(r)
     case S_RTC:

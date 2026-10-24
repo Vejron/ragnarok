@@ -31,7 +31,7 @@ const BLAST_HOP: f32 = 7.0;
 const BLAST_HOP_MIN: f32 = 3.0;
 
 /// Pitch beyond this is not a thing a client can send; clamp so a forged frame can't aim at the sky's far side.
-const MAX_PITCH: f32 = 1.5;
+pub(super) const MAX_PITCH: f32 = 1.5;
 
 /// Unit look direction for a stickman facing `yaw` and looking `pitch` (+ is up). Yaw 0 faces -Z.
 pub fn look(yaw: f32, pitch: f32) -> [f32; 3] {
@@ -214,6 +214,8 @@ pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
             bite_building(world, id, &blast, falloff);
         }
     }
+    // Placed cubes are bitten as far as a wall would be.
+    world.blast_cubes(blast.point, blast.radius * CARVE_REACH);
 }
 
 /// How much of a blast's radius is a bite out of a wall: the rest is heat and noise.
@@ -259,6 +261,20 @@ pub fn ram_building(world: &mut World, id: shared::world::ObjId, point: [f32; 3]
         take_bite(world, id, point, radius);
     }
     damage_object(world, Obj::Building(id), (dv * RAM_HP_PER_DV) as u16, point);
+}
+
+/// A vehicle drives into placed cubes at `point`, `dv` m/s of speed taken out of it in one step, as
+/// into a wall (`ram_building`): the cube it hit takes the knock, and a hard enough hit takes a bite.
+pub fn ram_cubes(world: &mut World, point: [f32; 3], dv: f32, weight: f32) {
+    let dv = dv * weight;
+    // The contact is on the cube's face: its middle is half a cube in.
+    if let Some(pos) = world.construct.nearest(point.map(to_cm), shared::carve::CELL) {
+        world.chip_cube(pos, (dv * RAM_CHIP_PER_DV).min(255.0) as u8);
+    }
+    let radius = ((dv - RAM_BITE_MIN_DV) * RAM_BITE_PER_DV).min(RAM_BITE_MAX);
+    if radius >= CARVE_MIN_RADIUS {
+        world.blast_cubes(point, radius);
+    }
 }
 
 /// Cell damage per m/s a vehicle loses to a wall: a cell has 40, so a hit of 5 m/s breaks one out.
@@ -489,7 +505,7 @@ fn effective_spread(item: &ItemDef, buttons: u16) -> f32 {
     if buttons & BUTTON_ALT != 0 { item.spread * AIM_SPREAD_SCALE } else { item.spread }
 }
 
-/// A round that ended in the world: damages the building or tree it struck, if it was one.
+/// A round that ended in the world: damages the building, tree or placed cube it struck, if it was one.
 pub(super) fn hit_object(world: &mut World, origin: [f32; 3], dir: [f32; 3], reach: f32, damage: u8) {
     // The ray stops at the surface; look a hair past it to be inside the collider.
     if let Some((_, Some(object))) = world.physics.cast_ray_object(origin, dir, reach + 0.05) {
@@ -504,6 +520,10 @@ pub(super) fn hit_object(world: &mut World, origin: [f32; 3], dir: [f32; 3], rea
             let point = [0, 1, 2].map(|i| origin[i] + dir[i] * (reach + 0.1));
             chip_building(world, id, point, damage);
         }
+    } else if world.physics.ray_meets_construct(origin, dir, reach + 0.05) {
+        // A placed cube is no building or tree, but takes a round as a piece of wall does.
+        let point = [0, 1, 2].map(|i| origin[i] + dir[i] * (reach + 0.1));
+        world.chip_cube(shared::construct::cell_at(point), damage);
     }
 }
 
@@ -801,6 +821,12 @@ fn use_item(world: &mut World, id: u32) {
                 let mut player = world.entities.get_mut::<Player>(id).expect("checked above");
                 player.fire_cooldown = item.cooldown_ticks;
                 spend(&mut player.hotbar[slot]);
+            }
+        }
+        ItemKind::Build => {
+            if pressed && player.fire_cooldown == 0 {
+                player.fire_cooldown = item.cooldown_ticks;
+                super::building::use_bricks(world, id, buttons & BUTTON_ALT != 0);
             }
         }
         ItemKind::Heal => {

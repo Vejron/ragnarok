@@ -1,8 +1,8 @@
 //! The client's handle on `sim`: the server's physics, built a tile at a time from the same files the
-//! client streams, with snapshot vehicles as solids, stepping the local stickman exactly as the server
-//! steps it; and how a building is cut into cells, which the client draws (`carve_*`). Everything
-//! crosses the boundary as numbers and byte slices; `client/src/sim/motor.ts` and `client/src/sim/carve.ts`
-//! wrap it in the client's own types.
+//! client streams, with snapshot vehicles as solids and the cubes players placed (`setConstructChunk`),
+//! stepping the local stickman exactly as the server steps it; and how a building is cut into cells,
+//! which the client draws (`carve_*`). Everything crosses the boundary as numbers and byte slices;
+//! `client/src/sim/motor.ts` and `client/src/sim/carve.ts` wrap it in the client's own types.
 
 use shared::protocol::InputFrame;
 use shared::world::{Manifest, ObjId, Tile};
@@ -129,6 +129,28 @@ impl ClientSim {
     #[wasm_bindgen(js_name = carveBuilding)]
     pub fn carve_building(&mut self, col: u16, row: u16, index: u32, removed: &[u32]) {
         self.physics.carve_building(col, row, index, removed);
+    }
+
+    /// Gives chunk `(cx, cy, cz)` of placed cubes the shape of `cells` (one byte a cube in cell order,
+    /// 0 for none: `shared::construct::Construct::chunk_cells`), or takes it out when it holds none;
+    /// takes effect at the next `refresh`.
+    #[wasm_bindgen(js_name = setConstructChunk)]
+    pub fn set_construct_chunk(&mut self, cx: i32, cy: i32, cz: i32, cells: &[u8]) {
+        let boxes = shared::construct::chunk_boxes([cx, cy, cz], cells);
+        self.physics.set_construct([cx, cy, cz], sim::solid_of(&boxes, &[]));
+    }
+
+    /// Whether a cube of half side `half` centred at `(x, y, z)` would overlap a building, a tree, a
+    /// vehicle or placed cubes (`Physics::cube_blocked`): where bricks cannot put one.
+    #[wasm_bindgen(js_name = cubeBlocked)]
+    pub fn cube_blocked(&self, x: f32, y: f32, z: f32, half: f32) -> bool {
+        self.physics.cube_blocked([x, y, z], half)
+    }
+
+    /// Whether a building's standing cells reach within `radius` of `(x, y, z)` (`Physics::building_near`).
+    #[wasm_bindgen(js_name = buildingNear)]
+    pub fn building_near(&self, x: f32, y: f32, z: f32, radius: f32) -> bool {
+        self.physics.building_near([x, y, z], radius)
     }
 
     /// Carries out what was queued and brings the scene queries up to date.

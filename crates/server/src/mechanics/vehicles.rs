@@ -498,12 +498,17 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
     // Every wall it hit gives way, not just the hardest contact.
     let rams: Vec<_> = world.physics.car_impacts().into_iter().filter(|i| i.dv > RAM_MIN_DV).collect();
     for impact in rams {
-        let Some(Obj::Building(id)) = impact.object else { continue };
         let Some(vehicle) = world.entities.get::<Vehicle>(impact.car) else { continue };
         if world.entities.dead(impact.car) || is_drone(vehicle.kind) {
             continue;
         }
-        super::combat::ram_building(world, id, impact.point, impact.dv, vehicle_def(vehicle.kind).body.ram);
+        let weight = vehicle_def(vehicle.kind).body.ram;
+        match impact.object {
+            Some(Obj::Building(id)) => super::combat::ram_building(world, id, impact.point, impact.dv, weight),
+            // Placed cubes give way like a wall.
+            None if impact.construct => super::combat::ram_cubes(world, impact.point, impact.dv, weight),
+            _ => {}
+        }
     }
     for (vid, impact) in hardest {
         // A drone's own collisions are what set it off (see `Drones`).

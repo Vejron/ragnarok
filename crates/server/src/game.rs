@@ -12,7 +12,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use shared::carve::{Cut, Shell, Tri};
 use shared::consts::*;
-use shared::items::{HOTBAR_SLOTS, ITEM_AK5, ITEM_DRONE, ITEM_FLARE, ITEM_LOITER, ITEM_SNIPER, def};
+use shared::items::{HOTBAR_SLOTS, ITEM_AK5, ITEM_BRICKS, ITEM_DRONE, ITEM_FLARE, ITEM_SNIPER, def};
 use shared::protocol::*;
 use shared::quant::{from_cm, pack_quat, to_axis, to_cm, to_cm_i16, to_milli_i16, to_mrad};
 use shared::world::{Building, ObjId, Tree, WorldFile};
@@ -21,6 +21,8 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{MissedTickBehavior, interval};
 
+mod construct;
+pub use construct::{HALF_CUBE, cube_centre};
 pub(crate) mod feedback;
 mod replicate;
 mod snapshot;
@@ -52,6 +54,21 @@ fn damaged_entry(id: ObjId, stage: u8, mark: Option<[f32; 3]>) -> DamagedBuildin
 /// Building `id`'s cells `blasted` and `fell`, by a blast `at` (cm), as a `Carved` entry.
 fn carved_entry(id: ObjId, point: [i32; 3], blasted: Vec<u32>, fell: Vec<u32>) -> CarvedBuilding {
     CarvedBuilding { col: id.col, row: id.row, index: id.index, point, blasted, fell }
+}
+
+/// Most cubes in one `Built` of a joiner's catch-up: about 10 bytes each on the wire.
+const BUILT_CATCH_UP_BATCH: usize = 32_768;
+
+/// A `Built` message: the cubes `placed`, `removed` and `fell`, as lattice places.
+fn built_message(live: bool, placed: Vec<(shared::construct::Pos, shared::construct::Cube)>, removed: Vec<shared::construct::Pos>, fell: Vec<shared::construct::Pos>) -> Built {
+    let at = |[x, y, z]: shared::construct::Pos| CubePos { x, y, z };
+    Built {
+        tag: S_BUILT,
+        live,
+        placed: placed.into_iter().map(|([x, y, z], cube)| BuiltCube { x, y, z, color: cube.colour, material: cube.material }).collect(),
+        removed: removed.into_iter().map(at).collect(),
+        fell: fell.into_iter().map(at).collect(),
+    }
 }
 
 pub struct Game {
@@ -93,6 +110,9 @@ impl Game {
                 fresh_carved: Vec::new(),
                 strained: HashMap::new(),
                 rubble: Vec::new(),
+                construct: Default::default(),
+                fresh_built: Default::default(),
+                construct_dirty: Default::default(),
                 map,
                 entities: Default::default(),
                 nav: Default::default(),
@@ -222,6 +242,12 @@ impl Game {
             .collect();
         if !carved.is_empty() {
             let _ = outbox.try_send(Outgoing::Reliable(encode(&Carved { tag: S_CARVED, live: false, buildings: carved }).into()));
+        }
+        // Every cube placed so far, as state, in batches that stay well under the client's 4 MiB a message.
+        let cubes: Vec<_> = self.world.construct.cubes().collect();
+        for batch in cubes.chunks(BUILT_CATCH_UP_BATCH) {
+            let message = built_message(false, batch.to_vec(), Vec::new(), Vec::new());
+            let _ = outbox.try_send(Outgoing::Reliable(encode(&message).into()));
         }
         if let Some(objective) = self.scenario.as_ref().map(Scenario::objective).filter(|o| !o.is_empty()) {
             let _ = outbox.try_send(Outgoing::Reliable(encode(&Notice { tag: S_NOTICE, kind: NOTICE_OBJECTIVE, text: objective.into() }).into()));
@@ -380,6 +406,7 @@ impl Game {
         self.broadcast_destroyed();
         self.broadcast_damaged();
         self.broadcast_carved();
+        self.broadcast_built();
         self.drop_stalled();
         crate::events::update(&mut self.world.entities.ecs);
         self.world.tick = self.world.tick.wrapping_add(1);
@@ -418,6 +445,19 @@ impl Game {
         }
         let entries = self.world.fresh_carved.drain(..).map(|(id, at, cut)| carved_entry(id, at, cut.blasted, cut.fell)).collect();
         let bytes = Bytes::from(encode(&Carved { tag: S_CARVED, live: true, buildings: entries }));
+        for (&to, outbox) in &self.outboxes {
+            send_reliable(outbox, to, &bytes, &mut self.stalled);
+        }
+    }
+
+    /// Gives the cubes that changed this tick their colliders, and tells everyone what changed, as one message.
+    fn broadcast_built(&mut self) {
+        self.world.flush_construct();
+        if self.world.fresh_built.is_empty() {
+            return;
+        }
+        let FreshBuilt { placed, removed, fell } = std::mem::take(&mut self.world.fresh_built);
+        let bytes = Bytes::from(encode(&built_message(true, placed, removed, fell)));
         for (&to, outbox) in &self.outboxes {
             send_reliable(outbox, to, &bytes, &mut self.stalled);
         }

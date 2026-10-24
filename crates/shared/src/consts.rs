@@ -1,7 +1,7 @@
 //! Simulation and network constants. `client/scripts/gen-consts.ts` generates the client's copy from this file: run `npm run gen:consts` in `client` after editing.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 42;
+pub const PROTOCOL_VERSION: u8 = 43;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -710,6 +710,20 @@ pub const PRONE_EYE_HEIGHT: f32 = 0.2 - PRONE_CENTRE;
 /// Mirrors `ON_FOOT_SHOULDER` and `ON_FOOT_HEIGHT` in the client.
 pub const ON_FOOT_SHOULDER: f32 = 0.9;
 pub const ON_FOOT_HEIGHT: f32 = 1.5;
+
+/// Building with bricks (`ITEM_BRICKS`, `crate::construct`). Fire puts a cube where the crosshair ray
+/// from the on-foot camera pivot meets the world, on the near side of the face it meets; aim (`BUTTON_ALT`)
+/// with fire digs the placed cube there out instead. Neither reaches further than `BUILD_REACH` metres
+/// from the eye to the cube's middle.
+pub const BUILD_REACH: f32 = 6.0;
+/// Ticks between two cubes placed or dug by one player while fire is held.
+pub const BUILD_COOLDOWN_TICKS: u32 = TICK_RATE / 6;
+/// Most cubes placed in the whole world at once: past it bricks place nothing until some are dug or
+/// blasted. It bounds the memory, the catch-up a joiner gets and what is drawn.
+pub const MAX_BUILT: usize = 200_000;
+/// A piece of cubes cut off from what held it is looked through no further than this many cubes; a
+/// bigger one is taken as held, so one blast never costs a long tick.
+pub const BUILD_SUPPORT_SEARCH: usize = 4096;
 
 /// Seated players. Each seat of a vehicle with open seats has a head point in the hull frame, where
 /// the client draws the sitting body's head (a car's `seat_N` markers, built by `build_car.py`). The

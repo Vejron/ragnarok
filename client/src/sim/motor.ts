@@ -153,6 +153,27 @@ export class SimMotor {
   }
 
   /**
+   * Gives each chunk of placed cubes in `chunks` the shape of its cubes (`cells`, one byte a cube,
+   * 0 for none), as the server has them; a chunk with none stops being solid.
+   */
+  setConstruct(chunks: Iterable<{ chunk: readonly [number, number, number]; cells: Uint8Array }>) {
+    timed(() => {
+      for (const { chunk, cells } of chunks) this.sim.setConstructChunk(chunk[0], chunk[1], chunk[2], cells)
+      this.sim.refresh()
+    })
+  }
+
+  /** Whether a cube of half side `half` centred at `centre` would overlap a building, tree, vehicle or placed cubes. */
+  cubeBlocked(centre: Vec3, half: number): boolean {
+    return this.sim.cubeBlocked(centre[0], centre[1], centre[2], half)
+  }
+
+  /** Whether a building's standing cells reach within `radius` of `point`. */
+  buildingNear(point: Vec3, radius: number): boolean {
+    return this.sim.buildingNear(point[0], point[1], point[2], radius)
+  }
+
+  /**
    * Makes the vehicles solid for the stickman at the poses of the newest snapshot; the ones missing
    * from `vehicles` go. The server runs them as dynamic bodies; here they only need to block the
    * predicted stickman like they block the real one, and carry it off at their speed when it leaves them.

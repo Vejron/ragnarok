@@ -327,7 +327,8 @@ export function disposeTile(group: Group) {
 }
 
 /** A non-indexed geometry from triangle-soup positions, with one flat normal per face. */
-function flatGeometry(positions: number[] | Floats, colors?: Floats): Geometry {
+/** Flat-shaded triangle soup (metres, nine numbers a triangle) with an optional colour per vertex. */
+export function flatGeometry(positions: number[] | Floats, colors?: Floats | number[]): Geometry {
   const array = positions instanceof Floats ? positions.array() : Float32Array.from(positions)
   const normals = new Float32Array(array.length)
   for (let i = 0; i < array.length; i += 9) {
@@ -343,5 +344,5 @@ function flatGeometry(positions: number[] | Floats, colors?: Floats): Geometry {
       normals[i + k + 2] = nz
     }
   }
-  return new Geometry({ positions: array, normals, colors: colors?.array() })
+  return new Geometry({ positions: array, normals, colors: colors instanceof Floats ? colors.array() : colors && Float32Array.from(colors) })
 }

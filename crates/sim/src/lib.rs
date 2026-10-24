@@ -76,6 +76,13 @@ pub struct Physics {
     /// Buildings to be given a new shape (`solid_of`), or taken out when nothing is left of them,
     /// at the start of the next step.
     replacements: Vec<(Obj, Option<SharedShape>)>,
+    /// The collider of each chunk of placed cubes (`shared::construct`), by chunk, and the other way
+    /// round. They are not destructible objects: what a blast does to them is the construct's business.
+    constructs: HashMap<[i32; 3], ColliderHandle>,
+    construct_chunks: HashMap<ColliderHandle, [i32; 3]>,
+    /// Chunks of placed cubes to be given a new shape (`set_construct`), or taken out when empty, at the
+    /// start of the next step.
+    construct_shapes: Vec<([i32; 3], Option<SharedShape>)>,
     /// The ground, `[min x, min z, max x, max z]` in metres, under every static collider taken out or
     /// reshaped since `take_changed` was last called: where the bots' walking grid is out of date.
     changed: Vec<[f32; 4]>,
@@ -376,6 +383,9 @@ impl Physics {
             handles: HashMap::new(),
             removals: Vec::new(),
             replacements: Vec::new(),
+            constructs: HashMap::new(),
+            construct_chunks: HashMap::new(),
+            construct_shapes: Vec::new(),
             changed: Vec::new(),
             bound,
             tiles: HashMap::new(),
@@ -432,6 +442,36 @@ impl Physics {
         }
         self.replacements.retain(|(queued, _)| *queued != object);
         self.replacements.push((object, shape));
+    }
+
+    /// Gives chunk `chunk` of placed cubes the collider `shape` (its boxes, `solid_of`), in place of
+    /// the one it has; `None` takes it out. Like `replace_building`, it takes effect at the start of
+    /// the next `step_cars` (or `refresh`).
+    pub fn set_construct(&mut self, chunk: [i32; 3], shape: Option<SharedShape>) {
+        self.construct_shapes.retain(|(queued, _)| *queued != chunk);
+        self.construct_shapes.push((chunk, shape));
+    }
+
+    /// Whether collider `handle` is a chunk of placed cubes.
+    pub fn is_construct(&self, handle: ColliderHandle) -> bool {
+        self.construct_chunks.contains_key(&handle)
+    }
+
+    /// Whether a cube of half side `half` centred at `centre`, unturned, overlaps a building, a tree, a
+    /// vehicle or placed cubes: where a new cube cannot go. The ground, the slab and the boundary walls
+    /// do not count, so a cube may sink into a slope.
+    pub fn cube_blocked(&self, centre: [f32; 3], half: f32) -> bool {
+        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::default());
+        let cube = Cuboid::new(Vector::new(half, half, half));
+        queries
+            .intersect_shape(Pose::from_translation(Vector::from(centre)), &cube)
+            .any(|(handle, collider)| self.objects.contains_key(&handle) || self.construct_chunks.contains_key(&handle) || collider.parent().is_some())
+    }
+
+    /// Whether a building's collider (its standing cells) reaches within `radius` of `point`: for a cube
+    /// centred there and a radius a little over half a cube, whether a building cell shares one of its faces.
+    pub fn building_near(&self, point: [f32; 3], radius: f32) -> bool {
+        self.objects_near(point, radius).iter().any(|object| matches!(object, Obj::Building(_)))
     }
 
     /// Every building and tree whose collider reaches within `radius` of `point`.

@@ -9,7 +9,8 @@
     {"id": 7, "name": "Shotgun", "kind": "gun", "auto": false, "damage": 12, "cooldownTicks": 60, "mag": 5, "reloadTicks": 180, "range": 40, "aimSpeed": 0.7, "scope": false, "stack": 1, "weapon": 13, "projectile": false, "pellets": 10, "falloffStart": 8, "falloffEnd": 40, "falloffMin": 0.25},
     {"id": 8, "name": "FPV drone", "kind": "drone", "auto": false, "damage": 0, "cooldownTicks": 60, "mag": 0, "reloadTicks": 0, "range": 0, "aimSpeed": 1, "scope": false, "stack": 1, "weapon": 19, "projectile": false, "pellets": 1, "falloffStart": 0, "falloffEnd": 0, "falloffMin": 1},
     {"id": 9, "name": "Loitering drone", "kind": "drone", "auto": false, "damage": 0, "cooldownTicks": 60, "mag": 0, "reloadTicks": 0, "range": 0, "aimSpeed": 1, "scope": false, "stack": 1, "weapon": 21, "projectile": false, "pellets": 1, "falloffStart": 0, "falloffEnd": 0, "falloffMin": 1},
-    {"id": 10, "name": "Flare gun", "kind": "flare", "auto": false, "damage": 0, "cooldownTicks": 60, "mag": 0, "reloadTicks": 0, "range": 0, "aimSpeed": 1, "scope": false, "stack": 3, "weapon": 22, "projectile": false, "pellets": 1, "falloffStart": 0, "falloffEnd": 0, "falloffMin": 1}
+    {"id": 10, "name": "Flare gun", "kind": "flare", "auto": false, "damage": 0, "cooldownTicks": 60, "mag": 0, "reloadTicks": 0, "range": 0, "aimSpeed": 1, "scope": false, "stack": 3, "weapon": 22, "projectile": false, "pellets": 1, "falloffStart": 0, "falloffEnd": 0, "falloffMin": 1},
+    {"id": 11, "name": "Bricks", "kind": "build", "auto": true, "damage": 0, "cooldownTicks": 10, "mag": 0, "reloadTicks": 0, "range": 6, "aimSpeed": 1, "scope": false, "stack": 1, "weapon": 0, "projectile": false, "pellets": 1, "falloffStart": 0, "falloffEnd": 0, "falloffMin": 1}
   ],
   "vehicles": [
     {"kind": 1, "name": "Jeep", "hp": 100, "seats": 4, "halfExtents": [1, 0.42, 1.95], "gun": false, "arms": false, "carWheels": true, "trackHalf": 0.9, "axleZ": 1.25, "crew": "open", "crewGuns": true, "seatHeads": [[-0.4, 0.62, -0.3], [0.4, 0.62, -0.3], [-0.4, 0.62, 0.75], [0.4, 0.62, 0.75]], "mountSeat": null, "legged": false, "heavy": false, "towed": false, "shedsTurret": false, "drone": false},
@@ -36,6 +37,9 @@
     {"kind": 7, "name": "Boulder", "radius": 0, "refHeight": 1, "radiusPctOfCrown": 80, "maxRadius": 200, "colliderHeightPct": 80, "destructible": false},
     {"kind": 8, "name": "Rock slab", "radius": 0, "refHeight": 1, "radiusPctOfCrown": 85, "maxRadius": 250, "colliderHeightPct": 85, "destructible": false},
     {"kind": 9, "name": "Bush", "radius": 10, "refHeight": 100, "radiusPctOfCrown": 0, "maxRadius": 60, "colliderHeightPct": 50, "destructible": true}
+  ],
+  "materials": [
+    {"id": 0, "name": "Brick", "hp": 40, "blastReach": 1}
   ],
   "consts": {
     "TICK_RATE": 60,

@@ -183,6 +183,8 @@ pub struct CarImpact {
     pub other_car: Option<u32>,
     /// The building or tree on the other side, if it was one.
     pub object: Option<Obj>,
+    /// Whether the other side was a chunk of placed cubes (`set_construct`).
+    pub construct: bool,
     /// Where they touched, in the vehicle's own frame (+X right, +Y up, -Z forward).
     pub local: [f32; 3],
     /// Where they touched, in the world.
@@ -643,8 +645,21 @@ impl Physics {
     /// Takes destroyed buildings and trees out of the collider set. With no car the pipeline does
     /// not run otherwise, and the broad-phase would keep pointing at colliders that are gone.
     pub(crate) fn apply_removals(&mut self) {
-        if self.removals.is_empty() && self.replacements.is_empty() {
+        if self.removals.is_empty() && self.replacements.is_empty() && self.construct_shapes.is_empty() {
             return;
+        }
+        for (chunk, shape) in std::mem::take(&mut self.construct_shapes) {
+            if let Some(old) = self.constructs.remove(&chunk) {
+                self.mark_changed(old);
+                self.construct_chunks.remove(&old);
+                self.colliders.remove(old, &mut self.islands, &mut self.bodies, &mut self.soft_bodies, false);
+            }
+            if let Some(shape) = shape {
+                let handle = self.colliders.insert(ColliderBuilder::new(shape).build());
+                self.mark_changed(handle);
+                self.constructs.insert(chunk, handle);
+                self.construct_chunks.insert(handle, chunk);
+            }
         }
         // Bitten buildings get their new shape first; one that is also coming down just goes.
         for (object, shape) in std::mem::take(&mut self.replacements) {
@@ -816,6 +831,7 @@ impl Physics {
                         car: id,
                         other_car,
                         object: self.objects.get(&other).copied(),
+                        construct: self.construct_chunks.contains_key(&other),
                         local: local.into(),
                         point: (body.position() * local).into(),
                         dv: pair.total_impulse_magnitude() / body.mass(),
@@ -905,6 +921,13 @@ impl Physics {
         let ray = Ray::new(Vector::from(origin), Vector::from(dir));
         let (collider, distance) = queries.cast_ray(&ray, max, true)?;
         Some((distance, self.object_of(collider)))
+    }
+
+    /// Whether a ray from `origin` along the unit `dir` meets a chunk of placed cubes first, within `max`.
+    pub fn ray_meets_construct(&self, origin: [f32; 3], dir: [f32; 3], max: f32) -> bool {
+        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::default());
+        let ray = Ray::new(Vector::from(origin), Vector::from(dir));
+        queries.cast_ray(&ray, max, true).is_some_and(|(collider, _)| self.is_construct(collider))
     }
 
     /// How far a ray travels before it meets the world or a vehicle, and the surface normal there.

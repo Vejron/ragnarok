@@ -3,6 +3,7 @@
 
 mod armor;
 mod bots;
+mod building;
 mod combat;
 mod drones;
 mod gunnery;

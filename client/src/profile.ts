@@ -42,6 +42,9 @@ export function forgetAllPlayers() {
 /** Entity `id`'s outfit colour: the one they chose, or one picked by id until we know. */
 export const colorFor = (id: number) => PLAYER_COLORS[(known.get(id)?.color ?? id) % PLAYER_COLORS.length]!.hex
 
+/** Entity `id`'s outfit colour as an index into `PLAYER_COLORS`, as `colorFor` picks it. */
+export const colorIndexFor = (id: number) => (known.get(id)?.color ?? id) % PLAYER_COLORS.length
+
 /** Entity `id`'s name, as the server knows it. */
 export const nameFor = (id: number) => known.get(id)?.name ?? `Player ${id}`
 

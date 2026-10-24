@@ -1,13 +1,16 @@
 import { Group, type Scene } from '@ragnarok/engine'
 import type * as THREE from 'three'
-import { OBJ_BUILDING, OBJ_TREE, type CarvedBuilding, type DamagedBuilding, type DestroyedObject } from './net/codec'
+import { OBJ_BUILDING, OBJ_TREE, type Built, type CarvedBuilding, type DamagedBuilding, type DestroyedObject } from './net/codec'
 import type { Effects } from './render/effects'
 import { FallingTrees, type TreeFx, type TreeNoise } from './render/falling'
 import { BuildingDamage } from './render/damage'
+import { ConstructView } from './render/construct'
 import { Collapses } from './render/rubble'
 import { buildTile, disposeTile, rebuildBuildings, restitchTerrain } from './render/world'
 import { buildWater, disposeWater } from './render/water'
 import { shellOf } from './sim/carve'
+import { CHUNK, Construct, cellAt, chunkKey, chunkOf, cubeCentre, posKey, type Cube, type Pos } from './sim/construct'
+import { CELL } from './sim/carve'
 import type { SimMotor } from './sim/motor'
 import type { Surfaces } from './sim/surface'
 import type { Waters } from './sim/waters'
@@ -36,6 +39,9 @@ export class WorldView {
   motor: SimMotor | null = null
 
   readonly damage = new BuildingDamage()
+  /** The cubes players placed with bricks, as the server has told of them, and their drawing. */
+  readonly construct = new Construct()
+  readonly cubes = new ConstructView()
   /** Water of every tile, drawn after everything solid. */
   readonly waterRoot = new Group()
 
@@ -49,6 +55,10 @@ export class WorldView {
   private readonly collapses = new Collapses()
   /** Carved buildings, by tile, whose colliders are to be reshaped at the next `update`: a barrage does it once a frame, not once a hit. */
   private readonly reshape = new Map<number, Set<number>>()
+  /** Chunks of cubes that changed since the last `update`, to redraw and to give to the physics. */
+  private readonly rebuilt = new Set<string>()
+  /** Chunks of cubes the physics has not been given yet: all of them until the simulation exists. */
+  private readonly unsolid = new Set<string>()
 
   constructor(private readonly scene: Scene) {}
 
@@ -64,6 +74,146 @@ export class WorldView {
     this.damage.update(dt, effects, camera, fx.smoke)
     for (const [key, indices] of this.reshape) this.dropBuildingColliders(key, indices)
     this.reshape.clear()
+    this.updateCubes(dt, effects)
+  }
+
+  /**
+   * The server says cubes were placed, dug out or blasted, and fell. `live` is false for the catch-up on
+   * joining, which only places. What changed is redrawn and made solid at the next `update`, once a
+   * frame however many messages came.
+   */
+  built(message: Pick<Built, 'live' | 'placed' | 'removed' | 'fell'>) {
+    for (const { x, y, z, color, material } of message.placed) {
+      const pos: Pos = [x, y, z]
+      const cube = { colour: color, material }
+      const predicted = this.predicted.get(posKey(pos))
+      this.predicted.delete(posKey(pos))
+      // A cube predicted there is now the server's; one of another colour (someone else's) takes its place.
+      const there = this.construct.get(pos)
+      if (there && predicted?.cube && there.colour === cube.colour && there.material === cube.material) continue
+      if (there) this.construct.remove(pos)
+      this.construct.place(pos, cube)
+      this.touch(pos)
+    }
+    for (const { x, y, z } of message.removed) {
+      const pos: Pos = [x, y, z]
+      // A dig predicted there is now the server's: the cube is already gone.
+      this.predicted.delete(posKey(pos))
+      if (message.live && this.construct.has(pos)) this.dusted.push(cubeCentre(pos))
+      if (this.construct.remove(pos) !== null) this.touch(pos)
+    }
+    const fell: { pos: Pos; cube: Cube }[] = []
+    for (const { x, y, z } of message.fell) {
+      const pos: Pos = [x, y, z]
+      this.predicted.delete(posKey(pos))
+      const cube = this.construct.get(pos)
+      if (cube === undefined) continue
+      fell.push({ pos, cube })
+      this.construct.remove(pos)
+      this.touch(pos)
+    }
+    if (message.live) this.cubes.drop(fell, (x, z) => this.terrain?.heightAt(x, z) ?? 0)
+  }
+
+  /**
+   * What the local player's bricks did on screen before the server said so (`predict`), by `posKey`:
+   * a cube put there (`cube`), or the cube dug out of there (`dug`), and when to give up waiting.
+   */
+  private readonly predicted = new Map<string, { pos: Pos; cube: Cube | null; dug: Cube | null; until: number }>()
+
+  /**
+   * The local player's bricks put `cube` at `pos` (or with `cube` null dug the cube there out) on this
+   * input tick. It is drawn and solid at once. If the server's `built` has not said the same by `until`
+   * (a `performance.now()` time), it is taken back.
+   */
+  predict(pos: Pos, cube: Cube | null, until: number) {
+    const key = posKey(pos)
+    if (cube) {
+      if (this.construct.place(pos, cube) === null) return
+      this.predicted.set(key, { pos, cube, dug: null, until })
+    } else {
+      const dug = this.construct.get(pos)
+      if (!dug) return
+      this.construct.remove(pos)
+      this.dusted.push(cubeCentre(pos))
+      this.predicted.set(key, { pos, cube: null, dug, until })
+    }
+    this.touch(pos)
+  }
+
+  /** Takes back what was predicted and never confirmed by `now`. */
+  private expire(now: number) {
+    for (const [key, guess] of this.predicted) {
+      if (guess.until > now) continue
+      this.predicted.delete(key)
+      if (guess.cube && this.construct.remove(guess.pos) !== null) this.touch(guess.pos)
+      if (guess.dug && this.construct.place(guess.pos, guess.dug) !== null) this.touch(guess.pos)
+    }
+  }
+
+  /** Cubes dug out or blasted since the last `update`, to be seen going in a little dust. */
+  private readonly dusted: [number, number, number][] = []
+
+  /**
+   * Notes the chunk of the cube at `pos` as changed: to redraw and to make solid anew. A cube on the
+   * chunk's edge changes what its neighbour draws too, so that neighbour is redrawn as well.
+   */
+  private touch(pos: Pos) {
+    const chunk = chunkOf(pos)
+    const key = chunkKey(chunk)
+    this.rebuilt.add(key)
+    this.unsolid.add(key)
+    for (let a = 0; a < 3; a++) {
+      const local = pos[a]! - chunk[a]! * CHUNK
+      const side = local === 0 ? -1 : local === CHUNK - 1 ? 1 : 0
+      if (side === 0) continue
+      const next = [...chunk] as [number, number, number]
+      next[a]! += side
+      this.rebuilt.add(chunkKey(next))
+    }
+  }
+
+  /**
+   * A round of this player's of `damage` ended at `(x, y, z)`. If it struck a placed cube, the cube is
+   * drawn darker by what it has taken, as a building's wall is, until the server breaks it out.
+   */
+  private chippedCube(x: number, y: number, z: number, damage: number): boolean {
+    // The round stops on the cube's face: its middle is under half a cube further on, the nearest cube round the point.
+    let best: Pos | null = null
+    let distance = Infinity
+    const at = cellAt(x, y, z)
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const pos: Pos = [at[0] + dx, at[1] + dy, at[2] + dz]
+          if (!this.construct.has(pos)) continue
+          const c = cubeCentre(pos)
+          const d = (c[0] - x) ** 2 + (c[1] - y) ** 2 + (c[2] - z) ** 2
+          if (d < distance) [best, distance] = [pos, d]
+        }
+      }
+    }
+    if (!best || distance > (CELL / 100) ** 2 || !this.construct.dent(best, damage)) return false
+    this.rebuilt.add(chunkKey(chunkOf(best)))
+    return true
+  }
+
+  /** Redraws the chunks of cubes that changed, gives them to the physics once it exists, and moves what is falling. */
+  private updateCubes(dt: number, effects: Effects) {
+    if (this.predicted.size > 0) this.expire(performance.now())
+    for (const key of this.rebuilt) this.cubes.redraw(this.construct, key)
+    this.rebuilt.clear()
+    if (this.motor && this.unsolid.size > 0) {
+      const chunks = [...this.unsolid].flatMap((key) => {
+        const data = this.construct.chunk(key)
+        return data ? [data] : []
+      })
+      this.motor.setConstruct(chunks)
+      for (const key of this.unsolid) this.construct.forget(key)
+      this.unsolid.clear()
+    }
+    for (const [x, y, z] of this.dusted.splice(0)) effects.dust({ x, y, z }, 1)
+    this.cubes.update(dt, effects)
   }
 
   /** Draws a streamed-in tile and makes it solid for both predicted simulations. Returns how to undo it. */
@@ -155,11 +305,12 @@ export class WorldView {
   }
 
   /**
-   * A round of `damage` from this player ended at `(x, y, z)`. If it struck a standing building,
-   * the piece of wall there is drawn pushed in by what it has taken, until the server breaks it out.
+   * A round of `damage` from this player ended at `(x, y, z)`. If it struck a placed cube or a standing
+   * building, that cube or piece of wall is drawn darker or pushed in by what it has taken, until the server breaks it out.
    * Only the player's own rounds do this, and only on their screen.
    */
   chipped(x: number, y: number, z: number, damage: number) {
+    if (this.chippedCube(x, y, z, damage)) return
     const world = this.world
     if (!world) return
     const key = tileKey(Math.floor((x + world.halfExtent) / world.tileSize), Math.floor((z + world.halfExtent) / world.tileSize))
@@ -201,6 +352,7 @@ export class WorldView {
 
   dispose() {
     this.damage.dispose()
+    this.cubes.dispose()
   }
 
   /**

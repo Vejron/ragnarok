@@ -6,9 +6,12 @@ import { Backoff } from './net/backoff'
 import { RttEstimator, ServerClock } from './net/clock'
 import { Transport } from './net/transport'
 import {
-  BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION, RESPAWN_TICKS,
+  BUTTON_ALT, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION, RESPAWN_TICKS,
   SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_PRONE,
-  TICK_MS, TICK_RATE, } from './sim/consts'
+  TICK_MS, TICK_RATE, BUILD_REACH, } from './sim/consts'
+import { CELL } from './sim/carve'
+import { MATERIAL_BRICK, cellAt, cubeCentre, type Pos } from './sim/construct'
+import { BrickTrigger, mayPlace, type BuildWorld } from './sim/bricks'
 import { crewGun, vehicleDef } from './sim/vehicles'
 import { aimSpeedScale, emptyHotbar, HOTBAR_SLOTS, ITEM_NONE, itemDef, type ItemSlot } from './sim/items'
 import { InputController } from './sim/input'
@@ -75,7 +78,7 @@ import type { HudStats } from './hud'
 import { Notices } from './notices'
 import { Scoreboard, sides } from './scoreboard'
 import { Blips } from './blips'
-import { allies, colorFor, cssColor, forgetAllPlayers, forgetPlayer, isBot, loadProfile, profileQuery, setPlayer, teamFor } from './profile'
+import { allies, colorFor, colorIndexFor, cssColor, forgetAllPlayers, forgetPlayer, isBot, loadProfile, profileQuery, setPlayer, teamFor } from './profile'
 
 // The overlay and its tests import these from here.
 export type { HudStats } from './hud'
@@ -99,6 +102,8 @@ const PING_INTERVAL_MS = 1000
 const SCOPE_LOOK_SCALE = 0.3
 /** Looking down a tank's sight is as slow as a rifle scope. */
 const SIGHT_LOOK_SCALE = 0.35
+/** How long past a round trip a predicted cube waits for the server's word before it is taken back, ms. */
+const BRICK_PREDICTION_SLACK_MS = 400
 /** And a little slower aiming a gun over the shoulder. */
 const AIM_LOOK_SCALE = 0.6
 /** How long the static shows after a drone's feed cuts out, ms. */
@@ -178,6 +183,8 @@ export class Game {
   private hotbar: ItemSlot[] = emptyHotbar()
   private progress = 0
   private firedBefore = false
+  /** When the local player's bricks are used, counted as the server counts it. */
+  private readonly bricks = new BrickTrigger()
   /** Whether the last sampled input held crouch, for the local avatar. */
   private crouching = false
   /** Looking down a scope this frame. */
@@ -249,7 +256,7 @@ export class Game {
       }
     }
     this.scene.scene.add(this.crowd.root)
-    this.scene.scene.add(this.effects.root, this.view.damage.root, this.damageNumbers.root)
+    this.scene.scene.add(this.effects.root, this.view.damage.root, this.view.cubes.root, this.damageNumbers.root)
     this.scene.scene.add(this.rocketModels.root, this.trails.root)
     this.scene.scene.add(this.pickupModels.root)
     this.scene.scene.add(this.trajectory.root, this.mortarArc.root)
@@ -486,6 +493,9 @@ export class Game {
       case 'carved':
         this.view.carved(message.buildings, message.live)
         break
+      case 'built':
+        this.view.built(message)
+        break
       case 'scores':
         this.board.replace(message.scores)
         break
@@ -540,6 +550,7 @@ export class Game {
     if (this.seat || this.hp === 0) this.predictor!.record(frame)
     else this.predictor!.apply(frame)
     if (this.localId !== null) this.fireFeedback(frame)
+    if (this.localId !== null) this.buildFeedback(frame)
     // A driver's own vehicle is predicted too; otherwise the frame is only remembered for a replay.
     this.driver?.apply(frame)
     if (this.localId === null) return
@@ -657,6 +668,13 @@ export class Game {
       vehicle: seat && ride ? { model: this.vehicles.model(seat.vehicle), motion: this.vehicles.fx(seat.vehicle), bombs: ride.arms?.bombs ?? 0 } : null,
       grenade: grenade ? { eye: [position[0]!, position[1]! + this.eyeHeight(), position[2]!], yaw: this.input.yaw, pitch: this.input.pitch } : null,
     })
+    // Bricks in hand: a ghost where fire would put a cube, or with aim held the cube it would dig out.
+    const bricks = !seated && this.hp > 0 && this.localId !== null && itemDef(this.held().item)?.kind === 'build'
+    const brick = bricks ? this.brickAim(position, this.input.yaw, this.input.pitch) : null
+    const digging = this.input.aimHeld
+    const place = brick && !digging ? brick.place : null
+    const world = place ? this.buildWorld(position) : null
+    this.view.cubes.aim(place, brick && digging && this.view.construct.has(brick.dig) ? brick.dig : null, place !== null && world !== null && mayPlace(world, place))
     this.effects.update(dt)
     this.trails.update(dt)
     this.scene.scene.lights.update(dt)
@@ -815,6 +833,62 @@ export class Game {
     me.fire()
     const barrel = me?.muzzle()
     this.effects.muzzle(barrel ?? new THREE.Vector3(x, y + EYE_HEIGHT, z).addScaledVector(direction, 0.6))
+  }
+
+  /**
+   * Where bricks in the local player's hand would put a cube and which cube they would dig out, as the
+   * server's `building::aim` finds them for a player standing at `position`: the crosshair ray from the
+   * camera's pivot, and the cubes on the near and far side of the face it meets, within `BUILD_REACH`
+   * of the eye.
+   */
+  private brickAim(position: ArrayLike<number>, yaw: number, pitch: number): { place: Pos; dig: Pos } | null {
+    const flat = Math.cos(pitch)
+    const dir: Vec3 = [-Math.sin(yaw) * flat, Math.sin(pitch), -Math.cos(yaw) * flat]
+    const pivot: Vec3 = [position[0]! + Math.cos(yaw) * ON_FOOT_SHOULDER, position[1]! + ON_FOOT_HEIGHT, position[2]! - Math.sin(yaw) * ON_FOOT_SHOULDER]
+    const hit = this.motor?.castRay(pivot, dir, BUILD_REACH + ON_FOOT_SHOULDER + ON_FOOT_HEIGHT)
+    if (!hit) return null
+    const half = CELL / 200
+    const across = (side: number) => cellAt(...([0, 1, 2].map((a) => pivot[a]! + dir[a]! * hit.t + hit.normal[a]! * half * side) as [number, number, number]))
+    const place = across(1)
+    const middle = cubeCentre(place)
+    const eye = [position[0]!, position[1]! + this.eyeHeight(), position[2]!]
+    if (Math.hypot(middle[0] - eye[0]!, middle[1] - eye[1]!, middle[2] - eye[2]!) > BUILD_REACH) return null
+    return { place, dig: across(-1) }
+  }
+
+  /** What the placing rules need of the world round the local player standing at `position`, once the simulation exists. */
+  private buildWorld(position: ArrayLike<number>): BuildWorld | null {
+    const motor = this.motor
+    if (!motor) return null
+    return {
+      construct: this.view.construct,
+      groundAt: (x, z) => this.view.terrain?.heightAt(x, z) ?? 0,
+      cubeBlocked: (centre, half) => motor.cubeBlocked(centre, half),
+      buildingNear: (point, radius) => motor.buildingNear(point, radius),
+      body: [position[0]!, position[1]!, position[2]!],
+    }
+  }
+
+  /**
+   * The local player's bricks, at once: on an input tick the server would use them on, the cube their
+   * crosshair puts (or with aim held, digs out) is placed on screen and made solid now, by the server's
+   * rules. `WorldView.predict` takes it back if the server does not do the same within about a round trip.
+   */
+  private buildFeedback(frame: InputFrame) {
+    const onFoot = !this.seat && this.hp > 0 && itemDef(this.held().item)?.kind === 'build'
+    if (!this.bricks.tick(onFoot && (frame.buttons & BUTTON_FIRE) !== 0)) return
+    const position = this.predictor!.state.position
+    const aim = this.brickAim(position, frame.yaw / 1000, frame.pitch / 1000)
+    if (!aim) return
+    // The server's `built` comes a round trip later, plus the ticks the input waits in its jitter buffer.
+    const until = performance.now() + (this.rtt.rtt ?? 250) * 1.5 + BRICK_PREDICTION_SLACK_MS
+    if ((frame.buttons & BUTTON_ALT) !== 0) {
+      this.view.predict(aim.dig, null, until)
+      return
+    }
+    const world = this.buildWorld(position)
+    if (!world || !mayPlace(world, aim.place)) return
+    this.view.predict(aim.place, { colour: colorIndexFor(this.localId!), material: MATERIAL_BRICK }, until)
   }
 
   /** Height of the local player's eye above the capsule centre, for the stance they are in. */

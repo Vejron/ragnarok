@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { Canopy } from './canopy'
 import { toonMaterial } from './toon'
 import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, PRONE_CENTRE, RUN_SPEED, STAND_CENTRE, WALK_SPEED } from '@/sim/consts'
-import { ITEM_AK5, ITEM_BANDAGE, ITEM_FLARE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, itemDef, type ItemDef } from '@/sim/items'
+import { ITEM_AK5, ITEM_BANDAGE, ITEM_BRICKS, ITEM_FLARE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, itemDef, type ItemDef } from '@/sim/items'
 import { type Limb, poseLimb, splitLimbs } from './gibs'
 import { colorFor } from '@/profile'
 
@@ -31,6 +31,8 @@ const WEAPON_MESH: Record<number, string> = {
   [ITEM_BANDAGE]: 'weapon_bandage',
   // The same: a pistol grip, so it borrows the revolver's.
   [ITEM_FLARE]: 'weapon_revolver',
+  // A block in the hand, as a bandage roll is.
+  [ITEM_BRICKS]: 'weapon_bandage',
 }
 /** The muzzle bone of the stance whose hand pose a gun is modelled in; none for the hands-low stance. */
 const MUZZLE_BONE: Record<Stance, string | null> = { rifle: 'muzzle', pistol: 'muzzle_pistol', hold: null }

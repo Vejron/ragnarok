@@ -651,7 +651,7 @@ fn a_new_life_starts_with_the_standard_loadout() {
     let hotbar = game.world.entities.of::<Player>(target).hotbar;
     assert_eq!(hotbar, starting_hotbar());
     let items: Vec<u8> = hotbar.iter().map(|slot| slot.item).collect();
-    assert_eq!(items, [ITEM_AK5, ITEM_SNIPER, ITEM_FLARE, ITEM_DRONE, ITEM_LOITER]);
+    assert_eq!(items, [ITEM_AK5, ITEM_SNIPER, ITEM_FLARE, ITEM_DRONE, ITEM_BRICKS]);
     assert_eq!(hotbar[0].ammo, def(ITEM_AK5).unwrap().mag, "magazines are full");
     assert_eq!(hotbar[2].count, def(ITEM_FLARE).unwrap().stack, "a full stack of flares");
     let _ = &mut seq;

@@ -22,8 +22,11 @@ pub const ITEM_DRONE: u8 = 8;
 pub const ITEM_LOITER: u8 = 9;
 /// A flare gun: one shot sends a flare up that hangs under a parachute, lighting the ground below.
 pub const ITEM_FLARE: u8 = 10;
+/// Bricks: fire puts a cube where the crosshair is, aim and fire digs one out (`crate::construct`).
+/// Never used up.
+pub const ITEM_BRICKS: u8 = 11;
 /// One past the largest item id.
-pub const ITEM_COUNT: u8 = 11;
+pub const ITEM_COUNT: u8 = 12;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ItemKind {
@@ -37,6 +40,8 @@ pub enum ItemKind {
     Drone(u8),
     /// Fires a flare: light, not harm.
     Flare,
+    /// Places and digs out cubes (`crate::construct`).
+    Build,
 }
 
 /// How a hitscan round loses damage with distance: all of it up to `start` metres, then a straight
@@ -313,6 +318,28 @@ const FLARE: ItemDef = ItemDef {
     weight: 2,
 };
 
+const BRICKS: ItemDef = ItemDef {
+    name: "Bricks",
+    kind: ItemKind::Build,
+    // Held fire keeps building, a cube every `BUILD_COOLDOWN_TICKS`.
+    auto: true,
+    damage: 0,
+    cooldown_ticks: crate::consts::BUILD_COOLDOWN_TICKS,
+    mag: 0,
+    reload_ticks: 0,
+    range: crate::consts::BUILD_REACH,
+    spread: 0.0,
+    projectile: false,
+    pellets: 1,
+    falloff: Falloff::NONE,
+    aim_speed: 1.0,
+    scope: false,
+    stack: 1,
+    weapon: WEAPON_RIFLE,
+    // Everyone starts with it; it is never scattered.
+    weight: 0,
+};
+
 /// The definition of `item`; `None` for an empty slot or an unknown id.
 pub fn def(item: u8) -> Option<&'static ItemDef> {
     match item {
@@ -326,6 +353,7 @@ pub fn def(item: u8) -> Option<&'static ItemDef> {
         ITEM_DRONE => Some(&DRONE),
         ITEM_LOITER => Some(&LOITER),
         ITEM_FLARE => Some(&FLARE),
+        ITEM_BRICKS => Some(&BRICKS),
         _ => None,
     }
 }
@@ -432,7 +460,7 @@ pub const MAX_PICKUPS_PER_SNAPSHOT: usize = 24;
 mod tests {
     use super::*;
 
-    /// The item, vehicle and tree tables, and the scalar constants the client mirrors, as JSON, each
+    /// The item, vehicle, tree and cube material tables, and the scalar constants the client mirrors, as JSON, each
     /// table in its Rust order. `client/src/sim/tables.generated.json` holds the committed copy, which
     /// the client builds its tables from (`sim/items.ts`, `sim/vehicles.ts`, `world.ts`). After a change
     /// to a table, regenerate it with `UPDATE_PARITY=1 cargo test -p shared parity`.
@@ -446,6 +474,7 @@ mod tests {
                     ItemKind::Heal => "heal",
                     ItemKind::Drone(_) => "drone",
                     ItemKind::Flare => "flare",
+                    ItemKind::Build => "build",
                 };
                 format!(
                     "    {{\"id\": {id}, \"name\": \"{}\", \"kind\": \"{kind}\", \"auto\": {}, \"damage\": {}, \"cooldownTicks\": {}, \"mag\": {}, \"reloadTicks\": {}, \"range\": {}, \"aimSpeed\": {}, \"scope\": {}, \"stack\": {}, \"weapon\": {}, \"projectile\": {}, \"pellets\": {}, \"falloffStart\": {}, \"falloffEnd\": {}, \"falloffMin\": {}}}",
@@ -478,6 +507,11 @@ mod tests {
                 )
             })
             .collect();
+        let materials: Vec<String> = crate::construct::MATERIALS
+            .iter()
+            .enumerate()
+            .map(|(id, m)| format!("    {{\"id\": {id}, \"name\": \"{}\", \"hp\": {}, \"blastReach\": {}}}", m.name, m.hp, m.blast_reach))
+            .collect();
         // Each value is printed from its own type, so an f32 0.15 stays 0.15 rather than 0.15000000596.
         let consts = [
             ("TICK_RATE", TICK_RATE.to_string()),
@@ -494,10 +528,11 @@ mod tests {
         ];
         let lines: Vec<String> = consts.iter().map(|(name, value)| format!("    \"{name}\": {value}")).collect();
         format!(
-            "{{\n  \"items\": [\n{}\n  ],\n  \"vehicles\": [\n{}\n  ],\n  \"treeKinds\": [\n{}\n  ],\n  \"consts\": {{\n{}\n  }}\n}}\n",
+            "{{\n  \"items\": [\n{}\n  ],\n  \"vehicles\": [\n{}\n  ],\n  \"treeKinds\": [\n{}\n  ],\n  \"materials\": [\n{}\n  ],\n  \"consts\": {{\n{}\n  }}\n}}\n",
             items.join(",\n"),
             vehicles.join(",\n"),
             tree_kinds.join(",\n"),
+            materials.join(",\n"),
             lines.join(",\n")
         )
     }
@@ -557,7 +592,7 @@ mod tests {
         for item in 1..ITEM_COUNT {
             let d = def(item).unwrap_or_else(|| panic!("item {item} has no definition"));
             assert!(d.stack >= 1);
-            assert!(d.weight > 0 || item == ITEM_GOLDEN_EGG);
+            assert!(d.weight > 0 || item == ITEM_GOLDEN_EGG || item == ITEM_BRICKS);
             assert!(d.aim_speed > 0.0 && d.aim_speed <= 1.0);
         }
         assert!(def(ITEM_COUNT).is_none());

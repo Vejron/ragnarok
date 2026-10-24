@@ -1,6 +1,6 @@
 import { Group, Material, Mesh, boxGeometry, sphereGeometry, type Geometry } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
-import { ITEM_AK5, ITEM_BANDAGE, ITEM_DRONE, ITEM_FLARE, ITEM_GOLDEN_EGG, ITEM_LOITER, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER } from '@/sim/items'
+import { ITEM_AK5, ITEM_BANDAGE, ITEM_BRICKS, ITEM_DRONE, ITEM_FLARE, ITEM_GOLDEN_EGG, ITEM_LOITER, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER } from '@/sim/items'
 
 const GUN_METAL = 0x3b3f47
 const GUN_TRIM = 0xf2a33a
@@ -10,6 +10,7 @@ const CLOTH = 0xf2f2ee
 const CROSS = 0xd93a3a
 const GOLD = 0xffc933
 const FLARE_ORANGE = 0xf26a1b
+const BRICK = 0xc0583e
 
 const materials = new Map<number, Material>()
 const boxes = new Map<string, Geometry>()
@@ -99,6 +100,11 @@ export function buildItem(item: number): Group {
       box(group, [0.06, 0.06, 0.2], [0, 0.045, -0.11], FLARE_ORANGE)
       box(group, [0.05, 0.065, 0.06], [0, 0.04, -0.01], GUN_METAL)
       box(group, [0.045, 0.11, 0.05], [0, -0.03, 0.04], FLARE_ORANGE).rotation.x = -0.25
+      break
+    case ITEM_BRICKS:
+      // Two bricks, the top one turned across the bottom one.
+      box(group, [0.1, 0.06, 0.2], [0, 0, 0], BRICK)
+      box(group, [0.2, 0.06, 0.1], [0, 0.065, 0], BRICK)
       break
     case ITEM_GOLDEN_EGG: {
       sphere ??= sphereGeometry(0.06, 10, 8)

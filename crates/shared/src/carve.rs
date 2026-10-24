@@ -590,38 +590,8 @@ impl Shell {
     /// along x, then along z while the whole row is standing and free, then up while the whole layer
     /// is. A wall is then a box or two a floor, where its faces would be hundreds of triangles.
     pub fn boxes(&self, removed: &[bool]) -> Vec<[i32; 6]> {
-        let [nx, ny, nz] = self.dims;
-        let mut free: Vec<bool> = (0..self.solid.len()).map(|i| self.solid[i] && !removed[i]).collect();
-        let mut out = Vec::new();
-        for y in 0..ny {
-            for z in 0..nz {
-                for x in 0..nx {
-                    if !free[self.index(x, y, z) as usize] {
-                        continue;
-                    }
-                    let row = |free: &[bool], y: usize, z: usize, w: usize| (x..x + w).all(|x| free[self.index(x, y, z) as usize]);
-                    let mut w = 1;
-                    while x + w < nx && free[self.index(x + w, y, z) as usize] {
-                        w += 1;
-                    }
-                    let mut d = 1;
-                    while z + d < nz && row(&free, y, z + d, w) {
-                        d += 1;
-                    }
-                    let mut h = 1;
-                    while y + h < ny && (z..z + d).all(|z| row(&free, y + h, z, w)) {
-                        h += 1;
-                    }
-                    for (yi, zi, xi) in (y..y + h).flat_map(|y| (z..z + d).flat_map(move |z| (x..x + w).map(move |x| (y, z, x)))) {
-                        free[self.index(xi, yi, zi) as usize] = false;
-                    }
-                    let [ox, oy, oz] = self.origin;
-                    let c = |v: usize| v as i32 * self.cell;
-                    out.push([ox + c(x), oy + c(y), oz + c(z), ox + c(x + w), oy + c(y + h), oz + c(z + d)]);
-                }
-            }
-        }
-        out
+        let free: Vec<bool> = (0..self.solid.len()).map(|i| self.solid[i] && !removed[i]).collect();
+        boxes_of(self.origin, self.dims, free)
     }
 
     /// A fresh `hp`: every cell whole.
@@ -633,6 +603,45 @@ impl Shell {
     pub fn untouched(&self) -> Vec<bool> {
         vec![false; self.solid.len()]
     }
+}
+
+/// The cells of a grid of `dims` cells from `origin` that are `free` (one flag a cell, `Shell::index`
+/// order) merged into boxes, as `Shell::boxes` does: each `[min x, min y, min z, max x, max y, max z]`
+/// in centimetres. Going through the cells in number order, each free cell starts a box, which grows
+/// first along x, then along z while the whole row is free, then up while the whole layer is.
+pub fn boxes_of(origin: [i32; 3], dims: [usize; 3], mut free: Vec<bool>) -> Vec<[i32; 6]> {
+    let [nx, ny, nz] = dims;
+    let index = |x: usize, y: usize, z: usize| (y * nz + z) * nx + x;
+    let mut out = Vec::new();
+    for y in 0..ny {
+        for z in 0..nz {
+            for x in 0..nx {
+                if !free[index(x, y, z)] {
+                    continue;
+                }
+                let row = |free: &[bool], y: usize, z: usize, w: usize| (x..x + w).all(|x| free[index(x, y, z)]);
+                let mut w = 1;
+                while x + w < nx && free[index(x + w, y, z)] {
+                    w += 1;
+                }
+                let mut d = 1;
+                while z + d < nz && row(&free, y, z + d, w) {
+                    d += 1;
+                }
+                let mut h = 1;
+                while y + h < ny && (z..z + d).all(|z| row(&free, y + h, z, w)) {
+                    h += 1;
+                }
+                for (yi, zi, xi) in (y..y + h).flat_map(|y| (z..z + d).flat_map(move |z| (x..x + w).map(move |x| (y, z, x)))) {
+                    free[index(xi, yi, zi)] = false;
+                }
+                let [ox, oy, oz] = origin;
+                let c = |v: usize| v as i32 * CELL;
+                out.push([ox + c(x), oy + c(y), oz + c(z), ox + c(x + w), oy + c(y + h), oz + c(z + d)]);
+            }
+        }
+    }
+    out
 }
 
 /// The standing cell nearest `at` (centimetres) of a grid of `dims` cells from `origin`, looking at the

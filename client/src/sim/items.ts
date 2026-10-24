@@ -25,8 +25,10 @@ export const ITEM_DRONE = 8
 export const ITEM_LOITER = 9
 /** Fires a flare that hangs under a parachute, lighting the ground below. */
 export const ITEM_FLARE = 10
+/** Bricks: fire puts a cube where the crosshair is, aim and fire digs one out. Never used up. */
+export const ITEM_BRICKS = 11
 
-export type ItemKind = 'gun' | 'grenade' | 'heal' | 'drone' | 'flare'
+export type ItemKind = 'gun' | 'grenade' | 'heal' | 'drone' | 'flare' | 'build'
 
 export interface ItemDef {
   name: string
@@ -75,6 +77,7 @@ const PRESENTATION: Record<number, Presentation> = {
   [ITEM_LOITER]: { stance: 'hold', sound: 'rifle' },
   [ITEM_FLARE]: { stance: 'pistol', sound: 'revolver' },
   [ITEM_GOLDEN_EGG]: { stance: 'hold', sound: 'rifle' },
+  [ITEM_BRICKS]: { stance: 'hold', sound: 'rifle' },
 }
 
 /** The server's rows, as the generated table has them. */
