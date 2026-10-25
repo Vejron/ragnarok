@@ -1,5 +1,5 @@
 import { decode, encode } from '@msgpack/msgpack'
-import { MAX_PACKET, PROTOCOL_VERSION } from '@/sim/consts'
+import { PROTOCOL_VERSION } from '@/sim/consts'
 import { decodeMessage, writeClientInput, writePing, writeRtc, type InputFrame, type ServerMessage } from './messages.generated'
 
 /**
@@ -162,7 +162,6 @@ export function encodePing(nonce: number): Uint8Array {
 
 /** Decodes any server message, or returns null for anything malformed or unknown. */
 export function decodeServer(bytes: Uint8Array): ServerMessage | null {
-  if (bytes.byteLength > MAX_PACKET * 4) return null
   let raw: unknown
   try {
     raw = decode(bytes)

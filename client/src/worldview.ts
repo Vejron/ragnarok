@@ -326,9 +326,12 @@ export class WorldView {
     // Buildings that fell, or are hurt and drawn by `damage` as shards, are not drawn with the tile.
     // More of them may have come down while the worker prepared it.
     const undrawn = this.undrawnBuildings(key)
+    // [ghost] temporary: which buildings this tile is attached without, and whether the worker's copy had them
+    console.info('[ghost] attach', { col: ref.col, row: ref.row, fromWorker: !!fromWorker, undrawn: [...undrawn], workerUndrawn: prepared.undrawn, carved: [...this.damage.carved(key).keys()], fractured: this.damage.fractured(key) })
     if (!sameSet(new Set(prepared.undrawn), undrawn)) {
       prepared.buildings = buildingBuffers(tile, salt, undrawn)
       prepared.undrawn = [...undrawn]
+      console.info('[ghost] attach rebuilt buildings', { col: ref.col, row: ref.row })
     }
     // Buildings that fell before this tile streamed in (or while it was away) settle as rubble.
     const down = new Set(this.goneBuildings.get(key)?.keys())
@@ -422,6 +425,8 @@ export class WorldView {
       const key = tileKey(b.col, b.row)
       if (this.goneBuildings.get(key)?.has(b.index)) continue
       const first = this.damage.carve(key, b.index, b.blasted, b.fell, live ? b.point : null, live)
+      // [ghost] temporary: each carve as it arrives, and whether its tile is drawn right now
+      console.info('[ghost] carved', { col: b.col, row: b.row, index: b.index, live, blasted: b.blasted.length, fell: b.fell.length, first, tileLoaded: this.loaded.has(key), groupDrawn: this.groups.has(key) })
       const dirty = this.reshape.get(key) ?? new Set<number>()
       dirty.add(b.index)
       this.reshape.set(key, dirty)

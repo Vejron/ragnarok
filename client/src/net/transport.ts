@@ -94,6 +94,8 @@ export class Transport {
       while (this.session === session) {
         const { value, done } = await reader.read()
         if (done) break
+        // The server never sends a datagram over a packet (`session.rs`); reliable messages are bigger and come by stream.
+        if (value.byteLength > MAX_PACKET) continue
         const message = decodeServer(value)
         if (message) this.onMessage(message)
       }
@@ -129,6 +131,9 @@ export class Transport {
         if (done) break
         for (const bytes of frames.push(value)) {
           const message = decodeServer(bytes)
+          // [ghost] temporary: every reliable message's type and size, and any that will not decode
+          if (message) console.info('[ghost] reliable', message.type, bytes.length)
+          else console.warn('[ghost] reliable message did not decode', bytes.length, bytes.slice(0, 8))
           if (message) this.onMessage(message)
         }
       }

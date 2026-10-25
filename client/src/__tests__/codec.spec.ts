@@ -176,3 +176,12 @@ describe('Replica', () => {
     expect(replica.receive(4, 2, [], [])).toBeNull()
   })
 })
+
+describe('a reliable message bigger than a datagram', () => {
+  it('still decodes: a joiner is told every cell of a collapsed tower', () => {
+    // A big building's join catch-up: thousands of cells, well past the 1200-byte datagram size.
+    const cells = Array.from({ length: 4000 }, (_, i) => 100_000 + i * 3)
+    const decoded = decodeServer(encode([10, false, [[1, 8, 5, [0, 0, 0], cells, []]]]))
+    expect(decoded).toEqual({ type: 'carved', live: false, buildings: [{ col: 1, row: 8, index: 5, point: [0, 0, 0], blasted: cells, fell: [] }] })
+  })
+})
