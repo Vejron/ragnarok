@@ -621,6 +621,22 @@ pub fn whole_boxes(cells: &Cells) -> Option<Vec<[i32; 6]>> {
     Some(boxes_of(cells.origin, dims, unpack(&cells.solid.0, n, dims[0] * dims[2])))
 }
 
+/// What a building the importer cut is drawn as while nothing is gone from it: `Shell::faces` of
+/// `untouched`, straight from its baked flags, without the anchors. Calls `emit` with each triangle
+/// and 1 when it is a roof cube's, 0 when a wall cube's. False when it has no cells.
+pub fn whole_faces(cells: &Cells, emit: impl FnMut(Tri, i32)) -> bool {
+    let dims = cells.dims.map(|d| d as usize);
+    let n = dims[0] * dims[1] * dims[2];
+    if n == 0 || n > MAX_CELLS {
+        return false;
+    }
+    let layer = dims[0] * dims[2];
+    let (solid, roof) = (unpack(&cells.solid.0, n, layer), unpack(&cells.roof.0, n, layer));
+    let keys: Vec<i32> = (0..n).map(|i| if solid[i] { i32::from(roof[i]) } else { -1 }).collect();
+    faces_of(cells.origin, dims, &keys, emit);
+    true
+}
+
 /// The cells of a grid of `dims` cells from `origin` that are `free` (one flag a cell, `Shell::index`
 /// order) merged into boxes, as `Shell::boxes` does: each `[min x, min y, min z, max x, max y, max z]`
 /// in centimetres. Going through the cells in number order, each free cell starts a box, which grows
@@ -1308,6 +1324,13 @@ mod tests {
             assert_eq!((back.origin, back.dims, &back.solid, &back.roof), (shell.origin, shell.dims, &shell.solid, &shell.roof));
             assert_eq!(back.anchored, shell.anchored);
             assert_eq!(whole_boxes(&shell.cells()).unwrap(), shell.boxes(&shell.untouched()));
+            let mut faces = Vec::new();
+            assert!(whole_faces(&shell.cells(), |tri, key| faces.push((tri, key))));
+            let keys: Vec<i32> = (0..shell.solid.len()).map(|i| if shell.solid[i] { i32::from(shell.roof[i]) } else { -1 }).collect();
+            let mut expected = Vec::new();
+            super::faces_of(shell.origin, shell.dims, &keys, |tri, key| expected.push((tri, key)));
+            assert_eq!(faces, expected);
+            assert_eq!(faces.iter().map(|f| f.0).collect::<Vec<_>>(), shell.faces(&shell.untouched()));
         }
         // A long run of zeros takes a two-byte length.
         let mut flags = vec![false; 8 * 300];

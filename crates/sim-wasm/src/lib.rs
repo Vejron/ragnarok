@@ -356,6 +356,27 @@ pub fn carve_faces(origin: &[i32], dims: &[u32], keys: &[i32]) -> Vec<i32> {
     out
 }
 
+/// What a building the importer baked (its grid corner, size and packed flags, as the tile holds
+/// them) is drawn as while whole (`shared::carve::whole_faces`): nine centimetre numbers a triangle,
+/// then one number a triangle, 1 for a roof cube's. Empty when it has no cells.
+#[wasm_bindgen]
+pub fn carve_baked_faces(origin: &[i32], dims: &[u32], solid: &[u8], roof: &[u8]) -> Vec<i32> {
+    let dims = grid(dims);
+    let cells = shared::world::Cells {
+        origin: corner(origin),
+        dims: dims.map(|d| d as u32),
+        solid: shared::world::Bits(solid.to_vec()),
+        roof: shared::world::Bits(roof.to_vec()),
+    };
+    let (mut tris, mut keys) = (Vec::new(), Vec::new());
+    shared::carve::whole_faces(&cells, |tri, key| {
+        tris.extend_from_slice(&tri);
+        keys.push(key);
+    });
+    tris.extend(keys);
+    tris
+}
+
 /// The cell a round that landed at `(x, y, z)` (centimetres) struck, as the server's `chip` finds it:
 /// the standing cell nearest it, one solid in `solid` and not in `removed`, or -1 for none in reach.
 #[wasm_bindgen]

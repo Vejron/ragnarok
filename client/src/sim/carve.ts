@@ -6,7 +6,7 @@
  * The module is initialised by `SimMotor.create` before any tile is drawn.
  */
 
-import { carve_cut, carve_faces, carve_nearest, carve_unpack } from './wasm/sim'
+import { carve_baked_faces, carve_cut, carve_faces, carve_nearest, carve_unpack } from './wasm/sim'
 
 /** Side of a cell, centimetres, on one lattice for the whole world. Mirrors `CELL`. */
 export const CELL = 72
@@ -32,31 +32,51 @@ export const unpack = (packed: Uint8Array, count: number, layer: number): Uint8A
 export const keyedFaces = (origin: readonly number[], dims: readonly number[], keys: Int32Array): Int32Array =>
   carve_faces(Int32Array.from(origin), Uint32Array.from(dims), keys)
 
+/** A building's cells as the importer packed them (`Cells` in `world.rs`). */
+type Baked = { origin: [number, number, number]; dims: [number, number, number]; solid: Uint8Array; roof: Uint8Array }
+
 /** A building's walls and roof as a grid of cells. */
 export class Shell {
   /** Corner of the grid with the smallest coordinates, centimetres. */
   readonly origin: [number, number, number]
   readonly cell = CELL
   readonly dims: [number, number, number]
-  /** 1 where the cell is part of the building. */
-  private readonly solid: Uint8Array
-  /** 1 where the roof passes through the cell, for drawing it in the roof's colour. */
-  private readonly roofed: Uint8Array
+  /**
+   * The flags as the importer packed them, for a building it baked: they are unpacked only once
+   * something asks after single cells, as drawing the whole building needs none of them.
+   */
+  private readonly baked: Baked | null
+  private solidFlags: Uint8Array | null
+  private roofFlags: Uint8Array | null
 
-  private constructor(origin: [number, number, number], dims: [number, number, number], solid: Uint8Array, roof: Uint8Array) {
+  private constructor(origin: [number, number, number], dims: [number, number, number], solid: Uint8Array | null, roof: Uint8Array | null, baked: Baked | null = null) {
     this.origin = origin
     this.dims = dims
-    this.solid = solid
-    this.roofed = roof
+    this.solidFlags = solid
+    this.roofFlags = roof
+    this.baked = baked
+  }
+
+  /** 1 where the cell is part of the building. */
+  private get solid(): Uint8Array {
+    return (this.solidFlags ??= unpack(this.baked!.solid, this.count, this.dims[0] * this.dims[2]))
+  }
+
+  /** 1 where the roof passes through the cell, for drawing it in the roof's colour. */
+  private get roofed(): Uint8Array {
+    return (this.roofFlags ??= unpack(this.baked!.roof, this.count, this.dims[0] * this.dims[2]))
+  }
+
+  private get count(): number {
+    return this.dims[0] * this.dims[1] * this.dims[2]
   }
 
   /** The building as the importer baked it (`Shell::from_cells`), or null when it has no cells. */
-  static fromCells(cells: { origin: [number, number, number]; dims: [number, number, number]; solid: Uint8Array; roof: Uint8Array }): Shell | null {
+  static fromCells(cells: Baked): Shell | null {
     const [nx, ny, nz] = cells.dims
     const count = nx * ny * nz
     if (count === 0 || count > MAX_CELLS) return null
-    const layer = nx * nz
-    return new Shell([...cells.origin], [nx, ny, nz], unpack(cells.solid, count, layer), unpack(cells.roof, count, layer))
+    return new Shell([...cells.origin], [nx, ny, nz], null, null, cells)
   }
 
   /** Cuts a building from its wall and roof triangles, or null when it has none or is too big. */
@@ -189,15 +209,21 @@ export class Shell {
   /** `faces`, and for each triangle 1 when it is a roof cube's. */
   facesWithRoof(removed: ReadonlySet<number>): { tris: Int32Array; roof: Uint8Array } {
     if (removed.size === 0 && this.whole) return this.whole
+    if (removed.size === 0 && this.baked) {
+      // Straight from the packed flags, without bringing the grid across (`whole_faces`).
+      const out = carve_baked_faces(Int32Array.from(this.origin), Uint32Array.from(this.dims), this.baked.solid, this.baked.roof)
+      const count = out.length / 10
+      return (this.whole = { tris: out.subarray(0, count * 9), roof: Uint8Array.from(out.subarray(count * 9)) })
+    }
     const keys = new Int32Array(this.solid.length).fill(-1)
     for (const id of this.cells) if (!removed.has(id)) keys[id] = this.roofed[id]!
     const faces = keyedFaces(this.origin, this.dims, keys)
     const count = faces.length / 10
     const tris = new Int32Array(count * 9)
     const roof = new Uint8Array(count)
-    for (let t = 0; t < count; t++) {
-      tris.set(faces.subarray(t * 10, t * 10 + 9), t * 9)
-      roof[t] = faces[t * 10 + 9]!
+    for (let t = 0, i = 0, o = 0; t < count; t++, i++) {
+      for (let k = 0; k < 9; k++) tris[o++] = faces[i++]!
+      roof[t] = faces[i]!
     }
     const result = { tris, roof }
     if (removed.size === 0) this.whole = result
@@ -213,7 +239,7 @@ const shells = new WeakMap<{ buildings: unknown }, Map<number, Shell | null>>()
  * as the importer cuts them. Null when it has no cubes.
  */
 export function shellOf(
-  tile: { buildings: readonly { first: number; walls: number; roof: number; cells?: Parameters<typeof Shell.fromCells>[0] | null }[]; collision: { vertices: Float32Array; triangles: Uint32Array } },
+  tile: { buildings: readonly { first: number; walls: number; roof: number; cells?: Baked | null }[]; collision: { vertices: Float32Array; triangles: Uint32Array } },
   index: number,
 ): Shell | null {
   let byIndex = shells.get(tile)
