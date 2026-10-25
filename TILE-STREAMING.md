@@ -8,7 +8,7 @@ The buildings and the terrain are already built in workers (design.md, "Tile mes
 
 | Phase | What | Status |
 |---|---|---|
-| 0 | Benchmark and baseline in the repo | ◐ benchmark done; browser trace left for the end |
+| 0 | Benchmark and baseline in the repo | ◐ benchmark done; browser trace still to record |
 | 1 | Hash a tile with an indexed loop | ☑ done (Chrome p95 0.40 ms) |
 | 2 | Cheaper road and rail draping on the main thread | ☑ done (4× faster, short of target; Phase 3 takes the rest) |
 | 3 | Roads, rails and water in the terrain worker | ☑ done (seam re-drape and play-test left) |
@@ -17,6 +17,26 @@ The buildings and the terrain are already built in workers (design.md, "Tile mes
 | 6 | Carve-only WASM for the buildings worker (optional) | ☐ not started |
 
 Status: ☐ not started · ◐ in progress · ☑ done · ✕ dropped (say why in the log).
+
+## Where it stands
+
+As of 2026-10-25, phases 1–5 are done and phase 0 is done apart from the browser trace. Per tile on the 1 m dev world, the main thread does:
+
+| Work | Now (median / p95 / max ms) | Before |
+|---|---|---|
+| `buildTile` + `buildWater`, with the workers' results (Chrome) | 0.30 / 0.70 / 4.7 | 22.4 / 38.2 / 52.8 |
+| Hash + decode (Chrome) | 0.70 / 1.20 / 1.60 | about 4.5 median in Node |
+| A building falling | 0.03 / 0.10 / 0.15 | 0.29 / 7.43 / 11.87 |
+| `ClientSim.addTile` (Node) | 1.33 / 2.78 / 5.44 | unchanged |
+| Grass mask (Node) | 0.62 / 2.05 / 7.15 | unchanged |
+| Surface raster (Node) | 0.24 / 1.04 / 4.37 | unchanged |
+
+The colliders, grass mask and surface raster now make up most of what attaching a tile costs. Their p95s add up to about 6 ms, against the 4 ms target, but they rarely peak on the same tile. Whether the target holds can only be told from a real trace.
+
+Next:
+1. Play, or record the Chrome trace from Phase 0, driving across the dev world. Look at the roads (seams, ditches, distant tiles) and water while you are at it.
+2. If attaching still shows up in the trace, the grass mask and surface raster are the next things to move. They only read the tile's cover, roads and water, so the terrain worker could rasterise them too. `ClientSim.addTile` stays on the main thread (see "Not doing").
+3. Phase 6, and the seam re-drape in Phase 3, only if the trace or the roads call for them.
 
 ## Baseline
 
