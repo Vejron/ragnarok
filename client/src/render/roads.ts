@@ -1,7 +1,7 @@
 import { Geometry, Material, Mesh, type Ramp } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
 import { ROAD_MAJOR, ROAD_MINOR, ROAD_PATH, type Road } from '@/world'
-import { normalAt, toneAt, type Height } from './shade'
+import { GroundShade, toneOf, type Height } from './shade'
 
 /** `[casing, fill]` per road kind; paths have no casing. */
 const ROAD_COLORS: Record<number, [number | null, number]> = {
@@ -34,34 +34,60 @@ export function layerMaterial(color: number, offset: number, ramp: Ramp) {
   return found
 }
 
+/** Numbers appended three at a time to a typed array that doubles when full. */
+class Triples<A extends Float32Array | Uint32Array> {
+  length = 0
+
+  constructor(public data: A) {}
+
+  push(a: number, b: number, c: number) {
+    if (this.length + 3 > this.data.length) {
+      const grown = new (this.data.constructor as new (length: number) => A)(this.data.length * 2)
+      grown.set(this.data)
+      this.data = grown
+    }
+    this.data[this.length] = a
+    this.data[this.length + 1] = b
+    this.data[this.length + 2] = c
+    this.length += 3
+  }
+
+  /** What was appended, in an array of its own size. */
+  array(): A {
+    return this.data.slice(0, this.length) as A
+  }
+}
+
 /** One material's worth of ground-hugging triangles, toned like the terrain under them. */
 export class Layer {
-  readonly positions: number[] = []
-  readonly normals: number[] = []
-  readonly colors: number[] = []
-  readonly indices: number[] = []
+  private readonly positions = new Triples(new Float32Array(3 * 1024))
+  private readonly normals = new Triples(new Float32Array(3 * 1024))
+  private readonly colors = new Triples(new Float32Array(3 * 1024))
+  private readonly indices = new Triples(new Uint32Array(3 * 1024))
 
   constructor(
-    private readonly height: Height,
     private readonly lift: number,
-    private readonly step: number,
+    /** The tile's shading, shared by its layers (`GroundShade`). */
+    private readonly shade: GroundShade,
   ) {}
 
   /** A vertex on the ground at `(x, z)`, raised by `lift` (the layer's own unless given). */
   vertex(x: number, z: number, lift = this.lift) {
-    const normal = normalAt(this.height, x, z, this.step)
-    const tone = toneAt(this.height, x, z, normal)
-    this.positions.push(x, this.height(x, z) + lift, z)
-    this.normals.push(...normal)
+    const normal = this.shade.normal(x, z)
+    const y = this.shade.height(x, z)
+    const tone = toneOf(normal, y, this.shade.mean(x, z), x, z)
+    this.positions.push(x, y + lift, z)
+    this.normals.push(normal[0], normal[1], normal[2])
     this.colors.push(tone, tone, tone)
     return this.positions.length / 3 - 1
   }
 
   /** A triangle, wound so it faces up whichever way round its corners were given. */
   triangle(a: number, b: number, c: number) {
-    const p = this.positions
+    const p = this.positions.data
     const up = (p[b * 3 + 2]! - p[a * 3 + 2]!) * (p[c * 3]! - p[a * 3]!) - (p[b * 3]! - p[a * 3]!) * (p[c * 3 + 2]! - p[a * 3 + 2]!)
-    this.indices.push(...(up > 0 ? [a, b, c] : [a, c, b]))
+    if (up > 0) this.indices.push(a, b, c)
+    else this.indices.push(a, c, b)
   }
 
   /** A round patch of rings no more than `ACROSS` apart, so it keeps to the ground out to its rim. */
@@ -121,10 +147,10 @@ export class Layer {
   mesh(material: Material): Mesh | null {
     if (this.indices.length === 0) return null
     const geometry = new Geometry({
-      positions: Float32Array.from(this.positions),
-      normals: Float32Array.from(this.normals),
-      colors: Float32Array.from(this.colors),
-      indices: Uint32Array.from(this.indices),
+      positions: this.positions.array(),
+      normals: this.normals.array(),
+      colors: this.colors.array(),
+      indices: this.indices.array(),
     })
     const mesh = new Mesh(geometry, material)
     mesh.receiveShadow = true
@@ -140,14 +166,16 @@ export class Layer {
  * neighbour tile carries on from there.
  */
 export function buildRoads(roads: readonly Road[], height: Height, step: number, border: readonly [number, number, number, number], ramp: Ramp): Mesh[] {
+  if (roads.length === 0) return []
   const meshes: Mesh[] = []
+  const shade = new GroundShade(height, step, border)
   for (const pass of [0, 1] as const) {
     for (const kind of [ROAD_PATH, ROAD_MINOR, ROAD_MAJOR]) {
       const colors = ROAD_COLORS[kind]!
       const color = colors[pass]
       if (color === null || color === undefined) continue
       const rank = RANK[kind]!
-      const layer = new Layer(height, (pass === 0 ? 0.05 : 0.07) + rank * 0.005, step)
+      const layer = new Layer((pass === 0 ? 0.05 : 0.07) + rank * 0.005, shade)
       for (const road of roads) {
         if (road.kind !== kind) continue
         const half = (road.width + (pass === 0 ? CASING : 0)) / 2

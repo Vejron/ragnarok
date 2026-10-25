@@ -1,7 +1,7 @@
 import type { Mesh, Ramp } from '@ragnarok/engine'
 import { BALLAST_EXTRA, RAIL_TRAIN, type Point2, type Rail } from '@/world'
 import { Layer, layerMaterial } from './roads'
-import type { Height } from './shade'
+import { GroundShade, type Height } from './shade'
 
 /** Sleeper spacing along the track, its width along it, and how far it reaches past each rail, metres. */
 const SLEEPER_PITCH = 0.65
@@ -111,9 +111,11 @@ function sleepers(layer: Layer, points: readonly Point2[], length: number) {
  * its neighbour tile carries on from there.
  */
 export function buildRails(rails: readonly Rail[], height: Height, step: number, border: readonly [number, number, number, number], ramp: Ramp): Mesh[] {
-  const ballast = new Layer(height, 0.04, step)
-  const ties = new Layer(height, 0.14, step)
-  const steel = new Layer(height, 0, step)
+  if (rails.length === 0) return []
+  const shade = new GroundShade(height, step, border)
+  const ballast = new Layer(0.04, shade)
+  const ties = new Layer(0.14, shade)
+  const steel = new Layer(0, shade)
   for (const { gauge, kind, points } of rails) {
     const train = kind === RAIL_TRAIN
     if (train) {
