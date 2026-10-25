@@ -3,7 +3,7 @@ import { NO_WATER, type Stream } from '@/world'
 import type { Height } from './shade'
 
 /*
- * A tile's water as plain arrays: built in the terrain worker (`terrain.worker.ts`) or, without
+ * A tile's water as plain arrays: built in the tile worker (`tile.worker.ts`) or, without
  * one, on the main thread, and made meshes with the water's material in `water.ts`. Nothing here
  * touches the scene, so it loads in a worker.
  */

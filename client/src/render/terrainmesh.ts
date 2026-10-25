@@ -13,8 +13,8 @@ import {
 import { CAVITY_RADIUS, heightSampler, ringMean, toneOf, type HeightSource } from './shade'
 
 /*
- * A tile's terrain as plain arrays: what both the terrain worker (`terrain.worker.ts`) and the main
- * thread's fallback build. Nothing here touches the engine or the DOM, so it runs in a worker.
+ * A tile's terrain as plain arrays, as part of preparing a tile (`tileprep.ts`): in the tile worker
+ * (`tile.worker.ts`) or, without one, on the main thread. Nothing here touches the engine or the DOM, so it runs in a worker.
  */
 
 export const GRASS_COLOR = 0x8fd16a

@@ -12,6 +12,7 @@ import { groundOf, Terrain, type TileGround } from '@/sim/terrain'
 import { rasterSurface } from '@/sim/surface'
 import { buildingBuffers } from '@/render/buildingmesh'
 import { buildTile, rebuildBuildings } from '@/render/world'
+import { prepareTile } from '@/render/tileprep'
 import { grassMask } from '@/render/grass'
 import { ribbonsOf, waterBuffers } from '@/render/groundmesh'
 import { terrainBuffers, TERRAIN_LOD_ERRORS } from '@/render/terrainmesh'
@@ -61,12 +62,14 @@ it.skipIf(!process.env.BENCH || !existsSync(resolve(root, 'world.msgpack')))('wh
     }
     const x0 = -world.halfExtent + col * world.tileSize
     const z0 = -world.halfExtent + row * world.tileSize
+    // All of the above but the colliders, as the tile worker does it.
+    time('prepareTile (worker)', () => prepareTile({ tile, ground, salt: 0, level: 0, undrawn: [], place: { x0, z0, size: world.tileSize } }, terrain))
     time('surface raster', () => rasterSurface(tile, x0, z0, world.tileSize, ground))
     time('grass mask', () => grassMask(tile, x0, z0, world.tileSize, ground))
     time('trees', () => buildTrees(tile.trees))
     if (!ground) continue
     time('terrain mesh (finest)', () => terrainBuffers(ground, TERRAIN_LOD_ERRORS[0]!))
-    // Built in the terrain worker; timed here as the main thread builds them without one.
+    // Built in the tile worker; timed here as the main thread builds them without one.
     const ribbons = time('roads + rails', () => ribbonsOf(tile, ground, terrain))
     ribbonVertices.push(ribbons.reduce((sum, { buffers }) => sum + buffers.positions.length / 3, 0))
     time('water', () => waterBuffers(tile, ground, terrain))

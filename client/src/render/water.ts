@@ -186,8 +186,8 @@ export function setWaterLight(sky: number, sun: number, cloud: Readonly<Color>) 
 }
 
 /**
- * One tile's water, or null if it has none: from `prepared` when the terrain worker built it. It is translucent and added apart from the tile's
- * group so the game can place it in the world apart from the tile.
+ * One tile's water, or null if it has none: from `prepared` when `prepareTile` built it already. It
+ * is translucent and added apart from the tile's group so the game can place it in the world apart from the tile.
  */
 export function buildWater(tile: Pick<TileData, 'water' | 'streams'>, ground: TileGround, around?: HeightSource, prepared?: WaterBuffers[]): Group | null {
   const meshes = (prepared ?? waterBuffers(tile, ground, around)).map((buffers) => {

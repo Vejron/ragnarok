@@ -6,8 +6,8 @@ export { COVER_COLORS, GRASS_COLOR } from './terrainmesh'
 
 /**
  * Paints a tile's ground cover, seen from above, into a texture (`paintCover`). Null when there is
- * no canvas (tests), in which case the terrain stays plain grass. The terrain worker paints the
- * same on an `OffscreenCanvas` instead (`terrain.worker.ts`).
+ * no canvas (tests), in which case the terrain stays plain grass. The tile worker paints the
+ * same on an `OffscreenCanvas` instead (`tile.worker.ts`).
  */
 export function bakeTerrainTexture(tile: Pick<TileData, 'cover'>, x0: number, z0: number, size: number): Texture | null {
   if (typeof document === 'undefined') return null

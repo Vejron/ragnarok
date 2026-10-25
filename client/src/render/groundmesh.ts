@@ -9,8 +9,8 @@ export type { Ribbon, WaterBuffers }
 
 /*
  * Everything a tile drapes on its ground, as plain arrays: its roads and rails (ribbons) and its
- * water. They need the tile's ground and, near its edge, its neighbours', which the terrain worker
- * (`terrain.worker.ts`) keeps, so they are built there, and on the main thread only without one.
+ * water. They need the tile's ground and, near its edge, its neighbours', which the tile worker
+ * (`tile.worker.ts`) keeps, so they are built there, and on the main thread only without one.
  */
 
 /** What of a tile is draped on its ground. */

@@ -124,11 +124,11 @@ export class Surfaces {
     return row * 65536 + col
   }
 
-  /** Rasterises and keeps `tile`'s surface. */
-  add(ref: TileRef, tile: Parameters<typeof rasterSurface>[0], ground: TileGround | null) {
+  /** Keeps `tile`'s surface: `surface` when it was rasterised already (`prepareTile`). */
+  add(ref: TileRef, tile: Parameters<typeof rasterSurface>[0], ground: TileGround | null, surface?: TileSurface | null) {
     const x0 = -this.halfExtent + ref.col * this.tileSize
     const z0 = -this.halfExtent + ref.row * this.tileSize
-    this.tiles.set(this.key(ref.col, ref.row), rasterSurface(tile, x0, z0, this.tileSize, ground))
+    this.tiles.set(this.key(ref.col, ref.row), surface ?? rasterSurface(tile, x0, z0, this.tileSize, ground))
   }
 
   delete(ref: TileRef) {

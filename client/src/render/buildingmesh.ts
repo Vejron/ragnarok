@@ -5,7 +5,7 @@ import { shellOf } from '@/sim/carve'
 
 /*
  * A tile's buildings and bridges as one flat-shaded triangle soup with a colour a vertex, as plain
- * arrays: on the main thread (`world.ts`) or in the buildings worker (`buildings.worker.ts`), which
+ * arrays, as part of preparing a tile (`tileprep.ts`): in the tile worker or on the main thread, which
  * is why nothing here touches the scene.
  */
 
@@ -25,11 +25,6 @@ export interface BuildingTile {
   collision: TileData['collision']
 }
 
-/** The parts of `tile` its buildings are drawn from, leaving out what the worker has no use for. */
-export function buildingTile(tile: TileData): BuildingTile {
-  const buildings = tile.buildings.map(({ first, walls, roof, roofKind, cells }) => ({ first, walls, roof, roofKind, cells }))
-  return { buildings, bridges: tile.bridges, collision: tile.collision }
-}
 
 /** A flat-shaded triangle soup: corners in metres, a normal and a colour a vertex, and the sphere round it. */
 export interface BuildingBuffers {

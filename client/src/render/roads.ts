@@ -2,8 +2,8 @@ import { ROAD_MAJOR, ROAD_MINOR, ROAD_PATH, type Road } from '@/world'
 import { toneOf, type GroundShade } from './shade'
 
 /*
- * Roads as ribbons draped on the ground, as plain arrays: built in the terrain worker
- * (`terrain.worker.ts`) or, without one, on the main thread, and made meshes in `world.ts`
+ * Roads as ribbons draped on the ground, as plain arrays: built in the tile worker
+ * (`tile.worker.ts`) or, without one, on the main thread, and made meshes in `world.ts`
  * (`ribbonMeshes`). Nothing here touches the scene, so it loads in a worker.
  */
 

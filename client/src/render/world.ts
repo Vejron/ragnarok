@@ -4,10 +4,10 @@ import type { TileGround } from '@/sim/terrain'
 import type { TileData } from '@/world'
 import { buildingBuffers, buildingColors, oneBuildingBuffers, type BuildingBuffers } from './buildingmesh'
 import { GRASS_COLOR, bakeTerrainTexture, coverTexture, reliefTexture } from './cover'
-import { ribbonsOf, type Ribbon } from './groundmesh'
+import type { Ribbon } from './groundmesh'
 import type { HeightSource } from './shade'
-import { reliefPixels, terrainBuffers, TERRAIN_LOD_ERRORS, type Pixels, type TerrainBuffers } from './terrainmesh'
-import type { PreparedTerrain } from './terrainworker'
+import { reliefPixels, type Pixels, type TerrainBuffers } from './terrainmesh'
+import { prepareTile, type PreparedTile } from './tileprep'
 import { buildTrees } from './trees'
 import { TERRAIN_RAMP } from './groundlight'
 
@@ -63,16 +63,15 @@ export function buildGround(halfExtent: number, y = 0): Mesh {
 }
 
 /**
- * One tile's terrain (`terrainBuffers`), from what the terrain worker made of it or, without one,
- * built here and now at the finest level. Its colour is the painted cover and its shading the relief
- * map, both the tile's own, so the mesh can be simplified without losing either.
+ * One tile's terrain mesh, from what `prepareTile` made of it. Its colour is the painted cover and
+ * its shading the relief map, both the tile's own, so the mesh can be simplified without losing
+ * either. A cover nothing painted yet is baked here.
  */
-function buildTerrain(tile: Pick<TileData, 'cover' | 'detail'>, ground: TileGround, around?: HeightSource, prepared?: PreparedTerrain): Mesh {
+function buildTerrain(tile: Pick<TileData, 'cover' | 'detail'>, ground: TileGround, terrain: NonNullable<PreparedTile['terrain']>, cover: PreparedTile['cover']): Mesh {
   const { x0, z0, cell, side } = ground
-  const geometry = new Geometry(prepared?.buffers ?? terrainBuffers(ground, TERRAIN_LOD_ERRORS[0]))
-  const map = prepared ? (prepared.cover ? coverTexture(prepared.cover) : null) : bakeTerrainTexture(tile, x0, z0, cell * (side - 1))
-  const normalMap = reliefTexture(prepared?.relief ?? reliefPixels(ground, around, tile.detail))
-  const mesh = new Mesh(geometry, toonMaterial({ ...(map ? { map } : { color: GRASS_COLOR }), normalMap, normalMapTone: true, ramp: TERRAIN_RAMP }))
+  const map = cover === undefined ? bakeTerrainTexture(tile, x0, z0, cell * (side - 1)) : cover ? coverTexture(cover) : null
+  const normalMap = reliefTexture(terrain.relief)
+  const mesh = new Mesh(new Geometry(terrain.buffers), toonMaterial({ ...(map ? { map } : { color: GRASS_COLOR }), normalMap, normalMapTone: true, ramp: TERRAIN_RAMP }))
   mesh.userData.ownsMaterial = true
   mesh.userData.ground = ground
   mesh.userData.detail = tile.detail
@@ -94,7 +93,7 @@ export function restitchTerrain(group: Group, around: HeightSource) {
   shadeTerrain(group, reliefPixels(mesh.userData.ground as TileGround, around, mesh.userData.detail as Int8Array | undefined, relief.source as Pixels))
 }
 
-/** Gives a tile's terrain a new relief map, as `restitchTerrain` or the terrain worker made it. */
+/** Gives a tile's terrain a new relief map, as `restitchTerrain` or the tile worker made it. */
 export function shadeTerrain(group: Group, relief: Pixels) {
   const texture = terrainMesh(group)?.material.normalMap
   if (!texture) return
@@ -111,27 +110,26 @@ export function remeshTerrain(group: Group, buffers: TerrainBuffers) {
 }
 
 /**
- * One tile's terrain and buildings (extruded footprints), merged by colour so a tile is a handful
- * of draw calls. `salt` keeps colours stable between reloads and varied across tiles. Roads and
- * tracks are ribbons draped on the terrain; ground cover is painted into the terrain's texture.
+ * A prepared tile (`prepareTile`) as meshes: its terrain, roads and rails draped on it, its
+ * buildings and bridges merged into one mesh with a colour a vertex, and its trees. Water is drawn
+ * apart (`buildWater`). Only wrapping arrays, so it is cheap enough for the frame.
  */
-export function buildTile(
-  tile: TileData,
-  salt: number,
-  ground: TileGround | null = null,
-  around?: HeightSource,
-  destroyed: ReadonlySet<number> = NONE,
-  terrain?: PreparedTerrain,
-  buildings?: BuildingBuffers | null,
-): Group {
+export function tileGroup(tile: Pick<TileData, 'cover' | 'detail' | 'trees'>, ground: TileGround | null, prepared: PreparedTile): Group {
   const group = new Group()
-  if (ground) {
-    group.add(buildTerrain(tile, ground, around, terrain))
-    group.add(...ribbonMeshes(terrain?.draped.ribbons ?? ribbonsOf(tile, ground, around)))
-  }
-  group.add(...mergedMesh(buildings === undefined ? buildingBuffers(tile, salt, destroyed) : buildings, destroyed))
+  if (ground && prepared.terrain) group.add(buildTerrain(tile, ground, prepared.terrain, prepared.cover))
+  if (prepared.draped) group.add(...ribbonMeshes(prepared.draped.ribbons))
+  group.add(...mergedMesh(prepared.buildings, new Set(prepared.undrawn)))
   group.add(...buildTrees(tile.trees))
   return group
+}
+
+/**
+ * One tile's meshes, prepared here and now at the finest level (`prepareTile`, then `tileGroup`),
+ * leaving out the buildings in `destroyed`. `salt` keeps colours stable between reloads and varied
+ * across tiles.
+ */
+export function buildTile(tile: TileData, salt: number, ground: TileGround | null = null, around?: HeightSource, destroyed: ReadonlySet<number> = NONE): Group {
+  return tileGroup(tile, ground, prepareTile({ tile, ground, salt, level: 0, undrawn: [...destroyed] }, around))
 }
 
 const NONE: ReadonlySet<number> = new Set()

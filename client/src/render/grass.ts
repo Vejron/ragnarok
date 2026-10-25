@@ -1,10 +1,13 @@
 import { Color, Geometry, Group, Mesh, ShaderMaterial } from '@ragnarok/engine'
-import { COVER_INDUSTRIAL, COVER_PARK, COVER_URBAN, COVER_WOOD, type Point2, type TileData, type TileRef } from '@/world'
-import { rasterSurface, SURFACE_CELL, SURFACE_GRASS } from '@/sim/surface'
+import { COVER_PARK, COVER_WOOD, type TileData, type TileRef } from '@/world'
+import { SURFACE_CELL } from '@/sim/surface'
 import type { TileGround } from '@/sim/terrain'
 import { COVER_COLORS, GRASS_COLOR } from './cover'
 import { GROUND_LIGHT_WGSL } from './groundlight'
 import { normalAt } from './shade'
+import { grassMask, type GrassMask } from './grassmask'
+
+export { grassMask, type GrassMask }
 
 /**
  * Grass: short blades near the camera that lean with the wind, part around whoever walks or drives
@@ -62,77 +65,7 @@ export function tierFor(density: GrassDensity, distance: number) {
 
 /** Grass colour per cell of a mask: 0 for no grass, else an index into `PALETTE`. */
 const PALETTE = [0, GRASS_COLOR, COVER_COLORS[COVER_PARK]!, COVER_COLORS[COVER_WOOD]!].map((hex) => Color.hex(hex))
-const COVER_SHADE: Record<number, number> = { [COVER_PARK]: 2, [COVER_WOOD]: 3, [COVER_URBAN]: 0, [COVER_INDUSTRIAL]: 0 }
 
-/** Where one tile has grass, on the surface grid (`SURFACE_CELL` metres a cell). */
-export interface GrassMask {
-  x0: number
-  z0: number
-  side: number
-  cells: Uint8Array
-}
-
-/** Calls `paint(row, column)` for every cell of the grid whose centre is inside `rings` (even-odd). */
-function fillRings(rings: readonly Point2[][], x0: number, z0: number, side: number, paint: (row: number, column: number) => void) {
-  for (let row = 0; row < side; row++) {
-    const z = z0 + (row + 0.5) * SURFACE_CELL
-    const crossings: number[] = []
-    for (const ring of rings) {
-      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-        const [ax, az] = ring[i]!
-        const [bx, bz] = ring[j]!
-        if (az > z !== bz > z) crossings.push(ax + ((z - az) / (bz - az)) * (bx - ax))
-      }
-    }
-    crossings.sort((a, b) => a - b)
-    for (let k = 0; k + 1 < crossings.length; k += 2) {
-      const from = Math.max(0, Math.ceil((crossings[k]! - x0) / SURFACE_CELL - 0.5))
-      const to = Math.min(side - 1, Math.floor((crossings[k + 1]! - x0) / SURFACE_CELL - 0.5))
-      for (let column = from; column <= to; column++) paint(row, column)
-    }
-  }
-}
-
-/**
- * Where grass grows on a tile: ground the terrain paints green (plain grass, parks and woods), that
- * is not a road, track, water or sand, and not under a building. Built-up land is left bare: the
- * terrain paints it grey, and its yards are full of houses.
- */
-export function grassMask(tile: Pick<TileData, 'cover' | 'roads' | 'water' | 'buildings' | 'streams'> & Partial<Pick<TileData, 'rails'>>, x0: number, z0: number, size: number, ground: TileGround | null = null): GrassMask {
-  const surface = rasterSurface(tile, x0, z0, size, ground)
-  const { side } = surface
-  const cells = new Uint8Array(side * side).fill(1)
-  for (const cover of tile.cover) {
-    const shade = COVER_SHADE[cover.kind]
-    if (shade === undefined) continue
-    fillRings(cover.rings, x0, z0, side, (row, column) => (cells[row * side + column] = shade))
-  }
-  for (let i = 0; i < cells.length; i++) if (surface.cells[i] !== SURFACE_GRASS) cells[i] = 0
-  for (const building of tile.buildings) fillRings([building.footprint], x0, z0, side, (row, column) => (cells[row * side + column] = 0))
-  // Streams are drawn as ribbons on the ground: keep the blades out of the water.
-  for (const stream of tile.streams) {
-    const half = stream.width / 2 + SURFACE_CELL / 2
-    for (let i = 1; i < stream.points.length; i++) {
-      const [ax, az] = stream.points[i - 1]!
-      const [bx, bz] = stream.points[i]!
-      const dx = bx - ax, dz = bz - az
-      const length2 = dx * dx + dz * dz
-      const c0 = Math.max(0, Math.floor((Math.min(ax, bx) - half - x0) / SURFACE_CELL))
-      const c1 = Math.min(side - 1, Math.floor((Math.max(ax, bx) + half - x0) / SURFACE_CELL))
-      const r0 = Math.max(0, Math.floor((Math.min(az, bz) - half - z0) / SURFACE_CELL))
-      const r1 = Math.min(side - 1, Math.floor((Math.max(az, bz) + half - z0) / SURFACE_CELL))
-      for (let row = r0; row <= r1; row++) {
-        for (let column = c0; column <= c1; column++) {
-          const px = x0 + (column + 0.5) * SURFACE_CELL - ax
-          const pz = z0 + (row + 0.5) * SURFACE_CELL - az
-          const t = length2 > 0 ? Math.min(1, Math.max(0, (px * dx + pz * dz) / length2)) : 0
-          if ((px - t * dx) ** 2 + (pz - t * dz) ** 2 <= half * half) cells[row * side + column] = 0
-        }
-      }
-    }
-  }
-  return { x0, z0, side, cells }
-}
 
 /** A small, fast hash to [0, 1): the same chunk always grows the same blades. */
 function random(seed: number) {
@@ -437,11 +370,11 @@ export class Grass {
     return row * 65536 + col
   }
 
-  /** Grows grass on a streamed-in tile. Chunks already built over it are rebuilt. */
-  addTile(ref: TileRef, tile: TileData, ground: TileGround | null) {
+  /** Grows grass on a streamed-in tile, by `mask` when it was worked out already (`prepareTile`). Chunks already built over it are rebuilt. */
+  addTile(ref: TileRef, tile: TileData, ground: TileGround | null, mask?: GrassMask | null) {
     const x0 = -this.halfExtent + ref.col * this.tileSize
     const z0 = -this.halfExtent + ref.row * this.tileSize
-    this.masks.set(this.tileKey(ref.col, ref.row), grassMask(tile, x0, z0, this.tileSize, ground))
+    this.masks.set(this.tileKey(ref.col, ref.row), mask ?? grassMask(tile, x0, z0, this.tileSize, ground))
     this.dropOver(x0, z0)
   }
 
