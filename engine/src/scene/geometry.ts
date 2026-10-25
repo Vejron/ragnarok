@@ -21,6 +21,8 @@ export interface GeometryData {
   weights?: Float32Array
   /** Without indices the vertices are drawn as a triangle list in order. */
   indices?: Uint16Array | Uint32Array
+  /** The bounding sphere, when the caller already knows it; worked out from `positions` otherwise. */
+  bounds?: Sphere
 }
 
 /**
@@ -56,7 +58,8 @@ export class Geometry {
     this.joints = data.joints
     this.weights = data.weights
     this.indices = data.indices
-    this.computeBounds()
+    if (data.bounds) this.bounds = { ...data.bounds }
+    else this.computeBounds()
   }
 
   get vertexCount() {
