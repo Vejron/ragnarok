@@ -57,6 +57,48 @@ impl Ground {
         }
     }
 
+    /// Lowers the samples within `radius` cm of `(x, z)` (cm, local) in a smooth bowl, `depth` cm at
+    /// the middle, never taking sample `at` (`j * side + i`) under `floor(at)` cm (one already lower stays
+    /// as it is). Returns
+    /// the range `(i0, j0, i1, j1)` of sample indices that changed (inclusive), or `None` if none did.
+    /// `client/src/sim/terrain.ts` mirrors this exactly (`digCrater`).
+    pub fn dig(&mut self, x: i32, z: i32, radius: i32, depth: i32, floor: &dyn Fn(usize) -> i32) -> Option<(u32, u32, u32, u32)> {
+        if self.is_flat() || radius <= 0 || depth <= 0 {
+            return None;
+        }
+        let last = self.side as i64 - 1;
+        let to_index = |v: i32, round_up: bool| {
+            let q = f64::from(v - self.origin) / f64::from(self.cell);
+            (if round_up { q.ceil() } else { q.floor() } as i64).clamp(0, last)
+        };
+        let (i0, i1) = (to_index(x - radius, true), to_index(x + radius, false));
+        let (j0, j1) = (to_index(z - radius, true), to_index(z + radius, false));
+        let r2 = i64::from(radius) * i64::from(radius);
+        let mut changed: Option<(u32, u32, u32, u32)> = None;
+        for j in j0..=j1 {
+            for i in i0..=i1 {
+                let dx = i64::from(self.origin) + i * i64::from(self.cell) - i64::from(x);
+                let dz = i64::from(self.origin) + j * i64::from(self.cell) - i64::from(z);
+                let d2 = dx * dx + dz * dz;
+                if d2 >= r2 {
+                    continue;
+                }
+                let t = (r2 - d2) as f64 / r2 as f64;
+                let delta = (f64::from(depth) * t * t).round() as i32;
+                let at = (j * i64::from(self.side) + i) as usize;
+                let old = self.heights[at];
+                let lowered = (old - delta).max(floor(at).min(old));
+                if lowered == old {
+                    continue;
+                }
+                self.heights[at] = lowered;
+                let (iu, ju) = (i as u32, j as u32);
+                changed = Some(changed.map_or((iu, ju, iu, ju), |(a, b, c, d)| (a.min(iu), b.min(ju), c.max(iu), d.max(ju))));
+            }
+        }
+        changed
+    }
+
     /// Highest sample, metres.
     pub fn max_height(&self) -> f32 {
         self.heights.iter().copied().max().map_or(0.0, |h| h as f32 / 100.0)
@@ -129,6 +171,60 @@ mod tests {
         for (x, z, expected) in TERRAIN_FIXTURE {
             let h = g.height_at(x, z);
             assert!((h - expected).abs() < 1e-4, "({x}, {z}): {h} != {expected}");
+        }
+    }
+
+    /// A 9 × 9 flat grid of 100 cm cells, 500 cm up, for the craters.
+    fn flat_500() -> Ground {
+        Ground { origin: 0, cell: 100, side: 9, heights: vec![500; 81] }
+    }
+
+    #[test]
+    fn a_crater_is_deepest_in_the_middle_and_smooth_at_the_rim() {
+        let mut g = flat_500();
+        let changed = g.dig(400, 400, 300, 100, &|_| 0).unwrap();
+        assert_eq!(changed, (2, 2, 6, 6));
+        assert_eq!(g.heights[4 * 9 + 4], 400);
+        // One cell out: t = (1 - 1/9)^2 = 0.790..., so 79 cm.
+        assert_eq!(g.heights[4 * 9 + 5], 500 - 79);
+        // On the rim nothing moves.
+        assert_eq!(g.heights[4 * 9 + 7], 500);
+        assert_eq!(g.heights[0], 500);
+    }
+
+    #[test]
+    fn a_crater_stops_at_the_floor_and_leaves_lower_ground_alone() {
+        let mut g = flat_500();
+        g.dig(400, 400, 300, 1000, &|_| 450);
+        assert_eq!(g.heights[4 * 9 + 4], 450);
+        g.heights[0] = 100;
+        g.dig(0, 0, 150, 100, &|_| 450);
+        assert_eq!(g.heights[0], 100);
+    }
+
+    #[test]
+    fn a_crater_with_nothing_to_dig_changes_nothing() {
+        assert_eq!(Ground::default().dig(0, 0, 300, 100, &|_| 0), None);
+        let mut g = flat_500();
+        assert_eq!(g.dig(400, 400, 0, 100, &|_| 0), None);
+        assert_eq!(g.dig(400, 400, 300, 0, &|_| 0), None);
+    }
+
+    /// `(x, z, radius, depth)` craters dug in order into `flat_500()`; `terrain.spec.ts` digs the same
+    /// ones and checks the samples in `CRATER_FIXTURE`.
+    pub const CRATERS: [(i32, i32, i32, i32); 3] = [(400, 400, 300, 100), (450, 380, 250, 60), (-50, 800, 400, 90)];
+
+    /// `(index, centimetres)` of `flat_500()` after `CRATERS`; mirrored in `terrain.spec.ts`.
+    pub const CRATER_FIXTURE: [(usize, i32); 8] = [(0, 500), (40, 345), (41, 366), (31, 377), (72, 413), (63, 424), (73, 434), (50, 408)];
+
+    #[test]
+    fn stacked_craters_match_the_fixture_the_client_checks() {
+        let mut g = flat_500();
+        for (x, z, radius, depth) in CRATERS {
+            g.dig(x, z, radius, depth, &|_| 0);
+        }
+        for (at, expected) in CRATER_FIXTURE {
+            assert_eq!(g.heights[at], expected, "sample {at}");
         }
     }
 

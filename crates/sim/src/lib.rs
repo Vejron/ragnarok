@@ -15,6 +15,7 @@ use shared::consts::*;
 use shared::movement::{begin_slide, decay_knock, desired_translation, settle_vertical, spend_stamina, steer_chute, toggle_chute};
 use shared::protocol::InputFrame;
 use shared::quant::from_cm;
+use shared::terrain::Ground;
 use shared::world::{ObjId, WorldFile};
 use std::collections::HashMap;
 
@@ -87,6 +88,14 @@ pub struct Physics {
     /// Chunks of placed cubes to be given a new shape (`set_construct`), or taken out when empty, at the
     /// start of the next step.
     construct_shapes: Vec<([i32; 3], Option<SharedShape>)>,
+    /// The server's terrain heightfields by block `(column, row)` (`terrain_colliders`); empty on the
+    /// client, whose tiles carry their own (`stream`).
+    terrain: HashMap<(u32, u32), ColliderHandle>,
+    /// Cells a terrain block is a side (`block_cells`).
+    terrain_cells: u32,
+    /// Terrain blocks to be given the heightfield after a crater (`dig_ground`), at the start of the
+    /// next step.
+    terrain_shapes: Vec<((u32, u32), Collider)>,
     /// The ground, `[min x, min z, max x, max z]` in metres, under every static collider taken out or
     /// reshaped since `take_changed` was last called: where the bots' walking grid is out of date.
     changed: Vec<[f32; 4]>,
@@ -123,30 +132,46 @@ const BED_FLOOR: f32 = 12.0;
 ///
 /// A building or tree comes with the [`Obj`] it is, for worlds that went through `assemble`.
 pub fn static_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)>> {
-    let terrain = !world.ground.is_flat();
-    let mut colliders = vec![(slab(world, terrain), None)];
-    let ground = &world.ground;
-    if terrain {
-        let side = ground.side as usize;
-        // Parry's heightfield is column-major with rows along Z: heights[(row, col)].
-        let mut heights = Vec::with_capacity(side * side);
-        for column in 0..side {
-            for row in 0..side {
-                heights.push(ground.sample(column as i64, row as i64));
-            }
-        }
-        let width = (side - 1) as f32 * from_cm(ground.cell);
-        let center = from_cm(ground.origin) + width / 2.0;
-        colliders.push((
-            ColliderBuilder::heightfield(Array2::new(side, side, heights), Vector::new(width, 1.0, width))
-                .translation(Vector::new(center, 0.0, center))
-                .build(),
-            None,
-        ));
-    }
+    let mut colliders = vec![(slab(world, !world.ground.is_flat()), None)];
+    colliders.extend(terrain_colliders(&world.ground, world.tile_size).into_iter().map(|(_, collider)| (collider, None)));
     colliders.extend(walls(world).into_iter().map(|wall| (wall, None)));
     colliders.extend(object_colliders(world)?);
     Ok(colliders)
+}
+
+/// How many cells a terrain block is a side: a tile when the grid is cut into whole tiles, so a crater
+/// rebuilds the heightfield of the few tiles it touches and not the whole world's; else the whole grid.
+fn block_cells(ground: &Ground, tile_size: i32) -> u32 {
+    let cells = ground.side.saturating_sub(1);
+    let per_tile = if ground.cell > 0 && tile_size > 0 && tile_size % ground.cell == 0 { (tile_size / ground.cell) as u32 } else { 0 };
+    if per_tile > 0 && cells.is_multiple_of(per_tile) { per_tile } else { cells.max(1) }
+}
+
+/// The heightfield of the block of `ground` whose first sample is `(i0, j0)`, `cells` cells a side,
+/// laid out as the whole terrain was: column-major with rows along Z, centred on its square.
+fn terrain_block(ground: &Ground, i0: u32, j0: u32, cells: u32) -> Collider {
+    let side = cells as usize + 1;
+    // Parry's heightfield is column-major with rows along Z: heights[(row, col)].
+    let mut heights = Vec::with_capacity(side * side);
+    for column in 0..side {
+        for row in 0..side {
+            heights.push(ground.sample(i64::from(i0) + column as i64, i64::from(j0) + row as i64));
+        }
+    }
+    let width = cells as f32 * from_cm(ground.cell);
+    let x = from_cm(ground.origin) + i0 as f32 * from_cm(ground.cell) + width / 2.0;
+    let z = from_cm(ground.origin) + j0 as f32 * from_cm(ground.cell) + width / 2.0;
+    ColliderBuilder::heightfield(Array2::new(side, side, heights), Vector::new(width, 1.0, width)).translation(Vector::new(x, 0.0, z)).build()
+}
+
+/// The terrain as heightfields, each with its block `(column, row)`; none on a flat world.
+fn terrain_colliders(ground: &Ground, tile_size: i32) -> Vec<((u32, u32), Collider)> {
+    if ground.is_flat() {
+        return Vec::new();
+    }
+    let cells = block_cells(ground, tile_size);
+    let blocks = (ground.side - 1).div_ceil(cells);
+    (0..blocks).flat_map(|bj| (0..blocks).map(move |bi| (bi, bj))).map(|(bi, bj)| ((bi, bj), terrain_block(ground, bi * cells, bj * cells, cells))).collect()
 }
 
 /// Ground: a 1 m thick slab. On flat worlds its top is y = 0 and it is the whole ground; under a
@@ -363,7 +388,16 @@ fn controller() -> KinematicCharacterController {
 impl Physics {
     pub fn new(world: &WorldFile) -> Result<Self> {
         let mut physics = Self::empty(from_cm(world.half_extent));
-        for (collider, object) in static_colliders(world)? {
+        physics.insert_static(slab(world, !world.ground.is_flat()), None);
+        for (block, collider) in terrain_colliders(&world.ground, world.tile_size) {
+            let handle = physics.insert_static(collider, None);
+            physics.terrain.insert(block, handle);
+        }
+        physics.terrain_cells = block_cells(&world.ground, world.tile_size);
+        for wall in walls(world) {
+            physics.insert_static(wall, None);
+        }
+        for (collider, object) in object_colliders(world)? {
             physics.insert_static(collider, object);
         }
         physics.step_pipeline();
@@ -396,6 +430,9 @@ impl Physics {
             constructs: HashMap::new(),
             construct_chunks: HashMap::new(),
             construct_shapes: Vec::new(),
+            terrain: HashMap::new(),
+            terrain_cells: 0,
+            terrain_shapes: Vec::new(),
             changed: Vec::new(),
             bound,
             tiles: HashMap::new(),
@@ -452,6 +489,28 @@ impl Physics {
         }
         self.replacements.retain(|(queued, _)| *queued != object);
         self.replacements.push((object, shape));
+    }
+
+    /// Gives the terrain the heights `ground` has now in the samples `(i0, j0)` to `(i1, j1)` (inclusive)
+    /// a crater changed: the blocks they touch get a new heightfield at the start of the next step. A
+    /// block shares its last row and column with its neighbour, so a sample on a seam rebuilds both.
+    pub fn dig_ground(&mut self, ground: &Ground, (i0, j0, i1, j1): (u32, u32, u32, u32)) {
+        let cells = self.terrain_cells;
+        if cells == 0 || self.terrain.is_empty() {
+            return;
+        }
+        let blocks = (ground.side - 1).div_ceil(cells);
+        // The first block whose last sample is at or after the changed one, to the last whose first is at or before.
+        let span = |lo: u32, hi: u32| (lo.saturating_sub(1) / cells).min(blocks - 1)..=(hi / cells).min(blocks - 1);
+        for bj in span(j0, j1) {
+            for bi in span(i0, i1) {
+                self.terrain_shapes.retain(|(queued, _)| *queued != (bi, bj));
+                self.terrain_shapes.push(((bi, bj), terrain_block(ground, bi * cells, bj * cells, cells)));
+            }
+        }
+        let cell = from_cm(ground.cell);
+        let at = |i: u32| from_cm(ground.origin) + i as f32 * cell;
+        self.changed.push([at(i0) - cell, at(j0) - cell, at(i1) + cell, at(j1) + cell]);
     }
 
     /// Gives chunk `chunk` of placed cubes the collider `shape` (its boxes, `solid_of`), in place of

@@ -1,7 +1,7 @@
 //! Simulation and network constants. `client/scripts/gen-consts.ts` generates the client's copy from this file: run `npm run gen:consts` in `client` after editing.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 44;
+pub const PROTOCOL_VERSION: u8 = 45;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -651,6 +651,21 @@ pub const PLANE_REARM_TICKS: u32 = 3 * TICK_RATE;
 pub const BOMB_RADIUS: f32 = 6.0;
 pub const BOMB_DAMAGE: f32 = 110.0;
 pub const BOMB_KNOCK: f32 = 16.0;
+
+/// Craters (CRATERS.md): a tank shell, a mortar round or a bomb that bursts on the ground dents it in a
+/// smooth bowl `radius` metres across the way out and `depth` metres deep at the middle.
+pub const CRATER_SHELL_RADIUS: f32 = 5.6;
+pub const CRATER_SHELL_DEPTH: f32 = 1.0;
+pub const CRATER_MORTAR_RADIUS: f32 = 8.8;
+pub const CRATER_MORTAR_DEPTH: f32 = 1.6;
+pub const CRATER_BOMB_RADIUS: f32 = 7.0;
+pub const CRATER_BOMB_DEPTH: f32 = 2.2;
+/// A shell digs only if it bursts within this far above the terrain, metres: not on a roof or in the air.
+pub const CRATER_REACH: f32 = 1.5;
+/// However many craters land on a place, the ground goes no lower than this under what it was, metres.
+pub const CRATER_MAX_DEPTH: f32 = 4.0;
+/// The most craters remembered for a joiner (the oldest are forgotten, which a late joiner sees as smoother ground there).
+pub const CRATER_MAX_KEPT: usize = 2000;
 
 /// The tank gun.
 pub const SHELL_COOLDOWN_TICKS: u32 = 90;

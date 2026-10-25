@@ -48,6 +48,44 @@ export function heightIn(ground: TileGround, x: number, z: number): number {
   return f32(h11 + f32(f32(1 - fx) * f32(h10 - h11)) + f32(f32(1 - fz) * f32(h01 - h11)))
 }
 
+/**
+ * Lowers `ground`'s samples within `radius` cm of `(x, z)` (cm, in the world's frame) in a smooth bowl,
+ * `depth` cm at the middle, never sample `at` (`j * side + i`) under `floor(at)` cm. Mirrors `Ground::dig` in `crates/shared` sample for
+ * sample (the heights are whole centimetres), but on this tile alone: a crater over a seam is dug in
+ * each tile it touches. Returns whether any sample changed.
+ */
+export function digCrater(ground: TileGround, x: number, z: number, radius: number, depth: number, floor: (at: number) => number): boolean {
+  if (radius <= 0 || depth <= 0) return false
+  const cell = Math.round(ground.cell * 100)
+  const x0 = Math.round(ground.x0 * 100)
+  const z0 = Math.round(ground.z0 * 100)
+  const last = ground.side - 1
+  const clamp = (v: number) => Math.min(Math.max(v, 0), last)
+  const i0 = clamp(Math.ceil((x - radius - x0) / cell))
+  const i1 = clamp(Math.floor((x + radius - x0) / cell))
+  const j0 = clamp(Math.ceil((z - radius - z0) / cell))
+  const j1 = clamp(Math.floor((z + radius - z0) / cell))
+  const r2 = radius * radius
+  let changed = false
+  for (let j = j0; j <= j1; j++) {
+    for (let i = i0; i <= i1; i++) {
+      const dx = x0 + i * cell - x
+      const dz = z0 + j * cell - z
+      const d2 = dx * dx + dz * dz
+      if (d2 >= r2) continue
+      const t = (r2 - d2) / r2
+      const delta = Math.round(depth * t * t)
+      const at = j * ground.side + i
+      const old = Math.round(ground.heights[at]! * 100)
+      const lowered = Math.max(old - delta, Math.min(floor(at), old))
+      if (lowered === old) continue
+      ground.heights[at] = f32(lowered / 100)
+      changed = true
+    }
+  }
+  return changed
+}
+
 /** The streamed-in tiles' ground, to look up heights for the camera, spawning and effects. */
 export class Terrain {
   private readonly tiles = new Map<number, TileGround>()

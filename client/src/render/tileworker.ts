@@ -1,4 +1,5 @@
 import type { TerrainBuffers, Pixels } from './terrainmesh'
+import type { Ribbon } from './groundmesh'
 import type { PreparedTile, TileInput } from './tileprep'
 
 /*
@@ -13,19 +14,22 @@ export type TileRequest =
   | { kind: 'init'; halfExtent: number; tileSize: number }
   | { kind: 'prepare'; id: number; col: number; row: number; input: TileInput }
   | { kind: 'remesh'; id: number; col: number; row: number; level: number }
+  | { kind: 'reground'; id: number; col: number; row: number; heights: Float32Array; level: number }
   | { kind: 'drop'; col: number; row: number }
 
 /**
  * What the worker answers. A `prepare` gets a `prepared` (or a `failed`), then a `shaded` for each
- * neighbour whose relief it changed; a `remesh` gets a `meshed` (or a `failed`).
+ * neighbour whose relief it changed; a `remesh` gets a `meshed` (or a `failed`); a `reground` gets a
+ * `regrounded`.
  */
 export type TileReply =
   | { kind: 'prepared'; id: number; prepared: PreparedTile }
   | { kind: 'meshed'; id: number; buffers: TerrainBuffers }
+  | { kind: 'regrounded'; id: number; buffers: TerrainBuffers; relief: Pixels; ribbons: Ribbon[] }
   | { kind: 'failed'; id: number; message: string }
   | { kind: 'shaded'; col: number; row: number; relief: Pixels }
 
-type Answer = Extract<TileReply, { kind: 'prepared' | 'meshed' }>
+type Answer = Extract<TileReply, { kind: 'prepared' | 'meshed' | 'regrounded' }>
 
 interface Waiting {
   resolve: (reply: Answer) => void
@@ -65,6 +69,17 @@ export class TileWorker {
     const reply = await this.ask((id) => ({ kind: 'remesh', id, col, row, level }))
     if (reply.kind !== 'meshed') throw new Error(`tile worker answered ${reply.kind}`)
     return reply.buffers
+  }
+
+  /**
+   * Tile `(col, row)`'s ground has these `heights` now (a crater dented it): its terrain mesh at `level`,
+   * its relief map and its roads and rails draped on the new ground. The worker also shades the
+   * neighbours again along the seam (`onShaded`).
+   */
+  async reground(col: number, row: number, heights: Float32Array, level: number): Promise<Extract<TileReply, { kind: 'regrounded' }>> {
+    const reply = await this.ask((id) => ({ kind: 'reground', id, col, row, heights, level }))
+    if (reply.kind !== 'regrounded') throw new Error(`tile worker answered ${reply.kind}`)
+    return reply
   }
 
   /** Tile `(col, row)` is gone: the worker forgets its ground. */

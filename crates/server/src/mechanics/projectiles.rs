@@ -99,6 +99,8 @@ pub struct Burst {
     pub damage: f32,
     pub knock: f32,
     pub upward: bool,
+    /// The crater it digs where it bursts on the ground: radius and depth, metres; zero for none.
+    pub crater: [f32; 2],
 }
 
 /// Moves at the start of `Gunnery`'s tick rather than at the end of `Combat`'s.
@@ -145,17 +147,17 @@ pub struct Flying {
 }
 
 const fn blast(weapon: u8, radius: f32, damage: f32, knock: f32) -> Burst {
-    Burst { weapon, radius, damage, knock, upward: false }
+    Burst { weapon, radius, damage, knock, upward: false, crater: [0.0, 0.0] }
 }
 
 /// What a projectile of `kind` does when it bursts; `None` for one that only goes out.
 pub fn burst_of(kind: u8) -> Option<Burst> {
     Some(match kind {
         PROJECTILE_ROCKET => blast(WEAPON_ROCKET, ROCKET_BLAST_RADIUS, ROCKET_DAMAGE, ROCKET_KNOCK),
-        PROJECTILE_SHELL => blast(WEAPON_SHELL, EXPLOSION_RADIUS, EXPLOSION_DAMAGE, EXPLOSION_KNOCK),
+        PROJECTILE_SHELL => Burst { crater: [CRATER_SHELL_RADIUS, CRATER_SHELL_DEPTH], ..blast(WEAPON_SHELL, EXPLOSION_RADIUS, EXPLOSION_DAMAGE, EXPLOSION_KNOCK) },
         PROJECTILE_CANNON => blast(WEAPON_AUTOCANNON, CANNON_RADIUS, CANNON_DAMAGE, CANNON_KNOCK),
-        PROJECTILE_BOMB => blast(WEAPON_BOMB, BOMB_RADIUS, BOMB_DAMAGE, BOMB_KNOCK),
-        PROJECTILE_MORTAR => blast(WEAPON_MORTAR, MORTAR_RADIUS, MORTAR_DAMAGE, MORTAR_KNOCK),
+        PROJECTILE_BOMB => Burst { crater: [CRATER_BOMB_RADIUS, CRATER_BOMB_DEPTH], ..blast(WEAPON_BOMB, BOMB_RADIUS, BOMB_DAMAGE, BOMB_KNOCK) },
+        PROJECTILE_MORTAR => Burst { crater: [CRATER_MORTAR_RADIUS, CRATER_MORTAR_DEPTH], ..blast(WEAPON_MORTAR, MORTAR_RADIUS, MORTAR_DAMAGE, MORTAR_KNOCK) },
         PROJECTILE_GRENADE => Burst { upward: true, ..blast(WEAPON_GRENADE, GRENADE_BLAST_RADIUS, GRENADE_DAMAGE, GRENADE_KNOCK) },
         PROJECTILE_EGG => Burst { upward: true, ..blast(WEAPON_EGG, HEN_EGG_BLAST_RADIUS, HEN_EGG_DAMAGE, HEN_EGG_KNOCK) },
         _ => return None,
@@ -340,6 +342,8 @@ fn set_off(world: &mut World, burst: Burst, owner: u32, point: [f32; 3], dir: [f
     let attacker = world.entities.has::<Player>(owner).then_some(owner);
     let dir = if burst.upward { [0.0, 1.0, 0.0] } else { dir };
     blast_at(world, Blast { point, radius: burst.radius, damage: burst.damage, knock: burst.knock, dir, attacker, weapon: burst.weapon }, direct);
+    // After the blast, so a building it bit has stood on the old ground when it fell.
+    world.dig_crater(point, burst.crater[0], burst.crater[1]);
 }
 
 /// A rocket or a shell: flies on, and bursts on the first wall, vehicle or (with `bodies`) stickman it

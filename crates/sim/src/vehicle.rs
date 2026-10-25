@@ -645,8 +645,15 @@ impl Physics {
     /// Takes destroyed buildings and trees out of the collider set. With no car the pipeline does
     /// not run otherwise, and the broad-phase would keep pointing at colliders that are gone.
     pub(crate) fn apply_removals(&mut self) {
-        if self.removals.is_empty() && self.replacements.is_empty() && self.construct_shapes.is_empty() {
+        if self.removals.is_empty() && self.replacements.is_empty() && self.construct_shapes.is_empty() && self.terrain_shapes.is_empty() {
             return;
+        }
+        for (block, collider) in std::mem::take(&mut self.terrain_shapes) {
+            if let Some(old) = self.terrain.remove(&block) {
+                self.colliders.remove(old, &mut self.islands, &mut self.bodies, &mut self.soft_bodies, false);
+            }
+            let handle = self.colliders.insert(collider);
+            self.terrain.insert(block, handle);
         }
         for (chunk, shape) in std::mem::take(&mut self.construct_shapes) {
             if let Some(old) = self.constructs.remove(&chunk) {

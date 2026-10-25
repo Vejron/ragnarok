@@ -32,8 +32,19 @@ function ribbonMeshes(ribbons: readonly Ribbon[]): Mesh[] {
     }
     const mesh = new Mesh(new Geometry(buffers), material)
     mesh.receiveShadow = true
+    mesh.userData.ribbon = true
     return mesh
   })
+}
+
+/** Draws a tile's roads and rails again, from ribbons made on its new ground (`ribbonsOf`). */
+export function replaceRibbons(group: Group, ribbons: readonly Ribbon[]) {
+  const stale = group.children.filter((child): child is Mesh => child.userData.ribbon === true && child instanceof Mesh)
+  for (const mesh of stale) {
+    mesh.geometry.dispose()
+    group.remove(mesh)
+  }
+  group.add(...ribbonMeshes(ribbons))
 }
 
 /** Every tile's buildings share this one; each vertex carries its colour. */

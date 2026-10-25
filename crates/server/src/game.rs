@@ -22,6 +22,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::{MissedTickBehavior, interval};
 
 mod construct;
+mod craters;
 pub use construct::{HALF_CUBE, cube_centre};
 pub(crate) mod feedback;
 mod replicate;
@@ -110,6 +111,9 @@ impl Game {
                 fresh_carved: Vec::new(),
                 strained: HashMap::new(),
                 rubble: Vec::new(),
+                craters: Vec::new(),
+                fresh_craters: Vec::new(),
+                pristine: Vec::new(),
                 construct: Default::default(),
                 fresh_built: Default::default(),
                 construct_dirty: Default::default(),
@@ -242,6 +246,10 @@ impl Game {
             .collect();
         if !carved.is_empty() {
             let _ = outbox.try_send(Outgoing::Reliable(encode(&Carved { tag: S_CARVED, live: false, buildings: carved }).into()));
+        }
+        // Every crater dug so far, in order, as state.
+        if !self.world.craters.is_empty() {
+            let _ = outbox.try_send(Outgoing::Reliable(encode(&Cratered { tag: S_CRATERED, live: false, craters: self.world.craters.clone() }).into()));
         }
         // Every cube placed so far, as state, in batches that stay well under the client's 4 MiB a message.
         let cubes: Vec<_> = self.world.construct.cubes().collect();
@@ -406,6 +414,7 @@ impl Game {
         self.broadcast_destroyed();
         self.broadcast_damaged();
         self.broadcast_carved();
+        self.broadcast_cratered();
         self.broadcast_built();
         self.drop_stalled();
         crate::events::update(&mut self.world.entities.ecs);
@@ -445,6 +454,17 @@ impl Game {
         }
         let entries = self.world.fresh_carved.drain(..).map(|(id, at, cut)| carved_entry(id, at, cut.blasted, cut.fell)).collect();
         let bytes = Bytes::from(encode(&Carved { tag: S_CARVED, live: true, buildings: entries }));
+        for (&to, outbox) in &self.outboxes {
+            send_reliable(outbox, to, &bytes, &mut self.stalled);
+        }
+    }
+
+    /// Tells everyone which craters shells dug this tick, as one message.
+    fn broadcast_cratered(&mut self) {
+        if self.world.fresh_craters.is_empty() {
+            return;
+        }
+        let bytes = Bytes::from(encode(&Cratered { tag: S_CRATERED, live: true, craters: std::mem::take(&mut self.world.fresh_craters) }));
         for (&to, outbox) in &self.outboxes {
             send_reliable(outbox, to, &bytes, &mut self.stalled);
         }
@@ -540,6 +560,60 @@ mod tests {
 
     fn drain(inbox: &mut mpsc::Receiver<Outgoing>) -> Vec<Outgoing> {
         std::iter::from_fn(|| inbox.try_recv().ok()).collect()
+    }
+
+    /// A 100 m square of ground 3 m up, samples 5 m apart.
+    fn hilly_game() -> Game {
+        let ground = shared::terrain::Ground { origin: -10_000, cell: 500, side: 41, heights: vec![300; 41 * 41] };
+        let map = WorldFile { version: WORLD_VERSION, half_extent: 10_000, spawns: vec![[0, 0]], tile_size: 20_000, ground, ..Default::default() };
+        Game::new(map, 0).unwrap()
+    }
+
+    /// The `Cratered` messages in `outgoing`, as `(live, craters)`.
+    fn cratered(outgoing: Vec<Outgoing>) -> Vec<(bool, Vec<CraterEntry>)> {
+        outgoing
+            .into_iter()
+            .filter_map(|out| match out {
+                Outgoing::Reliable(bytes) if peek_tag(&bytes) == Some(S_CRATERED) => decode::<Cratered>(&bytes).map(|c| (c.live, c.craters)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_shell_on_the_ground_digs_a_crater_everyone_is_told_of_and_a_joiner_catches_up_on() {
+        let mut game = hilly_game();
+        let (_, mut first) = join(&mut game);
+        drain(&mut first);
+        let ground = game.world.map.ground.clone();
+        // In the air, on a roof's height, nothing happens.
+        assert!(!game.world.dig_crater([0.0, 3.0 + CRATER_REACH + 1.0, 0.0], 5.0, 1.0));
+        assert_eq!(game.world.map.ground, ground);
+        assert!(game.world.dig_crater([0.0, 3.2, 0.0], 5.6, 1.0));
+        assert_eq!(game.world.map.ground.height_at(0.0, 0.0), 2.0, "a metre down in the middle");
+        assert_eq!(game.world.map.ground.height_at(20.0, 20.0), 3.0, "far away it is as it was");
+        game.step();
+        let told = cratered(drain(&mut first));
+        assert_eq!(told.len(), 1);
+        assert!(told[0].0, "news to the ones already here");
+        assert_eq!(told[0].1, vec![CraterEntry { x: 0, z: 0, radius: 560, depth: 100 }]);
+        // Nothing is told twice.
+        game.step();
+        assert!(cratered(drain(&mut first)).is_empty());
+        let (_, mut late) = join(&mut game);
+        let caught_up = cratered(drain(&mut late));
+        assert_eq!(caught_up.len(), 1);
+        assert!(!caught_up[0].0, "state, not news");
+        assert_eq!(caught_up[0].1.len(), 1);
+    }
+
+    #[test]
+    fn craters_pile_up_to_a_depth_and_no_further() {
+        let mut game = hilly_game();
+        for _ in 0..20 {
+            game.world.dig_crater([0.0, game.world.map.ground.height_at(0.0, 0.0), 0.0], 5.6, 1.0);
+        }
+        assert_eq!(game.world.map.ground.height_at(0.0, 0.0), 0.0f32.max(3.0 - CRATER_MAX_DEPTH));
     }
 
     #[test]
@@ -701,6 +775,136 @@ mod tests {
         }
         println!("{checked} buildings checked whole, {failed} failed; slowest check {worst:?}; {bitten} bitten at one side, {crumbled} of them crumbled further, {:.1}% of their cells on average", 100.0 * lost / crumbled.max(1) as f64);
         assert_eq!(failed, 0);
+    }
+
+    /// A tank battle: a full room on the ground while shells, mortar rounds and bombs rain on a 300 m
+    /// square, `SHELLS` of them a tick (default 2, so 120 a second) for `TICKS` ticks (default 1200), as
+    /// the crater version of the world, then again with autocannon rounds (the same blast, no crater)
+    /// to tell what the craters cost. `RAGNAROK_WORLD` picks the world (the committed city by default).
+    /// `cargo test --release -p server -- --ignored --nocapture shelling`
+    #[test]
+    #[ignore]
+    fn shelling_tick_cost() {
+        use crate::mechanics::for_tests::Flying;
+        use shared::protocol::{PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_MORTAR, PROJECTILE_SHELL};
+        use std::time::Instant;
+        let env = |name: &str, default: usize| std::env::var(name).ok().and_then(|n| n.parse().ok()).unwrap_or(default);
+        let (shells, ticks) = (env("SHELLS", 2), env("TICKS", 1200));
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../");
+        let fixture = std::env::var_os("RAGNAROK_WORLD").map(std::path::PathBuf::from).unwrap_or_else(|| manifest.join("fixtures/world/world.msgpack"));
+        let budget = Duration::from_secs_f64(1.0 / TICK_RATE as f64);
+        for (label, kinds) in [("craters (shell, mortar, bomb)", [PROJECTILE_SHELL, PROJECTILE_MORTAR, PROJECTILE_BOMB]), ("no craters (autocannon)", [PROJECTILE_CANNON; 3])] {
+            let (map, _) = crate::read_world(&fixture).expect("a world to shell");
+            let mut game = Game::new(map, 0).unwrap();
+            game.world.clear_pickups();
+            let mut inboxes = Vec::new();
+            let mut ids = Vec::new();
+            for _ in 0..MAX_PLAYERS - 1 {
+                let (outbox, inbox) = mpsc::channel(8192);
+                let (reply, mut response) = oneshot::channel();
+                game.handle(Command::Join { outbox, reply, profile: Default::default() });
+                ids.push(response.try_recv().unwrap().unwrap());
+                inboxes.push(inbox);
+            }
+            // Where the battle is: around the world's middle spawn, on its ground.
+            let centre = game.world.map.spawns.get(game.world.map.spawns.len() / 2).map_or([0.0, 0.0], |s| [s[0] as f32 / 100.0, s[1] as f32 / 100.0]);
+            for (n, id) in ids.iter().enumerate() {
+                let mut player = game.world.entities.get_mut::<Player>(*id).unwrap();
+                let (x, z) = (centre[0] + (n % 8) as f32 * 30.0 - 120.0, centre[1] + (n / 8) as f32 * 30.0 - 120.0);
+                player.character.position = [x, game.world.map.ground.height_at(x, z) + sim::STANDING_Y + 0.5, z];
+            }
+            let mut seed = 12345u32;
+            let mut random = move || {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                (seed >> 8) as f32 / (1u32 << 24) as f32
+            };
+            let (mut total, mut worst, mut over, mut fired) = (Duration::ZERO, Duration::ZERO, 0usize, 0usize);
+            let mut spikes = Vec::new();
+            let (mut bytes, mut crater_bytes) = (0usize, 0usize);
+            let mut per_tick = Vec::with_capacity(ticks);
+            for t in 0..ticks {
+                for _ in 0..shells {
+                    let (x, z) = (centre[0] + (random() - 0.5) * 300.0, centre[1] + (random() - 0.5) * 300.0);
+                    let y = game.world.map.ground.height_at(x, z) + 40.0;
+                    let kind = kinds[fired % 3];
+                    game.world.launch(Flying { kind, owner: ids[fired % ids.len()], source: 0, position: [x, y, z], velocity: [(random() - 0.5) * 10.0, -30.0, (random() - 0.5) * 10.0], ttl: 600, item: 0, back: 0, flown: 0.0 });
+                    fired += 1;
+                }
+                let started = Instant::now();
+                game.step();
+                let took = started.elapsed();
+                per_tick.push(took);
+                total += took;
+                if took > worst {
+                    worst = took;
+                }
+                if took > budget {
+                    over += 1;
+                }
+                if took > budget / 2 {
+                    spikes.push((t, took));
+                }
+                for inbox in &mut inboxes {
+                    while let Ok(out) = inbox.try_recv() {
+                        let (Outgoing::Reliable(b) | Outgoing::Datagram(b)) = &out;
+                        bytes += b.len();
+                        if matches!(out, Outgoing::Reliable(_)) && peek_tag(b) == Some(S_CRATERED) {
+                            crater_bytes += b.len();
+                        }
+                    }
+                }
+            }
+            per_tick.sort();
+            let pick = |q: f64| per_tick[((per_tick.len() - 1) as f64 * q) as usize];
+            println!("--- {label}: {fired} shots in {ticks} ticks, {} craters dug", game.world.craters.len());
+            println!("tick: avg {:?}, p50 {:?}, p99 {:?}, worst {:?}; over the {budget:?} budget: {over}; over half of it: {}", total / ticks as u32, pick(0.5), pick(0.99), worst, spikes.len());
+            println!("sent to the room: {} KiB, {} B a player a second, of which {} B a player a second are `cratered`", bytes / 1024, bytes / ids.len() / (ticks / TICK_RATE as usize).max(1), crater_bytes / ids.len() / (ticks / TICK_RATE as usize).max(1));
+            if label.starts_with("craters") {
+                let started = Instant::now();
+                let (outbox, mut inbox) = mpsc::channel(8192);
+                let (reply, _response) = oneshot::channel();
+                game.handle(Command::Join { outbox, reply, profile: Default::default() });
+                let joined = started.elapsed();
+                let catch_up: usize = std::iter::from_fn(|| inbox.try_recv().ok()).filter_map(|o| if let Outgoing::Reliable(b) = o { Some(b) } else { None }).filter(|b| peek_tag(b) == Some(S_CRATERED)).map(|b| b.len()).sum();
+                println!("a joiner after all that: {joined:?}, {catch_up} B of craters in the catch-up");
+            }
+        }
+    }
+
+    /// What one crater costs on ground of each sampling: the bowl dug into the grid, the new heightfields
+    /// built for the tiles it reaches, and the collider swap at the start of the next step.
+    /// `cargo test --release -p server -- --ignored --nocapture crater_rebuild`
+    #[test]
+    #[ignore]
+    fn crater_rebuild_cost() {
+        use std::time::Instant;
+        for (cell_cm, label) in [(500, "5 m"), (200, "2 m"), (100, "1 m")] {
+            // A 1536 m square of rolling ground in 256 m tiles (6 × 6 of them).
+            let (tile_cm, tiles) = (25_600, 6);
+            let side = (tile_cm * tiles / cell_cm + 1) as usize;
+            let origin = -(tile_cm * tiles) / 2;
+            let heights = (0..side * side).map(|k| 1500 + (((k % side) as f32 * 0.05).sin() * 300.0 + ((k / side) as f32 * 0.04).cos() * 300.0) as i32).collect();
+            let ground = shared::terrain::Ground { origin, cell: cell_cm, side: side as u32, heights };
+            let map = WorldFile { version: WORLD_VERSION, half_extent: -origin, spawns: vec![[0, 0]], tile_size: tile_cm, ground, ..Default::default() };
+            let mut game = Game::new(map, 0).unwrap();
+            let (mut dig, mut swap, mut worst) = (Duration::ZERO, Duration::ZERO, Duration::ZERO);
+            let n = 200;
+            for k in 0..n {
+                // Mostly inside tiles, a few on seams and corners.
+                let (x, z) = (((k * 97) % 1400) as f32 - 700.0 + if k % 5 == 0 { 256.0 - ((k * 97) % 1400) as f32 % 256.0 } else { 0.0 }, ((k * 53) % 1400) as f32 - 700.0);
+                let y = game.world.map.ground.height_at(x, z);
+                let started = Instant::now();
+                game.world.dig_crater([x, y, z], 8.8, 1.6);
+                dig += started.elapsed();
+                let started = Instant::now();
+                game.world.physics.step_cars(TICK_DT);
+                let took = started.elapsed();
+                swap += took;
+                worst = worst.max(took);
+            }
+            assert!(!game.world.craters.is_empty());
+            println!("{label} ground ({side}² samples, {} MiB): a crater digs and builds heightfields in {:?}, the swap takes {:?} (worst {worst:?})", side * side * 4 / (1 << 20), dig / n, swap / n);
+        }
     }
 
     /// Not a regression test: a rough cost of one tick with a full room, to aim optimisation at. Players

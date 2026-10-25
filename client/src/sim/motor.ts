@@ -133,6 +133,11 @@ export class SimMotor {
     timed(() => this.sim.addTile(ref.col, ref.row, bytes))
   }
 
+  /** Gives the tile its ground after a crater: `heights` in whole centimetres, as the tile file has them. */
+  setTileGround(ref: Pick<TileRef, 'col' | 'row'>, heights: Int32Array) {
+    timed(() => this.sim.setTileGround(ref.col, ref.row, heights))
+  }
+
   removeTile(ref: Pick<TileRef, 'col' | 'row'>) {
     timed(() => this.sim.removeTile(ref.col, ref.row))
   }

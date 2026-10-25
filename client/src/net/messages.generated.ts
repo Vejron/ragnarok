@@ -21,6 +21,7 @@ export const S_CARVED = 10
 export const S_PROFILES = 11
 export const S_NOTICE = 12
 export const S_BUILT = 13
+export const S_CRATERED = 14
 
 export interface BulletSpawn {
   id: number
@@ -201,6 +202,19 @@ export interface Built {
   fell: CubePos[]
 }
 
+export interface CraterEntry {
+  x: number
+  z: number
+  radius: number
+  depth: number
+}
+
+export interface Cratered {
+  type: 'cratered'
+  live: boolean
+  craters: CraterEntry[]
+}
+
 export interface Hit {
   type: 'hit'
   role: number
@@ -221,7 +235,7 @@ export interface Rtc {
   json: string
 }
 
-export type ServerMessage = Welcome | Snapshot | Pong | Leave | Kill | Scores | Profiles | Notice | Destroyed | Damaged | Carved | Built | Hit | Rtc
+export type ServerMessage = Welcome | Snapshot | Pong | Leave | Kill | Scores | Profiles | Notice | Destroyed | Damaged | Carved | Built | Cratered | Hit | Rtc
 
 function decodeBulletSpawn(r: unknown): BulletSpawn | undefined {
   if (!Array.isArray(r) || r.length !== 10) return undefined
@@ -323,6 +337,16 @@ function decodeCubePos(r: unknown): CubePos | undefined {
   const z = w.int(r[2])
   if (x === undefined || y === undefined || z === undefined) return undefined
   return { x, y, z }
+}
+
+function decodeCraterEntry(r: unknown): CraterEntry | undefined {
+  if (!Array.isArray(r) || r.length !== 4) return undefined
+  const x = w.int(r[0])
+  const z = w.int(r[1])
+  const radius = w.int(r[2])
+  const depth = w.int(r[3])
+  if (x === undefined || z === undefined || radius === undefined || depth === undefined) return undefined
+  return { x, z, radius, depth }
 }
 
 function decodeWelcome(r: readonly unknown[]): Welcome | undefined {
@@ -432,6 +456,14 @@ function decodeBuilt(r: readonly unknown[]): Built | undefined {
   return { type: 'built', live, placed, removed, fell }
 }
 
+function decodeCratered(r: readonly unknown[]): Cratered | undefined {
+  if (r.length !== 3) return undefined
+  const live = w.bool(r[1])
+  const craters = w.list(r[2], decodeCraterEntry)
+  if (live === undefined || craters === undefined) return undefined
+  return { type: 'cratered', live, craters }
+}
+
 function decodeHit(r: readonly unknown[]): Hit | undefined {
   if (r.length !== 10) return undefined
   const role = w.int(r[1])
@@ -483,6 +515,8 @@ export function decodeMessage(r: readonly unknown[]): ServerMessage | undefined 
       return decodeCarved(r)
     case S_BUILT:
       return decodeBuilt(r)
+    case S_CRATERED:
+      return decodeCratered(r)
     case S_HIT:
       return decodeHit(r)
     case S_RTC:

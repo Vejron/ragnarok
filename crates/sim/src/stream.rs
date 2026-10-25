@@ -20,6 +20,8 @@ pub(crate) struct Obstacle {
 /// server's ids), from which its buildings are cut into cells when blasts bite them.
 pub(crate) struct StreamedTile {
     handles: Vec<ColliderHandle>,
+    /// The tile's heightfield, one of `handles`; `None` when it has no ground.
+    ground: Option<ColliderHandle>,
     world: WorldFile,
     /// Buildings already cut into cells, by their number in `world`, with their floors: unpacking a
     /// big one is most of the work of a hit, so it is done once. `None` for one that cannot be cut.
@@ -71,9 +73,8 @@ impl Physics {
     pub fn add_tile(&mut self, manifest: &Manifest, col: u16, row: u16, tile: &Tile) -> Result<()> {
         self.remove_tile(col, row);
         let mut handles = Vec::new();
-        if let Some(ground) = tile_ground(manifest, col, row, &tile.ground) {
-            handles.push(self.insert_static(ground, None));
-        }
+        let ground = tile_ground(manifest, col, row, &tile.ground).map(|ground| self.insert_static(ground, None));
+        handles.extend(ground);
         // The tile alone, as the server's merged world holds it: what collides, under the same ids.
         let solid = Tile { buildings: tile.buildings.clone(), collision: tile.collision.clone(), trees: tile.trees.clone(), bridges: tile.bridges.clone(), ..Default::default() };
         let alone = Manifest { ground_cell: 0, tiles: Vec::new(), spawns: Vec::new(), ..manifest.clone() };
@@ -81,7 +82,7 @@ impl Physics {
         for (collider, object) in object_colliders(&world)? {
             handles.push(self.insert_static(collider, object));
         }
-        self.tiles.insert((col, row), StreamedTile { handles, world, shells: Default::default() });
+        self.tiles.insert((col, row), StreamedTile { handles, ground, world, shells: Default::default() });
         self.refresh();
         Ok(())
     }
@@ -97,6 +98,21 @@ impl Physics {
         }
         self.removals.retain(|object| self.handles.contains_key(object));
         self.replacements.retain(|(object, _)| self.handles.contains_key(object));
+        self.refresh();
+    }
+
+    /// Gives tile `(col, row)` the ground `heights` (centimetres, row-major, `tile_samples` a side): a crater
+    /// dented it. Takes effect at once. Does nothing for a tile that is not there or has no ground.
+    pub fn set_tile_ground(&mut self, manifest: &Manifest, col: u16, row: u16, heights: &[i32]) {
+        let Some(tile) = self.tiles.get_mut(&(col, row)) else { return };
+        let Some(new) = tile_ground(manifest, col, row, heights) else { return };
+        let Some(old) = tile.ground else { return };
+        tile.handles.retain(|&handle| handle != old);
+        self.colliders.remove(old, &mut self.islands, &mut self.bodies, &mut self.soft_bodies, false);
+        let handle = self.colliders.insert(new);
+        let tile = self.tiles.get_mut(&(col, row)).expect("still there");
+        tile.handles.push(handle);
+        tile.ground = Some(handle);
         self.refresh();
     }
 

@@ -2,7 +2,8 @@
 import init from '@/sim/wasm/sim'
 import { Terrain } from '@/sim/terrain'
 import { coverPixels, paintCover, reliefPixels, terrainBuffers, TERRAIN_LOD_ERRORS, type Pixels } from './terrainmesh'
-import { prepareTile, preparedTransferables, terrainTransferables, type CoverPainter } from './tileprep'
+import { ribbonsOf } from './groundmesh'
+import { prepareTile, preparedTransferables, terrainTransferables, type CoverPainter, type TileParts } from './tileprep'
 import type { TileReply, TileRequest } from './tileworker'
 
 /*
@@ -21,6 +22,9 @@ const ready = init()
 let terrain: Terrain | null = null
 /** Each prepared tile's relief map and slope map, by `col * 65536 + row`, to shade its seams again. */
 const reliefs = new Map<number, { relief: Pixels; detail: Int8Array | undefined }>()
+
+/** What each prepared tile was made from, by `col * 65536 + row`: its roads and rails, to drape on dented ground. */
+const parts = new Map<number, TileParts>()
 
 const NEIGHBOURS = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]] as const
 
@@ -53,6 +57,32 @@ self.onmessage = async (event: MessageEvent<TileRequest>) => {
   } else if (request.kind === 'drop') {
     terrain?.delete({ col: request.col, row: request.row, hash: 0 })
     reliefs.delete(key(request.col, request.row))
+    parts.delete(key(request.col, request.row))
+  } else if (request.kind === 'reground') {
+    const { id, col, row, heights, level } = request
+    const ground = terrain?.get(col, row)
+    const kept = reliefs.get(key(col, row))
+    const tile = parts.get(key(col, row))
+    if (!terrain || !ground || !kept || !tile) {
+      reply({ kind: 'failed', id, message: 'tile not prepared' })
+      return
+    }
+    ground.heights = heights
+    const buffers = terrainBuffers(ground, errorOf(level))
+    kept.relief = reliefPixels(ground, terrain, kept.detail)
+    const relief = copy(kept.relief)
+    const ribbons = ribbonsOf(tile, ground, terrain)
+    const transfer = [...terrainTransferables(buffers), relief.data.buffer as ArrayBuffer, ...ribbons.flatMap(({ buffers }) => [buffers.positions, buffers.normals, buffers.colors, buffers.indices].map((array) => array.buffer as ArrayBuffer))]
+    reply({ kind: 'regrounded', id, buffers, relief, ribbons }, transfer)
+    // The tiles beside it see its new heights along the seam.
+    for (const [dc, dr] of NEIGHBOURS) {
+      const next = terrain.get(col + dc, row + dr)
+      const beside = reliefs.get(key(col + dc, row + dr))
+      if (!next || !beside) continue
+      beside.relief = reliefPixels(next, terrain, beside.detail, beside.relief)
+      const shaded = copy(beside.relief)
+      reply({ kind: 'shaded', col: col + dc, row: row + dr, relief: shaded }, [shaded.data.buffer])
+    }
   } else if (request.kind === 'remesh') {
     const ground = terrain?.get(request.col, request.row)
     if (!ground) {
@@ -66,6 +96,7 @@ self.onmessage = async (event: MessageEvent<TileRequest>) => {
     try {
       if (input.tile.buildings.length > 0) await ready
       if (input.ground) terrain.set({ col, row, hash: 0 }, input.ground)
+      parts.set(key(col, row), input.tile)
       const prepared = prepareTile(input, terrain, paint)
       if (prepared.terrain) {
         reliefs.set(key(col, row), { relief: prepared.terrain.relief, detail: input.tile.detail })
@@ -85,6 +116,7 @@ self.onmessage = async (event: MessageEvent<TileRequest>) => {
     } catch (error) {
       terrain.delete({ col, row, hash: 0 })
       reliefs.delete(key(col, row))
+      parts.delete(key(col, row))
       reply({ kind: 'failed', id, message: error instanceof Error ? error.message : String(error) })
     }
   }

@@ -463,6 +463,12 @@ pub struct World {
     pub strained: HashMap<ObjId, u32>,
     /// Cells that have lost their hold and are still falling: where each column of them lands and when.
     pub rubble: Vec<Rubble>,
+    /// Every crater shells have dug, oldest first, for a joiner (`game/craters.rs`), and those dug since the
+    /// last tick, for `Game::step` to broadcast.
+    pub craters: Vec<shared::protocol::CraterEntry>,
+    pub fresh_craters: Vec<shared::protocol::CraterEntry>,
+    /// The ground as the importer left it, copied when the first crater lands: what `CRATER_MAX_DEPTH` is measured from.
+    pub pristine: Vec<i32>,
     /// The cubes players have placed with bricks (`game/construct.rs`).
     pub construct: shared::construct::Construct,
     /// What happened to the cubes since the last tick, for `Game::step` to broadcast as one `Built`.

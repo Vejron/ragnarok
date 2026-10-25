@@ -113,6 +113,12 @@ impl ClientSim {
         self.physics.add_tile(&self.manifest, col, row, &tile).map_err(|e| error("building a tile's colliders", e))
     }
 
+    /// Gives tile `(col, row)` the ground `heights` (whole centimetres, row-major): a crater dented it.
+    #[wasm_bindgen(js_name = setTileGround)]
+    pub fn set_tile_ground(&mut self, col: u16, row: u16, heights: &[i32]) {
+        self.physics.set_tile_ground(&self.manifest, col, row, heights);
+    }
+
     #[wasm_bindgen(js_name = removeTile)]
     pub fn remove_tile(&mut self, col: u16, row: u16) {
         self.physics.remove_tile(col, row);
