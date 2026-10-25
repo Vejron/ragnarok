@@ -9,10 +9,10 @@ The buildings and the terrain are already built in workers (design.md, "Tile mes
 | Phase | What | Status |
 |---|---|---|
 | 0 | Benchmark and baseline in the repo | ◐ benchmark done; browser trace left for the end |
-| 1 | Hash a tile with an indexed loop | ☑ done (p95 0.99 ms, short of 0.5) |
+| 1 | Hash a tile with an indexed loop | ☑ done (Chrome p95 0.40 ms) |
 | 2 | Cheaper road and rail draping on the main thread | ☑ done (4× faster, short of target; Phase 3 takes the rest) |
 | 3 | Roads, rails and water in the terrain worker | ☑ done (seam re-drape and play-test left) |
-| 4 | Decode: measure in the browser, then decide | ☐ not started |
+| 4 | Decode: measure in the browser, then decide | ☑ done (loops in `decodeTile`; no worker needed) |
 | 5 | A fallen building removed in place | ☐ not started |
 | 6 | Carve-only WASM for the buildings worker (optional) | ☐ not started |
 
@@ -64,7 +64,7 @@ The benchmarks so far lived in a scratchpad. Every later phase is judged against
 - [x] Switch to an indexed loop and check that the hash is unchanged (the known vectors in `world.spec.ts`).
 - [x] Re-measure: median 2.10 → 0.55 ms, p95 3.97 → 0.99 ms.
 
-**Done when** hashing takes p95 under 0.5 ms. Not quite: FNV-1a goes a byte at a time, so this is about as fast as JS goes (about 2.5 ns a byte). Hashing in Rust would gain little more, so this stays as it is.
+**Done when** hashing takes p95 under 0.5 ms. Met in Chrome: 0.20 / 0.40 / 0.70 ms (median / p95 / max). Node is slower, at a p95 of 0.99 ms.
 
 ## Phase 2: Cheaper road and rail draping on the main thread
 
@@ -119,10 +119,12 @@ Each tile is parsed three times:
 
 Moving the JS decode into a worker only helps if the main thread then gets back less than a whole `TileData`, because cloning a whole `TileData` back costs about as much as decoding it.
 
-- [ ] Measure `decodeTile` in Chrome, separately for the ground (`Float32Array`) and for the object-heavy parts (buildings, roads, trees, cover).
-- [ ] If decoding is still over the target: have the workers decode what only they need from `tile.bytes` (one transfer of a copy of the bytes), and let the main thread decode only what it queries (buildings, trees, cover for surfaces and grass). Otherwise mark this phase ✕ with the numbers.
+- [x] Measure where `decodeTile` goes. The msgpack decode itself was 0.43 ms a tile. Most of the rest was `Float32Array.from(array, map)`, whose generic path ran a callback for each of the ground's 66,049 numbers (and for the water and collision vertices).
+- [x] Replace those with plain loops (`inMetres`, `flatMetres`, `flatIndices` in `world.ts`). Element for element the output is the same on all 121 dev tiles. Node: decode 2.37 / 4.71 / 7.50 → 0.51 / 2.02 / 3.07 ms.
+- [x] Measure in Chrome: hash 0.20 / 0.40 / 0.70, decode 0.40 / 0.80 / 1.00, both together 0.70 / 1.20 / 1.60 ms (median / p95 / max) over the 121 tiles.
+- [x] ✕ Decoding in a worker: not needed at these numbers. It would also cost a clone of `TileData` back.
 
-**Done when** hash and decode together take p95 under 2 ms in the browser, or the phase is dropped with numbers that show it doesn't matter.
+**Done when** hash and decode together take p95 under 2 ms in the browser, or the phase is dropped with numbers that show it doesn't matter. Met: a p95 of 1.2 ms.
 
 ## Phase 5: A fallen building removed in place
 
@@ -154,6 +156,8 @@ The buildings worker compiles the whole 2.8 MB simulation module (Rapier include
 ## Log
 
 Newest first. One entry per change: date, phase, what was done, numbers before and after, commit.
+
+- **2026-10-25 · phase 4.** `decodeTile` fills its typed arrays with loops in place of `Float32Array.from(array, map)`: 2.37 → 0.51 ms median in Node. In Chrome, hash + decode take 0.70 / 1.20 / 1.60 ms, so it stays on the main thread.
 
 - **2026-10-25 · phase 3.** The terrain worker builds each tile's roads, rails and water (`groundmesh.ts`). In Chrome, `buildTile` + `buildWater` on the main thread take 0.30 / 0.70 / 4.7 ms with the workers' results, against 22.4 / 38.2 / 52.8 ms without, and the output is bit for bit the same. Still to do: re-drape at seams (optional), look at roads and distant roads in play.
 

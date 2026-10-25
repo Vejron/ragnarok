@@ -303,6 +303,40 @@ export function decodeManifest(bytes: Uint8Array): WorldData {
   }
 }
 
+// Plain loops, not `Float32Array.from(array, map)`: its generic path was most of `decodeTile` on a
+// 1 m tile, whose ground alone is 66,049 numbers.
+
+/** Centimetres to metres, as `metres` would map them. With `water`, `NO_WATER_CM` becomes `NO_WATER`. */
+function inMetres(cm: readonly number[], water = false): Float32Array {
+  const out = new Float32Array(cm.length)
+  for (let i = 0; i < cm.length; i++) out[i] = water && cm[i] === NO_WATER_CM ? NO_WATER : cm[i]! / 100
+  return out
+}
+
+/** Vertices `[x, y, z]` in centimetres, flattened, in metres. */
+function flatMetres(points: readonly number[][]): Float32Array {
+  const out = new Float32Array(points.length * 3)
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i]!
+    out[i * 3] = p[0]! / 100
+    out[i * 3 + 1] = p[1]! / 100
+    out[i * 3 + 2] = p[2]! / 100
+  }
+  return out
+}
+
+/** Triangles `[a, b, c]`, flattened. */
+function flatIndices(triangles: readonly number[][]): Uint32Array {
+  const out = new Uint32Array(triangles.length * 3)
+  for (let i = 0; i < triangles.length; i++) {
+    const t = triangles[i]!
+    out[i * 3] = t[0]!
+    out[i * 3 + 1] = t[1]!
+    out[i * 3 + 2] = t[2]!
+  }
+  return out
+}
+
 export function decodeTile(bytes: Uint8Array): TileData {
   const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges, detail, rails] = decode(bytes) as [
     [number, number[][], number, number, number, number, number, [number[], number[], Uint8Array, Uint8Array]?][],
@@ -344,12 +378,9 @@ export function decodeTile(bytes: Uint8Array): TileData {
       trunkRadius: metres(trunkRadiusCm(kind, height, crown)),
       trunkHeight: metres(Math.trunc((height * treeKindDef(kind).colliderHeightPct) / 100)),
     })),
-    collision: {
-      vertices: Float32Array.from(vertices.flat(), metres),
-      triangles: Uint32Array.from(triangles.flat()),
-    },
-    ground: Float32Array.from(ground, metres),
-    water: Float32Array.from(water, (cm) => (cm === NO_WATER_CM ? NO_WATER : metres(cm))),
+    collision: { vertices: flatMetres(vertices), triangles: flatIndices(triangles) },
+    ground: inMetres(ground),
+    water: inMetres(water, true),
     streams: streams.map(([width, points]) => ({ width: metres(width), points: points.map(point) })),
     bridges: (bridges ?? []).map(([first, deck, steel]) => ({ first, deck, steel })),
     detail: detail && detail.length > 0 ? Int8Array.from(detail) : undefined,
