@@ -31,7 +31,7 @@ const regions: { label: string; value: Region }[] = [
       :items="regions"
       class="w-full"
       title="Whose map grid and data the world is built from"
-      @update:model-value="(r) => chooseRegion(r as Region)"
+      @update:model-value="(r: unknown) => chooseRegion(r as Region)"
     />
     <USelect v-model="cell" :items="cells" class="w-full" title="How finely the ground's heights are sampled. Generate the world again to apply." @update:model-value="dirty = true" />
     <p class="text-sm text-muted">{{ painted.size }} tiles, {{ ((painted.size * tile * tile) / 1e6).toFixed(2) }} km²</p>
