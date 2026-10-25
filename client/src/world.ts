@@ -263,8 +263,9 @@ export interface TileData {
 /** FNV-1a, matching `world_hash` on the server. */
 export function worldHash(bytes: Uint8Array): number {
   let hash = 0x811c9dc5
-  for (const byte of bytes) hash = Math.imul(hash ^ byte, 0x01000193) >>> 0
-  return hash
+  // Indexed, not `for…of`: the iterator was most of the cost on a 1 m tile.
+  for (let i = 0; i < bytes.length; i++) hash = Math.imul(hash ^ bytes[i]!, 0x01000193)
+  return hash >>> 0
 }
 
 const metres = (cm: number) => cm / 100
