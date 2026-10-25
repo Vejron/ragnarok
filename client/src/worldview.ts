@@ -8,6 +8,8 @@ import { ConstructView } from './render/construct'
 import { Collapses } from './render/rubble'
 import { buildTile, disposeTile, rebuildBuildings, remeshTerrain, restitchTerrain, shadeTerrain } from './render/world'
 import { TerrainWorker, type PreparedTerrain } from './render/terrainworker'
+import { BuildingWorker } from './render/buildingworker'
+import { buildingTile, type BuildingBuffers } from './render/buildingmesh'
 import { terrainLevel, type Pixels } from './render/terrainmesh'
 import { buildWater, disposeWater } from './render/water'
 import { shellOf } from './sim/carve'
@@ -22,6 +24,11 @@ import type { TileData, TileRef, WorldData } from './world'
 
 /** Tiles are keyed by `row * 65536 + col`, as the server names the objects in them. */
 export const tileKey = (col: number, row: number) => row * 65536 + col
+
+/** Keeps a tile's building colours stable between reloads and varied across tiles. */
+const tileSalt = (ref: TileRef) => ref.col * 31 + ref.row * 17
+
+const sameSet = (a: ReadonlySet<number>, b: ReadonlySet<number>) => a.size === b.size && [...a].every((x) => b.has(x))
 
 /** The `(col, row)` of tile `key`. */
 const tileOf = (key: number) => ({ col: key % 65536, row: Math.floor(key / 65536) })
@@ -65,6 +72,12 @@ export class WorldView {
   private builder: TerrainWorker | null | undefined = undefined
   /** Terrain the worker has built for tiles that are not attached yet, by tile. */
   private readonly prepared = new Map<number, PreparedTerrain>()
+  private buildingBuilder: BuildingWorker | null | undefined = undefined
+  /**
+   * Building meshes the worker has made for tiles that are not attached yet, by tile, with the
+   * buildings they leave out: used only if that is still what to leave out when the tile attaches.
+   */
+  private readonly preparedBuildings = new Map<number, { undrawn: Set<number>; buffers: BuildingBuffers | null }>()
   /** The level of detail each attached tile's terrain is drawn at, for tiles the worker built. */
   private readonly levels = new Map<number, number>()
   /** Tiles whose terrain the worker is meshing at another level now. */
@@ -273,8 +286,12 @@ export class WorldView {
     this.cubes.update(dt, effects)
   }
 
-  /** Builds a streamed-in tile's terrain in the worker, before `attachTile`, so the frame that attaches it only uploads it. */
+  /** Builds a streamed-in tile's terrain and buildings in workers, before `attachTile`, so the frame that attaches it only uploads them. */
   async prepareTile(ref: TileRef, tile: TileData) {
+    await Promise.all([this.prepareTerrain(ref, tile), this.prepareBuildings(ref, tile)])
+  }
+
+  private async prepareTerrain(ref: TileRef, tile: TileData) {
     const ground = this.world ? groundOf(this.world, ref, tile) : null
     const builder = ground ? this.terrainBuilder() : null
     if (!ground || !builder) return
@@ -287,23 +304,43 @@ export class WorldView {
     }
   }
 
+  private async prepareBuildings(ref: TileRef, tile: TileData) {
+    if (tile.buildings.length === 0 && tile.bridges.length === 0) return
+    this.buildingBuilder ??= BuildingWorker.create()
+    if (!this.buildingBuilder) return
+    const key = tileKey(ref.col, ref.row)
+    const undrawn = this.undrawnBuildings(key)
+    try {
+      this.preparedBuildings.set(key, { undrawn, buffers: await this.buildingBuilder.build(buildingTile(tile), tileSalt(ref), undrawn) })
+    } catch (error) {
+      // `attachTile` builds them on the main thread instead.
+      console.warn('buildings worker failed', ref, error)
+    }
+  }
+
   /** A prepared tile that will not be attached after all. */
   discardTile(ref: TileRef) {
     this.prepared.delete(tileKey(ref.col, ref.row))
+    this.preparedBuildings.delete(tileKey(ref.col, ref.row))
     this.builder?.drop(ref.col, ref.row)
   }
 
   /** Draws a streamed-in tile and makes it solid for both predicted simulations. Returns how to undo it. */
   attachTile(ref: TileRef, tile: TileData) {
     const ground = this.world ? groundOf(this.world, ref, tile) : null
-    const salt = ref.col * 31 + ref.row * 17
+    const salt = tileSalt(ref)
     const key = tileKey(ref.col, ref.row)
     const prepared = this.prepared.get(key)
     this.prepared.delete(key)
+    const undrawn = this.undrawnBuildings(key)
+    // The worker's buildings, unless more of them came down (or got hurt) while it made them.
+    const made = this.preparedBuildings.get(key)
+    this.preparedBuildings.delete(key)
+    const buildings = made && sameSet(made.undrawn, undrawn) ? made.buffers : undefined
     // Buildings that fell before this tile streamed in (or while it was away) are not drawn.
     const down = new Set(this.goneBuildings.get(key)?.keys())
     // Buildings that are hurt are drawn by `damage`, as shards, not with the tile.
-    const group = buildTile(tile, salt, ground, this.terrain ?? undefined, this.undrawnBuildings(key), prepared)
+    const group = buildTile(tile, salt, ground, this.terrain ?? undefined, undrawn, prepared, buildings)
     this.scene.add(group)
     const water = ground ? buildWater(tile, ground, this.terrain ?? undefined) : null
     if (water) this.waterRoot.add(water)
@@ -453,6 +490,7 @@ export class WorldView {
     this.damage.dispose()
     this.cubes.dispose()
     this.builder?.dispose()
+    this.buildingBuilder?.dispose()
   }
 
   /**

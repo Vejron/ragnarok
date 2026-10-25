@@ -459,11 +459,13 @@ Done: dynamic entities are `bevy_ecs` components, the client predicts with the s
 
 ### Tile meshes off the main thread
 
-Build tile meshes in a Web Worker, so the main thread never waits on them. The terrain is done (§8): it was the part that grows with the ground's resolution, now about 16 ms a 1 m tile in the worker (errors, mesh, relief map) and only the upload on the main thread. The buildings are still built on the main thread as tiles stream in (`attachTile` → `buildTile`), and they are most of what attaching a tile costs today. The colliders no longer build a whole `Shell` (`carve::whole_boxes` merges the baked solid flags straight into boxes; the anchors wait for the first carve), which took about 40% off `add_tile`. The drawing no longer unpacks the grid either: a whole building's faces come in one WASM call straight from its packed flags (`carve::whole_faces`), and `Shell` unpacks them only once something asks after single cells (a dent, a carve), which took about 35% off drawing a tile's buildings. What is left is the face merging itself (`greedy`) and building the mesh on the main thread.
-- On Ersboda most tiles build in about 2 ms.
-- The worst one, with very large buildings, takes about 21 ms. That is more than a 60 fps frame (16.7 ms), so it can cause a visible hitch.
+Done: tile meshes are built in Web Workers, so the main thread only uploads them. The terrain (§8) is about 16 ms a 1 m tile in its worker (errors, mesh, relief map). The buildings have a worker of their own (`render/buildings.worker.ts`, with its own copy of the WASM module): `prepareTile` sends it the tile's buildings, bridges and collision mesh (`buildingTile`), and it sends back the mesh's arrays (`buildingBuffers` in `render/buildingmesh.ts`) without copying them. Posting a tile costs the main thread about 0.2 ms.
 
-This is a bigger change. The worker would make the buildings' faces (`Shell.facesWithRoof`) and the vertex arrays, and pass them back to the main thread without copying them. The scene graph and the Rapier colliders must still be made on the main thread. The client's carve state must then be kept in step between the two threads.
+- On the main thread the worst Ersboda tile (12_22, 62k triangles) took about 21 ms before this work. Faces straight from the packed flags (`carve::whole_faces`; `Shell` unpacks only for a dent or a carve) and arrays of their final size, with normals and bounds written in the same pass, took it to about 6 ms in Node and 11 ms in Chrome.
+- The worker builds only what was known at prepare time. If the buildings left out (fallen or fractured, `undrawnBuildings`) changed before the tile attaches, `attachTile` builds them on the main thread instead.
+- Damaged buildings are still redrawn on the main thread (`rebuildBuildings`, from the client's carve state), so the worker keeps no carve state.
+- The scene graph and the Rapier colliders stay on the main thread.
+- What is left of the cost is the face merging in WASM (`greedy`, about 40%) and filling the arrays. Both now run in the worker.
 
 ### Editor
 

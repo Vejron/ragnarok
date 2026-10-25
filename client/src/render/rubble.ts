@@ -4,7 +4,8 @@ import { toonMaterial } from './toon'
 import type { TileData } from '@/world'
 import type { Effects } from './effects'
 import { dustCloud, type Particles } from './particles'
-import { buildingColors, collapsingBuilding } from './world'
+import { buildingColors } from './buildingmesh'
+import { collapsingBuilding } from './world'
 
 /** How long the walls take to come down, seconds. */
 const COLLAPSE_SECONDS = 1.8

@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import type { TileData } from '@/world'
 import { CELL_HP, shellOf, type Shell } from '@/sim/carve'
 import { voxelBrick, voxelFaces, type Soup } from './voxels'
-import { buildingColors } from './world'
+import { buildingColors } from './buildingmesh'
 
 /** How much of its colour a cell right beside a hole loses to the burn, and the next one out. */
 const CHAR_NEAR = 0.75
