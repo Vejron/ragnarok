@@ -20,7 +20,7 @@ const FLAT_ROOF_COLORS = [0xb0b4ba, 0x9aa0a6, 0xc4c7cc]
 
 /** What of a tile its buildings are drawn from: small enough to send to the worker. */
 export interface BuildingTile {
-  buildings: readonly Pick<Building, 'first' | 'walls' | 'roof' | 'roofKind' | 'cells'>[]
+  buildings: readonly Pick<Building, 'first' | 'walls' | 'roof' | 'roofKind' | 'cells' | 'paint'>[]
   bridges: readonly Bridge[]
   collision: TileData['collision']
 }
@@ -46,9 +46,13 @@ export function buildingTransferables(buffers: BuildingBuffers): ArrayBuffer[] {
   return arrays.map((array) => array.buffer as ArrayBuffer)
 }
 
-/** The wall and roof colours of building `index`: stable between reloads, varied across tiles by `salt`. */
+/**
+ * The wall and roof colours of building `index`: the ones the importer gave it, or else picked from
+ * the palettes, stable between reloads and varied across tiles by `salt`.
+ */
 export function buildingColors(tile: Pick<BuildingTile, 'buildings'>, index: number, salt: number): { wall: number; roof: number } {
   const building = tile.buildings[index]!
+  if (building?.paint) return { wall: building.paint[0], roof: building.paint[1] }
   const palette = building?.roofKind === ROOF_FLAT ? FLAT_ROOF_COLORS : ROOF_COLORS
   return { wall: BUILDING_COLORS[(index + salt) % BUILDING_COLORS.length]!, roof: palette[(index + salt) % palette.length]! }
 }

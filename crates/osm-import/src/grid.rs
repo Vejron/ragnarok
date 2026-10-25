@@ -6,11 +6,17 @@
 //! sit at fixed places, a request's cache key depends only on the block and never on which world
 //! asked for it: two worlds that share a block share its cache entries, and a block's state can be
 //! probed without downloading anything.
+//!
+//! Each region has a grid of its own (`Region::grid`): Sweden's is anchored here and cut in the
+//! equirectangular frame, France's is cut in Lambert-93 metres. A tile index means nothing without
+//! its region.
 
+use crate::region::{Place, Region, enclosing};
 use crate::{assemble, cache, hydro, overpass, trees};
 use serde::{Deserialize, Serialize};
+use shared::world::Frame;
 
-/// The grid's anchor: central Umeå, the importer's default centre.
+/// Sweden's grid anchor: central Umeå, the importer's default centre.
 pub const ORIGIN: (f64, f64) = (63.8225, 20.235);
 /// Side of a tile, metres. A power of two, so a tile sampled every 1, 2 or 4 m is `2^k + 1` samples a
 /// side: the size the client's terrain simplification (RTIN) fits exactly.
@@ -54,9 +60,9 @@ impl Tile {
         (f64::from(self.gx) * TILE, f64::from(self.gy) * TILE)
     }
 
-    /// The tile containing the point `(lat, lon)`.
-    pub fn at(lat: f64, lon: f64) -> Tile {
-        let [x, z] = assemble::project(ORIGIN, lat, lon);
+    /// The tile of `region`'s grid containing the point `(lat, lon)`.
+    pub fn at(region: Region, lat: f64, lon: f64) -> Tile {
+        let [x, z] = region.grid().project(lat, lon);
         Tile { gx: (x / TILE).floor() as i32, gy: (z / TILE).floor() as i32 }
     }
 
@@ -65,34 +71,42 @@ impl Tile {
     }
 
     /// `[south, west, north, east]` of the tile.
-    pub fn bbox(self) -> [f64; 4] {
-        rect(self.gx, self.gy, 1)
+    pub fn bbox(self, region: Region) -> [f64; 4] {
+        rect(region, self.gx, self.gy, 1)
     }
 }
 
 impl Block {
     /// `[south, west, north, east]` of the block, rounded so the same block always yields the same
     /// text (and so the same cache key).
-    pub fn bbox(self) -> [f64; 4] {
-        rect(self.bx * BLOCK_TILES, self.by * BLOCK_TILES, BLOCK_TILES)
+    pub fn bbox(self, region: Region) -> [f64; 4] {
+        rect(region, self.bx * BLOCK_TILES, self.by * BLOCK_TILES, BLOCK_TILES)
     }
 
-    /// The block's cache state, from the keys the downloads would use.
-    pub fn status(self) -> Status {
-        let bbox = self.bbox();
+    /// The block's cache state, from the keys the downloads would use. Hydrografi and the tree
+    /// register are Swedish: a French block never has them.
+    pub fn status(self, region: Region) -> Status {
+        let bbox = self.bbox(region);
+        let swedish = region == Region::Sweden;
         Status {
             overpass: cache::has("overpass", &overpass::query(bbox)),
-            hydro: cache::has("hydro", &hydro::first_url("StandingWater", bbox)),
-            trees: cache::has("trees", &trees::filter(bbox)),
+            hydro: swedish && cache::has("hydro", &hydro::first_url("StandingWater", bbox)),
+            trees: swedish && cache::has("trees", &trees::filter(bbox)),
         }
     }
 }
 
 /// The lat/lon bounding box of `size` x `size` tiles whose corner tile is `(gx, gy)`.
-fn rect(gx: i32, gy: i32, size: i32) -> [f64; 4] {
+fn rect(region: Region, gx: i32, gy: i32, size: i32) -> [f64; 4] {
     let (x0, z0) = (f64::from(gx) * TILE, f64::from(gy) * TILE);
     let side = f64::from(size) * TILE;
-    let corners = [(x0, z0), (x0 + side, z0), (x0, z0 + side), (x0 + side, z0 + side)].map(|(x, z)| assemble::unproject(ORIGIN, x, z));
+    let grid = region.grid();
+    if let Frame::Lambert93 { e0, n0 } = grid {
+        // Not a rectangle of degrees: the box around the square, sides and all.
+        let half = side / 2.0;
+        return enclosing(Frame::Lambert93 { e0: e0 + x0 + half, n0: n0 - z0 - half }, half);
+    }
+    let corners = [(x0, z0), (x0 + side, z0), (x0, z0 + side), (x0 + side, z0 + side)].map(|(x, z)| grid.unproject(x, z));
     let round = |v: f64| (v * 1e6).round() / 1e6;
     let lats = corners.map(|c| c.0);
     let lons = corners.map(|c| c.1);
@@ -104,11 +118,8 @@ fn rect(gx: i32, gy: i32, size: i32) -> [f64; 4] {
 /// How a set of painted tiles becomes a world: the smallest square of tiles that holds them, laid
 /// out in the world's own frame.
 pub struct Layout {
-    /// `[south, west, north, east]` of the square, for `assemble::frame` (which finds the same
-    /// origin and half-extent again).
-    pub bbox: [f64; 4],
-    /// Half the side of the square, metres.
-    pub half: f64,
+    /// Where the square is: its frame (origin at its centre), half-side and box.
+    pub place: Place,
     /// The painted tiles as world `(col, row)`.
     pub mask: std::collections::BTreeSet<(u16, u16)>,
     /// The blocks the painted tiles lie in, as `[south, west, north, east]`: what to download.
@@ -118,9 +129,9 @@ pub struct Layout {
 /// The largest world side, in tiles: 30 km.
 pub const MAX_SIDE: i32 = 120;
 
-/// Lays out `tiles` as a world. The square is centred on the painted tiles' bounding box, the
-/// world's origin is the square's centre, and every tile edge lies on the global grid.
-pub fn layout(tiles: &[Tile]) -> anyhow::Result<Layout> {
+/// Lays out `tiles` of `region`'s grid as a world. The square is centred on the painted tiles'
+/// bounding box, the world's origin is the square's centre, and every tile edge lies on the grid.
+pub fn layout(region: Region, tiles: &[Tile]) -> anyhow::Result<Layout> {
     anyhow::ensure!(!tiles.is_empty(), "the area has no tiles");
     let min = |f: fn(&Tile) -> i32| tiles.iter().map(f).min().unwrap_or(0);
     let max = |f: fn(&Tile) -> i32| tiles.iter().map(f).max().unwrap_or(0);
@@ -130,11 +141,17 @@ pub fn layout(tiles: &[Tile]) -> anyhow::Result<Layout> {
     let (sx, sy) = (min(|t| t.gx) - (side - width) / 2, min(|t| t.gy) - (side - height) / 2);
     let half = f64::from(side) * TILE / 2.0;
     let centre = ((f64::from(sx) + f64::from(side) / 2.0) * TILE, (f64::from(sy) + f64::from(side) / 2.0) * TILE);
-    let origin = assemble::unproject(ORIGIN, centre.0, centre.1);
-    let bbox = assemble::bbox_around(origin.0, origin.1, half);
+    let place = match region.grid() {
+        // Exact: the world's frame is the grid's, moved to the square's centre.
+        Frame::Lambert93 { e0, n0 } => Place::france(Frame::Lambert93 { e0: e0 + centre.0, n0: n0 - centre.1 }, half),
+        grid => {
+            let origin = grid.unproject(centre.0, centre.1);
+            Place::sweden(assemble::bbox_around(origin.0, origin.1, half))
+        }
+    };
     let mask = tiles.iter().map(|t| ((t.gx - sx) as u16, (t.gy - sy) as u16)).collect();
-    let pieces = blocks_of(tiles).into_iter().map(Block::bbox).collect();
-    Ok(Layout { bbox, half, mask, pieces })
+    let pieces = blocks_of(tiles).into_iter().map(|b| b.bbox(region)).collect();
+    Ok(Layout { place, mask, pieces })
 }
 
 /// The distinct blocks that `tiles` need, in order.
@@ -151,18 +168,20 @@ mod tests {
 
     #[test]
     fn the_origin_is_the_corner_of_four_tiles() {
-        assert_eq!(Tile::at(ORIGIN.0 + 1e-6, ORIGIN.1 + 1e-6), Tile { gx: 0, gy: -1 });
-        assert_eq!(Tile::at(ORIGIN.0 - 1e-6, ORIGIN.1 - 1e-6), Tile { gx: -1, gy: 0 });
+        assert_eq!(Tile::at(Region::Sweden, ORIGIN.0 + 1e-6, ORIGIN.1 + 1e-6), Tile { gx: 0, gy: -1 });
+        assert_eq!(Tile::at(Region::Sweden, ORIGIN.0 - 1e-6, ORIGIN.1 - 1e-6), Tile { gx: -1, gy: 0 });
     }
 
     #[test]
     fn a_tile_lies_inside_its_own_bbox() {
-        let tile = Tile { gx: 7, gy: -13 };
-        let [s, w, n, e] = tile.bbox();
-        let (x, z) = tile.corner();
-        let (lat, lon) = assemble::unproject(ORIGIN, x + TILE / 2.0, z + TILE / 2.0);
-        assert!(s < lat && lat < n && w < lon && lon < e);
-        assert_eq!(Tile::at(lat, lon), tile);
+        for region in [Region::Sweden, Region::France] {
+            let tile = Tile { gx: 7, gy: -13 };
+            let [s, w, n, e] = tile.bbox(region);
+            let (x, z) = tile.corner();
+            let (lat, lon) = region.grid().unproject(x + TILE / 2.0, z + TILE / 2.0);
+            assert!(s < lat && lat < n && w < lon && lon < e);
+            assert_eq!(Tile::at(region, lat, lon), tile);
+        }
     }
 
     #[test]
@@ -176,20 +195,32 @@ mod tests {
     fn a_painted_area_is_a_square_in_the_same_frame() {
         // An L: three tiles in a row and one below the first.
         let tiles = [Tile { gx: 4, gy: 10 }, Tile { gx: 5, gy: 10 }, Tile { gx: 6, gy: 10 }, Tile { gx: 4, gy: 11 }];
-        let layout = layout(&tiles).unwrap();
-        assert_eq!(layout.half, 1.5 * TILE);
-        let (origin, half) = assemble::frame(layout.bbox);
-        assert_eq!(half, 1.5 * TILE);
+        let layout = layout(Region::Sweden, &tiles).unwrap();
+        assert_eq!(layout.place.half, 1.5 * TILE);
+        let [north, west] = [tiles[0].bbox(Region::Sweden)[2], tiles[0].bbox(Region::Sweden)[1]];
         // The square's corner is the first painted tile's corner, on the global grid.
-        let [x, z] = assemble::project(origin, tiles[0].bbox()[2], tiles[0].bbox()[1]);
+        let [x, z] = layout.place.frame.project(north, west);
         assert!((x + 1.5 * TILE).abs() < 0.2 && (z + 1.5 * TILE).abs() < 0.2, "{x} {z}");
         assert_eq!(layout.mask.iter().copied().collect::<Vec<_>>(), vec![(0, 0), (0, 1), (1, 0), (2, 0)]);
     }
 
     #[test]
+    fn a_french_area_lies_exactly_on_its_grid() {
+        let tiles = [Tile { gx: -400, gy: -300 }, Tile { gx: -398, gy: -300 }];
+        let layout = layout(Region::France, &tiles).unwrap();
+        assert_eq!(layout.place.half, 1.5 * TILE);
+        // The first tile's north-west corner, through degrees and back: the square's west edge, its
+        // middle row (the square is three tiles a side, the area one tile high).
+        let (x, z) = tiles[0].corner();
+        let (lat, lon) = Region::France.grid().unproject(x, z);
+        let [x, z] = layout.place.frame.project(lat, lon);
+        assert!((x + 1.5 * TILE).abs() < 1e-6 && (z + 0.5 * TILE).abs() < 1e-6, "{x} {z}");
+    }
+
+    #[test]
     fn a_block_bbox_does_not_depend_on_the_request() {
         let block = Block { bx: -2, by: 3 };
-        assert_eq!(block.bbox(), block.bbox());
+        assert_eq!(block.bbox(Region::Sweden), block.bbox(Region::Sweden));
         let tiles = [Tile { gx: -16, gy: 24 }, Tile { gx: -9, gy: 31 }, Tile { gx: -10, gy: 25 }];
         assert_eq!(blocks_of(&tiles), vec![block]);
     }

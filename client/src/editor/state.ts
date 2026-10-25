@@ -4,7 +4,7 @@
  */
 import { computed, ref, shallowRef } from 'vue'
 import { api, type Job, type WorldSummary } from './api'
-import { blockKey, blockOf, rectBounds, tileAt, tileKey, type BlockStatus, type GridInfo, type TileId } from './grid'
+import { blockKey, blockOf, rectBounds, tileAt, tileKey, type BlockStatus, type GridInfo, type Region, type TileId } from './grid'
 import { emptyPlacements, ITEM_KINDS, VEHICLE_KINDS, type Placements } from './placements'
 import { emptyScenario, renameName, squadsFromBots, usesName, validateScenario, type NameKind, type Scenario, type ScenarioSquad, type Spot, type Trigger } from './scenario'
 
@@ -21,6 +21,8 @@ export const isPlacing = (t: Tool) => t === 'spawn' || t === 'vehicle' || t === 
 export const MIN_CACHE_ZOOM = 12
 
 export const grid = shallowRef<GridInfo>()
+/** Whose grid and data the open world uses. Tiles of one region mean nothing on another's grid. */
+export const region = ref<Region>('sweden')
 export const painted = shallowRef(new Map<string, TileId>())
 export const blocks = shallowRef(new Map<string, BlockStatus>())
 export const tool = ref<Tool>('paint')
@@ -268,6 +270,7 @@ export async function openWorld(world: string) {
   if (scenarioDirty.value && !window.confirm('Discard the unsaved scenario changes?')) return
   const loaded = await api.world(world)
   const tiles = loaded.tiles
+  await useRegion(loaded.region ?? 'sweden')
   name.value = world
   cell.value = loaded.cell ?? IMPORTER_CELL
   placements.value = { spawns: loaded.spawns ?? [], vehicles: loaded.vehicles ?? [], items: loaded.items ?? [], bots: loaded.bots ?? [] }
@@ -282,6 +285,22 @@ export async function openWorld(world: string) {
   cacheTick.value++
 }
 
+/** Switches the map to `next`'s grid. */
+async function useRegion(next: Region) {
+  if (grid.value?.region === next) return
+  region.value = next
+  grid.value = await api.grid(next)
+}
+
+/** Picks the region a new world is painted in. Painted tiles are on the old grid, so they go. */
+export async function chooseRegion(next: Region) {
+  if (next === region.value) return
+  if (painted.value.size && !window.confirm('Switching region clears the painted tiles. Go on?')) return
+  setTiles(new Map())
+  dirty.value = true
+  await useRegion(next)
+}
+
 function cleanName(raw: string): string {
   return raw.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').slice(0, 40)
 }
@@ -294,7 +313,7 @@ export async function save(): Promise<boolean> {
   }
   name.value = world
   try {
-    await api.save(world, [...painted.value.values()], cell.value, placements.value)
+    await api.save(world, region.value, [...painted.value.values()], cell.value, placements.value)
     dirty.value = false
     message.value = `Saved ${world}.`
     await loadWorlds()

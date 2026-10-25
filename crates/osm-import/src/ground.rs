@@ -5,9 +5,9 @@ use anyhow::{Result, bail};
 use crate::water::Grid;
 use shared::terrain::Ground;
 
-/// Highest relief a world may have, metres. The boundary walls and the helicopter ceiling are at
-/// fixed heights (`BOUNDARY_HEIGHT`, `HELI_CEILING`), so the ground has to stay well below them.
-const MAX_RELIEF: f64 = 100.0;
+/// Highest relief a world may have, metres: what the boundary walls are built over
+/// (`shared::consts::MAX_RELIEF`).
+const MAX_RELIEF: f64 = shared::consts::MAX_RELIEF as f64;
 
 /// Water beds may be cut this far below the lowest dry ground, metres, so y = 0 stays the lowest
 /// land and the relief limit is about land only.
@@ -91,7 +91,7 @@ pub fn build_where(
         .map(|(index, &h)| {
             let dry = h.is_finite().then_some(h);
             let ground = bed(at(index as u32 % side), at(index as u32 / side), dry).unwrap_or(low).max(low - MAX_BED_BELOW);
-            ((ground - low) * 100.0).round() as i16
+            ((ground - low) * 100.0).round() as i32
         })
         .collect();
     eprintln!("terrain: {side}×{side} samples every {cell} m, {low:.1} to {high:.1} m above the datum ({:.0} m of relief)", high - low);

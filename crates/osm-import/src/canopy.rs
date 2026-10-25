@@ -339,6 +339,30 @@ pub fn classify(tree: &Detected) -> u8 {
     TREE_BIRCH
 }
 
+/// IGN LiDAR HD's intensity at and above which a crown is a conifer, and the share of multiple
+/// returns below which it is (needles return a pulse once more often than leaves do).
+const FRANCE_CONIFER_INTENSITY: f64 = 350.0;
+const FRANCE_CONIFER_MULTI: f64 = 0.93;
+/// Below this height, metres, a broadleaf is an ornamental (Paris: pear, cherry, crab apple).
+const FRANCE_ORNAMENTAL_HEIGHT: f64 = 8.5;
+
+/// The archetype for a tree found in IGN's class 5. Fitted against the Paris register (see
+/// `calibration_france`): French towns are planes, limes and chestnuts, so broadleaf is the rule,
+/// conifers are told by intensity and the multiple returns, and birch is never guessed.
+pub fn classify_france(tree: &Detected) -> u8 {
+    let ratio = tree.height / tree.crown;
+    if tree.intensity >= FRANCE_CONIFER_INTENSITY && tree.multi < FRANCE_CONIFER_MULTI {
+        return if ratio >= 2.7 { TREE_SPRUCE } else { TREE_PINE };
+    }
+    if tree.height < FRANCE_ORNAMENTAL_HEIGHT {
+        return TREE_ORNAMENTAL;
+    }
+    if ratio >= 5.0 && tree.crown < 3.0 {
+        return TREE_COLUMNAR;
+    }
+    TREE_BROADLEAF
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -410,6 +434,17 @@ mod tests {
     }
 
     #[test]
+    fn french_archetypes_follow_the_paris_calibration() {
+        // The register's medians for each kind (`calibration_france`).
+        let tree = |height: f64, crown: f64, multi: f64, intensity: f64| Detected { e: 0.0, n: 0.0, height, crown, multi, intensity, base: 0.4 };
+        assert_eq!(classify_france(&tree(12.4, 4.55, 0.98, 137.0)), TREE_BROADLEAF);
+        assert_eq!(classify_france(&tree(6.8, 3.1, 0.98, 202.0)), TREE_ORNAMENTAL);
+        assert_eq!(classify_france(&tree(13.0, 4.5, 0.87, 664.0)), TREE_SPRUCE);
+        assert_eq!(classify_france(&tree(9.6, 4.3, 0.84, 476.0)), TREE_PINE);
+        assert_eq!(classify_france(&tree(20.0, 2.0, 0.98, 140.0)), TREE_COLUMNAR);
+    }
+
+    #[test]
     fn archetypes_follow_the_shape() {
         let tree = |height, crown, intensity, base| Detected { e: 0.0, n: 0.0, height, crown, multi: 0.0, intensity, base };
         assert_eq!(classify(&tree(12.0, 3.0, 650.0, 0.45)), TREE_BIRCH);
@@ -438,11 +473,43 @@ mod tests {
         crate::lidar::fetch(bbox, window, None, &user, &password, |p| canopy.add(&p)).unwrap();
         let detected = canopy.detect(|e, n| dem.mean(e, n, 0.5), MIN_HEIGHT);
         let register = crate::trees::fetch(bbox).unwrap();
-        eprintln!("{} detected, {} in the register", detected.len(), register.len());
+        report(&detected, &register, crate::dem::sweref99tm, classify);
+    }
 
+    /// The same for France, against the Paris register, in IGN's class 5 (network, no credentials):
+    /// `cargo test --release -p osm-import calibration_france -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn calibration_france() {
+        crate::cache::init(Some(std::path::PathBuf::from("../../.cache/osm-import")), false);
+        let var = |name: &str, default: f64| std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default);
+        // Around the Jardin des Plantes and the quais: planes, limes, horse chestnuts, some conifers.
+        let (lat, lon) = (var("CAL_LAT", 48.8440), var("CAL_LON", 2.3580));
+        let (e, n) = shared::lambert93::forward(lat, lon);
+        let window = [e - 600.0, n - 600.0, e + 600.0, n + 600.0];
+        let bbox = crate::region::enclosing(shared::world::Frame::Lambert93 { e0: e, n0: n }, 600.0);
+        let dem = crate::ign::mnt(&[window]).unwrap();
+        let mut canopy = Canopy::new(window);
+        let squares = crate::ign::squares(window).unwrap();
+        let client = reqwest::blocking::Client::new();
+        crate::lidar::read_files(&client, &crate::ign::clouds(&squares), window, None, ("", ""), |p| {
+            if p.class == crate::ign::class::HIGH_VEGETATION {
+                canopy.add(&p);
+            }
+        })
+        .unwrap();
+        let detected = canopy.detect(|e, n| dem.mean(e, n, 0.5), MIN_HEIGHT);
+        let register = crate::trees::fetch_paris(bbox).unwrap();
+        report(&detected, &register, shared::lambert93::forward, classify_france);
+    }
+
+    /// Prints, per register archetype, the measurements of the detected trees that match a register
+    /// tree, and what the rules make of them.
+    fn report(detected: &[Detected], register: &[crate::trees::Planted], project: fn(f64, f64) -> (f64, f64), classify: fn(&Detected) -> u8) {
+        eprintln!("{} detected, {} in the register", detected.len(), register.len());
         let mut groups: std::collections::BTreeMap<u8, Vec<Detected>> = Default::default();
-        for planted in &register {
-            let (pe, pn) = crate::dem::sweref99tm(planted.lat, planted.lon);
+        for planted in register {
+            let (pe, pn) = project(planted.lat, planted.lon);
             let near = detected
                 .iter()
                 .filter(|d| (d.e - pe).hypot(d.n - pn) < 2.0)

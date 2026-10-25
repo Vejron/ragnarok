@@ -25,7 +25,7 @@ fn terrain_world(f: impl Fn(f32, f32) -> f32) -> WorldFile {
     let side = 41u32;
     let heights = (0..side)
         .flat_map(|j| (0..side).map(move |i| (i, j)))
-        .map(|(i, j)| (f(i as f32 * 5.0 - 100.0, j as f32 * 5.0 - 100.0) * 100.0).round() as i16)
+        .map(|(i, j)| (f(i as f32 * 5.0 - 100.0, j as f32 * 5.0 - 100.0) * 100.0).round() as i32)
         .collect();
     WorldFile { ground: Ground { origin: -10_000, cell: 500, side, heights }, ..flat_world() }
 }

@@ -102,7 +102,7 @@ pub fn client_normal([a, b, c]: [V3; 3]) -> V3 {
 }
 
 /// Ground heights are looked up on the grid, so is the water: `levels` has one entry per sample.
-fn water_at(ground: &Ground, levels: &[i16], p: P) -> Option<f64> {
+pub(crate) fn water_at(ground: &Ground, levels: &[i32], p: P) -> Option<f64> {
     if levels.len() != ground.heights.len() || ground.is_flat() {
         return None;
     }
@@ -206,6 +206,49 @@ fn limit_grade(y: &mut [f64], arcs: &[f64]) {
     }
 }
 
+/// Deck returns within this distance of a cross section are its height, metres.
+const MEASURE_REACH: f64 = 2.0;
+/// Fewest returns that measure a cross section, and the share of sections that must be measured
+/// for the measurement to replace the inferred deck.
+const MEASURE_POINTS: usize = 3;
+const MEASURE_SHARE: f64 = 0.5;
+
+/// The deck's height at each node as measured: the median of the returns near it, and gaps between
+/// measured nodes filled linearly. Before the first and after the last measured node (the way
+/// carries on over an embankment the laser calls ground) the deck descends at `MAX_GRADE`, never
+/// below the ground. `None` when too few nodes are measured.
+fn measured_profile(nodes: &[Node], returns: &[[f64; 3]]) -> Option<Vec<f64>> {
+    if returns.is_empty() {
+        return None;
+    }
+    let mut found: Vec<Option<f64>> = nodes
+        .iter()
+        .map(|n| {
+            let mut ys: Vec<f64> = returns.iter().filter(|r| (r[0] - n.p[0]).hypot(r[1] - n.p[1]) <= MEASURE_REACH).map(|r| r[2]).collect();
+            if ys.len() < MEASURE_POINTS {
+                return None;
+            }
+            ys.sort_by(f64::total_cmp);
+            Some(ys[ys.len() / 2])
+        })
+        .collect();
+    let known: Vec<usize> = (0..found.len()).filter(|&i| found[i].is_some()).collect();
+    if (known.len() as f64) < MEASURE_SHARE * nodes.len() as f64 {
+        return None;
+    }
+    for pair in known.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        let (ya, yb) = (found[a]?, found[b]?);
+        for i in a + 1..b {
+            let t = (nodes[i].arc - nodes[a].arc) / (nodes[b].arc - nodes[a].arc).max(1e-9);
+            found[i] = Some(ya + (yb - ya) * t);
+        }
+    }
+    let (first, last) = (*known.first()?, *known.last()?);
+    let towards = |edge: usize, i: usize| (found[edge].unwrap_or(0.0) - MAX_GRADE * (nodes[i].arc - nodes[edge].arc).abs()).max(nodes[i].g + LIFT);
+    Some((0..nodes.len()).map(|i| if i < first { towards(first, i) } else if i > last { towards(last, i) } else { found[i].unwrap_or(nodes[i].g + LIFT) }).collect())
+}
+
 /// How high the deck stands over water: the surface plus this, by road class.
 fn clearance(kind: u8) -> f64 {
     match kind {
@@ -215,10 +258,12 @@ fn clearance(kind: u8) -> f64 {
     }
 }
 
-/// Builds the bridge along `points` (metres, centre line) of road `width`. `levels` is the water
-/// surface at every sample of `ground`, empty without water; `limit` is how far from the origin
-/// the deck may reach.
-pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, ground: &Ground, levels: &[i16], limit: f64) -> Vec<Piece> {
+/// Builds the bridge along `points` (metres, centre line) of road `width`. `measured` holds deck
+/// returns `[x, z, y]` from a classified cloud, empty without one; `levels` is the water surface at
+/// every sample of `ground`, empty without water; `limit` is how far from the origin the deck may
+/// reach.
+#[allow(clippy::too_many_arguments)]
+pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f64; 3]], ground: &Ground, levels: &[i32], limit: f64) -> Vec<Piece> {
     let samples = resample(points, STEP);
     if samples.len() < 2 {
         return Vec::new();
@@ -255,6 +300,9 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, ground: &Ground
             let (lo, hi) = (i.saturating_sub(2), (i + 2).min(y.len() - 1));
             y[i] = (before[lo..=hi].iter().sum::<f64>() / (hi - lo + 1) as f64).max(required[i]);
         }
+    }
+    if let Some(found) = measured_profile(&nodes, measured) {
+        y = found.into_iter().zip(&nodes).map(|(m, n)| m.max(n.g + LIFT)).collect();
     }
     for (n, y) in nodes.iter_mut().zip(&y) {
         n.y = *y;
@@ -431,11 +479,31 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, ground: &Ground
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_measured_deck_replaces_the_inferred_one_and_ramps_down_beyond_it() {
+        // Flat ground at 0, 120 m of way; the laser saw the deck at 9 m over its middle 60 m only.
+        let ground = Ground::default();
+        let points = [[0.0, 0.0], [120.0, 0.0]];
+        let mut returns = Vec::new();
+        for k in 0..240 {
+            let x = 30.0 + f64::from(k) * 0.25;
+            returns.extend([[x, -1.0, 9.0], [x, 0.0, 9.1], [x, 1.0, 8.9]]);
+        }
+        let nodes: Vec<Node> = resample(&points, STEP).iter().map(|&p| Node { p, y: 0.0, g: 0.0, level: None, arc: p[0] }).collect();
+        let y = measured_profile(&nodes, &returns).unwrap();
+        let at = |x: f64| y[(x / STEP).round() as usize];
+        assert!((at(60.0) - 9.0).abs() < 0.11);
+        // 6 % down from the edge of what was measured, then the ground.
+        assert!((at(15.0) - (9.0 - MAX_GRADE * 15.0)).abs() < 0.2, "{}", at(15.0));
+        assert!((at(0.0) - (9.0 - MAX_GRADE * 30.0)).abs() < 0.2);
+        assert!(build(&points, 8.0, ROAD_MAJOR, Pylons::None, &returns, &ground, &[], 1000.0).iter().any(|piece| piece.tris.iter().flatten().any(|v| (v[1] - 9.0).abs() < 0.2)));
+    }
+
     use super::*;
 
     /// 600 m square of 10 m cells: banks at +3 m, a river 160 m wide along Z with its bed at -4 m
     /// and its surface at 0.
-    fn river() -> (Ground, Vec<i16>) {
+    fn river() -> (Ground, Vec<i32>) {
         let side = 61u32;
         let mut heights = Vec::new();
         let mut levels = Vec::new();
@@ -461,7 +529,7 @@ mod tests {
     #[test]
     fn a_deck_clears_the_water_and_meets_the_banks() {
         let (ground, levels) = river();
-        let pieces = build(&[[-150.0, 0.0], [150.0, 0.0]], 10.0, ROAD_MAJOR, Pylons::Middle, &ground, &levels, 295.0);
+        let pieces = build(&[[-150.0, 0.0], [150.0, 0.0]], 10.0, ROAD_MAJOR, Pylons::Middle, &[], &ground, &levels, 295.0);
         let top = vertices(&pieces).filter(|v| v[0].abs() < 40.0).map(|v| v[1]).fold(f64::MIN, f64::max);
         assert!(top >= 7.0, "mid-span deck top is {top}");
         let near_end = vertices(&pieces).filter(|v| v[0] > 140.0 && v[1] > 1.0).map(|v| v[1]).fold(f64::MAX, f64::min);
@@ -472,7 +540,7 @@ mod tests {
     #[test]
     fn a_short_footbridge_gets_no_pylon_and_stays_near_the_ground() {
         let (ground, levels) = river();
-        let pieces = build(&[[100.0, 0.0], [160.0, 0.0]], 2.5, ROAD_PATH, Pylons::None, &ground, &levels, 295.0);
+        let pieces = build(&[[100.0, 0.0], [160.0, 0.0]], 2.5, ROAD_PATH, Pylons::None, &[], &ground, &levels, 295.0);
         assert!(!pieces.is_empty());
         assert!(pieces.iter().all(|p| !p.steel));
         assert!(vertices(&pieces).all(|v| v[1] < 4.0));
@@ -481,7 +549,7 @@ mod tests {
     #[test]
     fn faces_point_out_of_the_solid() {
         let (ground, levels) = river();
-        let pieces = build(&[[-150.0, 0.0], [150.0, 0.0]], 10.0, ROAD_MAJOR, Pylons::Middle, &ground, &levels, 295.0);
+        let pieces = build(&[[-150.0, 0.0], [150.0, 0.0]], 10.0, ROAD_MAJOR, Pylons::Middle, &[], &ground, &levels, 295.0);
         // The deck's flat top: every triangle at the highest level of a section faces up.
         let flat_tops = pieces.iter().filter(|p| !p.steel).flat_map(|p| &p.tris).filter(|t| t.iter().all(|v| (v[1] - t[0][1]).abs() < 1e-9) && t[0][1] > 6.0);
         let mut count = 0;

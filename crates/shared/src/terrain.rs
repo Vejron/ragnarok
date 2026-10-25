@@ -1,7 +1,7 @@
 //! The ground: a regular grid of heights, sampled the same way by the importer, the server's
 //! physics and the client (`client/src/sim/terrain.ts` mirrors `height_at`).
 //!
-//! Samples are `i16` centimetres. Row `j` runs along +Z and column `i` along +X, so sample
+//! Samples are `i32` centimetres. Row `j` runs along +Z and column `i` along +X, so sample
 //! `(i, j)` sits at `(origin + i * cell, origin + j * cell)`. Each grid cell is split along the
 //! diagonal from its `(x0, z1)` corner to its `(x1, z0)` corner, which is how Rapier's
 //! heightfield triangulates by default, so `height_at` agrees with the collider's surface.
@@ -18,7 +18,7 @@ pub struct Ground {
     /// Samples per side.
     pub side: u32,
     /// `side * side` heights, centimetres, row-major (`j * side + i`).
-    pub heights: Vec<i16>,
+    pub heights: Vec<i32>,
 }
 
 impl Ground {
@@ -63,7 +63,7 @@ impl Ground {
     }
 
     /// Copies the `side × side` block of samples whose first sample is `(i0, j0)`.
-    pub fn block(&self, i0: u32, j0: u32, side: u32) -> Vec<i16> {
+    pub fn block(&self, i0: u32, j0: u32, side: u32) -> Vec<i32> {
         let mut out = Vec::with_capacity((side * side) as usize);
         for j in 0..side {
             for i in 0..side {
@@ -80,7 +80,7 @@ mod tests {
 
     fn ramp() -> Ground {
         // 3×3 samples 100 cm apart, height = 10 cm per cm of x: a plane sloping up towards +X.
-        let heights = (0..3).flat_map(|_j| (0..3).map(|i| (i * 100) as i16)).collect();
+        let heights = (0..3).flat_map(|_j| (0..3).map(|i| i * 100)).collect();
         Ground { origin: 0, cell: 100, side: 3, heights }
     }
 
@@ -109,7 +109,7 @@ mod tests {
     /// A bumpy 9 × 9 grid of 5 m cells starting at (0, 0). `terrain.spec.ts` builds the same one
     /// and checks `TERRAIN_FIXTURE` against its own sampler.
     pub fn bumpy() -> Ground {
-        let heights = (0..9).flat_map(|j| (0..9).map(move |i| ((i * 37 + j * 91) % 400) as i16 - 100)).collect();
+        let heights = (0..9).flat_map(|j| (0..9).map(move |i| (i * 37 + j * 91) % 400 - 100)).collect();
         Ground { origin: 0, cell: 500, side: 9, heights }
     }
 

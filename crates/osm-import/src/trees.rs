@@ -1,9 +1,11 @@
-//! Street and park trees from Umeå kommun's open data
-//! (`trad-som-forvaltas-av-gator-och-parker`, ~32 000 trees with species and position).
+//! Street and park trees from municipal open data: Umeå kommun's
+//! (`trad-som-forvaltas-av-gator-och-parker`, ~32 000 trees with species and position) and the
+//! Ville de Paris's (`les-arbres`, ~220 000 trees with species, height and position; Licence
+//! ODbL). Which one a world uses follows from where it is (`Register::over`).
 //!
-//! The data has species but no size, so each species is mapped to one of a few archetypes
-//! (`TREE_*`), and the archetype's typical size is varied a little per tree, deterministically
-//! from its id, so a re-import gives the same forest.
+//! Each species is mapped to one of a few archetypes (`TREE_*`). Umeå's data has no size, so the
+//! archetype's typical size is varied a little per tree, deterministically from its id, so a
+//! re-import gives the same forest; Paris's gives the height.
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -45,6 +47,99 @@ pub struct Planted {
     pub crown: f64,
     /// From the register of planted trees (as opposed to found in the laser data).
     pub registered: bool,
+}
+
+/// A municipal tree register.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Register {
+    Umea,
+    Paris,
+}
+
+/// Paris intra-muros, `[south, west, north, east]`, with the Bois de Boulogne and de Vincennes.
+const PARIS: [f64; 4] = [48.81, 2.22, 48.91, 2.47];
+
+impl Register {
+    /// The register that covers `bbox` in `region`, if any.
+    pub fn over(region: crate::region::Region, [south, west, north, east]: [f64; 4]) -> Option<Register> {
+        match region {
+            crate::region::Region::Sweden => Some(Register::Umea),
+            crate::region::Region::France => {
+                let [s, w, n, e] = PARIS;
+                (south < n && s < north && west < e && w < east).then_some(Register::Paris)
+            }
+        }
+    }
+
+    /// The trees in each of `pieces`, merged: a tree on a shared border is kept once.
+    pub fn fetch_pieces(self, pieces: &[[f64; 4]]) -> Result<Vec<Planted>> {
+        match self {
+            Register::Umea => fetch_pieces(pieces),
+            Register::Paris => {
+                let mut seen = std::collections::HashSet::new();
+                let mut all = Vec::new();
+                for &piece in pieces {
+                    all.extend(fetch_paris(piece)?.into_iter().filter(|t| seen.insert((t.lat.to_bits(), t.lon.to_bits()))));
+                }
+                Ok(all)
+            }
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Register::Umea => "Umeå open data",
+            Register::Paris => "Paris open data",
+        }
+    }
+}
+
+const PARIS_ENDPOINT: &str = "https://opendata.paris.fr/api/explore/v2.1/catalog/datasets/les-arbres/exports/json";
+
+#[derive(Debug, Deserialize)]
+struct ParisRecord {
+    idbase: Option<u64>,
+    geo_point_2d: Option<Point>,
+    genre: Option<String>,
+    espece: Option<String>,
+    /// Metres; 0 where nobody measured.
+    hauteurenm: Option<f64>,
+}
+
+/// Every tree of the Paris register in `[south, west, north, east]`.
+pub fn fetch_paris(bbox: [f64; 4]) -> Result<Vec<Planted>> {
+    let filter = filter(bbox);
+    let text = crate::cache::text("trees-paris", &filter, || {
+        let client = reqwest::blocking::Client::builder()
+            .user_agent(concat!("ragnarok-osm-import/", env!("CARGO_PKG_VERSION")))
+            .timeout(std::time::Duration::from_secs(120))
+            .build()?;
+        Ok(client
+            .get(PARIS_ENDPOINT)
+            .query(&[("where", filter.as_str()), ("select", "idbase,geo_point_2d,genre,espece,hauteurenm")])
+            .send()
+            .context("tree request failed")?
+            .error_for_status()
+            .context("the Paris tree API returned an error")?
+            .text()?)
+    })?;
+    let records: Vec<ParisRecord> = serde_json::from_str(&text).context("the Paris tree API returned invalid JSON")?;
+    Ok(records.into_iter().filter_map(plant_paris).collect())
+}
+
+/// Tallest height in the Paris register taken as measured, metres; above it is a typing error.
+const PARIS_MAX_HEIGHT: f64 = 45.0;
+
+fn plant_paris(record: ParisRecord) -> Option<Planted> {
+    let at = record.geo_point_2d?;
+    let name = format!("{} {}", record.genre.as_deref().unwrap_or(""), record.espece.as_deref().unwrap_or(""));
+    // Conifers are named by genus; anything else unknown is broadleaf, as most of Paris's trees are.
+    let kind = classify(Some(name.trim()), Some("Lövträd"));
+    let kind = if kind == TREE_BIRCH && !name.to_lowercase().starts_with("betula") { TREE_BROADLEAF } else { kind };
+    let (typical, crown) = size(kind, record.idbase.unwrap_or(0), None);
+    let height = record.hauteurenm.filter(|h| (1.0..=PARIS_MAX_HEIGHT).contains(h)).unwrap_or(typical);
+    // The crown in proportion to the archetype's, by height.
+    Some(Planted { lat: at.lat, lon: at.lon, kind, height, crown: crown * (height / typical).clamp(0.3, 2.0), registered: true })
 }
 
 /// The register's query for a box: also the cache key.
@@ -95,9 +190,9 @@ fn plant(record: Record) -> Option<Planted> {
 
 /// The register's trees with the laser's: a detected tree within `max(2 m, its crown)` of a
 /// register tree is that tree, keeping the register's species and the laser's measured size; the
-/// rest of the detected trees are added, classified from the laser alone.
-pub fn merge(register: Vec<Planted>, detected: &[crate::canopy::Detected]) -> Vec<Planted> {
-    use crate::dem::{sweref99tm, sweref99tm_inverse};
+/// rest of the detected trees are added, classified from the laser alone. Detections are in
+/// `region`'s projected coordinates.
+pub fn merge(region: crate::region::Region, register: Vec<Planted>, detected: &[crate::canopy::Detected]) -> Vec<Planted> {
     const BIN: f64 = 8.0;
     let bin = |e: f64, n: f64| ((e / BIN).floor() as i64, (n / BIN).floor() as i64);
     let mut grid: std::collections::HashMap<(i64, i64), Vec<usize>> = Default::default();
@@ -107,7 +202,7 @@ pub fn merge(register: Vec<Planted>, detected: &[crate::canopy::Detected]) -> Ve
     let mut taken = vec![false; detected.len()];
     let mut out = Vec::with_capacity(register.len() + detected.len());
     for mut tree in register {
-        let (e, n) = sweref99tm(tree.lat, tree.lon);
+        let (e, n) = region.source(tree.lat, tree.lon);
         let (bx, by) = bin(e, n);
         let mut best: Option<(f64, usize)> = None;
         for dx in -1..=1 {
@@ -130,8 +225,12 @@ pub fn merge(register: Vec<Planted>, detected: &[crate::canopy::Detected]) -> Ve
     }
     for (found, taken) in detected.iter().zip(taken) {
         if !taken {
-            let (lat, lon) = sweref99tm_inverse(found.e, found.n);
-            out.push(Planted { lat, lon, kind: crate::canopy::classify(found), height: found.height, crown: found.crown, registered: false });
+            let (lat, lon) = region.degrees(found.e, found.n);
+            let kind = match region {
+                crate::region::Region::Sweden => crate::canopy::classify(found),
+                crate::region::Region::France => crate::canopy::classify_france(found),
+            };
+            out.push(Planted { lat, lon, kind, height: found.height, crown: found.crown, registered: false });
         }
     }
     out
@@ -250,7 +349,7 @@ mod tests {
         let (e, n) = crate::dem::sweref99tm(lat, lon);
         let found = |de: f64, dn: f64| Detected { e: e + de, n: n + dn, height: 17.0, crown: 3.0, multi: 0.8, intensity: 650.0, base: 0.45 };
         let register = vec![Planted { lat, lon, kind: TREE_PINE, height: 16.0, crown: 2.5, registered: true }];
-        let merged = merge(register, &[found(1.0, 0.5), found(30.0, 0.0)]);
+        let merged = merge(crate::region::Region::Sweden, register, &[found(1.0, 0.5), found(30.0, 0.0)]);
         assert_eq!(merged.len(), 2);
         // The register's species with the laser's size.
         assert_eq!((merged[0].kind, merged[0].height, merged[0].crown), (TREE_PINE, 17.0, 3.0));

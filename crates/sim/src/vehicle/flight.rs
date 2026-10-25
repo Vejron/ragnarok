@@ -50,7 +50,7 @@ pub(crate) fn assist(body: &mut RigidBody, (throttle, steer): (f32, f32), ground
 /// in the air, the lift nozzles keep the car level (leaning it with the stick) and, once the hop
 /// has topped out, hold a slow climb that fades out below the ceiling. Both drain `tank`, which refills while the car sits on its wheels with both controls let go.
 /// Everything is a function of the body's state, the tank and the controls, so the client can replay it.
-pub(crate) fn thrust(body: &mut RigidBody, controls: CarControls, tank: &mut f32, grounded: bool, dt: f32) -> u8 {
+pub(crate) fn thrust(body: &mut RigidBody, controls: CarControls, tank: &mut f32, grounded: bool, floor: f32, dt: f32) -> u8 {
     let rotation = *body.rotation();
     let mass = body.mass();
     let mut firing = 0;
@@ -80,7 +80,7 @@ pub(crate) fn thrust(body: &mut RigidBody, controls: CarControls, tank: &mut f32
         // Once the hop tops out they hold a slow climb. They push along the hull's down axis, so a
         // leaning car drifts the way it leans.
         if rising <= ROADSTER_HOVER_CLIMB {
-            let target = ROADSTER_HOVER_CLIMB * ((ROADSTER_CEILING - body.translation().y) / 20.0).clamp(-1.0, 1.0);
+            let target = ROADSTER_HOVER_CLIMB * ((ROADSTER_CEILING - (body.translation().y - floor)) / 20.0).clamp(-1.0, 1.0);
             let extra = ((target - rising) * ROADSTER_HOVER_GAIN).clamp(-ROADSTER_HOVER_ACCEL, ROADSTER_HOVER_ACCEL);
             body.add_force(up * ((CAR_GRAVITY + extra) / up.y.max(0.5) * mass), true);
         }
@@ -171,7 +171,7 @@ pub(crate) fn flap(body: &mut RigidBody, controls: CarControls, stamina: &mut f3
 /// from the stick, like a tank's. The rotor then pushes along the up axis hard enough to hover
 /// however it leans, and holds a vertical speed set by the climb input. Everything is a function
 /// of the body's state and the controls alone, so the client can replay it.
-pub(crate) fn fly(body: &mut RigidBody, controls: CarControls, dt: f32) {
+pub(crate) fn fly(body: &mut RigidBody, controls: CarControls, floor: f32, dt: f32) {
     let rotation = *body.rotation();
     let up = rotation * Vector::Y;
     let nose = rotation * Vector::new(0.0, 0.0, -1.0);
@@ -191,7 +191,7 @@ pub(crate) fn fly(body: &mut RigidBody, controls: CarControls, dt: f32) {
     // The climb input asks for a vertical speed; with none held it asks for zero, so letting go of
     // the stick holds altitude. Climbing fades out below the ceiling and reverses above it.
     let lift = controls.lift.clamp(-1.0, 1.0);
-    let headroom = ((HELI_CEILING - body.translation().y) / 20.0).clamp(-1.0, 1.0);
+    let headroom = ((HELI_CEILING - (body.translation().y - floor)) / 20.0).clamp(-1.0, 1.0);
     let mut target = if lift > 0.0 { lift * HELI_CLIMB_SPEED * headroom.max(0.0) } else { lift * HELI_SINK_SPEED };
     if headroom < 0.0 {
         target = target.min(headroom * HELI_CLIMB_SPEED);
@@ -206,7 +206,7 @@ pub(crate) fn fly(body: &mut RigidBody, controls: CarControls, dt: f32) {
 /// ask for one (see `DRONE_SPEED`), and the rotors push towards it as hard as `DRONE_MAX_ACCEL` lets them,
 /// on top of holding the drone up. The hull leans the way they push and turns towards where its pilot
 /// looks. Everything is a function of the body's state and the controls alone, so the client can replay it.
-pub(crate) fn fly_drone(body: &mut RigidBody, controls: CarControls, dt: f32) {
+pub(crate) fn fly_drone(body: &mut RigidBody, controls: CarControls, floor: f32, dt: f32) {
     let rotation = *body.rotation();
     let up = rotation * Vector::Y;
     let nose = rotation * Vector::new(0.0, 0.0, -1.0);
@@ -223,7 +223,7 @@ pub(crate) fn fly_drone(body: &mut RigidBody, controls: CarControls, dt: f32) {
     let (rise, level) = if throttle > 0.0 { aim_pitch.sin_cos() } else { (0.0, 1.0) };
     let mut wanted = heading * (throttle * level * DRONE_SPEED) + right * (steer * DRONE_STRAFE_SPEED);
     wanted.y = throttle.max(0.0) * rise * DRONE_SPEED + if lift > 0.0 { lift * DRONE_CLIMB_SPEED } else { lift * DRONE_SINK_SPEED };
-    let headroom = ((DRONE_CEILING - body.translation().y) / 20.0).clamp(-1.0, 1.0);
+    let headroom = ((DRONE_CEILING - (body.translation().y - floor)) / 20.0).clamp(-1.0, 1.0);
     if wanted.y > 0.0 {
         wanted.y *= headroom.max(0.0);
     }
@@ -254,7 +254,7 @@ pub(crate) fn fly_drone(body: &mut RigidBody, controls: CarControls, dt: f32) {
 /// the turn and pulls, levelling its wings as it arrives; W/S pitch and A/D roll by hand while held,
 /// and with neither it flies level. Everything is a function of the body's state and the controls
 /// alone, so the client can replay it.
-pub(crate) fn fly_loiter(body: &mut RigidBody, controls: CarControls, dt: f32) {
+pub(crate) fn fly_loiter(body: &mut RigidBody, controls: CarControls, floor: f32, dt: f32) {
     let rotation = *body.rotation();
     let nose = rotation * Vector::new(0.0, 0.0, -1.0);
     let up = rotation * Vector::Y;
@@ -262,7 +262,7 @@ pub(crate) fn fly_loiter(body: &mut RigidBody, controls: CarControls, dt: f32) {
 
     let mut wanted = nose * LOITER_SPEED;
     // Climbing fades out under the ceiling, and above it it sinks back.
-    let headroom = ((LOITER_CEILING - body.translation().y) / 20.0).clamp(-1.0, 1.0);
+    let headroom = ((LOITER_CEILING - (body.translation().y - floor)) / 20.0).clamp(-1.0, 1.0);
     wanted.y = wanted.y.min(headroom * LOITER_SPEED);
     let mut push = (wanted - body.linvel()) * LOITER_GRIP;
     let size = push.length();
@@ -500,7 +500,7 @@ pub(crate) fn autopilot(rotation: Rotation, target: Vector, airspeed: f32, max_b
 /// rudder from the stick. Authority is lost at low speed. Near the edge of the world the plane turns itself
 /// back, and with nobody aboard it glides. Everything is a function of the body's state and the controls
 /// alone, so the client can replay it.
-pub(crate) fn wing(body: &mut RigidBody, controls: CarControls, power: f32, grounded: bool, bound: f32, dt: f32) {
+pub(crate) fn wing(body: &mut RigidBody, controls: CarControls, power: f32, grounded: bool, bound: f32, floor: f32, dt: f32) {
     let rotation = *body.rotation();
     let nose = rotation * Vector::new(0.0, 0.0, -1.0);
     let up = rotation * Vector::Y;
@@ -518,7 +518,7 @@ pub(crate) fn wing(body: &mut RigidBody, controls: CarControls, power: f32, grou
     let carried = if grounded { 1.0 } else { (airspeed / PLANE_LEVEL_SPEED).powi(2).min(1.0) };
     let lift = (flying * (CAR_GRAVITY * carried - PLANE_AOA_GAIN * velocity.dot(up))).clamp(-PLANE_MAX_LIFT, PLANE_MAX_LIFT);
     let side = -PLANE_SIDE_GAIN * velocity.dot(right) * (airspeed / PLANE_STALL_SPEED).min(1.0);
-    let headroom = ((PLANE_CEILING - position.y) / 20.0).clamp(0.0, 1.0);
+    let headroom = ((PLANE_CEILING - (position.y - floor)) / 20.0).clamp(0.0, 1.0);
     let thrust = if controls.powered { throttle_setting(controls.lift, grounded) * PLANE_THRUST * power * headroom } else { 0.0 };
     let accel = nose * thrust + up * lift + right * side - velocity * (speed * PLANE_DRAG);
     // A force rather than an impulse, integrated together with gravity.

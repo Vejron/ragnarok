@@ -2,12 +2,12 @@
 import L from 'leaflet'
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api } from './api'
-import { blockKey, rectBounds, tileAt, tileKey, type TileId } from './grid'
+import { blockKey, rectCorners, tileAt, tileKey, type TileId } from './grid'
 import { ITEM_KINDS, nearest, routeLines, teamColour, VEHICLE_KINDS, yawOf } from './placements'
 import {
   addArea, addSpot, blocks, brush, cacheTick, changeSpot, dirty, focus, grid, heading, isPlacing, itemKind, message, MIN_CACHE_ZOOM, mode,
   onPainted, painted, pickedSpot, pickedSquad, placements, poll, removeSpot, scenario, scenarioTool, setPlacements, setTiles, squadNamed, tool,
-  vehicleKind, zoom, loadWorlds, openWorld, worlds,
+  vehicleKind, zoom, loadWorlds, openWorld, region, worlds,
 } from './state'
 
 /** The tile grid's lines are drawn from this zoom up. */
@@ -48,41 +48,51 @@ function redraw() {
   if (!ctx) return
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
   ctx.clearRect(0, 0, size.x, size.y)
-  const rect = (gx: number, gy: number, n: number): [number, number, number, number] => {
-    const [s, w, nn, e] = rectBounds(g, gx, gy, n)
-    const a = map!.latLngToContainerPoint([nn, w])
-    const b = map!.latLngToContainerPoint([s, e])
-    return [a.x, a.y, b.x - a.x, b.y - a.y]
+  // A square of tiles as a path of its four corners: a French grid's squares are turned a little
+  // from north, so they are not rectangles on the map.
+  const square = (gx: number, gy: number, n: number) => {
+    ctx.beginPath()
+    for (const [lat, lon] of rectCorners(g, gx, gy, n)) {
+      const p = map!.latLngToContainerPoint([lat, lon])
+      ctx.lineTo(p.x, p.y)
+    }
+    ctx.closePath()
   }
   // Cached blocks, tinted wherever they are, so the cache's reach is visible without painting.
   ctx.lineWidth = 1
   for (const b of blocks.value.values()) {
     if (!b.overpass) continue
-    const [x, y, w, h] = rect(b.bx * g.blockTiles, b.by * g.blockTiles, g.blockTiles)
+    square(b.bx * g.blockTiles, b.by * g.blockTiles, g.blockTiles)
     ctx.fillStyle = 'rgba(46,160,67,0.14)'
-    ctx.fillRect(x, y, w, h)
+    ctx.fill()
     ctx.strokeStyle = 'rgba(46,160,67,0.6)'
-    ctx.strokeRect(x, y, w, h)
+    ctx.stroke()
   }
   const bounds = map.getBounds()
-  const nw = tileAt(g, bounds.getNorth(), bounds.getWest())
-  const se = tileAt(g, bounds.getSouth(), bounds.getEast())
+  const corners = [
+    tileAt(g, bounds.getNorth(), bounds.getWest()),
+    tileAt(g, bounds.getNorth(), bounds.getEast()),
+    tileAt(g, bounds.getSouth(), bounds.getWest()),
+    tileAt(g, bounds.getSouth(), bounds.getEast()),
+  ]
+  const nw = { gx: Math.min(...corners.map((t) => t.gx)), gy: Math.min(...corners.map((t) => t.gy)) }
+  const se = { gx: Math.max(...corners.map((t) => t.gx)), gy: Math.max(...corners.map((t) => t.gy)) }
   if (map.getZoom() >= GRID_ZOOM && (se.gx - nw.gx + 1) * (se.gy - nw.gy + 1) < 8000) {
     ctx.strokeStyle = 'rgba(0,0,0,0.22)'
     for (let gy = nw.gy; gy <= se.gy; gy++) {
       for (let gx = nw.gx; gx <= se.gx; gx++) {
-        const [x, y, w, h] = rect(gx, gy, 1)
-        ctx.strokeRect(x, y, w, h)
+        square(gx, gy, 1)
+        ctx.stroke()
       }
     }
   }
   for (const t of painted.value.values()) {
     if (t.gx < nw.gx - 1 || t.gx > se.gx + 1 || t.gy < nw.gy - 1 || t.gy > se.gy + 1) continue
-    const [x, y, w, h] = rect(t.gx, t.gy, 1)
+    square(t.gx, t.gy, 1)
     ctx.fillStyle = ready(t.gx, t.gy) ? 'rgba(46,160,67,0.55)' : 'rgba(240,160,0,0.55)'
-    ctx.fillRect(x, y, w, h)
+    ctx.fill()
     ctx.strokeStyle = 'rgba(30,30,30,0.5)'
-    ctx.strokeRect(x, y, w, h)
+    ctx.stroke()
   }
 }
 
@@ -90,7 +100,7 @@ async function refreshCache() {
   if (!map || map.getZoom() < MIN_CACHE_ZOOM) return
   const b = map.getBounds()
   try {
-    const found = await api.cache(b.getSouth(), b.getWest(), b.getNorth(), b.getEast())
+    const found = await api.cache(region.value, b.getSouth(), b.getWest(), b.getNorth(), b.getEast())
     const next = new Map(blocks.value)
     for (const block of found) next.set(blockKey(block.bx, block.by), block)
     blocks.value = next
@@ -332,6 +342,13 @@ watch([mode, scenario, pickedSpot], () => (mode.value === 'scenario' ? drawScena
 watch(mode, applyTool)
 watch(tool, applyTool)
 watch(cacheTick, refreshCache)
+// Another region's grid: the cached blocks and the view belong to the old one.
+watch(grid, (g, before) => {
+  if (!g || !before || g.region === before.region || !map) return
+  blocks.value = new Map()
+  map.setView(g.origin, Math.min(map.getZoom(), 7))
+  redraw()
+})
 watch(focus, (at) => {
   if (!at || !map) return
   map.setView([at.lat, at.lon], Math.max(map.getZoom(), 15))
@@ -339,7 +356,7 @@ watch(focus, (at) => {
 })
 
 onMounted(async () => {
-  grid.value = await api.grid()
+  grid.value = await api.grid(region.value)
   const [lat, lon] = grid.value.origin
   map = L.map(mapEl.value!, { center: [lat, lon], zoom: 14, zoomControl: true })
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {

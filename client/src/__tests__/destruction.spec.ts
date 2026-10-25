@@ -113,7 +113,7 @@ function box(x0: number, vertexBase: number) {
 function twoHouses(): TileData {
   const [a, b] = [box(0, 0), box(30, 8)]
   const building = (x0: number, first: number): Building => ({
-    height: 6, base: 0, first, walls: 8, roof: 2, roofKind: ROOF_FLAT, cells: null,
+    height: 6, base: 0, first, walls: 8, roof: 2, roofKind: ROOF_FLAT, cells: null, paint: null,
     footprint: [[x0, -5], [x0 + 10, -5], [x0 + 10, 5], [x0, 5]],
   })
   return {

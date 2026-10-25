@@ -9,6 +9,7 @@ pub mod carve;
 pub mod consts;
 pub mod construct;
 pub mod items;
+pub mod lambert93;
 pub mod mounts;
 pub mod movement;
 pub mod protocol;

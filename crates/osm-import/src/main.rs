@@ -18,7 +18,8 @@
 //!
 //! Credentials, data sources and the cache are described in `WORLD.md`.
 
-use osm_import::{assemble, cache, canopy, dem, detail, grid, ground, hydro, lidar, minimap, overpass, progress, roof, trees, voxels, water};
+use osm_import::region::{Place, Region};
+use osm_import::{assemble, bushes, cache, canopy, dem, detail, grid, ground, hydro, ign, lidar, minimap, overpass, paint, progress, roof, trees, voxels, water};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use std::path::PathBuf;
@@ -30,8 +31,7 @@ struct Args {
     /// `--half` the world reaches from Backen in the west to Nydala in the east.
     #[arg(long, default_value = "63.8225,20.235")]
     center: String,
-    /// Half the side of the square around `--center`, metres. The default is as large as the
-    /// terrain allows here: a bigger square takes in a hill that breaks the 100 m relief limit.
+    /// Half the side of the square around `--center`, metres.
     #[arg(long, default_value_t = 4300.0)]
     half: f64,
     /// south,west,north,east in degrees. Overrides `--center` and `--half`.
@@ -64,6 +64,10 @@ struct Args {
     /// Leave buildings as boxes of their tagged height instead of fitting roofs to the laser data.
     #[arg(long)]
     no_roofs: bool,
+    /// France: leave the buildings' colours to the client instead of taking the roofs' from IGN's
+    /// aerial photo.
+    #[arg(long)]
+    no_paint: bool,
     /// Leave out lakes, rivers and streams.
     #[arg(long)]
     no_water: bool,
@@ -132,15 +136,12 @@ fn parse_center(text: &str) -> Result<(f64, f64)> {
     Ok((lat, lon))
 }
 
-/// The SWEREF 99 TM window `[e0, n0, e1, n1]` over the world's whole grid of tiles.
-fn sweref_window(args: &Args, bbox: [f64; 4]) -> dem::Window {
-    let (origin, half) = assemble::frame(bbox);
-    // The square of tiles, which may stick out of the playable square, in SWEREF 99 TM.
-    let reach = (2.0 * half / args.tile).ceil() * args.tile / 2.0 + args.cell;
-    let corners = [(-reach, -reach), (reach, -reach), (-reach, reach), (reach, reach)].map(|(x, z)| {
-        let (lat, lon) = assemble::unproject(origin, x, z);
-        dem::sweref99tm(lat, lon)
-    });
+/// The window `[e0, n0, e1, n1]` over the world's whole grid of tiles, in the region's projected
+/// coordinates (SWEREF 99 TM, Lambert-93).
+fn source_window(args: &Args, place: &Place) -> dem::Window {
+    // The square of tiles, which may stick out of the playable square.
+    let reach = (2.0 * place.half / args.tile).ceil() * args.tile / 2.0 + args.cell;
+    let corners = [(-reach, -reach), (reach, -reach), (-reach, reach), (reach, reach)].map(|(x, z)| place.source(x, z));
     let fold = |init: f64, pick: fn(f64, f64) -> f64, axis: fn(&(f64, f64)) -> f64| corners.iter().map(axis).fold(init, pick);
     [
         fold(f64::MAX, f64::min, |c| c.0),
@@ -150,19 +151,16 @@ fn sweref_window(args: &Args, bbox: [f64; 4]) -> dem::Window {
     ]
 }
 
-/// The painted tiles as SWEREF 99 TM rectangles, each grown by `CANOPY_REACH` so a crown or a roof
-/// just over a tile's edge is still read. The tile grid is not aligned with SWEREF's, so each is
-/// the box around its four projected corners.
-fn painted_rects(args: &Args, bbox: [f64; 4], mask: &std::collections::BTreeSet<(u16, u16)>) -> Vec<dem::Window> {
+/// The painted tiles as rectangles of the region's projected coordinates, each grown by
+/// `CANOPY_REACH` so a crown or a roof just over a tile's edge is still read. Sweden's tile grid is
+/// not aligned with SWEREF's, so each is the box around its four projected corners.
+fn painted_rects(args: &Args, place: &Place, mask: &std::collections::BTreeSet<(u16, u16)>) -> Vec<dem::Window> {
     const CANOPY_REACH: f64 = 30.0;
-    let (origin, half) = assemble::frame(bbox);
+    let half = place.half;
     mask.iter()
         .map(|&(col, row)| {
             let (x0, z0) = (-half + f64::from(col) * args.tile, -half + f64::from(row) * args.tile);
-            let corners = [(x0, z0), (x0 + args.tile, z0), (x0, z0 + args.tile), (x0 + args.tile, z0 + args.tile)].map(|(x, z)| {
-                let (lat, lon) = assemble::unproject(origin, x, z);
-                dem::sweref99tm(lat, lon)
-            });
+            let corners = [(x0, z0), (x0 + args.tile, z0), (x0, z0 + args.tile), (x0 + args.tile, z0 + args.tile)].map(|(x, z)| place.source(x, z));
             let low = |axis: fn(&(f64, f64)) -> f64| corners.iter().map(axis).fold(f64::MAX, f64::min);
             let high = |axis: fn(&(f64, f64)) -> f64| corners.iter().map(axis).fold(f64::MIN, f64::max);
             [low(|c| c.0) - CANOPY_REACH, low(|c| c.1) - CANOPY_REACH, high(|c| c.0) + CANOPY_REACH, high(|c| c.1) + CANOPY_REACH]
@@ -170,18 +168,26 @@ fn painted_rects(args: &Args, bbox: [f64; 4], mask: &std::collections::BTreeSet<
         .collect()
 }
 
-/// Lakes, rivers and streams from Lantmäteriet's Hydrografi, in local metres. Empty with
-/// `--no-water`, without credentials or on flat ground (the surface height comes from the DTM).
-fn water_map(args: &Args, bbox: [f64; 4], pieces: Option<&[[f64; 4]]>) -> Result<water::Map> {
+/// Lakes, rivers and streams in local metres: from Lantmäteriet's Hydrografi in Sweden, from
+/// OpenStreetMap with `--osm-water` and always in France. Empty with `--no-water`, without
+/// credentials or on flat ground (the surface height comes from the DTM).
+fn water_map(args: &Args, place: &Place, pieces: Option<&[[f64; 4]]>) -> Result<water::Map> {
     if args.no_water || args.cell == 0.0 {
         return Ok(water::Map::default());
     }
-    let (origin, half) = assemble::frame(bbox);
+    let frame = place.frame;
     // The whole grid of tiles, which may stick out of the playable square.
-    let reach = (2.0 * half / args.tile).ceil() * args.tile / 2.0 + args.cell;
-    let (south, west) = assemble::unproject(origin, -reach, reach);
-    let (north, east) = assemble::unproject(origin, reach, -reach);
-    let local = |ring: &[overpass::LatLon]| -> Vec<[f64; 2]> { ring.iter().map(|p| assemble::project(origin, p.lat, p.lon)).collect() };
+    let reach = (2.0 * place.half / args.tile).ceil() * args.tile / 2.0 + args.cell;
+    let [south, west, north, east] = match place.region {
+        // Exactly the two corners, as always, so the cached answers are found again.
+        Region::Sweden => {
+            let (south, west) = frame.unproject(-reach, reach);
+            let (north, east) = frame.unproject(reach, -reach);
+            [south, west, north, east]
+        }
+        Region::France => osm_import::region::enclosing(frame, reach),
+    };
+    let local = |ring: &[overpass::LatLon]| -> Vec<[f64; 2]> { ring.iter().map(|p| frame.project(p.lat, p.lon)).collect() };
     // Rings are closed in GeoJSON: drop the repeated first point.
     let open = |mut ring: Vec<[f64; 2]>| {
         if ring.len() > 1 && ring.first() == ring.last() {
@@ -195,7 +201,7 @@ fn water_map(args: &Args, bbox: [f64; 4], pieces: Option<&[[f64; 4]]>) -> Result
             map.bodies.push(water::Body { kind, rings: polygon.iter().map(|ring| open(local(ring))).filter(|ring| ring.len() >= 3).collect(), level: None });
         }
     };
-    if !args.osm_water {
+    if !args.osm_water && place.region == Region::Sweden {
         let (Some(user), Some(password)) = (std::env::var("LM_USER").ok(), std::env::var("LM_PASS").ok()) else {
             eprintln!("no LM_USER / LM_PASS: the world has no water (or pass --osm-water)");
             return Ok(map);
@@ -230,17 +236,19 @@ fn water_map(args: &Args, bbox: [f64; 4], pieces: Option<&[[f64; 4]]>) -> Result
     Ok(map)
 }
 
-/// The terrain under `bbox`'s world, the elevation of its y = 0 and the water over it, from
-/// `--dem` or Lantmäteriet, or flat with `--cell 0`. Lakes and rivers are carved into the ground.
-fn terrain(args: &Args, bbox: [f64; 4], mask: Option<&std::collections::BTreeSet<(u16, u16)>>, map: &water::Map) -> Result<(shared::terrain::Ground, f64, Option<dem::Dem>, water::Placed)> {
+/// The terrain under the world, the elevation of its y = 0 and the water over it, from `--dem` or
+/// Lantmäteriet, or flat with `--cell 0`. Lakes and rivers are carved into the ground.
+fn terrain(args: &Args, place: &Place, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, map: &water::Map) -> Result<(shared::terrain::Ground, f64, Option<dem::Dem>, water::Placed)> {
     if args.cell == 0.0 {
         return Ok((Default::default(), 0.0, None, Default::default()));
     }
-    let (origin, half) = assemble::frame(bbox);
-    let window = sweref_window(args, bbox);
+    let (bbox, half) = (place.bbox, place.half);
+    let window = source_window(args, place);
     progress::stage("elevation");
     let source = match &args.dem {
         Some(path) => dem::Dem::from_path(path, window)?,
+        // IGN's 0.5 m MNT, only under the painted tiles when there are some.
+        None if place.region == Region::France => ign::mnt(&mask.map_or_else(|| vec![window], |mask| painted_rects(args, place, mask))).context("IGN's MNT failed; retry later, or pass --dem <file.tif>")?,
         None => {
             let (Some(user), Some(password)) = (std::env::var("LM_USER").ok(), std::env::var("LM_PASS").ok()) else {
                 bail!("elevation needs --dem <file.tif>, or LM_USER and LM_PASS (Lantmäteriet credentials), or --cell 0 for flat ground");
@@ -250,8 +258,7 @@ fn terrain(args: &Args, bbox: [f64; 4], mask: Option<&std::collections::BTreeSet
     };
     let half_cell = args.cell / 2.0;
     let dtm = |x: f64, z: f64| {
-        let (lat, lon) = assemble::unproject(origin, x, z);
-        let (e, n) = dem::sweref99tm(lat, lon);
+        let (e, n) = place.source(x, z);
         source.mean(e, n, half_cell).map(f64::from)
     };
     progress::stage("ground");
@@ -279,44 +286,120 @@ fn report(map: &water::Map, placed: &water::Placed) {
     eprintln!("water: {} bodies, {} samples under or beside water, {} stream lines kept", map.bodies.len(), wet, placed.streams.len());
 }
 
-/// What the laser data gives: the returns that can be roof, and the canopy for trees. Each is
-/// `None` when switched off or without credentials (`--no-roofs`, `--no-lidar-trees`).
-fn laser(args: &Args, bbox: [f64; 4], mask: Option<&std::collections::BTreeSet<(u16, u16)>>, datum: f64, osm: &overpass::Osm, dem: Option<&dem::Dem>) -> Result<(Option<roof::Cloud>, Vec<canopy::Detected>)> {
+/// What the laser data gives. Roofs, decks and trees are each empty when switched off, or without
+/// credentials (`--no-roofs`, `--no-lidar-trees`).
+struct Laser {
+    /// The returns that can be roof.
+    roofs: Option<roof::Cloud>,
+    /// Bridge deck returns, from a classified cloud only.
+    decks: Option<roof::Cloud>,
+    trees: Vec<canopy::Detected>,
+    /// From a classified cloud's medium vegetation only.
+    bushes: Vec<bushes::Bush>,
+}
+
+fn laser(args: &Args, place: &Place, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, datum: f64, osm: &overpass::Osm, dem: Option<&dem::Dem>) -> Result<Laser> {
+    let none = || Laser { roofs: None, decks: None, trees: Vec::new(), bushes: Vec::new() };
     let want_roofs = !args.no_roofs;
     let want_trees = !args.no_lidar_trees && dem.is_some();
     if args.cell == 0.0 || !(want_roofs || want_trees) {
-        return Ok((None, Vec::new()));
+        return Ok(none());
     }
-    let (Some(user), Some(password)) = (std::env::var("LM_USER").ok(), std::env::var("LM_PASS").ok()) else {
-        eprintln!("no LM_USER / LM_PASS: buildings stay boxes and only the register's trees are planted");
-        return Ok((None, Vec::new()));
+    let bbox = place.bbox;
+    let credentials = match place.region {
+        // IGN's LiDAR HD is open.
+        Region::France => (String::new(), String::new()),
+        Region::Sweden => {
+            let (Some(user), Some(password)) = (std::env::var("LM_USER").ok(), std::env::var("LM_PASS").ok()) else {
+                eprintln!("no LM_USER / LM_PASS: buildings stay boxes and only the register's trees are planted");
+                return Ok(none());
+            };
+            (user, password)
+        }
     };
-    let window = sweref_window(args, bbox);
+    let window = source_window(args, place);
     let mut cloud = want_roofs.then(|| roof::Cloud::new(window));
     let mut canopy = want_trees.then(|| canopy::Canopy::new(window));
-    let painted = mask.map(|mask| painted_rects(args, bbox, mask));
+    let mut decks = (want_roofs && place.region == Region::France).then(|| roof::Cloud::new(window));
+    let mut undergrowth = (want_trees && place.region == Region::France).then(|| bushes::Undergrowth::new(window));
+    let painted = mask.map(|mask| painted_rects(args, place, mask));
     progress::stage("laser");
-    let total = lidar::fetch(bbox, window, painted.as_deref(), &user, &password, |p| {
-        if let Some(cloud) = &mut cloud {
-            cloud.add(&p, datum);
+    let total = match place.region {
+        Region::Sweden => lidar::fetch(bbox, window, painted.as_deref(), &credentials.0, &credentials.1, |p| {
+            if let Some(cloud) = &mut cloud {
+                cloud.add(&p, datum);
+            }
+            if let Some(canopy) = &mut canopy {
+                canopy.add(&p);
+            }
+        })?,
+        // Classified: roofs read only building returns, and trees only high vegetation, so
+        // neither has to tell foliage from roofs by shape.
+        Region::France => {
+            let squares: Vec<ign::Square> = ign::squares(window)?
+                .into_iter()
+                .filter(|square| painted.as_ref().is_none_or(|rects| rects.iter().any(|r| square.window[0] < r[2] && r[0] < square.window[2] && square.window[1] < r[3] && r[1] < square.window[3])))
+                .collect();
+            eprintln!("laser: {} LiDAR HD squares", squares.len());
+            let client = reqwest::blocking::Client::builder().build()?;
+            lidar::read_files(&client, &ign::clouds(&squares), window, painted.as_deref(), ("", ""), |p| match p.class {
+                ign::class::BUILDING => {
+                    if let Some(cloud) = &mut cloud {
+                        cloud.add(&p, datum);
+                    }
+                }
+                ign::class::BRIDGE => {
+                    if let Some(decks) = &mut decks {
+                        decks.add(&p, datum);
+                    }
+                }
+                ign::class::HIGH_VEGETATION => {
+                    if let Some(canopy) = &mut canopy {
+                        canopy.add(&p);
+                    }
+                    if let Some(undergrowth) = &mut undergrowth {
+                        undergrowth.crown(&p);
+                    }
+                }
+                ign::class::MEDIUM_VEGETATION => {
+                    if let Some(undergrowth) = &mut undergrowth {
+                        undergrowth.add(&p);
+                    }
+                }
+                _ => {}
+            })?
         }
-        if let Some(canopy) = &mut canopy {
-            canopy.add(&p);
-        }
-    })?;
+    };
     eprintln!("laser: {total} returns{}", cloud.as_ref().map_or(String::new(), |c| format!(", {} kept for roofs", c.len())));
     let mut detected = Vec::new();
+    let mut found_bushes = Vec::new();
+    if let (Some(undergrowth), Some(dem)) = (undergrowth, dem) {
+        found_bushes = undergrowth.detect(|e, n| dem.mean(e, n, 0.5));
+        eprintln!("undergrowth: {} bushes", found_bushes.len());
+    }
     if let (Some(mut canopy), Some(dem)) = (canopy, dem) {
-        // Roofs are not trees: keep the canopy off every building outline.
-        for way in osm.ways.iter().filter(|way| way.tags.contains_key("building")) {
-            let ring: Vec<(f64, f64)> = way.geometry.iter().map(|p| dem::sweref99tm(p.lat, p.lon)).collect();
+        // Roofs are not trees: keep the canopy off every building outline. A classified cloud's
+        // vegetation has no roofs in it, and masking would only cut crowns that overhang one.
+        for way in osm.ways.iter().filter(|way| place.region == Region::Sweden && way.tags.contains_key("building")) {
+            let ring: Vec<(f64, f64)> = way.geometry.iter().map(|p| place.region.source(p.lat, p.lon)).collect();
             canopy.mask(&ring, 1.5);
         }
         progress::stage("canopy");
         detected = canopy.detect(|e, n| dem.mean(e, n, 0.5), args.min_tree_height);
         eprintln!("canopy: {} trees at least {} m tall", detected.len(), args.min_tree_height);
     }
-    Ok((cloud, detected))
+    Ok(Laser { roofs: cloud, decks, trees: detected, bushes: found_bushes })
+}
+
+/// The aerial photo the roofs' colours come from: France only, and none if IGN does not answer
+/// (the colours are a nicety; the client picks its own without them).
+fn photo(args: &Args, place: &Place, mask: Option<&std::collections::BTreeSet<(u16, u16)>>) -> Option<paint::Photo> {
+    if args.no_paint || place.region != Region::France {
+        return None;
+    }
+    progress::stage("aerial photo");
+    let rects = mask.map_or_else(|| vec![source_window(args, place)], |mask| painted_rects(args, place, mask));
+    ign::photo(&rects).inspect_err(|error| eprintln!("no roof colours: {error:#}")).ok()
 }
 
 /// `--bake`: reads the world at `path`, bakes every tile (`voxels::bake`), gives the cubes houses
@@ -325,7 +408,18 @@ fn laser(args: &Args, bbox: [f64; 4], mask: Option<&std::collections::BTreeSet<(
 fn bake_world(path: &std::path::Path) -> Result<()> {
     use shared::world::{Manifest, TileRef, WORLD_VERSION, Tile, world_hash};
     let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
-    let mut manifest = Manifest::decode(&bytes).with_context(|| format!("decoding {}", path.display()))?;
+    let mut manifest = match Manifest::decode(&bytes) {
+        Ok(manifest) => manifest,
+        // Before version 15 the manifest held the origin where the frame is now: every such world is
+        // Swedish, so its frame is the equirectangular one around that origin.
+        Err(error) => {
+            #[derive(serde::Deserialize)]
+            struct Old(u8, (f64, f64), i32, i32, Vec<[i32; 2]>, Vec<TileRef>, i32);
+            let Old(version, origin, half_extent, tile_size, spawns, tiles, ground_cell) =
+                rmp_serde::from_slice(&bytes).map_err(|_| error).with_context(|| format!("decoding {}", path.display()))?;
+            Manifest { version, frame: shared::world::Frame::Equirect { origin }, half_extent, tile_size, spawns, tiles, ground_cell }
+        }
+    };
     anyhow::ensure!(
         manifest.version + 1 >= WORLD_VERSION && manifest.version <= WORLD_VERSION,
         "{} is world version {}; only {} and {} can be baked",
@@ -421,30 +515,39 @@ fn main() -> Result<()> {
                 #[derive(serde::Deserialize)]
                 struct File {
                     tiles: Vec<grid::Tile>,
+                    #[serde(default)]
+                    region: Region,
                 }
                 let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
                 let file: File = serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
                 anyhow::ensure!((args.tile - grid::TILE).abs() < 1e-9, "--area worlds use the global grid's {} m tiles", grid::TILE);
-                let layout = grid::layout(&file.tiles)?;
-                eprintln!("area: {} tiles in a square of {} tiles, {} download blocks", file.tiles.len(), layout.half * 2.0 / grid::TILE, layout.pieces.len());
+                let layout = grid::layout(file.region, &file.tiles)?;
+                eprintln!("area: {} tiles of {}'s grid in a square of {} tiles, {} download blocks", file.tiles.len(), file.region.name(), layout.place.half * 2.0 / grid::TILE, layout.pieces.len());
                 Some(layout)
             }
             None => None,
         };
         let mask = area.as_ref().map(|layout| &layout.mask);
         let pieces = area.as_ref().map(|layout| layout.pieces.as_slice());
-        let bbox = match (&area, &args.bbox) {
-            (Some(layout), _) => layout.bbox,
-            (None, Some(text)) => parse_bbox(text)?,
+        let place = match (&area, &args.bbox) {
+            (Some(layout), _) => layout.place,
+            (None, Some(text)) => {
+                let bbox = parse_bbox(text)?;
+                Region::at((bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0).within(bbox)
+            }
             (None, None) => {
                 let (lat, lon) = parse_center(&args.center)?;
-                assemble::bbox_around(lat, lon, args.half)
+                Region::at(lat, lon).around(lat, lon, args.half)
             }
         };
+        let bbox = place.bbox;
+        if place.region != Region::Sweden {
+            eprintln!("region: {}, frame {:?}", place.region.name(), place.frame);
+        }
         // Before the network-flaky step: a world that cannot fit the format should fail in seconds.
         progress::stage("water");
-        let map = water_map(&args, bbox, pieces)?;
-        let (ground, datum, dem, placed) = terrain(&args, bbox, mask, &map)?;
+        let map = water_map(&args, &place, pieces)?;
+        let (ground, datum, dem, placed) = terrain(&args, &place, mask, &map)?;
         // The public servers shed load with 504s; a few rounds over all of them usually get through.
         progress::stage("overpass");
         let osm = match pieces {
@@ -452,14 +555,13 @@ fn main() -> Result<()> {
             None => overpass::fetch_chunked(&args.overpass, bbox, args.overpass_chunk, 3, 15),
         }
         .context("Overpass failed; retry later or use --synthetic")?;
-        let (cloud, detected) = laser(&args, bbox, mask, datum, &osm, dem.as_ref())?;
+        let Laser { roofs: cloud, decks, trees: detected, bushes: found_bushes } = laser(&args, &place, mask, datum, &osm, dem.as_ref())?;
         progress::stage("trees");
-        let register = if args.no_trees {
-            Vec::new()
-        } else {
-            match trees::fetch_pieces(pieces.unwrap_or(&[bbox])) {
+        let register = match trees::Register::over(place.region, bbox).filter(|_| !args.no_trees) {
+            None => Vec::new(),
+            Some(register) => match register.fetch_pieces(pieces.unwrap_or(&[bbox])) {
                 Ok(planted) => {
-                    eprintln!("trees: {} from Umeå open data", planted.len());
+                    eprintln!("trees: {} from {}", planted.len(), register.name());
                     planted
                 }
                 // The tree data is a nicety; a world without it is still a world.
@@ -469,18 +571,22 @@ fn main() -> Result<()> {
                 }
             }
         };
-        let planted = trees::merge(register, &detected);
+        let mut planted = trees::merge(place.region, register, &detected);
         eprintln!("trees: {} from the register, {} from the laser", planted.iter().filter(|t| t.registered).count(), planted.iter().filter(|t| !t.registered).count());
+        planted.extend(found_bushes.iter().map(|bush| {
+            let (lat, lon) = place.region.degrees(bush.e, bush.n);
+            trees::Planted { lat, lon, kind: shared::world::TREE_BUSH, height: bush.height, crown: bush.crown, registered: false }
+        }));
         let coarse = (args.detail > 0.0).then(|| ground.clone());
+        let photo = photo(&args, &place, mask);
         progress::stage("assemble");
-        let mut built = assemble::from_osm(bbox, args.tile, mask, &osm, &planted, ground, placed, cloud.as_ref());
+        let mut built = assemble::from_osm(&place, args.tile, mask, &osm, &planted, ground, placed, cloud.as_ref(), decks.as_ref(), photo.as_ref());
         if let (Some(coarse), Some(source)) = (coarse, dem.as_ref()) {
             progress::stage("detail");
-            let (origin, _) = assemble::frame(bbox);
             let model = |half: f64| {
+                let place = &place;
                 move |x: f64, z: f64| {
-                    let (lat, lon) = assemble::unproject(origin, x, z);
-                    let (e, n) = dem::sweref99tm(lat, lon);
+                    let (e, n) = place.source(x, z);
                     source.mean(e, n, half).map(f64::from)
                 }
             };
@@ -491,13 +597,13 @@ fn main() -> Result<()> {
     let (buildings, roads, triangles) = built.tiles.values().fold((0, 0, 0), |(b, r, t), tile| (b + tile.buildings.len(), r + tile.roads.len(), t + tile.collision.triangles.len()));
     let cover: usize = built.tiles.values().map(|tile| tile.cover.len()).sum();
     let rails: usize = built.tiles.values().map(|tile| tile.rails.len()).sum();
-    let mut by_kind = [0usize; 7];
+    let mut by_kind = [0usize; 10];
     for tree in built.tiles.values().flat_map(|tile| &tile.trees) {
-        by_kind[usize::from(tree.kind).min(6)] += 1;
+        by_kind[usize::from(tree.kind).min(9)] += 1;
     }
     eprintln!(
-        "trees: {} birch, {} pine, {} spruce, {} ornamental, {} broadleaf, {} columnar, {} low-wide",
-        by_kind[0], by_kind[1], by_kind[2], by_kind[3], by_kind[4], by_kind[5], by_kind[6]
+        "trees: {} birch, {} pine, {} spruce, {} ornamental, {} broadleaf, {} columnar, {} low-wide; {} rocks, {} bushes",
+        by_kind[0], by_kind[1], by_kind[2], by_kind[3], by_kind[4], by_kind[5], by_kind[6], by_kind[7] + by_kind[8], by_kind[9]
     );
     let mut roofs = [0usize; 4];
     for building in built.tiles.values().flat_map(|tile| &tile.buildings) {

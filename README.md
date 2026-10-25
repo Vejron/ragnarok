@@ -4,6 +4,7 @@ A browser multiplayer game: goofy stickmen in a real city built from OpenStreetM
 
 - [design.md](design.md): architecture, netcode, world pipeline and roadmap
 - [WORLD.md](WORLD.md): generating the world: data sources, credentials, download cache
+- [FRANCE.md](FRANCE.md): worlds in France from IGN LiDAR HD: the plan and where it stands
 - [NETWORKING.md](NETWORKING.md): wire protocol
 - [SERVER-PERFORMANCE.md](SERVER-PERFORMANCE.md): what a full room costs per tick, how it is measured, what is and is not worth optimising
 - [RENDERING.md](RENDERING.md): the client renderer: toon shading, light, effects, contact shadows, ink, far shadows

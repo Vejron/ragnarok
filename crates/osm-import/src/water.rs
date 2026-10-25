@@ -65,7 +65,7 @@ pub struct Map {
 /// (empty when there is no water) and the stream centre lines.
 #[derive(Clone, Debug, Default)]
 pub struct Placed {
-    pub levels: Vec<i16>,
+    pub levels: Vec<i32>,
     pub streams: Vec<Vec<P>>,
 }
 
@@ -217,12 +217,12 @@ impl Surface {
     /// The water surface at every ground sample of `ground` (built from `bed`), centimetres above
     /// its y = 0, which is `datum` in the height model. Samples next to water get a surface just
     /// under the bank, so the drawn shoreline falls between samples.
-    pub fn levels(&self, datum: f64, ground: &Ground) -> Vec<i16> {
+    pub fn levels(&self, datum: f64, ground: &Ground) -> Vec<i32> {
         let side = self.grid.side as usize;
         let mut out = vec![NO_WATER; side * side];
         for (at, &b) in self.body.iter().enumerate() {
             if b != NONE {
-                out[at] = (((self.level[b as usize] - datum) * 100.0).round() as i32).clamp(i16::MIN as i32 + 1, i16::MAX as i32) as i16;
+                out[at] = ((self.level[b as usize] - datum) * 100.0).round() as i32;
             }
         }
         let wet = out.clone();
@@ -232,7 +232,7 @@ impl Surface {
                 if wet[at] != NO_WATER {
                     continue;
                 }
-                let mut near: Option<i16> = None;
+                let mut near: Option<i32> = None;
                 for dj in -1i32..=1 {
                     for di in -1i32..=1 {
                         let (ni, nj) = (i as i32 + di, j as i32 + dj);
@@ -246,8 +246,7 @@ impl Surface {
                     }
                 }
                 if let Some(level) = near {
-                    let ground_cm = ground.heights[at] as i32;
-                    out[at] = (level as i32).min(ground_cm - BANK_DROP_CM).clamp(i16::MIN as i32 + 1, i16::MAX as i32) as i16;
+                    out[at] = level.min(ground.heights[at] - BANK_DROP_CM);
                 }
             }
         }
@@ -427,14 +426,14 @@ mod tests {
         let dem = |_: f64, _: f64| Some(10.0);
         let surface = Surface::new(&lake(), grid(), dem);
         let side = 21;
-        let heights: Vec<i16> = (0..side * side).map(|_| 1000).collect();
+        let heights: Vec<i32> = (0..side * side).map(|_| 1000).collect();
         let ground = Ground { origin: -10_000, cell: 1_000, side: side as u32, heights };
         let levels = surface.levels(0.0, &ground);
         let at = |x: i32, z: i32| levels[((z + 10) * side + x + 10) as usize];
         assert_eq!(at(0, 0), 1000);
         // Sample x = 40 m (index 4) is wet, x = 50 m (5) is bank, x = 60 m (6) has nothing.
         assert_eq!(at(4, 0), 1000);
-        assert_eq!(at(5, 0), 1000 - BANK_DROP_CM as i16);
+        assert_eq!(at(5, 0), 1000 - BANK_DROP_CM);
         assert_eq!(at(6, 0), NO_WATER);
     }
 

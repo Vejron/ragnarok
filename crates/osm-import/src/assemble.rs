@@ -3,7 +3,8 @@
 
 use crate::bridge::{self, Pylons};
 use crate::overpass::{Area, LatLon, Osm, Way};
-use crate::roof::{self, Cloud, Roof, Shape};
+use crate::region::Place;
+use crate::roof::{self, Cloud, Roof, Shape, Top};
 use crate::trees::Planted;
 use crate::water::{Placed, STREAM_WIDTH};
 use shared::terrain::Ground;
@@ -28,11 +29,6 @@ const BALLAST_EXTRA: f64 = 2.2;
 
 fn cm(metres: f64) -> i32 {
     (metres * 100.0).round() as i32
-}
-
-/// Equirectangular projection around `origin`: +X east, +Z south.
-pub fn project(origin: (f64, f64), lat: f64, lon: f64) -> P {
-    shared::world::project(origin, lat, lon)
 }
 
 fn signed_area(points: &[P]) -> f64 {
@@ -251,6 +247,10 @@ impl Built {
     }
 }
 
+/// A building to assemble: its footprint, its tagged height, its roof (if the laser gave one) and its
+/// `[wall, roof]` colours (if the photo gave them).
+type Footprint = (Vec<P>, f64, Option<Top>, Option<[u32; 2]>);
+
 /// Assembles the world from building outlines (metres, any winding) and road polylines, and cuts
 /// it into square tiles of `tile_size` metres.
 ///
@@ -261,11 +261,11 @@ impl Built {
 /// `rails` are `(centre line, gauge, RAIL_*)`; `rail_bridges` carry tracks and are built like road
 /// bridges, but draw no road.
 #[allow(clippy::too_many_arguments)]
-fn assemble(origin: (f64, f64), half: f64, tile_size: f64, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, buildings: Vec<(Vec<P>, f64, Option<Roof>)>, roads: Vec<(Vec<P>, f64, u8)>, bridges: Vec<(Vec<P>, f64, u8, Pylons)>, rails: Vec<(Vec<P>, f64, u8)>, rail_bridges: Vec<(Vec<P>, f64, u8, Pylons)>, covers: Vec<(u8, Vec<Vec<P>>)>, trees: Vec<(P, u8, f64, f64, bool)>, ground: Ground, water: Placed) -> Built {
+fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, buildings: Vec<Footprint>, roads: Vec<(Vec<P>, f64, u8)>, bridges: Vec<(Vec<P>, f64, u8, Pylons, Deck)>, rails: Vec<(Vec<P>, f64, u8)>, rail_bridges: Vec<(Vec<P>, f64, u8, Pylons, Deck)>, covers: Vec<(u8, Vec<Vec<P>>)>, trees: Vec<(P, u8, f64, f64, bool)>, ground: Ground, water: Placed) -> Built {
     let inner = half - EDGE_MARGIN;
     let mut manifest = Manifest {
         version: WORLD_VERSION,
-        origin,
+        frame,
         half_extent: cm(half),
         tile_size: cm(tile_size),
         ground_cell: ground.cell.max(0),
@@ -273,7 +273,7 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, mask: Option<&std::co
     };
     let mut tiles: BTreeMap<(u16, u16), Tile> = BTreeMap::new();
     let mut footprints = Vec::new();
-    for (mut footprint, height, fitted) in buildings {
+    for (mut footprint, height, fitted, paint) in buildings {
         if footprint.len() > 1 && footprint.first() == footprint.last() {
             footprint.pop();
         }
@@ -294,10 +294,18 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, mask: Option<&std::co
         // The floor is the lowest ground under the building, so no wall hangs in the air.
         let floor = footprint.iter().chain([&centre]).map(|p| ground.height_at(p[0] as f32, p[1] as f32) as f64).fold(f64::MAX, f64::min);
         let tile = tiles.entry(manifest.tile_at(cm(centre[0]), cm(centre[1]))).or_default();
-        // Without laser data a building is a box of its tagged (or guessed) height.
-        let shape = fitted.unwrap_or(Roof::Leaf(Shape::Flat { y: floor + height }));
         let first = tile.collision.triangles.len() as u32;
-        let parts = roof::build(&mut tile.collision, &footprint, floor, &shape);
+        let (parts, roof_kind) = match fitted {
+            Some(Top::Measured(field)) => (crate::field::build(&mut tile.collision, &footprint, floor, &field), field.kind()),
+            fitted => {
+                // Without laser data a building is a box of its tagged (or guessed) height.
+                let shape = match fitted {
+                    Some(Top::Fitted(roof)) => roof,
+                    _ => Roof::Leaf(Shape::Flat { y: floor + height }),
+                };
+                (roof::build(&mut tile.collision, &footprint, floor, &shape), shape.kind())
+            }
+        };
         tile.buildings.push(Building {
             height: cm(parts.top - floor),
             footprint: footprint.iter().map(|&[x, z]| [cm(x), cm(z)]).collect(),
@@ -305,8 +313,9 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, mask: Option<&std::co
             first,
             walls: parts.walls,
             roof: parts.roof,
-            roof_kind: shape.kind(),
+            roof_kind,
             cells: Default::default(),
+            paint,
         });
         footprints.push(footprint);
     }
@@ -314,7 +323,7 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, mask: Option<&std::co
     let side = tile_size;
     // Bridge roads are drawn like any road (and on the minimap) but never offer a spawn: the
     // ground under them is a river bed.
-    for ((points, width, kind), spawnable) in roads.iter().map(|(points, width, kind)| ((points, width, kind), true)).chain(bridges.iter().map(|(points, width, kind, _)| ((points, width, kind), false))) {
+    for ((points, width, kind), spawnable) in roads.iter().map(|(points, width, kind)| ((points, width, kind), true)).chain(bridges.iter().map(|(points, width, kind, ..)| ((points, width, kind), false))) {
         let (width, kind) = (*width, *kind);
         for run in clip_polyline(points, half) {
             // Sample along each run, not just at vertices, so long straight roads still offer spawns.
@@ -336,8 +345,8 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, mask: Option<&std::co
         }
     }
     // Bridges are solid geometry in the collision mesh, each piece in the tile it lies in.
-    for (points, width, kind, pylons) in bridges.iter().chain(&rail_bridges) {
-        let pieces = bridge::build(points, *width, *kind, *pylons, &ground, &water.levels, inner);
+    for (points, width, kind, pylons, deck) in bridges.iter().chain(&rail_bridges) {
+        let pieces = bridge::build(points, *width, *kind, *pylons, deck, &ground, &water.levels, inner);
         // Per tile: the deck pieces and the steel pieces that fall in it.
         type TilePieces<'a> = (Vec<&'a bridge::Piece>, Vec<&'a bridge::Piece>);
         let mut by_tile: BTreeMap<(u16, u16), TilePieces> = BTreeMap::new();
@@ -372,8 +381,9 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, mask: Option<&std::co
         }
     }
     // Cover is cut at tile borders like roads, so each tile's texture needs only its own file.
-    // Rocks and shrubs the map does not record go through the same rejection as every tree.
-    let props = crate::props::scatter(&covers, inner);
+    // Rocks and shrubs the map does not record go through the same rejection as every tree. Not in
+    // France: its laser classes every bush and wall it saw, so made-up ones would only be clutter.
+    let props = if matches!(frame, Frame::Lambert93 { .. }) { Vec::new() } else { crate::props::scatter(&covers, inner) };
     for (kind, rings) in covers {
         let (min, max) = rings.iter().flatten().fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), p| ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]));
         if min[0] > max[0] {
@@ -413,7 +423,7 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, mask: Option<&std::co
     // Trees near a bridge are dropped: over water they are the laser's reading of pylons, cables
     // and railings, and elsewhere they would grow through the deck.
     let bridges: Vec<_> = bridges.iter().chain(&rail_bridges).collect();
-    let bridge_boxes: Vec<[f64; 4]> = bridges.iter().map(|(points, width, _, _)| reach_box(points, width / 2.0 + BRIDGE_CLEAR)).collect();
+    let bridge_boxes: Vec<[f64; 4]> = bridges.iter().map(|(points, width, ..)| reach_box(points, width / 2.0 + BRIDGE_CLEAR)).collect();
     // A track keeps trees off its ballast bed, as a road does off its surface.
     let roads: Vec<(&[P], f64)> = roads.iter().map(|(points, width, _)| (&points[..], *width)).chain(rails.iter().map(|(points, gauge, _)| (&points[..], ballast(*gauge)))).collect();
     let road_boxes: Vec<[f64; 4]> = roads.iter().map(|(points, width)| reach_box(points, width / 2.0 + SOLID_REACH)).collect();
@@ -433,7 +443,7 @@ fn assemble(origin: (f64, f64), half: f64, tile_size: f64, mask: Option<&std::co
             on_road |= d < width / 2.0;
             near |= d < width / 2.0 + SOLID_REACH;
         }
-        let on_bridge = bridges.iter().zip(&bridge_boxes).any(|((points, width, _, _), b)| {
+        let on_bridge = bridges.iter().zip(&bridge_boxes).any(|((points, width, ..), b)| {
             in_box(b, at) && points.windows(2).any(|pair| distance_to_segment(at, pair[0], pair[1]) < width / 2.0 + BRIDGE_CLEAR)
         });
         if on_building || on_road || on_bridge {
@@ -517,8 +527,8 @@ pub fn bbox_around(lat: f64, lon: f64, half: f64) -> [f64; 4] {
     [lat - dlat, lon - dlon, lat + dlat, lon + dlon]
 }
 
-/// The world's origin (lat, lon) and half-extent in metres for `bbox`: the largest square around
-/// its centre.
+/// A Swedish world's origin (lat, lon) and half-extent in metres for `bbox`: the largest square
+/// around its centre, in the equirectangular frame (`region::Place::sweden`).
 pub fn frame([south, west, north, east]: [f64; 4]) -> ((f64, f64), f64) {
     let origin = ((south + north) / 2.0, (west + east) / 2.0);
     let [x0, z0] = project(origin, south, west);
@@ -526,21 +536,19 @@ pub fn frame([south, west, north, east]: [f64; 4]) -> ((f64, f64), f64) {
     (origin, ((x1 - x0).abs().min((z1 - z0).abs()) / 2.0).round())
 }
 
-/// Local metres `(x, z)` to degrees `(lat, lon)`, the inverse of the projection used for OSM.
-pub fn unproject(origin: (f64, f64), x: f64, z: f64) -> (f64, f64) {
-    (origin.0 - z / METRES_PER_DEG_LAT, origin.1 + x / shared::world::metres_per_deg_lon())
-}
-
 #[allow(clippy::too_many_arguments)]
-pub fn from_osm(bbox: [f64; 4], tile_size: f64, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, osm: &Osm, planted: &[Planted], ground: Ground, water: Placed, lidar: Option<&Cloud>) -> Built {
-    let (origin, half) = frame(bbox);
+/// `lidar` holds the returns that can be roof, `decks` the bridge deck returns of a classified cloud,
+/// and `photo` the aerial photo the buildings' colours come from.
+pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, osm: &Osm, planted: &[Planted], ground: Ground, water: Placed, lidar: Option<&Cloud>, decks: Option<&Cloud>, photo: Option<&crate::paint::Photo>) -> Built {
+    let (frame, half) = (place.frame, place.half);
+    let source = |x: f64, z: f64| place.source(x, z);
     let mut buildings = Vec::new();
     let mut roads = Vec::new();
     let mut bridges = Vec::new();
     let mut rails = Vec::new();
     let mut rail_bridges = Vec::new();
     let mut covers = Vec::new();
-    let line = |geometry: &[LatLon]| -> Vec<P> { geometry.iter().map(|g| project(origin, g.lat, g.lon)).collect() };
+    let line = |geometry: &[LatLon]| -> Vec<P> { geometry.iter().map(|g| frame.project(g.lat, g.lon)).collect() };
     for Area { tags, outer, inner, .. } in &osm.areas {
         let Some(kind) = cover_kind(tags) else { continue };
         let rings: Vec<Vec<P>> = join_rings(outer.iter().map(|w| line(w)).collect()).into_iter().chain(join_rings(inner.iter().map(|w| line(w)).collect())).collect();
@@ -549,19 +557,46 @@ pub fn from_osm(bbox: [f64; 4], tile_size: f64, mask: Option<&std::collections::
         }
     }
     let is_building = |way: &crate::overpass::Way| way.tags.get("building").is_some_and(|value| value != "no" && value != "roof");
-    let mut shapes = lidar.map(|cloud| fit_roofs(cloud, origin, half, tile_size, mask, osm, &line, is_building)).unwrap_or_default().into_iter();
+    // A classified cloud (France) has nothing but roof in its building returns: measure the roof.
+    let measured = place.region == crate::region::Region::France;
+    // The outlines, in the order of the ways. Where the roof is measured a big one is cut into pieces
+    // on a lattice, so no one building is a huge structure to check when it is hit. The pieces share
+    // the colours of the whole.
+    let paint = |rings: &[&[P]]| photo.map(|photo| crate::paint::of(photo, rings, source));
+    let outlines: Vec<(Vec<P>, f64, Option<[u32; 2]>)> = osm
+        .ways
+        .iter()
+        .filter(|way| is_building(way))
+        .flat_map(|way| {
+            let points = line(&way.geometry);
+            let height = building_height(way);
+            let ring = if points.len() > 1 && points.first() == points.last() { &points[..points.len() - 1] } else { &points[..] };
+            let paint = paint(&[ring]);
+            if measured && ring.len() >= 3 && signed_area(ring).abs() > crate::footprints::BIG {
+                crate::footprints::pieces(ring).into_iter().map(|piece| (piece, height, paint)).collect()
+            } else {
+                vec![(points, height, paint)]
+            }
+        })
+        .collect();
+    let rings: Vec<&[P]> = outlines.iter().map(|(points, ..)| points.as_slice()).collect();
+    let shapes = lidar.map(|cloud| fit_roofs(cloud, &source, measured, half, tile_size, mask, &rings)).unwrap_or_default();
+    let mut shapes = shapes.into_iter();
+    for (points, height, paint) in outlines {
+        // Roofs come from the laser returns over the footprint, where there are any.
+        buildings.push((points, height, shapes.next().flatten(), paint));
+    }
     crate::progress::stage("buildings and roads");
     for (index, way) in osm.ways.iter().enumerate() {
         crate::progress::steps(index, osm.ways.len());
         let points = line(&way.geometry);
         if is_building(way) {
-            // Roofs come from the laser returns over the footprint, where there are any.
-            let shape = shapes.next().flatten();
-            buildings.push((points, building_height(way), shape));
+            continue;
         } else if let Some((width, kind)) = way.tags.get("highway").and_then(|value| road_style(value)) {
             if is_bridge(way) {
-                let pylons = pylons_for(origin, &points);
-                bridges.push((points, width, kind, pylons));
+                let pylons = pylons_for(frame, &points);
+                let deck = decks.map(|cloud| deck_returns(cloud, &source, &points, width)).unwrap_or_default();
+                bridges.push((points, width, kind, pylons, deck));
             } else {
                 roads.push((points, width, kind));
             }
@@ -575,65 +610,108 @@ pub fn from_osm(bbox: [f64; 4], tile_size: f64, mask: Option<&std::collections::
         if let Some((gauge, kind)) = rail_style(way) {
             let points = line(&way.geometry);
             if is_bridge(way) {
-                let pylons = pylons_for(origin, &points);
-                rail_bridges.push((points, ballast(gauge), ROAD_MINOR, pylons));
+                let pylons = pylons_for(frame, &points);
+                let deck = decks.map(|cloud| deck_returns(cloud, &source, &points, ballast(gauge))).unwrap_or_default();
+                rail_bridges.push((points, ballast(gauge), ROAD_MINOR, pylons, deck));
             } else {
                 rails.push((points, gauge, kind));
             }
         }
     }
-    if lidar.is_some() {
-        let split = buildings.iter().filter(|(.., shape)| matches!(shape, Some(Roof::Cut { .. }))).count();
-        eprintln!("roofs: {split} of {} buildings have more than one part", buildings.len());
+    // What the laser maps as building and no OSM outline covers is a building OSM is missing.
+    if let (true, Some(cloud)) = (measured, lidar) {
+        crate::progress::stage("buildings from the laser");
+        let tiles = (2.0 * half / tile_size).ceil() as u16;
+        let rects: Vec<[f64; 4]> = (0..tiles)
+            .flat_map(|row| (0..tiles).map(move |col| (col, row)))
+            .filter(|key| mask.is_none_or(|mask| mask.contains(key)))
+            .map(|(col, row)| {
+                let (x0, z0) = (-half + f64::from(col) * tile_size, -half + f64::from(row) * tile_size);
+                [x0, z0, x0 + tile_size, z0 + tile_size]
+            })
+            .collect();
+        let known: Vec<Vec<P>> = buildings.iter().map(|(points, ..)| points.clone()).collect();
+        let height = |x: f64, z: f64| f64::from(ground.height_at(x as f32, z as f32));
+        let found = crate::footprints::missing(cloud, &source, &rects, &known, &height);
+        let before = buildings.len();
+        for pieces in found {
+            // The pieces of one building share its colours.
+            let paint = paint(&pieces.iter().map(Vec::as_slice).collect::<Vec<_>>());
+            for ring in pieces {
+                // Moored barges and houseboats are building returns too; a building stands on land.
+                let n = ring.len() as f64;
+                let mid = ring.iter().fold([0.0, 0.0], |s, p| [s[0] + p[0] / n, s[1] + p[1] / n]);
+                if bridge::water_at(&ground, &water.levels, mid).is_some() {
+                    continue;
+                }
+                if let Some(field) = crate::field::Field::measure(&ring, &cloud.over(&ring, source)) {
+                    buildings.push((ring, 0.0, Some(Top::Measured(field)), paint));
+                }
+            }
+        }
+        eprintln!("buildings: {} from the laser that OpenStreetMap does not have", buildings.len() - before);
     }
-    let trees = planted.iter().map(|tree| (project(origin, tree.lat, tree.lon), tree.kind, tree.height, tree.crown, tree.registered)).collect();
+    if lidar.is_some() {
+        let split = buildings.iter().filter(|(_, _, shape, _)| matches!(shape, Some(Top::Fitted(Roof::Cut { .. })))).count();
+        let measured = buildings.iter().filter(|(_, _, shape, _)| matches!(shape, Some(Top::Measured(_)))).count();
+        eprintln!("roofs: {measured} of {} buildings measured, {split} fitted in more than one part", buildings.len());
+    }
+    if photo.is_some() {
+        let mut roofs = std::collections::BTreeMap::new();
+        for (.., paint) in &buildings {
+            *roofs.entry(paint.map(|[_, roof]| format!("{roof:06x}"))).or_insert(0usize) += 1;
+        }
+        eprintln!("roof colours: {roofs:?}");
+    }
+    let trees = planted.iter().map(|tree| (frame.project(tree.lat, tree.lon), tree.kind, tree.height, tree.crown, tree.registered)).collect();
     crate::progress::stage("tiles");
-    assemble(origin, half, tile_size, mask, buildings, roads, bridges, rails, rail_bridges, covers, trees, ground, water)
+    assemble(frame, half, tile_size, mask, buildings, roads, bridges, rails, rail_bridges, covers, trees, ground, water)
 }
 
-/// The fitted roof of every building way, in the order of the ways. Buildings are independent, so
-/// they are fitted on all cores; one that lies wholly outside the painted tiles is not fitted, as
-/// the tiles drop it anyway.
+/// The roof over each of `rings` (footprints, local metres, closed or not): measured
+/// (`field::Field`) when `measured` and the returns cover the footprint, else fitted. Buildings are
+/// independent, so they are done on all cores; one that lies wholly outside the painted tiles is
+/// skipped, as the tiles drop it anyway.
 #[allow(clippy::too_many_arguments)]
 fn fit_roofs(
     cloud: &Cloud,
-    origin: (f64, f64),
+    source: &(impl Fn(f64, f64) -> (f64, f64) + Sync),
+    measured: bool,
     half: f64,
     tile_size: f64,
     mask: Option<&std::collections::BTreeSet<(u16, u16)>>,
-    osm: &Osm,
-    line: &(impl Fn(&[LatLon]) -> Vec<P> + Sync),
-    is_building: impl Fn(&crate::overpass::Way) -> bool,
-) -> Vec<Option<Roof>> {
+    rings: &[&[P]],
+) -> Vec<Option<Top>> {
     crate::progress::stage("roofs");
-    let ways: Vec<&crate::overpass::Way> = osm.ways.iter().filter(|way| is_building(way)).collect();
     let painted = |ring: &[P]| {
         let Some(mask) = mask else { return true };
         let (lo, hi) = ring.iter().fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), p| ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]));
         let span = |a: f64, b: f64| ((a + half) / tile_size).floor() as i64..=((b + half) / tile_size).floor() as i64;
         span(lo[0], hi[0]).any(|c| span(lo[1], hi[1]).any(|r| c >= 0 && r >= 0 && mask.contains(&(c as u16, r as u16))))
     };
-    let fit = |way: &&crate::overpass::Way| {
-        let points = line(&way.geometry);
-        let ring = if points.len() > 1 && points.first() == points.last() { &points[..points.len() - 1] } else { &points[..] };
+    let fit = |points: &[P]| {
+        let ring = if points.len() > 1 && points.first() == points.last() { &points[..points.len() - 1] } else { points };
         if ring.len() < 3 || !painted(ring) {
             return None;
         }
-        let returns = cloud.over(ring, |x, z| unproject(origin, x, z));
-        roof::fit(ring, &returns)
+        let returns = cloud.over(ring, source);
+        if measured && let Some(field) = crate::field::Field::measure(ring, &returns) {
+            return Some(Top::Measured(field));
+        }
+        roof::fit(ring, &returns).map(Top::Fitted)
     };
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let next = std::sync::atomic::AtomicUsize::new(0);
     let done = std::sync::atomic::AtomicUsize::new(0);
-    let slots: Vec<std::sync::Mutex<Option<Option<Roof>>>> = ways.iter().map(|_| Default::default()).collect();
+    let slots: Vec<std::sync::Mutex<Option<Option<Top>>>> = rings.iter().map(|_| Default::default()).collect();
     std::thread::scope(|scope| {
         for _ in 0..threads {
             scope.spawn(|| {
                 loop {
                     let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let Some(way) = ways.get(at) else { break };
-                    *slots[at].lock().unwrap() = Some(fit(way));
-                    crate::progress::steps(done.fetch_add(1, std::sync::atomic::Ordering::Relaxed), ways.len());
+                    let Some(ring) = rings.get(at) else { break };
+                    *slots[at].lock().unwrap() = Some(fit(ring));
+                    crate::progress::steps(done.fetch_add(1, std::sync::atomic::Ordering::Relaxed), rings.len());
                 }
             });
         }
@@ -641,14 +719,37 @@ fn fit_roofs(
     slots.into_iter().map(|slot| slot.into_inner().unwrap().expect("every building was taken")).collect()
 }
 
+/// Returns of a bridge's deck as measured, `[x, z, y]`: an empty list where nothing was measured.
+pub type Deck = Vec<[f64; 3]>;
+
+/// The deck returns within half of `width` of the centre line `points`.
+fn deck_returns(cloud: &Cloud, source: &impl Fn(f64, f64) -> (f64, f64), points: &[P], width: f64) -> Deck {
+    if points.len() < 2 {
+        return Vec::new();
+    }
+    let reach = width / 2.0;
+    let (lo, hi) = points.iter().fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), p| ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]));
+    let around = [[lo[0] - reach, lo[1] - reach], [lo[0] - reach, hi[1] + reach], [hi[0] + reach, hi[1] + reach], [hi[0] + reach, lo[1] - reach]];
+    let near = |p: P| {
+        points.windows(2).any(|pair| {
+            let (a, b) = (pair[0], pair[1]);
+            let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+            let length = dx * dx + dz * dz;
+            let t = if length > 0.0 { (((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / length).clamp(0.0, 1.0) } else { 0.0 };
+            (p[0] - a[0] - dx * t).hypot(p[1] - a[1] - dz * t) <= reach
+        })
+    };
+    cloud.over(&around, source).into_iter().filter(|r| near([r[0], r[1]])).map(|r| [r[0], r[1], r[2]]).collect()
+}
+
 /// The pylons a bridge is built with: those of the landmark it lies at, if any.
-fn pylons_for(origin: (f64, f64), points: &[P]) -> Pylons {
+fn pylons_for(frame: Frame, points: &[P]) -> Pylons {
     let n = points.len().max(1) as f64;
     let mid = [points.iter().map(|p| p[0]).sum::<f64>() / n, points.iter().map(|p| p[1]).sum::<f64>() / n];
     bridge::LANDMARKS
         .iter()
         .find(|(lat, lon, radius, _)| {
-            let at = project(origin, *lat, *lon);
+            let at = frame.project(*lat, *lon);
             (at[0] - mid[0]).hypot(at[1] - mid[1]) <= *radius
         })
         .map_or(Pylons::None, |landmark| landmark.3)
@@ -820,13 +921,13 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
                     let eaves = ground.height_at(at[0] as f32, at[1] as f32) as f64 + height;
                     let ridge = if next() < 0.5 { [1.0, 0.0] } else { [0.0, 1.0] };
                     let top = eaves + half_size / 2.0 * 0.6;
-                    Roof::Leaf(if next() < 0.5 {
+                    Top::Fitted(Roof::Leaf(if next() < 0.5 {
                         Shape::Gable { y: top, at, ridge, pitch: 0.6 }
                     } else {
                         Shape::Hip { y: top, at, ridge, pitch: 0.6, half: 0.0 }
-                    })
+                    }))
                 });
-                buildings.push((vec![[x, z], [x + half_size, z], [x + half_size, z + half_size], [x, z + half_size]], height, roof));
+                buildings.push((vec![[x, z], [x + half_size, z], [x + half_size, z + half_size], [x, z + half_size]], height, roof, None));
             }
         }
     }
@@ -844,11 +945,11 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
     // A bridge over the pond (`synthetic_water`), so the offline world has one to draw and cross.
     let pond_x = start + (count - 1) as f64 * PITCH + STREET / 2.0 + 2.0 + (PITCH - STREET - 4.0) / 2.0;
     let pond_z = -half + 70.0;
-    let bridges = vec![(vec![[pond_x, pond_z - 50.0], [pond_x, pond_z + 50.0]], 7.0, ROAD_MINOR, bridge::Pylons::Middle)];
+    let bridges = vec![(vec![[pond_x, pond_z - 50.0], [pond_x, pond_z + 50.0]], 7.0, ROAD_MINOR, bridge::Pylons::Middle, Deck::new())];
     // A tram down the middle street, so the offline world has a track to draw.
     let middle = start + (count / 2) as f64 * PITCH;
     let rails = vec![(vec![[middle, -half], [middle, half]], 1.435, RAIL_TRAM)];
-    assemble((0.0, 0.0), half, tile_size, None, buildings, roads, bridges, rails, Vec::new(), covers, trees, ground, water)
+    assemble(Frame::default(), half, tile_size, None, buildings, roads, bridges, rails, Vec::new(), covers, trees, ground, water)
 }
 
 #[cfg(test)]
@@ -910,7 +1011,7 @@ mod tests {
         let map = synthetic_water(300.0);
         let grid = Grid { origin: -30_000, cell: 500, side: 121 };
         let surface = Surface::new(&map, grid, |_, _| Some(3.0));
-        let heights = vec![300i16; 121 * 121];
+        let heights = vec![300i32; 121 * 121];
         let ground = Ground { origin: -30_000, cell: 500, side: 121, heights };
         let placed = Placed::new(&map, &surface, 0.0, &ground);
         assert!(!placed.levels.is_empty() && !placed.streams.is_empty());
@@ -1009,7 +1110,7 @@ mod tests {
     fn a_track_is_cut_at_tile_borders_and_keeps_trees_off_its_bed() {
         let rails = vec![(vec![[-140.0, 10.0], [140.0, 10.0]], 1.435, RAIL_TRAIN)];
         let trees = vec![([20.0, 10.5], TREE_BIRCH, 10.0, 2.0, false), ([20.0, 25.0], TREE_BIRCH, 10.0, 2.0, false)];
-        let built = assemble((0.0, 0.0), 150.0, 100.0, None, vec![], vec![], vec![], rails, vec![], vec![], trees, Ground::default(), Placed::default());
+        let built = assemble(Frame::default(), 150.0, 100.0, None, vec![], vec![], vec![], rails, vec![], vec![], trees, Ground::default(), Placed::default());
         let pieces: Vec<(&(u16, u16), &Rail)> = built.tiles.iter().flat_map(|(key, tile)| tile.rails.iter().map(move |rail| (key, rail))).collect();
         assert_eq!(pieces.len(), 3, "a 280 m track crosses three 100 m tiles");
         assert!(pieces.iter().all(|(_, rail)| rail.gauge == 144 && rail.kind == RAIL_TRAIN));

@@ -1,4 +1,4 @@
-import type { BlockStatus, TileId } from './grid'
+import type { BlockStatus, Region, TileId } from './grid'
 import type { Placements } from './placements'
 import type { Scenario } from './scenario'
 
@@ -46,10 +46,11 @@ const json = (method: string, body: unknown): RequestInit => ({
 })
 
 export const api = {
-  grid: () => call<import('./grid').GridInfo>('/grid'),
+  grid: (region: Region) => call<import('./grid').GridInfo>(`/grid?region=${region}`),
   worlds: async () => (await call<{ worlds: WorldSummary[] }>('/worlds')).worlds,
-  world: (name: string) => call<{ tiles: TileId[]; cell?: number | null } & Partial<Placements>>(`/worlds/${name}`),
-  save: (name: string, tiles: TileId[], cell: number, placements: Placements) => call(`/worlds/${name}`, json('PUT', { tiles, cell, ...placements })),
+  world: (name: string) => call<{ tiles: TileId[]; region?: Region; cell?: number | null } & Partial<Placements>>(`/worlds/${name}`),
+  save: (name: string, region: Region, tiles: TileId[], cell: number, placements: Placements) =>
+    call(`/worlds/${name}`, json('PUT', { tiles, region, cell, ...placements })),
   remove: (name: string) => call(`/worlds/${name}`, { method: 'DELETE' }),
   activate: (name: string) => call(`/worlds/${name}/activate`, { method: 'POST' }),
   generate: (name: string) => call<Job>(`/worlds/${name}/generate`, { method: 'POST' }),
@@ -65,6 +66,6 @@ export const api = {
   },
   saveScenario: (world: string, scenario: Scenario) => call(`/worlds/${world}/scenario`, json('PUT', scenario)),
   removeScenario: (world: string) => call(`/worlds/${world}/scenario`, { method: 'DELETE' }).catch(() => undefined),
-  cache: async (south: number, west: number, north: number, east: number) =>
-    (await call<{ blocks: BlockStatus[] }>(`/cache?south=${south}&west=${west}&north=${north}&east=${east}`)).blocks,
+  cache: async (region: Region, south: number, west: number, north: number, east: number) =>
+    (await call<{ blocks: BlockStatus[] }>(`/cache?region=${region}&south=${south}&west=${west}&north=${north}&east=${east}`)).blocks,
 }

@@ -32,7 +32,7 @@ pub fn bake(built: &mut Built, ground: &Ground, datum: f64, detail: f64, coarse:
     for j in 0..side {
         for i in 0..side {
             if let Some(e) = coarse(at(i), at(j)) {
-                heights[j * side + i] = ((e - datum) * 100.0).round().clamp(i16::MIN as f64, i16::MAX as f64) as i16;
+                heights[j * side + i] = ((e - datum) * 100.0).round() as i32;
             }
         }
     }
@@ -91,7 +91,7 @@ mod tests {
     fn a_slope_the_ground_has_comes_back_as_that_slope() {
         // 40 m tile, 10 m ground cells, rising 0.5 m per metre along x.
         let side = 5usize;
-        let heights = (0..side * side).map(|k| ((k % side) as i16) * 500).collect();
+        let heights = (0..side * side).map(|k| ((k % side) as i32) * 500).collect();
         let ground = Ground { origin: 0, cell: 1000, side: side as u32, heights };
         let mut world = built(&ground, 4000);
         world.manifest.half_extent = 0;

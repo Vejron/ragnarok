@@ -35,7 +35,7 @@ fn bare(manifest: &Manifest) -> WorldFile {
 /// Tile `(col, row)`'s ground as a heightfield of its own, laid out as `static_colliders` lays out the
 /// whole world's: centred on its square, scaled to its width, heights column-major with rows along Z.
 /// `None` when the world has no terrain or the tile carries none.
-fn tile_ground(manifest: &Manifest, col: u16, row: u16, ground: &[i16]) -> Option<Collider> {
+fn tile_ground(manifest: &Manifest, col: u16, row: u16, ground: &[i32]) -> Option<Collider> {
     let n = manifest.tile_samples() as usize;
     if n < 2 || ground.len() != n * n {
         return None;
@@ -43,7 +43,7 @@ fn tile_ground(manifest: &Manifest, col: u16, row: u16, ground: &[i16]) -> Optio
     let mut heights = Vec::with_capacity(n * n);
     for column in 0..n {
         for row in 0..n {
-            heights.push(f32::from(ground[row * n + column]) / 100.0);
+            heights.push(ground[row * n + column] as f32 / 100.0);
         }
     }
     let width = (n - 1) as f32 * from_cm(manifest.ground_cell);

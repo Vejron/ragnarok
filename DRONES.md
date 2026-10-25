@@ -146,7 +146,7 @@ A loitering drone is the FPV drone's big sibling: a Shahed-sized delta wing (abo
   - The battery rides in `thrust` like the FPV drone's, scaled to its own `energy_ticks`.
   - `is_drone(kind)` / `isDrone(kind)` stand wherever the code used to ask for `KIND_DRONE`: boarding, ramming, crash damage, the remote pilot, the camera and the prompts.
 - **Range past the interest circle.** Its 600 m range is beyond `INTEREST_RADIUS` (300 m), which is centred on the drone, so far out the pilot's own body drops out of their snapshots. That is harmless: while seated, the client draws its body from its own prediction and doesn't reconcile against the snapshot. Other players near the body aren't seen by the pilot, the same as when the pilot can't see anything else that far from the drone.
-- **Ceiling.** `LOITER_CEILING` is an absolute 500 m, so a launch from high ground isn't pushed straight back down.
+- **Ceiling.** `LOITER_CEILING` is 500 m above the terrain under the drone, as every flier's ceiling is.
 
 ## Tuning
 

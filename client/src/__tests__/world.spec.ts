@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { encode } from '@msgpack/msgpack'
-import { RAIL_TRAIN, RAIL_TRAM, WORLD_BASE, decodeManifest, decodeTile, worldHash } from '@/world'
+import { RAIL_TRAIN, RAIL_TRAM, ROOF_GABLE, WORLD_BASE, decodeManifest, decodeTile, worldHash } from '@/world'
+import { buildingColors } from '@/render/buildingmesh'
 
 // The committed synthetic world (`fixtures/world/`); the real one is generated and git-ignored.
 const read = (path: string) => new Uint8Array(readFileSync(resolve(process.cwd(), '../fixtures/world', path)))
@@ -86,5 +87,14 @@ describe('world files', () => {
     expect(decodeTile(encode(fields)).rails).toEqual([])
     const tile = decodeTile(encode([...fields, [[144, RAIL_TRAIN, [[0, 0], [1000, -250]]]]]))
     expect(tile.rails).toEqual([{ gauge: 1.44, kind: RAIL_TRAIN, points: [[0, 0], [10, -2.5]] }])
+  })
+
+  it('decodes a building\'s paint, and draws it in its own colours', () => {
+    const house = [600, [[0, 0], [100, 0], [100, 100]], 0, 0, 0, 0, ROOF_GABLE, [[0, 0, 0], [0, 0, 0], new Uint8Array(), new Uint8Array()]]
+    const tile = decodeTile(encode([[house, [...house, [0xf0e6cc, 0x56606e]]], [], [[], []], [], [], [], [], [], [], []]))
+    expect(tile.buildings.map((b) => b.paint)).toEqual([null, [0xf0e6cc, 0x56606e]])
+    expect(buildingColors(tile, 1, 3)).toEqual({ wall: 0xf0e6cc, roof: 0x56606e })
+    // Without paint the client picks from its palettes.
+    expect(buildingColors(tile, 0, 3).roof).not.toBe(0x56606e)
   })
 })

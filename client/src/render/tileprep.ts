@@ -17,13 +17,13 @@ import { reliefPixels, terrainBuffers, TERRAIN_LOD_ERRORS, type Pixels, type Ter
 
 /** What of a tile `prepareTile` reads: small enough to send to the worker (`tileParts`). */
 export type TileParts = Pick<TileData, 'cover' | 'detail' | 'roads' | 'rails' | 'water' | 'streams' | 'bridges' | 'collision'> & {
-  buildings: readonly Pick<Building, 'first' | 'walls' | 'roof' | 'roofKind' | 'cells' | 'footprint'>[]
+  buildings: readonly Pick<Building, 'first' | 'walls' | 'roof' | 'roofKind' | 'cells' | 'footprint' | 'paint'>[]
 }
 
 /** The parts of `tile` `prepareTile` reads, leaving out what the worker has no use for (trees, the file's bytes). */
 export function tileParts(tile: TileData): TileParts {
   const { cover, detail, roads, rails, water, streams, bridges, collision } = tile
-  const buildings = tile.buildings.map(({ first, walls, roof, roofKind, cells, footprint }) => ({ first, walls, roof, roofKind, cells, footprint }))
+  const buildings = tile.buildings.map(({ first, walls, roof, roofKind, cells, footprint, paint }) => ({ first, walls, roof, roofKind, cells, footprint, paint }))
   return { cover, ...(detail ? { detail } : {}), roads, rails, water, streams, bridges, collision, buildings }
 }
 

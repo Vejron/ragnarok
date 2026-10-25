@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { activate, cell, clearAll, dirty, grid, name, newWorld, openWorld, painted, remove, save, worlds } from './state'
+import { activate, cell, chooseRegion, clearAll, dirty, grid, name, newWorld, openWorld, painted, region, remove, save, worlds } from './state'
+import type { Region } from './grid'
 
 const tile = computed(() => grid.value?.tile ?? 256)
 /** Each resolution with what a tile's heights then weigh, so the cost of finer ground is in view. */
@@ -10,6 +11,10 @@ const cells = computed(() =>
     return { label: `Ground every ${metres} m (${Math.round((side * side * 2) / 1024)} KB a tile)`, value: metres }
   }),
 )
+const regions: { label: string; value: Region }[] = [
+  { label: 'Sweden (Lantmäteriet)', value: 'sweden' },
+  { label: 'France (IGN)', value: 'france' },
+]
 </script>
 
 <template>
@@ -21,6 +26,13 @@ const cells = computed(() =>
       <UButton label="New" size="sm" color="neutral" variant="outline" @click="newWorld" />
       <UButton label="Clear" size="sm" color="neutral" variant="outline" @click="clearAll" />
     </div>
+    <USelect
+      :model-value="region"
+      :items="regions"
+      class="w-full"
+      title="Whose map grid and data the world is built from"
+      @update:model-value="(r) => chooseRegion(r as Region)"
+    />
     <USelect v-model="cell" :items="cells" class="w-full" title="How finely the ground's heights are sampled. Generate the world again to apply." @update:model-value="dirty = true" />
     <p class="text-sm text-muted">{{ painted.size }} tiles, {{ ((painted.size * tile * tile) / 1e6).toFixed(2) }} km²</p>
 

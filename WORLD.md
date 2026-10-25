@@ -23,12 +23,12 @@ cargo run -p osm-import               # 8.6 km square of central Umeå, Backen t
 scripts/world.sh                      # the same: loads .env.local, builds in release mode
 ```
 
-Restart the server afterwards: it reads the whole world at start. The importer checks the terrain first (relief is limited to 100 m, and the error says where the extremes are), then fetches. It wipes
+Restart the server afterwards: it reads the whole world at start. The importer checks the terrain first (relief is limited to 1000 m, `MAX_RELIEF`, and the error says where the extremes are), then fetches. It wipes
 `client/public/tiles/` and writes the manifest last.
 
 | Flag | Meaning |
 |---|---|
-| `--center lat,lon --half m` | Square around a point (default 63.8225,20.235, 4300 m: Backen to Nydala; any more takes in a hill over the 100 m relief limit). The world is always a square: `--bbox` uses the largest one around its centre. |
+| `--center lat,lon --half m` | Square around a point (default 63.8225,20.235, 4300 m: Backen to Nydala). The world is always a square: `--bbox` uses the largest one around its centre. |
 | `--bbox s,w,n,e` | An exact box; overrides `--center`/`--half`. |
 | `--tile m` | Tile side, default 256 m (the editor grid's). |
 | `--cell m` | Terrain sample spacing, default 4 m (or an `--area` world's `cell`), must divide `--tile`; 1, 2 or 4 m make a 256 m tile `2^k + 1` samples a side, which the client simplifies best. `0` is flat ground and needs no credentials. |
@@ -135,9 +135,11 @@ game (in dev the client reads the same file; `VITE_WORLD_BASE` overrides).
 
 How it works:
 
-- **One global grid.** Tiles are indexed `(gx, gy)` from a fixed anchor (`grid::ORIGIN`, central
-  Umeå) and longitude is scaled at one fixed latitude for every world (`shared::world::SCALE_LATITUDE`),
-  so a tile is the same ground whichever world it is in.
+- **One global grid per region.** Tiles are indexed `(gx, gy)` from a fixed anchor. Sweden's is
+  `grid::ORIGIN` (central Umeå), with longitude scaled at one fixed latitude for every world
+  (`shared::world::SCALE_LATITUDE`). France's is cut in Lambert-93 metres from 46.5° N 3° E (see
+  Regions, below). So a tile is the same ground whichever world it is in. The region picker in the
+  World panel switches grids; a world's `area.json` keeps its `region` (absent means Sweden).
 - **Downloads are per 2 km block of that grid** (8 x 8 tiles). The cache key of a block's Overpass,
   Hydrografi and tree requests depends on the block only, so worlds share entries, and the editor
   can tell which blocks are cached from the keys without downloading (`grid::Block::status`). The
@@ -145,7 +147,7 @@ How it works:
 - **The world is the smallest square of tiles that holds the painted ones**, centred on it, with
   only the painted tiles in the manifest. A tile not listed is outside the world: it has no ground,
   nothing is generated there (and no elevation is downloaded for it), spawns and pickups avoid it, and
-  the server and client put boundary walls along its edge (`boundary_walls` / `boundaryWalls`).
+  the server and client put boundary walls along its edge (`boundary_walls`, in the shared sim).
 - **Not done yet:** the client's ground plane and minimap still cover the square; planes still turn back at
   the square's edge, not the shape's.
 
@@ -172,7 +174,41 @@ scripts/world.sh --center 63.83976,20.31514 --half 1375 --out client/public/dev/
 | Page warns the world differs from the server's | `RAGNAROK_WORLD` and `VITE_WORLD_BASE` name different worlds, or the world was regenerated and the server not restarted |
 | `/dev/world.msgpack: 404` in the browser | the dev world isn't generated yet, or `VITE_WORLD_BASE` has no matching directory under `client/public/` |
 | `LM_USER and LM_PASS are not set` | put them in `.env.local`, or add `--synthetic` |
-| World version mismatch | the world was made by an older importer; regenerate it, or, from version 10, bake it in place with `cargo run -p osm-import -- --bake worlds/<name>/world.msgpack` |
+| World version mismatch | the world was made by an older importer; regenerate it, or, from version 10, bake it in place with `cargo run -p osm-import -- --bake worlds/<name>/world.msgpack` (a version 14 world becomes 15 this way: its origin becomes a Swedish frame) |
+
+## Regions: Sweden and France
+
+A world is built from one country's data, chosen by where it lies (`region.rs`): France inside
+`shared::lambert93::FRANCE` (a box around mainland France and Corsica), Sweden everywhere else.
+An editor world says which in its `area.json`. The region fixes three things:
+
+| | Sweden | France |
+|---|---|---|
+| World frame (`Manifest::frame`) | equirectangular around the centre, longitude scaled at `SCALE_LATITUDE` (63.8°) | Lambert-93 (EPSG:2154), shifted to the centre |
+| Editor grid | 256 m tiles from central Umeå | 256 m tiles of Lambert-93 from (700 000, 6 600 000) |
+| Height model and laser in | SWEREF 99 TM, from Lantmäteriet | Lambert-93, from IGN |
+
+The fixed scale latitude suits Sweden only. At 47° N it would stretch a world 1.55 times east to
+west, so French worlds use Lambert-93 as it is: conformal, true to scale within 0.3 % in mainland
+France, and the grid IGN's data comes in. Its meridians converge, so a French world's grid north is
+turned up to a few degrees from true north, and its tiles are drawn turned on the editor's map.
+
+A French world needs no credentials: IGN's LiDAR HD and its 0.5 m terrain model are open data
+(Etalab 2.0, credit "IGN – LiDAR HD"), fetched and cached like everything else (`ign.rs`). The laser
+is classified, so it is read rather than guessed at. Roofs are measured from the building returns
+(class 6, `field.rs`), buildings OSM lacks are traced from them (`footprints.rs`), bridge decks
+come from class 17 and trees from class 5. Big buildings are cut into 32 m pieces. Roof colours
+come from IGN's aerial photo (BD ORTHO, `paint.rs`): the photo's median inside each building, snapped
+to a toon palette, stored as the building's `paint` (`--no-paint` leaves the colours to the client).
+In Paris the city's tree register adds species. Water comes from OpenStreetMap (`--osm-water` is implied).
+
+```sh
+cargo run --release -p osm-import -- --center 47.3966,0.6880 --half 384 --cell 1   # Tours, by Pont Wilson
+```
+
+`--dem` still takes a local GeoTIFF instead of IGN's MNT. IGN's download server allows about 10
+requests a second, so a first import of a square kilometre takes a couple of minutes. How each
+part works, what it costs the server and what is left is in [FRANCE.md](FRANCE.md).
 
 ## Credentials
 
@@ -261,7 +297,7 @@ imported. Without credentials, with `--cell 0` or with `--no-water` the world ha
 
 ### Terrain (DTM)
 STAC finds the GeoTIFFs over the box; the importer reads only the 512 KiB blocks under the world
-with HTTP range requests, takes the mean over each 5 m cell and stores it as `i16` cm above the
+with HTTP range requests, takes the mean over each 5 m cell and stores it as `i32` cm above the
 lowest sample. Coordinates are SWEREF 99 TM (EPSG:3006), heights RH 2000. The projection from
 lat/lon is our own Krüger series in `dem.rs`, checked against an independent implementation in a
 test.

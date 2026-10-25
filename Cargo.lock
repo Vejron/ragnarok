@@ -1108,6 +1108,7 @@ dependencies = [
  "salvo",
  "serde",
  "serde_json",
+ "shared",
  "tokio",
 ]
 
@@ -2576,6 +2577,7 @@ dependencies = [
  "laz",
  "png",
  "reqwest",
+ "rmp-serde",
  "serde",
  "serde_json",
  "shared",

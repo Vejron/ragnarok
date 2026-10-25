@@ -8,6 +8,7 @@
 //! `osm-import` reuses. Credentials come from `.env.local`, as for the importer.
 
 use osm_import::grid::{self, BLOCK_TILES, Block, Tile};
+use osm_import::region::Region;
 use osm_import::{cache, hydro, overpass, progress, trees};
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -30,6 +31,10 @@ fn valid(name: &str) -> bool {
 #[derive(Deserialize, Serialize)]
 struct Area {
     tiles: Vec<Tile>,
+    /// Whose grid the tiles are on and whose data the world is built from. Absent is Sweden, as
+    /// every world was before France.
+    #[serde(default, skip_serializing_if = "is_sweden")]
+    region: Region,
     /// Metres between the ground's height samples (`--cell`): one of `CELLS`. Absent, the importer
     /// picks (`DEFAULT_CELL` there).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -44,6 +49,18 @@ struct Area {
     items: Vec<serde_json::Value>,
     #[serde(default)]
     bots: Vec<serde_json::Value>,
+}
+
+fn is_sweden(region: &Region) -> bool {
+    *region == Region::Sweden
+}
+
+/// The `region` query parameter: `sweden` (the default) or `france`.
+fn region_of(req: &Request) -> Region {
+    match req.query::<String>("region").as_deref() {
+        Some("france") => Region::France,
+        _ => Region::Sweden,
+    }
 }
 
 /// The ground resolutions a world can be built at, metres. Each divides the grid's tile into a power
@@ -70,10 +87,19 @@ fn name_of(req: &Request, res: &mut Response) -> Option<String> {
     }
 }
 
+/// The region's grid (`?region=france`; Sweden by default): its frame, and where to open the map.
 #[handler]
-async fn grid_info(res: &mut Response) {
+async fn grid_info(req: &mut Request, res: &mut Response) {
+    let region = region_of(req);
+    let frame = match region.grid() {
+        shared::world::Frame::Equirect { origin } => serde_json::json!({ "kind": "equirect", "origin": [origin.0, origin.1], "scaleLatitude": shared::world::SCALE_LATITUDE }),
+        shared::world::Frame::Lambert93 { e0, n0 } => serde_json::json!({ "kind": "lambert93", "e0": e0, "n0": n0 }),
+    };
+    let (lat, lon) = region.grid().origin();
     res.render(Json(serde_json::json!({
-        "origin": [grid::ORIGIN.0, grid::ORIGIN.1],
+        "region": region.name(),
+        "frame": frame,
+        "origin": [lat, lon],
         "tile": grid::TILE,
         "cells": CELLS,
         "blockTiles": BLOCK_TILES,
@@ -104,7 +130,7 @@ async fn list_worlds(res: &mut Response) {
 async fn get_world(req: &mut Request, res: &mut Response) {
     let Some(name) = name_of(req, res) else { return };
     match read_area(&name) {
-        Some(area) => res.render(Json(serde_json::json!({ "name": name, "tiles": area.tiles, "cell": area.cell, "spawns": area.spawns, "vehicles": area.vehicles, "items": area.items, "bots": area.bots }))),
+        Some(area) => res.render(Json(serde_json::json!({ "name": name, "region": area.region.name(), "tiles": area.tiles, "cell": area.cell, "spawns": area.spawns, "vehicles": area.vehicles, "items": area.items, "bots": area.bots }))),
         None => fail(res, StatusCode::NOT_FOUND, "no such world"),
     }
 }
@@ -194,15 +220,18 @@ async fn activate(req: &mut Request, res: &mut Response) {
     }
 }
 
-/// The cache state of every block that touches a window, `south`, `west`, `north`, `east` in degrees.
+/// The cache state of every block of `region`'s grid that touches a window, `south`, `west`,
+/// `north`, `east` in degrees.
 #[handler]
 async fn cache_state(req: &mut Request, res: &mut Response) {
+    let region = region_of(req);
     let q = |key: &str| req.query::<f64>(key);
     let (Some(south), Some(west), Some(north), Some(east)) = (q("south"), q("west"), q("north"), q("east")) else {
         return fail(res, StatusCode::BAD_REQUEST, "south, west, north and east are required");
     };
     // Block (0, 0) is not at the grid's corner tile of the window, so take all four corners.
-    let corners = [Tile::at(south, west).block(), Tile::at(south, east).block(), Tile::at(north, west).block(), Tile::at(north, east).block()];
+    let at = |lat: f64, lon: f64| Tile::at(region, lat, lon).block();
+    let corners = [at(south, west), at(south, east), at(north, west), at(north, east)];
     let (bx0, bx1) = (corners.iter().map(|b| b.bx).min().unwrap_or(0), corners.iter().map(|b| b.bx).max().unwrap_or(0));
     let (by0, by1) = (corners.iter().map(|b| b.by).min().unwrap_or(0), corners.iter().map(|b| b.by).max().unwrap_or(0));
     if i64::from(bx1 - bx0 + 1) * i64::from(by1 - by0 + 1) > MAX_BLOCKS {
@@ -211,7 +240,7 @@ async fn cache_state(req: &mut Request, res: &mut Response) {
     let mut blocks = Vec::new();
     for by in by0..=by1 {
         for bx in bx0..=bx1 {
-            let s = Block { bx, by }.status();
+            let s = Block { bx, by }.status(region);
             blocks.push(serde_json::json!({ "bx": bx, "by": by, "overpass": s.overpass, "hydro": s.hydro, "trees": s.trees }));
         }
     }
@@ -258,11 +287,15 @@ fn job() -> std::sync::MutexGuard<'static, Job> {
     JOB.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Downloads, block by block, what the world's tiles need, into the importer's cache.
-fn run(blocks: Vec<Block>, credentials: Option<(String, String)>) {
+/// Downloads, block by block, what the world's `tiles` need, into the importer's cache. In France
+/// that is also IGN's LiDAR index for the block and its terrain model under the painted tiles; the
+/// point clouds themselves are read when the world is generated, node by node.
+fn run(region: Region, blocks: Vec<Block>, tiles: Vec<Tile>, credentials: Option<(String, String)>) {
     let endpoints: Vec<String> = overpass::DEFAULT_ENDPOINTS.iter().map(|e| e.to_string()).collect();
+    // Hydrografi and the tree register are Swedish.
+    let swedish = region == Region::Sweden;
     for block in blocks {
-        let bbox = block.bbox();
+        let bbox = block.bbox(region);
         progress::stage("overpass");
         if let Err(error) = overpass::fetch_pieces(&endpoints, &[bbox], 3, 15) {
             let mut job = job();
@@ -273,15 +306,28 @@ fn run(blocks: Vec<Block>, credentials: Option<(String, String)>) {
         }
         // Water and trees are extras: note what is missing and carry on.
         let mut notes = Vec::new();
-        if let Some((user, password)) = &credentials {
+        if let (true, Some((user, password))) = (swedish, &credentials) {
             progress::stage("water");
             if let Err(error) = hydro::fetch_pieces(&[bbox], user, password) {
                 notes.push(format!("block ({}, {}) has no water: {error:#}", block.bx, block.by));
             }
         }
         progress::stage("trees");
-        if let Err(error) = trees::fetch(bbox) {
+        if let (true, Err(error)) = (swedish, trees::fetch(bbox)) {
             notes.push(format!("block ({}, {}) has no trees: {error:#}", block.bx, block.by));
+        }
+        // The same windows the importer asks for (`painted_rects`: a tile and 30 m around it).
+        let windows: Vec<[f64; 4]> = tiles.iter().filter(|t| t.block() == block).filter_map(|&t| region.tile_window(t, 30.0)).collect();
+        if !windows.is_empty() {
+            progress::stage("LiDAR HD index");
+            let (lo, hi) = windows.iter().fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), w| ([lo[0].min(w[0]), lo[1].min(w[1])], [hi[0].max(w[2]), hi[1].max(w[3])]));
+            if let Err(error) = osm_import::ign::squares([lo[0], lo[1], hi[0], hi[1]]) {
+                notes.push(format!("block ({}, {}): no LiDAR HD index: {error:#}", block.bx, block.by));
+            }
+            progress::stage("terrain (IGN MNT)");
+            if let Err(error) = osm_import::ign::mnt(&windows) {
+                notes.push(format!("block ({}, {}): no terrain: {error:#}", block.bx, block.by));
+            }
         }
         let mut job = job();
         job.done += 1;
@@ -296,7 +342,8 @@ fn run(blocks: Vec<Block>, credentials: Option<(String, String)>) {
 async fn start_fetch(req: &mut Request, res: &mut Response) {
     let Some(name) = name_of(req, res) else { return };
     let Some(area) = read_area(&name) else { return fail(res, StatusCode::NOT_FOUND, "no such world") };
-    let blocks: Vec<Block> = grid::blocks_of(&area.tiles).into_iter().filter(|b| !b.status().ready()).collect();
+    // A French block's IGN downloads are not part of its status; they are cached, so asking again is cheap.
+    let blocks: Vec<Block> = grid::blocks_of(&area.tiles).into_iter().filter(|b| area.region == Region::France || !b.status(area.region).ready()).collect();
     {
         let mut current = job();
         if current.state == "running" {
@@ -311,7 +358,8 @@ async fn start_fetch(req: &mut Request, res: &mut Response) {
     progress::reset();
     if !blocks.is_empty() {
         let credentials = credential("LM_USER").zip(credential("LM_PASS"));
-        std::thread::spawn(move || run(blocks, credentials));
+        let (region, tiles) = (area.region, area.tiles);
+        std::thread::spawn(move || run(region, blocks, tiles, credentials));
     }
     res.render(Json(current()));
 }

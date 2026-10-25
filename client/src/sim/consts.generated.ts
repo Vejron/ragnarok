@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 43
+export const PROTOCOL_VERSION = 44
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -666,7 +666,17 @@ export const HELI_SINK_SPEED = 4.0
 export const HELI_VERT_GAIN = 1.5
 export const HELI_VERT_ACCEL = 5.0
 
-/** Climbing fades out over the last 20 m below this height, and above it the rotor pushes down. */
+/**
+ * Highest relief a world may have, metres from its lowest dry ground (y = 0) to its highest. The
+ * importer refuses more; the boundary walls reach above it, and fliers find the terrain under them by
+ * a ray from just over it.
+ */
+export const MAX_RELIEF = 1000.0
+
+/**
+ * Climbing fades out over the last 20 m below this height above the terrain, and above it the rotor
+ * pushes down. Every flier's ceiling is measured from the terrain under it, not from y = 0.
+ */
 export const HELI_CEILING = 120.0
 
 /**

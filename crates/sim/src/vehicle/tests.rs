@@ -116,7 +116,7 @@ fn ramp() -> WorldFile {
     let side = 41u32;
     let heights = (0..side)
         .flat_map(|j| (0..side).map(move |_| j))
-        .map(|j| ((100.0 - (j as f32 * 5.0 - 100.0)) * SLOPE * 100.0).round() as i16)
+        .map(|j| ((100.0 - (j as f32 * 5.0 - 100.0)) * SLOPE * 100.0).round() as i32)
         .collect();
     WorldFile { ground: shared::terrain::Ground { origin: -10_000, cell: 500, side, heights }, ..flat() }
 }
@@ -750,6 +750,18 @@ fn the_ceiling_stops_the_climb() {
     let mut physics = with_heli(HELI_CEILING - 30.0);
     let pose = run(&mut physics, CarControls { lift: 1.0, ..PILOTED }, 60 * 20);
     assert!(pose.position[1] > HELI_CEILING - 10.0 && pose.position[1] < HELI_CEILING + 8.0, "{pose:?}");
+}
+
+#[test]
+fn the_ceiling_is_measured_from_the_ground_under_it() {
+    // A plateau 600 m up: the helicopter climbs to its ceiling over it, not to 120 m above y = 0.
+    let side = 41u32;
+    let plateau = WorldFile { ground: shared::terrain::Ground { origin: -10_000, cell: 500, side, heights: vec![60_000; (side * side) as usize] }, ..flat() };
+    let mut physics = Physics::new(&plateau).unwrap();
+    physics.add_car(1, KIND_HELI, [0.0, 610.0, 0.0], 0.0);
+    let pose = run(&mut physics, CarControls { lift: 1.0, ..PILOTED }, 60 * 20);
+    let above = pose.position[1] - 600.0;
+    assert!(above > HELI_CEILING - 10.0 && above < HELI_CEILING + 8.0, "{pose:?}");
 }
 
 /// Flat ground six kilometres across, so a plane has room.

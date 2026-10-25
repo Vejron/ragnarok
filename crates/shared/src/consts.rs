@@ -1,7 +1,7 @@
 //! Simulation and network constants. `client/scripts/gen-consts.ts` generates the client's copy from this file: run `npm run gen:consts` in `client` after editing.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 43;
+pub const PROTOCOL_VERSION: u8 = 44;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -464,7 +464,13 @@ pub const HELI_CLIMB_SPEED: f32 = 6.0;
 pub const HELI_SINK_SPEED: f32 = 4.0;
 pub const HELI_VERT_GAIN: f32 = 1.5;
 pub const HELI_VERT_ACCEL: f32 = 5.0;
-/// Climbing fades out over the last 20 m below this height, and above it the rotor pushes down.
+/// Highest relief a world may have, metres from its lowest dry ground (y = 0) to its highest. The
+/// importer refuses more; the boundary walls reach above it, and fliers find the terrain under them by
+/// a ray from just over it.
+pub const MAX_RELIEF: f32 = 1000.0;
+
+/// Climbing fades out over the last 20 m below this height above the terrain, and above it the rotor
+/// pushes down. Every flier's ceiling is measured from the terrain under it, not from y = 0.
 pub const HELI_CEILING: f32 = 120.0;
 /// How firmly the hull levels out (rad/s of correction per unit of lean error), and how fast the
 /// angular velocity follows it, per second.

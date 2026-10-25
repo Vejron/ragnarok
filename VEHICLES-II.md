@@ -105,7 +105,7 @@ There are no wheels. `fly` in `physics/vehicle.rs` is a function of the body's s
 2. **Turn.** The yaw rate is set straight from the stick, `HELI_YAW_RATE` at full lock, as for a tank.
 3. **Rotor.** A force along the hull's up axis, big enough to cancel gravity however far it leans (divided by the up axis' height, at least 0.5), plus the acceleration that moves the vertical speed towards what the climb input asks for: `HELI_CLIMB_SPEED` up, `HELI_SINK_SPEED` down, zero when neither is held. The force is added to Rapier's force accumulator, which is integrated with gravity, so a hover is exact. It is reset every tick.
 4. **Drag.** Linear damping 0.2 is what limits the speed: a full lean pushes about `g × HELI_TILT` horizontally.
-5. **Ceiling.** Climbing fades out over the last 20 m below `HELI_CEILING`, and above it the rotor pushes down.
+5. **Ceiling.** Climbing fades out over the last 20 m below `HELI_CEILING` above the terrain under it, and above it the rotor pushes down.
 
 Because the model keeps no state beyond the body's, the client's copy needs nothing new on the wire: `drive` carries velocity and angular velocity as it does for a car, and its `steer` and `spin` are zero.
 

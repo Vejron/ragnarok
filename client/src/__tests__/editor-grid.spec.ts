@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { blockOf, rectBounds, tileAt, type GridInfo } from '../editor/grid'
+import { blockOf, project, rectBounds, rectCorners, tileAt, unproject, type GridInfo } from '../editor/grid'
+import { forward, inverse } from '../editor/lambert93'
 import { SimMotor } from '@/sim/motor'
 import { manifestBytes } from './worlds'
 
-// The values `GET /api/grid` returns: the importer's fixed global grid.
-const grid: GridInfo = { origin: [63.8225, 20.235], tile: 256, cells: [1, 2, 4], blockTiles: 8, metresPerDegLat: 110540, metresPerDegLon: 111320 }
+// The values `GET /api/grid` returns: the importer's fixed global grids.
+const common = { tile: 256, cells: [1, 2, 4], blockTiles: 8, metresPerDegLat: 110540, metresPerDegLon: 111320 }
+const grid: GridInfo = { region: 'sweden', frame: { kind: 'equirect', origin: [63.8225, 20.235], scaleLatitude: 63.8225 }, origin: [63.8225, 20.235], ...common }
+const france: GridInfo = { region: 'france', frame: { kind: 'lambert93', e0: 700000, n0: 6600000 }, origin: [46.5, 3], ...common }
 
 describe('editor grid', () => {
   it('puts the origin on a corner of four tiles, as osm-import does', () => {
@@ -16,6 +19,25 @@ describe('editor grid', () => {
     const [s, w, n, e] = rectBounds(grid, 7, -13)
     expect(tileAt(grid, (s + n) / 2, (w + e) / 2)).toEqual({ gx: 7, gy: -13 })
     expect(n - s).toBeCloseTo(256 / 110540, 9)
+  })
+
+  it('projects to Lambert-93 as the importer does', () => {
+    // The projection's false origin, and the round trip.
+    const [e, n] = forward(46.5, 3)
+    expect(e).toBeCloseTo(700000, 3)
+    expect(n).toBeCloseTo(6600000, 3)
+    const [lat, lon] = inverse(...forward(48.8566, 2.3522))
+    expect(lat).toBeCloseTo(48.8566, 9)
+    expect(lon).toBeCloseTo(2.3522, 9)
+    expect(project(france, 46.5, 3)).toEqual([expect.closeTo(0, 3), expect.closeTo(0, 3)])
+    expect(unproject(france, 256, 256)[0]).toBeLessThan(46.5)
+  })
+
+  it('finds a French tile inside its own corners', () => {
+    const corners = rectCorners(france, -400, -300)
+    const lat = corners.reduce((sum, c) => sum + c[0], 0) / 4
+    const lon = corners.reduce((sum, c) => sum + c[1], 0) / 4
+    expect(tileAt(france, lat, lon)).toEqual({ gx: -400, gy: -300 })
   })
 
   it('groups tiles into blocks with negative indices', () => {

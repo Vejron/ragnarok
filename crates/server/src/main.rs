@@ -135,9 +135,9 @@ fn half() -> f32 {
 /// vehicles and items for the mechanics. Anything outside the world's tiles is dropped.
 fn apply_placements(world: &mut WorldFile, path: &Path) {
     let Some(placed) = std::fs::read_to_string(path).ok().and_then(|text| serde_json::from_str::<Placements>(&text).ok()) else { return };
-    let origin = world.origin;
+    let frame = world.frame;
     let locate = |world: &WorldFile, lat: f64, lon: f64| {
-        let [x, z] = shared::world::project(origin, lat, lon);
+        let [x, z] = frame.project(lat, lon);
         let at = [(x * 100.0).round() as i32, (z * 100.0).round() as i32];
         world.is_inside(at[0], at[1]).then_some(at)
     };

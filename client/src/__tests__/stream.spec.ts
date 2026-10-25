@@ -8,7 +8,7 @@ const empty: TileData = { buildings: [], roads: [], cover: [], trees: [], collis
 function grid(): WorldData {
   const tiles: TileRef[] = []
   for (let col = 0; col < 10; col++) for (let row = 0; row < 10; row++) tiles.push({ col, row, hash: 0 })
-  return { origin: [0, 0], halfExtent: 500, tileSize: 100, spawns: [], tiles, groundCell: 0, collision: empty.collision }
+  return { frame: [0, 0, 0], halfExtent: 500, tileSize: 100, spawns: [], tiles, groundCell: 0, collision: empty.collision }
 }
 
 function setup() {

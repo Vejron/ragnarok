@@ -1,5 +1,6 @@
-//! Lantmäteriet's classified laser point cloud ("Laserdata Skog", COPC), read over HTTP range
-//! requests: only the octree nodes that touch the window are downloaded.
+//! Laser point clouds in COPC, read over HTTP range requests: only the octree nodes that touch the
+//! window are downloaded. `fetch` finds Lantmäteriet's ("Laserdata Skog") through its STAC API;
+//! `read_files` reads any list of files, such as IGN's LiDAR HD (`ign.rs`).
 //!
 //! A small COPC reader of our own: the public crates mis-walk this file's hierarchy pages. COPC is
 //! a LAZ 1.4 file whose points are stored as one independently compressed chunk per octree node;
@@ -19,8 +20,9 @@ pub struct Point {
     pub e: f64,
     pub n: f64,
     pub z: f64,
-    /// ASPRS class. This product only separates 2 ground (and a few 7 low noise, 18 high noise) from
-    /// 1 unclassified, which is everything else: buildings, vegetation, cars.
+    /// ASPRS class. Lantmäteriet's product only separates 2 ground (and a few 7 low noise, 18 high
+    /// noise) from 1 unclassified, which is everything else: buildings, vegetation, cars. IGN's
+    /// LiDAR HD has them all (`ign::class`).
     pub class: u8,
     /// 1-based return number and the number of returns of the pulse.
     pub ret: u8,
@@ -31,7 +33,7 @@ pub struct Point {
 /// Every return inside `window`, from the newest scan of each file that covers `bbox`
 /// (`[south, west, north, east]`). With `only`, octree nodes that touch none of those rectangles
 /// are not read, so a sparse world does not pay for the empty parts of its bounding square.
-pub fn fetch(bbox: [f64; 4], window: Window, only: Option<&[Window]>, user: &str, password: &str, mut keep: impl FnMut(Point)) -> Result<usize> {
+pub fn fetch(bbox: [f64; 4], window: Window, only: Option<&[Window]>, user: &str, password: &str, keep: impl FnMut(Point)) -> Result<usize> {
     let [south, west, north, east] = bbox;
     let client = reqwest::blocking::Client::builder().build()?;
     let url = format!("{STAC_ITEMS}?bbox={west},{south},{east},{north}&limit=50");
@@ -50,18 +52,26 @@ pub fn fetch(bbox: [f64; 4], window: Window, only: Option<&[Window]>, user: &str
             newest.insert(square, (when, id.to_string(), href.to_string()));
         }
     }
+    let files: Vec<(String, String)> = newest.into_values().map(|(_, id, href)| (id, href)).collect();
+    let total = read_files(&client, &files, window, only, (user, password), keep)?;
+    if total == 0 {
+        bail!("no laser data covers {bbox:?}");
+    }
+    Ok(total)
+}
+
+/// Every return inside `window` of the COPC files `(name, url)`, read with range requests (no
+/// credentials when the user is empty). With `only`, nodes that touch none of those rectangles are
+/// not read.
+pub fn read_files(client: &reqwest::blocking::Client, files: &[(String, String)], window: Window, only: Option<&[Window]>, (user, password): (&str, &str), mut keep: impl FnMut(Point)) -> Result<usize> {
     let mut total = 0;
-    let files = newest.len();
-    for (index, (_, id, href)) in newest.into_values().enumerate() {
-        crate::progress::stage(&format!("laser, file {} of {files}", index + 1));
+    for (index, (id, href)) in files.iter().enumerate() {
+        crate::progress::stage(&format!("laser, file {} of {}", index + 1, files.len()));
         eprintln!("reading {id}: {href}");
-        let open = || RangeReader::open(client.clone(), &href, user, password);
+        let open = || RangeReader::open(client.clone(), href, user, password);
         let count = read(open, window, only, &mut keep).with_context(|| format!("reading {href}"))?;
         eprintln!("  {count} points");
         total += count;
-    }
-    if total == 0 {
-        bail!("no laser data covers {bbox:?}");
     }
     Ok(total)
 }

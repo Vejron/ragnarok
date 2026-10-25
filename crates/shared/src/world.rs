@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 14;
+pub const WORLD_VERSION: u8 = 16;
 
 /// Metres per degree of latitude; longitude is scaled by cos(latitude).
 pub const METRES_PER_DEG_LAT: f64 = 110_540.0;
@@ -30,19 +30,84 @@ pub fn metres_per_deg_lon() -> f64 {
 }
 
 /// Equirectangular projection of `lat`, `lon` around `origin` (a latitude/longitude): `[x, z]` in
-/// metres, +X east, +Z south. The importer places everything with this.
+/// metres, +X east, +Z south. A Swedish world's frame (`Frame::Equirect`).
 pub fn project(origin: (f64, f64), lat: f64, lon: f64) -> [f64; 2] {
     let x = (lon - origin.1) * metres_per_deg_lon();
     let z = -(lat - origin.0) * METRES_PER_DEG_LAT;
     [x, z]
 }
 
+/// How a world's local metres lie on the Earth: +X east, +Z south, from local (0, 0). The importer
+/// places everything with `project`, and the server places the editor's latitude/longitude with it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "(u8, f64, f64)", into = "(u8, f64, f64)")]
+pub enum Frame {
+    /// Equirectangular around `origin` (latitude, longitude), with longitude scaled at
+    /// `SCALE_LATITUDE` for every world: Sweden's.
+    Equirect { origin: (f64, f64) },
+    /// Lambert-93 metres (`lambert93`), local (0, 0) at easting `e0`, northing `n0`: France's.
+    /// Conformal, so a world anywhere in France is true to scale within 0.3 %.
+    Lambert93 { e0: f64, n0: f64 },
+}
+
+impl Default for Frame {
+    fn default() -> Self {
+        Frame::Equirect { origin: (0.0, 0.0) }
+    }
+}
+
+impl Frame {
+    /// `[x, z]` metres of `(lat, lon)` degrees.
+    pub fn project(self, lat: f64, lon: f64) -> [f64; 2] {
+        match self {
+            Frame::Equirect { origin } => project(origin, lat, lon),
+            Frame::Lambert93 { e0, n0 } => {
+                let (e, n) = crate::lambert93::forward(lat, lon);
+                [e - e0, n0 - n]
+            }
+        }
+    }
+
+    /// `(lat, lon)` degrees of local `(x, z)` metres.
+    pub fn unproject(self, x: f64, z: f64) -> (f64, f64) {
+        match self {
+            Frame::Equirect { origin } => (origin.0 - z / METRES_PER_DEG_LAT, origin.1 + x / metres_per_deg_lon()),
+            Frame::Lambert93 { e0, n0 } => crate::lambert93::inverse(e0 + x, n0 - z),
+        }
+    }
+
+    /// Latitude/longitude of local (0, 0).
+    pub fn origin(self) -> (f64, f64) {
+        self.unproject(0.0, 0.0)
+    }
+}
+
+impl From<Frame> for (u8, f64, f64) {
+    fn from(frame: Frame) -> Self {
+        match frame {
+            Frame::Equirect { origin } => (0, origin.0, origin.1),
+            Frame::Lambert93 { e0, n0 } => (1, e0, n0),
+        }
+    }
+}
+
+impl TryFrom<(u8, f64, f64)> for Frame {
+    type Error = String;
+    fn try_from((kind, a, b): (u8, f64, f64)) -> Result<Self, String> {
+        match kind {
+            0 => Ok(Frame::Equirect { origin: (a, b) }),
+            1 => Ok(Frame::Lambert93 { e0: a, n0: b }),
+            _ => Err(format!("unknown world frame {kind}")),
+        }
+    }
+}
+
 /// `world.msgpack`: everything about the world except the tiles' contents.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Manifest {
     pub version: u8,
-    /// Latitude/longitude of local (0, 0), in degrees.
-    pub origin: (f64, f64),
+    /// Where local (0, 0) is and how local metres map to latitude/longitude.
+    pub frame: Frame,
     /// Half-extent of the playable square, centimetres.
     pub half_extent: i32,
     /// Side of a tile, centimetres. Tile `(col, row)` covers `[-half + col * size, ... + size)`
@@ -83,8 +148,8 @@ pub struct Tile {
     /// Ground heights, centimetres, row-major with `tile_size / ground_cell + 1` samples a side.
     /// The last row and column are shared with the neighbouring tile, so a tile stands alone.
     /// Empty when the world has no terrain.
-    #[serde(with = "samples16")]
-    pub ground: Vec<i16>,
+    #[serde(with = "samples32")]
+    pub ground: Vec<i32>,
     /// What covers the ground here (water, woods, parks, ...), clipped to the tile. The client
     /// bakes it, with the roads, into the terrain's texture; nothing simulates it.
     pub cover: Vec<Cover>,
@@ -94,8 +159,8 @@ pub struct Tile {
     /// or `NO_WATER` where there is none. Empty when the tile has no water. Lakes and wide rivers
     /// are carved into `ground`, so the depth under a sample is `water - ground`; the client draws
     /// the surface wherever that is positive. Nothing simulates it.
-    #[serde(default, with = "samples16")]
-    pub water: Vec<i16>,
+    #[serde(default, with = "samples32")]
+    pub water: Vec<i32>,
     /// Streams: narrow watercourses drawn as ribbons draped on the ground, clipped to the tile.
     #[serde(default)]
     pub streams: Vec<Stream>,
@@ -128,7 +193,7 @@ pub struct Bridge {
 }
 
 /// `Tile::water` entry for a sample with no water.
-pub const NO_WATER: i16 = i16::MIN;
+pub const NO_WATER: i32 = i32::MIN;
 
 /// A stream's centre line, in the direction the water flows (digitised downstream).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -149,8 +214,8 @@ impl Manifest {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct WorldFile {
     pub version: u8,
-    /// Latitude/longitude of local (0, 0), in degrees.
-    pub origin: (f64, f64),
+    /// Where local (0, 0) is and how local metres map to latitude/longitude.
+    pub frame: Frame,
     /// Half-extent of the playable square, centimetres.
     pub half_extent: i32,
     pub buildings: Vec<Building>,
@@ -173,7 +238,7 @@ pub struct WorldFile {
     /// Height of the water surface at each `ground` sample, centimetres, or `NO_WATER`. Filled by
     /// `assemble`; empty when no tile has water.
     #[serde(skip)]
-    pub water: Vec<i16>,
+    pub water: Vec<i32>,
     /// `buildings[i]`'s identity. Filled by `assemble`; empty for a world built by hand.
     #[serde(skip)]
     pub building_ids: Vec<ObjId>,
@@ -254,6 +319,11 @@ pub struct Building {
     /// (`dims` all 0) for a building too big to cut, which keeps its own triangles.
     #[serde(default)]
     pub cells: Cells,
+    /// `[wall, roof]` as `0xRRGGBB`, where the importer knows them (France: the roof from the aerial
+    /// photo). Without it a client picks the colours itself. Left out of the file when `None`, so a
+    /// world without colours is the same bytes as before there were any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paint: Option<[u32; 2]>,
 }
 
 /// A building's cubes as the importer baked them: the grid (`carve::Shell`'s `origin` and `dims`)
@@ -303,26 +373,26 @@ impl<'de> Deserialize<'de> for Bits {
     }
 }
 
-/// A tile's ground or water heights written as a msgpack `bin` of little-endian `i16`s, not an array
-/// of numbers: a 1 m tile has 66,049 of each, which the client then reads as one `Int16Array`.
-mod samples16 {
+/// A tile's ground or water heights written as a msgpack `bin` of little-endian `i32`s, not an array
+/// of numbers: a 1 m tile has 66,049 of each, which the client then reads as one `Int32Array`.
+mod samples32 {
     use serde::{Deserialize, Deserializer, Serializer};
 
-    pub fn serialize<S: Serializer>(samples: &[i16], serializer: S) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(samples: &[i32], serializer: S) -> Result<S::Ok, S::Error> {
         let bytes: Vec<u8> = samples.iter().flat_map(|sample| sample.to_le_bytes()).collect();
         serializer.serialize_bytes(&bytes)
     }
 
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<i16>, D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<i32>, D::Error> {
         let bytes = super::Bits::deserialize(deserializer)?.0;
-        if bytes.len() % 2 != 0 {
-            return Err(serde::de::Error::custom("an odd number of bytes for i16 samples"));
+        if bytes.len() % 4 != 0 {
+            return Err(serde::de::Error::custom("a byte count that is not a multiple of 4 for i32 samples"));
         }
-        Ok(bytes.chunks_exact(2).map(|pair| i16::from_le_bytes([pair[0], pair[1]])).collect())
+        Ok(bytes.chunks_exact(4).map(|quad| i32::from_le_bytes([quad[0], quad[1], quad[2], quad[3]])).collect())
     }
 }
 
-/// A tile's detail slopes written as a msgpack `bin`, one byte each, as `samples16` does the ground.
+/// A tile's detail slopes written as a msgpack `bin`, one byte each, as `samples32` does the ground.
 mod samples8 {
     use serde::{Deserialize, Deserializer, Serializer};
 
@@ -596,7 +666,7 @@ impl WorldFile {
     pub fn assemble(manifest: &Manifest, tiles: impl IntoIterator<Item = (u16, u16, Tile)>) -> Self {
         let mut world = WorldFile {
             version: manifest.version,
-            origin: manifest.origin,
+            frame: manifest.frame,
             half_extent: manifest.half_extent,
             spawns: manifest.spawns.clone(),
             tile_size: manifest.tile_size,
@@ -722,10 +792,28 @@ mod tests {
     }
 
     #[test]
+    fn both_frames_round_trip_their_degrees() {
+        let sweden = Frame::Equirect { origin: (63.8225, 20.235) };
+        let france = Frame::Lambert93 { e0: 652_000.0, n0: 6_862_000.0 };
+        for (frame, (lat, lon)) in [(sweden, (63.83, 20.25)), (france, (48.86, 2.35))] {
+            let [x, z] = frame.project(lat, lon);
+            let (back_lat, back_lon) = frame.unproject(x, z);
+            assert!((back_lat - lat).abs() < 1e-9 && (back_lon - lon).abs() < 1e-9, "{frame:?}");
+        }
+        // +X east and +Z south. Lambert-93's grid north is turned from true north by the meridians'
+        // convergence, half a degree near Paris: about 6 m of z over these 730 m of x.
+        let [x, z] = france.project(48.86, 2.36);
+        let [x0, z0] = france.project(48.86, 2.35);
+        assert!(x - x0 > 700.0 && (z - z0).abs() < 10.0, "{} {}", x - x0, z - z0);
+        let [_, z1] = france.project(48.87, 2.35);
+        assert!(z1 < z0);
+    }
+
+    #[test]
     fn manifest_and_tile_round_trip() {
         let manifest = Manifest {
             version: WORLD_VERSION,
-            origin: (59.3, 18.06),
+            frame: Frame::Lambert93 { e0: 652_000.0, n0: 6_862_000.0 },
             half_extent: 30_000,
             tile_size: 25_000,
             spawns: vec![[10, 20]],
@@ -734,7 +822,7 @@ mod tests {
         };
         assert_eq!(Manifest::decode(&manifest.encode()).unwrap(), manifest);
         let tile = Tile {
-            buildings: vec![Building { height: 800, footprint: vec![[0, 0], [100, 0], [100, 100]], base: 250, first: 0, walls: 6, roof: 2, roof_kind: ROOF_GABLE, cells: Cells { origin: [-100, 0, 200], dims: [2, 1, 5], solid: Bits(vec![0b1011, 3]), roof: Bits(vec![1, 0]) } }],
+            buildings: vec![Building { height: 800, footprint: vec![[0, 0], [100, 0], [100, 100]], base: 250, first: 0, walls: 6, roof: 2, roof_kind: ROOF_GABLE, cells: Cells { origin: [-100, 0, 200], dims: [2, 1, 5], solid: Bits(vec![0b1011, 3]), roof: Bits(vec![1, 0]) }, paint: Some([0xeee3c8, 0x4f5866]) }, Building { height: 300, ..Default::default() }],
             roads: vec![Road { width: 600, kind: ROAD_MINOR, points: vec![[0, 0], [500, 500]] }],
             collision: CollisionMesh { vertices: vec![[0, 0, 0]], triangles: vec![[0, 0, 0]] },
             ground: vec![0, 10, 20, 30],
@@ -755,10 +843,10 @@ mod tests {
         let tile = Tile { ground: vec![1, -2, 300], water: vec![NO_WATER, 40, 40], detail: vec![-1, 5], ..Default::default() };
         let bytes = tile.encode();
         // msgpack `bin 8` (0xc4), its length, then the samples low byte first: what the client reads
-        // as an `Int16Array` or `Int8Array` (`decodeTile`).
+        // as an `Int32Array` or `Int8Array` (`decodeTile`).
         let find = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
-        assert!(find(&[0xc4, 6, 1, 0, 0xfe, 0xff, 0x2c, 0x01]));
-        assert!(find(&[0xc4, 6, 0x00, 0x80, 40, 0, 40, 0]));
+        assert!(find(&[0xc4, 12, 1, 0, 0, 0, 0xfe, 0xff, 0xff, 0xff, 0x2c, 0x01, 0, 0]));
+        assert!(find(&[0xc4, 12, 0, 0, 0, 0x80, 40, 0, 0, 0, 40, 0, 0, 0]));
         assert!(find(&[0xc4, 2, 0xff, 5]));
         assert_eq!(Tile::decode(&bytes).unwrap(), tile);
     }
@@ -799,7 +887,7 @@ mod tests {
         // Two tiles of 2 cells a side (3 samples), 10 m cells: a grid of 2 × 2 tiles, 5 samples a side.
         let manifest = Manifest { version: WORLD_VERSION, half_extent: 2_000, tile_size: 2_000, ground_cell: 1_000, ..Default::default() };
         assert_eq!(manifest.tile_samples(), 3);
-        let tile = |h: i16| Tile { ground: vec![h; 9], ..Default::default() };
+        let tile = |h: i32| Tile { ground: vec![h; 9], ..Default::default() };
         let world = WorldFile::assemble(&manifest, [(0, 0, tile(1)), (1, 0, tile(2)), (0, 1, tile(3)), (1, 1, tile(4))]);
         let g = &world.ground;
         assert_eq!((g.side, g.cell, g.origin), (5, 1_000, -2_000));

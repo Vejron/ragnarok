@@ -6,7 +6,6 @@ use shared::consts::*;
 use shared::items::ITEM_GOLDEN_EGG;
 use shared::protocol::{HIT_ROOSTER, KIND_ROOSTER};
 use shared::quant::from_cm;
-use shared::world::project;
 use std::f32::consts::{PI, TAU};
 
 /// Creatures that wander about their home. The Hedemora rooster is one: it stands about, walks to a
@@ -85,7 +84,7 @@ pub fn rooster(home: [f32; 2]) -> impl crate::entities::Bundle {
 
 /// Where the rooster lives: `ROOSTER_HOME` if that is inside the world, else the first spawn.
 pub fn home(world: &World) -> [f32; 2] {
-    let [x, z] = project(world.map.origin, ROOSTER_HOME.0, ROOSTER_HOME.1);
+    let [x, z] = world.map.frame.project(ROOSTER_HOME.0, ROOSTER_HOME.1);
     let half = from_cm(world.map.half_extent) as f64 - 10.0;
     if x.abs() < half && z.abs() < half && world.map.is_inside((x * 100.0) as i32, (z * 100.0) as i32) {
         return [x as f32, z as f32];
@@ -266,7 +265,7 @@ mod tests {
 
     #[test]
     fn it_lives_at_its_coordinate_when_the_world_covers_it() {
-        let map = WorldFile { version: WORLD_VERSION, origin: (63.8372, 20.3261), half_extent: 112_500, spawns: vec![[0, 0]], ..Default::default() };
+        let map = WorldFile { version: WORLD_VERSION, frame: shared::world::Frame::Equirect { origin: (63.8372, 20.3261) }, half_extent: 112_500, spawns: vec![[0, 0]], ..Default::default() };
         let game = Game::new(map, 0).unwrap();
         let r = rooster(&game);
         // About 396 m north (-Z) and 15 m east of the dev world's centre.

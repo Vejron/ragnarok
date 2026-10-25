@@ -101,8 +101,9 @@ pub struct Physics {
 }
 
 /// Height of the top of the invisible boundary walls around the playable square, metres above
-/// the lowest ground.
-const BOUNDARY_HEIGHT: f32 = 200.0;
+/// the lowest ground: over the highest a world's ground may be, with room for the highest ceiling
+/// (`LOITER_CEILING`) above it, since the client builds them before it knows the world's ground.
+const BOUNDARY_HEIGHT: f32 = shared::consts::MAX_RELIEF + 1000.0;
 
 /// The collision group of a tree that can be felled. A tank's hull leaves this group out of what it
 /// touches, so it drives through such a trunk (felling it, see `plow_trees`) instead of stopping on it.

@@ -16,7 +16,7 @@ use shared::consts::TICK_RATE;
 use shared::items::{HOTBAR_SLOTS, ITEM_COUNT, ITEM_NONE, def};
 use shared::protocol::ItemSlot;
 use shared::protocol::{NOTICE_LOST, NOTICE_OBJECTIVE, NOTICE_SAY, NOTICE_WON};
-use shared::world::{WorldFile, project};
+use shared::world::WorldFile;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -265,7 +265,7 @@ pub fn load(path: &Path, map: &WorldFile) -> Result<Option<Scenario>> {
 /// The scenario written in `text`, on `map`.
 pub fn read(text: &str, map: &WorldFile) -> Result<Scenario> {
     Scenario::parse(text, |lat, lon| {
-        let [x, z] = project(map.origin, lat, lon);
+        let [x, z] = map.frame.project(lat, lon);
         map.is_inside((x * 100.0).round() as i32, (z * 100.0).round() as i32).then_some([x as f32, z as f32])
     })
 }

@@ -697,7 +697,15 @@ impl Physics {
         if self.cars.is_empty() {
             return;
         }
-        for car in self.cars.values().filter(|car| matches!(car.spec.lift, Lift::Rotor | Lift::Drone | Lift::Loiter)) {
+        // The ground under each flier and plane, which their ceilings are measured from.
+        let floors: std::collections::HashMap<u32, f32> = self
+            .cars
+            .iter()
+            .filter(|(_, car)| matches!(car.spec.lift, Lift::Rotor | Lift::Drone | Lift::Loiter | Lift::Wing) || car.tank.is_some())
+            .filter_map(|(&id, car)| Some((id, self.terrain_below(self.bodies.get(car.body)?.translation()))))
+            .collect();
+        let floor = |id: &u32| floors.get(id).copied().unwrap_or(0.0);
+        for (id, car) in self.cars.iter().filter(|(_, car)| matches!(car.spec.lift, Lift::Rotor | Lift::Drone | Lift::Loiter)) {
             if let Some(body) = self.bodies.get_mut(car.body) {
                 // Forces persist from step to step until reset.
                 body.reset_forces(false);
@@ -705,11 +713,11 @@ impl Physics {
                     continue;
                 }
                 if car.spec.lift == Lift::Drone {
-                    fly_drone(body, car.flight, dt);
+                    fly_drone(body, car.flight, floor(id), dt);
                 } else if car.spec.lift == Lift::Loiter {
-                    fly_loiter(body, car.flight, dt);
+                    fly_loiter(body, car.flight, floor(id), dt);
                 } else {
-                    fly(body, car.flight, dt);
+                    fly(body, car.flight, floor(id), dt);
                 }
             }
         }
@@ -752,12 +760,12 @@ impl Physics {
         // A car is pressed down or tilted in the air. A tank turns on the spot, but only while some
         // track is on the ground. The wheels' side grip fights any spin every tick, so the rate is
         // kept here and written back each time.
-        for car in self.cars.values_mut().filter(|car| car.spec.lift.wheeled()) {
+        for (id, car) in self.cars.iter_mut().filter(|(_, car)| car.spec.lift.wheeled()) {
             let grounded = car.controller.wheels().iter().any(|wheel| wheel.raycast_info().is_in_contact);
             let Some(body) = self.bodies.get_mut(car.body) else { continue };
             if car.spec.lift == Lift::Wing {
                 body.reset_forces(false);
-                wing(body, car.flight, car.condition.power, grounded, self.bound, dt);
+                wing(body, car.flight, car.condition.power, grounded, self.bound, floor(id), dt);
                 continue;
             }
             if car.spec.steer_lock > 0.0 {
@@ -765,7 +773,7 @@ impl Physics {
             }
             if let Some(tank) = &mut car.tank {
                 body.reset_forces(false);
-                car.firing = thrust(body, car.flight, tank, grounded, dt);
+                car.firing = thrust(body, car.flight, tank, grounded, floor(id), dt);
             }
             if car.turn == 0.0 || !grounded {
                 car.spin = 0.0;
@@ -872,6 +880,20 @@ impl Physics {
         let (hit, _) = queries.intersect_shape(Pose::from_translation(Vector::from(position)), shape).next()?;
         let (&car, body) = self.cars.iter().find(|(_, car)| car.owns(hit)).and_then(|(id, car)| Some((id, self.bodies.get(car.body)?)))?;
         Some(CarHit { car, position: body.translation().into(), velocity: body.linvel().into() })
+    }
+
+    /// Height of the terrain under `at`, metres: what fliers' ceilings are measured from. Buildings
+    /// and bridges do not count, so a helicopter holds its height over the rooftops. 0 on a flat
+    /// world, and where the tile under `at` has not streamed in.
+    fn terrain_below(&self, at: Vector) -> f32 {
+        const TERRAIN_TOP: f32 = MAX_RELIEF + 10.0;
+        const BED_FLOOR: f32 = 20.0;
+        let terrain = |_: ColliderHandle, collider: &Collider| collider.shape().as_heightfield().is_some();
+        let filter = QueryFilter::only_fixed().predicate(&terrain);
+        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, filter);
+        // From above the highest ground any world may have, so a flier sunk into a hill still finds it.
+        let ray = Ray::new(Vector::new(at.x, TERRAIN_TOP, at.z), Vector::new(0.0, -1.0, 0.0));
+        queries.cast_ray(&ray, TERRAIN_TOP + BED_FLOOR, true).map_or(0.0, |(_, distance)| TERRAIN_TOP - distance)
     }
 
     /// How far a ray from `origin` along the unit vector `dir` travels before it hits the world or a

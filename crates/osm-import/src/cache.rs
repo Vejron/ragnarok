@@ -1,8 +1,8 @@
 //! A download cache, so a rebuild of the world does not fetch the same data again.
 //!
 //! Everything the importer downloads goes through here: the Overpass answer, the tree register,
-//! the STAC searches, and every 512 KiB block read from Lantmäteriet's height model and point
-//! cloud. Entries are files in one directory (`.cache/osm-import` by default, git-ignored),
+//! the STAC searches, every 512 KiB block read from Lantmäteriet's height model and point
+//! cloud, and IGN's index answers, MNT pieces and 2 MiB point cloud blocks. Entries are files in one directory (`.cache/osm-import` by default, git-ignored),
 //! named by what they hold and a hash of the request. Credentials are never part of a key or an
 //! entry. Nothing expires: `--refresh` re-downloads and overwrites, `--clear-cache` deletes it all.
 //!
@@ -22,6 +22,36 @@ struct Cache {
 
 static CACHE: OnceLock<Option<Cache>> = OnceLock::new();
 static HITS: AtomicU64 = AtomicU64::new(0);
+/// Entries being downloaded now. Another thread asking for one of them waits for that download
+/// instead of making its own (the point cloud's decoders often want the same block at once).
+static BUSY: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+static FREED: std::sync::Condvar = std::sync::Condvar::new();
+
+/// Takes `path` off `BUSY` when the download ends, however it ends.
+struct Claim(PathBuf);
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        BUSY.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).retain(|p| *p != self.0);
+        FREED.notify_all();
+    }
+}
+
+/// Claims `path` for downloading, or, if another thread already is, waits for it and returns what
+/// it stored (`Err` with the claim when it stored nothing, so this one downloads after all).
+fn claim(path: &Path) -> Result<Vec<u8>, Claim> {
+    let mut busy = BUSY.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut waited = false;
+    while busy.iter().any(|p| p == path) {
+        waited = true;
+        busy = FREED.wait(busy).unwrap_or_else(|poisoned| poisoned.into_inner());
+    }
+    if waited && let Ok(found) = std::fs::read(path) {
+        return Ok(found);
+    }
+    busy.push(path.to_path_buf());
+    Err(Claim(path.to_path_buf()))
+}
 static MISSES: AtomicU64 = AtomicU64::new(0);
 
 /// Turns the cache on in `dir`, or leaves it off with `None`. Call once, before any download.
@@ -68,6 +98,14 @@ pub fn bytes(kind: &str, key: &str, download: impl FnOnce() -> Result<Vec<u8>>) 
         progress::reused(found.len());
         return Ok(found);
     }
+    let _claim = match claim(&path) {
+        Ok(found) => {
+            HITS.fetch_add(1, Ordering::Relaxed);
+            progress::reused(found.len());
+            return Ok(found);
+        }
+        Err(claim) => claim,
+    };
     MISSES.fetch_add(1, Ordering::Relaxed);
     let fresh = download()?;
     progress::received(fresh.len());

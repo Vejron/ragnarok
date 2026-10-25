@@ -10,7 +10,7 @@ const cm = (metres: number) => Math.round(metres * 100)
  * `groundCell` apart (0 for flat), made of the `tiles` `[col, row]` (none listed is every one).
  */
 export function manifestBytes(half: number, tileSize: number, groundCell = 0, tiles: [number, number][] = []): Uint8Array {
-  return encode([WORLD_VERSION, [0, 0], cm(half), cm(tileSize), [], tiles.map(([col, row]) => [col, row, 0]), cm(groundCell)])
+  return encode([WORLD_VERSION, [0, 0, 0], cm(half), cm(tileSize), [], tiles.map(([col, row]) => [col, row, 0]), cm(groundCell)])
 }
 
 /** A building as a tile file holds it, metres; with no baked cells, both sides cut its cubes from its walls and roof. */
@@ -31,8 +31,8 @@ export interface TestBuilding {
 export function tileBytes({ vertices = [], triangles = [], ground = [], buildings = [] }: { vertices?: number[][]; triangles?: number[][]; ground?: ArrayLike<number>; buildings?: TestBuilding[] }): Uint8Array {
   const mesh = [vertices.map((v) => v.map(cm)), triangles]
   const houses = buildings.map((b) => [cm(b.height), b.footprint.map((p) => p.map(cm)), cm(b.base), b.first, b.walls, b.roof, b.roofKind])
-  // Ground, water and detail as `bin`s of little-endian samples (`samples16` in `world.rs`).
-  const heights = new Uint8Array(Int16Array.from(ground, cm).buffer)
+  // Ground, water and detail as `bin`s of little-endian samples (`samples32` in `world.rs`).
+  const heights = new Uint8Array(Int32Array.from(ground, cm).buffer)
   return encode([houses, [], mesh, heights, [], [], new Uint8Array(), [], [], new Uint8Array(), []])
 }
 

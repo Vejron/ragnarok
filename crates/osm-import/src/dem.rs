@@ -124,6 +124,19 @@ impl Dem {
         Ok(Self { rasters: vec![raster] })
     }
 
+    /// Elevations from GeoTIFFs held in memory, each cut to its window. A file that misses its
+    /// window adds nothing.
+    pub fn from_bytes(files: impl IntoIterator<Item = (Vec<u8>, Window)>) -> Result<Self> {
+        let mut rasters = Vec::new();
+        for (bytes, window) in files {
+            rasters.extend(read_window(std::io::Cursor::new(bytes), window)?);
+        }
+        if rasters.is_empty() {
+            bail!("no elevation data covers the world");
+        }
+        Ok(Self { rasters })
+    }
+
     /// Finds the DEM files covering `bbox` (`[south, west, north, east]`) through STAC and reads the
     /// part of each that lies in `window`.
     pub fn from_stac(bbox: [f64; 4], window: Window, user: &str, password: &str) -> Result<Self> {
@@ -205,7 +218,8 @@ fn read_window<R: Read + Seek>(source: R, [we, wn, ee, en]: Window) -> Result<Op
     Ok(Some(Raster { e0: e_left + px0 as f64 * pixel, n_top: n_top - py0 as f64 * pixel, scale: pixel, width: w, height: h, data }))
 }
 
-/// `Read + Seek` over an HTTP resource, fetching 512 KiB blocks with range requests on demand.
+/// `Read + Seek` over an HTTP resource, fetching 512 KiB blocks with range requests on demand. An
+/// empty `user` sends no credentials (IGN's files are open).
 pub(crate) struct RangeReader {
     client: reqwest::blocking::Client,
     url: String,
@@ -213,16 +227,43 @@ pub(crate) struct RangeReader {
     password: String,
     length: u64,
     position: u64,
+    /// Bytes a range request asks for: `BLOCK`, or `OPEN_BLOCK` for an open server.
+    block: u64,
     blocks: HashMap<u64, Vec<u8>>,
 }
 
 const BLOCK: u64 = 512 * 1024;
+/// Blocks from a server without credentials (IGN's), which allows about 10 requests a second:
+/// bigger blocks need fewer of them.
+const OPEN_BLOCK: u64 = 2 * 1024 * 1024;
+/// The least time between two requests to an open server, from all threads together.
+const OPEN_PACE: std::time::Duration = std::time::Duration::from_millis(115);
+
+/// Waits for this request's turn at the open server, so the threads together stay under its limit.
+fn pace() {
+    static NEXT: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    let wait = {
+        let mut next = NEXT.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let now = std::time::Instant::now();
+        let at = next.map_or(now, |t| t.max(now));
+        *next = Some(at + OPEN_PACE);
+        at - now
+    };
+    std::thread::sleep(wait);
+}
 
 impl RangeReader {
     pub(crate) fn open(client: reqwest::blocking::Client, url: &str, user: &str, password: &str) -> Result<Self> {
         // The length is cached too, so a fully cached file is read without touching the network.
         let length = crate::cache::text("length", url, || {
-            let response = client.get(url).basic_auth(user, Some(password)).header("Range", "bytes=0-0").send()?;
+            let request = client.get(url);
+            let request = if user.is_empty() {
+                pace();
+                request
+            } else {
+                request.basic_auth(user, Some(password))
+            };
+            let response = request.header("Range", "bytes=0-0").send()?;
             anyhow::ensure!(response.status() != reqwest::StatusCode::UNAUTHORIZED, "{url} refused the credentials in LM_USER / LM_PASS (see WORLD.md)");
             let response = response.error_for_status()?;
             let length = response
@@ -236,27 +277,35 @@ impl RangeReader {
         })?
         .parse::<u64>()
         .context("cached file length is not a number; try --refresh")?;
-        Ok(Self { client, url: url.into(), user: user.into(), password: password.into(), length, position: 0, blocks: HashMap::new() })
+        let block = if user.is_empty() { OPEN_BLOCK } else { BLOCK };
+        Ok(Self { client, url: url.into(), user: user.into(), password: password.into(), length, position: 0, block, blocks: HashMap::new() })
     }
 
     fn block(&mut self, index: u64) -> std::io::Result<&Vec<u8>> {
         if !self.blocks.contains_key(&index) {
-            let (start, end) = (index * BLOCK, ((index + 1) * BLOCK).min(self.length) - 1);
+            let size = self.block;
+            let (start, end) = (index * size, ((index + 1) * size).min(self.length) - 1);
+            let open = self.user.is_empty();
             let bytes = crate::cache::bytes("range", &format!("{}#{index}", self.url), || {
-                // Lantmäteriet's server resets connections now and then; a few tries get through.
+                // Lantmäteriet's server resets connections now and then, and IGN's turns away
+                // requests over its rate (429); a few tries, further apart each time, get through.
                 let mut attempt = 0;
                 loop {
-                    let result = self
-                        .client
-                        .get(&self.url)
-                        .basic_auth(&self.user, Some(&self.password))
+                    let request = self.client.get(&self.url);
+                    let request = if open {
+                        pace();
+                        request
+                    } else {
+                        request.basic_auth(&self.user, Some(&self.password))
+                    };
+                    let result = request
                         .header("Range", format!("bytes={start}-{end}"))
                         .send()
                         .and_then(|r| r.error_for_status())
                         .and_then(|r| r.bytes());
                     match result {
                         Ok(bytes) => break Ok(bytes.to_vec()),
-                        Err(error) if attempt < 4 => {
+                        Err(error) if attempt < if open { 7 } else { 4 } => {
                             attempt += 1;
                             eprintln!("  range {start}-{end} failed ({error}); retry {attempt}");
                             crate::progress::retry(2 * attempt);
@@ -277,8 +326,8 @@ impl Read for RangeReader {
         if self.position >= self.length || buf.is_empty() {
             return Ok(0);
         }
-        let index = self.position / BLOCK;
-        let offset = (self.position % BLOCK) as usize;
+        let index = self.position / self.block;
+        let offset = (self.position % self.block) as usize;
         let block = self.block(index)?;
         let n = buf.len().min(block.len() - offset);
         buf[..n].copy_from_slice(&block[offset..offset + n]);

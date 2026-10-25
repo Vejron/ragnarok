@@ -2,7 +2,6 @@
 //! shed, gable, hip) and the best one becomes the building's walls and roof mesh. The mesh goes
 //! into the tile's collision mesh, and the client draws buildings from the same triangles.
 
-use crate::dem::sweref99tm;
 use crate::lidar::Point;
 use shared::world::{CollisionMesh, ROOF_FLAT, ROOF_GABLE, ROOF_HIP, ROOF_SHED};
 use std::collections::HashMap;
@@ -107,6 +106,13 @@ impl Roof {
             }
         }
     }
+}
+
+/// What a building's roof is made of: a shape fitted to the returns, or the returns themselves.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Top {
+    Fitted(Roof),
+    Measured(crate::field::Field),
 }
 
 /// One laser return of a building, local metres.
@@ -753,15 +759,11 @@ impl Cloud {
         self.cells.iter().all(Vec::is_empty)
     }
 
-    /// The returns inside `footprint`, a local-metre polygon, as `[x, z, y]`. `origin` is the world
-    /// frame's origin in degrees (lat, lon) and `unproject` maps local metres to degrees.
-    pub fn over(&self, footprint: &[P], unproject: impl Fn(f64, f64) -> (f64, f64)) -> Vec<[f64; 4]> {
+    /// The returns inside `footprint`, a local-metre polygon, as `[x, z, y]`. `grid` maps local
+    /// metres to the cloud's own `(easting, northing)` (`region::Place::source`).
+    pub fn over(&self, footprint: &[P], grid: impl Fn(f64, f64) -> (f64, f64)) -> Vec<[f64; 4]> {
         let n = footprint.len() as f64;
         let centre = footprint.iter().fold([0.0, 0.0], |s, p| [s[0] + p[0] / n, s[1] + p[1] / n]);
-        let grid = |x: f64, z: f64| {
-            let (lat, lon) = unproject(x, z);
-            sweref99tm(lat, lon)
-        };
         // The world's local frame is turned a few degrees from the grid; a linear map is exact enough
         // over one building.
         let o = grid(centre[0], centre[1]);

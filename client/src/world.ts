@@ -3,7 +3,7 @@ import tables from './sim/tables.generated.json'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 14
+export const WORLD_VERSION = 16
 
 /** Where `world.msgpack`, `tiles/` and `minimap.png` are served from: `/` normally, `/dev/` for the dev world. */
 export let WORLD_BASE: string = withSlash(import.meta.env.VITE_WORLD_BASE || '/')
@@ -120,6 +120,8 @@ export interface Building {
   roofKind: number
   /** Its 1 m cubes as the importer baked them, or null for a building with none (it keeps its triangles). */
   cells: Cells | null
+  /** `[wall, roof]` as `0xRRGGBB` where the importer knows them (France: the roof from the aerial photo), else null. */
+  paint: [number, number] | null
 }
 
 /**
@@ -193,7 +195,7 @@ export interface Stream {
 export const DETAIL_SLOPE_SCALE = 63.5
 
 /** `Tile::water` entry (centimetres) for a ground sample with no water. */
-const NO_WATER_CM = -32768
+const NO_WATER_CM = -2147483648
 
 /** `TileData.water` entry for a ground sample with no water. */
 export const NO_WATER = -Infinity
@@ -212,7 +214,11 @@ export interface TileRef {
 
 /** `world.msgpack`: where the world is and which tiles make it up. */
 export interface WorldData {
-  origin: [number, number]
+  /**
+   * How local metres lie on the Earth (`Frame` in `crates/shared/src/world.rs`): `[0, lat, lon]` for
+   * Sweden's equirectangular frame around `lat, lon`, `[1, e0, n0]` for Lambert-93 from `e0, n0`.
+   */
+  frame: [number, number, number]
   halfExtent: number
   /** Side of a tile, metres. Tile `(col, row)` starts at `-halfExtent + col * tileSize`. */
   tileSize: number
@@ -281,7 +287,7 @@ export function trunkRadiusCm(kind: number, heightCm: number, crownCm: number): 
 const noCollision = (): CollisionMesh => ({ vertices: new Float32Array(), triangles: new Uint32Array() })
 
 export function decodeManifest(bytes: Uint8Array): WorldData {
-  const [version, origin, halfExtent, tileSize, spawns, tiles, groundCell] = decode(bytes) as [number, [number, number], number, number, number[][], number[][], number]
+  const [version, frame, halfExtent, tileSize, spawns, tiles, groundCell] = decode(bytes) as [number, [number, number, number], number, number, number[][], number[][], number]
   if (version !== WORLD_VERSION) throw new Error(`world version ${version}, expected ${WORLD_VERSION}`)
   const refs = tiles.map(([col, row, hash]) => ({ col: col!, row: row!, hash: hash! }))
   const grid = Math.max(1, Math.ceil((2 * halfExtent) / Math.max(tileSize, 1)))
@@ -291,7 +297,7 @@ export function decodeManifest(bytes: Uint8Array): WorldData {
     for (const { col, row } of refs) inside[row * grid + col] = true
   }
   return {
-    origin,
+    frame,
     halfExtent: metres(halfExtent),
     tileSize: metres(tileSize),
     spawns: spawns.map(point),
@@ -307,13 +313,13 @@ export function decodeManifest(bytes: Uint8Array): WorldData {
 // 1 m tile, whose ground alone is 66,049 numbers.
 
 /**
- * A msgpack `bin` of little-endian `i16`s (`samples16` in `world.rs`) as an `Int16Array`: a view of
- * the file's bytes, copied once only when the view would start on an odd byte. Every platform a
- * browser runs on is little-endian.
+ * A msgpack `bin` of little-endian `i32`s (`samples32` in `world.rs`) as an `Int32Array`: a view of
+ * the file's bytes, copied once only when the view would not start on a multiple of 4. Every
+ * platform a browser runs on is little-endian.
  */
-function int16s(bin: Uint8Array): Int16Array {
-  const bytes = bin.byteOffset % 2 === 0 ? bin : bin.slice()
-  return new Int16Array(bytes.buffer, bytes.byteOffset, bytes.length >> 1)
+function int32s(bin: Uint8Array): Int32Array {
+  const bytes = bin.byteOffset % 4 === 0 ? bin : bin.slice()
+  return new Int32Array(bytes.buffer, bytes.byteOffset, bytes.length >> 2)
 }
 
 /** Centimetres to metres, as `metres` would map them. With `water`, `NO_WATER_CM` becomes `NO_WATER`. */
@@ -349,7 +355,7 @@ function flatIndices(triangles: readonly number[][]): Uint32Array {
 
 export function decodeTile(bytes: Uint8Array): TileData {
   const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges, detail, rails] = decode(bytes) as [
-    [number, number[][], number, number, number, number, number, [number[], number[], Uint8Array, Uint8Array]?][],
+    [number, number[][], number, number, number, number, number, [number[], number[], Uint8Array, Uint8Array]?, [number, number]?][],
     [number, number, number[][]][],
     [number[][], number[][]],
     Uint8Array,
@@ -362,7 +368,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     [number, number, number[][]][] | undefined,
   ]
   return {
-    buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind, cells]) => ({
+    buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind, cells, paint]) => ({
       height: metres(height),
       footprint: footprint.map(point),
       base: metres(base),
@@ -374,6 +380,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
         cells && cells[1][0]! * cells[1][1]! * cells[1][2]! > 0
           ? { origin: cells[0] as [number, number, number], dims: cells[1] as [number, number, number], solid: cells[2], roof: cells[3] }
           : null,
+      paint: paint ?? null,
     })),
     roads: roads.map(([width, kind, points]) => ({ width: metres(width), kind, points: points.map(point) })),
     cover: cover.map(([kind, rings]) => ({ kind, rings: rings.map((ring) => ring.map(point)) })),
@@ -389,8 +396,8 @@ export function decodeTile(bytes: Uint8Array): TileData {
       trunkHeight: metres(Math.trunc((height * treeKindDef(kind).colliderHeightPct) / 100)),
     })),
     collision: { vertices: flatMetres(vertices), triangles: flatIndices(triangles) },
-    ground: inMetres(int16s(ground)),
-    water: inMetres(int16s(water), true),
+    ground: inMetres(int32s(ground)),
+    water: inMetres(int32s(water), true),
     streams: streams.map(([width, points]) => ({ width: metres(width), points: points.map(point) })),
     bridges: (bridges ?? []).map(([first, deck, steel]) => ({ first, deck, steel })),
     // A copy of its own: a view would keep the whole file alive, and be cloned whole to the worker.
