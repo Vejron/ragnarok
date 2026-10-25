@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 13;
+pub const WORLD_VERSION: u8 = 14;
 
 /// Metres per degree of latitude; longitude is scaled by cos(latitude).
 pub const METRES_PER_DEG_LAT: f64 = 110_540.0;
@@ -83,6 +83,7 @@ pub struct Tile {
     /// Ground heights, centimetres, row-major with `tile_size / ground_cell + 1` samples a side.
     /// The last row and column are shared with the neighbouring tile, so a tile stands alone.
     /// Empty when the world has no terrain.
+    #[serde(with = "samples16")]
     pub ground: Vec<i16>,
     /// What covers the ground here (water, woods, parks, ...), clipped to the tile. The client
     /// bakes it, with the roads, into the terrain's texture; nothing simulates it.
@@ -93,7 +94,7 @@ pub struct Tile {
     /// or `NO_WATER` where there is none. Empty when the tile has no water. Lakes and wide rivers
     /// are carved into `ground`, so the depth under a sample is `water - ground`; the client draws
     /// the surface wherever that is positive. Nothing simulates it.
-    #[serde(default)]
+    #[serde(default, with = "samples16")]
     pub water: Vec<i16>,
     /// Streams: narrow watercourses drawn as ribbons draped on the ground, clipped to the tile.
     #[serde(default)]
@@ -106,7 +107,7 @@ pub struct Tile {
     /// (row-major, rows along +Z, `n × n` with `n = sqrt(len / 2)`), the slope `(dh/dx, dh/dz)` of the
     /// ground there, each in units of `1 / DETAIL_SLOPE_SCALE`. Finer than `ground`; nothing
     /// simulates it. Empty when the tile has no relief finer than its ground or none was baked.
-    #[serde(default)]
+    #[serde(default, with = "samples8")]
     pub detail: Vec<i8>,
     /// Railway tracks, clipped to the tile. Drawn on the ground; nothing simulates them.
     #[serde(default)]
@@ -299,6 +300,39 @@ impl<'de> Deserialize<'de> for Bits {
             }
         }
         deserializer.deserialize_bytes(Visit)
+    }
+}
+
+/// A tile's ground or water heights written as a msgpack `bin` of little-endian `i16`s, not an array
+/// of numbers: a 1 m tile has 66,049 of each, which the client then reads as one `Int16Array`.
+mod samples16 {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(samples: &[i16], serializer: S) -> Result<S::Ok, S::Error> {
+        let bytes: Vec<u8> = samples.iter().flat_map(|sample| sample.to_le_bytes()).collect();
+        serializer.serialize_bytes(&bytes)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<i16>, D::Error> {
+        let bytes = super::Bits::deserialize(deserializer)?.0;
+        if bytes.len() % 2 != 0 {
+            return Err(serde::de::Error::custom("an odd number of bytes for i16 samples"));
+        }
+        Ok(bytes.chunks_exact(2).map(|pair| i16::from_le_bytes([pair[0], pair[1]])).collect())
+    }
+}
+
+/// A tile's detail slopes written as a msgpack `bin`, one byte each, as `samples16` does the ground.
+mod samples8 {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(samples: &[i8], serializer: S) -> Result<S::Ok, S::Error> {
+        let bytes: Vec<u8> = samples.iter().map(|&sample| sample as u8).collect();
+        serializer.serialize_bytes(&bytes)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<i8>, D::Error> {
+        Ok(super::Bits::deserialize(deserializer)?.0.into_iter().map(|byte| byte as i8).collect())
     }
 }
 
@@ -714,6 +748,19 @@ mod tests {
         };
         assert_eq!(Tile::decode(&tile.encode()).unwrap(), tile);
         assert_eq!(manifest.tiles[0].path(), "tiles/1_0.msgpack");
+    }
+
+    #[test]
+    fn ground_water_and_detail_are_written_as_little_endian_bytes() {
+        let tile = Tile { ground: vec![1, -2, 300], water: vec![NO_WATER, 40, 40], detail: vec![-1, 5], ..Default::default() };
+        let bytes = tile.encode();
+        // msgpack `bin 8` (0xc4), its length, then the samples low byte first: what the client reads
+        // as an `Int16Array` or `Int8Array` (`decodeTile`).
+        let find = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
+        assert!(find(&[0xc4, 6, 1, 0, 0xfe, 0xff, 0x2c, 0x01]));
+        assert!(find(&[0xc4, 6, 0x00, 0x80, 40, 0, 40, 0]));
+        assert!(find(&[0xc4, 2, 0xff, 5]));
+        assert_eq!(Tile::decode(&bytes).unwrap(), tile);
     }
 
     #[test]

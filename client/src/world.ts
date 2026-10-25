@@ -3,7 +3,7 @@ import tables from './sim/tables.generated.json'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 13
+export const WORLD_VERSION = 14
 
 /** Where `world.msgpack`, `tiles/` and `minimap.png` are served from: `/` normally, `/dev/` for the dev world. */
 export let WORLD_BASE: string = withSlash(import.meta.env.VITE_WORLD_BASE || '/')
@@ -306,8 +306,18 @@ export function decodeManifest(bytes: Uint8Array): WorldData {
 // Plain loops, not `Float32Array.from(array, map)`: its generic path was most of `decodeTile` on a
 // 1 m tile, whose ground alone is 66,049 numbers.
 
+/**
+ * A msgpack `bin` of little-endian `i16`s (`samples16` in `world.rs`) as an `Int16Array`: a view of
+ * the file's bytes, copied once only when the view would start on an odd byte. Every platform a
+ * browser runs on is little-endian.
+ */
+function int16s(bin: Uint8Array): Int16Array {
+  const bytes = bin.byteOffset % 2 === 0 ? bin : bin.slice()
+  return new Int16Array(bytes.buffer, bytes.byteOffset, bytes.length >> 1)
+}
+
 /** Centimetres to metres, as `metres` would map them. With `water`, `NO_WATER_CM` becomes `NO_WATER`. */
-function inMetres(cm: readonly number[], water = false): Float32Array {
+function inMetres(cm: ArrayLike<number>, water = false): Float32Array {
   const out = new Float32Array(cm.length)
   for (let i = 0; i < cm.length; i++) out[i] = water && cm[i] === NO_WATER_CM ? NO_WATER : cm[i]! / 100
   return out
@@ -342,13 +352,13 @@ export function decodeTile(bytes: Uint8Array): TileData {
     [number, number[][], number, number, number, number, number, [number[], number[], Uint8Array, Uint8Array]?][],
     [number, number, number[][]][],
     [number[][], number[][]],
-    number[],
+    Uint8Array,
     [number, number[][][]][],
     [number, number, number, number, number, number, boolean][],
-    number[],
+    Uint8Array,
     [number, number[][]][],
     [number, number, number][] | undefined,
-    number[] | undefined,
+    Uint8Array | undefined,
     [number, number, number[][]][] | undefined,
   ]
   return {
@@ -379,11 +389,12 @@ export function decodeTile(bytes: Uint8Array): TileData {
       trunkHeight: metres(Math.trunc((height * treeKindDef(kind).colliderHeightPct) / 100)),
     })),
     collision: { vertices: flatMetres(vertices), triangles: flatIndices(triangles) },
-    ground: inMetres(ground),
-    water: inMetres(water, true),
+    ground: inMetres(int16s(ground)),
+    water: inMetres(int16s(water), true),
     streams: streams.map(([width, points]) => ({ width: metres(width), points: points.map(point) })),
     bridges: (bridges ?? []).map(([first, deck, steel]) => ({ first, deck, steel })),
-    detail: detail && detail.length > 0 ? Int8Array.from(detail) : undefined,
+    // A copy of its own: a view would keep the whole file alive, and be cloned whole to the worker.
+    detail: detail && detail.length > 0 ? new Int8Array(detail.slice().buffer) : undefined,
     rails: (rails ?? []).map(([gauge, kind, points]) => ({ gauge: metres(gauge), kind, points: points.map(point) })),
     bytes,
   }

@@ -31,7 +31,9 @@ export interface TestBuilding {
 export function tileBytes({ vertices = [], triangles = [], ground = [], buildings = [] }: { vertices?: number[][]; triangles?: number[][]; ground?: ArrayLike<number>; buildings?: TestBuilding[] }): Uint8Array {
   const mesh = [vertices.map((v) => v.map(cm)), triangles]
   const houses = buildings.map((b) => [cm(b.height), b.footprint.map((p) => p.map(cm)), cm(b.base), b.first, b.walls, b.roof, b.roofKind])
-  return encode([houses, [], mesh, Array.from(ground, cm), [], [], [], [], [], [], []])
+  // Ground, water and detail as `bin`s of little-endian samples (`samples16` in `world.rs`).
+  const heights = new Uint8Array(Int16Array.from(ground, cm).buffer)
+  return encode([houses, [], mesh, heights, [], [], new Uint8Array(), [], [], new Uint8Array(), []])
 }
 
 /** The server's physics on a flat floor at y = 0, 200 m square. */
