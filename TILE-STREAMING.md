@@ -70,6 +70,13 @@ sequenceDiagram
   WV->>TW: drop: forget its ground
 ```
 
+**The tile file** (`Tile` in `crates/shared/src/world.rs`, world version 14) is msgpack. The bulky fields are binary, so decoding is mostly taking views:
+- **Ground and water:** heights in centimetres as `bin`s of little-endian `i16`s (`samples16`). `decodeTile` reads them as one `Int16Array` each and converts them to metres.
+- **Detail slopes:** a `bin` of `i8`s (`samples8`).
+- **Building cells:** packed into `bin`s (`Bits`).
+
+The rest (cover, roads, trees, the collision mesh) are arrays of numbers.
+
 **Streaming** (`stream.ts`):
 - **Load and unload:** tiles within 450 m of the player are loaded, and dropped again beyond 550 m, with four fetches at a time.
 - **Prepare:** `prepare` runs off the frame and is always awaited before a tile is attached or discarded, so a worker reply never arrives for a tile the view has already dropped.
@@ -160,7 +167,7 @@ The 1 m dev world (`client/public/dev`, 121 tiles of 256 m). Times are in ms per
 |---|---|---|---|
 | `tileGroup` + `buildWater` | main (Chrome) | 0.30 / 1.10 / 4.3 | 22.4 / 38.2 / 52.8, everything built on the main thread |
 | Posting `prepare` | main (Chrome) | 0.10 / 0.20 / 0.30 | — |
-| Hash + decode | main (Chrome) | 0.70 / 1.20 / 1.60 | about 4.5 median (Node) |
+| Hash + decode | main (Chrome) | 0.40 / 0.60 / 0.90 | about 4.5 median (Node) |
 | `ClientSim.addTile` | main, WASM (Node) | 1.41 / 3.14 / 5.21 | same |
 | A building falling | main (Node) | 0.03 / 0.09 / 0.16 | 0.29 / 7.43 / 11.87 |
 | `prepareTile`, the whole tile | worker (Node) | 26.2 / 35.0 / 61.0 | — |
@@ -171,7 +178,7 @@ The 1 m dev world (`client/public/dev`, 121 tiles of 256 m). Times are in ms per
 
 `prepareTile` takes about 26 ms of the worker's time per tile, so one worker keeps up with about 35 tiles a second. Tiles are fetched from 450 m away and arrive a few a second at driving speed, so that is plenty.
 
-**Garbage.** Decoding a tile allocates about 1.1 MB on the main thread's heap and keeps 137 KB of it. The rest is msgpack's temporary arrays, which die young and cost an occasional minor collection. The worker allocates more (about 1.3 MB of shading cache per tile), but its collections never touch the frame.
+**Garbage.** Decoding a tile allocates about 0.5 MB on the main thread's heap and keeps about 150 KB of it. The rest is msgpack's temporary arrays for the cover, roads and trees, which die young. That was 1.1 MB before the ground and water became raw bytes. The worker allocates more (about 1.3 MB of shading cache per tile), but its collections never touch the frame.
 
 To measure, from `client/`:
 
@@ -205,7 +212,6 @@ BENCH=1 npx vitest run tiles.bench --silent=false
 - **Play-test.** Check roads at tile seams, in ditches and on distant tiles (beyond 320 m the terrain is drawn up to 50 cm off the true ground), and water. Record a Chrome trace while driving across the dev world: are any frames over 20 ms, and what are they spent on? Per-frame garbage in the game loop is not measured yet; the trace would show it.
 - **Ribbon seams.** Re-drape the ribbons along a shared edge when a neighbour arrives, as the relief is, if roads show a step there.
 - **Carve-only WASM for the worker.** The worker loads the whole simulation module (Rapier included) for the carve functions. Its first tile with buildings waits about 46 ms for it, and the module holds memory of its own. Split out a small `carve-wasm` crate only if that shows up in a trace or a memory profile.
-- **Ground as raw bytes in the tile file.** Decoding would become a near zero-copy view and drop most of decoding's 1.1 MB of garbage. It is a format change (Rust, a version bump, regenerated worlds) for about 0.3 ms a tile, so it waits.
 
 ## Decided against
 
@@ -231,3 +237,4 @@ All on 2026-10-25, on master:
 | `97e918b` | `decodeTile` fills its arrays with loops |
 | `7ae3cdc` | A fallen building is taken out in place |
 | `5456d00` | One tile worker and one `prepareTile` replace the two workers; the surface and grass rasters move off the main thread |
+| `65c81ce` | Ground, water and detail are stored as raw bytes (world version 14): decoding halves, its garbage halves, tiles are 30% smaller |
