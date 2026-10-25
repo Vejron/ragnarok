@@ -1,18 +1,19 @@
 import type { TileGround } from '@/sim/terrain'
 import type { TileData } from '@/world'
+import type { Draped, DrapedTile } from './groundmesh'
 import type { Pixels, TerrainBuffers } from './terrainmesh'
 
 /*
  * The main thread's side of the terrain worker (`terrain.worker.ts`), which builds a tile's terrain
- * mesh, relief map and cover texture off the main thread, so a tile arriving costs the frame only the
- * upload. The worker keeps its own copy of every tile's ground it has built, to shade across seams
+ * mesh, relief map and cover texture, and the roads, rails and water draped on it (`groundmesh.ts`),
+ * off the main thread, so a tile arriving costs the frame only the upload. The worker keeps its own copy of every tile's ground it has built, to shade across seams
  * and to mesh the tile again at another level of detail.
  */
 
 /** What the worker is asked. `level` indexes `TERRAIN_LOD_ERRORS`. */
 export type TerrainRequest =
   | { kind: 'init'; halfExtent: number; tileSize: number }
-  | { kind: 'build'; id: number; col: number; row: number; level: number; ground: TileGround; cover: TileData['cover']; detail?: Int8Array }
+  | { kind: 'build'; id: number; col: number; row: number; level: number; ground: TileGround; cover: TileData['cover']; detail?: Int8Array; draped: DrapedTile }
   | { kind: 'remesh'; id: number; col: number; row: number; level: number }
   | { kind: 'drop'; col: number; row: number }
 
@@ -21,7 +22,7 @@ export type TerrainRequest =
  * neighbour whose relief it changed; a `remesh` gets a `meshed` (or a `failed`).
  */
 export type TerrainReply =
-  | { kind: 'built'; id: number; buffers: TerrainBuffers; cover: ImageBitmap | null; relief: Pixels }
+  | { kind: 'built'; id: number; buffers: TerrainBuffers; cover: ImageBitmap | null; relief: Pixels; draped: Draped }
   | { kind: 'meshed'; id: number; buffers: TerrainBuffers }
   | { kind: 'failed'; id: number; message: string }
   | { kind: 'shaded'; col: number; row: number; relief: Pixels }
@@ -33,6 +34,8 @@ export interface PreparedTerrain {
   relief: Pixels
   /** The level of detail `buffers` were simplified to. */
   level: number
+  /** Its roads, rails and water. */
+  draped: Draped
 }
 
 /** The transferable buffers of `buffers`, so they move to the other thread instead of being copied. */
@@ -67,10 +70,11 @@ export class TerrainWorker {
   }
 
   /** Builds tile `(col, row)`'s terrain at `level`. From now on the worker shades its neighbours with it, until `drop`. */
-  async build(col: number, row: number, level: number, ground: TileGround, tile: Pick<TileData, 'cover' | 'detail'>): Promise<PreparedTerrain> {
-    const reply = await this.ask((id) => ({ kind: 'build', id, col, row, level, ground, cover: tile.cover, ...(tile.detail ? { detail: tile.detail } : {}) }))
+  async build(col: number, row: number, level: number, ground: TileGround, tile: Pick<TileData, 'cover' | 'detail'> & DrapedTile): Promise<PreparedTerrain> {
+    const draped: DrapedTile = { roads: tile.roads, rails: tile.rails, water: tile.water, streams: tile.streams }
+    const reply = await this.ask((id) => ({ kind: 'build', id, col, row, level, ground, cover: tile.cover, ...(tile.detail ? { detail: tile.detail } : {}), draped }))
     if (reply.kind !== 'built') throw new Error(`terrain worker answered ${reply.kind}`)
-    return { buffers: reply.buffers, cover: reply.cover, relief: reply.relief, level }
+    return { buffers: reply.buffers, cover: reply.cover, relief: reply.relief, level, draped: reply.draped }
   }
 
   /** Tile `(col, row)`'s terrain mesh simplified to `level` instead. */

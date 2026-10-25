@@ -1,7 +1,11 @@
-import { Geometry, Material, Mesh, type Ramp } from '@ragnarok/engine'
-import { toonMaterial } from './toon'
 import { ROAD_MAJOR, ROAD_MINOR, ROAD_PATH, type Road } from '@/world'
-import { GroundShade, toneOf, type Height } from './shade'
+import { toneOf, type GroundShade } from './shade'
+
+/*
+ * Roads as ribbons draped on the ground, as plain arrays: built in the terrain worker
+ * (`terrain.worker.ts`) or, without one, on the main thread, and made meshes in `world.ts`
+ * (`ribbonMeshes`). Nothing here touches the scene, so it loads in a worker.
+ */
 
 /** `[casing, fill]` per road kind; paths have no casing. */
 const ROAD_COLORS: Record<number, [number | null, number]> = {
@@ -20,18 +24,22 @@ const DISC = 12
 /** Paths first, so the wider roads are drawn over them at junctions. */
 const RANK: Record<number, number> = { [ROAD_PATH]: 0, [ROAD_MINOR]: 1, [ROAD_MAJOR]: 2 }
 
-const materials = new Map<string, Material>()
-export function layerMaterial(color: number, offset: number, ramp: Ramp) {
-  const key = `${color}:${offset}`
-  let found = materials.get(key)
-  if (!found) {
-    // Each layer pulls further towards the camera, so overlapping roads settle in a fixed order and
-    // clear the terrain at any distance; the lift alone covers the near field, where depth is fine.
-    // A flat quad between samples cuts the terrain's kinks, so the lift must exceed that chord error.
-    found = toonMaterial({ color, ramp, vertexColors: true, depthBias: offset, depthBiasSlope: 2 })
-    materials.set(key, found)
-  }
-  return found
+/** One layer's triangles: corners in metres, a normal and a grey tone a vertex, and indices. */
+export interface RibbonBuffers {
+  positions: Float32Array
+  normals: Float32Array
+  colors: Float32Array
+  indices: Uint32Array
+}
+
+/**
+ * One layer of ribbons and what it is drawn with: its `color`, and `offset`, the depth bias that
+ * keeps overlapping layers in a fixed order (`layerMaterial`).
+ */
+export interface Ribbon {
+  buffers: RibbonBuffers
+  color: number
+  offset: number
 }
 
 /** Numbers appended three at a time to a typed array that doubles when full. */
@@ -144,31 +152,23 @@ export class Layer {
     }
   }
 
-  mesh(material: Material): Mesh | null {
+  /** The layer as a ribbon drawn in `color` with depth bias `offset`, or null when it has no triangles. */
+  ribbon(color: number, offset: number): Ribbon | null {
     if (this.indices.length === 0) return null
-    const geometry = new Geometry({
-      positions: this.positions.array(),
-      normals: this.normals.array(),
-      colors: this.colors.array(),
-      indices: this.indices.array(),
-    })
-    const mesh = new Mesh(geometry, material)
-    mesh.receiveShadow = true
-    return mesh
+    const buffers = { positions: this.positions.array(), normals: this.normals.array(), colors: this.colors.array(), indices: this.indices.array() }
+    return { buffers, color, offset }
   }
 }
 
 /**
  * Roads as ribbons laid on the terrain, so their edges are as sharp as the screen is, however
- * close the camera gets (a texture would show its texels). One mesh per kind and layer: all the
+ * close the camera gets (a texture would show its texels). One ribbon per kind and layer: all the
  * casings, then all the fills, so a junction reads as one surface rather than a stack of outlines.
  * `border` is the tile's `[x0, z0, x1, z1]`; a road ending on it gets no round cap, since its
- * neighbour tile carries on from there.
+ * neighbour tile carries on from there. `shade` is the tile's (`GroundShade`).
  */
-export function buildRoads(roads: readonly Road[], height: Height, step: number, border: readonly [number, number, number, number], ramp: Ramp): Mesh[] {
-  if (roads.length === 0) return []
-  const meshes: Mesh[] = []
-  const shade = new GroundShade(height, step, border)
+export function roadRibbons(roads: readonly Road[], shade: GroundShade, border: readonly [number, number, number, number]): Ribbon[] {
+  const out: Ribbon[] = []
   for (const pass of [0, 1] as const) {
     for (const kind of [ROAD_PATH, ROAD_MINOR, ROAD_MAJOR]) {
       const colors = ROAD_COLORS[kind]!
@@ -186,9 +186,9 @@ export function buildRoads(roads: readonly Road[], height: Height, step: number,
           if (!onBorder) layer.disc(x, z, half)
         }
       }
-      const mesh = layer.mesh(layerMaterial(color, (pass === 0 ? 8 : 20) + rank * 2, ramp))
-      if (mesh) meshes.push(mesh)
+      const ribbon = layer.ribbon(color, (pass === 0 ? 8 : 20) + rank * 2)
+      if (ribbon) out.push(ribbon)
     }
   }
-  return meshes
+  return out
 }

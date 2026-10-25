@@ -6,20 +6,15 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { it } from 'vitest'
-import type { Mesh } from '@ragnarok/engine'
 import { decodeManifest, decodeTile, worldHash, type TileData } from '@/world'
 import { ClientSim } from '@/sim/wasm/sim'
 import { groundOf, Terrain, type TileGround } from '@/sim/terrain'
 import { rasterSurface } from '@/sim/surface'
 import { buildingBuffers } from '@/render/buildingmesh'
 import { grassMask } from '@/render/grass'
-import { TERRAIN_RAMP } from '@/render/groundlight'
-import { buildRails } from '@/render/rails'
-import { buildRoads } from '@/render/roads'
-import { heightSampler } from '@/render/shade'
+import { ribbonsOf, waterBuffers } from '@/render/groundmesh'
 import { terrainBuffers, TERRAIN_LOD_ERRORS } from '@/render/terrainmesh'
 import { buildTrees } from '@/render/trees'
-import { buildWater } from '@/render/water'
 
 const root = resolve(process.cwd(), 'public/dev')
 
@@ -51,7 +46,6 @@ it.skipIf(!process.env.BENCH || !existsSync(resolve(root, 'world.msgpack')))('wh
     ;(stages[stage] ??= []).push(performance.now() - start)
     return out
   }
-  const vertices = (meshes: Mesh[]) => meshes.reduce((sum, mesh) => sum + mesh.geometry.vertexCount, 0)
   const ribbonVertices: number[] = []
 
   for (const { col, row, bytes } of tiles) {
@@ -68,15 +62,10 @@ it.skipIf(!process.env.BENCH || !existsSync(resolve(root, 'world.msgpack')))('wh
     time('trees', () => buildTrees(tile.trees))
     if (!ground) continue
     time('terrain mesh (finest)', () => terrainBuffers(ground, TERRAIN_LOD_ERRORS[0]!))
-    const size = (ground.side - 1) * ground.cell
-    const height = heightSampler(ground, terrain)
-    const border = [ground.x0, ground.z0, ground.x0 + size, ground.z0 + size] as const
-    const ribbons = time('roads + rails', () => [
-      ...buildRoads(tile.roads, height, ground.cell, border, TERRAIN_RAMP),
-      ...buildRails(tile.rails, height, ground.cell, border, TERRAIN_RAMP),
-    ])
-    ribbonVertices.push(vertices(ribbons))
-    time('water', () => buildWater(tile, ground, terrain))
+    // Built in the terrain worker; timed here as the main thread builds them without one.
+    const ribbons = time('roads + rails', () => ribbonsOf(tile, ground, terrain))
+    ribbonVertices.push(ribbons.reduce((sum, { buffers }) => sum + buffers.positions.length / 3, 0))
+    time('water', () => waterBuffers(tile, ground, terrain))
   }
 
   const summary = (values: number[]) => {

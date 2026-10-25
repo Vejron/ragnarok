@@ -4,15 +4,37 @@ import type { TileGround } from '@/sim/terrain'
 import type { TileData } from '@/world'
 import { buildingBuffers, buildingColors, oneBuildingBuffers, type BuildingBuffers } from './buildingmesh'
 import { GRASS_COLOR, bakeTerrainTexture, coverTexture, reliefTexture } from './cover'
-import { buildRails } from './rails'
-import { buildRoads } from './roads'
-import { heightSampler, type HeightSource } from './shade'
+import { ribbonsOf, type Ribbon } from './groundmesh'
+import type { HeightSource } from './shade'
 import { reliefPixels, terrainBuffers, TERRAIN_LOD_ERRORS, type Pixels, type TerrainBuffers } from './terrainmesh'
 import type { PreparedTerrain } from './terrainworker'
 import { buildTrees } from './trees'
 import { TERRAIN_RAMP } from './groundlight'
 
 export type { HeightSource }
+
+/** Ribbon materials are shared by every tile too, by colour and depth bias. */
+const ribbonMaterials = new Map<string, Material>()
+
+/**
+ * Roads' and rails' ribbons (`roads.ts`, `rails.ts`) as meshes, toned like the terrain under them.
+ * Each layer pulls further towards the camera (`offset`), so overlapping ribbons settle in a fixed
+ * order and clear the terrain at any distance; the lift alone covers the near field, where depth
+ * is fine. A flat quad between samples cuts the terrain's kinks, so the lift must exceed that chord error.
+ */
+function ribbonMeshes(ribbons: readonly Ribbon[]): Mesh[] {
+  return ribbons.map(({ buffers, color, offset }) => {
+    const key = `${color}:${offset}`
+    let material = ribbonMaterials.get(key)
+    if (!material) {
+      material = toonMaterial({ color, ramp: TERRAIN_RAMP, vertexColors: true, depthBias: offset, depthBiasSlope: 2 })
+      ribbonMaterials.set(key, material)
+    }
+    const mesh = new Mesh(new Geometry(buffers), material)
+    mesh.receiveShadow = true
+    return mesh
+  })
+}
 
 /** Every tile's buildings share this one; each vertex carries its colour. */
 const buildingMaterial = toonMaterial({ vertexColors: true })
@@ -105,11 +127,7 @@ export function buildTile(
   const group = new Group()
   if (ground) {
     group.add(buildTerrain(tile, ground, around, terrain))
-    const size = (ground.side - 1) * ground.cell
-    const height = heightSampler(ground, around)
-    const border = [ground.x0, ground.z0, ground.x0 + size, ground.z0 + size] as const
-    group.add(...buildRoads(tile.roads, height, ground.cell, border, TERRAIN_RAMP))
-    group.add(...buildRails(tile.rails, height, ground.cell, border, TERRAIN_RAMP))
+    group.add(...ribbonMeshes(terrain?.draped.ribbons ?? ribbonsOf(tile, ground, around)))
   }
   group.add(...mergedMesh(buildings === undefined ? buildingBuffers(tile, salt, destroyed) : buildings))
   group.add(...buildTrees(tile.trees))

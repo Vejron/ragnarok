@@ -1,7 +1,6 @@
-import type { Mesh, Ramp } from '@ragnarok/engine'
 import { BALLAST_EXTRA, RAIL_TRAIN, type Point2, type Rail } from '@/world'
-import { Layer, layerMaterial } from './roads'
-import { GroundShade, type Height } from './shade'
+import { Layer, type Ribbon } from './roads'
+import type { GroundShade } from './shade'
 
 /** Sleeper spacing along the track, its width along it, and how far it reaches past each rail, metres. */
 const SLEEPER_PITCH = 0.65
@@ -110,9 +109,7 @@ function sleepers(layer: Layer, points: readonly Point2[], length: number) {
  * street. `border` is the tile's `[x0, z0, x1, z1]`; a track ending on it gets no round cap, since
  * its neighbour tile carries on from there.
  */
-export function buildRails(rails: readonly Rail[], height: Height, step: number, border: readonly [number, number, number, number], ramp: Ramp): Mesh[] {
-  if (rails.length === 0) return []
-  const shade = new GroundShade(height, step, border)
+export function railRibbons(rails: readonly Rail[], shade: GroundShade, border: readonly [number, number, number, number]): Ribbon[] {
   const ballast = new Layer(0.04, shade)
   const ties = new Layer(0.14, shade)
   const steel = new Layer(0, shade)
@@ -131,5 +128,5 @@ export function buildRails(rails: readonly Rail[], height: Height, step: number,
     for (const centre of [-gauge / 2, gauge / 2]) sweep(steel, points, normals, centre, train ? TRAIN_RAIL : TRAM_RAIL)
   }
   // The ballast sits under the roads' casings; sleepers and rails pull in front of their fills.
-  return [ballast.mesh(layerMaterial(BALLAST_COLOR, 6, ramp)), ties.mesh(layerMaterial(SLEEPER_COLOR, 26, ramp)), steel.mesh(layerMaterial(STEEL_COLOR, 28, ramp))].filter((mesh): mesh is Mesh => mesh !== null)
+  return [ballast.ribbon(BALLAST_COLOR, 6), ties.ribbon(SLEEPER_COLOR, 26), steel.ribbon(STEEL_COLOR, 28)].filter((ribbon): ribbon is Ribbon => ribbon !== null)
 }

@@ -342,7 +342,7 @@ export class WorldView {
     // Buildings that are hurt are drawn by `damage`, as shards, not with the tile.
     const group = buildTile(tile, salt, ground, this.terrain ?? undefined, undrawn, prepared, buildings)
     this.scene.add(group)
-    const water = ground ? buildWater(tile, ground, this.terrain ?? undefined) : null
+    const water = ground ? buildWater(tile, ground, this.terrain ?? undefined, prepared?.draped.water) : null
     if (water) this.waterRoot.add(water)
     this.terrain?.set(ref, ground)
     this.surfaces?.add(ref, tile, ground)

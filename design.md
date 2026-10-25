@@ -466,7 +466,7 @@ Done: tile meshes are built in Web Workers, so the main thread only uploads them
 - Damaged buildings are still redrawn on the main thread (`rebuildBuildings`, from the client's carve state), so the worker keeps no carve state.
 - The scene graph and the Rapier colliders stay on the main thread.
 - What is left of the cost is the face merging in WASM (`greedy`, about 40%) and filling the arrays. Both now run in the worker.
-- On 1 m tiles the main thread's biggest cost is now the roads and rails draped on the ground (about 25 ms median a tile, up to 126 ms). The plan to move them and the rest of a tile's ground work off the main thread is in [TILE-STREAMING.md](TILE-STREAMING.md).
+- The terrain worker also builds what a tile drapes on its ground: roads, rails and water (`render/groundmesh.ts`). It already holds the neighbours' ground, which ribbons near an edge need. Before, they were the main thread's biggest cost on 1 m tiles (about 25 ms median a tile, up to 126 ms). With the workers' results, `buildTile` and `buildWater` take about 0.3 ms median and 0.7 ms p95 on the main thread. Progress and what is left are in [TILE-STREAMING.md](TILE-STREAMING.md).
 
 ### Editor
 

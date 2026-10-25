@@ -11,7 +11,7 @@ The buildings and the terrain are already built in workers (design.md, "Tile mes
 | 0 | Benchmark and baseline in the repo | ◐ benchmark done; browser trace left for the end |
 | 1 | Hash a tile with an indexed loop | ☑ done (p95 0.99 ms, short of 0.5) |
 | 2 | Cheaper road and rail draping on the main thread | ☑ done (4× faster, short of target; Phase 3 takes the rest) |
-| 3 | Roads, rails and water in the terrain worker | ☐ not started |
+| 3 | Roads, rails and water in the terrain worker | ☑ done (seam re-drape and play-test left) |
 | 4 | Decode: measure in the browser, then decide | ☐ not started |
 | 5 | A fallen building removed in place | ☐ not started |
 | 6 | Carve-only WASM for the buildings worker (optional) | ☐ not started |
@@ -92,18 +92,21 @@ That is about 14 `heightIn` calls a vertex, with vertices 1 m apart along the ro
 
 Roads, rails and water are draped on the ground and need the neighbouring tiles at the seams. The terrain worker (`render/terrain.worker.ts`) already keeps every built tile's ground for exactly that purpose. It becomes the ground worker: everything that lies on the ground is built there.
 
-- [ ] **Split data from scene in roads, rails and water**, as `render/buildingmesh.ts` does for buildings:
-  - Each module returns plain buffers: positions, normals, colours, indices, bounds, and the material key (kind, pass, rank, offset).
-  - `Mesh` and material creation stay on the main thread, in `buildTile`.
-  - The modules must not import anything that touches the scene or the DOM, so they can load in a worker.
-- [ ] **Extend the terrain request.** `TerrainRequest.build` takes the tile's roads, rails, water levels and streams. `TerrainReply.built` returns the ribbon buffers alongside the terrain, as transferables.
-- [ ] **Use the worker's ground for heights.** The worker samples through its own stored grounds instead of the main thread's `Terrain`.
-- [ ] **Attach.** `buildTile` takes the prepared ribbons when present and builds them itself when not (no worker, or the worker failed), as for terrain and buildings.
-- [ ] **Seams, unchanged at first.** Today ribbons are draped once, with whatever neighbours are loaded, and never redone. Keep that behaviour in this phase.
+- [x] **Split data from scene in roads, rails and water**, as `render/buildingmesh.ts` does for buildings:
+  - `roadRibbons` (`roads.ts`) and `railRibbons` (`rails.ts`) return `Ribbon`s: positions, normals, tones and indices, with the material's colour and depth bias.
+  - `surfaceBuffers` and `streamBuffers` (new `watermesh.ts`) return the water's arrays.
+  - `drapedMeshes` (new `groundmesh.ts`) builds all of a tile's, sharing one `GroundShade` between its roads and rails.
+  - None of these modules import the engine.
+- [x] **Mesh and material creation stay on the main thread:** `ribbonMeshes` in `world.ts` (it took over `layerMaterial`), and `buildWater`, which now takes prepared buffers.
+- [x] **Extend the terrain request.** `TerrainRequest.build` carries the tile's `DrapedTile` (roads, rails, water levels, streams). `TerrainReply.built` and `PreparedTerrain` carry the `Draped` meshes, sent as transferables.
+- [x] **Use the worker's ground for heights.** The worker drapes through its own `Terrain` of the tiles it has built, as it does for relief.
+- [x] **Attach.** `buildTile` uses `prepared.draped.ribbons` and `attachTile` passes `prepared.draped.water` to `buildWater`. Without them, both build on the main thread as before.
+- [x] **Seams, unchanged at first.** Ribbons are draped once, with whatever neighbours are loaded, and never redone, as before.
 - [ ] **Seams, optional follow-up.** When a neighbour arrives, re-drape the ribbons that end on the shared edge and send them like `shaded`, so roads meet as cleanly as the terrain's relief does.
-- [ ] **Remeshing.** Check that remeshing at another level of detail (`remesh`) doesn't touch the ribbons. They are draped on the true ground, not the simplified mesh.
+- [x] **Remeshing.** `remesh` only rebuilds `terrainBuffers`. The ribbons are draped on the true ground and stay as they are.
 - [ ] **Distant roads.** Check the far roads in play, as noted in the handoff: tiles beyond 320 m are drawn up to 50 cm off the true ground.
 - [ ] **Rename (optional, last).** `TerrainWorker` → `GroundWorker`, and update design.md §8 and "Tile meshes off the main thread".
+- [x] **Checked in Chrome** on the first 40 dev-world tiles, built in order through the real `TerrainWorker`. The ribbons and water came out bit for bit the same as the main thread's with the same neighbours. `buildTile` + `buildWater` on the main thread went from 22.4 / 38.2 / 52.8 ms with no worker to 0.30 / 0.70 / 4.7 ms with the workers' results (median / p95 / max).
 
 **Done when** the attach-time target holds, roads, rails and water look the same in play, and the main-thread fallback still passes the tests.
 
@@ -151,6 +154,8 @@ The buildings worker compiles the whole 2.8 MB simulation module (Rapier include
 ## Log
 
 Newest first. One entry per change: date, phase, what was done, numbers before and after, commit.
+
+- **2026-10-25 · phase 3.** The terrain worker builds each tile's roads, rails and water (`groundmesh.ts`). In Chrome, `buildTile` + `buildWater` on the main thread take 0.30 / 0.70 / 4.7 ms with the workers' results, against 22.4 / 38.2 / 52.8 ms without, and the output is bit for bit the same. Still to do: re-drape at seams (optional), look at roads and distant roads in play.
 
 - **2026-10-25 · phase 2.** `GroundShade` caches node heights, node normals and ring means for each tile's roads and rails, and `Layer` writes typed arrays. Roads + rails 24.7 / 55.2 / 101.4 → 6.2 / 14.4 / 21.1 ms. The shading moves by 0.006 tone on average, at most 0.06 at a sharp ditch's edge. Still to do: look at roads in play.
 - **2026-10-25 · phase 1.** `worldHash` uses an indexed loop: median 2.10 → 0.55 ms, p95 3.97 → 0.99 ms.

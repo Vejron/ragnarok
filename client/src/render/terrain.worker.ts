@@ -2,10 +2,11 @@
 import { Terrain } from '@/sim/terrain'
 import { coverPixels, paintCover, reliefPixels, terrainBuffers, TERRAIN_LOD_ERRORS, type Pixels } from './terrainmesh'
 import { transferables, type TerrainReply, type TerrainRequest } from './terrainworker'
+import { drapedMeshes, drapedTransferables } from './groundmesh'
 
 /*
- * Builds tiles' terrain off the main thread (`TerrainWorker`): the simplified mesh, the relief map
- * and the painted cover. Every tile built here stays in `terrain` until dropped, so a tile is shaded
+ * Builds tiles' terrain off the main thread (`TerrainWorker`): the simplified mesh, the relief map,
+ * the painted cover, and the roads, rails and water draped on it. Every tile built here stays in `terrain` until dropped, so a tile is shaded
  * with the neighbours already built, those are shaded again along the new seam, and the tile can be
  * meshed again at another level of detail.
  */
@@ -61,10 +62,11 @@ self.onmessage = (event: MessageEvent<TerrainRequest>) => {
         paintCover(ctx, request, ground.x0, ground.z0, size, pixels)
         cover = canvas.transferToImageBitmap()
       }
+      const draped = drapedMeshes(request.draped, ground, terrain)
       const sent = copy(relief)
-      const transfer: Transferable[] = [...transferables(buffers), sent.data.buffer]
+      const transfer: Transferable[] = [...transferables(buffers), sent.data.buffer, ...drapedTransferables(draped)]
       if (cover) transfer.push(cover)
-      reply({ kind: 'built', id, buffers, cover, relief: sent }, transfer)
+      reply({ kind: 'built', id, buffers, cover, relief: sent, draped }, transfer)
       // The tiles already here were shaded without this one beside them: close the seams.
       for (const [dc, dr] of NEIGHBOURS) {
         const next = terrain.get(col + dc, row + dr)
