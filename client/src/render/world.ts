@@ -129,7 +129,7 @@ export function buildTile(
     group.add(buildTerrain(tile, ground, around, terrain))
     group.add(...ribbonMeshes(terrain?.draped.ribbons ?? ribbonsOf(tile, ground, around)))
   }
-  group.add(...mergedMesh(buildings === undefined ? buildingBuffers(tile, salt, destroyed) : buildings))
+  group.add(...mergedMesh(buildings === undefined ? buildingBuffers(tile, salt, destroyed) : buildings, destroyed))
   group.add(...buildTrees(tile.trees))
   return group
 }
@@ -163,23 +163,53 @@ function trianglePositions<T extends Triples>(tile: TileData, from: number, coun
  * The tile's buildings (as cubes) and bridges as one mesh with a colour per vertex
  * (`buildingBuffers`). One draw per tile (and one shadow draw) however many colours it holds.
  */
-function mergedMesh(buffers: BuildingBuffers | null): Mesh[] {
+function mergedMesh(buffers: BuildingBuffers | null, destroyed: ReadonlySet<number>): Mesh[] {
   if (!buffers) return []
-  const mesh = new Mesh(new Geometry(buffers), buildingMaterial)
+  const { positions, normals, colors, bounds } = buffers
+  const mesh = new Mesh(new Geometry({ positions, normals, colors, bounds }), buildingMaterial)
   mesh.castShadow = true
   mesh.receiveShadow = true
   mesh.userData.merged = true
+  const merged: Merged = { ranges: buffers.ranges ?? null, left: new Set(destroyed) }
+  mesh.userData.buildings = merged
   return [mesh]
 }
 
-/** Redraws a tile's buildings without those in `destroyed` (indices into `tile.buildings`). */
+/** What a tile's merged mesh knows of its buildings: where each one's vertices are, and those it leaves out. */
+interface Merged {
+  ranges: Uint32Array | null
+  left: Set<number>
+}
+
+/**
+ * Redraws a tile's buildings without those in `destroyed` (indices into `tile.buildings`). When
+ * that only leaves out more of them, as when one falls or starts to be drawn as shards, their
+ * vertices are collapsed to a point in place and only they are sent again; otherwise the mesh is
+ * built anew.
+ */
 export function rebuildBuildings(group: Group, tile: TileData, salt: number, destroyed: ReadonlySet<number>) {
+  const drawn = group.children.find((child): child is Mesh => child.userData.merged === true && child instanceof Mesh)
+  const merged = drawn?.userData.buildings as Merged | undefined
+  if (drawn && merged?.ranges && [...merged.left].every((index) => destroyed.has(index))) {
+    const { positions } = drawn.geometry
+    for (const index of destroyed) {
+      if (merged.left.has(index)) continue
+      merged.left.add(index)
+      const [first, count] = [merged.ranges[index * 2]!, merged.ranges[index * 2 + 1]!]
+      if (count === 0) continue
+      // Every corner on the first: no triangle left to draw, and no shadow.
+      const at = first * 3
+      for (let k = at + 3; k < (first + count) * 3; k += 3) positions.copyWithin(k, at, at + 3)
+      drawn.geometry.needsUpdateRange(first, count)
+    }
+    return
+  }
   const stale = group.children.filter((child): child is Mesh => child.userData.merged === true && child instanceof Mesh)
   for (const mesh of stale) {
     mesh.geometry.dispose()
     group.remove(mesh)
   }
-  group.add(...mergedMesh(buildingBuffers(tile, salt, destroyed)))
+  group.add(...mergedMesh(buildingBuffers(tile, salt, destroyed), destroyed))
 }
 
 /**

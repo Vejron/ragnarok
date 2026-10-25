@@ -139,8 +139,18 @@ describe('building triangle ranges', () => {
 })
 
 describe('redrawing a tile without a building', () => {
+  /** Vertices of the merged meshes' triangles that are drawn: a building taken out in place leaves its own collapsed to a point. */
   const vertexCount = (group: Group) =>
-    group.children.reduce((n, c) => n + (c instanceof Mesh && c.userData.merged ? c.geometry.vertexCount : 0), 0)
+    group.children.reduce((n, c) => {
+      if (!(c instanceof Mesh) || !c.userData.merged) return n
+      const p = c.geometry.positions
+      for (let i = 0; i < p.length; i += 9) {
+        const [ax, ay, az, bx, by, bz, cx, cy, cz] = p.subarray(i, i + 9)
+        const [ux, uy, uz, vx, vy, vz] = [bx! - ax!, by! - ay!, bz! - az!, cx! - ax!, cy! - ay!, cz! - az!]
+        if (Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) > 0) n += 3
+      }
+      return n
+    }, 0)
 
   it('drops that building\'s triangles from the merged meshes and no others', () => {
     const tile = twoHouses()
@@ -156,6 +166,22 @@ describe('redrawing a tile without a building', () => {
     expect(first + second).toBe(both)
     rebuildBuildings(group, tile, 0, new Set([0, 1]))
     expect(vertexCount(group)).toBe(0)
+  })
+
+  it('takes a building out in place when it only leaves out more of them', () => {
+    const tile = twoHouses()
+    const group = buildTile(tile, 0)
+    const mesh = group.children.find((c): c is Mesh => c instanceof Mesh && c.userData.merged === true)!
+    const geometry = mesh.geometry
+    rebuildBuildings(group, tile, 0, new Set([0]))
+    // The same geometry, with only the first house's vertices sent again.
+    expect(group.children.find((c) => c instanceof Mesh && c.userData.merged)).toBe(mesh)
+    expect(geometry.dirtyRanges).toHaveLength(2)
+    const fresh = buildTile(tile, 0, null, undefined, new Set([0]))
+    expect(vertexCount(group)).toBe(vertexCount(fresh))
+    // Bringing a house back takes a new mesh.
+    rebuildBuildings(group, tile, 0, new Set())
+    expect(group.children.find((c) => c instanceof Mesh && c.userData.merged)).not.toBe(mesh)
   })
 })
 

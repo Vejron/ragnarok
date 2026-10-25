@@ -13,7 +13,7 @@ The buildings and the terrain are already built in workers (design.md, "Tile mes
 | 2 | Cheaper road and rail draping on the main thread | ☑ done (4× faster, short of target; Phase 3 takes the rest) |
 | 3 | Roads, rails and water in the terrain worker | ☑ done (seam re-drape and play-test left) |
 | 4 | Decode: measure in the browser, then decide | ☑ done (loops in `decodeTile`; no worker needed) |
-| 5 | A fallen building removed in place | ☐ not started |
+| 5 | A fallen building removed in place | ☑ done (0.15 ms worst) |
 | 6 | Carve-only WASM for the buildings worker (optional) | ☐ not started |
 
 Status: ☐ not started · ◐ in progress · ☑ done · ✕ dropped (say why in the log).
@@ -130,11 +130,12 @@ Moving the JS decode into a worker only helps if the main thread then gets back 
 
 When a building falls, `rebuildBuildings` refills the whole tile's merged mesh: 4–5.5 ms on the worst tiles, on the main thread. Hurt buildings are drawn by `BuildingDamage` as shards, so the merged mesh only ever needs to lose a whole building.
 
-- [ ] Have `buildingBuffers` return each building's vertex range, and keep the ranges with the tile's group.
-- [ ] When a building falls, collapse its range to degenerate triangles (all corners at one point) and call `Geometry.needsUpdateRange`. Keep the full rebuild only for when a fallen building's range is unknown.
-- [ ] Check the bounds (they stay as they are, which is fine for culling) and the shadow pass.
+- [x] `buildingBuffers` returns each building's vertex range (`BuildingBuffers.ranges`, sent from the worker with the rest). The merged mesh keeps them and the buildings it leaves out (`userData.buildings`).
+- [x] `rebuildBuildings` collapses each newly left-out building's vertices onto one point and calls `Geometry.needsUpdateRange`, so only that range is sent again. This applies whenever the set of left-out buildings only grows: a building falls, or its first dent hands it to the shards. If a building comes back, or the ranges are unknown, the mesh is built anew as before.
+- [x] Bounds stay as they were, which is fine for culling. Collapsed triangles have no area, so they cast no shadow.
+- [x] `destruction.spec.ts` counts only the triangles that are drawn, and checks that the same geometry is kept with one dirty range.
 
-**Done when** a building falling costs the main thread under 0.5 ms.
+**Done when** a building falling costs the main thread under 0.5 ms. Met: 0.03 / 0.10 / 0.15 ms, against 0.29 / 7.43 / 11.87 for the full refill.
 
 ## Phase 6: Carve-only WASM for the buildings worker (optional)
 
@@ -156,6 +157,8 @@ The buildings worker compiles the whole 2.8 MB simulation module (Rapier include
 ## Log
 
 Newest first. One entry per change: date, phase, what was done, numbers before and after, commit.
+
+- **2026-10-25 · phase 5.** A building that falls, or starts to be drawn as shards, is collapsed in place in the tile's merged mesh: 0.29 / 7.43 / 11.87 → 0.03 / 0.10 / 0.15 ms.
 
 - **2026-10-25 · phase 4.** `decodeTile` fills its typed arrays with loops in place of `Float32Array.from(array, map)`: 2.37 → 0.51 ms median in Node. In Chrome, hash + decode take 0.70 / 1.20 / 1.60 ms, so it stays on the main thread.
 

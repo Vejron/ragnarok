@@ -37,11 +37,18 @@ export interface BuildingBuffers {
   normals: Float32Array
   colors: Float32Array
   bounds: Sphere
+  /**
+   * For a tile's soup (`buildingBuffers`), each building's vertices in it: first, then count, two
+   * numbers a building, a count of 0 for one left out. A building that falls later is taken out of
+   * the drawn mesh in place (`rebuildBuildings`).
+   */
+  ranges?: Uint32Array
 }
 
 /** The arrays of `buffers`, so they move to the other thread instead of being copied. */
 export function buildingTransferables(buffers: BuildingBuffers): ArrayBuffer[] {
-  return [buffers.positions.buffer, buffers.normals.buffer, buffers.colors.buffer] as ArrayBuffer[]
+  const arrays = [buffers.positions, buffers.normals, buffers.colors, ...(buffers.ranges ? [buffers.ranges] : [])]
+  return arrays.map((array) => array.buffer as ArrayBuffer)
 }
 
 /** The wall and roof colours of building `index`: stable between reloads, varied across tiles by `salt`. */
@@ -148,6 +155,11 @@ class Soup {
     return { x: (x0 + x1) / 2, y: (y0 + y1) / 2, z: (z0 + z1) / 2, radius: Math.hypot(x1 - x0, y1 - y0, z1 - z0) / 2 }
   }
 
+  /** Vertices written so far. */
+  get vertices(): number {
+    return this.at / 3
+  }
+
   buffers(): BuildingBuffers {
     return { positions: this.positions, normals: this.normals, colors: this.colors, bounds: this.bounds() }
   }
@@ -185,13 +197,19 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
   for (const bridge of tile.bridges) count += bridge.deck + bridge.steel
   if (count === 0) return null
   const soup = new Soup(count)
+  const ranges = new Uint32Array(tile.buildings.length * 2)
   tile.buildings.forEach((building, index) => {
     const own = faces[index]
     if (own === undefined) return
+    const first = soup.vertices
     const [wall, roof] = linearColors(tile, index, salt)
-    if (own) return soup.faces(own, wall, roof)
-    soup.collision(tile, building.first, building.walls, wall)
-    soup.collision(tile, building.first + building.walls, building.roof, roof)
+    if (own) soup.faces(own, wall, roof)
+    else {
+      soup.collision(tile, building.first, building.walls, wall)
+      soup.collision(tile, building.first + building.walls, building.roof, roof)
+    }
+    ranges[index * 2] = first
+    ranges[index * 2 + 1] = soup.vertices - first
   })
   // Bridges: concrete deck, piers and parapets, then steel pylon and cables.
   const [deck, steel] = [new THREE.Color(BRIDGE_DECK_COLOR), new THREE.Color(BRIDGE_STEEL_COLOR)]
@@ -199,7 +217,7 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
     soup.collision(tile, bridge.first, bridge.deck, deck)
     soup.collision(tile, bridge.first + bridge.deck, bridge.steel, steel)
   }
-  return soup.buffers()
+  return { ...soup.buffers(), ranges }
 }
 
 /** Building `index` alone as cubes, `offset` (metres) taken off every corner; null when it has no cells. */

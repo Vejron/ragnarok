@@ -11,6 +11,7 @@ import { ClientSim } from '@/sim/wasm/sim'
 import { groundOf, Terrain, type TileGround } from '@/sim/terrain'
 import { rasterSurface } from '@/sim/surface'
 import { buildingBuffers } from '@/render/buildingmesh'
+import { buildTile, rebuildBuildings } from '@/render/world'
 import { grassMask } from '@/render/grass'
 import { ribbonsOf, waterBuffers } from '@/render/groundmesh'
 import { terrainBuffers, TERRAIN_LOD_ERRORS } from '@/render/terrainmesh'
@@ -54,7 +55,10 @@ it.skipIf(!process.env.BENCH || !existsSync(resolve(root, 'world.msgpack')))('wh
     const { tile, ground } = decoded.get(row * 65536 + col)!
     time('ClientSim.addTile', () => sim.addTile(col, row, bytes))
     time('buildings', () => buildingBuffers(tile, 0, new Set()))
-    if (tile.buildings.length > 0) time('buildings, one fallen', () => buildingBuffers(tile, 0, new Set([0])))
+    if (tile.buildings.length > 0) {
+      const group = buildTile(tile, 0)
+      time('one building falls', () => rebuildBuildings(group, tile, 0, new Set([tile.buildings.length >> 1])))
+    }
     const x0 = -world.halfExtent + col * world.tileSize
     const z0 = -world.halfExtent + row * world.tileSize
     time('surface raster', () => rasterSurface(tile, x0, z0, world.tileSize, ground))
