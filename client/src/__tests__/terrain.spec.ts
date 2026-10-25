@@ -1,6 +1,6 @@
 import { Mesh } from '@ragnarok/engine'
 import { describe, expect, it } from 'vitest'
-import { groundOf, heightIn, Terrain, type TileGround } from '@/sim/terrain'
+import { digCrater, groundOf, heightIn, Terrain, type TileGround } from '@/sim/terrain'
 import type { TileData, WorldData } from '@/world'
 
 /** `bumpy()` in crates/shared/src/terrain.rs: 9 × 9 samples, 5 m apart, from (0, 0). */
@@ -19,6 +19,25 @@ const fixture: [number, number, number][] = [
   [-5, 50, 2.28],
   [21.7, 33.3, 2.6664],
 ]
+
+/** `CRATERS` and `CRATER_FIXTURE` in crates/shared/src/terrain.rs, on 9 × 9 samples 1 m apart, 5 m up. */
+describe('craters', () => {
+  const craters: [number, number, number, number][] = [[400, 400, 300, 100], [450, 380, 250, 60], [-50, 800, 400, 90]]
+  const fixture: [number, number][] = [[0, 500], [40, 345], [41, 366], [31, 377], [72, 413], [63, 424], [73, 434], [50, 408]]
+
+  it('digs the same samples as the server', () => {
+    const ground: TileGround = { x0: 0, z0: 0, cell: 1, side: 9, heights: new Float32Array(81).fill(5) }
+    for (const [x, z, radius, depth] of craters) digCrater(ground, x, z, radius, depth, () => 0)
+    for (const [at, cm] of fixture) expect(Math.round(ground.heights[at]! * 100), `sample ${at}`).toBe(cm)
+  })
+
+  it('does nothing outside its radius or under the floor', () => {
+    const ground: TileGround = { x0: 0, z0: 0, cell: 1, side: 9, heights: new Float32Array(81).fill(5) }
+    expect(digCrater(ground, 4000, 4000, 300, 100, () => 0)).toBe(false)
+    digCrater(ground, 400, 400, 300, 1000, () => 450)
+    expect(ground.heights[40]).toBeCloseTo(4.5, 5)
+  })
+})
 
 describe('terrain sampling', () => {
   it('agrees with the server on the same grid', () => {

@@ -1,16 +1,17 @@
 import { Group, type Scene } from '@ragnarok/engine'
 import type * as THREE from 'three'
-import { OBJ_BUILDING, OBJ_TREE, type Built, type CarvedBuilding, type DamagedBuilding, type DestroyedObject } from './net/codec'
+import { OBJ_BUILDING, OBJ_TREE, type Built, type CarvedBuilding, type CraterEntry, type DamagedBuilding, type DestroyedObject } from './net/codec'
 import type { Effects } from './render/effects'
 import { FallingTrees, type TreeFx, type TreeNoise } from './render/falling'
 import { BuildingDamage } from './render/damage'
 import { ConstructView } from './render/construct'
 import { Collapses } from './render/rubble'
-import { disposeTile, rebuildBuildings, remeshTerrain, restitchTerrain, shadeTerrain, tileGroup } from './render/world'
+import { disposeTile, rebuildBuildings, remeshTerrain, replaceRibbons, restitchTerrain, shadeTerrain, tileGroup } from './render/world'
+import { ribbonsOf } from './render/groundmesh'
 import { TileWorker } from './render/tileworker'
 import { prepareTile, tileParts, type PreparedTile, type TileInput, type TileParts } from './render/tileprep'
 import { buildingBuffers } from './render/buildingmesh'
-import { terrainLevel, type Pixels } from './render/terrainmesh'
+import { reliefPixels, terrainBuffers, terrainLevel, TERRAIN_LOD_ERRORS, type Pixels } from './render/terrainmesh'
 import { buildWater, disposeWater } from './render/water'
 import { shellOf } from './sim/carve'
 import { CHUNK, Construct, cellAt, chunkKey, chunkOf, cubeCentre, posKey, type Cube, type Pos } from './sim/construct'
@@ -18,7 +19,8 @@ import { CELL } from './sim/carve'
 import type { SimMotor } from './sim/motor'
 import type { Surfaces } from './sim/surface'
 import type { Waters } from './sim/waters'
-import { groundOf, type Terrain } from './sim/terrain'
+import { CRATER_MAX_DEPTH } from './sim/consts.generated'
+import { digCrater, groundOf, type Terrain, type TileGround } from './sim/terrain'
 import type { Grass } from './render/grass'
 import type { TileData, TileRef, WorldData } from './world'
 
@@ -29,6 +31,21 @@ export const tileKey = (col: number, row: number) => row * 65536 + col
 const tileSalt = (ref: TileRef) => ref.col * 31 + ref.row * 17
 
 const sameSet = (a: ReadonlySet<number>, b: ReadonlySet<number>) => a.size === b.size && [...a].every((x) => b.has(x))
+
+/** How far under what the file has a crater can take the ground, whole centimetres. */
+const CRATER_CAP = Math.round(CRATER_MAX_DEPTH * 100)
+
+/** Digs `crater` into `ground`, whose tile file has `pristine`: the server's `Ground::dig`. Whether anything moved. */
+function digInto(ground: TileGround, pristine: Float32Array, crater: CraterEntry): boolean {
+  return digCrater(ground, crater.x, crater.z, crater.radius, crater.depth, (at) => Math.max(Math.round(pristine[at]! * 100) - CRATER_CAP, 0))
+}
+
+/** Whether `crater` reaches `ground`'s tile (its edge samples included). */
+function reaches(ground: TileGround, crater: CraterEntry): boolean {
+  const size = ground.cell * (ground.side - 1) * 100
+  const [x0, z0] = [Math.round(ground.x0 * 100), Math.round(ground.z0 * 100)]
+  return crater.x + crater.radius > x0 && crater.x - crater.radius < x0 + size && crater.z + crater.radius > z0 && crater.z - crater.radius < z0 + size
+}
 
 /** The `(col, row)` of tile `key`. */
 const tileOf = (key: number) => ({ col: key % 65536, row: Math.floor(key / 65536) })
@@ -76,6 +93,13 @@ export class WorldView {
   private readonly levels = new Map<number, number>()
   /** Tiles whose terrain the worker is meshing at another level now. */
   private readonly remeshing = new Set<number>()
+  /** Every crater the server has told of, in the order they were dug: replayed onto tiles that stream in later. */
+  private readonly craters: CraterEntry[] = []
+  /** How many craters each tile's ground had when the worker prepared it. */
+  private readonly preparedWith = new Map<number, number>()
+  /** Tiles whose dented ground the worker is meshing now, and those dented again meanwhile. */
+  private readonly regrounding = new Set<number>()
+  private readonly regroundAgain = new Set<number>()
   /** Where the viewer is, `(x, z)`: what picks the tiles' levels of detail. */
   private eye: [number, number] | null = null
   /** Where the levels were last checked from. */
@@ -289,6 +313,7 @@ export class WorldView {
     if (!builder) return
     const key = tileKey(ref.col, ref.row)
     try {
+      this.preparedWith.set(key, this.craters.length)
       this.prepared.set(key, await builder.prepare(ref.col, ref.row, this.tileInput(ref, tile, tileParts(tile), terrainLevel(this.tileDistance(key)))))
     } catch (error) {
       // `attachTile` prepares it on the main thread instead.
@@ -303,20 +328,103 @@ export class WorldView {
    */
   private tileInput(ref: TileRef, tile: TileData, parts: TileParts, level: number): TileInput {
     const world = this.world
-    const ground = world ? groundOf(world, ref, tile) : null
+    const ground = this.groundFor(ref, tile)
     const place = world ? { x0: -world.halfExtent + ref.col * world.tileSize, z0: -world.halfExtent + ref.row * world.tileSize, size: world.tileSize } : undefined
     return { tile: parts, ground, salt: tileSalt(ref), level, undrawn: [...this.undrawnBuildings(tileKey(ref.col, ref.row))], ...(place ? { place } : {}) }
   }
 
+  /**
+   * The ground of `tile` as it is now: its file's heights, in a copy of their own (the file's stay as
+   * they are, which craters are measured from), with every crater so far dug into it.
+   */
+  private groundFor(ref: TileRef, tile: TileData): TileGround | null {
+    const ground = this.world ? groundOf(this.world, ref, tile) : null
+    if (!ground) return null
+    const own = { ...ground, heights: ground.heights.slice() }
+    for (const crater of this.craters) if (reaches(own, crater)) digInto(own, tile.ground, crater)
+    return own
+  }
+
+  /**
+   * The server says shells dug these craters, in this order. Every tile they reach is dented in place
+   * (the arrays the terrain, the surfaces and the camera read), given to the physics, and drawn again.
+   * Tiles that are not here yet are dented when they arrive. `live` is false for the catch-up on joining.
+   */
+  cratered(craters: readonly CraterEntry[], live: boolean) {
+    const dented = new Set<number>()
+    for (const crater of craters) {
+      this.craters.push(crater)
+      for (const [key, loaded] of this.loaded) {
+        const { col, row } = tileOf(key)
+        const ground = this.terrain?.get(col, row)
+        if (!ground || !reaches(ground, crater) || !digInto(ground, loaded.tile.ground, crater)) continue
+        dented.add(key)
+      }
+      this.grass?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
+      if (live) this.dusted.push([crater.x / 100, (this.terrain?.heightAt(crater.x / 100, crater.z / 100) ?? 0) + 0.5, crater.z / 100])
+    }
+    for (const key of dented) {
+      const { col, row } = tileOf(key)
+      const ground = this.terrain?.get(col, row)
+      if (!ground) continue
+      this.motor?.setTileGround({ col, row }, Int32Array.from(ground.heights, (h) => Math.round(h * 100)))
+      this.reground(key)
+    }
+  }
+
+  /** Draws tile `key`'s terrain, relief and roads again from its ground as it is now. */
+  private reground(key: number) {
+    const group = this.groups.get(key)
+    const loaded = this.loaded.get(key)
+    const { col, row } = tileOf(key)
+    const ground = this.terrain?.get(col, row)
+    if (!group || !loaded || !ground) return
+    const level = this.levels.get(key)
+    const builder = this.builder
+    if (builder && level !== undefined) {
+      if (this.regrounding.has(key)) {
+        this.regroundAgain.add(key)
+        return
+      }
+      this.regrounding.add(key)
+      builder
+        .reground(col, row, ground.heights.slice(), level)
+        .then(
+          (done) => {
+            if (this.groups.get(key) !== group) return
+            remeshTerrain(group, done.buffers)
+            shadeTerrain(group, done.relief)
+            replaceRibbons(group, done.ribbons)
+          },
+          () => {},
+        )
+        .finally(() => {
+          this.regrounding.delete(key)
+          if (this.regroundAgain.delete(key)) this.reground(key)
+        })
+      return
+    }
+    // No worker, or the main thread prepared this tile: the same, here.
+    remeshTerrain(group, terrainBuffers(ground, TERRAIN_LOD_ERRORS[Math.min(Math.max(level ?? 0, 0), TERRAIN_LOD_ERRORS.length - 1)]!))
+    shadeTerrain(group, reliefPixels(ground, this.terrain ?? undefined, loaded.tile.detail))
+    replaceRibbons(group, ribbonsOf(loaded.tile, ground, this.terrain ?? undefined))
+    if (!this.terrain) return
+    for (const [dc, dr] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]] as const) {
+      const next = this.groups.get(tileKey(col + dc, row + dr))
+      if (next) restitchTerrain(next, this.terrain)
+    }
+  }
+
   /** A prepared tile that will not be attached after all. */
   discardTile(ref: TileRef) {
+    this.preparedWith.delete(tileKey(ref.col, ref.row))
     this.prepared.delete(tileKey(ref.col, ref.row))
     this.builder?.drop(ref.col, ref.row)
   }
 
   /** Draws a streamed-in tile and makes it solid for both predicted simulations. Returns how to undo it. */
   attachTile(ref: TileRef, tile: TileData) {
-    const ground = this.world ? groundOf(this.world, ref, tile) : null
+    const ground = this.groundFor(ref, tile)
     const salt = tileSalt(ref)
     const key = tileKey(ref.col, ref.row)
     // What the worker prepared, or without one (or if it failed) the same, prepared here and now.
@@ -342,6 +450,7 @@ export class WorldView {
     this.terrain?.set(ref, ground)
     this.surfaces?.add(ref, tile, ground, prepared.surface)
     this.grass?.addTile(ref, tile, ground, prepared.grass)
+    if (ground) for (const crater of this.craters) if (reaches(ground, crater)) this.grass?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
     this.waters?.set(ref, ground, tile.water)
     this.groups.set(key, group)
     if (fromWorker?.terrain) this.levels.set(key, prepared.level)
@@ -355,6 +464,12 @@ export class WorldView {
     }
     if (tile.bytes) this.motor?.addTile(ref, tile.bytes)
     this.loaded.set(key, { tile, salt })
+    // The file's ground is flat of craters: the physics is given the dented one, and so is the worker's copy if craters came after it prepared.
+    if (ground && this.craters.some((crater) => reaches(ground, crater))) {
+      this.motor?.setTileGround(ref, Int32Array.from(ground.heights, (h) => Math.round(h * 100)))
+      if (fromWorker && this.preparedWith.get(key) !== this.craters.length) queueMicrotask(() => this.reground(key))
+    }
+    this.preparedWith.delete(key)
     this.damage.attach(key, tile, salt)
     if (down.size > 0 || this.damage.carved(key).size > 0) {
       this.dropBuildingColliders(key)

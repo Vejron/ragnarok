@@ -66,10 +66,12 @@ fn a_world_streamed_tile_by_tile_collides_as_the_whole_world_does() {
 
 #[test]
 fn a_stickman_walks_the_streamed_city_as_the_server_walks_it() {
+    // The first spawn does not get far on this route.
+    const SPAWN: usize = 1;
     let (manifest, tiles) = fixture();
     let whole = Physics::new(&WorldFile::assemble(&manifest, tiles.clone())).unwrap();
     let streamed = streamed(&manifest, &tiles);
-    let spawn = manifest.spawns[0].map(from_cm);
+    let spawn = manifest.spawns[SPAWN].map(from_cm).map(|v| v + 0.31);
     let ground = whole.cast_ray_static([spawn[0], 80.0, spawn[1]], [0.0, -1.0, 0.0], 200.0).unwrap();
     let start = Character { position: [spawn[0], 80.0 - ground + STANDING_Y, spawn[1]], grounded: true, ..Default::default() };
     let (mut a, mut b) = (start, start);
@@ -146,4 +148,53 @@ fn a_predicted_vehicle_is_not_moved_on_by_a_refresh_and_has_no_stand_in() {
     assert!(physics.obstacle_ids().is_empty());
     physics.step_cars(TICK_DT);
     assert!(physics.car_pose(3).unwrap().position[1] < before[1], "stepping does");
+}
+
+#[test]
+fn a_crater_lowers_the_ground_the_server_collides_with() {
+    let (manifest, tiles) = fixture();
+    let mut world = WorldFile::assemble(&manifest, tiles);
+    let mut physics = Physics::new(&world).unwrap();
+    // Open ground (nothing built over it) on the seam between two tiles, x = -50 m.
+    let x = -50.0;
+    let open = |physics: &Physics, z: f32| physics.cast_ray_static([x, 80.0, z], [0.0, -1.0, 0.0], 200.0).is_some_and(|t| (80.0 - t - world.ground.height_at(x, z)).abs() < 0.01);
+    let z = (-120..120).map(|k| k as f32 * 2.0 + 0.3).find(|&z| (-12..=12).all(|d| open(&physics, z + d as f32))).expect("a clear stretch of seam");
+    let before = physics.cast_ray_static([x, 80.0, z], [0.0, -1.0, 0.0], 200.0).unwrap();
+    let changed = world.ground.dig((x * 100.0) as i32, (z * 100.0) as i32, 600, 150, &|_| -1000).expect("the ground is dug");
+    physics.dig_ground(&world.ground, changed);
+    physics.apply_removals();
+    let after = physics.cast_ray_static([x, 80.0, z], [0.0, -1.0, 0.0], 200.0).unwrap();
+    // The samples are 5 m apart, so the bowl is cut where they are: less than its 1.5 m at the middle.
+    assert!(after - before > 0.5, "the ground fell only {} m", after - before);
+    assert!((world.ground.height_at(x, z) - (80.0 - after)).abs() < 0.02, "the collider and height_at agree");
+    // Either side of the seam, the tiles' own rows moved together.
+    for dx in [-0.5, 0.5] {
+        let hit = physics.cast_ray_static([x + dx, 80.0, z], [0.0, -1.0, 0.0], 200.0).unwrap();
+        assert!((world.ground.height_at(x + dx, z) - (80.0 - hit)).abs() < 0.02);
+    }
+}
+
+#[test]
+fn a_streamed_tile_given_dented_ground_collides_with_it() {
+    let (manifest, tiles) = fixture();
+    let mut physics = streamed(&manifest, &tiles);
+    let mut world = WorldFile::assemble(&manifest, tiles.clone());
+    let x = -50.0;
+    let open = |physics: &Physics, z: f32| physics.cast_ray_normal([x, 80.0, z], [0.0, -1.0, 0.0], 200.0).is_some_and(|(t, _)| (80.0 - t - world.ground.height_at(x, z)).abs() < 0.01);
+    let z = (-120..120).map(|k| k as f32 * 2.0 + 0.3).find(|&z| (-12..=12).all(|d| open(&physics, z + d as f32))).expect("a clear stretch of seam");
+    let changed = world.ground.dig((x * 100.0) as i32, (z * 100.0) as i32, 600, 150, &|_| -1000).unwrap();
+    // Every tile the crater touched, with its own block of the dug ground.
+    let n = manifest.tile_samples() as usize;
+    let cells = n as u32 - 1;
+    for (col, row, _) in &tiles {
+        let (i0, j0) = (u32::from(*col) * cells, u32::from(*row) * cells);
+        if changed.0 > i0 + cells || changed.2 < i0 || changed.1 > j0 + cells || changed.3 < j0 {
+            continue;
+        }
+        physics.set_tile_ground(&manifest, *col, *row, &world.ground.block(i0, j0, n as u32));
+    }
+    for dx in [-1.0, 0.0, 1.0] {
+        let (t, _) = physics.cast_ray_normal([x + dx, 80.0, z], [0.0, -1.0, 0.0], 200.0).unwrap();
+        assert!((world.ground.height_at(x + dx, z) - (80.0 - t)).abs() < 0.02, "at {dx}: ground {} collider {}", world.ground.height_at(x + dx, z), 80.0 - t);
+    }
 }

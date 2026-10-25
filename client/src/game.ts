@@ -503,6 +503,9 @@ export class Game {
       case 'carved':
         this.view.carved(message.buildings, message.live)
         break
+      case 'cratered':
+        this.view.cratered(message.craters, message.live)
+        break
       case 'built':
         this.view.built(message)
         break

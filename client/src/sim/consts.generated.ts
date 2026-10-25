@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 44
+export const PROTOCOL_VERSION = 45
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -917,6 +917,26 @@ export const PLANE_REARM_TICKS = 3 * TICK_RATE
 export const BOMB_RADIUS = 6.0
 export const BOMB_DAMAGE = 110.0
 export const BOMB_KNOCK = 16.0
+
+/**
+ * Craters (CRATERS.md): a tank shell, a mortar round or a bomb that bursts on the ground dents it in a
+ * smooth bowl `radius` metres across the way out and `depth` metres deep at the middle.
+ */
+export const CRATER_SHELL_RADIUS = 5.6
+export const CRATER_SHELL_DEPTH = 1.0
+export const CRATER_MORTAR_RADIUS = 8.8
+export const CRATER_MORTAR_DEPTH = 1.6
+export const CRATER_BOMB_RADIUS = 7.0
+export const CRATER_BOMB_DEPTH = 2.2
+
+/** A shell digs only if it bursts within this far above the terrain, metres: not on a roof or in the air. */
+export const CRATER_REACH = 1.5
+
+/** However many craters land on a place, the ground goes no lower than this under what it was, metres. */
+export const CRATER_MAX_DEPTH = 4.0
+
+/** The most craters remembered for a joiner (the oldest are forgotten, which a late joiner sees as smoother ground there). */
+export const CRATER_MAX_KEPT = 2000
 
 /** The tank gun. */
 export const SHELL_COOLDOWN_TICKS = 90

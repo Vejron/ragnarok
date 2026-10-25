@@ -33,6 +33,7 @@ pub const S_CARVED: u8 = 10;
 pub const S_PROFILES: u8 = 11;
 pub const S_NOTICE: u8 = 12;
 pub const S_BUILT: u8 = 13;
+pub const S_CRATERED: u8 = 14;
 
 /// `Hit` roles: whose feedback it is.
 /// You hurt something.
@@ -359,6 +360,16 @@ messages! {
     /// nothing holding them up, which come down; both as lattice places (`construct::Pos`).
     #[derive(Eq)]
     [S_BUILT] Built { live: bool, placed: Vec<BuiltCube>, removed: Vec<CubePos>, fell: Vec<CubePos> }
+
+    /// A crater a shell dug: where it is centred on the ground plane, how wide it is and how deep at the
+    /// middle, all in whole centimetres (`terrain::Ground::dig`, which the client mirrors sample for sample).
+    #[derive(Copy, Eq)]
+    [] CraterEntry { x: i32, z: i32, radius: i32, depth: i32 }
+
+    /// Sent on a reliable stream: to everyone when shells dig craters, and to a player who just joined
+    /// with every crater so far, in the order they were dug (`live` false, so it is state and not news).
+    #[derive(Eq)]
+    [S_CRATERED] Cratered { live: bool, craters: Vec<CraterEntry> }
 
     /// Sent on a reliable stream to the one player it is about, once per tick per `(role, kind)` with
     /// the amounts summed. `role` is `HIT_*`: dealt (you hurt something) or taken (something hurt you

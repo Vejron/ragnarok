@@ -338,6 +338,8 @@ interface Chunk {
 
 /** Metres a blade keeps from bare ground. */
 const EDGE = 0.8
+/** The share of a crater's radius that is bare earth: the rim keeps its grass, thinned by the slope. */
+const CRATER_BARE = 0.8
 const EDGE_PROBES = [[EDGE, 0], [-EDGE, 0], [0, EDGE], [0, -EDGE]] as const
 
 const chunkKey = (cx: number, cz: number) => (cz + 32768) * 65536 + (cx + 32768)
@@ -353,6 +355,8 @@ export class Grass {
   private readonly blasts: [number, number, number, number][] = Array.from({ length: BLASTS }, () => [0, 0, -1000, 0])
   private nextBlast = 0
   private readonly picked: Bender[] = []
+  /** Craters shells dug: bare earth inside, no grass grows there. Keyed by `x,z,radius` so telling of one twice adds nothing. */
+  private readonly craters = new Map<string, { x: number; z: number; radius: number }>()
 
   constructor(
     private readonly halfExtent: number,
@@ -418,8 +422,24 @@ export class Grass {
   growsAt(x: number, z: number): number {
     const shade = this.shadeAt(x, z)
     if (shade === 0) return 0
+    for (const c of this.craters.values()) if (Math.hypot(x - c.x, z - c.z) < c.radius) return 0
     for (const [dx, dz] of EDGE_PROBES) if (this.shadeAt(x + dx, z + dz) === 0) return 0
     return shade
+  }
+
+  /**
+   * A shell dug a crater of `radius` metres at `(x, z)`: the ground there has moved, so the blades over
+   * it are grown again on the new ground, and the grass is gone from the bowl, which is bare earth now.
+   */
+  dent(x: number, z: number, radius: number) {
+    const key = `${x},${z},${radius}`
+    if (this.craters.has(key)) return
+    this.craters.set(key, { x, z, radius: radius * CRATER_BARE })
+    for (const [chunkAt, chunk] of this.chunks) {
+      const cx = (chunkAt % 65536) - 32768, cz = Math.floor(chunkAt / 65536) - 32768
+      if ((cx + 1) * GRASS_CHUNK < x - radius || cx * GRASS_CHUNK > x + radius || (cz + 1) * GRASS_CHUNK < z - radius || cz * GRASS_CHUNK > z + radius) continue
+      chunk.stale = true
+    }
   }
 
   setEnabled(on: boolean) {
