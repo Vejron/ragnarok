@@ -71,6 +71,7 @@ import { PlaneGuns, Turrets } from './entities/presenters/guns'
 import { Wear } from './entities/presenters/wear'
 import { Smoke } from './entities/presenters/smoke'
 import { Jets } from './entities/presenters/jets'
+import { Headlights } from './entities/presenters/headlights'
 import { Roosters } from './entities/presenters/roosters'
 import { TileStreamer } from './stream'
 import { loadManifest, NO_WATER, type WorldData } from './world'
@@ -294,6 +295,7 @@ export class Game {
     })
     this.machines.add(new Smoke(world, this.vehicles))
     this.machines.add(new Jets(world, this.vehicles))
+    this.machines.add(new Headlights(world, this.vehicles))
     this.machines.add(new Turrets(world, this.vehicles))
     this.machines.add(new PlaneGuns(world, this.vehicles))
     this.flying.add(new Projectiles({

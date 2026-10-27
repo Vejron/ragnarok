@@ -137,6 +137,15 @@ export function createSky(): Sky {
   }
 }
 
+/**
+ * How dark it is at `phase` for driving: 0 by day, 1 from a little after sunset to a little before
+ * sunrise, the sun's last 10° or so between. Headlights come on by it.
+ */
+export function nightAt(phase: number): number {
+  const height = Math.sin(2 * Math.PI * (phase - 0.25)) * Math.sin(NOON_ELEVATION)
+  return 1 - smoothstep(-0.02, 0.18, height)
+}
+
 function smoothstep(edge0: number, edge1: number, x: number): number {
   const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)))
   return t * t * (3 - 2 * t)

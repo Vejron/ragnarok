@@ -12,7 +12,7 @@ import type { Debris } from './debris'
  */
 
 /** Side damage at which the lights on that end break, and the windscreen cracks. */
-const LIGHTS_BREAK = 90
+export const LIGHTS_BREAK = 90
 const GLASS_CRACKS = 120
 /** Side damage at which a bumper, and a door, comes off. */
 const BUMPER_FALLS = 160

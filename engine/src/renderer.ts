@@ -2,6 +2,7 @@ import { Effect, type EffectContext } from './fx/effect'
 import { GeometryArena, VERTEX_LAYOUT, type GeometrySlot } from './gpu/arena'
 import { BoneTable } from './gpu/bones'
 import { CraterBuffers } from './gpu/craters'
+import { LightBuffers } from './gpu/lights'
 import { MaterialTable } from './gpu/materials'
 import { ObjectTable } from './gpu/objects'
 import { MaterialResources } from './gpu/resources'
@@ -13,7 +14,7 @@ import { Frustum } from './math/frustum'
 import * as mat4 from './math/mat4'
 import { Bloom } from './passes/bloom'
 import { HalfResolution } from './passes/halfres'
-import { MAX_POINT_LIGHTS, PointLights } from './scene/lights'
+import { LIGHT_CELL, LightGrid } from './scene/lightgrid'
 import { outputWgsl } from './passes/output.wgsl'
 import type { PerspectiveCamera } from './scene/camera'
 import { ShaderMaterial, type Material } from './scene/material'
@@ -24,8 +25,8 @@ import type { Scene } from './scene/scene'
 import { Texture } from './scene/texture'
 import { SkinnedMesh } from './scene/skin'
 
-/** Floats in the frame uniform block. Matches `Frame` in common.wgsl (padded to 384 bytes). */
-const FRAME_FLOATS = 160
+/** Floats in the frame uniform block. Matches `Frame` in common.wgsl. */
+const FRAME_FLOATS = 96
 const HDR_FORMAT: GPUTextureFormat = 'rgba16float'
 const DEPTH_FORMAT: GPUTextureFormat = 'depth32float'
 /** The reflection holds nothing smaller than this share of the view's distance. */
@@ -55,6 +56,9 @@ export class RenderStats {
   pipelines = 0
   materials = 0
   geometryBytes = 0
+  /** Point and spot lights listed this frame (in view, on the light grid), and the cell entries they fill. */
+  lights = 0
+  lightEntries = 0
   /** Smoothed GPU ms per pass, when the device supports timestamp queries. */
   gpuMs: Record<string, number> = {}
 }
@@ -96,7 +100,11 @@ export class Renderer {
   height = 1
   /** Drawing-buffer pixels per CSS pixel, from the last `setSize`. */
   pixelRatio = 1
-  private readonly pickedLights: { l: PointLights['live'][number]; strength: number }[] = []
+  /** Tints lit surfaces by how many lights their light-grid cell lists, instead of lighting them. */
+  showLightGrid = false
+  private readonly lightGrid = new LightGrid()
+  private readonly lightVisible = (x: number, y: number, z: number, radius: number) =>
+    this.frustum.intersectsSphere(x, y, z, radius) || (this.reflectionOn && this.reflectionFrustum.intersectsSphere(x, y, z, radius))
   private readonly outputData = new Float32Array(16)
 
   private readonly context: GPUCanvasContext
@@ -108,6 +116,7 @@ export class Renderer {
   private readonly objects: ObjectTable
   private readonly bones: BoneTable
   private readonly craters: CraterBuffers
+  private readonly lights: LightBuffers
   private drawList = new Uint32Array(4096)
   private drawListBuffer: GPUBuffer
   private drawCount = 0
@@ -222,6 +231,7 @@ export class Renderer {
     this.objects = new ObjectTable(device)
     this.bones = new BoneTable(device)
     this.craters = new CraterBuffers(device, new Craters())
+    this.lights = new LightBuffers(device, this.lightGrid)
     this.drawListBuffer = this.makeDrawListBuffer(this.drawList.length)
     this.comparisonSampler = device.createSampler({ compare: 'less-equal', magFilter: 'linear', minFilter: 'linear' })
     this.shadowMap = this.makeShadowMap(1)
@@ -237,6 +247,8 @@ export class Renderer {
         { binding: 4, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 5, visibility: both, buffer: { type: 'read-only-storage' } },
         { binding: 6, visibility: both, buffer: { type: 'read-only-storage' } },
+        { binding: 7, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
+        { binding: 8, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
       ],
     })
     this.lightingLayout = device.createBindGroupLayout({
@@ -367,6 +379,7 @@ export class Renderer {
     this.bones.flush()
     this.uploadDrawList()
     this.craters.upload(scene.craters)
+    this.lights.upload(this.lightGrid)
     this.bindScene()
 
     const encoder = this.device.createCommandEncoder()
@@ -405,6 +418,8 @@ export class Renderer {
     stats.pipelines = this.pipelines.length + this.shadowPipelines.length + 1
     stats.materials = this.materials.count
     stats.geometryBytes = this.arena.usedBytes
+    stats.lights = this.lightGrid.count
+    stats.lightEntries = this.lightGrid.indexCount
     stats.gpuMs = this.timer.ms
     stats.cpuMs = performance.now() - start
   }
@@ -667,26 +682,15 @@ export class Renderer {
     }
   }
 
-  /** The strongest point lights as seen from the camera, up to the shader's limit. */
+  /** Bins the scene's lights into the light grid around the camera, for every view drawn this frame. */
   private writeLights(scene: Scene, f: Float32Array) {
-    const live = scene.lights.live
-    const picked = this.pickedLights
-    picked.length = 0
-    for (const l of live) {
-      const d2 = (l.x - this.camX) ** 2 + (l.y - this.camY) ** 2 + (l.z - this.camZ) ** 2
-      const strength = (l.intensity * PointLights.decay(l)) / (1 + d2 * 0.002)
-      picked.push({ l, strength })
-    }
-    picked.sort((a, b) => b.strength - a.strength)
-    const n = Math.min(picked.length, MAX_POINT_LIGHTS)
-    f[88] = n
-    for (let i = 0; i < n; i++) {
-      const { l } = picked[i]!
-      const o = 92 + i * 8
-      const k = l.intensity * PointLights.decay(l)
-      f[o] = l.x; f[o + 1] = l.y; f[o + 2] = l.z; f[o + 3] = l.radius
-      f[o + 4] = l.r * k; f[o + 5] = l.g * k; f[o + 6] = l.b * k; f[o + 7] = 0
-    }
+    const grid = this.lightGrid
+    grid.build(scene.lights.live, this.camX, this.camY, this.camZ, this.lightVisible)
+    f[88] = grid.count
+    f[92] = grid.originX
+    f[93] = grid.originZ
+    f[94] = 1 / LIGHT_CELL
+    f[95] = this.showLightGrid ? 1 : 0
   }
 
   private uploadDrawList() {
@@ -709,6 +713,8 @@ export class Renderer {
         { binding: 4, resource: { buffer: this.bones.buffer } },
         { binding: 5, resource: { buffer: this.craters.list } },
         { binding: 6, resource: { buffer: this.craters.grid } },
+        { binding: 7, resource: { buffer: this.lights.records } },
+        { binding: 8, resource: { buffer: this.lights.cells } },
       ],
     })
   }

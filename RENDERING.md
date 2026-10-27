@@ -175,8 +175,8 @@ after the solid scene, with the scene's depth bound read-only so they can be sof
   one storage buffer drawn instanced. A trail whose owner is gone (or stops being extended for half a
   second) is kept and fades; its segments' ages are written fresh each frame, so nothing is rebased.
 - **Blast lights and shockwaves:** `scene.lights` (the engine's `PointLights`) takes short-lived point
-  lights; `Game.blast` flashes one per explosion. The standard shader adds the strongest eight (by
-  strength over distance from the camera) to lit surfaces, without shadows. The shockwave is a `Flash`
+  lights; `Game.blast` flashes one per explosion. They light lit surfaces without shadows, through the
+  light grid (see Light below). The shockwave is a `Flash`
   with `ring: true`: a flat ring on the ground whose band is `length` metres thick.
 - **Bloom** is an engine pass chain, not a mesh: `Scene.bloom` (`Bloom`: `strength`, `threshold`,
   `knee`, `radius`) extracts what is brighter than the threshold from the resolved HDR image at half
@@ -194,7 +194,36 @@ little by the soft palette's Neutral tone map: a pure yellow comes out about 12%
 ## Light
 
 One hemisphere light (sky colour above, ground bounce below) and one shadow-casting sun, 120 m from
-its target. There is no point lighting. Background and fog share the sky colour; fog runs 150–600 m.
+its target, plus any number of point and spot lights (below). Background and fog share the sky colour; fog runs 150–600 m.
+
+### Point and spot lights
+
+`scene.lights` (`PointLights`, up to 256 alive) holds point lights and, given a `direction`, `angle`
+and `penumbra`, spot lights such as headlights. `flash` a light at an event or `hold` it every frame
+to keep it on. They light without shadows, with a wrapped falloff (`pointLight` in
+`materials/lights.wgsl.ts`), and every shader that knows a world position can add them: the standard
+one, and grass, water, trees and skid marks through `GROUND_LIGHT_WGSL`.
+
+Each frame the renderer bins them into a grid over the ground (`LightGrid`, `scene/lightgrid.ts`): 64
+by 64 cells of 8 m, 512 m across, centred on the camera and snapped to whole cells. Lights whose sphere
+is outside the view (or the reflection's) are left out, the rest go strongest first (strength over
+distance from the camera), and each cell lists up to 32 that reach it, the weakest dropped past that.
+A fragment looks up its cell by world x and z and walks only that list, so the cost follows the lights
+near a surface rather than all of them. Height is left to each light's radius test, which is why one
+grid serves the main view and the reflection alike. The grid goes up as two storage buffers at group 0
+bindings 7 and 8 (`gpu/lights.ts`); with no light listed nothing is uploaded and the shaders skip it.
+`renderer.showLightGrid` tints lit surfaces by their cell's count instead, and `stats.lights` and
+`stats.lightEntries` say how many lights and cell entries the frame listed. The `lights` engine example
+stresses it.
+
+Headlights are spot lights: the `Headlights` presenter (`entities/presenters/headlights.ts`) holds one
+per jeep, sports car or Roadster with someone in the driver's seat, from the middle of its front `lamp`
+meshes (`CarModel.headlight`), along the nose and dipped a little. They come on with the dusk
+(`nightAt` in `render/daynight.ts`, 0 by day and 1 once the sun is down), fade over a quarter second,
+and go out when the front lamps are smashed (`LIGHTS_BREAK`) or the car is wrecked.
+A helicopter gets a searchlight from the same presenter while anyone is aboard: it hangs under the
+nose gun and turns and nods with it (`HeliModel.searchlight`), reaching 80 m, twice the headlights,
+in a narrower beam.
 
 ### Day and night
 
