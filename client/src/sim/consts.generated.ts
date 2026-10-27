@@ -252,8 +252,11 @@ export const KILL_Y = -50.0
  */
 export const CAR_SEATS = 4
 
-/** Vehicles in the world; bounds the vehicle list in a snapshot. */
-export const MAX_VEHICLES = 32
+/**
+ * Vehicles in the world; bounds the vehicle list in a snapshot. The map editor's placed vehicles and the
+ * drones players launch share it, so it leaves room past the editor's full count for drones to launch into.
+ */
+export const MAX_VEHICLES = 512
 
 /** A player can enter a vehicle whose centre is within this distance of their capsule centre. */
 export const ENTER_RADIUS = 4.0

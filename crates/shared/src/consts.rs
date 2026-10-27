@@ -174,8 +174,9 @@ pub const KILL_Y: f32 = -50.0;
 /// Body-local axes: +X right, +Y up, -Z forward (yaw 0 faces -Z, like a stickman).
 /// Seats in the roomiest car (the jeep); bounds the seat list of any vehicle.
 pub const CAR_SEATS: usize = 4;
-/// Vehicles in the world; bounds the vehicle list in a snapshot.
-pub const MAX_VEHICLES: usize = 32;
+/// Vehicles in the world; bounds the vehicle list in a snapshot. The map editor's placed vehicles and the
+/// drones players launch share it, so it leaves room past the editor's full count for drones to launch into.
+pub const MAX_VEHICLES: usize = 512;
 /// A player can enter a vehicle whose centre is within this distance of their capsule centre.
 pub const ENTER_RADIUS: f32 = 4.0;
 

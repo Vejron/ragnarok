@@ -158,7 +158,7 @@ A loitering drone is the FPV drone's big sibling: a Shahed-sized delta wing (abo
 ## Not done
 
 - **No held model.** In hand the drone shows as nothing, like the golden egg: the character GLB has no mesh for it.
-- **Drones count against `MAX_VEHICLES` (32)** with the parked vehicles. A full room refuses a launch, and the item stays in hand.
+- **Drones count against `MAX_VEHICLES` (512)** with the parked vehicles. A full room refuses a launch, and the item stays in hand.
 - **The proximity fuse looks only for stickmen.** Vehicles set it off by contact, roosters not at all.
 - **No video-link physics.** Buildings do not block the signal: the link is a plain distance check.
 - **A pilot who recalls or loses the drone does not get it back.** The item is spent at launch.

@@ -1039,6 +1039,17 @@ mod tests {
             game.add_bot(at, TEAM_BOTS, Vec::new()).expect("BOTS is at most MAX_BOTS");
         }
         // `TANKS=n`: that many tank crews as well, at the spawn points from the last back, driving along the roads.
+        // `VEHICLES=n`: top the room up to n parked jeeps in a grid on the open ground, past `MAX_VEHICLES`
+        // if need be, to see what a vehicle costs while nobody drives it.
+        let vehicles: usize = std::env::var("VEHICLES").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
+        let mut parked = game.world.entities.count::<crate::game::Vehicle>();
+        for n in 0..vehicles.saturating_sub(parked) {
+            let (x, z) = ((n % 20) as f32 * 12.0 - 120.0, (n / 20) as f32 * 12.0 + 150.0);
+            let y = game.world.map.ground.height_at(x, z) + 1.5;
+            crate::mechanics::for_tests::add_vehicle(&mut game.world, KIND_JEEP, [x, y, z], 0.0);
+            parked += 1;
+        }
+        println!("{parked} vehicles");
         let tanks: usize = std::env::var("TANKS").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
         let mut crews = Vec::new();
         for &at in spawns.iter().rev() {
