@@ -1,7 +1,7 @@
 //! Simulation and network constants. `client/scripts/gen-consts.ts` generates the client's copy from this file: run `npm run gen:consts` in `client` after editing.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 45;
+pub const PROTOCOL_VERSION: u8 = 46;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -652,20 +652,31 @@ pub const BOMB_RADIUS: f32 = 6.0;
 pub const BOMB_DAMAGE: f32 = 110.0;
 pub const BOMB_KNOCK: f32 = 16.0;
 
-/// Craters (CRATERS.md): a tank shell, a mortar round or a bomb that bursts on the ground dents it in a
-/// smooth bowl `radius` metres across the way out and `depth` metres deep at the middle.
+/// Craters (CRATERS.md): anything explosive that bursts on the ground dents it in a smooth bowl
+/// `radius` metres across the way out and `depth` metres deep at the middle. The lighter blasts dig
+/// about 0.8 of their blast radius, as the tank shell does.
 pub const CRATER_SHELL_RADIUS: f32 = 5.6;
 pub const CRATER_SHELL_DEPTH: f32 = 1.0;
 pub const CRATER_MORTAR_RADIUS: f32 = 8.8;
 pub const CRATER_MORTAR_DEPTH: f32 = 1.6;
 pub const CRATER_BOMB_RADIUS: f32 = 7.0;
 pub const CRATER_BOMB_DEPTH: f32 = 2.2;
+pub const CRATER_ROCKET_RADIUS: f32 = 4.0;
+pub const CRATER_ROCKET_DEPTH: f32 = 0.7;
+pub const CRATER_GRENADE_RADIUS: f32 = 3.5;
+pub const CRATER_GRENADE_DEPTH: f32 = 0.5;
+pub const CRATER_CANNON_RADIUS: f32 = 2.0;
+pub const CRATER_CANNON_DEPTH: f32 = 0.3;
+pub const CRATER_EGG_RADIUS: f32 = 5.0;
+pub const CRATER_EGG_DEPTH: f32 = 0.9;
 /// A shell digs only if it bursts within this far above the terrain, metres: not on a roof or in the air.
 pub const CRATER_REACH: f32 = 1.5;
 /// However many craters land on a place, the ground goes no lower than this under what it was, metres.
 pub const CRATER_MAX_DEPTH: f32 = 4.0;
-/// The most craters remembered for a joiner (the oldest are forgotten, which a late joiner sees as smoother ground there).
+/// The most craters whose marks a joiner is sent (the oldest are dropped first). Their heights are sent whole, in `Dug`.
 pub const CRATER_MAX_KEPT: usize = 2000;
+/// A crater's scorch fades out over this long, seconds; then it is forgotten. Its hole stays.
+pub const CRATER_FADE_SECONDS: u32 = 30 * 60;
 
 /// The tank gun.
 pub const SHELL_COOLDOWN_TICKS: u32 = 90;

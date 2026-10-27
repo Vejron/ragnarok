@@ -16,6 +16,8 @@ export interface Look {
   reflect: boolean
   /** Grass that sways and parts around whoever goes through it; thinner on phones and tablets. */
   grass: boolean
+  /** Craters marked on the ground: char, rays and the rim's shadow (SCORCH.md). The dent is there either way. */
+  scorch: boolean
 }
 
 const KEY = 'ragnarok.look'
@@ -30,7 +32,7 @@ const RESET_ON_BUMP: (keyof Look)[] = ['ink']
 /** The long shadows are off on phones and tablets, where they cost fill rate and memory. */
 export function defaultLook(): Look {
   const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
-  return { soft: true, contact: true, far: !coarse, ink: true, bloom: !coarse, reflect: !coarse, grass: true }
+  return { soft: true, contact: true, far: !coarse, ink: true, bloom: !coarse, reflect: !coarse, grass: true, scorch: true }
 }
 
 export function loadLook(): Look {

@@ -1,6 +1,6 @@
 # Craters — plan
 
-Shells that land dent the ground. Only the heavy ones: the tank's shell (`PROJECTILE_SHELL`), the mortar round (`PROJECTILE_MORTAR`) and the plane's bomb (`PROJECTILE_BOMB`). Rockets, grenades, autocannon rounds and eggs leave the ground alone.
+Everything explosive that bursts on the ground dents it. First it was only the heavy ones: the tank's shell (`PROJECTILE_SHELL`), the mortar round (`PROJECTILE_MORTAR`) and the plane's bomb (`PROJECTILE_BOMB`). Since the scorch marks (SCORCH.md) proved cheap, rockets, grenades, autocannon rounds and the hen's eggs dig too, smaller craters at about 0.8 of their blast radius (`CRATER_*` in `consts.rs`).
 
 Status: branch `feat/craters`. Phases 1-4 are written and tested (Rust and Vitest suites green); not yet played in a browser, and the tuning in phase 5 is open. What is done, and what is knowingly left:
 
@@ -12,7 +12,7 @@ Status: branch `feat/craters`. Phases 1-4 are written and tested (Rust and Vites
 - A landing shell lowers the heightfield in a smooth bowl, with a slight raised lip. The server's physics, the client's prediction, the drawn mesh and every height lookup (`Ground::height_at`, `heightIn`) agree on the new surface.
 - Late joiners and streamed-in tiles see the craters that already exist.
 - Cheap on the wire: a crater is a few bytes, and both sides apply the same deterministic function.
-- Not in scope: persistence across server restarts (craters reset with the world), craters from other weapons, water, digging through building floors, filling craters back in.
+- Not in scope: persistence across server restarts (craters reset with the world), water, digging through building floors, filling craters back in.
 
 ## How a crater works
 
@@ -75,7 +75,7 @@ Sizes, to be tuned in play: tank shell about 2.5 m radius, 0.7 m deep; mortar ab
 
 Two ignored tests in `crates/server/src/game.rs`, run with `--release`:
 
-- `shelling_tick_cost` (`SHELLS=n TICKS=n`): 63 players standing in a 240 m square of the committed city (5 m ground), and `n` shells a tick falling from 40 m on a 300 m square, a third each tank shell, mortar round and bomb; then the same with autocannon rounds (the same kind of blast, no crater) as the baseline. It runs the real `Game::step`, snapshots included, with 63 bots-less players who only stand.
+- `shelling_tick_cost` (`SHELLS=n TICKS=n`): 63 players standing in a 240 m square of the committed city (5 m ground), and `n` shells a tick falling from 40 m on a 300 m square, a third each tank shell, mortar round and bomb; then the same with autocannon rounds (the same kind of blast, no crater when measured; they now dig small ones) as the baseline. It runs the real `Game::step`, snapshots included, with 63 bots-less players who only stand.
 - `crater_rebuild_cost`: one crater (a mortar's) on a 1536 m square of synthetic rolling ground at 5, 2 and 1 m, 200 craters, some on seams.
 
 | | craters | no craters | budget |
@@ -93,3 +93,21 @@ What it says:
 - The joiner's catch-up is the 2 000 most recent craters (`CRATER_MAX_KEPT`), about 21 KB.
 
 What it does not say: the client's cost. A crater makes the tile worker mesh the terrain again, shade it and drape its roads (about 5 + 8 ms a 1 m tile by the numbers in design.md §8, not measured here), once for every tile it reaches and one at a time per tile, with dents in between coalesced; a barrage over one tile therefore costs the worker a continuous job but not the frame. The players here stand still and nothing drives; tanks and bots on top would add their own cost, which `full_room` measures.
+
+## Lasting ground
+
+Status: phases 1-4 written and tested (Rust, client and engine suites), on `feat/scorch` with the scorch work, not committed; not yet played. Measuring a large `Dug` (a shelled 1 m world) is left.
+
+A joiner used to rebuild the dug ground by replaying the server's last `CRATER_MAX_KEPT` (2 000) craters onto the tile files. Past that the oldest were forgotten and the joiner's ground differed from the server's, and with every explosive digging (rockets, grenades, autocannon rounds) that came quickly. Now the server's dug ground is what a joiner gets, and the craters are only the scorch on it.
+
+- **The heights.** The server already digs every crater into its one `Ground` and keeps the ground as the importer left it (`World::pristine`). It now also keeps which tiles a crater changed (`World::dug_tiles`). A joiner is sent `Dug`: for each of those tiles, the difference from the pristine ground (whole centimetres, as runs of `[skip, count, values…]` over the tile's `side × side` samples, row-major as in the tile file), in batches that stay well under the client's 4 MiB a message. The client keeps them by tile and lays them on a tile's file heights when it streams in (`WorldView.groundFor`), before the craters dug since it joined. The size is that of the ground dug, not of the number of craters, and nothing is ever forgotten until the server restarts.
+- **Live craters** are as before: `Cratered { live: true }` the tick they are dug, dug by every client into the tiles it holds and replayed onto tiles that stream in later.
+- **The scorch fades.** The server keeps the craters of the last `CRATER_FADE_SECONDS` (30 minutes, and at most `CRATER_MAX_KEPT`) with the tick each was dug. A joiner's `Cratered { live: false }` is those, each with its `age` in seconds, and is marks only: the client does not dig them (their heights came in `Dug`). The ground's shader fades a crater's marks out over the last 30% of `CRATER_FADE` (engine `scene/craters.ts`) from its birth time, which for a caught-up crater is `now − age`; `Craters.expire` then takes it out of the grid. The hole stays.
+- **Protocol** 46: `CraterEntry` gains `age` (u16, seconds; 0 when live), and `Dug` is new (`S_DUG`).
+
+Phases:
+
+1. Wire: `CraterEntry.age`, `Dug`/`DugTile`, protocol 46, parity files, NETWORKING.md.
+2. Server: `dug_tiles` kept in `apply_crater`, `dug_ground` for the joiner, the crater list pruned by age, the join sends `Dug` before the marks. Tests: a joiner's patched ground equals the server's after more craters than `CRATER_MAX_KEPT`; marks older than the fade are not sent.
+3. Client: `WorldView.dug`, `groundFor` laying the patch, catch-up craters as marks only, with their age. Tests: a late joiner's ground from `Dug` equals an early one's.
+4. Engine: the fade in `craterMarks` and `craterGrass`, `Craters.expire`.

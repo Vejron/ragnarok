@@ -1,6 +1,7 @@
 import { Effect, type EffectContext } from './fx/effect'
 import { GeometryArena, VERTEX_LAYOUT, type GeometrySlot } from './gpu/arena'
 import { BoneTable } from './gpu/bones'
+import { CraterBuffers } from './gpu/craters'
 import { MaterialTable } from './gpu/materials'
 import { ObjectTable } from './gpu/objects'
 import { MaterialResources } from './gpu/resources'
@@ -18,6 +19,7 @@ import type { PerspectiveCamera } from './scene/camera'
 import { ShaderMaterial, type Material } from './scene/material'
 import { InstancedMesh, Mesh } from './scene/mesh'
 import type { Node } from './scene/node'
+import { Craters } from './scene/craters'
 import type { Scene } from './scene/scene'
 import { Texture } from './scene/texture'
 import { SkinnedMesh } from './scene/skin'
@@ -105,6 +107,7 @@ export class Renderer {
   private readonly frameBuffer: GPUBuffer
   private readonly objects: ObjectTable
   private readonly bones: BoneTable
+  private readonly craters: CraterBuffers
   private drawList = new Uint32Array(4096)
   private drawListBuffer: GPUBuffer
   private drawCount = 0
@@ -218,6 +221,7 @@ export class Renderer {
     this.reflectionFrameBuffer = device.createBuffer({ label: 'reflection frame', size: FRAME_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.objects = new ObjectTable(device)
     this.bones = new BoneTable(device)
+    this.craters = new CraterBuffers(device, new Craters())
     this.drawListBuffer = this.makeDrawListBuffer(this.drawList.length)
     this.comparisonSampler = device.createSampler({ compare: 'less-equal', magFilter: 'linear', minFilter: 'linear' })
     this.shadowMap = this.makeShadowMap(1)
@@ -231,6 +235,8 @@ export class Renderer {
         { binding: 2, visibility: both, buffer: { type: 'read-only-storage' } },
         { binding: 3, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 4, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 5, visibility: both, buffer: { type: 'read-only-storage' } },
+        { binding: 6, visibility: both, buffer: { type: 'read-only-storage' } },
       ],
     })
     this.lightingLayout = device.createBindGroupLayout({
@@ -360,6 +366,7 @@ export class Renderer {
     this.objects.flush()
     this.bones.flush()
     this.uploadDrawList()
+    this.craters.upload(scene.craters)
     this.bindScene()
 
     const encoder = this.device.createCommandEncoder()
@@ -700,6 +707,8 @@ export class Renderer {
         { binding: 2, resource: { buffer: this.materials.buffer } },
         { binding: 3, resource: { buffer: this.drawListBuffer } },
         { binding: 4, resource: { buffer: this.bones.buffer } },
+        { binding: 5, resource: { buffer: this.craters.list } },
+        { binding: 6, resource: { buffer: this.craters.grid } },
       ],
     })
   }

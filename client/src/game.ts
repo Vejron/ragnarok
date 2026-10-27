@@ -250,6 +250,7 @@ export class Game {
     this.input = new InputController(this.scene.canvas)
     this.cameras = new Cameras(this.scene, this.input, (origin, direction, max) => this.motor?.castRay(origin, direction, max) ?? null)
     this.view = new WorldView(this.scene.scene)
+    this.view.scorch = this.scene.look.scorch
     this.view.onTreeNoise = ({ phase, at, size }) => {
       const where: [number, number, number] = [at.x, at.y, at.z]
       if (phase === 'hit') this.sounds.treeHit(where, size)
@@ -505,6 +506,9 @@ export class Game {
         break
       case 'cratered':
         this.view.cratered(message.craters, message.live)
+        break
+      case 'dug':
+        this.view.dug(message.tiles)
         break
       case 'built':
         this.view.built(message)
@@ -946,6 +950,7 @@ export class Game {
   /** Switches the soft-lighting options and remembers them for next time. */
   setLook(look: Look) {
     this.scene.setLook(look)
+    this.view.scorch = look.scorch
     this.applyGrass(look)
     saveLook(look)
   }

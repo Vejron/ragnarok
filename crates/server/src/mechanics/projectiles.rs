@@ -153,13 +153,13 @@ const fn blast(weapon: u8, radius: f32, damage: f32, knock: f32) -> Burst {
 /// What a projectile of `kind` does when it bursts; `None` for one that only goes out.
 pub fn burst_of(kind: u8) -> Option<Burst> {
     Some(match kind {
-        PROJECTILE_ROCKET => blast(WEAPON_ROCKET, ROCKET_BLAST_RADIUS, ROCKET_DAMAGE, ROCKET_KNOCK),
+        PROJECTILE_ROCKET => Burst { crater: [CRATER_ROCKET_RADIUS, CRATER_ROCKET_DEPTH], ..blast(WEAPON_ROCKET, ROCKET_BLAST_RADIUS, ROCKET_DAMAGE, ROCKET_KNOCK) },
         PROJECTILE_SHELL => Burst { crater: [CRATER_SHELL_RADIUS, CRATER_SHELL_DEPTH], ..blast(WEAPON_SHELL, EXPLOSION_RADIUS, EXPLOSION_DAMAGE, EXPLOSION_KNOCK) },
-        PROJECTILE_CANNON => blast(WEAPON_AUTOCANNON, CANNON_RADIUS, CANNON_DAMAGE, CANNON_KNOCK),
+        PROJECTILE_CANNON => Burst { crater: [CRATER_CANNON_RADIUS, CRATER_CANNON_DEPTH], ..blast(WEAPON_AUTOCANNON, CANNON_RADIUS, CANNON_DAMAGE, CANNON_KNOCK) },
         PROJECTILE_BOMB => Burst { crater: [CRATER_BOMB_RADIUS, CRATER_BOMB_DEPTH], ..blast(WEAPON_BOMB, BOMB_RADIUS, BOMB_DAMAGE, BOMB_KNOCK) },
         PROJECTILE_MORTAR => Burst { crater: [CRATER_MORTAR_RADIUS, CRATER_MORTAR_DEPTH], ..blast(WEAPON_MORTAR, MORTAR_RADIUS, MORTAR_DAMAGE, MORTAR_KNOCK) },
-        PROJECTILE_GRENADE => Burst { upward: true, ..blast(WEAPON_GRENADE, GRENADE_BLAST_RADIUS, GRENADE_DAMAGE, GRENADE_KNOCK) },
-        PROJECTILE_EGG => Burst { upward: true, ..blast(WEAPON_EGG, HEN_EGG_BLAST_RADIUS, HEN_EGG_DAMAGE, HEN_EGG_KNOCK) },
+        PROJECTILE_GRENADE => Burst { upward: true, crater: [CRATER_GRENADE_RADIUS, CRATER_GRENADE_DEPTH], ..blast(WEAPON_GRENADE, GRENADE_BLAST_RADIUS, GRENADE_DAMAGE, GRENADE_KNOCK) },
+        PROJECTILE_EGG => Burst { upward: true, crater: [CRATER_EGG_RADIUS, CRATER_EGG_DEPTH], ..blast(WEAPON_EGG, HEN_EGG_BLAST_RADIUS, HEN_EGG_DAMAGE, HEN_EGG_KNOCK) },
         _ => return None,
     })
 }
@@ -514,6 +514,15 @@ mod tests {
 
     fn launch(game: &mut Game, kind: u8, position: [f32; 3], velocity: [f32; 3]) -> u32 {
         game.world.launch(Flying { kind, owner: 0, source: 0, position, velocity, ttl: 600, item: 0, back: 0, flown: 0.0 })
+    }
+
+    #[test]
+    fn everything_explosive_digs_a_crater_inside_its_blast() {
+        for kind in [PROJECTILE_ROCKET, PROJECTILE_SHELL, PROJECTILE_CANNON, PROJECTILE_BOMB, PROJECTILE_MORTAR, PROJECTILE_GRENADE, PROJECTILE_EGG] {
+            let [radius, depth] = burst_of(kind).unwrap().crater;
+            assert!(radius > 0.0 && depth > 0.0 && depth < radius, "kind {kind}");
+        }
+        assert!(burst_of(PROJECTILE_BULLET).is_none());
     }
 
     #[test]

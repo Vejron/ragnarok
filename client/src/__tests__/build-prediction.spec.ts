@@ -1,3 +1,4 @@
+import { Craters } from '@ragnarok/engine'
 import { describe, expect, it } from 'vitest'
 import { BUILD_COOLDOWN_TICKS } from '@/sim/consts'
 import { BrickTrigger, mayPlace, type BuildWorld } from '@/sim/bricks'
@@ -43,7 +44,7 @@ describe("the local player's bricks", () => {
   })
 
   it('show a cube at once, which the server then confirms', async () => {
-    const view = new WorldView({ add: () => {} } as never)
+    const view = new WorldView({ add: () => {}, craters: new Craters() } as never)
     view.motor = await flatMotor()
     const pos: Pos = [0, 0, 0]
     view.predict(pos, brick(3), performance.now() + 1000)
@@ -59,7 +60,7 @@ describe("the local player's bricks", () => {
   })
 
   it('take a cube back that the server never placed, and put back one it never dug', async () => {
-    const view = new WorldView({ add: () => {} } as never)
+    const view = new WorldView({ add: () => {}, craters: new Craters() } as never)
     view.motor = await flatMotor()
     view.predict([0, 0, 0], brick(1), -1)
     frame(view)
@@ -79,7 +80,7 @@ describe("the local player's bricks", () => {
   })
 
   it('give way to the cube the server put there instead', () => {
-    const view = new WorldView({ add: () => {} } as never)
+    const view = new WorldView({ add: () => {}, craters: new Craters() } as never)
     view.predict([0, 0, 0], brick(1), performance.now() + 1000)
     view.built({ live: true, placed: [{ x: 0, y: 0, z: 0, color: 6, material: MATERIAL_BRICK }], removed: [], fell: [] })
     expect(view.construct.get([0, 0, 0])).toEqual(brick(6))

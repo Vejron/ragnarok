@@ -1,4 +1,5 @@
 import { PointLights } from './lights'
+import { Craters } from './craters'
 import { Color, Vec3 } from '../math/vec'
 import { Node } from './node'
 
@@ -72,6 +73,8 @@ export class Scene extends Node {
   bloom: Bloom | null = null
   /** Short-lived point lights (blasts, flashes); call `lights.update(dt)` each frame. */
   readonly lights = new PointLights()
+  /** Craters the ground's materials (`craters: true`) are marked by: SCORCH.md. */
+  readonly craters = new Craters()
   toneMapping: ToneMapping = 'none'
   exposure = 1
 }

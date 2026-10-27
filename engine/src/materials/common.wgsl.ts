@@ -1,3 +1,5 @@
+import { CRATERS_WGSL } from './craters.wgsl'
+
 /**
  * Declarations shared by every scene shader: the per-frame uniforms and the object and material records.
  * The layouts must match their writers: FRAME_FLOATS in renderer.ts, OBJECT_FLOATS in gpu/objects.ts and
@@ -50,6 +52,7 @@ const MAT_VERTEX_COLORS = 2u;
 const MAT_FOG = 4u;
 const MAT_NORMAL_MAP = 8u;
 const MAT_NORMAL_TONE = 16u;
+const MAT_CRATERS = 32u;
 const OBJ_RECEIVE_SHADOW = 1u;
 const PI = 3.141592653589793;
 
@@ -96,4 +99,6 @@ fn normalMatrix(m: mat4x4f) -> mat3x3f {
   let cof = mat3x3f(cross(c1, c2), cross(c2, c0), cross(c0, c1));
   return cof * sign(dot(c0, cof[0]));
 }
+
+${CRATERS_WGSL}
 `
