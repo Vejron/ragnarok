@@ -40,6 +40,7 @@ pub(super) const TANK: VehicleDef = VehicleDef {
         buttons: Buttons::Drive,
         aims: false,
         solids: &[Solid { shape: Shape::Cylinder { half_height: TANK_TURRET_HALF_HEIGHT, radius: TANK_TURRET_RADIUS }, at: TANK_TURRET_PIVOT, role: Role::Turret }],
+        tongue: 0.0,
     },
     armor: ARMOR,
     drone: None,

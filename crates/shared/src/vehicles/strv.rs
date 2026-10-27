@@ -45,6 +45,7 @@ pub(super) const STRV: VehicleDef = VehicleDef {
         buttons: Buttons::Drive,
         aims: false,
         solids: &[Solid { shape: Shape::Cuboid(STRV_CASEMATE_HALF), at: STRV_CASEMATE_CENTRE, role: Role::Part }],
+        tongue: 0.0,
     },
     armor: ARMOR,
     drone: None,

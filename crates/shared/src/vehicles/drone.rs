@@ -52,6 +52,7 @@ pub(super) const DRONE: VehicleDef = VehicleDef {
         buttons: Buttons::Drive,
         aims: true,
         solids: &[],
+        tongue: 0.0,
     },
     armor: LIGHT,
     drone: Some(*FPV),

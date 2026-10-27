@@ -432,10 +432,10 @@ impl Physics {
         [0.0, -hy * 0.5, hz + TOW_BACK]
     }
 
-    /// Where a mortar's tongue is, in its own frame: its front face, which points back at the car.
+    /// Where a towed gun's towing eye is, in its own frame: on its centre line at `Spec::tongue`, a
+    /// mortar's ahead of it and a Pak's at the end of its trails.
     fn tongue_anchor(spec: &Spec) -> [f32; 3] {
-        let [_, _, hz] = spec.half_extents;
-        [0.0, 0.0, -(hz + TOW_BACK)]
+        [0.0, 0.0, spec.tongue]
     }
 
     /// Hitches mortar `mortar` to car `car`'s tow point, with a spherical joint. Does nothing if the

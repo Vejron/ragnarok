@@ -13,7 +13,7 @@ use crate::consts::*;
 use crate::mounts::{Aim, Ammo, Fire, MountDef, Muzzle, Need, Refill, Show};
 use crate::items::*;
 use crate::protocol::{
-    KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON,
+    KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON,
     PROJECTILE_EGG, PROJECTILE_MORTAR, PROJECTILE_SHELL, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LOITER, WEAPON_MG, WEAPON_SHELL,
 };
 
@@ -23,6 +23,7 @@ mod hen;
 mod jeep;
 mod loiter;
 mod mortar;
+mod pak;
 mod plane;
 mod roadster;
 mod spec;
@@ -49,7 +50,7 @@ pub struct VehicleDef {
     /// Whether its crew can be shot, and through what.
     pub crew: Exposure,
     /// Each seat's head point in the hull frame, for kinds whose crew show (`crew` is not `Sealed`).
-    /// The mortar's one seat is on its turning mount instead: `MORTAR_SEAT_HEAD`.
+    /// The mortar's and the Pak's one seat is on its turning mount instead (`mount_seat`).
     pub seat_heads: &'static [[f32; 3]],
     /// Its passengers (every seat but the driver's) can fire the guns in their own hotbar.
     pub crew_guns: bool,
@@ -61,7 +62,7 @@ pub struct VehicleDef {
     pub armor: Armor,
     /// For a drone, flown from afar by whoever launched it: how it flies, strikes and is launched.
     pub drone: Option<DroneDef>,
-    /// Its one seat is on its turning mount rather than in the hull: the mortar's.
+    /// Its one seat is on its turning mount rather than in the hull: the mortar's, the Pak's.
     pub mount_seat: Option<MountSeat>,
 }
 
@@ -233,6 +234,7 @@ pub static VEHICLES: &[VehicleDef] = &[
     drone::DRONE,
     hen::HEN,
     loiter::LOITER,
+    pak::PAK,
 ];
 
 /// Where each kind id's definition is in `VEHICLES`: 0, the jeep's, for ids that are not a vehicle.
@@ -305,5 +307,19 @@ mod tests {
         assert!(vehicle_def(KIND_PLANE).arms() && vehicle_def(KIND_HEN).arms() && !vehicle_def(KIND_TANK).arms());
         assert!(vehicle_def(KIND_TANK).gun() && vehicle_def(KIND_HELI).gun() && vehicle_def(KIND_PLANE).gun() && vehicle_def(KIND_WALKER).gun() && vehicle_def(KIND_STRV).gun());
         assert!(!vehicle_def(KIND_JEEP).gun() && !vehicle_def(KIND_SPORTS).gun() && !vehicle_def(KIND_ROADSTER).gun() && !vehicle_def(KIND_HEN).gun());
+        assert!(vehicle_def(KIND_MORTAR).gun() && vehicle_def(KIND_PAK).gun());
+    }
+
+    #[test]
+    fn a_towed_kind_has_its_towing_eye_beyond_its_hull_and_no_other_kind_has_one() {
+        for def in VEHICLES {
+            if def.body.towed {
+                assert!(def.spec.tongue.abs() > def.half_extents()[2], "{}: the eye is clear of the hull", def.name);
+            } else {
+                assert_eq!(def.spec.tongue, 0.0, "{} is not towed", def.name);
+            }
+        }
+        // The mortar is hitched by its front, the Pak by its trails behind it, so it travels muzzle-last.
+        assert!(vehicle_def(KIND_MORTAR).spec.tongue < 0.0 && vehicle_def(KIND_PAK).spec.tongue > 0.0);
     }
 }

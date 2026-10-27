@@ -37,6 +37,7 @@ pub(super) const MORTAR: VehicleDef = VehicleDef {
         buttons: Buttons::Drive,
         aims: false,
         solids: &[],
+        tongue: -(MORTAR_HALF_EXTENTS[2] + TOW_BACK),
     },
     armor: LIGHT,
     drone: None,

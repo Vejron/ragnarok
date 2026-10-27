@@ -660,7 +660,7 @@ export class Game {
     const lookPitch = this.input.pitch + this.sway[1]
     const ride = seat ? cars.get(seat.vehicle) : undefined
     const distance = ride ? rideView(ride.kind).distance : 0
-    // Aim held at a gun with a sight (a tank's, a Strv S's): look down it, which shows where the barrel really points.
+    // Aim held at a gun with a sight (a tank's, a Strv S's, a Pak's): look down it, which shows where the barrel really points.
     const sighted = this.hp > 0 && this.input.aimHeld && ride !== undefined && view?.sight === true
     this.input.lookScale = sighted ? SIGHT_LOOK_SCALE : scoped ? SCOPE_LOOK_SCALE : aiming ? AIM_LOOK_SCALE : 1
     const chase = ride && view?.chase ? this.chase.update([ride.x, ride.y, ride.z], ride.yaw, dt, distance) : null

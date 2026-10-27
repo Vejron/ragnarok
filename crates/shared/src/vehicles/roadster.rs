@@ -34,6 +34,7 @@ pub(super) const ROADSTER: VehicleDef = VehicleDef {
         buttons: Buttons::Stunt,
         aims: false,
         solids: &[],
+        tongue: 0.0,
     },
     armor: LIGHT,
     drone: None,

@@ -80,3 +80,14 @@ Protocol **26**:
 - No sound of its own: it is silent on its own (no engine), and its blast reuses the tank shell's blast profile rather than a dedicated mortar sound.
 - No touch button for **H** or for the range dial.
 - The range solve ignores the height of the ground at the target (see [Why the aim is a range dial](#why-the-aim-is-a-range-dial)).
+
+## The Pak 38
+
+A towed 5 cm anti-tank gun (`KIND_PAK`, 14; protocol **47**), in `crates/shared/src/vehicles/pak.rs`. It is towed like the mortar but fires like a tank.
+
+- **Towing.** The same `body.towed`, `hitch` and joint as the mortar. The towing eye is wherever the kind's `Spec::tongue` puts it: the mortar's is ahead of its hull, the Pak's is at the end of its trails behind it, so it travels muzzle-last. A towed Pak cannot be boarded or fire (`Need::Untowed`).
+- **Laying.** One gunner, on the mount (`mount_seat`). The look lays the gun as an `Aim::Mount`, so it holds within the carriage's travel: `PAK_TRAVERSE` (±0.57 rad) either side of the trails' line and `PAK_PITCH_MIN`..`PAK_PITCH_MAX` (−8° to +27°), at `PAK_SLEW`.
+- **Firing.** The tank's shell (`PROJECTILE_SHELL` at `SHELL_SPEED`, `SHELL_COOLDOWN_TICKS`) from a 3 m barrel. The seat has the tank gunner's sight (hold right mouse), with the same range ladder.
+- **Protection.** A shield solid (`PAK_SHIELD_*`) across the front stops rounds aimed at the gunner from ahead. It is fixed to the hull and does not turn with the traverse. 140 hp, and armour that turns slanting hits on the front.
+- **Client.** `render/pak.ts` (`PakModel`) is built from primitives. Hitched, the barrel comes back to the centre line and the trails close into the towing eye. It uses the `gun` camera rig with hull limits, the `gunner` role and hint, and is placed with the mortar (`PAK_COUNT` 1) and in the editor (icon K).
+- **Tests.** `a_pak_is_hitched_by_its_trails_and_travels_muzzle_last` (sim), `a_pak_is_laid_by_the_look_within_its_traverse_and_fires_a_tank_shell_flat` (server), `client/src/__tests__/pak.spec.ts`.

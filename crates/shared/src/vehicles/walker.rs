@@ -48,6 +48,7 @@ pub(super) const WALKER: VehicleDef = VehicleDef {
         buttons: Buttons::Drive,
         aims: false,
         solids: &LEG_SOLIDS,
+        tongue: 0.0,
     },
     armor: LIGHT,
     drone: None,

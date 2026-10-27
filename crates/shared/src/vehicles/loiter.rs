@@ -53,6 +53,7 @@ pub(super) const LOITER: VehicleDef = VehicleDef {
         buttons: Buttons::Drive,
         aims: true,
         solids: &[],
+        tongue: 0.0,
     },
     armor: LIGHT,
     drone: Some(LOITERING),

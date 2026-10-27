@@ -38,6 +38,7 @@ pub(super) const HEN: VehicleDef = VehicleDef {
         buttons: Buttons::Leap,
         aims: false,
         solids: &LEG_SOLIDS,
+        tongue: 0.0,
     },
     armor: LIGHT,
     drone: None,

@@ -38,6 +38,7 @@ pub(super) const PLANE: VehicleDef = VehicleDef {
         buttons: Buttons::Drive,
         aims: true,
         solids: &[Solid { shape: Shape::Cuboid(PLANE_WING_HALF_EXTENTS), at: PLANE_WING_CENTRE, role: Role::Wings }],
+        tongue: 0.0,
     },
     armor: SOFT,
     drone: None,

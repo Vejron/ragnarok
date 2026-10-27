@@ -35,6 +35,7 @@ pub(super) const HELI: VehicleDef = VehicleDef {
         buttons: Buttons::Drive,
         aims: false,
         solids: &[],
+        tongue: 0.0,
     },
     armor: LIGHT,
     drone: None,

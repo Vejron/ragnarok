@@ -60,6 +60,9 @@ pub struct Spec {
     pub aims: bool,
     /// What it carries beside its hull box.
     pub solids: &'static [Solid],
+    /// Where a car's tow joint holds it, as the Z of its towing eye on its centre line (hull frame): a
+    /// mortar's tongue ahead of it, a Pak's trails behind. 0 for a kind nobody tows.
+    pub tongue: f32,
 }
 
 /// What a driver's buttons do, beyond the stick (steer and throttle) every vehicle takes.

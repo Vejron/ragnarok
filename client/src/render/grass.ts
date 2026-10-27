@@ -386,11 +386,11 @@ export class Grass {
   }
 
   /** The ground of a tile moved: its blades are grown again on it. */
-  regrowTile(ref: TileRef) {
+  regrowTile(ref: Pick<TileRef, 'col' | 'row'>) {
     this.dropOver(-this.halfExtent + ref.col * this.tileSize, -this.halfExtent + ref.row * this.tileSize)
   }
 
-  removeTile(ref: TileRef) {
+  removeTile(ref: Pick<TileRef, 'col' | 'row'>) {
     this.masks.delete(this.tileKey(ref.col, ref.row))
     this.dropOver(-this.halfExtent + ref.col * this.tileSize, -this.halfExtent + ref.row * this.tileSize)
   }

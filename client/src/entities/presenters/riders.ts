@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { VehicleModel } from '@/render/car'
 import { MortarModel } from '@/render/mortar'
+import { PakModel } from '@/render/pak'
 import { FLAG_HELD_MASK, FLAG_HELD_SHIFT } from '@/net/codec'
 import { seatHead } from '@/sim/vehicles'
 import type { Avatars } from '../avatars'
@@ -12,11 +13,11 @@ import type { Vehicles } from './vehicles'
 
 /**
  * Where the rider of seat `index` of vehicle `model` (a `kind`) sits: their head point in the world
- * into `head` and the vehicle's turn (the mortar's mount's) into `rotation`. False for a crew that
+ * into `head` and the vehicle's turn (a towed gun's mount's) into `rotation`. False for a crew that
  * does not show, who are not drawn.
  */
 export function seatFrame(model: VehicleModel, kind: number, index: number, head: THREE.Vector3, rotation: THREE.Quaternion): boolean {
-  if (model instanceof MortarModel) {
+  if (model instanceof MortarModel || model instanceof PakModel) {
     if (index !== 0) return false
     model.seatFrame(head, rotation)
     return true

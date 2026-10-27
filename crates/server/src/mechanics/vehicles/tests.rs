@@ -55,10 +55,13 @@ fn move_player_next_to_a_car(game: &mut Game, id: u32) -> u32 {
 #[test]
 fn cars_are_placed_along_the_road() {
     let game = game();
-    assert_eq!(game.world.entities.count::<Vehicle>(), CAR_COUNT + ROADSTER_COUNT + TANK_COUNT + STRV_COUNT + HELI_COUNT + WALKER_COUNT + PLANE_COUNT + game.world.entities.all::<Vehicle>().map(|(_, vehicle)| vehicle).filter(|vehicle| vehicle.kind == KIND_MORTAR).count());
-    // The mortar only takes a spawn the others left, and this world has none spare.
+    let towed = game.world.entities.all::<Vehicle>().map(|(_, vehicle)| vehicle).filter(|vehicle| vehicle_def(vehicle.kind).body.towed).count();
+    assert_eq!(game.world.entities.count::<Vehicle>(), CAR_COUNT + ROADSTER_COUNT + TANK_COUNT + STRV_COUNT + HELI_COUNT + WALKER_COUNT + PLANE_COUNT + towed);
+    // The mortar and the Pak only take spawns the others left, and this world has at most one spare.
     let mortars = game.world.entities.all::<Vehicle>().map(|(_, vehicle)| vehicle).filter(|vehicle| vehicle.kind == KIND_MORTAR).count();
     assert!(mortars <= MORTAR_COUNT, "{mortars} mortars");
+    let paks = game.world.entities.all::<Vehicle>().map(|(_, vehicle)| vehicle).filter(|vehicle| vehicle.kind == KIND_PAK).count();
+    assert!(paks <= PAK_COUNT, "{paks} paks");
     let planes = game.world.entities.all::<Vehicle>().map(|(_, vehicle)| vehicle).filter(|vehicle| vehicle.kind == KIND_PLANE).count();
     assert_eq!(planes, PLANE_COUNT);
     let tanks = game.world.entities.all::<Vehicle>().map(|(_, vehicle)| vehicle).filter(|vehicle| vehicle.kind == KIND_TANK).count();

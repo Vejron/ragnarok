@@ -5,7 +5,7 @@ use sim::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_ex
 use shared::consts::*;
 use shared::vehicles::vehicle_def;
 use shared::protocol::{
-    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, ShotEvent, WEAPON_CRASH, is_drone,
+    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, ShotEvent, WEAPON_CRASH, is_drone,
     WEAPON_ROADKILL, WEAPON_SCRAPE, vehicle_hp,
 };
 use shared::quant::{to_cm, wrap_angle};
@@ -31,10 +31,12 @@ const ROADSTER_COUNT: usize = 1;
 const STRV_COUNT: usize = 1;
 /// Walkers, placed with the tanks and the helicopter on the road's spawn points.
 const WALKER_COUNT: usize = 1;
-/// Hens, placed after the mortars on whichever spawn points are left.
+/// Hens, placed after the mortars and the Paks on whichever spawn points are left.
 const HEN_COUNT: usize = 1;
 /// Field mortars, placed after the planes on whichever spawn points are left. A car hitches one (see `hitch`).
 const MORTAR_COUNT: usize = 1;
+/// Pak 38 guns, placed after the mortars the same way, and hitched the same way.
+const PAK_COUNT: usize = 1;
 /// Planes, placed after everything else where they have room to take off.
 const PLANE_COUNT: usize = 2;
 /// The longest runway worth looking for, metres: a plane is off the ground in about 40.
@@ -202,8 +204,8 @@ fn exit_position(world: &World, kind: u8, pose: &CarPose, seat: usize) -> [f32; 
     [pose.position[0], pose.position[1] + 2.5, pose.position[2]]
 }
 
-/// Hitches the free mortar within `HITCH_REACH` of the car its driver drives, or lets go of the one that car
-/// tows. Both need the car at a near standstill, and a mortar with no one aboard it.
+/// Hitches the free towed gun (a mortar, a Pak) within `HITCH_REACH` of the car its driver drives, or lets
+/// go of the one that car tows. Both need the car at a near standstill, and a gun with no one aboard it.
 fn hitch(world: &mut World, id: u32) {
     let Some(seat) = world.entities.get::<Player>(id).and_then(|player| player.seat) else { return };
     let car = seat.vehicle;
@@ -675,10 +677,10 @@ impl Mechanic for Vehicles {
             }
         }
         placed += place_planes(world, &candidates, &used);
-        // The mortars, then the hens, take whichever spawn points the planes left, so they never push a
+        // The mortars, the Paks, then the hens, take whichever spawn points the planes left, so they never push a
         // plane off one.
         let runways: Vec<CarPose> = world.entities.all::<Vehicle>().filter(|(_, v)| v.kind == KIND_PLANE).filter_map(|(id, _)| world.physics.car_pose(id)).collect();
-        for (kind, count) in [(KIND_MORTAR, MORTAR_COUNT), (KIND_HEN, HEN_COUNT)] {
+        for (kind, count) in [(KIND_MORTAR, MORTAR_COUNT), (KIND_PAK, PAK_COUNT), (KIND_HEN, HEN_COUNT)] {
             let mut added = 0;
             for (index, &[cx, cz]) in candidates.iter().enumerate() {
                 if added == count {

@@ -1,6 +1,6 @@
 use super::*;
 use shared::consts::TICK_DT;
-use shared::protocol::{KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER};
+use shared::protocol::{KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER};
 use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 
 fn flat() -> WorldFile {
@@ -1218,6 +1218,27 @@ fn a_hitched_mortar_is_pulled_along_behind_the_jeep_until_it_is_let_go() {
     physics.unhitch(2);
     assert_eq!(physics.towing(1), None);
     assert_eq!(physics.towed_by(2), None);
+}
+
+#[test]
+fn a_pak_is_hitched_by_its_trails_and_travels_muzzle_last() {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_JEEP, [0.0, 1.0, 0.0], 0.0);
+    // Parked behind the jeep turned round, its trails' eye at the jeep's tow point and its muzzle away.
+    physics.add_car(2, KIND_PAK, [0.0, 1.0, 4.0], std::f32::consts::PI);
+    assert!(physics.tow_reach(1, 2).unwrap() < HITCH_REACH, "the trails' eye starts in reach");
+    physics.hitch(1, 2);
+
+    let start = physics.car_pose(2).unwrap().position[2];
+    for _ in 0..3 * 60 {
+        physics.drive_car(1, FORWARD, TICK_DT);
+        physics.drive_car(2, COAST, TICK_DT);
+        physics.step_cars(TICK_DT);
+    }
+    let pose = physics.car_pose(2).unwrap();
+    assert!(pose.position[2] < start - 5.0, "the Pak came along behind: {start} -> {}", pose.position[2]);
+    assert!(physics.tow_reach(1, 2).unwrap() < HITCH_REACH, "and it stayed hitched");
+    assert!(pose.world_dir([0.0, 0.0, -1.0])[2] > 0.9, "its muzzle still points back, away from the jeep");
 }
 
 

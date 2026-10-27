@@ -157,8 +157,8 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
   <div v-if="stats?.prompt" class="prompt">{{ stats.touch ? stats.prompt.replace(/^E:/, 'USE:') : stats.prompt }}</div>
   <TouchControls v-if="stats?.touch && stats.locked && input" :input="input" :seat="stats.seat" :can-switch="stats.canSwitchSeat" />
   <template v-if="!stats?.touch">
-  <div v-if="stats?.seat === 'driver'" class="drive-hint">W/S gas and brake · A/D steer or turn · Space handbrake · H hitch a mortar<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
-  <div v-if="stats?.seat === 'roadster'" class="drive-hint">W/S gas and brake · A/D steer · Shift boost · Space hop, hold to hover · C handbrake · H hitch a mortar<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
+  <div v-if="stats?.seat === 'driver'" class="drive-hint">W/S gas and brake · A/D steer or turn · Space handbrake · H hitch a mortar or a Pak<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
+  <div v-if="stats?.seat === 'roadster'" class="drive-hint">W/S gas and brake · A/D steer · Shift boost · Space hop, hold to hover · C handbrake · H hitch a mortar or a Pak<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   <div v-if="stats?.seat === 'hen'" class="drive-hint">W/S walk · A/D turn · Space leap, hold to flap, then glide · W in the air to fly forward · Click or F lay an egg<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   <div v-if="stats?.seat === 'walker'" class="drive-hint">W/S walk · A/D turn · Mouse aim the guns (the body follows within 30°) · Click or F fire<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   <div v-if="stats?.seat === 'strv'" class="drive-hint">W/S gas and brake · A/D turn the tank to aim · Mouse look · Hold right mouse for the gun sight · Click or F fire · {{ stats.reload < 1 ? 'reloading…' : 'loaded' }}</div>

@@ -4,7 +4,7 @@ use crate::game::{Command, Game, Seat};
 use sim::STANDING_Y;
 use shared::items::Falloff;
 use shared::mounts::Show;
-use shared::protocol::{KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_PLANE, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_SHELL, WEAPON_BOMB, WEAPON_MG};
+use shared::protocol::{KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_SHELL, WEAPON_BOMB, WEAPON_MG};
 use shared::quant::to_mrad;
 use shared::world::{Road, WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
@@ -624,6 +624,33 @@ fn the_range_dial_walks_the_lob_and_the_elevation_follows_it() {
     let gun = turret(&game, vid);
     assert_eq!(gun.range, MORTAR_RANGE_MIN);
     assert!(gun.pitch > 1.4 && gun.pitch <= MORTAR_PITCH_MAX, "nearly vertical at the shortest: {}", gun.pitch);
+}
+
+#[test]
+fn a_pak_is_laid_by_the_look_within_its_traverse_and_fires_a_tank_shell_flat() {
+    let mut game = game();
+    let (gunner, _inbox) = join(&mut game);
+    let vid = crate::mechanics::vehicles::add_vehicle(&mut game.world, KIND_PAK, [0.0, 1.0, 20.0], 0.0);
+    seat(&mut game, gunner, vid, 0);
+    let mut seq = 0;
+    aim_and_hold(&mut game, gunner, &mut seq, 0.0, 0.0, 0, 60);
+    let hull = game.world.physics.car_pose(vid).unwrap().yaw();
+    // A little off the centre line it follows the look; far off it stops at the end of its traverse.
+    aim_and_hold(&mut game, gunner, &mut seq, hull + 0.3, 0.1, 0, 90);
+    let gun = turret(&game, vid);
+    assert!((gun.yaw - 0.3).abs() < 0.03 && (gun.pitch - 0.1).abs() < 0.03, "laid on the look: {} {}", gun.yaw, gun.pitch);
+    aim_and_hold(&mut game, gunner, &mut seq, hull + 1.5, 1.0, 0, 120);
+    let gun = turret(&game, vid);
+    assert!((gun.yaw - PAK_TRAVERSE).abs() < 0.01 && (gun.pitch - PAK_PITCH_MAX).abs() < 0.01, "held at its travel: {} {}", gun.yaw, gun.pitch);
+
+    aim_and_hold(&mut game, gunner, &mut seq, hull, 0.0, 0, 90);
+    aim_and_hold(&mut game, gunner, &mut seq, hull, 0.0, BUTTON_FIRE, 2);
+    assert_eq!(turret(&game, vid).shots, 1, "one shell away");
+    let shell = *game.world.in_flight().values().next().expect("a shell in flight");
+    assert_eq!(shell.kind, PROJECTILE_SHELL);
+    let speed = shell.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
+    assert!((speed - SHELL_SPEED).abs() < 5.0, "at a tank shell's speed: {speed}");
+    assert!(shell.velocity[2] < -0.95 * speed, "straight out of the muzzle, down -Z: {:?}", shell.velocity);
 }
 
 /// A hen standing off the road, `height` metres up, with a driver aboard and their first frames queued.

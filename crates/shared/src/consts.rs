@@ -1,7 +1,7 @@
 //! Simulation and network constants. `client/scripts/gen-consts.ts` generates the client's copy from this file: run `npm run gen:consts` in `client` after editing.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 46;
+pub const PROTOCOL_VERSION: u8 = 47;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -30,6 +30,8 @@ pub const KIND_HEN: u8 = 12;
 /// A loitering drone: a Shahed-sized delta wing with a big warhead, flown from afar like an FPV drone
 /// but launched high above and behind its pilot, and always cruising forward.
 pub const KIND_LOITER: u8 = 13;
+/// The Pak 38: a towed anti-tank gun with a shield and one gunner, who lays it like a tank's gun.
+pub const KIND_PAK: u8 = 14;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -727,6 +729,33 @@ pub const MORTAR_RECOIL: f32 = 3.0;
 pub const MORTAR_RADIUS: f32 = 11.0;
 pub const MORTAR_DAMAGE: f32 = 260.0;
 pub const MORTAR_KNOCK: f32 = 30.0;
+/// The Pak 38 (`KIND_PAK`): a towed 5 cm anti-tank gun on two wheels with split trails and a shield,
+/// one gunner. Its muzzle points down the hull's -Z, the trails run back to +Z, and it is towed by the
+/// trails' eye (`PAK_TONGUE_Z`), so it travels muzzle-last. It fires the tank's shell, laid by the look
+/// within its traverse and elevation, as a hull-mounted gun (`Aim::Mount`).
+pub const PAK_SEATS: usize = 1;
+pub const PAK_HALF_EXTENTS: [f32; 3] = [0.8, 0.35, 1.4];
+pub const PAK_WHEEL_RADIUS: f32 = 0.4;
+pub const PAK_TRACK_HALF: f32 = 0.8;
+/// The road wheels' axle, and the trails' spades it rests on at the back (the physics' second axle).
+pub const PAK_AXLES_Z: [f32; 2] = [-0.7, 1.25];
+/// The towing eye where the closed trails meet, behind the hull box.
+pub const PAK_TONGUE_Z: f32 = PAK_HALF_EXTENTS[2] + TOW_BACK;
+/// The trunnions, over the axle, and the barrel's length from them.
+pub const PAK_GUN_PIVOT: [f32; 3] = [0.0, 0.25, -0.7];
+pub const PAK_BARREL_LENGTH: f32 = 3.0;
+/// Traverse either side of the trails' centre line, and elevation, radians: about 65 degrees in all,
+/// and -8 to +27 degrees.
+pub const PAK_TRAVERSE: f32 = 0.57;
+pub const PAK_PITCH_MIN: f32 = -0.14;
+pub const PAK_PITCH_MAX: f32 = 0.47;
+/// How fast the gun is laid onto the look, rad/s: hand wheels, a little quicker than a tank's turret.
+pub const PAK_SLEW: f32 = 1.2;
+/// Speed it is shoved back at when it fires, m/s: its spades are dug in.
+pub const PAK_RECOIL: f32 = 1.0;
+/// The shield across the front, in the hull frame: it stops what would hit the gunner from ahead.
+pub const PAK_SHIELD_HALF: [f32; 3] = [0.85, 0.4, 0.03];
+pub const PAK_SHIELD_CENTRE: [f32; 3] = [0.0, 0.15, -0.95];
 /// The tow point sits this far behind a car's rear face, metres.
 pub const TOW_BACK: f32 = 0.25;
 /// How close a mortar's tongue must be to a car's tow point to hitch, metres.
@@ -782,6 +811,8 @@ pub const HELI_SEAT_HEADS: [[f32; 3]; 2] = [[0.0, 0.45, -0.45], [0.0, 0.1, -1.55
 pub const PLANE_SEAT_HEADS: [[f32; 3]; 2] = [[0.0, 0.98, -0.45], [0.0, 1.15, 0.7]];
 /// The mortar's gunner rides its mount, so this is in the mount's frame: `MORTAR_GUN_PIVOT` turned by the gun's yaw.
 pub const MORTAR_SEAT_HEAD: [f32; 3] = [0.6, 0.45, 0.6];
+/// The Pak 38's gunner kneels behind the shield, left of the breech, at the sight: in the mount's frame.
+pub const PAK_SEAT_HEAD: [f32; 3] = [-0.4, 0.2, 0.6];
 /// The seated capsule's centre is this far below the head point, and it spans `SEATED_HALF_HEIGHT`
 /// above and below that, plus `SEATED_RADIUS`.
 pub const SEATED_CENTRE_DROP: f32 = 0.3;

@@ -19,7 +19,7 @@ describe('Rounds', () => {
     const { rounds, placed, sparks } = harness()
     rounds.fire({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: -BULLET_SPEED }, true)
     rounds.update(0.5)
-    expect(placed.at(-1)![2]).toBeCloseTo(-BULLET_SPEED / 2)
+    expect(placed[placed.length - 1]![2]).toBeCloseTo(-BULLET_SPEED / 2)
     expect(sparks).toEqual([])
     rounds.update(0.6)
     expect(rounds.count).toBe(0)

@@ -15,7 +15,6 @@ import type { Mark } from '@/render/gunsight'
 import { PlaneModel } from '@/render/plane'
 import { CAMERA_HEIGHT, PLANE_CAMERA_HEIGHT, PLANE_DISTANCE, STRV_AIM_BACK, STRV_AIM_UP, WALKER_AIM_BACK, WALKER_AIM_UP, AIM_DISTANCE_SCALE, type Scene } from '@/render/scene'
 import { StrvModel } from '@/render/strvs'
-import { TankModel } from '@/render/tank'
 import type { VehicleFx } from '@/render/tyres'
 import { WalkerModel } from '@/render/walker'
 import { GRAVITY, PASSENGER_DISTANCE, PASSENGER_HEIGHT, PASSENGER_SHOULDER, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, SHELL_SPEED, STRV_BARREL_MAX, STRV_BARREL_MIN, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT } from '@/sim/consts'
@@ -33,7 +32,7 @@ const SIGHT_RANGES = [100, 150, 200, 250, 300, 350, 400, 450, 500]
 const SIGHT_RAY_START = 6
 const SIGHT_RANGE_MAX = 1500
 
-/** A mounted gun the camera can sit behind: a tank's, a helicopter's nose gun, a plane's ring. */
+/** A mounted gun the camera can sit behind: a tank's, a helicopter's nose gun, a plane's ring, a Pak's. */
 interface Barrel {
   root: VehicleModel['root']
   barrel(): { origin: THREE.Vector3; direction: THREE.Vector3 }
@@ -163,7 +162,7 @@ export class Cameras {
         if ('level' in rig) this.input.clampPitch(rig.level[0], rig.level[1])
         else this.limitGun(model, rig.hull[0], rig.hull[1], rig.hull[2])
         const { origin } = model.barrel()
-        if (sighted && model instanceof TankModel) this.lookDownBarrel(model)
+        if (sighted) this.lookDownBarrel(model)
         else this.scene.aimFrom([origin.x, origin.y, origin.z], this.input.yaw, this.input.pitch)
       },
     }
@@ -340,7 +339,7 @@ export class Cameras {
    * at each range. A shell leaves at `SHELL_SPEED` and falls under gravity, so `s` metres out it is
    * `g (s / v)² / 2` below the line. Returns the barrel's heading.
    */
-  private lookDownBarrel(model: TankModel | StrvModel): number {
+  private lookDownBarrel(model: Barrel): number {
     const { origin, direction } = model.barrel()
     const yaw = Math.atan2(-direction.x, -direction.z)
     const pitch = Math.asin(Math.max(-1, Math.min(1, direction.y)))
