@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Color } from '@ragnarok/engine'
-import { DAY_SECONDS, dayPhase, skyAt } from '@/render/daynight'
+import { DAY_SECONDS, dayPhase, nightAt, skyAt } from '@/render/daynight'
 import { CLASSIC, SOFT } from '@/render/look'
 
 describe('day and night', () => {
@@ -17,6 +17,18 @@ describe('day and night', () => {
       expect(sky.tint.g).toBeCloseTo(1)
       expect(sky.tint.b).toBeCloseTo(1)
     }
+  })
+
+  it('is dark for driving from just after sunset to just before sunrise, and light all day', () => {
+    expect(nightAt(0)).toBe(1)
+    expect(nightAt(0.24)).toBe(1)
+    expect(nightAt(0.5)).toBe(0)
+    expect(nightAt(0.3)).toBe(0)
+    expect(nightAt(0.7)).toBe(0)
+    // Dusk: on its way.
+    expect(nightAt(0.75)).toBeGreaterThan(0)
+    expect(nightAt(0.75)).toBeLessThan(1)
+    expect(nightAt(0.76)).toBe(1)
   })
 
   it('tints the ground light dark and blue at night', () => {

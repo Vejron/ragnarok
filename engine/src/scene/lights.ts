@@ -10,6 +10,12 @@ export interface LightFlash {
   radius: number
   /** Seconds to decay to nothing. */
   life: number
+  /** A spot light's direction (need not be unit length); without it the light shines every way. */
+  direction?: { x: number; y: number; z: number }
+  /** A spot light's half-angle, radians: nothing is lit outside it. Default 0.5. */
+  angle?: number
+  /** The share of `angle` over which a spot light's edge softens, 0 (hard) to 1. Default 0.3. */
+  penumbra?: number
 }
 
 interface Live {
@@ -25,21 +31,29 @@ interface Live {
   age: number
   /** Held at full strength for one frame (`hold`), not decaying. */
   steady: boolean
+  /** Unit direction of a spot light (0 for a point light). */
+  dx: number
+  dy: number
+  dz: number
+  /** Cosines of a spot light's outer and inner half-angles; -2 and -1 for a point light, which lights everything. */
+  cosOuter: number
+  cosInner: number
 }
 
-/** The most lights the renderer lights surfaces with in one frame; the strongest in view win. */
-export const MAX_POINT_LIGHTS = 8
+/** The most lights alive at once, and that the renderer lists in one frame. */
+export const MAX_LIGHTS = 256
 
 /**
- * Short-lived point lights (blasts, muzzle flashes, burning wrecks): `flash(...)` at an event and call
- * `update(dt)` once per frame. A light that stays on (a burning flare) is `hold(...)` every frame
- * instead. They light ordinary lit meshes, without shadows.
+ * Short-lived point and spot lights (blasts, muzzle flashes, burning wrecks, headlights): `flash(...)` at
+ * an event and call `update(dt)` once per frame. A light that stays on (a burning flare, a headlight) is
+ * `hold(...)` every frame instead. They light ordinary lit meshes, without shadows; the renderer bins
+ * them into a grid over the ground (scene/lightgrid.ts), so a surface pays only for the lights near it.
  */
 export class PointLights {
   readonly live: Live[] = []
   private readonly color = new Color()
 
-  constructor(readonly capacity = 32) {}
+  constructor(readonly capacity = MAX_LIGHTS) {}
 
   flash(x: number, y: number, z: number, flash: LightFlash) {
     this.add(x, y, z, flash, false)
@@ -58,7 +72,18 @@ export class PointLights {
       for (let i = 1; i < this.live.length; i++) if (this.live[i]!.age / this.live[i]!.life > this.live[oldest]!.age / this.live[oldest]!.life) oldest = i
       this.live.splice(oldest, 1)
     }
-    this.live.push({ x, y, z, r: c.r, g: c.g, b: c.b, intensity: flash.intensity, radius: flash.radius, life: Math.max(flash.life, 1e-3), age: 0, steady })
+    let dx = 0, dy = 0, dz = 0, cosOuter = -2, cosInner = -1
+    const d = flash.direction
+    const length = d ? Math.hypot(d.x, d.y, d.z) : 0
+    if (d && length > 0) {
+      dx = d.x / length
+      dy = d.y / length
+      dz = d.z / length
+      const angle = Math.min(flash.angle ?? 0.5, Math.PI)
+      cosOuter = Math.cos(angle)
+      cosInner = Math.max(Math.cos(angle * (1 - Math.min(Math.max(flash.penumbra ?? 0.3, 0), 1))), cosOuter + 1e-4)
+    }
+    this.live.push({ x, y, z, r: c.r, g: c.g, b: c.b, intensity: flash.intensity, radius: flash.radius, life: Math.max(flash.life, 1e-3), age: 0, steady, dx, dy, dz, cosOuter, cosInner })
   }
 
   update(dt: number) {

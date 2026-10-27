@@ -59,6 +59,7 @@ export class HeliModel implements VehicleModel {
   private readonly pivot = new THREE.Vector3()
   private readonly aim = new THREE.Vector3()
   private readonly matrix = new THREE.Matrix4()
+  private readonly beam = { at: new THREE.Vector3(), direction: new THREE.Vector3() }
 
   constructor(id: number) {
     if (!asset) throw new Error('loadHeliModel() must finish before helicopters are created')
@@ -116,6 +117,18 @@ export class HeliModel implements VehicleModel {
     this.gun.getWorldPosition(this.pivot)
     this.aim.set(0, 0, -1).transformDirection(this.matrix.fromArray(this.gun.matrixWorld))
     return { origin: this.pivot.clone(), direction: this.aim.clone() }
+  }
+
+  /**
+   * The searchlight under the nose gun, which turns with it: from just past the muzzle (so it does not
+   * light the gun), along the barrel, as of the last `update`. The vectors are reused by the next call.
+   */
+  searchlight(): { at: THREE.Vector3; direction: THREE.Vector3 } {
+    this.root.updateMatrixWorld(true)
+    this.gun.getWorldPosition(this.beam.at)
+    this.beam.direction.set(0, 0, -1).transformDirection(this.matrix.fromArray(this.gun.matrixWorld))
+    this.beam.at.addScaledVector(this.beam.direction, HELI_GUN_LENGTH + 0.2)
+    return this.beam
   }
 
   /** Where rounds leave the gun in world space. */

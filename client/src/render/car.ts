@@ -56,6 +56,40 @@ export async function loadCarModels() {
   )
 }
 
+/** How far the headlights' beam is dipped below the nose: a rise over a run of 1. */
+const BEAM_DIP = 0.08
+/** How far ahead of the lamps' faces the beam starts, metres, so it does not light the bonnet behind them. */
+const BEAM_AHEAD = 0.15
+
+/**
+ * The middle of `model`'s front lamps (`lamp` vertices ahead of its middle) in its frame, nudged forward
+ * past their faces, or null if it has none.
+ */
+function frontLamps(model: Node): THREE.Vector3 | null {
+  model.updateMatrixWorld(true)
+  const toModel = new THREE.Matrix4().fromArray(model.matrixWorld).invert()
+  const toFrame = new THREE.Matrix4()
+  const v = new THREE.Vector3()
+  const sum = new THREE.Vector3()
+  let count = 0
+  let front = Infinity
+  model.traverse((node) => {
+    if (!(node instanceof Mesh) || node.material.name !== 'lamp') return
+    toFrame.multiplyMatrices(toModel, new THREE.Matrix4().fromArray(node.matrixWorld))
+    const positions = node.geometry.positions
+    for (let i = 0; i < positions.length; i += 3) {
+      v.fromArray(positions, i).applyMatrix4(toFrame)
+      if (v.z >= 0) continue
+      sum.add(v)
+      count++
+      front = Math.min(front, v.z)
+    }
+  })
+  if (count === 0) return null
+  sum.divideScalar(count)
+  return sum.setZ(front - BEAM_AHEAD)
+}
+
 /** A cold-gas jet leaving one of a Roadster's nozzles: where, and which way it blows, in world space. */
 export interface Jet {
   at: THREE.Vector3
@@ -83,6 +117,9 @@ export class CarModel implements VehicleModel {
   private readonly damage: CarWear
   /** A Roadster's nozzles in the car's frame (`nozzle_rear_N` push it forward, `nozzle_lift_N` up). */
   private readonly nozzles: { at: THREE.Vector3; lift: boolean }[] = []
+  /** Where the headlights shine from in the car's frame: just ahead of the middle of the front lamps. */
+  private readonly lamps: THREE.Vector3 | null
+  private readonly beam = { at: new THREE.Vector3(), direction: new THREE.Vector3() }
 
   /** `name` is which of the car bodies it is. */
   constructor(name: CarKind, id: number) {
@@ -103,6 +140,7 @@ export class CarModel implements VehicleModel {
     })
 
     this.damage = new CarWear(this.root, model, halfExtentsOf(kind), wheelRadius, paint)
+    this.lamps = frontLamps(model)
 
     for (let seat = 0; seat < seats; seat++) {
       const marker = model.getObjectByName(`seat_${seat}`)!.position
@@ -144,6 +182,18 @@ export class CarModel implements VehicleModel {
       jets.push({ at, direction })
     }
     return jets
+  }
+
+  /**
+   * Its headlights' beam where the car was last placed: from the front lamps, along the nose and dipped a
+   * little toward the road. Null for a model without front lamps. The vectors are reused by the next call.
+   */
+  headlight(): { at: THREE.Vector3; direction: THREE.Vector3 } | null {
+    if (!this.lamps) return null
+    const q = this.root.quaternion
+    this.beam.at.copy(this.lamps).applyQuaternion(q).add(this.root.position)
+    this.beam.direction.set(0, -BEAM_DIP, -1).normalize().applyQuaternion(q)
+    return this.beam
   }
 
   /** The colour it was painted, for flying chips of it. */

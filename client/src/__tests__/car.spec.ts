@@ -62,6 +62,20 @@ describe.each([
     car.dispose()
   })
 
+  it('shines its headlights from the front lamps, along the nose and dipped toward the road', () => {
+    const car = (kindView(kind).model(1) as CarModel)
+    // Turned a quarter to the left: the nose points along -x.
+    car.update([10, 0, 0], [0, Math.SQRT1_2, 0, Math.SQRT1_2], 0)
+    const beam = car.headlight()!
+    expect(beam.at.x).toBeLessThan(10 - axleZ)
+    expect(Math.abs(beam.at.z)).toBeLessThan(0.05)
+    expect(beam.at.y).toBeGreaterThan(-ride)
+    expect(beam.at.y).toBeLessThan(1.5)
+    expect(beam.direction.x).toBeLessThan(-0.99)
+    expect(beam.direction.y).toBeLessThan(0)
+    car.dispose()
+  })
+
   it('steers the front wheels only and stays low-poly', () => {
     const car = (kindView(kind).model(1) as CarModel)
     car.update([0, 0, 0], IDENTITY, 1)
