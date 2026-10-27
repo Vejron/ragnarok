@@ -40,6 +40,8 @@ const rim = new Material({ color: 0xffa040, emissive: 0xff7a20, lit: false, blen
 const scuff = new Material({ color: 0xb8b4ac, lit: false, blend: 'alpha', opacity: 0.7, depthWrite: false, depthBias: 4, depthBiasSlope: 4 })
 /** The marks' own materials: a mark is never laid on another. */
 const MARKS = new Set<Material>([scorch, rim, scuff])
+/** Marks something else lays on a vehicle (a slit) that no round's mark should be laid on. */
+export const notSurface = (material: Material) => void MARKS.add(material)
 let shapes: { hole: Geometry; rim: Geometry; scuff: Geometry } | null = null
 
 const FORWARD = new Vec3(0, 0, 1)
@@ -88,16 +90,16 @@ function attached(node: Node, root: Node) {
  * Where on the model under `root` (a `kind`) a round going along `dir` struck it at `point`, both in the
  * vehicle's own frame as the server reported them. The server's point is on its boxes and drums, which
  * are only near the model: the round's path is followed into the model's triangles from a little before
- * the point, and the first it meets is where it went in. Failing that, the model's nearest surface;
- * failing that (no model yet), the hull box's face.
+ * the point (`before` it, looking `past` it), and the first it meets is where it went in. Failing that,
+ * the model's nearest surface; failing that (no model yet), the hull box's face.
  */
-export function locate(kind: number, root: Node, point: V, dir: V): Struck {
+export function locate(kind: number, root: Node, point: V, dir: V, before = BEFORE, past = PAST): Struck {
   root.updateWorldMatrix(true, true)
   const at = toWorld(root, point)
   const way = unitOf(toWorld(root, dir, true))
   const skip = (mesh: Mesh) => MARKS.has(mesh.material)
-  const from = { x: at.x - way.x * BEFORE, y: at.y - way.y * BEFORE, z: at.z - way.z * BEFORE }
-  const surface = raySurface(root, from, way, BEFORE + PAST, skip) ?? nearestSurface(root, at, SNAP, skip)
+  const from = { x: at.x - way.x * before, y: at.y - way.y * before, z: at.z - way.z * before }
+  const surface = raySurface(root, from, way, before + past, skip) ?? nearestSurface(root, at, SNAP, skip)
   let parent: Node, local: Vec3, normal: Vec3, unit = 1
   if (surface) {
     parent = surface.mesh

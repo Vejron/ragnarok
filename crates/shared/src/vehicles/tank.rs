@@ -3,13 +3,12 @@
 use super::*;
 
 /// A medium tank's armour: thickest in front, thin over the engine and underneath. The driver looks out
-/// through a visor slit in the glacis, the gunner through a sight beside the mantlet and the commander
-/// through the cupola's slits, and a well-aimed round can go in through any of them.
+/// through a visor slit in the glacis and the gunner through a sight beside the mantlet, and a well-aimed
+/// round can go in through either.
 const ARMOR: Armor = Armor {
     plates: &[
         Plate::slit("driver's visor", Zone::Front, Box3::new([-0.55, 0.35, -2.6], [0.14, 0.04, 0.1])),
         Plate::slit("gunner's sight", Zone::Front, Box3::new([0.4, 0.95, -0.62], [0.06, 0.035, 0.1])).on(0),
-        Plate { face: None, ..Plate::slit("cupola slit", Zone::Side, Box3::new([-0.6, 1.08, 1.1], [0.15, 0.04, 0.15])).on(0) },
         Plate::hull("mantlet", Zone::Front, 60.0).on(0).within(Box3::new([0.0, 0.85, -0.62], [0.32, 0.22, 0.15])).glances(72.0),
         Plate::hull("turret front", Zone::Front, 50.0).on(0).glances(68.0),
         Plate::hull("turret roof", Zone::Top, 12.0).on(0).glances(80.0),

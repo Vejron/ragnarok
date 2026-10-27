@@ -73,6 +73,7 @@ import { poseOf, Vehicles, type Placed, type VehicleWorld } from './entities/pre
 import { PlaneGuns, Turrets } from './entities/presenters/guns'
 import { Wear } from './entities/presenters/wear'
 import { Smoke } from './entities/presenters/smoke'
+import { Slits } from './entities/presenters/slits'
 import { Jets } from './entities/presenters/jets'
 import { Headlights } from './entities/presenters/headlights'
 import { Roosters } from './entities/presenters/roosters'
@@ -304,6 +305,7 @@ export class Game {
       fx: () => this.fxWorld, localId: () => this.localId, driving: () => this.driver?.driving ?? null,
     })
     this.machines.add(new Smoke(world, this.vehicles, (id) => this.hullMarks.vents(id)))
+    this.machines.add(new Slits(this.vehicles))
     this.machines.add(new Jets(world, this.vehicles))
     this.machines.add(new Headlights(world, this.vehicles))
     this.machines.add(new Turrets(world, this.vehicles))

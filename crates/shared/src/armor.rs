@@ -79,12 +79,14 @@ pub struct Plate {
     /// A gap rather than a plate: a visor or a vision slit. A round goes straight through it, and no
     /// fragments come with it.
     pub slit: bool,
+    /// The way it looks out: its face, even when it can be struck from any (a shield's sight gap).
+    pub towards: Zone,
 }
 
 impl Plate {
     /// A plain plate of `mm` on a whole `face` of the hull.
     pub const fn hull(name: &'static str, face: Zone, mm: f32) -> Plate {
-        Plate { name, on: On::Hull, face: Some(face), region: None, mm, slope: 0.0, ricochet: 75.0, slit: false }
+        Plate { name, on: On::Hull, face: Some(face), region: None, mm, slope: 0.0, ricochet: 75.0, slit: false, towards: face }
     }
 
     /// The same plate on solid `index` instead.
@@ -111,7 +113,7 @@ impl Plate {
 
     /// A slit in `face` of the hull at `region`.
     pub const fn slit(name: &'static str, face: Zone, region: Box3) -> Plate {
-        Plate { name, on: On::Hull, face: Some(face), region: Some(region), mm: 0.0, slope: 0.0, ricochet: 91.0, slit: true }
+        Plate { name, on: On::Hull, face: Some(face), region: Some(region), mm: 0.0, slope: 0.0, ricochet: 91.0, slit: true, towards: face }
     }
 
     /// Whether a shot that struck solid `solid` (`None` the hull) on `face` at `point` meets this plate.
@@ -292,10 +294,56 @@ pub struct Armor {
 
 /// Unarmoured: a sheet of something everywhere, which any round goes through.
 const fn skin(name: &'static str, mm: f32, ricochet: f32) -> Plate {
-    Plate { name, on: On::Any, face: None, region: None, mm, slope: 0.0, ricochet, slit: false }
+    Plate { name, on: On::Any, face: None, region: None, mm, slope: 0.0, ricochet, slit: false, towards: Zone::Front }
+}
+
+/// A slit as the client draws it: a dark gap on the model, and a glint behind it while someone looks out.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Slit {
+    pub centre: [f32; 3],
+    pub half: [f32; 3],
+    /// Out of it, a unit axis in the hull frame.
+    pub out: [f32; 3],
+    /// On the turret, placed as it is at yaw 0 and turned about `pivot` with it.
+    pub turret: bool,
+    pub pivot: [f32; 3],
+    /// The seat that looks out of it: the nearest crew member's.
+    pub seat: Option<u8>,
 }
 
 impl Armor {
+    /// Its slits, on a kind whose extra solids are `solids`.
+    pub fn slits(&self, solids: &'static [crate::vehicles::Solid]) -> impl Iterator<Item = Slit> + '_ {
+        self.plates.iter().filter(|plate| plate.slit).filter_map(move |plate| {
+            let region = plate.region?;
+            let solid = match plate.on {
+                On::Solid(index) => solids.get(index as usize),
+                _ => None,
+            };
+            let pivot = solid.map_or([0.0; 3], |solid| solid.at);
+            let side = if region.centre[0] < pivot[0] { -1.0 } else { 1.0 };
+            let out = match plate.towards {
+                Zone::Front => [0.0, 0.0, -1.0],
+                Zone::Back => [0.0, 0.0, 1.0],
+                Zone::Side => [side, 0.0, 0.0],
+                Zone::Top => [0.0, 1.0, 0.0],
+                Zone::Belly => [0.0, -1.0, 0.0],
+            };
+            let gap = |at: [f32; 3]| (0..3).map(|i| (at[i] - region.centre[i]).powi(2)).sum::<f32>();
+            let seat = self
+                .modules
+                .iter()
+                .filter_map(|module| match module.part {
+                    Part::Crew(seat) => Some((seat, gap(module.at.centre))),
+                    _ => None,
+                })
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(seat, _)| seat);
+            let turret = solid.is_some_and(|solid| solid.role == crate::vehicles::Role::Turret);
+            Some(Slit { centre: region.centre, half: region.half, out, turret, pivot, seat })
+        })
+    }
+
     /// The plate a shot that struck solid `solid` (`None` the hull) on `face` at `point` meets, if any.
     pub fn plate(&self, solid: Option<u8>, face: Zone, point: [f32; 3]) -> Option<&'static Plate> {
         self.plates.iter().find(|plate| plate.covers(solid, face, point))

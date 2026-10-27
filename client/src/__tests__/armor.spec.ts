@@ -96,3 +96,32 @@ describe('where a hurt vehicle smokes and burns from', () => {
     expect(marks.vents(1)).toEqual([])
   })
 })
+
+describe('a tank\'s vision slits', () => {
+  it('are drawn where the server has them, turned with the turret, and glint while their seat is taken', async () => {
+    const { Node } = await import('@ragnarok/engine')
+    const { Slits } = await import('@/entities/presenters/slits')
+    const { KIND_TANK } = await import('@/net/codec')
+    const root = new Node()
+    const placed = { kind: KIND_TANK, hp: 250, seats: [7, 0], turret: { yaw: Math.PI, pitch: 0, shots: 0, range: 0, flags: 0 } }
+    const vehicles = { placed: new Map([[1, placed]]), model: () => ({ root }) }
+    const slits = new Slits(vehicles as never)
+    const frame = { tick: 0, dt: 1 / 60, now: 0, localId: null }
+    // A model with no triangles to lay them on: they wait for it, then go on its boxes.
+    slits.update(1, undefined, frame)
+    expect(root.children).toHaveLength(0)
+    for (let i = 0; i < 130; i++) slits.update(1, undefined, frame)
+    // A gap and a glint for each of the driver's visor and the gunner's sight.
+    expect(root.children).toHaveLength(4)
+    const glints = root.children.filter((_, i) => i % 2 === 1) as InstanceType<typeof import('@ragnarok/engine').Mesh>[]
+    // The gunner's sight, beside the mantlet, is behind the turret's pivot with the turret turned about.
+    expect(glints[1]!.position.x).toBeCloseTo(-0.4, 1)
+    expect(glints[1]!.position.z).toBeCloseTo(1.22, 1)
+    // The driver is in, the gunner is not.
+    expect(glints[0]!.tint[3]).toBeGreaterThan(0)
+    expect(glints[1]!.tint[3]).toBe(0)
+    placed.hp = 0
+    slits.update(1, undefined, frame)
+    expect(glints[0]!.tint[3]).toBe(0)
+  })
+})

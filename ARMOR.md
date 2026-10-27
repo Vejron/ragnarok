@@ -35,7 +35,7 @@ the plain faces.
 
 | kind | plates (mm) | slits |
 |---|---|---|
-| tank | glacis 50 at 20 deg, hull side 30, rear 20, roof 12, belly 10, engine grille 10; turret front 50, mantlet 60, turret side 30, turret roof 12 | driver's visor (glacis, front left), gunner's sight (beside the mantlet), cupola slit (turret, rear left) |
+| tank | glacis 50 at 20 deg, hull side 30, rear 20, roof 12, belly 10, engine grille 10; turret front 50, mantlet 60, turret side 30, turret roof 12 | driver's visor (glacis, front left), gunner's sight (beside the mantlet) |
 | Strv S | glacis 40 at 55 deg, side 25, rear 20, roof 12, belly 10, engine deck 8; casemate front 40 at 30 deg, casemate side 20, casemate roof 10 | periscope (casemate face, left) |
 | Pak 38 | shield 8, sloped 11 deg; carriage 3 | sight gap in the shield |
 | jeep, cars, drones | 1.5 sheet steel | none |
@@ -145,6 +145,11 @@ A wreck coming back as new (`Vehicle::renew`) has every part whole and its fire 
   nearest surface, and failing that the hull box. A hole's rim glows and cools over 5 s. There are
   at most 40 marks a vehicle, and they are cleared when it comes back as new. The sparks, fragments
   and sounds come from the same spot.
+- Each slit is drawn as a dark gap on the model (`entities/presenters/slits.ts`, from
+  `Armor::slits` in the tables). It goes where a round going straight in through the slit's box crosses
+  the model, so a level shot at the gap goes through it. On a shallow plate such as the tank's glacis,
+  the gap is stretched to the strip that level shots cross. While the seat behind the slit is taken
+  and the vehicle lives, a faint glint flickers in it. The crew themselves are not drawn.
 - A hit engine smokes, a dead one smokes black, and burning fuel burns like a wreck and lights the
   ground round it (`entities/presenters/smoke.ts`). It comes out of three holes, newest first, and
   first of all the holes whose round hurt a part inside (`MARK_VITAL` on the mark's style)

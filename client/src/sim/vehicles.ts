@@ -42,6 +42,19 @@ export interface VehicleDef {
   shedsTurret: boolean
   /** Flown from afar by whoever launched it. */
   drone: boolean
+  /** Its vision slits, which a round goes straight through (`Armor::slits`). */
+  slits: readonly Slit[]
+}
+
+/** A vision slit: a box in the hull frame and the way it looks out; on a turret, placed at yaw 0 and turned about `pivot`. */
+export interface Slit {
+  centre: Triple
+  half: Triple
+  out: Triple
+  turret: boolean
+  pivot: Triple
+  /** The seat that looks out of it, if any. */
+  seat: number | null
 }
 
 type Triple = readonly [number, number, number]
@@ -54,6 +67,7 @@ export const VEHICLES: readonly VehicleDef[] = tables.vehicles.map((row) => ({
   crew: row.crew as VehicleDef['crew'],
   seatHeads: row.seatHeads.map(triple),
   mountSeat: row.mountSeat && { pivot: triple(row.mountSeat.pivot), head: triple(row.mountSeat.head) },
+  slits: row.slits.map((slit) => ({ ...slit, centre: triple(slit.centre), half: triple(slit.half), out: triple(slit.out), pivot: triple(slit.pivot) })),
 }))
 
 /** The definition of a vehicle `kind`. Unknown kinds are jeeps. */

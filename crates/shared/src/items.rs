@@ -569,8 +569,14 @@ mod tests {
                     let ([px, py, pz], [x, y, z]) = (seat.pivot, seat.head);
                     format!("{{\"pivot\": [{px}, {py}, {pz}], \"head\": [{x}, {y}, {z}]}}")
                 });
+                let slits: Vec<String> = d.armor.slits(d.spec.solids).map(|slit| {
+                    let ([x, y, z], [hx, hy, hz], [ox, oy, oz], [px, py, pz]) = (slit.centre, slit.half, slit.out, slit.pivot);
+                    let seat = slit.seat.map_or("null".to_string(), |seat| seat.to_string());
+                    format!("{{\"centre\": [{x}, {y}, {z}], \"half\": [{hx}, {hy}, {hz}], \"out\": [{ox}, {oy}, {oz}], \"turret\": {}, \"pivot\": [{px}, {py}, {pz}], \"seat\": {seat}}}", slit.turret)
+                }).collect();
+                let slits = slits.join(", ");
                 format!(
-                    "    {{\"kind\": {}, \"name\": \"{}\", \"hp\": {}, \"seats\": {}, \"halfExtents\": [{hx}, {hy}, {hz}], \"gun\": {}, \"arms\": {}, \"carWheels\": {}, \"trackHalf\": {}, \"axleZ\": {}, \"crew\": \"{}\", \"crewGuns\": {}, \"seatHeads\": [{}], \"mountSeat\": {mount_seat}, \"legged\": {}, \"heavy\": {}, \"towed\": {}, \"shedsTurret\": {}, \"drone\": {}}}",
+                    "    {{\"kind\": {}, \"name\": \"{}\", \"hp\": {}, \"seats\": {}, \"halfExtents\": [{hx}, {hy}, {hz}], \"gun\": {}, \"arms\": {}, \"carWheels\": {}, \"trackHalf\": {}, \"axleZ\": {}, \"crew\": \"{}\", \"crewGuns\": {}, \"seatHeads\": [{}], \"mountSeat\": {mount_seat}, \"legged\": {}, \"heavy\": {}, \"towed\": {}, \"shedsTurret\": {}, \"drone\": {}, \"slits\": [{slits}]}}",
                     d.kind, d.name, d.hp, d.seats, d.gun(), d.arms(), d.car_wheels, d.track_half(), d.axle_z(), d.crew.name(), d.crew_guns, heads, d.body.legs > 0.0, d.body.heavy, d.body.towed, d.sheds_turret(), d.drone.is_some()
                 )
             })
