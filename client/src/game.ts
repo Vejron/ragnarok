@@ -36,6 +36,7 @@ import { TrajectoryView } from './render/trajectory'
 import { MortarArc } from './render/mortar-arc'
 import { ProjectileTrails } from './render/trails'
 import { Rockets } from './render/rockets'
+import { Rounds } from './render/rounds'
 import { saveLook, type Look } from './render/look'
 import { Grass, GRASS_FULL, GRASS_LITE } from './render/grass'
 import { AIM_DISTANCE_SCALE, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, Scene } from './render/scene'
@@ -173,6 +174,8 @@ export class Game {
   private readonly rocketModels = new Rockets()
   /** Ribbons behind rockets, shells and bullets in flight. */
   private readonly trails = new ProjectileTrails()
+  /** A plane's machine gun rounds in flight, drawn as bullets. */
+  private readonly rounds = new Rounds(this.rocketModels, this.trails, (at) => this.effects.pelletStrike(at))
   private readonly chase = new ChaseCam()
   private readonly pickupModels = new Pickups()
   /** Items on the ground, as drawn. */
@@ -278,7 +281,7 @@ export class Game {
       },
     )
     const world: VehicleWorld = {
-      root: this.scene.scene, sounds: this.sounds, effects: this.effects, debris: this.debris, lights: this.scene.scene.lights, fx: () => this.fxWorld,
+      root: this.scene.scene, sounds: this.sounds, effects: this.effects, rounds: this.rounds, debris: this.debris, lights: this.scene.scene.lights, fx: () => this.fxWorld,
       castRay: (origin, direction, max) => this.motor?.castRay(origin, direction, max) ?? null,
       driven: () => (this.driven && this.driver?.driving ? { id: this.driver.driving, pose: this.driven, jets: this.driver.thrust?.flags ?? 0 } : null),
       seated: () => this.seat?.vehicle ?? null,
@@ -289,7 +292,7 @@ export class Game {
     this.vehicles = this.machines.add(new Vehicles(world, this.machines.add(new Seating())))
     this.wear = this.machines.add(new Wear(world, this.vehicles))
     this.events = new Events({
-      scene: this.scene, effects: this.effects, sounds: this.sounds, debris: this.debris, damageNumbers: this.damageNumbers, rockets: this.rocketModels, trails: this.trails,
+      scene: this.scene, effects: this.effects, sounds: this.sounds, debris: this.debris, damageNumbers: this.damageNumbers, rockets: this.rocketModels, trails: this.trails, rounds: this.rounds,
       blips: this.blips, avatars: this.avatars, vehicles: this.vehicles, wear: this.wear, view: this.view, chase: this.chase, surroundings: this.surroundings,
       fx: () => this.fxWorld, localId: () => this.localId, driving: () => this.driver?.driving ?? null,
     })
@@ -380,6 +383,7 @@ export class Game {
     this.driver?.leave()
     this.replica.reset()
     this.flying.clear()
+    this.rounds.clear()
     this.people.clear()
     this.machines.clear()
     this.store.clear()
@@ -705,6 +709,7 @@ export class Game {
     const world = place ? this.buildWorld(position) : null
     this.view.cubes.aim(place, brick && digging && this.view.construct.has(brick.dig) ? brick.dig : null, place !== null && world !== null && mayPlace(world, place))
     this.effects.update(dt)
+    this.rounds.update(dt)
     this.trails.update(dt)
     this.scene.scene.lights.update(dt)
     this.damageNumbers.update(dt, this.scene.camera)

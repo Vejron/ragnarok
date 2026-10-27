@@ -3,6 +3,7 @@ import type { Node, PointLights } from '@ragnarok/engine'
 import { ARMS_CUT, DAMAGE_WHEELS } from '@/net/codec'
 import type { Debris } from '@/render/debris'
 import type { Effects } from '@/render/effects'
+import type { Rounds } from '@/render/rounds'
 import { HenModel } from '@/render/hen'
 import { VehicleFx, type FxWorld } from '@/render/tyres'
 import { kindView } from '@/kinds'
@@ -57,6 +58,8 @@ export interface VehicleWorld {
   root: Node
   sounds: VehicleSounds
   effects: Effects
+  /** Machine gun rounds in flight. */
+  rounds: Rounds
   debris: Debris
   lights: PointLights
   fx: () => FxWorld

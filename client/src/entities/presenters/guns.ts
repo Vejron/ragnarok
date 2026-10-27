@@ -16,7 +16,7 @@ const MAX_ROUNDS = 4
 /**
  * A mounted gun (`turret`): every new shot on its counter is a shell or round leaving, with a flash at
  * the muzzle, a recoil and the bang. The shell itself is a projectile, and a plane's rear ring gun's
- * rounds are drawn as tracers.
+ * rounds are drawn as bullets in flight (`Rounds`).
  */
 export class Turrets implements Presenter<Frame> {
   /** The shot counter as last seen, per gun. */
@@ -60,21 +60,22 @@ export class Turrets implements Presenter<Frame> {
     if (frame.localId !== null && seats[gunner] === frame.localId) this.world.ownShot()
   }
 
-  /** A plane's rear ring gun: each new round a tracer out to what it meets. */
+  /** A plane's rear ring gun: each new round a bullet out to what it meets. */
   private ring(plane: PlaneModel, fired: number) {
     const rounds = Math.min(MAX_ROUNDS, fired)
     const { direction } = plane.barrel()
     const muzzle = plane.muzzle()
-    for (let k = 0; k < rounds; k++) this.world.effects.round(muzzle, tracerEnd(this.world, muzzle, direction))
+    this.world.effects.muzzle(muzzle)
+    for (let k = 0; k < rounds; k++) fireRound(this.world, muzzle, direction)
     plane.recoilRing()
     this.world.sounds.machineGun([muzzle.x, muzzle.y, muzzle.z], rounds, true)
   }
 }
 
 /**
- * A plane's forward guns (`arms`): every new round on their counter is drawn as a tracer from its
+ * A plane's forward guns (`arms`): every new round on their counter is drawn as a bullet from its
  * muzzle, out to the first wall or the end of the guns' range, with a flash, a kick and the rattle.
- * Only rounds that hit something come back from the server, as sparks.
+ * Only rounds that hit something come back from the server, and spark where they land.
  */
 export class PlaneGuns implements Presenter<Frame> {
   /** The forward guns' counter as last drawn, per plane. */
@@ -98,7 +99,8 @@ export class PlaneGuns implements Presenter<Frame> {
       const side = (before + k) % 2
       const { origin, direction } = plane.forwardGun(side)
       plane.recoil(side)
-      this.world.effects.round(origin, tracerEnd(this.world, origin, direction))
+      this.world.effects.muzzle(origin)
+      fireRound(this.world, origin, direction)
     }
     const { origin } = plane.forwardGun(0)
     this.world.sounds.machineGun([origin.x, origin.y, origin.z], rounds)
@@ -109,8 +111,8 @@ export class PlaneGuns implements Presenter<Frame> {
   }
 }
 
-/** Where a round from `origin` along `direction` ends: the first thing it meets, or the end of the guns' range. */
-function tracerEnd(world: VehicleWorld, origin: THREE.Vector3, direction: THREE.Vector3) {
+/** Sends a round from `origin` along `direction` out to the first thing it meets, or the end of the guns' range. */
+function fireRound(world: VehicleWorld, origin: THREE.Vector3, direction: THREE.Vector3) {
   const hit = world.castRay([origin.x, origin.y, origin.z], [direction.x, direction.y, direction.z], PLANE_GUN_RANGE)
-  return origin.clone().addScaledVector(direction, hit ? hit.t : PLANE_GUN_RANGE)
+  world.rounds.fire(origin, origin.clone().addScaledVector(direction, hit ? hit.t : PLANE_GUN_RANGE), hit !== null)
 }

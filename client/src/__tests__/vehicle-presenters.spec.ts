@@ -41,7 +41,8 @@ function harness(driven: Driven | null = null) {
   const world: VehicleWorld = {
     root: new Group(),
     sounds: { begin() {}, end() {}, engine() {}, drop: (id: number) => log.push(`drop ${id}`), thud() {}, footstep() {}, cannon: () => log.push('cannon'), laser() {}, machineGun() {} } as never,
-    effects: { muzzleFlash: () => log.push('flash'), round() {} } as never,
+    effects: { muzzleFlash: () => log.push('flash'), muzzle() {} } as never,
+    rounds: { fire() {} } as never,
     debris: { throw: () => log.push('turret thrown') } as never,
     lights: { flash: (_x: number, _y: number, _z: number, light: { color: number }) => log.push(light.color === 0xff7a24 ? 'fire' : 'muzzle light') } as never,
     fx: () => fx as never,

@@ -44,8 +44,8 @@ export class ProjectileTrails {
   /** The kind each live projectile was last followed as, to end its ribbons with the right keys. */
   private readonly kinds = new Map<string, number>()
 
-  /** Extends projectile `id`'s trail to its current position. `group` keeps rocket and bullet ids apart. */
-  follow(group: 'r' | 'b', id: number, kind: number, x: number, y: number, z: number) {
+  /** Extends projectile `id`'s trail to its current position. `group` keeps rocket, bullet and machine gun round ids apart. */
+  follow(group: 'r' | 'b' | 'm', id: number, kind: number, x: number, y: number, z: number) {
     const styles = stylesFor(kind)
     const key = `${group}${id}`
     this.kinds.set(key, kind)
@@ -53,7 +53,7 @@ export class ProjectileTrails {
   }
 
   /** The projectile is gone: its trails stay and fade. */
-  end(group: 'r' | 'b', id: number) {
+  end(group: 'r' | 'b' | 'm', id: number) {
     const key = `${group}${id}`
     const kind = this.kinds.get(key)
     if (kind === undefined) return

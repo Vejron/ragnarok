@@ -85,22 +85,6 @@ export class Effects {
     this.root.spawn({ at, lift: 0.3, size: 0.1, grow: 0.3, life: 0.4, color: 0xb8ad98 })
   }
 
-  /**
-   * A machine gun round with a tracer: a small flash at the muzzle and a short bright streak that flies
-   * from `from` to `to` at `speed` m/s. Where it ends on something, the server's hit event sparks.
-   */
-  round(from: V, to: V, speed = 700) {
-    const length = len(sub(to, from))
-    if (length < 0.01) return
-    const direction = norm(sub(to, from))
-    this.root.spawn({ at: from, life: 0.06, size: 0.22, grow: 0.15, color: 0xffe9a0, bright: true })
-    const streak = Math.min(7, length)
-    const at = add(from, direction, streak / 2)
-    for (const [width, color] of [[1.2, 0xfff4cc], [3, 0xff7a1a]] as const) {
-      this.root.spawn({ at, direction, along: length - streak, length: streak, size: 0.06 * width, life: length / speed, color, bright: true })
-    }
-  }
-
   /** A round striking something: a spark and a puff. */
   strike(at: V) {
     this.root.spawn({ at, life: 0.22, size: 0.15, grow: 0.4, color: 0xffa21f, bright: true })
@@ -155,7 +139,7 @@ export class Effects {
     this.root.spawn({ at, lift: size * 0.5, size: size * 0.35, grow: size * 0.65, life: 2.2, color: tinted(0xcbc2b0, this.light, NIGHT_FLOOR) })
   }
 
-  /** Just the muzzle flash, for the local player's own shot before the server confirms it. */
+  /** Just the muzzle flash: the local player's own shot before the server confirms it, or a machine gun's round. */
   muzzle(at: V) {
     this.root.spawn({ at, life: 0.06, size: 0.12, grow: 0.1, color: 0xfff2b0 })
   }

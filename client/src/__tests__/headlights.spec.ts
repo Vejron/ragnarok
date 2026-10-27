@@ -46,6 +46,7 @@ function harness() {
     root: new Group(),
     sounds: { begin() {}, end() {}, engine() {}, drop() {}, thud() {}, footstep() {} } as never,
     effects: {} as never,
+    rounds: {} as never,
     debris: {} as never,
     lights: { hold: (x: number, _y: number, _z: number, light: { radius: number; intensity: number; direction?: { x: number; y: number; z: number } }) =>
       held.push({ x, ...light, direction: light.direction && { ...light.direction } }) } as never,

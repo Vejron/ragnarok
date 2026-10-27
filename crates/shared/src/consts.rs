@@ -620,9 +620,9 @@ pub const PLANE_GUN_COOLDOWN_TICKS: u32 = 5;
 pub const PLANE_GUN_RANGE: f32 = 300.0;
 pub const PLANE_GUN_SPREAD: f32 = 0.012;
 /// What a round does to a stickman, and to a vehicle: a plane is all canvas, anything else shrugs it off.
-pub const PLANE_GUN_DAMAGE: u8 = 7;
-pub const PLANE_GUN_PLANE_DAMAGE: u8 = 4;
-pub const PLANE_GUN_VEHICLE_DAMAGE: u8 = 1;
+pub const PLANE_GUN_DAMAGE: u8 = 14;
+pub const PLANE_GUN_PLANE_DAMAGE: u8 = 7;
+pub const PLANE_GUN_VEHICLE_DAMAGE: u8 = 3;
 /// Guns heat by this much a round and cool by `GUN_COOL` a tick, out of 255. At 255 they jam until
 /// they have cooled to `GUN_UNJAM`: about four seconds of fire, then three of waiting.
 pub const PLANE_GUN_HEAT: f32 = 10.5;

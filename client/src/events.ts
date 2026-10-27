@@ -22,6 +22,7 @@ import type { Debris } from '@/render/debris'
 import type { Effects } from '@/render/effects'
 import { BLASTS, explosion, type ExplosionProfile } from '@/render/explosion'
 import type { Rockets } from '@/render/rockets'
+import type { Rounds } from '@/render/rounds'
 import type { Scene } from '@/render/scene'
 import type { ProjectileTrails } from '@/render/trails'
 import { crashBurst, scrapeSparks, type FxWorld } from '@/render/tyres'
@@ -63,6 +64,8 @@ export interface EventWorld {
   damageNumbers: DamageNumbers
   rockets: Rockets
   trails: ProjectileTrails
+  /** Machine gun rounds in flight. */
+  rounds: Rounds
   blips: Blips
   avatars: Avatars
   vehicles: Vehicles
@@ -221,8 +224,8 @@ export class Events {
       else effects.pelletStrike(to)
       if (bullet?.spawn.shooter === local) view.chipped(to.x, to.y, to.z, itemDef(bullet.spawn.item)?.damage ?? 0)
     } else if (shot.weapon === WEAPON_MG) {
-      // The tracer was drawn when the gun fired; this is a round striking something.
-      if (!surroundings.watery(to, 0.25)) effects.strike(to)
+      // The round was sent flying when the gun fired; this is where it strikes something.
+      if (!surroundings.watery(to, 0.25)) this.world.rounds.struck(to)
     } else if (shot.weapon === WEAPON_PELLET) {
       // A further pellet of a spread: the blast and the sound came with the first.
       const gun = hitscanGunFor(WEAPON_SHOTGUN)

@@ -876,9 +876,9 @@ export const PLANE_GUN_RANGE = 300.0
 export const PLANE_GUN_SPREAD = 0.012
 
 /** What a round does to a stickman, and to a vehicle: a plane is all canvas, anything else shrugs it off. */
-export const PLANE_GUN_DAMAGE = 7
-export const PLANE_GUN_PLANE_DAMAGE = 4
-export const PLANE_GUN_VEHICLE_DAMAGE = 1
+export const PLANE_GUN_DAMAGE = 14
+export const PLANE_GUN_PLANE_DAMAGE = 7
+export const PLANE_GUN_VEHICLE_DAMAGE = 3
 
 /**
  * Guns heat by this much a round and cool by `GUN_COOL` a tick, out of 255. At 255 they jam until
