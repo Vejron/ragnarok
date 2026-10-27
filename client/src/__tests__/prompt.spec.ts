@@ -8,7 +8,7 @@ import { WALKER_LEG_LENGTH } from '@/sim/consts'
 
 const standing = (x: number, extra: Partial<Where> = {}): Where => ({ position: [x, 1, 0], ground: 0, alive: true, grounded: true, chute: false, seat: null, ...extra })
 const car = (kind: number, x: number, seats: number[], y = 1): Placed => ({
-  kind, x, y, z: 0, yaw: 0, rotation: [0, 0, 0, 1], steer: 0, seats, turret: null, arms: null, hp: 100, damage: [0, 0, 0, 0, 0, 0, 0, 0], jets: 0, air: null,
+  kind, x, y, z: 0, yaw: 0, rotation: [0, 0, 0, 1], steer: 0, seats, turret: null, arms: null, hp: 100, damage: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], jets: 0, air: null,
 })
 const cars = (...list: Placed[]) => new Map(list.map((placed, i) => [i + 1, placed]))
 

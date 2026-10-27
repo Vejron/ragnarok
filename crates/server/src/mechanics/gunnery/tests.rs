@@ -101,9 +101,44 @@ fn turret_slew_is_rate_limited() {
     assert!(yaw > 0.3 && yaw <= TANK_TURRET_SLEW * 0.5 + 0.01, "{yaw}");
 }
 
+/// Loads the tank gun of `vid` with high explosive, its round against people.
+fn load_he(game: &mut Game, vid: u32) {
+    game.world.entities.get_mut::<Mounts>(vid).unwrap().state[0].alt = true;
+}
+
+#[test]
+fn the_ammo_button_swaps_the_round_once_a_press_and_reloads_the_gun() {
+    let (mut game, gunner, vid, mut seq) = crewed();
+    let hull = game.world.physics.car_pose(vid).unwrap().yaw();
+    aim_and_hold(&mut game, gunner, &mut seq, hull, 0.0, BUTTON_AMMO, 10);
+    let gun = *game.world.entities.of::<Mounts>(vid).turret().unwrap();
+    assert!(gun.alt, "held for ten ticks, it swapped once");
+    assert!(gun.cooldown > 0, "and the gun is being loaded");
+    aim_and_hold(&mut game, gunner, &mut seq, hull, 0.0, 0, 2);
+    aim_and_hold(&mut game, gunner, &mut seq, hull, 0.0, BUTTON_AMMO, 3);
+    assert!(!game.world.entities.of::<Mounts>(vid).turret().unwrap().alt, "and back");
+}
+
+#[test]
+fn an_armour_piercing_shot_kills_whoever_it_strikes_but_bursts_small() {
+    let (mut game, gunner, vid, mut seq) = crewed();
+    let (victim, _inbox) = join(&mut game);
+    let (near, _inbox2) = join(&mut game);
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    let gun = turret(&game, vid);
+    let (origin, dir) = aim(&pose, gun.yaw, gun.pitch);
+    let at = |metres: f32, side: f32| std::array::from_fn::<f32, 3, _>(|i| origin[i] + dir[i] * metres + if i == 0 { side } else { 0.0 });
+    game.world.entities.get_mut::<Player>(victim).unwrap().character.position = at(25.0, 0.0);
+    game.world.entities.get_mut::<Player>(near).unwrap().character.position = at(25.0, 5.0);
+    aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, BUTTON_FIRE, 40);
+    assert!(!game.world.entities.alive(victim));
+    assert_eq!(game.world.entities.of::<crate::entities::Health>(near).hp, PLAYER_MAX_HP, "5 m off is out of its little burst");
+}
+
 #[test]
 fn firing_hits_and_throws_a_stickman_in_the_line_of_fire() {
     let (mut game, gunner, vid, mut seq) = crewed();
+    load_he(&mut game, vid);
     let (victim, _inbox) = join(&mut game);
     let pose = game.world.physics.car_pose(vid).unwrap();
     let gun = turret(&game, vid);
@@ -128,6 +163,7 @@ fn firing_hits_and_throws_a_stickman_in_the_line_of_fire() {
 #[test]
 fn a_direct_hit_kills_and_the_gunner_gets_the_credit() {
     let (mut game, gunner, vid, mut seq) = crewed();
+    load_he(&mut game, vid);
     let (victim, _inbox) = join(&mut game);
     let (near, _inbox2) = join(&mut game);
     let pose = game.world.physics.car_pose(vid).unwrap();
@@ -566,7 +602,7 @@ fn machine_gun_rounds_hurt_a_plane_more_than_a_car() {
     let car = game.world.entities.all::<Vehicle>().find(|(_, v)| v.kind == shared::protocol::KIND_JEEP).unwrap().0;
     // The broad-phase learns of the vehicles in the first step.
     game.step();
-    let round = Round { damage: PLANE_GUN_DAMAGE, vehicle: PLANE_GUN_VEHICLE_DAMAGE, plane: PLANE_GUN_PLANE_DAMAGE, weapon: WEAPON_MG, range: 50.0, falloff: Falloff::NONE };
+    let round = Round { damage: PLANE_GUN_DAMAGE, vehicle: PLANE_GUN_VEHICLE_DAMAGE, plane: PLANE_GUN_PLANE_DAMAGE, weapon: WEAPON_MG, range: 50.0, falloff: Falloff::NONE, pen: shared::armor::Pen::ball(10.0, 10.0, 1.0, 7.92) };
     for vid in [target, car] {
         let at = game.world.physics.car_pose(vid).unwrap().position;
         let origin = [at[0], at[1] + 20.0, at[2]];

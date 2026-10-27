@@ -364,8 +364,9 @@ replicated! {
     set 12 damage
     /// A hurt hull and wheels, each 0..=255: front, rear, left, right, then the wheels front left, front
     /// right, rear left, rear right (`DAMAGE_*`). A wheel at `WHEEL_GONE` has come off; a tank's slot 4 at
-    /// `TURRET_GONE` means its turret has been shot off. Absent while unhurt.
-    Damage { parts: [u8; 8] }
+    /// `TURRET_GONE` means its turret has been shot off. Then the parts' states and the fire
+    /// (`DAMAGE_PARTS`, `DAMAGE_FIRE`). Absent while unhurt.
+    Damage { parts: [u8; 11] }
 
     diff 13 velocity
     /// A projectile's velocity, cm/s.

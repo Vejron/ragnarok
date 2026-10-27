@@ -48,7 +48,7 @@ fn a_new_entity_brings_everything_it_has_and_decodes_back() {
         thrust: Some(Thrust { air: 200, flags: 3 }),
         arms: Some(Arms { shots: 9, heat: 10, rear_heat: 11, bombs: 4, flags: 2 }),
         health: Some(Health { hp: 70 }),
-        damage: Some(Damage { parts: [1, 2, 3, 4, 5, 6, 7, 255] }),
+        damage: Some(Damage { parts: [1, 2, 3, 4, 5, 6, 7, 255, 0, 0, 0] }),
         velocity: Some(Velocity { vx: 30_000, vy: -30_000, vz: 0 }),
         kind: Some(Kind { kind: 6 }),
         projectile: Some(Projectile { kind: 2 }),
@@ -105,7 +105,7 @@ fn a_turret_that_did_not_move_is_not_resent() {
 
 #[test]
 fn a_repair_clears_damage_and_hurt_brings_it_back() {
-    let hurt = Replicated { damage: Some(Damage { parts: [0, 0, 90, 0, 0, 0, 0, 0] }), ..tank(0, 0) };
+    let hurt = Replicated { damage: Some(Damage { parts: [0, 0, 90, 0, 0, 0, 0, 0, 0, 0, 0] }), ..tank(0, 0) };
     let repaired = tank(0, 0);
     let update = repaired.update(9, Some(&hurt)).unwrap();
     assert_eq!(update.cleared, 1 << Damage::ID);
@@ -333,7 +333,7 @@ fn fixture_json() -> String {
         thrust: Some(Thrust { air: 200, flags: 3 }),
         arms: Some(Arms { shots: 9, heat: 10, rear_heat: 11, bombs: 4, flags: 2 }),
         health: Some(Health { hp: 70 }),
-        damage: Some(Damage { parts: [1, 2, 3, 4, 5, 6, 7, 255] }),
+        damage: Some(Damage { parts: [1, 2, 3, 4, 5, 6, 7, 255, 0, 0, 0] }),
         velocity: Some(Velocity { vx: 30_000, vy: -30_000, vz: 0 }),
         kind: Some(Kind { kind: 6 }),
         projectile: Some(Projectile { kind: 2 }),
@@ -345,7 +345,7 @@ fn fixture_json() -> String {
         look: Some(Look { pitch: -1570 }),
     };
     let first: Scene = vec![(1, stickman(1000, 200)), (4, tank(0, 0)), (70_000, all.clone())];
-    let hurt = Replicated { damage: Some(Damage { parts: [0, 0, 90, 0, 0, 0, 0, 0] }), ..tank(40, 12) };
+    let hurt = Replicated { damage: Some(Damage { parts: [0, 0, 90, 0, 0, 0, 0, 0, 0, 0, 0] }), ..tank(40, 12) };
     let second: Scene = vec![(1, stickman(1012, 230)), (3, stickman(-20, 7)), (4, hurt), (70_000, Replicated { heading: Some(Heading { yaw: 3141 }), steer: Some(Steer { steer: 127 }), ..all.clone() })];
     let third: Scene = vec![(1, stickman(1012, 230)), (3, Replicated { velocity: Some(Velocity { vx: 9, vy: -9, vz: 1 }), ..stickman(-20, 7) }), (4, tank(40, 12))];
     let steps = [("everything new, against nothing", Vec::new(), first.clone()), ("moves, an arrival and new damage", first, second.clone()), ("a repair, a departure and a component gained whole", second, third)];
@@ -384,7 +384,7 @@ fn scene_fixture_json() -> String {
         // A field mortar, hitched: its turret stowed, its crew showing and empty.
         (5, Replicated { turret: Some(Turret { yaw: 0, pitch: 600, shots: 0, range: 1500, flags: 1 }), ..vehicle(9) }),
         // A plane: crew showing, arms, hurt.
-        (6, Replicated { turret: Some(Turret { yaw: 3000, pitch: -100, shots: 17, range: 0, flags: 0 }), arms: Some(Arms { shots: 200, heat: 128, rear_heat: 3, bombs: 4, flags: 2 }), damage: Some(Damage { parts: [0, 9, 0, 0, 0, 0, 0, 0] }), ..vehicle(6) }),
+        (6, Replicated { turret: Some(Turret { yaw: 3000, pitch: -100, shots: 17, range: 0, flags: 0 }), arms: Some(Arms { shots: 200, heat: 128, rear_heat: 3, bombs: 4, flags: 2 }), damage: Some(Damage { parts: [0, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0] }), ..vehicle(6) }),
         // A drone, linked, its battery as air; a wreck.
         (7, Replicated { thrust: Some(Thrust { air: 99, flags: 4 }), drive: Some(Drive { vx: -250, vy: 3, vz: 1200, wx: 10, wy: -3500, wz: 0, steer: -300, spin: 700 }), ..vehicle(11) }),
         // The receiver themself, piloting the plane: what is theirs, and their seat.

@@ -14,7 +14,7 @@ export const TANK: VehicleKind = {
   ride: {
     distance: TANK_DISTANCE,
     reload: SHELL_COOLDOWN_TICKS,
-    seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the tank', chase: true }, { rig: { name: 'gun', level: [TANK_BARREL_MIN, TANK_BARREL_MAX] }, role: 'gunner', board: 'E: man the gun', sight: true }],
+    seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the tank', chase: true }, { rig: { name: 'gun', level: [TANK_BARREL_MIN, TANK_BARREL_MAX] }, role: 'gunner', board: 'E: man the gun', sight: true, gauges: ['ammo'] }],
   },
   sound: {
     voices: [['sawtooth', 1, 0.5], ['square', 0.5, 0.4], ['sawtooth', 1.51, 0.12]],

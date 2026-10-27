@@ -1,3 +1,4 @@
+import type { CalloutView } from './callouts'
 import type { ArcView, MarkerView } from './feedback'
 import type { ItemSlot } from './sim/items'
 import type { ConnectionStatus } from './net/transport'
@@ -43,6 +44,10 @@ export interface HudStats {
   reload: number
   /** A mortar's gunner: the range dial, metres; 0 elsewhere. */
   range: number
+  /** What armour made of the player's latest rounds, or of those that struck their vehicle, newest first. */
+  callouts: CalloutView[]
+  /** A gun with two kinds of round: which is loaded (Q loads the other); null elsewhere. */
+  ammo: 'AP' | 'HE' | null
   /** In a plane: the heat of the guns in hand, 0..1 (they jam at 1), and whether they have; null elsewhere. */
   heat: number | null
   jammed: boolean

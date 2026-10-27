@@ -1,5 +1,6 @@
 //! Items a player can carry in the hotbar. Mirrored in `client/src/sim/items.ts`.
 
+use crate::armor::Pen;
 use crate::consts::TICK_RATE;
 use crate::protocol::{KIND_DRONE, KIND_LOITER, WEAPON_DRONE, WEAPON_FLARE, WEAPON_GRENADE, WEAPON_LAUNCHER, WEAPON_LOITER, WEAPON_REVOLVER, WEAPON_RIFLE, WEAPON_SHOTGUN, WEAPON_SNIPER};
 
@@ -28,8 +29,11 @@ pub const ITEM_BRICKS: u8 = 11;
 /// A Carl Gustaf recoilless rifle, over the shoulder: each shot is a rocket (`PROJECTILE_ROCKET`), and
 /// it goes when the last of its `stack` is fired. Aim held looks down its sight.
 pub const ITEM_CARL_GUSTAF: u8 = 12;
+/// An anti-tank rifle: one hard-cored round at a time, which goes through a tank's sides, turret sides
+/// and rear (not its front), a Strv S's sides and casemate, or a Pak's shield (`crate::armor`).
+pub const ITEM_AT_RIFLE: u8 = 13;
 /// One past the largest item id.
-pub const ITEM_COUNT: u8 = 13;
+pub const ITEM_COUNT: u8 = 14;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ItemKind {
@@ -102,6 +106,8 @@ pub struct ItemDef {
     pub pellets: u8,
     /// How `damage` falls off with the distance a ray travelled before it hit.
     pub falloff: Falloff,
+    /// How much armour its round goes through (`crate::armor`): a rifle's none of a tank's.
+    pub pen: Pen,
     /// Walking speed multiplier while aim is held (`BUTTON_ALT`) with this gun in hand.
     pub aim_speed: f32,
     /// Can be scoped (aim held): the shot then leaves the eye along the look direction, with no spread.
@@ -128,6 +134,7 @@ const REVOLVER: ItemDef = ItemDef {
     projectile: true,
     pellets: 1,
     falloff: Falloff { start: 30.0, end: 150.0, min: 0.6 },
+    pen: Pen::ball(4.0, 2.0, 150.0, 9.0),
     aim_speed: 0.8,
     scope: false,
     stack: 1,
@@ -148,6 +155,7 @@ const AK5: ItemDef = ItemDef {
     projectile: true,
     pellets: 1,
     falloff: Falloff { start: 25.0, end: 200.0, min: 0.5 },
+    pen: Pen::ball(8.0, 5.0, 300.0, 5.56),
     aim_speed: 0.6,
     scope: false,
     stack: 1,
@@ -169,6 +177,8 @@ const SNIPER: ItemDef = ItemDef {
     projectile: true,
     pellets: 1,
     falloff: Falloff::NONE,
+    // Hard-cored: it goes on through what it gets into, rather than stopping in the first thing.
+    pen: Pen::ap(12.0, 9.0, 400.0, 7.62),
     aim_speed: 0.4,
     scope: true,
     stack: 1,
@@ -191,6 +201,7 @@ const SHOTGUN: ItemDef = ItemDef {
     projectile: false,
     pellets: 10,
     falloff: Falloff { start: 8.0, end: 40.0, min: 0.25 },
+    pen: Pen::ball(1.0, 0.5, 40.0, 8.0),
     aim_speed: 0.7,
     scope: false,
     stack: 1,
@@ -211,6 +222,7 @@ const GRENADE: ItemDef = ItemDef {
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
+    pen: Pen::NONE,
     aim_speed: 1.0,
     scope: false,
     stack: 3,
@@ -231,6 +243,7 @@ const BANDAGE: ItemDef = ItemDef {
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
+    pen: Pen::NONE,
     aim_speed: 1.0,
     scope: false,
     stack: 5,
@@ -252,6 +265,7 @@ const GOLDEN_EGG: ItemDef = ItemDef {
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
+    pen: Pen::NONE,
     aim_speed: 1.0,
     scope: false,
     stack: 1,
@@ -274,6 +288,7 @@ const DRONE: ItemDef = ItemDef {
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
+    pen: Pen::NONE,
     aim_speed: 1.0,
     scope: false,
     stack: 1,
@@ -295,6 +310,7 @@ const LOITER: ItemDef = ItemDef {
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
+    pen: Pen::NONE,
     aim_speed: 1.0,
     scope: false,
     stack: 1,
@@ -315,6 +331,7 @@ const FLARE: ItemDef = ItemDef {
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
+    pen: Pen::NONE,
     aim_speed: 1.0,
     scope: false,
     // Flares left; the gun goes when the last is fired.
@@ -337,6 +354,7 @@ const BRICKS: ItemDef = ItemDef {
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
+    pen: Pen::NONE,
     aim_speed: 1.0,
     scope: false,
     stack: 1,
@@ -362,11 +380,37 @@ const CARL_GUSTAF: ItemDef = ItemDef {
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
+    pen: Pen::he(400.0, 84.0),
     aim_speed: 0.4,
     scope: true,
     // Rounds left; the tube goes when the last is fired.
     stack: 3,
     weapon: WEAPON_LAUNCHER,
+    weight: 1,
+};
+
+const AT_RIFLE: ItemDef = ItemDef {
+    name: "AT rifle",
+    kind: ItemKind::Gun,
+    auto: false,
+    damage: 100,
+    cooldown_ticks: 3 * TICK_RATE / 2,
+    // A round at a time, loaded by hand.
+    mag: 1,
+    reload_ticks: 2 * TICK_RATE,
+    range: 400.0,
+    // Long and heavy: wild from the hip, true once braced (aim held).
+    spread: 0.06,
+    projectile: true,
+    pellets: 1,
+    falloff: Falloff::NONE,
+    // Through a tank's 30 mm sides and turret at fighting ranges, never its front.
+    pen: Pen::ap(40.0, 30.0, 300.0, 7.92),
+    aim_speed: 0.35,
+    scope: false,
+    stack: 1,
+    // Shown and credited as a sniper's shot: a heavy round that lands where it was aimed.
+    weapon: WEAPON_SNIPER,
     weight: 1,
 };
 
@@ -385,6 +429,7 @@ pub fn def(item: u8) -> Option<&'static ItemDef> {
         ITEM_FLARE => Some(&FLARE),
         ITEM_BRICKS => Some(&BRICKS),
         ITEM_CARL_GUSTAF => Some(&CARL_GUSTAF),
+        ITEM_AT_RIFLE => Some(&AT_RIFLE),
         _ => None,
     }
 }

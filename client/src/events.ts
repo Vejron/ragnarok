@@ -12,14 +12,15 @@ import type { Blips } from '@/blips'
 import { HIT_KILL, HIT_ROOSTER, HIT_VEHICLE } from '@/feedback'
 import {
   PROJECTILE_BULLET, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_BULLET, WEAPON_CRASH, WEAPON_DRONE, WEAPON_EGG, WEAPON_FLARE, WEAPON_GRENADE, WEAPON_LAUNCHER, WEAPON_LOITER, WEAPON_MG, WEAPON_MORTAR,
-  WEAPON_PELLET, WEAPON_RICOCHET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_TURRET, WEAPON_WRECK,
-  type BulletSpawn, type ShotEvent,
+  MARK_GLANCE, MARK_PIERCED, MARK_SCUFF, MARK_VITAL, WEAPON_AP, WEAPON_PELLET, WEAPON_RICOCHET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_TURRET, WEAPON_WRECK,
+  type BulletSpawn, type HullMark, type ShotEvent,
 } from '@/net/codec'
 import { CarModel } from '@/render/car'
 import type { ChaseCam } from '@/render/chase'
 import type { DamageNumbers } from '@/render/damagenumbers'
 import type { Debris } from '@/render/debris'
 import type { Effects } from '@/render/effects'
+import { locate, type HullMarks } from '@/render/hullmarks'
 import { BLASTS, explosion, type ExplosionProfile } from '@/render/explosion'
 import type { Rockets } from '@/render/rockets'
 import type { Rounds } from '@/render/rounds'
@@ -27,7 +28,7 @@ import type { Scene } from '@/render/scene'
 import type { ProjectileTrails } from '@/render/trails'
 import { crashBurst, scrapeSparks, type FxWorld } from '@/render/tyres'
 import { bulletLifeTicks, bulletPosition, bulletTicksTo, bulletVelocity } from '@/sim/ballistics'
-import { BOMB_RADIUS, CANNON_RADIUS, EXPLOSION_RADIUS, EYE_HEIGHT, MORTAR_RADIUS, ROCKET_BLAST_RADIUS, TICK_RATE, WRECK_BLAST_RADIUS } from '@/sim/consts'
+import { AP_BLAST_RADIUS, BOMB_RADIUS, CANNON_RADIUS, EXPLOSION_RADIUS, EYE_HEIGHT, MORTAR_RADIUS, ROCKET_BLAST_RADIUS, TICK_RATE, WRECK_BLAST_RADIUS } from '@/sim/consts'
 import { DRONE_BLAST_RADIUS, GRENADE_BLAST_RADIUS, hitscanGunFor, ITEM_SNIPER, itemDef, LOITER_BLAST_RADIUS, type ItemDef } from '@/sim/items'
 import type { Surroundings } from '@/surroundings'
 import type { VehicleSounds } from '@/vehicleaudio'
@@ -66,6 +67,8 @@ export interface EventWorld {
   trails: ProjectileTrails
   /** Machine gun rounds in flight. */
   rounds: Rounds
+  /** Holes and scuffs on armoured vehicles. */
+  hullMarks: HullMarks
   blips: Blips
   avatars: Avatars
   vehicles: Vehicles
@@ -83,6 +86,8 @@ export interface EventWorld {
 export class Events {
   /** Shot and burst events wait here until the render tick reaches them, so they line up with what is drawn. */
   private pending: { tick: number; shot: ShotEvent }[] = []
+  /** Marks rounds left on vehicles' armour, waiting likewise. */
+  private marks: { tick: number; mark: HullMark }[] = []
   /** Bullets in flight, flown from their spawn alone (`sim/ballistics.ts`); the server lists none after announcing them. */
   private readonly bullets = new Map<number, LiveBullet>()
   /** Bullets already seen, with the tick they were fired on: a spawn is sent twice and must not start a second round. */
@@ -97,11 +102,47 @@ export class Events {
     this.noteBullets(tick, bullets)
   }
 
+  /** Marks left on vehicles' armour as of `tick` (`S_MARKS`), to show when the picture gets there. */
+  receiveMarks(tick: number, marks: readonly HullMark[]) {
+    for (const mark of marks) this.marks.push({ tick, mark })
+    if (this.marks.length > MAX_PENDING) this.marks.splice(0, this.marks.length - MAX_PENDING)
+  }
+
   /** Plays what the picture has reached by `renderTick`, and draws the bullets in flight. */
   play(renderTick: number) {
     let played = 0
     while (played < this.pending.length && this.pending[played]!.tick <= renderTick) this.showShot(this.pending[played++]!.shot)
     if (played > 0) this.pending.splice(0, played)
+    played = 0
+    while (played < this.marks.length && this.marks[played]!.tick <= renderTick) this.showMark(this.marks[played++]!.mark)
+    if (played > 0) this.marks.splice(0, played)
+  }
+
+  /**
+   * A round meeting a vehicle's armour: sparks off it, a scuff where the plate stopped it, a hole and
+   * fragments where it went through. The server says where in the vehicle's own frame and which way the
+   * round went, so it is put on the vehicle as it is drawn now.
+   */
+  private showMark(mark: HullMark) {
+    const { effects, sounds, vehicles } = this.world
+    const placed = vehicles.placed.get(mark.vehicle)
+    const model = vehicles.model(mark.vehicle)
+    if (!placed || !model) return
+    const struck = locate(placed.kind, model.root, mark, { x: mark.dx / 127, y: mark.dy / 127, z: mark.dz / 127 })
+    const at: [number, number, number] = [struck.world.x, struck.world.y, struck.world.z]
+    const style = mark.style & ~MARK_VITAL
+    if (style === MARK_GLANCE) {
+      effects.strike(struck.world)
+      sounds.ricochet(at)
+      return
+    }
+    const pierced = style !== MARK_SCUFF
+    const big = style === MARK_PIERCED
+    if (pierced) effects.pierce(struck.world, struck.outward, big)
+    else effects.deflect(struck.world, struck.outward)
+    this.world.hullMarks.mark(mark.vehicle, model.root, struck, pierced, big ? 1.2 : pierced ? 0.45 : 0.5, (mark.style & MARK_VITAL) !== 0)
+    if (pierced) sounds.pierce(at, big)
+    else sounds.ricochet(at)
   }
 
   /** Draws every bullet where it has got to by `renderTick`, and ends the ones that have arrived. */
@@ -150,6 +191,7 @@ export class Events {
   /** Forgets everything pending and in flight: a disconnect. */
   clear() {
     this.pending = []
+    this.marks = []
     this.bullets.clear()
     this.seenBullets.clear()
   }
@@ -175,6 +217,10 @@ export class Events {
     } else if (shot.weapon === WEAPON_SHELL) {
       this.blast(to, EXPLOSION_RADIUS, BLASTS.shell)
       sounds.blast([to.x, to.y, to.z], 'big')
+    } else if (shot.weapon === WEAPON_AP) {
+      // A solid shot's little charge: a sharp crack rather than a fireball.
+      this.blast(to, AP_BLAST_RADIUS, BLASTS.cannon)
+      sounds.blast([to.x, to.y, to.z], 'small')
     } else if (shot.weapon === WEAPON_MORTAR) {
       this.blast(to, MORTAR_RADIUS, BLASTS.shell)
       sounds.blast([to.x, to.y, to.z], 'big')

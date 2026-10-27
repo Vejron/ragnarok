@@ -232,7 +232,7 @@ export class SimMotor {
 
   /** Puts simulated vehicle `id` in a state of the caller's making, the rest as it is when new; for tests. */
   placeCar(id: number, state: { position: Vec3; rotation?: [number, number, number, number]; linvel?: Vec3; angvel?: Vec3; hp?: number; damage?: readonly number[]; turret?: boolean }) {
-    const { position, rotation = [0, 0, 0, 1], linvel = [0, 0, 0], angvel = [0, 0, 0], hp = 255, damage = [0, 0, 0, 0, 0, 0, 0, 0], turret = true } = state
+    const { position, rotation = [0, 0, 0, 1], linvel = [0, 0, 0], angvel = [0, 0, 0], hp = 255, damage = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], turret = true } = state
     this.sim.setCarState(id, ...position, ...rotation, ...linvel, ...angvel, 0, 0, Number.NaN, hp, Uint8Array.from(damage), turret)
   }
 

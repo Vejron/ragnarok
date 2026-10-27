@@ -37,12 +37,14 @@ import { MortarArc } from './render/mortar-arc'
 import { ProjectileTrails } from './render/trails'
 import { Rockets } from './render/rockets'
 import { Rounds } from './render/rounds'
+import { HullMarks } from './render/hullmarks'
+import { Callouts } from './callouts'
 import { saveLook, type Look } from './render/look'
 import { Grass, GRASS_FULL, GRASS_LITE } from './render/grass'
 import { AIM_DISTANCE_SCALE, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, Scene } from './render/scene'
 import { ChaseCam } from './render/chase'
 import { PerfReadout } from './render/perf'
-import { encodeRtc } from './net/codec'
+import { encodeRtc, TURRET_ALT } from './net/codec'
 import { VoiceChat } from './voice'
 import { PlaneModel } from './render/plane'
 import { loadVehicleModels } from './kinds'
@@ -176,6 +178,10 @@ export class Game {
   private readonly trails = new ProjectileTrails()
   /** A plane's machine gun rounds in flight, drawn as bullets. */
   private readonly rounds = new Rounds(this.rocketModels, this.trails, (at) => this.effects.pelletStrike(at))
+  /** Holes and scuffs where rounds struck armoured vehicles. */
+  private readonly hullMarks = new HullMarks()
+  /** What the armour made of the player's rounds, and of the rounds that struck their vehicle. */
+  private readonly callouts = new Callouts()
   private readonly chase = new ChaseCam()
   private readonly pickupModels = new Pickups()
   /** Items on the ground, as drawn. */
@@ -293,10 +299,11 @@ export class Game {
     this.wear = this.machines.add(new Wear(world, this.vehicles))
     this.events = new Events({
       scene: this.scene, effects: this.effects, sounds: this.sounds, debris: this.debris, damageNumbers: this.damageNumbers, rockets: this.rocketModels, trails: this.trails, rounds: this.rounds,
+      hullMarks: this.hullMarks,
       blips: this.blips, avatars: this.avatars, vehicles: this.vehicles, wear: this.wear, view: this.view, chase: this.chase, surroundings: this.surroundings,
       fx: () => this.fxWorld, localId: () => this.localId, driving: () => this.driver?.driving ?? null,
     })
-    this.machines.add(new Smoke(world, this.vehicles))
+    this.machines.add(new Smoke(world, this.vehicles, (id) => this.hullMarks.vents(id)))
     this.machines.add(new Jets(world, this.vehicles))
     this.machines.add(new Headlights(world, this.vehicles))
     this.machines.add(new Turrets(world, this.vehicles))
@@ -384,6 +391,8 @@ export class Game {
     this.replica.reset()
     this.flying.clear()
     this.rounds.clear()
+    this.hullMarks.clear()
+    this.callouts.clear()
     this.people.clear()
     this.machines.clear()
     this.store.clear()
@@ -541,6 +550,12 @@ export class Game {
         }
         break
       }
+      case 'armor':
+        this.callouts.receive(message, now)
+        break
+      case 'marks':
+        this.events.receiveMarks(message.tick, message.marks)
+        break
       case 'notice':
         this.notices.receive(message.kind, message.text, now)
         break
@@ -710,6 +725,7 @@ export class Game {
     this.view.cubes.aim(place, brick && digging && this.view.construct.has(brick.dig) ? brick.dig : null, place !== null && world !== null && mayPlace(world, place))
     this.effects.update(dt)
     this.rounds.update(dt)
+    this.hullMarks.update(dt, this.vehicles.placed)
     this.trails.update(dt)
     this.scene.scene.lights.update(dt)
     this.damageNumbers.update(dt, this.scene.camera)
@@ -760,6 +776,8 @@ export class Game {
       seat: view?.role ?? null,
       canSwitchSeat: this.seat !== null && (cars.get(this.seat.vehicle)?.seats.includes(0) ?? false),
       range: view?.gauges?.includes('range') ? (ride?.turret?.range ?? 0) : 0,
+      callouts: this.callouts.view(now),
+      ammo: view?.gauges?.includes('ammo') ? ((ride?.turret?.flags ?? 0) & TURRET_ALT ? 'HE' : 'AP') : null,
       reload: this.reloaded(now, ride ? rideView(ride.kind).reload : SHELL_COOLDOWN_TICKS),
       ...cockpit(view?.gauges?.includes('cockpit') ? (ride?.arms ?? null) : null, aviator, seat ? this.vehicles.fx(seat.vehicle) : undefined),
       air: view?.gauges?.includes('air') ? (this.driver?.thrust?.air ?? null) : null,

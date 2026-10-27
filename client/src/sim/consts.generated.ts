@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 47
+export const PROTOCOL_VERSION = 50
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -127,6 +127,9 @@ export const BUTTON_RANGE_DOWN = 1 << 11
 
 /** One press: open or cut the parachute while in the air. Like a jump it is not repeated. */
 export const BUTTON_CHUTE = 1 << 12
+
+/** One press, at a gun that has two kinds of round: load the other one (Q). Like a jump it is not repeated. */
+export const BUTTON_AMMO = 1 << 13
 
 /** Stickman movement, in metres and seconds. */
 export const WALK_SPEED = 4.0
@@ -1193,8 +1196,18 @@ export const DAMAGE_MARK_MIN = 5
 export const EXPLOSION_DAMAGE = 125.0
 export const CANNON_DAMAGE = EXPLOSION_DAMAGE / 3.0
 
+/** An armour-piercing shell's small bursting charge, which goes off behind the plate it gets through. */
+export const AP_BLAST_RADIUS = 3.0
+export const AP_BLAST_DAMAGE = 70.0
+export const AP_BLAST_KNOCK = 8.0
+export const CRATER_AP_RADIUS = 1.6
+export const CRATER_AP_DEPTH = 0.3
+
 /** Most shot events one snapshot carries; the rest are cosmetic and dropped. A shotgun pull is ten. */
 export const MAX_SHOT_EVENTS = 24
+
+/** Most hull marks (`S_MARKS`) a player is sent with one snapshot. */
+export const MAX_HULL_MARKS = 32
 
 /** Most bullet spawns one snapshot carries (nearest first); they are cheap, and are sent twice. */
 export const MAX_BULLET_SPAWNS = 32

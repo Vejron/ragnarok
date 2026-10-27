@@ -97,7 +97,10 @@ impl Game {
         let shown = |show| mounts.and_then(|mounts| mounts.shown(show)).copied();
         // A hitched mortar is drawn folded up for travel.
         let stowed = if self.world.physics.towed_by(id).is_some() { TURRET_STOWED } else { 0 };
-        let turret = shown(Show::Turret).map(|gun| wire::Turret { yaw: to_mrad(gun.yaw), pitch: to_mrad(gun.pitch), shots: gun.shots, range: (gun.range * 10.0).round().clamp(0.0, u16::MAX as f32) as u16, flags: stowed });
+        let turret = shown(Show::Turret).map(|gun| {
+            let flags = stowed | if gun.alt { TURRET_ALT } else { 0 };
+            wire::Turret { yaw: to_mrad(gun.yaw), pitch: to_mrad(gun.pitch), shots: gun.shots, range: (gun.range * 10.0).round().clamp(0.0, u16::MAX as f32) as u16, flags }
+        });
         let arms = def.arms().then(|| {
             let (guns, rack, rear) = (shown(Show::Guns).unwrap_or_default(), shown(Show::Rack).unwrap_or_default(), shown(Show::Turret).unwrap_or_default());
             let mut flags = 0;
@@ -127,7 +130,7 @@ impl Game {
             thrust,
             arms,
             health: Some(wire::Health { hp: entities.get::<Health>(id).map_or(0, |health| health.hp) }),
-            damage: (vehicle.damage != [0; 8]).then_some(wire::Damage { parts: vehicle.damage }),
+            damage: (vehicle.damage != [0; shared::protocol::DAMAGE_SLOTS]).then_some(wire::Damage { parts: vehicle.damage }),
             drive: driver.filter(|&driver| entities.has::<Player>(driver)).and_then(|_| self.drive(id)),
             ..Default::default()
         })

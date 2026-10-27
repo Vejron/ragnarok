@@ -545,6 +545,15 @@ export class VehicleSounds {
     })
   }
 
+  /** A round punching through armour: a hard clang with a dull thump behind it, deeper for a shell. */
+  pierce(at: Vec3, big: boolean) {
+    this.emit(at, big ? 1.2 : 0.7, (ctx, out, t) => {
+      VehicleSounds.ping(ctx, out, t, 'square', big ? 520 : 1400, big ? 180 : 700, big ? 0.35 : 0.25, big ? 0.35 : 0.15)
+      VehicleSounds.ping(ctx, out, t, 'sine', big ? 90 : 220, big ? 40 : 120, big ? 0.6 : 0.3, big ? 0.4 : 0.15, 0.005)
+      VehicleSounds.burst(ctx, out, t, 'lowpass', big ? 1800 : 3200, big ? 300 : 900, big ? 0.3 : 0.12, big ? 0.6 : 0.3)
+    })
+  }
+
   /** A turret ripped off its ring: a deep metallic bang and a long groan as it comes away. */
   turretOff(at: Vec3) {
     this.emit(at, 1.4, (ctx, out, t) => {

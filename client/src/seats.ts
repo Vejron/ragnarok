@@ -40,7 +40,7 @@ export interface SeatView {
   /** Holding aim looks down the gun's sight. */
   sight?: true
   /** The gauges the HUD shows from it. */
-  gauges?: readonly ('air' | 'eggs' | 'cockpit' | 'range')[]
+  gauges?: readonly ('air' | 'eggs' | 'cockpit' | 'range' | 'ammo')[]
   /** The arc drawn ahead of what it fires: a mortar's bomb, or where a plane's bomb would land. */
   arc?: 'mortar' | 'bombs'
 }

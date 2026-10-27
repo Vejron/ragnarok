@@ -4,6 +4,16 @@ use super::*;
 
 /// A walker's two legs under a hull `hy` high. They hang from the bottom of the hull and stop short of
 /// the ground, so a car or a shell hits them but the springs, not the boxes, carry the walker.
+/// Its pilot sealed in the cab up front, and the fuel at the back.
+const ARMOR: Armor = Armor {
+    plates: ALLOY.plates,
+    modules: &[
+        Module::crew(0, [0.0, 0.4, -0.9], [0.4, 0.45, 0.45]),
+        Module::new(Part::Fuel, [0.0, -0.3, 1.0], [0.5, 0.3, 0.4], 100),
+    ],
+    canvas: false,
+};
+
 pub(super) const fn legs(hy: f32) -> [Solid; 2] {
     let half = (WALKER_LEG_LENGTH - WALKER_LEG_CLEARANCE) / 2.0;
     let leg = Shape::Cuboid([WALKER_LEG_HALF_WIDTH, half, WALKER_LEG_HALF_DEPTH]);
@@ -50,7 +60,7 @@ pub(super) const WALKER: VehicleDef = VehicleDef {
         solids: &LEG_SOLIDS,
         tongue: 0.0,
     },
-    armor: LIGHT,
+    armor: ARMOR,
     drone: None,
     mount_seat: None,
 };
@@ -60,7 +70,7 @@ const MOUNTS: &[MountDef] = &[MountDef {
     seat: 0,
     aim: Aim::Mount { yaw_limit: Some(WALKER_TORSO_LIMIT), pitch: (WALKER_GUN_PITCH_MIN, WALKER_GUN_PITCH_MAX), slew: WALKER_GUN_SLEW },
     muzzle: Muzzle::Twin { pivot: WALKER_GUN_PIVOT, x: WALKER_GUN_BARREL_X, drop: WALKER_GUN_BARREL_DROP },
-    fire: Fire::Shell { kind: PROJECTILE_CANNON, speed: SHELL_SPEED, length: WALKER_GUN_LENGTH, ttl: SHELL_TTL_TICKS },
+    fire: Fire::Shell { kind: PROJECTILE_CANNON, alt: PROJECTILE_CANNON, speed: SHELL_SPEED, length: WALKER_GUN_LENGTH, ttl: SHELL_TTL_TICKS },
     trigger: BUTTON_FIRE,
     cooldown: WALKER_GUN_COOLDOWN_TICKS,
     spread: WALKER_GUN_SPREAD,

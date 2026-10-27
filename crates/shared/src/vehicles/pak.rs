@@ -2,8 +2,18 @@
 
 use super::*;
 
-/// The shield turns a shot that comes in at a slant; the trails and the breech behind it are bare.
-const ARMOR: Armor = Armor { front_slope: 0.2, ricochet: [70.0, 82.0, 82.0, 82.0], mult: [0.8, 1.0, 1.2, 1.0], weak: &[], canvas: false };
+/// The shield stops a rifle bullet and turns a shot that comes in at a slant, but a gap for the sight is
+/// left in it; the trails and the breech behind it are bare.
+const ARMOR: Armor = Armor {
+    plates: &[
+        Plate { face: None, ..Plate::slit("sight gap", Zone::Front, Box3::new([0.25, 0.3, -0.95], [0.05, 0.04, 0.06])).on(0) },
+        Plate::hull("shield", Zone::Front, 8.0).on(0).all_round().sloped(11.0).glances(70.0),
+        Plate::hull("carriage", Zone::Front, 3.0).all_round().glances(82.0),
+    ],
+    // Its crew are in the open, hit as anyone is; only the breech behind the shield is a part.
+    modules: &[Module::new(Part::Breech, [0.0, 0.25, -0.4], [0.12, 0.12, 0.25], 60)],
+    canvas: false,
+};
 
 /// The Pak 38: a towed anti-tank gun. Nothing drives it, as with the mortar, but its gunner lays it like a
 /// tank's gun: the look trains and elevates it within its carriage's travel, and it fires the tank's shell.
@@ -52,13 +62,13 @@ const MOUNTS: &[MountDef] = &[MountDef {
     seat: 0,
     aim: Aim::Mount { yaw_limit: Some(PAK_TRAVERSE), pitch: (PAK_PITCH_MIN, PAK_PITCH_MAX), slew: PAK_SLEW },
     muzzle: Muzzle::One(PAK_GUN_PIVOT),
-    fire: Fire::Shell { kind: PROJECTILE_SHELL, speed: SHELL_SPEED, length: PAK_BARREL_LENGTH, ttl: SHELL_TTL_TICKS },
+    fire: Fire::Shell { kind: PROJECTILE_SHELL, alt: PROJECTILE_HE, speed: SHELL_SPEED, length: PAK_BARREL_LENGTH, ttl: SHELL_TTL_TICKS },
     trigger: BUTTON_FIRE,
     cooldown: SHELL_COOLDOWN_TICKS,
     spread: 0.0,
     recoil: PAK_RECOIL,
     heat: 0.0,
     ammo: None,
-    needs: &[Need::Untowed],
+    needs: &[Need::Untowed, Need::Breech],
     show: Show::Turret,
 }];

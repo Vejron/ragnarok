@@ -52,8 +52,27 @@ fn told_of(entity: &shared::replicated::Replicated) -> bool {
 }
 
 impl Game {
+    /// Sends each player the marks left on vehicles near them since the last snapshot (`S_MARKS`).
+    fn send_marks(&mut self) {
+        let marks = std::mem::take(&mut self.world.marks);
+        if marks.is_empty() {
+            return;
+        }
+        for (&id, outbox) in &self.outboxes {
+            let Some(player) = self.world.entities.get::<Player>(id) else { continue };
+            let remote = player.seat.filter(|seat| seat.remote).and_then(|seat| self.world.physics.car_pose(seat.vehicle));
+            let [hx, _, hz] = remote.map_or(player.character.position, |pose| pose.position);
+            let near: Vec<HullMark> = marks.iter().filter(|(_, [x, _, z])| (x - hx).hypot(z - hz) <= shared::consts::INTEREST_RADIUS).map(|&(mark, _)| mark).take(MAX_HULL_MARKS).collect();
+            if !near.is_empty() {
+                let bytes = Bytes::from(encode(&Marks { tag: S_MARKS, tick: self.world.tick, marks: near }));
+                send_reliable(outbox, id, &bytes, &mut self.stalled);
+            }
+        }
+    }
+
     pub(super) fn send_snapshots(&mut self) {
         let scene = crate::replication::ready(self.replicated());
+        self.send_marks();
         let mut shots = std::mem::take(&mut self.world.shots);
         shots.truncate(MAX_SHOT_EVENTS);
         // Each bullet goes out in a couple of snapshots, so a lost datagram does not lose it.

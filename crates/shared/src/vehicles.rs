@@ -14,7 +14,7 @@ use crate::mounts::{Aim, Ammo, Fire, MountDef, Muzzle, Need, Refill, Show};
 use crate::items::*;
 use crate::protocol::{
     KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON,
-    PROJECTILE_EGG, PROJECTILE_MORTAR, PROJECTILE_SHELL, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LOITER, WEAPON_MG, WEAPON_SHELL,
+    PROJECTILE_EGG, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_SHELL, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LOITER, WEAPON_MG, WEAPON_SHELL,
 };
 
 mod drone;
@@ -33,6 +33,7 @@ mod tank;
 mod walker;
 
 pub use spec::{Buttons, Lift, Role, Shape, Solid, Spec};
+pub use crate::armor::{ALLOY, Armor, Box3, Module, On, Part, Pen, Plate, SHEET, SOFT, Zone};
 
 #[derive(Clone, Copy, Debug)]
 pub struct VehicleDef {
@@ -191,34 +192,6 @@ const WINGS: Body = Body { drop_y: 1.5, crash: 2.0, flies: true, ..CAR };
 /// A walker's or a hen's hull starts as high as its legs hold it up.
 const LEGS: Body = Body { drop_y: WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1], legs: WALKER_LEG_LENGTH, ..CAR };
 const TOWED: Body = Body { towed: true, ..CAR };
-
-/// A vehicle's armour. A hit is judged in the hull's frame: the side it lands on is the zone, in the
-/// order front, side, back and top (the server's `armor.rs`).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Armor {
-    /// How far the front plate leans back from upright, radians.
-    pub front_slope: f32,
-    /// Incidence beyond which a shot glances off, by zone (degrees).
-    pub ricochet: [f32; 4],
-    /// Damage multiplier by zone.
-    pub mult: [f32; 4],
-    pub weak: &'static [WeakSpot],
-    /// Canvas and wood, which a machine gun's rounds tear through: they deal their `plane` damage.
-    pub canvas: bool,
-}
-
-/// A box on the hull where a hit does extra: an engine deck, a roof hatch.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct WeakSpot {
-    pub centre: [f32; 3],
-    pub half: [f32; 3],
-    pub mult: f32,
-}
-
-/// Cars, the helicopter and the walker: only the most grazing hit glances off.
-const LIGHT: Armor = Armor { front_slope: 0.0, ricochet: [82.0, 82.0, 82.0, 82.0], mult: [1.0; 4], weak: &[], canvas: false };
-/// Canvas and wood: nothing glances off.
-const SOFT: Armor = Armor { front_slope: 0.0, ricochet: [91.0; 4], mult: [1.0; 4], weak: &[], canvas: true };
 
 /// Every vehicle kind, in id order.
 pub static VEHICLES: &[VehicleDef] = &[

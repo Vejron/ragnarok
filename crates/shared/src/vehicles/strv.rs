@@ -2,12 +2,33 @@
 
 use super::*;
 
-/// The steep glacis turns shots away from well off the nose. The engine is at the back too, under a thin deck.
+/// The steep glacis turns shots away from well off the nose, and goes a long way through for one that
+/// does land. The engine is at the back, under a thin deck, and the driver (who is the gunner too) looks
+/// out through a periscope in the casemate's face.
 const ARMOR: Armor = Armor {
-    front_slope: 0.96,
-    ricochet: [58.0, 72.0, 75.0, 78.0],
-    mult: [1.0, 1.0, 1.4, 1.3],
-    weak: &[WeakSpot { centre: [0.0, 0.2, 2.0], half: [1.1, 0.4, 0.7], mult: 1.6 }, WeakSpot { centre: [0.0, 0.6, -0.3], half: [0.7, 0.2, 0.9], mult: 1.3 }],
+    plates: &[
+        Plate::slit("periscope", Zone::Front, Box3::new([-0.5, 0.7, -1.5], [0.12, 0.05, 0.05])).on(0),
+        Plate::hull("casemate front", Zone::Front, 40.0).on(0).sloped(30.0).glances(66.0),
+        Plate::hull("casemate roof", Zone::Top, 10.0).on(0).glances(78.0),
+        Plate::hull("casemate side", Zone::Side, 20.0).on(0).all_round().glances(72.0),
+        Plate::hull("engine deck", Zone::Top, 8.0).within(Box3::new([0.0, 0.45, 2.0], [1.3, 0.1, 0.7])).glances(78.0),
+        Plate::hull("glacis", Zone::Front, 40.0).sloped(55.0).glances(58.0),
+        Plate::hull("hull side", Zone::Side, 25.0).glances(72.0),
+        Plate::hull("hull rear", Zone::Back, 20.0).glances(75.0),
+        Plate::hull("hull roof", Zone::Top, 12.0).glances(78.0),
+        Plate::hull("belly", Zone::Belly, 10.0).glances(78.0),
+    ],
+    // The engine and gearbox at the back, fuel under the middle, the gun's magazine behind its one crew.
+    modules: &[
+        Module::new(Part::TrackLeft, [-1.15, -0.25, 0.0], [0.17, 0.25, 2.7], 60),
+        Module::new(Part::TrackRight, [1.15, -0.25, 0.0], [0.17, 0.25, 2.7], 60),
+        Module::new(Part::Engine, [0.0, 0.0, 1.9], [0.9, 0.35, 0.7], 90),
+        Module::new(Part::Transmission, [0.0, -0.2, 2.45], [0.8, 0.2, 0.2], 90),
+        Module::new(Part::Fuel, [0.0, -0.2, 1.0], [1.0, 0.2, 0.25], 60),
+        Module::new(Part::Ammo, [0.0, 0.1, 0.6], [0.6, 0.3, 0.4], 80),
+        Module::new(Part::Breech, [0.0, 0.55, -0.6], [0.2, 0.2, 0.4], 70),
+        Module::crew(0, [-0.55, 0.35, -1.0], [0.35, 0.4, 0.45]),
+    ],
     canvas: false,
 };
 
@@ -57,13 +78,13 @@ const MOUNTS: &[MountDef] = &[MountDef {
     seat: 0,
     aim: Aim::Bore { pitch: (STRV_BARREL_MIN, STRV_BARREL_MAX), slew: STRV_BARREL_SLEW },
     muzzle: Muzzle::One(STRV_GUN_PIVOT),
-    fire: Fire::Shell { kind: PROJECTILE_SHELL, speed: SHELL_SPEED, length: STRV_BARREL_LENGTH, ttl: SHELL_TTL_TICKS },
+    fire: Fire::Shell { kind: PROJECTILE_SHELL, alt: PROJECTILE_HE, speed: SHELL_SPEED, length: STRV_BARREL_LENGTH, ttl: SHELL_TTL_TICKS },
     trigger: BUTTON_FIRE,
     cooldown: SHELL_COOLDOWN_TICKS,
     spread: 0.0,
     recoil: SHELL_RECOIL,
     heat: 0.0,
     ammo: None,
-    needs: &[],
+    needs: &[Need::Breech],
     show: Show::Turret,
 }];

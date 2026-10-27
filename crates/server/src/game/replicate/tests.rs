@@ -56,7 +56,7 @@ fn a_client_rebuilds_exactly_what_the_server_has_near_it_in_a_busy_room() {
                     Some(add_vehicle(&mut game.world, KIND_JEEP, [at[0] + 6.0, at[1] + 1.0, at[2]], 0.0))
                 });
                 let jeep = jeep.unwrap();
-                game.world.entities.of_mut::<Vehicle>(jeep).damage = [10, 0, 200, 0, 0, 255, 0, 0];
+                game.world.entities.of_mut::<Vehicle>(jeep).damage = [10, 0, 200, 0, 0, 255, 0, 0, 0, 0, 0];
                 crate::mechanics::seat(&mut game.world, ids[2], jeep, 2);
             }
             70 => {

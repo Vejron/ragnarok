@@ -231,7 +231,7 @@ impl ClientSim {
         let Some(&kind) = self.cars.get(&id) else { return };
         let motion = CarMotion { linvel: [vx, vy, vz], angvel: [wx, wy, wz], steer, spin };
         self.physics.set_car_state(id, [x, y, z], [qx, qy, qz, qw], motion, (!tank.is_nan()).then_some(tank));
-        let mut wear = [0; 8];
+        let mut wear = [0; shared::protocol::DAMAGE_SLOTS];
         for (slot, &value) in wear.iter_mut().zip(damage) {
             *slot = value;
         }

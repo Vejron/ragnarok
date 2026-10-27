@@ -5,6 +5,7 @@
 //! `npm run gen:consts`) and the tables (`tables.generated.json`). The flag and kind constants in
 //! `client/src/net/codec.ts` are checked against these by `consts-parity.spec.ts`.
 
+pub mod armor;
 pub mod carve;
 pub mod consts;
 pub mod construct;

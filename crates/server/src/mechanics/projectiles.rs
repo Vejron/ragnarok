@@ -16,9 +16,10 @@ use super::armor::{self, Outcome};
 use super::combat::{Blast, Direct, Flight, Round as Damage, blast_at, land, strike};
 use crate::entities::{Component, Transform, With};
 use crate::game::{Player, World};
+use shared::armor::Pen;
 use shared::consts::*;
 use shared::items::{FLARE_DRAG, FLARE_RADIUS, FLARE_SINK, Falloff, GRENADE_BLAST_RADIUS, GRENADE_BOUNCE, GRENADE_DAMAGE, GRENADE_KNOCK, GRENADE_RADIUS, def};
-use shared::protocol::{PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, ShotEvent, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_BULLET, WEAPON_EGG, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_SHELL};
+use shared::protocol::{PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, ShotEvent, WEAPON_AP, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_BULLET, WEAPON_EGG, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_SHELL};
 use shared::quant::to_cm;
 use std::collections::BTreeMap;
 
@@ -154,7 +155,8 @@ const fn blast(weapon: u8, radius: f32, damage: f32, knock: f32) -> Burst {
 pub fn burst_of(kind: u8) -> Option<Burst> {
     Some(match kind {
         PROJECTILE_ROCKET => Burst { crater: [CRATER_ROCKET_RADIUS, CRATER_ROCKET_DEPTH], ..blast(WEAPON_ROCKET, ROCKET_BLAST_RADIUS, ROCKET_DAMAGE, ROCKET_KNOCK) },
-        PROJECTILE_SHELL => Burst { crater: [CRATER_SHELL_RADIUS, CRATER_SHELL_DEPTH], ..blast(WEAPON_SHELL, EXPLOSION_RADIUS, EXPLOSION_DAMAGE, EXPLOSION_KNOCK) },
+        PROJECTILE_SHELL => Burst { crater: [CRATER_AP_RADIUS, CRATER_AP_DEPTH], ..blast(WEAPON_AP, AP_BLAST_RADIUS, AP_BLAST_DAMAGE, AP_BLAST_KNOCK) },
+        PROJECTILE_HE => Burst { crater: [CRATER_SHELL_RADIUS, CRATER_SHELL_DEPTH], ..blast(WEAPON_SHELL, EXPLOSION_RADIUS, EXPLOSION_DAMAGE, EXPLOSION_KNOCK) },
         PROJECTILE_CANNON => Burst { crater: [CRATER_CANNON_RADIUS, CRATER_CANNON_DEPTH], ..blast(WEAPON_AUTOCANNON, CANNON_RADIUS, CANNON_DAMAGE, CANNON_KNOCK) },
         PROJECTILE_BOMB => Burst { crater: [CRATER_BOMB_RADIUS, CRATER_BOMB_DEPTH], ..blast(WEAPON_BOMB, BOMB_RADIUS, BOMB_DAMAGE, BOMB_KNOCK) },
         PROJECTILE_MORTAR => Burst { crater: [CRATER_MORTAR_RADIUS, CRATER_MORTAR_DEPTH], ..blast(WEAPON_MORTAR, MORTAR_RADIUS, MORTAR_DAMAGE, MORTAR_KNOCK) },
@@ -174,6 +176,20 @@ pub fn burst_for(kind: u8, item: u8) -> Option<Burst> {
     })
 }
 
+/// How much armour a projectile of `kind` goes through when it strikes (`Strikes::armor`): a gun's
+/// armour-piercing shell, with a small charge that bursts behind the plate it gets through, and high
+/// explosive, which goes through little but bursts big.
+pub fn pen_of(kind: u8) -> Pen {
+    match kind {
+        PROJECTILE_SHELL => Pen::ap(90.0, 90.0, 1.0, 75.0),
+        PROJECTILE_HE => Pen::he(15.0, 75.0),
+        PROJECTILE_CANNON => Pen::he(20.0, 20.0),
+        PROJECTILE_BOMB => Pen::he(60.0, 250.0),
+        PROJECTILE_MORTAR => Pen::he(15.0, 81.0),
+        _ => Pen::NONE,
+    }
+}
+
 /// A vehicle gun's shell, bomb or mortar round: falls, and bursts on what it meets, through its armor.
 const SHELL: Strikes = Strikes { bodies: true, armor: true, lost_below: true };
 
@@ -185,7 +201,7 @@ fn prefab(kind: u8, round: Round, entity: &mut bevy_ecs::world::EntityWorldMut) 
         PROJECTILE_ROCKET => {
             entity.insert((Motor { accel: ROCKET_ACCEL, top: ROCKET_MAX_SPEED }, Strikes { bodies: true, armor: false, lost_below: false }));
         }
-        PROJECTILE_SHELL | PROJECTILE_CANNON | PROJECTILE_BOMB | PROJECTILE_MORTAR => {
+        PROJECTILE_SHELL | PROJECTILE_HE | PROJECTILE_CANNON | PROJECTILE_BOMB | PROJECTILE_MORTAR => {
             entity.insert((Gravity(1.0), SHELL, GunStage));
         }
         PROJECTILE_GRENADE => {
@@ -361,13 +377,23 @@ fn step_striking(world: &mut World, id: u32, dt: f32, strikes: Strikes) {
     s.ttl = s.ttl.saturating_sub(1);
     if let Some(t) = body.map(|(_, t)| t).or(wall) {
         let point: [f32; 3] = std::array::from_fn(|i| s.position[i] + dir[i] * t);
+        // A solid shot through a person is the end of them, whatever its little charge does.
+        if let Some((victim, _)) = body
+            && pen_of(world.entities.get::<Projectile>(id).map_or(0, |p| p.kind)).kind == shared::armor::PenKind::Ap
+        {
+            let attacker = world.entities.has::<Player>(s.owner).then_some(s.owner);
+            let weapon = world.entities.get::<Burst>(id).map_or(WEAPON_SHELL, |burst| burst.weapon);
+            super::life::damage_entity(world, victim, super::life::Harm::new(PLAYER_MAX_HP, attacker, weapon).from(point));
+        }
         // A vehicle was hit first: its armor decides whether it bursts on it or glances off.
         let mut direct = None;
         if let (true, None, Some((_, Some(vid)))) = (strikes.armor, body, hit) {
-            match armor::armor_of(world, vid, s.position, dir, step) {
-                Some(Outcome::Ricochet { normal }) => {
+            let pen = pen_of(world.entities.get::<Projectile>(id).map_or(0, |p| p.kind));
+            let attacker = world.entities.has::<Player>(s.owner).then_some(s.owner);
+            match armor::armor_of(world, vid, s.position, dir, step, pen.near) {
+                Some(outcome @ Outcome::Ricochet { normal }) => {
                     let normal = world.physics.car_pose(vid).map_or(normal, |pose| pose.world_dir(normal));
-                    armor::announce_ricochet(world, vid, point);
+                    armor::report(world, vid, &outcome, point, dir, pen.calibre, armor::Inside::default(), attacker);
                     let out = armor::reflect(dir, normal);
                     s.velocity = out.map(|v| v * speed * armor::RICOCHET_KEEP);
                     // Just clear of the plate, so the next step does not hit it again.
@@ -375,7 +401,19 @@ fn step_striking(world: &mut World, id: u32, dt: f32, strikes: Strikes) {
                     write(world, id, &s);
                     return;
                 }
-                Some(Outcome::Hit { scale, turret }) => direct = Some(Direct { vehicle: vid, scale, turret }),
+                Some(outcome) => {
+                    let burst = world.entities.get::<Burst>(id).copied();
+                    let (damage, weapon) = burst.map_or((0.0, WEAPON_SHELL), |burst| (burst.damage, burst.weapon));
+                    // It bursts on the plate or behind it: a track there is hurt either way...
+                    let mut done = outcome.at().map_or_else(armor::Inside::default, |at| armor::on_outside(world, vid, at, pen.calibre, damage, attacker));
+                    // ...and one that went through goes on into what is inside.
+                    if let (Outcome::Pierced { residual, slit, at, .. }, Some(pose)) = (outcome, world.physics.car_pose(vid)) {
+                        let entry = armor::Entry { at, dir: pose.local_dir(dir), residual, calibre: pen.calibre, kind: pen.kind, slit, crew: PLAYER_MAX_HP, weapon, attacker };
+                        done.add(armor::inside(world, vid, entry));
+                    }
+                    armor::report(world, vid, &outcome, point, dir, pen.calibre, done, attacker);
+                    direct = Some(Direct { vehicle: vid, scale: outcome.share(pen.kind), turret: outcome.turret() });
+                }
                 None => {}
             }
         }
@@ -472,10 +510,10 @@ fn step_round(world: &mut World, id: u32, dt: f32) {
     let step = speed * dt;
     // A passenger's round leaves through their own vehicle (`source`) rather than stopping in it.
     let wall = world.physics.cast_ray_hit(s.position, dir, step, s.source);
-    let (base, falloff, weapon) = item.map_or((0, Falloff::NONE, WEAPON_RIFLE), |d| (d.damage, d.falloff, d.weapon));
+    let (base, falloff, weapon, pen) = item.map_or((0, Falloff::NONE, WEAPON_RIFLE, Pen::NONE), |d| (d.damage, d.falloff, d.weapon, d.pen));
     // What it does to a vehicle is a chip of what it does to a stickman, a plane no different.
     let chip = (base / 4).max(1);
-    let damage = Damage { damage: base, vehicle: chip, plane: chip, weapon, range: step, falloff };
+    let damage = Damage { damage: base, vehicle: chip, plane: chip, weapon, range: step, falloff, pen };
     let attacker = world.entities.has::<Player>(s.owner).then_some(s.owner);
     let flight = Flight { origin: s.position, dir, shooter: Some(s.owner), attacker, back: round.back, flown: round.flown };
     let met = strike(world, &flight, wall, step);

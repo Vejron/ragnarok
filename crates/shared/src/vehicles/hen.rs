@@ -5,6 +5,16 @@ use super::*;
 const LEG_SOLIDS: [Solid; 2] = super::walker::legs(HEN_HALF_EXTENTS[1]);
 
 /// The walker's legs and hull, with wings and eggs in place of guns.
+/// Its pilot sealed in the cab up front, and the fuel at the back.
+const ARMOR: Armor = Armor {
+    plates: ALLOY.plates,
+    modules: &[
+        Module::crew(0, [0.0, 0.4, -0.9], [0.4, 0.45, 0.45]),
+        Module::new(Part::Fuel, [0.0, -0.3, 1.0], [0.5, 0.3, 0.4], 100),
+    ],
+    canvas: false,
+};
+
 pub(super) const HEN: VehicleDef = VehicleDef {
     kind: KIND_HEN,
     name: "Hen",
@@ -40,7 +50,7 @@ pub(super) const HEN: VehicleDef = VehicleDef {
         solids: &LEG_SOLIDS,
         tongue: 0.0,
     },
-    armor: LIGHT,
+    armor: ARMOR,
     drone: None,
     mount_seat: None,
 };

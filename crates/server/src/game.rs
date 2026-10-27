@@ -126,6 +126,8 @@ impl Game {
                 next_id: 1,
                 rng: Rng::from_time(),
                 shots: Vec::new(),
+                armor_hits: Vec::new(),
+                marks: Vec::new(),
                 bullets: Vec::new(),
                 hooks: Default::default(),
             },
@@ -428,6 +430,7 @@ impl Game {
         }
         self.broadcast_kills();
         self.send_hits();
+        self.send_armor_hits();
         self.broadcast_destroyed();
         self.broadcast_damaged();
         self.broadcast_carved();
@@ -524,6 +527,21 @@ impl Game {
         for (to, hit) in merged {
             if let Some(outbox) = self.outboxes.get(&to) {
                 send_reliable(outbox, to, &Bytes::from(encode(&hit)), &mut self.stalled);
+            }
+        }
+    }
+
+    /// Tells whoever fired each round that met a vehicle's armour this tick, and its crew, what it did.
+    fn send_armor_hits(&mut self) {
+        for hit in std::mem::take(&mut self.world.armor_hits) {
+            let aboard: Vec<u32> = self.world.entities.get::<Seats>(hit.vehicle).map(|seats| seats.riders().collect()).unwrap_or_default();
+            let [x, y, z] = hit.point.map(to_cm);
+            let message = |role| Armor { tag: S_ARMOR, role, vehicle: hit.vehicle, result: hit.result, hurt: hit.inside.hurt, gone: hit.inside.gone, killed: hit.inside.killed, x, y, z };
+            let to = hit.attacker.filter(|by| !aboard.contains(by)).map(|by| (by, HIT_DEALT)).into_iter().chain(aboard.iter().map(|&rider| (rider, HIT_TAKEN)));
+            for (id, role) in to {
+                if let Some(outbox) = self.outboxes.get(&id) {
+                    send_reliable(outbox, id, &Bytes::from(encode(&message(role))), &mut self.stalled);
+                }
             }
         }
     }

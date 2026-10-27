@@ -1,7 +1,7 @@
 //! Simulation and network constants. `client/scripts/gen-consts.ts` generates the client's copy from this file: run `npm run gen:consts` in `client` after editing.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 47;
+pub const PROTOCOL_VERSION: u8 = 50;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -87,6 +87,8 @@ pub const BUTTON_RANGE_UP: u16 = 1 << 10;
 pub const BUTTON_RANGE_DOWN: u16 = 1 << 11;
 /// One press: open or cut the parachute while in the air. Like a jump it is not repeated.
 pub const BUTTON_CHUTE: u16 = 1 << 12;
+/// One press, at a gun that has two kinds of round: load the other one (Q). Like a jump it is not repeated.
+pub const BUTTON_AMMO: u16 = 1 << 13;
 
 /// Stickman movement, in metres and seconds.
 pub const WALK_SPEED: f32 = 4.0;
@@ -848,8 +850,16 @@ pub const DAMAGE_MARK_MIN: u16 = 5;
 /// Damage at the centre of an explosion; it falls off linearly to zero at `EXPLOSION_RADIUS`.
 /// More than a full life, so a shell that lands within about 1.4 m kills outright.
 pub const EXPLOSION_DAMAGE: f32 = 125.0;
+/// An armour-piercing shell's small bursting charge, which goes off behind the plate it gets through.
+pub const AP_BLAST_RADIUS: f32 = 3.0;
+pub const AP_BLAST_DAMAGE: f32 = 70.0;
+pub const AP_BLAST_KNOCK: f32 = 8.0;
+pub const CRATER_AP_RADIUS: f32 = 1.6;
+pub const CRATER_AP_DEPTH: f32 = 0.3;
 /// Most shot events one snapshot carries; the rest are cosmetic and dropped. A shotgun pull is ten.
 pub const MAX_SHOT_EVENTS: usize = 24;
+/// Most hull marks (`S_MARKS`) a player is sent with one snapshot.
+pub const MAX_HULL_MARKS: usize = 32;
 /// Most bullet spawns one snapshot carries (nearest first); they are cheap, and are sent twice.
 pub const MAX_BULLET_SPAWNS: usize = 32;
 

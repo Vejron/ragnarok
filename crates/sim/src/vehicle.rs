@@ -18,7 +18,8 @@ use super::{Obj, Physics};
 use rapier3d::control::{DynamicRayCastVehicleController, WheelTuning};
 use rapier3d::prelude::*;
 use shared::consts::*;
-use shared::protocol::{DAMAGE_WHEELS, THRUST_AIR, THRUST_BOOST, THRUST_GLIDE, THRUST_LIFT, WHEEL_GONE, is_drone, vehicle_hp};
+use shared::armor::{Part, State, unpack};
+use shared::protocol::{DAMAGE_PARTS, DAMAGE_SLOTS, DAMAGE_WHEELS, THRUST_AIR, THRUST_BOOST, THRUST_GLIDE, THRUST_LIFT, WHEEL_GONE, is_drone, vehicle_hp};
 
 
 mod flight;
@@ -37,6 +38,8 @@ const BLAST_VELOCITY: f32 = 5.0;
 const BRAKE_PER_KG: f32 = 0.045;
 /// Light brake that stands in for rolling resistance when the driver is off the pedals.
 const COAST_BRAKE_PER_KG: f32 = 0.0015;
+/// A broken track drags on its side's wheels as this share of a full brake.
+const BROKEN_TRACK_DRAG: f32 = 0.5;
 /// How fast the front wheels turn towards the steering input, radians per second.
 const STEER_RATE: f32 = 7.0;
 /// Wheels straighten this much faster than they turn in.
@@ -85,27 +88,76 @@ pub struct CarControls {
     pub hop: bool,
 }
 
-/// How worn a vehicle is, which both ends' physics apply: the engine's power and the state of a
+/// How worn a vehicle is, which both ends' physics apply: the engine's power, the share of its top
+/// speed and turn rate it has left, how much each side (left, right) is driven, and the state of a
 /// car's four wheels (front left, front right, rear left, rear right; 0 sound, 255 come off).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CarCondition {
     pub power: f32,
+    pub speed: f32,
+    pub turn: f32,
+    pub sides: [f32; 2],
     pub wheels: [u8; 4],
 }
 
+/// A hurt engine's share of its power and of the top speed.
+const ENGINE_HURT: f32 = 0.6;
+/// A hurt gearbox's share of the top speed.
+const GEARBOX_HURT: f32 = 0.7;
+/// A hurt track's share of the top speed; with one broken, the share of speed and of the turn left.
+const TRACK_HURT: f32 = 0.8;
+const TRACK_BROKEN_SPEED: f32 = 0.3;
+const TRACK_BROKEN_TURN: f32 = 0.35;
+
 impl CarCondition {
-    pub const NEW: CarCondition = CarCondition { power: 1.0, wheels: [0; 4] };
+    pub const NEW: CarCondition = CarCondition { power: 1.0, speed: 1.0, turn: 1.0, sides: [1.0; 2], wheels: [0; 4] };
 
     /// From a vehicle's health and damage as the snapshot carries them. The engine keeps full power
-    /// down to half health and loses up to half of it below.
-    pub fn of(kind: u8, hp: u8, damage: [u8; 8]) -> CarCondition {
+    /// down to half health and loses up to half of it below. A vehicle's parts (its damage slots
+    /// `DAMAGE_PARTS`) are hurt or gone on top of that: see `shared::armor::Part`.
+    pub fn of(kind: u8, hp: u8, damage: [u8; DAMAGE_SLOTS]) -> CarCondition {
         let health = f32::from(hp) / f32::from(vehicle_hp(kind));
+        let def = shared::vehicles::vehicle_def(kind);
+        let mut condition = CarCondition { power: (0.5 + health).min(1.0), ..CarCondition::NEW };
         // Only a car has wheels to hurt: a tank's first wheel slot says whether its turret is on.
-        let mut wheels = [0; 4];
-        if shared::vehicles::vehicle_def(kind).car_wheels {
-            wheels.copy_from_slice(&damage[DAMAGE_WHEELS..DAMAGE_WHEELS + 4]);
+        if def.car_wheels {
+            condition.wheels.copy_from_slice(&damage[DAMAGE_WHEELS..DAMAGE_WHEELS + 4]);
         }
-        CarCondition { power: (0.5 + health).min(1.0), wheels }
+        if def.armor.modules.is_empty() {
+            return condition;
+        }
+        let states = unpack([damage[DAMAGE_PARTS], damage[DAMAGE_PARTS + 1]]);
+        let state = |part: Part| part.slot().map_or(State::Sound, |slot| states[slot]);
+        match state(Part::Engine) {
+            State::Hurt => {
+                condition.power *= ENGINE_HURT;
+                condition.speed *= ENGINE_HURT;
+            }
+            State::Gone => condition.power = 0.0,
+            State::Sound => {}
+        }
+        match state(Part::Transmission) {
+            State::Hurt => condition.speed *= GEARBOX_HURT,
+            State::Gone => condition.power = 0.0,
+            State::Sound => {}
+        }
+        for (side, part) in [Part::TrackLeft, Part::TrackRight].into_iter().enumerate() {
+            match state(part) {
+                State::Hurt => condition.speed *= TRACK_HURT,
+                State::Gone => {
+                    condition.sides[side] = 0.0;
+                    condition.speed *= TRACK_BROKEN_SPEED;
+                    condition.turn *= TRACK_BROKEN_TURN;
+                }
+                State::Sound => {}
+            }
+        }
+        // Nothing turns the tracks, or neither of them goes round: it does not move under its own power.
+        if condition.power == 0.0 || condition.sides == [0.0; 2] {
+            condition.power = 0.0;
+            condition.turn = 0.0;
+        }
+        condition
     }
 }
 
@@ -154,8 +206,8 @@ pub struct CarPose {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Strike {
     pub distance: f32,
-    /// It hit the turret, not the hull.
-    pub turret: bool,
+    /// Which of the kind's `spec.solids` it hit (a turret, a casemate, a shield); `None` for the hull.
+    pub solid: Option<u8>,
     /// Outward surface normal, in the vehicle's frame (+X right, +Y up, -Z forward).
     pub normal: [f32; 3],
     /// The point, in the vehicle's frame.
@@ -603,7 +655,7 @@ impl Physics {
         let returning = target.abs() < car.steer.abs() || target * car.steer < 0.0;
         let step = STEER_RATE * if returning { STEER_RETURN } else { 1.0 } * dt;
         car.steer += (target - car.steer).clamp(-step, step);
-        car.turn = controls.steer.clamp(-1.0, 1.0) * car.spec.turn_rate;
+        car.turn = controls.steer.clamp(-1.0, 1.0) * car.spec.turn_rate * car.condition.turn;
         car.air = (controls.throttle.clamp(-1.0, 1.0), controls.steer.clamp(-1.0, 1.0));
         car.flight = controls;
 
@@ -614,7 +666,7 @@ impl Physics {
         } else if against {
             (0.0, BRAKE_PER_KG * mass)
         } else {
-            let headroom = if controls.throttle > 0.0 { pull(speed, car.spec.max_speed) } else { 0.5 };
+            let headroom = if controls.throttle > 0.0 { pull(speed, car.spec.max_speed * car.condition.speed) } else { 0.5 };
             (controls.throttle * car.spec.engine_force / car.controller.wheels().len() as f32 * headroom * car.condition.power, 0.0)
         };
         let handbrake = if controls.handbrake { BRAKE_PER_KG * mass } else { 0.0 };
@@ -633,8 +685,11 @@ impl Physics {
             // Wheels are added front pair first, left before right. The steering angle is negated:
             // +angle turns the wheel about the controller's up axis, which turns the car left.
             wheel.steering = if front { -steer } else { 0.0 } + toe;
-            wheel.engine_force = if gone { 0.0 } else { engine };
-            wheel.brake = if gone { 0.0 } else if front { brake } else { brake.max(handbrake) };
+            // Wheels are added left before right: a broken track's side is not driven, and drags.
+            let side = condition.sides[index % 2];
+            wheel.engine_force = if gone { 0.0 } else { engine * side };
+            let drag = (1.0 - side) * BROKEN_TRACK_DRAG * BRAKE_PER_KG * mass;
+            wheel.brake = if gone { 0.0 } else if front { brake } else { brake.max(handbrake).max(drag) };
             wheel.side_friction_stiffness = if drift && !front { DRIFT_GRIP } else { SIDE_GRIP } * (1.0 - WHEEL_GRIP_LOSS * wear);
             wheel.friction_slip = FRICTION_SLIP * (1.0 - WHEEL_SLIP_LOSS * wear);
             wheel.radius = if gone { LOST_WHEEL_RADIUS } else { spec.wheel_radius };
@@ -716,7 +771,8 @@ impl Physics {
             if let Some(body) = self.bodies.get_mut(car.body) {
                 // Forces persist from step to step until reset.
                 body.reset_forces(false);
-                if !car.flight.powered {
+                // Unpowered, or with its engine shot dead, the rotor stops and it falls.
+                if !car.flight.powered || car.condition.power == 0.0 {
                     continue;
                 }
                 if car.spec.lift == Lift::Drone {
@@ -923,7 +979,7 @@ impl Physics {
     }
 
     /// Where a ray from `origin` along the unit `dir` meets vehicle `id`'s own solids within `max`, for armor
-    /// to judge: how far, whether it was the turret and not the hull, and the surface normal and the point in
+    /// to judge: how far, which solid it was (`None` for the hull), and the surface normal and the point in
     /// the vehicle's frame. A ray that starts inside a solid has a zero normal.
     pub fn armor_strike(&self, origin: [f32; 3], dir: [f32; 3], max: f32, id: u32) -> Option<Strike> {
         let car = self.cars.get(&id)?;
@@ -937,7 +993,7 @@ impl Physics {
         let point = Vector::from(origin) + Vector::from(dir) * hit.time_of_impact;
         Some(Strike {
             distance: hit.time_of_impact,
-            turret: with_role(car.spec, &car.extra, Role::Turret).any(|handle| handle == collider),
+            solid: car.extra.iter().position(|&handle| handle == collider).map(|index| index as u8),
             normal: (to_local * hit.normal).into(),
             point: (to_local * (point - body.translation())).into(),
         })

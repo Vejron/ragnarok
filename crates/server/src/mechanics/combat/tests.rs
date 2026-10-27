@@ -929,7 +929,7 @@ fn stand_at(game: &mut Game, id: u32, distance: f32) {
 /// One ray of `item` from `distance` metres away, straight down -Z at the target at z = -20.
 fn one_round_from(game: &mut Game, shooter: u32, item: u8, distance: f32) {
     let gun = def(item).unwrap();
-    let round = Round { damage: gun.damage, vehicle: 1, plane: 1, weapon: gun.weapon, range: gun.range, falloff: gun.falloff };
+    let round = Round { damage: gun.damage, vehicle: 1, plane: 1, weapon: gun.weapon, range: gun.range, falloff: gun.falloff, pen: gun.pen };
     let origin = [100.0 + ON_FOOT_SHOULDER, STANDING_Y, -20.0 + distance];
     hitscan(&mut game.world, shooter, origin, [0.0, 0.0, -1.0], &round, 0, 0);
 }
@@ -1191,7 +1191,7 @@ fn rider_in(kind: u8, index: usize) -> (Game, u32, u32) {
 
 /// A round of 20 damage that does 5 to a vehicle, out to 50 m.
 fn round() -> Round {
-    Round { damage: 20, vehicle: 5, plane: 5, weapon: WEAPON_RIFLE, range: 50.0, falloff: Falloff::NONE }
+    Round { damage: 20, vehicle: 5, plane: 5, weapon: WEAPON_RIFLE, range: 50.0, falloff: Falloff::NONE, pen: shared::armor::Pen::ball(8.0, 8.0, 1.0, 5.56) }
 }
 
 /// Fires `round` from 10 m out on the vehicle's right (+X), level, at height `y`, through its centre's

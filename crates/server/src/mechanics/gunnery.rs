@@ -1,4 +1,5 @@
 use super::Mechanic;
+use shared::armor::Part;
 use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
 use super::combat::{Round, hitscan, look, rewind_ticks, scatter};
 use super::projectiles::{self, Flying, Stage};
@@ -81,6 +82,17 @@ fn work(world: &mut World, vid: u32, def: &MountDef, mut mount: Mount, pose: &Ca
         return mount;
     }
     turn(&mut mount, def.aim, &input, pose, dt);
+    // Loading the other kind of round takes as long as loading the next one.
+    let swap = input.buttons() & BUTTON_AMMO != 0;
+    if let Fire::Shell { kind, alt, .. } = def.fire
+        && alt != kind
+        && swap
+        && !mount.swapping
+    {
+        mount.alt = !mount.alt;
+        mount.cooldown = def.cooldown;
+    }
+    mount.swapping = swap;
 
     let loaded = def.ammo.is_none() || mount.ammo > 0;
     if input.buttons() & def.trigger == 0 || mount.cooldown > 0 || mount.jammed || !loaded {
@@ -135,7 +147,7 @@ fn can_work(world: &World, vid: u32, need: Need, pose: &CarPose) -> bool {
     match need {
         Need::Upright => pose.up_y >= WALKER_FALLEN_UP,
         Need::Turret => world.entities.of::<Vehicle>(vid).damage[DAMAGE_TURRET] != TURRET_GONE,
-        Need::Untowed | Need::Height(_) | Need::Clear(_) => true,
+        Need::Untowed | Need::Breech | Need::Height(_) | Need::Clear(_) => true,
     }
 }
 
@@ -143,6 +155,7 @@ fn can_work(world: &World, vid: u32, need: Need, pose: &CarPose) -> bool {
 fn can_fire(world: &World, vid: u32, need: Need, mount: &Mount, pose: &CarPose) -> bool {
     match need {
         Need::Untowed => world.physics.towed_by(vid).is_none(),
+        Need::Breech => !super::armor::part_gone(world, vid, Part::Breech),
         Need::Height(least) => height(world, pose) > least,
         Need::Clear(arc) => mount.yaw.abs() >= arc,
         Need::Upright | Need::Turret => true,
@@ -202,7 +215,8 @@ fn shoot(world: &mut World, vid: u32, def: &MountDef, mount: &Mount, occupant: u
         }
     };
     match def.fire {
-        Fire::Shell { kind, speed, length, ttl } => {
+        Fire::Shell { kind, alt, speed, length, ttl } => {
+            let kind = if mount.alt { alt } else { kind };
             let aimed = scatter(world, dir, def.spread);
             fire(world, kind, vid, origin, aimed, length, speed, ttl, occupant);
         }
@@ -212,10 +226,10 @@ fn shoot(world: &mut World, vid: u32, def: &MountDef, mount: &Mount, occupant: u
             let along: f32 = (0..3).map(|i| pose.velocity[i] * dir[i]).sum::<f32>().max(0.0);
             world.launch(Flying { kind: PROJECTILE_ROCKET, owner: occupant, source: vid, position: origin, velocity: dir.map(|d| d * (speed + along)), ttl, item: 0, back: 0, flown: 0.0 });
         }
-        Fire::Hitscan { length, damage, vehicle, plane, weapon, range } => {
+        Fire::Hitscan { length, damage, vehicle, plane, weapon, range, pen } => {
             let muzzle = std::array::from_fn(|i| origin[i] + dir[i] * length);
             let aimed = scatter(world, dir, def.spread);
-            let round = Round { damage, vehicle, plane, weapon, range, falloff: Falloff::NONE };
+            let round = Round { damage, vehicle, plane, weapon, range, falloff: Falloff::NONE, pen };
             machine_gun(world, occupant, vid, muzzle, aimed, &round);
         }
         Fire::Drop { kind, toss, ttl } => {

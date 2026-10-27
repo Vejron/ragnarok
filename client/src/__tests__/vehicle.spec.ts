@@ -344,7 +344,7 @@ describe('driving a predicted vehicle', () => {
     return {
       vehicle: {
         id: 3, kind, x: cm(s.position[0]), y: cm(s.position[1]), z: cm(s.position[2]),
-        qx, qy, qz, qw: Math.sqrt(1 - qx * qx - qy * qy - qz * qz), hp: vehicleMaxHp(kind), damage: [0, 0, 0, 0, 0, 0, 0, 0], air: null,
+        qx, qy, qz, qw: Math.sqrt(1 - qx * qx - qy * qy - qz * qz), hp: vehicleMaxHp(kind), damage: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], air: null,
       },
       drive: {
         vx: cm(s.linvel[0]), vy: cm(s.linvel[1]), vz: cm(s.linvel[2]),

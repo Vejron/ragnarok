@@ -1,6 +1,6 @@
 import { Group, Material, Mesh, boxGeometry, sphereGeometry, type Geometry } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
-import { ITEM_AK5, ITEM_BANDAGE, ITEM_BRICKS, ITEM_CARL_GUSTAF, ITEM_DRONE, ITEM_FLARE, ITEM_GOLDEN_EGG, ITEM_LOITER, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER } from '@/sim/items'
+import { ITEM_AK5, ITEM_AT_RIFLE, ITEM_BANDAGE, ITEM_BRICKS, ITEM_CARL_GUSTAF, ITEM_DRONE, ITEM_FLARE, ITEM_GOLDEN_EGG, ITEM_LOITER, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER } from '@/sim/items'
 
 const GUN_METAL = 0x3b3f47
 const GUN_TRIM = 0xf2a33a
@@ -60,6 +60,15 @@ export function buildItem(item: number): Group {
       box(group, [0.05, 0.05, 0.3], [0, 0.12, -0.22], GUN_TRIM)
       box(group, [0.05, 0.11, 0.05], [0, -0.05, 0.05], WOOD).rotation.x = -0.3
       box(group, [0.05, 0.1, 0.24], [0, 0.0, 0.32], WOOD)
+      break
+    case ITEM_AT_RIFLE:
+      // A long heavy barrel with a muzzle brake, a bipod folded under it and a plain wooden stock.
+      box(group, [0.05, 0.07, 0.55], [0, 0.04, -0.2], GUN_METAL)
+      box(group, [0.035, 0.035, 0.7], [0, 0.04, -0.82], GUN_METAL)
+      box(group, [0.06, 0.05, 0.08], [0, 0.04, -1.2], GUN_TRIM)
+      box(group, [0.08, 0.02, 0.3], [0, -0.01, -0.7], GUN_TRIM)
+      box(group, [0.05, 0.11, 0.05], [0, -0.05, 0.05], WOOD).rotation.x = -0.3
+      box(group, [0.05, 0.1, 0.26], [0, 0.0, 0.33], WOOD)
       break
     case ITEM_SHOTGUN:
       // A fat double barrel and a long wooden fore-end under it.

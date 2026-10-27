@@ -54,7 +54,7 @@ pub(super) const DRONE: VehicleDef = VehicleDef {
         solids: &[],
         tongue: 0.0,
     },
-    armor: LIGHT,
+    armor: SHEET,
     drone: Some(*FPV),
     mount_seat: None,
 };

@@ -39,7 +39,7 @@ pub(super) const MORTAR: VehicleDef = VehicleDef {
         solids: &[],
         tongue: -(MORTAR_HALF_EXTENTS[2] + TOW_BACK),
     },
-    armor: LIGHT,
+    armor: ALLOY,
     drone: None,
     mount_seat: Some(MountSeat { pivot: MORTAR_GUN_PIVOT, head: MORTAR_SEAT_HEAD }),
 };
@@ -49,7 +49,7 @@ const MOUNTS: &[MountDef] = &[MountDef {
     seat: 0,
     aim: Aim::Lob { slew: MORTAR_TRAVERSE_SLEW },
     muzzle: Muzzle::One(MORTAR_GUN_PIVOT),
-    fire: Fire::Shell { kind: PROJECTILE_MORTAR, speed: MORTAR_SHELL_SPEED, length: MORTAR_BARREL_LENGTH, ttl: MORTAR_SHELL_TTL_TICKS },
+    fire: Fire::Shell { kind: PROJECTILE_MORTAR, alt: PROJECTILE_MORTAR, speed: MORTAR_SHELL_SPEED, length: MORTAR_BARREL_LENGTH, ttl: MORTAR_SHELL_TTL_TICKS },
     trigger: BUTTON_FIRE,
     cooldown: MORTAR_COOLDOWN_TICKS,
     spread: 0.0,

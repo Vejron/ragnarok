@@ -2,7 +2,17 @@
 
 use super::*;
 
-const PLANE_GUN: Fire = Fire::Hitscan { length: 0.0, damage: PLANE_GUN_DAMAGE, vehicle: PLANE_GUN_VEHICLE_DAMAGE, plane: PLANE_GUN_PLANE_DAMAGE, weapon: WEAPON_MG, range: PLANE_GUN_RANGE };
+const PLANE_GUN: Fire = Fire::Hitscan { length: 0.0, damage: PLANE_GUN_DAMAGE, vehicle: PLANE_GUN_VEHICLE_DAMAGE, plane: PLANE_GUN_PLANE_DAMAGE, weapon: WEAPON_MG, range: PLANE_GUN_RANGE, pen: Pen::ball(10.0, 7.0, 300.0, 7.92) };
+
+/// The engine in the nose and the fuel tank ahead of the cockpit; the crew are in the open.
+const ARMOR: Armor = Armor {
+    plates: SOFT.plates,
+    modules: &[
+        Module::new(Part::Engine, [0.0, 0.1, -2.35], [0.35, 0.35, 0.45], 90),
+        Module::new(Part::Fuel, [0.0, 0.15, -1.5], [0.3, 0.25, 0.3], 70),
+    ],
+    canvas: true,
+};
 
 pub(super) const PLANE: VehicleDef = VehicleDef {
     kind: KIND_PLANE,
@@ -40,7 +50,7 @@ pub(super) const PLANE: VehicleDef = VehicleDef {
         solids: &[Solid { shape: Shape::Cuboid(PLANE_WING_HALF_EXTENTS), at: PLANE_WING_CENTRE, role: Role::Wings }],
         tongue: 0.0,
     },
-    armor: SOFT,
+    armor: ARMOR,
     drone: None,
     mount_seat: None,
 };

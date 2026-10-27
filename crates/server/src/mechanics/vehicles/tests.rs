@@ -533,13 +533,13 @@ fn a_nudge_does_no_harm() {
     game.world.physics.kick_car(a, [0.0, 0.0, -3.0]);
     let events = crash_events(&mut game, 300);
     assert_eq!((game.world.entities.of::<Health>(a).hp, game.world.entities.of::<Health>(b).hp), (vehicle_hp(KIND_JEEP), vehicle_hp(KIND_JEEP)));
-    assert_eq!(game.world.entities.of::<Vehicle>(b).damage, [0; 8]);
+    assert_eq!(game.world.entities.of::<Vehicle>(b).damage, [0; shared::protocol::DAMAGE_SLOTS]);
     assert!(events.iter().all(|shot| shot.weapon != WEAPON_CRASH), "{events:?}");
 }
 
 #[test]
 fn a_wheel_takes_a_hit_beside_it_and_a_wreck_comes_back_whole() {
-    let mut damage = [0; 8];
+    let mut damage = [0; shared::protocol::DAMAGE_SLOTS];
     // Just behind the front left wheel, on the left side.
     dent(KIND_JEEP, &mut damage, [-JEEP_HALF_EXTENTS[0], 0.0, -JEEP_AXLE_Z + 0.4], 15.0);
     assert!(damage[DAMAGE_LEFT] > 100 && damage[DAMAGE_RIGHT] == 0, "{damage:?}");
@@ -556,7 +556,7 @@ fn a_wheel_takes_a_hit_beside_it_and_a_wreck_comes_back_whole() {
     for _ in 0..WRECK_TICKS + 2 {
         Vehicles.on_tick(&mut game.world, TICK_DT);
     }
-    assert_eq!((game.world.entities.of::<Health>(a).hp, game.world.entities.of::<Vehicle>(a).damage), (vehicle_hp(KIND_JEEP), [0; 8]));
+    assert_eq!((game.world.entities.of::<Health>(a).hp, game.world.entities.of::<Vehicle>(a).damage), (vehicle_hp(KIND_JEEP), [0; shared::protocol::DAMAGE_SLOTS]));
     assert!(game.world.entities.get::<HurtBy>(a).is_none(), "nobody is blamed for a fresh one");
 }
 
@@ -579,7 +579,7 @@ fn gunfire_at_a_wheel_bends_it_and_a_second_round_takes_it_off_but_the_middle_is
     // Fire into the middle of the car: no wheel is within a bullet's reach.
     let middle = game.world.physics.car_pose(b).unwrap().position;
     shoot_wheels(&mut game.world, b, middle, 90.0, BULLET_WHEEL_REACH);
-    assert_eq!(game.world.entities.of::<Vehicle>(b).damage[DAMAGE_WHEELS..], [0; 4]);
+    assert_eq!(game.world.entities.of::<Vehicle>(b).damage[DAMAGE_WHEELS..DAMAGE_WHEELS + 4], [0; 4]);
 }
 
 #[test]

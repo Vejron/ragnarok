@@ -4,6 +4,8 @@
 //! how often, what it runs out of and what stops it. Arming a vehicle is a row in its definition
 //! (`crate::vehicles`); a new way of aiming or firing is a variant here and its arm in `Gunnery`.
 
+use crate::armor::Pen;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MountDef {
     /// The seat whose occupant aims and fires it.
@@ -66,12 +68,13 @@ pub enum Muzzle {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Fire {
     /// A shell (`PROJECTILE_*`) out of a barrel `length` long, at `speed`, that bursts on its own after
-    /// `ttl` ticks. A barrel poking into a wall bursts it there.
-    Shell { kind: u8, speed: f32, length: f32, ttl: u32 },
+    /// `ttl` ticks. A barrel poking into a wall bursts it there. `alt` is the other kind of round it can
+    /// be loaded with instead (`BUTTON_AMMO`), the same as `kind` for a gun with only the one.
+    Shell { kind: u8, alt: u8, speed: f32, length: f32, ttl: u32 },
     /// A rocket that starts at `speed` plus the vehicle's own speed along the barrel.
     Rocket { speed: f32, ttl: u32 },
-    /// A machine gun round, a hitscan, from a barrel `length` long.
-    Hitscan { length: f32, damage: u8, vehicle: u8, plane: u8, weapon: u8, range: f32 },
+    /// A machine gun round, a hitscan, from a barrel `length` long, going through `pen` of armour.
+    Hitscan { length: f32, damage: u8, vehicle: u8, plane: u8, weapon: u8, range: f32, pen: Pen },
     /// Something let go (`PROJECTILE_*`): it leaves with the vehicle's velocity plus `toss` (hull frame).
     Drop { kind: u8, toss: [f32; 3], ttl: u32 },
 }
@@ -100,6 +103,8 @@ pub enum Need {
     Turret,
     /// It is not being towed: it aims, but cannot fire.
     Untowed,
+    /// The gun's breech (`armor::Part::Breech`) has not been shot to pieces: it aims, but cannot fire.
+    Breech,
     /// At least this high over the ground to fire.
     Height(f32),
     /// Pointing at least this far, radians, either side of the nose to fire: clear of the pilot.
@@ -131,7 +136,7 @@ impl Fire {
     /// The same machine gun round from a barrel `length` long.
     pub(crate) const fn with_length(self, length: f32) -> Fire {
         match self {
-            Fire::Hitscan { damage, vehicle, plane, weapon, range, .. } => Fire::Hitscan { length, damage, vehicle, plane, weapon, range },
+            Fire::Hitscan { damage, vehicle, plane, weapon, range, pen, .. } => Fire::Hitscan { length, damage, vehicle, plane, weapon, range, pen },
             other => other,
         }
     }

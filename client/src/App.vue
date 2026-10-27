@@ -7,7 +7,7 @@ import TouchControls from './TouchControls.vue'
 import type { InputController } from './sim/input'
 import { colorFor, cssColor, isBot, nameFor } from './profile'
 import type { Look } from './render/look'
-import { WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_EGG, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK } from './net/codec'
+import { WEAPON_AP, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_EGG, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK } from './net/codec'
 import { HEN_EGGS } from './sim/consts'
 
 const container = ref<HTMLElement | null>(null)
@@ -78,7 +78,7 @@ const sideName = (team: number) => (team === 0 ? 'People' : `Team ${team}`)
 const settingsUrl = `${import.meta.env.BASE_URL}settings.html`
 /** What the kill feed shows between killer and victim. */
 const mark = (weapon: number) =>
-  weapon === WEAPON_SHELL || weapon === WEAPON_AUTOCANNON || weapon === WEAPON_ROCKET || weapon === WEAPON_GRENADE || weapon === WEAPON_WRECK || weapon === WEAPON_BOMB || weapon === WEAPON_EGG
+  weapon === WEAPON_SHELL || weapon === WEAPON_AP || weapon === WEAPON_AUTOCANNON || weapon === WEAPON_ROCKET || weapon === WEAPON_GRENADE || weapon === WEAPON_WRECK || weapon === WEAPON_BOMB || weapon === WEAPON_EGG
     ? '💥'
     : weapon === WEAPON_REVOLVER ? '›‹' : '›'
 
@@ -161,14 +161,14 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
   <div v-if="stats?.seat === 'roadster'" class="drive-hint">W/S gas and brake · A/D steer · Shift boost · Space hop, hold to hover · C handbrake · H hitch a mortar or a Pak<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   <div v-if="stats?.seat === 'hen'" class="drive-hint">W/S walk · A/D turn · Space leap, hold to flap, then glide · W in the air to fly forward · Click or F lay an egg<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   <div v-if="stats?.seat === 'walker'" class="drive-hint">W/S walk · A/D turn · Mouse aim the guns (the body follows within 30°) · Click or F fire<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
-  <div v-if="stats?.seat === 'strv'" class="drive-hint">W/S gas and brake · A/D turn the tank to aim · Mouse look · Hold right mouse for the gun sight · Click or F fire · {{ stats.reload < 1 ? 'reloading…' : 'loaded' }}</div>
+  <div v-if="stats?.seat === 'strv'" class="drive-hint">W/S gas and brake · A/D turn the tank to aim · Mouse look · Hold right mouse for the gun sight · Click or F fire · Q {{ stats.ammo === 'HE' ? 'load AP' : 'load HE' }} · {{ stats.ammo }} {{ stats.reload < 1 ? 'reloading…' : 'loaded' }}</div>
   <div v-if="stats?.seat === 'mortar'" class="drive-hint">Mouse aim sets the bearing · W/S range {{ Math.round(stats.range) }} m · Click or F fire · {{ stats.reload < 1 ? 'reloading…' : 'loaded' }}</div>
   <div v-if="stats?.seat === 'drone'" class="drive-hint">Mouse look and steer · W fly where you look · S back off · A/D strafe · Space climb · Shift sink · Click or F detonate · E recall</div>
   <div v-if="stats?.seat === 'loiter'" class="drive-hint">Mouse steer (it banks and turns to where you look) · W/S pitch · A/D roll · Right-click swap camera · Click or F detonate · E recall</div>
   <div v-if="stats?.seat === 'pilot'" class="drive-hint">W/S lean forward and back · A/D turn · Space climb · Shift sink<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   <div v-if="stats?.seat === 'aviator'" class="drive-hint">Mouse steer (the plane turns to where you look) · Space throttle up · Shift throttle down · W/S/A/D by hand · Click or F fire · C bomb<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   <div v-if="stats?.seat === 'passenger'" class="drive-hint">Mouse look · Click or F fire your gun · Right mouse aim · 1-5 or wheel switch · R reload<template v-if="stats.canSwitchSeat">, or switch seat when it is full</template></div>
-  <div v-if="stats?.seat === 'gunner'" class="drive-hint">Mouse aim · Hold right mouse for the gun sight · Click or F fire · {{ stats.jammed ? 'jammed!' : stats.heat !== null ? 'firing' : stats.reload < 1 ? 'reloading…' : 'loaded' }}<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
+  <div v-if="stats?.seat === 'gunner'" class="drive-hint">Mouse aim · Hold right mouse for the gun sight · Click or F fire<template v-if="stats.ammo"> · Q {{ stats.ammo === 'HE' ? 'load AP' : 'load HE' }}</template> · <template v-if="stats.ammo">{{ stats.ammo }} </template>{{ stats.jammed ? 'jammed!' : stats.heat !== null ? 'firing' : stats.reload < 1 ? 'reloading…' : 'loaded' }}<template v-if="stats.canSwitchSeat"> · R switch seat</template></div>
   </template>
   <div v-if="(stats?.seat === 'gunner' || stats?.seat === 'walker' || stats?.seat === 'strv' || stats?.seat === 'mortar') && !stats.sight" class="reticle" :class="{ loading: stats.reload < 1 || stats.jammed }" />
   <template v-if="stats?.seat === 'aviator'">
@@ -208,6 +208,9 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
     <i v-for="(arc, i) in stats.hurtArcs" :key="i" :style="{ transform: `rotate(${arc.angle}rad)`, opacity: arc.alpha }" />
   </div>
   <canvas ref="markCanvas" class="hitcanvas" width="200" height="200" />
+  <div v-if="stats?.callouts.length" class="callouts">
+    <div v-for="line in stats.callouts" :key="line.text" :class="line.tone" :style="{ opacity: line.alpha }">{{ line.text }}<template v-if="line.count > 1"> ×{{ line.count }}</template></div>
+  </div>
   <div v-if="stats?.hands" class="health" :class="{ low: stats.hp <= stats.maxHp / 4, hurt: stats.hurt > 0.3 }">
     <div class="health-fill" :style="{ width: (100 * stats.hp) / stats.maxHp + '%' }" />
     <span>{{ stats.hp }}</span>
@@ -322,6 +325,12 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
 .scope i { position: absolute; background: rgba(0, 0, 0, 0.85); }
 .scope-h { top: 50%; left: calc(50% - 38vmin); width: 76vmin; height: 1px; }
 .scope-v { left: 50%; top: calc(50% - 38vmin); height: 76vmin; width: 1px; }
+/* What armour made of a round: under the crosshair, the newest on top. */
+.callouts { position: fixed; top: calc(50% + 34px); left: 50%; transform: translateX(-50%); pointer-events: none; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.callouts div { font-size: 13px; font-weight: 800; letter-spacing: 0.02em; text-transform: uppercase; color: #f4f1ea; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8), 0 0 1px #000; white-space: nowrap; }
+.callouts .good { color: #ffd27a; }
+.callouts .bad { color: #ff7a6a; }
+.callouts div:first-child { font-size: 15px; }
 .reticle.loading { border-color: rgba(255, 190, 120, 0.9); border-style: dashed; }
 /* A plane's pilot: where the guns point. */
 .sight { position: fixed; left: 0; top: 0; width: 0; height: 0; pointer-events: none; will-change: transform; }

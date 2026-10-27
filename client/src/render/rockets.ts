@@ -14,6 +14,8 @@ const BOMB = 5
 const EGG = 7
 /** `PROJECTILE_FLARE`: a burning flare, under its parachute once it sinks. */
 const FLARE = 8
+/** `PROJECTILE_HE`: a high-explosive tank shell, drawn as the armour-piercing one. */
+const HE = 9
 
 /** The projectiles in flight: a glowing missile or a tank shell pointed along its velocity, or a tumbling grenade. Their trails are `ProjectileTrails`. */
 export class Rockets {
@@ -71,7 +73,7 @@ export class Rockets {
         mesh = new Mesh(this.bullet, this.bulletMaterial)
       } else if (kind === CANNON) {
         mesh = new Mesh(this.smallSlug, this.slugMaterial)
-      } else if (kind === SHELL || kind === MORTAR) {
+      } else if (kind === SHELL || kind === HE || kind === MORTAR) {
         mesh = new Mesh(this.slug, this.slugMaterial)
       } else mesh = new Mesh(this.body, this.material)
       this.meshes.set(id, mesh)

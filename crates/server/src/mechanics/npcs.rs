@@ -360,7 +360,7 @@ mod tests {
         let mut game = game();
         let r = rooster(&game);
         let p = r.transform.position;
-        let round = Round { damage: 1, vehicle: 1, plane: 1, weapon: gun.weapon, range: gun.range, falloff: gun.falloff };
+        let round = Round { damage: 1, vehicle: 1, plane: 1, weapon: gun.weapon, range: gun.range, falloff: gun.falloff, pen: gun.pen };
         let (_, struck) = hitscan(&mut game.world, shooter, [p[0], p[1] + ROOSTER_CAPSULE_CENTRE, p[2] + 5.0], [0.0, 0.0, -1.0], &round, 0, 0);
         assert!(struck);
         assert_eq!(rooster(&game).health.hp, ROOSTER_HP - 1);

@@ -1,6 +1,6 @@
 use crate::entities::{Health, HurtBy, Hurtbox, Transform, With};
 use super::Mechanic;
-use crate::game::{Died, Mounts, Player, Seat, Seats, Vehicle, World, Wreck};
+use crate::game::{Burning, Died, Mounts, Player, Seat, Seats, Vehicle, World, Wreck};
 use sim::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_extents};
 use shared::consts::*;
 use shared::vehicles::vehicle_def;
@@ -151,6 +151,7 @@ fn restore(world: &mut World, vid: u32, burnt: bool) {
     if burnt {
         world.entities.remove::<(Wreck, HurtBy)>(vid);
     }
+    world.entities.remove::<Burning>(vid);
     if let Some(mut mounts) = world.entities.get_mut::<Mounts>(vid) {
         mounts.restock();
     }
@@ -167,7 +168,8 @@ pub(super) fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: 
             home: (position, yaw),
             stuck_ticks: 0,
             turret_hp: TANK_TURRET_HP,
-            damage: [0; 8],
+            damage: [0; shared::protocol::DAMAGE_SLOTS],
+            parts: Vehicle::fresh_parts(kind),
             scrape_in: 0,
         },
         Health::full(vehicle_hp(kind)),
@@ -442,7 +444,7 @@ fn wheel_spots(kind: u8) -> [[f32; 2]; 4] {
 
 /// Adds the damage of a hit `over` m/s past the threshold at `local` (the vehicle's frame) to
 /// `damage`: mostly to the side it came from, shared at a corner, and to any wheel near it.
-fn dent(kind: u8, damage: &mut [u8; 8], local: [f32; 3], over: f32) {
+fn dent(kind: u8, damage: &mut [u8; shared::protocol::DAMAGE_SLOTS], local: [f32; 3], over: f32) {
     let [hx, _, hz] = half_extents(kind);
     let (nx, nz) = (local[0] / hx, local[2] / hz);
     let sides = [(DAMAGE_FRONT, -nz), (DAMAGE_REAR, nz), (DAMAGE_LEFT, -nx), (DAMAGE_RIGHT, nx)].map(|(side, toward)| (side, toward.max(0.0).powi(2)));
@@ -461,7 +463,7 @@ fn dent(kind: u8, damage: &mut [u8; 8], local: [f32; 3], over: f32) {
 
 /// Adds up to `amount` damage to each wheel within `reach` metres of `local` (the vehicle's frame),
 /// scaled by how close it is. A tank, a helicopter and a plane have no wheels to lose.
-fn hurt_wheels(kind: u8, damage: &mut [u8; 8], local: [f32; 3], amount: f32, reach: f32) {
+fn hurt_wheels(kind: u8, damage: &mut [u8; shared::protocol::DAMAGE_SLOTS], local: [f32; 3], amount: f32, reach: f32) {
     if !has_car_wheels(kind) {
         return;
     }
@@ -710,6 +712,7 @@ impl Mechanic for Vehicles {
     }
 
     fn on_tick(&mut self, world: &mut World, dt: f32) {
+        super::armor::burn(world);
         // Boarding and leaving.
         let pressed = world.entities.ids_where::<Player>(|id, player| world.entities.alive(id) && player.input.buttons() & BUTTON_USE != 0);
         for id in pressed {
@@ -789,15 +792,13 @@ impl Mechanic for Vehicles {
                 // A wreck lets go of whatever it tows, and whatever tows it.
                 world.physics.detach(vid);
                 if burnt {
-                    vehicle.damage = [0; 8];
-                    vehicle.turret_hp = TANK_TURRET_HP;
+                    vehicle.renew();
                     fresh = true;
                     world.physics.reset_car(vid, vehicle.home.0, vehicle.home.1);
                 }
             } else if y < KILL_Y {
                 // Fallen out of the world: a fresh one at home.
-                vehicle.damage = [0; 8];
-                vehicle.turret_hp = TANK_TURRET_HP;
+                vehicle.renew();
                 fresh = true;
                 world.physics.reset_car(vid, vehicle.home.0, vehicle.home.1);
             } else if vehicle.stuck_ticks >= UNFLIP_TICKS {

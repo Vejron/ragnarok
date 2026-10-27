@@ -11,7 +11,7 @@ export const STRV: VehicleKind = {
   kind: KIND_STRV,
   model: (id) => new StrvModel(id),
   load: loadStrvModel,
-  ride: { distance: STRV_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: { name: 'tanker' }, role: 'strv', board: 'E: drive the Strv S', chase: true, sight: true }] },
+  ride: { distance: STRV_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: { name: 'tanker' }, role: 'strv', board: 'E: drive the Strv S', chase: true, sight: true, gauges: ['ammo'] }] },
   sound: {
     voices: [['sawtooth', 1, 0.5], ['square', 0.5, 0.3], ['sawtooth', 2.01, 0.15]],
     q: 1.2,

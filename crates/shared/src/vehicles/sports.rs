@@ -2,6 +2,16 @@
 
 use super::*;
 
+/// The engine up front and the fuel tank behind the seats; the crew are in the open.
+const ARMOR: Armor = Armor {
+    plates: SHEET.plates,
+    modules: &[
+        Module::new(Part::Engine, [0.0, 0.0, -1.6], [0.45, 0.22, 0.45], 110),
+        Module::new(Part::Fuel, [0.0, -0.05, 1.75], [0.4, 0.12, 0.25], 90),
+    ],
+    canvas: false,
+};
+
 pub(super) const SPORTS: VehicleDef = VehicleDef {
     kind: KIND_SPORTS,
     name: "Sports car",
@@ -36,7 +46,7 @@ pub(super) const SPORTS: VehicleDef = VehicleDef {
         solids: &[],
         tongue: 0.0,
     },
-    armor: LIGHT,
+    armor: ARMOR,
     drone: None,
     mount_seat: None,
 };

@@ -9,7 +9,7 @@ import { decodeMessage, writeClientInput, writePing, writeRtc, type InputFrame, 
  */
 
 export type {
-  BulletSpawn, Built, CarvedBuilding, CraterEntry, DamagedBuilding, DestroyedObject, DugTile, InputFrame, ProfileEntry, Score, ServerMessage, ShotEvent,
+  BulletSpawn, Built, CarvedBuilding, CraterEntry, DamagedBuilding, DestroyedObject, DugTile, HullMark, InputFrame, ProfileEntry, Score, ServerMessage, ShotEvent,
 } from './messages.generated'
 
 /** `Notice` kinds: what a world's scenario is telling everyone. */
@@ -78,6 +78,22 @@ export const WEAPON_LOITER = 21
 export const WEAPON_FLARE = 22
 export const WEAPON_RUBBLE = 23
 export const WEAPON_LAUNCHER = 24
+/** An armour-piercing shell's small burst; `WEAPON_SHELL` is high explosive's. */
+export const WEAPON_AP = 27
+
+/** `HullMark`'s style: what a round left on a vehicle's armour. Mirrors `MARK_*`. */
+export const MARK_GLANCE = 0
+export const MARK_SCUFF = 1
+export const MARK_HOLE = 2
+export const MARK_PIERCED = 3
+/** Set on a hole's style when its round hurt a part inside: the hole smoke and fire come out of. Mirrors `MARK_VITAL`. */
+export const MARK_VITAL = 1 << 7
+
+/** `Armor`'s result: what a vehicle's armour made of a round. Mirrors `ARMOR_*`. */
+export const ARMOR_RICOCHET = 0
+export const ARMOR_BLOCKED = 1
+export const ARMOR_PIERCED = 2
+export const ARMOR_SLIT = 3
 
 /** How a stickman died, as in a `Kill`. Mirrors `DEATH_*`. */
 export const DEATH_BODY = 0
@@ -95,6 +111,11 @@ export const DAMAGE_WHEELS = 4
 /** A tank's slot 4 (its wheels are never hurt): `TURRET_GONE` once the turret has been shot off. */
 export const DAMAGE_TURRET = 4
 export const TURRET_GONE = 255
+/** Slots 8 and 9: a vehicle's parts' states, two bits each (`sim/armor.ts`). Mirrors `DAMAGE_PARTS`. */
+export const DAMAGE_PARTS = 8
+/** Slot 10: `BURNING` while its fuel is on fire. */
+export const DAMAGE_FIRE = 10
+export const BURNING = 1
 /** A wheel damaged this much has come off. */
 export const WHEEL_GONE = 255
 
@@ -112,9 +133,13 @@ export const PROJECTILE_MORTAR = 6
 export const PROJECTILE_EGG = 7
 /** A flare: it climbs, then hangs under its parachute, burning brightly as it drifts down. */
 export const PROJECTILE_FLARE = 8
+/** A tank gun's high-explosive shell: flies and is drawn as `PROJECTILE_SHELL` (armour-piercing), bursts bigger. */
+export const PROJECTILE_HE = 9
 
 /** `Turret`'s flags: a field mortar is hitched to a car, so it is drawn folded up for travel. Mirrors `TURRET_STOWED`. */
 export const TURRET_STOWED = 1 << 0
+/** `Turret`'s flags: the gun has its second kind of round loaded, a tank gun's high explosive. Mirrors `TURRET_ALT`. */
+export const TURRET_ALT = 1 << 1
 
 /** `Arms.flags`: the blip switch is cutting the engine, and either set of guns is jammed. Mirrors `ARMS_*`. */
 export const ARMS_CUT = 1 << 0

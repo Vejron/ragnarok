@@ -11,7 +11,7 @@ use crate::game::{Damaged, Died, Player, World};
 use shared::consts::{HEADSHOT_MULT, MAX_REWIND_TICKS, SEATED_CENTRE_DROP, SEATED_HALF_HEIGHT, SEATED_HEAD_ZONE, SEATED_RADIUS};
 use shared::protocol::{
     DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_EGG, WEAPON_GRENADE, WEAPON_LOITER, WEAPON_ROADKILL, WEAPON_ROCKET,
-    WEAPON_SHELL, WEAPON_WRECK,
+    WEAPON_AP, WEAPON_SHELL, WEAPON_WRECK,
 };
 
 pub struct Life;
@@ -190,7 +190,7 @@ impl Harm {
 }
 
 /// The weapons whose kill throws the body down as a blast does.
-const BLASTS: [u8; 9] = [WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK, WEAPON_GRENADE, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_LOITER, WEAPON_EGG];
+const BLASTS: [u8; 10] = [WEAPON_ROCKET, WEAPON_SHELL, WEAPON_AP, WEAPON_WRECK, WEAPON_GRENADE, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_LOITER, WEAPON_EGG];
 
 /// The one place health goes down, for anything with `Health` and a body: takes `harm` off entity
 /// `id`, and says so (`Damaged`). A blow to the head does `HEADSHOT_MULT` times the damage, and the

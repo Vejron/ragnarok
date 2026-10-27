@@ -107,6 +107,39 @@ export class Effects {
     this.root.spawn({ at, life: 0.09, size: 0.12, grow: 0.3, color: 0xffffff, bright: true })
   }
 
+  /**
+   * A round going through armour at `at`, on a plate facing `outward`: a white-hot flash, molten
+   * fragments blown back out of the hole and a wisp of smoke from it. `big` for a shell, which throws
+   * more and further, against a bullet through a slit or a thin plate.
+   */
+  pierce(at: V, outward: V, big: boolean) {
+    const out = norm(outward)
+    const scale = big ? 1 : 0.45
+    this.root.spawn({ at, life: 0.1, size: 0.25 * scale, grow: 0.5 * scale, color: 0xffffff, bright: true })
+    this.root.spawn({ at, life: 0.35, size: 0.18 * scale, grow: 0.35 * scale, color: 0xff8a2a, bright: true })
+    const count = big ? 16 : 6
+    for (let i = 0; i < count; i++) {
+      const direction = norm(add(out, spread(), 1.4))
+      const speed = (4 + Math.random() * 6) * scale
+      const size = (0.02 + Math.random() * 0.03) * (big ? 1.3 : 1)
+      this.root.spawn({ at, direction, along: speed * 0.45, drop: 3, size, grow: -0.6 * size, life: 0.3 + Math.random() * 0.35, color: i % 3 ? 0xffb347 : 0xfff0c0, bright: true })
+    }
+    this.root.spawn({ at: add(at, out, 0.15), lift: 0.8, size: 0.12 * scale, grow: 0.6 * scale, life: 1.6, color: tinted(0x2c2a28, this.light, NIGHT_FLOOR) })
+  }
+
+  /** Armour stopping a round at `at`, on a plate facing `outward`: sparks glancing off and a puff of grit. */
+  deflect(at: V, outward: V) {
+    const out = norm(outward)
+    this.root.spawn({ at, life: 0.07, size: 0.08, grow: 0.12, color: 0xffffff, bright: true })
+    for (let i = 0; i < 5; i++) {
+      const direction = norm(add(out, spread(), 2))
+      const speed = 3 + Math.random() * 4
+      const size = 0.012 + Math.random() * 0.015
+      this.root.spawn({ at, direction, along: speed * 0.3, drop: 1.5, size, grow: -0.6 * size, life: 0.15 + Math.random() * 0.12, color: i % 2 ? 0xffe3a0 : 0xffa040, bright: true })
+    }
+    this.root.spawn({ at, lift: 0.3, size: 0.06, grow: 0.25, life: 0.5, color: tinted(0x9a948a, this.light, NIGHT_FLOOR) })
+  }
+
   /** The white-hot flash of a blast at `at`; the fire, smoke and debris around it come from `explosion`. */
   burst(at: V, radius: number) {
     this.root.spawn({ at, life: 0.25, size: radius * 0.12, grow: radius * 0.3, color: 0xff9a3c, bright: true })

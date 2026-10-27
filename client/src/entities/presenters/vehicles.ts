@@ -20,7 +20,7 @@ import type { Arms, Entity, Turret } from '../units'
 import type { Seating } from './seating'
 
 /** Damage parts of a vehicle that is not hurt. */
-const UNHURT: readonly number[] = [0, 0, 0, 0, 0, 0, 0, 0]
+const UNHURT: readonly number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
 /** A vehicle as drawn this frame: where (predicted, for the one the local player drives), and its parts. */
 export interface Placed {

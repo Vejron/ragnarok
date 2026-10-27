@@ -29,6 +29,8 @@ export const ITEM_FLARE = 10
 export const ITEM_BRICKS = 11
 /** A Carl Gustaf over the shoulder: each shot a rocket, gone after the last; aim looks down its sight. */
 export const ITEM_CARL_GUSTAF = 12
+/** An anti-tank rifle: one hard-cored round at a time, through a tank's thin rear, roof and slits. */
+export const ITEM_AT_RIFLE = 13
 
 export type ItemKind = 'gun' | 'grenade' | 'heal' | 'drone' | 'flare' | 'build' | 'launcher'
 
@@ -81,6 +83,7 @@ const PRESENTATION: Record<number, Presentation> = {
   [ITEM_GOLDEN_EGG]: { stance: 'hold', sound: 'rifle' },
   [ITEM_BRICKS]: { stance: 'hold', sound: 'rifle' },
   [ITEM_CARL_GUSTAF]: { stance: 'shoulder', sound: 'sniper' },
+  [ITEM_AT_RIFLE]: { stance: 'rifle', sound: 'sniper' },
 }
 
 /** The server's rows, as the generated table has them. */

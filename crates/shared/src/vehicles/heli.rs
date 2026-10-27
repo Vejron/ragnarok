@@ -2,6 +2,16 @@
 
 use super::*;
 
+/// The turbine over the cabin, which turns the rotor, and the fuel under its floor; the crew behind the glass are hit as anyone is.
+const ARMOR: Armor = Armor {
+    plates: ALLOY.plates,
+    modules: &[
+        Module::new(Part::Engine, [0.0, 0.55, 0.5], [0.4, 0.22, 0.6], 110),
+        Module::new(Part::Fuel, [0.0, -0.45, 0.5], [0.5, 0.2, 0.5], 90),
+    ],
+    canvas: false,
+};
+
 pub(super) const HELI: VehicleDef = VehicleDef {
     kind: KIND_HELI,
     name: "Helicopter",
@@ -37,7 +47,7 @@ pub(super) const HELI: VehicleDef = VehicleDef {
         solids: &[],
         tongue: 0.0,
     },
-    armor: LIGHT,
+    armor: ARMOR,
     drone: None,
     mount_seat: None,
 };
@@ -48,7 +58,7 @@ const MOUNTS: &[MountDef] = &[
         seat: 1,
         aim: Aim::Mount { yaw_limit: Some(HELI_GUN_YAW_LIMIT), pitch: (HELI_GUN_PITCH_MIN, HELI_GUN_PITCH_MAX), slew: HELI_GUN_SLEW },
         muzzle: Muzzle::One(HELI_GUN_PIVOT),
-        fire: Fire::Shell { kind: PROJECTILE_CANNON, speed: SHELL_SPEED, length: HELI_GUN_LENGTH, ttl: SHELL_TTL_TICKS },
+        fire: Fire::Shell { kind: PROJECTILE_CANNON, alt: PROJECTILE_CANNON, speed: SHELL_SPEED, length: HELI_GUN_LENGTH, ttl: SHELL_TTL_TICKS },
         trigger: BUTTON_FIRE,
         cooldown: HELI_GUN_COOLDOWN_TICKS,
         spread: HELI_GUN_SPREAD,

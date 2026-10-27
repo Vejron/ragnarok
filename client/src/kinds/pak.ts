@@ -13,7 +13,7 @@ export const PAK: VehicleKind = {
   ride: {
     distance: MORTAR_DISTANCE,
     reload: SHELL_COOLDOWN_TICKS,
-    seats: [{ rig: { name: 'gun', hull: [PAK_TRAVERSE, PAK_PITCH_MIN, PAK_PITCH_MAX] }, role: 'gunner', board: 'E: man the Pak 38', sight: true }],
+    seats: [{ rig: { name: 'gun', hull: [PAK_TRAVERSE, PAK_PITCH_MIN, PAK_PITCH_MAX] }, role: 'gunner', board: 'E: man the Pak 38', sight: true, gauges: ['ammo'] }],
   },
   // No engine at all.
   sound: { voices: PETROL, ...PLAIN, engine: { name: 'none' } },

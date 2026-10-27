@@ -36,7 +36,7 @@ fn sample_snapshot() -> Snapshot {
         health: Some(wire::Health { hp: 250 }),
         ..Default::default()
     };
-    let hurt = Replicated { damage: Some(wire::Damage { parts: [0, 0, 40, 0, 0, 0, 255, 3] }), ..tank.clone() };
+    let hurt = Replicated { damage: Some(wire::Damage { parts: [0, 0, 40, 0, 0, 0, 255, 3, 0, 0, 0] }), ..tank.clone() };
     let updates = vec![
         // A stickman moving: differences. A dead one new to the receiver, whole. A tank, whole, and one repaired.
         // The receiver themself, with what only they are told, and the tank they drive.

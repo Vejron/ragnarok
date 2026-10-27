@@ -281,7 +281,7 @@ fn a_hard_corner_at_speed_rolls_it_but_a_firm_one_does_not() {
 fn a_wrecked_front_wheel_pulls_the_car_to_its_side() {
     for (wheels, side) in [([220, 0, 0, 0], -1.0), ([0, 220, 0, 0], 1.0)] {
         let mut physics = with_car(&flat());
-        physics.set_car_condition(1, CarCondition { power: 1.0, wheels });
+        physics.set_car_condition(1, CarCondition { power: 1.0, wheels, ..CarCondition::NEW });
         run(&mut physics, COAST, 60);
         let pose = run(&mut physics, FORWARD, 60 * 3);
         assert!(pose.position[0] * side > 2.0, "{wheels:?} pulls towards {side}: {pose:?}");
@@ -298,7 +298,7 @@ fn a_lost_wheel_drops_its_corner_and_drags() {
     run(&mut sound, COAST, 60);
     let sound = run(&mut sound, FORWARD, 60 * 3);
     let mut physics = with_car(&flat());
-    physics.set_car_condition(1, CarCondition { power: 1.0, wheels: [0, 0, 0, WHEEL_GONE] });
+    physics.set_car_condition(1, CarCondition { power: 1.0, wheels: [0, 0, 0, WHEEL_GONE], ..CarCondition::NEW });
     let rest = run(&mut physics, COAST, 90);
     // The right rear corner is down: rolled right (the right side lower) and nose up.
     let rotation = Rotation::from_xyzw(rest.rotation[0], rest.rotation[1], rest.rotation[2], rest.rotation[3]);
@@ -314,18 +314,18 @@ fn a_battered_engine_is_slower() {
     let mut speeds = vec![];
     for health in [100, 10] {
         let mut physics = with_car(&flat());
-        physics.set_car_condition(1, CarCondition::of(KIND_JEEP, health, [0; 8]));
+        physics.set_car_condition(1, CarCondition::of(KIND_JEEP, health, [0; shared::protocol::DAMAGE_SLOTS]));
         run(&mut physics, COAST, 60);
         speeds.push(run(&mut physics, FORWARD, 60 * 2).forward_speed);
     }
     assert!(speeds[1] < speeds[0] * 0.75, "{speeds:?}");
-    assert_eq!(CarCondition::of(KIND_JEEP, 60, [0; 8]).power, 1.0, "full power down to half health");
+    assert_eq!(CarCondition::of(KIND_JEEP, 60, [0; shared::protocol::DAMAGE_SLOTS]).power, 1.0, "full power down to half health");
 }
 
 /// `(tick, position)` of a jeep with a bent front left wheel and no rear right one, driven by
 /// `scripted_controls`, mirrored in `vehicle.spec.ts`.
 const DAMAGED_CHECKPOINTS: [(u32, [f32; 3]); 3] = [(90, [0.1147, 0.7626, -0.3659]), (300, [9.1750, 0.7638, -15.2648]), (480, [13.0374, 0.7641, -30.9333])];
-const DAMAGED_CONDITION: CarCondition = CarCondition { power: 0.8, wheels: [180, 0, 0, WHEEL_GONE] };
+const DAMAGED_CONDITION: CarCondition = CarCondition { power: 0.8, wheels: [180, 0, 0, WHEEL_GONE], ..CarCondition::NEW };
 
 #[test]
 fn a_damaged_drive_matches_fixture() {
@@ -1156,7 +1156,7 @@ fn a_walkers_legs_are_solid() {
 #[test]
 fn a_wrecked_walker_does_not_stand() {
     let mut physics = walker();
-    physics.set_car_condition(1, CarCondition { power: 0.5, wheels: [0; 4] });
+    physics.set_car_condition(1, CarCondition { power: 0.5, wheels: [0; 4], ..CarCondition::NEW });
     let pose = run(&mut physics, COAST, 120);
     // It slumps onto the boxes of its legs, which stop short of the ground when it stands.
     assert!(pose.position[1] < WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1] - 0.2, "sagged onto its legs: {pose:?}");
@@ -1534,15 +1534,41 @@ fn a_car_put_in_a_reported_state_is_in_it() {
 
 #[test]
 fn a_cars_wheels_are_read_off_the_damage_and_its_engine_off_its_health() {
-    assert_eq!(CarCondition::of(KIND_JEEP, 100, [9, 9, 9, 9, 1, 2, 3, 4]), CarCondition { power: 1.0, wheels: [1, 2, 3, 4] });
-    assert!((CarCondition::of(KIND_JEEP, 10, [0; 8]).power - 0.6).abs() < 1e-6);
-    assert_eq!(CarCondition::of(KIND_TANK, 125, [0; 8]).power, 1.0);
+    assert_eq!(CarCondition::of(KIND_JEEP, 100, [9, 9, 9, 9, 1, 2, 3, 4, 0, 0, 0]), CarCondition { power: 1.0, wheels: [1, 2, 3, 4], ..CarCondition::NEW });
+    assert!((CarCondition::of(KIND_JEEP, 10, [0; shared::protocol::DAMAGE_SLOTS]).power - 0.6).abs() < 1e-6);
+    assert_eq!(CarCondition::of(KIND_TANK, 125, [0; shared::protocol::DAMAGE_SLOTS]).power, 1.0);
 }
 
 #[test]
 fn a_tanks_turret_flag_is_not_mistaken_for_a_lost_wheel() {
-    let damage = [0, 0, 0, 0, shared::protocol::TURRET_GONE, 0, 0, 0];
+    let damage = [0, 0, 0, 0, shared::protocol::TURRET_GONE, 0, 0, 0, 0, 0, 0];
     assert_eq!(CarCondition::of(KIND_TANK, 250, damage).wheels, [0; 4]);
     // A car's four wheels are in the same slots.
     assert_eq!(CarCondition::of(KIND_JEEP, 100, damage).wheels, [shared::protocol::TURRET_GONE, 0, 0, 0]);
+}
+
+#[test]
+fn a_tanks_parts_take_its_power_speed_and_turn() {
+    use shared::armor::{PARTS, Part, State, pack};
+    use shared::protocol::{DAMAGE_PARTS, KIND_TANK};
+    let with = |part: Part, state: State| {
+        let mut states = [State::Sound; PARTS];
+        states[part.slot().unwrap()] = state;
+        let [low, high] = pack(states);
+        let mut damage = [0; shared::protocol::DAMAGE_SLOTS];
+        damage[DAMAGE_PARTS] = low;
+        damage[DAMAGE_PARTS + 1] = high;
+        CarCondition::of(KIND_TANK, 250, damage)
+    };
+    assert_eq!(CarCondition::of(KIND_TANK, 250, [0; shared::protocol::DAMAGE_SLOTS]), CarCondition::NEW);
+    let hurt = with(Part::Engine, State::Hurt);
+    assert!(hurt.power < 1.0 && hurt.speed < 1.0 && hurt.turn == 1.0, "{hurt:?}");
+    let dead = with(Part::Engine, State::Gone);
+    assert_eq!((dead.power, dead.turn), (0.0, 0.0));
+    assert_eq!(with(Part::Transmission, State::Gone).power, 0.0);
+    let track = with(Part::TrackRight, State::Gone);
+    assert_eq!(track.sides, [1.0, 0.0]);
+    assert!(track.power > 0.0 && track.turn < 1.0);
+    // The gun's parts do not move it.
+    assert_eq!(with(Part::Breech, State::Gone), CarCondition::NEW);
 }

@@ -23,6 +23,8 @@ export const S_NOTICE = 12
 export const S_BUILT = 13
 export const S_CRATERED = 14
 export const S_DUG = 15
+export const S_ARMOR = 16
+export const S_MARKS = 17
 
 export interface BulletSpawn {
   id: number
@@ -65,6 +67,17 @@ export interface Welcome {
   tickRate: number
   snapshotEvery: number
   worldHash: number
+}
+
+export interface HullMark {
+  vehicle: number
+  style: number
+  x: number
+  y: number
+  z: number
+  dx: number
+  dy: number
+  dz: number
 }
 
 export interface ShotEvent {
@@ -228,6 +241,25 @@ export interface Dug {
   tiles: DugTile[]
 }
 
+export interface Marks {
+  type: 'marks'
+  tick: number
+  marks: HullMark[]
+}
+
+export interface Armor {
+  type: 'armor'
+  role: number
+  vehicle: number
+  result: number
+  hurt: number
+  gone: number
+  killed: number
+  x: number
+  y: number
+  z: number
+}
+
 export interface Hit {
   type: 'hit'
   role: number
@@ -248,7 +280,7 @@ export interface Rtc {
   json: string
 }
 
-export type ServerMessage = Welcome | Snapshot | Pong | Leave | Kill | Scores | Profiles | Notice | Destroyed | Damaged | Carved | Built | Cratered | Dug | Hit | Rtc
+export type ServerMessage = Welcome | Snapshot | Pong | Leave | Kill | Scores | Profiles | Notice | Destroyed | Damaged | Carved | Built | Cratered | Dug | Marks | Armor | Hit | Rtc
 
 function decodeBulletSpawn(r: unknown): BulletSpawn | undefined {
   if (!Array.isArray(r) || r.length !== 10) return undefined
@@ -264,6 +296,20 @@ function decodeBulletSpawn(r: unknown): BulletSpawn | undefined {
   const tick = w.int(r[9])
   if (id === undefined || shooter === undefined || item === undefined || x === undefined || y === undefined || z === undefined || vx === undefined || vy === undefined || vz === undefined || tick === undefined) return undefined
   return { id, shooter, item, x: x / 100, y: y / 100, z: z / 100, vx: vx / 100, vy: vy / 100, vz: vz / 100, tick }
+}
+
+function decodeHullMark(r: unknown): HullMark | undefined {
+  if (!Array.isArray(r) || r.length !== 8) return undefined
+  const vehicle = w.int(r[0])
+  const style = w.int(r[1])
+  const x = w.int(r[2])
+  const y = w.int(r[3])
+  const z = w.int(r[4])
+  const dx = w.int(r[5])
+  const dy = w.int(r[6])
+  const dz = w.int(r[7])
+  if (vehicle === undefined || style === undefined || x === undefined || y === undefined || z === undefined || dx === undefined || dy === undefined || dz === undefined) return undefined
+  return { vehicle, style, x: x / 100, y: y / 100, z: z / 100, dx, dy, dz }
 }
 
 function decodeShotEvent(r: unknown): ShotEvent | undefined {
@@ -494,6 +540,29 @@ function decodeDug(r: readonly unknown[]): Dug | undefined {
   return { type: 'dug', tiles }
 }
 
+function decodeMarks(r: readonly unknown[]): Marks | undefined {
+  if (r.length !== 3) return undefined
+  const tick = w.int(r[1])
+  const marks = w.list(r[2], decodeHullMark)
+  if (tick === undefined || marks === undefined) return undefined
+  return { type: 'marks', tick, marks }
+}
+
+function decodeArmor(r: readonly unknown[]): Armor | undefined {
+  if (r.length !== 10) return undefined
+  const role = w.int(r[1])
+  const vehicle = w.int(r[2])
+  const result = w.int(r[3])
+  const hurt = w.int(r[4])
+  const gone = w.int(r[5])
+  const killed = w.int(r[6])
+  const x = w.int(r[7])
+  const y = w.int(r[8])
+  const z = w.int(r[9])
+  if (role === undefined || vehicle === undefined || result === undefined || hurt === undefined || gone === undefined || killed === undefined || x === undefined || y === undefined || z === undefined) return undefined
+  return { type: 'armor', role, vehicle, result, hurt, gone, killed, x: x / 100, y: y / 100, z: z / 100 }
+}
+
 function decodeHit(r: readonly unknown[]): Hit | undefined {
   if (r.length !== 10) return undefined
   const role = w.int(r[1])
@@ -549,6 +618,10 @@ export function decodeMessage(r: readonly unknown[]): ServerMessage | undefined 
       return decodeCratered(r)
     case S_DUG:
       return decodeDug(r)
+    case S_MARKS:
+      return decodeMarks(r)
+    case S_ARMOR:
+      return decodeArmor(r)
     case S_HIT:
       return decodeHit(r)
     case S_RTC:

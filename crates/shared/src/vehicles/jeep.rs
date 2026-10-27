@@ -2,6 +2,16 @@
 
 use super::*;
 
+/// A jeep's engine under the bonnet and its fuel tank at the back; its crew sit in the open, hit as anyone is.
+const ARMOR: Armor = Armor {
+    plates: SHEET.plates,
+    modules: &[
+        Module::new(Part::Engine, [0.0, 0.05, -1.4], [0.45, 0.3, 0.4], 120),
+        Module::new(Part::Fuel, [0.0, -0.15, 1.6], [0.4, 0.15, 0.25], 100),
+    ],
+    canvas: false,
+};
+
 pub(super) const JEEP: VehicleDef = VehicleDef {
     kind: KIND_JEEP,
     name: "Jeep",
@@ -37,7 +47,7 @@ pub(super) const JEEP: VehicleDef = VehicleDef {
         solids: &[],
         tongue: 0.0,
     },
-    armor: LIGHT,
+    armor: ARMOR,
     drone: None,
     mount_seat: None,
 };

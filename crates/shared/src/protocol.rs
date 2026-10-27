@@ -35,6 +35,8 @@ pub const S_NOTICE: u8 = 12;
 pub const S_BUILT: u8 = 13;
 pub const S_CRATERED: u8 = 14;
 pub const S_DUG: u8 = 15;
+pub const S_ARMOR: u8 = 16;
+pub const S_MARKS: u8 = 17;
 
 /// `Hit` roles: whose feedback it is.
 /// You hurt something.
@@ -136,6 +138,28 @@ pub const WEAPON_RUBBLE: u8 = 23;
 /// Shot events only: a Carl Gustaf fired from `shooter`'s shoulder, its rocket leaving at `x, y, z`.
 /// What the rocket does is `WEAPON_ROCKET`'s.
 pub const WEAPON_LAUNCHER: u8 = 24;
+/// An armour-piercing shell's small burst (`PROJECTILE_SHELL`); `WEAPON_SHELL` is high explosive's.
+pub const WEAPON_AP: u8 = 27;
+
+/// `HullMark::style`: what a round left where it met a vehicle's armour.
+/// It glanced off: sparks and a ping, and no mark.
+pub const MARK_GLANCE: u8 = 0;
+/// The plate stopped it: a scuff.
+pub const MARK_SCUFF: u8 = 1;
+/// A bullet through a slit or a thin plate: a small hole.
+pub const MARK_HOLE: u8 = 2;
+/// A shell through the plate: a big hole, and fragments.
+pub const MARK_PIERCED: u8 = 3;
+/// Set on a hole's style when the round that made it hurt a part inside (the engine, the fuel): the
+/// hole the smoke and fire come out of.
+pub const MARK_VITAL: u8 = 1 << 7;
+
+/// `Armor::result`: what a vehicle's armour made of a round.
+pub const ARMOR_RICOCHET: u8 = 0;
+pub const ARMOR_BLOCKED: u8 = 1;
+pub const ARMOR_PIERCED: u8 = 2;
+/// Through a slit or a visor, not a plate.
+pub const ARMOR_SLIT: u8 = 3;
 
 /// How a stickman died, as sent in a `Kill`, so every client can stage the death to match.
 pub const DEATH_BODY: u8 = 0;
@@ -162,6 +186,9 @@ pub const PROJECTILE_EGG: u8 = 7;
 /// A flare: it climbs, then hangs under its parachute, burning brightly as it drifts down, and burns
 /// out where it lies. It hurts nobody.
 pub const PROJECTILE_FLARE: u8 = 8;
+/// A tank gun's high-explosive shell: flies as `PROJECTILE_SHELL` does (which is armour-piercing), and
+/// bursts much bigger, but goes through little armour.
+pub const PROJECTILE_HE: u8 = 9;
 
 /// A message's field: its name, its Rust type and its unit (`UNITS`), or `""` for a count, a set of
 /// bits, an id or text, which have none.
@@ -263,6 +290,13 @@ messages! {
     /// Something that just happened, for drawing; `x, y, z` is where it ended. A rifle shot is a tracer
     /// from the shooter's own position to there; a rocket or a wreck is a burst at there (the shooter is
     /// 0 for a wreck with no culprit).
+    /// Where a round met vehicle `vehicle`'s armour and what it left there (`MARK_*`): the point in the
+    /// vehicle's own frame (+X right, +Y up, -Z forward) and the way the round was going in that frame,
+    /// as a unit vector times 127. In the vehicle's frame, so the client puts it on the vehicle as it
+    /// draws it, wherever that has got to.
+    #[derive(Copy, Eq)]
+    [] HullMark { vehicle: u32, style: u8, x: i16 as cm, y: i16 as cm, z: i16 as cm, dx: i8, dy: i8, dz: i8 }
+
     #[derive(Copy, Eq)]
     [] ShotEvent { shooter: u32, weapon: u8, x: i32 as cm, y: i32 as cm, z: i32 as cm }
 
@@ -391,6 +425,18 @@ messages! {
     /// a taken hit `bearing` is the yaw (0 faces -Z, as for a look) from you towards where it came
     /// from, if it came from anywhere. `(x, y, z)` is about where the thing hit is, chest height for a
     /// stickman, and `target` is its id, so clients can show a number and a flash on it.
+    /// Sent on a reliable stream to whoever fired a round that met a vehicle's armour (`role`
+    /// `HIT_DEALT`), and to its crew (`HIT_TAKEN`): what the armour made of it (`ARMOR_*`), the parts it
+    /// hurt and the ones it finished off (bits by `armor::Part::slot`), and the seats whose occupant it
+    /// killed (bits by seat). `(x, y, z)` is where it struck, so the shooter's callout can sit there.
+    /// Sent on a reliable stream with each snapshot to the players near any: the marks rounds left on
+    /// vehicles' armour since the last, as of `tick`, so they are drawn when the picture gets there.
+    #[derive(Eq)]
+    [S_MARKS] Marks { tick: u32, marks: Vec<HullMark> }
+
+    #[derive(Eq)]
+    [S_ARMOR] Armor { role: u8, vehicle: u32, result: u8, hurt: u8, gone: u8, killed: u8, x: i32 as cm, y: i32 as cm, z: i32 as cm }
+
     #[derive(Eq)]
     [S_HIT] Hit { role: u8, kind: u8, amount: u8, weapon: u8, bearing: Option<i16> as mrad, x: i32 as cm, y: i32 as cm, z: i32 as cm, target: u32 }
 
@@ -431,11 +477,22 @@ pub const DAMAGE_WHEELS: usize = 4;
 /// A tank's slot 4 (its wheels are never hurt): `TURRET_GONE` once the turret has been shot off.
 pub const DAMAGE_TURRET: usize = 4;
 pub const TURRET_GONE: u8 = 255;
+/// Slots 8 and 9, after a car's wheels: the state of each of a vehicle's parts, engine to fuel, two
+/// bits each (`armor::pack`).
+pub const DAMAGE_PARTS: usize = 8;
+/// Slot 10: `BURNING` while its fuel is on fire.
+pub const DAMAGE_FIRE: usize = 10;
+/// Slots in a vehicle's damage.
+pub const DAMAGE_SLOTS: usize = 11;
+pub const BURNING: u8 = 1;
 /// A wheel damaged this much has come off.
 pub const WHEEL_GONE: u8 = 255;
 
 /// `replicated::Turret::flags`: a field mortar is hitched to a car, so it is drawn folded up for travel.
 pub const TURRET_STOWED: u8 = 1;
+/// `replicated::Turret::flags`: the gun has its second kind of round loaded (`Fire::Shell::alt`), a
+/// tank gun's high explosive.
+pub const TURRET_ALT: u8 = 1 << 1;
 
 /// `replicated::Arms::flags`: the blip switch is cutting the engine, and either set of guns is jammed.
 pub const ARMS_CUT: u8 = 1 << 0;

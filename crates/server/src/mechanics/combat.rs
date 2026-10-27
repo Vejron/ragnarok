@@ -9,6 +9,7 @@ use crate::events::Hooks;
 use crate::game::{Bot, Damaged, Died, Drone, Player, Seats, TEAM_NONE, Vehicle, World, Wreck, starting_hotbar};
 use sim::Obj;
 use shared::consts::*;
+use shared::armor::Pen;
 use shared::items::*;
 use shared::vehicles::{Exposure, crew_gun, vehicle_def};
 use shared::protocol::{BulletSpawn, ItemSlot, PROJECTILE_BULLET, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_ROCKET, ShotEvent, WEAPON_FLARE, WEAPON_PELLET, WEAPON_RIFLE, WEAPON_WRECK};
@@ -131,7 +132,7 @@ pub struct Blast {
 }
 
 /// A vehicle the blast's shell struck directly: it takes `DIRECT_SHARE` of the damage times `scale`
-/// (what its armor made of the angle) instead of the damage its distance from the centre would give, and
+/// (what its armor made of the shot: nothing when the plate stopped it) instead of the damage its distance from the centre would give, and
 /// the turret takes it too if that was what was hit.
 #[derive(Clone, Copy)]
 pub struct Direct {
@@ -186,11 +187,17 @@ pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
         let direct = direct.filter(|direct| direct.vehicle == vid);
         let dealt = match direct {
             Some(direct) => blast.damage * super::armor::DIRECT_SHARE * direct.scale,
+            // Splash is mostly turned by armour plate.
+            None if super::armor::armoured(world, vid) => blast.damage * falloff * super::armor::SPLASH_ARMOURED,
             None => blast.damage * falloff,
         };
         let amount = dealt.round().min(255.0) as u8;
+        // A shell that struck the vehicle has had its say about the tracks already.
+        if direct.is_none() {
+            super::armor::blast_parts(world, vid, blast.point, blast.damage * falloff.max(0.0), blast.attacker);
+        }
         damage_vehicle(world, vid, amount, blast.attacker);
-        if direct.is_some_and(|direct| direct.turret) {
+        if amount > 0 && direct.is_some_and(|direct| direct.turret) {
             super::armor::damage_turret(world, vid, amount, blast.attacker);
         }
         super::vehicles::shoot_wheels(world, vid, blast.point, dealt, super::vehicles::WHEEL_REACH);
@@ -611,7 +618,7 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     }
     // A nuisance to a vehicle, not a way to kill one.
     let chip = (item.damage / 4).max(1);
-    let round = Round { damage: item.damage, vehicle: chip, plane: chip, weapon: item.weapon, range: item.range, falloff: item.falloff };
+    let round = Round { damage: item.damage, vehicle: chip, plane: chip, weapon: item.weapon, range: item.range, falloff: item.falloff, pen: item.pen };
     // Every pellet is its own ray through the same rewound world. The first goes along the aim as it
     // is (scattered once, above), the rest are scattered around it. Each is announced where it ended,
     // so a client can show where a spread landed; only the first carries the gun's own weapon id.
@@ -635,6 +642,8 @@ pub struct Round {
     pub range: f32,
     /// How the damage of a hit on a stickman or a rooster shrinks with how far the round flew.
     pub falloff: Falloff,
+    /// How much armour it goes through, and how that shrinks with how far it flew.
+    pub pen: Pen,
 }
 
 /// Fires one round for `shooter` from `origin` along the unit `dir`, through vehicle `ignore` (the one
@@ -708,11 +717,22 @@ pub fn land(world: &mut World, flight: &Flight, met: &Strike, round: &Round) {
     } else if let Some((_, Some(car))) = wall {
         let canvas = world.entities.get::<Vehicle>(car).is_some_and(|vehicle| vehicle_def(vehicle.kind).armor.canvas);
         let point = std::array::from_fn(|i| origin[i] + dir[i] * reach);
-        match super::armor::armor_of(world, car, origin, dir, reach) {
-            Some(Outcome::Ricochet { .. }) => super::armor::announce_ricochet(world, car, point),
+        // A round that does not get through the plate only strikes sparks off it.
+        match super::armor::armor_of(world, car, origin, dir, reach, round.pen.at(flown + reach)) {
+            Some(outcome @ (Outcome::Ricochet { .. } | Outcome::Blocked { .. })) => super::armor::report(world, car, &outcome, point, dir, round.pen.calibre, Default::default(), attacker),
             struck => {
-                let scale = if let Some(Outcome::Hit { scale, .. }) = struck { scale } else { 1.0 };
+                let scale = if let Some(Outcome::Pierced { scale, .. }) = struck { scale } else { 1.0 };
                 let base = if canvas { round.plane } else { round.vehicle };
+                // Through a slit or a thin plate, it goes on to whoever and whatever is behind.
+                if let (Some(outcome @ Outcome::Pierced { residual, slit, at, .. }), Some(pose)) = (struck, world.physics.car_pose(car)) {
+                    let entry = super::armor::Entry { at, dir: pose.local_dir(dir), residual, calibre: round.pen.calibre, kind: round.pen.kind, slit, crew: dealt, weapon: round.weapon, attacker };
+                    let done = super::armor::inside(world, car, entry);
+                    super::armor::report(world, car, &outcome, point, dir, round.pen.calibre, done, attacker);
+                    // Through a gap, it never touched the vehicle itself.
+                    if slit {
+                        return;
+                    }
+                }
                 damage_vehicle(world, car, (f32::from(base) * scale).round().max(1.0) as u8, attacker);
                 super::vehicles::shoot_wheels(world, car, point, f32::from(round.damage), super::vehicles::BULLET_WHEEL_REACH);
             }

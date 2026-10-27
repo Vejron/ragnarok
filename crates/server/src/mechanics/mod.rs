@@ -21,6 +21,7 @@ pub use bots::{Bots, DRIVER, GUNNER, nearest_waypoint, road_route};
 pub use combat::{Combat, bearing, position_of};
 #[cfg(test)]
 pub use combat::damage_vehicle;
+pub use armor::ArmorHit;
 pub use drones::Drones;
 pub use gunnery::Gunnery;
 pub use life::{Life, record_trails};
@@ -63,6 +64,7 @@ pub fn register_components(ecs: &mut bevy_ecs::world::World) {
     ecs.register_component::<crate::game::Mounts>();
     ecs.register_component::<crate::game::Drone>();
     ecs.register_component::<crate::game::Wreck>();
+    ecs.register_component::<crate::game::Burning>();
     ecs.register_component::<crate::game::Seats>();
     ecs.register_component::<crate::game::Player>();
     ecs.register_component::<crate::game::Bot>();

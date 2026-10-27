@@ -1,6 +1,7 @@
 //! The state the game loop owns: players, vehicles, rockets, the ECS entities and the `World` that holds them,
 //! and the `Command`/`Outgoing` messages the sessions exchange with it.
 
+use shared::armor::PARTS;
 use super::*;
 use bevy_ecs::message::{Message, Messages};
 use shared::mounts::{MountDef, Show};
@@ -253,10 +254,35 @@ pub struct Vehicle {
     pub stuck_ticks: u32,
     /// What a tank's turret has left before it comes off (`TANK_TURRET_HP` when whole).
     pub turret_hp: u8,
-    /// Crash damage as the snapshot carries it (`DAMAGE_*`); all zeros when unhurt.
-    pub damage: [u8; 8],
+    /// Crash damage as the snapshot carries it (`DAMAGE_*`); all zeros when unhurt. An armoured
+    /// vehicle's parts are in it too (`DAMAGE_PARTS`, kept by `armor::sync_parts`).
+    pub damage: [u8; shared::protocol::DAMAGE_SLOTS],
+    /// What each of an armoured vehicle's parts has left (`shared::armor::Part::slot`); full when whole.
+    pub parts: [u8; PARTS],
     /// Ticks before it may throw sparks again.
     pub scrape_in: u8,
+}
+
+impl Vehicle {
+    /// What each part of a fresh `kind` has.
+    pub fn fresh_parts(kind: u8) -> [u8; PARTS] {
+        let armor = &shared::vehicles::vehicle_def(kind).armor;
+        std::array::from_fn(|slot| armor.module(slot).map_or(0, |module| module.hp))
+    }
+
+    /// Put back as new: no damage, its turret on and every part whole.
+    pub fn renew(&mut self) {
+        self.damage = [0; shared::protocol::DAMAGE_SLOTS];
+        self.turret_hp = shared::consts::TANK_TURRET_HP;
+        self.parts = Vehicle::fresh_parts(self.kind);
+    }
+}
+
+/// A vehicle whose fuel is alight: it loses health until it is a wreck. `ticks` counts how long it has
+/// burnt.
+#[derive(crate::entities::Component, Clone, Copy, Debug, PartialEq)]
+pub struct Burning {
+    pub ticks: u32,
 }
 
 /// What a drone carries beyond being a vehicle: a component on the vehicle's entity. The `Drones`
@@ -361,6 +387,10 @@ pub struct Mount {
     pub ammo: u8,
     /// Ticks towards more ammo (`shared::mounts::Refill`).
     pub refill: u32,
+    /// A gun with two kinds of round has its second (`Fire::Shell::alt`) loaded.
+    pub alt: bool,
+    /// `BUTTON_AMMO` was down last tick: holding it swaps the round once.
+    pub swapping: bool,
 }
 
 impl Mount {
@@ -437,6 +467,12 @@ pub struct World {
     pub rng: Rng,
     /// Rifle shots since the last snapshot, for drawing tracers. Drained when snapshots go out.
     pub shots: Vec<ShotEvent>,
+    /// What vehicles' armour made of the rounds that met it this tick, for the shooters and the crews
+    /// (`S_ARMOR`). Drained every tick.
+    pub armor_hits: Vec<crate::mechanics::ArmorHit>,
+    /// Marks rounds left on vehicles' armour since the last snapshot, with where each vehicle was (for
+    /// who is near enough to be told). Sent with the snapshots (`S_MARKS`).
+    pub marks: Vec<(HullMark, [f32; 3])>,
     /// Bullets fired in the last few ticks, each sent to the clients near it in a couple of snapshots.
     pub bullets: Vec<BulletSpawn>,
     /// What the damage path runs the moment something is hurt or dies, from the mechanics' `hooks`.

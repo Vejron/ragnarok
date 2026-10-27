@@ -87,7 +87,7 @@ describe('the vehicle presenters', () => {
 
   it('throw a shot-off turret clear once, and smoke and burn as the hull dies', () => {
     const { log, store, draw, wear } = harness()
-    const gone = [0, 0, 0, 0, 0, 0, 0, 0]
+    const gone = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     gone[DAMAGE_TURRET] = TURRET_GONE
     store.push(10, new Map([[3, tank(1, { hp: 0, damage: gone })]]), true)
     draw(10)
