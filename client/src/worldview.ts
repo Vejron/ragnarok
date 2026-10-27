@@ -1,6 +1,6 @@
-import { Group, type Scene } from '@ragnarok/engine'
+import { CRATER_FADE, Group, type Scene } from '@ragnarok/engine'
 import type * as THREE from 'three'
-import { OBJ_BUILDING, OBJ_TREE, type Built, type CarvedBuilding, type CraterEntry, type DamagedBuilding, type DestroyedObject } from './net/codec'
+import { OBJ_BUILDING, OBJ_TREE, type Built, type CarvedBuilding, type CraterEntry, type DamagedBuilding, type DestroyedObject, type DugTile } from './net/codec'
 import type { Effects } from './render/effects'
 import { FallingTrees, type TreeFx, type TreeNoise } from './render/falling'
 import { BuildingDamage } from './render/damage'
@@ -22,6 +22,7 @@ import type { Waters } from './sim/waters'
 import { CRATER_MAX_DEPTH } from './sim/consts.generated'
 import { digCrater, groundOf, type Terrain, type TileGround } from './sim/terrain'
 import type { Grass } from './render/grass'
+import { Smoulders } from './render/smoulder'
 import type { TileData, TileRef, WorldData } from './world'
 
 /** Tiles are keyed by `row * 65536 + col`, as the server names the objects in them. */
@@ -38,6 +39,19 @@ const CRATER_CAP = Math.round(CRATER_MAX_DEPTH * 100)
 /** Digs `crater` into `ground`, whose tile file has `pristine`: the server's `Ground::dig`. Whether anything moved. */
 function digInto(ground: TileGround, pristine: Float32Array, crater: CraterEntry): boolean {
   return digCrater(ground, crater.x, crater.z, crater.radius, crater.depth, (at) => Math.max(Math.round(pristine[at]! * 100) - CRATER_CAP, 0))
+}
+
+/**
+ * Lays a `Dug` tile's `runs` on `ground`, whose tile file has `pristine`: each changed sample is the
+ * file's height and the difference the server sent, whole centimetres.
+ */
+function layDug(ground: TileGround, pristine: Float32Array, runs: ArrayLike<number>) {
+  let at = 0
+  for (let k = 0; k + 1 < runs.length; ) {
+    at += runs[k++]!
+    const count = runs[k++]!
+    for (let n = 0; n < count && at < ground.heights.length; n++, at++) ground.heights[at] = (Math.round(pristine[at]! * 100) + runs[k++]!) / 100
+  }
 }
 
 /** Whether `crater` reaches `ground`'s tile (its edge samples included). */
@@ -63,6 +77,9 @@ export class WorldView {
   waters: Waters | null = null
   /** What is solid to the local stickman and the vehicle it drives: the server's physics. */
   motor: SimMotor | null = null
+  /** Fresh craters smoke (the player's `scorch` look); their marks are hidden with the scene's craters. */
+  scorch = true
+  readonly smoulders = new Smoulders()
 
   readonly damage = new BuildingDamage()
   /** The cubes players placed with bricks, as the server has told of them, and their drawing. */
@@ -93,9 +110,15 @@ export class WorldView {
   private readonly levels = new Map<number, number>()
   /** Tiles whose terrain the worker is meshing at another level now. */
   private readonly remeshing = new Set<number>()
-  /** Every crater the server has told of, in the order they were dug: replayed onto tiles that stream in later. */
+  /** The ground of the tiles dug before this player joined, as the server sent it (`Dug`), by tile: laid on tiles as they stream in. */
+  private readonly dugTiles = new Map<number, Int32Array>()
+  /** The craters dug since this player joined, in order: replayed onto tiles that stream in later, after their `Dug`. */
   private readonly craters: CraterEntry[] = []
-  /** How many craters each tile's ground had when the worker prepared it. */
+  /** Every crater told of, the joiner's still marked ones too: the grass is cleared from their bowls on tiles that stream in later. */
+  private readonly marked: CraterEntry[] = []
+  /** Bumped by every change to the ground (a crater, a `Dug` tile). */
+  private groundEdits = 0
+  /** What `groundEdits` was when the worker prepared each tile's ground. */
   private readonly preparedWith = new Map<number, number>()
   /** Tiles whose dented ground the worker is meshing now, and those dented again meanwhile. */
   private readonly regrounding = new Set<number>()
@@ -120,6 +143,10 @@ export class WorldView {
     for (const [key, indices] of this.reshape) this.dropBuildingColliders(key, indices)
     this.reshape.clear()
     this.updateCubes(dt, effects)
+    // Marks that have faded out are dropped from the ground's shader.
+    this.scene.craters.expire(performance.now() / 1000 - CRATER_FADE)
+    if (this.scorch) this.smoulders.update(performance.now() / 1000, fx.smoke)
+    else this.smoulders.clear()
     this.focus(camera.x, camera.z)
   }
 
@@ -313,7 +340,7 @@ export class WorldView {
     if (!builder) return
     const key = tileKey(ref.col, ref.row)
     try {
-      this.preparedWith.set(key, this.craters.length)
+      this.preparedWith.set(key, this.groundEdits)
       this.prepared.set(key, await builder.prepare(ref.col, ref.row, this.tileInput(ref, tile, tileParts(tile), terrainLevel(this.tileDistance(key)))))
     } catch (error) {
       // `attachTile` prepares it on the main thread instead.
@@ -335,33 +362,70 @@ export class WorldView {
 
   /**
    * The ground of `tile` as it is now: its file's heights, in a copy of their own (the file's stay as
-   * they are, which craters are measured from), with every crater so far dug into it.
+   * they are, which craters are measured from), with the server's `Dug` ground laid on them and every
+   * crater since dug into it.
    */
   private groundFor(ref: TileRef, tile: TileData): TileGround | null {
     const ground = this.world ? groundOf(this.world, ref, tile) : null
     if (!ground) return null
     const own = { ...ground, heights: ground.heights.slice() }
+    const runs = this.dugTiles.get(tileKey(ref.col, ref.row))
+    if (runs) layDug(own, tile.ground, runs)
     for (const crater of this.craters) if (reaches(own, crater)) digInto(own, tile.ground, crater)
     return own
   }
 
   /**
-   * The server says shells dug these craters, in this order. Every tile they reach is dented in place
-   * (the arrays the terrain, the surfaces and the camera read), given to the physics, and drawn again.
-   * Tiles that are not here yet are dented when they arrive. `live` is false for the catch-up on joining.
+   * The ground of these tiles as craters left it before this player joined (CRATERS.md, "Lasting
+   * ground"). Laid on the tiles here now, which are given to the physics and drawn again, and on those
+   * that stream in later.
+   */
+  dug(tiles: readonly DugTile[]) {
+    for (const { col, row, runs } of tiles) {
+      const key = tileKey(col, row)
+      this.dugTiles.set(key, Int32Array.from(runs))
+      this.groundEdits++
+      const loaded = this.loaded.get(key)
+      const ground = this.terrain?.get(col, row)
+      if (!loaded || !ground) continue
+      // From the file again, so the craters since joining are dug on top of it, as on a tile streaming in.
+      ground.heights.set(loaded.tile.ground)
+      layDug(ground, loaded.tile.ground, runs)
+      for (const crater of this.craters) if (reaches(ground, crater)) digInto(ground, loaded.tile.ground, crater)
+      this.motor?.setTileGround({ col, row }, Int32Array.from(ground.heights, (h) => Math.round(h * 100)))
+      this.grass?.regrowTile({ col, row })
+      this.reground(key)
+    }
+  }
+
+  /**
+   * The server says blasts dug these craters, in this order (`live`), or that these are still marked
+   * from before this player joined (not `live`, each `age` seconds old). Live ones dent every tile they
+   * reach in place (the arrays the terrain, the surfaces and the camera read), which is given to the
+   * physics and drawn again; tiles that are not here yet are dented when they arrive. The catch-up's
+   * heights came in `dug`, so those are only marked.
    */
   cratered(craters: readonly CraterEntry[], live: boolean) {
     const dented = new Set<number>()
+    const now = performance.now() / 1000
     for (const crater of craters) {
-      this.craters.push(crater)
-      for (const [key, loaded] of this.loaded) {
-        const { col, row } = tileOf(key)
-        const ground = this.terrain?.get(col, row)
-        if (!ground || !reaches(ground, crater) || !digInto(ground, loaded.tile.ground, crater)) continue
-        dented.add(key)
-      }
+      this.marked.push(crater)
       this.grass?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
-      if (live) this.dusted.push([crater.x / 100, (this.terrain?.heightAt(crater.x / 100, crater.z / 100) ?? 0) + 0.5, crater.z / 100])
+      // Marked on the ground by its shader (SCORCH.md), fading with its age.
+      this.scene.craters.add(crater.x / 100, crater.z / 100, crater.radius / 100, crater.depth / 100, now - crater.age)
+      if (live) {
+        this.craters.push(crater)
+        this.groundEdits++
+        for (const [key, loaded] of this.loaded) {
+          const { col, row } = tileOf(key)
+          const ground = this.terrain?.get(col, row)
+          if (ground && reaches(ground, crater) && digInto(ground, loaded.tile.ground, crater)) dented.add(key)
+        }
+        const [x, z] = [crater.x / 100, crater.z / 100]
+        const y = this.terrain?.heightAt(x, z) ?? 0
+        this.dusted.push([x, y + 0.5, z])
+        if (this.scorch) this.smoulders.add(x, y, z, crater.radius / 100, now)
+      }
     }
     for (const key of dented) {
       const { col, row } = tileOf(key)
@@ -450,7 +514,7 @@ export class WorldView {
     this.terrain?.set(ref, ground)
     this.surfaces?.add(ref, tile, ground, prepared.surface)
     this.grass?.addTile(ref, tile, ground, prepared.grass)
-    if (ground) for (const crater of this.craters) if (reaches(ground, crater)) this.grass?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
+    if (ground) for (const crater of this.marked) if (reaches(ground, crater)) this.grass?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
     this.waters?.set(ref, ground, tile.water)
     this.groups.set(key, group)
     if (fromWorker?.terrain) this.levels.set(key, prepared.level)
@@ -464,10 +528,10 @@ export class WorldView {
     }
     if (tile.bytes) this.motor?.addTile(ref, tile.bytes)
     this.loaded.set(key, { tile, salt })
-    // The file's ground is flat of craters: the physics is given the dented one, and so is the worker's copy if craters came after it prepared.
-    if (ground && this.craters.some((crater) => reaches(ground, crater))) {
+    // The file's ground is flat of craters: the physics is given the dug one, and so is the worker's copy if the ground changed after it prepared.
+    if (ground && (this.dugTiles.has(key) || this.craters.some((crater) => reaches(ground, crater)))) {
       this.motor?.setTileGround(ref, Int32Array.from(ground.heights, (h) => Math.round(h * 100)))
-      if (fromWorker && this.preparedWith.get(key) !== this.craters.length) queueMicrotask(() => this.reground(key))
+      if (fromWorker && this.preparedWith.get(key) !== this.groundEdits) queueMicrotask(() => this.reground(key))
     }
     this.preparedWith.delete(key)
     this.damage.attach(key, tile, salt)
@@ -599,6 +663,7 @@ export class WorldView {
   }
 
   dispose() {
+    this.scene.craters.clear()
     this.damage.dispose()
     this.cubes.dispose()
     this.builder?.dispose()

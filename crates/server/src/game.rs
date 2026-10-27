@@ -59,6 +59,8 @@ fn carved_entry(id: ObjId, point: [i32; 3], blasted: Vec<u32>, fell: Vec<u32>) -
 
 /// Most cubes in one `Built` of a joiner's catch-up: about 10 bytes each on the wire.
 const BUILT_CATCH_UP_BATCH: usize = 32_768;
+/// Numbers of `DugTile::runs` in one `Dug` of a joiner's catch-up: at most 5 bytes each, well under the client's 4 MiB a message.
+const DUG_CATCH_UP_BATCH: usize = 400_000;
 
 /// A `Built` message: the cubes `placed`, `removed` and `fell`, as lattice places.
 fn built_message(live: bool, placed: Vec<(shared::construct::Pos, shared::construct::Cube)>, removed: Vec<shared::construct::Pos>, fell: Vec<shared::construct::Pos>) -> Built {
@@ -111,8 +113,9 @@ impl Game {
                 fresh_carved: Vec::new(),
                 strained: HashMap::new(),
                 rubble: Vec::new(),
-                craters: Vec::new(),
+                craters: Default::default(),
                 fresh_craters: Vec::new(),
+                dug_tiles: Default::default(),
                 pristine: Vec::new(),
                 construct: Default::default(),
                 fresh_built: Default::default(),
@@ -247,9 +250,23 @@ impl Game {
         if !carved.is_empty() {
             let _ = outbox.try_send(Outgoing::Reliable(encode(&Carved { tag: S_CARVED, live: false, buildings: carved }).into()));
         }
-        // Every crater dug so far, in order, as state.
-        if !self.world.craters.is_empty() {
-            let _ = outbox.try_send(Outgoing::Reliable(encode(&Cratered { tag: S_CRATERED, live: false, craters: self.world.craters.clone() }).into()));
+        // The ground as craters left it, then the craters still marked on it, in order, as state.
+        let mut batch: Vec<DugTile> = Vec::new();
+        let mut size = 0;
+        for tile in self.world.dug_ground() {
+            size += tile.runs.len();
+            batch.push(tile);
+            if size >= DUG_CATCH_UP_BATCH {
+                let _ = outbox.try_send(Outgoing::Reliable(encode(&Dug { tag: S_DUG, tiles: std::mem::take(&mut batch) }).into()));
+                size = 0;
+            }
+        }
+        if !batch.is_empty() {
+            let _ = outbox.try_send(Outgoing::Reliable(encode(&Dug { tag: S_DUG, tiles: batch }).into()));
+        }
+        let marks = self.world.crater_marks();
+        if !marks.is_empty() {
+            let _ = outbox.try_send(Outgoing::Reliable(encode(&Cratered { tag: S_CRATERED, live: false, craters: marks }).into()));
         }
         // Every cube placed so far, as state, in batches that stay well under the client's 4 MiB a message.
         let cubes: Vec<_> = self.world.construct.cubes().collect();
@@ -596,7 +613,7 @@ mod tests {
         let told = cratered(drain(&mut first));
         assert_eq!(told.len(), 1);
         assert!(told[0].0, "news to the ones already here");
-        assert_eq!(told[0].1, vec![CraterEntry { x: 0, z: 0, radius: 560, depth: 100 }]);
+        assert_eq!(told[0].1, vec![CraterEntry { x: 0, z: 0, radius: 560, depth: 100, age: 0 }]);
         // Nothing is told twice.
         game.step();
         assert!(cratered(drain(&mut first)).is_empty());
@@ -605,6 +622,67 @@ mod tests {
         assert_eq!(caught_up.len(), 1);
         assert!(!caught_up[0].0, "state, not news");
         assert_eq!(caught_up[0].1.len(), 1);
+    }
+
+    /// The `Dug` tiles in `outgoing`.
+    fn dug(outgoing: &[Outgoing]) -> Vec<DugTile> {
+        outgoing
+            .iter()
+            .filter_map(|out| match out {
+                Outgoing::Reliable(bytes) if peek_tag(bytes) == Some(S_DUG) => decode::<Dug>(bytes).map(|d| d.tiles),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
+    #[test]
+    fn a_joiner_gets_the_ground_as_dug_after_more_craters_than_are_kept_and_marks_only_while_fresh() {
+        let mut game = hilly_game();
+        let mut seed = 7u32;
+        let mut random = move || {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            (seed >> 8) as f32 / (1u32 << 24) as f32 * 180.0 - 90.0
+        };
+        for _ in 0..CRATER_MAX_KEPT + 300 {
+            let (x, z) = (random(), random());
+            game.world.dig_crater([x, game.world.map.ground.height_at(x, z), z], 3.5, 0.5);
+        }
+        let (_, mut late) = join(&mut game);
+        let told = drain(&mut late);
+        // The one tile, laid on the pristine ground, is the server's ground sample for sample.
+        let tiles = dug(&told);
+        assert_eq!(tiles.len(), 1);
+        let mut heights = game.world.pristine.clone();
+        let (mut at, mut runs) = (0usize, tiles[0].runs.iter().copied());
+        while let (Some(skip), Some(count)) = (runs.next(), runs.next()) {
+            at += skip as usize;
+            for _ in 0..count {
+                heights[at] += runs.next().unwrap();
+                at += 1;
+            }
+        }
+        assert_eq!(heights, game.world.map.ground.heights);
+        let marks = cratered(told);
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].1.len(), CRATER_MAX_KEPT);
+        // Long after, the holes are still sent but the marks have faded.
+        game.world.tick += CRATER_FADE_SECONDS * TICK_RATE;
+        let (_, mut later) = join(&mut game);
+        let told = drain(&mut later);
+        assert_eq!(dug(&told), tiles);
+        assert!(cratered(told).is_empty());
+    }
+
+    #[test]
+    fn a_crater_on_a_seam_marks_both_tiles_dug() {
+        let ground = shared::terrain::Ground { origin: -10_000, cell: 500, side: 41, heights: vec![300; 41 * 41] };
+        let map = WorldFile { version: WORLD_VERSION, half_extent: 10_000, spawns: vec![[0, 0]], tile_size: 10_000, ground, ..Default::default() };
+        let mut game = Game::new(map, 0).unwrap();
+        // On the seam x = 0 between tiles (0, 0) and (1, 0).
+        assert!(game.world.dig_crater([0.0, 3.0, -30.0], 5.6, 1.0));
+        assert_eq!(game.world.dug_tiles.iter().copied().collect::<Vec<_>>(), vec![(0, 0), (1, 0)]);
+        assert_eq!(game.world.dug_ground().iter().map(|t| (t.col, t.row)).collect::<Vec<_>>(), vec![(0, 0), (1, 0)]);
     }
 
     #[test]
@@ -779,8 +857,8 @@ mod tests {
 
     /// A tank battle: a full room on the ground while shells, mortar rounds and bombs rain on a 300 m
     /// square, `SHELLS` of them a tick (default 2, so 120 a second) for `TICKS` ticks (default 1200), as
-    /// the crater version of the world, then again with autocannon rounds (the same blast, no crater)
-    /// to tell what the craters cost. `RAGNAROK_WORLD` picks the world (the committed city by default).
+    /// the crater version of the world, then again with autocannon rounds (a third of the blast, and a
+    /// crater a third the size) to tell what the big craters cost. `RAGNAROK_WORLD` picks the world (the committed city by default).
     /// `cargo test --release -p server -- --ignored --nocapture shelling`
     #[test]
     #[ignore]
@@ -793,7 +871,7 @@ mod tests {
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../");
         let fixture = std::env::var_os("RAGNAROK_WORLD").map(std::path::PathBuf::from).unwrap_or_else(|| manifest.join("fixtures/world/world.msgpack"));
         let budget = Duration::from_secs_f64(1.0 / TICK_RATE as f64);
-        for (label, kinds) in [("craters (shell, mortar, bomb)", [PROJECTILE_SHELL, PROJECTILE_MORTAR, PROJECTILE_BOMB]), ("no craters (autocannon)", [PROJECTILE_CANNON; 3])] {
+        for (label, kinds) in [("craters (shell, mortar, bomb)", [PROJECTILE_SHELL, PROJECTILE_MORTAR, PROJECTILE_BOMB]), ("small craters (autocannon)", [PROJECTILE_CANNON; 3])] {
             let (map, _) = crate::read_world(&fixture).expect("a world to shell");
             let mut game = Game::new(map, 0).unwrap();
             game.world.clear_pickups();

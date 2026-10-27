@@ -8,6 +8,7 @@ const MAT_VERTEX_COLORS = 2
 const MAT_FOG = 4
 const MAT_NORMAL_MAP = 8
 const MAT_NORMAL_TONE = 16
+const MAT_CRATERS = 32
 
 export const RAMP_WIDTH = 256
 const RAMP_ROWS = 64
@@ -112,7 +113,7 @@ export class MaterialTable {
     this.data[f + 5] = m.emissive.g
     this.data[f + 6] = m.emissive.b
     this.data[f + 7] = 0
-    this.words[f + 8] = (m.lit ? MAT_LIT : 0) | (m.vertexColors ? MAT_VERTEX_COLORS : 0) | (m.fog ? MAT_FOG : 0) | (m.normalMap ? MAT_NORMAL_MAP : 0) | (m.normalMap && m.normalMapTone ? MAT_NORMAL_TONE : 0)
+    this.words[f + 8] = (m.lit ? MAT_LIT : 0) | (m.vertexColors ? MAT_VERTEX_COLORS : 0) | (m.fog ? MAT_FOG : 0) | (m.normalMap ? MAT_NORMAL_MAP : 0) | (m.normalMap && m.normalMapTone ? MAT_NORMAL_TONE : 0) | (m.craters ? MAT_CRATERS : 0)
     this.words[f + 9] = m.ramp ? this.rampRow(m.ramp) : 0
     this.words[f + 10] = 0
     this.words[f + 11] = 0

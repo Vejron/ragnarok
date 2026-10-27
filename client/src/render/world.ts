@@ -27,7 +27,7 @@ function ribbonMeshes(ribbons: readonly Ribbon[]): Mesh[] {
     const key = `${color}:${offset}`
     let material = ribbonMaterials.get(key)
     if (!material) {
-      material = toonMaterial({ color, ramp: TERRAIN_RAMP, vertexColors: true, depthBias: offset, depthBiasSlope: 2 })
+      material = toonMaterial({ color, ramp: TERRAIN_RAMP, vertexColors: true, depthBias: offset, depthBiasSlope: 2, craters: true })
       ribbonMaterials.set(key, material)
     }
     const mesh = new Mesh(new Geometry(buffers), material)
@@ -67,7 +67,7 @@ function material(kind: 'building', color: number) {
  * what shows through where a tile has not streamed in yet. `y` sits it just under the terrain.
  */
 export function buildGround(halfExtent: number, y = 0): Mesh {
-  const ground = new Mesh(planeGeometry(halfExtent * 2, halfExtent * 2), toonMaterial({ color: GRASS_COLOR }))
+  const ground = new Mesh(planeGeometry(halfExtent * 2, halfExtent * 2), toonMaterial({ color: GRASS_COLOR, craters: true }))
   ground.position.y = y
   ground.receiveShadow = true
   return ground
@@ -82,7 +82,7 @@ function buildTerrain(tile: Pick<TileData, 'cover' | 'detail'>, ground: TileGrou
   const { x0, z0, cell, side } = ground
   const map = cover === undefined ? bakeTerrainTexture(tile, x0, z0, cell * (side - 1)) : cover ? coverTexture(cover) : null
   const normalMap = reliefTexture(terrain.relief)
-  const mesh = new Mesh(new Geometry(terrain.buffers), toonMaterial({ ...(map ? { map } : { color: GRASS_COLOR }), normalMap, normalMapTone: true, ramp: TERRAIN_RAMP }))
+  const mesh = new Mesh(new Geometry(terrain.buffers), toonMaterial({ ...(map ? { map } : { color: GRASS_COLOR }), normalMap, normalMapTone: true, ramp: TERRAIN_RAMP, craters: true }))
   mesh.userData.ownsMaterial = true
   mesh.userData.ground = ground
   mesh.userData.detail = tile.detail

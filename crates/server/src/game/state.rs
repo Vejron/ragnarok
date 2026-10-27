@@ -463,12 +463,16 @@ pub struct World {
     pub strained: HashMap<ObjId, u32>,
     /// Cells that have lost their hold and are still falling: where each column of them lands and when.
     pub rubble: Vec<Rubble>,
-    /// Every crater shells have dug, oldest first, for a joiner (`game/craters.rs`), and those dug since the
-    /// last tick, for `Game::step` to broadcast.
-    pub craters: Vec<shared::protocol::CraterEntry>,
+    /// The craters dug in the last `CRATER_FADE_SECONDS` (at most `CRATER_MAX_KEPT`), oldest first, with
+    /// the tick each was dug: their marks, for a joiner (`game/craters.rs`). Their heights stay in `map.ground`.
+    pub craters: std::collections::VecDeque<(u32, shared::protocol::CraterEntry)>,
+    /// Craters dug since the last tick, for `Game::step` to broadcast.
     pub fresh_craters: Vec<shared::protocol::CraterEntry>,
-    /// The ground as the importer left it, copied when the first crater lands: what `CRATER_MAX_DEPTH` is measured from.
+    /// The ground as the importer left it, copied when the first crater lands: what `CRATER_MAX_DEPTH`
+    /// is measured from, and what a joiner's `Dug` is the difference from.
     pub pristine: Vec<i32>,
+    /// The tiles `(col, row)` whose ground a crater changed.
+    pub dug_tiles: std::collections::BTreeSet<(u16, u16)>,
     /// The cubes players have placed with bricks (`game/construct.rs`).
     pub construct: shared::construct::Construct,
     /// What happened to the cubes since the last tick, for `Game::step` to broadcast as one `Built`.

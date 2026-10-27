@@ -34,6 +34,7 @@ pub const S_PROFILES: u8 = 11;
 pub const S_NOTICE: u8 = 12;
 pub const S_BUILT: u8 = 13;
 pub const S_CRATERED: u8 = 14;
+pub const S_DUG: u8 = 15;
 
 /// `Hit` roles: whose feedback it is.
 /// You hurt something.
@@ -361,15 +362,28 @@ messages! {
     #[derive(Eq)]
     [S_BUILT] Built { live: bool, placed: Vec<BuiltCube>, removed: Vec<CubePos>, fell: Vec<CubePos> }
 
-    /// A crater a shell dug: where it is centred on the ground plane, how wide it is and how deep at the
-    /// middle, all in whole centimetres (`terrain::Ground::dig`, which the client mirrors sample for sample).
+    /// A crater a blast dug: where it is centred on the ground plane, how wide it is and how deep at the
+    /// middle, all in whole centimetres (`terrain::Ground::dig`, which the client mirrors sample for
+    /// sample), and how long ago it was dug, seconds (0 when live).
     #[derive(Copy, Eq)]
-    [] CraterEntry { x: i32, z: i32, radius: i32, depth: i32 }
+    [] CraterEntry { x: i32, z: i32, radius: i32, depth: i32, age: u16 }
 
-    /// Sent on a reliable stream: to everyone when shells dig craters, and to a player who just joined
-    /// with every crater so far, in the order they were dug (`live` false, so it is state and not news).
+    /// Sent on a reliable stream: to everyone when blasts dig craters, to be dug into the ground and
+    /// marked; and to a player who just joined with the craters of the last `CRATER_FADE_SECONDS`, in
+    /// the order they were dug (`live` false), to be marked only: their heights come in `Dug`.
     #[derive(Eq)]
     [S_CRATERED] Cratered { live: bool, craters: Vec<CraterEntry> }
+
+    /// A tile's ground as craters left it: the difference from its file's heights, whole centimetres,
+    /// as runs over its `side × side` samples (row-major, as `Tile::ground`): `[skip, count, value…]`
+    /// repeated, `skip` samples unchanged, then `count` changed ones.
+    #[derive(Eq)]
+    [] DugTile { col: u16, row: u16, runs: Vec<i32> }
+
+    /// Sent on a reliable stream to a player who just joined, before the craters: every tile whose
+    /// ground was dug, in batches (CRATERS.md, "Lasting ground").
+    #[derive(Eq)]
+    [S_DUG] Dug { tiles: Vec<DugTile> }
 
     /// Sent on a reliable stream to the one player it is about, once per tick per `(role, kind)` with
     /// the amounts summed. `role` is `HIT_*`: dealt (you hurt something) or taken (something hurt you

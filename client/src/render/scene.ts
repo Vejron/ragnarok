@@ -171,6 +171,7 @@ export class Scene {
     this.setShadowReach(look.far)
     scene.ink = look.ink ? (scene.ink ?? new Ink()) : null
     scene.bloom = look.bloom ? (scene.bloom ?? new Bloom()) : null
+    scene.craters.visible = look.scorch
   }
 
   /**

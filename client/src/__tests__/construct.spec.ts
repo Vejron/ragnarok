@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Mesh } from '@ragnarok/engine'
+import { Craters, Mesh } from '@ragnarok/engine'
 import { CELL } from '@/sim/carve'
 import { CHUNK, Construct, MATERIAL_BRICK, MATERIALS, cellAt, chunkKey, chunkOf, cubeCentre, materialOf } from '@/sim/construct'
 import { ConstructView } from '@/render/construct'
@@ -71,7 +71,7 @@ describe('placed cubes', () => {
   })
 
   it('are solid to the stickman once the world view has them', async () => {
-    const view = new WorldView({ add: () => {} } as never)
+    const view = new WorldView({ add: () => {}, craters: new Craters() } as never)
     view.motor = await flatMotor()
     view.built({ live: false, placed: [{ x: 0, y: 0, z: 0, color: 2, material: 0 }, { x: 0, y: 1, z: 0, color: 2, material: 0 }], removed: [], fell: [] })
     frame(view)
@@ -115,7 +115,7 @@ describe('placed cubes', () => {
 
   it('keep the material the server says, from the same table as its own', () => {
     expect(MATERIALS[MATERIAL_BRICK]).toEqual({ id: 0, name: 'Brick', hp: 40, blastReach: 1 })
-    const view = new WorldView({ add: () => {} } as never)
+    const view = new WorldView({ add: () => {}, craters: new Craters() } as never)
     view.built({ live: false, placed: [{ x: 1, y: 0, z: 1, color: 3, material: MATERIAL_BRICK }], removed: [], fell: [] })
     expect(view.construct.get([1, 0, 1])).toEqual({ colour: 3, material: MATERIAL_BRICK })
   })

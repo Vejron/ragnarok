@@ -22,6 +22,7 @@ export const S_PROFILES = 11
 export const S_NOTICE = 12
 export const S_BUILT = 13
 export const S_CRATERED = 14
+export const S_DUG = 15
 
 export interface BulletSpawn {
   id: number
@@ -207,12 +208,24 @@ export interface CraterEntry {
   z: number
   radius: number
   depth: number
+  age: number
 }
 
 export interface Cratered {
   type: 'cratered'
   live: boolean
   craters: CraterEntry[]
+}
+
+export interface DugTile {
+  col: number
+  row: number
+  runs: number[]
+}
+
+export interface Dug {
+  type: 'dug'
+  tiles: DugTile[]
 }
 
 export interface Hit {
@@ -235,7 +248,7 @@ export interface Rtc {
   json: string
 }
 
-export type ServerMessage = Welcome | Snapshot | Pong | Leave | Kill | Scores | Profiles | Notice | Destroyed | Damaged | Carved | Built | Cratered | Hit | Rtc
+export type ServerMessage = Welcome | Snapshot | Pong | Leave | Kill | Scores | Profiles | Notice | Destroyed | Damaged | Carved | Built | Cratered | Dug | Hit | Rtc
 
 function decodeBulletSpawn(r: unknown): BulletSpawn | undefined {
   if (!Array.isArray(r) || r.length !== 10) return undefined
@@ -340,13 +353,23 @@ function decodeCubePos(r: unknown): CubePos | undefined {
 }
 
 function decodeCraterEntry(r: unknown): CraterEntry | undefined {
-  if (!Array.isArray(r) || r.length !== 4) return undefined
+  if (!Array.isArray(r) || r.length !== 5) return undefined
   const x = w.int(r[0])
   const z = w.int(r[1])
   const radius = w.int(r[2])
   const depth = w.int(r[3])
-  if (x === undefined || z === undefined || radius === undefined || depth === undefined) return undefined
-  return { x, z, radius, depth }
+  const age = w.int(r[4])
+  if (x === undefined || z === undefined || radius === undefined || depth === undefined || age === undefined) return undefined
+  return { x, z, radius, depth, age }
+}
+
+function decodeDugTile(r: unknown): DugTile | undefined {
+  if (!Array.isArray(r) || r.length !== 3) return undefined
+  const col = w.int(r[0])
+  const row = w.int(r[1])
+  const runs = w.ints(r[2])
+  if (col === undefined || row === undefined || runs === undefined) return undefined
+  return { col, row, runs }
 }
 
 function decodeWelcome(r: readonly unknown[]): Welcome | undefined {
@@ -464,6 +487,13 @@ function decodeCratered(r: readonly unknown[]): Cratered | undefined {
   return { type: 'cratered', live, craters }
 }
 
+function decodeDug(r: readonly unknown[]): Dug | undefined {
+  if (r.length !== 2) return undefined
+  const tiles = w.list(r[1], decodeDugTile)
+  if (tiles === undefined) return undefined
+  return { type: 'dug', tiles }
+}
+
 function decodeHit(r: readonly unknown[]): Hit | undefined {
   if (r.length !== 10) return undefined
   const role = w.int(r[1])
@@ -517,6 +547,8 @@ export function decodeMessage(r: readonly unknown[]): ServerMessage | undefined 
       return decodeBuilt(r)
     case S_CRATERED:
       return decodeCratered(r)
+    case S_DUG:
+      return decodeDug(r)
     case S_HIT:
       return decodeHit(r)
     case S_RTC:
