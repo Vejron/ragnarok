@@ -27,7 +27,7 @@ describe('TankMusic', () => {
     expect(make).toHaveBeenCalledTimes(1)
     expect(audio.src).toContain('music/')
     expect(audio.play).toHaveBeenCalled()
-    expect(param.setTargetAtTime.mock.calls.at(-1)![0]).toBeGreaterThan(0)
+    expect(param.setTargetAtTime.mock.lastCall![0]).toBeGreaterThan(0)
   })
 
   it('fades out, pauses later, and cancels the pause on a quick return', () => {
@@ -36,7 +36,7 @@ describe('TankMusic', () => {
     const music = new TankMusic(ctx, make)
     music.want(true)
     music.want(false)
-    expect(param.setTargetAtTime.mock.calls.at(-1)![0]).toBe(0)
+    expect(param.setTargetAtTime.mock.lastCall![0]).toBe(0)
     expect(audio.pause).not.toHaveBeenCalled()
     vi.advanceTimersByTime(3000)
     expect(audio.pause).toHaveBeenCalledTimes(1)
