@@ -9,6 +9,7 @@ import { colorFor, cssColor, isBot, nameFor } from './profile'
 import type { Look } from './render/look'
 import { LIMB_ARM_L, LIMB_ARM_R, LIMB_LEG_L, LIMB_LEG_R, WEAPON_AP, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_EGG, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK } from './net/codec'
 import { HEN_EGGS } from './sim/consts'
+import { BACKPACK_NAME, type BackpackView } from './backpack'
 
 const container = ref<HTMLElement | null>(null)
 const stats = shallowRef<HudStats | null>(null)
@@ -73,6 +74,11 @@ onBeforeUnmount(() => {
 
 const swatch = (id: number) => cssColor(colorFor(id))
 const who = (id: number) => (id === 0 ? 'the fall' : nameFor(id))
+/** Seconds as m:ss, for the time held on the scoreboard. */
+const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+/** The line under the objective in a world with the backpack: who has it. */
+const backpackLine = (b: BackpackView) =>
+  b.yours ? `You carry the ${BACKPACK_NAME}: you heal, and run twice as fast on foot` : b.carrier === null ? `The ${BACKPACK_NAME} is up for grabs: find it in the orange circle` : `${nameFor(b.carrier)} has the ${BACKPACK_NAME}`
 /** A side's heading on the scoreboard. */
 const sideName = (team: number) => (team === 0 ? 'People' : `Team ${team}`)
 const settingsUrl = `${import.meta.env.BASE_URL}settings.html`
@@ -237,13 +243,14 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
     :touch="stats.touch"
     @select="(slot) => input?.selectSlot(slot)"
   />
-  <Minimap v-if="stats && stats.halfExtent > 0 && !stats.touch" :x="stats.x" :z="stats.z" :yaw="stats.yaw" :half-extent="stats.halfExtent" :open="mapOpen" :blips="stats.blips" />
+  <Minimap v-if="stats && stats.halfExtent > 0 && !stats.touch" :x="stats.x" :z="stats.z" :yaw="stats.yaw" :half-extent="stats.halfExtent" :open="mapOpen" :blips="stats.blips" :circle="stats.backpack" />
   <div v-if="stats?.dead" class="death">
     <h2>ELIMINATED</h2>
     <p>Respawning in {{ Math.ceil(stats.respawnIn) }}</p>
   </div>
-  <div v-if="stats && (stats.notices.objective || stats.notices.messages.length)" class="scenario">
+  <div v-if="stats && (stats.notices.objective || stats.notices.messages.length || stats.backpack)" class="scenario">
     <p v-if="stats.notices.objective" class="objective">{{ stats.notices.objective }}</p>
+    <p v-if="stats.backpack" class="backpack" :class="{ yours: stats.backpack.yours }">{{ backpackLine(stats.backpack) }}</p>
     <p v-for="(text, i) in stats.notices.messages" :key="i" class="message">{{ text }}</p>
   </div>
   <div v-if="stats?.notices.outcome" class="outcome" :class="stats.notices.outcome.won ? 'won' : 'lost'">
@@ -260,17 +267,19 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
     </li>
   </ul>
   <table v-if="stats?.board.length" class="board">
-    <thead><tr><th>Player</th><th>Kills</th><th>Deaths</th></tr></thead>
+    <thead><tr><th>Player</th><th>Kills</th><th>Deaths</th><th v-if="stats.backpack">Backpack</th></tr></thead>
     <tbody v-for="side in stats.board" :key="side.team">
       <tr v-if="stats.board.length > 1" class="side">
         <th>{{ sideName(side.team) }}</th>
         <th>{{ side.kills }}</th>
         <th>{{ side.deaths }}</th>
+        <th v-if="stats.backpack">{{ clock(side.held) }}</th>
       </tr>
       <tr v-for="row in side.rows" :key="row.id" :class="{ you: row.you }">
         <td><i :style="{ background: swatch(row.id) }" />{{ row.you ? `${nameFor(row.id)} (you)` : nameFor(row.id) }}<small v-if="isBot(row.id)" class="tag">BOT</small></td>
         <td>{{ row.kills }}</td>
         <td>{{ row.deaths }}</td>
+        <td v-if="stats.backpack">{{ clock(row.held) }}</td>
       </tr>
     </tbody>
   </table>
@@ -445,6 +454,8 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
   display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; font-weight: 700; color: #1d2b36;
 }
 .scenario p { margin: 0; padding: 6px 14px; border-radius: 10px; background: rgba(255, 255, 255, 0.85); }
+.scenario .backpack { font-weight: 700; box-shadow: 0 0 0 2px #ff8c00; }
+.scenario .backpack.yours { background: #ff8c00; color: #fff; }
 .scenario .objective { font-size: 15px; font-weight: 800; box-shadow: 0 0 0 2px #2ec4b6; }
 .scenario .message { font-size: 14px; }
 .outcome {

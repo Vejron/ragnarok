@@ -109,6 +109,8 @@ Each bot is named after its squad: Guards 1, Guards 2 and so on.
 | `"objective": "text"` | Everyone sees the text at the top of the screen until the next objective. Someone joining is told the current one. `""` clears it. |
 | `"win": "text"`, `"lose": "text"` | Ends it: everyone sees VICTORY or DEFEAT and the text for 8 s, and the objective is cleared. Anything after it in the same `do` is not done. |
 
+`"backpack": { "lat": …, "lon": … }` at the top level turns on the backpack mode and says where the backpack starts ([BACKPACK.md](BACKPACK.md)). It has nothing to do with the triggers and is not reset when the scenario starts again.
+
 After it ends, the scenario waits `restart` seconds (default `20`), clears its bots away and starts again from the top. People are left as they are: their scores, health and where they stand.
 
 An empty room is paused. With no one connected the game loop stops ticking and waits for a join, so bots and their scenario cost no CPU on an idle server, and pick up where they were.

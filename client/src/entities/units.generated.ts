@@ -30,6 +30,7 @@ export function toGame(w: Components): Entity {
     drive: w.drive && { vx: w.drive.vx / 100, vy: w.drive.vy / 100, vz: w.drive.vz / 100, wx: w.drive.wx / 1000, wy: w.drive.wy / 1000, wz: w.drive.wz / 1000, steer: w.drive.steer / 1000, spin: w.drive.spin / 1000 },
     seated: w.seated,
     look: w.look && { pitch: w.look.pitch / 1000 },
+    carry: w.carry,
   }
 }
 
@@ -62,5 +63,6 @@ export function blend(a: Entity, b: Entity, t: number): Entity {
     drive: a.drive && b.drive ? (a.drive === b.drive || (a.drive.vx === b.drive.vx && a.drive.vy === b.drive.vy && a.drive.vz === b.drive.vz && a.drive.wx === b.drive.wx && a.drive.wy === b.drive.wy && a.drive.wz === b.drive.wz && a.drive.steer === b.drive.steer && a.drive.spin === b.drive.spin) ? b.drive : { vx: lerp(a.drive.vx, b.drive.vx, t), vy: lerp(a.drive.vy, b.drive.vy, t), vz: lerp(a.drive.vz, b.drive.vz, t), wx: angle(a.drive.wx, b.drive.wx, t), wy: angle(a.drive.wy, b.drive.wy, t), wz: angle(a.drive.wz, b.drive.wz, t), steer: angle(a.drive.steer, b.drive.steer, t), spin: angle(a.drive.spin, b.drive.spin, t) }) : near.drive,
     seated: near.seated,
     look: a.look && b.look ? (a.look === b.look || (a.look.pitch === b.look.pitch) ? b.look : { pitch: angle(a.look.pitch, b.look.pitch, t) }) : near.look,
+    carry: near.carry,
   }
 }

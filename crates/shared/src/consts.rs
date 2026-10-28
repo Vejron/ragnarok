@@ -1,7 +1,7 @@
 //! Simulation and network constants. `client/scripts/gen-consts.ts` generates the client's copy from this file: run `npm run gen:consts` in `client` after editing.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 51;
+pub const PROTOCOL_VERSION: u8 = 52;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -32,6 +32,8 @@ pub const KIND_HEN: u8 = 12;
 pub const KIND_LOITER: u8 = 13;
 /// The Pak 38: a towed anti-tank gun with a shield and one gunner, who lays it like a tank's gun.
 pub const KIND_PAK: u8 = 14;
+/// The Intinor Compact Backpack lying on the ground (see `BACKPACK_*`). Replicated as a place and this kind.
+pub const KIND_BACKPACK: u8 = 15;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -791,6 +793,24 @@ pub const HITCH_MAX_SPEED: f32 = 1.5;
 pub const EXPLOSION_RADIUS: f32 = 7.0;
 /// Knockback speed at the centre of a blast, m/s; it fades to zero at the edge.
 pub const EXPLOSION_KNOCK: f32 = 18.0;
+
+/// The backpack mode (BACKPACK.md): a world whose scenario places one Intinor Compact Backpack. Whoever
+/// carries it walks `BACKPACK_SPEED` times as fast on foot and heals `BACKPACK_REGEN` health a second.
+/// Its modems give it away: everyone's map shows a circle with it somewhere inside, `BACKPACK_WIDE`
+/// metres across while it is new to its carrier (or lying about), narrowing to `BACKPACK_NARROW` over
+/// `BACKPACK_NARROW_SECONDS` in one carrier's hands.
+pub const BACKPACK_SPEED: f32 = 2.0;
+pub const BACKPACK_REGEN: f32 = 5.0;
+pub const BACKPACK_WIDE: f32 = 150.0;
+pub const BACKPACK_NARROW: f32 = 20.0;
+pub const BACKPACK_NARROW_SECONDS: f32 = 300.0;
+/// How near a stickman on foot must walk to take it, metres across the ground and up or down.
+pub const BACKPACK_REACH: f32 = 1.5;
+pub const BACKPACK_REACH_Y: f32 = 2.5;
+/// Seconds it may lie untouched before it goes back where the scenario put it.
+pub const BACKPACK_RETURN_SECONDS: f32 = 60.0;
+/// The `carry` component's value for the backpack.
+pub const CARRY_BACKPACK: u8 = 1;
 
 /// Combat. Every player starts a life with `PLAYER_MAX_HP` and dies at zero.
 pub const PLAYER_MAX_HP: u8 = 100;

@@ -7,9 +7,14 @@ import { ITEM_AK5, ITEM_AT_RIFLE, ITEM_BANDAGE, ITEM_BRICKS, ITEM_CARL_GUSTAF, I
 import { type Limb, poseLimb, splitLimbs } from './gibs'
 import { colorFor } from '@/profile'
 import { LIMB_ALL, LIMB_ARM_R } from '@/net/codec'
+import { buildBackpack } from './backpack'
 
 /** Gravity on a thrown body, m/s². */
 const FLING_GRAVITY = 14
+/** The worn backpack's bottom: this high above the feet standing, this much lower crouched, and this far behind the body's middle. */
+const PACK_Y = 0.85
+const PACK_CROUCH_DROP = 0.3
+const PACK_BACK = 0.2
 /** Feet sit this far below the capsule centre. */
 const FOOT_OFFSET = CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS
 
@@ -239,6 +244,9 @@ export class Character {
   private fling: { velocity: THREE.Vector3; spin: THREE.Vector3; offset: THREE.Vector3; groundAt: (x: number, z: number) => number } | null = null
   private readonly tumble = new THREE.Quaternion()
   private readonly canopy: Canopy
+  /** The backpack on its back (BACKPACK.md), made the first time it carries it. */
+  private backpack: Group | null = null
+  private carrying = false
 
   constructor(private readonly crowd: Crowd, id: number) {
     const asset = crowd.asset
@@ -333,6 +341,11 @@ export class Character {
     this.death = chase(this.death, this.down ? 1 : 0, DEATH_RATE, dt)
     this.crouch = chase(this.crouch, crouching ? 1 : 0, CROUCH_RATE, dt)
     this.lie = chase(this.lie, prone ? 1 : 0, LIE_RATE, dt)
+    if (this.backpack) {
+      // Between the shoulder blades, lower as it crouches; lying down or dead it is hidden rather than posed.
+      this.backpack.visible = this.carrying && !this.down && this.lie < 0.5
+      this.backpack.position.set(0, PACK_Y - PACK_CROUCH_DROP * this.crouch, -PACK_BACK)
+    }
     const alive = 1 - this.death
     const ground = alive * (1 - this.air)
     this.slide = chase(this.slide, sliding && crouching ? 1 : 0, SLIDE_RATE, dt)
@@ -649,6 +662,15 @@ export class Character {
     if (!this.shown || !bone) return null
     this.object.updateWorldMatrix(true, true)
     return bone.getWorldPosition(out)
+  }
+
+  /** Whether it carries the backpack on its back. */
+  set pack(on: boolean) {
+    this.carrying = on
+    if (on && !this.backpack) {
+      this.backpack = buildBackpack()
+      this.object.add(this.backpack)
+    }
   }
 
   /** Lying where it fell. */

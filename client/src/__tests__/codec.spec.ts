@@ -39,6 +39,7 @@ describe('codec', () => {
 
   it('matches the notice fixture and rejects a malformed one', () => {
     expect(decodeServer(bytes('notice'))).toEqual({ type: 'notice', kind: NOTICE_OBJECTIVE, text: 'Go' })
+    expect(decodeServer(bytes('backpack'))).toEqual({ type: 'backpack', x: -123.45, z: 678.9, radius: 75, carrier: 9, held: 301 })
     expect(decodeServer(encode([12, 1]))).toBeNull()
     expect(decodeServer(encode([12, 1, 5]))).toBeNull()
   })
@@ -121,7 +122,7 @@ describe('codec', () => {
     })
     expect(decodeServer(bytes('scores'))).toEqual({
       type: 'scores',
-      scores: [{ id: 1, kills: 2, deaths: 3 }, { id: 4, kills: 0, deaths: 900 }],
+      scores: [{ id: 1, kills: 2, deaths: 3, held: 0 }, { id: 4, kills: 0, deaths: 900, held: 754 }],
     })
     expect(decodeServer(encode([4, 7, 3]))).toBeNull()
     expect(decodeServer(encode([5, [[1, 2]]]))).toBeNull()

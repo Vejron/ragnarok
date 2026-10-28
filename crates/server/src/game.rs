@@ -120,6 +120,7 @@ impl Game {
                 construct: Default::default(),
                 fresh_built: Default::default(),
                 construct_dirty: Default::default(),
+                backpack: None,
                 map,
                 entities: Default::default(),
                 nav: Default::default(),
@@ -210,6 +211,7 @@ impl Game {
                 trigger_held: false,
                 kills: 0,
                 deaths: 0,
+                held: 0,
                 name: if profile.name.is_empty() { format!("Player {id}") } else { profile.name },
                 color: profile.color.unwrap_or((id % PLAYER_COLOR_COUNT as u32) as u8),
                 spawns: profile.spawns.into_iter().filter(|&point| crate::mechanics::spawn_usable(&self.world.map, point)).collect(),
@@ -224,7 +226,7 @@ impl Game {
         for (&to, other) in &self.outboxes {
             send_reliable(other, to, &joiner, &mut self.stalled);
         }
-        let scores = self.world.entities.all::<Player>().map(|(id, player)| Score { id, kills: player.kills, deaths: player.deaths }).collect();
+        let scores = self.world.entities.all::<Player>().map(|(id, player)| Score { id, kills: player.kills, deaths: player.deaths, held: player.held }).collect();
         let _ = outbox.try_send(Outgoing::Reliable(encode(&Scores { tag: S_SCORES, scores }).into()));
         // Always sent, even empty: the client takes the first one after the welcome as the catch-up
         // (not news to animate), and snapshots on the datagram channel can overtake it.
@@ -278,6 +280,10 @@ impl Game {
         }
         if let Some(objective) = self.scenario.as_ref().map(Scenario::objective).filter(|o| !o.is_empty()) {
             let _ = outbox.try_send(Outgoing::Reliable(encode(&Notice { tag: S_NOTICE, kind: NOTICE_OBJECTIVE, text: objective.into() }).into()));
+        }
+        if let Some(state) = &self.world.backpack {
+            let held = state.carrier.and_then(|carrier| self.world.entities.get::<Player>(carrier)).map_or(0, |player| player.held);
+            let _ = outbox.try_send(Outgoing::Reliable(encode(&state.circle(held)).into()));
         }
         self.outboxes.insert(id, outbox);
         self.replicas.insert(id, Replica::default());
@@ -338,6 +344,7 @@ impl Game {
                 trigger_held: false,
                 kills: 0,
                 deaths: 0,
+                held: 0,
                 name,
                 // One outfit per team, so a squad reads as one.
                 color: (team.wrapping_mul(5)) % PLAYER_COLOR_COUNT,
@@ -436,6 +443,7 @@ impl Game {
         self.broadcast_carved();
         self.broadcast_cratered();
         self.broadcast_built();
+        self.broadcast_backpack();
         self.drop_stalled();
         crate::events::update(&mut self.world.entities.ecs);
         self.world.tick = self.world.tick.wrapping_add(1);
@@ -498,6 +506,15 @@ impl Game {
         }
         let FreshBuilt { placed, removed, fell } = std::mem::take(&mut self.world.fresh_built);
         let bytes = Bytes::from(encode(&built_message(true, placed, removed, fell)));
+        for (&to, outbox) in &self.outboxes {
+            send_reliable(outbox, to, &bytes, &mut self.stalled);
+        }
+    }
+
+    /// Tells everyone where the backpack's circle is, when its mechanic has something to say.
+    fn broadcast_backpack(&mut self) {
+        let Some(circle) = self.world.backpack.as_mut().and_then(|state| state.fresh.take()) else { return };
+        let bytes = Bytes::from(encode(&circle));
         for (&to, outbox) in &self.outboxes {
             send_reliable(outbox, to, &bytes, &mut self.stalled);
         }

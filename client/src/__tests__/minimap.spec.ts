@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { insideWorld, mapToWorld, viewWindow, worldToMap } from '@/sim/minimap'
+import { circleOnSmall, insideWorld, mapToWorld, PIP_INSET, viewWindow, worldToMap } from '@/sim/minimap'
 
 describe('minimap', () => {
   it('maps the world corners and centre onto the image', () => {
@@ -14,6 +14,26 @@ describe('minimap', () => {
     expect(w.size).toBeCloseTo(1720)
     expect(w.left).toBeCloseTo(100 - 860)
     expect(w.top).toBeCloseTo(100 - 860)
+  })
+
+  it('draws the backpack\'s circle around where it is on the small map', () => {
+    // 600 m across 180 px: 0.3 px a metre.
+    const near = circleOnSmall(30, -60, 75, 0, 0, 600, 180)
+    expect(near.left).toBeCloseTo(99)
+    expect(near.top).toBeCloseTo(72)
+    expect(near.r).toBeCloseTo(22.5)
+    expect(near.pip).toBeNull()
+    // Its middle out of view but its edge in it: still drawn, no pip.
+    expect(circleOnSmall(340, 0, 75, 0, 0, 600, 180).pip).toBeNull()
+  })
+
+  it('points to the circle from the edge when none of it is in view', () => {
+    const east = circleOnSmall(1000, 0, 10, 0, 0, 600, 180)
+    expect(east.pip!.left).toBeCloseTo(180 - PIP_INSET)
+    expect(east.pip!.top).toBeCloseTo(90)
+    const corner = circleOnSmall(-800, -800, 10, 0, 0, 600, 180)
+    expect(corner.pip!.left).toBeCloseTo(PIP_INSET)
+    expect(corner.pip!.top).toBeCloseTo(PIP_INSET)
   })
 
   it('maps image fractions back to the world', () => {

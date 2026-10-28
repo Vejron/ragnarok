@@ -25,7 +25,8 @@ impl Game {
             let seated = player.seat.map(|seat| wire::Seated { vehicle: seat.vehicle, seat: seat.index as u8 });
             let one_arm = crate::mechanics::limbs_lost(&self.world, id) & LIMB_ARMS != 0;
             let limbs = self.world.entities.get::<Limbs>(id).map(|limbs| wire::Limbs { lost: limbs.wire() });
-            let shown = Replicated { seated, limbs, ..shown };
+            let carry = crate::mechanics::carries(&self.world, id).then_some(wire::Carry { what: CARRY_BACKPACK });
+            let shown = Replicated { seated, limbs, carry, ..shown };
             let hp = self.world.entities.get::<Health>(id).map_or(0, |health| health.hp);
             (id, Replicated { vitals: Some(wire::Vitals { hp, progress: progress(player, one_arm), spent: player.character.spent, winded: player.character.winded.into() }), hotbar: Some(wire::Hotbar { slots: player.hotbar }), ..shown })
         }));
@@ -40,6 +41,10 @@ impl Game {
             let pickup = self.world.pickup(id).filter(|pickup| pickup.respawn_in == 0)?;
             let [x, y, z] = self.world.pickup_position(id)?.map(to_cm);
             Some((id, Replicated { pickup: Some(wire::Pickup { item: pickup.item }), place: Some(wire::Place { x, y, z }), ..Default::default() }))
+        }));
+        scene.extend(crate::mechanics::backpack_lying(&self.world).into_iter().map(|(id, position)| {
+            let [x, y, z] = position.map(to_cm);
+            (id, Replicated { kind: Some(wire::Kind { kind: KIND_BACKPACK }), place: Some(wire::Place { x, y, z }), ..Default::default() })
         }));
         scene.sort_unstable_by_key(|(id, _)| *id);
         scene

@@ -33,14 +33,14 @@ describe('Scoreboard', () => {
 
   it('ranks by kills, then fewer deaths, then id, and includes you and those in view', () => {
     const board = new Scoreboard()
-    board.replace([{ id: 1, kills: 2, deaths: 5 }, { id: 2, kills: 2, deaths: 1 }, { id: 3, kills: 9, deaths: 9 }])
+    board.replace([{ id: 1, kills: 2, deaths: 5, held: 0 }, { id: 2, kills: 2, deaths: 1, held: 0 }, { id: 3, kills: 9, deaths: 9, held: 0 }])
     expect(board.rows(8, [4]).map((r) => r.id)).toEqual([3, 2, 1, 4, 8])
     expect(board.rows(8, []).find((r) => r.id === 8)?.you).toBe(true)
   })
 
   it('forgets a player who left and clears on disconnect', () => {
     const board = new Scoreboard()
-    board.replace([{ id: 1, kills: 2, deaths: 0 }])
+    board.replace([{ id: 1, kills: 2, deaths: 0, held: 0 }])
     board.forget(1)
     expect(board.kills(1)).toBe(0)
     board.kill(kill(2, 3), 0)
@@ -48,18 +48,27 @@ describe('Scoreboard', () => {
     expect(board.recent(0, null)).toEqual([])
     expect(board.rows(null, [])).toEqual([])
   })
+
+  it('keeps the backpack carrier\'s seconds with their kills', () => {
+    const board = new Scoreboard()
+    board.replace([{ id: 1, kills: 2, deaths: 0, held: 40 }])
+    board.held(1, 45)
+    board.held(2, 3)
+    board.kill(kill(1, 2), 0)
+    expect(board.rows(null, []).map((r) => [r.id, r.held])).toEqual([[1, 45], [2, 3]])
+  })
 })
 
 describe('sides', () => {
-  const row = (id: number, kills: number, you = false) => ({ id, kills, deaths: 1, you })
+  const row = (id: number, kills: number, you = false) => ({ id, kills, deaths: 1, held: kills * 10, you })
 
   it('splits by team with the local player\'s side first, then by kills', () => {
     const team = (id: number) => (id < 10 ? 0 : id < 20 ? 1 : 2)
     const split = sides([row(21, 9), row(11, 5), row(12, 4), row(1, 2, true)], team)
-    expect(split.map((side) => [side.team, side.kills, side.deaths, side.rows.map((r) => r.id)])).toEqual([
-      [0, 2, 1, [1]],
-      [1, 9, 2, [11, 12]],
-      [2, 9, 1, [21]],
+    expect(split.map((side) => [side.team, side.kills, side.deaths, side.held, side.rows.map((r) => r.id)])).toEqual([
+      [0, 2, 1, 20, [1]],
+      [1, 9, 2, 90, [11, 12]],
+      [2, 9, 1, 90, [21]],
     ])
   })
 

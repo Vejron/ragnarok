@@ -41,6 +41,10 @@ A worked, larger one is in `worlds/ersboda-alidhem/scenario.json` (Red Dawn): pa
 - **Sides.** Squads on the same `team` fight together. Squads on different teams fight each other as well as you, which is a fun twist and a surprise if it is not meant.
 - **Hard or easy.** `skill` runs 0 to 1: reaction time and aim error scale with it. 0.3 is a pushover, 0.8 is not.
 
+## 3½. The backpack
+
+A world can also play the backpack mode: one Intinor Compact Backpack to fight over, whose carrier heals and runs twice as fast, and whose whereabouts everyone's minimap shows as a circle. Give the file a top-level `"backpack": { "lat": …, "lon": … }` for where it starts; it works with or without triggers. [BACKPACK.md](BACKPACK.md) has the rules.
+
 ## 4. Try it
 
 1. Save the file and **restart the server**. It is read at start-up, and a mistake stops the server with the place named: an undefined name, an unknown field or action, an item that does not exist, a text over 200 characters, or a position outside the world. Fix what it says and start again.

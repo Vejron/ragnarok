@@ -83,6 +83,8 @@ pub struct Player {
     /// `TEAM_NONE` for people, who are all against all. Players on the same other team never hurt
     /// each other.
     pub team: u8,
+    /// Seconds carrying the backpack, in all (`mechanics::backpack`).
+    pub held: u16,
 }
 
 /// Every player for themselves.
@@ -515,6 +517,8 @@ pub struct World {
     pub fresh_built: FreshBuilt,
     /// Chunks of cubes whose colliders are out of date, rebuilt once a tick however many cubes changed.
     pub construct_dirty: std::collections::BTreeSet<shared::construct::Pos>,
+    /// The backpack, in a world whose scenario places one (`mechanics::backpack`).
+    pub backpack: Option<crate::mechanics::BackpackState>,
 }
 
 impl World {

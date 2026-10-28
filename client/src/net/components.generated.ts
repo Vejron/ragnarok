@@ -126,6 +126,10 @@ export interface Look {
   pitch: number
 }
 
+export interface Carry {
+  what: number
+}
+
 /** An entity as it is replicated: the components it has. */
 export interface Components {
   place?: Place
@@ -149,6 +153,7 @@ export interface Components {
   drive?: Drive
   seated?: Seated
   look?: Look
+  carry?: Carry
 }
 
 export type ComponentName = keyof Components
@@ -183,4 +188,5 @@ export const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; 
   { id: 19, name: 'drive', diff: false, owner: true, fields: [{ name: 'vx', unit: 'cm' }, { name: 'vy', unit: 'cm' }, { name: 'vz', unit: 'cm' }, { name: 'wx', unit: 'mrad' }, { name: 'wy', unit: 'mrad' }, { name: 'wz', unit: 'mrad' }, { name: 'steer', unit: 'mrad' }, { name: 'spin', unit: 'mrad' }] },
   { id: 20, name: 'seated', diff: false, owner: false, fields: [{ name: 'vehicle' }, { name: 'seat' }] },
   { id: 21, name: 'look', diff: true, owner: false, fields: [{ name: 'pitch', unit: 'mrad' }] },
+  { id: 22, name: 'carry', diff: false, owner: false, fields: [{ name: 'what' }] },
 ]

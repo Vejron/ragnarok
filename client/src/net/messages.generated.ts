@@ -25,6 +25,7 @@ export const S_CRATERED = 14
 export const S_DUG = 15
 export const S_ARMOR = 16
 export const S_MARKS = 17
+export const S_BACKPACK = 18
 
 export interface BulletSpawn {
   id: number
@@ -126,6 +127,7 @@ export interface Score {
   id: number
   kills: number
   deaths: number
+  held: number
 }
 
 export interface Scores {
@@ -247,6 +249,15 @@ export interface Marks {
   marks: HullMark[]
 }
 
+export interface Backpack {
+  type: 'backpack'
+  x: number
+  z: number
+  radius: number
+  carrier: number
+  held: number
+}
+
 export interface Armor {
   type: 'armor'
   role: number
@@ -280,7 +291,7 @@ export interface Rtc {
   json: string
 }
 
-export type ServerMessage = Welcome | Snapshot | Pong | Leave | Kill | Scores | Profiles | Notice | Destroyed | Damaged | Carved | Built | Cratered | Dug | Marks | Armor | Hit | Rtc
+export type ServerMessage = Welcome | Snapshot | Pong | Leave | Kill | Scores | Profiles | Notice | Destroyed | Damaged | Carved | Built | Cratered | Dug | Marks | Backpack | Armor | Hit | Rtc
 
 function decodeBulletSpawn(r: unknown): BulletSpawn | undefined {
   if (!Array.isArray(r) || r.length !== 10) return undefined
@@ -324,12 +335,13 @@ function decodeShotEvent(r: unknown): ShotEvent | undefined {
 }
 
 function decodeScore(r: unknown): Score | undefined {
-  if (!Array.isArray(r) || r.length !== 3) return undefined
+  if (!Array.isArray(r) || r.length !== 4) return undefined
   const id = w.int(r[0])
   const kills = w.int(r[1])
   const deaths = w.int(r[2])
-  if (id === undefined || kills === undefined || deaths === undefined) return undefined
-  return { id, kills, deaths }
+  const held = w.int(r[3])
+  if (id === undefined || kills === undefined || deaths === undefined || held === undefined) return undefined
+  return { id, kills, deaths, held }
 }
 
 function decodeProfileEntry(r: unknown): ProfileEntry | undefined {
@@ -548,6 +560,17 @@ function decodeMarks(r: readonly unknown[]): Marks | undefined {
   return { type: 'marks', tick, marks }
 }
 
+function decodeBackpack(r: readonly unknown[]): Backpack | undefined {
+  if (r.length !== 6) return undefined
+  const x = w.int(r[1])
+  const z = w.int(r[2])
+  const radius = w.int(r[3])
+  const carrier = w.int(r[4])
+  const held = w.int(r[5])
+  if (x === undefined || z === undefined || radius === undefined || carrier === undefined || held === undefined) return undefined
+  return { type: 'backpack', x: x / 100, z: z / 100, radius: radius / 100, carrier, held }
+}
+
 function decodeArmor(r: readonly unknown[]): Armor | undefined {
   if (r.length !== 10) return undefined
   const role = w.int(r[1])
@@ -620,6 +643,8 @@ export function decodeMessage(r: readonly unknown[]): ServerMessage | undefined 
       return decodeDug(r)
     case S_MARKS:
       return decodeMarks(r)
+    case S_BACKPACK:
+      return decodeBackpack(r)
     case S_ARMOR:
       return decodeArmor(r)
     case S_HIT:

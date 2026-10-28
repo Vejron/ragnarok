@@ -416,6 +416,10 @@ replicated! {
     /// How far a rider whose crew show looks up (+) or down, milliradians; their `heading` is where
     /// they look about, in the world.
     Look { pitch: i16 as mrad }
+
+    set 22 carry
+    /// What a stickman carries on its back, `CARRY_*`: the backpack (BACKPACK.md). Absent when nothing.
+    Carry { what: u8 }
 }
 
 /// The structs a component field can hold a list of, with their fields in wire order and each one's

@@ -1,6 +1,7 @@
 use super::Mechanic;
 use crate::entities::With;
 use crate::game::{Player, World};
+use shared::consts::BACKPACK_SPEED;
 use shared::items::{aim_speed_scale, HOTBAR_SLOTS};
 
 /// Walks every standing stickman by its input through the character controller, and keeps track of
@@ -16,6 +17,7 @@ impl Mechanic for Movement {
         for id in world.entities.ids::<With<Player>>() {
             let alive = world.entities.alive(id);
             let lost = super::limbs::lost(world, id);
+            let carrying = super::backpack::carries(world, id);
             let mut player = world.entities.of_mut::<Player>(id);
             if player.seat.is_some() || !alive {
                 continue;
@@ -25,7 +27,7 @@ impl Mechanic for Movement {
             character.lost = lost;
             let velocity = world.physics.car_pose(character.ride).map(|pose| pose.velocity);
             let slot = (player.input.slot() as usize).min(HOTBAR_SLOTS - 1);
-            let scale = aim_speed_scale(player.hotbar[slot].item, player.input.buttons());
+            let scale = aim_speed_scale(player.hotbar[slot].item, player.input.buttons()) * if carrying { BACKPACK_SPEED } else { 1.0 };
             world.physics.step_character(character, &player.input, dt, scale, velocity);
             character.ride = if character.grounded { world.physics.car_under(character.position).map_or(0, |hit| hit.car) } else { 0 };
         }

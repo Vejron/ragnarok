@@ -396,7 +396,7 @@ pub trait Mechanic: Send {
 }
 ```
 
-- The room runs an ordered list (`mechanics::default_mechanics`): `Bots`, `Spawn`, `Pickups`, `Drones`, `Vehicles` (boarding, seats, driving, stepping car physics), `Gunnery` (turret aim and shells for gunner seats), `Movement` (the character controller), `Life`, `Npcs`, `Combat` and `Scores`.
+- The room runs an ordered list (`mechanics::default_mechanics`): `Bots`, `Spawn`, `Pickups`, `Drones`, `Vehicles` (boarding, seats, driving, stepping car physics), `Gunnery` (turret aim and shells for gunner seats), `Movement` (the character controller), `Backpack` (the backpack mode, [BACKPACK.md](BACKPACK.md)), `Life`, `Npcs`, `Combat` and `Scores`.
 - `on_start` runs once when the room is created. `Vehicles` uses it to park the cars.
 - New features are new mechanics, such as `Pickups` or `Deathmatch`. Each owns its own state and reads and changes `World`.
 - Mechanics say what happened as events (§2.1). `react` answers them after every mechanic has ticked, and the game loop turns what is left into reliable messages (`game::feedback`), so mechanics never touch sessions.

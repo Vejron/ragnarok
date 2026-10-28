@@ -134,11 +134,21 @@
   },
   "triggers": [
     {
-      "when": { "start": true },
+      "when": {
+        "start": true
+      },
       "do": [
-        { "spawn": "squad1" },
-        { "spawn": "squad2" }
+        {
+          "spawn": "squad1"
+        },
+        {
+          "spawn": "squad2"
+        }
       ]
     }
-  ]
+  ],
+  "backpack": {
+    "lat": 63.8391428994347,
+    "lon": 20.31514512374997
+  }
 }

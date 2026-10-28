@@ -277,12 +277,21 @@ fn mistakes_in_the_file_are_refused_with_what_is_wrong() {
         (format!(r#"{{ "areas": {{ "far": {{ {}, "radius": 5 }} }} }}"#, ll(500.0, 0.0)), r#"area "far" at"#),
         (r#"{ "squads": { "s": { "loadout": ["bazooka"], "bots": [ { "lat": 0, "lon": 0 } ] } } }"#.to_string(), r#"no item called "bazooka""#),
         (r#"{ "squads": { "empty": {} } }"#.to_string(), r#"squad "empty" has no bots and no tanks"#),
+        (format!(r#"{{ "backpack": {{ {} }} }}"#, ll(500.0, 0.0)), "the backpack at"),
         (r#"{ "triggers": [ { "name": "a", "when": { "start": true }, "do": [] }, { "name": "a", "when": { "start": true }, "do": [] } ] }"#.to_string(), r#"two triggers are called "a""#),
     ];
     for (json, wanted) in cases {
         let got = error(&json);
         assert!(got.contains(wanted), "{json}\n  said {got:?}, not {wanted:?}");
     }
+}
+
+#[test]
+fn a_backpack_is_placed_where_the_file_says() {
+    let game = start(&format!(r#"{{ "backpack": {{ {} }} }}"#, ll(30.0, -20.0)));
+    let [x, z] = game.scenario.as_ref().unwrap().backpack().unwrap();
+    assert!((x - 30.0).abs() < 0.01 && (z + 20.0).abs() < 0.01, "{x}, {z}");
+    assert_eq!(start("{}").scenario.unwrap().backpack(), None);
 }
 
 /// The example under "Scenarios" in BOTS.md.

@@ -212,6 +212,10 @@ async fn main() -> Result<()> {
     let mut game = game::Game::new(world, hash)?;
     let scenario_path = Path::new(&world_path()).with_file_name("scenario.json");
     game.scenario = scenario::load(&scenario_path, &game.world.map)?;
+    if let Some(home) = game.scenario.as_ref().and_then(scenario::Scenario::backpack) {
+        tracing::info!(?home, "backpack mode");
+        game.world.backpack = Some(mechanics::BackpackState::new(home));
+    }
     add_test_bots(&mut game);
     add_test_tanks(&mut game);
     let game_task = tokio::spawn(game::run(game, receiver));

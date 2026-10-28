@@ -59,6 +59,7 @@ fn a_new_entity_brings_everything_it_has_and_decodes_back() {
         drive: Some(Drive { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }),
         seated: Some(Seated { vehicle: 70_000, seat: 2 }),
         look: Some(Look { pitch: -1570 }),
+        carry: Some(Carry { what: 1 }),
     };
     let update = everything.update(42, None).expect("a new entity is always sent");
     assert_eq!(update.set(), everything.mask(), "everything it has is set");
@@ -345,6 +346,7 @@ fn fixture_json() -> String {
         drive: Some(Drive { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }),
         seated: Some(Seated { vehicle: 70_000, seat: 2 }),
         look: Some(Look { pitch: -1570 }),
+        carry: Some(Carry { what: 1 }),
     };
     let first: Scene = vec![(1, stickman(1000, 200)), (4, tank(0, 0)), (70_000, all.clone())];
     let hurt = Replicated { damage: Some(Damage { parts: [0, 0, 90, 0, 0, 0, 0, 0, 0, 0, 0] }), ..tank(40, 12) };

@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import {
-  FLAG_GROUNDED, encodeInput, encodePing, toAxis, toMrad, type InputFrame, type ServerMessage, } from './net/codec'
+  FLAG_GROUNDED, NOTICE_SAY, encodeInput, encodePing, toAxis, toMrad, type InputFrame, type ServerMessage, } from './net/codec'
 import type { DriveState } from './entities/units'
 import { Backoff } from './net/backoff'
 import { RttEstimator, ServerClock } from './net/clock'
@@ -8,7 +8,7 @@ import { Transport } from './net/transport'
 import {
   BUTTON_ALT, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION, RESPAWN_TICKS,
   SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_PRONE,
-  TICK_MS, TICK_RATE, BUILD_REACH, STAMINA_FULL, ONE_ARM_SWAY, } from './sim/consts'
+  TICK_MS, TICK_RATE, BUILD_REACH, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED, } from './sim/consts'
 import { easeSway, sway, swayAmplitude } from './sway'
 import { CELL } from './sim/carve'
 import { MATERIAL_BRICK, cellAt, cubeCentre, type Pos } from './sim/construct'
@@ -44,7 +44,8 @@ import { Grass, GRASS_FULL, GRASS_LITE } from './render/grass'
 import { AIM_DISTANCE_SCALE, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, Scene } from './render/scene'
 import { ChaseCam } from './render/chase'
 import { PerfReadout } from './render/perf'
-import { encodeRtc, LIMB_ALL, LIMB_ARMS, TURRET_ALT } from './net/codec'
+import { encodeRtc, KIND_STRV, KIND_TANK, LIMB_ALL, LIMB_ARMS, TURRET_ALT } from './net/codec'
+import { TankMusic } from './music'
 import { bleedingOf, limbName, lostOf } from './sim/limbs'
 import { VoiceChat } from './voice'
 import { PlaneModel } from './render/plane'
@@ -67,6 +68,8 @@ import { Presenters, type Frame } from './entities/presenter'
 import { Avatars } from './entities/avatars'
 import { Projectiles } from './entities/presenters/projectiles'
 import { Pickups as LyingItems } from './entities/presenters/pickups'
+import { Backpacks } from './entities/presenters/backpacks'
+import { LyingBackpacks } from './render/backpack'
 import { Stickmen } from './entities/presenters/people'
 import { Riders, seatFrame } from './entities/presenters/riders'
 import { Seating } from './entities/presenters/seating'
@@ -85,7 +88,8 @@ import type { HudStats } from './hud'
 import { Notices } from './notices'
 import { Scoreboard, sides } from './scoreboard'
 import { Blips } from './blips'
-import { allies, colorFor, colorIndexFor, cssColor, forgetAllPlayers, forgetPlayer, isBot, loadProfile, profileQuery, setPlayer, teamFor } from './profile'
+import { BackpackTracker } from './backpack'
+import { allies, colorFor, colorIndexFor, cssColor, forgetAllPlayers, forgetPlayer, isBot, loadProfile, nameFor, profileQuery, setPlayer, teamFor } from './profile'
 
 // The overlay and its tests import these from here.
 export type { HudStats } from './hud'
@@ -174,6 +178,7 @@ export class Game {
   private readonly skids = new Skidmarks()
   /** Engines, tyres, crashes and guns. */
   private readonly sounds = new VehicleSounds()
+  private readonly music = new TankMusic()
   /** Bumpers, doors and wheels that came off. */
   private readonly debris = new Debris(160)
   private readonly gore = new Gore(this.debris, this.smoke, this.effects)
@@ -192,12 +197,18 @@ export class Game {
   private readonly dealtAt = new Map<number, number>()
   /** The local player's own `limbs`, as last sent. */
   private ownLimbs = 0
+  /** The local player carries the backpack, as their own `carry` last said: they walk faster. */
+  private carrying = false
+  /** The backpack's circle and carrier (BACKPACK.md). */
+  private readonly backpack = new BackpackTracker()
   /** When each stickman's stumps last dripped, by avatar key. */
   private readonly drippedAt = new Map<number, number>()
   private readonly chase = new ChaseCam()
   private readonly pickupModels = new Pickups()
   /** Items on the ground, as drawn. */
   private readonly lying = new LyingItems(this.pickupModels)
+  /** The backpack lying on the ground, as drawn (BACKPACK.md). */
+  private readonly backpackModels = new LyingBackpacks()
   /** The arc a grenade in hand would take, drawn while one is held. */
   private readonly trajectory = new TrajectoryView()
   private readonly mortarArc = new MortarArc()
@@ -285,7 +296,7 @@ export class Game {
     this.scene.scene.add(this.crowd.root)
     this.scene.scene.add(this.effects.root, this.view.damage.root, this.view.cubes.root, this.damageNumbers.root)
     this.scene.scene.add(this.rocketModels.root, this.trails.root)
-    this.scene.scene.add(this.pickupModels.root)
+    this.scene.scene.add(this.pickupModels.root, this.backpackModels.root)
     this.scene.scene.add(this.trajectory.root, this.mortarArc.root)
     this.scene.scene.add(this.smoke.root, this.glow.root, this.skids.root)
     this.smoke.groundAt = (x, z) => this.scene.groundAt(x, z)
@@ -325,6 +336,7 @@ export class Game {
       models: this.rocketModels, trails: this.trails, glow: this.glow, lights: this.scene.scene.lights, fx: () => this.fxWorld, blips: this.blips,
     }))
     this.flying.add(this.lying)
+    this.flying.add(new Backpacks(this.backpackModels))
     const blobFoot = (x: number, y: number, z: number) => this.surroundings.blobFoot(x, y, z)
     this.stickmen = this.people.add(new Stickmen({ avatars: this.avatars, blobFoot, wade: (id, x, y, z, speed, dt) => this.surroundings.wade(id, x, y, z, speed, dt) }))
     this.riders = this.people.add(new Riders(this.avatars, this.vehicles))
@@ -366,7 +378,7 @@ export class Game {
     this.view.focus(x, z)
     await this.tiles.prime(x, z)
     this.predictor = new Predictor(motor.stepper, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0 })
-    this.predictor.speedScale = (input) => aimSpeedScale(this.hotbar[Math.min(input.slot, HOTBAR_SLOTS - 1)]?.item ?? ITEM_NONE, input.buttons)
+    this.predictor.speedScale = (input) => aimSpeedScale(this.hotbar[Math.min(input.slot, HOTBAR_SLOTS - 1)]?.item ?? ITEM_NONE, input.buttons) * (this.carrying ? BACKPACK_SPEED : 1)
     this.avatars.local()
     if (this.disposed) return
     this.lastFrame = performance.now()
@@ -395,6 +407,8 @@ export class Game {
     this.seat = null
     this.board.clear()
     this.notices.clear()
+    this.backpack.clear()
+    this.carrying = false
     forgetAllPlayers()
     this.hits.clear()
     this.hp = PLAYER_MAX_HP
@@ -463,6 +477,7 @@ export class Game {
         }
         if (own?.hotbar) this.hotbar = [...own.hotbar.slots, ...emptyHotbar()].slice(0, HOTBAR_SLOTS)
         if (own) this.ownLimbs = own.limbs?.lost ?? 0
+        if (own) this.carrying = own.carry !== undefined
         this.events.receive(message.tick, message.shots, message.bullets)
         // Vehicles are solid to the predicted stickman, at the pose of the newest snapshot.
         this.refPoses.clear()
@@ -574,6 +589,12 @@ export class Game {
       case 'notice':
         this.notices.receive(message.kind, message.text, now)
         break
+      case 'backpack': {
+        if (message.carrier !== 0) this.board.held(message.carrier, message.held)
+        const news = this.backpack.receive(message, this.localId, nameFor)
+        if (news) this.notices.receive(NOTICE_SAY, news, now)
+        break
+      }
       case 'kill': {
         const body = this.avatars.of(message.victim)
         if (body?.visible) this.gore.die(body, message.style, message.yaw, message.power, (x, z) => this.scene.groundAt(x, z))
@@ -652,6 +673,7 @@ export class Game {
     const seat = this.seat
     const seated = seat !== null
     const view = seat ? seatView(seat.kind, seat.index) : null
+    this.music.want(seat !== null && this.hp > 0 && (seat.kind === KIND_TANK || seat.kind === KIND_STRV))
     // Flying a drone: the body kneels where it launched it, and the view is the drone's camera.
     const flying = view?.rig.name === 'fpv'
     this.driven = this.driver?.pose(this.accumulator / TICK_MS, dt) ?? null
@@ -704,6 +726,7 @@ export class Game {
     me.hidden = (seated && !flying && !sitting) || scoped
     me.dead = this.hp === 0
     me.held = this.hotbar[this.input.selectedSlot]?.item ?? ITEM_NONE
+    me.pack = this.carrying
     // Face where the camera looks, immediately, rather than the last ticked yaw.
     if (sitting) me.seat(this.seatAt, this.seatTurn, this.input.yaw, this.input.pitch, dt)
     else me.update(position, flying ? local.yaw : lookYaw, localVx, localVz, local.grounded, dt, flying ? 0 : lookPitch, this.crouching || flying,
@@ -837,6 +860,7 @@ export class Game {
       yaw: this.input.yaw,
       halfExtent: this.world?.halfExtent ?? 0,
       blips: this.blips.view(now, this.localId, ride?.x ?? position[0]!, ride?.z ?? position[2]!, this.alliesInView(), MAP_SIDES),
+      backpack: this.backpack.view(this.localId),
     })
   }
 
@@ -1085,6 +1109,7 @@ export class Game {
     this.glow.dispose()
     this.skids.dispose()
     this.sounds.dispose()
+    this.music.dispose()
     this.debris.dispose()
     this.view.dispose()
     this.rocketModels.dispose()

@@ -55,6 +55,7 @@ export class Stickmen implements Presenter<Frame> {
     const avatar = this.world.avatars.draw(id)
     avatar.dead = dead
     avatar.held = (flags & FLAG_HELD_MASK) >> FLAG_HELD_SHIFT
+    avatar.pack = entity.carry !== undefined
     if (!dead) this.world.blobFoot(x, y, z)
     avatar.update([x, y, z], entity.heading?.yaw ?? 0, velocity[0], velocity[1], grounded, frame.dt, 0, crouching,
       crouching && grounded && knock > SLIDE_MIN_SPEED, stance === STANCE_PRONE, stance === STANCE_CHUTE)

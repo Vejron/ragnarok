@@ -37,6 +37,7 @@ pub const S_CRATERED: u8 = 14;
 pub const S_DUG: u8 = 15;
 pub const S_ARMOR: u8 = 16;
 pub const S_MARKS: u8 = 17;
+pub const S_BACKPACK: u8 = 18;
 
 /// `Hit` roles: whose feedback it is.
 /// You hurt something.
@@ -334,8 +335,9 @@ messages! {
     #[derive(Eq)]
     [S_KILL] Kill { killer: u32, victim: u32, weapon: u8, killer_kills: u16, victim_deaths: u16, style: u8, yaw: i16 as mrad, power: u8 as fifth }
 
+    /// `held` is the seconds they have carried the backpack (BACKPACK.md), 0 where there is none.
     #[derive(Eq)]
-    [] Score { id: u32, kills: u16, deaths: u16 }
+    [] Score { id: u32, kills: u16, deaths: u16, held: u16 }
 
     /// Sent on a reliable stream to a player who just joined.
     #[derive(Eq)]
@@ -444,6 +446,13 @@ messages! {
     /// vehicles' armour since the last, as of `tick`, so they are drawn when the picture gets there.
     #[derive(Eq)]
     [S_MARKS] Marks { tick: u32, marks: Vec<HullMark> }
+
+    /// Sent on a reliable stream to everyone, in a world with the backpack (BACKPACK.md): when its
+    /// circle moves or it changes hands, once a second besides, and to a joiner. The backpack is
+    /// somewhere within `radius` of `(x, z)`, not necessarily near the middle. `carrier` is who has it, 0
+    /// when it lies on the ground, and `held` their seconds carrying it in all.
+    #[derive(Copy, Eq)]
+    [S_BACKPACK] Backpack { x: i32 as cm, z: i32 as cm, radius: u16 as cm, carrier: u32, held: u16 }
 
     #[derive(Eq)]
     [S_ARMOR] Armor { role: u8, vehicle: u32, result: u8, hurt: u8, gone: u8, killed: u8, x: i32 as cm, y: i32 as cm, z: i32 as cm }

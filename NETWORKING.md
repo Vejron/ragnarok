@@ -56,7 +56,7 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 | 2 | `pong` | datagram | `[2, nonce u32]` |
 | 3 | `leave` | reliable stream | `[3, entity_id u32]` |
 | 4 | `kill` | reliable stream | `[4, killer u32, victim u32, weapon u8, killer_kills u16, victim_deaths u16, style u8, yaw i16 mrad, power u8 (0.2 m/s)]`; `style` is `DEATH_*` (body, head, blast, roadkill, overkill) and `yaw`/`power` are the way and how hard the body is thrown, so every client stages the death alike |
-| 5 | `scores` | reliable stream | `[5, [[id u32, kills u16, deaths u16], …]]` |
+| 5 | `scores` | reliable stream | `[5, [[id u32, kills u16, deaths u16, held u16], …]]`; `held` is the seconds carrying the backpack ([BACKPACK.md](BACKPACK.md)) |
 | 6 | `destroyed` | reliable stream | `[6, [[kind u8, col u16, row u16, index u32, yaw i16, force u8], …]]` |
 | 7 | `damaged` | reliable stream | `[7, [[col u16, row u16, index u32, stage u8, mark [x i32, y i32, z i32] or nil], …]]` |
 | 8 | `hit` | reliable stream | `[8, role u8, kind u8, amount u8, weapon u8, bearing i16 or nil, x i32, y i32, z i32, target u32]` |
@@ -67,6 +67,7 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 | 13 | `built` | reliable stream | `[13, live bool, [[x i32, y i32, z i32, color u8, material u8], …], [[x i32, y i32, z i32], …], [[x i32, y i32, z i32], …]]`: placed, removed, fell |
 | 14 | `cratered` | reliable stream | `[14, live bool, [[x i32, z i32, radius i32, depth i32, age u16], …]]` |
 | 15 | `dug` | reliable stream | `[15, [[col u16, row u16, [skip, count, value…, …] i32s], …]]` |
+| 18 | `backpack` | reliable stream | `[18, x i32, z i32, radius u16, carrier u32, held u16]`, cm: in a world with the backpack ([BACKPACK.md](BACKPACK.md)), the circle it is somewhere inside, who carries it (0 when nobody) and their seconds with it. Sent to everyone when the circle moves or the backpack changes hands, once a second besides, and to a joiner |
 
 - `baseline` is the `server_tick` of the snapshot this one is a change from, or 0 when it is not. Then every entity in range comes whole. Each `update` is one entity's components: see [Entities and components](#entities-and-components) and [Delta snapshots](#delta-snapshots-and-interest).
 - `ack` is the newest input `seq` of the receiving player already applied to this state. The client drops pending inputs up to `ack` and replays the rest.
@@ -130,6 +131,7 @@ An `update` is `[id u32, set u32, (cleared u32), fields…]`:
 | 19 | `drive` | whole, owner | 8 × i16 | the exact motion of a vehicle a player drives, which its pose does not carry, for the driver's prediction (below) |
 | 20 | `seated` | whole | `vehicle` u32, `seat` u8 | a player sitting in seat `seat` of `vehicle`; seat 0 drives. They have no `place` unless their body stays behind (a drone's pilot): clients draw them at the kind's seat head point. The client learns its own seat from it |
 | 21 | `look` | diff | `pitch` i16 | how far a rider whose crew show looks up (+) or down, mrad; their `heading` is where they look about, in the world |
+| 22 | `carry` | whole | `what` u8 | a stickman carrying the backpack (`CARRY_BACKPACK`); the client's own prediction walks twice as fast with it. The backpack on the ground is an entity of `kind` 15 with a `place` |
 
 What each carries today:
 

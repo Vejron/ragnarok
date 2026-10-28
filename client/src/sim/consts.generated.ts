@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 51
+export const PROTOCOL_VERSION = 52
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -48,6 +48,9 @@ export const KIND_LOITER = 13
 
 /** The Pak 38: a towed anti-tank gun with a shield and one gunner, who lays it like a tank's gun. */
 export const KIND_PAK = 14
+
+/** The Intinor Compact Backpack lying on the ground (see `BACKPACK_*`). Replicated as a place and this kind. */
+export const KIND_BACKPACK = 15
 
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
@@ -1119,6 +1122,29 @@ export const CANNON_RADIUS = EXPLOSION_RADIUS / 3.0
 /** Knockback speed at the centre of a blast, m/s; it fades to zero at the edge. */
 export const EXPLOSION_KNOCK = 18.0
 export const CANNON_KNOCK = EXPLOSION_KNOCK / 2.0
+
+/**
+ * The backpack mode (BACKPACK.md): a world whose scenario places one Intinor Compact Backpack. Whoever
+ * carries it walks `BACKPACK_SPEED` times as fast on foot and heals `BACKPACK_REGEN` health a second.
+ * Its modems give it away: everyone's map shows a circle with it somewhere inside, `BACKPACK_WIDE`
+ * metres across while it is new to its carrier (or lying about), narrowing to `BACKPACK_NARROW` over
+ * `BACKPACK_NARROW_SECONDS` in one carrier's hands.
+ */
+export const BACKPACK_SPEED = 2.0
+export const BACKPACK_REGEN = 5.0
+export const BACKPACK_WIDE = 150.0
+export const BACKPACK_NARROW = 20.0
+export const BACKPACK_NARROW_SECONDS = 300.0
+
+/** How near a stickman on foot must walk to take it, metres across the ground and up or down. */
+export const BACKPACK_REACH = 1.5
+export const BACKPACK_REACH_Y = 2.5
+
+/** Seconds it may lie untouched before it goes back where the scenario put it. */
+export const BACKPACK_RETURN_SECONDS = 60.0
+
+/** The `carry` component's value for the backpack. */
+export const CARRY_BACKPACK = 1
 
 /** Combat. Every player starts a life with `PLAYER_MAX_HP` and dies at zero. */
 export const PLAYER_MAX_HP = 100

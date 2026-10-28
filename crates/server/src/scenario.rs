@@ -37,6 +37,9 @@ struct FileSpec {
     /// Seconds from the end until it starts again.
     #[serde(default = "restart")]
     restart: f32,
+    /// Where the backpack starts, in a world with the backpack mode (BACKPACK.md).
+    #[serde(default)]
+    backpack: Option<SpotSpec>,
 }
 
 #[derive(Deserialize)]
@@ -221,6 +224,8 @@ pub struct Scenario {
     triggers: Vec<Trigger>,
     restart: u32,
     progress: Progress,
+    /// Where the backpack starts, metres `[x, z]`, in a world with the backpack mode.
+    backpack: Option<[f32; 2]>,
 }
 
 fn ticks(seconds: f32) -> u32 {
@@ -358,7 +363,8 @@ impl Scenario {
                 .with_context(|| what.clone())?;
             triggers.push(Trigger { name: t.name, when, wait: ticks(t.wait), times: t.times, actions });
         }
-        let mut scenario = Self { areas, squads, triggers, restart: ticks(file.restart), progress: Progress::default() };
+        let backpack = file.backpack.as_ref().map(|spot| place("the backpack", spot.lat, spot.lon)).transpose()?;
+        let mut scenario = Self { areas, squads, triggers, restart: ticks(file.restart), progress: Progress::default(), backpack };
         scenario.progress = scenario.fresh();
         Ok(scenario)
     }
@@ -366,6 +372,11 @@ impl Scenario {
     fn fresh(&self) -> Progress {
         let (t, s) = (self.triggers.len(), self.squads.len());
         Progress { fired: vec![0; t], held: vec![false; t], waiting: vec![None; t], members: vec![Vec::new(); s], tanks: vec![Vec::new(); s], spawned: vec![false; s], ..Default::default() }
+    }
+
+    /// Where the backpack starts, metres `[x, z]`, if the world has one (BACKPACK.md).
+    pub fn backpack(&self) -> Option<[f32; 2]> {
+        self.backpack
     }
 
     /// What everyone is meant to be doing now; empty when nothing.

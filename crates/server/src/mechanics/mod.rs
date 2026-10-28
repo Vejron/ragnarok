@@ -2,6 +2,7 @@
 //! pickups, game modes) means adding a `Mechanic`, not editing the loop.
 
 mod armor;
+mod backpack;
 mod bots;
 mod building;
 mod combat;
@@ -22,7 +23,9 @@ pub use bots::{Bots, DRIVER, GUNNER, nearest_waypoint, road_route};
 pub use combat::{Combat, bearing, position_of};
 #[cfg(test)]
 pub use combat::damage_vehicle;
+pub(crate) use backpack::{carries, lying as backpack_lying};
 pub use armor::ArmorHit;
+pub use backpack::{Backpack, BackpackState};
 pub use drones::Drones;
 pub use gunnery::Gunnery;
 pub use life::{Life, record_trails};
@@ -71,13 +74,15 @@ pub fn register_components(ecs: &mut bevy_ecs::world::World) {
     ecs.register_component::<crate::game::Player>();
     ecs.register_component::<crate::game::Bot>();
     ecs.register_component::<limbs::Limbs>();
+    ecs.register_component::<backpack::Carry>();
+    ecs.register_component::<backpack::Lying>();
     projectiles::register(ecs);
 }
 
 /// The mechanics a room runs, in tick order. `Bots` goes first: it writes the bots' input, which
 /// everything after reads as it reads anyone's. `Life` brings the dead back before `Npcs` moves them.
 pub fn default_mechanics() -> Vec<Box<dyn Mechanic>> {
-    vec![Box::<Bots>::default(), Box::new(Spawn), Box::new(Pickups), Box::new(Drones), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement), Box::new(Life), Box::new(Npcs), Box::new(Combat), Box::new(Structure), Box::new(Scores)]
+    vec![Box::<Bots>::default(), Box::new(Spawn), Box::new(Pickups), Box::new(Drones), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement), Box::new(Backpack), Box::new(Life), Box::new(Npcs), Box::new(Combat), Box::new(Structure), Box::new(Scores)]
 }
 
 /// What tests outside the mechanics reach in for: setting up a busy room without playing it.

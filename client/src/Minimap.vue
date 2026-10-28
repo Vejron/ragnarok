@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { viewWindow, worldToMap } from './sim/minimap'
+import { circleOnSmall, viewWindow, worldToMap } from './sim/minimap'
 import type { Blip } from './blips'
 import { WORLD_BASE } from './world'
 
-const props = defineProps<{ x: number; z: number; yaw: number; halfExtent: number; open: boolean; blips: Blip[] }>()
+/** `circle`: the backpack's, metres, where it is somewhere inside (BACKPACK.md). */
+const props = defineProps<{ x: number; z: number; yaw: number; halfExtent: number; open: boolean; blips: Blip[]; circle?: { x: number; z: number; radius: number } | null }>()
 
 const url = `${WORLD_BASE}minimap.png`
 /** The image is generated with the world; an older world has none, and then nothing is shown. */
@@ -40,6 +41,21 @@ const bigBlips = computed(() =>
 function blipStyle(blip: Blip, left: string, top: string) {
   return { left, top, background: blip.color, opacity: blip.kind === 'ally' ? 1 : 0.25 + 0.75 * blip.strength }
 }
+/** The backpack's circle on the small map, or a pip on its edge pointing the way when it is out of view. */
+const smallCircle = computed(() => {
+  const c = props.circle
+  if (!c) return null
+  const { left, top, r, pip } = circleOnSmall(c.x, c.z, c.radius, props.x, props.z, SMALL_METRES, SMALL_PX)
+  if (pip) return { pip: { left: `${pip.left}px`, top: `${pip.top}px` }, ring: null }
+  return { pip: null, ring: { left: `${left}px`, top: `${top}px`, width: `${2 * r}px`, height: `${2 * r}px` } }
+})
+const bigCircle = computed(() => {
+  const c = props.circle
+  if (!c || props.halfExtent <= 0) return null
+  const [u, v] = worldToMap(c.x, c.z, props.halfExtent)
+  const across = (c.radius / props.halfExtent) * 100
+  return { left: `${u * 100}%`, top: `${v * 100}%`, width: `${across}%`, height: `${across}%` }
+})
 // Camera forward is (-sin yaw, -cos yaw) in x/z; the arrow points up (north, -z) at yaw 0.
 const arrow = computed(() => ({ transform: `translate(-50%, -50%) rotate(${(-props.yaw * 180) / Math.PI}deg)` }))
 </script>
@@ -48,11 +64,14 @@ const arrow = computed(() => ({ transform: `translate(-50%, -50%) rotate(${(-pro
   <img v-show="false" :src="url" alt="" @error="missing = true" />
   <template v-if="!missing">
     <div v-if="!open" class="minimap" :style="smallStyle">
+      <i v-if="smallCircle?.ring" class="modem" :style="smallCircle.ring" />
+      <i v-if="smallCircle?.pip" class="modem-pip" :style="smallCircle.pip" />
       <i v-for="(mark, i) in smallBlips" :key="i" class="blip" :class="mark.blip.kind" :style="mark.style" />
       <i class="arrow" :style="{ transform: arrow.transform, left: '50%', top: '50%' }" />
     </div>
     <div v-else class="map">
       <img :src="url" alt="Map" />
+      <i v-if="bigCircle" class="modem" :style="bigCircle" />
       <i v-for="(mark, i) in bigBlips" :key="i" class="blip" :class="mark.blip.kind" :style="mark.style" />
       <i class="arrow" :style="{ ...arrow, ...marker }" />
       <span class="hint">M close</span>
@@ -106,6 +125,27 @@ const arrow = computed(() => ({ transform: `translate(-50%, -50%) rotate(${(-pro
   transform: translate(-50%, -50%);
   box-shadow: 0 0 0 1.5px #fff;
 }
+/* The backpack's modems: a pulsing circle it is somewhere inside, or a pip on the edge pointing to it. */
+.modem {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  border: 2px solid rgba(255, 140, 0, 0.95);
+  background: rgba(255, 140, 0, 0.18);
+  box-sizing: border-box;
+  animation: modem 1.6s ease-in-out infinite;
+}
+.modem-pip {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: #ff8c00;
+  box-shadow: 0 0 0 1.5px #fff;
+  animation: modem 1.6s ease-in-out infinite;
+}
+@keyframes modem { 50% { opacity: 0.55; } }
 /* Gunfire is a diamond, so it reads apart from an ally's dot. */
 .blip.shot { border-radius: 1px; transform: translate(-50%, -50%) rotate(45deg); }
 .hint {
