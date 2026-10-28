@@ -111,6 +111,8 @@ Each bot is named after its squad: Guards 1, Guards 2 and so on.
 
 After it ends, the scenario waits `restart` seconds (default `20`), clears its bots away and starts again from the top. People are left as they are: their scores, health and where they stand.
 
+An empty room is paused. With no one connected the game loop stops ticking and waits for a join, so bots and their scenario cost no CPU on an idle server, and pick up where they were.
+
 **Mistakes stop the server.** A name that is not defined, an unknown field or action, a position outside the world, an item that does not exist, or a text over 200 characters stops the server at start-up, with a message saying where. A trigger that silently never fired would be harder to find. No `scenario.json` means no scenario.
 
 **On the wire.** The scenario speaks to clients with one reliable message, `notice` (tag 12, `[12, kind, text]`, see NETWORKING.md), so this stage moved `PROTOCOL_VERSION` to 31.

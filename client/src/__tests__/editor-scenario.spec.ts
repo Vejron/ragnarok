@@ -33,7 +33,7 @@ describe('validateScenario', () => {
   })
 
   it('accepts the shipped Mariehem scenario', () => {
-    const shipped = JSON.parse(readFileSync(resolve(process.cwd(), '../worlds/ersboda-alidhem/scenario.json'), 'utf8')) as Scenario
+    const shipped = JSON.parse(readFileSync(resolve(process.cwd(), '../worlds/boda/scenario.json'), 'utf8')) as Scenario
     expect(messages(shipped)).toEqual([])
   })
 

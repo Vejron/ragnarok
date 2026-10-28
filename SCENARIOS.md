@@ -46,6 +46,7 @@ A worked, larger one is in `worlds/ersboda-alidhem/scenario.json` (Red Dawn): pa
 1. Save the file and **restart the server**. It is read at start-up, and a mistake stops the server with the place named: an undefined name, an unknown field or action, an item that does not exist, a text over 200 characters, or a position outside the world. Fix what it says and start again.
 2. Join the game. The objective shows at the top of the screen, and notices appear under it.
 3. The scenario starts from the top again `restart` seconds after it ends (20 by default). People keep their health, scores and position, so move back to the start yourself.
+   While no one is connected the whole room is paused: bots, scenario clock and physics hold still until someone joins, so `start` triggers fire with the first joiner, and `after` counts only time with someone there.
 4. To test one part, make it the first: put `"start": true` on the trigger you are working on, or lower `wait` and `after`.
 
 ## 5. What it cannot do (yet)

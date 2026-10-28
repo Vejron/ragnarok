@@ -564,6 +564,19 @@ pub async fn run(mut game: Game, mut commands: mpsc::Receiver<Command>) {
     let mut ticker = interval(Duration::from_secs_f64(1.0 / TICK_RATE as f64));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Burst);
     loop {
+        // An empty room holds still until a command comes (a join), so its bots, scenario and
+        // physics cost nothing while no one is there to see them.
+        if game.outboxes.is_empty() {
+            tracing::info!(tick = game.world.tick, "room empty, paused");
+            while game.outboxes.is_empty() {
+                match commands.recv().await {
+                    Some(command) => game.handle(command),
+                    None => return,
+                }
+            }
+            ticker.reset();
+            tracing::info!(tick = game.world.tick, "room resumed");
+        }
         ticker.tick().await;
         loop {
             match commands.try_recv() {
