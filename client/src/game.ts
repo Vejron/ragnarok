@@ -8,7 +8,7 @@ import { Transport } from './net/transport'
 import {
   BUTTON_ALT, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION, RESPAWN_TICKS,
   SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_PRONE,
-  TICK_MS, TICK_RATE, BUILD_REACH, STAMINA_FULL, } from './sim/consts'
+  TICK_MS, TICK_RATE, BUILD_REACH, STAMINA_FULL, ONE_ARM_SWAY, } from './sim/consts'
 import { easeSway, sway, swayAmplitude } from './sway'
 import { CELL } from './sim/carve'
 import { MATERIAL_BRICK, cellAt, cubeCentre, type Pos } from './sim/construct'
@@ -44,7 +44,8 @@ import { Grass, GRASS_FULL, GRASS_LITE } from './render/grass'
 import { AIM_DISTANCE_SCALE, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, Scene } from './render/scene'
 import { ChaseCam } from './render/chase'
 import { PerfReadout } from './render/perf'
-import { encodeRtc, TURRET_ALT } from './net/codec'
+import { encodeRtc, LIMB_ALL, LIMB_ARMS, TURRET_ALT } from './net/codec'
+import { bleedingOf, limbName, lostOf } from './sim/limbs'
 import { VoiceChat } from './voice'
 import { PlaneModel } from './render/plane'
 import { loadVehicleModels } from './kinds'
@@ -61,7 +62,7 @@ import { VehicleSounds } from './vehicleaudio'
 import { HIT_DEALT, HIT_KILL, HIT_TAKEN, HitFeedback } from './feedback'
 import { buildGround } from './render/world'
 import { Replica } from './net/replica'
-import { EntityStore, inGameUnits } from './entities/store'
+import { EntityStore, inGameUnits, type Sampled } from './entities/store'
 import { Presenters, type Frame } from './entities/presenter'
 import { Avatars } from './entities/avatars'
 import { Projectiles } from './entities/presenters/projectiles'
@@ -114,6 +115,10 @@ const BRICK_PREDICTION_SLACK_MS = 400
 const AIM_LOOK_SCALE = 0.6
 /** How long the static shows after a drone's feed cuts out, ms. */
 const FEED_LOST_MS = 700
+/** A limb that comes off this soon after the local player hurt its owner is called out as theirs, ms. */
+const LIMB_CREDIT_MS = 1500
+/** A bleeding stump drips this often, ms. */
+const DRIP_MS = 250
 
 /**
  * The client game loop. Fixed 60 Hz ticks sample input, predict the local player and send inputs;
@@ -183,6 +188,12 @@ export class Game {
   private readonly hullMarks = new HullMarks()
   /** What the armour made of the player's rounds, and of the rounds that struck their vehicle. */
   private readonly callouts = new Callouts()
+  /** When the local player last hurt each player, by id: a limb that comes off soon after was their doing. */
+  private readonly dealtAt = new Map<number, number>()
+  /** The local player's own `limbs`, as last sent. */
+  private ownLimbs = 0
+  /** When each stickman's stumps last dripped, by avatar key. */
+  private readonly drippedAt = new Map<number, number>()
   private readonly chase = new ChaseCam()
   private readonly pickupModels = new Pickups()
   /** Items on the ground, as drawn. */
@@ -354,7 +365,7 @@ export class Game {
     const [x, z] = world.spawns[0] ?? [0, 0]
     this.view.focus(x, z)
     await this.tiles.prime(x, z)
-    this.predictor = new Predictor(motor.stepper, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false })
+    this.predictor = new Predictor(motor.stepper, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0 })
     this.predictor.speedScale = (input) => aimSpeedScale(this.hotbar[Math.min(input.slot, HOTBAR_SLOTS - 1)]?.item ?? ITEM_NONE, input.buttons)
     this.avatars.local()
     if (this.disposed) return
@@ -451,6 +462,7 @@ export class Game {
           this.progress = own.vitals.progress
         }
         if (own?.hotbar) this.hotbar = [...own.hotbar.slots, ...emptyHotbar()].slice(0, HOTBAR_SLOTS)
+        if (own) this.ownLimbs = own.limbs?.lost ?? 0
         this.events.receive(message.tick, message.shots, message.bullets)
         // Vehicles are solid to the predicted stickman, at the pose of the newest snapshot.
         this.refPoses.clear()
@@ -492,7 +504,7 @@ export class Game {
           this.predictor.reconcile(message.ack, {
             position: [x, y, z], yaw: own.heading?.yaw ?? 0, vy: own.motion?.vy ?? 0, grounded: (flags & FLAG_GROUNDED) !== 0,
             knock: [own.motion?.knock_x ?? 0, own.motion?.knock_z ?? 0], ride: message.ride, prone: stance === STANCE_PRONE, chute: stance === STANCE_CHUTE,
-            spent: own.vitals?.spent ?? 0, winded: own.vitals?.winded === 1,
+            spent: own.vitals?.spent ?? 0, winded: own.vitals?.winded === 1, lost: (own.limbs?.lost ?? 0) & LIMB_ALL,
           })
         }
         break
@@ -543,6 +555,7 @@ export class Game {
       case 'hit': {
         this.hits.receive(message, now)
         if (message.role === HIT_DEALT) {
+          this.dealtAt.set(message.target, now)
           this.sounds.hit(message.kind === HIT_KILL)
           this.events.hit(message)
         }
@@ -671,7 +684,10 @@ export class Game {
     const gun = itemDef(this.held().item)?.kind
     const steadying = !seated && this.localId !== null && this.hp > 0 && (gun === 'gun' || gun === 'launcher')
     // Seated it stops at once: a vehicle's aim must not pick up a fading wobble.
-    this.swaySize = seated ? 0 : easeSway(this.swaySize, steadying ? swayAmplitude(local.spent, local.winded) : 0, dt)
+    // A gun held in one hand wanders however rested.
+    const arms = local.lost & LIMB_ARMS
+    const oneArm = arms !== 0 && arms !== LIMB_ARMS ? ONE_ARM_SWAY : 0
+    this.swaySize = seated ? 0 : easeSway(this.swaySize, steadying ? Math.max(swayAmplitude(local.spent, local.winded), oneArm) : 0, dt)
     this.sway = sway(now / 1000, this.swaySize)
     const lookYaw = this.input.yaw + this.sway[0]
     const lookPitch = this.input.pitch + this.sway[1]
@@ -745,6 +761,7 @@ export class Game {
     this.surroundings.blobVehicles(cars)
 
     this.people.run(sampled, frame)
+    this.limbs(sampled, now)
     this.surroundings.bendGrass(!seated && this.hp > 0 ? position : null, this.stickmen.nearby, cars)
     const nearby = [...this.stickmen.nearby, ...this.riders.seated]
     this.avatars.sweep((key) => this.surroundings.dry(key))
@@ -779,6 +796,7 @@ export class Game {
       canSwitchSeat: this.seat !== null && (cars.get(this.seat.vehicle)?.seats.includes(0) ?? false),
       range: view?.gauges?.includes('range') ? (ride?.turret?.range ?? 0) : 0,
       callouts: this.callouts.view(now),
+      limbs: this.ownLimbs && this.hp > 0 ? { lost: lostOf(this.ownLimbs), bleeding: bleedingOf(this.ownLimbs) } : null,
       ammo: view?.gauges?.includes('ammo') ? ((ride?.turret?.flags ?? 0) & TURRET_ALT ? 'HE' : 'AP') : null,
       reload: this.reloaded(now, ride ? rideView(ride.kind).reload : SHELL_COOLDOWN_TICKS),
       ...cockpit(view?.gauges?.includes('cockpit') ? (ride?.arms ?? null) : null, aviator, seat ? this.vehicles.fx(seat.vehicle) : undefined),
@@ -836,6 +854,31 @@ export class Game {
       if (avatar?.visible && allies(this.localId, id)) found.push({ id, x: avatar.position.x, z: avatar.position.z })
     }
     return found
+  }
+
+  /**
+   * Tells every stickman drawn this frame which limbs it has lost. One that has just come off is thrown,
+   * and called out to the local player if it was theirs or they did it; a stump that still bleeds drips.
+   */
+  private limbs(sampled: ReadonlyMap<number, Sampled>, now: number) {
+    for (const key of this.avatars.drawn) {
+      const id = key === 0 ? this.localId : key
+      const avatar = id === null ? undefined : this.avatars.of(id)
+      if (id === null || !avatar) continue
+      const wire = sampled.get(id)?.entity.limbs?.lost ?? 0
+      const gained = avatar.setLimbs(wire)
+      if (gained) {
+        if (avatar.visible) this.gore.sever(avatar, gained)
+        const name = limbName(gained)
+        if (key === 0) this.callouts.say({ text: `${name} gone! Bandage it`, tone: 'bad' }, now)
+        else if (now - (this.dealtAt.get(id) ?? -Infinity) < LIMB_CREDIT_MS) this.callouts.say({ text: `${name} off!`, tone: 'good' }, now)
+      }
+      const bleeding = bleedingOf(wire)
+      if (bleeding && avatar.visible && now - (this.drippedAt.get(key) ?? -Infinity) > DRIP_MS) {
+        this.gore.drip(avatar, bleeding)
+        this.drippedAt.set(key, now)
+      }
+    }
   }
 
   private setHealth(hp: number, now: number) {

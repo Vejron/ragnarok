@@ -8,7 +8,7 @@ use super::combat::{position_of, ray_capsule, same_team};
 use crate::entities::{DropOnDeath, Health, Home, Hurtbox, NetId, Respawn, Respawned, Trail, Transform, With};
 use crate::events;
 use crate::game::{Damaged, Died, Player, World};
-use shared::consts::{HEADSHOT_MULT, MAX_REWIND_TICKS, SEATED_CENTRE_DROP, SEATED_HALF_HEIGHT, SEATED_HEAD_ZONE, SEATED_RADIUS};
+use shared::consts::{HEADSHOT_MULT, LIMB_DAMAGE_MULT, MAX_REWIND_TICKS, SEATED_CENTRE_DROP, SEATED_HALF_HEIGHT, SEATED_HEAD_ZONE, SEATED_RADIUS};
 use shared::protocol::{
     DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_EGG, WEAPON_GRENADE, WEAPON_LOITER, WEAPON_ROADKILL, WEAPON_ROCKET,
     WEAPON_AP, WEAPON_SHELL, WEAPON_WRECK,
@@ -163,7 +163,8 @@ pub fn blasted(world: &World, point: [f32; 3], radius: f32, damage: f32) -> Vec<
 }
 
 /// Harm done to something: how much, by whom (if anyone) with what (`WEAPON_*`), where it came from if
-/// not from where the attacker is (a blast's centre), and whether a round struck the head.
+/// not from where the attacker is (a blast's centre), and whether a round struck the head or a limb
+/// (`LIMB_*`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Harm {
     pub amount: u8,
@@ -171,11 +172,12 @@ pub struct Harm {
     pub weapon: u8,
     pub from: Option<[f32; 3]>,
     pub head: bool,
+    pub limb: Option<u8>,
 }
 
 impl Harm {
     pub fn new(amount: u8, attacker: Option<u32>, weapon: u8) -> Self {
-        Harm { amount, attacker, weapon, from: None, head: false }
+        Harm { amount, attacker, weapon, from: None, head: false, limb: None }
     }
 
     /// The same, come from `point`.
@@ -187,22 +189,39 @@ impl Harm {
     pub fn head(self, head: bool) -> Self {
         Harm { head, ..self }
     }
+
+    /// The same, to `limb` if it struck one.
+    pub fn limb(self, limb: Option<u8>) -> Self {
+        Harm { limb, ..self }
+    }
 }
 
 /// The weapons whose kill throws the body down as a blast does.
 const BLASTS: [u8; 10] = [WEAPON_ROCKET, WEAPON_SHELL, WEAPON_AP, WEAPON_WRECK, WEAPON_GRENADE, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_LOITER, WEAPON_EGG];
 
 /// The one place health goes down, for anything with `Health` and a body: takes `harm` off entity
-/// `id`, and says so (`Damaged`). A blow to the head does `HEADSHOT_MULT` times the damage, and the
+/// `id`, and says so (`Damaged`). A blow to the head does `HEADSHOT_MULT` times the damage, one to a
+/// limb `LIMB_DAMAGE_MULT` of it and wears the limb, which can come off (`limbs::wound`), and the
 /// attacker's own team is spared. At zero it dies (`Died`, crediting the attacker if it was anyone
 /// other than itself): its `Respawn` starts counting and its `DropOnDeath` is left where it fell.
 /// Returns whether this killed it; does nothing to the dead.
 pub fn damage_entity(world: &mut World, id: u32, harm: Harm) -> bool {
-    let Harm { amount, attacker, weapon, from, head } = harm;
-    let amount = if head { (f32::from(amount) * HEADSHOT_MULT).min(255.0) as u8 } else { amount };
+    let Harm { amount, attacker, weapon, from, head, limb } = harm;
+    let raw = amount;
+    let amount = if head {
+        (f32::from(amount) * HEADSHOT_MULT).min(255.0) as u8
+    } else if limb.is_some() {
+        (f32::from(amount) * LIMB_DAMAGE_MULT).round() as u8
+    } else {
+        amount
+    };
     let other = attacker.filter(|&by| by != id);
     if other.is_some_and(|by| same_team(world, by, id)) {
         return false;
+    }
+    // Even the round that kills takes the limb, so the body falls without it.
+    if let Some(limb) = limb.filter(|_| world.entities.alive(id) && raw > 0) {
+        super::limbs::wound(world, id, limb, raw, attacker);
     }
     let from = from.or_else(|| other.and_then(|by| position_of(world, by)));
     let at = mark(world, id);

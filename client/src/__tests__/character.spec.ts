@@ -291,3 +291,41 @@ describe('Character', () => {
     c.dispose()
   })
 })
+
+describe('Character losing limbs', () => {
+  it('shrinks away a lost limb, keeps the gun in a hand with the right arm gone, and says what is new', async () => {
+    const { LIMB_ARM_R, LIMB_BLEED_SHIFT, LIMB_LEG_L } = await import('@/net/codec')
+    const c = await crowd()
+    const person = new Character(c, 1)
+    // The model it draws, which the character keeps to itself.
+    const rootOf = (who: Character) => (who as unknown as { object: import('@ragnarok/engine').Node }).object
+    person.held = ITEM_AK5
+    run(person, 0, 0, 0, 0.1)
+    expect(person.setLimbs(LIMB_LEG_L), 'the first word is not news: they may have lost it before they came into view').toBe(0)
+    run(person, 0, 0, 0, 0.1)
+    const thigh = rootOf(person).getObjectByName('thigh_L')!
+    expect(thigh.scale.x).toBeLessThan(0.01)
+    expect(rootOf(person).getObjectByName('thigh_R')!.scale.x).toBe(1)
+    // The right arm goes, bleeding: that is new.
+    expect(person.setLimbs(LIMB_LEG_L | LIMB_ARM_R | (LIMB_ARM_R << LIMB_BLEED_SHIFT))).toBe(LIMB_ARM_R)
+    expect(person.limbs).toBe(LIMB_LEG_L | LIMB_ARM_R)
+    run(person, 0, 0, 0, 0.1)
+    const arm = rootOf(person).getObjectByName('upper_arm_R')!
+    expect(arm.scale.x).toBeLessThan(0.01)
+    rootOf(person).updateWorldMatrix(true, true)
+    const hand = new THREE.Vector3().setFromMatrixScale(new THREE.Matrix4().fromArray(rootOf(person).getObjectByName('hand_R')!.matrixWorld))
+    expect(hand.x / new THREE.Vector3().setFromMatrixScale(new THREE.Matrix4().fromArray(rootOf(person).matrixWorld)).x).toBeCloseTo(1, 1)
+    // A burst leaves out the limbs already thrown.
+    const keys = person.shatter().map((piece) => piece.key)
+    expect(keys).not.toContain('thigh_L')
+    expect(keys).not.toContain('forearm_R')
+    expect(keys).toContain('thigh_R')
+    // Respawned whole.
+    person.dead = true
+    person.dead = false
+    expect(person.limbs).toBe(0)
+    expect(thigh.scale.x).toBe(1)
+    person.dispose()
+    c.dispose()
+  })
+})

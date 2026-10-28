@@ -81,6 +81,16 @@ export const WEAPON_LAUNCHER = 24
 /** An armour-piercing shell's small burst; `WEAPON_SHELL` is high explosive's. */
 export const WEAPON_AP = 27
 
+/** `Limbs`'s lost limbs, the low four bits; the same bits above `LIMB_BLEED_SHIFT` still bleed. Mirrors `LIMB_*`. */
+export const LIMB_ARM_L = 1 << 0
+export const LIMB_ARM_R = 1 << 1
+export const LIMB_LEG_L = 1 << 2
+export const LIMB_LEG_R = 1 << 3
+export const LIMB_ARMS = LIMB_ARM_L | LIMB_ARM_R
+export const LIMB_LEGS = LIMB_LEG_L | LIMB_LEG_R
+export const LIMB_ALL = LIMB_ARMS | LIMB_LEGS
+export const LIMB_BLEED_SHIFT = 4
+
 /** `HullMark`'s style: what a round left on a vehicle's armour. Mirrors `MARK_*`. */
 export const MARK_GLANCE = 0
 export const MARK_SCUFF = 1

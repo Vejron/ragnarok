@@ -2,7 +2,7 @@ use super::*;
 use crate::entities::Health;
 use crate::game::{Command, Game, Outgoing};
 use sim::STANDING_Y;
-use shared::protocol::{HIT_BODY, HIT_DEALT, HIT_KILL, HIT_TAKEN, InputFrame, Snapshot, WEAPON_GRENADE, WEAPON_LAUNCHER, WEAPON_ROCKET, WEAPON_BULLET, WEAPON_FLARE, WEAPON_REVOLVER, WEAPON_PELLET, WEAPON_SHOTGUN, decode};
+use shared::protocol::{HIT_BODY, HIT_DEALT, HIT_KILL, HIT_TAKEN, InputFrame, LIMB_ARM_L, LIMB_ARM_R, LIMB_BLEED_SHIFT, LIMB_LEG_L, LIMB_LEG_R, LIMB_LEGS, Snapshot, WEAPON_SNIPER, WEAPON_GRENADE, WEAPON_LAUNCHER, WEAPON_ROCKET, WEAPON_BULLET, WEAPON_FLARE, WEAPON_REVOLVER, WEAPON_PELLET, WEAPON_SHOTGUN, decode};
 use shared::quant::to_mrad;
 use shared::world::{WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
@@ -12,6 +12,8 @@ fn game() -> Game {
     // Loose items would take a test's use button.
     let mut game = Game::new(map, 0).unwrap();
     game.world.clear_pickups();
+    // A gun's spread the same every run: where on the body a round lands decides what it does.
+    game.world.rng = crate::rng::Rng::from_seed(7);
     game
 }
 
@@ -469,9 +471,11 @@ fn a_scoped_sniper_shot_goes_true_along_the_look_direction() {
 #[test]
 fn aiming_tightens_any_guns_spread() {
     let ak = ak5();
-    assert_eq!(effective_spread(ak, 0), ak.spread);
-    assert_eq!(effective_spread(ak, BUTTON_ALT | BUTTON_FIRE), ak.spread * AIM_SPREAD_SCALE);
-    assert!(effective_spread(ak, BUTTON_ALT) < effective_spread(ak, 0));
+    assert_eq!(effective_spread(ak, 0, false), ak.spread);
+    assert_eq!(effective_spread(ak, BUTTON_ALT | BUTTON_FIRE, false), ak.spread * AIM_SPREAD_SCALE);
+    assert!(effective_spread(ak, BUTTON_ALT, false) < effective_spread(ak, 0, false));
+    // Held in one hand it wanders wider, and aiming does not steady it.
+    assert_eq!(effective_spread(ak, BUTTON_ALT, true), ak.spread + ONE_ARM_SPREAD);
 }
 
 #[test]
@@ -1334,4 +1338,117 @@ fn two_kills_in_one_tick_are_told_with_the_score_after_each() {
     crate::mechanics::Mechanic::react(&mut scores, &mut game.world);
     let kills = crate::game::feedback::kills(&game.world);
     assert_eq!(kills.iter().map(|kill| (kill.killer, kill.victim, kill.killer_kills, kill.victim_deaths)).collect::<Vec<_>>(), [(shooter, target, 1, 1), (shooter, other, 2, 1)]);
+}
+
+fn limbs_of(game: &Game, id: u32) -> crate::mechanics::Limbs {
+    game.world.entities.get::<crate::mechanics::Limbs>(id).copied().unwrap_or_default()
+}
+
+fn hp_of(game: &Game, id: u32) -> u8 {
+    game.world.entities.of::<crate::entities::Health>(id).hp
+}
+
+#[test]
+fn four_rifle_rounds_in_a_leg_take_it_off_and_three_do_not() {
+    let (mut game, shooter, target, _, _) = duel();
+    let round = ak5().damage;
+    for _ in 0..3 {
+        damage_entity(&mut game.world, target, Harm::new(round, Some(shooter), WEAPON_RIFLE).limb(Some(LIMB_LEG_L)));
+    }
+    assert_eq!(limbs_of(&game, target).lost, 0);
+    let limb_hit = (f32::from(round) * LIMB_DAMAGE_MULT).round() as u8;
+    assert_eq!(hp_of(&game, target), PLAYER_MAX_HP - 3 * limb_hit, "a limb takes less than the body");
+    damage_entity(&mut game.world, target, Harm::new(round, Some(shooter), WEAPON_RIFLE).limb(Some(LIMB_LEG_L)));
+    let limbs = limbs_of(&game, target);
+    assert_eq!((limbs.lost, limbs.bleeding), (LIMB_LEG_L, LIMB_LEG_L));
+    // It goes on to the next tick's movement and the snapshot.
+    let mut seq = 100;
+    hold(&mut game, target, &mut seq, 0.0, 0, 1);
+    assert_eq!(game.world.entities.of::<Player>(target).character.lost, LIMB_LEG_L);
+    let shown = game.replicated().into_iter().find(|(id, _)| *id == target).unwrap().1;
+    assert_eq!(shown.limbs.map(|limbs| limbs.lost), Some(LIMB_LEG_L | (LIMB_LEG_L << LIMB_BLEED_SHIFT)));
+}
+
+#[test]
+fn a_sniper_round_takes_an_arm_off_at_once_and_drops_the_reload() {
+    let (mut game, shooter, target, _, _) = duel();
+    game.world.entities.get_mut::<Player>(target).unwrap().reload_left = 30;
+    damage_entity(&mut game.world, target, Harm::new(def(ITEM_SNIPER).unwrap().damage, Some(shooter), WEAPON_SNIPER).limb(Some(LIMB_ARM_R)));
+    assert!(game.world.entities.alive(target));
+    assert_eq!(limbs_of(&game, target).lost, LIMB_ARM_R);
+    assert_eq!(game.world.entities.of::<Player>(target).reload_left, 0);
+}
+
+#[test]
+fn the_round_that_kills_still_takes_the_limb() {
+    let (mut game, shooter, target, _, _) = duel();
+    game.world.entities.get_mut::<crate::entities::Health>(target).unwrap().hp = 5;
+    assert!(damage_entity(&mut game.world, target, Harm::new(60, Some(shooter), WEAPON_SNIPER).limb(Some(LIMB_LEG_R))));
+    assert_eq!(limbs_of(&game, target).lost, LIMB_LEG_R);
+}
+
+#[test]
+fn a_rifle_round_low_on_the_body_lands_in_a_leg() {
+    let (mut game, shooter, target, mut seq, _) = duel();
+    // Low on the body at 20 m.
+    for _ in 0..4 {
+        press(&mut game, shooter, &mut seq, BUTTON_FIRE, 0, AIM_20M - 0.03);
+        hold_slot(&mut game, shooter, &mut seq, 0, 0, 8);
+    }
+    let limbs = limbs_of(&game, target);
+    assert!(limbs.lost & LIMB_LEGS != 0 || limbs.wear.iter().any(|&wear| wear > 0), "{limbs:?}, hp {}", hp_of(&game, target));
+}
+
+#[test]
+fn a_stump_bleeds_without_hurting_until_a_bandage_stops_it_and_puts_a_leg_back_first() {
+    let (mut game, shooter, target, _, mut seq) = duel();
+    damage_entity(&mut game.world, target, Harm::new(SEVER_HIT, Some(shooter), WEAPON_SNIPER).limb(Some(LIMB_ARM_L)));
+    damage_entity(&mut game.world, target, Harm::new(SEVER_HIT, Some(shooter), WEAPON_SNIPER).limb(Some(LIMB_LEG_R)));
+    assert_eq!(limbs_of(&game, target).lost, LIMB_ARM_L | LIMB_LEG_R);
+    assert_eq!(limbs_of(&game, target).bleeding, LIMB_ARM_L | LIMB_LEG_R);
+    let before = hp_of(&game, target);
+    hold(&mut game, target, &mut seq, 0.0, 0, 2 * TICK_RATE);
+    assert_eq!(hp_of(&game, target), before, "bleeding is for show");
+    // A bandage goes on one-handed.
+    give(&mut game, target, 3, ITEM_BANDAGE, 1);
+    hold_slot(&mut game, target, &mut seq, BUTTON_FIRE, 3, 1);
+    hold_slot(&mut game, target, &mut seq, 0, 3, BANDAGE_TICKS + 1);
+    let limbs = limbs_of(&game, target);
+    assert_eq!((limbs.lost, limbs.bleeding), (LIMB_ARM_L, 0), "the leg first, and no more bleeding");
+}
+
+#[test]
+fn with_no_arms_nothing_fires_and_one_arm_reloads_slowly() {
+    let (mut game, shooter, target, mut seq, _) = duel();
+    damage_entity(&mut game.world, shooter, Harm::new(SEVER_HIT, Some(target), WEAPON_SNIPER).limb(Some(LIMB_ARM_L)));
+    game.world.entities.get_mut::<Player>(shooter).unwrap().hotbar[0].ammo = 0;
+    hold_slot(&mut game, shooter, &mut seq, BUTTON_RELOAD, 0, 1);
+    assert_eq!(game.world.entities.of::<Player>(shooter).reload_left, ak5().reload_ticks * ONE_ARM_RELOAD, "twice as long");
+    hold_slot(&mut game, shooter, &mut seq, 0, 0, ak5().reload_ticks * ONE_ARM_RELOAD + 1);
+    damage_entity(&mut game.world, shooter, Harm::new(SEVER_HIT, Some(target), WEAPON_SNIPER).limb(Some(LIMB_ARM_R)));
+    let ammo = game.world.entities.of::<Player>(shooter).hotbar[0].ammo;
+    assert_eq!(ammo, ak5().mag);
+    hold_slot(&mut game, shooter, &mut seq, BUTTON_FIRE, 0, 10);
+    assert_eq!(game.world.entities.of::<Player>(shooter).hotbar[0].ammo, ammo, "no hands, no shot");
+}
+
+#[test]
+fn a_new_life_has_every_limb() {
+    let (mut game, shooter, target, _, mut seq) = duel();
+    damage_entity(&mut game.world, target, Harm::new(SEVER_HIT, Some(shooter), WEAPON_SNIPER).limb(Some(LIMB_LEG_L)));
+    damage_entity(&mut game.world, target, Harm::new(PLAYER_MAX_HP, Some(shooter), WEAPON_RIFLE));
+    hold(&mut game, target, &mut seq, 0.0, 0, RESPAWN_TICKS + 1);
+    assert!(game.world.entities.alive(target));
+    assert_eq!(limbs_of(&game, target), Default::default());
+    assert_eq!(game.world.entities.of::<Player>(target).character.lost, 0);
+}
+
+#[test]
+fn a_grenade_beside_someone_that_does_not_kill_them_can_take_a_leg() {
+    let (mut game, shooter, target, _, _) = duel();
+    let feet = game.world.entities.of::<Player>(target).character.position;
+    // Low down on their left, near enough to hurt badly but not to kill.
+    let point = [feet[0] - 0.4, feet[1] - 0.8, feet[2]];
+    super::super::limbs::blasted(&mut game.world, target, point, SEVER_HIT, Some(shooter));
+    assert_eq!(limbs_of(&game, target).lost, LIMB_LEG_L);
 }

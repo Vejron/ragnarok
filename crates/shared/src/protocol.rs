@@ -141,6 +141,17 @@ pub const WEAPON_LAUNCHER: u8 = 24;
 /// An armour-piercing shell's small burst (`PROJECTILE_SHELL`); `WEAPON_SHELL` is high explosive's.
 pub const WEAPON_AP: u8 = 27;
 
+/// `replicated::Limbs::lost` bits: the limbs a stickman has lost. The same bits shifted up by
+/// `LIMB_BLEED_SHIFT` are the stumps still bleeding.
+pub const LIMB_ARM_L: u8 = 1 << 0;
+pub const LIMB_ARM_R: u8 = 1 << 1;
+pub const LIMB_LEG_L: u8 = 1 << 2;
+pub const LIMB_LEG_R: u8 = 1 << 3;
+pub const LIMB_ARMS: u8 = LIMB_ARM_L | LIMB_ARM_R;
+pub const LIMB_LEGS: u8 = LIMB_LEG_L | LIMB_LEG_R;
+pub const LIMB_ALL: u8 = LIMB_ARMS | LIMB_LEGS;
+pub const LIMB_BLEED_SHIFT: u8 = 4;
+
 /// `HullMark::style`: what a round left where it met a vehicle's armour.
 /// It glanced off: sparks and a ping, and no mark.
 pub const MARK_GLANCE: u8 = 0;

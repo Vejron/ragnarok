@@ -12,7 +12,7 @@ use shared::consts::*;
 use shared::armor::Pen;
 use shared::items::*;
 use shared::vehicles::{Exposure, crew_gun, vehicle_def};
-use shared::protocol::{BulletSpawn, ItemSlot, PROJECTILE_BULLET, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_ROCKET, ShotEvent, WEAPON_FLARE, WEAPON_PELLET, WEAPON_RIFLE, WEAPON_WRECK};
+use shared::protocol::{BulletSpawn, ItemSlot, LIMB_ARMS, PROJECTILE_BULLET, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_ROCKET, ShotEvent, WEAPON_FLARE, WEAPON_PELLET, WEAPON_RIFLE, WEAPON_WRECK};
 use shared::quant::{from_mrad, to_cm, to_cm_i16, to_mrad};
 
 /// Health, death, the items in the hotbar and what blasts do to people and vehicles.
@@ -177,6 +177,7 @@ pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
     }
     for (id, amount) in blasted(world, blast.point, blast.radius, blast.damage) {
         damage_entity(world, id, Harm::new(amount, blast.attacker, blast.weapon).from(blast.point));
+        super::limbs::blasted(world, id, blast.point, amount, blast.attacker);
     }
     let mut reached = world.physics.blast_cars(blast.point, blast.radius);
     // A shell that struck a vehicle's edge may burst further from its centre than the blast reaches.
@@ -509,9 +510,21 @@ fn crosshair_dir(world: &World, shooter: u32, back: u32, pivot: [f32; 3], eye: [
     if along < 0.5 { look_dir } else { dir }
 }
 
-/// The cone a shot of `item` is scattered over: aim held (`BUTTON_ALT`) tightens it.
-fn effective_spread(item: &ItemDef, buttons: u16) -> f32 {
-    if buttons & BUTTON_ALT != 0 { item.spread * AIM_SPREAD_SCALE } else { item.spread }
+/// The cone a shot of `item` is scattered over: aim held (`BUTTON_ALT`) tightens it, unless the gun is
+/// held in `one_arm`, which widens it by `ONE_ARM_SPREAD` and can steady it no more.
+fn effective_spread(item: &ItemDef, buttons: u16, one_arm: bool) -> f32 {
+    if one_arm {
+        item.spread + ONE_ARM_SPREAD
+    } else if buttons & BUTTON_ALT != 0 {
+        item.spread * AIM_SPREAD_SCALE
+    } else {
+        item.spread
+    }
+}
+
+/// Whether player `id` has an arm left and no more.
+fn one_armed(world: &World, id: u32) -> bool {
+    super::limbs::lost(world, id) & LIMB_ARMS != 0
 }
 
 /// A round that ended in the world: damages the building, tree or placed cube it struck, if it was one.
@@ -577,14 +590,15 @@ fn aim(world: &mut World, id: u32, item: &ItemDef) -> Option<Aim> {
         ),
     };
     // Looking down a scope the camera is the eye, so the shot goes straight along the look
-    // direction, true.
+    // direction, true; held in one hand, not even then.
     let scoped = item.scope && input.buttons() & BUTTON_ALT != 0;
-    let dir = if scoped {
+    let one_arm = one_armed(world, id);
+    let dir = if scoped && !one_arm {
         look_dir
     } else {
         // A bot has no camera: it aims its look from the eye itself.
-        let aim = if world.entities.has::<Bot>(id) { look_dir } else { crosshair_dir(world, id, back, pivot, origin, look_dir, item.range, vehicle) };
-        scatter(world, aim, effective_spread(item, input.buttons()))
+        let aim = if scoped || world.entities.has::<Bot>(id) { look_dir } else { crosshair_dir(world, id, back, pivot, origin, look_dir, item.range, vehicle) };
+        scatter(world, aim, effective_spread(item, input.buttons(), one_arm))
     };
     Some(Aim { origin, dir, vehicle, back })
 }
@@ -622,7 +636,7 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     // Every pellet is its own ray through the same rewound world. The first goes along the aim as it
     // is (scattered once, above), the rest are scattered around it. Each is announced where it ended,
     // so a client can show where a spread landed; only the first carries the gun's own weapon id.
-    let spread = effective_spread(item, buttons);
+    let spread = effective_spread(item, buttons, one_armed(world, id));
     for pellet in 0..item.pellets {
         let ray = if pellet == 0 { dir } else { scatter(world, dir, spread) };
         let (end, _) = hitscan(world, id, origin, ray, &round, vehicle, back);
@@ -713,7 +727,9 @@ pub fn land(world: &mut World, flight: &Flight, met: &Strike, round: &Round) {
     let dealt = round.falloff.apply(round.damage, flown + end);
     if let Some((victim, t)) = hit {
         let head = is_headshot(world, victim, origin, dir, t, back);
-        damage_entity(world, victim, Harm::new(dealt, attacker, round.weapon).head(head));
+        let point = std::array::from_fn(|i| origin[i] + dir[i] * t);
+        let limb = if head { None } else { super::limbs::limb_struck(world, victim, point, back) };
+        damage_entity(world, victim, Harm::new(dealt, attacker, round.weapon).head(head).limb(limb));
     } else if let Some((_, Some(car))) = wall {
         let canvas = world.entities.get::<Vehicle>(car).is_some_and(|vehicle| vehicle_def(vehicle.kind).armor.canvas);
         let point = std::array::from_fn(|i| origin[i] + dir[i] * reach);
@@ -796,6 +812,7 @@ fn spend(slot: &mut ItemSlot) {
 fn use_item(world: &mut World, id: u32) {
     let Some(seat) = world.entities.get::<Player>(id).map(|player| player.seat) else { return };
     let hp = world.entities.get::<Health>(id).map_or(0, |health| health.hp);
+    let lost = super::limbs::lost(world, id);
     let passenger = seat.is_some_and(|seat| !seat.remote && world.entities.get::<Vehicle>(seat.vehicle).is_some_and(|vehicle| crew_gun(vehicle.kind, seat.index)));
     let mut player = world.entities.of_mut::<Player>(id);
     let buttons = player.input.buttons();
@@ -817,6 +834,11 @@ fn use_item(world: &mut World, id: u32) {
         player.interrupt();
         return;
     };
+    // With no arms there is nothing to hold a gun with; a bandage can still be got on somehow.
+    if lost & LIMB_ARMS == LIMB_ARMS && item.kind != ItemKind::Heal {
+        player.interrupt();
+        return;
+    }
     match item.kind {
         ItemKind::Gun => {
             if player.reload_left > 0 {
@@ -829,7 +851,7 @@ fn use_item(world: &mut World, id: u32) {
             let empty = held.ammo == 0;
             let wants_reload = buttons & BUTTON_RELOAD != 0 || (empty && (pressed));
             if wants_reload && held.ammo < item.mag {
-                player.reload_left = item.reload_ticks;
+                player.reload_left = item.reload_ticks * if lost & LIMB_ARMS != 0 { ONE_ARM_RELOAD } else { 1 };
                 return;
             }
             let trigger = if item.auto { pressed } else { fresh };
@@ -881,10 +903,13 @@ fn use_item(world: &mut World, id: u32) {
                 player.channel_left -= 1;
                 if player.channel_left == 0 {
                     spend(&mut player.hotbar[slot]);
-                    let mut health = world.entities.of_mut::<Health>(id);
-                    health.hp = health.hp.saturating_add(item.damage).min(PLAYER_MAX_HP);
+                    {
+                        let mut health = world.entities.of_mut::<Health>(id);
+                        health.hp = health.hp.saturating_add(item.damage).min(PLAYER_MAX_HP);
+                    }
+                    super::limbs::bandaged(world, id);
                 }
-            } else if fresh && hp < PLAYER_MAX_HP {
+            } else if fresh && (hp < PLAYER_MAX_HP || lost != 0) {
                 player.channel_left = BANDAGE_TICKS;
             }
         }

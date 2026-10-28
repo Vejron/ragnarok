@@ -431,3 +431,34 @@ fn walls_follow_the_edge_of_an_l_shaped_world() {
     }
     assert!(character.position[0] > 50.0 && character.position[0] < 100.0, "{:?}", character.position);
 }
+
+#[test]
+fn one_legged_it_hops_along_slower_than_a_walk_and_cannot_run() {
+    let physics = Physics::new(&flat_world()).unwrap();
+    let mut character = Character { lost: shared::protocol::LIMB_LEG_L, ..standing() };
+    let sprint = InputFrame { seq: 1, forward: 127, buttons: BUTTON_RUN, ..Default::default() };
+    let (mut landings, mut was_grounded) = (0, true);
+    for _ in 0..2 * TICK_RATE {
+        physics.move_character(&mut character, &sprint, TICK_DT);
+        if character.grounded && !was_grounded {
+            landings += 1;
+        }
+        was_grounded = character.grounded;
+    }
+    assert!(landings >= 2, "it hops: landed {landings} times");
+    let gone = -character.position[2];
+    assert!(gone > 2.0 * WALK_SPEED * HOP_SCALE * 0.8 && gone < 2.0 * WALK_SPEED * 0.7, "{gone} m in 2 s");
+    assert_eq!(character.spent, 0, "hopping is not running");
+}
+
+#[test]
+fn with_no_legs_it_lies_down_for_good_and_crawls() {
+    let physics = Physics::new(&flat_world()).unwrap();
+    let mut character = Character { lost: shared::protocol::LIMB_LEGS, ..standing() };
+    let stand_and_go = InputFrame { seq: 1, forward: 127, buttons: BUTTON_RUN | BUTTON_JUMP, ..Default::default() };
+    for _ in 0..TICK_RATE {
+        physics.move_character(&mut character, &stand_and_go, TICK_DT);
+    }
+    assert!(character.prone && character.grounded);
+    assert!((-character.position[2] - PRONE_SPEED * LEGLESS_CRAWL_SCALE).abs() < 0.1, "{:?}", character.position);
+}

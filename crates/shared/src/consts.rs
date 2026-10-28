@@ -1,7 +1,7 @@
 //! Simulation and network constants. `client/scripts/gen-consts.ts` generates the client's copy from this file: run `npm run gen:consts` in `client` after editing.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 50;
+pub const PROTOCOL_VERSION: u8 = 51;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -159,6 +159,29 @@ pub const STANCE_CHUTE: u8 = 2;
 pub const HEAD_ZONE_Y: f32 = 0.45;
 /// What a headshot does to the damage.
 pub const HEADSHOT_MULT: f32 = 2.0;
+
+/// Limbs. A round below this height over the capsule centre hit a leg (the hips are about 0.75 m up),
+/// and one between there and the head this far or more to the side of the body's middle (the outer
+/// edge of the 0.35 m capsule), an arm.
+pub const HIP_ZONE_Y: f32 = -0.1;
+pub const ARM_ZONE_X: f32 = 0.25;
+/// What a round in a limb does to health, of what it would do to the body.
+pub const LIMB_DAMAGE_MULT: f32 = 0.75;
+/// A limb comes off at a hit this big, or once this much has been done to it in all (four AK5 rounds).
+pub const SEVER_HIT: u8 = 40;
+pub const SEVER_WEAR: u8 = 40;
+/// One leg: each step is a hop up at this speed, m/s, at this share of walking speed; no running or sliding.
+pub const HOP_SPEED: f32 = 2.6;
+pub const HOP_SCALE: f32 = 0.55;
+/// One leg: a jump's take-off speed.
+pub const HOP_JUMP_SPEED: f32 = 4.5;
+/// No legs: always lying down, crawling at this share of `PRONE_SPEED`.
+pub const LEGLESS_CRAWL_SCALE: f32 = 0.7;
+/// One arm: a gun's spread grows by this, radians (aiming no longer steadies it), and a reload takes this many times as long.
+pub const ONE_ARM_SPREAD: f32 = 0.035;
+pub const ONE_ARM_RELOAD: u32 = 2;
+/// One arm: how far the aim wanders, radians, as the client sways the look it sends.
+pub const ONE_ARM_SWAY: f32 = 0.03;
 
 /// Character controller tuning. The client builds its Rapier controller from the same values.
 pub const CONTROLLER_OFFSET: f32 = 0.02;

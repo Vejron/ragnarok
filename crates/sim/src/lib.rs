@@ -13,7 +13,7 @@ use rapier3d::prelude::*;
 use shared::carve::{Shell, Tri};
 use shared::consts::*;
 use shared::movement::{begin_slide, decay_knock, desired_translation, settle_vertical, spend_stamina, steer_chute, toggle_chute};
-use shared::protocol::InputFrame;
+use shared::protocol::{InputFrame, LIMB_LEGS};
 use shared::quant::from_cm;
 use shared::terrain::Ground;
 use shared::world::{ObjId, WorldFile};
@@ -49,6 +49,8 @@ pub struct Character {
     pub spent: u16,
     /// Ran out of stamina and has not got enough back: running is walking, jumps are low.
     pub winded: bool,
+    /// The limbs it has lost (`LIMB_*`): one leg hops, none crawls. The server sets it; it does not change here.
+    pub lost: u8,
 }
 
 pub struct Physics {
@@ -628,12 +630,19 @@ impl Physics {
 
     /// `move_character` with walking speed multiplied by `speed_scale` (aiming a gun slows you).
     pub fn move_character_scaled(&self, character: &mut Character, input: &InputFrame, dt: f32, speed_scale: f32) {
+        let (input, speed_scale, hop) = legged(character, input, speed_scale);
+        let input = &input;
         character.chute = toggle_chute(character.chute, character.grounded, character.prone, input);
         self.change_stance(character, input.buttons() & BUTTON_PRONE != 0 && !character.chute);
         character.knock = if character.chute { steer_chute(character.knock, input) } else { begin_slide(character.knock, character.grounded, input) };
         let (spent, winded, jump_speed) = spend_stamina(character.spent, character.winded, character.grounded, character.prone, input);
         character.spent = spent;
         character.winded = winded;
+        // One leg: every step is a hop, which costs no more than walking; a jump is a bigger one.
+        let (input, jump_speed) = match hop {
+            Some(speed) => (&InputFrame { buttons: input.buttons | BUTTON_JUMP, ..*input }, speed),
+            None => (input, if character.lost & LIMB_LEGS != 0 { HOP_JUMP_SPEED } else { jump_speed }),
+        };
         // Winded, run held is a walk.
         let input = &if winded { InputFrame { buttons: input.buttons & !BUTTON_RUN, ..*input } } else { *input };
         let (vy, desired) = desired_translation(character.vy, character.grounded, character.knock, input, dt, speed_scale, character.chute, jump_speed);
@@ -698,6 +707,26 @@ impl Physics {
             character.prone = wants_prone;
         }
     }
+}
+
+/// What a character that has lost legs (`Character::lost`) can make of `input`, at `speed_scale`: with
+/// one it cannot run, slide or crouch, goes at `HOP_SCALE`, and hops along while it walks on the ground
+/// (the hop's take-off speed, if it hops this tick); with none it lies down for good and crawls at
+/// `LEGLESS_CRAWL_SCALE`, and cannot jump.
+fn legged(character: &Character, input: &InputFrame, speed_scale: f32) -> (InputFrame, f32, Option<f32>) {
+    let legs = character.lost & LIMB_LEGS;
+    if legs == 0 {
+        return (*input, speed_scale, None);
+    }
+    if legs == LIMB_LEGS {
+        let buttons = (input.buttons & !(BUTTON_JUMP | BUTTON_RUN | BUTTON_CROUCH | BUTTON_SLIDE)) | BUTTON_PRONE;
+        return (InputFrame { buttons, ..*input }, speed_scale * LEGLESS_CRAWL_SCALE, None);
+    }
+    let buttons = input.buttons & !(BUTTON_RUN | BUTTON_CROUCH | BUTTON_SLIDE);
+    let jumping = buttons & BUTTON_JUMP != 0;
+    let walking = (input.forward != 0 || input.strafe != 0) && buttons & BUTTON_PRONE == 0 && !character.prone;
+    let hop = (character.grounded && walking && !jumping).then_some(HOP_SPEED);
+    (InputFrame { buttons, ..*input }, speed_scale * HOP_SCALE, hop)
 }
 
 /// Adds a vehicle's horizontal velocity to a character's knockback, within the wire's limit.

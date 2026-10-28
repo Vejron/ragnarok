@@ -346,6 +346,12 @@ replicated! {
     /// a field mortar's range dial; and `TURRET_*` flags.
     Turret { yaw: i16 as mrad, pitch: i16 as mrad, shots: u8, range: u16 as dm, flags: u8 }
 
+    set 7 limbs
+    /// The limbs a stickman has lost (`LIMB_*`, low four bits) and the stumps that still bleed (the same
+    /// bits above `LIMB_BLEED_SHIFT`). Absent while whole. Ids 7 and 10 were the vehicle's `crew` and
+    /// `seats`.
+    Limbs { lost: u8 }
+
     set 8 thrust
     /// What is left of a Roadster's air, a hen's wings' stamina or a drone's battery, 0..=255 of full,
     /// and the `THRUST_*` flags: the nozzles firing, a hen's glide or lift, a drone still linked.
@@ -403,7 +409,7 @@ replicated! {
     set 20 seated
     /// A player sitting in seat `seat` of vehicle `vehicle` (0 drives). They have no `place` of their
     /// own unless their body stays behind (a drone's pilot): they are where the kind's seat puts them.
-    /// Ids 7 and 10 were the vehicle's `crew` and `seats`, which this replaced.
+    /// Id 10 was the vehicle's `seats`, which this replaced.
     Seated { vehicle: u32, seat: u8 }
 
     diff 21 look

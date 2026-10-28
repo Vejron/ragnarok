@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 50
+export const PROTOCOL_VERSION = 51
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -232,6 +232,38 @@ export const HEAD_ZONE_Y = 0.45
 
 /** What a headshot does to the damage. */
 export const HEADSHOT_MULT = 2.0
+
+/**
+ * Limbs. A round below this height over the capsule centre hit a leg (the hips are about 0.75 m up),
+ * and one between there and the head this far or more to the side of the body's middle (the outer
+ * edge of the 0.35 m capsule), an arm.
+ */
+export const HIP_ZONE_Y = -0.1
+export const ARM_ZONE_X = 0.25
+
+/** What a round in a limb does to health, of what it would do to the body. */
+export const LIMB_DAMAGE_MULT = 0.75
+
+/** A limb comes off at a hit this big, or once this much has been done to it in all (four AK5 rounds). */
+export const SEVER_HIT = 40
+export const SEVER_WEAR = 40
+
+/** One leg: each step is a hop up at this speed, m/s, at this share of walking speed; no running or sliding. */
+export const HOP_SPEED = 2.6
+export const HOP_SCALE = 0.55
+
+/** One leg: a jump's take-off speed. */
+export const HOP_JUMP_SPEED = 4.5
+
+/** No legs: always lying down, crawling at this share of `PRONE_SPEED`. */
+export const LEGLESS_CRAWL_SCALE = 0.7
+
+/** One arm: a gun's spread grows by this, radians (aiming no longer steadies it), and a reload takes this many times as long. */
+export const ONE_ARM_SPREAD = 0.035
+export const ONE_ARM_RELOAD = 2
+
+/** One arm: how far the aim wanders, radians, as the client sways the look it sends. */
+export const ONE_ARM_SWAY = 0.03
 
 /** Character controller tuning. The client builds its Rapier controller from the same values. */
 export const CONTROLLER_OFFSET = 0.02

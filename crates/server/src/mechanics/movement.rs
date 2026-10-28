@@ -15,12 +15,14 @@ impl Mechanic for Movement {
     fn on_tick(&mut self, world: &mut World, dt: f32) {
         for id in world.entities.ids::<With<Player>>() {
             let alive = world.entities.alive(id);
+            let lost = super::limbs::lost(world, id);
             let mut player = world.entities.of_mut::<Player>(id);
             if player.seat.is_some() || !alive {
                 continue;
             }
             let player = &mut *player;
             let character = &mut player.character;
+            character.lost = lost;
             let velocity = world.physics.car_pose(character.ride).map(|pose| pose.velocity);
             let slot = (player.input.slot() as usize).min(HOTBAR_SLOTS - 1);
             let scale = aim_speed_scale(player.hotbar[slot].item, player.input.buttons());

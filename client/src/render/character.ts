@@ -6,6 +6,7 @@ import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, PRONE_CENTRE, RUN_SPEED, STAND_CEN
 import { ITEM_AK5, ITEM_AT_RIFLE, ITEM_BANDAGE, ITEM_BRICKS, ITEM_CARL_GUSTAF, ITEM_FLARE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, itemDef, type ItemDef } from '@/sim/items'
 import { type Limb, poseLimb, splitLimbs } from './gibs'
 import { colorFor } from '@/profile'
+import { LIMB_ALL, LIMB_ARM_R } from '@/net/codec'
 
 /** Gravity on a thrown body, m/s². */
 const FLING_GRAVITY = 14
@@ -38,6 +39,18 @@ const WEAPON_MESH: Record<number, string> = {
   [ITEM_AT_RIFLE]: 'weapon_sniper',
 }
 /** The muzzle bone of the stance whose hand pose a gun is modelled in; none for the hands-low stance. */
+/** The bones a lost limb is shrunk away at, in `LIMB_*` bit order. */
+const LIMB_BONES = ['upper_arm_L', 'upper_arm_R', 'thigh_L', 'thigh_R']
+
+/** The `LIMB_*` bit a gib (`limbOf`'s key) belongs to; 0 for the head and the torso. */
+function limbBit(key: string): number {
+  const side = key.endsWith('_L') ? 0 : key.endsWith('_R') ? 1 : -1
+  if (side < 0) return 0
+  if (key.startsWith('upper_arm') || key.startsWith('forearm')) return 1 << side
+  if (key.startsWith('thigh') || key.startsWith('shin')) return 1 << (2 + side)
+  return 0
+}
+
 const MUZZLE_BONE: Record<Stance, string | null> = { rifle: 'muzzle', pistol: 'muzzle_pistol', hold: null, shoulder: 'muzzle_shoulder' }
 
 /**
@@ -215,6 +228,13 @@ export class Character {
   private gibbed = false
   private readonly head: Node | null
   private headless = false
+  /** The bone each limb hangs from, in `LIMB_*` bit order: left arm, right arm, left leg, right leg. */
+  private readonly limbBones: (Node | null)[]
+  /** The right hand, which holds the gun: kept its size when the right arm is gone. */
+  private readonly gunHand: Node | null
+  /** The limbs it has lost (`LIMB_*`), and whether it has been told yet. */
+  private lostLimbs = 0
+  private limbsKnown = false
   /** A body thrown by its killing blow: where it has got to, relative to where it died. */
   private fling: { velocity: THREE.Vector3; spin: THREE.Vector3; offset: THREE.Vector3; groundAt: (x: number, z: number) => number } | null = null
   private readonly tumble = new THREE.Quaternion()
@@ -238,6 +258,8 @@ export class Character {
     this.chest = this.object.getObjectByName('chest') ?? null
     this.spine = this.object.getObjectByName('spine') ?? null
     this.head = this.object.getObjectByName('head') ?? null
+    this.limbBones = LIMB_BONES.map((name) => this.object.getObjectByName(name) ?? null)
+    this.gunHand = this.object.getObjectByName('hand_R') ?? null
     for (const stance of Object.keys(MUZZLE_BONE) as Stance[]) {
       const bone = MUZZLE_BONE[stance] ? this.object.getObjectByName(MUZZLE_BONE[stance]!) : null
       if (bone) this.muzzleBones.set(stance, bone)
@@ -391,6 +413,7 @@ export class Character {
 
     this.animator.update(dt)
     this.head?.scale.setScalar(this.headless ? 0.001 : 1)
+    this.hideLimbs()
     this.recoil = chase(this.recoil, 0, RECOIL_DECAY, dt)
     this.aim()
     // A slide carries the body along its heading, rifle and all, rather than where the camera looks.
@@ -428,6 +451,7 @@ export class Character {
     }
     this.animator.update(dt)
     this.head?.scale.setScalar(this.headless ? 0.001 : 1)
+    this.hideLimbs()
     this.recoil = chase(this.recoil, 0, RECOIL_DECAY, dt)
     this.aim()
 
@@ -502,6 +526,41 @@ export class Character {
     this.tumble.identity()
   }
 
+  /**
+   * The limbs it has lost now, from its `limbs` (`LIMB_*`; the bleeding bits above are ignored), and
+   * which of them are new since it was last told: none the first time, or once it is in pieces. The
+   * round that kills can take a limb too, so a body lying dead still loses one.
+   */
+  setLimbs(wire: number): number {
+    const lost = wire & LIMB_ALL
+    const gained = this.limbsKnown && !this.gibbed ? lost & ~this.lostLimbs : 0
+    this.lostLimbs = lost
+    this.limbsKnown = true
+    return gained
+  }
+
+  /** The limbs it has lost (`LIMB_*`). */
+  get limbs() {
+    return this.lostLimbs
+  }
+
+  /** Where the stump of `limb` (a `LIMB_*` bit) is in the world: the shoulder or the hip. */
+  stump(limb: number, out = new THREE.Vector3()): THREE.Vector3 {
+    const bone = this.limbBones[Math.log2(limb)]
+    if (!bone) return out.copy(this.position)
+    this.object.updateWorldMatrix(true, true)
+    return bone.getWorldPosition(out)
+  }
+
+  /**
+   * Shrinks each lost limb to nothing at its root bone. The gun is skinned to the right hand, so with
+   * the right arm gone that hand is grown back to size: the gun stays, held at the shoulder.
+   */
+  private hideLimbs() {
+    this.limbBones.forEach((bone, i) => bone?.scale.setScalar(this.lostLimbs & (1 << i) ? 0.001 : 1))
+    this.gunHand?.scale.setScalar(this.lostLimbs & LIMB_ARM_R ? 1000 : 1)
+  }
+
   /** The head is gone (it is thrown separately, see `shatter`). */
   decapitate() {
     this.headless = true
@@ -521,6 +580,8 @@ export class Character {
       if (!limbs) this.crowd.limbs.set(mesh.geometry, (limbs = splitLimbs(mesh)))
       for (const limb of limbs) {
         if (only && !only.includes(limb.key)) continue
+        // A limb already off has been thrown.
+        if (!only && this.lostLimbs & limbBit(limb.key)) continue
         const object = poseLimb(mesh, limb)
         if (object) pieces.push({ key: limb.key, object })
       }
@@ -598,6 +659,9 @@ export class Character {
       // Respawned: whole again, upright and drawn.
       this.gibbed = false
       this.headless = false
+      this.lostLimbs = 0
+      this.limbsKnown = false
+      this.hideLimbs()
       this.fling = null
       this.tumble.identity()
       this.head?.scale.setScalar(1)

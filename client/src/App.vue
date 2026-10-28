@@ -7,7 +7,7 @@ import TouchControls from './TouchControls.vue'
 import type { InputController } from './sim/input'
 import { colorFor, cssColor, isBot, nameFor } from './profile'
 import type { Look } from './render/look'
-import { WEAPON_AP, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_EGG, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK } from './net/codec'
+import { LIMB_ARM_L, LIMB_ARM_R, LIMB_LEG_L, LIMB_LEG_R, WEAPON_AP, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_EGG, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK } from './net/codec'
 import { HEN_EGGS } from './sim/consts'
 
 const container = ref<HTMLElement | null>(null)
@@ -81,6 +81,14 @@ const mark = (weapon: number) =>
   weapon === WEAPON_SHELL || weapon === WEAPON_AP || weapon === WEAPON_AUTOCANNON || weapon === WEAPON_ROCKET || weapon === WEAPON_GRENADE || weapon === WEAPON_WRECK || weapon === WEAPON_BOMB || weapon === WEAPON_EGG
     ? '💥'
     : weapon === WEAPON_REVOLVER ? '›‹' : '›'
+
+/** The HUD's stick figure's limbs, `LIMB_*` bit by bit, as lines from the shoulders or hips. */
+const limbParts = [
+  { bit: LIMB_ARM_L, from: [20, 18], to: [7, 32] },
+  { bit: LIMB_ARM_R, from: [20, 18], to: [33, 32] },
+  { bit: LIMB_LEG_L, from: [20, 36], to: [10, 60] },
+  { bit: LIMB_LEG_R, from: [20, 36], to: [30, 60] },
+]
 
 const markCanvas = ref<HTMLCanvasElement | null>(null)
 const backOut = (t: number) => 1 + 2.70158 * (t - 1) ** 3 + 1.70158 * (t - 1) ** 2
@@ -211,6 +219,12 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
   <div v-if="stats?.callouts.length" class="callouts">
     <div v-for="line in stats.callouts" :key="line.text" :class="line.tone" :style="{ opacity: line.alpha }">{{ line.text }}<template v-if="line.count > 1"> ×{{ line.count }}</template></div>
   </div>
+  <svg v-if="stats?.hands && stats.limbs" class="body-map" viewBox="0 0 40 64" aria-label="limbs">
+    <circle cx="20" cy="8" r="6" />
+    <line x1="20" y1="14" x2="20" y2="36" />
+    <line v-for="part in limbParts" :key="part.bit" :x1="part.from[0]" :y1="part.from[1]" :x2="part.to[0]" :y2="part.to[1]"
+      :class="{ lost: stats.limbs.lost & part.bit, bleeding: stats.limbs.bleeding & part.bit }" />
+  </svg>
   <div v-if="stats?.hands" class="health" :class="{ low: stats.hp <= stats.maxHp / 4, hurt: stats.hurt > 0.3 }">
     <div class="health-fill" :style="{ width: (100 * stats.hp) / stats.maxHp + '%' }" />
     <span>{{ stats.hp }}</span>
@@ -389,6 +403,11 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
   position: fixed; left: 16px; bottom: 16px; width: 220px; height: 22px; border-radius: 999px; overflow: hidden; pointer-events: none;
   background: rgba(255, 255, 255, 0.55); box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.25);
 }
+.body-map { position: fixed; left: 16px; bottom: 46px; width: 30px; height: 48px; pointer-events: none; }
+.body-map circle, .body-map line { stroke: rgba(255, 255, 255, 0.85); stroke-width: 4; stroke-linecap: round; fill: none; }
+.body-map line.lost { stroke: rgba(255, 255, 255, 0.15); }
+.body-map line.lost.bleeding { stroke: #ff5a5f; animation: bleeding 0.9s ease-in-out infinite; }
+@keyframes bleeding { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 .health.hurt { box-shadow: 0 0 0 2px #ff5a5f, 0 0 12px rgba(255, 90, 95, 0.8); }
 .vignette {
   position: fixed; inset: 0; pointer-events: none;

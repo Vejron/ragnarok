@@ -17,20 +17,35 @@ export interface CalloutView {
   alpha: number
 }
 
-/** What the player is told about rounds meeting a vehicle's armour: their own, or ones that hit their vehicle. */
+/**
+ * What the player is told about rounds meeting a vehicle's armour (their own, or ones that hit their
+ * vehicle) and about limbs coming off (`say`).
+ */
 export class Callouts {
   private lines: { line: CalloutLine; at: number; count: number }[] = []
 
   receive(message: ArmorMessage, now: number) {
-    for (const line of calloutLines(message, message.role === HIT_DEALT).reverse()) {
-      const same = this.lines.find((shown) => shown.line.text === line.text && now - shown.at < JOIN_MS)
-      if (same) {
-        same.count++
-        same.at = now
-        continue
-      }
-      this.lines.unshift({ line, at: now, count: 1 })
+    for (const line of calloutLines(message, message.role === HIT_DEALT).reverse()) this.add(line, now)
+    this.trim()
+  }
+
+  /** Shows one `line`, as a round's would be. */
+  say(line: CalloutLine, now: number) {
+    this.add(line, now)
+    this.trim()
+  }
+
+  private add(line: CalloutLine, now: number) {
+    const same = this.lines.find((shown) => shown.line.text === line.text && now - shown.at < JOIN_MS)
+    if (same) {
+      same.count++
+      same.at = now
+      return
     }
+    this.lines.unshift({ line, at: now, count: 1 })
+  }
+
+  private trim() {
     this.lines.sort((a, b) => b.at - a.at)
     this.lines.length = Math.min(this.lines.length, MAX_CALLOUTS)
   }

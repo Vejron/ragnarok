@@ -8,6 +8,7 @@ mod combat;
 mod drones;
 mod gunnery;
 mod life;
+mod limbs;
 mod movement;
 mod npcs;
 mod pickups;
@@ -25,6 +26,7 @@ pub use armor::ArmorHit;
 pub use drones::Drones;
 pub use gunnery::Gunnery;
 pub use life::{Life, record_trails};
+pub use limbs::{Limbs, lost as limbs_lost};
 pub use movement::Movement;
 pub use npcs::{Npcs, calling};
 pub use pickups::Pickups;
@@ -68,6 +70,7 @@ pub fn register_components(ecs: &mut bevy_ecs::world::World) {
     ecs.register_component::<crate::game::Seats>();
     ecs.register_component::<crate::game::Player>();
     ecs.register_component::<crate::game::Bot>();
+    ecs.register_component::<limbs::Limbs>();
     projectiles::register(ecs);
 }
 

@@ -67,6 +67,7 @@ pub(super) fn place(world: &mut World, id: u32) {
     };
     // Bots cannot steer a canopy, so they start on the ground.
     let drop = !world.entities.has::<Bot>(id);
+    super::limbs::restore(world, id);
     if let Some(mut player) = world.entities.get_mut::<Player>(id) {
         let (x, z) = (from_cm(point[0]), from_cm(point[1]));
         let ground = world.map.ground.height_at(x, z);

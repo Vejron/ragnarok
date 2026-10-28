@@ -11,6 +11,7 @@
 
 use super::*;
 use crate::entities::{Health, NetKind, Transform, With};
+use crate::mechanics::Limbs;
 use shared::mounts::Show;
 use shared::replicated::{self as wire, Replicated, Scene};
 use shared::vehicles::{Exposure, vehicle_def};
@@ -22,9 +23,11 @@ impl Game {
         scene.extend(self.world.entities.all::<Player>().map(|(id, player)| {
             let shown = if player.embodied() { stickman(player, self.world.entities.alive(id)) } else { self.rider(player) };
             let seated = player.seat.map(|seat| wire::Seated { vehicle: seat.vehicle, seat: seat.index as u8 });
-            let shown = Replicated { seated, ..shown };
+            let one_arm = crate::mechanics::limbs_lost(&self.world, id) & LIMB_ARMS != 0;
+            let limbs = self.world.entities.get::<Limbs>(id).map(|limbs| wire::Limbs { lost: limbs.wire() });
+            let shown = Replicated { seated, limbs, ..shown };
             let hp = self.world.entities.get::<Health>(id).map_or(0, |health| health.hp);
-            (id, Replicated { vitals: Some(wire::Vitals { hp, progress: progress(player), spent: player.character.spent, winded: player.character.winded.into() }), hotbar: Some(wire::Hotbar { slots: player.hotbar }), ..shown })
+            (id, Replicated { vitals: Some(wire::Vitals { hp, progress: progress(player, one_arm), spent: player.character.spent, winded: player.character.winded.into() }), hotbar: Some(wire::Hotbar { slots: player.hotbar }), ..shown })
         }));
         scene.extend(self.creatures());
         scene.extend(self.world.entities.all::<Vehicle>().filter_map(|(id, vehicle)| Some((id, self.vehicle(id, vehicle)?))));
@@ -177,13 +180,15 @@ fn stickman(player: &Player, alive: bool) -> Replicated {
     }
 }
 
-/// How far the player's reload or bandage has got, 0..=255, or 0 when neither is going on.
-fn progress(player: &Player) -> u8 {
+/// How far the player's reload or bandage has got, 0..=255, or 0 when neither is going on. A reload in
+/// `one_arm` takes `ONE_ARM_RELOAD` times as long.
+fn progress(player: &Player, one_arm: bool) -> u8 {
     use shared::items::{BANDAGE_TICKS, def};
     let (left, total) = if player.channel_left > 0 {
         (player.channel_left, BANDAGE_TICKS)
     } else if player.reload_left > 0 {
-        (player.reload_left, def(player.held().item).map_or(1, |d| d.reload_ticks.max(1)))
+        let slow = if one_arm { ONE_ARM_RELOAD } else { 1 };
+        (player.reload_left, def(player.held().item).map_or(1, |d| d.reload_ticks.max(1)) * slow)
     } else {
         return 0;
     };

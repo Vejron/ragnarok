@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL } from '@/net/codec'
+import { DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, LIMB_ARM_L, LIMB_ARM_R, LIMB_LEG_L, LIMB_LEG_R } from '@/net/codec'
 import type { Character } from './character'
 import type { Debris } from './debris'
 import type { Effects } from './effects'
@@ -10,6 +10,13 @@ const GIB_LIFE = 9
 /** Height of a limb's centre above the ground when it lies there, metres. */
 const GIB_REST = 0.12
 const BLOOD = [0x9a0b0b, 0xb81414, 0x6e0808]
+/** The pieces (`limbOf` keys) each `LIMB_*` bit takes off: the whole arm or leg. */
+const LIMB_PIECES: [number, string[]][] = [
+  [LIMB_ARM_L, ['upper_arm_L', 'forearm_L']],
+  [LIMB_ARM_R, ['upper_arm_R', 'forearm_R']],
+  [LIMB_LEG_L, ['thigh_L', 'shin_L']],
+  [LIMB_LEG_R, ['thigh_R', 'shin_R']],
+]
 
 /** A thing that bleeds as it moves, for a while. */
 interface Trail {
@@ -57,6 +64,36 @@ export class Gore {
       avatar.launch(velocity, side.multiplyScalar(power * 0.9).add(new THREE.Vector3(spread(1.5), spread(1.5), spread(1.5))), groundAt)
       this.mist(centre, 8, 3, dir)
       this.bleed(() => avatar.position, 0.5, 40)
+    }
+  }
+
+  /**
+   * The limbs in `limbs` (`LIMB_*` bits) come off a living `avatar`: each is thrown off the body and
+   * spins away bleeding, and the stump sprays.
+   */
+  sever(avatar: Character, limbs: number) {
+    for (const [bit, keys] of LIMB_PIECES) {
+      if (!(limbs & bit)) continue
+      const stump = avatar.stump(bit)
+      const out = new THREE.Vector3().subVectors(stump, avatar.position).setY(0)
+      if (out.lengthSq() < 1e-4) out.set(spread(1), 0, spread(1))
+      out.normalize()
+      for (const { object } of avatar.shatter(keys)) {
+        const velocity = out.clone().multiplyScalar(2 + Math.random() * 2).add(new THREE.Vector3(spread(1), 2.5 + Math.random() * 2, spread(1)))
+        this.debris.throw(object, velocity, new THREE.Vector3(spread(12), spread(12), spread(12)), GIB_REST, GIB_LIFE)
+        this.bleed(() => object.position, 0.8, 40)
+      }
+      this.mist(stump, 12, 3.5, out)
+      this.bleed(() => avatar.stump(bit, stump), 1.2, 70, 2.5)
+    }
+  }
+
+  /** A drop or two from each of `avatar`'s stumps in `bleeding` (`LIMB_*` bits) that still bleeds. */
+  drip(avatar: Character, bleeding: number) {
+    for (const [bit] of LIMB_PIECES) {
+      if (!(bleeding & bit)) continue
+      const stump = new THREE.Vector3()
+      this.bleed(() => avatar.stump(bit, stump), 0.25, 14, 1)
     }
   }
 
