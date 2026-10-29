@@ -940,7 +940,7 @@ fn one_round_from(game: &mut Game, shooter: u32, item: u8, distance: f32) {
 }
 
 #[test]
-fn a_shotgun_kills_at_point_blank_and_credits_the_shooter() {
+fn two_shotgun_blasts_kill_at_point_blank_and_credit_the_shooter() {
     let (mut game, shooter, target, mut seq, _) = duel();
     give(&mut game, shooter, 4, ITEM_SHOTGUN, 1);
     stand_at(&mut game, target, 3.0);
@@ -949,7 +949,15 @@ fn a_shotgun_kills_at_point_blank_and_credits_the_shooter() {
     for _ in 0..6 {
         press(&mut game, shooter, &mut seq, BUTTON_FIRE | BUTTON_ALT, 4, -0.46);
     }
-    assert_eq!(game.world.entities.of::<crate::entities::Health>(target).hp, 0, "ten pellets at three metres are lethal");
+    assert!(game.world.entities.alive(target), "ten pellets are short of a soldier's full health");
+    // Let go, wait out the pump, and again.
+    for _ in 0..70 {
+        press(&mut game, shooter, &mut seq, BUTTON_ALT, 4, -0.46);
+    }
+    for _ in 0..6 {
+        press(&mut game, shooter, &mut seq, BUTTON_FIRE | BUTTON_ALT, 4, -0.46);
+    }
+    assert_eq!(game.world.entities.of::<crate::entities::Health>(target).hp, 0, "twenty at three metres are lethal");
     assert_eq!(game.world.entities.of::<Player>(shooter).kills, 1);
 }
 
@@ -1351,14 +1359,14 @@ fn hp_of(game: &Game, id: u32) -> u8 {
 }
 
 #[test]
-fn four_rifle_rounds_in_a_leg_take_it_off_and_three_do_not() {
+fn five_rifle_rounds_in_a_leg_take_it_off_and_four_do_not() {
     let (mut game, shooter, target, _, _) = duel();
     let round = ak5().damage;
-    for _ in 0..3 {
+    for _ in 0..4 {
         damage_entity(&mut game.world, target, Harm::new(round, Some(shooter), WEAPON_RIFLE).limb(Some(LIMB_LEG_L)));
     }
     assert_eq!(wounds_of(&game, target).lost, 0);
-    assert_eq!(wounds_of(&game, target).left()[3], LIMB_HP - 3 * round, "the leg took it");
+    assert_eq!(wounds_of(&game, target).left()[3], LIMB_HP - 4 * round, "the leg took it");
     assert_eq!(hp_of(&game, target), PLAYER_MAX_HP, "and the torso none of it");
     damage_entity(&mut game.world, target, Harm::new(round, Some(shooter), WEAPON_RIFLE).limb(Some(LIMB_LEG_L)));
     let limbs = wounds_of(&game, target);
@@ -1370,7 +1378,7 @@ fn four_rifle_rounds_in_a_leg_take_it_off_and_three_do_not() {
     let shown = game.replicated().into_iter().find(|(id, _)| *id == target).unwrap().1;
     assert_eq!(shown.limbs.map(|limbs| limbs.lost), Some(LIMB_LEG_L | (LIMB_LEG_L << LIMB_BLEED_SHIFT)));
     assert_eq!(shown.vitals.map(|vitals| vitals.parts), Some([HEAD_HP, LIMB_HP, LIMB_HP, 0, LIMB_HP]));
-    assert_eq!(shown.struck.map(|struck| (struck.count, struck.part)), Some((4, LIMB_LEG_L)), "everyone sees it flinch");
+    assert_eq!(shown.struck.map(|struck| (struck.count, struck.part)), Some((5, LIMB_LEG_L)), "everyone sees it flinch");
 }
 
 #[test]
@@ -1388,12 +1396,12 @@ fn limbs_never_kill_however_hard_they_are_hit() {
 fn the_head_has_health_of_its_own_and_kills_when_it_runs_out() {
     let (mut game, shooter, target, _, _) = duel();
     let round = ak5().damage;
-    for _ in 0..4 {
+    for _ in 0..6 {
         assert!(!damage_entity(&mut game.world, target, Harm::new(round, Some(shooter), WEAPON_RIFLE).head(true)));
     }
     assert_eq!(hp_of(&game, target), PLAYER_MAX_HP, "the torso is untouched");
-    assert_eq!(wounds_of(&game, target).left()[0], HEAD_HP - 4 * round);
-    assert!(damage_entity(&mut game.world, target, Harm::new(round, Some(shooter), WEAPON_RIFLE).head(true)), "the fifth kills");
+    assert_eq!(wounds_of(&game, target).left()[0], HEAD_HP - 6 * round);
+    assert!(damage_entity(&mut game.world, target, Harm::new(round, Some(shooter), WEAPON_RIFLE).head(true)), "the seventh kills");
     assert!(!game.world.entities.alive(target));
     // One sniper round does it alone.
     let (mut game, shooter, target, _, _) = duel();
@@ -1432,6 +1440,39 @@ fn a_rifle_round_low_on_the_body_lands_in_a_leg() {
     }
     let limbs = wounds_of(&game, target);
     assert!(limbs.lost & LIMB_LEGS != 0 || limbs.taken[2..4].iter().any(|&taken| taken > 0), "{limbs:?}, hp {}", hp_of(&game, target));
+}
+
+/// The first hit `target` takes from `shooter` aiming `pitch` off level, up to four tries.
+fn first_struck(pitch: f32) -> crate::mechanics::Struck {
+    let (mut game, shooter, target, mut seq, _) = duel();
+    for _ in 0..4 {
+        press(&mut game, shooter, &mut seq, BUTTON_FIRE, 0, pitch);
+        hold_slot(&mut game, shooter, &mut seq, 0, 0, 8);
+        if let Some(struck) = game.world.entities.get::<crate::mechanics::Struck>(target) {
+            return *struck;
+        }
+    }
+    panic!("never hit");
+}
+
+#[test]
+fn a_round_is_told_where_on_the_body_it_struck() {
+    // Low: the leg, well below where the soldier is drawn from, and on the near side of the body.
+    let low = first_struck(AIM_20M - 0.03);
+    assert!(low.at[1] < -20, "{low:?}");
+    assert!(low.at[2] > 0, "the side facing the shooter, who is to the +z: {low:?}");
+    assert!(low.at[0].abs() < 40, "{low:?}");
+    // High: the head, well above it.
+    let high = first_struck(AIM_20M + 0.035);
+    assert_eq!(high.part, shared::protocol::PART_HEAD, "{high:?}");
+    assert!(high.at[1] > 40, "{high:?}");
+}
+
+#[test]
+fn a_blast_does_not_say_where_on_the_body() {
+    let (mut game, shooter, target, _, _) = duel();
+    damage_entity(&mut game.world, target, Harm::new(10, Some(shooter), WEAPON_GRENADE));
+    assert_eq!(game.world.entities.of::<crate::mechanics::Struck>(target).at, [0; 3]);
 }
 
 #[test]
@@ -1486,4 +1527,72 @@ fn a_grenade_beside_someone_that_does_not_kill_them_can_take_a_leg() {
     let point = [feet[0] - 0.4, feet[1] - 0.8, feet[2]];
     super::super::limbs::blasted(&mut game.world, target, point, LIMB_HP, Some(shooter));
     assert_eq!(wounds_of(&game, target).lost, LIMB_LEG_L);
+}
+
+/// A blast with `knock` at its centre and no damage, `away` metres from `id` on the ground's level.
+fn shove(game: &mut Game, id: u32, away: f32, knock: f32) {
+    let at = game.world.entities.of::<Player>(id).character.position;
+    blast(&mut game.world, Blast { point: [at[0] - away, at[1], at[2]], radius: 6.0, damage: 0.0, knock, dir: [1.0, 0.0, 0.0], attacker: None, weapon: WEAPON_GRENADE });
+}
+
+fn down_of(game: &Game, id: u32) -> u8 {
+    game.world.entities.of::<Player>(id).character.down
+}
+
+#[test]
+fn a_blast_knocks_down_for_longer_the_closer_it_was_and_not_at_all_far_off() {
+    let mut downs = Vec::new();
+    // The blast hurts out to 6 m and throws out to twice that.
+    for away in [0.5, 7.0, 11.5] {
+        let (mut game, _, target, _, _) = duel();
+        shove(&mut game, target, away, KNOCK_MAX_SPEED);
+        downs.push(down_of(&game, target));
+    }
+    assert!(downs[0] > downs[1] && downs[1] > 0, "past where it hurts it still knocks down: {downs:?}");
+    assert_eq!(downs[2], 0, "at the edge of its reach it only shoves: {downs:?}");
+    assert!(downs[0] <= KNOCKDOWN_MAX_TICKS);
+}
+
+#[test]
+fn knocked_down_a_soldier_is_thrown_and_can_do_nothing_until_they_are_up() {
+    let (mut game, _, target, _, mut seq) = duel();
+    give(&mut game, target, 0, ITEM_AK5, 1);
+    let ammo = game.world.entities.of::<Player>(target).hotbar[0].ammo;
+    let before = game.world.entities.of::<Player>(target).character.position;
+    shove(&mut game, target, 0.5, KNOCK_MAX_SPEED);
+    assert!(down_of(&game, target) > 0);
+    // Firing, walking and jumping all come to nothing while down.
+    let mut flew = 0;
+    while down_of(&game, target) > 0 {
+        seq += 1;
+        // Up when the count runs out, and free to shoot then: a frame is played a tick after it is
+        // sent, so the trigger is let go a little before.
+        let buttons = if down_of(&game, target) > 3 { BUTTON_FIRE | BUTTON_JUMP } else { 0 };
+        game.handle(Command::Input(target, 0, vec![InputFrame { seq, strafe: 0, forward: -127, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 }]));
+        game.step();
+        flew += 1;
+        assert!(flew < 600, "never got up");
+    }
+    let after = game.world.entities.of::<Player>(target).character;
+    assert_eq!(game.world.entities.of::<Player>(target).hotbar[0].ammo, ammo, "not a shot fired");
+    assert!(after.position[0] - before[0] > 2.0, "thrown away from the blast: {:?} to {:?}", before, after.position);
+    assert!(after.grounded);
+    // Up again, they walk.
+    let up = after.position;
+    hold(&mut game, target, &mut seq, 0.0, 0, 1);
+    for _ in 0..30 {
+        seq += 1;
+        game.handle(Command::Input(target, 0, vec![InputFrame { seq, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
+        game.step();
+    }
+    assert!(game.world.entities.of::<Player>(target).character.position[2] < up[2] - 1.0);
+}
+
+#[test]
+fn knocked_down_shows_as_its_own_stance_and_the_owner_is_told_how_long() {
+    let (mut game, _, target, _, _) = duel();
+    shove(&mut game, target, 0.5, KNOCK_MAX_SPEED);
+    let shown = game.replicated().into_iter().find(|(id, _)| *id == target).unwrap().1;
+    assert_eq!(shown.flags.map(|flags| flags.stance), Some(STANCE_DOWN));
+    assert_eq!(shown.vitals.map(|vitals| vitals.down), Some(down_of(&game, target)));
 }

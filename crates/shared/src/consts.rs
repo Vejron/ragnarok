@@ -1,7 +1,7 @@
 //! Simulation and network constants. `client/scripts/gen-consts.ts` generates the client's copy from this file: run `npm run gen:consts` in `client` after editing.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 53;
+pub const PROTOCOL_VERSION: u8 = 56;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -157,13 +157,21 @@ pub const STANCE_STANDING: u8 = 0;
 pub const STANCE_PRONE: u8 = 1;
 /// Hanging under an open parachute.
 pub const STANCE_CHUTE: u8 = 2;
+/// Knocked down by a blast: thrown, then lying helpless until `Character::down` runs out (KNOCKDOWN.md).
+pub const STANCE_DOWN: u8 = 3;
+/// A blast that throws a soldier at least this hard, m/s, knocks them down.
+pub const KNOCKDOWN_POWER: f32 = 7.0;
+/// Ticks they lie there once landed: this many at `KNOCKDOWN_POWER`, rising evenly to
+/// `KNOCKDOWN_MAX_TICKS` at `KNOCK_MAX_SPEED`.
+pub const KNOCKDOWN_MIN_TICKS: u8 = 48;
+pub const KNOCKDOWN_MAX_TICKS: u8 = 150;
 /// A round that hits above this height over the capsule centre hit the head.
 pub const HEAD_ZONE_Y: f32 = 0.45;
 /// Body-part health. A soldier's torso has `PLAYER_MAX_HP`, its head `HEAD_HP` and each limb `LIMB_HP`.
 /// Only the torso or the head running out kills; a limb that runs out comes off, and what the round had
-/// left over is lost. A sniper round to the head kills, as do two revolver rounds or five AK5 rounds.
-pub const HEAD_HP: u8 = 50;
-pub const LIMB_HP: u8 = 40;
+/// left over is lost. A sniper round to the head kills, as do three revolver rounds or seven AK5 rounds.
+pub const HEAD_HP: u8 = 75;
+pub const LIMB_HP: u8 = 60;
 
 /// Limbs. A round below this height over the capsule centre hit a leg (the hips are about 0.75 m up),
 /// and one between there and the head this far or more to the side of the body's middle (the outer
@@ -811,7 +819,7 @@ pub const BACKPACK_RETURN_SECONDS: f32 = 60.0;
 pub const CARRY_BACKPACK: u8 = 1;
 
 /// Combat. Every player starts a life with `PLAYER_MAX_HP` and dies at zero.
-pub const PLAYER_MAX_HP: u8 = 100;
+pub const PLAYER_MAX_HP: u8 = 150;
 /// Ticks a dead player waits before respawning.
 pub const RESPAWN_TICKS: u32 = 3 * TICK_RATE;
 /// Guns are hitscans fired from the eye along the look direction; their stats are in `items`.

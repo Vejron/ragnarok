@@ -18,10 +18,11 @@ Conventions
   * Stances say how the arms hold things: `rifle` (both hands on the gun), `pistol` (both hands, out in front),
     `hold` (hands low, in front) and `shoulder` (a launcher tube on the right shoulder). Clips are baked per
     stance: the rifle's are named plainly (`idle`, `walk_fwd`, ...), the others carry a `pistol_` / `hold_` /
-    `shoulder_` prefix. `death`, `freefall` and `chute` are shared.
+    `shoulder_` prefix. `death`, `freefall`, `chute` and the get-ups are shared.
   * Clips: idle, walk_fwd/back/left/right, run_fwd/back/left/right, crouch_idle, crouch_fwd/back/left/
     right, crawl_idle, crawl_fwd/back/left/right, slide, jump_air, sit, death, freefall (a skydiver's box,
-    belly down about `FALL_PIVOT`) and chute (hanging under the canopy). The crawl is an army
+    belly down about `FALL_PIVOT`), chute (hanging under the canopy), and getup_back and getup_front
+    (up off the ground after a knockdown, through a squat). The crawl is an army
     crawl lying face down along -Y, resting on the ground at the origin's height. `sit` is a seat in a
     vehicle: hips dropped by `SIT_DROP`, thighs level and shins down, so the head ends up `SIT_HEAD`
     above the origin (the client places a seated player by it). Clips loop with a duplicated last key so the mixer wraps without a hitch.
@@ -712,6 +713,58 @@ def chute(t):
         pose_rot(f"foot_{side}", 0.5, 0, 0)
 
 
+
+def ease(x):
+    x = min(1.0, max(0.0, x))
+    return x * x * (3 - 2 * x)
+
+
+def mix(a, b, k):
+    return a + (b - a) * k
+
+
+# A deep squat, the middle of getting up: hips low, knees up, arms forward for balance.
+SQUAT = {"hips_z": -0.62, "hips": 0.5, "spine": 0.2, "chest": 0.1, "head": -0.1, "thigh": -1.9, "shin": 2.3, "foot": -0.4, "upper_arm": -0.6, "forearm": 0.4}
+
+
+def rise(t, lying, start):
+    """Getting up from flat on the ground (`lying`: the root's pitch, -pi/2 on the back with the head
+    behind, +pi/2 on the belly with it ahead) by way of `start`, the pose it has pushed itself into by
+    a third of the way (bone -> pitch), then a squat, then standing."""
+    a = ease(t / 0.35)
+    b = ease((t - 0.35) / 0.35)
+    c = ease((t - 0.7) / 0.3)
+    # Pushed up, then rolled onto the feet into the squat, then up out of it.
+    pose = {key: mix(mix(0.0, value, a), SQUAT.get(key, 0.0), b) for key, value in start.items()}
+    pose = {key: mix(value, 0.0, c) for key, value in pose.items()}
+    pose_rot("root", mix(lying, 0.0, b), 0, 0)
+    pose_loc("root", (0, 0, mix(0.13, 0.0, b)))
+    pose_loc("hips", (0, 0, mix(0.0, mix(SQUAT["hips_z"], 0.0, c), b)))
+    pose_rot("hips", pose["hips"], 0, 0)
+    pose_rot("spine", pose["spine"], 0, 0)
+    pose_rot("chest", pose["chest"], 0, 0)
+    pose_rot("head", pose["head"], 0, 0)
+    for side, s in (("L", 1), ("R", -1)):
+        pose_rot(f"thigh_{side}", pose["thigh"], s * 0.1 * (1 - c), 0)
+        pose_rot(f"shin_{side}", pose["shin"], 0, 0)
+        pose_rot(f"foot_{side}", pose["foot"], 0, 0)
+        pose_rot(f"upper_arm_{side}", pose["upper_arm"], -s * 0.15 * (1 - c), 0)
+        pose_rot(f"forearm_{side}", pose["forearm"], 0, 0)
+        pose_rot(f"hand_{side}", 0, 0, 0)
+
+
+def getup_back(t):
+    """Up from flat on the back: sits up with the hands pushing behind, feet drawn in, rolls forward
+    onto them into a squat and stands."""
+    rise(t, -math.pi / 2, {"hips_z": 0.0, "hips": 1.45, "spine": 0.15, "chest": 0.1, "head": 0.2, "thigh": -1.95, "shin": 1.4, "foot": -0.3, "upper_arm": 0.7, "forearm": 0.2})
+
+
+def getup_front(t):
+    """Up from flat on the belly: pushes the chest up on straight arms, brings the knees under into a
+    squat and stands."""
+    rise(t, math.pi / 2, {"hips_z": 0.0, "hips": -0.6, "spine": -0.2, "chest": -0.1, "head": -0.4, "thigh": 0.0, "shin": 0.3, "foot": 0.3, "upper_arm": -1.45, "forearm": 0.0})
+
+
 CROUCH_DROP = 0.46
 
 
@@ -1030,6 +1083,9 @@ def build_actions():
     # Falling lets go of the item's grip too: shared by every stance.
     bake("freefall", 90, freefall)
     bake("chute", 120, chute)
+    # Up again after being knocked flat: one off the back, one off the belly.
+    bake("getup_back", 54, getup_back, loop=False)
+    bake("getup_front", 54, getup_front, loop=False)
     reset_pose()
     arm_obj.animation_data.action = bpy.data.actions["idle"]
 
@@ -1166,6 +1222,14 @@ def preview(directory):
         for view in ("side", "front", "three"):
             at(clip, 10)
             shoot(f"{clip}_{view}", view)
+    # Getting up spans the body's length either way of the feet: framed wider, from the side.
+    views["wide"] = (Vector((6, 0, 0.5)), Vector((0, 0, 0.5)))
+    cam_data.ortho_scale = 4.4
+    for clip in ("getup_back", "getup_front"):
+        for frame in (0, 14, 24, 34, 44, 54):
+            at(clip, frame)
+            shoot(f"{clip}_{frame:02d}", "wide")
+    cam_data.ortho_scale = 2.1
 
 
 if PREVIEW:

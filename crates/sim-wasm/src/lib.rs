@@ -6,11 +6,11 @@
 
 use shared::protocol::InputFrame;
 use shared::world::{Manifest, ObjId, Tile};
-use sim::{CarCondition, CarControls, CarMotion, Character, Obj, Physics};
+use sim::{CarCondition, CarControls, CarMotion, Character, Obj, Physics, RAGDOLL_PARTS, RAGDOLL_POSE_FLOATS, Ragdolls};
 use wasm_bindgen::prelude::*;
 
 /// How a character travels in a `Float64Array`: every `f32` and every id fits exactly.
-pub const CHARACTER_LEN: usize = 14;
+pub const CHARACTER_LEN: usize = 15;
 const X: usize = 0;
 const Y: usize = 1;
 const Z: usize = 2;
@@ -25,6 +25,7 @@ const CHUTE: usize = 10;
 const SPENT: usize = 11;
 const WINDED: usize = 12;
 const LOST: usize = 13;
+const DOWN: usize = 14;
 
 fn read(state: &[f64]) -> Character {
     Character {
@@ -39,6 +40,7 @@ fn read(state: &[f64]) -> Character {
         spent: state[SPENT] as u16,
         winded: state[WINDED] != 0.0,
         lost: state[LOST] as u8,
+        down: state[DOWN] as u8,
     }
 }
 
@@ -58,6 +60,7 @@ fn write(character: &Character, state: &mut [f64]) {
     state[SPENT] = character.spent.into();
     state[WINDED] = flag(character.winded);
     state[LOST] = character.lost.into();
+    state[DOWN] = character.down.into();
 }
 
 /// How car controls travel in a `Float32Array`: `[throttle, steer, handbrake, lift, powered, aimed,
@@ -98,6 +101,8 @@ pub struct ClientSim {
     manifest: Manifest,
     /// The kind of each vehicle simulated here (the player's own, predicted), by id.
     cars: std::collections::BTreeMap<u32, u8>,
+    /// Soldiers knocked down, tumbling as ragdolls among this world's scenery (KNOCKDOWN.md).
+    ragdolls: Ragdolls,
 }
 
 #[wasm_bindgen]
@@ -106,7 +111,7 @@ impl ClientSim {
     #[wasm_bindgen(constructor)]
     pub fn new(manifest: &[u8]) -> Result<ClientSim, JsError> {
         let manifest = Manifest::decode(manifest).map_err(|e| error("decoding the manifest", e))?;
-        Ok(ClientSim { physics: Physics::streamed(&manifest), manifest, cars: Default::default() })
+        Ok(ClientSim { physics: Physics::streamed(&manifest), manifest, cars: Default::default(), ragdolls: Ragdolls::new() })
     }
 
     /// Adds tile `(col, row)` from its file's bytes, replacing it if it is already there.
@@ -261,6 +266,41 @@ impl ClientSim {
         self.physics.step_cars(dt);
     }
 
+    /// Makes ragdoll `key` (replacing any it had) from `segments`, the world points each of its parts
+    /// runs between as the soldier stood when thrown (`RAGDOLL_SEGMENT_FLOATS` each), with `side` their
+    /// right, setting off at `velocity` and turning at `spin`; the limbs in `lost` (`LIMB_*`) are left
+    /// out. Whether it was made.
+    #[wasm_bindgen(js_name = spawnRagdoll)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn_ragdoll(&mut self, key: u32, segments: &[f32], side_x: f32, side_y: f32, side_z: f32, vx: f32, vy: f32, vz: f32, wx: f32, wy: f32, wz: f32, lost: u8) -> bool {
+        self.ragdolls.spawn(&self.physics, key, segments, [side_x, side_y, side_z], [vx, vy, vz], [wx, wy, wz], lost)
+    }
+
+    /// Where the server has ragdoll `key`'s soldier now: its pelvis is pulled there.
+    #[wasm_bindgen(js_name = setRagdollTarget)]
+    pub fn set_ragdoll_target(&mut self, key: u32, x: f32, y: f32, z: f32) {
+        self.ragdolls.set_target(key, [x, y, z]);
+    }
+
+    /// Runs every ragdoll on by `dt` seconds.
+    #[wasm_bindgen(js_name = stepRagdolls)]
+    pub fn step_ragdolls(&mut self, dt: f32) {
+        self.ragdolls.step(&self.physics, dt);
+    }
+
+    /// Ragdoll `key`'s parts, `RAGDOLL_POSE_FLOATS` each (position, then rotation x, y, z, w), or
+    /// nothing when there is no such ragdoll.
+    #[wasm_bindgen(js_name = ragdollPose)]
+    pub fn ragdoll_pose(&self, key: u32) -> Vec<f32> {
+        let mut pose = vec![0.0; RAGDOLL_PARTS * RAGDOLL_POSE_FLOATS];
+        if self.ragdolls.pose(key, &mut pose) { pose } else { Vec::new() }
+    }
+
+    #[wasm_bindgen(js_name = removeRagdoll)]
+    pub fn remove_ragdoll(&mut self, key: u32) {
+        self.ragdolls.remove(key);
+    }
+
     /// Vehicle `id`'s state (`CAR_STATE_LEN` numbers), or nothing when it is not simulated here.
     #[wasm_bindgen(js_name = carState)]
     pub fn car_state(&self, id: u32) -> Vec<f32> {
@@ -412,7 +452,7 @@ mod tests {
 
     #[test]
     fn a_character_survives_the_trip_through_numbers() {
-        let character = Character { position: [1.5, -2.25, 1e-3], yaw: -3.0, vy: 6.5, grounded: true, knock: [0.1, -7.0], ride: 4_000_001, prone: false, chute: true, spent: 4321, winded: true, lost: 0b1010 };
+        let character = Character { position: [1.5, -2.25, 1e-3], yaw: -3.0, vy: 6.5, grounded: true, knock: [0.1, -7.0], ride: 4_000_001, prone: false, chute: true, spent: 4321, winded: true, lost: 0b1010, down: 77 };
         let mut state = [0.0; CHARACTER_LEN];
         write(&character, &mut state);
         assert_eq!(read(&state), character);

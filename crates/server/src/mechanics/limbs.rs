@@ -232,17 +232,22 @@ pub struct Struck {
     pub amount: u8,
     /// Where it came from, the bearing in the world (`combat::bearing`'s).
     pub yaw: i16,
+    /// Where on the body it struck, cm from the point the soldier is drawn from; all zero when not
+    /// known (a blast, or a hit in a seat).
+    pub at: [i16; 3],
 }
 
-/// Notes that player `id` was struck in `part` (`PART_*`) for `amount`, from `from` if known.
-pub fn struck(world: &mut World, id: u32, part: u8, amount: u8, from: Option<[f32; 3]>) {
+/// Notes that player `id` was struck in `part` (`PART_*`) for `amount`, from `from` if known, at
+/// `offset` metres from the point they hang from if a round found the spot.
+pub fn struck(world: &mut World, id: u32, part: u8, amount: u8, from: Option<[f32; 3]>, offset: Option<[f32; 3]>) {
     if !world.entities.has::<Player>(id) {
         return;
     }
     let count = world.entities.get::<Struck>(id).map_or(0, |struck| struck.count).wrapping_add(1);
     let at = super::life::mark(world, id);
     let yaw = from.map_or(0, |from| super::combat::bearing(at, from));
-    world.entities.insert(id, Struck { count, part, amount, yaw });
+    let at = offset.map_or([0; 3], |offset| offset.map(|metres| (metres * 100.0).round().clamp(-32767.0, 32767.0) as i16));
+    world.entities.insert(id, Struck { count, part, amount, yaw, at });
 }
 
 #[cfg(test)]

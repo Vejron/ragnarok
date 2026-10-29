@@ -395,7 +395,8 @@ replicated! {
     /// or 0 when neither is going on, and their stamina on foot as their prediction steps it: the points
     /// spent (0 is rested, `STAMINA_FULL` is out) and whether they are winded, 0 or 1.
     /// `parts` is what is left of the head's health and each limb's (`LIMB_*` order), 0 for a limb lost.
-    Vitals { hp: u8, progress: u8 as byte, spent: u16, winded: u8, parts: [u8; 5] }
+    /// `down` is the ticks of knockdown left (`Character::down`), for their prediction.
+    Vitals { hp: u8, progress: u8 as byte, spent: u16, winded: u8, parts: [u8; 5], down: u8 }
 
     set 18 hotbar [owner]
     /// A player's own hotbar.
@@ -425,8 +426,10 @@ replicated! {
     set 23 struck
     /// The last hit a soldier took this life, so everyone sees it flinch: the hits so far, modulo 256 (a
     /// new one is a change), the part struck (`PART_*`, a limb by its `LIMB_*` bit), how much it lost,
-    /// and the bearing it came from, in the world. Absent until the first hit of a life.
-    Struck { count: u8, part: u8, amount: u8, yaw: i16 as mrad }
+    /// the bearing it came from, in the world, and where on the body it struck, from the point the
+    /// soldier is drawn from (`Place`), all zero when not known (a blast). Absent until the first hit
+    /// of a life.
+    Struck { count: u8, part: u8, amount: u8, yaw: i16 as mrad, x: i16 as cm, y: i16 as cm, z: i16 as cm }
 }
 
 /// The structs a component field can hold a list of, with their fields in wire order and each one's

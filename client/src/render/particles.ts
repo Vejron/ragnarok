@@ -81,7 +81,8 @@ export class Particles {
   }
 
   spawn(spec: ParticleSpec) {
-    this.reap()
+    // The tally only needs clearing of the dead when it looks full: reaping every spawn made each cost as much as there are alive.
+    if (this.deaths.length >= this.capacity) this.reap()
     if (this.deaths.length >= this.capacity) return
     this.deaths.push(this.clock + spec.life)
     if (spec.bounce) this.bounces = true

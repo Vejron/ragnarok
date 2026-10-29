@@ -30,6 +30,16 @@ pub struct Combat;
 /// Hop given to a soldier at the centre of a blast; it fades with distance.
 const BLAST_HOP: f32 = 7.0;
 const BLAST_HOP_MIN: f32 = 3.0;
+/// A blast throws soldiers out to this many times the radius it hurts them in, and the push fades
+/// gently, as `1 - (distance / reach)²`: well outside where it hurts it still knocks them down.
+const BLAST_PUSH_REACH: f32 = 2.0;
+
+/// How hard (m/s) a blast with `knock` at its centre and pushing out to `reach` throws a soldier
+/// `distance` from it, at most `KNOCK_MAX_SPEED`; and the share of its full force that is.
+pub fn blast_push(knock: f32, reach: f32, distance: f32) -> (f32, f32) {
+    let falloff = (1.0 - (distance / reach).powi(2)).max(0.0);
+    ((knock * falloff).min(KNOCK_MAX_SPEED), falloff)
+}
 
 /// Pitch beyond this is not a thing a client can send; clamp so a forged frame can't aim at the sky's far side.
 pub(super) const MAX_PITCH: f32 = 1.5;
@@ -161,19 +171,25 @@ pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
         let c = &mut player.character;
         let away: [f32; 3] = std::array::from_fn(|i| c.position[i] - blast.point[i]);
         let distance = away.iter().map(|v| v * v).sum::<f32>().sqrt();
-        if distance >= blast.radius {
+        let reach = blast.radius * BLAST_PUSH_REACH;
+        if distance >= reach || blast.knock <= 0.0 {
             continue;
         }
-        let falloff = 1.0 - distance / blast.radius;
+        let (power, falloff) = blast_push(blast.knock, reach, distance);
         let flat = away[0].hypot(away[2]);
         // Right on the blast there is no "away": follow where it came from instead.
         let (dx, dz) = if flat > 0.1 { (away[0] / flat, away[2] / flat) } else { (blast.dir[0], blast.dir[2]) };
-        let power = (blast.knock * falloff).min(KNOCK_MAX_SPEED);
         c.knock = [dx * power, dz * power];
         c.vy = BLAST_HOP_MIN + (BLAST_HOP - BLAST_HOP_MIN) * falloff;
         c.grounded = false;
         c.ride = 0;
-        tracing::debug!(distance, power, "player blasted");
+        // Hard enough, it knocks them down: thrown, then lying there a moment (KNOCKDOWN.md).
+        let down = shared::movement::knockdown_ticks(power);
+        if down > 0 {
+            world.physics.knock_down(c, down);
+            player.interrupt();
+        }
+        tracing::debug!(distance, power, down, "player blasted");
     }
     for (id, amount) in blasted(world, blast.point, blast.radius, blast.damage) {
         damage_entity(world, id, Harm::new(amount, blast.attacker, blast.weapon).from(blast.point));
@@ -729,7 +745,9 @@ pub fn land(world: &mut World, flight: &Flight, met: &Strike, round: &Round) {
         let head = is_headshot(world, victim, origin, dir, t, back);
         let point = std::array::from_fn(|i| origin[i] + dir[i] * t);
         let limb = if head { None } else { super::limbs::limb_struck(world, victim, point, back) };
-        damage_entity(world, victim, Harm::new(dealt, attacker, round.weapon).head(head).limb(limb));
+        // Where on the body, for the wound to be drawn there.
+        let offset = body(world, victim, back).filter(|body| body.vehicle.is_none()).map(|body| std::array::from_fn(|i| point[i] - body.anchor[i]));
+        damage_entity(world, victim, Harm::new(dealt, attacker, round.weapon).head(head).limb(limb).at(point, offset));
     } else if let Some((_, Some(car))) = wall {
         let canvas = world.entities.get::<Vehicle>(car).is_some_and(|vehicle| vehicle_def(vehicle.kind).armor.canvas);
         let point = std::array::from_fn(|i| origin[i] + dir[i] * reach);
@@ -835,8 +853,9 @@ fn use_item(world: &mut World, id: u32) {
         player.interrupt();
         return;
     };
-    // With no arms there is nothing to hold a gun with; a bandage can still be got on somehow.
-    if lost & LIMB_ARMS == LIMB_ARMS && item.kind != ItemKind::Heal {
+    // With no arms there is nothing to hold a gun with; a bandage can still be got on somehow. Knocked
+    // down, nothing at all.
+    if (lost & LIMB_ARMS == LIMB_ARMS && item.kind != ItemKind::Heal) || player.character.down > 0 {
         player.interrupt();
         return;
     }

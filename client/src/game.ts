@@ -1,13 +1,13 @@
 import * as THREE from 'three'
 import {
-  FLAG_GROUNDED, NOTICE_SAY, encodeInput, encodePing, toAxis, toMrad, type InputFrame, type ServerMessage, } from './net/codec'
+  FLAG_DEAD, FLAG_GROUNDED, NOTICE_SAY, encodeInput, encodePing, toAxis, toMrad, type InputFrame, type ServerMessage, } from './net/codec'
 import type { DriveState } from './entities/units'
 import { Backoff } from './net/backoff'
 import { RttEstimator, ServerClock } from './net/clock'
 import { Transport } from './net/transport'
 import {
   BUTTON_ALT, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, HEAD_HP, LIMB_HP, PROTOCOL_VERSION, RESPAWN_TICKS,
-  SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_PRONE,
+  SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_DOWN, STANCE_PRONE,
   TICK_MS, TICK_RATE, BUILD_REACH, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED, } from './sim/consts'
 import { easeSway, sway, swayAmplitude } from './sway'
 import { CELL } from './sim/carve'
@@ -30,6 +30,7 @@ import { Bloodstains } from './render/bloodstains'
 import { type FxWorld } from './render/tyres'
 import { Debris } from './render/debris'
 import { Gore } from './render/gore'
+import { Ragdolls, type Knockable } from './sim/ragdoll'
 import { Surfaces, SURFACE_GRASS } from './sim/surface'
 import { Waters } from './sim/waters'
 import { Pickups } from './render/pickups'
@@ -176,6 +177,8 @@ export class Game {
   /** Tyre smoke, dust, gravel and spray; sparks and flames glow on their own pool. */
   private readonly smoke = new Particles(4096, false, true)
   private readonly glow = new Particles(2048, true)
+  /** Blood has a pool of its own, so a firefight's spray never leaves smoke and dust without room. */
+  private readonly blood = new Particles(1536)
   private readonly skids = new Skidmarks()
   /** Engines, tyres, crashes and guns. */
   private readonly sounds = new VehicleSounds()
@@ -183,7 +186,7 @@ export class Game {
   /** Bumpers, doors and wheels that came off. */
   private readonly debris = new Debris(160)
   private readonly stains = new Bloodstains()
-  private readonly gore = new Gore(this.debris, this.smoke, this.effects, this.stains, (x, z) => this.scene.groundAt(x, z))
+  private readonly gore = new Gore(this.debris, this.blood, this.effects, this.stains, (x, z) => this.scene.groundAt(x, z))
   /** Seconds since the last frame, for what is drawn per vehicle. */
   private frameDt = 0
   private readonly rocketModels = new Rockets()
@@ -255,6 +258,12 @@ export class Game {
   private readonly cameras: Cameras
   private predictor: Predictor | null = null
   private motor: SimMotor | null = null
+  /** Knocked-down soldiers tumbling as ragdolls (KNOCKDOWN.md), once the world's physics is up. */
+  private ragdolls: Ragdolls | null = null
+  /** Where the local soldier is drawn this frame. */
+  private localAt: readonly number[] | null = null
+  /** Whether the local soldier was knocked down last frame. */
+  private wasDown = false
   /** Predicts the vehicle the local player drives. */
   private driver: VehicleDriver | null = null
   /** The newest snapshot of the driven vehicle, waiting for the next frame to be reconciled with. */
@@ -302,7 +311,7 @@ export class Game {
     this.scene.scene.add(this.rocketModels.root, this.trails.root)
     this.scene.scene.add(this.pickupModels.root, this.backpackModels.root)
     this.scene.scene.add(this.trajectory.root, this.mortarArc.root)
-    this.scene.scene.add(this.smoke.root, this.glow.root, this.stains.root, this.skids.root)
+    this.scene.scene.add(this.smoke.root, this.glow.root, this.blood.root, this.stains.root, this.skids.root)
     this.smoke.groundAt = (x, z) => this.scene.groundAt(x, z)
     this.scene.scene.add(this.debris.root)
     this.debris.groundAt = (x, z) => this.scene.groundAt(x, z)
@@ -369,6 +378,7 @@ export class Game {
     if (!world.bytes) throw new Error('the manifest came without its bytes')
     const motor = await SimMotor.create(world.bytes)
     this.motor = this.view.motor = motor
+    this.ragdolls = new Ragdolls(motor)
     this.driver = new VehicleDriver(motor)
     await Promise.all([this.crowd.load(), loadVehicleModels(), loadRoosterModel()])
     // The buildings arrive as tiles, around wherever the player is.
@@ -381,7 +391,7 @@ export class Game {
     const [x, z] = world.spawns[0] ?? [0, 0]
     this.view.focus(x, z)
     await this.tiles.prime(x, z)
-    this.predictor = new Predictor(motor.stepper, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0 })
+    this.predictor = new Predictor(motor.stepper, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0, down: 0 })
     this.predictor.speedScale = (input) => aimSpeedScale(this.hotbar[Math.min(input.slot, HOTBAR_SLOTS - 1)]?.item ?? ITEM_NONE, input.buttons) * (this.carrying ? BACKPACK_SPEED : 1)
     this.avatars.local()
     if (this.disposed) return
@@ -521,10 +531,13 @@ export class Game {
         } else if (own?.place && own.flags && this.predictor) {
           const { x, y, z } = own.place
           const { flags, stance } = own.flags
+          const lost = (own.limbs?.lost ?? 0) & LIMB_ALL
+          // Knocked down, a soldier with no legs is still lying as they were.
+          const prone = stance === STANCE_PRONE || (stance === STANCE_DOWN && (lost & LIMB_LEGS) === LIMB_LEGS)
           this.predictor.reconcile(message.ack, {
             position: [x, y, z], yaw: own.heading?.yaw ?? 0, vy: own.motion?.vy ?? 0, grounded: (flags & FLAG_GROUNDED) !== 0,
-            knock: [own.motion?.knock_x ?? 0, own.motion?.knock_z ?? 0], ride: message.ride, prone: stance === STANCE_PRONE, chute: stance === STANCE_CHUTE,
-            spent: own.vitals?.spent ?? 0, winded: own.vitals?.winded === 1, lost: (own.limbs?.lost ?? 0) & LIMB_ALL,
+            knock: [own.motion?.knock_x ?? 0, own.motion?.knock_z ?? 0], ride: message.ride, prone, chute: stance === STANCE_CHUTE,
+            spent: own.vitals?.spent ?? 0, winded: own.vitals?.winded === 1, lost, down: own.vitals?.down ?? 0,
           })
         }
         break
@@ -673,6 +686,7 @@ export class Game {
     if (this.clock.synced) {
       this.scene.setTimeOfDay(dayPhase(renderTick, TICK_RATE))
       this.smoke.light.copy(this.scene.groundLight)
+      this.blood.light.copy(this.scene.groundLight)
       this.effects.light.copy(this.scene.groundLight)
     }
     const seat = this.seat
@@ -689,6 +703,7 @@ export class Game {
     const cars = this.vehicles.placed
 
     const position = this.ridden(predictor.renderPosition(this.accumulator / TICK_MS, dt), predictor.state.ride, renderTick)
+    this.localAt = position
     const local = predictor.state
     const localVx = (local.position[0] - predictor.previous.position[0]) / (TICK_MS / 1000)
     const localVz = (local.position[2] - predictor.previous.position[2]) / (TICK_MS / 1000)
@@ -735,7 +750,7 @@ export class Game {
     // Face where the camera looks, immediately, rather than the last ticked yaw.
     if (sitting) me.seat(this.seatAt, this.seatTurn, this.input.yaw, this.input.pitch, dt)
     else me.update(position, flying ? local.yaw : lookYaw, localVx, localVz, local.grounded, dt, flying ? 0 : lookPitch, this.crouching || flying,
-      this.crouching && local.grounded && Math.hypot(local.knock[0], local.knock[1]) > SLIDE_MIN_SPEED, local.prone, local.chute, local.vy)
+      this.crouching && local.grounded && Math.hypot(local.knock[0], local.knock[1]) > SLIDE_MIN_SPEED, local.prone || local.down > 0, local.chute, local.vy)
     if (!seated && this.hp > 0) this.surroundings.wade(0, position[0], position[1], position[2], Math.hypot(localVx, localVz), dt)
     else this.surroundings.dry(0)
     const aviator = view?.rig.name === 'aviator'
@@ -780,6 +795,7 @@ export class Game {
     this.glow.follow(eye.x, eye.z)
     this.smoke.update(dt)
     this.glow.update(dt)
+    this.blood.update(dt)
     this.skids.update(dt)
     this.stains.update(dt)
     this.debris.update(dt)
@@ -791,6 +807,7 @@ export class Game {
 
     this.people.run(sampled, frame)
     this.limbs(sampled, now)
+    this.knockdowns(sampled, dt)
     this.surroundings.bendGrass(!seated && this.hp > 0 ? position : null, this.soldiers.nearby, cars)
     const nearby = [...this.soldiers.nearby, ...this.riders.seated]
     this.avatars.sweep((key) => this.surroundings.dry(key))
@@ -886,6 +903,44 @@ export class Game {
     return found
   }
 
+  /**
+   * Hands every soldier drawn this frame that is knocked down to a ragdoll, and back when they are up
+   * (`Ragdolls`). The local player's own knockdown also jolts the camera, as hard as they were thrown.
+   */
+  private knockdowns(sampled: ReadonlyMap<number, Sampled>, dt: number) {
+    const ragdolls = this.ragdolls
+    if (!ragdolls) return
+    const soldiers: Knockable[] = []
+    for (const key of this.avatars.drawn) {
+      const id = key === 0 ? this.localId : key
+      const body = id === null ? undefined : this.avatars.of(id)
+      if (id === null || !body) continue
+      if (key === 0) {
+        const local = this.predictor?.state
+        if (!local || !this.localAt) continue
+        const down = local.down > 0 && !this.seat
+        if (down && !this.wasDown) this.chase.kick(Math.min(0.6, Math.hypot(local.knock[0], local.knock[1]) / 30))
+        this.wasDown = down
+        const [x, y, z] = this.localAt
+        soldiers.push({ key, body, down, dead: this.hp === 0, position: [x!, y!, z!], velocity: [local.knock[0], local.vy, local.knock[1]], lost: local.lost })
+        continue
+      }
+      const entity = sampled.get(id)?.entity
+      if (!entity?.place) continue
+      const { x, y, z } = entity.place
+      soldiers.push({
+        key, body,
+        down: entity.flags?.stance === STANCE_DOWN,
+        dead: ((entity.flags?.flags ?? 0) & FLAG_DEAD) !== 0,
+        position: [x, y, z],
+        velocity: [entity.motion?.knock_x ?? 0, entity.motion?.vy ?? 0, entity.motion?.knock_z ?? 0],
+        lost: (entity.limbs?.lost ?? 0) & LIMB_ALL,
+      })
+    }
+    const eye = this.scene.camera.position
+    ragdolls.update(soldiers, [eye.x, eye.y, eye.z], dt)
+  }
+
   /** The local player's body for the HUD while any of it is hurt and they live. */
   private body(): HudStats['limbs'] {
     const [head, ...limbs] = this.ownParts
@@ -905,7 +960,7 @@ export class Game {
       if (id === null || !avatar) continue
       const entity = sampled.get(id)?.entity
       const struck = entity?.struck
-      if (avatar.setStruck(struck) && struck && avatar.visible) this.gore.hit(avatar, struck.part, struck.yaw, struck.amount)
+      if (avatar.setStruck(struck) && struck && avatar.visible) this.gore.hit(avatar, struck.part, struck.yaw, struck.amount, struck)
       const wire = entity?.limbs?.lost ?? 0
       const gained = avatar.setLimbs(wire)
       if (gained) {
@@ -1128,6 +1183,7 @@ export class Game {
     this.effects.dispose()
     this.smoke.dispose()
     this.glow.dispose()
+    this.blood.dispose()
     this.skids.dispose()
     this.stains.dispose()
     this.sounds.dispose()

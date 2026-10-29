@@ -19,8 +19,10 @@ use shared::terrain::Ground;
 use shared::world::{ObjId, WorldFile};
 use std::collections::HashMap;
 
+mod ragdoll;
 mod stream;
 mod vehicle;
+pub use ragdoll::{PARTS as RAGDOLL_PARTS, POSE_FLOATS as RAGDOLL_POSE_FLOATS, Ragdolls, SEGMENT_FLOATS as RAGDOLL_SEGMENT_FLOATS};
 pub use vehicle::{CarCondition, CarControls, CarImpact, CarMotion, CarPose, Strike, half_extents};
 
 /// A destructible piece of the static world: a building or a tree, by tile and index.
@@ -51,6 +53,9 @@ pub struct Character {
     pub winded: bool,
     /// The limbs it has lost (`LIMB_*`): one leg hops, none crawls. The server sets it; it does not change here.
     pub lost: u8,
+    /// Knocked down by a blast: ticks left lying helpless, counted only on the ground, so the flight
+    /// is extra. Nothing the player asks for happens meanwhile; they are thrown and slide to a stop.
+    pub down: u8,
 }
 
 pub struct Physics {
@@ -630,6 +635,9 @@ impl Physics {
 
     /// `move_character` with walking speed multiplied by `speed_scale` (aiming a gun slows you).
     pub fn move_character_scaled(&self, character: &mut Character, input: &InputFrame, dt: f32, speed_scale: f32) {
+        // Knocked down, the player's input is nothing at all, facing as they were.
+        let still = InputFrame { strafe: 0, forward: 0, buttons: 0, yaw: shared::quant::to_mrad(character.yaw), ..*input };
+        let input = if character.down > 0 { &still } else { input };
         let (input, speed_scale, hop) = legged(character, input, speed_scale);
         let input = &input;
         character.chute = toggle_chute(character.chute, character.grounded, character.prone, input);
@@ -675,6 +683,22 @@ impl Physics {
             character.knock = decay_knock(character.knock, grounded, input.buttons() & BUTTON_CROUCH != 0);
         }
         character.yaw = shared::quant::from_mrad(input.yaw);
+        if grounded {
+            character.down = character.down.saturating_sub(1);
+        }
+    }
+
+    /// Knocks `character` down for `ticks` (more if it already is): the canopy, if open, is lost, and
+    /// one lying prone is stood back up to be thrown, if there is room.
+    pub fn knock_down(&self, character: &mut Character, ticks: u8) {
+        if ticks == 0 {
+            return;
+        }
+        character.down = character.down.max(ticks);
+        character.chute = false;
+        if character.lost & LIMB_LEGS != LIMB_LEGS {
+            self.change_stance(character, false);
+        }
     }
 
     /// One tick of a soldier on foot, as both the server and the client's prediction run it:

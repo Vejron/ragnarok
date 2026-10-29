@@ -134,13 +134,15 @@ fn fire_sets_the_charge_off_and_hurts_who_is_near() {
 }
 
 #[test]
-fn flying_into_someone_kills_them_and_credits_the_pilot() {
+fn flying_into_someone_wounded_kills_them_and_credits_the_pilot() {
     let mut game = game();
     let (id, mut seq) = pilot(&mut game);
     let target = join(&mut game);
     let vid = launch_drone(&mut game, id, &mut seq);
     let at = game.world.physics.car_pose(vid).unwrap().position;
     game.world.entities.get_mut::<Player>(target).unwrap().character.position = [at[0], STANDING_Y, at[2] - 15.0];
+    // A soldier at full health lives through it, knocked flat; one already hurt does not.
+    game.world.entities.get_mut::<crate::entities::Health>(target).unwrap().hp = 60;
     // Down to head height, then straight at them.
     for _ in 0..240 {
         if !game.world.entities.has::<Vehicle>(vid) {

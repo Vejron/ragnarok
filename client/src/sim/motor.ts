@@ -26,6 +26,8 @@ export interface CharacterState {
   winded: boolean
   /** The limbs lost (`LIMB_*`): one leg hops, none crawls. The server's to change. */
   lost: number
+  /** Ticks of knockdown left: thrown by a blast and lying helpless, counted on the ground (KNOCKDOWN.md). */
+  down: number
 }
 
 /** One tick of a soldier: what `Predictor` runs, and replays on reconciling. */
@@ -120,7 +122,7 @@ export type Obstacle = Pick<VehiclePose, 'id' | 'x' | 'y' | 'z' | 'qx' | 'qy' | 
  */
 export class SimMotor {
   /** The character as the WASM side reads and writes it (`sim-wasm`'s layout). */
-  private readonly scratch = new Float64Array(14)
+  private readonly scratch = new Float64Array(15)
 
   private constructor(private readonly sim: ClientSim) {}
 
@@ -212,6 +214,33 @@ export class SimMotor {
     return { t: hit[0]!, normal: [hit[1]!, hit[2]!, hit[3]!] }
   }
 
+  /**
+   * Makes ragdoll `key` (`crates/sim/src/ragdoll.rs`) from `segments`, thrown at `velocity` turning at
+   * `spin`, without the limbs in `lost`. Whether it was made.
+   */
+  spawnRagdoll(key: number, segments: Float32Array, side: Vec3, velocity: Vec3, spin: Vec3, lost: number): boolean {
+    return timed(() => this.sim.spawnRagdoll(key, segments, side[0], side[1], side[2], velocity[0], velocity[1], velocity[2], spin[0], spin[1], spin[2], lost))
+  }
+
+  /** Where ragdoll `key`'s soldier really is: its pelvis is pulled there. */
+  setRagdollTarget(key: number, at: Vec3) {
+    this.sim.setRagdollTarget(key, at[0], at[1], at[2])
+  }
+
+  stepRagdolls(dt: number) {
+    timed(() => this.sim.stepRagdolls(dt))
+  }
+
+  /** Ragdoll `key`'s parts (position and rotation each), or null when there is no such ragdoll. */
+  ragdollPose(key: number): Float32Array | null {
+    const pose = this.sim.ragdollPose(key)
+    return pose.length ? pose : null
+  }
+
+  removeRagdoll(key: number) {
+    this.sim.removeRagdoll(key)
+  }
+
   /** Starts simulating vehicle `id` of `kind` here in place of its stand-in: the player drives it. */
   startCar(id: number, kind: number, position: Vec3, yaw = 0) {
     this.sim.startCar(id, kind, position[0], position[1], position[2], yaw)
@@ -285,8 +314,9 @@ export class SimMotor {
       s[11] = state.spent
       s[12] = state.winded ? 1 : 0
       s[13] = state.lost
+      s[14] = state.down
       this.sim.stepCharacter(s, input.seq, input.strafe, input.forward, input.yaw, input.buttons, input.pitch, input.view, input.slot, dt, speedScale)
-      return { position: [s[0]!, s[1]!, s[2]!], yaw: s[3]!, vy: s[4]!, grounded: s[5] === 1, knock: [s[6]!, s[7]!], ride: s[8]!, prone: s[9] === 1, chute: s[10] === 1, spent: s[11]!, winded: s[12] === 1, lost: s[13]! }
+      return { position: [s[0]!, s[1]!, s[2]!], yaw: s[3]!, vy: s[4]!, grounded: s[5] === 1, knock: [s[6]!, s[7]!], ride: s[8]!, prone: s[9] === 1, chute: s[10] === 1, spent: s[11]!, winded: s[12] === 1, lost: s[13]!, down: s[14]! }
     })
   }
 

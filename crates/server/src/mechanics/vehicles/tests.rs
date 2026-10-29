@@ -268,6 +268,7 @@ fn a_driven_car_knocks_back_a_player_in_its_way() {
     let mut peak_knock: f32 = 0.0;
     let mut hopped = false;
     let mut lowest_hp = PLAYER_MAX_HP;
+    let mut was_down = false;
     for _ in 0..240 {
         seq_a += 1;
         seq_b += 1;
@@ -277,11 +278,13 @@ fn a_driven_car_knocks_back_a_player_in_its_way() {
         let character = game.world.entities.of::<Player>(victim).character;
         peak_knock = peak_knock.max(character.knock[0].hypot(character.knock[1]));
         hopped |= character.position[1] > STANDING_Y + 0.3;
+        was_down |= character.down > 0;
         lowest_hp = lowest_hp.min(game.world.entities.of::<crate::entities::Health>(victim).hp);
     }
     assert!(lowest_hp < PLAYER_MAX_HP, "a car at speed hurts: lowest hp {lowest_hp}");
     assert!(peak_knock > KNOCK_MIN_PUSH, "peak knockback {peak_knock}");
     assert!(hopped, "a hit sends the player up");
+    assert!(was_down, "a car at full speed knocks them down");
     let character = game.world.entities.of::<Player>(victim).character;
     let moved = (character.position[0] - spot[0]) * ahead[0] + (character.position[2] - spot[2]) * ahead[1];
     assert!(moved > 2.0, "thrown {moved} m along the car's heading");

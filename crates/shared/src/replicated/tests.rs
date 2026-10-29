@@ -46,7 +46,7 @@ fn a_new_entity_brings_everything_it_has_and_decodes_back() {
         steer: Some(Steer { steer: -127 }),
         turret: Some(Turret { yaw: 100, pitch: -50, shots: 255, range: 65535, flags: 1 }),
         limbs: Some(Limbs { lost: 0b0101_0110 }),
-        struck: Some(Struck { count: 7, part: 4, amount: 12, yaw: -1500 }),
+        struck: Some(Struck { count: 7, part: 4, amount: 12, yaw: -1500, x: 12, y: -45, z: 3 }),
         thrust: Some(Thrust { air: 200, flags: 3 }),
         arms: Some(Arms { shots: 9, heat: 10, rear_heat: 11, bombs: 4, flags: 2 }),
         health: Some(Health { hp: 70 }),
@@ -55,7 +55,7 @@ fn a_new_entity_brings_everything_it_has_and_decodes_back() {
         kind: Some(Kind { kind: 6 }),
         projectile: Some(Projectile { kind: 2 }),
         pickup: Some(Pickup { item: 7 }),
-        vitals: Some(Vitals { hp: 73, progress: 128, spent: 0, winded: 0, parts: [50, 40, 40, 0, 40] }),
+        vitals: Some(Vitals { hp: 73, progress: 128, spent: 0, winded: 0, parts: [50, 40, 40, 0, 40], down: 0 }),
         hotbar: Some(Hotbar { slots: [ItemSlot { item: 3, count: 1, ammo: 17 }, ItemSlot::default(), ItemSlot { item: 9, count: 2, ammo: 0 }, ItemSlot::default(), ItemSlot { item: 1, count: 255, ammo: 255 }] }),
         drive: Some(Drive { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }),
         seated: Some(Seated { vehicle: 70_000, seat: 2 }),
@@ -72,7 +72,7 @@ fn a_new_entity_brings_everything_it_has_and_decodes_back() {
 
 #[test]
 fn anyone_but_the_owner_is_told_everything_but_the_owners_components() {
-    let own = Replicated { vitals: Some(Vitals { hp: 40, progress: 0, spent: 0, winded: 0, parts: [50, 40, 40, 0, 40] }), hotbar: Some(Hotbar::default()), drive: Some(Drive::default()), ..tank(0, 0) };
+    let own = Replicated { vitals: Some(Vitals { hp: 40, progress: 0, spent: 0, winded: 0, parts: [50, 40, 40, 0, 40], down: 0 }), hotbar: Some(Hotbar::default()), drive: Some(Drive::default()), ..tank(0, 0) };
     assert_eq!(own.public(), tank(0, 0));
     let owned: Vec<&str> = schema().iter().filter(|component| component.owner).map(|component| component.name).collect();
     assert_eq!(owned, ["vitals", "hotbar", "drive"]);
@@ -334,7 +334,7 @@ fn fixture_json() -> String {
         steer: Some(Steer { steer: -127 }),
         turret: Some(Turret { yaw: 100, pitch: -50, shots: 255, range: 65535, flags: 1 }),
         limbs: Some(Limbs { lost: 0b0101_0110 }),
-        struck: Some(Struck { count: 7, part: 4, amount: 12, yaw: -1500 }),
+        struck: Some(Struck { count: 7, part: 4, amount: 12, yaw: -1500, x: 12, y: -45, z: 3 }),
         thrust: Some(Thrust { air: 200, flags: 3 }),
         arms: Some(Arms { shots: 9, heat: 10, rear_heat: 11, bombs: 4, flags: 2 }),
         health: Some(Health { hp: 70 }),
@@ -343,7 +343,7 @@ fn fixture_json() -> String {
         kind: Some(Kind { kind: 6 }),
         projectile: Some(Projectile { kind: 2 }),
         pickup: Some(Pickup { item: 7 }),
-        vitals: Some(Vitals { hp: 73, progress: 128, spent: 4500, winded: 1, parts: [50, 40, 40, 0, 40] }),
+        vitals: Some(Vitals { hp: 73, progress: 128, spent: 4500, winded: 1, parts: [50, 40, 40, 0, 40], down: 90 }),
         hotbar: Some(Hotbar { slots: [ItemSlot { item: 3, count: 1, ammo: 17 }, ItemSlot::default(), ItemSlot { item: 9, count: 2, ammo: 0 }, ItemSlot::default(), ItemSlot { item: 1, count: 255, ammo: 255 }] }),
         drive: Some(Drive { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }),
         seated: Some(Seated { vehicle: 70_000, seat: 2 }),
@@ -394,7 +394,7 @@ fn scene_fixture_json() -> String {
         // A drone, linked, its battery as air; a wreck.
         (7, Replicated { thrust: Some(Thrust { air: 99, flags: 4 }), drive: Some(Drive { vx: -250, vy: 3, vz: 1200, wx: 10, wy: -3500, wz: 0, steer: -300, spin: 700 }), ..vehicle(11) }),
         // The receiver themself, piloting the plane: what is theirs, and their seat.
-        (11, Replicated { kind: Some(Kind { kind: 0 }), seated: Some(Seated { vehicle: 6, seat: 0 }), vitals: Some(Vitals { hp: 55, progress: 255, spent: 0, winded: 0, parts: [50, 40, 40, 0, 40] }), hotbar: Some(Hotbar { slots: [ItemSlot { item: 2, count: 1, ammo: 30 }, ItemSlot::default(), ItemSlot::default(), ItemSlot::default(), ItemSlot::default()] }), ..Default::default() }),
+        (11, Replicated { kind: Some(Kind { kind: 0 }), seated: Some(Seated { vehicle: 6, seat: 0 }), vitals: Some(Vitals { hp: 55, progress: 255, spent: 0, winded: 0, parts: [50, 40, 40, 0, 40], down: 0 }), hotbar: Some(Hotbar { slots: [ItemSlot { item: 2, count: 1, ammo: 30 }, ItemSlot::default(), ItemSlot::default(), ItemSlot::default(), ItemSlot::default()] }), ..Default::default() }),
         // Their gunner, looking back and down, holding a gun.
         (12, Replicated { kind: Some(Kind { kind: 0 }), seated: Some(Seated { vehicle: 6, seat: 1 }), heading: Some(Heading { yaw: -3000 }), look: Some(Look { pitch: -40 }), flags: Some(Flags { flags: 0b0001_0100, stance: 0 }), ..Default::default() }),
         // A drone's pilot, kneeling where they stood.

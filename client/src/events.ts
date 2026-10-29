@@ -176,16 +176,25 @@ export class Events {
     }
   }
 
-  /** What a hit the local player landed looks like in the world: a number, flying debris and a flash on the target. */
+  /**
+   * What a hit the local player landed looks like in the world: a number on the spot, and a pinpoint
+   * flash there on a soldier (whose blood comes from `struck`) or flying debris off anything else.
+   */
   hit(hit: { kind: number; amount: number; x: number; y: number; z: number; target: number }) {
     const { scene, effects, damageNumbers, avatars } = this.world
     const at = new THREE.Vector3(hit.x, hit.y, hit.z)
     const kind = hit.kind === HIT_KILL ? 'kill' : hit.kind === HIT_VEHICLE ? 'vehicle' : hit.kind === HIT_ROOSTER ? 'rooster' : 'body'
     damageNumbers.spawn(at, hit.amount, kind, scene.camera)
+    const soldier = avatars.of(hit.target)
+    if (soldier && (kind === 'body' || kind === 'kill')) {
+      // The blood comes from `struck`, as everyone sees it; the shooter also sees the very spot.
+      effects.struck(at)
+      soldier.flash()
+      return
+    }
     // Debris flies back towards the shooter, as it would from a round that came in.
     const back = scene.camera.position.clone().sub(at).normalize()
     effects.impact(at, kind === 'kill' ? 'kill' : kind === 'vehicle' ? 'vehicle' : 'body', back)
-    avatars.of(hit.target)?.flash()
   }
 
   /** Forgets everything pending and in flight: a disconnect. */

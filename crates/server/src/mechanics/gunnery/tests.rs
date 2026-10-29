@@ -157,11 +157,13 @@ fn firing_hits_and_throws_a_soldier_in_the_line_of_fire() {
     assert!(speed > 10.0, "blast knockback {speed}");
     // Thrown away from the tank, along the shell's way.
     assert!(character.knock[0] * dir[0] + character.knock[1] * dir[2] > 0.0);
-    assert!(character.vy > 3.0);
+    // At full health they live through a shell at their feet, and are knocked flat by it.
+    assert!(game.world.entities.alive(victim));
+    assert!(character.down > 0);
 }
 
 #[test]
-fn a_direct_hit_kills_and_the_gunner_gets_the_credit() {
+fn a_direct_hit_kills_someone_wounded_and_the_gunner_gets_the_credit() {
     let (mut game, gunner, vid, mut seq) = crewed();
     load_he(&mut game, vid);
     let (victim, _inbox) = join(&mut game);
@@ -173,6 +175,8 @@ fn a_direct_hit_kills_and_the_gunner_gets_the_credit() {
     game.world.entities.get_mut::<Player>(victim).unwrap().character.position = at(25.0, 0.0);
     // Caught at the edge of the blast: hurt, not dead.
     game.world.entities.get_mut::<Player>(near).unwrap().character.position = at(25.0, 5.0);
+    // A shell at their feet is short of a soldier's full health; one already hurt it kills.
+    game.world.entities.get_mut::<crate::entities::Health>(victim).unwrap().hp = 100;
 
     aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, BUTTON_FIRE, 40);
     assert!(!game.world.entities.alive(victim));

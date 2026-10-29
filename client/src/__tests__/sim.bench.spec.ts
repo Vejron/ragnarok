@@ -31,7 +31,7 @@ it.skipIf(!process.env.BENCH)('sim hot paths', { timeout: 300_000 }, async () =>
     return ms
   }
   const runSoldier = (ticks: number) => {
-    let state: CharacterState = { position: [0, 3, 0], yaw: 0, vy: 0, grounded: false, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0 }
+    let state: CharacterState = { position: [0, 3, 0], yaw: 0, vy: 0, grounded: false, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0, down: 0 }
     const start = performance.now()
     for (let seq = 1; seq <= ticks; seq++) {
       state = motor.step(state, { seq, strafe: Math.sin(seq / 50), forward: 1, yaw: seq / 100, buttons: 0, pitch: 0, view: 0, slot: 0 }, TICK_DT)

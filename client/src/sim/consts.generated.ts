@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 53
+export const PROTOCOL_VERSION = 56
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -230,16 +230,29 @@ export const STANCE_PRONE = 1
 /** Hanging under an open parachute. */
 export const STANCE_CHUTE = 2
 
+/** Knocked down by a blast: thrown, then lying helpless until `Character::down` runs out (KNOCKDOWN.md). */
+export const STANCE_DOWN = 3
+
+/** A blast that throws a soldier at least this hard, m/s, knocks them down. */
+export const KNOCKDOWN_POWER = 7.0
+
+/**
+ * Ticks they lie there once landed: this many at `KNOCKDOWN_POWER`, rising evenly to
+ * `KNOCKDOWN_MAX_TICKS` at `KNOCK_MAX_SPEED`.
+ */
+export const KNOCKDOWN_MIN_TICKS = 48
+export const KNOCKDOWN_MAX_TICKS = 150
+
 /** A round that hits above this height over the capsule centre hit the head. */
 export const HEAD_ZONE_Y = 0.45
 
 /**
  * Body-part health. A soldier's torso has `PLAYER_MAX_HP`, its head `HEAD_HP` and each limb `LIMB_HP`.
  * Only the torso or the head running out kills; a limb that runs out comes off, and what the round had
- * left over is lost. A sniper round to the head kills, as do two revolver rounds or five AK5 rounds.
+ * left over is lost. A sniper round to the head kills, as do three revolver rounds or seven AK5 rounds.
  */
-export const HEAD_HP = 50
-export const LIMB_HP = 40
+export const HEAD_HP = 75
+export const LIMB_HP = 60
 
 /**
  * Limbs. A round below this height over the capsule centre hit a leg (the hips are about 0.75 m up),
@@ -1145,7 +1158,7 @@ export const BACKPACK_RETURN_SECONDS = 60.0
 export const CARRY_BACKPACK = 1
 
 /** Combat. Every player starts a life with `PLAYER_MAX_HP` and dies at zero. */
-export const PLAYER_MAX_HP = 100
+export const PLAYER_MAX_HP = 150
 
 /** Ticks a dead player waits before respawning. */
 export const RESPAWN_TICKS = 3 * TICK_RATE

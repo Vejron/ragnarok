@@ -35,6 +35,8 @@ pub(super) fn open_ground(world: &World, x: f32, z: f32) -> Option<f32> {
 /// point a hit on it is shown at, and the vehicle it sits in, if it sits in one.
 #[derive(Clone, Copy, Debug)]
 pub struct Body {
+    /// The point it hangs from (see [`anchor`]): where a soldier is drawn from.
+    pub anchor: [f32; 3],
     pub centre: [f32; 3],
     pub half_height: f32,
     pub radius: f32,
@@ -71,11 +73,11 @@ fn body_of(world: &World, id: u32, hurtbox: &Hurtbox, transform: Option<&Transfo
         None => {
             let centre = hurtbox.centre(at);
             let (half_height, radius) = (hurtbox.half_height, hurtbox.radius);
-            Body { centre, half_height, radius, head_y: hurtbox.head.map(|head| centre[1] + head), mark: [centre[0], centre[1] + hurtbox.mark_y, centre[2]], vehicle: None }
+            Body { anchor: at, centre, half_height, radius, head_y: hurtbox.head.map(|head| centre[1] + head), mark: [centre[0], centre[1] + hurtbox.mark_y, centre[2]], vehicle: None }
         }
         Some(vehicle) => {
             let centre = [at[0], at[1] - SEATED_CENTRE_DROP, at[2]];
-            Body { centre, half_height: SEATED_HALF_HEIGHT, radius: SEATED_RADIUS, head_y: hurtbox.head.map(|_| at[1] - SEATED_HEAD_ZONE), mark: centre, vehicle: Some(vehicle) }
+            Body { anchor: at, centre, half_height: SEATED_HALF_HEIGHT, radius: SEATED_RADIUS, head_y: hurtbox.head.map(|_| at[1] - SEATED_HEAD_ZONE), mark: centre, vehicle: Some(vehicle) }
         }
     })
 }
@@ -173,11 +175,16 @@ pub struct Harm {
     pub from: Option<[f32; 3]>,
     pub head: bool,
     pub limb: Option<u8>,
+    /// Where it struck, when a round did; the body's mark otherwise.
+    pub at: Option<[f32; 3]>,
+    /// That point less the point the body hangs from (`Body::anchor`) as it stood when struck, for
+    /// the wound to be drawn on the body; none for a body in a seat.
+    pub offset: Option<[f32; 3]>,
 }
 
 impl Harm {
     pub fn new(amount: u8, attacker: Option<u32>, weapon: u8) -> Self {
-        Harm { amount, attacker, weapon, from: None, head: false, limb: None }
+        Harm { amount, attacker, weapon, from: None, head: false, limb: None, at: None, offset: None }
     }
 
     /// The same, come from `point`.
@@ -194,6 +201,11 @@ impl Harm {
     pub fn limb(self, limb: Option<u8>) -> Self {
         Harm { limb, ..self }
     }
+
+    /// The same, struck at `point`, `offset` from where the body hangs.
+    pub fn at(self, point: [f32; 3], offset: Option<[f32; 3]>) -> Self {
+        Harm { at: Some(point), offset, ..self }
+    }
 }
 
 /// The weapons whose kill throws the body down as a blast does.
@@ -207,13 +219,13 @@ const BLASTS: [u8; 10] = [WEAPON_ROCKET, WEAPON_SHELL, WEAPON_AP, WEAPON_WRECK, 
 /// other than itself): its `Respawn` starts counting and its `DropOnDeath` is left where it fell.
 /// Returns whether this killed it; does nothing to the dead.
 pub fn damage_entity(world: &mut World, id: u32, harm: Harm) -> bool {
-    let Harm { amount, attacker, weapon, from, head, limb } = harm;
+    let Harm { amount, attacker, weapon, from, head, limb, at, offset } = harm;
     let other = attacker.filter(|&by| by != id);
     if other.is_some_and(|by| same_team(world, by, id)) || amount == 0 || !world.entities.alive(id) {
         return false;
     }
     let from = from.or_else(|| other.and_then(|by| position_of(world, by)));
-    let at = mark(world, id);
+    let at = at.unwrap_or_else(|| mark(world, id));
     let soldier = world.entities.has::<Player>(id);
     // What a part of a soldier other than the torso lost, and whether that killed them.
     let (part, spent) = match (soldier, head, limb) {
@@ -239,7 +251,7 @@ pub fn damage_entity(world: &mut World, id: u32, harm: Harm) -> bool {
     if lost == 0 && !killed {
         return false;
     }
-    super::limbs::struck(world, id, part, lost, from);
+    super::limbs::struck(world, id, part, lost, from, offset);
     events::damaged(world, Damaged { victim: id, lost, attacker, weapon, from, at, head: part == PART_HEAD, killed, aboard: Vec::new() });
     if !killed {
         return false;

@@ -1,5 +1,5 @@
 import { FLAG_CROUCHING, FLAG_DEAD, FLAG_GROUNDED, FLAG_HELD_MASK, FLAG_HELD_SHIFT, KIND_SOLDIER } from '@/net/codec'
-import { SLIDE_MIN_SPEED, STANCE_CHUTE, STANCE_PRONE } from '@/sim/consts'
+import { SLIDE_MIN_SPEED, STANCE_CHUTE, STANCE_DOWN, STANCE_PRONE } from '@/sim/consts'
 import type { Avatars } from '../avatars'
 import type { Frame, Presenter } from '../presenter'
 import type { Sampled } from '../store'
@@ -58,7 +58,7 @@ export class Soldiers implements Presenter<Frame> {
     avatar.pack = entity.carry !== undefined
     if (!dead) this.world.blobFoot(x, y, z)
     avatar.update([x, y, z], entity.heading?.yaw ?? 0, velocity[0], velocity[1], grounded, frame.dt, 0, crouching,
-      crouching && grounded && knock > SLIDE_MIN_SPEED, stance === STANCE_PRONE, stance === STANCE_CHUTE, entity.motion?.vy ?? 0)
+      crouching && grounded && knock > SLIDE_MIN_SPEED, stance === STANCE_PRONE || stance === STANCE_DOWN, stance === STANCE_CHUTE, entity.motion?.vy ?? 0)
     if (!dead) this.world.wade(id, x, y, z, Math.hypot(velocity[0], velocity[1]), frame.dt)
   }
 

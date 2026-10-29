@@ -26,12 +26,12 @@ impl Game {
             let one_arm = crate::mechanics::limbs_lost(&self.world, id) & LIMB_ARMS != 0;
             let wounds = self.world.entities.get::<Wounds>(id).copied();
             let limbs = wounds.filter(|wounds| wounds.lost != 0).map(|wounds| wire::Limbs { lost: wounds.wire() });
-            let struck = self.world.entities.get::<Struck>(id).map(|s| wire::Struck { count: s.count, part: s.part, amount: s.amount, yaw: s.yaw });
+            let struck = self.world.entities.get::<Struck>(id).map(|s| wire::Struck { count: s.count, part: s.part, amount: s.amount, yaw: s.yaw, x: s.at[0], y: s.at[1], z: s.at[2] });
             let parts = wounds.unwrap_or_default().left();
             let carry = crate::mechanics::carries(&self.world, id).then_some(wire::Carry { what: CARRY_BACKPACK });
             let shown = Replicated { seated, limbs, struck, carry, ..shown };
             let hp = self.world.entities.get::<Health>(id).map_or(0, |health| health.hp);
-            (id, Replicated { vitals: Some(wire::Vitals { hp, progress: progress(player, one_arm), spent: player.character.spent, winded: player.character.winded.into(), parts }), hotbar: Some(wire::Hotbar { slots: player.hotbar }), ..shown })
+            (id, Replicated { vitals: Some(wire::Vitals { hp, progress: progress(player, one_arm), spent: player.character.spent, winded: player.character.winded.into(), parts, down: player.character.down }), hotbar: Some(wire::Hotbar { slots: player.hotbar }), ..shown })
         }));
         scene.extend(self.creatures());
         scene.extend(self.world.entities.all::<Vehicle>().filter_map(|(id, vehicle)| Some((id, self.vehicle(id, vehicle)?))));
@@ -176,7 +176,7 @@ fn soldier(player: &Player, alive: bool) -> Replicated {
         flags |= FLAG_CROUCHING;
     }
     flags |= (player.held().item << FLAG_HELD_SHIFT) & FLAG_HELD_MASK;
-    let stance = if c.chute { STANCE_CHUTE } else if c.prone { STANCE_PRONE } else { STANCE_STANDING };
+    let stance = if c.down > 0 { STANCE_DOWN } else if c.chute { STANCE_CHUTE } else if c.prone { STANCE_PRONE } else { STANCE_STANDING };
     let [x, y, z] = c.position.map(to_cm);
     Replicated {
         kind: Some(wire::Kind { kind: KIND_SOLDIER }),

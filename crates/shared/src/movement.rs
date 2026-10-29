@@ -143,6 +143,15 @@ pub fn settle_vertical(vy: f32, desired_y: f32, moved_y: f32, grounded: bool) ->
     if landed || bumped_ceiling { 0.0 } else { vy }
 }
 
+/// Ticks a blast throwing a soldier at `power` m/s knocks them down for: none below `KNOCKDOWN_POWER`.
+pub fn knockdown_ticks(power: f32) -> u8 {
+    if power < KNOCKDOWN_POWER {
+        return 0;
+    }
+    let share = ((power - KNOCKDOWN_POWER) / (KNOCK_MAX_SPEED - KNOCKDOWN_POWER)).clamp(0.0, 1.0);
+    (f32::from(KNOCKDOWN_MIN_TICKS) + share * f32::from(KNOCKDOWN_MAX_TICKS - KNOCKDOWN_MIN_TICKS)).round() as u8
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,4 +306,14 @@ mod tests {
         let (_, moved) = desired_translation(-CHUTE_DESCENT, false, knock, &frame(127, BUTTON_RUN), TICK_DT, 1.0, true, JUMP_SPEED);
         assert!((moved[2] - knock[1] * TICK_DT).abs() < 1e-6);
     }
+
+    #[test]
+    fn a_push_knocks_down_from_its_threshold_for_longer_the_harder_it_is() {
+        assert_eq!(knockdown_ticks(KNOCKDOWN_POWER - 0.01), 0, "a shove");
+        assert_eq!(knockdown_ticks(KNOCKDOWN_POWER), KNOCKDOWN_MIN_TICKS);
+        assert_eq!(knockdown_ticks(KNOCK_MAX_SPEED), KNOCKDOWN_MAX_TICKS);
+        assert_eq!(knockdown_ticks(KNOCK_MAX_SPEED * 3.0), KNOCKDOWN_MAX_TICKS, "never longer");
+        assert!(knockdown_ticks(12.0) > knockdown_ticks(9.0));
+    }
+
 }

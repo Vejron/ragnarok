@@ -51,9 +51,12 @@ const KNOCK_MIN_PUSH: f32 = 2.5;
 const KNOCK_HOP: f32 = 2.0;
 const KNOCK_HOP_PER_SPEED: f32 = 0.25;
 const KNOCK_HOP_MAX: f32 = 8.0;
-/// A car slower than this (m/s) only shoves a soldier. Faster, it hurts by this much per m/s over.
+/// A car slower than this (m/s) only shoves a soldier. Faster, it hurts more and more steeply, and
+/// takes all a soldier has at `ROADKILL_LETHAL_SPEED` (90 km/h): below it they are mostly tossed.
 const ROADKILL_MIN_SPEED: f32 = 3.0;
-const ROADKILL_DAMAGE_PER_SPEED: f32 = 8.0;
+const ROADKILL_LETHAL_SPEED: f32 = 25.0;
+/// A car at least this fast (m/s) knocks a soldier down, however slow: tossed, they lie a moment.
+const CAR_KNOCKDOWN_SPEED: f32 = 2.0;
 /// Ticks before the same player can be hit again, so one pass is one hit.
 const HIT_COOLDOWN: u32 = 12;
 /// A car on its side or roof this long, and not moving, is set back on its wheels.
@@ -244,6 +247,10 @@ fn boarding_point(kind: u8, pose: &CarPose) -> [f32; 3] {
 
 fn board(world: &mut World, id: u32) {
     let Some(player) = world.entities.get::<Player>(id) else { return };
+    // Knocked down, they cannot climb aboard until they are up.
+    if player.character.down > 0 {
+        return;
+    }
     let here = player.character.position;
     let mut nearest: Option<(f32, u32, usize)> = None;
     for (vid, vehicle) in world.entities.all::<Vehicle>() {
@@ -568,9 +575,11 @@ fn run_down_creatures(world: &mut World) {
     }
 }
 
-/// What being run down at `speed` m/s takes off a soldier or a creature.
+/// What being run down at `speed` m/s takes off a soldier or a creature: the share of a soldier's
+/// health rising with the square of the speed over `ROADKILL_MIN_SPEED`, all of it at `ROADKILL_LETHAL_SPEED`.
 fn roadkill_damage(speed: f32) -> u8 {
-    ((speed - ROADKILL_MIN_SPEED) * ROADKILL_DAMAGE_PER_SPEED).min(f32::from(PLAYER_MAX_HP)).round() as u8
+    let share = ((speed - ROADKILL_MIN_SPEED) / (ROADKILL_LETHAL_SPEED - ROADKILL_MIN_SPEED)).clamp(0.0, 1.0);
+    (share * share * f32::from(PLAYER_MAX_HP)).round() as u8
 }
 
 /// Throws every standing player a car overlaps. The direction leans on the car's heading with a
@@ -603,6 +612,12 @@ fn knock_players(world: &mut World) {
         character.knock = [direction[0] * power, direction[1] * power];
         character.vy = (KNOCK_HOP + KNOCK_HOP_PER_SPEED * speed).min(KNOCK_HOP_MAX);
         character.grounded = false;
+        // Hit by a car that is going at all, they are knocked down, as a blast would (KNOCKDOWN.md).
+        let down = if speed >= CAR_KNOCKDOWN_SPEED { shared::movement::knockdown_ticks(power.max(KNOCKDOWN_POWER)) } else { 0 };
+        if down > 0 {
+            world.physics.knock_down(character, down);
+            player.interrupt();
+        }
         player.hit_cooldown = HIT_COOLDOWN;
         tracing::debug!(player = ?player.character.position, car = hit.car, speed, "player knocked");
         if speed > ROADKILL_MIN_SPEED {

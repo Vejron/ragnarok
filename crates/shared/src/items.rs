@@ -655,10 +655,10 @@ mod tests {
         assert_eq!(f.apply(100, 50.0), 50);
         assert_eq!(f.apply(1, 50.0), 1);
         assert_eq!(f.apply(0, 50.0), 0);
-        // Ten close-range pellets are lethal; ten from beyond the edge of the range are not.
+        // Two pulls' worth of close-range pellets are lethal; ten from beyond the edge of the range are not.
         let gun = def(ITEM_SHOTGUN).unwrap();
         let close = u32::from(gun.damage) * u32::from(gun.pellets);
-        assert!(close >= u32::from(crate::consts::PLAYER_MAX_HP));
+        assert!(2 * close >= u32::from(crate::consts::PLAYER_MAX_HP));
         let far = u32::from(gun.falloff.apply(gun.damage, gun.range)) * u32::from(gun.pellets);
         assert!(far < u32::from(crate::consts::PLAYER_MAX_HP) / 2);
     }

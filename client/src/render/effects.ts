@@ -107,6 +107,11 @@ export class Effects {
     this.root.spawn({ at, life: 0.09, size: 0.12, grow: 0.3, color: 0xffffff, bright: true })
   }
 
+  /** A round striking a soldier at `at`, for the one who fired it: a pinpoint flash on the spot. */
+  struck(at: V) {
+    this.root.spawn({ at, life: 0.08, size: 0.07, grow: 0.16, color: 0xffffff, bright: true })
+  }
+
   /**
    * A round going through armour at `at`, on a plate facing `outward`: a white-hot flash, molten
    * fragments blown back out of the hole and a wisp of smoke from it. `big` for a shell, which throws

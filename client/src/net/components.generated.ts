@@ -101,6 +101,7 @@ export interface Vitals {
   spent: number
   winded: number
   parts: number[]
+  down: number
 }
 
 export interface Hotbar {
@@ -136,6 +137,9 @@ export interface Struck {
   part: number
   amount: number
   yaw: number
+  x: number
+  y: number
+  z: number
 }
 
 /** An entity as it is replicated: the components it has. */
@@ -192,11 +196,11 @@ export const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; 
   { id: 14, name: 'kind', diff: false, owner: false, fields: [{ name: 'kind' }] },
   { id: 15, name: 'projectile', diff: false, owner: false, fields: [{ name: 'kind' }] },
   { id: 16, name: 'pickup', diff: false, owner: false, fields: [{ name: 'item' }] },
-  { id: 17, name: 'vitals', diff: false, owner: true, fields: [{ name: 'hp' }, { name: 'progress', unit: 'byte' }, { name: 'spent' }, { name: 'winded' }, { name: 'parts' }] },
+  { id: 17, name: 'vitals', diff: false, owner: true, fields: [{ name: 'hp' }, { name: 'progress', unit: 'byte' }, { name: 'spent' }, { name: 'winded' }, { name: 'parts' }, { name: 'down' }] },
   { id: 18, name: 'hotbar', diff: false, owner: true, fields: [{ name: 'slots', struct: [{ name: 'item' }, { name: 'count' }, { name: 'ammo' }] }] },
   { id: 19, name: 'drive', diff: false, owner: true, fields: [{ name: 'vx', unit: 'cm' }, { name: 'vy', unit: 'cm' }, { name: 'vz', unit: 'cm' }, { name: 'wx', unit: 'mrad' }, { name: 'wy', unit: 'mrad' }, { name: 'wz', unit: 'mrad' }, { name: 'steer', unit: 'mrad' }, { name: 'spin', unit: 'mrad' }] },
   { id: 20, name: 'seated', diff: false, owner: false, fields: [{ name: 'vehicle' }, { name: 'seat' }] },
   { id: 21, name: 'look', diff: true, owner: false, fields: [{ name: 'pitch', unit: 'mrad' }] },
   { id: 22, name: 'carry', diff: false, owner: false, fields: [{ name: 'what' }] },
-  { id: 23, name: 'struck', diff: false, owner: false, fields: [{ name: 'count' }, { name: 'part' }, { name: 'amount' }, { name: 'yaw', unit: 'mrad' }] },
+  { id: 23, name: 'struck', diff: false, owner: false, fields: [{ name: 'count' }, { name: 'part' }, { name: 'amount' }, { name: 'yaw', unit: 'mrad' }, { name: 'x', unit: 'cm' }, { name: 'y', unit: 'cm' }, { name: 'z', unit: 'cm' }] },
 ]

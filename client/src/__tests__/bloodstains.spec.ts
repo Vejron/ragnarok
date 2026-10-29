@@ -4,7 +4,7 @@ import { Bloodstains } from '@/render/bloodstains'
 import { Debris } from '@/render/debris'
 import { Effects } from '@/render/effects'
 import { Gore } from '@/render/gore'
-import { Particles } from '@/render/particles'
+import { Particles, type ParticleSpec } from '@/render/particles'
 import type { Character } from '@/render/character'
 import { DEATH_BODY, LIMB_LEG_L, PART_TORSO } from '@/net/codec'
 
@@ -43,8 +43,13 @@ describe('Gore on the ground', () => {
     const stains = new Bloodstains(500)
     const gore = new Gore(new Debris(), new Particles(2000), new Effects(64), stains, () => 0)
     const position = new THREE.Vector3(0, 0.9, 0)
-    const avatar = { position, stump: (_: number, out = new THREE.Vector3()) => out.copy(position), launch: () => {} } as unknown as Character
-    return { stains, gore, avatar }
+    const pinned: THREE.Vector3[] = []
+    const pin = (point: THREE.Vector3) => {
+      pinned.push(point.clone())
+      return (out = new THREE.Vector3()) => out.copy(point)
+    }
+    const avatar = { position, stump: (_: number, out = new THREE.Vector3()) => out.copy(position), launch: () => {}, pin } as unknown as Character
+    return { stains, gore, avatar, pinned }
   }
 
   it('stains the ground where the blood from a hit comes down, not before', () => {
@@ -70,4 +75,61 @@ describe('Gore on the ground', () => {
     }
     expect(stains.laid).toBe(5)
   })
+
+  it('bleeds from the spot the round struck, and out of the far side from the shooter', () => {
+    const { stains, gore, avatar, pinned } = setup()
+    // Shot in the left shin by a shooter to the +z (bearing pi, as 0 faces -z): it exits towards -z.
+    gore.hit(avatar, LIMB_LEG_L, Math.PI, 40, { x: 0.12, y: -0.6, z: -0.1 })
+    expect(pinned).toHaveLength(1)
+    expect(pinned[0]!.toArray()).toEqual([0.12, 0.3, -0.1].map((v) => expect.closeTo(v, 5)))
+    for (let t = 0; t < 2; t += 1 / 60) gore.update(1 / 60)
+    const positions = (stains as unknown as { positions: Float32Array }).positions
+    const zs: number[] = []
+    for (let quad = 0; quad < stains.laid; quad++) zs.push((positions[quad * 12 + 2]! + positions[quad * 12 + 11]!) / 2)
+    expect(zs.length).toBeGreaterThan(5)
+    const behind = zs.filter((z) => z < -0.1).length
+    expect(behind / zs.length, 'most of it lands on the far side').toBeGreaterThan(0.6)
+  })
+
+  it('bleeds at the rate it is told, however short the frames', () => {
+    const particles = new Particles(2000)
+    const spawned: ParticleSpec[] = []
+    particles.spawn = (spec) => void spawned.push(spec)
+    const gore = new Gore(new Debris(), particles, new Effects(64), new Bloodstains(500), () => 0)
+    const position = new THREE.Vector3(0, 0.9, 0)
+    const avatar = { position, stump: (_: number, out = new THREE.Vector3()) => out.copy(position) } as unknown as Character
+    // A drip is a quarter of a second at 14 drops a second: three or four, not one a frame.
+    gore.drip(avatar, LIMB_LEG_L)
+    for (let t = 0; t < 1; t += 1 / 144) gore.update(1 / 144)
+    expect(spawned.length).toBeGreaterThanOrEqual(3)
+    expect(spawned.length).toBeLessThanOrEqual(4)
+  })
+
+  it('ends each drop where the particle reaches the ground, on a slope too', () => {
+    const particles = new Particles(2000)
+    const spawned: ParticleSpec[] = []
+    particles.spawn = (spec) => void spawned.push(spec)
+    const slope = (x: number, z: number) => 0.3 * x - 0.1 * z
+    const gore = new Gore(new Debris(), particles, new Effects(64), new Bloodstains(500), slope)
+    const position = new THREE.Vector3(0, 1.2, 0)
+    const avatar = { position, stump: (_: number, out = new THREE.Vector3()) => out.copy(position), pin: (p: THREE.Vector3) => () => p.clone() } as unknown as Character
+    gore.hit(avatar, PART_TORSO, 0.7, 40, { x: 0.1, y: 0.3, z: 0 })
+    const drops = spawned.filter((spec) => spec.shape === 'drop')
+    expect(drops.length).toBeGreaterThan(10)
+    for (const drop of drops) {
+      // Moved as the GPU moves it: drag a share of the speed each step, then gravity.
+      const at = 'x' in drop.position ? [drop.position.x, drop.position.y, drop.position.z] : [...drop.position]
+      const v = [...drop.velocity]
+      const dt = 1 / 600
+      for (let t = 0; t < drop.life - 1e-9; t += dt) {
+        const keep = Math.max(0, 1 - drop.drag! * dt)
+        v[0]! *= keep
+        v[1]! = v[1]! * keep - drop.gravity! * dt
+        v[2]! *= keep
+        for (let i = 0; i < 3; i++) at[i]! += v[i]! * dt
+      }
+      expect(Math.abs(at[1]! - slope(at[0]!, at[2]!))).toBeLessThan(0.05)
+    }
+  })
 })
+

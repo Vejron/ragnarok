@@ -364,6 +364,35 @@ describe('Character coming alive', () => {
     expect(head().distanceTo(still)).toBeLessThan(0.03)
     c.dispose()
   })
+
+  it('pins a wound to the bone it is on, so it moves with the body', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    const rootOf = (who: Character) => (who as unknown as { object: import('@ragnarok/engine').Node }).object
+    const stand = (x: number, yaw: number) => {
+      for (let i = 0; i < 10; i++) person.update([x, 1, 0], yaw, 0, 0, true, 1 / 60)
+    }
+    stand(0, 0)
+    rootOf(person).updateWorldMatrix(true, true)
+    const shin = rootOf(person).getObjectByName('shin_L')!
+    const knee = shin.getWorldPosition(new THREE.Vector3())
+    const spot = knee.clone().add(new THREE.Vector3(0, -0.1, 0))
+    const wound = person.pin(spot)
+    expect(wound().distanceTo(spot)).toBeLessThan(1e-3)
+    // Walked 5 m on, the wound is 5 m on.
+    stand(5, 0)
+    const moved = wound()
+    expect(moved.x - spot.x).toBeCloseTo(5, 1)
+    expect(moved.y).toBeCloseTo(spot.y, 1)
+    // Turned about, it goes round with the leg, still on the shin.
+    stand(5, Math.PI)
+    const turned = wound()
+    const shinNow = shin.getWorldPosition(new THREE.Vector3())
+    expect(turned.distanceTo(shinNow)).toBeCloseTo(spot.distanceTo(knee), 2)
+    expect(Math.sign(turned.x - 5)).toBe(-Math.sign(spot.x))
+    person.dispose()
+    c.dispose()
+  })
 })
 
 describe('Character losing limbs', () => {

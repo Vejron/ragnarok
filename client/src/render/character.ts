@@ -265,7 +265,86 @@ const chase = (value: number, target: number, rate: number, dt: number) => value
 const AXIS_X = new THREE.Vector3(1, 0, 0)
 const AXIS_Y = new THREE.Vector3(0, 1, 0)
 const AXIS_Z = new THREE.Vector3(0, 0, 1)
+/**
+ * The bones a wound can be pinned to, each with the bone at its far end: the segment between them is
+ * the bone's length. The head has none; its segment runs `HEAD_LENGTH` along itself.
+ */
+const WOUND_BONES: [string, string | null][] = [
+  ['hips', 'spine'],
+  ['spine', 'chest'],
+  ['chest', 'neck'],
+  ['neck', 'head'],
+  ['head', null],
+  ...(['L', 'R'] as const).flatMap((side): [string, string][] => [
+    [`upper_arm_${side}`, `forearm_${side}`],
+    [`forearm_${side}`, `hand_${side}`],
+    [`thigh_${side}`, `shin_${side}`],
+    [`shin_${side}`, `foot_${side}`],
+  ]),
+]
+const HEAD_LENGTH = 0.25
+
+/**
+ * The parts of a ragdoll (`crates/sim/src/ragdoll.rs`, in its order), each as the bones its segment
+ * runs between: the second `null` for the head, which runs `HEAD_LENGTH` along itself.
+ */
+const RAGDOLL_SEGMENTS: readonly [string, string | null][] = [
+  ['thigh_L', 'thigh_R'],
+  ['spine', 'neck'],
+  ['head', null],
+  ['upper_arm_L', 'forearm_L'],
+  ['forearm_L', 'hand_L'],
+  ['upper_arm_R', 'forearm_R'],
+  ['forearm_R', 'hand_R'],
+  ['thigh_L', 'shin_L'],
+  ['shin_L', 'foot_L'],
+  ['thigh_R', 'shin_R'],
+  ['shin_R', 'foot_R'],
+]
+/** The bones a ragdoll drives, parents first, each with the part it rides on. The rest keep their pose. */
+const RAGDOLL_BONES: readonly [string, number][] = [
+  ['hips', 0],
+  ['spine', 1],
+  ['chest', 1],
+  ['neck', 1],
+  ['head', 2],
+  ['upper_arm_L', 3],
+  ['forearm_L', 4],
+  ['upper_arm_R', 5],
+  ['forearm_R', 6],
+  ['thigh_L', 7],
+  ['shin_L', 8],
+  ['thigh_R', 9],
+  ['shin_R', 10],
+]
+/** Floats per part in a ragdoll's pose: position, then rotation x, y, z, w. */
+const RAGDOLL_POSE = 7
+/** Seconds getting up takes, and over how many of them it eases out of the pose the ragdoll left. */
+const GETUP_TIME = 1.1
+const GETUP_BLEND = 0.3
+
+/** Part `part` of ragdoll pose `pose` as a matrix, into `out`. */
+function partMatrix(pose: ArrayLike<number>, part: number, out = new THREE.Matrix4()): THREE.Matrix4 {
+  const o = part * RAGDOLL_POSE
+  return out.compose(
+    SCRATCH.at.set(pose[o]!, pose[o + 1]!, pose[o + 2]!),
+    SCRATCH.q.set(pose[o + 3]!, pose[o + 4]!, pose[o + 5]!, pose[o + 6]!),
+    SCRATCH.one,
+  )
+}
+
+/** How far `p` is from the segment `a`–`b`. */
+function toSegment(p: THREE.Vector3, a: THREE.Vector3, b: THREE.Vector3): number {
+  const ab = SCRATCH.axis.subVectors(b, a)
+  const t = Math.min(1, Math.max(0, SCRATCH.forward.subVectors(p, a).dot(ab) / Math.max(ab.lengthSq(), 1e-6)))
+  return a.clone().addScaledVector(ab, t).distanceTo(p)
+}
+
 const SCRATCH = {
+  at: new THREE.Vector3(),
+  one: new THREE.Vector3(1, 1, 1),
+  size: new THREE.Vector3(),
+  matrix: new THREE.Matrix4(),
   q: new THREE.Quaternion(),
   parent: new THREE.Quaternion(),
   axis: new THREE.Vector3(),
@@ -294,6 +373,8 @@ export class Character {
   private readonly neck: Node | null
   /** Forearms and shins, in `LIMB_*` bit order, for hit reactions. */
   private readonly lowerLimbs: (Node | null)[]
+  /** `WOUND_BONES` as found in the model. */
+  private readonly woundBones: [Node, Node | null][]
   private readonly muzzleBones = new Map<Stance, Node>()
   /** Each weapon's mesh, by item id; only the one in hand is shown. */
   private readonly weapons = new Map<number, Node>()
@@ -328,6 +409,12 @@ export class Character {
   private lostLimbs = 0
   private limbsKnown = false
   /** A body thrown by its killing blow: where it has got to, relative to where it died. */
+  /** Knocked down: the ragdoll's parts drive these bones, each at its offset from the part it rides on. */
+  private ragdoll: { bones: { bone: Node; part: number; offset: THREE.Matrix4 }[]; front: THREE.Vector3 } | null = null
+  /** Getting up after a knockdown: the clip, how long it has played, and where each ragdoll bone was. */
+  private rising: { clip: string; time: number; from: THREE.Matrix4[] } | null = null
+  /** Bones by name. */
+  private readonly bones = new Map<string, Node>()
   private fling: { velocity: THREE.Vector3; spin: THREE.Vector3; offset: THREE.Vector3; groundAt: (x: number, z: number) => number } | null = null
   private readonly tumble = new THREE.Quaternion()
   private readonly canopy: Canopy
@@ -387,6 +474,13 @@ export class Character {
     this.random = seeded(id + 1)
     this.head =this.object.getObjectByName('head') ?? null
     this.limbBones = LIMB_BONES.map((name) => this.object.getObjectByName(name) ?? null)
+    this.object.traverse((node) => {
+      if (node.name && !this.bones.has(node.name)) this.bones.set(node.name, node)
+    })
+    this.woundBones = WOUND_BONES.flatMap(([name, end]): [Node, Node | null][] => {
+      const bone = this.object.getObjectByName(name)
+      return bone ? [[bone, end === null ? null : (this.object.getObjectByName(end) ?? null)]] : []
+    })
     this.gunHand = this.object.getObjectByName('hand_R') ?? null
     for (const stance of Object.keys(MUZZLE_BONE) as Stance[]) {
       const bone = MUZZLE_BONE[stance] ? this.object.getObjectByName(MUZZLE_BONE[stance]!) : null
@@ -419,6 +513,11 @@ export class Character {
     return this.shown
   }
 
+  /** Drawn and in one piece: what a ragdoll can be made of. */
+  get intact() {
+    return this.shown && !this.gibbed
+  }
+
   /** The blend weight of each clip, for tests and debugging. */
   get blend(): ReadonlyMap<string, number> {
     return this.weights
@@ -446,8 +545,13 @@ export class Character {
     this.position.set(position[0]!, position[1]!, position[2]!)
     this.pitch = pitch
     this.fadeFlash(dt)
-    this.flingStep(dt)
+    if (!this.ragdoll) this.flingStep(dt)
     if (!this.shown || this.gibbed) return
+    // A ragdoll poses it (`driveRagdoll`); nothing here does.
+    if (this.ragdoll) {
+      this.canopy.update(false, dt)
+      return
+    }
 
     this.clock += dt
     this.canopy.update(chute && !this.down, dt)
@@ -469,7 +573,8 @@ export class Character {
     const free = speedNow > STILL_SPEED || !grounded || prone || this.lie > 0.3 || this.down || sliding || crouching
     let body = this.bodyYaw ?? yaw
     const gap = wrap(yaw - body)
-    if (free || Math.abs(gap) > TWIST_LIMIT) this.turning = true
+    if (this.rising) this.turning = false
+    else if (free || Math.abs(gap) > TWIST_LIMIT) this.turning = true
     else if (Math.abs(gap) < TWIST_SETTLED) this.turning = false
     const before = body
     if (this.turning) body = wrap(body + gap * (1 - Math.exp(-(free ? BLEND_RATE * 2 : TURN_RATE) * dt)))
@@ -534,6 +639,17 @@ export class Character {
     targets.set('freefall', aloft * this.fall * (1 - this.hang))
     targets.set('chute', aloft * this.hang)
     targets.set('death', this.death)
+    // Getting up is all there is until it is up; then the stance's clips take over again.
+    const rising = this.rising
+    if (rising) {
+      rising.time += dt
+      if (rising.time >= GETUP_TIME) this.rising = null
+      else {
+        for (const name of targets.keys()) targets.set(name, 0)
+        targets.set(rising.clip, 1)
+        for (const name of this.actions.keys()) this.weights.set(name, name === rising.clip ? 1 : 0)
+      }
+    }
 
     // Weights chase their targets; both sets sum to one, so the blend stays a convex mix.
     const rate = BLEND_RATE
@@ -571,6 +687,7 @@ export class Character {
       if (base === 'idle' || base === 'crouch_idle' || base === 'crawl_idle' || base === 'slide') action.time = this.idleTime
       else if (base === 'jump_air') action.time = (this.idleTime / (idle?.clip.duration ?? 1)) * action.clip.duration
       else if (base === 'freefall' || base === 'chute') action.time = this.clock % action.clip.duration
+      else if (base === 'getup_back' || base === 'getup_front') action.time = Math.min(1, (this.rising?.time ?? GETUP_TIME) / GETUP_TIME) * action.clip.duration
       else if (base !== 'death') action.time = this.phase * action.clip.duration
     }
     // The death clip plays out on the animator's clock once it starts.
@@ -583,7 +700,7 @@ export class Character {
     this.recoil = chase(this.recoil, 0, RECOIL_DECAY, dt)
     this.aim()
     // The waist and chest take what the legs have not turned, so the gun points where it looks.
-    const twist = wrap(yaw - body) * alive * (1 - this.lie) * (1 - this.air)
+    const twist = wrap(yaw - body) * alive * (1 - this.lie) * (1 - this.air) * (this.rising ? 0 : 1)
     this.turn(this.spine, twist * TWIST_SPINE, AXIS_Y)
     this.turn(this.chest, twist * (1 - TWIST_SPINE), AXIS_Y)
     this.live(dt, speedNow, standing * (1 - moving), alive)
@@ -593,6 +710,26 @@ export class Character {
     const heading = speedNow > 0.5 ? Math.atan2(-vx, -vz) : body
     const turn = Math.atan2(Math.sin(heading - body), Math.cos(heading - body))
     this.place(body + turn * this.slide)
+    this.easeUp()
+  }
+
+  /** Just up from a ragdoll, eases each bone it drove out of where the ragdoll left it into the clip. */
+  private easeUp() {
+    const rising = this.rising
+    if (!rising || rising.time >= GETUP_BLEND) return
+    const k = rising.time / GETUP_BLEND
+    const ease = k * k * (3 - 2 * k)
+    this.object.updateWorldMatrix(true, true)
+    const from = { at: new THREE.Vector3(), q: new THREE.Quaternion(), size: new THREE.Vector3() }
+    const to = { at: new THREE.Vector3(), q: new THREE.Quaternion(), size: new THREE.Vector3() }
+    RAGDOLL_BONES.forEach(([name], i) => {
+      const bone = this.bones.get(name)
+      const was = rising.from[i]
+      if (!bone || !was) return
+      was.decompose(from.at, from.q, from.size)
+      new THREE.Matrix4().fromArray(bone.matrixWorld).decompose(to.at, to.q, to.size)
+      this.setWorld(bone, new THREE.Matrix4().compose(from.at.lerp(to.at, ease), from.q.slerp(to.q, ease), to.size))
+    })
   }
 
   /**
@@ -785,7 +922,8 @@ export class Character {
   private fadeFlash(dt: number) {
     if (this.flashLeft <= 0) return
     this.flashLeft = Math.max(0, this.flashLeft - dt)
-    const glow = (this.flashLeft / HIT_FLASH) * 0.9
+    // Faint: the wound is what shows where it was hit; this only says it was.
+    const glow = (this.flashLeft / HIT_FLASH) * 0.35
     this.outfit.emissive.set(glow, glow, glow)
     this.outfit.needsUpdate()
   }
@@ -841,6 +979,8 @@ export class Character {
    * carried it off. It lands and lies as a death does.
    */
   launch(velocity: THREE.Vector3, spin: THREE.Vector3, groundAt: (x: number, z: number) => number) {
+    // A ragdoll already carries it.
+    if (this.ragdoll) return
     this.fling = { velocity: velocity.clone(), spin: spin.clone(), offset: new THREE.Vector3(), groundAt }
     this.tumble.identity()
   }
@@ -861,6 +1001,136 @@ export class Character {
   /** The limbs it has lost (`LIMB_*`). */
   get limbs() {
     return this.lostLimbs
+  }
+
+  /**
+   * Pins world `point` (on the body as it stands now) to the bone it lies on: the function returned
+   * gives where that spot is from then on, as the body moves, bends and falls, into `out`.
+   */
+  pin(point: THREE.Vector3): (out?: THREE.Vector3) => THREE.Vector3 {
+    this.object.updateWorldMatrix(true, true)
+    let nearest: Node | null = null
+    let best = Infinity
+    const a = new THREE.Vector3()
+    const b = new THREE.Vector3()
+    for (const [bone, end] of this.woundBones) {
+      bone.getWorldPosition(a)
+      if (end) end.getWorldPosition(b)
+      else bone.localToWorld(b.set(0, HEAD_LENGTH, 0))
+      const distance = toSegment(point, a, b)
+      if (distance < best) {
+        best = distance
+        nearest = bone
+      }
+    }
+    if (!nearest) {
+      const offset = point.clone().sub(this.position)
+      return (out = new THREE.Vector3()) => out.copy(this.position).add(offset)
+    }
+    const bone = nearest
+    const local = bone.worldToLocal(point.clone())
+    return (out = new THREE.Vector3()) => {
+      this.object.updateWorldMatrix(true, true)
+      return bone.localToWorld(out.copy(local))
+    }
+  }
+
+  /** Whether a ragdoll is driving it. */
+  get ragdolled() {
+    return this.ragdoll !== null
+  }
+
+  /**
+   * What a ragdoll of it as it stands now is made of (`ClientSim.spawnRagdoll`): each part's segment,
+   * six numbers from one joint to the next, and its right in the world, the way elbows and knees bend.
+   */
+  ragdollSegments(): { segments: Float32Array; side: [number, number, number] } {
+    this.object.updateWorldMatrix(true, true)
+    const segments = new Float32Array(RAGDOLL_SEGMENTS.length * 6)
+    const a = new THREE.Vector3()
+    const b = new THREE.Vector3()
+    RAGDOLL_SEGMENTS.forEach(([from, to], i) => {
+      const start = this.bones.get(from)
+      if (start) start.getWorldPosition(a)
+      else a.copy(this.position)
+      const end = to === null ? null : this.bones.get(to)
+      if (end) end.getWorldPosition(b)
+      else if (start && to === null) start.localToWorld(b.set(0, HEAD_LENGTH, 0))
+      else b.copy(a).add(SCRATCH.at.set(0, 0.2, 0))
+      segments.set([a.x, a.y, a.z, b.x, b.y, b.z], i * 6)
+    })
+    // The model's right is its -X.
+    const side = new THREE.Vector3(-1, 0, 0).applyQuaternion(this.worldRotation(this.object))
+    return { segments, side: [side.x, side.y, side.z] }
+  }
+
+  /**
+   * Hands it over to a ragdoll whose parts are at `pose` (`ClientSim.ragdollPose`), made from
+   * `ragdollSegments` a moment ago: from now on `driveRagdoll` poses it, until `endRagdoll`.
+   */
+  startRagdoll(pose: ArrayLike<number>) {
+    this.object.updateWorldMatrix(true, true)
+    const bones: { bone: Node; part: number; offset: THREE.Matrix4 }[] = []
+    for (const [name, part] of RAGDOLL_BONES) {
+      const bone = this.bones.get(name)
+      if (!bone) continue
+      const offset = partMatrix(pose, part).invert().multiply(new THREE.Matrix4().fromArray(bone.matrixWorld))
+      bones.push({ bone, part, offset })
+    }
+    // Which way the chest faces, as the chest sees it: whether it lands on its back or its belly.
+    const chest = this.bones.get('chest') ?? this.object
+    const front = new THREE.Vector3(0, 0, 1).applyQuaternion(this.worldRotation(this.object)).applyQuaternion(this.worldRotation(chest).invert())
+    this.ragdoll = { bones, front }
+    this.rising = null
+    this.fling = null
+    this.tumble.identity()
+  }
+
+  /** Poses it as its ragdoll's parts are now (`ClientSim.ragdollPose`). */
+  driveRagdoll(pose: ArrayLike<number>) {
+    if (!this.ragdoll || pose.length < RAGDOLL_SEGMENTS.length * RAGDOLL_POSE) return
+    // The model's root goes along over the pelvis, so it is drawn where the body is.
+    this.object.position.set(pose[0]!, pose[1]! - STAND_CENTRE, pose[2]!)
+    this.position.set(pose[0]!, pose[1]!, pose[2]!)
+    this.object.updateWorldMatrix(true, true)
+    for (const { bone, part, offset } of this.ragdoll.bones) this.setWorld(bone, partMatrix(pose, part, SCRATCH.matrix).multiply(offset))
+  }
+
+  /**
+   * The ragdoll lets go. Alive, it gets up: off its back or its belly, whichever it lies on, facing
+   * the way its body lies, easing out of the pose the ragdoll left. Otherwise (a respawn) it is simply
+   * let go.
+   */
+  endRagdoll(rise = true) {
+    const ragdoll = this.ragdoll
+    if (!ragdoll) return
+    this.ragdoll = null
+    if (!rise || this.down) return
+    const from = ragdoll.bones.map(({ bone }) => new THREE.Matrix4().fromArray(bone.matrixWorld))
+    const chest = this.bones.get('chest') ?? this.object
+    const faceUp = ragdoll.front.clone().applyQuaternion(this.worldRotation(chest)).y > 0
+    const head = (this.bones.get('head') ?? this.object).getWorldPosition(new THREE.Vector3())
+    const hips = (this.bones.get('hips') ?? this.object).getWorldPosition(new THREE.Vector3())
+    // On its back the clip starts with the head behind it; on its belly, ahead.
+    const along = head.sub(hips).setY(0).multiplyScalar(faceUp ? -1 : 1)
+    if (along.lengthSq() > 1e-4) this.bodyYaw = Math.atan2(-along.x, -along.z)
+    const clip = faceUp ? 'getup_back' : 'getup_front'
+    if (!this.actions.has(clip)) return
+    this.rising = { clip, time: 0, from }
+  }
+
+  /** Gives `bone` the world transform `world`, keeping its scale, and carries it to its children. */
+  private setWorld(bone: Node, world: THREE.Matrix4) {
+    const parent = bone.parent ? new THREE.Matrix4().fromArray(bone.parent.matrixWorld).invert() : new THREE.Matrix4()
+    parent.multiply(world).decompose(SCRATCH.at, SCRATCH.q, SCRATCH.size)
+    bone.position.set(SCRATCH.at.x, SCRATCH.at.y, SCRATCH.at.z)
+    bone.quaternion.set(SCRATCH.q.x, SCRATCH.q.y, SCRATCH.q.z, SCRATCH.q.w)
+    bone.updateWorldMatrix(false, true)
+  }
+
+  /** `node`'s rotation in the world. */
+  private worldRotation(node: Node): THREE.Quaternion {
+    return node.getWorldQuaternion(new THREE.Quaternion())
   }
 
   /** Where the stump of `limb` (a `LIMB_*` bit) is in the world: the shoulder or the hip. */
@@ -998,6 +1268,8 @@ export class Character {
       this.limbsKnown = false
       this.hideLimbs()
       this.fling = null
+      this.ragdoll = null
+      this.rising = null
       this.tumble.identity()
       for (const spring of Object.values(this.springs)) spring.reset()
       this.struckCount = null

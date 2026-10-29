@@ -19,6 +19,11 @@ const DROP_GRAVITY = 14
 const STAIN_SHARE = 0.4
 /** Longest a drop is followed through the air before it is given up, seconds. */
 const DROP_FLIGHT = 2
+/** About how many stains the spray out of a hit leaves, larger by `HIT_STAIN_SCALE` than a drop's. */
+const HIT_STAINS = 7
+const HIT_STAIN_SCALE = 1.6
+/** Share of a wound's trickle that stains: most of it runs into the clothes. */
+const WOUND_STAIN_SHARE = 0.15
 /** A soldier lies down this long after it is killed before its pool starts to spread, seconds. */
 const POOL_AFTER = 1.2
 /** Metres across a crawler's smear. */
@@ -39,6 +44,10 @@ interface Trail {
   rate: number
   /** How hard they are thrown, m/s. */
   force: number
+  /** Share of its drops that stain where they land. */
+  share: number
+  /** The part of a drop owed from frames too short for a whole one. */
+  owed: number
 }
 
 /** A stain to lay when its drop lands. */
@@ -124,16 +133,47 @@ export class Gore {
 
   /**
    * A living `avatar` was shot in `part` (`PART_*`, a limb by its `LIMB_*` bit) from bearing `from`
-   * (0 faces -Z) for `amount`: blood sprays out the far side and spatters the ground behind it.
+   * (0 faces -Z) for `amount`, at `offset` from where it is drawn from when the round found the spot
+   * (all zero or none: guessed from the part). A puff of spray at the entry, drops kicked back toward
+   * the shooter, a cone of blood out of the far side that spatters the ground behind, and the wound
+   * goes on trickling a moment, moving with the body.
    */
-  hit(avatar: Character, part: number, from: number, amount: number) {
+  hit(avatar: Character, part: number, from: number, amount: number, offset: { x: number; y: number; z: number } | null = null) {
     const out = this.direction.set(Math.sin(from), 0, Math.cos(from))
     const at = this.point
-    if (part === PART_HEAD) at.copy(avatar.position).y += 0.75
+    if (offset && (offset.x || offset.y || offset.z)) at.copy(avatar.position).add(offset)
+    else if (part === PART_HEAD) at.copy(avatar.position).y += 0.75
     else if (part === PART_TORSO) at.copy(avatar.position).y += 0.25
     else avatar.stump(part, at)
     const heavy = Math.min(1, amount / 40)
-    this.mist(at, Math.round(5 + heavy * 14), 2.5 + heavy * 3, out, 0.3)
+    const head = part === PART_HEAD
+    // Entry: a burst of fine spray, and a few drops thrown back the way the round came.
+    this.particles.spawn({
+      position: at,
+      velocity: [-out.x * 0.6, 0.3, -out.z * 0.6],
+      life: 0.18 + Math.random() * 0.1,
+      size: [0.06, 0.28 + heavy * 0.15],
+      color: BLOOD[1]!,
+      colorEnd: BLOOD_DARK,
+      alpha: 0.45,
+      gravity: 0.5,
+      drag: 4,
+      shape: 'puff',
+    })
+    for (let i = 0; i < 4; i++) {
+      const velocity: [number, number, number] = [-out.x * (1 + Math.random() * 1.5) + spread(0.6), 0.8 + Math.random(), -out.z * (1 + Math.random() * 1.5) + spread(0.6)]
+      this.drop(at, velocity, 0.015 + Math.random() * 0.02, 0.6, i, 0)
+    }
+    // Exit: out of the far side of whatever it went through. A few larger stains rather than many
+    // small ones, so a firefight does not use up the stains' ring in seconds.
+    const through = head ? 0.18 : part === PART_TORSO ? 0.28 : 0.1
+    const exit = at.clone().addScaledVector(out, through)
+    const count = Math.round((6 + heavy * 16) * (head ? 1.5 : 1))
+    this.mist(exit, count, 3 + heavy * 4, out, 0.55, Math.min(1, HIT_STAINS / (count * 2)), HIT_STAIN_SCALE)
+    // The wound itself bleeds on a moment where it is on the body.
+    const wound = avatar.pin(at)
+    const spot = new THREE.Vector3()
+    this.bleed(() => wound(spot), 0.3 + heavy * 0.5, 30, 0.6, WOUND_STAIN_SHARE)
   }
 
   /** A legless `avatar` crawls on, bleeding: it leaves a smear behind it, as `track`. */
@@ -196,13 +236,13 @@ export class Gore {
 
   /**
    * A burst of droplets thrown along `dir` and a puff of fine spray. `cone` is how tightly they keep
-   * to `dir`, 0 every way to 1 straight along it.
+   * to `dir`, 0 every way to 1 straight along it; `share` of the drops stain, `scale` times as wide.
    */
-  private mist(at: THREE.Vector3, count: number, speed: number, dir: THREE.Vector3, cone = 0) {
+  private mist(at: THREE.Vector3, count: number, speed: number, dir: THREE.Vector3, cone = 0, share = STAIN_SHARE, scale = 1) {
     // Many small drops rather than a few big ones: a spray, not confetti.
     for (let i = 0; i < count * 2; i++) {
       const aim = new THREE.Vector3(spread(1), Math.random() * 0.9, spread(1)).multiplyScalar(1 - cone).addScaledVector(dir, 0.6 + cone).normalize().multiplyScalar(speed * (0.3 + Math.random()))
-      this.drop(at, [aim.x, aim.y + 1, aim.z], 0.02 + Math.random() ** 2 * 0.06, 0.6, i)
+      this.drop(at, [aim.x, aim.y + 1, aim.z], 0.02 + Math.random() ** 2 * 0.06, 0.6, i, share, scale)
     }
     // The finest of it hangs for a moment as a mist and is gone.
     for (let i = 0; i < Math.ceil(count / 6); i++) {
@@ -223,10 +263,10 @@ export class Gore {
 
   /**
    * One drop `size` metres across thrown from `at` at `velocity`. It flies as a bead of liquid,
-   * stretching with speed, until it reaches the ground, where it is gone; some leave a stain there as
-   * they land.
+   * stretching with speed, until it reaches the ground, where it is gone; `share` of them leave a
+   * stain there as they land, `scale` times as wide as a drop's.
    */
-  private drop(at: { x: number; y: number; z: number }, velocity: [number, number, number], size: number, drag: number, i: number) {
+  private drop(at: { x: number; y: number; z: number }, velocity: [number, number, number], size: number, drag: number, i: number, share = STAIN_SHARE, scale = 1) {
     const landing = this.flight(at, velocity, drag)
     this.particles.spawn({
       position: at,
@@ -241,32 +281,47 @@ export class Gore {
       stretch: 0.025,
       shape: 'drop',
     })
-    if (landing && Math.random() < STAIN_SHARE) {
-      landing.radius = (0.08 + Math.random() * 0.3) * landing.radius
+    if (landing && Math.random() < share) {
+      landing.radius = (0.08 + Math.random() * 0.3) * landing.radius * scale
       this.landings.push(landing)
     }
   }
 
   /**
-   * Follows a drop through the air to where it lands: there, seconds from now, with `radius` how
+   * Where a drop thrown from `at` at `velocity` lands: there, seconds from now, with `radius` how
    * much wider than a gentle drop it splashes; or null if it is still in the air after `DROP_FLIGHT`.
+   * Worked out as the particles move (each second `drag` of the speed is lost, then gravity pulls),
+   * in closed form: the height it falls to is found by Newton's method, then the ground there is
+   * looked up and the fall worked out again to it, up to a few times on a slope.
    */
   private flight(at: { x: number; y: number; z: number }, velocity: readonly [number, number, number], drag: number): Landing | null {
-    const step = 1 / 30
-    let [x, y, z] = [at.x, at.y, at.z]
-    let [vx, vy, vz] = velocity
-    for (let t = step; t < DROP_FLIGHT; t += step) {
-      const slow = Math.max(0, 1 - drag * step)
-      vx *= slow
-      vz *= slow
-      vy = vy * slow - DROP_GRAVITY * step
-      x += vx * step
-      y += vy * step
-      z += vz * step
-      const ground = this.groundAt(x, z)
-      if (y <= ground) return { x, y: ground, z, radius: Math.min(1.6, 1 + Math.hypot(vx, vz) * 0.08), in: t, spread: 0 }
+    const [vx, vy, vz] = velocity
+    const g = DROP_GRAVITY
+    const k = Math.max(drag, 1e-3)
+    // How far it has gone at the speed it set off with, after `t`: drag eats into it.
+    const reach = (t: number) => (1 - Math.exp(-k * t)) / k
+    const height = (t: number) => at.y + (vy + g / k) * reach(t) - (g / k) * t
+    const sink = (t: number) => (vy + g / k) * Math.exp(-k * t) - g / k
+    let ground = this.groundAt(at.x, at.z)
+    for (let pass = 0; ; pass++) {
+      // Start from the fall without drag, past the top of its arc, and close in on the dragged one.
+      let t = (vy + Math.sqrt(Math.max(0, vy * vy + 2 * g * (at.y - ground)))) / g
+      for (let n = 0; n < 4; n++) {
+        const v = sink(t)
+        if (v > -1e-3) break
+        t -= (height(t) - ground) / v
+      }
+      if (!(t > 0)) t = 0
+      if (t > DROP_FLIGHT) return null
+      const x = at.x + vx * reach(t)
+      const z = at.z + vz * reach(t)
+      const there = this.groundAt(x, z)
+      if (pass === 3 || Math.abs(there - ground) < 0.01) {
+        const speed = Math.hypot(vx, vz) * Math.exp(-k * t)
+        return { x, y: there, z, radius: Math.min(1.6, 1 + speed * 0.08), in: t, spread: 0 }
+      }
+      ground = there
     }
-    return null
   }
 
   /** A pool spreads under `at` (a body coming to rest) once it lies still, `radius` metres across over `seconds`. */
@@ -274,9 +329,9 @@ export class Gore {
     this.landings.push({ x: 0, y: 0, z: 0, radius, in: POOL_AFTER, spread: seconds, follow: at })
   }
 
-  /** Makes `at` bleed for `seconds`, `rate` droplets a second, thrown up to `force` m/s. */
-  private bleed(at: () => { x: number; y: number; z: number }, seconds: number, rate: number, force = 1.5) {
-    this.trails.push({ at, left: seconds, rate, force })
+  /** Makes `at` bleed for `seconds`, `rate` droplets a second, thrown up to `force` m/s; `share` of them stain. */
+  private bleed(at: () => { x: number; y: number; z: number }, seconds: number, rate: number, force = 1.5, share = STAIN_SHARE) {
+    this.trails.push({ at, left: seconds, rate, force, share, owed: 0 })
   }
 
   update(dt: number) {
@@ -288,10 +343,13 @@ export class Gore {
         continue
       }
       const { force } = trail
-      const drops = Math.max(1, Math.round(trail.rate * dt))
+      // Its rate, however short the frame: what does not make a whole drop is owed to the next.
+      trail.owed += trail.rate * dt
+      const drops = Math.floor(trail.owed)
+      trail.owed -= drops
       for (let d = 0; d < drops; d++) {
         const velocity: [number, number, number] = [spread(force * 0.5), force * (0.4 + Math.random()), spread(force * 0.5)]
-        this.drop(trail.at(), velocity, 0.06 + Math.random() * 0.06, 0.4, d)
+        this.drop(trail.at(), velocity, 0.06 + Math.random() * 0.06, 0.4, d, trail.share)
       }
     }
     for (let i = this.landings.length - 1; i >= 0; i--) {

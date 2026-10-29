@@ -9,13 +9,17 @@ agrees with the server. No dice are rolled: the same hit on the same part always
 
 | part | health | at zero |
 |---|---|---|
-| torso | `PLAYER_MAX_HP` (100), the soldier's `Health` | dies |
-| head | `HEAD_HP` (50) | dies, and the head comes off |
-| each arm and leg | `LIMB_HP` (40) | comes off; the soldier lives |
+| torso | `PLAYER_MAX_HP` (150), the soldier's `Health` | dies |
+| head | `HEAD_HP` (75) | dies, and the head comes off |
+| each arm and leg | `LIMB_HP` (60) | comes off; the soldier lives |
 
 - A round hurts only the part it struck. What it had beyond what that part had left is lost.
-- So a sniper round in the leg takes the leg but cannot kill. One in the head kills, as do two revolver
-  rounds or five AK5 rounds there.
+- So a sniper round in the leg takes the leg but cannot kill. One in the head kills, as do three
+  revolver rounds or seven AK5 rounds there.
+- Weapon damage was set when a soldier had 100 / 50 / 40. With 150 / 75 / 60 (since 2026-10-29) a
+  point-blank shotgun pull (120), a grenade, rocket, bomb, egg or drone at their feet (100–110) and a
+  tank's HE shell (125) no longer kill a soldier at full health. Only the mortar (260) still does. They
+  throw them instead (KNOCKDOWN.md).
 - A blast hurts the torso, and the limb nearest it as much: a leg when it goes off below the hips, an
   arm otherwise, on its side (`limbs::blasted`).
 - Seated players have no limbs to hit (their legs are inside), but their head can still be hit. Creatures
@@ -64,8 +68,18 @@ The legs' effects are `legged()` in `crates/sim/src/lib.rs`. The server copies t
 - `vitals` (component 17, the owner's): `hp` is the torso's, `parts` what the head and each limb have
   left (0 for a limb lost).
 - `struck` (component 23, public, absent until the first hit of a life): the hits so far this life, the
-  part (`PART_TORSO`, `PART_HEAD` or a `LIMB_*` bit), how much it lost and the bearing it came from.
-  Every client makes the soldier flinch there (`Character.flinch`). Protocol 53.
+  part (`PART_TORSO`, `PART_HEAD` or a `LIMB_*` bit), how much it lost, the bearing it came from, and
+  where on the body a round struck (`x, y, z`, cm from the soldier's `place`, as it stood when struck
+  after lag rewind; all zero for a blast or a hit in a seat). Protocol 54.
+  - Every client makes the soldier flinch there (`Character.flinch`).
+  - Every client draws the wound there (`Gore.hit`): a puff of spray at the entry, a few drops kicked
+    back towards the shooter, and a cone of blood out of the far side that stains the ground behind. The
+    wound trickles a moment longer, pinned to the bone it is on (`Character.pin`), so it moves with the
+    body.
+  - The shooter's `Hit` carries the same true point (`Harm::at`, from `combat::land`), not the body's
+    centre. Their damage number and a pinpoint white flash sit on it, and the soldier only faintly
+    whitens.
+  - Several pellets in one tick show as one wound, the last one's.
 - A lost limb is shrunk away at its root bone (`Character.setLimbs`). With the right arm gone the
   right hand is grown back to size, because the gun is skinned to it: the gun stays in hand at the
   shoulder.
@@ -73,8 +87,11 @@ The legs' effects are `legged()` in `crates/sim/src/lib.rs`. The server copies t
   stump drips.
 - Blood stains the ground (`render/bloodstains.ts`, a ring of quads like the skid marks).
   - Where it comes from:
-    - About 40 % of the drops thrown by a hit, a severed limb or a death leave a stain where they come
-      down, laid when they land.
+    - About 40 % of the drops thrown by a severed limb or a death leave a stain where they come down,
+      laid when they land. Where and when is solved in closed form, as the particles move, with a few
+      ground lookups per drop.
+    - A hit's spray lays about 7 larger stains, and its wound's trickle a few more, so a firefight does
+      not use up the ring in seconds.
     - A bleeding stump's drips stain where they land, and it leaves a spot under the soldier with
       every drip, a few a second.
     - A hit on a living soldier sprays out the far side, so the ground behind them is spattered.
@@ -84,7 +101,8 @@ The legs' effects are `legged()` in `crates/sim/src/lib.rs`. The server copies t
     colour, wet sheen and drying come from noise over the ground rather than from each stain, so
     stains that overlap run together into one puddle. They dry to brown-black and fade over 2 minutes,
     all in the shader. At most 2000 lie about at once; the oldest are laid over.
-- Drops in the air are beads of liquid (the engine's `drop` particle shape): crisp-edged with a glint,
+- Blood in the air has a particle pool of its own (1536), so it never leaves smoke and dust without
+  room. Drops are beads of liquid (the engine's `drop` particle shape): crisp-edged with a glint,
   stretched by speed, and whole until they reach the ground, where they end as their stain appears.
 - Callouts:
   - The victim reads "Left leg gone! Bandage it".
