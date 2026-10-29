@@ -75,7 +75,7 @@ export class WorldView {
   surfaces: Surfaces | null = null
   grass: Grass | null = null
   waters: Waters | null = null
-  /** What is solid to the local stickman and the vehicle it drives: the server's physics. */
+  /** What is solid to the local soldier and the vehicle it drives: the server's physics. */
   motor: SimMotor | null = null
   /** Fresh craters smoke (the player's `scorch` look); their marks are hidden with the scene's craters. */
   scorch = true

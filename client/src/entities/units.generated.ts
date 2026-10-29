@@ -25,12 +25,13 @@ export function toGame(w: Components): Entity {
     kind: w.kind,
     projectile: w.projectile,
     pickup: w.pickup,
-    vitals: w.vitals && { hp: w.vitals.hp, progress: w.vitals.progress / 255, spent: w.vitals.spent, winded: w.vitals.winded },
+    vitals: w.vitals && { hp: w.vitals.hp, progress: w.vitals.progress / 255, spent: w.vitals.spent, winded: w.vitals.winded, parts: w.vitals.parts },
     hotbar: w.hotbar,
     drive: w.drive && { vx: w.drive.vx / 100, vy: w.drive.vy / 100, vz: w.drive.vz / 100, wx: w.drive.wx / 1000, wy: w.drive.wy / 1000, wz: w.drive.wz / 1000, steer: w.drive.steer / 1000, spin: w.drive.spin / 1000 },
     seated: w.seated,
     look: w.look && { pitch: w.look.pitch / 1000 },
     carry: w.carry,
+    struck: w.struck && { count: w.struck.count, part: w.struck.part, amount: w.struck.amount, yaw: w.struck.yaw / 1000 },
   }
 }
 
@@ -64,5 +65,6 @@ export function blend(a: Entity, b: Entity, t: number): Entity {
     seated: near.seated,
     look: a.look && b.look ? (a.look === b.look || (a.look.pitch === b.look.pitch) ? b.look : { pitch: angle(a.look.pitch, b.look.pitch, t) }) : near.look,
     carry: near.carry,
+    struck: a.struck && b.struck ? (a.struck === b.struck || (a.struck.count === b.struck.count && a.struck.part === b.struck.part && a.struck.amount === b.struck.amount && a.struck.yaw === b.struck.yaw) ? b.struck : { count: t < 0.5 ? a.struck.count : b.struck.count, part: t < 0.5 ? a.struck.part : b.struck.part, amount: t < 0.5 ? a.struck.amount : b.struck.amount, yaw: angle(a.struck.yaw, b.struck.yaw, t) }) : near.struck,
   }
 }

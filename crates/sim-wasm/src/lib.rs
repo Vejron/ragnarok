@@ -1,6 +1,6 @@
 //! The client's handle on `sim`: the server's physics, built a tile at a time from the same files the
 //! client streams, with snapshot vehicles as solids and the cubes players placed (`setConstructChunk`),
-//! stepping the local stickman exactly as the server steps it; and how a building is cut into cells,
+//! stepping the local soldier exactly as the server steps it; and how a building is cut into cells,
 //! which the client draws (`carve_*`). Everything crosses the boundary as numbers and byte slices;
 //! `client/src/sim/motor.ts` and `client/src/sim/carve.ts` wrap it in the client's own types.
 
@@ -190,8 +190,8 @@ impl ClientSim {
         self.physics.obstacle_ids()
     }
 
-    /// One tick of the stickman in `state` (`CHARACTER_LEN` numbers, rewritten in place) under the
-    /// input frame's fields, as the server steps it (`Physics::step_character`). A stickman standing on
+    /// One tick of the soldier in `state` (`CHARACTER_LEN` numbers, rewritten in place) under the
+    /// input frame's fields, as the server steps it (`Physics::step_character`). A soldier standing on
     /// vehicle `ride` takes that vehicle's velocity as last placed. Its `ride` stays while it stays on
     /// the ground: which vehicle is under it is the next snapshot's to say.
     #[allow(clippy::too_many_arguments)]

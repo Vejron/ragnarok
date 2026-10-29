@@ -20,7 +20,7 @@ fn sample_input() -> ClientInput {
 fn sample_snapshot() -> Snapshot {
     use crate::replicated::{self as wire, Replicated};
     let walker = |x, yaw, vy| Replicated {
-        kind: Some(wire::Kind { kind: KIND_STICKMAN }),
+        kind: Some(wire::Kind { kind: KIND_SOLDIER }),
         place: Some(wire::Place { x, y: 85, z: 100_000 }),
         heading: Some(wire::Heading { yaw }),
         motion: Some(wire::Motion { vy, knock_x: 0, knock_z: 0 }),
@@ -38,15 +38,15 @@ fn sample_snapshot() -> Snapshot {
     };
     let hurt = Replicated { damage: Some(wire::Damage { parts: [0, 0, 40, 0, 0, 0, 255, 3, 0, 0, 0] }), ..tank.clone() };
     let updates = vec![
-        // A stickman moving: differences. A dead one new to the receiver, whole. A tank, whole, and one repaired.
+        // A soldier moving: differences. A dead one new to the receiver, whole. A tank, whole, and one repaired.
         // The receiver themself, with what only they are told, and the tank they drive.
-        Replicated { vitals: Some(wire::Vitals { hp: 73, progress: 128, spent: 0, winded: 0 }), hotbar: Some(wire::Hotbar { slots: [ItemSlot { item: ITEM_AK5, count: 1, ammo: 17 }, ItemSlot { item: ITEM_NONE, count: 0, ammo: 0 }, ItemSlot { item: ITEM_GRENADE, count: 2, ammo: 0 }, ItemSlot::default(), ItemSlot::default()] }), ..walker(25, -120, 650) }.update(1, Some(&walker(0, 0, 0))).unwrap(),
+        Replicated { vitals: Some(wire::Vitals { hp: 73, progress: 128, spent: 0, winded: 0, parts: [50, 40, 40, 0, 40] }), hotbar: Some(wire::Hotbar { slots: [ItemSlot { item: ITEM_AK5, count: 1, ammo: 17 }, ItemSlot { item: ITEM_NONE, count: 0, ammo: 0 }, ItemSlot { item: ITEM_GRENADE, count: 2, ammo: 0 }, ItemSlot::default(), ItemSlot::default()] }), ..walker(25, -120, 650) }.update(1, Some(&walker(0, 0, 0))).unwrap(),
         Replicated { flags: Some(wire::Flags { flags: FLAG_GROUNDED | FLAG_DEAD, stance: 0 }), ..walker(0, 0, 0) }.update(7, None).unwrap(),
         Replicated { drive: Some(wire::Drive { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }), ..tank.clone() }.update(10, None).unwrap(),
         tank.update(12, Some(&hurt)).unwrap(),
         // Someone sitting in the tank they just got into: where they look, and no place.
         Replicated {
-            kind: Some(wire::Kind { kind: KIND_STICKMAN }),
+            kind: Some(wire::Kind { kind: KIND_SOLDIER }),
             seated: Some(wire::Seated { vehicle: 12, seat: 1 }),
             heading: Some(wire::Heading { yaw: 900 }),
             look: Some(wire::Look { pitch: -60 }),

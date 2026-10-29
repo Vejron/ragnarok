@@ -46,7 +46,7 @@ Jump sets `CarControls::hop` for a hen as for a Roadster, with no handbrake and 
 
 ### Boarding a walker
 
-Boarding measures the distance to a vehicle's chassis centre, which on a walker or a hen is 4.3 m above a standing stickman's, out of `ENTER_RADIUS` (4 m) wherever the stickman stands. Both are now boarded from a point a leg's length below the hull, between the feet (`boarding_point` in `mechanics/vehicles.rs`, mirrored by the prompt in `game.ts`), and the prompt names them ("E: drive the walker", "E: drive the hen") instead of falling through to the jeep's.
+Boarding measures the distance to a vehicle's chassis centre, which on a walker or a hen is 4.3 m above a standing soldier's, out of `ENTER_RADIUS` (4 m) wherever the soldier stands. Both are now boarded from a point a leg's length below the hull, between the feet (`boarding_point` in `mechanics/vehicles.rs`, mirrored by the prompt in `game.ts`), and the prompt names them ("E: drive the walker", "E: drive the hen") instead of falling through to the jeep's.
 
 ### Model and drawing
 

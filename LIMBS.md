@@ -1,37 +1,42 @@
-# Losing limbs
+# Body parts
 
-A stickman on foot can lose arms and legs as well as its head. The server decides it all
-(`crates/server/src/mechanics/limbs.rs`). The movement it changes runs in the shared sim, so the
-local player's prediction agrees with the server. No dice are rolled: the same hit on the same limb
-always does the same thing.
+A soldier's head, torso and each limb have health of their own. Only the torso or the head running
+out kills. The server decides it all (`crates/server/src/mechanics/limbs.rs` and `damage_entity` in
+`life.rs`). The movement a lost limb changes runs in the shared sim, so the local player's prediction
+agrees with the server. No dice are rolled: the same hit on the same part always does the same thing.
+
+## Health
+
+| part | health | at zero |
+|---|---|---|
+| torso | `PLAYER_MAX_HP` (100), the soldier's `Health` | dies |
+| head | `HEAD_HP` (50) | dies, and the head comes off |
+| each arm and leg | `LIMB_HP` (40) | comes off; the soldier lives |
+
+- A round hurts only the part it struck. What it had beyond what that part had left is lost.
+- So a sniper round in the leg takes the leg but cannot kill. One in the head kills, as do two revolver
+  rounds or five AK5 rounds there.
+- A blast hurts the torso, and the limb nearest it as much: a leg when it goes off below the hips, an
+  arm otherwise, on its side (`limbs::blasted`).
+- Seated players have no limbs to hit (their legs are inside), but their head can still be hit. Creatures
+  have only a torso.
 
 ## Where a round lands
 
 The hurtbox is still the one capsule, 0.35 m in radius. Where on it a round struck is worked out in
-the stickman's own frame (`limb_at`):
+the soldier's own frame (`limb_at`):
 
 | zone | standing | lying down |
 |---|---|---|
-| head | above `HEAD_ZONE_Y` (as before: 2× damage, a kill takes the head off) | the same |
+| head | above `HEAD_ZONE_Y` | the same |
 | leg | below `HIP_ZONE_Y`, 0.1 m under the capsule centre (about 0.75 m up) | the back of the body |
 | arm | between hip and head, `ARM_ZONE_X` (0.25 m) or more out to the side | out to the side at the front |
-| body | everything else | everything else |
+| torso | everything else | everything else |
 
-The side is the one the round struck, as the stickman faces. Seated players lose no limbs, and
-neither does a creature. A round through where a limb was strikes the body.
+The side is the one the round struck, as the soldier faces. A round through where a limb was strikes the
+torso.
 
-## Coming off
-
-- A round in a limb does `LIMB_DAMAGE_MULT` (75 %) of its damage to health, and adds its full damage
-  to that limb's wear.
-- The limb comes off at a single hit of `SEVER_HIT` (40), or once its wear reaches `SEVER_WEAR` (40).
-  That takes one sniper, AT rifle or close shotgun round, four AK5 rounds (12 each) or two revolver
-  rounds.
-- The round that kills takes the limb too, so the body falls without it.
-- A blast that leaves someone alive but does at least `SEVER_HIT` tears off the limb nearest it: a leg
-  when it goes off below the hips, an arm otherwise, on its side (`limbs::blasted`).
-
-## What it does
+## What a lost limb does
 
 | lost | effect |
 |---|---|
@@ -43,17 +48,24 @@ neither does a creature. A round through where a limb was strikes the body.
 The legs' effects are `legged()` in `crates/sim/src/lib.rs`. The server copies the lost limbs into
 `Character::lost` every tick, and the client's prediction reads them from its own `limbs` component.
 
-## Bleeding and bandages
+## Bleeding, bandages and mending
 
 - A stump bleeds, for show only: it drips and pulses red on the HUD, but costs no health.
-- A bandage can be started with full health while a limb is lost, and with no arms.
-- A finished bandage heals as before, stops all bleeding and puts one limb back, a leg before an arm.
-- A new life has every limb.
+- A bandage can be started whenever any part is hurt or lost, and with no arms.
+- A finished bandage heals the torso, the head and every remaining limb by its 40, stops all bleeding
+  and puts one limb back whole, a leg before an arm.
+- Carrying the backpack mends the head and limbs as fast as the torso.
+- A new life has every part whole.
 
 ## On the wire and on screen
 
 - `limbs` (component 7, public, absent while whole): the lost limbs (`LIMB_*`, low four bits) and the
-  stumps still bleeding (the same bits above `LIMB_BLEED_SHIFT`). Protocol 51.
+  stumps still bleeding (the same bits above `LIMB_BLEED_SHIFT`).
+- `vitals` (component 17, the owner's): `hp` is the torso's, `parts` what the head and each limb have
+  left (0 for a limb lost).
+- `struck` (component 23, public, absent until the first hit of a life): the hits so far this life, the
+  part (`PART_TORSO`, `PART_HEAD` or a `LIMB_*` bit), how much it lost and the bearing it came from.
+  Every client makes the soldier flinch there (`Character.flinch`). Protocol 53.
 - A lost limb is shrunk away at its root bone (`Character.setLimbs`). With the right arm gone the
   right hand is grown back to size, because the gun is skinned to it: the gun stays in hand at the
   shoulder.
@@ -62,8 +74,9 @@ The legs' effects are `legged()` in `crates/sim/src/lib.rs`. The server copies t
 - Callouts:
   - The victim reads "Left leg gone! Bandage it".
   - The shooter reads "Left leg off!" when they hurt that player in the last 1.5 s.
-- The HUD shows a small figure above the health bar while a limb is lost: lost limbs are faint, and
-  bleeding ones pulse red.
+- The HUD shows a small figure above the health bar while any part is hurt: each part fades from white
+  through amber to red as its health goes, lost limbs are faint, and bleeding ones pulse red. The health
+  bar is the torso's.
 
 ## Not done
 

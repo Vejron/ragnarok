@@ -22,7 +22,7 @@ impl Game {
         self.replicated().into_iter().map(|(id, entity)| (id, entity.public())).filter(|(_, entity)| told_of(entity) && which(entity)).collect()
     }
 
-    /// Stickmen and creatures of `kind` on foot.
+    /// Soldiers and creatures of `kind` on foot.
     pub fn seen_people(&self, kind: u8) -> Vec<(u32, shared::replicated::Replicated)> {
         self.seen_where(|e| e.place.is_some() && e.orientation.is_none() && e.projectile.is_none() && e.pickup.is_none() && e.kind.as_ref().is_some_and(|k| k.kind == kind))
     }

@@ -7,7 +7,7 @@ const props = defineProps<{ input: InputController; seat: string | null; canSwit
 
 /** How far the thumb has to travel for a full push, in CSS pixels. */
 const STICK_RADIUS = 56
-/** Past this fraction of a full push on foot, the stickman runs. */
+/** Past this fraction of a full push on foot, the soldier runs. */
 const RUN_AT = 0.9
 /** Touch drags are a little quicker than a mouse, which has a whole desk to cross. */
 const LOOK_GAIN = 1.4

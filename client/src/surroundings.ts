@@ -86,7 +86,7 @@ export class Surroundings {
     this.wading.delete(key)
   }
 
-  /** A contact shadow under a stickman whose capsule is centred at `(x, y, z)`. */
+  /** A contact shadow under a soldier whose capsule is centred at `(x, y, z)`. */
   blobFoot(x: number, y: number, z: number) {
     const height = y - (CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS) - this.scene.groundAt(x, z)
     this.scene.contact.add(x, z, 0.6, 0.6, 0, Math.max(0, height))

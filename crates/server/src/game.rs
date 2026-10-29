@@ -219,7 +219,7 @@ impl Game {
                 team: TEAM_NONE,
             },
         );
-        self.world.entities.insert(id, stickman_life());
+        self.world.entities.insert(id, soldier_life());
         let profiles = self.world.entities.ids::<With<Player>>().into_iter().map(|id| profile_entry(&self.world, id)).collect();
         let _ = outbox.try_send(Outgoing::Reliable(encode(&Profiles { tag: S_PROFILES, players: profiles }).into()));
         let joiner = Bytes::from(encode(&Profiles { tag: S_PROFILES, players: vec![profile_entry(&self.world, id)] }));
@@ -353,7 +353,7 @@ impl Game {
                 team,
             },
         );
-        self.world.entities.insert(id, (stickman_life(), Bot::new(home, route)));
+        self.world.entities.insert(id, (soldier_life(), Bot::new(home, route)));
         for mechanic in &mut self.mechanics {
             mechanic.on_join(&mut self.world, id);
         }
@@ -761,11 +761,11 @@ mod tests {
             .collect();
         let last = snapshots.last().expect("a snapshot every SNAPSHOT_EVERY ticks");
         assert_eq!(last.ack, 2, "both inputs acknowledged");
-        // No snapshot was acknowledged, so each brings everything whole: the stickman among it.
+        // No snapshot was acknowledged, so each brings everything whole: the soldier among it.
         let scene = shared::replicated::apply(&[], &last.updates, &last.removed);
-        let stickmen: Vec<_> = scene.iter().filter(|(_, e)| e.kind.as_ref().is_some_and(|kind| kind.kind == KIND_STICKMAN)).collect();
-        assert_eq!(stickmen.len(), 1);
-        assert!(stickmen[0].1.place.unwrap().z < 0, "walked towards -Z");
+        let soldiers: Vec<_> = scene.iter().filter(|(_, e)| e.kind.as_ref().is_some_and(|kind| kind.kind == KIND_SOLDIER)).collect();
+        assert_eq!(soldiers.len(), 1);
+        assert!(soldiers[0].1.place.unwrap().z < 0, "walked towards -Z");
     }
 
     /// A `Profiles` entry as `(id, name, color, team, bot)`.
@@ -856,7 +856,7 @@ mod tests {
         game.handle(Command::Leave(first));
         let Some(Outgoing::Reliable(leave)) = drain(&mut b).into_iter().next() else { panic!("no leave") };
         assert_eq!(decode::<Leave>(&leave), Some(Leave { tag: S_LEAVE, id: first }));
-        assert_eq!(game.seen_people(KIND_STICKMAN).len(), 1);
+        assert_eq!(game.seen_people(KIND_SOLDIER).len(), 1);
     }
 
     /// Every building of the world (`RAGNAROK_WORLD`, else the committed city), whole, must pass the

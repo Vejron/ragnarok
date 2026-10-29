@@ -8,7 +8,7 @@ use crate::vehicle::{Role, extra_solids, heavy, spec, with_role};
 use shared::world::{Manifest, Tile};
 
 /// A vehicle as a snapshot shows it: a fixed body with the hull and the extra solids its kind has,
-/// where the stickman bumps into it, and how fast it was going, for a stickman leaving its roof.
+/// where the soldier bumps into it, and how fast it was going, for a soldier leaving its roof.
 pub(crate) struct Obstacle {
     kind: u8,
     body: RigidBodyHandle,
@@ -147,7 +147,7 @@ impl Physics {
         }
     }
 
-    /// Puts vehicle `id` of `kind` where a snapshot shows it, as a solid the stickman walks into,
+    /// Puts vehicle `id` of `kind` where a snapshot shows it, as a solid the soldier walks into,
     /// moving at `velocity` m/s. `turret` is whether a tank still has its turret.
     /// A vehicle simulated here (`add_car`) has no stand-in: it is solid as it is.
     pub fn set_obstacle(&mut self, id: u32, kind: u8, position: [f32; 3], rotation: [f32; 4], velocity: [f32; 3], turret: bool) {

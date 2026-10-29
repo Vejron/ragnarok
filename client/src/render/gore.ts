@@ -31,7 +31,7 @@ interface Trail {
 const spread = (amount: number) => (Math.random() - 0.5) * 2 * amount
 
 /**
- * How a stickman dies. A bullet throws the body; a headshot takes the head off and leaves a fountain;
+ * How a soldier dies. A bullet throws the body; a headshot takes the head off and leaves a fountain;
  * blasts, cars and overkill blow it into limbs. Pieces are `Debris`, so they fly, bounce and lie about.
  */
 export class Gore {

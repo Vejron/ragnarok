@@ -14,7 +14,7 @@ An FPV drone is a hotbar item. Using it launches a small quadcopter loaded with 
   - With nothing held it hovers in place.
 - **Ways it ends:**
   - **Detonate (click or F, a fresh press).** The charge goes off where the drone is: a 4 m blast, 120 damage at the centre. It hurts players, vehicles, trees and buildings like a grenade, credited to the pilot as `WEAPON_DRONE`.
-  - **Impact.** A flown drone that hits something hard (a contact taking more than 4 m/s out of it), or comes within 0.7 m of another stickman's body, goes off the same way. Flying into someone is the usual way to use it.
+  - **Impact.** A flown drone that hits something hard (a contact taking more than 4 m/s out of it), or comes within 0.7 m of another soldier's body, goes off the same way. Flying into someone is the usual way to use it.
   - **Recall (E).** The drone is gone with no blast, and the pilot is back in their body.
   - **Link lost.** The pilot is back in their body, and the drone falls with its motors off. It goes off on whatever it lands on, or after 5 s. The link is lost when:
     - the 25 s battery runs out;
@@ -44,7 +44,7 @@ An FPV drone is a hotbar item. Using it launches a small quadcopter loaded with 
   - fire detonates;
   - use recalls, and clears the use bit so `Vehicles` does not board something with it;
   - a lost link cuts it;
-  - a hard contact or a nearby stickman detonates it.
+  - a hard contact or a nearby soldier detonates it.
 - **`cut`** empties the seat, which leaves `Vehicles` with no driver, so the motors are off (`powered: false`).
 - **`burst`** removes the drone before the blast, so the blast never finds it.
 - **Shot down:** `Combat::wreck` hands a drone to `drones::pop`, which skips the burning-wreck path. The pilot is never killed with it.
@@ -159,6 +159,6 @@ A loitering drone is the FPV drone's big sibling: a Shahed-sized delta wing (abo
 
 - **No held model.** In hand the drone shows as nothing, like the golden egg: the character GLB has no mesh for it.
 - **Drones count against `MAX_VEHICLES` (512)** with the parked vehicles. A full room refuses a launch, and the item stays in hand.
-- **The proximity fuse looks only for stickmen.** Vehicles set it off by contact, roosters not at all.
+- **The proximity fuse looks only for soldiers.** Vehicles set it off by contact, roosters not at all.
 - **No video-link physics.** Buildings do not block the signal: the link is a plain distance check.
 - **A pilot who recalls or loses the drone does not get it back.** The item is spent at launch.

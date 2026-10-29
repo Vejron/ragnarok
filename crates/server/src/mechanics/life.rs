@@ -8,9 +8,9 @@ use super::combat::{position_of, ray_capsule, same_team};
 use crate::entities::{DropOnDeath, Health, Home, Hurtbox, NetId, Respawn, Respawned, Trail, Transform, With};
 use crate::events;
 use crate::game::{Damaged, Died, Player, World};
-use shared::consts::{HEADSHOT_MULT, LIMB_DAMAGE_MULT, MAX_REWIND_TICKS, SEATED_CENTRE_DROP, SEATED_HALF_HEIGHT, SEATED_HEAD_ZONE, SEATED_RADIUS};
+use shared::consts::{MAX_REWIND_TICKS, SEATED_CENTRE_DROP, SEATED_HALF_HEIGHT, SEATED_HEAD_ZONE, SEATED_RADIUS};
 use shared::protocol::{
-    DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_EGG, WEAPON_GRENADE, WEAPON_LOITER, WEAPON_ROADKILL, WEAPON_ROCKET,
+    PART_HEAD, PART_TORSO, DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_EGG, WEAPON_GRENADE, WEAPON_LOITER, WEAPON_ROADKILL, WEAPON_ROCKET,
     WEAPON_AP, WEAPON_SHELL, WEAPON_WRECK,
 };
 
@@ -44,8 +44,8 @@ pub struct Body {
 }
 
 /// The point entity `id`'s body hangs from now, and the vehicle it sits in, if the body is out in the
-/// world: a creature's feet (its `Transform`), a stickman's centre on foot (or standing over a drone's
-/// controls), or their head in a seat whose crew show. A stickman inside armour has none.
+/// world: a creature's feet (its `Transform`), a soldier's centre on foot (or standing over a drone's
+/// controls), or their head in a seat whose crew show. A soldier inside armour has none.
 fn anchor(world: &World, id: u32, transform: Option<&Transform>, player: Option<&Player>) -> Option<([f32; 3], Option<u32>)> {
     match player {
         Some(player) if player.embodied() => Some((player.character.position, None)),
@@ -80,7 +80,7 @@ fn body_of(world: &World, id: u32, hurtbox: &Hurtbox, transform: Option<&Transfo
     })
 }
 
-/// The nearest living body the ray meets within `max`, and how far along it is: a stickman or a
+/// The nearest living body the ray meets within `max`, and how far along it is: a soldier or a
 /// creature, as it was `back` ticks ago, which is where a shooter with that much lag saw it. `ignore`
 /// (the shooter) is passed through. A round that struck a glazed vehicle (`through`: the vehicle, and
 /// how far the ray goes on behind its glass) also meets the crew sitting in it, out to there. Of two at
@@ -200,39 +200,47 @@ impl Harm {
 const BLASTS: [u8; 10] = [WEAPON_ROCKET, WEAPON_SHELL, WEAPON_AP, WEAPON_WRECK, WEAPON_GRENADE, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_LOITER, WEAPON_EGG];
 
 /// The one place health goes down, for anything with `Health` and a body: takes `harm` off entity
-/// `id`, and says so (`Damaged`). A blow to the head does `HEADSHOT_MULT` times the damage, one to a
-/// limb `LIMB_DAMAGE_MULT` of it and wears the limb, which can come off (`limbs::wound`), and the
-/// attacker's own team is spared. At zero it dies (`Died`, crediting the attacker if it was anyone
+/// `id`, and says so (`Damaged`). A soldier's head and limbs have health of their own (`limbs`): a blow
+/// to the head hurts only the head, and kills once it has none left; one to a limb hurts only that limb,
+/// which comes off once it has none left, and never kills. Anything else hurts the torso (`Health`).
+/// The attacker's own team is spared. At zero it dies (`Died`, crediting the attacker if it was anyone
 /// other than itself): its `Respawn` starts counting and its `DropOnDeath` is left where it fell.
 /// Returns whether this killed it; does nothing to the dead.
 pub fn damage_entity(world: &mut World, id: u32, harm: Harm) -> bool {
     let Harm { amount, attacker, weapon, from, head, limb } = harm;
-    let raw = amount;
-    let amount = if head {
-        (f32::from(amount) * HEADSHOT_MULT).min(255.0) as u8
-    } else if limb.is_some() {
-        (f32::from(amount) * LIMB_DAMAGE_MULT).round() as u8
-    } else {
-        amount
-    };
     let other = attacker.filter(|&by| by != id);
-    if other.is_some_and(|by| same_team(world, by, id)) {
+    if other.is_some_and(|by| same_team(world, by, id)) || amount == 0 || !world.entities.alive(id) {
         return false;
-    }
-    // Even the round that kills takes the limb, so the body falls without it.
-    if let Some(limb) = limb.filter(|_| world.entities.alive(id) && raw > 0) {
-        super::limbs::wound(world, id, limb, raw, attacker);
     }
     let from = from.or_else(|| other.and_then(|by| position_of(world, by)));
     let at = mark(world, id);
+    let soldier = world.entities.has::<Player>(id);
+    // What a part of a soldier other than the torso lost, and whether that killed them.
+    let (part, spent) = match (soldier, head, limb) {
+        (true, true, _) => (PART_HEAD, Some(super::limbs::head(world, id, amount))),
+        (true, false, Some(limb)) => (limb, Some((super::limbs::wound(world, id, limb, amount, attacker), false))),
+        _ => (PART_TORSO, None),
+    };
     let Some(mut health) = world.entities.get_mut::<Health>(id) else { return false };
-    if !health.alive() || amount == 0 {
+    let before = health.hp;
+    let lost = match spent {
+        Some((lost, fatal)) => {
+            if fatal {
+                health.hp = 0;
+            }
+            lost
+        }
+        None => {
+            health.hp = health.hp.saturating_sub(amount);
+            before - health.hp
+        }
+    };
+    let killed = !health.alive();
+    if lost == 0 && !killed {
         return false;
     }
-    let before = health.hp;
-    health.hp = health.hp.saturating_sub(amount);
-    let (lost, killed) = (before - health.hp, !health.alive());
-    events::damaged(world, Damaged { victim: id, lost, attacker, weapon, from, at, head, killed, aboard: Vec::new() });
+    super::limbs::struck(world, id, part, lost, from);
+    events::damaged(world, Damaged { victim: id, lost, attacker, weapon, from, at, head: part == PART_HEAD, killed, aboard: Vec::new() });
     if !killed {
         return false;
     }

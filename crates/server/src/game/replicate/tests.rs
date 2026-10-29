@@ -109,7 +109,7 @@ fn a_client_rebuilds_exactly_what_the_server_has_near_it_in_a_busy_room() {
             hurt |= vehicles.iter().any(|(_, v)| v.damage.is_some());
             wrecks |= vehicles.iter().any(|(_, v)| v.health.as_ref().is_some_and(|h| h.hp == 0));
             crews |= vehicles.iter().any(|(vid, _)| game.seen_riders(*vid).iter().any(|(_, rider)| rider.look.is_some() && rider.flags.as_ref().is_some_and(|f| f.flags & FLAG_HELD_MASK != 0)));
-            dead |= game.seen_people(KIND_STICKMAN).iter().any(|(_, e)| e.flags.as_ref().is_some_and(|f| f.flags & FLAG_DEAD != 0));
+            dead |= game.seen_people(KIND_SOLDIER).iter().any(|(_, e)| e.flags.as_ref().is_some_and(|f| f.flags & FLAG_DEAD != 0));
         }
     }
     let (entities, vehicles, rockets, _) = seen;

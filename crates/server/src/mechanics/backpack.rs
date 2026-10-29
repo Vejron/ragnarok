@@ -1,5 +1,5 @@
 //! The backpack mode (BACKPACK.md): one Intinor Compact Backpack in a world whose scenario places it.
-//! A stickman on foot who walks onto it takes it; while they carry it they heal, walk twice as fast
+//! A soldier on foot who walks onto it takes it; while they carry it they heal, walk twice as fast
 //! (`Movement` reads `Carry`) and earn a point a second (`Player::held`). It falls where they die or
 //! leave, and goes back where the scenario put it when it lands where nobody can reach it or lies
 //! untouched for `BACKPACK_RETURN_SECONDS`.
@@ -20,7 +20,7 @@ use shared::quant::to_cm;
 
 pub struct Backpack;
 
-/// Carried on its back by the stickman who has the backpack.
+/// Carried on its back by the soldier who has the backpack.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Carry;
 
@@ -116,7 +116,7 @@ fn lay_home(world: &mut World) {
     lay(world, [x, floor, z]);
 }
 
-/// The floor under a stickman's body centred at `at`, which they could stand on: none off the world.
+/// The floor under a soldier's body centred at `at`, which they could stand on: none off the world.
 fn floor_under(world: &World, at: [f32; 3]) -> Option<f32> {
     if !world.map.is_inside((at[0] * 100.0) as i32, (at[2] * 100.0) as i32) {
         return None;
@@ -163,7 +163,7 @@ fn take(world: &mut World, id: u32, ground: u32) {
     state.changed = true;
 }
 
-/// The living stickman on foot within reach of the backpack lying at `at`, nearest first.
+/// The living soldier on foot within reach of the backpack lying at `at`, nearest first.
 fn reaching(world: &World, at: [f32; 3]) -> Option<u32> {
     world
         .entities
@@ -193,6 +193,8 @@ impl Mechanic for Backpack {
                     let whole = (state.regen + 1e-4).floor();
                     state.regen -= whole;
                     health.hp = (health.hp as f32 + whole).min(health.max as f32) as u8;
+                    // The head and the limbs mend as fast.
+                    super::limbs::heal(world, id, whole as u8);
                 }
                 if world.tick.wrapping_sub(since).is_multiple_of(TICK_RATE) && world.tick != since {
                     let mut player = world.entities.of_mut::<Player>(id);

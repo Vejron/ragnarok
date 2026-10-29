@@ -10,7 +10,7 @@ Roadmap stage 2 from [design.md §14](design.md#14-roadmap): a car, seats, enter
 - A HUD hint shows what **E** does when a car is in reach, and the driving keys while at the wheel.
 - The camera pulls back while in a car and swings behind it when the mouse is idle.
 - Seated players show as coloured heads in the open-top car, in their own colour.
-- Cars are solid: a stickman can't walk through one, and can climb on top and ride along. A car that drives into a stickman throws them forward and up (see Knockback).
+- Cars are solid: a soldier can't walk through one, and can climb on top and ride along. A car that drives into a soldier throws them forward and up (see Knockback).
 
 ## Two cars
 
@@ -33,11 +33,11 @@ Half of the six parked cars are of each kind. `PROTOCOL_VERSION` is 14, because 
 `PROTOCOL_VERSION` is now **4** (2 added vehicles, 3 knockback, 4 riding). Old clients are refused with the existing "reload" banner.
 
 - `Snapshot` has a fifth element, a list of `VehicleState`: `[id, kind, x, y, z, qx, qy, qz, steer, [seat player ids]]`. The orientation is a quaternion packed as `x, y, z` in an i16 each (`w` is rebuilt, with the sign picked so that `w >= 0`).
-- Players in a seat are left out of the stickman list. The seat list is how everyone, including the player themselves, learns who sits where.
+- Players in a seat are left out of the soldier list. The seat list is how everyone, including the player themselves, learns who sits where.
 - `Snapshot` gained a per-receiver `ride` field: the vehicle the player stands on, or 0.
 - `EntityState` gained `knock_x` and `knock_z` (cm/s), so a thrown player's slide survives reconciliation.
 - `BUTTON_USE` is now acted on. The jitter buffer strips it from repeated inputs, like jump, so an underrun can't board or leave twice.
-- The size test now checks every combination of cars and seated players. A full room still fits one datagram, because each seated player is a stickman fewer.
+- The size test now checks every combination of cars and seated players. A full room still fits one datagram, because each seated player is a soldier fewer.
 - The byte fixtures in `protocol.rs` and `codec.spec.ts` were regenerated together.
 
 ## Server
@@ -67,7 +67,7 @@ Measured on flat ground, from the tests: 0 to 18 m/s in 6 s, about 12 m turn rad
 ### Seats
 
 - `Vehicles::on_tick` reads each player's `BUTTON_USE`. Seated players leave, standing ones board the nearest car with a free seat within 4 m.
-- Leaving tries the seat's own side first (driver and back-left on the left), then the other side, the back and the front, with a capsule-fits check against the static world. When all four are blocked, the stickman appears 2.5 m above the car.
+- Leaving tries the seat's own side first (driver and back-left on the left), then the other side, the back and the front, with a capsule-fits check against the static world. When all four are blocked, the soldier appears 2.5 m above the car.
 - Riders' character positions follow the car every tick, so the `KILL_Y` respawn and any future proximity check keep working.
 - A player who disconnects frees their seat.
 
@@ -82,7 +82,7 @@ Measured on flat ground, from the tests: 0 to 18 m/s in 6 s, about 12 m turn rad
 - **Carrying.** `Vehicles::on_tick` notes each car's pose, steps the cars, and moves every rider by the car's rigid motion since then (`CarPose::carry`: into the old car frame, out of the new one). Pitch and roll carry the rider too. This happens before `Movement`, so the rider then walks about in the car's new frame.
 - **No self run-over.** A rider is skipped by `knock_players`, so a bouncing roof never throws its own passenger.
 - **Leaving.** Jumping from a car adds its horizontal velocity to the knockback before the jump step. Walking off the edge into the air does the same after the step. Both are capped at 20 m/s. Landing bleeds it off at 8% per tick, so they run on a few steps like a person would.
-- **On the client.** `CharacterState` has a `ride` too, set from the snapshot, and `stepCharacter` applies the same takeoff rule using the car's velocity from the last two snapshots (`Interpolator.latestVelocity`). The predicted stickman lives in a frame where the car is still, at its pose in the newest snapshot (the collider `setVehicles` holds), which keeps replay after a snapshot exact. `Game.ridden` then draws it relative to the car as it is interpolated now. So the car moves smoothly, the rider moves with it, and the rider's own steps on the roof are instant.
+- **On the client.** `CharacterState` has a `ride` too, set from the snapshot, and `stepCharacter` applies the same takeoff rule using the car's velocity from the last two snapshots (`Interpolator.latestVelocity`). The predicted soldier lives in a frame where the car is still, at its pose in the newest snapshot (the collider `setVehicles` holds), which keeps replay after a snapshot exact. `Game.ridden` then draws it relative to the car as it is interpolated now. So the car moves smoothly, the rider moves with it, and the rider's own steps on the roof are instant.
 - **Tests.** `a_player_on_the_roof_rides_along` and `jumping_off_a_moving_car_keeps_its_speed` on the server; four `riding a car` cases in `predict.spec.ts`.
 
 ### Knockback
@@ -101,7 +101,7 @@ Measured on flat ground, from the tests: 0 to 18 m/s in 6 s, about 12 m turn rad
 | `sim/consts.ts`, `net/codec.ts` | Version 2, car constants, `VehicleState` decoding |
 | `net/interp.ts` | `Interpolator<T>` is generic and takes a blend function. `blendEntity` is the old behaviour. `blendVehicle` lerps position, steering and the quaternion (the short way round) |
 | `render/car.ts` | The toy car model, wheel roll and steering, rider heads |
-| `render/stickman.ts`, `render/scene.ts` | `colorFor`, a `hidden` flag, a camera distance parameter |
+| `render/soldier.ts`, `render/scene.ts` | `colorFor`, a `hidden` flag, a camera distance parameter |
 | `sim/input.ts` | `followYaw`: eases the camera behind the car unless the mouse moved in the last 1.5 s |
 | `sim/predict.ts` | `record` and `acknowledge` |
 | `sim/movement.ts`, `sim/physics.ts` | Knockback in the character state and step. `RapierMotor.setVehicles` makes cars solid |
@@ -110,8 +110,8 @@ Measured on flat ground, from the tests: 0 to 18 m/s in 6 s, about 12 m turn rad
 ### How the client handles being seated
 
 1. A snapshot whose vehicle list has the local id in a seat puts the client in "seated" mode. This is derived only from snapshots.
-2. In that mode the stickman is hidden and not simulated. Inputs keep going to the server, because that is how the car is driven. They are kept with `record` instead of `apply`, and `acknowledge` trims them as acks arrive.
-3. The first snapshot with the player back in the stickman list ends it. `reconcile` takes the server's position and replays the inputs newer than the ack, so inputs sent between the server's exit and the snapshot's arrival are not lost. A jump of more than 3 m is a snap, not a slide.
+2. In that mode the soldier is hidden and not simulated. Inputs keep going to the server, because that is how the car is driven. They are kept with `record` instead of `apply`, and `acknowledge` trims them as acks arrive.
+3. The first snapshot with the player back in the soldier list ends it. `reconcile` takes the server's position and replays the inputs newer than the ack, so inputs sent between the server's exit and the snapshot's arrival are not lost. A jump of more than 3 m is a snap, not a slide.
 4. The driver sees their car through the normal interpolation delay, like a remote entity. That is the small input delay design.md accepted for this stage.
 
 ## Decisions worth knowing
@@ -119,7 +119,7 @@ Measured on flat ground, from the tests: 0 to 18 m/s in 6 s, about 12 m turn rad
 - **Seats travel in snapshots, not reliable events.** design.md said seat changes would be reliable events. A snapshot list cannot disagree with the snapshots the client already draws, and there is no ordering problem between a reliable stream and datagrams. Reliable events remain the plan for things that are truly one-off.
 - **A separate vehicle list**, not extra fields on every entity. Adding the pitch, roll and seat data to `EntityState` would have pushed a full 32-player snapshot past 1200 bytes.
 - **Solid cars, mirrored on the client.** The client's Rapier world gets a box per car at the newest snapshot pose (`RapierMotor.setVehicles`). For parked cars that is exact. For a moving car it is about half an RTT behind, which can cost a small correction right at the contact. That is also where the server throws the player, so the correction is lost in the hit.
-- **Gravity of 9.81 for cars** and 20 for stickmen. The suspension is tuned around the realistic value; the stickman value is a game-feel choice.
+- **Gravity of 9.81 for cars** and 20 for soldiers. The suspension is tuned around the realistic value; the soldier value is a game-feel choice.
 - **The car's quaternion is not a yaw.** Cars can pitch on kerbs or roll in a crash; flat worlds hide this, but the wire already supports slopes and flips.
 
 ## Tests
@@ -130,7 +130,7 @@ Run `cargo test --workspace` and `cd client && npm test`.
 - `mechanics/vehicles.rs`: placement along a road, boarding and leaving (including the standing position), range limits, a driver driving with a passenger riding, a disconnect freeing the seat, unflipping, and that every car in the shipped `world.msgpack` settles and stays put.
 - `protocol.rs`, `codec.spec.ts`: the new fixtures, in both languages, and the size bound.
 - `interp.spec.ts`: the vehicle blend, including the quaternion sign flip.
-- `predict.spec.ts`: inputs recorded in a car are replayed after stepping out, a server-side hit is picked up and keeps sliding, knockback fades, and the WASM car collider blocks the stickman like the server's.
+- `predict.spec.ts`: inputs recorded in a car are replayed after stepping out, a server-side hit is picked up and keeps sliding, knockback fades, and the WASM car collider blocks the soldier like the server's.
 - `movement.spec.ts`: knockback adds to walking and dies out.
 
 ## Not done, or not checked
@@ -138,8 +138,8 @@ Run `cargo test --workspace` and `cd client && npm test`.
 - **Not exercised in a browser.** The Rust and TypeScript tests pass, the client builds, and the server starts and parks six cars in the real world. WebTransport needs Chrome, Edge or Firefox with the dev server running, and I did not drive a car there. The camera feel, the E prompt and the wheel animation are the parts to look at first.
 - No driver-side prediction (Vehicles II), tank or helicopter.
 - No damage: the knockback has no health to take from yet.
-- Cars don't feel the stickman they hit (no slowdown). Characters are not physics bodies.
-- The client cannot tell a step off the roof onto the ground from a step along it, so its `ride` flag lasts until the next snapshot corrects it (up to one round trip). Mispredicting that only shifts the stickman by the car's frame, and the correction is smoothed.
+- Cars don't feel the soldier they hit (no slowdown). Characters are not physics bodies.
+- The client cannot tell a step off the roof onto the ground from a step along it, so its `ride` flag lasts until the next snapshot corrects it (up to one round trip). Mispredicting that only shifts the soldier by the car's frame, and the correction is smoothed.
 - Riders are carried but the car is not affected by their weight. Standing in the open-top cabin is not special: it is the same as the roof.
 - A car's wheels do not follow the suspension travel visually.
 - Cars are placed once at start and never stream in or out. Interest management (stage 5) needs to include them.

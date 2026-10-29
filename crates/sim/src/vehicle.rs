@@ -2,7 +2,7 @@
 //!
 //! The chassis is a box; each wheel is a suspension ray that pushes the chassis up and applies
 //! engine, brake and side-grip impulses at its contact point. Body-local axes are +X right,
-//! +Y up and -Z forward, so a yaw of 0 faces -Z exactly like a stickman.
+//! +Y up and -Z forward, so a yaw of 0 faces -Z exactly like a soldier.
 //!
 //! A car steers its front wheels. A tank has six unsteered wheels and turns on the spot: the
 //! physics sets its yaw rate directly, which is how skid steering looks from the outside.
@@ -324,7 +324,7 @@ impl CarPose {
         (Rotation::from_xyzw(x, y, z, w).inverse() * Vector::from(world)).into()
     }
 
-    /// Heading of the forward axis in the stickman convention: 0 faces -Z, + turns left (towards -X).
+    /// Heading of the forward axis in the soldier convention: 0 faces -Z, + turns left (towards -X).
     pub fn yaw(&self) -> f32 {
         let [x, y, z, w] = self.rotation;
         (2.0 * (x * z + w * y)).atan2(1.0 - 2.0 * (x * x + y * y))
@@ -919,7 +919,7 @@ impl Physics {
     }
 
     /// The car, if any, overlapping an upright capsule centred at `centre`: what a creature that is
-    /// not a stickman is run down by.
+    /// not a soldier is run down by.
     pub fn car_hit_capsule(&self, centre: [f32; 3], half_height: f32, radius: f32) -> Option<CarHit> {
         self.car_touching_shape(centre, SharedShape::capsule_y(half_height, radius).as_ref())
     }

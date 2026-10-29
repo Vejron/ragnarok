@@ -22,7 +22,7 @@ use shared::quant::{from_mrad, to_cm};
 /// - the battery running out, the pilot losing any health, dying or leaving, or the drone going past
 ///   its range loses the link: the pilot is back in their body, and the drone falls with its
 ///   motors off and goes off on whatever it lands on (or after its fall time);
-/// - a flown drone hitting something hard enough, or coming close to a stickman or a creature, goes off.
+/// - a flown drone hitting something hard enough, or coming close to a soldier or a creature, goes off.
 ///
 /// Each kind's numbers are its `drone_def`. Wrecking one (an FPV drone has 1 hp, a loitering drone a
 /// few rounds' worth) makes `Combat::wreck` call [`pop`] instead.

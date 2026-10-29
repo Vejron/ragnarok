@@ -8,7 +8,7 @@ use crate::mechanics::bearing;
 
 /// The hits this tick's damage makes, each with the player it is for, in the order it happened: the
 /// one hurt (a player) and whoever rode in it (a vehicle) took it, coming from where it came from;
-/// whoever did it, if not themself or aboard, dealt it. A hit's kind says what was struck: a stickman
+/// whoever did it, if not themself or aboard, dealt it. A hit's kind says what was struck: a soldier
 /// (a kill when it was the last of their health), a vehicle, or a creature as its `Hurtbox` says.
 pub fn hits(world: &World) -> Vec<(u32, Hit)> {
     let mut hits = Vec::new();

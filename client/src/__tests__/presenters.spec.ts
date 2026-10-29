@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Presenters, type Frame } from '@/entities/presenter'
 import { Pickups } from '@/entities/presenters/pickups'
-import { Stickmen } from '@/entities/presenters/people'
+import { Soldiers } from '@/entities/presenters/people'
 import { Projectiles, type ProjectileWorld } from '@/entities/presenters/projectiles'
 import { EntityStore } from '@/entities/store'
 import type { Components } from '@/net/components.generated'
@@ -60,8 +60,8 @@ describe('the item presenter', () => {
   })
 })
 
-describe('the stickmen presenter', () => {
-  /** Stands in for a stickman: records what it was last told. */
+describe('the soldiers presenter', () => {
+  /** Stands in for a soldier: records what it was last told. */
   const body = () => ({ dead: false, held: 0, pose: [] as unknown[], update(...args: unknown[]) { this.pose = args } })
 
   it('draws everyone else on foot as their flags say, and not the local player', () => {
@@ -69,18 +69,18 @@ describe('the stickmen presenter', () => {
     const avatars = { draw: (id: number) => bodies.get(id) ?? bodies.set(id, body()).get(id)! }
     const shadows: number[][] = []
     const presenters = new Presenters<Frame>()
-    const stickmen = presenters.add(new Stickmen({ avatars: avatars as never, blobFoot: (x, y, z) => shadows.push([x, y, z]), wade: () => {} }))
+    const soldiers = presenters.add(new Soldiers({ avatars: avatars as never, blobFoot: (x, y, z) => shadows.push([x, y, z]), wade: () => {} }))
     const store = new EntityStore()
     // Flags: grounded | crouching | holding item 2; lying down. And a dead one, and the local player.
     const crouched: Components = { kind: { kind: 0 }, place: { x: 100, y: 90, z: 0 }, heading: { yaw: 500 }, flags: { flags: 1 | 4 | (2 << 3), stance: 1 }, motion: { vy: 0, knock_x: 900, knock_z: 0 } }
     const dead: Components = { ...crouched, place: { x: 300, y: 90, z: 0 }, flags: { flags: 2, stance: 0 } }
     store.push(10, new Map([[3, crouched], [4, dead], [5, crouched], [6, { ...crouched, kind: { kind: 5 } }]]), true)
     presenters.run(store.sampleAll(10), { ...frame(10), localId: 5 })
-    expect(stickmen.inView).toEqual([3, 4])
-    expect(stickmen.nearby).toEqual([{ id: 3, x: 1, y: 0.9, z: 0 }, { id: 4, x: 3, y: 0.9, z: 0 }])
+    expect(soldiers.inView).toEqual([3, 4])
+    expect(soldiers.nearby).toEqual([{ id: 3, x: 1, y: 0.9, z: 0 }, { id: 4, x: 3, y: 0.9, z: 0 }])
     expect(bodies.get(3)).toMatchObject({ dead: false, held: 2 })
-    // Position, yaw, velocity, grounded, dt, pitch, crouching, sliding (knocked faster than a slide), prone, chute.
-    expect(bodies.get(3)!.pose).toEqual([[1, 0.9, 0], 0.5, 0, 0, true, 1 / 60, 0, true, true, true, false])
+    // Position, yaw, velocity, grounded, dt, pitch, crouching, sliding (knocked faster than a slide), prone, chute, vertical speed.
+    expect(bodies.get(3)!.pose).toEqual([[1, 0.9, 0], 0.5, 0, 0, true, 1 / 60, 0, true, true, true, false, 0])
     expect(bodies.get(4)!.dead).toBe(true)
     expect(shadows).toEqual([[1, 0.9, 0]])
   })

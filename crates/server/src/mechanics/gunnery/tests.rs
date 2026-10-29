@@ -136,7 +136,7 @@ fn an_armour_piercing_shot_kills_whoever_it_strikes_but_bursts_small() {
 }
 
 #[test]
-fn firing_hits_and_throws_a_stickman_in_the_line_of_fire() {
+fn firing_hits_and_throws_a_soldier_in_the_line_of_fire() {
     let (mut game, gunner, vid, mut seq) = crewed();
     load_he(&mut game, vid);
     let (victim, _inbox) = join(&mut game);
@@ -182,7 +182,7 @@ fn a_direct_hit_kills_and_the_gunner_gets_the_credit() {
 }
 
 #[test]
-fn the_gun_reloads_between_shots_and_a_stickman_far_away_is_unharmed() {
+fn the_gun_reloads_between_shots_and_a_soldier_far_away_is_unharmed() {
     let (mut game, gunner, vid, mut seq) = crewed();
     let (bystander, _inbox) = join(&mut game);
     game.world.entities.get_mut::<Player>(bystander).unwrap().character.position = [0.0, STANDING_Y, 150.0];
@@ -330,8 +330,11 @@ fn the_nose_gun_throws_small_shells_that_burst_a_third_as_wide() {
 
     aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, 0, 30);
     assert!(game.world.in_flight().is_empty(), "it has burst");
+    // What the torso lost, and any part a round in a limb or the head hurt.
     let hp = game.world.entities.of::<crate::entities::Health>(victim).hp;
-    assert!(hp < before && before - hp < 60, "hurt, but less than a tank shell: {before} to {hp}");
+    let parts = game.world.entities.get::<crate::mechanics::Wounds>(victim).map_or(0, |wounds| wounds.taken.iter().map(|&taken| u32::from(taken)).sum());
+    let lost = u32::from(before - hp) + parts;
+    assert!(lost > 0 && lost < 60, "hurt, but less than a tank shell: {before} to {hp}, and {parts} to its parts");
     assert_eq!(game.world.entities.of::<crate::entities::Health>(bystander).hp, PLAYER_MAX_HP, "outside the small blast");
 }
 
@@ -480,7 +483,7 @@ fn the_forward_guns_take_turns_and_hit_what_is_ahead_of_the_nose() {
     let arms = shown(&game, vid, Show::Guns);
     let expected = (30 / PLANE_GUN_COOLDOWN_TICKS) as u8;
     assert!(arms.shots.abs_diff(expected) <= 1, "{} rounds in half a second, expected about {expected}", arms.shots);
-    assert!(game.world.entities.of::<crate::entities::Health>(victim).hp < PLAYER_MAX_HP, "the stickman ahead is hit");
+    assert!(game.world.entities.of::<crate::entities::Health>(victim).hp < PLAYER_MAX_HP || game.world.entities.has::<crate::mechanics::Wounds>(victim), "the soldier ahead is hit");
     assert!(!hits.is_empty() && hits.iter().all(|shot| shot.shooter == pilot), "{hits:?}");
     assert_eq!(game.world.entities.of::<Health>(vid).hp, hp, "its own guns never hurt the plane");
     assert!(game.world.in_flight().is_empty(), "rounds are hitscans, not projectiles");
@@ -575,7 +578,7 @@ fn the_rear_gun_turns_all_the_way_round_but_never_fires_at_the_pilot() {
 }
 
 #[test]
-fn the_rear_gun_hits_a_stickman_behind_and_only_its_gunner_works_it() {
+fn the_rear_gun_hits_a_soldier_behind_and_only_its_gunner_works_it() {
     let (mut game, gunner, vid, mut seq) = plane_crewed(1);
     let (victim, _inbox) = join(&mut game);
     let hull = game.world.physics.car_pose(vid).unwrap().yaw();
@@ -585,7 +588,7 @@ fn the_rear_gun_hits_a_stickman_behind_and_only_its_gunner_works_it() {
     let (ring, dir) = aim_from(&pose, PLANE_REAR_PIVOT, gun.yaw, gun.pitch);
     game.world.entities.get_mut::<Player>(victim).unwrap().character.position = std::array::from_fn(|i| ring[i] + dir[i] * 20.0 + if i == 1 { -0.3 } else { 0.0 });
     aim_and_hold(&mut game, gunner, &mut seq, hull + std::f32::consts::PI, 0.0, BUTTON_FIRE, 30);
-    assert!(game.world.entities.of::<crate::entities::Health>(victim).hp < PLAYER_MAX_HP);
+    assert!(game.world.entities.of::<crate::entities::Health>(victim).hp < PLAYER_MAX_HP || game.world.entities.has::<crate::mechanics::Wounds>(victim), "hit somewhere");
 
     // A pilot alone works only the forward guns.
     let (mut game, pilot, vid, mut seq) = plane_crewed(0);

@@ -500,7 +500,7 @@ pub const DRONE_POP_RADIUS: f32 = 1.5;
 pub const DRONE_POP_DAMAGE: f32 = 20.0;
 /// A contact that takes this much speed (m/s) out of a flown drone sets it off; a falling one goes off on any.
 pub const DRONE_IMPACT_DV: f32 = 4.0;
-/// A drone this close (metres) to the axis of a stickman's capsule sets itself off.
+/// A drone this close (metres) to the axis of a soldier's capsule sets itself off.
 pub const DRONE_PROXIMITY: f32 = 0.7;
 /// Ticks a drone that lost its link falls before it goes off by itself.
 pub const DRONE_FALL_TICKS: u32 = 5 * TICK_RATE;

@@ -316,7 +316,7 @@ macro_rules! replicated {
 
 replicated! {
     diff 0 place
-    /// Where it is, centimetres: a stickman's capsule centre, a vehicle's chassis centre.
+    /// Where it is, centimetres: a soldier's capsule centre, a vehicle's chassis centre.
     Place { x: i32 as cm, y: i32 as cm, z: i32 as cm }
 
     diff 1 heading
@@ -324,7 +324,7 @@ replicated! {
     Heading { yaw: i16 as mrad }
 
     diff 2 motion
-    /// What a predicted stickman resumes from: vertical speed, and the slide a car's knock left
+    /// What a predicted soldier resumes from: vertical speed, and the slide a car's knock left
     /// them in, cm/s.
     Motion { vy: i16 as cm, knock_x: i16 as cm, knock_z: i16 as cm }
 
@@ -347,7 +347,7 @@ replicated! {
     Turret { yaw: i16 as mrad, pitch: i16 as mrad, shots: u8, range: u16 as dm, flags: u8 }
 
     set 7 limbs
-    /// The limbs a stickman has lost (`LIMB_*`, low four bits) and the stumps that still bleed (the same
+    /// The limbs a soldier has lost (`LIMB_*`, low four bits) and the stumps that still bleed (the same
     /// bits above `LIMB_BLEED_SHIFT`). Absent while whole. Ids 7 and 10 were the vehicle's `crew` and
     /// `seats`.
     Limbs { lost: u8 }
@@ -379,7 +379,7 @@ replicated! {
     Velocity { vx: i16 as cm, vy: i16 as cm, vz: i16 as cm }
 
     set 14 kind
-    /// `KIND_*`: which model a stickman, a creature or a vehicle is drawn as.
+    /// `KIND_*`: which model a soldier, a creature or a vehicle is drawn as.
     Kind { kind: u8 }
 
     set 15 projectile
@@ -391,10 +391,11 @@ replicated! {
     Pickup { item: u8 }
 
     set 17 vitals [owner]
-    /// A player's own health (0 is dead), how far their reload or bandage has got, 0..=255 of done,
+    /// A player's own torso health (0 is dead), how far their reload or bandage has got, 0..=255 of done,
     /// or 0 when neither is going on, and their stamina on foot as their prediction steps it: the points
     /// spent (0 is rested, `STAMINA_FULL` is out) and whether they are winded, 0 or 1.
-    Vitals { hp: u8, progress: u8 as byte, spent: u16, winded: u8 }
+    /// `parts` is what is left of the head's health and each limb's (`LIMB_*` order), 0 for a limb lost.
+    Vitals { hp: u8, progress: u8 as byte, spent: u16, winded: u8, parts: [u8; 5] }
 
     set 18 hotbar [owner]
     /// A player's own hotbar.
@@ -418,8 +419,14 @@ replicated! {
     Look { pitch: i16 as mrad }
 
     set 22 carry
-    /// What a stickman carries on its back, `CARRY_*`: the backpack (BACKPACK.md). Absent when nothing.
+    /// What a soldier carries on its back, `CARRY_*`: the backpack (BACKPACK.md). Absent when nothing.
     Carry { what: u8 }
+
+    set 23 struck
+    /// The last hit a soldier took this life, so everyone sees it flinch: the hits so far, modulo 256 (a
+    /// new one is a change), the part struck (`PART_*`, a limb by its `LIMB_*` bit), how much it lost,
+    /// and the bearing it came from, in the world. Absent until the first hit of a life.
+    Struck { count: u8, part: u8, amount: u8, yaw: i16 as mrad }
 }
 
 /// The structs a component field can hold a list of, with their fields in wire order and each one's

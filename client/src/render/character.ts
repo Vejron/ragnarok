@@ -6,7 +6,7 @@ import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, PRONE_CENTRE, RUN_SPEED, STAND_CEN
 import { ITEM_AK5, ITEM_AT_RIFLE, ITEM_BANDAGE, ITEM_BRICKS, ITEM_CARL_GUSTAF, ITEM_FLARE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, itemDef, type ItemDef } from '@/sim/items'
 import { type Limb, poseLimb, splitLimbs } from './gibs'
 import { colorFor } from '@/profile'
-import { LIMB_ALL, LIMB_ARM_R } from '@/net/codec'
+import { LIMB_ALL, LIMB_ARM_L, LIMB_ARM_R, LIMB_LEG_L, LIMB_LEG_R, PART_HEAD } from '@/net/codec'
 import { buildBackpack } from './backpack'
 
 /** Gravity on a thrown body, m/s². */
@@ -99,6 +99,51 @@ const SLIDE_RATE = 14
 /** Torso lean for aiming: how much of the camera pitch the chest and spine take. */
 const AIM_CHEST = 0.4
 const AIM_SPINE = 0.2
+/** And the neck, so the head looks where it aims. */
+const AIM_NECK = 0.3
+/** Falling faster than this with the chute shut, m/s, or for longer than `FREEFALL_AFTER` seconds, is a freefall rather than a jump. */
+const FREEFALL_VY = 9
+const FREEFALL_AFTER = 0.9
+const FALL_RATE = 4
+/**
+ * Standing still, the legs stay put while the look turns, and the waist and chest take the difference
+ * (`TWIST_SPINE` of it the waist, the rest the chest, so the gun points where the player looks). Past
+ * `TWIST_LIMIT` radians the feet step round until the body has caught up to within `TWIST_SETTLED`.
+ */
+const TWIST_LIMIT = 1.0
+const TWIST_SETTLED = 0.08
+const TWIST_SPINE = 0.4
+const TURN_RATE = 9
+/** Turning on the spot steps the feet as walking this fast would, m/s per rad/s of turn. */
+const STEP_PER_TURN = 0.35
+/** Idle glances: how far the head turns and nods, rad, and how long one holds and the gaps between, s. */
+const GLANCE_YAW = 0.7
+const GLANCE_PITCH = 0.2
+const GLANCE_HOLD = [0.8, 2.2] as const
+const GLANCE_GAP = [2.5, 7] as const
+/** Settling the weight onto one leg and then the other, rad of hip roll, every few seconds. */
+const SHIFT_ROLL = 0.05
+const SHIFT_GAP = [3, 8] as const
+/** Seconds stood still before glancing and shifting starts. */
+const SETTLE_TIME = 1.5
+/** Breathing hard after a run: how fast it comes on and goes, per second, and how deep, rad of chest. */
+const EXERT_UP = 0.35
+const EXERT_DOWN = 0.07
+const BREATH_DEEP = 0.07
+/** Leaning into a turn (rad per rad/s × m/s) and into a change of speed (rad per m/s²), at most `LEAN_MAX`. */
+const TURN_LEAN = 0.025
+const SPEED_LEAN = 0.02
+const LEAN_MAX = 0.22
+const LEAN_RATE = 6
+/** A landing sinks into a crouch this much per m/s of fall, at most `LAND_MAX`. */
+const LAND_DIP = 0.07
+const LAND_MAX = 0.85
+/** Hit reactions: the springs' stiffness and damping, and how hard a hit kicks, rad/s (`KICK_MIN` plus this per point lost). */
+const SPRING_K = 260
+const SPRING_C = 16
+const KICK_PER_POINT = 0.22
+const KICK_MIN = 3
+const KICK_MAX = 14
 const RECOIL_KICK = 0.09
 const RECOIL_DECAY = 14
 /**
@@ -174,6 +219,43 @@ export class Crowd {
   }
 }
 
+/** A small seeded random source, so each soldier glances and shifts on its own time. */
+function seeded(seed: number) {
+  let a = (seed * 2654435761) >>> 0 || 1
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0
+    let t = a
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+const wrap = (angle: number) => Math.atan2(Math.sin(angle), Math.cos(angle))
+
+/** A damped spring about zero, kicked by hits. */
+class Spring {
+  x = 0
+  v = 0
+  step(dt: number) {
+    // Small steps keep a stiff spring stable at a low frame rate.
+    const n = Math.max(1, Math.ceil(dt * 120))
+    const h = dt / n
+    for (let i = 0; i < n; i++) {
+      this.v += (-SPRING_K * this.x - SPRING_C * this.v) * h
+      this.x += this.v * h
+    }
+  }
+  reset() {
+    this.x = 0
+    this.v = 0
+  }
+}
+
+/** The springs a hit kicks: a bone and axis, or the whole body's tilt. */
+const SPRINGS = ['headX', 'headY', 'chestX', 'chestY', 'chestZ', 'armL', 'armR', 'legL', 'legR', 'tiltX', 'tiltZ'] as const
+type SpringName = (typeof SPRINGS)[number]
+
 const smooth = (a: number, b: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
   return t * t * (3 - 2 * t)
@@ -182,6 +264,7 @@ const chase = (value: number, target: number, rate: number, dt: number) => value
 
 const AXIS_X = new THREE.Vector3(1, 0, 0)
 const AXIS_Y = new THREE.Vector3(0, 1, 0)
+const AXIS_Z = new THREE.Vector3(0, 0, 1)
 const SCRATCH = {
   q: new THREE.Quaternion(),
   parent: new THREE.Quaternion(),
@@ -207,6 +290,10 @@ export class Character {
   private readonly outfit: Material
   private readonly chest: Node | null
   private readonly spine: Node | null
+  private readonly hips: Node | null
+  private readonly neck: Node | null
+  /** Forearms and shins, in `LIMB_*` bit order, for hit reactions. */
+  private readonly lowerLimbs: (Node | null)[]
   private readonly muzzleBones = new Map<Stance, Node>()
   /** Each weapon's mesh, by item id; only the one in hand is shown. */
   private readonly weapons = new Map<number, Node>()
@@ -247,6 +334,35 @@ export class Character {
   /** The backpack on its back (BACKPACK.md), made the first time it carries it. */
   private backpack: Group | null = null
   private carrying = false
+  /** Freefalling with the chute shut, and hanging under it, 0..1; and seconds off the ground. */
+  private fall = 0
+  private hang = 0
+  private airTime = 0
+  /** The fastest fall since leaving the ground, m/s (negative), for the landing. */
+  private fallSpeed = 0
+  private wasGrounded = true
+  /** A clock for the falling clips. */
+  private clock = 0
+  /** Where the legs face, which lags the look standing still; null until first placed. */
+  private bodyYaw: number | null = null
+  /** Stepping round on the spot until the body has caught up with the look. */
+  private turning = false
+  /** Seconds stood still, for when the idle life starts. */
+  private stillFor = 0
+  private readonly random: () => number
+  private readonly glance = { yaw: 0, pitch: 0, toYaw: 0, toPitch: 0, left: 0, on: false }
+  private readonly shift = { roll: 0, to: 0, left: 0 }
+  /** How hard it is breathing, 0..1, and the breath's phase. */
+  private exertion = 0
+  private breath = 0
+  /** Leaning into a turn (roll) and a change of speed (pitch), rad; last frame's velocity and facing. */
+  private leanRoll = 0
+  private leanPitch = 0
+  private lastVelocity: [number, number] | null = null
+  private lastYaw = 0
+  private readonly springs = Object.fromEntries(SPRINGS.map((name) => [name, new Spring()])) as Record<SpringName, Spring>
+  /** The `struck` count last seen, null until the first word. */
+  private struckCount: number | null = null
 
   constructor(private readonly crowd: Crowd, id: number) {
     const asset = crowd.asset
@@ -265,7 +381,11 @@ export class Character {
 
     this.chest = this.object.getObjectByName('chest') ?? null
     this.spine = this.object.getObjectByName('spine') ?? null
-    this.head = this.object.getObjectByName('head') ?? null
+    this.hips = this.object.getObjectByName('hips') ?? null
+    this.neck = this.object.getObjectByName('neck') ?? null
+    this.lowerLimbs = ['forearm_L', 'forearm_R', 'shin_L', 'shin_R'].map((name) => this.object.getObjectByName(name) ?? null)
+    this.random = seeded(id + 1)
+    this.head =this.object.getObjectByName('head') ?? null
     this.limbBones = LIMB_BONES.map((name) => this.object.getObjectByName(name) ?? null)
     this.gunHand = this.object.getObjectByName('hand_R') ?? null
     for (const stance of Object.keys(MUZZLE_BONE) as Stance[]) {
@@ -313,7 +433,7 @@ export class Character {
     this.flashLeft = HIT_FLASH
   }
 
-  /** Repaints the outfit: the player's chosen colour can arrive after their stickman. */
+  /** Repaints the outfit: the player's chosen colour can arrive after their soldier. */
   setColor(hex: number) {
     this.outfit.color.setHex(hex)
     this.canopy.setColor(hex)
@@ -321,7 +441,7 @@ export class Character {
   }
 
   update(
-    position: readonly number[], yaw: number, vx: number, vz: number, grounded: boolean, dt: number, pitch = 0, crouching = false, sliding = false, prone = false, chute = false,
+    position: readonly number[], yaw: number, vx: number, vz: number, grounded: boolean, dt: number, pitch = 0, crouching = false, sliding = false, prone = false, chute = false, vy = 0,
   ) {
     this.position.set(position[0]!, position[1]!, position[2]!)
     this.pitch = pitch
@@ -329,21 +449,49 @@ export class Character {
     this.flingStep(dt)
     if (!this.shown || this.gibbed) return
 
+    this.clock += dt
+    this.canopy.update(chute && !this.down, dt)
+
+    // Off the ground long enough, or falling fast enough, with the chute shut: a freefall.
+    this.airTime = grounded ? 0 : this.airTime + dt
+    if (!grounded) this.fallSpeed = Math.min(this.fallSpeed, vy)
+    const falling = !grounded && !chute && !this.down && (vy < -FREEFALL_VY || this.airTime > FREEFALL_AFTER)
+    this.fall = chase(this.fall, falling ? 1 : 0, FALL_RATE, dt)
+    this.hang = chase(this.hang, chute && !grounded && !this.down ? 1 : 0, FALL_RATE, dt)
+    // A landing sinks into a crouch as deep as the fall was hard, and comes back up.
+    if (grounded && !this.wasGrounded && !this.down) this.crouch = Math.max(this.crouch, Math.min(LAND_MAX, -this.fallSpeed * LAND_DIP))
+    if (grounded) this.fallSpeed = 0
+    this.wasGrounded = grounded
+
+    // Where the legs face: standing still they stay put while the look turns, until it has turned too
+    // far; otherwise they face where it looks.
+    const speedNow = Math.hypot(vx, vz)
+    const free = speedNow > STILL_SPEED || !grounded || prone || this.lie > 0.3 || this.down || sliding || crouching
+    let body = this.bodyYaw ?? yaw
+    const gap = wrap(yaw - body)
+    if (free || Math.abs(gap) > TWIST_LIMIT) this.turning = true
+    else if (Math.abs(gap) < TWIST_SETTLED) this.turning = false
+    const before = body
+    if (this.turning) body = wrap(body + gap * (1 - Math.exp(-(free ? BLEND_RATE * 2 : TURN_RATE) * dt)))
+    this.bodyYaw = body
+    // Turning on the spot steps the feet round, sideways the way it turns.
+    const turnRate = dt > 0 ? wrap(body - before) / dt : 0
+    const stepping = free ? 0 : Math.abs(turnRate) * STEP_PER_TURN
+
     // Velocity in the body's frame: forward is -Z at yaw 0, right is +X.
-    const sin = Math.sin(yaw)
-    const cos = Math.cos(yaw)
-    const forward = -(vx * sin + vz * cos)
-    const right = vx * cos - vz * sin
+    const sin = Math.sin(body)
+    const cos = Math.cos(body)
+    const forward = stepping > 0 ? 0 : -(vx * sin + vz * cos)
+    const right = stepping > 0 ? (turnRate > 0 ? -stepping : stepping) : vx * cos - vz * sin
     const speed = Math.hypot(forward, right)
 
-    this.canopy.update(chute && !this.down, dt)
     this.air = chase(this.air, !grounded && !this.down ? 1 : 0, AIR_RATE, dt)
     this.death = chase(this.death, this.down ? 1 : 0, DEATH_RATE, dt)
     this.crouch = chase(this.crouch, crouching ? 1 : 0, CROUCH_RATE, dt)
     this.lie = chase(this.lie, prone ? 1 : 0, LIE_RATE, dt)
     if (this.backpack) {
-      // Between the shoulder blades, lower as it crouches; lying down or dead it is hidden rather than posed.
-      this.backpack.visible = this.carrying && !this.down && this.lie < 0.5
+      // Between the shoulder blades, lower as it crouches; lying down, falling flat or dead it is hidden rather than posed.
+      this.backpack.visible = this.carrying && !this.down && this.lie < 0.5 && this.fall < 0.5
       this.backpack.position.set(0, PACK_Y - PACK_CROUCH_DROP * this.crouch, -PACK_BACK)
     }
     const alive = 1 - this.death
@@ -380,7 +528,11 @@ export class Character {
     set('crouch_idle', low * (1 - moving))
     set('crawl_idle', crawl * (1 - moving))
     set('slide', sliding_)
-    set('jump_air', alive * this.air)
+    // In the air: a jump, a freefall, or hanging under the canopy. The falling clips are every stance's.
+    const aloft = alive * this.air
+    set('jump_air', aloft * (1 - this.fall) * (1 - this.hang))
+    targets.set('freefall', aloft * this.fall * (1 - this.hang))
+    targets.set('chute', aloft * this.hang)
     targets.set('death', this.death)
 
     // Weights chase their targets; both sets sum to one, so the blend stays a convex mix.
@@ -413,11 +565,12 @@ export class Character {
     const current = this.clip('idle')
     for (const [name, action] of this.actions) {
       const w = this.weights.get(name)!
-      const base = name.replace(/^(pistol_|hold_)/, '')
+      const base = name.replace(/^(pistol_|hold_|shoulder_)/, '')
       action.enabled = w > 0.0005 || name === current
       action.weight = w
       if (base === 'idle' || base === 'crouch_idle' || base === 'crawl_idle' || base === 'slide') action.time = this.idleTime
       else if (base === 'jump_air') action.time = (this.idleTime / (idle?.clip.duration ?? 1)) * action.clip.duration
+      else if (base === 'freefall' || base === 'chute') action.time = this.clock % action.clip.duration
       else if (base !== 'death') action.time = this.phase * action.clip.duration
     }
     // The death clip plays out on the animator's clock once it starts.
@@ -429,10 +582,155 @@ export class Character {
     this.hideLimbs()
     this.recoil = chase(this.recoil, 0, RECOIL_DECAY, dt)
     this.aim()
+    // The waist and chest take what the legs have not turned, so the gun points where it looks.
+    const twist = wrap(yaw - body) * alive * (1 - this.lie) * (1 - this.air)
+    this.turn(this.spine, twist * TWIST_SPINE, AXIS_Y)
+    this.turn(this.chest, twist * (1 - TWIST_SPINE), AXIS_Y)
+    this.live(dt, speedNow, standing * (1 - moving), alive)
+    this.react(dt)
+    this.lean(dt, vx, vz, body, ground * (1 - this.lie))
     // A slide carries the body along its heading, rifle and all, rather than where the camera looks.
-    const heading = speed > 0.5 ? Math.atan2(-vx, -vz) : yaw
-    const turn = Math.atan2(Math.sin(heading - yaw), Math.cos(heading - yaw))
-    this.place(yaw + turn * this.slide)
+    const heading = speedNow > 0.5 ? Math.atan2(-vx, -vz) : body
+    const turn = Math.atan2(Math.sin(heading - body), Math.cos(heading - body))
+    this.place(body + turn * this.slide)
+  }
+
+  /**
+   * The small things that keep it from standing like a statue: breathing hard after a run, and, once it
+   * has stood still a while, glancing about and shifting its weight. `idle` is how much it stands idle.
+   */
+  private live(dt: number, speed: number, idle: number, alive: number) {
+    // Out of breath after a run, and getting it back slowly.
+    this.exertion = Math.min(1, Math.max(0, this.exertion + (speed > WALK_SPEED + 0.5 ? EXERT_UP : -EXERT_DOWN) * dt))
+    this.breath = (this.breath + dt * Math.PI * 2 * (0.3 + 0.6 * this.exertion)) % (Math.PI * 2)
+    const heave = Math.sin(this.breath) * BREATH_DEEP * this.exertion * alive * (1 - this.air)
+    this.turn(this.chest, -heave, AXIS_X)
+    this.turn(this.neck, heave * 0.6, AXIS_X)
+
+    this.stillFor = idle > 0.5 ? this.stillFor + dt : 0
+    const settled = this.stillFor > SETTLE_TIME && !this.down
+    const pick = ([a, b]: readonly [number, number]) => a + (b - a) * this.random()
+    const glance = this.glance
+    glance.left -= dt
+    if (!settled) {
+      glance.on = false
+      glance.left = 0
+      glance.toYaw = glance.toPitch = 0
+    } else if (glance.left <= 0) {
+      // Look somewhere for a moment, then back ahead for a while.
+      glance.on = !glance.on
+      glance.left = pick(glance.on ? GLANCE_HOLD : GLANCE_GAP)
+      glance.toYaw = glance.on ? (this.random() * 2 - 1) * GLANCE_YAW : 0
+      glance.toPitch = glance.on ? (this.random() * 2 - 1) * GLANCE_PITCH : 0
+    }
+    glance.yaw = chase(glance.yaw, glance.toYaw, 5, dt)
+    glance.pitch = chase(glance.pitch, glance.toPitch, 5, dt)
+    this.turn(this.neck, glance.yaw * 0.5, AXIS_Y)
+    this.turn(this.head, glance.yaw * 0.5, AXIS_Y)
+    this.turn(this.head, glance.pitch, AXIS_X)
+
+    const shift = this.shift
+    shift.left -= dt
+    if (!settled) shift.to = 0
+    else if (shift.left <= 0) {
+      shift.left = pick(SHIFT_GAP)
+      shift.to = shift.to > 0 ? -SHIFT_ROLL : SHIFT_ROLL
+    }
+    shift.roll = chase(shift.roll, shift.to * idle, 1.5, dt)
+    // The hips roll onto one leg and the waist leans back over it, so the head stays level.
+    this.turn(this.hips, shift.roll, AXIS_Z)
+    this.turn(this.spine, -shift.roll * 1.4, AXIS_Z)
+  }
+
+  /** Leans the whole body into a turn and a change of speed, by `on` (on the ground, upright). */
+  private lean(dt: number, vx: number, vz: number, yaw: number, on: number) {
+    let roll = 0
+    let pitch = 0
+    if (this.lastVelocity && dt > 0) {
+      const yawRate = wrap(yaw - this.lastYaw) / dt
+      // Turning left (yaw growing) leans to its left, the model's +X: a negative roll about its +Z.
+      roll = -yawRate * Math.hypot(vx, vz) * TURN_LEAN
+      const ax = (vx - this.lastVelocity[0]) / dt
+      const az = (vz - this.lastVelocity[1]) / dt
+      pitch = -(ax * Math.sin(yaw) + az * Math.cos(yaw)) * SPEED_LEAN
+    }
+    this.lastVelocity = [vx, vz]
+    this.lastYaw = yaw
+    const clamp = (v: number) => Math.max(-LEAN_MAX, Math.min(LEAN_MAX, v)) * on
+    this.leanRoll = chase(this.leanRoll, clamp(roll), LEAN_RATE, dt)
+    this.leanPitch = chase(this.leanPitch, clamp(pitch), LEAN_RATE, dt)
+  }
+
+  /**
+   * Its last hit, as `struck` replicates it: a new one makes it flinch. The first word is not news: it
+   * may have been hit before it came into view.
+   */
+  setStruck(struck: { count: number; part: number; amount: number; yaw: number } | undefined) {
+    if (!struck) {
+      // A new life starts counting again.
+      if (this.struckCount !== null) this.struckCount = 0
+      return
+    }
+    const fresh = this.struckCount !== null && struck.count !== this.struckCount
+    this.struckCount = struck.count
+    if (fresh) this.flinch(struck.part, struck.yaw, struck.amount)
+  }
+
+  /**
+   * Kicks the springs for a hit on `part` (`PART_*`, a limb by its `LIMB_*` bit) that came from bearing
+   * `from` in the world and took `amount`.
+   */
+  flinch(part: number, from: number, amount: number) {
+    if (this.down || this.gibbed) return
+    const kick = Math.min(KICK_MAX, KICK_MIN + amount * KICK_PER_POINT)
+    // Where it came from, relative to the way the body faces: 0 ahead, + to its left.
+    const rel = wrap(from - (this.bodyYaw ?? 0))
+    const ahead = Math.cos(rel)
+    const side = Math.sin(rel)
+    const s = this.springs
+    // Every hit rocks the body away from the blow a little.
+    s.tiltX.v -= ahead * kick * 0.12
+    s.tiltZ.v += side * kick * 0.12
+    if (part === PART_HEAD) {
+      s.headX.v -= ahead * kick
+      s.headY.v -= side * kick * 0.8
+      s.chestX.v -= ahead * kick * 0.3
+    } else if (part === LIMB_ARM_L || part === LIMB_ARM_R) {
+      // The struck shoulder is knocked back, twisting the chest that way.
+      const left = part === LIMB_ARM_L
+      ;(left ? s.armL : s.armR).v += kick
+      s.chestY.v += (left ? -1 : 1) * kick * 0.4
+    } else if (part === LIMB_LEG_L || part === LIMB_LEG_R) {
+      // The knee buckles and the body drops onto it.
+      ;(part === LIMB_LEG_L ? s.legL : s.legR).v += kick
+      this.crouch = Math.max(this.crouch, Math.min(0.6, amount / 60))
+      s.chestX.v += kick * 0.3
+    } else {
+      s.chestX.v -= ahead * kick * 0.7
+      s.chestY.v -= side * kick * 0.4
+      s.chestZ.v += side * kick * 0.4
+    }
+  }
+
+  /** Steps the hit springs and bends the bones by them. */
+  private react(dt: number) {
+    for (const spring of Object.values(this.springs)) spring.step(dt)
+    const s = this.springs
+    this.turn(this.chest, s.chestX.x, AXIS_X)
+    this.turn(this.chest, s.chestY.x, AXIS_Y)
+    this.turn(this.chest, s.chestZ.x, AXIS_Z)
+    this.turn(this.neck, s.headX.x * 0.4, AXIS_X)
+    this.turn(this.head, s.headX.x * 0.6, AXIS_X)
+    this.turn(this.head, s.headY.x, AXIS_Y)
+    const [upperL, upperR, thighL, thighR] = this.limbBones
+    const [, , shinL, shinR] = this.lowerLimbs
+    this.turn(upperL ?? null, s.armL.x, AXIS_X)
+    this.turn(upperR ?? null, s.armR.x, AXIS_X)
+    // A buckled knee: the shin folds back and the thigh comes forward.
+    this.turn(thighL ?? null, -s.legL.x * 0.5, AXIS_X)
+    this.turn(shinL ?? null, s.legL.x, AXIS_X)
+    this.turn(thighR ?? null, -s.legR.x * 0.5, AXIS_X)
+    this.turn(shinR ?? null, s.legR.x, AXIS_X)
   }
 
   /**
@@ -498,6 +796,13 @@ export class Character {
     // Set all three: a tumble leaves its pitch and roll in the Euler angles, and `rotation.y` alone
     // would keep them, leaving a respawned player tilted.
     this.object.rotation.set(0, yaw + Math.PI, 0, 'YXZ')
+    // Leaning into a turn or a change of speed, and rocked by a hit, about the feet: the model's +Z is
+    // ahead, so a turn about its +X tips it forward and one about its +Z to its right.
+    const tipX = this.leanPitch + this.springs.tiltX.x * 0.5
+    const tipZ = this.leanRoll + this.springs.tiltZ.x * 0.5
+    if (!this.fling && (tipX !== 0 || tipZ !== 0)) {
+      this.object.quaternion.multiply(SCRATCH.turn.setFromAxisAngle(AXIS_X, tipX)).multiply(SCRATCH.q.setFromAxisAngle(AXIS_Z, tipZ))
+    }
     if (this.fling) {
       // Tumble about the middle of the body, not the feet.
       const middle = SCRATCH.axis.set(0, FOOT_OFFSET, 0)
@@ -609,9 +914,12 @@ export class Character {
   /** Leans the torso (and the rifle it carries) with the camera pitch and the last shot's kick. */
   private aim() {
     if (this.down || this.death > 0.3) return
-    const lean = -this.pitch - this.recoil
+    // Falling flat or hanging in the harness, there is nothing to aim.
+    const held = 1 - Math.max(this.fall, this.hang)
+    const lean = (-this.pitch - this.recoil) * held
     this.turn(this.spine, lean * AIM_SPINE, AXIS_X)
     this.turn(this.chest, lean * AIM_CHEST, AXIS_X)
+    this.turn(this.neck, -this.pitch * AIM_NECK * held, AXIS_X)
   }
 
   /** Rotates a bone about `axis` in model space: X bends it forward and back, Y turns it. */
@@ -686,6 +994,10 @@ export class Character {
       this.hideLimbs()
       this.fling = null
       this.tumble.identity()
+      for (const spring of Object.values(this.springs)) spring.reset()
+      this.struckCount = null
+      this.bodyYaw = null
+      this.fall = this.hang = 0
       this.head?.scale.setScalar(1)
       this.object.visible = this.shown && this.placed
     }

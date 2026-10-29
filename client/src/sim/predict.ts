@@ -46,7 +46,7 @@ export class Predictor {
   }
 
   /**
-   * Remembers an input without simulating it, while the player is in a car and the stickman does
+   * Remembers an input without simulating it, while the player is in a car and the soldier does
    * not move. If the player steps out before the server's ack catches up, these inputs are
    * replayed over the state it reports.
    */

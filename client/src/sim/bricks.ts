@@ -22,7 +22,7 @@ export interface BuildWorld {
   cubeBlocked(centre: Vec3, half: number): boolean
   /** Whether a building's standing cells reach within `radius` of `point` (`SimMotor.buildingNear`). */
   buildingNear(point: Vec3, radius: number): boolean
-  /** The local stickman's capsule centre, or null when it is not standing in the world. */
+  /** The local soldier's capsule centre, or null when it is not standing in the world. */
   body: Vec3 | null
 }
 

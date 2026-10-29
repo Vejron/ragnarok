@@ -1,7 +1,8 @@
-import { Group, Mesh, sphereGeometry, type Material, type Node } from '@ragnarok/engine'
+import { Group, Mesh, sphereGeometry, type Geometry, type Material, type Node } from '@ragnarok/engine'
 import * as THREE from 'three'
 import { parseToonModel } from './models'
 import { toonMaterial } from './toon'
+import { boxUvs, camoTexture } from './camo'
 import { CAR_SEATS, TANK_TRACK_HALF } from '@/sim/consts'
 import { wrapAngle } from '@/net/codec'
 import type { Turret } from '@/entities/units'
@@ -14,8 +15,17 @@ export const TANK_MODEL_URL = `${import.meta.env.BASE_URL}models/tank.glb`
 const WHEEL_RADIUS = 0.4
 const RECOIL_STROKE = 0.5
 const RECOIL_SECONDS = 0.35
-/** Paint colours handed out by vehicle id, so neighbouring tanks are told apart. */
-const PAINTS = [0x6b8e23, 0x8a7f4a, 0x5f7d5a, 0x7a6f3d] as const
+/**
+ * WW2 camo schemes handed out by vehicle id, base coat first, so neighbouring tanks are told apart:
+ * dark yellow with olive green and red-brown (twice, the second faded), olive green with the same two,
+ * and olive drab with black and earth brown.
+ */
+const PAINTS = [
+  [0xc2a868, 0x4e5a38, 0x6e3b2a],
+  [0xb3a06e, 0x5d6443, 0x7a4834],
+  [0x55603f, 0xc2a868, 0x6e3b2a],
+  [0x4f5528, 0x2b2b25, 0x6b5a3a],
+] as const
 
 /** What differs between the tanks this model draws: where each seat's head shows and how the tracks turn the wheels. */
 export interface TankLayout {
@@ -33,7 +43,7 @@ let asset: Node | null = null
 
 /**
  * Parses `tank.glb` (built by `tools/vehicles/build_tank.py`) for every `TankModel` to share. Its
- * materials become flat toon ones to match the rest of the scene; `paint` is replaced per tank.
+ * materials become flat toon ones to match the rest of the scene; `paint` is replaced per tank by camo.
  */
 export async function parseTankModel(data: ArrayBuffer) {
   asset = await parseTankAsset(data)
@@ -41,7 +51,16 @@ export async function parseTankModel(data: ArrayBuffer) {
 
 /** Parses a tank-family `.glb` into toon materials, for `TankModel` and its kin to share. */
 export async function parseTankAsset(data: ArrayBuffer): Promise<Node> {
-  return parseToonModel(data, undefined, { merge: true })
+  const model = parseToonModel(data, undefined, { merge: true })
+  // The model has no uvs: the paint gets them boxed round it, for the camo to lie on.
+  const boxed = new Map<Geometry, Geometry>()
+  model.traverse((node) => {
+    if (!(node instanceof Mesh) || node.material.name !== 'paint') return
+    let geometry = boxed.get(node.geometry)
+    if (!geometry) boxed.set(node.geometry, (geometry = boxUvs(node.geometry)))
+    node.geometry = geometry
+  })
+  return model
 }
 
 export async function loadTankModel(url = TANK_MODEL_URL) {
@@ -80,7 +99,7 @@ export class TankModel implements VehicleModel {
     if (!source) throw new Error('loadTankModel() must finish before tanks are created')
     const model = source.clone()
     this.root.add(model)
-    this.paint = toonMaterial({ color: PAINTS[id % PAINTS.length]! })
+    this.paint = toonMaterial({ map: camoTexture(PAINTS[id % PAINTS.length]!) })
     model.traverse((node) => {
       if (node instanceof Mesh && node.material.name === 'paint') node.material = this.paint
       const wheel = /^wheel_([LR])_/.exec(node.name)

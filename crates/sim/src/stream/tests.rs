@@ -65,7 +65,7 @@ fn a_world_streamed_tile_by_tile_collides_as_the_whole_world_does() {
 }
 
 #[test]
-fn a_stickman_walks_the_streamed_city_as_the_server_walks_it() {
+fn a_soldier_walks_the_streamed_city_as_the_server_walks_it() {
     // The first spawn does not get far on this route.
     const SPAWN: usize = 1;
     let (manifest, tiles) = fixture();

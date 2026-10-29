@@ -45,7 +45,7 @@ get ground (see `WORLD.md`, "Painting a world").
 
 ### Bots and tanks belong to squads
 
-Bots are the server's enemy stickmen (see `BOTS.md`), and since scenarios they are placed in
+Bots are the server's enemy soldiers (see `BOTS.md`), and since scenarios they are placed in
 **Scenario** mode, as members of a squad, with the Bot, Tank, Route and Pick tools. Each is drawn as
 a square in its squad's team colour (a bot with its team number, a tank with a T and a dashed
 outline), and its route as a line in the same colour.

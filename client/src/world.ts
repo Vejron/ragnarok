@@ -233,7 +233,7 @@ export interface WorldData {
   inside?: boolean[] | null
   /** Collision that is not part of any tile. Empty in a generated world; tests fill it in. */
   collision: CollisionMesh
-  /** The `world.msgpack` this was decoded from, which the stickman's physics reads for itself. */
+  /** The `world.msgpack` this was decoded from, which the soldier's physics reads for itself. */
   bytes?: Uint8Array
 }
 
@@ -262,7 +262,7 @@ export interface TileData {
   streams: Stream[]
   bridges: Bridge[]
   rails: Rail[]
-  /** The tile file this was decoded from, which the stickman's physics reads for itself. */
+  /** The tile file this was decoded from, which the soldier's physics reads for itself. */
   bytes?: Uint8Array
 }
 

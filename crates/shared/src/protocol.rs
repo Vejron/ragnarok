@@ -48,7 +48,7 @@ pub const HIT_TAKEN: u8 = 1;
 /// `Hit` kinds: what took the damage.
 pub const HIT_BODY: u8 = 0;
 pub const HIT_VEHICLE: u8 = 1;
-/// A stickman or rooster that this hit finished.
+/// A soldier or rooster that this hit finished.
 pub const HIT_KILL: u8 = 2;
 pub const HIT_ROOSTER: u8 = 3;
 
@@ -56,7 +56,7 @@ pub const HIT_ROOSTER: u8 = 3;
 pub const OBJ_TREE: u8 = 0;
 pub const OBJ_BUILDING: u8 = 1;
 
-pub use crate::consts::{KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_STRV, KIND_TANK, KIND_WALKER};
+pub use crate::consts::{KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SPORTS, KIND_SOLDIER, KIND_STRV, KIND_TANK, KIND_WALKER};
 
 /// Whether `kind` is a drone: flown from a remote seat by whoever launched it (see the `Drones` mechanic).
 pub fn is_drone(kind: u8) -> bool {
@@ -111,7 +111,7 @@ pub const WEAPON_SCRAPE: u8 = 9;
 /// client draws every round's tracer itself, from the gun's shot counter.
 pub const WEAPON_MG: u8 = 10;
 pub const WEAPON_BOMB: u8 = 11;
-/// A vehicle running a stickman down. Only ever the weapon of a kill.
+/// A vehicle running a soldier down. Only ever the weapon of a kill.
 pub const WEAPON_ROADKILL: u8 = 12;
 /// Ten pellets in one pull; this event is the first of them (muzzle flash and sound) and marks where it ended.
 pub const WEAPON_SHOTGUN: u8 = 13;
@@ -142,7 +142,7 @@ pub const WEAPON_LAUNCHER: u8 = 24;
 /// An armour-piercing shell's small burst (`PROJECTILE_SHELL`); `WEAPON_SHELL` is high explosive's.
 pub const WEAPON_AP: u8 = 27;
 
-/// `replicated::Limbs::lost` bits: the limbs a stickman has lost. The same bits shifted up by
+/// `replicated::Limbs::lost` bits: the limbs a soldier has lost. The same bits shifted up by
 /// `LIMB_BLEED_SHIFT` are the stumps still bleeding.
 pub const LIMB_ARM_L: u8 = 1 << 0;
 pub const LIMB_ARM_R: u8 = 1 << 1;
@@ -152,6 +152,9 @@ pub const LIMB_ARMS: u8 = LIMB_ARM_L | LIMB_ARM_R;
 pub const LIMB_LEGS: u8 = LIMB_LEG_L | LIMB_LEG_R;
 pub const LIMB_ALL: u8 = LIMB_ARMS | LIMB_LEGS;
 pub const LIMB_BLEED_SHIFT: u8 = 4;
+/// `replicated::Struck::part`: where a soldier was last hit. A limb is its `LIMB_*` bit.
+pub const PART_TORSO: u8 = 0;
+pub const PART_HEAD: u8 = 1 << 4;
 
 /// `HullMark::style`: what a round left where it met a vehicle's armour.
 /// It glanced off: sparks and a ping, and no mark.
@@ -173,7 +176,7 @@ pub const ARMOR_PIERCED: u8 = 2;
 /// Through a slit or a visor, not a plate.
 pub const ARMOR_SLIT: u8 = 3;
 
-/// How a stickman died, as sent in a `Kill`, so every client can stage the death to match.
+/// How a soldier died, as sent in a `Kill`, so every client can stage the death to match.
 pub const DEATH_BODY: u8 = 0;
 pub const DEATH_HEAD: u8 = 1;
 pub const DEATH_BLAST: u8 = 2;
@@ -314,7 +317,7 @@ messages! {
 
     /// Sent as a datagram. `baseline` is the tick of the snapshot the updates are relative to, or 0
     /// when they are not (every entity in range then comes whole). Each update is one entity's
-    /// components (`shared::replicated::Update`): stickmen, creatures, vehicles, projectiles and items
+    /// components (`shared::replicated::Update`): soldiers, creatures, vehicles, projectiles and items
     /// on the ground alike. `ack` is the newest input of the *receiving* player that the state already
     /// includes. `ride` is the id of the vehicle the receiving player stands on top of, or 0: it is
     /// carried with that vehicle, so the client must predict relative to it. What only the receiving
@@ -437,7 +440,7 @@ messages! {
     /// or your vehicle); `kind` is `HIT_*` too; `amount` is the health lost; `weapon` is `WEAPON_*`. For
     /// a taken hit `bearing` is the yaw (0 faces -Z, as for a look) from you towards where it came
     /// from, if it came from anywhere. `(x, y, z)` is about where the thing hit is, chest height for a
-    /// stickman, and `target` is its id, so clients can show a number and a flash on it.
+    /// soldier, and `target` is its id, so clients can show a number and a flash on it.
     /// Sent on a reliable stream to whoever fired a round that met a vehicle's armour (`role`
     /// `HIT_DEALT`), and to its crew (`HIT_TAKEN`): what the armour made of it (`ARMOR_*`), the parts it
     /// hurt and the ones it finished off (bits by `armor::Part::slot`), and the seats whose occupant it

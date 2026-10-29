@@ -1,4 +1,4 @@
-//! Stickman movement rules that sit around the Rapier character controller. The server and the
+//! Soldier movement rules that sit around the Rapier character controller. The server and the
 //! client's prediction both run them, through `sim::Physics::step_character`.
 
 use crate::consts::*;

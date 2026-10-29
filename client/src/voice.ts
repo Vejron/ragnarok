@@ -102,7 +102,7 @@ export class VoiceChat {
     return { mic: this.micState, talking: this.talking && this.micState === 'ready', peers: up }
   }
 
-  /** Called every frame: `others` are the stickmen in view, `ears` is where the local player is. */
+  /** Called every frame: `others` are the soldiers in view, `ears` is where the local player is. */
   update(self: number | null, ears: readonly [number, number, number], others: ReadonlyArray<{ id: number; x: number; y: number; z: number }>) {
     if (this.disposed) return
     if (self !== this.self) {

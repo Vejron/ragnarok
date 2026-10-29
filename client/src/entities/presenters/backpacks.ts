@@ -4,7 +4,7 @@ import type { Presenter, Frame } from '../presenter'
 import type { Sampled } from '../store'
 import type { Entity } from '../units'
 
-/** The backpack lying on the ground (BACKPACK.md). Worn, it is drawn on its carrier's back by `Stickmen`. */
+/** The backpack lying on the ground (BACKPACK.md). Worn, it is drawn on its carrier's back by `Soldiers`. */
 export class Backpacks implements Presenter<Frame> {
   private readonly lying: { id: number; x: number; y: number; z: number }[] = []
 

@@ -94,16 +94,16 @@ fn use_boards_the_nearest_car_and_use_again_leaves() {
     press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
     idle(&mut game, id, &mut seq, 3);
     assert_eq!(game.world.entities.of::<Seats>(vid)[0], Some(id));
-    assert!(game.seen_people(shared::protocol::KIND_STICKMAN).is_empty(), "a seated player is not a stickman on foot");
+    assert!(game.seen_people(shared::protocol::KIND_SOLDIER).is_empty(), "a seated player is not a soldier on foot");
     assert_eq!(game.seen(id).unwrap().seated, Some(shared::replicated::Seated { vehicle: vid, seat: 0 }));
     assert!(game.seen(id).unwrap().place.is_none(), "they are where their seat is");
 
     press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
     idle(&mut game, id, &mut seq, 3);
     assert!(game.world.entities.of::<Seats>(vid).vacant());
-    let states = game.seen_people(shared::protocol::KIND_STICKMAN);
+    let states = game.seen_people(shared::protocol::KIND_SOLDIER);
     assert_eq!(states.len(), 1);
-    // The stickman stands beside the car, not inside it.
+    // The soldier stands beside the car, not inside it.
     let pose = game.world.physics.car_pose(vid).unwrap();
     let place = states[0].1.place.unwrap();
     let (dx, dz) = (place.x as f32 / 100.0 - pose.position[0], place.z as f32 / 100.0 - pose.position[2]);

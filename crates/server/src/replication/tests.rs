@@ -5,7 +5,7 @@ fn person(id: u32, x_m: f32, z_m: f32) -> (u32, Replicated) {
     (
         id,
         Replicated {
-            kind: Some(wire::Kind { kind: KIND_STICKMAN }),
+            kind: Some(wire::Kind { kind: KIND_SOLDIER }),
             place: Some(wire::Place { x: (x_m * 100.0) as i32, y: 90, z: (z_m * 100.0) as i32 }),
             heading: Some(wire::Heading { yaw: 0 }),
             motion: Some(wire::Motion::default()),
@@ -72,7 +72,7 @@ fn only_the_near_are_sent_and_the_far_come_in_as_you_approach() {
 #[test]
 fn a_rider_is_sent_with_their_vehicle_wherever_it_goes() {
     let car = |id: u32, x_m: f32| (id, Replicated { orientation: Some(wire::Orientation::default()), ..person(id, x_m, 0.0).1 });
-    let rider = |id: u32, vehicle: u32| (id, Replicated { kind: Some(wire::Kind { kind: KIND_STICKMAN }), seated: Some(wire::Seated { vehicle, seat: 1 }), ..Default::default() });
+    let rider = |id: u32, vehicle: u32| (id, Replicated { kind: Some(wire::Kind { kind: KIND_SOLDIER }), seated: Some(wire::Seated { vehicle, seat: 1 }), ..Default::default() });
     let mut replica = Replica::default();
     let mut held = Vec::new();
     // The rider's id comes before their vehicle's, as a player's does.

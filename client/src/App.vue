@@ -88,7 +88,14 @@ const mark = (weapon: number) =>
     ? '💥'
     : weapon === WEAPON_REVOLVER ? '›‹' : '›'
 
-/** The HUD's stick figure's limbs, `LIMB_*` bit by bit, as lines from the shoulders or hips. */
+/** What a body part with `left` of its health (0..1) is drawn in on the HUD: white when whole, through amber, to red. */
+const partColor = (left: number) => {
+  const t = Math.max(0, Math.min(1, left))
+  const hue = 50 * t
+  return t >= 0.999 ? 'rgba(255, 255, 255, 0.85)' : `hsl(${hue}, 95%, ${60 + 25 * t * t}%)`
+}
+
+/** The HUD's body map's limbs, `LIMB_*` bit by bit, as lines from the shoulders or hips. */
 const limbParts = [
   { bit: LIMB_ARM_L, from: [20, 18], to: [7, 32] },
   { bit: LIMB_ARM_R, from: [20, 18], to: [33, 32] },
@@ -225,11 +232,12 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
   <div v-if="stats?.callouts.length" class="callouts">
     <div v-for="line in stats.callouts" :key="line.text" :class="line.tone" :style="{ opacity: line.alpha }">{{ line.text }}<template v-if="line.count > 1"> ×{{ line.count }}</template></div>
   </div>
-  <svg v-if="stats?.hands && stats.limbs" class="body-map" viewBox="0 0 40 64" aria-label="limbs">
-    <circle cx="20" cy="8" r="6" />
-    <line x1="20" y1="14" x2="20" y2="36" />
-    <line v-for="part in limbParts" :key="part.bit" :x1="part.from[0]" :y1="part.from[1]" :x2="part.to[0]" :y2="part.to[1]"
-      :class="{ lost: stats.limbs.lost & part.bit, bleeding: stats.limbs.bleeding & part.bit }" />
+  <svg v-if="stats?.hands && stats.limbs" class="body-map" viewBox="0 0 40 64" aria-label="body">
+    <circle cx="20" cy="8" r="6" :style="{ stroke: partColor(stats.limbs.head) }" />
+    <line x1="20" y1="14" x2="20" y2="36" :style="{ stroke: partColor(stats.limbs.torso) }" />
+    <line v-for="(part, i) in limbParts" :key="part.bit" :x1="part.from[0]" :y1="part.from[1]" :x2="part.to[0]" :y2="part.to[1]"
+      :class="{ lost: stats.limbs.lost & part.bit, bleeding: stats.limbs.bleeding & part.bit }"
+      :style="stats.limbs.lost & part.bit ? undefined : { stroke: partColor(stats.limbs.parts[i] ?? 1) }" />
   </svg>
   <div v-if="stats?.hands" class="health" :class="{ low: stats.hp <= stats.maxHp / 4, hurt: stats.hurt > 0.3 }">
     <div class="health-fill" :style="{ width: (100 * stats.hp) / stats.maxHp + '%' }" />

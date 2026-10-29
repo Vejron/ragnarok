@@ -14,7 +14,7 @@ It works on its own or alongside squads and triggers. A position outside the wor
 
 ## Rules
 
-- **Taking it.** A stickman on foot who walks onto it (within 1.5 m) takes it. No key is needed. Someone in a vehicle cannot pick it up, but a carrier who gets into one keeps it.
+- **Taking it.** A soldier on foot who walks onto it (within 1.5 m) takes it. No key is needed. Someone in a vehicle cannot pick it up, but a carrier who gets into one keeps it.
 - **Carrying it.** The carrier heals 5 health a second, and walks and runs twice as fast on foot. It does not grow lost limbs back. They score a point (a second) for each second they hold it: the scoreboard's **Backpack** column, as m:ss.
 - **Losing it.** It falls where the carrier dies, or where they were when they left the game: on the floor under them, indoors too. If there is nowhere to put it (off the world), it goes back to its start. Lying untouched for 60 s away from its start, it goes back too.
 - **Being found.** Its six 5G modems give it away. Everyone's minimap, the carrier's included, shows an orange circle with the backpack somewhere inside it, not at its middle. It is 150 m across while it lies about or has just changed hands, and narrows to 20 m over 5 minutes in one carrier's hands. When the backpack nears the circle's edge, a new circle is drawn around it. A circle off the small map shows as an orange pip on its edge, pointing the way.

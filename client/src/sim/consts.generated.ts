@@ -2,15 +2,15 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 52
+export const PROTOCOL_VERSION = 53
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
  * `crate::vehicles`.
  */
-export const KIND_STICKMAN = 0
+export const KIND_SOLDIER = 0
 
-/** A Hedemora rooster, an NPC. Replicated like a stickman, with its own model. */
+/** A Hedemora rooster, an NPC. Replicated like a soldier, with its own model. */
 export const KIND_ROOSTER = 5
 
 /** Vehicle kinds: replicated with an `orientation`. */
@@ -80,7 +80,7 @@ export const MAX_NAME_CHARS = 16
 export const MAX_PACKET = 1200
 
 /**
- * A player is sent the entities, vehicles and effects within this many metres of their stickman
+ * A player is sent the entities, vehicles and effects within this many metres of their soldier
  * (measured on the ground plane), and keeps them until they are `INTEREST_HYSTERESIS` further out,
  * so something at the edge does not flicker in and out.
  */
@@ -134,7 +134,7 @@ export const BUTTON_CHUTE = 1 << 12
 /** One press, at a gun that has two kinds of round: load the other one (Q). Like a jump it is not repeated. */
 export const BUTTON_AMMO = 1 << 13
 
-/** Stickman movement, in metres and seconds. */
+/** Soldier movement, in metres and seconds. */
 export const WALK_SPEED = 4.0
 export const RUN_SPEED = 7.5
 
@@ -176,7 +176,7 @@ export const STAMINA_RECOVER = 1800
 export const GRAVITY = 20.0
 
 /**
- * Knockback (a car hitting a stickman) is a horizontal velocity added to the walking velocity.
+ * Knockback (a car hitting a soldier) is a horizontal velocity added to the walking velocity.
  * Each tick it keeps this fraction of itself: quickly on the ground, barely in the air.
  */
 export const KNOCK_KEEP_GROUND = 0.92
@@ -207,7 +207,7 @@ export const CHUTE_STEER = 0.03
 export const SPAWN_ALTITUDE = 100.0
 
 /**
- * Stickman collision capsule. Total height is `2 * (half_height + radius)` = 1.7 m, with the
+ * Soldier collision capsule. Total height is `2 * (half_height + radius)` = 1.7 m, with the
  * body origin at the capsule centre.
  */
 export const CAPSULE_HALF_HEIGHT = 0.5
@@ -233,8 +233,13 @@ export const STANCE_CHUTE = 2
 /** A round that hits above this height over the capsule centre hit the head. */
 export const HEAD_ZONE_Y = 0.45
 
-/** What a headshot does to the damage. */
-export const HEADSHOT_MULT = 2.0
+/**
+ * Body-part health. A soldier's torso has `PLAYER_MAX_HP`, its head `HEAD_HP` and each limb `LIMB_HP`.
+ * Only the torso or the head running out kills; a limb that runs out comes off, and what the round had
+ * left over is lost. A sniper round to the head kills, as do two revolver rounds or five AK5 rounds.
+ */
+export const HEAD_HP = 50
+export const LIMB_HP = 40
 
 /**
  * Limbs. A round below this height over the capsule centre hit a leg (the hips are about 0.75 m up),
@@ -243,13 +248,6 @@ export const HEADSHOT_MULT = 2.0
  */
 export const HIP_ZONE_Y = -0.1
 export const ARM_ZONE_X = 0.25
-
-/** What a round in a limb does to health, of what it would do to the body. */
-export const LIMB_DAMAGE_MULT = 0.75
-
-/** A limb comes off at a hit this big, or once this much has been done to it in all (four AK5 rounds). */
-export const SEVER_HIT = 40
-export const SEVER_WEAR = 40
 
 /** One leg: each step is a hop up at this speed, m/s, at this share of walking speed; no running or sliding. */
 export const HOP_SPEED = 2.6
@@ -285,7 +283,7 @@ export const KILL_Y = -50.0
 
 /**
  * Vehicles. Chassis and wheel geometry are shared with the client, which draws the car from them.
- * Body-local axes: +X right, +Y up, -Z forward (yaw 0 faces -Z, like a stickman).
+ * Body-local axes: +X right, +Y up, -Z forward (yaw 0 faces -Z, like a soldier).
  * Seats in the roomiest car (the jeep); bounds the seat list of any vehicle.
  */
 export const CAR_SEATS = 4
@@ -525,7 +523,7 @@ export const WALKER_TURN_RATE = 1.7
 export const WALKER_TURN_ACCEL = 8.0
 
 /**
- * Gravity acting on vehicle bodies. Stickmen use `GRAVITY`; the ray-cast suspension is tuned
+ * Gravity acting on vehicle bodies. Soldiers use `GRAVITY`; the ray-cast suspension is tuned
  * around the real-world value.
  */
 export const CAR_GRAVITY = 9.81
@@ -919,7 +917,7 @@ export const PLANE_GUN_COOLDOWN_TICKS = 5
 export const PLANE_GUN_RANGE = 300.0
 export const PLANE_GUN_SPREAD = 0.012
 
-/** What a round does to a stickman, and to a vehicle: a plane is all canvas, anything else shrugs it off. */
+/** What a round does to a soldier, and to a vehicle: a plane is all canvas, anything else shrugs it off. */
 export const PLANE_GUN_DAMAGE = 14
 export const PLANE_GUN_PLANE_DAMAGE = 7
 export const PLANE_GUN_VEHICLE_DAMAGE = 3
@@ -1136,7 +1134,7 @@ export const BACKPACK_WIDE = 150.0
 export const BACKPACK_NARROW = 20.0
 export const BACKPACK_NARROW_SECONDS = 300.0
 
-/** How near a stickman on foot must walk to take it, metres across the ground and up or down. */
+/** How near a soldier on foot must walk to take it, metres across the ground and up or down. */
 export const BACKPACK_REACH = 1.5
 export const BACKPACK_REACH_Y = 2.5
 
@@ -1154,14 +1152,14 @@ export const RESPAWN_TICKS = 3 * TICK_RATE
 
 /**
  * Guns are hitscans fired from the eye along the look direction; their stats are in `items`.
- * Height of a stickman's eye above its capsule centre, where a rifle shot leaves.
+ * Height of a soldier's eye above its capsule centre, where a rifle shot leaves.
  */
 export const EYE_HEIGHT = 0.6
 
 /** How far a crouch lowers the eye. The capsule keeps its size, so collision is unchanged. */
 export const CROUCH_EYE_DROP = 0.3
 
-/** A prone stickman's eye is 0.2 m above its feet, so this is relative to the capsule centre. */
+/** A prone soldier's eye is 0.2 m above its feet, so this is relative to the capsule centre. */
 export const PRONE_EYE_HEIGHT = 0.2 - PRONE_CENTRE
 
 /**

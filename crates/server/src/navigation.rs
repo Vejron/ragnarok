@@ -1,4 +1,4 @@
-//! Where a stickman can walk, and the way from one place to another: a grid of 1 m cells over the
+//! Where a soldier can walk, and the way from one place to another: a grid of 1 m cells over the
 //! world, each with the height of its floor or blocked, searched with A*. Bots use it to go round
 //! buildings, walls and trees instead of walking into them.
 //!
@@ -28,7 +28,7 @@ const CHUNK: i32 = 16;
 const STEP_CLEAR: f32 = 0.5;
 const BODY_TOP: f32 = 1.9;
 /// The most two cells' floors may differ by and still join, metres: about the steepest slope a
-/// stickman walks up.
+/// soldier walks up.
 const MAX_RISE: f32 = 1.0;
 /// A cell's floor is looked for from this far above the ground down to this far below it, metres.
 const FLOOR_FROM: f32 = 60.0;
@@ -78,7 +78,7 @@ impl NavGrid {
         self.chunks.len()
     }
 
-    /// The height of `cell`'s floor, if a standing stickman can be there.
+    /// The height of `cell`'s floor, if a standing soldier can be there.
     pub fn floor(&mut self, physics: &Physics, map: &WorldFile, (i, j): Cell) -> Option<f32> {
         let key = (i.div_euclid(CHUNK), j.div_euclid(CHUNK));
         let cells = self.chunks.entry(key).or_insert_with(|| {
@@ -89,12 +89,12 @@ impl NavGrid {
         (!floor.is_nan()).then_some(floor)
     }
 
-    /// Whether a standing stickman can be in `cell`.
+    /// Whether a standing soldier can be in `cell`.
     pub fn open(&mut self, physics: &Physics, map: &WorldFile, cell: Cell) -> bool {
         self.floor(physics, map, cell).is_some()
     }
 
-    /// Whether a stickman can step from cell `a` to cell `b`: both open, and their floors near enough.
+    /// Whether a soldier can step from cell `a` to cell `b`: both open, and their floors near enough.
     fn joins(&mut self, physics: &Physics, map: &WorldFile, a: Cell, b: Cell) -> bool {
         match (self.floor(physics, map, a), self.floor(physics, map, b)) {
             (Some(fa), Some(fb)) => (fa - fb).abs() <= MAX_RISE,
@@ -110,7 +110,7 @@ impl NavGrid {
         self.chunks.retain(|&(ci, cj), _| ci < lo.0 || ci > hi.0 || cj < lo.1 || cj > hi.1);
     }
 
-    /// Whether a stickman can walk straight from `from` to `to` (metres): every cell its body
+    /// Whether a soldier can walk straight from `from` to `to` (metres): every cell its body
     /// passes over is open, and each joins the one before.
     pub fn clear_line(&mut self, physics: &Physics, map: &WorldFile, from: [f32; 2], to: [f32; 2]) -> bool {
         let d = [to[0] - from[0], to[1] - from[1]];

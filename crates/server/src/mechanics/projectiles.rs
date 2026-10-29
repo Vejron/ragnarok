@@ -56,7 +56,7 @@ pub struct Sinks {
     pub max_sink: f32,
 }
 
-/// Bursts on the first thing it meets, or where it is when its time runs out. `bodies`: stickmen and
+/// Bursts on the first thing it meets, or where it is when its time runs out. `bodies`: soldiers and
 /// creatures in its path stop it too. `armor`: a vehicle it meets first judges it (`armor::armor_of`), and may turn
 /// it away. `lost_below`: under `KILL_Y` it is simply gone.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
@@ -82,7 +82,7 @@ pub struct Sticks {
 }
 
 /// A gun's round: which gun (`ITEM_*`, for its damage and falloff), how many ticks back its shooter saw
-/// the world (so it meets stickmen where they were in the picture it was aimed in), and how far it has
+/// the world (so it meets soldiers where they were in the picture it was aimed in), and how far it has
 /// flown, which its damage falls off with.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Round {
@@ -362,7 +362,7 @@ fn set_off(world: &mut World, burst: Burst, owner: u32, point: [f32; 3], dir: [f
     world.dig_crater(point, burst.crater[0], burst.crater[1]);
 }
 
-/// A rocket or a shell: flies on, and bursts on the first wall, vehicle or (with `bodies`) stickman it
+/// A rocket or a shell: flies on, and bursts on the first wall, vehicle or (with `bodies`) soldier it
 /// meets. With `armor`, a vehicle met first may turn it away instead.
 fn step_striking(world: &mut World, id: u32, dt: f32, strikes: Strikes) {
     let Some(mut s) = read(world, id) else { return };
@@ -372,7 +372,7 @@ fn step_striking(world: &mut World, id: u32, dt: f32, strikes: Strikes) {
     let step = speed * dt;
     let hit = world.physics.cast_ray_hit(s.position, dir, step, s.source);
     let wall = hit.map(|(t, _)| t);
-    // Stickmen and creatures are not physics bodies, so test the path against each one.
+    // Soldiers and creatures are not physics bodies, so test the path against each one.
     let body = if strikes.bodies { super::life::first_hurtbox_hit(world, s.position, dir, wall.unwrap_or(step), Some(s.owner), 0, None) } else { None };
     s.ttl = s.ttl.saturating_sub(1);
     if let Some(t) = body.map(|(_, t)| t).or(wall) {
@@ -499,7 +499,7 @@ fn step_sticking(world: &mut World, id: u32, dt: f32, sticks: Sticks) {
     }
 }
 
-/// A gun's round: flies and drops, and hurts the first stickman, creature, vehicle, building or tree it
+/// A gun's round: flies and drops, and hurts the first soldier, creature, vehicle, building or tree it
 /// meets, by its gun's damage less what the distance it has flown takes off.
 fn step_round(world: &mut World, id: u32, dt: f32) {
     let (Some(mut s), Some(round)) = (read(world, id), world.entities.get::<Round>(id).copied()) else { return };
@@ -511,7 +511,7 @@ fn step_round(world: &mut World, id: u32, dt: f32) {
     // A passenger's round leaves through their own vehicle (`source`) rather than stopping in it.
     let wall = world.physics.cast_ray_hit(s.position, dir, step, s.source);
     let (base, falloff, weapon, pen) = item.map_or((0, Falloff::NONE, WEAPON_RIFLE, Pen::NONE), |d| (d.damage, d.falloff, d.weapon, d.pen));
-    // What it does to a vehicle is a chip of what it does to a stickman, a plane no different.
+    // What it does to a vehicle is a chip of what it does to a soldier, a plane no different.
     let chip = (base / 4).max(1);
     let damage = Damage { damage: base, vehicle: chip, plane: chip, weapon, range: step, falloff, pen };
     let attacker = world.entities.has::<Player>(s.owner).then_some(s.owner);

@@ -15,7 +15,7 @@ export interface RoosterWorld {
   root: Node
   /** Where the local player hears from. */
   listener: () => readonly number[]
-  /** A contact shadow under a stickman-sized body centred at `(x, y, z)`. */
+  /** A contact shadow under a soldier-sized body centred at `(x, y, z)`. */
   blobFoot(x: number, y: number, z: number): void
 }
 

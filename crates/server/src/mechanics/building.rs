@@ -43,7 +43,7 @@ pub fn aim(world: &World, id: u32) -> Option<Aim> {
     (reach <= BUILD_REACH).then_some(Aim { place, dig })
 }
 
-/// Whether a stickman, a creature or anything else with a body stands in cube `pos`.
+/// Whether a soldier, a creature or anything else with a body stands in cube `pos`.
 fn body_in(world: &World, pos: Pos) -> bool {
     let middle = cube_centre(pos);
     world.entities.ids::<(With<Hurtbox>, With<Health>)>().into_iter().filter_map(|id| body(world, id, 0)).any(|b| {

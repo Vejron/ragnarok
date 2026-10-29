@@ -50,7 +50,7 @@ function domeGeometry(radius: number, height: number, around = 16, rings = 5): G
 const DOME = domeGeometry(RADIUS, HEIGHT)
 const LINE = cylinderGeometry(0.012, 0.012, 1, 4)
 
-/** A parachute above a stickman's head. Its root is placed at the feet; it grows open and folds away. */
+/** A parachute above a soldier's head. Its root is placed at the feet; it grows open and folds away. */
 export class Canopy {
   readonly root = new Group()
   private readonly cloth: ReturnType<typeof toonMaterial>

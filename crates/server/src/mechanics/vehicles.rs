@@ -51,7 +51,7 @@ const KNOCK_MIN_PUSH: f32 = 2.5;
 const KNOCK_HOP: f32 = 2.0;
 const KNOCK_HOP_PER_SPEED: f32 = 0.25;
 const KNOCK_HOP_MAX: f32 = 8.0;
-/// A car slower than this (m/s) only shoves a stickman. Faster, it hurts by this much per m/s over.
+/// A car slower than this (m/s) only shoves a soldier. Faster, it hurts by this much per m/s over.
 const ROADKILL_MIN_SPEED: f32 = 3.0;
 const ROADKILL_DAMAGE_PER_SPEED: f32 = 8.0;
 /// Ticks before the same player can be hit again, so one pass is one hit.
@@ -64,7 +64,7 @@ fn drop_height(kind: u8) -> f32 {
     vehicle_def(kind).body.drop_y
 }
 
-/// Heading of the nearest road segment to `(x, z)`, in the stickman yaw convention, or 0.
+/// Heading of the nearest road segment to `(x, z)`, in the soldier yaw convention, or 0.
 fn road_heading(map: &WorldFile, x: f32, z: f32) -> f32 {
     let mut best = (f32::MAX, 0.0);
     for road in &map.roads {
@@ -236,7 +236,7 @@ fn hitch(world: &mut World, id: u32) {
 }
 
 /// Where a vehicle of `kind` is boarded from: its hull, but a legged one's from between its feet, a
-/// leg's length below its hull, which is out of reach above a stickman's head. Mirrored in `game.ts`.
+/// leg's length below its hull, which is out of reach above a soldier's head. Mirrored in `game.ts`.
 fn boarding_point(kind: u8, pose: &CarPose) -> [f32; 3] {
     let [x, y, z] = pose.position;
     [x, y - vehicle_def(kind).body.legs, z]
@@ -547,7 +547,7 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
     }
 }
 
-/// Runs down every living creature (a rooster) a car overlaps fast enough to run a stickman down, by the
+/// Runs down every living creature (a rooster) a car overlaps fast enough to run a soldier down, by the
 /// same amount; whoever drives sees the hit. A creature is not thrown: it has no momentum to give.
 fn run_down_creatures(world: &mut World) {
     let mut run_down = Vec::new();
@@ -568,7 +568,7 @@ fn run_down_creatures(world: &mut World) {
     }
 }
 
-/// What being run down at `speed` m/s takes off a stickman or a creature.
+/// What being run down at `speed` m/s takes off a soldier or a creature.
 fn roadkill_damage(speed: f32) -> u8 {
     ((speed - ROADKILL_MIN_SPEED) * ROADKILL_DAMAGE_PER_SPEED).min(f32::from(PLAYER_MAX_HP)).round() as u8
 }

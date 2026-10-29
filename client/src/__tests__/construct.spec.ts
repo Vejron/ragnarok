@@ -70,7 +70,7 @@ describe('placed cubes', () => {
     expect(view.root.children.includes(piece)).toBe(false)
   })
 
-  it('are solid to the stickman once the world view has them', async () => {
+  it('are solid to the soldier once the world view has them', async () => {
     const view = new WorldView({ add: () => {}, craters: new Craters() } as never)
     view.motor = await flatMotor()
     view.built({ live: false, placed: [{ x: 0, y: 0, z: 0, color: 2, material: 0 }, { x: 0, y: 1, z: 0, color: 2, material: 0 }], removed: [], fell: [] })

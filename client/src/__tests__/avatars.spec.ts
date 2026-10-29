@@ -14,7 +14,7 @@ async function crowd() {
 }
 
 describe('Avatars', () => {
-  it('keeps a player’s stickman for whoever draws it, and lets go of those nobody drew', async () => {
+  it('keeps a player’s soldier for whoever draws it, and lets go of those nobody drew', async () => {
     const avatars = new Avatars(await crowd())
     avatars.localId = 9
     avatars.begin()

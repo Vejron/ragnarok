@@ -1,5 +1,5 @@
 /**
- * A stickman's limbs as the snapshot carries them (`limbs`, from `crates/server/src/mechanics/limbs.rs`):
+ * A soldier's limbs as the snapshot carries them (`limbs`, from `crates/server/src/mechanics/limbs.rs`):
  * the ones lost, and the stumps still bleeding above them.
  */
 

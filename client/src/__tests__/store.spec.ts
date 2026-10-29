@@ -4,7 +4,7 @@ import { EntityStore, type Sampled } from '@/entities/store'
 import type { Entity } from '@/entities/units'
 import type { Components } from '@/net/components.generated'
 
-/** A stickman at `x` metres facing `yaw` radians, as the wire has it. */
+/** A soldier at `x` metres facing `yaw` radians, as the wire has it. */
 const person = (x: number, yaw = 0): Components => ({
   kind: { kind: 0 }, place: { x: Math.round(x * 100), y: 100, z: 0 }, heading: { yaw: Math.round(yaw * 1000) }, flags: { flags: 1, stance: 0 },
 })
@@ -126,7 +126,7 @@ describe('Presenters', () => {
   })
 })
 
-/** A full room's scene `n` snapshots in: 64 stickmen, 20 vehicles and 30 rockets, all moving. */
+/** A full room's scene `n` snapshots in: 64 soldiers, 20 vehicles and 30 rockets, all moving. */
 function room(n: number): Map<number, Components> {
   const entries: [number, Components][] = []
   for (let i = 1; i <= 64; i++) entries.push([i, { ...person(i + n * 0.25, (i + n) * 0.01), motion: { vy: 0, knock_x: 0, knock_z: 0 } }])

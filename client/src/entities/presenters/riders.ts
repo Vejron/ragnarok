@@ -35,7 +35,7 @@ export function seatFrame(model: VehicleModel, kind: number, index: number, head
 
 /**
  * Everyone else sitting in a vehicle whose crew show (`seated`, with no place of their own): their
- * stickman in the seat, turned where they look (`heading`, `look`), holding what they hold (`flags`).
+ * soldier in the seat, turned where they look (`heading`, `look`), holding what they hold (`flags`).
  * The local player is drawn from their own camera. Runs after the vehicles are placed, since a rider
  * sits where the model is drawn.
  */
@@ -67,6 +67,6 @@ export class Riders implements Presenter<Frame> {
     avatar.seat(this.head, this.turn, entity.heading?.yaw ?? car.yaw, entity.look?.pitch ?? 0, frame.dt)
   }
 
-  // Their stickman is let go by `Avatars.sweep` once nobody draws it.
+  // Their soldier is let go by `Avatars.sweep` once nobody draws it.
   remove() {}
 }

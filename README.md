@@ -1,6 +1,6 @@
 # Ragnarok
 
-A browser multiplayer game: goofy stickmen in a real city built from OpenStreetMap. There's a server-authoritative Rust game server (Salvo, WebTransport, Rapier) and a Vue 3 + WebGPU client (drawn by the [engine](engine/README.md)) with client-side prediction and snapshot interpolation.
+A browser multiplayer game: goofy soldiers in a real city built from OpenStreetMap. There's a server-authoritative Rust game server (Salvo, WebTransport, Rapier) and a Vue 3 + WebGPU client (drawn by the [engine](engine/README.md)) with client-side prediction and snapshot interpolation.
 
 - [design.md](design.md): architecture, netcode, world pipeline and roadmap
 - [WORLD.md](WORLD.md): generating the world: data sources, credentials, download cache
@@ -12,7 +12,7 @@ A browser multiplayer game: goofy stickmen in a real city built from OpenStreetM
 - [VEHICLES-I.md](VEHICLES-I.md): how roadmap stage 2 (cars, seats, driving) was built
 - [ARMOR.md](ARMOR.md): armor zones, ricochets, weak spots, turret loss and the Strv S
 - [SCENARIOS.md](SCENARIOS.md): a guide to writing a world's `scenario.json` by hand, since there is no scenario editor
-- [BOTS.md](BOTS.md): server-run enemy stickmen that patrol, find their way, spot, hear, pursue and shoot, crew tanks along the roads, placed per world, and scenarios (`scenario.json`) with squads, triggers, waves, objectives and a win or a loss
+- [BOTS.md](BOTS.md): server-run enemy soldiers that patrol, find their way, spot, hear, pursue and shoot, crew tanks along the roads, placed per world, and scenarios (`scenario.json`) with squads, triggers, waves, objectives and a win or a loss
 - [VEHICLES-II.md](VEHICLES-II.md): the tank, its gunner seat and the shell, driver prediction and the helicopter
 - [VEHICLES-III.md](VEHICLES-III.md): handling, tyre effects, crash damage and vehicle sound
 - [VEHICLES-IV.md](VEHICLES-IV.md): the Fokker triplane: flight, guns, bombs, model and sound
@@ -22,7 +22,7 @@ A browser multiplayer game: goofy stickmen in a real city built from OpenStreetM
 ## Requirements
 
 - Rust 1.85+ (edition 2024), with the WASM target: `rustup target add wasm32-unknown-unknown`
-- `wasm-bindgen` of the version `crates/sim-wasm/Cargo.toml` pins: `cargo install wasm-bindgen-cli --version 0.2.129 --locked`. The client's prediction runs the server's own physics (`crates/sim`) built to WASM; `npm run dev`, `npm test`, `npm run type-check` and `npm run build` build it first (`npm run build:wasm`).
+- `wasm-bindgen` of the version `crates/sim-wasm/Cargo.toml` pins: `cargo install wasm-bindgen-cli --version 0.2.129 --locked`. The client's prediction runs the server's own physics (`crates/sim`) built to WASM; `npm run dev`, `npm test`, `npm run type-check` and `npm run build` build it first (`npm run build:wasm`). It is built with WebAssembly SIMD (`.cargo/config.toml`), which Rapier's solver uses through `wide`: vehicles step about a third faster than without it. `wasm-opt` was tried and left out: about 5% slower for 45 KB less gzipped.
 - Node 22.18+ or 24.12+
 - A browser with WebTransport: Chrome, Edge or Firefox
 

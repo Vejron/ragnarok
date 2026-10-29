@@ -28,7 +28,7 @@ export interface Placed {
   x: number
   y: number
   z: number
-  /** Heading of the nose, stickman convention. */
+  /** Heading of the nose, soldier convention. */
   yaw: number
   rotation: readonly [number, number, number, number]
   steer: number
@@ -200,7 +200,7 @@ export class Vehicles implements Presenter<Frame> {
   }
 }
 
-/** Vehicle `id` as the newest snapshot has it, for the prediction of the stickman and of its driver. */
+/** Vehicle `id` as the newest snapshot has it, for the prediction of the soldier and of its driver. */
 export function poseOf(id: number, entity: Entity): VehiclePose {
   const { x, y, z } = entity.place!
   const { qx, qy, qz, qw } = entity.orientation!

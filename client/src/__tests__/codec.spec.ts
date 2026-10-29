@@ -53,12 +53,12 @@ describe('codec', () => {
       ack: 42,
       ride: 9,
       updates: [
-        // The receiver moving, as differences, with what only they are told; a dead stickman new to the
+        // The receiver moving, as differences, with what only they are told; a dead soldier new to the
         // receiver, whole; the tank the receiver drives, whole, with its motion; a repair; a rider.
         {
           id: 1, cleared: 0,
           set: {
-            place: { x: 25, y: 0, z: 0 }, heading: { yaw: -120 }, motion: { vy: 650, knock_x: 0, knock_z: 0 }, vitals: { hp: 73, progress: 128, spent: 0, winded: 0 },
+            place: { x: 25, y: 0, z: 0 }, heading: { yaw: -120 }, motion: { vy: 650, knock_x: 0, knock_z: 0 }, vitals: { hp: 73, progress: 128, spent: 0, winded: 0, parts: [50, 40, 40, 0, 40] },
             hotbar: { slots: [{ item: 2, count: 1, ammo: 17 }, { item: 0, count: 0, ammo: 0 }, { item: 3, count: 2, ammo: 0 }, { item: 0, count: 0, ammo: 0 }, { item: 0, count: 0, ammo: 0 }] },
           },
         },

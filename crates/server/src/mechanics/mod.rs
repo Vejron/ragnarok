@@ -29,7 +29,7 @@ pub use backpack::{Backpack, BackpackState};
 pub use drones::Drones;
 pub use gunnery::Gunnery;
 pub use life::{Life, record_trails};
-pub use limbs::{Limbs, lost as limbs_lost};
+pub use limbs::{Struck, Wounds, lost as limbs_lost};
 pub use movement::Movement;
 pub use npcs::{Npcs, calling};
 pub use pickups::Pickups;
@@ -73,7 +73,8 @@ pub fn register_components(ecs: &mut bevy_ecs::world::World) {
     ecs.register_component::<crate::game::Seats>();
     ecs.register_component::<crate::game::Player>();
     ecs.register_component::<crate::game::Bot>();
-    ecs.register_component::<limbs::Limbs>();
+    ecs.register_component::<limbs::Wounds>();
+    ecs.register_component::<limbs::Struck>();
     ecs.register_component::<backpack::Carry>();
     ecs.register_component::<backpack::Lying>();
     projectiles::register(ecs);

@@ -292,6 +292,80 @@ describe('Character', () => {
   })
 })
 
+describe('Character coming alive', () => {
+  /** Runs it in the air for `seconds`: falling at `vy`, under the canopy when `chute`. */
+  function fly(person: Character, vy: number, chute: boolean, seconds = 1) {
+    for (let t = 0; t < seconds; t += 1 / 60) person.update([0, 100, 0], 0, 0, 0, false, 1 / 60, 0, false, false, false, chute, vy)
+  }
+
+  it('has the falling clips', async () => {
+    const c = await crowd()
+    for (const name of ['freefall', 'chute']) expect(c.asset!.clips.has(name), name).toBe(true)
+    c.dispose()
+  })
+
+  it('hangs in the harness under the canopy, and falls flat with it shut', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    fly(person, -5, true)
+    expect(person.blend.get('chute')).toBeGreaterThan(0.9)
+    fly(person, -30, false)
+    expect(person.blend.get('freefall')).toBeGreaterThan(0.9)
+    c.dispose()
+  })
+
+  it('jumps rather than falls for a short hop', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    fly(person, 2, false, 0.4)
+    expect(person.blend.get('jump_air')).toBeGreaterThan(person.blend.get('freefall')!)
+    c.dispose()
+  })
+
+  it('turns its chest and gun to a small look round, and its feet to a big one', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    run(person, 0, 0, 0, 0.5)
+    // A little to the left: the gun follows at once, the body stays.
+    run(person, 0.5, 0, 0, 0.1)
+    const muzzle = person.muzzle()!
+    expect(Math.atan2(-muzzle.x, -muzzle.z)).toBeGreaterThan(0.3)
+    expect(person.blend.get('idle')).toBeGreaterThan(0.8)
+    // A half turn: it steps round.
+    let stepped = 0
+    for (let t = 0; t < 1; t += 1 / 60) {
+      person.update([0, 0.85, 0], Math.PI - 0.01, 0, 0, true, 1 / 60)
+      stepped = Math.max(stepped, (person.blend.get('walk_left') ?? 0) + (person.blend.get('walk_right') ?? 0))
+    }
+    expect(stepped).toBeGreaterThan(0.1)
+    expect(person.muzzle()!.z).toBeGreaterThan(0.3)
+    c.dispose()
+  })
+
+  it('flinches at a new hit, but not at the first word of an old one', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    run(person, 0, 0, 0, 0.5)
+    const head = () => {
+      const at = new THREE.Vector3()
+      c.root.updateWorldMatrix(true, true)
+      c.root.getObjectByName('head')!.getWorldPosition(at)
+      return at.clone()
+    }
+    const still = head()
+    person.setStruck({ count: 3, part: 16, amount: 30, yaw: 0 })
+    run(person, 0, 0, 0, 0.05)
+    expect(head().distanceTo(still)).toBeLessThan(0.02)
+    person.setStruck({ count: 4, part: 16, amount: 30, yaw: 0 })
+    run(person, 0, 0, 0, 0.08)
+    // Shot from ahead, the head snaps back (+Z, as it faces -Z).
+    expect(head().z - still.z).toBeGreaterThan(0.03)
+    run(person, 0, 0, 0, 1.5)
+    expect(head().distanceTo(still)).toBeLessThan(0.03)
+    c.dispose()
+  })
+})
+
 describe('Character losing limbs', () => {
   it('shrinks away a lost limb, keeps the gun in a hand with the right arm gone, and says what is new', async () => {
     const { LIMB_ARM_R, LIMB_BLEED_SHIFT, LIMB_LEG_L } = await import('@/net/codec')

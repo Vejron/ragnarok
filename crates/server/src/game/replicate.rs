@@ -2,7 +2,7 @@
 //! (`shared::replicated`), read from the ECS. Who is listed is as in v1: standing players (and those
 //! flying a drone, who kneel where they stood), living creatures, vehicles with a body, projectiles
 //! but gun rounds (clients fly those from their `BulletSpawn`), and items lying on the ground.
-//! A seated player is a stickman with `seated` and no `place`, sent wherever their vehicle is
+//! A seated player is a soldier with `seated` and no `place`, sent wherever their vehicle is
 //! (`Replica::snapshot`); one whose crew shows also says where they look and what they hold. A drone's
 //! pilot stands where they were as well, with their seat.
 //!
@@ -11,7 +11,7 @@
 
 use super::*;
 use crate::entities::{Health, NetKind, Transform, With};
-use crate::mechanics::Limbs;
+use crate::mechanics::{Struck, Wounds};
 use shared::mounts::Show;
 use shared::replicated::{self as wire, Replicated, Scene};
 use shared::vehicles::{Exposure, vehicle_def};
@@ -21,14 +21,17 @@ impl Game {
     pub fn replicated(&self) -> Scene {
         let mut scene: Scene = Vec::new();
         scene.extend(self.world.entities.all::<Player>().map(|(id, player)| {
-            let shown = if player.embodied() { stickman(player, self.world.entities.alive(id)) } else { self.rider(player) };
+            let shown = if player.embodied() { soldier(player, self.world.entities.alive(id)) } else { self.rider(player) };
             let seated = player.seat.map(|seat| wire::Seated { vehicle: seat.vehicle, seat: seat.index as u8 });
             let one_arm = crate::mechanics::limbs_lost(&self.world, id) & LIMB_ARMS != 0;
-            let limbs = self.world.entities.get::<Limbs>(id).map(|limbs| wire::Limbs { lost: limbs.wire() });
+            let wounds = self.world.entities.get::<Wounds>(id).copied();
+            let limbs = wounds.filter(|wounds| wounds.lost != 0).map(|wounds| wire::Limbs { lost: wounds.wire() });
+            let struck = self.world.entities.get::<Struck>(id).map(|s| wire::Struck { count: s.count, part: s.part, amount: s.amount, yaw: s.yaw });
+            let parts = wounds.unwrap_or_default().left();
             let carry = crate::mechanics::carries(&self.world, id).then_some(wire::Carry { what: CARRY_BACKPACK });
-            let shown = Replicated { seated, limbs, carry, ..shown };
+            let shown = Replicated { seated, limbs, struck, carry, ..shown };
             let hp = self.world.entities.get::<Health>(id).map_or(0, |health| health.hp);
-            (id, Replicated { vitals: Some(wire::Vitals { hp, progress: progress(player, one_arm), spent: player.character.spent, winded: player.character.winded.into() }), hotbar: Some(wire::Hotbar { slots: player.hotbar }), ..shown })
+            (id, Replicated { vitals: Some(wire::Vitals { hp, progress: progress(player, one_arm), spent: player.character.spent, winded: player.character.winded.into(), parts }), hotbar: Some(wire::Hotbar { slots: player.hotbar }), ..shown })
         }));
         scene.extend(self.creatures());
         scene.extend(self.world.entities.all::<Vehicle>().filter_map(|(id, vehicle)| Some((id, self.vehicle(id, vehicle)?))));
@@ -51,9 +54,9 @@ impl Game {
     }
 
     /// A player sitting in a vehicle, but for their seat: where they look and what they hold when their
-    /// crew shows, and only that they are a stickman when it does not.
+    /// crew shows, and only that they are a soldier when it does not.
     fn rider(&self, player: &Player) -> Replicated {
-        let kind = Some(wire::Kind { kind: KIND_STICKMAN });
+        let kind = Some(wire::Kind { kind: KIND_SOLDIER });
         let vehicle = player.seat.and_then(|seat| self.world.entities.get::<Vehicle>(seat.vehicle));
         if vehicle.is_none_or(|vehicle| vehicle_def(vehicle.kind).crew == Exposure::Sealed) {
             return Replicated { kind, ..Default::default() };
@@ -160,7 +163,7 @@ impl Game {
 }
 
 /// A standing player (or one flying a drone, kneeling over the controls).
-fn stickman(player: &Player, alive: bool) -> Replicated {
+fn soldier(player: &Player, alive: bool) -> Replicated {
     let c = &player.character;
     let mut flags = 0;
     if c.grounded {
@@ -176,7 +179,7 @@ fn stickman(player: &Player, alive: bool) -> Replicated {
     let stance = if c.chute { STANCE_CHUTE } else if c.prone { STANCE_PRONE } else { STANCE_STANDING };
     let [x, y, z] = c.position.map(to_cm);
     Replicated {
-        kind: Some(wire::Kind { kind: KIND_STICKMAN }),
+        kind: Some(wire::Kind { kind: KIND_SOLDIER }),
         place: Some(wire::Place { x, y, z }),
         heading: Some(wire::Heading { yaw: to_mrad(c.yaw) }),
         motion: Some(wire::Motion { vy: to_cm_i16(c.vy), knock_x: to_cm_i16(c.knock[0]), knock_z: to_cm_i16(c.knock[1]) }),

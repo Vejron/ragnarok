@@ -4,11 +4,11 @@ use crate::game::{Player, World};
 use shared::consts::BACKPACK_SPEED;
 use shared::items::{aim_speed_scale, HOTBAR_SLOTS};
 
-/// Walks every standing stickman by its input through the character controller, and keeps track of
+/// Walks every standing soldier by its input through the character controller, and keeps track of
 /// the car it stands on, if any.
 ///
 /// Riders are carried by `Vehicles` (before this runs), so here they only walk about on the roof.
-/// Leaving a car by jumping or stepping off keeps its speed as knockback, so a stickman does not
+/// Leaving a car by jumping or stepping off keeps its speed as knockback, so a soldier does not
 /// drop away from a moving car as if it had stopped.
 pub struct Movement;
 

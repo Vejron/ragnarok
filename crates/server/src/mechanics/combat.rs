@@ -27,14 +27,14 @@ use shared::quant::{from_mrad, to_cm, to_cm_i16, to_mrad};
 /// their own guns from their seat.
 pub struct Combat;
 
-/// Hop given to a stickman at the centre of a blast; it fades with distance.
+/// Hop given to a soldier at the centre of a blast; it fades with distance.
 const BLAST_HOP: f32 = 7.0;
 const BLAST_HOP_MIN: f32 = 3.0;
 
 /// Pitch beyond this is not a thing a client can send; clamp so a forged frame can't aim at the sky's far side.
 pub(super) const MAX_PITCH: f32 = 1.5;
 
-/// Unit look direction for a stickman facing `yaw` and looking `pitch` (+ is up). Yaw 0 faces -Z.
+/// Unit look direction for a soldier facing `yaw` and looking `pitch` (+ is up). Yaw 0 faces -Z.
 pub fn look(yaw: f32, pitch: f32) -> [f32; 3] {
     [-yaw.sin() * pitch.cos(), pitch.sin(), -yaw.cos() * pitch.cos()]
 }
@@ -125,7 +125,7 @@ pub struct Blast {
     pub damage: f32,
     /// Knockback speed at the centre, m/s.
     pub knock: f32,
-    /// Where it came from. A stickman right on the point is thrown along this.
+    /// Where it came from. A soldier right on the point is thrown along this.
     pub dir: [f32; 3],
     pub attacker: Option<u32>,
     pub weapon: u8,
@@ -149,7 +149,7 @@ pub fn blast(world: &mut World, blast: Blast) {
 /// [`blast`], for a shell that struck vehicle `direct.vehicle` itself.
 pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
     make_noise(world, blast.point, blast.attacker, HEAR_BLAST);
-    // Stickmen are thrown; everything in the open is hurt, below.
+    // Soldiers are thrown; everything in the open is hurt, below.
     for id in world.entities.ids::<With<Player>>() {
         if !world.entities.alive(id) {
             continue;
@@ -646,7 +646,7 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     }
 }
 
-/// What one hitscan round does: to a stickman or a rooster, to a vehicle, and to a plane, which is all
+/// What one hitscan round does: to a soldier or a rooster, to a vehicle, and to a plane, which is all
 /// wood and canvas.
 pub struct Round {
     pub damage: u8,
@@ -654,14 +654,14 @@ pub struct Round {
     pub plane: u8,
     pub weapon: u8,
     pub range: f32,
-    /// How the damage of a hit on a stickman or a rooster shrinks with how far the round flew.
+    /// How the damage of a hit on a soldier or a rooster shrinks with how far the round flew.
     pub falloff: Falloff,
     /// How much armour it goes through, and how that shrinks with how far it flew.
     pub pen: Pen,
 }
 
 /// Fires one round for `shooter` from `origin` along the unit `dir`, through vehicle `ignore` (the one
-/// it is fired from, or 0), at stickmen where they stood `back` ticks ago. It hurts the first thing it
+/// it is fired from, or 0), at soldiers where they stood `back` ticks ago. It hurts the first thing it
 /// meets (see [`land`]). Returns how far it went, and whether it met anything at all before the end of
 /// its range.
 pub fn hitscan(world: &mut World, shooter: u32, origin: [f32; 3], dir: [f32; 3], round: &Round, ignore: u32, back: u32) -> (f32, bool) {
@@ -681,7 +681,7 @@ pub struct Flight {
     pub shooter: Option<u32>,
     /// Credited with what it does; `None` once they have left.
     pub attacker: Option<u32>,
-    /// Stickmen are tested where they stood this many ticks ago.
+    /// Soldiers are tested where they stood this many ticks ago.
     pub back: u32,
     /// Metres flown before `origin`, for the damage falloff.
     pub flown: f32,
@@ -693,7 +693,7 @@ pub struct Strike {
     wall: Option<(f32, Option<u32>)>,
     /// How far the stretch goes: to the wall, or the whole range.
     reach: f32,
-    /// The body met (a stickman, a rooster), and how far along.
+    /// The body met (a soldier, a rooster), and how far along.
     hit: Option<(u32, f32)>,
     /// Where it stops.
     pub end: f32,
@@ -707,7 +707,7 @@ impl Strike {
 }
 
 /// What a round flying `range` metres along `flight` meets, `wall` being what the world's ray met: the
-/// first of a body (a stickman, a rooster), a vehicle, a building or a tree. A round that strikes a
+/// first of a body (a soldier, a rooster), a vehicle, a building or a tree. A round that strikes a
 /// glazed vehicle (`Exposure::Glazed`) goes on through the glass to its crew, as far as whatever is
 /// behind them.
 pub fn strike(world: &World, flight: &Flight, wall: Option<(f32, Option<u32>)>, range: f32) -> Strike {
@@ -813,6 +813,7 @@ fn use_item(world: &mut World, id: u32) {
     let Some(seat) = world.entities.get::<Player>(id).map(|player| player.seat) else { return };
     let hp = world.entities.get::<Health>(id).map_or(0, |health| health.hp);
     let lost = super::limbs::lost(world, id);
+    let hurt = super::limbs::hurt(world, id);
     let passenger = seat.is_some_and(|seat| !seat.remote && world.entities.get::<Vehicle>(seat.vehicle).is_some_and(|vehicle| crew_gun(vehicle.kind, seat.index)));
     let mut player = world.entities.of_mut::<Player>(id);
     let buttons = player.input.buttons();
@@ -907,9 +908,10 @@ fn use_item(world: &mut World, id: u32) {
                         let mut health = world.entities.of_mut::<Health>(id);
                         health.hp = health.hp.saturating_add(item.damage).min(PLAYER_MAX_HP);
                     }
+                    super::limbs::heal(world, id, item.damage);
                     super::limbs::bandaged(world, id);
                 }
-            } else if fresh && (hp < PLAYER_MAX_HP || lost != 0) {
+            } else if fresh && (hp < PLAYER_MAX_HP || hurt) {
                 player.channel_left = BANDAGE_TICKS;
             }
         }

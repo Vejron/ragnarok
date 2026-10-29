@@ -52,7 +52,7 @@ impl Health {
 pub struct HurtBy(pub u32);
 
 /// What a round or a blast can meet: an upright capsule over what it stands on (see `life::body` for
-/// where that is, and the short capsule of a stickman in a seat). `hit_kind` is the `HIT_*` the shooter
+/// where that is, and the short capsule of a soldier in a seat). `hit_kind` is the `HIT_*` the shooter
 /// is told they hit.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Hurtbox {

@@ -1,0 +1,4 @@
+# WebAssembly SIMD for the browser build of `sim` (`client/scripts/build-wasm.ts`): lets LLVM emit 128-bit
+# vector instructions. Every current browser has it (Chrome/Firefox 2021, Safari 16.4).
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]

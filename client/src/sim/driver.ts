@@ -19,9 +19,9 @@ export interface DrivenPose {
 
 /**
  * Client-side prediction of the vehicle the local player drives: the server's own vehicle physics
- * (`crates/sim`, in WASM), in the same world as the stickman, where the vehicle stands in for its
+ * (`crates/sim`, in WASM), in the same world as the soldier, where the vehicle stands in for its
  * snapshot solid while it is predicted. Inputs are applied at once and replayed over each
- * authoritative state, as the stickman's are; what is left of a correction is kept as a visual offset
+ * authoritative state, as the soldier's are; what is left of a correction is kept as a visual offset
  * that decays.
  */
 export class VehicleDriver {

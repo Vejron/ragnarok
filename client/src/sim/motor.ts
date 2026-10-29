@@ -28,7 +28,7 @@ export interface CharacterState {
   lost: number
 }
 
-/** One tick of a stickman: what `Predictor` runs, and replays on reconciling. */
+/** One tick of a soldier: what `Predictor` runs, and replays on reconciling. */
 export type Stepper = (state: CharacterState, input: InputFrame, dt: number, speedScale: number) => CharacterState
 
 /** What a driver asks of a vehicle this tick, as `sim::CarControls`. */
@@ -109,13 +109,13 @@ export interface VehiclePose {
   air: number | null
 }
 
-/** A vehicle of the newest snapshot, as a solid for the stickman, with its horizontal velocity. */
+/** A vehicle of the newest snapshot, as a solid for the soldier, with its horizontal velocity. */
 export type Obstacle = Pick<VehiclePose, 'id' | 'x' | 'y' | 'z' | 'qx' | 'qy' | 'qz' | 'qw'> & { kind?: number; vx?: number; vz?: number; damage?: readonly number[] }
 
 /**
- * The local stickman's world: the server's own physics (`crates/sim`, built to WASM by
+ * The local soldier's world: the server's own physics (`crates/sim`, built to WASM by
  * `npm run build:wasm`), fed the tiles the client streams and the vehicles of the newest snapshot,
- * stepping the stickman exactly as the server does. It replaces the hand-written mirror of the
+ * stepping the soldier exactly as the server does. It replaces the hand-written mirror of the
  * server's character controller.
  */
 export class SimMotor {
@@ -185,9 +185,9 @@ export class SimMotor {
   }
 
   /**
-   * Makes the vehicles solid for the stickman at the poses of the newest snapshot; the ones missing
+   * Makes the vehicles solid for the soldier at the poses of the newest snapshot; the ones missing
    * from `vehicles` go. The server runs them as dynamic bodies; here they only need to block the
-   * predicted stickman like they block the real one, and carry it off at their speed when it leaves them.
+   * predicted soldier like they block the real one, and carry it off at their speed when it leaves them.
    */
   setVehicles(vehicles: readonly Obstacle[]) {
     timed(() => {
@@ -267,7 +267,7 @@ export class SimMotor {
     return this.sim.fits(position[0], position[1], position[2])
   }
 
-  /** One tick of the stickman, as `Physics::step_character` does it on the server. */
+  /** One tick of the soldier, as `Physics::step_character` does it on the server. */
   step(state: CharacterState, input: InputFrame, dt: number, speedScale = 1): CharacterState {
     return timed(() => {
       const s = this.scratch

@@ -18,9 +18,10 @@ Conventions
   * Stances say how the arms hold things: `rifle` (both hands on the gun), `pistol` (both hands, out in front),
     `hold` (hands low, in front) and `shoulder` (a launcher tube on the right shoulder). Clips are baked per
     stance: the rifle's are named plainly (`idle`, `walk_fwd`, ...), the others carry a `pistol_` / `hold_` /
-    `shoulder_` prefix. `death` is shared.
+    `shoulder_` prefix. `death`, `freefall` and `chute` are shared.
   * Clips: idle, walk_fwd/back/left/right, run_fwd/back/left/right, crouch_idle, crouch_fwd/back/left/
-    right, crawl_idle, crawl_fwd/back/left/right, slide, jump_air, sit, death. The crawl is an army
+    right, crawl_idle, crawl_fwd/back/left/right, slide, jump_air, sit, death, freefall (a skydiver's box,
+    belly down about `FALL_PIVOT`) and chute (hanging under the canopy). The crawl is an army
     crawl lying face down along -Y, resting on the ground at the origin's height. `sit` is a seat in a
     vehicle: hips dropped by `SIT_DROP`, thighs level and shins down, so the head ends up `SIT_HEAD`
     above the origin (the client places a seated player by it). Clips loop with a duplicated last key so the mixer wraps without a hitch.
@@ -662,6 +663,55 @@ def death(t):
         # Replace the carry pose: pose_rot overwrote it only on the bones set above.
 
 
+# Falling with the chute shut: the body pitches belly-down this far (rad) about `FALL_PIVOT` (metres up,
+# about the chest), which stays where it stands so the capsule still holds the body.
+FALL_PITCH = 1.3
+FALL_PIVOT = 1.0
+
+
+def freefall(t):
+    """A skydiver's box: belly to the ground, back arched, arms out with the forearms up, knees bent and
+    spread. The air flutters the limbs."""
+    phi = TAU * t
+    flutter = lambda k, off=0.0: 0.05 * math.sin(k * phi + off)
+    pose_rot("root", FALL_PITCH, 0, 0)
+    pose_loc("root", (0, FALL_PIVOT * math.sin(FALL_PITCH), FALL_PIVOT * (1 - math.cos(FALL_PITCH))))
+    pose_rot("hips", -0.1, 0, 0.02 * math.sin(phi))
+    pose_rot("spine", -0.2, 0, 0)
+    pose_rot("chest", -0.2 + flutter(2), 0, 0)
+    # Looking ahead to the ground coming up, not at it.
+    pose_rot("head", -0.5 + flutter(3, 1.0), 0, flutter(1))
+    for side, s in (("L", 1), ("R", -1)):
+        off = 0.0 if side == "L" else 1.7
+        pose_rot(f"upper_arm_{side}", -0.25 + flutter(3, off), -s * 1.35, 0)
+        pose_rot(f"forearm_{side}", 0, -s * 1.6 + flutter(4, off), 0)
+        pose_rot(f"hand_{side}", 0, 0, 0)
+        pose_rot(f"thigh_{side}", 0.3 + flutter(3, off + 0.5), -s * 0.35, 0)
+        pose_rot(f"shin_{side}", 1.1 + flutter(4, off), 0, 0)
+        pose_rot(f"foot_{side}", 0.4, 0, 0)
+
+
+def chute(t):
+    """Hanging in the harness: hands up on the toggles, legs dangling and swinging a little."""
+    phi = TAU * t
+    sway = math.sin(phi)
+    pose_loc("hips", (0, 0, -0.01))
+    pose_rot("hips", 0.06, 0, 0.03 * sway)
+    pose_rot("spine", 0.02, 0, -0.02 * sway)
+    pose_rot("chest", 0.03 + 0.015 * math.sin(2 * phi), 0, 0)
+    # Looking down at where it will land, glancing about.
+    pose_rot("head", 0.25, 0, 0.12 * math.sin(phi + 0.6))
+    for side, s in (("L", 1), ("R", -1)):
+        pull = 0.12 * math.sin(phi + (0.0 if side == "L" else math.pi))
+        pose_rot(f"upper_arm_{side}", -0.1, -s * (2.65 - pull), 0)
+        pose_rot(f"forearm_{side}", 0, -s * (0.45 + pull), 0)
+        pose_rot(f"hand_{side}", 0, 0, 0)
+        swing = 0.1 * math.sin(phi + (0.0 if side == "L" else 1.2))
+        pose_rot(f"thigh_{side}", -0.15 + swing, -s * 0.06, 0)
+        pose_rot(f"shin_{side}", 0.3 - swing * 0.5, 0, 0)
+        pose_rot(f"foot_{side}", 0.5, 0, 0)
+
+
 CROUCH_DROP = 0.46
 
 
@@ -977,6 +1027,9 @@ def build_actions():
     # Dying lets go of everything, so one clip serves every stance.
     CURRENT = "rifle"
     bake("death", 60, death, loop=False)
+    # Falling lets go of the item's grip too: shared by every stance.
+    bake("freefall", 90, freefall)
+    bake("chute", 120, chute)
     reset_pose()
     arm_obj.animation_data.action = bpy.data.actions["idle"]
 
@@ -1109,6 +1162,10 @@ def preview(directory):
     shoot("jump", "side")
     at("death", 60)
     shoot("death", "side")
+    for clip in ("freefall", "chute"):
+        for view in ("side", "front", "three"):
+            at(clip, 10)
+            shoot(f"{clip}_{view}", view)
 
 
 if PREVIEW:

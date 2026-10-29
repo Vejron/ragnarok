@@ -11,7 +11,7 @@ let parts: { body: Geometry; stripe: Geometry; antenna: Geometry; shell: Materia
 
 /**
  * The pack, 0.36 m wide, 0.46 m tall and 0.18 m deep, its straps' side towards -Z (worn, against the
- * back of a stickman facing -Z), with its bottom at the origin.
+ * back of a soldier facing -Z), with its bottom at the origin.
  */
 export function buildBackpack(): Group {
   parts ??= {

@@ -39,8 +39,12 @@ export interface HudStats {
   drone: { battery: number; signal: number; camera: 'forward' | 'down' | null } | null
   /** Strength 0..1 of the static that follows a drone's feed cutting out. */
   feedLost: number
-  /** The limbs the local player has lost and those still bleeding (`LIMB_*` bits); null while whole. */
-  limbs: { lost: number; bleeding: number } | null
+  /**
+   * The local player's body while any of it is hurt, else null: the limbs lost and those still bleeding
+   * (`LIMB_*` bits), and what each part has left of its health, 0..1: the head, the torso, and the limbs
+   * in `LIMB_*` order.
+   */
+  limbs: { lost: number; bleeding: number; head: number; torso: number; parts: number[] } | null
   /** Seated with a free seat to move to: R switches to it. */
   canSwitchSeat: boolean
   /** For a gunner: how loaded the gun is, 0 (just fired) to 1 (ready). */

@@ -7,7 +7,7 @@ import { BUTTON_JUMP, BUTTON_PRONE, BUTTON_RUN, PRONE_CENTRE, PRONE_SPEED, STAND
 import { KIND_JEEP, KIND_TANK, type InputFrame } from '@/net/codec'
 import { flatMotor, manifestBytes, tileBytes } from './worlds'
 
-// The stickman is stepped by the server's own physics (`crates/sim`, built to WASM), on a flat floor
+// The soldier is stepped by the server's own physics (`crates/sim`, built to WASM), on a flat floor
 // unless a test builds a world of its own.
 let floor: SimMotor
 let flat: Stepper
@@ -80,11 +80,11 @@ describe('Predictor', () => {
   })
 })
 
-describe('vehicles in the stickman\'s world', () => {
+describe('vehicles in the soldier\'s world', () => {
   const car = (x: number) => ({ id: 1, kind: KIND_JEEP, x, y: 0.66, z: 0, qx: 0, qy: 0, qz: 0, qw: 1 })
 
   // Mirrors `cars_are_solid_to_characters` in vehicle.rs: a 1.8 m wide car at the origin.
-  it('blocks the stickman like the server does, and lets go when the car leaves', async () => {
+  it('blocks the soldier like the server does, and lets go when the car leaves', async () => {
     const motor = await flatMotor()
     motor.setVehicles([car(0)])
     let state: CharacterState = { ...standing(), position: [-4, STANDING_Y, 0] }
@@ -104,13 +104,13 @@ describe('vehicles in the stickman\'s world', () => {
     let state: CharacterState = { ...standing(), position: [-4, STANDING_Y, 0] }
     const towardTank = (seq: number): InputFrame => ({ seq, strafe: 0, forward: 127, yaw: -1571, buttons: 0, pitch: 0, view: 0, slot: 0 })
     for (let i = 0; i < 180; i++) state = motor.step(state, towardTank(i), TICK_DT)
-    // The tank's half width is 1.3 m: the stickman stops there, not at the car's 0.9 m.
+    // The tank's half width is 1.3 m: the soldier stops there, not at the car's 0.9 m.
     expect(state.position[0]).toBeLessThan(-TANK_HALF_EXTENTS[0] - 0.35 + 0.1)
     expect(state.position[0]).toBeGreaterThan(-3)
   })
 })
 
-describe('the stickman\'s world', () => {
+describe('the soldier\'s world', () => {
   // Mirrors `walks_forward_at_walk_speed` and `falls_and_lands_on_the_ground` in physics.rs.
   it('walks and lands like the server', async () => {
     const motor = await flatMotor()
@@ -195,7 +195,7 @@ describe('riding a car', () => {
     expect(state.knock).toEqual([0, 0])
   })
 
-  it('a stickman on foot ignores cars when jumping', () => {
+  it('a soldier on foot ignores cars when jumping', () => {
     const state = stepCharacter(onCar, standing(), frame(BUTTON_JUMP), TICK_DT)
     expect(state.knock).toEqual([0, 0])
   })

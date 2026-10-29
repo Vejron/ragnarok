@@ -1,4 +1,4 @@
-//! Static world collision, the stickman character controller and the dynamic vehicle bodies.
+//! Static world collision, the soldier character controller and the dynamic vehicle bodies.
 //!
 //! The server links this natively and builds the whole world at once (`Physics::new`). The client
 //! runs the same code built to WASM (`crates/sim-wasm`) and builds the tiles around the player
@@ -30,7 +30,7 @@ pub enum Obj {
     Tree(ObjId),
 }
 
-/// Authoritative state of one stickman. Positions are the capsule centre, in metres.
+/// Authoritative state of one soldier. Positions are the capsule centre, in metres.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Character {
     pub position: [f32; 3],
@@ -370,7 +370,7 @@ fn boundary_walls(world: &WorldFile) -> Vec<(f32, f32, f32, f32)> {
     walls
 }
 
-/// The stickman's character controller, without snap-to-ground.
+/// The soldier's character controller, without snap-to-ground.
 fn controller() -> KinematicCharacterController {
     KinematicCharacterController {
         offset: CharacterLength::Absolute(CONTROLLER_OFFSET),
@@ -677,7 +677,7 @@ impl Physics {
         character.yaw = shared::quant::from_mrad(input.yaw);
     }
 
-    /// One tick of a stickman on foot, as both the server and the client's prediction run it:
+    /// One tick of a soldier on foot, as both the server and the client's prediction run it:
     /// `move_character_scaled`, plus what standing on a vehicle moving at `ride_velocity` does. Jumping
     /// off it adds its speed to the knockback before the move; stepping off its edge adds it after.
     /// Which vehicle the character stands on next (`Character::ride`) is the caller's to say.

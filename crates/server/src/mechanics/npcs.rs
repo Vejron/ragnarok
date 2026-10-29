@@ -408,7 +408,7 @@ mod tests {
     }
 
     #[test]
-    fn a_proximity_fuse_and_a_blasts_hit_marker_count_a_rooster_as_they_do_a_stickman() {
+    fn a_proximity_fuse_and_a_blasts_hit_marker_count_a_rooster_as_they_do_a_soldier() {
         use crate::game::TEAM_BOTS;
         use crate::mechanics::combat::{Blast, blast};
         use crate::mechanics::life::hurtbox_near;

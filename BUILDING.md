@@ -13,7 +13,7 @@ Bricks are a hotbar item. With them a player puts 72 cm cubes onto the world: ag
 - **Reach.** The middle of the cube must be within 6 m of the eye (`BUILD_REACH`).
 - **Where a cube can go.** It is placed only when all of these hold:
   - nothing is there already: no cube, wall, roof, tree trunk or vehicle;
-  - no stickman or creature stands in it;
+  - no soldier or creature stands in it;
   - it is not wholly under the ground;
   - it rests on something: another cube beside, above or below it, a standing cell of a building beside, above or below it, or the ground under it;
   - the world holds fewer than 200 000 cubes (`MAX_BUILT`).

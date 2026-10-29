@@ -24,7 +24,7 @@ const FIRST_ID = -1
  * A machine gun's rounds in flight, drawn as a rifle's bullet is (the same slug and ribbon, at
  * `BULLET_SPEED`), though the server settled each as a hitscan when it was fired. A round flies from
  * the muzzle to where the client's own ray says it stops; `struck` cuts one short where the server
- * says it hit something the ray does not see, such as a stickman.
+ * says it hit something the ray does not see, such as a soldier.
  */
 export class Rounds {
   private readonly live = new Map<number, Round>()

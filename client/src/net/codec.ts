@@ -24,7 +24,7 @@ export const OBJ_BUILDING = 1
 
 /** Entity kinds, generated from `consts.rs`. A vehicle kind's definition is `vehicleDef`. */
 export {
-  KIND_BACKPACK, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SPORTS, KIND_STICKMAN, KIND_STRV, KIND_TANK, KIND_WALKER,
+  KIND_BACKPACK, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SPORTS, KIND_SOLDIER, KIND_STRV, KIND_TANK, KIND_WALKER,
 } from '@/sim/consts'
 export { isDrone } from '@/sim/vehicles'
 
@@ -54,7 +54,7 @@ export const WEAPON_SCRAPE = 9
 /** A plane's machine guns. Shot events only for a round that hit something; every round's tracer is drawn from the gun's counter. */
 export const WEAPON_MG = 10
 export const WEAPON_BOMB = 11
-/** A vehicle running a stickman down; only ever a kill's weapon. */
+/** A vehicle running a soldier down; only ever a kill's weapon. */
 export const WEAPON_ROADKILL = 12
 /** Ten pellets in one pull; the shot event is where the middle of the spread ended. */
 export const WEAPON_SHOTGUN = 13
@@ -90,6 +90,9 @@ export const LIMB_ARMS = LIMB_ARM_L | LIMB_ARM_R
 export const LIMB_LEGS = LIMB_LEG_L | LIMB_LEG_R
 export const LIMB_ALL = LIMB_ARMS | LIMB_LEGS
 export const LIMB_BLEED_SHIFT = 4
+/** `Struck::part`: the torso, the head, or a limb by its `LIMB_*` bit. Mirrors `PART_*`. */
+export const PART_TORSO = 0
+export const PART_HEAD = 1 << 4
 
 /** `HullMark`'s style: what a round left on a vehicle's armour. Mirrors `MARK_*`. */
 export const MARK_GLANCE = 0
@@ -105,7 +108,7 @@ export const ARMOR_BLOCKED = 1
 export const ARMOR_PIERCED = 2
 export const ARMOR_SLIT = 3
 
-/** How a stickman died, as in a `Kill`. Mirrors `DEATH_*`. */
+/** How a soldier died, as in a `Kill`. Mirrors `DEATH_*`. */
 export const DEATH_BODY = 0
 export const DEATH_HEAD = 1
 export const DEATH_BLAST = 2

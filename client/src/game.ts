@@ -6,7 +6,7 @@ import { Backoff } from './net/backoff'
 import { RttEstimator, ServerClock } from './net/clock'
 import { Transport } from './net/transport'
 import {
-  BUTTON_ALT, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION, RESPAWN_TICKS,
+  BUTTON_ALT, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, HEAD_HP, LIMB_HP, PROTOCOL_VERSION, RESPAWN_TICKS,
   SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_PRONE,
   TICK_MS, TICK_RATE, BUILD_REACH, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED, } from './sim/consts'
 import { easeSway, sway, swayAmplitude } from './sway'
@@ -70,7 +70,7 @@ import { Projectiles } from './entities/presenters/projectiles'
 import { Pickups as LyingItems } from './entities/presenters/pickups'
 import { Backpacks } from './entities/presenters/backpacks'
 import { LyingBackpacks } from './render/backpack'
-import { Stickmen } from './entities/presenters/people'
+import { Soldiers } from './entities/presenters/people'
 import { Riders, seatFrame } from './entities/presenters/riders'
 import { Seating } from './entities/presenters/seating'
 import { poseOf, Vehicles, type Placed, type VehicleWorld } from './entities/presenters/vehicles'
@@ -136,9 +136,9 @@ export class Game {
   private readonly voice = new VoiceChat((peer, kind, json) => this.transport.sendReliable(encodeRtc(peer, kind, json)))
   private readonly clock = new ServerClock()
   private readonly rtt = new RttEstimator()
-  /** Every stickman is drawn by this one set of instanced meshes. */
+  /** Every soldier is drawn by this one set of instanced meshes. */
   private readonly crowd = new Crowd()
-  /** Every player's stickman, whoever draws it. */
+  /** Every player's soldier, whoever draws it. */
   private readonly avatars = new Avatars(this.crowd)
   /** Rebuilds snapshots from deltas, and says which one to diff the next against. */
   private readonly replica = new Replica()
@@ -152,7 +152,7 @@ export class Game {
   private readonly flying = new Presenters<Frame>()
   /** Everyone else on foot, and the creatures, where the contact shadows are gathered. */
   private readonly people = new Presenters<Frame>()
-  private readonly stickmen: Stickmen
+  private readonly soldiers: Soldiers
   private readonly riders: Riders
   /** The vehicles and what they carry, first in the frame: the camera follows them. */
   private readonly machines = new Presenters<Frame>()
@@ -197,11 +197,13 @@ export class Game {
   private readonly dealtAt = new Map<number, number>()
   /** The local player's own `limbs`, as last sent. */
   private ownLimbs = 0
+  /** What the local player's head and limbs have left of their health (`Vitals::parts`). */
+  private ownParts: number[] = [HEAD_HP, LIMB_HP, LIMB_HP, LIMB_HP, LIMB_HP]
   /** The local player carries the backpack, as their own `carry` last said: they walk faster. */
   private carrying = false
   /** The backpack's circle and carrier (BACKPACK.md). */
   private readonly backpack = new BackpackTracker()
-  /** When each stickman's stumps last dripped, by avatar key. */
+  /** When each soldier's stumps last dripped, by avatar key. */
   private readonly drippedAt = new Map<number, number>()
   private readonly chase = new ChaseCam()
   private readonly pickupModels = new Pickups()
@@ -255,7 +257,7 @@ export class Game {
   private driver: VehicleDriver | null = null
   /** The newest snapshot of the driven vehicle, waiting for the next frame to be reconciled with. */
   private driverSnapshot: { ack: number; vehicle: VehiclePose; drive: DriveState } | null = null
-  /** Vehicle poses of the newest snapshot, which the predicted stickman's frame is fixed to while riding. */
+  /** Vehicle poses of the newest snapshot, which the predicted soldier's frame is fixed to while riding. */
   private readonly refPoses = new Map<number, VehiclePose>()
   private localId: number | null = null
   private worldHash = 0
@@ -338,7 +340,7 @@ export class Game {
     this.flying.add(this.lying)
     this.flying.add(new Backpacks(this.backpackModels))
     const blobFoot = (x: number, y: number, z: number) => this.surroundings.blobFoot(x, y, z)
-    this.stickmen = this.people.add(new Stickmen({ avatars: this.avatars, blobFoot, wade: (id, x, y, z, speed, dt) => this.surroundings.wade(id, x, y, z, speed, dt) }))
+    this.soldiers = this.people.add(new Soldiers({ avatars: this.avatars, blobFoot, wade: (id, x, y, z, speed, dt) => this.surroundings.wade(id, x, y, z, speed, dt) }))
     this.riders = this.people.add(new Riders(this.avatars, this.vehicles))
     this.people.add(new Roosters({ root: this.scene.scene, listener: () => this.predictor?.state.position ?? [0, 0, 0], blobFoot }))
     // Dev-only handle for poking at the game from the console or a test driver.
@@ -451,7 +453,7 @@ export class Game {
         this.localId = this.avatars.localId = message.id
         this.awaitingCatchUp = true
         this.replica.reset()
-        // Recreate the local stickman in this player's colour.
+        // Recreate the local soldier in this player's colour.
         this.avatars.forgetLocal()
         // Inputs made before joining were never sent; they must not be replayed on server state.
         this.predictor?.clearPending()
@@ -474,12 +476,13 @@ export class Game {
         if (own?.vitals) {
           this.setHealth(own.vitals.hp, now)
           this.progress = own.vitals.progress
+          this.ownParts = own.vitals.parts
         }
         if (own?.hotbar) this.hotbar = [...own.hotbar.slots, ...emptyHotbar()].slice(0, HOTBAR_SLOTS)
         if (own) this.ownLimbs = own.limbs?.lost ?? 0
         if (own) this.carrying = own.carry !== undefined
         this.events.receive(message.tick, message.shots, message.bullets)
-        // Vehicles are solid to the predicted stickman, at the pose of the newest snapshot.
+        // Vehicles are solid to the predicted soldier, at the pose of the newest snapshot.
         this.refPoses.clear()
         let drive: DriveState | undefined
         for (const [id, wire] of rebuilt.scene) {
@@ -511,7 +514,7 @@ export class Game {
           this.driver?.acknowledge(message.ack)
         }
         if (this.seat) {
-          // The stickman is parked inside the car. Inputs still go out; the server just applies them to the car.
+          // The soldier is parked inside the car. Inputs still go out; the server just applies them to the car.
           this.predictor?.acknowledge(message.ack)
         } else if (own?.place && own.flags && this.predictor) {
           const { x, y, z } = own.place
@@ -563,7 +566,7 @@ export class Game {
       case 'profiles':
         for (const { id, name, color, team, bot } of message.players) {
           setPlayer(id, name, color, team, bot)
-          // Snapshots come by datagram and can overtake this, so a stickman may already be drawn.
+          // Snapshots come by datagram and can overtake this, so a soldier may already be drawn.
           this.avatars.of(id)?.setColor(colorFor(id))
         }
         break
@@ -619,7 +622,7 @@ export class Game {
       view: this.viewTick(),
       slot: sample.slot,
     }
-    // In a car the stickman does not walk, and nor does a dead one; the frame is kept for replay
+    // In a car the soldier does not walk, and nor does a dead one; the frame is kept for replay
     // in case it steps out or respawns.
     if (this.seat || this.hp === 0) this.predictor!.record(frame)
     else this.predictor!.apply(frame)
@@ -730,7 +733,7 @@ export class Game {
     // Face where the camera looks, immediately, rather than the last ticked yaw.
     if (sitting) me.seat(this.seatAt, this.seatTurn, this.input.yaw, this.input.pitch, dt)
     else me.update(position, flying ? local.yaw : lookYaw, localVx, localVz, local.grounded, dt, flying ? 0 : lookPitch, this.crouching || flying,
-      this.crouching && local.grounded && Math.hypot(local.knock[0], local.knock[1]) > SLIDE_MIN_SPEED, local.prone, local.chute)
+      this.crouching && local.grounded && Math.hypot(local.knock[0], local.knock[1]) > SLIDE_MIN_SPEED, local.prone, local.chute, local.vy)
     if (!seated && this.hp > 0) this.surroundings.wade(0, position[0], position[1], position[2], Math.hypot(localVx, localVz), dt)
     else this.surroundings.dry(0)
     const aviator = view?.rig.name === 'aviator'
@@ -746,7 +749,7 @@ export class Game {
       // Only the distance changes: the pivot is what the server's crosshair ray is built from.
       else this.scene.follow(position, lookYaw, lookPitch, ON_FOOT_DISTANCE * (1 - (1 - AIM_DISTANCE_SCALE) * this.aimBlend), ON_FOOT_SHOULDER, ON_FOOT_HEIGHT, shake)
     }
-    // Streaming follows what the camera is on: the car when seated, else the stickman.
+    // Streaming follows what the camera is on: the car when seated, else the soldier.
     this.tiles?.update(ride ? ride.x : position[0], ride ? ride.z : position[2])
     this.events.play(renderTick)
     this.flying.run(sampled, frame)
@@ -785,8 +788,8 @@ export class Game {
 
     this.people.run(sampled, frame)
     this.limbs(sampled, now)
-    this.surroundings.bendGrass(!seated && this.hp > 0 ? position : null, this.stickmen.nearby, cars)
-    const nearby = [...this.stickmen.nearby, ...this.riders.seated]
+    this.surroundings.bendGrass(!seated && this.hp > 0 ? position : null, this.soldiers.nearby, cars)
+    const nearby = [...this.soldiers.nearby, ...this.riders.seated]
     this.avatars.sweep((key) => this.surroundings.dry(key))
 
     this.voice.setTalking(this.localId !== null && this.hp > 0 && this.input.isHeld('KeyV'))
@@ -819,7 +822,7 @@ export class Game {
       canSwitchSeat: this.seat !== null && (cars.get(this.seat.vehicle)?.seats.includes(0) ?? false),
       range: view?.gauges?.includes('range') ? (ride?.turret?.range ?? 0) : 0,
       callouts: this.callouts.view(now),
-      limbs: this.ownLimbs && this.hp > 0 ? { lost: lostOf(this.ownLimbs), bleeding: bleedingOf(this.ownLimbs) } : null,
+      limbs: this.body(),
       ammo: view?.gauges?.includes('ammo') ? ((ride?.turret?.flags ?? 0) & TURRET_ALT ? 'HE' : 'AP') : null,
       reload: this.reloaded(now, ride ? rideView(ride.kind).reload : SHELL_COOLDOWN_TICKS),
       ...cockpit(view?.gauges?.includes('cockpit') ? (ride?.arms ?? null) : null, aviator, seat ? this.vehicles.fx(seat.vehicle) : undefined),
@@ -850,7 +853,7 @@ export class Game {
       deaths: this.board.deaths(this.localId),
       feed: this.board.recent(now, this.localId),
       notices: this.notices.view(now),
-      board: this.input.isHeld('Tab') ? sides(this.board.rows(this.localId, this.stickmen.inView), teamFor) : [],
+      board: this.input.isHeld('Tab') ? sides(this.board.rows(this.localId, this.soldiers.inView), teamFor) : [],
       hitMarker: hitView.marker,
       hurt: hitView.vignette,
       hurtArcs: hitView.arcs,
@@ -873,15 +876,23 @@ export class Game {
   private alliesInView(): { id: number; x: number; z: number }[] {
     if (this.localId === null || teamFor(this.localId) === 0) return []
     const found: { id: number; x: number; z: number }[] = []
-    for (const id of this.stickmen.inView) {
+    for (const id of this.soldiers.inView) {
       const avatar = this.avatars.of(id)
       if (avatar?.visible && allies(this.localId, id)) found.push({ id, x: avatar.position.x, z: avatar.position.z })
     }
     return found
   }
 
+  /** The local player's body for the HUD while any of it is hurt and they live. */
+  private body(): HudStats['limbs'] {
+    const [head, ...limbs] = this.ownParts
+    const hurt = this.ownLimbs !== 0 || this.hp < PLAYER_MAX_HP || head! < HEAD_HP || limbs.some((left) => left < LIMB_HP)
+    if (!hurt || this.hp <= 0) return null
+    return { lost: lostOf(this.ownLimbs), bleeding: bleedingOf(this.ownLimbs), head: head! / HEAD_HP, torso: this.hp / PLAYER_MAX_HP, parts: limbs.map((left) => left / LIMB_HP) }
+  }
+
   /**
-   * Tells every stickman drawn this frame which limbs it has lost. One that has just come off is thrown,
+   * Tells every soldier drawn this frame which limbs it has lost. One that has just come off is thrown,
    * and called out to the local player if it was theirs or they did it; a stump that still bleeds drips.
    */
   private limbs(sampled: ReadonlyMap<number, Sampled>, now: number) {
@@ -889,7 +900,9 @@ export class Game {
       const id = key === 0 ? this.localId : key
       const avatar = id === null ? undefined : this.avatars.of(id)
       if (id === null || !avatar) continue
-      const wire = sampled.get(id)?.entity.limbs?.lost ?? 0
+      const entity = sampled.get(id)?.entity
+      avatar.setStruck(entity?.struck)
+      const wire = entity?.limbs?.lost ?? 0
       const gained = avatar.setLimbs(wire)
       if (gained) {
         if (avatar.visible) this.gore.sever(avatar, gained)
@@ -1020,9 +1033,9 @@ export class Game {
   }
 
   /**
-   * While standing on a car, the stickman is predicted as if the car stood still where the newest
+   * While standing on a car, the soldier is predicted as if the car stood still where the newest
    * snapshot left it. This carries that position along to wherever the car is drawn now, so the
-   * stickman stays glued to the roof and still moves on it.
+   * soldier stays glued to the roof and still moves on it.
    */
   private ridden(position: Vec3, ride: number, renderTick: number): Vec3 {
     const ref = this.refPoses.get(ride)

@@ -161,7 +161,7 @@ re-encode per item. A synthetic room with every player firing full-auto is the w
 ## Crowds
 
 With bots (BOTS.md) a room holds 64 people and 64 bots, and the benchmark (`BOTS=64`) packs all 128
-stickmen around the spawn points, running. Almost every one of them changes in every snapshot, so a
+soldiers around the spawn points, running. Almost every one of them changes in every snapshot, so a
 player's delta is about twice what fits in 1200 bytes, and the farthest half of it has to be shed.
 The shed loop dropped one entity at a time and re-encoded the whole snapshot after each, so dozens
 of encodes per player per snapshot:

@@ -44,12 +44,12 @@ pub fn starting_hotbar() -> [ItemSlot; HOTBAR_SLOTS] {
     [full(ITEM_AK5), full(ITEM_SNIPER), full(ITEM_FLARE), full(ITEM_DRONE), full(ITEM_BRICKS)]
 }
 
-/// A stickman, a connected player's or a bot's: a component on the player's entity. Passes over players
+/// A soldier, a connected player's or a bot's: a component on the player's entity. Passes over players
 /// go by `Entities::ids::<With<Player>>()`, in id order as the map they were kept in gave them.
 #[derive(crate::entities::Component)]
 pub struct Player {
     pub character: Character,
-    /// While seated the stickman is hidden and rides with the vehicle; input drives the seat.
+    /// While seated the soldier is hidden and rides with the vehicle; input drives the seat.
     pub seat: Option<Seat>,
     /// Ticks until a car can hit this player again.
     pub hit_cooldown: u32,
@@ -213,20 +213,20 @@ impl Bot {
     }
 }
 
-/// Where a hit on a standing stickman is shown: their chest, this far above the capsule's centre.
+/// Where a hit on a standing soldier is shown: their chest, this far above the capsule's centre.
 const CHEST_Y: f32 = 0.9;
 
 /// What a player's entity carries besides the `Player` to live and die by: full health, coming back
 /// `RESPAWN_TICKS` after dying, and a body to hit (their capsule, with the head at the top) with a
 /// trail of where it was.
-pub fn stickman_life() -> impl crate::entities::Bundle {
+pub fn soldier_life() -> impl crate::entities::Bundle {
     use crate::entities::{Health, Hurtbox, Respawn, Trail};
     let body = Hurtbox { centre_y: 0.0, half_height: CAPSULE_HALF_HEIGHT, radius: CAPSULE_RADIUS, head: Some(HEAD_ZONE_Y), mark_y: CHEST_Y, hit_kind: HIT_BODY };
     (Health::full(PLAYER_MAX_HP), Respawn { delay: RESPAWN_TICKS, left: 0 }, body, Trail::default())
 }
 
 impl Player {
-    /// Whether the stickman is out in the world, to be seen, hit and blasted: on foot, or standing
+    /// Whether the soldier is out in the world, to be seen, hit and blasted: on foot, or standing
     /// still while flying a drone.
     pub fn embodied(&self) -> bool {
         self.seat.is_none_or(|seat| seat.remote)
@@ -463,7 +463,7 @@ pub struct World {
     /// The families moved to components so far: players (and bots' minds, a `Bot` on the player's
     /// entity), roosters, items on the ground, projectiles and vehicles, in one id space.
     pub entities: crate::entities::Entities,
-    /// Where a stickman can walk, built as the bots look for ways round things.
+    /// Where a soldier can walk, built as the bots look for ways round things.
     pub nav: crate::navigation::NavGrid,
     pub(super) next_id: u32,
     pub rng: Rng,

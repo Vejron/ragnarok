@@ -36,7 +36,7 @@ pub struct Damaged {
     pub weapon: u8,
     /// Where the harm came from (a blast's centre, or where the attacker was), when known.
     pub from: Option<[f32; 3]>,
-    /// Where it was struck: a stickman's chest, a creature's crown, a vehicle's middle.
+    /// Where it was struck: a soldier's chest, a creature's crown, a vehicle's middle.
     pub at: [f32; 3],
     /// A round that hit the head.
     pub head: bool,

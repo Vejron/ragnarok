@@ -1,12 +1,12 @@
 //! Simulation and network constants. `client/scripts/gen-consts.ts` generates the client's copy from this file: run `npm run gen:consts` in `client` after editing.
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 52;
+pub const PROTOCOL_VERSION: u8 = 53;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
-pub const KIND_STICKMAN: u8 = 0;
-/// A Hedemora rooster, an NPC. Replicated like a stickman, with its own model.
+pub const KIND_SOLDIER: u8 = 0;
+/// A Hedemora rooster, an NPC. Replicated like a soldier, with its own model.
 pub const KIND_ROOSTER: u8 = 5;
 /// Vehicle kinds: replicated with an `orientation`.
 pub const KIND_JEEP: u8 = 1;
@@ -53,7 +53,7 @@ pub const MAX_SPAWNS: usize = 5;
 pub const MAX_NAME_CHARS: usize = 16;
 /// Datagrams above this size are dropped unread. Stays under a typical QUIC datagram MTU.
 pub const MAX_PACKET: usize = 1200;
-/// A player is sent the entities, vehicles and effects within this many metres of their stickman
+/// A player is sent the entities, vehicles and effects within this many metres of their soldier
 /// (measured on the ground plane), and keeps them until they are `INTEREST_HYSTERESIS` further out,
 /// so something at the edge does not flicker in and out.
 pub const INTEREST_RADIUS: f32 = 300.0;
@@ -92,7 +92,7 @@ pub const BUTTON_CHUTE: u16 = 1 << 12;
 /// One press, at a gun that has two kinds of round: load the other one (Q). Like a jump it is not repeated.
 pub const BUTTON_AMMO: u16 = 1 << 13;
 
-/// Stickman movement, in metres and seconds.
+/// Soldier movement, in metres and seconds.
 pub const WALK_SPEED: f32 = 4.0;
 pub const RUN_SPEED: f32 = 7.5;
 /// Crouching overrides running.
@@ -120,7 +120,7 @@ pub const STAMINA_REFILL: u16 = 15;
 /// until this much has come back.
 pub const STAMINA_RECOVER: u16 = 1800;
 pub const GRAVITY: f32 = 20.0;
-/// Knockback (a car hitting a stickman) is a horizontal velocity added to the walking velocity.
+/// Knockback (a car hitting a soldier) is a horizontal velocity added to the walking velocity.
 /// Each tick it keeps this fraction of itself: quickly on the ground, barely in the air.
 pub const KNOCK_KEEP_GROUND: f32 = 0.92;
 pub const KNOCK_KEEP_AIR: f32 = 0.99;
@@ -142,7 +142,7 @@ pub const CHUTE_STEER: f32 = 0.03;
 /// Respawns drop in from this far above the ground, metres, with the canopy open.
 pub const SPAWN_ALTITUDE: f32 = 100.0;
 
-/// Stickman collision capsule. Total height is `2 * (half_height + radius)` = 1.7 m, with the
+/// Soldier collision capsule. Total height is `2 * (half_height + radius)` = 1.7 m, with the
 /// body origin at the capsule centre.
 pub const CAPSULE_HALF_HEIGHT: f32 = 0.5;
 pub const CAPSULE_RADIUS: f32 = 0.35;
@@ -159,19 +159,17 @@ pub const STANCE_PRONE: u8 = 1;
 pub const STANCE_CHUTE: u8 = 2;
 /// A round that hits above this height over the capsule centre hit the head.
 pub const HEAD_ZONE_Y: f32 = 0.45;
-/// What a headshot does to the damage.
-pub const HEADSHOT_MULT: f32 = 2.0;
+/// Body-part health. A soldier's torso has `PLAYER_MAX_HP`, its head `HEAD_HP` and each limb `LIMB_HP`.
+/// Only the torso or the head running out kills; a limb that runs out comes off, and what the round had
+/// left over is lost. A sniper round to the head kills, as do two revolver rounds or five AK5 rounds.
+pub const HEAD_HP: u8 = 50;
+pub const LIMB_HP: u8 = 40;
 
 /// Limbs. A round below this height over the capsule centre hit a leg (the hips are about 0.75 m up),
 /// and one between there and the head this far or more to the side of the body's middle (the outer
 /// edge of the 0.35 m capsule), an arm.
 pub const HIP_ZONE_Y: f32 = -0.1;
 pub const ARM_ZONE_X: f32 = 0.25;
-/// What a round in a limb does to health, of what it would do to the body.
-pub const LIMB_DAMAGE_MULT: f32 = 0.75;
-/// A limb comes off at a hit this big, or once this much has been done to it in all (four AK5 rounds).
-pub const SEVER_HIT: u8 = 40;
-pub const SEVER_WEAR: u8 = 40;
 /// One leg: each step is a hop up at this speed, m/s, at this share of walking speed; no running or sliding.
 pub const HOP_SPEED: f32 = 2.6;
 pub const HOP_SCALE: f32 = 0.55;
@@ -198,7 +196,7 @@ pub const SNAP_DISTANCE: f32 = 0.3;
 pub const KILL_Y: f32 = -50.0;
 
 /// Vehicles. Chassis and wheel geometry are shared with the client, which draws the car from them.
-/// Body-local axes: +X right, +Y up, -Z forward (yaw 0 faces -Z, like a stickman).
+/// Body-local axes: +X right, +Y up, -Z forward (yaw 0 faces -Z, like a soldier).
 /// Seats in the roomiest car (the jeep); bounds the seat list of any vehicle.
 pub const CAR_SEATS: usize = 4;
 /// Vehicles in the world; bounds the vehicle list in a snapshot. The map editor's placed vehicles and the
@@ -367,7 +365,7 @@ pub const WALKER_GRIP: f32 = 8.0;
 /// Yaw rate at full stick, rad/s, and the angular acceleration towards it, rad/s².
 pub const WALKER_TURN_RATE: f32 = 1.7;
 pub const WALKER_TURN_ACCEL: f32 = 8.0;
-/// Gravity acting on vehicle bodies. Stickmen use `GRAVITY`; the ray-cast suspension is tuned
+/// Gravity acting on vehicle bodies. Soldiers use `GRAVITY`; the ray-cast suspension is tuned
 /// around the real-world value.
 pub const CAR_GRAVITY: f32 = 9.81;
 /// Leg spring and damper, per kilogram of the whole body for the pair: the spring settles at
@@ -649,7 +647,7 @@ pub const PLANE_GUN_PIVOTS: [[f32; 3]; 2] = [[-0.16, 0.72, -2.0], [0.16, 0.72, -
 pub const PLANE_GUN_COOLDOWN_TICKS: u32 = 5;
 pub const PLANE_GUN_RANGE: f32 = 300.0;
 pub const PLANE_GUN_SPREAD: f32 = 0.012;
-/// What a round does to a stickman, and to a vehicle: a plane is all canvas, anything else shrugs it off.
+/// What a round does to a soldier, and to a vehicle: a plane is all canvas, anything else shrugs it off.
 pub const PLANE_GUN_DAMAGE: u8 = 14;
 pub const PLANE_GUN_PLANE_DAMAGE: u8 = 7;
 pub const PLANE_GUN_VEHICLE_DAMAGE: u8 = 3;
@@ -804,7 +802,7 @@ pub const BACKPACK_REGEN: f32 = 5.0;
 pub const BACKPACK_WIDE: f32 = 150.0;
 pub const BACKPACK_NARROW: f32 = 20.0;
 pub const BACKPACK_NARROW_SECONDS: f32 = 300.0;
-/// How near a stickman on foot must walk to take it, metres across the ground and up or down.
+/// How near a soldier on foot must walk to take it, metres across the ground and up or down.
 pub const BACKPACK_REACH: f32 = 1.5;
 pub const BACKPACK_REACH_Y: f32 = 2.5;
 /// Seconds it may lie untouched before it goes back where the scenario put it.
@@ -817,11 +815,11 @@ pub const PLAYER_MAX_HP: u8 = 100;
 /// Ticks a dead player waits before respawning.
 pub const RESPAWN_TICKS: u32 = 3 * TICK_RATE;
 /// Guns are hitscans fired from the eye along the look direction; their stats are in `items`.
-/// Height of a stickman's eye above its capsule centre, where a rifle shot leaves.
+/// Height of a soldier's eye above its capsule centre, where a rifle shot leaves.
 pub const EYE_HEIGHT: f32 = 0.6;
 /// How far a crouch lowers the eye. The capsule keeps its size, so collision is unchanged.
 pub const CROUCH_EYE_DROP: f32 = 0.3;
-/// A prone stickman's eye is 0.2 m above its feet, so this is relative to the capsule centre.
+/// A prone soldier's eye is 0.2 m above its feet, so this is relative to the capsule centre.
 pub const PRONE_EYE_HEIGHT: f32 = 0.2 - PRONE_CENTRE;
 
 /// The on-foot camera sits behind a pivot this far to the right of the capsule centre and this far

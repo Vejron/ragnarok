@@ -1,7 +1,7 @@
 use super::*;
 use crate::game::{Command, Game, MAX_BOTS, Profile, TEAM_BOTS, TEAM_NONE};
 use crate::mechanics::life::{Harm, damage_entity};
-use shared::protocol::KIND_STICKMAN;
+use shared::protocol::KIND_SOLDIER;
 use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
 
@@ -50,14 +50,14 @@ fn run(game: &mut Game, seconds: f32) {
 }
 
 #[test]
-fn a_bot_is_a_player_on_the_bot_team_seen_as_a_stickman_at_home() {
+fn a_bot_is_a_player_on_the_bot_team_seen_as_a_soldier_at_home() {
     let mut game = game(false);
     let id = game.add_bot([20.0, -10.0], 0, vec![]).unwrap();
     let player = &game.world.entities.of::<Player>(id);
     assert_eq!(player.team, TEAM_BOTS, "a bot is never on no team");
     let [x, _, z] = player.character.position;
     assert!((x - 20.0).abs() < 0.01 && (z + 10.0).abs() < 0.01, "spawned at {x}, {z}");
-    assert!(game.seen_people(KIND_STICKMAN).iter().any(|(seen, _)| *seen == id));
+    assert!(game.seen_people(KIND_SOLDIER).iter().any(|(seen, _)| *seen == id));
 }
 
 #[test]
