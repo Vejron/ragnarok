@@ -662,18 +662,19 @@ export class Character {
   }
 
   /**
-   * Its last hit, as `struck` replicates it: a new one makes it flinch. The first word is not news: it
-   * may have been hit before it came into view.
+   * Its last hit, as `struck` replicates it: a new one makes it flinch, and is told back. The first
+   * word is not news: it may have been hit before it came into view.
    */
-  setStruck(struck: { count: number; part: number; amount: number; yaw: number } | undefined) {
+  setStruck(struck: { count: number; part: number; amount: number; yaw: number } | undefined): boolean {
     if (!struck) {
       // A new life starts counting again.
       if (this.struckCount !== null) this.struckCount = 0
-      return
+      return false
     }
     const fresh = this.struckCount !== null && struck.count !== this.struckCount
     this.struckCount = struck.count
     if (fresh) this.flinch(struck.part, struck.yaw, struck.amount)
+    return fresh
   }
 
   /**
@@ -979,6 +980,10 @@ export class Character {
       this.backpack = buildBackpack()
       this.object.add(this.backpack)
     }
+  }
+
+  get dead() {
+    return this.down
   }
 
   /** Lying where it fell. */

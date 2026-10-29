@@ -1,5 +1,6 @@
 import * as THREE from 'three'
-import { DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, LIMB_ARM_L, LIMB_ARM_R, LIMB_LEG_L, LIMB_LEG_R } from '@/net/codec'
+import { DEATH_BLAST, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, LIMB_ARM_L, LIMB_ARM_R, LIMB_LEG_L, LIMB_LEG_R, PART_HEAD, PART_TORSO } from '@/net/codec'
+import type { Bloodstains } from './bloodstains'
 import type { Character } from './character'
 import type { Debris } from './debris'
 import type { Effects } from './effects'
@@ -9,7 +10,19 @@ import type { Particles } from './particles'
 const GIB_LIFE = 9
 /** Height of a limb's centre above the ground when it lies there, metres. */
 const GIB_REST = 0.12
-const BLOOD = [0x9a0b0b, 0xb81414, 0x6e0808]
+/** Blood in the air: dark and only a little red, as it is out of the body. */
+const BLOOD = [0x6e0303, 0x8a0707, 0x520202]
+const BLOOD_DARK = 0x2a0101
+/** Pulling a falling drop down, m/s², as the particles fall. */
+const DROP_GRAVITY = 14
+/** Share of the drops in the air that leave a stain where they land. */
+const STAIN_SHARE = 0.4
+/** Longest a drop is followed through the air before it is given up, seconds. */
+const DROP_FLIGHT = 2
+/** A soldier lies down this long after it is killed before its pool starts to spread, seconds. */
+const POOL_AFTER = 1.2
+/** Metres across a crawler's smear. */
+const SMEAR_WIDTH = 0.45
 /** The pieces (`limbOf` keys) each `LIMB_*` bit takes off: the whole arm or leg. */
 const LIMB_PIECES: [number, string[]][] = [
   [LIMB_ARM_L, ['upper_arm_L', 'forearm_L']],
@@ -28,6 +41,20 @@ interface Trail {
   force: number
 }
 
+/** A stain to lay when its drop lands. */
+interface Landing {
+  x: number
+  y: number
+  z: number
+  radius: number
+  /** Seconds until it lands. */
+  in: number
+  /** A pool keeps spreading over `spread` seconds; a drop has none. */
+  spread: number
+  /** Laid at the ground under `follow` when it lands, when it should follow a body lying down. */
+  follow?: () => { x: number; z: number }
+}
+
 const spread = (amount: number) => (Math.random() - 0.5) * 2 * amount
 
 /**
@@ -36,12 +63,17 @@ const spread = (amount: number) => (Math.random() - 0.5) * 2 * amount
  */
 export class Gore {
   private readonly trails: Trail[] = []
+  private readonly landings: Landing[] = []
   private readonly direction = new THREE.Vector3()
+  private readonly point = new THREE.Vector3()
 
   constructor(
     private readonly debris: Debris,
     private readonly particles: Particles,
     private readonly effects: Effects,
+    private readonly stains: Bloodstains,
+    /** Ground height under a point. */
+    private readonly groundAt: (x: number, z: number) => number,
   ) {}
 
   /**
@@ -52,6 +84,8 @@ export class Gore {
     const dir = this.direction.set(-Math.sin(yaw), 0, -Math.cos(yaw))
     const centre = avatar.position
     this.effects.impact(centre, 'kill', dir)
+    // It bleeds out where it comes to rest, unless it is in pieces.
+    if (style !== DEATH_BLAST && style !== DEATH_ROADKILL && style !== DEATH_OVERKILL) this.pool(() => avatar.position, 0.75 + Math.random() * 0.3, 7)
     if (style === DEATH_HEAD) {
       this.pop(avatar, dir, power)
       avatar.launch(dir.clone().multiplyScalar(power * 0.4).setY(1.5), new THREE.Vector3(spread(1), 0, spread(1)), groundAt)
@@ -88,6 +122,32 @@ export class Gore {
     }
   }
 
+  /**
+   * A living `avatar` was shot in `part` (`PART_*`, a limb by its `LIMB_*` bit) from bearing `from`
+   * (0 faces -Z) for `amount`: blood sprays out the far side and spatters the ground behind it.
+   */
+  hit(avatar: Character, part: number, from: number, amount: number) {
+    const out = this.direction.set(Math.sin(from), 0, Math.cos(from))
+    const at = this.point
+    if (part === PART_HEAD) at.copy(avatar.position).y += 0.75
+    else if (part === PART_TORSO) at.copy(avatar.position).y += 0.25
+    else avatar.stump(part, at)
+    const heavy = Math.min(1, amount / 40)
+    this.mist(at, Math.round(5 + heavy * 14), 2.5 + heavy * 3, out, 0.3)
+  }
+
+  /** A legless `avatar` crawls on, bleeding: it leaves a smear behind it, as `track`. */
+  drag(track: string, avatar: Character) {
+    const at = this.point.copy(avatar.position)
+    at.y = this.groundAt(at.x, at.z)
+    this.stains.smear(track, at, SMEAR_WIDTH * (0.8 + Math.random() * 0.4))
+  }
+
+  /** Smear `track` stops: the crawler is gone, dead or bandaged. */
+  lift(track: string) {
+    this.stains.lift(track)
+  }
+
   /** A drop or two from each of `avatar`'s stumps in `bleeding` (`LIMB_*` bits) that still bleeds. */
   drip(avatar: Character, bleeding: number) {
     for (const [bit] of LIMB_PIECES) {
@@ -95,6 +155,9 @@ export class Gore {
       const stump = new THREE.Vector3()
       this.bleed(() => avatar.stump(bit, stump), 0.25, 14, 1)
     }
+    // And a spot on the ground under it. The stains' ring keeps the total in hand.
+    const at = avatar.position
+    this.stains.blot(at.x + spread(0.3), this.groundAt(at.x, at.z), at.z + spread(0.3), 0.06 + Math.random() * 0.08)
   }
 
   /** The head comes off, and the neck stump sprays. */
@@ -125,38 +188,90 @@ export class Gore {
       velocity.y += (3 + Math.random() * 5 + power * 0.2) * torso
       this.debris.throw(object, velocity, new THREE.Vector3(spread(16), spread(16), spread(16)), GIB_REST, GIB_LIFE)
       this.bleed(() => object.position, 0.9, 45)
+      if (key === 'torso') this.pool(() => object.position, 0.6, 5)
     }
     this.mist(avatar.position, 36, 6 + power * 0.2, dir)
     this.bleed(() => avatar.position, 0.35, 120, 4)
   }
 
-  /** A burst of red droplets and a haze. */
-  private mist(at: THREE.Vector3, count: number, speed: number, dir: THREE.Vector3) {
-    for (let i = 0; i < count; i++) {
-      const aim = new THREE.Vector3(spread(1), Math.random() * 0.9, spread(1)).addScaledVector(dir, 0.6).normalize().multiplyScalar(speed * (0.3 + Math.random()))
+  /**
+   * A burst of droplets thrown along `dir` and a puff of fine spray. `cone` is how tightly they keep
+   * to `dir`, 0 every way to 1 straight along it.
+   */
+  private mist(at: THREE.Vector3, count: number, speed: number, dir: THREE.Vector3, cone = 0) {
+    // Many small drops rather than a few big ones: a spray, not confetti.
+    for (let i = 0; i < count * 2; i++) {
+      const aim = new THREE.Vector3(spread(1), Math.random() * 0.9, spread(1)).multiplyScalar(1 - cone).addScaledVector(dir, 0.6 + cone).normalize().multiplyScalar(speed * (0.3 + Math.random()))
+      this.drop(at, [aim.x, aim.y + 1, aim.z], 0.02 + Math.random() ** 2 * 0.06, 0.6, i)
+    }
+    // The finest of it hangs for a moment as a mist and is gone.
+    for (let i = 0; i < Math.ceil(count / 6); i++) {
       this.particles.spawn({
         position: at,
-        velocity: [aim.x, aim.y + 1, aim.z],
-        life: 0.5 + Math.random() * 0.7,
-        size: [0.14 + Math.random() * 0.1, 0.05],
-        color: BLOOD[i % BLOOD.length]!,
-        alpha: 0.9,
-        gravity: 14,
-        drag: 0.6,
+        velocity: [spread(0.8) + dir.x * speed * 0.3, 0.2 + Math.random() * 0.4, spread(0.8) + dir.z * speed * 0.3],
+        life: 0.25 + Math.random() * 0.25,
+        size: [0.08, 0.4],
+        color: BLOOD[1]!,
+        colorEnd: BLOOD_DARK,
+        alpha: 0.22,
+        gravity: 0.5,
+        drag: 3,
+        shape: 'puff',
       })
     }
-    for (let i = 0; i < Math.ceil(count / 4); i++) {
-      this.particles.spawn({
-        position: at,
-        velocity: [spread(1.5), 0.5 + Math.random(), spread(1.5)],
-        life: 0.6 + Math.random() * 0.5,
-        size: [0.3, 0.9],
-        color: BLOOD[2]!,
-        alpha: 0.45,
-        gravity: -0.5,
-        drag: 1.5,
-      })
+  }
+
+  /**
+   * One drop `size` metres across thrown from `at` at `velocity`. It flies as a bead of liquid,
+   * stretching with speed, until it reaches the ground, where it is gone; some leave a stain there as
+   * they land.
+   */
+  private drop(at: { x: number; y: number; z: number }, velocity: [number, number, number], size: number, drag: number, i: number) {
+    const landing = this.flight(at, velocity, drag)
+    this.particles.spawn({
+      position: at,
+      velocity,
+      life: landing?.in ?? DROP_FLIGHT,
+      size: [size, size * 0.85],
+      color: BLOOD[i % BLOOD.length]!,
+      colorEnd: BLOOD_DARK,
+      alpha: 1,
+      gravity: DROP_GRAVITY,
+      drag,
+      stretch: 0.025,
+      shape: 'drop',
+    })
+    if (landing && Math.random() < STAIN_SHARE) {
+      landing.radius = (0.08 + Math.random() * 0.3) * landing.radius
+      this.landings.push(landing)
     }
+  }
+
+  /**
+   * Follows a drop through the air to where it lands: there, seconds from now, with `radius` how
+   * much wider than a gentle drop it splashes; or null if it is still in the air after `DROP_FLIGHT`.
+   */
+  private flight(at: { x: number; y: number; z: number }, velocity: readonly [number, number, number], drag: number): Landing | null {
+    const step = 1 / 30
+    let [x, y, z] = [at.x, at.y, at.z]
+    let [vx, vy, vz] = velocity
+    for (let t = step; t < DROP_FLIGHT; t += step) {
+      const slow = Math.max(0, 1 - drag * step)
+      vx *= slow
+      vz *= slow
+      vy = vy * slow - DROP_GRAVITY * step
+      x += vx * step
+      y += vy * step
+      z += vz * step
+      const ground = this.groundAt(x, z)
+      if (y <= ground) return { x, y: ground, z, radius: Math.min(1.6, 1 + Math.hypot(vx, vz) * 0.08), in: t, spread: 0 }
+    }
+    return null
+  }
+
+  /** A pool spreads under `at` (a body coming to rest) once it lies still, `radius` metres across over `seconds`. */
+  private pool(at: () => { x: number; z: number }, radius: number, seconds: number) {
+    this.landings.push({ x: 0, y: 0, z: 0, radius, in: POOL_AFTER, spread: seconds, follow: at })
   }
 
   /** Makes `at` bleed for `seconds`, `rate` droplets a second, thrown up to `force` m/s. */
@@ -175,17 +290,19 @@ export class Gore {
       const { force } = trail
       const drops = Math.max(1, Math.round(trail.rate * dt))
       for (let d = 0; d < drops; d++) {
-        this.particles.spawn({
-          position: trail.at(),
-          velocity: [spread(force * 0.5), force * (0.4 + Math.random()), spread(force * 0.5)],
-          life: 0.4 + Math.random() * 0.5,
-          size: [0.1 + Math.random() * 0.06, 0.04],
-          color: BLOOD[d % BLOOD.length]!,
-          alpha: 0.85,
-          gravity: 14,
-          drag: 0.4,
-        })
+        const velocity: [number, number, number] = [spread(force * 0.5), force * (0.4 + Math.random()), spread(force * 0.5)]
+        this.drop(trail.at(), velocity, 0.06 + Math.random() * 0.06, 0.4, d)
       }
+    }
+    for (let i = this.landings.length - 1; i >= 0; i--) {
+      const landing = this.landings[i]!
+      landing.in -= dt
+      if (landing.in > 0) continue
+      this.landings.splice(i, 1)
+      if (landing.follow) {
+        const { x, z } = landing.follow()
+        this.stains.blot(x, this.groundAt(x, z), z, landing.radius, landing.spread)
+      } else this.stains.blot(landing.x, landing.y, landing.z, landing.radius, landing.spread)
     }
   }
 }

@@ -26,8 +26,8 @@ export interface ParticleSpec {
   stretch?: number
   /** Multiplies the colour past 1 so it blooms. */
   glow?: number
-  /** `puff` gives smoke a billowy edge. */
-  shape?: 'round' | 'puff'
+  /** `puff` gives smoke a billowy edge; `drop` is a bead of liquid that stays whole until it lands. */
+  shape?: 'round' | 'puff' | 'drop'
 }
 
 /** The darkest a particle gets at night, against its colour by day, so smoke and dust stay readable. */

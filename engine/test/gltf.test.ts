@@ -38,7 +38,7 @@ describe('parseGlb', () => {
     expect(skinned).toBeDefined()
     expect(skinned!.skeleton.bones.length).toBeGreaterThan(5)
     expect(skinned!.skeleton.inverseBind.length).toBe(skinned!.skeleton.bones.length * 16)
-    expect(clips.length).toBe(64)
+    expect(clips.length).toBe(91)
 
     const copy = scene.clone()
     let copied: SkinnedMesh | undefined

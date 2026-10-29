@@ -71,6 +71,21 @@ The legs' effects are `legged()` in `crates/sim/src/lib.rs`. The server copies t
   shoulder.
 - A limb that has just come off is thrown, bleeding, and the stump sprays (`Gore.sever`). A bleeding
   stump drips.
+- Blood stains the ground (`render/bloodstains.ts`, a ring of quads like the skid marks).
+  - Where it comes from:
+    - About 40 % of the drops thrown by a hit, a severed limb or a death leave a stain where they come
+      down, laid when they land.
+    - A bleeding stump's drips stain where they land, and it leaves a spot under the soldier with
+      every drip, a few a second.
+    - A hit on a living soldier sprays out the far side, so the ground behind them is spattered.
+    - A body that dies whole leaves a pool that spreads under it once it lies still.
+    - A soldier with no legs who is still bleeding leaves a smear as they crawl.
+  - How it looks: stains are ragged blots and streaked smears, solid with soft edges and no rim. Their
+    colour, wet sheen and drying come from noise over the ground rather than from each stain, so
+    stains that overlap run together into one puddle. They dry to brown-black and fade over 2 minutes,
+    all in the shader. At most 2000 lie about at once; the oldest are laid over.
+- Drops in the air are beads of liquid (the engine's `drop` particle shape): crisp-edged with a glint,
+  stretched by speed, and whole until they reach the ground, where they end as their stain appears.
 - Callouts:
   - The victim reads "Left leg gone! Bandage it".
   - The shooter reads "Left leg off!" when they hurt that player in the last 1.5 s.

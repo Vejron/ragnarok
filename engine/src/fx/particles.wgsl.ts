@@ -23,6 +23,7 @@ const PF_BOUNCE = 1u;
 const PF_ADDITIVE = 2u;
 const PF_NO_FOG = 4u;
 const PF_PUFF = 8u;
+const PF_DROP = 16u;
 `
 
 /**
@@ -268,7 +269,12 @@ fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) instance: u32) -> 
   let top = frame.viewProj * vec4f(p.posAge.xyz + up * size * 0.5, 1.0);
   let cover = abs(top.y - centre.y) / max(centre.w, 0.01);
   let near = 1.0 - smoothstep(0.7, 1.4, cover);
-  out.color = vec4f(rgb, p.color.a * min(1.0, t * 10.0) * (1.0 - t) * near);
+  var fade = min(1.0, t * 10.0) * (1.0 - t);
+  if ((p.state.y & PF_DROP) != 0u) {
+    // Liquid stays whole all the way: it is gone only where it lands, at the end of its life.
+    fade = 1.0 - smoothstep(0.92, 1.0, t);
+  }
+  out.color = vec4f(rgb, p.color.a * fade * near);
   out.seed = f32(alive[instance] % 97u);
   out.rot = rot;
   out.viewDepth = -(frame.view * vec4f(p.posAge.xyz, 1.0)).z;
@@ -313,6 +319,13 @@ fn fs(in: Out) -> @location(0) vec4f {
     let n = noise(r * 7.0 + in.seed);
     edge = smoothstep(0.5, 0.12, d + (n - 0.5) * 0.34);
   }
+  var shine = 0.0;
+  if ((in.flags & PF_DROP) != 0u) {
+    // A bead of liquid: a crisp edge and a glint up toward the light.
+    let q = in.uv - 0.5;
+    edge = 1.0 - smoothstep(0.36, 0.5, length(q));
+    shine = (1.0 - smoothstep(0.0, 0.16, length(q - vec2f(-0.12, 0.14)))) * 0.6;
+  }
   var alpha = in.color.a * edge;
   if (alpha < 0.01) {
     discard;
@@ -320,7 +333,7 @@ fn fs(in: Out) -> @location(0) vec4f {
   // Soft particles: fade out where the billboard nears what is behind it instead of cutting into it.
   ${sceneDepth}
   alpha *= clamp((scene - in.viewDepth) / max(in.size * 0.5, 0.05), 0.0, 1.0);
-  var rgb = in.color.rgb;
+  var rgb = in.color.rgb + frame.sunColor.rgb * shine * 0.15;
   if ((in.flags & PF_NO_FOG) == 0u && frame.fog.z > 0.0) {
     let f = smoothstep(frame.fog.x, frame.fog.y, in.viewDepth);
     if ((in.flags & PF_ADDITIVE) != 0u) {

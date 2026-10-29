@@ -26,6 +26,7 @@ import { dayPhase } from './render/daynight'
 import { DamageNumbers } from './render/damagenumbers'
 import { Particles } from './render/particles'
 import { Skidmarks } from './render/skidmarks'
+import { Bloodstains } from './render/bloodstains'
 import { type FxWorld } from './render/tyres'
 import { Debris } from './render/debris'
 import { Gore } from './render/gore'
@@ -44,7 +45,7 @@ import { Grass, GRASS_FULL, GRASS_LITE } from './render/grass'
 import { AIM_DISTANCE_SCALE, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, Scene } from './render/scene'
 import { ChaseCam } from './render/chase'
 import { PerfReadout } from './render/perf'
-import { encodeRtc, KIND_STRV, KIND_TANK, LIMB_ALL, LIMB_ARMS, TURRET_ALT } from './net/codec'
+import { encodeRtc, KIND_STRV, KIND_TANK, LIMB_ALL, LIMB_ARMS, LIMB_LEGS, TURRET_ALT } from './net/codec'
 import { TankMusic } from './music'
 import { bleedingOf, limbName, lostOf } from './sim/limbs'
 import { VoiceChat } from './voice'
@@ -181,7 +182,8 @@ export class Game {
   private readonly music = new TankMusic()
   /** Bumpers, doors and wheels that came off. */
   private readonly debris = new Debris(160)
-  private readonly gore = new Gore(this.debris, this.smoke, this.effects)
+  private readonly stains = new Bloodstains()
+  private readonly gore = new Gore(this.debris, this.smoke, this.effects, this.stains, (x, z) => this.scene.groundAt(x, z))
   /** Seconds since the last frame, for what is drawn per vehicle. */
   private frameDt = 0
   private readonly rocketModels = new Rockets()
@@ -300,7 +302,7 @@ export class Game {
     this.scene.scene.add(this.rocketModels.root, this.trails.root)
     this.scene.scene.add(this.pickupModels.root, this.backpackModels.root)
     this.scene.scene.add(this.trajectory.root, this.mortarArc.root)
-    this.scene.scene.add(this.smoke.root, this.glow.root, this.skids.root)
+    this.scene.scene.add(this.smoke.root, this.glow.root, this.stains.root, this.skids.root)
     this.smoke.groundAt = (x, z) => this.scene.groundAt(x, z)
     this.scene.scene.add(this.debris.root)
     this.debris.groundAt = (x, z) => this.scene.groundAt(x, z)
@@ -779,6 +781,7 @@ export class Game {
     this.smoke.update(dt)
     this.glow.update(dt)
     this.skids.update(dt)
+    this.stains.update(dt)
     this.debris.update(dt)
     this.gore.update(dt)
 
@@ -901,7 +904,8 @@ export class Game {
       const avatar = id === null ? undefined : this.avatars.of(id)
       if (id === null || !avatar) continue
       const entity = sampled.get(id)?.entity
-      avatar.setStruck(entity?.struck)
+      const struck = entity?.struck
+      if (avatar.setStruck(struck) && struck && avatar.visible) this.gore.hit(avatar, struck.part, struck.yaw, struck.amount)
       const wire = entity?.limbs?.lost ?? 0
       const gained = avatar.setLimbs(wire)
       if (gained) {
@@ -915,6 +919,10 @@ export class Game {
         this.gore.drip(avatar, bleeding)
         this.drippedAt.set(key, now)
       }
+      // A soldier with no legs crawls, and while a stump bleeds it drags a smear behind it.
+      const legless = (lostOf(wire) & LIMB_LEGS) === LIMB_LEGS
+      if (legless && bleeding && avatar.visible && !avatar.dead) this.gore.drag(`crawl${key}`, avatar)
+      else this.gore.lift(`crawl${key}`)
     }
   }
 
@@ -1121,6 +1129,7 @@ export class Game {
     this.smoke.dispose()
     this.glow.dispose()
     this.skids.dispose()
+    this.stains.dispose()
     this.sounds.dispose()
     this.music.dispose()
     this.debris.dispose()

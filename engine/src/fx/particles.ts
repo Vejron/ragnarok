@@ -34,8 +34,11 @@ export interface ParticleSpec {
   stretch?: number
   /** Multiplies the colour (HDR), so values over 1 bloom. */
   glow?: number
-  /** `puff` gives alpha-blended smoke a billowy, noise-eaten edge instead of a smooth disc. */
-  shape?: 'round' | 'puff'
+  /**
+   * `puff` gives alpha-blended smoke a billowy, noise-eaten edge instead of a smooth disc; `drop` is a
+   * bead of liquid, crisp-edged with a glint, that stays whole until the very end of its life.
+   */
+  shape?: 'round' | 'puff' | 'drop'
 }
 
 /** A burst: `count` particles from one spec, each with its own random values, rolled on the GPU. */
@@ -63,6 +66,7 @@ const PF_BOUNCE = 1
 const PF_ADDITIVE = 2
 const PF_NO_FOG = 4
 const PF_PUFF = 8
+const PF_DROP = 16
 /** Frames between reads of the live count. */
 const COUNT_EVERY = 10
 
@@ -156,7 +160,7 @@ export class ParticleSystem extends Effect {
     w[o + 20] = count
     w[o + 21] = this.spawnCount
     w[o + 22] = this.seed = (this.seed * 1664525 + 1013904223) >>> 0
-    w[o + 23] = (spec.bounce ? PF_BOUNCE : 0) | (spec.blend === 'additive' ? PF_ADDITIVE : 0) | (spec.fog === false ? PF_NO_FOG : 0) | (spec.shape === 'puff' ? PF_PUFF : 0)
+    w[o + 23] = (spec.bounce ? PF_BOUNCE : 0) | (spec.blend === 'additive' ? PF_ADDITIVE : 0) | (spec.fog === false ? PF_NO_FOG : 0) | (spec.shape === 'puff' ? PF_PUFF : 0) | (spec.shape === 'drop' ? PF_DROP : 0)
     const a = toLinear(spec.color, this.color)
     const b = toLinear(color2, this.color2)
     c[o + 24] = a.r; c[o + 25] = a.g; c[o + 26] = a.b
