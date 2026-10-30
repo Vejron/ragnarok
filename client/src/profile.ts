@@ -1,4 +1,5 @@
 import { MAX_NAME_CHARS, MAX_SPAWNS, PLAYER_COLOR_COUNT } from '@/sim/consts'
+import { HOTBAR_SLOTS, ITEM_NONE, LOADOUT_ITEMS } from '@/sim/items'
 
 /**
  * Who the player is: the settings page (`/settings.html`) edits it, the game sends it when it
@@ -68,11 +69,13 @@ export interface Profile {
   color: number | null
   /** Spawn points per world, keyed by world hash, in the order they are used. */
   spawns: Record<string, SpawnPoint[]>
+  /** The item in each hotbar slot at the start of a life, `ITEM_NONE` for empty; each item at most once. Null is the standard loadout. */
+  loadout: number[] | null
 }
 
 const STORAGE_KEY = 'ragnarok.profile'
 
-export const emptyProfile = (): Profile => ({ version: 1, name: '', color: null, spawns: {} })
+export const emptyProfile = (): Profile => ({ version: 1, name: '', color: null, spawns: {}, loadout: null })
 
 /** Characters that are invisible or reorder text. Mirrors `hidden` in `crates/server/src/profile.rs`. */
 const HIDDEN = /[\p{Cc}​-‏‪-‮⁠-⁩﻿]/gu
@@ -87,11 +90,18 @@ export function sanitizeName(name: string): string {
 const isPoint = (value: unknown): value is SpawnPoint =>
   Array.isArray(value) && value.length === 2 && value.every((v) => Number.isInteger(v) && Math.abs(v) < 2 ** 31)
 
+/** Whether `value` is a loadout the server will take. Mirrors `parse_loadout` in `crates/server/src/profile.rs`. */
+const isLoadout = (value: unknown): value is number[] => {
+  if (!Array.isArray(value) || value.length !== HOTBAR_SLOTS) return false
+  const items = value.filter((item) => item !== ITEM_NONE)
+  return items.every((item) => LOADOUT_ITEMS.includes(item)) && new Set(items).size === items.length
+}
+
 /** Whatever is stored, made safe to use: anything malformed is dropped. */
 export function parseProfile(raw: unknown): Profile {
   const profile = emptyProfile()
   if (!raw || typeof raw !== 'object') return profile
-  const { name, color, spawns } = raw as Record<string, unknown>
+  const { name, color, spawns, loadout } = raw as Record<string, unknown>
   if (typeof name === 'string') profile.name = sanitizeName(name)
   if (Number.isInteger(color) && (color as number) >= 0 && (color as number) < PLAYER_COLOR_COUNT) profile.color = color as number
   if (spawns && typeof spawns === 'object') {
@@ -99,6 +109,7 @@ export function parseProfile(raw: unknown): Profile {
       if (Array.isArray(points)) profile.spawns[world] = points.filter(isPoint).slice(0, MAX_SPAWNS)
     }
   }
+  if (isLoadout(loadout)) profile.loadout = loadout
   return profile
 }
 
@@ -127,5 +138,6 @@ export function profileQuery(profile: Profile, worldHash: number): string {
   if (name) params.set('name', name)
   if (profile.color !== null) params.set('color', String(profile.color))
   for (const [x, z] of (profile.spawns[worldKey(worldHash)] ?? []).slice(0, MAX_SPAWNS)) params.append('spawn', `${x},${z}`)
+  if (profile.loadout) params.set('loadout', profile.loadout.join(','))
   return params.toString()
 }

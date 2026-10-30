@@ -12,7 +12,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use shared::carve::{Cut, Shell, Tri};
 use shared::consts::*;
-use shared::items::{HOTBAR_SLOTS, ITEM_AK5, ITEM_BRICKS, ITEM_DRONE, ITEM_FLARE, ITEM_SNIPER, def};
+use shared::items::{HOTBAR_SLOTS, STANDARD_LOADOUT, def};
 use shared::protocol::*;
 use shared::quant::{from_cm, pack_quat, to_axis, to_cm, to_cm_i16, to_milli_i16, to_mrad};
 use shared::world::{Building, ObjId, Tree, WorldFile};
@@ -194,6 +194,7 @@ impl Game {
         if outbox.try_send(Outgoing::Reliable(welcome.into())).is_err() {
             return None;
         }
+        let loadout = profile.loadout.map_or_else(starting_hotbar, hotbar_of);
         self.world.entities.spawn(
             id,
             Player {
@@ -203,7 +204,8 @@ impl Game {
                 input: InputFrame::default(),
                 inputs: JitterBuffer::default(),
                 ack: 0,
-                hotbar: starting_hotbar(),
+                hotbar: loadout,
+                loadout,
                 selected: 0,
                 fire_cooldown: 0,
                 reload_left: 0,
@@ -337,6 +339,7 @@ impl Game {
                 inputs: JitterBuffer::default(),
                 ack: 0,
                 hotbar: starting_hotbar(),
+                loadout: starting_hotbar(),
                 selected: 0,
                 fire_cooldown: 0,
                 reload_left: 0,
@@ -788,7 +791,7 @@ mod tests {
         let (first, mut first_inbox) = join(&mut game);
         let (outbox, mut inbox) = mpsc::channel(256);
         let (reply, mut response) = oneshot::channel();
-        game.handle(Command::Join { outbox, reply, profile: Profile { name: "Åsa".into(), color: Some(5), spawns: vec![] } });
+        game.handle(Command::Join { outbox, reply, profile: Profile { name: "Åsa".into(), color: Some(5), ..Default::default() } });
         let second = response.try_recv().unwrap().unwrap();
         let first_colour = (first % PLAYER_COLOR_COUNT as u32) as u8;
         assert_eq!(profiles(drain(&mut inbox)), vec![vec![(first, format!("Player {first}"), first_colour, TEAM_NONE, 0), (second, "Åsa".into(), 5, TEAM_NONE, 0)]]);

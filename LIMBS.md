@@ -37,8 +37,15 @@ the soldier's own frame (`limb_at`):
 | arm | between hip and head, `ARM_ZONE_X` (0.25 m) or more out to the side | out to the side at the front |
 | torso | everything else | everything else |
 
-The side is the one the round struck, as the soldier faces. A round through where a limb was strikes the
-torso.
+The side is the one the round struck, as the soldier faces.
+
+A lost limb is not there to be hit (`past_lost_limbs` in `life.rs`). A round's path through the soldier
+is followed in 2 cm steps, and it strikes the first point that is not where a lost limb was:
+- From behind, through where a leg was, it misses and flies on to whatever is behind.
+- From the side, through where an arm was, it goes on into the chest.
+
+So all four limbs can be shot off and the soldier lives. Only the head or the torso running out kills,
+and a round through empty space never reaches either.
 
 ## What a lost limb does
 

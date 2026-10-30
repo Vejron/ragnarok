@@ -6,7 +6,7 @@ use super::spawn;
 use super::projectiles::{self, Flying, Stage};
 use crate::entities::{Health, HurtBy, Respawn, With};
 use crate::events::Hooks;
-use crate::game::{Bot, Damaged, Died, Drone, Player, Seats, TEAM_NONE, Vehicle, World, Wreck, starting_hotbar};
+use crate::game::{Bot, Damaged, Died, Drone, Player, Seats, TEAM_NONE, Vehicle, World, Wreck};
 use sim::Obj;
 use shared::consts::*;
 use shared::armor::Pen;
@@ -961,7 +961,6 @@ impl Mechanic for Combat {
     fn on_tick(&mut self, world: &mut World, dt: f32) {
         let ids = world.entities.ids::<With<Player>>();
         for id in ids {
-            let loadout = world.entities.get::<Bot>(id).and_then(|bot| bot.loadout);
             let alive = world.entities.alive(id);
             // `Life` counts a dead player's `Respawn` down; at zero they come back here, at a spawn point.
             let due = !alive && world.entities.get::<Respawn>(id).is_some_and(|respawn| respawn.left == 0);
@@ -969,8 +968,8 @@ impl Mechanic for Combat {
             player.fire_cooldown = player.fire_cooldown.saturating_sub(1);
             if !alive {
                 if due {
-                    // A fresh life starts with the standard loadout, or a scenario bot's own.
-                    player.hotbar = loadout.unwrap_or_else(starting_hotbar);
+                    // A fresh life starts with the player's own loadout.
+                    player.hotbar = player.loadout;
                     player.interrupt();
                     if let Some(mut health) = world.entities.get_mut::<Health>(id) {
                         health.hp = health.max;

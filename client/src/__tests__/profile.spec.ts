@@ -3,6 +3,7 @@ import {
   allies, colorFor, emptyProfile, forgetAllPlayers, forgetPlayer, isBot, loadProfile, nameFor, parseProfile, PLAYER_COLORS, profileQuery,
   sanitizeName, saveProfile, setPlayer, teamFor, worldKey,
 } from '@/profile'
+import { ITEM_GOLDEN_EGG } from '@/sim/items'
 
 describe('profile', () => {
   afterEach(() => {
@@ -21,8 +22,20 @@ describe('profile', () => {
   it('keeps only what is well formed from storage', () => {
     expect(parseProfile(null)).toEqual(emptyProfile())
     expect(parseProfile({ name: ' Åsa ', color: 99, spawns: { a: [[1, 2], [1.5, 2], 'x', [3, 4], [5, 6], [7, 8], [9, 10], [11, 12]], b: 'no' } })).toEqual({
-      version: 1, name: 'Åsa', color: null, spawns: { a: [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]] },
+      version: 1, name: 'Åsa', color: null, spawns: { a: [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]] }, loadout: null,
     })
+  })
+
+  it('keeps a loadout only if the server would take it', () => {
+    expect(parseProfile({ loadout: [2, 0, 13, 0, 11] }).loadout).toEqual([2, 0, 13, 0, 11])
+    for (const loadout of [[2, 5], [2, 2, 10, 8, 11], [2, ITEM_GOLDEN_EGG, 10, 8, 11], [2, 99, 10, 8, 11], [2, 'x', 10, 8, 11], 'no']) {
+      expect(parseProfile({ loadout }).loadout).toBeNull()
+    }
+  })
+
+  it('sends a chosen loadout, and nothing for the standard one', () => {
+    expect(profileQuery({ ...emptyProfile(), loadout: [2, 0, 13, 0, 11] }, 7)).toBe('loadout=2%2C0%2C13%2C0%2C11')
+    expect(profileQuery(emptyProfile(), 7)).toBe('')
   })
 
   it('saves and loads, and survives junk in storage', () => {

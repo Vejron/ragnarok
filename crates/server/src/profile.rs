@@ -1,7 +1,8 @@
 //! The player's own settings, sent as query parameters on the `/transport` URL when they connect:
-//! `name=Åsa&color=3&spawn=1200,-4500&spawn=...`. Set on the client's `/settings.html` page.
+//! `name=Åsa&color=3&spawn=1200,-4500&spawn=...&loadout=2,5,0,8,11`. Set on the client's `/settings.html` page.
 
 use shared::consts::{MAX_NAME_CHARS, MAX_SPAWNS, PLAYER_COLOR_COUNT};
+use shared::items::{HOTBAR_SLOTS, ITEM_NONE, can_start_with};
 
 /// What a player chose, cleaned up. Spawns are not checked against the world here; `Game::join`
 /// drops the ones that are not usable.
@@ -13,6 +14,9 @@ pub struct Profile {
     pub color: Option<u8>,
     /// Spawn points `[x, z]`, centimetres, in the order they are used. At most `MAX_SPAWNS`.
     pub spawns: Vec<[i32; 2]>,
+    /// The item in each hotbar slot at the start of a life, `ITEM_NONE` for an empty one; each item at
+    /// most once. `None` for the standard loadout.
+    pub loadout: Option<[u8; HOTBAR_SLOTS]>,
 }
 
 /// Characters that are invisible or reorder text, which a name could use to hide or spoof another.
@@ -27,6 +31,20 @@ pub fn clean_name(name: &str) -> String {
     visible.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(MAX_NAME_CHARS).collect::<String>().trim_end().to_string()
 }
 
+/// `2,5,0,8,11`, one item a slot. `None` unless it is a loadout a player can choose as a whole.
+fn parse_loadout(value: &str) -> Option<[u8; HOTBAR_SLOTS]> {
+    let mut items = [ITEM_NONE; HOTBAR_SLOTS];
+    let mut values = value.split(',');
+    for slot in 0..HOTBAR_SLOTS {
+        let item = values.next()?.trim().parse::<u8>().ok()?;
+        if item != ITEM_NONE && (!can_start_with(item) || items.contains(&item)) {
+            return None;
+        }
+        items[slot] = item;
+    }
+    values.next().is_none().then_some(items)
+}
+
 impl Profile {
     /// Reads the query parameters, ignoring any it does not know and any value that does not parse.
     pub fn from_query<'a>(pairs: impl IntoIterator<Item = (&'a str, &'a str)>) -> Self {
@@ -35,6 +53,7 @@ impl Profile {
             match key {
                 "name" => profile.name = clean_name(value),
                 "color" => profile.color = value.parse::<u8>().ok().filter(|&color| color < PLAYER_COLOR_COUNT),
+                "loadout" => profile.loadout = parse_loadout(value),
                 "spawn" if profile.spawns.len() < MAX_SPAWNS => {
                     if let Some((x, z)) = value.split_once(',')
                         && let (Ok(x), Ok(z)) = (x.trim().parse::<i32>(), z.trim().parse::<i32>())
@@ -55,8 +74,8 @@ mod tests {
 
     #[test]
     fn a_full_profile_is_read() {
-        let profile = Profile::from_query([("name", "Åsa"), ("color", "3"), ("spawn", "1200,-4500"), ("spawn", "0,7"), ("class", "medic")]);
-        assert_eq!(profile, Profile { name: "Åsa".into(), color: Some(3), spawns: vec![[1200, -4500], [0, 7]] });
+        let profile = Profile::from_query([("name", "Åsa"), ("color", "3"), ("spawn", "1200,-4500"), ("spawn", "0,7"), ("loadout", "2,0,13,8,11"), ("class", "medic")]);
+        assert_eq!(profile, Profile { name: "Åsa".into(), color: Some(3), spawns: vec![[1200, -4500], [0, 7]], loadout: Some([2, 0, 13, 8, 11]) });
     }
 
     #[test]
@@ -79,6 +98,14 @@ mod tests {
         assert_eq!(Profile::from_query([("color", "-1")]).color, None);
         assert_eq!(Profile::from_query([("color", "red")]).color, None);
         assert_eq!(Profile::from_query([("color", "11")]).color, Some(11));
+    }
+
+    #[test]
+    fn a_loadout_that_cannot_be_chosen_is_dropped_whole() {
+        for junk in ["", "2,5,8", "2,5,10,8,11,1", "2,5,x,8,11", "2,2,10,8,11", "2,6,10,8,11", "2,14,10,8,11", "2,300,10,8,11"] {
+            assert_eq!(Profile::from_query([("loadout", junk)]).loadout, None, "{junk:?}");
+        }
+        assert_eq!(Profile::from_query([("loadout", "0,0,0,0,0")]).loadout, Some([0; HOTBAR_SLOTS]), "empty slots may repeat");
     }
 
     #[test]

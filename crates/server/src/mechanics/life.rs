@@ -100,7 +100,7 @@ pub fn first_hurtbox_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f3
                 _ => max,
             };
             let limit = best.map_or(reach, |(_, t)| t.min(reach));
-            if let Some(t) = ray_capsule(origin, dir, body.centre, body.half_height, body.radius, limit)
+            if let Some(t) = ray_capsule(origin, dir, body.centre, body.half_height, body.radius, limit).and_then(|t| past_lost_limbs(&body, player, super::limbs::lost(world, id), origin, dir, t, limit))
                 && best.is_none_or(|(other, at)| t < at || (t == at && id < other))
             {
                 best = Some((id, t));
@@ -108,6 +108,33 @@ pub fn first_hurtbox_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f3
         }
         best
     })?
+}
+
+/// How far along the ray a round entering `body` at `entry` first meets something of it: a soldier's
+/// lost limbs (`lost`) are not there, so a round goes on through where one was, into the body behind it if the
+/// way lies through that, and out the other side if not (none: it missed). Within `limit`.
+fn past_lost_limbs(body: &Body, player: Option<&Player>, lost: u8, origin: [f32; 3], dir: [f32; 3], entry: f32, limit: f32) -> Option<f32> {
+    let Some(character) = player.map(|player| &player.character).filter(|_| lost != 0 && body.vehicle.is_none()) else { return Some(entry) };
+    // Steps of 2 cm through the capsule, as far as it is long.
+    const STEP: f32 = 0.02;
+    let length = 2.0 * (body.half_height + body.radius);
+    let mut t = entry;
+    while t <= (entry + length).min(limit) {
+        let p: [f32; 3] = std::array::from_fn(|i| origin[i] + dir[i] * t);
+        let dy = (p[1] - body.centre[1]).clamp(-body.half_height, body.half_height);
+        let off = [p[0] - body.centre[0], p[1] - body.centre[1] - dy, p[2] - body.centre[2]];
+        let inside = off.iter().map(|v| v * v).sum::<f32>() <= (body.radius + 1e-3).powi(2);
+        if !inside && t > entry + STEP {
+            return None;
+        }
+        let head = body.head_y.is_some_and(|head| p[1] > head);
+        let gone = !head && super::limbs::limb_at(body.centre, character.yaw, character.prone, p).is_some_and(|limb| lost & limb != 0);
+        if inside && !gone {
+            return Some(t);
+        }
+        t += STEP;
+    }
+    None
 }
 
 /// Notes where every living body is, once a tick has finished, in its `Trail`.

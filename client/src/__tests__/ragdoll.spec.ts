@@ -71,7 +71,7 @@ describe('Ragdolls', () => {
     // Blown apart, or gone from view.
     ragdolls.update([], [0, 0, 0], 1 / 60)
     expect(live.size).toBe(0)
-    expect(a.log.at(-1)).toBe('drive')
+    expect(a.log[a.log.length - 1]).toBe('drive')
     // A soldier already dead is never made one.
     ragdolls.update([soldier(2, body(), true, true)], [0, 0, 0], 1 / 60)
     expect(live.size).toBe(0)

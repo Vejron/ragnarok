@@ -1,6 +1,6 @@
 use super::*;
 use crate::entities::Health;
-use crate::game::{Command, Game, Outgoing};
+use crate::game::{Command, Game, Outgoing, Profile, starting_hotbar};
 use sim::STANDING_Y;
 use shared::protocol::{HIT_BODY, HIT_DEALT, HIT_KILL, HIT_TAKEN, InputFrame, LIMB_ALL, LIMB_ARM_L, LIMB_ARM_R, LIMB_BLEED_SHIFT, LIMB_LEG_L, LIMB_LEG_R, LIMB_LEGS, Snapshot, WEAPON_SNIPER, WEAPON_GRENADE, WEAPON_LAUNCHER, WEAPON_ROCKET, WEAPON_BULLET, WEAPON_FLARE, WEAPON_REVOLVER, WEAPON_PELLET, WEAPON_SHOTGUN, decode};
 use shared::quant::to_mrad;
@@ -697,6 +697,28 @@ fn a_new_life_starts_with_the_standard_loadout() {
     assert_eq!(hotbar[2].count, def(ITEM_FLARE).unwrap().stack, "a full stack of flares");
     let _ = &mut seq;
 }
+#[test]
+fn a_chosen_loadout_is_held_on_joining_and_again_after_every_death() {
+    let mut game = game();
+    let (outbox, _inbox) = mpsc::channel(4096);
+    let (reply, mut id) = tokio::sync::oneshot::channel();
+    let items = [ITEM_SHOTGUN, ITEM_NONE, ITEM_GRENADE, ITEM_AT_RIFLE, ITEM_BANDAGE];
+    game.handle(Command::Join { outbox, reply, profile: Profile { loadout: Some(items), ..Default::default() } });
+    let id = id.try_recv().unwrap().unwrap();
+    let carried = |game: &Game| game.world.entities.of::<Player>(id).hotbar;
+    assert_eq!(carried(&game).map(|slot| slot.item), items);
+    assert_eq!(carried(&game)[2].count, def(ITEM_GRENADE).unwrap().stack, "a full stack of grenades");
+    assert_eq!(carried(&game)[0].ammo, def(ITEM_SHOTGUN).unwrap().mag, "a full magazine");
+    assert_eq!((carried(&game)[1].count, carried(&game)[1].ammo), (0, 0), "an empty slot holds nothing");
+    let fresh = carried(&game);
+
+    damage_entity(&mut game.world, id, Harm::new(PLAYER_MAX_HP, None, WEAPON_RIFLE));
+    let mut seq = 0;
+    hold(&mut game, id, &mut seq, 0.0, 0, RESPAWN_TICKS);
+    assert!(game.world.entities.alive(id));
+    assert_eq!(carried(&game), fresh);
+}
+
 /// A game on a world with one solid pine at (10, 0), identified as tile (2, 3) index 0.
 fn game_with_tree() -> (Game, Obj) {
     use shared::world::{ObjId, TREE_PINE, Tree};
@@ -1595,4 +1617,36 @@ fn knocked_down_shows_as_its_own_stance_and_the_owner_is_told_how_long() {
     let shown = game.replicated().into_iter().find(|(id, _)| *id == target).unwrap().1;
     assert_eq!(shown.flags.map(|flags| flags.stance), Some(STANCE_DOWN));
     assert_eq!(shown.vitals.map(|vitals| vitals.down), Some(down_of(&game, target)));
+}
+
+/// One sniper round from `origin` along `dir`.
+fn sniper_round(game: &mut Game, shooter: u32, origin: [f32; 3], dir: [f32; 3]) {
+    let gun = def(ITEM_SNIPER).unwrap();
+    let round = Round { damage: gun.damage, vehicle: 1, plane: 1, weapon: gun.weapon, range: gun.range, falloff: gun.falloff, pen: gun.pen };
+    hitscan(&mut game.world, shooter, origin, dir, &round, 0, 0);
+}
+
+#[test]
+fn a_soldier_sniped_limb_by_limb_lives_and_rounds_go_through_where_the_limbs_were() {
+    let (mut game, shooter, target, _, _) = duel();
+    let [x, y, z] = game.world.entities.of::<Player>(target).character.position;
+    // They face -z, so their right is +x. From behind them, at 10 m.
+    let legs = [[x + 0.15, y - 0.5, z + 10.0], [x - 0.15, y - 0.5, z + 10.0]];
+    let arms = [[x + 0.3, y + 0.2, z + 10.0], [x - 0.3, y + 0.2, z + 10.0]];
+    let back = [0.0, 0.0, -1.0];
+    for origin in legs.iter().chain(&arms) {
+        sniper_round(&mut game, shooter, *origin, back);
+    }
+    assert_eq!(wounds_of(&game, target).lost, LIMB_ALL, "a sniper round takes each limb off");
+    assert!(game.world.entities.alive(target));
+    assert_eq!(hp_of(&game, target), PLAYER_MAX_HP, "and none of it reached the torso");
+    // Again, through where the limbs were: nothing there to hit.
+    for origin in legs.iter().chain(&arms) {
+        sniper_round(&mut game, shooter, *origin, back);
+    }
+    assert_eq!(hp_of(&game, target), PLAYER_MAX_HP, "rounds through empty space miss");
+    // From the side through where the right arm was, the round goes on into the chest.
+    sniper_round(&mut game, shooter, [x + 10.0, y + 0.2, z], [-1.0, 0.0, 0.0]);
+    assert_eq!(hp_of(&game, target), PLAYER_MAX_HP - def(ITEM_SNIPER).unwrap().damage);
+    assert!(game.world.entities.alive(target));
 }

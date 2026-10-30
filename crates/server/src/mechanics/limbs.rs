@@ -107,7 +107,8 @@ pub fn limb_struck(world: &World, victim: u32, point: [f32; 3], back: u32) -> Op
     }
     let player = world.entities.get::<Player>(victim)?;
     let limb = limb_at(body.centre, player.character.yaw, player.character.prone, point)?;
-    // A round through where a limb was strikes the body.
+    // A round goes on through where a limb was (`past_lost_limbs`), so it seldom stops there; when it
+    // does, by a hair, it is the body's.
     (lost(world, victim) & limb == 0).then_some(limb)
 }
 

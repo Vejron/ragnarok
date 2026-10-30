@@ -2,6 +2,8 @@
 import { computed, onMounted, ref, shallowRef, watch } from 'vue'
 import { cssColor, loadProfile, PLAYER_COLORS, sanitizeName, saveProfile, worldKey, type SpawnPoint } from '@/profile'
 import { MAX_NAME_CHARS, MAX_SPAWNS } from '@/sim/consts'
+import { HOTBAR_ICONS } from '@/hotbarIcons'
+import { ITEM_NONE, itemDef, LOADOUT_ITEMS, STANDARD_LOADOUT } from '@/sim/items'
 import { insideWorld, mapToWorld, worldToMap } from '@/sim/minimap'
 import { loadManifest, WORLD_BASE, type WorldData } from '@/world'
 
@@ -68,6 +70,23 @@ function onNameBlur() {
 
 function pickColor(index: number) {
   profile.value = { ...profile.value, color: index }
+}
+
+/** What each slot starts with, standard or chosen. */
+const loadout = computed(() => profile.value.loadout ?? STANDARD_LOADOUT)
+const customLoadout = computed(() => profile.value.loadout !== null)
+
+/** Puts `item` in `slot`; if another slot holds it, the two swap, so an item is only ever there once. */
+function pickItem(slot: number, item: number) {
+  const next = [...loadout.value]
+  const other = next.indexOf(item)
+  if (item !== ITEM_NONE && other >= 0) next[other] = next[slot]!
+  next[slot] = item
+  profile.value = { ...profile.value, loadout: next }
+}
+
+function resetLoadout() {
+  profile.value = { ...profile.value, loadout: null }
 }
 
 function addSpawn(event: MouseEvent) {
@@ -155,6 +174,24 @@ const metres = ([x, z]: SpawnPoint) => `${Math.round(x / 100)} m E, ${Math.round
       </div>
     </section>
 
+    <section class="card">
+      <div class="heading">
+        <h2>Starting weapons</h2>
+        <button v-if="customLoadout" type="button" class="reset" @click="resetLoadout">Use standard</button>
+      </div>
+      <p class="hint">What you carry at the start of every life, in hotbar order. Each item fits once. Applies the next time you join.</p>
+      <ol class="loadout">
+        <li v-for="(item, slot) in loadout" :key="slot">
+          <label :for="`slot-${slot}`">Slot {{ slot + 1 }}</label>
+          <svg viewBox="0 0 24 24" width="48" height="48" aria-hidden="true" v-html="HOTBAR_ICONS[item] ?? ''" />
+          <select :id="`slot-${slot}`" :value="item" @change="pickItem(slot, Number(($event.target as HTMLSelectElement).value))">
+            <option :value="ITEM_NONE">Empty</option>
+            <option v-for="choice in LOADOUT_ITEMS" :key="choice" :value="choice">{{ itemDef(choice)!.name }}</option>
+          </select>
+        </li>
+      </ol>
+    </section>
+
     <section class="card spawns">
       <h2>Spawn points</h2>
       <p class="hint">
@@ -229,6 +266,19 @@ input {
 input:focus { outline: none; border-color: #3a86ff; }
 .hint { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
 .error { color: #b3261e; font-weight: 700; }
+.heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; }
+.reset {
+  font: inherit; font-size: 13px; font-weight: 800; padding: 5px 12px; border-radius: 999px; border: 2px solid var(--line);
+  background: white; color: var(--ink); cursor: pointer;
+}
+.loadout { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.loadout li { display: grid; justify-items: center; gap: 6px; padding: 10px; border-radius: 12px; border: 2px solid var(--line); }
+.loadout svg { color: var(--ink); }
+.loadout select {
+  font: inherit; font-size: 14px; font-weight: 700; width: 100%; padding: 6px 8px; border-radius: 8px; border: 2px solid var(--line);
+  color: var(--ink); background: white;
+}
+.loadout select:focus { outline: none; border-color: #3a86ff; }
 .swatches { display: flex; flex-wrap: wrap; gap: 8px; }
 .swatches button {
   width: 34px; height: 34px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 0 2px var(--line); cursor: pointer;

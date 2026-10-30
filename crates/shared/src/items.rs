@@ -35,6 +35,9 @@ pub const ITEM_AT_RIFLE: u8 = 13;
 /// One past the largest item id.
 pub const ITEM_COUNT: u8 = 14;
 
+/// What a soldier carries, a slot each, unless their player chose otherwise (`can_start_with`).
+pub const STANDARD_LOADOUT: [u8; HOTBAR_SLOTS] = [ITEM_AK5, ITEM_SNIPER, ITEM_FLARE, ITEM_DRONE, ITEM_BRICKS];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ItemKind {
     /// A hitscan weapon fired from the eye.
@@ -414,6 +417,11 @@ const AT_RIFLE: ItemDef = ItemDef {
     weight: 1,
 };
 
+/// Whether a player may choose to start with `item`: anything but what only a rooster gives.
+pub fn can_start_with(item: u8) -> bool {
+    item != ITEM_GOLDEN_EGG && def(item).is_some()
+}
+
 /// The definition of `item`; `None` for an empty slot or an unknown id.
 pub fn def(item: u8) -> Option<&'static ItemDef> {
     match item {
@@ -609,13 +617,15 @@ mod tests {
             ("GRENADE_BOUNCE", GRENADE_BOUNCE.to_string()),
             ("PICKUP_RADIUS", PICKUP_RADIUS.to_string()),
         ];
+        let standard: Vec<String> = STANDARD_LOADOUT.iter().map(u8::to_string).collect();
         let lines: Vec<String> = consts.iter().map(|(name, value)| format!("    \"{name}\": {value}")).collect();
         format!(
-            "{{\n  \"items\": [\n{}\n  ],\n  \"vehicles\": [\n{}\n  ],\n  \"treeKinds\": [\n{}\n  ],\n  \"materials\": [\n{}\n  ],\n  \"consts\": {{\n{}\n  }}\n}}\n",
+            "{{\n  \"items\": [\n{}\n  ],\n  \"vehicles\": [\n{}\n  ],\n  \"treeKinds\": [\n{}\n  ],\n  \"materials\": [\n{}\n  ],\n  \"standardLoadout\": [{}],\n  \"consts\": {{\n{}\n  }}\n}}\n",
             items.join(",\n"),
             vehicles.join(",\n"),
             tree_kinds.join(",\n"),
             materials.join(",\n"),
+            standard.join(", "),
             lines.join(",\n")
         )
     }

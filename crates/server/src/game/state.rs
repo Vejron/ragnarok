@@ -36,12 +36,15 @@ pub struct Seat {
     pub remote: bool,
 }
 
-/// What a player holds at the start of every life: the AK5 and the sniper rifle with full magazines,
-/// a flare gun with a full stack of flares, an FPV drone and bricks to build with. The loitering drone
-/// is found lying about.
+/// A hotbar of `items`, one a slot, with full magazines and full stacks. `ITEM_NONE` is an empty slot.
+pub fn hotbar_of(items: [u8; HOTBAR_SLOTS]) -> [ItemSlot; HOTBAR_SLOTS] {
+    items.map(|item| def(item).map_or(ItemSlot::default(), |d| ItemSlot { item, count: d.stack, ammo: d.mag }))
+}
+
+/// What a player holds at the start of every life unless they chose otherwise: the AK5 and the sniper
+/// rifle, a flare gun, an FPV drone and bricks to build with. The loitering drone is found lying about.
 pub fn starting_hotbar() -> [ItemSlot; HOTBAR_SLOTS] {
-    let full = |item: u8| ItemSlot { item, count: def(item).map_or(1, |d| d.stack), ammo: def(item).map_or(0, |d| d.mag) };
-    [full(ITEM_AK5), full(ITEM_SNIPER), full(ITEM_FLARE), full(ITEM_DRONE), full(ITEM_BRICKS)]
+    hotbar_of(STANDARD_LOADOUT)
 }
 
 /// A soldier, a connected player's or a bot's: a component on the player's entity. Passes over players
@@ -60,6 +63,8 @@ pub struct Player {
     pub ack: u32,
     /// What is in each hotbar slot: `[item, count, ammo]`.
     pub hotbar: [ItemSlot; HOTBAR_SLOTS],
+    /// What it holds at the start of every life: its player's choice, or a scenario squad's.
+    pub loadout: [ItemSlot; HOTBAR_SLOTS],
     /// The slot in hand, as of the last tick.
     pub selected: usize,
     /// Ticks until the item in hand can be used again.
@@ -158,8 +163,6 @@ pub struct Bot {
     /// Where the last hit it took came from (the attacker, or a blast's centre), until it has
     /// turned that way.
     pub hit_from: Option<[f32; 3]>,
-    /// What it holds at the start of every life, when not the standard loadout.
-    pub loadout: Option<[ItemSlot; HOTBAR_SLOTS]>,
     /// The vehicle it crews and its seat there, when it is one of a tank's crew.
     pub crew: Option<Crew>,
     /// A driver backing out of being stuck: ticks left of it, and how often it has tried on the way
@@ -205,7 +208,6 @@ impl Bot {
             strafe: 0,
             strafe_left: 0,
             hit_from: None,
-            loadout: None,
             crew: None,
             reverse_left: 0,
             tries: 0,

@@ -44,6 +44,7 @@
   "materials": [
     {"id": 0, "name": "Brick", "hp": 40, "blastReach": 1}
   ],
+  "standardLoadout": [2, 5, 10, 8, 11],
   "consts": {
     "TICK_RATE": 60,
     "HOTBAR_SLOTS": 5,

@@ -97,6 +97,12 @@ const DEFS: Record<number, ItemDef> = Object.fromEntries(
   }),
 )
 
+/** What a soldier carries, a slot each, unless their player chose otherwise. */
+export const STANDARD_LOADOUT: readonly number[] = tables.standardLoadout
+
+/** The items a player can start with: all but what only a rooster gives. Mirrors `can_start_with`. */
+export const LOADOUT_ITEMS: readonly number[] = Object.keys(DEFS).map(Number).filter((item) => item !== ITEM_GOLDEN_EGG)
+
 /** The definition of `item`; undefined for an empty slot or an unknown id. */
 export const itemDef = (item: number): ItemDef | undefined => DEFS[item]
 
