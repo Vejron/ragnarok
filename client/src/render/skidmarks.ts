@@ -1,5 +1,4 @@
-import { Color, Geometry, Mesh, ShaderMaterial } from '@ragnarok/engine'
-import type * as THREE from 'three'
+import { Color, Geometry, Mesh, ShaderMaterial, type Vector3 } from '@ragnarok/engine'
 import { GROUND_LIGHT_WGSL } from './groundlight'
 
 /** Seconds a mark takes to fade away. */
@@ -24,9 +23,9 @@ fn surface(s: Surface) -> vec4f {
 `
 
 interface Track {
-  left: THREE.Vector3
-  right: THREE.Vector3
-  centre: THREE.Vector3
+  left: Vector3
+  right: Vector3
+  centre: Vector3
 }
 
 /**
@@ -85,7 +84,7 @@ export class Skidmarks {
    * Wheel `track` is marking the ground at `centre`, `width` metres across along `side` (a unit
    * vector), with `color` at `alpha`. Joins on to the wheel's last mark if it has one.
    */
-  mark(track: string, centre: THREE.Vector3, side: THREE.Vector3, width: number, color: number, alpha: number) {
+  mark(track: string, centre: Vector3, side: Vector3, width: number, color: number, alpha: number) {
     const left = centre.clone().addScaledVector(side, -width / 2)
     const right = centre.clone().addScaledVector(side, width / 2)
     left.y += LIFT
@@ -104,7 +103,7 @@ export class Skidmarks {
     this.tracks.delete(track)
   }
 
-  private quad(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, d: THREE.Vector3, color: number, alpha: number) {
+  private quad(a: Vector3, b: Vector3, c: Vector3, d: Vector3, color: number, alpha: number) {
     const quad = this.next
     this.next = (this.next + 1) % this.capacity
     this.written++

@@ -1,11 +1,9 @@
-import { CRATER_FADE, Group, type Scene } from '@ragnarok/engine'
-import type * as THREE from 'three'
-import { OBJ_BUILDING, OBJ_TREE, type Built, type CarvedBuilding, type CraterEntry, type DamagedBuilding, type DestroyedObject, type DugTile } from './net/codec'
+import { CRATER_FADE, Group, type Scene, type Vector3 } from '@ragnarok/engine'
+import { OBJ_TREE, type Built, type CarvedBuilding, type CraterEntry, type DamagedBuilding, type DestroyedObject, type DugTile } from './net/codec'
 import type { Effects } from './render/effects'
 import { FallingTrees, type TreeFx, type TreeNoise } from './render/falling'
 import { BuildingDamage } from './render/damage'
 import { ConstructView } from './render/construct'
-import { Collapses } from './render/rubble'
 import { disposeTile, rebuildBuildings, remeshTerrain, replaceRibbons, restitchTerrain, shadeTerrain, tileGroup } from './render/world'
 import { ribbonsOf } from './render/groundmesh'
 import { TileWorker } from './render/tileworker'
@@ -30,6 +28,12 @@ export const tileKey = (col: number, row: number) => row * 65536 + col
 
 /** Keeps a tile's building colours stable between reloads and varied across tiles. */
 const tileSalt = (ref: TileRef) => ref.col * 31 + ref.row * 17
+
+/** The eight tiles around one. */
+const AROUND = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]] as const
+
+/** A tile's heights in whole centimetres, as the physics takes them. */
+const centimetres = (heights: Float32Array) => Int32Array.from(heights, (h) => Math.round(h * 100))
 
 const sameSet = (a: ReadonlySet<number>, b: ReadonlySet<number>) => a.size === b.size && [...a].every((x) => b.has(x))
 
@@ -94,8 +98,6 @@ export class WorldView {
   /** Trees that fell, by tile then index, with the way they fell: replayed onto tiles that stream in later. */
   private readonly fellTrees = new Map<number, Map<number, number>>()
   private readonly fallingTrees = new FallingTrees()
-  private readonly goneBuildings = new Map<number, Map<number, number>>()
-  private readonly collapses = new Collapses()
   /** Carved buildings, by tile, whose colliders are to be reshaped at the next `update`: a barrage does it once a frame, not once a hit. */
   private readonly reshape = new Map<number, Set<number>>()
   /** Chunks of cubes that changed since the last `update`, to redraw and to give to the physics. */
@@ -136,11 +138,10 @@ export class WorldView {
   }
 
   /** Advances the falling trees, collapsing buildings and shards. */
-  update(dt: number, effects: Effects, camera: THREE.Vector3, fx: TreeFx) {
+  update(dt: number, effects: Effects, camera: Vector3, fx: TreeFx) {
     this.fallingTrees.update(dt, fx)
-    this.collapses.update(dt, effects, fx.smoke)
     this.damage.update(dt, effects, camera, fx.smoke)
-    for (const [key, indices] of this.reshape) this.dropBuildingColliders(key, indices)
+    for (const [key, indices] of this.reshape) this.reshapeBuildings(key, indices)
     this.reshape.clear()
     this.updateCubes(dt, effects)
     // Marks that have faded out are dropped from the ground's shader.
@@ -392,7 +393,7 @@ export class WorldView {
       ground.heights.set(loaded.tile.ground)
       layDug(ground, loaded.tile.ground, runs)
       for (const crater of this.craters) if (reaches(ground, crater)) digInto(ground, loaded.tile.ground, crater)
-      this.motor?.setTileGround({ col, row }, Int32Array.from(ground.heights, (h) => Math.round(h * 100)))
+      this.motor?.setTileGround({ col, row }, centimetres(ground.heights))
       this.grass?.regrowTile({ col, row })
       this.reground(key)
     }
@@ -431,7 +432,7 @@ export class WorldView {
       const { col, row } = tileOf(key)
       const ground = this.terrain?.get(col, row)
       if (!ground) continue
-      this.motor?.setTileGround({ col, row }, Int32Array.from(ground.heights, (h) => Math.round(h * 100)))
+      this.motor?.setTileGround({ col, row }, centimetres(ground.heights))
       this.reground(key)
     }
   }
@@ -473,7 +474,7 @@ export class WorldView {
     shadeTerrain(group, reliefPixels(ground, this.terrain ?? undefined, loaded.tile.detail))
     replaceRibbons(group, ribbonsOf(loaded.tile, ground, this.terrain ?? undefined))
     if (!this.terrain) return
-    for (const [dc, dr] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]] as const) {
+    for (const [dc, dr] of AROUND) {
       const next = this.groups.get(tileKey(col + dc, row + dr))
       if (next) restitchTerrain(next, this.terrain)
     }
@@ -495,18 +496,13 @@ export class WorldView {
     const fromWorker = this.prepared.get(key)
     this.prepared.delete(key)
     const prepared = fromWorker ?? prepareTile(this.tileInput(ref, tile, tile, 0), this.terrain ?? undefined)
-    // Buildings that fell, or are hurt and drawn by `damage` as shards, are not drawn with the tile.
-    // More of them may have come down while the worker prepared it.
+    // Buildings hurt and drawn by `damage` as shards are not drawn with the tile. More of them may
+    // have been hit while the worker prepared it.
     const undrawn = this.undrawnBuildings(key)
-    // [ghost] temporary: which buildings this tile is attached without, and whether the worker's copy had them
-    console.info('[ghost] attach', { col: ref.col, row: ref.row, fromWorker: !!fromWorker, undrawn: [...undrawn], workerUndrawn: prepared.undrawn, carved: [...this.damage.carved(key).keys()], fractured: this.damage.fractured(key) })
     if (!sameSet(new Set(prepared.undrawn), undrawn)) {
       prepared.buildings = buildingBuffers(tile, salt, undrawn)
       prepared.undrawn = [...undrawn]
-      console.info('[ghost] attach rebuilt buildings', { col: ref.col, row: ref.row })
     }
-    // Buildings that fell before this tile streamed in (or while it was away) settle as rubble.
-    const down = new Set(this.goneBuildings.get(key)?.keys())
     const group = tileGroup(tile, ground, prepared)
     this.scene.add(group)
     const water = ground && prepared.draped ? buildWater(tile, ground, this.terrain ?? undefined, prepared.draped.water) : null
@@ -521,7 +517,7 @@ export class WorldView {
     // Tiles already in place were shaded without this one beside them: close the seams. The worker
     // does that itself for the tiles it prepared (`onShaded`).
     if (this.terrain && ground && !fromWorker) {
-      for (const [dc, dr] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]] as const) {
+      for (const [dc, dr] of AROUND) {
         const next = this.groups.get(tileKey(ref.col + dc, ref.row + dr))
         if (next) restitchTerrain(next, this.terrain)
       }
@@ -530,15 +526,12 @@ export class WorldView {
     this.loaded.set(key, { tile, salt })
     // The file's ground is flat of craters: the physics is given the dug one, and so is the worker's copy if the ground changed after it prepared.
     if (ground && (this.dugTiles.has(key) || this.craters.some((crater) => reaches(ground, crater)))) {
-      this.motor?.setTileGround(ref, Int32Array.from(ground.heights, (h) => Math.round(h * 100)))
+      this.motor?.setTileGround(ref, centimetres(ground.heights))
       if (fromWorker && this.preparedWith.get(key) !== this.groundEdits) queueMicrotask(() => this.reground(key))
     }
     this.preparedWith.delete(key)
     this.damage.attach(key, tile, salt)
-    if (down.size > 0 || this.damage.carved(key).size > 0) {
-      this.dropBuildingColliders(key)
-      for (const index of down) Collapses.settled(group, tile, index)
-    }
+    if (this.damage.carved(key).size > 0) this.reshapeBuildings(key)
     // Trees that fell before this tile streamed in (or while it was away) are already down.
     for (const [index, yaw] of this.fellTrees.get(key) ?? []) this.fellTree(key, index, yaw, false)
     return () => {
@@ -573,24 +566,16 @@ export class WorldView {
     if (waiting) waiting.relief = relief
   }
 
-  /** The server says these buildings and trees are gone. `animate` is false for the catch-up on joining. */
+  /** The server says these trees are down. `animate` is false for the catch-up on joining. */
   destroyed(objects: readonly DestroyedObject[], animate: boolean) {
     for (const object of objects) {
+      if (object.kind !== OBJ_TREE) continue
       const key = tileKey(object.col, object.row)
-      if (object.kind === OBJ_TREE) {
-        const fell = this.fellTrees.get(key) ?? new Map<number, number>()
-        this.fellTrees.set(key, fell)
-        if (fell.has(object.index)) continue
-        fell.set(object.index, object.yaw)
-        this.fellTree(key, object.index, object.yaw, animate, object.force)
-      } else if (object.kind === OBJ_BUILDING) {
-        const gone = this.goneBuildings.get(key) ?? new Map<number, number>()
-        this.goneBuildings.set(key, gone)
-        if (gone.has(object.index)) continue
-        gone.set(object.index, object.yaw)
-        this.damage.fell(key, object.index)
-        this.fellBuilding(key, object.index, object.yaw, animate)
-      }
+      const fell = this.fellTrees.get(key) ?? new Map<number, number>()
+      this.fellTrees.set(key, fell)
+      if (fell.has(object.index)) continue
+      fell.set(object.index, object.yaw)
+      this.fellTree(key, object.index, object.yaw, animate, object.force)
     }
   }
 
@@ -602,10 +587,7 @@ export class WorldView {
   carved(buildings: readonly CarvedBuilding[], live: boolean) {
     for (const b of buildings) {
       const key = tileKey(b.col, b.row)
-      if (this.goneBuildings.get(key)?.has(b.index)) continue
       const first = this.damage.carve(key, b.index, b.blasted, b.fell, live ? b.point : null, live)
-      // [ghost] temporary: each carve as it arrives, and whether its tile is drawn right now
-      console.info('[ghost] carved', { col: b.col, row: b.row, index: b.index, live, blasted: b.blasted.length, fell: b.fell.length, first, tileLoaded: this.loaded.has(key), groupDrawn: this.groups.has(key) })
       const dirty = this.reshape.get(key) ?? new Set<number>()
       dirty.add(b.index)
       this.reshape.set(key, dirty)
@@ -632,7 +614,6 @@ export class WorldView {
     const carved = this.damage.carved(key)
     let best: { index: number; cell: number; distance: number } | null = null
     tile.buildings.forEach((building, index) => {
-      if (this.goneBuildings.get(key)?.has(index)) return
       // Only a building the round ended within a metre or two of is worth cutting into cells.
       const xs = building.footprint.map((p) => p[0])
       const zs = building.footprint.map((p) => p[1])
@@ -657,9 +638,37 @@ export class WorldView {
   damaged(buildings: readonly DamagedBuilding[]) {
     for (const b of buildings) {
       const key = tileKey(b.col, b.row)
-      if (this.goneBuildings.get(key)?.has(b.index)) continue
       this.damage.hurtBuilding(key, b.index, b.stage)
     }
+  }
+
+  /** Whether the world is as its files have it: nothing a server said has changed it. */
+  get pristine() {
+    return this.fellTrees.size === 0 && this.damage.untouched && this.dugTiles.size === 0 && this.marked.length === 0 && this.construct.size === 0
+  }
+
+  /**
+   * Forgets everything the server said about the world, for a new session: what it says next is all of
+   * it, and the server may have started over. Every tile must be detached first (`TileStreamer.reload`).
+   */
+  reset() {
+    this.fellTrees.clear()
+    this.fallingTrees.clear()
+    this.damage.reset()
+    this.reshape.clear()
+    this.dugTiles.clear()
+    this.craters.length = 0
+    this.marked.length = 0
+    this.groundEdits++
+    this.scene.craters.clear()
+    this.smoulders.clear()
+    this.predicted.clear()
+    this.dusted.length = 0
+    for (const key of this.construct.keys()) {
+      this.rebuilt.add(key)
+      this.unsolid.add(key)
+    }
+    this.construct.clear()
   }
 
   dispose() {
@@ -683,39 +692,18 @@ export class WorldView {
     this.motor?.fellTree(col, row, index)
   }
 
-  /** The buildings of tile `key` its own drawing leaves out: those that fell, and those drawn as shards instead. */
+  /** The buildings of tile `key` its own drawing leaves out: those drawn as shards instead. */
   private undrawnBuildings(key: number): Set<number> {
-    const out = new Set(this.goneBuildings.get(key)?.keys())
-    for (const index of this.damage.fractured(key)) out.add(index)
-    return out
+    return new Set(this.damage.fractured(key))
   }
 
-  /** Rebuilds tile `key`'s building colliders in both simulations without the buildings that fell, or just the carved buildings `only`. */
-  private dropBuildingColliders(key: number, only?: ReadonlySet<number>) {
+  /** Gives tile `key`'s carved buildings (or just `only`) their shape in both simulations. */
+  private reshapeBuildings(key: number, only?: ReadonlySet<number>) {
     const loaded = this.loaded.get(key)
     if (!loaded || loaded.tile.collision.triangles.length === 0) return
-    // Given `only`, just those carved buildings are reshaped; the rest are as they were.
-    const down = only ? new Set<number>() : new Set(this.goneBuildings.get(key)?.keys())
     const carved = this.damage.carved(key)
     if (only) for (const index of carved.keys()) if (!only.has(index)) carved.delete(index)
     const { col, row } = tileOf(key)
-    this.motor?.setBuildings(col, row, down, carved)
-  }
-
-  /**
-   * Brings building `index` of tile `key` down, if that tile is loaded: it is redrawn without
-   * it, it stops being solid in both simulations, and it collapses in front of the player.
-   */
-  private fellBuilding(key: number, index: number, yaw: number, animate: boolean) {
-    const group = this.groups.get(key)
-    const loaded = this.loaded.get(key)
-    if (!group || !loaded || !loaded.tile.buildings[index]) return
-    rebuildBuildings(group, loaded.tile, loaded.salt, this.undrawnBuildings(key))
-    this.dropBuildingColliders(key)
-    if (animate) {
-      this.collapses.start(group, loaded.tile, index, loaded.salt, yaw, (x, z) => this.terrain?.heightAt(x, z) ?? 0, key * 1_000_003 + index)
-    } else {
-      Collapses.settled(group, loaded.tile, index)
-    }
+    this.motor?.setBuildings(col, row, carved)
   }
 }

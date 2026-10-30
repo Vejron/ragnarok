@@ -32,6 +32,17 @@ function setup() {
 }
 
 describe('TileStreamer', () => {
+  it('attaches the same tiles afresh after a reload', async () => {
+    const { streamer, attached } = setup()
+    await streamer.prime(-450, -450)
+    const before = new Set(attached)
+    streamer.reload()
+    expect(attached.size).toBe(0)
+    expect(streamer.loaded).toBe(0)
+    await streamer.prime(-450, -450)
+    expect(attached).toEqual(before)
+  })
+
   it('loads the tiles around the player and no others', async () => {
     const { streamer, attached } = setup()
     await streamer.prime(-450, -450)

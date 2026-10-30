@@ -1,3 +1,4 @@
+use shared::vec3;
 use super::Mechanic;
 use super::armor::Outcome;
 use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
@@ -169,8 +170,8 @@ pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
             continue;
         }
         let c = &mut player.character;
-        let away: [f32; 3] = std::array::from_fn(|i| c.position[i] - blast.point[i]);
-        let distance = away.iter().map(|v| v * v).sum::<f32>().sqrt();
+        let away: [f32; 3] = vec3::sub(c.position, blast.point);
+        let distance = vec3::length(away);
         let reach = blast.radius * BLAST_PUSH_REACH;
         if distance >= reach || blast.knock <= 0.0 {
             continue;
@@ -224,7 +225,7 @@ pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
             Obj::Tree(id) => {
                 let Some(tree) = world.tree(id) else { continue };
                 let at = [tree.x as f32 / 100.0, tree.base as f32 / 100.0 + tree.trunk_height() as f32 / 200.0, tree.z as f32 / 100.0];
-                ((0..3).map(|i| (at[i] - blast.point[i]).powi(2)).sum::<f32>().sqrt(), BLAST_TREE_SCALE)
+                (vec3::distance(at, blast.point), BLAST_TREE_SCALE)
             }
             // A wall takes the blast at its nearest face, not from the middle of the house.
             Obj::Building(id) => match distance_to_building(world, id, blast.point) {
@@ -249,9 +250,6 @@ const CARVE_MIN_RADIUS: f32 = 0.8;
 
 /// Takes a bite out of standing building `id` where `blast` landed. A blast that was weak by the time it reached the wall bites less.
 fn bite_building(world: &mut World, id: shared::world::ObjId, blast: &Blast, falloff: f32) {
-    if world.destroyed.iter().any(|&(done, _)| done == Obj::Building(id)) {
-        return;
-    }
     let radius = blast.radius * CARVE_REACH * (0.5 + 0.5 * falloff);
     if radius < CARVE_MIN_RADIUS {
         return;
@@ -261,17 +259,11 @@ fn bite_building(world: &mut World, id: shared::world::ObjId, blast: &Blast, fal
 
 /// A round of `damage` lands on standing building `id` at `point`.
 fn chip_building(world: &mut World, id: shared::world::ObjId, point: [f32; 3], damage: u8) {
-    if world.destroyed.iter().any(|&(done, _)| done == Obj::Building(id)) {
-        return;
-    }
     world.chip(id, point, damage);
 }
 
 /// Cuts `radius` metres of standing building `id` away around `point`.
 fn take_bite(world: &mut World, id: shared::world::ObjId, point: [f32; 3], radius: f32) {
-    if world.destroyed.iter().any(|&(done, _)| done == Obj::Building(id)) {
-        return;
-    }
     world.carve(id, point, radius);
 }
 
@@ -326,7 +318,7 @@ const FORCE_PER_HEALTH: f32 = 64.0;
 /// building never comes down: its health stops at 1, the worst damage stage, which it shows by colour.
 /// Returns whether this destroyed it.
 pub fn damage_object(world: &mut World, object: Obj, amount: u16, from: [f32; 3]) -> bool {
-    if amount == 0 || world.destroyed.iter().any(|&(done, _)| done == object) {
+    if amount == 0 || world.felled.contains(&object) {
         return false;
     }
     // Full health and where it stands, in metres.
@@ -354,7 +346,7 @@ pub fn damage_object(world: &mut World, object: Obj, amount: u16, from: [f32; 3]
             let worse = before.is_some_and(|before| stage > before);
             let marked = amount >= DAMAGE_MARK_MIN;
             if worse || marked {
-                world.fresh_damaged.push((id, stage, marked.then_some(from)));
+                world.fresh.damaged.push((id, stage, marked.then_some(from)));
             }
         }
         return false;
@@ -366,10 +358,11 @@ pub fn damage_object(world: &mut World, object: Obj, amount: u16, from: [f32; 3]
     // `look`'s convention: yaw 0 faces -Z.
     let yaw = to_mrad((-(at[0] - from[0])).atan2(-(at[1] - from[2])));
     world.destroyed.push((object, yaw));
+    world.felled.insert(object);
     // How hard it was hit, for the way it falls: a killing blow of its own health is 64, and
     // four times that or more is the most violent a client shows.
     let force = (amount as f32 / full.max(1) as f32 * FORCE_PER_HEALTH).min(255.0) as u8;
-    world.fresh_destroyed.push((object, yaw, force));
+    world.fresh.destroyed.push((object, yaw, force));
     true
 }
 
@@ -386,6 +379,10 @@ fn distance_to_building(world: &World, id: shared::world::ObjId, point: [f32; 3]
 /// Takes `amount` health off vehicle `vid`, and says so (`Damaged`, with who was aboard). Wrecks it at zero.
 pub fn damage_vehicle(world: &mut World, vid: u32, amount: u8, attacker: Option<u32>) {
     let Some(seated) = world.entities.get::<Seats>(vid).map(|seats| seats.riders().collect::<Vec<u32>>()) else { return };
+    // A crew's own side spares it, as it spares them on foot.
+    if attacker.is_some_and(|by| seated.iter().any(|&rider| rider != by && same_team(world, by, rider))) {
+        return;
+    }
     let Some(mut health) = world.entities.get_mut::<Health>(vid) else { return };
     if !health.alive() || amount == 0 {
         return;
@@ -425,7 +422,7 @@ fn wreck(world: &mut World, vid: u32) {
             player.seat = None;
             player.character.position = pose.position;
         }
-        damage_entity(world, id, Harm::new(PLAYER_MAX_HP, attacker, WEAPON_WRECK));
+        damage_entity(world, id, Harm::new(PLAYER_MAX_HP, attacker, WEAPON_WRECK).unsparing());
     }
     let [x, y, z] = pose.position.map(to_cm);
     world.shots.push(ShotEvent { shooter: attacker.unwrap_or(0), weapon: WEAPON_WRECK, x, y, z });
@@ -454,7 +451,6 @@ fn wreck(world: &mut World, vid: u32) {
     tracing::debug!(vid, "vehicle wrecked");
 }
 
-
 /// Fires a rocket from player `id`'s launcher `launcher` (an `ITEM_*`), from the eye towards what the
 /// crosshair is on (along the look down its sight). The launch is a shot event of the launcher's weapon
 /// where the rocket leaves, and the blast is as hard as the launcher's damage.
@@ -463,7 +459,7 @@ fn fire_rocket(world: &mut World, id: u32, launcher: u8) {
     let Some(Aim { origin: eye, dir, .. }) = aim(world, id, item) else { return };
     // Up against a wall it bursts right there instead of starting on its far side.
     let reach = world.physics.cast_ray(eye, dir, ROCKET_MUZZLE, 0);
-    let start: [f32; 3] = std::array::from_fn(|i| eye[i] + dir[i] * reach.unwrap_or(ROCKET_MUZZLE));
+    let start: [f32; 3] = vec3::along(eye, dir, reach.unwrap_or(ROCKET_MUZZLE));
     let [x, y, z] = start.map(to_cm);
     world.shots.push(ShotEvent { shooter: id, weapon: item.weapon, x, y, z });
     make_noise(world, eye, Some(id), HEAR_BLAST);
@@ -471,20 +467,8 @@ fn fire_rocket(world: &mut World, id: u32, launcher: u8) {
         projectiles::burst_at(world, PROJECTILE_ROCKET, launcher, id, start, dir);
         return;
     }
-    world.launch(Flying {
-        kind: PROJECTILE_ROCKET,
-        owner: id,
-        source: 0,
-        position: start,
-        velocity: dir.map(|v| v * ROCKET_SPEED),
-        ttl: ROCKET_TTL_TICKS,
-        item: launcher,
-        back: 0,
-        flown: 0.0,
-    });
+    world.launch(Flying::new(PROJECTILE_ROCKET, id, start, dir.map(|v| v * ROCKET_SPEED), ROCKET_TTL_TICKS).of(launcher));
 }
-
-
 
 /// A unit vector `spread` radians at most from `dir`, uniformly in a cone.
 pub fn scatter(world: &mut World, dir: [f32; 3], spread: f32) -> [f32; 3] {
@@ -517,12 +501,12 @@ fn crosshair_dir(world: &World, shooter: u32, back: u32, pivot: [f32; 3], eye: [
     let wall = world.physics.cast_ray(pivot, look_dir, range, ignore).unwrap_or(range);
     let t = first_hurtbox_hit(world, pivot, look_dir, wall, Some(shooter), back, None).map_or(wall, |(_, t)| t);
     let to: [f32; 3] = std::array::from_fn(|i| pivot[i] + look_dir[i] * t - eye[i]);
-    let len = to.iter().map(|v| v * v).sum::<f32>().sqrt();
+    let len = vec3::length(to);
     if len < 1e-3 {
         return look_dir;
     }
     let dir = to.map(|v| v / len);
-    let along: f32 = (0..3).map(|i| dir[i] * look_dir[i]).sum();
+    let along: f32 = vec3::dot(dir, look_dir);
     if along < 0.5 { look_dir } else { dir }
 }
 
@@ -589,7 +573,6 @@ struct Aim {
 fn aim(world: &mut World, id: u32, item: &ItemDef) -> Option<Aim> {
     let player = world.entities.get::<Player>(id)?;
     let input = player.input;
-    let c = player.character;
     let pitch = from_mrad(input.pitch()).clamp(-MAX_PITCH, MAX_PITCH);
     let yaw = from_mrad(input.yaw);
     let look_dir = look(yaw, pitch);
@@ -598,10 +581,10 @@ fn aim(world: &mut World, id: u32, item: &ItemDef) -> Option<Aim> {
     // on foot, of the head in a seat. A seated round leaves from the head and through the vehicle.
     let right = [yaw.cos(), 0.0, -yaw.sin()];
     let (origin, pivot, vehicle) = match world.seated_head(id) {
-        Some((vehicle, head)) => (head, std::array::from_fn(|i| head[i] + right[i] * PASSENGER_SHOULDER + if i == 1 { PASSENGER_HEIGHT } else { 0.0 }), vehicle),
+        Some((vehicle, head)) => (head, [head[0] + right[0] * PASSENGER_SHOULDER, head[1] + PASSENGER_HEIGHT, head[2] + right[2] * PASSENGER_SHOULDER], vehicle),
         None => (
-            [c.position[0], c.position[1] + eye_height(input.buttons(), c.prone), c.position[2]],
-            std::array::from_fn(|i| c.position[i] + right[i] * ON_FOOT_SHOULDER + if i == 1 { ON_FOOT_HEIGHT } else { 0.0 }),
+            player.eye(),
+            player.pivot(),
             0,
         ),
     };
@@ -629,17 +612,7 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
         // The round leaves the eye and flies on its own, so it takes time to arrive and drops a little.
         let velocity = dir.map(|v| v * BULLET_SPEED);
         let gun = gun_for_weapon(item.weapon);
-        let bullet_id = world.launch(Flying {
-            kind: PROJECTILE_BULLET,
-            owner: id,
-            source: vehicle,
-            position: origin,
-            velocity,
-            ttl: (item.range / BULLET_SPEED * TICK_RATE as f32).ceil() as u32,
-            item: gun,
-            back,
-            flown: 0.0,
-        });
+        let bullet_id = world.launch(Flying::new(PROJECTILE_BULLET, id, origin, velocity, (item.range / BULLET_SPEED * TICK_RATE as f32).ceil() as u32).aboard(vehicle).of(gun).rewound(back));
         // Clients fly it themselves from this: where, which way, how fast, and when.
         let [x, y, z] = origin.map(to_cm);
         let [vx, vy, vz] = velocity.map(to_cm_i16);
@@ -743,14 +716,14 @@ pub fn land(world: &mut World, flight: &Flight, met: &Strike, round: &Round) {
     let dealt = round.falloff.apply(round.damage, flown + end);
     if let Some((victim, t)) = hit {
         let head = is_headshot(world, victim, origin, dir, t, back);
-        let point = std::array::from_fn(|i| origin[i] + dir[i] * t);
+        let point = vec3::along(origin, dir, t);
         let limb = if head { None } else { super::limbs::limb_struck(world, victim, point, back) };
         // Where on the body, for the wound to be drawn there.
-        let offset = body(world, victim, back).filter(|body| body.vehicle.is_none()).map(|body| std::array::from_fn(|i| point[i] - body.anchor[i]));
+        let offset = body(world, victim, back).filter(|body| body.vehicle.is_none()).map(|body| vec3::sub(point, body.anchor));
         damage_entity(world, victim, Harm::new(dealt, attacker, round.weapon).head(head).limb(limb).at(point, offset));
     } else if let Some((_, Some(car))) = wall {
         let canvas = world.entities.get::<Vehicle>(car).is_some_and(|vehicle| vehicle_def(vehicle.kind).armor.canvas);
-        let point = std::array::from_fn(|i| origin[i] + dir[i] * reach);
+        let point = vec3::along(origin, dir, reach);
         // A round that does not get through the plate only strikes sparks off it.
         match super::armor::armor_of(world, car, origin, dir, reach, round.pen.at(flown + reach)) {
             Some(outcome @ (Outcome::Ricochet { .. } | Outcome::Blocked { .. })) => super::armor::report(world, car, &outcome, point, dir, round.pen.calibre, Default::default(), attacker),
@@ -776,46 +749,30 @@ pub fn land(world: &mut World, flight: &Flight, met: &Strike, round: &Round) {
     }
 }
 
-/// Throws a grenade from player `id`'s eye, a little above where they look so it arcs.
-fn throw_grenade(world: &mut World, id: u32) {
-    let Some(player) = world.entities.get::<Player>(id) else { return };
+/// Where a thing lobbed by player `id` starts and which way it goes: from their eye, `loft` radians above
+/// where they look and `muzzle` metres out, or at the wall if one is nearer, its `radius` clear of it.
+fn lob(world: &World, id: u32, loft: f32, muzzle: f32, radius: f32) -> Option<([f32; 3], [f32; 3])> {
+    let player = world.entities.get::<Player>(id)?;
     let input = player.input;
-    let c = player.character;
-    let pitch = (from_mrad(input.pitch()) + GRENADE_LOFT).clamp(-MAX_PITCH, MAX_PITCH);
-    let dir = look(from_mrad(input.yaw), pitch);
-    let eye = [c.position[0], c.position[1] + eye_height(input.buttons(), c.prone), c.position[2]];
-    // Up against a wall it starts at the wall instead of on its far side.
-    let reach = world.physics.cast_ray(eye, dir, GRENADE_MUZZLE + GRENADE_RADIUS, 0).map_or(GRENADE_MUZZLE, |t| (t - GRENADE_RADIUS).max(0.0));
-    world.launch(Flying {
-        kind: PROJECTILE_GRENADE,
-        owner: id,
-        source: 0,
-        position: std::array::from_fn(|i| eye[i] + dir[i] * reach),
-        velocity: dir.map(|v| v * GRENADE_SPEED),
-        ttl: GRENADE_FUSE_TICKS,
-        item: 0,
-        back: 0,
-        flown: 0.0,
-    });
+    let dir = look(from_mrad(input.yaw), (from_mrad(input.pitch()) + loft).clamp(-MAX_PITCH, MAX_PITCH));
+    let eye = player.eye();
+    let reach = world.physics.cast_ray(eye, dir, muzzle + radius, 0).map_or(muzzle, |t| (t - radius).max(0.0));
+    Some((vec3::along(eye, dir, reach), dir))
 }
 
-
+/// Throws a grenade from player `id`'s eye, a little above where they look so it arcs.
+fn throw_grenade(world: &mut World, id: u32) {
+    let Some((position, dir)) = lob(world, id, GRENADE_LOFT, GRENADE_MUZZLE, GRENADE_RADIUS) else { return };
+    world.launch(Flying::new(PROJECTILE_GRENADE, id, position, dir.map(|v| v * GRENADE_SPEED), GRENADE_FUSE_TICKS));
+}
 
 /// Fires a flare from player `id`'s eye, well above where they look so it goes up.
 fn fire_flare(world: &mut World, id: u32) {
-    let Some(player) = world.entities.get::<Player>(id) else { return };
-    let input = player.input;
-    let c = player.character;
-    let dir = look(from_mrad(input.yaw), (from_mrad(input.pitch()) + FLARE_LOFT).clamp(-MAX_PITCH, MAX_PITCH));
-    let eye = [c.position[0], c.position[1] + eye_height(input.buttons(), c.prone), c.position[2]];
-    // Up against a wall it starts at the wall instead of on its far side.
-    let reach = world.physics.cast_ray(eye, dir, FLARE_MUZZLE + FLARE_RADIUS, 0).map_or(FLARE_MUZZLE, |t| (t - FLARE_RADIUS).max(0.0));
-    let position: [f32; 3] = std::array::from_fn(|i| eye[i] + dir[i] * reach);
+    let Some((position, dir)) = lob(world, id, FLARE_LOFT, FLARE_MUZZLE, FLARE_RADIUS) else { return };
     let [x, y, z] = position.map(to_cm);
     world.shots.push(ShotEvent { shooter: id, weapon: WEAPON_FLARE, x, y, z });
-    world.launch(Flying { kind: PROJECTILE_FLARE, owner: id, source: 0, position, velocity: dir.map(|v| v * FLARE_SPEED), ttl: FLARE_BURN_TICKS, item: 0, back: 0, flown: 0.0 });
+    world.launch(Flying::new(PROJECTILE_FLARE, id, position, dir.map(|v| v * FLARE_SPEED), FLARE_BURN_TICKS));
 }
-
 
 /// The slot in hand after it has been used once: one fewer, and empty when none are left.
 fn spend(slot: &mut ItemSlot) {
@@ -836,13 +793,13 @@ fn use_item(world: &mut World, id: u32) {
     let mut player = world.entities.of_mut::<Player>(id);
     let buttons = player.input.buttons();
     let slot = (player.input.slot() as usize).min(HOTBAR_SLOTS - 1);
-    if slot != player.selected {
-        player.selected = slot;
+    if slot != player.hands.selected {
+        player.hands.selected = slot;
         player.interrupt();
     }
     let pressed = buttons & BUTTON_FIRE != 0;
-    let fresh = pressed && !player.trigger_held;
-    player.trigger_held = pressed;
+    let fresh = pressed && !player.hands.trigger_held;
+    player.hands.trigger_held = pressed;
     let held = player.held();
     // In a seat only a car's passengers use anything, and only their guns.
     if seat.is_some() && (!passenger || def(held.item).is_none_or(|item| item.kind != ItemKind::Gun)) {
@@ -861,68 +818,62 @@ fn use_item(world: &mut World, id: u32) {
     }
     match item.kind {
         ItemKind::Gun => {
-            if player.reload_left > 0 {
-                player.reload_left -= 1;
-                if player.reload_left == 0 {
-                    player.hotbar[slot].ammo = item.mag;
+            if player.hands.reload_left > 0 {
+                player.hands.reload_left -= 1;
+                if player.hands.reload_left == 0 {
+                    player.hands.hotbar[slot].ammo = item.mag;
                 }
                 return;
             }
             let empty = held.ammo == 0;
             let wants_reload = buttons & BUTTON_RELOAD != 0 || (empty && (pressed));
             if wants_reload && held.ammo < item.mag {
-                player.reload_left = item.reload_ticks * if lost & LIMB_ARMS != 0 { ONE_ARM_RELOAD } else { 1 };
+                player.hands.reload_left = item.reload_ticks * if lost & LIMB_ARMS != 0 { ONE_ARM_RELOAD } else { 1 };
                 return;
             }
             let trigger = if item.auto { pressed } else { fresh };
-            if trigger && player.fire_cooldown == 0 && !empty {
-                player.fire_cooldown = item.cooldown_ticks;
-                player.hotbar[slot].ammo -= 1;
+            if trigger && player.hands.fire_cooldown == 0 && !empty {
+                player.hands.fire_cooldown = item.cooldown_ticks;
+                player.hands.hotbar[slot].ammo -= 1;
                 fire_gun(world, id, &item);
             }
         }
-        ItemKind::Grenade => {
-            if fresh && player.fire_cooldown == 0 && projectiles::count(&world.entities, None) < MAX_ROCKETS + MAX_GRENADES {
+        ItemKind::Grenade | ItemKind::Launcher | ItemKind::Flare => {
+            let ready = fresh && player.hands.fire_cooldown == 0;
+            let room = match item.kind {
+                ItemKind::Grenade => projectiles::count(&world.entities, None) < MAX_ROCKETS + MAX_GRENADES,
+                ItemKind::Launcher => projectiles::count(&world.entities, Some(PROJECTILE_ROCKET)) < MAX_ROCKETS,
+                _ => projectiles::count(&world.entities, Some(PROJECTILE_FLARE)) < MAX_FLARES,
+            };
+            if ready && room {
                 let mut player = world.entities.of_mut::<Player>(id);
-                player.fire_cooldown = item.cooldown_ticks;
-                spend(&mut player.hotbar[slot]);
-                throw_grenade(world, id);
-            }
-        }
-        ItemKind::Launcher => {
-            if fresh && player.fire_cooldown == 0 && projectiles::count(&world.entities, Some(PROJECTILE_ROCKET)) < MAX_ROCKETS {
-                let mut player = world.entities.of_mut::<Player>(id);
-                player.fire_cooldown = item.cooldown_ticks;
-                spend(&mut player.hotbar[slot]);
-                fire_rocket(world, id, held.item);
-            }
-        }
-        ItemKind::Flare => {
-            if fresh && player.fire_cooldown == 0 && projectiles::count(&world.entities, Some(PROJECTILE_FLARE)) < MAX_FLARES {
-                let mut player = world.entities.of_mut::<Player>(id);
-                player.fire_cooldown = item.cooldown_ticks;
-                spend(&mut player.hotbar[slot]);
-                fire_flare(world, id);
+                player.hands.fire_cooldown = item.cooldown_ticks;
+                spend(&mut player.hands.hotbar[slot]);
+                match item.kind {
+                    ItemKind::Grenade => throw_grenade(world, id),
+                    ItemKind::Launcher => fire_rocket(world, id, held.item),
+                    _ => fire_flare(world, id),
+                }
             }
         }
         ItemKind::Drone(kind) => {
-            if fresh && player.fire_cooldown == 0 && super::drones::launch(world, id, kind) {
+            if fresh && player.hands.fire_cooldown == 0 && super::drones::launch(world, id, kind) {
                 let mut player = world.entities.get_mut::<Player>(id).expect("checked above");
-                player.fire_cooldown = item.cooldown_ticks;
-                spend(&mut player.hotbar[slot]);
+                player.hands.fire_cooldown = item.cooldown_ticks;
+                spend(&mut player.hands.hotbar[slot]);
             }
         }
         ItemKind::Build => {
-            if pressed && player.fire_cooldown == 0 {
-                player.fire_cooldown = item.cooldown_ticks;
+            if pressed && player.hands.fire_cooldown == 0 {
+                player.hands.fire_cooldown = item.cooldown_ticks;
                 super::building::use_bricks(world, id, buttons & BUTTON_ALT != 0);
             }
         }
         ItemKind::Heal => {
-            if player.channel_left > 0 {
-                player.channel_left -= 1;
-                if player.channel_left == 0 {
-                    spend(&mut player.hotbar[slot]);
+            if player.hands.channel_left > 0 {
+                player.hands.channel_left -= 1;
+                if player.hands.channel_left == 0 {
+                    spend(&mut player.hands.hotbar[slot]);
                     {
                         let mut health = world.entities.of_mut::<Health>(id);
                         health.hp = health.hp.saturating_add(item.damage).min(PLAYER_MAX_HP);
@@ -931,7 +882,7 @@ fn use_item(world: &mut World, id: u32) {
                     super::limbs::bandaged(world, id);
                 }
             } else if fresh && (hp < PLAYER_MAX_HP || hurt) {
-                player.channel_left = BANDAGE_TICKS;
+                player.hands.channel_left = BANDAGE_TICKS;
             }
         }
     }
@@ -940,14 +891,14 @@ fn use_item(world: &mut World, id: u32) {
 /// A bandage needs a steady hand: any hurt spoils one being put on.
 fn spoil_bandage(world: &mut World, damaged: &Damaged) {
     if let Some(mut player) = world.entities.get_mut::<Player>(damaged.victim) {
-        player.channel_left = 0;
+        player.hands.channel_left = 0;
     }
 }
 
 /// The dead let go of what they held: a reload or a bandage half done, and the wait to fire again.
 fn let_go(world: &mut World, died: &Died) {
     if let Some(mut player) = world.entities.get_mut::<Player>(died.victim) {
-        player.fire_cooldown = 0;
+        player.hands.fire_cooldown = 0;
         player.interrupt();
     }
 }
@@ -965,11 +916,11 @@ impl Mechanic for Combat {
             // `Life` counts a dead player's `Respawn` down; at zero they come back here, at a spawn point.
             let due = !alive && world.entities.get::<Respawn>(id).is_some_and(|respawn| respawn.left == 0);
             let Some(mut player) = world.entities.get_mut::<Player>(id) else { continue };
-            player.fire_cooldown = player.fire_cooldown.saturating_sub(1);
+            player.hands.fire_cooldown = player.hands.fire_cooldown.saturating_sub(1);
             if !alive {
                 if due {
                     // A fresh life starts with the player's own loadout.
-                    player.hotbar = player.loadout;
+                    player.hands.hotbar = player.hands.loadout;
                     player.interrupt();
                     if let Some(mut health) = world.entities.get_mut::<Health>(id) {
                         health.hp = health.max;

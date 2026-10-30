@@ -1,6 +1,6 @@
 /** What a plane's crew sees: the gauges on the HUD, and the pilot's two markers on the screen. */
 
-import * as THREE from 'three'
+import { Vector3 } from '@ragnarok/engine'
 import type { Arms } from '@/entities/units'
 import type { HudStats } from '@/hud'
 import { ARMS_JAMMED, ARMS_REAR_JAMMED } from '@/net/codec'
@@ -27,17 +27,17 @@ export function cockpit(arms: Arms | null, pilot: boolean, motion: VehicleFx | u
  * which is where the guns point a little way out, and the aim, the heading the mouse asks for (`yaw`,
  * `pitch`). Given every frame, apart from the HUD stats, which are throttled, so they move smoothly.
  */
-export function pilotSights(camera: { project(point: THREE.Vector3): unknown }, plane: PlaneModel, yaw: number, pitch: number): { nose: [number, number] | null; aim: [number, number] | null } {
-  const toScreen = (point: THREE.Vector3): [number, number] | null => {
+export function pilotSights(camera: { project(point: Vector3): unknown }, plane: PlaneModel, yaw: number, pitch: number): { nose: [number, number] | null; aim: [number, number] | null } {
+  const toScreen = (point: Vector3): [number, number] | null => {
     // Kept on the screen: the view may be a way behind the aim.
     if (!camera.project(point)) return null
     return [clamp01((point.x + 1) / 2), clamp01((1 - point.y) / 2)]
   }
   const { origin, direction } = plane.forwardGun(0)
   const flat = Math.cos(pitch)
-  const wanted = new THREE.Vector3(-Math.sin(yaw) * flat, Math.sin(pitch), -Math.cos(yaw) * flat)
+  const wanted = new Vector3(-Math.sin(yaw) * flat, Math.sin(pitch), -Math.cos(yaw) * flat)
   return {
     nose: toScreen(origin.clone().addScaledVector(direction, 150)),
-    aim: toScreen(new THREE.Vector3().copy(plane.root.position).addScaledVector(wanted, 150)),
+    aim: toScreen(new Vector3().copy(plane.root.position).addScaledVector(wanted, 150)),
   }
 }

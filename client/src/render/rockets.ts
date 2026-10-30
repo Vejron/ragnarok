@@ -1,5 +1,4 @@
-import { Group, Material, Mesh, boxGeometry, cylinderGeometry, sphereGeometry } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Group, Material, Mesh, boxGeometry, cylinderGeometry, sphereGeometry, Vector3 } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
 
 /** `PROJECTILE_GRENADE`, `PROJECTILE_SHELL` and `PROJECTILE_CANNON` in codec.ts. */
@@ -45,7 +44,7 @@ export class Rockets {
   private readonly canopy = cylinderGeometry(0.08, 0.7, 0.4, 10)
   private readonly canopyMaterial = toonMaterial({ color: 0xe8e4d8 })
   private readonly meshes = new Map<number, Mesh>()
-  private readonly up = new THREE.Vector3(0, 1, 0)
+  private readonly up = new Vector3(0, 1, 0)
 
   /** Places projectile `id`, creating it on first sight. `velocity` only gives a rocket's or a shell's heading. */
   place(id: number, kind: number, position: readonly [number, number, number], velocity: readonly [number, number, number]) {
@@ -98,7 +97,7 @@ export class Rockets {
       mesh.rotation.z = Math.sin(performance.now() / 90) * Math.min(0.5, speed * 0.08)
       return
     }
-    const heading = new THREE.Vector3(...velocity)
+    const heading = new Vector3(...velocity)
     if (heading.lengthSq() > 1e-6) mesh.quaternion.setFromUnitVectors(this.up, heading.normalize())
   }
 

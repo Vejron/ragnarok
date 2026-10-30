@@ -3,6 +3,7 @@
 //! and creatures alike, and the count back to life for everything with a `Respawn` (at its `Home`, or
 //! a player where `Combat` puts them).
 
+use shared::vec3;
 use super::Mechanic;
 use super::combat::{position_of, ray_capsule, same_team};
 use crate::entities::{DropOnDeath, Health, Home, Hurtbox, NetId, Respawn, Respawned, Trail, Transform, With};
@@ -120,7 +121,7 @@ fn past_lost_limbs(body: &Body, player: Option<&Player>, lost: u8, origin: [f32;
     let length = 2.0 * (body.half_height + body.radius);
     let mut t = entry;
     while t <= (entry + length).min(limit) {
-        let p: [f32; 3] = std::array::from_fn(|i| origin[i] + dir[i] * t);
+        let p: [f32; 3] = vec3::along(origin, dir, t);
         let dy = (p[1] - body.centre[1]).clamp(-body.half_height, body.half_height);
         let off = [p[0] - body.centre[0], p[1] - body.centre[1] - dy, p[2] - body.centre[2]];
         let inside = off.iter().map(|v| v * v).sum::<f32>() <= (body.radius + 1e-3).powi(2);
@@ -183,7 +184,7 @@ pub fn blasted(world: &World, point: [f32; 3], radius: f32, damage: f32) -> Vec<
     let mut reached = Vec::new();
     for id in world.entities.ids::<(With<Hurtbox>, With<Health>)>() {
         let Some(body) = body(world, id, 0).filter(|body| body.vehicle.is_none()) else { continue };
-        let distance = (0..3).map(|i| (body.centre[i] - point[i]).powi(2)).sum::<f32>().sqrt();
+        let distance = vec3::distance(body.centre, point);
         if distance < radius {
             reached.push((id, (damage * (1.0 - distance / radius)).round().min(255.0) as u8));
         }
@@ -207,11 +208,18 @@ pub struct Harm {
     /// That point less the point the body hangs from (`Body::anchor`) as it stood when struck, for
     /// the wound to be drawn on the body; none for a body in a seat.
     pub offset: Option<[f32; 3]>,
+    /// Hurts the attacker's own side too: nothing spares the crew of a vehicle going up.
+    pub unsparing: bool,
 }
 
 impl Harm {
     pub fn new(amount: u8, attacker: Option<u32>, weapon: u8) -> Self {
-        Harm { amount, attacker, weapon, from: None, head: false, limb: None, at: None, offset: None }
+        Harm { amount, attacker, weapon, from: None, head: false, limb: None, at: None, offset: None, unsparing: false }
+    }
+
+    /// The same, sparing no one.
+    pub fn unsparing(self) -> Self {
+        Harm { unsparing: true, ..self }
     }
 
     /// The same, come from `point`.
@@ -246,9 +254,9 @@ const BLASTS: [u8; 10] = [WEAPON_ROCKET, WEAPON_SHELL, WEAPON_AP, WEAPON_WRECK, 
 /// other than itself): its `Respawn` starts counting and its `DropOnDeath` is left where it fell.
 /// Returns whether this killed it; does nothing to the dead.
 pub fn damage_entity(world: &mut World, id: u32, harm: Harm) -> bool {
-    let Harm { amount, attacker, weapon, from, head, limb, at, offset } = harm;
+    let Harm { amount, attacker, weapon, from, head, limb, at, offset, unsparing } = harm;
     let other = attacker.filter(|&by| by != id);
-    if other.is_some_and(|by| same_team(world, by, id)) || amount == 0 || !world.entities.alive(id) {
+    if (!unsparing && other.is_some_and(|by| same_team(world, by, id))) || amount == 0 || !world.entities.alive(id) {
         return false;
     }
     let from = from.or_else(|| other.and_then(|by| position_of(world, by)));

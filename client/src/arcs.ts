@@ -3,7 +3,7 @@
  * field mortar's bomb, or a plane's bomb, where each would land if let go now.
  */
 
-import * as THREE from 'three'
+import { Matrix4, Vector3 } from '@ragnarok/engine'
 import type { VehicleModel } from '@/render/car'
 import { MortarModel } from '@/render/mortar'
 import type { MortarArc } from '@/render/mortar-arc'
@@ -54,7 +54,7 @@ export class Arcs {
     const { model: plane, motion, bombs } = vehicle
     if (!(plane instanceof PlaneModel) || !motion || bombs === 0) return null
     plane.root.updateMatrixWorld(true)
-    const start = new THREE.Vector3(...PLANE_BOMB_PIVOT).applyMatrix4(new THREE.Matrix4().fromArray(plane.root.matrixWorld))
+    const start = new Vector3(...PLANE_BOMB_PIVOT).applyMatrix4(new Matrix4().fromArray(plane.root.matrixWorld))
     if (start.y - groundAt(start.x, start.z) < PLANE_BOMB_MIN_HEIGHT) return null
     const velocity = motion.velocity
     return dropTrajectory(castRay, [start.x, start.y, start.z], [velocity.x, velocity.y, velocity.z])

@@ -9,6 +9,7 @@
 //! Both write their input as a player in that seat would, so `Vehicles` and `Gunnery` drive the
 //! real tank. A crewman on foot (respawned, or put out) walks back to its tank and gets in.
 
+use shared::vec3;
 use super::*;
 use crate::game::{Crew, Mounts, Player, Seats, Vehicle};
 use crate::mechanics::combat::position_of;
@@ -182,7 +183,7 @@ pub(super) fn board(world: &mut World, id: u32, crew: Crew, at: [f32; 3]) -> Boa
         return Boarding::No;
     }
     let Some(pose) = world.physics.car_pose(crew.vehicle) else { return Boarding::No };
-    let distance = (0..3).map(|i| (pose.position[i] - at[i]).powi(2)).sum::<f32>().sqrt();
+    let distance = vec3::distance(pose.position, at);
     if distance <= ENTER_RADIUS - 0.5 && seat(world, id, crew.vehicle, crew.seat) {
         return Boarding::Aboard;
     }
@@ -216,20 +217,20 @@ fn drive(world: &World, bot: &mut Bot, vid: u32, pose: &CarPose, idle: InputFram
     let gunner = world.entities.get::<Seats>(vid).and_then(|seats| seats.rider(GUNNER)).and_then(|id| world.entities.get::<Bot>(id));
     // How fast it may go: full speed, unless it is coming up to a sharp turn.
     let mut limit = TANK_MAX_SPEED;
-    let goal = match gunner.map(|g| (g.mode, g.sees, g.last_seen)) {
+    let goal = match gunner.map(|g| (g.mode, g.sight.sees, g.sight.last_seen)) {
         // It holds still while the gunner fights, and while it looks round.
         Some((BotMode::Pursue, true, _)) | Some((BotMode::Search, ..)) => {
             bot.mode = BotMode::Pursue;
             return halt;
         }
         Some((BotMode::Pursue, false, seen)) => {
-            if bot.mode != BotMode::Pursue || distance_2d(seen, bot.last_seen) > GOAL_MOVED {
-                bot.tries = 0;
+            if bot.mode != BotMode::Pursue || distance_2d(seen, bot.sight.last_seen) > GOAL_MOVED {
+                bot.walk.tries = 0;
                 new_goal(bot);
             }
             bot.mode = BotMode::Pursue;
-            bot.last_seen = seen;
-            if distance_2d(at, seen) < CHASE_STOP || bot.tries >= TRIES {
+            bot.sight.last_seen = seen;
+            if distance_2d(at, seen) < CHASE_STOP || bot.walk.tries >= TRIES {
                 return halt;
             }
             seen
@@ -239,7 +240,7 @@ fn drive(world: &World, bot: &mut Bot, vid: u32, pose: &CarPose, idle: InputFram
                 // Back to the route, at the waypoint nearest to where the chase left it.
                 bot.mode = BotMode::Patrol;
                 bot.next = nearest_waypoint(&bot.route, [at[0], at[2]]);
-                bot.tries = 0;
+                bot.walk.tries = 0;
                 new_goal(bot);
             }
             let Some(&[x, z]) = bot.route.get(bot.next) else { return halt };
@@ -264,20 +265,20 @@ fn drive(world: &World, bot: &mut Bot, vid: u32, pose: &CarPose, idle: InputFram
     let off = wrap_angle(heading(at, goal) - pose.yaw());
     // A positive steer turns the hull clockwise seen from above, which takes its yaw down.
     let steer = -off * STEER_GAIN;
-    if bot.reverse_left > 0 {
-        bot.reverse_left -= 1;
-        if bot.reverse_left == 0 {
+    if bot.walk.reverse_left > 0 {
+        bot.walk.reverse_left -= 1;
+        if bot.walk.reverse_left == 0 {
             new_goal(bot);
         }
         return controls(-1.0, steer, false, idle);
     }
     if stalled_by(bot, distance_2d(at, goal), DRIVE_PROGRESS, (DRIVE_STALL * TICK_RATE as f32) as u32) {
-        bot.tries += 1;
-        tracing::debug!(vid, tries = bot.tries, "tank stuck; backing out");
-        if bot.tries >= TRIES && bot.mode == BotMode::Patrol {
+        bot.walk.tries += 1;
+        tracing::debug!(vid, tries = bot.walk.tries, "tank stuck; backing out");
+        if bot.walk.tries >= TRIES && bot.mode == BotMode::Patrol {
             next_waypoint(bot);
         } else {
-            bot.reverse_left = (REVERSE * TICK_RATE as f32) as u32;
+            bot.walk.reverse_left = (REVERSE * TICK_RATE as f32) as u32;
         }
         new_goal(bot);
         return halt;
@@ -295,7 +296,7 @@ fn drive(world: &World, bot: &mut Bot, vid: u32, pose: &CarPose, idle: InputFram
 
 fn next_waypoint(bot: &mut Bot) {
     bot.next = (bot.next + 1) % bot.route.len().max(1);
-    bot.tries = 0;
+    bot.walk.tries = 0;
     new_goal(bot);
 }
 
@@ -313,7 +314,7 @@ fn spot_from_turret(world: &World, id: u32, vid: u32, eye: [f32; 3]) -> Option<(
         }
         let Some(at) = position_of(world, other) else { continue };
         let mark = if riding.is_some() { at } else { [at[0], at[1] + CHEST, at[2]] };
-        let distance = (0..3).map(|i| (mark[i] - eye[i]).powi(2)).sum::<f32>().sqrt();
+        let distance = vec3::distance(mark, eye);
         if distance > TANK_SIGHT || best.is_some_and(|(.., nearest)| distance >= nearest) {
             continue;
         }
@@ -327,8 +328,8 @@ fn spot_from_turret(world: &World, id: u32, vid: u32, eye: [f32; 3]) -> Option<(
 /// Whether nothing stands between `from` and `to` but `own` (the tank looking) and `target` (the
 /// vehicle at `to`, if it is one).
 fn clear_shot(world: &World, from: [f32; 3], to: [f32; 3], own: u32, target: Option<u32>) -> bool {
-    let d: [f32; 3] = std::array::from_fn(|i| to[i] - from[i]);
-    let length = d.iter().map(|v| v * v).sum::<f32>().sqrt();
+    let d: [f32; 3] = vec3::sub(to, from);
+    let length = vec3::length(d);
     if length < 0.01 {
         return true;
     }
@@ -365,65 +366,65 @@ fn gun(world: &mut World, id: u32, bot: &mut Bot, vid: u32, pose: &CarPose, nois
     let turret_on = vehicle.damage[DAMAGE_TURRET] != TURRET_GONE;
 
     // A hit on the tank, or a fight heard, sends it after where that came from.
-    let heard = bot.hit_from.take().or_else(|| hear(id, bot, at, noises).filter(|&from| bot.mode != BotMode::Pursue || distance_2d(at, from) + NEARER_NOISE < distance_2d(at, bot.last_seen)));
+    let heard = bot.hit_from.take().or_else(|| hear(id, bot, at, noises).filter(|&from| bot.mode != BotMode::Pursue || distance_2d(at, from) + NEARER_NOISE < distance_2d(at, bot.sight.last_seen)));
     if let Some(from) = heard
-        && !(bot.mode == BotMode::Pursue && bot.sees)
+        && !(bot.mode == BotMode::Pursue && bot.sight.sees)
     {
         bot.mode = BotMode::Pursue;
-        bot.last_seen = from;
-        bot.sees = false;
+        bot.sight.last_seen = from;
+        bot.sight.sees = false;
         bot.mode_left = chase;
     }
 
     if (world.tick + id).is_multiple_of(LOOK_EVERY) {
         match spot_from_turret(world, id, vid, eye) {
             Some((other, seen_at)) => {
-                let same = bot.mode == BotMode::Pursue && bot.target == Some(other);
-                let since = world.tick.wrapping_sub(bot.seen_tick) as f32 / TICK_RATE as f32;
-                let moved: [f32; 3] = std::array::from_fn(|i| (seen_at[i] - bot.last_seen[i]) / since.max(1e-3));
-                let speed = moved.iter().map(|v| v * v).sum::<f32>().sqrt();
-                bot.velocity = if same && bot.sees && speed < TANK_TOP_SPEED { std::array::from_fn(|i| (bot.velocity[i] + moved[i]) / 2.0) } else { [0.0; 3] };
-                if !same || !bot.sees {
+                let same = bot.mode == BotMode::Pursue && bot.sight.target == Some(other);
+                let since = world.tick.wrapping_sub(bot.sight.seen_tick) as f32 / TICK_RATE as f32;
+                let moved: [f32; 3] = std::array::from_fn(|i| (seen_at[i] - bot.sight.last_seen[i]) / since.max(1e-3));
+                let speed = vec3::length(moved);
+                bot.sight.velocity = if same && bot.sight.sees && speed < TANK_TOP_SPEED { std::array::from_fn(|i| (bot.sight.velocity[i] + moved[i]) / 2.0) } else { [0.0; 3] };
+                if !same || !bot.sight.sees {
                     tracing::debug!(bot = id, target = other, "tank gunner spotted someone");
-                    bot.react = (lerp(TANK_REACT_POOR, TANK_REACT_GOOD, bot.skill) * TICK_RATE as f32) as u32;
-                    bot.tracked = 0;
+                    bot.aim.react = (lerp(TANK_REACT_POOR, TANK_REACT_GOOD, bot.aim.skill) * TICK_RATE as f32) as u32;
+                    bot.aim.tracked = 0;
                 }
-                let settled = 1.0 + UNSETTLED * (-(bot.tracked as f32) / (SETTLE * TICK_RATE as f32)).exp();
-                let off = lerp(TANK_AIM_POOR, TANK_AIM_GOOD, bot.skill) * settled;
-                bot.error = [wobble(world) * off, wobble(world) * off];
+                let settled = 1.0 + UNSETTLED * (-(bot.aim.tracked as f32) / (SETTLE * TICK_RATE as f32)).exp();
+                let off = lerp(TANK_AIM_POOR, TANK_AIM_GOOD, bot.aim.skill) * settled;
+                bot.aim.error = [wobble(world) * off, wobble(world) * off];
                 bot.mode = BotMode::Pursue;
-                bot.target = Some(other);
-                bot.last_seen = seen_at;
-                bot.seen_tick = world.tick;
-                bot.sees = true;
+                bot.sight.target = Some(other);
+                bot.sight.last_seen = seen_at;
+                bot.sight.seen_tick = world.tick;
+                bot.sight.sees = true;
                 bot.mode_left = chase;
             }
-            None => bot.sees = false,
+            None => bot.sight.sees = false,
         }
     }
 
     // Where it wants the gun, as a world heading and elevation.
     let (yaw, pitch, fire) = match bot.mode {
-        BotMode::Pursue if bot.sees => {
-            bot.tracked += 1;
-            bot.react = bot.react.saturating_sub(1);
-            let since = world.tick.wrapping_sub(bot.seen_tick) as f32 / TICK_RATE as f32;
-            let now: [f32; 3] = std::array::from_fn(|i| bot.last_seen[i] + bot.velocity[i] * since);
-            let flight = (0..3).map(|i| (now[i] - eye[i]).powi(2)).sum::<f32>().sqrt() / SHELL_SPEED;
-            let lead = lerp(LEAD_POOR, 1.0, bot.skill);
-            let mark: [f32; 3] = std::array::from_fn(|i| now[i] + bot.velocity[i] * flight * lead);
+        BotMode::Pursue if bot.sight.sees => {
+            bot.aim.tracked += 1;
+            bot.aim.react = bot.aim.react.saturating_sub(1);
+            let since = world.tick.wrapping_sub(bot.sight.seen_tick) as f32 / TICK_RATE as f32;
+            let now: [f32; 3] = vec3::along(bot.sight.last_seen, bot.sight.velocity, since);
+            let flight = vec3::distance(now, eye) / SHELL_SPEED;
+            let lead = lerp(LEAD_POOR, 1.0, bot.aim.skill);
+            let mark: [f32; 3] = vec3::along(now, bot.sight.velocity, flight * lead);
             let far_enough = distance_2d(at, mark) >= MIN_RANGE;
-            (heading(eye, mark) + bot.error[0], lay(eye, mark) + bot.error[1], bot.react == 0 && far_enough)
+            (heading(eye, mark) + bot.aim.error[0], lay(eye, mark) + bot.aim.error[1], bot.aim.react == 0 && far_enough)
         }
         BotMode::Pursue => {
             bot.mode_left = bot.mode_left.saturating_sub(1);
             if off_route(bot, at) > LEASH {
                 resume_patrol(bot, at);
-            } else if bot.mode_left == 0 || distance_2d(at, bot.last_seen) < CHASE_STOP {
+            } else if bot.mode_left == 0 || distance_2d(at, bot.sight.last_seen) < CHASE_STOP {
                 bot.mode = BotMode::Search;
                 bot.mode_left = SEARCH_TICKS;
             }
-            bot.yaw = heading(eye, bot.last_seen);
+            bot.yaw = heading(eye, bot.sight.last_seen);
             (bot.yaw, 0.0, false)
         }
         BotMode::Search => {
@@ -450,8 +451,8 @@ fn gun(world: &mut World, id: u32, bot: &mut Bot, vid: u32, pose: &CarPose, nois
     let mut buttons = 0;
     if fire && laid && in_reach && turret_on && turret.cooldown == 0 {
         let (muzzle, _) = aim(pose, turret.yaw, turret.pitch);
-        let target = bot.target.and_then(|t| world.entities.get::<Player>(t)).and_then(|p| p.seat).filter(|s| !s.remote).map(|s| s.vehicle);
-        if clear_shot(world, muzzle, bot.last_seen, vid, target) {
+        let target = bot.sight.target.and_then(|t| world.entities.get::<Player>(t)).and_then(|p| p.seat).filter(|s| !s.remote).map(|s| s.vehicle);
+        if clear_shot(world, muzzle, bot.sight.last_seen, vid, target) {
             buttons |= BUTTON_FIRE;
         }
     }

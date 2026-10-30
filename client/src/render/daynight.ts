@@ -1,6 +1,7 @@
 import { Color } from '@ragnarok/engine'
 import { flatGroundLight } from './groundlight'
 import type { Palette } from './look'
+import { smoothstep } from '@/math'
 
 /** A whole day, midnight to midnight, in seconds of server time. */
 export const DAY_SECONDS = 30 * 60
@@ -144,11 +145,6 @@ export function createSky(): Sky {
 export function nightAt(phase: number): number {
   const height = Math.sin(2 * Math.PI * (phase - 0.25)) * Math.sin(NOON_ELEVATION)
   return 1 - smoothstep(-0.02, 0.18, height)
-}
-
-function smoothstep(edge0: number, edge1: number, x: number): number {
-  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)))
-  return t * t * (3 - 2 * t)
 }
 
 function normalize2(x: number, z: number): [number, number] {

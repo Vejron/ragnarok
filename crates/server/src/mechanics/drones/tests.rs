@@ -41,7 +41,7 @@ fn pilot(game: &mut Game) -> (u32, u32) {
     let id = join(game);
     let mut player = game.world.entities.get_mut::<Player>(id).unwrap();
     player.character.position = [100.0, STANDING_Y, 0.0];
-    player.hotbar[0] = ItemSlot { item: ITEM_DRONE, count: 1, ammo: 0 };
+    player.hands.hotbar[0] = ItemSlot { item: ITEM_DRONE, count: 1, ammo: 0 };
     let mut seq = 0;
     idle(game, id, &mut seq, 10);
     (id, seq)
@@ -65,7 +65,7 @@ fn a_launch_spends_the_drone_and_puts_the_player_at_its_controls() {
     let vid = launch_drone(&mut game, id, &mut seq);
     let player = &game.world.entities.of::<Player>(id);
     assert_eq!(player.seat, Some(Seat { vehicle: vid, index: 0, remote: true }));
-    assert_eq!(player.hotbar[0].item, ITEM_NONE, "the drone left the hand");
+    assert_eq!(player.hands.hotbar[0].item, ITEM_NONE, "the drone left the hand");
     assert_eq!(game.world.entities.of::<Vehicle>(vid).kind, KIND_DRONE);
     assert!(drone(&game, vid).is_some_and(|drone| drone.linked && drone.owner == id));
     // The body is still out there, kneeling, and its drone is listed with a full, linked battery.
@@ -154,7 +154,7 @@ fn flying_into_someone_wounded_kills_them_and_credits_the_pilot() {
     }
     assert!(!game.world.entities.has::<Vehicle>(vid), "it went off");
     assert_eq!(game.world.entities.of::<crate::entities::Health>(target).hp, 0, "right on them, the blast kills");
-    assert_eq!(game.world.entities.of::<Player>(id).kills, 1);
+    assert_eq!(game.world.entities.of::<Player>(id).score.kills, 1);
 }
 
 #[test]
@@ -239,7 +239,7 @@ fn a_pilot_who_leaves_takes_the_drone_with_them() {
 /// A pilot like [`pilot`]'s, holding a loitering drone instead.
 fn loiter_pilot(game: &mut Game) -> (u32, u32) {
     let (id, seq) = pilot(game);
-    game.world.entities.get_mut::<Player>(id).unwrap().hotbar[0] = ItemSlot { item: ITEM_LOITER, count: 1, ammo: 0 };
+    game.world.entities.get_mut::<Player>(id).unwrap().hands.hotbar[0] = ItemSlot { item: ITEM_LOITER, count: 1, ammo: 0 };
     (id, seq)
 }
 
@@ -252,7 +252,7 @@ fn a_loitering_drone_starts_high_up_behind_its_pilot_already_flying() {
     fly(&mut game, id, &mut seq, 0, 0.0, BUTTON_FIRE, 3);
     let vid = game.world.entities.of::<Player>(id).seat.expect("the pilot is at its controls").vehicle;
     assert_eq!(game.world.entities.of::<Vehicle>(vid).kind, KIND_LOITER);
-    assert_eq!(game.world.entities.of::<Player>(id).hotbar[0].item, ITEM_NONE, "it left the hand");
+    assert_eq!(game.world.entities.of::<Player>(id).hands.hotbar[0].item, ITEM_NONE, "it left the hand");
     let pose = game.world.physics.car_pose(vid).unwrap();
     assert!((pose.position[0] - body[0]).abs() < 0.5, "{pose:?}");
     assert!((pose.position[1] - body[1] - LOITER_LAUNCH_UP).abs() < 3.0, "{pose:?}");

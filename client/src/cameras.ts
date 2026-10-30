@@ -5,7 +5,8 @@
  * remembers between frames is its own rather than a flag per seat in the game loop.
  */
 
-import * as THREE from 'three'
+import { Quaternion, Vector3 } from '@ragnarok/engine'
+import { clamp } from '@/math'
 import { wrapAngle } from '@/net/codec'
 import type { Placed } from '@/entities/presenters/vehicles'
 import type { Turret } from '@/entities/units'
@@ -35,7 +36,7 @@ const SIGHT_RANGE_MAX = 1500
 /** A mounted gun the camera can sit behind: a tank's, a helicopter's nose gun, a plane's ring, a Pak's. */
 interface Barrel {
   root: VehicleModel['root']
-  barrel(): { origin: THREE.Vector3; direction: THREE.Vector3 }
+  barrel(): { origin: Vector3; direction: Vector3 }
 }
 const hasBarrel = (model: VehicleModel | undefined): model is VehicleModel & Barrel => model !== undefined && 'barrel' in model
 
@@ -59,7 +60,7 @@ export interface Seated {
   /** The chase camera's lean, distance and shake, for a seat that has it. */
   chase: ChaseView | null
   /** Where the local player's head is, when they show in their seat. */
-  head: THREE.Vector3 | null
+  head: Vector3 | null
 }
 
 type RigName = Rig['name']
@@ -183,10 +184,10 @@ export class Cameras {
         this.input.clampPitch(seat.rig.pitch[0], seat.rig.pitch[1])
         let bank = 0
         // A loitering drone's cameras sit in its nose and under its belly; an FPV drone's is at its centre.
-        const eye = new THREE.Vector3(0, belly ? (this.loiterCam === 'down' ? -0.35 : 0) : 0.05, belly && this.loiterCam === 'forward' ? -1.7 : 0)
+        const eye = new Vector3(0, belly ? (this.loiterCam === 'down' ? -0.35 : 0) : 0.05, belly && this.loiterCam === 'forward' ? -1.7 : 0)
         if (model) {
-          const right = new THREE.Vector3(1, 0, 0).applyQuaternion(model.root.quaternion)
-          const top = new THREE.Vector3(0, 1, 0).applyQuaternion(model.root.quaternion)
+          const right = new Vector3(1, 0, 0).applyQuaternion(model.root.quaternion)
+          const top = new Vector3(0, 1, 0).applyQuaternion(model.root.quaternion)
           bank = -Math.atan2(-right.y, top.y)
           eye.applyQuaternion(model.root.quaternion)
           // Its own frame would fill the lens.
@@ -229,8 +230,8 @@ export class Cameras {
         const fast = Math.min(1, Math.max(0, (motion?.forwardSpeed ?? 0) / PLANE_CRUISE_SPEED))
         this.scene.follow([ride.x, ride.y, ride.z], view[0], view[1], PLANE_DISTANCE + PLANE_PULLBACK * fast, 0, PLANE_CAMERA_HEIGHT)
         if (model instanceof PlaneModel) {
-          const right = new THREE.Vector3(1, 0, 0).applyQuaternion(model.root.quaternion)
-          const top = new THREE.Vector3(0, 1, 0).applyQuaternion(model.root.quaternion)
+          const right = new Vector3(1, 0, 0).applyQuaternion(model.root.quaternion)
+          const top = new Vector3(0, 1, 0).applyQuaternion(model.root.quaternion)
           this.scene.camera.rotateZ(-Math.atan2(-right.y, top.y) * PLANE_VIEW_ROLL)
         }
       },
@@ -312,10 +313,10 @@ export class Cameras {
    */
   private lookAlong(mount: Barrel, gun: Turret) {
     const flat = Math.cos(gun.pitch)
-    const local = new THREE.Vector3(-Math.sin(gun.yaw) * flat, Math.sin(gun.pitch), -Math.cos(gun.yaw) * flat)
+    const local = new Vector3(-Math.sin(gun.yaw) * flat, Math.sin(gun.pitch), -Math.cos(gun.yaw) * flat)
     const world = local.applyQuaternion(mount.root.quaternion)
     this.input.yaw = Math.atan2(-world.x, -world.z)
-    this.input.pitch = Math.asin(THREE.MathUtils.clamp(world.y, -1, 1))
+    this.input.pitch = Math.asin(clamp(world.y, -1, 1))
   }
 
   /**
@@ -324,13 +325,13 @@ export class Cameras {
    */
   private limitGun(mount: Pick<Barrel, 'root'>, yawLimit: number, pitchMin: number, pitchMax: number) {
     const flat = Math.cos(this.input.pitch)
-    const world = new THREE.Vector3(-Math.sin(this.input.yaw) * flat, Math.sin(this.input.pitch), -Math.cos(this.input.yaw) * flat)
-    const local = world.applyQuaternion(new THREE.Quaternion().copy(mount.root.quaternion).invert())
-    const yaw = THREE.MathUtils.clamp(Math.atan2(-local.x, -local.z), -yawLimit, yawLimit)
-    const pitch = THREE.MathUtils.clamp(Math.asin(THREE.MathUtils.clamp(local.y, -1, 1)), pitchMin, pitchMax)
-    const limited = new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)).applyQuaternion(mount.root.quaternion)
+    const world = new Vector3(-Math.sin(this.input.yaw) * flat, Math.sin(this.input.pitch), -Math.cos(this.input.yaw) * flat)
+    const local = world.applyQuaternion(new Quaternion().copy(mount.root.quaternion).invert())
+    const yaw = clamp(Math.atan2(-local.x, -local.z), -yawLimit, yawLimit)
+    const pitch = clamp(Math.asin(clamp(local.y, -1, 1)), pitchMin, pitchMax)
+    const limited = new Vector3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)).applyQuaternion(mount.root.quaternion)
     this.input.yaw = Math.atan2(-limited.x, -limited.z)
-    this.input.pitch = Math.asin(THREE.MathUtils.clamp(limited.y, -1, 1))
+    this.input.pitch = Math.asin(clamp(limited.y, -1, 1))
   }
 
   /**
@@ -343,11 +344,11 @@ export class Cameras {
     const { origin, direction } = model.barrel()
     const yaw = Math.atan2(-direction.x, -direction.z)
     const pitch = Math.asin(Math.max(-1, Math.min(1, direction.y)))
-    const eye = new THREE.Vector3(origin.x, origin.y + SIGHT_EYE_UP, origin.z)
+    const eye = new Vector3(origin.x, origin.y + SIGHT_EYE_UP, origin.z)
     this.scene.scopeFrom([eye.x, eye.y, eye.z], yaw, pitch)
     const camera = this.scene.camera
-    const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw))
-    const up = new THREE.Vector3().crossVectors(right, direction)
+    const right = new Vector3(Math.cos(yaw), 0, -Math.sin(yaw))
+    const up = new Vector3().crossVectors(right, direction)
     const reach = Math.tan((camera.fov * Math.PI) / 360)
     const level = Math.hypot(direction.x, direction.z)
     const marks: Mark[] = []
@@ -356,7 +357,7 @@ export class Cameras {
       const along = range / level
       const fall = 0.5 * GRAVITY * (along / SHELL_SPEED) ** 2
       // From the eye, which sits a little above the muzzle's start.
-      const to = direction.clone().multiplyScalar(along).add(new THREE.Vector3(0, -fall - SIGHT_EYE_UP, 0))
+      const to = direction.clone().multiplyScalar(along).add(new Vector3(0, -fall - SIGHT_EYE_UP, 0))
       const depth = to.dot(direction)
       if (depth <= 0) continue
       const y = to.dot(up) / depth

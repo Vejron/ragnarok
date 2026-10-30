@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import { Vector3 } from '@ragnarok/engine'
 import { DEATH_BLAST, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, LIMB_ARM_L, LIMB_ARM_R, LIMB_LEG_L, LIMB_LEG_R, PART_HEAD, PART_TORSO } from '@/net/codec'
 import type { Bloodstains } from './bloodstains'
 import type { Character } from './character'
@@ -73,8 +73,8 @@ const spread = (amount: number) => (Math.random() - 0.5) * 2 * amount
 export class Gore {
   private readonly trails: Trail[] = []
   private readonly landings: Landing[] = []
-  private readonly direction = new THREE.Vector3()
-  private readonly point = new THREE.Vector3()
+  private readonly direction = new Vector3()
+  private readonly point = new Vector3()
 
   constructor(
     private readonly debris: Debris,
@@ -97,14 +97,14 @@ export class Gore {
     if (style !== DEATH_BLAST && style !== DEATH_ROADKILL && style !== DEATH_OVERKILL) this.pool(() => avatar.position, 0.75 + Math.random() * 0.3, 7)
     if (style === DEATH_HEAD) {
       this.pop(avatar, dir, power)
-      avatar.launch(dir.clone().multiplyScalar(power * 0.4).setY(1.5), new THREE.Vector3(spread(1), 0, spread(1)), groundAt)
+      avatar.launch(dir.clone().multiplyScalar(power * 0.4).setY(1.5), new Vector3(spread(1), 0, spread(1)), groundAt)
     } else if (style === DEATH_BLAST || style === DEATH_ROADKILL || style === DEATH_OVERKILL) {
       this.burst(avatar, dir, power, style)
     } else {
       // A bullet: the body is thrown back, head over heels the harder it was hit.
-      const side = new THREE.Vector3(dir.z, 0, -dir.x)
+      const side = new Vector3(dir.z, 0, -dir.x)
       const velocity = dir.clone().multiplyScalar(power * 1.1).setY(2 + power * 0.25)
-      avatar.launch(velocity, side.multiplyScalar(power * 0.9).add(new THREE.Vector3(spread(1.5), spread(1.5), spread(1.5))), groundAt)
+      avatar.launch(velocity, side.multiplyScalar(power * 0.9).add(new Vector3(spread(1.5), spread(1.5), spread(1.5))), groundAt)
       this.mist(centre, 8, 3, dir)
       this.bleed(() => avatar.position, 0.5, 40)
     }
@@ -118,12 +118,12 @@ export class Gore {
     for (const [bit, keys] of LIMB_PIECES) {
       if (!(limbs & bit)) continue
       const stump = avatar.stump(bit)
-      const out = new THREE.Vector3().subVectors(stump, avatar.position).setY(0)
+      const out = new Vector3().subVectors(stump, avatar.position).setY(0)
       if (out.lengthSq() < 1e-4) out.set(spread(1), 0, spread(1))
       out.normalize()
       for (const { object } of avatar.shatter(keys)) {
-        const velocity = out.clone().multiplyScalar(2 + Math.random() * 2).add(new THREE.Vector3(spread(1), 2.5 + Math.random() * 2, spread(1)))
-        this.debris.throw(object, velocity, new THREE.Vector3(spread(12), spread(12), spread(12)), GIB_REST, GIB_LIFE)
+        const velocity = out.clone().multiplyScalar(2 + Math.random() * 2).add(new Vector3(spread(1), 2.5 + Math.random() * 2, spread(1)))
+        this.debris.throw(object, velocity, new Vector3(spread(12), spread(12), spread(12)), GIB_REST, GIB_LIFE)
         this.bleed(() => object.position, 0.8, 40)
       }
       this.mist(stump, 12, 3.5, out)
@@ -172,7 +172,7 @@ export class Gore {
     this.mist(exit, count, 3 + heavy * 4, out, 0.55, Math.min(1, HIT_STAINS / (count * 2)), HIT_STAIN_SCALE)
     // The wound itself bleeds on a moment where it is on the body.
     const wound = avatar.pin(at)
-    const spot = new THREE.Vector3()
+    const spot = new Vector3()
     this.bleed(() => wound(spot), 0.3 + heavy * 0.5, 30, 0.6, WOUND_STAIN_SHARE)
   }
 
@@ -192,7 +192,7 @@ export class Gore {
   drip(avatar: Character, bleeding: number) {
     for (const [bit] of LIMB_PIECES) {
       if (!(bleeding & bit)) continue
-      const stump = new THREE.Vector3()
+      const stump = new Vector3()
       this.bleed(() => avatar.stump(bit, stump), 0.25, 14, 1)
     }
     // And a spot on the ground under it. The stains' ring keeps the total in hand.
@@ -201,23 +201,23 @@ export class Gore {
   }
 
   /** The head comes off, and the neck stump sprays. */
-  private pop(avatar: Character, dir: THREE.Vector3, power: number) {
+  private pop(avatar: Character, dir: Vector3, power: number) {
     avatar.decapitate()
     for (const { object } of avatar.shatter(['head'])) {
-      const velocity = dir.clone().multiplyScalar(power * 0.5 + 1.5).add(new THREE.Vector3(spread(2), 5 + Math.random() * 3, spread(2)))
-      this.debris.throw(object, velocity, new THREE.Vector3(spread(14), spread(14), spread(14)), GIB_REST, GIB_LIFE)
+      const velocity = dir.clone().multiplyScalar(power * 0.5 + 1.5).add(new Vector3(spread(2), 5 + Math.random() * 3, spread(2)))
+      this.debris.throw(object, velocity, new Vector3(spread(14), spread(14), spread(14)), GIB_REST, GIB_LIFE)
       this.bleed(() => object.position, 1.0, 55)
     }
-    const neck = new THREE.Vector3()
-    this.bleed(() => neck.copy(avatar.position).add(new THREE.Vector3(0, 0.7, 0)), 1.2, 90, 3.5)
+    const neck = new Vector3()
+    this.bleed(() => neck.copy(avatar.position).add(new Vector3(0, 0.7, 0)), 1.2, 90, 3.5)
     this.mist(avatar.position, 14, 4, dir)
   }
 
   /** The body is torn apart. */
-  private burst(avatar: Character, dir: THREE.Vector3, power: number, style: number) {
+  private burst(avatar: Character, dir: Vector3, power: number, style: number) {
     const heavy = style === DEATH_BLAST || style === DEATH_ROADKILL ? 1 : 0.6
     for (const { key, object } of avatar.shatter()) {
-      const away = new THREE.Vector3().copy(object.position).sub(avatar.position)
+      const away = new Vector3().copy(object.position).sub(avatar.position)
       away.y *= 0.5
       if (away.lengthSq() > 1e-4) away.normalize()
       const torso = key === 'torso' ? 0.6 : 1
@@ -226,7 +226,7 @@ export class Gore {
         .multiplyScalar(power * (0.5 + Math.random() * 0.7) * heavy * torso)
         .addScaledVector(away, (3 + Math.random() * 5) * torso)
       velocity.y += (3 + Math.random() * 5 + power * 0.2) * torso
-      this.debris.throw(object, velocity, new THREE.Vector3(spread(16), spread(16), spread(16)), GIB_REST, GIB_LIFE)
+      this.debris.throw(object, velocity, new Vector3(spread(16), spread(16), spread(16)), GIB_REST, GIB_LIFE)
       this.bleed(() => object.position, 0.9, 45)
       if (key === 'torso') this.pool(() => object.position, 0.6, 5)
     }
@@ -238,10 +238,10 @@ export class Gore {
    * A burst of droplets thrown along `dir` and a puff of fine spray. `cone` is how tightly they keep
    * to `dir`, 0 every way to 1 straight along it; `share` of the drops stain, `scale` times as wide.
    */
-  private mist(at: THREE.Vector3, count: number, speed: number, dir: THREE.Vector3, cone = 0, share = STAIN_SHARE, scale = 1) {
+  private mist(at: Vector3, count: number, speed: number, dir: Vector3, cone = 0, share = STAIN_SHARE, scale = 1) {
     // Many small drops rather than a few big ones: a spray, not confetti.
     for (let i = 0; i < count * 2; i++) {
-      const aim = new THREE.Vector3(spread(1), Math.random() * 0.9, spread(1)).multiplyScalar(1 - cone).addScaledVector(dir, 0.6 + cone).normalize().multiplyScalar(speed * (0.3 + Math.random()))
+      const aim = new Vector3(spread(1), Math.random() * 0.9, spread(1)).multiplyScalar(1 - cone).addScaledVector(dir, 0.6 + cone).normalize().multiplyScalar(speed * (0.3 + Math.random()))
       this.drop(at, [aim.x, aim.y + 1, aim.z], 0.02 + Math.random() ** 2 * 0.06, 0.6, i, share, scale)
     }
     // The finest of it hangs for a moment as a mist and is gone.

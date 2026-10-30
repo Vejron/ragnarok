@@ -1,10 +1,10 @@
-import { Group, Mesh, boxGeometry, cylinderGeometry, type Node } from '@ragnarok/engine'
-import * as THREE from 'three'
-import { toonMaterial } from './toon'
+import { Group, boxGeometry, cylinderGeometry } from '@ragnarok/engine'
+import { TowedGun } from './towedgun'
 import type { VehicleModel } from './car'
 import type { Turret } from '@/entities/units'
 import { TURRET_STOWED } from '@/net/codec'
 import { PAK_AXLES_Z, PAK_BARREL_LENGTH, PAK_GUN_PIVOT, PAK_SEAT_HEAD, PAK_TONGUE_Z, PAK_TRACK_HALF, PAK_WHEEL_RADIUS } from '@/sim/consts'
+import { lerp } from '@/math'
 
 /** The road wheels' axle (`axles` in `pak.rs`; the second is the trails' spades). */
 const AXLE_Z = PAK_AXLES_Z[0]
@@ -73,7 +73,6 @@ const smooth = (from: number, to: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - from) / (to - from)))
   return t * t * (3 - 2 * t)
 }
-const lerp = (a: number, b: number, t: number) => a + (b - a) * t
 
 /** One split trail: the yaw at its hinge, the pitch inside it, and the spade folding at its tip. */
 interface Trail {
@@ -93,50 +92,17 @@ interface Trail {
  * Hitched (`TURRET_STOWED`) the barrel comes back to the centre line, level, and the trails close and
  * lift into the towing eye, so it travels muzzle-last behind the car. Let go, the trails spread again.
  */
-export class PakModel implements VehicleModel {
-  readonly root = new Group()
-  /** Turns with the traverse: the hull-relative yaw. */
-  private readonly mount = new Group()
-  /** Lifts with the elevation, about the trunnions. */
-  private readonly elevation = new Group()
-  /** Runs back along the barrel's line when it fires. */
-  private readonly recoiling = new Group()
+export class PakModel extends TowedGun implements VehicleModel {
   private readonly trails: Trail[] = []
-  /** Where the gunner's head is, kneeling behind the shield. */
-  private readonly seat = new Group()
-  private readonly spinners: Node[] = []
-  private readonly paint = toonMaterial({ color: PAINT })
-  private readonly steel = toonMaterial({ color: STEEL })
-  private readonly rubber = toonMaterial({ color: RUBBER })
-  private roll = 0
-  private placed = false
-  /** 0 set up to fire, 1 closed up for travel. */
-  private stow = 0
-  /** `performance.now()` of the last `update`, for the fold's pace. */
-  private updatedAt = 0
-  /** `performance.now()` of the last shot, for the barrel's recoil. */
-  private firedAt = -Infinity
-  private readonly last = new THREE.Vector3()
-  private readonly forward = new THREE.Vector3()
-  private readonly pivot = new THREE.Vector3()
-  private readonly aim = new THREE.Vector3()
-  private readonly matrix = new THREE.Matrix4()
 
   constructor(_id: number) {
+    super(PAINT, STEEL, RUBBER)
     this.buildCarriage()
     for (const side of [-1, 1]) this.trails.push(this.buildTrail(side))
     this.buildGun()
 
     this.seat.position.set(...PAK_SEAT_HEAD)
     this.mount.add(this.seat)
-  }
-
-  private part(geometry: ConstructorParameters<typeof Mesh>[0], material: ConstructorParameters<typeof Mesh>[1], parent: Node, x: number, y: number, z: number, shadow = true) {
-    const mesh = new Mesh(geometry, material)
-    mesh.position.set(x, y, z)
-    mesh.castShadow = shadow
-    parent.add(mesh)
-    return mesh
   }
 
   /** The axle and its saddle, the road wheels, and the apron hung under the shield. */
@@ -256,34 +222,5 @@ export class PakModel implements VehicleModel {
     // The barrel runs back along its own line and is pushed home.
     const since = (now - this.firedAt) / 1000
     this.recoiling.position.z = since < RECOIL_SECONDS ? RECOIL_STROKE * (1 - since / RECOIL_SECONDS) ** 2 : 0
-  }
-
-  /** The gunner's head point in the world and the mount's turn, as of the last `update`. */
-  seatFrame(head: THREE.Vector3, rotation: THREE.Quaternion) {
-    this.root.updateMatrixWorld(true)
-    this.seat.getWorldPosition(head)
-    const q = this.mount.getWorldQuaternion(new THREE.Quaternion())
-    rotation.set(q.x, q.y, q.z, q.w)
-  }
-
-  /** A shell was just fired: the barrel runs back. */
-  recoil() {
-    this.firedAt = performance.now()
-  }
-
-  /** The barrel's root in world space as of the last `update`, and its unit aim direction. */
-  barrel() {
-    this.root.updateMatrixWorld(true)
-    this.elevation.getWorldPosition(this.pivot)
-    this.aim.set(0, 0, -1).transformDirection(this.matrix.fromArray(this.elevation.matrixWorld))
-    return { origin: this.pivot.clone(), direction: this.aim.clone() }
-  }
-
-  /** Frees what this gun owns; the shared geometry stays. */
-  dispose() {
-    this.paint.dispose()
-    this.steel.dispose()
-    this.rubber.dispose()
-    this.root.removeFromParent()
   }
 }

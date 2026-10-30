@@ -144,6 +144,7 @@ impl Ragdolls {
     /// runs between (`SEGMENT_FLOATS` each), as the soldier stood when it was thrown. `side` is the
     /// soldier's right, the axis elbows and knees bend about. Every part sets off at `velocity` (m/s),
     /// turning at `spin` (rad/s, about world axes). The limbs in `lost` (`LIMB_*`) are left out.
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn(&mut self, physics: &Physics, key: u32, segments: &[f32], side: [f32; 3], velocity: [f32; 3], spin: [f32; 3], lost: u8) -> bool {
         if segments.len() < PARTS * SEGMENT_FLOATS {
             return false;

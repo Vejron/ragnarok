@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Geometry, Group, Material, Mesh, Node, boxGeometry, cylinderGeometry } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Geometry, Group, Material, Mesh, Node, boxGeometry, cylinderGeometry, Vector3 } from '@ragnarok/engine'
 import { CarWear, sideOf } from '@/render/carwear'
 import { Debris } from '@/render/debris'
 import { DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT } from '@/net/codec'
@@ -65,36 +64,36 @@ function subdivided(w: number, h: number, d: number, sx: number, sy: number, sz:
 }
 
 const damage = (sides: [number, number, number, number], wheels: [number, number, number, number] = [0, 0, 0, 0]) => [...sides, ...wheels]
-const still = new THREE.Vector3()
+const still = new Vector3()
 
 /** How far each vertex of `mesh` has moved from where the shared geometry has it. */
 function moved(mesh: Mesh, shared: Geometry) {
   const now = mesh.geometry.positions
   const was = shared.positions
-  const out: { at: THREE.Vector3; by: number }[] = []
+  const out: { at: Vector3; by: number }[] = []
   for (let i = 0; i < was.length / 3; i++) {
-    const at = new THREE.Vector3().fromArray(was, i * 3)
-    out.push({ at, by: at.distanceTo(new THREE.Vector3().fromArray(now, i * 3)) })
+    const at = new Vector3().fromArray(was, i * 3)
+    out.push({ at, by: at.distanceTo(new Vector3().fromArray(now, i * 3)) })
   }
   return out
 }
 
 describe('CarWear', () => {
   it('names the side a point is on', () => {
-    expect(sideOf(new THREE.Vector3(0, 0, -2), HALF)).toBe(DAMAGE_FRONT)
-    expect(sideOf(new THREE.Vector3(0.2, 0, 1.9), HALF)).toBe(DAMAGE_REAR)
-    expect(sideOf(new THREE.Vector3(-1, 0, 0.5), HALF)).toBe(DAMAGE_LEFT)
-    expect(sideOf(new THREE.Vector3(1, 0, -0.5), HALF)).toBe(DAMAGE_RIGHT)
+    expect(sideOf(new Vector3(0, 0, -2), HALF)).toBe(DAMAGE_FRONT)
+    expect(sideOf(new Vector3(0.2, 0, 1.9), HALF)).toBe(DAMAGE_REAR)
+    expect(sideOf(new Vector3(-1, 0, 0.5), HALF)).toBe(DAMAGE_LEFT)
+    expect(sideOf(new Vector3(1, 0, -0.5), HALF)).toBe(DAMAGE_RIGHT)
   })
 
   it('dents the body where the crash event says, and nowhere far from it', () => {
     const { shell, wear } = model()
     const shared = shell.geometry
-    wear.noteImpact(new THREE.Vector3(0.6, 0, -2), 0)
+    wear.noteImpact(new Vector3(0.6, 0, -2), 0)
     wear.update(damage([120, 0, 0, 0]), 100, null, still, 10)
     expect(shell.geometry).not.toBe(shared)
     const offsets = moved(shell, shared)
-    const near = offsets.filter(({ at }) => at.distanceTo(new THREE.Vector3(0.6, 0, -2)) < 0.3)
+    const near = offsets.filter(({ at }) => at.distanceTo(new Vector3(0.6, 0, -2)) < 0.3)
     const far = offsets.filter(({ at }) => at.z > 0)
     expect(Math.max(...near.map((o) => o.by))).toBeGreaterThan(0.08)
     expect(Math.max(...far.map((o) => o.by))).toBe(0)
@@ -126,7 +125,7 @@ describe('CarWear', () => {
     const shared = shell.geometry
     const sharedTriangles = shared.indexCount
     const debris = new Debris()
-    wear.update(damage([200, 0, 0, 0], [0, 0, 0, 255]), 40, debris, new THREE.Vector3(0, 0, -10), 5000)
+    wear.update(damage([200, 0, 0, 0], [0, 0, 0, 255]), 40, debris, new Vector3(0, 0, -10), 5000)
     expect(wear.state.gone).toContain('bumper_F')
     expect(wear.state.wheelsGone).toEqual([false, false, false, true])
     expect(car.getObjectByName('wheel_RR')!.visible).toBe(false)

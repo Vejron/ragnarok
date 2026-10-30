@@ -30,14 +30,7 @@ impl World {
     /// Whether building `id` has a standing cell at lattice place `pos`. Cuts the building into cells
     /// the first time it is asked, as a blast does.
     fn building_cell_standing(&mut self, id: ObjId, pos: Pos) -> bool {
-        if self.destroyed.iter().any(|&(done, _)| done == Obj::Building(id)) {
-            return false;
-        }
-        if !self.carves.contains_key(&id) {
-            let Some(carving) = self.cut_building(id) else { return false };
-            self.carves.insert(id, carving);
-        }
-        let Some(carving) = self.carves.get(&id) else { return false };
+        let Some(carving) = self.carving(id) else { return false };
         let shell = &carving.shell;
         let at: [i64; 3] = std::array::from_fn(|a| (i64::from(pos[a]) * i64::from(CELL) - i64::from(shell.origin[a])).div_euclid(i64::from(CELL)));
         if (0..3).any(|a| at[a] < 0 || at[a] >= shell.dims[a] as i64) {
@@ -53,7 +46,7 @@ impl World {
         if !self.construct.place(pos, cube) {
             return false;
         }
-        self.fresh_built.placed.push((pos, cube));
+        self.fresh.built.placed.push((pos, cube));
         self.construct_dirty.insert(chunk_of(pos));
         true
     }
@@ -63,7 +56,7 @@ impl World {
         if self.construct.remove(pos).is_none() {
             return false;
         }
-        self.fresh_built.removed.push(pos);
+        self.fresh.built.removed.push(pos);
         self.construct_dirty.insert(chunk_of(pos));
         self.drop_cubes(&NEIGHBOURS.map(|s| step(pos, s)));
         true
@@ -88,7 +81,7 @@ impl World {
             self.construct_dirty.insert(chunk_of(pos));
             seeds.extend(NEIGHBOURS.map(|s| step(pos, s)));
         }
-        self.fresh_built.removed.extend(gone);
+        self.fresh.built.removed.extend(gone);
         self.drop_cubes(&seeds);
     }
 
@@ -140,7 +133,7 @@ impl World {
             let due = self.tick.wrapping_add(((2.0 * fall / 9.8).sqrt() * TICK_RATE as f32).ceil() as u32 + 1);
             self.rubble.push(Rubble { due, at, top, ground, cells });
         }
-        self.fresh_built.fell.extend(fell);
+        self.fresh.built.fell.extend(fell);
     }
 
     /// Gives every chunk of cubes that changed this tick its new collider.

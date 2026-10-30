@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import { Vector3 } from '@ragnarok/engine'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { boxOf, triangleCount } from './helpers'
 import { MortarModel, STOW_SECONDS } from '@/render/mortar'
@@ -11,7 +11,7 @@ const AIM: Turret = { yaw: 0.5, pitch: 1.0, shots: 0, range: 120, flags: 0 }
 const named = (mortar: MortarModel, name: string) => mortar.root.getObjectByName(name)!
 const world = (mortar: MortarModel, name: string) => {
   mortar.root.updateMatrixWorld(true)
-  return named(mortar, name).getWorldPosition(new THREE.Vector3())
+  return named(mortar, name).getWorldPosition(new Vector3())
 }
 
 afterEach(() => vi.restoreAllMocks())

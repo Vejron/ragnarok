@@ -95,14 +95,28 @@ export class TileStreamer {
     }
   }
 
+  /** Detaches everything, for the tiles around the player to be attached afresh as `update` finds them. */
+  reload() {
+    this.detachAll()
+    this.checkedAt = null
+  }
+
   dispose() {
     this.disposed = true
+    this.detachAll()
+    this.waiting.splice(0).forEach((resolve) => resolve())
+  }
+
+  private detachAll() {
     for (const entry of this.entries.values()) {
       entry.detach?.()
       entry.detach = null
+      if (entry.state === 'loaded') entry.state = 'idle'
     }
-    for (const { entry } of this.ready.splice(0)) this.sink.discard?.(entry.ref)
-    this.waiting.splice(0).forEach((resolve) => resolve())
+    for (const { entry } of this.ready.splice(0)) {
+      this.sink.discard?.(entry.ref)
+      entry.state = 'idle'
+    }
   }
 
   /** Attaches queued tiles, nearest first, for up to `budgetMs` (always at least one). */

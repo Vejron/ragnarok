@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import * as THREE from 'three'
+import { Vector3 } from '@ragnarok/engine'
 import { kindView } from '@/kinds'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { CarModel, parseCarModel } from '@/render/car'
@@ -42,7 +42,7 @@ describe.each([
     car.root.updateMatrixWorld(true)
     for (const [tag, x, z] of [['FL', -trackHalf, -axleZ], ['FR', trackHalf, -axleZ], ['RL', -trackHalf, axleZ], ['RR', trackHalf, axleZ]] as const) {
       const wheel = car.root.getObjectByName(`wheel_${tag}`)!
-      const at = wheel.getWorldPosition(new THREE.Vector3())
+      const at = wheel.getWorldPosition(new Vector3())
       expect(at.x).toBeCloseTo(x, 3)
       expect(at.z).toBeCloseTo(z, 3)
       // The wheel's lowest point is on the ground, `ride` below the chassis centre.

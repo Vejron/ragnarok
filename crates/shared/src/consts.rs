@@ -1,5 +1,19 @@
 //! Simulation and network constants. `client/scripts/gen-consts.ts` generates the client's copy from this file: run `npm run gen:consts` in `client` after editing.
 
+pub use crate::vehicles::drone::*;
+pub use crate::vehicles::heli::*;
+pub use crate::vehicles::hen::*;
+pub use crate::vehicles::jeep::*;
+pub use crate::vehicles::loiter::*;
+pub use crate::vehicles::mortar::*;
+pub use crate::vehicles::pak::*;
+pub use crate::vehicles::plane::*;
+pub use crate::vehicles::roadster::*;
+pub use crate::vehicles::sports::*;
+pub use crate::vehicles::strv::*;
+pub use crate::vehicles::tank::*;
+pub use crate::vehicles::walker::*;
+
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
 pub const PROTOCOL_VERSION: u8 = 56;
 
@@ -213,375 +227,15 @@ pub const MAX_VEHICLES: usize = 512;
 /// A player can enter a vehicle whose centre is within this distance of their capsule centre.
 pub const ENTER_RADIUS: f32 = 4.0;
 
-/// Cars come in two kinds, which share the ray-cast wheel physics and differ in these numbers.
-/// The jeep (`KIND_JEEP`) is tall on big wheels with plenty of ground clearance: slower, but it
-/// rides over kerbs and rough ground. Half extents of the chassis box, metres.
-pub const JEEP_HALF_EXTENTS: [f32; 3] = [1.0, 0.42, 1.95];
-pub const JEEP_WHEEL_RADIUS: f32 = 0.55;
-/// Wheel hard points relative to the chassis centre: half the track, and the distance of the
-/// axles from the centre along Z. Front axle is at -Z.
-pub const JEEP_TRACK_HALF: f32 = 0.9;
-pub const JEEP_AXLE_Z: f32 = 1.25;
-pub const JEEP_HARD_POINT_Y: f32 = 0.0;
-pub const JEEP_SUSPENSION_REST: f32 = 0.4;
-/// Height of the chassis centre above flat ground once the suspension has settled (measured by
-/// `ride_heights_differ_between_cars` in vehicle.rs). The clearance under the box is this minus the half height.
-pub const JEEP_RIDE_HEIGHT: f32 = 0.857;
-/// Largest steering angle of the front wheels, radians. The wire carries it as -127..=127.
-pub const JEEP_MAX_STEER: f32 = 0.5;
-/// Forward speed above which engine force fades to zero, m/s.
-pub const JEEP_MAX_SPEED: f32 = 32.0;
-
-/// The sports car (`KIND_SPORTS`): a low two-seater with small wheels and a big engine. Quick in a
-/// straight line, with the chassis only about 12 cm off the ground.
-pub const SPORTS_SEATS: usize = 2;
-pub const SPORTS_HALF_EXTENTS: [f32; 3] = [0.95, 0.3, 2.2];
-pub const SPORTS_WHEEL_RADIUS: f32 = 0.32;
-pub const SPORTS_TRACK_HALF: f32 = 0.82;
-pub const SPORTS_AXLE_Z: f32 = 1.45;
-pub const SPORTS_HARD_POINT_Y: f32 = 0.05;
-pub const SPORTS_SUSPENSION_REST: f32 = 0.22;
-pub const SPORTS_RIDE_HEIGHT: f32 = 0.397;
-pub const SPORTS_MAX_STEER: f32 = 0.4;
-pub const SPORTS_MAX_SPEED: f32 = 50.0;
-
-/// The Roadster (`KIND_ROADSTER`): Tesla's 2026 two-seater with SpaceX cold-gas thrusters fed from a
-/// tank of compressed air. Same chassis and wheels as the sports car, a stronger motor, and three
-/// tricks: rear nozzles that push it far past what the tyres could (Shift), a hop straight up off the
-/// ground (Space), and lift nozzles that hold it in the air while Space stays held. Thrust drains
-/// the tank, which refills while it sits on its wheels.
-pub const ROADSTER_SEATS: usize = 2;
-pub const ROADSTER_HALF_EXTENTS: [f32; 3] = SPORTS_HALF_EXTENTS;
-pub const ROADSTER_WHEEL_RADIUS: f32 = SPORTS_WHEEL_RADIUS;
-pub const ROADSTER_TRACK_HALF: f32 = SPORTS_TRACK_HALF;
-pub const ROADSTER_AXLE_Z: f32 = SPORTS_AXLE_Z;
-pub const ROADSTER_HARD_POINT_Y: f32 = SPORTS_HARD_POINT_Y;
-pub const ROADSTER_SUSPENSION_REST: f32 = SPORTS_SUSPENSION_REST;
-pub const ROADSTER_RIDE_HEIGHT: f32 = SPORTS_RIDE_HEIGHT;
-pub const ROADSTER_MAX_STEER: f32 = 0.4;
-pub const ROADSTER_MAX_SPEED: f32 = 62.0;
-/// The air tank, as a share of full.
-pub const ROADSTER_AIR: f32 = 1.0;
-/// The rear nozzles' push along the nose, m/s²: well past the tyres' grip.
-pub const ROADSTER_BOOST_ACCEL: f32 = 24.0;
-/// Air the rear nozzles use, share of the tank per second: about three seconds of boost.
-pub const ROADSTER_BOOST_DRAIN: f32 = 0.33;
-/// Upward speed a hop adds, m/s: enough to clear a row of cars.
-pub const ROADSTER_HOP_SPEED: f32 = 9.0;
-/// Air a hop uses, share of the tank.
-pub const ROADSTER_HOP_COST: f32 = 0.15;
-/// While hovering, the lift nozzles hold this upward speed, m/s, and use this share of the tank per second.
-pub const ROADSTER_HOVER_CLIMB: f32 = 1.0;
-pub const ROADSTER_HOVER_DRAIN: f32 = 0.25;
-/// How hard the lift nozzles chase that speed, per second, and the most they add to gravity's worth, m/s².
-pub const ROADSTER_HOVER_GAIN: f32 = 3.0;
-pub const ROADSTER_HOVER_ACCEL: f32 = 6.0;
-/// While hovering, the lift nozzles lean the car this far (radians, roughly) with the stick, level
-/// it this hard and this fast (per second), and turn it at this yaw rate, rad/s.
-pub const ROADSTER_HOVER_TILT: f32 = 0.2;
-pub const ROADSTER_HOVER_LEVEL: f32 = 4.0;
-pub const ROADSTER_HOVER_RESPONSE: f32 = 6.0;
-pub const ROADSTER_HOVER_YAW: f32 = 1.2;
-/// The lift nozzles fade out over 20 m below this height.
-pub const ROADSTER_CEILING: f32 = 40.0;
-/// Refill rate on the ground with no nozzle firing, share of the tank per second.
-pub const ROADSTER_AIR_REFILL: f32 = 0.2;
-
-/// The tank: a heavy six-wheel hull that turns on the spot, with a driver (seat 0) and a gunner
-/// (seat 1) who aims the turret and fires. Same body axes as the car.
-pub const TANK_SEATS: usize = 2;
-pub const TANK_HALF_EXTENTS: [f32; 3] = [1.3, 0.5, 2.6];
-pub const TANK_WHEEL_RADIUS: f32 = 0.45;
-pub const TANK_TRACK_HALF: f32 = 1.2;
-/// Z of the three axles, front first.
-pub const TANK_AXLES_Z: [f32; 3] = [-1.9, 0.0, 1.9];
-pub const TANK_HARD_POINT_Y: f32 = -0.2;
-pub const TANK_SUSPENSION_REST: f32 = 0.35;
-pub const TANK_MAX_SPEED: f32 = 12.0;
-/// Yaw rate at full stick, rad/s.
-pub const TANK_TURN_RATE: f32 = 1.1;
-/// Where the turret ring sits in the hull frame, and how far the muzzle is from the ring.
-pub const TANK_TURRET_PIVOT: [f32; 3] = [0.0, 0.85, 0.3];
-pub const TANK_BARREL_LENGTH: f32 = 3.2;
-/// The turret is solid: a cylinder on the ring, so it is the same shape whichever way it points.
-/// Its base is the hull's top.
-pub const TANK_TURRET_RADIUS: f32 = 1.0;
-pub const TANK_TURRET_HALF_HEIGHT: f32 = 0.35;
-/// How fast the turret and barrel follow the gunner's aim, rad/s.
-pub const TANK_TURRET_SLEW: f32 = 1.4;
-pub const TANK_BARREL_SLEW: f32 = 0.9;
-/// Barrel elevation limits, radians (+ is up).
-pub const TANK_BARREL_MIN: f32 = -0.12;
-pub const TANK_BARREL_MAX: f32 = 0.5;
-/// What it takes to knock the turret off: damage from hits on the turret and the hull's roof, which a
-/// hull hit never adds to. Past it `DAMAGE_TURRET` is set, the gunner dies and the gun is gone until the
-/// tank respawns. Mirrors `TANK_TURRET_HP` in `sim/consts.ts`.
-pub const TANK_TURRET_HP: u8 = 90;
-
-/// The Strv S (`KIND_STRV`): a turretless tank with the gun fixed in the hull. One seat: the driver steers
-/// by pivoting the hull and fires the main gun, which only the barrel's elevation can aim. Quicker and
-/// lower than the tank, with a steeply sloped glacis. Same body axes as the tank; mirrors `STRV_*` in
-/// `sim/consts.ts`.
-pub const STRV_SEATS: usize = 1;
-pub const STRV_HALF_EXTENTS: [f32; 3] = [1.3, 0.45, 2.7];
-/// Bigger wheels and a longer suspension than the tank's, with the hull higher on them: it steps over
-/// obstacles the tank has to go around.
-pub const STRV_WHEEL_RADIUS: f32 = 0.52;
-pub const STRV_TRACK_HALF: f32 = 1.2;
-/// Z of the three axles, front first.
-pub const STRV_AXLES_Z: [f32; 3] = [-1.9, 0.0, 1.9];
-pub const STRV_HARD_POINT_Y: f32 = -0.2;
-pub const STRV_SUSPENSION_REST: f32 = 0.42;
-pub const STRV_MAX_SPEED: f32 = 16.0;
-/// Yaw rate at full stick, rad/s.
-pub const STRV_TURN_RATE: f32 = 1.5;
-/// The casemate the gun sits in is a solid box on the hull's roof, weightless like the tank's turret:
-/// its half extents and centre in the hull frame.
-pub const STRV_CASEMATE_HALF: [f32; 3] = [0.9, 0.17, 1.25];
-pub const STRV_CASEMATE_CENTRE: [f32; 3] = [0.0, 0.62, -0.25];
-/// Where the gun's trunnion is in the hull frame, how far the muzzle is from it, how fast the barrel
-/// elevates (rad/s) and its limits, radians (+ is up). The gun points where the hull does.
-pub const STRV_GUN_PIVOT: [f32; 3] = [0.0, 0.72, -1.3];
-pub const STRV_BARREL_LENGTH: f32 = 4.4;
-pub const STRV_BARREL_SLEW: f32 = 1.2;
-pub const STRV_BARREL_MIN: f32 = -0.15;
-pub const STRV_BARREL_MAX: f32 = 0.3;
-
-/// The walker (`KIND_WALKER`): a two-legged assault walker, one driver in the head. Its body is a single
-/// box held up by two spring legs that are ray casts to the ground, and kept upright by a torque that a
-/// big enough blow overpowers. Mirrors `WALKER_*` in `sim/consts.ts`.
-pub const WALKER_SEATS: usize = 1;
-pub const WALKER_HALF_EXTENTS: [f32; 3] = [1.0, 1.2, 1.8];
-/// Distance of each foot from the middle of the hull, sideways, metres, and how long a leg is from the
-/// bottom of the hull to the ground when it stands.
-pub const WALKER_FOOT_HALF: f32 = 1.7;
-pub const WALKER_LEG_LENGTH: f32 = 4.2;
-/// The legs are solid, so a car or a shell can hit them: a box on each hip, this wide and deep (half
-/// extents, metres), ending this far above the ground when it stands so the feet's own springs carry it.
-pub const WALKER_LEG_HALF_WIDTH: f32 = 0.25;
-pub const WALKER_LEG_HALF_DEPTH: f32 = 0.3;
-pub const WALKER_LEG_CLEARANCE: f32 = 0.5;
-/// Top speed forwards, backwards (a share of it), m/s, and the acceleration towards it, m/s².
-pub const WALKER_MAX_SPEED: f32 = 9.0;
-pub const WALKER_REVERSE_SHARE: f32 = 0.5;
-pub const WALKER_ACCEL: f32 = 4.5;
-/// Deceleration, m/s², when it slows or reverses: it plants its feet and leans back.
-pub const WALKER_BRAKE: f32 = 6.0;
-/// Planted feet do not slide sideways: the push against it, per m/s of sideways speed, and its cap, m/s².
-pub const WALKER_GRIP_GAIN: f32 = 8.0;
-pub const WALKER_GRIP: f32 = 8.0;
-/// Yaw rate at full stick, rad/s, and the angular acceleration towards it, rad/s².
-pub const WALKER_TURN_RATE: f32 = 1.7;
-pub const WALKER_TURN_ACCEL: f32 = 8.0;
 /// Gravity acting on vehicle bodies. Soldiers use `GRAVITY`; the ray-cast suspension is tuned
 /// around the real-world value.
 pub const CAR_GRAVITY: f32 = 9.81;
-/// Leg spring and damper, per kilogram of the whole body for the pair: the spring settles at
-/// `CAR_GRAVITY / WALKER_LEG_SPRING` of compression.
-pub const WALKER_LEG_SPRING: f32 = 80.0;
-pub const WALKER_LEG_DAMPING: f32 = 14.0;
-/// How hard the hull is pulled upright, rad/s² per radian of tilt, and the damping on its tilt rate, per
-/// second. The pull never exceeds `WALKER_BALANCE_MAX` rad/s²: a blow that tips it further than that
-/// can undo goes over.
-pub const WALKER_BALANCE_GAIN: f32 = 10.0;
-pub const WALKER_BALANCE_DAMP: f32 = 4.0;
-pub const WALKER_BALANCE_MAX: f32 = 3.0;
-/// Pitching (forwards and backwards) is the axis a walker can fight best: its feet are in line with the
-/// tilt, so the pull is up to this, and it also takes a catching step. The step is a push towards where
-/// the top is falling, by `WALKER_CATCH_GAIN` m/s² per unit of lean from where it should be and
-/// `WALKER_CATCH_DAMP` per rad/s of fall, at most `WALKER_CATCH_MAX`.
-pub const WALKER_BALANCE_MAX_PITCH: f32 = 6.0;
-pub const WALKER_CATCH_GAIN: f32 = 20.0;
-pub const WALKER_CATCH_DAMP: f32 = 3.0;
-pub const WALKER_CATCH_MAX: f32 = 8.0;
-/// Lean (up's horizontal part along the heading beyond its walking lean) and fall rate (rad/s) it
-/// tolerates before it takes a step, so a walk's own lean and its pushes are left alone.
-pub const WALKER_CATCH_LEAN_MARGIN: f32 = 0.15;
-pub const WALKER_CATCH_FALL_MARGIN: f32 = 0.5;
-/// Extra lean into its heading at top speed, as a tilt: the walker walks a little forward of its feet.
-pub const WALKER_CRUISE_LEAN: f32 = 0.08;
-/// How much of the tilt that would match its push it leans by: the push goes through the middle of
-/// the hull, so the lean is for show and for how it handles.
-pub const WALKER_ACCEL_LEAN: f32 = 0.5;
-/// A blast pushes a walker at its shoulders, this far above the middle of the hull, so it tips it.
-pub const WALKER_BLAST_LEVER: f32 = 3.0;
-/// Below this `up_y` it has fallen: the legs no longer push or drive, and only a weak pull
-/// (`WALKER_GETUP_SHARE` of the full one) stands it up again.
-pub const WALKER_FALLEN_UP: f32 = 0.6;
-pub const WALKER_GETUP_SHARE: f32 = 0.25;
-/// The chin guns: the driver aims them with the look, and the upper body turns to point them, up to
-/// `WALKER_TORSO_LIMIT` either side of the way the legs face (and `WALKER_GUN_PITCH_MIN..=_MAX` up and
-/// down, radians, hull frame), at `WALKER_GUN_SLEW` rad/s. `WALKER_GUN_PIVOT` is where the upper body turns
-/// in the hull frame and `WALKER_GUN_LENGTH` how far the muzzle is from it. A round is a cannon shell, as
-/// in a helicopter's nose gun, fired every `WALKER_GUN_COOLDOWN_TICKS` and scattered by up to `WALKER_GUN_SPREAD`.
-pub const WALKER_TORSO_LIMIT: f32 = 0.52;
-pub const WALKER_GUN_PITCH_MIN: f32 = -0.5;
-pub const WALKER_GUN_PITCH_MAX: f32 = 0.4;
-pub const WALKER_GUN_SLEW: f32 = 2.5;
-pub const WALKER_GUN_PIVOT: [f32; 3] = [0.0, 0.1, 0.0];
-pub const WALKER_GUN_LENGTH: f32 = 3.7;
-/// The two barrels hang `WALKER_GUN_BARREL_DROP` below the pivot, `WALKER_GUN_BARREL_X` either side of
-/// it, and fire in turn.
-pub const WALKER_GUN_BARREL_X: f32 = 0.3;
-pub const WALKER_GUN_BARREL_DROP: f32 = 1.0;
-pub const WALKER_GUN_COOLDOWN_TICKS: u32 = TICK_RATE / 4;
-pub const WALKER_GUN_SPREAD: f32 = 0.01;
 
-/// The hen (`KIND_HEN`): a giant robot hen on the walker's legs, one driver in a cockpit on its back. It
-/// walks and balances exactly as the walker does (the `WALKER_*` legs, spring and balance), and adds
-/// wings: a leap off the ground (Space), flapping that holds a slow climb while Space stays held in the
-/// air, and a glide that holds its fall to a slow sink once the flapping has run out. Jumping and
-/// flapping drain the wings' stamina, which comes back while it stands with Space let go.
-pub const HEN_SEATS: usize = 1;
-pub const HEN_HALF_EXTENTS: [f32; 3] = WALKER_HALF_EXTENTS;
-/// The wings' stamina, as a share of full.
-pub const HEN_STAMINA: f32 = 1.0;
-/// Upward speed a leap adds, m/s (about a 6 m leap), plus this much along its heading at full stick
-/// (half of it backwards), and the stamina it costs.
-pub const HEN_JUMP_SPEED: f32 = 11.0;
-pub const HEN_JUMP_FORWARD: f32 = 6.0;
-pub const HEN_JUMP_COST: f32 = 0.2;
-/// Flapping, once the leap has topped out, holds this upward speed, m/s, chasing it this hard (per
-/// second) by at most this much on top of gravity's worth, m/s², and uses this share of the stamina
-/// per second: about three seconds of it.
-pub const HEN_FLAP_CLIMB: f32 = 1.5;
-pub const HEN_FLAP_GAIN: f32 = 3.0;
-pub const HEN_FLAP_ACCEL: f32 = 6.0;
-pub const HEN_FLAP_DRAIN: f32 = 0.33;
-/// Held in the air, the wings carry it forward towards this speed at full stick, m/s, by at most
-/// this much, m/s².
-pub const HEN_GLIDE_SPEED: f32 = 12.0;
-pub const HEN_GLIDE_ACCEL: f32 = 4.0;
-/// With no stamina left the wings spread and hold its fall to this sink, m/s, chasing it this hard,
-/// per second.
-pub const HEN_GLIDE_SINK: f32 = 4.0;
-pub const HEN_GLIDE_GAIN: f32 = 3.0;
-/// In the air the wings keep it level, leaning it this far (radians, roughly) with the stick, levelling
-/// it this hard and this fast (per second), and turn it at this yaw rate, rad/s.
-pub const HEN_AIR_TILT: f32 = 0.2;
-pub const HEN_AIR_LEVEL: f32 = 4.0;
-pub const HEN_AIR_RESPONSE: f32 = 6.0;
-pub const HEN_AIR_YAW: f32 = 1.2;
-/// Stamina comes back at this share per second while a foot is down and Space is let go.
-pub const HEN_STAMINA_REFILL: f32 = 0.35;
-/// Eggs: a clutch of `HEN_EGGS`, laid one at most every `HEN_EGG_COOLDOWN_TICKS` from `HEN_VENT` (hull
-/// frame, under the tail) with the hull's velocity and `HEN_EGG_TOSS` m/s backwards, and one growing back
-/// every `HEN_EGG_REGROW_TICKS`. An egg falls and bounces like a grenade (`HEN_EGG_RADIUS`, keeping
-/// `HEN_EGG_BOUNCE` of its speed), bursts when `HEN_EGG_FUSE_TICKS` run out, and at once when it meets
-/// something at more than `HEN_EGG_SMASH_SPEED` m/s, which a laid egg never does but a dropped one does.
-pub const HEN_EGGS: u8 = 6;
-pub const HEN_EGG_COOLDOWN_TICKS: u32 = TICK_RATE / 2;
-pub const HEN_EGG_REGROW_TICKS: u32 = TICK_RATE * 4;
-pub const HEN_VENT: [f32; 3] = [0.0, -1.0, 2.0];
-pub const HEN_EGG_TOSS: f32 = 3.0;
-pub const HEN_EGG_RADIUS: f32 = 0.35;
-pub const HEN_EGG_BOUNCE: f32 = 0.3;
-pub const HEN_EGG_FUSE_TICKS: u32 = TICK_RATE * 2;
-pub const HEN_EGG_SMASH_SPEED: f32 = 16.0;
-/// An egg's blast, as a plane's bomb.
-pub const HEN_EGG_BLAST_RADIUS: f32 = 6.0;
-pub const HEN_EGG_DAMAGE: f32 = 110.0;
-pub const HEN_EGG_KNOCK: f32 = 16.0;
-
-/// The helicopter: a hull flown by a pilot (seat 0) with a gunner (seat 1) on the nose gun. There are no
-/// wheels; the rotor is a thrust along the hull's up axis, and the pilot leans the hull to go
-/// anywhere. Same body axes as the car.
-pub const HELI_SEATS: usize = 2;
-pub const HELI_HALF_EXTENTS: [f32; 3] = [1.0, 0.8, 2.4];
-/// How far the rotor disc leans at full stick: tangent of the angle, forward and sideways.
-pub const HELI_TILT: f32 = 0.5;
-pub const HELI_BANK: f32 = 0.35;
-/// Yaw rate at full stick, rad/s.
-pub const HELI_YAW_RATE: f32 = 1.4;
-/// Vertical speed the climb input asks for and the descent input asks for, m/s. With neither
-/// held the rotor holds altitude, whatever speed it had. `HELI_VERT_GAIN` (per second) turns the
-/// speed error into an acceleration, which never exceeds `HELI_VERT_ACCEL`, m/s².
-pub const HELI_CLIMB_SPEED: f32 = 6.0;
-pub const HELI_SINK_SPEED: f32 = 4.0;
-pub const HELI_VERT_GAIN: f32 = 1.5;
-pub const HELI_VERT_ACCEL: f32 = 5.0;
 /// Highest relief a world may have, metres from its lowest dry ground (y = 0) to its highest. The
 /// importer refuses more; the boundary walls reach above it, and fliers find the terrain under them by
 /// a ray from just over it.
 pub const MAX_RELIEF: f32 = 1000.0;
 
-/// Climbing fades out over the last 20 m below this height above the terrain, and above it the rotor
-/// pushes down. Every flier's ceiling is measured from the terrain under it, not from y = 0.
-pub const HELI_CEILING: f32 = 120.0;
-/// How firmly the hull levels out (rad/s of correction per unit of lean error), and how fast the
-/// angular velocity follows it, per second.
-pub const HELI_LEVEL_GAIN: f32 = 4.0;
-pub const HELI_RESPONSE: f32 = 8.0;
-/// The FPV drone: a quadcopter the size of a dinner plate. It is flown by velocity: forward stick asks
-/// for `DRONE_SPEED` along where its pilot looks (diving or climbing with the look's pitch), strafe for
-/// `DRONE_STRAFE_SPEED` sideways, jump and run for `DRONE_CLIMB_SPEED` / `DRONE_SINK_SPEED` straight up
-/// or down, and nothing held for a hover. The rotors close the gap at `DRONE_ACCEL_GAIN` per second, never
-/// pushing harder than `DRONE_MAX_ACCEL` m/s² beyond holding it up, and the hull leans the way they push.
-/// The look turns it: `DRONE_YAW_GAIN` rad/s per radian off, at most `DRONE_YAW_RATE`.
-pub const DRONE_SEATS: usize = 1;
-pub const DRONE_HALF_EXTENTS: [f32; 3] = [0.22, 0.06, 0.22];
-pub const DRONE_SPEED: f32 = 30.0;
-pub const DRONE_STRAFE_SPEED: f32 = 12.0;
-pub const DRONE_CLIMB_SPEED: f32 = 10.0;
-pub const DRONE_SINK_SPEED: f32 = 10.0;
-pub const DRONE_ACCEL_GAIN: f32 = 2.0;
-pub const DRONE_MAX_ACCEL: f32 = 18.0;
-pub const DRONE_YAW_GAIN: f32 = 6.0;
-pub const DRONE_YAW_RATE: f32 = 4.0;
-/// Climbing fades out over the last 20 m below this height, and above it the rotors push down.
-pub const DRONE_CEILING: f32 = 150.0;
-/// How firmly the hull follows its lean (rad/s per unit of error), and how fast the angular velocity
-/// follows that, per second.
-pub const DRONE_LEVEL_GAIN: f32 = 8.0;
-pub const DRONE_RESPONSE: f32 = 14.0;
-/// Air drag on the body, which is all that slows a drone whose motors are off.
-pub const DRONE_DAMPING: f32 = 0.1;
-/// The loitering drone: a delta wing about 2.5 m across and 3.5 m long, with a pusher prop. It flies as
-/// a simplified, nimble plane: always at `LOITER_SPEED` along its nose, with no throttle. The wings and
-/// motor close any gap between its velocity and that at `LOITER_GRIP` per second, never harder than
-/// `LOITER_MAX_ACCEL` m/s², so it goes where its nose points, and they hold it up whatever its attitude.
-/// The nose is steered as a plane's is: the mouse sets where to go and it banks into the turn and pulls
-/// (see `autopilot`), and W/S pitch and A/D roll by hand while held. It turns at most `LOITER_PITCH_RATE`,
-/// `LOITER_YAW_RATE` and `LOITER_ROLL_RATE` rad/s about its own axes; its angular velocity follows the
-/// controls at `LOITER_RESPONSE` per second.
-pub const LOITER_SEATS: usize = 1;
-pub const LOITER_HALF_EXTENTS: [f32; 3] = [1.25, 0.25, 1.75];
-pub const LOITER_SPEED: f32 = 35.0;
-pub const LOITER_GRIP: f32 = 10.0;
-pub const LOITER_MAX_ACCEL: f32 = 80.0;
-pub const LOITER_PITCH_RATE: f32 = 2.0;
-pub const LOITER_ROLL_RATE: f32 = 4.0;
-pub const LOITER_YAW_RATE: f32 = 0.8;
-pub const LOITER_RESPONSE: f32 = 8.0;
-/// The most the autopilot banks it into a turn, radians (about 57 degrees): less than the plane, so a
-/// hard reversal stays a turn rather than a roll on to its back.
-pub const LOITER_MAX_BANK: f32 = 1.0;
-/// Climbing fades out over the last 20 m below this height, and above it it is pushed down.
-pub const LOITER_CEILING: f32 = 500.0;
-/// Air drag on the body, which is all that slows one whose motor is off.
-pub const LOITER_DAMPING: f32 = 0.05;
-
-/// The nose gun: a four-barrel autocannon on a chin mount. `HELI_GUN_PIVOT` is the mount in the hull
-/// frame and `HELI_GUN_LENGTH` how far the muzzle is from it. The gunner's look direction aims it, within
-/// `HELI_GUN_YAW_LIMIT` either side of the nose and `HELI_GUN_PITCH_MIN..=HELI_GUN_PITCH_MAX` (radians, the
-/// hull's frame), at `HELI_GUN_SLEW` rad/s. It fires a shell (`SHELL_SPEED`, same fall and lifetime) every
-/// `HELI_GUN_COOLDOWN_TICKS`, three a second, scattered by up to `HELI_GUN_SPREAD` radians. It bursts
-/// like a tank shell on a smaller scale: a third of the radius and a third of the damage.
-pub const HELI_GUN_PIVOT: [f32; 3] = [0.0, -0.6, -2.0];
-pub const HELI_GUN_LENGTH: f32 = 1.3;
-pub const HELI_GUN_YAW_LIMIT: f32 = 1.0;
-pub const HELI_GUN_PITCH_MIN: f32 = -0.75;
-pub const HELI_GUN_PITCH_MAX: f32 = 0.2;
-pub const HELI_GUN_SLEW: f32 = 3.0;
-pub const HELI_GUN_COOLDOWN_TICKS: u32 = TICK_RATE / 3;
-pub const HELI_GUN_SPREAD: f32 = 0.01;
-/// The rocket pods under the stub wings, fired by the pilot (seat 0) on the fire button. `HELI_POD_PIVOTS`
-/// are the four tube mouths in the hull frame, used in turn, one rocket every `HELI_ROCKET_COOLDOWN_TICKS`.
-/// A rocket leaves at `HELI_ROCKET_LAUNCH_SPEED` over the helicopter's own velocity, along the nose, and
-/// is driven at `ROCKET_ACCEL` m/s² up to `ROCKET_MAX_SPEED`: it flies straight, no gravity.
-pub const HELI_POD_PIVOTS: [[f32; 3]; 4] = [[-1.0, -0.39, -0.3], [1.0, -0.39, -0.3], [-1.75, -0.525, -0.3], [1.75, -0.525, -0.3]];
-pub const HELI_ROCKET_COOLDOWN_TICKS: u32 = TICK_RATE / 5;
-pub const HELI_ROCKET_LAUNCH_SPEED: f32 = 20.0;
 pub const ROCKET_ACCEL: f32 = 110.0;
 pub const ROCKET_MAX_SPEED: f32 = 170.0;
 /// The blast of an autocannon round: a third of a tank shell's radius, a third of its damage.
@@ -589,101 +243,8 @@ pub const CANNON_RADIUS: f32 = EXPLOSION_RADIUS / 3.0;
 pub const CANNON_DAMAGE: f32 = EXPLOSION_DAMAGE / 3.0;
 pub const CANNON_KNOCK: f32 = EXPLOSION_KNOCK / 2.0;
 
-/// The triplane: a Fokker Dr.I stretched into a two-seater, flown by a pilot (seat 0) who also fires the
-/// two forward guns and drops the bombs, with a gunner (seat 1) on a ring-mounted gun behind. It rolls on
-/// ray-cast wheels like a car, and in the air its wings hold it up once it is fast enough (see `wing` in
-/// `physics/vehicle.rs`). Same body axes as the car.
-pub const PLANE_SEATS: usize = 2;
-/// The fuselage box. The wings are a second, weightless box (`PLANE_WING_*`), centred in the hull frame.
-pub const PLANE_HALF_EXTENTS: [f32; 3] = [0.5, 0.6, 2.8];
-pub const PLANE_WING_CENTRE: [f32; 3] = [0.0, 0.45, -1.1];
-pub const PLANE_WING_HALF_EXTENTS: [f32; 3] = [3.6, 0.85, 0.55];
-pub const PLANE_WHEEL_RADIUS: f32 = 0.35;
-pub const PLANE_TRACK_HALF: f32 = 0.8;
-/// The main gear ahead of the centre, the tail skid behind it. The front pair steers on the ground.
-pub const PLANE_AXLES_Z: [f32; 2] = [-1.5, 2.4];
-pub const PLANE_HARD_POINT_Y: f32 = -0.5;
-pub const PLANE_SUSPENSION_REST: f32 = 0.3;
-pub const PLANE_MAX_STEER: f32 = 0.5;
-/// Acceleration the engine gives at full throttle, m/s². With the stick released it runs at
-/// `PLANE_CRUISE_THROTTLE` of that, and with the stick pulled back the blip switch cuts it to `PLANE_IDLE_THROTTLE`.
-pub const PLANE_THRUST: f32 = 6.5;
-pub const PLANE_CRUISE_THROTTLE: f32 = 0.6;
-pub const PLANE_IDLE_THROTTLE: f32 = 0.03;
-/// Air drag per (m/s)², which tops a level flight out at about 45 m/s on full throttle and 35 at cruise.
-pub const PLANE_DRAG: f32 = PLANE_THRUST / (45.0 * 45.0);
-/// Below this airspeed (m/s) the wings stall: their lift fades out over the last 30% of it and the nose drops.
-pub const PLANE_STALL_SPEED: f32 = 17.0;
-/// Above this airspeed the wings carry the plane level by themselves; below it they carry less, by the square.
-pub const PLANE_LEVEL_SPEED: f32 = 28.0;
-/// The speed the controls are tuned for: they lose authority below it, by its square.
-pub const PLANE_CRUISE_SPEED: f32 = 35.0;
-/// How fast the wings turn the flight path towards where the nose points, per second, and how
-/// fast the fin kills a sideslip.
-pub const PLANE_AOA_GAIN: f32 = 4.0;
-pub const PLANE_SIDE_GAIN: f32 = 3.0;
-/// The most the wings can pull, m/s² (about 4 g).
-pub const PLANE_MAX_LIFT: f32 = 40.0;
-/// Turn rates at full deflection, rad/s, and how fast the body's spin follows them, per second.
-pub const PLANE_PITCH_RATE: f32 = 1.4;
-pub const PLANE_ROLL_RATE: f32 = 3.0;
-pub const PLANE_YAW_RATE: f32 = 0.5;
-pub const PLANE_RESPONSE: f32 = 6.0;
-/// How hard a stalled plane drops its nose towards where it is going, rad/s.
-pub const PLANE_STALL_DROP: f32 = 1.5;
-/// Where a plane with nobody at the stick points its nose, radians below the horizon: it glides down.
-pub const PLANE_GLIDE_PITCH: f32 = -0.2;
-/// Off-target angle (radians) beyond which the plane banks into the turn instead of levelling its wings.
-pub const PLANE_BANK_ANGLE: f32 = 0.2;
-/// The steepest bank the plane rolls into by itself, radians (about 75°): past it the pull does the turning.
-pub const PLANE_MAX_BANK: f32 = 1.3;
-/// Rate asked for per radian the target is off the nose, as a share of the full rate.
-pub const PLANE_AIM_GAIN: f32 = 2.0;
-/// How steeply a pilot's mouse can ask the plane to climb or dive, radians (75 degrees).
-pub const PLANE_AIM_MAX_PITCH: f32 = 1.3;
-/// With the stick centred the nose settles back to the horizon at this share of full pitch per radian off it.
-pub const PLANE_LEVEL_GAIN: f32 = 1.5;
-/// The engine fades out over the last 20 m below this height; the boundary walls stop at 200 m.
-pub const PLANE_CEILING: f32 = 160.0;
-/// Within this many metres of the edge of the world the plane is steered back towards the middle.
-pub const PLANE_EDGE_MARGIN: f32 = 120.0;
-/// A plane is parked where a straight, flat, clear run of at least this many metres lies ahead.
-pub const PLANE_RUNWAY: f32 = 80.0;
-/// The two forward guns on the cowling, which fire in turn along the nose. `PLANE_GUN_COOLDOWN_TICKS`
-/// between rounds makes twelve a second between them. A round is a hitscan out to `PLANE_GUN_RANGE`.
-pub const PLANE_GUN_PIVOTS: [[f32; 3]; 2] = [[-0.16, 0.72, -2.0], [0.16, 0.72, -2.0]];
-pub const PLANE_GUN_COOLDOWN_TICKS: u32 = 5;
-pub const PLANE_GUN_RANGE: f32 = 300.0;
-pub const PLANE_GUN_SPREAD: f32 = 0.012;
-/// What a round does to a soldier, and to a vehicle: a plane is all canvas, anything else shrugs it off.
-pub const PLANE_GUN_DAMAGE: u8 = 14;
-pub const PLANE_GUN_PLANE_DAMAGE: u8 = 7;
-pub const PLANE_GUN_VEHICLE_DAMAGE: u8 = 3;
-/// Guns heat by this much a round and cool by `GUN_COOL` a tick, out of 255. At 255 they jam until
-/// they have cooled to `GUN_UNJAM`: about four seconds of fire, then three of waiting.
-pub const PLANE_GUN_HEAT: f32 = 10.5;
 pub const GUN_COOL: f32 = 1.0;
 pub const GUN_UNJAM: f32 = 77.0;
-/// The gunner's ring mount behind the pilot: a pivot in the hull frame, the barrel's length, how far
-/// it lifts and dips, and its rate. It turns all the way round, but holds fire within
-/// `PLANE_REAR_DEAD_ZONE` of the nose, where the pilot sits.
-pub const PLANE_REAR_PIVOT: [f32; 3] = [0.0, 0.85, 0.7];
-pub const PLANE_REAR_LENGTH: f32 = 0.9;
-pub const PLANE_REAR_PITCH_MIN: f32 = -0.35;
-pub const PLANE_REAR_PITCH_MAX: f32 = 1.0;
-pub const PLANE_REAR_SLEW: f32 = 4.0;
-pub const PLANE_REAR_DEAD_ZONE: f32 = 0.6;
-pub const PLANE_REAR_COOLDOWN_TICKS: u32 = 8;
-pub const PLANE_REAR_HEAT: f32 = 16.5;
-/// Bombs on the rack under the fuselage, one dropped at most every `PLANE_BOMB_COOLDOWN_TICKS`. A
-/// bomb leaves with the plane's velocity and falls; it bursts on the first thing it meets. The
-/// rack fills again on the ground once the plane has stood still for `PLANE_REARM_TICKS`.
-pub const PLANE_BOMBS: u8 = 4;
-pub const PLANE_BOMB_PIVOT: [f32; 3] = [0.0, -0.85, -0.3];
-pub const PLANE_BOMB_COOLDOWN_TICKS: u32 = 30;
-/// The rack holds on to its bombs below this height above the ground, metres.
-pub const PLANE_BOMB_MIN_HEIGHT: f32 = 4.0;
-pub const PLANE_REARM_TICKS: u32 = 3 * TICK_RATE;
 pub const BOMB_RADIUS: f32 = 6.0;
 pub const BOMB_DAMAGE: f32 = 110.0;
 pub const BOMB_KNOCK: f32 = 16.0;
@@ -730,66 +291,6 @@ pub const SHELL_TTL_TICKS: u32 = 6 * TICK_RATE;
 /// Speed a fired shell takes from the tank, m/s, backwards along the barrel.
 pub const SHELL_RECOIL: f32 = 1.6;
 
-/// The field mortar (`KIND_MORTAR`): a towed, unpowered two-wheeler with one gunner, who aims its bearing
-/// with the look and its range with the dial. It is towed by a car's rear tow point through a spherical joint.
-pub const MORTAR_SEATS: usize = 1;
-pub const MORTAR_HALF_EXTENTS: [f32; 3] = [1.0, 0.5, 1.5];
-pub const MORTAR_WHEEL_RADIUS: f32 = 0.45;
-pub const MORTAR_TRACK_HALF: f32 = 0.85;
-/// Where the mount sits in the hull frame, and the barrel's length from it.
-pub const MORTAR_GUN_PIVOT: [f32; 3] = [0.0, 0.7, -0.2];
-pub const MORTAR_BARREL_LENGTH: f32 = 3.2;
-/// Elevation travel, radians: a high lob at the bottom, nearly vertical at the top. The gunner never sets
-/// it by hand: the range dial does (`lob_pitch` in gunnery).
-pub const MORTAR_PITCH_MIN: f32 = 0.785;
-pub const MORTAR_PITCH_MAX: f32 = 1.484;
-/// The range dial, metres: W and S walk it at `MORTAR_RANGE_RATE` while `BUTTON_RANGE_UP` /
-/// `BUTTON_RANGE_DOWN` are held. The longest lob is 245 m (`GRAVITY` and the muzzle speed at 45 degrees),
-/// the shortest the high lob reaches is about 42 m, so the dial stops at 50.
-pub const MORTAR_RANGE_START: f32 = 120.0;
-pub const MORTAR_RANGE_MIN: f32 = 50.0;
-pub const MORTAR_RANGE_MAX: f32 = 245.0;
-pub const MORTAR_RANGE_RATE: f32 = 60.0;
-/// How fast the mount follows the gunner's look, rad/s. Quick enough that the barrel stays on the crosshair.
-pub const MORTAR_TRAVERSE_SLEW: f32 = 3.0;
-/// Muzzle speed of a mortar bomb, m/s. Under `GRAVITY` it reaches about 245 m at 45 degrees and 40 m at 85.
-pub const MORTAR_SHELL_SPEED: f32 = 70.0;
-/// A reload is long: the gunner waits between bombs.
-pub const MORTAR_COOLDOWN_TICKS: u32 = 7 * TICK_RATE;
-pub const MORTAR_SHELL_TTL_TICKS: u32 = 10 * TICK_RATE;
-/// Speed the mortar is shoved back at when it fires, m/s, along the barrel's horizontal heading.
-pub const MORTAR_RECOIL: f32 = 3.0;
-/// Blast of a mortar bomb: wider and harder than a tank shell.
-pub const MORTAR_RADIUS: f32 = 11.0;
-pub const MORTAR_DAMAGE: f32 = 260.0;
-pub const MORTAR_KNOCK: f32 = 30.0;
-/// The Pak 38 (`KIND_PAK`): a towed 5 cm anti-tank gun on two wheels with split trails and a shield,
-/// one gunner. Its muzzle points down the hull's -Z, the trails run back to +Z, and it is towed by the
-/// trails' eye (`PAK_TONGUE_Z`), so it travels muzzle-last. It fires the tank's shell, laid by the look
-/// within its traverse and elevation, as a hull-mounted gun (`Aim::Mount`).
-pub const PAK_SEATS: usize = 1;
-pub const PAK_HALF_EXTENTS: [f32; 3] = [0.8, 0.35, 1.4];
-pub const PAK_WHEEL_RADIUS: f32 = 0.4;
-pub const PAK_TRACK_HALF: f32 = 0.8;
-/// The road wheels' axle, and the trails' spades it rests on at the back (the physics' second axle).
-pub const PAK_AXLES_Z: [f32; 2] = [-0.7, 1.25];
-/// The towing eye where the closed trails meet, behind the hull box.
-pub const PAK_TONGUE_Z: f32 = PAK_HALF_EXTENTS[2] + TOW_BACK;
-/// The trunnions, over the axle, and the barrel's length from them.
-pub const PAK_GUN_PIVOT: [f32; 3] = [0.0, 0.25, -0.7];
-pub const PAK_BARREL_LENGTH: f32 = 3.0;
-/// Traverse either side of the trails' centre line, and elevation, radians: about 65 degrees in all,
-/// and -8 to +27 degrees.
-pub const PAK_TRAVERSE: f32 = 0.57;
-pub const PAK_PITCH_MIN: f32 = -0.14;
-pub const PAK_PITCH_MAX: f32 = 0.47;
-/// How fast the gun is laid onto the look, rad/s: hand wheels, a little quicker than a tank's turret.
-pub const PAK_SLEW: f32 = 1.2;
-/// Speed it is shoved back at when it fires, m/s: its spades are dug in.
-pub const PAK_RECOIL: f32 = 1.0;
-/// The shield across the front, in the hull frame: it stops what would hit the gunner from ahead.
-pub const PAK_SHIELD_HALF: [f32; 3] = [0.85, 0.4, 0.03];
-pub const PAK_SHIELD_CENTRE: [f32; 3] = [0.0, 0.15, -0.95];
 /// The tow point sits this far behind a car's rear face, metres.
 pub const TOW_BACK: f32 = 0.25;
 /// How close a mortar's tongue must be to a car's tow point to hitch, metres.
@@ -850,21 +351,6 @@ pub const MAX_BUILT: usize = 200_000;
 /// bigger one is taken as held, so one blast never costs a long tick.
 pub const BUILD_SUPPORT_SEARCH: usize = 4096;
 
-/// Seated players. Each seat of a vehicle with open seats has a head point in the hull frame, where
-/// the client draws the sitting body's head (a car's `seat_N` markers, built by `build_car.py`). The
-/// body that can be shot is a short upright capsule hanging below it: head and shoulders down to the
-/// waist, so the hull box in front of the lower body takes the rounds aimed there.
-pub const JEEP_SEAT_HEADS: [[f32; 3]; 4] = [[-0.4, 0.62, -0.3], [0.4, 0.62, -0.3], [-0.4, 0.62, 0.75], [0.4, 0.62, 0.75]];
-pub const SPORTS_SEAT_HEADS: [[f32; 3]; 2] = [[-0.35, 0.4, 0.1], [0.35, 0.4, 0.1]];
-pub const ROADSTER_SEAT_HEADS: [[f32; 3]; 2] = [[-0.33, 0.42, 0.12], [0.33, 0.42, 0.12]];
-/// The pilot raised behind and above the gunner in the nose.
-pub const HELI_SEAT_HEADS: [[f32; 3]; 2] = [[0.0, 0.45, -0.45], [0.0, 0.1, -1.55]];
-/// The pilot behind the wings, the gunner standing in the ring.
-pub const PLANE_SEAT_HEADS: [[f32; 3]; 2] = [[0.0, 0.98, -0.45], [0.0, 1.15, 0.7]];
-/// The mortar's gunner rides its mount, so this is in the mount's frame: `MORTAR_GUN_PIVOT` turned by the gun's yaw.
-pub const MORTAR_SEAT_HEAD: [f32; 3] = [0.6, 0.45, 0.6];
-/// The Pak 38's gunner kneels behind the shield, left of the breech, at the sight: in the mount's frame.
-pub const PAK_SEAT_HEAD: [f32; 3] = [-0.4, 0.2, 0.6];
 /// The seated capsule's centre is this far below the head point, and it spans `SEATED_HALF_HEIGHT`
 /// above and below that, plus `SEATED_RADIUS`.
 pub const SEATED_CENTRE_DROP: f32 = 0.3;

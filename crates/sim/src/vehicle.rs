@@ -14,6 +14,7 @@
 //! with wings, which leap, flap and glide (see [`flap`]).
 //! "Car" in the names below means any of these vehicles; [`Spec`] says which one.
 
+use shared::vec3;
 use super::{Obj, Physics};
 use rapier3d::control::{DynamicRayCastVehicleController, WheelTuning};
 use rapier3d::prelude::*;
@@ -540,7 +541,7 @@ impl Physics {
         let (towing, towed) = (self.cars.get(&car)?, self.cars.get(&mortar)?);
         let hitch = self.car_pose(car)?.world_point(Self::tow_anchor(towing.spec));
         let tongue = self.car_pose(mortar)?.world_point(Self::tongue_anchor(towed.spec));
-        Some((0..3).map(|i| (hitch[i] - tongue[i]).powi(2)).sum::<f32>().sqrt())
+        Some(vec3::distance(hitch, tongue))
     }
 
     /// Puts a car back upright and at rest. Anything hitched to it lets go.

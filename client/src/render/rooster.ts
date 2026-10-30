@@ -1,5 +1,4 @@
-import { Animator, Color, Group, Mesh, parseGlb, type AnimationClip, type Node } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Animator, Color, Group, Mesh, parseGlb, type AnimationClip, type Node, Vector3 } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
 
 export const ROOSTER_URL = `${import.meta.env.BASE_URL}models/rooster.glb`
@@ -47,7 +46,7 @@ export class RoosterModel {
   readonly root = new Group()
   private readonly animator: Animator
   private readonly weights = { idle: 1, walk: 0, crow: 0 }
-  private readonly last = new THREE.Vector3()
+  private readonly last = new Vector3()
   private placed = false
   private crowing = false
   private speed = 0

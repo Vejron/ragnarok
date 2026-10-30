@@ -160,6 +160,17 @@ export class Construct {
     if (this.chunks.get(key)?.count === 0) this.chunks.delete(key)
   }
 
+  /** Takes every cube away, leaving the chunks empty until they are drawn as nothing (`forget`). */
+  clear() {
+    for (const data of this.chunks.values()) {
+      data.cells.fill(0)
+      data.materials.fill(0)
+      data.count = 0
+    }
+    this.count = 0
+    this.hurt.clear()
+  }
+
   /** Every chunk's key. */
   keys(): IterableIterator<string> {
     return this.chunks.keys()

@@ -27,7 +27,7 @@ impl World {
         if self.craters.len() > CRATER_MAX_KEPT {
             self.craters.pop_front();
         }
-        self.fresh_craters.push(crater);
+        self.fresh.craters.push(crater);
         true
     }
 

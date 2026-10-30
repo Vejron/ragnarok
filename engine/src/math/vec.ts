@@ -8,9 +8,10 @@ const noop = () => {}
 export type EulerOrder = 'XYZ' | 'YXZ' | 'ZXY' | 'ZYX' | 'YZX' | 'XZY'
 
 export class Vec3 {
-  private _x: number
-  private _y: number
-  private _z: number
+  // `declare`: a real field would start out undefined, and V8 would box every number written to it (see `Vector3`).
+  private declare _x: number
+  private declare _y: number
+  private declare _z: number
   /** @internal set by the owner that caches something derived from this vector. */
   onChange: () => void = noop
 
@@ -116,7 +117,7 @@ export class Vec3 {
   }
 }
 
-/** Anything with x, y and z: an engine Vec3 or three's Vector3. */
+/** Anything with x, y and z: a `Vec3` or a `Vector3`. */
 export interface XYZ {
   x: number
   y: number
@@ -272,7 +273,7 @@ export class Quat {
     return out
   }
 
-  /** Euler angles in the given `order` (default three's 'XYZ': the matrix is Rx · Ry · Rz). */
+  /** Euler angles in the given `order` (by default 'XYZ': the matrix is Rx · Ry · Rz). */
   setFromEuler(ax: number, ay: number, az: number, order: EulerOrder = 'XYZ'): this {
     const c1 = Math.cos(ax / 2), c2 = Math.cos(ay / 2), c3 = Math.cos(az / 2)
     const s1 = Math.sin(ax / 2), s2 = Math.sin(ay / 2), s3 = Math.sin(az / 2)

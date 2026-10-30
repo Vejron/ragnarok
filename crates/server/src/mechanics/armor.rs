@@ -17,6 +17,7 @@
 //! No dice: the same shot at the same place always does the same thing, so the client and the tests
 //! can tell what will happen.
 
+use shared::vec3;
 use crate::game::{Burning, Mounts, Player, Seats, Vehicle, World};
 use sim::Strike;
 use shared::armor::{Box3, Module, PARTS, Part, PenKind, State, Zone, pack};
@@ -205,7 +206,7 @@ pub fn report(world: &mut World, vid: u32, outcome: &Outcome, point: [f32; 3], d
         return;
     }
     let Some(pose) = world.physics.car_pose(vid) else { return };
-    let [x, y, z] = pose.local_dir(std::array::from_fn(|i| point[i] - pose.position[i])).map(to_cm_i16);
+    let [x, y, z] = pose.local_dir(vec3::sub(point, pose.position)).map(to_cm_i16);
     let [dx, dy, dz] = pose.local_dir(dir).map(|v| (v * 127.0).round().clamp(-127.0, 127.0) as i8);
     world.marks.push((HullMark { vehicle: vid, style, x, y, z, dx, dy, dz }, pose.position));
 }

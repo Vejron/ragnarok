@@ -28,3 +28,4 @@ worlds/active.json
 # built from crates/sim-wasm by client/scripts/build-wasm.ts (npm run build:wasm)
 client/src/sim/wasm/
 Trace-*.json*
+__pycache__/

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import * as THREE from 'three'
+import { Quat, Vector3 } from '@ragnarok/engine'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { boxOf, triangleCount } from './helpers'
 import { parsePlaneModel, PlaneModel } from '@/render/plane'
@@ -37,7 +37,7 @@ describe('PlaneModel', () => {
     }
     PLANE_GUN_PIVOTS.forEach((pivot, side) => {
       const gun = named(plane, side === 0 ? 'gun_L' : 'gun_R')
-      pivot.forEach((v, i) => expect(gun.getWorldPosition(new THREE.Vector3()).toArray()[i]).toBeCloseTo(v, 3))
+      pivot.forEach((v, i) => expect(gun.getWorldPosition(new Vector3()).toArray()[i]).toBeCloseTo(v, 3))
     })
     const ring = named(plane, 'turret')
     PLANE_REAR_PIVOT.forEach((v, i) => expect(ring.position.toArray()[i]).toBeCloseTo(v, 4))
@@ -113,7 +113,7 @@ describe('PlaneModel', () => {
     // Turning left and rolling the right wing up, a frame at a time.
     for (let k = 0; k < 30; k++) {
       wait(8)
-      const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, k * 0.02, k * 0.03, 'YXZ'))
+      const q = new Quat().setFromEuler(0, k * 0.02, k * 0.03, 'YXZ')
       plane.update([0, 10, 0], [q.x, q.y, q.z, q.w], 0, [3, 0], null, ARMS)
     }
     expect(plane.rates.y).toBeGreaterThan(0.5)

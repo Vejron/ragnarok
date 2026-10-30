@@ -1,3 +1,4 @@
+use shared::vec3;
 use super::*;
 use crate::entities::Health;
 use super::super::projectiles::Flying;
@@ -176,7 +177,7 @@ fn shoot_at(game: &mut Game, vid: u32, target: [f32; 3], local_from: [f32; 3]) -
     let at = pose.world_point(target);
     let from = std::array::from_fn(|i| at[i] + pose.world_dir(local_from)[i] * 12.0);
     let flat = [at[0] - from[0], at[1] - from[1], at[2] - from[2]];
-    let len = flat.iter().map(|v| v * v).sum::<f32>().sqrt();
+    let len = vec3::length(flat);
     let dir = flat.map(|v| v / len);
     let id = game.world.alloc_id();
     game.world.launch_as(id, Flying { kind: PROJECTILE_SHELL, owner: 0, source: 0, position: from, velocity: dir.map(|v| v * SHELL_SPEED), ttl: SHELL_TTL_TICKS, item: 0, back: 0, flown: 0.0 });
@@ -273,7 +274,7 @@ fn a_shell_into_a_tanks_turret_damages_the_turret() {
     let target = pose.world_point([0.0, 0.85, 0.3]);
     let from = pose.world_point([-12.0, 0.85, 0.3]);
     let dir = [target[0] - from[0], target[1] - from[1], target[2] - from[2]];
-    let len = dir.iter().map(|v| v * v).sum::<f32>().sqrt();
+    let len = vec3::length(dir);
     let id = game.world.alloc_id();
     game.world.launch_as(id, Flying { kind: PROJECTILE_SHELL, owner: 0, source: 0, position: from, velocity: dir.map(|v| v / len * SHELL_SPEED), ttl: SHELL_TTL_TICKS, item: 0, back: 0, flown: 0.0 });
     for _ in 0..40 {
@@ -295,7 +296,7 @@ fn gun_at(game: &mut Game, item: u8, vid: u32, target: [f32; 3], local_from: [f3
     let at = pose.world_point(target);
     let from: [f32; 3] = std::array::from_fn(|i| at[i] + pose.world_dir(local_from)[i] * 12.0);
     let flat = [at[0] - from[0], at[1] - from[1], at[2] - from[2]];
-    let len = flat.iter().map(|v| v * v).sum::<f32>().sqrt();
+    let len = vec3::length(flat);
     let gun = shared::items::def(item).unwrap();
     let round = Round { damage: gun.damage, vehicle: gun.damage / 4, plane: gun.damage / 4, weapon: gun.weapon, range: 50.0, falloff: gun.falloff, pen: gun.pen };
     game.world.shots.clear();
@@ -522,7 +523,7 @@ fn he_at(game: &mut Game, vid: u32, target: [f32; 3], local_from: [f32; 3]) {
     let at = pose.world_point(target);
     let from: [f32; 3] = std::array::from_fn(|i| at[i] + pose.world_dir(local_from)[i] * 12.0);
     let flat = [at[0] - from[0], at[1] - from[1], at[2] - from[2]];
-    let len = flat.iter().map(|v| v * v).sum::<f32>().sqrt();
+    let len = vec3::length(flat);
     let kind = shared::protocol::PROJECTILE_HE;
     let id = game.world.launch(Flying { kind, owner: 0, source: 0, position: from, velocity: flat.map(|v| v / len * SHELL_SPEED), ttl: SHELL_TTL_TICKS, item: 0, back: 0, flown: 0.0 });
     for _ in 0..40 {
@@ -580,7 +581,7 @@ fn a_hail_of_rifle_rounds_on_a_tank_is_one_scuff_a_snapshot_but_every_one_is_cal
         let at = pose.world_point(target);
         let from: [f32; 3] = std::array::from_fn(|i| at[i] + pose.world_dir([0.0, 0.0, -1.0])[i] * 12.0);
         let dir = [at[0] - from[0], at[1] - from[1], at[2] - from[2]];
-        let len = dir.iter().map(|v| v * v).sum::<f32>().sqrt();
+        let len = vec3::length(dir);
         hitscan(&mut game.world, 0, from, dir.map(|v| v / len), &round, 0, 0);
     };
     game.world.marks.clear();

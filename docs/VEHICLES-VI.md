@@ -55,4 +55,4 @@ The driver's `VehicleDriver.reconcile` takes the tank from `thrust.air` along wi
 
 ## Tuning
 
-Every number is a `ROADSTER_*` constant in `crates/shared/src/consts.rs`, mirrored in `client/src/sim/consts.ts` (`consts-parity.spec.ts` keeps the two equal). Changing any of them moves the scripted run, so regenerate `THRUST_CHECKPOINTS` on both sides.
+Every number is a `ROADSTER_*` constant in its `crates/shared/src/vehicles/` file, mirrored in `client/src/sim/consts.ts` (`consts-parity.spec.ts` keeps the two equal). Changing any of them moves the scripted run, so regenerate `THRUST_CHECKPOINTS` on both sides.

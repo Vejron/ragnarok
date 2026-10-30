@@ -100,7 +100,12 @@ export class Transport {
         if (message) this.onMessage(message)
       }
     } catch (error) {
-      if (this.session === session) console.warn('datagrams ended', error)
+      // Nothing more would be read while pings kept the session open: the game would stand still for
+      // good. Dropping it lets the game reconnect.
+      if (this.session === session) {
+        console.warn('datagrams ended', error)
+        this.close()
+      }
     } finally {
       reader.releaseLock()
     }
@@ -131,9 +136,6 @@ export class Transport {
         if (done) break
         for (const bytes of frames.push(value)) {
           const message = decodeServer(bytes)
-          // [ghost] temporary: every reliable message's type and size, and any that will not decode
-          if (message) console.info('[ghost] reliable', message.type, bytes.length)
-          else console.warn('[ghost] reliable message did not decode', bytes.length, bytes.slice(0, 8))
           if (message) this.onMessage(message)
         }
       }

@@ -1,10 +1,10 @@
-import { Group, Mesh, boxGeometry, cylinderGeometry, type Node } from '@ragnarok/engine'
-import * as THREE from 'three'
-import { toonMaterial } from './toon'
+import { Group, boxGeometry, cylinderGeometry } from '@ragnarok/engine'
+import { TowedGun } from './towedgun'
 import type { VehicleModel } from './car'
 import type { Turret } from '@/entities/units'
 import { TURRET_STOWED } from '@/net/codec'
 import { MORTAR_BARREL_LENGTH, MORTAR_GUN_PIVOT, MORTAR_SEAT_HEAD, MORTAR_TRACK_HALF, MORTAR_WHEEL_RADIUS } from '@/sim/consts'
+import { lerp } from '@/math'
 
 /** Fore and aft of each axle, metres (`axles` in `spec.rs`). */
 const AXLE_Z = 0.9
@@ -88,7 +88,6 @@ const smooth = (from: number, to: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - from) / (to - from)))
   return t * t * (3 - 2 * t)
 }
-const lerp = (a: number, b: number, t: number) => a + (b - a) * t
 const wrap = (angle: number) => Math.atan2(Math.sin(angle), Math.cos(angle))
 
 /** One split trail: the yaw at its hinge, the pitch inside it, and the spade folding at its tip. */
@@ -110,51 +109,18 @@ interface Trail {
  * then the trails close into a tow bar at the hitch and the firing pad lifts. Let go, it unfolds the same
  * way backwards. The fold is only drawn: the server fires only an unhitched gun.
  */
-export class MortarModel implements VehicleModel {
-  readonly root = new Group()
-  /** Turns with the traverse: the hull-relative yaw. */
-  private readonly mount = new Group()
-  /** Lifts with the elevation, about the mount's trunnions. */
-  private readonly elevation = new Group()
-  /** Slides back along the barrel's line when it fires. */
-  private readonly recoiling = new Group()
+export class MortarModel extends TowedGun implements VehicleModel {
   private readonly pad = new Group()
   private readonly trails: Trail[] = []
-  /** Where the gunner's head is, riding the mount. */
-  private readonly seat = new Group()
-  private readonly spinners: Node[] = []
-  private readonly paint = toonMaterial({ color: PAINT })
-  private readonly steel = toonMaterial({ color: STEEL })
-  private readonly rubber = toonMaterial({ color: RUBBER })
-  private roll = 0
-  private placed = false
-  /** 0 set up to fire, 1 folded for travel. */
-  private stow = 0
-  /** `performance.now()` of the last `update`, for the fold's pace. */
-  private updatedAt = 0
-  /** `performance.now()` of the last shot, for the barrel's recoil stroke. */
-  private firedAt = -Infinity
-  private readonly last = new THREE.Vector3()
-  private readonly forward = new THREE.Vector3()
-  private readonly pivot = new THREE.Vector3()
-  private readonly aim = new THREE.Vector3()
-  private readonly matrix = new THREE.Matrix4()
 
   constructor(_id: number) {
+    super(PAINT, STEEL, RUBBER)
     this.buildCarriage()
     for (const side of [-1, 1]) this.trails.push(this.buildTrail(side))
     this.buildGun()
 
     this.seat.position.set(...MORTAR_SEAT_HEAD)
     this.mount.add(this.seat)
-  }
-
-  private part(geometry: ConstructorParameters<typeof Mesh>[0], material: ConstructorParameters<typeof Mesh>[1], parent: Node, x: number, y: number, z: number, shadow = true) {
-    const mesh = new Mesh(geometry, material)
-    mesh.position.set(x, y, z)
-    mesh.castShadow = shadow
-    parent.add(mesh)
-    return mesh
   }
 
   /** The lower carriage: the body, the tandem bogies and their wheels, the travel lock and the firing pad. */
@@ -279,34 +245,5 @@ export class MortarModel implements VehicleModel {
     // The barrel slides back along its own line and eases home.
     const since = (now - this.firedAt) / 1000
     this.recoiling.position.z = since < RECOIL_SECONDS ? RECOIL_STROKE * (1 - since / RECOIL_SECONDS) ** 2 : 0
-  }
-
-  /** The gunner's head point in the world and the mount's turn, as of the last `update`. */
-  seatFrame(head: THREE.Vector3, rotation: THREE.Quaternion) {
-    this.root.updateMatrixWorld(true)
-    this.seat.getWorldPosition(head)
-    const q = this.mount.getWorldQuaternion(new THREE.Quaternion())
-    rotation.set(q.x, q.y, q.z, q.w)
-  }
-
-  /** A bomb was just fired: the barrel kicks back. */
-  recoil() {
-    this.firedAt = performance.now()
-  }
-
-  /** The barrel's root in world space as of the last `update`, and its unit aim direction. */
-  barrel() {
-    this.root.updateMatrixWorld(true)
-    this.elevation.getWorldPosition(this.pivot)
-    this.aim.set(0, 0, -1).transformDirection(this.matrix.fromArray(this.elevation.matrixWorld))
-    return { origin: this.pivot.clone(), direction: this.aim.clone() }
-  }
-
-  /** Frees what this mortar owns; the shared geometry stays. */
-  dispose() {
-    this.paint.dispose()
-    this.steel.dispose()
-    this.rubber.dispose()
-    this.root.removeFromParent()
   }
 }

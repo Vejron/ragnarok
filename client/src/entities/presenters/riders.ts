@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import { Quaternion, Vector3 } from '@ragnarok/engine'
 import type { VehicleModel } from '@/render/car'
 import { MortarModel } from '@/render/mortar'
 import { PakModel } from '@/render/pak'
@@ -16,7 +16,7 @@ import type { Vehicles } from './vehicles'
  * into `head` and the vehicle's turn (a towed gun's mount's) into `rotation`. False for a crew that
  * does not show, who are not drawn.
  */
-export function seatFrame(model: VehicleModel, kind: number, index: number, head: THREE.Vector3, rotation: THREE.Quaternion): boolean {
+export function seatFrame(model: VehicleModel, kind: number, index: number, head: Vector3, rotation: Quaternion): boolean {
   if (model instanceof MortarModel || model instanceof PakModel) {
     if (index !== 0) return false
     model.seatFrame(head, rotation)
@@ -42,8 +42,8 @@ export function seatFrame(model: VehicleModel, kind: number, index: number, head
 export class Riders implements Presenter<Frame> {
   /** Who sits where they can be heard this frame. */
   readonly seated: Nearby[] = []
-  private readonly head = new THREE.Vector3()
-  private readonly turn = new THREE.Quaternion()
+  private readonly head = new Vector3()
+  private readonly turn = new Quaternion()
 
   constructor(private readonly avatars: Avatars, private readonly vehicles: Vehicles) {}
 

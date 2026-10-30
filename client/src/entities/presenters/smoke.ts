@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import { Quaternion, Vector3 } from '@ragnarok/engine'
 import { bayOutlet, damageSmoke, type Outlet } from '@/render/vehiclesmoke'
 import { GONE, HURT, PART_ENGINE, burning, partState } from '@/sim/armor'
 import { vehicleMaxHp } from '@/sim/consts'
@@ -7,7 +7,7 @@ import type { Entity } from '../units'
 import type { VehicleWorld, Vehicles } from './vehicles'
 
 /** A vehicle with no motion on record. */
-const STILL = new THREE.Vector3()
+const STILL = new Vector3()
 
 /**
  * A plume from a hurt vehicle (`health`): thin steam under 40% health, black smoke and flame as it
@@ -43,7 +43,7 @@ export class Smoke implements Presenter<Frame> {
       return
     }
     const holes = this.holes(id)
-    const outlets = holes.length > 0 ? holes : [bayOutlet(kind, [placed.x, placed.y, placed.z], new THREE.Quaternion(...placed.rotation))]
+    const outlets = holes.length > 0 ? holes : [bayOutlet(kind, [placed.x, placed.y, placed.z], new Quaternion(...placed.rotation))]
     const owed = damageSmoke(this.world.fx(), outlets, this.vehicles.fx(id)?.velocity ?? STILL, severity, fire, frame.dt, this.owed.get(id) ?? 0)
     this.owed.set(id, owed)
     // A fire lights its surroundings with a flicker, from the hole it burns out of. Each light lives a fraction of a second, so one per frame holds it.

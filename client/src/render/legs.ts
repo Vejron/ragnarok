@@ -1,5 +1,4 @@
-import type { Node } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { type Node, Quaternion, Vector3 } from '@ragnarok/engine'
 import { WALKER_FOOT_HALF } from '@/sim/consts'
 
 /** The sizes of a pair of bird legs, metres. */
@@ -32,7 +31,7 @@ const TUCK = 1.6
  */
 export class Legs {
   private stamp = 0
-  private readonly last = new THREE.Vector3()
+  private readonly last = new Vector3()
   private yaw = 0
   private seen = false
   private tuck = 0
@@ -67,15 +66,15 @@ export class Legs {
     const now = performance.now()
     const dt = this.seen ? Math.min(0.1, Math.max(0.001, (now - this.stamp) / 1000)) : 0.016
     this.stamp = now
-    const here = new THREE.Vector3(position[0], 0, position[2])
+    const here = new Vector3(position[0], 0, position[2])
     // Nose pitch: leaning forward dips it. The legs undo it, so the feet stay flat on the ground.
-    const nose = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion(...rotation))
+    const nose = new Vector3(0, 0, -1).applyQuaternion(new Quaternion(...rotation))
     const pitch = Math.asin(Math.max(-1, Math.min(1, nose.y)))
-    const heading = new THREE.Vector3(nose.x, 0, nose.z)
+    const heading = new Vector3(nose.x, 0, nose.z)
     if (heading.lengthSq() < 1e-6) heading.set(0, 0, -1)
     heading.normalize()
     // Right of the heading, in the ground plane.
-    const right = new THREE.Vector3(-heading.z, 0, heading.x)
+    const right = new Vector3(-heading.z, 0, heading.x)
     const yaw = Math.atan2(-heading.x, -heading.z)
     const velocity = here.clone().sub(this.last).divideScalar(dt)
     let spin = 0

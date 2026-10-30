@@ -2,6 +2,35 @@
 
 use super::*;
 
+/// The Strv S (`KIND_STRV`): a turretless tank with the gun fixed in the hull. One seat: the driver steers
+/// by pivoting the hull and fires the main gun, which only the barrel's elevation can aim. Quicker and
+/// lower than the tank, with a steeply sloped glacis. Same body axes as the tank; mirrors `STRV_*` in
+/// `sim/consts.ts`.
+pub const STRV_SEATS: usize = 1;
+pub const STRV_HALF_EXTENTS: [f32; 3] = [1.3, 0.45, 2.7];
+/// Bigger wheels and a longer suspension than the tank's, with the hull higher on them: it steps over
+/// obstacles the tank has to go around.
+pub const STRV_WHEEL_RADIUS: f32 = 0.52;
+pub const STRV_TRACK_HALF: f32 = 1.2;
+/// Z of the three axles, front first.
+pub const STRV_AXLES_Z: [f32; 3] = [-1.9, 0.0, 1.9];
+pub const STRV_HARD_POINT_Y: f32 = -0.2;
+pub const STRV_SUSPENSION_REST: f32 = 0.42;
+pub const STRV_MAX_SPEED: f32 = 16.0;
+/// Yaw rate at full stick, rad/s.
+pub const STRV_TURN_RATE: f32 = 1.5;
+/// The casemate the gun sits in is a solid box on the hull's roof, weightless like the tank's turret:
+/// its half extents and centre in the hull frame.
+pub const STRV_CASEMATE_HALF: [f32; 3] = [0.9, 0.17, 1.25];
+pub const STRV_CASEMATE_CENTRE: [f32; 3] = [0.0, 0.62, -0.25];
+/// Where the gun's trunnion is in the hull frame, how far the muzzle is from it, how fast the barrel
+/// elevates (rad/s) and its limits, radians (+ is up). The gun points where the hull does.
+pub const STRV_GUN_PIVOT: [f32; 3] = [0.0, 0.72, -1.3];
+pub const STRV_BARREL_LENGTH: f32 = 4.4;
+pub const STRV_BARREL_SLEW: f32 = 1.2;
+pub const STRV_BARREL_MIN: f32 = -0.15;
+pub const STRV_BARREL_MAX: f32 = 0.3;
+
 /// The steep glacis turns shots away from well off the nose, and goes a long way through for one that
 /// does land. The engine is at the back, under a thin deck, and the driver (who is the gunner too) looks
 /// out through a periscope in the casemate's face.

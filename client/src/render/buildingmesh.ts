@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import { Color } from '@ragnarok/engine'
 import type { Sphere } from '@ragnarok/engine'
 import { ROOF_FLAT, type Bridge, type Building, type TileData } from '@/world'
 import { shellOf } from '@/sim/carve'
@@ -121,7 +121,7 @@ class Soup {
    * Building faces (`Shell.facesWithRoof`: nine centimetre numbers a triangle), roof triangles in
    * `roof` and the rest in `wall`, with `offset` (metres) taken off every corner.
    */
-  faces({ tris, roof }: Faces, wall: THREE.Color, top: THREE.Color, [ox, oy, oz]: readonly [number, number, number] = [0, 0, 0]) {
+  faces({ tris, roof }: Faces, wall: Color, top: Color, [ox, oy, oz]: readonly [number, number, number] = [0, 0, 0]) {
     for (let t = 0, i = 0; t < roof.length; t++, i += 9) {
       const c = roof[t] ? top : wall
       this.triangle(
@@ -139,7 +139,7 @@ class Soup {
    * counter-clockwise in (x, z); seen from +Y that is clockwise, so they are reversed to face
    * outwards and up.
    */
-  collision(tile: BuildingTile, from: number, count: number, color: THREE.Color) {
+  collision(tile: BuildingTile, from: number, count: number, color: Color) {
     const { vertices, triangles } = tile.collision
     for (let t = from; t < from + count; t++) {
       const [a, b, c] = [triangles[t * 3]! * 3, triangles[t * 3 + 2]! * 3, triangles[t * 3 + 1]! * 3]
@@ -173,10 +173,10 @@ function buildingFaces(tile: BuildingTile, index: number): Faces | null {
   return shellOf(tile, index)?.facesWithRoof(NONE) ?? null
 }
 
-/** Building `index`'s wall and roof colours, as linear `THREE.Color`s for vertex colours. */
-function linearColors(tile: BuildingTile, index: number, salt: number): [THREE.Color, THREE.Color] {
+/** Building `index`'s wall and roof colours, as linear `Color`s for vertex colours. */
+function linearColors(tile: BuildingTile, index: number, salt: number): [Color, Color] {
   const { wall, roof } = buildingColors(tile, index, salt)
-  return [new THREE.Color(wall), new THREE.Color(roof)]
+  return [Color.hex(wall), Color.hex(roof)]
 }
 
 /**
@@ -211,7 +211,7 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
     ranges[index * 2 + 1] = soup.vertices - first
   })
   // Bridges: concrete deck, piers and parapets, then steel pylon and cables.
-  const [deck, steel] = [new THREE.Color(BRIDGE_DECK_COLOR), new THREE.Color(BRIDGE_STEEL_COLOR)]
+  const [deck, steel] = [Color.hex(BRIDGE_DECK_COLOR), Color.hex(BRIDGE_STEEL_COLOR)]
   for (const bridge of tile.bridges) {
     soup.collision(tile, bridge.first, bridge.deck, deck)
     soup.collision(tile, bridge.first + bridge.deck, bridge.steel, steel)
@@ -219,11 +219,3 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
   return { ...soup.buffers(), ranges }
 }
 
-/** Building `index` alone as cubes, `offset` (metres) taken off every corner; null when it has no cells. */
-export function oneBuildingBuffers(tile: BuildingTile, index: number, salt: number, offset: readonly [number, number, number]): BuildingBuffers | null {
-  const faces = buildingFaces(tile, index)
-  if (!faces) return null
-  const soup = new Soup(faces.roof.length)
-  soup.faces(faces, ...linearColors(tile, index, salt), offset)
-  return soup.buffers()
-}

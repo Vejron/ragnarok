@@ -5,6 +5,7 @@
 
 import { wrapAngle } from '@/net/codec'
 import type { Rotation } from './units'
+import { lerp } from '@/math'
 
 /** A replicated quaternion's x, y, z (scaled by 32767, `w >= 0`) as a rotation. */
 export function rotationOf(x: number, y: number, z: number): Rotation {
@@ -12,7 +13,7 @@ export function rotationOf(x: number, y: number, z: number): Rotation {
   return { qx, qy, qz, qw: Math.sqrt(Math.max(0, 1 - qx * qx - qy * qy - qz * qz)) }
 }
 
-export const lerp = (a: number, b: number, t: number) => a + (b - a) * t
+export { lerp }
 
 /** An angle, turned the short way round. */
 export const angle = (a: number, b: number, t: number) => a + wrapAngle(b - a) * t

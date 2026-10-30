@@ -2,7 +2,7 @@
 
 A small WebGPU-only renderer. It does what a stylised outdoor game needs: toon-lit meshes, sun shadows, fog, skinned glTF models, custom shader materials, GPU particles, short-lived shot effects and ink outlines. It does not try to be general. There is no WebGL fallback, no PBR, no post-processing stack and no scene loader beyond binary glTF.
 
-It has no runtime dependencies and imports nothing from the game. `three` is a dev dependency, used only by the comparison example.
+It has no runtime dependencies and imports nothing from the game.
 
 ```ts
 import { Renderer, Scene, PerspectiveCamera, Mesh, Material, boxGeometry, Ramp } from '@ragnarok/engine'
@@ -63,9 +63,9 @@ The difference comes from how GPU state is organised, not from per-call speed:
 
 ## Using it from a game
 
-The engine has its own small math (`Vec3`, `Quat`, `Euler`, `Color`, `mat4`), and nodes take anything
-with `x`, `y`, `z` where a vector is expected, so a game can keep another maths library for its logic
-(the ragnarok client keeps three's) and write results into `node.position.set(...)`.
+The engine has its own small math. `Vec3`, `Quat` and `Euler` are what a node exposes: writing them tells the
+node it moved. `Vector3`, `Quaternion` and `Matrix4` are plain values to calculate with, with no such cost, and
+`Color` and `mat4` serve both. Anything with `x`, `y`, `z` is taken where a vector is expected, so the two mix.
 
 - **Rotation** is a quaternion and an Euler (`node.rotation`, with an order), kept in step.
 - **Hierarchy:** `attach` re-parents without moving, `localToWorld` / `worldToLocal`, `getWorldPosition`
@@ -100,7 +100,6 @@ node scripts/inspect.mjs "http://localhost:5180/static/?still" 6000 shot.png   #
 
 Examples:
 - **`static/`:** the benchmark scene.
-- **`three/`:** the same scene drawn by three; add `?webgpu` for three's WebGPU renderer.
 - **`materials/`:** textures, a normal map, the game's water as a `ShaderMaterial`, blending and a decal.
 - **`particles/`:** explosions, smoke and gunfire; add `?stress=100000` to keep that many particles alive.
 - **`models/`:** 64 animated players and the vehicles.

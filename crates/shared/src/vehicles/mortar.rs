@@ -2,6 +2,42 @@
 
 use super::*;
 
+/// The field mortar (`KIND_MORTAR`): a towed, unpowered two-wheeler with one gunner, who aims its bearing
+/// with the look and its range with the dial. It is towed by a car's rear tow point through a spherical joint.
+pub const MORTAR_SEATS: usize = 1;
+pub const MORTAR_HALF_EXTENTS: [f32; 3] = [1.0, 0.5, 1.5];
+pub const MORTAR_WHEEL_RADIUS: f32 = 0.45;
+pub const MORTAR_TRACK_HALF: f32 = 0.85;
+/// Where the mount sits in the hull frame, and the barrel's length from it.
+pub const MORTAR_GUN_PIVOT: [f32; 3] = [0.0, 0.7, -0.2];
+pub const MORTAR_BARREL_LENGTH: f32 = 3.2;
+/// Elevation travel, radians: a high lob at the bottom, nearly vertical at the top. The gunner never sets
+/// it by hand: the range dial does (`lob_pitch` in gunnery).
+pub const MORTAR_PITCH_MIN: f32 = 0.785;
+pub const MORTAR_PITCH_MAX: f32 = 1.484;
+/// The range dial, metres: W and S walk it at `MORTAR_RANGE_RATE` while `BUTTON_RANGE_UP` /
+/// `BUTTON_RANGE_DOWN` are held. The longest lob is 245 m (`GRAVITY` and the muzzle speed at 45 degrees),
+/// the shortest the high lob reaches is about 42 m, so the dial stops at 50.
+pub const MORTAR_RANGE_START: f32 = 120.0;
+pub const MORTAR_RANGE_MIN: f32 = 50.0;
+pub const MORTAR_RANGE_MAX: f32 = 245.0;
+pub const MORTAR_RANGE_RATE: f32 = 60.0;
+/// How fast the mount follows the gunner's look, rad/s. Quick enough that the barrel stays on the crosshair.
+pub const MORTAR_TRAVERSE_SLEW: f32 = 3.0;
+/// Muzzle speed of a mortar bomb, m/s. Under `GRAVITY` it reaches about 245 m at 45 degrees and 40 m at 85.
+pub const MORTAR_SHELL_SPEED: f32 = 70.0;
+/// A reload is long: the gunner waits between bombs.
+pub const MORTAR_COOLDOWN_TICKS: u32 = 7 * TICK_RATE;
+pub const MORTAR_SHELL_TTL_TICKS: u32 = 10 * TICK_RATE;
+/// Speed the mortar is shoved back at when it fires, m/s, along the barrel's horizontal heading.
+pub const MORTAR_RECOIL: f32 = 3.0;
+/// Blast of a mortar bomb: wider and harder than a tank shell.
+pub const MORTAR_RADIUS: f32 = 11.0;
+pub const MORTAR_DAMAGE: f32 = 260.0;
+pub const MORTAR_KNOCK: f32 = 30.0;
+/// The mortar's gunner rides its mount, so this is in the mount's frame: `MORTAR_GUN_PIVOT` turned by the gun's yaw.
+pub const MORTAR_SEAT_HEAD: [f32; 3] = [0.6, 0.45, 0.6];
+
 /// The field mortar: a towed gun on two wheels. Nothing drives it, so it has no engine; its wheels only
 /// roll it, and the brake holds it once it is unhitched.
 pub(super) const MORTAR: VehicleDef = VehicleDef {

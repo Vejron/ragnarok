@@ -3,6 +3,7 @@
 //! crosshair ray meets, so it sits against a wall, on a roof, on the ground or on another cube. What
 //! the world does with it (colliders, what falls, telling everyone) is `game/construct.rs`.
 
+use shared::vec3;
 use super::combat::{MAX_PITCH, look};
 use super::life::body;
 use crate::entities::{Health, Hurtbox, With};
@@ -28,18 +29,16 @@ pub fn aim(world: &World, id: u32) -> Option<Aim> {
         return None;
     }
     let input = player.input;
-    let c = player.character;
     let yaw = from_mrad(input.yaw);
     let dir = look(yaw, from_mrad(input.pitch()).clamp(-MAX_PITCH, MAX_PITCH));
-    let right = [yaw.cos(), 0.0, -yaw.sin()];
-    let pivot: [f32; 3] = std::array::from_fn(|i| c.position[i] + right[i] * ON_FOOT_SHOULDER + if i == 1 { ON_FOOT_HEIGHT } else { 0.0 });
-    let eye = [c.position[0], c.position[1] + eye_height(input.buttons(), c.prone), c.position[2]];
+    let pivot: [f32; 3] = player.pivot();
+    let eye = player.eye();
     let (t, normal) = world.physics.cast_ray_normal(pivot, dir, BUILD_REACH + ON_FOOT_SHOULDER + ON_FOOT_HEIGHT)?;
-    let hit: [f32; 3] = std::array::from_fn(|i| pivot[i] + dir[i] * t);
-    let place = cell_at(std::array::from_fn(|i| hit[i] + normal[i] * HALF_CUBE));
+    let hit: [f32; 3] = vec3::along(pivot, dir, t);
+    let place = cell_at(vec3::along(hit, normal, HALF_CUBE));
     let dig = cell_at(std::array::from_fn(|i| hit[i] - normal[i] * HALF_CUBE));
     let middle = cube_centre(place);
-    let reach = (0..3).map(|i| (middle[i] - eye[i]).powi(2)).sum::<f32>().sqrt();
+    let reach = vec3::distance(middle, eye);
     (reach <= BUILD_REACH).then_some(Aim { place, dig })
 }
 

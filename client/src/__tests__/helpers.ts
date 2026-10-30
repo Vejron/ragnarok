@@ -1,15 +1,34 @@
-import { Mesh, SkinnedMesh, type Node } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Mesh, SkinnedMesh, type Node, type XYZ, Matrix4, Vector3 } from '@ragnarok/engine'
+
+/** An axis-aligned box, empty until a point is put in it. */
+export class Box {
+  readonly min = new Vector3(Infinity, Infinity, Infinity)
+  readonly max = new Vector3(-Infinity, -Infinity, -Infinity)
+
+  expandByPoint(point: XYZ): this {
+    this.min.min(point)
+    this.max.max(point)
+    return this
+  }
+
+  getCenter(out: Vector3) {
+    return out.addVectors(this.min, this.max).multiplyScalar(0.5)
+  }
+
+  getSize(out: Vector3) {
+    return out.subVectors(this.max, this.min)
+  }
+}
 
 /** The axis-aligned box around every vertex under `root`, with skinned meshes posed by their bones. */
-export function boxOf(root: Node): THREE.Box3 {
+export function boxOf(root: Node): Box {
   root.updateMatrixWorld(true)
-  const box = new THREE.Box3()
-  const v = new THREE.Vector3()
-  const world = new THREE.Matrix4()
-  const bone = new THREE.Matrix4()
-  const inverse = new THREE.Matrix4()
-  const sum = new THREE.Vector3()
+  const box = new Box()
+  const v = new Vector3()
+  const world = new Matrix4()
+  const bone = new Matrix4()
+  const inverse = new Matrix4()
+  const sum = new Vector3()
   root.traverse((node) => {
     if (!(node instanceof Mesh) || !node.visible) return
     const { positions, joints, weights } = node.geometry

@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import { Vector3 } from '@ragnarok/engine'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { boxOf, triangleCount } from './helpers'
 import { PakModel, STOW_SECONDS } from '@/render/pak'
@@ -11,7 +11,7 @@ const AIM: Turret = { yaw: 0.3, pitch: 0.2, shots: 0, range: 0, flags: 0 }
 const named = (pak: PakModel, name: string) => pak.root.getObjectByName(name)!
 const world = (pak: PakModel, name: string) => {
   pak.root.updateMatrixWorld(true)
-  return named(pak, name).getWorldPosition(new THREE.Vector3())
+  return named(pak, name).getWorldPosition(new Vector3())
 }
 /** The hull frame's ground: the wheels' bottom (`WHEEL_Y` in `pak.ts`). */
 const GROUND_Y = -0.3 - PAK_WHEEL_RADIUS

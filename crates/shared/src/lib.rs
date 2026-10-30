@@ -18,4 +18,5 @@ pub mod quant;
 pub mod replicated;
 pub mod terrain;
 pub mod vehicles;
+pub mod vec3;
 pub mod world;

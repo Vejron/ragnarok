@@ -1,5 +1,4 @@
-import { Group, type Node } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Group, type Node, Vector3 } from '@ragnarok/engine'
 import type { Tree } from '@/world'
 import type { Particles } from './particles'
 import { removeTreeInstance, standaloneTree } from './trees'
@@ -16,10 +15,10 @@ export interface TreeNoise {
 
 interface Falling {
   pivot: Group
-  axis: THREE.Vector3
+  axis: Vector3
   duration: number
   elapsed: number
-  foot: THREE.Vector3
+  foot: Vector3
   /** Horizontal unit direction of the fall. */
   dx: number
   dz: number
@@ -46,8 +45,6 @@ const MAX_FALLING = 24
 const SNAP = 0.5
 /** How far a trunk bends (radians) before it lets go. */
 const GIVE_ANGLE = 0.12
-const WOOD = 0xa07040
-const LEAF = 0x4f7f2a
 
 /**
  * Trees that have been cut down. A felled tree leaves its tile's instanced mesh and becomes a
@@ -76,13 +73,13 @@ export class FallingTrees {
     // up × direction takes the top that way.
     const dx = -Math.sin(yaw)
     const dz = -Math.cos(yaw)
-    const axis = new THREE.Vector3(dz, 0, -dx)
+    const axis = new Vector3(dz, 0, -dx)
     if (!animate || this.falling.length >= MAX_FALLING) {
       pivot.quaternion.setFromAxisAngle(axis, LANDED)
       return true
     }
     // Taller trees take longer to come down.
-    const foot = new THREE.Vector3(tree.x, tree.base, tree.z)
+    const foot = new Vector3(tree.x, tree.base, tree.z)
     // The harder the blow, the faster it comes down: a full-force hit takes a third of a second or so.
     const duration = Math.max(0.3, (0.6 + tree.height * 0.025) / (1 + 4 * force))
     // A soft push is felt first: the trunk gives for a moment. A hard one does not wait.
@@ -130,11 +127,11 @@ export class FallingTrees {
       if (fall.throwSpeed > 0 && fall.settled === null) {
         const s = fall.duration
         fall.pivot.position.set(fall.foot.x + fall.dx * fall.throwSpeed * s, fall.foot.y, fall.foot.z + fall.dz * fall.throwSpeed * s)
-        fall.foot = new THREE.Vector3(fall.pivot.position.x, fall.pivot.position.y, fall.pivot.position.z)
+        fall.foot = new Vector3(fall.pivot.position.x, fall.pivot.position.y, fall.pivot.position.z)
       }
       if (fall.settled === null) {
         fall.settled = 0
-        const crown = new THREE.Vector3(fall.foot.x + fall.dx * fall.height * 0.85, fall.foot.y, fall.foot.z + fall.dz * fall.height * 0.85)
+        const crown = new Vector3(fall.foot.x + fall.dx * fall.height * 0.85, fall.foot.y, fall.foot.z + fall.dz * fall.height * 0.85)
         land(fx, crown, fall.dx, fall.dz, fall.height, fall.crown, fall.force)
         this.onNoise?.({ phase: 'thud', at: crown, size: fall.height })
       }
@@ -205,7 +202,7 @@ function dust(fx: TreeFx, at: { x: number; y: number; z: number }, velocity: rea
 }
 
 /** The trunk splits: chips and bark thrown the way the tree falls, a cloud at the foot, and leaves shaken loose from the crown. */
-function crack(fx: TreeFx, foot: THREE.Vector3, dx: number, dz: number, height: number, crown: number, force: number) {
+function crack(fx: TreeFx, foot: Vector3, dx: number, dz: number, height: number, crown: number, force: number) {
   const scale = Math.min(2, 0.6 + height / 14) * (1 + force * 0.5)
   const at = { x: foot.x, y: foot.y + 0.5, z: foot.z }
   const chips = Math.min(70, Math.round(16 + height + force * 36))
@@ -224,7 +221,7 @@ function crack(fx: TreeFx, foot: THREE.Vector3, dx: number, dz: number, height: 
 }
 
 /** The crown hits the ground: dust rolls out along the ground, chips jump, and the crown bursts into leaves along the trunk. */
-function land(fx: TreeFx, crown: THREE.Vector3, dx: number, dz: number, height: number, width: number, force: number) {
+function land(fx: TreeFx, crown: Vector3, dx: number, dz: number, height: number, width: number, force: number) {
   const scale = Math.min(2, 0.6 + height / 14) * (1 + force * 0.5)
   const ground = { x: crown.x, y: crown.y + 0.3, z: crown.z }
   const puffs = Math.round(10 + scale * 4)

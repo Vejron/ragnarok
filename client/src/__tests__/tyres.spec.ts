@@ -1,6 +1,5 @@
-import { Vec3 } from '@ragnarok/engine'
+import { Vec3, Vector3 } from '@ragnarok/engine'
 import { describe, expect, it } from 'vitest'
-import * as THREE from 'three'
 import { kindView } from '@/kinds'
 import { tyreSlip } from '@/sim/slip'
 import { rasterSurface, Surfaces, SURFACE_ASPHALT, SURFACE_DIRT, SURFACE_GRASS, SURFACE_WATER } from '@/sim/surface'
@@ -102,27 +101,27 @@ describe('surfaces', () => {
 })
 
 describe('Skidmarks', () => {
-  const side = new THREE.Vector3(1, 0, 0)
+  const side = new Vector3(1, 0, 0)
 
   it('joins a wheel’s marks into a strip and starts over after a lift', () => {
     const skids = new Skidmarks(10)
-    skids.mark('a', new THREE.Vector3(0, 0, 0), side, 0.3, 0, 1)
+    skids.mark('a', new Vector3(0, 0, 0), side, 0.3, 0, 1)
     expect(skids.laid).toBe(0)
-    skids.mark('a', new THREE.Vector3(0, 0, -0.1), side, 0.3, 0, 1)
+    skids.mark('a', new Vector3(0, 0, -0.1), side, 0.3, 0, 1)
     expect(skids.laid).toBe(0)
-    skids.mark('a', new THREE.Vector3(0, 0, -1), side, 0.3, 0, 1)
+    skids.mark('a', new Vector3(0, 0, -1), side, 0.3, 0, 1)
     expect(skids.laid).toBe(1)
     skids.lift('a')
-    skids.mark('a', new THREE.Vector3(0, 0, -2), side, 0.3, 0, 1)
+    skids.mark('a', new Vector3(0, 0, -2), side, 0.3, 0, 1)
     expect(skids.laid).toBe(1)
     // A jump is not drawn as a long smear.
-    skids.mark('a', new THREE.Vector3(0, 0, -20), side, 0.3, 0, 1)
+    skids.mark('a', new Vector3(0, 0, -20), side, 0.3, 0, 1)
     expect(skids.laid).toBe(1)
   })
 
   it('reuses its oldest quads and fades them out', () => {
     const skids = new Skidmarks(3)
-    for (let i = 0; i <= 5; i++) skids.mark('a', new THREE.Vector3(0, 0, -i), side, 0.3, 0, 1)
+    for (let i = 0; i <= 5; i++) skids.mark('a', new Vector3(0, 0, -i), side, 0.3, 0, 1)
     expect(skids.laid).toBe(5)
     expect(skids.ageOf(0)).toBe(0)
     skids.update(SKID_LIFE / 2)

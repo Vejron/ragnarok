@@ -21,6 +21,7 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{MissedTickBehavior, interval};
 
+mod catch_up;
 mod construct;
 mod craters;
 pub use construct::{HALF_CUBE, cube_centre};
@@ -49,18 +50,13 @@ fn profile_entry(world: &World, id: u32) -> ProfileEntry {
 
 /// Building `id`'s damage `stage`, and where a blast marked it, as a `Damaged` entry.
 fn damaged_entry(id: ObjId, stage: u8, mark: Option<[f32; 3]>) -> DamagedBuilding {
-    DamagedBuilding { col: id.col, row: id.row, index: id.index, stage, mark: mark.map(|p| p.map(|v| (v * 100.0).round() as i32)) }
+    DamagedBuilding { col: id.col, row: id.row, index: id.index, stage, mark: mark.map(|p| p.map(to_cm)) }
 }
 
 /// Building `id`'s cells `blasted` and `fell`, by a blast `at` (cm), as a `Carved` entry.
 fn carved_entry(id: ObjId, point: [i32; 3], blasted: Vec<u32>, fell: Vec<u32>) -> CarvedBuilding {
     CarvedBuilding { col: id.col, row: id.row, index: id.index, point, blasted, fell }
 }
-
-/// Most cubes in one `Built` of a joiner's catch-up: about 10 bytes each on the wire.
-const BUILT_CATCH_UP_BATCH: usize = 32_768;
-/// Numbers of `DugTile::runs` in one `Dug` of a joiner's catch-up: at most 5 bytes each, well under the client's 4 MiB a message.
-const DUG_CATCH_UP_BATCH: usize = 400_000;
 
 /// A `Built` message: the cubes `placed`, `removed` and `fell`, as lattice places.
 fn built_message(live: bool, placed: Vec<(shared::construct::Pos, shared::construct::Cube)>, removed: Vec<shared::construct::Pos>, fell: Vec<shared::construct::Pos>) -> Built {
@@ -107,18 +103,15 @@ impl Game {
                 buildings_by_id: map.building_ids.iter().enumerate().map(|(index, &id)| (id, index)).collect(),
                 object_hp: HashMap::new(),
                 destroyed: Vec::new(),
-                fresh_destroyed: Vec::new(),
-                fresh_damaged: Vec::new(),
+                felled: Default::default(),
+                fresh: Default::default(),
                 carves: HashMap::new(),
-                fresh_carved: Vec::new(),
                 strained: HashMap::new(),
                 rubble: Vec::new(),
                 craters: Default::default(),
-                fresh_craters: Vec::new(),
                 dug_tiles: Default::default(),
                 pristine: Vec::new(),
                 construct: Default::default(),
-                fresh_built: Default::default(),
                 construct_dirty: Default::default(),
                 backpack: None,
                 map,
@@ -150,7 +143,7 @@ impl Game {
         for bot in std::mem::take(&mut game.world.map.placed_bots) {
             let route = bot.route.iter().map(|point| point.map(from_cm)).collect();
             match game.add_bot(bot.at.map(from_cm), bot.team, route) {
-                Some(id) => game.world.entities.get_mut::<Bot>(id).expect("just added").skill = bot.skill.clamp(0.0, 1.0),
+                Some(id) => game.world.entities.get_mut::<Bot>(id).expect("just added").aim.skill = bot.skill.clamp(0.0, 1.0),
                 None => tracing::warn!(MAX_BOTS, "too many bots, placed bot skipped"),
             }
         }
@@ -195,98 +188,16 @@ impl Game {
             return None;
         }
         let loadout = profile.loadout.map_or_else(starting_hotbar, hotbar_of);
-        self.world.entities.spawn(
-            id,
-            Player {
-                character: Character::default(),
-                seat: None,
-                hit_cooldown: 0,
-                input: InputFrame::default(),
-                inputs: JitterBuffer::default(),
-                ack: 0,
-                hotbar: loadout,
-                loadout,
-                selected: 0,
-                fire_cooldown: 0,
-                reload_left: 0,
-                channel_left: 0,
-                trigger_held: false,
-                kills: 0,
-                deaths: 0,
-                held: 0,
-                name: if profile.name.is_empty() { format!("Player {id}") } else { profile.name },
-                color: profile.color.unwrap_or((id % PLAYER_COLOR_COUNT as u32) as u8),
-                spawns: profile.spawns.into_iter().filter(|&point| crate::mechanics::spawn_usable(&self.world.map, point)).collect(),
-                next_spawn: 0,
-                team: TEAM_NONE,
-            },
-        );
+        let name = if profile.name.is_empty() { format!("Player {id}") } else { profile.name };
+        let color = profile.color.unwrap_or((id % PLAYER_COLOR_COUNT as u32) as u8);
+        let spawns = profile.spawns.into_iter().filter(|&point| crate::mechanics::spawn_usable(&self.world.map, point)).collect();
+        self.world.entities.spawn(id, Player::new(name, color, TEAM_NONE, spawns, loadout));
         self.world.entities.insert(id, soldier_life());
-        let profiles = self.world.entities.ids::<With<Player>>().into_iter().map(|id| profile_entry(&self.world, id)).collect();
-        let _ = outbox.try_send(Outgoing::Reliable(encode(&Profiles { tag: S_PROFILES, players: profiles }).into()));
-        let joiner = Bytes::from(encode(&Profiles { tag: S_PROFILES, players: vec![profile_entry(&self.world, id)] }));
-        for (&to, other) in &self.outboxes {
-            send_reliable(other, to, &joiner, &mut self.stalled);
+        for message in self.catch_up() {
+            send_reliable(&outbox, id, &Bytes::from(message), &mut self.stalled);
         }
-        let scores = self.world.entities.all::<Player>().map(|(id, player)| Score { id, kills: player.kills, deaths: player.deaths, held: player.held }).collect();
-        let _ = outbox.try_send(Outgoing::Reliable(encode(&Scores { tag: S_SCORES, scores }).into()));
-        // Always sent, even empty: the client takes the first one after the welcome as the catch-up
-        // (not news to animate), and snapshots on the datagram channel can overtake it.
-        let message = Destroyed { tag: S_DESTROYED, objects: self.world.destroyed.iter().map(|&(object, yaw)| destroyed_entry(object, yaw, 0)).collect() };
-        let _ = outbox.try_send(Outgoing::Reliable(encode(&message).into()));
-        let hurt: Vec<_> = self.world.object_hp.keys().filter_map(|&object| self.world.damage_stage(object).map(|stage| (object, stage))).collect();
-        let hurt: Vec<_> = hurt.into_iter().filter_map(|(object, stage)| match object {
-            Obj::Building(object_id) if stage > 0 => Some(damaged_entry(object_id, stage, None)),
-            _ => None,
-        }).collect();
-        if !hurt.is_empty() {
-            let _ = outbox.try_send(Outgoing::Reliable(encode(&shared::protocol::Damaged { tag: S_DAMAGED, buildings: hurt }).into()));
-        }
-        // Cells already gone, as state: the building they were taken from is still standing.
-        let carved: Vec<_> = self
-            .world
-            .carves
-            .iter()
-            .filter(|(object_id, _)| !self.world.destroyed.iter().any(|&(done, _)| done == Obj::Building(**object_id)))
-            .filter_map(|(object_id, carving)| {
-                let gone: Vec<u32> = (0..carving.removed.len()).filter(|&i| carving.removed[i]).map(|i| i as u32).collect();
-                (!gone.is_empty()).then(|| carved_entry(*object_id, [0; 3], gone, Vec::new()))
-            })
-            .collect();
-        if !carved.is_empty() {
-            let _ = outbox.try_send(Outgoing::Reliable(encode(&Carved { tag: S_CARVED, live: false, buildings: carved }).into()));
-        }
-        // The ground as craters left it, then the craters still marked on it, in order, as state.
-        let mut batch: Vec<DugTile> = Vec::new();
-        let mut size = 0;
-        for tile in self.world.dug_ground() {
-            size += tile.runs.len();
-            batch.push(tile);
-            if size >= DUG_CATCH_UP_BATCH {
-                let _ = outbox.try_send(Outgoing::Reliable(encode(&Dug { tag: S_DUG, tiles: std::mem::take(&mut batch) }).into()));
-                size = 0;
-            }
-        }
-        if !batch.is_empty() {
-            let _ = outbox.try_send(Outgoing::Reliable(encode(&Dug { tag: S_DUG, tiles: batch }).into()));
-        }
-        let marks = self.world.crater_marks();
-        if !marks.is_empty() {
-            let _ = outbox.try_send(Outgoing::Reliable(encode(&Cratered { tag: S_CRATERED, live: false, craters: marks }).into()));
-        }
-        // Every cube placed so far, as state, in batches that stay well under the client's 4 MiB a message.
-        let cubes: Vec<_> = self.world.construct.cubes().collect();
-        for batch in cubes.chunks(BUILT_CATCH_UP_BATCH) {
-            let message = built_message(false, batch.to_vec(), Vec::new(), Vec::new());
-            let _ = outbox.try_send(Outgoing::Reliable(encode(&message).into()));
-        }
-        if let Some(objective) = self.scenario.as_ref().map(Scenario::objective).filter(|o| !o.is_empty()) {
-            let _ = outbox.try_send(Outgoing::Reliable(encode(&Notice { tag: S_NOTICE, kind: NOTICE_OBJECTIVE, text: objective.into() }).into()));
-        }
-        if let Some(state) = &self.world.backpack {
-            let held = state.carrier.and_then(|carrier| self.world.entities.get::<Player>(carrier)).map_or(0, |player| player.held);
-            let _ = outbox.try_send(Outgoing::Reliable(encode(&state.circle(held)).into()));
-        }
+        let joiner = encode(&Profiles { tag: S_PROFILES, players: vec![profile_entry(&self.world, id)] });
+        self.broadcast(joiner);
         self.outboxes.insert(id, outbox);
         self.replicas.insert(id, Replica::default());
         for mechanic in &mut self.mechanics {
@@ -307,10 +218,7 @@ impl Game {
         self.world.entities.despawn(id);
         self.outboxes.remove(&id);
         self.replicas.remove(&id);
-        let leave = Bytes::from(encode(&Leave { tag: S_LEAVE, id }));
-        for (&to, outbox) in &self.outboxes {
-            send_reliable(outbox, to, &leave, &mut self.stalled);
-        }
+        self.broadcast(encode(&Leave { tag: S_LEAVE, id }));
         tracing::info!(id, players = self.world.entities.count::<Player>(), "player left");
     }
 
@@ -329,42 +237,15 @@ impl Game {
         }
         let id = self.world.alloc_id();
         let team = team.max(TEAM_BOTS);
-        self.world.entities.spawn(
-            id,
-            Player {
-                character: Character::default(),
-                seat: None,
-                hit_cooldown: 0,
-                input: InputFrame::default(),
-                inputs: JitterBuffer::default(),
-                ack: 0,
-                hotbar: starting_hotbar(),
-                loadout: starting_hotbar(),
-                selected: 0,
-                fire_cooldown: 0,
-                reload_left: 0,
-                channel_left: 0,
-                trigger_held: false,
-                kills: 0,
-                deaths: 0,
-                held: 0,
-                name,
-                // One outfit per team, so a squad reads as one.
-                color: (team.wrapping_mul(5)) % PLAYER_COLOR_COUNT,
-                spawns: vec![home.map(to_cm)],
-                next_spawn: 0,
-                team,
-            },
-        );
+        // One outfit per team, so a squad reads as one.
+        let color = team.wrapping_mul(5) % PLAYER_COLOR_COUNT;
+        self.world.entities.spawn(id, Player::new(name, color, team, vec![home.map(to_cm)], starting_hotbar()));
         self.world.entities.insert(id, (soldier_life(), Bot::new(home, route)));
         for mechanic in &mut self.mechanics {
             mechanic.on_join(&mut self.world, id);
         }
         // Scores are only ever sent whole, to joiners; a bot's starts at zero on every client anyway.
-        let profile = Bytes::from(encode(&Profiles { tag: S_PROFILES, players: vec![profile_entry(&self.world, id)] }));
-        for (&to, outbox) in &self.outboxes {
-            send_reliable(outbox, to, &profile, &mut self.stalled);
-        }
+        self.broadcast(encode(&Profiles { tag: S_PROFILES, players: vec![profile_entry(&self.world, id)] }));
         tracing::info!(id, team, x = home[0], z = home[1], "bot added");
         Some(id)
     }
@@ -412,10 +293,7 @@ impl Game {
 
     /// Tells everyone something: a `Notice` of `kind` (`NOTICE_*`).
     pub fn notice(&mut self, kind: u8, text: &str) {
-        let bytes = Bytes::from(encode(&Notice { tag: S_NOTICE, kind, text: text.into() }));
-        for (&to, outbox) in &self.outboxes {
-            send_reliable(outbox, to, &bytes, &mut self.stalled);
-        }
+        self.broadcast(encode(&Notice { tag: S_NOTICE, kind, text: text.into() }));
     }
 
     /// One fixed simulation step.
@@ -456,6 +334,14 @@ impl Game {
         }
     }
 
+    /// Queues `message` for everyone, reliably.
+    fn broadcast(&mut self, message: Vec<u8>) {
+        let bytes = Bytes::from(message);
+        for (&to, outbox) in &self.outboxes {
+            send_reliable(outbox, to, &bytes, &mut self.stalled);
+        }
+    }
+
     /// Disconnects players that missed a reliable message; dropping the outbox ends their session.
     fn drop_stalled(&mut self) {
         for id in std::mem::take(&mut self.stalled) {
@@ -468,71 +354,54 @@ impl Game {
 
     /// Tells everyone about the buildings and trees destroyed this tick, as one message.
     fn broadcast_destroyed(&mut self) {
-        if self.world.fresh_destroyed.is_empty() {
+        if self.world.fresh.destroyed.is_empty() {
             return;
         }
-        let entries = self.world.fresh_destroyed.drain(..).map(|(object, yaw, force)| destroyed_entry(object, yaw, force)).collect();
-        let bytes = Bytes::from(encode(&Destroyed { tag: S_DESTROYED, objects: entries }));
-        for (&to, outbox) in &self.outboxes {
-            send_reliable(outbox, to, &bytes, &mut self.stalled);
-        }
+        let entries = self.world.fresh.destroyed.drain(..).map(|(object, yaw, force)| destroyed_entry(object, yaw, force)).collect();
+        self.broadcast(encode(&Destroyed { tag: S_DESTROYED, objects: entries }));
     }
 
     /// Tells everyone which cells blasts took out of buildings this tick, as one message.
     fn broadcast_carved(&mut self) {
-        if self.world.fresh_carved.is_empty() {
+        if self.world.fresh.carved.is_empty() {
             return;
         }
-        let entries = self.world.fresh_carved.drain(..).map(|(id, at, cut)| carved_entry(id, at, cut.blasted, cut.fell)).collect();
-        let bytes = Bytes::from(encode(&Carved { tag: S_CARVED, live: true, buildings: entries }));
-        for (&to, outbox) in &self.outboxes {
-            send_reliable(outbox, to, &bytes, &mut self.stalled);
-        }
+        let entries = self.world.fresh.carved.drain(..).map(|(id, at, cut)| carved_entry(id, at, cut.blasted, cut.fell)).collect();
+        self.broadcast(encode(&Carved { tag: S_CARVED, live: true, buildings: entries }));
     }
 
     /// Tells everyone which craters shells dug this tick, as one message.
     fn broadcast_cratered(&mut self) {
-        if self.world.fresh_craters.is_empty() {
+        if self.world.fresh.craters.is_empty() {
             return;
         }
-        let bytes = Bytes::from(encode(&Cratered { tag: S_CRATERED, live: true, craters: std::mem::take(&mut self.world.fresh_craters) }));
-        for (&to, outbox) in &self.outboxes {
-            send_reliable(outbox, to, &bytes, &mut self.stalled);
-        }
+        let craters = std::mem::take(&mut self.world.fresh.craters);
+        self.broadcast(encode(&Cratered { tag: S_CRATERED, live: true, craters }));
     }
 
     /// Gives the cubes that changed this tick their colliders, and tells everyone what changed, as one message.
     fn broadcast_built(&mut self) {
         self.world.flush_construct();
-        if self.world.fresh_built.is_empty() {
+        if self.world.fresh.built.is_empty() {
             return;
         }
-        let FreshBuilt { placed, removed, fell } = std::mem::take(&mut self.world.fresh_built);
-        let bytes = Bytes::from(encode(&built_message(true, placed, removed, fell)));
-        for (&to, outbox) in &self.outboxes {
-            send_reliable(outbox, to, &bytes, &mut self.stalled);
-        }
+        let FreshBuilt { placed, removed, fell } = std::mem::take(&mut self.world.fresh.built);
+        self.broadcast(encode(&built_message(true, placed, removed, fell)));
     }
 
     /// Tells everyone where the backpack's circle is, when its mechanic has something to say.
     fn broadcast_backpack(&mut self) {
         let Some(circle) = self.world.backpack.as_mut().and_then(|state| state.fresh.take()) else { return };
-        let bytes = Bytes::from(encode(&circle));
-        for (&to, outbox) in &self.outboxes {
-            send_reliable(outbox, to, &bytes, &mut self.stalled);
-        }
+        self.broadcast(encode(&circle));
     }
 
     /// Tells everyone about the buildings hurt this tick, as one message.
     fn broadcast_damaged(&mut self) {
-        if self.world.fresh_damaged.is_empty() {
+        if self.world.fresh.damaged.is_empty() {
             return;
         }
-        let entries = self.world.fresh_damaged.drain(..).map(|(id, stage, mark)| damaged_entry(id, stage, mark)).collect();
-        let bytes = Bytes::from(encode(&shared::protocol::Damaged { tag: S_DAMAGED, buildings: entries }));
-        for (&to, outbox) in &self.outboxes {
-            send_reliable(outbox, to, &bytes, &mut self.stalled);
-        }
+        let entries = self.world.fresh.damaged.drain(..).map(|(id, stage, mark)| damaged_entry(id, stage, mark)).collect();
+        self.broadcast(encode(&shared::protocol::Damaged { tag: S_DAMAGED, buildings: entries }));
     }
 
     /// Tells each player about the hits they dealt or took this tick, amounts summed per kind.
@@ -569,10 +438,7 @@ impl Game {
     /// Tells everyone about the kills mechanics recorded this tick.
     fn broadcast_kills(&mut self) {
         for kill in feedback::kills(&self.world) {
-            let bytes = Bytes::from(encode(&kill));
-            for (&to, outbox) in &self.outboxes {
-                send_reliable(outbox, to, &bytes, &mut self.stalled);
-            }
+            self.broadcast(encode(&kill));
         }
     }
 
@@ -830,9 +696,52 @@ mod tests {
         game.handle(Command::Join { outbox, reply, profile: Default::default() });
         let id = response.try_recv().unwrap().unwrap();
         // The welcome already fills the one slot, so the next reliable message cannot be queued.
-        game.world.fresh_destroyed.push((Obj::Tree(Default::default()), 0, 0));
+        game.world.fresh.destroyed.push((Obj::Tree(Default::default()), 0, 0));
         game.step();
         assert!(!game.world.entities.has::<Player>(id));
+    }
+
+    #[test]
+    fn snapshots_leave_a_stalled_session_room_for_what_must_arrive() {
+        let mut game = game();
+        // A session held up on a slow reliable write: nothing is drained however long this goes on.
+        let (id, _inbox) = {
+            let (outbox, inbox) = mpsc::channel(64);
+            let (reply, mut response) = oneshot::channel();
+            game.handle(Command::Join { outbox, reply, profile: Default::default() });
+            (response.try_recv().unwrap().unwrap(), inbox)
+        };
+        for _ in 0..600 {
+            game.step();
+        }
+        game.world.fresh.destroyed.push((Obj::Tree(Default::default()), 0, 0));
+        game.step();
+        assert!(game.world.entities.has::<Player>(id), "a harmless backlog of snapshots cost them their session");
+    }
+
+    #[test]
+    fn a_crews_own_side_cannot_hurt_its_vehicle_but_the_other_side_can() {
+        use crate::entities::Health;
+        use crate::mechanics::{damage_vehicle, for_tests::add_vehicle, seat};
+        let mut game = game();
+        let (enemy, _inbox) = join(&mut game);
+        let [rider, friend] = [0.0, 8.0].map(|x| game.add_bot([x, 0.0], 3, vec![]).unwrap());
+        let vid = add_vehicle(&mut game.world, KIND_JEEP, [20.0, 1.0, 0.0], 0.0);
+        assert!(seat(&mut game.world, rider, vid, 0));
+        let full = game.world.entities.of::<Health>(vid).hp;
+        damage_vehicle(&mut game.world, vid, 10, Some(friend));
+        assert_eq!(game.world.entities.of::<Health>(vid).hp, full);
+        damage_vehicle(&mut game.world, vid, 10, Some(enemy));
+        assert_eq!(game.world.entities.of::<Health>(vid).hp, full - 10);
+    }
+
+    #[test]
+    fn everyone_inside_dies_when_a_vehicle_goes_up_whoever_set_it_off() {
+        use crate::mechanics::for_tests::{Harm, damage_entity};
+        let mut game = game();
+        let [rider, friend] = [0.0, 8.0].map(|x| game.add_bot([x, 0.0], 3, vec![]).unwrap());
+        assert!(!damage_entity(&mut game.world, rider, Harm::new(PLAYER_MAX_HP, Some(friend), 0)));
+        assert!(damage_entity(&mut game.world, rider, Harm::new(PLAYER_MAX_HP, Some(friend), 0).unsparing()));
     }
 
     #[test]
@@ -956,7 +865,7 @@ mod tests {
                     let (x, z) = (centre[0] + (random() - 0.5) * 300.0, centre[1] + (random() - 0.5) * 300.0);
                     let y = game.world.map.ground.height_at(x, z) + 40.0;
                     let kind = kinds[fired % 3];
-                    game.world.launch(Flying { kind, owner: ids[fired % ids.len()], source: 0, position: [x, y, z], velocity: [(random() - 0.5) * 10.0, -30.0, (random() - 0.5) * 10.0], ttl: 600, item: 0, back: 0, flown: 0.0 });
+                    game.world.launch(Flying::new(kind, ids[fired % ids.len()], [x, y, z], [(random() - 0.5) * 10.0, -30.0, (random() - 0.5) * 10.0], 600));
                     fired += 1;
                 }
                 let started = Instant::now();

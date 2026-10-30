@@ -1,11 +1,10 @@
-import { Group, type Geometry, type Material, type Node } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Group, type Geometry, type Material, type Node, Quaternion, Vector3 } from '@ragnarok/engine'
 
 interface Piece {
   object: Node
-  velocity: THREE.Vector3
+  velocity: Vector3
   /** Angular velocity, rad/s, about world axes. */
-  spin: THREE.Vector3
+  spin: Vector3
   /** Height of its centre above the ground when it lies there, metres. */
   rest: number
   age: number
@@ -27,8 +26,8 @@ const GRAVITY = 9.8
 export class Debris {
   readonly root = new Group()
   private readonly pieces: Piece[] = []
-  private readonly turn = new THREE.Quaternion()
-  private readonly axis = new THREE.Vector3()
+  private readonly turn = new Quaternion()
+  private readonly axis = new Vector3()
 
   /** Ground height under a point. */
   groundAt: (x: number, z: number) => number = () => 0
@@ -43,7 +42,7 @@ export class Debris {
    * Throws `object` (already placed in world space) with `velocity` and `spin`, for `life` seconds.
    * `owned` is geometry and materials made for it alone, freed when it goes.
    */
-  throw(object: Node, velocity: THREE.Vector3, spin: THREE.Vector3, rest: number, life = 8, owned: readonly (Geometry | Material)[] = []) {
+  throw(object: Node, velocity: Vector3, spin: Vector3, rest: number, life = 8, owned: readonly (Geometry | Material)[] = []) {
     if (this.pieces.length >= this.capacity) this.drop(0)
     this.root.add(object)
     this.pieces.push({ object, velocity: velocity.clone(), spin: spin.clone(), rest, age: 0, life, owned, scale: { x: object.scale.x, y: object.scale.y, z: object.scale.z } })

@@ -4,7 +4,7 @@
  * it happened on, so it lines up with what is drawn.
  */
 
-import * as THREE from 'three'
+import { Vector3 } from '@ragnarok/engine'
 import type { Avatars } from '@/entities/avatars'
 import type { Vehicles } from '@/entities/presenters/vehicles'
 import type { Wear } from '@/entities/presenters/wear'
@@ -29,19 +29,36 @@ import type { ProjectileTrails } from '@/render/trails'
 import { crashBurst, scrapeSparks, type FxWorld } from '@/render/tyres'
 import { bulletLifeTicks, bulletPosition, bulletTicksTo, bulletVelocity } from '@/sim/ballistics'
 import { AP_BLAST_RADIUS, BOMB_RADIUS, CANNON_RADIUS, EXPLOSION_RADIUS, EYE_HEIGHT, MORTAR_RADIUS, ROCKET_BLAST_RADIUS, TICK_RATE, WRECK_BLAST_RADIUS } from '@/sim/consts'
-import { DRONE_BLAST_RADIUS, GRENADE_BLAST_RADIUS, hitscanGunFor, ITEM_SNIPER, itemDef, LOITER_BLAST_RADIUS, type ItemDef } from '@/sim/items'
+import { DRONE_BLAST_RADIUS, GRENADE_BLAST_RADIUS, hitscanGunFor, ITEM_SNIPER, itemDef, LOITER_BLAST_RADIUS } from '@/sim/items'
 import type { Surroundings } from '@/surroundings'
 import type { VehicleSounds } from '@/vehicleaudio'
 import type { WorldView } from '@/worldview'
 
 /** A vehicle with no motion on record. */
-const STILL = new THREE.Vector3()
+const STILL = new Vector3()
 /** Events wait at most this many deep for the picture to reach them. */
 const MAX_PENDING = 64
 /** From a Carl Gustaf's muzzle back to its venturi, metres: where the backblast leaves. */
 const LAUNCHER_LENGTH = 1.05
 /** How hard a Carl Gustaf shakes its own shooter's view (`ChaseCam.kick`): trauma 0.7 is about a 17 cm shake. */
 const LAUNCHER_KICK = 0.7
+
+/** Weapons that only go off where they land: how wide, how it looks and what is heard. */
+const BLAST_OF: ReadonlyMap<number, { radius: number; profile: ExplosionProfile; sound: 'small' | 'big' | 'explosion' }> = new Map([
+  [WEAPON_ROCKET, { radius: ROCKET_BLAST_RADIUS, profile: BLASTS.rocket, sound: 'small' }],
+  [WEAPON_GRENADE, { radius: GRENADE_BLAST_RADIUS, profile: BLASTS.grenade, sound: 'small' }],
+  [WEAPON_SHELL, { radius: EXPLOSION_RADIUS, profile: BLASTS.shell, sound: 'big' }],
+  // A solid shot's little charge: a sharp crack rather than a fireball.
+  [WEAPON_AP, { radius: AP_BLAST_RADIUS, profile: BLASTS.cannon, sound: 'small' }],
+  [WEAPON_MORTAR, { radius: MORTAR_RADIUS, profile: BLASTS.shell, sound: 'big' }],
+  [WEAPON_WRECK, { radius: WRECK_BLAST_RADIUS, profile: BLASTS.wreck, sound: 'explosion' }],
+  [WEAPON_DRONE, { radius: DRONE_BLAST_RADIUS, profile: BLASTS.grenade, sound: 'small' }],
+  [WEAPON_LOITER, { radius: LOITER_BLAST_RADIUS, profile: BLASTS.shell, sound: 'explosion' }],
+  [WEAPON_AUTOCANNON, { radius: CANNON_RADIUS, profile: BLASTS.cannon, sound: 'small' }],
+  // A hen's egg goes off like a plane's bomb, and as wide.
+  [WEAPON_BOMB, { radius: BOMB_RADIUS, profile: BLASTS.bomb, sound: 'explosion' }],
+  [WEAPON_EGG, { radius: BOMB_RADIUS, profile: BLASTS.bomb, sound: 'explosion' }],
+])
 
 /** A bullet in flight on this client. */
 interface LiveBullet {
@@ -53,7 +70,7 @@ interface LiveBullet {
   /** Its first frame has played: arm, flash and sound. */
   shown: boolean
   /** Muzzle minus eye, closing as it flies. */
-  offset: THREE.Vector3 | null
+  offset: Vector3 | null
 }
 
 /** What events are drawn and heard in, and who the local player is. */
@@ -182,7 +199,7 @@ export class Events {
    */
   hit(hit: { kind: number; amount: number; x: number; y: number; z: number; target: number }) {
     const { scene, effects, damageNumbers, avatars } = this.world
-    const at = new THREE.Vector3(hit.x, hit.y, hit.z)
+    const at = new Vector3(hit.x, hit.y, hit.z)
     const kind = hit.kind === HIT_KILL ? 'kill' : hit.kind === HIT_VEHICLE ? 'vehicle' : hit.kind === HIT_ROOSTER ? 'rooster' : 'body'
     damageNumbers.spawn(at, hit.amount, kind, scene.camera)
     const soldier = avatars.of(hit.target)
@@ -206,42 +223,22 @@ export class Events {
   }
 
   /** Where a player's rifle leaves: the end of the barrel it is drawn holding, else its eye. */
-  private muzzleOf(shooter: number): THREE.Vector3 | null {
+  private muzzleOf(shooter: number): Vector3 | null {
     const avatar = this.world.avatars.of(shooter)
     if (!avatar || !avatar.visible) return null
-    return avatar.muzzle() ?? avatar.position.clone().add(new THREE.Vector3(0, EYE_HEIGHT, 0))
+    return avatar.muzzle() ?? avatar.position.clone().add(new Vector3(0, EYE_HEIGHT, 0))
   }
 
   private showShot(shot: ShotEvent) {
     const { effects, sounds, avatars, vehicles, view, surroundings, chase, scene } = this.world
     const local = this.world.localId()
-    let gun: ItemDef | undefined
-    const to = new THREE.Vector3(shot.x, shot.y, shot.z)
-    if (shot.weapon === WEAPON_ROCKET) {
-      this.blast(to, ROCKET_BLAST_RADIUS, BLASTS.rocket)
-      sounds.blast([to.x, to.y, to.z], 'small')
-    } else if (shot.weapon === WEAPON_GRENADE) {
-      this.blast(to, GRENADE_BLAST_RADIUS, BLASTS.grenade)
-      sounds.blast([to.x, to.y, to.z], 'small')
-    } else if (shot.weapon === WEAPON_SHELL) {
-      this.blast(to, EXPLOSION_RADIUS, BLASTS.shell)
-      sounds.blast([to.x, to.y, to.z], 'big')
-    } else if (shot.weapon === WEAPON_AP) {
-      // A solid shot's little charge: a sharp crack rather than a fireball.
-      this.blast(to, AP_BLAST_RADIUS, BLASTS.cannon)
-      sounds.blast([to.x, to.y, to.z], 'small')
-    } else if (shot.weapon === WEAPON_MORTAR) {
-      this.blast(to, MORTAR_RADIUS, BLASTS.shell)
-      sounds.blast([to.x, to.y, to.z], 'big')
-    } else if (shot.weapon === WEAPON_WRECK) {
-      this.blast(to, WRECK_BLAST_RADIUS, BLASTS.wreck)
-      sounds.explosion([to.x, to.y, to.z])
-    } else if (shot.weapon === WEAPON_DRONE) {
-      this.blast(to, DRONE_BLAST_RADIUS, BLASTS.grenade)
-      sounds.blast([to.x, to.y, to.z], 'small')
-    } else if (shot.weapon === WEAPON_LOITER) {
-      this.blast(to, LOITER_BLAST_RADIUS, BLASTS.shell)
-      sounds.explosion([to.x, to.y, to.z])
+    const to = new Vector3(shot.x, shot.y, shot.z)
+    const blast = BLAST_OF.get(shot.weapon)
+    if (blast) {
+      this.blast(to, blast.radius, blast.profile)
+      const at: [number, number, number] = [to.x, to.y, to.z]
+      if (blast.sound === 'explosion') sounds.explosion(at)
+      else sounds.blast(at, blast.sound)
     } else if (shot.weapon === WEAPON_FLARE) {
       // The flare itself is a projectile; this is the gun going off.
       avatars.of(shot.shooter)?.fire()
@@ -255,9 +252,9 @@ export class Events {
       const avatar = avatars.of(shot.shooter)
       avatar?.fire()
       const from = this.muzzleOf(shot.shooter) ?? to
-      const eye = avatar ? avatar.position.clone().add(new THREE.Vector3(0, EYE_HEIGHT, 0)) : from
+      const eye = avatar ? avatar.position.clone().add(new Vector3(0, EYE_HEIGHT, 0)) : from
       const along = to.clone().sub(eye)
-      const forward = along.lengthSq() > 1e-4 ? along.normalize() : new THREE.Vector3(0, 0, -1)
+      const forward = along.lengthSq() > 1e-4 ? along.normalize() : new Vector3(0, 0, -1)
       const back = forward.clone().negate()
       const venturi = from.clone().addScaledVector(back, LAUNCHER_LENGTH)
       effects.muzzleFlash(from, forward)
@@ -267,31 +264,26 @@ export class Events {
       this.world.blips.fired(shot.shooter, from.x, from.z, performance.now())
       sounds.blast([from.x, from.y, from.z], 'small')
       if (shot.shooter === local) chase.kick(LAUNCHER_KICK)
-    } else if (shot.weapon === WEAPON_AUTOCANNON) {
-      this.blast(to, CANNON_RADIUS, BLASTS.cannon)
-      sounds.blast([to.x, to.y, to.z], 'small')
     } else if (shot.weapon === WEAPON_BULLET) {
       // A bullet ended here; `shooter` is its id. It is drawn until it gets there.
       const bullet = this.bullets.get(shot.shooter)
       if (bullet) bullet.endTicks = bulletTicksTo(bullet.spawn, [shot.x, shot.y, shot.z])
-      if (surroundings.watery(to, bullet?.spawn.item === ITEM_SNIPER ? 0.45 : 0.25)) { /* splashed */ }
-      else if (bullet?.spawn.item === ITEM_SNIPER) effects.burst(to, 0.8)
-      else effects.pelletStrike(to)
+      const sniper = bullet?.spawn.item === ITEM_SNIPER
+      if (!surroundings.watery(to, sniper ? 0.45 : 0.25)) {
+        if (sniper) effects.burst(to, 0.8)
+        else effects.pelletStrike(to)
+      }
       if (bullet?.spawn.shooter === local) view.chipped(to.x, to.y, to.z, itemDef(bullet.spawn.item)?.damage ?? 0)
     } else if (shot.weapon === WEAPON_MG) {
       // The round was sent flying when the gun fired; this is where it strikes something.
       if (!surroundings.watery(to, 0.25)) this.world.rounds.struck(to)
     } else if (shot.weapon === WEAPON_PELLET) {
       // A further pellet of a spread: the blast and the sound came with the first.
-      const gun = hitscanGunFor(WEAPON_SHOTGUN)
+      const pellets = hitscanGunFor(WEAPON_SHOTGUN)
       const from = this.muzzleOf(shot.shooter)
-      if (!gun || (from && from.distanceTo(to) >= gun.range - 1)) return
+      if (!pellets || (from && from.distanceTo(to) >= pellets.range - 1)) return
       if (!surroundings.watery(to, 0.2)) effects.pelletStrike(to)
-      if (shot.shooter === local) view.chipped(to.x, to.y, to.z, gun.damage)
-    } else if (shot.weapon === WEAPON_BOMB || shot.weapon === WEAPON_EGG) {
-      // A hen's egg goes off like a plane's bomb, and as wide.
-      this.blast(to, BOMB_RADIUS, BLASTS.bomb)
-      sounds.explosion([to.x, to.y, to.z])
+      if (shot.shooter === local) view.chipped(to.x, to.y, to.z, pellets.damage)
     } else if (shot.weapon === WEAPON_RICOCHET) {
       // A shell or round glanced off armor: sparks and a ping, and no blast.
       effects.strike(to)
@@ -315,7 +307,9 @@ export class Events {
     } else if (shot.weapon === WEAPON_SNIPER) {
       // The round is drawn in flight; this is where it landed.
       if (!surroundings.watery(to, 0.45)) effects.burst(to, 0.8)
-    } else if ((gun = hitscanGunFor(shot.weapon))) {
+    } else {
+      const gun = hitscanGunFor(shot.weapon)
+      if (!gun) return
       const from = this.muzzleOf(shot.shooter)
       avatars.of(shot.shooter)?.fire()
       if (from) {
@@ -338,12 +332,12 @@ export class Events {
   }
 
   /** A short flash of light at a gun's muzzle: it lights the barrel, the hull and the ground in front of it. */
-  private muzzleLight(at: THREE.Vector3, color: number, intensity: number, radius: number) {
+  private muzzleLight(at: Vector3, color: number, intensity: number, radius: number) {
     this.world.scene.scene.lights.flash(at.x, at.y, at.z, { color, intensity, radius, life: 0.09 })
   }
 
   /** A heavy blast: the layered fire, sparks, dust and debris, a flash, and a shove of the camera if it is close. */
-  private blast(at: THREE.Vector3, radius: number, profile: ExplosionProfile) {
+  private blast(at: Vector3, radius: number, profile: ExplosionProfile) {
     const { scene, effects, chase, surroundings } = this.world
     // On water it is a column of spray, not fire and dirt.
     if (surroundings.watery(at, radius * 0.45, 14)) {
@@ -385,10 +379,10 @@ export class Events {
     this.world.avatars.of(shooter)?.fire()
     const muzzle = this.muzzleOf(shooter)
     if (muzzle) {
-      bullet.offset = muzzle.clone().sub(new THREE.Vector3(at[0], at[1], at[2]))
+      bullet.offset = muzzle.clone().sub(new Vector3(at[0], at[1], at[2]))
       this.world.effects.muzzle(muzzle)
     }
-    const heard = muzzle ?? new THREE.Vector3(at[0], at[1], at[2])
+    const heard = muzzle ?? new Vector3(at[0], at[1], at[2])
     this.world.sounds.gunshot([heard.x, heard.y, heard.z], gun?.sound ?? 'rifle')
   }
 }

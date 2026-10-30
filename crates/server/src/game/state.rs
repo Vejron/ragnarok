@@ -1,10 +1,11 @@
-//! The state the game loop owns: players, vehicles, rockets, the ECS entities and the `World` that holds them,
+//! The state the game loop owns: the components of the ECS entities and the `World` that holds them,
 //! and the `Command`/`Outgoing` messages the sessions exchange with it.
 
 use shared::armor::PARTS;
 use super::*;
 use bevy_ecs::message::{Message, Messages};
 use shared::mounts::{MountDef, Show};
+use shared::quant::{from_mrad, to_cm};
 pub use crate::profile::Profile;
 
 pub enum Command {
@@ -22,7 +23,7 @@ pub enum Command {
 pub enum Outgoing {
     /// Unreliable and unordered: snapshots.
     Datagram(Bytes),
-    /// Reliable, each on its own unidirectional stream: welcome, leave.
+    /// Reliable and in order, on the session's one stream: welcome, kills, what the world lost.
     Reliable(Bytes),
 }
 
@@ -61,6 +62,26 @@ pub struct Player {
     pub inputs: JitterBuffer,
     /// Newest client input sequence already applied, echoed in snapshots for reconciliation.
     pub ack: u32,
+    /// What they carry and what they are doing with it.
+    pub hands: Hands,
+    pub score: Tally,
+    /// Shown to everyone in place of the id.
+    pub name: String,
+    /// Outfit colour, below `PLAYER_COLOR_COUNT`.
+    pub color: u8,
+    /// The player's own spawn points `[x, z]`, centimetres, all usable when they joined. Empty means
+    /// a random one of the world's.
+    pub spawns: Vec<[i32; 2]>,
+    /// Which of `spawns` the next spawn uses; counts up forever and wraps by `spawns.len()`.
+    pub next_spawn: usize,
+    /// `TEAM_NONE` for people, who are all against all. Players on the same other team never hurt
+    /// each other.
+    pub team: u8,
+}
+
+/// What a soldier carries, and how far along they are with using it.
+#[derive(Clone, Copy, Debug)]
+pub struct Hands {
     /// What is in each hotbar slot: `[item, count, ammo]`.
     pub hotbar: [ItemSlot; HOTBAR_SLOTS],
     /// What it holds at the start of every life: its player's choice, or a scenario squad's.
@@ -74,20 +95,13 @@ pub struct Player {
     pub channel_left: u32,
     /// Whether fire was held last tick, so a semi-automatic gun needs a fresh press.
     pub trigger_held: bool,
+}
+
+/// What a player has done, for the scoreboard.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Tally {
     pub kills: u16,
     pub deaths: u16,
-    /// Shown to everyone in place of the id.
-    pub name: String,
-    /// Outfit colour, below `PLAYER_COLOR_COUNT`.
-    pub color: u8,
-    /// The player's own spawn points `[x, z]`, centimetres, all usable when they joined. Empty means
-    /// a random one of the world's.
-    pub spawns: Vec<[i32; 2]>,
-    /// Which of `spawns` the next spawn uses; counts up forever and wraps by `spawns.len()`.
-    pub next_spawn: usize,
-    /// `TEAM_NONE` for people, who are all against all. Players on the same other team never hurt
-    /// each other.
-    pub team: u8,
     /// Seconds carrying the backpack, in all (`mechanics::backpack`).
     pub held: u16,
 }
@@ -124,6 +138,30 @@ pub struct Bot {
     pub mode: BotMode,
     /// Ticks left of a search.
     pub mode_left: u32,
+    /// Facing and looking up or down, radians, turned smoothly rather than snapped.
+    pub yaw: f32,
+    pub pitch: f32,
+    /// Whom it is after and what it knows of them.
+    pub sight: Sight,
+    /// How it finds its way there.
+    pub walk: Walk,
+    /// How well it shoots, and how its aim is coming along.
+    pub aim: Aim,
+    /// The hotbar slot it holds.
+    pub slot: u8,
+    /// Which way it sidesteps while it stands and fights (-1, 0 or 1), and for how many more ticks.
+    pub strafe: i8,
+    pub strafe_left: u32,
+    /// Where the last hit it took came from (the attacker, or a blast's centre), until it has
+    /// turned that way.
+    pub hit_from: Option<[f32; 3]>,
+    /// The vehicle it crews and its seat there, when it is one of a tank's crew.
+    pub crew: Option<Crew>,
+}
+
+/// What a bot knows of whom it is after.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Sight {
     /// Whom it is after, where they were last seen (the body's centre) and on which tick, and how
     /// fast they seemed to be going then, m/s.
     pub target: Option<u32>,
@@ -132,9 +170,11 @@ pub struct Bot {
     pub velocity: [f32; 3],
     /// Whether the target was in sight at the last look.
     pub sees: bool,
-    /// Facing and looking up or down, radians, turned smoothly rather than snapped.
-    pub yaw: f32,
-    pub pitch: f32,
+}
+
+/// How a bot finds its way.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Walk {
     /// The nearest it has been to the next corner of its path since it last got closer, and ticks
     /// since then.
     pub best: f32,
@@ -144,10 +184,17 @@ pub struct Bot {
     pub path: Vec<[f32; 2]>,
     pub path_to: [f32; 2],
     pub replan_in: u32,
+    /// A driver backing out of being stuck: ticks left of it, and how often it has tried on the way
+    /// to this goal.
+    pub reverse_left: u32,
+    pub tries: u32,
+}
+
+/// How a bot shoots.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Aim {
     /// How good a shot it is, 0 to 1: how quickly it reacts, how close its aim is, how well it leads.
     pub skill: f32,
-    /// The hotbar slot it holds.
-    pub slot: u8,
     /// Ticks before it may fire on someone it has just seen.
     pub react: u32,
     /// Ticks it has had its target in sight, unbroken: its aim settles as this grows.
@@ -157,18 +204,6 @@ pub struct Bot {
     /// Ticks left of holding the trigger down, then of letting it go, for a gun that fires in bursts.
     pub burst: u32,
     pub pause: u32,
-    /// Which way it sidesteps while it stands and fights (-1, 0 or 1), and for how many more ticks.
-    pub strafe: i8,
-    pub strafe_left: u32,
-    /// Where the last hit it took came from (the attacker, or a blast's centre), until it has
-    /// turned that way.
-    pub hit_from: Option<[f32; 3]>,
-    /// The vehicle it crews and its seat there, when it is one of a tank's crew.
-    pub crew: Option<Crew>,
-    /// A driver backing out of being stuck: ticks left of it, and how often it has tried on the way
-    /// to this goal.
-    pub reverse_left: u32,
-    pub tries: u32,
 }
 
 /// A bot's place in a crew: its vehicle, and the seat it works (0 drives, 1 is the gun).
@@ -186,31 +221,16 @@ impl Bot {
             next: 0,
             mode: BotMode::Patrol,
             mode_left: 0,
-            target: None,
-            last_seen: [0.0; 3],
-            seen_tick: 0,
-            velocity: [0.0; 3],
-            sees: false,
             yaw: 0.0,
             pitch: 0.0,
-            best: f32::MAX,
-            stalled: 0,
-            path: Vec::new(),
-            path_to: [0.0; 2],
-            replan_in: 0,
-            skill: DEFAULT_SKILL,
+            sight: Sight::default(),
+            walk: Walk { best: f32::MAX, stalled: 0, path: Vec::new(), path_to: [0.0; 2], replan_in: 0, reverse_left: 0, tries: 0 },
+            aim: Aim { skill: DEFAULT_SKILL, react: 0, tracked: 0, error: [0.0; 2], burst: 0, pause: 0 },
             slot: 0,
-            react: 0,
-            tracked: 0,
-            error: [0.0; 2],
-            burst: 0,
-            pause: 0,
             strafe: 0,
             strafe_left: 0,
             hit_from: None,
             crew: None,
-            reverse_left: 0,
-            tries: 0,
         }
     }
 }
@@ -228,6 +248,25 @@ pub fn soldier_life() -> impl crate::entities::Bundle {
 }
 
 impl Player {
+    /// A soldier who has just joined, at the origin with nothing asked of them yet.
+    pub fn new(name: String, color: u8, team: u8, spawns: Vec<[i32; 2]>, loadout: [ItemSlot; HOTBAR_SLOTS]) -> Self {
+        Player {
+            character: Character::default(),
+            seat: None,
+            hit_cooldown: 0,
+            input: InputFrame::default(),
+            inputs: JitterBuffer::default(),
+            ack: 0,
+            hands: Hands { hotbar: loadout, loadout, selected: 0, fire_cooldown: 0, reload_left: 0, channel_left: 0, trigger_held: false },
+            score: Tally::default(),
+            name,
+            color,
+            spawns,
+            next_spawn: 0,
+            team,
+        }
+    }
+
     /// Whether the soldier is out in the world, to be seen, hit and blasted: on foot, or standing
     /// still while flying a drone.
     pub fn embodied(&self) -> bool {
@@ -236,13 +275,26 @@ impl Player {
 
     /// The slot in hand.
     pub fn held(&self) -> ItemSlot {
-        self.hotbar[self.selected.min(HOTBAR_SLOTS - 1)]
+        self.hands.hotbar[self.hands.selected.min(HOTBAR_SLOTS - 1)]
+    }
+
+    /// Where the soldier's eye is, for the stance they are in.
+    pub fn eye(&self) -> [f32; 3] {
+        let c = &self.character;
+        [c.position[0], c.position[1] + eye_height(self.input.buttons(), c.prone), c.position[2]]
+    }
+
+    /// The point the over-the-shoulder camera turns about on foot, which the crosshair's ray starts from.
+    pub fn pivot(&self) -> [f32; 3] {
+        let (sin, cos) = from_mrad(self.input.yaw).sin_cos();
+        let at = self.character.position;
+        [at[0] + cos * ON_FOOT_SHOULDER, at[1] + ON_FOOT_HEIGHT, at[2] - sin * ON_FOOT_SHOULDER]
     }
 
     /// Takes away anything half done: a reload or a bandage.
     pub fn interrupt(&mut self) {
-        self.reload_left = 0;
-        self.channel_left = 0;
+        self.hands.reload_left = 0;
+        self.hands.channel_left = 0;
     }
 }
 
@@ -489,16 +541,12 @@ pub struct World {
     pub object_hp: HashMap<Obj, u16>,
     /// Everything destroyed so far with the yaw it fell at, oldest first. A joiner is told all of it.
     pub destroyed: Vec<(Obj, i16)>,
-    /// What was destroyed since the last tick, with how violently (0..=255, see `combat::damage_object`). Drained and broadcast reliably by `Game::step`.
-    pub fresh_destroyed: Vec<(Obj, i16, u8)>,
-    /// Buildings hurt since the last tick that need telling about: the damage stage they are in,
-    /// and where a blast landed if it leaves a mark. Drained and broadcast reliably by `Game::step`.
-    pub fresh_damaged: Vec<FreshDamage>,
+    /// `destroyed`, to ask of: a blast asks it of everything it reaches.
+    pub felled: std::collections::HashSet<Obj>,
     /// Buildings that have had cells blasted out of them: how they are cut and what is gone.
     pub carves: HashMap<ObjId, Carving>,
-    /// Bites taken since the last tick, for `Game::step` to broadcast: the building, where the
-    /// blast was (centimetres) and the cells it broke and left hanging.
-    pub fresh_carved: Vec<FreshCarve>,
+    /// What changed since the last tick, for `Game::step` to tell everyone reliably.
+    pub fresh: Fresh,
     /// Carved buildings waiting to have their structure checked (`settle`), by the tick they are due.
     pub strained: HashMap<ObjId, u32>,
     /// Cells that have lost their hold and are still falling: where each column of them lands and when.
@@ -506,8 +554,6 @@ pub struct World {
     /// The craters dug in the last `CRATER_FADE_SECONDS` (at most `CRATER_MAX_KEPT`), oldest first, with
     /// the tick each was dug: their marks, for a joiner (`game/craters.rs`). Their heights stay in `map.ground`.
     pub craters: std::collections::VecDeque<(u32, shared::protocol::CraterEntry)>,
-    /// Craters dug since the last tick, for `Game::step` to broadcast.
-    pub fresh_craters: Vec<shared::protocol::CraterEntry>,
     /// The ground as the importer left it, copied when the first crater lands: what `CRATER_MAX_DEPTH`
     /// is measured from, and what a joiner's `Dug` is the difference from.
     pub pristine: Vec<i32>,
@@ -515,8 +561,6 @@ pub struct World {
     pub dug_tiles: std::collections::BTreeSet<(u16, u16)>,
     /// The cubes players have placed with bricks (`game/construct.rs`).
     pub construct: shared::construct::Construct,
-    /// What happened to the cubes since the last tick, for `Game::step` to broadcast as one `Built`.
-    pub fresh_built: FreshBuilt,
     /// Chunks of cubes whose colliders are out of date, rebuilt once a tick however many cubes changed.
     pub construct_dirty: std::collections::BTreeSet<shared::construct::Pos>,
     /// The backpack, in a world whose scenario places one (`mechanics::backpack`).
@@ -565,27 +609,28 @@ impl World {
     /// cell that leaves with nothing under it, and swaps its collider for what is left. Returns what
     /// was cut: `None` when it is not a building that can be carved, or the blast broke nothing.
     pub fn carve(&mut self, id: ObjId, point: [f32; 3], radius: f32) -> Option<Cut> {
-        if !self.carves.contains_key(&id) {
-            let carving = self.cut_building(id)?;
-            self.carves.insert(id, carving);
-        }
-        let carving = self.carves.get_mut(&id)?;
-        let at = point.map(|v| (v * 100.0).round() as i32);
-        let cut = carving.shell.blast(&mut carving.removed, at, (radius * 100.0).round() as i32);
+        let at = point.map(to_cm);
+        let carving = self.carving(id)?;
+        let cut = carving.shell.blast(&mut carving.removed, at, to_cm(radius));
         self.finish_cut(id, at, cut)
     }
 
     /// A round of `damage` hits standing building `id` at `point`: the piece of wall there loses
     /// that much health and breaks out when it has none. As `carve` for what it returns.
     pub fn chip(&mut self, id: ObjId, point: [f32; 3], damage: u8) -> Option<Cut> {
+        let at = point.map(to_cm);
+        let carving = self.carving(id)?;
+        let cut = carving.shell.chip(&mut carving.removed, &mut carving.hp, at, damage);
+        self.finish_cut(id, at, cut)
+    }
+
+    /// Building `id`'s cells, cut the first time they are asked for.
+    pub(super) fn carving(&mut self, id: ObjId) -> Option<&mut Carving> {
         if !self.carves.contains_key(&id) {
             let carving = self.cut_building(id)?;
             self.carves.insert(id, carving);
         }
-        let carving = self.carves.get_mut(&id)?;
-        let at = point.map(|v| (v * 100.0).round() as i32);
-        let cut = carving.shell.chip(&mut carving.removed, &mut carving.hp, at, damage);
-        self.finish_cut(id, at, cut)
+        self.carves.get_mut(&id)
     }
 
     /// Swaps the collider and queues the news for a cut that took something.
@@ -596,7 +641,7 @@ impl World {
         let carving = self.carves.get(&id)?;
         let standing = sim::solid_of(&carving.shell.boxes(&carving.removed), &carving.floor);
         self.physics.replace_building(Obj::Building(id), standing);
-        self.fresh_carved.push((id, at, cut.clone()));
+        self.fresh.carved.push((id, at, cut.clone()));
         self.drop_rubble(id, &cut.fell);
         self.loosen_beside_cells(id, &cut);
         // Whatever it lost is looked at again in a moment: the first cut sets the time, not each one.
@@ -672,6 +717,21 @@ impl World {
         self.next_id += 1;
         id
     }
+}
+
+/// The news of a tick, drained and broadcast by `Game::step`.
+#[derive(Default)]
+pub struct Fresh {
+    /// What was destroyed, with how violently (0..=255, see `combat::damage_object`).
+    pub destroyed: Vec<(Obj, i16, u8)>,
+    /// Buildings hurt that need telling about: the damage stage they are in, and where a blast landed if it leaves a mark.
+    pub damaged: Vec<FreshDamage>,
+    /// Bites taken: the building, where the blast was (centimetres) and the cells it broke and left hanging.
+    pub carved: Vec<FreshCarve>,
+    /// Craters dug.
+    pub craters: Vec<shared::protocol::CraterEntry>,
+    /// What happened to the cubes, to go out as one `Built`.
+    pub built: FreshBuilt,
 }
 
 /// A building hurt: its identity, its damage stage and where a blast marked it.

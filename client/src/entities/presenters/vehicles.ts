@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import { Quaternion, Vector3 } from '@ragnarok/engine'
 import type { Node, PointLights } from '@ragnarok/engine'
 import { ARMS_CUT, DAMAGE_WHEELS } from '@/net/codec'
 import type { Debris } from '@/render/debris'
@@ -124,7 +124,7 @@ export class Vehicles implements Presenter<Frame> {
     const position: [number, number, number] = mine ? [...mine.pose.position] : [place.x, place.y, place.z]
     const rotation = mine ? mine.pose.rotation : ([q.qx, q.qy, q.qz, q.qw] as const)
     const steer = mine ? mine.pose.steer : (entity.steer?.steer ?? 0)
-    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion(...rotation))
+    const forward = new Vector3(0, 0, -1).applyQuaternion(new Quaternion(...rotation))
     const seats = this.seating.of(id, kind)
     const turret = entity.turret ?? null
     const arms = entity.arms ?? null

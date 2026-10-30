@@ -2,7 +2,7 @@ import { Geometry, Group, Material, Mesh, planeGeometry, type Node } from '@ragn
 import { toonMaterial } from './toon'
 import type { TileGround } from '@/sim/terrain'
 import type { TileData } from '@/world'
-import { buildingBuffers, buildingColors, oneBuildingBuffers, type BuildingBuffers } from './buildingmesh'
+import { buildingBuffers, type BuildingBuffers } from './buildingmesh'
 import { GRASS_COLOR, bakeTerrainTexture, coverTexture, reliefTexture } from './cover'
 import type { Ribbon } from './groundmesh'
 import type { HeightSource } from './shade'
@@ -49,18 +49,6 @@ export function replaceRibbons(group: Group, ribbons: readonly Ribbon[]) {
 
 /** Every tile's buildings share this one; each vertex carries its colour. */
 const buildingMaterial = toonMaterial({ vertexColors: true })
-
-/** Materials are shared by every tile, so streaming one in or out never compiles a shader. */
-const materials = new Map<string, Material>()
-function material(kind: 'building', color: number) {
-  const key = `${kind}:${color}`
-  let found = materials.get(key)
-  if (!found) {
-    found = toonMaterial({ color })
-    materials.set(key, found)
-  }
-  return found
-}
 
 /**
  * The grass, as one plane under the whole world: the ground of a flat world, and on a hilly one
@@ -145,29 +133,6 @@ export function buildTile(tile: TileData, salt: number, ground: TileGround | nul
 
 const NONE: ReadonlySet<number> = new Set()
 
-/** Numbers appended three at a time. */
-interface Triples {
-  readonly length: number
-  push(a: number, b: number, c: number): unknown
-}
-
-/**
- * Triangle soup for `count` triangles of the tile's collision mesh from `from`: the importer's
- * own triangles, so what is drawn is what is collided with. The importer winds footprints
- * counter-clockwise in (x, z); seen from +Y that is clockwise, so they are reversed to face
- * outwards and up. `lower` is taken off every height.
- */
-function trianglePositions<T extends Triples>(tile: TileData, from: number, count: number, out: T, lower = 0): T {
-  const { vertices, triangles } = tile.collision
-  for (let t = from; t < from + count; t++) {
-    for (const k of [0, 2, 1]) {
-      const v = triangles[t * 3 + k]! * 3
-      out.push(vertices[v]!, vertices[v + 1]! - lower, vertices[v + 2]!)
-    }
-  }
-  return out
-}
-
 /**
  * The tile's buildings (as cubes) and bridges as one mesh with a colour per vertex
  * (`buildingBuffers`). One draw per tile (and one shadow draw) however many colours it holds.
@@ -219,30 +184,6 @@ export function rebuildBuildings(group: Group, tile: TileData, salt: number, des
     group.remove(mesh)
   }
   group.add(...mergedMesh(buildingBuffers(tile, salt, destroyed), destroyed))
-}
-
-/**
- * Building `index` as a mesh of its own, for it to be seen collapsing: its walls and roof, with
- * the floor at the group's origin so scaling `y` sinks it into the ground.
- */
-export function collapsingBuilding(tile: TileData, index: number, salt: number): Group {
-  const building = tile.buildings[index]!
-  const { wall, roof } = buildingColors(tile, index, salt)
-  const group = new Group()
-  group.position.y = building.base
-  const cubes = oneBuildingBuffers(tile, index, salt, [0, building.base, 0])
-  if (cubes) {
-    const mesh = new Mesh(new Geometry(cubes), buildingMaterial)
-    mesh.castShadow = true
-    group.add(mesh)
-    return group
-  }
-  for (const [color, from, count] of [[wall, building.first, building.walls], [roof, building.first + building.walls, building.roof]] as const) {
-    const mesh = new Mesh(flatGeometry(trianglePositions(tile, from, count, [], building.base)), material('building', color))
-    mesh.castShadow = true
-    group.add(mesh)
-  }
-  return group
 }
 
 /** Frees a tile's geometry and its terrain texture. The materials and tree prototypes are shared and stay. */

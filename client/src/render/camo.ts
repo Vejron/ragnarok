@@ -1,4 +1,5 @@
 import { Geometry, Texture, type PixelData } from '@ragnarok/engine'
+import { smoothstep } from '@/math'
 
 /** Lattice cells across the tile for the patches' coarsest octave, along and up: wider than tall, so they run in bands. */
 const CELLS_U = 3
@@ -34,11 +35,6 @@ function fbm(x: number, y: number, seed: number) {
     total += amp
   }
   return sum / total
-}
-
-const smoothstep = (a: number, b: number, x: number) => {
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
-  return t * t * (3 - 2 * t)
 }
 
 /**

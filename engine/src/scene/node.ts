@@ -155,7 +155,7 @@ export class Node {
     return this
   }
 
-  /** Three's name for `updateWorld`, for code that came from there. */
+  /** `updateWorld` by another name. */
   updateMatrixWorld(force = false) {
     this.updateWorld(force)
   }

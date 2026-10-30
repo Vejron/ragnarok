@@ -12,6 +12,7 @@
 //! `Projectile::kind` (`PROJECTILE_*`) is what the client draws; nothing here branches on it. A new
 //! kind is a new prefab in `prefab`.
 
+use shared::vec3;
 use super::armor::{self, Outcome};
 use super::combat::{Blast, Direct, Flight, Round as Damage, blast_at, land, strike};
 use crate::entities::{Component, Transform, With};
@@ -145,6 +146,29 @@ pub struct Flying {
     pub item: u8,
     pub back: u32,
     pub flown: f32,
+}
+
+impl Flying {
+    /// A projectile of `kind` that `owner` set off from `position`, going for `ttl` ticks, from no
+    /// vehicle, of no item and with nothing rewound or flown yet.
+    pub fn new(kind: u8, owner: u32, position: [f32; 3], velocity: [f32; 3], ttl: u32) -> Self {
+        Flying { kind, owner, source: 0, position, velocity, ttl, item: 0, back: 0, flown: 0.0 }
+    }
+
+    /// The same, fired from aboard vehicle `source`.
+    pub fn aboard(self, source: u32) -> Self {
+        Flying { source, ..self }
+    }
+
+    /// The same, of `item`.
+    pub fn of(self, item: u8) -> Self {
+        Flying { item, ..self }
+    }
+
+    /// The same, aimed at the world as it was `back` ticks ago.
+    pub fn rewound(self, back: u32) -> Self {
+        Flying { back, ..self }
+    }
 }
 
 const fn blast(weapon: u8, radius: f32, damage: f32, knock: f32) -> Burst {
@@ -337,7 +361,7 @@ fn fly(world: &World, id: u32, state: &mut State, dt: f32) {
 }
 
 fn length(v: [f32; 3]) -> f32 {
-    v.iter().map(|v| v * v).sum::<f32>().sqrt()
+    vec3::length(v)
 }
 
 /// Takes projectile `id` out of the world and, if it has a `Burst`, sets it off at `point`, heading
@@ -376,7 +400,7 @@ fn step_striking(world: &mut World, id: u32, dt: f32, strikes: Strikes) {
     let body = if strikes.bodies { super::life::first_hurtbox_hit(world, s.position, dir, wall.unwrap_or(step), Some(s.owner), 0, None) } else { None };
     s.ttl = s.ttl.saturating_sub(1);
     if let Some(t) = body.map(|(_, t)| t).or(wall) {
-        let point: [f32; 3] = std::array::from_fn(|i| s.position[i] + dir[i] * t);
+        let point: [f32; 3] = vec3::along(s.position, dir, t);
         // A solid shot through a person is the end of them, whatever its little charge does.
         if let Some((victim, _)) = body
             && pen_of(world.entities.get::<Projectile>(id).map_or(0, |p| p.kind)).kind == shared::armor::PenKind::Ap
@@ -397,7 +421,7 @@ fn step_striking(world: &mut World, id: u32, dt: f32, strikes: Strikes) {
                     let out = armor::reflect(dir, normal);
                     s.velocity = out.map(|v| v * speed * armor::RICOCHET_KEEP);
                     // Just clear of the plate, so the next step does not hit it again.
-                    s.position = std::array::from_fn(|i| point[i] + normal[i] * 0.1);
+                    s.position = vec3::along(point, normal, 0.1);
                     write(world, id, &s);
                     return;
                 }
@@ -420,7 +444,7 @@ fn step_striking(world: &mut World, id: u32, dt: f32, strikes: Strikes) {
         burst(world, id, s.owner, point, dir, direct);
         return;
     }
-    s.position = std::array::from_fn(|i| s.position[i] + dir[i] * step);
+    s.position = vec3::along(s.position, dir, step);
     if strikes.lost_below && s.position[1] < KILL_Y {
         world.entities.despawn(id);
     } else if s.ttl == 0 {
@@ -448,9 +472,9 @@ fn step_bouncing(world: &mut World, id: u32, dt: f32, bounces: Bounces) {
         match world.physics.cast_ray_normal(s.position, dir, step + bounces.radius) {
             Some((t, normal)) => {
                 let travel = (t - bounces.radius).clamp(0.0, step);
-                s.position = std::array::from_fn(|i| s.position[i] + dir[i] * travel);
+                s.position = vec3::along(s.position, dir, travel);
                 // Reflect, keeping some of the speed, and rolling to rest on a floor.
-                let along: f32 = (0..3).map(|i| s.velocity[i] * normal[i]).sum();
+                let along: f32 = vec3::dot(s.velocity, normal);
                 if bounces.smash.is_some_and(|smash| -along > smash) {
                     smashed = true;
                     break;
@@ -462,7 +486,7 @@ fn step_bouncing(world: &mut World, id: u32, dt: f32, bounces: Bounces) {
                 remaining *= 1.0 - travel / step.max(1e-6);
             }
             None => {
-                s.position = std::array::from_fn(|i| s.position[i] + dir[i] * step);
+                s.position = vec3::along(s.position, dir, step);
                 break;
             }
         }
@@ -486,10 +510,10 @@ fn step_sticking(world: &mut World, id: u32, dt: f32, sticks: Sticks) {
         let step = speed * dt;
         match world.physics.cast_ray(s.position, dir, step + sticks.radius, 0) {
             Some(t) => {
-                s.position = std::array::from_fn(|i| s.position[i] + dir[i] * (t - sticks.radius).clamp(0.0, step));
+                s.position = vec3::along(s.position, dir, (t - sticks.radius).clamp(0.0, step));
                 s.velocity = [0.0; 3];
             }
-            None => s.position = std::array::from_fn(|i| s.position[i] + dir[i] * step),
+            None => s.position = vec3::along(s.position, dir, step),
         }
     }
     if s.ttl == 0 || s.position[1] < KILL_Y {
@@ -521,12 +545,12 @@ fn step_round(world: &mut World, id: u32, dt: f32) {
     if met.any() {
         world.entities.despawn(id);
         land(world, &flight, &met, &damage);
-        let point: [f32; 3] = std::array::from_fn(|i| s.position[i] + dir[i] * met.end);
+        let point: [f32; 3] = vec3::along(s.position, dir, met.end);
         let [x, y, z] = point.map(to_cm);
         world.shots.push(ShotEvent { shooter: id, weapon: WEAPON_BULLET, x, y, z });
         return;
     }
-    s.position = std::array::from_fn(|i| s.position[i] + dir[i] * step);
+    s.position = vec3::along(s.position, dir, step);
     if s.ttl == 0 || s.position[1] < KILL_Y {
         world.entities.despawn(id);
     } else {
@@ -551,7 +575,7 @@ mod tests {
     }
 
     fn launch(game: &mut Game, kind: u8, position: [f32; 3], velocity: [f32; 3]) -> u32 {
-        game.world.launch(Flying { kind, owner: 0, source: 0, position, velocity, ttl: 600, item: 0, back: 0, flown: 0.0 })
+        game.world.launch(Flying::new(kind, 0, position, velocity, 600))
     }
 
     #[test]

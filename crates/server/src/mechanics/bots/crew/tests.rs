@@ -82,7 +82,7 @@ fn the_driver_drives_its_route_round_and_round() {
         assert!(x > -10.0 && x < 60.0 && z > -10.0 && z < 60.0, "keeps to its route: {x}, {z}");
     }
     assert_eq!(visited, [true; 4], "drove to every waypoint");
-    assert!(game.world.entities.of::<Bot>(driver).tries == 0 || game.world.entities.of::<Bot>(driver).tries < TRIES, "never stuck on open ground");
+    assert!(game.world.entities.of::<Bot>(driver).walk.tries == 0 || game.world.entities.of::<Bot>(driver).walk.tries < TRIES, "never stuck on open ground");
 }
 
 /// A road from (-200, -20) east to (200, -20), then north to (200, 100).
@@ -172,14 +172,14 @@ fn the_shell_laid_for_a_mark_lands_on_it() {
 fn the_gunner_shells_someone_it_sees_all_round_and_the_tank_holds_still() {
     let mut game = game(false, vec![]);
     let (vid, [_, gunner]) = crew(&mut game, [0.0, 0.0], vec![[0.0, 0.0], [0.0, -60.0]]);
-    game.world.entities.get_mut::<Bot>(gunner).unwrap().skill = 1.0;
+    game.world.entities.get_mut::<Bot>(gunner).unwrap().aim.skill = 1.0;
     let person = join(&mut game);
     // Behind the tank, which first heads the other way.
     put(&mut game, person, [10.0, 70.0]);
     let mut halted = false;
     for _ in 0..(20 * TICK_RATE) {
         game.step();
-        let fighting = game.world.entities.of::<Bot>(gunner).sees;
+        let fighting = game.world.entities.of::<Bot>(gunner).sight.sees;
         if fighting && tank(&game, vid).forward_speed.abs() < 0.3 {
             halted = true;
         }
@@ -207,13 +207,13 @@ fn it_leaves_its_own_team_alone() {
 fn it_does_not_fire_on_someone_close_enough_for_the_burst_to_reach_it() {
     let mut game = game(false, vec![]);
     let (vid, [_, gunner]) = crew(&mut game, [0.0, 0.0], vec![[0.0, 0.0]]);
-    game.world.entities.get_mut::<Bot>(gunner).unwrap().skill = 1.0;
+    game.world.entities.get_mut::<Bot>(gunner).unwrap().aim.skill = 1.0;
     let person = join(&mut game);
     for _ in 0..(6 * TICK_RATE) {
         put(&mut game, person, [6.0, -6.0]);
         game.step();
     }
-    assert!(game.world.entities.of::<Bot>(gunner).sees, "it sees them");
+    assert!(game.world.entities.of::<Bot>(gunner).sight.sees, "it sees them");
     assert_eq!(shells_fired(&game, vid), 0, "but holds its fire");
 }
 
@@ -265,7 +265,7 @@ fn a_crewman_put_out_of_reach_of_its_tank_fights_on_foot() {
     run(&mut game, 5.0);
     assert_eq!(seated(&game, driver), None);
     let hp = game.world.entities.of::<crate::entities::Health>(person).hp;
-    assert!(hp < shared::consts::PLAYER_MAX_HP || game.world.entities.of::<Player>(person).deaths > 0, "it shot them on foot");
+    assert!(hp < shared::consts::PLAYER_MAX_HP || game.world.entities.of::<Player>(person).score.deaths > 0, "it shot them on foot");
 }
 
 /// Not a regression test: tank crews let loose on the committed fixture city with no one about, to
@@ -294,7 +294,7 @@ fn tanks_drive_the_fixture_city() {
         for (crew, was) in crews.iter_mut().zip(before) {
             let now = tank(&game, crew.0).position;
             crew.3 += (now[0] - was[0]).hypot(now[2] - was[2]);
-            crew.4 = crew.4.max(game.world.entities.of::<Bot>(crew.1).tries);
+            crew.4 = crew.4.max(game.world.entities.of::<Bot>(crew.1).walk.tries);
         }
     }
     for (vid, driver, start, driven, tries) in crews {

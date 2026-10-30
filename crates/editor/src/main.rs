@@ -12,6 +12,7 @@ use osm_import::region::Region;
 use osm_import::{cache, hydro, overpass, progress, trees};
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
+use shared::world::plain_world_name;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Instant;
@@ -21,11 +22,6 @@ const MAX_BLOCKS: i64 = 400;
 
 fn worlds_dir() -> PathBuf {
     std::env::var("RAGNAROK_WORLDS").map_or_else(|_| PathBuf::from("worlds"), PathBuf::from)
-}
-
-/// Worlds are directories named by the player, so keep the names plain.
-fn valid(name: &str) -> bool {
-    (1..=40).contains(&name.len()) && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
 }
 
 #[derive(Deserialize, Serialize)]
@@ -79,7 +75,7 @@ fn fail(res: &mut Response, code: StatusCode, message: &str) {
 
 fn name_of(req: &Request, res: &mut Response) -> Option<String> {
     let name: String = req.param("name").unwrap_or_default();
-    if valid(&name) {
+    if plain_world_name(&name) {
         Some(name)
     } else {
         fail(res, StatusCode::BAD_REQUEST, "a world name is 1-40 characters of a-z, 0-9, - and _");
@@ -117,7 +113,7 @@ async fn list_worlds(res: &mut Response) {
     let mut worlds = Vec::new();
     for entry in std::fs::read_dir(worlds_dir()).into_iter().flatten().flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if let (true, Some(area)) = (valid(&name), read_area(&name)) {
+        if let (true, Some(area)) = (plain_world_name(&name), read_area(&name)) {
             let generated = worlds_dir().join(&name).join("world.msgpack").exists();
             worlds.push(serde_json::json!({ "name": name, "tiles": area.tiles.len(), "active": active.as_deref() == Some(&name), "generated": generated }));
         }

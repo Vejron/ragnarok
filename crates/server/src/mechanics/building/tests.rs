@@ -51,7 +51,7 @@ fn builder(game: &mut Game, x: f32, z: f32) -> u32 {
     std::mem::forget(inbox);
     let mut player = game.world.entities.get_mut::<Player>(id).unwrap();
     player.character.position = [x, STANDING_Y, z];
-    player.hotbar[0] = ItemSlot { item: ITEM_BRICKS, count: 1, ammo: 0 };
+    player.hands.hotbar[0] = ItemSlot { item: ITEM_BRICKS, count: 1, ammo: 0 };
     id
 }
 
@@ -199,7 +199,7 @@ fn digging_out_a_towers_foot_brings_it_down_on_whoever_is_under_it() {
     game.step();
     assert!(game.world.dig_cube([100, 0, 0]));
     assert!(game.world.construct.is_empty(), "nothing held the rest");
-    assert_eq!(game.world.fresh_built.fell.len(), 7);
+    assert_eq!(game.world.fresh.built.fell.len(), 7);
     assert!(!game.world.rubble.is_empty(), "it comes down as rubble");
 }
 
@@ -212,7 +212,7 @@ fn a_beam_off_a_wall_falls_when_the_wall_under_it_is_blown_out() {
     let wall = cube_centre([20, 4, 0]);
     game.world.carve(house, wall, 1.0).expect("the wall is bitten");
     assert!(game.world.construct.is_empty(), "the beam is left hanging: {:?}", game.world.construct.cubes().collect::<Vec<_>>());
-    assert_eq!(game.world.fresh_built.fell.len(), 5);
+    assert_eq!(game.world.fresh.built.fell.len(), 5);
 }
 
 #[test]
@@ -258,7 +258,7 @@ fn wall_ahead(world: &mut World) -> usize {
 fn rifleman(game: &mut Game) -> u32 {
     let id = builder(game, 100.0, 0.0);
     let ak5 = def(shared::items::ITEM_AK5).unwrap();
-    game.world.entities.get_mut::<Player>(id).unwrap().hotbar[0] = ItemSlot { item: shared::items::ITEM_AK5, count: 1, ammo: ak5.mag };
+    game.world.entities.get_mut::<Player>(id).unwrap().hands.hotbar[0] = ItemSlot { item: shared::items::ITEM_AK5, count: 1, ammo: ak5.mag };
     id
 }
 
@@ -307,8 +307,8 @@ fn shooting_out_a_towers_foot_brings_it_down() {
         super::super::combat::hit_object(&mut game.world, [foot[0] - 5.0, foot[1], foot[2]], [1.0, 0.0, 0.0], 5.0 - HALF_CUBE, 12);
     }
     assert!(game.world.construct.is_empty(), "{:?}", game.world.construct.cubes().collect::<Vec<_>>());
-    assert_eq!(game.world.fresh_built.removed, vec![[100, 0, 0]]);
-    assert_eq!(game.world.fresh_built.fell.len(), 5);
+    assert_eq!(game.world.fresh.built.removed, vec![[100, 0, 0]]);
+    assert_eq!(game.world.fresh.built.fell.len(), 5);
 }
 
 #[test]

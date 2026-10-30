@@ -14,7 +14,7 @@ Roadmap stage 2 from [design.md §14](design.md#14-roadmap): a car, seats, enter
 
 ## Two cars
 
-The single car was later split into two kinds that share the ray-cast physics and differ in their `Spec` (server `physics/vehicle.rs`, client `sim/vehicle.ts`). Models are built in Blender by [tools/vehicles/build_car.py](tools/vehicles/build_car.py) into `client/public/models/jeep.glb` and `sports.glb`; the three vehicles' scripts follow the same conventions.
+The single car was later split into two kinds that share the ray-cast physics and differ in their `Spec` (server `physics/vehicle.rs`, client `sim/vehicle.ts`). Models are built in Blender by [tools/vehicles/build_car.py](../tools/vehicles/build_car.py) into `client/public/models/jeep.glb` and `sports.glb`; the three vehicles' scripts follow the same conventions.
 
 | | Jeep (`KIND_JEEP`, 1) | Sports car (`KIND_SPORTS`, 4) |
 |---|---|---|

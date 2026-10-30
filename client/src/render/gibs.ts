@@ -1,5 +1,4 @@
-import { Geometry, Group, Mesh, SkinnedMesh } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Geometry, Group, Mesh, SkinnedMesh, Matrix4, Quaternion, Vector3 } from '@ragnarok/engine'
 
 /** One rigid piece of the character, as it is in the bind pose. */
 export interface Limb {
@@ -8,7 +7,7 @@ export interface Limb {
   bone: string
   /** Vertices centred on `centre`, which is in the mesh's bind-pose space. */
   geometry: Geometry
-  centre: THREE.Vector3
+  centre: Vector3
 }
 
 /** Which limb a bone belongs to: arms and legs split at the elbow and knee, the rest is the torso. */
@@ -92,7 +91,7 @@ export function splitLimbs(mesh: SkinnedMesh): Limb[] {
         max[c] = Math.max(max[c]!, p[i + c]!)
       }
     }
-    const centre = new THREE.Vector3((min[0]! + max[0]!) / 2, (min[1]! + max[1]!) / 2, (min[2]! + max[2]!) / 2)
+    const centre = new Vector3((min[0]! + max[0]!) / 2, (min[1]! + max[1]!) / 2, (min[2]! + max[2]!) / 2)
     out.translate(-centre.x, -centre.y, -centre.z)
     limbs.push({ key, bone: group.bone, geometry: out, centre })
   }
@@ -100,11 +99,11 @@ export function splitLimbs(mesh: SkinnedMesh): Limb[] {
 }
 
 const SCRATCH = {
-  matrix: new THREE.Matrix4(),
-  inverseBind: new THREE.Matrix4(),
-  position: new THREE.Vector3(),
-  quaternion: new THREE.Quaternion(),
-  scale: new THREE.Vector3(),
+  matrix: new Matrix4(),
+  inverseBind: new Matrix4(),
+  position: new Vector3(),
+  quaternion: new Quaternion(),
+  scale: new Vector3(),
 }
 
 /**

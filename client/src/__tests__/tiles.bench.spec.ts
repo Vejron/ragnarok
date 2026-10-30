@@ -18,7 +18,7 @@ import { ribbonsOf, waterBuffers } from '@/render/groundmesh'
 import { terrainBuffers, TERRAIN_LOD_ERRORS } from '@/render/terrainmesh'
 import { buildTrees } from '@/render/trees'
 
-const root = resolve(process.cwd(), 'public/dev')
+const root = resolve(process.cwd(), process.env.BENCH_WORLD ?? 'public/dev')
 
 it.skipIf(!process.env.BENCH || !existsSync(resolve(root, 'world.msgpack')))('what a tile costs, stage by stage', { timeout: 300_000 }, () => {
   const manifest = new Uint8Array(readFileSync(resolve(root, 'world.msgpack')))

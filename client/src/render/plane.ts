@@ -1,5 +1,4 @@
-import { Group, Mesh, type Material, type Node } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Group, Mesh, type Material, type Node, Matrix4, Quaternion, Vector3 } from '@ragnarok/engine'
 import { parseToonModel } from './models'
 import { toonMaterial } from './toon'
 import { PLANE_BOMBS, PLANE_REAR_LENGTH } from '@/sim/consts'
@@ -72,15 +71,15 @@ export class PlaneModel implements VehicleModel {
   private readonly firedAt = [-Infinity, -Infinity]
   private ringFiredAt = -Infinity
   /** The orientation at the last update, to measure how fast it turns. */
-  private readonly lastRotation = new THREE.Quaternion()
+  private readonly lastRotation = new Quaternion()
   private hasRotation = false
   /** Smoothed turn rates in the plane's own frame, rad/s: + pitches up, + yaws left, + rolls right wing up. */
-  readonly rates = new THREE.Vector3()
+  readonly rates = new Vector3()
   /** Whoever sits at the ring, 0 for nobody. */
   gunner = 0
-  private readonly pivot = new THREE.Vector3()
-  private readonly aim = new THREE.Vector3()
-  private readonly matrix = new THREE.Matrix4()
+  private readonly pivot = new Vector3()
+  private readonly aim = new Vector3()
+  private readonly matrix = new Matrix4()
 
   constructor(id: number) {
     if (!asset) throw new Error('loadPlaneModel() must finish before planes are created')
@@ -157,11 +156,11 @@ export class PlaneModel implements VehicleModel {
     const now = this.root.quaternion
     if (this.hasRotation && dt > 1e-4) {
       // The change in the plane's own frame: last⁻¹ · now, as an axis and angle.
-      const delta = this.lastRotation.clone().invert().multiply(new THREE.Quaternion(now.x, now.y, now.z, now.w))
+      const delta = this.lastRotation.clone().invert().multiply(new Quaternion(now.x, now.y, now.z, now.w))
       if (delta.w < 0) delta.set(-delta.x, -delta.y, -delta.z, -delta.w)
       const angle = 2 * Math.acos(Math.min(1, delta.w))
       const sin = Math.sqrt(Math.max(0, 1 - delta.w * delta.w))
-      const measured = sin > 1e-6 ? new THREE.Vector3(delta.x, delta.y, delta.z).multiplyScalar(angle / sin / dt) : new THREE.Vector3()
+      const measured = sin > 1e-6 ? new Vector3(delta.x, delta.y, delta.z).multiplyScalar(angle / sin / dt) : new Vector3()
       this.rates.lerp(measured, Math.min(1, dt * 8))
     }
     this.lastRotation.set(now.x, now.y, now.z, now.w)

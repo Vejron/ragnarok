@@ -1,3 +1,4 @@
+use shared::vec3;
 use super::*;
 use shared::consts::TICK_DT;
 use shared::protocol::{KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER};
@@ -607,7 +608,7 @@ fn scripted_loiter_matches_fixture() {
 }
 
 fn speed(pose: &CarPose) -> f32 {
-    pose.velocity.iter().map(|v| v * v).sum::<f32>().sqrt()
+    vec3::length(pose.velocity)
 }
 
 #[test]

@@ -2,6 +2,37 @@
 
 use super::*;
 
+/// The tank: a heavy six-wheel hull that turns on the spot, with a driver (seat 0) and a gunner
+/// (seat 1) who aims the turret and fires. Same body axes as the car.
+pub const TANK_SEATS: usize = 2;
+pub const TANK_HALF_EXTENTS: [f32; 3] = [1.3, 0.5, 2.6];
+pub const TANK_WHEEL_RADIUS: f32 = 0.45;
+pub const TANK_TRACK_HALF: f32 = 1.2;
+/// Z of the three axles, front first.
+pub const TANK_AXLES_Z: [f32; 3] = [-1.9, 0.0, 1.9];
+pub const TANK_HARD_POINT_Y: f32 = -0.2;
+pub const TANK_SUSPENSION_REST: f32 = 0.35;
+pub const TANK_MAX_SPEED: f32 = 12.0;
+/// Yaw rate at full stick, rad/s.
+pub const TANK_TURN_RATE: f32 = 1.1;
+/// Where the turret ring sits in the hull frame, and how far the muzzle is from the ring.
+pub const TANK_TURRET_PIVOT: [f32; 3] = [0.0, 0.85, 0.3];
+pub const TANK_BARREL_LENGTH: f32 = 3.2;
+/// The turret is solid: a cylinder on the ring, so it is the same shape whichever way it points.
+/// Its base is the hull's top.
+pub const TANK_TURRET_RADIUS: f32 = 1.0;
+pub const TANK_TURRET_HALF_HEIGHT: f32 = 0.35;
+/// How fast the turret and barrel follow the gunner's aim, rad/s.
+pub const TANK_TURRET_SLEW: f32 = 1.4;
+pub const TANK_BARREL_SLEW: f32 = 0.9;
+/// Barrel elevation limits, radians (+ is up).
+pub const TANK_BARREL_MIN: f32 = -0.12;
+pub const TANK_BARREL_MAX: f32 = 0.5;
+/// What it takes to knock the turret off: damage from hits on the turret and the hull's roof, which a
+/// hull hit never adds to. Past it `DAMAGE_TURRET` is set, the gunner dies and the gun is gone until the
+/// tank respawns. Mirrors `TANK_TURRET_HP` in `sim/consts.ts`.
+pub const TANK_TURRET_HP: u8 = 90;
+
 /// A medium tank's armour: thickest in front, thin over the engine and underneath. The driver looks out
 /// through a visor slit in the glacis and the gunner through a sight beside the mantlet, and a well-aimed
 /// round can go in through either.

@@ -1,5 +1,4 @@
-import { Group, Mesh, type Material, type Node } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Group, Mesh, type Material, type Node, Matrix4, Vector3 } from '@ragnarok/engine'
 import { parseToonModel, unlitMaterial } from './models'
 import { toonMaterial } from './toon'
 import { JEEP_MAX_STEER, JEEP_WHEEL_RADIUS, ROADSTER_MAX_STEER, ROADSTER_SEATS, ROADSTER_WHEEL_RADIUS, SPORTS_MAX_STEER, SPORTS_SEATS, SPORTS_WHEEL_RADIUS, CAR_SEATS } from '@/sim/consts'
@@ -65,17 +64,17 @@ const BEAM_AHEAD = 0.15
  * The middle of `model`'s front lamps (`lamp` vertices ahead of its middle) in its frame, nudged forward
  * past their faces, or null if it has none.
  */
-function frontLamps(model: Node): THREE.Vector3 | null {
+function frontLamps(model: Node): Vector3 | null {
   model.updateMatrixWorld(true)
-  const toModel = new THREE.Matrix4().fromArray(model.matrixWorld).invert()
-  const toFrame = new THREE.Matrix4()
-  const v = new THREE.Vector3()
-  const sum = new THREE.Vector3()
+  const toModel = new Matrix4().fromArray(model.matrixWorld).invert()
+  const toFrame = new Matrix4()
+  const v = new Vector3()
+  const sum = new Vector3()
   let count = 0
   let front = Infinity
   model.traverse((node) => {
     if (!(node instanceof Mesh) || node.material.name !== 'lamp') return
-    toFrame.multiplyMatrices(toModel, new THREE.Matrix4().fromArray(node.matrixWorld))
+    toFrame.multiplyMatrices(toModel, new Matrix4().fromArray(node.matrixWorld))
     const positions = node.geometry.positions
     for (let i = 0; i < positions.length; i += 3) {
       v.fromArray(positions, i).applyMatrix4(toFrame)
@@ -92,8 +91,8 @@ function frontLamps(model: Node): THREE.Vector3 | null {
 
 /** A cold-gas jet leaving one of a Roadster's nozzles: where, and which way it blows, in world space. */
 export interface Jet {
-  at: THREE.Vector3
-  direction: THREE.Vector3
+  at: Vector3
+  direction: Vector3
 }
 
 /**
@@ -106,20 +105,20 @@ export class CarModel implements VehicleModel {
   private readonly frontPivots: Node[] = []
   private readonly spinners: Node[] = []
   /** Each seat's head point in the car's frame, from the model's `seat_N` markers. */
-  readonly seatMarkers: THREE.Vector3[] = []
+  readonly seatMarkers: Vector3[] = []
   private readonly paint: Material
   private readonly wheelRadius: number
   private readonly maxSteer: number
   private roll = 0
   private placed = false
-  private readonly last = new THREE.Vector3()
-  private readonly forward = new THREE.Vector3()
+  private readonly last = new Vector3()
+  private readonly forward = new Vector3()
   private readonly damage: CarWear
   /** A Roadster's nozzles in the car's frame (`nozzle_rear_N` push it forward, `nozzle_lift_N` up). */
-  private readonly nozzles: { at: THREE.Vector3; lift: boolean }[] = []
+  private readonly nozzles: { at: Vector3; lift: boolean }[] = []
   /** Where the headlights shine from in the car's frame: just ahead of the middle of the front lamps. */
-  private readonly lamps: THREE.Vector3 | null
-  private readonly beam = { at: new THREE.Vector3(), direction: new THREE.Vector3() }
+  private readonly lamps: Vector3 | null
+  private readonly beam = { at: new Vector3(), direction: new Vector3() }
 
   /** `name` is which of the car bodies it is. */
   constructor(name: CarKind, id: number) {
@@ -136,7 +135,7 @@ export class CarModel implements VehicleModel {
       if (/^wheel_[FR][LR]$/.test(node.name)) this.spinners.push(node)
       if (/^pivot_F[LR]$/.test(node.name)) this.frontPivots.push(node)
       const nozzle = /^nozzle_(rear|lift)_\d+$/.exec(node.name)
-      if (nozzle) this.nozzles.push({ at: new THREE.Vector3(node.position.x, node.position.y, node.position.z), lift: nozzle[1] === 'lift' })
+      if (nozzle) this.nozzles.push({ at: new Vector3(node.position.x, node.position.y, node.position.z), lift: nozzle[1] === 'lift' })
     })
 
     this.damage = new CarWear(this.root, model, halfExtentsOf(kind), wheelRadius, paint)
@@ -144,7 +143,7 @@ export class CarModel implements VehicleModel {
 
     for (let seat = 0; seat < seats; seat++) {
       const marker = model.getObjectByName(`seat_${seat}`)!.position
-      this.seatMarkers.push(new THREE.Vector3(marker.x, marker.y, marker.z))
+      this.seatMarkers.push(new Vector3(marker.x, marker.y, marker.z))
     }
   }
 
@@ -178,7 +177,7 @@ export class CarModel implements VehicleModel {
     for (const nozzle of this.nozzles) {
       if (!(flags & (nozzle.lift ? THRUST_LIFT : THRUST_BOOST))) continue
       const at = nozzle.at.clone().applyQuaternion(this.root.quaternion).add(this.root.position)
-      const direction = new THREE.Vector3(0, nozzle.lift ? -1 : 0, nozzle.lift ? 0 : 1).applyQuaternion(this.root.quaternion)
+      const direction = new Vector3(0, nozzle.lift ? -1 : 0, nozzle.lift ? 0 : 1).applyQuaternion(this.root.quaternion)
       jets.push({ at, direction })
     }
     return jets
@@ -188,7 +187,7 @@ export class CarModel implements VehicleModel {
    * Its headlights' beam where the car was last placed: from the front lamps, along the nose and dipped a
    * little toward the road. Null for a model without front lamps. The vectors are reused by the next call.
    */
-  headlight(): { at: THREE.Vector3; direction: THREE.Vector3 } | null {
+  headlight(): { at: Vector3; direction: Vector3 } | null {
     if (!this.lamps) return null
     const q = this.root.quaternion
     this.beam.at.copy(this.lamps).applyQuaternion(q).add(this.root.position)
@@ -202,12 +201,12 @@ export class CarModel implements VehicleModel {
   }
 
   /** A crash at `world` (from the server's event): the dent it makes goes there. */
-  noteImpact(world: THREE.Vector3) {
+  noteImpact(world: Vector3) {
     this.damage.noteImpact(world)
   }
 
   /** Shows crash `damage` and `hp` as the snapshot has them; parts that come off go into `debris`. */
-  wear(damage: readonly number[], hp: number, debris: Debris | null, velocity: THREE.Vector3) {
+  wear(damage: readonly number[], hp: number, debris: Debris | null, velocity: Vector3) {
     this.damage.update(damage, hp, debris, velocity)
   }
 

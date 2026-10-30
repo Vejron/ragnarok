@@ -184,15 +184,15 @@ impl Mechanic for Pickups {
             let Some(mut player) = world.entities.get_mut::<Player>(id) else { continue };
             // The reach is spent: the car beside the gun stays unboarded.
             player.input.buttons &= !BUTTON_USE;
-            let left = store(&mut player.hotbar, pickup.item, pickup.count);
+            let left = store(&mut player.hands.hotbar, pickup.item, pickup.count);
             // Nowhere to put it: trade it for what is in hand, which is left in its place.
             let traded = if left != 0 && left >= pickup.count {
                 // Combat has not yet seen this tick's selection, so read it from the input.
                 let held = (player.input.slot() as usize).min(HOTBAR_SLOTS - 1);
-                let slot = player.hotbar[held];
+                let slot = player.hands.hotbar[held];
                 let item_def = def(pickup.item);
                 if let (true, Some(item_def)) = (slot.item != ITEM_NONE && slot.item != pickup.item, item_def) {
-                    player.hotbar[held] = ItemSlot { item: pickup.item, count: pickup.count, ammo: item_def.mag };
+                    player.hands.hotbar[held] = ItemSlot { item: pickup.item, count: pickup.count, ammo: item_def.mag };
                     player.interrupt();
                     Some(slot)
                 } else {
@@ -238,7 +238,7 @@ mod tests {
         let id = response.try_recv().unwrap().unwrap();
         game.world.clear_pickups();
         // These tests are about taking things, so they start with room to take them.
-        game.world.entities.get_mut::<Player>(id).unwrap().hotbar = Default::default();
+        game.world.entities.get_mut::<Player>(id).unwrap().hands.hotbar = Default::default();
         (game, id, inbox)
     }
 
@@ -290,7 +290,7 @@ mod tests {
         let pid = drop_at_feet(&mut game, id, ITEM_AK5, 1);
         let mut seq = 0;
         press_use(&mut game, id, &mut seq, 0);
-        let slot = game.world.entities.of::<Player>(id).hotbar[0];
+        let slot = game.world.entities.of::<Player>(id).hands.hotbar[0];
         assert_eq!(slot, ItemSlot { item: ITEM_AK5, count: 1, ammo: def(ITEM_AK5).unwrap().mag });
         assert!(game.world.pickup(pid).unwrap().respawn_in > 0);
         assert!(game.seen_pickups().is_empty(), "a taken item is not shown");
@@ -303,12 +303,12 @@ mod tests {
     #[test]
     fn stackable_items_stack_up_to_the_limit_and_the_rest_stay_on_the_ground() {
         let (mut game, id, _inbox) = game();
-        game.world.entities.get_mut::<Player>(id).unwrap().hotbar = [ItemSlot { item: ITEM_GRENADE, count: 2, ammo: 0 }, ItemSlot { item: ITEM_REVOLVER, count: 1, ammo: 6 }, ItemSlot { item: ITEM_AK5, count: 1, ammo: 30 }, ItemSlot { item: ITEM_BANDAGE, count: 1, ammo: 0 }, ItemSlot { item: ITEM_BANDAGE, count: 5, ammo: 0 }];
+        game.world.entities.get_mut::<Player>(id).unwrap().hands.hotbar = [ItemSlot { item: ITEM_GRENADE, count: 2, ammo: 0 }, ItemSlot { item: ITEM_REVOLVER, count: 1, ammo: 6 }, ItemSlot { item: ITEM_AK5, count: 1, ammo: 30 }, ItemSlot { item: ITEM_BANDAGE, count: 1, ammo: 0 }, ItemSlot { item: ITEM_BANDAGE, count: 5, ammo: 0 }];
         let pid = drop_at_feet(&mut game, id, ITEM_GRENADE, 2);
         let mut seq = 0;
         press_use(&mut game, id, &mut seq, 0);
         let grenades = def(ITEM_GRENADE).unwrap().stack;
-        assert_eq!(game.world.entities.of::<Player>(id).hotbar[0].count, grenades);
+        assert_eq!(game.world.entities.of::<Player>(id).hands.hotbar[0].count, grenades);
         assert_eq!(game.world.pickup(pid).unwrap().count, 2 - (grenades - 2));
         assert_eq!(game.world.pickup(pid).unwrap().respawn_in, 0, "what did not fit is still there");
     }
@@ -316,16 +316,16 @@ mod tests {
     #[test]
     fn a_full_hotbar_swaps_with_the_slot_in_hand() {
         let (mut game, id, _inbox) = game();
-        game.world.entities.get_mut::<Player>(id).unwrap().hotbar =
+        game.world.entities.get_mut::<Player>(id).unwrap().hands.hotbar =
             [ItemSlot { item: ITEM_REVOLVER, count: 1, ammo: 6 }, ItemSlot { item: ITEM_AK5, count: 1, ammo: 30 }, ItemSlot { item: ITEM_GRENADE, count: 3, ammo: 0 }, ItemSlot { item: ITEM_BANDAGE, count: 5, ammo: 0 }, ItemSlot { item: ITEM_REVOLVER, count: 1, ammo: 2 }];
         let pid = drop_at_feet(&mut game, id, ITEM_AK5, 1);
         game.world.pickup_mut(pid).unwrap().count = 1;
         // Everything but the AK5 slot is full of other things; hold slot 2 (grenades) and swap.
-        game.world.entities.get_mut::<Player>(id).unwrap().hotbar[1] = ItemSlot { item: ITEM_BANDAGE, count: 5, ammo: 0 };
+        game.world.entities.get_mut::<Player>(id).unwrap().hands.hotbar[1] = ItemSlot { item: ITEM_BANDAGE, count: 5, ammo: 0 };
         let mut seq = 0;
         press_use(&mut game, id, &mut seq, 2);
         let player = &game.world.entities.of::<Player>(id);
-        assert_eq!(player.hotbar[2].item, ITEM_AK5);
+        assert_eq!(player.hands.hotbar[2].item, ITEM_AK5);
         let on_ground = game.world.pickup(pid).unwrap();
         assert_eq!((on_ground.item, on_ground.count, on_ground.respawn_in), (ITEM_GRENADE, 3, 0));
     }
@@ -336,7 +336,7 @@ mod tests {
         drop_at_feet(&mut game, id, ITEM_BANDAGE, 1);
         let mut seq = 0;
         press_use(&mut game, id, &mut seq, 0);
-        assert_eq!(game.world.entities.of::<Player>(id).hotbar[0].item, ITEM_BANDAGE);
+        assert_eq!(game.world.entities.of::<Player>(id).hands.hotbar[0].item, ITEM_BANDAGE);
         assert!(game.world.entities.of::<Player>(id).seat.is_none());
     }
 
@@ -347,7 +347,7 @@ mod tests {
         game.world.entities.get_mut::<Transform>(pid).unwrap().position[0] += PICKUP_RADIUS + 1.0;
         let mut seq = 0;
         press_use(&mut game, id, &mut seq, 0);
-        assert_eq!(game.world.entities.of::<Player>(id).hotbar[0].item, ITEM_NONE);
+        assert_eq!(game.world.entities.of::<Player>(id).hands.hotbar[0].item, ITEM_NONE);
         assert_eq!(game.world.pickup(pid).unwrap().respawn_in, 0);
     }
 }

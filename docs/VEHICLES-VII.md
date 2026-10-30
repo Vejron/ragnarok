@@ -60,4 +60,4 @@ The walker's foot planting and two-bone IK moved into `Legs` (`render/legs.ts`),
 
 ## Tuning
 
-Every number is a `HEN_*` constant in `crates/shared/src/consts.rs`, generated into `client/src/sim/consts.generated.ts` by `npm run gen:consts`. Changing any of the flight constants moves the scripted run, so regenerate `HEN_CHECKPOINTS` on both sides. The legs and balance are the walker's `WALKER_*` constants, shared on purpose; a bigger hen would need its own.
+Every number is a `HEN_*` constant in its `crates/shared/src/vehicles/` file, generated into `client/src/sim/consts.generated.ts` by `npm run gen:consts`. Changing any of the flight constants moves the scripted run, so regenerate `HEN_CHECKPOINTS` on both sides. The legs and balance are the walker's `WALKER_*` constants, shared on purpose; a bigger hen would need its own.

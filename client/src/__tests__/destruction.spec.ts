@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Group, InstancedMesh, Mesh } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Group, InstancedMesh, Mesh, Vector3 } from '@ragnarok/engine'
 import { encode } from '@msgpack/msgpack'
 import { decodeServer, OBJ_TREE } from '@/net/codec'
 import { BuildingDamage } from '@/render/damage'
@@ -56,7 +55,7 @@ describe('felling a tree', () => {
     // It cracks as it starts and thuds as it lands, once each.
     expect(noises).toEqual(['hit', 'crack', 'thud'])
     const pivot = group.children[group.children.length - 1]!
-    const top = new THREE.Vector3(0, 1, 0).applyQuaternion(pivot.quaternion)
+    const top = new Vector3(0, 1, 0).applyQuaternion(pivot.quaternion)
     expect(top.x).toBeGreaterThan(0.95)
     expect(Math.abs(top.z)).toBeLessThan(0.05)
     expect(top.y).toBeLessThan(0.1)
@@ -82,7 +81,7 @@ describe('felling a tree', () => {
   it('lies down at once when told it already fell', () => {
     const group = scene()
     new FallingTrees().fell(group, tree(0, true), 0, 0, false)
-    const top = new THREE.Vector3(0, 1, 0).applyQuaternion(group.children[group.children.length - 1]!.quaternion)
+    const top = new Vector3(0, 1, 0).applyQuaternion(group.children[group.children.length - 1]!.quaternion)
     // yaw 0 faces -Z.
     expect(top.z).toBeLessThan(-0.95)
   })
@@ -91,7 +90,6 @@ describe('felling a tree', () => {
 // ---- buildings
 
 import { Effects } from '@/render/effects'
-import { Collapses } from '@/render/rubble'
 import { buildTile, rebuildBuildings } from '@/render/world'
 import type { SimMotor } from '@/sim/motor'
 import { flatMotor, tileBytes } from './worlds'
@@ -185,7 +183,7 @@ describe('redrawing a tile without a building', () => {
   })
 })
 
-describe('the building collider without a fallen building', () => {
+describe('the building collider', () => {
   /** The tile in a world of its own, solid to the server's physics (in WASM). */
   async function solidTile(tile: TileData): Promise<SimMotor> {
     const { vertices, triangles } = tile.collision
@@ -202,14 +200,6 @@ describe('the building collider without a fallen building', () => {
   }
   const along = (motor: SimMotor, x: number, y = 1, z = 0) => motor.castRay([x, y, z], [1, 0, 0], 5)
 
-  it('keeps the other house and loses that one', async () => {
-    const motor = await solidTile(twoHouses())
-    motor.setBuildings(0, 0, [0], new Map())
-    // Rays start 2 m before each house's west wall.
-    expect(along(motor, -2)).toBeNull()
-    expect(along(motor, 28)).not.toBeNull()
-  })
-
   // The cells are the ones the client draws (`carve.ts`); the server's physics cuts them out of its own shell.
   it('opens the wall where cells were blasted out and leaves the rest of that wall', async () => {
     const tile = twoHouses()
@@ -217,7 +207,7 @@ describe('the building collider without a fallen building', () => {
     const hole = new Set<number>()
     for (let y = 0; y <= 2.5; y += 0.5) for (let z = -1.5; z <= 1.5; z += 0.5) hole.add(shell.cellAt(0, y, z))
     const motor = await solidTile(tile)
-    motor.setBuildings(0, 0, [], new Map([[0, hole]]))
+    motor.setBuildings(0, 0, new Map([[0, hole]]))
     expect(along(motor, -2, 1, 0)).toBeNull()
     expect(along(motor, -2, 1, 4)).not.toBeNull()
     // The other house and this one's floor are as they were.
@@ -238,48 +228,6 @@ describe('the building collider without a fallen building', () => {
     expect(20 - down.t).toBeCloseTo(5.76, 4)
     // And walking into the wall stops at the cubes' face, x = 0.
     expect(along(motor, -2)!.t - 2).toBeCloseTo(0, 4)
-  })
-
-  it('is nothing at all once every building is gone', async () => {
-    const motor = await solidTile(twoHouses())
-    motor.setBuildings(0, 0, [0, 1], new Map())
-    expect(along(motor, -2)).toBeNull()
-    expect(along(motor, 28)).toBeNull()
-    // Down to the ground, with no floor left either.
-    expect(20 - motor.castRay([5, 20, 0], [0, -1, 0], 30)!.t).toBeCloseTo(0, 4)
-  })
-})
-
-describe('a building collapsing', () => {
-  it('sinks its walls, leaves a pile of rubble in the tile, and clears away its pieces', () => {
-    const tile = twoHouses()
-    const group = new Group()
-    // A tile's group hangs in the world; the collapse stops when it is taken out.
-    new Group().add(group)
-    const effects = new Effects()
-    const collapses = new Collapses()
-    collapses.start(group, tile, 0, 0, 0, () => 0, 7)
-    // The building's walls, the pile and the flung pieces.
-    expect(group.children.length).toBe(3)
-    const body = group.children[0]!
-    for (let i = 0; i < 20; i++) collapses.update(0.05, effects)
-    // A second in of 1.8, easing in: past 0.5 of the way down, not yet flat.
-    expect(body.scale.y).toBeLessThan(0.75)
-    expect(body.scale.y).toBeGreaterThan(0.3)
-    for (let i = 0; i < 300; i++) collapses.update(0.05, effects)
-    // Only the pile is left.
-    expect(group.children.length).toBe(1)
-    const heap = group.children[0] as Mesh
-    expect(heap.scale.y).toBeGreaterThanOrEqual(1)
-    expect(heap.scale.y).toBeLessThanOrEqual(3)
-    effects.dispose()
-  })
-
-  it('is just the pile when the tile came in after it fell', () => {
-    const group = new Group()
-    Collapses.settled(group, twoHouses(), 1)
-    expect(group.children.length).toBe(1)
-    expect(group.children[0]!.position.x).toBeCloseTo(35)
   })
 })
 
@@ -359,23 +307,10 @@ describe('a hurt building', () => {
     damage.carve(key, 0, [], [hung], [0, 2, 0], true)
     const pieces = damage.root.children[0]!.children.filter((c) => c instanceof Mesh && c.geometry.colors && c.position.lengthSq() > 0) as Mesh[]
     const start = pieces.map((m) => m.position.clone())
-    for (let i = 0; i < 30; i++) damage.update(0.02, { dust() {} } as never, new THREE.Vector3(1e6, 0, 0))
+    for (let i = 0; i < 30; i++) damage.update(0.02, { dust() {} } as never, new Vector3(1e6, 0, 0))
     const moved = pieces.map((m, i) => m.position.clone().sub(start[i]!))
     const towards = moved.some((d) => d.x * Math.sign(gx - hx) + d.z * Math.sign(gz - hz) > 0.2)
     expect(towards).toBe(true)
-  })
-
-  it('is cleared when it collapses, and not drawn again when the tile returns', () => {
-    const damage = new BuildingDamage()
-    damage.attach(key, tileWith())
-    damage.hurtBuilding(key, 0, 2)
-    damage.carve(key, 0, [cellAt(0, 0, 2, 0)], [], [-2, 2, 0], true)
-    damage.fell(key, 0)
-    expect(damage.root.children.length).toBe(0)
-    expect(damage.fractured(key)).toEqual([])
-    damage.detach(key)
-    damage.attach(key, tileWith())
-    expect(damage.shown(key, 0)).toEqual({ cells: 0 })
   })
 
   it('is hurt as it was when its tile streams back in', () => {
@@ -447,7 +382,7 @@ describe('a building with cells blasted out of it', () => {
     damage.carve(key, 0, all, [], [-1, 2, 0], true)
     // A hit on a building already drawn as shards is drawn at the next frame.
     const e = effects()
-    damage.update(0, e, new THREE.Vector3(500, 0, 0))
+    damage.update(0, e, new Vector3(500, 0, 0))
     e.dispose()
     expect(bodyOf(damage).geometry.vertexCount).toBeLessThan(whole)
   })
@@ -462,7 +397,7 @@ describe('a building with cells blasted out of it', () => {
     damage.carve(key, 0, all.slice(0, 20), all.slice(20, 60), [-1, 2, 0], true)
     expect(group.children.length).toBeGreaterThan(before)
     const e = effects()
-    for (let i = 0; i < 400; i++) damage.update(0.05, e, new THREE.Vector3(500, 0, 0))
+    for (let i = 0; i < 400; i++) damage.update(0.05, e, new Vector3(500, 0, 0))
     expect(group.children.length).toBeLessThanOrEqual(before)
     e.dispose()
   })
@@ -514,7 +449,7 @@ describe('a building with cells blasted out of it', () => {
       const puffs: { alpha: number; color: number; at: number }[] = []
       const smoke = { spawn: (spec: { alpha: number; color: number }) => puffs.push({ alpha: spec.alpha, color: spec.color, at: seconds }) }
       let seconds = 0
-      for (; seconds < 90; seconds += 0.1) damage.update(0.1, { dust() {} } as never, new THREE.Vector3(0, 0, 0), smoke)
+      for (; seconds < 90; seconds += 0.1) damage.update(0.1, { dust() {} } as never, new Vector3(0, 0, 0), smoke)
       return puffs
     }
     const day = smoulder()

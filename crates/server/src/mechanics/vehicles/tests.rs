@@ -1,3 +1,4 @@
+use shared::vec3;
 use super::*;
 use crate::entities::{Health, HurtBy};
 use crate::game::{Command, Game, Outgoing};
@@ -685,7 +686,7 @@ fn a_roadster_driver_boosts_on_run_hops_on_jump_and_brakes_on_crouch() {
     let thrust = game.seen(vid).unwrap().thrust.expect("a roadster sends its tank");
     assert_eq!(thrust.flags, THRUST_BOOST);
     assert!(thrust.air < 255, "boosting drains the tank: {}", thrust.air);
-    assert!(game.world.physics.car_pose(vid).unwrap().velocity.iter().map(|v| v * v).sum::<f32>().sqrt() > 5.0);
+    assert!(vec3::length(game.world.physics.car_pose(vid).unwrap().velocity) > 5.0);
 
     let ground = game.world.physics.car_pose(vid).unwrap().position[1];
     press(&mut game, id, &mut seq, (0, 0), BUTTON_JUMP, 30);

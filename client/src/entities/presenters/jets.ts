@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import { Vector3 } from '@ragnarok/engine'
 import { CarModel } from '@/render/car'
 import { coldGas } from '@/render/tyres'
 import type { Frame, Presenter } from '../presenter'
@@ -6,7 +6,7 @@ import type { Entity } from '../units'
 import type { VehicleWorld, Vehicles } from './vehicles'
 
 /** A vehicle with no motion on record. */
-const STILL = new THREE.Vector3()
+const STILL = new Vector3()
 
 /** A car's thrusters (`thrust`): cold gas from each nozzle firing, the driver's own as predicted. */
 export class Jets implements Presenter<Frame> {

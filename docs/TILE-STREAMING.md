@@ -157,7 +157,7 @@ flowchart LR
 All damage is handled on the main thread, from the client's carve state:
 - **The carve state:** `goneBuildings`, `BuildingDamage`, and `Shell` in `sim/carve.ts`, which unpacks a building's cells only once something asks after single cells.
 - **What the worker knows:** nothing about damage. It only builds a tile as it was when it was prepared.
-- **Taking a building out:** when a building falls, or its first dent hands it to the shards, the merged mesh collapses that building's vertices onto one point and re-sends only that range. A full rebuild happens only if a building comes back.
+- **Taking a building out:** when a building's first dent hands it to the shards, the merged mesh collapses that building's vertices onto one point and re-sends only that range. A full rebuild happens only if a building comes back.
 
 ## Costs
 

@@ -31,7 +31,7 @@ impl Game {
             let carry = crate::mechanics::carries(&self.world, id).then_some(wire::Carry { what: CARRY_BACKPACK });
             let shown = Replicated { seated, limbs, struck, carry, ..shown };
             let hp = self.world.entities.get::<Health>(id).map_or(0, |health| health.hp);
-            (id, Replicated { vitals: Some(wire::Vitals { hp, progress: progress(player, one_arm), spent: player.character.spent, winded: player.character.winded.into(), parts, down: player.character.down }), hotbar: Some(wire::Hotbar { slots: player.hotbar }), ..shown })
+            (id, Replicated { vitals: Some(wire::Vitals { hp, progress: progress(player, one_arm), spent: player.character.spent, winded: player.character.winded.into(), parts, down: player.character.down }), hotbar: Some(wire::Hotbar { slots: player.hands.hotbar }), ..shown })
         }));
         scene.extend(self.creatures());
         scene.extend(self.world.entities.all::<Vehicle>().filter_map(|(id, vehicle)| Some((id, self.vehicle(id, vehicle)?))));
@@ -192,11 +192,11 @@ fn soldier(player: &Player, alive: bool) -> Replicated {
 /// `one_arm` takes `ONE_ARM_RELOAD` times as long.
 fn progress(player: &Player, one_arm: bool) -> u8 {
     use shared::items::{BANDAGE_TICKS, def};
-    let (left, total) = if player.channel_left > 0 {
-        (player.channel_left, BANDAGE_TICKS)
-    } else if player.reload_left > 0 {
+    let (left, total) = if player.hands.channel_left > 0 {
+        (player.hands.channel_left, BANDAGE_TICKS)
+    } else if player.hands.reload_left > 0 {
         let slow = if one_arm { ONE_ARM_RELOAD } else { 1 };
-        (player.reload_left, def(player.held().item).map_or(1, |d| d.reload_ticks.max(1)) * slow)
+        (player.hands.reload_left, def(player.held().item).map_or(1, |d| d.reload_ticks.max(1)) * slow)
     } else {
         return 0;
     };

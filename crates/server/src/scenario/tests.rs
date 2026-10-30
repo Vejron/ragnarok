@@ -91,11 +91,11 @@ fn a_squad_spawns_at_the_start_with_its_loadout_and_everyone_hears_the_objective
     for id in &ids {
         let (player, bot) = (&game.world.entities.of::<Player>(*id), &game.world.entities.of::<Bot>(*id));
         assert_eq!(player.team, 2);
-        assert_eq!(bot.skill, 0.9);
-        assert_eq!(player.hotbar[0].item, ITEM_SHOTGUN);
-        assert_eq!(player.hotbar[0].ammo, def(ITEM_SHOTGUN).unwrap().mag, "loaded");
-        assert_eq!((player.hotbar[1].item, player.hotbar[1].count), (ITEM_GRENADE, def(ITEM_GRENADE).unwrap().stack), "a full stack");
-        assert_eq!(player.hotbar[2].item, ITEM_NONE, "nothing else");
+        assert_eq!(bot.aim.skill, 0.9);
+        assert_eq!(player.hands.hotbar[0].item, ITEM_SHOTGUN);
+        assert_eq!(player.hands.hotbar[0].ammo, def(ITEM_SHOTGUN).unwrap().mag, "loaded");
+        assert_eq!((player.hands.hotbar[1].item, player.hands.hotbar[1].count), (ITEM_GRENADE, def(ITEM_GRENADE).unwrap().stack), "a full stack");
+        assert_eq!(player.hands.hotbar[2].item, ITEM_NONE, "nothing else");
     }
 
     run(&mut game, 1.0);
@@ -261,8 +261,8 @@ fn a_squad_that_respawns_comes_back_with_its_own_loadout() {
     run(&mut game, RESPAWN_TICKS as f32 / TICK_RATE as f32 + 0.5);
     assert!(game.world.entities.alive(id), "back");
     let player = &game.world.entities.of::<Player>(id);
-    assert_eq!(player.hotbar[0].item, ITEM_SNIPER);
-    assert_eq!(player.hotbar[1].item, ITEM_NONE, "not the standard loadout");
+    assert_eq!(player.hands.hotbar[0].item, ITEM_SNIPER);
+    assert_eq!(player.hands.hotbar[1].item, ITEM_NONE, "not the standard loadout");
 }
 
 #[test]
@@ -296,7 +296,7 @@ fn a_backpack_is_placed_where_the_file_says() {
 
 /// The example under "Scenarios" in BOTS.md.
 fn documented_example() -> &'static str {
-    let doc = include_str!("../../../../BOTS.md");
+    let doc = include_str!("../../../../docs/BOTS.md");
     let from = doc.find("## Scenarios").expect("a Scenarios section");
     let start = from + doc[from..].find("```json\n").expect("an example") + "```json\n".len();
     &doc[start..start + doc[start..].find("```").unwrap()]
@@ -380,7 +380,7 @@ fn a_squad_tank_comes_crewed_and_goes_once_it_is_wrecked_and_burnt_out() {
     let crew: Vec<u32> = game.world.entities.of::<Seats>(vid).iter().flatten().copied().collect();
     assert_eq!(crew.len(), 2, "both seats manned");
     for id in &crew {
-        assert_eq!((game.world.entities.of::<Player>(*id).team, game.world.entities.of::<Bot>(*id).skill), (3, 0.8));
+        assert_eq!((game.world.entities.of::<Player>(*id).team, game.world.entities.of::<Bot>(*id).aim.skill), (3, 0.8));
     }
 
     crate::mechanics::damage_vehicle(&mut game.world, vid, 255, None);

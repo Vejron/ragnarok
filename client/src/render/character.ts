@@ -1,5 +1,4 @@
-import { Animator, Group, Mesh, SkinnedMesh, parseGlb, type AnimationClip, type Geometry, type Material, type Node } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Animator, Group, Mesh, SkinnedMesh, parseGlb, type AnimationClip, type Geometry, type Material, type Node, Matrix4, Quaternion, Vector3 } from '@ragnarok/engine'
 import { Canopy } from './canopy'
 import { toonMaterial } from './toon'
 import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, PRONE_CENTRE, RUN_SPEED, STAND_CENTRE, WALK_SPEED } from '@/sim/consts'
@@ -8,6 +7,7 @@ import { type Limb, poseLimb, splitLimbs } from './gibs'
 import { colorFor } from '@/profile'
 import { LIMB_ALL, LIMB_ARM_L, LIMB_ARM_R, LIMB_LEG_L, LIMB_LEG_R, PART_HEAD } from '@/net/codec'
 import { buildBackpack } from './backpack'
+import { smoothstep } from '@/math'
 
 /** Gravity on a thrown body, m/s². */
 const FLING_GRAVITY = 14
@@ -256,15 +256,11 @@ class Spring {
 const SPRINGS = ['headX', 'headY', 'chestX', 'chestY', 'chestZ', 'armL', 'armR', 'legL', 'legR', 'tiltX', 'tiltZ'] as const
 type SpringName = (typeof SPRINGS)[number]
 
-const smooth = (a: number, b: number, x: number) => {
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
-  return t * t * (3 - 2 * t)
-}
 const chase = (value: number, target: number, rate: number, dt: number) => value + (target - value) * (1 - Math.exp(-rate * dt))
 
-const AXIS_X = new THREE.Vector3(1, 0, 0)
-const AXIS_Y = new THREE.Vector3(0, 1, 0)
-const AXIS_Z = new THREE.Vector3(0, 0, 1)
+const AXIS_X = new Vector3(1, 0, 0)
+const AXIS_Y = new Vector3(0, 1, 0)
+const AXIS_Z = new Vector3(0, 0, 1)
 /**
  * The bones a wound can be pinned to, each with the bone at its far end: the segment between them is
  * the bone's length. The head has none; its segment runs `HEAD_LENGTH` along itself.
@@ -324,7 +320,7 @@ const GETUP_TIME = 1.1
 const GETUP_BLEND = 0.3
 
 /** Part `part` of ragdoll pose `pose` as a matrix, into `out`. */
-function partMatrix(pose: ArrayLike<number>, part: number, out = new THREE.Matrix4()): THREE.Matrix4 {
+function partMatrix(pose: ArrayLike<number>, part: number, out = new Matrix4()): Matrix4 {
   const o = part * RAGDOLL_POSE
   return out.compose(
     SCRATCH.at.set(pose[o]!, pose[o + 1]!, pose[o + 2]!),
@@ -334,22 +330,22 @@ function partMatrix(pose: ArrayLike<number>, part: number, out = new THREE.Matri
 }
 
 /** How far `p` is from the segment `a`–`b`. */
-function toSegment(p: THREE.Vector3, a: THREE.Vector3, b: THREE.Vector3): number {
+function toSegment(p: Vector3, a: Vector3, b: Vector3): number {
   const ab = SCRATCH.axis.subVectors(b, a)
   const t = Math.min(1, Math.max(0, SCRATCH.forward.subVectors(p, a).dot(ab) / Math.max(ab.lengthSq(), 1e-6)))
   return a.clone().addScaledVector(ab, t).distanceTo(p)
 }
 
 const SCRATCH = {
-  at: new THREE.Vector3(),
-  one: new THREE.Vector3(1, 1, 1),
-  size: new THREE.Vector3(),
-  matrix: new THREE.Matrix4(),
-  q: new THREE.Quaternion(),
-  parent: new THREE.Quaternion(),
-  axis: new THREE.Vector3(),
-  forward: new THREE.Vector3(),
-  turn: new THREE.Quaternion(),
+  at: new Vector3(),
+  one: new Vector3(1, 1, 1),
+  size: new Vector3(),
+  matrix: new Matrix4(),
+  q: new Quaternion(),
+  parent: new Quaternion(),
+  axis: new Vector3(),
+  forward: new Vector3(),
+  turn: new Quaternion(),
 }
 
 /**
@@ -361,7 +357,7 @@ const HIT_FLASH = 0.14
 
 export class Character {
   /** The capsule centre, as last placed. */
-  readonly position = new THREE.Vector3()
+  readonly position = new Vector3()
   private readonly object: Node
   private readonly animator: Animator
   private readonly actions: Animator['actions']
@@ -410,13 +406,13 @@ export class Character {
   private limbsKnown = false
   /** A body thrown by its killing blow: where it has got to, relative to where it died. */
   /** Knocked down: the ragdoll's parts drive these bones, each at its offset from the part it rides on. */
-  private ragdoll: { bones: { bone: Node; part: number; offset: THREE.Matrix4 }[]; front: THREE.Vector3 } | null = null
+  private ragdoll: { bones: { bone: Node; part: number; offset: Matrix4 }[]; front: Vector3 } | null = null
   /** Getting up after a knockdown: the clip, how long it has played, and where each ragdoll bone was. */
-  private rising: { clip: string; time: number; from: THREE.Matrix4[] } | null = null
+  private rising: { clip: string; time: number; from: Matrix4[] } | null = null
   /** Bones by name. */
   private readonly bones = new Map<string, Node>()
-  private fling: { velocity: THREE.Vector3; spin: THREE.Vector3; offset: THREE.Vector3; groundAt: (x: number, z: number) => number } | null = null
-  private readonly tumble = new THREE.Quaternion()
+  private fling: { velocity: Vector3; spin: Vector3; offset: Vector3; groundAt: (x: number, z: number) => number } | null = null
+  private readonly tumble = new Quaternion()
   private readonly canopy: Canopy
   /** The backpack on its back (BACKPACK.md), made the first time it carries it. */
   private backpack: Group | null = null
@@ -609,8 +605,8 @@ export class Character {
     const sliding_ = ground * this.crouch * this.slide * (1 - this.lie)
 
     // How much of the standing weight is locomotion, and how much of that is a run.
-    const moving = smooth(STILL_SPEED, FULL_STEP, speed)
-    const running = smooth(WALK_SPEED + 0.4, RUN_SPEED - 0.6, speed)
+    const moving = smoothstep(STILL_SPEED, FULL_STEP, speed)
+    const running = smoothstep(WALK_SPEED + 0.4, RUN_SPEED - 0.6, speed)
     const targets = new Map<string, number>()
     // Every clip is pulled to zero unless this stance's blend asks for it, so a stance change crossfades.
     for (const name of this.actions.keys()) targets.set(name, 0)
@@ -720,15 +716,15 @@ export class Character {
     const k = rising.time / GETUP_BLEND
     const ease = k * k * (3 - 2 * k)
     this.object.updateWorldMatrix(true, true)
-    const from = { at: new THREE.Vector3(), q: new THREE.Quaternion(), size: new THREE.Vector3() }
-    const to = { at: new THREE.Vector3(), q: new THREE.Quaternion(), size: new THREE.Vector3() }
+    const from = { at: new Vector3(), q: new Quaternion(), size: new Vector3() }
+    const to = { at: new Vector3(), q: new Quaternion(), size: new Vector3() }
     RAGDOLL_BONES.forEach(([name], i) => {
       const bone = this.bones.get(name)
       const was = rising.from[i]
       if (!bone || !was) return
       was.decompose(from.at, from.q, from.size)
-      new THREE.Matrix4().fromArray(bone.matrixWorld).decompose(to.at, to.q, to.size)
-      this.setWorld(bone, new THREE.Matrix4().compose(from.at.lerp(to.at, ease), from.q.slerp(to.q, ease), to.size))
+      new Matrix4().fromArray(bone.matrixWorld).decompose(to.at, to.q, to.size)
+      this.setWorld(bone, new Matrix4().compose(from.at.lerp(to.at, ease), from.q.slerp(to.q, ease), to.size))
     })
   }
 
@@ -875,7 +871,7 @@ export class Character {
    * Sits the character in a vehicle seat: its head on `head` (world), the body turned with the
    * vehicle's `rotation`, and the chest twisted towards `yaw` and leaning with `pitch`, where it aims.
    */
-  seat(head: THREE.Vector3, rotation: THREE.Quaternion, yaw: number, pitch: number, dt: number) {
+  seat(head: Vector3, rotation: Quaternion, yaw: number, pitch: number, dt: number) {
     this.position.copy(head)
     this.pitch = pitch
     this.fadeFlash(dt)
@@ -978,10 +974,10 @@ export class Character {
    * Throws the body along `velocity`, tumbling with `spin` (rad/s about world axes): the killing blow
    * carried it off. It lands and lies as a death does.
    */
-  launch(velocity: THREE.Vector3, spin: THREE.Vector3, groundAt: (x: number, z: number) => number) {
+  launch(velocity: Vector3, spin: Vector3, groundAt: (x: number, z: number) => number) {
     // A ragdoll already carries it.
     if (this.ragdoll) return
-    this.fling = { velocity: velocity.clone(), spin: spin.clone(), offset: new THREE.Vector3(), groundAt }
+    this.fling = { velocity: velocity.clone(), spin: spin.clone(), offset: new Vector3(), groundAt }
     this.tumble.identity()
   }
 
@@ -1007,12 +1003,12 @@ export class Character {
    * Pins world `point` (on the body as it stands now) to the bone it lies on: the function returned
    * gives where that spot is from then on, as the body moves, bends and falls, into `out`.
    */
-  pin(point: THREE.Vector3): (out?: THREE.Vector3) => THREE.Vector3 {
+  pin(point: Vector3): (out?: Vector3) => Vector3 {
     this.object.updateWorldMatrix(true, true)
     let nearest: Node | null = null
     let best = Infinity
-    const a = new THREE.Vector3()
-    const b = new THREE.Vector3()
+    const a = new Vector3()
+    const b = new Vector3()
     for (const [bone, end] of this.woundBones) {
       bone.getWorldPosition(a)
       if (end) end.getWorldPosition(b)
@@ -1025,11 +1021,11 @@ export class Character {
     }
     if (!nearest) {
       const offset = point.clone().sub(this.position)
-      return (out = new THREE.Vector3()) => out.copy(this.position).add(offset)
+      return (out = new Vector3()) => out.copy(this.position).add(offset)
     }
     const bone = nearest
     const local = bone.worldToLocal(point.clone())
-    return (out = new THREE.Vector3()) => {
+    return (out = new Vector3()) => {
       this.object.updateWorldMatrix(true, true)
       return bone.localToWorld(out.copy(local))
     }
@@ -1047,8 +1043,8 @@ export class Character {
   ragdollSegments(): { segments: Float32Array; side: [number, number, number] } {
     this.object.updateWorldMatrix(true, true)
     const segments = new Float32Array(RAGDOLL_SEGMENTS.length * 6)
-    const a = new THREE.Vector3()
-    const b = new THREE.Vector3()
+    const a = new Vector3()
+    const b = new Vector3()
     RAGDOLL_SEGMENTS.forEach(([from, to], i) => {
       const start = this.bones.get(from)
       if (start) start.getWorldPosition(a)
@@ -1060,7 +1056,7 @@ export class Character {
       segments.set([a.x, a.y, a.z, b.x, b.y, b.z], i * 6)
     })
     // The model's right is its -X.
-    const side = new THREE.Vector3(-1, 0, 0).applyQuaternion(this.worldRotation(this.object))
+    const side = new Vector3(-1, 0, 0).applyQuaternion(this.worldRotation(this.object))
     return { segments, side: [side.x, side.y, side.z] }
   }
 
@@ -1070,16 +1066,16 @@ export class Character {
    */
   startRagdoll(pose: ArrayLike<number>) {
     this.object.updateWorldMatrix(true, true)
-    const bones: { bone: Node; part: number; offset: THREE.Matrix4 }[] = []
+    const bones: { bone: Node; part: number; offset: Matrix4 }[] = []
     for (const [name, part] of RAGDOLL_BONES) {
       const bone = this.bones.get(name)
       if (!bone) continue
-      const offset = partMatrix(pose, part).invert().multiply(new THREE.Matrix4().fromArray(bone.matrixWorld))
+      const offset = partMatrix(pose, part).invert().multiply(new Matrix4().fromArray(bone.matrixWorld))
       bones.push({ bone, part, offset })
     }
     // Which way the chest faces, as the chest sees it: whether it lands on its back or its belly.
     const chest = this.bones.get('chest') ?? this.object
-    const front = new THREE.Vector3(0, 0, 1).applyQuaternion(this.worldRotation(this.object)).applyQuaternion(this.worldRotation(chest).invert())
+    const front = new Vector3(0, 0, 1).applyQuaternion(this.worldRotation(this.object)).applyQuaternion(this.worldRotation(chest).invert())
     this.ragdoll = { bones, front }
     this.rising = null
     this.fling = null
@@ -1106,11 +1102,11 @@ export class Character {
     if (!ragdoll) return
     this.ragdoll = null
     if (!rise || this.down) return
-    const from = ragdoll.bones.map(({ bone }) => new THREE.Matrix4().fromArray(bone.matrixWorld))
+    const from = ragdoll.bones.map(({ bone }) => new Matrix4().fromArray(bone.matrixWorld))
     const chest = this.bones.get('chest') ?? this.object
     const faceUp = ragdoll.front.clone().applyQuaternion(this.worldRotation(chest)).y > 0
-    const head = (this.bones.get('head') ?? this.object).getWorldPosition(new THREE.Vector3())
-    const hips = (this.bones.get('hips') ?? this.object).getWorldPosition(new THREE.Vector3())
+    const head = (this.bones.get('head') ?? this.object).getWorldPosition(new Vector3())
+    const hips = (this.bones.get('hips') ?? this.object).getWorldPosition(new Vector3())
     // On its back the clip starts with the head behind it; on its belly, ahead.
     const along = head.sub(hips).setY(0).multiplyScalar(faceUp ? -1 : 1)
     if (along.lengthSq() > 1e-4) this.bodyYaw = Math.atan2(-along.x, -along.z)
@@ -1120,8 +1116,8 @@ export class Character {
   }
 
   /** Gives `bone` the world transform `world`, keeping its scale, and carries it to its children. */
-  private setWorld(bone: Node, world: THREE.Matrix4) {
-    const parent = bone.parent ? new THREE.Matrix4().fromArray(bone.parent.matrixWorld).invert() : new THREE.Matrix4()
+  private setWorld(bone: Node, world: Matrix4) {
+    const parent = bone.parent ? new Matrix4().fromArray(bone.parent.matrixWorld).invert() : new Matrix4()
     parent.multiply(world).decompose(SCRATCH.at, SCRATCH.q, SCRATCH.size)
     bone.position.set(SCRATCH.at.x, SCRATCH.at.y, SCRATCH.at.z)
     bone.quaternion.set(SCRATCH.q.x, SCRATCH.q.y, SCRATCH.q.z, SCRATCH.q.w)
@@ -1129,12 +1125,12 @@ export class Character {
   }
 
   /** `node`'s rotation in the world. */
-  private worldRotation(node: Node): THREE.Quaternion {
-    return node.getWorldQuaternion(new THREE.Quaternion())
+  private worldRotation(node: Node): Quaternion {
+    return node.getWorldQuaternion(new Quaternion())
   }
 
   /** Where the stump of `limb` (a `LIMB_*` bit) is in the world: the shoulder or the hip. */
-  stump(limb: number, out = new THREE.Vector3()): THREE.Vector3 {
+  stump(limb: number, out = new Vector3()): Vector3 {
     const bone = this.limbBones[Math.log2(limb)]
     if (!bone) return out.copy(this.position)
     this.object.updateWorldMatrix(true, true)
@@ -1194,7 +1190,7 @@ export class Character {
   }
 
   /** Rotates a bone about `axis` in model space: X bends it forward and back, Y turns it. */
-  private turn(bone: Node | null, angle: number, axis: THREE.Vector3) {
+  private turn(bone: Node | null, angle: number, axis: Vector3) {
     if (!bone || Math.abs(angle) < 1e-4) return
     // The bone's parent frame relative to the model root, to carry the model-space axis down into it.
     const parent = SCRATCH.parent.identity()
@@ -1236,7 +1232,7 @@ export class Character {
   }
 
   /** Where the gun in hand ends, in the world; null while hidden or when nothing is held that shoots. */
-  muzzle(out = new THREE.Vector3()): THREE.Vector3 | null {
+  muzzle(out = new Vector3()): Vector3 | null {
     const bone = this.muzzleBones.get(this.stance)
     if (!this.shown || !bone) return null
     this.object.updateWorldMatrix(true, true)

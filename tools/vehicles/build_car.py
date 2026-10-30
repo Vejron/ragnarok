@@ -11,7 +11,7 @@ Conventions
   * Blender: Z up, the nose points along +Y, the car's right hand side is +X. The glTF exporter turns
     that into Y up, nose along -Z, which is the game's vehicle frame (body axes +X right, +Y up, -Z forward).
   * Origin is the centre of the chassis collider. Dimensions below are kept in step with JEEP_* and
-    SPORTS_* in crates/shared/src/consts.rs (and client/src/sim/consts.ts).
+    SPORTS_* in crates/shared/src/vehicles/ (and client/src/sim/consts.ts).
   * Nodes the game looks up by name:
       `pivot_FL`, `pivot_FR`, `pivot_RL`, `pivot_RR`  empties on each wheel's hub; the game steers the front ones about Y
       `wheel_FL` ... `wheel_RR`                        the wheels, children of the pivots, origin on the axle: the game rolls them about X
@@ -29,12 +29,11 @@ import bmesh
 import bpy
 from mathutils import Matrix, Vector
 
-argv = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-
-def arg(name, default=None):
-    return argv[argv.index(name) + 1] if name in argv else default
-
+import common
+from common import MATERIALS, arg
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = arg("--out", os.path.normpath(os.path.join(HERE, "../../client/public/models")))
@@ -42,7 +41,7 @@ ONLY = arg("--only")
 PREVIEW = arg("--preview")
 
 # --------------------------------------------------------------------------------------------------
-# Dimensions (metres). Keep in step with JEEP_* and SPORTS_* in crates/shared/src/consts.rs.
+# Dimensions (metres). Keep in step with JEEP_* and SPORTS_* in crates/shared/src/vehicles/.
 # `ride` is the height of the chassis centre above flat ground once the suspension has settled
 # (JEEP_RIDE_HEIGHT, SPORTS_RIDE_HEIGHT): the wheel centres sit one wheel radius above the ground.
 # The ground is `ride` below the origin, so the jeep's belly is 0.44 m off it and the sports car's 0.10 m.
@@ -67,14 +66,14 @@ NAMES = list(MATERIAL_COLORS)
 PAINT, DARK, GLASS, STEEL, LAMP, RED, WHITE = range(len(NAMES))
 
 scene = None
-MATERIALS = []
+MATERIALS[:] = []
 
 
 def reset_scene():
-    global scene, MATERIALS
+    global scene
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
-    MATERIALS = []
+    MATERIALS[:] = []
     for name, rgb in MATERIAL_COLORS.items():
         m = bpy.data.materials.new(name)
         m.use_nodes = True
@@ -85,22 +84,7 @@ def reset_scene():
         MATERIALS.append(m)
 
 
-class Part:
-    """A mesh under construction: primitives are added in the part's own frame, each with a material."""
-
-    def __init__(self, name, location=(0.0, 0.0, 0.0), parent=None):
-        self.bm = bmesh.new()
-        self.name = name
-        self.location = Vector(location)
-        self.parent = parent
-
-    def _tag(self, verts, mat):
-        for face in {f for v in verts for f in v.link_faces}:
-            face.material_index = mat
-
-    def box(self, centre, size, mat, rx=0.0):
-        m = Matrix.Translation(centre) @ Matrix.Rotation(rx, 4, "X") @ Matrix.Diagonal((*size, 1.0))
-        self._tag(bmesh.ops.create_cube(self.bm, size=1.0, matrix=m)["verts"], mat)
+class Part(common.Part):
 
     def cylinder(self, centre, radius, depth, mat, axis="Z", segments=10, radius2=None):
         turn = {"Z": Matrix.Identity(4), "X": Matrix.Rotation(math.pi / 2, 4, "Y"), "Y": Matrix.Rotation(-math.pi / 2, 4, "X")}[axis]
@@ -116,32 +100,6 @@ class Part:
             matrix=m,
         )["verts"]
         self._tag(verts, mat)
-
-    def prism(self, profile, x0, x1, mat):
-        """Extrudes a closed (y, z) outline along X, from x0 to x1."""
-        a = [self.bm.verts.new((x0, y, z)) for y, z in profile]
-        b = [self.bm.verts.new((x1, y, z)) for y, z in profile]
-        faces = [self.bm.faces.new(a), self.bm.faces.new(b[::-1])]
-        for i in range(len(profile)):
-            j = (i + 1) % len(profile)
-            faces.append(self.bm.faces.new((a[i], a[j], b[j], b[i])))
-        for face in faces:
-            face.material_index = mat
-
-    def build(self):
-        bmesh.ops.remove_doubles(self.bm, verts=self.bm.verts, dist=1e-4)
-        bmesh.ops.recalc_face_normals(self.bm, faces=self.bm.faces)
-        mesh = bpy.data.meshes.new(self.name)
-        self.bm.to_mesh(mesh)
-        self.bm.free()
-        for m in MATERIALS:
-            mesh.materials.append(m)
-        obj = bpy.data.objects.new(self.name, mesh)
-        obj.location = self.location
-        scene.collection.objects.link(obj)
-        if self.parent:
-            obj.parent = self.parent
-        return obj
 
 
 def empty(name, location, parent=None):

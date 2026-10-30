@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Group } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Group, Vector3 } from '@ragnarok/engine'
 import { Cameras, type Seated } from '@/cameras'
 import { isDrone, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
 import type { Placed } from '@/entities/presenters/vehicles'
@@ -128,7 +127,7 @@ describe('camera rigs', () => {
     const { views, input, cameras } = rigged()
     cameras.seated(seated(KIND_TANK, 1, { ride: placed(KIND_TANK, 0.3) }), 1)
     expect(views).toEqual(['follow'])
-    const barrel = { root: new Group(), barrel: () => ({ origin: new THREE.Vector3(), direction: new THREE.Vector3(0, 0, -1) }) } as never
+    const barrel = { root: new Group(), barrel: () => ({ origin: new Vector3(), direction: new Vector3(0, 0, -1) }) } as never
     cameras.seated(seated(KIND_TANK, 1, { ride: placed(KIND_TANK, 0.3), model: barrel }), 1)
     expect(views).toEqual(['follow', 'aim'])
     // Hull yaw 0.5 and turret 0.3: the gunner looks along the barrel.

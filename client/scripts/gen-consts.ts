@@ -1,15 +1,21 @@
-// Generates `src/sim/consts.generated.ts` from `crates/shared/src/consts.rs`, which is the one place
-// those constants are written down. Run `npm run gen:consts` after editing the Rust; `--check` fails
+// Generates `src/sim/consts.generated.ts` from `crates/shared/src/consts.rs` and each vehicle's own
+// `crates/shared/src/vehicles/<kind>.rs`, the one place those constants are written down. Run `npm run gen:consts` after editing the Rust; `--check` fails
 // instead of writing, and the consts spec does the same, so a stale file cannot be committed.
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
-export const RUST_SOURCE = resolve(here, '../../crates/shared/src/consts.rs')
+const SHARED = resolve(here, '../../crates/shared/src')
+
+/** Every file the constants are written in, one text: `pub const` lines are all that is read of it. */
+export const rustSource = () => {
+  const kinds = readdirSync(resolve(SHARED, 'vehicles')).filter((name) => name.endsWith('.rs')).sort()
+  return [resolve(SHARED, 'consts.rs'), ...kinds.map((name) => resolve(SHARED, 'vehicles', name))].map((path) => readFileSync(path, 'utf8')).join('\n')
+}
 export const GENERATED = resolve(here, '../src/sim/consts.generated.ts')
 
-const HEADER = `// GENERATED from crates/shared/src/consts.rs by scripts/gen-consts.ts. Do not edit:
+const HEADER = `// GENERATED from crates/shared/src/consts.rs and vehicles/*.rs by scripts/gen-consts.ts. Do not edit:
 // change the Rust and run \`npm run gen:consts\`. Client-only constants live in consts.ts.
 `
 
@@ -110,7 +116,7 @@ export const generateConsts = (rust: string): string => {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const next = generateConsts(readFileSync(RUST_SOURCE, 'utf8'))
+  const next = generateConsts(rustSource())
   if (process.argv.includes('--check')) {
     let current = ''
     try {

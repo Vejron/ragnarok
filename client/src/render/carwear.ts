@@ -1,5 +1,4 @@
-import { Geometry, Group, Mesh, type Color, type Material, type Node } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Geometry, Group, Mesh, Color, type Material, type Node, Matrix4, Quaternion, Vector3 } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
 import { DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, WHEEL_GONE } from '@/net/codec'
 import type { Debris } from './debris'
@@ -29,8 +28,8 @@ const IMPACT_KEEP_MS = 1500
 
 const BROKEN = toonMaterial({ color: 0x262626, name: 'broken' })
 const CRACKED = toonMaterial({ color: 0xd9e3e8, name: 'cracked' })
-const DULL = new THREE.Color(0x4a4744)
-const CHARRED = new THREE.Color(0x1a1817)
+const DULL = Color.hex(0x4a4744)
+const CHARRED = Color.hex(0x1a1817)
 
 const WHEELS = ['wheel_FL', 'wheel_FR', 'wheel_RL', 'wheel_RR'] as const
 
@@ -40,8 +39,8 @@ interface BodyPart {
   shared: Geometry
   /** This car's own copy, made on the first dent. */
   own: Geometry | null
-  toRoot: THREE.Matrix4
-  fromRoot: THREE.Matrix4
+  toRoot: Matrix4
+  fromRoot: Matrix4
   /** What it was drawn with before a light broke or the glass cracked. */
   material: Material
 }
@@ -51,13 +50,13 @@ interface Panel {
   name: string
   side: number
   threshold: number
-  inside: (p: THREE.Vector3) => boolean
+  inside: (p: Vector3) => boolean
   /** Which way it flies off, in the car's frame. */
-  away: THREE.Vector3
+  away: Vector3
 }
 
 /** Which side of a car a point in its frame is on, by how far along each half extent it lies. */
-export function sideOf(point: THREE.Vector3, half: readonly [number, number, number]): number {
+export function sideOf(point: Vector3, half: readonly [number, number, number]): number {
   const nx = point.x / half[0]
   const nz = point.z / half[2]
   if (Math.abs(nz) >= Math.abs(nx)) return nz < 0 ? DAMAGE_FRONT : DAMAGE_REAR
@@ -71,7 +70,7 @@ export class CarWear {
   private readonly panels: Panel[]
   private readonly applied = [0, 0, 0, 0]
   private readonly waiting: { side: number; amount: number; since: number }[] = []
-  private readonly impacts: { point: THREE.Vector3; at: number }[] = []
+  private readonly impacts: { point: Vector3; at: number }[] = []
   private readonly gone = new Set<string>()
   private readonly wheelGone = [false, false, false, false]
   private readonly baseColor: Color
@@ -87,25 +86,25 @@ export class CarWear {
     this.wheelRadius = wheelRadius
     this.baseColor = paint.color.clone()
     model.updateMatrixWorld(true)
-    const toModel = new THREE.Matrix4().fromArray(model.matrixWorld).invert()
+    const toModel = new Matrix4().fromArray(model.matrixWorld).invert()
     model.getObjectByName('body')?.traverse((node) => {
       if (!(node instanceof Mesh)) return
       // The model sits at the root's origin, so its frame is the car's.
-      const toRoot = new THREE.Matrix4().multiplyMatrices(toModel, new THREE.Matrix4().fromArray(node.matrixWorld))
+      const toRoot = new Matrix4().multiplyMatrices(toModel, new Matrix4().fromArray(node.matrixWorld))
       this.parts.push({ mesh: node, shared: node.geometry, own: null, toRoot, fromRoot: toRoot.clone().invert(), material: node.material })
     })
     this.wheels = WHEELS.map((name) => model.getObjectByName(name) ?? null)
     const [hx, hy, hz] = half
     this.panels = [
-      { name: 'bumper_F', side: DAMAGE_FRONT, threshold: BUMPER_FALLS, inside: (p) => p.z < -hz + 0.3 && p.y < hy * 0.2, away: new THREE.Vector3(0, 0.4, -1) },
-      { name: 'bumper_R', side: DAMAGE_REAR, threshold: BUMPER_FALLS, inside: (p) => p.z > hz - 0.3 && p.y < hy * 0.2, away: new THREE.Vector3(0, 0.4, 1) },
-      { name: 'door_L', side: DAMAGE_LEFT, threshold: DOOR_FALLS, inside: (p) => p.x < -hx + 0.18 && Math.abs(p.z) < hz * 0.4 && p.y > -hy, away: new THREE.Vector3(-1, 0.4, 0) },
-      { name: 'door_R', side: DAMAGE_RIGHT, threshold: DOOR_FALLS, inside: (p) => p.x > hx - 0.18 && Math.abs(p.z) < hz * 0.4 && p.y > -hy, away: new THREE.Vector3(1, 0.4, 0) },
+      { name: 'bumper_F', side: DAMAGE_FRONT, threshold: BUMPER_FALLS, inside: (p) => p.z < -hz + 0.3 && p.y < hy * 0.2, away: new Vector3(0, 0.4, -1) },
+      { name: 'bumper_R', side: DAMAGE_REAR, threshold: BUMPER_FALLS, inside: (p) => p.z > hz - 0.3 && p.y < hy * 0.2, away: new Vector3(0, 0.4, 1) },
+      { name: 'door_L', side: DAMAGE_LEFT, threshold: DOOR_FALLS, inside: (p) => p.x < -hx + 0.18 && Math.abs(p.z) < hz * 0.4 && p.y > -hy, away: new Vector3(-1, 0.4, 0) },
+      { name: 'door_R', side: DAMAGE_RIGHT, threshold: DOOR_FALLS, inside: (p) => p.x > hx - 0.18 && Math.abs(p.z) < hz * 0.4 && p.y > -hy, away: new Vector3(1, 0.4, 0) },
     ]
   }
 
   /** A crash event at `world`: the next dent on that side goes there. */
-  noteImpact(world: THREE.Vector3, now = performance.now()) {
+  noteImpact(world: Vector3, now = performance.now()) {
     this.root.updateMatrixWorld()
     const point = this.root.worldToLocal(world.clone())
     this.impacts.push({ point, at: now })
@@ -123,7 +122,7 @@ export class CarWear {
    * Shows `damage` (as the snapshot carries it) and `hp`. Pieces that come off are thrown into
    * `debris`, moving with the car's `velocity`.
    */
-  update(damage: readonly number[], hp: number, debris: Debris | null, velocity: THREE.Vector3, now = performance.now()) {
+  update(damage: readonly number[], hp: number, debris: Debris | null, velocity: Vector3, now = performance.now()) {
     const total = damage.slice(0, 4).reduce((sum, value) => sum + value, 0) + damage.slice(DAMAGE_WHEELS).reduce((sum, value) => sum + value, 0)
     if (total === 0) {
       if (this.hurt) this.repair()
@@ -168,9 +167,9 @@ export class CarWear {
     this.tint(hp, total / (8 * 255))
   }
 
-  private middleOf(side: number): THREE.Vector3 {
+  private middleOf(side: number): Vector3 {
     const [hx, , hz] = this.half
-    return side === DAMAGE_FRONT ? new THREE.Vector3(0, 0, -hz) : side === DAMAGE_REAR ? new THREE.Vector3(0, 0, hz) : new THREE.Vector3(side === DAMAGE_LEFT ? -hx : hx, 0, 0)
+    return side === DAMAGE_FRONT ? new Vector3(0, 0, -hz) : side === DAMAGE_REAR ? new Vector3(0, 0, hz) : new Vector3(side === DAMAGE_LEFT ? -hx : hx, 0, 0)
   }
 
   /** This car's own copy of a body part's geometry, to bend or cut. */
@@ -184,13 +183,13 @@ export class CarWear {
   }
 
   /** Pushes the body in around `point` (the car's frame) by `amount` of a full dent. */
-  private dent(point: THREE.Vector3, amount: number) {
+  private dent(point: Vector3, amount: number) {
     const depth = MAX_DENT * Math.min(1, amount)
     // Inwards, level: towards the middle of the car from where it was hit.
-    const inward = new THREE.Vector3(-point.x, 0, -point.z)
+    const inward = new Vector3(-point.x, 0, -point.z)
     if (inward.lengthSq() < 1e-6) return
     inward.normalize()
-    const v = new THREE.Vector3()
+    const v = new Vector3()
     for (const part of this.parts) {
       const geometry = this.own(part)
       const positions = geometry.positions
@@ -217,14 +216,14 @@ export class CarWear {
   }
 
   /** Cuts `panel` out of the body and throws it. */
-  private detach(panel: Panel, debris: Debris | null, velocity: THREE.Vector3) {
+  private detach(panel: Panel, debris: Debris | null, velocity: Vector3) {
     this.gone.add(panel.name)
     const piece = new Group()
     const owned: (Geometry | Material)[] = []
-    const a = new THREE.Vector3()
-    const b = new THREE.Vector3()
-    const c = new THREE.Vector3()
-    const centroid = new THREE.Vector3()
+    const a = new Vector3()
+    const b = new Vector3()
+    const c = new Vector3()
+    const centroid = new Vector3()
     for (const part of this.parts) {
       const geometry = this.own(part)
       const positions = geometry.positions
@@ -262,7 +261,7 @@ export class CarWear {
   }
 
   /** Hides wheel `index` and sends a copy of it rolling off. */
-  private lose(index: number, debris: Debris | null, velocity: THREE.Vector3) {
+  private lose(index: number, debris: Debris | null, velocity: Vector3) {
     this.wheelGone[index] = true
     const wheel = this.wheels[index]!
     wheel.visible = false
@@ -273,27 +272,27 @@ export class CarWear {
     wheel.updateWorldMatrix(true, false)
     // In the car's frame, so `throwPiece` can place it with the car.
     holder.add(loose)
-    const at = this.root.worldToLocal(wheel.getWorldPosition(new THREE.Vector3()))
+    const at = this.root.worldToLocal(wheel.getWorldPosition(new Vector3()))
     loose.position.set(at.x, at.y, at.z)
-    loose.quaternion.copy(this.root.quaternion).invert().multiply(wheel.getWorldQuaternion(new THREE.Quaternion()))
-    const away = new THREE.Vector3(index % 2 === 0 ? -1 : 1, 0.6, 0)
+    loose.quaternion.copy(this.root.quaternion).invert().multiply(wheel.getWorldQuaternion(new Quaternion()))
+    const away = new Vector3(index % 2 === 0 ? -1 : 1, 0.6, 0)
     this.throwPiece(holder, away, debris, velocity, this.wheelRadius, [])
   }
 
   /** Places `piece` (built in the car's frame) where the car is and throws it towards `away`. */
-  private throwPiece(piece: Node, away: THREE.Vector3, debris: Debris, velocity: THREE.Vector3, rest: number, owned: (Geometry | Material)[]) {
+  private throwPiece(piece: Node, away: Vector3, debris: Debris, velocity: Vector3, rest: number, owned: (Geometry | Material)[]) {
     this.root.updateMatrixWorld()
     // Recentre on its own middle, so it tumbles about itself.
     const middle = centreOf(piece)
     for (const child of piece.children) child.position.sub(middle)
     const holder = new Group()
     holder.add(piece)
-    const at = middle.applyMatrix4(new THREE.Matrix4().fromArray(this.root.matrixWorld))
+    const at = middle.applyMatrix4(new Matrix4().fromArray(this.root.matrixWorld))
     holder.position.set(at.x, at.y, at.z)
     holder.quaternion.copy(this.root.quaternion)
     const throwDir = away.clone().applyQuaternion(this.root.quaternion)
     const fling = velocity.clone().multiplyScalar(0.7).addScaledVector(throwDir, 2.5 + Math.random() * 2)
-    const spin = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(10)
+    const spin = new Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(10)
     debris.throw(holder, fling, spin, rest, 9, owned)
   }
 
@@ -336,12 +335,12 @@ export class CarWear {
 }
 
 /** The middle of the box around every vertex under `root`, in `root`'s own frame. */
-function centreOf(root: Node): THREE.Vector3 {
+function centreOf(root: Node): Vector3 {
   root.updateMatrixWorld(true)
-  const min = new THREE.Vector3(Infinity, Infinity, Infinity)
-  const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity)
-  const v = new THREE.Vector3()
-  const m = new THREE.Matrix4()
+  const min = new Vector3(Infinity, Infinity, Infinity)
+  const max = new Vector3(-Infinity, -Infinity, -Infinity)
+  const v = new Vector3()
+  const m = new Matrix4()
   root.traverse((node) => {
     if (!(node instanceof Mesh)) return
     m.fromArray(node.matrixWorld)

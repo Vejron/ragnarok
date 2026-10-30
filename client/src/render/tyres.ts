@@ -1,5 +1,4 @@
-import type { Vec3 } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { type Vec3, Quaternion, Vector3 } from '@ragnarok/engine'
 import { kindView } from '@/kinds'
 import type { KindFx } from '@/kinds/kind'
 import { isTracked } from '@/sim/vehicles'
@@ -51,9 +50,9 @@ const rand = (low: number, high: number) => low + Math.random() * (high - low)
  */
 export class VehicleFx {
   private readonly fx: KindFx
-  private readonly last: (THREE.Vector3 | null)[] = []
+  private readonly last: (Vector3 | null)[] = []
   private readonly slips: number[] = []
-  private lastPosition: THREE.Vector3 | null = null
+  private lastPosition: Vector3 | null = null
   private measured = false
   private speed = 0
   private accel = 0
@@ -66,14 +65,14 @@ export class VehicleFx {
   private airTime = 0
   private fall = 0
   private landed = 0
-  private readonly q = new THREE.Quaternion()
-  private readonly contact = new THREE.Vector3()
-  private readonly side = new THREE.Vector3()
-  private readonly forward = new THREE.Vector3()
+  private readonly q = new Quaternion()
+  private readonly contact = new Vector3()
+  private readonly side = new Vector3()
+  private readonly forward = new Vector3()
   /** How fast it is going, m/s, as drawn. */
-  readonly velocity = new THREE.Vector3()
-  private readonly steerTurn = new THREE.Quaternion()
-  private static readonly UP = new THREE.Vector3(0, 1, 0)
+  readonly velocity = new Vector3()
+  private readonly steerTurn = new Quaternion()
+  private static readonly UP = new Vector3(0, 1, 0)
 
   /** Speed along its nose, m/s, signed, smoothed. */
   get forwardSpeed() {
@@ -131,7 +130,7 @@ export class VehicleFx {
       this.measured = false
       return
     }
-    const here = new THREE.Vector3(...position)
+    const here = new Vector3(...position)
     const distance = world.camera.distanceTo(here)
     this.q.set(...rotation)
     this.forward.set(0, 0, -1).applyQuaternion(this.q)
@@ -164,9 +163,9 @@ export class VehicleFx {
   }
 
   /** A rotary engine throws out burnt castor oil: a thin blue-grey trail from under the cowling. */
-  private castorOil(world: FxWorld, here: THREE.Vector3, dt: number) {
+  private castorOil(world: FxWorld, here: Vector3, dt: number) {
     if (Math.random() > dt * 24) return
-    const cowl = new THREE.Vector3(rand(-0.3, 0.3), -0.3, -2.4).applyQuaternion(this.q).add(here)
+    const cowl = new Vector3(rand(-0.3, 0.3), -0.3, -2.4).applyQuaternion(this.q).add(here)
     world.smoke.spawn({
       position: cowl,
       // Left behind by the plane as it flies on, drifting a little.
@@ -181,9 +180,9 @@ export class VehicleFx {
   }
 
   private wheels(world: FxWorld, layout: WheelLayout, steer: number, particles: boolean, dt: number) {
-    const upright = new THREE.Vector3(0, 1, 0).applyQuaternion(this.q).y > 0.5
+    const upright = new Vector3(0, 1, 0).applyQuaternion(this.q).y > 0.5
     let touching = !upright
-    const wet: THREE.Vector3[] = []
+    const wet: Vector3[] = []
     layout.contacts.forEach((local, wheel) => {
       const contact = this.contact.set(local[0], local[1], local[2]).applyQuaternion(this.q).add(this.lastPosition!)
       const steered = wheel < layout.steered
@@ -256,7 +255,7 @@ export class VehicleFx {
   }
 
   /** Puff of tyre smoke or dust. */
-  private cloud(world: FxWorld, at: THREE.Vector3, color: number, alpha: number, size: [number, number], life: number) {
+  private cloud(world: FxWorld, at: Vector3, color: number, alpha: number, size: [number, number], life: number) {
     world.smoke.spawn({
       position: [at.x + rand(-0.2, 0.2), at.y + 0.15, at.z + rand(-0.2, 0.2)],
       velocity: [this.velocity.x * 0.15 + rand(-0.6, 0.6), rand(0.3, 1.0), this.velocity.z * 0.15 + rand(-0.6, 0.6)],
@@ -270,7 +269,7 @@ export class VehicleFx {
   }
 
   /** A stone flung back off a spinning or sliding tyre. */
-  private gravel(world: FxWorld, at: THREE.Vector3) {
+  private gravel(world: FxWorld, at: Vector3) {
     const back = this.forward.clone().multiplyScalar(-rand(2, 5) - Math.abs(this.speed) * 0.15)
     world.smoke.spawn({
       position: [at.x, at.y + 0.1, at.z],
@@ -284,7 +283,7 @@ export class VehicleFx {
     })
   }
 
-  private spray(world: FxWorld, at: THREE.Vector3) {
+  private spray(world: FxWorld, at: Vector3) {
     // The wheel's contact is the bed; the spray starts at the surface.
     const level = world.waterAt?.(at.x, at.z)
     const top = level !== undefined && Number.isFinite(level) ? level : at.y
@@ -301,9 +300,9 @@ export class VehicleFx {
   }
 
   /** Exhaust puffs when the driver pulls away, and a backfire when a sports car lifts off hard. */
-  private exhaust(world: FxWorld, here: THREE.Vector3, dt: number) {
+  private exhaust(world: FxWorld, here: Vector3, dt: number) {
     const [hx, hy, hz] = halfExtentsOf(this.kind)
-    const pipe = new THREE.Vector3(hx * 0.45, -hy * 0.5, hz + 0.05).applyQuaternion(this.q).add(here)
+    const pipe = new Vector3(hx * 0.45, -hy * 0.5, hz + 0.05).applyQuaternion(this.q).add(here)
     const tank = isTracked(this.kind)
     const pulling = this.accel > (tank ? 0.8 : 2.0)
     if ((pulling && Math.random() < dt * 30) || Math.random() < dt * 1.5) {
@@ -336,7 +335,7 @@ export class VehicleFx {
   }
 
   /** A low helicopter's rotor raises a ring of dust below it. */
-  private downwash(world: FxWorld, here: THREE.Vector3, dt: number) {
+  private downwash(world: FxWorld, here: Vector3, dt: number) {
     const ground = world.groundAt(here.x, here.z)
     const height = here.y - ground
     if (height > 14) return
@@ -369,7 +368,7 @@ export class VehicleFx {
 }
 
 /** A crash at `at`: a shower of sparks, chips of `paint` and a puff of dust, carried on with `velocity`. */
-export function crashBurst(world: FxWorld, at: THREE.Vector3, paint: number, velocity: THREE.Vector3) {
+export function crashBurst(world: FxWorld, at: Vector3, paint: number, velocity: Vector3) {
   for (let i = 0; i < 26; i++) {
     const speed = rand(3, 9)
     const angle = rand(0, Math.PI * 2)
@@ -411,7 +410,7 @@ export function crashBurst(world: FxWorld, at: THREE.Vector3, paint: number, vel
 }
 
 /** Metal dragging along something at `at`: a spray of sparks trailing behind the vehicle. */
-export function scrapeSparks(world: FxWorld, at: THREE.Vector3, velocity: THREE.Vector3) {
+export function scrapeSparks(world: FxWorld, at: Vector3, velocity: Vector3) {
   for (let i = 0; i < 8; i++) {
     world.glow.spawn({
       position: at,
@@ -434,7 +433,7 @@ const JET_RATE = 90
  * carried on with the car's `velocity`. Compressed air does not burn, so there is no flame, only
  * a cold, fast plume that a lift jet also kicks up off the ground below.
  */
-export function coldGas(world: FxWorld, jets: readonly { at: THREE.Vector3; direction: THREE.Vector3 }[], velocity: THREE.Vector3, dt: number) {
+export function coldGas(world: FxWorld, jets: readonly { at: Vector3; direction: Vector3 }[], velocity: Vector3, dt: number) {
   const count = Math.max(1, Math.round(JET_RATE * dt))
   for (const { at, direction } of jets) {
     for (let i = 0; i < count; i++) {

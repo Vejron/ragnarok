@@ -517,11 +517,11 @@ impl Scenario {
                         break;
                     };
                     if let Some(mut bot) = game.world.entities.get_mut::<Bot>(id) {
-                        bot.skill = squad.skill;
+                        bot.aim.skill = squad.skill;
                     }
                     if let (Some(hotbar), Some(mut player)) = (squad.loadout, game.world.entities.get_mut::<Player>(id)) {
-                        player.hotbar = hotbar;
-                        player.loadout = hotbar;
+                        player.hands.hotbar = hotbar;
+                        player.hands.loadout = hotbar;
                     }
                     self.progress.members[s].push(id);
                 }
@@ -535,11 +535,11 @@ impl Scenario {
                     n += 2;
                     for id in crew {
                         if let Some(mut bot) = game.world.entities.get_mut::<Bot>(id) {
-                            bot.skill = squad.skill;
+                            bot.aim.skill = squad.skill;
                         }
                         if let (Some(hotbar), Some(mut player)) = (squad.loadout, game.world.entities.get_mut::<Player>(id)) {
-                            player.hotbar = hotbar;
-                            player.loadout = hotbar;
+                            player.hands.hotbar = hotbar;
+                            player.hands.loadout = hotbar;
                         }
                     }
                     self.progress.members[s].extend(crew);

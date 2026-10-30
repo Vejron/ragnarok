@@ -50,8 +50,8 @@ pub fn kills(world: &World) -> Vec<Kill> {
         .map(|(i, death)| {
             let later = &died[i + 1..];
             let killer = death.killer.filter(|&id| world.entities.has::<Player>(id));
-            let killer_kills = killer.map_or(0, |id| score(id, |p| p.kills).saturating_sub(later.iter().filter(|d| d.killer == Some(id)).count() as u16));
-            let victim_deaths = score(death.victim, |p| p.deaths).saturating_sub(later.iter().filter(|d| d.victim == death.victim).count() as u16);
+            let killer_kills = killer.map_or(0, |id| score(id, |p| p.score.kills).saturating_sub(later.iter().filter(|d| d.killer == Some(id)).count() as u16));
+            let victim_deaths = score(death.victim, |p| p.score.deaths).saturating_sub(later.iter().filter(|d| d.victim == death.victim).count() as u16);
             let body = world.entities.get::<Player>(death.victim).map(|player| player.character).unwrap_or_default();
             let [kx, kz] = body.knock;
             let pushed = kx.hypot(kz);

@@ -1,5 +1,5 @@
-import { Group, Material, Mesh, Texture, quadGeometry, type PerspectiveCamera } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Group, Material, Mesh, Texture, quadGeometry, type PerspectiveCamera, Vector3 } from '@ragnarok/engine'
+import { clamp } from '@/math'
 
 const LIFE = 0.95
 const MAX_ACTIVE = 14
@@ -8,7 +8,7 @@ const RISE = 1.7
 
 interface Floater {
   sprite: Mesh
-  from: THREE.Vector3
+  from: Vector3
   drift: number
   age: number
   size: number
@@ -27,7 +27,7 @@ export class DamageNumbers {
   private readonly active: Floater[] = []
 
   /** A number of `amount` at `at`: white for a body, amber for a vehicle, red and big for a kill. */
-  spawn(at: THREE.Vector3, amount: number, kind: 'body' | 'vehicle' | 'kill' | 'rooster', camera: PerspectiveCamera) {
+  spawn(at: Vector3, amount: number, kind: 'body' | 'vehicle' | 'kill' | 'rooster', camera: PerspectiveCamera) {
     if (amount <= 0) return
     if (this.active.length >= MAX_ACTIVE) this.finish(0)
     const fill = { body: '#ffffff', vehicle: '#ffb020', kill: '#ff3b3b', rooster: '#ffe14a' }[kind]
@@ -56,7 +56,7 @@ export class DamageNumbers {
     this.root.add(sprite)
     const distance = Math.hypot(camera.position.x - at.x, camera.position.y - at.y, camera.position.z - at.z)
     // Roughly constant on screen from near to far, within bounds.
-    const size = THREE.MathUtils.clamp(distance * 0.05, 0.7, 4) * (kind === 'kill' ? 1.35 : 1)
+    const size = clamp(distance * 0.05, 0.7, 4) * (kind === 'kill' ? 1.35 : 1)
     this.active.push({ sprite, from: at.clone(), drift: (Math.random() - 0.5) * 0.9, age: 0, size, texture })
   }
 

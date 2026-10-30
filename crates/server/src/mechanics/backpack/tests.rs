@@ -270,6 +270,6 @@ fn the_carrier_scores_a_point_a_second() {
     for _ in 0..TICK_RATE * 3 {
         game.step();
     }
-    assert_eq!(game.world.entities.of::<Player>(id).held, 3);
+    assert_eq!(game.world.entities.of::<Player>(id).score.held, 3);
     assert_eq!(circles(&mut inbox).last().unwrap().held, 3);
 }

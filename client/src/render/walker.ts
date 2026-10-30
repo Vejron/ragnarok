@@ -1,5 +1,4 @@
-import { Group, Mesh, sphereGeometry, type Material, type Node } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Group, Mesh, sphereGeometry, type Material, type Node, Matrix4, Quaternion, Vector3 } from '@ragnarok/engine'
 import { Legs } from './legs'
 import { parseToonModel, unlitMaterial } from './models'
 import { toonMaterial } from './toon'
@@ -86,9 +85,9 @@ export class WalkerModel implements VehicleModel {
   barrel(side = 0) {
     this.gun.updateWorldMatrix(true, false)
     // `side` -1 or 1 is one of the two barrels, which hang under the chin; 0 is the pivot between them.
-    const matrix = new THREE.Matrix4().fromArray(this.gun.matrixWorld)
-    const origin = new THREE.Vector3(side * WALKER_GUN_BARREL_X, side === 0 ? 0 : -WALKER_GUN_BARREL_DROP, 0).applyMatrix4(matrix)
-    const direction = new THREE.Vector3(0, 0, -1).transformDirection(matrix)
+    const matrix = new Matrix4().fromArray(this.gun.matrixWorld)
+    const origin = new Vector3(side * WALKER_GUN_BARREL_X, side === 0 ? 0 : -WALKER_GUN_BARREL_DROP, 0).applyMatrix4(matrix)
+    const direction = new Vector3(0, 0, -1).transformDirection(matrix)
     return { origin, direction }
   }
 
@@ -123,7 +122,7 @@ export class WalkerModel implements VehicleModel {
     const target = lean * SWAY * Math.min(1, Math.hypot(speed, Math.abs(spin) * WALKER_FOOT_HALF) / 3)
     this.sway += (target - this.sway) * Math.min(1, dt * 10)
     // Leaning to the right moves the top of the hull to +x, which is a negative turn about the nose axis.
-    this.root.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -this.sway))
+    this.root.quaternion.multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), -this.sway))
 
     this.kick = Math.max(0, this.kick - this.kick * Math.min(1, dt * RECOIL_RETURN) - dt * 0.2)
     this.gun.position.z = this.gunRest + this.kick

@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import { Vector3 } from '@ragnarok/engine'
 import { HeliModel } from '@/render/heli'
 import { MortarModel } from '@/render/mortar'
 import { PakModel } from '@/render/pak'
@@ -113,7 +113,7 @@ export class PlaneGuns implements Presenter<Frame> {
 }
 
 /** Sends a round from `origin` along `direction` out to the first thing it meets, or the end of the guns' range. */
-function fireRound(world: VehicleWorld, origin: THREE.Vector3, direction: THREE.Vector3) {
+function fireRound(world: VehicleWorld, origin: Vector3, direction: Vector3) {
   const hit = world.castRay([origin.x, origin.y, origin.z], [direction.x, direction.y, direction.z], PLANE_GUN_RANGE)
   world.rounds.fire(origin, origin.clone().addScaledVector(direction, hit ? hit.t : PLANE_GUN_RANGE), hit !== null)
 }

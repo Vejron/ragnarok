@@ -154,12 +154,11 @@ export class SimMotor {
   }
 
   /**
-   * Brings the tile's buildings `down` and gives each of the `carved` ones its shape without the
-   * cells listed for it, as the server has them.
+   * Gives each of the tile's `carved` buildings its shape without the cells listed for it, as the
+   * server has them.
    */
-  setBuildings(col: number, row: number, down: Iterable<number>, carved: ReadonlyMap<number, ReadonlySet<number>>) {
+  setBuildings(col: number, row: number, carved: ReadonlyMap<number, ReadonlySet<number>>) {
     timed(() => {
-      for (const index of down) this.sim.fellBuilding(col, row, index)
       for (const [index, cells] of carved) this.sim.carveBuilding(col, row, index, Uint32Array.from(cells))
       this.sim.refresh()
     })

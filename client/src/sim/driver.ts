@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import { Quaternion, Vector3 } from '@ragnarok/engine'
 import { TICK_DT, ROADSTER_AIR } from './consts'
 import { controlsOf, type CarBodyState, type SimMotor, type VehiclePose } from './motor'
 import type { InputFrame } from '@/net/codec'
@@ -30,8 +30,8 @@ export class VehicleDriver {
   private pending: InputFrame[] = []
   private previous: CarBodyState | null = null
   private current: CarBodyState | null = null
-  private readonly errorPosition = new THREE.Vector3()
-  private readonly errorRotation = new THREE.Quaternion()
+  private readonly errorPosition = new Vector3()
+  private readonly errorRotation = new Quaternion()
   /** Size of the last correction, metres. */
   lastCorrection = 0
 
@@ -101,7 +101,7 @@ export class VehicleDriver {
       this.errorRotation.identity()
       return
     }
-    const delta = new THREE.Vector3(...before.position).sub(new THREE.Vector3(...state.position))
+    const delta = new Vector3(...before.position).sub(new Vector3(...state.position))
     this.lastCorrection = delta.length()
     if (this.lastCorrection > SNAP_DISTANCE) {
       this.errorPosition.set(0, 0, 0)
@@ -110,8 +110,8 @@ export class VehicleDriver {
     }
     // What was drawn stays where it was, and eases onto the corrected pose.
     this.errorPosition.add(delta)
-    const was = new THREE.Quaternion(...before.rotation)
-    const now = new THREE.Quaternion(...state.rotation)
+    const was = new Quaternion(...before.rotation)
+    const now = new Quaternion(...state.rotation)
     this.errorRotation.multiply(was.multiply(now.invert()))
   }
 
@@ -133,8 +133,8 @@ export class VehicleDriver {
     const decay = Math.exp(-ERROR_DECAY * dtSeconds)
     this.errorPosition.multiplyScalar(decay)
     this.errorRotation.slerp(IDENTITY, 1 - decay)
-    const position = new THREE.Vector3(...previous.position).lerp(new THREE.Vector3(...current.position), alpha).add(this.errorPosition)
-    const rotation = new THREE.Quaternion(...previous.rotation).slerp(new THREE.Quaternion(...current.rotation), alpha)
+    const position = new Vector3(...previous.position).lerp(new Vector3(...current.position), alpha).add(this.errorPosition)
+    const rotation = new Quaternion(...previous.rotation).slerp(new Quaternion(...current.rotation), alpha)
     rotation.premultiply(this.errorRotation)
     return { position: [position.x, position.y, position.z], rotation: [rotation.x, rotation.y, rotation.z, rotation.w], steer: current.steerFraction }
   }
@@ -144,4 +144,4 @@ export class VehicleDriver {
   }
 }
 
-const IDENTITY = new THREE.Quaternion()
+const IDENTITY = new Quaternion()

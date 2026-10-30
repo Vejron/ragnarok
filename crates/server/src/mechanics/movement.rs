@@ -27,7 +27,7 @@ impl Mechanic for Movement {
             character.lost = lost;
             let velocity = world.physics.car_pose(character.ride).map(|pose| pose.velocity);
             let slot = (player.input.slot() as usize).min(HOTBAR_SLOTS - 1);
-            let scale = aim_speed_scale(player.hotbar[slot].item, player.input.buttons()) * if carrying { BACKPACK_SPEED } else { 1.0 };
+            let scale = aim_speed_scale(player.hands.hotbar[slot].item, player.input.buttons()) * if carrying { BACKPACK_SPEED } else { 1.0 };
             world.physics.step_character(character, &player.input, dt, scale, velocity);
             character.ride = if character.grounded { world.physics.car_under(character.position).map_or(0, |hit| hit.car) } else { 0 };
         }

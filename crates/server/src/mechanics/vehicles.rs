@@ -1,3 +1,4 @@
+use shared::vec3;
 use crate::entities::{Health, HurtBy, Hurtbox, Transform, With};
 use super::Mechanic;
 use crate::game::{Burning, Died, Mounts, Player, Seat, Seats, Vehicle, World, Wreck};
@@ -218,7 +219,7 @@ fn hitch(world: &mut World, id: u32) {
         return;
     }
     let Some(pose) = world.physics.car_pose(car) else { return };
-    let speed = pose.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
+    let speed = vec3::length(pose.velocity);
     if speed > HITCH_MAX_SPEED {
         return;
     }
@@ -491,7 +492,7 @@ pub fn shoot_wheels(world: &mut World, vid: u32, point: [f32; 3], damage: f32, r
         return;
     }
     let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(vid) else { return };
-    let offset = std::array::from_fn(|i| point[i] - pose.position[i]);
+    let offset = vec3::sub(point, pose.position);
     hurt_wheels(vehicle.kind, &mut vehicle.damage, pose.local_dir(offset), damage * SHOT_WHEEL_PER_DAMAGE, reach);
 }
 
@@ -535,7 +536,7 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
         let [x, y, z] = impact.point.map(to_cm);
         let mut over = impact.dv - CRASH_MIN_DV;
         if over <= 0.0 {
-            let speed = before.get(&vid).map_or(0.0, |pose| pose.velocity.iter().map(|v| v * v).sum::<f32>().sqrt());
+            let speed = before.get(&vid).map_or(0.0, |pose| vec3::length(pose.velocity));
             if impact.dv > SCRAPE_MIN_DV && speed > SCRAPE_SPEED && vehicle.scrape_in == 0 {
                 vehicle.scrape_in = SCRAPE_EVERY;
                 world.shots.push(ShotEvent { shooter: vid, weapon: WEAPON_SCRAPE, x, y, z });

@@ -35,9 +35,9 @@ pub fn launch(world: &mut World, id: u32, kind: u8) -> bool {
     if !world.entities.alive(id) || player.seat.is_some() || world.entities.count::<Vehicle>() >= MAX_VEHICLES {
         return false;
     }
-    let (input, c, hp) = (player.input, player.character, world.entities.get::<crate::entities::Health>(id).map_or(0, |health| health.hp));
+    let (input, hp) = (player.input, world.entities.get::<crate::entities::Health>(id).map_or(0, |health| health.hp));
     let yaw = from_mrad(input.yaw);
-    let eye = [c.position[0], c.position[1] + eye_height(input.buttons(), c.prone), c.position[2]];
+    let eye = player.eye();
     let ahead = look(yaw, 0.0);
     let def = drone_def(kind);
     let position = match def.launch {
@@ -149,7 +149,7 @@ impl Mechanic for Drones {
             } else if let (true, Some(pilot)) = (drone.linked, pilot) {
                 let buttons = pilot.input.buttons();
                 let away = (pose.position[0] - pilot.character.position[0]).hypot(pose.position[2] - pilot.character.position[2]);
-                if buttons & BUTTON_FIRE != 0 && !pilot.trigger_held {
+                if buttons & BUTTON_FIRE != 0 && !pilot.hands.trigger_held {
                     Fate::Detonate
                 } else if buttons & BUTTON_USE != 0 {
                     Fate::Abort

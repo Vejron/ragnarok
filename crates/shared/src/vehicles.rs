@@ -3,7 +3,7 @@
 //! `crate::mounts`), how it stands and meets the world (`Body`), what the physics makes of it (`Spec`,
 //! which `crates/sim` runs on the server and in the client's prediction) and its armour.
 //!
-//! Adding a kind: its `KIND_*` id in `consts.rs` (which the client's copy is generated from), its
+//! Adding a kind: its `KIND_*` id in `consts.rs` (constants of one kind go in its own file; the client's copy is generated from both), its
 //! file here and its place in `VEHICLES`, and its presentation on the client, `client/src/kinds/`,
 //! with its model. Nothing in the server, the sim or the client branches on a kind: what a kind does
 //! is its fields. A new way of moving is a `Lift` and its system in `crates/sim`. The client's table is built from `client/src/sim/tables.generated.json`, which
@@ -17,20 +17,20 @@ use crate::protocol::{
     PROJECTILE_EGG, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_SHELL, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LOITER, WEAPON_MG, WEAPON_SHELL,
 };
 
-mod drone;
-mod heli;
-mod hen;
-mod jeep;
-mod loiter;
-mod mortar;
-mod pak;
-mod plane;
-mod roadster;
+pub mod drone;
+pub mod heli;
+pub mod hen;
+pub mod jeep;
+pub mod loiter;
+pub mod mortar;
+pub mod pak;
+pub mod plane;
+pub mod roadster;
 mod spec;
-mod sports;
-mod strv;
-mod tank;
-mod walker;
+pub mod sports;
+pub mod strv;
+pub mod tank;
+pub mod walker;
 
 pub use spec::{Buttons, Lift, Role, Shape, Solid, Spec};
 pub use crate::armor::{ALLOY, Armor, Box3, Module, On, Part, Pen, Plate, SHEET, SOFT, Zone};

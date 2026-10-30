@@ -1,5 +1,4 @@
-import { Group, Mesh, sphereGeometry, type Material, type Node } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Group, Mesh, sphereGeometry, type Material, type Node, Quaternion, Vector3 } from '@ragnarok/engine'
 import { Legs } from './legs'
 import { parseToonModel, unlitMaterial } from './models'
 import { toonMaterial } from './toon'
@@ -170,7 +169,7 @@ export class HenModel implements VehicleModel {
     // The hull sways over whichever foot is down, more the faster it goes.
     const target = airborne ? 0 : lean * SWAY * Math.min(1, Math.hypot(speed, Math.abs(spin) * 1.7) / 3)
     this.sway += (target - this.sway) * Math.min(1, dt * 10)
-    this.root.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -this.sway))
+    this.root.quaternion.multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), -this.sway))
 
     // The tail flicks up as an egg is laid.
     const shots = arms?.shots ?? null

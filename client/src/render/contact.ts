@@ -1,5 +1,4 @@
-import { Group, InstancedMesh, Material, Texture, mat4, planeGeometry } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Group, InstancedMesh, Material, Texture, mat4, planeGeometry, Quaternion, Vector3 } from '@ragnarok/engine'
 
 /** Most blobs drawn in one frame; the rest are dropped. */
 const CAPACITY = 128
@@ -37,13 +36,13 @@ export class ContactShadows {
   private count = 0
   private enabled = true
   private readonly matrix = mat4.create()
-  private readonly position = new THREE.Vector3()
-  private readonly rotation = new THREE.Quaternion()
-  private readonly tilt = new THREE.Quaternion()
-  private readonly turn = new THREE.Quaternion()
-  private readonly scale = new THREE.Vector3()
-  private readonly normal = new THREE.Vector3()
-  private static readonly UP = new THREE.Vector3(0, 1, 0)
+  private readonly position = new Vector3()
+  private readonly rotation = new Quaternion()
+  private readonly tilt = new Quaternion()
+  private readonly turn = new Quaternion()
+  private readonly scale = new Vector3()
+  private readonly normal = new Vector3()
+  private static readonly UP = new Vector3(0, 1, 0)
 
   constructor(private readonly groundAt: (x: number, z: number) => number) {
     // Flat on the ground, facing up; unlit, drawn over the ground it lies on by a depth bias.

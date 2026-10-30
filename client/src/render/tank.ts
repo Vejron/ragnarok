@@ -1,5 +1,4 @@
-import { Group, Mesh, sphereGeometry, type Geometry, type Material, type Node } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Group, Mesh, sphereGeometry, type Geometry, type Material, type Node, Matrix4, Vector3 } from '@ragnarok/engine'
 import { parseToonModel } from './models'
 import { toonMaterial } from './toon'
 import { boxUvs, camoTexture } from './camo'
@@ -89,11 +88,11 @@ export class TankModel implements VehicleModel {
   /** `performance.now()` of the last shot, for the barrel's recoil stroke. */
   private firedAt = -Infinity
   private lastYaw = 0
-  private readonly last = new THREE.Vector3()
-  private readonly forward = new THREE.Vector3()
-  private readonly pivot = new THREE.Vector3()
-  private readonly aim = new THREE.Vector3()
-  private readonly matrix = new THREE.Matrix4()
+  private readonly last = new Vector3()
+  private readonly forward = new Vector3()
+  private readonly pivot = new Vector3()
+  private readonly aim = new Vector3()
+  private readonly matrix = new Matrix4()
 
   constructor(id: number, source: Node | null = asset, private readonly layout: TankLayout = TANK_LAYOUT) {
     if (!source) throw new Error('loadTankModel() must finish before tanks are created')

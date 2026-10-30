@@ -139,11 +139,6 @@ impl ClientSim {
     }
 
     /// Brings building `index` of tile `(col, row)` down; takes effect at the next `refresh`.
-    #[wasm_bindgen(js_name = fellBuilding)]
-    pub fn fell_building(&mut self, col: u16, row: u16, index: u32) -> bool {
-        self.physics.destroy(Obj::Building(ObjId { col, row, index }))
-    }
-
     /// Gives building `index` of tile `(col, row)` its shape without the cells `removed`; takes effect
     /// at the next `refresh`.
     #[wasm_bindgen(js_name = carveBuilding)]

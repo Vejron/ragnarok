@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import * as THREE from 'three'
+import { Quaternion, Vector3 } from '@ragnarok/engine'
 import { describe, expect, it } from 'vitest'
 import { Character, Crowd, parseCharacter } from '@/render/character'
 import { boxOf } from './helpers'
@@ -23,6 +23,9 @@ async function crowd() {
 function run(person: Character, yaw: number, vx: number, vz: number, seconds = 1) {
   for (let t = 0; t < seconds; t += 1 / 60) person.update([0, 0.85, 0], yaw, vx, vz, true, 1 / 60)
 }
+
+/** How much a world matrix scales its X axis. */
+const scaleOf = (m: ArrayLike<number>) => Math.hypot(m[0]!, m[1]!, m[2]!)
 
 describe('Character holding things', () => {
   it('has a clip set per stance and a mesh and muzzle for each weapon', async () => {
@@ -173,7 +176,7 @@ describe('Character', () => {
     run(person, 0, 0, 0, 1.5)
     const head = () => {
       c.root.updateMatrixWorld(true)
-      return c.root.getObjectByName('head')!.getWorldPosition(new THREE.Vector3()).y
+      return c.root.getObjectByName('head')!.getWorldPosition(new Vector3()).y
     }
     expect(head()).toBeLessThan(0.5)
     person.hidden = true
@@ -198,8 +201,8 @@ describe('Character', () => {
   it('sits with its head on the seat and turns its chest to where it aims', async () => {
     const c = await crowd()
     const person = new Character(c, 1)
-    const seat = new THREE.Vector3(3, 1.5, -2)
-    const upright = new THREE.Quaternion()
+    const seat = new Vector3(3, 1.5, -2)
+    const upright = new Quaternion()
     const sit = (yaw: number) => {
       for (let t = 0; t < 1; t += 1 / 60) person.seat(seat, upright, yaw, 0, 1 / 60)
       c.root.updateMatrixWorld(true)
@@ -207,7 +210,7 @@ describe('Character', () => {
     sit(0)
     expect(person.blend.get('sit')!).toBeGreaterThan(0.9)
     // The head bone is the base of the head, a little below its middle.
-    const head = c.root.getObjectByName('head')!.getWorldPosition(new THREE.Vector3())
+    const head = c.root.getObjectByName('head')!.getWorldPosition(new Vector3())
     expect(head.x).toBeCloseTo(seat.x, 1)
     expect(head.z).toBeCloseTo(seat.z, 1)
     expect(head.y).toBeGreaterThan(seat.y - 0.2)
@@ -226,7 +229,7 @@ describe('Character', () => {
     const person = new Character(c, 1)
     const head = () => {
       c.root.updateMatrixWorld(true)
-      return c.root.getObjectByName('head')!.getWorldPosition(new THREE.Vector3()).y
+      return c.root.getObjectByName('head')!.getWorldPosition(new Vector3()).y
     }
     const crouched = (vx: number, vz: number, seconds = 1) => {
       for (let t = 0; t < seconds; t += 1 / 60) person.update([0, 0.85, 0], 0, vx, vz, true, 1 / 60, 0, true)
@@ -347,7 +350,7 @@ describe('Character coming alive', () => {
     const person = new Character(c, 1)
     run(person, 0, 0, 0, 0.5)
     const head = () => {
-      const at = new THREE.Vector3()
+      const at = new Vector3()
       c.root.updateWorldMatrix(true, true)
       c.root.getObjectByName('head')!.getWorldPosition(at)
       return at.clone()
@@ -375,8 +378,8 @@ describe('Character coming alive', () => {
     stand(0, 0)
     rootOf(person).updateWorldMatrix(true, true)
     const shin = rootOf(person).getObjectByName('shin_L')!
-    const knee = shin.getWorldPosition(new THREE.Vector3())
-    const spot = knee.clone().add(new THREE.Vector3(0, -0.1, 0))
+    const knee = shin.getWorldPosition(new Vector3())
+    const spot = knee.clone().add(new Vector3(0, -0.1, 0))
     const wound = person.pin(spot)
     expect(wound().distanceTo(spot)).toBeLessThan(1e-3)
     // Walked 5 m on, the wound is 5 m on.
@@ -387,7 +390,7 @@ describe('Character coming alive', () => {
     // Turned about, it goes round with the leg, still on the shin.
     stand(5, Math.PI)
     const turned = wound()
-    const shinNow = shin.getWorldPosition(new THREE.Vector3())
+    const shinNow = shin.getWorldPosition(new Vector3())
     expect(turned.distanceTo(shinNow)).toBeCloseTo(spot.distanceTo(knee), 2)
     expect(Math.sign(turned.x - 5)).toBe(-Math.sign(spot.x))
     person.dispose()
@@ -416,8 +419,8 @@ describe('Character losing limbs', () => {
     const arm = rootOf(person).getObjectByName('upper_arm_R')!
     expect(arm.scale.x).toBeLessThan(0.01)
     rootOf(person).updateWorldMatrix(true, true)
-    const hand = new THREE.Vector3().setFromMatrixScale(new THREE.Matrix4().fromArray(rootOf(person).getObjectByName('hand_R')!.matrixWorld))
-    expect(hand.x / new THREE.Vector3().setFromMatrixScale(new THREE.Matrix4().fromArray(rootOf(person).matrixWorld)).x).toBeCloseTo(1, 1)
+    const hand = scaleOf(rootOf(person).getObjectByName('hand_R')!.matrixWorld)
+    expect(hand / scaleOf(rootOf(person).matrixWorld)).toBeCloseTo(1, 1)
     // A burst leaves out the limbs already thrown.
     const keys = person.shatter().map((piece) => piece.key)
     expect(keys).not.toContain('thigh_L')

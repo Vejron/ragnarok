@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import * as THREE from 'three'
+import { Vector3 } from '@ragnarok/engine'
 import { Bloodstains } from '@/render/bloodstains'
 import { Debris } from '@/render/debris'
 import { Effects } from '@/render/effects'
@@ -13,17 +13,17 @@ describe('Bloodstains', () => {
     const stains = new Bloodstains(10)
     stains.blot(0, 0, 0, 0.2)
     expect(stains.laid).toBe(1)
-    stains.smear('a', new THREE.Vector3(0, 0, 0), 0.4)
-    stains.smear('a', new THREE.Vector3(0, 0, -0.1), 0.4)
+    stains.smear('a', new Vector3(0, 0, 0), 0.4)
+    stains.smear('a', new Vector3(0, 0, -0.1), 0.4)
     expect(stains.laid).toBe(1)
-    stains.smear('a', new THREE.Vector3(0, 0, -1), 0.4)
+    stains.smear('a', new Vector3(0, 0, -1), 0.4)
     expect(stains.laid).toBe(2)
     // A jump starts over rather than smearing across the gap.
-    stains.smear('a', new THREE.Vector3(0, 0, -20), 0.4)
-    stains.smear('a', new THREE.Vector3(0, 0, -21), 0.4)
+    stains.smear('a', new Vector3(0, 0, -20), 0.4)
+    stains.smear('a', new Vector3(0, 0, -21), 0.4)
     expect(stains.laid).toBe(2)
     stains.lift('a')
-    stains.smear('a', new THREE.Vector3(0, 0, -22), 0.4)
+    stains.smear('a', new Vector3(0, 0, -22), 0.4)
     expect(stains.laid).toBe(2)
   })
 
@@ -42,13 +42,13 @@ describe('Gore on the ground', () => {
   const setup = () => {
     const stains = new Bloodstains(500)
     const gore = new Gore(new Debris(), new Particles(2000), new Effects(64), stains, () => 0)
-    const position = new THREE.Vector3(0, 0.9, 0)
-    const pinned: THREE.Vector3[] = []
-    const pin = (point: THREE.Vector3) => {
+    const position = new Vector3(0, 0.9, 0)
+    const pinned: Vector3[] = []
+    const pin = (point: Vector3) => {
       pinned.push(point.clone())
-      return (out = new THREE.Vector3()) => out.copy(point)
+      return (out = new Vector3()) => out.copy(point)
     }
-    const avatar = { position, stump: (_: number, out = new THREE.Vector3()) => out.copy(position), launch: () => {}, pin } as unknown as Character
+    const avatar = { position, stump: (_: number, out = new Vector3()) => out.copy(position), launch: () => {}, pin } as unknown as Character
     return { stains, gore, avatar, pinned }
   }
 
@@ -96,8 +96,8 @@ describe('Gore on the ground', () => {
     const spawned: ParticleSpec[] = []
     particles.spawn = (spec) => void spawned.push(spec)
     const gore = new Gore(new Debris(), particles, new Effects(64), new Bloodstains(500), () => 0)
-    const position = new THREE.Vector3(0, 0.9, 0)
-    const avatar = { position, stump: (_: number, out = new THREE.Vector3()) => out.copy(position) } as unknown as Character
+    const position = new Vector3(0, 0.9, 0)
+    const avatar = { position, stump: (_: number, out = new Vector3()) => out.copy(position) } as unknown as Character
     // A drip is a quarter of a second at 14 drops a second: three or four, not one a frame.
     gore.drip(avatar, LIMB_LEG_L)
     for (let t = 0; t < 1; t += 1 / 144) gore.update(1 / 144)
@@ -111,8 +111,8 @@ describe('Gore on the ground', () => {
     particles.spawn = (spec) => void spawned.push(spec)
     const slope = (x: number, z: number) => 0.3 * x - 0.1 * z
     const gore = new Gore(new Debris(), particles, new Effects(64), new Bloodstains(500), slope)
-    const position = new THREE.Vector3(0, 1.2, 0)
-    const avatar = { position, stump: (_: number, out = new THREE.Vector3()) => out.copy(position), pin: (p: THREE.Vector3) => () => p.clone() } as unknown as Character
+    const position = new Vector3(0, 1.2, 0)
+    const avatar = { position, stump: (_: number, out = new Vector3()) => out.copy(position), pin: (p: Vector3) => () => p.clone() } as unknown as Character
     gore.hit(avatar, PART_TORSO, 0.7, 40, { x: 0.1, y: 0.3, z: 0 })
     const drops = spawned.filter((spec) => spec.shape === 'drop')
     expect(drops.length).toBeGreaterThan(10)

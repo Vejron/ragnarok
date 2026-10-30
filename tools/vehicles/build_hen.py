@@ -32,19 +32,18 @@ import bmesh
 import bpy
 from mathutils import Matrix, Vector
 
-argv = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-
-def arg(name, default=None):
-    return argv[argv.index(name) + 1] if name in argv else default
-
+import common
+from common import MATERIALS, arg, export, material
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = arg("--out", os.path.normpath(os.path.join(HERE, "../../client/public/models/hen.glb")))
 PREVIEW = arg("--preview")
 
 # --------------------------------------------------------------------------------------------------
-# Dimensions (metres). Keep in step with HEN_* / WALKER_* in crates/shared/src/consts.rs and render/hen.ts.
+# Dimensions (metres). Keep in step with HEN_* / WALKER_* in crates/shared/src/vehicles/ and render/hen.ts.
 # --------------------------------------------------------------------------------------------------
 HX, HY, HZ = 1.0, 1.8, 1.2  # half extents of the hull box: sideways, along the beak, up
 FOOT_HALF = 1.7
@@ -58,17 +57,7 @@ bpy.ops.wm.read_factory_settings(use_empty=True)
 scene = bpy.context.scene
 
 
-def material(name, rgb):
-    m = bpy.data.materials.new(name)
-    m.use_nodes = True
-    bsdf = m.node_tree.nodes["Principled BSDF"]
-    bsdf.inputs["Base Color"].default_value = (*rgb, 1.0)
-    bsdf.inputs["Roughness"].default_value = 1.0
-    m.diffuse_color = (*rgb, 1.0)
-    return m
-
-
-MATERIALS = [
+MATERIALS[:] = [
     material("paint", (0.93, 0.91, 0.86)),
     material("dark", (0.12, 0.13, 0.14)),
     material("metal", (0.42, 0.44, 0.47)),
@@ -81,18 +70,7 @@ MATERIALS = [
 PAINT, DARK, METAL, COMB, BEAK, LEG, GLASS, LAMP = range(8)
 
 
-class Part:
-    """A mesh under construction: primitives are added in the part's own frame, each with a material."""
-
-    def __init__(self, name, location=(0.0, 0.0, 0.0), parent=None):
-        self.bm = bmesh.new()
-        self.name = name
-        self.location = Vector(location)
-        self.parent = parent
-
-    def _tag(self, verts, mat):
-        for face in {f for v in verts for f in v.link_faces}:
-            face.material_index = mat
+class Part(common.Part):
 
     def box(self, centre, size, mat, rx=0.0, ry=0.0, rz=0.0):
         m = (
@@ -139,21 +117,6 @@ class Part:
         m = Matrix.Translation((base + tip) / 2) @ axis.to_track_quat("Z", "Y").to_matrix().to_4x4()
         verts = bmesh.ops.create_cone(self.bm, cap_ends=True, cap_tris=False, segments=segments, radius1=radius, radius2=0.0, depth=axis.length, matrix=m)["verts"]
         self._tag(verts, mat)
-
-    def build(self):
-        bmesh.ops.remove_doubles(self.bm, verts=self.bm.verts, dist=1e-4)
-        bmesh.ops.recalc_face_normals(self.bm, faces=self.bm.faces)
-        mesh = bpy.data.meshes.new(self.name)
-        self.bm.to_mesh(mesh)
-        self.bm.free()
-        for m in MATERIALS:
-            mesh.materials.append(m)
-        obj = bpy.data.objects.new(self.name, mesh)
-        obj.location = self.location
-        scene.collection.objects.link(obj)
-        if self.parent:
-            obj.parent = self.parent
-        return obj
 
 
 # --------------------------------------------------------------------------------------------------
@@ -267,27 +230,7 @@ for side, label in ((-1, "L"), (1, "R")):
 # --------------------------------------------------------------------------------------------------
 # Export
 # --------------------------------------------------------------------------------------------------
-def export():
-    os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    bpy.ops.object.select_all(action="SELECT")
-    kwargs = dict(
-        filepath=OUT,
-        export_format="GLB",
-        use_selection=True,
-        export_yup=True,
-        export_apply=True,
-        export_animations=False,
-        export_skins=False,
-        export_cameras=False,
-        export_lights=False,
-        export_extras=False,
-        export_materials="EXPORT",
-    )
-    valid = bpy.ops.export_scene.gltf.get_rna_type().properties.keys()
-    bpy.ops.export_scene.gltf(**{k: v for k, v in kwargs.items() if k in valid})
-
-
-export()
+export(OUT)
 everything = [body_obj, head_obj, tail_obj, *wing_objects, *leg_objects]
 print("tris:", sum(len(p.vertices) - 2 for o in everything for p in o.data.polygons))
 print("wrote", OUT)

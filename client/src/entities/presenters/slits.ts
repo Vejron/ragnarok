@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import { Matrix4, Vector3 } from '@ragnarok/engine'
 import { Material, Mesh, Quat, quadGeometry, type Geometry, type Node } from '@ragnarok/engine'
 import { locate, notSurface } from '@/render/hullmarks'
 import { vehicleDef, type Slit } from '@/sim/vehicles'
@@ -31,7 +31,7 @@ interface Drawn {
 /** Direction `v` in the frame of `node`, in the world, unit length. */
 const toWorldDirection = (node: Node, [x, y, z]: readonly number[]) => {
   const m = node.matrixWorld
-  return new THREE.Vector3(m[0]! * x! + m[4]! * y! + m[8]! * z!, m[1]! * x! + m[5]! * y! + m[9]! * z!, m[2]! * x! + m[6]! * y! + m[10]! * z!).normalize()
+  return new Vector3(m[0]! * x! + m[4]! * y! + m[8]! * z!, m[1]! * x! + m[5]! * y! + m[9]! * z!, m[2]! * x! + m[6]! * y! + m[10]! * z!).normalize()
 }
 
 /** `v` turned by `yaw` about the vertical, as a turret turns it (yaw 0 faces -Z, + turns left). */
@@ -92,19 +92,19 @@ export class Slits implements Presenter<Frame> {
       const { parent, local, normal, unit } = struck
       // Its long side level: across the plate, square to the vehicle's up as it is in the mesh's frame.
       parent.updateWorldMatrix(true, false)
-      const toLocal = new THREE.Matrix4().fromArray(parent.matrixWorld).invert()
-      const up = new THREE.Vector3(root.matrixWorld[4]!, root.matrixWorld[5]!, root.matrixWorld[6]!).transformDirection(toLocal)
-      const z = new THREE.Vector3(normal.x, normal.y, normal.z)
-      const x = new THREE.Vector3().crossVectors(up, z)
+      const toLocal = new Matrix4().fromArray(parent.matrixWorld).invert()
+      const up = new Vector3(root.matrixWorld[4]!, root.matrixWorld[5]!, root.matrixWorld[6]!).transformDirection(toLocal)
+      const z = new Vector3(normal.x, normal.y, normal.z)
+      const x = new Vector3().crossVectors(up, z)
       if (x.lengthSq() < 1e-6) x.set(1, 0, 0)
       x.normalize()
-      const y = new THREE.Vector3().crossVectors(z, x)
-      const basis = new THREE.Matrix4().makeBasis(x, y, z)
+      const y = new Vector3().crossVectors(z, x)
+      const basis = new Matrix4().makeBasis(x, y, z)
       const facing = new Quat().setFromRotationMatrix(basis.elements)
       const [hx, hy, hz] = slit.half
       // Drawn where a round going straight in would cross the plate: a strip as long as the slope stretches it.
       const along = toWorldDirection(root, slit.turret ? yawed(slit.out, yaw) : slit.out)
-      const square = Math.max(0.25, Math.abs(along.dot(new THREE.Vector3(struck.outward.x, struck.outward.y, struck.outward.z))))
+      const square = Math.max(0.25, Math.abs(along.dot(new Vector3(struck.outward.x, struck.outward.y, struck.outward.z))))
       const width = 2 * (slit.out[0] !== 0 ? hz : hx)
       const height = (2 * (slit.out[1] !== 0 ? hz : hy)) / square
       const lay = (material: Material, lift: number, w: number, h: number) => {

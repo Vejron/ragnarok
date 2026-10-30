@@ -302,7 +302,7 @@ mod tests {
         let died: Vec<_> = game.world.happened::<crate::game::Died>().copied().collect();
         assert_eq!(died.iter().map(|death| (death.victim, death.killer)).collect::<Vec<_>>(), [(r.id, Some(shooter))]);
         crate::mechanics::Scores.react(&mut game.world);
-        assert_eq!(game.world.entities.of::<crate::game::Player>(shooter).kills, 0, "a rooster is not a kill");
+        assert_eq!(game.world.entities.of::<crate::game::Player>(shooter).score.kills, 0, "a rooster is not a kill");
         assert!(crate::game::feedback::kills(&game.world).is_empty(), "nor news for the kill feed");
     }
 
@@ -370,7 +370,7 @@ mod tests {
         let r = rooster(&game);
         let p = r.transform.position;
         let at = [p[0], p[1] + ROOSTER_CAPSULE_CENTRE, p[2] + 3.0];
-        game.world.launch(Flying { kind: PROJECTILE_BULLET, owner: shooter, source: 0, position: at, velocity: [0.0, 0.0, -300.0], ttl: 30, item: ITEM_AK5, back: 0, flown: 0.0 });
+        game.world.launch(Flying::new(PROJECTILE_BULLET, shooter, at, [0.0, 0.0, -300.0], 30).of(ITEM_AK5));
         game.step();
         assert!(rooster(&game).health.hp < ROOSTER_HP, "the bullet met it on its first step");
         assert_eq!(crate::mechanics::projectiles::count(&game.world.entities, None), 0, "and is spent");
@@ -384,7 +384,7 @@ mod tests {
         let p = rooster(&game).transform.position;
         // Level with its middle, over flat ground: without the rooster in the way it flies on.
         let at = [p[0], p[1] + ROOSTER_CAPSULE_CENTRE, p[2] + 6.0];
-        game.world.launch(Flying { kind: PROJECTILE_ROCKET, owner: 999, source: 0, position: at, velocity: [0.0, 0.0, -30.0], ttl: 120, item: 0, back: 0, flown: 0.0 });
+        game.world.launch(Flying::new(PROJECTILE_ROCKET, 999, at, [0.0, 0.0, -30.0], 120));
         for _ in 0..30 {
             game.step();
         }

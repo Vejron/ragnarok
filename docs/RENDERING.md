@@ -2,13 +2,13 @@
 
 How the client turns the simulation into a picture: the scene, the light, the shading style, the
 soft-lighting options and what each one costs. The drawing is done by the WebGPU engine in
-[`engine/`](engine/README.md), a package of its own; the game's side of it is `client/src/render/`,
+[`engine/`](../engine/README.md), a package of its own; the game's side of it is `client/src/render/`,
 and `client/src/game.ts` drives it once per animation frame. Networking and prediction are in
 [NETWORKING.md](NETWORKING.md), where the world comes from is in [WORLD.md](WORLD.md).
 
 WebGPU is required. There is no WebGL fallback: without `navigator.gpu` the game says so and stops.
-three.js is still a dependency of the client, but only for the vector, quaternion and matrix classes
-the game logic uses; nothing of three draws.
+The client has no other graphics dependency: what it calculates with (`Vector3`, `Quaternion`, `Matrix4`,
+`Color`) is the engine's too.
 
 ```
 game.frame()
@@ -30,7 +30,7 @@ game.frame()
 
 ## The engine and the game's side of it
 
-The engine ([engine/README.md](engine/README.md) has its design) keeps everything a frame needs on the
+The engine ([engine/README.md](../engine/README.md) has its design) keeps everything a frame needs on the
 GPU between frames: one object record per mesh (written only when it changes), one material table,
 one vertex arena. Meshes that share geometry and render state become one instanced draw, whatever
 their materials. That is why the renderer costs a fraction of what three's did, and why the game can
@@ -74,7 +74,7 @@ scene:
 | Effects | `effects.ts` | Muzzle flashes, tracers, sparks, fireballs: `FlashEffects`, below. |
 | Particles | `particles.ts` | Smoke, dust, gravel, sparks and flames: GPU particles, below. |
 | Skidmarks | `skidmarks.ts` | A ring of quads with a birth time, faded in the shader. |
-| Damage | `damage.ts`, `fracture.ts`, `rubble.ts` | A building redrawn from its cubes (holes blasted through walls and roofs, the cubes around a hole burnt black, cubes darkened where this player's rounds landed; a cube never shrinks), thrown and falling chunks of cubes. |
+| Damage | `damage.ts`, `fracture.ts` | A building redrawn from its cubes (holes blasted through walls and roofs, the cubes around a hole burnt black, cubes darkened where this player's rounds landed; a cube never shrinks), thrown and falling chunks of cubes. |
 | Placed cubes | `construct.ts` | What players built with bricks, a mesh per 16³ chunk with a colour per vertex, cubes that fell coming down as one piece, and the ghost cube where the next one would go. See [BUILDING.md](BUILDING.md). |
 | Trajectory | `trajectory.ts` | The arc a held grenade would take. |
 | Field mortar | `mortar.ts`, `mortar-arc.ts` | A hand-built gun, and the landing marker its gunner aims by. See [VEHICLES-V.md](VEHICLES-V.md). |
@@ -384,8 +384,8 @@ object, and makes a handful of native calls per draw, none of which a straight p
 branch is kept as a reference.
 
 The engine replaces it by design: persistent per-object records, a material table, one geometry
-arena, automatic instancing and GPU-side effects, as described in [engine/README.md](engine/README.md).
-Its own examples (`engine/examples`) benchmark the same scene against three's two renderers.
+arena, automatic instancing and GPU-side effects, as described in [engine/README.md](../engine/README.md).
+Its own README gives the benchmark against three's two renderers, from when a comparison example was kept.
 
 ## Measuring, and traps
 

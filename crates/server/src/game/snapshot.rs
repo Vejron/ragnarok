@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// How much of an outbox, in quarters, snapshots leave free for reliable messages.
+const RESERVED_FOR_RELIABLE: usize = 3;
+
 /// The world as a client is told it (`Game::replicated`), by what each thing is, for tests that ask
 /// what a client is shown.
 #[cfg(test)]
@@ -90,8 +93,13 @@ impl Game {
             let here = remote.map_or(player.character.position, |pose| pose.position);
             let at = [here[0], here[2]];
             let (Some(outbox), Some(replica)) = (self.outboxes.get(&id), self.replicas.get_mut(&id)) else { continue };
+            // A session busy with a slow reliable write is not draining its outbox. Snapshots then stop
+            // short of filling it: a lost one is harmless, but a reliable message with no room costs the
+            // player their session.
+            if outbox.capacity() <= outbox.max_capacity() * RESERVED_FOR_RELIABLE / 4 {
+                continue;
+            }
             let snapshot = replica.snapshot(at, &everything, own);
-            // A full outbox means the session is stalled; dropping a snapshot is harmless.
             let _ = outbox.try_send(Outgoing::Datagram(snapshot.into()));
         }
     }

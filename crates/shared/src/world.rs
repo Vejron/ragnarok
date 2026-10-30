@@ -24,6 +24,11 @@ pub const METRES_PER_DEG_LON: f64 = 111_320.0;
 /// wherever their origins are.
 pub const SCALE_LATITUDE: f64 = 63.8225;
 
+/// Whether `name` is one a world directory may have: 1-40 characters of a-z, 0-9, `-` and `_`.
+pub fn plain_world_name(name: &str) -> bool {
+    (1..=40).contains(&name.len()) && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
 /// Metres per degree of longitude, everywhere.
 pub fn metres_per_deg_lon() -> f64 {
     METRES_PER_DEG_LON * SCALE_LATITUDE.to_radians().cos()

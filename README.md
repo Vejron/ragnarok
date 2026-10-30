@@ -2,22 +2,41 @@
 
 A browser multiplayer game: goofy soldiers in a real city built from OpenStreetMap. There's a server-authoritative Rust game server (Salvo, WebTransport, Rapier) and a Vue 3 + WebGPU client (drawn by the [engine](engine/README.md)) with client-side prediction and snapshot interpolation.
 
-- [design.md](design.md): architecture, netcode, world pipeline and roadmap
-- [WORLD.md](WORLD.md): generating the world: data sources, credentials, download cache
-- [FRANCE.md](FRANCE.md): worlds in France from IGN LiDAR HD: the plan and where it stands
-- [NETWORKING.md](NETWORKING.md): wire protocol
-- [SERVER-PERFORMANCE.md](SERVER-PERFORMANCE.md): what a full room costs per tick, how it is measured, what is and is not worth optimising
-- [RENDERING.md](RENDERING.md): the client renderer: toon shading, light, effects, contact shadows, ink, far shadows
+The docs are in [docs/](docs/).
+
+**How it works**
+
+- [design.md](docs/design.md): architecture, netcode, world pipeline and roadmap
+- [NETWORKING.md](docs/NETWORKING.md): wire protocol
+- [RENDERING.md](docs/RENDERING.md): the client renderer: toon shading, light, effects, contact shadows, ink, far shadows
 - [engine/README.md](engine/README.md): the WebGPU render engine the client draws with, a package of its own
-- [VEHICLES-I.md](VEHICLES-I.md): how roadmap stage 2 (cars, seats, driving) was built
-- [ARMOR.md](ARMOR.md): armor zones, ricochets, weak spots, turret loss and the Strv S
-- [SCENARIOS.md](SCENARIOS.md): a guide to writing a world's `scenario.json` by hand, since there is no scenario editor
-- [BOTS.md](BOTS.md): server-run enemy soldiers that patrol, find their way, spot, hear, pursue and shoot, crew tanks along the roads, placed per world, and scenarios (`scenario.json`) with squads, triggers, waves, objectives and a win or a loss
-- [VEHICLES-II.md](VEHICLES-II.md): the tank, its gunner seat and the shell, driver prediction and the helicopter
-- [VEHICLES-III.md](VEHICLES-III.md): handling, tyre effects, crash damage and vehicle sound
-- [VEHICLES-IV.md](VEHICLES-IV.md): the Fokker triplane: flight, guns, bombs, model and sound
-- [VEHICLES-VI.md](VEHICLES-VI.md): the Tesla Roadster: cold-gas boost, hop and hover
-- [VEHICLES-VII.md](VEHICLES-VII.md): the hen: a giant robot hen on the walker's legs that leaps, flaps, glides and lays egg bombs
+- [SERVER-PERFORMANCE.md](docs/SERVER-PERFORMANCE.md): what a full room costs per tick, how it is measured, what is and is not worth optimising
+- [TILE-STREAMING.md](docs/TILE-STREAMING.md): how the map reaches the browser
+
+**Making worlds**
+
+- [WORLD.md](docs/WORLD.md): generating the world: data sources, credentials, download cache
+- [FRANCE.md](docs/FRANCE.md): worlds in France from IGN LiDAR HD
+- [EDITOR.md](docs/EDITOR.md): the map editor
+- [SCENARIOS.md](docs/SCENARIOS.md): a guide to writing a world's `scenario.json` by hand, since there is no scenario editor
+
+**How each feature was built**
+
+- [BOTS.md](docs/BOTS.md): server-run enemy soldiers, tank crews, and scenarios with squads, triggers, waves, objectives and a win or a loss
+- [ARMOR.md](docs/ARMOR.md): armor zones, ricochets, weak spots, turret loss and the Strv S
+- [LIMBS.md](docs/LIMBS.md): limb loss and part health
+- [KNOCKDOWN.md](docs/KNOCKDOWN.md): blasts, cars and ragdolls
+- [BUILDING.md](docs/BUILDING.md): placing cubes with bricks
+- [CRATERS.md](docs/CRATERS.md) and [SCORCH.md](docs/SCORCH.md): shells digging the ground, and the marks they leave
+- [DRONES.md](docs/DRONES.md): FPV and loitering drones
+- [BACKPACK.md](docs/BACKPACK.md): backpack mode
+- [VEHICLES-I.md](docs/VEHICLES-I.md): cars, seats, driving
+- [VEHICLES-II.md](docs/VEHICLES-II.md): the tank, its gunner seat and the shell, driver prediction and the helicopter
+- [VEHICLES-III.md](docs/VEHICLES-III.md): handling, tyre effects, crash damage and vehicle sound
+- [VEHICLES-IV.md](docs/VEHICLES-IV.md): the Fokker triplane
+- [VEHICLES-V.md](docs/VEHICLES-V.md): the field mortar
+- [VEHICLES-VI.md](docs/VEHICLES-VI.md): the Tesla Roadster
+- [VEHICLES-VII.md](docs/VEHICLES-VII.md): the hen
 
 ## Requirements
 
@@ -60,13 +79,13 @@ RAGNAROK_WORLD=client/public/dev/world.msgpack cargo run -p server
 cd client && VITE_WORLD_BASE=/dev/ npm run dev
 ```
 
-Open http://localhost:5173 in two windows. Click to capture the mouse. Controls: WASD to move, Shift to run, Space to jump, Esc to release the mouse. Walk up to a car and press E to get in (the first to board drives, the next ones ride along) and E again to get out. Driving: W/S gas and brake, A/D steer, Space handbrake. Two tanks are parked among the cars: the first in drives (A/D turns it on the spot), the second takes the gun. The gunner aims with the mouse and fires with a click or F. On foot you start with empty hands: walk up to an item on the ground (revolver, AK5, grenade, bandage) and press E to take it. 1-5 or the mouse wheel pick a hotbar slot, a click (or F) uses what is in hand, R reloads; Tab shows the scores. Slot 5 holds bricks: a click puts a cube where the crosshair is (a ghost shows where), holding it keeps building, and right mouse held with a click digs a placed cube out; build up a wall, over a roof or out from the ground as far as you like ([BUILDING.md](BUILDING.md)). It is a free-for-all: you die at zero health and respawn after three seconds. Grenades and tank shells also wreck vehicles. One helicopter is parked there too: its pilot leans with W/S, turns with A/D, climbs with Space and sinks with Shift, and one passenger takes the nose autocannon, aiming with the mouse and firing explosive rounds with a click or F. R swaps seats in vehicles, tank or helicopter. Two Fokker triplanes stand at the end of long straight roads: the pilot works the throttle with Space (more) and Shift (less, and the brake on the ground), steers with the mouse (the plane banks and turns towards where the view points, and a yellow cross shows where the nose is), and can take pitch and roll over by hand with W (nose down), S (nose up) and A/D while they are held; a click or F fires the two forward guns and C drops a bomb. The second aboard works the gun on the ring behind. One Tesla Roadster is parked with the cars: Shift fires its rear cold-gas thrusters for a huge shove, Space hops it straight up (hold Space in the air to hover, leaning with W/S/A/D), and C is its handbrake. The air tank shows bottom right and refills while it sits on its wheels.
+Open http://localhost:5173 in two windows. Click to capture the mouse. Controls: WASD to move, Shift to run, Space to jump, Esc to release the mouse. Walk up to a car and press E to get in (the first to board drives, the next ones ride along) and E again to get out. Driving: W/S gas and brake, A/D steer, Space handbrake. Two tanks are parked among the cars: the first in drives (A/D turns it on the spot), the second takes the gun. The gunner aims with the mouse and fires with a click or F. On foot you start with empty hands: walk up to an item on the ground (revolver, AK5, grenade, bandage) and press E to take it. 1-5 or the mouse wheel pick a hotbar slot, a click (or F) uses what is in hand, R reloads; Tab shows the scores. Slot 5 holds bricks: a click puts a cube where the crosshair is (a ghost shows where), holding it keeps building, and right mouse held with a click digs a placed cube out; build up a wall, over a roof or out from the ground as far as you like ([BUILDING.md](docs/BUILDING.md)). It is a free-for-all: you die at zero health and respawn after three seconds. Grenades and tank shells also wreck vehicles. One helicopter is parked there too: its pilot leans with W/S, turns with A/D, climbs with Space and sinks with Shift, and one passenger takes the nose autocannon, aiming with the mouse and firing explosive rounds with a click or F. R swaps seats in vehicles, tank or helicopter. Two Fokker triplanes stand at the end of long straight roads: the pilot works the throttle with Space (more) and Shift (less, and the brake on the ground), steers with the mouse (the plane banks and turns towards where the view points, and a yellow cross shows where the nose is), and can take pitch and roll over by hand with W (nose down), S (nose up) and A/D while they are held; a click or F fires the two forward guns and C drops a bomb. The second aboard works the gun on the ring behind. One Tesla Roadster is parked with the cars: Shift fires its rear cold-gas thrusters for a huge shove, Space hops it straight up (hold Space in the air to hover, leaning with W/S/A/D), and C is its handbrake. The air tank shows bottom right and refills while it sits on its wheels.
 
 The world is `client/public/world.msgpack` plus `client/public/tiles/`, git-ignored and generated by step 1 (`scripts/world.sh --synthetic` is the offline one, and the tests use the small committed `fixtures/world/`): the server reads all of it at start and the browser streams the tiles around the player. Restart the server after regenerating the world. The page warns if its world differs from the server's.
 
 **Player settings:** open `/settings.html` (or use the link on the click-to-play screen) to set your name, outfit colour and up to 5 spawn points on the world's map. You start at the first and spawn at the next one each time you die. Spots in water or inside a building are skipped. Settings are kept in the browser and sent when the game connects, so return to the game (or reload it) after changing them.
 
-**Map editor:** `cargo run -p editor`, then open `/editor.html` on the Vite dev server to paint which 256 m tiles of the map make up a world, see which of them are cached, and keep several worlds to switch between (see `EDITOR.md` and `WORLD.md`).
+**Map editor:** `cargo run -p editor`, then open `/editor.html` on the Vite dev server to paint which 256 m tiles of the map make up a world, see which of them are cached, and keep several worlds to switch between (see [EDITOR.md](docs/EDITOR.md) and [WORLD.md](docs/WORLD.md)).
 
 ## Test
 

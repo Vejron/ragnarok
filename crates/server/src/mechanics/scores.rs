@@ -12,9 +12,9 @@ impl Mechanic for Scores {
         let died: Vec<Died> = world.happened::<Died>().copied().collect();
         for death in died {
             let Some(mut victim) = world.entities.get_mut::<Player>(death.victim) else { continue };
-            victim.deaths = victim.deaths.saturating_add(1);
+            victim.score.deaths = victim.score.deaths.saturating_add(1);
             if let Some(mut killer) = death.killer.and_then(|id| world.entities.get_mut::<Player>(id)) {
-                killer.kills = killer.kills.saturating_add(1);
+                killer.score.kills = killer.score.kills.saturating_add(1);
             }
         }
     }

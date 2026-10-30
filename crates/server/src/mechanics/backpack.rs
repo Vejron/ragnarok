@@ -83,7 +83,7 @@ pub fn radius_after(ticks: u32) -> f32 {
 
 /// The carrier's seconds with it, as sent.
 fn held(world: &World, carrier: Option<u32>) -> u16 {
-    carrier.and_then(|id| world.entities.get::<Player>(id)).map_or(0, |player| player.held)
+    carrier.and_then(|id| world.entities.get::<Player>(id)).map_or(0, |player| player.score.held)
 }
 
 /// Where the backpack is: its carrier's place (their vehicle's, seated), or where it lies.
@@ -198,7 +198,7 @@ impl Mechanic for Backpack {
                 }
                 if world.tick.wrapping_sub(since).is_multiple_of(TICK_RATE) && world.tick != since {
                     let mut player = world.entities.of_mut::<Player>(id);
-                    player.held = player.held.saturating_add(1);
+                    player.score.held = player.score.held.saturating_add(1);
                 }
             }
             (None, Some(id)) => {

@@ -1,5 +1,4 @@
-import { Group, Mesh } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Group, Mesh, Vector3 } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
 import { DAMAGE_STAGES } from '@/sim/consts'
 import type { TileData } from '@/world'
@@ -7,7 +6,18 @@ import { shellOf, type Shell } from '@/sim/carve'
 import type { Effects } from './effects'
 import { dustCloud, type Particles } from './particles'
 import { Fracture, shardGeometry } from './fracture'
-import { random } from './rubble'
+
+/** A small deterministic generator, so every client throws the same pieces the same way. */
+function random(seed: number) {
+  let a = seed >>> 0
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0
+    let t = a
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
 
 /** Most pieces thrown from a building at once, and how long they lie where they land, seconds. */
 const MAX_FALLING = 48
@@ -50,8 +60,8 @@ const LEAN_SPEED = 0.7
 /** A shard that broke away, on its way down or lying where it fell. */
 interface Falling {
   mesh: Mesh
-  velocity: THREE.Vector3
-  spin: THREE.Vector3
+  velocity: Vector3
+  spin: Vector3
   age: number
   resting: boolean
 }
@@ -77,7 +87,7 @@ interface Loaded {
 
 /** Dust to be raised where a shard just came away, drained by `update`. */
 interface Puff {
-  at: THREE.Vector3
+  at: Vector3
   size: number
 }
 
@@ -87,9 +97,18 @@ const hurtMaterial = toonMaterial({ vertexColors: true, side: 'double' })
 
 /** A wall triangle: the three corners and its unit normal (arbitrary side), metres. */
 interface Wall {
-  triangle: THREE.Triangle
-  normal: THREE.Vector3
+  corners: Corners
+  normal: Vector3
   area: number
+}
+
+type Corners = readonly [Vector3, Vector3, Vector3]
+
+/** The side `corners` wind towards: its unit normal and its area. */
+function faceOf([a, b, c]: Corners) {
+  const across = new Vector3().subVectors(c, b).cross(new Vector3().subVectors(a, b))
+  const twice = across.length()
+  return { normal: across.divideScalar(twice || 1), area: twice / 2 }
 }
 
 const cubeWalls = new WeakMap<Shell, Wall[]>()
@@ -105,12 +124,11 @@ function wallsOf(tile: TileData, index: number): Wall[] {
       const faces = shell.faces(new Set())
       walls = []
       for (let o = 0; o < faces.length; o += 9) {
-        const [a, b, c] = [0, 3, 6].map((k) => new THREE.Vector3(faces[o + k]! / 100, faces[o + k + 1]! / 100, faces[o + k + 2]! / 100)) as [THREE.Vector3, THREE.Vector3, THREE.Vector3]
-        const triangle = new THREE.Triangle(a, b, c)
-        const normal = triangle.getNormal(new THREE.Vector3())
+        const corners = [0, 3, 6].map((k) => new Vector3(faces[o + k]! / 100, faces[o + k + 1]! / 100, faces[o + k + 2]! / 100)) as unknown as Corners
+        const { normal, area } = faceOf(corners)
         // Sides only: the tops and bottoms of the cubes are roof and floor.
         if (Math.abs(normal.y) > 0.5) continue
-        walls.push({ triangle, normal, area: triangle.getArea() })
+        walls.push({ corners, normal, area })
       }
       cubeWalls.set(shell, walls)
     }
@@ -119,13 +137,13 @@ function wallsOf(tile: TileData, index: number): Wall[] {
   const { vertices, triangles } = tile.collision
   const walls: Wall[] = []
   for (let t = building.first; t < building.first + building.walls; t++) {
-    const [a, b, c] = [0, 1, 2].map((k) => new THREE.Vector3().fromArray(vertices, triangles[t * 3 + k]! * 3)) as [THREE.Vector3, THREE.Vector3, THREE.Vector3]
+    const [a, b, c] = [0, 1, 2].map((k) => new Vector3().fromArray(vertices, triangles[t * 3 + k]! * 3)) as [Vector3, Vector3, Vector3]
     // The collision mesh is wound inwards (the renderer reverses it), so the outward normal is the
     // one of the reversed triangle.
-    const triangle = new THREE.Triangle(a, c, b)
-    const area = triangle.getArea()
+    const corners: Corners = [a, c, b]
+    const { normal, area } = faceOf(corners)
     if (area < 0.01) continue
-    walls.push({ triangle, normal: triangle.getNormal(new THREE.Vector3()), area })
+    walls.push({ corners, normal, area })
   }
   return walls
 }
@@ -229,14 +247,6 @@ export class BuildingDamage {
     this.drawn.delete(key)
   }
 
-  /** Building `index` of tile `key` has collapsed: nothing is left to be hurt. */
-  fell(key: number, index: number) {
-    this.hurt.get(key)?.delete(index)
-    const drawn = this.drawn.get(key)?.get(index)
-    if (drawn) this.release(drawn)
-    this.drawn.get(key)?.delete(index)
-  }
-
   /** What building `index` of tile `key` shows, for tests. */
   shown(key: number, index: number): { cells: number } {
     return { cells: this.hurt.get(key)?.get(index)?.removed.size ?? 0 }
@@ -246,7 +256,7 @@ export class BuildingDamage {
    * Pieces fall and rest, and buildings that were just hit or lost their hold smoulder when `near` (the camera) is close enough to
    * see it, easing out over `SMOULDER_SECONDS`.
    */
-  update(dt: number, effects: Effects, near: THREE.Vector3, smoke?: Pick<Particles, 'spawn'>) {
+  update(dt: number, effects: Effects, near: Vector3, smoke?: Pick<Particles, 'spawn'>) {
     for (const puff of this.puffs.splice(0)) {
       if (smoke) dustCloud(smoke, puff.at, puff.size)
       else effects.dust(puff.at, puff.size)
@@ -279,11 +289,21 @@ export class BuildingDamage {
     }
   }
 
-  dispose() {
+  /** Whether no building has been hurt. */
+  get untouched() {
+    return this.hurt.size === 0
+  }
+
+  /** Forgets every building's hurt: they are whole again. */
+  reset() {
     for (const buildings of this.drawn.values()) for (const drawn of buildings.values()) this.release(drawn)
-    this.root.removeFromParent()
     this.hurt.clear()
     this.drawn.clear()
+  }
+
+  dispose() {
+    this.reset()
+    this.root.removeFromParent()
     this.loaded.clear()
   }
 
@@ -366,14 +386,14 @@ export class BuildingDamage {
       mesh.position.copy(chunk.pivot)
       mesh.castShadow = true
       drawn.group.add(mesh)
-      const velocity = new THREE.Vector3()
+      const velocity = new Vector3()
       if (!falls && point) {
         velocity.set(chunk.pivot.x - point[0], chunk.pivot.y - point[1], chunk.pivot.z - point[2])
         if (velocity.lengthSq() < 1e-4) velocity.set(0, 1, 0)
         velocity.normalize().multiplyScalar(THROW * (0.5 + this.rand())).y += 1 + this.rand() * 2
       }
       const tumble = falls ? 0.6 : 5
-      const spin = new THREE.Vector3((this.rand() - 0.5) * tumble, (this.rand() - 0.5) * tumble, (this.rand() - 0.5) * tumble)
+      const spin = new Vector3((this.rand() - 0.5) * tumble, (this.rand() - 0.5) * tumble, (this.rand() - 0.5) * tumble)
       // A piece that lost its hold tips over towards the gap, top first, and slides that way a little.
       const lean = falls ? leanOf(shell, group, removed) : null
       if (lean) {
@@ -423,7 +443,7 @@ export class BuildingDamage {
   }
 
   private pointOn(wall: Wall) {
-    return pointInTriangle(wall.triangle, this.rand(), this.rand())
+    return pointInTriangle(wall.corners, this.rand(), this.rand())
   }
 }
 
@@ -461,14 +481,14 @@ function leanOf(shell: NonNullable<Fracture['shell']>, group: readonly number[],
   return length < 1e-3 ? null : [sx / length, sz / length]
 }
 
-/** A point of `triangle`, uniform for uniform `u` and `v`. */
-function pointInTriangle(triangle: THREE.Triangle, u: number, v: number) {
+/** A point of the triangle `[a, b, c]`, uniform for uniform `u` and `v`. */
+function pointInTriangle([a, b, c]: Corners, u: number, v: number) {
   if (u + v > 1) [u, v] = [1 - u, 1 - v]
-  return triangle.a.clone().addScaledVector(triangle.b.clone().sub(triangle.a), u).addScaledVector(triangle.c.clone().sub(triangle.a), v)
+  return a.clone().addScaledVector(b.clone().sub(a), u).addScaledVector(c.clone().sub(a), v)
 }
 
 /** A puff of smoke rising from `at`: dark, thick and big while it is hot, thin and grey as it dies. */
-function smolder(smoke: Pick<Particles, 'spawn'>, at: THREE.Vector3, heat: number) {
+function smolder(smoke: Pick<Particles, 'spawn'>, at: Vector3, heat: number) {
   const tone = (grey: number) => (grey << 16) | (grey << 8) | grey
   const rand = (min: number, max: number) => min + Math.random() * (max - min)
   smoke.spawn({

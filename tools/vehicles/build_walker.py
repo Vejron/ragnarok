@@ -30,19 +30,18 @@ import bmesh
 import bpy
 from mathutils import Matrix, Vector
 
-argv = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-
-def arg(name, default=None):
-    return argv[argv.index(name) + 1] if name in argv else default
-
+import common
+from common import MATERIALS, arg, export, material
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = arg("--out", os.path.normpath(os.path.join(HERE, "../../client/public/models/walker.glb")))
 PREVIEW = arg("--preview")
 
 # --------------------------------------------------------------------------------------------------
-# Dimensions (metres). Keep in step with WALKER_* in crates/shared/src/consts.rs and render/walker.ts.
+# Dimensions (metres). Keep in step with WALKER_* in crates/shared/src/vehicles/ and render/walker.ts.
 # --------------------------------------------------------------------------------------------------
 HX, HY, HZ = 1.0, 1.8, 1.2  # half extents of the hull box: sideways, along the guns, up
 FOOT_HALF = 1.7
@@ -56,17 +55,7 @@ bpy.ops.wm.read_factory_settings(use_empty=True)
 scene = bpy.context.scene
 
 
-def material(name, rgb):
-    m = bpy.data.materials.new(name)
-    m.use_nodes = True
-    bsdf = m.node_tree.nodes["Principled BSDF"]
-    bsdf.inputs["Base Color"].default_value = (*rgb, 1.0)
-    bsdf.inputs["Roughness"].default_value = 1.0
-    m.diffuse_color = (*rgb, 1.0)
-    return m
-
-
-MATERIALS = [
+MATERIALS[:] = [
     material("paint", (0.55, 0.58, 0.58)),
     material("dark", (0.12, 0.13, 0.14)),
     material("metal", (0.26, 0.28, 0.3)),
@@ -76,58 +65,7 @@ MATERIALS = [
 PAINT, DARK, METAL, STEEL, LAMP = range(5)
 
 
-class Part:
-    """A mesh under construction: primitives are added in the part's own frame, each with a material."""
-
-    def __init__(self, name, location=(0.0, 0.0, 0.0), parent=None):
-        self.bm = bmesh.new()
-        self.name = name
-        self.location = Vector(location)
-        self.parent = parent
-
-    def _tag(self, verts, mat):
-        for face in {f for v in verts for f in v.link_faces}:
-            face.material_index = mat
-
-    def box(self, centre, size, mat, rx=0.0):
-        m = Matrix.Translation(centre) @ Matrix.Rotation(rx, 4, "X") @ Matrix.Diagonal((*size, 1.0))
-        self._tag(bmesh.ops.create_cube(self.bm, size=1.0, matrix=m)["verts"], mat)
-
-    def cylinder(self, centre, radius, depth, mat, axis="Z", segments=10, radius2=None, squash=(1.0, 1.0)):
-        """A cylinder or frustum. `squash` stretches the two cross-section axes (a slot or an ellipse)."""
-        turn = {"Z": Matrix.Identity(4), "X": Matrix.Rotation(math.pi / 2, 4, "Y"), "Y": Matrix.Rotation(-math.pi / 2, 4, "X")}[axis]
-        flat = Matrix.Diagonal((squash[0], squash[1], 1.0, 1.0))
-        m = Matrix.Translation(centre) @ turn @ flat
-        verts = bmesh.ops.create_cone(
-            self.bm,
-            cap_ends=True,
-            cap_tris=False,
-            segments=segments,
-            radius1=radius,
-            radius2=radius if radius2 is None else radius2,
-            depth=depth,
-            matrix=m,
-        )["verts"]
-        self._tag(verts, mat)
-
-    def dome(self, centre, scale, mat, floor, u=14, v=8):
-        """The part of an ellipsoid above the horizontal plane `floor` (relative to its centre)."""
-        m = Matrix.Translation(centre) @ Matrix.Diagonal((*scale, 1.0))
-        verts = bmesh.ops.create_uvsphere(self.bm, u_segments=u, v_segments=v, radius=1.0, matrix=m)["verts"]
-        below = [vert for vert in verts if vert.co.z < centre[2] + floor * scale[2] - 1e-4]
-        bmesh.ops.delete(self.bm, geom=below, context="VERTS")
-        self._tag([vert for vert in verts if vert.is_valid], mat)
-
-    def prism(self, profile, x0, x1, mat):
-        """Extrudes a closed (y, z) outline along X, from x0 to x1."""
-        a = [self.bm.verts.new((x0, y, z)) for y, z in profile]
-        b = [self.bm.verts.new((x1, y, z)) for y, z in profile]
-        faces = [self.bm.faces.new(a), self.bm.faces.new(b[::-1])]
-        for i in range(len(profile)):
-            j = (i + 1) % len(profile)
-            faces.append(self.bm.faces.new((a[i], a[j], b[j], b[i])))
-        for face in faces:
-            face.material_index = mat
+class Part(common.Part):
 
     def taper(self, centre, top, bottom, height, mat):
         """A box that narrows (or widens) from `top` to `bottom`, each an (x, y) size, `height` tall along Z."""
@@ -141,38 +79,6 @@ class Part:
             faces.append(self.bm.faces.new((t[i], b[i], b[j], t[j])))
         for face in faces:
             face.material_index = mat
-
-    def ring(self, outer, inner, x0, x1, mat):
-        """Extrudes the band between two (y, z) loops along X."""
-        n = len(outer)
-        verts = {
-            (name, x, i): self.bm.verts.new((x, *loop[i]))
-            for name, loop in (("o", outer), ("i", inner))
-            for x in (x0, x1)
-            for i in range(n)
-        }
-        for i in range(n):
-            j = (i + 1) % n
-            for x in (x0, x1):
-                self.bm.faces.new((verts["o", x, i], verts["o", x, j], verts["i", x, j], verts["i", x, i])).material_index = mat
-            self.bm.faces.new((verts["o", x0, i], verts["o", x0, j], verts["o", x1, j], verts["o", x1, i])).material_index = mat
-            self.bm.faces.new((verts["i", x0, i], verts["i", x0, j], verts["i", x1, j], verts["i", x1, i])).material_index = mat
-
-    def build(self):
-        bmesh.ops.remove_doubles(self.bm, verts=self.bm.verts, dist=1e-4)
-        bmesh.ops.recalc_face_normals(self.bm, faces=self.bm.faces)
-        mesh = bpy.data.meshes.new(self.name)
-        self.bm.to_mesh(mesh)
-        self.bm.free()
-        for m in MATERIALS:
-            mesh.materials.append(m)
-        obj = bpy.data.objects.new(self.name, mesh)
-        obj.location = self.location
-        scene.collection.objects.link(obj)
-        if self.parent:
-            obj.parent = self.parent
-        return obj
-
 
 
 # --------------------------------------------------------------------------------------------------
@@ -262,27 +168,7 @@ for side, label in ((-1, "L"), (1, "R")):
 # --------------------------------------------------------------------------------------------------
 # Export
 # --------------------------------------------------------------------------------------------------
-def export():
-    os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    bpy.ops.object.select_all(action="SELECT")
-    kwargs = dict(
-        filepath=OUT,
-        export_format="GLB",
-        use_selection=True,
-        export_yup=True,
-        export_apply=True,
-        export_animations=False,
-        export_skins=False,
-        export_cameras=False,
-        export_lights=False,
-        export_extras=False,
-        export_materials="EXPORT",
-    )
-    valid = bpy.ops.export_scene.gltf.get_rna_type().properties.keys()
-    bpy.ops.export_scene.gltf(**{k: v for k, v in kwargs.items() if k in valid})
-
-
-export()
+export(OUT)
 everything = [torso_obj, gun_obj, *leg_objects]
 print("tris:", sum(len(p.vertices) - 2 for o in everything for p in o.data.polygons))
 print("wrote", OUT)

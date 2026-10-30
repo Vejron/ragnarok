@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { GENERATED, RUST_SOURCE, generateConsts } from '../../scripts/gen-consts'
+import { GENERATED, generateConsts, rustSource } from '../../scripts/gen-consts'
 
 // consts.rs is generated into the client, so only the other shared files can drift. Every numeric
 // `pub const` in `crates/shared/src/*.rs` that the client also exports under the same
@@ -84,7 +84,7 @@ const close = (a: number, b: number) => Math.abs(a - b) <= 1e-5 * Math.max(1, Ma
 describe('shared constants match the server', () => {
   it('has an up to date consts.generated.ts', () => {
     // consts.rs is the source; run `npm run gen:consts` if this fails.
-    expect(readFileSync(GENERATED, 'utf8')).toBe(generateConsts(readFileSync(RUST_SOURCE, 'utf8')))
+    expect(readFileSync(GENERATED, 'utf8')).toBe(generateConsts(rustSource()))
   })
 
   const rust = readRustConsts()

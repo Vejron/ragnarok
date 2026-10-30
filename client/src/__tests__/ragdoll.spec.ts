@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import * as THREE from 'three'
+import { Vector3 } from '@ragnarok/engine'
 import { Character, Crowd, parseCharacter } from '@/render/character'
 import { Ragdolls, type Knockable, type RagdollBody, type RagdollPhysics } from '@/sim/ragdoll'
 import { STANDING_Y } from '@/sim/consts'
@@ -92,7 +92,7 @@ describe('A ragdolled soldier', () => {
     const motor = await flatMotor()
     const person = new Character(c, 1)
     const ragdolls = new Ragdolls(motor)
-    const hips = () => (person as unknown as { bones: Map<string, import('@ragnarok/engine').Node> }).bones.get('hips')!.getWorldPosition(new THREE.Vector3())
+    const hips = () => (person as unknown as { bones: Map<string, import('@ragnarok/engine').Node> }).bones.get('hips')!.getWorldPosition(new Vector3())
     let at: [number, number, number] = [0, STANDING_Y, 0]
     const frame = (down: boolean) => {
       person.update(at, 0, 0, 0, true, 1 / 60)

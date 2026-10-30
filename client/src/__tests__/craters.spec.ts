@@ -117,6 +117,31 @@ describe('craters', () => {
     }
   })
 
+  it('are not dug a second time when the session that told of them comes back', () => {
+    const [x, z] = [-50, 20]
+    const { view, tiles } = city()
+    const detach = [...tiles].map(([ref, tile]) => view.attachTile(ref, tile))
+    const whole = view.terrain!.heightAt(x, z)
+    view.cratered([crater(x, z)], true)
+    const dug = view.terrain!.heightAt(x, z)
+    const sent = dugOf(view, tiles)
+    expect(view.pristine).toBe(false)
+
+    // A reconnect to the same server: its catch-up is all there is, and it has this crater in it.
+    detach.forEach((undo) => undo())
+    view.reset()
+    expect(view.pristine).toBe(true)
+    const again = [...tiles].map(([ref, tile]) => view.attachTile(ref, tile))
+    view.dug(sent)
+    expect(view.terrain!.heightAt(x, z)).toBe(dug)
+
+    // A server that started over has nothing to say about the ground: it is as the files have it.
+    again.forEach((undo) => undo())
+    view.reset()
+    for (const [ref, tile] of tiles) view.attachTile(ref, tile)
+    expect(view.terrain!.heightAt(x, z)).toBe(whole)
+  })
+
   it('redraw the terrain mesh of a tile they reach', () => {
     const { world, view, tiles } = city()
     for (const [ref, tile] of tiles) view.attachTile(ref, tile)

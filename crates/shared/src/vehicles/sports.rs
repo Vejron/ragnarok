@@ -2,6 +2,20 @@
 
 use super::*;
 
+/// The sports car (`KIND_SPORTS`): a low two-seater with small wheels and a big engine. Quick in a
+/// straight line, with the chassis only about 12 cm off the ground.
+pub const SPORTS_SEATS: usize = 2;
+pub const SPORTS_HALF_EXTENTS: [f32; 3] = [0.95, 0.3, 2.2];
+pub const SPORTS_WHEEL_RADIUS: f32 = 0.32;
+pub const SPORTS_TRACK_HALF: f32 = 0.82;
+pub const SPORTS_AXLE_Z: f32 = 1.45;
+pub const SPORTS_HARD_POINT_Y: f32 = 0.05;
+pub const SPORTS_SUSPENSION_REST: f32 = 0.22;
+pub const SPORTS_RIDE_HEIGHT: f32 = 0.397;
+pub const SPORTS_MAX_STEER: f32 = 0.4;
+pub const SPORTS_MAX_SPEED: f32 = 50.0;
+pub const SPORTS_SEAT_HEADS: [[f32; 3]; 2] = [[-0.35, 0.4, 0.1], [0.35, 0.4, 0.1]];
+
 /// The engine up front and the fuel tank behind the seats; the crew are in the open.
 const ARMOR: Armor = Armor {
     plates: SHEET.plates,

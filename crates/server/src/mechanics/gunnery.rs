@@ -1,3 +1,4 @@
+use shared::vec3;
 use super::Mechanic;
 use shared::armor::Part;
 use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
@@ -119,7 +120,7 @@ fn work(world: &mut World, vid: u32, def: &MountDef, mut mount: Mount, pose: &Ca
 fn refill(world: &World, mount: &mut Mount, ammo: Ammo, pose: &CarPose) {
     match ammo.refill {
         Refill::Parked(ticks) => {
-            let speed = pose.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
+            let speed = vec3::length(pose.velocity);
             let parked = speed < 0.5 && height(world, pose) < 2.0;
             mount.refill = if parked { mount.refill + 1 } else { 0 };
             if mount.refill >= ticks {
@@ -223,11 +224,11 @@ fn shoot(world: &mut World, vid: u32, def: &MountDef, mount: &Mount, occupant: u
         Fire::Rocket { speed, ttl } => {
             // It flies where the barrel points, not where the vehicle is drifting: only the vehicle's
             // speed along it is carried over, so a sideways slide does not bend the rocket's heading.
-            let along: f32 = (0..3).map(|i| pose.velocity[i] * dir[i]).sum::<f32>().max(0.0);
-            world.launch(Flying { kind: PROJECTILE_ROCKET, owner: occupant, source: vid, position: origin, velocity: dir.map(|d| d * (speed + along)), ttl, item: 0, back: 0, flown: 0.0 });
+            let along: f32 = vec3::dot(pose.velocity, dir).max(0.0);
+            world.launch(Flying::new(PROJECTILE_ROCKET, occupant, origin, dir.map(|d| d * (speed + along)), ttl).aboard(vid));
         }
         Fire::Hitscan { length, damage, vehicle, plane, weapon, range, pen } => {
-            let muzzle = std::array::from_fn(|i| origin[i] + dir[i] * length);
+            let muzzle = vec3::along(origin, dir, length);
             let aimed = scatter(world, dir, def.spread);
             let round = Round { damage, vehicle, plane, weapon, range, falloff: Falloff::NONE, pen };
             machine_gun(world, occupant, vid, muzzle, aimed, &round);
@@ -235,7 +236,7 @@ fn shoot(world: &mut World, vid: u32, def: &MountDef, mount: &Mount, occupant: u
         Fire::Drop { kind, toss, ttl } => {
             let toss = pose.world_dir(toss);
             let velocity = std::array::from_fn(|i| pose.velocity[i] + toss[i]);
-            world.launch(Flying { kind, owner: occupant, source: vid, position: origin, velocity, ttl, item: 0, back: 0, flown: 0.0 });
+            world.launch(Flying::new(kind, occupant, origin, velocity, ttl).aboard(vid));
         }
     }
     dir
@@ -249,10 +250,10 @@ fn fire(world: &mut World, kind: u8, vid: u32, origin: [f32; 3], dir: [f32; 3], 
     make_noise(world, origin, Some(gunner), HEAR_BLAST);
     // A barrel poking into a wall bursts the shell there, instead of starting it on the far side.
     if let Some(t) = world.physics.cast_ray(origin, dir, length, vid) {
-        projectiles::burst_at(world, kind, 0, gunner, std::array::from_fn(|i| origin[i] + dir[i] * t), dir);
+        projectiles::burst_at(world, kind, 0, gunner, vec3::along(origin, dir, t), dir);
         return;
     }
-    world.launch(Flying { kind, owner: gunner, source: vid, position: std::array::from_fn(|i| origin[i] + dir[i] * length), velocity: dir.map(|v| v * speed), ttl, item: 0, back: 0, flown: 0.0 });
+    world.launch(Flying::new(kind, gunner, vec3::along(origin, dir, length), dir.map(|v| v * speed), ttl).aboard(vid));
 }
 
 /// One machine gun `round` for `shooter` from vehicle `vid`, out of `muzzle` along `dir`. Every round

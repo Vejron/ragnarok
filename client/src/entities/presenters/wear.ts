@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import { Vector3 } from '@ragnarok/engine'
 import { DAMAGE_TURRET, TURRET_GONE } from '@/net/codec'
 import { vehicleDef } from '@/sim/vehicles'
 import { CarModel } from '@/render/car'
@@ -8,7 +8,7 @@ import type { Entity } from '../units'
 import type { VehicleWorld, Vehicles } from './vehicles'
 
 /** A vehicle with no motion on record. */
-const STILL = new THREE.Vector3()
+const STILL = new Vector3()
 
 /**
  * What a vehicle's hurts look like (`damage` and `health`): a car's dents, cracks and parts coming off,
@@ -48,6 +48,6 @@ export class Wear implements Presenter<Frame> {
     tank.setTurret(false)
     if (!copy) return
     const spread = () => (Math.random() - 0.5) * 8
-    this.world.debris.throw(copy, new THREE.Vector3(spread(), 9 + Math.random() * 3, spread()), new THREE.Vector3(spread() / 2, spread() / 3, spread() / 2), 0.5, 25)
+    this.world.debris.throw(copy, new Vector3(spread(), 9 + Math.random() * 3, spread()), new Vector3(spread() / 2, spread() / 3, spread() / 2), 0.5, 25)
   }
 }

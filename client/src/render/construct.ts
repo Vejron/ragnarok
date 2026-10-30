@@ -1,5 +1,4 @@
-import { Group, Material, Mesh, boxGeometry } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Group, Material, Mesh, boxGeometry, Color } from '@ragnarok/engine'
 import { CELL, keyedFaces } from '@/sim/carve'
 import { CHUNK, MATERIALS, MATERIAL_BRICK, cubeCentre, type Construct, type Cube, type Pos } from '@/sim/construct'
 import { PLAYER_COLORS } from '@/profile'
@@ -50,7 +49,7 @@ const keyOf = (cube: Cube, wear: number) => (cube.colour & 255) | ((cube.materia
 /** The colour of cubes of `key`: the builder's outfit colour, as its material looks, darkened by wear. */
 function tint(key: number) {
   const look = LOOKS[(key >> 8) & 255] ?? LOOKS[MATERIAL_BRICK]!
-  const c = new THREE.Color(PLAYER_COLORS[(key & 255) % PLAYER_COLORS.length]!.hex).lerp(new THREE.Color(look.mix), look.amount)
+  const c = Color.hex(PLAYER_COLORS[(key & 255) % PLAYER_COLORS.length]!.hex).lerp(Color.hex(look.mix), look.amount)
   return c.multiplyScalar(1 - WEAR_DARKEN * ((key >> 16) & 255))
 }
 
@@ -59,7 +58,7 @@ function soup(origin: readonly number[], dims: readonly number[], keys: Int32Arr
   const faces = keyedFaces(origin, dims, keys)
   const positions: number[] = []
   const colors: number[] = []
-  const colours = new Map<number, THREE.Color>()
+  const colours = new Map<number, Color>()
   for (let t = 0; t < faces.length; t += 10) {
     const key = faces[t + 9]!
     if (key >= BORDER) continue

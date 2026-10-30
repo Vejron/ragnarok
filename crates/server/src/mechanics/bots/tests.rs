@@ -105,13 +105,13 @@ fn it_makes_up_a_route_near_home_when_given_none() {
 
 /// Takes every item off player `id`.
 fn disarm(game: &mut Game, id: u32) {
-    game.world.entities.get_mut::<Player>(id).unwrap().hotbar = Default::default();
+    game.world.entities.get_mut::<Player>(id).unwrap().hands.hotbar = Default::default();
 }
 
 /// A bot guarding `[0, 0]`, facing -Z (yaw 0), as good a shot as `skill`.
 fn guard(game: &mut Game, skill: f32) -> u32 {
     let bot = game.add_bot([0.0, 0.0], TEAM_BOTS, vec![[0.0, 0.0]]).unwrap();
-    game.world.entities.get_mut::<Bot>(bot).unwrap().skill = skill;
+    game.world.entities.get_mut::<Bot>(bot).unwrap().aim.skill = skill;
     bot
 }
 
@@ -129,7 +129,7 @@ fn an_unarmed_bot_spots_someone_in_front_and_runs_at_them() {
     put(&mut game, human, [0.0, -30.0]);
     run(&mut game, 0.5);
     assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Pursue);
-    assert_eq!(game.world.entities.of::<Bot>(bot).target, Some(human));
+    assert_eq!(game.world.entities.of::<Bot>(bot).sight.target, Some(human));
     run(&mut game, 5.0);
     let gap = distance_2d(feet(&game, bot), feet(&game, human));
     assert!(gap < CLOSE_IN + 0.5, "closed in to {gap} m");
@@ -146,7 +146,7 @@ fn a_calm_bot_does_not_see_behind_it_or_through_walls() {
     put(&mut game, walled, [30.0, 0.0]);
     game.world.entities.get_mut::<Bot>(bot).unwrap().yaw = -PI / 2.0; // Facing +X, at the wall.
     run(&mut game, 1.0);
-    assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Patrol, "saw {:?}", game.world.entities.of::<Bot>(bot).target);
+    assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Patrol, "saw {:?}", game.world.entities.of::<Bot>(bot).sight.target);
 }
 
 #[test]
@@ -192,7 +192,7 @@ fn a_bot_on_another_team_is_fair_game() {
     let red = game.add_bot([0.0, 0.0], TEAM_BOTS, vec![[0.0, 0.0]]).unwrap();
     let blue = game.add_bot([0.0, -20.0], TEAM_BOTS + 1, vec![[0.0, -20.0]]).unwrap();
     run(&mut game, 0.5);
-    assert_eq!(game.world.entities.of::<Bot>(red).target, Some(blue));
+    assert_eq!(game.world.entities.of::<Bot>(red).sight.target, Some(blue));
 }
 
 #[test]
@@ -219,8 +219,8 @@ fn it_shoots_someone_it_sees_dead() {
     let human = join(&mut game);
     put(&mut game, human, [0.0, -25.0]);
     run(&mut game, 6.0);
-    assert!(game.world.entities.of::<Player>(human).deaths >= 1, "still on {} hp", game.world.entities.of::<crate::entities::Health>(human).hp);
-    assert_eq!(game.world.entities.of::<Player>(bot).kills, game.world.entities.of::<Player>(human).deaths);
+    assert!(game.world.entities.of::<Player>(human).score.deaths >= 1, "still on {} hp", game.world.entities.of::<crate::entities::Health>(human).hp);
+    assert_eq!(game.world.entities.of::<Player>(bot).score.kills, game.world.entities.of::<Player>(human).score.deaths);
 }
 
 #[test]
@@ -289,7 +289,7 @@ fn it_takes_the_shotgun_up_close_and_a_rifle_further_out() {
     let mut game = game(false);
     let bot = guard(&mut game, 0.5);
     // The standard loadout has no shotgun: one is carried in the last slot.
-    game.world.entities.get_mut::<Player>(bot).unwrap().hotbar[4] = ItemSlot { item: shared::items::ITEM_SHOTGUN, count: 1, ammo: shared::items::def(shared::items::ITEM_SHOTGUN).unwrap().mag };
+    game.world.entities.get_mut::<Player>(bot).unwrap().hands.hotbar[4] = ItemSlot { item: shared::items::ITEM_SHOTGUN, count: 1, ammo: shared::items::def(shared::items::ITEM_SHOTGUN).unwrap().mag };
     let human = join(&mut game);
     put(&mut game, human, [0.0, -6.0]);
     run(&mut game, 0.5);
@@ -320,16 +320,16 @@ fn it_reloads_when_empty_and_tops_up_between_fights() {
     let mut game = game(false);
     let bot = guard(&mut game, 0.5);
     game.step();
-    let slot = game.world.entities.of::<Player>(bot).selected;
+    let slot = game.world.entities.of::<Player>(bot).hands.selected;
     let mag = shared::items::def(game.world.entities.of::<Player>(bot).held().item).unwrap().mag;
-    game.world.entities.get_mut::<Player>(bot).unwrap().hotbar[slot].ammo = 3;
+    game.world.entities.get_mut::<Player>(bot).unwrap().hands.hotbar[slot].ammo = 3;
     run(&mut game, 4.0);
     assert_eq!(rounds_left(&game, bot), mag, "topped up with no one about");
     let human = join(&mut game);
     put(&mut game, human, [0.0, -25.0]);
-    game.world.entities.get_mut::<Player>(bot).unwrap().hotbar[slot].ammo = 0;
+    game.world.entities.get_mut::<Player>(bot).unwrap().hands.hotbar[slot].ammo = 0;
     run(&mut game, 0.5);
-    assert!(game.world.entities.of::<Player>(bot).reload_left > 0, "reloading in the middle of a fight");
+    assert!(game.world.entities.of::<Player>(bot).hands.reload_left > 0, "reloading in the middle of a fight");
 }
 
 #[test]
@@ -378,8 +378,8 @@ fn it_chases_round_a_wall_to_where_it_last_saw_someone() {
     let y = feet(&game, bot)[1];
     let mut mind = game.world.entities.get_mut::<Bot>(bot).unwrap();
     mind.mode = BotMode::Pursue;
-    mind.target = Some(human);
-    mind.last_seen = [14.0, y, 0.0];
+    mind.sight.target = Some(human);
+    mind.sight.last_seen = [14.0, y, 0.0];
     for _ in 0..(25 * TICK_RATE) {
         game.step();
         if game.world.entities.of::<Bot>(bot).mode != BotMode::Pursue {
@@ -403,7 +403,7 @@ fn a_calm_bot_shot_from_behind_turns_round_and_fights_back() {
     damage_entity(&mut game.world, bot, Harm::new(10, Some(human), 0));
     run(&mut game, 1.0);
     let mind = &game.world.entities.of::<Bot>(bot);
-    assert_eq!((mind.mode, mind.target, mind.sees), (BotMode::Pursue, Some(human), true));
+    assert_eq!((mind.mode, mind.sight.target, mind.sight.sees), (BotMode::Pursue, Some(human), true));
 }
 
 #[test]
@@ -416,7 +416,7 @@ fn it_goes_to_look_where_it_heard_a_gunshot_and_searches_there() {
     make_noise(&mut game.world, shot, None, HEAR_SHOT);
     game.step();
     assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Pursue);
-    assert_eq!(game.world.entities.of::<Bot>(bot).target, None, "it has seen no one");
+    assert_eq!(game.world.entities.of::<Bot>(bot).sight.target, None, "it has seen no one");
     for _ in 0..(25 * TICK_RATE) {
         game.step();
         if game.world.entities.of::<Bot>(bot).mode != BotMode::Pursue {
@@ -444,7 +444,7 @@ fn a_blast_carries_further_than_a_gunshot_and_its_own_shots_are_not_news() {
     );
     game.step();
     assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Pursue);
-    assert!(distance_2d(game.world.entities.of::<Bot>(bot).last_seen, far) < 0.01);
+    assert!(distance_2d(game.world.entities.of::<Bot>(bot).sight.last_seen, far) < 0.01);
 }
 
 #[test]
@@ -455,14 +455,14 @@ fn a_bot_in_a_fight_is_not_drawn_off_by_noises() {
     let human = join(&mut game);
     put(&mut game, human, [0.0, -20.0]);
     run(&mut game, 0.5);
-    assert!(game.world.entities.of::<Bot>(bot).sees);
+    assert!(game.world.entities.of::<Bot>(bot).sight.sees);
     for _ in 0..TICK_RATE {
         make_noise(&mut game.world, [0.0, sim::STANDING_Y, 30.0], None, HEAR_BLAST);
         game.step();
     }
     let mind = &game.world.entities.of::<Bot>(bot);
-    assert_eq!((mind.target, mind.sees), (Some(human), true));
-    assert!(distance_2d(mind.last_seen, feet(&game, human)) < 0.5);
+    assert_eq!((mind.sight.target, mind.sight.sees), (Some(human), true));
+    assert!(distance_2d(mind.sight.last_seen, feet(&game, human)) < 0.5);
 }
 
 #[test]
@@ -481,7 +481,7 @@ fn a_teammate_firing_behind_a_wall_brings_it_running() {
     }
     let mind = &game.world.entities.of::<Bot>(helper);
     assert_eq!(mind.mode, BotMode::Pursue, "heard nothing");
-    assert!(stood.iter().any(|&at| distance_2d(mind.last_seen, at) < 0.1), "went to look at {:?}, not where the fighter fired from", mind.last_seen);
+    assert!(stood.iter().any(|&at| distance_2d(mind.sight.last_seen, at) < 0.1), "went to look at {:?}, not where the fighter fired from", mind.sight.last_seen);
 }
 
 #[test]
@@ -489,12 +489,12 @@ fn a_bot_sent_far_from_home_fights_at_the_end_of_its_route() {
     let mut game = game(false);
     // Home at one side, the one waypoint 170 m off at the other: an attacker's route.
     let bot = game.add_bot([-90.0, 0.0], TEAM_BOTS, vec![[80.0, 0.0]]).unwrap();
-    game.world.entities.get_mut::<Bot>(bot).unwrap().skill = 1.0;
+    game.world.entities.get_mut::<Bot>(bot).unwrap().aim.skill = 1.0;
     put(&mut game, bot, [80.0, 0.0]);
     let human = join(&mut game);
     put(&mut game, human, [80.0, -25.0]);
     run(&mut game, 6.0);
-    assert!(game.world.entities.of::<Player>(human).deaths >= 1, "still on {} hp", game.world.entities.of::<crate::entities::Health>(human).hp);
+    assert!(game.world.entities.of::<Player>(human).score.deaths >= 1, "still on {} hp", game.world.entities.of::<crate::entities::Health>(human).hp);
 }
 
 #[test]

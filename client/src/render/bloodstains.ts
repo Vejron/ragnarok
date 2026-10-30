@@ -1,5 +1,4 @@
-import { Color, Geometry, Mesh, ShaderMaterial } from '@ragnarok/engine'
-import type * as THREE from 'three'
+import { Color, Geometry, Mesh, ShaderMaterial, type Vector3 } from '@ragnarok/engine'
 import { GROUND_LIGHT_WGSL } from './groundlight'
 
 /** Seconds a stain lies on the ground before it has faded away. */
@@ -84,7 +83,7 @@ interface Smear {
   /** Where its last piece ended, either side; none before its first piece. */
   left: Point | null
   right: Point | null
-  centre: THREE.Vector3
+  centre: Vector3
   along: number
   seed: number
 }
@@ -172,7 +171,7 @@ export class Bloodstains {
    * Smear `track` is being dragged over the ground at `centre` (on the ground), `width` metres across.
    * Joins on to the smear's last piece if it has one; it runs the way it was dragged.
    */
-  smear(track: string, centre: THREE.Vector3, width: number, alpha = 1) {
+  smear(track: string, centre: Vector3, width: number, alpha = 1) {
     const last = this.smears.get(track)
     if (!last) {
       this.smears.set(track, { left: null, right: null, centre: centre.clone(), along: 0, seed: Math.random() })
@@ -189,7 +188,7 @@ export class Bloodstains {
     // Across the way it moved.
     const sx = (-dz / step) * (width / 2)
     const sz = (dx / step) * (width / 2)
-    const end = (c: THREE.Vector3, sign: number) => [c.x + sx * sign, c.y + LIFT, c.z + sz * sign] as const
+    const end = (c: Vector3, sign: number) => [c.x + sx * sign, c.y + LIFT, c.z + sz * sign] as const
     const from = [last.left ?? end(last.centre, -1), last.right ?? end(last.centre, 1)]
     const to = [end(centre, -1), end(centre, 1)]
     const along = last.along + step

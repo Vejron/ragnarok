@@ -29,19 +29,18 @@ import bmesh
 import bpy
 from mathutils import Matrix, Vector
 
-argv = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-
-def arg(name, default=None):
-    return argv[argv.index(name) + 1] if name in argv else default
-
+import common
+from common import MATERIALS, about_x, about_y, about_z, arg, export
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = arg("--out", os.path.normpath(os.path.join(HERE, "../../client/public/models/heli.glb")))
 PREVIEW = arg("--preview")
 
 # --------------------------------------------------------------------------------------------------
-# Dimensions (metres). Keep in step with HELI_* in crates/shared/src/consts.rs.
+# Dimensions (metres). Keep in step with HELI_* in crates/shared/src/vehicles/.
 # --------------------------------------------------------------------------------------------------
 GUN_PIVOT = Vector((0.0, 2.0, -0.6))  # game [0, -0.6, -2.0]: +Z in the game is backwards
 GUN_LENGTH = 1.3  # pivot to muzzle
@@ -70,7 +69,7 @@ def material(name, rgb, alpha=1.0):
     return m
 
 
-MATERIALS = [
+MATERIALS[:] = [
     material("paint", (0.42, 0.48, 0.34)),
     material("dark", (0.1, 0.1, 0.1)),
     material("metal", (0.24, 0.26, 0.23)),
@@ -80,18 +79,7 @@ MATERIALS = [
 PAINT, DARK, METAL, STEEL, GLASS = range(5)
 
 
-class Part:
-    """A mesh under construction: primitives are added in the part's own frame, each with a material."""
-
-    def __init__(self, name, location=(0.0, 0.0, 0.0), parent=None):
-        self.bm = bmesh.new()
-        self.name = name
-        self.location = Vector(location)
-        self.parent = parent
-
-    def _tag(self, verts, mat):
-        for face in {f for v in verts for f in v.link_faces}:
-            face.material_index = mat
+class Part(common.Part):
 
     def box(self, centre, size, mat, rx=0.0, rot=None):
         """A box. `rot` is a 4x4 rotation about its own centre; `rx` is the shorthand for one about X."""
@@ -123,65 +111,6 @@ class Part:
         below = [vert for vert in verts if vert.co.z < centre[2] + floor * scale[2] - 1e-4]
         bmesh.ops.delete(self.bm, geom=below, context="VERTS")
         self._tag([vert for vert in verts if vert.is_valid], mat)
-
-    def prism(self, profile, x0, x1, mat):
-        """Extrudes a closed (y, z) outline along X, from x0 to x1."""
-        a = [self.bm.verts.new((x0, y, z)) for y, z in profile]
-        b = [self.bm.verts.new((x1, y, z)) for y, z in profile]
-        faces = [self.bm.faces.new(a), self.bm.faces.new(b[::-1])]
-        for i in range(len(profile)):
-            j = (i + 1) % len(profile)
-            faces.append(self.bm.faces.new((a[i], a[j], b[j], b[i])))
-        for face in faces:
-            face.material_index = mat
-
-    def loft(self, stations, mat, segments=12, power=2.0):
-        """A body along Y through elliptical cross-sections `(y, centre_x, centre_z, radius_x, radius_z)`.
-        `power` squares them off: 2 is an ellipse, higher is boxier."""
-        rings = []
-        for y, cx, cz, rx, rz in stations:
-            ring = []
-            for k in range(segments):
-                a = 2 * math.pi * k / segments
-                c, s = math.cos(a), math.sin(a)
-                x = rx * math.copysign(abs(c) ** (2 / power), c)
-                z = rz * math.copysign(abs(s) ** (2 / power), s)
-                ring.append(self.bm.verts.new((cx + x, y, cz + z)))
-            rings.append(ring)
-        faces = [self.bm.faces.new(rings[0]), self.bm.faces.new(rings[-1][::-1])]
-        for a, b in zip(rings, rings[1:]):
-            for i in range(segments):
-                j = (i + 1) % segments
-                faces.append(self.bm.faces.new((a[i], a[j], b[j], b[i])))
-        for face in faces:
-            face.material_index = mat
-
-    def build(self):
-        bmesh.ops.remove_doubles(self.bm, verts=self.bm.verts, dist=1e-4)
-        bmesh.ops.recalc_face_normals(self.bm, faces=self.bm.faces)
-        mesh = bpy.data.meshes.new(self.name)
-        self.bm.to_mesh(mesh)
-        self.bm.free()
-        for m in MATERIALS:
-            mesh.materials.append(m)
-        obj = bpy.data.objects.new(self.name, mesh)
-        obj.location = self.location
-        scene.collection.objects.link(obj)
-        if self.parent:
-            obj.parent = self.parent
-        return obj
-
-
-def about_z(angle):
-    return Matrix.Rotation(angle, 4, "Z")
-
-
-def about_x(angle):
-    return Matrix.Rotation(angle, 4, "X")
-
-
-def about_y(angle):
-    return Matrix.Rotation(angle, 4, "Y")
 
 
 # --------------------------------------------------------------------------------------------------
@@ -341,27 +270,7 @@ gun_obj = gun.build()
 # --------------------------------------------------------------------------------------------------
 # Export
 # --------------------------------------------------------------------------------------------------
-def export():
-    os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    bpy.ops.object.select_all(action="SELECT")
-    kwargs = dict(
-        filepath=OUT,
-        export_format="GLB",
-        use_selection=True,
-        export_yup=True,
-        export_apply=True,
-        export_animations=False,
-        export_skins=False,
-        export_cameras=False,
-        export_lights=False,
-        export_extras=False,
-        export_materials="EXPORT",
-    )
-    valid = bpy.ops.export_scene.gltf.get_rna_type().properties.keys()
-    bpy.ops.export_scene.gltf(**{k: v for k, v in kwargs.items() if k in valid})
-
-
-export()
+export(OUT)
 everything = [hull_obj, gear_obj, rotor_obj, tail_rotor_obj, turret_obj, gun_obj]
 print("tris:", sum(len(p.vertices) - 2 for o in everything for p in o.data.polygons))
 print("wrote", OUT)

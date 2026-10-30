@@ -1,5 +1,5 @@
-import { Geometry, Group, Material, Node, Skeleton, SkinnedMesh, mat4 } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Geometry, Group, Material, Node, Skeleton, SkinnedMesh, mat4, Vector3 } from '@ragnarok/engine'
+import { Box } from './helpers'
 import { describe, expect, it } from 'vitest'
 import { limbOf, poseLimb, splitLimbs } from '@/render/gibs'
 
@@ -46,9 +46,9 @@ describe('gibs', () => {
     for (const limb of limbs) {
       // Centred: the middle of its box is the origin.
       const p = limb.geometry.positions
-      const box = new THREE.Box3()
-      for (let i = 0; i < p.length; i += 3) box.expandByPoint(new THREE.Vector3(p[i], p[i + 1], p[i + 2]))
-      expect(box.getCenter(new THREE.Vector3()).length()).toBeLessThan(1e-6)
+      const box = new Box()
+      for (let i = 0; i < p.length; i += 3) box.expandByPoint(new Vector3(p[i], p[i + 1], p[i + 2]))
+      expect(box.getCenter(new Vector3()).length()).toBeLessThan(1e-6)
     }
   })
 

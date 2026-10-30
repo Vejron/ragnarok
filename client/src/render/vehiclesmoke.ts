@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import { Quaternion, Vector3 } from '@ragnarok/engine'
 import { kindView } from '@/kinds'
 import type { FxWorld } from './tyres'
 
@@ -6,7 +6,7 @@ import type { FxWorld } from './tyres'
 const RANGE = 140
 const HALF_RANGE = 70
 /** A steady breeze that every plume leans with, m/s. */
-const WIND = new THREE.Vector3(1.1, 0, 0.5)
+const WIND = new Vector3(1.1, 0, 0.5)
 
 const rand = (low: number, high: number) => low + Math.random() * (high - low)
 const pick = <T>(items: readonly T[]) => items[Math.floor(Math.random() * items.length)]!
@@ -33,8 +33,8 @@ const EMBERS = [10, 110] as const
 const FLAMES = [9, 18] as const
 
 /** The engine bay of `kind` posed at `position` and `rotation`, as an outlet: for a vehicle with no hole to burn from. */
-export function bayOutlet(kind: number, position: readonly [number, number, number], rotation: THREE.Quaternion): Outlet {
-  const bay = new THREE.Vector3(...kindView(kind).fx.bay).applyQuaternion(rotation).add(new THREE.Vector3(...position))
+export function bayOutlet(kind: number, position: readonly [number, number, number], rotation: Quaternion): Outlet {
+  const bay = new Vector3(...kindView(kind).fx.bay).applyQuaternion(rotation).add(new Vector3(...position))
   return { x: bay.x, y: bay.y, z: bay.z, out: { x: 0, y: 1, z: 0 }, age: Infinity }
 }
 
@@ -52,7 +52,7 @@ const due = (rate: number, dt: number) => Math.floor(rate * dt + Math.random())
 export function damageSmoke(
   world: FxWorld,
   outlets: readonly Outlet[],
-  velocity: THREE.Vector3,
+  velocity: Vector3,
   severity: number,
   wreck: boolean,
   dt: number,

@@ -1,5 +1,4 @@
-import { Geometry } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Geometry, Color, Vector3 } from '@ragnarok/engine'
 import type { TileData } from '@/world'
 import { CELL_HP, shellOf, type Shell } from '@/sim/carve'
 import { voxelBrick, voxelFaces, type Soup } from './voxels'
@@ -24,7 +23,7 @@ export interface Fractured {
 }
 
 /** `color` scaled by `f`, as `0xrrggbb`. */
-function pack(color: THREE.Color, f: number): number {
+function pack(color: Color, f: number): number {
   const c = (v: number) => Math.max(0, Math.min(255, Math.round(v * f * 255)))
   return (c(color.r) << 16) | (c(color.g) << 8) | c(color.b)
 }
@@ -42,17 +41,17 @@ function arrays(soup: Soup): Fractured {
 export class Fracture {
   /** The building's cells, the same as the server cuts them, or null when it has no walls. */
   readonly shell: Shell | null
-  private readonly wallColor: THREE.Color
-  private readonly roofColor: THREE.Color
+  private readonly wallColor: Color
+  private readonly roofColor: Color
 
   constructor(tile: TileData, index: number, salt: number) {
     const colors = buildingColors(tile, index, salt)
-    this.wallColor = new THREE.Color(colors.wall)
-    this.roofColor = new THREE.Color(colors.roof)
+    this.wallColor = Color.hex(colors.wall)
+    this.roofColor = Color.hex(colors.roof)
     this.shell = shellOf(tile, index)
   }
 
-  private colorOf(id: number): THREE.Color {
+  private colorOf(id: number): Color {
     return this.shell?.isRoof(id) ? this.roofColor : this.wallColor
   }
 
@@ -186,10 +185,10 @@ export class Fracture {
    * The cells in `cells` on their own, to be thrown: triangle soup around their centre, which is
    * `pivot`. Null when those cells hold nothing.
    */
-  chunk(cells: ReadonlySet<number>): (Fractured & { pivot: THREE.Vector3 }) | null {
+  chunk(cells: ReadonlySet<number>): (Fractured & { pivot: Vector3 }) | null {
     const shell = this.shell
     if (!shell) return null
-    const pivot = new THREE.Vector3()
+    const pivot = new Vector3()
     let n = 0
     for (const id of cells) {
       if (!shell.isSolid(id)) continue

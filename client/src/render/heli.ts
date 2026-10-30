@@ -1,5 +1,4 @@
-import { Group, Mesh, type Material, type Node } from '@ragnarok/engine'
-import * as THREE from 'three'
+import { Group, Mesh, type Material, type Node, Matrix4, Vector3 } from '@ragnarok/engine'
 import { parseToonModel } from './models'
 import { toonMaterial } from './toon'
 import { HELI_GUN_LENGTH } from '@/sim/consts'
@@ -56,10 +55,10 @@ export class HeliModel implements VehicleModel {
   private firedAt = -Infinity
   /** Whoever sits at the gun, 0 for nobody. */
   gunner = 0
-  private readonly pivot = new THREE.Vector3()
-  private readonly aim = new THREE.Vector3()
-  private readonly matrix = new THREE.Matrix4()
-  private readonly beam = { at: new THREE.Vector3(), direction: new THREE.Vector3() }
+  private readonly pivot = new Vector3()
+  private readonly aim = new Vector3()
+  private readonly matrix = new Matrix4()
+  private readonly beam = { at: new Vector3(), direction: new Vector3() }
 
   constructor(id: number) {
     if (!asset) throw new Error('loadHeliModel() must finish before helicopters are created')
@@ -123,7 +122,7 @@ export class HeliModel implements VehicleModel {
    * The searchlight under the nose gun, which turns with it: from just past the muzzle (so it does not
    * light the gun), along the barrel, as of the last `update`. The vectors are reused by the next call.
    */
-  searchlight(): { at: THREE.Vector3; direction: THREE.Vector3 } {
+  searchlight(): { at: Vector3; direction: Vector3 } {
     this.root.updateMatrixWorld(true)
     this.gun.getWorldPosition(this.beam.at)
     this.beam.direction.set(0, 0, -1).transformDirection(this.matrix.fromArray(this.gun.matrixWorld))
