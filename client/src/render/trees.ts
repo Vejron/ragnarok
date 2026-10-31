@@ -12,6 +12,7 @@ import {
   TREE_SPRUCE,
   type Tree,
 } from '@/world'
+import { winter } from './season'
 
 /**
  * The tree archetypes. Each prototype is built in unit space (foot at the origin, `y` 0..1 over the
@@ -131,7 +132,29 @@ fn surface(s: Surface) -> vec4f {
   let hemi = mix(frame.hemiGround.rgb, frame.hemiSky.rgb, 0.5 * s.normal.y + 0.5);
   var bands = BANDS_AT;
   let lit = frame.sunColor.rgb * bands[band] + hemi + pointLight(s.world, s.normal);
-  return vec4f(s.color.rgb / PI * lit, s.color.a);
+  return vec4f(under(s.color.rgb, s) / PI * lit, s.color.a);
+}
+`
+
+/** Summer's colours: nothing lies on the leaves. */
+const SUMMER_WGSL = /* wgsl */ `
+fn under(color: vec3f, s: Surface) -> vec3f {
+  return color;
+}
+`
+
+/**
+ * Winter's: faded needles and leaves, and snow on what faces the sky. The noise, in world space so no
+ * two trees wear the same pattern, breaks the snow's edge into clumps, leaving crowns half covered.
+ */
+const WINTER_WGSL = /* wgsl */ `
+fn under(color: vec3f, s: Surface) -> vec3f {
+  let grey = dot(color, vec3f(0.3, 0.59, 0.11));
+  let faded = mix(color, vec3f(grey), 0.6) * 0.7;
+  let p = s.world * vec3f(2.3, 3.1, 2.3);
+  let clumps = sin(p.x + sin(p.y * 1.3)) * sin(p.z + sin(p.y * 0.9)) * 0.5 + sin(p.y * 2.1 + p.x * 1.7) * 0.2;
+  let cover = smoothstep(-0.12, 0.1, s.normal.y + clumps * 0.4);
+  return mix(faded, vec3f(0.94, 0.96, 0.99), cover);
 }
 `
 
@@ -143,7 +166,7 @@ function prototypes() {
     for (const [kind, parts] of Object.entries(PROTOTYPES)) {
       geometries.set(Number(kind), Geometry.merge(parts.map(partGeometry)))
     }
-    shared = { geometries, material: new ShaderMaterial({ wgsl: FOLIAGE_WGSL, vertexColors: true }) }
+    shared = { geometries, material: new ShaderMaterial({ wgsl: FOLIAGE_WGSL + (winter ? WINTER_WGSL : SUMMER_WGSL), vertexColors: true }) }
   }
   return shared
 }

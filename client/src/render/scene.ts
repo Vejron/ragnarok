@@ -2,8 +2,9 @@ import { Bloom, Color, Fog, Ink, PerspectiveCamera, Renderer, Scene as EngineSce
 import { GunSightView } from './gunsight'
 import { ContactShadows } from './contact'
 import { setWaterLight, setWaterPlane, setWaterReflection } from './water'
-import { CLASSIC, SOFT, loadLook, type Look, type Palette } from './look'
-import { createSky, skyAt } from './daynight'
+import { CLASSIC, SOFT, loadLook, wintry, type Look, type Palette } from './look'
+import { winter } from './season'
+import { createSky, nightAt, skyAt } from './daynight'
 import { clearArm, lookDir } from '../aimline'
 import { ON_FOOT_HEIGHT, ON_FOOT_SHOULDER } from '../sim/consts'
 
@@ -156,6 +157,11 @@ export class Scene {
     }
   }
 
+  /** How dark it is now for lamps (`nightAt`). */
+  get night() {
+    return nightAt(this.dayPhase)
+  }
+
   get look(): Readonly<Look> {
     return this.currentLook
   }
@@ -163,7 +169,8 @@ export class Scene {
   /** Switches the soft-lighting options; takes effect on the next frame. */
   setLook(look: Look) {
     this.currentLook = { ...look }
-    const palette = look.soft ? SOFT : CLASSIC
+    const base = look.soft ? SOFT : CLASSIC
+    const palette = winter ? wintry(base) : base
     this.palette = palette
     const scene = this.scene
     scene.sun.shadow.radius = palette.shadowRadius

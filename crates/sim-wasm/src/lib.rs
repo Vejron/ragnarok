@@ -10,7 +10,7 @@ use sim::{CarCondition, CarControls, CarMotion, Character, Obj, Physics, RAGDOLL
 use wasm_bindgen::prelude::*;
 
 /// How a character travels in a `Float64Array`: every `f32` and every id fits exactly.
-pub const CHARACTER_LEN: usize = 15;
+pub const CHARACTER_LEN: usize = 17;
 const X: usize = 0;
 const Y: usize = 1;
 const Z: usize = 2;
@@ -26,6 +26,8 @@ const SPENT: usize = 11;
 const WINDED: usize = 12;
 const LOST: usize = 13;
 const DOWN: usize = 14;
+const SKIS: usize = 15;
+const SKI_STRAIN: usize = 16;
 
 fn read(state: &[f64]) -> Character {
     Character {
@@ -41,6 +43,8 @@ fn read(state: &[f64]) -> Character {
         winded: state[WINDED] != 0.0,
         lost: state[LOST] as u8,
         down: state[DOWN] as u8,
+        skis: state[SKIS] != 0.0,
+        ski_strain: state[SKI_STRAIN] as u8,
     }
 }
 
@@ -61,6 +65,8 @@ fn write(character: &Character, state: &mut [f64]) {
     state[WINDED] = flag(character.winded);
     state[LOST] = character.lost.into();
     state[DOWN] = character.down.into();
+    state[SKIS] = flag(character.skis);
+    state[SKI_STRAIN] = character.ski_strain.into();
 }
 
 /// How car controls travel in a `Float32Array`: `[throttle, steer, handbrake, lift, powered, aimed,
@@ -447,7 +453,7 @@ mod tests {
 
     #[test]
     fn a_character_survives_the_trip_through_numbers() {
-        let character = Character { position: [1.5, -2.25, 1e-3], yaw: -3.0, vy: 6.5, grounded: true, knock: [0.1, -7.0], ride: 4_000_001, prone: false, chute: true, spent: 4321, winded: true, lost: 0b1010, down: 77 };
+        let character = Character { position: [1.5, -2.25, 1e-3], yaw: -3.0, vy: 6.5, grounded: true, knock: [0.1, -7.0], ride: 4_000_001, prone: false, chute: true, spent: 4321, winded: true, lost: 0b1010, down: 77, skis: true, ski_strain: 9 };
         let mut state = [0.0; CHARACTER_LEN];
         write(&character, &mut state);
         assert_eq!(read(&state), character);

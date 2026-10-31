@@ -32,6 +32,8 @@ export interface MaterialParams {
   normalMapTone?: boolean
   /** Marked by the scene's craters (`Scene.craters`): their slope, char and rims drawn on it. For the ground. */
   craters?: boolean
+  /** Snow lies on it: whatever faces up enough turns white, in the shader, so steep rock and walls stay bare. */
+  snow?: boolean
   ramp?: Ramp | null
   blend?: Blend
   side?: Side
@@ -61,6 +63,7 @@ export class Material {
   normalMap: Texture | null
   normalMapTone: boolean
   craters: boolean
+  snow: boolean
   ramp: Ramp | null
   blend: Blend
   side: Side
@@ -86,6 +89,7 @@ export class Material {
     this.normalMap = params.normalMap ?? null
     this.normalMapTone = params.normalMapTone ?? false
     this.craters = params.craters ?? false
+    this.snow = params.snow ?? false
     this.ramp = params.ramp ?? null
     this.blend = params.blend ?? 'opaque'
     this.side = params.side ?? 'front'
@@ -115,6 +119,7 @@ export class Material {
       normalMap: this.normalMap,
       normalMapTone: this.normalMapTone,
       craters: this.craters,
+      snow: this.snow,
       ramp: this.ramp,
       blend: this.blend,
       side: this.side,

@@ -14,7 +14,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 16;
+pub const WORLD_VERSION: u8 = 17;
+
+/// `Manifest::theme`: the world as it always was.
+pub const THEME_PLAIN: u8 = 0;
+/// `Manifest::theme`: snow on everything, lakes frozen, ski tracks where OSM has them.
+pub const THEME_WINTER: u8 = 1;
 
 /// Metres per degree of latitude; longitude is scaled by cos(latitude).
 pub const METRES_PER_DEG_LAT: f64 = 110_540.0;
@@ -127,6 +132,9 @@ pub struct Manifest {
     /// Distance between ground samples, centimetres. Zero when the world has no terrain and the
     /// ground is the plane y = 0. It divides `tile_size`.
     pub ground_cell: i32,
+    /// `THEME_*`: what the season is.
+    #[serde(default)]
+    pub theme: u8,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -182,6 +190,9 @@ pub struct Tile {
     /// Railway tracks, clipped to the tile. Drawn on the ground; nothing simulates them.
     #[serde(default)]
     pub rails: Vec<Rail>,
+    /// Groomed ski tracks, clipped to the tile. Skis run faster on them (`ski::SkiMap`).
+    #[serde(default)]
+    pub ski: Vec<SkiTrail>,
 }
 
 /// Units per unit of slope in `Tile::detail`: a slope of 2 (63°) is 127.
@@ -244,6 +255,12 @@ pub struct WorldFile {
     /// `assemble`; empty when no tile has water.
     #[serde(skip)]
     pub water: Vec<i32>,
+    /// `THEME_*`, from the manifest.
+    #[serde(skip)]
+    pub theme: u8,
+    /// Every ski track. Filled by `assemble`.
+    #[serde(skip)]
+    pub ski: Vec<SkiTrail>,
     /// `buildings[i]`'s identity. Filled by `assemble`; empty for a world built by hand.
     #[serde(skip)]
     pub building_ids: Vec<ObjId>,
@@ -466,6 +483,14 @@ pub struct Rail {
     pub points: Vec<[i32; 2]>,
 }
 
+/// A groomed ski track's centre line.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SkiTrail {
+    /// Groomed width, centimetres.
+    pub width: i32,
+    pub points: Vec<[i32; 2]>,
+}
+
 /// A track on its own ballast bed, with sleepers.
 pub const RAIL_TRAIN: u8 = 0;
 /// A track set flush into the street.
@@ -675,6 +700,7 @@ impl WorldFile {
             half_extent: manifest.half_extent,
             spawns: manifest.spawns.clone(),
             tile_size: manifest.tile_size,
+            theme: manifest.theme,
             ..Default::default()
         };
         let grid = manifest.grid() as usize;
@@ -698,6 +724,7 @@ impl WorldFile {
             };
         }
         for (col, row, tile) in tiles {
+            world.ski.extend(tile.ski.iter().cloned());
             if n > 0 && tile.ground.len() == (n * n) as usize {
                 let ground = &mut world.ground;
                 let (i0, j0) = (col as u32 * (n - 1), row as u32 * (n - 1));
@@ -824,6 +851,7 @@ mod tests {
             spawns: vec![[10, 20]],
             tiles: vec![TileRef { col: 1, row: 0, hash: 7 }],
             ground_cell: 5_000,
+            theme: THEME_WINTER,
         };
         assert_eq!(Manifest::decode(&manifest.encode()).unwrap(), manifest);
         let tile = Tile {
@@ -838,6 +866,7 @@ mod tests {
             bridges: vec![Bridge { first: 0, deck: 12, steel: 4 }],
             detail: vec![0, -3, 127, -127],
             rails: vec![Rail { gauge: 144, kind: RAIL_TRAIN, points: vec![[0, 0], [900, 50]] }],
+            ski: vec![SkiTrail { width: 400, points: vec![[0, 0], [900, 50]] }],
         };
         assert_eq!(Tile::decode(&tile.encode()).unwrap(), tile);
         assert_eq!(manifest.tiles[0].path(), "tiles/1_0.msgpack");

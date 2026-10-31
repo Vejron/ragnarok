@@ -53,6 +53,10 @@ pub fn starting_hotbar() -> [ItemSlot; HOTBAR_SLOTS] {
 #[derive(crate::entities::Component)]
 pub struct Player {
     pub character: Character,
+    /// The headlamp is on.
+    pub lamp: bool,
+    /// `BUTTON_LAMP` was down last tick: holding it switches the lamp once.
+    pub lamp_held: bool,
     /// While seated the soldier is hidden and rides with the vehicle; input drives the seat.
     pub seat: Option<Seat>,
     /// Ticks until a car can hit this player again.
@@ -257,6 +261,8 @@ impl Player {
             input: InputFrame::default(),
             inputs: JitterBuffer::default(),
             ack: 0,
+            lamp: false,
+            lamp_held: false,
             hands: Hands { hotbar: loadout, loadout, selected: 0, fire_cooldown: 0, reload_left: 0, channel_left: 0, trigger_held: false },
             score: Tally::default(),
             name,

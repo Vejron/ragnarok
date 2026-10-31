@@ -11,7 +11,7 @@ import type { PreparedTile, TileInput } from './tileprep'
 
 /** What the worker is asked. */
 export type TileRequest =
-  | { kind: 'init'; halfExtent: number; tileSize: number }
+  | { kind: 'init'; halfExtent: number; tileSize: number; winter: boolean }
   | { kind: 'prepare'; id: number; col: number; row: number; input: TileInput }
   | { kind: 'remesh'; id: number; col: number; row: number; level: number }
   | { kind: 'reground'; id: number; col: number; row: number; heights: Float32Array; level: number }
@@ -45,16 +45,16 @@ export class TileWorker {
   onShaded: (col: number, row: number, relief: Pixels) => void = () => {}
 
   /** Null where there are no workers or no `OffscreenCanvas` (tests), and the main thread prepares tiles instead. */
-  static create(halfExtent: number, tileSize: number): TileWorker | null {
+  static create(halfExtent: number, tileSize: number, winter: boolean): TileWorker | null {
     if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined') return null
-    return new TileWorker(halfExtent, tileSize)
+    return new TileWorker(halfExtent, tileSize, winter)
   }
 
-  private constructor(halfExtent: number, tileSize: number) {
+  private constructor(halfExtent: number, tileSize: number, winter: boolean) {
     this.worker = new Worker(new URL('./tile.worker.ts', import.meta.url), { type: 'module', name: 'tiles' })
     this.worker.onmessage = (event: MessageEvent<TileReply>) => this.receive(event.data)
     this.worker.onerror = (event) => this.fail(new Error(`tile worker: ${event.message}`))
-    this.post({ kind: 'init', halfExtent, tileSize })
+    this.post({ kind: 'init', halfExtent, tileSize, winter })
   }
 
   /** Prepares tile `(col, row)`. From now on the worker shades and drapes its neighbours with its ground, until `drop`. */

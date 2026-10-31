@@ -32,6 +32,8 @@ export interface HudStats {
   air: number | null
   /** On foot: stamina left, 0..1, and whether they are winded (running is walking, jumps are low); null elsewhere. */
   stamina: { left: number; winded: boolean } | null
+  /** On skis: their speed, km/h; null elsewhere. */
+  skiSpeed: number | null
   /**
    * Flying a drone: its battery, 0..1, and the link's strength, 1 at the pilot's side to 0 at the edge of its range;
    * for a loitering drone also which camera is watched (null for an FPV drone's one); null when not flying one.

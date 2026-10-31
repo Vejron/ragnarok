@@ -1,5 +1,5 @@
 import { wrapAngle } from '@/net/codec'
-import { BUTTON_ALT, BUTTON_AMMO, BUTTON_CHUTE, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_HITCH, BUTTON_JUMP, BUTTON_PRONE, BUTTON_RANGE_DOWN, BUTTON_RANGE_UP, BUTTON_RELOAD, BUTTON_RUN, BUTTON_SLIDE, BUTTON_USE } from './consts'
+import { BUTTON_ALT, BUTTON_AMMO, BUTTON_CHUTE, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_HITCH, BUTTON_JUMP, BUTTON_LAMP, BUTTON_PRONE, BUTTON_RANGE_DOWN, BUTTON_RANGE_UP, BUTTON_RELOAD, BUTTON_RUN, BUTTON_SLIDE, BUTTON_USE } from './consts'
 import { HOTBAR_SLOTS } from './items'
 
 /** Mouse-look sensitivity, radians per pixel. */
@@ -178,6 +178,7 @@ export class InputController {
       if (event.code === 'KeyE') this.latched |= BUTTON_USE
       if (event.code === 'KeyH') this.latched |= BUTTON_HITCH
       if (event.code === 'KeyG') this.latched |= BUTTON_CHUTE
+      if (event.code === 'KeyL') this.latched |= BUTTON_LAMP
       if (event.code === 'KeyR') this.latched |= BUTTON_RELOAD
       // Q loads a gun's other kind of round: a tank's high explosive, or back to armour-piercing.
       if (event.code === 'KeyQ') this.latched |= BUTTON_AMMO

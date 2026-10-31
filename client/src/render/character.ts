@@ -1,12 +1,14 @@
 import { Animator, Group, Mesh, SkinnedMesh, parseGlb, type AnimationClip, type Geometry, type Material, type Node, Matrix4, Quaternion, Vector3 } from '@ragnarok/engine'
 import { Canopy } from './canopy'
 import { toonMaterial } from './toon'
-import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, PRONE_CENTRE, RUN_SPEED, STAND_CENTRE, WALK_SPEED } from '@/sim/consts'
+import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, PRONE_CENTRE, RUN_SPEED, SKI_BOOST_TOP, STAND_CENTRE, WALK_SPEED } from '@/sim/consts'
 import { ITEM_AK5, ITEM_AT_RIFLE, ITEM_BANDAGE, ITEM_BRICKS, ITEM_CARL_GUSTAF, ITEM_FLARE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, itemDef, type ItemDef } from '@/sim/items'
 import { type Limb, poseLimb, splitLimbs } from './gibs'
 import { colorFor } from '@/profile'
 import { LIMB_ALL, LIMB_ARM_L, LIMB_ARM_R, LIMB_LEG_L, LIMB_LEG_R, PART_HEAD } from '@/net/codec'
 import { buildBackpack } from './backpack'
+import { Headlamp } from './headlamp'
+import { buildPole, buildSki } from './skigear'
 import { smoothstep } from '@/math'
 
 /** Gravity on a thrown body, m/s². */
@@ -72,6 +74,12 @@ const SPEED_OF: Record<string, number> = {
   run_back: 6.4,
   run_left: 5.8,
   run_right: 5.8,
+  // Ground covered by one cycle of the arms, not by the feet: a ski just slides.
+  ski_stride: 4.2,
+  ski_pole: 9,
+  ski_climb: 1.5,
+  ski_stride_hard: 3.4,
+  ski_pole_hard: 7,
   crouch_fwd: 1.8,
   crouch_back: 1.8,
   crouch_left: 1.5,
@@ -84,6 +92,29 @@ const SPEED_OF: Record<string, number> = {
   crawl_right: 0.7,
 }
 const LOCOMOTION = Object.keys(SPEED_OF)
+
+/** Speed the arms go from the diagonal stride to double poling, m/s. */
+const SKI_POLE_FROM = 5.5
+/** Slowing that begins to look like a snowplow, and that is one, m/s². */
+const SKI_PLOW_FROM = 1.2
+/** Rise over run from which it is a herringbone, how far each ski turns out, radians, and the speed its steps never pace slower than, m/s. */
+const HERRING_RISE = 0.16
+const HERRING_SPLAY = 0.52
+const HERRING_PACE = 1.1
+/** The speed the arms' tempo never drops under when poling hard, m/s. */
+const HARD_PACE = 6
+const SKI_PLOW_FULL = 2.4
+const SKI_SENSE_RATE = 5
+/** How far a pole's tip trails behind the hand, radians. */
+const POLE_TILT = 0.32
+/** How much further back they go in a tuck, and how far they splay out from the body, radians. */
+const POLE_TUCK = 1.05
+const POLE_SPLAY = 0.1
+/** How far the headlamp's beam is dipped below where the face looks: a rise over a run of 1. */
+const LAMP_DIP = 0.12
+const SKI_TILT = new Quaternion()
+const SKI_V = new Quaternion()
+const SKI_SPLAY = new Quaternion()
 
 /** Below this ground speed the character just stands; `FULL_STEP` is where the walk is fully in. */
 const STILL_SPEED = 0.3
@@ -417,6 +448,29 @@ export class Character {
   /** The backpack on its back (BACKPACK.md), made the first time it carries it. */
   private backpack: Group | null = null
   private carrying = false
+  /** The lamp on its head, made the first time it is lit. */
+  private headlamp: Headlamp | null = null
+  private lampOn = false
+  /** The head bone's turn from the model's, unanimated: undoing it lays the lamp along the face. */
+  private readonly headRest = new Quaternion()
+  private readonly beam = { at: new Vector3(), direction: new Vector3() }
+  /** Its skis and poles, made the first time it wears them. */
+  private gear: { skis: [Group, Group]; poles: [Group, Group] } | null = null
+  /** Wearing skis, and coasting with the weapon up (aim held) rather than poling. */
+  private onSkis = false
+  private skiAiming = false
+  /** Poling hard (run held), and how far the clips have gone over to it, 0 to 1. */
+  private skiHard = false
+  private poling = 0
+  private frameDt = 0
+  /** How far into a herringbone it is, 0 to 1: skis splayed, the body staying up over the hill. */
+  private herring = 0
+  /** How far the body has gone over from the walking clips to the skiing ones, 0 to 1. */
+  private ski = 0
+  /** Smoothed: how fast the ground rises under it along the way it goes (rise over run), and how fast it is slowing. */
+  private skiRise = 0
+  private skiBraking = 0
+  private skiLast: { y: number; speed: number } | null = null
   /** Freefalling with the chute shut, and hanging under it, 0..1; and seconds off the ground. */
   private fall = 0
   private hang = 0
@@ -469,6 +523,10 @@ export class Character {
     this.lowerLimbs = ['forearm_L', 'forearm_R', 'shin_L', 'shin_R'].map((name) => this.object.getObjectByName(name) ?? null)
     this.random = seeded(id + 1)
     this.head =this.object.getObjectByName('head') ?? null
+    if (this.head) {
+      this.object.updateWorldMatrix(true, true)
+      this.head.getWorldQuaternion(this.headRest).premultiply(this.object.getWorldQuaternion(new Quaternion()).invert())
+    }
     this.limbBones = LIMB_BONES.map((name) => this.object.getObjectByName(name) ?? null)
     this.object.traverse((node) => {
       if (node.name && !this.bones.has(node.name)) this.bones.set(node.name, node)
@@ -599,13 +657,17 @@ export class Character {
     const ground = alive * (1 - this.air)
     this.slide = chase(this.slide, sliding && crouching ? 1 : 0, SLIDE_RATE, dt)
     // Lying down is its own stance: the crouch and slide clips give way to the crawl clips.
-    const standing = ground * (1 - this.crouch) * (1 - this.lie)
-    const low = ground * this.crouch * (1 - this.slide) * (1 - this.lie)
+    this.frameDt = dt
+    this.ski = chase(this.ski, this.onSkis && !this.skiAiming && !this.down ? 1 : 0, BLEND_RATE, dt)
+    this.senseSlope(grounded, speedNow, dt)
+    const walking = 1 - this.ski
+    const standing = ground * walking * (1 - this.crouch) * (1 - this.lie)
+    const low = ground * walking * this.crouch * (1 - this.slide) * (1 - this.lie)
     const crawl = ground * this.lie
-    const sliding_ = ground * this.crouch * this.slide * (1 - this.lie)
+    const sliding_ = ground * walking * this.crouch * this.slide * (1 - this.lie)
 
     // How much of the standing weight is locomotion, and how much of that is a run.
-    const moving = smoothstep(STILL_SPEED, FULL_STEP, speed)
+    const moving = this.onSkis ? 0 : smoothstep(STILL_SPEED, FULL_STEP, speed)
     const running = smoothstep(WALK_SPEED + 0.4, RUN_SPEED - 0.6, speed)
     const targets = new Map<string, number>()
     // Every clip is pulled to zero unless this stance's blend asks for it, so a stance change crossfades.
@@ -631,7 +693,8 @@ export class Character {
     set('slide', sliding_)
     // In the air: a jump, a freefall, or hanging under the canopy. The falling clips are every stance's.
     const aloft = alive * this.air
-    set('jump_air', aloft * (1 - this.fall) * (1 - this.hang))
+    set('jump_air', aloft * walking * (1 - this.fall) * (1 - this.hang))
+    if (this.ski > 0) this.skiTargets(targets, ground * this.ski * (1 - this.lie), aloft * this.ski * (1 - this.fall) * (1 - this.hang), speedNow)
     targets.set('freefall', aloft * this.fall * (1 - this.hang))
     targets.set('chute', aloft * this.hang)
     targets.set('death', this.death)
@@ -670,7 +733,9 @@ export class Character {
         weightSum += w
       }
     }
-    if (weightSum > 0 && stride > 0) this.phase = (this.phase + (dt * speed * weightSum) / stride) % 1
+    // Poling hard, the arms go flat out from the first stride, however little it has got going yet.
+    const paced = Math.max(this.poling > 0 ? speed + (Math.max(speed, HARD_PACE) - speed) * this.poling : speed, HERRING_PACE * this.herring)
+    if (weightSum > 0 && stride > 0) this.phase = (this.phase + (dt * paced * weightSum) / stride) % 1
     const idle = this.actions.get('idle')
     if (idle) this.idleTime = (this.idleTime + dt) % idle.clip.duration
 
@@ -680,7 +745,8 @@ export class Character {
       const base = name.replace(/^(pistol_|hold_|shoulder_)/, '')
       action.enabled = w > 0.0005 || name === current
       action.weight = w
-      if (base === 'idle' || base === 'crouch_idle' || base === 'crawl_idle' || base === 'slide') action.time = this.idleTime
+      if (base === 'idle' || base === 'crouch_idle' || base === 'crawl_idle' || base === 'slide' || base === 'ski_glide' || base === 'ski_tuck' || base === 'ski_plow') action.time = this.idleTime % action.clip.duration
+      else if (base === 'ski_air') action.time = this.clock % action.clip.duration
       else if (base === 'jump_air') action.time = (this.idleTime / (idle?.clip.duration ?? 1)) * action.clip.duration
       else if (base === 'freefall' || base === 'chute') action.time = this.clock % action.clip.duration
       else if (base === 'getup_back' || base === 'getup_front') action.time = Math.min(1, (this.rising?.time ?? GETUP_TIME) / GETUP_TIME) * action.clip.duration
@@ -705,8 +771,73 @@ export class Character {
     // A slide carries the body along its heading, rifle and all, rather than where the camera looks.
     const heading = speedNow > 0.5 ? Math.atan2(-vx, -vz) : body
     const turn = Math.atan2(Math.sin(heading - body), Math.cos(heading - body))
-    this.place(body + turn * this.slide)
+    this.place(body + turn * Math.max(this.slide, this.ski))
     this.easeUp()
+    if (this.onSkis) this.fitSkis()
+  }
+
+  /** How the ground rises and how fast it is slowing, from how it moved: enough to choose a gait, and it needs nothing sent. */
+  private senseSlope(grounded: boolean, speed: number, dt: number) {
+    const last = this.skiLast
+    if (this.onSkis && last && dt > 0) {
+      const rise = grounded && speed > 0.5 ? Math.max(-1, Math.min(1, (this.position.y - last.y) / (speed * dt))) : this.skiRise * 0.9
+      this.skiRise = chase(this.skiRise, rise, SKI_SENSE_RATE, dt)
+      this.skiBraking = chase(this.skiBraking, (last.speed - speed) / dt, SKI_SENSE_RATE, dt)
+    }
+    this.skiLast = this.onSkis ? { y: this.position.y, speed } : null
+  }
+
+  /** The skiing clips' share of `ground` and `aloft`: the gait is told from the speed, the slope and the crouch. */
+  private skiTargets(targets: Map<string, number>, ground: number, aloft: number, speed: number) {
+    const tuck = this.crouch
+    const plow = (1 - tuck) * smoothstep(SKI_PLOW_FROM, SKI_PLOW_FULL, this.skiBraking) * smoothstep(1, 3, speed)
+    const rest = ground * (1 - tuck) * (1 - plow)
+    const coasting = 1 - smoothstep(-0.08, -0.03, this.skiRise) * smoothstep(0.1, 0.8, speed)
+    const pushing = rest * (1 - coasting)
+    const climbing = smoothstep(HERRING_RISE - 0.05, HERRING_RISE, this.skiRise) * (1 - smoothstep(3, 5, speed))
+    this.herring = chase(this.herring, climbing * ground, BLEND_RATE, this.frameDt)
+    const poles = (1 - climbing) * smoothstep(SKI_POLE_FROM - 1, SKI_POLE_FROM + 1, speed)
+    targets.set('ski_plow', ground * (1 - tuck) * plow)
+    targets.set('ski_glide', rest * coasting)
+    targets.set('ski_climb', pushing * climbing)
+    // Past the speed where poling gives anything, a skier stops throwing themselves at it.
+    this.poling = chase(this.poling, this.skiHard && speed < SKI_BOOST_TOP && climbing < 0.5 ? 1 : 0, BLEND_RATE, this.frameDt)
+    const stride = pushing * (1 - climbing) * (1 - poles)
+    const double = pushing * poles
+    targets.set('ski_pole', double * (1 - this.poling))
+    targets.set('ski_pole_hard', double * this.poling)
+    targets.set('ski_stride', stride * (1 - this.poling))
+    targets.set('ski_stride_hard', stride * this.poling)
+    // A tuck holds through the air.
+    targets.set('ski_tuck', ground * tuck + aloft * tuck)
+    targets.set('ski_air', aloft * (1 - tuck))
+  }
+
+  /** Lays each ski along the ground under its foot, whatever the foot is doing: only the heel lifts off. */
+  private fitSkis() {
+    const gear = this.gear
+    if (!gear) return
+    this.object.updateWorldMatrix(true, true)
+    const level = SCRATCH.q.copy(this.object.quaternion)
+    if (this.object.parent) this.object.getWorldQuaternion(level)
+    const inverse = SCRATCH.turn
+    gear.skis.forEach((ski, i) => {
+      const foot = ski.parent
+      if (!foot) return
+      foot.getWorldQuaternion(inverse).invert()
+      // The V of a herringbone, tips out and tails in, each ski lying on the hill as the body does not.
+      SKI_V.setFromAxisAngle(AXIS_Y, this.herring * (i === 0 ? HERRING_SPLAY : -HERRING_SPLAY))
+      SKI_TILT.setFromAxisAngle(AXIS_X, -this.herring * Math.atan(this.skiRise))
+      ski.quaternion.copy(inverse).multiply(level).multiply(SKI_V).multiply(SKI_TILT)
+    })
+    // The poles stay straight under the hand, tips back: all the way back in a tuck.
+    const tilt = SKI_TILT.setFromAxisAngle(AXIS_X, POLE_TILT + POLE_TUCK * this.crouch)
+    gear.poles.forEach((pole, i) => {
+      const hand = pole.parent
+      if (!hand) return
+      hand.getWorldQuaternion(inverse).invert()
+      pole.quaternion.copy(inverse).multiply(level).multiply(tilt).multiply(SKI_SPLAY.setFromAxisAngle(AXIS_Z, i === 0 ? POLE_SPLAY : -POLE_SPLAY))
+    })
   }
 
   /** Just up from a ragdoll, eases each bone it drove out of where the ragdoll left it into the clip. */
@@ -933,7 +1064,8 @@ export class Character {
     this.object.rotation.set(0, yaw + Math.PI, 0, 'YXZ')
     // Leaning into a turn or a change of speed, and rocked by a hit, about the feet: the model's +Z is
     // ahead, so a turn about its +X tips it forward and one about its +Z to its right.
-    const tipX = this.leanPitch + this.springs.tiltX.x * 0.5
+    // On skis the body goes with the slope. Rising ground tips the model's nose (+Z ahead) up: a negative turn about +X.
+    const tipX = this.leanPitch + this.springs.tiltX.x * 0.5 - this.ski * (1 - this.herring) * Math.atan(this.skiRise)
     const tipZ = this.leanRoll + this.springs.tiltZ.x * 0.5
     if (!this.fling && (tipX !== 0 || tipZ !== 0)) {
       this.object.quaternion.multiply(SCRATCH.turn.setFromAxisAngle(AXIS_X, tipX)).multiply(SCRATCH.q.setFromAxisAngle(AXIS_Z, tipZ))
@@ -1216,7 +1348,8 @@ export class Character {
     // Two items may share a mesh, so hide them all before showing the one in hand.
     for (const mesh of this.weapons.values()) mesh.visible = false
     const mesh = this.weapons.get(this.item)
-    if (mesh) mesh.visible = true
+    // The poles fill both hands: on skis the weapon is up only while aiming.
+    if (mesh) mesh.visible = !this.onSkis || this.skiAiming
   }
 
   /** The item in hand (`ITEM_*`, 0 for none): picks the weapon drawn and how the arms hold it. */
@@ -1237,6 +1370,74 @@ export class Character {
     if (!this.shown || !bone) return null
     this.object.updateWorldMatrix(true, true)
     return bone.getWorldPosition(out)
+  }
+
+  /** Whether it wears skis. */
+  set skis(on: boolean) {
+    if (on === this.onSkis) return
+    this.onSkis = on
+    if (on && !this.gear) {
+      const ski = (name: string) => {
+        const group = buildSki()
+        this.bones.get(name)?.add(group)
+        return group
+      }
+      const pole = (name: string) => {
+        const group = buildPole()
+        this.bones.get(name)?.add(group)
+        return group
+      }
+      this.gear = { skis: [ski('foot_L'), ski('foot_R')], poles: [pole('hand_L'), pole('hand_R')] }
+    }
+    this.showGear()
+  }
+
+  get skis() {
+    return this.onSkis
+  }
+
+  /** Whether it is poling hard. */
+  set skiPoling(on: boolean) {
+    this.skiHard = on
+  }
+
+  /** Whether the weapon is up instead of the poles (aim held on skis). */
+  set skiAim(on: boolean) {
+    if (on === this.skiAiming) return
+    this.skiAiming = on
+    this.showGear()
+  }
+
+  private showGear() {
+    if (this.gear) {
+      for (const ski of this.gear.skis) ski.visible = this.onSkis
+      for (const pole of this.gear.poles) pole.visible = this.onSkis && !this.skiAiming
+    }
+    this.showWeapon()
+  }
+
+  /** Whether its headlamp is on. */
+  set lamp(on: boolean) {
+    if (on === this.lampOn) return
+    this.lampOn = on
+    if (on && !this.headlamp && this.head) {
+      this.headlamp = new Headlamp()
+      this.headlamp.root.quaternion.copy(this.headRest).invert()
+      this.headlamp.root.position.applyQuaternion(this.headlamp.root.quaternion)
+      this.head.add(this.headlamp.root)
+    }
+    if (this.headlamp) this.headlamp.lit = on
+  }
+
+  /** The lit headlamp's beam, wherever the head has it pointing this frame, ragdoll included; null when off or gone. */
+  lampBeam(): { at: Vector3; direction: Vector3 } | null {
+    const lamp = this.headlamp
+    if (!lamp || !this.lampOn || this.headless || this.gibbed) return null
+    this.object.updateWorldMatrix(true, true)
+    lamp.root.getWorldPosition(this.beam.at)
+    lamp.root.getWorldQuaternion(SCRATCH.q)
+    this.beam.direction.set(0, -LAMP_DIP, 1).normalize().applyQuaternion(SCRATCH.q)
+    return this.beam
   }
 
   /** Whether it carries the backpack on its back. */

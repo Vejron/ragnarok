@@ -46,7 +46,7 @@ export class Skidmarks {
   private written = 0
   private time = 0
 
-  constructor(readonly capacity = 4000) {
+  constructor(readonly capacity = 4000, private readonly life = SKID_LIFE) {
     this.positions = new Float32Array(capacity * 4 * 3)
     this.tints = new Float32Array(capacity * 4 * 4)
     // Born long ago, so unused quads are fully faded.
@@ -60,7 +60,7 @@ export class Skidmarks {
     this.geometry = new Geometry({ positions: this.positions, colors: this.tints, custom: new Float32Array(capacity * 4 * 4), indices: index })
     this.material = new ShaderMaterial({
       wgsl: WGSL,
-      uniforms: { now: 0, life: SKID_LIFE },
+      uniforms: { now: 0, life },
       vertexColors: true,
       blend: 'alpha',
       depthWrite: false,
@@ -123,7 +123,7 @@ export class Skidmarks {
 
   /** How faded quad `index` is now, 0 fresh to 1 gone, for tests. */
   ageOf(index: number) {
-    return Math.min(1, Math.max(0, (this.time - this.births[index * 4]!) / SKID_LIFE))
+    return Math.min(1, Math.max(0, (this.time - this.births[index * 4]!) / this.life))
   }
 
   update(dt: number) {

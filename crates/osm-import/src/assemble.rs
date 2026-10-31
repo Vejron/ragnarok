@@ -171,6 +171,9 @@ pub(crate) fn ballast(gauge: f64) -> f64 {
     gauge + BALLAST_EXTRA
 }
 
+/// Groomed width of a ski track, metres: room for two classic tracks and a skating lane.
+const SKI_TRAIL_WIDTH: f64 = 4.0;
+
 /// Cuts `run` (already inside the world) at tile borders and hands each piece, in centimetres, to
 /// `f` with the tile it lies in, so each tile holds only its own pieces.
 fn per_tile(manifest: &Manifest, half: f64, side: f64, run: &[P], mut f: impl FnMut((u16, u16), Vec<[i32; 2]>)) {
@@ -261,7 +264,7 @@ type Footprint = (Vec<P>, f64, Option<Top>, Option<[u32; 2]>);
 /// `rails` are `(centre line, gauge, RAIL_*)`; `rail_bridges` carry tracks and are built like road
 /// bridges, but draw no road.
 #[allow(clippy::too_many_arguments)]
-fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, buildings: Vec<Footprint>, roads: Vec<(Vec<P>, f64, u8)>, bridges: Vec<(Vec<P>, f64, u8, Pylons, Deck)>, rails: Vec<(Vec<P>, f64, u8)>, rail_bridges: Vec<(Vec<P>, f64, u8, Pylons, Deck)>, covers: Vec<(u8, Vec<Vec<P>>)>, trees: Vec<(P, u8, f64, f64, bool)>, ground: Ground, water: Placed) -> Built {
+fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, buildings: Vec<Footprint>, roads: Vec<(Vec<P>, f64, u8)>, bridges: Vec<(Vec<P>, f64, u8, Pylons, Deck)>, rails: Vec<(Vec<P>, f64, u8)>, rail_bridges: Vec<(Vec<P>, f64, u8, Pylons, Deck)>, ski: Vec<Vec<P>>, covers: Vec<(u8, Vec<Vec<P>>)>, trees: Vec<(P, u8, f64, f64, bool)>, ground: Ground, water: Placed) -> Built {
     let inner = half - EDGE_MARGIN;
     let mut manifest = Manifest {
         version: WORLD_VERSION,
@@ -342,6 +345,11 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
     for (points, gauge, kind) in &rails {
         for run in clip_polyline(points, half) {
             per_tile(&manifest, half, side, &run, |key, points| tiles.entry(key).or_default().rails.push(Rail { gauge: cm(*gauge), kind: *kind, points }));
+        }
+    }
+    for points in &ski {
+        for run in clip_polyline(points, half) {
+            per_tile(&manifest, half, side, &run, |key, points| tiles.entry(key).or_default().ski.push(SkiTrail { width: cm(SKI_TRAIL_WIDTH), points }));
         }
     }
     // Bridges are solid geometry in the collision mesh, each piece in the tile it lies in.
@@ -425,7 +433,7 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
     let bridges: Vec<_> = bridges.iter().chain(&rail_bridges).collect();
     let bridge_boxes: Vec<[f64; 4]> = bridges.iter().map(|(points, width, ..)| reach_box(points, width / 2.0 + BRIDGE_CLEAR)).collect();
     // A track keeps trees off its ballast bed, as a road does off its surface.
-    let roads: Vec<(&[P], f64)> = roads.iter().map(|(points, width, _)| (&points[..], *width)).chain(rails.iter().map(|(points, gauge, _)| (&points[..], ballast(*gauge)))).collect();
+    let roads: Vec<(&[P], f64)> = roads.iter().map(|(points, width, _)| (&points[..], *width)).chain(rails.iter().map(|(points, gauge, _)| (&points[..], ballast(*gauge)))).chain(ski.iter().map(|points| (&points[..], SKI_TRAIL_WIDTH))).collect();
     let road_boxes: Vec<[f64; 4]> = roads.iter().map(|(points, width)| reach_box(points, width / 2.0 + SOLID_REACH)).collect();
     let footprint_boxes: Vec<[f64; 4]> = footprints.iter().map(|footprint| reach_box(footprint, SOLID_REACH)).collect();
     for (at, kind, height, crown, planted) in trees.into_iter().chain(props) {
@@ -539,7 +547,7 @@ pub fn frame([south, west, north, east]: [f64; 4]) -> ((f64, f64), f64) {
 #[allow(clippy::too_many_arguments)]
 /// `lidar` holds the returns that can be roof, `decks` the bridge deck returns of a classified cloud,
 /// and `photo` the aerial photo the buildings' colours come from.
-pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, osm: &Osm, planted: &[Planted], ground: Ground, water: Placed, lidar: Option<&Cloud>, decks: Option<&Cloud>, photo: Option<&crate::paint::Photo>) -> Built {
+pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, osm: &Osm, planted: &[Planted], ground: Ground, water: Placed, lidar: Option<&Cloud>, decks: Option<&Cloud>, photo: Option<&crate::paint::Photo>, ski: &[Vec<crate::overpass::LatLon>]) -> Built {
     let (frame, half) = (place.frame, place.half);
     let source = |x: f64, z: f64| place.source(x, z);
     let mut buildings = Vec::new();
@@ -665,7 +673,8 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     }
     let trees = planted.iter().map(|tree| (frame.project(tree.lat, tree.lon), tree.kind, tree.height, tree.crown, tree.registered)).collect();
     crate::progress::stage("tiles");
-    assemble(frame, half, tile_size, mask, buildings, roads, bridges, rails, rail_bridges, covers, trees, ground, water)
+    let ski = ski.iter().map(|way| way.iter().map(|p| frame.project(p.lat, p.lon)).collect()).collect();
+    assemble(frame, half, tile_size, mask, buildings, roads, bridges, rails, rail_bridges, ski, covers, trees, ground, water)
 }
 
 /// The roof over each of `rings` (footprints, local metres, closed or not): measured
@@ -949,7 +958,7 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
     // A tram down the middle street, so the offline world has a track to draw.
     let middle = start + (count / 2) as f64 * PITCH;
     let rails = vec![(vec![[middle, -half], [middle, half]], 1.435, RAIL_TRAM)];
-    assemble(Frame::default(), half, tile_size, None, buildings, roads, bridges, rails, Vec::new(), covers, trees, ground, water)
+    assemble(Frame::default(), half, tile_size, None, buildings, roads, bridges, rails, Vec::new(), Vec::new(), covers, trees, ground, water)
 }
 
 #[cfg(test)]
@@ -1110,7 +1119,7 @@ mod tests {
     fn a_track_is_cut_at_tile_borders_and_keeps_trees_off_its_bed() {
         let rails = vec![(vec![[-140.0, 10.0], [140.0, 10.0]], 1.435, RAIL_TRAIN)];
         let trees = vec![([20.0, 10.5], TREE_BIRCH, 10.0, 2.0, false), ([20.0, 25.0], TREE_BIRCH, 10.0, 2.0, false)];
-        let built = assemble(Frame::default(), 150.0, 100.0, None, vec![], vec![], vec![], rails, vec![], vec![], trees, Ground::default(), Placed::default());
+        let built = assemble(Frame::default(), 150.0, 100.0, None, vec![], vec![], vec![], rails, vec![], vec![], vec![], trees, Ground::default(), Placed::default());
         let pieces: Vec<(&(u16, u16), &Rail)> = built.tiles.iter().flat_map(|(key, tile)| tile.rails.iter().map(move |rail| (key, rail))).collect();
         assert_eq!(pieces.len(), 3, "a 280 m track crosses three 100 m tiles");
         assert!(pieces.iter().all(|(_, rail)| rail.gauge == 144 && rail.kind == RAIL_TRAIN));

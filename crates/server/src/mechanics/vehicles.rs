@@ -347,8 +347,8 @@ pub fn alight(world: &mut World, id: u32) {
     let position = exit_position(world, kind, &pose, seat.index);
     if let Some(mut player) = world.entities.get_mut::<Player>(id) {
         // Stamina keeps what it was when they got in: a ride is no rest.
-        let Character { spent, winded, .. } = player.character;
-        player.character = Character { position, yaw: pose.yaw(), spent, winded, ..Default::default() };
+        let Character { spent, winded, skis, .. } = player.character;
+        player.character = Character { position, yaw: pose.yaw(), spent, winded, skis, ..Default::default() };
     }
     tracing::debug!(id, vehicle = seat.vehicle, "alighted");
 }

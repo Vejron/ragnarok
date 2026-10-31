@@ -3,7 +3,10 @@ import tables from './sim/tables.generated.json'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 16
+export const WORLD_VERSION = 17
+
+/** `Manifest::theme`, mirrors `crates/shared/src/world.rs`. */
+export const THEME_WINTER = 1
 
 /** Where `world.msgpack`, `tiles/` and `minimap.png` are served from: `/` normally, `/dev/` for the dev world. */
 export let WORLD_BASE: string = withSlash(import.meta.env.VITE_WORLD_BASE || '/')
@@ -213,6 +216,13 @@ export interface TileRef {
 }
 
 /** `world.msgpack`: where the world is and which tiles make it up. */
+/** A groomed ski track's centre line, clipped to the tile. */
+export interface SkiTrail {
+  /** Groomed width, metres. */
+  width: number
+  points: Point2[]
+}
+
 export interface WorldData {
   /**
    * How local metres lie on the Earth (`Frame` in `crates/shared/src/world.rs`): `[0, lat, lon]` for
@@ -226,6 +236,8 @@ export interface WorldData {
   tiles: TileRef[]
   /** Distance between ground samples, metres; 0 when the ground is the plane y = 0. */
   groundCell: number
+  /** `THEME_*`: 0 is the world as it always was. */
+  theme: number
   /**
    * Which tiles of the square grid are part of the world, `grid × grid` row-major, or `null` when
    * every one is. Tiles outside it have no ground and are walled off.
@@ -262,6 +274,7 @@ export interface TileData {
   streams: Stream[]
   bridges: Bridge[]
   rails: Rail[]
+  ski: SkiTrail[]
   /** The tile file this was decoded from, which the soldier's physics reads for itself. */
   bytes?: Uint8Array
 }
@@ -287,7 +300,7 @@ export function trunkRadiusCm(kind: number, heightCm: number, crownCm: number): 
 const noCollision = (): CollisionMesh => ({ vertices: new Float32Array(), triangles: new Uint32Array() })
 
 export function decodeManifest(bytes: Uint8Array): WorldData {
-  const [version, frame, halfExtent, tileSize, spawns, tiles, groundCell] = decode(bytes) as [number, [number, number, number], number, number, number[][], number[][], number]
+  const [version, frame, halfExtent, tileSize, spawns, tiles, groundCell, theme] = decode(bytes) as [number, [number, number, number], number, number, number[][], number[][], number, number?]
   if (version !== WORLD_VERSION) throw new Error(`world version ${version}, expected ${WORLD_VERSION}`)
   const refs = tiles.map(([col, row, hash]) => ({ col: col!, row: row!, hash: hash! }))
   const grid = Math.max(1, Math.ceil((2 * halfExtent) / Math.max(tileSize, 1)))
@@ -303,6 +316,7 @@ export function decodeManifest(bytes: Uint8Array): WorldData {
     spawns: spawns.map(point),
     tiles: refs,
     groundCell: metres(groundCell),
+    theme: theme ?? 0,
     inside,
     collision: noCollision(),
     bytes,
@@ -354,7 +368,7 @@ function flatIndices(triangles: readonly number[][]): Uint32Array {
 }
 
 export function decodeTile(bytes: Uint8Array): TileData {
-  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges, detail, rails] = decode(bytes) as [
+  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges, detail, rails, ski] = decode(bytes) as [
     [number, number[][], number, number, number, number, number, [number[], number[], Uint8Array, Uint8Array]?, [number, number]?][],
     [number, number, number[][]][],
     [number[][], number[][]],
@@ -366,6 +380,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     [number, number, number][] | undefined,
     Uint8Array | undefined,
     [number, number, number[][]][] | undefined,
+    [number, number[][]][] | undefined,
   ]
   return {
     buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind, cells, paint]) => ({
@@ -403,6 +418,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     // A copy of its own: a view would keep the whole file alive, and be cloned whole to the worker.
     detail: detail && detail.length > 0 ? new Int8Array(detail.slice().buffer) : undefined,
     rails: (rails ?? []).map(([gauge, kind, points]) => ({ gauge: metres(gauge), kind, points: points.map(point) })),
+    ski: (ski ?? []).map(([width, points]) => ({ width: metres(width), points: points.map(point) })),
     bytes,
   }
 }

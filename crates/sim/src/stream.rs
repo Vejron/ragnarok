@@ -72,6 +72,7 @@ impl Physics {
     /// there is replaced.
     pub fn add_tile(&mut self, manifest: &Manifest, col: u16, row: u16, tile: &Tile) -> Result<()> {
         self.remove_tile(col, row);
+        self.add_ski_trails(&tile.ski);
         let mut handles = Vec::new();
         let ground = tile_ground(manifest, col, row, &tile.ground).map(|ground| self.insert_static(ground, None));
         handles.extend(ground);

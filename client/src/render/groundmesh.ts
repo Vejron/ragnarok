@@ -1,6 +1,7 @@
 import type { TileGround } from '@/sim/terrain'
 import type { TileData } from '@/world'
 import { railRibbons } from './rails'
+import { skiRibbons } from './skitrails'
 import { roadRibbons, type Ribbon } from './roads'
 import { GroundShade, heightSampler, type HeightSource } from './shade'
 import { streamBuffers, surfaceBuffers, type WaterBuffers } from './watermesh'
@@ -14,7 +15,7 @@ export type { Ribbon, WaterBuffers }
  */
 
 /** What of a tile is draped on its ground. */
-export type DrapedTile = Pick<TileData, 'roads' | 'rails' | 'water' | 'streams'>
+export type DrapedTile = Pick<TileData, 'roads' | 'rails' | 'ski' | 'water' | 'streams'>
 
 /** A tile's draped meshes: ribbons drawn in the tile's group, water drawn apart (`buildWater`). */
 export interface Draped {
@@ -29,12 +30,12 @@ export function drapedMeshes(tile: DrapedTile, ground: TileGround, around?: Heig
 }
 
 /** The roads' and rails' ribbons of `tile`, sharing one `GroundShade`. */
-export function ribbonsOf(tile: Pick<DrapedTile, 'roads' | 'rails'>, ground: TileGround, around?: HeightSource): Ribbon[] {
-  if (tile.roads.length === 0 && tile.rails.length === 0) return []
+export function ribbonsOf(tile: Pick<DrapedTile, 'roads' | 'rails' | 'ski'>, ground: TileGround, around?: HeightSource): Ribbon[] {
+  if (tile.roads.length === 0 && tile.rails.length === 0 && tile.ski.length === 0) return []
   const size = (ground.side - 1) * ground.cell
   const border = [ground.x0, ground.z0, ground.x0 + size, ground.z0 + size] as const
   const shade = new GroundShade(heightSampler(ground, around), ground.cell, border)
-  return [...roadRibbons(tile.roads, shade, border), ...railRibbons(tile.rails, shade, border)]
+  return [...roadRibbons(tile.roads, shade, border), ...railRibbons(tile.rails, shade, border), ...skiRibbons(tile.ski, shade)]
 }
 
 /** The lake and river surface and the streams of `tile`. */

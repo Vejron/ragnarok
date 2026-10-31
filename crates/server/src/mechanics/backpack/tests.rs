@@ -273,3 +273,24 @@ fn the_carrier_scores_a_point_a_second() {
     assert_eq!(game.world.entities.of::<Player>(id).score.held, 3);
     assert_eq!(circles(&mut inbox).last().unwrap().held, 3);
 }
+
+#[test]
+fn the_lamp_button_switches_the_headlamp_once_a_press_for_everyone_to_see() {
+    let mut game = game();
+    let (id, _inbox) = join(&mut game);
+    let mut seq = 0;
+    let mut press = |game: &mut Game, buttons: u16, ticks: u32| {
+        for _ in 0..ticks {
+            seq += 1;
+            game.handle(Command::Input(id, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 }]));
+            game.step();
+        }
+    };
+    let worn = |game: &Game| game.replicated().into_iter().find(|(entity, _)| *entity == id).and_then(|(_, shown)| shown.carry).map(|carry| carry.what);
+    assert_eq!(worn(&game), None);
+    press(&mut game, BUTTON_LAMP, 10);
+    assert_eq!(worn(&game), Some(CARRY_LAMP), "held for ten ticks, it switched once");
+    press(&mut game, 0, 2);
+    press(&mut game, BUTTON_LAMP, 2);
+    assert_eq!(worn(&game), None, "and off again");
+}

@@ -417,7 +417,7 @@ fn bake_world(path: &std::path::Path) -> Result<()> {
             struct Old(u8, (f64, f64), i32, i32, Vec<[i32; 2]>, Vec<TileRef>, i32);
             let Old(version, origin, half_extent, tile_size, spawns, tiles, ground_cell) =
                 rmp_serde::from_slice(&bytes).map_err(|_| error).with_context(|| format!("decoding {}", path.display()))?;
-            Manifest { version, frame: shared::world::Frame::Equirect { origin }, half_extent, tile_size, spawns, tiles, ground_cell }
+            Manifest { version, frame: shared::world::Frame::Equirect { origin }, half_extent, tile_size, spawns, tiles, ground_cell, theme: 0 }
         }
     };
     anyhow::ensure!(
@@ -460,23 +460,35 @@ fn bake_world(path: &std::path::Path) -> Result<()> {
 /// power of two, so a 256 m tile is `2^k + 1` samples a side, which the client simplifies best.
 const DEFAULT_CELL: f64 = 4.0;
 
-/// The ground resolution an editor world asks for (`cell` in its `area.json`), if any.
-fn area_cell(path: &std::path::Path) -> Result<Option<f64>> {
-    #[derive(serde::Deserialize)]
-    struct File {
-        cell: Option<f64>,
-    }
+/// What an editor world's `area.json` asks of the build, past its tiles.
+#[derive(Default, serde::Deserialize)]
+struct AreaOptions {
+    /// The ground resolution (`--cell`), if any.
+    cell: Option<f64>,
+    /// `"winter"`, or nothing for the world as it always was.
+    theme: Option<String>,
+    /// Winter: groom the forest paths and tracks too, where OSM maps few ski tracks.
+    #[serde(default)]
+    groomed_paths: bool,
+}
+
+fn area_options(path: &std::path::Path) -> Result<AreaOptions> {
     let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    Ok(serde_json::from_str::<File>(&text).with_context(|| format!("parsing {}", path.display()))?.cell)
+    serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))
 }
 
 fn main() -> Result<()> {
     let mut args = Args::parse();
-    let from_area = match &args.area {
-        Some(path) => area_cell(path)?,
-        None => None,
+    let options = match &args.area {
+        Some(path) => area_options(path)?,
+        None => AreaOptions::default(),
     };
-    args.cell = args.cell_arg.or(from_area).unwrap_or(DEFAULT_CELL);
+    args.cell = args.cell_arg.or(options.cell).unwrap_or(DEFAULT_CELL);
+    let winter = match options.theme.as_deref() {
+        None => false,
+        Some("winter") => true,
+        Some(theme) => bail!("unknown theme {theme:?}"),
+    };
     if let Some(path) = &args.bake {
         return bake_world(path);
     }
@@ -491,7 +503,7 @@ fn main() -> Result<()> {
     }
     anyhow::ensure!(args.tile >= 20.0, "--tile must be at least 20 m");
     anyhow::ensure!(args.cell == 0.0 || args.cell >= 0.5, "--cell must be 0 or at least 0.5 m");
-    let built = if args.synthetic {
+    let mut built = if args.synthetic {
         let map = if args.no_water { water::Map::default() } else { assemble::synthetic_water(300.0) };
         let (ground, datum, placed) = if args.cell > 0.0 {
             let surface = water::Surface::new(&map, ground::grid(300.0, args.tile, args.cell)?, |x, z| Some(ground::hills(x, z)));
@@ -580,7 +592,22 @@ fn main() -> Result<()> {
         let coarse = (args.detail > 0.0).then(|| ground.clone());
         let photo = photo(&args, &place, mask);
         progress::stage("assemble");
-        let mut built = assemble::from_osm(&place, args.tile, mask, &osm, &planted, ground, placed, cloud.as_ref(), decks.as_ref(), photo.as_ref());
+        let ski = if winter {
+            progress::stage("ski tracks");
+            let split = overpass::split(bbox, args.overpass_chunk);
+            let found = osm_import::osm_ski::fetch_pieces(&args.overpass, pieces.unwrap_or(&split), 3, 15).context("OpenStreetMap ski tracks failed; retry later")?;
+            eprintln!("ski: {} tracks from OpenStreetMap", found.len());
+            let mut found = found;
+            if options.groomed_paths {
+                let path = |way: &&overpass::Way| matches!(way.tags.get("highway").map(String::as_str), Some("path" | "track" | "bridleway"));
+                found.extend(osm.ways.iter().filter(path).map(|way| way.geometry.clone()));
+                eprintln!("ski: {} with the forest paths and tracks", found.len());
+            }
+            found
+        } else {
+            Vec::new()
+        };
+        let mut built = assemble::from_osm(&place, args.tile, mask, &osm, &planted, ground, placed, cloud.as_ref(), decks.as_ref(), photo.as_ref(), &ski);
         if let (Some(coarse), Some(source)) = (coarse, dem.as_ref()) {
             progress::stage("detail");
             let model = |half: f64| {
@@ -594,6 +621,10 @@ fn main() -> Result<()> {
         }
         built
     };
+    if winter {
+        built.manifest.theme = shared::world::THEME_WINTER;
+        osm_import::winter::freeze(built.tiles.values_mut());
+    }
     let (buildings, roads, triangles) = built.tiles.values().fold((0, 0, 0), |(b, r, t), tile| (b + tile.buildings.len(), r + tile.roads.len(), t + tile.collision.triangles.len()));
     let cover: usize = built.tiles.values().map(|tile| tile.cover.len()).sum();
     let rails: usize = built.tiles.values().map(|tile| tile.rails.len()).sum();

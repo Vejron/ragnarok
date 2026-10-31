@@ -35,6 +35,12 @@ struct Area {
     /// picks (`DEFAULT_CELL` there).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cell: Option<f64>,
+    /// The season (`"winter"`). Absent, the world is as it always was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    theme: Option<String>,
+    /// Winter: groom the forest paths and tracks too (`groomed_paths` in the importer).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    groomed_paths: bool,
     /// Hand-placed spawn points, vehicles, items and bots (latitude/longitude). The server reads
     /// these from the same file; the importer ignores them.
     #[serde(default)]

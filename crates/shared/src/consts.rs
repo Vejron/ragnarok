@@ -16,7 +16,7 @@ pub use crate::vehicles::tank::*;
 pub use crate::vehicles::walker::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 60;
+pub const PROTOCOL_VERSION: u8 = 64;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -108,6 +108,8 @@ pub const BUTTON_RANGE_DOWN: u16 = 1 << 11;
 pub const BUTTON_CHUTE: u16 = 1 << 12;
 /// One press, at a gun that has two kinds of round: load the other one (Q). Like a jump it is not repeated.
 pub const BUTTON_AMMO: u16 = 1 << 13;
+/// One press: the headlamp on or off (L). Like a jump it is not repeated.
+pub const BUTTON_LAMP: u16 = 1 << 14;
 
 /// Soldier movement, in metres and seconds.
 pub const WALK_SPEED: f32 = 4.0;
@@ -324,6 +326,97 @@ pub const BACKPACK_REACH_Y: f32 = 2.5;
 pub const BACKPACK_RETURN_SECONDS: f32 = 60.0;
 /// The `carry` component's value for the backpack.
 pub const CARRY_BACKPACK: u8 = 1;
+/// Skis on: `carry` is a mask of what is worn.
+pub const CARRY_SKIS: u8 = 2;
+/// The headlamp is on.
+pub const CARRY_LAMP: u8 = 4;
+/// Poling hard: on skis on the ground, pushing with run held.
+pub const CARRY_POLING: u8 = 8;
+
+/// Pull of gravity on a skier's slope, m/s². Real, unlike the game's heavier `GRAVITY` for flight.
+pub const SKI_GRAVITY: f32 = 9.81;
+/// Friction on a groomed track and on loose snow.
+pub const SKI_MU_TRACK: f32 = 0.03;
+pub const SKI_MU_SNOW: f32 = 0.08;
+/// Friction in a groove of a track: the best going there is.
+pub const SKI_MU_GROOVE: f32 = 0.022;
+/// How far each classic groove lies from a track's centre line, metres.
+pub const SKI_GROOVE_OFFSET: f32 = 0.8;
+/// Cosine of how far off a groove skis can point or go and stay in it, or drop into it (28°).
+pub const SKI_GROOVE_HOLD: f32 = 0.883;
+/// How hard a groove draws skis to its line: m/s sideways per metre off it, and the most.
+pub const SKI_GROOVE_PULL: f32 = 7.0;
+pub const SKI_GROOVE_PULL_MAX: f32 = 2.5;
+/// Air drag per (m/s)², upright and in a tuck.
+pub const SKI_DRAG: f32 = 0.005;
+pub const SKI_DRAG_TUCK: f32 = 0.0025;
+/// What the poles put out, W/kg: over speed, it is the push.
+pub const SKI_POWER: f32 = 3.0;
+/// What run held adds to the push from a standstill, m/s². It fades away to nothing at `SKI_BOOST_TOP`.
+pub const SKI_BOOST: f32 = 3.5;
+/// The speed past which poling hard gives no more, m/s: 43 km/h.
+pub const SKI_BOOST_TOP: f32 = 12.0;
+/// The speed a push is worked out from below this: a standing start does not push forever harder.
+pub const SKI_PUSH_MIN_SPEED: f32 = 0.6;
+/// Climbing steeper than this along the skis is a herringbone: stepping up on the inner edges, radians (12°).
+pub const SKI_HERRING_FROM: f32 = 0.21;
+/// The steepest a herringbone gets up, radians: 30° at a walk, 42° with run held.
+pub const SKI_HERRING_SLOPE: f32 = 0.524;
+pub const SKI_HERRING_SLOPE_RUN: f32 = 0.733;
+/// The pace it keeps on easy ground, m/s, walking and with run held. It falls by `SKI_HERRING_SLOWING` at the limit.
+pub const SKI_HERRING_PACE: f32 = 1.5;
+pub const SKI_HERRING_PACE_RUN: f32 = 2.4;
+pub const SKI_HERRING_SLOWING: f32 = 0.6;
+/// How fast a herringbone gets up to its pace, m/s².
+pub const SKI_HERRING_ACCEL: f32 = 5.0;
+/// Skiing hard spends stamina this many times slower than running.
+pub const SKI_STAMINA_SHARE: u16 = 3;
+pub const SKI_MAX_SPEED: f32 = 25.0;
+/// Fastest a skier slides backwards.
+pub const SKI_SLIP_SPEED: f32 = 4.0;
+pub const SKI_JUMP_SPEED: f32 = 4.5;
+/// Gravity on a skier in the air, m/s²: lighter than `GRAVITY`, the game's heavy one for runners.
+pub const SKI_AIR_GRAVITY: f32 = 13.0;
+/// Over a crest the ground ahead is felt this far off, seconds of travel, and from this speed, m/s.
+pub const SKI_CREST_LOOK: f32 = 0.12;
+pub const SKI_CREST_SPEED: f32 = 6.0;
+/// How much the ground's climb rate can fall over that look before the legs cannot follow it, m/s.
+pub const SKI_CREST_DROP: f32 = 1.7;
+/// Slowing a full snowplow adds, m/s², and how much better it holds a turn.
+pub const SKI_PLOW_BRAKE: f32 = 3.5;
+pub const SKI_PLOW_GRIP: f32 = 1.6;
+/// Most sideways acceleration the edges give, m/s²: how fast the velocity follows the skis.
+pub const SKI_GRIP: f32 = 7.0;
+/// Below this the skis are stepped round and the velocity goes where they point, m/s.
+pub const SKI_SHUFFLE_SPEED: f32 = 1.5;
+/// How far strafing turns the skis from the look (the tangent of 45°).
+pub const SKI_STRAFE_TURN: f32 = 1.0;
+/// Too tight: speed × the angle between skis and travel past this (m/s × radians) strains the edges.
+pub const SKI_EDGE: f32 = 11.0;
+/// No speed under this catches an edge, m/s.
+pub const SKI_FALL_MIN_SPEED: f32 = 5.0;
+/// Ticks of strain that are a fall, and how fast it eases off.
+pub const SKI_STRAIN_FALL: u8 = 12;
+pub const SKI_STRAIN_EASE: u8 = 2;
+/// Hardest landing the legs take, m/s across the ground, and how much more in a tuck.
+pub const SKI_LANDING: f32 = 8.0;
+pub const SKI_LANDING_TUCK: f32 = 1.3;
+/// Landing above this speed with the skis more than this off the way they are going is a fall.
+pub const SKI_LANDING_SKEW_SPEED: f32 = 6.0;
+pub const SKI_LANDING_SKEW: f32 = 0.524;
+/// Above this speed, being stopped short by something is a crash, m/s.
+pub const SKI_CRASH_SPEED: f32 = 8.0;
+/// Share of the wanted move that counts as stopped short.
+pub const SKI_CRASH_MOVED: f32 = 0.4;
+/// How far a fall bounces the skier up, m/s.
+pub const SKI_FALL_HOP: f32 = 2.5;
+/// Share of the speed a fall keeps each tick on the ground: a tumble, not a stop.
+pub const SKI_TUMBLE_KEEP: f32 = 0.975;
+/// Snap to the ground on skis, metres. Under the walkers': at speed a crest falls away faster than
+/// this a tick, and the skier flies.
+pub const SKI_SNAP_DISTANCE: f32 = 0.12;
+/// Fastest skis go on or off, m/s.
+pub const SKI_CLIP_SPEED: f32 = 2.0;
 
 /// Combat. Every player starts a life with `PLAYER_MAX_HP` and dies at zero.
 pub const PLAYER_MAX_HP: u8 = 150;

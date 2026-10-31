@@ -1,5 +1,6 @@
+import type { Character } from '@/render/character'
 import { FLAG_CROUCHING, FLAG_DEAD, FLAG_GROUNDED, FLAG_HELD_MASK, FLAG_HELD_SHIFT, KIND_SOLDIER } from '@/net/codec'
-import { SLIDE_MIN_SPEED, STANCE_CHUTE, STANCE_DOWN, STANCE_PRONE } from '@/sim/consts'
+import { CARRY_BACKPACK, CARRY_LAMP, CARRY_POLING, CARRY_SKIS, SLIDE_MIN_SPEED, STANCE_CHUTE, STANCE_DOWN, STANCE_PRONE } from '@/sim/consts'
 import type { Avatars } from '../avatars'
 import type { Frame, Presenter } from '../presenter'
 import type { Sampled } from '../store'
@@ -19,6 +20,10 @@ export interface PeopleWorld {
   blobFoot(x: number, y: number, z: number): void
   /** Splashes and ripples for someone at `(x, y, z)` moving at `speed`, m/s. */
   wade(id: number, x: number, y: number, z: number, speed: number, dt: number): void
+  /** The light of `avatar`'s headlamp, if lit. */
+  headlamp(avatar: Character): void
+  /** The grooves and spray of a skier at `(x, z)` going `(vx, vz)`. */
+  skiRun(id: number, x: number, z: number, vx: number, vz: number, grounded: boolean, dt: number): void
 }
 
 /**
@@ -55,11 +60,17 @@ export class Soldiers implements Presenter<Frame> {
     const avatar = this.world.avatars.draw(id)
     avatar.dead = dead
     avatar.held = (flags & FLAG_HELD_MASK) >> FLAG_HELD_SHIFT
-    avatar.pack = entity.carry !== undefined
+    const worn = entity.carry?.what ?? 0
+    avatar.pack = (worn & CARRY_BACKPACK) !== 0
+    avatar.skis = (worn & CARRY_SKIS) !== 0
+    avatar.lamp = (worn & CARRY_LAMP) !== 0 && !dead
+    avatar.skiPoling = (worn & CARRY_POLING) !== 0
     if (!dead) this.world.blobFoot(x, y, z)
     avatar.update([x, y, z], entity.heading?.yaw ?? 0, velocity[0], velocity[1], grounded, frame.dt, 0, crouching,
       crouching && grounded && knock > SLIDE_MIN_SPEED, stance === STANCE_PRONE || stance === STANCE_DOWN, stance === STANCE_CHUTE, entity.motion?.vy ?? 0)
     if (!dead) this.world.wade(id, x, y, z, Math.hypot(velocity[0], velocity[1]), frame.dt)
+    this.world.headlamp(avatar)
+    if (avatar.skis && !dead) this.world.skiRun(id, x, z, velocity[0], velocity[1], grounded, frame.dt)
   }
 
   // A soldier not drawn in a frame is let go by `Avatars.sweep`: it may have taken a seat instead.

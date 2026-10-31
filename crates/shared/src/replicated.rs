@@ -395,8 +395,9 @@ replicated! {
     /// or 0 when neither is going on, and their stamina on foot as their prediction steps it: the points
     /// spent (0 is rested, `STAMINA_FULL` is out) and whether they are winded, 0 or 1.
     /// `parts` is what is left of the head's health and each limb's (`LIMB_*` order), 0 for a limb lost.
-    /// `down` is the ticks of knockdown left (`Character::down`), for their prediction.
-    Vitals { hp: u8, progress: u8 as byte, spent: u16, winded: u8, parts: [u8; 5], down: u8 }
+    /// `down` is the ticks of knockdown left (`Character::down`) and `strain` how near skis are to catching
+    /// an edge (`Character::ski_strain`), for their prediction.
+    Vitals { hp: u8, progress: u8 as byte, spent: u16, winded: u8, parts: [u8; 5], down: u8, strain: u8 }
 
     set 18 hotbar [owner]
     /// A player's own hotbar.
@@ -420,7 +421,7 @@ replicated! {
     Look { pitch: i16 as mrad }
 
     set 22 carry
-    /// What a soldier carries on its back, `CARRY_*`: the backpack (BACKPACK.md). Absent when nothing.
+    /// What a soldier carries and wears, a mask of `CARRY_*`: the backpack (BACKPACK.md), skis. Absent when nothing.
     Carry { what: u8 }
 
     set 23 struck

@@ -121,6 +121,13 @@ fn surface(s: Surface) -> vec4f {
   let lace = smoothstep(0.1, 0.55, bands(world * 2.1, time * 1.6) * 0.5 + 0.5);
   color = mix(color, params.foam * ground, foam * mix(0.55, 1.0, lace));
 
+  if (params.ice.x > 0.5) {
+    // Wind-scoured ice under drifts of snow, with the odd long crack: still, and opaque.
+    let drift = smoothstep(-0.25, 0.35, bands(world * 0.09, 0.0) + bands(world * 0.31, 0.0) * 0.4);
+    let crack = smoothstep(0.9, 0.99, 1.0 - abs(sin(world.x * 0.13 + 2.0 * sin(world.y * 0.08))));
+    let ice = mix(vec3f(0.74, 0.86, 0.93), vec3f(0.92, 0.95, 0.98), drift) * (1.0 - crack * 0.14 * (1.0 - drift));
+    return vec4f(ice * ground * 1.15 + mirror * fresnel * 0.2 * (1.0 - drift), 1.0);
+  }
   var alpha = smoothstep(0.0, 0.1, depth) * mix(0.62, 0.9, deep);
   alpha = clamp(alpha - clear * 0.12 + fresnel * 0.35 + spark * 0.4, 0.0, 1.0);
   return vec4f(color, alpha);
@@ -146,6 +153,8 @@ function material(): ShaderMaterial {
       cloud: Color.hex(0xffffff),
       // Height of the mirrored plane, and 1 while there is one.
       plane: [0, 0],
+      // 1 while the water is frozen.
+      ice: [0, 0],
     },
     textures: { reflection: blank },
     blend: 'alpha',
@@ -158,6 +167,12 @@ function material(): ShaderMaterial {
     depthBiasSlope: 2,
   })
   return shared
+}
+
+/** Freezes every lake, river and stream. */
+export function freezeWater() {
+  ;(material().uniforms.ice as [number, number])[0] = 1
+  material().needsUpdate()
 }
 
 /** Has the water sample `texture`, the renderer's mirror image of the scene. */

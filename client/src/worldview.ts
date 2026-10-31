@@ -10,6 +10,7 @@ import { TileWorker } from './render/tileworker'
 import { prepareTile, tileParts, type PreparedTile, type TileInput, type TileParts } from './render/tileprep'
 import { buildingBuffers } from './render/buildingmesh'
 import { reliefPixels, terrainBuffers, terrainLevel, TERRAIN_LOD_ERRORS, type Pixels } from './render/terrainmesh'
+import { winter } from './render/season'
 import { buildWater, disposeWater } from './render/water'
 import { shellOf } from './sim/carve'
 import { CHUNK, Construct, cellAt, chunkKey, chunkOf, cubeCentre, posKey, type Cube, type Pos } from './sim/construct'
@@ -552,7 +553,7 @@ export class WorldView {
 
   private tileWorker(): TileWorker | null {
     if (this.builder === undefined && this.world) {
-      this.builder = TileWorker.create(this.world.halfExtent, this.world.tileSize)
+      this.builder = TileWorker.create(this.world.halfExtent, this.world.tileSize, winter)
       if (this.builder) this.builder.onShaded = (col, row, relief) => this.reshade(tileKey(col, row), relief)
     }
     return this.builder ?? null

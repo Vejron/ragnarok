@@ -1,5 +1,6 @@
 import { BALLAST_EXTRA, RAIL_TRAIN, type Point2, type Rail } from '@/world'
 import { Layer, type Ribbon } from './roads'
+import { winter } from './season'
 import type { GroundShade } from './shade'
 
 /** Sleeper spacing along the track, its width along it, and how far it reaches past each rail, metres. */
@@ -10,6 +11,7 @@ const SLEEPER_OVERHANG = 0.45
 const SPACING = 1
 
 const BALLAST_COLOR = 0x8a8478
+const WINTER_BALLAST_COLOR = 0xdfe3e8
 const SLEEPER_COLOR = 0x5a4632
 const STEEL_COLOR = 0x9aa0a6
 
@@ -39,7 +41,7 @@ function across(a: Point2, b: Point2): Point2 | null {
  * The direction to offset each vertex of `points` in, scaled so a line offset along it stays
  * parallel to both segments at a joint (a mitre, capped at sharp bends).
  */
-function mitres(points: readonly Point2[]): Point2[] {
+export function mitres(points: readonly Point2[]): Point2[] {
   const sides = points.slice(1).map((p, i) => across(points[i]!, p))
   return points.map((_, i) => {
     const before = sides[i - 1] ?? sides[i] ?? null
@@ -55,7 +57,7 @@ function mitres(points: readonly Point2[]): Point2[] {
 }
 
 /** Sweeps `profile` (centred `centre` metres to the left of the line) along `points` into `layer`. */
-function sweep(layer: Layer, points: readonly Point2[], normals: readonly Point2[], centre: number, profile: readonly [number, number][]) {
+export function sweep(layer: Layer, points: readonly Point2[], normals: readonly Point2[], centre: number, profile: readonly [number, number][]) {
   let previous: number[] | null = null
   const section = (x: number, z: number, nx: number, nz: number) => {
     const ids = profile.map(([offset, lift]) => layer.vertex(x + nx * (centre + offset), z + nz * (centre + offset), lift))
@@ -128,5 +130,5 @@ export function railRibbons(rails: readonly Rail[], shade: GroundShade, border: 
     for (const centre of [-gauge / 2, gauge / 2]) sweep(steel, points, normals, centre, train ? TRAIN_RAIL : TRAM_RAIL)
   }
   // The ballast sits under the roads' casings; sleepers and rails pull in front of their fills.
-  return [ballast.ribbon(BALLAST_COLOR, 6), ties.ribbon(SLEEPER_COLOR, 26), steel.ribbon(STEEL_COLOR, 28)].filter((ribbon): ribbon is Ribbon => ribbon !== null)
+  return [ballast.ribbon(winter ? WINTER_BALLAST_COLOR : BALLAST_COLOR, 6), ties.ribbon(SLEEPER_COLOR, 26), steel.ribbon(STEEL_COLOR, 28)].filter((ribbon): ribbon is Ribbon => ribbon !== null)
 }

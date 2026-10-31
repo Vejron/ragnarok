@@ -12,11 +12,12 @@ use rapier3d::parry::utils::Array2;
 use rapier3d::prelude::*;
 use shared::carve::{Shell, Tri};
 use shared::consts::*;
-use shared::movement::{begin_slide, decay_knock, desired_translation, settle_vertical, spend_stamina, steer_chute, toggle_chute};
+use shared::movement::{begin_slide, decay_knock, desired_translation, knockdown_ticks, settle_vertical, spend_stamina, steer_chute, toggle_chute};
 use shared::protocol::{InputFrame, LIMB_LEGS};
 use shared::quant::from_cm;
+use shared::ski::{SkiGround, SkiMap, bad_landing, over_crest, ski_flight, ski_step};
 use shared::terrain::Ground;
-use shared::world::{ObjId, WorldFile};
+use shared::world::{ObjId, SkiTrail, WorldFile};
 use std::collections::HashMap;
 
 mod ragdoll;
@@ -56,6 +57,10 @@ pub struct Character {
     /// Knocked down by a blast: ticks left lying helpless, counted only on the ground, so the flight
     /// is extra. Nothing the player asks for happens meanwhile; they are thrown and slide to a stop.
     pub down: u8,
+    /// On skis: `knock` is the skier's whole speed, and walking is off. The server sets it.
+    pub skis: bool,
+    /// Ticks the skis have been too far across the way they are going (`shared::ski::ski_step`).
+    pub ski_strain: u8,
 }
 
 pub struct Physics {
@@ -76,6 +81,10 @@ pub struct Physics {
     /// The same controller with snap-to-ground on, for the horizontal pass of a character that was
     /// standing: it keeps them on a slope they walk down instead of stepping off it.
     snapping: KinematicCharacterController,
+    /// On skis: snaps less far, so that crests throw a skier in the air at speed.
+    ski_snapping: KinematicCharacterController,
+    /// Where the groomed ski tracks are.
+    ski: SkiMap,
     character_shape: Collider,
     /// The shape of a character lying down. Same controller; only the collider differs.
     prone_shape: Collider,
@@ -394,6 +403,12 @@ fn controller() -> KinematicCharacterController {
 
 impl Physics {
     pub fn new(world: &WorldFile) -> Result<Self> {
+        let mut physics = Self::built(world)?;
+        physics.add_ski_trails(&world.ski);
+        Ok(physics)
+    }
+
+    fn built(world: &WorldFile) -> Result<Self> {
         let mut physics = Self::empty(from_cm(world.half_extent));
         physics.insert_static(slab(world, !world.ground.is_flat()), None);
         for (block, collider) in terrain_colliders(&world.ground, world.tile_size) {
@@ -427,6 +442,8 @@ impl Physics {
             parameters: IntegrationParameters { dt: TICK_DT, ..Default::default() },
             cars: Default::default(),
             snapping: KinematicCharacterController { snap_to_ground: Some(CharacterLength::Absolute(SNAP_DISTANCE)), ..controller() },
+            ski_snapping: KinematicCharacterController { snap_to_ground: Some(CharacterLength::Absolute(SKI_SNAP_DISTANCE)), ..controller() },
+            ski: SkiMap::default(),
             controller: controller(),
             character_shape: ColliderBuilder::capsule_y(CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS).build(),
             prone_shape: ColliderBuilder::ball(PRONE_RADIUS).build(),
@@ -639,21 +656,62 @@ impl Physics {
         let still = InputFrame { strafe: 0, forward: 0, buttons: 0, yaw: shared::quant::to_mrad(character.yaw), ..*input };
         let input = if character.down > 0 { &still } else { input };
         let (input, speed_scale, hop) = legged(character, input, speed_scale);
-        let input = &input;
+        // Skis cannot lie down or slide on their side.
+        let input = &if character.skis { InputFrame { buttons: input.buttons & !(BUTTON_PRONE | BUTTON_SLIDE), ..input } } else { input };
         character.chute = toggle_chute(character.chute, character.grounded, character.prone, input);
         self.change_stance(character, input.buttons() & BUTTON_PRONE != 0 && !character.chute);
-        character.knock = if character.chute { steer_chute(character.knock, input) } else { begin_slide(character.knock, character.grounded, input) };
-        let (spent, winded, jump_speed) = spend_stamina(character.spent, character.winded, character.grounded, character.prone, input);
-        character.spent = spent;
+        let skiing = character.skis && !character.chute && character.down == 0;
+        let was_grounded = character.grounded;
+        let ground = if character.skis { self.ski_ground(character.position) } else { SkiGround::FLAT };
+        let mut fell = false;
+        character.knock = if character.chute {
+            steer_chute(character.knock, input)
+        } else if skiing {
+            if character.grounded {
+                // Winded, run held does nothing.
+                let spent = InputFrame { buttons: input.buttons & !BUTTON_RUN, ..*input };
+                let step = ski_step(character.knock, character.ski_strain, ground, if character.winded { &spent } else { input }, dt);
+                character.ski_strain = step.strain;
+                fell = step.fell;
+                step.knock
+            } else {
+                ski_flight(character.knock, input, dt)
+            }
+        } else {
+            begin_slide(character.knock, character.grounded, input)
+        };
+        let (spent, winded, mut jump_speed) = spend_stamina(character.spent, character.winded, character.grounded, character.prone, input);
+        // Skiing hard lasts: it is the long haul, not a sprint.
+        character.spent = if character.skis && spent > character.spent { character.spent + (spent - character.spent) / SKI_STAMINA_SHARE } else { spent };
         character.winded = winded;
         // One leg: every step is a hop, which costs no more than walking; a jump is a bigger one.
+        // Over a crest the skier takes off with whatever climb the ground gave them.
+        let mut thrown = false;
+        if skiing && character.grounded {
+            let [vx, vz] = character.knock;
+            let climbing = ground.climb(character.knock);
+            let ahead = [character.position[0] + vx * SKI_CREST_LOOK, character.position[1], character.position[2] + vz * SKI_CREST_LOOK];
+            if input.buttons() & BUTTON_JUMP != 0 {
+                jump_speed += climbing.max(0.0);
+            } else if vx.hypot(vz) >= SKI_CREST_SPEED && over_crest(character.knock, ground, self.ski_ground(ahead)) {
+                character.vy = climbing.max(SKI_CREST_LIFT);
+                character.grounded = false;
+                thrown = true;
+            }
+        } else if skiing {
+            // In the air gravity is the skier's own, lighter one: what `desired_translation` takes off, part is given back.
+            character.vy += (GRAVITY - SKI_AIR_GRAVITY) * dt;
+        }
         let (input, jump_speed) = match hop {
             Some(speed) => (&InputFrame { buttons: input.buttons | BUTTON_JUMP, ..*input }, speed),
+            None if character.skis => (input, SKI_JUMP_SPEED.min(jump_speed)),
             None => (input, if character.lost & LIMB_LEGS != 0 { HOP_JUMP_SPEED } else { jump_speed }),
         };
         // Winded, run held is a walk.
         let input = &if winded { InputFrame { buttons: input.buttons & !BUTTON_RUN, ..*input } } else { *input };
-        let (vy, desired) = desired_translation(character.vy, character.grounded, character.knock, input, dt, speed_scale, character.chute, jump_speed);
+        // On skis nothing walks: all the moving is `knock`.
+        let walk = if character.skis { InputFrame { strafe: 0, forward: 0, ..*input } } else { *input };
+        let (vy, desired) = desired_translation(character.vy, character.grounded, character.knock, &walk, dt, speed_scale, character.chute, jump_speed);
         let queries = self.broad_phase.as_query_pipeline(
             self.narrow_phase.query_dispatcher(),
             &self.bodies,
@@ -666,7 +724,8 @@ impl Physics {
         // and WASM Rapier), and every stall would be a misprediction.
         let shape = self.shape(character.prone).shape();
         let start = Vector::from(character.position);
-        let walker = if character.grounded && vy <= 0.0 { &self.snapping } else { &self.controller };
+        let snapping = if skiing { &self.ski_snapping } else { &self.snapping };
+        let walker = if character.grounded && vy <= 0.0 && !thrown { snapping } else { &self.controller };
         let horizontal = walker.move_shape(dt, &queries, shape, &Pose::from_translation(start), Vector::new(desired[0], 0.0, desired[2]), |_| {});
         let middle = start + horizontal.translation;
         let vertical = self.controller.move_shape(dt, &queries, shape, &Pose::from_translation(middle), Vector::new(0.0, desired[1], 0.0), |_| {});
@@ -679,13 +738,56 @@ impl Physics {
         if grounded {
             character.chute = false;
         }
-        if !character.chute {
+        if skiing {
+            let wanted = desired[0].hypot(desired[2]);
+            let speed = character.knock[0].hypot(character.knock[1]);
+            let moved = horizontal.translation.x.hypot(horizontal.translation.z);
+            if !grounded && was_grounded && vy <= 0.0 && !thrown {
+                // Left the ground over a crest: going up, it throws the skier; going down, they carry on.
+                character.vy = ground.climb(character.knock);
+            } else if grounded && !was_grounded {
+                let landed = self.ski_ground(character.position);
+                fell |= bad_landing(landed.impact([character.knock[0], vy, character.knock[1]]), character.knock, input);
+            }
+            fell |= speed > SKI_CRASH_SPEED && moved < wanted * SKI_CRASH_MOVED;
+            if fell {
+                character.ski_strain = 0;
+                character.vy = SKI_FALL_HOP;
+                character.grounded = false;
+                self.knock_down(character, knockdown_ticks(speed.max(KNOCKDOWN_POWER)));
+            }
+        } else if character.skis && !character.chute {
+            // Thrown down on skis: a tumble that takes a while to stop.
+            if grounded {
+                let [x, z] = character.knock.map(|v| v * SKI_TUMBLE_KEEP);
+                character.knock = if x.hypot(z) < KNOCK_MIN_SPEED { [0.0, 0.0] } else { [x, z] };
+            }
+        } else if !character.chute {
             character.knock = decay_knock(character.knock, grounded, input.buttons() & BUTTON_CROUCH != 0);
         }
         character.yaw = shared::quant::from_mrad(input.yaw);
         if grounded {
             character.down = character.down.saturating_sub(1);
         }
+    }
+
+    /// Adds a world tile's or a whole world's groomed tracks to what `on_track` knows.
+    pub fn add_ski_trails(&mut self, trails: &[SkiTrail]) {
+        trails.iter().for_each(|trail| self.ski.add(trail));
+    }
+
+    /// What is under skis at the capsule centre `position`: the slope of the terrain, as `terrain_below`
+    /// finds it, and whether it is a groomed track. Flat where no terrain has streamed in.
+    fn ski_ground(&self, position: [f32; 3]) -> SkiGround {
+        let track = self.ski.on_track(position[0], position[2]);
+        let terrain = |_: ColliderHandle, collider: &Collider| collider.shape().as_heightfield().is_some();
+        let filter = QueryFilter::only_fixed().predicate(&terrain);
+        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, filter);
+        // Off to the side a little: a ray straight down an exact grid line can slip between the triangles.
+        let ray = Ray::new(Vector::new(position[0] + SKI_RAY_NUDGE, TERRAIN_TOP, position[2] + SKI_RAY_NUDGE), Vector::new(0.0, -1.0, 0.0));
+        let hit = queries.cast_ray_and_get_normal(&ray, TERRAIN_TOP + RAY_FLOOR, true);
+        let normal = hit.map_or([0.0, 1.0, 0.0], |(_, hit)| [hit.normal.x, hit.normal.y, hit.normal.z]);
+        SkiGround { normal, track, groove: self.ski.groove(position[0], position[2]) }
     }
 
     /// Knocks `character` down for `ticks` (more if it already is): the canopy, if open, is lost, and
@@ -764,6 +866,15 @@ fn inherit(character: &mut Character, velocity: [f32; 3]) {
 }
 
 /// Capsule-centre height for a character standing on flat ground at y = 0.
+/// Above the highest ground any world may have, and below the deepest bed: what a ray straight down
+/// for the terrain goes between.
+const TERRAIN_TOP: f32 = MAX_RELIEF + 10.0;
+const RAY_FLOOR: f32 = 20.0;
+/// How far off a skier the ray for the slope goes down, metres.
+const SKI_RAY_NUDGE: f32 = 0.0137;
+/// The least a crest throws a skier up, m/s: just enough to be off the ground.
+const SKI_CREST_LIFT: f32 = 0.4;
+
 pub const STANDING_Y: f32 = CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS + CONTROLLER_OFFSET;
 
 #[cfg(test)]

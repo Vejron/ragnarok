@@ -330,6 +330,211 @@ fn ramp_run_matches_fixture() {
     }
 }
 
+/// Skis on, standing on the ground of `world` at `[x, z]`.
+fn on_skis(world: &WorldFile, x: f32, z: f32) -> Character {
+    Character { position: [x, world.ground.height_at(x, z) + STANDING_Y, z], grounded: true, skis: true, ..Default::default() }
+}
+
+#[test]
+fn skis_run_down_a_slope_with_nobody_pushing_and_stay_on_the_ground() {
+    let world = terrain_world(|_, z| z * 0.17);
+    let physics = Physics::new(&world).unwrap();
+    let mut character = on_skis(&world, 0.0, 60.0);
+    let mut airborne = 0;
+    for seq in 0..360 {
+        physics.move_character(&mut character, &InputFrame { seq, ..Default::default() }, TICK_DT);
+        airborne += u32::from(!character.grounded);
+    }
+    assert!(character.position[2] < 50.0 && -character.knock[1] > 4.0, "{character:?}");
+    assert!(airborne < 3, "{airborne}");
+    assert_eq!(character.down, 0);
+}
+
+#[test]
+fn skis_climb_slowly_and_faster_with_the_poles_going_hard() {
+    let world = terrain_world(|_, z| -z * 0.18);
+    let physics = Physics::new(&world).unwrap();
+    let mut character = on_skis(&world, 0.0, 60.0);
+    for seq in 0..600 {
+        physics.move_character(&mut character, &InputFrame { seq, forward: 127, ..Default::default() }, TICK_DT);
+    }
+    assert!((40.0..58.0).contains(&character.position[2]), "{:?}", character.position);
+}
+
+#[test]
+fn a_crest_at_speed_throws_a_skier_and_a_flat_landing_after_a_big_one_is_a_fall() {
+    // Up a ramp towards -Z that ends in a 6 m drop onto the flat.
+    let world = terrain_world(|_, z| if z > 40.0 { 0.0 } else if z > 10.0 { (40.0 - z) * 0.2 } else { 0.0 });
+    let physics = Physics::new(&world).unwrap();
+    let mut character = on_skis(&world, 0.0, 42.0);
+    character.knock = [0.0, -20.0];
+    let (mut flew, mut fell) = (0, false);
+    for seq in 0..240 {
+        physics.move_character(&mut character, &InputFrame { seq, forward: 127, buttons: BUTTON_RUN, ..Default::default() }, TICK_DT);
+        flew += u32::from(!character.grounded);
+        fell |= character.down > 0;
+    }
+    assert!(flew > 20, "{flew}");
+    assert!(fell, "{character:?}");
+}
+
+#[test]
+fn a_skier_exactly_on_a_ground_line_still_feels_the_slope() {
+    let world = ramp_world();
+    let physics = Physics::new(&world).unwrap();
+    let mut character = on_skis(&world, 0.0, 60.0);
+    physics.move_character(&mut character, &InputFrame::default(), TICK_DT);
+    assert!(character.knock[1] < 0.0, "{character:?}");
+}
+
+#[test]
+fn a_wall_at_speed_is_a_crash() {
+    let physics = Physics::new(&world_with_wall()).unwrap();
+    let mut character = Character { skis: true, position: [-6.0, STANDING_Y, 0.0], grounded: true, ..Default::default() };
+    character.knock = [14.0, 0.0];
+    let east = shared::quant::to_mrad(-std::f32::consts::FRAC_PI_2);
+    let mut fell = false;
+    for seq in 0..120 {
+        physics.move_character(&mut character, &InputFrame { seq, forward: 127, yaw: east, ..Default::default() }, TICK_DT);
+        fell |= character.down > 0;
+    }
+    assert!(fell, "{character:?}");
+}
+
+#[test]
+fn a_fall_tumbles_on_and_stops() {
+    let physics = Physics::new(&flat_world()).unwrap();
+    let mut character = Character { skis: true, ..standing() };
+    character.knock = [0.0, -15.0];
+    character.ski_strain = SKI_STRAIN_FALL - 1;
+    let start = character.position[2];
+    let input = InputFrame { yaw: 1500, ..Default::default() };
+    physics.move_character(&mut character, &input, TICK_DT);
+    assert!(character.down > 0, "{character:?}");
+    while character.down > 0 {
+        physics.move_character(&mut character, &input, TICK_DT);
+    }
+    assert!(start - character.position[2] > 6.0, "{:?}", character.position);
+}
+
+#[test]
+fn a_track_is_faster_than_the_snow_beside_it() {
+    let mut world = flat_world();
+    world.ski.push(shared::world::SkiTrail { width: 400, points: vec![[0, 2_000], [0, -8_000]] });
+    let physics = Physics::new(&world).unwrap();
+    let run = |x: f32| {
+        let mut character = Character { position: [x, STANDING_Y, 15.0], grounded: true, skis: true, ..Default::default() };
+        for seq in 0..240 {
+            physics.move_character(&mut character, &InputFrame { seq, forward: 127, ..Default::default() }, TICK_DT);
+        }
+        15.0 - character.position[2]
+    };
+    assert!(run(0.0) > run(10.0) * 1.1, "{} {}", run(0.0), run(10.0));
+}
+
+/// `(tick, position)` skiing `ramp_world`'s slope, mirrored in `predict.spec.ts`.
+const SKI_CHECKPOINTS: [(u32, [f32; 3]); 3] = [
+    (60, [1.2015, 59.3078, 60.4792]),
+    (120, [0.8157, 58.3169, 57.7560]),
+    (240, [-0.3172, 55.2653, 49.3722]),
+];
+
+/// Skiing `ramp_world`: down the slope turning a little, a jump, a tuck, a snowplow.
+pub fn ski_input(seq: u32) -> InputFrame {
+    let buttons = if seq == 70 { BUTTON_JUMP } else if (100..180).contains(&seq) { BUTTON_CROUCH } else { 0 };
+    InputFrame { seq, strafe: 0, forward: if seq >= 180 { -127 } else { 0 }, yaw: (seq as i16 * 2) % 300, buttons, pitch: 0, view: 0, slot: 0 }
+}
+
+#[test]
+fn ski_run_matches_fixture() {
+    let world = ramp_world();
+    let physics = Physics::new(&world).unwrap();
+    let mut character = on_skis(&world, 1.3, 61.7);
+    for seq in 1..=240 {
+        physics.move_character(&mut character, &ski_input(seq), TICK_DT);
+        if let Some((_, expected)) = SKI_CHECKPOINTS.iter().find(|(tick, _)| *tick == seq) {
+            let close = character.position.iter().zip(expected).all(|(actual, expected)| (actual - expected).abs() < 0.001);
+            assert!(close, "tick {seq}: {:?} {:?}", character.position, character);
+        }
+    }
+}
+
+/// `on_skis`, up a ramp of `degrees` rising towards -Z, for six seconds of pushing: how far it got, metres.
+fn climbed(degrees: f32, buttons: u16) -> f32 {
+    let rise = degrees.to_radians().tan();
+    let world = terrain_world(|_, z| (100.0 - z) * rise);
+    let physics = Physics::new(&world).unwrap();
+    let mut character = on_skis(&world, 0.3, 40.0);
+    for seq in 0..360 {
+        physics.move_character(&mut character, &InputFrame { seq, forward: 127, buttons, ..Default::default() }, TICK_DT);
+    }
+    40.0 - character.position[2]
+}
+
+#[test]
+fn run_held_gets_a_herringbone_up_forty_degrees_and_a_walk_only_up_thirty() {
+    assert!(climbed(40.0, BUTTON_RUN) > 3.0, "{}", climbed(40.0, BUTTON_RUN));
+    assert!(climbed(28.0, 0) > 3.0, "{}", climbed(28.0, 0));
+    assert!(climbed(40.0, 0) < 0.0, "{}", climbed(40.0, 0));
+}
+
+/// Ticks in the air coasting at `speed` over a ridge 1.5 m high, its sides 7.5 m long.
+fn air_over_ridge(speed: f32) -> u32 {
+    let world = terrain_world(|_, z| (1.5 - (z - 30.0).abs() * 0.2).max(0.0));
+    let physics = Physics::new(&world).unwrap();
+    let mut character = on_skis(&world, 0.3, 50.0);
+    character.knock = [0.0, -speed];
+    let mut flew = 0;
+    for seq in 0..180 {
+        physics.move_character(&mut character, &InputFrame { seq, buttons: BUTTON_CROUCH, ..Default::default() }, TICK_DT);
+        flew += u32::from(!character.grounded);
+    }
+    flew
+}
+
+#[test]
+fn a_bump_at_speed_gives_air_and_at_a_walk_it_does_not() {
+    assert!(air_over_ridge(13.0) > 20, "{}", air_over_ridge(13.0));
+    assert_eq!(air_over_ridge(4.0), 0);
+}
+
+/// A flat world with a track that runs along -Z, then bends 20° towards -X.
+fn bent_track() -> WorldFile {
+    let mut world = flat_world();
+    world.ski.push(shared::world::SkiTrail { width: 400, points: vec![[0, 9_000], [0, 0], [-1_700, -4_700]] });
+    world
+}
+
+/// Coasting from `start` along -Z at 10 m/s, looking `yaw` radians off, for `ticks`.
+fn coast(physics: &Physics, start: [f32; 2], yaw: f32, ticks: u32) -> Character {
+    let mut character = Character { position: [start[0], STANDING_Y, start[1]], grounded: true, skis: true, knock: [0.0, -10.0], ..Default::default() };
+    let yaw = shared::quant::to_mrad(yaw);
+    for seq in 0..ticks {
+        physics.move_character(&mut character, &InputFrame { seq, yaw, ..Default::default() }, TICK_DT);
+    }
+    character
+}
+
+#[test]
+fn a_groove_draws_a_skier_in_and_carries_them_round_a_bend() {
+    let physics = Physics::new(&bent_track()).unwrap();
+    // Starting between the grooves, looking straight on the first leg, then down the bend's way is within reach.
+    let straight = coast(&physics, [-0.2, 60.0], 0.1, 120);
+    assert!((straight.position[0] + 0.8).abs() < 0.1, "{:?}", straight.position);
+    let round = coast(&physics, [-0.8, 5.0], 0.2, 150);
+    let [x, z] = [round.position[0], round.position[2]];
+    let off_centre = (x - z * (17.0 / 47.0)).abs() * (47.0 / 50.0);
+    assert!(z < -5.0 && (off_centre - 0.8).abs() < 0.3, "{:?}", round.position);
+    assert_eq!(round.down, 0);
+}
+
+#[test]
+fn turning_well_away_leaves_a_groove() {
+    let physics = Physics::new(&bent_track()).unwrap();
+    let out = coast(&physics, [-0.8, 60.0], 0.8, 120);
+    assert!(out.position[0] < -4.0, "{:?}", out.position);
+}
+
 #[test]
 fn simulation_is_deterministic() {
     let physics = Physics::new(&world_with_wall()).unwrap();

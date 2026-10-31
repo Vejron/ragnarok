@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn a_loadout_that_cannot_be_chosen_is_dropped_whole() {
-        for junk in ["", "2,5,8", "2,5,10,8,11,1", "2,5,x,8,11", "2,2,10,8,11", "2,6,10,8,11", "2,14,10,8,11", "2,300,10,8,11"] {
+        for junk in ["", "2,5,8", "2,5,10,8,11,1", "2,5,x,8,11", "2,2,10,8,11", "2,6,10,8,11", "2,15,10,8,11", "2,300,10,8,11"] {
             assert_eq!(Profile::from_query([("loadout", junk)]).loadout, None, "{junk:?}");
         }
         assert_eq!(Profile::from_query([("loadout", "0,0,0,0,0")]).loadout, Some([0; HOTBAR_SLOTS]), "empty slots may repeat");

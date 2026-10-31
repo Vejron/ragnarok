@@ -13,7 +13,7 @@ use shared::consts::*;
 use shared::armor::Pen;
 use shared::items::*;
 use shared::vehicles::{Exposure, crew_gun, vehicle_def};
-use shared::protocol::{BulletSpawn, ItemSlot, LIMB_ARMS, PROJECTILE_BULLET, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_ROCKET, ShotEvent, WEAPON_FLARE, WEAPON_PELLET, WEAPON_RIFLE, WEAPON_WRECK};
+use shared::protocol::{BulletSpawn, ItemSlot, LIMB_ARMS, LIMB_LEGS, PROJECTILE_BULLET, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_ROCKET, ShotEvent, WEAPON_FLARE, WEAPON_PELLET, WEAPON_RIFLE, WEAPON_WRECK};
 use shared::quant::{from_mrad, to_cm, to_cm_i16, to_mrad};
 
 /// Health, death, the items in the hotbar and what blasts do to people and vehicles.
@@ -927,6 +927,14 @@ fn use_item(world: &mut World, id: u32) {
             if pressed && player.hands.fire_cooldown == 0 {
                 player.hands.fire_cooldown = item.cooldown_ticks;
                 super::building::use_bricks(world, id, buttons & BUTTON_ALT != 0);
+            }
+        }
+        ItemKind::Skis => {
+            let still = player.character.knock[0].hypot(player.character.knock[1]) < SKI_CLIP_SPEED;
+            if fresh && player.hands.fire_cooldown == 0 && still && lost & LIMB_LEGS == 0 {
+                player.hands.fire_cooldown = item.cooldown_ticks;
+                player.character.skis = !player.character.skis;
+                player.character.knock = [0.0, 0.0];
             }
         }
         ItemKind::Heal => {
