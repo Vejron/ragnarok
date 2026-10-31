@@ -510,6 +510,17 @@ fn crosshair_dir(world: &World, shooter: u32, back: u32, pivot: [f32; 3], eye: [
     if along < 0.5 { look_dir } else { dir }
 }
 
+/// Where a round leaves to follow the crosshair exactly: the point of the camera's ray from `pivot`
+/// abreast of `eye`, so nothing is off by the width of a shoulder up close. `None` when a wall stands
+/// between the eye and that point (vehicle `ignore` is not in the way): the shot cannot leave there.
+fn crosshair_muzzle(world: &World, pivot: [f32; 3], eye: [f32; 3], look_dir: [f32; 3], ignore: u32) -> Option<[f32; 3]> {
+    let abreast = vec3::dot(vec3::sub(eye, pivot), look_dir);
+    let muzzle = vec3::along(pivot, look_dir, abreast);
+    let to = vec3::sub(muzzle, eye);
+    let len = vec3::length(to);
+    (len < 1e-3 || world.physics.cast_ray(eye, to.map(|v| v / len), len, ignore).is_none()).then_some(muzzle)
+}
+
 /// The cone a shot of `item` is scattered over: aim held (`BUTTON_ALT`) tightens it, unless the gun is
 /// held in `one_arm`, which widens it by `ONE_ARM_SPREAD` and can steady it no more.
 fn effective_spread(item: &ItemDef, buttons: u16, one_arm: bool) -> f32 {
@@ -568,8 +579,9 @@ struct Aim {
     back: u32,
 }
 
-/// How player `id` aims `item`: from their eye (their head, in a seat) towards what the crosshair is
-/// on, scattered over the item's cone; or, looking down its scope, straight along the look.
+/// How player `id` aims `item`: along the crosshair's own line, or from their eye (their head, in a seat)
+/// towards what it is on if a wall is in the way of that, scattered over the item's cone; or, looking
+/// down its scope, straight along the look.
 fn aim(world: &mut World, id: u32, item: &ItemDef) -> Option<Aim> {
     let player = world.entities.get::<Player>(id)?;
     let input = player.input;
@@ -592,13 +604,14 @@ fn aim(world: &mut World, id: u32, item: &ItemDef) -> Option<Aim> {
     // direction, true; held in one hand, not even then.
     let scoped = item.scope && input.buttons() & BUTTON_ALT != 0;
     let one_arm = one_armed(world, id);
-    let dir = if scoped && !one_arm {
-        look_dir
-    } else {
-        // A bot has no camera: it aims its look from the eye itself.
-        let aim = if scoped || world.entities.has::<Bot>(id) { look_dir } else { crosshair_dir(world, id, back, pivot, origin, look_dir, item.range, vehicle) };
-        scatter(world, aim, effective_spread(item, input.buttons(), one_arm))
+    // A bot has no camera: it aims its look from the eye itself.
+    let eye_line = scoped || world.entities.has::<Bot>(id);
+    let (origin, aim) = match crosshair_muzzle(world, pivot, origin, look_dir, vehicle).filter(|_| !eye_line) {
+        Some(muzzle) => (muzzle, look_dir),
+        None if eye_line => (origin, look_dir),
+        None => (origin, crosshair_dir(world, id, back, pivot, origin, look_dir, item.range, vehicle)),
     };
+    let dir = if scoped && !one_arm { aim } else { scatter(world, aim, effective_spread(item, input.buttons(), one_arm)) };
     Some(Aim { origin, dir, vehicle, back })
 }
 

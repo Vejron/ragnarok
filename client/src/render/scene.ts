@@ -4,6 +4,7 @@ import { ContactShadows } from './contact'
 import { setWaterLight, setWaterPlane, setWaterReflection } from './water'
 import { CLASSIC, SOFT, loadLook, type Look, type Palette } from './look'
 import { createSky, skyAt } from './daynight'
+import { clearArm, lookDir } from '../aimline'
 import { ON_FOOT_HEIGHT, ON_FOOT_SHOULDER } from '../sim/consts'
 
 // On foot the camera is over the right shoulder and a little above the head; the server shares these.
@@ -64,6 +65,8 @@ const AIM_FOV = 50
 const SCOPE_FOV = 18
 /** A gunner's sight: a tank gun's optic, wide enough to hold a range ladder out to 400 m. */
 const SIGHT_FOV = 20
+/** How far above the ground a shoulder camera stays (m). */
+const CAMERA_CLEARANCE = 0.3
 /** How far in the third-person camera pulls while aiming, as a fraction of its distance. */
 export const AIM_DISTANCE_SCALE = 0.7
 /** How fast the zoom eases in and out, per second. */
@@ -232,6 +235,23 @@ export class Scene {
     camera.position.y = Math.max(this.groundAt(camera.position.x, camera.position.z) + 0.3, camera.position.y)
     camera.lookAt(x, y, z)
     // The shadow frustum follows the target's height too, so it covers hills.
+    this.sunOver(target[0]!, target[1]!, target[2]!)
+  }
+
+  /**
+   * Over a shoulder, where a crosshair must mean what the server's ray does: the camera stays on the
+   * line through the pivot along the look, pulled in rather than lifted where the ground would come
+   * through it, and looks along that line. Shake moves the view without turning it.
+   */
+  overShoulder(target: readonly number[], yaw: number, pitch: number, distance: number, shoulder: number, height: number, shake?: readonly number[]) {
+    const look = lookDir(yaw, pitch)
+    const pivot = [target[0]! + Math.cos(yaw) * shoulder, target[1]! + height, target[2]! - Math.sin(yaw) * shoulder]
+    const arm = clearArm(pivot, [-look[0], -look[1], -look[2]], distance, this.groundAt, CAMERA_CLEARANCE)
+    const camera = this.camera
+    camera.position.set(pivot[0]! - look[0] * arm + (shake?.[0] ?? 0), pivot[1]! - look[1] * arm + (shake?.[1] ?? 0), pivot[2]! - look[2] * arm + (shake?.[2] ?? 0))
+    // Only on a bank so steep the pivot itself is in it.
+    camera.position.y = Math.max(this.groundAt(camera.position.x, camera.position.z) + CAMERA_CLEARANCE, camera.position.y)
+    camera.lookAt(camera.position.x + look[0] * 10, camera.position.y + look[1] * 10, camera.position.z + look[2] * 10)
     this.sunOver(target[0]!, target[1]!, target[2]!)
   }
 

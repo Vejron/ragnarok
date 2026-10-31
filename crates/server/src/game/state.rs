@@ -243,7 +243,7 @@ const CHEST_Y: f32 = 0.9;
 /// trail of where it was.
 pub fn soldier_life() -> impl crate::entities::Bundle {
     use crate::entities::{Health, Hurtbox, Respawn, Trail};
-    let body = Hurtbox { centre_y: 0.0, half_height: CAPSULE_HALF_HEIGHT, radius: CAPSULE_RADIUS, head: Some(HEAD_ZONE_Y), mark_y: CHEST_Y, hit_kind: HIT_BODY };
+    let body = Hurtbox { centre_y: 0.0, half_height: CAPSULE_HALF_HEIGHT, radius: HURT_RADIUS, head: Some(HEAD_ZONE_Y), mark_y: CHEST_Y, hit_kind: HIT_BODY };
     (Health::full(PLAYER_MAX_HP), Respawn { delay: RESPAWN_TICKS, left: 0 }, body, Trail::default())
 }
 

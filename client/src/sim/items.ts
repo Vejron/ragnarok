@@ -5,7 +5,7 @@
  * below are checked against the Rust source by `consts-parity.spec.ts`.
  */
 
-import { BUTTON_ALT, TICK_RATE } from './consts'
+import { AIM_SPREAD_SCALE, BUTTON_ALT, ONE_ARM_SPREAD, TICK_RATE } from './consts'
 import tables from './tables.generated.json'
 
 export const HOTBAR_SLOTS = 5
@@ -65,6 +65,8 @@ export interface ItemDef {
   falloffStart: number
   falloffEnd: number
   falloffMin: number
+  /** The cone its shots scatter over, radians. Mirrors `spread`. */
+  spread: number
 }
 
 /** What the client adds to an item: how it is held and what it sounds like. Every item needs one. */
@@ -125,6 +127,10 @@ export const aimSpeedScale = (item: number, buttons: number): number => {
 }
 
 /** Ticks a bandage takes to apply. */
+/** The cone a shot of `def` scatters over. Mirrors the server's `effective_spread`. */
+export const effectiveSpread = (def: ItemDef, aimHeld: boolean, oneArm: boolean): number =>
+  oneArm ? def.spread + ONE_ARM_SPREAD : aimHeld ? def.spread * AIM_SPREAD_SCALE : def.spread
+
 export const BANDAGE_TICKS = 2 * TICK_RATE
 /** Grenades. Mirrors the grenade block of items.rs. */
 export const GRENADE_BLAST_RADIUS = 5.0

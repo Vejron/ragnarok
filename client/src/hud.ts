@@ -78,6 +78,10 @@ export interface HudStats {
   aiming: boolean
   /** A gun in hand, on foot or in a passenger seat: show the crosshair. */
   armed: boolean
+  /** How far the crosshair's arms stand from its middle: the reach of the gun's real spread, px. */
+  crossGap: number
+  /** Where on the screen, as fractions of its width and height, something stops a round short of the crosshair, or null. */
+  blocked: [number, number] | null
   /** Connected, alive and with their own items to hand (standing, or a car's passenger): the health bar and the hotbar are shown. */
   hands: boolean
   /** The five hotbar slots. */

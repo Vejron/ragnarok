@@ -4,6 +4,7 @@ import { BrickTrigger, mayPlace, type BuildWorld } from './sim/bricks'
 import { MATERIAL_BRICK, cellAt, cubeCentre, type Pos } from './sim/construct'
 import type { SimMotor, Vec3 } from './sim/motor'
 import type { InputFrame } from './net/codec'
+import { lookDir, shoulderPivot } from './aimline'
 import { ON_FOOT_HEIGHT, ON_FOOT_SHOULDER } from './render/scene'
 import type { WorldView } from './worldview'
 
@@ -30,9 +31,8 @@ export class Bricklayer {
    * of the eye.
    */
   aim(position: ArrayLike<number>, yaw: number, pitch: number): { place: Pos; dig: Pos } | null {
-    const flat = Math.cos(pitch)
-    const dir: Vec3 = [-Math.sin(yaw) * flat, Math.sin(pitch), -Math.cos(yaw) * flat]
-    const pivot: Vec3 = [position[0]! + Math.cos(yaw) * ON_FOOT_SHOULDER, position[1]! + ON_FOOT_HEIGHT, position[2]! - Math.sin(yaw) * ON_FOOT_SHOULDER]
+    const dir = lookDir(yaw, pitch)
+    const pivot = shoulderPivot(position, yaw)
     const hit = this.motor()?.castRay(pivot, dir, BUILD_REACH + ON_FOOT_SHOULDER + ON_FOOT_HEIGHT)
     if (!hit) return null
     const half = CELL / 200

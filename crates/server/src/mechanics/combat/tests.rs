@@ -27,7 +27,7 @@ fn join(game: &mut Game) -> (u32, mpsc::Receiver<Outgoing>) {
 
 /// The camera is above and to the right of the eye, so a shooter aims a little down to put the
 /// crosshair on a target 20 m away at the same height.
-const AIM_20M: f32 = -0.075;
+const AIM_20M: f32 = -0.0425;
 
 /// How a player aims with `slot` in hand: a gun's crosshair on a target 20 m away, anything else level.
 fn aim_for(game: &Game, id: u32, slot: usize) -> f32 {
@@ -133,7 +133,7 @@ fn a_shot_at_the_ground_hits_nobody_and_ends_on_it() {
 #[test]
 fn a_shot_goes_where_the_shoulder_camera_crosshair_is() {
     let (mut game, shooter, _, _, _) = duel();
-    // The pivot is 0.9 m to the right; a target whose centre is on that line is under the crosshair,
+    // The pivot is to the right; a target whose centre is on that line is under the crosshair,
     // and one 5 m off to the side is not.
     game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: 0, view: 0, slot: 0 };
     let c = game.world.entities.of::<Player>(shooter).character;
@@ -141,11 +141,45 @@ fn a_shot_goes_where_the_shoulder_camera_crosshair_is() {
     let eye = [c.position[0], c.position[1] + EYE_HEIGHT, c.position[2]];
     let pivot = [c.position[0] + ON_FOOT_SHOULDER, pivot_y, c.position[2]];
     let dir = crosshair_dir(&game.world, shooter, 0, pivot, eye, look(0.0, 0.0), 100.0, 0);
-    // Over 100 m the line from the eye crosses the camera's ray, which is 0.9 m to the right and 0.9 m above.
+    // At the target, 20 m off, the line from the eye crosses the camera's ray, to the right of it and above.
     let at = |t: f32| [eye[0] + dir[0] * t, eye[1] + dir[1] * t];
-    assert!((at(100.0)[0] - (c.position[0] + ON_FOOT_SHOULDER)).abs() < 0.05, "x {}", at(100.0)[0]);
-    assert!((at(100.0)[1] - pivot_y).abs() < 0.1, "y {}", at(100.0)[1]);
+    assert!((at(20.0)[0] - (c.position[0] + ON_FOOT_SHOULDER)).abs() < 0.05, "x {}", at(20.0)[0]);
+    assert!((at(20.0)[1] - pivot_y).abs() < 0.1, "y {}", at(20.0)[1]);
     assert!(dir[2] < -0.99, "still forwards: {dir:?}");
+}
+
+/// Puts `target` 4 m off with the crosshair `beside` metres to the right of their middle, chest high, and
+/// fires four aimed rounds at them.
+fn fire_beside(beside: f32) -> (Game, u32) {
+    let (mut game, shooter, target, mut seq, _) = duel();
+    game.world.entities.get_mut::<Player>(target).unwrap().character.position = [100.0 + ON_FOOT_SHOULDER - beside, STANDING_Y, -4.0];
+    for _ in 0..=MAX_REWIND_TICKS {
+        game.step();
+    }
+    let pitch = -((ON_FOOT_HEIGHT - 0.3) / 4.0).atan();
+    for _ in 0..4 {
+        press(&mut game, shooter, &mut seq, BUTTON_FIRE | BUTTON_ALT, 0, pitch);
+        hold_slot(&mut game, shooter, &mut seq, 0, 0, 8);
+    }
+    (game, target)
+}
+
+#[test]
+fn up_close_an_arm_under_the_crosshair_is_the_arm_that_is_hit() {
+    for beside in [0.3, -0.3, 0.4, -0.4] {
+        let (game, target) = fire_beside(beside);
+        assert_eq!(hp_of(&game, target), PLAYER_MAX_HP, "the torso is untouched, {beside} m off");
+        assert!(wounds_of(&game, target).taken.iter().any(|&taken| taken > 0), "an arm is hurt, {beside} m off");
+    }
+}
+
+#[test]
+fn up_close_a_crosshair_beside_the_body_misses_it() {
+    for beside in [0.6, -0.6] {
+        let (game, target) = fire_beside(beside);
+        assert_eq!(hp_of(&game, target), PLAYER_MAX_HP, "{beside} m off");
+        assert!(wounds_of(&game, target).taken.iter().all(|&taken| taken == 0), "{beside} m off");
+    }
 }
 
 #[test]
@@ -967,18 +1001,18 @@ fn two_shotgun_blasts_kill_at_point_blank_and_credit_the_shooter() {
     let (mut game, shooter, target, mut seq, _) = duel();
     give(&mut game, shooter, 4, ITEM_SHOTGUN, 1);
     stand_at(&mut game, target, 3.0);
-    // The shoulder camera is 1.5 m above the target's centre, so the crosshair on it at three metres is well down.
+    // The shoulder camera is above the target's centre, so the crosshair on it at three metres is down a little.
     // Aimed, so the spread is tight enough that every pellet is on the body and the kill is not down to luck.
     for _ in 0..6 {
-        press(&mut game, shooter, &mut seq, BUTTON_FIRE | BUTTON_ALT, 4, -0.46);
+        press(&mut game, shooter, &mut seq, BUTTON_FIRE | BUTTON_ALT, 4, -(ON_FOOT_HEIGHT / 3.0).atan());
     }
     assert!(game.world.entities.alive(target), "ten pellets are short of a soldier's full health");
     // Let go, wait out the pump, and again.
     for _ in 0..70 {
-        press(&mut game, shooter, &mut seq, BUTTON_ALT, 4, -0.46);
+        press(&mut game, shooter, &mut seq, BUTTON_ALT, 4, -(ON_FOOT_HEIGHT / 3.0).atan());
     }
     for _ in 0..6 {
-        press(&mut game, shooter, &mut seq, BUTTON_FIRE | BUTTON_ALT, 4, -0.46);
+        press(&mut game, shooter, &mut seq, BUTTON_FIRE | BUTTON_ALT, 4, -(ON_FOOT_HEIGHT / 3.0).atan());
     }
     assert_eq!(game.world.entities.of::<crate::entities::Health>(target).hp, 0, "twenty at three metres are lethal");
     assert_eq!(game.world.entities.of::<Player>(shooter).score.kills, 1);

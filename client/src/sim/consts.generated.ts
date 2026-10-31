@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 59
+export const PROTOCOL_VERSION = 60
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -260,10 +260,16 @@ export const LIMB_HP = 60
 /**
  * Limbs. A round below this height over the capsule centre hit a leg (the hips are about 0.75 m up),
  * and one between there and the head this far or more to the side of the body's middle (the outer
- * edge of the 0.35 m capsule), an arm.
+ * edge of the chest), an arm.
  */
 export const HIP_ZONE_Y = -0.1
 export const ARM_ZONE_X = 0.25
+
+/**
+ * How far out a round finds a soldier from the middle of their body: wider than the 0.35 m they
+ * move with, for the arms as they are drawn.
+ */
+export const HURT_RADIUS = 0.43
 
 /** One leg: each step is a hop up at this speed, m/s, at this share of walking speed; no running or sliding. */
 export const HOP_SPEED = 2.6
@@ -455,8 +461,8 @@ export const PRONE_EYE_HEIGHT = 0.2 - PRONE_CENTRE
  * above it. The server rebuilds the camera ray from it, so a shot lands where the crosshair is.
  * Mirrors `ON_FOOT_SHOULDER` and `ON_FOOT_HEIGHT` in the client.
  */
-export const ON_FOOT_SHOULDER = 0.9
-export const ON_FOOT_HEIGHT = 1.5
+export const ON_FOOT_SHOULDER = 0.6
+export const ON_FOOT_HEIGHT = 0.85
 
 /**
  * Building with bricks (`ITEM_BRICKS`, `crate::construct`). Fire puts a cube where the crosshair ray

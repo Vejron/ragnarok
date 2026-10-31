@@ -334,7 +334,7 @@ export class Cameras {
         if (!head) return this.rigs.drive.frame(c)
         const at = [head.x, head.y, head.z]
         if (scoped) this.scene.scopeFrom(at, this.input.yaw, this.input.pitch)
-        else this.scene.follow(at, this.input.yaw, this.input.pitch, PASSENGER_DISTANCE * (1 - (1 - AIM_DISTANCE_SCALE) * aimBlend), PASSENGER_SHOULDER, PASSENGER_HEIGHT)
+        else this.scene.overShoulder(at, this.input.yaw, this.input.pitch, PASSENGER_DISTANCE * (1 - (1 - AIM_DISTANCE_SCALE) * aimBlend), PASSENGER_SHOULDER, PASSENGER_HEIGHT)
       },
     }
   }

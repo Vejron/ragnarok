@@ -12,7 +12,8 @@ import {
 import { easeSway, sway, swayAmplitude } from './sway'
 import { mayPlace } from './sim/bricks'
 import { crewGun, vehicleDef } from './sim/vehicles'
-import { aimSpeedScale, HOTBAR_SLOTS, itemDef, type ItemSlot } from './sim/items'
+import { blockedAt, spreadPixels } from './aimline'
+import { aimSpeedScale, effectiveSpread, HOTBAR_SLOTS, itemDef, type ItemDef, type ItemSlot } from './sim/items'
 import { InputController } from './sim/input'
 import { SimMotor, type CharacterState, type VehiclePose } from './sim/motor'
 import { Terrain } from './sim/terrain'
@@ -114,6 +115,8 @@ const MAX_TICKS_PER_FRAME = 8
 const PING_INTERVAL_MS = 1000
 /** Mouse-look is this much slower down a scope, to match the narrower view. */
 const SCOPE_LOOK_SCALE = 0.3
+/** The crosshair's arms stand at least this far from its middle, px, however true the gun. */
+const MIN_CROSS_GAP = 3
 /** Looking down a tank's sight is as slow as a rifle scope. */
 const SIGHT_LOOK_SCALE = 0.35
 /** And a little slower aiming a gun over the shoulder. */
@@ -849,7 +852,7 @@ export class Game {
     this.cameras.leave(now)
     if (scoped) this.scene.scopeFrom([position[0]!, position[1]! + this.eyeHeight(), position[2]!], lookYaw, lookPitch, shake)
     // Only the distance changes: the pivot is what the server's crosshair ray is built from.
-    else this.scene.follow(position, lookYaw, lookPitch, ON_FOOT_DISTANCE * (1 - (1 - AIM_DISTANCE_SCALE) * this.aimBlend), ON_FOOT_SHOULDER, ON_FOOT_HEIGHT, shake)
+    else this.scene.overShoulder(position, lookYaw, lookPitch, ON_FOOT_DISTANCE * (1 - (1 - AIM_DISTANCE_SCALE) * this.aimBlend), ON_FOOT_SHOULDER, ON_FOOT_HEIGHT, shake)
   }
 
   /** The arcs of what is in hand or in the rack, and the ghost of the cube bricks in hand would place or dig. */
@@ -886,8 +889,17 @@ export class Game {
     this.gore.update(dt)
   }
 
+  /** Where on the screen something stops a round of `gun` short of the crosshair, or null. */
+  private blockedMark(gun: ItemDef, position: Vec3, yaw: number, pitch: number): [number, number] | null {
+    const castRay = (origin: Vec3, direction: Vec3, max: number) => this.motor?.castRay(origin, direction, max) ?? null
+    const hit = blockedAt(castRay, position, [position[0]!, position[1]! + this.eyeHeight(), position[2]!], yaw, pitch, gun.range)
+    if (!hit) return null
+    const point = new Vector3(hit[0], hit[1], hit[2])
+    return this.scene.camera.project(point) ? [(point.x + 1) / 2, (1 - point.y) / 2] : null
+  }
+
   /** Tells the overlay how things stand. */
-  private report({ now, seat, view, ride, position, local, seated, hands, able, handy, sighted }: Moment) {
+  private report({ now, seat, view, ride, position, local, seated, hands, able, handy, sighted, scoped, lookYaw, lookPitch }: Moment) {
     const { player, predictor } = this
     const cars = this.vehicles.placed
     const aviator = view?.rig.name === 'aviator'
@@ -897,6 +909,10 @@ export class Game {
     const hitView = this.hits.view(now, this.input.yaw)
     const gauges = view?.gauges
     const link = view?.rig.name === 'fpv' ? view.rig : null
+    const held = itemDef(this.held().item)
+    const gun = held?.kind === 'gun' ? held : undefined
+    // Seated, the ray cannot leave out the vehicle round the soldier.
+    const blocked = handy && gun && !seated && !scoped ? this.blockedMark(gun, position, lookYaw, lookPitch) : null
     this.onStats({
       status: this.transport.status,
       rtt: this.rtt.rtt,
@@ -938,7 +954,9 @@ export class Game {
       sight: sighted,
       scoped: this.scoped,
       aiming: this.aiming,
-      armed: handy && itemDef(this.held().item)?.kind === 'gun',
+      armed: handy && gun !== undefined,
+      crossGap: gun ? Math.max(MIN_CROSS_GAP, spreadPixels(effectiveSpread(gun, this.input.aimHeld, (local.lost & LIMB_ARMS) !== 0), this.scene.camera.fov, window.innerHeight)) : MIN_CROSS_GAP,
+      blocked,
       hands: this.localId !== null && hands && player.alive,
       hotbar: player.hotbar,
       selected: this.input.selectedSlot,

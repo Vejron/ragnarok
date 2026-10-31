@@ -210,7 +210,8 @@ watch(() => stats.value?.hitMarker, (marker) => drawMarker(marker))
     <div v-if="stats.bombs !== null" class="bombs"><i v-for="k in 4" :key="k" :class="{ gone: k > (stats.bombs ?? 0) }" /></div>
   </div>
   <div v-else-if="stats?.scoped" class="scope"><i class="scope-h" /><i class="scope-v" /></div>
-  <div v-else-if="stats?.armed" class="cross" :class="{ aim: stats.aiming }" :style="stats.hitMarker ? { '--gap': (stats.aiming ? 3 : 7) + 6 * (1 - stats.hitMarker.progress) ** 2 + 'px' } : undefined"><i /><i /><i /><i /></div>
+  <div v-else-if="stats?.armed" class="cross" :style="{ '--gap': stats.crossGap + (stats.hitMarker ? 6 * (1 - stats.hitMarker.progress) ** 2 : 0) + 'px' }"><i /><i /><i /><i /></div>
+  <div v-if="stats?.blocked" class="blocked" :style="{ left: stats.blocked[0] * 100 + '%', top: stats.blocked[1] * 100 + '%' }" />
   <div v-if="stats?.hands && stats.hp <= stats.maxHp / 4" class="vignette low-hp" />
   <div v-if="stats && stats.hurt > 0.01" class="vignette" :style="{ opacity: stats.hurt }" />
   <div v-if="stats?.hurtArcs.length" class="arcs">
@@ -329,7 +330,6 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
   border: 3px solid rgba(255, 255, 255, 0.95); border-radius: 50%; box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.45);
 }
 .cross { position: fixed; top: 50%; left: 50%; width: 0; height: 0; pointer-events: none; --gap: 7px; --len: 6px; }
-.cross.aim { --gap: 3px; }
 .cross i { position: absolute; background: rgba(255, 255, 255, 0.55); box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.3); transition: transform 0.12s; }
 .cross i:nth-child(1), .cross i:nth-child(2) { width: 2px; height: var(--len); margin-left: -1px; }
 .cross i:nth-child(1) { top: calc(var(--gap) * -1 - var(--len)); }
@@ -337,6 +337,10 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
 .cross i:nth-child(3), .cross i:nth-child(4) { height: 2px; width: var(--len); margin-top: -1px; }
 .cross i:nth-child(3) { left: calc(var(--gap) * -1 - var(--len)); }
 .cross i:nth-child(4) { left: var(--gap); }
+/* Where a round would stop short of the crosshair. */
+.blocked { position: fixed; width: 14px; height: 14px; margin: -7px 0 0 -7px; pointer-events: none; }
+.blocked::before, .blocked::after { content: ''; position: absolute; top: 6px; left: 0; width: 14px; height: 2px; background: #ff4a3d; box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.5); transform: rotate(45deg); }
+.blocked::after { transform: rotate(-45deg); }
 .scope {
   position: fixed; inset: 0; pointer-events: none;
   background: radial-gradient(circle at center, transparent 0, transparent 38vmin, #000 38.4vmin);
