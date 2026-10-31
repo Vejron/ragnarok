@@ -1,9 +1,9 @@
-/** The tank: a driver, and a gunner in the turret who looks down the gun's sight. */
+/** The tank: a driver, a gunner in the turret who looks down the gun's sight, and a machine gunner out of the roof hatch. */
 
 import { KIND_TANK } from '@/net/codec'
 import { loadTankModel, TankModel } from '@/render/tank'
 import { TANK_DISTANCE } from '@/render/scene'
-import { SHELL_COOLDOWN_TICKS, TANK_BARREL_MAX, TANK_BARREL_MIN, TANK_MAX_SPEED } from '@/sim/consts'
+import { SHELL_COOLDOWN_TICKS, TANK_BARREL_MAX, TANK_BARREL_MIN, TANK_MAX_SPEED, TANK_MG_PITCH_MAX, TANK_MG_PITCH_MIN, TANK_MG_YAW_LIMIT } from '@/sim/consts'
 import { TRACK_WHEELS } from '@/sim/slip'
 import { DRIVE, type VehicleKind } from './kind'
 
@@ -14,7 +14,11 @@ export const TANK: VehicleKind = {
   ride: {
     distance: TANK_DISTANCE,
     reload: SHELL_COOLDOWN_TICKS,
-    seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the tank', chase: true }, { rig: { name: 'gun', level: [TANK_BARREL_MIN, TANK_BARREL_MAX] }, role: 'gunner', board: 'E: man the gun', sight: true, gauges: ['ammo'] }],
+    seats: [
+      { rig: DRIVE, role: 'driver', board: 'E: drive the tank', chase: true },
+      { rig: { name: 'gun', level: [TANK_BARREL_MIN, TANK_BARREL_MAX] }, role: 'gunner', board: 'E: man the gun', sight: true, gauges: ['ammo'] },
+      { rig: { name: 'pintle', limit: TANK_MG_YAW_LIMIT, pitch: [TANK_MG_PITCH_MIN, TANK_MG_PITCH_MAX] }, role: 'roofgunner', board: 'E: man the machine gun', gauges: ['pintle'] },
+    ],
   },
   sound: {
     voices: [['sawtooth', 1, 0.5], ['square', 0.5, 0.4], ['sawtooth', 1.51, 0.12]],

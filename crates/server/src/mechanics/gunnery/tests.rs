@@ -5,7 +5,7 @@ use crate::game::{Command, Game, Seat};
 use sim::STANDING_Y;
 use shared::items::Falloff;
 use shared::mounts::Show;
-use shared::protocol::{KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_SHELL, WEAPON_BOMB, WEAPON_MG};
+use shared::protocol::{KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_TUPP, KIND_PAK, KIND_PLANE, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_SHELL, WEAPON_BOMB, WEAPON_LASER, WEAPON_MG};
 use shared::quant::to_mrad;
 use shared::world::{Road, WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
@@ -100,6 +100,114 @@ fn turret_slew_is_rate_limited() {
     let yaw = turret(&game, vid).yaw;
     // 30 ticks is half a second: at most 0.7 rad, plus the jitter buffer's lag.
     assert!(yaw > 0.3 && yaw <= TANK_TURRET_SLEW * 0.5 + 0.01, "{yaw}");
+}
+
+/// A tank with a machine gunner in seat 2, settled.
+fn mg_crewed() -> (Game, u32, u32, u32) {
+    let mut game = game();
+    let (gunner, inbox) = join(&mut game);
+    std::mem::forget(inbox);
+    let vid = tank(&game);
+    seat(&mut game, gunner, vid, TANK_MG_SEAT);
+    let mut seq = 0;
+    let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
+    aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, 0, 90);
+    (game, gunner, vid, seq)
+}
+
+#[test]
+fn the_roof_gun_holds_its_look_within_ninety_degrees_of_the_cannon() {
+    let (mut game, gunner, vid, mut seq) = mg_crewed();
+    let hull = game.world.physics.car_pose(vid).unwrap().yaw();
+    aim_and_hold(&mut game, gunner, &mut seq, hull + 1.0, 0.5, 0, 120);
+    let gun = shown(&game, vid, Show::Pintle);
+    assert!((gun.yaw - 1.0).abs() < 0.02 && (gun.pitch - 0.5).abs() < 0.02, "{gun:?}");
+    assert_eq!(turret(&game, vid).yaw, 0.0, "the cannon has not moved");
+    // Further round than it goes.
+    aim_and_hold(&mut game, gunner, &mut seq, hull + 2.5, 2.0, 0, 120);
+    let gun = shown(&game, vid, Show::Pintle);
+    assert!((gun.yaw - TANK_MG_YAW_LIMIT).abs() < 0.001 && (gun.pitch - TANK_MG_PITCH_MAX).abs() < 0.01, "{gun:?}");
+
+    // The cannon turning towards the look gives the gun back what it needed: it stays on the look.
+    game.world.entities.get_mut::<Mounts>(vid).unwrap().state[0].yaw = 1.5;
+    aim_and_hold(&mut game, gunner, &mut seq, hull + 2.5, 0.0, 0, 120);
+    assert!((shown(&game, vid, Show::Pintle).yaw - 1.0).abs() < 0.02);
+    // And turning away pushes it along at the end of its arc.
+    game.world.entities.get_mut::<Mounts>(vid).unwrap().state[0].yaw = -1.5;
+    aim_and_hold(&mut game, gunner, &mut seq, hull + 2.5, 0.0, 0, 2);
+    assert!(shown(&game, vid, Show::Pintle).yaw.abs() <= TANK_MG_YAW_LIMIT);
+}
+
+#[test]
+fn the_three_seats_of_a_tank_work_apart() {
+    let (mut game, gunner, vid, mut seq) = mg_crewed();
+    let hull = game.world.physics.car_pose(vid).unwrap().yaw();
+    let (cannon, _inbox) = join(&mut game);
+    seat(&mut game, cannon, vid, 1);
+    for _ in 0..30 {
+        seq += 1;
+        game.handle(Command::Input(gunner, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: to_mrad(hull), buttons: BUTTON_FIRE, pitch: 0, view: 0, slot: 0 }]));
+        game.handle(Command::Input(cannon, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: to_mrad(hull + 1.0), buttons: 0, pitch: 0, view: 0, slot: 0 }]));
+        game.step();
+    }
+    assert!(shown(&game, vid, Show::Pintle).shots >= 4, "the machine gun fires");
+    assert_eq!(turret(&game, vid).shots, 0, "and not the cannon");
+    assert!(turret(&game, vid).yaw > 0.3, "whose gunner turns the turret");
+}
+
+#[test]
+fn the_roof_gun_leaves_from_the_turret_and_turns_with_it() {
+    let (mut game, gunner, vid, mut seq) = mg_crewed();
+    let (victim, _inbox) = join(&mut game);
+    let hull = game.world.physics.car_pose(vid).unwrap().yaw();
+    let quarter = std::f32::consts::FRAC_PI_2;
+    // The cannon a quarter round to the left and the gun a little past it, looking there.
+    game.world.entities.get_mut::<Mounts>(vid).unwrap().state[0].yaw = quarter;
+    aim_and_hold(&mut game, gunner, &mut seq, hull + quarter + 0.5, 0.0, 0, 60);
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    let (root, dir) = aim_from(&pose, on_turret(TANK_TURRET_PIVOT, TANK_MG_AT, quarter), quarter + 0.5, 0.0);
+    game.world.entities.get_mut::<Player>(victim).unwrap().character.position = vec3::sub(vec3::along(root, dir, 20.0), [0.0, 0.3, 0.0]);
+    aim_and_hold(&mut game, gunner, &mut seq, hull + quarter + 0.5, 0.0, BUTTON_FIRE, 60);
+    assert!(game.world.entities.of::<crate::entities::Health>(victim).hp < PLAYER_MAX_HP || game.world.entities.has::<crate::mechanics::Wounds>(victim), "hit somewhere");
+    assert_eq!(on_turret([0.0; 3], [1.0, 2.0, 0.0], 0.0), [1.0, 2.0, 0.0]);
+    let [x, _, z] = on_turret([0.0; 3], [1.0, 0.0, 0.0], quarter);
+    assert!(x.abs() < 1e-5 && (z + 1.0).abs() < 1e-5, "yaw + turns left, so the right side swings ahead: {x} {z}");
+}
+
+#[test]
+fn the_roof_gun_jams_when_hot_shows_it_and_clears() {
+    let (mut game, gunner, vid, mut seq) = mg_crewed();
+    let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
+    let mut jammed_at = None;
+    for tick in 0..60 * 10 {
+        aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, BUTTON_FIRE, 1);
+        if shown(&game, vid, Show::Pintle).jammed {
+            jammed_at = Some(tick);
+            break;
+        }
+    }
+    let jammed_at = jammed_at.expect("the gun jams");
+    assert!((60 * 4..60 * 8).contains(&jammed_at), "after about six seconds: {jammed_at} ticks");
+    assert!(game.seen(vid).unwrap().pintle.unwrap().flags & shared::protocol::PINTLE_JAMMED != 0);
+    aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, 0, 60 * 4);
+    assert!(!shown(&game, vid, Show::Pintle).jammed, "cool again");
+}
+
+#[test]
+fn the_roof_gun_goes_with_the_turret_but_not_with_the_breech() {
+    let (mut game, gunner, vid, mut seq) = mg_crewed();
+    let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
+    let slot = shared::armor::Part::Breech.slot().unwrap();
+    let def = shared::vehicles::vehicle_def(KIND_TANK);
+    assert!(def.armor.module(slot).is_some());
+    assert!(def.mounts[1].needs == [shared::mounts::Need::Turret], "only the turret stops it");
+    aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, BUTTON_FIRE, 30);
+    let shots = shown(&game, vid, Show::Pintle).shots;
+    assert!(shots > 0);
+    crate::mechanics::armor::damage_turret(&mut game.world, vid, 255, None);
+    assert!(!game.world.entities.alive(gunner), "the gunner went with it");
+    assert_eq!(game.world.entities.of::<Seats>(vid).rider(TANK_MG_SEAT), None);
+    assert_eq!(shown(&game, vid, Show::Pintle).shots, shots);
 }
 
 /// Loads the tank gun of `vid` with high explosive, its round against people.
@@ -489,7 +597,7 @@ fn the_forward_guns_take_turns_and_hit_what_is_ahead_of_the_nose() {
     let expected = (30 / PLANE_GUN_COOLDOWN_TICKS) as u8;
     assert!(arms.shots.abs_diff(expected) <= 1, "{} rounds in half a second, expected about {expected}", arms.shots);
     assert!(game.world.entities.of::<crate::entities::Health>(victim).hp < PLAYER_MAX_HP || game.world.entities.has::<crate::mechanics::Wounds>(victim), "the soldier ahead is hit");
-    assert!(!hits.is_empty() && hits.iter().all(|shot| shot.shooter == pilot), "{hits:?}");
+    assert!(!hits.is_empty() && hits.iter().all(|shot| shot.shooter == vid), "{hits:?}");
     assert_eq!(game.world.entities.of::<Health>(vid).hp, hp, "its own guns never hurt the plane");
     assert!(game.world.in_flight().is_empty(), "rounds are hitscans, not projectiles");
 }
@@ -812,4 +920,88 @@ fn a_mount_made_of_parts_no_vehicle_has_works() {
     let yaw = launcher(&game).yaw;
     assert!((yaw.abs() - std::f32::consts::PI).abs() < 0.05, "it turned to look behind: {yaw}");
     assert!(game.world.in_flight().values().filter(|p| p.kind == PROJECTILE_ROCKET).all(|rocket| rocket.owner == passenger && rocket.source == vid));
+}
+
+/// A tupp off the road with a driver aboard, on a tick that puts its hits on odd ones: a hit on a
+/// snapshot's tick goes out with it, before `hold_watching` can see it.
+fn tupp_crewed() -> (Game, u32, u32, u32) {
+    let mut game = game();
+    let (driver, _inbox) = join(&mut game);
+    let ground = game.world.map.ground.height_at(0.0, 60.0);
+    let vid = super::super::vehicles::add_vehicle(&mut game.world, KIND_TUPP, [0.0, ground + WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1] + 0.2, 60.0], 0.0);
+    seat(&mut game, driver, vid, 0);
+    let mut seq = 0;
+    aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, 0, 60);
+    (game, driver, vid, seq)
+}
+
+#[test]
+fn a_tupp_charges_then_burns_whatever_the_trigger_does_then_cools() {
+    let (mut game, driver, vid, mut seq) = tupp_crewed();
+    let early = hold_watching(&mut game, driver, &mut seq, 0.0, BUTTON_FIRE, TUPP_LASER_CHARGE_TICKS - 2, WEAPON_LASER);
+    assert!(early.is_empty() && turret(&game, vid).charge > 0, "nothing while it charges");
+    aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, BUTTON_FIRE, 3);
+    assert!(turret(&game, vid).beam > 0, "lit");
+    // Letting go changes nothing now.
+    let beams = hold_watching(&mut game, driver, &mut seq, 0.0, 0, TUPP_LASER_BURN_TICKS, WEAPON_LASER);
+    let expected = (TUPP_LASER_BURN_TICKS / TUPP_LASER_HIT_TICKS) as usize;
+    assert!(beams.len().abs_diff(expected) <= 2, "{} beams in a burn, expected about {expected}", beams.len());
+    assert!(beams.iter().all(|shot| shot.shooter == vid), "{beams:?}");
+    assert_eq!((turret(&game, vid).beam, turret(&game, vid).charge), (0, 0), "out");
+    aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, BUTTON_FIRE, TUPP_LASER_RECOVER_TICKS / 2);
+    assert_eq!(turret(&game, vid).charge, 0, "still cooling");
+    assert!(game.world.in_flight().is_empty(), "a beam is a hitscan");
+}
+
+/// A beam of the tupp's along -Z from 40 m out, level with a standing soldier's chest.
+fn fire_beam(game: &mut Game, shooter: u32) -> ([f32; 3], bool) {
+    // Long enough that no rewound picture still has anyone where they were.
+    for _ in 0..=MAX_REWIND_TICKS {
+        game.step();
+    }
+    let round = Round { damage: 30, vehicle: 14, plane: 30, weapon: WEAPON_LASER, range: 250.0, falloff: Falloff::NONE, pen: shared::armor::Pen::ap(60.0, 60.0, 1.0, 20.0) };
+    beam(&mut game.world, shooter, [0.0, STANDING_Y + 0.5, 40.0], [0.0, 0.0, -1.0], &round, 0, 0, TUPP_LASER_RADIUS)
+}
+
+#[test]
+fn a_beam_reaches_a_soldier_it_only_grazes() {
+    let mut game = game();
+    let (shooter, _a) = join(&mut game);
+    let (grazed, _b) = join(&mut game);
+    game.world.entities.get_mut::<Player>(shooter).unwrap().character.position = [-40.0, STANDING_Y, 40.0];
+    game.world.entities.get_mut::<Player>(grazed).unwrap().character.position = [1.1, STANDING_Y, 15.0];
+    let (end, _) = fire_beam(&mut game, shooter);
+    assert!((end[2] - 15.0).abs() < 1.0, "it ends on the soldier 1.1 m off its middle: {end:?}");
+}
+
+#[test]
+fn a_beam_passes_a_soldier_outside_it() {
+    let mut game = game();
+    let (shooter, _a) = join(&mut game);
+    let (clear, _b) = join(&mut game);
+    game.world.entities.get_mut::<Player>(shooter).unwrap().character.position = [-40.0, STANDING_Y, 40.0];
+    game.world.entities.get_mut::<Player>(clear).unwrap().character.position = [3.0, STANDING_Y, 15.0];
+    let (end, _) = fire_beam(&mut game, shooter);
+    assert!(end[2] < 14.0, "3 m off is not in it: {end:?}");
+}
+
+#[test]
+fn a_beam_stops_at_what_its_middle_meets() {
+    let mut game = game();
+    let (shooter, _a) = join(&mut game);
+    let (front, _b) = join(&mut game);
+    let (behind, _c) = join(&mut game);
+    game.world.entities.get_mut::<Player>(shooter).unwrap().character.position = [-40.0, STANDING_Y, 40.0];
+    game.world.entities.get_mut::<Player>(front).unwrap().character.position = [0.0, STANDING_Y, 25.0];
+    game.world.entities.get_mut::<Player>(behind).unwrap().character.position = [1.0, STANDING_Y, 5.0];
+    let (end, _) = fire_beam(&mut game, shooter);
+    assert!((end[2] - 25.0).abs() < 1.0, "one target a stroke: {end:?}");
+}
+
+#[test]
+fn letting_go_early_wastes_a_tupps_charge() {
+    let (mut game, driver, vid, mut seq) = tupp_crewed();
+    aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, BUTTON_FIRE, TUPP_LASER_CHARGE_TICKS / 2);
+    aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, 0, 2);
+    assert_eq!(turret(&game, vid).charge, 0);
 }

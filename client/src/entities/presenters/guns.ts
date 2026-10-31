@@ -1,12 +1,14 @@
 import { Vector3 } from '@ragnarok/engine'
 import { HeliModel } from '@/render/heli'
+import { LaserEyes } from '@/render/lasereyes'
 import { MortarModel } from '@/render/mortar'
 import { PakModel } from '@/render/pak'
 import { PlaneModel } from '@/render/plane'
 import { StrvModel } from '@/render/strvs'
 import { TankModel } from '@/render/tank'
+import { TuppModel } from '@/render/tupp'
 import { WalkerModel } from '@/render/walker'
-import { HELI_GUN_LENGTH, MORTAR_BARREL_LENGTH, PAK_BARREL_LENGTH, PLANE_GUN_RANGE, STRV_BARREL_LENGTH, TANK_BARREL_LENGTH, WALKER_GUN_LENGTH } from '@/sim/consts'
+import { HELI_GUN_LENGTH, MORTAR_BARREL_LENGTH, PAK_BARREL_LENGTH, PLANE_GUN_RANGE, STRV_BARREL_LENGTH, TANK_BARREL_LENGTH, TANK_MG_LENGTH, TANK_MG_RANGE, WALKER_GUN_LENGTH } from '@/sim/consts'
 import type { Frame, Presenter } from '../presenter'
 import type { Entity } from '../units'
 import type { VehicleWorld, Vehicles } from './vehicles'
@@ -22,6 +24,7 @@ const MAX_ROUNDS = 4
 export class Turrets implements Presenter<Frame> {
   /** The shot counter as last seen, per gun. */
   private readonly shots = new Map<number, number>()
+  private readonly laserEyes = new Map<number, LaserEyes>()
 
   constructor(private readonly world: VehicleWorld, private readonly vehicles: Vehicles) {}
 
@@ -33,6 +36,7 @@ export class Turrets implements Presenter<Frame> {
     const model = this.vehicles.model(id)
     const placed = this.vehicles.placed.get(id)
     if (!model || !placed?.turret) return
+    if (model instanceof TuppModel) return this.eyes(id, model, placed.turret.flags, placed.seats, frame)
     const shots = placed.turret.shots
     const before = this.shots.get(id)
     this.shots.set(id, shots)
@@ -44,6 +48,15 @@ export class Turrets implements Presenter<Frame> {
 
   remove(id: number) {
     this.shots.delete(id)
+    this.laserEyes.get(id)?.dispose()
+    this.laserEyes.delete(id)
+  }
+
+  private eyes(id: number, tupp: TuppModel, flags: number, seats: readonly number[], frame: Frame) {
+    let eyes = this.laserEyes.get(id)
+    if (!eyes) this.laserEyes.set(id, (eyes = new LaserEyes()))
+    const mine = frame.localId !== null && seats[0] === frame.localId
+    eyes.update(tupp, flags, mine, frame.dt, { effects: this.world.effects, sounds: this.world.sounds, lights: this.world.lights, lit: this.world.ownShot })
   }
 
   private fired(gun: TankModel | HeliModel | WalkerModel | MortarModel | PakModel, shots: number, seats: readonly number[], frame: Frame) {
@@ -67,7 +80,7 @@ export class Turrets implements Presenter<Frame> {
     const { direction } = plane.barrel()
     const muzzle = plane.muzzle()
     this.world.effects.muzzle(muzzle)
-    for (let k = 0; k < rounds; k++) fireRound(this.world, muzzle, direction)
+    for (let k = 0; k < rounds; k++) fireRound(this.world, muzzle, direction, PLANE_GUN_RANGE)
     plane.recoilRing()
     this.world.sounds.machineGun([muzzle.x, muzzle.y, muzzle.z], rounds, true)
   }
@@ -101,7 +114,7 @@ export class PlaneGuns implements Presenter<Frame> {
       const { origin, direction } = plane.forwardGun(side)
       plane.recoil(side)
       this.world.effects.muzzle(origin)
-      fireRound(this.world, origin, direction)
+      fireRound(this.world, origin, direction, PLANE_GUN_RANGE)
     }
     const { origin } = plane.forwardGun(0)
     this.world.sounds.machineGun([origin.x, origin.y, origin.z], rounds)
@@ -112,8 +125,43 @@ export class PlaneGuns implements Presenter<Frame> {
   }
 }
 
-/** Sends a round from `origin` along `direction` out to the first thing it meets, or the end of the guns' range. */
-function fireRound(world: VehicleWorld, origin: Vector3, direction: Vector3) {
-  const hit = world.castRay([origin.x, origin.y, origin.z], [direction.x, direction.y, direction.z], PLANE_GUN_RANGE)
-  world.rounds.fire(origin, origin.clone().addScaledVector(direction, hit ? hit.t : PLANE_GUN_RANGE), hit !== null)
+/**
+ * A tank's roof gun (`pintle`): every new round on its counter is a bullet from its muzzle out to what
+ * it meets, with a flash and the rattle. Only rounds that hit something come back from the server.
+ */
+export class RoofGuns implements Presenter<Frame> {
+  /** The counter as last drawn, per tank. */
+  private readonly shots = new Map<number, number>()
+
+  constructor(private readonly world: VehicleWorld, private readonly vehicles: Vehicles) {}
+
+  wants(entity: Entity) {
+    return entity.pintle !== undefined && entity.orientation !== undefined
+  }
+
+  update(id: number) {
+    const tank = this.vehicles.model(id)
+    const shots = this.vehicles.placed.get(id)?.pintle?.shots
+    if (!(tank instanceof TankModel) || shots === undefined) return
+    const before = this.shots.get(id)
+    this.shots.set(id, shots)
+    if (before === undefined || before === shots) return
+    const barrel = tank.pintleBarrel()
+    if (!barrel) return
+    const rounds = Math.min(MAX_ROUNDS, (shots - before + 256) % 256)
+    const muzzle = barrel.origin.addScaledVector(barrel.direction, TANK_MG_LENGTH)
+    this.world.effects.muzzle(muzzle)
+    for (let k = 0; k < rounds; k++) fireRound(this.world, muzzle, barrel.direction, TANK_MG_RANGE)
+    this.world.sounds.machineGun([muzzle.x, muzzle.y, muzzle.z], rounds)
+  }
+
+  remove(id: number) {
+    this.shots.delete(id)
+  }
+}
+
+/** Sends a round from `origin` along `direction` out to the first thing it meets, or the end of its `range`. */
+function fireRound(world: VehicleWorld, origin: Vector3, direction: Vector3, range: number) {
+  const hit = world.castRay([origin.x, origin.y, origin.z], [direction.x, direction.y, direction.z], range)
+  world.rounds.fire(origin, origin.clone().addScaledVector(direction, hit ? hit.t : range), hit !== null)
 }

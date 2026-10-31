@@ -7,6 +7,7 @@ import type { Rounds } from '@/render/rounds'
 import { HenModel } from '@/render/hen'
 import { VehicleFx, type FxWorld } from '@/render/tyres'
 import { kindView } from '@/kinds'
+import { TankModel } from '@/render/tank'
 import { WalkerModel } from '@/render/walker'
 import type { VehicleModel } from '@/render/car'
 import type { DrivenPose } from '@/sim/driver'
@@ -16,7 +17,7 @@ import { vehicleDef } from '@/sim/vehicles'
 import type { VehicleSounds } from '@/vehicleaudio'
 import type { Frame, Presenter } from '../presenter'
 import type { Sampled } from '../store'
-import type { Arms, Entity, Turret } from '../units'
+import type { Arms, Entity, Pintle, Turret } from '../units'
 import type { Seating } from './seating'
 
 /** Damage parts of a vehicle that is not hurt. */
@@ -35,6 +36,8 @@ export interface Placed {
   /** The player in each seat, 0 for an empty one (`Seating`). */
   seats: readonly number[]
   turret: Turret | null
+  /** The roof gun, on a tank with one. */
+  pintle: Pintle | null
   arms: Arms | null
   hp: number
   /** `VehicleState::damage`'s parts; all 0 while unhurt. */
@@ -127,12 +130,14 @@ export class Vehicles implements Presenter<Frame> {
     const forward = new Vector3(0, 0, -1).applyQuaternion(new Quaternion(...rotation))
     const seats = this.seating.of(id, kind)
     const turret = entity.turret ?? null
+    const pintle = entity.pintle ?? null
     const arms = entity.arms ?? null
     const jets = mine ? mine.jets : (entity.thrust?.flags ?? 0)
     const [x, y, z] = position
     // A hen draws its wings and legs from its flags: the driver's own as predicted, at once.
     if (model instanceof HenModel) model.setFlags(jets)
     model.update(position, [rotation[0], rotation[1], rotation[2], rotation[3]], steer, seats, turret, arms)
+    if (model instanceof TankModel) model.setPintle(pintle)
     if (model instanceof WalkerModel || model instanceof HenModel) for (const step of model.takeSteps()) this.world.sounds.footstep(step.at, step.weight)
     if (model instanceof HenModel) {
       const { beats, leapt, eggs } = model.takeEvents()
@@ -141,7 +146,7 @@ export class Vehicles implements Presenter<Frame> {
       if (eggs > 0) this.world.sounds.plop([x, y - 1, z])
     }
     const placed: Placed = {
-      kind, x, y, z, yaw: Math.atan2(-forward.x, -forward.z), rotation, steer, seats, turret, arms,
+      kind, x, y, z, yaw: Math.atan2(-forward.x, -forward.z), rotation, steer, seats, turret, pintle, arms,
       hp: entity.health?.hp ?? 0, damage: entity.damage?.parts ?? UNHURT, jets, air: entity.thrust?.air ?? null,
     }
     this.placed.set(id, placed)

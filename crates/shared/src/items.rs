@@ -575,7 +575,7 @@ mod tests {
                 let heads = heads.join(", ");
                 let mount_seat = d.mount_seat.map_or("null".to_string(), |seat| {
                     let ([px, py, pz], [x, y, z]) = (seat.pivot, seat.head);
-                    format!("{{\"pivot\": [{px}, {py}, {pz}], \"head\": [{x}, {y}, {z}]}}")
+                    format!("{{\"seat\": {}, \"pivot\": [{px}, {py}, {pz}], \"head\": [{x}, {y}, {z}]}}", seat.seat)
                 });
                 let slits: Vec<String> = d.armor.slits(d.spec.solids).map(|slit| {
                     let ([x, y, z], [hx, hy, hz], [ox, oy, oz], [px, py, pz]) = (slit.centre, slit.half, slit.out, slit.pivot);

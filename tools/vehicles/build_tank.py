@@ -16,6 +16,8 @@ Conventions
       `wheel_R_<n>`     the same on the right
       `turret`          origin on the turret ring (the game's TANK_TURRET_PIVOT); the game yaws it
       `gun`             child of `turret`, origin on the ring too; the game pitches it and slides it back in recoil
+      `mg`              child of `turret`, origin where the roof gun turns (the game's TANK_MG_AT); the game yaws it
+      `mg_gun`          child of `mg`, same origin; the game pitches it
   * Materials: `paint` is tinted per tank at runtime; `dark` (tracks, tyres), `metal` (barrel, fittings)
     and `steel` (rims) keep their colours.
 """
@@ -42,6 +44,8 @@ PREVIEW = arg("--preview")
 # --------------------------------------------------------------------------------------------------
 TURRET_PIVOT = Vector((0.0, -0.3, 0.85))  # game [0, 0.85, 0.3]: +Z in the game is backwards
 BARREL_LENGTH = 3.2
+MG_AT = Vector((0.45, -0.3, 0.6))  # game turret frame [0.45, 0.6, 0.3]
+MG_LENGTH = 1.1
 TRACK_X = 1.25  # centre line of each track
 TRACK_WIDTH = 0.46
 TRACK_Z = -0.48  # height of the wheel axles
@@ -132,11 +136,25 @@ gun.cylinder((0.0, (0.95 + BARREL_LENGTH) / 2, 0.0), 0.12, BARREL_LENGTH - 0.95,
 gun.cylinder((0.0, 2.3, 0.0), 0.16, 0.55, METAL, axis="Y", segments=8)  # bore evacuator
 gun_obj = gun.build()
 
+# The roof gun: a post out of the loader's hatch that turns, and the heavy machine gun that nods on it.
+mg = Part("mg", location=MG_AT, parent=turret_obj)
+mg.cylinder((0.0, 0.0, -0.13), 0.045, 0.26, METAL, segments=6)
+mg.box((0.0, 0.0, -0.01), (0.14, 0.14, 0.05), METAL)
+mg_obj = mg.build()
+
+mg_gun = Part("mg_gun", parent=mg_obj)
+mg_gun.box((0.0, 0.08, 0.05), (0.11, 0.62, 0.12), DARK)  # receiver
+mg_gun.box((-0.14, 0.08, 0.04), (0.17, 0.28, 0.2), METAL)  # ammunition box
+mg_gun.box((0.0, -0.27, 0.04), (0.2, 0.05, 0.05), DARK)  # spade grips
+mg_gun.cylinder((0.0, (0.38 + MG_LENGTH) / 2, 0.05), 0.034, MG_LENGTH - 0.38, DARK, axis="Y", segments=6)
+mg_gun.cylinder((0.0, MG_LENGTH - 0.05, 0.05), 0.055, 0.1, METAL, axis="Y", segments=6)  # muzzle brake
+mg_gun_obj = mg_gun.build()
+
 # --------------------------------------------------------------------------------------------------
 # Export
 # --------------------------------------------------------------------------------------------------
 export(OUT)
-everything = [hull_obj, turret_obj, gun_obj, *wheel_objects]
+everything = [hull_obj, turret_obj, gun_obj, mg_obj, mg_gun_obj, *wheel_objects]
 print("tris:", sum(len(p.vertices) - 2 for o in everything for p in o.data.polygons))
 print("wrote", OUT)
 

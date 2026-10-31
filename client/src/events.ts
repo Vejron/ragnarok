@@ -11,7 +11,7 @@ import type { Wear } from '@/entities/presenters/wear'
 import type { Blips } from '@/blips'
 import { HIT_KILL, HIT_ROOSTER, HIT_VEHICLE } from '@/feedback'
 import {
-  PROJECTILE_BULLET, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_BULLET, WEAPON_CRASH, WEAPON_DRONE, WEAPON_EGG, WEAPON_FLARE, WEAPON_GRENADE, WEAPON_LAUNCHER, WEAPON_LOITER, WEAPON_MG, WEAPON_MORTAR,
+  PROJECTILE_BULLET, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_BULLET, WEAPON_CRASH, WEAPON_DRONE, WEAPON_EGG, WEAPON_FLARE, WEAPON_GRENADE, WEAPON_LASER, WEAPON_LAUNCHER, WEAPON_LOITER, WEAPON_MG, WEAPON_MORTAR,
   MARK_GLANCE, MARK_PIERCED, MARK_SCUFF, MARK_VITAL, WEAPON_AP, WEAPON_PELLET, WEAPON_RICOCHET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_TURRET, WEAPON_WRECK,
   type BulletSpawn, type HullMark, type ShotEvent,
 } from '@/net/codec'
@@ -20,15 +20,17 @@ import type { ChaseCam } from '@/render/chase'
 import type { DamageNumbers } from '@/render/damagenumbers'
 import type { Debris } from '@/render/debris'
 import type { Effects } from '@/render/effects'
+import type { Scorchmarks } from '@/render/scorchmarks'
 import { locate, type HullMarks } from '@/render/hullmarks'
 import { BLASTS, explosion, type ExplosionProfile } from '@/render/explosion'
 import type { Rockets } from '@/render/rockets'
 import type { Rounds } from '@/render/rounds'
 import type { Scene } from '@/render/scene'
+import { TuppModel } from '@/render/tupp'
 import type { ProjectileTrails } from '@/render/trails'
 import { crashBurst, scrapeSparks, type FxWorld } from '@/render/tyres'
 import { bulletLifeTicks, bulletPosition, bulletTicksTo, bulletVelocity } from '@/sim/ballistics'
-import { AP_BLAST_RADIUS, BOMB_RADIUS, CANNON_RADIUS, EXPLOSION_RADIUS, EYE_HEIGHT, MORTAR_RADIUS, ROCKET_BLAST_RADIUS, TICK_RATE, WRECK_BLAST_RADIUS } from '@/sim/consts'
+import { AP_BLAST_RADIUS, BOMB_RADIUS, CANNON_RADIUS, EXPLOSION_RADIUS, EYE_HEIGHT, MORTAR_RADIUS, ROCKET_BLAST_RADIUS, TICK_RATE, TUPP_LASER_DAMAGE, TUPP_LASER_RANGE, WRECK_BLAST_RADIUS } from '@/sim/consts'
 import { DRONE_BLAST_RADIUS, GRENADE_BLAST_RADIUS, hitscanGunFor, ITEM_SNIPER, itemDef, LOITER_BLAST_RADIUS } from '@/sim/items'
 import type { Surroundings } from '@/surroundings'
 import type { VehicleSounds } from '@/vehicleaudio'
@@ -36,6 +38,9 @@ import type { WorldView } from '@/worldview'
 
 /** A vehicle with no motion on record. */
 const STILL = new Vector3()
+/** A laser's burn on the ground, metres across, and how far above the ground a hit still counts as on it. */
+const SCORCH_RADIUS = 1.4
+const SCORCH_HEIGHT = 0.6
 /** Events wait at most this many deep for the picture to reach them. */
 const MAX_PENDING = 64
 /** From a Carl Gustaf's muzzle back to its venturi, metres: where the backblast leaves. */
@@ -77,6 +82,7 @@ interface LiveBullet {
 export interface EventWorld {
   scene: Scene
   effects: Effects
+  scorches: Scorchmarks
   sounds: VehicleSounds
   debris: Debris
   damageNumbers: DamageNumbers
@@ -230,7 +236,7 @@ export class Events {
   }
 
   private showShot(shot: ShotEvent) {
-    const { effects, sounds, avatars, vehicles, view, surroundings, chase, scene } = this.world
+    const { effects, scorches, sounds, avatars, vehicles, view, surroundings, chase, scene } = this.world
     const local = this.world.localId()
     const to = new Vector3(shot.x, shot.y, shot.z)
     const blast = BLAST_OF.get(shot.weapon)
@@ -274,6 +280,25 @@ export class Events {
         else effects.pelletStrike(to)
       }
       if (bullet?.spawn.shooter === local) view.chipped(to.x, to.y, to.z, itemDef(bullet.spawn.item)?.damage ?? 0)
+    } else if (shot.weapon === WEAPON_LASER) {
+      // The beam is drawn every frame, from the eyes; this is where it ends, and what it does there.
+      const tupp = vehicles.model(shot.shooter)
+      if (!(tupp instanceof TuppModel)) return
+      tupp.beamEnd = to
+      if (this.world.driving() === shot.shooter) chase.kick(0.08)
+      else if (to.distanceTo(scene.camera.position) < 30) chase.kick(0.05)
+      if (tupp.barrel().origin.distanceTo(to) >= TUPP_LASER_RANGE - 1 || surroundings.watery(to, 0.25)) {
+        tupp.scorched = null
+        return
+      }
+      effects.laserBurn(to)
+      // A burn only where it struck the ground itself, not a hull or a wall, and joined to the one before.
+      const onGround = to.y - scene.groundAt(to.x, to.z) < SCORCH_HEIGHT
+      if (onGround) scorches.sweep(tupp.scorched, to, SCORCH_RADIUS)
+      tupp.scorched = onGround ? to.clone() : null
+      this.muzzleLight(to, 0xff4020, 3, 10)
+      sounds.laserSizzle([to.x, to.y, to.z])
+      if (this.world.driving() === shot.shooter) view.chipped(to.x, to.y, to.z, TUPP_LASER_DAMAGE)
     } else if (shot.weapon === WEAPON_MG) {
       // The round was sent flying when the gun fired; this is where it strikes something.
       if (!surroundings.watery(to, 0.25)) this.world.rounds.struck(to)

@@ -2,9 +2,10 @@
 
 use super::*;
 
-/// The tank: a heavy six-wheel hull that turns on the spot, with a driver (seat 0) and a gunner
-/// (seat 1) who aims the turret and fires. Same body axes as the car.
-pub const TANK_SEATS: usize = 2;
+/// The tank: a heavy six-wheel hull that turns on the spot, with a driver (seat 0), a gunner (seat 1)
+/// who aims the turret and fires, and a machine gunner (seat 2) out of the roof hatch. Same body axes
+/// as the car.
+pub const TANK_SEATS: usize = 3;
 pub const TANK_HALF_EXTENTS: [f32; 3] = [1.3, 0.5, 2.6];
 pub const TANK_WHEEL_RADIUS: f32 = 0.45;
 pub const TANK_TRACK_HALF: f32 = 1.2;
@@ -32,6 +33,29 @@ pub const TANK_BARREL_MAX: f32 = 0.5;
 /// hull hit never adds to. Past it `DAMAGE_TURRET` is set, the gunner dies and the gun is gone until the
 /// tank respawns. Mirrors `TANK_TURRET_HP` in `sim/consts.ts`.
 pub const TANK_TURRET_HP: u8 = 90;
+
+/// The seat that works the roof machine gun.
+pub const TANK_MG_SEAT: usize = 2;
+/// Where the roof gun turns, from the turret ring in the turret's frame, over the hatch on its right.
+pub const TANK_MG_AT: [f32; 3] = [0.45, 0.6, 0.3];
+/// The machine gunner's head from the ring, with the turret ahead: out of the hatch, behind the gun, and
+/// clear over the turret's solid, so they can be shot from all round.
+pub const TANK_MG_HEAD: [f32; 3] = [0.45, 1.0, 0.75];
+pub const TANK_MG_LENGTH: f32 = 1.1;
+/// How far the roof gun turns either side of where the cannon points, and its elevation, radians (+ is
+/// up): steep enough for aircraft.
+pub const TANK_MG_YAW_LIMIT: f32 = 1.57;
+pub const TANK_MG_PITCH_MIN: f32 = -0.25;
+pub const TANK_MG_PITCH_MAX: f32 = 0.9;
+pub const TANK_MG_SLEW: f32 = 2.5;
+pub const TANK_MG_COOLDOWN_TICKS: u32 = 6;
+pub const TANK_MG_SPREAD: f32 = 0.012;
+pub const TANK_MG_RANGE: f32 = 300.0;
+pub const TANK_MG_DAMAGE: u8 = 16;
+pub const TANK_MG_PLANE_DAMAGE: u8 = 8;
+pub const TANK_MG_VEHICLE_DAMAGE: u8 = 4;
+/// Heat a round puts in the barrel: about six seconds of holding the trigger jams it.
+pub const TANK_MG_HEAT: f32 = 10.5;
 
 /// A medium tank's armour: thickest in front, thin over the engine and underneath. The driver looks out
 /// through a visor slit in the glacis and the gunner through a sight beside the mantlet, and a well-aimed
@@ -66,6 +90,9 @@ const ARMOR: Armor = Armor {
     ],
     canvas: false,
 };
+
+/// A 12.7 mm heavy machine gun.
+const ROOF_GUN: Fire = Fire::Hitscan { length: TANK_MG_LENGTH, damage: TANK_MG_DAMAGE, vehicle: TANK_MG_VEHICLE_DAMAGE, plane: TANK_MG_PLANE_DAMAGE, weapon: WEAPON_MG, range: TANK_MG_RANGE, pen: Pen::ball(20.0, 12.0, TANK_MG_RANGE, 12.7) };
 
 const SHELL: Fire = Fire::Shell { kind: PROJECTILE_SHELL, alt: PROJECTILE_HE, speed: SHELL_SPEED, length: TANK_BARREL_LENGTH, ttl: SHELL_TTL_TICKS };
 
@@ -106,20 +133,37 @@ pub(super) const TANK: VehicleDef = VehicleDef {
     },
     armor: ARMOR,
     drone: None,
-    mount_seat: None,
+    mount_seat: Some(MountSeat { seat: TANK_MG_SEAT, pivot: TANK_TURRET_PIVOT, head: TANK_MG_HEAD }),
 };
 
-const MOUNTS: &[MountDef] = &[MountDef {
-    seat: 1,
-    aim: Aim::Turret { slew: TANK_TURRET_SLEW, pitch: (TANK_BARREL_MIN, TANK_BARREL_MAX), pitch_slew: TANK_BARREL_SLEW },
-    muzzle: Muzzle::One(TANK_TURRET_PIVOT),
-    fire: SHELL,
-    trigger: BUTTON_FIRE,
-    cooldown: SHELL_COOLDOWN_TICKS,
-    spread: 0.0,
-    recoil: SHELL_RECOIL,
-    heat: 0.0,
-    ammo: None,
-    needs: &[Need::Turret, Need::Breech],
-    show: Show::Turret,
-}];
+/// The cannon, then the roof gun, which reads the turret's yaw as of this tick.
+const MOUNTS: &[MountDef] = &[
+    MountDef {
+        seat: 1,
+        aim: Aim::Turret { slew: TANK_TURRET_SLEW, pitch: (TANK_BARREL_MIN, TANK_BARREL_MAX), pitch_slew: TANK_BARREL_SLEW },
+        muzzle: Muzzle::One(TANK_TURRET_PIVOT),
+        fire: SHELL,
+        trigger: BUTTON_FIRE,
+        cooldown: SHELL_COOLDOWN_TICKS,
+        spread: 0.0,
+        recoil: SHELL_RECOIL,
+        heat: 0.0,
+        ammo: None,
+        needs: &[Need::Turret, Need::Breech],
+        show: Show::Turret,
+    },
+    MountDef {
+        seat: TANK_MG_SEAT,
+        aim: Aim::Pintle { yaw_limit: TANK_MG_YAW_LIMIT, pitch: (TANK_MG_PITCH_MIN, TANK_MG_PITCH_MAX), slew: TANK_MG_SLEW },
+        muzzle: Muzzle::Pintle { ring: TANK_TURRET_PIVOT, at: TANK_MG_AT },
+        fire: ROOF_GUN,
+        trigger: BUTTON_FIRE,
+        cooldown: TANK_MG_COOLDOWN_TICKS,
+        spread: TANK_MG_SPREAD,
+        recoil: 0.0,
+        heat: TANK_MG_HEAT,
+        ammo: None,
+        needs: &[Need::Turret],
+        show: Show::Pintle,
+    },
+];

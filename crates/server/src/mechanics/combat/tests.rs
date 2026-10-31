@@ -1271,6 +1271,24 @@ fn a_tanks_crew_cannot_be_shot() {
 }
 
 #[test]
+fn a_tanks_machine_gunner_can_be_shot_from_any_side_as_the_turret_turns() {
+    let (mut game, vid, rider) = rider_in(shared::protocol::KIND_TANK, TANK_MG_SEAT);
+    // Their gun looks over the turret, wherever that points.
+    for yaw in [0.0, 1.2, -2.4] {
+        game.world.entities.get_mut::<crate::game::Mounts>(vid).unwrap().state[0].yaw = yaw;
+        let (_, head) = game.world.seated_head(rider).unwrap();
+        game.world.entities.get_mut::<crate::entities::Health>(rider).unwrap().hp = PLAYER_MAX_HP;
+        let shooter = join(&mut game).0;
+        let before = game.world.entities.of::<crate::entities::Health>(rider).hp;
+        hitscan(&mut game.world, shooter, [head[0] + 10.0, head[1] - 0.15, head[2]], [-1.0, 0.0, 0.0], &round(), 0, 0);
+        hitscan(&mut game.world, shooter, [head[0], head[1] - 0.15, head[2] + 10.0], [0.0, 0.0, -1.0], &round(), 0, 0);
+        let left = game.world.entities.of::<crate::entities::Health>(rider).hp;
+        assert!(left < before, "yaw {yaw}: hit from the side and from behind, {before} to {left}");
+    }
+    assert!(game.seen(rider).unwrap().look.is_some(), "and they show");
+}
+
+#[test]
 fn a_helicopters_gunner_is_shot_through_the_glass() {
     let (mut game, vid, rider) = rider_in(shared::protocol::KIND_HELI, 1);
     let (_, head) = game.world.seated_head(rider).unwrap();

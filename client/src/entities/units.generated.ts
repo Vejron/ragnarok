@@ -32,6 +32,7 @@ export function toGame(w: Components): Entity {
     look: w.look && { pitch: w.look.pitch / 1000 },
     carry: w.carry,
     struck: w.struck && { count: w.struck.count, part: w.struck.part, amount: w.struck.amount, yaw: w.struck.yaw / 1000, x: w.struck.x / 100, y: w.struck.y / 100, z: w.struck.z / 100 },
+    pintle: w.pintle && { yaw: w.pintle.yaw / 1000, pitch: w.pintle.pitch / 1000, shots: w.pintle.shots, heat: w.pintle.heat / 255, flags: w.pintle.flags },
   }
 }
 
@@ -66,5 +67,6 @@ export function blend(a: Entity, b: Entity, t: number): Entity {
     look: a.look && b.look ? (a.look === b.look || (a.look.pitch === b.look.pitch) ? b.look : { pitch: angle(a.look.pitch, b.look.pitch, t) }) : near.look,
     carry: near.carry,
     struck: a.struck && b.struck ? (a.struck === b.struck || (a.struck.count === b.struck.count && a.struck.part === b.struck.part && a.struck.amount === b.struck.amount && a.struck.yaw === b.struck.yaw && a.struck.x === b.struck.x && a.struck.y === b.struck.y && a.struck.z === b.struck.z) ? b.struck : { count: t < 0.5 ? a.struck.count : b.struck.count, part: t < 0.5 ? a.struck.part : b.struck.part, amount: t < 0.5 ? a.struck.amount : b.struck.amount, yaw: angle(a.struck.yaw, b.struck.yaw, t), x: lerp(a.struck.x, b.struck.x, t), y: lerp(a.struck.y, b.struck.y, t), z: lerp(a.struck.z, b.struck.z, t) }) : near.struck,
+    pintle: a.pintle && b.pintle ? (a.pintle === b.pintle || (a.pintle.yaw === b.pintle.yaw && a.pintle.pitch === b.pintle.pitch && a.pintle.shots === b.pintle.shots && a.pintle.heat === b.pintle.heat && a.pintle.flags === b.pintle.flags) ? b.pintle : { yaw: angle(a.pintle.yaw, b.pintle.yaw, t), pitch: angle(a.pintle.pitch, b.pintle.pitch, t), shots: t < 0.5 ? a.pintle.shots : b.pintle.shots, heat: t < 0.5 ? a.pintle.heat : b.pintle.heat, flags: t < 0.5 ? a.pintle.flags : b.pintle.flags }) : near.pintle,
   }
 }

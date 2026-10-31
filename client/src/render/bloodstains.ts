@@ -14,15 +14,8 @@ const FRESH = 0x6a0404
 const KIND_SMEAR = 0
 const KIND_BLOT = 1
 
-// Per vertex: uv across the stain (-1 to 1; along a smear `v` is metres travelled), and in `custom`
-// its birth time, a seed for its ragged edge, its kind, and how long it takes to spread, seconds.
-// A stain draws only its shape: solid inside with a soft edge and no rim, and its colour, sheen and
-// drying come from noise over the world, not the stain. So stains that overlap read as one puddle that
-// runs together rather than as a pile of outlined discs. It dries over the first half of its life and
-// fades over the last third.
-const WGSL = /* wgsl */ `
-${GROUND_LIGHT_WGSL}
-
+/** Value noise over the ground, for what is drawn on it. */
+export const STAIN_NOISE_WGSL = /* wgsl */ `
 fn stainHash(p: vec2f) -> f32 {
   var q = fract(vec3f(p.x, p.y, p.x) * 0.1031);
   q += dot(q, q.yzx + 33.33);
@@ -35,6 +28,18 @@ fn stainNoise(p: vec2f) -> f32 {
   let u = f * f * (3.0 - 2.0 * f);
   return mix(mix(stainHash(i), stainHash(i + vec2f(1.0, 0.0)), u.x), mix(stainHash(i + vec2f(0.0, 1.0)), stainHash(i + vec2f(1.0, 1.0)), u.x), u.y);
 }
+`
+
+// Per vertex: uv across the stain (-1 to 1; along a smear `v` is metres travelled), and in `custom`
+// its birth time, a seed for its ragged edge, its kind, and how long it takes to spread, seconds.
+// A stain draws only its shape: solid inside with a soft edge and no rim, and its colour, sheen and
+// drying come from noise over the world, not the stain. So stains that overlap read as one puddle that
+// runs together rather than as a pile of outlined discs. It dries over the first half of its life and
+// fades over the last third.
+const WGSL = /* wgsl */ `
+${GROUND_LIGHT_WGSL}
+
+${STAIN_NOISE_WGSL}
 
 fn surface(s: Surface) -> vec4f {
   let seconds = params.now - s.custom.x;

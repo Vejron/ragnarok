@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { KIND_HEN, KIND_JEEP, KIND_STRV, KIND_TANK, KIND_WALKER } from '../net/codec'
+import { KIND_HEN, KIND_JEEP, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER } from '../net/codec'
 import { TICK_RATE } from '../sim/consts'
 import * as items from '../sim/items'
 import tables from '../sim/tables.generated.json'
@@ -24,7 +24,7 @@ describe('gameplay tables come from the server', () => {
   it('has every vehicle kind the server does, the jeep first as the fallback', () => {
     expect(VEHICLES.map((def) => def.kind)).toEqual(tables.vehicles.map((row) => row.kind))
     expect(vehicleDef(999).kind).toBe(KIND_JEEP)
-    expect(VEHICLES.filter((def) => isLegged(def.kind)).map((def) => def.kind)).toEqual([KIND_WALKER, KIND_HEN])
+    expect(VEHICLES.filter((def) => isLegged(def.kind)).map((def) => def.kind)).toEqual([KIND_WALKER, KIND_HEN, KIND_TUPP])
     expect(VEHICLES.filter((def) => isTracked(def.kind)).map((def) => def.kind)).toEqual([KIND_TANK, KIND_STRV])
     expect(isLegged(undefined) || isTracked(undefined)).toBe(false)
   })

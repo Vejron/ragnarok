@@ -142,6 +142,14 @@ export interface Struck {
   z: number
 }
 
+export interface Pintle {
+  yaw: number
+  pitch: number
+  shots: number
+  heat: number
+  flags: number
+}
+
 /** An entity as it is replicated: the components it has. */
 export interface Components {
   place?: Place
@@ -167,6 +175,7 @@ export interface Components {
   look?: Look
   carry?: Carry
   struck?: Struck
+  pintle?: Pintle
 }
 
 export type ComponentName = keyof Components
@@ -203,4 +212,5 @@ export const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; 
   { id: 21, name: 'look', diff: true, owner: false, fields: [{ name: 'pitch', unit: 'mrad' }] },
   { id: 22, name: 'carry', diff: false, owner: false, fields: [{ name: 'what' }] },
   { id: 23, name: 'struck', diff: false, owner: false, fields: [{ name: 'count' }, { name: 'part' }, { name: 'amount' }, { name: 'yaw', unit: 'mrad' }, { name: 'x', unit: 'cm' }, { name: 'y', unit: 'cm' }, { name: 'z', unit: 'cm' }] },
+  { id: 24, name: 'pintle', diff: false, owner: false, fields: [{ name: 'yaw', unit: 'mrad' }, { name: 'pitch', unit: 'mrad' }, { name: 'shots' }, { name: 'heat', unit: 'byte' }, { name: 'flags' }] },
 ]

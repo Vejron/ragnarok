@@ -27,6 +27,8 @@ export type Entity = Omit<Components, 'orientation'> & { orientation?: Rotation 
 
 /** A gun on a mount (`turret`), in the game's units: radians, and metres of range. */
 export type Turret = NonNullable<Entity['turret']>
+/** A gun on a turret's roof (`pintle`): radians from the turret, heat as 0..1. */
+export type Pintle = NonNullable<Entity['pintle']>
 /** A plane's pilot weapons and engine, or a hen's eggs (`arms`), heat as 0..1. */
 export type Arms = NonNullable<Entity['arms']>
 /**

@@ -37,6 +37,7 @@ The docs are in [docs/](docs/).
 - [VEHICLES-V.md](docs/VEHICLES-V.md): the field mortar
 - [VEHICLES-VI.md](docs/VEHICLES-VI.md): the Tesla Roadster
 - [VEHICLES-VII.md](docs/VEHICLES-VII.md): the hen
+- [VEHICLES-VIII.md](docs/VEHICLES-VIII.md): the tupp, a Hedemora rooster with laser eyes
 
 ## Requirements
 

@@ -430,6 +430,11 @@ replicated! {
     /// soldier is drawn from (`Place`), all zero when not known (a blast). Absent until the first hit
     /// of a life.
     Struck { count: u8, part: u8, amount: u8, yaw: i16 as mrad, x: i16 as cm, y: i16 as cm, z: i16 as cm }
+
+    set 24 pintle
+    /// A gun on a turret's roof, as drawn and shown on its gunner's gauges: its yaw from the turret and
+    /// its elevation, the rounds fired, modulo 256, its heat (it jams at 255) and `PINTLE_*` flags.
+    Pintle { yaw: i16 as mrad, pitch: i16 as mrad, shots: u8, heat: u8 as byte, flags: u8 }
 }
 
 /// The structs a component field can hold a list of, with their fields in wire order and each one's

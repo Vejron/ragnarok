@@ -3,6 +3,7 @@
 pub use crate::vehicles::drone::*;
 pub use crate::vehicles::heli::*;
 pub use crate::vehicles::hen::*;
+pub use crate::vehicles::tupp::*;
 pub use crate::vehicles::jeep::*;
 pub use crate::vehicles::loiter::*;
 pub use crate::vehicles::mortar::*;
@@ -15,7 +16,7 @@ pub use crate::vehicles::tank::*;
 pub use crate::vehicles::walker::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 56;
+pub const PROTOCOL_VERSION: u8 = 59;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -48,6 +49,8 @@ pub const KIND_LOITER: u8 = 13;
 pub const KIND_PAK: u8 = 14;
 /// The Intinor Compact Backpack lying on the ground (see `BACKPACK_*`). Replicated as a place and this kind.
 pub const KIND_BACKPACK: u8 = 15;
+/// The tupp: a giant robot Hedemora rooster on the hen's legs and wings, with laser eyes. One seat.
+pub const KIND_TUPP: u8 = 16;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;

@@ -447,6 +447,9 @@ pub struct Mount {
     pub alt: bool,
     /// `BUTTON_AMMO` was down last tick: holding it swaps the round once.
     pub swapping: bool,
+    /// A beam's ticks charged so far, and its ticks of burning left (`Fire::Beam`).
+    pub charge: u32,
+    pub beam: u32,
 }
 
 impl Mount {

@@ -5,13 +5,13 @@ import { Effect, type EffectContext } from './effect'
 type Vec3Like = readonly [number, number, number] | { x: number; y: number; z: number }
 
 /**
- * One short-lived flash, puff, speck or streak whose whole life is a formula of its progress p (0..1):
+ * One short-lived streak or ground ring whose whole life is a formula of its progress p (0..1):
  *
- *   position = at + direction × (along × p + sqrtAlong × √p) + up × (lift × p − drop × p²)
+ *   position = at + direction × along × p
  *   radius   = size + grow × p
  *   opacity  = opacity × (1 − p), or × (1 − p³) with `fade: 'late'`
  *
- * With `length` it is a streak of that length lying along `direction` (a tracer); otherwise a ball.
+ * Anything round in the air (flashes, sparks, smoke) is a particle (`ParticleSystem`), not one of these.
  */
 export interface Flash {
   at: Vec3Like
@@ -19,15 +19,13 @@ export interface Flash {
   /** Seconds. */
   life: number
   along?: number
-  sqrtAlong?: number
-  lift?: number
-  drop?: number
-  /** Radius at birth, metres (half the width, for a streak). */
+  /** Half the width of a streak, or a ring's radius at birth, metres. */
   size: number
   /** Radius gained by the end (negative shrinks). */
   grow?: number
-  length?: number
-  /** sRGB hex or a linear Color. */
+  /** A streak's length along `direction`, or the thickness of a ring's band. */
+  length: number
+  /** sRGB hex or a linear Color (a linear one may run past 1, to bloom). */
   color: number | Color
   opacity?: number
   fade?: 'linear' | 'late'
@@ -38,14 +36,16 @@ export interface Flash {
   ring?: boolean
   /** Ignores fog, so it keeps its colour at range and against a pale sky. */
   bright?: boolean
+  /** A streak that falls away from its middle to nothing at its edges, rather than a flat bar. */
+  soft?: boolean
 }
 
 /** Floats per record; matches `Flash` in the shader. */
 const RECORD_FLOATS = 20
 const FLAG_LATE = 1
 const FLAG_BRIGHT = 2
-const FLAG_STREAK = 4
 const FLAG_RING = 8
+const FLAG_SOFT = 16
 
 const WGSL = /* wgsl */ `
 ${COMMON_WGSL}
@@ -55,12 +55,11 @@ struct Flash {
   at: vec4f,
   // xyz unit direction, w life.
   dir: vec4f,
-  // along, sqrtAlong, lift, drop.
-  motion: vec4f,
-  // size, grow, length, flags.
+  // size, grow, length, along.
   shape: vec4f,
   // linear rgb, opacity.
   color: vec4f,
+  flags: f32,
 }
 
 struct Clock {
@@ -91,8 +90,8 @@ fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) i: u32) -> Out {
   }
   var corners = array<vec2f, 6>(vec2f(-1.0, -1.0), vec2f(1.0, -1.0), vec2f(1.0, 1.0), vec2f(-1.0, -1.0), vec2f(1.0, 1.0), vec2f(-1.0, 1.0));
   let corner = corners[v];
-  let flags = u32(f.shape.w);
-  let centre = f.at.xyz + f.dir.xyz * (f.motion.x * p + f.motion.y * sqrt(p)) + vec3f(0.0, f.motion.z * p - f.motion.w * p * p, 0.0);
+  let flags = u32(f.flags);
+  let centre = f.at.xyz + f.dir.xyz * f.shape.w * p;
   let radius = max(f.shape.x + f.shape.y * p, 0.0);
   var world: vec3f;
   out.thick = 1.0;
@@ -101,18 +100,13 @@ fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) i: u32) -> Out {
     world = centre + vec3f(corner.x, 0.0, corner.y) * radius;
     out.uv = corner;
     out.thick = clamp(f.shape.z / max(radius, 1e-3), 0.02, 1.0);
-  } else if ((flags & 4u) != 0u) {
+  } else {
     // A streak: long along its direction, as wide as its radius across the view.
     let toCamera = normalize(frame.cameraPos.xyz - centre);
     var side = cross(f.dir.xyz, toCamera);
     side = select(normalize(side), vec3f(1.0, 0.0, 0.0), length(side) < 1e-4);
     world = centre + f.dir.xyz * corner.y * f.shape.z * 0.5 + side * corner.x * radius;
-    out.uv = vec2f(0.0);
-  } else {
-    let right = vec3f(frame.view[0].x, frame.view[1].x, frame.view[2].x);
-    let up = vec3f(frame.view[0].y, frame.view[1].y, frame.view[2].y);
-    world = centre + (right * corner.x + up * corner.y) * radius;
-    out.uv = corner;
+    out.uv = vec2f(corner.x, 0.0);
   }
   let fade = select(1.0 - p, 1.0 - p * p * p, (flags & 1u) != 0u);
   out.clip = frame.viewProj * vec4f(world, 1.0);
@@ -124,14 +118,15 @@ fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) i: u32) -> Out {
 
 @fragment
 fn fs(in: Out) -> @location(0) vec4f {
-  // A ball is a flat disc, as an unlit sphere looks; its edge is smoothed over about a pixel.
+  var edge = 1.0;
   let r = length(in.uv);
   let w = fwidth(r);
-  var edge = 1.0 - smoothstep(1.0 - w * 1.5, 1.0, r);
   if ((in.flags & 8u) != 0u) {
     let inner = 1.0 - in.thick;
     let band = smoothstep(inner, 1.0 - in.thick * 0.1, r);
     edge = band * band * (1.0 - smoothstep(1.0 - max(w * 2.0, 0.03), 1.0, r));
+  } else if ((in.flags & 16u) != 0u) {
+    edge = (1.0 - r) * (1.0 - r);
   }
   var rgb = in.color.rgb;
   if ((in.flags & 2u) == 0u && frame.fog.z > 0.0) {
@@ -142,9 +137,9 @@ fn fs(in: Out) -> @location(0) vec4f {
 `
 
 /**
- * Short-lived shot effects (flashes, specks, puffs, tracer streaks) as GPU records in a ring. Each is
- * written once when spawned and then lives entirely in the shader, so a shotgun blast of dozens of
- * pieces costs a few hundred bytes of upload and no per-frame CPU work. All of them draw in one or two
+ * Short-lived tracer streaks and ground rings as GPU records in a ring. Each is
+ * written once when spawned and then lives entirely in the shader, so a burst of dozens costs a few
+ * hundred bytes of upload and no per-frame CPU work. All of them draw in one or two
  * calls. Call `update(dt)` once per frame to advance their clock.
  */
 export class FlashEffects extends Effect {
@@ -197,17 +192,14 @@ export class FlashEffects extends Effect {
     }
     d[o + 4] = dx; d[o + 5] = dy; d[o + 6] = dz
     d[o + 7] = Math.max(flash.life, 1e-3)
-    d[o + 8] = flash.along ?? 0
-    d[o + 9] = flash.sqrtAlong ?? 0
-    d[o + 10] = flash.lift ?? 0
-    d[o + 11] = flash.drop ?? 0
-    d[o + 12] = flash.size
-    d[o + 13] = flash.grow ?? 0
-    d[o + 14] = flash.length ?? 0
-    d[o + 15] = (flash.fade === 'late' ? FLAG_LATE : 0) | (flash.bright ? FLAG_BRIGHT : 0) | (flash.length && !flash.ring ? FLAG_STREAK : 0) | (flash.ring ? FLAG_RING : 0)
+    d[o + 8] = flash.size
+    d[o + 9] = flash.grow ?? 0
+    d[o + 10] = flash.length
+    d[o + 11] = flash.along ?? 0
     const c = typeof flash.color === 'number' ? this.color.setHex(flash.color) : flash.color
-    d[o + 16] = c.r; d[o + 17] = c.g; d[o + 18] = c.b
-    d[o + 19] = flash.opacity ?? 1
+    d[o + 12] = c.r; d[o + 13] = c.g; d[o + 14] = c.b
+    d[o + 15] = flash.opacity ?? 1
+    d[o + 16] = (flash.fade === 'late' ? FLAG_LATE : 0) | (flash.bright ? FLAG_BRIGHT : 0) | (flash.ring ? FLAG_RING : 0) | (flash.soft ? FLAG_SOFT : 0)
     // Expiry only ever counts as "gone" from the tail; a long-lived record in the middle just stays drawn.
     this.expiry[i] = this.time + flash.life
     this.head = (i + 1) % this.capacity

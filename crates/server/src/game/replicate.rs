@@ -14,7 +14,7 @@ use crate::entities::{Health, NetKind, Transform, With};
 use crate::mechanics::{Struck, Wounds};
 use shared::mounts::Show;
 use shared::replicated::{self as wire, Replicated, Scene};
-use shared::vehicles::{Exposure, vehicle_def};
+use shared::vehicles::{crew_shows, vehicle_def};
 
 impl Game {
     /// Everything replicated, ordered by id.
@@ -57,8 +57,8 @@ impl Game {
     /// crew shows, and only that they are a soldier when it does not.
     fn rider(&self, player: &Player) -> Replicated {
         let kind = Some(wire::Kind { kind: KIND_SOLDIER });
-        let vehicle = player.seat.and_then(|seat| self.world.entities.get::<Vehicle>(seat.vehicle));
-        if vehicle.is_none_or(|vehicle| vehicle_def(vehicle.kind).crew == Exposure::Sealed) {
+        let shows = player.seat.is_some_and(|seat| self.world.entities.get::<Vehicle>(seat.vehicle).is_some_and(|vehicle| crew_shows(vehicle.kind, seat.index)));
+        if !shows {
             return Replicated { kind, ..Default::default() };
         }
         let flags = FLAG_CROUCHING | ((player.held().item << FLAG_HELD_SHIFT) & FLAG_HELD_MASK);
@@ -109,9 +109,11 @@ impl Game {
         // A hitched mortar is drawn folded up for travel.
         let stowed = if self.world.physics.towed_by(id).is_some() { TURRET_STOWED } else { 0 };
         let turret = shown(Show::Turret).map(|gun| {
-            let flags = stowed | if gun.alt { TURRET_ALT } else { 0 };
+            let beam = if gun.charge > 0 { TURRET_CHARGING } else if gun.beam > 0 { TURRET_BEAM } else { 0 };
+            let flags = stowed | beam | if gun.alt { TURRET_ALT } else { 0 };
             wire::Turret { yaw: to_mrad(gun.yaw), pitch: to_mrad(gun.pitch), shots: gun.shots, range: (gun.range * 10.0).round().clamp(0.0, u16::MAX as f32) as u16, flags }
         });
+        let pintle = shown(Show::Pintle).map(|gun| wire::Pintle { yaw: to_mrad(gun.yaw), pitch: to_mrad(gun.pitch), shots: gun.shots, heat: heat_byte(gun.heat), flags: if gun.jammed { PINTLE_JAMMED } else { 0 } });
         let arms = def.arms().then(|| {
             let (guns, rack, rear) = (shown(Show::Guns).unwrap_or_default(), shown(Show::Rack).unwrap_or_default(), shown(Show::Turret).unwrap_or_default());
             let mut flags = 0;
@@ -138,6 +140,7 @@ impl Game {
             orientation: Some(wire::Orientation { qx, qy, qz }),
             steer: Some(wire::Steer { steer: to_axis(pose.steer) }),
             turret,
+            pintle,
             thrust,
             arms,
             health: Some(wire::Health { hp: entities.get::<Health>(id).map_or(0, |health| health.hp) }),

@@ -2,9 +2,9 @@ import { Group, Mesh, sphereGeometry, type Geometry, type Material, type Node, M
 import { parseToonModel } from './models'
 import { toonMaterial } from './toon'
 import { boxUvs, camoTexture } from './camo'
-import { CAR_SEATS, TANK_TRACK_HALF } from '@/sim/consts'
+import { CAR_SEATS, TANK_MG_SEAT, TANK_TRACK_HALF } from '@/sim/consts'
 import { wrapAngle } from '@/net/codec'
-import type { Turret } from '@/entities/units'
+import type { Pintle, Turret } from '@/entities/units'
 import { colorFor } from '@/profile'
 import type { VehicleModel } from './car'
 
@@ -70,8 +70,9 @@ export async function loadTankModel(url = TANK_MODEL_URL) {
 
 /**
  * A T-55 in silhouette: a hull on two track runs with seven wheels each, and a turret that swings
- * on the hull with a barrel that nods. The driver's head shows in a hatch, the gunner's in the
- * turret's cupola. Wheels roll with the movement of each track (so turning on the spot rolls them
+ * on the hull with a barrel that nods, and a heavy machine gun that turns and nods on its roof. The
+ * driver's head shows in a hatch, the gunner's in the turret's cupola; the machine gunner is a soldier
+ * in the roof hatch (`Riders`). Wheels roll with the movement of each track (so turning on the spot rolls them
  * in opposite directions).
  */
 export class TankModel implements VehicleModel {
@@ -80,6 +81,9 @@ export class TankModel implements VehicleModel {
   private readonly turret: Node | null
   private readonly gun: Node
   private readonly gunRest: number
+  /** The roof gun: what turns and what nods; a tank without one (the Strv S) has neither. */
+  private readonly roofMount: Node | null
+  private readonly roofGun: Node | null
   private readonly spinners: { node: Node; side: number }[] = []
   private readonly heads: Mesh[] = []
   private readonly paint: Material
@@ -107,6 +111,8 @@ export class TankModel implements VehicleModel {
     this.turret = model.getObjectByName('turret') ?? null
     this.gun = model.getObjectByName('gun')!
     this.gunRest = this.gun.position.z
+    this.roofMount = model.getObjectByName('mg') ?? null
+    this.roofGun = model.getObjectByName('mg_gun') ?? null
 
     const headGeometry = sphereGeometry(0.2, 12, 10)
     for (let seat = 0; seat < CAR_SEATS; seat++) {
@@ -118,6 +124,9 @@ export class TankModel implements VehicleModel {
       if (seat === 0) {
         head.position.set(...layout.driverHead)
         this.root.add(head)
+      } else if (seat === TANK_MG_SEAT) {
+        // Drawn as the soldier they are, since they can be shot.
+        continue
       } else if (seat === 1 && this.turret && layout.gunnerHead) {
         head.position.set(...layout.gunnerHead)
         this.turret.add(head)
@@ -160,6 +169,7 @@ export class TankModel implements VehicleModel {
     const since = (performance.now() - this.firedAt) / 1000
     this.gun.position.z = this.gunRest + (since < RECOIL_SECONDS ? RECOIL_STROKE * (1 - since / RECOIL_SECONDS) ** 2 : 0)
     this.heads.forEach((head, seat) => {
+      if (!head.parent) return
       const occupant = seats[seat] ?? 0
       head.visible = occupant !== 0
       if (occupant !== 0) {
@@ -167,6 +177,22 @@ export class TankModel implements VehicleModel {
         head.material.needsUpdate()
       }
     })
+  }
+
+  /** Points the roof gun: its angles are from the turret. */
+  setPintle(pintle: Pintle | null) {
+    if (!this.roofMount || !this.roofGun) return
+    this.roofMount.rotation.y = pintle?.yaw ?? 0
+    this.roofGun.rotation.x = pintle?.pitch ?? 0
+  }
+
+  /** The roof gun in world space as of the last `update`: where it turns and the unit aim direction; null without one. */
+  pintleBarrel() {
+    if (!this.roofGun) return null
+    this.root.updateMatrixWorld(true)
+    this.roofGun.getWorldPosition(this.pivot)
+    this.aim.set(0, 0, -1).transformDirection(this.matrix.fromArray(this.roofGun.matrixWorld))
+    return { origin: this.pivot.clone(), direction: this.aim.clone() }
   }
 
   /** Whether the turret is on, for a tank that has one. */

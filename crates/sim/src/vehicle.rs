@@ -275,7 +275,7 @@ pub(super) struct Car {
     condition: CarCondition,
     /// A mortar's tow: the car it is hitched to, and the joint that holds it there.
     towed_by: Option<(u32, ImpulseJointHandle)>,
-    /// A Roadster's air tank, 0..=`ROADSTER_AIR`, or a hen's stamina, 0..=`HEN_STAMINA`; `None` for anything else.
+    /// A Roadster's air tank, 0..=`ROADSTER_AIR`, or a hen's or a tupp's stamina, 0..=`HEN_STAMINA`; `None` for anything else.
     tank: Option<f32>,
     /// The `THRUST_*` nozzles that fired in the last step.
     firing: u8,

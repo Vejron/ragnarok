@@ -24,6 +24,7 @@ const PF_ADDITIVE = 2u;
 const PF_NO_FOG = 4u;
 const PF_PUFF = 8u;
 const PF_DROP = 16u;
+const PF_GLARE = 32u;
 `
 
 /**
@@ -325,6 +326,11 @@ fn fs(in: Out) -> @location(0) vec4f {
     let q = in.uv - 0.5;
     edge = 1.0 - smoothstep(0.36, 0.5, length(q));
     shine = (1.0 - smoothstep(0.0, 0.16, length(q - vec2f(-0.12, 0.14)))) * 0.6;
+  }
+  if ((in.flags & PF_GLARE) != 0u) {
+    // Light: the cube of the distance from its edge, so no edge is ever seen.
+    let g = max(1.0 - length(in.uv - 0.5) * 2.0, 0.0);
+    edge = g * g * g;
   }
   var alpha = in.color.a * edge;
   if (alpha < 0.01) {

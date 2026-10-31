@@ -4,7 +4,7 @@ First part of roadmap stage 3 (see [design.md §14](design.md#14-roadmap)): a ta
 
 ## What you get
 
-- Two tanks park on the roads next to the six cars. Walk up and press **E**: the first player in drives, the second takes the gun. A third can't board (two seats).
+- Two tanks park on the roads next to the six cars. Walk up and press **E**: the first player in drives, the second takes the gun and the third the machine gun on the turret roof. A fourth can't board (three seats).
 - **Driver:** W/S gas and brake, **A/D turns the tank on the spot** (or while driving), Space is the handbrake. Top speed is 12 m/s; the car's is 30.
 - **Gunner:** aims with the mouse and fires with a click or **F**. The camera sits behind the turret on the line of the barrel, so the reticle at the screen centre is where the barrel points; the shell falls from that line, so there is no aiming aid and long shots are judged by eye. The reticle goes dashed while the gun reloads (1.5 s).
 - The turret turns on the hull at 1.4 rad/s and the barrel nods at 0.9 rad/s, between −7° and +29°. It is *stabilised*: it follows the gunner's world heading, so a turning hull doesn't drag the aim.
@@ -29,6 +29,14 @@ Nobody in the gunner seat means nobody works the gun: a driver holding fire does
 
 Each shot gives the hull a 1.6 m/s kick backwards along the barrel (level, so it doesn't dig the nose in), applied on the server by `Physics::kick_car`, so it is real motion everyone sees. The barrel also slides back 0.5 m and eases home over 0.35 s on the client; that part is purely visual.
 
+## The roof machine gun
+
+Seat 2 stands in the hatch on the right of the turret roof and works a 12.7 mm heavy machine gun (`Aim::Pintle`, `Muzzle::Pintle`, `TANK_MG_*`). The gun turns with the turret, and on top of that up to 90° either side of where the cannon points. Like the cannon it follows its gunner's look in the world, so it holds its aim as the hull and the turret turn, until the turret swings so far that the end of the arc pushes it along. It elevates from −14° to +52°, far enough for aircraft. It fires 10 rounds a second, hitscan, out to 300 m and overheats like a plane's guns: about six seconds on the trigger jams it until it cools. A shot-up breech does not stop it, only losing the turret does.
+
+The machine gunner is the one member of a tank's crew who is out in the open. `MountSeat` puts their head over the turret's solid and turns it with the turret, so a round can reach them from every side; the driver and the gunner stay sealed in (`crew_shows`). They die with the turret. The gun's state goes in its own `pintle` component, since `turret` carries the cannon.
+
+Bot crews stay two-man.
+
 ## The tank's physics
 
 `physics/vehicle.rs` now describes a vehicle by a `Spec` (box size, wheel layout, density, engine, steering). The car's numbers are unchanged. The tank:
@@ -43,7 +51,7 @@ Each shot gives the hull a 1.6 m/s kick backwards along the barrel (level, so it
 
 - `InputFrame` gained `pitch` (milliradians, + looks up) and `BUTTON_FIRE` (8). Every player sends their look pitch; only a gunner's means anything.
 - `VehicleState` gained `turret`: `nil` for cars, else `[yaw i16, pitch i16, shots u8, range u16]`. The range is in decimetres. A car pays one byte for the `nil`. The worst-case snapshot test now gives every vehicle a turret and a full seat list, and still fits 1200 bytes.
-- `KIND_TANK = 2`. A tank has two seats.
+- `KIND_TANK = 2`. A tank has three seats.
 - The byte fixtures in `protocol.rs` and `codec.spec.ts` were regenerated and now contain a car and a tank.
 
 ## Client

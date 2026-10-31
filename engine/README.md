@@ -58,7 +58,7 @@ The difference comes from how GPU state is organised, not from per-call speed:
     - `spawn(spec)` creates one particle.
     - `emit(spec)` creates a burst, randomised on the GPU.
     - Particles bounce on a height field set with `setGround`, and have soft edges and fog.
-  - `FlashEffects` holds short-lived flashes, specks, puffs and tracer streaks, each one evaluated in the vertex shader from its spawn record.
+  - `FlashEffects` holds short-lived tracer streaks and ground rings, each one evaluated in the vertex shader from its spawn record.
 - **Stats:** `renderer.stats` reports draw calls, triangles, instances, record churn, pipelines, CPU time and per-pass GPU time (when the device supports `timestamp-query`).
 
 ## Using it from a game

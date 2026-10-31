@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 56
+export const PROTOCOL_VERSION = 59
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -51,6 +51,9 @@ export const KIND_PAK = 14
 
 /** The Intinor Compact Backpack lying on the ground (see `BACKPACK_*`). Replicated as a place and this kind. */
 export const KIND_BACKPACK = 15
+
+/** The tupp: a giant robot Hedemora rooster on the hen's legs and wings, with laser eyes. One seat. */
+export const KIND_TUPP = 16
 
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
@@ -1174,10 +1177,11 @@ export const STRV_BARREL_MIN = -0.15
 export const STRV_BARREL_MAX = 0.3
 
 /**
- * The tank: a heavy six-wheel hull that turns on the spot, with a driver (seat 0) and a gunner
- * (seat 1) who aims the turret and fires. Same body axes as the car.
+ * The tank: a heavy six-wheel hull that turns on the spot, with a driver (seat 0), a gunner (seat 1)
+ * who aims the turret and fires, and a machine gunner (seat 2) out of the roof hatch. Same body axes
+ * as the car.
  */
-export const TANK_SEATS = 2
+export const TANK_SEATS = 3
 export const TANK_HALF_EXTENTS = [1.3, 0.5, 2.6] as const
 export const TANK_WHEEL_RADIUS = 0.45
 export const TANK_TRACK_HALF = 1.2
@@ -1217,6 +1221,79 @@ export const TANK_BARREL_MAX = 0.5
  */
 export const TANK_TURRET_HP = 90
 
+/** The seat that works the roof machine gun. */
+export const TANK_MG_SEAT = 2
+
+/** Where the roof gun turns, from the turret ring in the turret's frame, over the hatch on its right. */
+export const TANK_MG_AT = [0.45, 0.6, 0.3] as const
+
+/**
+ * The machine gunner's head from the ring, with the turret ahead: out of the hatch, behind the gun, and
+ * clear over the turret's solid, so they can be shot from all round.
+ */
+export const TANK_MG_HEAD = [0.45, 1.0, 0.75] as const
+export const TANK_MG_LENGTH = 1.1
+
+/**
+ * How far the roof gun turns either side of where the cannon points, and its elevation, radians (+ is
+ * up): steep enough for aircraft.
+ */
+export const TANK_MG_YAW_LIMIT = 1.57
+export const TANK_MG_PITCH_MIN = -0.25
+export const TANK_MG_PITCH_MAX = 0.9
+export const TANK_MG_SLEW = 2.5
+export const TANK_MG_COOLDOWN_TICKS = 6
+export const TANK_MG_SPREAD = 0.012
+export const TANK_MG_RANGE = 300.0
+export const TANK_MG_DAMAGE = 16
+export const TANK_MG_PLANE_DAMAGE = 8
+export const TANK_MG_VEHICLE_DAMAGE = 4
+
+/** Heat a round puts in the barrel: about six seconds of holding the trigger jams it. */
+export const TANK_MG_HEAT = 10.5
+
+/**
+ * The tupp (`KIND_TUPP`): a giant robot rooster of the Swedish Hedemora breed, one driver in a cockpit
+ * on its back. It walks, leaps, flaps and glides exactly as the hen does (the `WALKER_*` legs and the
+ * `HEN_*` wings), and lays nothing: its head follows the driver's look and its eyes burn a laser.
+ */
+export const TUPP_SEATS = 1
+
+/**
+ * The head turns within `TUPP_HEAD_LIMIT` of the way the legs face, and `TUPP_HEAD_PITCH_MIN..=_MAX` up
+ * and down (radians, hull frame), at `TUPP_HEAD_SLEW` rad/s, about `TUPP_HEAD_PIVOT` in the hull frame.
+ */
+export const TUPP_HEAD_LIMIT = 0.9
+export const TUPP_HEAD_PITCH_MIN = -0.6
+export const TUPP_HEAD_PITCH_MAX = 0.5
+export const TUPP_HEAD_SLEW = 3.5
+export const TUPP_HEAD_PIVOT = [0.0, 2.45, -2.3] as const
+
+/**
+ * How far the beam starts ahead of the pivot, and how far either side of the middle the eyes are,
+ * metres. It is settled from between them; the two beams are drawn converging on where it ended.
+ */
+export const TUPP_EYE_AHEAD = 0.55
+export const TUPP_EYE_X = 0.27
+
+/**
+ * The laser: `TUPP_LASER_CHARGE_TICKS` of holding the trigger, then a beam for `TUPP_LASER_BURN_TICKS`
+ * that strikes every `TUPP_LASER_HIT_TICKS` out to `TUPP_LASER_RANGE`, then `TUPP_LASER_RECOVER_TICKS`
+ * to cool. One whole burn finishes anything short of a tank, through up to `TUPP_LASER_PEN` mm of plate.
+ */
+export const TUPP_LASER_CHARGE_TICKS = Math.trunc(TICK_RATE * 5 / 4)
+export const TUPP_LASER_BURN_TICKS = Math.trunc(TICK_RATE * 3 / 2)
+export const TUPP_LASER_HIT_TICKS = Math.trunc(TICK_RATE / 10)
+export const TUPP_LASER_RECOVER_TICKS = TICK_RATE * 3
+export const TUPP_LASER_RANGE = 250.0
+
+/** How wide the beam is, metres from its middle to its edge: it burns the first soldier or vehicle inside that. */
+export const TUPP_LASER_RADIUS = 1.5
+export const TUPP_LASER_DAMAGE = 30
+export const TUPP_LASER_VEHICLE_DAMAGE = 14
+export const TUPP_LASER_PLANE_DAMAGE = 30
+export const TUPP_LASER_PEN = 60.0
+
 /**
  * The walker (`KIND_WALKER`): a two-legged assault walker, one driver in the head. Its body is a single
  * box held up by two spring legs that are ray casts to the ground, and kept upright by a torque that a
@@ -1225,6 +1302,7 @@ export const TANK_TURRET_HP = 90
 export const WALKER_SEATS = 1
 export const WALKER_HALF_EXTENTS = [1.0, 1.2, 1.8] as const
 export const HEN_HALF_EXTENTS = WALKER_HALF_EXTENTS
+export const TUPP_HALF_EXTENTS = WALKER_HALF_EXTENTS
 
 /**
  * Distance of each foot from the middle of the hull, sideways, metres, and how long a leg is from the

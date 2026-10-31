@@ -179,3 +179,82 @@ class Part:
                 self.bm.faces.new((verts["o", x, i], verts["o", x, j], verts["i", x, j], verts["i", x, i])).material_index = mat
             self.bm.faces.new((verts["o", x0, i], verts["o", x0, j], verts["o", x1, j], verts["o", x1, i])).material_index = mat
             self.bm.faces.new((verts["i", x0, i], verts["i", x0, j], verts["i", x1, j], verts["i", x1, i])).material_index = mat
+
+
+class Bird(Part):
+    """The rounder, turned shapes of the hen and the tupp."""
+
+    def box(self, centre, size, mat, rx=0.0, ry=0.0, rz=0.0):
+        m = (
+            Matrix.Translation(centre)
+            @ Matrix.Rotation(rz, 4, "Z")
+            @ Matrix.Rotation(ry, 4, "Y")
+            @ Matrix.Rotation(rx, 4, "X")
+            @ Matrix.Diagonal((*size, 1.0))
+        )
+        self._tag(bmesh.ops.create_cube(self.bm, size=1.0, matrix=m)["verts"], mat)
+
+    def cylinder(self, centre, radius, depth, mat, axis="Z", segments=10, radius2=None, rx=0.0):
+        turn = {"Z": Matrix.Identity(4), "X": Matrix.Rotation(math.pi / 2, 4, "Y"), "Y": Matrix.Rotation(-math.pi / 2, 4, "X")}[axis]
+        m = Matrix.Translation(centre) @ Matrix.Rotation(rx, 4, "X") @ turn
+        verts = bmesh.ops.create_cone(
+            self.bm,
+            cap_ends=True,
+            cap_tris=False,
+            segments=segments,
+            radius1=radius,
+            radius2=radius if radius2 is None else radius2,
+            depth=depth,
+            matrix=m,
+        )["verts"]
+        self._tag(verts, mat)
+
+    def blob(self, centre, scale, mat, u=12, v=8, rx=0.0):
+        """A faceted ellipsoid."""
+        m = Matrix.Translation(centre) @ Matrix.Rotation(rx, 4, "X") @ Matrix.Diagonal((*scale, 1.0))
+        self._tag(bmesh.ops.create_uvsphere(self.bm, u_segments=u, v_segments=v, radius=1.0, matrix=m)["verts"], mat)
+
+    def dome(self, centre, scale, mat, floor, u=12, v=8):
+        """The part of an ellipsoid above the horizontal plane `floor` (relative to its centre)."""
+        m = Matrix.Translation(centre) @ Matrix.Diagonal((*scale, 1.0))
+        verts = bmesh.ops.create_uvsphere(self.bm, u_segments=u, v_segments=v, radius=1.0, matrix=m)["verts"]
+        below = [vert for vert in verts if vert.co.z < centre[2] + floor * scale[2] - 1e-4]
+        bmesh.ops.delete(self.bm, geom=below, context="VERTS")
+        self._tag([vert for vert in verts if vert.is_valid], mat)
+
+    def cone(self, base, tip, radius, mat, segments=6):
+        """A cone from a circle of `radius` at `base` to a point at `tip`."""
+        base, tip = Vector(base), Vector(tip)
+        axis = tip - base
+        m = Matrix.Translation((base + tip) / 2) @ axis.to_track_quat("Z", "Y").to_matrix().to_4x4()
+        verts = bmesh.ops.create_cone(self.bm, cap_ends=True, cap_tris=False, segments=segments, radius1=radius, radius2=0.0, depth=axis.length, matrix=m)["verts"]
+        self._tag(verts, mat)
+
+
+def preview(directory, middle=-1.5, scale=11.5):
+    """Renders a bird's four standard views into `directory`, `middle` being the height to centre on and
+    `scale` how much the flat views take in, metres."""
+    scene = bpy.context.scene
+    os.makedirs(directory, exist_ok=True)
+    scene.render.engine = "BLENDER_WORKBENCH"
+    scene.display.shading.light = "STUDIO"
+    scene.display.shading.color_type = "MATERIAL"
+    scene.render.resolution_x, scene.render.resolution_y = 900, 700
+    cam_data = bpy.data.cameras.new("cam")
+    cam = bpy.data.objects.new("cam", cam_data)
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    views = {
+        "side": ("ORTHO", Vector((16, 0, middle)), Vector((0, 0, middle)), scale),
+        "front": ("ORTHO", Vector((0, 16, middle)), Vector((0, 0, middle)), scale),
+        "three": ("PERSP", Vector((12, 11, middle + 4)), Vector((0, 0, middle)), 0),
+        "rear": ("PERSP", Vector((-9, -12, middle + 4.5)), Vector((0, 0, middle)), 0),
+    }
+    for name, (kind, pos, target, scale) in views.items():
+        cam_data.type = kind
+        if kind == "ORTHO":
+            cam_data.ortho_scale = scale
+        cam.location = pos
+        cam.rotation_euler = (target - pos).to_track_quat("-Z", "Y").to_euler()
+        scene.render.filepath = os.path.join(directory, f"{name}.png")
+        bpy.ops.render.render(write_still=True)

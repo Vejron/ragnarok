@@ -25,6 +25,7 @@ import { DamageNumbers } from './render/damagenumbers'
 import { Particles } from './render/particles'
 import { Skidmarks } from './render/skidmarks'
 import { Bloodstains } from './render/bloodstains'
+import { Scorchmarks } from './render/scorchmarks'
 import { type FxWorld } from './render/tyres'
 import { Debris } from './render/debris'
 import { Gore } from './render/gore'
@@ -52,7 +53,7 @@ import { loadVehicleModels } from './kinds'
 import { Crowd } from './render/character'
 import { Events } from './events'
 import { Arcs } from './arcs'
-import { cockpit, pilotSights } from './gauges'
+import { cockpit, pilotSights, roofGun } from './gauges'
 import { prompt } from './prompt'
 import { Surroundings } from './surroundings'
 import { Cameras } from './cameras'
@@ -73,7 +74,7 @@ import { Soldiers } from './entities/presenters/people'
 import { Riders, seatFrame } from './entities/presenters/riders'
 import { Seating } from './entities/presenters/seating'
 import { poseOf, Vehicles, type Placed, type VehicleWorld } from './entities/presenters/vehicles'
-import { PlaneGuns, Turrets } from './entities/presenters/guns'
+import { PlaneGuns, RoofGuns, Turrets } from './entities/presenters/guns'
 import { Wear } from './entities/presenters/wear'
 import { Smoke } from './entities/presenters/smoke'
 import { Slits } from './entities/presenters/slits'
@@ -200,13 +201,13 @@ export class Game {
   private waters: Waters | null = null
   /** True from the welcome until the joiner's catch-up `destroyed` arrives: that one is state, not news. */
   private awaitingCatchUp = false
-  private readonly effects = new Effects()
   private readonly damageNumbers = new DamageNumbers()
   /** Tyre smoke, dust, gravel and spray; sparks and flames glow on their own pool. */
   private readonly smoke = new Particles(4096, false, true)
   private readonly glow = new Particles(2048, true)
   /** Blood has a pool of its own, so a firefight's spray never leaves smoke and dust without room. */
   private readonly blood = new Particles(1536)
+  private readonly effects = new Effects({ smoke: this.smoke, glow: this.glow, blood: this.blood })
   private readonly skids = new Skidmarks()
   /** Engines, tyres, crashes and guns. */
   private readonly sounds = new VehicleSounds()
@@ -214,6 +215,8 @@ export class Game {
   /** Bumpers, doors and wheels that came off. */
   private readonly debris = new Debris(160)
   private readonly stains = new Bloodstains()
+  /** Burns on the ground where a laser has been. */
+  private readonly scorches = new Scorchmarks((x, z) => this.scene.groundAt(x, z))
   private readonly gore = new Gore(this.debris, this.blood, this.effects, this.stains, (x, z) => this.scene.groundAt(x, z))
   /** Seconds since the last frame, for what is drawn per vehicle. */
   private frameDt = 0
@@ -312,6 +315,7 @@ export class Game {
     this.view = new WorldView(this.scene.scene)
     this.bricks = new Bricklayer(this.view, () => this.motor, () => this.eyeHeight())
     this.view.scorch = this.scene.look.scorch
+    this.scorches.root.visible = this.scene.look.scorch
     this.view.onTreeNoise = ({ phase, at, size }) => {
       const where: [number, number, number] = [at.x, at.y, at.z]
       if (phase === 'hit') this.sounds.treeHit(where, size)
@@ -326,8 +330,9 @@ export class Game {
     this.scene.scene.add(this.rocketModels.root, this.trails.root)
     this.scene.scene.add(this.pickupModels.root, this.backpackModels.root)
     this.scene.scene.add(this.trajectory.root, this.mortarArc.root)
-    this.scene.scene.add(this.smoke.root, this.glow.root, this.blood.root, this.stains.root, this.skids.root)
+    this.scene.scene.add(this.smoke.root, this.glow.root, this.blood.root, this.stains.root, this.scorches.root, this.skids.root)
     this.smoke.groundAt = (x, z) => this.scene.groundAt(x, z)
+    this.glow.groundAt = (x, z) => this.scene.groundAt(x, z)
     this.scene.scene.add(this.debris.root)
     this.debris.groundAt = (x, z) => this.scene.groundAt(x, z)
     this.scene.scene.add(this.view.waterRoot)
@@ -349,7 +354,7 @@ export class Game {
     this.vehicles = this.machines.add(new Vehicles(world, this.machines.add(new Seating())))
     this.wear = this.machines.add(new Wear(world, this.vehicles))
     this.events = new Events({
-      scene: this.scene, effects: this.effects, sounds: this.sounds, debris: this.debris, damageNumbers: this.damageNumbers, rockets: this.rocketModels, trails: this.trails, rounds: this.rounds,
+      scene: this.scene, effects: this.effects, scorches: this.scorches, sounds: this.sounds, debris: this.debris, damageNumbers: this.damageNumbers, rockets: this.rocketModels, trails: this.trails, rounds: this.rounds,
       hullMarks: this.hullMarks,
       blips: this.blips, avatars: this.avatars, vehicles: this.vehicles, wear: this.wear, view: this.view, chase: this.chase, surroundings: this.surroundings,
       fx: () => this.fxWorld, localId: () => this.localId, driving: () => this.driver?.driving ?? null,
@@ -360,6 +365,7 @@ export class Game {
     this.machines.add(new Headlights(world, this.vehicles))
     this.machines.add(new Turrets(world, this.vehicles))
     this.machines.add(new PlaneGuns(world, this.vehicles))
+    this.machines.add(new RoofGuns(world, this.vehicles))
     this.flying.add(new Projectiles({
       models: this.rocketModels, trails: this.trails, glow: this.glow, lights: this.scene.scene.lights, fx: () => this.fxWorld, blips: this.blips,
     }))
@@ -763,7 +769,6 @@ export class Game {
     this.scene.setTimeOfDay(dayPhase(renderTick, TICK_RATE))
     this.smoke.light.copy(this.scene.groundLight)
     this.blood.light.copy(this.scene.groundLight)
-    this.effects.light.copy(this.scene.groundLight)
   }
 
   /** Works out what the local player is up to this frame, for the stages of the frame that follow. */
@@ -782,7 +787,7 @@ export class Game {
     const handy = able && hands
     // Where the local player sits, when they show in their seat: their head, and the vehicle's turn.
     const mount = seated && !flying ? this.vehicles.model(seat.vehicle) : undefined
-    const sitting = mount !== undefined && seatFrame(mount, seat!.kind, seat!.index, this.seatAt, this.seatTurn)
+    const sitting = mount !== undefined && seatFrame(mount, seat!.kind, seat!.index, this.seatAt, this.seatTurn, this.vehicles.placed.get(seat!.vehicle)?.turret?.yaw)
     const item = itemDef(this.held().item)
     // Aim held with a scoped gun in hand, alive and free to use it: look down the scope. With any other gun: half zoom over the shoulder.
     const scoped = handy && this.input.aimHeld && item?.scope === true
@@ -876,6 +881,7 @@ export class Game {
     this.blood.update(dt)
     this.skids.update(dt)
     this.stains.update(dt)
+    this.scorches.update(dt)
     this.debris.update(dt)
     this.gore.update(dt)
   }
@@ -913,7 +919,7 @@ export class Game {
       limbs: player.body(),
       ammo: gauges?.includes('ammo') ? ((ride?.turret?.flags ?? 0) & TURRET_ALT ? 'HE' : 'AP') : null,
       reload: this.reloaded(now, ride ? rideView(ride.kind).reload : SHELL_COOLDOWN_TICKS),
-      ...cockpit(gauges?.includes('cockpit') ? (ride?.arms ?? null) : null, aviator, seat ? this.vehicles.fx(seat.vehicle) : undefined),
+      ...(gauges?.includes('pintle') ? roofGun(ride?.pintle ?? null) : cockpit(gauges?.includes('cockpit') ? (ride?.arms ?? null) : null, aviator, seat ? this.vehicles.fx(seat.vehicle) : undefined)),
       air: gauges?.includes('air') ? (this.driver?.thrust?.air ?? null) : null,
       stamina: !seated && able ? { left: 1 - local.spent / STAMINA_FULL, winded: local.winded } : null,
       eggs: gauges?.includes('eggs') ? (ride?.arms?.bombs ?? null) : null,
@@ -1032,6 +1038,7 @@ export class Game {
   setLook(look: Look) {
     this.scene.setLook(look)
     this.view.scorch = look.scorch
+    this.scorches.root.visible = look.scorch
     this.applyGrass(look)
     saveLook(look)
   }
@@ -1090,6 +1097,7 @@ export class Game {
     this.blood.dispose()
     this.skids.dispose()
     this.stains.dispose()
+    this.scorches.dispose()
     this.sounds.dispose()
     this.music.dispose()
     this.debris.dispose()

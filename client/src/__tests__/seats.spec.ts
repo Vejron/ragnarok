@@ -3,15 +3,17 @@ import { Group, Vector3 } from '@ragnarok/engine'
 import { Cameras, type Seated } from '@/cameras'
 import { isDrone, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
 import type { Placed } from '@/entities/presenters/vehicles'
+import { TankModel } from '@/render/tank'
 import { rideView, seatView } from '@/seats'
-import { HELI_GUN_COOLDOWN_TICKS, MORTAR_COOLDOWN_TICKS, SHELL_COOLDOWN_TICKS, WALKER_GUN_COOLDOWN_TICKS } from '@/sim/consts'
+import { HELI_GUN_COOLDOWN_TICKS, MORTAR_COOLDOWN_TICKS, SHELL_COOLDOWN_TICKS, TANK_MG_PITCH_MAX, TANK_MG_SEAT, TANK_MG_YAW_LIMIT, WALKER_GUN_COOLDOWN_TICKS } from '@/sim/consts'
 import { vehicleDef } from '@/sim/vehicles'
 import { BEFORE } from './kinds.before'
 
 // What the if-chains in `game.ts` said before the seats became a table, kept here to hold the table to them.
 const before = {
-  prompt(kind: number, driverSeatFree: boolean) {
+  prompt(kind: number, driverSeatFree: boolean, index: number) {
     if (kind === KIND_MORTAR) return 'E: man the mortar'
+    if (kind === KIND_TANK && index === TANK_MG_SEAT) return 'E: man the machine gun'
     if (kind === KIND_TANK) return driverSeatFree ? 'E: drive the tank' : 'E: man the gun'
     if (kind === KIND_STRV) return 'E: drive the Strv S'
     if (kind === KIND_HELI) return driverSeatFree ? 'E: fly' : 'E: man the nose gun'
@@ -23,6 +25,7 @@ const before = {
     return driverSeatFree ? 'E: drive the jeep' : 'E: ride along'
   },
   role(kind: number, index: number) {
+    if (kind === KIND_TANK && index === TANK_MG_SEAT) return 'roofgunner'
     if (index > 0) return vehicleDef(kind).gun ? 'gunner' : 'passenger'
     return kind === KIND_DRONE ? 'drone' : kind === KIND_LOITER ? 'loiter' : kind === KIND_HELI ? 'pilot' : kind === KIND_PLANE ? 'aviator' : kind === KIND_WALKER ? 'walker' : kind === KIND_HEN ? 'hen' : kind === KIND_STRV ? 'strv' : kind === KIND_MORTAR ? 'mortar' : kind === KIND_ROADSTER ? 'roadster' : 'driver'
   },
@@ -42,7 +45,7 @@ describe('the seats table', () => {
         expect(seat.sight === true, `seat ${index}`).toBe(before.sight(def.kind, index))
         expect(seat.chase === true, `seat ${index}`).toBe(before.chase(def.kind, index))
         // Boarding takes the lowest free seat, so seat `index` is boarded when every seat before it is taken.
-        expect(seat.board, `seat ${index}`).toBe(isDrone(def.kind) ? undefined : before.prompt(def.kind, index === 0))
+        expect(seat.board, `seat ${index}`).toBe(isDrone(def.kind) ? undefined : before.prompt(def.kind, index === 0, index))
         // A seat whose occupant fires their own guns is shot from over their shoulder.
         expect(seat.rig.name === 'passenger', `seat ${index}`).toBe(def.crewGuns && index > 0)
       })
@@ -50,7 +53,7 @@ describe('the seats table', () => {
   }
 
   it('gives a seat past the last its last row', () => {
-    expect(seatView(KIND_TANK, 5)).toBe(seatView(KIND_TANK, 1))
+    expect(seatView(KIND_TANK, 5)).toBe(seatView(KIND_TANK, TANK_MG_SEAT))
   })
 })
 
@@ -78,9 +81,20 @@ function rigged() {
   return { views, input, cameras }
 }
 
+/** The nodes of a tank a roof gun needs. */
+function roofGunModel() {
+  const root = new Group()
+  for (const [name, parent] of [['turret', root], ['gun', root], ['mg', root], ['mg_gun', root]] as const) {
+    const node = new Group()
+    node.name = name
+    parent.add(node)
+  }
+  return root
+}
+
 const placed = (kind: number, turretYaw = 0): Placed => ({
   kind, x: 0, y: 1, z: 0, yaw: 0.5, rotation: [0, 0, 0, 1], steer: 0, seats: [1, 2], turret: { yaw: turretYaw, pitch: 0.1, shots: 0, range: 0, flags: 0 },
-  arms: null, hp: 100, damage: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], jets: 0, air: null,
+  pintle: null, arms: null, hp: 100, damage: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], jets: 0, air: null,
 })
 
 function seated(kind: number, index: number, extra: Partial<Seated> = {}): Seated {
@@ -91,6 +105,24 @@ function seated(kind: number, index: number, extra: Partial<Seated> = {}): Seate
 }
 
 describe('camera rigs', () => {
+  it('keep the look on a roof gun within its travel of the turret, however that turns', () => {
+    const { input, cameras } = rigged()
+    const tank = new TankModel(1, roofGunModel())
+    const ride = (turret: number): Placed => ({ ...placed(KIND_TANK, turret), pintle: { yaw: 0.2, pitch: 0.1, shots: 0, heat: 0, flags: 0 } })
+    const seat = TANK_MG_SEAT
+    cameras.seated(seated(KIND_TANK, seat, { ride: ride(0.25), model: tank }), seat)
+    expect(input.yaw).toBeCloseTo(0.5 + 0.25 + 0.2)
+    expect(input.pitch).toBeCloseTo(0.1)
+    input.yaw = 0.5 + 0.25 + 3
+    input.pitch = 1.5
+    cameras.seated(seated(KIND_TANK, seat, { ride: ride(0.25), model: tank }), seat)
+    expect(input.yaw).toBeCloseTo(0.5 + 0.25 + TANK_MG_YAW_LIMIT)
+    expect(input.pitch).toBeCloseTo(TANK_MG_PITCH_MAX)
+    // The turret swinging away pushes the look along.
+    cameras.seated(seated(KIND_TANK, seat, { ride: ride(0.1), model: tank }), seat)
+    expect(input.yaw).toBeCloseTo(0.5 + 0.1 + TANK_MG_YAW_LIMIT)
+  })
+
   it('turn the look where a seat points when it is taken, and only then', () => {
     const { input, cameras } = rigged()
     cameras.seated(seated(KIND_MORTAR, 0, { ride: placed(KIND_MORTAR, 0.25) }), 0)

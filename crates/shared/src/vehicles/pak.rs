@@ -84,7 +84,7 @@ pub(super) const PAK: VehicleDef = VehicleDef {
     },
     armor: ARMOR,
     drone: None,
-    mount_seat: Some(MountSeat { pivot: PAK_GUN_PIVOT, head: PAK_SEAT_HEAD }),
+    mount_seat: Some(MountSeat { seat: 0, pivot: PAK_GUN_PIVOT, head: PAK_SEAT_HEAD }),
 };
 
 /// The gun, laid by the look within its traverse, which a towed Pak cannot fire.

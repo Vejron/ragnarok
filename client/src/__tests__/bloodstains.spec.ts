@@ -41,7 +41,8 @@ describe('Bloodstains', () => {
 describe('Gore on the ground', () => {
   const setup = () => {
     const stains = new Bloodstains(500)
-    const gore = new Gore(new Debris(), new Particles(2000), new Effects(64), stains, () => 0)
+    const particles = new Particles(2000)
+    const gore = new Gore(new Debris(), particles, new Effects({ smoke: new Particles(64), glow: new Particles(64, true), blood: particles }, 64), stains, () => 0)
     const position = new Vector3(0, 0.9, 0)
     const pinned: Vector3[] = []
     const pin = (point: Vector3) => {
@@ -95,7 +96,7 @@ describe('Gore on the ground', () => {
     const particles = new Particles(2000)
     const spawned: ParticleSpec[] = []
     particles.spawn = (spec) => void spawned.push(spec)
-    const gore = new Gore(new Debris(), particles, new Effects(64), new Bloodstains(500), () => 0)
+    const gore = new Gore(new Debris(), particles, new Effects({ smoke: new Particles(64), glow: new Particles(64, true), blood: particles }, 64), new Bloodstains(500), () => 0)
     const position = new Vector3(0, 0.9, 0)
     const avatar = { position, stump: (_: number, out = new Vector3()) => out.copy(position) } as unknown as Character
     // A drip is a quarter of a second at 14 drops a second: three or four, not one a frame.
@@ -110,7 +111,7 @@ describe('Gore on the ground', () => {
     const spawned: ParticleSpec[] = []
     particles.spawn = (spec) => void spawned.push(spec)
     const slope = (x: number, z: number) => 0.3 * x - 0.1 * z
-    const gore = new Gore(new Debris(), particles, new Effects(64), new Bloodstains(500), slope)
+    const gore = new Gore(new Debris(), particles, new Effects({ smoke: new Particles(64), glow: new Particles(64, true), blood: particles }, 64), new Bloodstains(500), slope)
     const position = new Vector3(0, 1.2, 0)
     const avatar = { position, stump: (_: number, out = new Vector3()) => out.copy(position), pin: (p: Vector3) => () => p.clone() } as unknown as Character
     gore.hit(avatar, PART_TORSO, 0.7, 40, { x: 0.1, y: 0.3, z: 0 })

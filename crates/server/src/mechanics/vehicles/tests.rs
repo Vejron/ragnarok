@@ -398,11 +398,11 @@ fn parked_cars_in_the_fixture_world_settle_and_stay_put() {
         let after = game.world.physics.car_pose(id).unwrap();
         let moved = (after.position[0] - before.position[0]).hypot(after.position[2] - before.position[2]);
         let ground = game.world.map.ground.height_at(after.position[0], after.position[2]);
-        // A plane stands taller on its undercarriage than any car, and a walker's or a hen's hull is up on its legs.
+        // A plane stands taller on its undercarriage than any car, and a walker's, a hen's or a tupp's hull is up on its legs.
         let ride = match game.world.entities.of::<Vehicle>(id).kind {
             KIND_PLANE => 1.3,
             KIND_STRV => 1.2,
-            KIND_WALKER | KIND_HEN => WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1],
+            KIND_WALKER | KIND_HEN | KIND_TUPP => WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1],
             _ => 1.0,
         };
         assert!(after.up_y > 0.99 && after.position[1] < ground + ride && moved < 0.5, "car {id}: {before:?} -> {after:?}");
@@ -417,12 +417,12 @@ fn parked_cars_in_the_fixture_world_settle_and_stay_put() {
 }
 
 #[test]
-fn a_tank_has_a_driver_and_a_gunner_and_no_third_seat() {
+fn a_tank_has_a_driver_a_gunner_and_a_machine_gunner_and_no_fourth_seat() {
     let mut game = game();
     let vid = game.world.entities.all::<Vehicle>().find(|(_, vehicle)| vehicle.kind == KIND_TANK).unwrap().0;
     let pose = game.world.physics.car_pose(vid).unwrap();
     let mut crew = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..4 {
         let (id, inbox) = join(&mut game);
         crew.push((id, inbox, 0));
     }
@@ -435,14 +435,14 @@ fn a_tank_has_a_driver_and_a_gunner_and_no_third_seat() {
         idle(&mut game, *id, seq, 3);
     }
     let seated: Vec<_> = crew.iter().map(|(id, ..)| game.world.entities.of::<Player>(*id).seat.map(|seat| (seat.vehicle, seat.index))).collect();
-    assert_eq!(seated, [Some((vid, 0)), Some((vid, 1)), None], "two seats, the third stays outside");
+    assert_eq!(seated, [Some((vid, 0)), Some((vid, 1)), Some((vid, 2)), None], "three seats, the fourth stays outside");
     let state = game.seen(vid).unwrap();
-    assert_eq!(game.seen_riders(vid).len(), 2);
-    assert!(state.turret.is_some(), "a tank reports its turret");
+    assert_eq!(game.seen_riders(vid).len(), 3);
+    assert!(state.turret.is_some() && state.pintle.is_some(), "a tank reports its turret and its roof gun");
 }
 
 #[test]
-fn a_lone_crewman_can_switch_between_driver_and_gunner() {
+fn a_lone_crewman_can_switch_round_every_seat() {
     let mut game = game();
     let vid = game.world.entities.all::<Vehicle>().find(|(_, vehicle)| vehicle.kind == KIND_TANK).unwrap().0;
     let pose = game.world.physics.car_pose(vid).unwrap();
@@ -452,16 +452,20 @@ fn a_lone_crewman_can_switch_between_driver_and_gunner() {
     game.world.entities.get_mut::<Player>(id).unwrap().character.position = [pose.position[0] + 2.5, STANDING_Y, pose.position[2]];
     press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
     idle(&mut game, id, &mut seq, 3);
-    assert_eq!(game.world.entities.of::<Seats>(vid)[..2], [Some(id), None]);
+    assert_eq!(game.world.entities.of::<Seats>(vid)[..3], [Some(id), None, None]);
 
     press(&mut game, id, &mut seq, (0, 0), BUTTON_RELOAD, 1);
     idle(&mut game, id, &mut seq, 3);
-    assert_eq!(game.world.entities.of::<Seats>(vid)[..2], [None, Some(id)]);
+    assert_eq!(game.world.entities.of::<Seats>(vid)[..3], [None, Some(id), None]);
     assert_eq!(game.world.entities.of::<Player>(id).seat, Some(Seat { vehicle: vid, index: 1, remote: false }));
 
     press(&mut game, id, &mut seq, (0, 0), BUTTON_RELOAD, 1);
     idle(&mut game, id, &mut seq, 3);
-    assert_eq!(game.world.entities.of::<Seats>(vid)[..2], [Some(id), None]);
+    assert_eq!(game.world.entities.of::<Seats>(vid)[..3], [None, None, Some(id)]);
+
+    press(&mut game, id, &mut seq, (0, 0), BUTTON_RELOAD, 1);
+    idle(&mut game, id, &mut seq, 3);
+    assert_eq!(game.world.entities.of::<Seats>(vid)[..3], [Some(id), None, None]);
 }
 
 #[test]
@@ -470,7 +474,7 @@ fn a_full_tank_has_nowhere_to_switch_to() {
     let vid = game.world.entities.all::<Vehicle>().find(|(_, vehicle)| vehicle.kind == KIND_TANK).unwrap().0;
     let pose = game.world.physics.car_pose(vid).unwrap();
     let mut crew = Vec::new();
-    for _ in 0..2 {
+    for _ in 0..3 {
         let (id, inbox) = join(&mut game);
         crew.push((id, inbox, 0));
     }
@@ -484,7 +488,7 @@ fn a_full_tank_has_nowhere_to_switch_to() {
     press(&mut game, *first, seq, (0, 0), BUTTON_RELOAD, 1);
     idle(&mut game, *first, seq, 3);
     let seats = game.world.entities.of::<Seats>(vid);
-    assert_eq!(seats[..2], [Some(crew[0].0), Some(crew[1].0)]);
+    assert_eq!(seats[..3], [Some(crew[0].0), Some(crew[1].0), Some(crew[2].0)]);
 }
 
 /// Two cars off the road, `a` facing -Z towards the flank of `b` 12 m ahead, settled.
@@ -695,8 +699,8 @@ fn a_roadster_driver_boosts_on_run_hops_on_jump_and_brakes_on_crouch() {
 
     press(&mut game, id, &mut seq, (0, 0), BUTTON_CROUCH, 3);
     assert!(game.world.entities.of::<Vehicle>(vid).controls.handbrake);
-    // Nothing else carries a tank, but a hen's stamina and a drone's battery.
-    assert!(game.seen_vehicles().iter().filter(|(_, v)| !matches!(v.kind.as_ref().unwrap().kind, KIND_ROADSTER | KIND_HEN | KIND_DRONE)).all(|(_, v)| v.thrust.is_none()));
+    // Nothing else carries a tank, but a hen's or a tupp's stamina and a drone's battery.
+    assert!(game.seen_vehicles().iter().filter(|(_, v)| !matches!(v.kind.as_ref().unwrap().kind, KIND_ROADSTER | KIND_HEN | KIND_TUPP | KIND_DRONE)).all(|(_, v)| v.thrust.is_none()));
 }
 
 /// A game with one pine just in front of where a vehicle of `kind` is set down facing it, and the

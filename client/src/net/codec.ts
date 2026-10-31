@@ -24,7 +24,7 @@ export const OBJ_BUILDING = 1
 
 /** Entity kinds, generated from `consts.rs`. A vehicle kind's definition is `vehicleDef`. */
 export {
-  KIND_BACKPACK, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SPORTS, KIND_SOLDIER, KIND_STRV, KIND_TANK, KIND_WALKER,
+  KIND_BACKPACK, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SPORTS, KIND_SOLDIER, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER,
 } from '@/sim/consts'
 export { isDrone } from '@/sim/vehicles'
 
@@ -72,6 +72,8 @@ export const WEAPON_MORTAR = 18
 export const WEAPON_DRONE = 19
 /** A hen's egg going off. */
 export const WEAPON_EGG = 20
+/** A tupp's laser eyes: a shot event for every burn, hit or miss, from vehicle `shooter`, to where it ended. */
+export const WEAPON_LASER = 28
 /** A loitering drone's warhead going off. */
 export const WEAPON_LOITER = 21
 /** A flare gun fired from `shooter`'s hand. */
@@ -153,11 +155,17 @@ export const PROJECTILE_HE = 9
 export const TURRET_STOWED = 1 << 0
 /** `Turret`'s flags: the gun has its second kind of round loaded, a tank gun's high explosive. Mirrors `TURRET_ALT`. */
 export const TURRET_ALT = 1 << 1
+/** `Turret`'s flags: a beam is charging, and it is burning. Mirrors `TURRET_CHARGING` and `TURRET_BEAM`. */
+export const TURRET_CHARGING = 1 << 2
+export const TURRET_BEAM = 1 << 3
 
 /** `Arms.flags`: the blip switch is cutting the engine, and either set of guns is jammed. Mirrors `ARMS_*`. */
 export const ARMS_CUT = 1 << 0
 export const ARMS_JAMMED = 1 << 1
 export const ARMS_REAR_JAMMED = 1 << 2
+
+/** `Pintle.flags`: the gun is jammed. Mirrors `PINTLE_JAMMED`. */
+export const PINTLE_JAMMED = 1 << 0
 
 /** `Thrust.flags`: the rear (boost) nozzles and the lift (hop and hover) nozzles are firing. Mirrors `THRUST_*`. */
 export const THRUST_BOOST = 1 << 0

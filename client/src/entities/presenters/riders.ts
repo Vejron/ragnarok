@@ -16,13 +16,13 @@ import type { Vehicles } from './vehicles'
  * into `head` and the vehicle's turn (a towed gun's mount's) into `rotation`. False for a crew that
  * does not show, who are not drawn.
  */
-export function seatFrame(model: VehicleModel, kind: number, index: number, head: Vector3, rotation: Quaternion): boolean {
+export function seatFrame(model: VehicleModel, kind: number, index: number, head: Vector3, rotation: Quaternion, gunYaw = 0): boolean {
   if (model instanceof MortarModel || model instanceof PakModel) {
     if (index !== 0) return false
     model.seatFrame(head, rotation)
     return true
   }
-  const local = seatHead(kind, index)
+  const local = seatHead(kind, index, gunYaw)
   if (!local) return false
   const { position, quaternion } = model.root
   rotation.set(quaternion.x, quaternion.y, quaternion.z, quaternion.w)
@@ -59,7 +59,7 @@ export class Riders implements Presenter<Frame> {
     const { vehicle, seat } = entity.seated!
     const model = this.vehicles.model(vehicle)
     const car = this.vehicles.placed.get(vehicle)
-    if (!model || !car || !seatFrame(model, car.kind, seat, this.head, this.turn)) return
+    if (!model || !car || !seatFrame(model, car.kind, seat, this.head, this.turn, car.turret?.yaw)) return
     this.seated.push({ id, x: this.head.x, y: this.head.y, z: this.head.z })
     const avatar = this.avatars.draw(id)
     avatar.dead = false

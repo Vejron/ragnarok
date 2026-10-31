@@ -56,7 +56,7 @@ pub const HIT_ROOSTER: u8 = 3;
 pub const OBJ_TREE: u8 = 0;
 pub const OBJ_BUILDING: u8 = 1;
 
-pub use crate::consts::{KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SPORTS, KIND_SOLDIER, KIND_STRV, KIND_TANK, KIND_WALKER};
+pub use crate::consts::{KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SPORTS, KIND_SOLDIER, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER};
 
 /// Whether `kind` is a drone: flown from a remote seat by whoever launched it (see the `Drones` mechanic).
 pub fn is_drone(kind: u8) -> bool {
@@ -141,6 +141,8 @@ pub const WEAPON_RUBBLE: u8 = 23;
 pub const WEAPON_LAUNCHER: u8 = 24;
 /// An armour-piercing shell's small burst (`PROJECTILE_SHELL`); `WEAPON_SHELL` is high explosive's.
 pub const WEAPON_AP: u8 = 27;
+/// A tupp's laser eyes: sent for every burn, hit or miss, from `shooter`, the vehicle, ending at `x, y, z`.
+pub const WEAPON_LASER: u8 = 28;
 
 /// `replicated::Limbs::lost` bits: the limbs a soldier has lost. The same bits shifted up by
 /// `LIMB_BLEED_SHIFT` are the stumps still bleeding.
@@ -516,7 +518,12 @@ pub const TURRET_STOWED: u8 = 1;
 /// `replicated::Turret::flags`: the gun has its second kind of round loaded (`Fire::Shell::alt`), a
 /// tank gun's high explosive.
 pub const TURRET_ALT: u8 = 1 << 1;
+/// `Turret`'s flags: a beam is charging (`Fire::Beam`), and it is burning.
+pub const TURRET_CHARGING: u8 = 1 << 2;
+pub const TURRET_BEAM: u8 = 1 << 3;
 
+/// `replicated::Pintle::flags`: the gun is jammed.
+pub const PINTLE_JAMMED: u8 = 1 << 0;
 /// `replicated::Arms::flags`: the blip switch is cutting the engine, and either set of guns is jammed.
 pub const ARMS_CUT: u8 = 1 << 0;
 pub const ARMS_JAMMED: u8 = 1 << 1;

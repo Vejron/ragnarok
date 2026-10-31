@@ -16,13 +16,15 @@ export type Rig =
   /** Behind a mounted gun along its line, its travel kept in the hull's frame (`hull`) or about the vertical (`level`). */
   | { name: 'gun'; hull: readonly [yawLimit: number, pitchMin: number, pitchMax: number] }
   | { name: 'gun'; level: readonly [pitchMin: number, pitchMax: number] }
+  /** Behind a gun on a turret's roof, its travel kept within `limit` either side of the turret. */
+  | { name: 'pintle'; limit: number; pitch: readonly [number, number] }
   /** Through a drone's camera, flown from afar within `link` metres; a loitering drone also has one under its belly. */
   | { name: 'fpv'; pitch: readonly [number, number]; link: number; belly?: true }
   /** Behind a plane, following the mouse's aim at an easy pace. */
   | { name: 'aviator' }
   /** Behind a Strv S's gun, which the hull aims. */
   | { name: 'tanker' }
-  /** Behind a walker's guns, which turn within its torso's travel. */
+  /** Behind a walker's guns or a tupp's eyes, which turn within its torso's or its head's travel. */
   | { name: 'walker' }
   /** Behind a field mortar, looking where the mouse sets its bearing. */
   | { name: 'mortar' }
@@ -40,7 +42,7 @@ export interface SeatView {
   /** Holding aim looks down the gun's sight. */
   sight?: true
   /** The gauges the HUD shows from it. */
-  gauges?: readonly ('air' | 'eggs' | 'cockpit' | 'range' | 'ammo')[]
+  gauges?: readonly ('air' | 'eggs' | 'cockpit' | 'range' | 'ammo' | 'pintle')[]
   /** The arc drawn ahead of what it fires: a mortar's bomb, or where a plane's bomb would land. */
   arc?: 'mortar' | 'bombs'
 }

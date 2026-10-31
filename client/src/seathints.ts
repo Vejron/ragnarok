@@ -14,6 +14,7 @@ const HINTS: Record<Seat, (stats: Stats) => string> = {
   driver: ({ canSwitchSeat }) => `W/S gas and brake · A/D steer or turn · Space handbrake · ${HITCH}${canSwitchSeat ? SWITCH : ''}`,
   roadster: ({ canSwitchSeat }) => `W/S gas and brake · A/D steer · Shift boost · Space hop, hold to hover · C handbrake · ${HITCH}${canSwitchSeat ? SWITCH : ''}`,
   hen: ({ canSwitchSeat }) => `W/S walk · A/D turn · Space leap, hold to flap, then glide · W in the air to fly forward · Click or F lay an egg${canSwitchSeat ? SWITCH : ''}`,
+  tupp: ({ canSwitchSeat }) => `W/S walk · A/D turn · Mouse aim the eyes (the head turns within 50°) · Hold click or F to charge the laser · Space leap, hold to flap, then glide${canSwitchSeat ? SWITCH : ''}`,
   walker: ({ canSwitchSeat }) => `W/S walk · A/D turn · Mouse aim the guns (the body follows within 30°) · Click or F fire${canSwitchSeat ? SWITCH : ''}`,
   strv: ({ ammo, reload }) => `W/S gas and brake · A/D turn the tank to aim · Mouse look · Hold right mouse for the gun sight · Click or F fire · Q ${swapRound(ammo)} · ${ammo} ${loaded(reload)}`,
   mortar: ({ range, reload }) => `Mouse aim sets the bearing · W/S range ${Math.round(range)} m · Click or F fire · ${loaded(reload)}`,
@@ -26,10 +27,11 @@ const HINTS: Record<Seat, (stats: Stats) => string> = {
     const state = jammed ? 'jammed!' : heat !== null ? 'firing' : loaded(reload)
     return `Mouse aim · Hold right mouse for the gun sight · Click or F fire${ammo ? ` · Q ${swapRound(ammo)}` : ''} · ${ammo ? `${ammo} ` : ''}${state}${canSwitchSeat ? SWITCH : ''}`
   },
+  roofgunner: ({ jammed, heat, canSwitchSeat }) => `Mouse aim (within 90° of the cannon) · Click or F fire · ${jammed ? 'jammed!' : (heat ?? 0) > 0.6 ? 'overheating' : 'ready'}${canSwitchSeat ? SWITCH : ''}`,
 }
 
 /** What to show from `seat`, or null out of a vehicle. */
 export const seatHint = (seat: HudStats['seat'], stats: Stats) => (seat ? HINTS[seat](stats) : null)
 
 /** Seats that aim at the middle of the screen, with a reticle while not looking down a sight. */
-export const aimsReticle = (seat: HudStats['seat']) => seat === 'gunner' || seat === 'walker' || seat === 'strv' || seat === 'mortar'
+export const aimsReticle = (seat: HudStats['seat']) => seat === 'gunner' || seat === 'roofgunner' || seat === 'walker' || seat === 'tupp' || seat === 'strv' || seat === 'mortar'

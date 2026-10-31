@@ -22,6 +22,7 @@ use crate::game::{Burning, Mounts, Player, Seats, Vehicle, World};
 use sim::Strike;
 use shared::armor::{Box3, Module, PARTS, Part, PenKind, State, Zone, pack};
 use shared::consts::*;
+use shared::mounts::Need;
 use shared::protocol::{ARMOR_BLOCKED, ARMOR_PIERCED, ARMOR_RICOCHET, ARMOR_SLIT, BURNING, DAMAGE_FIRE, DAMAGE_PARTS, DAMAGE_TURRET, HullMark, MARK_GLANCE, MARK_HOLE, MARK_PIERCED, MARK_SCUFF, MARK_VITAL, ShotEvent, TURRET_GONE, WEAPON_TURRET, WEAPON_WRECK};
 use shared::quant::{to_cm, to_cm_i16};
 use shared::vehicles::{Role, vehicle_def};
@@ -212,13 +213,15 @@ pub fn report(world: &mut World, vid: u32, outcome: &Outcome, point: [f32; 3], d
 }
 
 /// Hits of `damage` that land on the turret of tank `vid`. At zero the turret comes off: it is gone
-/// until the tank is put back, its solid goes, the gunner dies with it and `DAMAGE_TURRET` tells clients.
+/// until the tank is put back, its solid goes, whoever works a gun on it dies with it and `DAMAGE_TURRET`
+/// tells clients.
 pub fn damage_turret(world: &mut World, vid: u32, damage: u8, attacker: Option<u32>) {
     if world.entities.dead(vid) {
         return;
     }
     let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(vid) else { return };
-    if !vehicle_def(vehicle.kind).sheds_turret() || vehicle.damage[DAMAGE_TURRET] == TURRET_GONE {
+    let def = vehicle_def(vehicle.kind);
+    if !def.sheds_turret() || vehicle.damage[DAMAGE_TURRET] == TURRET_GONE {
         return;
     }
     vehicle.turret_hp = vehicle.turret_hp.saturating_sub(damage);
@@ -226,13 +229,13 @@ pub fn damage_turret(world: &mut World, vid: u32, damage: u8, attacker: Option<u
         return;
     }
     vehicle.damage[DAMAGE_TURRET] = TURRET_GONE;
-    let gunner = world.entities.get_mut::<Seats>(vid).and_then(|mut seats| seats.take(1));
+    let gunners: Vec<u32> = def.mounts.iter().filter(|mount| mount.needs.contains(&Need::Turret)).filter_map(|mount| world.entities.get_mut::<Seats>(vid).and_then(|mut seats| seats.take(mount.seat))).collect();
     world.physics.set_turret(vid, false);
     if let Some(pose) = world.physics.car_pose(vid) {
         let at = pose.world_point(TANK_TURRET_PIVOT);
         let [x, y, z] = at.map(to_cm);
         world.shots.push(ShotEvent { shooter: vid, weapon: WEAPON_TURRET, x, y, z });
-        if let Some(id) = gunner {
+        for id in gunners {
             if let Some(mut player) = world.entities.get_mut::<Player>(id) {
                 player.seat = None;
                 player.character.position = at;

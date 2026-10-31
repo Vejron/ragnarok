@@ -71,7 +71,7 @@ scene:
 | Vehicles | `car.ts`, `tank.ts`, `heli.ts`, `plane.ts`, `walker.ts`, `strvs.ts`, `mortar.ts` | glTF models from `client/public/models/`, one clone per vehicle (the mortar is built by hand). |
 | Characters | `character.ts` | Skinned clones of one shared model (`Crowd`), outfit colour by player id. |
 | Items, pickups, rockets | `items.ts`, `pickups.ts`, `rockets.ts` | Small hand-built meshes. |
-| Effects | `effects.ts` | Muzzle flashes, tracers, sparks, fireballs: `FlashEffects`, below. |
+| Effects | `effects.ts` | Muzzle flashes, tracers, sparks, smoke: the particle pools and `FlashEffects`, below. |
 | Particles | `particles.ts` | Smoke, dust, gravel, sparks and flames: GPU particles, below. |
 | Skidmarks | `skidmarks.ts` | A ring of quads with a birth time, faded in the shader. |
 | Damage | `damage.ts`, `fracture.ts` | A building redrawn from its cubes (holes blasted through walls and roofs, the cubes around a hole burnt black, cubes darkened where this player's rounds landed; a cube never shrinks), thrown and falling chunks of cubes. |
@@ -142,12 +142,13 @@ The style is flat, bright and few-banded, not physically based.
 Short-lived things are not meshes. They are records on the GPU, drawn by the engine's effects pass
 after the solid scene, with the scene's depth bound read-only so they can be soft where they meet it.
 
-- **`Effects`** (`effects.ts`, over the engine's `FlashEffects`) is every muzzle flash, tracer, spark,
-  fireball and dust cloud. Each is one 80-byte record written when it is spawned, a formula of its
-  age (`at + direction × (along·p + √p·sqrtAlong) + up × (lift·p − drop·p²)`, radius `size + grow·p`)
-  that the vertex shader evaluates, so nothing is touched per frame and a shotgun blast is one or two
-  draws instead of 60 meshes with 60 materials. A "ball" is a flat disc; a tracer is a camera-facing
-  strip. `bright` pieces ignore fog.
+- **`Effects`** (`effects.ts`) is every muzzle flash, tracer, spark and puff of a shot. Whatever is
+  round in the air goes to the particle pools below: light to `glow` (`shape: 'glare'`, which has no
+  edge), fire and smoke to `smoke` (`shape: 'puff'`), blood to `blood`.
+- **`FlashEffects`** (the engine's) is only tracers, a laser's beam and flares, and rings on the ground.
+  Each is one 80-byte record written when it is spawned, a formula of its age (`at + direction × along·p`,
+  radius `size + grow·p`) that the vertex shader evaluates, so nothing is touched per frame. A streak is a
+  camera-facing strip, `soft` ones falling away to nothing at their edges; `bright` pieces ignore fog.
 - **Half resolution.** An effect with `halfResolution = true` (the alpha smoke pool) draws into a
   half-width, half-height target, cleared to nothing, with no depth attachment: its soft-particle
   fade reads the nearest of the four full-resolution depths each pixel covers, so smoke errs towards
@@ -407,9 +408,8 @@ Its own README gives the benchmark against three's two renderers, from when a co
   with `toonMaterial()` from `toon.ts` to match, set `castShadow` on anything that should cast, and
   call `material.needsUpdate()` after changing a material's colour or opacity. A glTF goes through
   `parseToonModel` (`models.ts`), which swaps in toon materials and keeps their names.
-- **A new short-lived effect:** a `Flash` (`FlashEffects.spawn`) if it is a pure function of its age
-  (flash, spark, puff, streak, ground ring); a `Particles.spawn` if it needs drag, gravity, bounce or
-  to change colour as it ages; a ribbon (`ProjectileTrails.follow`) for a trail behind something that
+- **A new short-lived effect:** a `Particles.spawn` for anything round in the air (flash, spark,
+  fire, smoke); a `Flash` (`FlashEffects.spawn`) for a streak or a ground ring, which cost nothing per frame; a ribbon (`ProjectileTrails.follow`) for a trail behind something that
   moves; `scene.lights.flash` to light the surroundings. Avoid spawning meshes per event.
 - **Something that must never be hidden** (a reticle, a marker): a mesh with `overlay = true` and a
   `blend: 'alpha'` material. It ignores depth and sorts by `renderOrder`.

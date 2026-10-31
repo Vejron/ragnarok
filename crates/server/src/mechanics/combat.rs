@@ -661,6 +661,48 @@ pub fn hitscan(world: &mut World, shooter: u32, origin: [f32; 3], dir: [f32; 3],
     (met.end, met.any())
 }
 
+/// The rays round a beam's middle, as (share of its radius, how many): close enough that a soldier cannot
+/// stand between two of them at the edge of the tupp's.
+const BEAM_RINGS: [(f32, u32); 2] = [(0.5, 6), (1.0, 12)];
+/// A beam's edge reaches this much further than its middle, metres: past where the middle ended is behind
+/// what stopped it, unless it was only the ground just short of the target.
+const BEAM_SLACK: f32 = 4.0;
+
+/// Fires a beam of `radius` metres for `shooter`, as [`hitscan`] does a round. If its middle meets no
+/// soldier and no vehicle, it strikes the nearest one in the rays round it, each stopped by walls and the
+/// ground as a round is, so a beam never reaches round a corner. One target a stroke. Returns where it
+/// ended, and whether it met anything at all.
+#[allow(clippy::too_many_arguments)]
+pub fn beam(world: &mut World, shooter: u32, origin: [f32; 3], dir: [f32; 3], round: &Round, ignore: u32, back: u32, radius: f32) -> ([f32; 3], bool) {
+    let flight = |origin| Flight { origin, dir, shooter: Some(shooter), attacker: Some(shooter), back, flown: 0.0 };
+    let meet = |world: &World, origin| strike(world, &flight(origin), world.physics.cast_ray_hit(origin, dir, round.range, ignore), round.range);
+    let (mut from, mut met) = (origin, meet(world, origin));
+    if !met.target() {
+        let mut nearest = met.end + BEAM_SLACK;
+        // Two directions square to the beam, and each ray's start along them.
+        let flat = dir[0].hypot(dir[2]);
+        let side = if flat > 1e-4 { [-dir[2] / flat, 0.0, dir[0] / flat] } else { [1.0, 0.0, 0.0] };
+        let up = [dir[1] * side[2] - dir[2] * side[1], dir[2] * side[0] - dir[0] * side[2], dir[0] * side[1] - dir[1] * side[0]];
+        let rays = BEAM_RINGS.into_iter().flat_map(|(share, count)| (0..count).map(move |k| (share, k as f32 * std::f32::consts::TAU / count as f32)));
+        for (share, angle) in rays {
+            let out: [f32; 3] = std::array::from_fn(|i| side[i] * angle.cos() + up[i] * angle.sin());
+            let reach = radius * share;
+            // The eyes must see where the ray starts, or it starts on the far side of a wall.
+            if world.physics.cast_ray(origin, out, reach, ignore).is_some() {
+                continue;
+            }
+            let start = vec3::along(origin, out, reach);
+            let edge = meet(world, start);
+            if edge.target() && edge.end <= nearest {
+                nearest = edge.end;
+                (from, met) = (start, edge);
+            }
+        }
+    }
+    land(world, &flight(from), &met, round);
+    (vec3::along(from, dir, met.end), met.any())
+}
+
 /// A round on its way, for [`strike`] and [`land`]: where it is and which way it goes, whose it is,
 /// and how far it has come.
 pub struct Flight {
@@ -692,6 +734,11 @@ impl Strike {
     /// Whether it met anything at all.
     pub fn any(&self) -> bool {
         self.hit.is_some() || self.wall.is_some()
+    }
+
+    /// Whether it met something a beam should burn: a body or a vehicle, not a wall or the ground.
+    fn target(&self) -> bool {
+        self.hit.is_some() || self.wall.is_some_and(|(_, car)| car.is_some())
     }
 }
 

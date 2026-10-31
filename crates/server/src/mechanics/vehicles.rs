@@ -6,7 +6,7 @@ use sim::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_ex
 use shared::consts::*;
 use shared::vehicles::vehicle_def;
 use shared::protocol::{
-    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, ShotEvent, WEAPON_CRASH, is_drone,
+    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER, ShotEvent, WEAPON_CRASH, is_drone,
     WEAPON_ROADKILL, WEAPON_SCRAPE, vehicle_hp,
 };
 use shared::quant::{to_cm, wrap_angle};
@@ -34,6 +34,7 @@ const STRV_COUNT: usize = 1;
 const WALKER_COUNT: usize = 1;
 /// Hens, placed after the mortars and the Paks on whichever spawn points are left.
 const HEN_COUNT: usize = 1;
+const TUPP_COUNT: usize = 1;
 /// Field mortars, placed after the planes on whichever spawn points are left. A car hitches one (see `hitch`).
 const MORTAR_COUNT: usize = 1;
 /// Pak 38 guns, placed after the mortars the same way, and hitched the same way.
@@ -695,10 +696,10 @@ impl Mechanic for Vehicles {
             }
         }
         placed += place_planes(world, &candidates, &used);
-        // The mortars, the Paks, then the hens, take whichever spawn points the planes left, so they never push a
+        // The mortars, the Paks, then the hen and the tupp, take whichever spawn points the planes left, so they never push a
         // plane off one.
         let runways: Vec<CarPose> = world.entities.all::<Vehicle>().filter(|(_, v)| v.kind == KIND_PLANE).filter_map(|(id, _)| world.physics.car_pose(id)).collect();
-        for (kind, count) in [(KIND_MORTAR, MORTAR_COUNT), (KIND_PAK, PAK_COUNT), (KIND_HEN, HEN_COUNT)] {
+        for (kind, count) in [(KIND_MORTAR, MORTAR_COUNT), (KIND_PAK, PAK_COUNT), (KIND_HEN, HEN_COUNT), (KIND_TUPP, TUPP_COUNT)] {
             let mut added = 0;
             for (index, &[cx, cz]) in candidates.iter().enumerate() {
                 if added == count {

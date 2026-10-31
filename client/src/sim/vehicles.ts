@@ -28,8 +28,8 @@ export interface VehicleDef {
   crew: 'sealed' | 'open' | 'glazed'
   /** Each seat's head point in the hull frame, where its occupant is drawn sitting (not for a `mountSeat`: `seatHead`). */
   seatHeads: readonly (readonly [number, number, number])[]
-  /** Its one seat is on its turning mount (the mortar's): the head is `head` from the mount's `pivot`, turned with the gun. */
-  mountSeat: { pivot: Triple; head: Triple } | null
+  /** A seat on its turning mount, shown whatever `crew` says (the mortar's one, a tank's machine gunner): the head is `head` from the mount's `pivot`, turned with the gun. */
+  mountSeat: { seat: number; pivot: Triple; head: Triple } | null
   /** Its passengers (every seat but the driver's) fire the guns in their own hotbar. */
   crewGuns: boolean
   /** A hull on two spring legs, boarded from between its feet: a walker or a hen. */
@@ -66,7 +66,7 @@ export const VEHICLES: readonly VehicleDef[] = tables.vehicles.map((row) => ({
   halfExtents: triple(row.halfExtents),
   crew: row.crew as VehicleDef['crew'],
   seatHeads: row.seatHeads.map(triple),
-  mountSeat: row.mountSeat && { pivot: triple(row.mountSeat.pivot), head: triple(row.mountSeat.head) },
+  mountSeat: row.mountSeat && { seat: row.mountSeat.seat, pivot: triple(row.mountSeat.pivot), head: triple(row.mountSeat.head) },
   slits: row.slits.map((slit) => ({ ...slit, centre: triple(slit.centre), half: triple(slit.half), out: triple(slit.out), pivot: triple(slit.pivot) })),
 }))
 
@@ -82,15 +82,14 @@ export const gunSeat = (kind: number | undefined): number => (vehicleDef(kind).s
  */
 export const seatHead = (kind: number | undefined, index: number, gunYaw = 0): readonly [number, number, number] | null => {
   const def = vehicleDef(kind)
-  if (def.crew === 'sealed') return null
-  if (def.mountSeat) {
-    if (index !== 0) return null
+  if (def.mountSeat?.seat === index) {
     const [x, y, z] = def.mountSeat.head
     const [px, py, pz] = def.mountSeat.pivot
     const sin = Math.sin(gunYaw)
     const cos = Math.cos(gunYaw)
     return [px + x * cos + z * sin, py + y, pz - x * sin + z * cos]
   }
+  if (def.crew === 'sealed') return null
   return def.seatHeads[index] ?? null
 }
 

@@ -8,11 +8,17 @@ import type { Arms } from '@/entities/units'
 import { colorFor } from '@/profile'
 import type { VehicleModel } from './car'
 
+/** A bird's plumage, and its comb and wattles' colour if they are not the model's own. */
+export interface Breed {
+  paint: number
+  comb: number | null
+}
+
 /** The breeds handed out by vehicle id: a white hen with a red comb, and a silver one with a dark grey comb and wattles. */
-const BREEDS = [
+const BREEDS: readonly Breed[] = [
   { paint: 0xf2efe6, comb: null },
   { paint: 0xa9adb3, comb: 0x3b3d40 },
-] as const
+]
 export const HEN_MODEL_URL = `${import.meta.env.BASE_URL}models/hen.glb`
 /** Where the driver's head shows, in the hull's frame: in the glass cockpit on the back. */
 const HEAD = [0, 1.3, 0.35] as const
@@ -71,6 +77,8 @@ export class HenModel implements VehicleModel {
   private readonly tail: Node
   private readonly legs: Legs
   private flags = 0
+  /** How far a bird that rears up to do something holds its wings out, radians, whatever else they do. */
+  protected brace = 0
   /** How far the wings are swung out, radians, and where they are in their beat (0..1). */
   private wing = 0
   private beat = 0
@@ -83,11 +91,12 @@ export class HenModel implements VehicleModel {
   private leapt = false
   private eggs = 0
 
-  constructor(id: number) {
-    if (!asset) throw new Error('loadHenModel() must finish before hens are created')
-    const model = asset.clone()
+  /** `source` and `breeds` are the model and the breeds to draw: a hen's unless a kind of bird brings its own. */
+  constructor(id: number, source: Node | null = asset, breeds: readonly Breed[] = BREEDS) {
+    if (!source) throw new Error('its model must finish loading before birds are created')
+    const model = source.clone()
     this.root.add(model)
-    const breed = BREEDS[id % BREEDS.length]!
+    const breed = breeds[id % breeds.length]!
     this.paint = toonMaterial({ color: breed.paint })
     this.comb = breed.comb === null ? null : toonMaterial({ color: breed.comb })
     model.traverse((node) => {
@@ -156,6 +165,7 @@ export class HenModel implements VehicleModel {
       wanted = BEAT_LOW + (BEAT_HIGH - BEAT_LOW) * (0.5 + 0.5 * Math.cos(this.beat * Math.PI * 2))
     } else if (this.flags & THRUST_GLIDE) wanted = SPREAD
     else if (airborne) wanted = 0.4
+    wanted = Math.max(wanted, this.brace)
     this.wing += (wanted - this.wing) * Math.min(1, dt * (this.flags & THRUST_LIFT ? 30 : 6))
     // The left wing swings out to -x, which is a negative turn about the fore-and-aft axis.
     this.wings[0]!.rotation.z = -this.wing

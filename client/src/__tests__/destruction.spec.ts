@@ -90,6 +90,7 @@ describe('felling a tree', () => {
 // ---- buildings
 
 import { Effects } from '@/render/effects'
+import { Particles } from '@/render/particles'
 import { buildTile, rebuildBuildings } from '@/render/world'
 import type { SimMotor } from '@/sim/motor'
 import { flatMotor, tileBytes } from './worlds'
@@ -361,7 +362,7 @@ describe('a building with cells blasted out of it', () => {
     const positions = join((m) => m.geometry.positions)
     return { geometry: { positions, colors: join((m) => m.geometry.colors!), vertexCount: positions.length / 3 } }
   }
-  const effects = () => new Effects()
+  const effects = () => new Effects({ smoke: new Particles(64), glow: new Particles(64, true), blood: new Particles(64) }, 64)
 
   it('is drawn as pieces from the first bite, and says so only once', () => {
     const damage = new BuildingDamage()

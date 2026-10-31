@@ -603,6 +603,140 @@ export class VehicleSounds {
   }
 
   /** A blaster bolt: a bright zap that falls steeply in pitch, with a crack at the front and a low thrum. */
+  /** A sound that can be cut off: `stop` fades it out in a moment. */
+  private voice(at: Vec3 | null, life: number, build: (ctx: BaseAudioContext, out: AudioNode, t: number) => void) {
+    let stop = () => {}
+    this.emit(at, life, (ctx, out, t) => {
+      const level = ctx.createGain()
+      level.gain.value = 0.55
+      level.connect(out)
+      build(ctx, level, t)
+      stop = () => level.gain.setTargetAtTime(0, ctx.currentTime, 0.04)
+    })
+    return () => stop()
+  }
+
+  /** An oscillator held for `length` s, gliding from `from` to `to` Hz and swelling from `start` to `end`. */
+  private static drone(ctx: BaseAudioContext, out: AudioNode, t: number, type: OscillatorType, from: number, to: number, length: number, start: number, end: number, detune = 0) {
+    const osc = ctx.createOscillator()
+    osc.type = type
+    osc.detune.value = detune
+    osc.frequency.setValueAtTime(from, t)
+    osc.frequency.exponentialRampToValueAtTime(to, t + length)
+    const gain = ctx.createGain()
+    gain.gain.setValueAtTime(Math.max(0.0001, start), t)
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, end), t + length)
+    gain.gain.linearRampToValueAtTime(0.0001, t + length + 0.08)
+    osc.connect(gain).connect(out)
+    osc.start(t)
+    osc.stop(t + length + 0.1)
+    return gain
+  }
+
+  /** Noise through a band that sweeps from `from` to `to` Hz over `length` s, held at `level`. */
+  private static roar(ctx: BaseAudioContext, out: AudioNode, t: number, from: number, to: number, q: number, length: number, level: number) {
+    const source = ctx.createBufferSource()
+    source.buffer = noiseBuffer(ctx)
+    source.loop = true
+    const filter = ctx.createBiquadFilter()
+    filter.type = 'bandpass'
+    filter.Q.value = q
+    filter.frequency.setValueAtTime(from, t)
+    filter.frequency.exponentialRampToValueAtTime(to, t + length)
+    const gain = ctx.createGain()
+    gain.gain.setValueAtTime(0.0001, t)
+    gain.gain.linearRampToValueAtTime(level, t + 0.03)
+    gain.gain.setValueAtTime(level, t + length - 0.05)
+    gain.gain.linearRampToValueAtTime(0.0001, t + length + 0.15)
+    source.connect(filter).connect(gain).connect(out)
+    source.start(t, Math.random())
+    source.stop(t + length + 0.2)
+  }
+
+  /** A saturating stage that everything fearsome goes through, into `out`. */
+  private static grit(ctx: BaseAudioContext, out: AudioNode, drive: number) {
+    const curve = new Float32Array(1024)
+    for (let i = 0; i < curve.length; i++) curve[i] = Math.tanh(((i / (curve.length - 1)) * 2 - 1) * drive)
+    const shaper = ctx.createWaveShaper()
+    shaper.curve = curve
+    shaper.oversample = '2x'
+    shaper.connect(out)
+    return shaper
+  }
+
+  /** Something throbbing `gain` at `hz`, faster and faster up to `to` over `length` s. */
+  private static flutter(ctx: BaseAudioContext, gain: AudioParam, t: number, hz: number, to: number, depth: number, length: number) {
+    const lfo = ctx.createOscillator()
+    lfo.type = 'sawtooth'
+    lfo.frequency.setValueAtTime(hz, t)
+    lfo.frequency.exponentialRampToValueAtTime(to, t + length)
+    const amount = ctx.createGain()
+    amount.gain.value = depth
+    lfo.connect(amount).connect(gain)
+    lfo.start(t)
+    lfo.stop(t + length + 0.1)
+  }
+
+  /** Eyes charging over `seconds`: a growl climbing into a shriek, pulsing faster and faster. Returns how to cut it off. */
+  laserCharge(at: Vec3, seconds: number) {
+    return this.voice(at, seconds + 0.2, (ctx, out, t) => {
+      const pulse = ctx.createGain()
+      pulse.gain.value = 0.7
+      VehicleSounds.flutter(ctx, pulse.gain, t, 4, 42, 0.35, seconds)
+      const filter = ctx.createBiquadFilter()
+      filter.type = 'lowpass'
+      filter.Q.value = 9
+      filter.frequency.setValueAtTime(180, t)
+      filter.frequency.exponentialRampToValueAtTime(5200, t + seconds)
+      pulse.connect(filter).connect(VehicleSounds.grit(ctx, out, 2.5))
+      for (const detune of [-14, 0, 13]) VehicleSounds.drone(ctx, pulse, t, 'sawtooth', 55, 740, seconds, 0.1, 0.34, detune)
+      VehicleSounds.drone(ctx, out, t, 'sine', 40, 110, seconds, 0.2, 0.5)
+      VehicleSounds.drone(ctx, out, t, 'sine', 900, 6200, seconds, 0.003, 0.09)
+      VehicleSounds.roar(ctx, out, t, 500, 7000, 5, seconds, 0.12)
+    })
+  }
+
+  /** Charged eyes dying away unfired: the whine falling off. */
+  laserFizzle(at: Vec3) {
+    this.emit(at, 0.5, (ctx, out, t) => {
+      VehicleSounds.ping(ctx, out, t, 'sawtooth', 500, 45, 0.4, 0.22)
+      VehicleSounds.burst(ctx, out, t, 'highpass', 3000, 900, 0.3, 0.1)
+    })
+  }
+
+  /**
+   * The beam, for `seconds`: a crack and a drop like a shell's, then a wall of distorted sawtooth
+   * fluttering at the edge of a pitch, a tearing roar, and over it all a robot rooster's scream.
+   */
+  laserBeam(at: Vec3, seconds: number) {
+    return this.voice(at, seconds + 0.5, (ctx, out, t) => {
+      VehicleSounds.burst(ctx, out, t, 'lowpass', 7000, 90, 0.7, 1)
+      VehicleSounds.ping(ctx, out, t, 'sine', 170, 26, 0.9, 1)
+      const wall = ctx.createGain()
+      wall.gain.value = 0.6
+      VehicleSounds.flutter(ctx, wall.gain, t, 38, 31, 0.4, seconds)
+      wall.connect(VehicleSounds.grit(ctx, out, 4))
+      for (const [hz, detune] of [[46, -9], [46, 8], [69, 5], [92, -6], [139, 7]] as const) VehicleSounds.drone(ctx, wall, t, 'sawtooth', hz, hz * 0.84, seconds, 0.3, 0.26, detune)
+      VehicleSounds.drone(ctx, out, t, 'square', 34, 28, seconds, 0.3, 0.26)
+      VehicleSounds.roar(ctx, out, t, 1300, 650, 0.8, seconds, 0.7)
+      VehicleSounds.roar(ctx, out, t, 5200, 3000, 3, seconds, 0.22)
+      const scream = VehicleSounds.grit(ctx, out, 3)
+      for (const [hz, level] of [[640, 0.2], [963, 0.13]] as const) {
+        VehicleSounds.drone(ctx, scream, t, 'sawtooth', hz, hz * 1.5, seconds * 0.4, level * 0.5, level)
+        const fall = t + seconds * 0.4
+        VehicleSounds.drone(ctx, scream, fall, 'sawtooth', hz * 1.5, hz * 0.7, seconds * 0.6, level, level * 0.4)
+      }
+    })
+  }
+
+  /** The beam biting into something. */
+  laserSizzle(at: Vec3) {
+    this.emit(at, 0.2, (ctx, out, t) => {
+      VehicleSounds.burst(ctx, out, t, 'highpass', 5000, 2500, 0.16, 0.35)
+      VehicleSounds.burst(ctx, out, t, 'bandpass', 900, 300, 0.12, 0.3)
+    })
+  }
+
   laser(at: Vec3) {
     this.emit(at, 0.8, (ctx, out, t) => {
       VehicleSounds.ping(ctx, out, t, 'sawtooth', 2600, 260, 0.22, 0.4)

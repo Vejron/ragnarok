@@ -1,9 +1,9 @@
 /** What a plane's crew sees: the gauges on the HUD, and the pilot's two markers on the screen. */
 
 import { Vector3 } from '@ragnarok/engine'
-import type { Arms } from '@/entities/units'
+import type { Arms, Pintle } from '@/entities/units'
 import type { HudStats } from '@/hud'
-import { ARMS_JAMMED, ARMS_REAR_JAMMED } from '@/net/codec'
+import { ARMS_JAMMED, ARMS_REAR_JAMMED, PINTLE_JAMMED } from '@/net/codec'
 import type { PlaneModel } from '@/render/plane'
 import type { VehicleFx } from '@/render/tyres'
 import { PLANE_STALL_SPEED } from '@/sim/consts'
@@ -20,6 +20,11 @@ export function cockpit(arms: Arms | null, pilot: boolean, motion: VehicleFx | u
   if (!pilot) return { heat: arms.rear_heat, jammed: (arms.flags & ARMS_REAR_JAMMED) !== 0, bombs: null, stall: false }
   const stall = motion !== undefined && !motion.grounded && motion.forwardSpeed < PLANE_STALL_SPEED * 1.1
   return { heat: arms.heat, jammed: (arms.flags & ARMS_JAMMED) !== 0, bombs: arms.bombs, stall }
+}
+
+/** What a tank's machine gunner sees on the HUD: their gun's heat and whether it has jammed. */
+export function roofGun(pintle: Pintle | null): Pick<HudStats, 'heat' | 'jammed' | 'bombs' | 'stall'> {
+  return { heat: pintle?.heat ?? null, jammed: ((pintle?.flags ?? 0) & PINTLE_JAMMED) !== 0, bombs: null, stall: false }
 }
 
 /**

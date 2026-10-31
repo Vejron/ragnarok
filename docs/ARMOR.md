@@ -161,6 +161,7 @@ A wreck coming back as new (`Vehicle::renew`) has every part whole and its fire 
 ## Not done
 
 - Rockets (the Carl Gustaf, the helicopter's) and drones are not judged by armour; they hurt as before.
-- Turret crew die only when the turret comes off or a round reaches them; there is no bail-out or
+- Turret crew die only when the turret comes off or a round reaches them (a T-55's machine gunner, in
+  the open on the roof, can also be shot like anyone else); there is no bail-out or
   "knocked out" state for a vehicle whose crew are all dead.
 - The AT rifle borrows the sniper's model in hand, and is credited as a sniper shot in the feed.

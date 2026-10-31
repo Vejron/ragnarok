@@ -70,7 +70,7 @@ describe('the vehicle presenters', () => {
     store.push(10, new Map([[3, tank(1)], [4, tank(2)]]), true)
     draw(10)
     expect(vehicles.model(3)).toBeInstanceOf(TankModel)
-    expect(vehicles.placed.get(3)).toMatchObject({ kind: KIND_TANK, x: 1, y: 1.2, z: 0, hp: 250, seats: [0, 0] })
+    expect(vehicles.placed.get(3)).toMatchObject({ kind: KIND_TANK, x: 1, y: 1.2, z: 0, hp: 250, seats: [0, 0, 0] })
     expect(vehicles.placed.get(4)).toMatchObject({ x: 9, y: 1, z: 9, steer: 0.5 })
   })
 

@@ -54,8 +54,8 @@ particles.setGround(heights, side, side, x0, z0, cell)
 scene.add(particles)
 const ribbons = new Ribbons()
 scene.add(ribbons)
-// Gunfire: the game's shot effects as GPU flash records.
-const shots = new Shots()
+// Gunfire: the game's shot effects, on the same particles.
+const shots = new Shots(particles)
 scene.add(shots.flashes)
 
 function explosion(x: number, z: number, radius = 3) {

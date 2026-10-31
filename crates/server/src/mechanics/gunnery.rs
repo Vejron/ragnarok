@@ -2,7 +2,7 @@ use shared::vec3;
 use super::Mechanic;
 use shared::armor::Part;
 use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
-use super::combat::{Round, hitscan, look, rewind_ticks, scatter};
+use super::combat::{Round, beam, hitscan, look, rewind_ticks, scatter};
 use super::projectiles::{self, Flying, Stage};
 use crate::entities::With;
 use crate::game::{Mount, Mounts, Player, Seats, Vehicle, World};
@@ -19,7 +19,7 @@ use shared::quant::{from_mrad, to_cm, wrap_angle};
 /// is a projectile (a shell, a rocket, a bomb, an egg; see `projectiles`) or a machine gun round, a
 /// hitscan. Nothing here branches on the vehicle's kind: a tank's stabilised turret, a helicopter's
 /// nose gun and pods, a plane's ring mount, forward guns and bombs, a walker's chin guns, a Strv S's
-/// fixed gun, a mortar's tube and a hen's eggs are each a row of data.
+/// fixed gun, a mortar's tube, a hen's eggs and a tupp's eyes are each a row of data.
 pub struct Gunnery;
 
 fn step_toward(current: f32, target: f32, step: f32) -> f32 {
@@ -41,6 +41,12 @@ pub fn aim(pose: &CarPose, yaw: f32, pitch: f32) -> ([f32; 3], [f32; 3]) {
 fn aim_from(pose: &CarPose, pivot: [f32; 3], yaw: f32, pitch: f32) -> ([f32; 3], [f32; 3]) {
     let local = [-yaw.sin() * pitch.cos(), pitch.sin(), -yaw.cos() * pitch.cos()];
     (pose.world_point(pivot), pose.world_dir(local))
+}
+
+/// Where point `at` of a turret at `yaw` on a ring at `ring` is, in the hull frame.
+fn on_turret(ring: [f32; 3], [x, y, z]: [f32; 3], yaw: f32) -> [f32; 3] {
+    let (sin, cos) = yaw.sin_cos();
+    [ring[0] + x * cos + z * sin, ring[1] + y, ring[2] - x * sin + z * cos]
 }
 
 /// The elevation of the high lob that lands a bomb `range` metres out on level ground, from `MORTAR_SHELL_SPEED`
@@ -77,12 +83,36 @@ fn work(world: &mut World, vid: u32, def: &MountDef, mut mount: Mount, pose: &Ca
     if let Aim::Bore { .. } = def.aim {
         mount.yaw = 0.0;
     }
+    // A beam only goes on from here, so one that loses its driver or falls over dies with the tick.
+    let (charged, burning) = (mount.charge, mount.beam);
+    (mount.charge, mount.beam) = (0, 0);
     let Some(occupant) = world.entities.get::<Seats>(vid).and_then(|seats| seats.rider(def.seat)) else { return mount };
     let Some(input) = world.entities.get::<Player>(occupant).map(|player| player.input) else { return mount };
     if !def.needs.iter().all(|&need| can_work(world, vid, need, pose)) {
         return mount;
     }
-    turn(&mut mount, def.aim, &input, pose, dt);
+    let turret_yaw = world.entities.get::<Mounts>(vid).and_then(|mounts| mounts.turret().map(|turret| turret.yaw)).unwrap_or(0.0);
+    turn(&mut mount, def.aim, &input, pose, turret_yaw, dt);
+    if let Fire::Beam { charge, burn, recover, .. } = def.fire {
+        if burning > 0 {
+            mount.beam = burning - 1;
+            if mount.cooldown == 0 {
+                shoot(world, vid, def, &mount, occupant, pose, turret_yaw);
+                mount.shots = mount.shots.wrapping_add(1);
+                mount.cooldown = def.cooldown;
+            }
+            if mount.beam == 0 {
+                mount.cooldown = recover;
+            }
+        } else if input.buttons() & def.trigger != 0 && mount.cooldown == 0 {
+            if charged + 1 >= charge {
+                mount.beam = burn;
+            } else {
+                mount.charge = charged + 1;
+            }
+        }
+        return mount;
+    }
     // Loading the other kind of round takes as long as loading the next one.
     let swap = input.buttons() & BUTTON_AMMO != 0;
     if let Fire::Shell { kind, alt, .. } = def.fire
@@ -102,7 +132,7 @@ fn work(world: &mut World, vid: u32, def: &MountDef, mut mount: Mount, pose: &Ca
     if !def.needs.iter().all(|&need| can_fire(world, vid, need, &mount, pose)) {
         return mount;
     }
-    let dir = shoot(world, vid, def, &mount, occupant, pose);
+    let dir = shoot(world, vid, def, &mount, occupant, pose, turret_yaw);
     if def.recoil != 0.0 {
         // The hull is shoved back along the barrel, level, so it does not dig in.
         world.physics.kick_car(vid, [-dir[0] * def.recoil, 0.0, -dir[2] * def.recoil]);
@@ -163,8 +193,8 @@ fn can_fire(world: &World, vid: u32, need: Need, mount: &Mount, pose: &CarPose) 
     }
 }
 
-/// A tick of the occupant's look turning the mount.
-fn turn(mount: &mut Mount, aim: Aim, input: &InputFrame, pose: &CarPose, dt: f32) {
+/// A tick of the occupant's look turning the mount, on a vehicle whose turret is at `turret_yaw`.
+fn turn(mount: &mut Mount, aim: Aim, input: &InputFrame, pose: &CarPose, turret_yaw: f32, dt: f32) {
     match aim {
         Aim::Fixed => {}
         Aim::Turret { slew, pitch: (min, max), pitch_slew } => {
@@ -185,6 +215,12 @@ fn turn(mount: &mut Mount, aim: Aim, input: &InputFrame, pose: &CarPose, dt: f32
             };
             mount.pitch = step_toward(mount.pitch, pitch, slew * dt);
         }
+        Aim::Pintle { yaw_limit, pitch: (min, max), slew } => {
+            // The look seen from the turret: when the turret swings away the end of the arc pushes the gun along.
+            let yaw = wrap_angle(from_mrad(input.yaw) - pose.yaw() - turret_yaw).clamp(-yaw_limit, yaw_limit);
+            mount.yaw = step_toward(mount.yaw, yaw, slew * dt).clamp(-yaw_limit, yaw_limit);
+            mount.pitch = step_toward(mount.pitch, from_mrad(input.pitch()).clamp(min, max), slew * dt);
+        }
         Aim::Lob { slew } => {
             mount.yaw = follow(mount.yaw, wrap_angle(from_mrad(input.yaw) - pose.yaw()), slew * dt);
             // A gun that has never been dialled starts at the middle of the range, not at zero.
@@ -198,7 +234,7 @@ fn turn(mount: &mut Mount, aim: Aim, input: &InputFrame, pose: &CarPose, dt: f32
 }
 
 /// Fires a round of `def` for `occupant`, and returns the barrel's heading (before any spread).
-fn shoot(world: &mut World, vid: u32, def: &MountDef, mount: &Mount, occupant: u32, pose: &CarPose) -> [f32; 3] {
+fn shoot(world: &mut World, vid: u32, def: &MountDef, mount: &Mount, occupant: u32, pose: &CarPose, turret_yaw: f32) -> [f32; 3] {
     let (origin, dir) = match def.muzzle {
         Muzzle::One(pivot) => aim_from(pose, pivot, mount.yaw, mount.pitch),
         Muzzle::Turns(pivots) => aim_from(pose, pivots[usize::from(mount.shots) % pivots.len()], mount.yaw, mount.pitch),
@@ -214,6 +250,7 @@ fn shoot(world: &mut World, vid: u32, def: &MountDef, mount: &Mount, occupant: u
             let offset = [bx * cy + lz * sy, ly, -bx * sy + lz * cy];
             (pose.world_point(std::array::from_fn(|i| pivot[i] + offset[i])), dir)
         }
+        Muzzle::Pintle { ring, at } => aim_from(pose, on_turret(ring, at, turret_yaw), wrap_angle(turret_yaw + mount.yaw), mount.pitch),
     };
     match def.fire {
         Fire::Shell { kind, alt, speed, length, ttl } => {
@@ -232,6 +269,16 @@ fn shoot(world: &mut World, vid: u32, def: &MountDef, mount: &Mount, occupant: u
             let aimed = scatter(world, dir, def.spread);
             let round = Round { damage, vehicle, plane, weapon, range, falloff: Falloff::NONE, pen };
             machine_gun(world, occupant, vid, muzzle, aimed, &round);
+        }
+        Fire::Beam { length, radius, damage, vehicle, plane, weapon, range, pen, .. } => {
+            let muzzle = vec3::along(origin, dir, length);
+            let round = Round { damage, vehicle, plane, weapon, range, falloff: Falloff::NONE, pen };
+            let back = world.entities.get::<Player>(occupant).map_or(0, |player| rewind_ticks(world.tick, player.input.view()));
+            make_noise(world, muzzle, Some(occupant), HEAR_SHOT);
+            // Always announced, hit or miss: the beam is drawn to where it ended.
+            let (end, _) = beam(world, occupant, muzzle, dir, &round, vid, back, radius);
+            let [x, y, z] = end.map(to_cm);
+            world.shots.push(ShotEvent { shooter: vid, weapon, x, y, z });
         }
         Fire::Drop { kind, toss, ttl } => {
             let toss = pose.world_dir(toss);
@@ -257,14 +304,15 @@ fn fire(world: &mut World, kind: u8, vid: u32, origin: [f32; 3], dir: [f32; 3], 
 }
 
 /// One machine gun `round` for `shooter` from vehicle `vid`, out of `muzzle` along `dir`. Every round
-/// is drawn by the client from the gun's counter; only one that hit something is announced, for the spark.
+/// is drawn by the client from the gun's counter; only one that hit something is announced, for the
+/// spark.
 fn machine_gun(world: &mut World, shooter: u32, vid: u32, muzzle: [f32; 3], dir: [f32; 3], round: &Round) {
     let back = world.entities.get::<Player>(shooter).map_or(0, |player| rewind_ticks(world.tick, player.input.view()));
     make_noise(world, muzzle, Some(shooter), HEAR_SHOT);
     let (end, struck) = hitscan(world, shooter, muzzle, dir, round, vid, back);
     if struck {
         let [x, y, z] = std::array::from_fn(|i| to_cm(muzzle[i] + dir[i] * end));
-        world.shots.push(ShotEvent { shooter, weapon: round.weapon, x, y, z });
+        world.shots.push(ShotEvent { shooter: vid, weapon: round.weapon, x, y, z });
     }
 }
 

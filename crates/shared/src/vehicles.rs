@@ -13,8 +13,8 @@ use crate::consts::*;
 use crate::mounts::{Aim, Ammo, Fire, MountDef, Muzzle, Need, Refill, Show};
 use crate::items::*;
 use crate::protocol::{
-    KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON,
-    PROJECTILE_EGG, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_SHELL, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LOITER, WEAPON_MG, WEAPON_SHELL,
+    KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON,
+    PROJECTILE_EGG, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_SHELL, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LASER, WEAPON_LOITER, WEAPON_MG, WEAPON_SHELL,
 };
 
 pub mod drone;
@@ -30,6 +30,7 @@ mod spec;
 pub mod sports;
 pub mod strv;
 pub mod tank;
+pub mod tupp;
 pub mod walker;
 
 pub use spec::{Buttons, Lift, Role, Shape, Solid, Spec};
@@ -42,7 +43,7 @@ pub struct VehicleDef {
     /// Health of a fresh one. Zero on the wire means wrecked.
     pub hp: u8,
     /// Seat 0 is the driver (a helicopter's or a plane's pilot, and a walker's, who also aims its guns);
-    /// a tank's, helicopter's and plane's seat 1 is the gunner.
+    /// a tank's, helicopter's and plane's seat 1 is the gunner, and a tank's seat 2 the machine gunner.
     pub seats: usize,
     /// What it fires, worked in this order every tick (`crate::mounts`).
     pub mounts: &'static [MountDef],
@@ -63,13 +64,16 @@ pub struct VehicleDef {
     pub armor: Armor,
     /// For a drone, flown from afar by whoever launched it: how it flies, strikes and is launched.
     pub drone: Option<DroneDef>,
-    /// Its one seat is on its turning mount rather than in the hull: the mortar's, the Pak's.
+    /// A seat on its turning mount rather than in the hull, and out in the open whatever `crew` says:
+    /// the mortar's and the Pak's only one, a tank's machine gunner on the turret roof.
     pub mount_seat: Option<MountSeat>,
 }
 
 /// A seat on a mount that turns with the gun.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MountSeat {
+    /// Which seat it is.
+    pub seat: usize,
     /// Where the mount turns, in the hull frame.
     pub pivot: [f32; 3],
     /// The occupant's head, from the pivot, with the gun pointing ahead.
@@ -189,7 +193,7 @@ const ROTOR: Body = Body { flies: true, ..CAR };
 /// A plane is wood and canvas: it takes twice the crash damage, so flying it into anything at speed
 /// is the end of it.
 const WINGS: Body = Body { drop_y: 1.5, crash: 2.0, flies: true, ..CAR };
-/// A walker's or a hen's hull starts as high as its legs hold it up.
+/// A walker's, a hen's or a tupp's hull starts as high as its legs hold it up.
 const LEGS: Body = Body { drop_y: WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1], legs: WALKER_LEG_LENGTH, ..CAR };
 const TOWED: Body = Body { towed: true, ..CAR };
 
@@ -208,6 +212,7 @@ pub static VEHICLES: &[VehicleDef] = &[
     hen::HEN,
     loiter::LOITER,
     pak::PAK,
+    tupp::TUPP,
 ];
 
 /// Where each kind id's definition is in `VEHICLES`: 0, the jeep's, for ids that are not a vehicle.
@@ -231,14 +236,23 @@ pub fn gun_seat(kind: u8) -> usize {
 /// turning mount turned to `gun_yaw`. `None` for a crew that does not show.
 pub fn seat_head(kind: u8, index: usize, gun_yaw: f32) -> Option<[f32; 3]> {
     let def = vehicle_def(kind);
+    if let Some(MountSeat { seat, pivot: [px, py, pz], head: [x, y, z] }) = def.mount_seat
+        && seat == index
+    {
+        let (sin, cos) = gun_yaw.sin_cos();
+        return Some([px + x * cos + z * sin, py + y, pz - x * sin + z * cos]);
+    }
     if def.crew == Exposure::Sealed {
         return None;
     }
-    if let Some(MountSeat { pivot: [px, py, pz], head: [x, y, z] }) = def.mount_seat {
-        let (sin, cos) = gun_yaw.sin_cos();
-        return (index == 0).then_some([px + x * cos + z * sin, py + y, pz - x * sin + z * cos]);
-    }
     def.seat_heads.get(index).copied()
+}
+
+/// Whether the occupant of seat `index` of a `kind` shows, as a soldier sitting there: all of a crew
+/// that is not sealed in, and whoever sits on a turning mount outside.
+pub fn crew_shows(kind: u8, index: usize) -> bool {
+    let def = vehicle_def(kind);
+    def.crew != Exposure::Sealed || def.mount_seat.is_some_and(|seat| seat.seat == index)
 }
 
 /// Whether seat `index` of a `kind` fires its occupant's own guns: a car's passengers.
@@ -280,7 +294,20 @@ mod tests {
         assert!(vehicle_def(KIND_PLANE).arms() && vehicle_def(KIND_HEN).arms() && !vehicle_def(KIND_TANK).arms());
         assert!(vehicle_def(KIND_TANK).gun() && vehicle_def(KIND_HELI).gun() && vehicle_def(KIND_PLANE).gun() && vehicle_def(KIND_WALKER).gun() && vehicle_def(KIND_STRV).gun());
         assert!(!vehicle_def(KIND_JEEP).gun() && !vehicle_def(KIND_SPORTS).gun() && !vehicle_def(KIND_ROADSTER).gun() && !vehicle_def(KIND_HEN).gun());
+        assert!(vehicle_def(KIND_TUPP).gun() && !vehicle_def(KIND_TUPP).arms());
         assert!(vehicle_def(KIND_MORTAR).gun() && vehicle_def(KIND_PAK).gun());
+    }
+
+    #[test]
+    fn a_tanks_machine_gunner_alone_shows_and_turns_with_the_turret() {
+        assert!(seat_head(KIND_TANK, 0, 0.0).is_none() && seat_head(KIND_TANK, 1, 0.0).is_none());
+        assert!(crew_shows(KIND_TANK, tank::TANK_MG_SEAT) && !crew_shows(KIND_TANK, 0) && !crew_shows(KIND_TANK, 1));
+        let [x, y, z] = seat_head(KIND_TANK, tank::TANK_MG_SEAT, 0.0).unwrap();
+        let [turned_x, turned_y, turned_z] = seat_head(KIND_TANK, tank::TANK_MG_SEAT, std::f32::consts::PI).unwrap();
+        let [px, _, pz] = tank::TANK_TURRET_PIVOT;
+        assert!((turned_x - px + (x - px)).abs() < 1e-4 && (turned_z - pz + (z - pz)).abs() < 1e-4);
+        assert_eq!(y, turned_y);
+        assert!(y > tank::TANK_TURRET_PIVOT[1] + tank::TANK_TURRET_HALF_HEIGHT, "over the turret's solid");
     }
 
     #[test]

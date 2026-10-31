@@ -250,6 +250,20 @@ fn enough_damage_to_the_turret_takes_it_off_and_kills_the_gunner() {
 }
 
 #[test]
+fn the_machine_gunner_goes_with_the_turret_too() {
+    let mut game = game();
+    let vid = of_kind(&game, KIND_TANK);
+    let (gunner, top) = (join(&mut game), join(&mut game));
+    for (id, index) in [(gunner, 1), (top, 2)] {
+        game.world.entities.get_mut::<Seats>(vid).unwrap()[index] = Some(id);
+        game.world.entities.get_mut::<Player>(id).unwrap().seat = Some(Seat { vehicle: vid, index, remote: false });
+    }
+    damage_turret(&mut game.world, vid, 255, None);
+    assert!(!game.world.entities.alive(gunner) && !game.world.entities.alive(top));
+    assert_eq!(game.world.entities.of::<Seats>(vid).rider(2), None);
+}
+
+#[test]
 fn a_tank_without_its_turret_cannot_fire_and_gets_one_back_on_respawn() {
     let mut game = game();
     let vid = of_kind(&game, KIND_TANK);

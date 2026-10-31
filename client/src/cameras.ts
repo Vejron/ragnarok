@@ -16,9 +16,11 @@ import type { Mark } from '@/render/gunsight'
 import { PlaneModel } from '@/render/plane'
 import { CAMERA_HEIGHT, PLANE_CAMERA_HEIGHT, PLANE_DISTANCE, STRV_AIM_BACK, STRV_AIM_UP, WALKER_AIM_BACK, WALKER_AIM_UP, AIM_DISTANCE_SCALE, type Scene } from '@/render/scene'
 import { StrvModel } from '@/render/strvs'
+import { TankModel } from '@/render/tank'
 import type { VehicleFx } from '@/render/tyres'
+import { TuppModel } from '@/render/tupp'
 import { WalkerModel } from '@/render/walker'
-import { GRAVITY, PASSENGER_DISTANCE, PASSENGER_HEIGHT, PASSENGER_SHOULDER, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, SHELL_SPEED, STRV_BARREL_MAX, STRV_BARREL_MIN, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT } from '@/sim/consts'
+import { GRAVITY, PASSENGER_DISTANCE, PASSENGER_HEIGHT, PASSENGER_SHOULDER, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, SHELL_SPEED, STRV_BARREL_MAX, STRV_BARREL_MIN, TUPP_HEAD_LIMIT, TUPP_HEAD_PITCH_MAX, TUPP_HEAD_PITCH_MIN, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT } from '@/sim/consts'
 import type { InputController } from '@/sim/input'
 import type { Rig, SeatView } from '@/seats'
 
@@ -26,6 +28,9 @@ import type { Rig, SeatView } from '@/seats'
 const PLANE_VIEW_EASE = 5
 const PLANE_PULLBACK = 3
 const PLANE_VIEW_ROLL = 0.3
+/** How far behind and above a roof gun the camera sits: over the gunner's shoulder. */
+const ROOF_AIM_BACK = 3.5
+const ROOF_AIM_UP = 1.2
 /** The sight sits this far above the gun's pivot, on the mantlet. */
 const SIGHT_EYE_UP = 0.5
 /** Ranges (m) the sight's ladder is marked at. */
@@ -88,7 +93,7 @@ export class Cameras {
     private readonly input: InputController,
     private readonly castRay: (origin: [number, number, number], direction: [number, number, number], max: number) => { t: number } | null,
   ) {
-    this.rigs = { drive: this.drive(), gun: this.gun(), fpv: this.fpv(), aviator: this.aviator(), tanker: this.tanker(), walker: this.walker(), mortar: this.mortar(), passenger: this.passenger() }
+    this.rigs = { drive: this.drive(), gun: this.gun(), fpv: this.fpv(), aviator: this.aviator(), tanker: this.tanker(), walker: this.walker(), pintle: this.pintle(), mortar: this.mortar(), passenger: this.passenger() }
   }
 
   /** The rig the camera is in, if the local player is seated. */
@@ -262,7 +267,7 @@ export class Cameras {
     }
   }
 
-  /** Behind a walker's guns: the look is the aim, free of the legs' heading, within the upper body's travel of it. */
+  /** Behind a walker's guns or a tupp's eyes: the look is the aim, free of the legs' heading, within the upper body's or the head's travel of it. */
   private walker(): RigImpl {
     return {
       enter: ({ ride }) => {
@@ -270,14 +275,41 @@ export class Cameras {
         this.input.pitch = 0
       },
       frame: ({ ride, model, distance }) => {
-        if (model instanceof WalkerModel) {
-          this.limitGun(model, WALKER_TORSO_LIMIT, WALKER_GUN_PITCH_MIN, WALKER_GUN_PITCH_MAX)
+        if (model instanceof WalkerModel || model instanceof TuppModel) {
+          if (model instanceof WalkerModel) this.limitGun(model, WALKER_TORSO_LIMIT, WALKER_GUN_PITCH_MIN, WALKER_GUN_PITCH_MAX)
+          else this.limitGun(model, TUPP_HEAD_LIMIT, TUPP_HEAD_PITCH_MIN, TUPP_HEAD_PITCH_MAX)
           // Behind and above the guns, looking along their line, so the middle of the screen is where they point.
           const { origin } = model.barrel()
           this.scene.aimFrom([origin.x, origin.y, origin.z], this.input.yaw, this.input.pitch, WALKER_AIM_BACK, WALKER_AIM_UP)
         } else {
           this.scene.follow([ride.x, ride.y + 0.4, ride.z], this.input.yaw, this.input.pitch, distance, 0, CAMERA_HEIGHT)
         }
+      },
+    }
+  }
+
+  /** Behind a gun on a turret's roof, looking along its line, and kept within its travel of the turret, which pushes the look along when it swings away. */
+  private pintle(): RigImpl {
+    let aimed = false
+    return {
+      enter: () => {
+        aimed = false
+      },
+      frame: (c) => {
+        const { ride, model, seat } = c
+        const barrel = model instanceof TankModel ? model.pintleBarrel() : null
+        if (seat.rig.name !== 'pintle' || !barrel || !ride.turret) return this.rigs.drive.frame(c)
+        const turret = ride.yaw + ride.turret.yaw
+        if (!aimed && ride.pintle) {
+          // Take the seat looking where the gun points.
+          this.input.yaw = turret + ride.pintle.yaw
+          this.input.pitch = ride.pintle.pitch
+          aimed = true
+        }
+        this.input.yaw = turret + clamp(wrapAngle(this.input.yaw - turret), -seat.rig.limit, seat.rig.limit)
+        this.input.clampPitch(seat.rig.pitch[0], seat.rig.pitch[1])
+        const { origin } = barrel
+        this.scene.aimFrom([origin.x, origin.y, origin.z], this.input.yaw, this.input.pitch, ROOF_AIM_BACK, ROOF_AIM_UP)
       },
     }
   }
