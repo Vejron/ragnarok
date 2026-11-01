@@ -358,7 +358,7 @@ fn no_file_is_no_scenario_and_a_bad_one_says_which_file() {
 fn a_squad_tank_comes_crewed_and_goes_once_it_is_wrecked_and_burnt_out() {
     let json = format!(
         r#"{{
-            "squads": {{ "armour": {{ "team": 3, "skill": 0.8, "bots": [ {{ {} }} ], "tanks": [ {{ {}, "route": [ {{ {} }}, {{ {} }} ] }} ] }} }},
+            "squads": {{ "armour": {{ "team": 3, "skill": 0.8, "temper": {{ "courage": 0.25, "patience": 2.0 }}, "bots": [ {{ {} }} ], "tanks": [ {{ {}, "route": [ {{ {} }}, {{ {} }} ] }} ] }} }},
             "triggers": [
                 {{ "when": {{ "start": true }}, "do": [ {{ "spawn": "armour" }} ] }},
                 {{ "when": {{ "cleared": "armour" }}, "do": [ {{ "win": "The column is stopped" }} ] }}
@@ -381,6 +381,7 @@ fn a_squad_tank_comes_crewed_and_goes_once_it_is_wrecked_and_burnt_out() {
     assert_eq!(crew.len(), 2, "both seats manned");
     for id in &crew {
         assert_eq!((game.world.entities.of::<Player>(*id).team, game.world.entities.of::<Bot>(*id).aim.skill), (3, 0.8));
+        assert_eq!(game.world.entities.of::<Bot>(*id).temper, crate::game::Temper { courage: 0.25, aggression: 0.5, patience: 1.0 });
     }
 
     crate::mechanics::damage_vehicle(&mut game.world, vid, 255, None);

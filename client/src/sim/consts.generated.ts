@@ -597,6 +597,16 @@ export const EYE_HEIGHT = 0.6
 /** How far a crouch lowers the eye. The capsule keeps its size, so collision is unchanged. */
 export const CROUCH_EYE_DROP = 0.3
 
+/** How far a crouch lowers the top of the hurtbox, with the head zone and the hips: as far as the eye. */
+export const CROUCH_DROP = CROUCH_EYE_DROP
+
+/**
+ * Lying down, the hurtbox is a capsule on its side along the heading, the head at the front: this far
+ * from the centre to the centre of either end, and this thick. 1.7 m long and under 0.8 m high.
+ */
+export const PRONE_HURT_HALF_LENGTH = 0.47
+export const PRONE_HURT_RADIUS = 0.38
+
 /** A prone soldier's eye is 0.2 m above its feet, so this is relative to the capsule centre. */
 export const PRONE_EYE_HEIGHT = 0.2 - PRONE_CENTRE
 

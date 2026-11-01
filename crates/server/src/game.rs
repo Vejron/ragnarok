@@ -244,7 +244,8 @@ impl Game {
         // One outfit per team, so a squad reads as one.
         let color = team.wrapping_mul(5) % PLAYER_COLOR_COUNT;
         self.world.entities.spawn(id, Player::new(name, color, team, vec![home.map(to_cm)], starting_hotbar()));
-        self.world.entities.insert(id, (soldier_life(), Bot::new(home, route)));
+        let temper = Temper::rolled(|| self.world.rng.next_f64() as f32);
+        self.world.entities.insert(id, (soldier_life(), Bot { temper, ..Bot::new(home, route) }));
         for mechanic in &mut self.mechanics {
             mechanic.on_join(&mut self.world, id);
         }

@@ -599,6 +599,21 @@ fn lying_down_keeps_the_feet_on_the_ground() {
 }
 
 #[test]
+fn letting_go_of_prone_on_open_ground_stands_it_back_up() {
+    let physics = Physics::new(&flat_world()).unwrap();
+    let mut character = standing();
+    for _ in 0..30 {
+        physics.move_character(&mut character, &held(BUTTON_PRONE, 0), TICK_DT);
+    }
+    assert!(character.prone);
+    for _ in 0..30 {
+        physics.move_character(&mut character, &held(0, 0), TICK_DT);
+    }
+    assert!(!character.prone && character.grounded, "{character:?}");
+    assert!((character.position[1] - STAND_CENTRE).abs() < 0.05, "{:?}", character.position);
+}
+
+#[test]
 fn crawling_is_slower_than_walking() {
     let physics = Physics::new(&flat_world()).unwrap();
     let mut character = standing();

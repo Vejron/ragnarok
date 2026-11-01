@@ -1,7 +1,7 @@
 use shared::vec3;
 use super::Mechanic;
 use shared::armor::Part;
-use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
+use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise, make_shot};
 use super::combat::{Round, beam, hitscan, look, rewind_ticks, scatter};
 use super::projectiles::{self, Flying, Stage};
 use crate::entities::With;
@@ -308,7 +308,7 @@ fn fire(world: &mut World, kind: u8, vid: u32, origin: [f32; 3], dir: [f32; 3], 
 /// spark.
 fn machine_gun(world: &mut World, shooter: u32, vid: u32, muzzle: [f32; 3], dir: [f32; 3], round: &Round) {
     let back = world.entities.get::<Player>(shooter).map_or(0, |player| rewind_ticks(world.tick, player.input.view()));
-    make_noise(world, muzzle, Some(shooter), HEAR_SHOT);
+    make_shot(world, muzzle, Some(shooter), dir);
     let (end, struck) = hitscan(world, shooter, muzzle, dir, round, vid, back);
     if struck {
         let [x, y, z] = std::array::from_fn(|i| to_cm(muzzle[i] + dir[i] * end));

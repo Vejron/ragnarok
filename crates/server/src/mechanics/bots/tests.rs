@@ -1,5 +1,5 @@
 use super::*;
-use crate::game::{Command, Game, MAX_BOTS, Profile, TEAM_BOTS, TEAM_NONE};
+use crate::game::{Command, Game, MAX_BOTS, Profile, Role, TEAM_BOTS, TEAM_NONE, Temper};
 use crate::mechanics::life::{Harm, damage_entity};
 use shared::protocol::KIND_SOLDIER;
 use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
@@ -111,7 +111,10 @@ fn disarm(game: &mut Game, id: u32) {
 /// A bot guarding `[0, 0]`, facing -Z (yaw 0), as good a shot as `skill`.
 fn guard(game: &mut Game, skill: f32) -> u32 {
     let bot = game.add_bot([0.0, 0.0], TEAM_BOTS, vec![[0.0, 0.0]]).unwrap();
-    game.world.entities.get_mut::<Bot>(bot).unwrap().aim.skill = skill;
+    let mut mind = game.world.entities.get_mut::<Bot>(bot).unwrap();
+    mind.aim.skill = skill;
+    // Tempers are rolled from the clock: these tests are about what every bot does.
+    mind.temper = Temper::EVEN;
     bot
 }
 
@@ -261,11 +264,13 @@ fn a_better_shot_hits_more() {
         let _ = bot;
         dealt
     };
+    let mut hit_at_all = 0;
     for seed in 1..=4 {
         let (poor, good) = (damage_done(0.0, seed), damage_done(1.0, seed));
         assert!(good > poor * 2, "seed {seed}: skill 1 did {good}, skill 0 did {poor}");
-        assert!(poor > 0, "seed {seed}: skill 0 never hit at all");
+        hit_at_all += poor;
     }
+    assert!(hit_at_all > 0, "skill 0 never hit at all");
 }
 
 #[test]
@@ -546,4 +551,322 @@ fn a_squad_fighting_one_target_does_not_stack_up_on_one_line() {
     }
     let gap = closest(&game, &ids);
     assert!(gap > 1.5, "the closest two are {gap} m apart");
+}
+
+/// A bot of temper `temper` at the origin, and someone 20 m off that it has seen.
+fn in_a_fight(wall: bool, temper: Temper) -> (Game, u32, u32) {
+    let mut game = game(wall);
+    let bot = game.add_bot([0.0, 0.0], TEAM_BOTS, vec![]).unwrap();
+    game.world.entities.get_mut::<Bot>(bot).unwrap().temper = temper;
+    let human = join(&mut game);
+    put(&mut game, human, [0.0, -20.0]);
+    run(&mut game, 0.5);
+    (game, bot, human)
+}
+
+fn shoot_at(game: &mut Game, victim: u32, attacker: u32) {
+    let harm = Harm::new(10, Some(attacker), 0);
+    damage_entity(&mut game.world, victim, harm);
+    game.step();
+}
+
+#[test]
+fn a_round_passing_close_shakes_it_but_one_going_elsewhere_does_not() {
+    let (mut game, bot, human) = in_a_fight(false, Temper::EVEN);
+    let at = feet(&game, bot);
+    let eye = [at[0], at[1], at[2] - 20.0];
+    make_shot(&mut game.world, eye, Some(human), [1.0, 0.0, 0.0]);
+    game.step();
+    assert!(game.world.entities.of::<Bot>(bot).nerve >= 0.99, "wide of it");
+    make_shot(&mut game.world, eye, Some(human), [0.0, 0.0, 1.0]);
+    game.step();
+    assert!(game.world.entities.of::<Bot>(bot).nerve < 0.95, "right past it");
+}
+
+#[test]
+fn a_teammates_round_does_not_shake_it() {
+    let (mut game, bot, _) = in_a_fight(false, Temper::EVEN);
+    let friend = game.add_bot([0.0, -40.0], TEAM_BOTS, vec![]).unwrap();
+    make_shot(&mut game.world, [0.0, 1.0, -20.0], Some(friend), [0.0, 0.0, 1.0]);
+    game.step();
+    assert!(game.world.entities.of::<Bot>(bot).nerve >= 0.99);
+}
+
+#[test]
+fn nerve_comes_back_with_time() {
+    let (mut game, bot, human) = in_a_fight(false, Temper::EVEN);
+    put(&mut game, human, [0.0, 90.0]);
+    game.world.entities.get_mut::<Bot>(bot).unwrap().nerve = 0.5;
+    run(&mut game, 2.0);
+    assert!(game.world.entities.of::<Bot>(bot).nerve > 0.55);
+}
+
+#[test]
+fn broken_with_no_cover_it_stops_and_goes_flat() {
+    let (mut game, bot, human) = in_a_fight(false, Temper::EVEN);
+    put(&mut game, human, [0.0, -50.0]);
+    game.world.entities.get_mut::<Bot>(bot).unwrap().nerve = 0.1;
+    let start = feet(&game, bot);
+    run(&mut game, 0.5);
+    assert!(game.world.entities.of::<Player>(bot).character.prone, "flat on open ground");
+    assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Pursue, "nowhere to go");
+    assert!(distance_2d(start, feet(&game, bot)) < 1.5, "it does not advance");
+}
+
+#[test]
+fn a_bot_with_no_fear_never_breaks() {
+    let (mut game, bot, _) = in_a_fight(false, Temper { courage: 1.0, aggression: 0.5, patience: 0.5 });
+    game.world.entities.get_mut::<Bot>(bot).unwrap().nerve = 0.0;
+    game.step();
+    let mind = &game.world.entities.of::<Bot>(bot);
+    assert!(!nerve::broken(mind) && !nerve::frozen(mind));
+}
+
+#[test]
+fn the_same_fire_breaks_a_coward_and_not_a_brave_soldier() {
+    let shaken = |courage: f32| {
+        let mut bot = Bot::new([0.0; 2], vec![]);
+        bot.temper.courage = courage;
+        for _ in 0..3 {
+            nerve::shake(&mut bot, 0.2);
+        }
+        nerve::broken(&bot)
+    };
+    assert!(shaken(0.0) && !shaken(0.8));
+}
+
+/// A broken bot of full patience at `[x, z]`, with one round left, and someone unarmed at `threat`.
+fn broken_bot(game: &mut Game, at: [f32; 2], threat: [f32; 2]) -> u32 {
+    let bot = game.add_bot(at, TEAM_BOTS, vec![]).unwrap();
+    game.world.entities.get_mut::<Bot>(bot).unwrap().temper = Temper { courage: 0.0, aggression: 0.5, patience: 1.0 };
+    let human = join(game);
+    put(game, human, threat);
+    game.world.entities.get_mut::<Player>(human).unwrap().hands.hotbar = Default::default();
+    // Calm, it sees only what is in front of it.
+    game.world.entities.get_mut::<Bot>(bot).unwrap().yaw = heading([at[0], 0.0, at[1]], [threat[0], 0.0, threat[1]]);
+    run(game, 0.7);
+    assert!(game.world.entities.of::<Bot>(bot).sight.sees, "it has seen them");
+    game.world.entities.get_mut::<Bot>(bot).unwrap().nerve = 0.0;
+    let slot = game.world.entities.of::<Bot>(bot).slot as usize;
+    game.world.entities.get_mut::<Player>(bot).unwrap().hands.hotbar[slot].ammo = 1;
+    bot
+}
+
+#[test]
+fn broken_by_the_end_of_a_wall_it_gets_behind_it_and_reloads_there() {
+    // The wall runs across x = 10..12 and ends at z = 30, a few steps away.
+    for seed in 1..=8 {
+        let mut game = game(true);
+        game.world.rng = crate::rng::Rng::from_seed(seed);
+        let bot = broken_bot(&mut game, [8.0, 27.0], [-15.0, 27.0]);
+        let mut hidden = false;
+        for _ in 0..(8 * TICK_RATE) {
+            game.step();
+            let mind = game.world.entities.of::<Bot>(bot);
+            hidden |= mind.mode == BotMode::Cover && feet(&game, bot)[0] > 12.0 && feet(&game, bot)[2] < 30.0;
+            if hidden {
+                break;
+            }
+        }
+        assert!(hidden, "seed {seed}: ended at {:?}, {:?}", feet(&game, bot), game.world.entities.of::<Bot>(bot).mode);
+        run(&mut game, 3.0);
+        assert!(game.world.entities.of::<Player>(bot).held().ammo > 1, "seed {seed}: reloaded behind the wall");
+    }
+}
+
+#[test]
+fn the_far_side_of_a_wall_too_long_to_get_round_is_no_cover() {
+    for seed in 1..=8 {
+        let mut game = game(true);
+        game.world.rng = crate::rng::Rng::from_seed(seed);
+        let bot = broken_bot(&mut game, [8.0, 0.0], [-10.0, 0.0]);
+        run(&mut game, 2.0);
+        assert_ne!(game.world.entities.of::<Bot>(bot).mode, BotMode::Cover, "seed {seed}");
+        assert!(game.world.entities.of::<Player>(bot).character.prone, "seed {seed}: flat where it is");
+    }
+}
+
+#[test]
+fn it_comes_out_of_cover_once_steady() {
+    let mut game = game(false);
+    let bot = game.add_bot([0.0, 0.0], TEAM_BOTS, vec![]).unwrap();
+    {
+        let mut mind = game.world.entities.get_mut::<Bot>(bot).unwrap();
+        mind.mode = BotMode::Cover;
+        mind.mode_left = 1000;
+        mind.cover = Some([0.0, 0.0, 0.0]);
+        mind.sight.last_seen = [20.0, 1.0, 0.0];
+    }
+    run(&mut game, 0.2);
+    let mind = game.world.entities.of::<Bot>(bot);
+    assert_eq!(mind.mode, BotMode::Pursue);
+    assert!(mind.cover.is_none());
+    assert!((mind.sight.last_seen[2]).abs() >= 3.0, "comes out to one side: {:?}", mind.sight.last_seen);
+}
+
+#[test]
+fn its_first_rounds_go_wide_and_walk_in() {
+    let (mut game, bot, human) = in_a_fight(false, Temper { courage: 1.0, aggression: 0.0, patience: 0.5 });
+    game.world.entities.get_mut::<Bot>(bot).unwrap().aim.skill = 1.0;
+    let off = |game: &Game| {
+        let mind = game.world.entities.of::<Bot>(bot);
+        (shared::quant::wrap_angle(mind.yaw - heading(feet(game, bot), feet(game, human)))).abs()
+    };
+    {
+        let mut mind = game.world.entities.get_mut::<Bot>(bot).unwrap();
+        mind.aim.side = [1.0, 0.0];
+        mind.aim.tracked = 0;
+    }
+    run(&mut game, 0.2);
+    let early = off(&game);
+    run(&mut game, 3.0);
+    let late = off(&game);
+    assert!(early > 0.03, "wide at first: {early}");
+    assert!(late < 0.02, "on them later: {late}");
+}
+
+#[test]
+fn it_dies_calm_of_mind() {
+    let (mut game, bot, human) = in_a_fight(false, Temper::EVEN);
+    game.world.entities.get_mut::<Bot>(bot).unwrap().nerve = 0.1;
+    shoot_at(&mut game, bot, human);
+    game.world.entities.get_mut::<Bot>(bot).unwrap().cover = Some([1.0, 0.0, 1.0]);
+    damage_entity(&mut game.world, bot, Harm::new(250, Some(human), 0));
+    game.step();
+    game.step();
+    let mind = game.world.entities.of::<Bot>(bot);
+    assert_eq!((mind.nerve, mind.cover), (1.0, None));
+}
+
+#[test]
+fn tempers_are_rolled_and_some_are_fanatics() {
+    let mut game = game(false);
+    let ids: Vec<u32> = (0..MAX_BOTS).filter_map(|_| game.add_bot([0.0, 0.0], TEAM_BOTS, vec![])).collect();
+    let tempers: Vec<Temper> = ids.iter().map(|&id| game.world.entities.of::<Bot>(id).temper).collect();
+    assert!(tempers.iter().any(|t| t.courage < 0.3) && tempers.iter().any(|t| t.courage > 0.6));
+    assert!(tempers.iter().all(|t| t.aggression >= 0.0 && t.aggression < 1.0));
+}
+
+#[test]
+fn it_can_hit_someone_lying_down() {
+    let mut game = game(false);
+    game.world.rng = crate::rng::Rng::from_seed(5);
+    let bot = guard(&mut game, 1.0);
+    let human = join(&mut game);
+    put(&mut game, human, [0.0, -20.0]);
+    let mut struck = 0;
+    for seq in 1..=6 * TICK_RATE {
+        game.handle(Command::Input(human, 0, vec![InputFrame { seq, buttons: BUTTON_PRONE, ..Default::default() }]));
+        game.step();
+        let health = game.world.entities.of::<crate::entities::Health>(human).hp;
+        struck = struck.max(u32::from(PLAYER_MAX_HP - health));
+        game.world.entities.get_mut::<crate::entities::Health>(human).unwrap().hp = PLAYER_MAX_HP;
+    }
+    assert!(game.world.entities.of::<Player>(human).character.prone && game.world.entities.of::<Bot>(bot).sight.sees);
+    assert!(struck > 0, "never hit them");
+}
+
+/// `count` steady bots of skill 0 in a line 30 m from someone unarmed at the origin, all facing them.
+fn crowd_on(game: &mut Game, count: usize) -> (u32, Vec<u32>) {
+    game.world.rng = crate::rng::Rng::from_seed(9);
+    let human = join(game);
+    put(game, human, [0.0, 0.0]);
+    game.world.entities.get_mut::<Player>(human).unwrap().hands.hotbar = Default::default();
+    let bots: Vec<u32> = (0..count)
+        .map(|n| {
+            let id = guard(game, 0.0);
+            put(game, id, [(n as f32 - count as f32 / 2.0) * 4.0, -30.0]);
+            let mut mind = game.world.entities.get_mut::<Bot>(id).unwrap();
+            mind.home = [(n as f32 - count as f32 / 2.0) * 4.0, -30.0];
+            mind.route = vec![mind.home];
+            mind.yaw = std::f32::consts::PI;
+            id
+        })
+        .collect();
+    (human, bots)
+}
+
+fn keep_alive(game: &mut Game, human: u32, seconds: f32) {
+    for _ in 0..(seconds * TICK_RATE as f32) as u32 {
+        game.world.entities.get_mut::<crate::entities::Health>(human).unwrap().hp = PLAYER_MAX_HP;
+        game.step();
+    }
+}
+
+fn with_role(game: &Game, bots: &[u32], role: Role) -> Vec<u32> {
+    bots.iter().copied().filter(|&id| game.world.entities.of::<Bot>(id).role == role).collect()
+}
+
+#[test]
+fn only_a_few_of_a_crowd_attack_and_the_rest_keep_busy() {
+    let mut game = game(false);
+    let (human, bots) = crowd_on(&mut game, 8);
+    keep_alive(&mut game, human, 2.0);
+    let attackers = with_role(&game, &bots, Role::Attacker);
+    let distant = attackers.iter().filter(|&&id| distance_2d(feet(&game, id), feet(&game, human)) > 8.0).count();
+    assert!(distant <= 2, "{distant} attackers at skill 0");
+    assert_eq!(with_role(&game, &bots, Role::Flanker).len(), 2);
+    assert!(!with_role(&game, &bots, Role::Suppressor).is_empty());
+}
+
+#[test]
+fn a_squad_no_bigger_than_its_tokens_all_attack() {
+    let mut game = game(false);
+    let (human, bots) = crowd_on(&mut game, 2);
+    keep_alive(&mut game, human, 2.0);
+    assert_eq!(with_role(&game, &bots, Role::Attacker).len(), 2);
+}
+
+#[test]
+fn an_attacker_dying_hands_its_token_on() {
+    let mut game = game(false);
+    let (human, bots) = crowd_on(&mut game, 8);
+    keep_alive(&mut game, human, 1.5);
+    let waiting = with_role(&game, &bots, Role::Suppressor);
+    for id in with_role(&game, &bots, Role::Attacker) {
+        damage_entity(&mut game.world, id, Harm::new(PLAYER_MAX_HP, Some(human), 0));
+    }
+    keep_alive(&mut game, human, 1.0);
+    assert!(waiting.iter().any(|&id| game.world.entities.of::<Bot>(id).role == Role::Attacker), "someone stepped up");
+}
+
+#[test]
+fn a_flanker_gets_round_the_side_and_is_next_for_a_token() {
+    let mut game = game(false);
+    let (human, bots) = crowd_on(&mut game, 8);
+    keep_alive(&mut game, human, 1.5);
+    let flankers = with_role(&game, &bots, Role::Flanker);
+    assert_eq!(flankers.len(), 2);
+    keep_alive(&mut game, human, 9.0);
+    let round = flankers.iter().filter(|&&id| feet(&game, id)[2] > -12.0 || game.world.entities.of::<Bot>(id).role == Role::Attacker).count();
+    assert!(round > 0, "at {:?}", flankers.iter().map(|&id| feet(&game, id)).collect::<Vec<_>>());
+}
+
+#[test]
+fn right_next_to_the_target_a_bot_fights_token_or_no_token() {
+    let mut game = game(false);
+    let (human, bots) = crowd_on(&mut game, 8);
+    keep_alive(&mut game, human, 1.0);
+    let waiting = with_role(&game, &bots, Role::Suppressor)[0];
+    put(&mut game, waiting, [3.0, 3.0]);
+    keep_alive(&mut game, human, 0.8);
+    assert_eq!(game.world.entities.of::<Bot>(waiting).role, Role::Attacker);
+}
+
+#[test]
+fn a_suppressor_does_little_harm_for_its_noise() {
+    let mut game = game(false);
+    let (human, bots) = crowd_on(&mut game, 8);
+    keep_alive(&mut game, human, 1.5);
+    for id in with_role(&game, &bots, Role::Attacker).into_iter().chain(with_role(&game, &bots, Role::Flanker)) {
+        game.world.entities.remove::<Bot>(id);
+        game.world.entities.get_mut::<Player>(id).unwrap().hands.hotbar = Default::default();
+    }
+    let mut taken = 0u32;
+    for _ in 0..3 * TICK_RATE {
+        game.world.entities.get_mut::<crate::entities::Health>(human).unwrap().hp = PLAYER_MAX_HP;
+        game.step();
+        taken += u32::from(PLAYER_MAX_HP - game.world.entities.of::<crate::entities::Health>(human).hp);
+    }
+    assert!(taken < PLAYER_MAX_HP as u32, "took {taken}");
 }

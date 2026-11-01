@@ -27,12 +27,12 @@ agrees with the server. No dice are rolled: the same hit on the same part always
 
 ## Where a round lands
 
-The hurtbox is still the one capsule, 0.35 m in radius. Where on it a round struck is worked out in
+The hurtbox is one capsule, 0.43 m in radius, 0.3 m shorter while crouched, with the zones below 0.3 m lower. Lying down it is a capsule on its side along the heading, 1.7 m long and 0.76 m thick (`PRONE_HURT_HALF_LENGTH`, `PRONE_HURT_RADIUS`), its centre 0.3 m off the ground. Where on it a round struck is worked out in
 the soldier's own frame (`limb_at`):
 
 | zone | standing | lying down |
 |---|---|---|
-| head | above `HEAD_ZONE_Y` | the same |
+| head | above `HEAD_ZONE_Y` | past `HEAD_ZONE_Y` towards the front |
 | leg | below `HIP_ZONE_Y`, 0.1 m under the capsule centre (about 0.75 m up) | the back of the body |
 | arm | between hip and head, `ARM_ZONE_X` (0.25 m) or more out to the side | out to the side at the front |
 | torso | everything else | everything else |

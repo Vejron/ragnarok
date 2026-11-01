@@ -6,10 +6,10 @@
 use shared::vec3;
 use super::Mechanic;
 use super::combat::{position_of, ray_capsule, same_team};
-use crate::entities::{DropOnDeath, Health, Home, Hurtbox, NetId, Respawn, Respawned, Trail, Transform, With};
+use crate::entities::{DropOnDeath, Health, Home, Hurtbox, NetId, Posture, Respawn, Respawned, Trail, Transform, With};
 use crate::events;
 use crate::game::{Damaged, Died, Player, World};
-use shared::consts::{MAX_REWIND_TICKS, SEATED_CENTRE_DROP, SEATED_HALF_HEIGHT, SEATED_HEAD_ZONE, SEATED_RADIUS};
+use shared::consts::{CROUCH_DROP, MAX_REWIND_TICKS, PRONE_HURT_HALF_LENGTH, PRONE_HURT_RADIUS, SEATED_CENTRE_DROP, SEATED_HALF_HEIGHT, SEATED_HEAD_ZONE, SEATED_RADIUS};
 use shared::protocol::{
     PART_HEAD, PART_TORSO, DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_EGG, WEAPON_GRENADE, WEAPON_LOITER, WEAPON_ROADKILL, WEAPON_ROCKET,
     WEAPON_AP, WEAPON_SHELL, WEAPON_WRECK,
@@ -31,9 +31,10 @@ pub(super) fn open_ground(world: &World, x: f32, z: f32) -> Option<f32> {
     ((floor - ground).abs() < 0.5).then_some(floor)
 }
 
-/// What a round or a blast can meet of a living entity, where it is (or was): an upright capsule
-/// (`half_height` above and below `centre`, plus `radius`), the head above `head_y` if it has one, the
-/// point a hit on it is shown at, and the vehicle it sits in, if it sits in one.
+/// What a round or a blast can meet of a living entity, where it is (or was): a capsule (`half_height`
+/// either way along `axis` from `centre`, plus `radius`), upright unless it is lying down, the head
+/// past `head_y` along that axis if it has one, the point a hit on it is shown at, and the vehicle it
+/// sits in, if it sits in one.
 #[derive(Clone, Copy, Debug)]
 pub struct Body {
     /// The point it hangs from (see [`anchor`]): where a soldier is drawn from.
@@ -41,9 +42,52 @@ pub struct Body {
     pub centre: [f32; 3],
     pub half_height: f32,
     pub radius: f32,
+    pub axis: [f32; 3],
+    /// Which way its head lies, when it lies down.
+    pub lying: Option<f32>,
     pub head_y: Option<f32>,
     pub mark: [f32; 3],
+    /// Where the limb zones are measured from: `centre`, or for a crouched soldier as low as the
+    /// crouch took their hips and shoulders.
+    pub zones: [f32; 3],
     pub vehicle: Option<u32>,
+}
+
+const UP: [f32; 3] = [0.0, 1.0, 0.0];
+
+fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+impl Body {
+    /// How far along the ray from `origin` it is first met, within `max`.
+    pub fn ray(&self, origin: [f32; 3], dir: [f32; 3], max: f32) -> Option<f32> {
+        if self.lying.is_none() {
+            return ray_capsule(origin, dir, self.centre, self.half_height, self.radius, max);
+        }
+        // Seen in a frame where it stands up along y, it is the upright capsule at the origin.
+        let side = [self.axis[2], 0.0, -self.axis[0]];
+        let frame = |v: [f32; 3]| [dot(side, v), dot(self.axis, v), v[1]];
+        let from: [f32; 3] = std::array::from_fn(|i| origin[i] - self.centre[i]);
+        ray_capsule(frame(from), frame(dir), [0.0; 3], self.half_height, self.radius, max)
+    }
+
+    /// From the nearest point of the capsule's axis to `point`.
+    pub fn off_axis(&self, point: [f32; 3]) -> [f32; 3] {
+        let to: [f32; 3] = std::array::from_fn(|i| point[i] - self.centre[i]);
+        let along = dot(to, self.axis).clamp(-self.half_height, self.half_height);
+        std::array::from_fn(|i| to[i] - self.axis[i] * along)
+    }
+
+    /// Whether `point` is on its head, when it has one.
+    pub fn is_head(&self, point: [f32; 3]) -> bool {
+        self.head_y.is_some_and(|head| dot(point, self.axis) > head)
+    }
+
+    /// The limb at `point`, for a soldier now facing `yaw`, however it lay when it was struck.
+    pub fn limb_at(&self, yaw: f32, point: [f32; 3]) -> Option<u8> {
+        super::limbs::limb_at(self.zones, self.lying.unwrap_or(yaw), self.lying.is_some(), point)
+    }
 }
 
 /// The point entity `id`'s body hangs from now, and the vehicle it sits in, if the body is out in the
@@ -60,7 +104,9 @@ fn anchor(world: &World, id: u32, transform: Option<&Transform>, player: Option<
 /// Entity `id`'s body as it was `back` ticks ago, if a round can hit it now: alive, with a `Hurtbox`,
 /// and out in the world (see [`anchor`]). Where it was comes from its `Trail`, and is where it is when
 /// the trail does not go back that far, or had it seated then and standing now or the other way round.
-/// Seated, it is the short capsule from the head down to the waist.
+/// Seated, it is the short capsule from the head down to the waist. Crouched, it is as low at the top
+/// by `CROUCH_DROP`, with the feet where they were and the head and the hit mark lower with it. Lying
+/// down, it is a capsule on its side, along the way the soldier faces, with the head at the front.
 pub fn body(world: &World, id: u32, back: u32) -> Option<Body> {
     let hurtbox = world.entities.get::<Hurtbox>(id).filter(|_| world.entities.alive(id))?;
     body_of(world, id, hurtbox, world.entities.get::<Transform>(id), world.entities.get::<Player>(id), world.entities.get::<Trail>(id), back)
@@ -69,16 +115,26 @@ pub fn body(world: &World, id: u32, back: u32) -> Option<Body> {
 /// [`body`], with the living entity's components in hand.
 fn body_of(world: &World, id: u32, hurtbox: &Hurtbox, transform: Option<&Transform>, player: Option<&Player>, trail: Option<&Trail>, back: u32) -> Option<Body> {
     let (now, vehicle) = anchor(world, id, transform, player)?;
-    let at = trail.filter(|_| back > 0).and_then(|trail| trail.at(world.tick.wrapping_sub(back), vehicle.is_some())).unwrap_or(now);
+    let then = trail.filter(|_| back > 0).and_then(|trail| trail.then(world.tick.wrapping_sub(back), vehicle.is_some()));
+    let (at, posture) = then.unwrap_or((now, player.map_or(Posture::Upright, Player::posture)));
     Some(match vehicle {
         None => {
-            let centre = hurtbox.centre(at);
-            let (half_height, radius) = (hurtbox.half_height, hurtbox.radius);
-            Body { anchor: at, centre, half_height, radius, head_y: hurtbox.head.map(|head| centre[1] + head), mark: [centre[0], centre[1] + hurtbox.mark_y, centre[2]], vehicle: None }
+            let upright = hurtbox.centre(at);
+            if let Posture::Lying { yaw } = posture {
+                let axis = [-yaw.sin(), 0.0, -yaw.cos()];
+                let (half_height, radius) = (PRONE_HURT_HALF_LENGTH, PRONE_HURT_RADIUS);
+                let head_y = hurtbox.head.map(|head| dot(upright, axis) + head);
+                return Some(Body { anchor: at, centre: upright, half_height, radius, axis, lying: Some(yaw), head_y, mark: [upright[0], upright[1] + radius, upright[2]], zones: upright, vehicle: None });
+            }
+            let drop = if posture == Posture::Crouched { CROUCH_DROP } else { 0.0 };
+            let lowered = |by: f32| [upright[0], upright[1] - by, upright[2]];
+            let (half_height, radius) = (hurtbox.half_height - drop / 2.0, hurtbox.radius);
+            let zones = lowered(drop);
+            Body { anchor: at, centre: lowered(drop / 2.0), half_height, radius, axis: UP, lying: None, head_y: hurtbox.head.map(|head| zones[1] + head), mark: [zones[0], zones[1] + hurtbox.mark_y, zones[2]], zones, vehicle: None }
         }
         Some(vehicle) => {
             let centre = [at[0], at[1] - SEATED_CENTRE_DROP, at[2]];
-            Body { anchor: at, centre, half_height: SEATED_HALF_HEIGHT, radius: SEATED_RADIUS, head_y: hurtbox.head.map(|_| at[1] - SEATED_HEAD_ZONE), mark: centre, vehicle: Some(vehicle) }
+            Body { anchor: at, centre, half_height: SEATED_HALF_HEIGHT, radius: SEATED_RADIUS, axis: UP, lying: None, head_y: hurtbox.head.map(|_| at[1] - SEATED_HEAD_ZONE), mark: centre, zones: centre, vehicle: Some(vehicle) }
         }
     })
 }
@@ -101,7 +157,7 @@ pub fn first_hurtbox_hit(world: &World, origin: [f32; 3], dir: [f32; 3], max: f3
                 _ => max,
             };
             let limit = best.map_or(reach, |(_, t)| t.min(reach));
-            if let Some(t) = ray_capsule(origin, dir, body.centre, body.half_height, body.radius, limit).and_then(|t| past_lost_limbs(&body, player, super::limbs::lost(world, id), origin, dir, t, limit))
+            if let Some(t) = body.ray(origin, dir, limit).and_then(|t| past_lost_limbs(&body, player, super::limbs::lost(world, id), origin, dir, t, limit))
                 && best.is_none_or(|(other, at)| t < at || (t == at && id < other))
             {
                 best = Some((id, t));
@@ -122,14 +178,11 @@ fn past_lost_limbs(body: &Body, player: Option<&Player>, lost: u8, origin: [f32;
     let mut t = entry;
     while t <= (entry + length).min(limit) {
         let p: [f32; 3] = vec3::along(origin, dir, t);
-        let dy = (p[1] - body.centre[1]).clamp(-body.half_height, body.half_height);
-        let off = [p[0] - body.centre[0], p[1] - body.centre[1] - dy, p[2] - body.centre[2]];
-        let inside = off.iter().map(|v| v * v).sum::<f32>() <= (body.radius + 1e-3).powi(2);
+        let inside = body.off_axis(p).iter().map(|v| v * v).sum::<f32>() <= (body.radius + 1e-3).powi(2);
         if !inside && t > entry + STEP {
             return None;
         }
-        let head = body.head_y.is_some_and(|head| p[1] > head);
-        let gone = !head && super::limbs::limb_at(body.centre, character.yaw, character.prone, p).is_some_and(|limb| lost & limb != 0);
+        let gone = !body.is_head(p) && body.limb_at(character.yaw, p).is_some_and(|limb| lost & limb != 0);
         if inside && !gone {
             return Some(t);
         }
@@ -140,16 +193,16 @@ fn past_lost_limbs(body: &Body, player: Option<&Player>, lost: u8, origin: [f32;
 
 /// Notes where every living body is, once a tick has finished, in its `Trail`.
 pub fn record_trails(world: &mut World) {
-    let frames: Vec<(u32, [f32; 3], bool)> = world
+    let frames: Vec<(u32, [f32; 3], bool, Posture)> = world
         .entities
         .scan::<(&NetId, &Health, Option<&Transform>, Option<&Player>), With<Trail>, _>(|living| {
-            living.filter(|(_, health, ..)| health.alive()).filter_map(|(&NetId(id), _, transform, player)| anchor(world, id, transform, player).map(|(at, vehicle)| (id, at, vehicle.is_some()))).collect()
+            living.filter(|(_, health, ..)| health.alive()).filter_map(|(&NetId(id), _, transform, player)| anchor(world, id, transform, player).map(|(at, vehicle)| (id, at, vehicle.is_some(), player.map_or(Posture::Upright, Player::posture)))).collect()
         })
         .unwrap_or_default();
     let tick = world.tick;
-    for (id, at, seated) in frames {
+    for (id, at, seated, posture) in frames {
         if let Some(mut trail) = world.entities.get_mut::<Trail>(id) {
-            trail.record(tick, at, seated, MAX_REWIND_TICKS as usize);
+            trail.record(tick, at, seated, posture, MAX_REWIND_TICKS as usize);
         }
     }
 }
@@ -162,10 +215,7 @@ pub fn hurtbox_near(world: &World, point: [f32; 3], proximity: f32, ignore: Opti
         .scan::<(&NetId, &Hurtbox, &Health, Option<&Transform>, Option<&Player>), (), _>(|living| {
             living.filter(|&(&NetId(id), _, health, ..)| health.alive() && Some(id) != ignore).any(|(&NetId(id), hurtbox, _, transform, player)| {
                 let Some(body) = body_of(world, id, hurtbox, transform, player, None, 0).filter(|body| body.vehicle.is_none()) else { return false };
-                let c = body.centre;
-                let dy = (point[1] - c[1]).clamp(-body.half_height, body.half_height);
-                let d = [point[0] - c[0], point[1] - c[1] - dy, point[2] - c[2]];
-                d.iter().map(|v| v * v).sum::<f32>() < proximity * proximity
+                body.off_axis(point).iter().map(|v| v * v).sum::<f32>() < proximity * proximity
             })
         })
         .unwrap_or(false)

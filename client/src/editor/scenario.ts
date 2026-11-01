@@ -25,6 +25,8 @@ export interface ScenarioSquad {
   /** Item names, one a slot, at most `MAX_LOADOUT`. Missing: the standard loadout. */
   loadout?: string[]
   respawn?: boolean
+  /** Each 0 to 1, missing 0.5. No temper at all rolls one for each bot. */
+  temper?: { courage?: number; aggression?: number; patience?: number }
   /** Missing in the file counts as none. */
   bots?: Spot[]
   tanks?: Spot[]
@@ -112,6 +114,9 @@ export function validateScenario(scenario: Scenario, inside: (lat: number, lon: 
     if (!name.trim()) add(path, 'needs a name')
     if (!Number.isInteger(squad.team) || squad.team < 1) add(`${path}.team`, 'must be 1 or more')
     if (!(squad.skill >= 0 && squad.skill <= 1)) add(`${path}.skill`, 'must be between 0 and 1')
+    for (const [trait, value] of Object.entries(squad.temper ?? {})) {
+      if (!(value >= 0 && value <= 1)) add(`${path}.temper.${trait}`, 'must be between 0 and 1')
+    }
     if (squad.loadout) {
       if (squad.loadout.length > MAX_LOADOUT) add(`${path}.loadout`, `has at most ${MAX_LOADOUT} items`)
       squad.loadout.forEach((item, i) => {

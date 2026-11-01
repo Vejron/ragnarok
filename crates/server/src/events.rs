@@ -17,12 +17,13 @@ use crate::game::World;
 use bevy_ecs::message::{Message, Messages};
 
 /// Something loud a bot may hear: where it was, who made it (none for a wreck going up, say), and
-/// how far it carries, metres. Walls do not stop it.
+/// how far it carries, metres. Walls do not stop it. A gunshot also says which way the round went.
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub struct Noise {
     pub at: [f32; 3],
     pub by: Option<u32>,
     pub reach: f32,
+    pub line: Option<[f32; 3]>,
 }
 
 /// Entity `victim` lost `lost` health. Sent only when it lost some.

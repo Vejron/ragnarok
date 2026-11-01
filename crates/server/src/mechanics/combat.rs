@@ -1,7 +1,7 @@
 use shared::vec3;
 use super::Mechanic;
 use super::armor::Outcome;
-use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
+use super::bots::{HEAR_BLAST, make_noise, make_shot};
 use super::life::{Harm, blasted, body, damage_entity, first_hurtbox_hit};
 use super::spawn;
 use super::projectiles::{self, Flying, Stage};
@@ -125,7 +125,7 @@ pub fn bearing(at: [f32; 3], from: [f32; 3]) -> i16 {
 /// Whether a round that reaches `t` along `dir` from `origin` hits `victim` (where it stood `back`
 /// ticks ago) in the head.
 pub(super) fn is_headshot(world: &World, victim: u32, origin: [f32; 3], dir: [f32; 3], t: f32, back: u32) -> bool {
-    body(world, victim, back).and_then(|body| body.head_y).is_some_and(|head_y| origin[1] + dir[1] * t > head_y)
+    body(world, victim, back).is_some_and(|body| body.is_head(vec3::along(origin, dir, t)))
 }
 
 /// What a blast does where it lands.
@@ -619,7 +619,7 @@ fn aim(world: &mut World, id: u32, item: &ItemDef) -> Option<Aim> {
 fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     let Some(Aim { origin, dir, vehicle, back }) = aim(world, id, item) else { return };
     let buttons = world.entities.get::<Player>(id).map_or(0, |player| player.input.buttons());
-    make_noise(world, origin, Some(id), HEAR_SHOT);
+    make_shot(world, origin, Some(id), dir);
 
     if item.projectile {
         // The round leaves the eye and flies on its own, so it takes time to arrive and drops a little.

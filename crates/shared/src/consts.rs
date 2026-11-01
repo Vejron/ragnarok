@@ -434,6 +434,12 @@ pub const RESPAWN_TICKS: u32 = 3 * TICK_RATE;
 pub const EYE_HEIGHT: f32 = 0.6;
 /// How far a crouch lowers the eye. The capsule keeps its size, so collision is unchanged.
 pub const CROUCH_EYE_DROP: f32 = 0.3;
+/// How far a crouch lowers the top of the hurtbox, with the head zone and the hips: as far as the eye.
+pub const CROUCH_DROP: f32 = CROUCH_EYE_DROP;
+/// Lying down, the hurtbox is a capsule on its side along the heading, the head at the front: this far
+/// from the centre to the centre of either end, and this thick. 1.7 m long and under 0.8 m high.
+pub const PRONE_HURT_HALF_LENGTH: f32 = 0.47;
+pub const PRONE_HURT_RADIUS: f32 = 0.38;
 /// A prone soldier's eye is 0.2 m above its feet, so this is relative to the capsule centre.
 pub const PRONE_EYE_HEIGHT: f32 = 0.2 - PRONE_CENTRE;
 
