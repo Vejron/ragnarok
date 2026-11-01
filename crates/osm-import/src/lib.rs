@@ -23,6 +23,7 @@ pub mod progress;
 pub mod props;
 pub mod region;
 pub mod roof;
+pub mod species;
 pub mod trees;
 pub mod voxels;
 pub mod water;

@@ -19,7 +19,7 @@
 //! Credentials, data sources and the cache are described in `WORLD.md`.
 
 use osm_import::region::{Place, Region};
-use osm_import::{assemble, bushes, cache, canopy, dem, detail, grid, ground, hydro, ign, lidar, minimap, overpass, paint, progress, roof, trees, voxels, water};
+use osm_import::{assemble, bushes, cache, canopy, dem, detail, grid, ground, hydro, ign, lidar, minimap, overpass, paint, progress, roof, species, trees, voxels, water};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use std::path::PathBuf;
@@ -87,6 +87,9 @@ struct Args {
     /// Shortest tree to take from the laser data, metres above the terrain.
     #[arg(long, default_value_t = canopy::MIN_HEIGHT)]
     min_tree_height: f64,
+    /// Directory of the unpacked NMD2023 species layers (`species.rs`), for Swedish worlds.
+    #[arg(long, default_value = "temp-maps/nmd2023")]
+    species: PathBuf,
     /// Bake the buildings' cubes into a world written before they were (world version 10), in
     /// place: its manifest, and the tiles next to it. Nothing is downloaded.
     #[arg(long)]
@@ -583,7 +586,11 @@ fn main() -> Result<()> {
                 }
             }
         };
-        let mut planted = trees::merge(place.region, register, &detected);
+        // Like the register, a nicety: without it the laser names the trees.
+        let raster = (place.region == Region::Sweden && !detected.is_empty())
+            .then(|| species::Species::open(&args.species, source_window(&args, &place)).inspect_err(|error| eprintln!("no tree species: {error:#}")).ok())
+            .flatten();
+        let mut planted = trees::merge(place.region, register, &detected, raster.as_ref());
         eprintln!("trees: {} from the register, {} from the laser", planted.iter().filter(|t| t.registered).count(), planted.iter().filter(|t| !t.registered).count());
         planted.extend(found_bushes.iter().map(|bush| {
             let (lat, lon) = place.region.degrees(bush.e, bush.n);

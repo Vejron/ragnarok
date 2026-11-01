@@ -190,9 +190,9 @@ fn plant(record: Record) -> Option<Planted> {
 
 /// The register's trees with the laser's: a detected tree within `max(2 m, its crown)` of a
 /// register tree is that tree, keeping the register's species and the laser's measured size; the
-/// rest of the detected trees are added, classified from the laser alone. Detections are in
-/// `region`'s projected coordinates.
-pub fn merge(region: crate::region::Region, register: Vec<Planted>, detected: &[crate::canopy::Detected]) -> Vec<Planted> {
+/// rest of the detected trees are added, named by `species` where it has a mix for them and from the
+/// laser alone elsewhere. Detections are in `region`'s projected coordinates.
+pub fn merge(region: crate::region::Region, register: Vec<Planted>, detected: &[crate::canopy::Detected], species: Option<&crate::species::Species>) -> Vec<Planted> {
     const BIN: f64 = 8.0;
     let bin = |e: f64, n: f64| ((e / BIN).floor() as i64, (n / BIN).floor() as i64);
     let mut grid: std::collections::HashMap<(i64, i64), Vec<usize>> = Default::default();
@@ -223,15 +223,16 @@ pub fn merge(region: crate::region::Region, register: Vec<Planted>, detected: &[
         }
         out.push(tree);
     }
-    for (found, taken) in detected.iter().zip(taken) {
-        if !taken {
-            let (lat, lon) = region.degrees(found.e, found.n);
-            let kind = match region {
-                crate::region::Region::Sweden => crate::canopy::classify(found),
-                crate::region::Region::France => crate::canopy::classify_france(found),
-            };
-            out.push(Planted { lat, lon, kind, height: found.height, crown: found.crown, registered: false });
-        }
+    let rest: Vec<_> = detected.iter().zip(taken).filter(|(_, taken)| !taken).map(|(found, _)| *found).collect();
+    let named = species.map_or_else(|| vec![None; rest.len()], |species| crate::species::assign(&rest, |block| species.shares(block)));
+    eprintln!("trees: {} of the laser's named by NMD, {} from the laser alone", named.iter().flatten().count(), named.iter().filter(|kind| kind.is_none()).count());
+    for (found, kind) in rest.iter().zip(named) {
+        let (lat, lon) = region.degrees(found.e, found.n);
+        let kind = kind.unwrap_or_else(|| match region {
+            crate::region::Region::Sweden => crate::canopy::classify(found),
+            crate::region::Region::France => crate::canopy::classify_france(found),
+        });
+        out.push(Planted { lat, lon, kind, height: found.height, crown: found.crown, registered: false });
     }
     out
 }
@@ -349,7 +350,7 @@ mod tests {
         let (e, n) = crate::dem::sweref99tm(lat, lon);
         let found = |de: f64, dn: f64| Detected { e: e + de, n: n + dn, height: 17.0, crown: 3.0, multi: 0.8, intensity: 650.0, base: 0.45 };
         let register = vec![Planted { lat, lon, kind: TREE_PINE, height: 16.0, crown: 2.5, registered: true }];
-        let merged = merge(crate::region::Region::Sweden, register, &[found(1.0, 0.5), found(30.0, 0.0)]);
+        let merged = merge(crate::region::Region::Sweden, register, &[found(1.0, 0.5), found(30.0, 0.0)], None);
         assert_eq!(merged.len(), 2);
         // The register's species with the laser's size.
         assert_eq!((merged[0].kind, merged[0].height, merged[0].crown), (TREE_PINE, 17.0, 3.0));
