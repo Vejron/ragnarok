@@ -15,7 +15,7 @@
 //! "Car" in the names below means any of these vehicles; [`Spec`] says which one.
 
 use shared::vec3;
-use super::{Obj, Physics};
+use super::{Obj, Physics, RAY_FLOOR, TERRAIN_TOP};
 use rapier3d::control::{DynamicRayCastVehicleController, WheelTuning};
 use rapier3d::prelude::*;
 use shared::consts::*;
@@ -950,14 +950,12 @@ impl Physics {
     /// and bridges do not count, so a helicopter holds its height over the rooftops. 0 on a flat
     /// world, and where the tile under `at` has not streamed in.
     fn terrain_below(&self, at: Vector) -> f32 {
-        const TERRAIN_TOP: f32 = MAX_RELIEF + 10.0;
-        const BED_FLOOR: f32 = 20.0;
         let terrain = |_: ColliderHandle, collider: &Collider| collider.shape().as_heightfield().is_some();
         let filter = QueryFilter::only_fixed().predicate(&terrain);
         let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, filter);
         // From above the highest ground any world may have, so a flier sunk into a hill still finds it.
         let ray = Ray::new(Vector::new(at.x, TERRAIN_TOP, at.z), Vector::new(0.0, -1.0, 0.0));
-        queries.cast_ray(&ray, TERRAIN_TOP + BED_FLOOR, true).map_or(0.0, |(_, distance)| TERRAIN_TOP - distance)
+        queries.cast_ray(&ray, TERRAIN_TOP + RAY_FLOOR, true).map_or(0.0, |(_, distance)| TERRAIN_TOP - distance)
     }
 
     /// How far a ray from `origin` along the unit vector `dir` travels before it hits the world or a

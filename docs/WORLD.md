@@ -10,7 +10,8 @@ Lantmäteriet DTM  ────────┤  terrain heights ──► ground
 Lantmäteriet Hydrografi ──┤  lakes, rivers, streams ► water surface, carved beds
 Lantmäteriet laser ───────┤  roof shapes ──────► buildings' roofs
                           │  canopy ───────────► trees (every tree in the woods too)
-Umeå tree register ───────┘  planted trees ────► archetypes by species
+Umeå tree register ───────┤  planted trees ────► archetypes by species
+NMD2023 species layers ───┘  forest mix ───────► species of the laser's trees
                               │
                       osm-import (assemble) ─► world.msgpack + tiles/{col}_{row}.msgpack
 ```
@@ -40,6 +41,7 @@ Restart the server afterwards: it reads the whole world at start. The importer c
 | `--no-minimap` | Skip `minimap.png`, the pre-rendered top-down map (2048 px, written next to `world.msgpack`) that the client shows as minimap and map. |
 | `--no-lidar-trees` | Only the register's trees: no woods, no garden trees. |
 | `--min-tree-height m` | Shortest tree taken from the laser, default 3 m above the terrain. |
+| `--species dir` | Where the unpacked NMD2023 species layers are, default `temp-maps/nmd2023`. See [Tree species](#tree-species). |
 | `--synthetic` | Offline procedural grid city with hills and a few trees. Needs no network at all. |
 | `--overpass url,url` | Overpass endpoints, tried in order (the public ones are often busy; four mirrors by default, since city-sized boxes failed on two). |
 | `--overpass-chunk m` | Ask Overpass for squares of about this many metres (default 2000) and merge, so a city-sized box doesn't time out. Each square is cached, so an interrupted run resumes. |
@@ -57,6 +59,48 @@ What works with which credentials:
 
 Without credentials the importer says so and builds buildings as boxes; terrain needs `--dem` or
 `--cell 0`.
+
+## Tree species
+
+The laser says where a tree is and how big. In Swedish forest, what it is comes from Naturvårdsverket's
+NMD2023 species layers (CC0, credit "NMD, Naturvårdsverket"), in `species.rs`. A tree from a register
+keeps the register's species, and France does not use the layers.
+
+The layers are one 14 GB download, used locally and not fetched by the importer. Unpack the five that
+are read once, about 10 GB, into the default directory:
+
+```bash
+unzip -j temp-maps/NMD2023_Tradslag_v1_1.zip 'NMD2023_tradslag_tall_v1_1.tif' \
+  'NMD2023_tradslag_gran_v1_1.tif' 'NMD2023_tradslag_trivial_v1_1.tif' \
+  'NMD2023_tradslag_adel_v1_1.tif' 'NMD2023_tradslag_lark_v1_1.tif' -d temp-maps/nmd2023
+```
+
+Without them the importer prints `no tree species` and the laser names every tree, as `canopy::classify`
+always did. It was fitted to Umeå's street trees and makes a pine forest mostly birch, so a world built
+that way is much worse in the woods.
+
+Each pixel is 10 m and holds the crown share of a species, 0-100, or 255 for what is not forest. One
+pixel is off by about 30 points, so the importer reads blocks of 3 × 3 pixels:
+
+1. The block's forest pixels give its mix. With fewer than 3 of them, the block is not a stand and its
+   trees are left to `canopy::classify`. That covers towns, fields and lone trees.
+2. The mix becomes a whole number of trees of each species.
+3. The trees rank among themselves. The dimmest in the laser's near-infrared are the broadleaves, and of
+   the conifers the highest crown bases are the pines. Ranks need no threshold, so they hold across
+   laser flights.
+4. Shape picks the archetype of a deciduous tree: the layers call birch, aspen, alder and rowan all one
+   thing.
+
+**255 in the layers.** The product description says a layer is 0 where it was not made. In fact `adel`
+and `lark` (and `bok`, `ekovradel` and `contorta`, which are not read) have 255 on about a fifth of the
+forest around Umeå, so 255 means "not forest" only in `tall`, `gran` and `trivial`. Read naively, Umeå
+looks like a quarter oak.
+
+There are no archetypes for oak, beech, larch or contorta: noble broadleaves are `TREE_BROADLEAF`, larch
+is `TREE_SPRUCE` and contorta stays in with the pine.
+
+To check a world, `WORLD=kulla cargo test --release -p osm-import world_trees -- --ignored --nocapture`
+prints its trees by kind and a hash of their positions, which a change of species keeps.
 
 ## Which world, and when
 

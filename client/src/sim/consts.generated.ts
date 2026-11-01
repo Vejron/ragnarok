@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 60
+export const PROTOCOL_VERSION = 65
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -137,6 +137,9 @@ export const BUTTON_CHUTE = 1 << 12
 /** One press, at a gun that has two kinds of round: load the other one (Q). Like a jump it is not repeated. */
 export const BUTTON_AMMO = 1 << 13
 
+/** One press: the headlamp on or off (L). Like a jump it is not repeated. */
+export const BUTTON_LAMP = 1 << 14
+
 /** Soldier movement, in metres and seconds. */
 export const WALK_SPEED = 4.0
 export const RUN_SPEED = 7.5
@@ -236,6 +239,9 @@ export const STANCE_CHUTE = 2
 /** Knocked down by a blast: thrown, then lying helpless until `Character::down` runs out (KNOCKDOWN.md). */
 export const STANCE_DOWN = 3
 
+/** Hands up: a bot that has given in. */
+export const STANCE_SURRENDER = 4
+
 /** A blast that throws a soldier at least this hard, m/s, knocks them down. */
 export const KNOCKDOWN_POWER = 7.0
 
@@ -299,6 +305,17 @@ export const AUTOSTEP_MIN_WIDTH = 0.2
  * a slope, metres. Without it, running downhill is a series of small falls.
  */
 export const SNAP_DISTANCE = 0.3
+
+/**
+ * Share of walking speed lost per unit of grade (height over distance) going uphill, and the least
+ * that can leave. A 10% climb costs 15%; the steepest is a slog. Going down costs nothing, and gives
+ * nothing: any faster and a runner leaves the ground.
+ */
+export const SLOPE_CLIMB_DRAG = 1.5
+export const SLOPE_SCALE_MIN = 0.4
+
+/** Further than this above the terrain, metres, a soldier is on a roof or a bridge, and its slope is not theirs. */
+export const SLOPE_MAX_CLEARANCE = 2.0
 
 /** Anything that falls below this is respawned (e.g. a player squeezed through a gap in the mesh). */
 export const KILL_Y = -50.0
@@ -438,6 +455,136 @@ export const BACKPACK_RETURN_SECONDS = 60.0
 /** The `carry` component's value for the backpack. */
 export const CARRY_BACKPACK = 1
 
+/** Skis on: `carry` is a mask of what is worn. */
+export const CARRY_SKIS = 2
+
+/** The headlamp is on. */
+export const CARRY_LAMP = 4
+
+/** Poling hard: on skis on the ground, pushing with run held. */
+export const CARRY_POLING = 8
+
+/** Pull of gravity on a skier's slope, m/s². Real, unlike the game's heavier `GRAVITY` for flight. */
+export const SKI_GRAVITY = 9.81
+
+/** Friction on a groomed track and on loose snow. */
+export const SKI_MU_TRACK = 0.03
+export const SKI_MU_SNOW = 0.08
+
+/** Friction in a groove of a track: the best going there is. */
+export const SKI_MU_GROOVE = 0.022
+
+/** How far each classic groove lies from a track's centre line, metres. */
+export const SKI_GROOVE_OFFSET = 0.8
+
+/** Cosine of how far off a groove skis can point or go and stay in it, or drop into it (28°). */
+export const SKI_GROOVE_HOLD = 0.883
+
+/** How hard a groove draws skis to its line: m/s sideways per metre off it, and the most. */
+export const SKI_GROOVE_PULL = 7.0
+export const SKI_GROOVE_PULL_MAX = 2.5
+
+/** Air drag per (m/s)², upright and in a tuck. */
+export const SKI_DRAG = 0.005
+export const SKI_DRAG_TUCK = 0.0025
+
+/** What the poles put out, W/kg: over speed, it is the push. */
+export const SKI_POWER = 3.0
+
+/** What run held adds to the push from a standstill, m/s². It fades away to nothing at `SKI_BOOST_TOP`. */
+export const SKI_BOOST = 3.5
+
+/** The speed past which poling hard gives no more, m/s: 43 km/h. */
+export const SKI_BOOST_TOP = 12.0
+
+/** The speed a push is worked out from below this: a standing start does not push forever harder. */
+export const SKI_PUSH_MIN_SPEED = 0.6
+
+/** Climbing steeper than this along the skis is a herringbone: stepping up on the inner edges, radians (12°). */
+export const SKI_HERRING_FROM = 0.21
+
+/** The steepest a herringbone gets up, radians: 30° at a walk, 42° with run held. */
+export const SKI_HERRING_SLOPE = 0.524
+export const SKI_HERRING_SLOPE_RUN = 0.733
+
+/** The pace it keeps on easy ground, m/s, walking and with run held. It falls by `SKI_HERRING_SLOWING` at the limit. */
+export const SKI_HERRING_PACE = 1.5
+export const SKI_HERRING_PACE_RUN = 2.4
+export const SKI_HERRING_SLOWING = 0.6
+
+/** How fast a herringbone gets up to its pace, m/s². */
+export const SKI_HERRING_ACCEL = 5.0
+
+/** Skiing hard spends stamina this many times slower than running. */
+export const SKI_STAMINA_SHARE = 3
+export const SKI_MAX_SPEED = 25.0
+
+/** Fastest a skier slides backwards. */
+export const SKI_SLIP_SPEED = 4.0
+export const SKI_JUMP_SPEED = 4.5
+
+/** Gravity on a skier in the air, m/s²: lighter than `GRAVITY`, the game's heavy one for runners. */
+export const SKI_AIR_GRAVITY = 13.0
+
+/** Over a crest the ground ahead is felt this far off, seconds of travel, and from this speed, m/s. */
+export const SKI_CREST_LOOK = 0.12
+export const SKI_CREST_SPEED = 6.0
+
+/** How much the ground's climb rate can fall over that look before the legs cannot follow it, m/s. */
+export const SKI_CREST_DROP = 1.7
+
+/** Slowing a full snowplow adds, m/s², and how much better it holds a turn. */
+export const SKI_PLOW_BRAKE = 3.5
+export const SKI_PLOW_GRIP = 1.6
+
+/** Most sideways acceleration the edges give, m/s²: how fast the velocity follows the skis. */
+export const SKI_GRIP = 7.0
+
+/** Below this the skis are stepped round and the velocity goes where they point, m/s. */
+export const SKI_SHUFFLE_SPEED = 1.5
+
+/** How far strafing turns the skis from the look (the tangent of 45°). */
+export const SKI_STRAFE_TURN = 1.0
+
+/** Too tight: speed × the angle between skis and travel past this (m/s × radians) strains the edges. */
+export const SKI_EDGE = 11.0
+
+/** No speed under this catches an edge, m/s. */
+export const SKI_FALL_MIN_SPEED = 5.0
+
+/** Ticks of strain that are a fall, and how fast it eases off. */
+export const SKI_STRAIN_FALL = 12
+export const SKI_STRAIN_EASE = 2
+
+/** Hardest landing the legs take, m/s across the ground, and how much more in a tuck. */
+export const SKI_LANDING = 8.0
+export const SKI_LANDING_TUCK = 1.3
+
+/** Landing above this speed with the skis more than this off the way they are going is a fall. */
+export const SKI_LANDING_SKEW_SPEED = 6.0
+export const SKI_LANDING_SKEW = 0.524
+
+/** Above this speed, being stopped short by something is a crash, m/s. */
+export const SKI_CRASH_SPEED = 8.0
+
+/** Share of the wanted move that counts as stopped short. */
+export const SKI_CRASH_MOVED = 0.4
+
+/** How far a fall bounces the skier up, m/s. */
+export const SKI_FALL_HOP = 2.5
+
+/** Share of the speed a fall keeps each tick on the ground: a tumble, not a stop. */
+export const SKI_TUMBLE_KEEP = 0.975
+
+/**
+ * Snap to the ground on skis, metres. Under the walkers': at speed a crest falls away faster than
+ * this a tick, and the skier flies.
+ */
+export const SKI_SNAP_DISTANCE = 0.12
+
+/** Fastest skis go on or off, m/s. */
+export const SKI_CLIP_SPEED = 2.0
+
 /** Combat. Every player starts a life with `PLAYER_MAX_HP` and dies at zero. */
 export const PLAYER_MAX_HP = 150
 
@@ -453,6 +600,20 @@ export const EYE_HEIGHT = 0.6
 /** How far a crouch lowers the eye. The capsule keeps its size, so collision is unchanged. */
 export const CROUCH_EYE_DROP = 0.3
 
+/** How far a crouch lowers the top of the hurtbox, with the head zone and the hips: as far as the eye. */
+export const CROUCH_DROP = CROUCH_EYE_DROP
+
+/**
+ * Lying down, the hurtbox is a capsule on its side along the heading, the head at the front: this far
+ * from the centre to the centre of either end, and this thick. 1.7 m long and under 0.8 m high.
+ */
+export const PRONE_HURT_HALF_LENGTH = 0.47
+export const PRONE_HURT_RADIUS = 0.38
+
+/** A whole day and night, seconds, and where in it (0 midnight, 0.5 noon) tick 0 falls. */
+export const DAY_SECONDS = 1800.0
+export const DAY_START_PHASE = 0.36
+
 /** A prone soldier's eye is 0.2 m above its feet, so this is relative to the capsule centre. */
 export const PRONE_EYE_HEIGHT = 0.2 - PRONE_CENTRE
 
@@ -462,7 +623,7 @@ export const PRONE_EYE_HEIGHT = 0.2 - PRONE_CENTRE
  * Mirrors `ON_FOOT_SHOULDER` and `ON_FOOT_HEIGHT` in the client.
  */
 export const ON_FOOT_SHOULDER = 0.6
-export const ON_FOOT_HEIGHT = 0.85
+export const ON_FOOT_HEIGHT = 0.6
 
 /**
  * Building with bricks (`ITEM_BRICKS`, `crate::construct`). Fire puts a cube where the crosshair ray

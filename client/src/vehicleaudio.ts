@@ -236,6 +236,8 @@ interface Candidate {
 export class VehicleSounds {
   private ctx: BaseAudioContext | null = null
   private master: GainNode | null = null
+  /** The hiss of skis on snow, once somebody here has skied. */
+  private skiHiss: { filter: BiquadFilterNode; gain: GainNode } | null = null
   private bank: SampleBank | null = null
   private readonly voices = new Map<number, Voice>()
   private readonly candidates: Candidate[] = []
@@ -562,6 +564,37 @@ export class VehicleSounds {
       VehicleSounds.ping(ctx, out, t, 'sawtooth', 220, 90, 0.6, 0.3, 0.05)
       VehicleSounds.ping(ctx, out, t, 'square', 1300, 600, 0.2, 0.2, 0.03)
     })
+  }
+
+  /** A ski pole going into the snow: a dry little crunch. */
+  polePlant(at: Vec3) {
+    this.emit(at, 0.2, (ctx, out, t) => {
+      VehicleSounds.burst(ctx, out, t, 'bandpass', 2600, 900, 0.09, 0.16)
+      VehicleSounds.burst(ctx, out, t, 'lowpass', 500, 180, 0.07, 0.12)
+    })
+  }
+
+  /** Skis running over snow at `speed` m/s, heard as the skier hears them; 0 stops it. */
+  glide(speed: number) {
+    const ctx = this.ready()
+    if (!ctx || !this.master) return
+    if (!this.skiHiss && speed > 0) {
+      const noise = ctx.createBufferSource()
+      noise.buffer = noiseBuffer(ctx)
+      noise.loop = true
+      const filter = ctx.createBiquadFilter()
+      filter.type = 'bandpass'
+      filter.Q.value = 0.7
+      const gain = ctx.createGain()
+      gain.gain.value = 0
+      noise.connect(filter).connect(gain).connect(this.master)
+      noise.start()
+      this.skiHiss = { filter, gain }
+    }
+    if (!this.skiHiss) return
+    const pace = Math.min(speed / 20, 1)
+    this.skiHiss.filter.frequency.setTargetAtTime(700 + 2600 * pace, ctx.currentTime, 0.08)
+    this.skiHiss.gain.gain.setTargetAtTime(0.22 * Math.sqrt(pace), ctx.currentTime, 0.08)
   }
 
   /** A walker's foot coming down: a heavy thump under a dull metal clank. `weight` is 0..1. */

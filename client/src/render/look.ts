@@ -95,10 +95,15 @@ export const SOFT: Palette = {
   sky: 0xb3dcf4,
   hemiSky: 0xeaf4ff,
   hemiGround: 0x9bb871,
-  hemiIntensity: 1.5,
+  hemiIntensity: 1.25,
   sun: 0xfff0d6,
-  sunIntensity: 1.8,
+  sunIntensity: 2.0,
   toneMapping: 'neutral',
   exposure: 1,
   shadowRadius: 4,
+}
+
+/** `palette` under a snowy overcast: a paler sky, light thrown back up off the snow, and a sun that does not blow it out. */
+export function wintry(palette: Palette): Palette {
+  return { ...palette, sky: 0xc9d9e6, hemiSky: 0xeaf1f8, hemiGround: 0xe6ecf3, hemiIntensity: palette.hemiIntensity * 1.8, sunIntensity: palette.sunIntensity * 0.85, exposure: palette.exposure }
 }

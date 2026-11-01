@@ -31,8 +31,10 @@ export const ITEM_BRICKS = 11
 export const ITEM_CARL_GUSTAF = 12
 /** An anti-tank rifle: one hard-cored round at a time, through a tank's thin rear, roof and slits. */
 export const ITEM_AT_RIFLE = 13
+/** Skis: used, they go on or off when standing about. Worn whatever is in hand. */
+export const ITEM_SKIS = 14
 
-export type ItemKind = 'gun' | 'grenade' | 'heal' | 'drone' | 'flare' | 'build' | 'launcher'
+export type ItemKind = 'gun' | 'grenade' | 'heal' | 'drone' | 'flare' | 'build' | 'launcher' | 'skis'
 
 export interface ItemDef {
   name: string
@@ -86,6 +88,7 @@ const PRESENTATION: Record<number, Presentation> = {
   [ITEM_BRICKS]: { stance: 'hold', sound: 'rifle' },
   [ITEM_CARL_GUSTAF]: { stance: 'shoulder', sound: 'sniper' },
   [ITEM_AT_RIFLE]: { stance: 'rifle', sound: 'sniper' },
+  [ITEM_SKIS]: { stance: 'hold', sound: 'rifle' },
 }
 
 /** The server's rows, as the generated table has them. */

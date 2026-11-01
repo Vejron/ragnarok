@@ -3,7 +3,7 @@ import { Predictor } from '@/sim/predict'
 import { SimMotor, type CharacterState, type Stepper, type Vec3 } from '@/sim/motor'
 import { heightIn, type TileGround } from '@/sim/terrain'
 import { f32 } from '@/sim/round'
-import { BUTTON_JUMP, BUTTON_PRONE, BUTTON_RUN, PRONE_CENTRE, PRONE_SPEED, STANDING_Y, TANK_HALF_EXTENTS, TICK_DT, TICK_RATE, WALK_SPEED } from '@/sim/consts'
+import { BUTTON_CROUCH, BUTTON_JUMP, BUTTON_PRONE, BUTTON_RUN, PRONE_CENTRE, PRONE_SPEED, STANDING_Y, TANK_HALF_EXTENTS, TICK_DT, TICK_RATE, WALK_SPEED } from '@/sim/consts'
 import { KIND_JEEP, KIND_TANK, type InputFrame } from '@/net/codec'
 import { flatMotor, manifestBytes, tileBytes } from './worlds'
 
@@ -17,7 +17,7 @@ beforeAll(async () => {
 })
 const stepCharacter = (step: Stepper, state: CharacterState, input: InputFrame, dt: number, speedScale = 1) => step(state, input, dt, speedScale)
 
-const standing = (): CharacterState => ({ position: [0, STANDING_Y, 0], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0, down: 0 })
+const standing = (): CharacterState => ({ position: [0, STANDING_Y, 0], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0, down: 0, skis: false, skiStrain: 0 })
 const forward = (seq: number, buttons = 0): InputFrame => ({ seq, strafe: 0, forward: 127, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 })
 
 /** What the server would compute: the same inputs from the same start. */
@@ -48,7 +48,7 @@ describe('Predictor', () => {
     predictor.acknowledge(3)
     expect(predictor.pendingCount).toBe(2)
     // The server stepped the player out at seq 3 and reports where; 4 and 5 walk on from there.
-    const outside: CharacterState = { position: [10, STANDING_Y, 10], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0, down: 0 }
+    const outside: CharacterState = { position: [10, STANDING_Y, 10], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0, down: 0, skis: false, skiStrain: 0 }
     predictor.reconcile(3, outside)
     const expected = [forward(4), forward(5)].reduce((state, input) => stepCharacter(flat, state, input, TICK_DT), outside)
     expect(predictor.state.position).toEqual(expected.position)
@@ -144,7 +144,7 @@ describe('knockback and cars', () => {
     const idle = (seq: number): InputFrame => ({ seq, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 })
     for (let seq = 1; seq <= 6; seq++) predictor.apply(idle(seq))
     // By input 3 a car had thrown the player 4 m/s towards +X and up.
-    const hit: CharacterState = { position: [0.2, STANDING_Y + 0.3, 0], yaw: 0, vy: 3, grounded: false, knock: [4, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0, down: 0 }
+    const hit: CharacterState = { position: [0.2, STANDING_Y + 0.3, 0], yaw: 0, vy: 3, grounded: false, knock: [4, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0, down: 0, skis: false, skiStrain: 0 }
     predictor.reconcile(3, hit)
     const expected = [4, 5, 6].reduce((state, seq) => stepCharacter(flat, state, idle(seq), TICK_DT), hit)
     expect(predictor.state.position).toEqual(expected.position)
@@ -269,12 +269,31 @@ describe('cross-language terrain', () => {
       [30, [-0.018, 50.4969, 36.2721]],
       [60, [-0.0733, 50.7774, 32.5448]],
       [120, [-0.2956, 46.428, 25.0937]],
-      [240, [-0.4475, 45.1152, 21.4872]],
+      [240, [-0.4372, 45.1150, 21.4867]],
     ])
     for (let seq = 1; seq <= 240; seq++) {
       const buttons = seq === 50 ? BUTTON_RUN | BUTTON_JUMP : seq < 150 ? BUTTON_RUN : 0
       const input = { seq, strafe: (seq % 5) * 10 - 20, forward: seq < 150 ? 127 : 0, yaw: Math.trunc(seq / 3) % 200, buttons, pitch: 0, view: 0, slot: 0 }
       state = motor.step(state, input, TICK_DT)
+      const expected = checkpoints.get(seq)
+      if (!expected) continue
+      state.position.forEach((value, axis) => expect(Math.abs(value - expected[axis]!), `tick ${seq} axis ${axis}`).toBeLessThan(0.01))
+    }
+  })
+
+  it('WASM prediction on skis lands where the native server does', async () => {
+    const motor = await SimMotor.create(manifestBytes(100, 200, 5))
+    motor.addTile({ col: 0, row: 0 }, tileBytes({ ground: ramp().heights }))
+    let state: CharacterState = { ...standing(), position: [1.3, heightIn(ramp(), 1.3, 61.7) + STANDING_Y, 61.7], skis: true }
+    // `SKI_CHECKPOINTS` in crates/sim/src/tests.rs.
+    const checkpoints = new Map<number, Vec3>([
+      [60, [1.2015, 59.3078, 60.4792]],
+      [120, [0.8157, 58.3169, 57.7560]],
+      [240, [-0.3172, 55.2653, 49.3722]],
+    ])
+    for (let seq = 1; seq <= 240; seq++) {
+      const buttons = seq === 70 ? BUTTON_JUMP : seq >= 100 && seq < 180 ? BUTTON_CROUCH : 0
+      state = motor.step(state, { seq, strafe: 0, forward: seq >= 180 ? -127 : 0, yaw: (seq * 2) % 300, buttons, pitch: 0, view: 0, slot: 0 }, TICK_DT)
       const expected = checkpoints.get(seq)
       if (!expected) continue
       state.position.forEach((value, axis) => expect(Math.abs(value - expected[axis]!), `tick ${seq} axis ${axis}`).toBeLessThan(0.01))

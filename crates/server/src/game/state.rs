@@ -53,6 +53,12 @@ pub fn starting_hotbar() -> [ItemSlot; HOTBAR_SLOTS] {
 #[derive(crate::entities::Component)]
 pub struct Player {
     pub character: Character,
+    /// The headlamp is on.
+    pub lamp: bool,
+    /// `BUTTON_LAMP` was down last tick: holding it switches the lamp once.
+    pub lamp_held: bool,
+    /// Hands up: a bot that has given in.
+    pub surrendered: bool,
     /// While seated the soldier is hidden and rides with the vehicle; input drives the seat.
     pub seat: Option<Seat>,
     /// Ticks until a car can hit this player again.
@@ -124,6 +130,58 @@ pub enum BotMode {
     Pursue,
     /// Lost them: looking round where they were last seen.
     Search,
+    /// Shaken, or out of rounds: getting out of sight, and staying there a while.
+    Cover,
+    /// Given in: hands up, waiting to see what happens.
+    Surrender,
+    /// Lying still, waiting for someone to come close.
+    PlayDead,
+}
+
+impl BotMode {
+    /// Whether it is set on this, and neither what it hears nor whom it sees changes that.
+    pub fn committed(self) -> bool {
+        matches!(self, Self::Cover | Self::Surrender | Self::PlayDead)
+    }
+}
+
+/// What a bot does in a fight shared with others (see `bots::tokens`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    /// Holds a token, or needs none: fights to kill.
+    Attacker,
+    /// Running round to the target's side.
+    Flanker,
+    /// In sight of the target with no token: stays put and fires wide.
+    Suppressor,
+    /// Out of sight with no token: waits a way off for a place to open.
+    Holder,
+}
+
+/// What kind of soldier a bot is, each from 0 to 1. Skill says how well it shoots; this says what
+/// it does about being shot at.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Temper {
+    /// How much it takes before it breaks. At 1 it never does.
+    pub courage: f32,
+    /// How close it comes before it stops to fight.
+    pub aggression: f32,
+    /// How readily it crouches, lies down and takes cover to reload, and how long it stays there.
+    pub patience: f32,
+}
+
+/// One bot in this many has no fear at all.
+const FANATIC_ONE_IN: f32 = 16.0;
+
+impl Temper {
+    /// Middling in every way.
+    pub const EVEN: Self = Self { courage: 0.5, aggression: 0.5, patience: 0.5 };
+
+    /// A temper of its own, each trait from `draw`, a random number in 0..1.
+    pub fn rolled(mut draw: impl FnMut() -> f32) -> Self {
+        let courage = if draw() < 1.0 / FANATIC_ONE_IN { 1.0 } else { draw() * 0.9 };
+        Self { courage, aggression: draw(), patience: draw() }
+    }
 }
 
 /// The mind of a bot. Its body is the `Player` with the same id; `Bots` writes that player's input
@@ -157,6 +215,29 @@ pub struct Bot {
     pub hit_from: Option<[f32; 3]>,
     /// The vehicle it crews and its seat there, when it is one of a tank's crew.
     pub crew: Option<Crew>,
+    /// What kind of soldier it is.
+    pub temper: Temper,
+    /// How steady it is, 1 calm to 0 shaken (see `bots::nerve`).
+    pub nerve: f32,
+    /// How many limbs it has lost so far, to notice the next.
+    pub limbs: u32,
+    /// The stance it fights in (`BUTTON_CROUCH`, `BUTTON_PRONE` or 0), and ticks until it thinks again.
+    pub pose: u16,
+    pub pose_left: u32,
+    /// The point it is taking cover at, and ticks until it may look for cover again.
+    pub cover: Option<[f32; 3]>,
+    pub cover_wait: u32,
+    /// What it does in a shared fight, and ticks left on its token.
+    pub role: Role,
+    pub token_left: u32,
+    /// The point it is flanking to and ticks left to get there, and whether it has got there and
+    /// is next in line for a token.
+    pub flank: Option<[f32; 3]>,
+    pub flank_left: u32,
+    pub flanked: bool,
+    /// Ticks left of stopping to look about at a waypoint, and its walking pace there, an axis value.
+    pub pause_left: u32,
+    pub pace: i8,
 }
 
 /// What a bot knows of whom it is after.
@@ -170,6 +251,8 @@ pub struct Sight {
     pub velocity: [f32; 3],
     /// Whether the target was in sight at the last look.
     pub sees: bool,
+    /// How far it has taken in whoever is in view, 0 to 1: at 1 it has seen them (see `bots::senses`).
+    pub aware: f32,
 }
 
 /// How a bot finds its way.
@@ -201,6 +284,8 @@ pub struct Aim {
     pub tracked: u32,
     /// How far off its aim is, yaw and pitch, radians: drawn afresh at every look.
     pub error: [f32; 2],
+    /// Which way its first rounds go wide, yaw and pitch, before they walk onto the target.
+    pub side: [f32; 2],
     /// Ticks left of holding the trigger down, then of letting it go, for a gun that fires in bursts.
     pub burst: u32,
     pub pause: u32,
@@ -225,12 +310,26 @@ impl Bot {
             pitch: 0.0,
             sight: Sight::default(),
             walk: Walk { best: f32::MAX, stalled: 0, path: Vec::new(), path_to: [0.0; 2], replan_in: 0, reverse_left: 0, tries: 0 },
-            aim: Aim { skill: DEFAULT_SKILL, react: 0, tracked: 0, error: [0.0; 2], burst: 0, pause: 0 },
+            aim: Aim { skill: DEFAULT_SKILL, react: 0, tracked: 0, error: [0.0; 2], side: [0.0; 2], burst: 0, pause: 0 },
             slot: 0,
             strafe: 0,
             strafe_left: 0,
             hit_from: None,
             crew: None,
+            temper: Temper::EVEN,
+            nerve: 1.0,
+            limbs: 0,
+            pose: 0,
+            pose_left: 0,
+            cover: None,
+            cover_wait: 0,
+            role: Role::Attacker,
+            token_left: 0,
+            flank: None,
+            flank_left: 0,
+            flanked: false,
+            pause_left: 0,
+            pace: 127,
         }
     }
 }
@@ -257,6 +356,9 @@ impl Player {
             input: InputFrame::default(),
             inputs: JitterBuffer::default(),
             ack: 0,
+            lamp: false,
+            lamp_held: false,
+            surrendered: false,
             hands: Hands { hotbar: loadout, loadout, selected: 0, fire_cooldown: 0, reload_left: 0, channel_left: 0, trigger_held: false },
             score: Tally::default(),
             name,
@@ -276,6 +378,25 @@ impl Player {
     /// The slot in hand.
     pub fn held(&self) -> ItemSlot {
         self.hands.hotbar[self.hands.selected.min(HOTBAR_SLOTS - 1)]
+    }
+
+    /// Whether the soldier is down in a crouch, kneeling over a drone's controls included: not lying
+    /// down, hanging under a canopy, or with a leg gone, which rules a crouch out.
+    pub fn crouched(&self) -> bool {
+        let c = &self.character;
+        (self.input.buttons() & BUTTON_CROUCH != 0 || self.seat.is_some()) && !c.prone && !c.chute && c.down == 0 && c.lost & LIMB_LEGS == 0
+    }
+
+    /// How the soldier holds themself, for a round to meet.
+    pub fn posture(&self) -> crate::entities::Posture {
+        use crate::entities::Posture;
+        let c = &self.character;
+        match (c.prone, c.down > 0) {
+            (true, _) => Posture::Lying { yaw: c.yaw },
+            (false, true) => Posture::Down { yaw: c.yaw },
+            _ if self.crouched() => Posture::Crouched,
+            _ => Posture::Upright,
+        }
     }
 
     /// Where the soldier's eye is, for the stance they are in.

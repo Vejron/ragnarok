@@ -102,11 +102,11 @@ pub fn limb_at(centre: [f32; 3], yaw: f32, prone: bool, point: [f32; 3]) -> Opti
 /// hit: none for a head or the body, anyone seated (their legs are inside), or a creature.
 pub fn limb_struck(world: &World, victim: u32, point: [f32; 3], back: u32) -> Option<u8> {
     let body = body(world, victim, back).filter(|body| body.vehicle.is_none())?;
-    if body.head_y.is_some_and(|head| point[1] > head) {
+    if body.is_head(point) {
         return None;
     }
     let player = world.entities.get::<Player>(victim)?;
-    let limb = limb_at(body.centre, player.character.yaw, player.character.prone, point)?;
+    let limb = body.limb_at(player.character.yaw, point)?;
     // A round goes on through where a limb was (`past_lost_limbs`), so it seldom stops there; when it
     // does, by a hair, it is the body's.
     (lost(world, victim) & limb == 0).then_some(limb)
@@ -117,7 +117,7 @@ pub fn limb_struck(world: &World, victim: u32, point: [f32; 3], back: u32) -> Op
 fn limb_near(world: &World, victim: u32, point: [f32; 3]) -> Option<u8> {
     let body = body(world, victim, 0).filter(|body| body.vehicle.is_none())?;
     let player = world.entities.get::<Player>(victim)?;
-    let [x, y, _] = local(body.centre, player.character.yaw, point);
+    let [x, y, _] = local(body.zones, player.character.yaw, point);
     let arm = !player.character.prone && y >= HIP_ZONE_Y;
     let lost = lost(world, victim);
     // The one on the blast's side, or the other if that one is gone.

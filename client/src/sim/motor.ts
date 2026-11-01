@@ -28,6 +28,10 @@ export interface CharacterState {
   lost: number
   /** Ticks of knockdown left: thrown by a blast and lying helpless, counted on the ground (KNOCKDOWN.md). */
   down: number
+  /** On skis: `knock` is all the speed, and walking is off. */
+  skis: boolean
+  /** Ticks the skis have been too far across the way they are going. */
+  skiStrain: number
 }
 
 /** One tick of a soldier: what `Predictor` runs, and replays on reconciling. */
@@ -122,7 +126,7 @@ export type Obstacle = Pick<VehiclePose, 'id' | 'x' | 'y' | 'z' | 'qx' | 'qy' | 
  */
 export class SimMotor {
   /** The character as the WASM side reads and writes it (`sim-wasm`'s layout). */
-  private readonly scratch = new Float64Array(15)
+  private readonly scratch = new Float64Array(17)
 
   private constructor(private readonly sim: ClientSim) {}
 
@@ -314,8 +318,10 @@ export class SimMotor {
       s[12] = state.winded ? 1 : 0
       s[13] = state.lost
       s[14] = state.down
+      s[15] = state.skis ? 1 : 0
+      s[16] = state.skiStrain
       this.sim.stepCharacter(s, input.seq, input.strafe, input.forward, input.yaw, input.buttons, input.pitch, input.view, input.slot, dt, speedScale)
-      return { position: [s[0]!, s[1]!, s[2]!], yaw: s[3]!, vy: s[4]!, grounded: s[5] === 1, knock: [s[6]!, s[7]!], ride: s[8]!, prone: s[9] === 1, chute: s[10] === 1, spent: s[11]!, winded: s[12] === 1, lost: s[13]!, down: s[14]! }
+      return { position: [s[0]!, s[1]!, s[2]!], yaw: s[3]!, vy: s[4]!, grounded: s[5] === 1, knock: [s[6]!, s[7]!], ride: s[8]!, prone: s[9] === 1, chute: s[10] === 1, spent: s[11]!, winded: s[12] === 1, lost: s[13]!, down: s[14]!, skis: s[15] === 1, skiStrain: s[16]! }
     })
   }
 

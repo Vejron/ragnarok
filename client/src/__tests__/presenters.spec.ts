@@ -69,7 +69,7 @@ describe('the soldiers presenter', () => {
     const avatars = { draw: (id: number) => bodies.get(id) ?? bodies.set(id, body()).get(id)! }
     const shadows: number[][] = []
     const presenters = new Presenters<Frame>()
-    const soldiers = presenters.add(new Soldiers({ avatars: avatars as never, blobFoot: (x, y, z) => shadows.push([x, y, z]), wade: () => {} }))
+    const soldiers = presenters.add(new Soldiers({ avatars: avatars as never, blobFoot: (x, y, z) => shadows.push([x, y, z]), wade: () => {}, skiRun: () => {}, headlamp: () => {} }))
     const store = new EntityStore()
     // Flags: grounded | crouching | holding item 2; lying down. And a dead one, and the local player.
     const crouched: Components = { kind: { kind: 0 }, place: { x: 100, y: 90, z: 0 }, heading: { yaw: 500 }, flags: { flags: 1 | 4 | (2 << 3), stance: 1 }, motion: { vy: 0, knock_x: 900, knock_z: 0 } }

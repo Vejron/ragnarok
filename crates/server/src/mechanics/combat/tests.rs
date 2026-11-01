@@ -27,7 +27,7 @@ fn join(game: &mut Game) -> (u32, mpsc::Receiver<Outgoing>) {
 
 /// The camera is above and to the right of the eye, so a shooter aims a little down to put the
 /// crosshair on a target 20 m away at the same height.
-const AIM_20M: f32 = -0.0425;
+const AIM_20M: f32 = -ON_FOOT_HEIGHT / 20.0;
 
 /// How a player aims with `slot` in hand: a gun's crosshair on a target 20 m away, anything else level.
 fn aim_for(game: &Game, id: u32, slot: usize) -> f32 {
@@ -1702,4 +1702,152 @@ fn a_soldier_sniped_limb_by_limb_lives_and_rounds_go_through_where_the_limbs_wer
     sniper_round(&mut game, shooter, [x + 10.0, y + 0.2, z], [-1.0, 0.0, 0.0]);
     assert_eq!(hp_of(&game, target), PLAYER_MAX_HP - def(ITEM_SNIPER).unwrap().damage);
     assert!(game.world.entities.alive(target));
+}
+
+/// Someone standing at the origin, and the height of their capsule's centre.
+fn target(game: &mut Game) -> (u32, f32) {
+    let (id, inbox) = join(game);
+    std::mem::forget(inbox);
+    let mut player = game.world.entities.get_mut::<Player>(id).unwrap();
+    player.character.position = [0.0, STANDING_Y, 0.0];
+    player.character.chute = false;
+    (id, STANDING_Y)
+}
+
+fn crouch(game: &mut Game, id: u32, down: bool) {
+    game.world.entities.get_mut::<Player>(id).unwrap().input = InputFrame { buttons: if down { BUTTON_CROUCH } else { 0 }, ..Default::default() };
+}
+
+/// What a level round at height `y`, coming along x, meets.
+fn struck_at(game: &Game, y: f32) -> Option<u32> {
+    crate::mechanics::life::first_hurtbox_hit(&game.world, [-5.0, y, 0.0], [1.0, 0.0, 0.0], 10.0, None, 0, None).map(|(id, _)| id)
+}
+
+#[test]
+fn a_round_over_a_crouching_soldiers_head_misses_and_one_at_their_feet_does_not() {
+    let mut game = game();
+    let (id, centre) = target(&mut game);
+    let top = centre + CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS;
+    let (over, chest, shins) = (top - 0.15, centre - 0.1, centre - 0.7);
+    assert_eq!([over, chest, shins].map(|y| struck_at(&game, y)), [Some(id); 3], "on their feet");
+    crouch(&mut game, id, true);
+    assert_eq!([over, chest, shins].map(|y| struck_at(&game, y)), [None, Some(id), Some(id)], "crouched");
+}
+
+#[test]
+fn crouching_lowers_the_head_the_mark_and_the_limbs_with_the_feet_where_they_were() {
+    let mut game = game();
+    let (id, centre) = target(&mut game);
+    let up = crate::mechanics::life::body(&game.world, id, 0).unwrap();
+    crouch(&mut game, id, true);
+    let down = crate::mechanics::life::body(&game.world, id, 0).unwrap();
+    assert!((up.head_y.unwrap() - down.head_y.unwrap() - CROUCH_DROP).abs() < 1e-5);
+    assert!((up.mark[1] - down.mark[1] - CROUCH_DROP).abs() < 1e-5);
+    let feet = |b: &crate::mechanics::life::Body| b.centre[1] - b.half_height;
+    assert!((feet(&up) - feet(&down)).abs() < 1e-5);
+    // A point just below the standing hips is above the crouching ones.
+    let point = [0.05, centre + HIP_ZONE_Y - 0.1, 0.0];
+    assert!(crate::mechanics::limbs::limb_at(up.zones, 0.0, false, point).is_some());
+    assert_eq!(crate::mechanics::limbs::limb_at(down.zones, 0.0, false, point), None);
+}
+
+#[test]
+fn a_lagging_shooter_hits_the_crouch_they_saw() {
+    let mut game = game();
+    let (id, _) = target(&mut game);
+    let mut seq = 0;
+    settle(&mut game, id, &mut seq);
+    hold(&mut game, id, &mut seq, 0.0, BUTTON_CROUCH, 4);
+    hold(&mut game, id, &mut seq, 0.0, 0, 4);
+    let height = |game: &Game, back: u32| crate::mechanics::life::body(&game.world, id, back).unwrap().half_height;
+    let (up, down) = (CAPSULE_HALF_HEIGHT, CAPSULE_HALF_HEIGHT - CROUCH_DROP / 2.0);
+    assert_eq!(height(&game, 0), up, "on their feet again");
+    assert!((1..=8).any(|back| (height(&game, back) - down).abs() < 1e-5), "as they were when the shooter saw them");
+}
+
+#[test]
+fn lying_down_or_a_lost_leg_is_no_crouch() {
+    let mut game = game();
+    let (id, _) = target(&mut game);
+    crouch(&mut game, id, true);
+    assert!(game.world.entities.of::<Player>(id).crouched());
+    game.world.entities.get_mut::<Player>(id).unwrap().character.lost = LIMB_LEG_L;
+    assert!(!game.world.entities.of::<Player>(id).crouched());
+    let mut player = game.world.entities.get_mut::<Player>(id).unwrap();
+    player.character.lost = 0;
+    player.character.prone = true;
+    assert!(!player.crouched());
+}
+
+/// Someone lying at the origin facing -Z, with `hold` having put them down as a client would.
+fn lying(game: &mut Game) -> (u32, [f32; 3]) {
+    let (id, _) = target(game);
+    let mut seq = 0;
+    settle(game, id, &mut seq);
+    hold(game, id, &mut seq, 0.0, BUTTON_PRONE, 4);
+    let player = game.world.entities.of::<Player>(id);
+    assert!(player.character.prone);
+    (id, player.character.position)
+}
+
+fn ray_hits(game: &Game, id: u32, from: [f32; 3], dir: [f32; 3]) -> bool {
+    crate::mechanics::life::body(&game.world, id, 0).unwrap().ray(from, dir, 20.0).is_some()
+}
+
+#[test]
+fn a_soldier_lying_down_is_long_and_low() {
+    let mut game = game();
+    let (id, c) = lying(&mut game);
+    let east = [1.0, 0.0, 0.0];
+    assert!(ray_hits(&game, id, [-5.0, c[1], c[2]], east), "across the middle");
+    assert!(ray_hits(&game, id, [-5.0, c[1], c[2] + 0.7], east), "across the legs, behind the centre");
+    assert!(ray_hits(&game, id, [-5.0, c[1], c[2] - 0.7], east), "across the head, ahead of it");
+    assert!(!ray_hits(&game, id, [-5.0, c[1] + 0.5, c[2]], east), "over the back");
+    assert!(!ray_hits(&game, id, [-5.0, c[1], c[2] + 1.0], east), "past the feet");
+    assert!(ray_hits(&game, id, [0.0, c[1], -5.0], [0.0, 0.0, 1.0]), "head on");
+    assert!(ray_hits(&game, id, [0.0, 5.0, c[2] + 0.6], [0.0, -1.0, 0.0]), "from above, on the legs");
+}
+
+#[test]
+fn it_turns_as_the_soldier_does() {
+    let mut game = game();
+    let (id, c) = lying(&mut game);
+    game.world.entities.get_mut::<Player>(id).unwrap().character.yaw = std::f32::consts::FRAC_PI_2;
+    // Facing -X, it lies along x now.
+    assert!(!ray_hits(&game, id, [-5.0, c[1], c[2] + 0.7], [1.0, 0.0, 0.0]));
+    assert!(ray_hits(&game, id, [c[0] + 0.7, c[1], -5.0], [0.0, 0.0, 1.0]));
+}
+
+#[test]
+fn the_head_of_someone_lying_down_is_at_the_front_and_the_legs_at_the_back() {
+    let mut game = game();
+    let (id, c) = lying(&mut game);
+    let body = crate::mechanics::life::body(&game.world, id, 0).unwrap();
+    assert!(body.is_head([c[0], c[1], c[2] - 0.6]));
+    assert!(!body.is_head([c[0], c[1] + 0.3, c[2]]), "the back is no head, however high");
+    assert!(!body.is_head([c[0], c[1], c[2] + 0.6]));
+    assert!(matches!(body.limb_at(0.0, [c[0] + 0.1, c[1], c[2] + 0.5]), Some(LIMB_LEG_L | LIMB_LEG_R)));
+}
+
+#[test]
+fn a_lagging_shooter_hits_them_lying_as_they_lay() {
+    let mut game = game();
+    let (id, _) = lying(&mut game);
+    game.world.entities.get_mut::<Player>(id).unwrap().character.prone = false;
+    let was_lying = |back: u32| crate::mechanics::life::body(&game.world, id, back).unwrap().lying.is_some();
+    assert!(!was_lying(0), "up again");
+    assert!(was_lying(2), "as the shooter saw them");
+}
+
+#[test]
+fn knocked_down_a_soldier_is_low_and_flat_where_they_lie() {
+    let mut game = game();
+    let (id, centre) = target(&mut game);
+    game.world.entities.get_mut::<Player>(id).unwrap().character.down = 30;
+    let body = crate::mechanics::life::body(&game.world, id, 0).unwrap();
+    assert!(body.lying.is_some());
+    let floor = centre - STAND_CENTRE;
+    assert!((body.centre[1] - (floor + PRONE_CENTRE)).abs() < 1e-4);
+    assert_eq!(struck_at(&game, floor + 1.0), None, "over them");
+    assert_eq!(struck_at(&game, floor + 0.3), Some(id));
 }

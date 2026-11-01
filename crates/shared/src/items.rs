@@ -32,8 +32,11 @@ pub const ITEM_CARL_GUSTAF: u8 = 12;
 /// An anti-tank rifle: one hard-cored round at a time, which goes through a tank's sides, turret sides
 /// and rear (not its front), a Strv S's sides and casemate, or a Pak's shield (`crate::armor`).
 pub const ITEM_AT_RIFLE: u8 = 13;
+/// Skis: used, they go on or off when standing about (`crate::ski`). Worn whatever is in hand. The last
+/// id but one that fits `FLAG_HELD`.
+pub const ITEM_SKIS: u8 = 14;
 /// One past the largest item id.
-pub const ITEM_COUNT: u8 = 14;
+pub const ITEM_COUNT: u8 = 15;
 
 /// What a soldier carries, a slot each, unless their player chose otherwise (`can_start_with`).
 pub const STANDARD_LOADOUT: [u8; HOTBAR_SLOTS] = [ITEM_AK5, ITEM_SNIPER, ITEM_FLARE, ITEM_DRONE, ITEM_BRICKS];
@@ -54,6 +57,8 @@ pub enum ItemKind {
     Build,
     /// Fires a rocket from the eye towards the crosshair, or along the look down its sight.
     Launcher,
+    /// Goes on the feet, or comes off them.
+    Skis,
 }
 
 /// How a hitscan round loses damage with distance: all of it up to `start` metres, then a straight
@@ -343,6 +348,28 @@ const FLARE: ItemDef = ItemDef {
     weight: 2,
 };
 
+const SKIS: ItemDef = ItemDef {
+    name: "Skis",
+    kind: ItemKind::Skis,
+    auto: false,
+    damage: 0,
+    cooldown_ticks: TICK_RATE / 2,
+    mag: 0,
+    reload_ticks: 0,
+    range: 0.0,
+    spread: 0.0,
+    projectile: false,
+    pellets: 1,
+    falloff: Falloff::NONE,
+    pen: Pen::NONE,
+    aim_speed: 1.0,
+    scope: false,
+    stack: 1,
+    weapon: WEAPON_RIFLE,
+    // Everyone in a winter world has them; they are never scattered.
+    weight: 0,
+};
+
 const BRICKS: ItemDef = ItemDef {
     name: "Bricks",
     kind: ItemKind::Build,
@@ -438,6 +465,7 @@ pub fn def(item: u8) -> Option<&'static ItemDef> {
         ITEM_BRICKS => Some(&BRICKS),
         ITEM_CARL_GUSTAF => Some(&CARL_GUSTAF),
         ITEM_AT_RIFLE => Some(&AT_RIFLE),
+        ITEM_SKIS => Some(&SKIS),
         _ => None,
     }
 }
@@ -560,6 +588,7 @@ mod tests {
                     ItemKind::Flare => "flare",
                     ItemKind::Build => "build",
                     ItemKind::Launcher => "launcher",
+                    ItemKind::Skis => "skis",
                 };
                 format!(
                     "    {{\"id\": {id}, \"name\": \"{}\", \"kind\": \"{kind}\", \"auto\": {}, \"damage\": {}, \"cooldownTicks\": {}, \"mag\": {}, \"reloadTicks\": {}, \"range\": {}, \"aimSpeed\": {}, \"scope\": {}, \"stack\": {}, \"weapon\": {}, \"projectile\": {}, \"pellets\": {}, \"falloffStart\": {}, \"falloffEnd\": {}, \"falloffMin\": {}, \"spread\": {}}}",
@@ -686,7 +715,7 @@ mod tests {
         for item in 1..ITEM_COUNT {
             let d = def(item).unwrap_or_else(|| panic!("item {item} has no definition"));
             assert!(d.stack >= 1);
-            assert!(d.weight > 0 || item == ITEM_GOLDEN_EGG || item == ITEM_BRICKS);
+            assert!(d.weight > 0 || item == ITEM_GOLDEN_EGG || item == ITEM_BRICKS || item == ITEM_SKIS);
             assert!(d.aim_speed > 0.0 && d.aim_speed <= 1.0);
         }
         assert!(def(ITEM_COUNT).is_none());

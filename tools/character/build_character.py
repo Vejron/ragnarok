@@ -46,6 +46,8 @@ def arg(name, default=None):
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = arg("--out", os.path.normpath(os.path.join(HERE, "../../client/public/models/player.glb")))
 PREVIEW = arg("--preview")
+# Only the preview shots whose names start with this.
+ONLY = arg("--only", "")
 
 FPS = 60
 
@@ -1040,6 +1042,116 @@ def sit(t):
         pose_rot(f"foot_{side}", 0.72, 0, 0)
 
 
+# --------------------------------------------------------------------------------------------------
+# On skis. Forward is -Y. The hands are placed by `reach`, the poles being drawn in them by the client.
+# --------------------------------------------------------------------------------------------------
+def ski_body(lean, legs):
+    """Bent forward `lean` from the hips and up the spine, the head kept up to look ahead, on `legs`:
+    (side, swing, knee, spread) each, a thigh swung `swing` forward of straight down whatever the
+    hips are doing, the knee bent `knee`. The hips come down until the lower foot is on the ski, which
+    stays flat under it: with `knee` twice `swing` the ankle is right under the hip, the shin leaning
+    into the boot as it does on skis."""
+    hip = lean * 0.45
+    thigh, shin = HIP_Z - KNEE_Z, KNEE_Z - ANKLE_Z
+    drop = min(thigh * (1 - math.cos(swing)) + shin * (1 - math.cos(knee - swing)) for _, swing, knee, _ in legs)
+    pose_loc("hips", (0, 0, -drop))
+    pose_rot("hips", hip, 0, 0)
+    pose_rot("spine", lean * 0.3, 0, 0)
+    pose_rot("chest", lean * 0.25, 0, 0)
+    pose_rot("head", -lean * 0.8, 0, 0)
+    for side, swing, knee, spread in legs:
+        s = 1 if side == "L" else -1
+        pose_rot(f"thigh_{side}", -swing - hip, -s * (0.05 + spread), 0)
+        pose_rot(f"shin_{side}", knee, 0, 0)
+        pose_rot(f"foot_{side}", swing - knee, 0, 0)
+
+
+def ski_hand(side, ahead, down, out=0.16):
+    """The wrist `ahead` of its shoulder and `down` below it, `out` to its side, gripping the pole."""
+    bpy.context.view_layer.update()
+    shoulder = arm_obj.pose.bones[f"upper_arm_{side}"].head
+    wide = 1 if shoulder.x > 0 else -1
+    reach(side, shoulder + Vector((wide * out, -ahead, -down)), FLAT_HAND[side], Vector((wide * 0.5, 0.7, -0.2)))
+
+
+def ski_glide(t):
+    """Gliding, easy, tipped a little forward over the feet."""
+    breath = 0.02 * math.sin(TAU * t)
+    ski_body(0.3, [("L", 0.2 + breath, 0.42 + 2 * breath, 0), ("R", 0.2 + breath, 0.42 + 2 * breath, 0)])
+    for side in ("L", "R"):
+        ski_hand(side, 0.2, 0.42)
+
+
+def ski_stride(reach_out, kick, lean):
+    """Diagonal stride: a long kick behind, the opposite arm reaching `reach_out` with the pole."""
+
+    def fn(t):
+        phi = TAU * t
+        legs = []
+        for side, offset in (("L", 0.0), ("R", math.pi)):
+            s = math.sin(phi + offset)
+            legs.append((side, 0.14 + kick * s, 0.34 + 0.4 * max(0.0, s) + 0.2 * max(0.0, math.cos(phi + offset)), 0))
+        ski_body(lean + 0.04 * math.cos(2 * phi), legs)
+        for side, offset in (("L", 0.0), ("R", math.pi)):
+            s = math.sin(phi + offset)
+            ski_hand(side, 0.14 - reach_out * s, 0.34 + 0.12 * s)
+
+    return fn
+
+
+def ski_pole(reach_out, drive, fold):
+    """Double poling: arms `reach_out` ahead, then the whole body folding `fold` on them, driving `drive` back."""
+
+    def fn(t):
+        phi = TAU * t
+        crunch = 0.5 - 0.5 * math.cos(phi)
+        swing = 0.16 + 0.2 * crunch
+        ski_body(0.2 + fold * crunch, [("L", swing, swing * 2, 0), ("R", swing, swing * 2, 0)])
+        for side in ("L", "R"):
+            ski_hand(side, reach_out - (reach_out + drive) * crunch, 0.2 + 0.36 * crunch)
+
+    return fn
+
+
+def ski_climb(t):
+    """Herringbone: bent into the hill, stepping each ski up and out with the knee high, the opposite pole
+    driving from behind. The client splays the skis in their V."""
+    phi = TAU * t
+    legs = []
+    for side, offset in (("L", 0.0), ("R", math.pi)):
+        s = math.sin(phi + offset)
+        step = max(0.0, s)
+        legs.append((side, 0.3 + 0.55 * step - 0.12 * max(0.0, -s), 0.6 + 0.95 * step, 0.26))
+    ski_body(0.85 + 0.05 * math.sin(2 * phi), legs)
+    pose_rot("hips", 0.85 * 0.45, 0, 0.1 * math.sin(phi))
+    for side, offset in (("L", 0.0), ("R", math.pi)):
+        ski_hand(side, 0.1 + 0.32 * math.sin(phi + offset), 0.42, out=0.3)
+
+
+def ski_tuck(t):
+    """The tuck: down on the thighs with the chest low over them, the hands tucked in under the chin."""
+    wob = 0.012 * math.sin(TAU * t)
+    ski_body(1.2, [("L", 0.95 + wob, 1.9 + 2 * wob, 0), ("R", 0.95 + wob, 1.9 + 2 * wob, 0)])
+    for side in ("L", "R"):
+        ski_hand(side, 0.26, 0.2, out=0.0)
+
+
+def ski_plow(t):
+    """The snowplow: knees in, tails pushed wide, weight forward on the shins."""
+    wob = 0.01 * math.sin(TAU * t)
+    ski_body(0.35, [("L", 0.42 + wob, 0.84 + 2 * wob, 0.32), ("R", 0.42 + wob, 0.84 + 2 * wob, 0.32)])
+    for side in ("L", "R"):
+        ski_hand(side, 0.26, 0.34, out=0.24)
+
+
+def ski_air(t):
+    """In the air: skis together, knees soft, hands out for balance."""
+    wob = 0.03 * math.sin(TAU * t)
+    ski_body(0.4, [("L", 0.34, 0.68, 0), ("R", 0.34, 0.68, 0)])
+    for side in ("L", "R"):
+        ski_hand(side, 0.18 + wob, 0.3, out=0.32)
+
+
 # One crawl cycle, two pushes, at 60 fps.
 CRAWL_FRAMES = 78
 
@@ -1086,6 +1198,17 @@ def build_actions():
     # Up again after being knocked flat: one off the back, one off the belly.
     bake("getup_back", 54, getup_back, loop=False)
     bake("getup_front", 54, getup_front, loop=False)
+    # The arms are on the poles, whatever is carried: every stance's.
+    bake("ski_glide", 120, ski_glide)
+    bake("ski_stride", 54, ski_stride(0.42, 0.5, 0.5))
+    bake("ski_pole", 60, ski_pole(0.46, 0.4, 0.75))
+    # Poling hard: the same with everything thrown into it.
+    bake("ski_stride_hard", 54, ski_stride(0.62, 0.66, 0.68))
+    bake("ski_pole_hard", 60, ski_pole(0.64, 0.62, 1.05))
+    bake("ski_climb", 54, ski_climb)
+    bake("ski_tuck", 120, ski_tuck)
+    bake("ski_plow", 120, ski_plow)
+    bake("ski_air", 60, ski_air)
     reset_pose()
     arm_obj.animation_data.action = bpy.data.actions["idle"]
 
@@ -1168,6 +1291,8 @@ def preview(directory):
     }
 
     def shoot(name, view):
+        if not name.startswith(ONLY):
+            return
         pos, target = views[view]
         cam.location = pos
         cam.rotation_euler = (target - pos).to_track_quat("-Z", "Y").to_euler()
@@ -1181,6 +1306,10 @@ def preview(directory):
     at("idle", 0)
     for v in views:
         shoot(f"idle_{v}", v)
+    for clip, frames in (("ski_glide", 1), ("ski_stride", 54), ("ski_pole", 60), ("ski_stride_hard", 54), ("ski_pole_hard", 60), ("ski_climb", 54), ("ski_tuck", 1), ("ski_plow", 1), ("ski_air", 1)):
+        for i in range(1 if frames == 1 else 4):
+            at(clip, i * frames // 4)
+            shoot(f"{clip}_{i}", "side")
     for clip, frames in (("walk_fwd", 36), ("walk_right", 36), ("run_fwd", 24), ("run_left", 24)):
         for i in range(4):
             at(clip, i * frames // 4)

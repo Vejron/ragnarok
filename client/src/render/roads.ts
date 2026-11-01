@@ -1,4 +1,5 @@
 import { ROAD_MAJOR, ROAD_MINOR, ROAD_PATH, type Road } from '@/world'
+import { winter } from './season'
 import { toneOf, type GroundShade } from './shade'
 
 /*
@@ -12,6 +13,13 @@ const ROAD_COLORS: Record<number, [number | null, number]> = {
   [ROAD_MAJOR]: [0xc9a86a, 0xfff1c9],
   [ROAD_MINOR]: [0xbdbdbd, 0xffffff],
   [ROAD_PATH]: [null, 0xd8b98a],
+}
+/** Ploughed: packed snow with a little grit in it. */
+const WINTER_ROAD_COLORS: Record<number, [number | null, number | null]> = {
+  [ROAD_MAJOR]: [0xc6ccd4, 0xd8dde3],
+  [ROAD_MINOR]: [0xd5dae1, 0xe4e8ed],
+  // Paths lie under the snow: where one is skied, its ski track is what shows.
+  [ROAD_PATH]: [null, null],
 }
 /** How much wider than the road its casing is, metres. */
 const CASING = 0.8
@@ -171,7 +179,7 @@ export function roadRibbons(roads: readonly Road[], shade: GroundShade, border: 
   const out: Ribbon[] = []
   for (const pass of [0, 1] as const) {
     for (const kind of [ROAD_PATH, ROAD_MINOR, ROAD_MAJOR]) {
-      const colors = ROAD_COLORS[kind]!
+      const colors = (winter ? WINTER_ROAD_COLORS : ROAD_COLORS)[kind]!
       const color = colors[pass]
       if (color === null || color === undefined) continue
       const rank = RANK[kind]!

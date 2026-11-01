@@ -12,10 +12,10 @@ use anyhow::Result;
 use bytes::Bytes;
 use shared::carve::{Cut, Shell, Tri};
 use shared::consts::*;
-use shared::items::{HOTBAR_SLOTS, STANDARD_LOADOUT, def};
+use shared::items::{HOTBAR_SLOTS, ITEM_SKIS, STANDARD_LOADOUT, def};
 use shared::protocol::*;
 use shared::quant::{from_cm, pack_quat, to_axis, to_cm, to_cm_i16, to_milli_i16, to_mrad};
-use shared::world::{Building, ObjId, Tree, WorldFile};
+use shared::world::{Building, ObjId, THEME_WINTER, Tree, WorldFile};
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
@@ -187,7 +187,11 @@ impl Game {
         if outbox.try_send(Outgoing::Reliable(welcome.into())).is_err() {
             return None;
         }
-        let loadout = profile.loadout.map_or_else(starting_hotbar, hotbar_of);
+        let mut loadout = profile.loadout.map_or_else(starting_hotbar, hotbar_of);
+        // In the snow everyone has skis, whatever they chose: they take the place of the last item.
+        if self.world.map.theme == THEME_WINTER && loadout.iter().all(|slot| slot.item != ITEM_SKIS) {
+            loadout[HOTBAR_SLOTS - 1] = ItemSlot { item: ITEM_SKIS, count: 1, ammo: 0 };
+        }
         let name = if profile.name.is_empty() { format!("Player {id}") } else { profile.name };
         let color = profile.color.unwrap_or((id % PLAYER_COLOR_COUNT as u32) as u8);
         let spawns = profile.spawns.into_iter().filter(|&point| crate::mechanics::spawn_usable(&self.world.map, point)).collect();
@@ -240,7 +244,8 @@ impl Game {
         // One outfit per team, so a squad reads as one.
         let color = team.wrapping_mul(5) % PLAYER_COLOR_COUNT;
         self.world.entities.spawn(id, Player::new(name, color, team, vec![home.map(to_cm)], starting_hotbar()));
-        self.world.entities.insert(id, (soldier_life(), Bot::new(home, route)));
+        let temper = Temper::rolled(|| self.world.rng.next_f64() as f32);
+        self.world.entities.insert(id, (soldier_life(), Bot { temper, ..Bot::new(home, route) }));
         for mechanic in &mut self.mechanics {
             mechanic.on_join(&mut self.world, id);
         }

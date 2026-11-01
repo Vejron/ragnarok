@@ -1,3 +1,4 @@
+import { winter } from './season'
 import { Geometry, Group, Material, Mesh, planeGeometry, type Node } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
 import type { TileGround } from '@/sim/terrain'
@@ -50,12 +51,18 @@ export function replaceRibbons(group: Group, ribbons: readonly Ribbon[]) {
 /** Every tile's buildings share this one; each vertex carries its colour. */
 const buildingMaterial = toonMaterial({ vertexColors: true })
 
+/** Puts snow on the roofs. Done once, when the manifest says it is winter, before any tile is drawn. */
+export function snowOnBuildings() {
+  buildingMaterial.snow = true
+  buildingMaterial.needsUpdate()
+}
+
 /**
  * The grass, as one plane under the whole world: the ground of a flat world, and on a hilly one
  * what shows through where a tile has not streamed in yet. `y` sits it just under the terrain.
  */
 export function buildGround(halfExtent: number, y = 0): Mesh {
-  const ground = new Mesh(planeGeometry(halfExtent * 2, halfExtent * 2), toonMaterial({ color: GRASS_COLOR, craters: true }))
+  const ground = new Mesh(planeGeometry(halfExtent * 2, halfExtent * 2), toonMaterial({ color: GRASS_COLOR, craters: true, snow: winter }))
   ground.position.y = y
   ground.receiveShadow = true
   return ground
@@ -70,7 +77,7 @@ function buildTerrain(tile: Pick<TileData, 'cover' | 'detail'>, ground: TileGrou
   const { x0, z0, cell, side } = ground
   const map = cover === undefined ? bakeTerrainTexture(tile, x0, z0, cell * (side - 1)) : cover ? coverTexture(cover) : null
   const normalMap = reliefTexture(terrain.relief)
-  const mesh = new Mesh(new Geometry(terrain.buffers), toonMaterial({ ...(map ? { map } : { color: GRASS_COLOR }), normalMap, normalMapTone: true, ramp: TERRAIN_RAMP, craters: true }))
+  const mesh = new Mesh(new Geometry(terrain.buffers), toonMaterial({ ...(map ? { map } : { color: GRASS_COLOR }), normalMap, normalMapTone: true, ramp: TERRAIN_RAMP, craters: true, snow: winter }))
   mesh.userData.ownsMaterial = true
   mesh.userData.ground = ground
   mesh.userData.detail = tile.detail

@@ -5,7 +5,7 @@
 //! maps the playable square `[-half, half]` onto `[0, SIZE)` in both axes.
 
 use anyhow::Result;
-use shared::world::{COVER_FARM, COVER_INDUSTRIAL, COVER_PARK, COVER_SAND, COVER_URBAN, COVER_WATER, COVER_WOOD, Manifest, NO_WATER, RAIL_TRAM, ROAD_MAJOR, ROAD_MINOR, Tile};
+use shared::world::{COVER_FARM, COVER_INDUSTRIAL, COVER_PARK, COVER_SAND, COVER_URBAN, COVER_WATER, COVER_WOOD, Manifest, NO_WATER, RAIL_TRAM, ROAD_MAJOR, ROAD_MINOR, THEME_WINTER, Tile};
 use std::collections::BTreeMap;
 
 /// Side of the image, pixels. 2048 px over 8.6 km is about 4 m a pixel.
@@ -20,6 +20,10 @@ const ROAD_MAJOR_COLOR: Rgb = [0xf2, 0xb8, 0x5c];
 const ROAD_MINOR_COLOR: Rgb = [0xff, 0xff, 0xff];
 const ROAD_PATH_COLOR: Rgb = [0xc4, 0xa2, 0x78];
 const RAIL_COLOR: Rgb = [0x6b, 0x6b, 0x6b];
+const SNOW: Rgb = [0xf1, 0xf5, 0xfa];
+const SKI_COLOR: Rgb = [0x1f, 0x6f, 0xd6];
+/// How much of a winter map is snow laid over the summer's colours.
+const SNOW_COVER: f64 = 0.7;
 
 fn cover_color(kind: u8) -> Rgb {
     match kind {
@@ -171,6 +175,18 @@ pub fn render(manifest: &Manifest, tiles: &BTreeMap<(u16, u16), Tile>) -> Result
     for building in tiles.values().flat_map(|tile| &tile.buildings) {
         let footprint = ring(&canvas, &building.footprint);
         canvas.fill(&[footprint], BUILDING);
+    }
+
+    if manifest.theme == THEME_WINTER {
+        for pixel in canvas.pixels.chunks_exact_mut(3) {
+            for (channel, snow) in pixel.iter_mut().zip(SNOW) {
+                *channel = (f64::from(*channel) * (1.0 - SNOW_COVER) + f64::from(snow) * SNOW_COVER) as u8;
+            }
+        }
+        // After the snow, so the tracks stand out from it.
+        for trail in tiles.values().flat_map(|tile| &tile.ski) {
+            canvas.stroke(&ring(&canvas, &trail.points), (f64::from(trail.width) / 100.0 * canvas.scale).max(2.0), SKI_COLOR);
+        }
     }
 
     let mut bytes = Vec::new();

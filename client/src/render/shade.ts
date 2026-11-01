@@ -189,8 +189,8 @@ export class GroundShade {
 /** `toneAt` from its parts: the normal and height at `(x, z)` and the ring's mean height there (`ringMean`). */
 export function toneOf(normal: readonly [number, number, number], height: number, mean: number, x: number, z: number): number {
   const [nx, ny, nz] = normal
-  const shade = 1 + 0.45 * (nx * LIGHT[0] + ny * LIGHT[1] + nz * LIGHT[2] - FLAT_LIGHT)
-  const steep = 1 - 0.3 * smooth(0.02, 0.25, 1 - ny)
+  const shade = 1 + 0.8 * (nx * LIGHT[0] + ny * LIGHT[1] + nz * LIGHT[2] - FLAT_LIGHT)
+  const steep = 1 - 0.3 * smooth(0.002, 0.2, 1 - ny)
   const cavity = 1 + Math.min(Math.max((height - mean) * 0.05, -0.18), 0.08)
   const wobble = 1 + 0.03 * (Math.sin(x * 0.043 + 1.3) * Math.sin(z * 0.057) + 0.5 * Math.sin((x - z) * 0.09 + 0.7))
   return Math.min(Math.max(shade * steep * cavity * wobble, 0.55), 1.2)

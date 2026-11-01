@@ -7,7 +7,7 @@
 //! The file names things; `Scenario` holds them as indices, checked once when it is read, so a
 //! typo stops the server with a message instead of a trigger that never fires.
 
-use crate::game::{Bot, Game, Player, Seats, Vehicle, World, Wreck};
+use crate::game::{Bot, Game, Player, Seats, Temper, Vehicle, World, Wreck};
 use crate::entities::With;
 use crate::mechanics::{position_of, remove_vehicle};
 use anyhow::{Context, Result, bail};
@@ -64,12 +64,26 @@ struct SquadSpec {
     /// unless they are all dead at once.
     #[serde(default)]
     respawn: bool,
+    /// What kind of soldiers they are; none rolls a temper for each bot.
+    #[serde(default)]
+    temper: Option<TemperSpec>,
     #[serde(default)]
     bots: Vec<BotSpec>,
     /// Tanks, each with a crew of two of the squad's bots. A tank's route is driven, and with none
     /// it drives along the nearest road.
     #[serde(default)]
     tanks: Vec<BotSpec>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TemperSpec {
+    #[serde(default = "half")]
+    courage: f32,
+    #[serde(default = "half")]
+    aggression: f32,
+    #[serde(default = "half")]
+    patience: f32,
 }
 
 #[derive(Deserialize)]
@@ -166,6 +180,7 @@ struct Squad {
     skill: f32,
     loadout: Option<[ItemSlot; HOTBAR_SLOTS]>,
     respawn: bool,
+    temper: Option<Temper>,
     /// Each bot's home and route, `[x, z]` metres, and each tank's.
     bots: Vec<([f32; 2], Vec<[f32; 2]>)>,
     tanks: Vec<([f32; 2], Vec<[f32; 2]>)>,
@@ -314,7 +329,8 @@ impl Scenario {
                     bail!("squad {name:?} has no bots and no tanks");
                 }
                 let loadout = s.loadout.as_deref().map(loadout).transpose().with_context(|| format!("squad {name:?}"))?;
-                Ok(Squad { name, team: s.team, skill: s.skill.clamp(0.0, 1.0), loadout, respawn: s.respawn, bots, tanks })
+                let temper = s.temper.map(|t| Temper { courage: t.courage.clamp(0.0, 1.0), aggression: t.aggression.clamp(0.0, 1.0), patience: t.patience.clamp(0.0, 1.0) });
+                Ok(Squad { name, team: s.team, skill: s.skill.clamp(0.0, 1.0), loadout, respawn: s.respawn, temper, bots, tanks })
             })
             .collect::<Result<_>>()?;
 
@@ -518,6 +534,7 @@ impl Scenario {
                     };
                     if let Some(mut bot) = game.world.entities.get_mut::<Bot>(id) {
                         bot.aim.skill = squad.skill;
+                        bot.temper = squad.temper.unwrap_or(bot.temper);
                     }
                     if let (Some(hotbar), Some(mut player)) = (squad.loadout, game.world.entities.get_mut::<Player>(id)) {
                         player.hands.hotbar = hotbar;
@@ -536,6 +553,7 @@ impl Scenario {
                     for id in crew {
                         if let Some(mut bot) = game.world.entities.get_mut::<Bot>(id) {
                             bot.aim.skill = squad.skill;
+                            bot.temper = squad.temper.unwrap_or(bot.temper);
                         }
                         if let (Some(hotbar), Some(mut player)) = (squad.loadout, game.world.entities.get_mut::<Player>(id)) {
                             player.hands.hotbar = hotbar;

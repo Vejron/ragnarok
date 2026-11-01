@@ -2,8 +2,9 @@ import { Bloom, Color, Fog, Ink, PerspectiveCamera, Renderer, Scene as EngineSce
 import { GunSightView } from './gunsight'
 import { ContactShadows } from './contact'
 import { setWaterLight, setWaterPlane, setWaterReflection } from './water'
-import { CLASSIC, SOFT, loadLook, type Look, type Palette } from './look'
-import { createSky, skyAt } from './daynight'
+import { CLASSIC, SOFT, loadLook, wintry, type Look, type Palette } from './look'
+import { winter } from './season'
+import { createSky, nightAt, skyAt } from './daynight'
 import { clearArm, lookDir } from '../aimline'
 import { ON_FOOT_HEIGHT, ON_FOOT_SHOULDER } from '../sim/consts'
 
@@ -56,7 +57,7 @@ const SHADOW_FAR = { span: 300, size: 4096, depth: 300 }
 /** Radians a scoped view swings per metre of camera shake: the zoomed view magnifies it, so a little goes a long way. */
 const SCOPE_SHAKE = 0.25
 /** Vertical field of view, degrees: normal, aiming a gun, and looking down a scope. */
-const DEFAULT_FOV = 75
+const DEFAULT_FOV = 65
 /** An FPV camera's wide lens. */
 const FPV_FOV = 100
 /** A loitering drone's belly camera: narrower, to pick out targets from 100 m up. */
@@ -156,6 +157,11 @@ export class Scene {
     }
   }
 
+  /** How dark it is now for lamps (`nightAt`). */
+  get night() {
+    return nightAt(this.dayPhase)
+  }
+
   get look(): Readonly<Look> {
     return this.currentLook
   }
@@ -163,7 +169,8 @@ export class Scene {
   /** Switches the soft-lighting options; takes effect on the next frame. */
   setLook(look: Look) {
     this.currentLook = { ...look }
-    const palette = look.soft ? SOFT : CLASSIC
+    const base = look.soft ? SOFT : CLASSIC
+    const palette = winter ? wintry(base) : base
     this.palette = palette
     const scene = this.scene
     scene.sun.shadow.radius = palette.shadowRadius

@@ -6,15 +6,16 @@ import { Backoff } from './net/backoff'
 import { RttEstimator, ServerClock } from './net/clock'
 import { Transport } from './net/transport'
 import {
-  BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION,
+  BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, BUTTON_RUN, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION,
   SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_DOWN, STANCE_PRONE,
-  TICK_MS, TICK_RATE, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED } from './sim/consts'
+  TICK_MS, TICK_RATE, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED, CARRY_SKIS } from './sim/consts'
 import { easeSway, sway, swayAmplitude } from './sway'
 import { mayPlace } from './sim/bricks'
 import { crewGun, vehicleDef } from './sim/vehicles'
 import { blockedAt, spreadPixels } from './aimline'
 import { aimSpeedScale, effectiveSpread, HOTBAR_SLOTS, itemDef, type ItemDef, type ItemSlot } from './sim/items'
 import { InputController } from './sim/input'
+import type { Character } from './render/character'
 import { SimMotor, type CharacterState, type VehiclePose } from './sim/motor'
 import { Terrain } from './sim/terrain'
 import { VehicleDriver, type DrivenPose } from './sim/driver'
@@ -24,7 +25,10 @@ import { Effects } from './render/effects'
 import { dayPhase } from './render/daynight'
 import { DamageNumbers } from './render/damagenumbers'
 import { Particles } from './render/particles'
+import { setWinter, winter } from './render/season'
 import { Skidmarks } from './render/skidmarks'
+import { SkiTracks } from './render/skitracks'
+import { Snowfall } from './render/snowfall'
 import { Bloodstains } from './render/bloodstains'
 import { Scorchmarks } from './render/scorchmarks'
 import { type FxWorld } from './render/tyres'
@@ -62,7 +66,8 @@ import { rideView, seatView, type SeatView } from './seats'
 import { loadRoosterModel } from './render/rooster'
 import { VehicleSounds } from './vehicleaudio'
 import { HIT_DEALT, HIT_KILL, HIT_TAKEN, HitFeedback } from './feedback'
-import { buildGround } from './render/world'
+import { freezeWater } from './render/water'
+import { buildGround, snowOnBuildings } from './render/world'
 import { Replica } from './net/replica'
 import { EntityStore, inGameUnits } from './entities/store'
 import { Presenters, type Frame } from './entities/presenter'
@@ -83,7 +88,7 @@ import { Jets } from './entities/presenters/jets'
 import { Headlights } from './entities/presenters/headlights'
 import { Roosters } from './entities/presenters/roosters'
 import { TileStreamer } from './stream'
-import { loadManifest, NO_WATER, type WorldData } from './world'
+import { loadManifest, NO_WATER, THEME_WINTER, type WorldData } from './world'
 import { WorldView } from './worldview'
 import type { HudStats } from './hud'
 import { Notices } from './notices'
@@ -119,6 +124,22 @@ const SCOPE_LOOK_SCALE = 0.3
 const MIN_CROSS_GAP = 3
 /** Looking down a tank's sight is as slow as a rifle scope. */
 const SIGHT_LOOK_SCALE = 0.35
+/** The cold white of a headlamp, its strength in full dark and the share of that by day, its reach in metres, and its half-angle and soft edge. */
+const LAMP_COLOR = 0xeef4ff
+const LAMP_INTENSITY = 18
+const LAMP_BY_DAY = 0.1
+const LAMP_REACH = 45
+const LAMP_ANGLE = 0.36
+const LAMP_PENUMBRA = 0.5
+/** The local skier's camera widens past this speed, by this many degrees per m/s. */
+const SKI_FOV_FROM = 9
+const SKI_FOV_PER_SPEED = 0.7
+/** Seconds between the pole plants heard while pushing. */
+const POLE_EVERY = 0.62
+const POLE_EVERY_HARD = 0.36
+/** Key for the local skier's tracks: entity ids start above it. */
+const LOCAL_TRACK = 0
+
 /** And a little slower aiming a gun over the shoulder. */
 const AIM_LOOK_SCALE = 0.6
 /** How long the static shows after a drone's feed cuts out, ms. */
@@ -212,6 +233,16 @@ export class Game {
   private readonly blood = new Particles(1536)
   private readonly effects = new Effects({ smoke: this.smoke, glow: this.glow, blood: this.blood })
   private readonly skids = new Skidmarks()
+  /** The snow in the air, in a winter world. */
+  private snowfall: Snowfall | null = null
+  /** Grooves and spray left by skiers, in a winter world. */
+  skiTracks: SkiTracks | null = null
+  /** Forward is held, as of the last tick. */
+  private pushing = false
+  /** And run with it. */
+  private polingHard = false
+  /** Seconds to the next pole plant heard. */
+  private poleIn = 0
   /** Engines, tyres, crashes and guns. */
   private readonly sounds = new VehicleSounds()
   private readonly music = new TankMusic()
@@ -375,7 +406,7 @@ export class Game {
     this.flying.add(this.lying)
     this.flying.add(new Backpacks(this.backpackModels))
     const blobFoot = (x: number, y: number, z: number) => this.surroundings.blobFoot(x, y, z)
-    this.soldiers = this.people.add(new Soldiers({ avatars: this.avatars, blobFoot, wade: (id, x, y, z, speed, dt) => this.surroundings.wade(id, x, y, z, speed, dt) }))
+    this.soldiers = this.people.add(new Soldiers({ avatars: this.avatars, blobFoot, wade: (id, x, y, z, speed, dt) => this.surroundings.wade(id, x, y, z, speed, dt), skiRun: (id, x, z, vx, vz, grounded, dt) => this.skiTracks?.run(id, x, z, vx, vz, grounded, dt), headlamp: (avatar) => this.shine(avatar) }))
     this.riders = this.people.add(new Riders(this.avatars, this.vehicles))
     this.people.add(new Roosters({ root: this.scene.scene, listener: () => this.predictor?.state.position ?? [0, 0, 0], blobFoot }))
     // Dev-only handle for poking at the game from the console or a test driver.
@@ -388,6 +419,7 @@ export class Game {
     const { world, hash } = await loadManifest()
     this.worldHash = hash
     this.world = world
+    if (world.theme === THEME_WINTER) this.startWinter()
     this.view.world = world
     // On a hilly world the plane sits just under the terrain, so it only shows where a tile is late.
     this.scene.scene.add(buildGround(world.halfExtent, world.groundCell > 0 ? -0.05 : 0))
@@ -415,7 +447,7 @@ export class Game {
     const [x, z] = world.spawns[0] ?? [0, 0]
     this.view.focus(x, z)
     await this.tiles.prime(x, z)
-    this.predictor = new Predictor(motor.stepper, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0, down: 0 })
+    this.predictor = new Predictor(motor.stepper, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0, down: 0, skis: false, skiStrain: 0 })
     this.predictor.speedScale = (input) => aimSpeedScale(this.player.slot(Math.min(input.slot, HOTBAR_SLOTS - 1)).item, input.buttons) * (this.player.carrying ? BACKPACK_SPEED : 1)
     this.avatars.local()
     if (this.disposed) return
@@ -648,6 +680,7 @@ export class Game {
       position: [x, y, z], yaw: own.heading?.yaw ?? 0, vy: own.motion?.vy ?? 0, grounded: (flags & FLAG_GROUNDED) !== 0,
       knock: [own.motion?.knock_x ?? 0, own.motion?.knock_z ?? 0], ride, prone, chute: stance === STANCE_CHUTE,
       spent: own.vitals?.spent ?? 0, winded: own.vitals?.winded === 1, lost, down: own.vitals?.down ?? 0,
+      skis: ((own.carry?.what ?? 0) & CARRY_SKIS) !== 0, skiStrain: own.vitals?.strain ?? 0,
     })
   }
 
@@ -656,6 +689,8 @@ export class Game {
     if (this.seat || !this.player.alive) this.input.clearProne()
     const sample = this.input.sample()
     this.crouching = (sample.buttons & BUTTON_CROUCH) !== 0
+    this.pushing = sample.forward > 0
+    this.polingHard = this.pushing && (sample.buttons & BUTTON_RUN) !== 0
     const frame: InputFrame = {
       seq: ++this.seq,
       strafe: toAxis(sample.strafe),
@@ -826,12 +861,41 @@ export class Game {
     me.dead = !this.player.alive
     me.held = this.player.slot(this.input.selectedSlot).item
     me.pack = this.player.carrying
+    me.skis = local.skis
+    me.skiAim = local.skis && this.input.aimHeld
+    me.skiPoling = this.polingHard && !this.crouching && !this.input.aimHeld && !local.winded && local.grounded
+    me.lamp = this.player.lamp && this.player.alive
+    this.skiSounds(local, position, dt)
     // Face where the camera looks, immediately, rather than the last ticked yaw.
     if (sitting) me.seat(this.seatAt, this.seatTurn, this.input.yaw, this.input.pitch, dt)
     else me.update(position, flying ? local.yaw : lookYaw, vx, vz, local.grounded, dt, flying ? 0 : lookPitch, this.crouching || flying,
       this.crouching && local.grounded && Math.hypot(local.knock[0], local.knock[1]) > SLIDE_MIN_SPEED, local.prone || local.down > 0, local.chute, local.vy)
+    this.shine(me)
     if (!seated && this.player.alive) this.surroundings.wade(0, position[0], position[1], position[2], Math.hypot(vx, vz), dt)
     else this.surroundings.dry(0)
+    if (local.skis && !seated && this.player.alive) this.skiTracks?.run(LOCAL_TRACK, position[0], position[2], vx, vz, local.grounded, dt)
+    else this.skiTracks?.lift(LOCAL_TRACK)
+  }
+
+  /** The light of a soldier's headlamp, this frame: it does little by day and comes into its own at dusk. */
+  private shine(avatar: Character) {
+    const beam = avatar.lampBeam()
+    if (!beam) return
+    const { at, direction } = beam
+    const intensity = LAMP_INTENSITY * (LAMP_BY_DAY + (1 - LAMP_BY_DAY) * this.scene.night)
+    this.scene.scene.lights.hold(at.x, at.y, at.z, { color: LAMP_COLOR, intensity, direction, radius: LAMP_REACH, angle: LAMP_ANGLE, penumbra: LAMP_PENUMBRA })
+  }
+
+  /** The hiss under the local skier, and a pole going in every so often while they push. */
+  private skiSounds(local: CharacterState, position: readonly number[], dt: number) {
+    const speed = local.skis && local.grounded ? Math.hypot(local.knock[0], local.knock[1]) : 0
+    this.sounds.glide(speed)
+    this.poleIn -= dt
+    const pushing = local.skis && local.grounded && this.pushing && !this.crouching
+    if (pushing && this.poleIn <= 0) {
+      this.sounds.polePlant([position[0]!, position[1]!, position[2]!])
+      this.poleIn = this.polingHard && !local.winded ? POLE_EVERY_HARD : POLE_EVERY
+    }
   }
 
   /** Puts the camera where this frame wants it. */
@@ -841,7 +905,8 @@ export class Game {
     if (!chase) this.chase.reset()
     // A kick shakes the on-foot view too; a car's chase camera shakes with its own.
     const shake = chase ? undefined : this.chase.tremble(dt)
-    this.scene.zoomTo(this.cameras.zoom(view, this.input.aimHeld, sighted, scoped, aiming), dt, chase?.fovBoost ?? 0)
+    const skiing = !seat && this.predictor?.state.skis ? Math.hypot(this.predictor.state.knock[0], this.predictor.state.knock[1]) : 0
+    this.scene.zoomTo(this.cameras.zoom(view, this.input.aimHeld, sighted, scoped, aiming), dt, chase?.fovBoost ?? Math.max(0, skiing - SKI_FOV_FROM) * SKI_FOV_PER_SPEED)
     if (seat && ride && view) {
       this.cameras.seated({
         now, dt, vehicle: seat.vehicle, seat: view, ride, model: this.vehicles.model(seat.vehicle), motion: this.vehicles.fx(seat.vehicle),
@@ -877,6 +942,8 @@ export class Game {
     this.scene.scene.lights.update(dt)
     this.damageNumbers.update(dt, this.scene.camera)
     const eye = this.scene.camera.position
+    this.snowfall?.update(eye, dt)
+    this.skiTracks?.update(dt)
     this.smoke.follow(eye.x, eye.z)
     this.glow.follow(eye.x, eye.z)
     this.smoke.update(dt)
@@ -938,6 +1005,7 @@ export class Game {
       ...(gauges?.includes('pintle') ? roofGun(ride?.pintle ?? null) : cockpit(gauges?.includes('cockpit') ? (ride?.arms ?? null) : null, aviator, seat ? this.vehicles.fx(seat.vehicle) : undefined)),
       air: gauges?.includes('air') ? (this.driver?.thrust?.air ?? null) : null,
       stamina: !seated && able ? { left: 1 - local.spent / STAMINA_FULL, winded: local.winded } : null,
+      skiSpeed: !seated && local.skis ? Math.round(Math.hypot(local.knock[0], local.knock[1]) * 3.6) : null,
       eggs: gauges?.includes('eggs') ? (ride?.arms?.bombs ?? null) : null,
       drone: link && ride
         ? {
@@ -1053,6 +1121,17 @@ export class Game {
   }
 
   /** Switches the soft-lighting options and remembers them for next time. */
+  /** Before the first tile: colours, ice and the snow in the air, for the whole of a winter world. */
+  private startWinter() {
+    setWinter(true)
+    snowOnBuildings()
+    freezeWater()
+    this.scene.setLook(this.scene.look)
+    this.snowfall = new Snowfall()
+    this.skiTracks = new SkiTracks((x, z) => this.scene.groundAt(x, z), this.smoke)
+    this.scene.scene.add(this.snowfall.root, this.skiTracks.marks.root)
+  }
+
   setLook(look: Look) {
     this.scene.setLook(look)
     this.view.scorch = look.scorch
@@ -1064,7 +1143,7 @@ export class Game {
   private applyGrass(look: Look) {
     const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
     this.grass?.setDensity(coarse ? GRASS_LITE : GRASS_FULL)
-    this.grass?.setEnabled(look.grass)
+    this.grass?.setEnabled(look.grass && !winter)
   }
 
   /** Puts the ears where the camera is, last frame's pose, and moving with the vehicle the player is in. */
@@ -1111,6 +1190,8 @@ export class Game {
     this.crowd.dispose()
     this.effects.dispose()
     this.smoke.dispose()
+    this.snowfall?.dispose()
+    this.skiTracks?.dispose()
     this.glow.dispose()
     this.blood.dispose()
     this.skids.dispose()

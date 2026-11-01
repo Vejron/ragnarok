@@ -85,6 +85,7 @@ This one has you clear two guards off a farm, then hold its barn against three w
 |---|---|---|
 | `team` | `1` | As for a placed bot. Squads and placed bots on the same team are on the same side. |
 | `skill` | `0.5` | As for a placed bot. |
+| `temper` | rolled per bot | `{ "courage", "aggression", "patience" }`, each 0 to 1, missing ones 0.5. See [Nerve and temper](#nerve-and-temper). |
 | `loadout` | the standard one | Item names, one a slot, up to five: `revolver`, `ak5`, `grenade`, `bandage`, `sniper`, `golden egg`, `shotgun`, `fpv drone`. Guns come loaded and stacks full. Bots fight only with the guns. |
 | `respawn` | `false` | Whether its bots come back at home after dying, with the same loadout. A squad that does not respawn leaves the game once its fallen would have got up (3 s). One that does is cleared only while all of its bots are down at once. |
 | `tanks` | none | Tanks, each crewed by two of the squad's bots (see [Tank crews](#tank-crews)). A tank is written like a bot, `lat`, `lon` and an optional `route`, which it drives; with none it drives along the nearest road. Its crew are numbered after the squad's bots, and count towards `cleared` and `enter` with `by` like the rest. |
@@ -159,13 +160,67 @@ The marks are kept by `Blips` (`client/src/blips.ts`), and the board is split by
 A bot fights while it can see its target. It starts with the same hotbar as anyone else (revolver, AK5, sniper, grenades, shotgun) and uses only the guns.
 
 - **Gun.** It takes the shotgun under 10 m and keeps it until 15 m, and otherwise the AK5. With neither, it takes the revolver, then the sniper, then any gun. With no one in sight it holds the gun it would use at 30 m.
-- **Distance.** It walks towards the target while it fires, until it is close enough for that gun: 5 m with the shotgun, 15 m with the AK5, 12 m with the revolver, 35 m with the sniper. There it stands and aims down the sights (`BUTTON_ALT`: a quarter of the spread, and no spread at all through the sniper's scope). A bot of skill 0.3 or more also sidesteps, changing direction every 0.6 to 1.6 s.
+- **Distance.** It walks towards the target while it fires, until it is close enough for that gun: 5 m with the shotgun, 15 m with the AK5, 12 m with the revolver, 35 m with the sniper. There it settles and aims down the sights (`BUTTON_ALT`: a quarter of the spread, and no spread at all through the sniper's scope). How far it stands off also depends on its temper: 1.4 times that with no aggression, half with full. A bot of skill 0.3 or more also sidesteps, changing direction every 0.6 to 1.6 s.
 - **Reacting.** From the moment it catches sight of someone, it holds its fire for 0.7 s at skill 0, down to 0.2 s at skill 1. It waits again each time it loses sight of them and sees them again.
-- **Aiming.** It aims at the chest, where it thinks the target is by now. It knows only what it saw at its last look, so it extrapolates their speed from the last two looks. It aims ahead by the distance they run while the round flies, at 280 m/s, and above by how far the round drops on the way. A skill-0 bot leads by only 30 per cent of that. A shotgun needs no lead. To all of that it adds an aim error, drawn afresh at every look. The error is up to 0.1 rad at skill 0 and 0.008 rad at skill 1. On first sight it is three times that, and it settles over about a second of watching.
+- **Aiming.** It aims at the chest, where it thinks the target is by now. It knows only what it saw at its last look, so it extrapolates their speed from the last two looks. It aims ahead by the distance they run while the round flies, at 280 m/s, and above by how far the round drops on the way. A skill-0 bot leads by only 30 per cent of that. A shotgun needs no lead. To all of that it adds an aim error, drawn afresh at every look. The error is up to 0.1 rad at skill 0 and 0.008 rad at skill 1. On first sight it is three times that, and it settles over about a second of watching. Its first rounds also go 2 m wide to one side and walk in over 1.5 s at skill 0, down to 0.6 s at skill 1, so the misses warn you. The error grows up to four times over as its nerve goes, by a quarter while it moves, and by 4 per cent per m/s the target moves, up to 10 m/s.
 - **Firing.** It fires only once it faces within 0.05 rad of where it means to shoot. It fires the AK5 in bursts of 3 to 6 rounds, then pauses 0.6 s at skill 0, down to 0.25 s at skill 1. It presses again for every round of the other guns, as fast as each gun allows.
 - **Reloading.** It reloads when the gun in hand is empty. With no one in sight, it also tops up any gun that is not full.
 
-Against someone running across its front at 4 m/s, 25 m away, over 10 s, a bot does about 100 to 140 damage at skill 0, 300 to 350 at skill 0.5 and 600 to 700 at skill 1. That is a kill in about 8 s, 3 s and 1.5 s.
+Against someone running across its front at 4 m/s, 25 m away, over 10 s, a bot typically takes about 24 health at skill 0, 120 at skill 0.5 and 430 at skill 1 (medians over 24 seeds, counting `Health` only, so not what limbs absorb). Results vary widely below skill 1.
+
+### Attack tokens
+
+However many bots are after someone, only a few at a time try to kill them (`bots/tokens.rs`). Each target has 2 tokens at skill 0, up to 4 at skill 1, and roles are handed out twice a second. A group no bigger than its tokens is all attackers.
+
+| Role | Who | What it does |
+|---|---|---|
+| Attacker | Holds a token, or is within 8 m of the target | Fights as described above |
+| Flanker | Up to 2 on a target, with no token | Runs for a point 8 to 12 m from the target, about 100° round from where it was, the first on the side further out of the target's view. It has 8 s, and does not fire on the way unless it comes within 8 m |
+| Suppressor | Sees the target, no token | Stays put and fires 3 m wide |
+| Holder | Does not see the target, no token | Waits crouched 20 m from where the target was last seen |
+
+A token lasts 4 s, then its holder competes again. It goes back at once if the bot dies, breaks for cover, or reloads. The next goes to a flanker that got there, then to whoever sees the target, nearest first. Bots in a fight share where the target was last seen. Once no one has seen the target for 5 s they all go looking, as lone bots do.
+
+### Awareness
+
+A bot does not see someone the moment a ray reaches them (`bots/senses.rs`). In view, an awareness meter fills in 0.2 s for someone in plain sight, and takes longer in proportion to:
+
+| | Share |
+|---|---|
+| Distance | full to 15 m, falling to 0.15 at 60 m |
+| Stance | crouched 0.6, lying 0.3 |
+| Moving | still 0.7, walking 1, running 1.3 |
+| Light | down to 0.35 at night, 1.2 with a lamp lit, day or night |
+
+Within 3 m it is instant, and a bot already alert fills it three times as fast. At 0.4 a patrolling bot stops and stares at the spot. The meter fades at 0.25 a second with no one in view. The server cannot see a client's `?time=` pin, so night here always follows the clock. Noises from over 15 m are heard 12 per cent of the distance off, a different way for each bot.
+
+### Nerve and temper
+
+Each bot rolls a temper when it is added: `courage`, `aggression` and `patience`, each 0 to 1. Courage rolls below 0.9, except one bot in 16, which gets 1 and never breaks. A squad's `temper` replaces the roll.
+
+Nerve runs from 1 (calm) to 0 (`bots/nerve.rs`). It comes back at 0.06 a second, 0.16 in cover. Each of these takes away the amount shown, less up to 70 per cent with courage:
+
+| What happens | Nerve lost |
+|---|---|
+| A hit | 0.25, plus 0.01 per point of damage |
+| A limb lost | 0.4 more |
+| A blast within 15 m | 0.15 |
+| An enemy round passing within 2.5 m, even through a wall | 0.12 |
+| A soldier on its side killed within 20 m | 0.3 |
+
+Below `0.55 × (1 − courage)` it has broken: it stops advancing, goes prone and looks for cover. Under 0.08 it freezes and holds its fire. Enough suppressing fire pins a bot without hitting it.
+
+While it fights at its distance it picks a stance every 1.5 to 4 s. Past 10 m it may crouch, and past 25 m with a sniper it may lie down, both more often the more patient it is. Prone, it does not sidestep.
+
+**Cover** (`bots/cover.rs`). A broken bot looks for cover, as does one with an empty gun and patience of 0.4 or more. It tries 8 points 3 to 12 m away, straight away from the threat first, for one the threat cannot see with the bot crouched, so a low wall will do, and which is under 18 m away by the path it would take. It runs there, crouches, reloads and calms down. It comes out once steady, or after 3 s with no patience, up to 10 s with full, heading 3 to 6 m to the side of where it last saw the target. Seen at its spot, it comes out at once. With no point to be found, it stays where it is, prone.
+
+### Wounded and giving in
+
+A hurt bot in cover, unseen, bandages itself if it has a bandage (`bots/wounded.rs`). A bot that has frozen with no cover to be found, within 25 m of its target, may give in. With courage under 0.35 and no friend within 15 m it surrenders for 20 s: hands up (`STANCE_SURRENDER`), not firing, ignored by other bots, then back to its route. With patience of 0.6 or more it plays dead for 15 s instead, lying still, and goes for anyone within 6 m, aim all ready.
+
+### On patrol
+
+At a waypoint it stops half the time, for 1 to 4 s, to look about. One time in five it cuts out the next waypoint, and it walks on at a new pace. Surprised on patrol, it can take up to 0.6 s longer to react at skill 0.
 
 A bot's shot leaves its eye along its look direction (`combat::fire_gun`). A person's shot goes towards what the over-the-shoulder camera's crosshair is on, and a bot has no camera.
 
@@ -301,7 +356,7 @@ On the HUD, `game.rs` checks that a bot's profile carries its team and the bot f
 ## Roadmap
 
 1. ~~Bot players and teams, patrol, sight, pursue, search.~~ Done.
-2. ~~**Shooting.**~~ Done (see [Fighting](#fighting)). Bots do not throw grenades yet, or take cover.
+2. ~~**Shooting.**~~ Done (see [Fighting](#fighting)). Bots do not throw grenades yet.
 3. ~~**Path finding.**~~ Done (see [Finding the way](#finding-the-way)). There are no doors: the inside of a building is never reached. There is also one floor per cell, so the road under a bridge is taken to be the bridge.
 4. ~~**Hearing.**~~ Done (see [Hearing](#hearing)). There are no quiet guns, and a bot hears every noise as loudly through a wall. Footsteps and engines make no noise.
 5. ~~**Editor tools.**~~ Done (see [EDITOR.md](EDITOR.md)): the Bot and Route tools placed bots, drew their routes, and set team and skill. Since scenario editing they work on squads in Scenario mode instead, and loose bots can be converted into squads. Markers still cannot be dragged.

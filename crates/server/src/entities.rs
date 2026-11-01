@@ -75,25 +75,41 @@ impl Hurtbox {
     }
 }
 
+/// How a body holds itself, which decides the shape of what a round can meet (see `life::body`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Posture {
+    Upright,
+    Crouched,
+    /// On its belly, its head towards `yaw`.
+    Lying { yaw: f32 },
+    /// Knocked down: as low as lying, but still at the height the point it hangs from is on its feet.
+    Down { yaw: f32 },
+}
+
 /// Where it was at the end of each of the last few ticks, newest last, under the tick number a snapshot
-/// of that moment carries: the point its body hangs from (see `life::body`), and whether it sat in a
-/// seat. A round fired by someone who saw the world late is tested against it (lag compensation).
+/// of that moment carries: the point its body hangs from (see `life::body`), whether it sat in a seat,
+/// and how it held itself. A round fired by someone who saw the world late is tested against it (lag compensation).
 #[derive(Component, Clone, Debug, Default, PartialEq)]
-pub struct Trail(VecDeque<(u32, [f32; 3], bool)>);
+pub struct Trail(VecDeque<(u32, [f32; 3], bool, Posture)>);
 
 impl Trail {
     /// Notes where it was at the end of `tick`, keeping that and the `keep` ticks before it.
-    pub fn record(&mut self, tick: u32, at: [f32; 3], seated: bool, keep: usize) {
+    pub fn record(&mut self, tick: u32, at: [f32; 3], seated: bool, posture: Posture, keep: usize) {
         if self.0.len() > keep {
             self.0.pop_front();
         }
-        self.0.push_back((tick, at, seated));
+        self.0.push_back((tick, at, seated, posture));
     }
 
     /// Where it was at the end of `tick`, if the trail goes back that far and it was `seated`, or not,
     /// then.
     pub fn at(&self, tick: u32, seated: bool) -> Option<[f32; 3]> {
-        self.0.iter().rev().find(|(t, ..)| *t == tick).filter(|(.., was)| *was == seated).map(|&(_, at, _)| at)
+        self.then(tick, seated).map(|(at, _)| at)
+    }
+
+    /// `at`, and how it held itself then.
+    pub fn then(&self, tick: u32, seated: bool) -> Option<([f32; 3], Posture)> {
+        self.0.iter().rev().find(|(t, ..)| *t == tick).filter(|&&(_, _, was, _)| was == seated).map(|&(_, at, _, posture)| (at, posture))
     }
 }
 

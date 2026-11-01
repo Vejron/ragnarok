@@ -1,7 +1,7 @@
 use shared::vec3;
 use super::Mechanic;
 use super::armor::Outcome;
-use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise};
+use super::bots::{HEAR_BLAST, make_noise, make_shot};
 use super::life::{Harm, blasted, body, damage_entity, first_hurtbox_hit};
 use super::spawn;
 use super::projectiles::{self, Flying, Stage};
@@ -13,7 +13,7 @@ use shared::consts::*;
 use shared::armor::Pen;
 use shared::items::*;
 use shared::vehicles::{Exposure, crew_gun, vehicle_def};
-use shared::protocol::{BulletSpawn, ItemSlot, LIMB_ARMS, PROJECTILE_BULLET, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_ROCKET, ShotEvent, WEAPON_FLARE, WEAPON_PELLET, WEAPON_RIFLE, WEAPON_WRECK};
+use shared::protocol::{BulletSpawn, ItemSlot, LIMB_ARMS, LIMB_LEGS, PROJECTILE_BULLET, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_ROCKET, ShotEvent, WEAPON_FLARE, WEAPON_PELLET, WEAPON_RIFLE, WEAPON_WRECK};
 use shared::quant::{from_mrad, to_cm, to_cm_i16, to_mrad};
 
 /// Health, death, the items in the hotbar and what blasts do to people and vehicles.
@@ -125,7 +125,7 @@ pub fn bearing(at: [f32; 3], from: [f32; 3]) -> i16 {
 /// Whether a round that reaches `t` along `dir` from `origin` hits `victim` (where it stood `back`
 /// ticks ago) in the head.
 pub(super) fn is_headshot(world: &World, victim: u32, origin: [f32; 3], dir: [f32; 3], t: f32, back: u32) -> bool {
-    body(world, victim, back).and_then(|body| body.head_y).is_some_and(|head_y| origin[1] + dir[1] * t > head_y)
+    body(world, victim, back).is_some_and(|body| body.is_head(vec3::along(origin, dir, t)))
 }
 
 /// What a blast does where it lands.
@@ -160,6 +160,8 @@ pub fn blast(world: &mut World, blast: Blast) {
 /// [`blast`], for a shell that struck vehicle `direct.vehicle` itself.
 pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
     make_noise(world, blast.point, blast.attacker, HEAR_BLAST);
+    // As they stood when it went off: being knocked flat by it does not bring them nearer.
+    let bodies = blasted(world, blast.point, blast.radius, blast.damage);
     // Soldiers are thrown; everything in the open is hurt, below.
     for id in world.entities.ids::<With<Player>>() {
         if !world.entities.alive(id) {
@@ -192,7 +194,7 @@ pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
         }
         tracing::debug!(distance, power, down, "player blasted");
     }
-    for (id, amount) in blasted(world, blast.point, blast.radius, blast.damage) {
+    for (id, amount) in bodies {
         damage_entity(world, id, Harm::new(amount, blast.attacker, blast.weapon).from(blast.point));
         super::limbs::blasted(world, id, blast.point, amount, blast.attacker);
     }
@@ -619,7 +621,7 @@ fn aim(world: &mut World, id: u32, item: &ItemDef) -> Option<Aim> {
 fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     let Some(Aim { origin, dir, vehicle, back }) = aim(world, id, item) else { return };
     let buttons = world.entities.get::<Player>(id).map_or(0, |player| player.input.buttons());
-    make_noise(world, origin, Some(id), HEAR_SHOT);
+    make_shot(world, origin, Some(id), dir);
 
     if item.projectile {
         // The round leaves the eye and flies on its own, so it takes time to arrive and drops a little.
@@ -927,6 +929,14 @@ fn use_item(world: &mut World, id: u32) {
             if pressed && player.hands.fire_cooldown == 0 {
                 player.hands.fire_cooldown = item.cooldown_ticks;
                 super::building::use_bricks(world, id, buttons & BUTTON_ALT != 0);
+            }
+        }
+        ItemKind::Skis => {
+            let still = player.character.knock[0].hypot(player.character.knock[1]) < SKI_CLIP_SPEED;
+            if fresh && player.hands.fire_cooldown == 0 && still && lost & LIMB_LEGS == 0 {
+                player.hands.fire_cooldown = item.cooldown_ticks;
+                player.character.skis = !player.character.skis;
+                player.character.knock = [0.0, 0.0];
             }
         }
         ItemKind::Heal => {

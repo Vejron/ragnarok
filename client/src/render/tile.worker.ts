@@ -4,6 +4,7 @@ import { Terrain } from '@/sim/terrain'
 import { coverPixels, paintCover, reliefPixels, terrainBuffers, TERRAIN_LOD_ERRORS, type Pixels } from './terrainmesh'
 import { ribbonsOf } from './groundmesh'
 import { prepareTile, preparedTransferables, terrainTransferables, type CoverPainter, type TileParts } from './tileprep'
+import { setWinter } from './season'
 import type { TileReply, TileRequest } from './tileworker'
 
 /*
@@ -54,6 +55,7 @@ self.onmessage = async (event: MessageEvent<TileRequest>) => {
   const request = event.data
   if (request.kind === 'init') {
     terrain = new Terrain(request.halfExtent, request.tileSize)
+    setWinter(request.winter)
   } else if (request.kind === 'drop') {
     terrain?.delete({ col: request.col, row: request.row, hash: 0 })
     reliefs.delete(key(request.col, request.row))

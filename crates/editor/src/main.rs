@@ -35,6 +35,12 @@ struct Area {
     /// picks (`DEFAULT_CELL` there).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cell: Option<f64>,
+    /// The season (`"winter"`). Absent, the world is as it always was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    theme: Option<String>,
+    /// Winter: groom the forest paths and tracks too (`groomed_paths` in the importer).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    groomed_paths: bool,
     /// Hand-placed spawn points, vehicles, items and bots (latitude/longitude). The server reads
     /// these from the same file; the importer ignores them.
     #[serde(default)]
@@ -45,6 +51,16 @@ struct Area {
     items: Vec<serde_json::Value>,
     #[serde(default)]
     bots: Vec<serde_json::Value>,
+}
+
+impl Area {
+    /// The page knows nothing of the season, so a save carries it over from the file it replaces.
+    fn keep_season(&mut self, old: Option<Area>) {
+        if let (None, Some(old)) = (&self.theme, old) {
+            self.theme = old.theme;
+            self.groomed_paths = old.groomed_paths;
+        }
+    }
 }
 
 fn is_sweden(region: &Region) -> bool {
@@ -140,6 +156,7 @@ async fn put_world(req: &mut Request, res: &mut Response) {
     }
     area.tiles.sort();
     area.tiles.dedup();
+    area.keep_season(read_area(&name));
     let dir = worlds_dir().join(&name);
     let written = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(dir.join("area.json"), serde_json::to_vec(&area).unwrap_or_default()));
     match written {
@@ -512,6 +529,18 @@ mod tests {
         assert!(old.bots.is_empty());
         assert_eq!(old.cell, None);
         assert!(!String::from_utf8(serde_json::to_vec(&old).unwrap()).unwrap().contains("cell"));
+    }
+
+    #[test]
+    fn a_save_from_the_page_keeps_the_season() {
+        let old: Area = serde_json::from_str(r#"{"tiles":[],"theme":"winter","groomed_paths":true}"#).unwrap();
+        let mut sent: Area = serde_json::from_str(r#"{"tiles":[{"gx":1,"gy":2}]}"#).unwrap();
+        sent.keep_season(Some(old));
+        assert_eq!((sent.theme.as_deref(), sent.groomed_paths), (Some("winter"), true));
+        assert_eq!(sent.tiles.len(), 1);
+        let mut new: Area = serde_json::from_str(r#"{"tiles":[]}"#).unwrap();
+        new.keep_season(None);
+        assert_eq!((new.theme, new.groomed_paths), (None, false));
     }
 
     #[test]

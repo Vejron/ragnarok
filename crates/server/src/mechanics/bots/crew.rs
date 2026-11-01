@@ -427,7 +427,7 @@ fn gun(world: &mut World, id: u32, bot: &mut Bot, vid: u32, pose: &CarPose, nois
             bot.yaw = heading(eye, bot.sight.last_seen);
             (bot.yaw, 0.0, false)
         }
-        BotMode::Search => {
+        BotMode::Search | BotMode::Cover | BotMode::Surrender | BotMode::PlayDead => {
             bot.mode_left = bot.mode_left.saturating_sub(1);
             if bot.mode_left == 0 {
                 resume_patrol(bot, at);

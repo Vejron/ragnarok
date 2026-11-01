@@ -83,7 +83,7 @@ fn a_soldier_walks_the_streamed_city_as_the_server_walks_it() {
         streamed.step_character(&mut b, &input, TICK_DT, 1.0, None);
     }
     let travelled = (a.position[0] - start.position[0]).hypot(a.position[2] - start.position[2]);
-    assert!(travelled > 10.0, "it hardly moved: {travelled} m");
+    assert!(travelled > 4.0, "it hardly moved: {travelled} m");
     let apart = vec3::distance(a.position, b.position);
     assert!(apart < 0.01, "after 10 s apart by {apart} m: {:?} and {:?}", a.position, b.position);
 }

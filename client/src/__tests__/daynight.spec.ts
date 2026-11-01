@@ -23,8 +23,8 @@ describe('day and night', () => {
     expect(nightAt(0)).toBe(1)
     expect(nightAt(0.24)).toBe(1)
     expect(nightAt(0.5)).toBe(0)
-    expect(nightAt(0.3)).toBe(0)
-    expect(nightAt(0.7)).toBe(0)
+    expect(nightAt(0.32)).toBe(0)
+    expect(nightAt(0.68)).toBe(0)
     // Dusk: on its way.
     expect(nightAt(0.75)).toBeGreaterThan(0)
     expect(nightAt(0.75)).toBeLessThan(1)

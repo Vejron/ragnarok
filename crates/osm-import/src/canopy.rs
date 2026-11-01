@@ -1,4 +1,5 @@
 //! Trees from the laser cloud: a canopy height model, treetops, crowns, and an archetype per tree.
+//! In Swedish forest the archetype comes from `species`; `classify` names the trees outside it.
 //!
 //! Lantmäteriet's "Laserdata Skog" is classified only into ground (2) and everything else (1), so
 //! buildings, cars and vegetation are not separated. Buildings are masked with their OSM footprints;
@@ -319,21 +320,28 @@ const CONIFER_INTENSITY: f64 = 760.0;
 /// Pine's crown starts higher up the stem than spruce's (0.5 vs 0.4 of the height).
 const PINE_BASE: f64 = 0.47;
 
-/// The archetype for a detected tree. Thresholds were fitted against the Umeå register (see
-/// `calibration` in the tests): the near-infrared intensity is what tells conifers from broadleaves,
-/// the height of the crown's lowest returns pine from spruce.
+/// The archetype for a detected tree outside the forest, where `species` has no say. Thresholds were
+/// fitted against the Umeå register (see `calibration` in the tests): the near-infrared intensity is
+/// what tells conifers from broadleaves, the height of the crown's lowest returns pine from spruce.
 pub fn classify(tree: &Detected) -> u8 {
-    let ratio = tree.height / tree.crown;
-    if tree.height < 9.0 {
-        return if tree.intensity >= 800.0 { TREE_ORNAMENTAL } else { TREE_LOWWIDE };
+    if tree.height < 9.0 && tree.intensity >= 800.0 {
+        return TREE_ORNAMENTAL;
     }
-    if tree.intensity >= CONIFER_INTENSITY {
+    if tree.height >= 9.0 && tree.intensity >= CONIFER_INTENSITY {
         return if tree.base >= PINE_BASE { TREE_PINE } else { TREE_SPRUCE };
+    }
+    deciduous(tree)
+}
+
+/// The archetype of a tree known to be deciduous, from its shape.
+pub fn deciduous(tree: &Detected) -> u8 {
+    if tree.height < 9.0 {
+        return TREE_LOWWIDE;
     }
     if tree.crown >= 6.5 {
         return TREE_BROADLEAF;
     }
-    if ratio >= 7.0 {
+    if tree.height / tree.crown >= 7.0 {
         return TREE_COLUMNAR;
     }
     TREE_BIRCH

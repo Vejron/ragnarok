@@ -68,6 +68,13 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
     if (!front) {
       n = -n;
     }
+    if ((flags & MAT_SNOW) != 0u) {
+      // Keeps what the ground's tone did to the colour below it, so snow still shows the relief.
+      let tone = select(1.0, mix(1.0, normalTexel.a * 2.0, 0.5), (flags & MAT_NORMAL_TONE) != 0u);
+      // Ground the snow has slid off is bare rock, whatever the summer's cover was; a wall is its own colour.
+      let bare = select(rgb, mix(SNOW_ROCK * tone, rgb, marks.earth), (flags & MAT_NORMAL_TONE) != 0u);
+      rgb = mix(bare, SNOW_COLOR * tone, 0.94 * smoothstep(0.6, 0.82, n.y) * (1.0 - marks.earth));
+    }
     let dotNL = dot(n, frame.sunDir.xyz);
     let u = u32(clamp(dotNL * 0.5 + 0.5, 0.0, 1.0) * 255.0);
     let ramp = textureLoad(ramps, vec2u(u, material.params.y), 0).r;

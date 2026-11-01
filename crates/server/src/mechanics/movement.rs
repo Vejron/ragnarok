@@ -1,8 +1,9 @@
 use super::Mechanic;
 use crate::entities::With;
 use crate::game::{Player, World};
-use shared::consts::BACKPACK_SPEED;
+use shared::consts::{BACKPACK_SPEED, BUTTON_LAMP};
 use shared::items::{aim_speed_scale, HOTBAR_SLOTS};
+use shared::protocol::LIMB_LEGS;
 
 /// Walks every standing soldier by its input through the character controller, and keeps track of
 /// the car it stands on, if any.
@@ -19,12 +20,16 @@ impl Mechanic for Movement {
             let lost = super::limbs::lost(world, id);
             let carrying = super::backpack::carries(world, id);
             let mut player = world.entities.of_mut::<Player>(id);
+            let player = &mut *player;
+            let lamp = player.input.buttons() & BUTTON_LAMP != 0;
+            player.lamp ^= lamp && !player.lamp_held;
+            player.lamp_held = lamp;
             if player.seat.is_some() || !alive {
                 continue;
             }
-            let player = &mut *player;
             let character = &mut player.character;
             character.lost = lost;
+            character.skis &= lost & LIMB_LEGS == 0;
             let velocity = world.physics.car_pose(character.ride).map(|pose| pose.velocity);
             let slot = (player.input.slot() as usize).min(HOTBAR_SLOTS - 1);
             let scale = aim_speed_scale(player.hands.hotbar[slot].item, player.input.buttons()) * if carrying { BACKPACK_SPEED } else { 1.0 };

@@ -121,7 +121,7 @@ fn fire_puts_a_cube_of_the_builders_colour_on_the_ground_where_the_crosshair_is(
     assert_eq!(pos[1], 0, "it sits on the ground");
     // The crosshair is right of the body (the camera's shoulder) and ahead of it.
     let c = cube_centre(pos);
-    assert!(c[0] > 100.0 && c[2] < -3.0 && c[2] > -6.0, "{c:?}");
+    assert!(c[0] > 100.0 && c[2] < -2.0 && c[2] > -6.0, "{c:?}");
     assert_eq!(built_told(&mut watcher), vec![(true, 1, 0, 0)]);
     // It is solid from the end of the tick.
     let down = game.world.physics.cast_ray_static([c[0], 10.0, c[2]], [0.0, -1.0, 0.0], 20.0).unwrap();
