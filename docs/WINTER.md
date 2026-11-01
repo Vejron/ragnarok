@@ -39,7 +39,7 @@ The slope comes from a ray straight down, as `terrain_below` does it. It is nudg
 
 ## On screen
 
-Clips `ski_*` are baked in `tools/character/build_character.py`, and `Character` picks the gait from speed, slope and crouch, so nothing extra is sent. Skis and poles are meshes under the foot and hand bones (`render/skigear.ts`), turned each frame to stay flat and straight. Grooves and spray are in `render/skitracks.ts`, client-only. Snowfall has its own particle pool (`render/snowfall.ts`).
+Clips `ski_*` are baked in `tools/character/build_character.py`, and `Character` picks the gait from speed, slope and crouch, so nothing extra is sent. Skis and poles are meshes under the foot and hand bones (`render/skigear.ts`), the skis turned each frame to lie flat. A pole keeps its tip on the snow through the push, the hand coming down over it tipping it back, then swings back off the snow and round to the plant (`poleLift`). Grooves and spray are in `render/skitracks.ts`, client-only. Snowfall has its own particle pool (`render/snowfall.ts`).
 
 Whether another player is aiming is not sent, so they are seen poling while they aim.
 

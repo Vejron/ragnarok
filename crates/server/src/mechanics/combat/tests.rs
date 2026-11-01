@@ -27,7 +27,7 @@ fn join(game: &mut Game) -> (u32, mpsc::Receiver<Outgoing>) {
 
 /// The camera is above and to the right of the eye, so a shooter aims a little down to put the
 /// crosshair on a target 20 m away at the same height.
-const AIM_20M: f32 = -0.0425;
+const AIM_20M: f32 = -ON_FOOT_HEIGHT / 20.0;
 
 /// How a player aims with `slot` in hand: a gun's crosshair on a target 20 m away, anything else level.
 fn aim_for(game: &Game, id: u32, slot: usize) -> f32 {

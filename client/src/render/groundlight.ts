@@ -2,8 +2,8 @@ import { Color, Ramp } from '@ragnarok/engine'
 
 /**
  * The terrain's toon ramp: eight steps over the half-Lambert coordinate (`N·L * 0.5 + 0.5`), dark and
- * coarse in shade and fine near the light. Flat ground under the sun (about 0.83) sits in the middle
- * of step 6, so a few degrees of slope tip it one step either way instead of flickering.
+ * coarse in shade and fine near the light. Flat ground under the noon sun (about 0.79) sits low in
+ * step 6, so a few degrees of slope away from the sun tip it a step down.
  */
 export const TERRAIN_STEPS = [90, 100, 115, 140, 180, 208, 235, 255] as const
 export const TERRAIN_RAMP = new Ramp(new Uint8Array(TERRAIN_STEPS))

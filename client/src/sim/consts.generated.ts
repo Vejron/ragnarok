@@ -303,6 +303,17 @@ export const AUTOSTEP_MIN_WIDTH = 0.2
  */
 export const SNAP_DISTANCE = 0.3
 
+/**
+ * Share of walking speed lost per unit of grade (height over distance) going uphill, and the least
+ * that can leave. A 10% climb costs 15%; the steepest is a slog. Going down costs nothing, and gives
+ * nothing: any faster and a runner leaves the ground.
+ */
+export const SLOPE_CLIMB_DRAG = 1.5
+export const SLOPE_SCALE_MIN = 0.4
+
+/** Further than this above the terrain, metres, a soldier is on a roof or a bridge, and its slope is not theirs. */
+export const SLOPE_MAX_CLEARANCE = 2.0
+
 /** Anything that falls below this is respawned (e.g. a player squeezed through a gap in the mesh). */
 export const KILL_Y = -50.0
 
@@ -595,7 +606,7 @@ export const PRONE_EYE_HEIGHT = 0.2 - PRONE_CENTRE
  * Mirrors `ON_FOOT_SHOULDER` and `ON_FOOT_HEIGHT` in the client.
  */
 export const ON_FOOT_SHOULDER = 0.6
-export const ON_FOOT_HEIGHT = 0.85
+export const ON_FOOT_HEIGHT = 0.6
 
 /**
  * Building with bricks (`ITEM_BRICKS`, `crate::construct`). Fire puts a cube where the crosshair ray

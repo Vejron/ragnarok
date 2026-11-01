@@ -37,6 +37,18 @@ pub fn wish_velocity_scaled(input: &InputFrame, scale: f32) -> [f32; 2] {
     [x * speed * scale, z * speed * scale]
 }
 
+/// What the ground's slope does to walking along `wish`, `[x, z]`: a share of the speed, under 1 going
+/// up. `normal` is the ground's, pointing up.
+pub fn slope_scale(wish: [f32; 2], normal: [f32; 3]) -> f32 {
+    let speed = wish[0].hypot(wish[1]);
+    if speed < 1e-3 || normal[1] < 1e-3 {
+        return 1.0;
+    }
+    // A heightfield's height changes as (-nx, -nz) / ny, so this is the climb per metre along the walk.
+    let grade = -(wish[0] * normal[0] + wish[1] * normal[2]) / (speed * normal[1]);
+    (1.0 - grade.max(0.0) * SLOPE_CLIMB_DRAG).max(SLOPE_SCALE_MIN)
+}
+
 /// Whether the parachute is open after this input. A press opens it in the air and cuts it when open; on the
 /// ground it is always shut. A prone player cannot open one.
 pub fn toggle_chute(chute: bool, grounded: bool, prone: bool, input: &InputFrame) -> bool {
@@ -161,6 +173,17 @@ mod tests {
         let [x, z] = wish_velocity(&InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 });
         assert!(x.abs() < 1e-6);
         assert!((z + WALK_SPEED).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_climb_slows_the_walk_and_a_descent_does_not() {
+        // Ground rising towards +Z at a 10% grade.
+        let length = (1.0f32 + 0.01).sqrt();
+        let normal = [0.0, 1.0 / length, -0.1 / length];
+        assert!((slope_scale([0.0, 4.0], normal) - 0.85).abs() < 1e-4);
+        assert_eq!(slope_scale([0.0, -4.0], normal), 1.0);
+        assert!((slope_scale([4.0, 0.0], normal) - 1.0).abs() < 1e-4, "along the slope nothing changes");
+        assert_eq!(slope_scale([0.0, 4.0], [0.0, 0.7, -0.7]), SLOPE_SCALE_MIN);
     }
 
     #[test]

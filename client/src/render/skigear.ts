@@ -14,11 +14,13 @@ const SKI_WIDTH = 0.055
 /** Depth bias of a ski, over any ground drawn close under it. */
 const SKI_BIAS = 40
 /** How far under the ankle bone the ski lies, clear of the trails drawn on the snow, and how far along the foot it clips in, metres. */
-const SOLE_DROP = 0.045
+export const SOLE_DROP = 0.045
 const CLIP_AHEAD = 0.06
 /** Pole length, and how much of it stands above the grip, metres. */
 const POLE_LENGTH = 1.42
 const POLE_ABOVE = 0.08
+/** From the grip to the tip, metres. */
+export const POLE_REACH = POLE_LENGTH - POLE_ABOVE
 const BASKET_RADIUS = 0.055
 
 let parts: { ski: Geometry; tip: Geometry; binding: Geometry; pole: Geometry; basket: Geometry; red: Material; dark: Material; strap: Material } | null = null

@@ -221,6 +221,13 @@ pub const AUTOSTEP_MIN_WIDTH: f32 = 0.2;
 /// How far below its feet a standing character is pulled back onto the ground when it walks off
 /// a slope, metres. Without it, running downhill is a series of small falls.
 pub const SNAP_DISTANCE: f32 = 0.3;
+/// Share of walking speed lost per unit of grade (height over distance) going uphill, and the least
+/// that can leave. A 10% climb costs 15%; the steepest is a slog. Going down costs nothing, and gives
+/// nothing: any faster and a runner leaves the ground.
+pub const SLOPE_CLIMB_DRAG: f32 = 1.5;
+pub const SLOPE_SCALE_MIN: f32 = 0.4;
+/// Further than this above the terrain, metres, a soldier is on a roof or a bridge, and its slope is not theirs.
+pub const SLOPE_MAX_CLEARANCE: f32 = 2.0;
 
 /// Anything that falls below this is respawned (e.g. a player squeezed through a gap in the mesh).
 pub const KILL_Y: f32 = -50.0;
@@ -434,7 +441,7 @@ pub const PRONE_EYE_HEIGHT: f32 = 0.2 - PRONE_CENTRE;
 /// above it. The server rebuilds the camera ray from it, so a shot lands where the crosshair is.
 /// Mirrors `ON_FOOT_SHOULDER` and `ON_FOOT_HEIGHT` in the client.
 pub const ON_FOOT_SHOULDER: f32 = 0.6;
-pub const ON_FOOT_HEIGHT: f32 = 0.85;
+pub const ON_FOOT_HEIGHT: f32 = 0.6;
 
 /// Building with bricks (`ITEM_BRICKS`, `crate::construct`). Fire puts a cube where the crosshair ray
 /// from the on-foot camera pivot meets the world, on the near side of the face it meets; aim (`BUTTON_ALT`)

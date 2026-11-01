@@ -8,7 +8,7 @@ import { colorFor } from '@/profile'
 import { LIMB_ALL, LIMB_ARM_L, LIMB_ARM_R, LIMB_LEG_L, LIMB_LEG_R, PART_HEAD } from '@/net/codec'
 import { buildBackpack } from './backpack'
 import { Headlamp } from './headlamp'
-import { buildPole, buildSki } from './skigear'
+import { POLE_REACH, SOLE_DROP, buildPole, buildSki } from './skigear'
 import { smoothstep } from '@/math'
 
 /** Gravity on a thrown body, m/s². */
@@ -110,11 +110,18 @@ const POLE_TILT = 0.32
 /** How much further back they go in a tuck, and how far they splay out from the body, radians. */
 const POLE_TUCK = 1.05
 const POLE_SPLAY = 0.1
+/** How far a pole swings back at the end of its push, radians, its tip off the snow. */
+const POLE_BACK = 1.5
 /** How far the headlamp's beam is dipped below where the face looks: a rise over a run of 1. */
 const LAMP_DIP = 0.12
 const SKI_TILT = new Quaternion()
 const SKI_V = new Quaternion()
 const SKI_SPLAY = new Quaternion()
+/** How far through its stroke a pole is off the snow, 0 being on it, from the plant with the hand forward: held there through the push, then back and round to the next plant. */
+const poleLift = (stroke: number) => {
+  const q = stroke % 1
+  return smoothstep(0.36, 0.56, q) * (1 - smoothstep(0.56, 1, q))
+}
 
 /** Below this ground speed the character just stands; `FULL_STEP` is where the walk is fully in. */
 const STILL_SPEED = 0.3
@@ -376,6 +383,7 @@ const SCRATCH = {
   parent: new Quaternion(),
   axis: new Vector3(),
   forward: new Vector3(),
+  foot: new Vector3(),
   turn: new Quaternion(),
 }
 
@@ -830,13 +838,25 @@ export class Character {
       SKI_TILT.setFromAxisAngle(AXIS_X, -this.herring * Math.atan(this.skiRise))
       ski.quaternion.copy(inverse).multiply(level).multiply(SKI_V).multiply(SKI_TILT)
     })
-    // The poles stay straight under the hand, tips back: all the way back in a tuck.
-    const tilt = SKI_TILT.setFromAxisAngle(AXIS_X, POLE_TILT + POLE_TUCK * this.crouch)
+    // The snow holds a pole's tip through the push, so the hand coming down over it is what tips it back.
+    // From there it swings on back and off the snow. The stride's and the climb's arms take turns.
+    const weight = (name: string) => this.weights.get(name) ?? 0
+    const double = weight('ski_pole') + weight('ski_pole_hard')
+    const stride = weight('ski_stride') + weight('ski_stride_hard')
+    const climb = weight('ski_climb')
+    const up = SCRATCH.axis.set(0, 1, 0).applyQuaternion(level)
+    const [skiL, skiR] = gear.skis
+    const snow = Math.min(skiL.getWorldPosition(SCRATCH.at).dot(up), skiR.getWorldPosition(SCRATCH.foot).dot(up)) - SOLE_DROP
     gear.poles.forEach((pole, i) => {
       const hand = pole.parent
       if (!hand) return
+      const left = i === 0
+      const lift = double * poleLift(this.phase) + stride * poleLift(this.phase + (left ? 0.25 : 0.75)) + climb * poleLift(this.phase + (left ? 0.75 : 0.25))
+      const height = hand.getWorldPosition(SCRATCH.at).dot(up) - snow
+      const planted = Math.max(POLE_TILT + POLE_TUCK * this.crouch, Math.acos(Math.max(0, Math.min(1, height / POLE_REACH))))
+      const tilt = SKI_TILT.setFromAxisAngle(AXIS_X, planted + (POLE_BACK - planted) * lift)
       hand.getWorldQuaternion(inverse).invert()
-      pole.quaternion.copy(inverse).multiply(level).multiply(tilt).multiply(SKI_SPLAY.setFromAxisAngle(AXIS_Z, i === 0 ? POLE_SPLAY : -POLE_SPLAY))
+      pole.quaternion.copy(inverse).multiply(level).multiply(tilt).multiply(SKI_SPLAY.setFromAxisAngle(AXIS_Z, left ? POLE_SPLAY : -POLE_SPLAY))
     })
   }
 

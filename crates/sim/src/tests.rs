@@ -293,6 +293,25 @@ fn walking_down_and_up_a_slope_stays_grounded() {
     }
 }
 
+#[test]
+fn a_hill_is_slower_up_than_down() {
+    let slope = 0.2;
+    let world = terrain_world(|_, z| (z + 100.0) * slope);
+    let physics = Physics::new(&world).unwrap();
+    let walked = |forward: i8| {
+        let ground = world.ground.height_at(0.0, 0.0);
+        let mut character = Character { position: [0.0, ground + STANDING_Y, 0.0], grounded: true, ..Default::default() };
+        for seq in 0..TICK_RATE {
+            let input = InputFrame { seq, strafe: 0, forward, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 };
+            physics.move_character(&mut character, &input, TICK_DT);
+        }
+        character.position[2].abs()
+    };
+    // Yaw 0 faces -Z, so forward is downhill.
+    assert!((walked(127) - WALK_SPEED).abs() < 0.2, "down {}", walked(127));
+    assert!((walked(-127) - WALK_SPEED * 0.7).abs() < 0.2, "up {}", walked(-127));
+}
+
 /// The slope the cross-language fixture runs on: a 20° ramp rising towards +Z, in 5 m cells.
 /// `predict.spec.ts` builds the same heights.
 fn ramp_world() -> WorldFile {
@@ -311,7 +330,7 @@ const RAMP_CHECKPOINTS: [(u32, [f32; 3]); 4] = [
     (30, [-0.0180, 50.4969, 36.2721]),
     (60, [-0.0733, 50.7774, 32.5448]),
     (120, [-0.2956, 46.4280, 25.0937]),
-    (240, [-0.4475, 45.1152, 21.4872]),
+    (240, [-0.4372, 45.1150, 21.4867]),
 ];
 const RAMP_START: [f32; 2] = [0.0, 40.0];
 

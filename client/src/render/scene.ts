@@ -57,7 +57,7 @@ const SHADOW_FAR = { span: 300, size: 4096, depth: 300 }
 /** Radians a scoped view swings per metre of camera shake: the zoomed view magnifies it, so a little goes a long way. */
 const SCOPE_SHAKE = 0.25
 /** Vertical field of view, degrees: normal, aiming a gun, and looking down a scope. */
-const DEFAULT_FOV = 75
+const DEFAULT_FOV = 65
 /** An FPV camera's wide lens. */
 const FPV_FOV = 100
 /** A loitering drone's belly camera: narrower, to pick out targets from 100 m up. */

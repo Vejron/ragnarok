@@ -12,7 +12,7 @@ use rapier3d::parry::utils::Array2;
 use rapier3d::prelude::*;
 use shared::carve::{Shell, Tri};
 use shared::consts::*;
-use shared::movement::{begin_slide, decay_knock, desired_translation, knockdown_ticks, settle_vertical, spend_stamina, steer_chute, toggle_chute};
+use shared::movement::{begin_slide, decay_knock, desired_translation, knockdown_ticks, settle_vertical, slope_scale, spend_stamina, steer_chute, toggle_chute, wish_velocity};
 use shared::protocol::{InputFrame, LIMB_LEGS};
 use shared::quant::from_cm;
 use shared::ski::{SkiGround, SkiMap, bad_landing, over_crest, ski_flight, ski_step};
@@ -711,6 +711,7 @@ impl Physics {
         let input = &if winded { InputFrame { buttons: input.buttons & !BUTTON_RUN, ..*input } } else { *input };
         // On skis nothing walks: all the moving is `knock`.
         let walk = if character.skis { InputFrame { strafe: 0, forward: 0, ..*input } } else { *input };
+        let speed_scale = speed_scale * self.walk_slope(character, &walk);
         let (vy, desired) = desired_translation(character.vy, character.grounded, character.knock, &walk, dt, speed_scale, character.chute, jump_speed);
         let queries = self.broad_phase.as_query_pipeline(
             self.narrow_phase.query_dispatcher(),
@@ -780,14 +781,30 @@ impl Physics {
     /// finds it, and whether it is a groomed track. Flat where no terrain has streamed in.
     fn ski_ground(&self, position: [f32; 3]) -> SkiGround {
         let track = self.ski.on_track(position[0], position[2]);
+        let normal = self.terrain_under(position).map_or([0.0, 1.0, 0.0], |(_, normal)| normal);
+        SkiGround { normal, track, groove: self.ski.groove(position[0], position[2]) }
+    }
+
+    /// What the slope under a soldier does to their walking this tick (`slope_scale`).
+    fn walk_slope(&self, character: &Character, input: &InputFrame) -> f32 {
+        if !character.grounded || (input.strafe == 0 && input.forward == 0) {
+            return 1.0;
+        }
+        match self.terrain_under(character.position) {
+            Some((height, normal)) if character.position[1] - height < SLOPE_MAX_CLEARANCE => slope_scale(wish_velocity(input), normal),
+            _ => 1.0,
+        }
+    }
+
+    /// The terrain's height and normal under `position`, if it has streamed in.
+    fn terrain_under(&self, position: [f32; 3]) -> Option<(f32, [f32; 3])> {
         let terrain = |_: ColliderHandle, collider: &Collider| collider.shape().as_heightfield().is_some();
         let filter = QueryFilter::only_fixed().predicate(&terrain);
         let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, filter);
         // Off to the side a little: a ray straight down an exact grid line can slip between the triangles.
         let ray = Ray::new(Vector::new(position[0] + SKI_RAY_NUDGE, TERRAIN_TOP, position[2] + SKI_RAY_NUDGE), Vector::new(0.0, -1.0, 0.0));
         let hit = queries.cast_ray_and_get_normal(&ray, TERRAIN_TOP + RAY_FLOOR, true);
-        let normal = hit.map_or([0.0, 1.0, 0.0], |(_, hit)| [hit.normal.x, hit.normal.y, hit.normal.z]);
-        SkiGround { normal, track, groove: self.ski.groove(position[0], position[2]) }
+        hit.map(|(_, hit)| (TERRAIN_TOP - hit.time_of_impact, [hit.normal.x, hit.normal.y, hit.normal.z]))
     }
 
     /// Knocks `character` down for `ticks` (more if it already is): the canopy, if open, is lost, and
