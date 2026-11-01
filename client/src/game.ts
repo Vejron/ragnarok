@@ -13,7 +13,7 @@ import { easeSway, sway, swayAmplitude } from './sway'
 import { mayPlace } from './sim/bricks'
 import { crewGun, vehicleDef } from './sim/vehicles'
 import { blockedAt, spreadPixels } from './aimline'
-import { aimSpeedScale, effectiveSpread, HOTBAR_SLOTS, itemDef, type ItemDef, type ItemSlot } from './sim/items'
+import { aimSpeedScale, effectiveSpread, fillsHands, itemDef, type ItemDef, type ItemSlot } from './sim/items'
 import { InputController } from './sim/input'
 import type { Character } from './render/character'
 import { SimMotor, type CharacterState, type VehiclePose } from './sim/motor'
@@ -126,7 +126,7 @@ const MIN_CROSS_GAP = 3
 const SIGHT_LOOK_SCALE = 0.35
 /** The cold white of a headlamp, its strength in full dark and the share of that by day, its reach in metres, and its half-angle and soft edge. */
 const LAMP_COLOR = 0xeef4ff
-const LAMP_INTENSITY = 18
+const LAMP_INTENSITY = 4
 const LAMP_BY_DAY = 0.1
 const LAMP_REACH = 45
 const LAMP_ANGLE = 0.36
@@ -448,7 +448,8 @@ export class Game {
     this.view.focus(x, z)
     await this.tiles.prime(x, z)
     this.predictor = new Predictor(motor.stepper, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0, down: 0, skis: false, skiStrain: 0 })
-    this.predictor.speedScale = (input) => aimSpeedScale(this.player.slot(Math.min(input.slot, HOTBAR_SLOTS - 1)).item, input.buttons) * (this.player.carrying ? BACKPACK_SPEED : 1)
+    this.predictor.speedScale = (input) => aimSpeedScale(this.player.slot(input.slot).item, input.buttons) * (this.player.carrying ? BACKPACK_SPEED : 1)
+    this.predictor.armed = (input) => fillsHands(this.player.slot(input.slot).item)
     this.avatars.local()
     if (this.disposed) return
     this.lastFrame = performance.now()
@@ -859,11 +860,11 @@ export class Game {
     const me = this.avatars.local()
     me.hidden = (seated && !flying && !sitting) || scoped
     me.dead = !this.player.alive
-    me.held = this.player.slot(this.input.selectedSlot).item
+    me.held = this.player.slot(this.input.heldSlot).item
     me.pack = this.player.carrying
     me.skis = local.skis
     me.skiAim = local.skis && this.input.aimHeld
-    me.skiPoling = this.polingHard && !this.crouching && !this.input.aimHeld && !local.winded && local.grounded
+    me.skiPoling = this.polingHard && !fillsHands(me.held) && !this.crouching && !this.input.aimHeld && !local.winded && local.grounded
     me.lamp = this.player.lamp && this.player.alive
     this.skiSounds(local, position, dt)
     // Face where the camera looks, immediately, rather than the last ticked yaw.
@@ -1027,7 +1028,7 @@ export class Game {
       blocked,
       hands: this.localId !== null && hands && player.alive,
       hotbar: player.hotbar,
-      selected: this.input.selectedSlot,
+      selected: this.input.heldSlot,
       progress: player.progress,
       kills: this.board.kills(this.localId),
       deaths: this.board.deaths(this.localId),
@@ -1065,7 +1066,7 @@ export class Game {
 
   /** The slot in hand. */
   private held(): ItemSlot {
-    return this.player.slot(this.input.selectedSlot)
+    return this.player.slot(this.input.heldSlot)
   }
 
   /** The local player's own muzzle flash, at once, instead of after the server's reply. */

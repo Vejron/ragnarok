@@ -16,7 +16,7 @@ pub use crate::vehicles::tank::*;
 pub use crate::vehicles::walker::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 65;
+pub const PROTOCOL_VERSION: u8 = 66;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -110,6 +110,8 @@ pub const BUTTON_CHUTE: u16 = 1 << 12;
 pub const BUTTON_AMMO: u16 = 1 << 13;
 /// One press: the headlamp on or off (L). Like a jump it is not repeated.
 pub const BUTTON_LAMP: u16 = 1 << 14;
+/// Puts skis on or takes them off, in a winter world, nearly still (`SKI_CLIP_SPEED`). The last bit.
+pub const BUTTON_SKIS: u16 = 1 << 15;
 
 /// Soldier movement, in metres and seconds.
 pub const WALK_SPEED: f32 = 4.0;
@@ -361,6 +363,8 @@ pub const SKI_DRAG: f32 = 0.005;
 pub const SKI_DRAG_TUCK: f32 = 0.0025;
 /// What the poles put out, W/kg: over speed, it is the push.
 pub const SKI_POWER: f32 = 3.0;
+/// What the legs alone put out, W/kg: a gun in hand leaves no hand for the poles.
+pub const SKI_KICK_POWER: f32 = 1.0;
 /// What run held adds to the push from a standstill, m/s². It fades away to nothing at `SKI_BOOST_TOP`.
 pub const SKI_BOOST: f32 = 3.5;
 /// The speed past which poling hard gives no more, m/s: 43 km/h.

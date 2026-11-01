@@ -35,7 +35,7 @@ export interface CharacterState {
 }
 
 /** One tick of a soldier: what `Predictor` runs, and replays on reconciling. */
-export type Stepper = (state: CharacterState, input: InputFrame, dt: number, speedScale: number) => CharacterState
+export type Stepper = (state: CharacterState, input: InputFrame, dt: number, speedScale: number, armed: boolean) => CharacterState
 
 /** What a driver asks of a vehicle this tick, as `sim::CarControls`. */
 export interface CarControls {
@@ -300,7 +300,7 @@ export class SimMotor {
   }
 
   /** One tick of the soldier, as `Physics::step_character` does it on the server. */
-  step(state: CharacterState, input: InputFrame, dt: number, speedScale = 1): CharacterState {
+  step(state: CharacterState, input: InputFrame, dt: number, speedScale = 1, armed = false): CharacterState {
     return timed(() => {
       const s = this.scratch
       s[0] = state.position[0]
@@ -320,14 +320,14 @@ export class SimMotor {
       s[14] = state.down
       s[15] = state.skis ? 1 : 0
       s[16] = state.skiStrain
-      this.sim.stepCharacter(s, input.seq, input.strafe, input.forward, input.yaw, input.buttons, input.pitch, input.view, input.slot, dt, speedScale)
+      this.sim.stepCharacter(s, input.seq, input.strafe, input.forward, input.yaw, input.buttons, input.pitch, input.view, input.slot, dt, speedScale, armed)
       return { position: [s[0]!, s[1]!, s[2]!], yaw: s[3]!, vy: s[4]!, grounded: s[5] === 1, knock: [s[6]!, s[7]!], ride: s[8]!, prone: s[9] === 1, chute: s[10] === 1, spent: s[11]!, winded: s[12] === 1, lost: s[13]!, down: s[14]!, skis: s[15] === 1, skiStrain: s[16]! }
     })
   }
 
   /** The stepper `Predictor` runs. */
   get stepper(): Stepper {
-    return (state, input, dt, speedScale) => this.step(state, input, dt, speedScale)
+    return (state, input, dt, speedScale, armed) => this.step(state, input, dt, speedScale, armed)
   }
 
   dispose() {

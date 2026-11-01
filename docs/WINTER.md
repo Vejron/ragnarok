@@ -11,18 +11,22 @@ A world is a winter one when its `area.json` says `"theme": "winter"`. The impor
 
 ## Skiing (`crates/shared/src/ski.rs`)
 
-Skis are an item (`ITEM_SKIS`). Use it nearly still to put them on or take them off; they stay on when you change weapon. Everyone in a winter world has a pair, in the last hotbar slot unless they chose them. Worn skis replicate through `carry`, now a mask of `CARRY_*`.
+Skis are a switch, like the headlamp, and not an item: K (`BUTTON_SKIS`) puts them on or takes them off, nearly still (`SKI_CLIP_SPEED`), in a winter world only. `Movement` does it, so the key does nothing elsewhere. They stay on when you change weapon. Worn skis replicate through `carry`, now a mask of `CARRY_*`.
+
+**Guns and poles.** A gun in hand (`fills_hands`: guns, launchers, the flare gun) leaves no hand for the poles, so they are stowed and only the legs push: a skate kick at `SKI_KICK_POWER`, a third of the poles, with nothing added by run. The herringbone still climbs. X slings what is in hand (the input's `slot` is `SLOT_NONE`) and the poles come back; X again or picking a slot brings it back. The tick's `armed` goes through `step_character` beside `speed_scale`, from the same hotbar lookup on both sides.
 
 On skis, all speed is in `Character::knock`, so ragdolls launch at the skier's speed. `ski_step` adds gravity along the slope, friction (lower on a track), drag and the push of the poles, and turns the velocity towards the skis as far as they grip. The constants are `SKI_*` in `consts.rs`.
 
 | Input | On skis |
 |---|---|
-| W | Push |
-| Shift + W | Pole hard: a strong extra push that fades away at `SKI_BOOST_TOP` (43 km/h), for stamina |
+| K | Skis on or off |
+| X | Sling the gun or take it back: poles or gun |
+| W | Push with the poles; with a gun in hand a weak skate kick |
+| Shift + W | Pole hard: a strong extra push that fades away at `SKI_BOOST_TOP` (43 km/h), for stamina. Nothing extra with a gun in hand |
 | S | Snowplow: brakes, and holds a tighter turn |
 | Crouch | Tuck: half the drag, no pushing |
 | A / D | Turn the skis 45° from the look |
-| Aim | Weapon up, poles down: coast straight, no steering |
+| Aim | Coast straight, no steering, no push |
 | Jump | A smaller jump |
 
 **Climbing.** Steeper than 12° along the skis a push turns into a herringbone (the Swedish *saxning*): each step gets the skier up at a steady pace, slower the steeper it is, up to 30° at a walk and 42° with run held, which costs stamina. Past that, or winded, nothing holds and they slip back. On screen the skis splay into a V and lie on the hill, while the body stays up over them.
@@ -39,9 +43,9 @@ The slope comes from a ray straight down, as `terrain_below` does it. It is nudg
 
 ## On screen
 
-Clips `ski_*` are baked in `tools/character/build_character.py`, and `Character` picks the gait from speed, slope and crouch, so nothing extra is sent. Skis and poles are meshes under the foot and hand bones (`render/skigear.ts`), the skis turned each frame to lie flat. A pole keeps its tip on the snow through the push, the hand coming down over it tipping it back, then swings back off the snow and round to the plant (`poleLift`). Grooves and spray are in `render/skitracks.ts`, client-only. Snowfall has its own particle pool (`render/snowfall.ts`).
+Clips `ski_*` (poles) and, per stance, `armed_*` (the stance's grip on the same legs, chest kept up so the gun stays level) are baked in `tools/character/build_character.py`, and `Character` picks the gait from speed, slope and crouch, so nothing extra is sent. Skis and poles are meshes under the foot and hand bones (`render/skigear.ts`), the skis turned each frame to lie flat. A pole keeps its tip on the snow through the push, the hand coming down over it tipping it back, then swings back off the snow and round to the plant (`poleLift`). Grooves and spray are in `render/skitracks.ts`, client-only. Snowfall has its own particle pool (`render/snowfall.ts`).
 
-Whether another player is aiming is not sent, so they are seen poling while they aim.
+With a gun the legs and skis go the way of travel and the torso carries the gun to the look, up to `SKI_TWIST`; past that the legs turn too. Other players' poles or gun follow from the held item, which is already sent.
 
 ## Headlamp
 

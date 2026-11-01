@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { reactive } from 'vue'
 import type { InputController } from './sim/input'
-import { BUTTON_ALT, BUTTON_CHUTE, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_PRONE, BUTTON_RELOAD, BUTTON_RUN, BUTTON_USE } from './sim/consts'
+import { BUTTON_ALT, BUTTON_CHUTE, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_PRONE, BUTTON_RELOAD, BUTTON_RUN, BUTTON_SKIS, BUTTON_USE } from './sim/consts'
+import { winter } from './render/season'
 
 const props = defineProps<{ input: InputController; seat: string | null; canSwitch?: boolean }>()
 
@@ -96,6 +97,8 @@ const release = (mask: number) => () => props.input.hold(mask, false)
     <button v-if="seat === 'aviator' || seat === 'roadster'" class="btn crouch" @pointerdown.prevent="press(BUTTON_CROUCH)($event)" @pointerup="release(BUTTON_CROUCH)()" @pointercancel="release(BUTTON_CROUCH)()">{{ seat === 'roadster' ? 'BRAKE' : 'BOMB' }}</button>
     <button class="btn fire" @pointerdown.prevent="press(BUTTON_FIRE)($event)" @pointerup="release(BUTTON_FIRE)()" @pointercancel="release(BUTTON_FIRE)()">{{ seat === 'drone' || seat === 'loiter' ? 'BOOM' : seat === 'hen' ? 'EGG' : seat === 'tupp' ? 'LASER' : 'FIRE' }}</button>
     <button v-if="!seat" class="btn chute" @pointerdown.prevent="input.tap(BUTTON_CHUTE)">CHUTE</button>
+    <button v-if="!seat" class="btn holster" @pointerdown.prevent="input.holster()">HANDS</button>
+    <button v-if="!seat && winter" class="btn skis" @pointerdown.prevent="input.tap(BUTTON_SKIS)">SKIS</button>
     <button v-if="!seat || seat === 'passenger'" class="btn reload" @pointerdown.prevent="input.tap(BUTTON_RELOAD)">RELOAD</button>
     <!-- A loitering drone's camera swap is aim, as right-click is. -->
     <button v-else-if="seat === 'loiter'" class="btn reload" @pointerdown.prevent="press(BUTTON_ALT)($event)" @pointerup="release(BUTTON_ALT)()" @pointercancel="release(BUTTON_ALT)()">CAM</button>
@@ -129,5 +132,7 @@ const release = (mask: number) => () => props.input.hold(mask, false)
 .chute { right: calc(max(18px, env(safe-area-inset-right)) + 96px); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 60px); font-size: 10px; }
 .crouch { right: calc(max(26px, env(safe-area-inset-right)) + 80px); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 100px); font-size: 10px; }
 .prone { right: calc(max(26px, env(safe-area-inset-right)) + 160px); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 100px); font-size: 10px; }
+.holster { right: calc(max(26px, env(safe-area-inset-right)) + 80px); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 180px); font-size: 10px; }
+.skis { right: calc(max(26px, env(safe-area-inset-right)) + 160px); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 180px); font-size: 10px; }
 .use { right: max(26px, env(safe-area-inset-right)); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 180px); }
 </style>

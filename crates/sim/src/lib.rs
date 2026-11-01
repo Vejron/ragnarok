@@ -647,11 +647,12 @@ impl Physics {
     /// which keeps the local player's prediction independent of where remote players really are.
     #[cfg(any(test, feature = "testing"))]
     pub fn move_character(&self, character: &mut Character, input: &InputFrame, dt: f32) {
-        self.move_character_scaled(character, input, dt, 1.0);
+        self.move_character_scaled(character, input, dt, 1.0, false);
     }
 
-    /// `move_character` with walking speed multiplied by `speed_scale` (aiming a gun slows you).
-    pub fn move_character_scaled(&self, character: &mut Character, input: &InputFrame, dt: f32, speed_scale: f32) {
+    /// `move_character` with walking speed multiplied by `speed_scale` (aiming a gun slows you), and
+    /// `armed` for a gun in hand, which on skis leaves only the legs to push (`ski_step`).
+    pub fn move_character_scaled(&self, character: &mut Character, input: &InputFrame, dt: f32, speed_scale: f32, armed: bool) {
         // Knocked down, the player's input is nothing at all, facing as they were.
         let still = InputFrame { strafe: 0, forward: 0, buttons: 0, yaw: shared::quant::to_mrad(character.yaw), ..*input };
         let input = if character.down > 0 { &still } else { input };
@@ -670,7 +671,7 @@ impl Physics {
             if character.grounded {
                 // Winded, run held does nothing.
                 let spent = InputFrame { buttons: input.buttons & !BUTTON_RUN, ..*input };
-                let step = ski_step(character.knock, character.ski_strain, ground, if character.winded { &spent } else { input }, dt);
+                let step = ski_step(character.knock, character.ski_strain, ground, if character.winded { &spent } else { input }, armed, dt);
                 character.ski_strain = step.strain;
                 fell = step.fell;
                 step.knock
@@ -824,12 +825,12 @@ impl Physics {
     /// `move_character_scaled`, plus what standing on a vehicle moving at `ride_velocity` does. Jumping
     /// off it adds its speed to the knockback before the move; stepping off its edge adds it after.
     /// Which vehicle the character stands on next (`Character::ride`) is the caller's to say.
-    pub fn step_character(&self, character: &mut Character, input: &InputFrame, dt: f32, speed_scale: f32, ride_velocity: Option<[f32; 3]>) {
+    pub fn step_character(&self, character: &mut Character, input: &InputFrame, dt: f32, speed_scale: f32, armed: bool, ride_velocity: Option<[f32; 3]>) {
         let jumped = character.ride != 0 && character.grounded && input.buttons() & BUTTON_JUMP != 0;
         if let (true, Some(velocity)) = (jumped, ride_velocity) {
             inherit(character, velocity);
         }
-        self.move_character_scaled(character, input, dt, speed_scale);
+        self.move_character_scaled(character, input, dt, speed_scale, armed);
         if let (false, false, Some(velocity)) = (jumped, character.grounded, ride_velocity) {
             // Stepped off the edge of the roof.
             inherit(character, velocity);

@@ -326,7 +326,7 @@ fn it_reloads_when_empty_and_tops_up_between_fights() {
     let mut game = game(false);
     let bot = guard(&mut game, 0.5);
     game.step();
-    let slot = game.world.entities.of::<Player>(bot).hands.selected;
+    let slot = game.world.entities.of::<Player>(bot).hands.selected.unwrap();
     let mag = shared::items::def(game.world.entities.of::<Player>(bot).held().item).unwrap().mag;
     game.world.entities.get_mut::<Player>(bot).unwrap().hands.hotbar[slot].ammo = 3;
     run(&mut game, 4.0);

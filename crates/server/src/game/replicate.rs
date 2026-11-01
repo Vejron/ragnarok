@@ -29,7 +29,7 @@ impl Game {
             let struck = self.world.entities.get::<Struck>(id).map(|s| wire::Struck { count: s.count, part: s.part, amount: s.amount, yaw: s.yaw, x: s.at[0], y: s.at[1], z: s.at[2] });
             let parts = wounds.unwrap_or_default().left();
             let c = &player.character;
-            let poling = c.skis && c.grounded && c.down == 0 && !c.winded && player.input.forward > 0 && player.input.buttons() & (BUTTON_RUN | BUTTON_CROUCH | BUTTON_ALT) == BUTTON_RUN;
+            let poling = c.skis && c.grounded && c.down == 0 && !c.winded && !shared::items::fills_hands(player.held().item) && player.input.forward > 0 && player.input.buttons() & (BUTTON_RUN | BUTTON_CROUCH | BUTTON_ALT) == BUTTON_RUN;
             let what = if poling { CARRY_POLING } else { 0 } | if crate::mechanics::carries(&self.world, id) { CARRY_BACKPACK } else { 0 } | if player.character.skis { CARRY_SKIS } else { 0 } | if player.lamp { CARRY_LAMP } else { 0 };
             let carry = (what != 0).then_some(wire::Carry { what });
             let shown = Replicated { seated, limbs, struck, carry, ..shown };

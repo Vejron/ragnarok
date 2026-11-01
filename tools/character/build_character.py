@@ -1152,6 +1152,59 @@ def ski_air(t):
         ski_hand(side, 0.18 + wob, 0.3, out=0.32)
 
 
+def armed_body(lean, legs):
+    """`ski_body` with the poles stowed: the hips fold `lean` but the chest stays up, so the gun in the
+    stance's grip stays level, wherever the legs are."""
+    ski_body(lean, legs)
+    pose_rot("chest", -lean * 0.75, 0, 0)
+    pose_rot("head", 0, 0, 0)
+    set_arms_carry()
+
+
+def armed_glide(t):
+    """Gliding with a gun up."""
+    breath = 0.02 * math.sin(TAU * t)
+    armed_body(0.25, [("L", 0.2 + breath, 0.42 + 2 * breath, 0), ("R", 0.2 + breath, 0.42 + 2 * breath, 0)])
+
+
+def armed_skate(t):
+    """A short kick off each ski in turn, tails out: all a skier has with no hand for a pole."""
+    phi = TAU * t
+    legs = []
+    for side, offset in (("L", 0.0), ("R", math.pi)):
+        s = math.sin(phi + offset)
+        legs.append((side, 0.16 + 0.3 * s, 0.36 + 0.3 * max(0.0, s) + 0.12 * max(0.0, math.cos(phi + offset)), 0.1))
+    armed_body(0.3 + 0.03 * math.cos(2 * phi), legs)
+
+
+def armed_climb(t):
+    """Herringbone with a gun up."""
+    phi = TAU * t
+    legs = []
+    for side, offset in (("L", 0.0), ("R", math.pi)):
+        s = math.sin(phi + offset)
+        step = max(0.0, s)
+        legs.append((side, 0.3 + 0.55 * step - 0.12 * max(0.0, -s), 0.6 + 0.95 * step, 0.26))
+    armed_body(0.6 + 0.05 * math.sin(2 * phi), legs)
+
+
+def armed_tuck(t):
+    """Down on the thighs, as in the tuck, with the gun still level."""
+    wob = 0.012 * math.sin(TAU * t)
+    armed_body(0.9, [("L", 0.95 + wob, 1.9 + 2 * wob, 0), ("R", 0.95 + wob, 1.9 + 2 * wob, 0)])
+
+
+def armed_plow(t):
+    """The snowplow with a gun up."""
+    wob = 0.01 * math.sin(TAU * t)
+    armed_body(0.3, [("L", 0.42 + wob, 0.84 + 2 * wob, 0.32), ("R", 0.42 + wob, 0.84 + 2 * wob, 0.32)])
+
+
+def armed_air(t):
+    """In the air with a gun up."""
+    armed_body(0.3, [("L", 0.34, 0.68, 0), ("R", 0.34, 0.68, 0)])
+
+
 # One crawl cycle, two pushes, at 60 fps.
 CRAWL_FRAMES = 78
 
@@ -1189,6 +1242,13 @@ def build_actions():
         bake(f"{prefix}slide", 120, slide)
         bake(f"{prefix}jump_air", 60, jump_air)
         bake(f"{prefix}sit", 120, sit)
+        # On skis with the poles stowed: the stance's grip on the skier's legs.
+        bake(f"{prefix}armed_glide", 120, armed_glide)
+        bake(f"{prefix}armed_skate", 54, armed_skate)
+        bake(f"{prefix}armed_climb", 54, armed_climb)
+        bake(f"{prefix}armed_tuck", 120, armed_tuck)
+        bake(f"{prefix}armed_plow", 120, armed_plow)
+        bake(f"{prefix}armed_air", 60, armed_air)
     # Dying lets go of everything, so one clip serves every stance.
     CURRENT = "rifle"
     bake("death", 60, death, loop=False)
@@ -1306,7 +1366,7 @@ def preview(directory):
     at("idle", 0)
     for v in views:
         shoot(f"idle_{v}", v)
-    for clip, frames in (("ski_glide", 1), ("ski_stride", 54), ("ski_pole", 60), ("ski_stride_hard", 54), ("ski_pole_hard", 60), ("ski_climb", 54), ("ski_tuck", 1), ("ski_plow", 1), ("ski_air", 1)):
+    for clip, frames in (("ski_glide", 1), ("ski_stride", 54), ("ski_pole", 60), ("ski_stride_hard", 54), ("ski_pole_hard", 60), ("ski_climb", 54), ("ski_tuck", 1), ("ski_plow", 1), ("ski_air", 1), ("armed_glide", 1), ("armed_skate", 54), ("armed_climb", 54), ("armed_tuck", 1), ("armed_plow", 1), ("armed_air", 1), ("shoulder_armed_glide", 1), ("pistol_armed_tuck", 1)):
         for i in range(1 if frames == 1 else 4):
             at(clip, i * frames // 4)
             shoot(f"{clip}_{i}", "side")

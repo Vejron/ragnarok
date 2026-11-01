@@ -15,6 +15,7 @@ pub mod hydro;
 pub mod ign;
 pub mod lidar;
 pub mod minimap;
+pub mod ocad;
 pub mod paint;
 pub mod osm_ski;
 pub mod osm_water;

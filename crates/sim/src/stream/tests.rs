@@ -79,8 +79,8 @@ fn a_soldier_walks_the_streamed_city_as_the_server_walks_it() {
     for tick in 0..600u32 {
         // Running and turning, now and then jumping: into walls, kerbs and slopes.
         let input = InputFrame { seq: tick + 1, forward: 127, strafe: if tick % 200 < 100 { 60 } else { -60 }, yaw: ((tick * 7) % 6283) as i16 - 3141, buttons: if tick % 90 == 0 { BUTTON_JUMP } else { BUTTON_RUN }, ..Default::default() };
-        whole.step_character(&mut a, &input, TICK_DT, 1.0, None);
-        streamed.step_character(&mut b, &input, TICK_DT, 1.0, None);
+        whole.step_character(&mut a, &input, TICK_DT, 1.0, false, None);
+        streamed.step_character(&mut b, &input, TICK_DT, 1.0, false, None);
     }
     let travelled = (a.position[0] - start.position[0]).hypot(a.position[2] - start.position[2]);
     assert!(travelled > 4.0, "it hardly moved: {travelled} m");

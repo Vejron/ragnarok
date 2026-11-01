@@ -4,7 +4,7 @@ import { Quaternion, Vector3 } from '@ragnarok/engine'
 import { describe, expect, it } from 'vitest'
 import { Character, Crowd, parseCharacter } from '@/render/character'
 import { boxOf } from './helpers'
-import { ITEM_AK5, ITEM_BANDAGE, ITEM_GRENADE, ITEM_NONE, ITEM_REVOLVER } from '@/sim/items'
+import { ITEM_AK5, ITEM_BANDAGE, ITEM_GRENADE, ITEM_NONE, ITEM_REVOLVER, fillsHands } from '@/sim/items'
 
 const file = resolve(process.cwd(), 'public/models/player.glb')
 
@@ -26,6 +26,55 @@ function run(person: Character, yaw: number, vx: number, vz: number, seconds = 1
 
 /** How much a world matrix scales its X axis. */
 const scaleOf = (m: ArrayLike<number>) => Math.hypot(m[0]!, m[1]!, m[2]!)
+
+describe('Character on skis', () => {
+  const visible = (c: Crowd, name: string) => {
+    let shown = false
+    c.root.traverse((node) => {
+      if (node.name === name) shown = node.visible
+    })
+    return shown
+  }
+
+  it('has the skis-with-a-gun clips in every stance', async () => {
+    const c = await crowd()
+    for (const prefix of ['', 'pistol_', 'hold_', 'shoulder_']) {
+      for (const name of ['glide', 'skate', 'climb', 'tuck', 'plow', 'air']) expect(c.asset!.clips.has(`${prefix}armed_${name}`), prefix + name).toBe(true)
+    }
+    c.dispose()
+  })
+
+  it('shows the gun and blends the armed clips with a gun in hand', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    person.held = ITEM_AK5
+    person.skis = true
+    run(person, 0, 0, -6)
+    expect(visible(c, 'weapon_ak5')).toBe(true)
+    expect(person.blend.get('armed_glide')! + person.blend.get('armed_skate')!).toBeGreaterThan(0.8)
+    expect(person.blend.get('ski_pole') ?? 0).toBeLessThan(0.05)
+    c.dispose()
+  })
+
+  it('goes back to the poles with empty hands, gun put away', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    person.held = ITEM_AK5
+    person.skis = true
+    person.held = ITEM_NONE
+    run(person, 0, 0, -6)
+    expect(visible(c, 'weapon_ak5')).toBe(false)
+    expect(person.blend.get('armed_glide') ?? 0).toBeLessThan(0.05)
+    c.dispose()
+  })
+
+  it('counts what shoots as filling the hands', () => {
+    expect(fillsHands(ITEM_AK5)).toBe(true)
+    expect(fillsHands(ITEM_REVOLVER)).toBe(true)
+    expect(fillsHands(ITEM_GRENADE)).toBe(false)
+    expect(fillsHands(ITEM_NONE)).toBe(false)
+  })
+})
 
 describe('Character holding things', () => {
   it('has a clip set per stance and a mesh and muzzle for each weapon', async () => {

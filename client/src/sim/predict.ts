@@ -31,6 +31,8 @@ export class Predictor {
   lastCorrection = 0
   /** Walking speed multiplier for an input, e.g. slower aiming a gun. The game sets it from the hotbar. */
   speedScale: (input: InputFrame) => number = () => 1
+  /** Whether a gun is in hand for an input, which leaves the skis no poles. The game sets it from the hotbar. */
+  armed: (input: InputFrame) => boolean = () => false
 
   constructor(private readonly step: Stepper, initial: CharacterState) {
     this.state = cloneState(initial)
@@ -40,7 +42,7 @@ export class Predictor {
   /** Applies one new input locally. */
   apply(input: InputFrame) {
     this.previous = this.state
-    this.state = this.step(this.state, input, TICK_DT, this.speedScale(input))
+    this.state = this.step(this.state, input, TICK_DT, this.speedScale(input), this.armed(input))
     this.pending.push(input)
     if (this.pending.length > MAX_PENDING) this.pending.shift()
   }
@@ -77,7 +79,7 @@ export class Predictor {
     let previous = state
     for (const input of this.pending) {
       previous = state
-      state = this.step(state, input, TICK_DT, this.speedScale(input))
+      state = this.step(state, input, TICK_DT, this.speedScale(input), this.armed(input))
     }
     const delta: Vec3 = [before[0] - state.position[0], before[1] - state.position[1], before[2] - state.position[2]]
     this.lastCorrection = Math.hypot(...delta)

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { InputController } from '@/sim/input'
-import { BUTTON_ALT, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_PRONE, BUTTON_RELOAD, BUTTON_USE } from '@/sim/consts'
+import { BUTTON_ALT, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_PRONE, BUTTON_RELOAD, BUTTON_SKIS, BUTTON_USE } from '@/sim/consts'
+import { SLOT_NONE } from '@/sim/items'
 
 const press = (code: string) => window.dispatchEvent(new KeyboardEvent('keydown', { code }))
 const release = (code: string) => window.dispatchEvent(new KeyboardEvent('keyup', { code }))
@@ -9,6 +10,35 @@ describe('InputController hotbar', () => {
   let input: InputController | null = null
   const make = () => (input = new InputController(document.createElement('div')))
   afterEach(() => input?.dispose())
+
+  it('X slings what is in hand and brings the same slot back', () => {
+    const i = make()
+    press('Digit3')
+    release('Digit3')
+    press('KeyX')
+    release('KeyX')
+    expect(i.sample().slot).toBe(SLOT_NONE)
+    press('KeyX')
+    release('KeyX')
+    expect(i.sample().slot).toBe(2)
+  })
+
+  it('picking a slot takes the hands out of the holster', () => {
+    const i = make()
+    press('KeyX')
+    release('KeyX')
+    press('Digit2')
+    release('Digit2')
+    expect(i.sample().slot).toBe(1)
+  })
+
+  it('K sends the ski switch once', () => {
+    const i = make()
+    press('KeyK')
+    expect(i.sample().buttons & BUTTON_SKIS).toBeTruthy()
+    expect(i.sample().buttons & BUTTON_SKIS).toBe(0)
+    release('KeyK')
+  })
 
   it('starts on the first slot and follows the number keys', () => {
     const i = make()

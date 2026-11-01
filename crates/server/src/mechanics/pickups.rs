@@ -188,15 +188,17 @@ impl Mechanic for Pickups {
             // Nowhere to put it: trade it for what is in hand, which is left in its place.
             let traded = if left != 0 && left >= pickup.count {
                 // Combat has not yet seen this tick's selection, so read it from the input.
-                let held = (player.input.slot() as usize).min(HOTBAR_SLOTS - 1);
-                let slot = player.hands.hotbar[held];
+                // With the hands empty there is nothing to trade.
+                let held = hotbar_index(player.input.slot());
                 let item_def = def(pickup.item);
-                if let (true, Some(item_def)) = (slot.item != ITEM_NONE && slot.item != pickup.item, item_def) {
-                    player.hands.hotbar[held] = ItemSlot { item: pickup.item, count: pickup.count, ammo: item_def.mag };
-                    player.interrupt();
-                    Some(slot)
-                } else {
-                    None
+                match (held, item_def) {
+                    (Some(held), Some(item_def)) if player.hands.hotbar[held].item != ITEM_NONE && player.hands.hotbar[held].item != pickup.item => {
+                        let slot = player.hands.hotbar[held];
+                        player.hands.hotbar[held] = ItemSlot { item: pickup.item, count: pickup.count, ammo: item_def.mag };
+                        player.interrupt();
+                        Some(slot)
+                    }
+                    _ => None,
                 }
             } else {
                 None
@@ -338,6 +340,17 @@ mod tests {
         press_use(&mut game, id, &mut seq, 0);
         assert_eq!(game.world.entities.of::<Player>(id).hands.hotbar[0].item, ITEM_BANDAGE);
         assert!(game.world.entities.of::<Player>(id).seat.is_none());
+    }
+
+    #[test]
+    fn empty_hands_have_nothing_to_trade() {
+        let (mut game, id, _inbox) = game();
+        game.world.entities.get_mut::<Player>(id).unwrap().hands.hotbar = [ItemSlot { item: ITEM_REVOLVER, count: 1, ammo: 6 }; HOTBAR_SLOTS];
+        let pid = drop_at_feet(&mut game, id, ITEM_AK5, 1);
+        let mut seq = 0;
+        press_use(&mut game, id, &mut seq, SLOT_NONE);
+        assert!(game.world.entities.of::<Player>(id).hands.hotbar.iter().all(|slot| slot.item == ITEM_REVOLVER));
+        assert_eq!(game.world.pickup(pid).unwrap().item, ITEM_AK5);
     }
 
     #[test]

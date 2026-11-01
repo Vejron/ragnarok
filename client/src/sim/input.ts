@@ -1,6 +1,6 @@
 import { wrapAngle } from '@/net/codec'
-import { BUTTON_ALT, BUTTON_AMMO, BUTTON_CHUTE, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_HITCH, BUTTON_JUMP, BUTTON_LAMP, BUTTON_PRONE, BUTTON_RANGE_DOWN, BUTTON_RANGE_UP, BUTTON_RELOAD, BUTTON_RUN, BUTTON_SLIDE, BUTTON_USE } from './consts'
-import { HOTBAR_SLOTS } from './items'
+import { BUTTON_ALT, BUTTON_AMMO, BUTTON_CHUTE, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_HITCH, BUTTON_JUMP, BUTTON_LAMP, BUTTON_PRONE, BUTTON_RANGE_DOWN, BUTTON_RANGE_UP, BUTTON_RELOAD, BUTTON_RUN, BUTTON_SKIS, BUTTON_SLIDE, BUTTON_USE } from './consts'
+import { HOTBAR_SLOTS, SLOT_NONE } from './items'
 
 /** Mouse-look sensitivity, radians per pixel. */
 const LOOK_SPEED = 0.0025
@@ -32,6 +32,8 @@ export class InputController {
   pitch = -0.25
   /** The hotbar slot in hand. Keys 1-5, the wheel and the on-screen slots change it. */
   selectedSlot = 0
+  /** The gun is slung (X): the hands are free, and `selectedSlot` waits to come back. */
+  holstered = false
   /** `performance.now()` of the last mouse movement, so the camera does not fight the player. */
   private lastLook = -Infinity
   private held = new Set<string>()
@@ -94,11 +96,25 @@ export class InputController {
 
   /** Takes hotbar slot `slot` in hand. */
   selectSlot(slot: number) {
-    if (Number.isInteger(slot) && slot >= 0 && slot < HOTBAR_SLOTS) this.selectedSlot = slot
+    if (Number.isInteger(slot) && slot >= 0 && slot < HOTBAR_SLOTS) {
+      this.selectedSlot = slot
+      this.holstered = false
+    }
   }
 
   private cycleSlot(by: number) {
     this.selectedSlot = (this.selectedSlot + by + HOTBAR_SLOTS) % HOTBAR_SLOTS
+    this.holstered = false
+  }
+
+  /** Slings what is in hand, or takes it back. */
+  holster() {
+    this.holstered = !this.holstered
+  }
+
+  /** What the hands hold: a hotbar slot, or `SLOT_NONE`. */
+  get heldSlot() {
+    return this.holstered ? SLOT_NONE : this.selectedSlot
   }
 
   /** Whether `code` (a `KeyboardEvent.code`) is down right now. */
@@ -179,6 +195,8 @@ export class InputController {
       if (event.code === 'KeyH') this.latched |= BUTTON_HITCH
       if (event.code === 'KeyG') this.latched |= BUTTON_CHUTE
       if (event.code === 'KeyL') this.latched |= BUTTON_LAMP
+      if (event.code === 'KeyK') this.latched |= BUTTON_SKIS
+      if (event.code === 'KeyX') this.holster()
       if (event.code === 'KeyR') this.latched |= BUTTON_RELOAD
       // Q loads a gun's other kind of round: a tank's high explosive, or back to armour-piercing.
       if (event.code === 'KeyQ') this.latched |= BUTTON_AMMO
@@ -220,7 +238,7 @@ export class InputController {
       buttons,
       yaw: this.yaw,
       pitch: this.pitch,
-      slot: this.selectedSlot,
+      slot: this.heldSlot,
     }
   }
 

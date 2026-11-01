@@ -184,7 +184,8 @@ fn held(groove: Option<Groove>, wanted: [f32; 2], facing: [f32; 2], aiming: bool
 /// The ski tick: gravity along the slope, friction and drag against the way it is going, push from
 /// the poles, and the velocity turning towards the skis as far as they grip. Crouching is the tuck,
 /// back the snowplow. Aim held coasts as it goes, not steering: the ski heading stays free of the look.
-pub fn ski_step(knock: [f32; 2], strain: u8, ground: SkiGround, input: &InputFrame, dt: f32) -> SkiStep {
+/// `armed` has a gun in hand, so the poles are stowed and only the legs push, however hard it tries.
+pub fn ski_step(knock: [f32; 2], strain: u8, ground: SkiGround, input: &InputFrame, armed: bool, dt: f32) -> SkiStep {
     let buttons = input.buttons();
     let aiming = buttons & BUTTON_ALT != 0;
     let tuck = buttons & BUTTON_CROUCH != 0;
@@ -232,8 +233,9 @@ pub fn ski_step(knock: [f32; 2], strain: u8, ground: SkiGround, input: &InputFra
     let pushing = forward > 0.0 && !tuck && !aiming && climb < limit;
     let stepping = pushing && climb > SKI_HERRING_FROM;
     let start = along;
-    let boost = if hard { SKI_BOOST * (1.0 - along / SKI_BOOST_TOP).clamp(0.0, 1.0) } else { 0.0 };
-    let push = if pushing { forward * (SKI_POWER / along.abs().max(SKI_PUSH_MIN_SPEED) + boost) } else { 0.0 };
+    let boost = if hard && !armed { SKI_BOOST * (1.0 - along / SKI_BOOST_TOP).clamp(0.0, 1.0) } else { 0.0 };
+    let power = if armed { SKI_KICK_POWER } else { SKI_POWER };
+    let push = if pushing { forward * (power / along.abs().max(SKI_PUSH_MIN_SPEED) + boost) } else { 0.0 };
     along += (downhill + push) * dt;
 
     let mu = if in_groove.is_some() { SKI_MU_GROOVE } else if ground.track { SKI_MU_TRACK } else { SKI_MU_SNOW };
@@ -307,7 +309,7 @@ mod tests {
     fn run(start: f32, ground: SkiGround, input: &InputFrame, seconds: f32) -> f32 {
         let mut knock = [0.0, -start];
         for _ in 0..(seconds / DT) as u32 {
-            knock = ski_step(knock, 0, ground, input, DT).knock;
+            knock = ski_step(knock, 0, ground, input, false, DT).knock;
         }
         -knock[1]
     }
@@ -388,7 +390,7 @@ mod tests {
     fn falls(speed: f32, input: &InputFrame) -> bool {
         let (mut knock, mut strain) = ([0.0, -speed], 0);
         for _ in 0..30 {
-            let step = ski_step(knock, strain, SkiGround::FLAT, input, DT);
+            let step = ski_step(knock, strain, SkiGround::FLAT, input, false, DT);
             if step.fell {
                 return true;
             }
@@ -411,10 +413,45 @@ mod tests {
         assert!(!falls(15.0, &plowing));
     }
 
+    /// `run`, with a gun in hand.
+    fn run_armed(start: f32, ground: SkiGround, input: &InputFrame, seconds: f32) -> f32 {
+        let mut knock = [0.0, -start];
+        for _ in 0..(seconds / DT) as u32 {
+            knock = ski_step(knock, 0, ground, input, true, DT).knock;
+        }
+        -knock[1]
+    }
+
+    #[test]
+    fn a_gun_in_hand_leaves_only_the_legs() {
+        let track = SkiGround { track: true, ..SkiGround::FLAT };
+        let armed = run_armed(0.0, track, &input(127, 0), 40.0);
+        let poling = run(0.0, track, &input(127, 0), 40.0);
+        assert!((2.0..poling * 0.6).contains(&armed), "{armed} {poling}");
+        assert!(run_armed(0.0, SkiGround::FLAT, &input(127, 0), 40.0) > 0.8, "moves off in loose snow too");
+    }
+
+    #[test]
+    fn run_held_adds_nothing_to_the_kick() {
+        let track = SkiGround { track: true, ..SkiGround::FLAT };
+        assert_eq!(run_armed(0.0, track, &input(127, BUTTON_RUN), 10.0), run_armed(0.0, track, &input(127, 0), 10.0));
+    }
+
+    #[test]
+    fn a_gun_in_hand_still_climbs() {
+        assert!(run_armed(0.0, slope(-15.0, false), &input(127, 0), 5.0) > 1.0);
+    }
+
+    #[test]
+    fn aiming_a_gun_does_not_push() {
+        let track = SkiGround { track: true, ..SkiGround::FLAT };
+        assert_eq!(run_armed(0.0, track, &input(127, BUTTON_ALT), 5.0), 0.0);
+    }
+
     #[test]
     fn aiming_coasts_straight_whatever_the_look() {
         let aimed = InputFrame { buttons: BUTTON_ALT, ..turned(120.0) };
-        let step = ski_step([0.0, -15.0], 0, SkiGround::FLAT, &aimed, DT);
+        let step = ski_step([0.0, -15.0], 0, SkiGround::FLAT, &aimed, false, DT);
         assert!(step.knock[0].abs() < 1e-3 && step.strain == 0, "{step:?}");
     }
 
@@ -463,7 +500,7 @@ mod tests {
 
     #[test]
     fn a_groove_holds_a_look_a_little_off_it_and_nothing_strains() {
-        let step = ski_step([0.0, -10.0], 3, in_groove(0.0), &turned(20.0), DT);
+        let step = ski_step([0.0, -10.0], 3, in_groove(0.0), &turned(20.0), false, DT);
         assert!(step.knock[0].abs() < 1e-4 && step.knock[1] < -9.0, "{step:?}");
         assert_eq!(step.strain, 1);
     }
@@ -472,7 +509,7 @@ mod tests {
     fn looking_well_off_a_groove_turns_out_of_it() {
         let mut knock = [0.0, -10.0];
         for _ in 0..30 {
-            knock = ski_step(knock, 0, in_groove(0.0), &turned(40.0), DT).knock;
+            knock = ski_step(knock, 0, in_groove(0.0), &turned(40.0), false, DT).knock;
         }
         assert!(knock[0] < -1.0, "{knock:?}");
     }
@@ -480,7 +517,7 @@ mod tests {
     #[test]
     fn strafing_turns_out_of_a_groove_too() {
         let right = InputFrame { strafe: 127, ..Default::default() };
-        let step = ski_step([0.0, -10.0], 0, in_groove(0.0), &right, DT);
+        let step = ski_step([0.0, -10.0], 0, in_groove(0.0), &right, false, DT);
         assert!(step.knock[0] > 0.01, "{step:?}");
     }
 
@@ -488,20 +525,20 @@ mod tests {
     fn crossing_a_track_at_an_angle_is_not_caught_by_a_groove() {
         let across = InputFrame { yaw: to_mrad(50f32.to_radians()), ..Default::default() };
         let (sin, cos) = 50f32.to_radians().sin_cos();
-        let step = ski_step([-sin * 10.0, -cos * 10.0], 0, in_groove(0.2), &across, DT);
+        let step = ski_step([-sin * 10.0, -cos * 10.0], 0, in_groove(0.2), &across, false, DT);
         assert!(step.knock[0] < -7.0, "{step:?}");
     }
 
     #[test]
     fn a_groove_draws_skis_to_its_line() {
-        let step = ski_step([0.0, -10.0], 0, in_groove(0.5), &input(0, 0), DT);
+        let step = ski_step([0.0, -10.0], 0, in_groove(0.5), &input(0, 0), false, DT);
         // `off` is towards -X here, so the pull is towards +X.
         assert!(step.knock[0] > 1.0, "{step:?}");
     }
 
     #[test]
     fn a_skier_standing_by_a_groove_stays_where_they_are() {
-        assert_eq!(ski_step([0.0, 0.0], 0, in_groove(0.5), &input(0, 0), DT).knock, [0.0, 0.0]);
+        assert_eq!(ski_step([0.0, 0.0], 0, in_groove(0.5), &input(0, 0), false, DT).knock, [0.0, 0.0]);
     }
 
     #[test]

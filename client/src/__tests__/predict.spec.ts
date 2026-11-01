@@ -15,7 +15,7 @@ beforeAll(async () => {
   floor = await flatMotor()
   flat = floor.stepper
 })
-const stepCharacter = (step: Stepper, state: CharacterState, input: InputFrame, dt: number, speedScale = 1) => step(state, input, dt, speedScale)
+const stepCharacter = (step: Stepper, state: CharacterState, input: InputFrame, dt: number, speedScale = 1) => step(state, input, dt, speedScale, false)
 
 const standing = (): CharacterState => ({ position: [0, STANDING_Y, 0], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0, down: 0, skis: false, skiStrain: 0 })
 const forward = (seq: number, buttons = 0): InputFrame => ({ seq, strafe: 0, forward: 127, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 })
@@ -36,6 +36,19 @@ describe('Predictor', () => {
     expect(predictor.pendingCount).toBe(4)
     predictor.state.position.forEach((value, i) => expect(value).toBeCloseTo(before[i]!, 6))
     expect(predictor.lastCorrection).toBeLessThan(1e-6)
+  })
+
+  it('asks whether a gun is in hand, tick by tick and on replay', () => {
+    const seen: boolean[] = []
+    const predictor = new Predictor((state, input, dt, scale, armed) => {
+      seen.push(armed)
+      return flat(state, input, dt, scale, armed)
+    }, standing())
+    predictor.armed = (input) => input.seq === 2
+    predictor.apply(forward(1))
+    predictor.apply(forward(2))
+    predictor.reconcile(1, serverRun([forward(1)]))
+    expect(seen).toEqual([false, true, true])
   })
 
   it('inputs recorded in a car are replayed over the state after stepping out', () => {

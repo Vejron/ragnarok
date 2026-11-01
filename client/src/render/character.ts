@@ -2,7 +2,7 @@ import { Animator, Group, Mesh, SkinnedMesh, parseGlb, type AnimationClip, type 
 import { Canopy } from './canopy'
 import { toonMaterial } from './toon'
 import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, PRONE_CENTRE, RUN_SPEED, SKI_BOOST_TOP, STAND_CENTRE, WALK_SPEED } from '@/sim/consts'
-import { ITEM_AK5, ITEM_AT_RIFLE, ITEM_BANDAGE, ITEM_BRICKS, ITEM_CARL_GUSTAF, ITEM_FLARE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, itemDef, type ItemDef } from '@/sim/items'
+import { ITEM_AK5, ITEM_AT_RIFLE, ITEM_BANDAGE, ITEM_BRICKS, ITEM_CARL_GUSTAF, ITEM_FLARE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, fillsHands, itemDef, type ItemDef } from '@/sim/items'
 import { type Limb, poseLimb, splitLimbs } from './gibs'
 import { colorFor } from '@/profile'
 import { LIMB_ALL, LIMB_ARM_L, LIMB_ARM_R, LIMB_LEG_L, LIMB_LEG_R, PART_HEAD } from '@/net/codec'
@@ -80,6 +80,8 @@ const SPEED_OF: Record<string, number> = {
   ski_climb: 1.5,
   ski_stride_hard: 3.4,
   ski_pole_hard: 7,
+  armed_skate: 3,
+  armed_climb: 1.5,
   crouch_fwd: 1.8,
   crouch_back: 1.8,
   crouch_left: 1.5,
@@ -151,6 +153,8 @@ const FALL_RATE = 4
 const TWIST_LIMIT = 1.0
 const TWIST_SETTLED = 0.08
 const TWIST_SPINE = 0.4
+/** How far a skier's body takes the gun off the way the skis go, rad; past it the legs turn too. */
+const SKI_TWIST = 1.2
 const TURN_RATE = 9
 /** Turning on the spot steps the feet as walking this fast would, m/s per rad/s of turn. */
 const STEP_PER_TURN = 0.35
@@ -467,6 +471,8 @@ export class Character {
   /** Wearing skis, and coasting with the weapon up (aim held) rather than poling. */
   private onSkis = false
   private skiAiming = false
+  /** How far the body has gone over to skiing with a gun up and the poles stowed, 0 to 1. */
+  private skiGun = 0
   /** Poling hard (run held), and how far the clips have gone over to it, 0 to 1. */
   private skiHard = false
   private poling = 0
@@ -668,9 +674,10 @@ export class Character {
     this.slide = chase(this.slide, sliding && crouching ? 1 : 0, SLIDE_RATE, dt)
     // Lying down is its own stance: the crouch and slide clips give way to the crawl clips.
     this.frameDt = dt
-    this.ski = chase(this.ski, this.onSkis && !this.skiAiming && !this.down ? 1 : 0, BLEND_RATE, dt)
+    this.ski = chase(this.ski, this.onSkis && !this.gunUp && !this.down ? 1 : 0, BLEND_RATE, dt)
+    this.skiGun = chase(this.skiGun, this.onSkis && this.gunUp && !this.down ? 1 : 0, BLEND_RATE, dt)
     this.senseSlope(grounded, speedNow, dt)
-    const walking = 1 - this.ski
+    const walking = Math.max(0, 1 - this.ski - this.skiGun)
     const standing = ground * walking * (1 - this.crouch) * (1 - this.lie)
     const low = ground * walking * this.crouch * (1 - this.slide) * (1 - this.lie)
     const crawl = ground * this.lie
@@ -704,7 +711,8 @@ export class Character {
     // In the air: a jump, a freefall, or hanging under the canopy. The falling clips are every stance's.
     const aloft = alive * this.air
     set('jump_air', aloft * walking * (1 - this.fall) * (1 - this.hang))
-    if (this.ski > 0) this.skiTargets(targets, ground * this.ski * (1 - this.lie), aloft * this.ski * (1 - this.fall) * (1 - this.hang), speedNow)
+    const skiing = this.ski + this.skiGun
+    if (skiing > 0) this.skiTargets(targets, ground * skiing * (1 - this.lie), aloft * skiing * (1 - this.fall) * (1 - this.hang), speedNow)
     targets.set('freefall', aloft * this.fall * (1 - this.hang))
     targets.set('chute', (this.handsUp ? alive : aloft) * this.hang)
     targets.set('death', this.death)
@@ -755,8 +763,8 @@ export class Character {
       const base = name.replace(/^(pistol_|hold_|shoulder_)/, '')
       action.enabled = w > 0.0005 || name === current
       action.weight = w
-      if (base === 'idle' || base === 'crouch_idle' || base === 'crawl_idle' || base === 'slide' || base === 'ski_glide' || base === 'ski_tuck' || base === 'ski_plow') action.time = this.idleTime % action.clip.duration
-      else if (base === 'ski_air') action.time = this.clock % action.clip.duration
+      if (base === 'idle' || base === 'crouch_idle' || base === 'crawl_idle' || base === 'slide' || base === 'ski_glide' || base === 'ski_tuck' || base === 'ski_plow' || base === 'armed_glide' || base === 'armed_tuck' || base === 'armed_plow') action.time = this.idleTime % action.clip.duration
+      else if (base === 'ski_air' || base === 'armed_air') action.time = this.clock % action.clip.duration
       else if (base === 'jump_air') action.time = (this.idleTime / (idle?.clip.duration ?? 1)) * action.clip.duration
       else if (base === 'freefall' || base === 'chute') action.time = this.clock % action.clip.duration
       else if (base === 'getup_back' || base === 'getup_front') action.time = Math.min(1, (this.rising?.time ?? GETUP_TIME) / GETUP_TIME) * action.clip.duration
@@ -772,16 +780,18 @@ export class Character {
     this.recoil = chase(this.recoil, 0, RECOIL_DECAY, dt)
     this.aim()
     // The waist and chest take what the legs have not turned, so the gun points where it looks.
-    const twist = wrap(yaw - body) * alive * (1 - this.lie) * (1 - this.air) * (this.rising ? 0 : 1)
+    // On skis with a gun the legs go the way the skis do and the torso alone carries it to the look.
+    const heading = speedNow > 0.5 ? Math.atan2(-vx, -vz) : body
+    const skiTurn = this.skiGun * (1 - this.air) * wrap(yaw + Math.max(-SKI_TWIST, Math.min(SKI_TWIST, wrap(heading - yaw))) - body)
+    const twist = wrap(yaw - body - skiTurn) * alive * (1 - this.lie) * (1 - this.air) * (this.rising ? 0 : 1)
     this.turn(this.spine, twist * TWIST_SPINE, AXIS_Y)
     this.turn(this.chest, twist * (1 - TWIST_SPINE), AXIS_Y)
     this.live(dt, speedNow, standing * (1 - moving), alive)
     this.react(dt)
     this.lean(dt, vx, vz, body, ground * (1 - this.lie))
     // A slide carries the body along its heading, rifle and all, rather than where the camera looks.
-    const heading = speedNow > 0.5 ? Math.atan2(-vx, -vz) : body
     const turn = Math.atan2(Math.sin(heading - body), Math.cos(heading - body))
-    this.place(body + turn * Math.max(this.slide, this.ski))
+    this.place(body + skiTurn + turn * Math.max(this.slide, this.ski))
     this.easeUp()
     if (this.onSkis) this.fitSkis()
   }
@@ -800,6 +810,12 @@ export class Character {
   /** The skiing clips' share of `ground` and `aloft`: the gait is told from the speed, the slope and the crouch. */
   private skiTargets(targets: Map<string, number>, ground: number, aloft: number, speed: number) {
     const tuck = this.crouch
+    // The legs do the same either way; what the arms hold is the share of each set of clips.
+    const gun = this.skiGun / (this.ski + this.skiGun)
+    const both = (poles: string, armed: string, weight: number) => {
+      targets.set(poles, weight * (1 - gun))
+      targets.set(this.clip(armed), weight * gun)
+    }
     const plow = (1 - tuck) * smoothstep(SKI_PLOW_FROM, SKI_PLOW_FULL, this.skiBraking) * smoothstep(1, 3, speed)
     const rest = ground * (1 - tuck) * (1 - plow)
     const coasting = 1 - smoothstep(-0.08, -0.03, this.skiRise) * smoothstep(0.1, 0.8, speed)
@@ -807,20 +823,21 @@ export class Character {
     const climbing = smoothstep(HERRING_RISE - 0.05, HERRING_RISE, this.skiRise) * (1 - smoothstep(3, 5, speed))
     this.herring = chase(this.herring, climbing * ground, BLEND_RATE, this.frameDt)
     const poles = (1 - climbing) * smoothstep(SKI_POLE_FROM - 1, SKI_POLE_FROM + 1, speed)
-    targets.set('ski_plow', ground * (1 - tuck) * plow)
-    targets.set('ski_glide', rest * coasting)
-    targets.set('ski_climb', pushing * climbing)
+    both('ski_plow', 'armed_plow', ground * (1 - tuck) * plow)
+    both('ski_glide', 'armed_glide', rest * coasting)
+    both('ski_climb', 'armed_climb', pushing * climbing)
     // Past the speed where poling gives anything, a skier stops throwing themselves at it.
     this.poling = chase(this.poling, this.skiHard && speed < SKI_BOOST_TOP && climbing < 0.5 ? 1 : 0, BLEND_RATE, this.frameDt)
     const stride = pushing * (1 - climbing) * (1 - poles)
     const double = pushing * poles
-    targets.set('ski_pole', double * (1 - this.poling))
-    targets.set('ski_pole_hard', double * this.poling)
-    targets.set('ski_stride', stride * (1 - this.poling))
-    targets.set('ski_stride_hard', stride * this.poling)
+    targets.set('ski_pole', double * (1 - this.poling) * (1 - gun))
+    targets.set('ski_pole_hard', double * this.poling * (1 - gun))
+    targets.set('ski_stride', stride * (1 - this.poling) * (1 - gun))
+    targets.set('ski_stride_hard', stride * this.poling * (1 - gun))
+    targets.set(this.clip('armed_skate'), pushing * (1 - climbing) * gun)
     // A tuck holds through the air.
-    targets.set('ski_tuck', ground * tuck + aloft * tuck)
-    targets.set('ski_air', aloft * (1 - tuck))
+    both('ski_tuck', 'armed_tuck', ground * tuck + aloft * tuck)
+    both('ski_air', 'armed_air', aloft * (1 - tuck))
   }
 
   /** Lays each ski along the ground under its foot, whatever the foot is doing: only the heel lifts off. */
@@ -1370,8 +1387,8 @@ export class Character {
     // Two items may share a mesh, so hide them all before showing the one in hand.
     for (const mesh of this.weapons.values()) mesh.visible = false
     const mesh = this.weapons.get(this.item)
-    // The poles fill both hands: on skis the weapon is up only while aiming.
-    if (mesh) mesh.visible = !this.handsUp && (!this.onSkis || this.skiAiming)
+    // The poles fill both hands: on skis the weapon shows only instead of them.
+    if (mesh) mesh.visible = !this.handsUp && (!this.onSkis || this.gunUp)
   }
 
   set surrendering(on: boolean) {
@@ -1385,7 +1402,7 @@ export class Character {
     if (item === this.item) return
     this.item = item
     this.stance = itemDef(item)?.stance ?? 'hold'
-    this.showWeapon()
+    this.showGear()
   }
 
   get held() {
@@ -1429,7 +1446,12 @@ export class Character {
     this.skiHard = on
   }
 
-  /** Whether the weapon is up instead of the poles (aim held on skis). */
+  /** Whether what is in hand is up instead of the poles: a gun always, anything else while aiming. */
+  private get gunUp() {
+    return this.skiAiming || fillsHands(this.item)
+  }
+
+  /** Whether aim is held on skis. */
   set skiAim(on: boolean) {
     if (on === this.skiAiming) return
     this.skiAiming = on
@@ -1439,7 +1461,7 @@ export class Character {
   private showGear() {
     if (this.gear) {
       for (const ski of this.gear.skis) ski.visible = this.onSkis
-      for (const pole of this.gear.poles) pole.visible = this.onSkis && !this.skiAiming
+      for (const pole of this.gear.poles) pole.visible = this.onSkis && !this.gunUp
     }
     this.showWeapon()
   }

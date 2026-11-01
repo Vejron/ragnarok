@@ -11,6 +11,8 @@ import tables from './tables.generated.json'
 export const HOTBAR_SLOTS = 5
 
 export const ITEM_NONE = 0
+/** The input's `slot` with nothing in hand: the gun is slung, the hands are free. */
+export const SLOT_NONE = 255
 export const ITEM_REVOLVER = 1
 export const ITEM_AK5 = 2
 export const ITEM_GRENADE = 3
@@ -32,9 +34,8 @@ export const ITEM_CARL_GUSTAF = 12
 /** An anti-tank rifle: one hard-cored round at a time, through a tank's thin rear, roof and slits. */
 export const ITEM_AT_RIFLE = 13
 /** Skis: used, they go on or off when standing about. Worn whatever is in hand. */
-export const ITEM_SKIS = 14
 
-export type ItemKind = 'gun' | 'grenade' | 'heal' | 'drone' | 'flare' | 'build' | 'launcher' | 'skis'
+export type ItemKind = 'gun' | 'grenade' | 'heal' | 'drone' | 'flare' | 'build' | 'launcher'
 
 export interface ItemDef {
   name: string
@@ -88,7 +89,6 @@ const PRESENTATION: Record<number, Presentation> = {
   [ITEM_BRICKS]: { stance: 'hold', sound: 'rifle' },
   [ITEM_CARL_GUSTAF]: { stance: 'shoulder', sound: 'sniper' },
   [ITEM_AT_RIFLE]: { stance: 'rifle', sound: 'sniper' },
-  [ITEM_SKIS]: { stance: 'hold', sound: 'rifle' },
 }
 
 /** The server's rows, as the generated table has them. */
@@ -127,6 +127,12 @@ export const falloffDamage = (def: ItemDef, distance: number): number => {
 export const aimSpeedScale = (item: number, buttons: number): number => {
   const d = DEFS[item]
   return (d?.kind === 'gun' || d?.kind === 'launcher') && (buttons & BUTTON_ALT) !== 0 ? d.aimSpeed : 1
+}
+
+/** Whether `item` in hand leaves none for ski poles: anything that shoots. Mirrors `fills_hands`. */
+export const fillsHands = (item: number): boolean => {
+  const kind = DEFS[item]?.kind
+  return kind === 'gun' || kind === 'launcher' || kind === 'flare'
 }
 
 /** Ticks a bandage takes to apply. */

@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 65
+export const PROTOCOL_VERSION = 66
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -139,6 +139,9 @@ export const BUTTON_AMMO = 1 << 13
 
 /** One press: the headlamp on or off (L). Like a jump it is not repeated. */
 export const BUTTON_LAMP = 1 << 14
+
+/** Puts skis on or takes them off, in a winter world, nearly still (`SKI_CLIP_SPEED`). The last bit. */
+export const BUTTON_SKIS = 1 << 15
 
 /** Soldier movement, in metres and seconds. */
 export const WALK_SPEED = 4.0
@@ -490,6 +493,9 @@ export const SKI_DRAG_TUCK = 0.0025
 
 /** What the poles put out, W/kg: over speed, it is the push. */
 export const SKI_POWER = 3.0
+
+/** What the legs alone put out, W/kg: a gun in hand leaves no hand for the poles. */
+export const SKI_KICK_POWER = 1.0
 
 /** What run held adds to the push from a standstill, m/s². It fades away to nothing at `SKI_BOOST_TOP`. */
 export const SKI_BOOST = 3.5

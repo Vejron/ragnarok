@@ -57,6 +57,8 @@ pub struct Player {
     pub lamp: bool,
     /// `BUTTON_LAMP` was down last tick: holding it switches the lamp once.
     pub lamp_held: bool,
+    /// `BUTTON_SKIS` was down last tick: holding it switches the skis once.
+    pub ski_held: bool,
     /// Hands up: a bot that has given in.
     pub surrendered: bool,
     /// While seated the soldier is hidden and rides with the vehicle; input drives the seat.
@@ -93,7 +95,7 @@ pub struct Hands {
     /// What it holds at the start of every life: its player's choice, or a scenario squad's.
     pub loadout: [ItemSlot; HOTBAR_SLOTS],
     /// The slot in hand, as of the last tick.
-    pub selected: usize,
+    pub selected: Option<usize>,
     /// Ticks until the item in hand can be used again.
     pub fire_cooldown: u32,
     /// Ticks left of a reload, or of a bandage being applied (`channel_left`). Zero when idle.
@@ -358,8 +360,9 @@ impl Player {
             ack: 0,
             lamp: false,
             lamp_held: false,
+            ski_held: false,
             surrendered: false,
-            hands: Hands { hotbar: loadout, loadout, selected: 0, fire_cooldown: 0, reload_left: 0, channel_left: 0, trigger_held: false },
+            hands: Hands { hotbar: loadout, loadout, selected: Some(0), fire_cooldown: 0, reload_left: 0, channel_left: 0, trigger_held: false },
             score: Tally::default(),
             name,
             color,
@@ -377,7 +380,7 @@ impl Player {
 
     /// The slot in hand.
     pub fn held(&self) -> ItemSlot {
-        self.hands.hotbar[self.hands.selected.min(HOTBAR_SLOTS - 1)]
+        self.hands.selected.map_or(ItemSlot::default(), |slot| self.hands.hotbar[slot])
     }
 
     /// Whether the soldier is down in a crouch, kneeling over a drone's controls included: not lying
