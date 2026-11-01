@@ -16,7 +16,9 @@
 mod cover;
 mod crew;
 mod nerve;
+mod senses;
 mod tokens;
+mod wounded;
 
 pub use crew::road_route;
 pub use crew::{DRIVER, GUNNER, nearest_waypoint};
@@ -129,6 +131,16 @@ const FAST: f32 = 10.0;
 const COVER_PATIENCE: f32 = 0.4;
 /// How far it stands off for its gun, as a share of `hold_distance`: from no aggression to full.
 const HOLD_SCALE: [f32; 2] = [1.4, 0.5];
+/// Caught on patrol, at skill 0 it can take this much longer to react, seconds.
+const STARTLED: f32 = 0.6;
+/// At a waypoint: the chance it stops to look about, for how long, seconds, the chance it cuts out
+/// the next one, and the slowest it walks on, as an axis value.
+const PAUSE_CHANCE: f64 = 0.5;
+const PAUSE: [f32; 2] = [1.0, 4.0];
+const SKIP_CHANCE: f64 = 0.2;
+const SLOWEST_PACE: f32 = 80.0;
+/// How fast it looks about, radians a second, swinging the other way every second.
+const LOOK_ABOUT_RATE: f32 = 0.9;
 /// It looks up or down no further than this, radians.
 const PITCH_LIMIT: f32 = 1.4;
 /// Fastest it believes anyone moves, m/s: past that a sighting is a respawn or a teleport, not speed.
@@ -273,7 +285,7 @@ fn spot(world: &World, id: u32, eye: [f32; 3], yaw: f32, alert: bool) -> Option<
     let facing = [-yaw.sin(), -yaw.cos()];
     let mut best: Option<(u32, [f32; 3], f32)> = None;
     for (other, player) in world.entities.all::<Player>() {
-        if other == id || !world.entities.alive(other) || !player.embodied() || same_team(world, id, other) {
+        if other == id || !world.entities.alive(other) || !player.embodied() || player.surrendered || same_team(world, id, other) {
             continue;
         }
         let at = player.character.position;
@@ -520,6 +532,11 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
         bot.token_left = 0;
         bot.flank = None;
         bot.flanked = false;
+        bot.pause_left = 0;
+        bot.sight.aware = 0.0;
+        if let Some(mut player) = world.entities.get_mut::<Player>(id) {
+            player.surrendered = false;
+        }
         new_goal(bot);
         return idle;
     }
@@ -542,18 +559,18 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
     // Hit, or hearing a fight, while it is not in one itself: it goes to look where that came from,
     // alert, so it sees all round on the way. In cover it only notes where a hit came from.
     let hit = bot.hit_from.take();
-    if bot.mode == BotMode::Cover
+    if bot.mode.committed()
         && let Some(from) = hit
     {
         bot.sight.last_seen = from;
     }
     let heard = hit.or_else(|| {
         let busy = bot.mode == BotMode::Pursue;
-        hear(id, bot, at, noises).filter(|&from| !busy || distance_2d(at, from) + NEARER_NOISE < distance_2d(at, bot.sight.last_seen))
+        hear(id, bot, at, noises).map(|from| senses::roughly(id, at, from)).filter(|&from| !busy || distance_2d(at, from) + NEARER_NOISE < distance_2d(at, bot.sight.last_seen))
     });
     if let Some(from) = heard
         && !(bot.mode == BotMode::Pursue && bot.sight.sees)
-        && bot.mode != BotMode::Cover
+        && !bot.mode.committed()
     {
         if bot.mode != BotMode::Pursue || distance_2d(from, bot.sight.last_seen) > GOAL_MOVED {
             tracing::debug!(bot = id, ?from, "bot heard something");
@@ -566,9 +583,13 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
 
     if (world.tick + id).is_multiple_of(LOOK_EVERY) {
         let alert = bot.mode != BotMode::Patrol;
-        match spot(world, id, eye, bot.yaw, alert) {
+        let in_view = spot(world, id, eye, bot.yaw, alert);
+        if in_view.is_none() {
+            senses::fade(bot);
+        }
+        match in_view.filter(|&(other, seen_at)| senses::notice(world, bot, other, seen_at, eye, alert)) {
             Some((other, seen_at)) => {
-                let same = matches!(bot.mode, BotMode::Pursue | BotMode::Cover) && bot.sight.target == Some(other);
+                let same = (bot.mode == BotMode::Pursue || bot.mode.committed()) && bot.sight.target == Some(other);
                 if !same {
                     tracing::debug!(bot = id, target = other, "bot spotted someone");
                     new_goal(bot);
@@ -580,7 +601,8 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
                 bot.sight.velocity = if same && bot.sight.sees && speed < TOP_SPEED { std::array::from_fn(|i| (bot.sight.velocity[i] + moved[i]) / 2.0) } else { [0.0; 3] };
                 if !same || !bot.sight.sees {
                     // Caught sight of them: it takes a moment to react, and its aim has to settle.
-                    bot.aim.react = (lerp(REACT_POOR, REACT_GOOD, bot.aim.skill) * TICK_RATE as f32) as u32;
+                    let startled = if bot.mode == BotMode::Patrol { world.rng.next_f64() as f32 * STARTLED * (1.0 - bot.aim.skill) } else { 0.0 };
+                    bot.aim.react = ((lerp(REACT_POOR, REACT_GOOD, bot.aim.skill) + startled) * TICK_RATE as f32) as u32;
                     bot.aim.tracked = 0;
                     bot.aim.side = [if world.rng.next_f64() < 0.5 { -1.0 } else { 1.0 }, wobble(world) * 0.5];
                 }
@@ -589,7 +611,7 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
                 let moving = 1.0 + if stepping { MOVING_AIM } else { 0.0 } + vec3::length(bot.sight.velocity).min(FAST) * TARGET_SPEED_AIM;
                 let off = lerp(AIM_POOR, AIM_GOOD, bot.aim.skill) * settled * shaken * moving;
                 bot.aim.error = [wobble(world) * off, wobble(world) * off];
-                if bot.mode != BotMode::Cover {
+                if !bot.mode.committed() {
                     bot.mode = BotMode::Pursue;
                 }
                 bot.sight.target = Some(other);
@@ -615,6 +637,9 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
     if bot.mode == BotMode::Pursue && (nerve::broken(bot) || out_of_rounds) {
         cover::seek(world, bot, at, rays, budget);
     }
+    if bot.mode == BotMode::Pursue && fighting && nerve::frozen(bot) && bot.cover_wait > 0 {
+        wounded::give_in(world, id, bot, at, crowd);
+    }
     let Some(player) = world.entities.get::<Player>(id) else { return idle };
     let reloading = player.hands.reload_left > 0;
 
@@ -629,8 +654,25 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
         BotMode::Patrol => {
             let Some(&[x, z]) = bot.route.get(bot.next) else { return idle };
             let goal = [x, at[1], z];
+            if bot.sight.aware >= senses::SUSPICIOUS {
+                // Something there: it stops and stares.
+                bot.yaw = turn_towards(bot.yaw, heading(at, bot.sight.last_seen), TURN_RATE * dt);
+                return InputFrame { yaw: to_mrad(bot.yaw), ..idle };
+            }
+            if bot.pause_left > 0 {
+                bot.pause_left -= 1;
+                let swing = if (bot.pause_left / TICK_RATE).is_multiple_of(2) { 1.0 } else { -1.0 };
+                bot.yaw = (bot.yaw + swing * LOOK_ABOUT_RATE * dt + PI).rem_euclid(TAU) - PI;
+                return InputFrame { yaw: to_mrad(bot.yaw), ..idle };
+            }
             if distance_2d(at, goal) < REACHED {
-                bot.next = (bot.next + 1) % bot.route.len();
+                let skip = if bot.route.len() > 2 && world.rng.next_f64() < SKIP_CHANCE { 2 } else { 1 };
+                bot.next = (bot.next + skip) % bot.route.len();
+                // A sentry keeps its eyes front.
+                if bot.route.len() > 1 && world.rng.next_f64() < PAUSE_CHANCE {
+                    bot.pause_left = (lerp(PAUSE[0], PAUSE[1], world.rng.next_f64() as f32) * TICK_RATE as f32) as u32;
+                }
+                bot.pace = lerp(SLOWEST_PACE, 127.0, world.rng.next_f64() as f32) as i8;
                 new_goal(bot);
                 return idle;
             }
@@ -682,6 +724,13 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
             };
             bot.mode_left = bot.mode_left.saturating_sub(1);
             let there = distance_2d(at, goal) < REACHED;
+            if there
+                && !bot.sight.sees
+                && let Some(input) = wounded::bandage(world, id, idle)
+            {
+                bot.mode_left = bot.mode_left.max(1);
+                return input;
+            }
             // Seen at its spot, the spot is no good; and it does not run for ever.
             if bot.mode_left == 0 || (there && (bot.sight.sees || (nerve::steady(bot) && !reloading))) {
                 cover::leave(world, bot, at);
@@ -692,6 +741,23 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
                 return InputFrame { yaw: to_mrad(bot.yaw), buttons: BUTTON_CROUCH, ..idle };
             }
             (goal, true)
+        }
+        BotMode::Surrender => {
+            bot.mode_left = bot.mode_left.saturating_sub(1);
+            if bot.mode_left == 0 {
+                wounded::rise(world, id, bot, at);
+            }
+            return InputFrame { yaw: to_mrad(bot.yaw), ..idle };
+        }
+        BotMode::PlayDead => {
+            bot.mode_left = bot.mode_left.saturating_sub(1);
+            if wounded::spring(bot, at) {
+                return idle;
+            }
+            if bot.mode_left == 0 {
+                wounded::rise(world, id, bot, at);
+            }
+            return InputFrame { buttons: BUTTON_PRONE, yaw: to_mrad(bot.yaw), ..idle };
         }
     } };
 
@@ -712,7 +778,7 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
     bot.yaw = turn_towards(bot.yaw, want, TURN_RATE * dt);
     let facing = (turn_towards(bot.yaw, want, PI) - bot.yaw).abs() < WALK_WITHIN;
     InputFrame {
-        forward: if facing { 127 } else { 0 },
+        forward: if !facing { 0 } else if run { 127 } else { bot.pace },
         buttons: if run { BUTTON_RUN } else { 0 },
         ..InputFrame { yaw: to_mrad(bot.yaw), ..idle }
     }
@@ -772,7 +838,7 @@ impl Mechanic for Bots {
             let Some(mut mind) = world.entities.get_mut::<Bot>(id) else { continue };
             let mut bot = std::mem::replace(&mut *mind, Bot::new([0.0; 2], Vec::new()));
             let input = think(world, id, &mut bot, dt, &noises, &crowd, &mut budget, &mut rays);
-            let input = reload(world, id, &bot, input);
+            let input = if matches!(bot.mode, BotMode::Surrender | BotMode::PlayDead) { input } else { reload(world, id, &bot, input) };
             *world.entities.of_mut::<Bot>(id) = bot;
             if let Some(mut player) = world.entities.get_mut::<Player>(id) {
                 player.input = input;

@@ -57,6 +57,8 @@ pub struct Player {
     pub lamp: bool,
     /// `BUTTON_LAMP` was down last tick: holding it switches the lamp once.
     pub lamp_held: bool,
+    /// Hands up: a bot that has given in.
+    pub surrendered: bool,
     /// While seated the soldier is hidden and rides with the vehicle; input drives the seat.
     pub seat: Option<Seat>,
     /// Ticks until a car can hit this player again.
@@ -130,6 +132,17 @@ pub enum BotMode {
     Search,
     /// Shaken, or out of rounds: getting out of sight, and staying there a while.
     Cover,
+    /// Given in: hands up, waiting to see what happens.
+    Surrender,
+    /// Lying still, waiting for someone to come close.
+    PlayDead,
+}
+
+impl BotMode {
+    /// Whether it is set on this, and neither what it hears nor whom it sees changes that.
+    pub fn committed(self) -> bool {
+        matches!(self, Self::Cover | Self::Surrender | Self::PlayDead)
+    }
 }
 
 /// What a bot does in a fight shared with others (see `bots::tokens`).
@@ -222,6 +235,9 @@ pub struct Bot {
     pub flank: Option<[f32; 3]>,
     pub flank_left: u32,
     pub flanked: bool,
+    /// Ticks left of stopping to look about at a waypoint, and its walking pace there, an axis value.
+    pub pause_left: u32,
+    pub pace: i8,
 }
 
 /// What a bot knows of whom it is after.
@@ -235,6 +251,8 @@ pub struct Sight {
     pub velocity: [f32; 3],
     /// Whether the target was in sight at the last look.
     pub sees: bool,
+    /// How far it has taken in whoever is in view, 0 to 1: at 1 it has seen them (see `bots::senses`).
+    pub aware: f32,
 }
 
 /// How a bot finds its way.
@@ -310,6 +328,8 @@ impl Bot {
             flank: None,
             flank_left: 0,
             flanked: false,
+            pause_left: 0,
+            pace: 127,
         }
     }
 }
@@ -338,6 +358,7 @@ impl Player {
             ack: 0,
             lamp: false,
             lamp_held: false,
+            surrendered: false,
             hands: Hands { hotbar: loadout, loadout, selected: 0, fire_cooldown: 0, reload_left: 0, channel_left: 0, trigger_held: false },
             score: Tally::default(),
             name,
@@ -369,10 +390,12 @@ impl Player {
     /// How the soldier holds themself, for a round to meet.
     pub fn posture(&self) -> crate::entities::Posture {
         use crate::entities::Posture;
-        match self.character.prone {
-            true => Posture::Lying { yaw: self.character.yaw },
-            false if self.crouched() => Posture::Crouched,
-            false => Posture::Upright,
+        let c = &self.character;
+        match (c.prone, c.down > 0) {
+            (true, _) => Posture::Lying { yaw: c.yaw },
+            (false, true) => Posture::Down { yaw: c.yaw },
+            _ if self.crouched() => Posture::Crouched,
+            _ => Posture::Upright,
         }
     }
 

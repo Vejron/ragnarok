@@ -2,11 +2,9 @@ import { Color } from '@ragnarok/engine'
 import { flatGroundLight } from './groundlight'
 import type { Palette } from './look'
 import { smoothstep } from '@/math'
+import { DAY_SECONDS, DAY_START_PHASE } from '@/sim/consts'
 
-/** A whole day, midnight to midnight, in seconds of server time. */
-export const DAY_SECONDS = 30 * 60
-/** Where in the day a server's tick 0 falls: a fresh server opens mid-morning, with long shadows on the hills. */
-const START_PHASE = 0.36
+export { DAY_SECONDS }
 
 /** How high the sun gets at noon. Higher and hillsides all fall in the same lit band of the toon ramp; here a slope of 5° away from it drops a band. */
 const NOON_ELEVATION = (35 * Math.PI) / 180
@@ -32,7 +30,7 @@ const NIGHT_HEMI_SCALE = 0.35
  */
 export function dayPhase(tick: number, tickRate: number): number {
   if (pinned !== null) return pinned
-  const phase = (tick / tickRate / DAY_SECONDS + START_PHASE) % 1
+  const phase = (tick / tickRate / DAY_SECONDS + DAY_START_PHASE) % 1
   return phase < 0 ? phase + 1 : phase
 }
 

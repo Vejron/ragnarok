@@ -82,6 +82,8 @@ pub enum Posture {
     Crouched,
     /// On its belly, its head towards `yaw`.
     Lying { yaw: f32 },
+    /// Knocked down: as low as lying, but still at the height the point it hangs from is on its feet.
+    Down { yaw: f32 },
 }
 
 /// Where it was at the end of each of the last few ticks, newest last, under the tick number a snapshot

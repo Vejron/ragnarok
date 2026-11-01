@@ -175,11 +175,24 @@ However many bots are after someone, only a few at a time try to kill them (`bot
 | Role | Who | What it does |
 |---|---|---|
 | Attacker | Holds a token, or is within 8 m of the target | Fights as described above |
-| Flanker | Up to 2 on a target, with no token | Runs for a point 8 to 12 m from the target, about 100° round from where it was. It has 8 s, and does not fire on the way unless it comes within 8 m |
+| Flanker | Up to 2 on a target, with no token | Runs for a point 8 to 12 m from the target, about 100° round from where it was, the first on the side further out of the target's view. It has 8 s, and does not fire on the way unless it comes within 8 m |
 | Suppressor | Sees the target, no token | Stays put and fires 3 m wide |
 | Holder | Does not see the target, no token | Waits crouched 20 m from where the target was last seen |
 
 A token lasts 4 s, then its holder competes again. It goes back at once if the bot dies, breaks for cover, or reloads. The next goes to a flanker that got there, then to whoever sees the target, nearest first. Bots in a fight share where the target was last seen. Once no one has seen the target for 5 s they all go looking, as lone bots do.
+
+### Awareness
+
+A bot does not see someone the moment a ray reaches them (`bots/senses.rs`). In view, an awareness meter fills in 0.2 s for someone in plain sight, and takes longer in proportion to:
+
+| | Share |
+|---|---|
+| Distance | full to 15 m, falling to 0.15 at 60 m |
+| Stance | crouched 0.6, lying 0.3 |
+| Moving | still 0.7, walking 1, running 1.3 |
+| Light | down to 0.35 at night, 1.2 with a lamp lit, day or night |
+
+Within 3 m it is instant, and a bot already alert fills it three times as fast. At 0.4 a patrolling bot stops and stares at the spot. The meter fades at 0.25 a second with no one in view. The server cannot see a client's `?time=` pin, so night here always follows the clock. Noises from over 15 m are heard 12 per cent of the distance off, a different way for each bot.
 
 ### Nerve and temper
 
@@ -200,6 +213,14 @@ Below `0.55 × (1 − courage)` it has broken: it stops advancing, goes prone an
 While it fights at its distance it picks a stance every 1.5 to 4 s. Past 10 m it may crouch, and past 25 m with a sniper it may lie down, both more often the more patient it is. Prone, it does not sidestep.
 
 **Cover** (`bots/cover.rs`). A broken bot looks for cover, as does one with an empty gun and patience of 0.4 or more. It tries 8 points 3 to 12 m away, straight away from the threat first, for one the threat cannot see with the bot crouched, so a low wall will do, and which is under 18 m away by the path it would take. It runs there, crouches, reloads and calms down. It comes out once steady, or after 3 s with no patience, up to 10 s with full, heading 3 to 6 m to the side of where it last saw the target. Seen at its spot, it comes out at once. With no point to be found, it stays where it is, prone.
+
+### Wounded and giving in
+
+A hurt bot in cover, unseen, bandages itself if it has a bandage (`bots/wounded.rs`). A bot that has frozen with no cover to be found, within 25 m of its target, may give in. With courage under 0.35 and no friend within 15 m it surrenders for 20 s: hands up (`STANCE_SURRENDER`), not firing, ignored by other bots, then back to its route. With patience of 0.6 or more it plays dead for 15 s instead, lying still, and goes for anyone within 6 m, aim all ready.
+
+### On patrol
+
+At a waypoint it stops half the time, for 1 to 4 s, to look about. One time in five it cuts out the next waypoint, and it walks on at a new pace. Surprised on patrol, it can take up to 0.6 s longer to react at skill 0.
 
 A bot's shot leaves its eye along its look direction (`combat::fire_gun`). A person's shot goes towards what the over-the-shoulder camera's crosshair is on, and a bot has no camera.
 

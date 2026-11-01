@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 64
+export const PROTOCOL_VERSION = 65
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -238,6 +238,9 @@ export const STANCE_CHUTE = 2
 
 /** Knocked down by a blast: thrown, then lying helpless until `Character::down` runs out (KNOCKDOWN.md). */
 export const STANCE_DOWN = 3
+
+/** Hands up: a bot that has given in. */
+export const STANCE_SURRENDER = 4
 
 /** A blast that throws a soldier at least this hard, m/s, knocks them down. */
 export const KNOCKDOWN_POWER = 7.0
@@ -606,6 +609,10 @@ export const CROUCH_DROP = CROUCH_EYE_DROP
  */
 export const PRONE_HURT_HALF_LENGTH = 0.47
 export const PRONE_HURT_RADIUS = 0.38
+
+/** A whole day and night, seconds, and where in it (0 midnight, 0.5 noon) tick 0 falls. */
+export const DAY_SECONDS = 1800.0
+export const DAY_START_PHASE = 0.36
 
 /** A prone soldier's eye is 0.2 m above its feet, so this is relative to the capsule centre. */
 export const PRONE_EYE_HEIGHT = 0.2 - PRONE_CENTRE

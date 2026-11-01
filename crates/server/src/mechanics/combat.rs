@@ -160,6 +160,8 @@ pub fn blast(world: &mut World, blast: Blast) {
 /// [`blast`], for a shell that struck vehicle `direct.vehicle` itself.
 pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
     make_noise(world, blast.point, blast.attacker, HEAR_BLAST);
+    // As they stood when it went off: being knocked flat by it does not bring them nearer.
+    let bodies = blasted(world, blast.point, blast.radius, blast.damage);
     // Soldiers are thrown; everything in the open is hurt, below.
     for id in world.entities.ids::<With<Player>>() {
         if !world.entities.alive(id) {
@@ -192,7 +194,7 @@ pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
         }
         tracing::debug!(distance, power, down, "player blasted");
     }
-    for (id, amount) in blasted(world, blast.point, blast.radius, blast.damage) {
+    for (id, amount) in bodies {
         damage_entity(world, id, Harm::new(amount, blast.attacker, blast.weapon).from(blast.point));
         super::limbs::blasted(world, id, blast.point, amount, blast.attacker);
     }

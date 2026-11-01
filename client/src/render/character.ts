@@ -482,6 +482,8 @@ export class Character {
   /** Freefalling with the chute shut, and hanging under it, 0..1; and seconds off the ground. */
   private fall = 0
   private hang = 0
+  /** Hands up, on its feet: the arms of the `chute` clip, with nothing in them. */
+  private handsUp = false
   private airTime = 0
   /** The fastest fall since leaving the ground, m/s (negative), for the landing. */
   private fallSpeed = 0
@@ -623,7 +625,7 @@ export class Character {
     if (!grounded) this.fallSpeed = Math.min(this.fallSpeed, vy)
     const falling = !grounded && !chute && !this.down && (vy < -FREEFALL_VY || this.airTime > FREEFALL_AFTER)
     this.fall = chase(this.fall, falling ? 1 : 0, FALL_RATE, dt)
-    this.hang = chase(this.hang, chute && !grounded && !this.down ? 1 : 0, FALL_RATE, dt)
+    this.hang = chase(this.hang, ((chute && !grounded) || this.handsUp) && !this.down ? 1 : 0, FALL_RATE, dt)
     // A landing sinks into a crouch as deep as the fall was hard, and comes back up.
     if (grounded && !this.wasGrounded && !this.down) this.crouch = Math.max(this.crouch, Math.min(LAND_MAX, -this.fallSpeed * LAND_DIP))
     if (grounded) this.fallSpeed = 0
@@ -662,7 +664,7 @@ export class Character {
       this.backpack.position.set(0, PACK_Y - PACK_CROUCH_DROP * this.crouch, -PACK_BACK)
     }
     const alive = 1 - this.death
-    const ground = alive * (1 - this.air)
+    const ground = alive * (1 - this.air) * (this.handsUp ? 1 - this.hang : 1)
     this.slide = chase(this.slide, sliding && crouching ? 1 : 0, SLIDE_RATE, dt)
     // Lying down is its own stance: the crouch and slide clips give way to the crawl clips.
     this.frameDt = dt
@@ -704,7 +706,7 @@ export class Character {
     set('jump_air', aloft * walking * (1 - this.fall) * (1 - this.hang))
     if (this.ski > 0) this.skiTargets(targets, ground * this.ski * (1 - this.lie), aloft * this.ski * (1 - this.fall) * (1 - this.hang), speedNow)
     targets.set('freefall', aloft * this.fall * (1 - this.hang))
-    targets.set('chute', aloft * this.hang)
+    targets.set('chute', (this.handsUp ? alive : aloft) * this.hang)
     targets.set('death', this.death)
     // Getting up is all there is until it is up; then the stance's clips take over again.
     const rising = this.rising
@@ -1369,7 +1371,13 @@ export class Character {
     for (const mesh of this.weapons.values()) mesh.visible = false
     const mesh = this.weapons.get(this.item)
     // The poles fill both hands: on skis the weapon is up only while aiming.
-    if (mesh) mesh.visible = !this.onSkis || this.skiAiming
+    if (mesh) mesh.visible = !this.handsUp && (!this.onSkis || this.skiAiming)
+  }
+
+  set surrendering(on: boolean) {
+    if (on === this.handsUp) return
+    this.handsUp = on
+    this.showWeapon()
   }
 
   /** The item in hand (`ITEM_*`, 0 for none): picks the weapon drawn and how the arms hold it. */

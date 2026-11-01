@@ -182,7 +182,7 @@ fn soldier(player: &Player, alive: bool) -> Replicated {
         flags |= FLAG_CROUCHING;
     }
     flags |= (player.held().item << FLAG_HELD_SHIFT) & FLAG_HELD_MASK;
-    let stance = if c.down > 0 { STANCE_DOWN } else if c.chute { STANCE_CHUTE } else if c.prone { STANCE_PRONE } else { STANCE_STANDING };
+    let stance = if c.down > 0 { STANCE_DOWN } else if player.surrendered { STANCE_SURRENDER } else if c.chute { STANCE_CHUTE } else if c.prone { STANCE_PRONE } else { STANCE_STANDING };
     let [x, y, z] = c.position.map(to_cm);
     Replicated {
         kind: Some(wire::Kind { kind: KIND_SOLDIER }),

@@ -46,6 +46,11 @@ struct Member {
     skill: f32,
 }
 
+/// How far ahead of `target`, facing `yaw`, `point` is: a flanker wants this low, out of their view.
+fn ahead_of(target: [f32; 3], yaw: f32, point: [f32; 3]) -> f32 {
+    (point[0] - target[0]) * -yaw.sin() + (point[2] - target[2]) * -yaw.cos()
+}
+
 /// The point round `target` from `from`, on `side` (1 or -1), if there is open ground there.
 fn flank_point(world: &World, target: [f32; 3], from: [f32; 3], side: f32) -> Option<[f32; 3]> {
     let (sin, cos) = (heading(target, from) + side * FLANK_ANGLE).sin_cos();
@@ -55,9 +60,16 @@ fn flank_point(world: &World, target: [f32; 3], from: [f32; 3], side: f32) -> Op
     })
 }
 
-/// Goes on a way to a flank; true if there was somewhere to go.
-fn send_flanking(world: &World, bot: &mut Bot, target: [f32; 3], from: [f32; 3], side: f32) -> bool {
-    let Some(point) = flank_point(world, target, from, side).or_else(|| flank_point(world, target, from, -side)) else { return false };
+/// Goes on a way to a flank; true if there was somewhere to go. With another already on its way to
+/// `taken` it takes the far side from them, and otherwise the side further out of the sight of
+/// `target`, facing `yaw`.
+pub(super) fn send_flanking(world: &World, bot: &mut Bot, target: [f32; 3], yaw: f32, from: [f32; 3], taken: Option<[f32; 3]>) -> bool {
+    let badness = |point: [f32; 3]| match taken {
+        Some(taken) => -distance_2d(point, taken),
+        None => ahead_of(target, yaw, point),
+    };
+    let sides = [flank_point(world, target, from, 1.0), flank_point(world, target, from, -1.0)];
+    let Some(point) = sides.into_iter().flatten().min_by(|&a, &b| badness(a).total_cmp(&badness(b))) else { return false };
     bot.flank = Some(point);
     bot.flank_left = FLANK_TICKS;
     bot.flanked = false;
@@ -111,7 +123,10 @@ pub(super) fn assign(world: &mut World, ids: &[u32]) {
 
 /// Who does what in the fight of `members` against `target`.
 fn run_fight(world: &mut World, target: u32, mut members: Vec<Member>) {
-    let target_at = world.entities.of::<Player>(target).character.position;
+    let (target_at, target_yaw) = {
+        let target = &world.entities.of::<Player>(target).character;
+        (target.position, target.yaw)
+    };
     // What one of them has seen they have all been told, and the fight is on while anyone has.
     let latest = members.iter().filter_map(|m| world.entities.get::<Bot>(m.id).map(|bot| (bot.sight.seen_tick, bot.sight.last_seen))).max_by_key(|&(tick, _)| tick);
     let Some((seen_tick, last_seen)) = latest else { return };
@@ -140,7 +155,7 @@ fn run_fight(world: &mut World, target: u32, mut members: Vec<Member>) {
         }
     }
     let mut flankers = rest.iter().filter(|m| m.flanking).count().min(MAX_FLANKERS);
-    let mut sides = flankers;
+    let mut taken = rest.iter().filter(|m| m.flanking).find_map(|m| world.entities.get::<Bot>(m.id).and_then(|bot| bot.flank));
     for member in rest {
         let role = if member.flanking {
             Role::Flanker
@@ -148,12 +163,11 @@ fn run_fight(world: &mut World, target: u32, mut members: Vec<Member>) {
             tokens -= 1;
             Role::Attacker
         } else if flankers < MAX_FLANKERS && !member.busy && !member.flanked {
-            let side = if sides.is_multiple_of(2) { 1.0 } else { -1.0 };
-            sides += 1;
             let from = world.entities.of::<Player>(member.id).character.position;
             let Some(mut bot) = world.entities.get_mut::<Bot>(member.id) else { continue };
             let mut mind = std::mem::replace(&mut *bot, Bot::new([0.0; 2], Vec::new()));
-            let sent = send_flanking(world, &mut mind, target_at, from, side);
+            let sent = send_flanking(world, &mut mind, target_at, target_yaw, from, taken);
+            taken = mind.flank.or(taken);
             *world.entities.of_mut::<Bot>(member.id) = mind;
             if sent {
                 flankers += 1;

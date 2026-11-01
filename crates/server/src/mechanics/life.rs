@@ -9,7 +9,7 @@ use super::combat::{position_of, ray_capsule, same_team};
 use crate::entities::{DropOnDeath, Health, Home, Hurtbox, NetId, Posture, Respawn, Respawned, Trail, Transform, With};
 use crate::events;
 use crate::game::{Damaged, Died, Player, World};
-use shared::consts::{CROUCH_DROP, MAX_REWIND_TICKS, PRONE_HURT_HALF_LENGTH, PRONE_HURT_RADIUS, SEATED_CENTRE_DROP, SEATED_HALF_HEIGHT, SEATED_HEAD_ZONE, SEATED_RADIUS};
+use shared::consts::{CROUCH_DROP, MAX_REWIND_TICKS, PRONE_CENTRE, PRONE_HURT_HALF_LENGTH, PRONE_HURT_RADIUS, SEATED_CENTRE_DROP, SEATED_HALF_HEIGHT, SEATED_HEAD_ZONE, SEATED_RADIUS, STAND_CENTRE};
 use shared::protocol::{
     PART_HEAD, PART_TORSO, DEATH_BLAST, DEATH_BODY, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_DRONE, WEAPON_EGG, WEAPON_GRENADE, WEAPON_LOITER, WEAPON_ROADKILL, WEAPON_ROCKET,
     WEAPON_AP, WEAPON_SHELL, WEAPON_WRECK,
@@ -120,11 +120,17 @@ fn body_of(world: &World, id: u32, hurtbox: &Hurtbox, transform: Option<&Transfo
     Some(match vehicle {
         None => {
             let upright = hurtbox.centre(at);
-            if let Posture::Lying { yaw } = posture {
+            let flat = match posture {
+                Posture::Lying { yaw } => Some((yaw, 0.0)),
+                Posture::Down { yaw } => Some((yaw, STAND_CENTRE - PRONE_CENTRE)),
+                _ => None,
+            };
+            if let Some((yaw, sink)) = flat {
                 let axis = [-yaw.sin(), 0.0, -yaw.cos()];
                 let (half_height, radius) = (PRONE_HURT_HALF_LENGTH, PRONE_HURT_RADIUS);
-                let head_y = hurtbox.head.map(|head| dot(upright, axis) + head);
-                return Some(Body { anchor: at, centre: upright, half_height, radius, axis, lying: Some(yaw), head_y, mark: [upright[0], upright[1] + radius, upright[2]], zones: upright, vehicle: None });
+                let centre = [upright[0], upright[1] - sink, upright[2]];
+                let head_y = hurtbox.head.map(|head| dot(centre, axis) + head);
+                return Some(Body { anchor: at, centre, half_height, radius, axis, lying: Some(yaw), head_y, mark: [centre[0], centre[1] + radius, centre[2]], zones: centre, vehicle: None });
             }
             let drop = if posture == Posture::Crouched { CROUCH_DROP } else { 0.0 };
             let lowered = |by: f32| [upright[0], upright[1] - by, upright[2]];

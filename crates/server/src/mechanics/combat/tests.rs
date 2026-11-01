@@ -1838,3 +1838,16 @@ fn a_lagging_shooter_hits_them_lying_as_they_lay() {
     assert!(!was_lying(0), "up again");
     assert!(was_lying(2), "as the shooter saw them");
 }
+
+#[test]
+fn knocked_down_a_soldier_is_low_and_flat_where_they_lie() {
+    let mut game = game();
+    let (id, centre) = target(&mut game);
+    game.world.entities.get_mut::<Player>(id).unwrap().character.down = 30;
+    let body = crate::mechanics::life::body(&game.world, id, 0).unwrap();
+    assert!(body.lying.is_some());
+    let floor = centre - STAND_CENTRE;
+    assert!((body.centre[1] - (floor + PRONE_CENTRE)).abs() < 1e-4);
+    assert_eq!(struck_at(&game, floor + 1.0), None, "over them");
+    assert_eq!(struck_at(&game, floor + 0.3), Some(id));
+}

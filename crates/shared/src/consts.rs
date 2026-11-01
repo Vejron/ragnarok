@@ -16,7 +16,7 @@ pub use crate::vehicles::tank::*;
 pub use crate::vehicles::walker::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 64;
+pub const PROTOCOL_VERSION: u8 = 65;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -178,6 +178,8 @@ pub const STANCE_PRONE: u8 = 1;
 pub const STANCE_CHUTE: u8 = 2;
 /// Knocked down by a blast: thrown, then lying helpless until `Character::down` runs out (KNOCKDOWN.md).
 pub const STANCE_DOWN: u8 = 3;
+/// Hands up: a bot that has given in.
+pub const STANCE_SURRENDER: u8 = 4;
 /// A blast that throws a soldier at least this hard, m/s, knocks them down.
 pub const KNOCKDOWN_POWER: f32 = 7.0;
 /// Ticks they lie there once landed: this many at `KNOCKDOWN_POWER`, rising evenly to
@@ -440,6 +442,9 @@ pub const CROUCH_DROP: f32 = CROUCH_EYE_DROP;
 /// from the centre to the centre of either end, and this thick. 1.7 m long and under 0.8 m high.
 pub const PRONE_HURT_HALF_LENGTH: f32 = 0.47;
 pub const PRONE_HURT_RADIUS: f32 = 0.38;
+/// A whole day and night, seconds, and where in it (0 midnight, 0.5 noon) tick 0 falls.
+pub const DAY_SECONDS: f32 = 1800.0;
+pub const DAY_START_PHASE: f32 = 0.36;
 /// A prone soldier's eye is 0.2 m above its feet, so this is relative to the capsule centre.
 pub const PRONE_EYE_HEIGHT: f32 = 0.2 - PRONE_CENTRE;
 

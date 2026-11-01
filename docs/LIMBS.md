@@ -27,7 +27,7 @@ agrees with the server. No dice are rolled: the same hit on the same part always
 
 ## Where a round lands
 
-The hurtbox is one capsule, 0.43 m in radius, 0.3 m shorter while crouched, with the zones below 0.3 m lower. Lying down it is a capsule on its side along the heading, 1.7 m long and 0.76 m thick (`PRONE_HURT_HALF_LENGTH`, `PRONE_HURT_RADIUS`), its centre 0.3 m off the ground. Where on it a round struck is worked out in
+The hurtbox is one capsule, 0.43 m in radius, 0.3 m shorter while crouched, with the zones below 0.3 m lower. Lying down it is a capsule on its side along the heading, 1.7 m long and 0.76 m thick (`PRONE_HURT_HALF_LENGTH`, `PRONE_HURT_RADIUS`), its centre 0.3 m off the ground, and the same knocked down, still along the heading, since the server does not know how the ragdoll landed. Where on it a round struck is worked out in
 the soldier's own frame (`limb_at`):
 
 | zone | standing | lying down |
