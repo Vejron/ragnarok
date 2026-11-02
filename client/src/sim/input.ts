@@ -52,6 +52,12 @@ export class InputController {
   private touchHeld = 0
   /** Lying down: Z toggles it, and jumping or crouching gets up. */
   private proneLatched = false
+  /** The paper map is held up to read: M toggles it; firing or aiming puts it away. */
+  mapUp = false
+  /** Wheel notches turned with the map up, not yet taken (`takeMapWheel`): down zooms out. */
+  private mapWheel = 0
+  /** The click that put the map away fires nothing: its buttons are ignored until let go. */
+  private swallow = false
 
   constructor(private readonly element: HTMLElement) {
     const options = { signal: this.abort.signal }
@@ -78,10 +84,11 @@ export class InputController {
       if (event.button === 0) this.firing = false
       if (event.button === 2) this.aiming = false
     }, options)
-    // The wheel cycles the hotbar, one slot per notch.
+    // The wheel cycles the hotbar, one slot per notch; with the map up it zooms the map.
     document.addEventListener('wheel', (event) => {
       if (document.pointerLockElement !== element || event.deltaY === 0) return
-      this.cycleSlot(event.deltaY > 0 ? 1 : -1)
+      if (this.mapUp) this.mapWheel += event.deltaY > 0 ? 1 : -1
+      else this.cycleSlot(event.deltaY > 0 ? 1 : -1)
     }, { ...options, passive: true })
     // The right button must not open a menu.
     document.addEventListener('contextmenu', (event) => event.preventDefault(), options)
@@ -124,7 +131,7 @@ export class InputController {
 
   /** Aim is held, by the right mouse button or on screen. */
   get aimHeld() {
-    return this.aiming || (this.touchHeld & BUTTON_ALT) !== 0
+    return !this.swallow && (this.aiming || (this.touchHeld & BUTTON_ALT) !== 0)
   }
 
   get locked() {
@@ -197,6 +204,7 @@ export class InputController {
       if (event.code === 'KeyL') this.latched |= BUTTON_LAMP
       if (event.code === 'KeyK') this.latched |= BUTTON_SKIS
       if (event.code === 'KeyX') this.holster()
+      if (event.code === 'KeyM') this.mapUp = !this.mapUp
       if (event.code === 'KeyR') this.latched |= BUTTON_RELOAD
       // Q loads a gun's other kind of round: a tank's high explosive, or back to armour-piercing.
       if (event.code === 'KeyQ') this.latched |= BUTTON_AMMO
@@ -218,6 +226,18 @@ export class InputController {
     return (positive.some((c) => this.held.has(c)) ? 1 : 0) - (negative.some((c) => this.held.has(c)) ? 1 : 0)
   }
 
+  /** The wheel notches turned over the map since last asked. */
+  takeMapWheel() {
+    const notches = this.mapWheel
+    this.mapWheel = 0
+    return notches
+  }
+
+  /** Puts the map away, as firing or aiming does. */
+  lowerMap() {
+    this.mapUp = false
+  }
+
   /** Reads the current intent and clears latched buttons. */
   sample(): InputSample {
     let buttons = this.latched | this.touchHeld
@@ -226,6 +246,16 @@ export class InputController {
     if (this.held.has('Space')) buttons |= BUTTON_JUMP
     if (this.firing || this.held.has('KeyF')) buttons |= BUTTON_FIRE
     if (this.aiming) buttons |= BUTTON_ALT
+    // Firing or aiming with the map up puts it away, and that press does nothing else.
+    const trigger = buttons & (BUTTON_FIRE | BUTTON_ALT)
+    if (this.mapUp && trigger) {
+      this.mapUp = false
+      this.swallow = true
+    }
+    if (this.swallow) {
+      if (trigger) buttons &= ~(BUTTON_FIRE | BUTTON_ALT)
+      else this.swallow = false
+    }
     if (this.held.has('KeyC') || this.held.has('ControlLeft')) buttons |= BUTTON_CROUCH
     if (this.proneLatched) buttons |= BUTTON_PRONE
     // W and S walk a mortar's range dial; nobody on foot or driving needs them for anything else here.

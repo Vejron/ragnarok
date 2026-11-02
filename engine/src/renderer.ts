@@ -13,6 +13,7 @@ import { STANDARD_WGSL } from './materials/standard.wgsl'
 import { Frustum } from './math/frustum'
 import * as mat4 from './math/mat4'
 import { Bloom } from './passes/bloom'
+import { HudLayer, HudPass } from './hud/layer'
 import { HalfResolution } from './passes/halfres'
 import { LIGHT_CELL, LightGrid } from './scene/lightgrid'
 import { outputWgsl } from './passes/output.wgsl'
@@ -24,6 +25,9 @@ import { Craters } from './scene/craters'
 import type { Scene } from './scene/scene'
 import { Texture } from './scene/texture'
 import { SkinnedMesh } from './scene/skin'
+
+/** Where a mesh is drawn: with the world, held in front of the camera over it, or as an overlay over everything. */
+type Layer = 'world' | 'held' | 'overlay'
 
 /** Floats in the frame uniform block. Matches `Frame` in common.wgsl. */
 const FRAME_FLOATS = 96
@@ -102,6 +106,9 @@ export class Renderer {
   pixelRatio = 1
   /** Tints lit surfaces by how many lights their light-grid cell lists, instead of lighting them. */
   showLightGrid = false
+  /** Flat sprites drawn over the finished frame: fill it before each `render`, which draws and empties it. */
+  hud = new HudLayer()
+  private readonly hudPass: HudPass
   private readonly lightGrid = new LightGrid()
   private readonly lightVisible = (x: number, y: number, z: number, radius: number) =>
     this.frustum.intersectsSphere(x, y, z, radius) || (this.reflectionOn && this.reflectionFrustum.intersectsSphere(x, y, z, radius))
@@ -133,7 +140,7 @@ export class Renderer {
   /** Per pipeline: 'standard', a ShaderMaterial's ('custom', whose group 1 is the material's own), or one that also takes the lighting group at 2 ('shadowed'). */
   private readonly pipelineKind: ('standard' | 'custom' | 'shadowed')[] = []
   private readonly pipelineKeys = new Map<string, number>()
-  private readonly materialPipelines = new Map<number, { version: number; overlay: boolean; pipeline: number }>()
+  private readonly materialPipelines = new Map<number, { version: number; layer: Layer; pipeline: number }>()
   private readonly shadowPipelines: GPURenderPipeline[]
   private readonly outputPipeline: GPURenderPipeline
   private readonly outputUniform: GPUBuffer
@@ -159,6 +166,8 @@ export class Renderer {
   private readonly opaque: DrawItem[] = []
   private readonly transparent: DrawItem[] = []
   private readonly overlay: DrawItem[] = []
+  /** Held meshes: the end of the main pass, over the scene but writing depth (`Mesh.held`). */
+  private readonly held: DrawItem[] = []
   /** Where in `mainBatches` the overlay's draws start. */
   private overlayFrom = 0
 
@@ -285,6 +294,7 @@ export class Renderer {
     this.halfResolution = new HalfResolution(device, HDR_FORMAT)
     this.bloomSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' })
     this.outputUniform = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    this.hudPass = new HudPass(device, this.format, this.textures)
     this.setSize(canvas.clientWidth || 1, canvas.clientHeight || 1, 1)
   }
 
@@ -352,6 +362,7 @@ export class Renderer {
     this.opaque.length = 0
     this.transparent.length = 0
     this.overlay.length = 0
+    this.held.length = 0
     this.casters.length = 0
     this.effects.length = 0
     this.collect(scene)
@@ -359,6 +370,7 @@ export class Renderer {
     this.opaque.sort(byStateThenGeometry)
     this.transparent.sort(byOrderThenFarToNear)
     this.overlay.sort(byOrderThenFarToNear)
+    this.held.sort(byOrderThenFarToNear)
     this.casters.sort(byStateThenGeometry)
     this.reflected.sort(byStateThenGeometry)
 
@@ -368,6 +380,7 @@ export class Renderer {
     this.shadowBatches.length = 0
     this.writeBatches(this.opaque, this.mainBatches, true)
     this.writeBatches(this.transparent, this.mainBatches, false)
+    this.writeBatches(this.held, this.mainBatches, false)
     this.overlayFrom = this.mainBatches.length
     this.writeBatches(this.overlay, this.mainBatches, false)
     this.writeBatches(this.casters, this.shadowBatches, true)
@@ -400,7 +413,9 @@ export class Renderer {
     if (this.overlay.length) this.overlayPass(encoder)
     const bloom = scene.bloom
     if (bloom && bloom.strength > 0) this.bloom.encode(encoder, bloom.threshold, bloom.knee, bloom.radius)
-    this.outputPass(encoder, scene, camera)
+    const screen = this.context.getCurrentTexture().createView()
+    this.outputPass(encoder, scene, camera, screen)
+    if (this.hud.size) stats.drawCalls += this.hudPass.encode(encoder, screen, this.hud, this.timer.pass('hud'))
     this.timer.resolve(encoder)
     this.device.queue.submit([encoder.finish()])
     this.timer.read()
@@ -465,12 +480,13 @@ export class Renderer {
     const radius = br * mat4.maxScale(m)
     const material = mesh.material
     const inView = !mesh.frustumCulled || this.frustum.intersectsSphere(cx, cy, cz, radius)
-    const inShadow = this.shadowsOn && mesh.castShadow && !material.transparent && !mesh.overlay &&
+    const layer: Layer = mesh.overlay ? 'overlay' : mesh.held ? 'held' : 'world'
+    const inShadow = this.shadowsOn && mesh.castShadow && !material.transparent && layer === 'world' &&
       (!mesh.frustumCulled || this.shadowFrustum.intersectsSphere(cx, cy, cz, radius))
     const dx = cx - this.camX, dy = cy - this.camY, dz = cz - this.camZ
     const distance2 = dx * dx + dy * dy + dz * dz
     // Only what rises above the mirror, is near and big enough to show, and falls in the mirrored view.
-    const inReflection = this.reflectionOn && !material.transparent && !mesh.overlay &&
+    const inReflection = this.reflectionOn && !material.transparent && layer === 'world' &&
       cy + radius > this.reflectionHeight! && distance2 < this.reflectionRange * this.reflectionRange &&
       radius * radius > distance2 * (REFLECT_MIN_SIZE * REFLECT_MIN_SIZE) &&
       (!mesh.frustumCulled || this.reflectionFrustum.intersectsSphere(cx, cy, cz, radius))
@@ -480,11 +496,11 @@ export class Renderer {
     const count = mesh instanceof InstancedMesh ? mesh.count : 1
     if (inView || inReflection) {
       const group = material instanceof ShaderMaterial ? this.resources.custom(material) : this.resources.standard(material)
-      const pipeline = this.pipelineFor(material, mesh.overlay)
+      const pipeline = this.pipelineFor(material, layer)
       if (inView) {
         const item = this.item(mesh, slot, record, count, pipeline, group)
         item.depth = distance2
-        ;(mesh.overlay ? this.overlay : material.transparent ? this.transparent : this.opaque).push(item)
+        ;(layer === 'overlay' ? this.overlay : layer === 'held' ? this.held : material.transparent ? this.transparent : this.opaque).push(item)
       }
       if (inReflection) this.reflected.push(this.item(mesh, slot, record, count, pipeline, group))
     }
@@ -535,13 +551,14 @@ export class Renderer {
 
   // ---- pipelines ----
 
-  private pipelineFor(material: Material, overlay: boolean): number {
+  private pipelineFor(material: Material, layer: Layer): number {
     const cached = this.materialPipelines.get(material.id)
-    if (cached && cached.version === material.version && cached.overlay === overlay) return cached.pipeline
+    if (cached && cached.version === material.version && cached.layer === layer) return cached.pipeline
     const program = material instanceof ShaderMaterial ? this.resources.program(material) : null
     // An overlay ignores depth: it neither tests nor writes, which also lets it draw against a read-only depth.
-    const state = overlay
-      ? `${material.blend}|${material.side}|overlay`
+    // A held mesh does not test either, but writes: what comes after is behind it, and the ink outlines it.
+    const state = layer !== 'world'
+      ? `${material.blend}|${material.side}|${layer}`
       : `${material.blend}|${material.side}|${material.depthTest}|${material.depthWrite}|${material.depthBias}|${material.depthBiasSlope}`
     const key = program ? `${program.shader.key}|${state}` : state
     let pipeline = this.pipelineKeys.get(key)
@@ -550,15 +567,15 @@ export class Renderer {
       const layout = program
         ? this.device.createPipelineLayout({ bindGroupLayouts: (material as ShaderMaterial).shadows ? [this.sceneLayout, program.groupLayout, this.lightingLayout] : [this.sceneLayout, program.groupLayout] })
         : this.mainLayout
-      this.pipelines.push(this.makePipeline(material, overlay, program ? 'shader material' : state, program?.module ?? this.standardModule, layout))
+      this.pipelines.push(this.makePipeline(material, layer, program ? 'shader material' : state, program?.module ?? this.standardModule, layout))
       this.pipelineKind.push(program === null ? 'standard' : (material as ShaderMaterial).shadows ? 'shadowed' : 'custom')
       this.pipelineKeys.set(key, pipeline)
     }
-    this.materialPipelines.set(material.id, { version: material.version, overlay, pipeline })
+    this.materialPipelines.set(material.id, { version: material.version, layer, pipeline })
     return pipeline
   }
 
-  private makePipeline(m: Material, overlay: boolean, label: string, module: GPUShaderModule, layout: GPUPipelineLayout): GPURenderPipeline {
+  private makePipeline(m: Material, layer: Layer, label: string, module: GPUShaderModule, layout: GPUPipelineLayout): GPURenderPipeline {
     let blend: GPUBlendState | undefined
     if (m.blend === 'alpha') {
       blend = {
@@ -579,12 +596,12 @@ export class Renderer {
       primitive: { topology: 'triangle-list', cullMode: m.side === 'front' ? 'back' : m.side === 'back' ? 'front' : 'none' },
       depthStencil: {
         format: DEPTH_FORMAT,
-        depthWriteEnabled: m.depthWrite && !overlay,
+        depthWriteEnabled: layer === 'held' || (m.depthWrite && layer === 'world'),
         // Reversed depth: nearer is larger.
-        depthCompare: m.depthTest && !overlay ? 'greater-equal' : 'always',
+        depthCompare: m.depthTest && layer === 'world' ? 'greater-equal' : 'always',
         // Positive bias pulls toward the camera, which with reversed depth means a larger value.
-        depthBias: overlay ? 0 : Math.round(m.depthBias),
-        depthBiasSlopeScale: overlay ? 0 : m.depthBiasSlope,
+        depthBias: layer !== 'world' ? 0 : Math.round(m.depthBias),
+        depthBiasSlopeScale: layer !== 'world' ? 0 : m.depthBiasSlope,
       },
       multisample: { count: this.sampleCount },
     })
@@ -958,7 +975,7 @@ export class Renderer {
     pass.end()
   }
 
-  private outputPass(encoder: GPUCommandEncoder, scene: Scene, camera: PerspectiveCamera) {
+  private outputPass(encoder: GPUCommandEncoder, scene: Scene, camera: PerspectiveCamera, screen: GPUTextureView) {
     const o = this.outputData
     const ink = scene.ink
     o[0] = scene.toneMapping === 'neutral' ? 1 : 0
@@ -974,7 +991,7 @@ export class Renderer {
     this.device.queue.writeBuffer(this.outputUniform, 0, o)
     const pass = encoder.beginRenderPass({
       label: 'output',
-      colorAttachments: [{ view: this.context.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
+      colorAttachments: [{ view: screen, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
       timestampWrites: this.timer.pass('output'),
     })
     pass.setPipeline(this.outputPipeline)

@@ -150,3 +150,34 @@ describe('InputController aim', () => {
     i.dispose()
   })
 })
+
+describe('InputController map', () => {
+  let input: InputController | null = null
+  const make = () => (input = new InputController(document.createElement('div')))
+  afterEach(() => input?.dispose())
+
+  it('M raises the map and lowers it again', () => {
+    const i = make()
+    press('KeyM')
+    release('KeyM')
+    expect(i.mapUp).toBe(true)
+    press('KeyM')
+    release('KeyM')
+    expect(i.mapUp).toBe(false)
+  })
+
+  it('firing with the map up puts it away and fires nothing until the button is let go', () => {
+    const i = make()
+    press('KeyM')
+    release('KeyM')
+    press('KeyF')
+    expect(i.sample().buttons & BUTTON_FIRE).toBe(0)
+    expect(i.mapUp).toBe(false)
+    expect(i.sample().buttons & BUTTON_FIRE).toBe(0)
+    release('KeyF')
+    expect(i.sample().buttons & BUTTON_FIRE).toBe(0)
+    press('KeyF')
+    expect(i.sample().buttons & BUTTON_FIRE).toBeTruthy()
+    release('KeyF')
+  })
+})

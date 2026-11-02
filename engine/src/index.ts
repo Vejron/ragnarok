@@ -22,3 +22,4 @@ export { AnimationClip, sampleTrack, type Track, type TrackPath, type Interpolat
 export { Animator, Action } from './animation/animator'
 export { parseGlb, loadGlb, type Gltf } from './assets/gltf'
 export { Craters, CRATER_CAPACITY, CRATER_EMBER_LIFE, CRATER_FADE } from './scene/craters'
+export { HudLayer } from './hud/layer'

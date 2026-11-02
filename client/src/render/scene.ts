@@ -1,5 +1,6 @@
 import { Bloom, Color, Fog, Ink, PerspectiveCamera, Renderer, Scene as EngineScene } from '@ragnarok/engine'
 import { GunSightView } from './gunsight'
+import { HeldMapView } from './heldmap'
 import { ContactShadows } from './contact'
 import { setWaterLight, setWaterPlane, setWaterReflection } from './water'
 import { CLASSIC, SOFT, loadLook, wintry, type Look, type Palette } from './look'
@@ -88,6 +89,8 @@ export class Scene {
   renderer: Renderer | null = null
   /** A tank gunner's reticle, drawn over the finished frame. */
   readonly gunsight = new GunSightView()
+  /** The paper map in the soldier's hands, in first person. */
+  readonly heldMap = new HeldMapView()
   private readonly resizeObserver: ResizeObserver
   /** Blob shadows; the game fills them in each frame. */
   readonly contact: ContactShadows
@@ -112,7 +115,7 @@ export class Scene {
     this.scene.fog = new Fog(150, 600)
     this.scene.sun.shadow.enabled = true
     this.contact = new ContactShadows((x, z) => this.groundAt(x, z))
-    this.scene.add(this.contact.root, this.gunsight.root)
+    this.scene.add(this.contact.root, this.gunsight.root, this.heldMap.root)
 
     this.resizeObserver = new ResizeObserver(() => this.resize())
     this.resizeObserver.observe(container)
@@ -350,6 +353,7 @@ export class Scene {
     // The reticle is laid out in view space; it goes where the camera is, just before drawing.
     this.camera.updateWorld()
     this.gunsight.follow(this.camera)
+    this.heldMap.follow(this.camera)
     this.renderer.render(this.scene, this.camera)
   }
 
@@ -357,6 +361,7 @@ export class Scene {
     this.disposed = true
     this.resizeObserver.disconnect()
     this.gunsight.dispose()
+    this.heldMap.dispose()
     this.contact.dispose()
     this.renderer?.destroy()
     this.canvas.remove()

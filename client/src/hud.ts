@@ -8,7 +8,7 @@ import type { BackpackView } from './backpack'
 import type { FeedEntry, Side } from './scoreboard'
 import type { VoiceStatus } from './voice'
 
-/** Everything the overlay draws, assembled by the game once a frame. */
+/** Everything the HUD draws (`hud/`), assembled by the game once a frame. */
 export interface HudStats {
   status: ConnectionStatus
   rtt: number | null
@@ -32,8 +32,13 @@ export interface HudStats {
   air: number | null
   /** On foot: stamina left, 0..1, and whether they are winded (running is walking, jumps are low); null elsewhere. */
   stamina: { left: number; winded: boolean } | null
-  /** On skis: their speed, km/h; null elsewhere. */
-  skiSpeed: number | null
+  /** Driving, flying or steering something that moves, or on skis: its speed, km/h, for the speedometer; null elsewhere. */
+  speed: number | null
+  /** Seated in a vehicle: its name, as the HUD labels its health, and that health; null on foot. */
+  vehicle: { name: string; hp: number; maxHp: number } | null
+  /** A plane's pilot: where the guns point and where the mouse aims, as fractions of the screen; null elsewhere. */
+  nose: [number, number] | null
+  aim: [number, number] | null
   /**
    * Flying a drone: its battery, 0..1, and the link's strength, 1 at the pilot's side to 0 at the edge of its range;
    * for a loitering drone also which camera is watched (null for an FPV drone's one); null when not flying one.

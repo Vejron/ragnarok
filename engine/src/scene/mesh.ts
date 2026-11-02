@@ -15,6 +15,12 @@ export class Mesh extends Node {
    * hidden. Overlay meshes sort by `renderOrder`, then far to near, and are not batched or shadowed.
    */
   overlay = false
+  /**
+   * Held in front of the camera (a map in the hands, a first-person item): drawn at the end of the main
+   * pass over the scene, ignoring its depth, but writing its own, so effects behind it stay behind and
+   * the ink outlines it. Held meshes sort by `renderOrder`, then far to near, and are not shadowed.
+   */
+  held = false
   /** Multiplies the material colour and opacity for this mesh alone: per-object tint without a new material. */
   readonly tint = new Float32Array([1, 1, 1, 1])
 
@@ -29,6 +35,7 @@ export class Mesh extends Node {
     copy.renderOrder = this.renderOrder
     copy.frustumCulled = this.frustumCulled
     copy.overlay = this.overlay
+    copy.held = this.held
     copy.tint.set(this.tint)
     return copy
   }

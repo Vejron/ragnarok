@@ -38,7 +38,10 @@ describe('parseGlb', () => {
     expect(skinned).toBeDefined()
     expect(skinned!.skeleton.bones.length).toBeGreaterThan(5)
     expect(skinned!.skeleton.inverseBind.length).toBe(skinned!.skeleton.bones.length * 16)
-    expect(clips.length).toBe(93)
+    // Not a fixed count: the character tool adds clips as stances and moves are made.
+    expect(clips.length).toBeGreaterThan(0)
+    expect(new Set(clips.map((clip) => clip.name)).size).toBe(clips.length)
+    expect(clips.every((clip) => clip.duration >= 0 && clip.tracks.length > 0)).toBe(true)
 
     const copy = scene.clone()
     let copied: SkinnedMesh | undefined

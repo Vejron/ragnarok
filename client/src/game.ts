@@ -89,7 +89,10 @@ import { Jets } from './entities/presenters/jets'
 import { Headlights } from './entities/presenters/headlights'
 import { Roosters } from './entities/presenters/roosters'
 import { TileStreamer } from './stream'
-import { loadManifest, NO_WATER, THEME_WINTER, type WorldData } from './world'
+import { loadManifest, NO_WATER, THEME_WINTER, WORLD_BASE, type WorldData } from './world'
+import { HudLayer } from '@ragnarok/engine'
+import { InGameHud } from './hud/index'
+import { PAPER_METRES, zoomPaper } from './hud/map'
 import { WorldView } from './worldview'
 import type { HudStats } from './hud'
 import { Notices } from './notices'
@@ -145,6 +148,8 @@ const LOCAL_TRACK = 0
 const AIM_LOOK_SCALE = 0.6
 /** How long the static shows after a drone's feed cuts out, ms. */
 const FEED_LOST_MS = 700
+/** Seats that steer something along, which get a speedometer. */
+const MOVERS: ReadonlySet<SeatView['role']> = new Set(['driver', 'roadster', 'pilot', 'aviator', 'walker', 'hen', 'tupp', 'strv', 'drone', 'loiter'] as const)
 
 /** What the local player is up to this frame: worked out once, read by the stages of the frame. */
 interface Moment {
@@ -178,6 +183,8 @@ interface Moment {
   lookPitch: number
   /** How far a chase camera stands behind what they ride. */
   distance: number
+  /** How far the paper map is up in front of the eyes, 0..1: the view goes first person with it. */
+  reading: number
 }
 
 /**
@@ -301,6 +308,11 @@ export class Game {
   private readonly notices = new Notices()
   /** Hits dealt and taken, for the crosshair marker, the screen flash and the direction arcs. */
   private readonly hits = new HitFeedback()
+  /** The HUD, drawn by the renderer over each frame. */
+  private readonly hudLayer = new HudLayer()
+  private readonly hud = new InGameHud(this.hudLayer)
+  /** How much ground the paper map shows across, metres; the wheel zooms it while it is up. */
+  private paperSpan = PAPER_METRES
   /** What the server tells the local player of themself. */
   private readonly player = new LocalPlayer()
   /** Limbs coming off and soldiers thrown down, as drawn. */
@@ -339,9 +351,6 @@ export class Game {
   /** Set when reconnecting cannot help (protocol mismatch); only a reload can. */
   private halted = false
   private warning: string | null = null
-
-  /** Called every frame with the pilot's gunsight and mouse-aim circle on screen, or nulls. */
-  onSights: ((nose: [number, number] | null, aim: [number, number] | null) => void) | null = null
 
   constructor(container: HTMLElement, private readonly onStats: (stats: HudStats) => void) {
     this.scene = new Scene(container)
@@ -420,6 +429,8 @@ export class Game {
     // The GPU first: with no WebGPU there is nothing to draw, and the error says so.
     await this.scene.init()
     const { world, hash } = await loadManifest()
+    // Only now is the world's place known (in dev, the one the editor activated).
+    this.hud.loadMap(`${WORLD_BASE}minimap.png`)
     this.worldHash = hash
     this.world = world
     if (world.theme === THEME_WINTER) this.startWinter()
@@ -790,10 +801,31 @@ export class Game {
     this.voice.update(this.localId, position, nearby)
     this.scene.contact.end()
     this.surroundings.mirrorWater()
+    const stats = this.report(moment)
+    this.holdMap(stats, moment)
+    this.drawHud(stats, now)
     this.perf.beforeRender()
     this.scene.render()
     this.perf.end(ticks)
-    this.report(moment)
+    this.onStats(stats)
+  }
+
+  /** Raises or lowers the paper map and redraws what it shows. */
+  private holdMap(stats: HudStats, { now, dt, velocity, lookYaw, lookPitch }: Moment) {
+    const marks = { x: stats.x, z: stats.z, yaw: stats.yaw, blips: stats.blips, circle: stats.backpack, pulse: (now % 1600) / 1600 }
+    if (this.localId !== null) this.scene.heldMap.dress(colorFor(this.localId))
+    this.paperSpan = zoomPaper(this.paperSpan, this.input.takeMapWheel())
+    this.scene.heldMap.update(this.input.mapUp, dt, now, Math.hypot(velocity[0], velocity[1]), lookYaw, lookPitch, this.scene.groundLight, this.player.lamp && this.player.alive, this.hud.mapImage, stats.halfExtent, marks, this.paperSpan)
+  }
+
+  /** Lays the HUD for `stats` onto the renderer's HUD layer, for the frame about to be drawn. */
+  private drawHud(stats: HudStats, now: number) {
+    const renderer = this.scene.renderer
+    if (!renderer) return
+    // A new renderer (after a lost device) gets the same layer.
+    renderer.hud = this.hudLayer
+    const scale = renderer.pixelRatio
+    this.hud.draw(stats, now, renderer.width / scale, renderer.height / scale, scale)
   }
 
   /** Runs the fixed ticks `dt` has brought due, and says how many. */
@@ -835,6 +867,8 @@ export class Game {
     const mount = seated && !flying ? this.vehicles.model(seat.vehicle) : undefined
     const sitting = mount !== undefined && seatFrame(mount, seat!.kind, seat!.index, this.seatAt, this.seatTurn, this.vehicles.placed.get(seat!.vehicle)?.turret?.yaw)
     const item = itemDef(this.held().item)
+    // The map is read on foot or from a passenger's seat, alive; anywhere else it is put away.
+    if (this.input.mapUp && !(able && (!seated || view?.role === 'passenger'))) this.input.lowerMap()
     // Aim held with a scoped gun in hand, alive and free to use it: look down the scope. With any other gun: half zoom over the shoulder.
     const scoped = handy && this.input.aimHeld && item?.scope === true
     const aiming = !scoped && handy && this.input.aimHeld && item?.kind === 'gun'
@@ -855,17 +889,19 @@ export class Game {
       lookYaw: this.input.yaw + this.sway[0],
       lookPitch: this.input.pitch + this.sway[1],
       distance: ride ? rideView(ride.kind).distance : 0,
+      reading: this.scene.heldMap.raised,
       // Aim held at a gun with a sight (a tank's, a Strv S's, a Pak's): look down it, which shows where the barrel really points.
       sighted: this.player.alive && this.input.aimHeld && ride !== undefined && view?.sight === true,
     }
   }
 
   /** Draws the local soldier. */
-  private poseLocal({ dt, seated, flying, sitting, scoped, position, local, velocity, lookYaw, lookPitch }: Moment) {
+  private poseLocal({ dt, seated, flying, sitting, scoped, reading, position, local, velocity, lookYaw, lookPitch }: Moment) {
     const [vx, vz] = velocity
     this.avatars.begin()
     const me = this.avatars.local()
-    me.hidden = (seated && !flying && !sitting) || scoped
+    // Reading the map the view is at the eyes, inside the head.
+    me.hidden = (seated && !flying && !sitting) || scoped || reading > 0.4
     me.dead = !this.player.alive
     me.held = this.player.slot(this.input.heldSlot).item
     me.pack = this.player.carrying
@@ -907,7 +943,7 @@ export class Game {
   }
 
   /** Puts the camera where this frame wants it. */
-  private aimCamera({ now, dt, seat, view, ride, position, distance, sighted, scoped, aiming, lookYaw, lookPitch, sitting }: Moment) {
+  private aimCamera({ now, dt, seat, view, ride, position, distance, sighted, scoped, aiming, lookYaw, lookPitch, sitting, reading }: Moment) {
     this.input.lookScale = sighted ? SIGHT_LOOK_SCALE : scoped ? SCOPE_LOOK_SCALE : aiming ? AIM_LOOK_SCALE : 1
     const chase = ride && view?.chase ? this.chase.update([ride.x, ride.y, ride.z], ride.yaw, dt, distance) : null
     if (!chase) this.chase.reset()
@@ -920,12 +956,24 @@ export class Game {
         now, dt, vehicle: seat.vehicle, seat: view, ride, model: this.vehicles.model(seat.vehicle), motion: this.vehicles.fx(seat.vehicle),
         distance, sighted, scoped, aimBlend: this.aimBlend, chase, head: sitting ? this.seatAt : null,
       }, seat.index)
+      // A passenger reading the map: the view moves to their eyes.
+      if (reading > 0 && sitting) this.toEyes([this.seatAt.x, this.seatAt.y, this.seatAt.z], reading)
       return
     }
     this.cameras.leave(now)
     if (scoped) this.scene.scopeFrom([position[0]!, position[1]! + this.eyeHeight(), position[2]!], lookYaw, lookPitch, shake)
-    // Only the distance changes: the pivot is what the server's crosshair ray is built from.
-    else this.scene.overShoulder(position, lookYaw, lookPitch, ON_FOOT_DISTANCE * (1 - (1 - AIM_DISTANCE_SCALE) * this.aimBlend), ON_FOOT_SHOULDER, ON_FOOT_HEIGHT, shake)
+    else {
+      // Only the distance changes: the pivot is what the server's crosshair ray is built from.
+      this.scene.overShoulder(position, lookYaw, lookPitch, ON_FOOT_DISTANCE * (1 - (1 - AIM_DISTANCE_SCALE) * this.aimBlend), ON_FOOT_SHOULDER, ON_FOOT_HEIGHT, shake)
+      if (reading > 0) this.toEyes([position[0]!, position[1]! + this.eyeHeight(), position[2]!], reading)
+    }
+  }
+
+  /** Moves the camera `share` (eased) of the way from where it is to `eye`, looking the same way: into first person. */
+  private toEyes(eye: readonly number[], share: number) {
+    const t = share * share * (3 - 2 * share)
+    const camera = this.scene.camera.position
+    camera.set(camera.x + (eye[0]! - camera.x) * t, camera.y + (eye[1]! - camera.y) * t, camera.z + (eye[2]! - camera.z) * t)
   }
 
   /** The arcs of what is in hand or in the rack, and the ghost of the cube bricks in hand would place or dig. */
@@ -974,22 +1022,24 @@ export class Game {
     return this.scene.camera.project(point) ? [(point.x + 1) / 2, (1 - point.y) / 2] : null
   }
 
-  /** Tells the overlay how things stand. */
-  private report({ now, seat, view, ride, position, local, seated, hands, able, handy, sighted, scoped, lookYaw, lookPitch }: Moment) {
+  /** How things stand, for the HUD and the page. */
+  private report({ now, seat, view, ride, position, local, seated, hands, able, handy, sighted, scoped, lookYaw, lookPitch }: Moment): HudStats {
     const { player, predictor } = this
     const cars = this.vehicles.placed
     const aviator = view?.rig.name === 'aviator'
     const plane = aviator && seat ? this.vehicles.model(seat.vehicle) : undefined
     const sights = plane instanceof PlaneModel ? pilotSights(this.scene.camera, plane, this.input.yaw, this.input.pitch) : { nose: null, aim: null }
-    this.onSights?.(sights.nose, sights.aim)
     const hitView = this.hits.view(now, this.input.yaw)
     const gauges = view?.gauges
     const link = view?.rig.name === 'fpv' ? view.rig : null
     const held = itemDef(this.held().item)
     const gun = held?.kind === 'gun' ? held : undefined
     // Seated, the ray cannot leave out the vehicle round the soldier.
-    const blocked = handy && gun && !seated && !scoped ? this.blockedMark(gun, position, lookYaw, lookPitch) : null
-    this.onStats({
+    const reading = this.scene.heldMap.raised > 0.3
+    const blocked = handy && gun && !seated && !scoped && !reading ? this.blockedMark(gun, position, lookYaw, lookPitch) : null
+    const fx = seat ? this.vehicles.fx(seat.vehicle) : undefined
+    const def = ride ? vehicleDef(ride.kind) : null
+    return {
       status: this.transport.status,
       rtt: this.rtt.rtt,
       voice: this.voice.status,
@@ -1014,7 +1064,12 @@ export class Game {
       ...(gauges?.includes('pintle') ? roofGun(ride?.pintle ?? null) : cockpit(gauges?.includes('cockpit') ? (ride?.arms ?? null) : null, aviator, seat ? this.vehicles.fx(seat.vehicle) : undefined)),
       air: gauges?.includes('air') ? (this.driver?.thrust?.air ?? null) : null,
       stamina: !seated && able ? { left: 1 - local.spent / STAMINA_FULL, winded: local.winded } : null,
-      skiSpeed: !seated && local.skis ? Math.round(Math.hypot(local.knock[0], local.knock[1]) * 3.6) : null,
+      speed: seated
+        ? (fx && view && MOVERS.has(view.role) ? Math.hypot(fx.velocity.x, fx.velocity.y, fx.velocity.z) * 3.6 : null)
+        : local.skis && able ? Math.hypot(local.knock[0], local.knock[1]) * 3.6 : null,
+      vehicle: ride && def ? { name: def.name.toUpperCase(), hp: ride.hp, maxHp: def.hp } : null,
+      nose: sights.nose,
+      aim: sights.aim,
       eggs: gauges?.includes('eggs') ? (ride?.arms?.bombs ?? null) : null,
       drone: link && ride
         ? {
@@ -1031,7 +1086,7 @@ export class Game {
       sight: sighted,
       scoped: this.scoped,
       aiming: this.aiming,
-      armed: handy && gun !== undefined,
+      armed: handy && gun !== undefined && !reading,
       crossGap: gun ? Math.max(MIN_CROSS_GAP, spreadPixels(effectiveSpread(gun, this.input.aimHeld, (local.lost & LIMB_ARMS) !== 0), this.scene.camera.fov, window.innerHeight)) : MIN_CROSS_GAP,
       blocked,
       hands: this.localId !== null && hands && player.alive,
@@ -1053,7 +1108,7 @@ export class Game {
       halfExtent: this.world?.halfExtent ?? 0,
       blips: this.blips.view(now, this.localId, ride?.x ?? position[0]!, ride?.z ?? position[2]!, this.alliesInView(), MAP_SIDES),
       backpack: this.backpack.view(this.localId),
-    })
+    }
   }
 
   /** How far the gun the local player last fired has reloaded, 0..1, for one taking `ticks` (null: never reloads). */
@@ -1187,6 +1242,7 @@ export class Game {
   dispose() {
     this.disposed = true
     this.perf.dispose()
+    this.hud.dispose()
     cancelAnimationFrame(this.frameHandle)
     clearTimeout(this.reconnectTimer)
     clearInterval(this.pingTimer)

@@ -17,15 +17,17 @@ game.frame()
   ├─ scene.follow() / aimFrom()           camera + sun shadow frustum follow the target
   ├─ tiles, effects, pickups, rockets     streamed in / animated
   ├─ contact.begin() … add() … end()      blob shadows for this frame's poses
+  ├─ report() → hud.draw()                the HUD laid onto `renderer.hud` (client/src/hud/)
   └─ scene.render()                       engine Renderer.render(scene, camera)
         ├─ effect prepare   compute: particle emit + simulate
         ├─ shadow pass      sun depth map
-        ├─ main pass        4× MSAA, rgba16float, reversed depth
+        ├─ main pass        4× MSAA, rgba16float, reversed depth; held meshes (the map in hand) last
         ├─ effects half     smoke at half resolution into its own target (`halfResolution` effects)
         ├─ effects pass     that target laid over, then particles, ribbons + flashes, depth read-only
         ├─ overlay pass     the gunsight, over everything
         ├─ bloom            bright extract → mip chain → add back (when `scene.bloom`)
-        └─ output pass      ink from depth, bloom, tone mapping, sRGB     → canvas
+        ├─ output pass      ink from depth, bloom, tone mapping, sRGB     → canvas
+        └─ hud pass         flat sprites over the finished picture          → canvas
 ```
 
 ## The engine and the game's side of it
@@ -402,6 +404,32 @@ Its own README gives the benchmark against three's two renderers, from when a co
 - Two dev servers sharing one `node_modules` share Vite's dependency cache; give the second its own
   `cacheDir`, or the two builds' dependency bundles clash.
 
+## The HUD
+
+Everything shown while playing (crosshair, health, hotbar, gauges, speedometer, minimap, kill feed,
+scoreboard, notices, scope, drone feed) is drawn by the renderer, not as page elements. The page
+(`App.vue`) keeps only what is clicked or tapped: the click-to-play screen, the graphics toggles, the
+banners, the touch controls and invisible tap targets over the drawn hotbar.
+
+- **Engine:** `HudLayer` (`engine/src/hud/layer.ts`) is a list of 2D sprites in CSS pixels from the
+  top-left: a colour, an optional texture and uv rect, a rotation. `Renderer.hud` is drawn by the
+  `hud` pass after the output pass, straight onto the canvas, so it is not tone mapped, bloomed or inked,
+  and is emptied after drawing. Consecutive sprites sharing a texture are one instanced draw. Colours
+  and textures are taken as sRGB and blended as a web page does: make HUD textures with `srgb: false`.
+- **Client:** `client/src/hud/`. `Game.report()` builds `HudStats` every frame and `InGameHud.draw`
+  lays it out (`aim.ts` crosshair, scope, hit marker, drone feed, vignettes; `panels.ts` text panels;
+  `gauges.ts` health, body map, hotbar, bars, vehicle health and speedometer; `map.ts` the map
+  pictures). `Painter` (`paint.ts`) gives rounded boxes (a disc cut into nine), bars, rings, lines and
+  text; text is drawn once per string on a canvas and kept in a least-recently-used `TextCache`.
+  Shapes quads cannot make (the hit marker, the body map, the minimap) are a `CanvasSprite`, redrawn
+  only when what they show changes.
+- **The held map** (`render/heldmap.ts`, M) is not HUD but scene: a folded sheet in two gloved hands in
+  view space, made of meshes with `held = true`. Those are drawn at the end of the main pass ignoring the
+  scene's depth but writing their own, so a wall never cuts them, effects behind stay behind, and the ink
+  outlines the sheet rather than drawing the scene's edges over it. Its picture is `minimap.png` round
+  the reader (`paperView`, 1.2 km, kept on the world) on a canvas texture, redrawn 8 times a second.
+  The view eases into first person at the eyes while it is up; firing or aiming puts it away.
+
 ## Adding to the pipeline
 
 - **A new model or effect:** add its root to the scene in `Game`'s constructor. Make its materials
@@ -413,6 +441,10 @@ Its own README gives the benchmark against three's two renderers, from when a co
   moves; `scene.lights.flash` to light the surroundings. Avoid spawning meshes per event.
 - **Something that must never be hidden** (a reticle, a marker): a mesh with `overlay = true` and a
   `blend: 'alpha'` material. It ignores depth and sorts by `renderOrder`.
+- **Something held in front of the eyes** (a first-person item): meshes with `held = true`, in a group
+  that follows the camera, as `HeldMapView` does.
+- **A new HUD element:** a field in `HudStats` filled in `Game.report()`, drawn in one of the files in
+  `client/src/hud/` with the `Painter`. Not a page element.
 - **A new look option:** add a field to `Look` and `defaultLook`, apply it in `Scene.setLook`, and add
   a row to `LOOKS` in `App.vue`.
 - **Palette tuning:** edit `SOFT` / `CLASSIC` in `look.ts`.
