@@ -51,9 +51,10 @@ export class MaterialResources {
         { binding: 0, visibility: fragment, texture: {} },
         { binding: 1, visibility: fragment, texture: {} },
         { binding: 2, visibility: fragment, sampler: {} },
+        { binding: 3, visibility: fragment, texture: {} },
       ],
     })
-    this.groups.set(0, this.makeTextureGroup(null, null))
+    this.groups.set(0, this.makeTextureGroup(null, null, null))
   }
 
   group(id: number): GPUBindGroup {
@@ -64,12 +65,13 @@ export class MaterialResources {
   standard(material: Material): number {
     const map = material.map
     const normal = material.normalMap
-    if (!map && !normal) return 0
-    const key = `${map ? `${map.id}:${map.version}` : '-'}|${normal ? `${normal.id}:${normal.version}` : '-'}`
+    const stones = material.stones
+    if (!map && !normal && !stones) return 0
+    const key = [map, normal, stones].map((t) => (t ? `${t.id}:${t.version}` : '-')).join('|')
     let entry = this.textureGroups.get(key)
     if (!entry) {
       const id = this.nextId++
-      entry = { id, group: this.makeTextureGroup(map, normal), used: this.frame }
+      entry = { id, group: this.makeTextureGroup(map, normal, stones), used: this.frame }
       this.textureGroups.set(key, entry)
       this.groups.set(id, entry.group)
     }
@@ -169,14 +171,15 @@ export class MaterialResources {
     }
   }
 
-  private makeTextureGroup(map: Material['map'], normal: Material['normalMap']): GPUBindGroup {
+  private makeTextureGroup(map: Material['map'], normal: Material['normalMap'], stones: Material['stones']): GPUBindGroup {
     return this.device.createBindGroup({
       label: 'material textures',
       layout: this.texturesLayout,
       entries: [
         { binding: 0, resource: map ? this.textures.view(map) : this.textures.white },
         { binding: 1, resource: normal ? this.textures.view(normal) : this.textures.flat },
-        { binding: 2, resource: this.textures.sampler(map ?? normal) },
+        { binding: 2, resource: this.textures.sampler(map ?? normal ?? stones) },
+        { binding: 3, resource: stones ? this.textures.view(stones) : this.textures.black },
       ],
     })
   }

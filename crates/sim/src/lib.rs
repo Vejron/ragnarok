@@ -12,7 +12,7 @@ use rapier3d::parry::utils::Array2;
 use rapier3d::prelude::*;
 use shared::carve::{Shell, Tri};
 use shared::consts::*;
-use shared::movement::{begin_slide, decay_knock, desired_translation, knockdown_ticks, settle_vertical, slope_scale, spend_stamina, steer_chute, toggle_chute, wish_velocity};
+use shared::movement::{begin_slide, decay_knock, desired_translation, knockdown_ticks, settle_vertical, slope_scale, spend_stamina, steer_chute, stones_scale, toggle_chute, wish_velocity};
 use shared::protocol::{InputFrame, LIMB_LEGS};
 use shared::quant::from_cm;
 use shared::ski::{SkiGround, SkiMap, bad_landing, over_crest, ski_flight, ski_step};
@@ -21,6 +21,7 @@ use shared::world::{ObjId, SkiTrail, WorldFile};
 use std::collections::HashMap;
 
 pub mod fences;
+pub mod stones;
 mod ragdoll;
 mod stream;
 mod vehicle;
@@ -126,6 +127,8 @@ pub struct Physics {
     obstacles: std::collections::BTreeMap<u32, stream::Obstacle>,
     /// What a soldier cannot walk through but everything else goes through (`fences`).
     fences: fences::Fences,
+    /// Stony ground, which slows a soldier on foot (`stones`).
+    stones: stones::Stones,
 }
 
 /// Height of the top of the invisible boundary walls around the playable square, metres above
@@ -418,6 +421,10 @@ impl Physics {
         for (tile, lines) in by_tile {
             physics.fences.set(tile, fences::fences_of(&lines));
         }
+        physics.stones = stones::Stones::new(world.half_extent, world.tile_size);
+        for (col, row, stones) in &world.stones {
+            physics.stones.set((*col, *row), stones.clone());
+        }
         Ok(physics)
     }
 
@@ -475,6 +482,7 @@ impl Physics {
             tiles: HashMap::new(),
             obstacles: std::collections::BTreeMap::new(),
             fences: fences::Fences::default(),
+            stones: stones::Stones::default(),
         }
     }
 
@@ -731,7 +739,7 @@ impl Physics {
         let input = &if winded { InputFrame { buttons: input.buttons & !BUTTON_RUN, ..*input } } else { *input };
         // On skis nothing walks: all the moving is `knock`.
         let walk = if character.skis { InputFrame { strafe: 0, forward: 0, ..*input } } else { *input };
-        let speed_scale = speed_scale * self.walk_slope(character, &walk);
+        let speed_scale = speed_scale * self.walk_slope(character, &walk) * self.walk_stones(character);
         let (vy, desired) = desired_translation(character.vy, character.grounded, character.knock, &walk, dt, speed_scale, character.chute, jump_speed);
         let queries = self.broad_phase.as_query_pipeline(
             self.narrow_phase.query_dispatcher(),
@@ -818,6 +826,19 @@ impl Physics {
         match self.terrain_under(character.position) {
             Some((height, normal)) if character.position[1] - height < SLOPE_MAX_CLEARANCE => slope_scale(wish_velocity(input), normal),
             _ => 1.0,
+        }
+    }
+
+    /// What stony ground under a soldier does to their walking this tick (`stones_scale`): nothing off
+    /// the ground, or up on a roof or a bridge.
+    fn walk_stones(&self, character: &Character) -> f32 {
+        let cell = self.stones.at(character.position[0], character.position[2]);
+        if cell == 0 || !character.grounded {
+            return 1.0;
+        }
+        match self.terrain_under(character.position) {
+            Some((height, _)) if character.position[1] - height >= SLOPE_MAX_CLEARANCE => 1.0,
+            _ => stones_scale(cell),
         }
     }
 

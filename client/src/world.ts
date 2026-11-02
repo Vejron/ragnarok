@@ -228,6 +228,10 @@ export interface Stream {
 
 /** Units per unit of slope in `TileData.detail` (`DETAIL_SLOPE_SCALE` in `crates/shared`). */
 export const DETAIL_SLOPE_SCALE = 63.5
+/** `TileData.stones`: the share of a cell under stones, out of this (`STONES_DENSITY` in `crates/shared`). */
+export const STONES_DENSITY = 0x7f
+/** `TileData.stones`: a boulder field's blocks rather than cobbles (`STONES_ANGULAR`). */
+export const STONES_ANGULAR = 0x80
 
 /** `Tile::water` entry (centimetres) for a ground sample with no water. */
 const NO_WATER_CM = -2147483648
@@ -309,6 +313,12 @@ export interface TileData {
   ski: SkiTrail[]
   /** Fences and power lines; absent in a tile made up in a test. */
   lines?: Line[]
+  /**
+   * Stony ground, `n × n` cells over the tile with `n = sqrt(length)`, rows along +Z: how stony each
+   * is in the low bits (`STONES_DENSITY`, 0 none) and `STONES_ANGULAR` for a boulder field's blocks.
+   * Absent when the tile has none.
+   */
+  stones?: Uint8Array
   /** The tile file this was decoded from, which the soldier's physics reads for itself. */
   bytes?: Uint8Array
 }
@@ -402,7 +412,7 @@ function flatIndices(triangles: readonly number[][]): Uint32Array {
 }
 
 export function decodeTile(bytes: Uint8Array): TileData {
-  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges, detail, rails, ski, lines] = decode(bytes) as [
+  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges, detail, rails, ski, lines, stones] = decode(bytes) as [
     [number, number[][], number, number, number, number, number, [number[], number[], Uint8Array, Uint8Array]?, [number, number]?][],
     [number, number, number[][]][],
     [number[][], number[][]],
@@ -416,6 +426,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     [number, number, number[][]][] | undefined,
     [number, number[][]][] | undefined,
     [number, number[][], number[], boolean][] | undefined,
+    Uint8Array | undefined,
   ]
   return {
     buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind, cells, paint]) => ({
@@ -455,6 +466,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     rails: (rails ?? []).map(([gauge, kind, points]) => ({ gauge: metres(gauge), kind, points: points.map(point) })),
     ski: (ski ?? []).map(([width, points]) => ({ width: metres(width), points: points.map(point) })),
     lines: (lines ?? []).map(([kind, points, base, end]) => ({ kind, points: points.map(point), base: base.map(metres), end })),
+    ...(stones && stones.length > 0 ? { stones: stones.slice() } : {}),
     bytes,
   }
 }

@@ -1,5 +1,6 @@
 import { COMMON_WGSL } from './common.wgsl'
 import { MARSH_WGSL } from './marsh.wgsl'
+import { STONES_WGSL } from './stones.wgsl'
 import { SUN_SHADOW_WGSL } from './sunshadow.wgsl'
 import { VERTEX_WGSL } from './vertex.wgsl'
 
@@ -21,9 +22,11 @@ ${VERTEX_WGSL}
 @group(2) @binding(0) var colorMap: texture_2d<f32>;
 @group(2) @binding(1) var normalMap: texture_2d<f32>;
 @group(2) @binding(2) var mapSampler: sampler;
+@group(2) @binding(3) var stonesMap: texture_2d<f32>;
 
 ${SUN_SHADOW_WGSL}
 ${MARSH_WGSL}
+${STONES_WGSL}
 
 // The craters' marks (linear colours): bare earth in the bowl, char, and the soil thrown out round the rim.
 const CRATER_EARTH = vec3f(0.22, 0.14, 0.075);
@@ -40,6 +43,7 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   // Sampled before any branching: implicit-derivative sampling must be in uniform control flow.
   let texel = textureSample(colorMap, mapSampler, in.uv);
   let normalTexel = textureSample(normalMap, mapSampler, in.uv);
+  let stonesTexel = textureSample(stonesMap, mapSampler, in.uv);
   // Metres a pixel spans on the surface, for the craters' rim lines: a derivative, so taken up here too.
   let pixel = length(fwidth(in.world.xz)) * 0.7071;
   let material = materials[in.ids.x];
@@ -72,13 +76,30 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
     marsh.pool *= dry;
     marsh.sheen *= dry;
   }
+  var stones = StonesLook(rgb, vec2f(0.0));
+  if ((flags & MAT_STONES) != 0u && stonesTexel.r > 0.004) {
+    // Where the client lays its stones over these (\`Stones\`, out to 16 m, flattening from 7 m).
+    let carpet = 1.0 - smoothstep(7.0, 16.0, distance(in.world.xz, frame.cameraPos.xz));
+    stones = stonesLook(rgb, in.world.xz, stonesTexel.r, stonesTexel.g > 0.5, pixel, carpet);
+    // A crater's earth is thrown over the stones too.
+    rgb = mix(stones.rgb, rgb, marks.earth);
+    stones.tilt *= 1.0 - marks.earth;
+  }
+  // The shore: the stones' map has in blue how far over the water near it the ground is (0 to 1 m).
+  // Up to about 0.3 m it is wet, darker and with a sheen, its edge uneven as the waves leave it.
+  var wet = 0.0;
+  if ((flags & MAT_STONES) != 0u && stonesTexel.b < 0.999) {
+    let above = stonesTexel.b + (marshValue(in.world.xz * 0.9) - 0.5) * 0.14;
+    wet = (1.0 - smoothstep(0.2, 0.36, above)) * (1.0 - marks.earth);
+    rgb *= mix(1.0, 0.6, wet);
+  }
   if ((flags & MAT_LIT) != 0u) {
     var n = normalize(in.normal);
     if ((flags & MAT_NORMAL_MAP) != 0u) {
       n = normalize(normalMatrix(objects[in.ids.z].model) * mapped);
     }
     // A heightfield's normal goes as (-dh/dx, 1, -dh/dz): the craters' slope tips it.
-    n = normalize(n - vec3f(marks.slope.x, 0.0, marks.slope.y) * n.y);
+    n = normalize(n - vec3f(marks.slope.x, 0.0, marks.slope.y) * n.y + vec3f(stones.tilt.x, 0.0, stones.tilt.y) * n.y);
     if (!front) {
       n = -n;
     }
@@ -101,6 +122,9 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
     }
     let hemi = mix(frame.hemiGround.rgb, frame.hemiSky.rgb, 0.5 * n.y + 0.5) * marks.sky;
     rgb = rgb / PI * (frame.sunColor.rgb * ramp * shadow + hemi + pointLight(in.world, n)) + material.emissive.rgb;
+    if (wet > 0.0) {
+      rgb += marshShine(n, in.world, 0.0, wet * 0.8, shadow);
+    }
     if (marsh.pool + marsh.sheen > 0.0) {
       rgb += marshShine(n, in.world, marsh.pool, marsh.sheen, shadow);
     }

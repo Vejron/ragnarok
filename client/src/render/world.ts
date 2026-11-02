@@ -12,6 +12,8 @@ import { reliefPixels, type Pixels, type TerrainBuffers } from './terrainmesh'
 import { prepareTile, type PreparedTile } from './tileprep'
 import { buildTrees } from './trees'
 import { buildLines } from './lines'
+import { stonesTexture } from './stones'
+import { shoreOf, type Shore } from './shore'
 import { TERRAIN_RAMP } from './groundlight'
 
 export type { HeightSource }
@@ -75,13 +77,14 @@ export function buildGround(halfExtent: number, y = 0): Mesh {
  * its shading the relief map, both the tile's own, so the mesh can be simplified without losing
  * either. A cover nothing painted yet is baked here.
  */
-function buildTerrain(tile: Pick<TileData, 'cover' | 'detail'>, ground: TileGround, terrain: NonNullable<PreparedTile['terrain']>, cover: PreparedTile['cover']): Mesh {
+function buildTerrain(tile: Pick<TileData, 'cover' | 'detail' | 'stones'>, ground: TileGround, terrain: NonNullable<PreparedTile['terrain']>, cover: PreparedTile['cover'], shore: Shore | null): Mesh {
   const { x0, z0, cell, side } = ground
   const map = cover === undefined ? bakeTerrainTexture(tile, x0, z0, cell * (side - 1)) : cover ? coverTexture(cover) : null
   const size = cell * (side - 1)
   const wet = terrain.wet === undefined ? wetnessPixels(tile, x0, z0, size, terrain.relief.width) : terrain.wet
   const normalMap = reliefTexture(wet ? packMarsh(terrain.relief, wet) : terrain.relief)
-  const mesh = new Mesh(new Geometry(terrain.buffers), toonMaterial({ ...(map ? { map } : { color: GRASS_COLOR }), normalMap, normalMapTone: true, ramp: TERRAIN_RAMP, craters: true, snow: winter, marsh: wet !== null }))
+  const stones = stonesTexture(tile.stones, shore, ground)
+  const mesh = new Mesh(new Geometry(terrain.buffers), toonMaterial({ ...(map ? { map } : { color: GRASS_COLOR }), normalMap, normalMapTone: true, ramp: TERRAIN_RAMP, craters: true, snow: winter, marsh: wet !== null, stones }))
   mesh.userData.ownsMaterial = true
   mesh.userData.ground = ground
   mesh.userData.detail = tile.detail
@@ -130,12 +133,14 @@ export function remeshTerrain(group: Group, buffers: TerrainBuffers) {
  * power lines. Water is drawn
  * apart (`buildWater`). Only wrapping arrays, so it is cheap enough for the frame.
  */
-export function tileGroup(tile: Pick<TileData, 'cover' | 'detail' | 'trees' | 'lines'>, ground: TileGround | null, prepared: PreparedTile): Group {
+export function tileGroup(tile: Pick<TileData, 'cover' | 'detail' | 'trees' | 'lines' | 'stones' | 'water'>, ground: TileGround | null, prepared: PreparedTile): Group {
   const group = new Group()
-  if (ground && prepared.terrain) group.add(buildTerrain(tile, ground, prepared.terrain, prepared.cover))
+  // Where the ground meets the water, for what is wet there.
+  const shore = ground ? shoreOf(ground, tile.water) : null
+  if (ground && prepared.terrain) group.add(buildTerrain(tile, ground, prepared.terrain, prepared.cover, shore))
   if (prepared.draped) group.add(...ribbonMeshes(prepared.draped.ribbons))
   group.add(...mergedMesh(prepared.buildings, new Set(prepared.undrawn)))
-  group.add(...buildTrees(tile.trees))
+  group.add(...buildTrees(tile.trees, shore))
   group.add(...buildLines(tile.lines, ground))
   return group
 }
@@ -214,6 +219,7 @@ export function disposeTile(group: Group) {
       const material = object.material
       material.map?.dispose()
       material.normalMap?.dispose()
+      material.stones?.dispose()
       material.dispose()
     }
   })

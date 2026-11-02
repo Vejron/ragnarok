@@ -1,9 +1,10 @@
 import { Color, Geometry, Group, Mesh, ShaderMaterial } from '@ragnarok/engine'
-import { COVER_PARK, COVER_WOOD, type TileData, type TileRef } from '@/world'
+import { COVER_PARK, COVER_WOOD, STONES_DENSITY, type TileData, type TileRef } from '@/world'
 import { SURFACE_CELL } from '@/sim/surface'
 import type { TileGround } from '@/sim/terrain'
 import { COVER_COLORS, GRASS_COLOR } from './cover'
 import { GROUND_LIGHT_WGSL } from './groundlight'
+import { isRock } from './rocks'
 import { normalAt } from './shade'
 import { grassMask, type GrassMask } from './grassmask'
 import { inMarshPool, marshField, marshPoolLevel } from './marshnoise'
@@ -407,6 +408,8 @@ export class Grass {
   readonly root = new Group()
   private readonly material: ShaderMaterial
   private readonly masks = new Map<number, GrassMask>()
+  /** Each tile's stony ground (`TileData.stones`), where the grass thins out between the stones. */
+  private readonly stones = new Map<number, Uint8Array>()
   private readonly chunks = new Map<number, Chunk>()
   private density: GrassDensity = GRASS_FULL
   private enabled = true
@@ -416,6 +419,8 @@ export class Grass {
   private readonly picked: Bender[] = []
   /** Craters shells dug: bare earth inside, no grass grows there. Keyed by `x,z,radius` so telling of one twice adds nothing. */
   private readonly craters = new Map<string, { x: number; z: number; radius: number }>()
+  /** Rocks as `[x, z, radius²]` runs, by the chunk they stand over and then by tile, so no blade grows through one. */
+  private readonly rocks = new Map<number, Map<number, number[]>>()
 
   constructor(
     private readonly halfExtent: number,
@@ -438,7 +443,31 @@ export class Grass {
     const x0 = -this.halfExtent + ref.col * this.tileSize
     const z0 = -this.halfExtent + ref.row * this.tileSize
     this.masks.set(this.tileKey(ref.col, ref.row), mask ?? grassMask(tile, x0, z0, this.tileSize, ground))
+    const tileKey = this.tileKey(ref.col, ref.row)
+    if (tile.stones) this.stones.set(tileKey, tile.stones)
+    else this.stones.delete(tileKey)
+    this.dropRocks(tileKey)
+    for (const tree of tile.trees) {
+      if (!isRock(tree.kind)) continue
+      // The rock's foot: a little inside its widest, where it meets the ground.
+      const radius = tree.crown * 0.85
+      for (let cz = Math.floor((tree.z - radius) / GRASS_CHUNK); cz <= Math.floor((tree.z + radius) / GRASS_CHUNK); cz++) {
+        for (let cx = Math.floor((tree.x - radius) / GRASS_CHUNK); cx <= Math.floor((tree.x + radius) / GRASS_CHUNK); cx++) {
+          const byTile = this.rocks.get(chunkKey(cx, cz)) ?? new Map<number, number[]>()
+          this.rocks.set(chunkKey(cx, cz), byTile)
+          const list = byTile.get(tileKey) ?? []
+          list.push(tree.x, tree.z, radius * radius)
+          byTile.set(tileKey, list)
+        }
+      }
+    }
     this.dropOver(x0, z0)
+  }
+
+  private dropRocks(tileKey: number) {
+    for (const [key, byTile] of this.rocks) {
+      if (byTile.delete(tileKey) && byTile.size === 0) this.rocks.delete(key)
+    }
   }
 
   /** The ground of a tile moved: its blades are grown again on it. */
@@ -448,6 +477,8 @@ export class Grass {
 
   removeTile(ref: Pick<TileRef, 'col' | 'row'>) {
     this.masks.delete(this.tileKey(ref.col, ref.row))
+    this.dropRocks(this.tileKey(ref.col, ref.row))
+    this.stones.delete(this.tileKey(ref.col, ref.row))
     this.dropOver(-this.halfExtent + ref.col * this.tileSize, -this.halfExtent + ref.row * this.tileSize)
   }
 
@@ -479,6 +510,18 @@ export class Grass {
     return mask.cells[row * mask.side + column]!
   }
 
+  /** How stony the ground is at `(x, z)`, 0 to 1. */
+  stonyAt(x: number, z: number): number {
+    const grid = Math.max(1, Math.ceil((2 * this.halfExtent) / this.tileSize))
+    const col = Math.floor((x + this.halfExtent) / this.tileSize), row = Math.floor((z + this.halfExtent) / this.tileSize)
+    if (col < 0 || row < 0 || col >= grid || row >= grid) return 0
+    const stones = this.stones.get(this.tileKey(col, row))
+    if (!stones) return 0
+    const n = Math.round(Math.sqrt(stones.length))
+    const i = Math.floor(((x + this.halfExtent) / this.tileSize - col) * n), j = Math.floor(((z + this.halfExtent) / this.tileSize - row) * n)
+    return (stones[Math.min(j, n - 1) * n + Math.min(i, n - 1)]! & STONES_DENSITY) / STONES_DENSITY
+  }
+
   /**
    * `shadeAt`, but bare within `EDGE` of a cell without grass: the mask is coarse, and a road's edge
    * can be up to half a cell either side of where its cells end.
@@ -487,7 +530,13 @@ export class Grass {
     const shade = this.shadeAt(x, z)
     if (shade === 0) return 0
     for (const c of this.craters.values()) if (Math.hypot(x - c.x, z - c.z) < c.radius) return 0
+    for (const list of this.rocks.get(chunkKey(Math.floor(x / GRASS_CHUNK), Math.floor(z / GRASS_CHUNK)))?.values() ?? []) {
+      for (let i = 0; i < list.length; i += 3) if ((x - list[i]!) ** 2 + (z - list[i + 1]!) ** 2 < list[i + 2]!) return 0
+    }
     for (const [dx, dz] of EDGE_PROBES) if (this.shadeAt(x + dx, z + dz) === 0) return 0
+    // Between stones a tuft here and there; on the stoniest ground none.
+    const stony = this.stonyAt(x, z)
+    if (stony > 0 && (Math.abs(Math.sin(x * 12.9898 + z * 78.233)) * 43758.5453) % 1 < stony * 2) return 0
     return shade
   }
 

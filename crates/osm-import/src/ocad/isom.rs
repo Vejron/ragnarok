@@ -21,9 +21,25 @@ pub struct Stone {
     pub solid: bool,
 }
 
+/// Stony ground or a boulder field: a share of the ground under stones, for the tile's `stones`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stony {
+    /// 0..1: how much of the ground is stone where it is drawn, or at the middle of a dot.
+    pub level: f64,
+    /// Blocks of a boulder field, not cobbles.
+    pub angular: bool,
+    /// One block big enough to stand behind to this many square metres, or none at 0.
+    pub per_block: f64,
+}
+
+const fn stony(level: f64, angular: bool, per_block: f64) -> Feature {
+    Feature::Stony(Stony { level, angular, per_block })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Feature {
     Stone(Stone),
+    Stony(Stony),
     Road(Track),
     Cover(u8),
     /// Green: a cover, filled with shrubs.
@@ -118,8 +134,14 @@ pub fn feature(number: i32) -> Option<Feature> {
             205 => stone(TREE_ROCK_BOULDER, 2.3, 1.7, 1, 0.0, true),
             206 => stone(TREE_ROCK_SLAB, 3.5, 2.9, 1, 0.0, true),
             207 => stone(TREE_ROCK_BOULDER, 1.0, 0.7, 4, 4.0, true),
-            208 => stone(TREE_ROCK_SLAB, 0.6, 1.1, 3, 5.0, true),
-            210 => stone(TREE_ROCK_BOULDER, 0.4, 0.4, 3, 3.0, false),
+            // Ground under stones too many to map one by one, by how they slow a runner. Mappers draw
+            // them as areas, or as dots (210.001) and triangles (208.001) where the stones lie.
+            208 => stony(0.55, true, 40.0),
+            209 => stony(0.9, true, 15.0),
+            210 => stony(0.45, false, 0.0),
+            211 => stony(0.7, false, 0.0),
+            212 => stony(0.95, false, 0.0),
+            214 => Feature::Cover(COVER_ROCK),
             417 => stone(TREE_BROADLEAF, 14.0, 5.0, 1, 0.0, true),
             418 => stone(TREE_BUSH, 1.4, 0.9, 1, 0.0, false),
             201 => ledge(3.0, 1.0, 3.0),
@@ -170,6 +192,8 @@ pub fn trees_kept(number: i32) -> Option<f64> {
         404_001 => 0.3,
         _ => match number / 1000 {
             213 | 401 | 403 | 412 => 0.0,
+            // Bare rock: a pine here and there in a crack.
+            214 => 0.1,
             402 | 404 => 0.15,
             _ => return None,
         },
@@ -238,6 +262,18 @@ mod tests {
         assert!(shrubs(406_000).per_area > shrubs(408_000).per_area && shrubs(408_000).per_area > shrubs(410_000).per_area);
         // Good visibility: as slow, but it hides nobody.
         assert!(shrubs(409_000).height < 1.0 && shrubs(408_000).height > 1.5);
+    }
+
+    #[test]
+    fn stony_ground_gets_stonier_as_it_gets_slower() {
+        let level = |number| match feature(number) {
+            Some(Feature::Stony(stony)) => stony,
+            other => panic!("{other:?}"),
+        };
+        assert!(level(210_001).level < level(211_000).level && level(211_000).level < level(212_000).level);
+        assert!(!level(210_000).angular && level(208_001).angular && level(209_000).angular);
+        assert!(level(209_000).per_block < level(208_000).per_block && level(210_000).per_block == 0.0);
+        assert_eq!(feature(214_000), Some(Feature::Cover(COVER_ROCK)));
     }
 
     #[test]

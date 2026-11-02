@@ -38,6 +38,8 @@ export class TextureStore {
   readonly white: GPUTextureView
   /** A 1×1 texture holding the +Y normal, for an unset normal map. */
   readonly flat: GPUTextureView
+  /** A 1×1 black texture: what an unset data map (stones, say) samples. */
+  readonly black: GPUTextureView
   private readonly samplers = new Map<string, GPUSampler>()
   private readonly blitModule: GPUShaderModule
   private readonly blitPipelines = new Map<GPUTextureFormat, GPURenderPipeline>()
@@ -48,6 +50,7 @@ export class TextureStore {
   constructor(private readonly device: GPUDevice) {
     this.white = this.solid([255, 255, 255, 255], 'rgba8unorm')
     this.flat = this.solid([128, 255, 128, 255], 'rgba8unorm')
+    this.black = this.solid([0, 0, 0, 255], 'rgba8unorm')
     this.blitModule = device.createShaderModule({ label: 'mip blit', code: BLIT_WGSL })
     this.blitSampler = device.createSampler({ minFilter: 'linear', magFilter: 'linear' })
   }

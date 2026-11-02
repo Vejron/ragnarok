@@ -18,8 +18,8 @@ use crate::region::{Place, Region};
 use crate::trees::Planted;
 use anyhow::{Context, Result, ensure};
 use file::{Map, OBJECT_AREA, OBJECT_LINE, OBJECT_POINT, Paper};
-use isom::{Feature, Shrubs, Stone};
-use shared::world::{COVER_FARM, COVER_MARSH, COVER_ROCK, COVER_URBAN, COVER_WOOD, TREE_BUSH};
+use isom::{Feature, Shrubs, Stone, Stony};
+use shared::world::{COVER_FARM, COVER_MARSH, COVER_ROCK, COVER_URBAN, COVER_WOOD, TREE_BUSH, TREE_ROCK_SLAB};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -92,6 +92,9 @@ pub struct Source {
     pub cliffs: Vec<relief::Cliff>,
     /// `(LINE_*, line)`: fences and power lines.
     pub lines: Vec<(u8, Vec<P>)>,
+    /// Stony ground drawn as dots, each a patch about its point, and drawn as areas.
+    pub stony_dots: Vec<(P, Stony)>,
+    pub stony_areas: Vec<(Vec<Vec<P>>, Stony)>,
     /// How the paper sits on the ground, and the corners of what is drawn on it.
     pub sheet: Option<Sheet>,
     pub paper: [Paper; 2],
@@ -161,6 +164,32 @@ fn from_map(map: &Map, place: &Place, shift: [f64; 2]) -> Source {
                 source.lines.push((wire.kind, line));
             }
             (Feature::Stone(stone), OBJECT_POINT) => source.planted.extend(stones(stone, degrees(*first), index)),
+            // A gigantic boulder drawn to its shape: one rock as wide as the shape, where it stands.
+            (Feature::Stone(stone), OBJECT_AREA) => {
+                let ring: Vec<P> = object.rings[0].iter().map(|&p| local(p)).collect();
+                let n = ring.len() as f64;
+                let mid = ring.iter().fold([0.0, 0.0], |s, p| [s[0] + p[0] / n, s[1] + p[1] / n]);
+                let wide = ring.iter().map(|p| (p[0] - mid[0]).hypot(p[1] - mid[1])).sum::<f64>() / n;
+                let (lat, lon) = place.frame.unproject(mid[0], mid[1]);
+                source.planted.push(Planted { lat, lon, kind: stone.kind, height: stone.height.max(wide * 0.8).min(6.0), crown: stone.crown.max(wide), registered: stone.solid });
+            }
+            (Feature::Stony(stony), OBJECT_POINT) => {
+                source.stony_dots.push((local(*first), stony));
+                if stony.per_block > 0.0 {
+                    source.planted.extend(stones(BLOCK_PAIR, degrees(*first), index));
+                }
+            }
+            (Feature::Stony(stony), OBJECT_AREA) => {
+                let rings: Vec<Vec<P>> = object.rings.iter().map(|ring| ring.iter().map(|&p| local(p)).collect()).collect();
+                if stony.per_block > 0.0 {
+                    let blocks = Shrubs { per_area: stony.per_block, height: BLOCK_PAIR.height, crown: BLOCK_PAIR.crown };
+                    source.planted.extend(thicket(&rings, blocks, index).into_iter().map(|(at, height, crown)| {
+                        let (lat, lon) = place.frame.unproject(at[0], at[1]);
+                        Planted { lat, lon, kind: TREE_ROCK_SLAB, height, crown, registered: true }
+                    }));
+                }
+                source.stony_areas.push((rings, stony));
+            }
             (Feature::Road(track), OBJECT_LINE) => {
                 source.roads.push((object.rings[0].iter().map(|&p| latlon(p)).collect(), track.width, track.kind));
                 if track.cleared > 0.0 {
@@ -253,6 +282,10 @@ fn stones(stone: Stone, (lat, lon): (f64, f64), object: usize) -> Vec<Planted> {
 }
 
 const METRES_PER_DEGREE: f64 = 111_200.0;
+
+/// The blocks a boulder field's triangle stands for, big enough to stand behind; the rest of its
+/// stones are the tile's `stones`.
+const BLOCK_PAIR: Stone = Stone { kind: TREE_ROCK_SLAB, height: 0.75, crown: 0.8, count: 2, spread: 4.0, solid: true };
 
 /// `(position, height, crown)` of the shrubs of a thicket: thrown at its bounding box, the thicket's
 /// holes and outside left bare.

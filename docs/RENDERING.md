@@ -134,6 +134,30 @@ The style is flat, bright and few-banded, not physically based.
   bands, plus a 4×4 ordered dither that removes pixels within 2.5 m of the eye, so standing in a crown,
   or behind a felled one, you still see what you aim at. Trees take no shadow. A felled tree's instance
   is scaled to nothing in place.
+- **Rocks** (`rocks.ts`) are a few shapes a kind, carved from an icosphere by flat cuts and drawn
+  flat-faced, one `InstancedMesh` a shape per tile. Each rock is turned, tipped, sunk and stretched by its
+  position, and its instance colour carries its stone's tint in rgb and its moss in alpha (how much forest
+  stands within about 8 m). `ROCK_WGSL` adds world-space mottling, lichen, moss and snow on top, so two
+  copies of a shape never match, and rocks take the sun's shadow. Grass does not grow through them.
+- **Stony ground** (`Tile::stones`) is drawn in three layers that hand over to each other. The terrain's
+  shader (`stones.wgsl.ts`, `MAT_STONES`, the grid as an RGBA texture at group 2 binding 3) lays a
+  Voronoi of cobbles or blocks over the ground, each its own tone with a dome or tipped face for the
+  light, evening out to their average where a cell is a few pixels. Within 16 m, `Stones`
+  (`render/stones.ts`) stands a low-poly rock on each painted stone, from the same hash in chunks of
+  16 m, flattening them from 7 m onto the painted stones under them, which have the same place, size
+  and tone. A cobble is a hand high, so it swells out of its picture unseen as you come. (Sinking them
+  0.5 m looked like mushrooms coming up; a dither left a speckled band.) The vertex code gets each
+  vertex's height over the stone's foot as its colour's alpha: the shape's share in the vertex colour
+  times the stone's height in the instance's. As they stand up, the shader fades the painted stones under them into the
+  ground between the stones, leaving a soft shade where each stone meets it.
+- **The shore** (`shore.ts`): the level of the water within 12 m of each 2 m cell of a tile, spread out
+  from its water samples. The terrain's stones texture carries the ground's height over it in blue, and
+  the shader darkens the ground and the painted stones within about 0.3 m of the water, with an uneven
+  edge and the marsh's wet sheen. A boulder's instance alpha packs the water's level beside its moss
+  (`packRockAlpha`: the whole part is the level in 5 cm steps, the rest the moss, a quarter up), and
+  `ROCK_WGSL` darkens and wets it below the line, with no moss or lichen there. A carpet stone is all wet
+  or all dry, darkened on the CPU. In the densest
+  spot on Kläppudden it is about 11,000 stones and 0.9 M triangles, under 1 ms of GPU in headless Metal.
 - **Materials are shared** where they can be (per colour for buildings and terrain). Materials cost no
   shader compile in this engine (only the render state picks a pipeline), but sharing keeps the table
   small; only a tile's own cover texture and instance buffers are per-tile and are freed with it

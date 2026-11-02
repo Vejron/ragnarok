@@ -48,6 +48,7 @@ import { HullMarks } from './render/hullmarks'
 import { Callouts } from './callouts'
 import { saveLook, type Look } from './render/look'
 import { Grass, GRASS_FULL, GRASS_LITE } from './render/grass'
+import { Stones } from './render/stones'
 import { AIM_DISTANCE_SCALE, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, Scene } from './render/scene'
 import { ChaseCam } from './render/chase'
 import { PerfReadout } from './render/perf'
@@ -230,6 +231,7 @@ export class Game {
   private terrain: Terrain | null = null
   private surfaces: Surfaces | null = null
   private grass: Grass | null = null
+  private stones: Stones | null = null
   private waters: Waters | null = null
   /** True from the welcome until the joiner's catch-up `destroyed` arrives: that one is state, not news. */
   private awaitingCatchUp = false
@@ -448,6 +450,8 @@ export class Game {
     const terrain = this.terrain
     this.grass = this.view.grass = this.surroundings.grass = new Grass(world.halfExtent, world.tileSize, (x, z) => terrain.sample(x, z))
     this.scene.scene.add(this.grass.root)
+    this.stones = this.view.stones = new Stones(world.halfExtent, world.tileSize, (x, z) => terrain.sample(x, z))
+    this.scene.scene.add(this.stones.root)
     this.applyGrass(this.scene.look)
     if (!world.bytes) throw new Error('the manifest came without its bytes')
     const motor = await SimMotor.create(world.bytes)
@@ -795,6 +799,7 @@ export class Game {
       this.bodies.knockdowns(this.ragdolls, sampled, { id: this.localId, state: this.predictor?.state, at: this.localAt, seated: moment.seated, dead: !this.player.alive }, [at.x, at.y, at.z], dt)
     }
     this.surroundings.bendGrass(standing ? position : null, this.soldiers.nearby, cars)
+    this.stones?.update(this.scene.camera.position.x, this.scene.camera.position.z)
     const nearby = [...this.soldiers.nearby, ...this.riders.seated]
     this.avatars.sweep((key) => this.surroundings.dry(key))
     this.voice.setTalking(this.localId !== null && this.player.alive && this.input.isHeld('KeyV'))
@@ -1273,6 +1278,7 @@ export class Game {
     this.trails.dispose()
     this.damageNumbers.dispose()
     this.grass?.dispose()
+    this.stones?.dispose()
     this.trajectory.dispose()
     this.mortarArc.dispose()
     this.scene.dispose()

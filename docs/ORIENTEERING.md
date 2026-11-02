@@ -77,12 +77,23 @@ tyres, and splashes in the pools on foot and on wheels. Mist hangs over it at da
 | Symbol | Name | In the world |
 |---|---|---|
 | 204 | Boulder, at least about 1 m high | One solid rock, 1.3 m |
-| 205, 206 | Large and gigantic boulder | One solid rock, 2.3 m and 3.5 m |
+| 205, 206 | Large and gigantic boulder | One solid rock, 2.3 m and 3.5 m; a 206 drawn as an area is one rock as wide as it |
 | 207 | Boulder cluster | Four solid rocks |
-| 208 | Boulder field | Three low solid rocks per symbol |
-| 210 | Stony ground, slows you down | Three small rocks per symbol, solid only near roads and buildings |
+| 208, 209 | Boulder field, dense boulder field | Stony ground of blocks (`STONES_ANGULAR`), grade 0.55 and 0.9, and solid blocks to hide behind: two per triangle, one per 40 or 15 m² of area |
+| 210, 211, 212 | Stony ground: slow running, walk, fight | Stony ground of cobbles, grade 0.45, 0.7 and 0.95 |
+| 214 | Bare rock | `COVER_ROCK`, nearly all trees cleared |
 | 201 | Impassable cliff | A step in the ground, 3 m over 1 m, too steep to climb, with bare rock (`COVER_ROCK`) |
 | 202 | Cliff | A step, 1.8 m over 2 m, a slow scramble, with bare rock |
+
+Stony ground is the tile's `stones` grid (2 m cells, `Tile::stones`), filled by `assemble::lay_stones`.
+Mappers draw it as dots and triangles (210.001, 208.001) as often as areas. Each dot is a soft patch
+about 5 m across, and where dots crowd they fill in up to their symbol's grade, never past it: many dots of
+slow running are still slow running. The grade slows a soldier on foot (`movement::stones_scale`: about
+0.85, 0.6 and 0.4 for the three grades of 210-212, boulder fields a little slower), on the server and in
+prediction alike. The terrain's shader lays cobbles or blocks over the ground out to the horizon, and
+near the eye the client puts a small rock on each of them (`render/stones.ts`). The grass thins out on
+it. Boulders and slabs (`render/rocks.ts`) are carved shapes, tipped and tinted per rock, mossed by the
+forest around them.
 
 A cliff is ground, not an object, so it needs `"cell": 1`; at 4 m it is a ramp. `ocad/relief.rs` reads the
 height model either side of the line, takes the lower side as down, and adds what the step lacks, half up

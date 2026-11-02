@@ -690,7 +690,79 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     if let (Some(ocad), Some(ground)) = (ocad, kept) {
         lay_lines(&mut built, &ocad.lines, half, tile_size, &ground);
     }
+    if let Some(ocad) = ocad {
+        lay_stones(&mut built, &ocad.stony_dots, &ocad.stony_areas, half, tile_size);
+    }
     built
+}
+
+/// Side of a cell of a tile's `stones`, metres, about: the tile is cut into a whole number of them.
+const STONES_CELL: f64 = 2.0;
+/// How far a dot of stony ground reaches, metres: the spread of the patch it stands for.
+const STONY_SPREAD: f64 = 5.0;
+
+/// Fills each tile's `stones` from stony ground drawn as dots (each a soft patch about its point,
+/// filling in where patches overlap) and as areas (stony to the edge). A cell is as stony as the
+/// symbols over it say, never more: many dots of slow running are still slow running. Cells take the
+/// angular blocks of a boulder field where those are the larger share.
+fn lay_stones(built: &mut Built, dots: &[(P, crate::ocad::isom::Stony)], areas: &[(Vec<Vec<P>>, crate::ocad::isom::Stony)], half: f64, tile_size: f64) {
+    if dots.is_empty() && areas.is_empty() {
+        return;
+    }
+    let n = (tile_size / STONES_CELL).round().max(1.0) as usize;
+    let cell = tile_size / n as f64;
+    let reach = STONY_SPREAD * 3.0;
+    let bounds: Vec<Option<[f64; 4]>> = areas.iter().map(|(rings, _)| crate::props::bounds(rings)).collect();
+    // The cells, clamped to the tile, that `lo..hi` metres along an axis from `origin` covers.
+    let span = |lo: f64, hi: f64, origin: f64| (((lo - origin) / cell).floor().max(0.0) as usize, (((hi - origin) / cell).ceil().max(0.0) as usize).min(n));
+    for (&(col, row), tile) in &mut built.tiles {
+        let (x0, z0) = (-half + f64::from(col) * tile_size, -half + f64::from(row) * tile_size);
+        // [cobbles, blocks]: first the dots' reach and their levels by it, then how stony.
+        let mut reach_of = [vec![0.0f64; n * n], vec![0.0f64; n * n]];
+        let mut share = [vec![0.0f64; n * n], vec![0.0f64; n * n]];
+        for &(p, stony) in dots {
+            let (i0, i1) = span(p[0] - reach, p[0] + reach, x0);
+            let (j0, j1) = span(p[1] - reach, p[1] + reach, z0);
+            for j in j0..j1 {
+                for i in i0..i1 {
+                    let (dx, dz) = (x0 + (i as f64 + 0.5) * cell - p[0], z0 + (j as f64 + 0.5) * cell - p[1]);
+                    let weight = (-(dx * dx + dz * dz) / (2.0 * STONY_SPREAD * STONY_SPREAD)).exp();
+                    reach_of[usize::from(stony.angular)][j * n + i] += weight;
+                    share[usize::from(stony.angular)][j * n + i] += stony.level * weight;
+                }
+            }
+        }
+        // The dots' level, as much of it as they reach: most of it at a lone dot's middle, all of it where they crowd.
+        for (share, reach) in share.iter_mut().zip(&reach_of) {
+            for (value, &reach) in share.iter_mut().zip(reach) {
+                *value = if reach > 0.0 { *value / reach * (1.0 - (-2.0 * reach).exp()) } else { 0.0 };
+            }
+        }
+        for ((rings, stony), b) in areas.iter().zip(&bounds) {
+            let Some(b) = b else { continue };
+            let (i0, i1) = span(b[0], b[2], x0);
+            let (j0, j1) = span(b[1], b[3], z0);
+            for j in j0..j1 {
+                for i in i0..i1 {
+                    let at = [x0 + (i as f64 + 0.5) * cell, z0 + (j as f64 + 0.5) * cell];
+                    let value = &mut share[usize::from(stony.angular)][j * n + i];
+                    if *value < stony.level && crate::props::inside(rings, at) {
+                        *value = stony.level;
+                    }
+                }
+            }
+        }
+        let stones: Vec<u8> = (0..n * n)
+            .map(|k| {
+                let (cobbles, blocks) = (share[0][k], share[1][k]);
+                let level = (cobbles.max(blocks).min(1.0) * f64::from(STONES_DENSITY)).round() as u8;
+                if level == 0 { 0 } else if blocks > cobbles { level | STONES_ANGULAR } else { level }
+            })
+            .collect();
+        if stones.iter().any(|&value| value != 0) {
+            tile.stones = stones;
+        }
+    }
 }
 
 /// Longest span between two poles of a power line, metres: wooden poles, then steel pylons.
@@ -1265,6 +1337,30 @@ mod tests {
         assert_eq!(power.iter().filter(|line| line.end).count(), 1, "only the last run ends on a pole of its own");
         let fences = built.tiles.values().flat_map(|tile| &tile.lines).filter(|line| line.kind == LINE_FENCE).count();
         assert_eq!(fences, 3);
+    }
+
+    #[test]
+    fn stony_dots_are_soft_patches_and_areas_fill_to_their_edge() {
+        use crate::ocad::isom::Stony;
+        let manifest = Manifest { version: WORLD_VERSION, half_extent: cm(100.0), tile_size: cm(100.0), ..Default::default() };
+        let mut built = Built { manifest, tiles: [(0, 0), (1, 0), (0, 1), (1, 1)].into_iter().map(|key| (key, Tile::default())).collect() };
+        let cobbles = Stony { level: 0.45, angular: false, per_block: 0.0 };
+        let blocks = Stony { level: 0.9, angular: true, per_block: 15.0 };
+        // Two dots near the middle of tile (0, 0), a block field over the corner of (1, 1).
+        let dots = vec![([-51.0, -51.0], cobbles), ([-47.0, -51.0], cobbles)];
+        let areas = vec![(vec![vec![[60.0, 60.0], [100.0, 60.0], [100.0, 100.0], [60.0, 100.0]]], blocks)];
+        lay_stones(&mut built, &dots, &areas, 100.0, 100.0);
+        let tile = &built.tiles[&(0, 0)];
+        assert_eq!(tile.stones.len(), 50 * 50);
+        let at = |tile: &Tile, x: f64, z: f64| tile.stones[(z / 2.0) as usize * 50 + (x / 2.0) as usize];
+        let middle = at(tile, 50.0, 49.0);
+        // Two overlapping patches: cobbles, filled in to nearly their symbol's level and not past it.
+        assert!(middle & STONES_ANGULAR == 0 && f64::from(middle) > 0.4 * 127.0 && f64::from(middle) <= 0.45 * 127.0 + 0.5, "{middle}");
+        assert_eq!(at(tile, 5.0, 5.0), 0, "a patch fades out within its reach");
+        assert!(built.tiles[&(0, 1)].stones.is_empty() && built.tiles[&(1, 0)].stones.is_empty(), "nothing reaches these");
+        let corner = &built.tiles[&(1, 1)];
+        assert_eq!(at(corner, 80.0, 80.0), STONES_ANGULAR | 114);
+        assert_eq!(at(corner, 40.0, 40.0), 0);
     }
 
     #[test]

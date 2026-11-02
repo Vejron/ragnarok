@@ -16,7 +16,7 @@ pub use crate::vehicles::tank::*;
 pub use crate::vehicles::walker::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 66;
+pub const PROTOCOL_VERSION: u8 = 67;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -230,6 +230,10 @@ pub const SNAP_DISTANCE: f32 = 0.3;
 /// nothing: any faster and a runner leaves the ground.
 pub const SLOPE_CLIMB_DRAG: f32 = 1.5;
 pub const SLOPE_SCALE_MIN: f32 = 0.4;
+/// Share of walking speed stony ground takes at its stoniest (`Tile::stones`), for cobbles and for a
+/// boulder field's blocks: ISOM's grades come out near slow running 0.85, walk 0.6 and fight 0.4.
+pub const STONY_DRAG: f32 = 0.6;
+pub const BOULDER_DRAG: f32 = 0.66;
 /// Further than this above the terrain, metres, a soldier is on a roof or a bridge, and its slope is not theirs.
 pub const SLOPE_MAX_CLEARANCE: f32 = 2.0;
 

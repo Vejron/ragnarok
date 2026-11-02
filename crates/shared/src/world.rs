@@ -153,7 +153,8 @@ impl TileRef {
 }
 
 /// One tile file: the buildings and roads inside it, their collision mesh and the ground under it.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+/// Written by hand (`TileOut`), so the fields at the end are left out when they are empty.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 pub struct Tile {
     pub buildings: Vec<Building>,
     pub roads: Vec<Road>,
@@ -195,8 +196,72 @@ pub struct Tile {
     pub ski: Vec<SkiTrail>,
     /// Fences and power lines (`Line`). Drawn, not simulated. Left out of the file when there are
     /// none, so a world without them is written as it was before they existed.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub lines: Vec<Line>,
+    /// Stony ground: for each cell of a square grid over the tile (row-major, rows along +Z, `n × n`
+    /// with `n = sqrt(len)`), how stony it is in the low bits (`STONES_DENSITY`, 0 none) and whether
+    /// the stones are blocks of a boulder field rather than cobbles (`STONES_ANGULAR`). Empty when the
+    /// tile has none. The client draws it; it slows whoever crosses it.
+    #[serde(default, deserialize_with = "bits")]
+    pub stones: Vec<u8>,
+}
+
+/// `Tile::stones`: the share of a cell's ground under stones, out of this.
+pub const STONES_DENSITY: u8 = 0x7f;
+/// `Tile::stones`: set where the stones are the angular blocks of a boulder field.
+pub const STONES_ANGULAR: u8 = 0x80;
+
+fn bits<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+    Ok(Bits::deserialize(deserializer)?.0)
+}
+
+/// How a `Tile` is written: a msgpack array, field by field, so a field left out at the end must
+/// take every one after it along. `lines` and `stones` are left out when there is nothing in them
+/// or after them, so a world without them is written as it was before they existed.
+#[derive(Serialize)]
+struct TileOut<'a> {
+    buildings: &'a Vec<Building>,
+    roads: &'a Vec<Road>,
+    collision: &'a CollisionMesh,
+    #[serde(with = "samples32")]
+    ground: &'a Vec<i32>,
+    cover: &'a Vec<Cover>,
+    trees: &'a Vec<Tree>,
+    #[serde(with = "samples32")]
+    water: &'a Vec<i32>,
+    streams: &'a Vec<Stream>,
+    bridges: &'a Vec<Bridge>,
+    #[serde(with = "samples8")]
+    detail: &'a Vec<i8>,
+    rails: &'a Vec<Rail>,
+    ski: &'a Vec<SkiTrail>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lines: Option<&'a Vec<Line>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stones: Option<Bits>,
+}
+
+impl Serialize for Tile {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let stones = (!self.stones.is_empty()).then(|| Bits(self.stones.clone()));
+        TileOut {
+            buildings: &self.buildings,
+            roads: &self.roads,
+            collision: &self.collision,
+            ground: &self.ground,
+            cover: &self.cover,
+            trees: &self.trees,
+            water: &self.water,
+            streams: &self.streams,
+            bridges: &self.bridges,
+            detail: &self.detail,
+            rails: &self.rails,
+            ski: &self.ski,
+            lines: (!self.lines.is_empty() || stones.is_some()).then_some(&self.lines),
+            stones,
+        }
+        .serialize(serializer)
+    }
 }
 
 /// A fence or a power line in a tile. Drawn, not simulated: nothing collides with it.
@@ -293,6 +358,10 @@ pub struct WorldFile {
     /// Every fence and power line, with the `(col, row)` of the tile it came in. Filled by `assemble`.
     #[serde(skip)]
     pub lines: Vec<(u16, u16, Line)>,
+    /// Each tile's stony ground (`Tile::stones`), by its `(col, row)`; tiles without any are left out.
+    /// Filled by `assemble`.
+    #[serde(skip)]
+    pub stones: Vec<(u16, u16, Vec<u8>)>,
     /// `buildings[i]`'s identity. Filled by `assemble`; empty for a world built by hand.
     #[serde(skip)]
     pub building_ids: Vec<ObjId>,
@@ -774,6 +843,9 @@ impl WorldFile {
         for (col, row, tile) in tiles {
             world.ski.extend(tile.ski.iter().cloned());
             world.lines.extend(tile.lines.iter().map(|line| (col, row, line.clone())));
+            if !tile.stones.is_empty() {
+                world.stones.push((col, row, tile.stones.clone()));
+            }
             if n > 0 && tile.ground.len() == (n * n) as usize {
                 let ground = &mut world.ground;
                 let (i0, j0) = (col as u32 * (n - 1), row as u32 * (n - 1));
@@ -917,10 +989,16 @@ mod tests {
             rails: vec![Rail { gauge: 144, kind: RAIL_TRAIN, points: vec![[0, 0], [900, 50]] }],
             ski: vec![SkiTrail { width: 400, points: vec![[0, 0], [900, 50]] }],
             lines: vec![Line { kind: LINE_POWER, points: vec![[0, 0], [5000, 0]], base: vec![120, 150], end: false }],
+            stones: vec![0, 40, STONES_ANGULAR | 90, 0],
         };
         assert_eq!(Tile::decode(&tile.encode()).unwrap(), tile);
+        // Stones without lines: the empty lines are written, to keep the stones in their place.
+        let stony = Tile { lines: Vec::new(), ..tile.clone() };
+        let bytes = stony.encode();
+        assert_eq!(bytes[0], 0x9e, "an array of all 14 fields");
+        assert_eq!(Tile::decode(&bytes).unwrap(), stony);
         // Without lines a tile is written as it was before they existed, and reads back the same.
-        let plain = Tile { lines: Vec::new(), ..tile.clone() };
+        let plain = Tile { lines: Vec::new(), stones: Vec::new(), ..tile.clone() };
         let bytes = plain.encode();
         assert_eq!(bytes[0], 0x9c, "an array of the 12 fields before lines");
         assert_eq!(Tile::decode(&bytes).unwrap(), plain);

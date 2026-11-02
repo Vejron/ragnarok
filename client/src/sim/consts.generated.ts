@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 66
+export const PROTOCOL_VERSION = 67
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -316,6 +316,13 @@ export const SNAP_DISTANCE = 0.3
  */
 export const SLOPE_CLIMB_DRAG = 1.5
 export const SLOPE_SCALE_MIN = 0.4
+
+/**
+ * Share of walking speed stony ground takes at its stoniest (`Tile::stones`), for cobbles and for a
+ * boulder field's blocks: ISOM's grades come out near slow running 0.85, walk 0.6 and fight 0.4.
+ */
+export const STONY_DRAG = 0.6
+export const BOULDER_DRAG = 0.66
 
 /** Further than this above the terrain, metres, a soldier is on a roof or a bridge, and its slope is not theirs. */
 export const SLOPE_MAX_CLEARANCE = 2.0

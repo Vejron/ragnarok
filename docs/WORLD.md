@@ -147,6 +147,11 @@ and how many objects it has of each symbol.
   bullets. A fence stops soldiers only (`sim/src/fences.rs`): it is no collider but lines a soldier's
   step is cut short of, the same on server and client, and the bots' grid shuts the cells it runs
   through. OSM's are not fetched yet.
+- **Stony ground** goes in the tiles' `stones` layer: a 2 m grid of grades, the low seven bits how stony
+  (`STONES_DENSITY`) and the top bit a boulder field's blocks (`STONES_ANGULAR`). It is written after
+  `lines` (an empty `lines` is written to keep it in place) and left out when a tile has none, so a
+  world without it is written as before. It slows soldiers on foot, and the client draws it. Only
+  orienteering maps give it; [ORIENTEERING.md](ORIENTEERING.md) has how.
 - **Not imported yet:** walls, and bridges, which stay OSM's.
 
 ## Which world, and when

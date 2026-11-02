@@ -59,6 +59,31 @@ fn walks_forward_at_walk_speed() {
 }
 
 #[test]
+fn stony_ground_slows_a_walker_by_its_grade_on_the_server_and_streamed_alike() {
+    use shared::world::{Manifest, STONES_DENSITY, Tile, TileRef};
+    // One 200 m tile, its south half (z > 0) as stony as ISOM's "walk" (211).
+    let grade = (0.7 * f32::from(STONES_DENSITY)).round() as u8;
+    let stones: Vec<u8> = (0..100 * 100).map(|k| if k / 100 >= 50 { grade } else { 0 }).collect();
+    let manifest = Manifest { version: WORLD_VERSION, half_extent: 10_000, tile_size: 20_000, tiles: vec![TileRef { col: 0, row: 0, hash: 0 }], ..Default::default() };
+    let tile = Tile { stones, ..Default::default() };
+    let server = Physics::new(&WorldFile::assemble(&manifest, [(0, 0, tile.clone())])).unwrap();
+    let mut streamed = Physics::streamed(&manifest);
+    streamed.add_tile(&manifest, 0, 0, &tile).unwrap();
+    let forward = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 };
+    let walked = |physics: &Physics, z: f32| {
+        let mut character = Character { position: [0.0, STANDING_Y, z], grounded: true, ..Default::default() };
+        for _ in 0..TICK_RATE {
+            physics.move_character(&mut character, &forward, TICK_DT);
+        }
+        z - character.position[2]
+    };
+    assert!((walked(&server, -50.0) - WALK_SPEED).abs() < 0.1, "bare ground: {}", walked(&server, -50.0));
+    let stony = walked(&server, 50.0);
+    assert!((stony / WALK_SPEED - stones_scale(grade)).abs() < 0.03 && stony < WALK_SPEED * 0.7, "stony ground: {stony}");
+    assert_eq!(walked(&streamed, 50.0), stony);
+}
+
+#[test]
 fn sliding_carries_a_runner_much_further_than_crouch_walking() {
     let physics = Physics::new(&flat_world()).unwrap();
     let held = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: BUTTON_RUN | BUTTON_CROUCH, pitch: 0, view: 0, slot: 0 };

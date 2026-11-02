@@ -49,6 +49,15 @@ pub fn slope_scale(wish: [f32; 2], normal: [f32; 3]) -> f32 {
     (1.0 - grade.max(0.0) * SLOPE_CLIMB_DRAG).max(SLOPE_SCALE_MIN)
 }
 
+/// What stony ground does to walking over it: a share of the speed. `cell` is the ground's
+/// `Tile::stones` value. Light stoniness costs little, the stoniest most.
+pub fn stones_scale(cell: u8) -> f32 {
+    let stony = f32::from(cell & crate::world::STONES_DENSITY) / f32::from(crate::world::STONES_DENSITY);
+    let (from, to, drag) = if cell & crate::world::STONES_ANGULAR != 0 { (0.2, 0.95, BOULDER_DRAG) } else { (0.25, 1.0, STONY_DRAG) };
+    let t = ((stony - from) / (to - from)).clamp(0.0, 1.0);
+    1.0 - drag * t * t * (3.0 - 2.0 * t)
+}
+
 /// Whether the parachute is open after this input. A press opens it in the air and cuts it when open; on the
 /// ground it is always shut. A prone player cannot open one.
 pub fn toggle_chute(chute: bool, grounded: bool, prone: bool, input: &InputFrame) -> bool {
@@ -337,6 +346,20 @@ mod tests {
         assert_eq!(knockdown_ticks(KNOCK_MAX_SPEED), KNOCKDOWN_MAX_TICKS);
         assert_eq!(knockdown_ticks(KNOCK_MAX_SPEED * 3.0), KNOCKDOWN_MAX_TICKS, "never longer");
         assert!(knockdown_ticks(12.0) > knockdown_ticks(9.0));
+    }
+
+
+    #[test]
+    fn stony_ground_slows_by_its_grade() {
+        use crate::world::{STONES_ANGULAR, STONES_DENSITY};
+        let grade = |level: f32| (level * f32::from(STONES_DENSITY)).round() as u8;
+        assert_eq!(stones_scale(0), 1.0);
+        // ISOM 210, 211 and 212 (`ocad/isom.rs`): slow running, walk, fight.
+        assert!((stones_scale(grade(0.45)) - 0.85).abs() < 0.05, "{}", stones_scale(grade(0.45)));
+        assert!((stones_scale(grade(0.7)) - 0.6).abs() < 0.05, "{}", stones_scale(grade(0.7)));
+        assert!((stones_scale(grade(0.95)) - 0.4).abs() < 0.05, "{}", stones_scale(grade(0.95)));
+        // A boulder field is slower going than cobbles of the same grade.
+        assert!(stones_scale(grade(0.55) | STONES_ANGULAR) < stones_scale(grade(0.55)));
     }
 
 }

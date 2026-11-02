@@ -3,7 +3,8 @@
  * transforms to clip space, and passes the material colour (× tint × vertex colour) along.
  * Needs COMMON_WGSL before it. With `displace`, the shader must also define
  * `fn displace(world: vec3f, custom: vec4f, color: vec4f) -> vec3f`, which moves each vertex in world
- * space before it is projected (a ShaderMaterial's `vertex` code: grass bending in the wind).
+ * space before it is projected (a ShaderMaterial's `vertex` code: grass bending in the wind). `color` is
+ * the vertex's colour as the fragment gets it: material × instance tint × vertex colour.
  */
 export function vertexWgsl(displace: boolean) {
   return /* wgsl */ `
@@ -36,15 +37,15 @@ fn vs(in: VertexIn) -> VertexOut {
   let object = objects[record];
   let material = materials[object.misc.x];
   let model = modelMatrix(object, in.joints, in.weights);
-  ${displace ? 'let world = vec4f(displace((model * vec4f(in.position, 1.0)).xyz, in.custom, in.color), 1.0);' : 'let world = model * vec4f(in.position, 1.0);'}
-  var out: VertexOut;
-  out.clip = frame.viewProj * world;
-  out.world = world.xyz;
-  out.normal = normalMatrix(model) * in.normal;
   var color = material.color * object.tint;
   if ((material.params.x & MAT_VERTEX_COLORS) != 0u) {
     color *= in.color;
   }
+  ${displace ? 'let world = vec4f(displace((model * vec4f(in.position, 1.0)).xyz, in.custom, color), 1.0);' : 'let world = model * vec4f(in.position, 1.0);'}
+  var out: VertexOut;
+  out.clip = frame.viewProj * world;
+  out.world = world.xyz;
+  out.normal = normalMatrix(model) * in.normal;
   out.color = color;
   out.uv = in.uv;
   out.viewDepth = -(frame.view * world).z;

@@ -39,6 +39,11 @@ export interface MaterialParams {
    * is in blue, and the wet ground grows tussocks, peat and pools in the shader. For the terrain.
    */
   marsh?: boolean
+  /**
+   * Stony ground: red is how much of the ground is under stones, green is set where they are a boulder
+   * field's blocks rather than cobbles. Sampled at the geometry's uv; the stones are drawn in the shader.
+   */
+  stones?: Texture | null
   ramp?: Ramp | null
   blend?: Blend
   side?: Side
@@ -70,6 +75,7 @@ export class Material {
   craters: boolean
   snow: boolean
   marsh: boolean
+  stones: Texture | null
   ramp: Ramp | null
   blend: Blend
   side: Side
@@ -97,6 +103,7 @@ export class Material {
     this.craters = params.craters ?? false
     this.snow = params.snow ?? false
     this.marsh = params.marsh ?? false
+    this.stones = params.stones ?? null
     this.ramp = params.ramp ?? null
     this.blend = params.blend ?? 'opaque'
     this.side = params.side ?? 'front'
@@ -128,6 +135,7 @@ export class Material {
       craters: this.craters,
       snow: this.snow,
       marsh: this.marsh,
+      stones: this.stones,
       ramp: this.ramp,
       blend: this.blend,
       side: this.side,
@@ -171,7 +179,8 @@ export interface ShaderMaterialParams extends Omit<MaterialParams, 'lit' | 'map'
   wgsl: string
   /**
    * WGSL defining `fn displace(world: vec3f, custom: vec4f, color: vec4f) -> vec3f`, which moves each
-   * vertex in world space before it is projected; `custom` and `color` are the vertex's own attributes.
+   * vertex in world space before it is projected; `custom` is the vertex's own attribute, `color` its
+   * colour as the fragment gets it (material × instance tint × vertex colour).
    * It sees `params` and `frame` too. Moved vertices can leave the geometry's bounds: pad them, or turn
    * the mesh's `frustumCulled` off. Shadows are cast from the unmoved vertices.
    */
