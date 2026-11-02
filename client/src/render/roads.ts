@@ -1,4 +1,4 @@
-import { ROAD_MAJOR, ROAD_MINOR, ROAD_PATH, type Road } from '@/world'
+import { ROAD_FAINT, ROAD_GRAVEL, ROAD_MAJOR, ROAD_MINOR, ROAD_PATH, ROAD_TRACK, type Road } from '@/world'
 import { winter } from './season'
 import { toneOf, type GroundShade } from './shade'
 
@@ -13,6 +13,10 @@ const ROAD_COLORS: Record<number, [number | null, number]> = {
   [ROAD_MAJOR]: [0xc9a86a, 0xfff1c9],
   [ROAD_MINOR]: [0xbdbdbd, 0xffffff],
   [ROAD_PATH]: [null, 0xd8b98a],
+  [ROAD_GRAVEL]: [null, 0xc9bca4],
+  // Two ruts: the dirt, then the grass that grows between them.
+  [ROAD_TRACK]: [0xb79a72, 0x7fa25a],
+  [ROAD_FAINT]: [null, 0xa9a274],
 }
 /** Ploughed: packed snow with a little grit in it. */
 const WINTER_ROAD_COLORS: Record<number, [number | null, number | null]> = {
@@ -20,9 +24,14 @@ const WINTER_ROAD_COLORS: Record<number, [number | null, number | null]> = {
   [ROAD_MINOR]: [0xd5dae1, 0xe4e8ed],
   // Paths lie under the snow: where one is skied, its ski track is what shows.
   [ROAD_PATH]: [null, null],
+  [ROAD_GRAVEL]: [0xd5dae1, 0xe4e8ed],
+  [ROAD_TRACK]: [null, null],
+  [ROAD_FAINT]: [null, null],
 }
 /** How much wider than the road its casing is, metres. */
 const CASING = 0.8
+/** A track's casing is its full width, and its fill the grass down the middle, this share of it. */
+const TRACK_MIDDLE = 0.35
 /** Along-road spacing of cross-sections, so a ribbon follows the ground's bumps, metres. */
 const SPACING = 1
 /** Largest gap between vertices across a road, and between a disc's rings, metres. */
@@ -30,7 +39,14 @@ const ACROSS = 1
 /** Sides of the disc that rounds a joint or an end. */
 const DISC = 12
 /** Paths first, so the wider roads are drawn over them at junctions. */
-const RANK: Record<number, number> = { [ROAD_PATH]: 0, [ROAD_MINOR]: 1, [ROAD_MAJOR]: 2 }
+const RANK: Record<number, number> = { [ROAD_FAINT]: 0, [ROAD_PATH]: 0, [ROAD_TRACK]: 0, [ROAD_GRAVEL]: 1, [ROAD_MINOR]: 1, [ROAD_MAJOR]: 2 }
+const KINDS = [ROAD_FAINT, ROAD_PATH, ROAD_TRACK, ROAD_GRAVEL, ROAD_MINOR, ROAD_MAJOR]
+
+/** Half the width of a road's casing (`pass` 0) or fill (1), metres. */
+function halfWidth(road: Road, pass: 0 | 1): number {
+  if (road.kind === ROAD_TRACK) return (pass === 0 ? road.width : road.width * TRACK_MIDDLE) / 2
+  return (road.width + (pass === 0 ? CASING : 0)) / 2
+}
 
 /** One layer's triangles: corners in metres, a normal and a grey tone a vertex, and indices. */
 export interface RibbonBuffers {
@@ -178,7 +194,7 @@ export class Layer {
 export function roadRibbons(roads: readonly Road[], shade: GroundShade, border: readonly [number, number, number, number]): Ribbon[] {
   const out: Ribbon[] = []
   for (const pass of [0, 1] as const) {
-    for (const kind of [ROAD_PATH, ROAD_MINOR, ROAD_MAJOR]) {
+    for (const kind of KINDS) {
       const colors = (winter ? WINTER_ROAD_COLORS : ROAD_COLORS)[kind]!
       const color = colors[pass]
       if (color === null || color === undefined) continue
@@ -186,7 +202,7 @@ export function roadRibbons(roads: readonly Road[], shade: GroundShade, border: 
       const layer = new Layer((pass === 0 ? 0.05 : 0.07) + rank * 0.005, shade)
       for (const road of roads) {
         if (road.kind !== kind) continue
-        const half = (road.width + (pass === 0 ? CASING : 0)) / 2
+        const half = halfWidth(road, pass)
         const { points } = road
         for (let i = 0; i + 1 < points.length; i++) layer.segment(points[i]![0], points[i]![1], points[i + 1]![0], points[i + 1]![1], half)
         for (const [x, z] of points) {

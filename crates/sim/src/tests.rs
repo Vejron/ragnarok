@@ -128,6 +128,38 @@ fn jumps_and_comes_back_down() {
 }
 
 #[test]
+fn a_fence_stops_a_soldier_and_a_power_pole_stops_them_and_a_ray() {
+    use shared::world::{LINE_FENCE, LINE_POWER, Line};
+    // A fence across x = 5 m, and a pole at (0, -5) m with a line going on past the world's edge.
+    let fence = Line { kind: LINE_FENCE, points: vec![[500, -1000], [500, 1000]], base: vec![0, 0], end: true };
+    let power = Line { kind: LINE_POWER, points: vec![[0, -500], [0, -9000]], base: vec![0, 0], end: false };
+    let world = WorldFile { lines: vec![(0, 0, fence), (0, 0, power)], ..flat_world() };
+    let physics = Physics::new(&world).unwrap();
+    let toward = |yaw| InputFrame { seq: 1, strafe: 0, forward: 127, yaw, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0 };
+    let mut character = standing();
+    for _ in 0..TICK_RATE * 2 {
+        physics.move_character(&mut character, &toward(-1571), TICK_DT);
+    }
+    let x = character.position[0];
+    assert!(x < 5.0 - CAPSULE_RADIUS && x > 4.0, "x = {x}");
+    // Along it is open: the stop slides.
+    let mut along = Character { position: [4.0, STANDING_Y, 0.0], ..standing() };
+    for _ in 0..TICK_RATE {
+        physics.move_character(&mut along, &toward(0), TICK_DT);
+    }
+    assert!(along.position[2] < -3.0, "{:?}", along.position);
+    // A bullet goes through the wire, but not through the pole.
+    assert_eq!(physics.cast_ray_static([0.0, 1.0, 0.0], [1.0, 0.0, 0.0], 10.0), None);
+    assert!(physics.cast_ray_static([0.0, 1.0, 0.0], [0.0, 0.0, -1.0], 10.0).is_some_and(|d| (d - 4.86).abs() < 0.02));
+    let mut walker = standing();
+    for _ in 0..TICK_RATE * 2 {
+        physics.move_character(&mut walker, &toward(0), TICK_DT);
+    }
+    // A thin pole is walked round, not through: the capsule slides off it.
+    assert!(walker.position[0].abs() > CAPSULE_RADIUS, "{:?}", walker.position);
+}
+
+#[test]
 fn walls_block_movement() {
     let physics = Physics::new(&world_with_wall()).unwrap();
     let mut character = standing();
@@ -291,6 +323,27 @@ fn walking_down_and_up_a_slope_stays_grounded() {
         assert!((character.position[1] - ground - STANDING_Y).abs() < 0.1, "{:?} on {ground}", character.position);
         assert!(airborne <= TICK_RATE / 10, "airborne {airborne} of {} ticks from z = {start_z}", TICK_RATE * 4);
     }
+}
+
+/// Whether a soldier running at a step in 1 m ground gets on top of it: `rise` metres over `width`,
+/// the shape an orienteering map's cliff is cut into the terrain with.
+fn scales_step(rise: f32, width: f32) -> bool {
+    let side = 201u32;
+    let height = |z: f32| ((10.0 - z) / width).clamp(0.0, 1.0) * rise;
+    let heights = (0..side).flat_map(|j| (0..side).map(move |i| (i, j))).map(|(_, j)| (height(j as f32 - 100.0) * 100.0).round() as i32).collect();
+    let world = WorldFile { ground: Ground { origin: -10_000, cell: 100, side, heights }, ..flat_world() };
+    let physics = Physics::new(&world).unwrap();
+    let mut character = Character { position: [0.0, STANDING_Y, 20.0], grounded: true, ..Default::default() };
+    for seq in 0..TICK_RATE * 8 {
+        physics.move_character(&mut character, &InputFrame { seq, forward: 127, buttons: BUTTON_RUN, ..Default::default() }, TICK_DT);
+    }
+    character.position[2] < 10.0 - width - 1.0
+}
+
+#[test]
+fn a_sheer_step_stops_a_soldier_and_a_broken_one_does_not() {
+    assert!(!scales_step(3.0, 1.0));
+    assert!(scales_step(1.8, 2.0));
 }
 
 #[test]

@@ -1,4 +1,5 @@
 import { COMMON_WGSL } from './common.wgsl'
+import { MARSH_WGSL } from './marsh.wgsl'
 import { SUN_SHADOW_WGSL } from './sunshadow.wgsl'
 import { VERTEX_WGSL } from './vertex.wgsl'
 
@@ -22,6 +23,7 @@ ${VERTEX_WGSL}
 @group(2) @binding(2) var mapSampler: sampler;
 
 ${SUN_SHADOW_WGSL}
+${MARSH_WGSL}
 
 // The craters' marks (linear colours): bare earth in the bowl, char, and the soil thrown out round the rim.
 const CRATER_EARTH = vec3f(0.22, 0.14, 0.075);
@@ -38,11 +40,14 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   // Sampled before any branching: implicit-derivative sampling must be in uniform control flow.
   let texel = textureSample(colorMap, mapSampler, in.uv);
   let normalTexel = textureSample(normalMap, mapSampler, in.uv);
-  let mapped = normalTexel.xyz * 2.0 - 1.0;
   // Metres a pixel spans on the surface, for the craters' rim lines: a derivative, so taken up here too.
   let pixel = length(fwidth(in.world.xz)) * 0.7071;
   let material = materials[in.ids.x];
   let flags = material.params.x;
+  let marshy = (flags & MAT_MARSH) != 0u;
+  // A marsh's map has no room for the normal's y: it is the rest of a unit vector, as a heightfield's always points up.
+  let packed = normalTexel.xy * 2.0 - 1.0;
+  let mapped = select(normalTexel.xyz * 2.0 - 1.0, vec3f(packed.x, sqrt(max(0.0, 1.0 - dot(packed, packed))), packed.y), marshy);
   // Mirroring for a reflection: what is under the water plane is not part of the picture.
   if (frame.lightCount.z > 0.5 && in.world.y < frame.lightCount.y) {
     discard;
@@ -58,6 +63,15 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
     rgb = mix(rgb, CRATER_SOIL, marks.soil * 0.5);
     rgb = mix(rgb, CRATER_CHAR, marks.char);
   }
+  var marsh = MarshLook(rgb, 0.0, 0.0);
+  if (marshy && normalTexel.b > 0.004) {
+    marsh = marshLook(rgb, in.world.xz, normalTexel.b, pixel);
+    // A crater's earth is thrown over the marsh; snow and ice cover the pools.
+    let dry = select(1.0 - marks.earth, 0.0, (flags & MAT_SNOW) != 0u);
+    rgb = mix(rgb, marsh.rgb, 1.0 - marks.earth);
+    marsh.pool *= dry;
+    marsh.sheen *= dry;
+  }
   if ((flags & MAT_LIT) != 0u) {
     var n = normalize(in.normal);
     if ((flags & MAT_NORMAL_MAP) != 0u) {
@@ -67,6 +81,9 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
     n = normalize(n - vec3f(marks.slope.x, 0.0, marks.slope.y) * n.y);
     if (!front) {
       n = -n;
+    }
+    if (marsh.pool > 0.0) {
+      n = normalize(mix(n, marshRipple(in.world.xz, frame.fog.w), marsh.pool));
     }
     if ((flags & MAT_SNOW) != 0u) {
       // Keeps what the ground's tone did to the colour below it, so snow still shows the relief.
@@ -84,6 +101,9 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
     }
     let hemi = mix(frame.hemiGround.rgb, frame.hemiSky.rgb, 0.5 * n.y + 0.5) * marks.sky;
     rgb = rgb / PI * (frame.sunColor.rgb * ramp * shadow + hemi + pointLight(in.world, n)) + material.emissive.rgb;
+    if (marsh.pool + marsh.sheen > 0.0) {
+      rgb += marshShine(n, in.world, marsh.pool, marsh.sheen, shadow);
+    }
   }
   rgb = rgb * (1.0 - marks.ink * CRATER_INK) + CRATER_EMBER * marks.heat;
   return vec4f(applyFog(rgb, flags, in.viewDepth), in.color.a * texel.a);

@@ -4,7 +4,8 @@ import type { KindFx } from '@/kinds/kind'
 import { isTracked } from '@/sim/vehicles'
 import { halfExtentsOf } from '@/sim/kinds'
 import { tyreSlip, type WheelLayout } from '@/sim/slip'
-import { SURFACE_ASPHALT, SURFACE_DIRT, SURFACE_GRASS, SURFACE_SAND, SURFACE_WATER } from '@/sim/surface'
+import { SURFACE_ASPHALT, SURFACE_DIRT, SURFACE_GRASS, SURFACE_MUD, SURFACE_MUD_DEEP, SURFACE_MUD_FAINT, SURFACE_SAND, SURFACE_WATER, surfaceWetness } from '@/sim/surface'
+import { inMarshPool } from './marshnoise'
 import type { Particles } from './particles'
 import { splash } from './splash'
 import type { Skidmarks } from './skidmarks'
@@ -39,6 +40,10 @@ const MARKS: Record<number, { mark: number; alpha: number; cloud: number }> = {
   [SURFACE_DIRT]: { mark: 0x4e3b26, alpha: 0.45, cloud: 0xb39874 },
   [SURFACE_SAND]: { mark: 0x9c8455, alpha: 0.4, cloud: 0xdcc795 },
   [SURFACE_GRASS]: { mark: 0x3f4a22, alpha: 0.38, cloud: 0x8c8a5c },
+  // Wet ruts, darker the wetter; a marsh throws no dust.
+  [SURFACE_MUD_FAINT]: { mark: 0x33281a, alpha: 0.5, cloud: 0x5e4a32 },
+  [SURFACE_MUD]: { mark: 0x2a2116, alpha: 0.58, cloud: 0x5e4a32 },
+  [SURFACE_MUD_DEEP]: { mark: 0x221b12, alpha: 0.64, cloud: 0x5e4a32 },
 }
 
 const rand = (low: number, high: number) => low + Math.random() * (high - low)
@@ -209,7 +214,9 @@ export class VehicleFx {
       const surface = world.surfaceAt(contact.x, contact.z)
       this.surface = surface
       const moving = Math.abs(this.speed)
-      if (surface === SURFACE_WATER) {
+      const wetness = surfaceWetness(surface)
+      // A marsh's pools splash as water does.
+      if (surface === SURFACE_WATER || (wetness > 0 && inMarshPool(contact.x, contact.z, wetness))) {
         world.skids.lift(track)
         wet.push(contact.clone())
         if (particles && moving > 3 && Math.random() < dt * moving * 1.2) this.spray(world, contact)
@@ -217,8 +224,9 @@ export class VehicleFx {
       }
       const look = MARKS[surface] ?? MARKS[SURFACE_GRASS]!
       const soft = surface !== SURFACE_ASPHALT
-      // Soft ground takes a faint rut from any wheel rolling over it; a tank's tracks always mark it.
-      const rut = soft && (isTracked(this.kind) ? moving > 0.5 : moving > 8) ? 0.35 : 0
+      // Soft ground takes a faint rut from any wheel rolling over it; a tank's tracks always mark it; a marsh
+      // takes a deep one from anything.
+      const rut = wetness > 0 ? (moving > 0.5 ? 0.6 : 0) : soft && (isTracked(this.kind) ? moving > 0.5 : moving > 8) ? 0.35 : 0
       const strength = Math.max(slip, rut)
       if (strength > 0.12) world.skids.mark(track, contact, this.side, layout.width, look.mark, look.alpha * Math.min(1, strength + 0.2))
       else world.skids.lift(track)
@@ -226,6 +234,12 @@ export class VehicleFx {
 
       if (surface === SURFACE_ASPHALT) {
         if (slip > 0.15 && Math.random() < dt * 45 * slip) this.cloud(world, contact, look.cloud, 0.45, [0.5, 3.2], 2.2)
+        return
+      }
+      if (wetness > 0) {
+        // Clods of mud off the tyres instead of dust: when they spin, and behind anything quick.
+        const fling = slip + Math.max(0, moving - 4) / 12
+        if (Math.random() < dt * 40 * fling) this.gravel(world, contact, true)
         return
       }
       // Dust off the tyres when sliding, and a trail behind any quick car off-road.
@@ -268,18 +282,18 @@ export class VehicleFx {
     })
   }
 
-  /** A stone flung back off a spinning or sliding tyre. */
-  private gravel(world: FxWorld, at: Vector3) {
+  /** A stone, or a clod of `mud`, flung back off a spinning or sliding tyre. */
+  private gravel(world: FxWorld, at: Vector3, mud = false) {
     const back = this.forward.clone().multiplyScalar(-rand(2, 5) - Math.abs(this.speed) * 0.15)
     world.smoke.spawn({
       position: [at.x, at.y + 0.1, at.z],
       velocity: [back.x + this.velocity.x * 0.5 + rand(-1.2, 1.2), rand(1.5, 4.5), back.z + this.velocity.z * 0.5 + rand(-1.2, 1.2)],
       life: rand(0.8, 1.6),
-      size: [0.09, 0.07],
-      color: Math.random() < 0.5 ? 0x3d3022 : 0x6b5a45,
+      size: mud ? [0.14, 0.1] : [0.09, 0.07],
+      color: mud ? (Math.random() < 0.5 ? 0x2b2116 : 0x3c3020) : Math.random() < 0.5 ? 0x3d3022 : 0x6b5a45,
       alpha: 1,
       gravity: 9.8,
-      bounce: true,
+      bounce: !mud,
     })
   }
 

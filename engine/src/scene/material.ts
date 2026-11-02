@@ -34,6 +34,11 @@ export interface MaterialParams {
   craters?: boolean
   /** Snow lies on it: whatever faces up enough turns white, in the shader, so steep rock and walls stay bare. */
   snow?: boolean
+  /**
+   * Marsh in places: the normal map packs the normal's x and z in red and green and how wet the ground
+   * is in blue, and the wet ground grows tussocks, peat and pools in the shader. For the terrain.
+   */
+  marsh?: boolean
   ramp?: Ramp | null
   blend?: Blend
   side?: Side
@@ -64,6 +69,7 @@ export class Material {
   normalMapTone: boolean
   craters: boolean
   snow: boolean
+  marsh: boolean
   ramp: Ramp | null
   blend: Blend
   side: Side
@@ -90,6 +96,7 @@ export class Material {
     this.normalMapTone = params.normalMapTone ?? false
     this.craters = params.craters ?? false
     this.snow = params.snow ?? false
+    this.marsh = params.marsh ?? false
     this.ramp = params.ramp ?? null
     this.blend = params.blend ?? 'opaque'
     this.side = params.side ?? 'front'
@@ -120,6 +127,7 @@ export class Material {
       normalMapTone: this.normalMapTone,
       craters: this.craters,
       snow: this.snow,
+      marsh: this.marsh,
       ramp: this.ramp,
       blend: this.blend,
       side: this.side,

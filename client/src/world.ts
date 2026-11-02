@@ -38,12 +38,24 @@ export async function resolveWorldBase(): Promise<string> {
 export const ROAD_MAJOR = 0
 export const ROAD_MINOR = 1
 export const ROAD_PATH = 2
+export const ROAD_GRAVEL = 3
+export const ROAD_TRACK = 4
+export const ROAD_FAINT = 5
 /** A track on its own ballast bed, with sleepers. */
 export const RAIL_TRAIN = 0
 /** A track set flush into the street. */
 export const RAIL_TRAM = 1
 /** How much wider a track's ballast bed is than its gauge, metres (`BALLAST_EXTRA` in the importer). */
 export const BALLAST_EXTRA = 2.2
+
+/** `Line::kind`: a wire fence on wooden posts, waist high. */
+export const LINE_FENCE = 0
+/** A game fence: wire netting two metres high on tall posts. */
+export const LINE_FENCE_HIGH = 1
+/** A power line on wooden poles, with three wires on a crossarm. */
+export const LINE_POWER = 2
+/** A major power line on steel pylons. */
+export const LINE_POWER_MAJOR = 3
 
 export const COVER_WATER = 0
 export const COVER_WOOD = 1
@@ -52,6 +64,13 @@ export const COVER_FARM = 3
 export const COVER_SAND = 4
 export const COVER_URBAN = 5
 export const COVER_INDUSTRIAL = 6
+export const COVER_THICKET_SLOW = 7
+export const COVER_THICKET_WALK = 8
+export const COVER_THICKET_FIGHT = 9
+export const COVER_MARSH = 10
+export const COVER_ROCK = 11
+export const COVER_MARSH_DEEP = 12
+export const COVER_MARSH_FAINT = 13
 
 export const TREE_BIRCH = 0
 export const TREE_PINE = 1
@@ -182,6 +201,19 @@ export interface Rail {
   points: Point2[]
 }
 
+/**
+ * A fence or a power line (`Line` in `crates/shared/src/world.rs`). A fence is cut at the tile's edges;
+ * a power line is its poles, span after span, and its last point is a pole of the next tile unless
+ * `end`. Drawn, not simulated.
+ */
+export interface Line {
+  kind: number
+  points: Point2[]
+  /** Height of the ground under each point, metres. */
+  base: number[]
+  end: boolean
+}
+
 /** A patch of ground cover: rings filled even-odd, so inner rings are holes. Drawn, not simulated. */
 export interface Cover {
   kind: number
@@ -275,6 +307,8 @@ export interface TileData {
   bridges: Bridge[]
   rails: Rail[]
   ski: SkiTrail[]
+  /** Fences and power lines; absent in a tile made up in a test. */
+  lines?: Line[]
   /** The tile file this was decoded from, which the soldier's physics reads for itself. */
   bytes?: Uint8Array
 }
@@ -368,7 +402,7 @@ function flatIndices(triangles: readonly number[][]): Uint32Array {
 }
 
 export function decodeTile(bytes: Uint8Array): TileData {
-  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges, detail, rails, ski] = decode(bytes) as [
+  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges, detail, rails, ski, lines] = decode(bytes) as [
     [number, number[][], number, number, number, number, number, [number[], number[], Uint8Array, Uint8Array]?, [number, number]?][],
     [number, number, number[][]][],
     [number[][], number[][]],
@@ -381,6 +415,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     Uint8Array | undefined,
     [number, number, number[][]][] | undefined,
     [number, number[][]][] | undefined,
+    [number, number[][], number[], boolean][] | undefined,
   ]
   return {
     buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind, cells, paint]) => ({
@@ -419,6 +454,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     detail: detail && detail.length > 0 ? new Int8Array(detail.slice().buffer) : undefined,
     rails: (rails ?? []).map(([gauge, kind, points]) => ({ gauge: metres(gauge), kind, points: points.map(point) })),
     ski: (ski ?? []).map(([width, points]) => ({ width: metres(width), points: points.map(point) })),
+    lines: (lines ?? []).map(([kind, points, base, end]) => ({ kind, points: points.map(point), base: base.map(metres), end })),
     bytes,
   }
 }

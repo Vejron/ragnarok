@@ -1,6 +1,6 @@
 import { Mesh, boxGeometry, Vector3 } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
-import { SURFACE_ASPHALT, SURFACE_DIRT, SURFACE_SAND, SURFACE_WATER } from '@/sim/surface'
+import { SURFACE_ASPHALT, SURFACE_DIRT, SURFACE_MUD, SURFACE_MUD_DEEP, SURFACE_MUD_FAINT, SURFACE_SAND, SURFACE_WATER } from '@/sim/surface'
 import type { Debris } from './debris'
 import type { FxWorld } from './tyres'
 
@@ -41,6 +41,9 @@ const DIRT: Record<number, number> = {
   [SURFACE_ASPHALT]: 0x8d8d8d,
   [SURFACE_DIRT]: 0x7a5f3f,
   [SURFACE_SAND]: 0xd2bd88,
+  [SURFACE_MUD_FAINT]: 0x4a3b28,
+  [SURFACE_MUD]: 0x3e3122,
+  [SURFACE_MUD_DEEP]: 0x33291c,
 }
 
 const chunkGeometry = boxGeometry(1, 1, 1)

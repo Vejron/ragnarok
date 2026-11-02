@@ -4,6 +4,7 @@ import type { Building, TileData } from '@/world'
 import { buildingBuffers, buildingTransferables, type BuildingBuffers } from './buildingmesh'
 import { drapedMeshes, drapedTransferables, type Draped } from './groundmesh'
 import { grassMask, type GrassMask } from './grassmask'
+import { wetnessPixels } from './marshnoise'
 import type { HeightSource } from './shade'
 import { reliefPixels, terrainBuffers, TERRAIN_LOD_ERRORS, type Pixels, type TerrainBuffers } from './terrainmesh'
 
@@ -47,8 +48,8 @@ export interface PreparedTile {
   level: number
   /** The buildings `buildings` leaves out. */
   undrawn: number[]
-  /** The terrain mesh at `level` and its relief map; null on a flat world. */
-  terrain: { buffers: TerrainBuffers; relief: Pixels } | null
+  /** The terrain mesh at `level`, its relief map and how wet each of its texels is (`wetnessPixels`); null on a flat world. */
+  terrain: { buffers: TerrainBuffers; relief: Pixels; wet: Uint8Array | null } | null
   /** The painted cover. Absent where nothing could paint it (`paint`), for the main thread to bake. */
   cover?: ImageBitmap | null
   /** Roads, rails and water; null on a flat world. */
@@ -74,13 +75,19 @@ export function prepareTile(input: TileInput, around?: HeightSource, paint?: Cov
   return {
     level: input.level,
     undrawn: [...input.undrawn],
-    terrain: ground ? { buffers: terrainBuffers(ground, error), relief: reliefPixels(ground, around, tile.detail) } : null,
+    terrain: ground ? terrainOf(tile, ground, error, around) : null,
     ...(paint && ground ? { cover: paint(tile, ground) } : {}),
     draped: ground ? drapedMeshes(tile, ground, around) : null,
     buildings: buildingBuffers(tile, input.salt, new Set(input.undrawn)),
     surface,
     grass: place && surface ? grassMask(tile, place.x0, place.z0, place.size, ground, surface) : null,
   }
+}
+
+function terrainOf(tile: TileInput['tile'], ground: TileGround, error: number, around?: HeightSource): NonNullable<PreparedTile['terrain']> {
+  const relief = reliefPixels(ground, around, tile.detail)
+  const wet = wetnessPixels(tile, ground.x0, ground.z0, ground.cell * (ground.side - 1), relief.width)
+  return { buffers: terrainBuffers(ground, error), relief, wet }
 }
 
 /** The arrays of a terrain mesh, so they move to the other thread instead of being copied. */
@@ -92,6 +99,7 @@ export function terrainTransferables(buffers: TerrainBuffers): ArrayBuffer[] {
 export function preparedTransferables(prepared: PreparedTile): Transferable[] {
   const out: Transferable[] = []
   if (prepared.terrain) out.push(...terrainTransferables(prepared.terrain.buffers), prepared.terrain.relief.data.buffer as ArrayBuffer)
+  if (prepared.terrain?.wet) out.push(prepared.terrain.wet.buffer as ArrayBuffer)
   if (prepared.cover) out.push(prepared.cover)
   if (prepared.draped) out.push(...drapedTransferables(prepared.draped))
   if (prepared.buildings) out.push(...buildingTransferables(prepared.buildings))

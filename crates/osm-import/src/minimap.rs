@@ -5,7 +5,7 @@
 //! maps the playable square `[-half, half]` onto `[0, SIZE)` in both axes.
 
 use anyhow::Result;
-use shared::world::{COVER_FARM, COVER_INDUSTRIAL, COVER_PARK, COVER_SAND, COVER_URBAN, COVER_WATER, COVER_WOOD, Manifest, NO_WATER, RAIL_TRAM, ROAD_MAJOR, ROAD_MINOR, THEME_WINTER, Tile};
+use shared::world::{COVER_FARM, COVER_INDUSTRIAL, COVER_MARSH, COVER_MARSH_DEEP, COVER_MARSH_FAINT, COVER_PARK, COVER_ROCK, COVER_SAND, COVER_THICKET_FIGHT, COVER_THICKET_SLOW, COVER_THICKET_WALK, COVER_URBAN, COVER_WATER, COVER_WOOD, Manifest, NO_WATER, RAIL_TRAM, ROAD_FAINT, ROAD_GRAVEL, ROAD_MAJOR, ROAD_MINOR, ROAD_TRACK, THEME_WINTER, Tile};
 use std::collections::BTreeMap;
 
 /// Side of the image, pixels. 2048 px over 8.6 km is about 4 m a pixel.
@@ -19,6 +19,9 @@ const BUILDING: Rgb = [0xa9, 0x9d, 0x92];
 const ROAD_MAJOR_COLOR: Rgb = [0xf2, 0xb8, 0x5c];
 const ROAD_MINOR_COLOR: Rgb = [0xff, 0xff, 0xff];
 const ROAD_PATH_COLOR: Rgb = [0xc4, 0xa2, 0x78];
+const ROAD_GRAVEL_COLOR: Rgb = [0xf4, 0xef, 0xe4];
+const ROAD_TRACK_COLOR: Rgb = [0xae, 0x8c, 0x62];
+const ROAD_FAINT_COLOR: Rgb = [0xcf, 0xbd, 0x9c];
 const RAIL_COLOR: Rgb = [0x6b, 0x6b, 0x6b];
 const SNOW: Rgb = [0xf1, 0xf5, 0xfa];
 const SKI_COLOR: Rgb = [0x1f, 0x6f, 0xd6];
@@ -34,7 +37,57 @@ fn cover_color(kind: u8) -> Rgb {
         COVER_SAND => [0xf3, 0xe4, 0xb0],
         COVER_URBAN => [0xdc, 0xd6, 0xca],
         COVER_INDUSTRIAL => [0xd0, 0xd0, 0xda],
+        COVER_THICKET_SLOW => [0x9c, 0xc8, 0x88],
+        COVER_THICKET_WALK => [0x7f, 0xb6, 0x70],
+        COVER_THICKET_FIGHT => [0x5e, 0x9e, 0x56],
+        COVER_MARSH => [0x8f, 0xc4, 0xc4],
+        COVER_MARSH_DEEP => [0x76, 0xb4, 0xb8],
+        COVER_MARSH_FAINT => [0xae, 0xd4, 0xcc],
+        COVER_ROCK => [0x5c, 0x56, 0x50],
         _ => LAND,
+    }
+}
+
+/// An image laid over the drawn map, a print of an orienteering map where the world has one.
+pub struct Overlay {
+    pub width: usize,
+    pub height: usize,
+    /// RGB, row by row.
+    pub pixels: Vec<u8>,
+    /// Pixels to leave out.
+    pub blank: Vec<bool>,
+    /// The image position of a point in the world's frame.
+    pub at: Box<dyn Fn(f64, f64) -> [f64; 2]>,
+}
+
+impl Overlay {
+    /// The mean of what is not blank in the 2 × 2 pixels at `[x, y]`, if that is most of them.
+    fn sample(&self, [x, y]: [f64; 2]) -> Option<Rgb> {
+        let (mut sum, mut count) = ([0u32; 3], 0);
+        for (i, j) in [(x, y), (x + 1.0, y), (x, y + 1.0), (x + 1.0, y + 1.0)] {
+            if i < 0.0 || j < 0.0 || i >= self.width as f64 || j >= self.height as f64 {
+                continue;
+            }
+            let at = j as usize * self.width + i as usize;
+            if !self.blank[at] {
+                count += 1;
+                for (total, value) in sum.iter_mut().zip(&self.pixels[at * 3..at * 3 + 3]) {
+                    *total += u32::from(*value);
+                }
+            }
+        }
+        (count >= 3).then(|| sum.map(|total| (total / count) as u8))
+    }
+
+    fn paint(&self, canvas: &mut Canvas) {
+        for row in 0..SIZE {
+            for column in 0..SIZE {
+                let [x, z] = [(column as f64 + 0.5) / canvas.scale - canvas.half, (row as f64 + 0.5) / canvas.scale - canvas.half];
+                if let Some(color) = self.sample((self.at)(x, z)) {
+                    canvas.pixels[(row * SIZE + column) * 3..][..3].copy_from_slice(&color);
+                }
+            }
+        }
     }
 }
 
@@ -114,7 +167,7 @@ impl Canvas {
 }
 
 /// Renders the world to PNG bytes.
-pub fn render(manifest: &Manifest, tiles: &BTreeMap<(u16, u16), Tile>) -> Result<Vec<u8>> {
+pub fn render(manifest: &Manifest, tiles: &BTreeMap<(u16, u16), Tile>, overlay: Option<&Overlay>) -> Result<Vec<u8>> {
     let half_cm = manifest.half_extent;
     let mut canvas = Canvas::new(f64::from(half_cm) / 100.0);
     let ring = |canvas: &Canvas, points: &[[i32; 2]]| points.iter().map(|&p| canvas.px(p)).collect::<Vec<_>>();
@@ -159,7 +212,7 @@ pub fn render(manifest: &Manifest, tiles: &BTreeMap<(u16, u16), Tile>) -> Result
     }
 
     // Paths under minor roads under major ones.
-    for (kind, color) in [(2u8, ROAD_PATH_COLOR), (ROAD_MINOR, ROAD_MINOR_COLOR), (ROAD_MAJOR, ROAD_MAJOR_COLOR)] {
+    for (kind, color) in [(ROAD_FAINT, ROAD_FAINT_COLOR), (2u8, ROAD_PATH_COLOR), (ROAD_TRACK, ROAD_TRACK_COLOR), (ROAD_GRAVEL, ROAD_GRAVEL_COLOR), (ROAD_MINOR, ROAD_MINOR_COLOR), (ROAD_MAJOR, ROAD_MAJOR_COLOR)] {
         for road in tiles.values().flat_map(|tile| &tile.roads).filter(|road| road.kind == kind) {
             let floor = if kind == 2 { 1.0 } else { 2.0 };
             let width = (f64::from(road.width) / 100.0 * canvas.scale).max(floor);
@@ -189,6 +242,9 @@ pub fn render(manifest: &Manifest, tiles: &BTreeMap<(u16, u16), Tile>) -> Result
         }
     }
 
+    if let Some(overlay) = overlay {
+        overlay.paint(&mut canvas);
+    }
     let mut bytes = Vec::new();
     let mut encoder = png::Encoder::new(&mut bytes, SIZE as u32, SIZE as u32);
     encoder.set_color(png::ColorType::Rgb);
@@ -213,7 +269,7 @@ mod tests {
         // A track along Z = 500 m, crossing the road.
         tile.rails.push(Rail { gauge: 144, kind: RAIL_TRAIN, points: vec![[-90_000, 50_000], [90_000, 50_000]] });
         let tiles = BTreeMap::from([((0, 0), tile)]);
-        let bytes = render(&manifest, &tiles).unwrap();
+        let bytes = render(&manifest, &tiles, None).unwrap();
         let decoded = png::Decoder::new(std::io::Cursor::new(bytes)).read_info().unwrap();
         let mut reader = decoded;
         let mut pixels = vec![0u8; reader.output_buffer_size().unwrap()];

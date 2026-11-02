@@ -262,9 +262,9 @@ type Footprint = (Vec<P>, f64, Option<Top>, Option<[u32; 2]>);
 /// a road or a track are dropped. A tree is solid (has a trunk collider) when it is planted, in the
 /// register, or stands within `SOLID_REACH` of a road, a track or a building.
 /// `rails` are `(centre line, gauge, RAIL_*)`; `rail_bridges` carry tracks and are built like road
-/// bridges, but draw no road.
+/// bridges, but draw no road. No rocks or shrubs are made up inside `mapped`, an orienteering map's outline.
 #[allow(clippy::too_many_arguments)]
-fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, buildings: Vec<Footprint>, roads: Vec<(Vec<P>, f64, u8)>, bridges: Vec<(Vec<P>, f64, u8, Pylons, Deck)>, rails: Vec<(Vec<P>, f64, u8)>, rail_bridges: Vec<(Vec<P>, f64, u8, Pylons, Deck)>, ski: Vec<Vec<P>>, covers: Vec<(u8, Vec<Vec<P>>)>, trees: Vec<(P, u8, f64, f64, bool)>, ground: Ground, water: Placed) -> Built {
+fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, buildings: Vec<Footprint>, roads: Vec<(Vec<P>, f64, u8)>, bridges: Vec<(Vec<P>, f64, u8, Pylons, Deck)>, rails: Vec<(Vec<P>, f64, u8)>, rail_bridges: Vec<(Vec<P>, f64, u8, Pylons, Deck)>, ski: Vec<Vec<P>>, covers: Vec<(u8, Vec<Vec<P>>)>, trees: Vec<(P, u8, f64, f64, bool)>, mapped: &[P], ground: Ground, water: Placed) -> Built {
     let inner = half - EDGE_MARGIN;
     let mut manifest = Manifest {
         version: WORLD_VERSION,
@@ -391,7 +391,10 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
     // Cover is cut at tile borders like roads, so each tile's texture needs only its own file.
     // Rocks and shrubs the map does not record go through the same rejection as every tree. Not in
     // France: its laser classes every bush and wall it saw, so made-up ones would only be clutter.
-    let props = if matches!(frame, Frame::Lambert93 { .. }) { Vec::new() } else { crate::props::scatter(&covers, inner) };
+    let mut props = if matches!(frame, Frame::Lambert93 { .. }) { Vec::new() } else { crate::props::scatter(&covers, inner) };
+    if mapped.len() >= 3 {
+        props.retain(|(at, ..)| !point_in_polygon(*at, mapped));
+    }
     for (kind, rings) in covers {
         let (min, max) = rings.iter().flatten().fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), p| ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]));
         if min[0] > max[0] {
@@ -547,7 +550,7 @@ pub fn frame([south, west, north, east]: [f64; 4]) -> ((f64, f64), f64) {
 #[allow(clippy::too_many_arguments)]
 /// `lidar` holds the returns that can be roof, `decks` the bridge deck returns of a classified cloud,
 /// and `photo` the aerial photo the buildings' colours come from.
-pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, osm: &Osm, planted: &[Planted], ground: Ground, water: Placed, lidar: Option<&Cloud>, decks: Option<&Cloud>, photo: Option<&crate::paint::Photo>, ski: &[Vec<crate::overpass::LatLon>]) -> Built {
+pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, osm: &Osm, planted: &[Planted], ground: Ground, water: Placed, lidar: Option<&Cloud>, decks: Option<&Cloud>, photo: Option<&crate::paint::Photo>, ski: &[Vec<crate::overpass::LatLon>], ocad: Option<&crate::ocad::Source>) -> Built {
     let (frame, half) = (place.frame, place.half);
     let source = |x: f64, z: f64| place.source(x, z);
     let mut buildings = Vec::new();
@@ -674,7 +677,108 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     let trees = planted.iter().map(|tree| (frame.project(tree.lat, tree.lon), tree.kind, tree.height, tree.crown, tree.registered)).collect();
     crate::progress::stage("tiles");
     let ski = ski.iter().map(|way| way.iter().map(|p| frame.project(p.lat, p.lon)).collect()).collect();
-    assemble(frame, half, tile_size, mask, buildings, roads, bridges, rails, rail_bridges, ski, covers, trees, ground, water)
+    let mut mapped = Vec::new();
+    if let Some(ocad) = ocad {
+        roads.extend(ocad.roads.iter().map(|(geometry, width, kind)| (line(geometry), *width, *kind)));
+        covers = covers.into_iter().flat_map(|(kind, rings)| ocad.outside(&rings).into_iter().map(move |rings| (kind, rings))).collect();
+        covers.extend(ocad.covers.iter().cloned());
+        mapped.clone_from(&ocad.outline);
+    }
+    // The lines are laid on the ground once the tiles are built, so it is kept for them.
+    let kept = ocad.filter(|ocad| !ocad.lines.is_empty()).map(|_| ground.clone());
+    let mut built = assemble(frame, half, tile_size, mask, buildings, roads, bridges, rails, rail_bridges, ski, covers, trees, &mapped, ground, water);
+    if let (Some(ocad), Some(ground)) = (ocad, kept) {
+        lay_lines(&mut built, &ocad.lines, half, tile_size, &ground);
+    }
+    built
+}
+
+/// Longest span between two poles of a power line, metres: wooden poles, then steel pylons.
+const POLE_SPAN: f64 = 55.0;
+const PYLON_SPAN: f64 = 260.0;
+/// A power line turns at a pole: a bend sharper than this, radians, gets one of its own.
+const POLE_BEND: f64 = 0.14;
+/// Closest a pole at a bend stands to the one before, metres.
+const POLE_GAP: f64 = 12.0;
+
+/// A power line's poles along `points`: at its ends and sharper bends, and evenly between them, no
+/// span longer than `span`. A line drawn with many small turns is straightened, as a power line is.
+fn poles(points: &[P], span: f64) -> Vec<P> {
+    let Some(&first) = points.first() else { return Vec::new() };
+    let heading = |a: P, b: P| (b[1] - a[1]).atan2(b[0] - a[0]);
+    let mut corners = vec![first];
+    for i in 1..points.len() {
+        let last = *corners.last().unwrap();
+        let p = points[i];
+        let far = (p[0] - last[0]).hypot(p[1] - last[1]);
+        let end = i + 1 == points.len();
+        let bend = !end && {
+            let turn = (heading(p, points[i + 1]) - heading(last, p) + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
+            turn.abs() > POLE_BEND && far >= POLE_GAP
+        };
+        if end && far < POLE_GAP && corners.len() > 1 {
+            // Too near the pole before: the line ends there instead.
+            corners.pop();
+        }
+        if end || bend {
+            corners.push(p);
+        }
+    }
+    let mut poles = vec![first];
+    for pair in corners.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        let spans = ((b[0] - a[0]).hypot(b[1] - a[1]) / span).ceil().max(1.0) as usize;
+        poles.extend((1..=spans).map(|i| {
+            let t = i as f64 / spans as f64;
+            [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+        }));
+    }
+    poles
+}
+
+/// Puts fences and power lines (`(LINE_*, line)`) in the tiles they cross, which must exist already.
+/// A fence is cut at tile borders like a road. A power line is its poles, each span in the tile of
+/// its first pole, so every pole is in one tile only and a span never needs two.
+fn lay_lines(built: &mut Built, lines: &[(u8, Vec<P>)], half: f64, tile_size: f64, ground: &Ground) {
+    let inner = half - EDGE_MARGIN;
+    let Built { manifest, tiles } = built;
+    let mut put = |key: (u16, u16), kind: u8, points: Vec<[i32; 2]>, end: bool| {
+        if let Some(tile) = tiles.get_mut(&key) {
+            let base = points.iter().map(|&[x, z]| cm(f64::from(ground.height_at(x as f32 / 100.0, z as f32 / 100.0)))).collect();
+            tile.lines.push(Line { kind, points, base, end });
+        }
+    };
+    for (kind, points) in lines {
+        let span = match *kind {
+            LINE_POWER => POLE_SPAN,
+            LINE_POWER_MAJOR => PYLON_SPAN,
+            _ => {
+                for run in clip_polyline(points, inner) {
+                    per_tile(manifest, half, tile_size, &run, |key, points| put(key, *kind, points, true));
+                }
+                continue;
+            }
+        };
+        let at = |p: P| [cm(p[0]), cm(p[1])];
+        let outside = |p: &P| p[0].abs() > inner || p[1].abs() > inner;
+        let mut run: Vec<[i32; 2]> = Vec::new();
+        let mut owner = None;
+        for pair in poles(points, span).windows(2) {
+            let key = (!pair.iter().any(outside)).then(|| manifest.tile_at(cm(pair[0][0]), cm(pair[0][1])));
+            if key != owner {
+                // The next span is elsewhere: the run ends on a pole of its own only where the line leaves the world.
+                if let Some(owner) = owner {
+                    put(owner, *kind, std::mem::take(&mut run), key.is_none());
+                }
+                run = vec![at(pair[0])];
+                owner = key;
+            }
+            run.push(at(pair[1]));
+        }
+        if let Some(owner) = owner {
+            put(owner, *kind, run, true);
+        }
+    }
 }
 
 /// The roof over each of `rings` (footprints, local metres, closed or not): measured
@@ -778,7 +882,11 @@ fn cover_kind(tags: &std::collections::HashMap<String, String>) -> Option<u8> {
         return match value {
             "wood" => Some(COVER_WOOD),
             "scrub" | "heath" | "grassland" => Some(COVER_PARK),
-            "wetland" => Some(COVER_FARM),
+            "wetland" => Some(match tag("wetland") {
+                Some("bog" | "swamp" | "fen") => COVER_MARSH_DEEP,
+                Some("wet_meadow") => COVER_MARSH_FAINT,
+                _ => COVER_MARSH,
+            }),
             "sand" | "beach" => Some(COVER_SAND),
             _ => None,
         };
@@ -796,11 +904,11 @@ fn cover_kind(tags: &std::collections::HashMap<String, String>) -> Option<u8> {
     }
 }
 
-/// Draw order: ground uses first, then green, water on top. The client paints in list order.
+/// Draw order: ground uses first, then green, water and marsh on top. The client paints in list order.
 fn cover_rank(kind: u8) -> u8 {
     match kind {
         COVER_URBAN | COVER_INDUSTRIAL | COVER_FARM => 0,
-        COVER_WOOD | COVER_PARK | COVER_SAND => 1,
+        COVER_WOOD | COVER_PARK | COVER_SAND | COVER_THICKET_SLOW | COVER_THICKET_WALK | COVER_THICKET_FIGHT => 1,
         _ => 2,
     }
 }
@@ -958,7 +1066,7 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
     // A tram down the middle street, so the offline world has a track to draw.
     let middle = start + (count / 2) as f64 * PITCH;
     let rails = vec![(vec![[middle, -half], [middle, half]], 1.435, RAIL_TRAM)];
-    assemble(Frame::default(), half, tile_size, None, buildings, roads, bridges, rails, Vec::new(), Vec::new(), covers, trees, ground, water)
+    assemble(Frame::default(), half, tile_size, None, buildings, roads, bridges, rails, Vec::new(), Vec::new(), covers, trees, &[], ground, water)
 }
 
 #[cfg(test)]
@@ -1006,6 +1114,9 @@ mod tests {
         assert_eq!(cover_kind(&tags(&[("landuse", "forest")])), Some(COVER_WOOD));
         assert_eq!(cover_kind(&tags(&[("leisure", "park")])), Some(COVER_PARK));
         assert_eq!(cover_kind(&tags(&[("landuse", "military")])), None);
+        assert_eq!(cover_kind(&tags(&[("natural", "wetland")])), Some(COVER_MARSH));
+        assert_eq!(cover_kind(&tags(&[("natural", "wetland"), ("wetland", "bog")])), Some(COVER_MARSH_DEEP));
+        assert_eq!(cover_kind(&tags(&[("natural", "wetland"), ("wetland", "wet_meadow")])), Some(COVER_MARSH_FAINT));
     }
 
     #[test]
@@ -1119,7 +1230,7 @@ mod tests {
     fn a_track_is_cut_at_tile_borders_and_keeps_trees_off_its_bed() {
         let rails = vec![(vec![[-140.0, 10.0], [140.0, 10.0]], 1.435, RAIL_TRAIN)];
         let trees = vec![([20.0, 10.5], TREE_BIRCH, 10.0, 2.0, false), ([20.0, 25.0], TREE_BIRCH, 10.0, 2.0, false)];
-        let built = assemble(Frame::default(), 150.0, 100.0, None, vec![], vec![], vec![], rails, vec![], vec![], vec![], trees, Ground::default(), Placed::default());
+        let built = assemble(Frame::default(), 150.0, 100.0, None, vec![], vec![], vec![], rails, vec![], vec![], vec![], trees, &[], Ground::default(), Placed::default());
         let pieces: Vec<(&(u16, u16), &Rail)> = built.tiles.iter().flat_map(|(key, tile)| tile.rails.iter().map(move |rail| (key, rail))).collect();
         assert_eq!(pieces.len(), 3, "a 280 m track crosses three 100 m tiles");
         assert!(pieces.iter().all(|(_, rail)| rail.gauge == 144 && rail.kind == RAIL_TRAIN));
@@ -1127,6 +1238,33 @@ mod tests {
         assert_eq!(trees.len(), 1, "the tree on the ballast is dropped");
         assert!(trees[0].solid, "the one beside the line is near it");
         assert!(built.manifest.spawns.iter().all(|&[_, z]| (z - 1000).abs() > 100), "no spawn on the track");
+    }
+
+    #[test]
+    fn power_poles_stand_at_bends_and_evenly_between() {
+        // 120 m east with a wobble that is no bend, then 40 m south.
+        let line = [[0.0, 0.0], [50.0, 0.5], [120.0, 0.0], [120.0, 40.0]];
+        let found = poles(&line, 55.0);
+        assert_eq!(found.len(), 5, "{found:?}");
+        assert_eq!(found[3], [120.0, 0.0]);
+        assert_eq!(found[4], [120.0, 40.0]);
+        assert!(found.windows(2).all(|pair| (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1]) <= 55.0));
+        // An end close behind a bend is the end, not a pole a few metres past it.
+        assert_eq!(poles(&[[0.0, 0.0], [100.0, 0.0], [100.0, 5.0]], 200.0), [[0.0, 0.0], [100.0, 5.0]]);
+    }
+
+    #[test]
+    fn a_power_line_puts_each_pole_in_one_tile_and_a_fence_is_cut() {
+        let manifest = Manifest { version: WORLD_VERSION, half_extent: cm(150.0), tile_size: cm(100.0), ..Default::default() };
+        let mut built = Built { manifest, tiles: [(0, 1), (1, 1), (2, 1)].into_iter().map(|key| (key, Tile::default())).collect() };
+        let lines = vec![(LINE_POWER, vec![[-140.0, 10.0], [140.0, 10.0]]), (LINE_FENCE, vec![[-140.0, 20.0], [140.0, 20.0]])];
+        lay_lines(&mut built, &lines, 150.0, 100.0, &Ground::default());
+        let power: Vec<&Line> = built.tiles.values().flat_map(|tile| &tile.lines).filter(|line| line.kind == LINE_POWER).collect();
+        // Six spans of 46.7 m: poles at -140, -93, -47, 0, 47, 93, 140.
+        assert_eq!(power.iter().map(|line| line.points.len() - usize::from(!line.end)).sum::<usize>(), 7, "{power:?}");
+        assert_eq!(power.iter().filter(|line| line.end).count(), 1, "only the last run ends on a pole of its own");
+        let fences = built.tiles.values().flat_map(|tile| &tile.lines).filter(|line| line.kind == LINE_FENCE).count();
+        assert_eq!(fences, 3);
     }
 
     #[test]

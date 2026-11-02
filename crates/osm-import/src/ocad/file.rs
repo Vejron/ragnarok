@@ -279,12 +279,14 @@ fn scale_parameters(text: &str) -> Scale {
 pub(super) mod tests {
     use super::*;
 
+    /// `(symbol, kind, status, encrypted, coordinates)`.
+    type Entry = (i32, u8, u8, u8, Vec<[i32; 2]>);
+
     /// One file as OCAD lays it out: header, then one block of each index.
     pub struct Builder {
         pub version: u16,
         pub symbols: Vec<(i32, u8, String)>,
-        /// `(symbol, kind, status, encrypted, coordinates)`.
-        pub objects: Vec<(i32, u8, u8, u8, Vec<[i32; 2]>)>,
+        pub objects: Vec<Entry>,
         pub scale: String,
     }
 

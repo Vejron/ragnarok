@@ -77,7 +77,8 @@ impl Physics {
         let ground = tile_ground(manifest, col, row, &tile.ground).map(|ground| self.insert_static(ground, None));
         handles.extend(ground);
         // The tile alone, as the server's merged world holds it: what collides, under the same ids.
-        let solid = Tile { buildings: tile.buildings.clone(), collision: tile.collision.clone(), trees: tile.trees.clone(), bridges: tile.bridges.clone(), ..Default::default() };
+        let solid = Tile { buildings: tile.buildings.clone(), collision: tile.collision.clone(), trees: tile.trees.clone(), bridges: tile.bridges.clone(), lines: tile.lines.clone(), ..Default::default() };
+        self.fences.set((col, row), crate::fences::fences_of(&tile.lines));
         let alone = Manifest { ground_cell: 0, tiles: Vec::new(), spawns: Vec::new(), ..manifest.clone() };
         let world = WorldFile::assemble(&alone, [(col, row, solid)]);
         for (collider, object) in object_colliders(&world)? {
@@ -90,6 +91,7 @@ impl Physics {
 
     /// Takes tile `(col, row)` out, with whatever of it is still standing.
     pub fn remove_tile(&mut self, col: u16, row: u16) {
+        self.fences.remove((col, row));
         let Some(StreamedTile { handles, .. }) = self.tiles.remove(&(col, row)) else { return };
         for handle in handles {
             if let Some(object) = self.objects.remove(&handle) {

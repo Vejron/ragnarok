@@ -2,7 +2,10 @@
 //! each symbol. For checking a new map before building a world from it.
 
 use anyhow::{Context, Result, bail};
+use osm_import::grid::Tile;
+use osm_import::ocad::Sheet;
 use osm_import::ocad::file::{self, OBJECT_AREA, OBJECT_LINE, OBJECT_POINT};
+use osm_import::region::Region;
 use std::collections::BTreeMap;
 
 fn main() -> Result<()> {
@@ -21,6 +24,16 @@ fn main() -> Result<()> {
         let metres = scale / 100_000.0;
         println!("extent on the ground: {:.0} × {:.0} m", (hi[0] - lo[0]) * metres, (hi[1] - lo[1]) * metres);
         println!("paper bounds: ({}, {})..({}, {})", lo[0], lo[1], hi[0], hi[1]);
+        let sheet = Sheet::new(&map.scale, [0.0, 0.0]);
+        let at = |paper| {
+            let (e, n) = sheet.ground(paper);
+            let (lat, lon) = Region::Sweden.degrees(e, n);
+            (e, n, lat, lon, Tile::at(Region::Sweden, lat, lon))
+        };
+        let (a, b) = (at(lo), at(hi));
+        println!("in SWEREF 99 TM: ({:.0}, {:.0})..({:.0}, {:.0})", a.0, a.1, b.0, b.1);
+        println!("in degrees: {:.5} {:.5}..{:.5} {:.5}", a.2, a.3, b.2, b.3);
+        println!("tiles of Sweden's grid: gx {}..{}, gy {}..{}", a.4.gx, b.4.gx, b.4.gy, a.4.gy);
     }
     let mut count: BTreeMap<i32, [usize; 3]> = BTreeMap::new();
     for object in &map.objects {

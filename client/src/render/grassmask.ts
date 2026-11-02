@@ -1,5 +1,5 @@
-import { COVER_INDUSTRIAL, COVER_PARK, COVER_URBAN, COVER_WOOD, type Building, type Point2, type TileData } from '@/world'
-import { rasterSurface, SURFACE_CELL, SURFACE_GRASS } from '@/sim/surface'
+import { COVER_INDUSTRIAL, COVER_PARK, COVER_ROCK, COVER_THICKET_FIGHT, COVER_THICKET_SLOW, COVER_THICKET_WALK, COVER_URBAN, COVER_WOOD, type Building, type Point2, type TileData } from '@/world'
+import { rasterSurface, SURFACE_CELL, SURFACE_GRASS, SURFACE_MUD, SURFACE_MUD_DEEP, SURFACE_MUD_FAINT } from '@/sim/surface'
 import type { TileGround } from '@/sim/terrain'
 
 /*
@@ -8,7 +8,10 @@ import type { TileGround } from '@/sim/terrain'
  */
 
 /** The `PALETTE` entry (`grass.ts`) for each cover's grass; 0 for none. */
-const COVER_SHADE: Record<number, number> = { [COVER_PARK]: 2, [COVER_WOOD]: 3, [COVER_URBAN]: 0, [COVER_INDUSTRIAL]: 0 }
+const COVER_SHADE: Record<number, number> = { [COVER_PARK]: 2, [COVER_WOOD]: 3, [COVER_THICKET_SLOW]: 3, [COVER_THICKET_WALK]: 3, [COVER_THICKET_FIGHT]: 3, [COVER_ROCK]: 0, [COVER_URBAN]: 0, [COVER_INDUSTRIAL]: 0 }
+
+/** The `PALETTE` entries of a marsh's sedge, by the surface's grade, which the surface grid already has. */
+export const MARSH_SHADES: Record<number, number> = { [SURFACE_MUD_FAINT]: 4, [SURFACE_MUD]: 5, [SURFACE_MUD_DEEP]: 6 }
 
 /** Where one tile has grass, on the surface grid (`SURFACE_CELL` metres a cell). */
 export interface GrassMask {
@@ -40,8 +43,8 @@ function fillRings(rings: readonly Point2[][], x0: number, z0: number, side: num
 }
 
 /**
- * Where grass grows on a tile: ground the terrain paints green (plain grass, parks and woods), that
- * is not a road, track, water or sand, and not under a building. Built-up land is left bare: the
+ * Where grass grows on a tile: ground the terrain paints green (plain grass, parks and woods), and
+ * sedge in a marsh, that is not a road, track, water or sand, and not under a building. Built-up land is left bare: the
  * terrain paints it grey, and its yards are full of houses. `surface` is the tile's `rasterSurface`,
  * when it has been worked out already.
  */
@@ -53,7 +56,10 @@ export function grassMask(tile: Pick<TileData, 'cover' | 'roads' | 'water' | 'st
     if (shade === undefined) continue
     fillRings(cover.rings, x0, z0, side, (row, column) => (cells[row * side + column] = shade))
   }
-  for (let i = 0; i < cells.length; i++) if (surface.cells[i] !== SURFACE_GRASS) cells[i] = 0
+  for (let i = 0; i < cells.length; i++) {
+    const under = surface.cells[i]!
+    if (under !== SURFACE_GRASS) cells[i] = MARSH_SHADES[under] ?? 0
+  }
   for (const building of tile.buildings) fillRings([building.footprint], x0, z0, side, (row, column) => (cells[row * side + column] = 0))
   // Streams are drawn as ribbons on the ground: keep the blades out of the water.
   for (const stream of tile.streams) {

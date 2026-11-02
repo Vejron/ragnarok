@@ -90,6 +90,9 @@ struct Args {
     /// Directory of the unpacked NMD2023 species layers (`species.rs`), for Swedish worlds.
     #[arg(long, default_value = "temp-maps/nmd2023")]
     species: PathBuf,
+    /// An orienteering map (`.ocd`) to build from where it reaches (`ocad`); an area's `ocad` otherwise.
+    #[arg(long)]
+    ocad: Option<PathBuf>,
     /// Bake the buildings' cubes into a world written before they were (world version 10), in
     /// place: its manifest, and the tiles next to it. Nothing is downloaded.
     #[arg(long)]
@@ -241,7 +244,7 @@ fn water_map(args: &Args, place: &Place, pieces: Option<&[[f64; 4]]>) -> Result<
 
 /// The terrain under the world, the elevation of its y = 0 and the water over it, from `--dem` or
 /// Lantmäteriet, or flat with `--cell 0`. Lakes and rivers are carved into the ground.
-fn terrain(args: &Args, place: &Place, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, map: &water::Map) -> Result<(shared::terrain::Ground, f64, Option<dem::Dem>, water::Placed)> {
+fn terrain(args: &Args, place: &Place, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, map: &water::Map, landforms: &[osm_import::ocad::relief::Landform], cliffs: &[osm_import::ocad::relief::Cliff]) -> Result<(shared::terrain::Ground, f64, Option<dem::Dem>, water::Placed)> {
     if args.cell == 0.0 {
         return Ok((Default::default(), 0.0, None, Default::default()));
     }
@@ -278,9 +281,44 @@ fn terrain(args: &Args, place: &Place, mask: Option<&std::collections::BTreeSet<
         };
         spans(xc).iter().any(|&c| spans(zc).iter().any(|&r| c >= 0 && r >= 0 && mask.contains(&(c as u16, r as u16))))
     };
-    let (ground, datum) = ground::build_where(half, args.tile, args.cell, wanted, dtm, |x, z, dem| surface.bed(x, z, dem))?;
+    // After the water, whose levels are the model's: a pit by a shore must not move the lake.
+    let model = |e: f64, n: f64| source.mean(e, n, 0.5).map(f64::from);
+    let (mut relief, enough) = osm_import::ocad::relief::Relief::fit(landforms, model);
+    let (tall_enough, unsure) = relief.add_cliffs(cliffs, model);
+    if !cliffs.is_empty() {
+        let before = osm_import::ocad::relief::cliff_median(cliffs, model);
+        eprintln!("ocad: {} cliffs, median step {before:.2} m in the height model, {tall_enough} tall enough, {unsure} with no clear low side", cliffs.len());
+        if args.cell > 1.0 {
+            eprintln!("ocad: cliffs need `cell` 1: at {} m they are ramps anyone can walk", args.cell);
+        }
+    }
+    if !landforms.is_empty() {
+        eprintln!("ocad: {} knolls and pits, {} shaped into the ground, {} already in the height model", landforms.len(), relief.len(), enough);
+    }
+    let shaped = |x: f64, z: f64| {
+        let (e, n) = place.source(x, z);
+        source.mean(e, n, half_cell).map(|height| f64::from(height) + relief.at(e, n))
+    };
+    let (ground, datum) = ground::build_where(half, args.tile, args.cell, wanted, shaped, |x, z, dem| surface.bed(x, z, dem))?;
     let placed = water::Placed::new(map, &surface, datum, &ground);
     report(map, &placed);
+    if !landforms.is_empty() {
+        let on_ground = |e: f64, n: f64| {
+            let (lat, lon) = place.region.degrees(e, n);
+            let [x, z] = place.frame.project(lat, lon);
+            Some(f64::from(ground.height_at(x as f32, z as f32)))
+        };
+        let [knolls, pits] = osm_import::ocad::relief::medians(landforms, on_ground);
+        eprintln!("ocad: on the ground, knolls stand {knolls:.2} m and pits go {pits:.2} m deep (medians)");
+    }
+    if !cliffs.is_empty() {
+        let on_ground = |e: f64, n: f64| {
+            let (lat, lon) = place.region.degrees(e, n);
+            let [x, z] = place.frame.project(lat, lon);
+            Some(f64::from(ground.height_at(x as f32, z as f32)))
+        };
+        eprintln!("ocad: on the ground, the median cliff is a step of {:.2} m", osm_import::ocad::relief::cliff_median(cliffs, on_ground));
+    }
     Ok((ground, datum, Some(source), placed))
 }
 
@@ -473,6 +511,16 @@ struct AreaOptions {
     /// Winter: groom the forest paths and tracks too, where OSM maps few ski tracks.
     #[serde(default)]
     groomed_paths: bool,
+    /// The orienteering map to build from (`--ocad`), if any.
+    ocad: Option<PathBuf>,
+    /// Metres to move that map, east and south, where it was drawn a little off.
+    #[serde(default)]
+    ocad_shift: [f64; 2],
+    /// A print of the orienteering map to show as the minimap where it reaches.
+    minimap_image: Option<PathBuf>,
+    /// Take the water from OSM (`--osm-water`), for a world on the coast: Hydrografi has no sea.
+    #[serde(default)]
+    osm_water: bool,
 }
 
 fn area_options(path: &std::path::Path) -> Result<AreaOptions> {
@@ -487,6 +535,7 @@ fn main() -> Result<()> {
         None => AreaOptions::default(),
     };
     args.cell = args.cell_arg.or(options.cell).unwrap_or(DEFAULT_CELL);
+    args.osm_water |= options.osm_water;
     let winter = match options.theme.as_deref() {
         None => false,
         Some("winter") => true,
@@ -506,6 +555,7 @@ fn main() -> Result<()> {
     }
     anyhow::ensure!(args.tile >= 20.0, "--tile must be at least 20 m");
     anyhow::ensure!(args.cell == 0.0 || args.cell >= 0.5, "--cell must be 0 or at least 0.5 m");
+    let mut print = None;
     let mut built = if args.synthetic {
         let map = if args.no_water { water::Map::default() } else { assemble::synthetic_water(300.0) };
         let (ground, datum, placed) = if args.cell > 0.0 {
@@ -562,7 +612,13 @@ fn main() -> Result<()> {
         // Before the network-flaky step: a world that cannot fit the format should fail in seconds.
         progress::stage("water");
         let map = water_map(&args, &place, pieces)?;
-        let (ground, datum, dem, placed) = terrain(&args, &place, mask, &map)?;
+        // Like the species, a nicety: a map that cannot be read leaves the world as OSM has it.
+        let mut ocad = args.ocad.as_ref().or(options.ocad.as_ref()).and_then(|path| osm_import::ocad::load(path, &place, options.ocad_shift).inspect_err(|error| eprintln!("no orienteering map: {error:#}")).ok());
+        if let (Some(ocad), Some(path)) = (&ocad, &options.minimap_image) {
+            print = ocad.print(path, &place).inspect_err(|error| eprintln!("no print of the map: {error:#}")).ok();
+        }
+        let (landforms, cliffs) = ocad.as_ref().map_or((&[][..], &[][..]), |ocad| (ocad.landforms.as_slice(), ocad.cliffs.as_slice()));
+        let (ground, datum, dem, placed) = terrain(&args, &place, mask, &map, landforms, cliffs)?;
         // The public servers shed load with 504s; a few rounds over all of them usually get through.
         progress::stage("overpass");
         let osm = match pieces {
@@ -570,6 +626,13 @@ fn main() -> Result<()> {
             None => overpass::fetch_chunked(&args.overpass, bbox, args.overpass_chunk, 3, 15),
         }
         .context("Overpass failed; retry later or use --synthetic")?;
+        let osm = match &mut ocad {
+            Some(ocad) => {
+                eprintln!("ocad: {} roads and paths, {} buildings, {} covers, {} rocks and shrubs over OSM", ocad.roads.len(), ocad.ways.len(), ocad.covers.len(), ocad.planted.len());
+                ocad.over(osm, &place)
+            }
+            None => osm,
+        };
         let Laser { roofs: cloud, decks, trees: detected, bushes: found_bushes } = laser(&args, &place, mask, datum, &osm, dem.as_ref())?;
         progress::stage("trees");
         let register = match trees::Register::over(place.region, bbox).filter(|_| !args.no_trees) {
@@ -592,10 +655,14 @@ fn main() -> Result<()> {
             .flatten();
         let mut planted = trees::merge(place.region, register, &detected, raster.as_ref());
         eprintln!("trees: {} from the register, {} from the laser", planted.iter().filter(|t| t.registered).count(), planted.iter().filter(|t| !t.registered).count());
+        if let Some(ocad) = &ocad {
+            planted = ocad.clear(planted, &place);
+        }
         planted.extend(found_bushes.iter().map(|bush| {
             let (lat, lon) = place.region.degrees(bush.e, bush.n);
             trees::Planted { lat, lon, kind: shared::world::TREE_BUSH, height: bush.height, crown: bush.crown, registered: false }
         }));
+        planted.extend(ocad.iter_mut().flat_map(|ocad| std::mem::take(&mut ocad.planted)));
         let coarse = (args.detail > 0.0).then(|| ground.clone());
         let photo = photo(&args, &place, mask);
         progress::stage("assemble");
@@ -614,7 +681,7 @@ fn main() -> Result<()> {
         } else {
             Vec::new()
         };
-        let mut built = assemble::from_osm(&place, args.tile, mask, &osm, &planted, ground, placed, cloud.as_ref(), decks.as_ref(), photo.as_ref(), &ski);
+        let mut built = assemble::from_osm(&place, args.tile, mask, &osm, &planted, ground, placed, cloud.as_ref(), decks.as_ref(), photo.as_ref(), &ski, ocad.as_ref());
         if let (Some(coarse), Some(source)) = (coarse, dem.as_ref()) {
             progress::stage("detail");
             let model = |half: f64| {
@@ -650,7 +717,7 @@ fn main() -> Result<()> {
     eprintln!("roofs: {} flat, {} shed, {} gable, {} hip", roofs[0], roofs[1], roofs[2], roofs[3]);
     let (spawns, tile_count) = (built.manifest.spawns.len(), built.tiles.len());
     progress::stage("minimap");
-    let map = if args.no_minimap { None } else { Some(minimap::render(&built.manifest, &built.tiles).context("rendering the minimap")?) };
+    let map = if args.no_minimap { None } else { Some(minimap::render(&built.manifest, &built.tiles, print.as_ref()).context("rendering the minimap")?) };
     let (manifest, tiles) = built.into_files();
     progress::stage("write");
 

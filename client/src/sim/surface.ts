@@ -1,4 +1,4 @@
-import { BALLAST_EXTRA, COVER_FARM, COVER_INDUSTRIAL, COVER_SAND, COVER_WATER, NO_WATER, RAIL_TRAIN, ROAD_PATH, type Point2, type TileData, type TileRef } from '@/world'
+import { BALLAST_EXTRA, COVER_FARM, COVER_INDUSTRIAL, COVER_MARSH, COVER_MARSH_DEEP, COVER_MARSH_FAINT, COVER_ROCK, COVER_SAND, COVER_WATER, NO_WATER, RAIL_TRAIN, ROAD_MAJOR, ROAD_MINOR, type Point2, type TileData, type TileRef } from '@/world'
 import type { TileGround } from './terrain'
 
 /**
@@ -10,17 +10,36 @@ export const SURFACE_ASPHALT = 1
 export const SURFACE_DIRT = 2
 export const SURFACE_SAND = 3
 export const SURFACE_WATER = 4
+/** A marsh's wet ground, by its grade: damp, marsh, and the bog that cannot be crossed. */
+export const SURFACE_MUD_FAINT = 5
+export const SURFACE_MUD = 6
+export const SURFACE_MUD_DEEP = 7
+
+/** How wet a surface is, 0 to 1, as `marshWetness` has its cover: 0 for anything but marsh. */
+export function surfaceWetness(surface: number): number {
+  switch (surface) {
+    case SURFACE_MUD_DEEP: return 1
+    case SURFACE_MUD: return 0.65
+    case SURFACE_MUD_FAINT: return 0.35
+    default: return 0
+  }
+}
 
 /** Side of a surface cell, metres. */
 export const SURFACE_CELL = 2
 /** Water deeper than this (metres) splashes instead of leaving a mark. */
 const WADING_DEPTH = 0.15
 
-function coverSurface(kind: number): number | null {
+/** The surface a cover kind makes, or null where the ground stays grass. */
+export function coverSurface(kind: number): number | null {
   switch (kind) {
     case COVER_WATER: return SURFACE_WATER
     case COVER_FARM: return SURFACE_DIRT
     case COVER_INDUSTRIAL: return SURFACE_DIRT
+    case COVER_MARSH: return SURFACE_MUD
+    case COVER_MARSH_DEEP: return SURFACE_MUD_DEEP
+    case COVER_MARSH_FAINT: return SURFACE_MUD_FAINT
+    case COVER_ROCK: return SURFACE_DIRT
     case COVER_SAND: return SURFACE_SAND
     // Woods, parks and built-up land stay grass: the cover's own colour is what the terrain shows.
     default: return null
@@ -94,7 +113,7 @@ export function rasterSurface(tile: Pick<TileData, 'cover' | 'roads' | 'water'> 
   }
   // A tram's rails are set in the street, which the roads paint.
   for (const rail of tile.rails ?? []) if (rail.kind === RAIL_TRAIN) stroke(rail.points, (rail.gauge + BALLAST_EXTRA) / 2, SURFACE_DIRT)
-  for (const road of tile.roads) stroke(road.points, road.width / 2, road.kind === ROAD_PATH ? SURFACE_DIRT : SURFACE_ASPHALT)
+  for (const road of tile.roads) stroke(road.points, road.width / 2, road.kind === ROAD_MAJOR || road.kind === ROAD_MINOR ? SURFACE_ASPHALT : SURFACE_DIRT)
 
   if (ground && tile.water.length === ground.heights.length) {
     for (let row = 0; row < side; row++) {

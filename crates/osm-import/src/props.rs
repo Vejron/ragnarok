@@ -33,11 +33,11 @@ fn unit(hash: u64) -> f64 {
 }
 
 /// Inside the rings by the even-odd rule, so an inner ring is a hole.
-fn inside(rings: &[Vec<P>], at: P) -> bool {
+pub(crate) fn inside(rings: &[Vec<P>], at: P) -> bool {
     rings.iter().filter(|ring| ring.len() > 2 && point_in_polygon(at, ring)).count() % 2 == 1
 }
 
-fn bounds(rings: &[Vec<P>]) -> Option<[f64; 4]> {
+pub(crate) fn bounds(rings: &[Vec<P>]) -> Option<[f64; 4]> {
     let mut found = false;
     let mut b = [f64::MAX, f64::MAX, f64::MIN, f64::MIN];
     for p in rings.iter().flatten() {

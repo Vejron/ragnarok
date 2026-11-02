@@ -193,7 +193,36 @@ pub struct Tile {
     /// Groomed ski tracks, clipped to the tile. Skis run faster on them (`ski::SkiMap`).
     #[serde(default)]
     pub ski: Vec<SkiTrail>,
+    /// Fences and power lines (`Line`). Drawn, not simulated. Left out of the file when there are
+    /// none, so a world without them is written as it was before they existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lines: Vec<Line>,
 }
+
+/// A fence or a power line in a tile. Drawn, not simulated: nothing collides with it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Line {
+    /// `LINE_*`.
+    pub kind: u8,
+    /// A fence's line, cut at the tile's edges. A power line's poles, span after span: each span is in
+    /// the tile its first pole stands in, so the last point may be a pole of the next tile.
+    pub points: Vec<[i32; 2]>,
+    /// Height of the ground under each of `points`, centimetres: a span's far pole can stand on a
+    /// tile that is not loaded.
+    pub base: Vec<i32>,
+    /// Whether a pole stands at the last point: false where the line carries on in another tile, which
+    /// has that pole. Always true for a fence.
+    pub end: bool,
+}
+
+/// A wire fence on wooden posts, waist high.
+pub const LINE_FENCE: u8 = 0;
+/// A game fence: wire netting two metres high on tall posts. On an orienteering map, impassable.
+pub const LINE_FENCE_HIGH: u8 = 1;
+/// A power line on wooden poles, with three wires on a crossarm.
+pub const LINE_POWER: u8 = 2;
+/// A major power line on steel pylons.
+pub const LINE_POWER_MAJOR: u8 = 3;
 
 /// Units per unit of slope in `Tile::detail`: a slope of 2 (63°) is 127.
 pub const DETAIL_SLOPE_SCALE: f32 = 63.5;
@@ -261,6 +290,9 @@ pub struct WorldFile {
     /// Every ski track. Filled by `assemble`.
     #[serde(skip)]
     pub ski: Vec<SkiTrail>,
+    /// Every fence and power line, with the `(col, row)` of the tile it came in. Filled by `assemble`.
+    #[serde(skip)]
+    pub lines: Vec<(u16, u16, Line)>,
     /// `buildings[i]`'s identity. Filled by `assemble`; empty for a world built by hand.
     #[serde(skip)]
     pub building_ids: Vec<ObjId>,
@@ -511,6 +543,17 @@ pub const COVER_FARM: u8 = 3;
 pub const COVER_SAND: u8 = 4;
 pub const COVER_URBAN: u8 = 5;
 pub const COVER_INDUSTRIAL: u8 = 6;
+/// Forest with undergrowth, from an orienteering map's greens: the higher, the denser.
+pub const COVER_THICKET_SLOW: u8 = 7;
+pub const COVER_THICKET_WALK: u8 = 8;
+pub const COVER_THICKET_FIGHT: u8 = 9;
+/// Marsh, by how wet: the plain kind is ordinary marsh, deep marsh cannot be crossed and has open
+/// pools, faint marsh is damp ground.
+pub const COVER_MARSH: u8 = 10;
+/// Bare rock along an orienteering map's cliffs.
+pub const COVER_ROCK: u8 = 11;
+pub const COVER_MARSH_DEEP: u8 = 12;
+pub const COVER_MARSH_FAINT: u8 = 13;
 
 /// One tree. All lengths are centimetres.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -618,6 +661,11 @@ impl Tree {
 pub const ROAD_MAJOR: u8 = 0;
 pub const ROAD_MINOR: u8 = 1;
 pub const ROAD_PATH: u8 = 2;
+/// Unpaved, from an orienteering map: a gravel road, a vehicle track's two ruts, and a trace barely
+/// worn into the ground.
+pub const ROAD_GRAVEL: u8 = 3;
+pub const ROAD_TRACK: u8 = 4;
+pub const ROAD_FAINT: u8 = 5;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct CollisionMesh {
@@ -725,6 +773,7 @@ impl WorldFile {
         }
         for (col, row, tile) in tiles {
             world.ski.extend(tile.ski.iter().cloned());
+            world.lines.extend(tile.lines.iter().map(|line| (col, row, line.clone())));
             if n > 0 && tile.ground.len() == (n * n) as usize {
                 let ground = &mut world.ground;
                 let (i0, j0) = (col as u32 * (n - 1), row as u32 * (n - 1));
@@ -867,8 +916,14 @@ mod tests {
             detail: vec![0, -3, 127, -127],
             rails: vec![Rail { gauge: 144, kind: RAIL_TRAIN, points: vec![[0, 0], [900, 50]] }],
             ski: vec![SkiTrail { width: 400, points: vec![[0, 0], [900, 50]] }],
+            lines: vec![Line { kind: LINE_POWER, points: vec![[0, 0], [5000, 0]], base: vec![120, 150], end: false }],
         };
         assert_eq!(Tile::decode(&tile.encode()).unwrap(), tile);
+        // Without lines a tile is written as it was before they existed, and reads back the same.
+        let plain = Tile { lines: Vec::new(), ..tile.clone() };
+        let bytes = plain.encode();
+        assert_eq!(bytes[0], 0x9c, "an array of the 12 fields before lines");
+        assert_eq!(Tile::decode(&bytes).unwrap(), plain);
         assert_eq!(manifest.tiles[0].path(), "tiles/1_0.msgpack");
     }
 

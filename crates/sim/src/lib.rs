@@ -20,6 +20,7 @@ use shared::terrain::Ground;
 use shared::world::{ObjId, SkiTrail, WorldFile};
 use std::collections::HashMap;
 
+pub mod fences;
 mod ragdoll;
 mod stream;
 mod vehicle;
@@ -123,6 +124,8 @@ pub struct Physics {
     /// Vehicles as solid stand-ins at their snapshot pose (`set_obstacle`), by id: what the client's
     /// prediction walks into. Empty on the server, which simulates the vehicles themselves.
     obstacles: std::collections::BTreeMap<u32, stream::Obstacle>,
+    /// What a soldier cannot walk through but everything else goes through (`fences`).
+    fences: fences::Fences,
 }
 
 /// Height of the top of the invisible boundary walls around the playable square, metres above
@@ -270,6 +273,9 @@ fn object_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)>> {
         let object = if tree.destructible() { world.tree_ids.get(index).map(|&id| Obj::Tree(id)) } else { None };
         colliders.push((cylinder, object));
     }
+    // Power poles stand like rocks: nothing fells them.
+    let lines: Vec<shared::world::Line> = world.lines.iter().map(|(_, _, line)| line.clone()).collect();
+    colliders.extend(fences::pole_colliders(&lines).into_iter().map(|pole| (pole, None)));
     Ok(colliders)
 }
 
@@ -405,6 +411,13 @@ impl Physics {
     pub fn new(world: &WorldFile) -> Result<Self> {
         let mut physics = Self::built(world)?;
         physics.add_ski_trails(&world.ski);
+        let mut by_tile: std::collections::BTreeMap<(u16, u16), Vec<shared::world::Line>> = Default::default();
+        for (col, row, line) in &world.lines {
+            by_tile.entry((*col, *row)).or_default().push(line.clone());
+        }
+        for (tile, lines) in by_tile {
+            physics.fences.set(tile, fences::fences_of(&lines));
+        }
         Ok(physics)
     }
 
@@ -461,6 +474,7 @@ impl Physics {
             bound,
             tiles: HashMap::new(),
             obstacles: std::collections::BTreeMap::new(),
+            fences: fences::Fences::default(),
         }
     }
 
@@ -581,6 +595,11 @@ impl Physics {
         });
         found.dedup();
         found
+    }
+
+    /// Whether a fence that stands over `floor` passes within `reach` of `(x, z)` (`fences::Fences::near`).
+    pub fn fence_near(&self, x: f32, z: f32, reach: f32, floor: f32) -> bool {
+        self.fences.near([x, z], reach, floor)
     }
 
     /// Which building or tree a collider is, if it is one.
@@ -729,7 +748,12 @@ impl Physics {
         let snapping = if skiing { &self.ski_snapping } else { &self.snapping };
         let walker = if character.grounded && vy <= 0.0 && !thrown { snapping } else { &self.controller };
         let horizontal = walker.move_shape(dt, &queries, shape, &Pose::from_translation(start), Vector::new(desired[0], 0.0, desired[2]), |_| {});
-        let middle = start + horizontal.translation;
+        let mut middle = start + horizontal.translation;
+        // Fences, which only soldiers meet, cut the step short.
+        let (radius, centre) = if character.prone { (PRONE_RADIUS, PRONE_RADIUS) } else { (CAPSULE_RADIUS, STAND_CENTRE) };
+        let [x, z] = self.fences.stop([start.x, start.z], [middle.x, middle.z], middle.y - centre, radius);
+        middle.x = x;
+        middle.z = z;
         let vertical = self.controller.move_shape(dt, &queries, shape, &Pose::from_translation(middle), Vector::new(0.0, desired[1], 0.0), |_| {});
         let end = middle + vertical.translation;
         character.position = end.into();

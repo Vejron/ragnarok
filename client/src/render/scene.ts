@@ -157,6 +157,11 @@ export class Scene {
     }
   }
 
+  /** The time of day (`dayPhase`): 0 midnight, 0.5 noon. */
+  get phase() {
+    return this.dayPhase
+  }
+
   /** How dark it is now for lamps (`nightAt`). */
   get night() {
     return nightAt(this.dayPhase)

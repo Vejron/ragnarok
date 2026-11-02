@@ -6,6 +6,7 @@ import { COVER_COLORS, GRASS_COLOR } from './cover'
 import { GROUND_LIGHT_WGSL } from './groundlight'
 import { normalAt } from './shade'
 import { grassMask, type GrassMask } from './grassmask'
+import { inMarshPool, marshField, marshPoolLevel } from './marshnoise'
 
 export { grassMask, type GrassMask }
 
@@ -63,8 +64,15 @@ export function tierFor(density: GrassDensity, distance: number) {
   return 2 ** Math.max(-6, Math.ceil(Math.log2(kept)))
 }
 
-/** Grass colour per cell of a mask: 0 for no grass, else an index into `PALETTE`. */
-const PALETTE = [0, GRASS_COLOR, COVER_COLORS[COVER_PARK]!, COVER_COLORS[COVER_WOOD]!].map((hex) => Color.hex(hex))
+/**
+ * Grass colour per cell of a mask: 0 for no grass, else an index into `PALETTE`. The last three are a
+ * marsh's sedge (`MARSH_SHADES`), damp to bog, yellowing and browning the wetter it is.
+ */
+const PALETTE = [0, GRASS_COLOR, COVER_COLORS[COVER_PARK]!, COVER_COLORS[COVER_WOOD]!, 0x9fae62, 0x9a9f55, 0x8e8a4c].map((hex) => Color.hex(hex))
+/** How wet the ground of each `PALETTE` entry is: as `surfaceWetness` has the marsh's grades. */
+const PALETTE_WET = [0, 0, 0, 0, 0.35, 0.65, 1]
+/** Cottongrass's seed heads. */
+const COTTON = Color.hex(0xf4f1e6)
 
 
 /** A small, fast hash to [0, 1): the same chunk always grows the same blades. */
@@ -94,6 +102,26 @@ export interface Blade {
   tone: number
   /** The ground's normal at the root, so the blade is lit as the slope it grows on. */
   normal: readonly [number, number, number]
+  /** Cottongrass: a white tuft at the top. */
+  cotton?: boolean
+}
+
+/**
+ * A marsh's sedge at `(x, z)` on ground this `wet`, or null for open water: tussocks thick and tall on
+ * the highs of the marsh's field, thinning to the pools' edges, with reeds round the bog's pools and the
+ * odd cottongrass. `chance`, `height` and `pick` are the blade's own draws, 0 to 1.
+ */
+function sedge(x: number, z: number, wet: number, chance: number, height: number, pick: number): { height: number; cotton: boolean } | null {
+  const field = marshField(x, z)
+  const level = marshPoolLevel(wet)
+  if (field < level + 0.02) return null
+  const t = Math.min(1, (field - level) / 0.25)
+  const clump = t * t * (3 - 2 * t)
+  if (chance > 0.15 + 0.85 * clump) return null
+  // Reeds stand in the shallows at a bog pool's edge.
+  if (wet >= 1 && field < level + 0.09 && pick < 0.3) return { height: 1.3 + ((pick * 13) % 1) * 0.7, cotton: false }
+  if (wet > 0.5 && pick > 0.95 && clump > 0.3) return { height: 0.35 + height * 0.3, cotton: true }
+  return { height: height * 1.3 * (0.7 + 0.45 * clump), cotton: false }
 }
 
 /** Smooth noise in 0..1 on a lattice of unit cells. */
@@ -140,19 +168,43 @@ export function chunkBlades(cx: number, cz: number, perMetre: number, share: num
     const turn = next() * Math.PI
     const tone = 0.85 + next() * 0.3
     const chance = next()
-    const patch = patchAt(x, z)
-    // A few stray tufts grow between the patches.
-    if (chance > patch * 0.96 + 0.04) continue
     const shade = shadeAt(x, z)
     if (shade === 0) continue
+    const wet = PALETTE_WET[shade] ?? 0
+    let grown: number
+    let cotton = false
+    if (wet > 0) {
+      const marsh = sedge(x, z, wet, chance, height, (tone - 0.85) / 0.3)
+      if (!marsh) continue
+      grown = marsh.height
+      cotton = marsh.cotton
+    } else {
+      const patch = patchAt(x, z)
+      // A few stray tufts grow between the patches.
+      if (chance > patch * 0.96 + 0.04) continue
+      // Taller in the thick of a patch, short at its edge.
+      grown = height * (0.55 + 0.6 * patch)
+    }
     const y = heightAt(x, z)
     if (y === null) continue
     const normal = normalAt((nx, nz) => heightAt(nx, nz) ?? y, x, z, NORMAL_STEP)
-    // Taller in the thick of a patch, short at its edge.
-    blades.push({ x, z, y, height: height * (0.55 + 0.6 * patch), turn, rank: i / total, shade, tone, normal })
+    blades.push({ x, z, y, height: grown, turn, rank: i / total, shade, tone, normal, ...(cotton ? { cotton } : {}) })
+    // Sedge grows in tufts: two more blades about the first, shorter and turned, at its rank.
+    if (wet > 0 && !cotton && grown < 1.2) {
+      for (let k = 1; k <= 2; k++) {
+        const angle = turn * 2 + k * 2.1
+        const out = 0.05 + 0.05 * k
+        const tx = x + Math.cos(angle) * out, tz = z + Math.sin(angle) * out
+        if (inMarshPool(tx, tz, wet)) continue
+        blades.push({ x: tx, z: tz, y, height: grown * (1 - 0.17 * k), turn: turn + k * 1.1, rank: i / total, shade, tone: tone * (1 - 0.05 * k), normal })
+      }
+    }
   }
   return blades
 }
+
+/** The tallest blade, metres, a reed: the colour's alpha (unorm) holds the height as a share of it. */
+const MAX_BLADE = 2
 
 /** Metres either side of a root the ground is sampled at for its slope: about the terrain's own grid. */
 const NORMAL_STEP = 2
@@ -163,7 +215,7 @@ const MAX_BEND = 1.35
 /**
  * The blades' geometry: two segments and a tip (5 vertices) a blade, or for far-off chunks (`simple`)
  * a single triangle, which from there looks the same. Each vertex carries its root, its height above
- * it and the blade's rank in `custom`, and the blade's full height in the colour's alpha, for the
+ * it and the blade's rank in `custom`, and the blade's full height (over `MAX_BLADE`) in the colour's alpha, for the
  * vertex shader to bend, thin and widen it about its root.
  */
 export function bladeGeometry(blades: readonly Blade[], simple = false): Geometry {
@@ -177,23 +229,27 @@ export function bladeGeometry(blades: readonly Blade[], simple = false): Geometr
   // Base width and how much of it is left at each level up the blade.
   const width = 0.07
   const levels = simple ? [[0, 1]] : [[0, 1], [0.55, 0.7]]
+  // Cottongrass: a thin stalk under a white head, widest just below its top.
+  const cottonLevels = simple ? [[0, 0.5]] : [[0, 0.4], [0.82, 1.7]]
   let v = 0
   let n = 0
   for (const b of blades) {
     const sx = Math.cos(b.turn) * width * 0.5
     const sz = Math.sin(b.turn) * width * 0.5
-    const color = PALETTE[b.shade]!
+    const stem = PALETTE[b.shade]!
     const first = v
     const put = (x: number, y: number, z: number, along: number, light: number) => {
       positions.set([x, y, z], v * 3)
       normals.set(b.normal, v * 3)
       // Darker at the root, where it meets the ground's own colour, lighter toward the tip.
-      const k = b.tone * light
-      colors.set([color.r * k, color.g * k, color.b * k, Math.min(1, b.height)], v * 4)
+      const head = b.cotton === true && along > b.height * 0.7
+      const color = head ? COTTON : stem
+      const k = head ? 1 : b.tone * light
+      colors.set([color.r * k, color.g * k, color.b * k, Math.min(1, b.height / MAX_BLADE)], v * 4)
       custom.set([b.x, b.z, along, b.rank], v * 4)
       v++
     }
-    for (const [at, keep] of levels) {
+    for (const [at, keep] of b.cotton ? cottonLevels : levels) {
       const y = b.y + at! * b.height
       const light = 0.92 + at! * 0.35
       put(b.x - sx * keep!, y, b.z - sz * keep!, at! * b.height, light)
@@ -265,7 +321,7 @@ fn displace(world: vec3f, custom: vec4f, color: vec4f) -> vec3f {
   let root = custom.xy;
   let along = custom.z;
   let rank = custom.w;
-  let height = max(color.a, 0.05);
+  let height = max(color.a * ${MAX_BLADE.toFixed(1)}, 0.05);
   let base = vec3f(root.x, world.y - along, root.y);
   let eye = distance(base.xz, frame.cameraPos.xz);
   let kept = min(1.0, pow(params.fade.z / max(eye, 0.01), 2.0));
@@ -310,7 +366,7 @@ fn surface(s: Surface) -> vec4f {
   // Washed out with distance: the dark roots and bright tips even out, and the green pales and greys
   // a little toward the sky, so far grass is a soft haze over the ground rather than a field of lines.
   let far = smoothstep(params.wash.x, params.wash.y, s.viewDepth);
-  let t = clamp(s.custom.z / max(s.color.a, 0.05), 0.0, 1.0);
+  let t = clamp(s.custom.z / max(s.color.a * ${MAX_BLADE.toFixed(1)}, 0.05), 0.0, 1.0);
   let even = c / (0.92 + 0.38 * t) * 1.1;
   c = mix(c, even, far * 0.85);
   // Burnt where the ground under it is charred, most at the tips.

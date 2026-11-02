@@ -2,8 +2,15 @@ import type { TileGround } from '@/sim/terrain'
 import {
   COVER_FARM,
   COVER_INDUSTRIAL,
+  COVER_MARSH,
+  COVER_MARSH_DEEP,
+  COVER_MARSH_FAINT,
   COVER_PARK,
+  COVER_ROCK,
   COVER_SAND,
+  COVER_THICKET_FIGHT,
+  COVER_THICKET_SLOW,
+  COVER_THICKET_WALK,
   COVER_URBAN,
   COVER_WATER,
   COVER_WOOD,
@@ -27,6 +34,13 @@ export const COVER_COLORS: Record<number, number> = {
   [COVER_SAND]: 0xf3e3a6,
   [COVER_URBAN]: 0xd9d3c7,
   [COVER_INDUSTRIAL]: 0xc6c6d0,
+  [COVER_THICKET_SLOW]: 0x529f50,
+  [COVER_THICKET_WALK]: 0x459046,
+  [COVER_THICKET_FIGHT]: 0x37803c,
+  [COVER_MARSH]: 0x6f9a7c,
+  [COVER_MARSH_DEEP]: 0x5f8a6c,
+  [COVER_MARSH_FAINT]: 0x86ad80,
+  [COVER_ROCK]: 0x7d776f,
 }
 
 /** Texels per metre of terrain. */

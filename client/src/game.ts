@@ -29,6 +29,7 @@ import { setWinter, winter } from './render/season'
 import { Skidmarks } from './render/skidmarks'
 import { SkiTracks } from './render/skitracks'
 import { Snowfall } from './render/snowfall'
+import { MarshMist, mistAt } from './render/marshmist'
 import { Bloodstains } from './render/bloodstains'
 import { Scorchmarks } from './render/scorchmarks'
 import { type FxWorld } from './render/tyres'
@@ -235,6 +236,8 @@ export class Game {
   private readonly skids = new Skidmarks()
   /** The snow in the air, in a winter world. */
   private snowfall: Snowfall | null = null
+  /** Mist over the marshes; none in winter, when they are frozen. */
+  private marshMist: MarshMist | null = null
   /** Grooves and spray left by skiers, in a winter world. */
   skiTracks: SkiTracks | null = null
   /** Forward is held, as of the last tick. */
@@ -420,6 +423,10 @@ export class Game {
     this.worldHash = hash
     this.world = world
     if (world.theme === THEME_WINTER) this.startWinter()
+    else {
+      this.marshMist = new MarshMist()
+      this.scene.scene.add(this.marshMist.root)
+    }
     this.view.world = world
     // On a hilly world the plane sits just under the terrain, so it only shows where a tile is late.
     this.scene.scene.add(buildGround(world.halfExtent, world.groundCell > 0 ? -0.05 : 0))
@@ -944,6 +951,7 @@ export class Game {
     this.damageNumbers.update(dt, this.scene.camera)
     const eye = this.scene.camera.position
     this.snowfall?.update(eye, dt)
+    this.marshMist?.update(eye, dt, mistAt(this.scene.phase), this.scene.groundLight, (x, z) => this.surfaces?.at(x, z) ?? SURFACE_GRASS, this.scene.groundAt)
     this.skiTracks?.update(dt)
     this.smoke.follow(eye.x, eye.z)
     this.glow.follow(eye.x, eye.z)
@@ -1192,6 +1200,7 @@ export class Game {
     this.effects.dispose()
     this.smoke.dispose()
     this.snowfall?.dispose()
+    this.marshMist?.dispose()
     this.skiTracks?.dispose()
     this.glow.dispose()
     this.blood.dispose()

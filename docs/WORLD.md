@@ -42,6 +42,7 @@ Restart the server afterwards: it reads the whole world at start. The importer c
 | `--no-lidar-trees` | Only the register's trees: no woods, no garden trees. |
 | `--min-tree-height m` | Shortest tree taken from the laser, default 3 m above the terrain. |
 | `--species dir` | Where the unpacked NMD2023 species layers are, default `temp-maps/nmd2023`. See [Tree species](#tree-species). |
+| `--ocad map.ocd` | An orienteering map to build from where it reaches. See [Orienteering maps](#orienteering-maps). |
 | `--synthetic` | Offline procedural grid city with hills and a few trees. Needs no network at all. |
 | `--overpass url,url` | Overpass endpoints, tried in order (the public ones are often busy; four mirrors by default, since city-sized boxes failed on two). |
 | `--overpass-chunk m` | Ask Overpass for squares of about this many metres (default 2000) and merge, so a city-sized box doesn't time out. Each square is cached, so an interrupted run resumes. |
@@ -101,6 +102,52 @@ is `TREE_SPRUCE` and contorta stays in with the pine.
 
 To check a world, `WORLD=kulla cargo test --release -p osm-import world_trees -- --ignored --nocapture`
 prints its trees by kind and a hash of their positions, which a change of species keeps.
+
+## Orienteering maps
+
+An OCAD map (`.ocd`, versions 9 to 2018) is a second source next to OSM, in `ocad/`. Where it reaches it
+replaces OSM's roads, buildings and cover, and places what OSM does not have: every boulder, group of
+boulders, stony ground and small path. Outside it nothing changes. A world names its map in `area.json`,
+so that editor builds get it too:
+
+```json
+{ "tiles": [...], "cell": 1, "ocad": "temp-maps/ocad/map.ocd", "ocad_shift": [0, 0], "osm_water": true,
+  "minimap_image": "temp-maps/ocad/map.jpg" }
+```
+
+Maps belong to their clubs, so they stay in the git-ignored `temp-maps/ocad/`. Check a new map first:
+
+```bash
+cargo run -p osm-import --bin ocd-dump -- temp-maps/ocad/map.ocd
+```
+
+That prints the version, the georeferencing, the tiles the map covers (a world needs them, and a margin)
+and how many objects it has of each symbol.
+
+- **The map must be in SWEREF 99 TM, grid code 13002, and drawn to ISOM 2017.** Anything else is refused
+  with a message, and the world is built without it. The table is in `ocad/isom.rs`.
+- **Placement.** The build prints `median offset` against OSM's buildings. `ocad_shift` moves the map, in
+  metres east and south. Kläppudden needs none: 0.7 m over 13 buildings.
+- **The outline** is the convex hull of the map's objects. Plain forest is undrawn in ISOM, so the whole
+  outline is laid as wood under the rest, and no rocks are made up inside it.
+- **What the map does not decide.** The terrain stays with the laser, but for the knolls and pits it adds
+  (set `"cell": 1`, or they fall between the samples). The trees stay with the laser and NMD, but open land
+  clears them. The water stays with its usual source. A world on the coast wants `"osm_water": true`: Hydrografi has no sea.
+- **`minimap_image`** is a JPEG print of the map laid over the drawn minimap. It must show exactly the
+  extent of the map's objects, which is what an OCAD export gives: `ocd-dump` prints that as paper bounds,
+  and nothing else places it. It looks a few degrees turned, because the world's frame has true north up and
+  the map SWEREF's grid north. White paper joined to a corner outside the map is left out. It ships in
+  `minimap.png`, so a deployed world needs the mapmaker's permission for it as well.
+- **What the symbols mean**, and what each becomes in the world: [ORIENTEERING.md](ORIENTEERING.md).
+- **Fences and power lines** go in the tiles' `lines` layer (`Line`, `LINE_*`), which is left out of a
+  tile file that has none, so worlds without them are written as before. A fence is cut at tile borders
+  like a road; a power line is its poles, set at its bends and no more than 55 m apart (260 m for steel
+  pylons), each span in the tile of its first pole, with the ground height under every point. They are
+  drawn by `render/lines.ts`. A pole is a collider like a rock's, stopping soldiers, vehicles and
+  bullets. A fence stops soldiers only (`sim/src/fences.rs`): it is no collider but lines a soldier's
+  step is cut short of, the same on server and client, and the bots' grid shuts the cells it runs
+  through. OSM's are not fetched yet.
+- **Not imported yet:** walls, and bridges, which stay OSM's.
 
 ## Which world, and when
 
@@ -287,7 +334,9 @@ auth. They are never written to the cache or to the world files. OSM and Umeå's
 ### OpenStreetMap
 One Overpass query for the bounding box returns buildings, highways, railways and cover (landuse, natural,
 leisure, riverbanks) as ways with inline geometry, plus multipolygon relations for cover. Heights
-come from the `height` tag, else `building:levels` × 3 + 1, else a guess of 6–12 m. Overpass
+come from the `height` tag, else `building:levels` × 3 + 1, else a guess of 6–12 m. `natural=wetland` is
+marsh, by its `wetland` tag: `bog`, `swamp` and `fen` are `COVER_MARSH_DEEP`, `wet_meadow` is
+`COVER_MARSH_FAINT` and the rest `COVER_MARSH` (docs/ORIENTEERING.md has how the client draws them). Overpass
 often answers 504; the importer tries every endpoint, four rounds, 15 s apart, for each square. A box larger than `--overpass-chunk` is fetched as a grid of squares; ways and relations that cross a border come back twice and are merged by id.
 
 ### Railways

@@ -5,6 +5,7 @@
  */
 
 import type { Effects } from '@/render/effects'
+import { inMarshPool } from '@/render/marshnoise'
 import type { Grass, Bender } from '@/render/grass'
 import type { Scene } from '@/render/scene'
 import { splash } from '@/render/splash'
@@ -13,6 +14,7 @@ import type { Placed } from '@/entities/presenters/vehicles'
 import { rideView } from '@/seats'
 import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS } from '@/sim/consts'
 import { halfExtentsOf } from '@/sim/kinds'
+import { surfaceWetness } from '@/sim/surface'
 import type { Waters } from '@/sim/waters'
 import { NO_WATER } from '@/world'
 
@@ -20,6 +22,8 @@ import { NO_WATER } from '@/world'
 const WADE_DEPTH = 0.15
 /** Wading ripples are drawn within this many metres of the camera. */
 const WADE_RIPPLE_RANGE = 60
+/** Seconds between splashes of someone going through a marsh's pools: about a stride. */
+const MARSH_STRIDE = 0.32
 
 /** A point on the ground plane. */
 interface At {
@@ -59,7 +63,10 @@ export class Surroundings {
     this.scene.setWaterPlane(level)
   }
 
-  /** Splashes when person `key`'s feet go into water, and ripples while they wade. `speed` is how fast they move, m/s. */
+  /**
+   * Splashes when person `key`'s feet go into water, and ripples while they wade; a small splash a stride
+   * through a marsh's pools. `speed` is how fast they move, m/s.
+   */
   wade(key: number, x: number, y: number, z: number, speed: number, dt: number) {
     const level = this.waters?.levelAt(x, z) ?? NO_WATER
     const wet = level !== NO_WATER && level - y > WADE_DEPTH
@@ -71,6 +78,17 @@ export class Surroundings {
     }
     if (wet && !was.wet) splash(this.fx(), { x, y: level, z }, 0.45, 2 + Math.min(speed, 8))
     else if (!wet && was.wet && speed > 1) splash(this.fx(), { x, y: level === NO_WATER ? y : level, z }, 0.3, 1)
+    if (!wet && speed > 1) {
+      const fx = this.fx()
+      const wetness = surfaceWetness(fx.surfaceAt(x, z))
+      if (wetness > 0 && inMarshPool(x, z, wetness)) {
+        was.ripple -= dt
+        if (was.ripple <= 0) {
+          splash(fx, { x, y: this.scene.groundAt(x, z), z }, 0.25, 1 + Math.min(speed, 6) * 0.5)
+          was.ripple = MARSH_STRIDE * (0.85 + Math.random() * 0.3)
+        }
+      }
+    }
     if (wet && speed > 1) {
       was.ripple -= dt
       if (was.ripple <= 0 && Math.hypot(this.scene.camera.position.x - x, this.scene.camera.position.z - z) < WADE_RIPPLE_RANGE) {

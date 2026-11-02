@@ -5,7 +5,7 @@
 //! A cell's floor is the topmost static surface under its middle: the ground, a bridge, or a roof.
 //! It is blocked when a 1 m box over it, from a step's height above that floor to above a standing
 //! body's head, touches anything static: a wall, a tree, a rock, the world's edge, or ground too
-//! steep to climb. Buildings are hollow meshes, so the box test is what makes their walls, which are
+//! steep to climb, or a fence runs through it. Buildings are hollow meshes, so the box test is what makes their walls, which are
 //! thin, block the cells they pass through. Two cells next to each other join only when their
 //! floors are within `MAX_RISE`, so a roof is an island of its own and a bridge joins the road at
 //! its ends.
@@ -44,6 +44,9 @@ const ISLAND: usize = 400;
 const NEAR_OPEN: i32 = 2;
 /// What building a chunk costs, counted in the cells a search looks at: about as long.
 const CHUNK_COST: usize = 200;
+/// A cell is shut when a fence passes this near its middle, metres: over half a cell's diagonal, so
+/// no step from cell to cell, straight or slanting, crosses one.
+const FENCE_REACH: f32 = 0.75;
 /// A straight line is checked every this many metres along it.
 const LINE_STEP: f32 = 0.5;
 
@@ -298,7 +301,8 @@ fn build_chunk(physics: &Physics, map: &WorldFile, (ci, cj): Cell) -> Box<[f32]>
             let Some(down) = physics.cast_ray_static([x, top, z], [0.0, -1.0, 0.0], FLOOR_FROM + FLOOR_BELOW) else { continue };
             let floor = top - down;
             let half = [CELL / 2.0, (BODY_TOP - STEP_CLEAR) / 2.0, CELL / 2.0];
-            if !physics.box_touches_static([x, floor + (BODY_TOP + STEP_CLEAR) / 2.0, z], half) {
+            // A fence is no collider, so the box does not meet it: a cell it runs through is shut.
+            if !physics.box_touches_static([x, floor + (BODY_TOP + STEP_CLEAR) / 2.0, z], half) && !physics.fence_near(x, z, FENCE_REACH, floor + STEP_CLEAR) {
                 cells[(row * CHUNK + column) as usize] = floor;
             }
         }

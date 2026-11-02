@@ -7,9 +7,11 @@ import { buildingBuffers, type BuildingBuffers } from './buildingmesh'
 import { GRASS_COLOR, bakeTerrainTexture, coverTexture, reliefTexture } from './cover'
 import type { Ribbon } from './groundmesh'
 import type { HeightSource } from './shade'
+import { packMarsh, wetnessPixels } from './marshnoise'
 import { reliefPixels, type Pixels, type TerrainBuffers } from './terrainmesh'
 import { prepareTile, type PreparedTile } from './tileprep'
 import { buildTrees } from './trees'
+import { buildLines } from './lines'
 import { TERRAIN_RAMP } from './groundlight'
 
 export type { HeightSource }
@@ -76,11 +78,16 @@ export function buildGround(halfExtent: number, y = 0): Mesh {
 function buildTerrain(tile: Pick<TileData, 'cover' | 'detail'>, ground: TileGround, terrain: NonNullable<PreparedTile['terrain']>, cover: PreparedTile['cover']): Mesh {
   const { x0, z0, cell, side } = ground
   const map = cover === undefined ? bakeTerrainTexture(tile, x0, z0, cell * (side - 1)) : cover ? coverTexture(cover) : null
-  const normalMap = reliefTexture(terrain.relief)
-  const mesh = new Mesh(new Geometry(terrain.buffers), toonMaterial({ ...(map ? { map } : { color: GRASS_COLOR }), normalMap, normalMapTone: true, ramp: TERRAIN_RAMP, craters: true, snow: winter }))
+  const size = cell * (side - 1)
+  const wet = terrain.wet === undefined ? wetnessPixels(tile, x0, z0, size, terrain.relief.width) : terrain.wet
+  const normalMap = reliefTexture(wet ? packMarsh(terrain.relief, wet) : terrain.relief)
+  const mesh = new Mesh(new Geometry(terrain.buffers), toonMaterial({ ...(map ? { map } : { color: GRASS_COLOR }), normalMap, normalMapTone: true, ramp: TERRAIN_RAMP, craters: true, snow: winter, marsh: wet !== null }))
   mesh.userData.ownsMaterial = true
   mesh.userData.ground = ground
   mesh.userData.detail = tile.detail
+  // The relief as `reliefPixels` made it, for the next restitch, and the marsh packed into what is drawn.
+  mesh.userData.relief = terrain.relief
+  mesh.userData.wet = wet
   mesh.receiveShadow = true
   return mesh
 }
@@ -94,16 +101,18 @@ function terrainMesh(group: Group): Mesh | null {
 /** Works out a terrain mesh's relief along its edges again once a neighbouring tile has arrived, so the seam closes. */
 export function restitchTerrain(group: Group, around: HeightSource) {
   const mesh = terrainMesh(group)
-  const relief = mesh?.material.normalMap
-  if (!mesh || !relief) return
-  shadeTerrain(group, reliefPixels(mesh.userData.ground as TileGround, around, mesh.userData.detail as Int8Array | undefined, relief.source as Pixels))
+  if (!mesh?.material.normalMap) return
+  shadeTerrain(group, reliefPixels(mesh.userData.ground as TileGround, around, mesh.userData.detail as Int8Array | undefined, mesh.userData.relief as Pixels))
 }
 
 /** Gives a tile's terrain a new relief map, as `restitchTerrain` or the tile worker made it. */
 export function shadeTerrain(group: Group, relief: Pixels) {
-  const texture = terrainMesh(group)?.material.normalMap
-  if (!texture) return
-  texture.source = relief
+  const mesh = terrainMesh(group)
+  const texture = mesh?.material.normalMap
+  if (!mesh || !texture) return
+  const wet = mesh.userData.wet as Uint8Array | null
+  mesh.userData.relief = relief
+  texture.source = wet && wet.length === relief.width * relief.height ? packMarsh(relief, wet) : relief
   texture.needsUpdate()
 }
 
@@ -117,15 +126,17 @@ export function remeshTerrain(group: Group, buffers: TerrainBuffers) {
 
 /**
  * A prepared tile (`prepareTile`) as meshes: its terrain, roads and rails draped on it, its
- * buildings and bridges merged into one mesh with a colour a vertex, and its trees. Water is drawn
+ * buildings and bridges merged into one mesh with a colour a vertex, its trees, and its fences and
+ * power lines. Water is drawn
  * apart (`buildWater`). Only wrapping arrays, so it is cheap enough for the frame.
  */
-export function tileGroup(tile: Pick<TileData, 'cover' | 'detail' | 'trees'>, ground: TileGround | null, prepared: PreparedTile): Group {
+export function tileGroup(tile: Pick<TileData, 'cover' | 'detail' | 'trees' | 'lines'>, ground: TileGround | null, prepared: PreparedTile): Group {
   const group = new Group()
   if (ground && prepared.terrain) group.add(buildTerrain(tile, ground, prepared.terrain, prepared.cover))
   if (prepared.draped) group.add(...ribbonMeshes(prepared.draped.ribbons))
   group.add(...mergedMesh(prepared.buildings, new Set(prepared.undrawn)))
   group.add(...buildTrees(tile.trees))
+  group.add(...buildLines(tile.lines, ground))
   return group
 }
 

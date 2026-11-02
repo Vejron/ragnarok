@@ -158,3 +158,18 @@ fn a_search_takes_no_more_than_its_budget() {
     assert_eq!(budget, 0);
     assert!(grid.find_path(&physics, &map, [0.0, 0.0, 0.0], [30.0, 0.0, 0.0], &mut plenty()).is_some());
 }
+
+#[test]
+fn it_goes_round_the_end_of_a_fence() {
+    use shared::world::{LINE_FENCE, Line};
+    // A slanting fence, so it runs between cells as well as through them.
+    let fence = Line { kind: LINE_FENCE, points: vec![[1000, -3000], [1300, 3000]], base: vec![0, 0], end: true };
+    let map = WorldFile { version: WORLD_VERSION, half_extent: 10_000, lines: vec![(0, 0, fence)], ..Default::default() };
+    let physics = Physics::new(&map).unwrap();
+    let mut grid = NavGrid::default();
+    let (from, to) = ([0.0, 0.0], [25.0, 0.0]);
+    let path = grid.find_path(&physics, &map, feet(from), feet(to), &mut plenty()).expect("a way round");
+    assert_eq!(path.last(), Some(&to));
+    let walked = length(from, &path);
+    assert!(walked > 64.0, "walked {walked} m, through the fence: {path:?}");
+}
