@@ -22,6 +22,7 @@ use std::collections::HashMap;
 
 pub mod fences;
 pub mod stones;
+pub mod waters;
 mod ragdoll;
 mod stream;
 mod vehicle;
@@ -129,6 +130,8 @@ pub struct Physics {
     fences: fences::Fences,
     /// Stony ground, which slows a soldier on foot (`stones`).
     stones: stones::Stones,
+    /// Open water, which a light car planes over at speed and everything wheeled wades through (`waters`).
+    waters: waters::Waters,
 }
 
 /// Height of the top of the invisible boundary walls around the playable square, metres above
@@ -425,6 +428,7 @@ impl Physics {
         for (col, row, stones) in &world.stones {
             physics.stones.set((*col, *row), stones.clone());
         }
+        physics.waters = waters::Waters::of_world(world);
         Ok(physics)
     }
 
@@ -483,6 +487,7 @@ impl Physics {
             obstacles: std::collections::BTreeMap::new(),
             fences: fences::Fences::default(),
             stones: stones::Stones::default(),
+            waters: waters::Waters::default(),
         }
     }
 

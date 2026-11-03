@@ -77,6 +77,26 @@ pub struct Spec {
     /// Seconds its steering takes to swing from straight to full lock, so that a key held down eases
     /// into a turn rather than snapping to it. 0 swings at the usual rate, which is all but at once.
     pub steer_time: f32,
+    /// How it does on open water, for a kind light and quick enough to plane over it. `None` sinks
+    /// straight to the bed and wades there, as every other wheeled kind does.
+    pub skim: Option<Skim>,
+}
+
+/// How a wheeled kind skims over water: held up on the surface above `plane_speed`, sinking below
+/// `sink_speed`, and between the two partly held. On the surface its wheels touch nothing, so the
+/// water pushes and steers it instead.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Skim {
+    /// Below this forward speed, m/s, nothing holds it up.
+    pub sink_speed: f32,
+    /// From this forward speed, m/s, it rides on the surface.
+    pub plane_speed: f32,
+    /// The share of its engine's pull it still has on the surface.
+    pub thrust: f32,
+    /// How much of its sideways sliding the water takes out each second: low drifts.
+    pub grip: f32,
+    /// How much speed a hard turn costs on the surface: the more, the sooner carving drops it in.
+    pub bank_drag: f32,
 }
 
 /// What a driver's buttons do, beyond the stick (steer and throttle) every vehicle takes.

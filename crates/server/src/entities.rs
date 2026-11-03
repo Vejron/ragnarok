@@ -103,6 +103,7 @@ impl Trail {
 
     /// Where it was at the end of `tick`, if the trail goes back that far and it was `seated`, or not,
     /// then.
+    #[cfg(test)]
     pub fn at(&self, tick: u32, seated: bool) -> Option<[f32; 3]> {
         self.then(tick, seated).map(|(at, _)| at)
     }

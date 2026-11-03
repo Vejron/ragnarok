@@ -25,8 +25,10 @@ use shared::protocol::{DAMAGE_PARTS, DAMAGE_SLOTS, DAMAGE_WHEELS, THRUST_AIR, TH
 
 mod flight;
 mod spec;
+mod water;
 
 use flight::{assist, boost, flap, fly, fly_drone, fly_loiter, pull, roll_plane, thrust, walk, wing};
+use water::wade;
 pub use spec::half_extents;
 pub(super) use spec::{Buttons, Lift, Role, Shape, Solid, Spec, spec};
 
@@ -366,6 +368,11 @@ pub(crate) fn heavy(kind: u8) -> bool {
 pub(crate) fn extra_solids(kind: u8) -> Vec<ColliderBuilder> {
     let solids = spec(kind).solids.iter().map(|solid| ColliderBuilder::new(solid.shape(0.0)).translation(Vector::from(solid.at)));
     if heavy(kind) { solids.map(|collider| collider.collision_groups(super::plows_trees())).collect() } else { solids.collect() }
+}
+
+/// Whether a snowmobile under `controls` has its boost open: held, driving forward, with some left in `tank`.
+fn boosting(controls: CarControls, tank: Option<f32>) -> bool {
+    controls.boost && controls.throttle > 0.0 && tank.is_some_and(|tank| tank > 0.0)
 }
 
 /// How far a car's front wheels can turn at `speed` m/s, radians: the lock narrows at speed.
@@ -717,7 +724,7 @@ impl Physics {
             (0.0, BRAKE_PER_KG * mass)
         } else {
             // A snowmobile's boost opens the engine right up while there is any left.
-            let boosted = car.spec.buttons == Buttons::Sled && controls.boost && controls.throttle > 0.0 && car.tank.is_some_and(|tank| tank > 0.0);
+            let boosted = car.spec.buttons == Buttons::Sled && boosting(controls, car.tank);
             let (power, top) = if boosted { (SNOWMOBILE_BOOST_POWER, SNOWMOBILE_BOOST_SPEED) } else { (1.0, 1.0) };
             let headroom = if controls.throttle > 0.0 { pull(speed, car.spec.max_speed * top * car.condition.speed) } else { 0.5 };
             (controls.throttle * power * car.spec.engine_force / car.controller.wheels().len() as f32 * headroom * car.condition.power, 0.0)
@@ -894,12 +901,18 @@ impl Physics {
         // track is on the ground. The wheels' side grip fights any spin every tick, so the rate is
         // kept here and written back each time.
         for (id, car) in self.cars.iter_mut().filter(|(_, car)| car.spec.lift.wheeled()) {
-            let grounded = car.controller.wheels().iter().any(|wheel| wheel.raycast_info().is_in_contact);
+            let mut grounded = car.controller.wheels().iter().any(|wheel| wheel.raycast_info().is_in_contact);
             let Some(body) = self.bodies.get_mut(car.body) else { continue };
             if car.spec.lift == Lift::Wing {
                 body.reset_forces(false);
                 wing(body, car.flight, car.condition.power, grounded, self.bound, floor(id), dt);
                 continue;
+            }
+            // Open water holds it up while it skims, which is as good as being on the ground.
+            let at = body.translation();
+            if let Some(level) = self.waters.level_at(at.x, at.z) {
+                let boosted = car.spec.buttons == Buttons::Sled && boosting(car.flight, car.tank);
+                grounded |= wade(body, car.spec, car.flight, car.steer, car.condition, boosted, level, dt);
             }
             if car.spec.steer_lock > 0.0 {
                 assist(body, car.air, grounded, dt);

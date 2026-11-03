@@ -149,6 +149,7 @@ pub(super) const PLANE: VehicleDef = VehicleDef {
         roll: 0.0,
         nose: 0.0,
         steer_time: 0.0,
+        skim: None,
     },
     armor: ARMOR,
     drone: None,

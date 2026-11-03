@@ -34,7 +34,7 @@ pub mod tank;
 pub mod tupp;
 pub mod walker;
 
-pub use spec::{Buttons, Lift, Role, Shape, Solid, Spec};
+pub use spec::{Buttons, Lift, Role, Shape, Skim, Solid, Spec};
 pub use crate::armor::{ALLOY, Armor, Box3, Module, On, Part, Pen, Plate, SHEET, SOFT, Zone};
 
 #[derive(Clone, Copy, Debug)]

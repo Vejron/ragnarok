@@ -199,13 +199,9 @@ mod tests {
         Shares { pine, spruce, deciduous, noble }
     }
 
-    fn count(kinds: &[Option<u8>], kind: u8) -> usize {
-        kinds.iter().filter(|k| **k == Some(kind)).count()
-    }
-
     /// One block of the same pixel, plus any `others` over its first pixels.
     fn raster(pixel: Pixel, others: &[Pixel]) -> Species {
-        let mut pixels = vec![pixel; 9];
+        let mut pixels = [pixel; 9];
         pixels[..others.len()].copy_from_slice(others);
         let layers = std::array::from_fn(|layer| pixels.iter().map(|p| p[layer]).collect());
         Species { col0: 30, row0: 30, cols: 3, rows: 3, layers }

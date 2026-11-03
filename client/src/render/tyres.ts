@@ -35,6 +35,10 @@ const PARTICLE_RANGE = 120
 const MARK_RANGE = 200
 /** A wheel more than this above the ground under it is in the air. */
 const AIRBORNE = 0.3
+/** A hull whose underside is within this of the water surface, metres, rides on it (`skim`). */
+const SKIM_DRAFT = 0.3
+/** Slower than this, m/s, a hull on the water throws no wake. */
+const SKIM_SPEED = 5
 /** How quickly the smoothed slips and acceleration follow, per second. */
 const SMOOTHING = 12
 
@@ -78,6 +82,8 @@ export class VehicleFx {
   private down = true
   /** Whether a wheel was in water last frame. */
   private wet = false
+  /** Whether its hull rode on the water surface last frame. */
+  private skimming = false
   private airTime = 0
   private fall = 0
   private landed = 0
@@ -172,6 +178,7 @@ export class VehicleFx {
       return
     }
     this.wheels(world, layout, steer, particles, dt)
+    this.skim(world, here, particles, dt)
     if (powered && particles && world.roost && this.fx.roost) this.roost(world, world.roost, this.fx.roost, here, distance, dt)
     if (powered && particles) {
       if (this.fx.exhaust === 'castor') this.castorOil(world, here, dt)
@@ -350,6 +357,48 @@ export class VehicleFx {
       velocity: [this.side.x * rand(-2.5, 2.5) + this.velocity.x * 0.3, rand(2, 4.5), this.side.z * rand(-2.5, 2.5) + this.velocity.z * 0.3],
       life: rand(0.5, 0.9),
       size: [0.25, 1.1],
+      color: 0xeaf5ff,
+      alpha: 0.7,
+      gravity: 9.8,
+    })
+  }
+
+  /**
+   * A hull planing over open water: a rooster tail off its back, sheets of spray off its sides and
+   * rings spreading behind, and a splash where it comes down onto the surface. Its wheels touch
+   * nothing out there, so it counts as on the ground.
+   */
+  private skim(world: FxWorld, here: Vector3, particles: boolean, dt: number) {
+    const level = winter ? undefined : world.waterAt?.(here.x, here.z)
+    const [hx, hy, hz] = halfExtentsOf(this.kind)
+    const moving = Math.hypot(this.velocity.x, this.velocity.z)
+    const skimming = level !== undefined && Number.isFinite(level) && Math.abs(here.y - hy - level) < SKIM_DRAFT && moving > SKIM_SPEED
+    if (skimming) {
+      if (!this.skimming && particles && this.fall > 2) splash(world, { x: here.x, y: level, z: here.z }, Math.min(2.5, 0.8 + this.fall * 0.1), this.fall)
+      this.down = true
+      this.airTime = 0
+      this.fall = 0
+      if (particles) {
+        const tail = new Vector3(0, 0, hz).applyQuaternion(this.q).add(here)
+        const right = new Vector3(1, 0, 0).applyQuaternion(this.q)
+        const fast = Math.min(1, moving / 25)
+        if (Math.random() < dt * 30 * fast) this.wake(world, tail, level, right, 0, fast)
+        if (Math.random() < dt * 24 * fast) this.wake(world, tail, level, right, Math.random() < 0.5 ? -hx : hx, fast)
+        if (Math.random() < dt * 6) world.ripple?.({ x: tail.x, y: level + 0.02, z: tail.z }, 0.6 + hx)
+      }
+    }
+    this.skimming = skimming
+  }
+
+  /** One droplet of a skimming hull's wake from `tail`, `offset` metres to its right: straight up and back from the middle, out to the side from a corner. */
+  private wake(world: FxWorld, tail: Vector3, level: number, right: Vector3, offset: number, fast: number) {
+    const out = Math.sign(offset) * rand(1.5, 4) * fast
+    const rise = offset === 0 ? rand(3, 6) * fast : rand(1, 2.5) * fast
+    world.smoke.spawn({
+      position: [tail.x + right.x * offset, level + 0.1, tail.z + right.z * offset],
+      velocity: [this.velocity.x * 0.35 + right.x * out + rand(-0.6, 0.6), rise, this.velocity.z * 0.35 + right.z * out + rand(-0.6, 0.6)],
+      life: rand(0.5, 1.0),
+      size: offset === 0 ? [0.3, 1.4] : [0.2, 0.9],
       color: 0xeaf5ff,
       alpha: 0.7,
       gravity: 9.8,
