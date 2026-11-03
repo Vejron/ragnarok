@@ -20,7 +20,8 @@ function hash(ix: number, iz: number): number {
   return (h >>> 8) / 16777216
 }
 
-function value(x: number, z: number): number {
+/** Smooth value noise at world `(x, z)`, 0 to 1, one cell a unit. As `marshValue` in WGSL. */
+export function value(x: number, z: number): number {
   const cx = Math.floor(x), cz = Math.floor(z)
   const fx = x - cx, fz = z - cz
   const ux = fx * fx * (3 - 2 * fx), uz = fz * fz * (3 - 2 * fz)

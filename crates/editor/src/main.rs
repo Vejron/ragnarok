@@ -51,14 +51,23 @@ struct Area {
     items: Vec<serde_json::Value>,
     #[serde(default)]
     bots: Vec<serde_json::Value>,
+    /// The importer's other options (`ocad`, `osm_water`, `minimap_image`, ...), which the page
+    /// never sees: kept as they are written.
+    #[serde(flatten)]
+    rest: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Area {
-    /// The page knows nothing of the season, so a save carries it over from the file it replaces.
-    fn keep_season(&mut self, old: Option<Area>) {
-        if let (None, Some(old)) = (&self.theme, old) {
+    /// The page knows nothing of the season or the importer's other options, so a save carries them
+    /// over from the file it replaces.
+    fn keep_options(&mut self, old: Option<Area>) {
+        let Some(old) = old else { return };
+        if self.theme.is_none() {
             self.theme = old.theme;
             self.groomed_paths = old.groomed_paths;
+        }
+        for (key, value) in old.rest {
+            self.rest.entry(key).or_insert(value);
         }
     }
 }
@@ -156,7 +165,7 @@ async fn put_world(req: &mut Request, res: &mut Response) {
     }
     area.tiles.sort();
     area.tiles.dedup();
-    area.keep_season(read_area(&name));
+    area.keep_options(read_area(&name));
     let dir = worlds_dir().join(&name);
     let written = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(dir.join("area.json"), serde_json::to_vec(&area).unwrap_or_default()));
     match written {
@@ -535,12 +544,25 @@ mod tests {
     fn a_save_from_the_page_keeps_the_season() {
         let old: Area = serde_json::from_str(r#"{"tiles":[],"theme":"winter","groomed_paths":true}"#).unwrap();
         let mut sent: Area = serde_json::from_str(r#"{"tiles":[{"gx":1,"gy":2}]}"#).unwrap();
-        sent.keep_season(Some(old));
+        sent.keep_options(Some(old));
         assert_eq!((sent.theme.as_deref(), sent.groomed_paths), (Some("winter"), true));
         assert_eq!(sent.tiles.len(), 1);
         let mut new: Area = serde_json::from_str(r#"{"tiles":[]}"#).unwrap();
-        new.keep_season(None);
+        new.keep_options(None);
         assert_eq!((new.theme, new.groomed_paths), (None, false));
+    }
+
+    #[test]
+    fn a_save_from_the_page_keeps_the_orienteering_map() {
+        let old: Area = serde_json::from_str(r#"{"tiles":[],"ocad":"maps/a.ocd","ocad_shift":[1,2],"osm_water":true,"minimap_image":"maps/a.jpg"}"#).unwrap();
+        let mut sent: Area = serde_json::from_str(r#"{"tiles":[{"gx":1,"gy":2}],"cell":1,"spawns":[],"vehicles":[],"items":[],"bots":[]}"#).unwrap();
+        sent.keep_options(Some(old));
+        let saved: serde_json::Value = serde_json::from_slice(&serde_json::to_vec(&sent).unwrap()).unwrap();
+        assert_eq!(saved["ocad"], "maps/a.ocd");
+        assert_eq!(saved["ocad_shift"], serde_json::json!([1, 2]));
+        assert_eq!(saved["osm_water"], true);
+        assert_eq!(saved["minimap_image"], "maps/a.jpg");
+        assert_eq!(saved["cell"], 1.0);
     }
 
     #[test]

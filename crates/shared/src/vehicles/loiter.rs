@@ -37,6 +37,8 @@ const LOITERING: DroneDef = DroneDef {
     knock: LOITER_KNOCK,
     pop_radius: LOITER_POP_RADIUS,
     pop_damage: LOITER_POP_DAMAGE,
+    crater: LOITER_CRATER,
+    pop_crater: LOITER_POP_CRATER,
     impact_dv: LOITER_IMPACT_DV,
     proximity: LOITER_PROXIMITY,
     fall_ticks: LOITER_FALL_TICKS,

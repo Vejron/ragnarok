@@ -515,6 +515,9 @@ pub const DRONE_LAUNCH_UP: f32 = 0.5;
 pub const DRONE_BLAST_RADIUS: f32 = 4.0;
 pub const DRONE_DAMAGE: f32 = 120.0;
 pub const DRONE_KNOCK: f32 = 10.0;
+/// The crater (radius, depth, metres) its charge digs on the ground, and its pop's.
+pub const DRONE_CRATER: [f32; 2] = [3.2, 0.5];
+pub const DRONE_POP_CRATER: [f32; 2] = [1.2, 0.2];
 /// Shot down, it only pops.
 pub const DRONE_POP_RADIUS: f32 = 1.5;
 pub const DRONE_POP_DAMAGE: f32 = 20.0;
@@ -537,6 +540,9 @@ pub const LOITER_LAUNCH_UP: f32 = 100.0;
 pub const LOITER_BLAST_RADIUS: f32 = 12.0;
 pub const LOITER_DAMAGE: f32 = 300.0;
 pub const LOITER_KNOCK: f32 = 25.0;
+/// The crater (radius, depth, metres) its warhead digs on the ground, and its pop's.
+pub const LOITER_CRATER: [f32; 2] = [9.6, 1.8];
+pub const LOITER_POP_CRATER: [f32; 2] = [3.2, 0.5];
 /// Shot down, its warhead only partly goes off.
 pub const LOITER_POP_RADIUS: f32 = 4.0;
 pub const LOITER_POP_DAMAGE: f32 = 60.0;

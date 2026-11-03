@@ -57,6 +57,7 @@ const MAT_CRATERS = 32u;
 const MAT_SNOW = 64u;
 const MAT_MARSH = 128u;
 const MAT_STONES = 256u;
+const MAT_WORN = 512u;
 const SNOW_COLOR = vec3f(0.93, 0.95, 0.98);
 const SNOW_ROCK = vec3f(0.3, 0.31, 0.33);
 const OBJ_RECEIVE_SHADOW = 1u;

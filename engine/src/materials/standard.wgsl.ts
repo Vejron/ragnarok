@@ -3,6 +3,7 @@ import { MARSH_WGSL } from './marsh.wgsl'
 import { STONES_WGSL } from './stones.wgsl'
 import { SUN_SHADOW_WGSL } from './sunshadow.wgsl'
 import { VERTEX_WGSL } from './vertex.wgsl'
+import { WORN_WGSL } from './worn.wgsl'
 
 /**
  * The shader for every ordinary mesh. Toon lighting matches three's MeshToonMaterial with a gradient
@@ -27,6 +28,7 @@ ${VERTEX_WGSL}
 ${SUN_SHADOW_WGSL}
 ${MARSH_WGSL}
 ${STONES_WGSL}
+${WORN_WGSL}
 
 // The craters' marks (linear colours): bare earth in the bowl, char, and the soil thrown out round the rim.
 const CRATER_EARTH = vec3f(0.22, 0.14, 0.075);
@@ -59,6 +61,13 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   var rgb = in.color.rgb * texel.rgb;
   if ((flags & MAT_NORMAL_TONE) != 0u) {
     rgb *= normalTexel.a * 2.0;
+  }
+  if ((flags & MAT_WORN) != 0u) {
+    let worn = wornLook(rgb, in.world.xz, in.custom.x, in.custom.y, pixel);
+    if (!worn.keep) {
+      discard;
+    }
+    rgb = worn.rgb;
   }
   var marks = CraterMark(vec2f(0.0), 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0);
   if ((flags & MAT_CRATERS) != 0u) {

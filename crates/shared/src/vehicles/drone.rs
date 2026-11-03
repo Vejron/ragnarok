@@ -36,6 +36,8 @@ pub(super) const FPV: &DroneDef = &DroneDef {
     knock: DRONE_KNOCK,
     pop_radius: DRONE_POP_RADIUS,
     pop_damage: DRONE_POP_DAMAGE,
+    crater: DRONE_CRATER,
+    pop_crater: DRONE_POP_CRATER,
     impact_dv: DRONE_IMPACT_DV,
     proximity: DRONE_PROXIMITY,
     fall_ticks: DRONE_FALL_TICKS,

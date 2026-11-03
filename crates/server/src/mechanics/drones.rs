@@ -92,7 +92,7 @@ fn detonate(world: &mut World, vid: u32) {
     let owner = drone.owner;
     let def = drone_def(drone.kind);
     let attacker = world.entities.has::<Player>(owner).then_some(owner);
-    burst(world, vid, attacker, def.weapon, def, def.blast_radius, def.damage, def.knock);
+    burst(world, vid, attacker, def.weapon, def, def.blast_radius, def.damage, def.knock, def.crater);
     tracing::debug!(vid, owner, "drone went off");
 }
 
@@ -102,19 +102,21 @@ pub(super) fn pop(world: &mut World, vid: u32) {
     let attacker = world.entities.get::<HurtBy>(vid).map(|by| by.0);
     let kind = world.entities.get::<Drone>(vid).map_or(KIND_DRONE, |drone| drone.kind);
     let def = drone_def(kind);
-    burst(world, vid, attacker, def.pop_shown_as, def, def.pop_radius, def.pop_damage, def.knock * 0.3);
+    burst(world, vid, attacker, def.pop_shown_as, def, def.pop_radius, def.pop_damage, def.knock * 0.3, def.pop_crater);
     tracing::debug!(vid, "drone shot down");
 }
 
-/// Removes drone `vid` and puts a blast where it was, credited as `def.weapon`. It is gone before the
-/// blast, which so never finds it.
+/// Removes drone `vid` and puts a blast where it was, credited as `def.weapon`, digging `crater` if it
+/// was on the ground. It is gone before the blast, which so never finds it.
 #[allow(clippy::too_many_arguments)]
-fn burst(world: &mut World, vid: u32, attacker: Option<u32>, shown_as: u8, def: &DroneDef, radius: f32, damage: f32, knock: f32) {
+fn burst(world: &mut World, vid: u32, attacker: Option<u32>, shown_as: u8, def: &DroneDef, radius: f32, damage: f32, knock: f32, crater: [f32; 2]) {
     let Some(pose) = world.physics.car_pose(vid) else { return };
     remove(world, vid);
     let [x, y, z] = pose.position.map(to_cm);
     world.shots.push(ShotEvent { shooter: attacker.unwrap_or(0), weapon: shown_as, x, y, z });
     blast(world, Blast { point: pose.position, radius, damage, knock, dir: [0.0, 1.0, 0.0], attacker, weapon: def.weapon });
+    // After the blast, as a shell's, so a building it bit has stood on the old ground when it fell.
+    world.dig_crater(pose.position, crater[0], crater[1]);
 }
 
 /// What becomes of drone `vid` this tick.

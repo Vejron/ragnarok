@@ -136,9 +136,16 @@ pub fn fit(footprint: &[P], points: &[[f64; 4]]) -> Option<Roof> {
         let (u, v) = frame.to_uv([p[0], p[1]]);
         Obs { u, v, y: p[2] }
     };
-    // Foliage returns more than once; a roof is one return. Keep the single returns when enough are left.
+    // Foliage returns more than once; a roof is one return. Keep the single returns when enough are
+    // left, else the last ones: under a crown, what a pulse hits last is the roof.
+    let enough = |obs: &Vec<Obs>| obs.len() >= MIN_POINTS && obs.len() as f64 >= 0.3 * area;
     let singles: Vec<Obs> = points.iter().filter(|p| (p[3] as u8) >> 4 <= 1).map(to_obs).collect();
-    let mut obs: Vec<Obs> = if singles.len() >= MIN_POINTS && singles.len() as f64 >= 0.3 * area { singles } else { points.iter().map(to_obs).collect() };
+    let lasts = || -> Vec<Obs> { points.iter().filter(|p| (p[3] as u8) & 0x0f == (p[3] as u8) >> 4).map(to_obs).collect() };
+    let mut obs: Vec<Obs> = if enough(&singles) {
+        singles
+    } else {
+        Some(lasts()).filter(enough).unwrap_or_else(|| points.iter().map(to_obs).collect())
+    };
     // Whatever still stands well above the first fit is a tree, an antenna or a chimney stack.
     let (first, _) = model(&obs, &frame);
     let keep: Vec<Obs> = obs
@@ -155,6 +162,11 @@ pub fn fit(footprint: &[P], points: &[[f64; 4]]) -> Option<Roof> {
         obs = keep;
     }
     Some(tree(&obs, &frame, MAX_DEPTH).0)
+}
+
+/// Half the short side of the smallest rectangle around `footprint`, metres.
+pub fn half_width(footprint: &[P]) -> Option<f64> {
+    Frame::around(footprint).map(|frame| frame.half[1])
 }
 
 /// Fewest returns in a part of a roof.
@@ -874,6 +886,19 @@ mod tests {
     fn too_few_returns_make_no_fit() {
         let footprint = rectangle(10.0, 10.0, 0.0, [0.0, 0.0]);
         assert_eq!(fit(&footprint, &[[0.0, 0.0, 5.0, 0.0]; 3]), None);
+    }
+
+    #[test]
+    fn a_crown_over_the_whole_roof_is_seen_through() {
+        // A 6 × 8 cottage wholly under a crown 17 m up: every pulse hits the crown, then the roof.
+        let footprint = rectangle(8.0, 6.0, 0.0, [0.0, 0.0]);
+        let truth = Shape::Gable { y: 5.0, at: [0.0, 0.0], ridge: [1.0, 0.0], pitch: 0.6 };
+        let points: Vec<[f64; 4]> = sample(&footprint, &truth)
+            .into_iter()
+            .flat_map(|[x, z, y, _]| [[x, z, 17.0 + (x * z).sin(), f64::from(1 | 2 << 4)], [x, z, y, f64::from(2 | 2 << 4)]])
+            .collect();
+        let Shape::Gable { y, .. } = leaf(fit(&footprint, &points)) else { panic!("not a gable") };
+        assert!((y - 5.0).abs() < 0.5, "the crown pulled the ridge to {y}");
     }
 
     #[test]

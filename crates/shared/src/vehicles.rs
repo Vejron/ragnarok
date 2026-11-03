@@ -90,6 +90,9 @@ pub struct DroneDef {
     pub knock: f32,
     pub pop_radius: f32,
     pub pop_damage: f32,
+    /// The craters (radius, depth, metres) its blast and its pop dig where they burst on the ground.
+    pub crater: [f32; 2],
+    pub pop_crater: [f32; 2],
     pub impact_dv: f32,
     pub proximity: f32,
     pub fall_ticks: u32,

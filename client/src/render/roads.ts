@@ -1,6 +1,7 @@
 import { ROAD_FAINT, ROAD_GRAVEL, ROAD_MAJOR, ROAD_MINOR, ROAD_PATH, ROAD_TRACK, type Road } from '@/world'
 import { winter } from './season'
 import { toneOf, type GroundShade } from './shade'
+import { value } from './marshnoise'
 
 /*
  * Roads as ribbons draped on the ground, as plain arrays: built in the tile worker
@@ -14,8 +15,8 @@ const ROAD_COLORS: Record<number, [number | null, number]> = {
   [ROAD_MINOR]: [0xbdbdbd, 0xffffff],
   [ROAD_PATH]: [null, 0xd8b98a],
   [ROAD_GRAVEL]: [null, 0xc9bca4],
-  // Two ruts: the dirt, then the grass that grows between them.
-  [ROAD_TRACK]: [0xb79a72, 0x7fa25a],
+  // A path wide enough to drive: the same worn dirt.
+  [ROAD_TRACK]: [null, 0xd8b98a],
   [ROAD_FAINT]: [null, 0xa9a274],
 }
 /** Ploughed: packed snow with a little grit in it. */
@@ -30,8 +31,6 @@ const WINTER_ROAD_COLORS: Record<number, [number | null, number | null]> = {
 }
 /** How much wider than the road its casing is, metres. */
 const CASING = 0.8
-/** A track's casing is its full width, and its fill the grass down the middle, this share of it. */
-const TRACK_MIDDLE = 0.35
 /** Along-road spacing of cross-sections, so a ribbon follows the ground's bumps, metres. */
 const SPACING = 1
 /** Largest gap between vertices across a road, and between a disc's rings, metres. */
@@ -41,18 +40,31 @@ const DISC = 12
 /** Paths first, so the wider roads are drawn over them at junctions. */
 const RANK: Record<number, number> = { [ROAD_FAINT]: 0, [ROAD_PATH]: 0, [ROAD_TRACK]: 0, [ROAD_GRAVEL]: 1, [ROAD_MINOR]: 1, [ROAD_MAJOR]: 2 }
 const KINDS = [ROAD_FAINT, ROAD_PATH, ROAD_TRACK, ROAD_GRAVEL, ROAD_MINOR, ROAD_MAJOR]
+/** How raggedly a worn kind's edges break up into the ground beside it (`Material.worn`), 0 to 1. */
+const RAGGED: Record<number, number> = { [ROAD_FAINT]: 1, [ROAD_PATH]: 0.6, [ROAD_TRACK]: 0.45 }
+/** How much a worn path's width strays either way, as a share of it, and over how many metres it changes. */
+const WIDTH_JITTER = 0.3
+const WIDTH_SPAN = 9
+
+/** A worn path's half width `half` where it passes `(x, z)`: wider and narrower by turns, the same in every tile. */
+function wornHalf(half: number, x: number, z: number): number {
+  return half * (1 + WIDTH_JITTER * (2 * value(x / WIDTH_SPAN + 71, z / WIDTH_SPAN + 23) - 1))
+}
 
 /** Half the width of a road's casing (`pass` 0) or fill (1), metres. */
 function halfWidth(road: Road, pass: 0 | 1): number {
-  if (road.kind === ROAD_TRACK) return (pass === 0 ? road.width : road.width * TRACK_MIDDLE) / 2
   return (road.width + (pass === 0 ? CASING : 0)) / 2
 }
 
-/** One layer's triangles: corners in metres, a normal and a grey tone a vertex, and indices. */
+/**
+ * One layer's triangles: corners in metres, a normal and a grey tone a vertex, and indices. A worn
+ * layer's `custom` has where across the ribbon each vertex is (-1 to 1) and how ragged its edges are.
+ */
 export interface RibbonBuffers {
   positions: Float32Array
   normals: Float32Array
   colors: Float32Array
+  custom?: Float32Array
   indices: Uint32Array
 }
 
@@ -95,22 +107,32 @@ export class Layer {
   private readonly positions = new Triples(new Float32Array(3 * 1024))
   private readonly normals = new Triples(new Float32Array(3 * 1024))
   private readonly colors = new Triples(new Float32Array(3 * 1024))
+  /** A worn layer's `custom`, four a vertex: across, ragged, 0, 0. */
+  private readonly custom: number[] = []
   private readonly indices = new Triples(new Uint32Array(3 * 1024))
 
   constructor(
     private readonly lift: number,
     /** The tile's shading, shared by its layers (`GroundShade`). */
     private readonly shade: GroundShade,
+    /** A worn path's: how raggedly its edges break up (`Material.worn`), or null for a layer drawn whole. */
+    private readonly ragged: number | null = null,
   ) {}
 
-  /** A vertex on the ground at `(x, z)`, raised by `lift` (the layer's own unless given). */
-  vertex(x: number, z: number, lift = this.lift) {
+  /**
+   * A vertex on the ground at `(x, z)`, raised by `lift` (the layer's own unless given). `across` is
+   * where it is across the ribbon, -1 to 1, for a worn layer's edges.
+   */
+  vertex(x: number, z: number, lift = this.lift, across = 0) {
     const normal = this.shade.normal(x, z)
     const y = this.shade.height(x, z)
     const tone = toneOf(normal, y, this.shade.mean(x, z), x, z)
     this.positions.push(x, y + lift, z)
     this.normals.push(normal[0], normal[1], normal[2])
     this.colors.push(tone, tone, tone)
+    if (this.ragged !== null) {
+      this.custom.push(across, this.ragged, 0, 0)
+    }
     return this.positions.length / 3 - 1
   }
 
@@ -131,7 +153,7 @@ export class Layer {
       const r = (radius * k) / rings
       const ring = Array.from({ length: DISC }, (_, i) => {
         const angle = (i / DISC) * Math.PI * 2
-        return this.vertex(x + Math.cos(angle) * r, z + Math.sin(angle) * r)
+        return this.vertex(x + Math.cos(angle) * r, z + Math.sin(angle) * r, this.lift, k / rings)
       })
       for (let i = 0; i < DISC; i++) {
         const next = (i + 1) % DISC
@@ -156,15 +178,16 @@ export class Layer {
     const px = -(bz - az) / length
     const pz = (bx - ax) / length
     const parts = Math.max(1, Math.ceil(length / SPACING))
-    const across = Math.max(2, Math.ceil((2 * half) / ACROSS))
+    const across = Math.max(2, Math.ceil((2 * half * (this.ragged === null ? 1 : 1 + WIDTH_JITTER)) / ACROSS))
     let previous: number[] | null = null
     for (let k = 0; k <= parts; k++) {
       const x = ax + ((bx - ax) * k) / parts
       const z = az + ((bz - az) * k) / parts
+      const width = this.ragged === null ? half : wornHalf(half, x, z)
       const section: number[] = []
       for (let j = 0; j <= across; j++) {
-        const side = ((2 * j) / across - 1) * half
-        section.push(this.vertex(x + px * side, z + pz * side))
+        const t = (2 * j) / across - 1
+        section.push(this.vertex(x + px * t * width, z + pz * t * width, this.lift, t))
       }
       if (previous) {
         for (let j = 0; j < across; j++) {
@@ -179,7 +202,8 @@ export class Layer {
   /** The layer as a ribbon drawn in `color` with depth bias `offset`, or null when it has no triangles. */
   ribbon(color: number, offset: number): Ribbon | null {
     if (this.indices.length === 0) return null
-    const buffers = { positions: this.positions.array(), normals: this.normals.array(), colors: this.colors.array(), indices: this.indices.array() }
+    const buffers: RibbonBuffers = { positions: this.positions.array(), normals: this.normals.array(), colors: this.colors.array(), indices: this.indices.array() }
+    if (this.ragged !== null) buffers.custom = new Float32Array(this.custom)
     return { buffers, color, offset }
   }
 }
@@ -199,7 +223,7 @@ export function roadRibbons(roads: readonly Road[], shade: GroundShade, border: 
       const color = colors[pass]
       if (color === null || color === undefined) continue
       const rank = RANK[kind]!
-      const layer = new Layer((pass === 0 ? 0.05 : 0.07) + rank * 0.005, shade)
+      const layer = new Layer((pass === 0 ? 0.05 : 0.07) + rank * 0.005, shade, RAGGED[kind] ?? null)
       for (const road of roads) {
         if (road.kind !== kind) continue
         const half = halfWidth(road, pass)
@@ -207,7 +231,7 @@ export function roadRibbons(roads: readonly Road[], shade: GroundShade, border: 
         for (let i = 0; i + 1 < points.length; i++) layer.segment(points[i]![0], points[i]![1], points[i + 1]![0], points[i + 1]![1], half)
         for (const [x, z] of points) {
           const onBorder = Math.abs(x - border[0]) < 0.01 || Math.abs(x - border[2]) < 0.01 || Math.abs(z - border[1]) < 0.01 || Math.abs(z - border[3]) < 0.01
-          if (!onBorder) layer.disc(x, z, half)
+          if (!onBorder) layer.disc(x, z, RAGGED[kind] === undefined ? half : wornHalf(half, x, z))
         }
       }
       const ribbon = layer.ribbon(color, (pass === 0 ? 8 : 20) + rank * 2)

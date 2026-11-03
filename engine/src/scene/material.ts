@@ -44,6 +44,11 @@ export interface MaterialParams {
    * field's blocks rather than cobbles. Sampled at the geometry's uv; the stones are drawn in the shader.
    */
   stones?: Texture | null
+  /**
+   * A worn path's ribbon: the geometry's custom x runs -1 to 1 across it and y is how ragged its edges
+   * are (0 to 1). The edges break up into the ground beside it and the dirt is mottled, in the shader.
+   */
+  worn?: boolean
   ramp?: Ramp | null
   blend?: Blend
   side?: Side
@@ -76,6 +81,7 @@ export class Material {
   snow: boolean
   marsh: boolean
   stones: Texture | null
+  worn: boolean
   ramp: Ramp | null
   blend: Blend
   side: Side
@@ -104,6 +110,7 @@ export class Material {
     this.snow = params.snow ?? false
     this.marsh = params.marsh ?? false
     this.stones = params.stones ?? null
+    this.worn = params.worn ?? false
     this.ramp = params.ramp ?? null
     this.blend = params.blend ?? 'opaque'
     this.side = params.side ?? 'front'
@@ -136,6 +143,7 @@ export class Material {
       snow: this.snow,
       marsh: this.marsh,
       stones: this.stones,
+      worn: this.worn,
       ramp: this.ramp,
       blend: this.blend,
       side: this.side,

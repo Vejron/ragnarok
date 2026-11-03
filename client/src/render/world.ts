@@ -29,10 +29,12 @@ const ribbonMaterials = new Map<string, Material>()
  */
 function ribbonMeshes(ribbons: readonly Ribbon[]): Mesh[] {
   return ribbons.map(({ buffers, color, offset }) => {
-    const key = `${color}:${offset}`
+    // A worn path's ribbon carries where across it each vertex is, for its ragged edges.
+    const worn = buffers.custom !== undefined
+    const key = `${color}:${offset}:${worn}`
     let material = ribbonMaterials.get(key)
     if (!material) {
-      material = toonMaterial({ color, ramp: TERRAIN_RAMP, vertexColors: true, depthBias: offset, depthBiasSlope: 2, craters: true })
+      material = toonMaterial({ color, ramp: TERRAIN_RAMP, vertexColors: true, depthBias: offset, depthBiasSlope: 2, craters: true, worn })
       ribbonMaterials.set(key, material)
     }
     const mesh = new Mesh(new Geometry(buffers), material)
