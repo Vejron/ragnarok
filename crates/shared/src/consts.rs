@@ -10,6 +10,7 @@ pub use crate::vehicles::mortar::*;
 pub use crate::vehicles::pak::*;
 pub use crate::vehicles::plane::*;
 pub use crate::vehicles::roadster::*;
+pub use crate::vehicles::snowmobile::*;
 pub use crate::vehicles::sports::*;
 pub use crate::vehicles::strv::*;
 pub use crate::vehicles::tank::*;
@@ -51,6 +52,8 @@ pub const KIND_PAK: u8 = 14;
 pub const KIND_BACKPACK: u8 = 15;
 /// The tupp: a giant robot Hedemora rooster on the hen's legs and wings, with laser eyes. One seat.
 pub const KIND_TUPP: u8 = 16;
+/// The snowmobile: a mountain sled for two that tows a Pak or a mortar up slopes no car can climb.
+pub const KIND_SNOWMOBILE: u8 = 17;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;

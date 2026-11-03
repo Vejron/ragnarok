@@ -1,5 +1,5 @@
 import {
-  JEEP_AXLE_Z, JEEP_MAX_STEER, JEEP_RIDE_HEIGHT, JEEP_TRACK_HALF, SPORTS_AXLE_Z, SPORTS_MAX_STEER, SPORTS_RIDE_HEIGHT, SPORTS_TRACK_HALF,
+  JEEP_AXLE_Z, JEEP_MAX_STEER, JEEP_RIDE_HEIGHT, JEEP_TRACK_HALF, SNOWMOBILE_AXLE_Z, SNOWMOBILE_MAX_STEER, SNOWMOBILE_RIDE_HEIGHT, SNOWMOBILE_TRACK_HALF, SPORTS_AXLE_Z, SPORTS_MAX_STEER, SPORTS_RIDE_HEIGHT, SPORTS_TRACK_HALF,
   TANK_AXLES_Z, TANK_TRACK_HALF, PLANE_AXLES_Z, PLANE_MAX_STEER, PLANE_TRACK_HALF,
 } from './consts'
 
@@ -29,6 +29,13 @@ function corners(track: number, front: number, back: number, ride: number): (rea
 /** A car's four wheels; the walker, the hen, the drones and the mortar use the jeep's too (`kinds/`). */
 export const JEEP_WHEELS: WheelLayout = { contacts: corners(JEEP_TRACK_HALF, -JEEP_AXLE_Z, JEEP_AXLE_Z, JEEP_RIDE_HEIGHT), steered: 2, maxSteer: JEEP_MAX_STEER, width: 0.32 }
 export const SPORTS_WHEELS: WheelLayout = { contacts: corners(SPORTS_TRACK_HALF, -SPORTS_AXLE_Z, SPORTS_AXLE_Z, SPORTS_RIDE_HEIGHT), steered: 2, maxSteer: SPORTS_MAX_STEER, width: 0.26 }
+/** The snowmobile's two skis, then its track: a wide mark from the middle of the sled to its tail. */
+export const SNOWMOBILE_WHEELS: WheelLayout = {
+  contacts: [[-SNOWMOBILE_TRACK_HALF, -SNOWMOBILE_RIDE_HEIGHT, -SNOWMOBILE_AXLE_Z], [SNOWMOBILE_TRACK_HALF, -SNOWMOBILE_RIDE_HEIGHT, -SNOWMOBILE_AXLE_Z], [-0.1, -SNOWMOBILE_RIDE_HEIGHT, SNOWMOBILE_AXLE_Z], [0.1, -SNOWMOBILE_RIDE_HEIGHT, SNOWMOBILE_AXLE_Z]],
+  steered: 2,
+  maxSteer: SNOWMOBILE_MAX_STEER,
+  width: 0.2,
+}
 /** A track lays its mark from end to end; the corners stand in for it. The Strv S's are the tank's. */
 export const TRACK_WHEELS: WheelLayout = { contacts: corners(TANK_TRACK_HALF, TANK_AXLES_Z[0], TANK_AXLES_Z[2], TANK_RIDE_HEIGHT), steered: 0, maxSteer: 0, width: 0.55 }
 

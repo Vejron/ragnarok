@@ -6,6 +6,7 @@
  */
 
 import type { VehicleModel } from '@/render/car'
+import type { RoostStyle } from '@/render/snowroost'
 import type { RideView, SeatView } from '@/seats'
 import type { Engine } from '@/sim/engine'
 import type { WheelLayout } from '@/sim/slip'
@@ -34,6 +35,16 @@ export interface KindFx {
   backfire?: true
   /** Where its engine is, in the hull's frame: where a hurt one smokes from. */
   bay: readonly [number, number, number]
+  /** A track that throws up snow when it digs in, in a winter world (`SnowRoost`). */
+  roost?: Roost
+}
+
+/** Where a track throws its snow and how hard it must pull to: past the tail of each track, in the hull's frame. */
+export interface Roost extends RoostStyle {
+  /** (x, z) in the hull's frame, behind the end of each track. */
+  at: readonly (readonly [number, number])[]
+  /** Acceleration along its nose where the snow starts flying, and where it is at its thickest, m/s². */
+  accel: readonly [number, number]
 }
 
 export interface VehicleKind {

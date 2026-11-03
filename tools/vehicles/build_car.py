@@ -51,6 +51,8 @@ SPECS = {
     "sports": dict(half=(0.95, 0.3, 2.2), wheel_radius=0.32, wheel_width=0.26, track=0.82, axle=1.45, ride=0.397),
     # ROADSTER_*: the sports car's chassis and wheels under a different body.
     "roadster": dict(half=(0.95, 0.3, 2.2), wheel_radius=0.32, wheel_width=0.28, track=0.82, axle=1.45, ride=0.397),
+    # SNOWMOBILE_*: `track` is half the ski stance, `axle` where the skis and the rear idlers are.
+    "snowmobile": dict(half=(0.55, 0.3, 1.6), wheel_radius=0.22, wheel_width=0.16, track=0.55, axle=1.2, ride=0.559),
 }
 
 MATERIAL_COLORS = {
@@ -282,7 +284,98 @@ def build_roadster():
     return [body_obj, *wheels]
 
 
-BUILDERS = {"jeep": build_jeep, "sports": build_sports, "roadster": build_roadster}
+# --------------------------------------------------------------------------------------------------
+# The snowmobile: a modern mountain sled. A sharp, narrow, rider-forward body over a long deep-lugged
+# track, two skis on A-arms, tall risers and a long tandem seat. The skis hang from `pivot_FL/FR` and
+# steer but do not roll (there are no `wheel_F*`); the rear idlers inside the track are `wheel_RL/RR`.
+# --------------------------------------------------------------------------------------------------
+def build_snowmobile():
+    spec = SPECS["snowmobile"]
+    ground = -spec["ride"]
+    body = Part("body")
+    # The track: a side profile (y, z) of the belt in its tunnel, from the tail up over the rear idlers,
+    # flat along the ground, then rising to the drive sprocket under the footwells.
+    track = [(-1.68, ground + 0.16), (-1.58, ground + 0.02), (0.15, ground + 0.02), (0.55, ground + 0.24), (0.45, -0.12), (-1.62, -0.12)]
+    body.prism(track, -0.19, 0.19, DARK)
+    # Deep paddles under the belt and over its return run.
+    y = -1.55
+    while y < 0.12:
+        body.box((0.0, y, ground + 0.01), (0.4, 0.035, 0.06), DARK)
+        y += 0.13
+    for k in range(8):
+        body.box((0.0, -1.5 + k * 0.2, -0.105), (0.4, 0.04, 0.04), DARK)
+    # The tunnel over the track, its cooler fins, the snowflap and the tail light at its end.
+    body.box((0.0, -0.75, -0.06), (0.48, 1.9, 0.08), PAINT)
+    mirrored(body, 0.23, -0.75, -0.14, (0.03, 1.9, 0.18), PAINT)
+    body.box((0.0, -1.62, -0.36), (0.46, 0.02, 0.36), DARK)
+    body.box((0.0, -1.68, -0.08), (0.24, 0.05, 0.05), RED)
+    # Running boards: open steel footwells either side of the tunnel.
+    mirrored(body, 0.37, -0.15, -0.12, (0.24, 1.1, 0.025), STEEL)
+    mirrored(body, 0.49, -0.15, -0.1, (0.025, 1.1, 0.05), STEEL)
+    # The belly pan and the engine bay's side panels, under a sharp angular hood.
+    body.prism([(0.25, -0.3), (1.55, -0.3), (1.85, -0.18), (1.85, -0.06), (0.25, -0.06)], -0.4, 0.4, DARK)
+    body.prism([(0.25, -0.06), (1.85, -0.06), (1.7, 0.08), (1.1, 0.26), (0.7, 0.34), (0.25, 0.34)], -0.42, 0.42, PAINT)
+    # The nose: a narrower wedge proud of the hood, like a modern sled's pointed front.
+    body.prism([(1.2, 0.0), (2.0, -0.14), (2.02, -0.04), (1.45, 0.24), (1.2, 0.28)], -0.24, 0.24, PAINT)
+    # White graphics down both sides of the hood, and vents.
+    mirrored(body, 0.425, 1.05, 0.08, (0.01, 0.9, 0.06), WHITE, rx=0.22)
+    for y in (0.55, 0.7, 0.85):
+        mirrored(body, 0.425, y, -0.02, (0.012, 0.06, 0.18), DARK)
+    # LED headlights: two slim strips in the nose and a centre lamp.
+    for side in (-1, 1):
+        body.box((side * 0.14, 1.84, 0.0), (0.16, 0.05, 0.035), LAMP, rx=-0.5)
+    body.box((0.0, 1.93, -0.08), (0.12, 0.04, 0.03), LAMP)
+    # A tall, narrow windscreen leaned back over the gauge.
+    body.box((0.0, 0.76, 0.56), (0.46, 0.025, 0.46), GLASS, rx=0.4)
+    body.box((0.0, 0.62, 0.38), (0.16, 0.12, 0.06), DARK)
+    # Front bumper loop, and the A-arms and shocks that carry the skis.
+    body.cylinder((0.0, 1.98, -0.2), 0.022, 0.7, STEEL, axis="X", segments=6)
+    for side in (-1, 1):
+        for y in (spec["axle"] - 0.12, spec["axle"] + 0.12):
+            body.box((side * 0.32, y, -0.3), (0.36, 0.04, 0.035), STEEL)
+        body.cylinder((side * 0.36, spec["axle"], -0.12), 0.035, 0.36, RED, axis="Z", segments=8)
+    # Tall risers to wide handlebars with hand guards, and the grips.
+    body.cylinder((0.0, 0.5, 0.55), 0.03, 0.42, STEEL, axis="Z", segments=8)
+    body.cylinder((0.0, 0.48, 0.77), 0.018, 0.82, STEEL, axis="X", segments=6)
+    for side in (-1, 1):
+        body.cylinder((side * 0.36, 0.48, 0.77), 0.026, 0.12, DARK, axis="X", segments=6)
+        body.box((side * 0.4, 0.56, 0.8), (0.03, 0.18, 0.12), PAINT)
+    # The long, thin tandem seat, rising behind for the passenger, with a grab handle and a rack.
+    body.box((0.0, -0.25, 0.4), (0.32, 1.1, 0.14), DARK)
+    body.box((0.0, -0.95, 0.48), (0.32, 0.5, 0.18), DARK)
+    # The seat's base on the tunnel: slim side panels, tapering in at the tail.
+    body.prism([(0.3, -0.02), (0.3, 0.34), (-1.2, 0.34), (-1.45, 0.2), (-1.45, -0.02)], -0.2, 0.2, PAINT)
+    body.prism([(0.3, -0.02), (0.3, 0.2), (-0.6, 0.2), (-0.6, -0.02)], -0.22, 0.22, WHITE)
+    body.box((0.0, -1.24, 0.6), (0.3, 0.04, 0.12), STEEL)
+    mirrored(body, 0.17, -1.42, 0.38, (0.025, 0.4, 0.025), STEEL)
+    body.box((0.0, -1.62, 0.38), (0.36, 0.025, 0.025), STEEL)
+    body_obj = body.build()
+
+    built = [body_obj]
+    # The skis: long and narrow with an upturned tip, a keel and a spindle up to the A-arms.
+    z = spec["wheel_radius"] - spec["ride"]
+    for side, x in (("L", -spec["track"]), ("R", spec["track"])):
+        pivot = empty(f"pivot_F{side}", (x, spec["axle"], z))
+        ski = Part(f"ski_F{side}", parent=pivot)
+        floor = -spec["wheel_radius"]
+        ski.box((0.0, -0.05, floor + 0.025), (0.16, 1.15, 0.04), DARK)
+        ski.box((0.0, 0.6, floor + 0.09), (0.15, 0.22, 0.035), DARK, rx=0.75)
+        ski.box((0.0, -0.05, floor + 0.005), (0.03, 1.0, 0.02), STEEL)
+        ski.box((0.0, 0.0, floor + 0.08), (0.06, 0.2, 0.09), PAINT)
+        ski.cylinder((0.0, 0.0, floor + 0.2), 0.03, 0.26, STEEL, axis="Z", segments=6)
+        built.append(ski.build())
+    # The rear idlers inside the track, which roll.
+    for side, x in (("L", -0.22), ("R", 0.22)):
+        pivot = empty(f"pivot_R{side}", (x, -spec["axle"], z))
+        wheel = Part(f"wheel_R{side}", parent=pivot)
+        wheel.cylinder((0, 0, 0), 0.19, 0.05, STEEL, axis="X", segments=12)
+        wheel.box((0, 0, 0), (0.06, 0.3, 0.05), DARK)
+        built.append(wheel.build())
+    add_seats([(0.0, -0.1, 1.05), (0.0, -0.8, 1.15)])
+    return built
+
+
+BUILDERS = {"jeep": build_jeep, "sports": build_sports, "roadster": build_roadster, "snowmobile": build_snowmobile}
 
 
 # --------------------------------------------------------------------------------------------------

@@ -10,7 +10,7 @@ use shared::protocol::{
     WEAPON_ROADKILL, WEAPON_SCRAPE, vehicle_hp,
 };
 use shared::quant::{to_cm, wrap_angle};
-use shared::world::WorldFile;
+use shared::world::{THEME_WINTER, WorldFile};
 use std::collections::BTreeMap;
 
 /// Cars parked around the map, seats, and driving them.
@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 /// is in. `BUTTON_RELOAD` moves a seated player to a free seat of the same vehicle.
 pub struct Vehicles;
 
-/// Cars (half jeeps, half sports cars), tanks and helicopters placed at start. Fewer appear when the world has too few clear spawn points.
+/// Cars (half jeeps, half sports cars, or snowmobiles in a winter world), tanks and helicopters placed at start. Fewer appear when the world has too few clear spawn points.
 const CAR_COUNT: usize = 6;
 const TANK_COUNT: usize = 2;
 const HELI_COUNT: usize = 1;
@@ -500,10 +500,12 @@ pub fn shoot_wheels(world: &mut World, vid: u32, point: [f32; 3], damage: f32, r
 /// Hurts every vehicle that hit something hard in the last step, and makes sparks fly from those
 /// grinding along something. Each vehicle counts its hardest contact.
 fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
-    let mut hardest: BTreeMap<u32, CarImpact> = BTreeMap::new();
+    let mut hardest: BTreeMap<u32, (f32, CarImpact)> = BTreeMap::new();
     for impact in world.physics.car_impacts() {
-        if hardest.get(&impact.car).is_none_or(|known| impact.dv > known.dv) {
-            hardest.insert(impact.car, impact);
+        let Some(vehicle) = world.entities.get::<Vehicle>(impact.car) else { continue };
+        let dv = severity(vehicle.kind, &impact);
+        if hardest.get(&impact.car).is_none_or(|&(known, _)| dv > known) {
+            hardest.insert(impact.car, (dv, impact));
         }
     }
     for vid in world.entities.ids::<With<Vehicle>>() {
@@ -525,7 +527,7 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
             _ => {}
         }
     }
-    for (vid, impact) in hardest {
+    for (vid, (dv, impact)) in hardest {
         // A drone's own collisions are what set it off (see `Drones`).
         if world.entities.dead(vid) {
             continue;
@@ -535,10 +537,10 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
             continue;
         }
         let [x, y, z] = impact.point.map(to_cm);
-        let mut over = impact.dv - CRASH_MIN_DV;
+        let mut over = dv - CRASH_MIN_DV;
         if over <= 0.0 {
             let speed = before.get(&vid).map_or(0.0, |pose| vec3::length(pose.velocity));
-            if impact.dv > SCRAPE_MIN_DV && speed > SCRAPE_SPEED && vehicle.scrape_in == 0 {
+            if dv > SCRAPE_MIN_DV && speed > SCRAPE_SPEED && vehicle.scrape_in == 0 {
                 vehicle.scrape_in = SCRAPE_EVERY;
                 world.shots.push(ShotEvent { shooter: vid, weapon: WEAPON_SCRAPE, x, y, z });
             }
@@ -554,6 +556,13 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
         world.shots.push(ShotEvent { shooter: vid, weapon: WEAPON_CRASH, x, y, z });
         super::combat::damage_vehicle(world, vid, (over * CRASH_HP_PER_DV).round().min(255.0) as u8, attacker);
     }
+}
+
+/// How hard `impact` hit a vehicle of `kind`, m/s. A sled (a kind whose hull has a swept `nose`) is
+/// built to be slammed up and down by the ground under its skis and belly, so only the part of a
+/// ground hit that stopped it counts: running fast onto a slope does not hurt it, into a bank does.
+fn severity(kind: u8, impact: &CarImpact) -> f32 {
+    if impact.ground && vehicle_def(kind).spec.nose > 0.0 { impact.stopped } else { impact.dv }
 }
 
 /// Runs down every living creature (a rooster) a car overlaps fast enough to run a soldier down, by the
@@ -671,15 +680,17 @@ impl Mechanic for Vehicles {
         let candidates: Vec<[i32; 2]> = spawns[split..].iter().chain(spawns[..split].iter().rev()).copied().collect();
         let mut used = vec![false; candidates.len()];
         let mut placed = 0;
+        // A sports car has no business in the snow: a winter world gets snowmobiles instead.
+        let second_car = if world.map.theme == THEME_WINTER { KIND_SNOWMOBILE } else { KIND_SPORTS };
         for (index, &[cx, cz]) in candidates.iter().enumerate() {
             const CARS: usize = CAR_COUNT + ROADSTER_COUNT;
             if placed == CARS + TANK_COUNT + STRV_COUNT + HELI_COUNT + WALKER_COUNT {
                 break;
             }
-            // Cars first (jeeps and sports cars take turns, then the Roadster), then the tanks, then the helicopter.
+            // Cars first (jeeps and sports cars or snowmobiles take turns, then the Roadster), then the tanks, then the helicopter.
             let kind = match placed {
                 0..CAR_COUNT if placed % 2 == 0 => KIND_JEEP,
-                0..CAR_COUNT => KIND_SPORTS,
+                0..CAR_COUNT => second_car,
                 _ if placed < CARS => KIND_ROADSTER,
                 _ if placed < CARS + TANK_COUNT => KIND_TANK,
                 _ if placed < CARS + TANK_COUNT + STRV_COUNT => KIND_STRV,

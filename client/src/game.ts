@@ -29,6 +29,7 @@ import { setWinter, winter } from './render/season'
 import { Skidmarks } from './render/skidmarks'
 import { SkiTracks } from './render/skitracks'
 import { Snowfall } from './render/snowfall'
+import { SnowRoost } from './render/snowroost'
 import { MarshMist, mistAt } from './render/marshmist'
 import { Bloodstains } from './render/bloodstains'
 import { Scorchmarks } from './render/scorchmarks'
@@ -150,7 +151,7 @@ const AIM_LOOK_SCALE = 0.6
 /** How long the static shows after a drone's feed cuts out, ms. */
 const FEED_LOST_MS = 700
 /** Seats that steer something along, which get a speedometer. */
-const MOVERS: ReadonlySet<SeatView['role']> = new Set(['driver', 'roadster', 'pilot', 'aviator', 'walker', 'hen', 'tupp', 'strv', 'drone', 'loiter'] as const)
+const MOVERS: ReadonlySet<SeatView['role']> = new Set(['driver', 'roadster', 'sled', 'pilot', 'aviator', 'walker', 'hen', 'tupp', 'strv', 'drone', 'loiter'] as const)
 
 /** What the local player is up to this frame: worked out once, read by the stages of the frame. */
 interface Moment {
@@ -245,6 +246,8 @@ export class Game {
   private readonly skids = new Skidmarks()
   /** The snow in the air, in a winter world. */
   private snowfall: Snowfall | null = null
+  /** The snow tracks throw up, in a winter world. */
+  private snowRoost: SnowRoost | null = null
   /** Mist over the marshes; none in winter, when they are frozen. */
   private marshMist: MarshMist | null = null
   /** Grooves and spray left by skiers, in a winter world. */
@@ -852,6 +855,7 @@ export class Game {
     this.scene.setTimeOfDay(dayPhase(renderTick, TICK_RATE))
     this.smoke.light.copy(this.scene.groundLight)
     this.blood.light.copy(this.scene.groundLight)
+    this.snowRoost?.light.copy(this.scene.groundLight)
   }
 
   /** Works out what the local player is up to this frame, for the stages of the frame that follow. */
@@ -1004,6 +1008,7 @@ export class Game {
     this.damageNumbers.update(dt, this.scene.camera)
     const eye = this.scene.camera.position
     this.snowfall?.update(eye, dt)
+    this.snowRoost?.update(eye, dt)
     this.marshMist?.update(eye, dt, mistAt(this.scene.phase), this.scene.groundLight, (x, z) => this.surfaces?.at(x, z) ?? SURFACE_GRASS, this.scene.groundAt)
     this.skiTracks?.update(dt)
     this.smoke.follow(eye.x, eye.z)
@@ -1198,7 +1203,10 @@ export class Game {
     this.scene.setLook(this.scene.look)
     this.snowfall = new Snowfall()
     this.skiTracks = new SkiTracks((x, z) => this.scene.groundAt(x, z), this.smoke)
-    this.scene.scene.add(this.snowfall.root, this.skiTracks.marks.root)
+    this.snowRoost = new SnowRoost(this.glow, (x, z) => this.scene.groundAt(x, z))
+    // In case the vehicles' effects were set up before the world was known.
+    if (this.fxWorldMade) this.fxWorldMade.roost = this.snowRoost
+    this.scene.scene.add(this.snowfall.root, this.skiTracks.marks.root, this.snowRoost.root)
   }
 
   setLook(look: Look) {
@@ -1240,6 +1248,7 @@ export class Game {
       waterAt: (x, z) => this.waters?.levelAt(x, z) ?? NO_WATER,
       ripple: (at, size) => this.effects.ripple(at, size),
       camera: this.scene.camera.position,
+      roost: this.snowRoost,
     }
     return this.fxWorldMade
   }
@@ -1261,6 +1270,7 @@ export class Game {
     this.effects.dispose()
     this.smoke.dispose()
     this.snowfall?.dispose()
+    this.snowRoost?.dispose()
     this.marshMist?.dispose()
     this.skiTracks?.dispose()
     this.glow.dispose()

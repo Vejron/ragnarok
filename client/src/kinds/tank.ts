@@ -3,7 +3,7 @@
 import { KIND_TANK } from '@/net/codec'
 import { loadTankModel, TankModel } from '@/render/tank'
 import { TANK_DISTANCE } from '@/render/scene'
-import { SHELL_COOLDOWN_TICKS, TANK_BARREL_MAX, TANK_BARREL_MIN, TANK_MAX_SPEED, TANK_MG_PITCH_MAX, TANK_MG_PITCH_MIN, TANK_MG_YAW_LIMIT } from '@/sim/consts'
+import { SHELL_COOLDOWN_TICKS, TANK_BARREL_MAX, TANK_HALF_EXTENTS, TANK_TRACK_HALF, TANK_BARREL_MIN, TANK_MAX_SPEED, TANK_MG_PITCH_MAX, TANK_MG_PITCH_MIN, TANK_MG_YAW_LIMIT } from '@/sim/consts'
 import { TRACK_WHEELS } from '@/sim/slip'
 import { DRIVE, type VehicleKind } from './kind'
 
@@ -26,5 +26,12 @@ export const TANK: VehicleKind = {
     chop: { type: 'bandpass', hz: 650 },
     engine: { name: 'gears', shifts: [0], top: TANK_MAX_SPEED, hz: 30, level: 0.3, tracks: true },
   },
-  fx: { wheels: TRACK_WHEELS, drivenFrom: 0, exhaust: 'pipe', bay: [0, 1.3, 1.6] },
+  fx: {
+    wheels: TRACK_WHEELS,
+    drivenFrom: 0,
+    exhaust: 'pipe',
+    bay: [0, 1.3, 1.6],
+    // Two broad, low washes off the wide tracks: a tank does not pull hard, but it moves a lot of snow.
+    roost: { at: [[-TANK_TRACK_HALF, TANK_HALF_EXTENTS[2] + 0.1], [TANK_TRACK_HALF, TANK_HALF_EXTENTS[2] + 0.1]], accel: [0.5, 3], width: 0.35, up: 3.5, power: 1.1 },
+  },
 }

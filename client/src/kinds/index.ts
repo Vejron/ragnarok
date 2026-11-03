@@ -13,6 +13,7 @@ import { MORTAR } from './mortar'
 import { PAK } from './pak'
 import { PLANE } from './plane'
 import { ROADSTER } from './roadster'
+import { SNOWMOBILE } from './snowmobile'
 import { SPORTS } from './sports'
 import { STRV } from './strv'
 import { TANK } from './tank'
@@ -21,7 +22,7 @@ import { WALKER } from './walker'
 
 export type { VehicleKind } from './kind'
 
-export const KINDS: readonly VehicleKind[] = [JEEP, TANK, HELI, SPORTS, PLANE, WALKER, STRV, MORTAR, ROADSTER, DRONE, HEN, LOITER, PAK, TUPP]
+export const KINDS: readonly VehicleKind[] = [JEEP, TANK, HELI, SPORTS, PLANE, WALKER, STRV, MORTAR, ROADSTER, DRONE, HEN, LOITER, PAK, TUPP, SNOWMOBILE]
 
 const byKind = new Map(KINDS.map((kind) => [kind.kind, kind]))
 

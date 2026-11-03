@@ -26,7 +26,7 @@ use shared::protocol::{DAMAGE_PARTS, DAMAGE_SLOTS, DAMAGE_WHEELS, THRUST_AIR, TH
 mod flight;
 mod spec;
 
-use flight::{assist, flap, fly, fly_drone, fly_loiter, pull, roll_plane, thrust, walk, wing};
+use flight::{assist, boost, flap, fly, fly_drone, fly_loiter, pull, roll_plane, thrust, walk, wing};
 pub use spec::half_extents;
 pub(super) use spec::{Buttons, Lift, Role, Shape, Solid, Spec, spec};
 
@@ -52,6 +52,19 @@ const FULL_POWER: f32 = 0.65;
 /// Side grip of a car's rear wheels while the handbrake is held, against 1 normally. Grip is the share
 /// of the wheel's sideways slip cancelled each tick, so even 0.3 holds firm; this lets the tail slide out.
 const DRIFT_GRIP: f32 = 0.05;
+/// A kind that slides (`Spec::slide`) lets its tail go past this share of full steering, and from
+/// the first of these speeds (m/s) to all of it at the second: at a crawl it still turns on the spot.
+/// From the third it bites again, fully by the fourth, so that a hard turn at full tilt loads it up
+/// and, if it rolls (`Spec::roll`), throws it over.
+const SLIDE_STEER: f32 = 0.5;
+const SLIDE_SPEEDS: [f32; 4] = [5.0, 15.0, 22.0, 28.0];
+/// Past the first slip angle (radians) a sliding kind's tail stays loose, wholly so at the second.
+const SLIDE_SLIP: [f32; 2] = [0.05, 0.3];
+/// Once the driver straightens up, a sliding kind's spin dies away at this rate, per second: the
+/// slide is caught instead of carrying on round into a spin.
+const SLIDE_CATCH: f32 = 4.0;
+/// The share of the true roll leverage Rapier's wheels keep (`WheelTuning`'s private `roll_influence`).
+const RAPIER_ROLL_INFLUENCE: f32 = 0.1;
 /// Downforce on a car with a wheel down, per kilogram, per (m/s)²: a third of its weight again at 40 m/s.
 const DOWNFORCE_PER_KG: f32 = 0.0001;
 /// How quickly the throttle pitches and the steering rolls a car with no wheel down, rad/s².
@@ -67,6 +80,10 @@ const WHEEL_GRIP_LOSS: f32 = 0.85;
 const WHEEL_SLIP_LOSS: f32 = 0.6;
 /// A wheel that has come off: a stub that never reaches the ground.
 const LOST_WHEEL_RADIUS: f32 = 0.05;
+/// How hard a hitch resists the towed gun swinging about it, as a motor holding their yaw rates
+/// together. Without it a gun heavier than what tows it (a Pak behind the snowmobile) sways ever
+/// wider at speed until it jackknifes.
+const HITCH_YAW_DAMPING: f32 = 200.0;
 
 /// What the driver asks of the car this tick.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -183,6 +200,7 @@ impl CarControls {
             Buttons::Drive => CarControls { handbrake: held(BUTTON_JUMP), lift: f32::from(held(BUTTON_JUMP)) - f32::from(held(BUTTON_RUN)), ..stick },
             Buttons::Stunt => CarControls { handbrake: held(BUTTON_CROUCH), boost: held(BUTTON_RUN), hop: held(BUTTON_JUMP), ..stick },
             Buttons::Leap => CarControls { hop: held(BUTTON_JUMP), ..stick },
+            Buttons::Sled => CarControls { handbrake: held(BUTTON_JUMP), boost: held(BUTTON_RUN), ..stick },
         }
     }
 }
@@ -244,6 +262,10 @@ pub struct CarImpact {
     pub point: [f32; 3],
     /// Speed the contact took out of the vehicle this step, m/s: its impulse over the vehicle's mass.
     pub dv: f32,
+    /// The part of `dv` along the vehicle's nose: how much the contact stopped it, not lifted or turned it.
+    pub stopped: f32,
+    /// Whether the other side was the ground.
+    pub ground: bool,
 }
 
 /// A car touching a character.
@@ -346,6 +368,30 @@ pub(crate) fn extra_solids(kind: u8) -> Vec<ColliderBuilder> {
     if heavy(kind) { solids.map(|collider| collider.collision_groups(super::plows_trees())).collect() } else { solids.collect() }
 }
 
+/// How far a car's front wheels can turn at `speed` m/s, radians: the lock narrows at speed.
+fn lock(spec: &Spec, speed: f32) -> f32 {
+    spec.steer_lock / (1.0 + speed.abs() / STEER_FADE_SPEED)
+}
+
+/// How far a car's front wheels are turned (`steer`, radians) at `speed`, as a share of its lock there.
+fn turned(spec: &Spec, steer: f32, speed: f32) -> f32 {
+    let lock = lock(spec, speed);
+    if lock > 0.0 { steer.abs() / lock } else { 0.0 }
+}
+
+/// A car's hull: its box, with the front of the underside swept up if it has a `nose`.
+fn hull(spec: &Spec) -> ColliderBuilder {
+    let [hx, hy, hz] = spec.half_extents;
+    if spec.nose <= 0.0 {
+        return ColliderBuilder::cuboid(hx, hy, hz);
+    }
+    let mut corners = Vec::new();
+    for x in [-hx, hx] {
+        corners.extend([[x, hy, -hz], [x, hy, hz], [x, -hy, hz], [x, -hy, spec.nose - hz], [x, 0.0, -hz]].map(Vector::from));
+    }
+    ColliderBuilder::convex_hull(&corners).expect("a hull with a nose is not flat")
+}
+
 /// A solid's collision shape.
 pub(crate) trait Collide {
     /// Its shape, grown by `margin` on every side.
@@ -427,7 +473,7 @@ impl Physics {
             .ccd_enabled(is_drone(kind))
             .build();
         let body = self.bodies.insert(body);
-        let mut chassis = ColliderBuilder::cuboid(hx, hy, hz).friction(0.4);
+        let mut chassis = hull(spec).friction(0.4);
         chassis = if spec.com_drop > 0.0 {
             // The box's own mass and inertia, with the centre of mass lowered.
             let mass = spec.density * 8.0 * hx * hy * hz;
@@ -502,6 +548,7 @@ impl Physics {
             .local_anchor1(Vector::from(Self::tow_anchor(towing.spec)))
             .local_anchor2(Vector::from(Self::tongue_anchor(towed.spec)))
             .contacts_enabled(false)
+            .motor_velocity(JointAxis::AngY, 0.0, HITCH_YAW_DAMPING)
             .build();
         let handle = self.impulse_joints.insert(towing.body, towed.body, joint, true);
         if let Some(towed) = self.cars.get_mut(&mortar) {
@@ -651,10 +698,12 @@ impl Physics {
         }
 
         // Steering eases towards its target, and the lock narrows at speed.
-        let lock = car.spec.steer_lock / (1.0 + speed.abs() / STEER_FADE_SPEED);
+        let lock = lock(car.spec, speed);
         let target = controls.steer.clamp(-1.0, 1.0) * lock;
         let returning = target.abs() < car.steer.abs() || target * car.steer < 0.0;
-        let step = STEER_RATE * if returning { STEER_RETURN } else { 1.0 } * dt;
+        // A kind with a `steer_time` swings a share of its lock each second rather than a set angle.
+        let rate = if car.spec.steer_time > 0.0 { lock / car.spec.steer_time } else { STEER_RATE };
+        let step = rate * if returning { STEER_RETURN } else { 1.0 } * dt;
         car.steer += (target - car.steer).clamp(-step, step);
         car.turn = controls.steer.clamp(-1.0, 1.0) * car.spec.turn_rate * car.condition.turn;
         car.air = (controls.throttle.clamp(-1.0, 1.0), controls.steer.clamp(-1.0, 1.0));
@@ -667,14 +716,31 @@ impl Physics {
         } else if against {
             (0.0, BRAKE_PER_KG * mass)
         } else {
-            let headroom = if controls.throttle > 0.0 { pull(speed, car.spec.max_speed * car.condition.speed) } else { 0.5 };
-            (controls.throttle * car.spec.engine_force / car.controller.wheels().len() as f32 * headroom * car.condition.power, 0.0)
+            // A snowmobile's boost opens the engine right up while there is any left.
+            let boosted = car.spec.buttons == Buttons::Sled && controls.boost && controls.throttle > 0.0 && car.tank.is_some_and(|tank| tank > 0.0);
+            let (power, top) = if boosted { (SNOWMOBILE_BOOST_POWER, SNOWMOBILE_BOOST_SPEED) } else { (1.0, 1.0) };
+            let headroom = if controls.throttle > 0.0 { pull(speed, car.spec.max_speed * top * car.condition.speed) } else { 0.5 };
+            (controls.throttle * power * car.spec.engine_force / car.controller.wheels().len() as f32 * headroom * car.condition.power, 0.0)
         };
         let handbrake = if controls.handbrake { BRAKE_PER_KG * mass } else { 0.0 };
 
         // Only a car's first axle steers and is spared the handbrake, which also lets its tail slide.
         let front_wheels = if car.spec.steer_lock > 0.0 { 2 } else { 0 };
         let drift = controls.handbrake && front_wheels > 0;
+        // A kind that slides lets its rear go in a hard turn at speed, the more so under power: grip
+        // falls away towards the handbrake's, geometrically, since even a third of it holds firm.
+        // How hard it is turned is how far the wheels have swung, not how far the stick is pushed.
+        let turned = turned(car.spec, car.steer, speed);
+        let hard = ((turned - SLIDE_STEER) / (1.0 - SLIDE_STEER)).clamp(0.0, 1.0);
+        let fast = ((speed.abs() - SLIDE_SPEEDS[0]) / (SLIDE_SPEEDS[1] - SLIDE_SPEEDS[0])).clamp(0.0, 1.0)
+            * (1.0 - ((speed.abs() - SLIDE_SPEEDS[2]) / (SLIDE_SPEEDS[3] - SLIDE_SPEEDS[2])).clamp(0.0, 1.0));
+        // And while it is still sliding it only finds its grip again as the slide dies, rather than
+        // catching all at once and throwing itself over.
+        let sideways = (body.rotation() * Vector::new(1.0, 0.0, 0.0)).dot(body.linvel());
+        let slip = sideways.abs().atan2(speed.abs());
+        let sliding = ((slip - SLIDE_SLIP[0]) / (SLIDE_SLIP[1] - SLIDE_SLIP[0])).clamp(0.0, 1.0);
+        let carve = car.spec.slide * (hard * fast * (0.6 + 0.4 * controls.throttle.max(0.0))).max(sliding);
+        let rear_grip = SIDE_GRIP * (DRIFT_GRIP / SIDE_GRIP).powf(carve);
         let (spec, condition, steer) = (car.spec, car.condition, car.steer);
         for (index, wheel) in car.controller.wheels_mut().iter_mut().enumerate() {
             let front = index < front_wheels;
@@ -691,7 +757,7 @@ impl Physics {
             wheel.engine_force = if gone { 0.0 } else { engine * side };
             let drag = (1.0 - side) * BROKEN_TRACK_DRAG * BRAKE_PER_KG * mass;
             wheel.brake = if gone { 0.0 } else if front { brake } else { brake.max(handbrake).max(drag) };
-            wheel.side_friction_stiffness = if drift && !front { DRIFT_GRIP } else { SIDE_GRIP } * (1.0 - WHEEL_GRIP_LOSS * wear);
+            wheel.side_friction_stiffness = if front { SIDE_GRIP } else if drift { DRIFT_GRIP } else { rear_grip } * (1.0 - WHEEL_GRIP_LOSS * wear);
             wheel.friction_slip = FRICTION_SLIP * (1.0 - WHEEL_SLIP_LOSS * wear);
             wheel.radius = if gone { LOST_WHEEL_RADIUS } else { spec.wheel_radius };
             wheel.suspension_rest_length = if gone { 0.0 } else { spec.suspension_rest };
@@ -820,6 +886,9 @@ impl Physics {
                 filter,
             );
             car.controller.update_vehicle(dt, queries);
+            if car.spec.roll > 0.0 {
+                restore_roll(car, &mut self.bodies);
+            }
         }
         // A car is pressed down or tilted in the air. A tank turns on the spot, but only while some
         // track is on the ground. The wheels' side grip fights any spin every tick, so the rate is
@@ -835,9 +904,19 @@ impl Physics {
             if car.spec.steer_lock > 0.0 {
                 assist(body, car.air, grounded, dt);
             }
+            let speed = body.linvel().dot(*body.rotation() * Vector::new(0.0, 0.0, -1.0));
+            if car.spec.slide > 0.0 && grounded && turned(car.spec, car.steer, speed) < SLIDE_STEER {
+                let mut spin = body.angvel();
+                spin.y *= (-SLIDE_CATCH * dt).exp();
+                body.set_angvel(spin, true);
+            }
             if let Some(tank) = &mut car.tank {
-                body.reset_forces(false);
-                car.firing = thrust(body, car.flight, tank, grounded, floor(id), dt);
+                if car.spec.buttons == Buttons::Sled {
+                    car.firing = boost(car.flight, tank, dt);
+                } else {
+                    body.reset_forces(false);
+                    car.firing = thrust(body, car.flight, tank, grounded, floor(id), dt);
+                }
             }
             if car.turn == 0.0 || !grounded {
                 car.spin = 0.0;
@@ -898,6 +977,7 @@ impl Physics {
                         continue;
                     }
                     let local = offset * (sum / count);
+                    let forward = body.rotation() * Vector::new(0.0, 0.0, -1.0);
                     let other_car = self.cars.iter().find(|(_, car)| car.owns(other)).map(|(&other, _)| other);
                     found.push(CarImpact {
                         car: id,
@@ -907,6 +987,8 @@ impl Physics {
                         local: local.into(),
                         point: (body.position() * local).into(),
                         dv: pair.total_impulse_magnitude() / body.mass(),
+                        stopped: pair.total_impulse().dot(forward).abs() / body.mass(),
+                        ground: self.colliders.get(other).is_some_and(|collider| collider.shape().as_heightfield().is_some()),
                     });
                 }
             }
@@ -1098,3 +1180,24 @@ impl Physics {
 
 #[cfg(test)]
 mod tests;
+
+/// Rapier's ray-cast wheels push sideways from a tenth of the way down from the centre of mass to
+/// the ground (their private `roll_influence`), so their side grip barely rolls the chassis. This
+/// gives back `Spec::roll` of the rest of that leverage, as a twist about the centre of mass.
+fn restore_roll(car: &Car, bodies: &mut RigidBodySet) {
+    let Some(body) = bodies.get_mut(car.body) else { return };
+    let up = *body.rotation() * Vector::new(0.0, 1.0, 0.0);
+    let centre = body.center_of_mass();
+    let mut twist = Vector::ZERO;
+    for wheel in car.controller.wheels() {
+        let contact = wheel.raycast_info();
+        if !contact.is_in_contact || wheel.side_impulse == 0.0 {
+            continue;
+        }
+        let normal = contact.contact_normal_ws;
+        let side = (wheel.axle() - normal * wheel.axle().dot(normal)).normalize_or_zero();
+        let below = up * up.dot(contact.contact_point_ws - centre) * (1.0 - RAPIER_ROLL_INFLUENCE);
+        twist += below.cross(side * wheel.side_impulse);
+    }
+    body.apply_torque_impulse(twist * car.spec.roll, true);
+}

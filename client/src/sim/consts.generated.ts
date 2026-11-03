@@ -55,6 +55,9 @@ export const KIND_BACKPACK = 15
 /** The tupp: a giant robot Hedemora rooster on the hen's legs and wings, with laser eyes. One seat. */
 export const KIND_TUPP = 16
 
+/** The snowmobile: a mountain sled for two that tows a Pak or a mortar up slopes no car can climb. */
+export const KIND_SNOWMOBILE = 17
+
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
 
@@ -1290,6 +1293,47 @@ export const ROADSTER_CEILING = 40.0
 /** Refill rate on the ground with no nozzle firing, share of the tank per second. */
 export const ROADSTER_AIR_REFILL = 0.2
 export const ROADSTER_SEAT_HEADS = [[-0.33, 0.42, 0.12], [0.33, 0.42, 0.12]] as const
+
+/**
+ * The snowmobile (`KIND_SNOWMOBILE`): a modern mountain sled, light and very powerful, for two
+ * riders one behind the other. The physics drives it as a car: the front pair of wheels are its
+ * skis, which steer, and two pairs behind stand in for the track, whose long footprint keeps it
+ * straight with a gun in tow. Its power to weight takes it up slopes no car can manage, and a Pak
+ * or a mortar up steep ones.
+ */
+export const SNOWMOBILE_SEATS = 2
+export const SNOWMOBILE_HALF_EXTENTS = [0.55, 0.3, 1.6] as const
+export const SNOWMOBILE_WHEEL_RADIUS = 0.22
+
+/** Half the ski stance: the skis are 1.1 m apart. */
+export const SNOWMOBILE_TRACK_HALF = 0.55
+export const SNOWMOBILE_AXLE_Z = 1.2
+
+/** The track touches down from just behind the seat's front to the tail: a middle axle stands in for its front end. */
+export const SNOWMOBILE_TRACK_Z = 0.3
+export const SNOWMOBILE_HARD_POINT_Y = -0.05
+
+/** Long-travel suspension, for bumps and drifts. */
+export const SNOWMOBILE_SUSPENSION_REST = 0.35
+export const SNOWMOBILE_RIDE_HEIGHT = 0.559
+
+/** Skis turn far: tight at a crawl, and the lock fades with speed as every car's does. */
+export const SNOWMOBILE_MAX_STEER = 0.6
+export const SNOWMOBILE_MAX_SPEED = 20.0
+
+/**
+ * The boost: holding run opens the engine right up, multiplying its pull and its top speed, while
+ * the boost lasts (a share of full, `Spec::tank`). It runs down in about four seconds held and
+ * fills again in about six once let go.
+ */
+export const SNOWMOBILE_BOOST = 1.0
+export const SNOWMOBILE_BOOST_POWER = 1.8
+export const SNOWMOBILE_BOOST_SPEED = 1.35
+export const SNOWMOBILE_BOOST_DRAIN = 0.25
+export const SNOWMOBILE_BOOST_REFILL = 0.17
+
+/** The driver sits up front, the passenger behind and a little higher on the seat's rise. */
+export const SNOWMOBILE_SEAT_HEADS = [[0.0, 1.05, 0.1], [0.0, 1.15, 0.8]] as const
 
 /**
  * The sports car (`KIND_SPORTS`): a low two-seater with small wheels and a big engine. Quick in a

@@ -1,12 +1,14 @@
 import { type Vec3, Quaternion, Vector3 } from '@ragnarok/engine'
 import { kindView } from '@/kinds'
-import type { KindFx } from '@/kinds/kind'
+import type { KindFx, Roost } from '@/kinds/kind'
 import { isTracked } from '@/sim/vehicles'
 import { halfExtentsOf } from '@/sim/kinds'
 import { tyreSlip, type WheelLayout } from '@/sim/slip'
 import { SURFACE_ASPHALT, SURFACE_DIRT, SURFACE_GRASS, SURFACE_MUD, SURFACE_MUD_DEEP, SURFACE_MUD_FAINT, SURFACE_SAND, SURFACE_WATER, surfaceWetness } from '@/sim/surface'
 import { inMarshPool } from './marshnoise'
 import type { Particles } from './particles'
+import { winter } from './season'
+import type { SnowRoost } from './snowroost'
 import { splash } from './splash'
 import type { Skidmarks } from './skidmarks'
 
@@ -24,6 +26,8 @@ export interface FxWorld {
   ripple?(at: { x: number; y: number; z: number }, size: number): void
   /** Where the camera is, so far-away vehicles can skip the particles. */
   camera: Vec3
+  /** The snow tracks throw up when they dig in: only in a winter world. */
+  roost?: SnowRoost | null
 }
 
 /** Particles are skipped for vehicles further from the camera than this, metres; marks reach a little further. */
@@ -45,6 +49,13 @@ const MARKS: Record<number, { mark: number; alpha: number; cloud: number }> = {
   [SURFACE_MUD]: { mark: 0x2a2116, alpha: 0.58, cloud: 0x5e4a32 },
   [SURFACE_MUD_DEEP]: { mark: 0x221b12, alpha: 0.64, cloud: 0x5e4a32 },
 }
+/** In a winter world everything off the ploughed roads is under snow: packed, blue-grey ruts and powder for dust. */
+const SNOW = { mark: 0x9fb0c2, alpha: 0.5, cloud: 0xf4f8ff }
+/** A track's chassis bottom more than this above the ground under it throws no snow, metres. */
+const ROOST_AIRBORNE = 0.9
+/** How much snow a track throws where the road is ploughed, and off lake ice, against deep snow. */
+const ROOST_ON_ROAD = 0.2
+const ROOST_ON_ICE = 0.3
 
 const rand = (low: number, high: number) => low + Math.random() * (high - low)
 
@@ -161,6 +172,7 @@ export class VehicleFx {
       return
     }
     this.wheels(world, layout, steer, particles, dt)
+    if (powered && particles && world.roost && this.fx.roost) this.roost(world, world.roost, this.fx.roost, here, distance, dt)
     if (powered && particles) {
       if (this.fx.exhaust === 'castor') this.castorOil(world, here, dt)
       else if (this.fx.exhaust === 'pipe') this.exhaust(world, here, dt)
@@ -215,6 +227,11 @@ export class VehicleFx {
       this.surface = surface
       const moving = Math.abs(this.speed)
       const wetness = surfaceWetness(surface)
+      // In winter the lakes and the marsh are frozen: ice takes no marks and throws nothing up.
+      if (winter && (surface === SURFACE_WATER || wetness > 0)) {
+        world.skids.lift(track)
+        return
+      }
       // A marsh's pools splash as water does.
       if (surface === SURFACE_WATER || (wetness > 0 && inMarshPool(contact.x, contact.z, wetness))) {
         world.skids.lift(track)
@@ -222,8 +239,8 @@ export class VehicleFx {
         if (particles && moving > 3 && Math.random() < dt * moving * 1.2) this.spray(world, contact)
         return
       }
-      const look = MARKS[surface] ?? MARKS[SURFACE_GRASS]!
       const soft = surface !== SURFACE_ASPHALT
+      const look = winter && soft ? SNOW : (MARKS[surface] ?? MARKS[SURFACE_GRASS]!)
       // Soft ground takes a faint rut from any wheel rolling over it; a tank's tracks always mark it; a marsh
       // takes a deep one from anything.
       const rut = wetness > 0 ? (moving > 0.5 ? 0.6 : 0) : soft && (isTracked(this.kind) ? moving > 0.5 : moving > 8) ? 0.35 : 0
@@ -245,7 +262,7 @@ export class VehicleFx {
       // Dust off the tyres when sliding, and a trail behind any quick car off-road.
       const kick = slip + Math.max(0, moving - 6) / 25
       if (Math.random() < dt * 22 * kick) this.cloud(world, contact, look.cloud, surface === SURFACE_GRASS ? 0.28 : 0.4, [0.7, 3.6], 2.0)
-      if (surface !== SURFACE_GRASS && slip > 0.2 && Math.random() < dt * 60 * slip) this.gravel(world, contact)
+      if (surface !== SURFACE_GRASS && !winter && slip > 0.2 && Math.random() < dt * 60 * slip) this.gravel(world, contact)
     })
     // The first wheel into water, or a drop into it, throws a splash that grows with the speed.
     const wading = wet[0]
@@ -266,6 +283,32 @@ export class VehicleFx {
       this.fall = Math.max(this.fall, -this.velocity.y)
     }
     this.down = touching
+  }
+
+  /**
+   * Snow off the end of each track: thick when it pulls hard or spins, and a thin veil behind it when it
+   * goes quickly. Ploughed roads and lake ice give little; nothing comes off a track in the air.
+   */
+  private roost(world: FxWorld, snow: SnowRoost, roost: Roost, here: Vector3, distance: number, dt: number) {
+    if (new Vector3(0, 1, 0).applyQuaternion(this.q).y < 0.5) return
+    const [from, full] = roost.accel
+    const pull = Math.min(1, Math.max(0, (this.accel - from) / (full - from)))
+    const cruise = Math.min(0.3, Math.max(0, Math.abs(this.speed) - 8) / 30)
+    // Far off, less of it: the plume still reads from a distance with a fraction of the particles.
+    const near = Math.min(1, 1.5 - distance / PARTICLE_RANGE)
+    const strength = Math.max(pull, this.slip * 0.6, cruise) * near
+    if (strength < 0.03) return
+    const back = this.forward.clone().negate().setY(0).normalize()
+    const bottom = -halfExtentsOf(this.kind)[1]
+    for (const [x, z] of roost.at) {
+      const at = this.contact.set(x, bottom, z).applyQuaternion(this.q).add(here)
+      const ground = world.groundAt(at.x, at.z)
+      if (at.y - ground > ROOST_AIRBORNE) continue
+      at.y = ground
+      const surface = world.surfaceAt(at.x, at.z)
+      const deep = surface === SURFACE_ASPHALT ? ROOST_ON_ROAD : surface === SURFACE_WATER || surfaceWetness(surface) > 0 ? ROOST_ON_ICE : 1
+      snow.throw(at, back, this.velocity, this.speed, strength * deep, roost, dt)
+    }
   }
 
   /** Puff of tyre smoke or dust. */

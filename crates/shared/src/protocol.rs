@@ -56,7 +56,7 @@ pub const HIT_ROOSTER: u8 = 3;
 pub const OBJ_TREE: u8 = 0;
 pub const OBJ_BUILDING: u8 = 1;
 
-pub use crate::consts::{KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SPORTS, KIND_SOLDIER, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER};
+pub use crate::consts::{KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SNOWMOBILE, KIND_SOLDIER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER};
 
 /// Whether `kind` is a drone: flown from a remote seat by whoever launched it (see the `Drones` mechanic).
 pub fn is_drone(kind: u8) -> bool {

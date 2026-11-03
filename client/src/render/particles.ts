@@ -1,4 +1,4 @@
-import { Color, ParticleSystem, type ParticleSpec as EngineSpec } from '@ragnarok/engine'
+import { Color, ParticleSystem, type EmitSpec as EngineEmit, type ParticleSpec as EngineSpec } from '@ragnarok/engine'
 import { tinted } from './groundlight'
 
 /** How one particle moves and looks over its life. */
@@ -28,6 +28,23 @@ export interface ParticleSpec {
   glow?: number
   /** `puff` gives smoke a billowy edge; `drop` is a bead of liquid that stays whole until it lands; `glare` is light with no edge at all. */
   shape?: 'round' | 'puff' | 'drop' | 'glare'
+}
+
+/** A burst: `count` particles from one spec, each rolled on the GPU from the ranges below. */
+export interface EmitSpec extends Omit<ParticleSpec, 'life'> {
+  count: number
+  /** Seconds, or a [min, max] range. */
+  life: number | readonly [number, number]
+  /** Births scattered in a ball of this radius around `position`. */
+  spread?: number
+  /** Added velocity, uniform in ±this per axis. */
+  jitter?: readonly [number, number, number]
+  /** Added velocity in a random direction, at a speed up to this. */
+  burst?: number
+  /** Both sizes multiplied by a factor in this range. */
+  scale?: readonly [number, number]
+  /** Each particle's colour is a random mix between `color` and this. */
+  color2?: number
 }
 
 /** The darkest a particle gets at night, against its colour by day, so smoke and dust stay readable. */
@@ -105,6 +122,26 @@ export class Particles {
       shape: spec.shape,
     }
     this.root.spawn(engine)
+  }
+
+  /** `spec.count` particles in one command, their randomness rolled on the GPU: as many as fit in the pool. */
+  emit(spec: EmitSpec) {
+    if (this.deaths.length + spec.count > this.capacity) this.reap()
+    const count = Math.min(spec.count, this.capacity - this.deaths.length)
+    if (count <= 0) return
+    const longest = typeof spec.life === 'number' ? spec.life : spec.life[1]
+    for (let i = 0; i < count; i++) this.deaths.push(this.clock + longest)
+    if (spec.bounce) this.bounces = true
+    const dim = this.blend === 'alpha' ? (c: number) => tinted(c, this.light, NIGHT_FLOOR) : (c: number) => c
+    const engine: EngineEmit = {
+      ...spec,
+      count,
+      color: dim(spec.color),
+      color2: spec.color2 === undefined ? undefined : dim(spec.color2),
+      colorEnd: spec.colorEnd === undefined ? undefined : dim(spec.colorEnd),
+      blend: this.blend,
+    }
+    this.root.emit(engine)
   }
 
   /** Where the camera is: the ground field for bouncing particles is kept around it. */

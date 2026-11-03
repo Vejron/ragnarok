@@ -216,9 +216,10 @@ export function removeSpot(at: { squad: string; kind: 'bots' | 'tanks'; index: n
   pickedSpot.value = undefined
 }
 
-/** Loads the world's scenario, or an empty one when it has none. */
+/** Loads the world's scenario, or an empty one when it has none. The server lets a file leave out
+ * `areas`, `squads` or `triggers`; here each is always there. */
 export async function loadScenario(world: string) {
-  scenario.value = (await api.scenario(world)) ?? emptyScenario()
+  scenario.value = { ...emptyScenario(), ...(await api.scenario(world)) }
   scenarioDirty.value = false
   pickedSquad.value = Object.keys(scenario.value.squads)[0] ?? ''
   pickedSpot.value = undefined

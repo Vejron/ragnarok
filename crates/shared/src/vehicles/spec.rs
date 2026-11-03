@@ -63,6 +63,20 @@ pub struct Spec {
     /// Where a car's tow joint holds it, as the Z of its towing eye on its centre line (hull frame): a
     /// mortar's tongue ahead of it, a Pak's trails behind. 0 for a kind nobody tows.
     pub tongue: f32,
+    /// How much of its rear wheels' side grip a hard turn takes away, 0..1: they let go and the tail
+    /// slides round, more the faster it goes and the more it is driven. 0 for a car that grips.
+    pub slide: f32,
+    /// How much of the true leverage its wheels' side grip has to roll it over the physics gives back,
+    /// 0..1. The ray-cast wheels push sideways from near the centre of mass, so a car corners flat
+    /// and never rolls; a kind with this tips over when it corners harder than its stance can carry.
+    pub roll: f32,
+    /// How far back from the front its hull's underside sweeps up to half its height, metres, as a
+    /// sled's does over its upturned skis: it rides up onto a slope instead of digging its nose in.
+    /// 0 for a plain box.
+    pub nose: f32,
+    /// Seconds its steering takes to swing from straight to full lock, so that a key held down eases
+    /// into a turn rather than snapping to it. 0 swings at the usual rate, which is all but at once.
+    pub steer_time: f32,
 }
 
 /// What a driver's buttons do, beyond the stick (steer and throttle) every vehicle takes.
@@ -74,6 +88,8 @@ pub enum Buttons {
     Stunt,
     /// A hen's: jump leaps, then flaps or glides. There is no handbrake.
     Leap,
+    /// A snowmobile's: run boosts the engine from its `tank` while it lasts, and jump is the handbrake.
+    Sled,
 }
 
 /// A solid a vehicle carries beside its hull box, fixed to the hull at `at` (hull frame). It adds no

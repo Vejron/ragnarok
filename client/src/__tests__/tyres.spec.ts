@@ -7,7 +7,9 @@ import { Skidmarks, SKID_LIFE } from '@/render/skidmarks'
 import { Particles } from '@/render/particles'
 import { VehicleFx, type FxWorld } from '@/render/tyres'
 import { COVER_FARM, COVER_WATER, RAIL_TRAIN, RAIL_TRAM, ROAD_MINOR, ROAD_PATH, NO_WATER } from '@/world'
-import { KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SPORTS, KIND_TANK } from '@/net/codec'
+import { KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SNOWMOBILE, KIND_SPORTS, KIND_TANK } from '@/net/codec'
+import { setWinter } from '@/render/season'
+import { SnowRoost } from '@/render/snowroost'
 
 describe('tyreSlip', () => {
   it('grips on a straight cruise and in a gentle turn', () => {
@@ -227,5 +229,71 @@ describe('VehicleFx', () => {
     expect(fx.impactSpeed).toBeGreaterThan(15)
     expect(fx.forwardSpeed).toBeGreaterThan(15)
     expect(fx.surfaceUnder).toBe(SURFACE_DIRT)
+  })
+})
+
+describe('snow off the tracks', () => {
+  function winterWorld(surface: number) {
+    const glow = new Particles(500, true)
+    const roost = new SnowRoost(glow, () => 0)
+    const w: FxWorld & { smoke: Particles; skids: Skidmarks } = {
+      smoke: new Particles(2000),
+      glow,
+      skids: new Skidmarks(500),
+      groundAt: () => 0,
+      surfaceAt: () => surface,
+      camera: new Vec3(0, 5, 10),
+      roost,
+    }
+    return { w, roost }
+  }
+
+  /** `kind` at `ride` height pulling away along -Z at `accel` m/s² from `speed`, for a second. */
+  function pull(kind: number, w: FxWorld, ride: number, speed: number, accel: number, powered = true) {
+    const fx = new VehicleFx(1, kind)
+    const dt = 1 / 60
+    for (let i = 0; i < 60; i++) {
+      const t = i * dt
+      fx.update(w, [0, ride, -(speed * t + 0.5 * accel * t * t)], [0, 0, 0, 1], 0, powered, dt)
+    }
+  }
+
+  it('throws a plume behind a snowmobile pulling hard, and none behind one rolling along', () => {
+    const hard = winterWorld(SURFACE_GRASS)
+    pull(KIND_SNOWMOBILE, hard.w, 0.56, 0, 12)
+    expect(hard.roost.alive).toBeGreaterThan(80)
+    const easy = winterWorld(SURFACE_GRASS)
+    pull(KIND_SNOWMOBILE, easy.w, 0.56, 5, 0)
+    expect(easy.roost.alive).toBe(0)
+    const parked = winterWorld(SURFACE_GRASS)
+    pull(KIND_SNOWMOBILE, parked.w, 0.56, 0, 12, false)
+    expect(parked.roost.alive).toBe(0)
+  })
+
+  it('throws little off a ploughed road', () => {
+    const snow = winterWorld(SURFACE_GRASS)
+    pull(KIND_SNOWMOBILE, snow.w, 0.56, 0, 12)
+    const road = winterWorld(SURFACE_ASPHALT)
+    pull(KIND_SNOWMOBILE, road.w, 0.56, 0, 12)
+    expect(road.roost.alive).toBeLessThan(snow.roost.alive * 0.4)
+  })
+
+  it('washes snow off both tracks of a tank pulling away', () => {
+    const { w, roost } = winterWorld(SURFACE_GRASS)
+    pull(KIND_TANK, w, 0.94, 0, 3)
+    expect(roost.alive).toBeGreaterThan(60)
+  })
+
+  it('treats a frozen lake as ice: no spray and no marks', () => {
+    setWinter(true)
+    try {
+      const { w } = winterWorld(SURFACE_WATER)
+      // Nobody at the wheel, so no exhaust: anything in the air would be spray.
+      pull(KIND_JEEP, w, 0.857, 10, 0, false)
+      expect(w.smoke.alive).toBe(0)
+      expect(w.skids.laid).toBe(0)
+    } finally {
+      setWinter(false)
+    }
   })
 })

@@ -95,6 +95,16 @@ pub(crate) fn thrust(body: &mut RigidBody, controls: CarControls, tank: &mut f32
     firing
 }
 
+/// One tick of a snowmobile's boost (its push is in `drive_car`): held with the throttle open it runs
+/// the boost down, let go it fills again. Returns `THRUST_BOOST` while it is on.
+pub(crate) fn boost(controls: CarControls, tank: &mut f32, dt: f32) -> u8 {
+    let on = controls.boost && controls.throttle > 0.0 && *tank > 0.0;
+    // Holding it with an empty boost keeps it from filling, so it does not stutter on and off.
+    let rate = if on { -SNOWMOBILE_BOOST_DRAIN } else if controls.boost { 0.0 } else { SNOWMOBILE_BOOST_REFILL };
+    *tank = (*tank + rate * dt).clamp(0.0, SNOWMOBILE_BOOST);
+    if on { THRUST_BOOST } else { 0 }
+}
+
 /// One tick of a hen's wings, after [`walk`] has worked its legs; returns its `THRUST_*` flags.
 ///
 /// With a foot down, jump leaps: a burst of upward speed and a little along the heading, once per

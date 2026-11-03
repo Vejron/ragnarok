@@ -48,6 +48,7 @@ export const VEHICLE_KINDS: { kind: number; name: string; icon: string }[] = [
   { kind: 16, name: 'Tupp', icon: 'U' },
   { kind: 9, name: 'Mortar', icon: 'M' },
   { kind: 14, name: 'Pak 38', icon: 'K' },
+  { kind: 17, name: 'Snowmobile', icon: 'N' },
 ]
 
 /** The `ITEM_*` ids of crates/shared/src/items.rs. */
