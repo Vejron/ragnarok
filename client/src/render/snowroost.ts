@@ -1,4 +1,4 @@
-import type { Color, Vec3 } from '@ragnarok/engine'
+import type { Color, XYZ } from '@ragnarok/engine'
 import { Particles } from './particles'
 
 /** How many particles the roost can hold: a few sleds pulling away at once, or a pair of tanks. */
@@ -51,7 +51,7 @@ export class SnowRoost {
    * Snow off the track at `at` (on the ground) for `dt` seconds, at `strength` 0..1. `back` is the
    * unit direction behind the vehicle, `carried` its velocity, which the snow leaves with.
    */
-  throw(at: Vec3, back: Vec3, carried: Vec3, speed: number, strength: number, style: RoostStyle, dt: number) {
+  throw(at: XYZ, back: XYZ, carried: XYZ, speed: number, strength: number, style: RoostStyle, dt: number) {
     if (strength <= 0) return
     const amount = strength * style.power
     const w = style.width
