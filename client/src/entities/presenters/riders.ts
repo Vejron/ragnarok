@@ -1,7 +1,6 @@
 import { Quaternion, Vector3 } from '@ragnarok/engine'
 import type { VehicleModel } from '@/render/car'
-import { MortarModel } from '@/render/mortar'
-import { PakModel } from '@/render/pak'
+import { TowedGun } from '@/render/towedgun'
 import { FLAG_HELD_MASK, FLAG_HELD_SHIFT } from '@/net/codec'
 import { seatHead } from '@/sim/vehicles'
 import type { Avatars } from '../avatars'
@@ -17,7 +16,8 @@ import type { Vehicles } from './vehicles'
  * does not show, who are not drawn.
  */
 export function seatFrame(model: VehicleModel, kind: number, index: number, head: Vector3, rotation: Quaternion, gunYaw = 0): boolean {
-  if (model instanceof MortarModel || model instanceof PakModel) {
+  // A gun's crew are on its turning mount: a mortar's, a Pak's or a ship's gun's.
+  if (model instanceof TowedGun) {
     if (index !== 0) return false
     model.seatFrame(head, rotation)
     return true

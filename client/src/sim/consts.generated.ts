@@ -58,6 +58,12 @@ export const KIND_TUPP = 16
 /** The snowmobile: a mountain sled for two that tows a Pak or a mortar up slopes no car can climb. */
 export const KIND_SNOWMOBILE = 17
 
+/** The pirate ship: sailed by the wind on open water from its helm, its deck walked, with six guns. */
+export const KIND_SHIP = 18
+
+/** One of a pirate ship's guns, fixed to its deck and manned by one gunner. */
+export const KIND_SHIP_GUN = 19
+
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
 
@@ -1293,6 +1299,108 @@ export const ROADSTER_CEILING = 40.0
 /** Refill rate on the ground with no nozzle firing, share of the tank per second. */
 export const ROADSTER_AIR_REFILL = 0.2
 export const ROADSTER_SEAT_HEADS = [[-0.33, 0.42, 0.12], [0.33, 0.42, 0.12]] as const
+
+/**
+ * The pirate ship (`KIND_SHIP`): a single-masted brig of about 10 m, sailed from the helm at the
+ * stern, with three guns run out on each broadside (`SHIP_GUN_SLOTS`, each its own `KIND_SHIP_GUN`).
+ * It floats and sails only on open water, driven by the wind in its sail (`crate::wind`), and is
+ * stranded wherever it runs aground. The hull's top is its deck, walked on between the guns; the
+ * bulwarks along its sides keep whoever walks it aboard. Its bow tapers to a point over `SHIP_BOW`.
+ */
+export const SHIP_SEATS = 1
+export const SHIP_HALF_EXTENTS = [1.8, 0.7, 5.0] as const
+
+/** How far back from the stem the sides taper out to the full beam, metres. */
+export const SHIP_BOW = 2.2
+
+/** How deep the hull floats, metres: the deck stands this much less than its height out of the water. */
+export const SHIP_DRAFT = 0.6
+
+/** Top speed on a beam reach in a full wind, m/s (about 20 knots). */
+export const SHIP_MAX_SPEED = 10.0
+
+/** How quickly it turns under way, at full rudder, rad/s. */
+export const SHIP_TURN_RATE = 0.6
+
+/**
+ * The share of a full sail's drive her motor gives whatever the wind, hidden below decks: into the
+ * wind, where the sail only flaps, it still pushes her along slowly.
+ */
+export const SHIP_MOTOR = 0.35
+
+/** The deck, in the hull frame. */
+export const SHIP_DECK_Y = SHIP_HALF_EXTENTS[1]
+
+/**
+ * The bulwarks: waist high over the deck, too high to climb over, with the guns firing through ports
+ * in them; and as thick as planks.
+ */
+export const SHIP_BULWARK_HEIGHT = 0.75
+export const SHIP_BULWARK_THICK = 0.1
+
+/** The mast, from the deck: how tall and how thick, and how far forward of the middle it stands. */
+export const SHIP_MAST_HEIGHT = 8.0
+export const SHIP_MAST_RADIUS = 0.15
+export const SHIP_MAST_Z = -0.7
+
+/** The helm, where its helmsman stands and from where it is boarded, near the stern. */
+export const SHIP_HELM = [0.0, SHIP_DECK_Y + 0.9, 4.0] as const
+export const SHIP_HELM_HEAD = [0.0, SHIP_DECK_Y + 1.6, 4.3] as const
+
+/** Where the helmsman steps down onto the deck, the middle of a soldier standing just ahead of the helm. */
+export const SHIP_HELM_EXIT = [0.0, SHIP_DECK_Y + STAND_CENTRE + 0.05, 3.3] as const
+
+/** How far out from the centre line the guns stand, and how far along it each pair stands, metres. */
+export const SHIP_GUN_X = 1.15
+export const SHIP_GUN_Z = [-1.8, 0.4, 2.6] as const
+
+/**
+ * A ship's gun (`KIND_SHIP_GUN`): a long gun on a wooden truck carriage, fixed to its ship's deck
+ * (`Fitting`, `SHIP_GUN_SLOTS`) and carried with it, so nothing pushes or drives it. One gunner lays it
+ * by the look, a little either way along the broadside and up and down, and fires round shot
+ * (`PROJECTILE_BALL`): slower than a shell, so it arcs, and bursting small where it lands. Its
+ * muzzle points down its own -Z, over the side.
+ */
+export const SHIP_GUN_SEATS = 1
+export const SHIP_GUN_HALF_EXTENTS = [0.3, 0.3, 0.5] as const
+
+/** The trunnions, over the carriage's front, and the barrel's length from them. */
+export const SHIP_GUN_PIVOT = [0.0, 0.25, -0.12] as const
+export const SHIP_GUN_BARREL_LENGTH = 1.4
+
+/** Traverse either side of square to the ship, and elevation, radians. */
+export const SHIP_GUN_TRAVERSE = 0.5
+export const SHIP_GUN_PITCH_MIN = -0.12
+export const SHIP_GUN_PITCH_MAX = 0.35
+
+/** How fast it is laid onto the look, rad/s: handspikes and tackle, slow. */
+export const SHIP_GUN_SLEW = 0.8
+
+/** Ticks between shots: swabbed, loaded and run out again. */
+export const SHIP_GUN_COOLDOWN_TICKS = 4 * TICK_RATE
+
+/** How hard it kicks back, m/s, which its ship takes at the gun: a broadside rolls it. */
+export const SHIP_GUN_RECOIL = 1.5
+
+/** The round shot's muzzle speed, m/s. */
+export const BALL_SPEED = 90.0
+
+/**
+ * Its small burst where it lands, beside the harm of the iron itself to whatever it goes through
+ * (radius metres, damage, knock m/s), and the hole it knocks in the ground (radius, depth, metres).
+ */
+export const BALL_BLAST_RADIUS = 2.5
+export const BALL_BLAST_DAMAGE = 55.0
+export const BALL_BLAST_KNOCK = 7.0
+export const CRATER_BALL_RADIUS = 1.3
+export const CRATER_BALL_DEPTH = 0.3
+
+/** The gunner stands behind the breech, from the pivot, with the gun pointing ahead. */
+export const SHIP_GUN_SEAT_HEAD = [0.25, 0.5, 0.85] as const
+
+/** Where the gun is manned from, behind its breech, and where its gunner steps back onto the deck. */
+export const SHIP_GUN_BOARD = [0.0, 0.2, 0.6] as const
+export const SHIP_GUN_EXIT = [0.0, STAND_CENTRE + 0.05 - SHIP_GUN_HALF_EXTENTS[1], SHIP_GUN_HALF_EXTENTS[2] + CAPSULE_RADIUS + 0.3] as const
 
 /**
  * The snowmobile (`KIND_SNOWMOBILE`): a modern mountain sled, light and very powerful, for two

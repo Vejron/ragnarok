@@ -141,10 +141,14 @@ pub(super) const WALKER: VehicleDef = VehicleDef {
         nose: 0.0,
         steer_time: 0.0,
         skim: None,
+        bow: 0.0,
     },
     armor: ARMOR,
     drone: None,
     mount_seat: None,
+    board: None,
+    exit: None,
+    fittings: &[],
 };
 
 /// The driver's chin guns: the upper body turns within `WALKER_TORSO_LIMIT` of the legs.

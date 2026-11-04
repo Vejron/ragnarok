@@ -12,6 +12,8 @@
 //! nose, and its wings hold it up once it is fast enough (see [`wing`]).
 //! A walker stands on two spring legs and is kept upright by a torque (see [`walk`]); a hen is a walker
 //! with wings, which leap, flap and glide (see [`flap`]).
+//! A ship floats on open water and sails by the wind, steered by its rudder (see [`sail`]); its guns
+//! are vehicles of their own, fixed to its deck and carried there each step (see [`Physics::mount_car`]).
 //! "Car" in the names below means any of these vehicles; [`Spec`] says which one.
 
 use shared::vec3;
@@ -24,10 +26,12 @@ use shared::protocol::{DAMAGE_PARTS, DAMAGE_SLOTS, DAMAGE_WHEELS, THRUST_AIR, TH
 
 
 mod flight;
+mod sail;
 mod spec;
 mod water;
 
 use flight::{assist, boost, flap, fly, fly_drone, fly_loiter, pull, roll_plane, thrust, walk, wing};
+use sail::sail;
 use water::{wade, water_under};
 pub use spec::half_extents;
 pub(super) use spec::{Buttons, Lift, Role, Shape, Solid, Spec, spec};
@@ -86,6 +90,8 @@ const LOST_WHEEL_RADIUS: f32 = 0.05;
 /// together. Without it a gun heavier than what tows it (a Pak behind the snowmobile) sways ever
 /// wider at speed until it jackknifes.
 const HITCH_YAW_DAMPING: f32 = 200.0;
+/// How wide a bow's stem is, as a share of the hull's width.
+const STEM: f32 = 0.08;
 
 /// What the driver asks of the car this tick.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -118,6 +124,8 @@ pub struct CarCondition {
     pub turn: f32,
     pub sides: [f32; 2],
     pub wheels: [u8; 4],
+    /// It has no health left: a ship's hull fills, and it sinks.
+    pub wrecked: bool,
 }
 
 /// A hurt engine's share of its power and of the top speed.
@@ -130,7 +138,7 @@ const TRACK_BROKEN_SPEED: f32 = 0.3;
 const TRACK_BROKEN_TURN: f32 = 0.35;
 
 impl CarCondition {
-    pub const NEW: CarCondition = CarCondition { power: 1.0, speed: 1.0, turn: 1.0, sides: [1.0; 2], wheels: [0; 4] };
+    pub const NEW: CarCondition = CarCondition { power: 1.0, speed: 1.0, turn: 1.0, sides: [1.0; 2], wheels: [0; 4], wrecked: false };
 
     /// From a vehicle's health and damage as the snapshot carries them. The engine keeps full power
     /// down to half health and loses up to half of it below. A vehicle's parts (its damage slots
@@ -138,7 +146,7 @@ impl CarCondition {
     pub fn of(kind: u8, hp: u8, damage: [u8; DAMAGE_SLOTS]) -> CarCondition {
         let health = f32::from(hp) / f32::from(vehicle_hp(kind));
         let def = shared::vehicles::vehicle_def(kind);
-        let mut condition = CarCondition { power: (0.5 + health).min(1.0), ..CarCondition::NEW };
+        let mut condition = CarCondition { power: (0.5 + health).min(1.0), wrecked: hp == 0, ..CarCondition::NEW };
         // Only a car has wheels to hurt: a tank's first wheel slot says whether its turret is on.
         if def.car_wheels {
             condition.wheels.copy_from_slice(&damage[DAMAGE_WHEELS..DAMAGE_WHEELS + 4]);
@@ -303,6 +311,15 @@ pub(super) struct Car {
     tank: Option<f32>,
     /// The `THRUST_*` nozzles that fired in the last step.
     firing: u8,
+    /// Where a ship's gun is fixed (`mount_car`): it is carried there after every step.
+    mounted: Option<Mounted>,
+}
+
+/// A vehicle fixed to another one, `on`, at `at` (its own frame), turned `yaw` there.
+#[derive(Clone, Copy, Debug)]
+struct Mounted {
+    on: u32,
+    at: Pose,
 }
 
 impl Car {
@@ -386,9 +403,19 @@ fn turned(spec: &Spec, steer: f32, speed: f32) -> f32 {
     if lock > 0.0 { steer.abs() / lock } else { 0.0 }
 }
 
-/// A car's hull: its box, with the front of the underside swept up if it has a `nose`.
-fn hull(spec: &Spec) -> ColliderBuilder {
+/// A car's hull: its box, with the front of the underside swept up if it has a `nose`, or its sides
+/// tapered in to a stem if it has a `bow`.
+pub(crate) fn hull(spec: &Spec) -> ColliderBuilder {
     let [hx, hy, hz] = spec.half_extents;
+    if spec.bow > 0.0 {
+        let stem = hx * STEM;
+        let corners: Vec<Vector> = [-hy, hy]
+            .into_iter()
+            .flat_map(|y| [[-hx, y, hz], [hx, y, hz], [-hx, y, spec.bow - hz], [hx, y, spec.bow - hz], [-stem, y, -hz], [stem, y, -hz]])
+            .map(Vector::from)
+            .collect();
+        return ColliderBuilder::convex_hull(&corners).expect("a hull with a bow is not flat");
+    }
     if spec.nose <= 0.0 {
         return ColliderBuilder::cuboid(hx, hy, hz);
     }
@@ -522,7 +549,7 @@ impl Physics {
                 );
             }
         }
-        self.cars.insert(id, Car { spec, body, collider, extra, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW, towed_by: None, tank: spec.tank, firing: 0 });
+        self.cars.insert(id, Car { spec, body, collider, extra, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW, towed_by: None, tank: spec.tank, firing: 0, mounted: None });
     }
 
     /// Takes vehicle `id` out of the world, with everything hitched to it.
@@ -690,7 +717,7 @@ impl Physics {
     /// Applies the driver's controls to the wheels for the next [`Physics::step_cars`].
     pub fn drive_car(&mut self, id: u32, controls: CarControls, dt: f32) {
         let Some(car) = self.cars.get_mut(&id) else { return };
-        if matches!(car.spec.lift, Lift::Rotor | Lift::Walker | Lift::Drone | Lift::Loiter) {
+        if matches!(car.spec.lift, Lift::Rotor | Lift::Walker | Lift::Drone | Lift::Loiter | Lift::Sail | Lift::Mounted) {
             car.flight = controls;
             return;
         }
@@ -831,6 +858,7 @@ impl Physics {
     pub fn step_cars(&mut self, dt: f32) {
         self.apply_removals();
         let waves = shared::waves::time(self.tick);
+        let wind = shared::wind::wind(self.tick);
         self.tick = self.tick.wrapping_add(1);
         if self.cars.is_empty() {
             return;
@@ -884,6 +912,12 @@ impl Physics {
                 let grounded = feet.iter().any(|reach| reach.is_some_and(|distance| distance < WALKER_LEG_LENGTH));
                 car.firing = flap(body, car.flight, stamina, standing, grounded, dt);
             }
+        }
+        // A ship floats on whatever water it is on, and sails if there is enough of it under her keel.
+        for car in self.cars.values().filter(|car| car.spec.lift == Lift::Sail) {
+            let Some(body) = self.bodies.get_mut(car.body) else { continue };
+            let water = water_under(&self.waters, waves, body, car.spec);
+            sail(body, car.spec, car.flight, car.condition, water.as_ref(), wind, dt);
         }
         for car in self.cars.values_mut().filter(|car| car.spec.lift.wheeled()) {
             // Wheel rays must not hit their own chassis.
@@ -943,6 +977,53 @@ impl Physics {
             body.set_angvel(spin, true);
         }
         self.step_pipeline();
+        self.carry_mounted();
+    }
+
+    /// Fixes vehicle `id` (a ship's gun) to vehicle `on` (its ship) at `at` in `on`'s frame, turned
+    /// `yaw` there, and puts it there. From now on it goes wherever that spot goes, after every step,
+    /// and nothing else moves it; it touches nothing, but what moves is still stopped by it, and shots
+    /// still meet it. Whatever kicks it kicks what it is fixed to.
+    pub fn mount_car(&mut self, id: u32, on: u32, at: [f32; 3], yaw: f32) {
+        let Some(car) = self.cars.get_mut(&id) else { return };
+        car.mounted = Some(Mounted { on, at: pose_of(at, yaw) });
+        if let Some(body) = self.bodies.get_mut(car.body) {
+            body.set_body_type(RigidBodyType::KinematicPositionBased, true);
+        }
+        for &handle in std::iter::once(&car.collider).chain(&car.extra) {
+            if let Some(collider) = self.colliders.get_mut(handle) {
+                collider.set_collision_groups(InteractionGroups::none());
+            }
+        }
+        self.carry_mounted();
+    }
+
+    /// The vehicle `id` is fixed to, if it is.
+    pub fn mounted_on(&self, id: u32) -> Option<u32> {
+        self.cars.get(&id)?.mounted.map(|mounted| mounted.on)
+    }
+
+    /// The vehicles fixed to vehicle `id`, in id order.
+    pub fn fittings_of(&self, id: u32) -> Vec<u32> {
+        self.cars.iter().filter(|(_, car)| car.mounted.is_some_and(|mounted| mounted.on == id)).map(|(&fitting, _)| fitting).collect()
+    }
+
+    /// Puts every fixed vehicle where it is fixed, on what it is fixed to as that is now.
+    fn carry_mounted(&mut self) {
+        let placed: Vec<(RigidBodyHandle, Pose)> = self
+            .cars
+            .values()
+            .filter_map(|car| {
+                let mounted = car.mounted?;
+                let on = self.bodies.get(self.cars.get(&mounted.on)?.body)?;
+                Some((car.body, *on.position() * mounted.at))
+            })
+            .collect();
+        for (handle, pose) in placed {
+            if let Some(body) = self.bodies.get_mut(handle) {
+                body.set_position(pose, true);
+            }
+        }
     }
 
     /// Every `(car, tree)` pair in contact after the last step: what a car has driven into.
@@ -1063,8 +1144,14 @@ impl Physics {
     /// Like [`Self::cast_ray`], and also says which vehicle it hit, if it was a vehicle and not the world.
     pub fn cast_ray_hit(&self, origin: [f32; 3], dir: [f32; 3], max: f32, ignore: u32) -> Option<(f32, Option<u32>)> {
         let mut filter = QueryFilter::default();
+        // A ship's gun fires over its own ship's side, and its shot never hits it.
+        let host = self.cars.get(&ignore).and_then(|car| car.mounted).and_then(|mounted| self.cars.get(&mounted.on)).map(|on| on.body);
+        let not_host = |_: ColliderHandle, collider: &Collider| collider.parent().is_none() || collider.parent() != host;
         if let Some(car) = self.cars.get(&ignore) {
             filter = filter.exclude_rigid_body(car.body);
+            if host.is_some() {
+                filter = filter.predicate(&not_host);
+            }
         }
         let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, filter);
         let ray = Ray::new(Vector::from(origin), Vector::from(dir));
@@ -1121,6 +1208,16 @@ impl Physics {
     /// Changes vehicle `id`'s velocity by `delta` m/s at once, as a gun's recoil does.
     pub fn kick_car(&mut self, id: u32, delta: [f32; 3]) {
         let Some(car) = self.cars.get(&id) else { return };
+        // A fixed gun cannot move: what it is fixed to takes the kick, where the gun stands.
+        if let Some(mounted) = car.mounted {
+            let [hx, hy, hz] = car.spec.half_extents;
+            let mass = car.spec.density * 8.0 * hx * hy * hz;
+            let at = self.bodies.get(car.body).map(|body| body.translation());
+            if let (Some(at), Some(on)) = (at, self.cars.get(&mounted.on)) && let Some(body) = self.bodies.get_mut(on.body) {
+                body.apply_impulse_at_point(Vector::from(delta) * mass, at, true);
+            }
+            return;
+        }
         if let Some(body) = self.bodies.get_mut(car.body) {
             body.apply_impulse(Vector::from(delta) * body.mass(), true);
         }
@@ -1181,13 +1278,18 @@ impl Physics {
         let body = self.bodies.get(car.body)?;
         let rotation = *body.rotation();
         let forward = rotation * Vector::new(0.0, 0.0, -1.0);
+        // A fixed gun goes as fast as the spot it is fixed to.
+        let velocity = match car.mounted.and_then(|mounted| self.cars.get(&mounted.on)).and_then(|on| self.bodies.get(on.body)) {
+            Some(on) => on.velocity_at_point(body.translation()),
+            None => body.linvel(),
+        };
         Some(CarPose {
             position: body.translation().into(),
             rotation: [rotation.x, rotation.y, rotation.z, rotation.w],
-            forward_speed: forward.dot(body.linvel()),
+            forward_speed: forward.dot(velocity),
             steer: if car.spec.steer_lock > 0.0 { car.steer / car.spec.steer_lock } else { 0.0 },
             up_y: (rotation * Vector::new(0.0, 1.0, 0.0)).y,
-            velocity: body.linvel().into(),
+            velocity: velocity.into(),
         })
     }
 }

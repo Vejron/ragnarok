@@ -1,6 +1,6 @@
 import type { HudStats } from '@/hud'
 import { BACKPACK_NAME, type BackpackView } from '@/backpack'
-import { WEAPON_AP, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_EGG, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK } from '@/net/codec'
+import { WEAPON_AP, WEAPON_AUTOCANNON, WEAPON_BALL, WEAPON_BOMB, WEAPON_EGG, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK } from '@/net/codec'
 import { colorFor, isBot, nameFor } from '@/profile'
 import { seatHint } from '@/seathints'
 import type { Painter, TextStyle } from './paint'
@@ -20,7 +20,7 @@ export const backpackLine = (b: BackpackView) =>
 const sideName = (team: number) => (team === 0 ? 'People' : `Team ${team}`)
 /** What the kill feed shows between killer and victim. */
 const mark = (weapon: number) =>
-  weapon === WEAPON_SHELL || weapon === WEAPON_AP || weapon === WEAPON_AUTOCANNON || weapon === WEAPON_ROCKET || weapon === WEAPON_GRENADE || weapon === WEAPON_WRECK || weapon === WEAPON_BOMB || weapon === WEAPON_EGG
+  weapon === WEAPON_SHELL || weapon === WEAPON_AP || weapon === WEAPON_AUTOCANNON || weapon === WEAPON_ROCKET || weapon === WEAPON_GRENADE || weapon === WEAPON_WRECK || weapon === WEAPON_BOMB || weapon === WEAPON_EGG || weapon === WEAPON_BALL
     ? '💥'
     : weapon === WEAPON_REVOLVER ? '›‹' : '›'
 

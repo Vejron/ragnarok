@@ -500,6 +500,12 @@ impl Physics {
         self.tick = tick;
     }
 
+    /// The level of open water at `(x, z)`, metres, when it is still: `None` where it is dry (and
+    /// everywhere when it is frozen).
+    pub fn water_level(&self, x: f32, z: f32) -> Option<f32> {
+        self.waters.level_at(x, z)
+    }
+
     /// Test helper: stills the waves on all open water.
     #[cfg(any(test, feature = "testing"))]
     pub fn calm_waters(&mut self) {

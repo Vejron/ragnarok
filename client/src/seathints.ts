@@ -14,6 +14,7 @@ const HINTS: Record<Seat, (stats: Stats) => string> = {
   driver: ({ canSwitchSeat }) => `W/S gas and brake · A/D steer or turn · Space handbrake · ${HITCH}${canSwitchSeat ? SWITCH : ''}`,
   roadster: ({ canSwitchSeat }) => `W/S gas and brake · A/D steer · Shift boost · Space hop, hold to hover · C handbrake · ${HITCH}${canSwitchSeat ? SWITCH : ''}`,
   sled: ({ canSwitchSeat }) => `W/S gas and brake · A/D steer, hard at speed to drift · Shift boost · Space handbrake · ${HITCH}${canSwitchSeat ? SWITCH : ''}`,
+  helm: () => 'W set sail · S back the sail, then the sweeps astern · A/D rudder, under way · Space anchor · Sail across the wind: into it she barely moves',
   hen: ({ canSwitchSeat }) => `W/S walk · A/D turn · Space leap, hold to flap, then glide · W in the air to fly forward · Click or F lay an egg${canSwitchSeat ? SWITCH : ''}`,
   tupp: ({ canSwitchSeat }) => `W/S walk · A/D turn · Mouse aim the eyes (the head turns within 50°) · Hold click or F to charge the laser · Space leap, hold to flap, then glide${canSwitchSeat ? SWITCH : ''}`,
   walker: ({ canSwitchSeat }) => `W/S walk · A/D turn · Mouse aim the guns (the body follows within 30°) · Click or F fire${canSwitchSeat ? SWITCH : ''}`,

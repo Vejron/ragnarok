@@ -221,7 +221,7 @@ export class Gauges {
     if (s.air !== null) {
       if (s.eggs !== null) pips(HEN_EGGS, s.eggs, true)
       const wings = s.seat === 'hen' || s.seat === 'tupp'
-      const label = wings ? (s.air < 0.15 ? 'GLIDE' : 'WINGS') : s.seat === 'sled' ? (s.air < 0.15 ? 'BOOST LOW' : 'BOOST') : s.air < 0.15 ? 'AIR LOW' : 'AIR'
+      const label = s.seat === 'helm' ? (s.air < 0.15 ? 'IN IRONS' : 'WIND') : wings ? (s.air < 0.15 ? 'GLIDE' : 'WINGS') : s.seat === 'sled' ? (s.air < 0.15 ? 'BOOST LOW' : 'BOOST') : s.air < 0.15 ? 'AIR LOW' : 'AIR'
       gauge(s.air, 'air', s.air < 0.15, label)
     }
     if (s.stamina && (s.stamina.left < 1 || s.stamina.winded)) gauge(s.stamina.left, 'stamina', s.stamina.winded, s.stamina.winded ? 'WINDED' : 'STAMINA')

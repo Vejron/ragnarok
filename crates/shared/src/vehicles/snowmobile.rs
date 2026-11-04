@@ -89,8 +89,12 @@ pub(super) const SNOWMOBILE: VehicleDef = VehicleDef {
         steer_time: 0.2,
         // Light and powerful, it planes over open water from a modest speed and carves on it.
         skim: Some(Skim { sink_speed: 6.0, plane_speed: 10.0, thrust: 0.15, grip: 0.6, bank_drag: 1.0 }),
+        bow: 0.0,
     },
     armor: ARMOR,
     drone: None,
     mount_seat: None,
+    board: None,
+    exit: None,
+    fittings: &[],
 };

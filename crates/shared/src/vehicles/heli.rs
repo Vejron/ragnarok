@@ -99,10 +99,14 @@ pub(super) const HELI: VehicleDef = VehicleDef {
         nose: 0.0,
         steer_time: 0.0,
         skim: None,
+        bow: 0.0,
     },
     armor: ARMOR,
     drone: None,
     mount_seat: None,
+    board: None,
+    exit: None,
+    fittings: &[],
 };
 
 /// The gunner's nose autocannon, whose rounds are shells in miniature, and the pilot's rocket pods.

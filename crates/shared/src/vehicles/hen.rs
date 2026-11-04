@@ -110,10 +110,14 @@ pub(super) const HEN: VehicleDef = VehicleDef {
         nose: 0.0,
         steer_time: 0.0,
         skim: None,
+        bow: 0.0,
     },
     armor: ARMOR,
     drone: None,
     mount_seat: None,
+    board: None,
+    exit: None,
+    fittings: &[],
 };
 
 /// The clutch: an egg from under the tail, with the hull's velocity and a little backwards.

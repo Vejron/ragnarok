@@ -12,7 +12,7 @@ import type { Blips } from '@/blips'
 import { HIT_KILL, HIT_ROOSTER, HIT_VEHICLE } from '@/feedback'
 import {
   PROJECTILE_BULLET, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_BULLET, WEAPON_CRASH, WEAPON_DRONE, WEAPON_EGG, WEAPON_FLARE, WEAPON_GRENADE, WEAPON_LASER, WEAPON_LAUNCHER, WEAPON_LOITER, WEAPON_MG, WEAPON_MORTAR,
-  MARK_GLANCE, MARK_PIERCED, MARK_SCUFF, MARK_VITAL, WEAPON_AP, WEAPON_PELLET, WEAPON_RICOCHET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_TURRET, WEAPON_WRECK,
+  MARK_GLANCE, MARK_PIERCED, MARK_SCUFF, MARK_VITAL, WEAPON_AP, WEAPON_BALL, WEAPON_SPLASH, WEAPON_PELLET, WEAPON_RICOCHET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_TURRET, WEAPON_WRECK,
   type BulletSpawn, type HullMark, type ShotEvent,
 } from '@/net/codec'
 import { CarModel } from '@/render/car'
@@ -30,7 +30,7 @@ import { TuppModel } from '@/render/tupp'
 import type { ProjectileTrails } from '@/render/trails'
 import { crashBurst, scrapeSparks, type FxWorld } from '@/render/tyres'
 import { bulletLifeTicks, bulletPosition, bulletTicksTo, bulletVelocity } from '@/sim/ballistics'
-import { AP_BLAST_RADIUS, BOMB_RADIUS, CANNON_RADIUS, EXPLOSION_RADIUS, EYE_HEIGHT, MORTAR_RADIUS, ROCKET_BLAST_RADIUS, TICK_RATE, TUPP_LASER_DAMAGE, TUPP_LASER_RANGE, WRECK_BLAST_RADIUS } from '@/sim/consts'
+import { AP_BLAST_RADIUS, BALL_BLAST_RADIUS, BOMB_RADIUS, CANNON_RADIUS, EXPLOSION_RADIUS, EYE_HEIGHT, MORTAR_RADIUS, ROCKET_BLAST_RADIUS, TICK_RATE, TUPP_LASER_DAMAGE, TUPP_LASER_RANGE, WRECK_BLAST_RADIUS } from '@/sim/consts'
 import { DRONE_BLAST_RADIUS, GRENADE_BLAST_RADIUS, hitscanGunFor, ITEM_SNIPER, itemDef, LOITER_BLAST_RADIUS } from '@/sim/items'
 import type { Surroundings } from '@/surroundings'
 import type { VehicleSounds } from '@/vehicleaudio'
@@ -56,6 +56,8 @@ const BLAST_OF: ReadonlyMap<number, { radius: number; profile: ExplosionProfile;
   // A solid shot's little charge: a sharp crack rather than a fireball.
   [WEAPON_AP, { radius: AP_BLAST_RADIUS, profile: BLASTS.cannon, sound: 'small' }],
   [WEAPON_MORTAR, { radius: MORTAR_RADIUS, profile: BLASTS.shell, sound: 'big' }],
+  // Round shot: iron, and a little powder where it lands.
+  [WEAPON_BALL, { radius: BALL_BLAST_RADIUS, profile: BLASTS.cannon, sound: 'small' }],
   [WEAPON_WRECK, { radius: WRECK_BLAST_RADIUS, profile: BLASTS.wreck, sound: 'explosion' }],
   [WEAPON_DRONE, { radius: DRONE_BLAST_RADIUS, profile: BLASTS.grenade, sound: 'small' }],
   [WEAPON_LOITER, { radius: LOITER_BLAST_RADIUS, profile: BLASTS.shell, sound: 'explosion' }],
@@ -309,6 +311,9 @@ export class Events {
       if (!pellets || (from && from.distanceTo(to) >= pellets.range - 1)) return
       if (!surroundings.watery(to, 0.2)) effects.pelletStrike(to)
       if (shot.shooter === local) view.chipped(to.x, to.y, to.z, pellets.damage)
+    } else if (shot.weapon === WEAPON_SPLASH) {
+      // A round came down in open water: a tall column where it went in, whatever burst there.
+      surroundings.watery(to, 1.6, 22)
     } else if (shot.weapon === WEAPON_RICOCHET) {
       // A shell or round glanced off armor: sparks and a ping, and no blast.
       effects.strike(to)

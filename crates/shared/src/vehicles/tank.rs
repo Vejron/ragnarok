@@ -135,10 +135,14 @@ pub(super) const TANK: VehicleDef = VehicleDef {
         nose: 0.0,
         steer_time: 0.0,
         skim: None,
+        bow: 0.0,
     },
     armor: ARMOR,
     drone: None,
     mount_seat: Some(MountSeat { seat: TANK_MG_SEAT, pivot: TANK_TURRET_PIVOT, head: TANK_MG_HEAD }),
+    board: None,
+    exit: None,
+    fittings: &[],
 };
 
 /// The cannon, then the roof gun, which reads the turret's yaw as of this tick.

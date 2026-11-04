@@ -56,7 +56,7 @@ pub const HIT_ROOSTER: u8 = 3;
 pub const OBJ_TREE: u8 = 0;
 pub const OBJ_BUILDING: u8 = 1;
 
-pub use crate::consts::{KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SNOWMOBILE, KIND_SOLDIER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER};
+pub use crate::consts::{KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SOLDIER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER};
 
 /// Whether `kind` is a drone: flown from a remote seat by whoever launched it (see the `Drones` mechanic).
 pub fn is_drone(kind: u8) -> bool {
@@ -143,6 +143,10 @@ pub const WEAPON_LAUNCHER: u8 = 24;
 pub const WEAPON_AP: u8 = 27;
 /// A tupp's laser eyes: sent for every burn, hit or miss, from `shooter`, the vehicle, ending at `x, y, z`.
 pub const WEAPON_LASER: u8 = 28;
+/// A ship's gun's round shot bursting where it lands (`PROJECTILE_BALL`).
+pub const WEAPON_BALL: u8 = 29;
+/// Shot events only: a round ended in open water at `x, y, z`, the surface there: a splash.
+pub const WEAPON_SPLASH: u8 = 30;
 
 /// `replicated::Limbs::lost` bits: the limbs a soldier has lost. The same bits shifted up by
 /// `LIMB_BLEED_SHIFT` are the stumps still bleeding.
@@ -206,6 +210,9 @@ pub const PROJECTILE_FLARE: u8 = 8;
 /// A tank gun's high-explosive shell: flies as `PROJECTILE_SHELL` does (which is armour-piercing), and
 /// bursts much bigger, but goes through little armour.
 pub const PROJECTILE_HE: u8 = 9;
+/// A ship's gun's round shot: slower than a shell, so it arcs, hurting what it hits hard and bursting
+/// small. On open water it ends in a splash.
+pub const PROJECTILE_BALL: u8 = 10;
 
 /// A message's field: its name, its Rust type and its unit (`UNITS`), or `""` for a count, a set of
 /// bits, an id or text, which have none.

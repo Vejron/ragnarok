@@ -10,6 +10,8 @@ pub use crate::vehicles::mortar::*;
 pub use crate::vehicles::pak::*;
 pub use crate::vehicles::plane::*;
 pub use crate::vehicles::roadster::*;
+pub use crate::vehicles::ship::*;
+pub use crate::vehicles::ship_gun::*;
 pub use crate::vehicles::snowmobile::*;
 pub use crate::vehicles::sports::*;
 pub use crate::vehicles::strv::*;
@@ -54,6 +56,10 @@ pub const KIND_BACKPACK: u8 = 15;
 pub const KIND_TUPP: u8 = 16;
 /// The snowmobile: a mountain sled for two that tows a Pak or a mortar up slopes no car can climb.
 pub const KIND_SNOWMOBILE: u8 = 17;
+/// The pirate ship: sailed by the wind on open water from its helm, its deck walked, with six guns.
+pub const KIND_SHIP: u8 = 18;
+/// One of a pirate ship's guns, fixed to its deck and manned by one gunner.
+pub const KIND_SHIP_GUN: u8 = 19;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;

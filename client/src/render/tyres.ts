@@ -181,7 +181,8 @@ export class VehicleFx {
     const particles = distance < PARTICLE_RANGE
     const layout = this.fx.wheels
     if (!layout) {
-      if (powered && particles) this.downwash(world, here, dt)
+      if (this.fx.floats) this.skim(world, here, particles, dt)
+      else if (powered && particles) this.downwash(world, here, dt)
       return
     }
     this.wheels(world, layout, steer, particles, dt)

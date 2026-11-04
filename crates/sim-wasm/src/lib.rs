@@ -282,6 +282,15 @@ impl ClientSim {
         vec![wave.height, wave.slope[0], wave.slope[1], wave.rise]
     }
 
+    /// Which way the wind blows at `tick` (`[x, z]`), and the share of a full sail a ship heading along
+    /// `(fx, fz)` gets from it and how far its boom swings out (`shared::wind`), for checking the
+    /// client's copy against.
+    #[wasm_bindgen(js_name = windAt)]
+    pub fn wind_at(tick: u32, fx: f32, fz: f32) -> Vec<f32> {
+        let wind = shared::wind::wind(tick);
+        vec![wind[0], wind[1], shared::wind::point_of_sail([fx, fz], wind), shared::wind::boom([fx, fz], wind)]
+    }
+
     /// Makes ragdoll `key` (replacing any it had) from `segments`, the world points each of its parts
     /// runs between as the soldier stood when thrown (`RAGDOLL_SEGMENT_FLOATS` each), with `side` their
     /// right, setting off at `velocity` and turning at `spin`; the limbs in `lost` (`LIMB_*`) are left

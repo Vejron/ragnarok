@@ -55,6 +55,6 @@ describe('wakes', () => {
     expect(dropped).toEqual([0, 1, 2, 3, 4, 5])
     trail.lift()
     trail.move((at) => dropped.push(at), 5.1, 0, 0.1)
-    expect(dropped.at(-1)).toBe(5.1)
+    expect(dropped[dropped.length - 1]).toBe(5.1)
   })
 })

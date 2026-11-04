@@ -13,7 +13,7 @@ use crate::consts::*;
 use crate::mounts::{Aim, Ammo, Fire, MountDef, Muzzle, Need, Refill, Show};
 use crate::items::*;
 use crate::protocol::{
-    KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SNOWMOBILE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON,
+    KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON,
     PROJECTILE_EGG, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_SHELL, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LASER, WEAPON_LOITER, WEAPON_MG, WEAPON_SHELL,
 };
 
@@ -26,6 +26,8 @@ pub mod mortar;
 pub mod pak;
 pub mod plane;
 pub mod roadster;
+pub mod ship;
+pub mod ship_gun;
 pub mod snowmobile;
 mod spec;
 pub mod sports;
@@ -68,6 +70,24 @@ pub struct VehicleDef {
     /// A seat on its turning mount rather than in the hull, and out in the open whatever `crew` says:
     /// the mortar's and the Pak's only one, a tank's machine gunner on the turret roof.
     pub mount_seat: Option<MountSeat>,
+    /// Where it is boarded from, in the hull frame, when that is not its middle: a ship's helm, at its
+    /// stern, or behind a gun's breech. `None` boards it from anywhere near its hull.
+    pub board: Option<[f32; 3]>,
+    /// Where whoever leaves it stands, in the hull frame (the middle of a standing soldier), tried before
+    /// anywhere beside it: on a ship's deck, rather than over the side. `None` sets them down beside it.
+    pub exit: Option<[f32; 3]>,
+    /// The vehicles fixed to it, which come and go with it: a ship's guns.
+    pub fittings: &'static [Fitting],
+}
+
+/// A vehicle of `kind` fixed to another one at `at` (its middle, in the other's hull frame), facing
+/// `yaw` there (in the soldier convention, + turns left). It is its own vehicle, with its own seat and
+/// health, but carried where it is fixed: nothing moves it but what it is fixed to.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fitting {
+    pub kind: u8,
+    pub at: [f32; 3],
+    pub yaw: f32,
 }
 
 /// A seat on a mount that turns with the gun.
@@ -218,6 +238,8 @@ pub static VEHICLES: &[VehicleDef] = &[
     pak::PAK,
     tupp::TUPP,
     snowmobile::SNOWMOBILE,
+    ship::SHIP,
+    ship_gun::SHIP_GUN,
 ];
 
 /// Where each kind id's definition is in `VEHICLES`: 0, the jeep's, for ids that are not a vehicle.
@@ -301,6 +323,31 @@ mod tests {
         assert!(!vehicle_def(KIND_JEEP).gun() && !vehicle_def(KIND_SPORTS).gun() && !vehicle_def(KIND_ROADSTER).gun() && !vehicle_def(KIND_HEN).gun());
         assert!(vehicle_def(KIND_TUPP).gun() && !vehicle_def(KIND_TUPP).arms());
         assert!(vehicle_def(KIND_MORTAR).gun() && vehicle_def(KIND_PAK).gun());
+        assert!(!vehicle_def(KIND_SHIP).gun() && vehicle_def(KIND_SHIP_GUN).gun());
+    }
+
+    #[test]
+    fn a_ships_guns_stand_on_its_deck_inside_its_bulwarks_and_clear_of_each_other() {
+        let ship = vehicle_def(KIND_SHIP);
+        let [hx, hy, hz] = ship.half_extents();
+        let gun = vehicle_def(KIND_SHIP_GUN).half_extents();
+        assert_eq!(ship.fittings.len(), 6);
+        for (index, fitting) in ship.fittings.iter().enumerate() {
+            assert_eq!(fitting.kind, KIND_SHIP_GUN);
+            let [x, y, z] = fitting.at;
+            assert!((y - gun[1] - hy).abs() < 1e-5, "gun {index} stands on the deck");
+            // Turned square to the side, its length lies across the ship.
+            assert!(x.abs() + gun[2] < hx - ship::SHIP_BULWARK_THICK && z.abs() + gun[0] < hz - ship::SHIP_BOW * 0.5, "gun {index} is inside the bulwarks");
+            // It faces out over its own side.
+            assert!(-fitting.yaw.sin() * x > 0.0, "gun {index} points out");
+            for other in &ship.fittings[index + 1..] {
+                let gap = (x - other.at[0]).abs().max((z - other.at[2]).abs() - 2.0 * gun[0]);
+                assert!(gap > 1.0, "gun {index} leaves room to walk past it");
+            }
+        }
+        // Down the middle there is a gangway between the two broadsides.
+        assert!(ship.fittings.iter().all(|fitting| fitting.at[0].abs() - gun[2] > 0.6));
+        assert!(ship.board.is_some() && ship.exit.is_some() && ship.spec.lift == Lift::Sail);
     }
 
     #[test]

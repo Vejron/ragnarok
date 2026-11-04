@@ -4,7 +4,7 @@
 //! trunk or a wall is the same shape on both sides.
 
 use super::*;
-use crate::vehicle::{Role, extra_solids, heavy, spec, with_role};
+use crate::vehicle::{Lift, Role, extra_solids, heavy, hull, spec, with_role};
 use shared::world::{Manifest, Tile};
 
 /// A vehicle as a snapshot shows it: a fixed body with the hull and the extra solids its kind has,
@@ -169,13 +169,20 @@ impl Physics {
         }
         if !self.obstacles.contains_key(&id) {
             let body = self.bodies.insert(RigidBodyBuilder::fixed().pose(pose).build());
-            let [hx, hy, hz] = half_extents(kind);
-            let mut hull = ColliderBuilder::cuboid(hx, hy, hz);
+            // The same hull as the vehicle the server simulates.
+            let mut shape = hull(spec(kind));
             if heavy(kind) {
-                hull = hull.collision_groups(plows_trees());
+                shape = shape.collision_groups(plows_trees());
             }
-            self.colliders.insert_with_parent(hull.build(), body, &mut self.bodies);
-            let extra = extra_solids(kind).into_iter().map(|solid| self.colliders.insert_with_parent(solid.build(), body, &mut self.bodies)).collect();
+            // A ship's gun touches nothing, as on the server, so it never fights the ship this client
+            // sails under it; it is still in the way of a soldier.
+            let groups = (spec(kind).lift == Lift::Mounted).then(InteractionGroups::none);
+            let fit = |collider: ColliderBuilder| match groups {
+                Some(groups) => collider.collision_groups(groups),
+                None => collider,
+            };
+            self.colliders.insert_with_parent(fit(shape).build(), body, &mut self.bodies);
+            let extra = extra_solids(kind).into_iter().map(|solid| self.colliders.insert_with_parent(fit(solid).build(), body, &mut self.bodies)).collect();
             self.obstacles.insert(id, Obstacle { kind, body, extra, velocity });
         }
         let obstacle = self.obstacles.get_mut(&id).expect("just made");

@@ -16,6 +16,11 @@ pub enum Lift {
     Drone,
     /// A loitering drone's motor and wings: always cruising forward, turning towards the look.
     Loiter,
+    /// A hull that floats on open water and a sail the wind fills (`crate::wind`), steered by its
+    /// rudder. Aground, nothing drives it.
+    Sail,
+    /// Nothing of its own: it is fixed to another vehicle (`Fitting`) and carried with it.
+    Mounted,
 }
 
 impl Lift {
@@ -80,6 +85,9 @@ pub struct Spec {
     /// How it does on open water, for a kind light and quick enough to plane over it. `None` sinks
     /// straight to the bed and wades there, as every other wheeled kind does.
     pub skim: Option<Skim>,
+    /// How far back from the front its hull's sides taper in to the full width, metres, as a ship's
+    /// bow does to its stem. 0 for a square front.
+    pub bow: f32,
 }
 
 /// How a wheeled kind skims over water: held up on the surface above `plane_speed`, sinking below

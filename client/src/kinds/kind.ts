@@ -37,6 +37,8 @@ export interface KindFx {
   bay: readonly [number, number, number]
   /** A track that throws up snow when it digs in, in a winter world (`SnowRoost`). */
   roost?: Roost
+  /** A hull that floats, with no wheels: it carves a wake through open water as it goes. */
+  floats?: true
 }
 
 /** Where a track throws its snow and how hard it must pull to: past the tail of each track, in the hull's frame. */

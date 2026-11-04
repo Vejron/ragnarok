@@ -88,7 +88,7 @@ const release = (mask: number) => () => props.input.hold(mask, false)
     </div>
     <button class="btn use" @pointerdown.prevent="input.tap(BUTTON_USE)">{{ seat === 'drone' || seat === 'loiter' ? 'RECALL' : 'USE' }}</button>
     <button class="btn jump" @pointerdown.prevent="press(BUTTON_JUMP)($event)" @pointerup="release(BUTTON_JUMP)()" @pointercancel="release(BUTTON_JUMP)()">
-      {{ seat === 'driver' || seat === 'sled' ? 'BRAKE' : seat === 'roadster' ? 'HOP' : seat === 'hen' || seat === 'tupp' ? 'FLAP' : seat === 'aviator' ? 'FASTER' : seat === 'pilot' || seat === 'drone' ? 'UP' : 'JUMP' }}
+      {{ seat === 'driver' || seat === 'sled' ? 'BRAKE' : seat === 'helm' ? 'ANCHOR' : seat === 'roadster' ? 'HOP' : seat === 'hen' || seat === 'tupp' ? 'FLAP' : seat === 'aviator' ? 'FASTER' : seat === 'pilot' || seat === 'drone' ? 'UP' : 'JUMP' }}
     </button>
     <button v-if="seat === 'pilot' || seat === 'drone' || seat === 'aviator' || seat === 'roadster' || seat === 'sled'" class="btn sink" @pointerdown.prevent="press(BUTTON_RUN)($event)" @pointerup="release(BUTTON_RUN)()" @pointercancel="release(BUTTON_RUN)()">{{ seat === 'aviator' ? 'SLOWER' : seat === 'roadster' || seat === 'sled' ? 'BOOST' : 'DOWN' }}</button>
     <button v-if="!seat" class="btn crouch" @pointerdown.prevent="press(BUTTON_CROUCH)($event)" @pointerup="release(BUTTON_CROUCH)()" @pointercancel="release(BUTTON_CROUCH)()">CROUCH</button>

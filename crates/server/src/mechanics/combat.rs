@@ -428,6 +428,32 @@ fn wreck(world: &mut World, vid: u32) {
     }
     let [x, y, z] = pose.position.map(to_cm);
     world.shots.push(ShotEvent { shooter: attacker.unwrap_or(0), weapon: WEAPON_WRECK, x, y, z });
+    // A ship's guns go down with her, whoever fired the shot.
+    for fitting in world.physics.fittings_of(vid) {
+        let alive = world.entities.get_mut::<Health>(fitting).is_some_and(|mut health| {
+            let alive = health.alive();
+            health.hp = 0;
+            alive
+        });
+        if alive {
+            if let Some(id) = attacker {
+                world.entities.insert(fitting, HurtBy(id));
+            }
+            wreck(world, fitting);
+        }
+    }
+    // A ship is not thrown: she fills and goes down where she is (`sim`'s `sail`). A gun fixed to her
+    // deck has nothing in it to go up.
+    let lift = world.entities.get::<Vehicle>(vid).map(|vehicle| shared::vehicles::vehicle_def(vehicle.kind).spec.lift);
+    if lift == Some(shared::vehicles::Lift::Mounted) {
+        tracing::debug!(vid, "gun wrecked");
+        return;
+    }
+    if lift == Some(shared::vehicles::Lift::Sail) {
+        blast(world, Blast { point: pose.position, radius: WRECK_BLAST_RADIUS, damage: WRECK_BLAST_DAMAGE, knock: WRECK_BLAST_KNOCK, dir: [0.0, 1.0, 0.0], attacker, weapon: WEAPON_WRECK });
+        tracing::debug!(vid, "ship wrecked");
+        return;
+    }
     // Thrown up a little, so it is plainly not a parked car any more.
     world.physics.kick_car(vid, [0.0, 9.0, 0.0]);
     // ...and tumbling: a roll or a somersault, either way round, picked by the vehicle's id and

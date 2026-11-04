@@ -1,6 +1,6 @@
 import { Quaternion, Vector3 } from '@ragnarok/engine'
 import type { Node, PointLights } from '@ragnarok/engine'
-import { ARMS_CUT, DAMAGE_WHEELS } from '@/net/codec'
+import { ARMS_CUT, DAMAGE_WHEELS, KIND_SHIP, KIND_SHIP_GUN } from '@/net/codec'
 import type { Debris } from '@/render/debris'
 import type { Effects } from '@/render/effects'
 import type { Rounds } from '@/render/rounds'
@@ -12,13 +12,20 @@ import { WalkerModel } from '@/render/walker'
 import type { VehicleModel } from '@/render/car'
 import type { DrivenPose } from '@/sim/driver'
 import type { VehiclePose } from '@/sim/motor'
-import { vehicleMaxHp } from '@/sim/consts'
+import { SHIP_DECK_Y, SHIP_GUN_HALF_EXTENTS, SHIP_GUN_X, SHIP_GUN_Z, vehicleMaxHp } from '@/sim/consts'
 import { vehicleDef } from '@/sim/vehicles'
 import type { VehicleSounds } from '@/vehicleaudio'
 import type { Frame, Presenter } from '../presenter'
 import type { Sampled } from '../store'
 import type { Arms, Entity, Pintle, Turret } from '../units'
 import type { Seating } from './seating'
+
+/** Where a ship's guns stand on her deck, in her frame (`SHIP_GUN_SLOTS`), and which way each faces. */
+const GUN_SLOTS = [1, -1].flatMap((side) =>
+  SHIP_GUN_Z.map((z) => ({ at: new Vector3(side * SHIP_GUN_X, SHIP_DECK_Y + SHIP_GUN_HALF_EXTENTS[1], z), turn: new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), -side * Math.PI / 2) })),
+)
+/** A gun further than this from any of a ship's slots, metres, is not on her. */
+const SLOT_REACH = 1.5
 
 /** Damage parts of a vehicle that is not hurt. */
 const UNHURT: readonly number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -89,6 +96,10 @@ export class Vehicles implements Presenter<Frame> {
   readonly placed = new Map<number, Placed>()
   private readonly models = new Map<number, VehicleModel>()
   private readonly motion = new Map<number, VehicleFx>()
+  /** Which ship each of her guns stands on, and at which slot, once found. */
+  private readonly decks = new Map<number, { ship: number; slot: number }>()
+  /** Ships' guns waiting to be drawn this frame, once their ships are. */
+  private readonly guns: [number, Sampled][] = []
 
   constructor(private readonly world: VehicleWorld, private readonly seating: Seating) {}
 
@@ -112,7 +123,41 @@ export class Vehicles implements Presenter<Frame> {
     this.world.sounds.begin()
   }
 
-  update(id: number, { entity }: Sampled, frame: Frame) {
+  update(id: number, sampled: Sampled, frame: Frame) {
+    // A ship's gun is drawn on her deck as she is drawn: after her, in `end`.
+    if (sampled.entity.kind!.kind === KIND_SHIP_GUN) this.guns.push([id, sampled])
+    else this.draw(id, sampled, frame)
+  }
+
+  /**
+   * Where gun `id`, drawn from its snapshots at `position`, stands on its ship as she is drawn this
+   * frame: her pose and its slot on her deck. Her own pose runs ahead of her guns' snapshots wherever
+   * she is predicted (her helmsman's), and theirs are interpolated apart from hers, so drawn from their
+   * own they would lag behind their ports at speed.
+   */
+  private onDeck(id: number, position: readonly [number, number, number]): { position: [number, number, number]; rotation: readonly [number, number, number, number] } | null {
+    let deck = this.decks.get(id)
+    if (!deck || this.placed.get(deck.ship)?.kind !== KIND_SHIP) {
+      deck = undefined
+      const at = new Vector3(...position)
+      for (const [ship, placed] of this.placed) {
+        if (placed.kind !== KIND_SHIP) continue
+        const local = at.clone().sub(new Vector3(placed.x, placed.y, placed.z)).applyQuaternion(new Quaternion(...placed.rotation).invert())
+        const slot = GUN_SLOTS.findIndex((slot) => slot.at.distanceTo(local) < SLOT_REACH)
+        if (slot >= 0) deck = { ship, slot }
+      }
+      if (!deck) return null
+      this.decks.set(id, deck)
+    }
+    const ship = this.placed.get(deck.ship)!
+    const turn = new Quaternion(...ship.rotation)
+    const { at, turn: facing } = GUN_SLOTS[deck.slot]!
+    const spot = at.clone().applyQuaternion(turn)
+    const q = turn.multiply(facing)
+    return { position: [ship.x + spot.x, ship.y + spot.y, ship.z + spot.z], rotation: [q.x, q.y, q.z, q.w] }
+  }
+
+  private draw(id: number, { entity }: Sampled, frame: Frame) {
     const kind = entity.kind!.kind
     let model = this.models.get(id)
     if (!model) {
@@ -124,8 +169,9 @@ export class Vehicles implements Presenter<Frame> {
     const mine = driven !== null && driven.id === id ? driven : null
     const place = entity.place!
     const q = entity.orientation!
-    const position: [number, number, number] = mine ? [...mine.pose.position] : [place.x, place.y, place.z]
-    const rotation = mine ? mine.pose.rotation : ([q.qx, q.qy, q.qz, q.qw] as const)
+    const deck = kind === KIND_SHIP_GUN ? this.onDeck(id, [place.x, place.y, place.z]) : null
+    const position: [number, number, number] = deck ? deck.position : mine ? [...mine.pose.position] : [place.x, place.y, place.z]
+    const rotation = deck ? deck.rotation : mine ? mine.pose.rotation : ([q.qx, q.qy, q.qz, q.qw] as const)
     const steer = mine ? mine.pose.steer : (entity.steer?.steer ?? 0)
     const forward = new Vector3(0, 0, -1).applyQuaternion(new Quaternion(...rotation))
     const seats = this.seating.of(id, kind)
@@ -154,10 +200,13 @@ export class Vehicles implements Presenter<Frame> {
   }
 
   end(frame: Frame) {
+    for (const [id, sampled] of this.guns) this.draw(id, sampled, frame)
+    this.guns.length = 0
     this.world.sounds.end(frame.dt)
   }
 
   remove(id: number) {
+    this.decks.delete(id)
     this.models.get(id)?.dispose()
     this.models.delete(id)
     this.motion.get(id)?.lift(this.world.fx())

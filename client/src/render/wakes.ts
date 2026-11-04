@@ -1,4 +1,4 @@
-import { Texture, type Vec3 } from '@ragnarok/engine'
+import { Texture, type XYZ } from '@ragnarok/engine'
 
 /**
  * Wakes: what moves through open water carves it. Each source is a point something passed, dropped
@@ -106,7 +106,7 @@ export class Wakes {
    * Ages the sources by `dt` seconds and draws them into the map about `camera`. Returns whether the
    * map changed (it is left alone while the water is still).
    */
-  update(dt: number, camera: Readonly<Vec3>): boolean {
+  update(dt: number, camera: Readonly<XYZ>): boolean {
     this.clock += dt
     this.sources = this.sources.filter((source) => this.clock - source.born < LIFE)
     if (this.sources.length === 0 && !this.drawn) return false

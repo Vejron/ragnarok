@@ -148,7 +148,8 @@ impl Game {
             arms,
             health: Some(wire::Health { hp: entities.get::<Health>(id).map_or(0, |health| health.hp) }),
             damage: (vehicle.damage != [0; shared::protocol::DAMAGE_SLOTS]).then_some(wire::Damage { parts: vehicle.damage }),
-            drive: driver.filter(|&driver| entities.has::<Player>(driver)).and_then(|_| self.drive(id)),
+            // A gun fixed to a ship goes where the ship takes it: its gunner has nothing to predict.
+            drive: driver.filter(|&driver| entities.has::<Player>(driver) && self.world.physics.mounted_on(id).is_none()).and_then(|_| self.drive(id)),
             ..Default::default()
         })
     }

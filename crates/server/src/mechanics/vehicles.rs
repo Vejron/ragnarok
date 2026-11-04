@@ -4,7 +4,7 @@ use super::Mechanic;
 use crate::game::{Burning, Died, Mounts, Player, Seat, Seats, Vehicle, World, Wreck};
 use sim::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_extents};
 use shared::consts::*;
-use shared::vehicles::vehicle_def;
+use shared::vehicles::{Lift, vehicle_def};
 use shared::protocol::{
     DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER, ShotEvent, WEAPON_CRASH, is_drone,
     WEAPON_ROADKILL, WEAPON_SCRAPE, vehicle_hp,
@@ -63,6 +63,8 @@ const CAR_KNOCKDOWN_SPEED: f32 = 2.0;
 const HIT_COOLDOWN: u32 = 12;
 /// A car on its side or roof this long, and not moving, is set back on its wheels.
 const UNFLIP_TICKS: u32 = 3 * TICK_RATE;
+/// A ship slower than this, m/s, does not knock anyone over.
+const SHIP_KNOCK_SPEED: f32 = 4.0;
 
 /// How high above the ground a fresh vehicle of `kind` starts, at its chassis centre.
 fn drop_height(kind: u8) -> f32 {
@@ -183,7 +185,20 @@ pub(super) fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: 
     if let Some(mounts) = Mounts::fresh(vehicle_def(kind).mounts) {
         world.entities.insert(id, mounts);
     }
+    // A ship's guns come with it, each a vehicle of its own fixed to her deck.
+    for fitting in vehicle_def(kind).fittings {
+        let Some(pose) = world.physics.car_pose(id) else { break };
+        let gun = add_vehicle(world, fitting.kind, pose.world_point(fitting.at), wrap_angle(yaw + fitting.yaw));
+        world.physics.mount_car(gun, id, fitting.at, fitting.yaw);
+    }
     id
+}
+
+/// Where a fresh vehicle of `kind` starts over `(x, z)`: its chassis centre `drop_height` over the
+/// ground, or over the water for a ship, which only floats (`None` where there is no open water).
+fn start_position(world: &World, kind: u8, x: f32, z: f32) -> Option<[f32; 3]> {
+    let below = if vehicle_def(kind).spec.lift == shared::vehicles::Lift::Sail { world.physics.water_level(x, z)? } else { world.map.ground.height_at(x, z) };
+    Some([x, below + drop_height(kind), z])
 }
 
 /// Horizontal unit vectors `(right, back)` for a heading.
@@ -197,6 +212,13 @@ fn exit_position(world: &World, kind: u8, pose: &CarPose, seat: usize) -> [f32; 
     let half = half_extents(kind);
     let yaw = pose.yaw();
     let (right, back) = axes(yaw);
+    // A ship's helmsman or a gunner steps back onto the deck.
+    if let Some(exit) = vehicle_def(kind).exit {
+        let spot = pose.world_point(exit);
+        if world.physics.character_fits(spot) {
+            return spot;
+        }
+    }
     let side = if seat.is_multiple_of(2) { -1.0 } else { 1.0 };
     let reach_side = half[0] + CAPSULE_RADIUS + 0.6;
     let reach_end = half[2] + CAPSULE_RADIUS + 0.6;
@@ -241,10 +263,15 @@ fn hitch(world: &mut World, id: u32) {
 }
 
 /// Where a vehicle of `kind` is boarded from: its hull, but a legged one's from between its feet, a
-/// leg's length below its hull, which is out of reach above a soldier's head. Mirrored in `game.ts`.
+/// leg's length below its hull, which is out of reach above a soldier's head, and a ship's at her helm
+/// or a gun's behind its breech (`VehicleDef::board`). Mirrored in `game.ts`.
 fn boarding_point(kind: u8, pose: &CarPose) -> [f32; 3] {
+    let def = vehicle_def(kind);
+    if let Some(board) = def.board {
+        return pose.world_point(board);
+    }
     let [x, y, z] = pose.position;
-    [x, y - vehicle_def(kind).body.legs, z]
+    [x, y - def.body.legs, z]
 }
 
 fn board(world: &mut World, id: u32) {
@@ -301,8 +328,12 @@ pub fn add_tank(world: &mut World, [x, z]: [f32; 2], yaw: f32) -> Option<u32> {
     Some(add_vehicle(world, KIND_TANK, position, yaw))
 }
 
-/// Takes vehicle `vid` out of the world. Anyone aboard is set down beside it first.
+/// Takes vehicle `vid` out of the world, with whatever is fixed to it. Anyone aboard is set down beside
+/// it first.
 pub fn remove_vehicle(world: &mut World, vid: u32) {
+    for fitting in world.physics.fittings_of(vid) {
+        remove_vehicle(world, fitting);
+    }
     let aboard: Vec<u32> = world.entities.get::<Seats>(vid).map(|seats| seats.riders().collect()).unwrap_or_default();
     for id in aboard {
         alight(world, id);
@@ -605,8 +636,10 @@ fn knock_players(world: &mut World) {
             continue;
         }
         let Some(hit) = world.physics.car_hit(player.character.position) else { continue };
-        // A drone is too light to throw anyone; it goes off instead (see `Drones`).
-        if world.entities.get::<Vehicle>(hit.car).is_some_and(|vehicle| is_drone(vehicle.kind)) {
+        // A drone is too light to throw anyone; it goes off instead (see `Drones`). A ship drifting
+        // alongside only nudges a swimmer away, as the water would.
+        let slow_ship = world.entities.get::<Vehicle>(hit.car).is_some_and(|vehicle| vehicle_def(vehicle.kind).spec.lift == Lift::Sail) && vec3::length(hit.velocity) < SHIP_KNOCK_SPEED;
+        if world.entities.get::<Vehicle>(hit.car).is_some_and(|vehicle| is_drone(vehicle.kind)) || slow_ship {
             continue;
         }
         let mut player = world.entities.of_mut::<Player>(id);
@@ -661,8 +694,12 @@ impl Mechanic for Vehicles {
             let mut placed = 0;
             for spot in world.map.placed_vehicles.clone() {
                 let (x, z) = (spot.at[0] as f32 / 100.0, spot.at[1] as f32 / 100.0);
-                let position = [x, world.map.ground.height_at(x, z) + drop_height(spot.kind), z];
-                if world.entities.count::<Vehicle>() >= MAX_VEHICLES {
+                // A ship needs open water: none on land, nor on a frozen lake.
+                let Some(position) = start_position(world, spot.kind, x, z) else {
+                    tracing::info!(kind = spot.kind, x, z, "placed ship is not on open water; skipped");
+                    continue;
+                };
+                if world.entities.count::<Vehicle>() + 1 + vehicle_def(spot.kind).fittings.len() > MAX_VEHICLES {
                     tracing::warn!(kind = spot.kind, x, z, max = MAX_VEHICLES, "too many placed vehicles; skipped");
                 } else if world.physics.car_fits(spot.kind, position, spot.yaw) {
                     add_vehicle(world, spot.kind, position, spot.yaw);
@@ -817,7 +854,9 @@ impl Mechanic for Vehicles {
             let mut fresh = false;
             let [x, y, z] = pose.position;
             let slow = pose.forward_speed.abs() < 1.5;
-            vehicle.stuck_ticks = if pose.up_y < 0.2 && slow { vehicle.stuck_ticks + 1 } else { 0 };
+            // A ship's gun goes where its ship does, which is put right for both.
+            let mounted = world.physics.mounted_on(vid).is_some();
+            vehicle.stuck_ticks = if pose.up_y < 0.2 && slow && !mounted { vehicle.stuck_ticks + 1 } else { 0 };
             if wrecked {
                 // A wreck lets go of whatever it tows, and whatever tows it.
                 world.physics.detach(vid);
@@ -826,7 +865,7 @@ impl Mechanic for Vehicles {
                     fresh = true;
                     world.physics.reset_car(vid, vehicle.home.0, vehicle.home.1);
                 }
-            } else if y < KILL_Y {
+            } else if y < KILL_Y && !mounted {
                 // Fallen out of the world: a fresh one at home.
                 vehicle.renew();
                 fresh = true;

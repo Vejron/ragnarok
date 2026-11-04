@@ -65,8 +65,12 @@ pub(super) const SPORTS: VehicleDef = VehicleDef {
         steer_time: 0.0,
         // It skips over water flat out, and a turn drops it in.
         skim: Some(Skim { sink_speed: 22.0, plane_speed: 30.0, thrust: 0.15, grip: 0.35, bank_drag: 1.8 }),
+        bow: 0.0,
     },
     armor: ARMOR,
     drone: None,
     mount_seat: None,
+    board: None,
+    exit: None,
+    fittings: &[],
 };

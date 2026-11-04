@@ -58,6 +58,34 @@ export class Effects {
     }
   }
 
+  /**
+   * A black-powder gun going off at `muzzle` along `direction`, drifting with `wind` (m/s, `[x, z]`): a
+   * long tongue of flame and burning grains thrown out ahead, then a great bank of thick, dark smoke
+   * rolling out of the muzzle and hanging there as the wind takes it.
+   */
+  blackPowder(muzzle: V, direction: V, wind: readonly [number, number] = WIND) {
+    const d = norm(direction)
+    this.flash(add(muzzle, d, 0.8), 4.5, 0.16, 0xffd27a, 10)
+    for (let i = 0; i < 6; i++) {
+      const out = rand(0.3, 2.8)
+      const v = add(d, spread(), 0.25)
+      this.flame(add(muzzle, d, out), [v.x * 9, v.y * 9, v.z * 9], rand(0.15, 0.35), [0.6, rand(1.6, 2.6)], pick([0xffc060, 0xff9a30, 0xffe090]))
+    }
+    for (let i = 0; i < 10; i++) {
+      const v = add(d, spread(), 0.6)
+      const speed = rand(10, 22)
+      this.glow.spawn({ position: add(muzzle, d, 0.5), velocity: [v.x * speed, v.y * speed + 2, v.z * speed], life: rand(0.3, 0.8), size: [0.08, 0.03], color: pick(SPARK), colorEnd: 0xff3a05, glow: 6, stretch: 0.03, alpha: 1, gravity: 9.8, drag: 1.5 })
+    }
+    // The smoke: blown out along the barrel and slowing, swelling into a cloud that leans downwind.
+    for (let i = 0; i < 18; i++) {
+      const out = rand(0.2, 4.5)
+      const v = add(d, spread(), 0.9)
+      const speed = rand(2, 9) * (1 - out / 6)
+      const [wx, wz] = wind
+      this.drift(add(muzzle, d, out), [v.x * speed + wx, v.y * speed + 0.4, v.z * speed + wz], rand(4, 7), [rand(1, 1.6), rand(4, 6.5)], pick([0x2a2826, 0x3a3734, 0x1e1d1c, 0x4a4743]), rand(0.55, 0.8), { drag: 1.6, gravity: -0.25 })
+    }
+  }
+
   /** A rifle shot: a short streak flies from the muzzle to `to` and, when it ended on something, sparks there. */
   tracer(from: V, to: V, hit: boolean) {
     const length = len(sub(to, from))

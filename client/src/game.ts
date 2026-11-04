@@ -72,6 +72,8 @@ import { HIT_DEALT, HIT_KILL, HIT_TAKEN, HitFeedback } from './feedback'
 import { freezeWater, setWaterTime, setWaterWakes } from './render/water'
 import { Wakes } from './render/wakes'
 import { waveTime } from './sim/waves'
+import { pointOfSail, wind } from './sim/wind'
+import { seaWind } from './render/ship'
 import { buildGround, snowOnBuildings } from './render/world'
 import { Replica } from './net/replica'
 import { EntityStore, inGameUnits } from './entities/store'
@@ -153,7 +155,7 @@ const AIM_LOOK_SCALE = 0.6
 /** How long the static shows after a drone's feed cuts out, ms. */
 const FEED_LOST_MS = 700
 /** Seats that steer something along, which get a speedometer. */
-const MOVERS: ReadonlySet<SeatView['role']> = new Set(['driver', 'roadster', 'sled', 'pilot', 'aviator', 'walker', 'hen', 'tupp', 'strv', 'drone', 'loiter'] as const)
+const MOVERS: ReadonlySet<SeatView['role']> = new Set(['driver', 'roadster', 'sled', 'helm', 'pilot', 'aviator', 'walker', 'hen', 'tupp', 'strv', 'drone', 'loiter'] as const)
 
 /** What the local player is up to this frame: worked out once, read by the stages of the frame. */
 interface Moment {
@@ -774,6 +776,7 @@ export class Game {
     // The waves run on the server's clock, as the sim the vehicles ride them in does.
     if (this.clock.synced) {
       this.waveClock = waveTime(this.clock.tickAt(now))
+      seaWind.blowing = wind(this.clock.tickAt(now))
       setWaterTime(this.waveClock)
     }
     const eye = this.scene.camera.position
@@ -1086,7 +1089,7 @@ export class Game {
       ammo: gauges?.includes('ammo') ? ((ride?.turret?.flags ?? 0) & TURRET_ALT ? 'HE' : 'AP') : null,
       reload: this.reloaded(now, ride ? rideView(ride.kind).reload : SHELL_COOLDOWN_TICKS),
       ...(gauges?.includes('pintle') ? roofGun(ride?.pintle ?? null) : cockpit(gauges?.includes('cockpit') ? (ride?.arms ?? null) : null, aviator, seat ? this.vehicles.fx(seat.vehicle) : undefined)),
-      air: gauges?.includes('air') ? (this.driver?.thrust?.air ?? null) : null,
+      air: gauges?.includes('air') ? (this.driver?.thrust?.air ?? null) : gauges?.includes('wind') && seat ? this.sailing(seat.vehicle, now) : null,
       stamina: !seated && able ? { left: 1 - local.spent / STAMINA_FULL, winded: local.winded } : null,
       speed: seated
         ? (fx && view && MOVERS.has(view.role) ? Math.hypot(fx.velocity.x, fx.velocity.y, fx.velocity.z) * 3.6 : null)
@@ -1133,6 +1136,15 @@ export class Game {
       blips: this.blips.view(now, this.localId, ride?.x ?? position[0]!, ride?.z ?? position[2]!, this.alliesInView(), MAP_SIDES),
       backpack: this.backpack.view(this.localId),
     }
+  }
+
+  /** How well ship `vehicle`'s sail draws in the wind now, 0..1, as drawn: her heading against it. */
+  private sailing(vehicle: number, now: number): number | null {
+    const model = this.vehicles.model(vehicle)
+    if (!model) return null
+    const nose = new Vector3(0, 0, -1).applyQuaternion(model.root.quaternion)
+    const flat = Math.hypot(nose.x, nose.z)
+    return flat > 1e-3 ? pointOfSail([nose.x / flat, nose.z / flat], wind(this.clock.tickAt(now))) : null
   }
 
   /** How far the gun the local player last fired has reloaded, 0..1, for one taking `ticks` (null: never reloads). */

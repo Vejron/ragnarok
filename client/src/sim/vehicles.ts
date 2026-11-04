@@ -42,6 +42,8 @@ export interface VehicleDef {
   shedsTurret: boolean
   /** Flown from afar by whoever launched it. */
   drone: boolean
+  /** Where it is boarded from in the hull frame, when not its middle: a ship's helm, a ship's gun's breech (`VehicleDef::board`). */
+  board: Triple | null
   /** Its vision slits, which a round goes straight through (`Armor::slits`). */
   slits: readonly Slit[]
 }
@@ -67,6 +69,7 @@ export const VEHICLES: readonly VehicleDef[] = tables.vehicles.map((row) => ({
   crew: row.crew as VehicleDef['crew'],
   seatHeads: row.seatHeads.map(triple),
   mountSeat: row.mountSeat && { seat: row.mountSeat.seat, pivot: triple(row.mountSeat.pivot), head: triple(row.mountSeat.head) },
+  board: row.board ? triple(row.board) : null,
   slits: row.slits.map((slit) => ({ ...slit, centre: triple(slit.centre), half: triple(slit.half), out: triple(slit.out), pivot: triple(slit.pivot) })),
 }))
 
@@ -99,8 +102,11 @@ export const crewGun = (kind: number | undefined, index: number): boolean => veh
 /** A walker or a hen: a hull on two spring legs, boarded from between its feet. */
 export const isLegged = (kind: number | undefined): boolean => kind !== undefined && vehicleDef(kind).legged
 
-/** A tracked tank: the tank or the Strv S, which turn on the spot, rut soft ground and rumble alike. */
-export const isTracked = (kind: number | undefined): boolean => kind !== undefined && vehicleDef(kind).heavy
+/**
+ * A tracked tank: the tank or the Strv S, which turn on the spot, rut soft ground and rumble alike. A
+ * ship is as heavy, but has no tracks under her.
+ */
+export const isTracked = (kind: number | undefined): boolean => kind !== undefined && vehicleDef(kind).heavy && vehicleDef(kind).trackHalf > 0
 
 /** Whether `kind` is a drone, flown from a remote seat by whoever launched it. Mirrors `is_drone`. */
 export const isDrone = (kind: number | undefined): boolean => kind !== undefined && vehicleDef(kind).drone

@@ -773,3 +773,5 @@ fn a_hen_driver_leaps_on_jump_and_the_snapshot_carries_its_stamina() {
     let thrust = game.seen(vid).unwrap().thrust.unwrap();
     assert!(thrust.flags & THRUST_AIR != 0 && thrust.flags & THRUST_LIFT != 0 && thrust.air < 255, "{thrust:?}");
 }
+
+mod ship;

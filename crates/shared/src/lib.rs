@@ -20,5 +20,6 @@ pub mod terrain;
 pub mod vehicles;
 pub mod vec3;
 pub mod waves;
+pub mod wind;
 pub mod ski;
 pub mod world;

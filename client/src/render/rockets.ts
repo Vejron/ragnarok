@@ -15,6 +15,8 @@ const EGG = 7
 const FLARE = 8
 /** `PROJECTILE_HE`: a high-explosive tank shell, drawn as the armour-piercing one. */
 const HE = 9
+/** `PROJECTILE_BALL`: a ship's gun's round shot. */
+const ROUND_SHOT = 10
 
 /** The projectiles in flight: a glowing missile or a tank shell pointed along its velocity, or a tumbling grenade. Their trails are `ProjectileTrails`. */
 export class Rockets {
@@ -35,6 +37,9 @@ export class Rockets {
   private readonly fins = boxGeometry(0.2, 0.1, 0.02)
   private readonly bombMaterial = toonMaterial({ color: 0x2b2b26 })
   private readonly ballMaterial = toonMaterial({ color: 0x4f5d2e })
+  /** Round shot: a black iron ball, as big as the real thing would be hard to follow, a little bigger. */
+  private readonly roundShot = sphereGeometry(0.16, 10, 8)
+  private readonly ironMaterial = toonMaterial({ color: 0x1e1f20 })
   /** A hen's egg: a giant cream one (`HEN_EGG_RADIUS` across the middle), taller than it is wide, and rocking as it rolls. */
   private readonly egg = sphereGeometry(0.35, 12, 9)
   private readonly eggMaterial = toonMaterial({ color: 0xf6efdc })
@@ -51,6 +56,7 @@ export class Rockets {
     let mesh = this.meshes.get(id)
     if (!mesh) {
       if (kind === GRENADE) mesh = new Mesh(this.ball, this.ballMaterial)
+      else if (kind === ROUND_SHOT) mesh = new Mesh(this.roundShot, this.ironMaterial)
       else if (kind === FLARE) {
         mesh = new Mesh(this.flare, this.flareMaterial)
         const canopy = new Mesh(this.canopy, this.canopyMaterial)
@@ -122,6 +128,8 @@ export class Rockets {
     this.bullet.dispose()
     this.bulletMaterial.dispose()
     this.ball.dispose()
+    this.roundShot.dispose()
+    this.ironMaterial.dispose()
     this.ballMaterial.dispose()
     this.egg.dispose()
     this.eggMaterial.dispose()

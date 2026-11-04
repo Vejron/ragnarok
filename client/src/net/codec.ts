@@ -24,7 +24,7 @@ export const OBJ_BUILDING = 1
 
 /** Entity kinds, generated from `consts.rs`. A vehicle kind's definition is `vehicleDef`. */
 export {
-  KIND_BACKPACK, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SNOWMOBILE, KIND_SPORTS, KIND_SOLDIER, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER,
+  KIND_BACKPACK, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SPORTS, KIND_SOLDIER, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER,
 } from '@/sim/consts'
 export { isDrone } from '@/sim/vehicles'
 
@@ -82,6 +82,10 @@ export const WEAPON_RUBBLE = 23
 export const WEAPON_LAUNCHER = 24
 /** An armour-piercing shell's small burst; `WEAPON_SHELL` is high explosive's. */
 export const WEAPON_AP = 27
+/** A ship's gun's round shot bursting where it lands. */
+export const WEAPON_BALL = 29
+/** A round ended in open water at the event's point, the surface there: a splash. */
+export const WEAPON_SPLASH = 30
 
 /** `Limbs`'s lost limbs, the low four bits; the same bits above `LIMB_BLEED_SHIFT` still bleed. Mirrors `LIMB_*`. */
 export const LIMB_ARM_L = 1 << 0
@@ -150,6 +154,8 @@ export const PROJECTILE_EGG = 7
 export const PROJECTILE_FLARE = 8
 /** A tank gun's high-explosive shell: flies and is drawn as `PROJECTILE_SHELL` (armour-piercing), bursts bigger. */
 export const PROJECTILE_HE = 9
+/** A ship's gun's round shot: slower than a shell, so it arcs, and bursting small where it lands. */
+export const PROJECTILE_BALL = 10
 
 /** `Turret`'s flags: a field mortar is hitched to a car, so it is drawn folded up for travel. Mirrors `TURRET_STOWED`. */
 export const TURRET_STOWED = 1 << 0
