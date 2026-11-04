@@ -28,7 +28,7 @@ mod spec;
 mod water;
 
 use flight::{assist, boost, flap, fly, fly_drone, fly_loiter, pull, roll_plane, thrust, walk, wing};
-use water::wade;
+use water::{wade, water_under};
 pub use spec::half_extents;
 pub(super) use spec::{Buttons, Lift, Role, Shape, Solid, Spec, spec};
 
@@ -830,6 +830,8 @@ impl Physics {
     /// Advances every car and the rigid-body world by one tick.
     pub fn step_cars(&mut self, dt: f32) {
         self.apply_removals();
+        let waves = shared::waves::time(self.tick);
+        self.tick = self.tick.wrapping_add(1);
         if self.cars.is_empty() {
             return;
         }
@@ -909,10 +911,9 @@ impl Physics {
                 continue;
             }
             // Open water holds it up while it skims, which is as good as being on the ground.
-            let at = body.translation();
-            if let Some(level) = self.waters.level_at(at.x, at.z) {
+            if let Some(water) = water_under(&self.waters, waves, body, car.spec) {
                 let boosted = car.spec.buttons == Buttons::Sled && boosting(car.flight, car.tank);
-                grounded |= wade(body, car.spec, car.flight, car.steer, car.condition, boosted, level, dt);
+                grounded |= wade(body, car.spec, car.flight, car.steer, car.condition, boosted, &water, dt);
             }
             if car.spec.steer_lock > 0.0 {
                 assist(body, car.air, grounded, dt);

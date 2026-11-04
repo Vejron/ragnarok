@@ -270,6 +270,11 @@ export class SimMotor {
     this.sim.setCarState(id, ...position, ...rotation, ...linvel, ...angvel, 0, 0, Number.NaN, hp, Uint8Array.from(damage), turret)
   }
 
+  /** Sets the server tick the next `driveCar` steps, which the waves on open water run on; each step moves it on. */
+  setTick(tick: number) {
+    this.sim.setTick(tick)
+  }
+
   /** One tick of simulated vehicle `id` under `controls`: the server's `drive_car` then `step_cars`. */
   driveCar(id: number, controls: CarControls, dt: number) {
     const aim = controls.aim ?? null

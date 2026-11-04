@@ -69,7 +69,9 @@ import { rideView, seatView, type SeatView } from './seats'
 import { loadRoosterModel } from './render/rooster'
 import { VehicleSounds } from './vehicleaudio'
 import { HIT_DEALT, HIT_KILL, HIT_TAKEN, HitFeedback } from './feedback'
-import { freezeWater } from './render/water'
+import { freezeWater, setWaterTime, setWaterWakes } from './render/water'
+import { Wakes } from './render/wakes'
+import { waveTime } from './sim/waves'
 import { buildGround, snowOnBuildings } from './render/world'
 import { Replica } from './net/replica'
 import { EntityStore, inGameUnits } from './entities/store'
@@ -234,6 +236,10 @@ export class Game {
   private grass: Grass | null = null
   private stones: Stones | null = null
   private waters: Waters | null = null
+  /** The waves' clock this frame, seconds into their loop (`waveTime`). */
+  private waveClock = 0
+  /** What has passed through the water lately. */
+  private readonly wakes = new Wakes()
   /** True from the welcome until the joiner's catch-up `destroyed` arrives: that one is state, not news. */
   private awaitingCatchUp = false
   private readonly damageNumbers = new DamageNumbers()
@@ -337,7 +343,7 @@ export class Game {
   /** Predicts the vehicle the local player drives. */
   private driver: VehicleDriver | null = null
   /** The newest snapshot of the driven vehicle, waiting for the next frame to be reconciled with. */
-  private driverSnapshot: { ack: number; vehicle: VehiclePose; drive: DriveState } | null = null
+  private driverSnapshot: { ack: number; tick: number; vehicle: VehiclePose; drive: DriveState } | null = null
   /** Vehicle poses of the newest snapshot, which the predicted soldier's frame is fixed to while riding. */
   private readonly refPoses = new Map<number, VehiclePose>()
   private localId: number | null = null
@@ -449,6 +455,8 @@ export class Game {
     this.terrain = this.view.terrain = new Terrain(world.halfExtent, world.tileSize)
     this.surfaces = this.view.surfaces = new Surfaces(world.halfExtent, world.tileSize)
     this.waters = this.view.waters = this.surroundings.waters = new Waters(world.halfExtent, world.tileSize)
+    // Frozen lakes have no waves.
+    this.waters.calm = world.theme === THEME_WINTER
     this.scene.groundAt = (x, z) => this.terrain?.heightAt(x, z) ?? 0
     const terrain = this.terrain
     this.grass = this.view.grass = this.surroundings.grass = new Grass(world.halfExtent, world.tileSize, (x, z) => terrain.sample(x, z))
@@ -680,7 +688,7 @@ export class Game {
       // for the next frame: a backlog of snapshots (a busy main thread) is then one replay, not
       // one per snapshot, which would only make the thread busier.
       this.driver?.acknowledge(message.ack)
-      this.driverSnapshot = { ack: message.ack, vehicle: mount, drive }
+      this.driverSnapshot = { ack: message.ack, tick: message.tick, vehicle: mount, drive }
     } else {
       this.driverSnapshot = null
       this.driver?.leave()
@@ -759,11 +767,17 @@ export class Game {
     this.lastFrame = now
 
     if (this.driverSnapshot) {
-      const { ack, vehicle, drive } = this.driverSnapshot
+      const { ack, tick, vehicle, drive } = this.driverSnapshot
       this.driverSnapshot = null
-      this.driver?.reconcile(ack, vehicle, drive)
+      this.driver?.reconcile(ack, vehicle, drive, tick)
+    }
+    // The waves run on the server's clock, as the sim the vehicles ride them in does.
+    if (this.clock.synced) {
+      this.waveClock = waveTime(this.clock.tickAt(now))
+      setWaterTime(this.waveClock)
     }
     const eye = this.scene.camera.position
+    if (this.wakes.update(dt, eye)) setWaterWakes(this.wakes.texture, this.wakes.area)
     this.view.update(dt, this.effects, this.cameraAt.set(eye.x, eye.y, eye.z), this.fxWorld)
     const ticks = this.runTicks(dt)
     const renderTick = this.clock.tickAt(now) - this.clock.interpDelay
@@ -1245,8 +1259,9 @@ export class Game {
       skids: this.skids,
       groundAt: (x, z) => this.scene.groundAt(x, z),
       surfaceAt: (x, z) => this.surfaces?.at(x, z) ?? SURFACE_GRASS,
-      waterAt: (x, z) => this.waters?.levelAt(x, z) ?? NO_WATER,
+      waterAt: (x, z) => this.waters?.surfaceAt(x, z, this.waveClock) ?? NO_WATER,
       ripple: (at, size) => this.effects.ripple(at, size),
+      wake: (x, z, strength) => this.wakes.drop(x, z, strength),
       camera: this.scene.camera.position,
       roost: this.snowRoost,
     }

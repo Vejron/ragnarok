@@ -132,6 +132,8 @@ pub struct Physics {
     stones: stones::Stones,
     /// Open water, which a light car planes over at speed and everything wheeled wades through (`waters`).
     waters: waters::Waters,
+    /// The server tick the next step is, which the waves run on (`set_tick`); `step_cars` moves it on.
+    tick: u32,
 }
 
 /// Height of the top of the invisible boundary walls around the playable square, metres above
@@ -488,7 +490,20 @@ impl Physics {
             fences: fences::Fences::default(),
             stones: stones::Stones::default(),
             waters: waters::Waters::default(),
+            tick: 0,
         }
+    }
+
+    /// Sets the server tick the next step is: the clock the waves on open water run on, the same on
+    /// the server and in the client's prediction. Each `step_cars` moves it on by one.
+    pub fn set_tick(&mut self, tick: u32) {
+        self.tick = tick;
+    }
+
+    /// Test helper: stills the waves on all open water.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn calm_waters(&mut self) {
+        self.waters.calm();
     }
 
     /// Adds a static collider, noting the building or tree it is.

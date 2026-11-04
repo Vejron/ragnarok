@@ -782,6 +782,8 @@ impl Mechanic for Vehicles {
             world.physics.drive_car(vid, vehicle.controls, dt);
         }
         let before: BTreeMap<u32, CarPose> = world.entities.ids::<With<Vehicle>>().into_iter().filter_map(|vid| Some((vid, world.physics.car_pose(vid)?))).collect();
+        // The waves on open water run on the server's tick, which the client's prediction knows too.
+        world.physics.set_tick(world.tick);
         world.physics.step_cars(dt);
         // Riders keep their place on the roof as it moves.
         for id in world.entities.ids::<With<Player>>() {

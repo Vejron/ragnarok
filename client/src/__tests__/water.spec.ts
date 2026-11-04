@@ -26,10 +26,22 @@ describe('water', () => {
     const mesh = group.children[0] as Mesh
     // The geometry's custom attribute carries depth in x.
     const custom = mesh.geometry.custom!
-    expect(custom[(2 * 5 + 2) * 4]).toBeCloseTo(1)
-    expect(custom[0]).toBeLessThan(0)
-    // 3 × 3 wet samples touch 4 × 4 = 16 cells, two triangles each.
-    expect(mesh.geometry.indexCount).toBe(16 * 6)
+    const positions = mesh.geometry.positions
+    const depthAt = (x: number, z: number) => {
+      for (let i = 0; i < positions.length / 3; i++) if (positions[i * 3] === x && positions[i * 3 + 2] === z) return custom[i * 4]!
+      return undefined
+    }
+    expect(depthAt(10, 10)).toBeCloseTo(1)
+    expect(depthAt(0, 0)).toBeLessThan(0)
+    // 3 × 3 wet samples touch 4 × 4 = 16 cells, each 5 m cell cut into 4 × 4 for the waves, two triangles each.
+    expect(mesh.geometry.indexCount).toBe(16 * 16 * 6)
+    disposeWater(group)
+  })
+
+  it('keeps a fine grid as it is', () => {
+    const { ground, water } = pond()
+    const group = buildWater({ water, streams: [] }, { ...ground, cell: 1 })!
+    expect((group.children[0] as Mesh).geometry.indexCount).toBe(16 * 6)
     disposeWater(group)
   })
 

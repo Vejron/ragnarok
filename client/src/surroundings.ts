@@ -17,6 +17,7 @@ import { halfExtentsOf } from '@/sim/kinds'
 import { surfaceWetness } from '@/sim/surface'
 import type { Waters } from '@/sim/waters'
 import { NO_WATER } from '@/world'
+import { WakeTrail } from '@/render/wakes'
 
 /** Feet this deep (metres) under the surface are in the water. */
 const WADE_DEPTH = 0.15
@@ -35,7 +36,7 @@ interface At {
 export class Surroundings {
   waters: Waters | null = null
   grass: Grass | null = null
-  private readonly wading = new Map<number, { wet: boolean; ripple: number }>()
+  private readonly wading = new Map<number, { wet: boolean; ripple: number; trail: WakeTrail }>()
   private readonly benders: Bender[] = []
 
   constructor(
@@ -49,7 +50,8 @@ export class Surroundings {
    * (the server reports the carved bed). Returns whether it did.
    */
   watery(at: At, size: number, speed = 10): boolean {
-    const level = this.waters?.levelAt(at.x, at.z) ?? NO_WATER
+    // The surface with its waves (`FxWorld.waterAt`).
+    const level = this.fx().waterAt?.(at.x, at.z) ?? NO_WATER
     if (level === NO_WATER || at.y > level + 0.05) return false
     splash(this.fx(), { x: at.x, y: level, z: at.z }, size, speed)
     return true
@@ -68,14 +70,17 @@ export class Surroundings {
    * through a marsh's pools. `speed` is how fast they move, m/s.
    */
   wade(key: number, x: number, y: number, z: number, speed: number, dt: number) {
-    const level = this.waters?.levelAt(x, z) ?? NO_WATER
+    const level = this.fx().waterAt?.(x, z) ?? NO_WATER
     const wet = level !== NO_WATER && level - y > WADE_DEPTH
     const was = this.wading.get(key)
     if (!was) {
       // First seen: already wet is not a splash.
-      this.wading.set(key, { wet, ripple: 0 })
+      this.wading.set(key, { wet, ripple: 0, trail: new WakeTrail(0.8) })
       return
     }
+    // Someone wading carves a small wake of their own.
+    if (wet && speed > 0.8) was.trail.move(this.fx().wake, x, z, Math.min(0.06, 0.02 + speed * 0.008))
+    else was.trail.lift()
     if (wet && !was.wet) splash(this.fx(), { x, y: level, z }, 0.45, 2 + Math.min(speed, 8))
     else if (!wet && was.wet && speed > 1) splash(this.fx(), { x, y: level === NO_WATER ? y : level, z }, 0.3, 1)
     if (!wet && speed > 1) {

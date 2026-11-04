@@ -89,7 +89,7 @@ export class MaterialResources {
     let program = this.programs.get(shader.key)
     if (!program) {
       const fragment = GPUShaderStage.FRAGMENT
-      // A material with vertex code reads its uniforms there too.
+      // A material with vertex code reads its uniforms and textures there too.
       const uniforms = material.vertex !== undefined ? fragment | GPUShaderStage.VERTEX : fragment
       program = {
         shader,
@@ -98,8 +98,8 @@ export class MaterialResources {
           label: 'shader material',
           entries: [
             { binding: 0, visibility: uniforms, buffer: { type: 'uniform' } },
-            { binding: 1, visibility: fragment, sampler: {} },
-            ...shader.textureNames.map((_, i) => ({ binding: i + 2, visibility: fragment, texture: {} })),
+            { binding: 1, visibility: uniforms, sampler: {} },
+            ...shader.textureNames.map((_, i) => ({ binding: i + 2, visibility: uniforms, texture: {} })),
           ],
         }),
       }

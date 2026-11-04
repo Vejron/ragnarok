@@ -1,9 +1,12 @@
 //! What open water does to a wheeled vehicle: a light, quick one planes over it (`Spec::skim`), held
 //! up, pushed and steered by the water while its wheels touch nothing; anything slower sinks slowly to
 //! the bed and wades there, where the water holds it to a crawl. Not how water behaves, but fun: keep
-//! the speed up and it skims, carve too hard, brake or let go and it drops in.
+//! the speed up and it skims, carve too hard, brake or let go and it drops in. The surface has waves
+//! (`shared::waves`): a skimming hull rides them, pitching and rolling with the water under it, is
+//! thrown off their crests at speed, and loses speed when it slams back down.
 
 use super::*;
+use crate::waters::Waters;
 
 /// How far below the surface a skimming hull's underside rides, metres.
 const SKIM_DRAFT: f32 = 0.05;
@@ -41,6 +44,41 @@ const WADE_LINEAR: f32 = 1.5;
 const WADE_QUAD: f32 = 1.0;
 /// The steepest a hull may lean, as the up axis's height, and still plane.
 const SKIM_UPRIGHT: f32 = 0.5;
+/// Coming down onto the water faster than this, m/s, slams: every m/s more takes `SLAM` m/s² off its
+/// speed while it lasts, and more again the more its nose is down.
+const SLAM_SPEED: f32 = 3.0;
+const SLAM: f32 = 6.0;
+const SLAM_NOSE: f32 = 4.0;
+
+/// The water under a hull: the surface's height there (metres, averaged along the hull), which way is
+/// up off it, how fast it is rising under the hull's middle (m/s) and its slope there `[dh/dx, dh/dz]`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Water {
+    pub height: f32,
+    pub normal: Vector,
+    pub rise: f32,
+    pub slope: [f32; 2],
+}
+
+/// The water under a vehicle of `spec` whose body is `body`, `time` seconds into the waves' loop, or
+/// `None` where it is dry. The surface is felt at the hull's middle and at its four sides, so a hull
+/// pitches and rolls with the waves.
+pub(crate) fn water_under(waters: &Waters, time: f32, body: &RigidBody, spec: &Spec) -> Option<Water> {
+    let at = body.translation();
+    let middle = waters.surface(at.x, at.z, time)?;
+    let [hx, _, hz] = spec.half_extents;
+    let mut forward = *body.rotation() * Vector::new(0.0, 0.0, -1.0);
+    forward.y = 0.0;
+    let forward = forward.normalize_or_zero();
+    let right = Vector::new(-forward.z, 0.0, forward.x);
+    // A side that sticks out over dry land feels the water at the middle.
+    let height = |offset: Vector| waters.surface(at.x + offset.x, at.z + offset.z, time).map_or(middle.height, |surface| surface.height);
+    let (front, back) = (height(forward * hz), height(-forward * hz));
+    let along = (front - back) / (2.0 * hz);
+    let across = (height(right * hx) - height(-right * hx)) / (2.0 * hx);
+    let normal = (Vector::Y - forward * along - right * across).normalize();
+    Some(Water { height: (front + back + 2.0 * middle.height) / 4.0, normal, rise: middle.rise, slope: middle.slope })
+}
 
 /// `0` at `low`, `1` at `high`, smoothly in between.
 fn smoothstep(low: f32, high: f32, x: f32) -> f32 {
@@ -48,16 +86,15 @@ fn smoothstep(low: f32, high: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// One tick of water on a wheeled vehicle whose body is `body`, over water whose surface is at
-/// `level`: after the wheels have had their say, before the pipeline steps. `steer` is its front
+/// One tick of water on a wheeled vehicle whose body is `body`, over `water`: after the wheels have had their say, before the pipeline steps. `steer` is its front
 /// wheels' angle (+ is right) and `boosted` whether a snowmobile's boost is open. Returns whether it is
 /// skimming, which counts as being on the ground. Does nothing to a hull out of the water. Everything
 /// is a function of the body's state and the controls, so the client can replay it.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn wade(body: &mut RigidBody, spec: &Spec, controls: CarControls, steer: f32, condition: CarCondition, boosted: bool, level: f32, dt: f32) -> bool {
+pub(crate) fn wade(body: &mut RigidBody, spec: &Spec, controls: CarControls, steer: f32, condition: CarCondition, boosted: bool, water: &Water, dt: f32) -> bool {
     let [_, hy, _] = spec.half_extents;
     let rotation = *body.rotation();
-    let under = (level - (body.translation().y - hy)).clamp(0.0, 2.0 * hy);
+    let under = (water.height - (body.translation().y - hy)).clamp(0.0, 2.0 * hy);
     if under <= 0.0 {
         return false;
     }
@@ -74,9 +111,13 @@ pub(crate) fn wade(body: &mut RigidBody, spec: &Spec, controls: CarControls, ste
         _ => 0.0,
     };
 
-    // Held up at the surface while it planes; filling and settling slowly while it does not.
+    // How fast the surface comes up under the hull: the waves rising, and the hull running up their slope.
+    let surfacing = water.rise + velocity.x * water.slope[0] + velocity.z * water.slope[1];
+    let falling = surfacing - velocity.y;
+    // Held up at the surface while it planes, and lifted with it up a wave's face, which throws it off
+    // the crest; filling and settling slowly while it does not.
     if plane > 0.0 {
-        let lift = (CAR_GRAVITY + SKIM_SPRING * (under - SKIM_DRAFT) - SKIM_DAMPING * velocity.y).clamp(0.0, SKIM_LIFT_MAX);
+        let lift = (CAR_GRAVITY + SKIM_SPRING * (under - SKIM_DRAFT) + SKIM_DAMPING * falling).clamp(0.0, SKIM_LIFT_MAX);
         velocity.y += plane * lift * dt;
     }
     let sinking = 1.0 - plane;
@@ -84,7 +125,9 @@ pub(crate) fn wade(body: &mut RigidBody, spec: &Spec, controls: CarControls, ste
     velocity.y *= (-sinking * SINK_DAMPING * wet * dt).exp();
 
     let mut flat = Vector::new(velocity.x, 0.0, velocity.z);
-    let mut slowing = 0.0;
+    // Slamming down onto the water costs speed, nose first the more so.
+    let nose = (rotation * Vector::new(0.0, 0.0, -1.0)).dot(water.normal);
+    let mut slowing = SLAM * (falling - SLAM_SPEED).max(0.0) * (1.0 + SLAM_NOSE * (-nose).max(0.0));
     if let Some(skim) = spec.skim.filter(|_| plane > 0.0) {
         // The wheels touch nothing out here, so the water pushes it along, as the engine would.
         let throttle = controls.throttle.clamp(-1.0, 1.0);
@@ -112,7 +155,7 @@ pub(crate) fn wade(body: &mut RigidBody, spec: &Spec, controls: CarControls, ste
         spin = rotation * Vector::new(local.x * steady, local.y, local.z * steady);
         let hurry = ((speed - skim.sink_speed) / (spec.max_speed - skim.sink_speed).max(1.0)).clamp(0.0, 1.0);
         let squat = SKIM_SQUAT * (1.0 - (1.0 - SKIM_SQUAT_FAST) * hurry);
-        let lean = (Vector::Y + right * (SKIM_LEAN * turned * steer.signum()) - forward * squat).normalize();
+        let lean = (water.normal + right * (SKIM_LEAN * turned * steer.signum()) - forward * squat).normalize();
         spin += up.cross(lean) * (SKIM_LEVEL * plane * dt);
         body.set_angvel(spin, true);
     }
@@ -163,9 +206,16 @@ mod tests {
     const TICKS_PER_SECOND: u32 = (1.0 / TICK_DT + 0.5) as u32;
     const FORWARD: CarControls = CarControls { throttle: 1.0, ..CarControls::IDLE };
 
-    /// A vehicle of `kind` on the lake's surface at z = -30, heading -Z at `speed` m/s.
+    /// The pond with its waves stilled.
+    fn calm(world: &WorldFile) -> Physics {
+        let mut physics = Physics::new(world).unwrap();
+        physics.calm_waters();
+        physics
+    }
+
+    /// A vehicle of `kind` on the calm lake's surface at z = -30, heading -Z at `speed` m/s.
     fn afloat(kind: u8, speed: f32) -> Physics {
-        let mut physics = Physics::new(&pond()).unwrap();
+        let mut physics = calm(&pond());
         physics.add_car(1, kind, [0.0, spec(kind).half_extents[1] + 0.05, -30.0], 0.0);
         physics.set_car_velocity(1, [0.0, 0.0, -speed]);
         physics
@@ -184,7 +234,7 @@ mod tests {
 
     #[test]
     fn a_snowmobile_at_full_throttle_skims_across_the_lake() {
-        let mut physics = Physics::new(&pond()).unwrap();
+        let mut physics = calm(&pond());
         physics.add_car(1, KIND_SNOWMOBILE, [0.0, 1.0, 40.0], 0.0);
         let mut low = f32::INFINITY;
         let mut crossed = false;
@@ -249,7 +299,7 @@ mod tests {
     #[test]
     fn a_tank_wades_slowly_along_the_bed() {
         let on_bed = |world: &WorldFile| {
-            let mut physics = Physics::new(world).unwrap();
+            let mut physics = calm(world);
             physics.add_car(1, KIND_TANK, [0.0, -1.5, -40.0], 0.0);
             let start = drive(&mut physics, CarControls::IDLE, TICKS_PER_SECOND).position[2];
             start - drive(&mut physics, FORWARD, 5 * TICKS_PER_SECOND).position[2]
@@ -257,6 +307,81 @@ mod tests {
         let dry = WorldFile { water: Vec::new(), ..pond() };
         let (wet, dry) = (on_bed(&pond()), on_bed(&dry));
         assert!(wet > 2.0 && wet < dry * 0.5, "the water holds it back: {wet} m against {dry} m dry");
+    }
+
+    /// A snowmobile driven flat out with the boost from the shore down the lake, slanting over its swell: the
+    /// most its nose pitched up or down, how many ticks its hull was clear of the water, how far it rose
+    /// and fell (metres), and whether it got across.
+    fn swell_crossing(start: u32) -> (f32, u32, f32, bool) {
+        let mut physics = Physics::new(&pond()).unwrap();
+        physics.set_tick(start);
+        physics.add_car(1, KIND_SNOWMOBILE, [0.0, 1.0, 30.0], 0.0);
+        let flat_out = CarControls { throttle: 1.0, boost: true, ..CarControls::IDLE };
+        let (mut pitched, mut clear, mut low, mut high, mut crossed) = (0.0f32, 0, f32::INFINITY, f32::NEG_INFINITY, false);
+        for _ in 0..10 * TICKS_PER_SECOND {
+            let pose = drive(&mut physics, flat_out, 1);
+            let [x, y, z] = pose.position;
+            // Past where it came off the shore.
+            if (-85.0..-40.0).contains(&z) {
+                pitched = pitched.max(pitch(&pose).abs());
+                (low, high) = (low.min(y), high.max(y));
+                let surface = physics.waters.surface(x, z, shared::waves::time(physics.tick)).unwrap();
+                if y - spec(KIND_SNOWMOBILE).half_extents[1] > surface.height + 0.3 {
+                    clear += 1;
+                }
+            }
+            crossed |= z < -95.0;
+        }
+        (pitched, clear, high - low, crossed)
+    }
+
+    #[test]
+    fn across_the_swell_a_snowmobile_rides_up_and_down_it() {
+        for start in [0, 900, 1800, 2700] {
+            let (pitched, clear, travel, crossed) = swell_crossing(start);
+            assert!(crossed, "it got across from tick {start}");
+            assert!(travel > 0.05, "it rose and fell {travel} m with the swell from tick {start}");
+            assert!(pitched > 0.02 && pitched < 0.4, "it pitched gently with it, {pitched} rad from tick {start}");
+            assert!(clear < 5, "slanting over the crests throws nothing in the air: {clear} ticks clear from tick {start}");
+        }
+    }
+
+    /// The same, but the way the swell runs (towards −x, across the lake's width), where its crests come
+    /// at it head on: its most ticks in a row clear of the water, the most it pitched, and whether it got across.
+    fn along_the_swell(start: u32) -> (u32, f32, bool) {
+        let mut physics = Physics::new(&pond()).unwrap();
+        physics.set_tick(start);
+        physics.add_car(1, KIND_SNOWMOBILE, [60.0, 1.0, -55.0], std::f32::consts::FRAC_PI_2);
+        let flat_out = CarControls { throttle: 1.0, boost: true, ..CarControls::IDLE };
+        let (mut run, mut longest, mut pitched, mut x_end) = (0, 0, 0.0f32, 0.0);
+        for _ in 0..8 * TICKS_PER_SECOND {
+            let pose = drive(&mut physics, flat_out, 1);
+            let [x, y, z] = pose.position;
+            x_end = x;
+            if (-35.0..35.0).contains(&x) {
+                pitched = pitched.max(pitch(&pose).abs());
+                let surface = physics.waters.surface(x, z, shared::waves::time(physics.tick)).unwrap();
+                run = if y - spec(KIND_SNOWMOBILE).half_extents[1] > surface.height + 0.3 { run + 1 } else { 0 };
+                longest = longest.max(run);
+            }
+        }
+        (longest, pitched, x_end < -45.0)
+    }
+
+    #[test]
+    fn head_on_into_the_swell_a_fast_snowmobile_leaps_its_crests() {
+        let leaps: Vec<_> = (0..3840).step_by(480).map(|start| (start, along_the_swell(start))).collect();
+        for &(start, (_, _, crossed)) in &leaps {
+            assert!(crossed, "it got across from tick {start}");
+        }
+        let airborne = leaps.iter().filter(|(_, (longest, _, _))| *longest >= 10).count();
+        assert!(airborne >= leaps.len() - 1, "the crests throw it clear, mostly: {leaps:?}");
+    }
+
+    #[test]
+    fn the_waves_run_on_the_tick() {
+        assert_ne!(swell_crossing(0), swell_crossing(600), "another tick, other waves");
+        assert_eq!(swell_crossing(77), swell_crossing(77 + shared::waves::LOOP_TICKS), "a loop later, the same");
     }
 
     #[test]

@@ -15,6 +15,17 @@ struct Grid {
     side: usize,
     /// Surface height at each ground sample, metres, row-major as `Ground::heights`; `NEG_INFINITY` where it is dry.
     levels: Vec<f32>,
+    /// How deep the water is at each sample, metres; 0 where it is dry.
+    depths: Vec<f32>,
+}
+
+/// The water's surface at a point, waves and all: its height (metres), its slope `[dh/dx, dh/dz]` and
+/// how fast it is rising there (m/s).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Surface {
+    pub height: f32,
+    pub slope: [f32; 2],
+    pub rise: f32,
 }
 
 /// Every tile's water surface, by the tile it came in. A world that is not cut into whole tiles is
@@ -28,11 +39,13 @@ pub struct Waters {
     cell: f32,
     /// Winter: the water is ice and none of it is kept.
     frozen: bool,
+    /// The waves are stilled (a test's flat water).
+    calm: bool,
 }
 
 impl Waters {
     pub fn new(half_extent: i32, tile_size: i32, ground_cell: i32, frozen: bool) -> Waters {
-        Waters { by_tile: BTreeMap::new(), half: from_cm(half_extent), tile: from_cm(tile_size), cell: from_cm(ground_cell), frozen }
+        Waters { by_tile: BTreeMap::new(), half: from_cm(half_extent), tile: from_cm(tile_size), cell: from_cm(ground_cell), frozen, calm: false }
     }
 
     /// The water of a world's whole `ground`, as `WorldFile::water` holds it: cut back into its tiles
@@ -74,8 +87,14 @@ impl Waters {
             return;
         }
         let levels: Vec<f32> = water.iter().zip(ground).map(|(&w, &g)| if w != NO_WATER && w > g { from_cm(w) } else { f32::NEG_INFINITY }).collect();
+        let depths = water.iter().zip(ground).map(|(&w, &g)| if w != NO_WATER && w > g { from_cm(w - g) } else { 0.0 }).collect();
         let side = (levels.len() as f32).sqrt().round() as usize;
-        self.by_tile.insert(tile, Grid { x0, z0, side, levels });
+        self.by_tile.insert(tile, Grid { x0, z0, side, levels, depths });
+    }
+
+    /// Stills the waves everywhere.
+    pub fn calm(&mut self) {
+        self.calm = true;
     }
 
     pub fn remove(&mut self, tile: (u16, u16)) {
@@ -85,6 +104,37 @@ impl Waters {
     /// The water surface height at `(x, z)`, metres, from the nearest ground sample; `None` where it
     /// is dry or the tile is not here.
     pub fn level_at(&self, x: f32, z: f32) -> Option<f32> {
+        let (grid, i, j) = self.sample(x, z)?;
+        let level = grid.levels[j * grid.side + i];
+        level.is_finite().then_some(level)
+    }
+
+    /// The surface at `(x, z)` with its waves (`shared::waves`), `time` seconds into their loop: the
+    /// waves die away towards the shore, as deep as the water is between the samples around it. `None`
+    /// where it is dry or the tile is not here.
+    pub fn surface(&self, x: f32, z: f32, time: f32) -> Option<Surface> {
+        let level = self.level_at(x, z)?;
+        let share = if self.calm { 0.0 } else { shared::waves::shore(self.depth_at(x, z)) };
+        let wave = shared::waves::wave(x, z, time);
+        Some(Surface { height: level + wave.height * share, slope: wave.slope.map(|slope| slope * share), rise: wave.rise * share })
+    }
+
+    /// How deep the water is at `(x, z)`, metres, between the four samples around it, as the water's
+    /// mesh draws it; 0 off the grid.
+    fn depth_at(&self, x: f32, z: f32) -> f32 {
+        let Some((grid, _, _)) = self.sample(x, z) else { return 0.0 };
+        let (u, v) = (((x - grid.x0) / self.cell).max(0.0), ((z - grid.z0) / self.cell).max(0.0));
+        let last = grid.side - 1;
+        let (i, j) = ((u as usize).min(last.saturating_sub(1)), (v as usize).min(last.saturating_sub(1)));
+        let (fu, fv) = ((u - i as f32).clamp(0.0, 1.0), (v - j as f32).clamp(0.0, 1.0));
+        let at = |i: usize, j: usize| grid.depths[j.min(last) * grid.side + i.min(last)];
+        let near = at(i, j) + (at(i + 1, j) - at(i, j)) * fu;
+        let far = at(i, j + 1) + (at(i + 1, j + 1) - at(i, j + 1)) * fu;
+        near + (far - near) * fv
+    }
+
+    /// The grid under `(x, z)` and its nearest sample's column and row.
+    fn sample(&self, x: f32, z: f32) -> Option<(&Grid, usize, usize)> {
         if self.by_tile.is_empty() || self.cell <= 0.0 {
             return None;
         }
@@ -103,8 +153,7 @@ impl Waters {
         if i < 0.0 || j < 0.0 || i > last || j > last {
             return None;
         }
-        let level = grid.levels[j as usize * grid.side + i as usize];
-        level.is_finite().then_some(level)
+        Some((grid, i as usize, j as usize))
     }
 }
 
@@ -140,6 +189,21 @@ mod tests {
         assert_eq!(waters.level_at(3.0, 3.0), None);
         world.theme = THEME_WINTER;
         assert_eq!(Waters::of_world(&world).level_at(0.4, 0.3), None, "winter water is ice");
+    }
+
+    #[test]
+    fn waves_ride_on_deep_water_and_die_away_at_the_shore() {
+        // One grid of 2 m cells: 3 m deep at x = 0, shallowing to the shore at x = 8.
+        let mut world = WorldFile { half_extent: 400, ..Default::default() };
+        let ground: Vec<i32> = (0..25).map(|k| [-300, -300, -150, -20, 10][k % 5]).collect();
+        world.ground = shared::terrain::Ground { origin: 0, cell: 200, side: 5, heights: ground };
+        world.water = vec![0; 25];
+        let waters = Waters::of_world(&world);
+        let time = 7.3;
+        let deep = waters.surface(0.0, 4.0, time).unwrap();
+        assert_eq!(deep.height, shared::waves::wave(0.0, 4.0, time).height, "deep water has the whole wave");
+        let shallow = waters.surface(6.0, 4.0, time).unwrap();
+        assert_eq!((shallow.height, shallow.rise), (0.0, 0.0), "20 cm of water lies flat");
     }
 
     #[test]

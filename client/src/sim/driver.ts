@@ -76,8 +76,12 @@ export class VehicleDriver {
     return this.motor.carState(this.id)
   }
 
-  /** Rewinds to the server's state as of input `ack` and replays everything newer. */
-  reconcile(ack: number, vehicle: VehiclePose, drive: DriveState) {
+  /**
+   * Rewinds to the server's state as of input `ack` and replays everything newer. `tick` is the
+   * snapshot's: the server's next step, which the first replayed input is, so the waves on open water
+   * are where the server has them.
+   */
+  reconcile(ack: number, vehicle: VehiclePose, drive: DriveState, tick?: number) {
     this.acknowledge(ack)
     if (this.id !== vehicle.id || this.kind !== vehicle.kind) {
       this.leave()
@@ -87,6 +91,7 @@ export class VehicleDriver {
     }
     const before = this.current
     this.motor.setCarState(this.id, vehicle, drive)
+    if (tick !== undefined) this.motor.setTick(tick)
     let state = this.motor.carState(this.id)
     let previous = state
     for (const input of this.pending) {

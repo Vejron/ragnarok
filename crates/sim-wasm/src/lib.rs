@@ -267,6 +267,21 @@ impl ClientSim {
         self.physics.step_cars(dt);
     }
 
+    /// Sets the server tick the next `driveCar` steps, which the waves on open water run on; each step
+    /// moves it on by one.
+    #[wasm_bindgen(js_name = setTick)]
+    pub fn set_tick(&mut self, tick: u32) {
+        self.physics.set_tick(tick);
+    }
+
+    /// The waves at full height at `(x, z)`, `time` seconds into their loop: height, slope x, slope z
+    /// and rise (`shared::waves::wave`), for checking the client's copy against.
+    #[wasm_bindgen(js_name = waveAt)]
+    pub fn wave_at(x: f32, z: f32, time: f32) -> Vec<f32> {
+        let wave = shared::waves::wave(x, z, time);
+        vec![wave.height, wave.slope[0], wave.slope[1], wave.rise]
+    }
+
     /// Makes ragdoll `key` (replacing any it had) from `segments`, the world points each of its parts
     /// runs between as the soldier stood when thrown (`RAGDOLL_SEGMENT_FLOATS` each), with `side` their
     /// right, setting off at `velocity` and turning at `spin`; the limbs in `lost` (`LIMB_*`) are left

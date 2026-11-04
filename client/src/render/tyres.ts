@@ -11,6 +11,7 @@ import { winter } from './season'
 import type { SnowRoost } from './snowroost'
 import { splash } from './splash'
 import type { Skidmarks } from './skidmarks'
+import { type DropWake, WakeTrail } from './wakes'
 
 /** What every vehicle's effects draw into and look things up in. */
 export interface FxWorld {
@@ -24,6 +25,8 @@ export interface FxWorld {
   waterAt?(x: number, z: number): number
   /** Rings running out over the water surface from `at`, for a splash of about `size` metres. */
   ripple?(at: { x: number; y: number; z: number }, size: number): void
+  /** Carves a wake into the water (`Wakes.drop`). */
+  wake?: DropWake
   /** Where the camera is, so far-away vehicles can skip the particles. */
   camera: Vec3
   /** The snow tracks throw up when they dig in: only in a winter world. */
@@ -37,8 +40,10 @@ const MARK_RANGE = 200
 const AIRBORNE = 0.3
 /** A hull whose underside is within this of the water surface, metres, rides on it (`skim`). */
 const SKIM_DRAFT = 0.3
-/** Slower than this, m/s, a hull on the water throws no wake. */
+/** Slower than this, m/s, a hull on the water throws no spray. */
 const SKIM_SPEED = 5
+/** Slower than this, m/s, a hull in the water carves no wake. */
+const WAKE_SPEED = 1
 /** How quickly the smoothed slips and acceleration follow, per second. */
 const SMOOTHING = 12
 
@@ -84,6 +89,8 @@ export class VehicleFx {
   private wet = false
   /** Whether its hull rode on the water surface last frame. */
   private skimming = false
+  /** Where its wake was last carved. */
+  private readonly trail = new WakeTrail()
   private airTime = 0
   private fall = 0
   private landed = 0
@@ -372,7 +379,16 @@ export class VehicleFx {
     const level = winter ? undefined : world.waterAt?.(here.x, here.z)
     const [hx, hy, hz] = halfExtentsOf(this.kind)
     const moving = Math.hypot(this.velocity.x, this.velocity.z)
-    const skimming = level !== undefined && Number.isFinite(level) && Math.abs(here.y - hy - level) < SKIM_DRAFT && moving > SKIM_SPEED
+    const afloat = level !== undefined && Number.isFinite(level)
+    const skimming = afloat && Math.abs(here.y - hy - level) < SKIM_DRAFT && moving > SKIM_SPEED
+    // Anything wide in the water, and moving, carves a wake: hard on the surface, gently wading.
+    if (afloat && here.y - hy < level + SKIM_DRAFT && moving > WAKE_SPEED) {
+      const size = Math.min(2, hx / 0.55)
+      const strength = skimming ? Math.min(0.3, 0.08 + moving * 0.01) : Math.min(0.15, 0.03 + moving * 0.03)
+      this.trail.move(world.wake, here.x, here.z, strength * size)
+    } else {
+      this.trail.lift()
+    }
     if (skimming) {
       if (!this.skimming && particles && this.fall > 2) splash(world, { x: here.x, y: level, z: here.z }, Math.min(2.5, 0.8 + this.fall * 0.1), this.fall)
       this.down = true

@@ -16,6 +16,8 @@ const STREAM_ACROSS = 5
 const STREAM_LIFT = 0.1
 /** Depth drawn at the middle of a stream, metres. */
 const STREAM_DEPTH = 0.45
+/** Water cells wider than this, metres, are cut into smaller ones, fine enough for the waves to bend. */
+const WAVE_CELL = 1.5
 /** A water mesh: positions, the shader's `custom` attribute (depth, then the flow), and indices. */
 export interface WaterBuffers {
   positions: Float32Array
@@ -62,7 +64,53 @@ export function surfaceBuffers(water: Float32Array, ground: TileGround): WaterBu
     }
   }
   if (indices.length === 0) return null
+  const split = Math.ceil(cell / WAVE_CELL - 1e-6)
+  if (split > 1) return subdivided(positions, depths, Uint32Array.from(indices), side, cell, split)
   return { positions, custom: surfaceCustom(depths, flows), indices: Uint32Array.from(indices) }
+}
+
+/**
+ * The cells of a surface mesh (two triangles a cell, as `surfaceBuffers` lists them, over a grid
+ * `side` samples across) each cut into `split` × `split`, their heights and depths blended from the
+ * cell's corners. Neighbouring cells repeat their shared edge's vertices, which the waves move alike.
+ */
+function subdivided(positions: Float32Array, depths: Float32Array, cells: Uint32Array, side: number, cell: number, split: number): WaterBuffers {
+  const n = split + 1
+  const count = cells.length / 6
+  const out = new Float32Array(count * n * n * 3)
+  const deep = new Float32Array(count * n * n)
+  const indices = new Uint32Array(count * split * split * 6)
+  let vertex = 0
+  let index = 0
+  for (let c = 0; c < count; c++) {
+    const p00 = cells[c * 6]!
+    const [p01, p10, p11] = [p00 + 1, p00 + side, p00 + side + 1]
+    const x0 = positions[p00 * 3]!
+    const z0 = positions[p00 * 3 + 2]!
+    const blend = (of: (p: number) => number, u: number, v: number) => {
+      const near = of(p00) + (of(p01) - of(p00)) * u
+      const far = of(p10) + (of(p11) - of(p10)) * u
+      return near + (far - near) * v
+    }
+    const first = vertex
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) {
+        const u = i / split
+        const v = j / split
+        out.set([x0 + u * cell, blend((p) => positions[p * 3 + 1]!, u, v), z0 + v * cell], vertex * 3)
+        deep[vertex++] = blend((p) => depths[p]!, u, v)
+      }
+    }
+    for (let j = 0; j < split; j++) {
+      for (let i = 0; i < split; i++) {
+        const q00 = first + j * n + i
+        const [q01, q10, q11] = [q00 + 1, q00 + n, q00 + n + 1]
+        indices.set([q00, q10, q01, q10, q11, q01], index)
+        index += 6
+      }
+    }
+  }
+  return { positions: out, custom: surfaceCustom(deep, new Float32Array(deep.length * 3)), indices }
 }
 
 /** The vertex attribute the shader reads: depth in x and the stream flow (along, across, is-stream) in yzw. */

@@ -4,19 +4,46 @@ import type { TileData } from '@/world'
 import type { HeightSource } from './shade'
 import { waterBuffers, type WaterBuffers } from './groundmesh'
 import { GROUND_LIGHT_WGSL } from './groundlight'
+import { WAVES_WGSL } from '@/sim/waves'
+import { WAKES_WGSL } from './wakes'
 
 /**
  * Water: lakes and rivers are a surface mesh per tile at the importer's water level, streams are
  * ribbons draped on the ground. Both share one toy-style shader: a tint that deepens with depth,
  * soft light bands drifting over the surface, a foam line along the shore, and a flow along a
  * stream's length. Depth is a vertex attribute (`level - ground`), not a depth-texture read, so the
- * look needs no extra pass.
+ * look needs no extra pass. Lakes and rivers carry the waves the sim rides vehicles on (`sim/waves.ts`):
+ * the vertices rise and fall with them on the server's clock, they light the surface, and their crests
+ * break white. They die away towards the shore; streams and ice have none. On top, whatever moves
+ * through the water carves a wake into it (`wakes.ts`).
  */
 
 /** Shore foam reaches this deep, metres. */
 const FOAM_DEPTH = 0.35
 /** Along-stream speed of the flow, metres per second. */
 const FLOW_SPEED = 1.4
+
+/** Moves each vertex of a lake or river with the waves. Its functions serve the fragment too. */
+const VERTEX = /* wgsl */ `
+${WAVES_WGSL}
+
+// How much of the waves this water has: none on a stream or on ice, less towards the shore.
+fn waveShare(custom: vec4f) -> f32 {
+  return select(waveShore(custom.x), 0.0, custom.w > 0.5) * params.wave.y;
+}
+
+${WAKES_WGSL}
+
+// How much of the wakes this water shows: none on ice, less where it is too shallow to stir.
+fn wakeShare(custom: vec4f) -> f32 {
+  return smoothstep(0.05, 0.4, custom.x) * params.wave.y;
+}
+
+fn displace(world: vec3f, custom: vec4f, color: vec4f) -> vec3f {
+  let lift = waves(world.xz, params.wave.x).x * waveShare(custom) + wake(world.xz).x * wakeShare(custom);
+  return world + vec3f(0.0, lift, 0.0);
+}
+`
 
 const WGSL = /* wgsl */ `
 ${GROUND_LIGHT_WGSL}
@@ -87,7 +114,12 @@ fn surface(s: Surface) -> vec4f {
   let fine = 1.0 - smoothstep(25.0, 110.0, length(to));
   let h = swell(q, t, fine);
   let grad = vec2f(swell(q + vec2f(e, 0.0), t, fine) - h, swell(q + vec2f(0.0, e), t, fine) - h) / e;
-  var n = normalize(vec3f(-grad.x * 0.2, 1.0, -grad.y * 0.2));
+  // The real waves' slope, with the small swell's ripples over it.
+  let share = waveShare(s.custom);
+  let big = waves(world, params.wave.x) * share;
+  // And what has passed through it: the wakes' rings and trenches, and their churn.
+  let churn = wake(world) * wakeShare(s.custom);
+  var n = normalize(vec3f(-grad.x * 0.2 - big.y - churn.y, 1.0, -grad.y * 0.2 - big.z - churn.z));
   if (!s.front) {
     n.y = -n.y;
   }
@@ -108,7 +140,8 @@ fn surface(s: Surface) -> vec4f {
   let ripple = vec2f(n.x, n.z) * 0.05 * fine;
   let ruv = clamp(vec2f(0.5 - ndc.x * 0.5, 0.5 - ndc.y * 0.5) + ripple, vec2f(0.0), vec2f(1.0));
   let seen = textureSampleLevel(reflection, materialSampler, ruv, 0.0);
-  let level = params.plane.y * (1.0 - smoothstep(0.2, 0.5, abs(s.world.y - params.plane.x)));
+  // Measured at the water's level under the waves, so a crest still mirrors the scene.
+  let level = params.plane.y * (1.0 - smoothstep(0.2, 0.5, abs(s.world.y - big.x - churn.x - params.plane.x)));
   mirror = mix(mirror, seen.rgb, seen.a * level);
   color = mix(color, mirror, clamp(fresnel * 1.3 + 0.12, 0.0, 0.95));
 
@@ -120,6 +153,13 @@ fn surface(s: Surface) -> vec4f {
   let foam = 1.0 - smoothstep(shore * 0.55, shore, depth);
   let lace = smoothstep(0.1, 0.55, bands(world * 2.1, time * 1.6) * 0.5 + 0.5);
   color = mix(color, params.foam * ground, foam * mix(0.55, 1.0, lace));
+  // Whitecaps: the high, steep crests break, in ragged patches.
+  let steep = length(big.yz);
+  let cap = smoothstep(0.35, 0.7, big.x) * smoothstep(0.15, 0.4, steep) * smoothstep(0.2, 0.6, lace);
+  color = mix(color, params.foam * ground, cap * 0.75);
+  // A wake churns white behind what made it, breaking up as it settles.
+  let wash = clamp(churn.w, 0.0, 1.0) * mix(0.5, 1.0, lace);
+  color = mix(color, params.foam * ground, wash * 0.8);
 
   if (params.ice.x > 0.5) {
     // Wind-scoured ice under drifts of snow, with the odd long crack: still, and opaque.
@@ -128,7 +168,7 @@ fn surface(s: Surface) -> vec4f {
     let ice = mix(vec3f(0.74, 0.86, 0.93), vec3f(0.92, 0.95, 0.98), drift) * (1.0 - crack * 0.14 * (1.0 - drift));
     return vec4f(ice * ground * 1.15 + mirror * fresnel * 0.2 * (1.0 - drift), 1.0);
   }
-  var alpha = smoothstep(0.0, 0.1, depth) * mix(0.62, 0.9, deep);
+  var alpha = max(smoothstep(0.0, 0.1, depth) * mix(0.62, 0.9, deep), max(cap, wash) * 0.9);
   alpha = clamp(alpha - clear * 0.12 + fresnel * 0.35 + spark * 0.4, 0.0, 1.0);
   return vec4f(color, alpha);
 }
@@ -138,11 +178,15 @@ fn surface(s: Surface) -> vec4f {
 /** What the water samples until the renderer's mirror is handed over: transparent, so it shows sky. */
 const blank = new Texture({ data: new Uint8Array(4), width: 1, height: 1 }, { srgb: false, wrap: 'clamp', mipmaps: false })
 
+/** A wake map with nothing on it. */
+const still = new Texture({ data: new Uint8Array([128, 128, 128, 0]), width: 1, height: 1 }, { srgb: false, wrap: 'clamp', mipmaps: false })
+
 /** One shared material, so every tile draws with the same pipeline and a sky change reaches them all. */
 let shared: ShaderMaterial | null = null
 function material(): ShaderMaterial {
   shared ??= new ShaderMaterial({
     wgsl: WGSL,
+    vertex: VERTEX,
     uniforms: {
       shallow: Color.hex(0x7fd8f5),
       deep: Color.hex(0x2f8fd8),
@@ -155,8 +199,13 @@ function material(): ShaderMaterial {
       plane: [0, 0],
       // 1 while the water is frozen.
       ice: [0, 0],
+      // The waves' clock, seconds into their loop, and 1 while they run (not on ice).
+      wave: [0, 1],
+      // Where the wake map's corner is (x, z) and how wide it is, metres (`Wakes.area`).
+      wakeArea: [0, 0, 1, 0],
     },
-    textures: { reflection: blank },
+    // Mid-grey until the wakes are handed over: no height, no slope.
+    textures: { reflection: blank, wakeMap: still },
     blend: 'alpha',
     // Written, so the ink (which reads depth) outlines the surface and not the bed seen through it.
     depthWrite: true,
@@ -172,6 +221,21 @@ function material(): ShaderMaterial {
 /** Freezes every lake, river and stream. */
 export function freezeWater() {
   ;(material().uniforms.ice as [number, number])[0] = 1
+  ;(material().uniforms.wave as [number, number])[1] = 0
+  material().needsUpdate()
+}
+
+/** Hands the water the wake map (`Wakes.texture`) and where it lies (`Wakes.area`), after it was drawn again. */
+export function setWaterWakes(map: Texture, area: Readonly<[number, number, number, number]>) {
+  const m = material()
+  m.textures.wakeMap = map
+  ;(m.uniforms.wakeArea as [number, number, number, number]).splice(0, 4, ...area)
+  m.needsUpdate()
+}
+
+/** Sets the waves' clock: `time` seconds into their loop (`waveTime` of the server's tick). */
+export function setWaterTime(time: number) {
+  ;(material().uniforms.wave as [number, number])[0] = time
   material().needsUpdate()
 }
 
