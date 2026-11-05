@@ -18,6 +18,7 @@ mod scores;
 mod spawn;
 mod structure;
 mod vehicles;
+mod wildlife;
 
 pub use bots::{Bots, DRIVER, GUNNER, nearest_waypoint, road_route};
 pub use combat::{Combat, bearing, position_of};
@@ -37,6 +38,7 @@ pub use scores::Scores;
 pub use spawn::{Spawn, usable as spawn_usable};
 pub use structure::Structure;
 pub use vehicles::{Vehicles, add_tank, remove_vehicle, seat};
+pub use wildlife::{Wildlife, fell, grazing};
 
 use crate::game::World;
 
@@ -64,6 +66,8 @@ pub trait Mechanic: Send {
 /// Registers the components mechanics own with the room's ECS world (see `entities`).
 pub fn register_components(ecs: &mut bevy_ecs::world::World) {
     ecs.register_component::<npcs::Wander>();
+    ecs.register_component::<wildlife::Wild>();
+    ecs.register_component::<wildlife::Fell>();
     ecs.register_component::<pickups::Pickup>();
     ecs.register_component::<crate::game::Vehicle>();
     ecs.register_component::<crate::game::Mounts>();
@@ -81,9 +85,9 @@ pub fn register_components(ecs: &mut bevy_ecs::world::World) {
 }
 
 /// The mechanics a room runs, in tick order. `Bots` goes first: it writes the bots' input, which
-/// everything after reads as it reads anyone's. `Life` brings the dead back before `Npcs` moves them.
+/// everything after reads as it reads anyone's. `Life` brings the dead back before `Npcs` and `Wildlife` move them.
 pub fn default_mechanics() -> Vec<Box<dyn Mechanic>> {
-    vec![Box::<Bots>::default(), Box::new(Spawn), Box::new(Pickups), Box::new(Drones), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement), Box::new(Backpack), Box::new(Life), Box::new(Npcs), Box::new(Combat), Box::new(Structure), Box::new(Scores)]
+    vec![Box::<Bots>::default(), Box::new(Spawn), Box::new(Pickups), Box::new(Drones), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement), Box::new(Backpack), Box::new(Life), Box::new(Npcs), Box::<Wildlife>::default(), Box::new(Combat), Box::new(Structure), Box::new(Scores)]
 }
 
 /// What tests outside the mechanics reach in for: setting up a busy room without playing it.

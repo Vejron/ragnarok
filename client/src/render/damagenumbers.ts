@@ -27,10 +27,10 @@ export class DamageNumbers {
   private readonly active: Floater[] = []
 
   /** A number of `amount` at `at`: white for a body, amber for a vehicle, red and big for a kill. */
-  spawn(at: Vector3, amount: number, kind: 'body' | 'vehicle' | 'kill' | 'rooster', camera: PerspectiveCamera) {
+  spawn(at: Vector3, amount: number, kind: 'body' | 'vehicle' | 'kill' | 'rooster' | 'deer', camera: PerspectiveCamera) {
     if (amount <= 0) return
     if (this.active.length >= MAX_ACTIVE) this.finish(0)
-    const fill = { body: '#ffffff', vehicle: '#ffb020', kill: '#ff3b3b', rooster: '#ffe14a' }[kind]
+    const fill = { body: '#ffffff', vehicle: '#ffb020', kill: '#ff3b3b', rooster: '#ffe14a', deer: '#ffffff' }[kind]
     const canvas = document.createElement('canvas')
     canvas.width = 160
     canvas.height = 80

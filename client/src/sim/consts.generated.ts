@@ -64,6 +64,13 @@ export const KIND_SHIP = 18
 /** One of a pirate ship's guns, fixed to its deck and manned by one gunner. */
 export const KIND_SHIP_GUN = 19
 
+/**
+ * Wildlife: a deer (a hind) and a stag, NPCs that graze in herds and bolt from people and gunfire.
+ * Replicated like the rooster, with their own models.
+ */
+export const KIND_DEER = 20
+export const KIND_STAG = 21
+
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
 
@@ -772,6 +779,53 @@ export const ROOSTER_CROW_TICKS = 100
 export const ROOSTER_CAPSULE_CENTRE = 0.4
 export const ROOSTER_CAPSULE_HALF_HEIGHT = 0.1
 export const ROOSTER_CAPSULE_RADIUS = 0.3
+
+/**
+ * Deer, placed in herds by the map editor (`animals` in area.json). They graze about their herd's
+ * home, turn to look at someone who comes near and bolt from one who comes nearer, from gunfire and
+ * blasts, and from being hurt; a herd bolts together. The stag lets people come closer.
+ * How far from home a grazing herd drifts, metres.
+ */
+export const DEER_HERD_RADIUS = 14.0
+
+/** Walking speed and galloping (fleeing) speed, m/s, and how fast it turns walking and galloping, rad/s. */
+export const DEER_WALK_SPEED = 1.3
+export const DEER_GALLOP_SPEED = 9.0
+export const DEER_TURN_RATE = 2.5
+export const DEER_FLEE_TURN_RATE = 5.0
+
+/** How far it runs from what scared it, metres. */
+export const DEER_FLEE_DISTANCE = 70.0
+
+/**
+ * Someone this close looks up from grazing, metres: walking, running, and crouched or prone and
+ * still. Someone in a vehicle is noticed at the running distance plus a half.
+ */
+export const DEER_NOTICE_WALK = 24.0
+export const DEER_NOTICE_RUN = 36.0
+export const DEER_NOTICE_SNEAK = 8.0
+
+/** Of the noticing distance: someone nearer than this share of it makes it bolt. */
+export const DEER_BOLT_SHARE = 0.6
+
+/** The stag's noticing distances are the hind's times this. */
+export const STAG_NERVE = 0.7
+export const DEER_HP = 60
+export const STAG_HP = 90
+
+/** A killed deer is back at its herd's home after this long. */
+export const DEER_RESPAWN_TICKS = 90 * TICK_RATE
+
+/**
+ * Hit capsule: centre this high above its hooves, metres. Hurtboxes stand upright, so it is a fat one
+ * that takes in the body from chest to rump, and the head held up.
+ */
+export const DEER_CAPSULE_CENTRE = 0.9
+export const DEER_CAPSULE_HALF_HEIGHT = 0.25
+export const DEER_CAPSULE_RADIUS = 0.55
+export const STAG_CAPSULE_CENTRE = 1.05
+export const STAG_CAPSULE_HALF_HEIGHT = 0.3
+export const STAG_CAPSULE_RADIUS = 0.6
 
 /**
  * The FPV drone: a quadcopter the size of a dinner plate. It is flown by velocity: forward stick asks

@@ -92,12 +92,12 @@ pub fn home(world: &World) -> [f32; 2] {
     world.map.spawns.first().map_or([0.0, 0.0], |s| [from_cm(s[0]), from_cm(s[1])])
 }
 
-fn random_between(world: &mut World, low: f32, high: f32) -> f32 {
+pub(super) fn random_between(world: &mut World, low: f32, high: f32) -> f32 {
     low + world.rng.next_f64() as f32 * (high - low)
 }
 
 /// A random open spot within `radius` of `home`.
-fn pick_target(world: &mut World, home: [f32; 2], radius: f32) -> Option<[f32; 2]> {
+pub(super) fn pick_target(world: &mut World, home: [f32; 2], radius: f32) -> Option<[f32; 2]> {
     for _ in 0..TARGET_ATTEMPTS {
         let angle = random_between(world, 0.0, TAU);
         let distance = random_between(world, 1.0, radius);

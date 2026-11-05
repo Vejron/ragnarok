@@ -223,7 +223,8 @@ pub fn restore(world: &mut World, id: u32) {
     world.entities.remove::<Struck>(id);
 }
 
-/// The last hit a soldier took this life (replicated as `struck`), so others see it flinch.
+/// The last hit a soldier or a wild animal took this life (replicated as `struck`), so others see it
+/// flinch and bleed.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Struck {
     /// Hits so far this life, modulo 256.
@@ -238,10 +239,10 @@ pub struct Struck {
     pub at: [i16; 3],
 }
 
-/// Notes that player `id` was struck in `part` (`PART_*`) for `amount`, from `from` if known, at
+/// Notes that player or wild animal `id` was struck in `part` (`PART_*`) for `amount`, from `from` if known, at
 /// `offset` metres from the point they hang from if a round found the spot.
 pub fn struck(world: &mut World, id: u32, part: u8, amount: u8, from: Option<[f32; 3]>, offset: Option<[f32; 3]>) {
-    if !world.entities.has::<Player>(id) {
+    if !world.entities.has::<Player>(id) && !world.entities.has::<super::wildlife::Wild>(id) {
         return;
     }
     let count = world.entities.get::<Struck>(id).map_or(0, |struck| struck.count).wrapping_add(1);

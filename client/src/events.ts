@@ -9,7 +9,7 @@ import type { Avatars } from '@/entities/avatars'
 import type { Vehicles } from '@/entities/presenters/vehicles'
 import type { Wear } from '@/entities/presenters/wear'
 import type { Blips } from '@/blips'
-import { HIT_KILL, HIT_ROOSTER, HIT_VEHICLE } from '@/feedback'
+import { HIT_DEER, HIT_KILL, HIT_ROOSTER, HIT_VEHICLE } from '@/feedback'
 import {
   PROJECTILE_BULLET, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_BULLET, WEAPON_CRASH, WEAPON_DRONE, WEAPON_EGG, WEAPON_FLARE, WEAPON_GRENADE, WEAPON_LASER, WEAPON_LAUNCHER, WEAPON_LOITER, WEAPON_MG, WEAPON_MORTAR,
   MARK_GLANCE, MARK_PIERCED, MARK_SCUFF, MARK_VITAL, WEAPON_AP, WEAPON_BALL, WEAPON_SPLASH, WEAPON_PELLET, WEAPON_RICOCHET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_TURRET, WEAPON_WRECK,
@@ -208,13 +208,18 @@ export class Events {
   hit(hit: { kind: number; amount: number; x: number; y: number; z: number; target: number }) {
     const { scene, effects, damageNumbers, avatars } = this.world
     const at = new Vector3(hit.x, hit.y, hit.z)
-    const kind = hit.kind === HIT_KILL ? 'kill' : hit.kind === HIT_VEHICLE ? 'vehicle' : hit.kind === HIT_ROOSTER ? 'rooster' : 'body'
+    const kind = hit.kind === HIT_KILL ? 'kill' : hit.kind === HIT_VEHICLE ? 'vehicle' : hit.kind === HIT_ROOSTER ? 'rooster' : hit.kind === HIT_DEER ? 'deer' : 'body'
     damageNumbers.spawn(at, hit.amount, kind, scene.camera)
     const soldier = avatars.of(hit.target)
     if (soldier && (kind === 'body' || kind === 'kill')) {
       // The blood comes from `struck`, as everyone sees it; the shooter also sees the very spot.
       effects.struck(at)
       soldier.flash()
+      return
+    }
+    // A deer bleeds where it was struck.
+    if (kind === 'deer') {
+      effects.struck(at)
       return
     }
     // Debris flies back towards the shooter, as it would from a round that came in.

@@ -1,4 +1,4 @@
-import { Vector3 } from '@ragnarok/engine'
+import { Vector3, type Geometry, type Material, type Node } from '@ragnarok/engine'
 import { DEATH_BLAST, DEATH_HEAD, DEATH_OVERKILL, DEATH_ROADKILL, LIMB_ARM_L, LIMB_ARM_R, LIMB_LEG_L, LIMB_LEG_R, PART_HEAD, PART_TORSO } from '@/net/codec'
 import type { Bloodstains } from './bloodstains'
 import type { Character } from './character'
@@ -139,14 +139,29 @@ export class Gore {
    * goes on trickling a moment, moving with the body.
    */
   hit(avatar: Character, part: number, from: number, amount: number, offset: { x: number; y: number; z: number } | null = null) {
-    const out = this.direction.set(Math.sin(from), 0, Math.cos(from))
     const at = this.point
     if (offset && (offset.x || offset.y || offset.z)) at.copy(avatar.position).add(offset)
     else if (part === PART_HEAD) at.copy(avatar.position).y += 0.75
     else if (part === PART_TORSO) at.copy(avatar.position).y += 0.25
     else avatar.stump(part, at)
-    const heavy = Math.min(1, amount / 40)
     const head = part === PART_HEAD
+    const through = head ? 0.18 : part === PART_TORSO ? 0.28 : 0.1
+    this.struck(at, from, amount, through, head ? 1.5 : 1, avatar.pin(at))
+  }
+
+  /**
+   * Something that is not a soldier, a wild animal, was shot at `at` from bearing `from` (0 faces -Z)
+   * for `amount`: the same spray, spatter and trickle as a soldier's `hit`, through a body `through`
+   * metres thick. `follow` writes where the wound is now into its argument, as the body moves.
+   */
+  wound(at: Vector3, from: number, amount: number, through: number, follow: (out: Vector3) => Vector3) {
+    this.struck(this.point.copy(at), from, amount, through, 1.2, follow)
+  }
+
+  /** What a round does as it strikes a body at `at`; `scale` is how much more spray a part makes. */
+  private struck(at: Vector3, from: number, amount: number, through: number, scale: number, follow: (out: Vector3) => Vector3) {
+    const out = this.direction.set(Math.sin(from), 0, Math.cos(from))
+    const heavy = Math.min(1, amount / 40)
     // Entry: a burst of fine spray, and a few drops thrown back the way the round came.
     this.particles.spawn({
       position: at,
@@ -166,14 +181,49 @@ export class Gore {
     }
     // Exit: out of the far side of whatever it went through. A few larger stains rather than many
     // small ones, so a firefight does not use up the stains' ring in seconds.
-    const through = head ? 0.18 : part === PART_TORSO ? 0.28 : 0.1
     const exit = at.clone().addScaledVector(out, through)
-    const count = Math.round((6 + heavy * 16) * (head ? 1.5 : 1))
+    const count = Math.round((6 + heavy * 16) * scale)
     this.mist(exit, count, 3 + heavy * 4, out, 0.55, Math.min(1, HIT_STAINS / (count * 2)), HIT_STAIN_SCALE)
     // The wound itself bleeds on a moment where it is on the body.
-    const wound = avatar.pin(at)
     const spot = new Vector3()
-    this.bleed(() => wound(spot), 0.3 + heavy * 0.5, 30, 0.6, WOUND_STAIN_SHARE)
+    this.bleed(() => follow(spot), 0.3 + heavy * 0.5, 30, 0.6, WOUND_STAIN_SHARE)
+  }
+
+  /**
+   * A wild animal whose body is at `centre` (as it moves) was killed in `style` (`DEATH_*`) by a blow
+   * from bearing `from`. Shot, it bleeds as it falls and a pool spreads under it. Blown up or run
+   * down, there is a burst of blood and `pieces` of it are thrown about, each bleeding as it flies.
+   */
+  fell(centre: () => { x: number; y: number; z: number }, style: number, from: number, pieces: readonly { object: Node; owned: (Geometry | Material)[] }[] = []) {
+    const dir = new Vector3(Math.sin(from), 0, Math.cos(from))
+    const at = new Vector3().copy(centre())
+    const torn = style === DEATH_BLAST || style === DEATH_ROADKILL || style === DEATH_OVERKILL
+    if (!torn) {
+      this.mist(at, 10, 3, dir)
+      this.bleed(centre, 0.8, 40)
+      this.pool(centre, 0.9 + Math.random() * 0.4, 8)
+      return
+    }
+    const power = style === DEATH_OVERKILL ? 4 : 8
+    for (const { object, owned } of pieces) {
+      const away = new Vector3().subVectors(object.position, at)
+      away.y *= 0.5
+      if (away.lengthSq() > 1e-4) away.normalize()
+      const velocity = dir.clone().multiplyScalar(power * (0.4 + Math.random() * 0.6)).addScaledVector(away, 2 + Math.random() * 4)
+      velocity.y += 3 + Math.random() * 5
+      this.debris.throw(object, velocity, new Vector3(spread(14), spread(14), spread(14)), GIB_REST, GIB_LIFE, owned)
+      this.bleed(() => object.position, 0.9, 40)
+    }
+    this.mist(at, 44, 7, dir)
+    this.bleed(() => at, 0.4, 140, 4)
+    this.pool(() => at, 1.1, 5)
+  }
+
+  /** A drop or two out of a wounded animal at `at` as it goes, and a spot on the ground under it: a trail to follow. */
+  dripAt(at: () => { x: number; y: number; z: number }) {
+    this.bleed(at, 0.2, 14, 0.8)
+    const { x, z } = at()
+    this.stains.blot(x + spread(0.25), this.groundAt(x, z), z + spread(0.25), 0.05 + Math.random() * 0.07)
   }
 
   /** A legless `avatar` crawls on, bleeding: it leaves a smear behind it, as `track`. */

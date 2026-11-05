@@ -381,6 +381,9 @@ pub struct WorldFile {
     /// Bots the map editor placed by hand. Empty means none (bar `RAGNAROK_BOTS`).
     #[serde(skip)]
     pub placed_bots: Vec<PlacedBot>,
+    /// Herds of wild animals the map editor placed by hand. Empty means none.
+    #[serde(skip)]
+    pub placed_animals: Vec<PlacedAnimal>,
 }
 
 /// A vehicle placed in the map editor: its kind, `[x, z]` in centimetres and heading in radians.
@@ -400,6 +403,15 @@ pub struct PlacedBot {
     pub team: u8,
     pub skill: f32,
     pub route: Vec<[i32; 2]>,
+}
+
+/// A herd of `count` wild animals of `kind` (`KIND_DEER`, `KIND_STAG`) placed in the map editor,
+/// grazing about `[x, z]` in centimetres.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PlacedAnimal {
+    pub kind: u8,
+    pub at: [i32; 2],
+    pub count: u8,
 }
 
 /// An item placed in the map editor: `[x, z]` in centimetres.

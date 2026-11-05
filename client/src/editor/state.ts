@@ -5,17 +5,17 @@
 import { computed, ref, shallowRef } from 'vue'
 import { api, type Job, type WorldSummary } from './api'
 import { blockKey, blockOf, rectBounds, tileAt, tileKey, type BlockStatus, type GridInfo, type Region, type TileId } from './grid'
-import { emptyPlacements, ITEM_KINDS, VEHICLE_KINDS, type Placements } from './placements'
+import { ANIMAL_KINDS, emptyPlacements, ITEM_KINDS, VEHICLE_KINDS, type Placements } from './placements'
 import { emptyScenario, renameName, squadsFromBots, usesName, validateScenario, type NameKind, type Scenario, type ScenarioSquad, type Spot, type Trigger } from './scenario'
 
-export type Tool = 'pan' | 'paint' | 'erase' | 'spawn' | 'vehicle' | 'item'
+export type Tool = 'pan' | 'paint' | 'erase' | 'spawn' | 'vehicle' | 'item' | 'animal'
 
 /** Which side the map and the panels are working on. */
 export type Mode = 'placements' | 'scenario'
 /** What a click does in scenario mode. */
 export type ScenarioTool = 'area' | 'bot' | 'tank' | 'route' | 'pick'
 
-export const isPlacing = (t: Tool) => t === 'spawn' || t === 'vehicle' || t === 'item'
+export const isPlacing = (t: Tool) => t === 'spawn' || t === 'vehicle' || t === 'item' || t === 'animal'
 
 /** Below this zoom the cache window is too big to ask for. */
 export const MIN_CACHE_ZOOM = 12
@@ -31,6 +31,9 @@ export const placements = shallowRef<Placements>(emptyPlacements())
 export const vehicleKind = ref(VEHICLE_KINDS[0]!.kind)
 export const heading = ref(0)
 export const itemKind = ref(ITEM_KINDS[0]!.item)
+export const animalKind = ref(ANIMAL_KINDS[0]!.kind)
+/** How many in a herd placed next. */
+export const herdSize = ref(ANIMAL_KINDS[0]!.count)
 export const worlds = ref<WorldSummary[]>([])
 export const name = ref('')
 /** What a new world's ground is sampled at, metres: the finest the client draws well. */
@@ -274,7 +277,7 @@ export async function openWorld(world: string) {
   await useRegion(loaded.region ?? 'sweden')
   name.value = world
   cell.value = loaded.cell ?? IMPORTER_CELL
-  placements.value = { spawns: loaded.spawns ?? [], vehicles: loaded.vehicles ?? [], items: loaded.items ?? [], bots: loaded.bots ?? [] }
+  placements.value = { spawns: loaded.spawns ?? [], vehicles: loaded.vehicles ?? [], items: loaded.items ?? [], bots: loaded.bots ?? [], animals: loaded.animals ?? [] }
   setTiles(new Map(tiles.map((t) => [tileKey(t.gx, t.gy), t])))
   dirty.value = false
   const first = tiles[0]

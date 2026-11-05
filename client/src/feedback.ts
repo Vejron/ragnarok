@@ -17,6 +17,7 @@ export interface HitMessage {
 /** Kinds, as in `Hit`. */
 export const HIT_VEHICLE = 1
 export const HIT_ROOSTER = 3
+export const HIT_DEER = 4
 
 /** A hit marker lasts this long, ms; the one that finishes someone lasts longer. */
 export const MARKER_MS = 170

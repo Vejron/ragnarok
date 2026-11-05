@@ -60,6 +60,10 @@ pub const KIND_SNOWMOBILE: u8 = 17;
 pub const KIND_SHIP: u8 = 18;
 /// One of a pirate ship's guns, fixed to its deck and manned by one gunner.
 pub const KIND_SHIP_GUN: u8 = 19;
+/// Wildlife: a deer (a hind) and a stag, NPCs that graze in herds and bolt from people and gunfire.
+/// Replicated like the rooster, with their own models.
+pub const KIND_DEER: u8 = 20;
+pub const KIND_STAG: u8 = 21;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -574,3 +578,37 @@ pub const ROOSTER_CROW_TICKS: u32 = 100;
 pub const ROOSTER_CAPSULE_CENTRE: f32 = 0.4;
 pub const ROOSTER_CAPSULE_HALF_HEIGHT: f32 = 0.1;
 pub const ROOSTER_CAPSULE_RADIUS: f32 = 0.3;
+
+/// Deer, placed in herds by the map editor (`animals` in area.json). They graze about their herd's
+/// home, turn to look at someone who comes near and bolt from one who comes nearer, from gunfire and
+/// blasts, and from being hurt; a herd bolts together. The stag lets people come closer.
+/// How far from home a grazing herd drifts, metres.
+pub const DEER_HERD_RADIUS: f32 = 14.0;
+/// Walking speed and galloping (fleeing) speed, m/s, and how fast it turns walking and galloping, rad/s.
+pub const DEER_WALK_SPEED: f32 = 1.3;
+pub const DEER_GALLOP_SPEED: f32 = 9.0;
+pub const DEER_TURN_RATE: f32 = 2.5;
+pub const DEER_FLEE_TURN_RATE: f32 = 5.0;
+/// How far it runs from what scared it, metres.
+pub const DEER_FLEE_DISTANCE: f32 = 70.0;
+/// Someone this close looks up from grazing, metres: walking, running, and crouched or prone and
+/// still. Someone in a vehicle is noticed at the running distance plus a half.
+pub const DEER_NOTICE_WALK: f32 = 24.0;
+pub const DEER_NOTICE_RUN: f32 = 36.0;
+pub const DEER_NOTICE_SNEAK: f32 = 8.0;
+/// Of the noticing distance: someone nearer than this share of it makes it bolt.
+pub const DEER_BOLT_SHARE: f32 = 0.6;
+/// The stag's noticing distances are the hind's times this.
+pub const STAG_NERVE: f32 = 0.7;
+pub const DEER_HP: u8 = 60;
+pub const STAG_HP: u8 = 90;
+/// A killed deer is back at its herd's home after this long.
+pub const DEER_RESPAWN_TICKS: u32 = 90 * TICK_RATE;
+/// Hit capsule: centre this high above its hooves, metres. Hurtboxes stand upright, so it is a fat one
+/// that takes in the body from chest to rump, and the head held up.
+pub const DEER_CAPSULE_CENTRE: f32 = 0.9;
+pub const DEER_CAPSULE_HALF_HEIGHT: f32 = 0.25;
+pub const DEER_CAPSULE_RADIUS: f32 = 0.55;
+pub const STAG_CAPSULE_CENTRE: f32 = 1.05;
+pub const STAG_CAPSULE_HALF_HEIGHT: f32 = 0.3;
+pub const STAG_CAPSULE_RADIUS: f32 = 0.6;

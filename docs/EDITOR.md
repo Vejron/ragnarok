@@ -26,20 +26,22 @@ get ground (see `WORLD.md`, "Painting a world").
 | Paint | Click or drag to add tiles. The brush select sets the size. |
 | Erase | Remove tiles. Shift or the right button erases with any tool. |
 
-### 2. Place spawns, vehicles and items
+### 2. Place spawns, vehicles, items and animals
 
 | Tool | Select | Placed |
 |---|---|---|
 | Spawn | none | A player spawn point. |
 | Vehicle | vehicle kind and a facing (8 compass directions) | A vehicle at that spot, facing that way. |
 | Item | item kind | A pickup at that spot. |
+| Animal | animal kind (deer, stag) and herd size | A herd grazing about that spot, drawn with the 14 m circle it grazes in. |
 
 - Click a painted tile to place a marker. Placing outside the painted tiles is refused.
 - Shift or right-click removes the nearest marker of the current tool's kind.
 - Markers cannot be dragged: remove and place again.
 - Placing any of a kind **replaces the random ones** for that kind: placed spawns replace the
   generated spawn points, placed vehicles replace the scattered vehicles and placed items replace
-  the scattered pickups. A kind with none placed behaves as before.
+  the scattered pickups. A kind with none placed behaves as before. Animals are only ever where
+  they are placed: there are no random ones.
 - Vehicles that do not fit at their spot when the server starts are skipped, with a warning in the
   log.
 
@@ -92,11 +94,12 @@ they survive the world being re-centred when tiles are added or removed:
   "vehicles": [{ "kind": 1, "lat": 63.8259, "lon": 20.2631, "yaw": 0.0 }],
   "items":    [{ "item": 2, "count": 1, "lat": 63.8257, "lon": 20.2629 }],
   "bots":     [{ "lat": 63.8256, "lon": 20.2628, "team": 1, "skill": 0.5,
-                 "route": [{ "lat": 63.8256, "lon": 20.2628 }, { "lat": 63.8260, "lon": 20.2640 }] }]
+                 "route": [{ "lat": 63.8256, "lon": 20.2628 }, { "lat": 63.8260, "lon": 20.2640 }] }],
+  "animals":  [{ "kind": 20, "lat": 63.8261, "lon": 20.2625, "count": 4 }]
 }
 ```
 
-`cell` is the ground's resolution, metres between height samples: 1, 2 or 4, picked in the World panel (new worlds take 1 m) and applied the next time the world is generated. Each makes a tile `2^k + 1` samples a side, which the client simplifies best; 1 m shows every ditch and bank, and a tile's heights weigh about 130 KB. Without it the importer uses 4 m. `spawns`, `vehicles`, `items` and `bots` are optional; older files without them still load. A
+`cell` is the ground's resolution, metres between height samples: 1, 2 or 4, picked in the World panel (new worlds take 1 m) and applied the next time the world is generated. Each makes a tile `2^k + 1` samples a side, which the client simplifies best; 1 m shows every ditch and bank, and a tile's heights weigh about 130 KB. Without it the importer uses 4 m. `spawns`, `vehicles`, `items`, `bots` and `animals` are optional; older files without them still load. An animal herd's `count` is optional (4). A
 bot's `team`, `skill` and `route` are optional as well (1, 0.5 and none); the editor always
 writes all three. `yaw` is in
 radians as the simulation counts it (0 faces north, positive turns left); the editor stores
@@ -132,4 +135,5 @@ All under `/api` on port 8700.
 | `crates/editor/src/main.rs` | The API, job runner and world files. |
 | `crates/server/src/main.rs` | `apply_placements`: reads `area.json` at server start. |
 | `crates/server/src/mechanics/{vehicles,pickups}.rs` | Spawn the placed vehicles and items. |
+| `crates/server/src/mechanics/wildlife.rs` | Spawns the placed herds and runs them: grazing, looking up, bolting. |
 | `crates/server/src/game.rs` | `Game::new` adds the placed bots (`add_bot`); `mechanics/bots.rs` runs them. |

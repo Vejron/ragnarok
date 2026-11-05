@@ -67,6 +67,7 @@ import { Surroundings } from './surroundings'
 import { Cameras } from './cameras'
 import { rideView, seatView, type SeatView } from './seats'
 import { loadRoosterModel } from './render/rooster'
+import { loadAnimalModels } from './render/animal'
 import { VehicleSounds } from './vehicleaudio'
 import { HIT_DEALT, HIT_KILL, HIT_TAKEN, HitFeedback } from './feedback'
 import { freezeWater, setWaterTime, setWaterWakes } from './render/water'
@@ -94,6 +95,7 @@ import { Slits } from './entities/presenters/slits'
 import { Jets } from './entities/presenters/jets'
 import { Headlights } from './entities/presenters/headlights'
 import { Roosters } from './entities/presenters/roosters'
+import { Animals } from './entities/presenters/animals'
 import { TileStreamer } from './stream'
 import { loadManifest, NO_WATER, THEME_WINTER, WORLD_BASE, type WorldData } from './world'
 import { HudLayer } from '@ragnarok/engine'
@@ -434,6 +436,7 @@ export class Game {
     this.soldiers = this.people.add(new Soldiers({ avatars: this.avatars, blobFoot, wade: (id, x, y, z, speed, dt) => this.surroundings.wade(id, x, y, z, speed, dt), skiRun: (id, x, z, vx, vz, grounded, dt) => this.skiTracks?.run(id, x, z, vx, vz, grounded, dt), headlamp: (avatar) => this.shine(avatar) }))
     this.riders = this.people.add(new Riders(this.avatars, this.vehicles))
     this.people.add(new Roosters({ root: this.scene.scene, listener: () => this.predictor?.state.position ?? [0, 0, 0], blobFoot }))
+    this.people.add(new Animals({ root: this.scene.scene, blobFoot, gore: this.gore }))
     // Dev-only handle for poking at the game from the console or a test driver.
     if (import.meta.env.DEV) (window as unknown as { __game?: Game }).__game = this
   }
@@ -471,7 +474,7 @@ export class Game {
     this.motor = this.view.motor = motor
     this.ragdolls = new Ragdolls(motor)
     this.driver = new VehicleDriver(motor)
-    await Promise.all([this.crowd.load(), loadVehicleModels(), loadRoosterModel()])
+    await Promise.all([this.crowd.load(), loadVehicleModels(), loadRoosterModel(), loadAnimalModels()])
     // The buildings arrive as tiles, around wherever the player is.
     this.tiles = new TileStreamer(world, {
       prepare: (ref, tile) => this.view.prepareTile(ref, tile),

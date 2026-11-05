@@ -41,7 +41,7 @@ struct Area {
     /// Winter: groom the forest paths and tracks too (`groomed_paths` in the importer).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     groomed_paths: bool,
-    /// Hand-placed spawn points, vehicles, items and bots (latitude/longitude). The server reads
+    /// Hand-placed spawn points, vehicles, items, bots and animal herds (latitude/longitude). The server reads
     /// these from the same file; the importer ignores them.
     #[serde(default)]
     spawns: Vec<serde_json::Value>,
@@ -51,6 +51,8 @@ struct Area {
     items: Vec<serde_json::Value>,
     #[serde(default)]
     bots: Vec<serde_json::Value>,
+    #[serde(default)]
+    animals: Vec<serde_json::Value>,
     /// The importer's other options (`ocad`, `osm_water`, `minimap_image`, ...), which the page
     /// never sees: kept as they are written.
     #[serde(flatten)]
@@ -151,7 +153,7 @@ async fn list_worlds(res: &mut Response) {
 async fn get_world(req: &mut Request, res: &mut Response) {
     let Some(name) = name_of(req, res) else { return };
     match read_area(&name) {
-        Some(area) => res.render(Json(serde_json::json!({ "name": name, "region": area.region.name(), "tiles": area.tiles, "cell": area.cell, "spawns": area.spawns, "vehicles": area.vehicles, "items": area.items, "bots": area.bots }))),
+        Some(area) => res.render(Json(serde_json::json!({ "name": name, "region": area.region.name(), "tiles": area.tiles, "cell": area.cell, "spawns": area.spawns, "vehicles": area.vehicles, "items": area.items, "bots": area.bots, "animals": area.animals }))),
         None => fail(res, StatusCode::NOT_FOUND, "no such world"),
     }
 }
@@ -533,9 +535,12 @@ mod tests {
         let bot = &saved["bots"][0];
         assert_eq!((bot["team"].as_u64(), bot["skill"].as_f64()), (Some(2), Some(0.8)));
         assert_eq!(bot["route"].as_array().map(Vec::len), Some(2));
+        let herd: Area = serde_json::from_str(r#"{"tiles":[],"animals":[{"kind":20,"lat":63.82,"lon":20.29,"count":5}]}"#).unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(&serde_json::to_vec(&herd).unwrap()).unwrap();
+        assert_eq!(saved["animals"][0]["count"].as_u64(), Some(5));
         // An area saved before bots could be placed, or before it had a ground resolution, still loads.
         let old: Area = serde_json::from_str(r#"{"tiles":[]}"#).unwrap();
-        assert!(old.bots.is_empty());
+        assert!(old.bots.is_empty() && old.animals.is_empty());
         assert_eq!(old.cell, None);
         assert!(!String::from_utf8(serde_json::to_vec(&old).unwrap()).unwrap().contains("cell"));
     }

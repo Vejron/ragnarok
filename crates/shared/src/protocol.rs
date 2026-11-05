@@ -51,12 +51,13 @@ pub const HIT_VEHICLE: u8 = 1;
 /// A soldier or rooster that this hit finished.
 pub const HIT_KILL: u8 = 2;
 pub const HIT_ROOSTER: u8 = 3;
+pub const HIT_DEER: u8 = 4;
 
 /// `Destroyed` entry kinds: what part of the static world fell.
 pub const OBJ_TREE: u8 = 0;
 pub const OBJ_BUILDING: u8 = 1;
 
-pub use crate::consts::{KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SOLDIER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER};
+pub use crate::consts::{KIND_DEER, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SOLDIER, KIND_SPORTS, KIND_STAG, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER};
 
 /// Whether `kind` is a drone: flown from a remote seat by whoever launched it (see the `Drones` mechanic).
 pub fn is_drone(kind: u8) -> bool {
@@ -85,6 +86,8 @@ pub const FLAG_HELD_SHIFT: u8 = 3;
 pub const FLAG_HELD_MASK: u8 = 0b1111 << FLAG_HELD_SHIFT;
 /// A rooster is mid-crow, so clients play its crow animation and sound.
 pub const FLAG_CROWING: u8 = 1 << 7;
+/// A deer has its head down grazing. The rooster's crowing bit: no creature does both.
+pub const FLAG_GRAZING: u8 = FLAG_CROWING;
 
 const _: () = assert!(
     crate::items::ITEM_COUNT as u16 <= (FLAG_HELD_MASK >> FLAG_HELD_SHIFT) as u16 + 1,

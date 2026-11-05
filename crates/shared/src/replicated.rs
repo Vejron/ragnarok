@@ -436,6 +436,11 @@ replicated! {
     /// A gun on a turret's roof, as drawn and shown on its gunner's gauges: its yaw from the turret and
     /// its elevation, the rounds fired, modulo 256, its heat (it jams at 255) and `PINTLE_*` flags.
     Pintle { yaw: i16 as mrad, pitch: i16 as mrad, shots: u8, heat: u8 as byte, flags: u8 }
+
+    set 25 fell
+    /// How a wild animal lying dead was killed (`DEATH_*`), so clients draw it fallen or blown apart.
+    /// Present only while it lies there, which it does until it respawns (`FLAG_DEAD`).
+    Fell { style: u8 }
 }
 
 /// The structs a component field can hold a list of, with their fields in wire order and each one's

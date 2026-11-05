@@ -74,24 +74,33 @@ impl Game {
         }
     }
 
-    /// The living ECS creatures (roosters): standing where they are, calling or not.
+    /// The ECS creatures (roosters, deer): standing where they are, calling or grazing or not, with
+    /// the last hit they took. A dead rooster is gone; a dead deer lies where it fell until it is back.
     fn creatures(&self) -> Vec<(u32, Replicated)> {
         let entities = &self.world.entities;
         entities
             .ids::<(With<NetKind>, With<Transform>, With<Health>)>()
             .into_iter()
-            .filter(|&id| !entities.dead(id))
+            .filter(|&id| !entities.dead(id) || crate::mechanics::fell(&self.world, id).is_some())
             .filter_map(|id| {
                 let (NetKind(kind), transform) = (*entities.get::<NetKind>(id)?, entities.get::<Transform>(id)?);
                 let [x, y, z] = transform.position.map(to_cm);
-                let calling = if crate::mechanics::calling(&self.world, id) { FLAG_CROWING } else { 0 };
+                let calling = if crate::mechanics::calling(&self.world, id) {
+                    FLAG_CROWING
+                } else if crate::mechanics::grazing(&self.world, id) {
+                    FLAG_GRAZING
+                } else {
+                    0
+                };
                 Some((
                     id,
                     Replicated {
                         kind: Some(wire::Kind { kind }),
                         place: Some(wire::Place { x, y, z }),
                         heading: Some(wire::Heading { yaw: to_mrad(transform.yaw) }),
-                        flags: Some(wire::Flags { flags: FLAG_GROUNDED | calling, stance: STANCE_STANDING }),
+                        flags: Some(wire::Flags { flags: FLAG_GROUNDED | calling | if entities.dead(id) { FLAG_DEAD } else { 0 }, stance: STANCE_STANDING }),
+                        struck: entities.get::<Struck>(id).map(|s| wire::Struck { count: s.count, part: s.part, amount: s.amount, yaw: s.yaw, x: s.at[0], y: s.at[1], z: s.at[2] }),
+                        fell: crate::mechanics::fell(&self.world, id).map(|style| wire::Fell { style }),
                         ..Default::default()
                     },
                 ))

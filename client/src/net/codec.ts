@@ -24,7 +24,7 @@ export const OBJ_BUILDING = 1
 
 /** Entity kinds, generated from `consts.rs`. A vehicle kind's definition is `vehicleDef`. */
 export {
-  KIND_BACKPACK, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SPORTS, KIND_SOLDIER, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER,
+  KIND_BACKPACK, KIND_DEER, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SPORTS, KIND_SOLDIER, KIND_STAG, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER,
 } from '@/sim/consts'
 export { isDrone } from '@/sim/vehicles'
 
@@ -36,6 +36,8 @@ export const FLAG_HELD_SHIFT = 3
 export const FLAG_HELD_MASK = 0b1111 << FLAG_HELD_SHIFT
 /** A rooster is mid-crow. */
 export const FLAG_CROWING = 1 << 7
+/** A deer has its head down grazing: the rooster's crowing bit, as no creature does both. */
+export const FLAG_GRAZING = FLAG_CROWING
 
 /** The AK5. */
 export const WEAPON_RIFLE = 0

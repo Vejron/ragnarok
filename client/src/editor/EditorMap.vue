@@ -3,9 +3,9 @@ import L from 'leaflet'
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api } from './api'
 import { blockKey, rectCorners, tileAt, tileKey, type TileId } from './grid'
-import { ITEM_KINDS, nearest, routeLines, teamColour, VEHICLE_KINDS, yawOf } from './placements'
+import { ANIMAL_KINDS, HERD_RADIUS, ITEM_KINDS, nearest, routeLines, teamColour, VEHICLE_KINDS, yawOf } from './placements'
 import {
-  addArea, addSpot, blocks, brush, cacheTick, changeSpot, dirty, focus, grid, heading, isPlacing, itemKind, message, MIN_CACHE_ZOOM, mode,
+  addArea, addSpot, animalKind, blocks, brush, cacheTick, changeSpot, dirty, focus, grid, heading, herdSize, isPlacing, itemKind, message, MIN_CACHE_ZOOM, mode,
   onPainted, painted, pickedSpot, pickedSquad, placements, poll, removeSpot, scenario, scenarioTool, setPlacements, setTiles, squadNamed, tool,
   vehicleKind, zoom, loadWorlds, openWorld, region, worlds,
 } from './state'
@@ -132,6 +132,11 @@ function drawMarkers() {
     L.marker([v.lat, v.lon], { icon: icon(info?.icon ?? '?', 'vehicle', v.yaw), interactive: false }).addTo(markers)
   }
   for (const i of p.items) L.marker([i.lat, i.lon], { icon: icon('◆', 'item'), interactive: false }).addTo(markers)
+  for (const a of p.animals) {
+    const info = ANIMAL_KINDS.find((k) => k.kind === a.kind)
+    L.circle([a.lat, a.lon], { radius: HERD_RADIUS, color: '#2e7d32', weight: 1, fillOpacity: 0.12, interactive: false }).addTo(markers)
+    L.marker([a.lat, a.lon], { icon: icon(`${info?.icon ?? '?'}${a.count > 1 ? a.count : ''}`, 'animal'), interactive: false }).addTo(markers)
+  }
   // Loose bots from before squads: shown, not editable. The sidebar offers to turn them into squads.
   for (const bot of p.bots) {
     const colour = teamColour(bot.team)
@@ -160,14 +165,15 @@ function placeAt(event: PointerEvent) {
   const at = map.containerPointToLatLng([px[0], px[1]])
   const removing = event.shiftKey || event.buttons === 2 || event.button === 2
   const current = placements.value
-  const kind = tool.value as 'spawn' | 'vehicle' | 'item'
-  const list = kind === 'spawn' ? current.spawns : kind === 'vehicle' ? current.vehicles : current.items
+  const kind = tool.value as 'spawn' | 'vehicle' | 'item' | 'animal'
+  const key = ({ spawn: 'spawns', vehicle: 'vehicles', item: 'items', animal: 'animals' } as const)[kind]
+  const list: { lat: number; lon: number }[] = current[key]
   if (removing) {
     const points = list.map((m) => map!.latLngToContainerPoint([m.lat, m.lon]))
     const index = nearest(points, px[0], px[1], PICK_REACH)
     if (index < 0) return
     const rest = list.filter((_, i) => i !== index)
-    setPlacements({ ...current, [kind === 'spawn' ? 'spawns' : kind === 'vehicle' ? 'vehicles' : 'items']: rest })
+    setPlacements({ ...current, [key]: rest })
     return
   }
   if (!onPainted(at.lat, at.lng)) return
@@ -175,6 +181,7 @@ function placeAt(event: PointerEvent) {
   if (kind === 'spawn') setPlacements({ ...current, spawns: [...current.spawns, where] })
   else if (kind === 'vehicle')
     setPlacements({ ...current, vehicles: [...current.vehicles, { kind: vehicleKind.value, yaw: yawOf(heading.value), ...where }] })
+  else if (kind === 'animal') setPlacements({ ...current, animals: [...current.animals, { kind: animalKind.value, count: herdSize.value, ...where }] })
   else {
     const count = ITEM_KINDS.find((k) => k.item === itemKind.value)?.count ?? 1
     setPlacements({ ...current, items: [...current.items, { item: itemKind.value, count, ...where }] })
@@ -424,6 +431,9 @@ onBeforeUnmount(() => {
 .marker.item {
   background: #e8a200;
   border-radius: 4px;
+}
+.marker.animal {
+  background: #2e7d32;
 }
 .marker.bot {
   border-radius: 4px;

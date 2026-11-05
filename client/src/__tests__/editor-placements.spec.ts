@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { BOT_TEAMS, headingOf, isGuard, ITEM_KINDS, nearest, routeLines, routeSummary, teamColour, yawOf, type PlacedBot } from '../editor/placements'
+import { ANIMAL_KINDS, BOT_TEAMS, HERD_RADIUS, headingOf, isGuard, ITEM_KINDS, nearest, routeLines, routeSummary, teamColour, yawOf, type PlacedBot } from '../editor/placements'
 import { LOADOUT_ITEMS } from '../editor/scenario'
+import { DEER_HERD_RADIUS, KIND_DEER, KIND_STAG } from '../sim/consts'
 import { ITEM_GOLDEN_EGG, itemDef } from '../sim/items'
 
 describe('editor placements', () => {
@@ -14,6 +15,11 @@ describe('editor placements', () => {
     const points = [{ x: 0, y: 0 }, { x: 10, y: 0 }]
     expect(nearest(points, 9, 1, 5)).toBe(1)
     expect(nearest(points, 50, 50, 5)).toBe(-1)
+  })
+
+  it('places the wild animals the server knows, and draws their herds as far as they graze', () => {
+    expect(ANIMAL_KINDS.map((k) => k.kind)).toEqual([KIND_DEER, KIND_STAG])
+    expect(HERD_RADIUS).toBe(DEER_HERD_RADIUS)
   })
 })
 

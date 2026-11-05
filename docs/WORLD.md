@@ -539,6 +539,6 @@ edge of the world's grid and closed clockwise along it (`osm_water::sea`); islan
 height model leaves the sea out, so its surface is fixed at 0 m. A world lying entirely in the sea
 (no coastline crossing it) gets no sea.
 
-## Hand-placed spawns, vehicles and items
+## Hand-placed spawns, vehicles, items and animals
 
-The map editor's Spawn, Vehicle and Item tools write `spawns`, `vehicles` and `items` (latitude/longitude, plus `kind`/`yaw` or `item`/`count`) into the world's `area.json`. They are not part of `world.msgpack`, so changing them needs a save and a server restart but no "Generate world". The server reads `area.json` next to the manifest on start. Placing any of a kind replaces the random ones: placed spawns replace the generated spawn points, placed vehicles replace the scattered vehicles, placed items replace the scattered pickups. Anything outside the painted tiles is dropped. Vehicle `yaw` is in radians as the simulation counts it (0 faces north, positive turns left).
+The map editor's Spawn, Vehicle, Item and Animal tools write `spawns`, `vehicles`, `items` and `animals` (latitude/longitude, plus `kind`/`yaw`, `item`/`count` or `kind`/`count`) into the world's `area.json`. They are not part of `world.msgpack`, so changing them needs a save and a server restart but no "Generate world". The server reads `area.json` next to the manifest on start. Placing any of a kind replaces the random ones: placed spawns replace the generated spawn points, placed vehicles replace the scattered vehicles, placed items replace the scattered pickups. Anything outside the painted tiles is dropped. Vehicle `yaw` is in radians as the simulation counts it (0 faces north, positive turns left).

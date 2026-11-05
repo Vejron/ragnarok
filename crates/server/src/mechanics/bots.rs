@@ -306,17 +306,22 @@ fn spot(world: &World, id: u32, eye: [f32; 3], yaw: f32, alert: bool) -> Option<
     best.map(|(other, at, _)| (other, at))
 }
 
+/// Whether anything hears noises: a bot, or a wild animal.
+fn listening(world: &World) -> bool {
+    world.entities.count::<Bot>() > 0 || world.entities.count::<super::wildlife::Wild>() > 0
+}
+
 /// Notes a noise at `at` made by `by` that carries `reach` metres, for the bots to hear on the next
-/// tick. With no bots to hear it, it is not kept.
+/// tick, and for wild animals to bolt from. With nobody to hear it, it is not kept.
 pub fn make_noise(world: &mut World, at: [f32; 3], by: Option<u32>, reach: f32) {
-    if world.entities.count::<Bot>() > 0 {
+    if listening(world) {
         world.send(Noise { at, by, reach, line: None });
     }
 }
 
 /// Notes a gunshot at `at` by `by`, its round going along `line`.
 pub fn make_shot(world: &mut World, at: [f32; 3], by: Option<u32>, line: [f32; 3]) {
-    if world.entities.count::<Bot>() > 0 {
+    if listening(world) {
         world.send(Noise { at, by, reach: HEAR_SHOT, line: Some(line) });
     }
 }

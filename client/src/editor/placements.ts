@@ -27,11 +27,19 @@ export interface PlacedBot {
   /** Walked in order, looping. Empty: it makes up a loop near home. Only its own spot: it stands guard. */
   route: Spawn[]
 }
+/** A herd of wild animals grazing about a spot. */
+export interface PlacedAnimal {
+  kind: number
+  lat: number
+  lon: number
+  count: number
+}
 export interface Placements {
   spawns: Spawn[]
   vehicles: PlacedVehicle[]
   items: PlacedItem[]
   bots: PlacedBot[]
+  animals: PlacedAnimal[]
 }
 
 /** The `KIND_*` ids of crates/shared/src/protocol.rs that are vehicles. */
@@ -52,6 +60,14 @@ export const VEHICLE_KINDS: { kind: number; name: string; icon: string }[] = [
   // Her guns come with her. Only on open water, in summer.
   { kind: 18, name: 'Pirate ship', icon: 'X' },
 ]
+
+/** The `KIND_*` ids of crates/shared/src/consts.rs that are wild animals, and the herd each comes in by default. */
+export const ANIMAL_KINDS: { kind: number; name: string; icon: string; count: number }[] = [
+  { kind: 20, name: 'Deer', icon: 'D', count: 4 },
+  { kind: 21, name: 'Stag', icon: 'A', count: 1 },
+]
+/** How far a herd grazes from its spot, metres: `DEER_HERD_RADIUS` in consts.rs. */
+export const HERD_RADIUS = 14
 
 /** The `ITEM_*` ids of crates/shared/src/items.rs. */
 export const ITEM_KINDS: { item: number; name: string; count: number }[] = [
@@ -111,7 +127,7 @@ export const yawOf = (heading: number): number => (heading === 0 ? 0 : -(heading
 /** The compass heading index nearest a yaw. */
 export const headingOf = (yaw: number): number => (((Math.round((-yaw * 4) / Math.PI) % 8) + 8) % 8)
 
-export const emptyPlacements = (): Placements => ({ spawns: [], vehicles: [], items: [], bots: [] })
+export const emptyPlacements = (): Placements => ({ spawns: [], vehicles: [], items: [], bots: [], animals: [] })
 
 /** Index of the point nearest `(x, y)` within `reach`, or -1. */
 export function nearest(points: { x: number; y: number }[], x: number, y: number, reach: number): number {

@@ -1,4 +1,4 @@
-//! What the map editor placed by hand in a world: its spawn points, vehicles, items and bots.
+//! What the map editor placed by hand in a world: its spawn points, vehicles, items, bots and animals.
 
 use anyhow::{Context, Result};
 use shared::world::WorldFile;
@@ -16,6 +16,8 @@ struct Placements {
     items: Vec<PlacedItemSpot>,
     #[serde(default)]
     bots: Vec<PlacedBotSpot>,
+    #[serde(default)]
+    animals: Vec<PlacedAnimalSpot>,
 }
 
 #[derive(serde::Deserialize)]
@@ -54,6 +56,20 @@ struct PlacedBotSpot {
     /// Waypoints it walks round; empty makes up a short loop around where it stands.
     #[serde(default)]
     route: Vec<Spot>,
+}
+
+#[derive(serde::Deserialize)]
+struct PlacedAnimalSpot {
+    kind: u8,
+    lat: f64,
+    lon: f64,
+    /// How many in the herd.
+    #[serde(default = "herd")]
+    count: u8,
+}
+
+fn herd() -> u8 {
+    4
 }
 
 fn one() -> u8 {
@@ -100,7 +116,12 @@ pub fn apply(world: &mut WorldFile, path: &Path) -> Result<()> {
             locate(world, b.lat, b.lon).map(|at| shared::world::PlacedBot { at, team: b.team, skill: b.skill, route })
         })
         .collect();
-    tracing::info!(spawns = world.spawns.len(), vehicles = world.placed_vehicles.len(), items = world.placed_items.len(), bots = world.placed_bots.len(), "editor placements applied");
+    world.placed_animals = placed
+        .animals
+        .iter()
+        .filter_map(|a| locate(world, a.lat, a.lon).map(|at| shared::world::PlacedAnimal { kind: a.kind, at, count: a.count.max(1) }))
+        .collect();
+    tracing::info!(spawns = world.spawns.len(), vehicles = world.placed_vehicles.len(), items = world.placed_items.len(), bots = world.placed_bots.len(), animals = world.placed_animals.len(), "editor placements applied");
     Ok(())
 }
 
@@ -115,5 +136,14 @@ mod tests {
         let [a, b] = &placed.bots[..] else { panic!("two bots") };
         assert_eq!((a.team, a.skill, a.route.len()), (2, 0.8, 1));
         assert_eq!((b.team, b.skill, b.route.len()), (1, 0.5, 0));
+    }
+
+    #[test]
+    fn placed_animals_read_as_the_editor_writes_them_with_a_herd_of_four_by_default() {
+        let text = r#"{"animals":[{"kind":20,"lat":63.82,"lon":20.29,"count":6},{"kind":21,"lat":63.8,"lon":20.2}]}"#;
+        let placed: Placements = serde_json::from_str(text).unwrap();
+        let [a, b] = &placed.animals[..] else { panic!("two herds") };
+        assert_eq!((a.kind, a.count), (20, 6));
+        assert_eq!((b.kind, b.count), (21, 4));
     }
 }
