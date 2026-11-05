@@ -141,7 +141,7 @@ export class Rockets {
   }
 
   /** Where projectile `id` is drawn, or null when it is gone. */
-  position(id: number): Vector3 | null {
+  position(id: number): { readonly x: number; readonly y: number; readonly z: number } | null {
     return this.meshes.get(id)?.position ?? null
   }
 

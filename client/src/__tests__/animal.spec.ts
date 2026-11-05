@@ -61,9 +61,9 @@ describe('animal models', () => {
 
 describe('animal blood', () => {
   const frame = (now: number) => ({ tick: 0, dt: 1 / 60, now, localId: null })
-  const deer = (more: Partial<Entity> = {}): { entity: Entity; velocity: null } => ({
+  const deer = (more: Partial<Entity> = {}): { entity: Entity; velocity: [number, number] } => ({
     entity: { kind: { kind: KIND_DEER }, place: { x: 1, y: 2, z: 3 }, heading: { yaw: 0 }, flags: { flags: 1, stance: 0 }, ...more } as Entity,
-    velocity: null,
+    velocity: [0, 0],
   })
   const struck = (count: number, amount: number) => ({ count, part: 0, amount, yaw: 0.5, x: 0, y: 0, z: 0 })
   function setup() {
