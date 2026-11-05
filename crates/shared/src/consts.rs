@@ -19,7 +19,7 @@ pub use crate::vehicles::tank::*;
 pub use crate::vehicles::walker::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 67;
+pub const PROTOCOL_VERSION: u8 = 69;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -612,3 +612,52 @@ pub const DEER_CAPSULE_RADIUS: f32 = 0.55;
 pub const STAG_CAPSULE_CENTRE: f32 = 1.05;
 pub const STAG_CAPSULE_HALF_HEIGHT: f32 = 0.3;
 pub const STAG_CAPSULE_RADIUS: f32 = 0.6;
+
+/// Golf (`ITEM_DRIVER`, `ITEM_PUTTER`, `PROJECTILE_GOLF_BALL`). A ball falls at this share of
+/// `GRAVITY`, which is twice the earth's: a ball wants the real thing to carry like one.
+pub const GOLF_GRAVITY_SCALE: f32 = 0.5;
+pub const GOLF_BALL_RADIUS: f32 = 0.05;
+/// A full swing's speed off the club, m/s, and how far above level it leaves, radians: the driver's
+/// own, and with aim held, a high pitch that stops quickly.
+pub const GOLF_DRIVER_SPEED: f32 = 70.0;
+pub const GOLF_DRIVER_LOFT: f32 = 0.21;
+pub const GOLF_DRIVER_HIGH_LOFT: f32 = 0.75;
+pub const GOLF_PUTTER_SPEED: f32 = 6.0;
+/// The swing meter (`golf::Meter`), counted in input frames, one a tick. Held fire fills it to a full
+/// swing in `GOLF_CHARGE_TICKS`, and on into an overswing to `GOLF_OVERSWING`, where it lets go by
+/// itself. Let go, a marker runs back across it, a full bar in `GOLF_RETURN_FRAMES`, to the line.
+pub const GOLF_CHARGE_TICKS: u32 = TICK_RATE * 6 / 5;
+pub const GOLF_OVERSWING: f32 = 1.1;
+pub const GOLF_RETURN_FRAMES: u32 = TICK_RATE * 9 / 10;
+/// Fire pressed again this many frames either side of the line strikes the ball dead straight; further
+/// off it curves, early to the left and late to the right, fully `GOLF_CURVE_FRAMES` beyond that; more
+/// than `GOLF_MISS_FRAMES` off (or never) is a mishit, topped, with `GOLF_MISHIT_POWER` of the power.
+pub const GOLF_PURE_FRAMES: u32 = 1;
+pub const GOLF_CURVE_FRAMES: u32 = 6;
+pub const GOLF_MISS_FRAMES: u32 = 9;
+pub const GOLF_MISHIT_POWER: f32 = 0.4;
+/// Frames after a strike before the meter can be started again.
+pub const GOLF_REST_FRAMES: u32 = TICK_RATE;
+/// A fully curved ball's sideways pull in the air, m/s² for each m/s it flies at; a putt has no air to
+/// curve in, so it is pulled or pushed off line by this much, radians.
+pub const GOLF_SPIN: f32 = 0.12;
+pub const GOLF_PUTT_PULL: f32 = 0.1;
+/// A ball this far (metres, along the ground) from the golfer's feet, ahead of them, is in reach.
+pub const GOLF_REACH: f32 = 1.6;
+/// How much of its speed into a surface a ball keeps bouncing off it, and of its speed along it.
+pub const GOLF_BOUNCE: f32 = 0.35;
+pub const GOLF_SKID: f32 = 0.75;
+/// Rolling friction, of the ball's weight: on a green, a fairway or tee, a bunker, and anywhere else.
+pub const GOLF_ROLL_GREEN: f32 = 0.065;
+pub const GOLF_ROLL_FAIRWAY: f32 = 0.16;
+pub const GOLF_ROLL_BUNKER: f32 = 2.0;
+pub const GOLF_ROLL_ROUGH: f32 = 0.4;
+/// Slower than this (m/s) on a slope gentler than its friction holds, a rolling ball stops.
+pub const GOLF_REST_SPEED: f32 = 0.08;
+/// A ball within this of the cup's middle (metres) going slower than `GOLF_CUP_SPEED` (m/s) drops in.
+pub const GOLF_CUP_RADIUS: f32 = 0.16;
+pub const GOLF_CUP_SPEED: f32 = 1.8;
+/// A ball nobody has struck for this long is gone; another waits on its tee.
+pub const GOLF_BALL_TTL_TICKS: u32 = 300 * TICK_RATE;
+/// Golf balls in the world at once.
+pub const MAX_GOLF_BALLS: usize = 32;

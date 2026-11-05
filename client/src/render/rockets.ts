@@ -17,6 +17,8 @@ const FLARE = 8
 const HE = 9
 /** `PROJECTILE_BALL`: a ship's gun's round shot. */
 const ROUND_SHOT = 10
+/** `PROJECTILE_GOLF_BALL`. */
+const GOLF_BALL = 11
 
 /** The projectiles in flight: a glowing missile or a tank shell pointed along its velocity, or a tumbling grenade. Their trails are `ProjectileTrails`. */
 export class Rockets {
@@ -40,6 +42,9 @@ export class Rockets {
   /** Round shot: a black iron ball, as big as the real thing would be hard to follow, a little bigger. */
   private readonly roundShot = sphereGeometry(0.16, 10, 8)
   private readonly ironMaterial = toonMaterial({ color: 0x1e1f20 })
+  /** A golf ball, drawn a little over its real size so it can be found in the grass. */
+  private readonly golfBall = sphereGeometry(0.07, 10, 8)
+  private readonly golfMaterial = toonMaterial({ color: 0xfafaf6 })
   /** A hen's egg: a giant cream one (`HEN_EGG_RADIUS` across the middle), taller than it is wide, and rocking as it rolls. */
   private readonly egg = sphereGeometry(0.35, 12, 9)
   private readonly eggMaterial = toonMaterial({ color: 0xf6efdc })
@@ -49,6 +54,7 @@ export class Rockets {
   private readonly canopy = cylinderGeometry(0.08, 0.7, 0.4, 10)
   private readonly canopyMaterial = toonMaterial({ color: 0xe8e4d8 })
   private readonly meshes = new Map<number, Mesh>()
+  private readonly kinds = new Map<number, number>()
   private readonly up = new Vector3(0, 1, 0)
 
   /** Places projectile `id`, creating it on first sight. `velocity` only gives a rocket's or a shell's heading. */
@@ -57,6 +63,7 @@ export class Rockets {
     if (!mesh) {
       if (kind === GRENADE) mesh = new Mesh(this.ball, this.ballMaterial)
       else if (kind === ROUND_SHOT) mesh = new Mesh(this.roundShot, this.ironMaterial)
+      else if (kind === GOLF_BALL) mesh = new Mesh(this.golfBall, this.golfMaterial)
       else if (kind === FLARE) {
         mesh = new Mesh(this.flare, this.flareMaterial)
         const canopy = new Mesh(this.canopy, this.canopyMaterial)
@@ -82,9 +89,11 @@ export class Rockets {
         mesh = new Mesh(this.slug, this.slugMaterial)
       } else mesh = new Mesh(this.body, this.material)
       this.meshes.set(id, mesh)
+      this.kinds.set(id, kind)
       this.root.add(mesh)
     }
     mesh.position.set(...position)
+    if (kind === GOLF_BALL) return
     if (kind === GRENADE) {
       mesh.rotation.x += 0.25
       return
@@ -112,14 +121,33 @@ export class Rockets {
     if (!mesh) return
     mesh.removeFromParent()
     this.meshes.delete(id)
+    this.kinds.delete(id)
   }
 
   has(id: number) {
     return this.meshes.has(id)
   }
 
+  /** The golf ball drawn nearest `at`, within `radius` metres, or null: the one a club struck there. */
+  nearestGolfBall(at: Vector3, radius: number): number | null {
+    let found: number | null = null
+    let best = radius
+    for (const [id, mesh] of this.meshes) {
+      if (this.kinds.get(id) !== GOLF_BALL) continue
+      const distance = mesh.position.distanceTo(at)
+      if (distance < best) [found, best] = [id, distance]
+    }
+    return found
+  }
+
+  /** Where projectile `id` is drawn, or null when it is gone. */
+  position(id: number): Vector3 | null {
+    return this.meshes.get(id)?.position ?? null
+  }
+
   dispose() {
     this.meshes.clear()
+    this.kinds.clear()
     this.body.dispose()
     this.material.dispose()
     this.slug.dispose()
@@ -130,6 +158,8 @@ export class Rockets {
     this.ball.dispose()
     this.roundShot.dispose()
     this.ironMaterial.dispose()
+    this.golfBall.dispose()
+    this.golfMaterial.dispose()
     this.ballMaterial.dispose()
     this.egg.dispose()
     this.eggMaterial.dispose()

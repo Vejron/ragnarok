@@ -1,8 +1,9 @@
 import type { Texture } from '@ragnarok/engine'
-import type { HudStats } from '@/hud'
+import type { GolfMeterView, HudStats } from '@/hud'
 import { HOTBAR_ICONS } from '@/hotbarIcons'
 import { LIMB_ARM_L, LIMB_ARM_R, LIMB_LEG_L, LIMB_LEG_R } from '@/net/codec'
 import { HEN_EGGS } from '@/sim/consts'
+import { METER_CURVE, METER_HIGH, METER_LOW, METER_MISS, METER_PURE } from '@/sim/golf'
 import { HOTBAR_SLOTS, itemDef, type ItemSlot } from '@/sim/items'
 import { CanvasSprite, INK, canvas2d, hudTexture, type Painter } from './paint'
 import { dialTicks, dialTop, fill, needleAngle } from './speedo'
@@ -161,11 +162,46 @@ export class Gauges {
     return null
   }
 
+  /**
+   * The golf swing meter, `w` wide at `[x, y]`: the power filling it while fire is held, a tick where it
+   * was let go, and the marker running back to the line near its left end. Around the line the zones:
+   * pure (white), a draw or fade (green), a hook or slice (amber), and a mishit (red); past a full swing,
+   * the overswing.
+   */
+  private golfMeter(p: Painter, golf: GolfMeterView, x: number, y: number, w: number) {
+    const h = 12
+    const at = (v: number) => x + ((v - METER_LOW) / (METER_HIGH - METER_LOW)) * w
+    const span = (from: number, to: number, color: number, alpha: number) => {
+      const [a, b] = [at(Math.max(METER_LOW, from)), at(Math.min(METER_HIGH, to))]
+      p.rect(a, y, b - a, h, color, alpha)
+    }
+    p.box(x, y, w, h, 3, 0x000000, 0.35, 1, 0xffffff, 0.5)
+    span(1, METER_HIGH, 0xe63946, 0.45)
+    span(-METER_MISS, METER_MISS, 0xe63946, 0.55)
+    span(-METER_CURVE, METER_CURVE, 0xffbe0b, 0.8)
+    span(-(METER_PURE + METER_CURVE) / 2, (METER_PURE + METER_CURVE) / 2, 0x6ad04a, 0.85)
+    span(-METER_PURE, METER_PURE, 0xffffff, 0.95)
+    for (const v of [0.25, 0.5, 0.75, 1]) p.rect(at(v) - 0.5, y + h - 4, 1, 4, 0xffffff, 0.6)
+    const reading = golf.reading
+    if (reading) {
+      const top = at(Math.max(0, reading.power))
+      if (!reading.returning) p.rect(at(0), y + 2, top - at(0), h - 4, 0xffbe0b, 0.9)
+      else {
+        p.rect(top - 1, y - 3, 2, h + 6, 0xffbe0b, 1)
+        const m = at(Math.max(METER_LOW, reading.marker))
+        p.rect(m - 1.5, y - 4, 3, h + 8, 0xffffff, 1)
+        p.rect(m - 0.5, y - 4, 1, h + 8, 0x000000, 0.6)
+      }
+    }
+    if (golf.call) p.label(golf.call, x + w / 2, y - 12, { size: 13, weight: 800, color: '#ffffff', shadow: true }, 'center', 0.95)
+  }
+
   private hotbar(p: Painter, s: HudStats) {
     const rects = hotbarRects(p.width, p.height, s.touch)
     const first = rects[0]!
     const last = rects[rects.length - 1]!
-    if (s.progress > 0) {
+    if (s.golf) this.golfMeter(p, s.golf, first.x, first.y - 22, last.x + last.w - first.x)
+    else if (s.progress > 0) {
       const w = last.x + last.w - first.x
       p.pill(first.x, first.y - 8, w, 5, 0xffffff, 0.55, 1)
       p.round(first.x, first.y - 8, Math.max(5, w * s.progress), 5, 2.5, 0xffbe0b)

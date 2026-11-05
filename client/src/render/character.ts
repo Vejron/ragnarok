@@ -9,6 +9,7 @@ import { LIMB_ALL, LIMB_ARM_L, LIMB_ARM_R, LIMB_LEG_L, LIMB_LEG_R, PART_HEAD } f
 import { buildBackpack } from './backpack'
 import { Headlamp } from './headlamp'
 import { POLE_REACH, SOLE_DROP, buildPole, buildSki } from './skigear'
+import { buildClub, swingLength, swingPhase } from './golfclub'
 import { smoothstep } from '@/math'
 
 /** Gravity on a thrown body, m/s². */
@@ -468,6 +469,16 @@ export class Character {
   private readonly beam = { at: new Vector3(), direction: new Vector3() }
   /** Its skis and poles, made the first time it wears them. */
   private gear: { skis: [Group, Group]; poles: [Group, Group] } | null = null
+  /** The golf club in its right hand, made when it first holds one, and which club that is. */
+  private club: Group | null = null
+  private clubItem = 0
+  /** The `golf_swing` phase the club is held at while the swing is made on the meter; seconds into a swing (-1 for none), and the phase it was struck from. */
+  private clubHeld = 0
+  private swingTime = -1
+  private swungFrom = 0
+  /** Where the `golf_swing` clip stands, 0..1, and how much the golf stance has taken the body over. */
+  private golfPhase = 0
+  private golf = 0
   /** Wearing skis, and coasting with the weapon up (aim held) rather than poling. */
   private onSkis = false
   private skiAiming = false
@@ -640,7 +651,8 @@ export class Character {
     // Where the legs face: standing still they stay put while the look turns, until it has turned too
     // far; otherwise they face where it looks.
     const speedNow = Math.hypot(vx, vz)
-    const free = speedNow > STILL_SPEED || !grounded || prone || this.lie > 0.3 || this.down || sliding || crouching
+    // Over the ball the golfer stands square to where they aim, the target on their left.
+    const free = speedNow > STILL_SPEED || !grounded || prone || this.lie > 0.3 || this.down || sliding || crouching || this.golf > 0.01
     let body = this.bodyYaw ?? yaw
     const gap = wrap(yaw - body)
     if (this.rising) this.turning = false
@@ -704,7 +716,13 @@ export class Character {
       set(`crouch_${dir}`, low * moving * share)
       set(`crawl_${dir}`, crawl * moving * share)
     }
-    set('idle', standing * (1 - moving))
+    // With a club, standing still is standing over the ball; a swing is played out wherever it goes.
+    this.swingOn(dt)
+    const golfing = this.golfer && !crouching && !prone
+    const addressing = golfing ? (this.swingTime >= 0 ? 1 : 1 - moving) : 0
+    targets.set('golf_swing', standing * addressing)
+    this.golf = chase(this.golf, standing * addressing, BLEND_RATE, dt)
+    set('idle', standing * (1 - moving) * (1 - addressing))
     set('crouch_idle', low * (1 - moving))
     set('crawl_idle', crawl * (1 - moving))
     set('slide', sliding_)
@@ -768,6 +786,7 @@ export class Character {
       else if (base === 'jump_air') action.time = (this.idleTime / (idle?.clip.duration ?? 1)) * action.clip.duration
       else if (base === 'freefall' || base === 'chute') action.time = this.clock % action.clip.duration
       else if (base === 'getup_back' || base === 'getup_front') action.time = Math.min(1, (this.rising?.time ?? GETUP_TIME) / GETUP_TIME) * action.clip.duration
+      else if (base === 'golf_swing') action.time = this.golfPhase * action.clip.duration
       else if (base !== 'death') action.time = this.phase * action.clip.duration
     }
     // The death clip plays out on the animator's clock once it starts.
@@ -783,7 +802,7 @@ export class Character {
     // On skis with a gun the legs go the way the skis do and the torso alone carries it to the look.
     const heading = speedNow > 0.5 ? Math.atan2(-vx, -vz) : body
     const skiTurn = this.skiGun * (1 - this.air) * wrap(yaw + Math.max(-SKI_TWIST, Math.min(SKI_TWIST, wrap(heading - yaw))) - body)
-    const twist = wrap(yaw - body - skiTurn) * alive * (1 - this.lie) * (1 - this.air) * (this.rising ? 0 : 1)
+    const twist = wrap(yaw - body - skiTurn) * alive * (1 - this.lie) * (1 - this.air) * (1 - this.golf) * (this.rising ? 0 : 1)
     this.turn(this.spine, twist * TWIST_SPINE, AXIS_Y)
     this.turn(this.chest, twist * (1 - TWIST_SPINE), AXIS_Y)
     this.live(dt, speedNow, standing * (1 - moving), alive)
@@ -1353,7 +1372,8 @@ export class Character {
   private aim() {
     if (this.down || this.death > 0.3) return
     // Falling flat or hanging in the harness, there is nothing to aim.
-    const held = 1 - Math.max(this.fall, this.hang)
+    // A golfer's look is down at the ball, which the swing clip already has.
+    const held = (1 - Math.max(this.fall, this.hang)) * (1 - this.golf)
     const lean = (-this.pitch - this.recoil) * held
     this.turn(this.spine, lean * AIM_SPINE, AXIS_X)
     this.turn(this.chest, lean * AIM_CHEST, AXIS_X)
@@ -1377,6 +1397,39 @@ export class Character {
     this.recoil = RECOIL_KICK
   }
 
+  /** Swings the golf club in hand through; call when this player strikes. */
+  swing() {
+    if (this.swingTime >= 0 && this.swingTime < 0.3) return
+    this.swungFrom = this.clubHeld > 0 ? this.golfPhase : 0
+    this.swingTime = 0
+    this.clubHeld = 0
+  }
+
+  /** The `golf_swing` phase to hold the club at while the swing is being made (`golfclub.backswingPhase`, `downswingPhase`); 0 at the address. */
+  set clubPose(phase: number) {
+    if (this.swingTime < 0) this.clubHeld = phase
+  }
+
+  /** Whether it holds a golf club as one: on its feet, not on skis. */
+  private get golfer() {
+    return itemDef(this.item)?.kind === 'club' && !this.onSkis && !this.handsUp
+  }
+
+  /** Moves the swing on: the clip's phase from the charge, or from how far the swing has got. */
+  private swingOn(dt: number) {
+    if (this.swingTime >= 0) {
+      this.swingTime += dt
+      if (this.swingTime >= swingLength(this.swungFrom)) {
+        // The clip ends at the address it starts from: go back to its start rather than easing there,
+        // which would play the whole swing backwards.
+        this.swingTime = -1
+        this.golfPhase = 0
+        return
+      }
+    }
+    this.golfPhase = this.swingTime >= 0 ? swingPhase(this.swingTime, this.swungFrom) : chase(this.golfPhase, this.clubHeld, 12, dt)
+  }
+
   /** The clip for `base` in the stance being held. */
   private clip(base: string) {
     return PREFIX[this.stance] + base
@@ -1389,6 +1442,17 @@ export class Character {
     const mesh = this.weapons.get(this.item)
     // The poles fill both hands: on skis the weapon shows only instead of them.
     if (mesh) mesh.visible = !this.handsUp && (!this.onSkis || this.gunUp)
+    const golf = itemDef(this.item)?.kind === 'club'
+    if (golf && this.clubItem !== this.item && this.gunHand) {
+      this.club?.removeFromParent()
+      // Along the hand, as the swing clip lays the hand along the club.
+      this.club = buildClub(this.item)
+      this.gunHand.add(this.club)
+      this.clubItem = this.item
+      this.swingTime = -1
+      this.clubHeld = 0
+    }
+    if (this.club) this.club.visible = golf && !this.handsUp && !this.onSkis
   }
 
   set surrendering(on: boolean) {

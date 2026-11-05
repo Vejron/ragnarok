@@ -2,7 +2,7 @@
 
 use crate::armor::Pen;
 use crate::consts::TICK_RATE;
-use crate::protocol::{KIND_DRONE, KIND_LOITER, WEAPON_DRONE, WEAPON_FLARE, WEAPON_GRENADE, WEAPON_LAUNCHER, WEAPON_LOITER, WEAPON_REVOLVER, WEAPON_RIFLE, WEAPON_SHOTGUN, WEAPON_SNIPER};
+use crate::protocol::{KIND_DRONE, KIND_LOITER, WEAPON_DRONE, WEAPON_GOLF, WEAPON_FLARE, WEAPON_GRENADE, WEAPON_LAUNCHER, WEAPON_LOITER, WEAPON_REVOLVER, WEAPON_RIFLE, WEAPON_SHOTGUN, WEAPON_SNIPER};
 
 /// Slots in the hotbar. A player picks one with the `slot` field of their input.
 pub const HOTBAR_SLOTS: usize = 5;
@@ -32,8 +32,12 @@ pub const ITEM_CARL_GUSTAF: u8 = 12;
 /// An anti-tank rifle: one hard-cored round at a time, which goes through a tank's sides, turret sides
 /// and rear (not its front), a Strv S's sides and casemate, or a Pak's shield (`crate::armor`).
 pub const ITEM_AT_RIFLE: u8 = 13;
+/// Golf clubs: hold fire to charge a swing, let go to hit the ball at your feet (`crate::consts::GOLF_*`).
+/// The driver sends it far, and higher with aim held; the putter rolls it along the green.
+pub const ITEM_DRIVER: u8 = 14;
+pub const ITEM_PUTTER: u8 = 15;
 /// One past the largest item id.
-pub const ITEM_COUNT: u8 = 14;
+pub const ITEM_COUNT: u8 = 16;
 /// The input's `slot` with nothing in hand: the gun is slung, the hands are free.
 pub const SLOT_NONE: u8 = 255;
 
@@ -56,6 +60,27 @@ pub enum ItemKind {
     Build,
     /// Fires a rocket from the eye towards the crosshair, or along the look down its sight.
     Launcher,
+    /// A golf club: held fire charges a swing, letting go hits the ball in reach (`club`).
+    Club,
+}
+
+/// How a golf club sends the ball: at most `speed` m/s on a full swing, `loft` radians above level,
+/// or `high_loft` with aim held.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Club {
+    pub speed: f32,
+    pub loft: f32,
+    pub high_loft: f32,
+}
+
+/// The club `item` is, if it is one.
+pub fn club(item: u8) -> Option<Club> {
+    use crate::consts::*;
+    match item {
+        ITEM_DRIVER => Some(Club { speed: GOLF_DRIVER_SPEED, loft: GOLF_DRIVER_LOFT, high_loft: GOLF_DRIVER_HIGH_LOFT }),
+        ITEM_PUTTER => Some(Club { speed: GOLF_PUTTER_SPEED, loft: 0.0, high_loft: 0.0 }),
+        _ => None,
+    }
 }
 
 /// How a hitscan round loses damage with distance: all of it up to `start` metres, then a straight
@@ -419,6 +444,33 @@ const AT_RIFLE: ItemDef = ItemDef {
     weight: 1,
 };
 
+const fn golf_club(name: &'static str) -> ItemDef {
+    ItemDef {
+        name,
+        kind: ItemKind::Club,
+        auto: false,
+        damage: 0,
+        cooldown_ticks: TICK_RATE / 2,
+        mag: 0,
+        reload_ticks: 0,
+        range: crate::consts::GOLF_REACH,
+        spread: 0.0,
+        projectile: false,
+        pellets: 1,
+        falloff: Falloff::NONE,
+        pen: Pen::NONE,
+        aim_speed: 1.0,
+        scope: false,
+        stack: 1,
+        weapon: WEAPON_GOLF,
+        // Laid out by the course, never scattered.
+        weight: 0,
+    }
+}
+
+const DRIVER: ItemDef = golf_club("Driver");
+const PUTTER: ItemDef = golf_club("Putter");
+
 /// Whether a player may choose to start with `item`: anything but what only a rooster gives.
 pub fn can_start_with(item: u8) -> bool {
     item != ITEM_GOLDEN_EGG && def(item).is_some()
@@ -440,6 +492,8 @@ pub fn def(item: u8) -> Option<&'static ItemDef> {
         ITEM_BRICKS => Some(&BRICKS),
         ITEM_CARL_GUSTAF => Some(&CARL_GUSTAF),
         ITEM_AT_RIFLE => Some(&AT_RIFLE),
+        ITEM_DRIVER => Some(&DRIVER),
+        ITEM_PUTTER => Some(&PUTTER),
         _ => None,
     }
 }
@@ -578,6 +632,7 @@ mod tests {
                     ItemKind::Flare => "flare",
                     ItemKind::Build => "build",
                     ItemKind::Launcher => "launcher",
+                    ItemKind::Club => "club",
                 };
                 format!(
                     "    {{\"id\": {id}, \"name\": \"{}\", \"kind\": \"{kind}\", \"auto\": {}, \"damage\": {}, \"cooldownTicks\": {}, \"mag\": {}, \"reloadTicks\": {}, \"range\": {}, \"aimSpeed\": {}, \"scope\": {}, \"stack\": {}, \"weapon\": {}, \"projectile\": {}, \"pellets\": {}, \"falloffStart\": {}, \"falloffEnd\": {}, \"falloffMin\": {}, \"spread\": {}}}",
@@ -636,14 +691,22 @@ mod tests {
             ("GRENADE_BOUNCE", GRENADE_BOUNCE.to_string()),
             ("PICKUP_RADIUS", PICKUP_RADIUS.to_string()),
         ];
+        let golf_meter: Vec<String> = crate::golf::meter_traces()
+            .into_iter()
+            .map(|(fire, struck)| {
+                let strike = struck.map_or("null".to_string(), |(at, s)| format!("{{\"at\": {at}, \"power\": {}, \"curve\": {}, \"mishit\": {}}}", s.power, s.curve, s.mishit));
+                format!("    {{\"fire\": \"{fire}\", \"strike\": {strike}}}")
+            })
+            .collect();
         let standard: Vec<String> = STANDARD_LOADOUT.iter().map(u8::to_string).collect();
         let lines: Vec<String> = consts.iter().map(|(name, value)| format!("    \"{name}\": {value}")).collect();
         format!(
-            "{{\n  \"items\": [\n{}\n  ],\n  \"vehicles\": [\n{}\n  ],\n  \"treeKinds\": [\n{}\n  ],\n  \"materials\": [\n{}\n  ],\n  \"standardLoadout\": [{}],\n  \"consts\": {{\n{}\n  }}\n}}\n",
+            "{{\n  \"items\": [\n{}\n  ],\n  \"vehicles\": [\n{}\n  ],\n  \"treeKinds\": [\n{}\n  ],\n  \"materials\": [\n{}\n  ],\n  \"golfMeter\": [\n{}\n  ],\n  \"standardLoadout\": [{}],\n  \"consts\": {{\n{}\n  }}\n}}\n",
             items.join(",\n"),
             vehicles.join(",\n"),
             tree_kinds.join(",\n"),
             materials.join(",\n"),
+            golf_meter.join(",\n"),
             standard.join(", "),
             lines.join(",\n")
         )
@@ -710,6 +773,12 @@ mod tests {
     }
 
     #[test]
+    fn the_driver_hits_far_harder_than_the_putter() {
+        assert!(club(ITEM_DRIVER).unwrap().speed > 5.0 * club(ITEM_PUTTER).unwrap().speed);
+        assert!(club(ITEM_AK5).is_none());
+    }
+
+    #[test]
     fn the_golden_egg_heals_to_full() {
         let egg = def(ITEM_GOLDEN_EGG).unwrap();
         assert_eq!(egg.kind, ItemKind::Heal);
@@ -722,7 +791,7 @@ mod tests {
         for item in 1..ITEM_COUNT {
             let d = def(item).unwrap_or_else(|| panic!("item {item} has no definition"));
             assert!(d.stack >= 1);
-            assert!(d.weight > 0 || item == ITEM_GOLDEN_EGG || item == ITEM_BRICKS);
+            assert!(d.weight > 0 || matches!(item, ITEM_GOLDEN_EGG | ITEM_BRICKS | ITEM_DRIVER | ITEM_PUTTER));
             assert!(d.aim_speed > 0.0 && d.aim_speed <= 1.0);
         }
         assert!(def(ITEM_COUNT).is_none());

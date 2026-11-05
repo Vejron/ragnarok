@@ -1,4 +1,4 @@
-import { COVER_INDUSTRIAL, COVER_PARK, COVER_ROCK, COVER_THICKET_FIGHT, COVER_THICKET_SLOW, COVER_THICKET_WALK, COVER_URBAN, COVER_WOOD, type Building, type Point2, type TileData } from '@/world'
+import { COVER_GOLF_BUNKER, COVER_GOLF_FAIRWAY, COVER_GOLF_GREEN, COVER_GOLF_TEE, COVER_INDUSTRIAL, COVER_PARK, COVER_ROCK, COVER_THICKET_FIGHT, COVER_THICKET_SLOW, COVER_THICKET_WALK, COVER_URBAN, COVER_WOOD, type Building, type Point2, type TileData } from '@/world'
 import { rasterSurface, SURFACE_CELL, SURFACE_GRASS, SURFACE_MUD, SURFACE_MUD_DEEP, SURFACE_MUD_FAINT } from '@/sim/surface'
 import type { TileGround } from '@/sim/terrain'
 
@@ -7,8 +7,21 @@ import type { TileGround } from '@/sim/terrain'
  * the main thread, and read by `Grass` (`grass.ts`). Nothing here touches the scene.
  */
 
-/** The `PALETTE` entry (`grass.ts`) for each cover's grass; 0 for none. */
-const COVER_SHADE: Record<number, number> = { [COVER_PARK]: 2, [COVER_WOOD]: 3, [COVER_THICKET_SLOW]: 3, [COVER_THICKET_WALK]: 3, [COVER_THICKET_FIGHT]: 3, [COVER_ROCK]: 0, [COVER_URBAN]: 0, [COVER_INDUSTRIAL]: 0 }
+/** The `PALETTE` entry (`grass.ts`) for each cover's grass; 0 for none. A golf course's mown surfaces have no tall blades. */
+const COVER_SHADE: Record<number, number> = {
+  [COVER_PARK]: 2,
+  [COVER_WOOD]: 3,
+  [COVER_THICKET_SLOW]: 3,
+  [COVER_THICKET_WALK]: 3,
+  [COVER_THICKET_FIGHT]: 3,
+  [COVER_ROCK]: 0,
+  [COVER_URBAN]: 0,
+  [COVER_INDUSTRIAL]: 0,
+  [COVER_GOLF_FAIRWAY]: 0,
+  [COVER_GOLF_TEE]: 0,
+  [COVER_GOLF_GREEN]: 0,
+  [COVER_GOLF_BUNKER]: 0,
+}
 
 /** The `PALETTE` entries of a marsh's sedge, by the surface's grade, which the surface grid already has. */
 export const MARSH_SHADES: Record<number, number> = { [SURFACE_MUD_FAINT]: 4, [SURFACE_MUD]: 5, [SURFACE_MUD_DEEP]: 6 }

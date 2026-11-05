@@ -626,6 +626,24 @@ export class VehicleSounds {
     })
   }
 
+  /** A golf club swung: a whoosh of air, and a crisp click where it met a ball (`struck`). */
+  golfSwing(at: Vec3, struck: boolean) {
+    this.emit(at, 0.5, (ctx, out, t) => {
+      VehicleSounds.burst(ctx, out, t, 'bandpass', 900, 700, 0.16, 0.25)
+      if (!struck) return
+      VehicleSounds.ping(ctx, out, t, 'triangle', 2400, 1400, 0.05, 0.5, 0.12)
+      VehicleSounds.burst(ctx, out, t, 'highpass', 3500, 2500, 0.04, 0.35, 0.12)
+    })
+  }
+
+  /** A golf ball dropping into the cup: a hollow knock and a little rattle. */
+  golfCup(at: Vec3) {
+    this.emit(at, 0.6, (ctx, out, t) => {
+      VehicleSounds.ping(ctx, out, t, 'sine', 700, 380, 0.12, 0.5)
+      for (let i = 0; i < 3; i++) VehicleSounds.ping(ctx, out, t, 'triangle', 1100 + i * 180, 700, 0.04, 0.25 / (i + 1), 0.08 + i * 0.07)
+    })
+  }
+
   /** An egg leaving a hen: a hollow plop and a clunk of the hatch. */
   plop(at: Vec3) {
     this.emit(at, 0.4, (ctx, out, t) => {

@@ -56,6 +56,9 @@ if [[ -f "$WORLD_DIR/area.json" ]]; then cp "$WORLD_DIR/area.json" .deploy/area.
 # The world's scenario (scenario.json, if it has one) is read from the same folder.
 rm -f .deploy/scenario.json
 if [[ -f "$WORLD_DIR/scenario.json" ]]; then cp "$WORLD_DIR/scenario.json" .deploy/scenario.json; echo "==> scenario: $(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(", ".join(f"{len(d.get(k,[]))} {k}" for k in ("areas","squads","triggers")))' .deploy/scenario.json 2>/dev/null || echo unknown)"; else echo "==> scenario: none"; fi
+# The world's golf course (golf.json, if it has one), read from the same folder.
+rm -f .deploy/golf.json
+if [[ -f "$WORLD_DIR/golf.json" ]]; then cp "$WORLD_DIR/golf.json" .deploy/golf.json; echo "==> golf: $(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["holes"]), "holes")' .deploy/golf.json 2>/dev/null || echo unknown)"; else echo "==> golf: none"; fi
 echo "==> placements: $(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(", ".join(f"{len(d.get(k,[]))} {k}" for k in ("spawns","vehicles","items")))' .deploy/area.json 2>/dev/null || echo unknown)"
 
 echo "==> building image $IMAGE ($PLATFORM)"

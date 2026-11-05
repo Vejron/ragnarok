@@ -3,8 +3,8 @@
 //!
 //! - How it moves: `Gravity`, a rocket `Motor`, a flare's `Sinks`.
 //! - What meeting something does, one of: `Strikes` (bursts on what it meets, a shell through the
-//!   armor it meets first), `Bounces` (a grenade or an egg), `Sticks` (a flare) or `Round` (a gun's
-//!   bullet, which hurts what it meets).
+//!   armor it meets first), `Bounces` (a grenade or an egg), `Sticks` (a flare), `Rolls` (a golf
+//!   ball) or `Round` (a gun's bullet, which hurts what it meets).
 //! - What bursting does: `Burst`, absent for what only goes out.
 //! - When it moves: at the end of `Combat`'s tick, the tick it is thrown or fired by hand, or with
 //!   `GunStage` at the start of `Gunnery`'s, before the vehicle guns fire.
@@ -20,7 +20,7 @@ use crate::game::{Player, World};
 use shared::armor::Pen;
 use shared::consts::*;
 use shared::items::{FLARE_DRAG, FLARE_RADIUS, FLARE_SINK, Falloff, GRENADE_BLAST_RADIUS, GRENADE_BOUNCE, GRENADE_DAMAGE, GRENADE_KNOCK, GRENADE_RADIUS, def};
-use shared::protocol::{PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, ShotEvent, WEAPON_AP, WEAPON_BALL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_BULLET, WEAPON_EGG, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_SPLASH};
+use shared::protocol::{PROJECTILE_BALL, PROJECTILE_GOLF_BALL, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, ShotEvent, WEAPON_AP, WEAPON_BALL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_BULLET, WEAPON_EGG, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_SPLASH};
 use shared::quant::to_cm;
 use std::collections::BTreeMap;
 
@@ -76,6 +76,22 @@ pub struct Bounces {
     pub smash: Option<f32>,
 }
 
+/// A golf ball of `radius` metres: bounces off what it meets, rolls along the ground as the course's
+/// surface there lets it (`shared::golf::Course::roll_at`), and rests where it stops until a club
+/// strikes it again. It goes when its time runs out, into open water or out of the world.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct Rolls {
+    pub radius: f32,
+}
+
+/// A golf ball's sidespin: in the air it is pulled to the right of where it flies, by this much (1/s)
+/// of its speed; to the left if negative.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct Spin(pub f32);
+
+/// Of a golf ball's spin, what it keeps each tick it is on the ground.
+const SPIN_KEPT: f32 = 0.3;
+
 /// Stops where it meets something, as a ball of `radius` metres, and stays there until it goes out.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Sticks {
@@ -127,6 +143,8 @@ pub fn register(ecs: &mut bevy_ecs::world::World) {
     ecs.register_component::<Strikes>();
     ecs.register_component::<Bounces>();
     ecs.register_component::<Sticks>();
+    ecs.register_component::<Rolls>();
+    ecs.register_component::<Spin>();
     ecs.register_component::<Round>();
     ecs.register_component::<Burst>();
     ecs.register_component::<GunStage>();
@@ -237,6 +255,9 @@ fn prefab(kind: u8, round: Round, entity: &mut bevy_ecs::world::EntityWorldMut) 
         PROJECTILE_EGG => {
             entity.insert((Gravity(1.0), Bounces { radius: HEN_EGG_RADIUS, keep: HEN_EGG_BOUNCE, smash: Some(HEN_EGG_SMASH_SPEED) }));
         }
+        PROJECTILE_GOLF_BALL => {
+            entity.insert((Gravity(GOLF_GRAVITY_SCALE), Rolls { radius: GOLF_BALL_RADIUS }));
+        }
         PROJECTILE_FLARE => {
             entity.insert((Gravity(1.0), Sinks { drag: FLARE_DRAG, max_sink: FLARE_SINK }, Sticks { radius: FLARE_RADIUS }));
         }
@@ -290,10 +311,11 @@ impl World {
 
 }
 
-/// How many projectiles are in flight; `kind` counts only those of one kind. On the entities alone,
-/// so it can be asked while a player is borrowed.
+/// How many projectiles are in flight; `kind` counts only those of one kind, and `None` all but the
+/// golf balls, which are bounded on their own. On the entities alone, so it can be asked while a
+/// player is borrowed.
 pub fn count(entities: &crate::entities::Entities, kind: Option<u8>) -> usize {
-    entities.scan::<&Projectile, (), _>(|flying| flying.filter(|p| kind.is_none_or(|kind| p.kind == kind)).count()).unwrap_or(0)
+    entities.scan::<&Projectile, (), _>(|flying| flying.filter(|p| kind.map_or(p.kind != PROJECTILE_GOLF_BALL, |kind| p.kind == kind)).count()).unwrap_or(0)
 }
 
 /// Moves every projectile of `stage` one tick, in id order, and carries out what each meets.
@@ -306,6 +328,8 @@ pub fn step(world: &mut World, dt: f32, stage: Stage) {
         let entities = &world.entities;
         if entities.get::<Round>(id).is_some() {
             step_round(world, id, dt);
+        } else if let Some(rolls) = entities.get::<Rolls>(id).copied() {
+            step_rolling(world, id, dt, rolls);
         } else if let Some(bounces) = entities.get::<Bounces>(id).copied() {
             step_bouncing(world, id, dt, bounces);
         } else if let Some(sticks) = entities.get::<Sticks>(id).copied() {
@@ -524,6 +548,112 @@ fn step_bouncing(world: &mut World, id: u32, dt: f32, bounces: Bounces) {
     } else {
         write(world, id, &s);
     }
+}
+
+/// Slower into a surface than this (m/s), a golf ball stays on it and rolls rather than bouncing.
+const GOLF_SETTLE: f32 = 1.2;
+/// How far below a golf ball's bottom (metres) the ground still holds it, rolling over a bump.
+const GOLF_CONTACT: f32 = 0.03;
+
+/// Takes the part of `velocity` going into a surface of `normal` out of it: off it in a bounce
+/// that keeps `GOLF_BOUNCE` of that part and `GOLF_SKID` of the rest, or, gently, by leaving it on
+/// the surface to roll. Says whether it bounced.
+fn meet(velocity: &mut [f32; 3], normal: [f32; 3]) -> bool {
+    let into = vec3::dot(*velocity, normal);
+    if into >= 0.0 {
+        return false;
+    }
+    if -into > GOLF_SETTLE {
+        let along: [f32; 3] = std::array::from_fn(|i| velocity[i] - into * normal[i]);
+        *velocity = std::array::from_fn(|i| along[i] * GOLF_SKID - into * GOLF_BOUNCE * normal[i]);
+        true
+    } else {
+        *velocity = std::array::from_fn(|i| velocity[i] - into * normal[i]);
+        false
+    }
+}
+
+/// A golf ball: flies, bounces and rolls, slowed by what it rolls on, and lies still once it stops on
+/// ground that does not tip it on.
+fn step_rolling(world: &mut World, id: u32, dt: f32, rolls: Rolls) {
+    let Some(mut s) = read(world, id) else { return };
+    s.ttl = s.ttl.saturating_sub(1);
+    let below = world.physics.cast_ray_normal(s.position, [0.0, -1.0, 0.0], rolls.radius + GOLF_CONTACT).filter(|(_, normal)| normal[1] > 0.3);
+    if s.ttl == 0 || s.position[1] < KILL_Y {
+        world.entities.despawn(id);
+        return;
+    }
+    // At rest on the ground it stays put: no work at all.
+    if s.velocity == [0.0; 3] && below.is_some() {
+        write(world, id, &s);
+        return;
+    }
+    let gravity = GRAVITY * world.entities.get::<Gravity>(id).map_or(1.0, |g| g.0);
+    s.velocity[1] -= gravity * dt;
+    if let Some((t, normal)) = below
+        && !meet(&mut s.velocity, normal)
+    {
+        // Rolling: sit on the surface and lose speed to it.
+        s.position[1] += rolls.radius - t;
+        let roll = world.map.golf.as_ref().map_or(GOLF_ROLL_ROUGH, |course| course.roll_at([s.position[0], s.position[2]]));
+        let speed = length(s.velocity);
+        let slowed = (speed - roll * gravity * normal[1] * dt).max(0.0);
+        // Once nearly still where the slope cannot overcome the friction, it stops.
+        let tipped = (1.0 - normal[1] * normal[1]).max(0.0).sqrt() > roll * normal[1];
+        if slowed < GOLF_REST_SPEED && !tipped {
+            s.velocity = [0.0; 3];
+        } else if speed > 0.0 {
+            s.velocity = s.velocity.map(|v| v * slowed / speed);
+        }
+    }
+    // Cut, it bends to its right (a slice) or left (a hook) as it flies, and gives up most of the spin
+    // to the ground each time it meets it.
+    if let Some(spin) = world.entities.get::<Spin>(id).map(|spin| spin.0) {
+        if below.is_some() {
+            let left = spin * SPIN_KEPT;
+            if left.abs() < 1e-3 {
+                world.entities.remove::<Spin>(id);
+            } else {
+                world.entities.insert(id, Spin(left));
+            }
+        } else {
+            let [vx, _, vz] = s.velocity;
+            s.velocity[0] -= spin * vz * dt;
+            s.velocity[2] += spin * vx * dt;
+        }
+    }
+    let mut remaining = dt;
+    // It can meet a surface more than once in a tick in a corner; three is plenty.
+    for _ in 0..3 {
+        let speed = length(s.velocity);
+        if speed < 1e-4 {
+            break;
+        }
+        let dir = s.velocity.map(|v| v / speed);
+        let step = speed * remaining;
+        match world.physics.cast_ray_normal(s.position, dir, step + rolls.radius) {
+            Some((t, normal)) => {
+                let travel = (t - rolls.radius).clamp(0.0, step);
+                s.position = vec3::along(s.position, dir, travel);
+                meet(&mut s.velocity, normal);
+                remaining *= 1.0 - travel / step.max(1e-6);
+            }
+            None => {
+                s.position = vec3::along(s.position, dir, step);
+                break;
+            }
+        }
+    }
+    // Into open water: gone, with a splash.
+    if let Some(level) = world.physics.water_level(s.position[0], s.position[2])
+        && s.position[1] < level
+    {
+        let [x, _, z] = s.position.map(to_cm);
+        world.shots.push(ShotEvent { shooter: s.owner, weapon: WEAPON_SPLASH, x, y: to_cm(level), z });
+        world.entities.despawn(id);
+        return;
+    }
+    write(world, id, &s);
 }
 
 /// A flare: rises, then sinks under its chute, and burns where it comes to rest until it goes out.

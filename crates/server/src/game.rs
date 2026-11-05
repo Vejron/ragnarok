@@ -326,6 +326,9 @@ impl Game {
         self.broadcast_cratered();
         self.broadcast_built();
         self.broadcast_backpack();
+        for text in std::mem::take(&mut self.world.fresh.said) {
+            self.notice(NOTICE_SAY, &text);
+        }
         self.drop_stalled();
         crate::events::update(&mut self.world.entities.ecs);
         self.world.tick = self.world.tick.wrapping_add(1);

@@ -957,6 +957,17 @@ fn use_item(world: &mut World, id: u32) {
                 super::building::use_bricks(world, id, buttons & BUTTON_ALT != 0);
             }
         }
+        ItemKind::Club => {
+            // The swing meter counts the golfer's own input frames, not ticks: a frame repeated for one
+            // that is late neither lets go of a swing nor runs its marker on.
+            let seq = player.input.seq();
+            if seq != player.hands.golf_seen {
+                player.hands.golf_seen = seq;
+                if let Some(strike) = player.hands.golf.step(pressed) {
+                    super::golf::swing(world, id, held.item, strike, buttons & BUTTON_ALT != 0);
+                }
+            }
+        }
         ItemKind::Heal => {
             if player.hands.channel_left > 0 {
                 player.hands.channel_left -= 1;

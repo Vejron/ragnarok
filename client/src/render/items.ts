@@ -1,6 +1,6 @@
 import { Group, Material, Mesh, boxGeometry, sphereGeometry, type Geometry } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
-import { ITEM_AK5, ITEM_AT_RIFLE, ITEM_BANDAGE, ITEM_BRICKS, ITEM_CARL_GUSTAF, ITEM_DRONE, ITEM_FLARE, ITEM_GOLDEN_EGG, ITEM_LOITER, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER } from '@/sim/items'
+import { ITEM_AK5, ITEM_AT_RIFLE, ITEM_BANDAGE, ITEM_BRICKS, ITEM_CARL_GUSTAF, ITEM_DRIVER, ITEM_DRONE, ITEM_FLARE, ITEM_GOLDEN_EGG, ITEM_LOITER, ITEM_GRENADE, ITEM_PUTTER, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER } from '@/sim/items'
 
 const GUN_METAL = 0x3b3f47
 const GUN_TRIM = 0xf2a33a
@@ -12,6 +12,8 @@ const GOLD = 0xffc933
 const FLARE_ORANGE = 0xf26a1b
 const BRICK = 0xc0583e
 const TUBE = 0x55613a
+const STEEL = 0xc8ccd0
+const GRIP = 0x1c1c1e
 
 const materials = new Map<number, Material>()
 const boxes = new Map<string, Geometry>()
@@ -104,6 +106,14 @@ export function buildItem(item: number): Group {
       box(group, [0.5, 0.02, 0.16], [0, 0.08, 0.1], GUN_METAL)
       box(group, [0.28, 0.02, 0.14], [0, 0.08, -0.04], GUN_METAL)
       for (const x of [-0.24, 0.24]) box(group, [0.015, 0.08, 0.1], [x, 0.12, 0.12], GUN_TRIM)
+      break
+    case ITEM_DRIVER:
+    case ITEM_PUTTER:
+      // A golf club lying flat: the grip, the long steel shaft, and the head, a fat wood or a flat blade.
+      box(group, [0.03, 0.03, 0.25], [0, 0, 0.05], GRIP)
+      box(group, [0.018, 0.018, 0.8], [0, 0, -0.45], STEEL)
+      if (item === ITEM_DRIVER) box(group, [0.12, 0.06, 0.09], [0.03, 0, -0.88], GRIP)
+      else box(group, [0.11, 0.03, 0.03], [0.04, 0, -0.86], STEEL)
       break
     case ITEM_FLARE:
       // A stubby orange pistol with a fat barrel and a dark breech.

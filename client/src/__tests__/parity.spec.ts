@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { KIND_HEN, KIND_JEEP, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER } from '../net/codec'
 import { TICK_RATE } from '../sim/consts'
+import { Meter, type Strike } from '../sim/golf'
 import * as items from '../sim/items'
 import tables from '../sim/tables.generated.json'
 import { VEHICLES, isLegged, isTracked, vehicleDef } from '../sim/vehicles'
@@ -61,5 +62,25 @@ describe('falloff', () => {
     const shotgun = items.itemDef(items.ITEM_SHOTGUN)!
     expect(shotgun.pellets * items.falloffDamage(shotgun, 3)).toBeGreaterThanOrEqual(100)
     expect(items.falloffDamage(shotgun, 1000)).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe('the golf swing meter steps as the server does', () => {
+  it('strikes every sample swing in the same frame, as hard and as curved', () => {
+    for (const trace of tables.golfMeter) {
+      const meter = new Meter()
+      let struck: { at: number; strike: Strike } | null = null
+      ;[...trace.fire].some((c, at) => {
+        const strike = meter.step(c === '1')
+        if (strike) struck = { at, strike }
+        return strike !== null
+      })
+      expect(struck, trace.fire).not.toBeNull()
+      const { at, strike } = struck!
+      expect(at).toBe(trace.strike!.at)
+      expect(strike.power).toBeCloseTo(trace.strike!.power, 5)
+      expect(strike.curve).toBeCloseTo(trace.strike!.curve, 5)
+      expect(strike.mishit).toBe(trace.strike!.mishit)
+    }
   })
 })

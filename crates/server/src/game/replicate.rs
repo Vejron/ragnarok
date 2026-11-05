@@ -204,7 +204,7 @@ fn soldier(player: &Player, alive: bool) -> Replicated {
     }
 }
 
-/// How far the player's reload or bandage has got, 0..=255, or 0 when neither is going on. A reload in
+/// How far the player's reload or bandage has got, 0..=255, or 0 when none is going on. A reload in
 /// `one_arm` takes `ONE_ARM_RELOAD` times as long.
 fn progress(player: &Player, one_arm: bool) -> u8 {
     use shared::items::{BANDAGE_TICKS, def};

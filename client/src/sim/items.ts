@@ -33,9 +33,12 @@ export const ITEM_BRICKS = 11
 export const ITEM_CARL_GUSTAF = 12
 /** An anti-tank rifle: one hard-cored round at a time, through a tank's thin rear, roof and slits. */
 export const ITEM_AT_RIFLE = 13
+/** Golf clubs: hold fire to charge a swing, let go to hit the ball at your feet. Aim held pitches the driver high. */
+export const ITEM_DRIVER = 14
+export const ITEM_PUTTER = 15
 /** Skis: used, they go on or off when standing about. Worn whatever is in hand. */
 
-export type ItemKind = 'gun' | 'grenade' | 'heal' | 'drone' | 'flare' | 'build' | 'launcher'
+export type ItemKind = 'gun' | 'grenade' | 'heal' | 'drone' | 'flare' | 'build' | 'launcher' | 'club'
 
 export interface ItemDef {
   name: string
@@ -89,6 +92,8 @@ const PRESENTATION: Record<number, Presentation> = {
   [ITEM_BRICKS]: { stance: 'hold', sound: 'rifle' },
   [ITEM_CARL_GUSTAF]: { stance: 'shoulder', sound: 'sniper' },
   [ITEM_AT_RIFLE]: { stance: 'rifle', sound: 'sniper' },
+  [ITEM_DRIVER]: { stance: 'hold', sound: 'rifle' },
+  [ITEM_PUTTER]: { stance: 'hold', sound: 'rifle' },
 }
 
 /** The server's rows, as the generated table has them. */

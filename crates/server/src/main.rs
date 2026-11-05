@@ -67,6 +67,12 @@ fn read_world(path: &Path) -> Result<(WorldFile, u32)> {
     }
     let mut world = WorldFile::assemble(&manifest, tiles);
     placements::apply(&mut world, &dir.join("area.json"))?;
+    let course = dir.join(shared::golf::COURSE_FILE);
+    if let Ok(text) = std::fs::read_to_string(&course) {
+        let golf: shared::golf::Course = serde_json::from_str(&text).with_context(|| format!("reading {}", course.display()))?;
+        tracing::info!(holes = golf.holes.len(), surfaces = golf.surfaces.len(), "golf course loaded");
+        world.golf = Some(golf);
+    }
     tracing::info!(path = %shown, tiles = manifest.tiles.len(), buildings = world.buildings.len(), roads = world.roads.len(), "world loaded");
     Ok((world, world_hash(&bytes)))
 }

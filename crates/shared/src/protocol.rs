@@ -150,6 +150,10 @@ pub const WEAPON_LASER: u8 = 28;
 pub const WEAPON_BALL: u8 = 29;
 /// Shot events only: a round ended in open water at `x, y, z`, the surface there: a splash.
 pub const WEAPON_SPLASH: u8 = 30;
+/// Shot events only: `shooter` swung a golf club, its head at `x, y, z`; at a ball, it is struck.
+pub const WEAPON_GOLF: u8 = 31;
+/// Shot events only: a golf ball dropped into the cup at `x, y, z`. `shooter` is who struck it last.
+pub const WEAPON_CUP: u8 = 32;
 
 /// `replicated::Limbs::lost` bits: the limbs a soldier has lost. The same bits shifted up by
 /// `LIMB_BLEED_SHIFT` are the stumps still bleeding.
@@ -216,6 +220,9 @@ pub const PROJECTILE_HE: u8 = 9;
 /// A ship's gun's round shot: slower than a shell, so it arcs, hurting what it hits hard and bursting
 /// small. On open water it ends in a splash.
 pub const PROJECTILE_BALL: u8 = 10;
+/// A golf ball: it flies, bounces and rolls, rests where it stops, and is struck by a club
+/// (`Golf`). It hurts nobody and never bursts.
+pub const PROJECTILE_GOLF_BALL: u8 = 11;
 
 /// A message's field: its name, its Rust type and its unit (`UNITS`), or `""` for a count, a set of
 /// bits, an id or text, which have none.

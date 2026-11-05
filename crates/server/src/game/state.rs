@@ -103,6 +103,9 @@ pub struct Hands {
     pub channel_left: u32,
     /// Whether fire was held last tick, so a semi-automatic gun needs a fresh press.
     pub trigger_held: bool,
+    /// A golf club's swing meter, stepped by each new input frame (the last one's `seq`).
+    pub golf: shared::golf::Meter,
+    pub golf_seen: u32,
 }
 
 /// What a player has done, for the scoreboard.
@@ -362,7 +365,7 @@ impl Player {
             lamp_held: false,
             ski_held: false,
             surrendered: false,
-            hands: Hands { hotbar: loadout, loadout, selected: Some(0), fire_cooldown: 0, reload_left: 0, channel_left: 0, trigger_held: false },
+            hands: Hands { hotbar: loadout, loadout, selected: Some(0), fire_cooldown: 0, reload_left: 0, channel_left: 0, trigger_held: false, golf: Default::default(), golf_seen: 0 },
             score: Tally::default(),
             name,
             color,
@@ -415,10 +418,11 @@ impl Player {
         [at[0] + cos * ON_FOOT_SHOULDER, at[1] + ON_FOOT_HEIGHT, at[2] - sin * ON_FOOT_SHOULDER]
     }
 
-    /// Takes away anything half done: a reload or a bandage.
+    /// Takes away anything half done: a reload, a bandage or a golf swing.
     pub fn interrupt(&mut self) {
         self.hands.reload_left = 0;
         self.hands.channel_left = 0;
+        self.hands.golf = Default::default();
     }
 }
 
@@ -859,6 +863,8 @@ pub struct Fresh {
     pub craters: Vec<shared::protocol::CraterEntry>,
     /// What happened to the cubes, to go out as one `Built`.
     pub built: FreshBuilt,
+    /// Messages for everyone (`NOTICE_SAY`): a golf ball holed.
+    pub said: Vec<String>,
 }
 
 /// A building hurt: its identity, its damage stage and where a blast marked it.

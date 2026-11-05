@@ -79,8 +79,15 @@ export function paintMap(g: CanvasRenderingContext2D, image: HTMLImageElement, h
   }
 
   for (const blip of marks.blips) {
-    const [bx, by] = at(blip.x, blip.z)
+    let [bx, by] = at(blip.x, blip.z)
     const edge = 4 * scale
+    if (blip.kind === 'ball') {
+      // The player's golf ball: kept on the edge, the way to it, when it is off the map.
+      const inset = 7 * scale
+      ;[bx, by] = [Math.max(inset, Math.min(size - inset, bx)), Math.max(inset, Math.min(size - inset, by))]
+      golfBall(g, bx, by, scale)
+      continue
+    }
     if (bx < edge || by < edge || bx > size - edge || by > size - edge) continue
     g.globalAlpha = blip.kind === 'ally' ? 1 : 0.25 + 0.75 * blip.strength
     if (blip.kind === 'shot') {
@@ -117,6 +124,17 @@ export function arrow(g: CanvasRenderingContext2D, x: number, y: number, turn: n
   g.fillStyle = ARROW
   g.fill()
   g.restore()
+}
+
+/** A golf ball's mark: white, ringed dark so it shows on the paper's pale greens. */
+function golfBall(g: CanvasRenderingContext2D, x: number, y: number, scale: number) {
+  g.beginPath()
+  g.arc(x, y, 5 * scale, 0, Math.PI * 2)
+  g.fillStyle = '#ffffff'
+  g.fill()
+  g.lineWidth = 2 * scale
+  g.strokeStyle = '#1d2b36'
+  g.stroke()
 }
 
 function disc(g: CanvasRenderingContext2D, x: number, y: number, r: number, color: string, edge: number) {

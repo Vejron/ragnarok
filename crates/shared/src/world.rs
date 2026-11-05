@@ -384,6 +384,9 @@ pub struct WorldFile {
     /// Herds of wild animals the map editor placed by hand. Empty means none.
     #[serde(skip)]
     pub placed_animals: Vec<PlacedAnimal>,
+    /// The golf course beside the world (`crate::golf::COURSE_FILE`), if it has one.
+    #[serde(skip)]
+    pub golf: Option<crate::golf::Course>,
 }
 
 /// A vehicle placed in the map editor: its kind, `[x, z]` in centimetres and heading in radians.
@@ -635,6 +638,17 @@ pub const COVER_MARSH: u8 = 10;
 pub const COVER_ROCK: u8 = 11;
 pub const COVER_MARSH_DEEP: u8 = 12;
 pub const COVER_MARSH_FAINT: u8 = 13;
+/// A golf course's playing surfaces, from OSM's `golf=*`: mown fairway, the green, a tee and a
+/// bunker's sand.
+pub const COVER_GOLF_FAIRWAY: u8 = 14;
+pub const COVER_GOLF_GREEN: u8 = 15;
+pub const COVER_GOLF_TEE: u8 = 16;
+pub const COVER_GOLF_BUNKER: u8 = 17;
+
+/// Whether cover `kind` is one of a golf course's playing surfaces, kept clear of trees and rocks.
+pub fn is_golf_cover(kind: u8) -> bool {
+    (COVER_GOLF_FAIRWAY..=COVER_GOLF_BUNKER).contains(&kind)
+}
 
 /// One tree. All lengths are centimetres.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -667,6 +681,8 @@ pub const TREE_ROCK_BOULDER: u8 = 7;
 pub const TREE_ROCK_SLAB: u8 = 8;
 /// A shrub, never solid: something to walk through and hide behind.
 pub const TREE_BUSH: u8 = 9;
+/// A golf hole's flagstick and the cup it stands in, never solid. `height` is the pole's.
+pub const TREE_FLAG: u8 = 10;
 
 /// What an archetype is: how its collider is sized and what can break it. One table for server and
 /// client (`client/src/world.ts` builds its table from `client/src/sim/tables.generated.json`), so a
@@ -694,7 +710,7 @@ const fn tree_kind(kind: u8, name: &'static str, radius: i32, ref_height: i32) -
     TreeKindDef { kind, name, radius, ref_height, radius_pct_of_crown: 0, max_radius: 60, collider_height_pct: 50, destructible: true }
 }
 
-pub const TREE_KINDS: [TreeKindDef; 10] = [
+pub const TREE_KINDS: [TreeKindDef; 11] = [
     tree_kind(TREE_BIRCH, "Birch", 15, 1200),
     tree_kind(TREE_PINE, "Pine", 20, 1600),
     tree_kind(TREE_SPRUCE, "Spruce", 20, 1600),
@@ -705,6 +721,7 @@ pub const TREE_KINDS: [TreeKindDef; 10] = [
     TreeKindDef { radius_pct_of_crown: 80, max_radius: 200, collider_height_pct: 80, destructible: false, ..tree_kind(TREE_ROCK_BOULDER, "Boulder", 0, 1) },
     TreeKindDef { radius_pct_of_crown: 85, max_radius: 250, collider_height_pct: 85, destructible: false, ..tree_kind(TREE_ROCK_SLAB, "Rock slab", 0, 1) },
     tree_kind(TREE_BUSH, "Bush", 10, 100),
+    TreeKindDef { destructible: false, ..tree_kind(TREE_FLAG, "Flag", 2, 230) },
 ];
 
 /// The definition of an archetype. Unknown kinds are birches, as they are drawn.
@@ -927,10 +944,10 @@ mod tests {
     }
 
     #[test]
-    fn only_rocks_are_indestructible_and_every_kind_is_in_the_table() {
+    fn only_rocks_and_flags_are_indestructible_and_every_kind_is_in_the_table() {
         for (index, def) in TREE_KINDS.iter().enumerate() {
             assert_eq!(def.kind as usize, index, "{} sits at its own id", def.name);
-            assert_eq!(object(def.kind, 500, 100).destructible(), def.kind != TREE_ROCK_BOULDER && def.kind != TREE_ROCK_SLAB);
+            assert_eq!(object(def.kind, 500, 100).destructible(), !matches!(def.kind, TREE_ROCK_BOULDER | TREE_ROCK_SLAB | TREE_FLAG));
         }
     }
 

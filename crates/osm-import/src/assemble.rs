@@ -24,6 +24,8 @@ const SPAWN_CLEARANCE: f64 = 1.5;
 const SOLID_REACH: f64 = 20.0;
 /// No tree stands this close to the edge of a bridge, metres.
 const BRIDGE_CLEAR: f64 = 4.0;
+/// A golf flagstick's height, metres.
+const FLAG_HEIGHT: f64 = 2.3;
 /// How much wider a track's ballast bed is than its gauge, metres.
 const BALLAST_EXTRA: f64 = 2.2;
 
@@ -441,6 +443,14 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
     if mapped.len() >= 3 {
         props.retain(|(at, ..)| !point_in_polygon(*at, mapped));
     }
+    // A golf course's mown surfaces are kept clear of trees, rocks and shrubs.
+    let golf: Vec<([f64; 4], Vec<P>)> = covers
+        .iter()
+        .filter(|(kind, _)| is_golf_cover(*kind))
+        .flat_map(|(_, rings)| rings.iter())
+        .filter(|ring| ring.len() >= 3)
+        .map(|ring| (ring.iter().fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, p| [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])]), ring.clone()))
+        .collect();
     for (kind, rings) in covers {
         let (min, max) = rings.iter().flatten().fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), p| ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]));
         if min[0] > max[0] {
@@ -503,7 +513,8 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
         let on_bridge = bridges.iter().zip(&bridge_boxes).any(|((points, width, ..), b)| {
             in_box(b, at) && points.windows(2).any(|pair| distance_to_segment(at, pair[0], pair[1]) < width / 2.0 + BRIDGE_CLEAR)
         });
-        if on_building || on_road || on_bridge {
+        let on_course = kind != TREE_FLAG && golf.iter().any(|(b, ring)| in_box(b, at) && point_in_polygon(at, ring));
+        if on_building || on_road || on_bridge || on_course {
             continue;
         }
         if !near {
@@ -520,7 +531,7 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
             crown: cm(crown),
             kind,
             // A shrub is something to walk through, wherever it stands.
-            solid: near && kind != TREE_BUSH,
+            solid: near && kind != TREE_BUSH && kind != TREE_FLAG,
         });
     }
     // The API gives no stable order, and tile files are hashed.
@@ -596,7 +607,7 @@ pub fn frame([south, west, north, east]: [f64; 4]) -> ((f64, f64), f64) {
 #[allow(clippy::too_many_arguments)]
 /// `lidar` holds the returns that can be roof, `decks` the bridge deck returns of a classified cloud,
 /// and `photo` the aerial photo the buildings' colours come from.
-pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, osm: &Osm, planted: &[Planted], ground: Ground, water: Placed, lidar: Option<&Cloud>, decks: Option<&Cloud>, photo: Option<&crate::paint::Photo>, ski: &[Vec<crate::overpass::LatLon>], ocad: Option<&crate::ocad::Source>) -> Built {
+pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, osm: &Osm, planted: &[Planted], ground: Ground, water: Placed, lidar: Option<&Cloud>, decks: Option<&Cloud>, photo: Option<&crate::paint::Photo>, ski: &[Vec<crate::overpass::LatLon>], ocad: Option<&crate::ocad::Source>, golf: Option<&shared::golf::Course>) -> Built {
     let (frame, half) = (place.frame, place.half);
     let source = |x: f64, z: f64| place.source(x, z);
     let mut buildings = Vec::new();
@@ -660,6 +671,9 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
             } else {
                 roads.push((points, width, kind));
             }
+        } else if golf.is_some() && way.tags.get("golf").and_then(|value| crate::osm_golf::surface_kind(value)).is_some() {
+            // The course has its surfaces, every one of them, not only those with a landuse too.
+            continue;
         } else if let Some(kind) = cover_kind(&way.tags) {
             // Only closed ways are areas; an open one is a bank or a fence.
             if points.len() >= 4 && points.first() == points.last() {
@@ -723,16 +737,24 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
         }
         eprintln!("roof colours: {roofs:?}");
     }
-    let trees = planted.iter().map(|tree| (frame.project(tree.lat, tree.lon), tree.kind, tree.height, tree.crown, tree.registered)).collect();
+    let mut trees: Vec<_> = planted.iter().map(|tree| (frame.project(tree.lat, tree.lon), tree.kind, tree.height, tree.crown, tree.registered)).collect();
+    let mut course = Vec::new();
+    if let Some(golf) = golf {
+        course.extend(golf.surfaces.iter().map(|surface| (surface.kind, vec![surface.ring.iter().map(|&[x, z]| [f64::from(x), f64::from(z)]).collect::<Vec<P>>()])));
+        // A flag in every cup.
+        trees.extend(golf.holes.iter().map(|hole| ([f64::from(hole.cup[0]), f64::from(hole.cup[1])], TREE_FLAG, FLAG_HEIGHT, 0.3, false)));
+    }
     crate::progress::stage("tiles");
     let ski = ski.iter().map(|way| way.iter().map(|p| frame.project(p.lat, p.lon)).collect()).collect();
     let mut mapped = Vec::new();
     if let Some(ocad) = ocad {
         roads.extend(ocad.roads.iter().map(|(geometry, width, kind)| (line(geometry), *width, *kind)));
-        covers = covers.into_iter().flat_map(|(kind, rings)| ocad.outside(&rings).into_iter().map(move |rings| (kind, rings))).collect();
+        covers = covers.into_iter().flat_map(|(kind, rings)| if is_golf_cover(kind) { vec![rings] } else { ocad.outside(&rings) }.into_iter().map(move |rings| (kind, rings))).collect();
         covers.extend(ocad.covers.iter().cloned());
         mapped.clone_from(&ocad.outline);
     }
+    // After the map's own, which would cut them away where it covers the course.
+    covers.extend(course);
     // The lines are laid on the ground once the tiles are built, so it is kept for them.
     let kept = ocad.filter(|ocad| !ocad.lines.is_empty()).map(|_| ground.clone());
     let mut built = assemble(frame, half, tile_size, mask, buildings, roads, bridges, rails, rail_bridges, ski, covers, trees, &mapped, ground, water);
@@ -1005,6 +1027,9 @@ fn is_bridge(way: &Way) -> bool {
 /// cover: it comes from Hydrografi (`water.rs`).
 fn cover_kind(tags: &std::collections::HashMap<String, String>) -> Option<u8> {
     let tag = |key: &str| tags.get(key).map(String::as_str);
+    if let Some(kind) = tag("golf").and_then(crate::osm_golf::surface_kind) {
+        return Some(kind);
+    }
     if let Some(value) = tag("natural") {
         return match value {
             "wood" => Some(COVER_WOOD),
@@ -1036,6 +1061,9 @@ fn cover_rank(kind: u8) -> u8 {
     match kind {
         COVER_URBAN | COVER_INDUSTRIAL | COVER_FARM => 0,
         COVER_WOOD | COVER_PARK | COVER_SAND | COVER_THICKET_SLOW | COVER_THICKET_WALK | COVER_THICKET_FIGHT => 1,
+        // A course over the park it lies in: its fairways, and on them its tees, greens and bunkers.
+        COVER_GOLF_FAIRWAY => 3,
+        COVER_GOLF_GREEN | COVER_GOLF_TEE | COVER_GOLF_BUNKER => 4,
         _ => 2,
     }
 }

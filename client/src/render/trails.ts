@@ -1,5 +1,5 @@
 import { Ribbons, type RibbonStyle } from '@ragnarok/engine'
-import { PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL } from '@/net/codec'
+import { PROJECTILE_BALL, PROJECTILE_GOLF_BALL, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL } from '@/net/codec'
 
 /** A white-hot core and a pale smoke line behind a rocket: the flame is short, the smoke hangs. */
 const ROCKET: RibbonStyle[] = [
@@ -20,6 +20,8 @@ const BULLET: RibbonStyle[] = [
 /** Round shot: no tracer, only a thin grey smudge of powder smoke behind the iron. */
 const BALL: RibbonStyle[] = [{ color: 0x8a8a86, colorEnd: 0xb4b4ae, alpha: 0.28, life: 0.9, width: 0.3, taper: 2.5, step: 0.6 }]
 const BOMB: RibbonStyle[] = [{ color: 0x707070, colorEnd: 0x9a9a9a, alpha: 0.25, life: 1.2, width: 0.15, taper: 3, step: 0.5 }]
+/** A golf ball in flight: a faint white streak, to follow it against the sky. */
+const GOLF: RibbonStyle[] = [{ color: 0xffffff, colorEnd: 0xe8ecef, alpha: 0.35, life: 0.6, width: 0.05, taper: 1.5, step: 0.5 }]
 const GRENADE: RibbonStyle[] = [{ color: 0x909090, colorEnd: 0xb0b0b0, alpha: 0.22, life: 0.7, width: 0.08, taper: 2, step: 0.4 }]
 
 /** A flare's climb: a hot streak and a pale smoke line that hangs where it went up. */
@@ -36,6 +38,7 @@ function stylesFor(kind: number): RibbonStyle[] {
   if (kind === PROJECTILE_BULLET) return BULLET
   if (kind === PROJECTILE_BOMB) return BOMB
   if (kind === PROJECTILE_BALL) return BALL
+  if (kind === PROJECTILE_GOLF_BALL) return GOLF
   // A hen's egg leaves the grenade's faint wake.
   if (kind === PROJECTILE_GRENADE || kind === PROJECTILE_EGG) return GRENADE
   return ROCKET

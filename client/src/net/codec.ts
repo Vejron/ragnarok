@@ -88,6 +88,10 @@ export const WEAPON_AP = 27
 export const WEAPON_BALL = 29
 /** A round ended in open water at the event's point, the surface there: a splash. */
 export const WEAPON_SPLASH = 30
+/** `shooter` swung a golf club, its head at the event's point; at a ball, it is struck. */
+export const WEAPON_GOLF = 31
+/** A golf ball dropped into the cup at the event's point; `shooter` struck it last. */
+export const WEAPON_CUP = 32
 
 /** `Limbs`'s lost limbs, the low four bits; the same bits above `LIMB_BLEED_SHIFT` still bleed. Mirrors `LIMB_*`. */
 export const LIMB_ARM_L = 1 << 0
@@ -158,6 +162,8 @@ export const PROJECTILE_FLARE = 8
 export const PROJECTILE_HE = 9
 /** A ship's gun's round shot: slower than a shell, so it arcs, and bursting small where it lands. */
 export const PROJECTILE_BALL = 10
+/** A golf ball: flies, bounces and rolls, and rests where it stops until a club strikes it. */
+export const PROJECTILE_GOLF_BALL = 11
 
 /** `Turret`'s flags: a field mortar is hitched to a car, so it is drawn folded up for travel. Mirrors `TURRET_STOWED`. */
 export const TURRET_STOWED = 1 << 0

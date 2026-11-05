@@ -12,7 +12,9 @@
     {"id": 10, "name": "Flare gun", "kind": "flare", "auto": false, "damage": 0, "cooldownTicks": 60, "mag": 0, "reloadTicks": 0, "range": 0, "aimSpeed": 1, "scope": false, "stack": 3, "weapon": 22, "projectile": false, "pellets": 1, "falloffStart": 0, "falloffEnd": 0, "falloffMin": 1, "spread": 0},
     {"id": 11, "name": "Bricks", "kind": "build", "auto": true, "damage": 0, "cooldownTicks": 10, "mag": 0, "reloadTicks": 0, "range": 6, "aimSpeed": 1, "scope": false, "stack": 1, "weapon": 0, "projectile": false, "pellets": 1, "falloffStart": 0, "falloffEnd": 0, "falloffMin": 1, "spread": 0},
     {"id": 12, "name": "Carl Gustaf", "kind": "launcher", "auto": false, "damage": 160, "cooldownTicks": 150, "mag": 0, "reloadTicks": 0, "range": 400, "aimSpeed": 0.4, "scope": true, "stack": 3, "weapon": 24, "projectile": false, "pellets": 1, "falloffStart": 0, "falloffEnd": 0, "falloffMin": 1, "spread": 0.03},
-    {"id": 13, "name": "AT rifle", "kind": "gun", "auto": false, "damage": 100, "cooldownTicks": 90, "mag": 1, "reloadTicks": 120, "range": 400, "aimSpeed": 0.35, "scope": false, "stack": 1, "weapon": 7, "projectile": true, "pellets": 1, "falloffStart": 0, "falloffEnd": 0, "falloffMin": 1, "spread": 0.06}
+    {"id": 13, "name": "AT rifle", "kind": "gun", "auto": false, "damage": 100, "cooldownTicks": 90, "mag": 1, "reloadTicks": 120, "range": 400, "aimSpeed": 0.35, "scope": false, "stack": 1, "weapon": 7, "projectile": true, "pellets": 1, "falloffStart": 0, "falloffEnd": 0, "falloffMin": 1, "spread": 0.06},
+    {"id": 14, "name": "Driver", "kind": "club", "auto": false, "damage": 0, "cooldownTicks": 30, "mag": 0, "reloadTicks": 0, "range": 1.6, "aimSpeed": 1, "scope": false, "stack": 1, "weapon": 31, "projectile": false, "pellets": 1, "falloffStart": 0, "falloffEnd": 0, "falloffMin": 1, "spread": 0},
+    {"id": 15, "name": "Putter", "kind": "club", "auto": false, "damage": 0, "cooldownTicks": 30, "mag": 0, "reloadTicks": 0, "range": 1.6, "aimSpeed": 1, "scope": false, "stack": 1, "weapon": 31, "projectile": false, "pellets": 1, "falloffStart": 0, "falloffEnd": 0, "falloffMin": 1, "spread": 0}
   ],
   "vehicles": [
     {"kind": 1, "name": "Jeep", "hp": 100, "seats": 4, "halfExtents": [1, 0.42, 1.95], "gun": false, "arms": false, "carWheels": true, "trackHalf": 0.9, "axleZ": 1.25, "crew": "open", "crewGuns": true, "seatHeads": [[-0.4, 0.62, -0.3], [0.4, 0.62, -0.3], [-0.4, 0.62, 0.75], [0.4, 0.62, 0.75]], "mountSeat": null, "legged": false, "heavy": false, "towed": false, "shedsTurret": false, "drone": false, "board": null, "slits": []},
@@ -43,10 +45,19 @@
     {"kind": 6, "name": "Low and wide", "radius": 15, "refHeight": 800, "radiusPctOfCrown": 0, "maxRadius": 60, "colliderHeightPct": 50, "destructible": true},
     {"kind": 7, "name": "Boulder", "radius": 0, "refHeight": 1, "radiusPctOfCrown": 80, "maxRadius": 200, "colliderHeightPct": 80, "destructible": false},
     {"kind": 8, "name": "Rock slab", "radius": 0, "refHeight": 1, "radiusPctOfCrown": 85, "maxRadius": 250, "colliderHeightPct": 85, "destructible": false},
-    {"kind": 9, "name": "Bush", "radius": 10, "refHeight": 100, "radiusPctOfCrown": 0, "maxRadius": 60, "colliderHeightPct": 50, "destructible": true}
+    {"kind": 9, "name": "Bush", "radius": 10, "refHeight": 100, "radiusPctOfCrown": 0, "maxRadius": 60, "colliderHeightPct": 50, "destructible": true},
+    {"kind": 10, "name": "Flag", "radius": 2, "refHeight": 230, "radiusPctOfCrown": 0, "maxRadius": 60, "colliderHeightPct": 50, "destructible": false}
   ],
   "materials": [
     {"id": 0, "name": "Brick", "hp": 40, "blastReach": 1}
+  ],
+  "golfMeter": [
+    {"fire": "0011111111111111111111111111111111111110000000000000000000000000011000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000", "strike": {"at": 65, "power": 0.5, "curve": 0, "mishit": false}},
+    {"fire": "001111111111111111111111111111111111111111111111111111111111111111111111111000000000000000000000000000000000000000000000000011000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000", "strike": {"at": 124, "power": 1, "curve": -0.6666667, "mishit": false}},
+    {"fire": "0011111111111111111111111111111111111111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000011000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000", "strike": {"at": 131, "power": 1, "curve": 0.16666667, "mishit": false}},
+    {"fire": "0011111111111111111111111111111111111110000000000000011000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000", "strike": {"at": 53, "power": 0.2, "curve": -1, "mishit": true}},
+    {"fire": "001111111111111111111111111111111111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000", "strike": {"at": 76, "power": 0.2, "curve": 1, "mishit": true}},
+    {"fire": "01111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001", "strike": {"at": 150, "power": 0.44000003, "curve": 1, "mishit": true}}
   ],
   "standardLoadout": [2, 5, 10, 8, 11],
   "consts": {

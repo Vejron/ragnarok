@@ -4,6 +4,7 @@ import {
   TREE_BROADLEAF,
   TREE_BUSH,
   TREE_COLUMNAR,
+  TREE_FLAG,
   TREE_LOWWIDE,
   TREE_ORNAMENTAL,
   TREE_PINE,
@@ -71,6 +72,12 @@ const PROTOTYPES: Record<number, Part[]> = {
   [TREE_BUSH]: [
     { shape: 'ellipsoid', color: 0x3f8f45, y0: 0.4, rx: 1, ry: 0.45 },
     { shape: 'ellipsoid', color: 0x4fa352, y0: 0.62, rx: 0.65, ry: 0.35, x: 0.15, z: -0.1 },
+  ],
+  // Over a crown of 0.3 m: a thin white pole, a red pennant at its top, and the dark cup it stands in.
+  [TREE_FLAG]: [
+    { shape: 'trunk', color: 0xf4f4f0, y0: 0, y1: 1, rx: 0.04 },
+    { shape: 'ellipsoid', color: 0xe0302a, y0: 0.9, rx: 0.55, ry: 0.06, x: 0.55 },
+    { shape: 'trunk', color: 0x1a1a18, y0: 0, y1: 0.004, rx: 0.4 },
   ],
 }
 

@@ -1,4 +1,4 @@
-import { BALLAST_EXTRA, COVER_FARM, COVER_INDUSTRIAL, COVER_MARSH, COVER_MARSH_DEEP, COVER_MARSH_FAINT, COVER_ROCK, COVER_SAND, COVER_WATER, NO_WATER, RAIL_TRAIN, ROAD_MAJOR, ROAD_MINOR, type Point2, type TileData, type TileRef } from '@/world'
+import { BALLAST_EXTRA, COVER_FARM, COVER_GOLF_BUNKER, COVER_INDUSTRIAL, COVER_MARSH, COVER_MARSH_DEEP, COVER_MARSH_FAINT, COVER_ROCK, COVER_SAND, COVER_WATER, NO_WATER, RAIL_TRAIN, ROAD_MAJOR, ROAD_MINOR, type Point2, type TileData, type TileRef } from '@/world'
 import type { TileGround } from './terrain'
 
 /**
@@ -41,6 +41,7 @@ export function coverSurface(kind: number): number | null {
     case COVER_MARSH_FAINT: return SURFACE_MUD_FAINT
     case COVER_ROCK: return SURFACE_DIRT
     case COVER_SAND: return SURFACE_SAND
+    case COVER_GOLF_BUNKER: return SURFACE_SAND
     // Woods, parks and built-up land stay grass: the cover's own colour is what the terrain shows.
     default: return null
   }

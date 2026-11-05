@@ -24,4 +24,8 @@ export const HOTBAR_ICONS: Record<number, string> = {
   11: '<rect x="2" y="5" width="9" height="6" fill="#c0603a"/><rect x="13" y="5" width="9" height="6" fill="#c0603a"/><rect x="7" y="13" width="10" height="6" fill="#c0603a"/><path d="M2 5h20v14H2zM11 5v6M7 13h10" fill="none" stroke="#fff" stroke-width="1" opacity=".5"/>',
   // Carl Gustaf
   12: '<rect x="1" y="9" width="22" height="5" rx="2" fill="#55613a"/><path d="M1 8.5h4v6H1zM19 8.5h4v6h-4z" fill="#3a4426"/><path d="M9 14v5h3v-5M13 5h4v4h-4z" fill="currentColor"/>',
+  // Driver
+  14: '<path d="M6 2l9 15" stroke="#c8ccd0" stroke-width="1.6" stroke-linecap="round"/><path d="M5 1l2.5 4.3" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><path d="M12.5 16.5c1-1.6 4.5-2.3 7-1.2 1.6.7 1.6 3.4 0 4.3-2.4 1.3-6.2.9-7.3-.6-.4-.6-.3-1.6.3-2.5z" fill="currentColor"/><circle cx="20" cy="21.5" r="1.6" fill="#fff" stroke="currentColor" stroke-width=".6"/>',
+  // Putter
+  15: '<path d="M7 2l7 17" stroke="#c8ccd0" stroke-width="1.6" stroke-linecap="round"/><path d="M6 1l2 4.6" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><rect x="11" y="18" width="9" height="3" rx="1" fill="currentColor"/><circle cx="4" cy="20" r="1.6" fill="#fff" stroke="currentColor" stroke-width=".6"/>',
 }

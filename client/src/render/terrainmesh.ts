@@ -5,6 +5,10 @@ import {
   COVER_MARSH,
   COVER_MARSH_DEEP,
   COVER_MARSH_FAINT,
+  COVER_GOLF_BUNKER,
+  COVER_GOLF_FAIRWAY,
+  COVER_GOLF_GREEN,
+  COVER_GOLF_TEE,
   COVER_PARK,
   COVER_ROCK,
   COVER_SAND,
@@ -41,6 +45,11 @@ export const COVER_COLORS: Record<number, number> = {
   [COVER_MARSH_DEEP]: 0x5f8a6c,
   [COVER_MARSH_FAINT]: 0x86ad80,
   [COVER_ROCK]: 0x7d776f,
+  // Mown short, so a shade richer than the park round them, the green the richest.
+  [COVER_GOLF_FAIRWAY]: 0x86d063,
+  [COVER_GOLF_TEE]: 0x7ccb5c,
+  [COVER_GOLF_GREEN]: 0x62c457,
+  [COVER_GOLF_BUNKER]: 0xf2e2b2,
 }
 
 /** Texels per metre of terrain. */

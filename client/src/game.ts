@@ -13,7 +13,9 @@ import { easeSway, sway, swayAmplitude } from './sway'
 import { mayPlace } from './sim/bricks'
 import { crewGun, vehicleDef } from './sim/vehicles'
 import { blockedAt, spreadPixels } from './aimline'
+import { Meter, called } from './sim/golf'
 import { aimSpeedScale, effectiveSpread, fillsHands, itemDef, type ItemDef, type ItemSlot } from './sim/items'
+import { backswingPhase, downswingPhase } from './render/golfclub'
 import { InputController } from './sim/input'
 import type { Character } from './render/character'
 import { SimMotor, type CharacterState, type VehiclePose } from './sim/motor'
@@ -102,10 +104,10 @@ import { HudLayer } from '@ragnarok/engine'
 import { InGameHud } from './hud/index'
 import { PAPER_METRES, zoomPaper } from './hud/map'
 import { WorldView } from './worldview'
-import type { HudStats } from './hud'
+import type { GolfMeterView, HudStats } from './hud'
 import { Notices } from './notices'
 import { Scoreboard, sides } from './scoreboard'
-import { Blips } from './blips'
+import { Blips, type Blip } from './blips'
 import { BackpackTracker } from './backpack'
 import { Bodies } from './bodies'
 import { Bricklayer } from './bricklayer'
@@ -134,6 +136,8 @@ const PING_INTERVAL_MS = 1000
 const SCOPE_LOOK_SCALE = 0.3
 /** The crosshair's arms stand at least this far from its middle, px, however true the gun. */
 const MIN_CROSS_GAP = 3
+/** How long a golf strike's name stays over the meter, ms. */
+const GOLF_CALL_MS = 1800
 /** Looking down a tank's sight is as slow as a rifle scope. */
 const SIGHT_LOOK_SCALE = 0.35
 /** The cold white of a headlamp, its strength in full dark and the share of that by day, its reach in metres, and its half-angle and soft edge. */
@@ -301,6 +305,9 @@ export class Game {
   private readonly mortarArc = new MortarArc()
   private readonly arcs = new Arcs(this.trajectory, this.mortarArc)
   private firedBefore = false
+  /** The golf swing meter, stepped by the same frames as the server's, and what the last strike was called and when. */
+  private golf = new Meter()
+  private golfCall: { text: string; at: number } | null = null
   /** Whether the last sampled input held crouch, for the local avatar. */
   private crouching = false
   /** Looking down a scope this frame. */
@@ -1123,6 +1130,7 @@ export class Game {
       hotbar: player.hotbar,
       selected: this.input.heldSlot,
       progress: player.progress,
+      golf: this.golfView(now),
       kills: this.board.kills(this.localId),
       deaths: this.board.deaths(this.localId),
       feed: this.board.recent(now, this.localId),
@@ -1136,7 +1144,7 @@ export class Game {
       z: ride?.z ?? position[2],
       yaw: this.input.yaw,
       halfExtent: this.world?.halfExtent ?? 0,
-      blips: this.blips.view(now, this.localId, ride?.x ?? position[0]!, ride?.z ?? position[2]!, this.alliesInView(), MAP_SIDES),
+      blips: [...this.blips.view(now, this.localId, ride?.x ?? position[0]!, ride?.z ?? position[2]!, this.alliesInView(), MAP_SIDES), ...this.golfBlip()],
       backpack: this.backpack.view(this.localId),
     }
   }
@@ -1172,14 +1180,45 @@ export class Game {
   }
 
   /** The local player's own muzzle flash, at once, instead of after the server's reply. */
+  /** The golf ball the player last struck, where it is drawn, until it is holed or lost. */
+  private golfBlip(): Blip[] {
+    const id = this.blips.golfBall
+    const at = id === null ? null : this.rocketModels.position(id)
+    if (!at) {
+      this.blips.golfBall = null
+      return []
+    }
+    return [{ x: at.x, z: at.z, color: '#ffffff', kind: 'ball', strength: 1 }]
+  }
+
+  /** The golf meter for the HUD, while a club is in hand. */
+  private golfView(now: number): GolfMeterView | null {
+    if (itemDef(this.held().item)?.kind !== 'club') return null
+    const call = this.golfCall && now - this.golfCall.at < GOLF_CALL_MS ? this.golfCall.text : null
+    return { reading: this.golf.reading(), call }
+  }
+
   private fireFeedback(frame: InputFrame) {
     const now = performance.now()
     const pressed = (frame.buttons & BUTTON_FIRE) !== 0
     const fresh = pressed && !this.firedBefore
     this.firedBefore = pressed
-    if (!this.player.alive || (this.seat && !crewGun(this.seat.kind, this.seat.index))) return
     const slot = this.held()
     const item = itemDef(slot.item)
+    // A golf club swings on the meter, stepped here just as the server steps it: drawn back as the
+    // power fills, starting down as the marker runs back, and struck the frame the server strikes.
+    if (item?.kind !== 'club' || !this.player.alive || this.seat) this.golf.reset()
+    else {
+      const me = this.avatars.local()
+      const strike = this.golf.step(pressed)
+      const reading = this.golf.reading()
+      if (strike) {
+        me.swing()
+        this.golfCall = { text: called(strike), at: now }
+      } else if (reading) me.clubPose = reading.returning ? downswingPhase(1 - reading.marker / Math.max(reading.power, 1e-3)) : backswingPhase(reading.power)
+      else me.clubPose = 0
+    }
+    if (!this.player.alive || (this.seat && !crewGun(this.seat.kind, this.seat.index))) return
     // A local mirror of the server's rules for a shot, so the flash does not wait for its reply.
     if (!item || item.kind !== 'gun' || !pressed || (!item.auto && !fresh)) return
     if (slot.ammo === 0 || this.player.progress > 0 || (frame.buttons & BUTTON_RELOAD) !== 0) return

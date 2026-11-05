@@ -1205,6 +1205,144 @@ def armed_air(t):
     armed_body(0.3, [("L", 0.34, 0.68, 0), ("R", 0.34, 0.68, 0)])
 
 
+# --------------------------------------------------------------------------------------------------
+# Golf: one swing, from the address over the ball up to the top, through the ball to the finish, and
+# back to the address. The game scrubs it: the backswing as the swing is charged, the rest once it is
+# let go (`golf_swing`, `GOLF_*` below and in client/src/render/character.ts).
+#
+# The golfer stands side-on to the target: the hips turn a quarter right, so the target (the game's
+# forward) is on their left and the ball in front of their toes. Positions below are in the golfer's
+# own axes before that turn: x their left, towards the target; -y their front, towards the ball; z up.
+# --------------------------------------------------------------------------------------------------
+GOLF_TURN = Matrix.Rotation(-math.pi / 2, 3, "Z")
+# The ball, where the club meets it at address and impact.
+GOLF_BALL = Vector((0.03, -0.62, 0.04))
+# How far down the grip the right hand is below the left, metres.
+GOLF_GRIP_GAP = 0.09
+# Forward tilt from the hips, knee flex, and the drop the flexed knees take the hips down by.
+GOLF_BEND = 0.5
+GOLF_KNEE = 0.3
+GOLF_FINISH_BEND = 0.1
+GOLF_DROP = (HIP_Z - ANKLE_Z) * (1 - math.cos(GOLF_KNEE))
+# Phases of the clip: the top of the backswing, impact, the finish, and the finish held until.
+GOLF_TOP = 0.40
+GOLF_IMPACT = 0.56
+GOLF_FINISH = 0.75
+GOLF_HOLD = 0.86
+
+
+def golf_address_dir():
+    return (GOLF_BALL - Vector((0.04, -0.30, 0.80))).normalized()
+
+
+# (phase, left hand's palm, the club's way from the hands to the head, the torso's turn about the spine).
+GOLF_KEYS = [
+    (0.00, Vector((0.04, -0.30, 0.80)), golf_address_dir(), 0.0),
+    (0.12, Vector((-0.20, -0.34, 0.83)), Vector((-0.70, -0.30, -0.65)), -0.55),
+    (0.25, Vector((-0.42, -0.26, 1.05)), Vector((-0.20, 0.05, 1.0)), -1.15),
+    (GOLF_TOP, Vector((-0.24, -0.04, 1.42)), Vector((0.95, 0.25, -0.10)), -1.65),
+    (0.50, Vector((-0.36, -0.24, 1.02)), Vector((-0.40, 0.05, 0.92)), -0.85),
+    (GOLF_IMPACT, Vector((0.07, -0.31, 0.80)), golf_address_dir(), 0.2),
+    (0.64, Vector((0.40, -0.30, 0.95)), Vector((0.80, -0.25, -0.50)), 0.95),
+    (GOLF_FINISH, Vector((0.26, -0.02, 1.42)), Vector((-0.85, 0.35, -0.25)), 1.65),
+    (GOLF_HOLD, Vector((0.26, -0.02, 1.42)), Vector((-0.85, 0.35, -0.25)), 1.65),
+    (1.00, Vector((0.04, -0.30, 0.80)), golf_address_dir(), 0.0),
+]
+
+
+def catmull(p0, p1, p2, p3, u):
+    return 0.5 * ((2 * p1) + (-p0 + p2) * u + (2 * p0 - 5 * p1 + 4 * p2 - p3) * u * u + (-p0 + 3 * p1 - 3 * p2 + p3) * u * u * u)
+
+
+def golf_key(t):
+    """The hands, the club's way and the turn at phase `t`, through the keys on a smooth curve. The held
+    finish stays put."""
+    keys = GOLF_KEYS
+    i = max(k for k in range(len(keys) - 1) if keys[k][0] <= t)
+    (t1, h1, d1, b1), (t2, h2, d2, b2) = keys[i], keys[i + 1]
+    u = (t - t1) / (t2 - t1)
+    if h1 == h2 and d1 == d2:
+        return h1.copy(), d1.normalized(), b1
+    (_, h0, d0, b0), (_, h3, d3, b3) = keys[max(i - 1, 0)], keys[min(i + 2, len(keys) - 1)]
+    # Into and out of the held finish, and from the address, the curve does not overshoot.
+    if keys[i][0] == GOLF_HOLD or i == 0:
+        h0, d0, b0 = h1, d1, b1
+    if keys[i + 1][0] == GOLF_FINISH or i + 2 >= len(keys):
+        h3, d3, b3 = h2, d2, b2
+    hand = catmull(h0, h1, h2, h3, u)
+    way = catmull(d0.normalized(), d1.normalized(), d2.normalized(), d3.normalized(), u).normalized()
+    turn = catmull(b0, b1, b2, b3, u)
+    return hand, way, turn
+
+
+def set_bone_matrix(name, head, rotation):
+    """Poses bone `name` to `rotation` (armature axes) at its posed head, rotation only."""
+    pb = arm_obj.pose.bones[name]
+    pb.matrix = Matrix.Translation(head) @ rotation.to_4x4()
+    pb.location = (0, 0, 0)
+    bpy.context.view_layer.update()
+
+
+def golf_arm(side, wrist, pole, way, face):
+    """Reaches arm `side` so its wrist is at `wrist` (armature axes), the elbow towards `pole`, and lays
+    the hand along the club (`way`), its +Z towards the club's face (`face`)."""
+    shoulder = arm_obj.pose.bones[f"upper_arm_{side}"].head.copy()
+    to_target = wrist - shoulder
+    reach = min(to_target.length, (UPPER_ARM + FOREARM) * 0.985)
+    direction = to_target.normalized()
+    a = (UPPER_ARM**2 - FOREARM**2 + reach**2) / (2 * reach)
+    h = math.sqrt(max(UPPER_ARM**2 - a**2, 0.0))
+    off = pole - direction * pole.dot(direction)
+    off.normalize()
+    elbow = shoulder + direction * a + off * h
+    reached = shoulder + direction * reach
+    down = Vector((0, 0, -1))
+    for part, head, tail in (("upper_arm", shoulder, elbow), ("forearm", elbow, reached)):
+        name = f"{part}_{side}"
+        turn = down.rotation_difference((tail - head).normalized()).to_matrix()
+        set_bone_matrix(name, head, turn @ REST3[name])
+    y = way.normalized()
+    z = (face - y * face.dot(y)).normalized()
+    x = y.cross(z)
+    hand = Matrix((x, y, z)).transposed()
+    set_bone_matrix(f"hand_{side}", reached, hand)
+
+
+def golf_swing(t):
+    hand, way, turn = golf_key(t)
+    # Weight goes back onto the right foot in the backswing and through onto the left.
+    shift = 0.04 * math.sin(math.pi * min(1.0, t / GOLF_IMPACT)) * (-1 if t < GOLF_TOP else 1) if t < GOLF_HOLD else 0.0
+    pose_loc("hips", GOLF_TURN @ Vector((shift, 0, -GOLF_DROP)))
+    # Bent over the ball until it is struck, standing tall at the finish.
+    tall = ease((t - GOLF_IMPACT) / (GOLF_FINISH - GOLF_IMPACT)) * (1 - ease((t - GOLF_HOLD) / (1 - GOLF_HOLD)))
+    bend = GOLF_BEND + (GOLF_FINISH_BEND - GOLF_BEND) * tall
+    pose_rot("hips", bend, 0, -math.pi / 2)
+    # The hips turn a little with the shoulders, the legs staying planted.
+    hips_turn = 0.45 * turn
+    pose_rot("spine", 0, 0, hips_turn * 0.6)
+    pose_rot("chest", 0.05, 0, turn - hips_turn * 0.6)
+    for side, spread in (("L", -0.1), ("R", 0.1)):
+        pose_rot(f"thigh_{side}", -bend - GOLF_KNEE, spread, 0)
+        pose_rot(f"shin_{side}", 2 * GOLF_KNEE, 0, 0)
+        pose_rot(f"foot_{side}", -GOLF_KNEE, 0, 0)
+    # The eyes stay on the ball until it is struck, then follow it towards the target.
+    looking = tall
+    pose_rot("neck", 0.3 - 0.25 * looking, 0, -0.5 * turn * (1 - looking))
+    pose_rot("head", 0.25 - 0.2 * looking, 0, -0.4 * turn * (1 - looking) + 0.5 * looking)
+    bpy.context.view_layer.update()
+    # The hands, on the club, both laid along it: the left at the top of the grip, the right below.
+    target = Vector((1, 0, 0))
+    plane = target.cross(golf_address_dir()).normalized()
+    face = way.cross(plane)
+    pole_l = GOLF_TURN @ Vector((0.3, 0.4, -1.0))
+    pole_r = GOLF_TURN @ Vector((-0.3, 0.4, -1.0))
+    left = hand
+    right = hand + way * GOLF_GRIP_GAP
+    w, f = GOLF_TURN @ way, GOLF_TURN @ face
+    golf_arm("L", GOLF_TURN @ (left - way * HAND_LEN * 0.5), pole_l, w, f)
+    golf_arm("R", GOLF_TURN @ (right - way * HAND_LEN * 0.5), pole_r, w, f)
+
+
 # One crawl cycle, two pushes, at 60 fps.
 CRAWL_FRAMES = 78
 
@@ -1251,6 +1389,8 @@ def build_actions():
         bake(f"{prefix}armed_air", 60, armed_air)
     # Dying lets go of everything, so one clip serves every stance.
     CURRENT = "rifle"
+    # Both hands on the club: whatever stance a club is held in.
+    bake("golf_swing", 150, golf_swing, loop=False)
     bake("death", 60, death, loop=False)
     # Falling lets go of the item's grip too: shared by every stance.
     bake("freefall", 90, freefall)
@@ -1327,6 +1467,27 @@ print("wrote", OUT)
 # --------------------------------------------------------------------------------------------------
 # Preview renders (optional)
 # --------------------------------------------------------------------------------------------------
+def golf_preview_club():
+    """A club on the right hand for the previews: the shaft along the hand bone, the head at its end."""
+    bm = bmesh.new()
+    bmesh.ops.create_cone(bm, cap_ends=True, segments=6, radius1=0.012, radius2=0.012, depth=0.87)
+    bmesh.ops.rotate(bm, verts=bm.verts, matrix=Matrix.Rotation(-math.pi / 2, 3, "X"))
+    bmesh.ops.translate(bm, verts=bm.verts, vec=Vector((0, 0.355, 0)))
+    head = bmesh.ops.create_cube(bm, size=1.0)["verts"]
+    bmesh.ops.scale(bm, verts=head, vec=Vector((0.11, 0.05, 0.05)))
+    bmesh.ops.translate(bm, verts=head, vec=Vector((0.04, 0.80, -0.01)))
+    data = bpy.data.meshes.new("club")
+    bm.to_mesh(data)
+    obj = bpy.data.objects.new("club", data)
+    scene.collection.objects.link(obj)
+    obj.parent = arm_obj
+    obj.parent_type = "BONE"
+    obj.parent_bone = "hand_R"
+    # A bone's child hangs from its tail.
+    obj.location = (0, -HAND_LEN, 0)
+    return obj
+
+
 def preview(directory):
     os.makedirs(directory, exist_ok=True)
     scene.render.engine = "BLENDER_WORKBENCH"
@@ -1403,6 +1564,20 @@ def preview(directory):
                 shoot(f"held_{wname}_{clip}_{view}", view)
     for obj in weapon_objects:
         obj.hide_render = False
+    # A swing, a club in hand as the game puts one there (`render/golfclub.ts`): along the hand, its face +Z.
+    # Side-on, the golfer faces -X: seen face on, and down the line from behind the ball's flight.
+    views["golf_face"] = (Vector((-6, 0, 0.9)), Vector((0, 0, 0.9)))
+    views["golf_line"] = (Vector((0, 6, 0.9)), Vector((0, 0, 0.9)))
+    club = golf_preview_club()
+    for obj in weapon_objects:
+        obj.hide_render = True
+    for frame in (0, 18, 37, 48, 60, 75, 84, 96, 112, 129, 150):
+        at("golf_swing", frame)
+        for view in ("golf_face", "golf_line"):
+            shoot(f"golf_{frame:03d}_{view}", view)
+    for obj in weapon_objects:
+        obj.hide_render = False
+    bpy.data.objects.remove(club)
     at("jump_air", 10)
     shoot("jump", "side")
     at("death", 60)

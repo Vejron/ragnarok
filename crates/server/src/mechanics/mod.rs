@@ -7,6 +7,7 @@ mod bots;
 mod building;
 mod combat;
 mod drones;
+mod golf;
 mod gunnery;
 mod life;
 mod limbs;
@@ -28,6 +29,7 @@ pub(crate) use backpack::{carries, lying as backpack_lying};
 pub use armor::ArmorHit;
 pub use backpack::{Backpack, BackpackState};
 pub use drones::Drones;
+pub use golf::Golf;
 pub use gunnery::Gunnery;
 pub use life::{Life, record_trails};
 pub use limbs::{Struck, Wounds, lost as limbs_lost};
@@ -82,12 +84,13 @@ pub fn register_components(ecs: &mut bevy_ecs::world::World) {
     ecs.register_component::<backpack::Carry>();
     ecs.register_component::<backpack::Lying>();
     projectiles::register(ecs);
+    golf::register(ecs);
 }
 
 /// The mechanics a room runs, in tick order. `Bots` goes first: it writes the bots' input, which
 /// everything after reads as it reads anyone's. `Life` brings the dead back before `Npcs` and `Wildlife` move them.
 pub fn default_mechanics() -> Vec<Box<dyn Mechanic>> {
-    vec![Box::<Bots>::default(), Box::new(Spawn), Box::new(Pickups), Box::new(Drones), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement), Box::new(Backpack), Box::new(Life), Box::new(Npcs), Box::<Wildlife>::default(), Box::new(Combat), Box::new(Structure), Box::new(Scores)]
+    vec![Box::<Bots>::default(), Box::new(Spawn), Box::new(Pickups), Box::new(Drones), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement), Box::new(Backpack), Box::new(Life), Box::new(Npcs), Box::<Wildlife>::default(), Box::new(Combat), Box::new(Golf), Box::new(Structure), Box::new(Scores)]
 }
 
 /// What tests outside the mechanics reach in for: setting up a busy room without playing it.

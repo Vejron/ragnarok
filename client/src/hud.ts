@@ -9,6 +9,12 @@ import type { FeedEntry, Side } from './scoreboard'
 import type { VoiceStatus } from './voice'
 
 /** Everything the HUD draws (`hud/`), assembled by the game once a frame. */
+/** The golf swing meter (`sim/golf.ts`): where it stands, if a swing is being made, and the last strike's name while it is shown. */
+export interface GolfMeterView {
+  reading: { power: number; marker: number; returning: boolean } | null
+  call: string | null
+}
+
 export interface HudStats {
   status: ConnectionStatus
   rtt: number | null
@@ -97,6 +103,8 @@ export interface HudStats {
   selected: number
   /** How far a reload or a bandage has got, 0..1, or 0 when neither is going on. */
   progress: number
+  /** The golf swing meter, with a club in hand; null otherwise. */
+  golf: GolfMeterView | null
   kills: number
   deaths: number
   /** Recent kills, oldest first. */

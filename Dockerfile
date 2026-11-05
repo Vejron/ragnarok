@@ -37,8 +37,9 @@ COPY client/dist /app/dist
 # The built client holds the world (copied from client/public, or WORLD_DIR via scripts/deploy.sh).
 COPY client/dist/world.msgpack /app/world.msgpack
 COPY client/dist/tiles /app/tiles
-# Hand-placed spawns, vehicles and items (area.json) and the world's scenario (scenario.json, if it has
-# one): scripts/deploy.sh fills .deploy/, and the server reads both next to world.msgpack.
+# Hand-placed spawns, vehicles and items (area.json), the world's scenario (scenario.json) and golf
+# course (golf.json), when it has them: scripts/deploy.sh fills .deploy/, and the server reads them next
+# to world.msgpack.
 COPY .deploy/ /app/
 ENV RAGNAROK_DIST=/app/dist \
     RAGNAROK_WORLD=/app/world.msgpack \

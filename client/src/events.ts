@@ -12,7 +12,7 @@ import type { Blips } from '@/blips'
 import { HIT_DEER, HIT_KILL, HIT_ROOSTER, HIT_VEHICLE } from '@/feedback'
 import {
   PROJECTILE_BULLET, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_BULLET, WEAPON_CRASH, WEAPON_DRONE, WEAPON_EGG, WEAPON_FLARE, WEAPON_GRENADE, WEAPON_LASER, WEAPON_LAUNCHER, WEAPON_LOITER, WEAPON_MG, WEAPON_MORTAR,
-  MARK_GLANCE, MARK_PIERCED, MARK_SCUFF, MARK_VITAL, WEAPON_AP, WEAPON_BALL, WEAPON_SPLASH, WEAPON_PELLET, WEAPON_RICOCHET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_TURRET, WEAPON_WRECK,
+  MARK_GLANCE, MARK_PIERCED, MARK_SCUFF, MARK_VITAL, WEAPON_AP, WEAPON_BALL, WEAPON_CUP, WEAPON_GOLF, WEAPON_SPLASH, WEAPON_PELLET, WEAPON_RICOCHET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_TURRET, WEAPON_WRECK,
   type BulletSpawn, type HullMark, type ShotEvent,
 } from '@/net/codec'
 import { CarModel } from '@/render/car'
@@ -79,6 +79,9 @@ interface LiveBullet {
   /** Muzzle minus eye, closing as it flies. */
   offset: Vector3 | null
 }
+
+/** How far from a club's head (metres) the ball it struck can be drawn when the swing is played. */
+const STRUCK_BALL_RADIUS = 2.5
 
 /** What events are drawn and heard in, and who the local player is. */
 export interface EventWorld {
@@ -316,6 +319,18 @@ export class Events {
       if (!pellets || (from && from.distanceTo(to) >= pellets.range - 1)) return
       if (!surroundings.watery(to, 0.2)) effects.pelletStrike(to)
       if (shot.shooter === local) view.chipped(to.x, to.y, to.z, pellets.damage)
+    } else if (shot.weapon === WEAPON_GOLF) {
+      // A club swung, its head at the ball it struck, or at the feet where there was none. The local
+      // player's own swing started when they let go.
+      // The local player's own ball is followed on the map. By the tick the event is played, the ball
+      // has flown a tick from the club (over a metre off a driver), so it is looked for round about.
+      if (shot.shooter !== local) avatars.of(shot.shooter)?.swing()
+      const struck = this.world.rockets.nearestGolfBall(to, STRUCK_BALL_RADIUS)
+      if (struck !== null && shot.shooter === local) this.world.blips.golfBall = struck
+      sounds.golfSwing([to.x, to.y, to.z], struck !== null)
+      if (struck !== null) effects.dust(to, 0.4)
+    } else if (shot.weapon === WEAPON_CUP) {
+      sounds.golfCup([to.x, to.y, to.z])
     } else if (shot.weapon === WEAPON_SPLASH) {
       // A round came down in open water: a tall column where it went in, whatever burst there.
       surroundings.watery(to, 1.6, 22)

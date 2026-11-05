@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 67
+export const PROTOCOL_VERSION = 69
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -826,6 +826,77 @@ export const DEER_CAPSULE_RADIUS = 0.55
 export const STAG_CAPSULE_CENTRE = 1.05
 export const STAG_CAPSULE_HALF_HEIGHT = 0.3
 export const STAG_CAPSULE_RADIUS = 0.6
+
+/**
+ * Golf (`ITEM_DRIVER`, `ITEM_PUTTER`, `PROJECTILE_GOLF_BALL`). A ball falls at this share of
+ * `GRAVITY`, which is twice the earth's: a ball wants the real thing to carry like one.
+ */
+export const GOLF_GRAVITY_SCALE = 0.5
+export const GOLF_BALL_RADIUS = 0.05
+
+/**
+ * A full swing's speed off the club, m/s, and how far above level it leaves, radians: the driver's
+ * own, and with aim held, a high pitch that stops quickly.
+ */
+export const GOLF_DRIVER_SPEED = 70.0
+export const GOLF_DRIVER_LOFT = 0.21
+export const GOLF_DRIVER_HIGH_LOFT = 0.75
+export const GOLF_PUTTER_SPEED = 6.0
+
+/**
+ * The swing meter (`golf::Meter`), counted in input frames, one a tick. Held fire fills it to a full
+ * swing in `GOLF_CHARGE_TICKS`, and on into an overswing to `GOLF_OVERSWING`, where it lets go by
+ * itself. Let go, a marker runs back across it, a full bar in `GOLF_RETURN_FRAMES`, to the line.
+ */
+export const GOLF_CHARGE_TICKS = Math.trunc(TICK_RATE * 6 / 5)
+export const GOLF_OVERSWING = 1.1
+export const GOLF_RETURN_FRAMES = Math.trunc(TICK_RATE * 9 / 10)
+
+/**
+ * Fire pressed again this many frames either side of the line strikes the ball dead straight; further
+ * off it curves, early to the left and late to the right, fully `GOLF_CURVE_FRAMES` beyond that; more
+ * than `GOLF_MISS_FRAMES` off (or never) is a mishit, topped, with `GOLF_MISHIT_POWER` of the power.
+ */
+export const GOLF_PURE_FRAMES = 1
+export const GOLF_CURVE_FRAMES = 6
+export const GOLF_MISS_FRAMES = 9
+export const GOLF_MISHIT_POWER = 0.4
+
+/** Frames after a strike before the meter can be started again. */
+export const GOLF_REST_FRAMES = TICK_RATE
+
+/**
+ * A fully curved ball's sideways pull in the air, m/s² for each m/s it flies at; a putt has no air to
+ * curve in, so it is pulled or pushed off line by this much, radians.
+ */
+export const GOLF_SPIN = 0.12
+export const GOLF_PUTT_PULL = 0.1
+
+/** A ball this far (metres, along the ground) from the golfer's feet, ahead of them, is in reach. */
+export const GOLF_REACH = 1.6
+
+/** How much of its speed into a surface a ball keeps bouncing off it, and of its speed along it. */
+export const GOLF_BOUNCE = 0.35
+export const GOLF_SKID = 0.75
+
+/** Rolling friction, of the ball's weight: on a green, a fairway or tee, a bunker, and anywhere else. */
+export const GOLF_ROLL_GREEN = 0.065
+export const GOLF_ROLL_FAIRWAY = 0.16
+export const GOLF_ROLL_BUNKER = 2.0
+export const GOLF_ROLL_ROUGH = 0.4
+
+/** Slower than this (m/s) on a slope gentler than its friction holds, a rolling ball stops. */
+export const GOLF_REST_SPEED = 0.08
+
+/** A ball within this of the cup's middle (metres) going slower than `GOLF_CUP_SPEED` (m/s) drops in. */
+export const GOLF_CUP_RADIUS = 0.16
+export const GOLF_CUP_SPEED = 1.8
+
+/** A ball nobody has struck for this long is gone; another waits on its tee. */
+export const GOLF_BALL_TTL_TICKS = 300 * TICK_RATE
+
+/** Golf balls in the world at once. */
+export const MAX_GOLF_BALLS = 32
 
 /**
  * The FPV drone: a quadcopter the size of a dinner plate. It is flown by velocity: forward stick asks

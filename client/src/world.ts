@@ -71,6 +71,11 @@ export const COVER_MARSH = 10
 export const COVER_ROCK = 11
 export const COVER_MARSH_DEEP = 12
 export const COVER_MARSH_FAINT = 13
+/** A golf course's mown surfaces. */
+export const COVER_GOLF_FAIRWAY = 14
+export const COVER_GOLF_GREEN = 15
+export const COVER_GOLF_TEE = 16
+export const COVER_GOLF_BUNKER = 17
 
 export const TREE_BIRCH = 0
 export const TREE_PINE = 1
@@ -82,6 +87,8 @@ export const TREE_LOWWIDE = 6
 export const TREE_ROCK_BOULDER = 7
 export const TREE_ROCK_SLAB = 8
 export const TREE_BUSH = 9
+/** A golf hole's flagstick and its cup. */
+export const TREE_FLAG = 10
 
 /**
  * How an archetype's collider is sized and whether it can fall: `TREE_KINDS` in

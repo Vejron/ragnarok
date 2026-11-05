@@ -6,8 +6,8 @@ export interface Blip {
   z: number
   /** CSS colour. */
   color: string
-  /** An ally, shown while in view, or someone who fired. */
-  kind: 'ally' | 'shot'
+  /** An ally, shown while in view, someone who fired, or the golf ball the player last struck. */
+  kind: 'ally' | 'shot' | 'ball'
   /** 1 when new, falling to 0 as it goes. */
   strength: number
 }
@@ -33,9 +33,12 @@ export const ALLY_COLOR = '#2ec4b6'
 
 export class Blips {
   private shots: { shooter: number; x: number; z: number; at: number }[] = []
+  /** The projectile id of the golf ball the player last struck, marked while it is about. */
+  golfBall: number | null = null
 
   clear() {
     this.shots = []
+    this.golfBall = null
   }
 
   /** `shooter` fired from `(x, z)` at `now`; 0 when nobody is known, as for a shell or a rocket. */

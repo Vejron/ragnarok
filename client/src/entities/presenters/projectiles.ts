@@ -5,7 +5,7 @@ import type { Rockets } from '@/render/rockets'
 import type { ProjectileTrails } from '@/render/trails'
 import type { FxWorld } from '@/render/tyres'
 import { rocketTrail } from '@/render/vehiclesmoke'
-import { PROJECTILE_FLARE } from '@/net/codec'
+import { PROJECTILE_FLARE, PROJECTILE_GOLF_BALL } from '@/net/codec'
 import type { Presenter, Frame } from '../presenter'
 import type { Sampled } from '../store'
 import type { Entity } from '../units'
@@ -46,9 +46,10 @@ export class Projectiles implements Presenter<Frame> {
     const { vx, vy, vz } = entity.velocity!
     const kind = entity.projectile!.kind
     // Nobody is named as a rocket's shooter: the map marks it as gunfire from where it was first seen.
+    // A golf ball is no gunfire.
     if (!this.seen.has(id)) {
       this.seen.add(id)
-      this.world.blips.fired(0, x, z, frame.now)
+      if (kind !== PROJECTILE_GOLF_BALL) this.world.blips.fired(0, x, z, frame.now)
     }
     this.world.models.place(id, kind, [x, y, z], [vx, vy, vz])
     this.world.trails.follow('r', id, kind, x, y, z)

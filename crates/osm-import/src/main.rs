@@ -556,6 +556,8 @@ fn main() -> Result<()> {
     anyhow::ensure!(args.tile >= 20.0, "--tile must be at least 20 m");
     anyhow::ensure!(args.cell == 0.0 || args.cell >= 0.5, "--cell must be 0 or at least 0.5 m");
     let mut print = None;
+    // The world's golf course, if it has one: laid out in its tiles, and written beside it for the server.
+    let mut course: Option<shared::golf::Course> = None;
     let mut built = if args.synthetic {
         let map = if args.no_water { water::Map::default() } else { assemble::synthetic_water(300.0) };
         let (ground, datum, placed) = if args.cell > 0.0 {
@@ -681,7 +683,24 @@ fn main() -> Result<()> {
         } else {
             Vec::new()
         };
-        let mut built = assemble::from_osm(&place, args.tile, mask, &osm, &planted, ground, placed, cloud.as_ref(), decks.as_ref(), photo.as_ref(), &ski, ocad.as_ref());
+        progress::stage("golf");
+        let split = overpass::split(bbox, args.overpass_chunk);
+        // A nicety: a world whose golf cannot be fetched is a world without a course.
+        course = match osm_import::osm_golf::fetch_pieces(&args.overpass, pieces.unwrap_or(&split), 3, 15) {
+            Ok(mapped) => {
+                let laid = osm_import::osm_golf::lay_out(&mapped, |lat, lon| place.frame.project(lat, lon));
+                let inside = |[x, z]: [f32; 2]| f64::from(x).abs() < place.half && f64::from(z).abs() < place.half;
+                let holes = laid.holes.iter().filter(|hole| inside(hole.tee) && inside(hole.cup)).count();
+                eprintln!("golf: {} holes ({holes} inside the world), {} surfaces, {} pins from OpenStreetMap", laid.holes.len(), laid.surfaces.len(), mapped.pins.len());
+                let laid = shared::golf::Course { holes: laid.holes.into_iter().filter(|hole| inside(hole.tee) && inside(hole.cup)).collect(), ..laid };
+                (!laid.holes.is_empty() || !laid.surfaces.is_empty()).then_some(laid)
+            }
+            Err(error) => {
+                eprintln!("no golf: {error:#}");
+                None
+            }
+        };
+        let mut built = assemble::from_osm(&place, args.tile, mask, &osm, &planted, ground, placed, cloud.as_ref(), decks.as_ref(), photo.as_ref(), &ski, ocad.as_ref(), course.as_ref());
         if let (Some(coarse), Some(source)) = (coarse, dem.as_ref()) {
             progress::stage("detail");
             let model = |half: f64| {
@@ -737,6 +756,13 @@ fn main() -> Result<()> {
         std::fs::write(dir.join("minimap.png"), map).context("writing minimap.png")?;
     }
     std::fs::write(&args.out, &manifest).with_context(|| format!("writing {}", args.out.display()))?;
+    let course_path = dir.join(shared::golf::COURSE_FILE);
+    match &course {
+        Some(course) => std::fs::write(&course_path, serde_json::to_string(course)?).with_context(|| format!("writing {}", course_path.display()))?,
+        // Not one of an earlier, different world's.
+        None if course_path.exists() => std::fs::remove_file(&course_path).with_context(|| format!("removing {}", course_path.display()))?,
+        None => {}
+    }
     eprintln!(
         "wrote {} ({} KiB) and {tile_count} tiles ({} KiB): {buildings} buildings, {roads} roads, {rails} track pieces, {cover} cover patches, {spawns} spawns, {triangles} collision triangles, hash {:08x}",
         args.out.display(),
