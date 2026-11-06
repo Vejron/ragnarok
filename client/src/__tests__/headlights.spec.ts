@@ -120,7 +120,7 @@ describe('headlights', () => {
     // The gun's angles go over the wire in milliradians.
     const heli = (yaw: number): Components => ({
       kind: { kind: KIND_HELI }, place: { x: 0, y: 3000, z: 0 }, orientation: { qx: 0, qy: 0, qz: 0 }, steer: { steer: 0 }, health: { hp: 100 },
-      turret: { yaw: yaw * 1000, pitch: -300, shots: 0, range: 0, flags: 0 },
+      turret: { yaw: yaw * 1000, pitch: -300, shots: 0, range: 0, heat: 0, flags: 0 },
     })
     store.push(MIDNIGHT, new Map([[1, heli(0)], [2, { ...heli(0), place: { x: 5000, y: 3000, z: 0 } }], [11, rider(1, 1)]]), true)
     const ahead = settle(MIDNIGHT)

@@ -150,7 +150,7 @@ is. A rider with no `place` is sent to whoever is sent their vehicle.
 
 A jeep has 4 seats, and a sports car and a Roadster 2; a tank has 2, the second being the gunner; a helicopter has 2, the pilot and the nose gunner; a plane has 2, the pilot (who fires the forward guns and drops the bombs) and the rear gunner; a walker, a hen and a Strv S have 1, the driver, who also fires (a hen's driver lays its eggs) (the Strv S's gun is fixed in the hull, so its `turret.yaw` is always 0 and only `pitch` moves) |
 
-`turret` is `[yaw, pitch, shots, range, flags]`:
+`turret` is `[yaw, pitch, shots, range, heat, flags]`:
 
 | Field | Unit |
 |---|---|
@@ -158,7 +158,8 @@ A jeep has 4 seats, and a sports car and a Roadster 2; a tank has 2, the second 
 | `pitch` | milliradians, barrel elevation, + is up |
 | `shots` | shells fired so far, modulo 256. A client sees a shot as a change in this counter, and draws the flash from the barrel it is drawing |
 | `range` | decimetres: how far the last shell flew before it hit something (3000 means it hit nothing). A field mortar's is its range dial |
-| `flags` | `TURRET_*`: bit 0 (`TURRET_STOWED`) is set while a field mortar is hitched to a car, and clients draw it folded for travel |
+| `heat` | 0..255: how hot a machine gun on the mount is (a technical's), as `arms.heat`; 0 for a gun that never heats |
+| `flags` | `TURRET_*`: bit 0 (`TURRET_STOWED`) is set while a field mortar is hitched to a car, and clients draw it folded for travel; bit 4 (`TURRET_JAMMED`) while its machine gun has overheated and jammed |
 
 `arms` is a plane's pilot weapons and engine, `[shots, heat, rear_heat, bombs, flags]`. A hen sends one too: `shots` counts the eggs it has laid (its tail flicks up on each), `bombs` is the eggs left, 0..6, and the rest stay 0:
 

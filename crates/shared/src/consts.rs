@@ -4,6 +4,7 @@ pub use crate::vehicles::drone::*;
 pub use crate::vehicles::golf_cart::*;
 pub use crate::vehicles::heli::*;
 pub use crate::vehicles::hen::*;
+pub use crate::vehicles::technical::*;
 pub use crate::vehicles::tupp::*;
 pub use crate::vehicles::jeep::*;
 pub use crate::vehicles::loiter::*;
@@ -20,7 +21,7 @@ pub use crate::vehicles::tank::*;
 pub use crate::vehicles::walker::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 69;
+pub const PROTOCOL_VERSION: u8 = 70;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -67,6 +68,8 @@ pub const KIND_DEER: u8 = 20;
 pub const KIND_STAG: u8 = 21;
 /// The golf cart: two seats side by side under a roof, an electric motor, and a bag rack on the back.
 pub const KIND_GOLF_CART: u8 = 22;
+/// The technical: a pickup with a machine gun in its bed, a driver, a passenger and a gunner.
+pub const KIND_TECHNICAL: u8 = 23;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;

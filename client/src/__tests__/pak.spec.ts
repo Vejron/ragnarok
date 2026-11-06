@@ -7,7 +7,7 @@ import { TURRET_STOWED } from '@/net/codec'
 import type { Turret } from '@/entities/units'
 
 const IDENTITY: [number, number, number, number] = [0, 0, 0, 1]
-const AIM: Turret = { yaw: 0.3, pitch: 0.2, shots: 0, range: 0, flags: 0 }
+const AIM: Turret = { yaw: 0.3, pitch: 0.2, shots: 0, range: 0, heat: 0, flags: 0 }
 const named = (pak: PakModel, name: string) => pak.root.getObjectByName(name)!
 const world = (pak: PakModel, name: string) => {
   pak.root.updateMatrixWorld(true)

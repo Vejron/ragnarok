@@ -86,6 +86,7 @@ pub(super) const DRONE: VehicleDef = VehicleDef {
         steer_time: 0.0,
         skim: None,
         bow: 0.0,
+        springs: Springs::FIRM,
     },
     armor: SHEET,
     drone: Some(*FPV),

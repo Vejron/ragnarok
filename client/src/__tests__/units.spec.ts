@@ -23,8 +23,8 @@ describe('replicated components in the game’s units', () => {
       thrust: { air: 0.2, flags: THRUST_BOOST },
     })
     expect(roadster.orientation).toEqual({ qx: q(1200), qy: q(-3000), qz: q(15), qw: expect.closeTo(Math.sqrt(1 - (1200 ** 2 + 3000 ** 2 + 15 ** 2) / 32767 ** 2), 9) })
-    const tank = toGame({ kind: { kind: 2 }, place: { x: 0, y: 0, z: 0 }, orientation: { qx: 0, qy: 0, qz: 0 }, turret: { yaw: -700, pitch: 250, shots: 3, range: 1234, flags: TURRET_STOWED } })
-    expect(tank.turret).toEqual({ yaw: -0.7, pitch: 0.25, shots: 3, range: 123.4, flags: TURRET_STOWED })
+    const tank = toGame({ kind: { kind: 2 }, place: { x: 0, y: 0, z: 0 }, orientation: { qx: 0, qy: 0, qz: 0 }, turret: { yaw: -700, pitch: 250, shots: 3, range: 1234, heat: 51, flags: TURRET_STOWED } })
+    expect(tank.turret).toEqual({ yaw: -0.7, pitch: 0.25, shots: 3, range: 123.4, heat: 0.2, flags: TURRET_STOWED })
     expect(tank.orientation).toEqual({ qx: 0, qy: 0, qz: 0, qw: 1 })
     const plane = toGame({ kind: { kind: KIND_PLANE }, arms: { shots: 17, heat: 255, rear_heat: 51, bombs: 3, flags: ARMS_CUT } })
     expect(plane.arms).toEqual({ shots: 17, heat: 1, rear_heat: 0.2, bombs: 3, flags: ARMS_CUT })
@@ -82,7 +82,7 @@ describe('blending two snapshots', () => {
   })
 
   it('turns a turret the short way, and takes its counters and the seats from the nearer snapshot', () => {
-    const turret = (yaw: number, pitch: number, shots: number, range: number) => ({ yaw, pitch, shots, range, flags: 0 })
+    const turret = (yaw: number, pitch: number, shots: number, range: number) => ({ yaw, pitch, shots, range, heat: 0, flags: 0 })
     const a = turned(0, 0, { turret: turret(3.0, 0, 4, 10) })
     const b = turned(0, 0, { turret: turret(-3.0, 0.4, 5, 90) })
     const mid = blend(a, b, 0.5).turret!

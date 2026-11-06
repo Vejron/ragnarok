@@ -528,10 +528,10 @@ impl Physics {
         // which we do not read.
         controller.index_forward_axis = 2;
         let tuning = WheelTuning {
-            suspension_stiffness: 25.0,
-            suspension_compression: 2.2,
-            suspension_damping: 3.0,
-            max_suspension_travel: 0.3,
+            suspension_stiffness: spec.springs.stiffness,
+            suspension_compression: spec.springs.compression,
+            suspension_damping: spec.springs.damping,
+            max_suspension_travel: spec.springs.travel,
             side_friction_stiffness: SIDE_GRIP,
             friction_slip: FRICTION_SLIP,
             max_suspension_force: spec.max_suspension_force,

@@ -1,7 +1,7 @@
 use shared::vec3;
 use super::*;
 use shared::consts::TICK_DT;
-use shared::protocol::{KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER};
+use shared::protocol::{KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_WALKER};
 use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 
 fn flat() -> WorldFile {
@@ -155,7 +155,7 @@ fn a_car_climbs_a_slope_like_wasm() {
 #[test]
 fn ride_heights_differ_between_cars() {
     let mut heights = vec![];
-    for (kind, ride) in [(KIND_JEEP, JEEP_RIDE_HEIGHT), (KIND_SPORTS, SPORTS_RIDE_HEIGHT), (KIND_GOLF_CART, GOLF_CART_RIDE_HEIGHT)] {
+    for (kind, ride) in [(KIND_JEEP, JEEP_RIDE_HEIGHT), (KIND_SPORTS, SPORTS_RIDE_HEIGHT), (KIND_GOLF_CART, GOLF_CART_RIDE_HEIGHT), (KIND_TECHNICAL, TECHNICAL_RIDE_HEIGHT)] {
         let mut physics = Physics::new(&flat()).unwrap();
         physics.add_car(1, kind, [0.0, 1.5, 0.0], 0.0);
         let pose = run(&mut physics, COAST, 240);
@@ -164,6 +164,8 @@ fn ride_heights_differ_between_cars() {
     }
     // Ground clearance under the chassis: the jeep clears at least four times what the sports car does.
     assert!(heights[0] > 0.4 && heights[1] < 0.15 && heights[0] > 3.0 * heights[1], "{heights:?}");
+    // The technical clears more than the jeep.
+    assert!(heights[3] > heights[0] + 0.1, "{heights:?}");
 }
 
 #[test]
@@ -202,6 +204,51 @@ fn a_golf_cart_potters_along_and_stays_on_its_wheels_at_full_lock() {
     let turned = (yaw(&physics.car_pose(1).unwrap()) - start).rem_euclid(std::f32::consts::TAU);
     assert!(worst > 0.8, "flat out at full lock it stays on its wheels: {worst}");
     assert!(turned > 0.5, "and turns: {turned}");
+}
+
+#[test]
+fn a_technical_gets_going_and_stays_on_its_wheels_at_full_lock() {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_TECHNICAL, [0.0, 1.5, 0.0], 0.0);
+    run(&mut physics, COAST, 60);
+    let early = run(&mut physics, FORWARD, 60 * 3);
+    let top = run(&mut physics, FORWARD, 60 * 5);
+    assert!(early.forward_speed > 10.0, "gets going: {early:?}");
+    assert!(top.forward_speed > TECHNICAL_MAX_SPEED - 3.0 && top.forward_speed <= TECHNICAL_MAX_SPEED + 1.0, "tops out at its own speed: {top:?}");
+    let start = yaw(&top);
+    let mut worst = 1.0_f32;
+    for _ in 0..60 * 3 {
+        let pose = run(&mut physics, CarControls { throttle: 1.0, steer: -1.0, ..CarControls::IDLE }, 1);
+        worst = worst.min(pose.up_y);
+    }
+    let turned = (yaw(&physics.car_pose(1).unwrap()) - start).rem_euclid(std::f32::consts::TAU);
+    assert!(worst > 0.8, "flat out at full lock it stays on its wheels: {worst}");
+    assert!(turned > 0.5, "and turns: {turned}");
+}
+
+#[test]
+fn a_technical_is_softer_sprung_than_the_jeep() {
+    // Each dropped from half a metre over where it rests: the soft springs give further and swing slower.
+    let mut dips = vec![];
+    for (kind, ride) in [(KIND_JEEP, JEEP_RIDE_HEIGHT), (KIND_TECHNICAL, TECHNICAL_RIDE_HEIGHT)] {
+        let mut physics = Physics::new(&flat()).unwrap();
+        physics.add_car(1, kind, [0.0, ride + 0.5, 0.0], 0.0);
+        let mut lowest = f32::MAX;
+        let mut bottomed = 0;
+        for tick in 0..120 {
+            let pose = run(&mut physics, COAST, 1);
+            if pose.position[1] < lowest {
+                lowest = pose.position[1];
+                bottomed = tick;
+            }
+        }
+        let rest = run(&mut physics, COAST, 240);
+        assert!((rest.position[1] - ride).abs() < 0.01 && rest.up_y > 0.99, "kind {kind} settles again: {rest:?}");
+        dips.push((ride - lowest, bottomed));
+    }
+    let [(jeep_dip, jeep_bottomed), (technical_dip, technical_bottomed)] = dips[..] else { unreachable!() };
+    assert!(technical_dip > jeep_dip * 1.3, "it sinks further on landing: {dips:?}");
+    assert!(technical_bottomed > jeep_bottomed, "and takes longer about it: {dips:?}");
 }
 
 #[test]

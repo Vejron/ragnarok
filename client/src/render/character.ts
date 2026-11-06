@@ -194,6 +194,8 @@ const RECOIL_DECAY = 14
  * (`SIT_DROP` in build_character.py). A seated player is placed so their head lands on the seat's head point.
  */
 export const SIT_HEAD = 1.22
+/** Height of the head's middle above the model's origin standing: `SIT_HEAD` with the hips back up `SIT_DROP`. */
+const STAND_HEAD = SIT_HEAD + 0.42
 /** How far a seated body turns at the waist and chest towards where it aims, either way, radians. */
 const SIT_TWIST = 1.7
 /** Of that turn, the share the spine takes; the chest takes the rest. */
@@ -1060,14 +1062,15 @@ export class Character {
    * Sits the character in a vehicle seat: its head on `head` (world), the body turned with the
    * vehicle's `rotation`, and the chest twisted towards `yaw` and leaning with `pitch`, where it aims.
    */
-  seat(head: Vector3, rotation: Quaternion, yaw: number, pitch: number, dt: number) {
+  seat(head: Vector3, rotation: Quaternion, yaw: number, pitch: number, dt: number, standing = false) {
     this.position.copy(head)
     this.pitch = pitch
     this.fadeFlash(dt)
     if (!this.shown || this.gibbed) return
 
-    // Every other clip gives way to sitting in the stance of the item in hand.
-    const sit = this.clip('sit')
+    // Every other clip gives way to sitting, or standing still for a seat stood in, in the stance of the item in hand.
+    const pose = standing ? 'idle' : 'sit'
+    const sit = this.clip(pose)
     let sum = 0
     for (const name of this.actions.keys()) {
       const next = chase(this.weights.get(name) ?? 0, name === sit ? 1 : 0, BLEND_RATE, dt)
@@ -1081,7 +1084,7 @@ export class Character {
       const w = this.weights.get(name)!
       action.enabled = w > 0.0005 || name === sit
       action.weight = w
-      if (name.endsWith('sit')) action.time = this.idleTime
+      if (name.endsWith(pose)) action.time = this.idleTime
     }
     this.animator.update(dt)
     this.head?.scale.setScalar(this.headless ? 0.001 : 1)
@@ -1098,7 +1101,7 @@ export class Character {
 
     // The model faces +Z; the vehicle's nose is its -Z.
     this.object.quaternion.copy(rotation).multiply(SCRATCH.turn.setFromAxisAngle(AXIS_Y, Math.PI))
-    this.object.position.copy(head).sub(SCRATCH.axis.set(0, SIT_HEAD, 0).applyQuaternion(rotation))
+    this.object.position.copy(head).sub(SCRATCH.axis.set(0, standing ? STAND_HEAD : SIT_HEAD, 0).applyQuaternion(rotation))
     this.placed = true
     this.object.visible = this.shown && !this.gibbed
   }

@@ -57,7 +57,7 @@ pub const HIT_DEER: u8 = 4;
 pub const OBJ_TREE: u8 = 0;
 pub const OBJ_BUILDING: u8 = 1;
 
-pub use crate::consts::{KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SOLDIER, KIND_SPORTS, KIND_STAG, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER};
+pub use crate::consts::{KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SOLDIER, KIND_SPORTS, KIND_STAG, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_TUPP, KIND_WALKER};
 
 /// Whether `kind` is a drone: flown from a remote seat by whoever launched it (see the `Drones` mechanic).
 pub fn is_drone(kind: u8) -> bool {
@@ -538,6 +538,8 @@ pub const TURRET_ALT: u8 = 1 << 1;
 /// `Turret`'s flags: a beam is charging (`Fire::Beam`), and it is burning.
 pub const TURRET_CHARGING: u8 = 1 << 2;
 pub const TURRET_BEAM: u8 = 1 << 3;
+/// `replicated::Turret::flags`: a machine gun on a mount has overheated and jammed (`MountDef::heat`).
+pub const TURRET_JAMMED: u8 = 1 << 4;
 
 /// `replicated::Pintle::flags`: the gun is jammed.
 pub const PINTLE_JAMMED: u8 = 1 << 0;

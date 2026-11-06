@@ -96,8 +96,11 @@ export const seatHead = (kind: number | undefined, index: number, gunYaw = 0): r
   return def.seatHeads[index] ?? null
 }
 
-/** Whether seat `index` of a `kind` fires its occupant's own guns: a car's passengers. */
-export const crewGun = (kind: number | undefined, index: number): boolean => vehicleDef(kind).crewGuns && index !== 0
+/** Whether seat `index` of a `kind` fires its occupant's own guns: a car's passengers, but not a technical's gunner on its mount. Mirrors `crew_gun`. */
+export const crewGun = (kind: number | undefined, index: number): boolean => {
+  const def = vehicleDef(kind)
+  return def.crewGuns && index !== 0 && def.mountSeat?.seat !== index
+}
 
 /** A walker or a hen: a hull on two spring legs, boarded from between its feet. */
 export const isLegged = (kind: number | undefined): boolean => kind !== undefined && vehicleDef(kind).legged

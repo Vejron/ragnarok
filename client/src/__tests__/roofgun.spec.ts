@@ -11,7 +11,7 @@ import { TANK_MG_AT, TANK_MG_HEAD, TANK_MG_SEAT, TANK_TURRET_PIVOT } from '@/sim
 import { seatHead } from '@/sim/vehicles'
 
 const IDENTITY = [0, 0, 0, 1] as const
-const turret = (yaw: number) => ({ yaw, pitch: 0, shots: 0, range: 0, flags: 0 })
+const turret = (yaw: number) => ({ yaw, pitch: 0, shots: 0, range: 0, heat: 0, flags: 0 })
 const gun = (yaw: number, pitch: number, flags = 0, heat = 0) => ({ yaw, pitch, shots: 0, heat, flags })
 
 beforeAll(async () => {

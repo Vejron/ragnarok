@@ -8,9 +8,10 @@ import { seaWind } from '@/render/ship'
 import { PlaneModel } from '@/render/plane'
 import { StrvModel } from '@/render/strvs'
 import { TankModel } from '@/render/tank'
+import { TechnicalModel } from '@/render/technical'
 import { TuppModel } from '@/render/tupp'
 import { WalkerModel } from '@/render/walker'
-import { HELI_GUN_LENGTH, MORTAR_BARREL_LENGTH, PAK_BARREL_LENGTH, SHIP_GUN_BARREL_LENGTH, PLANE_GUN_RANGE, STRV_BARREL_LENGTH, TANK_BARREL_LENGTH, TANK_MG_LENGTH, TANK_MG_RANGE, WALKER_GUN_LENGTH } from '@/sim/consts'
+import { HELI_GUN_LENGTH, MORTAR_BARREL_LENGTH, PAK_BARREL_LENGTH, SHIP_GUN_BARREL_LENGTH, PLANE_GUN_RANGE, STRV_BARREL_LENGTH, TANK_BARREL_LENGTH, TANK_MG_LENGTH, TANK_MG_RANGE, TECHNICAL_MG_LENGTH, TECHNICAL_MG_RANGE, TECHNICAL_MG_SEAT, WALKER_GUN_LENGTH } from '@/sim/consts'
 import type { Frame, Presenter } from '../presenter'
 import type { Entity } from '../units'
 import type { VehicleWorld, Vehicles } from './vehicles'
@@ -22,8 +23,8 @@ const MAX_ROUNDS = 4
 
 /**
  * A mounted gun (`turret`): every new shot on its counter is a shell or round leaving, with a flash at
- * the muzzle, a recoil and the bang. The shell itself is a projectile, and a plane's rear ring gun's
- * rounds are drawn as bullets in flight (`Rounds`).
+ * the muzzle, a recoil and the bang. The shell itself is a projectile, and a plane's rear ring gun's and
+ * a technical's machine gun's rounds are drawn as bullets in flight (`Rounds`).
  */
 export class Turrets implements Presenter<Frame> {
   /** The shot counter as last seen, per gun. */
@@ -47,6 +48,7 @@ export class Turrets implements Presenter<Frame> {
     // The first sight of a gun is not a shot, nor is a counter that has not moved.
     if (before === undefined || before === shots) return
     if (model instanceof PlaneModel) this.ring(model, (shots - before + 256) % 256)
+    else if (model instanceof TechnicalModel) this.machineGun(model, (shots - before + 256) % 256, placed.seats, frame)
     else if (model instanceof TankModel || model instanceof HeliModel || model instanceof WalkerModel || model instanceof MortarModel || model instanceof PakModel || model instanceof ShipGunModel) this.fired(model, shots, placed.seats, frame)
   }
 
@@ -94,6 +96,18 @@ export class Turrets implements Presenter<Frame> {
     for (let k = 0; k < rounds; k++) fireRound(this.world, muzzle, direction, PLANE_GUN_RANGE)
     plane.recoilRing()
     this.world.sounds.machineGun([muzzle.x, muzzle.y, muzzle.z], rounds, true)
+  }
+
+  /** A technical's machine gun: each new round a bullet out to what it meets, with a flash and the rattle. */
+  private machineGun(truck: TechnicalModel, fired: number, seats: readonly number[], frame: Frame) {
+    const rounds = Math.min(MAX_ROUNDS, fired)
+    const { origin, direction } = truck.barrel()
+    const muzzle = origin.addScaledVector(direction, TECHNICAL_MG_LENGTH)
+    this.world.effects.muzzle(muzzle)
+    for (let k = 0; k < rounds; k++) fireRound(this.world, muzzle, direction, TECHNICAL_MG_RANGE)
+    truck.recoil()
+    this.world.sounds.machineGun([muzzle.x, muzzle.y, muzzle.z], rounds)
+    if (frame.localId !== null && seats[TECHNICAL_MG_SEAT] === frame.localId) this.world.ownShot()
   }
 }
 

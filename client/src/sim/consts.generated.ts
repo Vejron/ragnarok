@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 69
+export const PROTOCOL_VERSION = 70
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -73,6 +73,9 @@ export const KIND_STAG = 21
 
 /** The golf cart: two seats side by side under a roof, an electric motor, and a bag rack on the back. */
 export const KIND_GOLF_CART = 22
+
+/** The technical: a pickup with a machine gun in its bed, a driver, a passenger and a gunner. */
+export const KIND_TECHNICAL = 23
 
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
@@ -1732,6 +1735,68 @@ export const TANK_MG_VEHICLE_DAMAGE = 4
 
 /** Heat a round puts in the barrel: about six seconds of holding the trigger jams it. */
 export const TANK_MG_HEAT = 10.5
+
+/**
+ * The technical (`KIND_TECHNICAL`): a long-bonnet pickup with a heavy machine gun on a post in its open
+ * bed. A driver and a passenger sit in the cab (seats 0 and 1, the passenger firing their own guns) and
+ * the gunner (seat 2) stands in the bed behind the gun, turning with it all the way round. It is tall,
+ * on big tyres and long soft springs: it wallows through corners but rides over rough ground.
+ */
+export const TECHNICAL_SEATS = 3
+export const TECHNICAL_HALF_EXTENTS = [0.95, 0.4, 2.45] as const
+export const TECHNICAL_WHEEL_RADIUS = 0.58
+export const TECHNICAL_TRACK_HALF = 0.85
+export const TECHNICAL_AXLE_Z = 1.6
+export const TECHNICAL_HARD_POINT_Y = -0.1
+export const TECHNICAL_SUSPENSION_REST = 0.6
+
+/** Measured by `ride_heights_differ_between_cars` in vehicle.rs. */
+export const TECHNICAL_RIDE_HEIGHT = 1.08
+export const TECHNICAL_MAX_STEER = 0.5
+
+/** About 108 km/h, a little slower than the jeep. */
+export const TECHNICAL_MAX_SPEED = 30.0
+
+/** The seat that works the machine gun. */
+export const TECHNICAL_MG_SEAT = 2
+
+/** Where the gun turns on top of its post, over the bed and above the cab's roof, so it fires over it. */
+export const TECHNICAL_MG_PIVOT = [0.0, 1.45, 0.9] as const
+
+/**
+ * The gunner's head from the pivot, with the gun pointing ahead: standing in the bed behind it, their
+ * feet on its floor (0.15 m over the hull's middle) and their head 1.64 m above them.
+ */
+export const TECHNICAL_MG_HEAD = [0.0, 0.34, 0.75] as const
+export const TECHNICAL_MG_LENGTH = 1.2
+
+/** Its elevation, radians (+ is up): steep enough for aircraft. It turns all the way round. */
+export const TECHNICAL_MG_PITCH_MIN = -0.3
+export const TECHNICAL_MG_PITCH_MAX = 0.9
+export const TECHNICAL_MG_SLEW = 2.5
+
+/**
+ * A heavy, slow gun: four rounds a second, each one hitting hard. It deals what the tank's roof gun does
+ * in a second, but in fewer, bigger blows: four put a soldier down.
+ */
+export const TECHNICAL_MG_COOLDOWN_TICKS = 15
+export const TECHNICAL_MG_SPREAD = 0.014
+export const TECHNICAL_MG_RANGE = 300.0
+export const TECHNICAL_MG_DAMAGE = 40
+export const TECHNICAL_MG_PLANE_DAMAGE = 20
+export const TECHNICAL_MG_VEHICLE_DAMAGE = 10
+
+/**
+ * Heat a round puts in the barrel: about four seconds of holding the trigger jams it, a little sooner
+ * than the tank's roof gun, and about three more before it has cooled enough to clear.
+ */
+export const TECHNICAL_MG_HEAT = 31.0
+
+/**
+ * The driver on the left and the passenger in the cab, then the gunner as they stand with the gun ahead
+ * (`TECHNICAL_MG_PIVOT` plus `TECHNICAL_MG_HEAD`).
+ */
+export const TECHNICAL_SEAT_HEADS = [[-0.42, 1.0, -0.35], [0.42, 1.0, -0.35], [0.0, 1.79, 1.65]] as const
 
 /**
  * The tupp (`KIND_TUPP`): a giant robot rooster of the Swedish Hedemora breed, one driver in a cockpit

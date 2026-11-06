@@ -18,7 +18,7 @@ fn tank(x: i32, turret_yaw: i16) -> Replicated {
         place: Some(Place { x, y: 120, z: 0 }),
         orientation: Some(Orientation { qx: 0, qy: 1200, qz: 0 }),
         steer: Some(Steer::default()),
-        turret: Some(Turret { yaw: turret_yaw, pitch: 40, shots: 3, range: 3000, flags: 0 }),
+        turret: Some(Turret { yaw: turret_yaw, pitch: 40, shots: 3, range: 3000, heat: 0, flags: 0 }),
         health: Some(Health { hp: 250 }),
         ..Default::default()
     }
@@ -44,7 +44,7 @@ fn a_new_entity_brings_everything_it_has_and_decodes_back() {
         flags: Some(Flags { flags: 0b1000_0101, stance: 1 }),
         orientation: Some(Orientation { qx: -32767, qy: 5, qz: 32767 }),
         steer: Some(Steer { steer: -127 }),
-        turret: Some(Turret { yaw: 100, pitch: -50, shots: 255, range: 65535, flags: 1 }),
+        turret: Some(Turret { yaw: 100, pitch: -50, shots: 255, range: 65535, heat: 200, flags: 1 }),
         pintle: Some(Pintle { yaw: -1200, pitch: 300, shots: 77, heat: 200, flags: 1 }),
         fell: Some(Fell { style: 2 }),
         limbs: Some(Limbs { lost: 0b0101_0110 }),
@@ -334,7 +334,7 @@ fn fixture_json() -> String {
         flags: Some(Flags { flags: 0b1000_0101, stance: 1 }),
         orientation: Some(Orientation { qx: -32767, qy: 5, qz: 32767 }),
         steer: Some(Steer { steer: -127 }),
-        turret: Some(Turret { yaw: 100, pitch: -50, shots: 255, range: 65535, flags: 1 }),
+        turret: Some(Turret { yaw: 100, pitch: -50, shots: 255, range: 65535, heat: 200, flags: 1 }),
         pintle: Some(Pintle { yaw: -1200, pitch: 300, shots: 77, heat: 200, flags: 1 }),
         fell: Some(Fell { style: 2 }),
         limbs: Some(Limbs { lost: 0b0101_0110 }),
@@ -392,9 +392,9 @@ fn scene_fixture_json() -> String {
         (2, Replicated { kind: Some(Kind { kind: 5 }), place: Some(Place { x: 10, y: 0, z: 20 }), heading: Some(Heading { yaw: 900 }), flags: Some(Flags { flags: 0b1000_0001, stance: 0 }), ..Default::default() }),
         (4, tank(300, -700)),
         // A field mortar, hitched: its turret stowed, its crew showing and empty.
-        (5, Replicated { turret: Some(Turret { yaw: 0, pitch: 600, shots: 0, range: 1500, flags: 1 }), ..vehicle(9) }),
+        (5, Replicated { turret: Some(Turret { yaw: 0, pitch: 600, shots: 0, range: 1500, heat: 0, flags: 1 }), ..vehicle(9) }),
         // A plane: crew showing, arms, hurt.
-        (6, Replicated { turret: Some(Turret { yaw: 3000, pitch: -100, shots: 17, range: 0, flags: 0 }), arms: Some(Arms { shots: 200, heat: 128, rear_heat: 3, bombs: 4, flags: 2 }), damage: Some(Damage { parts: [0, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0] }), ..vehicle(6) }),
+        (6, Replicated { turret: Some(Turret { yaw: 3000, pitch: -100, shots: 17, range: 0, heat: 0, flags: 0 }), arms: Some(Arms { shots: 200, heat: 128, rear_heat: 3, bombs: 4, flags: 2 }), damage: Some(Damage { parts: [0, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0] }), ..vehicle(6) }),
         // A drone, linked, its battery as air; a wreck.
         (7, Replicated { thrust: Some(Thrust { air: 99, flags: 4 }), drive: Some(Drive { vx: -250, vy: 3, vz: 1200, wx: 10, wy: -3500, wz: 0, steer: -300, spin: 700 }), ..vehicle(11) }),
         // The receiver themself, piloting the plane: what is theirs, and their seat.

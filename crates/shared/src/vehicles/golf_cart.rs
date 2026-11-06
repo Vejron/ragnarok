@@ -69,6 +69,7 @@ pub(super) const GOLF_CART: VehicleDef = VehicleDef {
         // Too slow to skim: it sinks and wades along the bed.
         skim: None,
         bow: 0.0,
+        springs: Springs::FIRM,
     },
     armor: ARMOR,
     drone: None,

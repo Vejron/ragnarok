@@ -65,7 +65,7 @@ describe('codec', () => {
         { id: 7, cleared: 0, set: { place: { x: 0, y: 85, z: 100000 }, heading: { yaw: 0 }, motion: { vy: 0, knock_x: 0, knock_z: 0 }, flags: { flags: FLAG_GROUNDED | FLAG_DEAD, stance: 0 }, kind: { kind: 0 } } },
         {
           id: 10, cleared: 0,
-          set: { place: { x: 300, y: 90, z: -2000 }, orientation: { qx: 0, qy: 700, qz: 0 }, steer: { steer: 32 }, turret: { yaw: -700, pitch: 250, shots: 3, range: 1234, flags: TURRET_STOWED }, health: { hp: 250 }, kind: { kind: 2 },
+          set: { place: { x: 300, y: 90, z: -2000 }, orientation: { qx: 0, qy: 700, qz: 0 }, steer: { steer: 32 }, turret: { yaw: -700, pitch: 250, shots: 3, range: 1234, heat: 0, flags: TURRET_STOWED }, health: { hp: 250 }, kind: { kind: 2 },
             drive: { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 },
           },
         },

@@ -111,6 +111,7 @@ pub(super) const HEN: VehicleDef = VehicleDef {
         steer_time: 0.0,
         skim: None,
         bow: 0.0,
+        springs: Springs::FIRM,
     },
     armor: ARMOR,
     drone: None,

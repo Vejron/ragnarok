@@ -32,7 +32,7 @@ fn sample_snapshot() -> Snapshot {
         place: Some(wire::Place { x: 300, y: 90, z: -2000 }),
         orientation: Some(wire::Orientation { qx: 0, qy: 700, qz: 0 }),
         steer: Some(wire::Steer { steer: 32 }),
-        turret: Some(wire::Turret { yaw: -700, pitch: 250, shots: 3, range: 1234, flags: TURRET_STOWED }),
+        turret: Some(wire::Turret { yaw: -700, pitch: 250, shots: 3, range: 1234, heat: 0, flags: TURRET_STOWED }),
         health: Some(wire::Health { hp: 250 }),
         ..Default::default()
     };

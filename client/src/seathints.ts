@@ -26,7 +26,7 @@ const HINTS: Record<Seat, (stats: Stats) => string> = {
   aviator: ({ canSwitchSeat }) => `Mouse steer (the plane turns to where you look) · Space throttle up · Shift throttle down · W/S/A/D by hand · Click or F fire · C bomb${canSwitchSeat ? SWITCH : ''}`,
   passenger: ({ canSwitchSeat }) => `Mouse look · Click or F fire your gun · Right mouse aim · 1-5 or wheel switch · R reload${canSwitchSeat ? ', or switch seat when it is full' : ''}`,
   gunner: ({ ammo, jammed, heat, reload, canSwitchSeat }) => {
-    const state = jammed ? 'jammed!' : heat !== null ? 'firing' : loaded(reload)
+    const state = jammed ? 'jammed!' : heat !== null ? (heat > 0.6 ? 'overheating' : 'firing') : loaded(reload)
     return `Mouse aim · Hold right mouse for the gun sight · Click or F fire${ammo ? ` · Q ${swapRound(ammo)}` : ''} · ${ammo ? `${ammo} ` : ''}${state}${canSwitchSeat ? SWITCH : ''}`
   },
   roofgunner: ({ jammed, heat, canSwitchSeat }) => `Mouse aim (within 90° of the cannon) · Click or F fire · ${jammed ? 'jammed!' : (heat ?? 0) > 0.6 ? 'overheating' : 'ready'}${canSwitchSeat ? SWITCH : ''}`,

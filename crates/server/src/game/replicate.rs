@@ -122,8 +122,8 @@ impl Game {
         let stowed = if self.world.physics.towed_by(id).is_some() { TURRET_STOWED } else { 0 };
         let turret = shown(Show::Turret).map(|gun| {
             let beam = if gun.charge > 0 { TURRET_CHARGING } else if gun.beam > 0 { TURRET_BEAM } else { 0 };
-            let flags = stowed | beam | if gun.alt { TURRET_ALT } else { 0 };
-            wire::Turret { yaw: to_mrad(gun.yaw), pitch: to_mrad(gun.pitch), shots: gun.shots, range: (gun.range * 10.0).round().clamp(0.0, u16::MAX as f32) as u16, flags }
+            let flags = stowed | beam | if gun.alt { TURRET_ALT } else { 0 } | if gun.jammed { TURRET_JAMMED } else { 0 };
+            wire::Turret { yaw: to_mrad(gun.yaw), pitch: to_mrad(gun.pitch), shots: gun.shots, range: (gun.range * 10.0).round().clamp(0.0, u16::MAX as f32) as u16, heat: heat_byte(gun.heat), flags }
         });
         let pintle = shown(Show::Pintle).map(|gun| wire::Pintle { yaw: to_mrad(gun.yaw), pitch: to_mrad(gun.pitch), shots: gun.shots, heat: heat_byte(gun.heat), flags: if gun.jammed { PINTLE_JAMMED } else { 0 } });
         let arms = def.arms().then(|| {

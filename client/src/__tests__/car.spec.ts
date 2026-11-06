@@ -7,15 +7,15 @@ import { CarModel, parseCarModel } from '@/render/car'
 import {
   JEEP_AXLE_Z, JEEP_RIDE_HEIGHT, JEEP_TRACK_HALF, JEEP_WHEEL_RADIUS, ROADSTER_AXLE_Z, ROADSTER_HALF_EXTENTS, ROADSTER_RIDE_HEIGHT, ROADSTER_SEATS, ROADSTER_TRACK_HALF,
   ROADSTER_WHEEL_RADIUS, SPORTS_AXLE_Z, SPORTS_RIDE_HEIGHT, SPORTS_SEATS, SPORTS_TRACK_HALF,
-  SPORTS_WHEEL_RADIUS,
+  SPORTS_WHEEL_RADIUS, TECHNICAL_AXLE_Z, TECHNICAL_RIDE_HEIGHT, TECHNICAL_SEATS, TECHNICAL_TRACK_HALF, TECHNICAL_WHEEL_RADIUS,
 } from '@/sim/consts'
-import { KIND_JEEP, KIND_ROADSTER, KIND_SPORTS, THRUST_BOOST, THRUST_LIFT } from '@/net/codec'
+import { KIND_JEEP, KIND_ROADSTER, KIND_SPORTS, KIND_TECHNICAL, THRUST_BOOST, THRUST_LIFT } from '@/net/codec'
 import { triangleCount } from './helpers'
 import { vehicleDef } from '@/sim/vehicles'
 
 const IDENTITY: [number, number, number, number] = [0, 0, 0, 1]
 
-async function load(kind: 'jeep' | 'sports' | 'roadster') {
+async function load(kind: 'jeep' | 'sports' | 'roadster' | 'technical') {
   const bytes = readFileSync(resolve(process.cwd(), `public/models/${kind}.glb`))
   // A copy made here, so it is an ArrayBuffer of the realm the loader checks against.
   const copy = new Uint8Array(bytes.length)
@@ -27,6 +27,7 @@ beforeAll(async () => {
   await load('jeep')
   await load('sports')
   await load('roadster')
+  await load('technical')
 })
 
 const triangles = (car: CarModel) => triangleCount(car.root)
@@ -35,6 +36,7 @@ describe.each([
   ['jeep', KIND_JEEP, JEEP_TRACK_HALF, JEEP_AXLE_Z, JEEP_WHEEL_RADIUS, JEEP_RIDE_HEIGHT, 4],
   ['sports car', KIND_SPORTS, SPORTS_TRACK_HALF, SPORTS_AXLE_Z, SPORTS_WHEEL_RADIUS, SPORTS_RIDE_HEIGHT, SPORTS_SEATS],
   ['Roadster', KIND_ROADSTER, ROADSTER_TRACK_HALF, ROADSTER_AXLE_Z, ROADSTER_WHEEL_RADIUS, ROADSTER_RIDE_HEIGHT, ROADSTER_SEATS],
+  ['technical', KIND_TECHNICAL, TECHNICAL_TRACK_HALF, TECHNICAL_AXLE_Z, TECHNICAL_WHEEL_RADIUS, TECHNICAL_RIDE_HEIGHT, TECHNICAL_SEATS],
 ] as const)('the %s model', (_name, kind, trackHalf, axleZ, radius, ride, seats) => {
   it('has its wheels where the physics has them, touching the ground at its ride height', () => {
     const car = (kindView(kind).model(1) as CarModel)

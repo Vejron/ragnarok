@@ -93,7 +93,7 @@ function roofGunModel() {
 }
 
 const placed = (kind: number, turretYaw = 0): Placed => ({
-  kind, x: 0, y: 1, z: 0, yaw: 0.5, rotation: [0, 0, 0, 1], steer: 0, seats: [1, 2], turret: { yaw: turretYaw, pitch: 0.1, shots: 0, range: 0, flags: 0 },
+  kind, x: 0, y: 1, z: 0, yaw: 0.5, rotation: [0, 0, 0, 1], steer: 0, seats: [1, 2], turret: { yaw: turretYaw, pitch: 0.1, shots: 0, range: 0, heat: 0, flags: 0 },
   pintle: null, arms: null, hp: 100, damage: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], jets: 0, air: null,
 })
 

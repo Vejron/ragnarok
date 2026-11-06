@@ -103,7 +103,7 @@ describe('a tank\'s vision slits', () => {
     const { Slits } = await import('@/entities/presenters/slits')
     const { KIND_TANK } = await import('@/net/codec')
     const root = new Node()
-    const placed = { kind: KIND_TANK, hp: 250, seats: [7, 0], turret: { yaw: Math.PI, pitch: 0, shots: 0, range: 0, flags: 0 } }
+    const placed = { kind: KIND_TANK, hp: 250, seats: [7, 0], turret: { yaw: Math.PI, pitch: 0, shots: 0, range: 0, heat: 0, flags: 0 } }
     const vehicles = { placed: new Map([[1, placed]]), model: () => ({ root }) }
     const slits = new Slits(vehicles as never)
     const frame = { tick: 0, dt: 1 / 60, now: 0, localId: null }

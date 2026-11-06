@@ -1005,3 +1005,56 @@ fn letting_go_early_wastes_a_tupps_charge() {
     aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, 0, 2);
     assert_eq!(turret(&game, vid).charge, 0);
 }
+
+/// A technical with a gunner on its machine gun (seat 2), settled.
+fn technical_crewed() -> (Game, u32, u32, u32) {
+    let mut game = game();
+    let (gunner, inbox) = join(&mut game);
+    std::mem::forget(inbox);
+    let vid = crate::mechanics::vehicles::add_vehicle(&mut game.world, shared::protocol::KIND_TECHNICAL, [0.0, 2.0, 20.0], 0.0);
+    seat(&mut game, gunner, vid, TECHNICAL_MG_SEAT);
+    let mut seq = 0;
+    let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
+    aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, 0, 90);
+    (game, gunner, vid, seq)
+}
+
+#[test]
+fn a_technicals_gun_turns_all_the_way_round_and_only_its_gunner_fires_it() {
+    let (mut game, gunner, vid, mut seq) = technical_crewed();
+    let hull = game.world.physics.car_pose(vid).unwrap().yaw();
+    // Over the tailgate, then round over the cab.
+    aim_and_hold(&mut game, gunner, &mut seq, hull + 3.0, 0.2, 0, 120);
+    let gun = turret(&game, vid);
+    assert!(wrap_angle(gun.yaw - 3.0).abs() < 0.02 && (gun.pitch - 0.2).abs() < 0.02, "{gun:?}");
+    aim_and_hold(&mut game, gunner, &mut seq, hull - 0.5, 0.0, BUTTON_FIRE, 120);
+    let gun = turret(&game, vid);
+    assert!(wrap_angle(gun.yaw + 0.5).abs() < 0.02, "{gun:?}");
+    assert!(gun.shots >= 4, "it fires: {gun:?}");
+    assert!(!shared::vehicles::crew_gun(shared::protocol::KIND_TECHNICAL, TECHNICAL_MG_SEAT), "its gunner has no hands free for their own gun");
+    assert!(shared::vehicles::crew_gun(shared::protocol::KIND_TECHNICAL, 1), "but the passenger does");
+}
+
+#[test]
+fn a_technicals_gun_jams_when_hot_shows_it_and_clears() {
+    let (mut game, gunner, vid, mut seq) = technical_crewed();
+    let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
+    let mut jammed_at = None;
+    for tick in 0..60 * 10 {
+        aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, BUTTON_FIRE, 1);
+        if turret(&game, vid).jammed {
+            jammed_at = Some(tick);
+            break;
+        }
+    }
+    let jammed_at = jammed_at.expect("the gun jams");
+    assert!((60 * 3..60 * 6).contains(&jammed_at), "after about four seconds: {jammed_at} ticks");
+    let seen = game.seen(vid).unwrap().turret.unwrap();
+    assert!(seen.flags & shared::protocol::TURRET_JAMMED != 0 && seen.heat > 240, "the gunner sees it: {seen:?}");
+    let shots = turret(&game, vid).shots;
+    aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, BUTTON_FIRE, 30);
+    assert_eq!(turret(&game, vid).shots, shots, "a jammed gun does not fire");
+    aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, 0, 60 * 4);
+    assert!(!turret(&game, vid).jammed, "cool again");
+    assert_eq!(game.seen(vid).unwrap().turret.unwrap().flags & shared::protocol::TURRET_JAMMED, 0);
+}

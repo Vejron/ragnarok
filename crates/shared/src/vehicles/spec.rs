@@ -88,6 +88,25 @@ pub struct Spec {
     /// How far back from the front its hull's sides taper in to the full width, metres, as a ship's
     /// bow does to its stem. 0 for a square front.
     pub bow: f32,
+    /// How its wheels' springs give: firm on most, soft and long on a truck built for rough ground.
+    pub springs: Springs,
+}
+
+/// A wheeled kind's springs and dampers, which ride on the wheel's ray cast. The stiffness and the
+/// damping are per unit of the chassis' mass, so a heavier hull sits no lower on the same springs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Springs {
+    pub stiffness: f32,
+    /// Damping as the spring is pushed in, and as it springs back out.
+    pub compression: f32,
+    pub damping: f32,
+    /// How far, metres, a wheel can be pushed up from its rest length.
+    pub travel: f32,
+}
+
+impl Springs {
+    /// What every car rode on before there was a choice: stiff, with a short travel.
+    pub const FIRM: Springs = Springs { stiffness: 25.0, compression: 2.2, damping: 3.0, travel: 0.3 };
 }
 
 /// How a wheeled kind skims over water: held up on the surface above `plane_speed`, sinking below

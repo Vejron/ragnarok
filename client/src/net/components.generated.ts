@@ -49,6 +49,7 @@ export interface Turret {
   pitch: number
   shots: number
   range: number
+  heat: number
   flags: number
 }
 
@@ -201,7 +202,7 @@ export const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; 
   { id: 3, name: 'flags', diff: false, owner: false, fields: [{ name: 'flags' }, { name: 'stance' }] },
   { id: 4, name: 'orientation', diff: true, owner: false, fields: [{ name: 'qx', unit: 'quat' }, { name: 'qy', unit: 'quat' }, { name: 'qz', unit: 'quat' }] },
   { id: 5, name: 'steer', diff: true, owner: false, fields: [{ name: 'steer', unit: 'axis' }] },
-  { id: 6, name: 'turret', diff: false, owner: false, fields: [{ name: 'yaw', unit: 'mrad' }, { name: 'pitch', unit: 'mrad' }, { name: 'shots' }, { name: 'range', unit: 'dm' }, { name: 'flags' }] },
+  { id: 6, name: 'turret', diff: false, owner: false, fields: [{ name: 'yaw', unit: 'mrad' }, { name: 'pitch', unit: 'mrad' }, { name: 'shots' }, { name: 'range', unit: 'dm' }, { name: 'heat', unit: 'byte' }, { name: 'flags' }] },
   { id: 7, name: 'limbs', diff: false, owner: false, fields: [{ name: 'lost' }] },
   { id: 8, name: 'thrust', diff: false, owner: false, fields: [{ name: 'air', unit: 'byte' }, { name: 'flags' }] },
   { id: 9, name: 'arms', diff: false, owner: false, fields: [{ name: 'shots' }, { name: 'heat', unit: 'byte' }, { name: 'rear_heat', unit: 'byte' }, { name: 'bombs' }, { name: 'flags' }] },

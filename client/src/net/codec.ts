@@ -24,7 +24,7 @@ export const OBJ_BUILDING = 1
 
 /** Entity kinds, generated from `consts.rs`. A vehicle kind's definition is `vehicleDef`. */
 export {
-  KIND_BACKPACK, KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SPORTS, KIND_SOLDIER, KIND_STAG, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER,
+  KIND_BACKPACK, KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SPORTS, KIND_SOLDIER, KIND_STAG, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_TUPP, KIND_WALKER,
 } from '@/sim/consts'
 export { isDrone } from '@/sim/vehicles'
 
@@ -172,6 +172,8 @@ export const TURRET_ALT = 1 << 1
 /** `Turret`'s flags: a beam is charging, and it is burning. Mirrors `TURRET_CHARGING` and `TURRET_BEAM`. */
 export const TURRET_CHARGING = 1 << 2
 export const TURRET_BEAM = 1 << 3
+/** `Turret`'s flags: a machine gun on a mount has overheated and jammed. Mirrors `TURRET_JAMMED`. */
+export const TURRET_JAMMED = 1 << 4
 
 /** `Arms.flags`: the blip switch is cutting the engine, and either set of guns is jammed. Mirrors `ARMS_*`. */
 export const ARMS_CUT = 1 << 0

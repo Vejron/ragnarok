@@ -26,7 +26,7 @@ beforeAll(async () => {
 function tank(x: number, { shots = 0, hp = 250, damage }: { shots?: number; hp?: number; damage?: number[] } = {}): Components {
   return {
     kind: { kind: KIND_TANK }, place: { x: x * 100, y: 120, z: 0 }, orientation: { qx: 0, qy: 0, qz: 0 }, steer: { steer: 0 },
-    turret: { yaw: 0, pitch: 0, shots, range: 0, flags: 0 }, health: { hp },
+    turret: { yaw: 0, pitch: 0, shots, range: 0, heat: 0, flags: 0 }, health: { hp },
     ...(damage ? { damage: { parts: damage } } : {}),
   }
 }

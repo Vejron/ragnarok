@@ -41,8 +41,10 @@ export interface SeatView {
   chase?: true
   /** Holding aim looks down the gun's sight. */
   sight?: true
+  /** Its occupant stands rather than sits: a technical's gunner, on their feet in the bed behind the gun. */
+  stand?: true
   /** The gauges the HUD shows from it. */
-  gauges?: readonly ('air' | 'eggs' | 'cockpit' | 'range' | 'ammo' | 'pintle' | 'wind')[]
+  gauges?: readonly ('air' | 'eggs' | 'cockpit' | 'range' | 'ammo' | 'pintle' | 'heat' | 'wind')[]
   /** The arc drawn ahead of what it fires: a mortar's bomb, or where a plane's bomb would land. */
   arc?: 'mortar' | 'bombs'
 }

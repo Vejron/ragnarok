@@ -7,7 +7,7 @@ import { TURRET_STOWED } from '@/net/codec'
 import type { Turret } from '@/entities/units'
 
 const IDENTITY: [number, number, number, number] = [0, 0, 0, 1]
-const AIM: Turret = { yaw: 0.5, pitch: 1.0, shots: 0, range: 120, flags: 0 }
+const AIM: Turret = { yaw: 0.5, pitch: 1.0, shots: 0, range: 120, heat: 0, flags: 0 }
 const named = (mortar: MortarModel, name: string) => mortar.root.getObjectByName(name)!
 const world = (mortar: MortarModel, name: string) => {
   mortar.root.updateMatrixWorld(true)

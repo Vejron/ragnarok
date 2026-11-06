@@ -343,8 +343,8 @@ replicated! {
     set 6 turret
     /// A gun on a mount, as it is drawn: the turret's yaw (+ turns left) and the barrel's elevation (+ is
     /// up), both in the hull's frame; the shots fired, modulo 256, so a client sees a new one as a change;
-    /// a field mortar's range dial; and `TURRET_*` flags.
-    Turret { yaw: i16 as mrad, pitch: i16 as mrad, shots: u8, range: u16 as dm, flags: u8 }
+    /// a field mortar's range dial; how hot a machine gun's barrel is; and `TURRET_*` flags.
+    Turret { yaw: i16 as mrad, pitch: i16 as mrad, shots: u8, range: u16 as dm, heat: u8 as byte, flags: u8 }
 
     set 7 limbs
     /// The limbs a soldier has lost (`LIMB_*`, low four bits) and the stumps that still bleed (the same

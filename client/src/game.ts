@@ -64,7 +64,7 @@ import { loadVehicleModels } from './kinds'
 import { Crowd } from './render/character'
 import { Events } from './events'
 import { Arcs } from './arcs'
-import { cockpit, pilotSights, roofGun } from './gauges'
+import { cockpit, mountGun, pilotSights, roofGun } from './gauges'
 import { prompt } from './prompt'
 import { Surroundings } from './surroundings'
 import { Cameras } from './cameras'
@@ -940,7 +940,7 @@ export class Game {
   }
 
   /** Draws the local soldier. */
-  private poseLocal({ dt, seated, flying, sitting, scoped, reading, position, local, velocity, lookYaw, lookPitch }: Moment) {
+  private poseLocal({ dt, seated, flying, sitting, scoped, reading, position, local, velocity, lookYaw, lookPitch, view }: Moment) {
     const [vx, vz] = velocity
     this.avatars.begin()
     const me = this.avatars.local()
@@ -955,7 +955,7 @@ export class Game {
     me.lamp = this.player.lamp && this.player.alive
     this.skiSounds(local, position, dt)
     // Face where the camera looks, immediately, rather than the last ticked yaw.
-    if (sitting) me.seat(this.seatAt, this.seatTurn, this.input.yaw, this.input.pitch, dt)
+    if (sitting) me.seat(this.seatAt, this.seatTurn, this.input.yaw, this.input.pitch, dt, view?.stand === true)
     else me.update(position, flying ? local.yaw : lookYaw, vx, vz, local.grounded, dt, flying ? 0 : lookPitch, this.crouching || flying,
       this.crouching && local.grounded && Math.hypot(local.knock[0], local.knock[1]) > SLIDE_MIN_SPEED, local.prone || local.down > 0, local.chute, local.vy)
     this.shine(me)
@@ -1116,7 +1116,7 @@ export class Game {
       limbs: player.body(),
       ammo: gauges?.includes('ammo') ? ((ride?.turret?.flags ?? 0) & TURRET_ALT ? 'HE' : 'AP') : null,
       reload: this.reloaded(now, ride ? rideView(ride.kind).reload : SHELL_COOLDOWN_TICKS),
-      ...(gauges?.includes('pintle') ? roofGun(ride?.pintle ?? null) : cockpit(gauges?.includes('cockpit') ? (ride?.arms ?? null) : null, aviator, seat ? this.vehicles.fx(seat.vehicle) : undefined)),
+      ...(gauges?.includes('pintle') ? roofGun(ride?.pintle ?? null) : gauges?.includes('heat') ? mountGun(ride?.turret ?? null) : cockpit(gauges?.includes('cockpit') ? (ride?.arms ?? null) : null, aviator, seat ? this.vehicles.fx(seat.vehicle) : undefined)),
       air: gauges?.includes('air') ? (this.driver?.thrust?.air ?? null) : gauges?.includes('wind') && seat ? this.sailing(seat.vehicle, now) : null,
       stamina: !seated && able ? { left: 1 - local.spent / STAMINA_FULL, winded: local.winded } : null,
       speed: seated

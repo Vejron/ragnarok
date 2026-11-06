@@ -2,6 +2,7 @@ import { Quaternion, Vector3 } from '@ragnarok/engine'
 import type { VehicleModel } from '@/render/car'
 import { TowedGun } from '@/render/towedgun'
 import { FLAG_HELD_MASK, FLAG_HELD_SHIFT } from '@/net/codec'
+import { seatView } from '@/seats'
 import { seatHead } from '@/sim/vehicles'
 import type { Avatars } from '../avatars'
 import type { Frame, Presenter } from '../presenter'
@@ -64,7 +65,7 @@ export class Riders implements Presenter<Frame> {
     const avatar = this.avatars.draw(id)
     avatar.dead = false
     avatar.held = ((entity.flags?.flags ?? 0) & FLAG_HELD_MASK) >> FLAG_HELD_SHIFT
-    avatar.seat(this.head, this.turn, entity.heading?.yaw ?? car.yaw, entity.look?.pitch ?? 0, frame.dt)
+    avatar.seat(this.head, this.turn, entity.heading?.yaw ?? car.yaw, entity.look?.pitch ?? 0, frame.dt, seatView(car.kind, seat).stand === true)
   }
 
   // Their soldier is let go by `Avatars.sweep` once nobody draws it.

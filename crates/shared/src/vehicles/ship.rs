@@ -106,6 +106,7 @@ pub(super) const SHIP: VehicleDef = VehicleDef {
         steer_time: 0.0,
         skim: None,
         bow: SHIP_BOW,
+        springs: Springs::FIRM,
     },
     armor: ARMOR,
     drone: None,
