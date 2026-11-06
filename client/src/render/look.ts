@@ -1,6 +1,6 @@
 import type { ToneMapping } from '@ragnarok/engine'
 
-/** The soft-lighting options a player can switch on and off. Each is independent. */
+/** The soft-lighting options a player can switch on and off, and what else the HUD shows. Each is independent. */
 export interface Look {
   /** A gentler palette, filmic tone mapping and blurrier sun shadows. */
   soft: boolean
@@ -18,7 +18,22 @@ export interface Look {
   grass: boolean
   /** Craters marked on the ground: char, rays and the rim's shadow (SCORCH.md). The dent is there either way. */
   scorch: boolean
+  /** The HUD's network numbers: ping, players in view, the tally and the sync line. F3 toggles it. */
+  netStats: boolean
 }
+
+/** The options as the settings show them: a name, what it does, and whether it costs a slow device much. */
+export const LOOK_OPTIONS: { key: keyof Look; label: string; about: string; heavy?: boolean }[] = [
+  { key: 'soft', label: 'Soft light', about: 'A gentler palette, filmic tone mapping and softer sun shadows.' },
+  { key: 'contact', label: 'Contact shadows', about: 'A dark patch under every character and vehicle, so they sit on the ground.' },
+  { key: 'far', label: 'Far shadows', about: 'Sun shadows reach further from you, a little coarser.', heavy: true },
+  { key: 'ink', label: 'Ink outlines', about: 'Dark cartoon outlines where one thing meets another.' },
+  { key: 'bloom', label: 'Bloom', about: 'A glow around fire, tracers and flashes.', heavy: true },
+  { key: 'reflect', label: 'Water reflections', about: 'Water mirrors the world, which draws it a second time.', heavy: true },
+  { key: 'grass', label: 'Grass', about: 'Grass that sways and parts as you go through it.' },
+  { key: 'scorch', label: 'Scorched craters', about: 'Char and rays on the ground where something blew up.' },
+  { key: 'netStats', label: 'Network stats (F3)', about: 'Ping, players in view, your kills and deaths, and the sync numbers, top left.' },
+]
 
 const KEY = 'ragnarok.look'
 
@@ -32,7 +47,7 @@ const RESET_ON_BUMP: (keyof Look)[] = ['ink']
 /** The long shadows are off on phones and tablets, where they cost fill rate and memory. */
 export function defaultLook(): Look {
   const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
-  return { soft: true, contact: true, far: !coarse, ink: true, bloom: !coarse, reflect: !coarse, grass: true, scorch: true }
+  return { soft: true, contact: true, far: !coarse, ink: true, bloom: !coarse, reflect: !coarse, grass: true, scorch: true, netStats: false }
 }
 
 export function loadLook(): Look {

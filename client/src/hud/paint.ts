@@ -3,6 +3,21 @@ import { Texture, type HudLayer } from '@ragnarok/engine'
 export const FONT = "ui-rounded, 'SF Pro Rounded', system-ui, sans-serif"
 /** The HUD's dark ink, as the page's CSS had it. */
 export const INK = 0x1d2b36
+export const INK_CSS = '#1d2b36'
+export const RED = 0xff5a5f
+export const TEAL = 0x2ec4b6
+export const AMBER = 0xf3c94b
+export const GREEN_CSS = '#138a4b'
+/** Text sizes, CSS pixels: nothing on the HUD is smaller than `xs`. */
+export const TEXT = { xs: 11, sm: 13, md: 15, lg: 18 } as const
+/** The gap between the HUD and the screen's edges, CSS pixels. */
+export const MARGIN = 16
+
+/**
+ * How much bigger the HUD is drawn than its CSS-pixel layout: 1 up to a 900-pixel-high view, growing
+ * with the screen to 1.4, so it stays readable on a large monitor. Never smaller than its layout.
+ */
+export const uiScale = (width: number, height: number) => Math.max(1, Math.min(1.4, Math.min(width, height) / 900))
 
 export interface TextStyle {
   /** CSS pixels. */
@@ -110,8 +125,8 @@ export class TextCache {
     g.textBaseline = 'middle'
     g.fillStyle = style.color ?? '#fff'
     if (style.shadow) {
-      g.shadowColor = 'rgba(0, 0, 0, 0.8)'
-      g.shadowBlur = 2 * s
+      g.shadowColor = 'rgba(0, 0, 0, 0.9)'
+      g.shadowBlur = 3 * s
       g.shadowOffsetY = 1 * s
     }
     if (tracking === 0) g.fillText(text, PAD, PAD + height / 2)
@@ -187,19 +202,24 @@ function disc(): Texture {
 export class Painter {
   readonly text = new TextCache()
   readonly disc = disc()
-  /** CSS pixels of the view. */
+  /** The view in the HUD's layout pixels: CSS pixels divided by `ui`. */
   width = 1
   height = 1
+  /** Device pixels per layout pixel. */
   scale = 1
+  /** Layout pixels to CSS pixels (`uiScale`). */
+  ui = 1
 
   constructor(readonly layer: HudLayer) {}
 
-  begin(width: number, height: number, scale: number) {
-    this.width = width
-    this.height = height
-    this.scale = scale
-    this.text.setScale(scale)
-    this.layer.begin(width, height)
+  /** Starts a frame on a view `width` × `height` CSS pixels at `scale` device pixels each, zoomed by `ui`. */
+  begin(width: number, height: number, scale: number, ui = 1) {
+    this.width = width / ui
+    this.height = height / ui
+    this.scale = scale * ui
+    this.ui = ui
+    this.text.setScale(this.scale)
+    this.layer.begin(this.width, this.height)
   }
 
   rect(x: number, y: number, w: number, h: number, color: number, alpha = 1) {

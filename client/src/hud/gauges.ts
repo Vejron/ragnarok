@@ -5,17 +5,12 @@ import { LIMB_ARM_L, LIMB_ARM_R, LIMB_LEG_L, LIMB_LEG_R } from '@/net/codec'
 import { HEN_EGGS } from '@/sim/consts'
 import { METER_CURVE, METER_HIGH, METER_LOW, METER_MISS, METER_PURE } from '@/sim/golf'
 import { HOTBAR_SLOTS, itemDef, type ItemSlot } from '@/sim/items'
-import { CanvasSprite, INK, canvas2d, hudTexture, type Painter } from './paint'
+import { AMBER, CanvasSprite, INK, INK_CSS, RED, TEAL, TEXT, canvas2d, hudTexture, uiScale, type Painter } from './paint'
 import { dialTicks, dialTop, fill, needleAngle } from './speedo'
 
 /** How much wider than the hotbar the golf meter is, and the least it is across, CSS pixels. */
 const GOLF_METER_WIDEN = 2.2
 const GOLF_METER_MIN = 560
-
-const RED = 0xff5a5f
-const TEAL = 0x2ec4b6
-const AMBER = 0xf3c94b
-const INK_CSS = '#1d2b36'
 
 /** Fills for the gauge bars, left to right (a single colour is flat). */
 const FILLS = {
@@ -27,14 +22,25 @@ const FILLS = {
 type Fill = keyof typeof FILLS
 
 export const SLOT = 32
+/** A touch screen's slots are big enough for a thumb. */
+export const TOUCH_SLOT = 44
 const SLOT_GAP = 4
 
-/** Where the hotbar's slots are on a view `width` × `height` CSS pixels: for taps on a touch screen. */
-export function hotbarRects(width: number, height: number, touch: boolean): { x: number; y: number; w: number; h: number }[] {
-  const total = HOTBAR_SLOTS * SLOT + (HOTBAR_SLOTS - 1) * SLOT_GAP
+type Rect = { x: number; y: number; w: number; h: number }
+
+/** Where the hotbar's slots are on a view `width` × `height` layout pixels. */
+export function hotbarRects(width: number, height: number, touch: boolean): Rect[] {
+  const slot = touch ? TOUCH_SLOT : SLOT
+  const total = HOTBAR_SLOTS * slot + (HOTBAR_SLOTS - 1) * SLOT_GAP
   const left = (width - total) / 2
-  const top = height - (touch ? 10 : 12) - SLOT
-  return Array.from({ length: HOTBAR_SLOTS }, (_, k) => ({ x: left + k * (SLOT + SLOT_GAP), y: top, w: SLOT, h: SLOT }))
+  const top = height - (touch ? 10 : 12) - slot
+  return Array.from({ length: HOTBAR_SLOTS }, (_, k) => ({ x: left + k * (slot + SLOT_GAP), y: top, w: slot, h: slot }))
+}
+
+/** `hotbarRects` in CSS pixels, as the HUD draws them on a view `width` × `height` CSS pixels: for taps on a touch screen. */
+export function hotbarRectsCss(width: number, height: number, touch: boolean): Rect[] {
+  const ui = uiScale(width, height)
+  return hotbarRects(width / ui, height / ui, touch).map((r) => ({ x: r.x * ui, y: r.y * ui, w: r.w * ui, h: r.h * ui }))
 }
 
 /** `ammo` for a gun, the stack size for a thing you use up. */
@@ -90,7 +96,7 @@ export class Gauges {
   }
 
   /** A pill-shaped bar at (`x`, `y`) filled `amount` (0..1) with `kind`, tinted `tint`, with `text` over it. */
-  bar(p: Painter, x: number, y: number, w: number, h: number, amount: number, kind: Fill, tint: number, text: string, textSize = 11) {
+  bar(p: Painter, x: number, y: number, w: number, h: number, amount: number, kind: Fill, tint: number, text: string, textSize = TEXT.xs) {
     p.pill(x, y, w, h, 0xffffff, 0.55, 2)
     const f = Math.max(0, Math.min(1, amount))
     if (f > 0) p.image(this.barTexture(kind, w, h, p.scale), x, y, w * f, h, 1, tint, [0, 0, f, 1])
@@ -227,23 +233,25 @@ export class Gauges {
         p.box(r.x - 2, y - 2, r.w + 4, r.h + 4, 8, 0xffbe0b, 1, 1, 0x000000, 0.25)
         p.box(r.x, y, r.w, r.h, 6, 0xffffff, 0.92)
       } else p.box(r.x, y, r.w, r.h, 6, 0xffffff, 0.55 * fade, 1, 0x000000, 0.25 * fade)
-      p.label(String(k + 1), r.x + 3, y + 5, { size: 8, weight: 800, color: INK_CSS }, 'left', 0.6 * fade)
       const icon = slot ? this.icon(slot.item) : null
-      if (icon) p.image(icon, r.x + 4, y + 4, 24, 24, (dry ? 0.45 : 1) * fade)
-      if (slot) p.label(slotDetail(slot), r.x + r.w - 2, y + r.h - 5, { size: 9, weight: 800, color: dry ? '#b3261e' : INK_CSS }, 'right', fade)
+      const inset = r.w / 8
+      if (icon) p.image(icon, r.x + inset, y + inset, r.w - 2 * inset, r.h - 2 * inset, (dry ? 0.45 : 1) * fade)
+      p.label(String(k + 1), r.x + 3, y + 6, { size: TEXT.xs, weight: 800, color: INK_CSS }, 'left', 0.7 * fade)
+      if (slot) p.label(slotDetail(slot), r.x + r.w - 2, y + r.h - 6, { size: TEXT.xs, weight: 800, color: dry ? '#b3261e' : INK_CSS }, 'right', fade)
     })
   }
 
-  /** The bottom-right column, from the bottom up: bars, then the vehicle's health, then the speedometer. */
+  /**
+   * The bottom-right column, from the bottom up: bars, then the vehicle's health, then the speedometer.
+   * A touch screen's buttons are in that corner, so there the column hangs from the top right (where the
+   * minimap would be), from the top down, the speedometer first.
+   */
   private corner(p: Painter, s: HudStats) {
     const right = p.width - 16
-    let bottom = p.height - 16
     const W = 160
     const H = 18
-    const row = (draw: (top: number) => void, h = H) => {
-      draw(bottom - h)
-      bottom -= h + 6
-    }
+    const rows: { h: number; draw: (top: number) => void }[] = []
+    const row = (draw: (top: number) => void, h = H) => rows.push({ h, draw })
     const gauge = (amount: number, kind: Fill, alarm: boolean, text: string) =>
       row((top) => this.bar(p, right - W, top, W, H, amount, alarm ? 'white' : kind, alarm ? RED : 0xffffff, text))
     const pips = (count: number, left: number, egg: boolean) =>
@@ -279,6 +287,19 @@ export class Gauges {
       row((top) => this.bar(p, right - W, top, W, H, f, 'white', f > 0.5 ? TEAL : f > 0.25 ? AMBER : RED, `${s.vehicle!.name} ${Math.ceil(f * 100)}%`))
     }
     if (s.speed !== null) row((top) => this.speedometer(p, right - 60, top + 60, 60, s.seat, s.speed!), 120)
+    if (s.touch) {
+      let top = 16
+      for (const { h, draw } of rows.reverse()) {
+        draw(top)
+        top += h + 6
+      }
+    } else {
+      let bottom = p.height - 16
+      for (const { h, draw } of rows) {
+        draw(bottom - h)
+        bottom -= h + 6
+      }
+    }
   }
 
   /** A round dial of radius `r` centred (`cx`, `cy`): ticks, numbers, a needle and the speed written below. */
@@ -291,7 +312,7 @@ export class Gauges {
       const [c, s] = [Math.cos(a), Math.sin(a)]
       const inner = r - (tick.major ? 10 : 6)
       p.line(cx + c * inner, cy + s * inner, cx + c * (r - 3), cy + s * (r - 3), tick.major ? 2 : 1.5, 0xffffff, tick.major ? 0.95 : 0.6)
-      if (tick.major) p.label(String(tick.kmh), cx + c * (r - 19), cy + s * (r - 19), { size: 9, weight: 700, color: '#fff' }, 'center', 0.85)
+      if (tick.major) p.label(String(tick.kmh), cx + c * (r - 19), cy + s * (r - 19), { size: TEXT.xs, weight: 700, color: '#fff' }, 'center', 0.9)
     }
     const a = needleAngle(kmh, top)
     const reach = r - 8
@@ -299,7 +320,7 @@ export class Gauges {
     p.dot(cx, cy, 5, 0xffffff)
     p.dot(cx, cy, 3, RED)
     p.label(String(Math.round(kmh)), cx, cy + r * 0.42, { size: 20, weight: 800, color: '#fff' }, 'center')
-    p.label('km/h', cx, cy + r * 0.72, { size: 9, weight: 700, color: '#fff' }, 'center', 0.75)
+    p.label('km/h', cx, cy + r * 0.72, { size: TEXT.xs, weight: 700, color: '#fff' }, 'center', 0.85)
   }
 
   dispose() {

@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { DIAL_START, DIAL_SWEEP, dialTicks, dialTop, fill, needleAngle } from '@/hud/speedo'
-import { hotbarRects, slotDetail } from '@/hud/gauges'
+import { hotbarRects, hotbarRectsCss, slotDetail } from '@/hud/gauges'
 import { PAPER_MAX, PAPER_METRES, PAPER_MIN, mapWindow, paperView, scaleLength, zoomPaper } from '@/hud/map'
-import { TextCache, hexOf } from '@/hud/paint'
+import { TextCache, hexOf, uiScale } from '@/hud/paint'
+import { hintAlpha, touchPrompt, wrap } from '@/hud/panels'
 import { HOTBAR_SLOTS } from '@/sim/items'
 
 describe('speedometer', () => {
@@ -45,7 +46,7 @@ describe('hotbar layout', () => {
     const right = rects[rects.length - 1]!.x + rects[rects.length - 1]!.w
     expect(left + right).toBeCloseTo(1000)
     expect(rects[0]!.y + rects[0]!.h).toBe(600 - 12)
-    expect(hotbarRects(1000, 600, true)[0]!.y + 32).toBe(600 - 10)
+    expect(hotbarRects(1000, 600, true)[0]!.y + 44).toBe(600 - 10)
   })
 
   it('shows a gun by its magazine and a stack by its count', () => {
@@ -53,6 +54,45 @@ describe('hotbar layout', () => {
     expect(slotDetail({ item: 3, ammo: 0, count: 3 } as never)).toBe('×3')
     expect(slotDetail({ item: 3, ammo: 0, count: 1 } as never)).toBe('')
     expect(slotDetail({ item: 0, ammo: 0, count: 0 } as never)).toBe('')
+  })
+})
+
+describe('HUD scale', () => {
+  it('draws the HUD at its layout size up to 900 pixels high, larger on a big screen, at most 1.4 times', () => {
+    expect(uiScale(1280, 720)).toBe(1)
+    expect(uiScale(1920, 1080)).toBeCloseTo(1.2)
+    expect(uiScale(3840, 2160)).toBe(1.4)
+  })
+
+  it('puts the hotbar tap targets where the scaled HUD draws the slots', () => {
+    const [layout] = hotbarRects(1920 / 1.2, 1080 / 1.2, true)
+    const [css] = hotbarRectsCss(1920, 1080, true)
+    expect(css!.x).toBeCloseTo(layout!.x * 1.2)
+    expect(css!.w).toBeCloseTo(44 * 1.2)
+    expect(css!.y + css!.h).toBeCloseTo(1080 - 10 * 1.2)
+  })
+})
+
+describe('HUD panels', () => {
+  it('wraps text at spaces within a width', () => {
+    const measure = (t: string) => t.length * 10
+    expect(wrap(measure, 'one two three four', 90)).toEqual(['one two', 'three', 'four'])
+    expect(wrap(measure, 'short', 90)).toEqual(['short'])
+    // A word longer than the width stands on its own line.
+    expect(wrap(measure, 'a extraordinarily b', 50)).toEqual(['a', 'extraordinarily', 'b'])
+  })
+
+  it('shows a seat’s keys in full at first, then fades them', () => {
+    expect(hintAlpha(0)).toBe(1)
+    expect(hintAlpha(5999)).toBe(1)
+    expect(hintAlpha(6300)).toBeLessThan(1)
+    expect(hintAlpha(60_000)).toBeCloseTo(0.45)
+  })
+
+  it('names the touch buttons in prompts that name a key', () => {
+    expect(touchPrompt('E: drive the jeep')).toBe('USE: drive the jeep')
+    expect(touchPrompt('G: open the parachute')).toBe('CHUTE: open the parachute')
+    expect(touchPrompt('Q: something else')).toBe('Q: something else')
   })
 })
 

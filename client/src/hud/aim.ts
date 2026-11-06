@@ -2,6 +2,7 @@ import { Texture } from '@ragnarok/engine'
 import type { HudStats } from '@/hud'
 import type { MarkerView } from '@/feedback'
 import { aimsReticle } from '@/seathints'
+import { miniSize } from './map'
 import { CanvasSprite, canvas2d, hudTexture, type Painter } from './paint'
 
 const backOut = (t: number) => 1 + 2.70158 * (t - 1) ** 3 + 1.70158 * (t - 1) ** 2
@@ -142,15 +143,17 @@ export class AimMarks {
       p.rect(cx - 9, cy - 1, 18, 2, 0xffffff, 0.85)
       p.rect(cx - 1, cy - 9, 2, 18, 0xffffff, 0.85)
       const live = `● LIVE${s.drone.camera ? ` · ${s.drone.camera === 'down' ? 'CAM DOWN' : 'CAM FWD'}` : ''}`
-      if (blink(now, 1000)) p.label(live, p.width - 16, 22, { size: 13, weight: 800, color: '#ff5a5f', tracking: 0.1 }, 'right')
+      // Left of the minimap, where there is one.
+      if (blink(now, 1000)) p.label(live, s.touch ? p.width - 16 : p.width - 12 - miniSize(p.width, p.height) - 18, 22, { size: 13, weight: 800, color: '#ff5a5f', shadow: true, tracking: 0.1 }, 'right')
       // Looking straight down, the top of the screen is where it heads.
       if (s.drone.camera === 'down') p.label('▲', cx, 24, { size: 14, color: 'rgba(255, 255, 255, 0.85)', shadow: true }, 'center')
     }
     if (s.heat === null && !s.scoped && s.armed) {
-      const gap = s.crossGap + (s.hitMarker ? 6 * (1 - s.hitMarker.progress) ** 2 : 0)
+      // The gap is the gun's spread on the screen, in CSS pixels.
+      const gap = s.crossGap / p.ui + (s.hitMarker ? 6 * (1 - s.hitMarker.progress) ** 2 : 0)
       const arm = (x: number, y: number, w: number, h: number) => {
-        p.rect(x - 0.5, y - 0.5, w + 1, h + 1, 0x000000, 0.3)
-        p.rect(x, y, w, h, 0xffffff, 0.55)
+        p.rect(x - 0.5, y - 0.5, w + 1, h + 1, 0x000000, 0.5)
+        p.rect(x, y, w, h, 0xffffff, 0.8)
       }
       arm(cx - 1, cy - gap - 6, 2, 6)
       arm(cx - 1, cy + gap, 2, 6)

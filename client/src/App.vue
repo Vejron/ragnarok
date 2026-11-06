@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { Game, type HudStats } from './game'
-import { hotbarRects } from './hud/gauges'
+import { hotbarRectsCss } from './hud/gauges'
 import TouchControls from './TouchControls.vue'
 import type { InputController } from './sim/input'
-import type { Look } from './render/look'
+import { LOOK_OPTIONS, type Look } from './render/look'
 
 // The HUD itself is drawn by the game (`hud/`); the page keeps what is clicked or tapped, and banners.
 const container = ref<HTMLElement | null>(null)
 const stats = shallowRef<HudStats | null>(null)
 const error = ref<string | null>(null)
 const input = shallowRef<InputController | null>(null)
-const look = ref<Look>({ soft: true, contact: true, far: true, ink: true, bloom: true, reflect: true, grass: true, scorch: true })
+const look = ref<Look>({ soft: true, contact: true, far: true, ink: true, bloom: true, reflect: true, grass: true, scorch: true, netStats: false })
+const lookOpen = ref(false)
 let game: Game | null = null
 let lastStats = 0
 const viewport = ref({ width: window.innerWidth, height: window.innerHeight })
@@ -33,16 +34,6 @@ onMounted(() => {
   })
 })
 
-const LOOKS: { key: keyof Look; label: string }[] = [
-  { key: 'soft', label: 'Soft light' },
-  { key: 'contact', label: 'Contact shadows' },
-  { key: 'far', label: 'Far shadows' },
-  { key: 'ink', label: 'Ink outlines' },
-  { key: 'bloom', label: 'Bloom' },
-  { key: 'reflect', label: 'Water reflections' },
-  { key: 'grass', label: 'Grass' },
-  { key: 'scorch', label: 'Scorched craters' },
-]
 function toggleLook(key: keyof Look) {
   look.value = { ...look.value, [key]: !look.value[key] }
   game?.setLook(look.value)
@@ -55,12 +46,28 @@ onBeforeUnmount(() => {
 
 const settingsUrl = `${import.meta.env.BASE_URL}settings.html`
 /** On a touch screen, where the drawn hotbar's slots are, to be tapped. */
-const slotTaps = computed(() => (stats.value?.touch && stats.value.hands ? hotbarRects(viewport.value.width, viewport.value.height, true) : []))
+const slotTaps = computed(() => (stats.value?.touch && stats.value.hands ? hotbarRectsCss(viewport.value.width, viewport.value.height, true) : []))
+
+/** The keys, in pairs, for the pause screen. */
+const KEYS: [string, string][] = [
+  ['WASD', 'move'], ['Shift', 'run'], ['Space', 'jump'], ['C', 'crouch'], ['Z', 'lie down'],
+  ['E', 'take, drive, ride or man a gun'], ['1–5 / wheel', 'pick an item'], ['Click', 'fire'],
+  ['Right mouse', 'aim (scope with the sniper or Carl Gustaf)'], ['R', 'reload'], ['X', 'holster'],
+  ['G', 'parachute'], ['K', 'skis (winter)'], ['L', 'headlamp'], ['V', 'talk'], ['M', 'read the map'],
+  ['Tab', 'scores'], ['F3', 'network stats'], ['Esc', 'release the mouse'],
+]
 </script>
 
 <template>
   <div ref="container" class="viewport" />
-  <TouchControls v-if="stats?.touch && stats.locked && input" :input="input" :seat="stats.seat" :can-switch="stats.canSwitchSeat" />
+  <TouchControls
+    v-if="stats?.touch && stats.locked && input"
+    :input="input"
+    :seat="stats.seat"
+    :can-switch="stats.canSwitchSeat"
+    :ammo="stats.ammo !== null"
+    :voice="stats.status === 'CONNECTED' && stats.voice.mic !== 'unavailable'"
+  />
   <button
     v-for="(slot, k) in slotTaps"
     :key="k"
@@ -70,19 +77,24 @@ const slotTaps = computed(() => (stats.value?.touch && stats.value.hands ? hotba
     :aria-label="`Slot ${k + 1}`"
     @pointerdown.prevent="input?.selectSlot(k)"
   />
-  <div v-if="stats?.warning" class="banner">{{ stats.warning }}</div>
+  <!-- The game's own warnings are drawn on the HUD, under the pills; this is for a game that would not start. -->
   <div v-if="error" class="banner">{{ error }}</div>
-  <div v-if="stats && !stats.locked" class="look" @click.stop>
-    <label v-for="option in LOOKS" :key="option.key">
-      <input type="checkbox" :checked="look[option.key]" @change="toggleLook(option.key)" />{{ option.label }}
-    </label>
-  </div>
   <div v-if="stats && !stats.locked" class="overlay">
     <h1>RAGNAROK</h1>
-    <p>{{ stats.touch ? 'Tap to play' : 'Click to play' }}</p>
-    <p><a class="settings" :href="settingsUrl" @click.stop>Name, colour and spawn points</a></p>
-    <p v-if="stats.touch" class="keys">Left thumb moves · Drag the right side to look · Buttons jump, crouch, fire, reload and use · Tap the slots to switch items</p>
-    <p v-else class="keys">WASD move · Shift run · Space jump · E take, drive, ride or man a gun · 1-5 or wheel pick an item · Mouse look · Click fire · Right mouse aim (scope with the sniper or Carl Gustaf) · R reload · X holster · K skis (winter) · L headlamp · V talk · M read the map · Tab scores · Esc release</p>
+    <p class="play">{{ stats.touch ? 'Tap to play' : 'Click to play' }}</p>
+    <div class="actions" @click.stop>
+      <a class="chip" :href="settingsUrl" title="Leaves the match: you join again when you come back">Settings · name, colour, loadout, spawns</a>
+      <button type="button" class="chip" :aria-expanded="lookOpen" @click="lookOpen = !lookOpen">Graphics {{ lookOpen ? '▴' : '▾' }}</button>
+    </div>
+    <div v-if="lookOpen" class="look" @click.stop>
+      <label v-for="option in LOOK_OPTIONS" :key="option.key" :title="option.about">
+        <input type="checkbox" :checked="look[option.key]" @change="toggleLook(option.key)" />{{ option.label }}
+      </label>
+    </div>
+    <p v-if="stats.touch" class="keys">Left thumb moves · Drag the right side to look · Hold AIM to aim · Tap the slots to switch items</p>
+    <dl v-else class="keys">
+      <div v-for="[key, what] in KEYS" :key="key"><dt>{{ key }}</dt><dd>{{ what }}</dd></div>
+    </dl>
   </div>
 </template>
 
@@ -101,22 +113,32 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
 .slot-tap {
   position: fixed; padding: 0; border: 0; background: transparent; touch-action: none; -webkit-tap-highlight-color: transparent;
 }
-.look {
-  position: fixed; right: 12px; bottom: 12px; z-index: 1; display: flex; flex-direction: column; gap: 6px;
-  padding: 10px 14px; border-radius: 14px; background: rgba(255, 255, 255, 0.92); color: #1d2b36; font-size: 13px; font-weight: 700;
-}
-.look label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .overlay {
-  position: fixed; inset: 0; display: grid; place-content: center; text-align: center;
-  background: rgba(20, 40, 60, 0.35); color: white; pointer-events: none;
+  position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  padding: 16px; overflow-y: auto; text-align: center;
+  background: rgba(20, 40, 60, 0.45); color: white; pointer-events: none;
   text-shadow: 0 2px 0 rgba(0, 0, 0, 0.3);
 }
 .overlay h1 { margin: 0; font-size: clamp(40px, 10vw, 88px); letter-spacing: 0.08em; transform: rotate(-3deg); }
-.overlay p { margin: 6px 0; font-size: 20px; font-weight: 700; }
-.overlay .keys { font-size: 14px; font-weight: 500; opacity: 0.9; }
-.overlay .settings {
-  pointer-events: auto; display: inline-block; padding: 6px 16px; border-radius: 999px; font-size: 15px;
-  background: rgba(255, 255, 255, 0.92); color: #1d2b36; text-decoration: none; text-shadow: none;
+.overlay .play { margin: 0; font-size: 22px; font-weight: 800; }
+.actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; pointer-events: auto; }
+.chip {
+  display: inline-block; padding: 8px 16px; border: 0; border-radius: 999px; font: inherit; font-size: 15px; font-weight: 700;
+  background: rgba(255, 255, 255, 0.92); color: #1d2b36; text-decoration: none; text-shadow: none; cursor: pointer;
 }
-.overlay .settings:hover { background: white; }
+.chip:hover { background: white; }
+.look {
+  pointer-events: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px 16px;
+  width: min(560px, 100%); padding: 12px 16px; border-radius: 14px; text-align: left; text-shadow: none;
+  background: rgba(255, 255, 255, 0.94); color: #1d2b36; font-size: 14px; font-weight: 700;
+}
+.look label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.keys {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 4px 20px;
+  width: min(760px, 100%); margin: 8px 0 0; font-size: 14px; font-weight: 500; text-align: left;
+}
+.keys div { display: flex; gap: 8px; align-items: baseline; }
+.keys dt { flex: none; min-width: 92px; text-align: right; font-weight: 800; }
+.keys dd { margin: 0; opacity: 0.92; }
+p.keys { display: block; text-align: center; }
 </style>

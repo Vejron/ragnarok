@@ -839,7 +839,7 @@ export class Game {
     this.stones?.update(this.scene.camera.position.x, this.scene.camera.position.z)
     const nearby = [...this.soldiers.nearby, ...this.riders.seated]
     this.avatars.sweep((key) => this.surroundings.dry(key))
-    this.voice.setTalking(this.localId !== null && this.player.alive && this.input.isHeld('KeyV'))
+    this.voice.setTalking(this.localId !== null && this.player.alive && this.input.talkHeld)
     this.voice.update(this.localId, position, nearby)
     this.scene.contact.end()
     this.surroundings.mirrorWater()
@@ -857,6 +857,7 @@ export class Game {
     const marks = { x: stats.x, z: stats.z, yaw: stats.yaw, blips: stats.blips, circle: stats.backpack, pulse: (now % 1600) / 1600 }
     if (this.localId !== null) this.scene.heldMap.dress(colorFor(this.localId))
     this.paperSpan = zoomPaper(this.paperSpan, this.input.takeMapWheel())
+    if (this.input.takeStatsToggle()) this.setLook({ ...this.scene.look, netStats: !this.scene.look.netStats })
     this.scene.heldMap.update(this.input.mapUp, dt, now, Math.hypot(velocity[0], velocity[1]), lookYaw, lookPitch, this.scene.groundLight, this.player.lamp && this.player.alive, this.hud.mapImage, stats.halfExtent, marks, this.paperSpan)
   }
 
@@ -1163,6 +1164,7 @@ export class Game {
       halfExtent: this.world?.halfExtent ?? 0,
       blips: [...this.blips.view(now, this.localId, ride?.x ?? position[0]!, ride?.z ?? position[2]!, this.alliesInView(), MAP_SIDES), ...this.golfBlip()],
       backpack: this.backpack.view(this.localId),
+      netStats: this.scene.look.netStats,
     }
   }
 

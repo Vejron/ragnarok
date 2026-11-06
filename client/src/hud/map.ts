@@ -1,9 +1,15 @@
 import type { Blip } from '@/blips'
 import { circleOnSmall } from '@/sim/minimap'
+import { FONT, INK_CSS } from './paint'
 
 /** The paper colour of `minimap.png`, the importer's `LAND`. */
 export const PAPER = '#e9e5d9'
 export const ARROW = '#ff5a5f'
+/** The minimap's side on a view `width` × `height` layout pixels: 180 on a desktop, down to 110 on a phone. */
+export const miniSize = (width: number, height: number) => Math.round(Math.max(110, Math.min(180, Math.min(width, height) * 0.3)))
+/** How far down the minimap's frame reaches, from the top of the screen. */
+export const miniBottom = (width: number, height: number) => 12 + miniSize(width, height) + 4
+
 const MODEM = (alpha: number) => `rgba(255, 140, 0, ${alpha})`
 
 /** What a map shows on top of the picture: who reads it, the marks, and the backpack's circle. */
@@ -133,7 +139,7 @@ function golfBall(g: CanvasRenderingContext2D, x: number, y: number, scale: numb
   g.fillStyle = '#ffffff'
   g.fill()
   g.lineWidth = 2 * scale
-  g.strokeStyle = '#1d2b36'
+  g.strokeStyle = INK_CSS
   g.stroke()
 }
 
@@ -188,7 +194,7 @@ export function paintPaper(g: CanvasRenderingContext2D, image: HTMLImageElement 
     g.fillStyle = PAPER
     g.fillRect(0, 0, size, size)
     g.fillStyle = 'rgba(29, 43, 54, 0.5)'
-    g.font = `700 ${size / 20}px ui-rounded, system-ui, sans-serif`
+    g.font = `700 ${size / 20}px ${FONT}`
     g.textAlign = 'center'
     g.fillText('No map of this area', size / 2, size / 2)
     return
@@ -196,7 +202,7 @@ export function paintPaper(g: CanvasRenderingContext2D, image: HTMLImageElement 
   const { cx, cz, metres } = paperView(marks.x, marks.z, halfExtent, span)
   const scale = size / 360
   paintMap(g, image, halfExtent, cx, cz, metres, size, marks, scale)
-  const ink = '#1d2b36'
+  const ink = INK_CSS
   g.fillStyle = 'rgba(255, 255, 255, 0.8)'
   // The scale bar, bottom left.
   const length = scaleLength(metres)
@@ -207,7 +213,7 @@ export function paintPaper(g: CanvasRenderingContext2D, image: HTMLImageElement 
   g.fillRect(pad, size - pad - 2 * scale, barPx, 3 * scale)
   g.fillRect(pad, size - pad - 8 * scale, 2 * scale, 9 * scale)
   g.fillRect(pad + barPx - 2 * scale, size - pad - 8 * scale, 2 * scale, 9 * scale)
-  g.font = `700 ${11 * scale}px ui-rounded, system-ui, sans-serif`
+  g.font = `700 ${11 * scale}px ${FONT}`
   g.textAlign = 'center'
   g.fillText(length >= 1000 ? `${length / 1000} km` : `${length} m`, pad + barPx / 2, size - pad - 9 * scale)
   // North, top right.

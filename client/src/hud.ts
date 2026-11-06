@@ -26,6 +26,8 @@ export interface HudStats {
   tiles: number
   correction: number
   pending: number
+  /** Show the network numbers (ping, players in view, the tally, the sync line); else just the connection. */
+  netStats: boolean
   locked: boolean
   /** The player is on a touch screen. */
   touch: boolean

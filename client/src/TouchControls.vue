@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { reactive } from 'vue'
+import { computed, onBeforeUnmount, reactive, watch } from 'vue'
+import type { HudStats } from './hud'
 import type { InputController } from './sim/input'
-import { BUTTON_ALT, BUTTON_CHUTE, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_PRONE, BUTTON_RELOAD, BUTTON_RUN, BUTTON_SKIS, BUTTON_USE } from './sim/consts'
 import { winter } from './render/season'
+import { touchButtons, type TouchButton } from './touchbuttons'
 
-const props = defineProps<{ input: InputController; seat: string | null; canSwitch?: boolean }>()
+const props = defineProps<{ input: InputController; seat: HudStats['seat']; canSwitch?: boolean; ammo?: boolean; voice?: boolean }>()
 
 /** How far the thumb has to travel for a full push, in CSS pixels. */
 const STICK_RADIUS = 56
@@ -72,11 +73,56 @@ function lookUp(event: PointerEvent) {
   if (event.pointerId === lookPointer) lookPointer = -1
 }
 
-const press = (mask: number) => (event: PointerEvent) => {
-  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
-  props.input.hold(mask, true)
+const buttons = computed(() => touchButtons(props.seat, { canSwitch: props.canSwitch ?? false, winter, ammo: props.ammo ?? false }))
+
+/** The buttons under a finger, by pointer, so a lift (or the button going away) lets go of the right one. */
+const pressed = reactive(new Map<number, TouchButton>())
+/** The toggles' states, read off the input each frame: Z or a jump also changes them. */
+const toggled = reactive({ prone: false, holster: false, map: false })
+let frame = 0
+const poll = () => {
+  toggled.prone = props.input.prone
+  toggled.holster = props.input.holstered
+  toggled.map = props.input.mapUp
+  frame = requestAnimationFrame(poll)
 }
-const release = (mask: number) => () => props.input.hold(mask, false)
+frame = requestAnimationFrame(poll)
+
+const isPressed = (button: TouchButton) => [...pressed.values()].some((b) => b.id === button.id)
+const isOn = (button: TouchButton) => (button.id === 'prone' ? toggled.prone : button.id === 'holster' ? toggled.holster : false)
+
+function down(button: TouchButton, event: PointerEvent) {
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  pressed.set(event.pointerId, button)
+  navigator.vibrate?.(10)
+  if (button.mode === 'hold') props.input.hold(button.mask, true)
+  else if (button.id === 'holster') props.input.holster()
+  else props.input.tap(button.mask)
+}
+
+function up(event: PointerEvent) {
+  const button = pressed.get(event.pointerId)
+  if (!button) return
+  pressed.delete(event.pointerId)
+  if (button.mode === 'hold') props.input.hold(button.mask, false)
+}
+
+/** Lets go of everything: a seat's buttons are not the last one's, and a finger on one that went away never lifts from it. */
+function releaseAll() {
+  pressed.clear()
+  stickPointer = -1
+  stick.active = false
+  props.input.releaseTouch()
+}
+watch(() => props.seat, releaseAll)
+onBeforeUnmount(() => {
+  cancelAnimationFrame(frame)
+  releaseAll()
+})
+
+function talk(on: boolean) {
+  props.input.touchTalk = on
+}
 </script>
 
 <template>
@@ -84,30 +130,35 @@ const release = (mask: number) => () => props.input.hold(mask, false)
     <div class="zone left" @pointerdown="stickDown" @pointermove="stickMove" @pointerup="stickUp" @pointercancel="stickUp" />
     <div class="zone right" @pointerdown="lookDown" @pointermove="lookMove" @pointerup="lookUp" @pointercancel="lookUp" />
     <div v-if="stick.active" class="base" :style="{ left: stick.x + 'px', top: stick.y + 'px' }">
-      <div class="knob" :style="{ transform: `translate(${stick.dx}px, ${stick.dy}px)` }" />
+      <div class="knob" :class="{ run: seat === null && Math.hypot(stick.dx, stick.dy) >= STICK_RADIUS * RUN_AT }" :style="{ transform: `translate(${stick.dx}px, ${stick.dy}px)` }" />
     </div>
-    <button class="btn use" @pointerdown.prevent="input.tap(BUTTON_USE)">{{ seat === 'drone' || seat === 'loiter' ? 'RECALL' : 'USE' }}</button>
-    <button class="btn jump" @pointerdown.prevent="press(BUTTON_JUMP)($event)" @pointerup="release(BUTTON_JUMP)()" @pointercancel="release(BUTTON_JUMP)()">
-      {{ seat === 'driver' || seat === 'sled' ? 'BRAKE' : seat === 'helm' ? 'ANCHOR' : seat === 'roadster' ? 'HOP' : seat === 'hen' || seat === 'tupp' ? 'FLAP' : seat === 'aviator' ? 'FASTER' : seat === 'pilot' || seat === 'drone' ? 'UP' : 'JUMP' }}
-    </button>
-    <button v-if="seat === 'pilot' || seat === 'drone' || seat === 'aviator' || seat === 'roadster' || seat === 'sled'" class="btn sink" @pointerdown.prevent="press(BUTTON_RUN)($event)" @pointerup="release(BUTTON_RUN)()" @pointercancel="release(BUTTON_RUN)()">{{ seat === 'aviator' ? 'SLOWER' : seat === 'roadster' || seat === 'sled' ? 'BOOST' : 'DOWN' }}</button>
-    <button v-if="!seat" class="btn crouch" @pointerdown.prevent="press(BUTTON_CROUCH)($event)" @pointerup="release(BUTTON_CROUCH)()" @pointercancel="release(BUTTON_CROUCH)()">CROUCH</button>
-    <!-- Lying down is a toggle, as Z is. -->
-    <button v-if="!seat" class="btn prone" @pointerdown.prevent="input.tap(BUTTON_PRONE)">PRONE</button>
-    <button v-if="seat === 'aviator' || seat === 'roadster'" class="btn crouch" @pointerdown.prevent="press(BUTTON_CROUCH)($event)" @pointerup="release(BUTTON_CROUCH)()" @pointercancel="release(BUTTON_CROUCH)()">{{ seat === 'roadster' ? 'BRAKE' : 'BOMB' }}</button>
-    <button class="btn fire" @pointerdown.prevent="press(BUTTON_FIRE)($event)" @pointerup="release(BUTTON_FIRE)()" @pointercancel="release(BUTTON_FIRE)()">{{ seat === 'drone' || seat === 'loiter' ? 'BOOM' : seat === 'hen' ? 'EGG' : seat === 'tupp' ? 'LASER' : 'FIRE' }}</button>
-    <button v-if="!seat" class="btn chute" @pointerdown.prevent="input.tap(BUTTON_CHUTE)">CHUTE</button>
-    <button v-if="!seat" class="btn holster" @pointerdown.prevent="input.holster()">HANDS</button>
-    <button v-if="!seat && winter" class="btn skis" @pointerdown.prevent="input.tap(BUTTON_SKIS)">SKIS</button>
-    <button v-if="!seat || seat === 'passenger'" class="btn reload" @pointerdown.prevent="input.tap(BUTTON_RELOAD)">RELOAD</button>
-    <!-- A loitering drone's camera swap is aim, as right-click is. -->
-    <button v-else-if="seat === 'loiter'" class="btn reload" @pointerdown.prevent="press(BUTTON_ALT)($event)" @pointerup="release(BUTTON_ALT)()" @pointercancel="release(BUTTON_ALT)()">CAM</button>
-    <button v-else-if="canSwitch" class="btn reload" @pointerdown.prevent="input.tap(BUTTON_RELOAD)">SEAT</button>
+    <div class="grid">
+      <button
+        v-for="button in buttons"
+        :key="button.id"
+        type="button"
+        class="btn"
+        :class="[button.tone, { big: button.big, pressed: isPressed(button), on: isOn(button), small: button.label.length > 6 }]"
+        :style="{ '--col': button.col, '--row': button.row }"
+        :aria-pressed="button.mode === 'toggle' ? isOn(button) : undefined"
+        @pointerdown.prevent="down(button, $event)"
+        @pointerup="up"
+        @pointercancel="up"
+      >{{ button.label }}</button>
+    </div>
+    <div class="top">
+      <button type="button" class="chip" :class="{ on: toggled.map }" @pointerdown.prevent="input.mapUp = !input.mapUp">MAP</button>
+      <button v-if="voice" type="button" class="chip" @pointerdown.prevent="talk(true)" @pointerup="talk(false)" @pointercancel="talk(false)">TALK</button>
+    </div>
+    <div class="rotate">Turn your device sideways to play</div>
   </div>
 </template>
 
 <style scoped>
-.touch { position: fixed; inset: 0; pointer-events: none; user-select: none; -webkit-user-select: none; touch-action: none; }
+.touch {
+  --btn: 64px; --gap: 10px; --edge-r: max(18px, env(safe-area-inset-right)); --edge-b: max(20px, env(safe-area-inset-bottom));
+  position: fixed; inset: 0; pointer-events: none; user-select: none; -webkit-user-select: none; touch-action: none;
+}
 .zone { position: absolute; top: 0; bottom: 0; pointer-events: auto; touch-action: none; }
 .zone.left { left: 0; width: 42%; top: 25%; }
 .zone.right { right: 0; width: 58%; }
@@ -117,22 +168,39 @@ const release = (mask: number) => () => props.input.hold(mask, false)
 }
 .knob {
   position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border-radius: 50%;
-  background: rgba(255, 255, 255, 0.85); box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.3);
+  background: rgba(255, 255, 255, 0.85); box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.3); transition: background 0.1s;
 }
+/* Pushed far enough to run. */
+.knob.run { background: rgba(143, 209, 106, 0.95); }
 .btn {
-  position: absolute; width: 68px; height: 68px; border-radius: 50%; border: 0; pointer-events: auto; touch-action: none;
-  font: 800 12px ui-rounded, system-ui, sans-serif; color: #1d2b36; background: rgba(255, 255, 255, 0.6);
+  position: absolute; width: var(--btn); height: var(--btn); border-radius: 50%; border: 0; padding: 0; pointer-events: auto; touch-action: none;
+  right: calc(var(--edge-r) + var(--col) * (var(--btn) + var(--gap)));
+  bottom: calc(var(--edge-b) + var(--row) * (var(--btn) + var(--gap)));
+  font: 800 12px ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; color: #1d2b36; background: rgba(255, 255, 255, 0.65);
   box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.3); -webkit-tap-highlight-color: transparent;
+  transition: transform 0.06s, background 0.06s;
 }
-.btn:active { background: rgba(255, 255, 255, 0.9); }
-.fire { right: max(18px, env(safe-area-inset-right)); bottom: max(24px, env(safe-area-inset-bottom)); width: 84px; height: 84px; background: rgba(255, 90, 95, 0.7); }
-.reload { right: calc(max(18px, env(safe-area-inset-right)) + 96px); bottom: max(24px, env(safe-area-inset-bottom)); background: rgba(255, 190, 11, 0.7); font-size: 10px; }
-.jump { right: max(26px, env(safe-area-inset-right)); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 100px); }
-.sink { right: calc(max(26px, env(safe-area-inset-right)) + 80px); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 100px); }
-.chute { right: calc(max(18px, env(safe-area-inset-right)) + 96px); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 60px); font-size: 10px; }
-.crouch { right: calc(max(26px, env(safe-area-inset-right)) + 80px); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 100px); font-size: 10px; }
-.prone { right: calc(max(26px, env(safe-area-inset-right)) + 160px); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 100px); font-size: 10px; }
-.holster { right: calc(max(26px, env(safe-area-inset-right)) + 80px); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 180px); font-size: 10px; }
-.skis { right: calc(max(26px, env(safe-area-inset-right)) + 160px); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 180px); font-size: 10px; }
-.use { right: max(26px, env(safe-area-inset-right)); bottom: calc(max(24px, env(safe-area-inset-bottom)) + 180px); }
+.btn.small { font-size: 11px; line-height: 1.1; }
+/* Centred on its cell, bigger than the rest. */
+.btn.big { width: 80px; height: 80px; margin: 0 -8px -8px 0; font-size: 14px; }
+.btn.fire { background: rgba(255, 90, 95, 0.75); }
+.btn.reload { background: rgba(255, 190, 11, 0.75); }
+.btn.on { box-shadow: 0 0 0 3px #2ec4b6, 0 0 0 5px rgba(0, 0, 0, 0.3); background: rgba(255, 255, 255, 0.9); }
+.btn.pressed { transform: scale(0.92); background: rgba(255, 255, 255, 0.95); }
+.btn.fire.pressed { background: rgba(255, 90, 95, 1); }
+.btn.reload.pressed { background: rgba(255, 190, 11, 1); }
+.top { position: absolute; top: max(12px, env(safe-area-inset-top)); right: calc(var(--edge-r) + 172px); display: flex; gap: 8px; }
+.chip {
+  pointer-events: auto; touch-action: none; min-width: 56px; height: 36px; padding: 0 12px; border: 0; border-radius: 999px;
+  font: 800 12px ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; color: #1d2b36; background: rgba(255, 255, 255, 0.75);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.25); -webkit-tap-highlight-color: transparent;
+}
+.chip:active, .chip.on { background: rgba(255, 255, 255, 0.95); box-shadow: 0 0 0 3px #2ec4b6; }
+.rotate { display: none; }
+@media (orientation: portrait) {
+  .rotate {
+    display: grid; place-content: center; position: absolute; inset: 0; pointer-events: auto; padding: 24px; text-align: center;
+    background: rgba(20, 40, 60, 0.85); color: white; font: 800 22px ui-rounded, 'SF Pro Rounded', system-ui, sans-serif;
+  }
+}
 </style>

@@ -56,6 +56,8 @@ export class InputController {
   mapUp = false
   /** Wheel notches turned with the map up, not yet taken (`takeMapWheel`): down zooms out. */
   private mapWheel = 0
+  /** F3 was pressed since last asked (`takeStatsToggle`): show or hide the HUD's network numbers. */
+  private statsToggle = false
   /** The click that put the map away fires nothing: its buttons are ignored until let go. */
   private swallow = false
 
@@ -129,6 +131,21 @@ export class InputController {
     return this.held.has(code)
   }
 
+  /** Push-to-talk held on screen; V on a keyboard. */
+  touchTalk = false
+
+  /** Talking: V held, or the touch button. */
+  get talkHeld() {
+    return this.touchTalk || this.held.has('KeyV')
+  }
+
+  /** Lets go of every button held on screen: for when the touch controls change or go away under a finger. */
+  releaseTouch() {
+    this.touchHeld = 0
+    this.touchTalk = false
+    this.stick = [0, 0, false]
+  }
+
   /** Aim is held, by the right mouse button or on screen. */
   get aimHeld() {
     return !this.swallow && (this.aiming || (this.touchHeld & BUTTON_ALT) !== 0)
@@ -190,7 +207,7 @@ export class InputController {
 
   private key(event: KeyboardEvent, down: boolean) {
     // Tab shows the scoreboard; it must not also move the browser's focus.
-    if (event.code === 'Tab') event.preventDefault()
+    if (event.code === 'Tab' || event.code === 'F3') event.preventDefault()
     if (event.repeat) return
     if (down) {
       this.held.add(event.code)
@@ -205,6 +222,7 @@ export class InputController {
       if (event.code === 'KeyK') this.latched |= BUTTON_SKIS
       if (event.code === 'KeyX') this.holster()
       if (event.code === 'KeyM') this.mapUp = !this.mapUp
+      if (event.code === 'F3') this.statsToggle = true
       if (event.code === 'KeyR') this.latched |= BUTTON_RELOAD
       // Q loads a gun's other kind of round: a tank's high explosive, or back to armour-piercing.
       if (event.code === 'KeyQ') this.latched |= BUTTON_AMMO
@@ -224,6 +242,13 @@ export class InputController {
 
   private axis(negative: string[], positive: string[]) {
     return (positive.some((c) => this.held.has(c)) ? 1 : 0) - (negative.some((c) => this.held.has(c)) ? 1 : 0)
+  }
+
+  /** Whether F3 was pressed since last asked. */
+  takeStatsToggle() {
+    const toggled = this.statsToggle
+    this.statsToggle = false
+    return toggled
   }
 
   /** The wheel notches turned over the map since last asked. */
@@ -258,9 +283,9 @@ export class InputController {
     }
     if (this.held.has('KeyC') || this.held.has('ControlLeft')) buttons |= BUTTON_CROUCH
     if (this.proneLatched) buttons |= BUTTON_PRONE
-    // W and S walk a mortar's range dial; nobody on foot or driving needs them for anything else here.
-    if (this.held.has('KeyW')) buttons |= BUTTON_RANGE_UP
-    if (this.held.has('KeyS')) buttons |= BUTTON_RANGE_DOWN
+    // W and S (or the stick pushed up or down) walk a mortar's range dial; nobody on foot or driving needs them for anything else here.
+    if (this.held.has('KeyW') || this.stick[1] > 0.5) buttons |= BUTTON_RANGE_UP
+    if (this.held.has('KeyS') || this.stick[1] < -0.5) buttons |= BUTTON_RANGE_DOWN
     if (this.held.has('ShiftLeft') || this.held.has('ShiftRight')) buttons |= BUTTON_RUN
     return {
       strafe: Math.max(-1, Math.min(1, this.axis(['KeyA', 'ArrowLeft'], ['KeyD', 'ArrowRight']) + this.stick[0])),

@@ -6,9 +6,38 @@ import { HOTBAR_ICONS } from '@/hotbarIcons'
 import { ITEM_NONE, itemDef, LOADOUT_ITEMS, STANDARD_LOADOUT } from '@/sim/items'
 import { insideWorld, mapToWorld, worldToMap } from '@/sim/minimap'
 import { loadManifest, WORLD_BASE, type WorldData } from '@/world'
+import { defaultLook, loadLook, LOOK_OPTIONS, saveLook, type Look } from '@/render/look'
+
+/** Shift-click removes the spawn point nearest the click if it is this close, CSS pixels. */
+const REMOVE_REACH = 24
+
+/** Everything saves as it changes; a chip says so for a moment. */
+const saved = ref(false)
+let savedTimer = 0
+function flashSaved() {
+  saved.value = true
+  clearTimeout(savedTimer)
+  savedTimer = window.setTimeout(() => (saved.value = false), 1500)
+}
 
 const profile = ref(loadProfile())
-watch(profile, (value) => saveProfile(value), { deep: true })
+watch(profile, (value) => {
+  saveProfile(value)
+  flashSaved()
+}, { deep: true })
+
+const look = ref<Look>(loadLook())
+function toggleLook(key: keyof Look) {
+  look.value = { ...look.value, [key]: !look.value[key] }
+  saveLook(look.value)
+  flashSaved()
+}
+function resetLook() {
+  look.value = defaultLook()
+  saveLook(look.value)
+  flashSaved()
+}
+const customLook = computed(() => JSON.stringify(look.value) !== JSON.stringify(defaultLook()))
 
 const world = shallowRef<WorldData | null>(null)
 const hash = ref(0)
@@ -31,6 +60,8 @@ const mapUrl = computed(() => (world.value ? `${WORLD_BASE}minimap.png` : ''))
 const playUrl = import.meta.env.BASE_URL
 const displayName = computed(() => sanitizeName(profile.value.name) || 'Player')
 const outfit = computed(() => cssColor(PLAYER_COLORS[profile.value.color ?? 0]!.hex))
+const colorName = computed(() => (profile.value.color === null ? 'Automatic: picked by your player number' : PLAYER_COLORS[profile.value.color]!.name))
+const nameLength = computed(() => [...profile.value.name].length)
 
 /** This world's spawn points, in the order they are used. */
 const spawns = computed<SpawnPoint[]>({
@@ -68,7 +99,7 @@ function onNameBlur() {
   profile.value = { ...profile.value, name: sanitizeName(profile.value.name) }
 }
 
-function pickColor(index: number) {
+function pickColor(index: number | null) {
   profile.value = { ...profile.value, color: index }
 }
 
@@ -95,7 +126,8 @@ function addSpawn(event: MouseEvent) {
   const box = (event.currentTarget as HTMLElement).getBoundingClientRect()
   const [x, z] = mapToWorld((event.clientX - box.left) / box.width, (event.clientY - box.top) / box.height, data.halfExtent)
   if (event.shiftKey) {
-    removeNearest(x, z)
+    // Metres per CSS pixel on this map, so the reach is the same on screen whatever its size.
+    removeNearest(x, z, (REMOVE_REACH * 2 * data.halfExtent) / box.width)
     return
   }
   if (spawns.value.length >= MAX_SPAWNS) return say(`At most ${MAX_SPAWNS} spawn points. Remove one first.`)
@@ -103,9 +135,9 @@ function addSpawn(event: MouseEvent) {
   spawns.value = [...spawns.value, [Math.round(x * 100), Math.round(z * 100)]]
 }
 
-function removeNearest(x: number, z: number) {
+function removeNearest(x: number, z: number, reach: number) {
   let best = -1
-  let bestDistance = Infinity
+  let bestDistance = reach
   spawns.value.forEach(([sx, sz], i) => {
     const distance = Math.hypot(sx / 100 - x, sz / 100 - z)
     if (distance < bestDistance) [best, bestDistance] = [i, distance]
@@ -117,11 +149,17 @@ function removeSpawn(index: number) {
   spawns.value = spawns.value.filter((_, i) => i !== index)
 }
 
-function moveEarlier(index: number) {
-  if (index === 0) return
+/** Swaps spawn point `index` with the one `by` (±1) from it. */
+function move(index: number, by: number) {
+  const other = index + by
+  if (other < 0 || other >= spawns.value.length) return
   const next = [...spawns.value]
-  ;[next[index - 1], next[index]] = [next[index]!, next[index - 1]!]
+  ;[next[other], next[index]] = [next[index]!, next[other]!]
   spawns.value = next
+}
+
+function clearSpawns() {
+  spawns.value = []
 }
 
 const metres = ([x, z]: SpawnPoint) => `${Math.round(x / 100)} m E, ${Math.round(-z / 100)} m N`
@@ -130,11 +168,16 @@ const metres = ([x, z]: SpawnPoint) => `${Math.round(x / 100)} m E, ${Math.round
 <template>
   <main>
     <header>
-      <h1>Player settings</h1>
-      <a class="play" :href="playUrl">Play</a>
+      <div>
+        <h1>Settings</h1>
+        <p class="hint">Changes save as you make them, and apply the next time you join a match.</p>
+      </div>
+      <span class="saved" :class="{ shown: saved }" aria-live="polite">{{ saved ? 'Saved ✓' : '' }}</span>
+      <a class="play" :href="playUrl">Back to the game</a>
     </header>
 
     <section class="card who">
+      <h2 class="wide">Player</h2>
       <div class="preview" aria-hidden="true">
         <svg viewBox="0 0 60 90" width="60" height="90">
           <circle cx="30" cy="16" r="11" :fill="outfit" stroke="#1d2b36" stroke-width="3" />
@@ -151,35 +194,42 @@ const metres = ([x, z]: SpawnPoint) => `${Math.round(x / 100)} m E, ${Math.round
           placeholder="Player"
           autocomplete="nickname"
           spellcheck="false"
+          aria-describedby="name-hint"
           @input="onNameInput"
           @blur="onNameBlur"
         />
-        <p class="hint">Up to {{ MAX_NAME_CHARS }} characters. Leave empty to be “Player” and your number.</p>
+        <p id="name-hint" class="hint">{{ nameLength }} / {{ MAX_NAME_CHARS }} characters. Leave empty to be “Player” and your number.</p>
 
-        <span class="label">Colour</span>
-        <div class="swatches" role="radiogroup" aria-label="Colour">
-          <button
-            v-for="(color, index) in PLAYER_COLORS"
-            :key="color.name"
-            type="button"
-            role="radio"
-            :aria-checked="profile.color === index"
-            :title="color.name"
-            :aria-label="color.name"
-            :class="{ chosen: profile.color === index }"
-            :style="{ background: cssColor(color.hex) }"
-            @click="pickColor(index)"
-          />
-        </div>
+        <fieldset class="colour">
+          <legend>Colour</legend>
+          <div class="swatches" role="radiogroup" aria-label="Colour">
+            <button
+              v-for="(color, index) in PLAYER_COLORS"
+              :key="color.name"
+              type="button"
+              role="radio"
+              :aria-checked="profile.color === index"
+              :title="color.name"
+              :aria-label="color.name"
+              :class="{ chosen: profile.color === index }"
+              :style="{ background: cssColor(color.hex) }"
+              @click="pickColor(index)"
+            />
+          </div>
+          <p class="hint">
+            {{ colorName }}
+            <button v-if="profile.color !== null" type="button" class="link" @click="pickColor(null)">Use automatic</button>
+          </p>
+        </fieldset>
       </div>
     </section>
 
     <section class="card">
       <div class="heading">
-        <h2>Starting weapons</h2>
+        <h2>Loadout</h2>
         <button v-if="customLoadout" type="button" class="reset" @click="resetLoadout">Use standard</button>
       </div>
-      <p class="hint">What you carry at the start of every life, in hotbar order. Each item fits once. Applies the next time you join.</p>
+      <p class="hint">What you carry at the start of every life, in hotbar order. Each item fits in one slot only: picking it again moves it.</p>
       <ol class="loadout">
         <li v-for="(item, slot) in loadout" :key="slot">
           <label :for="`slot-${slot}`">Slot {{ slot + 1 }}</label>
@@ -193,12 +243,15 @@ const metres = ([x, z]: SpawnPoint) => `${Math.round(x / 100)} m E, ${Math.round
     </section>
 
     <section class="card spawns">
-      <h2>Spawn points</h2>
-      <p class="hint">
-        Click the map to add up to {{ MAX_SPAWNS }}. You start at #1, and each time you die you spawn at the next one.
-        Shift-click or click a marker to remove it. With none, you spawn somewhere near the middle.
-        A spot in water or inside a building is skipped.
-      </p>
+      <div class="heading">
+        <h2>Spawn points</h2>
+        <button v-if="spawns.length" type="button" class="reset" @click="clearSpawns">Clear all</button>
+      </div>
+      <ul class="hint steps">
+        <li>Click the map to add a point, up to {{ MAX_SPAWNS }}. Click a marker to remove it.</li>
+        <li>You start at #1; each time you die you spawn at the next one.</li>
+        <li>With none, you spawn near the middle. A point in water or inside a building is skipped.</li>
+      </ul>
       <p v-if="worldError" class="error">Could not load the world: {{ worldError }}</p>
       <div v-else-if="world" class="layout">
         <div class="map" :class="{ missing: mapMissing }" @click="addSpawn" @contextmenu.prevent>
@@ -216,16 +269,36 @@ const metres = ([x, z]: SpawnPoint) => `${Math.round(x / 100)} m E, ${Math.round
           <span v-if="notice" class="notice">{{ notice }}</span>
         </div>
         <ol class="list">
-          <li v-for="(point, index) in spawns" :key="`${point[0]},${point[1]}`">
+          <li v-for="(point, index) in spawns" :key="`${index}:${point[0]},${point[1]}`">
             <b :style="{ background: outfit }">{{ index + 1 }}</b>
             <span>{{ metres(point) }}</span>
-            <button type="button" :disabled="index === 0" title="Use earlier" @click="moveEarlier(index)">↑</button>
-            <button type="button" title="Remove" @click="removeSpawn(index)">×</button>
+            <button type="button" :disabled="index === 0" title="Use earlier" :aria-label="`Move #${index + 1} earlier`" @click="move(index, -1)">↑</button>
+            <button type="button" :disabled="index === spawns.length - 1" title="Use later" :aria-label="`Move #${index + 1} later`" @click="move(index, 1)">↓</button>
+            <button type="button" title="Remove" :aria-label="`Remove #${index + 1}`" @click="removeSpawn(index)">×</button>
           </li>
           <li v-if="!spawns.length" class="empty">No spawn points: random spawns.</li>
         </ol>
       </div>
       <p v-else class="hint">Loading the map…</p>
+    </section>
+
+    <section class="card">
+      <div class="heading">
+        <h2>Graphics</h2>
+        <button v-if="customLook" type="button" class="reset" @click="resetLook">Use defaults</button>
+      </div>
+      <p class="hint">These apply straight away, here and in the game's pause screen. Those marked “heavier” cost the most on a phone or an older computer.</p>
+      <ul class="looks">
+        <li v-for="option in LOOK_OPTIONS" :key="option.key">
+          <label>
+            <input type="checkbox" :checked="look[option.key]" @change="toggleLook(option.key)" />
+            <span>
+              <span class="name"><strong>{{ option.label }}</strong><em v-if="option.heavy" class="heavy">heavier</em></span>
+              <small>{{ option.about }}</small>
+            </span>
+          </label>
+        </li>
+      </ul>
     </section>
   </main>
 </template>
@@ -244,8 +317,15 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
 
 <style scoped>
 main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; display: grid; gap: 16px; }
-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-h1 { margin: 0; font-size: clamp(26px, 5vw, 40px); letter-spacing: 0.04em; transform: rotate(-2deg); }
+header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+header > div { flex: 1; min-width: 220px; }
+.saved {
+  font-size: 14px; font-weight: 800; color: #138a4b; background: white; padding: 6px 12px; border-radius: 999px;
+  opacity: 0; transition: opacity 0.2s;
+}
+.saved.shown { opacity: 1; }
+.wide { flex-basis: 100%; }
+h1 { margin: 0 0 8px; font-size: clamp(26px, 5vw, 40px); letter-spacing: 0.04em; transform: rotate(-2deg); }
 h2 { margin: 0 0 4px; font-size: 20px; }
 .play {
   padding: 10px 28px; border-radius: 999px; background: var(--ink); color: white; font-weight: 800; font-size: 18px;
@@ -253,12 +333,17 @@ h2 { margin: 0 0 4px; font-size: 20px; }
 }
 .play:hover { background: #2f4556; }
 .card { background: var(--card); border-radius: 18px; padding: 18px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08); }
-.who { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }
+.who { display: flex; gap: 8px 24px; align-items: center; flex-wrap: wrap; }
 .preview { display: grid; justify-items: center; gap: 6px; min-width: 120px; }
 .tag { background: var(--ink); color: white; font-weight: 800; padding: 3px 10px; border-radius: 999px; font-size: 13px; }
 .fields { flex: 1; min-width: 240px; display: grid; gap: 6px; }
 label, .label { font-weight: 800; font-size: 14px; }
-.label { margin-top: 10px; }
+fieldset.colour { border: 0; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; min-width: 0; }
+fieldset.colour legend { font-weight: 800; font-size: 14px; padding: 0; margin-bottom: 6px; }
+.link {
+  font: inherit; font-weight: 800; color: #1f5fbf; background: none; border: 0; padding: 0 0 0 8px; cursor: pointer;
+  text-decoration: underline;
+}
 input {
   font: inherit; font-size: 18px; font-weight: 700; padding: 8px 12px; border-radius: 10px; border: 2px solid var(--line);
   color: var(--ink); background: white; max-width: 320px;
@@ -271,7 +356,7 @@ input:focus { outline: none; border-color: #3a86ff; }
   font: inherit; font-size: 13px; font-weight: 800; padding: 5px 12px; border-radius: 999px; border: 2px solid var(--line);
   background: white; color: var(--ink); cursor: pointer;
 }
-.loadout { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.loadout { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
 .loadout li { display: grid; justify-items: center; gap: 6px; padding: 10px; border-radius: 12px; border: 2px solid var(--line); }
 .loadout svg { color: var(--ink); }
 .loadout select {
@@ -281,7 +366,7 @@ input:focus { outline: none; border-color: #3a86ff; }
 .loadout select:focus { outline: none; border-color: #3a86ff; }
 .swatches { display: flex; flex-wrap: wrap; gap: 8px; }
 .swatches button {
-  width: 34px; height: 34px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 0 2px var(--line); cursor: pointer;
+  width: 36px; height: 36px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 0 2px rgba(29, 43, 54, 0.35); cursor: pointer;
   padding: 0;
 }
 .swatches button.chosen { box-shadow: 0 0 0 3px var(--ink); }
@@ -301,7 +386,7 @@ input:focus { outline: none; border-color: #3a86ff; }
 }
 .notice {
   position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); background: #ffe066; color: var(--ink);
-  padding: 6px 12px; border-radius: 10px; font-weight: 700; font-size: 13px; pointer-events: none; white-space: nowrap;
+  padding: 6px 12px; border-radius: 10px; font-weight: 700; font-size: 13px; pointer-events: none; max-width: calc(100% - 24px); text-align: center;
 }
 .list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .list li { display: flex; align-items: center; gap: 8px; font-size: 14px; }
@@ -316,7 +401,20 @@ input:focus { outline: none; border-color: #3a86ff; }
 }
 .list button:disabled { opacity: 0.35; cursor: default; }
 .list .empty { color: var(--muted); }
+.steps { padding-left: 18px; margin-top: 4px; }
+.looks { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+.looks label { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; border: 2px solid var(--line); cursor: pointer; font-weight: 400; }
+.looks input { width: 20px; height: 20px; margin: 2px 0 0; flex: none; accent-color: var(--ink); }
+.looks label > span { display: grid; gap: 2px; }
+.looks strong { font-size: 15px; }
+.looks small { color: var(--muted); font-size: 13px; line-height: 1.4; }
+.heavy {
+  font-style: normal; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em;
+  margin-left: 8px; padding: 1px 6px; border-radius: 6px; background: #ffe8a3; color: #6b4b00; vertical-align: 2px;
+}
 @media (max-width: 720px) {
   .layout { grid-template-columns: 1fr; }
+  .list button { width: 40px; height: 40px; }
+  .play { padding: 10px 20px; font-size: 16px; }
 }
 </style>
