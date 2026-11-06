@@ -71,6 +71,9 @@ export const KIND_SHIP_GUN = 19
 export const KIND_DEER = 20
 export const KIND_STAG = 21
 
+/** The golf cart: two seats side by side under a roof, an electric motor, and a bag rack on the back. */
+export const KIND_GOLF_CART = 22
+
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
 
@@ -929,6 +932,27 @@ export const DRONE_RESPONSE = 14.0
 
 /** Air drag on the body, which is all that slows a drone whose motors are off. */
 export const DRONE_DAMPING = 0.1
+
+/**
+ * The golf cart (`KIND_GOLF_CART`): two seats side by side under a canopy roof, small wheels and an
+ * electric motor. Light and slow, it potters between the holes at the speed of a brisk cycle ride,
+ * with a bag rack on the back.
+ */
+export const GOLF_CART_SEATS = 2
+export const GOLF_CART_HALF_EXTENTS = [0.6, 0.28, 1.2] as const
+export const GOLF_CART_WHEEL_RADIUS = 0.23
+export const GOLF_CART_TRACK_HALF = 0.5
+export const GOLF_CART_AXLE_Z = 0.82
+export const GOLF_CART_HARD_POINT_Y = -0.06
+export const GOLF_CART_SUSPENSION_REST = 0.2
+
+/** Measured by `ride_heights_differ_between_cars` in vehicle.rs. */
+export const GOLF_CART_RIDE_HEIGHT = 0.397
+export const GOLF_CART_MAX_STEER = 0.55
+
+/** About 43 km/h, which is quick for a golf cart. */
+export const GOLF_CART_MAX_SPEED = 12.0
+export const GOLF_CART_SEAT_HEADS = [[-0.28, 0.82, 0.25], [0.28, 0.82, 0.25]] as const
 
 /**
  * The helicopter: a hull flown by a pilot (seat 0) with a gunner (seat 1) on the nose gun. There are no

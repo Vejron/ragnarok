@@ -3,7 +3,7 @@ Builds the three cars, an open jeep, a low sports car and the thruster Roadster,
 to client/public/models/.
 
     /Applications/Blender.app/Contents/MacOS/Blender -b -P tools/vehicles/build_car.py -- \
-        [--out DIR] [--only jeep|sports|roadster] [--preview DIR]
+        [--out DIR] [--only jeep|sports|roadster|snowmobile|golf_cart] [--preview DIR]
 
 Everything is procedural and flat-shaded: about a thousand triangles each.
 
@@ -53,6 +53,8 @@ SPECS = {
     "roadster": dict(half=(0.95, 0.3, 2.2), wheel_radius=0.32, wheel_width=0.28, track=0.82, axle=1.45, ride=0.397),
     # SNOWMOBILE_*: `track` is half the ski stance, `axle` where the skis and the rear idlers are.
     "snowmobile": dict(half=(0.55, 0.3, 1.6), wheel_radius=0.22, wheel_width=0.16, track=0.55, axle=1.2, ride=0.559),
+    # GOLF_CART_*: small wheels close in under a short body.
+    "golf_cart": dict(half=(0.6, 0.28, 1.2), wheel_radius=0.23, wheel_width=0.18, track=0.5, axle=0.82, ride=0.397),
 }
 
 MATERIAL_COLORS = {
@@ -375,7 +377,58 @@ def build_snowmobile():
     return built
 
 
-BUILDERS = {"jeep": build_jeep, "sports": build_sports, "roadster": build_roadster, "snowmobile": build_snowmobile}
+# --------------------------------------------------------------------------------------------------
+# The golf cart: a short two-seater on small wheels, a rounded cowl at the front, a bench seat over the
+# batteries, a white canopy roof on four struts, and two golf bags standing on a rack at the back.
+# --------------------------------------------------------------------------------------------------
+def build_golf_cart():
+    spec = SPECS["golf_cart"]
+    body = Part("body")
+    # The frame and the floor of the footwell, between the cowl and the seat.
+    body.box((0.0, 0.0, -0.22), (1.0, 2.3, 0.08), DARK)
+    body.box((0.0, 0.25, -0.16), (1.1, 0.7, 0.04), DARK)
+    # The front cowl as a side profile, (y, z): a rounded nose over the front wheels, up to the dash.
+    body.prism([(0.58, -0.22), (1.18, -0.22), (1.24, -0.05), (1.16, 0.1), (0.85, 0.2), (0.58, 0.32), (0.5, 0.32), (0.5, -0.22)], -0.6, 0.6, PAINT)
+    # The seat's base over the batteries, a white bench cushion and a back leaned a little.
+    body.box((0.0, -0.3, -0.02), (1.2, 0.7, 0.4), PAINT)
+    body.box((0.0, -0.28, 0.22), (1.06, 0.6, 0.1), WHITE)
+    body.box((0.0, -0.6, 0.5), (1.06, 0.1, 0.46), WHITE, rx=0.15)
+    mirrored(body, 0.58, -0.32, 0.36, (0.05, 0.5, 0.05), STEEL)
+    # The tail over the rear wheels and the motor: a low deck, falling to a cut-off back.
+    body.prism([(-0.65, -0.22), (-0.65, 0.18), (-1.12, 0.14), (-1.22, 0.02), (-1.22, -0.22)], -0.6, 0.6, PAINT)
+    # Bumpers, headlamps and tail lamps.
+    body.box((0.0, 1.26, -0.17), (1.0, 0.08, 0.1), DARK)
+    body.box((0.0, -1.25, -0.17), (1.16, 0.08, 0.1), DARK)
+    for side in (-1, 1):
+        body.cylinder((side * 0.36, 1.2, 0.04), 0.07, 0.06, LAMP, axis="Y", segments=8)
+        body.box((side * 0.48, -1.23, 0.06), (0.12, 0.03, 0.06), RED)
+    # The steering column and wheel before the driver (on the left), and a windscreen on the dash.
+    body.box((-0.28, 0.4, 0.38), (0.05, 0.05, 0.36), DARK, rx=0.5)
+    body.cylinder((-0.28, 0.3, 0.55), 0.17, 0.03, DARK, axis="Y", segments=12)
+    body.box((0.0, 0.52, 0.85), (1.04, 0.025, 1.0), GLASS, rx=0.12)
+    # Four struts up to the canopy roof.
+    mirrored(body, 0.55, 0.55, 0.9, (0.04, 0.04, 1.15), STEEL, rx=0.12)
+    mirrored(body, 0.55, -0.72, 0.85, (0.04, 0.04, 1.2), STEEL)
+    body.box((0.0, -0.1, 1.48), (1.24, 1.75, 0.06), WHITE)
+    body.box((0.0, -0.1, 1.43), (1.2, 1.7, 0.04), DARK)
+    # The bag rack and two golf bags standing on it, club heads showing at the top.
+    body.box((0.0, -1.05, 0.2), (0.9, 0.36, 0.04), STEEL)
+    body.box((0.0, -0.9, 0.5), (0.9, 0.04, 0.04), STEEL)
+    for side, mat in ((-1, RED), (1, DARK)):
+        x = side * 0.22
+        body.cylinder((x, -1.05, 0.55), 0.13, 0.7, mat, axis="Z", segments=10)
+        body.cylinder((x, -1.05, 0.91), 0.14, 0.04, WHITE, axis="Z", segments=10)
+        for dx, dy, h in ((-0.05, 0.04, 0.12), (0.05, 0.03, 0.17), (0.0, -0.05, 0.08)):
+            body.box((x + dx, -1.05 + dy, 0.93 + h / 2), (0.02, 0.02, h), STEEL)
+            body.box((x + dx, -1.05 + dy + 0.03, 0.93 + h), (0.04, 0.08, 0.04), STEEL)
+    body_obj = body.build()
+    wheels = add_wheels(spec, lugs=0, rim_ratio=0.6)
+    # GOLF_CART_SEAT_HEADS, in this frame: x, -z, y.
+    add_seats([(-0.28, -0.25, 0.82), (0.28, -0.25, 0.82)])
+    return [body_obj, *wheels]
+
+
+BUILDERS = {"jeep": build_jeep, "sports": build_sports, "roadster": build_roadster, "snowmobile": build_snowmobile, "golf_cart": build_golf_cart}
 
 
 # --------------------------------------------------------------------------------------------------

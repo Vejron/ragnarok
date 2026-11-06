@@ -57,6 +57,7 @@ export const VEHICLE_KINDS: { kind: number; name: string; icon: string }[] = [
   { kind: 9, name: 'Mortar', icon: 'M' },
   { kind: 14, name: 'Pak 38', icon: 'K' },
   { kind: 17, name: 'Snowmobile', icon: 'N' },
+  { kind: 22, name: 'Golf cart', icon: 'G' },
   // Her guns come with her. Only on open water, in summer.
   { kind: 18, name: 'Pirate ship', icon: 'X' },
 ]

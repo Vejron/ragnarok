@@ -1,6 +1,7 @@
 //! Simulation and network constants. `client/scripts/gen-consts.ts` generates the client's copy from this file: run `npm run gen:consts` in `client` after editing.
 
 pub use crate::vehicles::drone::*;
+pub use crate::vehicles::golf_cart::*;
 pub use crate::vehicles::heli::*;
 pub use crate::vehicles::hen::*;
 pub use crate::vehicles::tupp::*;
@@ -64,6 +65,8 @@ pub const KIND_SHIP_GUN: u8 = 19;
 /// Replicated like the rooster, with their own models.
 pub const KIND_DEER: u8 = 20;
 pub const KIND_STAG: u8 = 21;
+/// The golf cart: two seats side by side under a roof, an electric motor, and a bag rack on the back.
+pub const KIND_GOLF_CART: u8 = 22;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;

@@ -5,6 +5,7 @@ Any world with a golf course in OpenStreetMap can be played. Kläppudden has Nor
 ## Playing
 
 - **Clubs.** There are two: the **Driver** (item 14) and the **Putter** (item 15). They are hotbar items like any other: lay them out in the editor (`area.json` `items`), or start with them in a loadout. They are never scattered. At Kläppudden a pair lies beside hole 1's tee.
+- **The golf cart** (`KIND_GOLF_CART`, 22) seats two side by side, the driver on the left. It is electric and slow, topping out at 12 m/s, and too slow to skim water, so it sinks and wades. Place one in the editor (G). At Kläppudden two are parked beside hole 1's tee, facing up the fairway. Its tuning is `crates/shared/src/vehicles/golf_cart.rs`, and its model is `build_golf_cart` in `tools/vehicles/build_car.py`.
 - **Swinging.** Stand still with a club and you take your stance over the ball: side-on, with the target (where you aim) on your left and the ball by your right foot. A swing takes three clicks on the meter over the hotbar:
   1. **Press fire and hold it.** The power fills the bar, reaching a full swing in 1.2 s. Held on, it runs into the red **overswing**, up to 110%, and lets go by itself at the top.
   2. **Let go** to set the power. The club is at the top of the backswing.

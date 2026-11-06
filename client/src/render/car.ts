@@ -2,10 +2,10 @@ import { Group, Mesh, type Material, type Node, Matrix4, Vector3 } from '@ragnar
 import { parseToonModel, unlitMaterial } from './models'
 import { toonMaterial } from './toon'
 import {
-  JEEP_MAX_STEER, JEEP_WHEEL_RADIUS, ROADSTER_MAX_STEER, ROADSTER_SEATS, ROADSTER_WHEEL_RADIUS, SNOWMOBILE_MAX_STEER, SNOWMOBILE_SEATS, SNOWMOBILE_WHEEL_RADIUS, SPORTS_MAX_STEER, SPORTS_SEATS,
+  GOLF_CART_MAX_STEER, GOLF_CART_SEATS, GOLF_CART_WHEEL_RADIUS, JEEP_MAX_STEER, JEEP_WHEEL_RADIUS, ROADSTER_MAX_STEER, ROADSTER_SEATS, ROADSTER_WHEEL_RADIUS, SNOWMOBILE_MAX_STEER, SNOWMOBILE_SEATS, SNOWMOBILE_WHEEL_RADIUS, SPORTS_MAX_STEER, SPORTS_SEATS,
   SPORTS_WHEEL_RADIUS, CAR_SEATS,
 } from '@/sim/consts'
-import { KIND_JEEP, KIND_ROADSTER, KIND_SNOWMOBILE, KIND_SPORTS, THRUST_BOOST, THRUST_LIFT } from '@/net/codec'
+import { KIND_GOLF_CART, KIND_JEEP, KIND_ROADSTER, KIND_SNOWMOBILE, KIND_SPORTS, THRUST_BOOST, THRUST_LIFT } from '@/net/codec'
 import type { Arms, Turret } from '@/entities/units'
 import { CarWear } from './carwear'
 import type { Debris } from './debris'
@@ -25,7 +25,7 @@ export interface VehicleModel {
   dispose(): void
 }
 
-export type CarKind = 'jeep' | 'sports' | 'roadster' | 'snowmobile'
+export type CarKind = 'jeep' | 'sports' | 'roadster' | 'snowmobile' | 'golf_cart'
 
 /** Per-body facts the model needs: its vehicle kind, where its mesh is, how big its wheels are and how far they steer. */
 const KINDS: Record<CarKind, { kind: number; url: string; wheelRadius: number; maxSteer: number; seats: number }> = {
@@ -34,6 +34,7 @@ const KINDS: Record<CarKind, { kind: number; url: string; wheelRadius: number; m
   roadster: { kind: KIND_ROADSTER, url: `${import.meta.env.BASE_URL}models/roadster.glb`, wheelRadius: ROADSTER_WHEEL_RADIUS, maxSteer: ROADSTER_MAX_STEER, seats: ROADSTER_SEATS },
   // Its skis steer on the front pivots and do not roll; the idlers in its track do.
   snowmobile: { kind: KIND_SNOWMOBILE, url: `${import.meta.env.BASE_URL}models/snowmobile.glb`, wheelRadius: SNOWMOBILE_WHEEL_RADIUS, maxSteer: SNOWMOBILE_MAX_STEER, seats: SNOWMOBILE_SEATS },
+  golf_cart: { kind: KIND_GOLF_CART, url: `${import.meta.env.BASE_URL}models/golf_cart.glb`, wheelRadius: GOLF_CART_WHEEL_RADIUS, maxSteer: GOLF_CART_MAX_STEER, seats: GOLF_CART_SEATS },
 }
 
 const BODY_COLORS = [0xff9f1c, 0x2ec4b6, 0xe71d36, 0x5aa9e6, 0xb5e48c, 0xf15bb5, 0xffd23f, 0x9d4edd]
@@ -41,7 +42,7 @@ const BODY_COLORS = [0xff9f1c, 0x2ec4b6, 0xe71d36, 0x5aa9e6, 0xb5e48c, 0xf15bb5,
 const assets = new Map<CarKind, Node>()
 
 /**
- * Parses `jeep.glb`, `sports.glb`, `roadster.glb` or `snowmobile.glb` (built by `tools/vehicles/build_car.py`) for every `CarModel` of
+ * Parses `jeep.glb`, `sports.glb`, `roadster.glb`, `snowmobile.glb` or `golf_cart.glb` (built by `tools/vehicles/build_car.py`) for every `CarModel` of
  * that kind to share. Materials become flat toon ones to match the rest of the scene (`lamp` ones are
  * unlit, like a headlight); `paint` is replaced per car.
  */

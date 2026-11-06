@@ -1,7 +1,7 @@
 use shared::vec3;
 use super::*;
 use shared::consts::TICK_DT;
-use shared::protocol::{KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER};
+use shared::protocol::{KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER};
 use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 
 fn flat() -> WorldFile {
@@ -155,7 +155,7 @@ fn a_car_climbs_a_slope_like_wasm() {
 #[test]
 fn ride_heights_differ_between_cars() {
     let mut heights = vec![];
-    for (kind, ride) in [(KIND_JEEP, JEEP_RIDE_HEIGHT), (KIND_SPORTS, SPORTS_RIDE_HEIGHT)] {
+    for (kind, ride) in [(KIND_JEEP, JEEP_RIDE_HEIGHT), (KIND_SPORTS, SPORTS_RIDE_HEIGHT), (KIND_GOLF_CART, GOLF_CART_RIDE_HEIGHT)] {
         let mut physics = Physics::new(&flat()).unwrap();
         physics.add_car(1, kind, [0.0, 1.5, 0.0], 0.0);
         let pose = run(&mut physics, COAST, 240);
@@ -182,6 +182,26 @@ fn the_sports_car_is_quicker_than_the_jeep() {
     assert!(sports_early > jeep_early * 1.2, "quicker off the line: {reached:?}");
     assert!(sports_top > jeep_top * 1.3, "higher top speed: {reached:?}");
     assert!(sports_top <= SPORTS_MAX_SPEED + 1.0 && jeep_top <= JEEP_MAX_SPEED + 1.0, "{reached:?}");
+}
+
+#[test]
+fn a_golf_cart_potters_along_and_stays_on_its_wheels_at_full_lock() {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_GOLF_CART, [0.0, 1.5, 0.0], 0.0);
+    run(&mut physics, COAST, 60);
+    let early = run(&mut physics, FORWARD, 60 * 2);
+    let top = run(&mut physics, FORWARD, 60 * 8);
+    assert!(early.forward_speed > 5.0, "gets going: {early:?}");
+    assert!(top.forward_speed > GOLF_CART_MAX_SPEED - 1.5 && top.forward_speed <= GOLF_CART_MAX_SPEED + 0.5, "tops out at its own speed: {top:?}");
+    let start = yaw(&top);
+    let mut worst = 1.0_f32;
+    for _ in 0..60 * 3 {
+        let pose = run(&mut physics, CarControls { throttle: 1.0, steer: -1.0, ..CarControls::IDLE }, 1);
+        worst = worst.min(pose.up_y);
+    }
+    let turned = (yaw(&physics.car_pose(1).unwrap()) - start).rem_euclid(std::f32::consts::TAU);
+    assert!(worst > 0.8, "flat out at full lock it stays on its wheels: {worst}");
+    assert!(turned > 0.5, "and turns: {turned}");
 }
 
 #[test]
