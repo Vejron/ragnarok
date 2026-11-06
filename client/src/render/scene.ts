@@ -322,6 +322,13 @@ export class Scene {
     this.sunOver(eye[0]!, eye[1]!, eye[2]!)
   }
 
+  /** The camera at `eye`, looking at `at`, with the sun's shadow centred on what it looks at. */
+  lookFromTo(eye: readonly number[], at: readonly number[]) {
+    this.camera.position.set(eye[0]!, eye[1]!, eye[2]!)
+    this.camera.lookAt(at[0]!, at[1]!, at[2]!)
+    this.sunOver(at[0]!, at[1]!, at[2]!)
+  }
+
   /** Centres the sun's shadow on `(x, y, z)`. */
   private sunOver(x: number, y: number, z: number) {
     const sun = this.scene.sun

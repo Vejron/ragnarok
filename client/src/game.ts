@@ -14,7 +14,7 @@ import { mayPlace } from './sim/bricks'
 import { crewGun, vehicleDef } from './sim/vehicles'
 import { blockedAt, spreadPixels } from './aimline'
 import { Meter, called } from './sim/golf'
-import { aimSpeedScale, effectiveSpread, fillsHands, itemDef, type ItemDef, type ItemSlot } from './sim/items'
+import { ITEM_DRIVER, aimSpeedScale, effectiveSpread, fillsHands, itemDef, type ItemDef, type ItemSlot } from './sim/items'
 import { backswingPhase, downswingPhase } from './render/golfclub'
 import { InputController } from './sim/input'
 import type { Character } from './render/character'
@@ -53,6 +53,7 @@ import { saveLook, type Look } from './render/look'
 import { Grass, GRASS_FULL, GRASS_LITE } from './render/grass'
 import { Stones } from './render/stones'
 import { AIM_DISTANCE_SCALE, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, Scene } from './render/scene'
+import { BallCam } from './render/ballcam'
 import { ChaseCam } from './render/chase'
 import { PerfReadout } from './render/perf'
 import { encodeRtc, KIND_STRV, KIND_TANK, LIMB_ALL, LIMB_ARMS, LIMB_LEGS, TURRET_ALT } from './net/codec'
@@ -295,6 +296,8 @@ export class Game {
   /** The backpack's circle and carrier (BACKPACK.md). */
   private readonly backpack = new BackpackTracker()
   private readonly chase = new ChaseCam()
+  /** Follows a driven golf ball away. */
+  private readonly ballCam = new BallCam()
   private readonly pickupModels = new Pickups()
   /** Items on the ground, as drawn. */
   private readonly lying = new LyingItems(this.pickupModels)
@@ -426,6 +429,10 @@ export class Game {
       hullMarks: this.hullMarks,
       blips: this.blips, avatars: this.avatars, vehicles: this.vehicles, wear: this.wear, view: this.view, chase: this.chase, surroundings: this.surroundings,
       fx: () => this.fxWorld, localId: () => this.localId, driving: () => this.driver?.driving ?? null,
+      struckGolfBall: (id) => {
+        this.blips.golfBall = id
+        if (this.held().item === ITEM_DRIVER) this.ballCam.start(this.input.yaw)
+      },
     })
     this.machines.add(new Smoke(world, this.vehicles, (id) => this.hullMarks.vents(id)))
     this.machines.add(new Slits(this.vehicles))
@@ -1002,7 +1009,17 @@ export class Game {
       // Only the distance changes: the pivot is what the server's crosshair ray is built from.
       this.scene.overShoulder(position, lookYaw, lookPitch, ON_FOOT_DISTANCE * (1 - (1 - AIM_DISTANCE_SCALE) * this.aimBlend), ON_FOOT_SHOULDER, ON_FOOT_HEIGHT, shake)
       if (reading > 0) this.toEyes([position[0]!, position[1]! + this.eyeHeight(), position[2]!], reading)
+      else this.followBall(lookYaw, lookPitch, dt)
     }
+  }
+
+  /** Hands the on-foot view over to the ball camera while it follows a drive, easing between the two. */
+  private followBall(yaw: number, pitch: number, dt: number) {
+    const ball = this.blips.golfBall === null ? null : this.rocketModels.position(this.blips.golfBall)
+    const eye = this.scene.camera.position
+    const look = [-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)]
+    const view = this.ballCam.update(ball, [eye.x, eye.y, eye.z], [eye.x + look[0]! * 10, eye.y + look[1]! * 10, eye.z + look[2]! * 10], dt, (x, z) => this.scene.groundAt(x, z))
+    if (view) this.scene.lookFromTo(view.eye, view.at)
   }
 
   /** Moves the camera `share` (eased) of the way from where it is to `eye`, looking the same way: into first person. */
@@ -1207,6 +1224,8 @@ export class Game {
     const item = itemDef(slot.item)
     // A golf club swings on the meter, stepped here just as the server steps it: drawn back as the
     // power fills, starting down as the marker runs back, and struck the frame the server strikes.
+    // Moving on, or starting another swing, brings the view back from a ball being followed.
+    if (frame.forward !== 0 || frame.strafe !== 0 || fresh) this.ballCam.stop()
     if (item?.kind !== 'club' || !this.player.alive || this.seat) this.golf.reset()
     else {
       const me = this.avatars.local()

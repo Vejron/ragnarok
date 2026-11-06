@@ -109,6 +109,8 @@ export interface EventWorld {
   localId: () => number | null
   /** The vehicle the local player drives, if any. */
   driving: () => number | null
+  /** The local player struck golf ball `id`. */
+  struckGolfBall: (id: number) => void
 }
 
 export class Events {
@@ -322,11 +324,11 @@ export class Events {
     } else if (shot.weapon === WEAPON_GOLF) {
       // A club swung, its head at the ball it struck, or at the feet where there was none. The local
       // player's own swing started when they let go.
-      // The local player's own ball is followed on the map. By the tick the event is played, the ball
+      // The local player's own ball is followed on the map, and a drive by the camera. By the tick the event is played, the ball
       // has flown a tick from the club (over a metre off a driver), so it is looked for round about.
       if (shot.shooter !== local) avatars.of(shot.shooter)?.swing()
       const struck = this.world.rockets.nearestGolfBall(to, STRUCK_BALL_RADIUS)
-      if (struck !== null && shot.shooter === local) this.world.blips.golfBall = struck
+      if (struck !== null && shot.shooter === local) this.world.struckGolfBall(struck)
       sounds.golfSwing([to.x, to.y, to.z], struck !== null)
       if (struck !== null) effects.dust(to, 0.4)
     } else if (shot.weapon === WEAPON_CUP) {

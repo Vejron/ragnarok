@@ -8,6 +8,10 @@ import { HOTBAR_SLOTS, itemDef, type ItemSlot } from '@/sim/items'
 import { CanvasSprite, INK, canvas2d, hudTexture, type Painter } from './paint'
 import { dialTicks, dialTop, fill, needleAngle } from './speedo'
 
+/** How much wider than the hotbar the golf meter is, and the least it is across, CSS pixels. */
+const GOLF_METER_WIDEN = 2.2
+const GOLF_METER_MIN = 560
+
 const RED = 0xff5a5f
 const TEAL = 0x2ec4b6
 const AMBER = 0xf3c94b
@@ -169,7 +173,7 @@ export class Gauges {
    * the overswing.
    */
   private golfMeter(p: Painter, golf: GolfMeterView, x: number, y: number, w: number) {
-    const h = 12
+    const h = 16
     const at = (v: number) => x + ((v - METER_LOW) / (METER_HIGH - METER_LOW)) * w
     const span = (from: number, to: number, color: number, alpha: number) => {
       const [a, b] = [at(Math.max(METER_LOW, from)), at(Math.min(METER_HIGH, to))]
@@ -193,14 +197,19 @@ export class Gauges {
         p.rect(m - 0.5, y - 4, 1, h + 8, 0x000000, 0.6)
       }
     }
-    if (golf.call) p.label(golf.call, x + w / 2, y - 12, { size: 13, weight: 800, color: '#ffffff', shadow: true }, 'center', 0.95)
+    if (golf.call) p.label(golf.call, x + w / 2, y - 14, { size: 15, weight: 800, color: '#ffffff', shadow: true }, 'center', 0.95)
   }
 
   private hotbar(p: Painter, s: HudStats) {
     const rects = hotbarRects(p.width, p.height, s.touch)
     const first = rects[0]!
     const last = rects[rects.length - 1]!
-    if (s.golf) this.golfMeter(p, s.golf, first.x, first.y - 22, last.x + last.w - first.x)
+    if (s.golf) {
+      // Wider than the hotbar, for a finer read of the line; centred over it, within the screen.
+      const bar = last.x + last.w - first.x
+      const w = Math.min(p.width - 32, Math.max(bar * GOLF_METER_WIDEN, GOLF_METER_MIN))
+      this.golfMeter(p, s.golf, first.x + bar / 2 - w / 2, first.y - 28, w)
+    }
     else if (s.progress > 0) {
       const w = last.x + last.w - first.x
       p.pill(first.x, first.y - 8, w, 5, 0xffffff, 0.55, 1)
