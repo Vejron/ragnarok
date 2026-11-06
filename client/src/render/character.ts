@@ -395,6 +395,13 @@ const SCRATCH = {
 }
 
 /**
+ * Where the camera is, for how often characters are posed: within `radius` metres every frame, within
+ * twice it every second frame, and further every fourth. `zoom` divides the distance, so a scope's
+ * narrow view counts as near. The game sets it each frame.
+ */
+export const animationFocus = { x: 0, y: 0, z: 0, radius: Infinity, zoom: 1, frame: 0 }
+
+/**
  * One player: a skinned clone of the model, placed at its capsule centre and animated from where it
  * is moving relative to where it faces, so strafing and backpedalling play their own clips.
  */
@@ -435,6 +442,11 @@ export class Character {
   private shown = true
   /** False until the first `update` puts it somewhere, so it does not flash at the origin. */
   private placed = false
+  /** Time not yet posed, on frames skipped for distance (`animationFocus`), and which frames this one skips. */
+  private unposed = 0
+  private readonly stagger: number
+  /** Where the model stood against `position` when last posed, to carry it along on the frames between. */
+  private readonly posedOffset = new Vector3()
   private pitch = 0
   private recoil = 0
   /** Seconds of hit flash left, which whitens the outfit. */
@@ -551,6 +563,7 @@ export class Character {
     this.neck = this.object.getObjectByName('neck') ?? null
     this.lowerLimbs = ['forearm_L', 'forearm_R', 'shin_L', 'shin_R'].map((name) => this.object.getObjectByName(name) ?? null)
     this.random = seeded(id + 1)
+    this.stagger = id & 3
     this.head =this.object.getObjectByName('head') ?? null
     if (this.head) {
       this.object.updateWorldMatrix(true, true)
@@ -635,6 +648,15 @@ export class Character {
       this.canopy.update(false, dt)
       return
     }
+    // Far off, the pose waits for a later frame; the body still goes where it is. A turn (`turn`)
+    // adds to the bones' pose, so the whole pose is skipped, never just the clips.
+    if (this.placed && !this.fling && this.skipsFrame()) {
+      this.unposed += dt
+      this.object.position.copy(this.position).add(this.posedOffset)
+      return
+    }
+    dt += this.unposed
+    this.unposed = 0
 
     this.clock += dt
     this.canopy.update(chute && !this.down, dt)
@@ -815,6 +837,15 @@ export class Character {
     this.place(body + skiTurn + turn * Math.max(this.slide, this.ski))
     this.easeUp()
     if (this.onSkis) this.fitSkis()
+    this.posedOffset.copy(this.object.position).sub(this.position)
+  }
+
+  private skipsFrame() {
+    const focus = animationFocus
+    const distance = Math.hypot(this.position.x - focus.x, this.position.y - focus.y, this.position.z - focus.z) / focus.zoom
+    if (distance < focus.radius) return false
+    const every = distance < focus.radius * 2 ? 2 : 4
+    return (focus.frame + this.stagger) % every !== 0
   }
 
   /** How the ground rises and how fast it is slowing, from how it moved: enough to choose a gait, and it needs nothing sent. */

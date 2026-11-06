@@ -84,6 +84,10 @@ export class ParticleSystem extends Effect {
   /** Live particles, read back from the GPU every few frames (so a little behind). */
   alive = 0
   private dt = 0
+  /** Frames prepared, the frame of the last spawn, and the frame `alive` was read on: an empty pool is skipped. */
+  private frames = 0
+  private spawnedAt = -1
+  private aliveAt = -1
   private commands = new Float32Array(256 * COMMAND_FLOATS)
   private commandWords = new Uint32Array(this.commands.buffer)
   private commandCount = 0
@@ -185,6 +189,14 @@ export class ParticleSystem extends Effect {
     const device = ctx.device
     if (this.ground && this.ground.version !== gpu.groundVersion) gpu.uploadGround(this.ground)
     const spawn = Math.min(this.spawnCount, this.capacity)
+    const frame = ++this.frames
+    if (spawn) this.spawnedAt = frame
+    // Nothing alive since the last spawn and nothing new: the last simulation left zero instances to draw.
+    if (!spawn && this.alive === 0 && this.aliveAt > this.spawnedAt) {
+      this.commandCount = 0
+      this.dt = 0
+      return
+    }
     if (this.commandCount) gpu.uploadCommands(this.commands, this.commandCount)
     const sim = gpu.simData
     sim[0] = this.dt
@@ -210,7 +222,10 @@ export class ParticleSystem extends Effect {
     pass.setPipeline(gpu.simulatePipeline)
     pass.dispatchWorkgroups(this.capacity / 64)
     pass.end()
-    gpu.readCount(encoder, (dead) => { this.alive = this.capacity - dead })
+    gpu.readCount(encoder, (dead) => {
+      this.alive = this.capacity - dead
+      this.aliveAt = frame
+    })
     this.commandCount = 0
     this.spawnCount = 0
     this.dt = 0

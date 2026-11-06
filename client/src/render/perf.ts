@@ -40,7 +40,7 @@ export class PerfReadout {
   }
 
   /** `renderer` is read each frame, since the GPU is asked for after the game is built. */
-  constructor(private readonly renderer: () => Renderer | null) {
+  constructor(private readonly renderer: () => Renderer | null, private readonly quality: () => string = () => '') {
     this.el = document.createElement('div')
     this.el.setAttribute('aria-hidden', 'true')
     this.el.style.cssText = [
@@ -100,6 +100,7 @@ export class PerfReadout {
       `draw calls ${stats?.drawCalls ?? 0}   triangles ${((stats?.triangles ?? 0) / 1000).toFixed(1)}k   shadow draws ${stats?.shadowDraws ?? 0}`,
       `objects ${stats?.records ?? 0}  rewritten ${stats?.recordsWritten ?? 0}   materials ${stats?.materials ?? 0}   pipelines ${stats?.pipelines ?? 0}`,
       `gpu ms  ${gpu || 'n/a'}`,
+      `${this.quality()}   buffer ${this.renderer()?.canvas.width ?? 0}×${this.renderer()?.canvas.height ?? 0}`,
     ].join('\n')
   }
 

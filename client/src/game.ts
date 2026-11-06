@@ -50,9 +50,11 @@ import { Rounds } from './render/rounds'
 import { HullMarks } from './render/hullmarks'
 import { Callouts } from './callouts'
 import { saveLook, type Look } from './render/look'
+import { loadQuality, PRESETS, resolveQuality, saveQuality, type Quality } from './render/quality'
+import { AdaptiveScale } from './render/adaptive'
 import { Grass, GRASS_FULL, GRASS_LITE } from './render/grass'
 import { Stones } from './render/stones'
-import { AIM_DISTANCE_SCALE, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, Scene } from './render/scene'
+import { AIM_DISTANCE_SCALE, DEFAULT_FOV, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, Scene } from './render/scene'
 import { BallCam } from './render/ballcam'
 import { ChaseCam } from './render/chase'
 import { PerfReadout } from './render/perf'
@@ -61,7 +63,7 @@ import { TankMusic } from './music'
 import { VoiceChat } from './voice'
 import { PlaneModel } from './render/plane'
 import { loadVehicleModels } from './kinds'
-import { Crowd } from './render/character'
+import { animationFocus, Crowd } from './render/character'
 import { Events } from './events'
 import { Arcs } from './arcs'
 import { cockpit, mountGun, pilotSights, roofGun } from './gauges'
@@ -101,6 +103,7 @@ import { Roosters } from './entities/presenters/roosters'
 import { Animals } from './entities/presenters/animals'
 import { TileStreamer } from './stream'
 import { loadManifest, NO_WATER, THEME_WINTER, WORLD_BASE, type WorldData } from './world'
+import { updateNow } from './pwa'
 import { HudLayer } from '@ragnarok/engine'
 import { InGameHud } from './hud/index'
 import { PAPER_METRES, zoomPaper } from './hud/map'
@@ -366,6 +369,9 @@ export class Game {
   private recent: InputFrame[] = []
   private accumulator = 0
   private lastFrame = 0
+  private qualitySetting: Quality = loadQuality()
+  /** The render scale for how fast frames come, while `Look.adaptive` is on. */
+  private readonly adaptive = new AdaptiveScale()
   private frameHandle = 0
   /** Frame-cost overlay, F3 or `?perf`. */
   private readonly perf: PerfReadout
@@ -380,7 +386,8 @@ export class Game {
   constructor(container: HTMLElement, private readonly onStats: (stats: HudStats) => void) {
     this.scene = new Scene(container)
     this.bodies = new Bodies(this.avatars, this.gore, this.callouts, this.chase)
-    this.perf = new PerfReadout(() => this.scene.renderer)
+    this.perf = new PerfReadout(() => this.scene.renderer, () => `quality ${resolveQuality(this.qualitySetting)}${this.qualitySetting === 'auto' ? ' (auto)' : ''}   msaa ${this.scene.quality.msaa}x   scale ${this.scene.renderScale.toFixed(2)}`)
+    this.adaptive.floor = this.scene.quality.minScale
     this.input = new InputController(this.scene.canvas)
     this.cameras = new Cameras(this.scene, this.input, (origin, direction, max) => this.motor?.castRay(origin, direction, max) ?? null)
     this.view = new WorldView(this.scene.scene)
@@ -495,6 +502,7 @@ export class Game {
       attach: (ref, tile) => this.view.attachTile(ref, tile),
       discard: (ref) => this.view.discardTile(ref),
     })
+    this.tiles.setReach(this.scene.quality.loadRadius, this.scene.quality.unloadRadius)
     // Until the server places us, walk around solo from the first spawn point.
     const [x, z] = world.spawns[0] ?? [0, 0]
     this.view.focus(x, z)
@@ -505,6 +513,7 @@ export class Game {
     this.avatars.local()
     if (this.disposed) return
     this.lastFrame = performance.now()
+    this.adaptive.pause(this.lastFrame)
     this.frameHandle = requestAnimationFrame((now) => this.frame(now))
     // A timer rather than the frame loop, so a background tab (no animation frames) still pings
     // and the server does not drop it as idle.
@@ -569,11 +578,15 @@ export class Game {
       case 'welcome':
         if (message.version !== PROTOCOL_VERSION) {
           this.warning = `Server speaks protocol ${message.version}, this page ${PROTOCOL_VERSION}. Reload.`
+          void updateNow(`protocol ${message.version}`)
           this.halted = true
           this.transport.close()
           return
         }
-        if (message.worldHash !== this.worldHash) this.warning = 'Server world differs from this page’s world.msgpack. Reload.'
+        if (message.worldHash !== this.worldHash) {
+          this.warning = 'Server world differs from this page’s world.msgpack. Reload.'
+          void updateNow(`world ${message.worldHash}`)
+        }
         this.backoff.reset()
         this.localId = this.avatars.localId = message.id
         this.awaitingCatchUp = true
@@ -783,6 +796,7 @@ export class Game {
     this.perf.begin(now)
     const dt = Math.min(0.25, (now - this.lastFrame) / 1000)
     this.frameDt = dt
+    this.fitResolution(now, now - this.lastFrame)
     this.lastFrame = now
 
     if (this.driverSnapshot) {
@@ -829,6 +843,7 @@ export class Game {
     this.scene.contact.begin()
     if (standing) this.surroundings.blobFoot(position[0], position[1], position[2])
     this.surroundings.blobVehicles(cars)
+    this.focusAnimation()
     this.people.run(sampled, entityFrame)
     this.bodies.limbs(sampled, this.localId, now)
     if (this.ragdolls) {
@@ -1283,6 +1298,48 @@ export class Game {
     return this.scene.look
   }
 
+  /** The quality setting, as chosen: `auto` stays `auto`. */
+  get quality(): Quality {
+    return this.qualitySetting
+  }
+
+  /** Switches the quality preset and remembers it for next time. */
+  setQuality(quality: Quality) {
+    this.qualitySetting = quality
+    saveQuality(quality)
+    const preset = PRESETS[resolveQuality(quality)]
+    this.scene.setQuality(preset)
+    this.scene.setRenderScale(1)
+    this.adaptive.reset(performance.now(), preset.minScale)
+    this.tiles?.setReach(preset.loadRadius, preset.unloadRadius)
+    this.applyGrass(this.scene.look)
+  }
+
+  /** Tells the characters where the camera is (last frame's place), for how often the far ones are posed. */
+  private focusAnimation() {
+    const camera = this.scene.camera
+    const focus = animationFocus
+    focus.x = camera.position.x
+    focus.y = camera.position.y
+    focus.z = camera.position.z
+    focus.radius = this.scene.quality.animateRadius
+    focus.zoom = Math.tan((DEFAULT_FOV * Math.PI) / 360) / Math.tan((camera.fov * Math.PI) / 360)
+    focus.frame++
+  }
+
+  /** Lowers the render scale while frames are slow, and raises it again once they are not. */
+  private fitResolution(now: number, interval: number) {
+    if (!this.scene.look.adaptive) {
+      if (this.adaptive.scale !== 1) this.adaptive.reset(now)
+      this.scene.setRenderScale(1)
+      return
+    }
+    if (document.visibilityState !== 'visible') return this.adaptive.pause(now)
+    let gpu: number | undefined
+    for (const ms of Object.values(this.scene.renderer?.stats.gpuMs ?? {})) gpu = (gpu ?? 0) + ms
+    if (this.adaptive.frame(now, interval, gpu)) this.scene.setRenderScale(this.adaptive.scale)
+  }
+
   /** Switches the soft-lighting options and remembers them for next time. */
   /** Before the first tile: colours, ice and the snow in the air, for the whole of a winter world. */
   private startWinter() {
@@ -1307,8 +1364,7 @@ export class Game {
   }
 
   private applyGrass(look: Look) {
-    const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
-    this.grass?.setDensity(coarse ? GRASS_LITE : GRASS_FULL)
+    this.grass?.setDensity(this.scene.quality.grass === 'full' ? GRASS_FULL : GRASS_LITE)
     this.grass?.setEnabled(look.grass && !winter)
   }
 

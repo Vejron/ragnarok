@@ -679,6 +679,7 @@ export class Renderer {
     f[80] = shadow.span / shadow.mapSize
     f[81] = shadow.radius
     f[82] = this.shadowsOn ? 1 : 0
+    f[83] = shadow.taps === 1 ? 1 : 0
     f[84] = camera.near
     f[85] = camera.far
     this.writeLights(scene, f)

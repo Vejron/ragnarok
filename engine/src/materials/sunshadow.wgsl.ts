@@ -25,6 +25,9 @@ fn sunShadow(world: vec3f, normal: vec3f) -> f32 {
   if (c.z > 1.0) {
     return 1.0;
   }
+  if (frame.shadow.w > 0.5) {
+    return textureSampleCompareLevel(shadowMap, shadowSampler, c.xy, c.z);
+  }
   // PCF: 3×3 hardware-compared taps, spread by the blur radius.
   let texel = 1.0 / vec2f(textureDimensions(shadowMap));
   let spread = max(frame.shadow.y, 1.0) * 0.5;

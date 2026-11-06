@@ -18,6 +18,8 @@ export interface Look {
   grass: boolean
   /** Craters marked on the ground: char, rays and the rim's shadow (SCORCH.md). The dent is there either way. */
   scorch: boolean
+  /** Draw at a lower resolution while frames are slow, and sharpen again when they are not. */
+  adaptive: boolean
   /** The HUD's network numbers: ping, players in view, the tally and the sync line. F3 toggles it. */
   netStats: boolean
 }
@@ -32,6 +34,7 @@ export const LOOK_OPTIONS: { key: keyof Look; label: string; about: string; heav
   { key: 'reflect', label: 'Water reflections', about: 'Water mirrors the world, which draws it a second time.', heavy: true },
   { key: 'grass', label: 'Grass', about: 'Grass that sways and parts as you go through it.' },
   { key: 'scorch', label: 'Scorched craters', about: 'Char and rays on the ground where something blew up.' },
+  { key: 'adaptive', label: 'Adaptive resolution', about: 'Draws fewer pixels while the game runs slow, and more again when it catches up.' },
   { key: 'netStats', label: 'Network stats (F3)', about: 'Ping, players in view, your kills and deaths, and the sync numbers, top left.' },
 ]
 
@@ -47,7 +50,7 @@ const RESET_ON_BUMP: (keyof Look)[] = ['ink']
 /** The long shadows are off on phones and tablets, where they cost fill rate and memory. */
 export function defaultLook(): Look {
   const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
-  return { soft: true, contact: true, far: !coarse, ink: true, bloom: !coarse, reflect: !coarse, grass: true, scorch: true, netStats: false }
+  return { soft: true, contact: true, far: !coarse, ink: true, bloom: !coarse, reflect: !coarse, grass: true, scorch: true, adaptive: true, netStats: false }
 }
 
 export function loadLook(): Look {

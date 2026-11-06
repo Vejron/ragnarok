@@ -5,14 +5,17 @@ import { hotbarRectsCss } from './hud/gauges'
 import TouchControls from './TouchControls.vue'
 import type { InputController } from './sim/input'
 import { LOOK_OPTIONS, type Look } from './render/look'
+import { QUALITIES, resolveQuality, type Quality } from './render/quality'
+import { applyUpdate, updateReady } from './pwa'
 
 // The HUD itself is drawn by the game (`hud/`); the page keeps what is clicked or tapped, and banners.
 const container = ref<HTMLElement | null>(null)
 const stats = shallowRef<HudStats | null>(null)
 const error = ref<string | null>(null)
 const input = shallowRef<InputController | null>(null)
-const look = ref<Look>({ soft: true, contact: true, far: true, ink: true, bloom: true, reflect: true, grass: true, scorch: true, netStats: false })
+const look = ref<Look>({ soft: true, contact: true, far: true, ink: true, bloom: true, reflect: true, grass: true, scorch: true, adaptive: true, netStats: false })
 const lookOpen = ref(false)
+const quality = ref<Quality>('auto')
 let game: Game | null = null
 let lastStats = 0
 const viewport = ref({ width: window.innerWidth, height: window.innerHeight })
@@ -29,10 +32,16 @@ onMounted(() => {
   })
   input.value = game.input
   look.value = { ...game.look }
+  quality.value = game.quality
   game.start().catch((reason: unknown) => {
     error.value = reason instanceof Error ? reason.message : String(reason)
   })
 })
+
+function chooseQuality(next: Quality) {
+  quality.value = next
+  game?.setQuality(next)
+}
 
 function toggleLook(key: keyof Look) {
   look.value = { ...look.value, [key]: !look.value[key] }
@@ -79,6 +88,8 @@ const KEYS: [string, string][] = [
   />
   <!-- The game's own warnings are drawn on the HUD, under the pills; this is for a game that would not start. -->
   <div v-if="error" class="banner">{{ error }}</div>
+  <!-- Offered rather than done, so nobody is pulled out of a fight; on the pause screen it is one tap away. -->
+  <button v-if="updateReady && !stats?.locked" type="button" class="chip update" @click.stop="applyUpdate">New version · Reload</button>
   <div v-if="stats && !stats.locked" class="overlay">
     <h1>RAGNAROK</h1>
     <p class="play">{{ stats.touch ? 'Tap to play' : 'Click to play' }}</p>
@@ -87,6 +98,19 @@ const KEYS: [string, string][] = [
       <button type="button" class="chip" :aria-expanded="lookOpen" @click="lookOpen = !lookOpen">Graphics {{ lookOpen ? '▴' : '▾' }}</button>
     </div>
     <div v-if="lookOpen" class="look" @click.stop>
+      <div class="quality" role="radiogroup" aria-label="Quality">
+        <span>Quality</span>
+        <button
+          v-for="option in QUALITIES"
+          :key="option.key"
+          type="button"
+          role="radio"
+          :aria-checked="quality === option.key"
+          :class="{ on: quality === option.key }"
+          :title="option.key === 'auto' ? `${resolveQuality('auto')} on this device` : undefined"
+          @click="chooseQuality(option.key)"
+        >{{ option.label }}</button>
+      </div>
       <label v-for="option in LOOK_OPTIONS" :key="option.key" :title="option.about">
         <input type="checkbox" :checked="look[option.key]" @change="toggleLook(option.key)" />{{ option.label }}
       </label>
@@ -127,12 +151,21 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
   background: rgba(255, 255, 255, 0.92); color: #1d2b36; text-decoration: none; text-shadow: none; cursor: pointer;
 }
 .chip:hover { background: white; }
+.update { position: fixed; top: calc(12px + env(safe-area-inset-top)); right: 16px; z-index: 1; background: #ffe066; }
+.update:hover { background: #ffeb94; }
 .look {
   pointer-events: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px 16px;
   width: min(560px, 100%); padding: 12px 16px; border-radius: 14px; text-align: left; text-shadow: none;
   background: rgba(255, 255, 255, 0.94); color: #1d2b36; font-size: 14px; font-weight: 700;
 }
 .look label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.quality { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.quality span { margin-right: 4px; }
+.quality button {
+  padding: 4px 12px; border-radius: 999px; border: 2px solid #1d2b36; background: transparent; color: inherit;
+  font: inherit; cursor: pointer;
+}
+.quality button.on { background: #1d2b36; color: white; }
 .keys {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 4px 20px;
   width: min(760px, 100%); margin: 8px 0 0; font-size: 14px; font-weight: 500; text-align: left;

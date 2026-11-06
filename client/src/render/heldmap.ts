@@ -14,7 +14,7 @@ const TILT = 0.5
 const FOLD = 0.07
 /** Pixels of the map texture's side. */
 const TEXTURE = 1024
-/** How often the map is redrawn while it is up, ms. */
+/** How often the map is redrawn while it is up, ms, unless the quality preset says otherwise. */
 const REDRAW_MS = 125
 
 const GLOVE = 0x8a7a5c
@@ -56,6 +56,8 @@ export class HeldMapView {
   private readonly geometries: Geometry[] = []
   private readonly sheets: Mesh[] = []
   private drawnAt = -Infinity
+  /** How often the map is redrawn while it is up, ms. */
+  redrawMs = REDRAW_MS
   /** Metres across the picture shows, as last drawn. */
   private span = 0
   /** 0 put away, 1 held up to read. */
@@ -174,7 +176,7 @@ export class HeldMapView {
     for (const sheet of this.sheets) sheet.tint.set([lit(light.r), lit(light.g), lit(light.b), 1])
 
     // A zoom shows at once; otherwise the marks move a few times a second.
-    if ((now - this.drawnAt >= REDRAW_MS || span !== this.span) && this.g) {
+    if ((now - this.drawnAt >= this.redrawMs || span !== this.span) && this.g) {
       this.span = span
       this.drawnAt = now
       this.g.save()

@@ -493,7 +493,8 @@ export async function loadManifest(url?: string): Promise<{ world: WorldData; ha
 /** Fetches one tile and checks it is the one the manifest names. */
 export async function fetchTile(ref: TileRef, base = WORLD_BASE): Promise<TileData> {
   const url = `${base}tiles/${ref.col}_${ref.row}.msgpack`
-  const response = await fetch(url)
+  // The hash makes the address name the content, so the service worker can keep the tile for good.
+  const response = await fetch(`${url}?h=${(ref.hash >>> 0).toString(16)}`)
   if (!response.ok) throw new Error(`${url}: ${response.status}`)
   const bytes = new Uint8Array(await response.arrayBuffer())
   if (worldHash(bytes) !== ref.hash) throw new Error(`${url} does not match the manifest; reload`)

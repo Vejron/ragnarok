@@ -7,6 +7,7 @@ import { ITEM_NONE, itemDef, LOADOUT_ITEMS, STANDARD_LOADOUT } from '@/sim/items
 import { insideWorld, mapToWorld, worldToMap } from '@/sim/minimap'
 import { loadManifest, WORLD_BASE, type WorldData } from '@/world'
 import { defaultLook, loadLook, LOOK_OPTIONS, saveLook, type Look } from '@/render/look'
+import { loadQuality, PRESETS, QUALITIES, resolveQuality, saveQuality, type Quality } from '@/render/quality'
 
 /** Shift-click removes the spawn point nearest the click if it is this close, CSS pixels. */
 const REMOVE_REACH = 24
@@ -32,12 +33,25 @@ function toggleLook(key: keyof Look) {
   saveLook(look.value)
   flashSaved()
 }
+const quality = ref<Quality>(loadQuality())
+function chooseQuality(next: Quality) {
+  quality.value = next
+  saveQuality(next)
+  flashSaved()
+}
+/** What auto comes to here, by name. */
+const autoLevel = QUALITIES.find((q) => q.key === resolveQuality('auto'))!.label
+const QUALITY_ABOUT: Record<Exclude<Quality, 'auto'>, string> = {
+  high: `Sharpest: smoothed edges at up to ${PRESETS.high.maxPixelRatio}× pixels, soft shadows, thick grass, and the furthest view.`,
+  medium: 'Fewer pixels on sharp screens, thinner grass and a slightly nearer horizon.',
+  low: 'For an older phone: no edge smoothing, hard shadows and a nearer horizon.',
+}
 function resetLook() {
   look.value = defaultLook()
   saveLook(look.value)
-  flashSaved()
+  chooseQuality('auto')
 }
-const customLook = computed(() => JSON.stringify(look.value) !== JSON.stringify(defaultLook()))
+const customLook = computed(() => quality.value !== 'auto' || JSON.stringify(look.value) !== JSON.stringify(defaultLook()))
 
 const world = shallowRef<WorldData | null>(null)
 const hash = ref(0)
@@ -288,6 +302,19 @@ const metres = ([x, z]: SpawnPoint) => `${Math.round(x / 100)} m E, ${Math.round
         <button v-if="customLook" type="button" class="reset" @click="resetLook">Use defaults</button>
       </div>
       <p class="hint">These apply straight away, here and in the game's pause screen. Those marked “heavier” cost the most on a phone or an older computer.</p>
+      <div class="quality" role="radiogroup" aria-label="Quality">
+        <strong>Quality</strong>
+        <button
+          v-for="option in QUALITIES"
+          :key="option.key"
+          type="button"
+          role="radio"
+          :aria-checked="quality === option.key"
+          :class="{ on: quality === option.key }"
+          @click="chooseQuality(option.key)"
+        >{{ option.key === 'auto' ? `Auto (${autoLevel})` : option.label }}</button>
+      </div>
+      <p class="hint">{{ quality === 'auto' ? `Picked for this device: ${QUALITY_ABOUT[resolveQuality('auto')]}` : QUALITY_ABOUT[quality] }}</p>
       <ul class="looks">
         <li v-for="option in LOOK_OPTIONS" :key="option.key">
           <label>
@@ -402,6 +429,10 @@ input:focus { outline: none; border-color: #3a86ff; }
 .list button:disabled { opacity: 0.35; cursor: default; }
 .list .empty { color: var(--muted); }
 .steps { padding-left: 18px; margin-top: 4px; }
+.quality { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.quality strong { margin-right: 4px; }
+.quality button { padding: 6px 14px; border-radius: 999px; border: 2px solid var(--line); background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.quality button.on { border-color: var(--ink); background: var(--ink); color: white; }
 .looks { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
 .looks label { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; border: 2px solid var(--line); cursor: pointer; font-weight: 400; }
 .looks input { width: 20px; height: 20px; margin: 2px 0 0; flex: none; accent-color: var(--ink); }

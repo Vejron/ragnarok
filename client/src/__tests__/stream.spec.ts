@@ -90,6 +90,17 @@ describe('TileStreamer', () => {
     expect(attached.has('5_5')).toBe(false)
   })
 
+  it('loads and unloads at a nearer reach when told', async () => {
+    const { streamer, attached } = setup()
+    streamer.setReach(150, 200)
+    await streamer.prime(0, 0)
+    expect(attached.has('5_5')).toBe(true)
+    expect(attached.has('8_5'), 'past 150 m').toBe(false)
+    streamer.update(-240, 50)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(attached.has('5_5'), 'past 200 m').toBe(false)
+  })
+
   it('does not attach a tile that arrives after the player left', async () => {
     const attached: string[] = []
     let release: (() => void) | undefined

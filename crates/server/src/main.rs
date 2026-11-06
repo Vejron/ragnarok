@@ -111,6 +111,30 @@ fn add_test_tanks(game: &mut game::Game) {
     }
 }
 
+/// How long browsers keep the client's files: Vite's hashed `assets/` for good, and whatever names the
+/// current build (the pages, the service worker, the app manifest) only after asking, so a new build
+/// reaches installed apps on their next check.
+#[handler]
+async fn cache_headers(req: &mut Request, depot: &mut Depot, res: &mut Response, ctrl: &mut FlowCtrl) {
+    ctrl.call_next(req, depot, res).await;
+    let path = req.uri().path();
+    let policy = if path.starts_with("/assets/") {
+        "public, max-age=31536000, immutable"
+    } else if path == "/"
+        || path.ends_with(".html")
+        || path.ends_with(".webmanifest")
+        || path == "/sw.js"
+        || path.starts_with("/workbox-")
+    {
+        "no-cache"
+    } else {
+        return;
+    };
+    if res.status_code.is_none_or(|status| status.is_success()) {
+        res.headers_mut().insert(salvo::http::header::CACHE_CONTROL, salvo::http::HeaderValue::from_static(policy));
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -150,7 +174,7 @@ async fn main() -> Result<()> {
 
     if let Some(domain) = domain {
         let dist = env("RAGNAROK_DIST").unwrap_or_else(|| "client/dist".into());
-        router = router.push(Router::with_path("{*path}").get(StaticDir::new([dist]).defaults("index.html")));
+        router = router.push(Router::with_path("{*path}").hoop(cache_headers).get(StaticDir::new([dist]).defaults("index.html")));
         let cache = env("RAGNAROK_ACME_CACHE").unwrap_or_else(|| "crates/server/acme".into());
         let staging = env("RAGNAROK_ACME_STAGING").is_some();
         let mut issuer = AcmeIssuer::builder()

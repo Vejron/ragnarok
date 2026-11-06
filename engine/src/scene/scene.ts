@@ -22,6 +22,8 @@ export class SunShadow {
   depth = 200
   /** Blur of the shadow edge, in texels. */
   radius = 1
+  /** Comparisons per shaded pixel: 9 (a 3×3 filter, soft edged) or 1 (one bilinear tap, cheaper). */
+  taps: 1 | 9 = 9
 }
 
 /** Sky light from above blending to bounce light from below, by how much a surface faces up. */

@@ -5,6 +5,7 @@ import { ContactShadows } from './contact'
 import { setWaterLight, setWaterPlane, setWaterReflection } from './water'
 import { CLASSIC, SOFT, loadLook, wintry, type Look, type Palette } from './look'
 import { winter } from './season'
+import { loadQuality, PRESETS, resolveQuality, type Preset } from './quality'
 import { createSky, nightAt, skyAt } from './daynight'
 import { clearArm, lookDir } from '../aimline'
 import { ON_FOOT_HEIGHT, ON_FOOT_SHOULDER } from '../sim/consts'
@@ -49,16 +50,17 @@ const SUN_DISTANCE = 120
 const NOON = 0.5
 
 /**
- * The sun's shadow map covers a square this many metres to a side around the player, at this resolution,
- * with casters taken from this far either side of the player along the sun's direction.
+ * The sun's shadow map covers a square this many metres to a side around the player, with casters
+ * taken from this far either side of the player along the sun's direction. Its resolution is the
+ * quality preset's.
  */
-const SHADOW_NEAR = { span: 100, size: 2048, depth: 200 }
-const SHADOW_FAR = { span: 300, size: 4096, depth: 300 }
+const SHADOW_NEAR = { span: 100, depth: 200 }
+const SHADOW_FAR = { span: 300, depth: 300 }
 
 /** Radians a scoped view swings per metre of camera shake: the zoomed view magnifies it, so a little goes a long way. */
 const SCOPE_SHAKE = 0.25
 /** Vertical field of view, degrees: normal, aiming a gun, and looking down a scope. */
-const DEFAULT_FOV = 65
+export const DEFAULT_FOV = 65
 /** An FPV camera's wide lens. */
 const FPV_FOV = 100
 /** A loitering drone's belly camera: narrower, to pick out targets from 100 m up. */
@@ -73,9 +75,6 @@ const CAMERA_CLEARANCE = 0.3
 export const AIM_DISTANCE_SCALE = 0.7
 /** How fast the zoom eases in and out, per second. */
 const ZOOM_RATE = 14
-
-/** The pixel ratio the picture renders at: the screen's, to at most this. */
-const MAX_PIXEL_RATIO = 2
 
 /**
  * The picture: the engine's scene, the camera, the renderer and the lights. Everything else adds a
@@ -95,6 +94,11 @@ export class Scene {
   /** Blob shadows; the game fills them in each frame. */
   readonly contact: ContactShadows
   private currentLook: Look = loadLook()
+  private currentPreset: Preset = PRESETS[resolveQuality(loadQuality())]
+  /** The share of the preset's pixel ratio drawn at: lowered while frames are slow (`AdaptiveScale`). */
+  private scale = 1
+  /** Bumped by each renderer swap, so a slow one that is overtaken is thrown away. */
+  private renderers = 0
   private palette: Palette = CLASSIC
   private dayPhase = NOON
   private readonly sky = createSky()
@@ -112,13 +116,14 @@ export class Scene {
     this.canvas.style.cssText = 'display:block;width:100%;height:100%'
     container.appendChild(this.canvas)
 
-    this.scene.fog = new Fog(150, 600)
+    this.scene.fog = new Fog(this.currentPreset.fogNear, this.currentPreset.fogFar)
     this.scene.sun.shadow.enabled = true
     this.contact = new ContactShadows((x, z) => this.groundAt(x, z))
     this.scene.add(this.contact.root, this.gunsight.root, this.heldMap.root)
 
     this.resizeObserver = new ResizeObserver(() => this.resize())
     this.resizeObserver.observe(container)
+    this.setQuality(this.currentPreset)
     this.setLook(this.currentLook)
   }
 
@@ -129,7 +134,7 @@ export class Scene {
   }
 
   private async createRenderer(): Promise<Renderer> {
-    const renderer = await Renderer.create(this.canvas, { onDeviceLost: (info) => this.deviceLost(info) })
+    const renderer = await Renderer.create(this.canvas, { sampleCount: this.currentPreset.msaa, onDeviceLost: (info) => this.deviceLost(info) })
     setWaterReflection(renderer.reflection)
     return renderer
   }
@@ -157,6 +162,48 @@ export class Scene {
         console.error('Could not get the graphics device back:', error)
         await new Promise((resolve) => setTimeout(resolve, Math.min(1000 * 2 ** attempt, 10000)))
       }
+    }
+  }
+
+  get quality(): Readonly<Preset> {
+    return this.currentPreset
+  }
+
+  get renderScale() {
+    return this.scale
+  }
+
+  /** Applies a quality preset. A change of multisampling needs a new renderer, which takes a moment. */
+  setQuality(preset: Preset) {
+    const msaa = preset.msaa !== this.currentPreset.msaa
+    this.currentPreset = preset
+    this.scene.fog!.near = preset.fogNear
+    this.scene.fog!.far = preset.fogFar
+    this.scene.sun.shadow.taps = preset.shadowTaps
+    this.heldMap.redrawMs = preset.heldMapMs
+    this.setShadowReach(this.currentLook.far)
+    if (msaa && this.renderer) void this.replaceRenderer()
+    else this.resize()
+  }
+
+  /** Draws at `scale` of the preset's pixel ratio. Each change reallocates the render targets. */
+  setRenderScale(scale: number) {
+    if (scale === this.scale) return
+    this.scale = scale
+    this.resize()
+  }
+
+  private async replaceRenderer() {
+    const generation = ++this.renderers
+    this.renderer?.destroy()
+    this.renderer = null
+    try {
+      const renderer = await this.createRenderer()
+      if (this.disposed || generation !== this.renderers) return renderer.destroy()
+      this.renderer = renderer
+      this.resize()
+    } catch (error) {
+      console.error('Could not make a new renderer:', error)
     }
   }
 
@@ -217,17 +264,17 @@ export class Scene {
   }
 
   private setShadowReach(far: boolean) {
-    const { span, size, depth } = far ? SHADOW_FAR : SHADOW_NEAR
+    const { span, depth } = far ? SHADOW_FAR : SHADOW_NEAR
     const shadow = this.scene.sun.shadow
     shadow.span = span
-    shadow.mapSize = size
+    shadow.mapSize = far ? this.currentPreset.shadowFar : this.currentPreset.shadowNear
     shadow.depth = depth
   }
 
   private resize() {
     const { clientWidth: width, clientHeight: height } = this.container
     if (width === 0 || height === 0) return
-    this.renderer?.setSize(width, height, Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO))
+    this.renderer?.setSize(width, height, Math.min(window.devicePixelRatio, this.currentPreset.maxPixelRatio) * this.scale)
     this.camera.aspect = width / height
   }
 

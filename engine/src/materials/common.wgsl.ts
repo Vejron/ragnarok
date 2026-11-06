@@ -23,7 +23,7 @@ struct Frame {
   // width, height, 1/width, 1/height in pixels.
   viewport: vec4f,
   shadowMatrix: mat4x4f,
-  // texel size, blur radius in texels, on (0 or 1), unused.
+  // texel size, blur radius in texels, on (0 or 1), one tap instead of the 3×3 filter (0 or 1).
   shadow: vec4f,
   // camera near, camera far, seconds since the last frame, unused.
   clip: vec4f,

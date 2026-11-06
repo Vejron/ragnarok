@@ -2,7 +2,7 @@ import { fetchTile, type TileData, type TileRef, type WorldData } from '@/world'
 
 /** Tiles whose nearest edge is within this many metres of the player are loaded... */
 export const LOAD_RADIUS = 450
-/** ...and unloaded again beyond this, so walking along a border does not thrash. */
+/** ...and unloaded again beyond this, so walking along a border does not thrash. These are the defaults; see `setReach`. */
 export const UNLOAD_RADIUS = 550
 /** Fetches in flight at once. */
 const MAX_FETCHES = 4
@@ -39,8 +39,8 @@ interface Entry {
 
 /**
  * Keeps the tiles around the player loaded and the rest out of memory. The world is a grid of
- * tile files (`osm-import`); this fetches the ones within `LOAD_RADIUS`, hands them to the sink
- * (which draws them and gives them collision), and detaches those beyond `UNLOAD_RADIUS`.
+ * tile files (`osm-import`); this fetches the ones within `loadRadius`, hands them to the sink
+ * (which draws them and gives them collision), and detaches those beyond `unloadRadius`.
  */
 export class TileStreamer {
   private readonly entries = new Map<number, Entry>()
@@ -52,6 +52,8 @@ export class TileStreamer {
   private checkedAt: [number, number] | null = null
   private inFlight = 0
   private disposed = false
+  private loadRadius = LOAD_RADIUS
+  private unloadRadius = UNLOAD_RADIUS
 
   constructor(
     private readonly world: WorldData,
@@ -78,6 +80,13 @@ export class TileStreamer {
     if (last && Math.hypot(x - last[0], z - last[1]) < RECHECK_DISTANCE && this.inFlight === 0 && !this.hasRetries()) return
     this.checkedAt = [x, z]
     this.schedule()
+  }
+
+  /** How far tiles are loaded, and how far they go before they are unloaded; applied on the next `update`. */
+  setReach(load: number, unload: number) {
+    this.loadRadius = load
+    this.unloadRadius = Math.max(load, unload)
+    this.checkedAt = null
   }
 
   /** Loads everything in range of `(x, z)` and resolves once it is attached: the first frame needs it. */
@@ -127,7 +136,7 @@ export class TileStreamer {
     while (this.ready.length > 0) {
       const { entry, tile } = this.ready.shift()!
       // The player may have walked away while it waited.
-      if (this.disposed || this.distance(entry.ref) > UNLOAD_RADIUS) {
+      if (this.disposed || this.distance(entry.ref) > this.unloadRadius) {
         this.sink.discard?.(entry.ref)
         entry.state = 'idle'
         continue
@@ -143,7 +152,7 @@ export class TileStreamer {
   private pending() {
     let count = 0
     for (const entry of this.entries.values()) {
-      if (entry.state !== 'loaded' && this.distance(entry.ref) <= LOAD_RADIUS) count++
+      if (entry.state !== 'loaded' && this.distance(entry.ref) <= this.loadRadius) count++
     }
     return count
   }
@@ -151,7 +160,7 @@ export class TileStreamer {
   private hasRetries() {
     const now = this.now()
     for (const entry of this.entries.values()) {
-      if (entry.state === 'idle' && entry.retryAt > 0 && entry.retryAt <= now && this.distance(entry.ref) <= LOAD_RADIUS) return true
+      if (entry.state === 'idle' && entry.retryAt > 0 && entry.retryAt <= now && this.distance(entry.ref) <= this.loadRadius) return true
     }
     return false
   }
@@ -171,11 +180,11 @@ export class TileStreamer {
     const wanted: Entry[] = []
     for (const entry of this.entries.values()) {
       const distance = this.distance(entry.ref)
-      if (entry.state === 'loaded' && distance > UNLOAD_RADIUS) {
+      if (entry.state === 'loaded' && distance > this.unloadRadius) {
         entry.detach?.()
         entry.detach = null
         entry.state = 'idle'
-      } else if (entry.state === 'idle' && distance <= LOAD_RADIUS && entry.retryAt <= now) {
+      } else if (entry.state === 'idle' && distance <= this.loadRadius && entry.retryAt <= now) {
         wanted.push(entry)
       }
     }
@@ -193,7 +202,7 @@ export class TileStreamer {
     try {
       const tile = await this.fetcher(entry.ref)
       // The player may have walked away while it travelled.
-      if (!this.disposed && this.distance(entry.ref) <= UNLOAD_RADIUS) {
+      if (!this.disposed && this.distance(entry.ref) <= this.unloadRadius) {
         await this.sink.prepare?.(entry.ref, tile)
         // Attached on the next frame with time for it (`drain`), not here, mid-frame.
         if (this.disposed) this.sink.discard?.(entry.ref)

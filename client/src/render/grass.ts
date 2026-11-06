@@ -398,6 +398,19 @@ interface Chunk {
 
 /** Metres a blade keeps from bare ground. */
 const EDGE = 0.8
+const BENDER_KEYS = Array.from({ length: BENDERS }, (_, i) => `b${i}`)
+const BLAST_KEYS = Array.from({ length: BLASTS }, (_, i) => `e${i}`)
+
+/** Sets a uniform's four values; whether any changed. */
+function set4(v: number[], a: number, b: number, c: number, d: number) {
+  if (v[0] === a && v[1] === b && v[2] === c && v[3] === d) return false
+  v[0] = a
+  v[1] = b
+  v[2] = c
+  v[3] = d
+  return true
+}
+
 /** The share of a crater's radius that is bare earth: the rim keeps its grass, thinned by the slope. */
 const CRATER_BARE = 0.8
 const EDGE_PROBES = [[EDGE, 0], [-EDGE, 0], [0, EDGE], [0, -EDGE]] as const
@@ -630,17 +643,20 @@ export class Grass {
     this.picked.length = 0
     for (const b of benders) if (Math.hypot(b.x - x, b.z - z) < Math.min(far, 60)) this.picked.push(b)
     this.picked.sort((a, b) => Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z))
+    // Written in place, and uploaded only when something moved: most frames nothing near is bending it.
     const u = this.material.uniforms
+    let changed = false
     for (let i = 0; i < BENDERS; i++) {
       const b = this.picked[i]
-      u[`b${i}`] = b ? [b.x, b.z, b.radius, b.strength] : [0, 0, 0, 0]
+      changed = set4(u[BENDER_KEYS[i]!] as number[], b ? b.x : 0, b ? b.z : 0, b ? b.radius : 0, b ? b.strength : 0) || changed
     }
     const now = performance.now() / 1000
     for (let i = 0; i < BLASTS; i++) {
       const e = this.blasts[i]!
-      u[`e${i}`] = now - e[2] < BLAST_LIFE + e[3] / 10 ? [e[0], e[1], e[2], e[3]] : [0, 0, -1000, 0]
+      const live = now - e[2] < BLAST_LIFE + e[3] / 10
+      changed = set4(u[BLAST_KEYS[i]!] as number[], live ? e[0] : 0, live ? e[1] : 0, live ? e[2] : -1000, live ? e[3] : 0) || changed
     }
-    this.material.needsUpdate()
+    if (changed) this.material.needsUpdate()
   }
 
   dispose() {
