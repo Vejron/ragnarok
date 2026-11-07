@@ -3,11 +3,12 @@
 //! collision mesh, and both sides make the faces from them (see `shared::carve`).
 
 use shared::carve::{CELL, Shell, Tri, pack, unpack};
-use shared::world::{Bits, CollisionMesh, Tile};
+use shared::world::{Bits, CollisionMesh, Look, Tile};
 use std::collections::{HashMap, HashSet};
 
 /// Cuts each building of `tile` into cubes and rewrites the collision mesh to match: a building's
-/// walls and roof leave it (`walls` and `roof` become 0) and only its floor stays. A building too
+/// walls and roof leave it (`walls` and `roof` become 0) and only its floor stays. The walls and roof
+/// go to the tile's `look`, to be drawn. A building too
 /// big to cut keeps its own triangles and no cells. Bridges and whatever else is in the mesh are copied as they are, and
 /// every `first` is moved to where its triangles now start. Baking a baked tile changes nothing.
 pub fn bake(tile: &mut Tile) {
@@ -23,13 +24,16 @@ pub fn bake(tile: &mut Tile) {
     starts.dedup();
     let mut out = Mesh::default();
     let mut moved: HashMap<u32, u32> = HashMap::new();
+    let mut look = LookMesh::from(std::mem::take(&mut tile.look));
+    look.buildings.resize(tile.buildings.len(), [0; 3]);
     for pair in starts.windows(2) {
         let (from, to) = (pair[0].min(end), pair[1].min(end));
         moved.insert(from, out.triangles.len() as u32);
         // A building baked already (its cells are there) is copied as it is.
-        let building = tile.buildings.iter_mut().find(|b| b.first == from && b.walls + b.roof > 0 && b.cells.dims == [0; 3]);
+        let found = tile.buildings.iter().position(|b| b.first == from && b.walls + b.roof > 0 && b.cells.dims == [0; 3]);
         let mut copy_from = from;
-        if let Some(building) = building {
+        if let Some(index) = found {
+            let building = &mut tile.buildings[index];
             let roof = (from + building.walls).min(to);
             let floor = (roof + building.roof).min(to);
             let walls: Vec<Tri> = (from..roof).map(tri).collect();
@@ -39,6 +43,8 @@ pub fn bake(tile: &mut Tile) {
                 building.roof = 0;
                 building.cells = shell.cells();
                 copy_from = floor;
+                look.buildings[index] = [look.triangles.len() as u32, walls.len() as u32, roofs.len() as u32];
+                walls.iter().chain(&roofs).for_each(|tri| look.push(tri));
             }
         }
         for t in copy_from..to {
@@ -53,6 +59,37 @@ pub fn bake(tile: &mut Tile) {
         bridge.first = moved.get(&bridge.first).copied().unwrap_or(out.triangles.len() as u32);
     }
     tile.collision = CollisionMesh { vertices: out.vertices, triangles: out.triangles };
+    tile.look = if look.triangles.is_empty() { Look::default() } else { Look { vertices: look.vertices, triangles: look.triangles, buildings: look.buildings } };
+}
+
+/// The tile's look as it is written, with its corners shared.
+#[derive(Default)]
+struct LookMesh {
+    vertices: Vec<[i32; 3]>,
+    triangles: Vec<[u32; 3]>,
+    buildings: Vec<[u32; 3]>,
+    shared: HashMap<[i32; 3], u32>,
+}
+
+impl From<Look> for LookMesh {
+    fn from(look: Look) -> Self {
+        let shared = look.vertices.iter().enumerate().map(|(i, &v)| (v, i as u32)).collect();
+        Self { vertices: look.vertices, triangles: look.triangles, buildings: look.buildings, shared }
+    }
+}
+
+impl LookMesh {
+    fn push(&mut self, tri: &Tri) {
+        let mut corner = |k: usize| -> u32 {
+            let v = [tri[k], tri[k + 1], tri[k + 2]];
+            *self.shared.entry(v).or_insert_with(|| {
+                self.vertices.push(v);
+                self.vertices.len() as u32 - 1
+            })
+        };
+        let triangle = [corner(0), corner(3), corner(6)];
+        self.triangles.push(triangle);
+    }
 }
 
 /// Gives each cube claimed by more than one building to the first of them, in the order `tiles`
@@ -148,6 +185,12 @@ mod tests {
         assert_eq!([0, 1, 2].map(|k| corner(3, k)), [[2000, 0, 0], [2500, 0, 400], [2500, 0, 0]], "the floor");
         // The vertices nothing uses any more are gone: two floors and a bridge.
         assert_eq!(tile.collision.vertices.len(), 4 + 3 + 4);
+        // The walls and roofs are kept to be drawn, in the order they were, corners shared.
+        assert_eq!(tile.look.buildings, vec![[0, 8, 2], [10, 8, 2]]);
+        assert_eq!((tile.look.triangles.len(), tile.look.vertices.len()), (20, 16));
+        let seen = |t: usize, k: usize| tile.look.vertices[tile.look.triangles[t][k] as usize];
+        assert_eq!([0, 1, 2].map(|k| seen(0, k)), [[0, 0, 0], [500, 0, 0], [500, 300, 0]], "the first wall");
+        assert_eq!([0, 1, 2].map(|k| seen(18, k)), [[2000, 300, 0], [2500, 300, 0], [2500, 300, 400]], "the second roof");
         let again = tile.clone();
         bake(&mut tile);
         assert_eq!(tile, again, "baking twice");

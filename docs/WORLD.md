@@ -147,6 +147,12 @@ and how many objects it has of each symbol.
   bullets. A fence stops soldiers only (`sim/src/fences.rs`): it is no collider but lines a soldier's
   step is cut short of, the same on server and client, and the bots' grid shuts the cells it runs
   through. OSM's are not fetched yet.
+- **Looks** (`Tile::look`): every building's own walls and roof, as the importer built them before
+  `voxels::bake` cut them into 72 cm cells, kept for drawing only. Cells stay what is collided with
+  and blasted; a client draws a whole building from its look and cuts holes into it
+  (`render/lookfracture.ts`). A tile written before looks has none and its buildings are drawn as
+  cubes; the field is left out of the file when empty, so the world version is unchanged. Re-import a
+  world to give it looks (`--bake` cannot: a baked world has lost its walls and roofs).
 - **Stony ground** goes in the tiles' `stones` layer: a 2 m grid of grades, the low seven bits how stony
   (`STONES_DENSITY`) and the top bit a boulder field's blocks (`STONES_ANGULAR`). It is written after
   `lines` (an empty `lines` is written to keep it in place) and left out when a tile has none, so a

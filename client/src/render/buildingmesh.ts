@@ -2,6 +2,7 @@ import { Color } from '@ragnarok/engine'
 import type { Sphere } from '@ragnarok/engine'
 import { ROOF_FLAT, type Bridge, type Building, type TileData } from '@/world'
 import { shellOf } from '@/sim/carve'
+import { facing, openingQuads, openingsOf, type Opening } from './windows'
 
 /*
  * A tile's buildings and bridges as one flat-shaded triangle soup with a colour a vertex, as plain
@@ -9,10 +10,13 @@ import { shellOf } from '@/sim/carve'
  * is why nothing here touches the scene.
  */
 
-/** Candy-coloured buildings. Picked per building so the palette stays stable between reloads. */
+/**
+ * House colours as they are painted here: falu red, ochre, white, render greys, sage, beige and dark
+ * stained wood. Picked per building so the palette stays stable between reloads.
+ */
 const BRIDGE_DECK_COLOR = 0xb8b6ae
 const BRIDGE_STEEL_COLOR = 0x6d7a86
-const BUILDING_COLORS = [0xffd6a5, 0xfdffb6, 0xcaffbf, 0x9bf6ff, 0xa0c4ff, 0xbdb2ff, 0xffc6ff, 0xffadad]
+const BUILDING_COLORS = [0xa8432f, 0xd9b45a, 0xeee9dc, 0xc9c4b8, 0xb5bda4, 0xd8c6a3, 0x6e5642, 0x8f3a2c, 0xe4dcc6, 0xa9a59c]
 
 /** Roofs: slate, tile and timber for pitched ones, concrete grey for flat ones. */
 const ROOF_COLORS = [0xb5543f, 0x6d7a8c, 0x8d6e63, 0x4f5d6b, 0x9c4a3c]
@@ -20,9 +24,10 @@ const FLAT_ROOF_COLORS = [0xb0b4ba, 0x9aa0a6, 0xc4c7cc]
 
 /** What of a tile its buildings are drawn from: small enough to send to the worker. */
 export interface BuildingTile {
-  buildings: readonly Pick<Building, 'first' | 'walls' | 'roof' | 'roofKind' | 'cells' | 'paint'>[]
+  buildings: readonly Pick<Building, 'first' | 'walls' | 'roof' | 'roofKind' | 'cells' | 'paint' | 'look'>[]
   bridges: readonly Bridge[]
   collision: TileData['collision']
+  look?: TileData['look']
 }
 
 
@@ -139,12 +144,19 @@ class Soup {
    * counter-clockwise in (x, z); seen from +Y that is clockwise, so they are reversed to face
    * outwards and up.
    */
-  collision(tile: BuildingTile, from: number, count: number, color: Color) {
+  collision(tile: Pick<BuildingTile, 'collision'>, from: number, count: number, color: Color) {
     const { vertices, triangles } = tile.collision
     for (let t = from; t < from + count; t++) {
       const [a, b, c] = [triangles[t * 3]! * 3, triangles[t * 3 + 2]! * 3, triangles[t * 3 + 1]! * 3]
       this.triangle(vertices[a]!, vertices[a + 1]!, vertices[a + 2]!, vertices[b]!, vertices[b + 1]!, vertices[b + 2]!, vertices[c]!, vertices[c + 1]!, vertices[c + 2]!, color.r, color.g, color.b)
     }
+  }
+
+  /** The quad `corners` (in order round it) as two triangles in linear `rgb`, wound as `facing` puts them. */
+  quad(corners: [number, number, number][], [r, g, b]: readonly [number, number, number]) {
+    const [a, c, d, e] = corners as [[number, number, number], [number, number, number], [number, number, number], [number, number, number]]
+    this.triangle(...a, ...c, ...d, r, g, b)
+    this.triangle(...a, ...d, ...e, r, g, b)
   }
 
   /** The sphere round the box round every corner: a little looser than `Geometry` finds, but without a second pass. */
@@ -186,11 +198,21 @@ function linearColors(tile: BuildingTile, index: number, salt: number): [Color, 
 export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: ReadonlySet<number>): BuildingBuffers | null {
   // Each building's faces first, so the arrays are made once at their final size. A building
   // without cells is drawn from its collision triangles.
-  const faces: (Faces | null | undefined)[] = tile.buildings.map((_, index) => (destroyed.has(index) ? undefined : buildingFaces(tile, index)))
+  // A building with a look is drawn from it, whole: its own walls and roof, not its cubes.
+  const look = tile.look
+  const looked = (index: number) => (look && tile.buildings[index]?.look) || null
+  const faces: (Faces | null | undefined)[] = tile.buildings.map((_, index) => (destroyed.has(index) || looked(index) ? undefined : buildingFaces(tile, index)))
+  // Windows and doors on the buildings drawn from their looks: two quads, four triangles, each.
+  const openings: (readonly Opening[] | null)[] = tile.buildings.map((_, index) => {
+    const seen = destroyed.has(index) ? null : looked(index)
+    return seen ? openingsOf(look!, seen) : null
+  })
   let count = 0
   tile.buildings.forEach((building, index) => {
     const own = faces[index]
-    if (own) count += own.roof.length
+    const seen = destroyed.has(index) ? null : looked(index)
+    if (seen) count += seen.walls + seen.roof + (openings[index]?.length ?? 0) * 4
+    else if (own) count += own.roof.length
     else if (own === null) count += building.walls + building.roof
   })
   for (const bridge of tile.bridges) count += bridge.deck + bridge.steel
@@ -198,11 +220,16 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
   const soup = new Soup(count)
   const ranges = new Uint32Array(tile.buildings.length * 2)
   tile.buildings.forEach((building, index) => {
+    if (destroyed.has(index)) return
     const own = faces[index]
-    if (own === undefined) return
+    const seen = looked(index)
     const first = soup.vertices
     const [wall, roof] = linearColors(tile, index, salt)
-    if (own) soup.faces(own, wall, roof)
+    if (seen) {
+      soup.collision({ collision: look! }, seen.first, seen.walls, wall)
+      soup.collision({ collision: look! }, seen.first + seen.walls, seen.roof, roof)
+      openingQuads(openings[index] ?? [], (corners, rgb, normal) => soup.quad(facing(corners, normal), rgb))
+    } else if (own) soup.faces(own, wall, roof)
     else {
       soup.collision(tile, building.first, building.walls, wall)
       soup.collision(tile, building.first + building.walls, building.roof, roof)

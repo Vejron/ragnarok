@@ -69,14 +69,14 @@ scene:
 | Piece | File | What it is |
 |---|---|---|
 | Ground plane | `world.ts` `buildGround` | One grass plane under the world; shows only where a tile is late. |
-| Tiles | `world.ts` `buildTile` | Terrain mesh, buildings (as 72 cm cubes, `voxels.ts`), roads and trees of one 250 m tile. Streamed in and out around the player. |
+| Tiles | `world.ts` `buildTile` | Terrain mesh, buildings (from their own walls and roofs, `Tile.look`, or as 72 cm cubes, `voxels.ts`, in a world made before looks), roads and trees of one 250 m tile. Streamed in and out around the player. |
 | Vehicles | `car.ts`, `tank.ts`, `heli.ts`, `plane.ts`, `walker.ts`, `strvs.ts`, `mortar.ts` | glTF models from `client/public/models/`, one clone per vehicle (the mortar is built by hand). |
 | Characters | `character.ts` | Skinned clones of one shared model (`Crowd`), outfit colour by player id. |
 | Items, pickups, rockets | `items.ts`, `pickups.ts`, `rockets.ts` | Small hand-built meshes. |
 | Effects | `effects.ts` | Muzzle flashes, tracers, sparks, smoke: the particle pools and `FlashEffects`, below. |
 | Particles | `particles.ts` | Smoke, dust, gravel, sparks and flames: GPU particles, below. |
 | Skidmarks | `skidmarks.ts` | A ring of quads with a birth time, faded in the shader. |
-| Damage | `damage.ts`, `fracture.ts` | A building redrawn from its cubes (holes blasted through walls and roofs, the cubes around a hole burnt black, cubes darkened where this player's rounds landed; a cube never shrinks), thrown and falling chunks of cubes. |
+| Damage | `damage.ts`, `lookfracture.ts`, `shards.ts`, `windows.ts`, `fracture.ts` | A hurt building with a look (`Tile.look`) is redrawn from its own walls and roof: the triangles near a hole are sliced along the 72 cm cell grid, pieces in cells that are gone are left out, the hole's edge is given a wall's depth in a cross-section colour, its corners are pushed about in the wall's plane so it is ragged, and soot fades smoothly round it. Rounds that strike leave chips on the wall, more as a cell wears. What is blasted flies as flat-faced plates in the wall's and roof's colours (`shards.ts`), not cubes; a section that loses its hold falls whole, cut from the walls and roof with the hole's own ragged edge (`lookChunk`), and tips over towards the gap. Rubble is heaped round the building's foot from the cells that are gone (`rubbleSoup`), so it is the same on every client and after a tile streams back in; on a live loss it comes about a second later, under the dust. Windows and doors (`windows.ts`) are drawn on the walls of buildings with a look, rows a storey apart and a door on the longest wall; those within a cell of a hole are left out, their glass blown. A building without a look (a world made before looks) is still redrawn from its cubes (`fracture.ts`): holes through walls and roofs, cubes burnt black round a hole and darkened where this player's rounds landed, thrown and falling chunks of cubes. |
 | Placed cubes | `construct.ts` | What players built with bricks, a mesh per 16³ chunk with a colour per vertex, cubes that fell coming down as one piece, and the ghost cube where the next one would go. See [BUILDING.md](BUILDING.md). |
 | Trajectory | `trajectory.ts` | The arc a held grenade would take. |
 | Field mortar | `mortar.ts`, `mortar-arc.ts` | A hand-built gun, and the landing marker its gunner aims by. See [VEHICLES-V.md](VEHICLES-V.md). |
@@ -102,7 +102,7 @@ The style is flat, bright and few-banded, not physically based.
   The engine does three's `MeshToonMaterial` maths: `colour/π × (sun × ramp(N·L·0.5 + 0.5) × shadow +
   hemisphere(N)) + emissive`, then linear fog. A ramp is a row of one 256 × 64 texture, so the number
   of ramps is not a cost.
-- **Candy palette.** Building colours, roof colours, cover colours (`cover.ts`) and player outfits
+- **Fixed palettes.** Building colours (natural house paint: falu red, ochre, white, render greys, dark wood), roof colours, cover colours (`cover.ts`) and player outfits
   (`character.ts` `PALETTE`) are fixed lists, picked by index so they are stable between reloads.
 - **Baked terrain tone.** `shade.ts` computes a brightness multiplier per terrain vertex: hillshade
   from a lower light than the sun, darker on steep ground and in hollows, brighter on rises, plus a

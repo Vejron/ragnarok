@@ -204,6 +204,29 @@ pub struct Tile {
     /// tile has none. The client draws it; it slows whoever crosses it.
     #[serde(default, deserialize_with = "bits")]
     pub stones: Vec<u8>,
+    /// The buildings' own walls and roofs, for drawing only: what the importer built before it cut
+    /// them into cells (`voxels::bake`). Cells are still what is collided with and blasted; a client
+    /// draws a building from these while it is whole, and cuts its holes into them. Empty in a world
+    /// made before there were looks, where a client draws the cells. Left out of the file when empty.
+    #[serde(default)]
+    pub look: Look,
+}
+
+/// Draw-only building surfaces of a tile (`Tile::look`): a mesh wound as the collision mesh is, and
+/// for each of the tile's buildings, by index, `[first, walls, roof]`: its wall triangles from `first`,
+/// then its roof triangles. `[0, 0, 0]` for a building without a look (it keeps its own collision
+/// triangles, or the world predates looks).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Look {
+    pub vertices: Vec<[i32; 3]>,
+    pub triangles: Vec<[u32; 3]>,
+    pub buildings: Vec<[u32; 3]>,
+}
+
+impl Look {
+    pub fn is_empty(&self) -> bool {
+        self.triangles.is_empty()
+    }
 }
 
 /// `Tile::stones`: the share of a cell's ground under stones, out of this.
@@ -216,8 +239,8 @@ fn bits<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D:
 }
 
 /// How a `Tile` is written: a msgpack array, field by field, so a field left out at the end must
-/// take every one after it along. `lines` and `stones` are left out when there is nothing in them
-/// or after them, so a world without them is written as it was before they existed.
+/// take every one after it along. `lines`, `stones` and `look` are left out when there is nothing in
+/// them or after them, so a world without them is written as it was before they existed.
 #[derive(Serialize)]
 struct TileOut<'a> {
     buildings: &'a Vec<Building>,
@@ -239,11 +262,14 @@ struct TileOut<'a> {
     lines: Option<&'a Vec<Line>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stones: Option<Bits>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    look: Option<&'a Look>,
 }
 
 impl Serialize for Tile {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let stones = (!self.stones.is_empty()).then(|| Bits(self.stones.clone()));
+        let look = (!self.look.is_empty()).then_some(&self.look);
+        let stones = (!self.stones.is_empty() || look.is_some()).then(|| Bits(self.stones.clone()));
         TileOut {
             buildings: &self.buildings,
             roads: &self.roads,
@@ -259,6 +285,7 @@ impl Serialize for Tile {
             ski: &self.ski,
             lines: (!self.lines.is_empty() || stones.is_some()).then_some(&self.lines),
             stones,
+            look,
         }
         .serialize(serializer)
     }
@@ -1019,15 +1046,21 @@ mod tests {
             ski: vec![SkiTrail { width: 400, points: vec![[0, 0], [900, 50]] }],
             lines: vec![Line { kind: LINE_POWER, points: vec![[0, 0], [5000, 0]], base: vec![120, 150], end: false }],
             stones: vec![0, 40, STONES_ANGULAR | 90, 0],
+            look: Look { vertices: vec![[0, 0, 0], [100, 0, 0], [0, 300, 0]], triangles: vec![[0, 1, 2]], buildings: vec![[0, 1, 0], [0, 0, 0]] },
         };
         assert_eq!(Tile::decode(&tile.encode()).unwrap(), tile);
+        assert_eq!(tile.encode()[0], 0x9f, "an array of all 15 fields");
+        // A look without lines or stones takes empty ones along, to keep its place.
+        let bare = Tile { lines: Vec::new(), stones: Vec::new(), ..tile.clone() };
+        assert_eq!(bare.encode()[0], 0x9f);
+        assert_eq!(Tile::decode(&bare.encode()).unwrap(), bare);
         // Stones without lines: the empty lines are written, to keep the stones in their place.
-        let stony = Tile { lines: Vec::new(), ..tile.clone() };
+        let stony = Tile { lines: Vec::new(), look: Look::default(), ..tile.clone() };
         let bytes = stony.encode();
         assert_eq!(bytes[0], 0x9e, "an array of all 14 fields");
         assert_eq!(Tile::decode(&bytes).unwrap(), stony);
         // Without lines a tile is written as it was before they existed, and reads back the same.
-        let plain = Tile { lines: Vec::new(), stones: Vec::new(), ..tile.clone() };
+        let plain = Tile { lines: Vec::new(), stones: Vec::new(), look: Look::default(), ..tile.clone() };
         let bytes = plain.encode();
         assert_eq!(bytes[0], 0x9c, "an array of the 12 fields before lines");
         assert_eq!(Tile::decode(&bytes).unwrap(), plain);

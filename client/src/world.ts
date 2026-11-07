@@ -151,6 +151,11 @@ export interface Building {
   cells: Cells | null
   /** `[wall, roof]` as `0xRRGGBB` where the importer knows them (France: the roof from the aerial photo), else null. */
   paint: [number, number] | null
+  /**
+   * Its own walls and roof in the tile's `look`, to be drawn: `walls` triangles from `first`, then
+   * `roof`. Null when it has none (a world made before looks): it is then drawn as its cubes.
+   */
+  look?: { first: number; walls: number; roof: number } | null
 }
 
 /**
@@ -326,6 +331,11 @@ export interface TileData {
    * Absent when the tile has none.
    */
   stones?: Uint8Array
+  /**
+   * The buildings' own walls and roofs, for drawing only (`Building.look` says whose are where),
+   * wound as `collision` is. Absent when the world has none.
+   */
+  look?: CollisionMesh
   /** The tile file this was decoded from, which the soldier's physics reads for itself. */
   bytes?: Uint8Array
 }
@@ -419,7 +429,7 @@ function flatIndices(triangles: readonly number[][]): Uint32Array {
 }
 
 export function decodeTile(bytes: Uint8Array): TileData {
-  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges, detail, rails, ski, lines, stones] = decode(bytes) as [
+  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges, detail, rails, ski, lines, stones, look] = decode(bytes) as [
     [number, number[][], number, number, number, number, number, [number[], number[], Uint8Array, Uint8Array]?, [number, number]?][],
     [number, number, number[][]][],
     [number[][], number[][]],
@@ -434,9 +444,11 @@ export function decodeTile(bytes: Uint8Array): TileData {
     [number, number[][]][] | undefined,
     [number, number[][], number[], boolean][] | undefined,
     Uint8Array | undefined,
+    [number[][], number[][], number[][]] | undefined,
   ]
+  const looks = look?.[2]
   return {
-    buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind, cells, paint]) => ({
+    buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind, cells, paint], index) => ({
       height: metres(height),
       footprint: footprint.map(point),
       base: metres(base),
@@ -449,6 +461,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
           ? { origin: cells[0] as [number, number, number], dims: cells[1] as [number, number, number], solid: cells[2], roof: cells[3] }
           : null,
       paint: paint ?? null,
+      look: looks?.[index] && looks[index]![1]! + looks[index]![2]! > 0 ? { first: looks[index]![0]!, walls: looks[index]![1]!, roof: looks[index]![2]! } : null,
     })),
     roads: roads.map(([width, kind, points]) => ({ width: metres(width), kind, points: points.map(point) })),
     cover: cover.map(([kind, rings]) => ({ kind, rings: rings.map((ring) => ring.map(point)) })),
@@ -474,6 +487,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     ski: (ski ?? []).map(([width, points]) => ({ width: metres(width), points: points.map(point) })),
     lines: (lines ?? []).map(([kind, points, base, end]) => ({ kind, points: points.map(point), base: base.map(metres), end })),
     ...(stones && stones.length > 0 ? { stones: stones.slice() } : {}),
+    ...(look && look[1].length > 0 ? { look: { vertices: flatMetres(look[0]), triangles: flatIndices(look[1]) } } : {}),
     bytes,
   }
 }
