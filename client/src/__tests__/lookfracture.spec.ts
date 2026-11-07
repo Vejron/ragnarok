@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Shell, type Tri } from '@/sim/carve'
 import { lookFracture } from '@/render/lookfracture'
 import { openingsOf } from '@/render/windows'
+import { rubbleSoup } from '@/render/shards'
 import type { CollisionMesh } from '@/world'
 
 /** A box house 5 × 4 × 3 m: walls, then a flat roof, centimetre triangles. */
@@ -112,5 +113,18 @@ describe('lookFracture', () => {
     const a = lookFracture(look, range, shell, new Set([hole]), new Map(), white, white)
     const b = lookFracture(look, range, shell, new Set([hole]), new Map(), white, white)
     expect(Array.from(a.positions)).toEqual(Array.from(b.positions))
+  })
+
+  it('heaps rubble on a slope without leaving any of it in the air', () => {
+    const ground = (x: number, z: number) => 0.25 * x + 0.1 * z
+    const centres = Array.from({ length: 30 }, (_, i) => [2 + (i % 6) * 0.72, 1 + Math.floor(i / 6) * 0.72, 0.4] as const)
+    const soup = rubbleSoup(centres, centres.map(() => false), ground, white, white)
+    // Each triangle's lowest corner is at or below the ground under it.
+    const { positions: p } = soup
+    for (let i = 0; i < p.length; i += 9) {
+      const corners = [0, 3, 6].map((k) => [p[i + k]!, p[i + k + 1]!, p[i + k + 2]!] as const)
+      const low = corners.reduce((a, b) => (b[1] < a[1] ? b : a))
+      expect(low[1]).toBeLessThanOrEqual(ground(low[0], low[2]) + 0.6)
+    }
   })
 })

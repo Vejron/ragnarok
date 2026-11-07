@@ -61,14 +61,14 @@ export function shardSoup(seed: number, rgb: readonly [number, number, number], 
 /** Ground cells rubble is heaped on, metres a side. */
 const HEAP_CELL = 1.5
 /** Rubble a fallen cell leaves on the ground, cubic metres (a wall is far thinner than its cell). */
-const HEAP_PER_CELL = 0.06
+const HEAP_PER_CELL = 0.12
 
 /**
  * The rubble left by the cells at `centres` (metres; `roofs[i]` when that one was roof) heaped on the
- * floor at `floor`: a low mound for each `HEAP_CELL` square they stood over, sized by how many stood
+ * ground (`groundAt`, metres, under a mound's middle): a low mound for each `HEAP_CELL` square they stood over, sized by how many stood
  * there, with a few broken plates on it. In world coordinates; the same for the same cells.
  */
-export function rubbleSoup(centres: readonly (readonly [number, number, number])[], roofs: readonly boolean[], floor: number, wall: readonly [number, number, number], roof: readonly [number, number, number]): ShardSoup {
+export function rubbleSoup(centres: readonly (readonly [number, number, number])[], roofs: readonly boolean[], groundAt: (x: number, z: number) => number, wall: readonly [number, number, number], roof: readonly [number, number, number]): ShardSoup {
   const bins = new Map<string, { x: number; z: number; n: number; roofs: number }>()
   centres.forEach(([x, , z], i) => {
     const key = `${Math.floor(x / HEAP_CELL)},${Math.floor(z / HEAP_CELL)}`
@@ -96,6 +96,8 @@ export function rubbleSoup(centres: readonly (readonly [number, number, number])
     const volume = bin.n * HEAP_PER_CELL
     const radius = Math.min(2.4, 0.5 + Math.sqrt(volume) * 0.9)
     const height = Math.min(1.4, Math.max(0.12, volume / (radius * radius * 1.1)))
+    // On a slope the mound sits at the lowest ground round it, so no edge of it hangs in the air.
+    const floor = Math.min(groundAt(x, z), ...[0, 1, 2, 3].map((k) => groundAt(x + Math.cos(k * 1.571) * radius * 0.8, z + Math.sin(k * 1.571) * radius * 0.8)))
     // The mound: a squashed lump, half sunk into the ground.
     put(shardSoup(next() * 1e9, dark(wall, 0.72), 0.5), [x, floor, z], [radius * 2, height * 2, radius * 2], next() * 6.28)
     // Plates on and round it, a few of them roof.
@@ -105,7 +107,8 @@ export function rubbleSoup(centres: readonly (readonly [number, number, number])
       const size = 0.25 + next() * 0.45
       const angle = next() * 6.28
       const out = next() * radius * 0.8
-      put(shardSoup(next() * 1e9, dark(isRoof ? roof : wall, 0.9), isRoof ? 0.18 : 0.32), [x + Math.cos(angle) * out, floor + height * (1 - out / radius) * 0.8, z + Math.sin(angle) * out], [size, size, size], next() * 6.28)
+      const [px, pz] = [x + Math.cos(angle) * out, z + Math.sin(angle) * out]
+      put(shardSoup(next() * 1e9, dark(isRoof ? roof : wall, 0.9), isRoof ? 0.18 : 0.32), [px, Math.max(groundAt(px, pz), floor) + height * (1 - out / radius) * 0.8, pz], [size, size, size], next() * 6.28)
     }
   }
   return { positions: Float32Array.from(positions), colors: Float32Array.from(colors) }

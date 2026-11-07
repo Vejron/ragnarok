@@ -413,6 +413,7 @@ export class Game {
     this.glow.groundAt = (x, z) => this.scene.groundAt(x, z)
     this.scene.scene.add(this.debris.root)
     this.debris.groundAt = (x, z) => this.scene.groundAt(x, z)
+    this.view.damage.groundAt = (x, z) => (this.terrain ? this.terrain.heightAt(x, z) : null)
     this.scene.scene.add(this.view.waterRoot)
     this.transport = new Transport(
       (message) => this.handle(message),

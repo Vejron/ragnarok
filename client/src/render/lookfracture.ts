@@ -167,10 +167,30 @@ function slice(look: CollisionMesh, range: LookRange, grid: Grid, near: readonly
       // A hair inside the wall, so a wall on a cell boundary is judged by the cell it is cut into.
       const [x, y, z] = [0, 1, 2].map((a) => grid.of(c[a]! - piece.normal[a]! * 0.01, a)) as P
       const inCut = grid.has(x, y, z) && cut(shell.index(x, y, z))
-      ;(inCut ? taken : kept).push({ poly, normal: piece.normal, roof: piece.roof })
+      ;(inCut || orphan(grid, x, y, z, cut) ? taken : kept).push({ poly, normal: piece.normal, roof: piece.roof })
     }
   }
   return { whole, kept, taken }
+}
+
+/**
+ * Whether the wall in cell `(x, y, z)` is left with nothing to hang from: the cell is not the
+ * building's own (another house was given it, or the cut missed it), and every cell of the
+ * building round it is gone (`cut`). It goes with them rather than stay in the air.
+ */
+function orphan(grid: Grid, x: number, y: number, z: number, cut: (id: number) => boolean): boolean {
+  const shell = grid.shell
+  if (grid.has(x, y, z) && shell.isSolid(shell.index(x, y, z))) return false
+  let lost = false
+  for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+    const [ax, ay, az] = [x + dx, y + dy, z + dz]
+    if (!grid.has(ax, ay, az)) continue
+    const id = shell.index(ax, ay, az)
+    if (!shell.isSolid(id)) continue
+    if (!cut(id)) return false
+    lost = true
+  }
+  return lost
 }
 
 interface Rim {

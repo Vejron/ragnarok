@@ -24,7 +24,12 @@ function random(seed: number) {
 
 /** Most pieces thrown from a building at once, and how long they lie where they land, seconds. */
 const MAX_FALLING = 48
-const FALLEN_SECONDS = 10
+/** Pieces a building keeps lying about; past that the oldest sink into the ground, over this many seconds. */
+const KEEP_RESTING = 60
+const SINK_SECONDS = 4
+/** Longest a fallen section of wall goes on tipping over on the ground, seconds, and the least it turns while it does, rad/s. */
+const TIP_SECONDS = 2.5
+const MIN_TIP = 1.4
 const GRAVITY = 9.8
 /** A building that was just hit or just lost its hold smoulders this long, easing out, seconds; only this near the camera, metres. */
 const SMOULDER_SECONDS = 60
@@ -61,8 +66,6 @@ const THROW = 3
 const LEAN_SPEED = 0.7
 /** Seconds from a live loss to the rubble being heaped: about as long as what fell takes to land. */
 const RUBBLE_DELAY = 1.1
-/** How high the middle of a fallen section of wall comes to rest above the floor, metres. */
-const SECTION_REST = 0.35
 /** Shard shapes made for each building colour. */
 const SHARD_SHAPES = 4
 
@@ -75,8 +78,12 @@ interface Falling {
   resting: boolean
   /** Its geometry is one of the kept shard shapes (`shardGeometry`), not to be freed with it. */
   shared?: boolean
-  /** How high its middle comes to rest above the floor, metres; 0.15 when not given. */
-  rest?: number
+  /** A section of wall: it tips over on the ground until it lies flat. */
+  section?: boolean
+  /** Seconds since its lowest corner first met the ground; undefined while it is in the air. */
+  grounded?: number
+  /** Seconds it has been sinking into the ground, once there were too many lying about. */
+  sinking?: number
 }
 
 interface Drawn {
@@ -184,6 +191,11 @@ export class BuildingDamage {
   private readonly loaded = new Map<number, Loaded>()
   private readonly puffs: Puff[] = []
   private readonly rand = random(99)
+  /**
+   * Height of the ground at `(x, z)`, metres, where what falls comes to rest; null where it is not
+   * known (no terrain), and then the building's floor is used.
+   */
+  groundAt: (x: number, z: number) => number | null = () => null
   /** Shard shapes by colour and shape (`shardGeometry`), kept for the session. */
   private readonly shards = new Map<number, ReturnType<typeof shardGeometry>>()
 
@@ -432,7 +444,7 @@ export class BuildingDamage {
       const c = Color.hex(hex)
       return [c.r, c.g, c.b] as const
     }
-    const soup = rubbleSoup(centres, ids.map((id) => shell.isRoof(id)), building.base, rgb(wall), rgb(roof))
+    const soup = rubbleSoup(centres, ids.map((id) => shell.isRoof(id)), (x, z) => this.groundUnder(x, z, building.base), rgb(wall), rgb(roof))
     if (drawn.rubble) {
       drawn.rubble.geometry.dispose()
       drawn.rubble.geometry = shardGeometry(soup.positions, soup.colors)
@@ -512,7 +524,7 @@ export class BuildingDamage {
         velocity,
         spin,
         age: 0,
-        resting: mesh.position.y <= floor + 0.15,
+        resting: false,
       })
     }
   }
@@ -534,7 +546,7 @@ export class BuildingDamage {
     }
     this.puffs.push({ at: pivot.clone(), size: falls ? 3 + this.rand() * 2 : 1.4 + this.rand() * 1.4 })
     // A fall throws up a cloud where it lands, too, that hides the heap coming.
-    if (falls) this.puffs.push({ at: new Vector3(pivot.x, floor + 0.6, pivot.z), size: 4 + this.rand() * 2 + Math.min(4, group.length / 20) })
+    if (falls) this.puffs.push({ at: new Vector3(pivot.x, this.groundUnder(pivot.x, pivot.z, floor) + 0.6, pivot.z), size: 4 + this.rand() * 2 + Math.min(4, group.length / 20) })
     // What the cells hold, as a volume: a cell is 72 cm a side, but the wall in it is thinner.
     const volume = group.length * 0.1
     const count = falls ? Math.min(5, 2 + Math.floor(group.length / 6)) : Math.min(8, 3 + Math.floor(group.length / 2))
@@ -564,7 +576,7 @@ export class BuildingDamage {
           velocity.x += lean[0] * LEAN_SPEED * (0.6 + this.rand() * 0.8)
           velocity.z += lean[1] * LEAN_SPEED * (0.6 + this.rand() * 0.8)
         }
-        drawn.falling.push({ mesh, velocity, spin, age: 0, resting: mesh.position.y <= floor + SECTION_REST, rest: SECTION_REST })
+        drawn.falling.push({ mesh, velocity, spin, age: 0, resting: false, section: true })
         first = 1
       }
     }
@@ -594,7 +606,7 @@ export class BuildingDamage {
         velocity.x += lean[0] * LEAN_SPEED * (0.6 + this.rand() * 0.8)
         velocity.z += lean[1] * LEAN_SPEED * (0.6 + this.rand() * 0.8)
       }
-      drawn.falling.push({ mesh, velocity, spin, age: 0, resting: mesh.position.y <= floor + 0.15, shared: true })
+      drawn.falling.push({ mesh, velocity, spin, age: 0, resting: false, shared: true })
     }
   }
 
@@ -613,28 +625,67 @@ export class BuildingDamage {
     return geometry
   }
 
-  /** Moves a building's flung shards: they drop, tumble and lie on the ground a while, then go. */
+  /** Where something falling at `(x, z)` near a building whose floor is at `floor` comes to rest. */
+  private groundUnder(x: number, z: number, floor: number): number {
+    return this.groundAt(x, z) ?? floor
+  }
+
+  /**
+   * Moves a building's flung pieces: they drop and tumble until their lowest corner meets the ground,
+   * a section of wall goes on tipping over there until it lies flat, and then they lie. They stay:
+   * only when a building has more than `KEEP_RESTING` lying about do the oldest sink into the ground.
+   */
   private fall(drawn: Drawn, floor: number, dt: number) {
+    let lying = 0
+    for (const piece of drawn.falling) if (piece.resting && piece.sinking === undefined) lying++
+    for (let i = 0; i < drawn.falling.length && lying > KEEP_RESTING; i++) {
+      const piece = drawn.falling[i]!
+      if (!piece.resting || piece.sinking !== undefined) continue
+      piece.sinking = 0
+      lying--
+    }
     for (let i = drawn.falling.length - 1; i >= 0; i--) {
       const piece = drawn.falling[i]!
+      const mesh = piece.mesh
       piece.age += dt
-      if (piece.age > FALLEN_SECONDS) {
-        if (!piece.shared) piece.mesh.geometry.dispose()
-        piece.mesh.removeFromParent()
-        drawn.falling.splice(i, 1)
+      if (piece.sinking !== undefined) {
+        piece.sinking += dt
+        mesh.position.y -= (dt / SINK_SECONDS) * (span(mesh).height + 0.3)
+        if (piece.sinking >= SINK_SECONDS) {
+          if (!piece.shared) mesh.geometry.dispose()
+          mesh.removeFromParent()
+          drawn.falling.splice(i, 1)
+        }
         continue
       }
       if (piece.resting) continue
-      piece.velocity.y -= GRAVITY * dt
-      piece.mesh.position.addScaledVector(piece.velocity, dt)
-      piece.mesh.rotation.x += piece.spin.x * dt
-      piece.mesh.rotation.y += piece.spin.y * dt
-      piece.mesh.rotation.z += piece.spin.z * dt
-      const rest = piece.rest ?? 0.15
-      if (piece.mesh.position.y <= floor + rest) {
-        piece.mesh.position.y = floor + rest
-        piece.resting = true
+      const ground = this.groundUnder(mesh.position.x, mesh.position.z, floor)
+      const grounded = piece.grounded ?? 0
+      if (grounded === 0) {
+        piece.velocity.y -= GRAVITY * dt
+        mesh.position.addScaledVector(piece.velocity, dt)
+      } else {
+        // On the ground: it slides a little and slows.
+        mesh.position.x += piece.velocity.x * dt
+        mesh.position.z += piece.velocity.z * dt
+        piece.velocity.multiplyScalar(Math.max(0, 1 - 4 * dt))
       }
+      mesh.rotation.x += piece.spin.x * dt
+      mesh.rotation.y += piece.spin.y * dt
+      mesh.rotation.z += piece.spin.z * dt
+      const { low, height, wide } = span(mesh)
+      if (low > ground) continue
+      // Its lowest corner on the ground, not under it.
+      mesh.position.y += ground - low
+      piece.grounded = grounded + dt
+      // A section of wall tips on over its foot until it lies about flat; anything else lies where it lands.
+      const flat = height <= Math.max(0.45, wide * 0.35)
+      if (piece.section && !flat && piece.grounded < TIP_SECONDS) {
+        if (piece.spin.length() < MIN_TIP) piece.spin.setLength(MIN_TIP)
+        piece.spin.y *= 0.9
+        continue
+      }
+      piece.resting = true
     }
   }
 
@@ -705,4 +756,33 @@ function smolder(smoke: Pick<Particles, 'spawn'>, at: Vector3, heat: number) {
     gravity: -0.6,
     drag: 0.7,
   })
+}
+
+/**
+ * Where `mesh`'s corners reach, in world metres: the lowest, how tall it stands, and how wide it is
+ * across, from its geometry turned and scaled as it is now.
+ */
+export function span(mesh: Mesh): { low: number; height: number; wide: number } {
+  const q = mesh.quaternion
+  const [qx, qy, qz, qw] = [q.x, q.y, q.z, q.w]
+  const [sx, sy, sz] = [mesh.scale.x, mesh.scale.y, mesh.scale.z]
+  // The rows of the rotation matrix that give a turned vector's y and x.
+  const ry = [2 * (qx * qy + qw * qz), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qw * qx)]
+  const rx = [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qw * qz), 2 * (qx * qz + qw * qy)]
+  const rz = [2 * (qx * qz - qw * qy), 2 * (qy * qz + qw * qx), 1 - 2 * (qx * qx + qy * qy)]
+  const p = mesh.geometry.positions
+  let [low, high, x0, x1, z0, z1] = [Infinity, -Infinity, Infinity, -Infinity, Infinity, -Infinity]
+  for (let i = 0; i < p.length; i += 3) {
+    const [x, y, z] = [p[i]! * sx, p[i + 1]! * sy, p[i + 2]! * sz]
+    const wy = ry[0]! * x + ry[1]! * y + ry[2]! * z
+    const wx = rx[0]! * x + rx[1]! * y + rx[2]! * z
+    const wz = rz[0]! * x + rz[1]! * y + rz[2]! * z
+    if (wy < low) low = wy
+    if (wy > high) high = wy
+    if (wx < x0) x0 = wx
+    if (wx > x1) x1 = wx
+    if (wz < z0) z0 = wz
+    if (wz > z1) z1 = wz
+  }
+  return { low: mesh.position.y + low, height: high - low, wide: Math.max(x1 - x0, z1 - z0) }
 }

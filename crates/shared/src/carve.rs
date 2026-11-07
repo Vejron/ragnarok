@@ -73,11 +73,12 @@ pub struct Hold {
 /// The `span` of a cell no chain of cells joins to an anchor.
 const UNHELD: u16 = u16::MAX;
 /// How much longer a cell's chain to an anchor may get than in the whole building before it lets
-/// go: 6 cells sideways, about 4.3 m of roof or floor hanging out past its last support.
-const SPAN_SLACK: u16 = 12;
+/// go: 3 cells sideways, about 2.2 m of roof or floor hanging out past its last support. More
+/// than that read as a roof floating in the air once buildings were drawn from their own walls.
+const SPAN_SLACK: u16 = 6;
 /// A cell fails when it carries more than `LOAD_FACTOR_PERCENT` percent of what it did in the whole building,
 /// plus `LOAD_SLACK`: the pillar left holding up a roof that a wall shared with it.
-const LOAD_FACTOR_PERCENT: u32 = 300;
+const LOAD_FACTOR_PERCENT: u32 = 200;
 /// Most that one check takes of the cells standing, percent, and at least this many cells.
 const SHED_SHARE: usize = 5;
 const SHED_LEAST: usize = 40;

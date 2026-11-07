@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Group, InstancedMesh, Mesh, Vector3 } from '@ragnarok/engine'
 import { encode } from '@msgpack/msgpack'
 import { decodeServer, OBJ_TREE } from '@/net/codec'
-import { BuildingDamage } from '@/render/damage'
+import { BuildingDamage, span } from '@/render/damage'
 import { buildTrees } from '@/render/trees'
 import { FallingTrees } from '@/render/falling'
 import { TREE_PINE, type TileData, type Tree } from '@/world'
@@ -314,6 +314,31 @@ describe('a hurt building', () => {
     expect(towards).toBe(true)
   })
 
+  it('lets what it throws come to rest on the ground where it lands, not at its floor', () => {
+    const damage = new BuildingDamage()
+    // Ground falling away from the house: 2 m lower for every 10 m out along x.
+    const ground = (x: number) => -0.2 * Math.abs(x - 5)
+    damage.groundAt = (x) => ground(x)
+    damage.attach(key, tileWith())
+    damage.carve(key, 0, [cellAt(0, 0, 2, 0), cellAt(0, 0, 3, 0), cellAt(0, 0, 4, 0)], [], [-1, 2, 0], true)
+    const pieces = damage.root.children[0]!.children.filter((c) => c instanceof Mesh && c.geometry.colors && c.position.lengthSq() > 0) as Mesh[]
+    expect(pieces.length).toBeGreaterThan(0)
+    for (let i = 0; i < 300; i++) damage.update(0.02, { dust() {} } as never, new Vector3(1e6, 0, 0))
+    // Each lies with its lowest corner on the ground under it.
+    for (const piece of pieces) expect(span(piece).low).toBeCloseTo(ground(piece.position.x), 1)
+  })
+
+  it('keeps what it threw lying about, rather than taking it away after a while', () => {
+    const damage = new BuildingDamage()
+    damage.attach(key, tileWith())
+    damage.carve(key, 0, [cellAt(0, 0, 2, 0), cellAt(0, 0, 3, 0)], [], [-1, 2, 0], true)
+    const count = () => damage.root.children[0]!.children.filter((c) => c instanceof Mesh && c.geometry.colors && c.position.lengthSq() > 0).length
+    const thrown = count()
+    expect(thrown).toBeGreaterThan(0)
+    for (let i = 0; i < 1500; i++) damage.update(0.02, { dust() {} } as never, new Vector3(1e6, 0, 0))
+    expect(count()).toBe(thrown)
+  })
+
   it('is hurt as it was when its tile streams back in', () => {
     const damage = new BuildingDamage()
     damage.attach(key, tileWith())
@@ -399,7 +424,13 @@ describe('a building with cells blasted out of it', () => {
     expect(group.children.length).toBeGreaterThan(before)
     const e = effects()
     for (let i = 0; i < 400; i++) damage.update(0.05, e, new Vector3(500, 0, 0))
-    expect(group.children.length).toBeLessThanOrEqual(before)
+    // Twenty seconds on, all of it lies still on the ground, and stays.
+    const lying = group.children.length
+    expect(lying).toBeGreaterThan(before)
+    const where = () => group.children.map((c) => [c.position.x, c.position.y, c.position.z]).flat()
+    const still = where()
+    damage.update(0.05, e, new Vector3(500, 0, 0))
+    expect(where()).toEqual(still)
     e.dispose()
   })
 
