@@ -108,6 +108,11 @@ pub struct Round {
     pub flown: f32,
 }
 
+/// A mounted machine gun's round (`Fire::Bullet`), besides its `Round`: it hurts by the gun's own
+/// numbers rather than an item's, with no falloff, and where it strikes is announced as the vehicle's.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct MountRound(pub Damage);
+
 /// What bursting does: a blast of `radius` metres for `damage` and `knock`, shown and credited as
 /// `weapon`. `upward` throws things up rather than along the way it was going (a grenade's).
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
@@ -146,6 +151,7 @@ pub fn register(ecs: &mut bevy_ecs::world::World) {
     ecs.register_component::<Rolls>();
     ecs.register_component::<Spin>();
     ecs.register_component::<Round>();
+    ecs.register_component::<MountRound>();
     ecs.register_component::<Burst>();
     ecs.register_component::<GunStage>();
 }
@@ -164,13 +170,15 @@ pub struct Flying {
     pub item: u8,
     pub back: u32,
     pub flown: f32,
+    /// A mounted gun's round: what it does, in place of its item's ([`MountRound`]).
+    pub hits: Option<Damage>,
 }
 
 impl Flying {
     /// A projectile of `kind` that `owner` set off from `position`, going for `ttl` ticks, from no
     /// vehicle, of no item and with nothing rewound or flown yet.
     pub fn new(kind: u8, owner: u32, position: [f32; 3], velocity: [f32; 3], ttl: u32) -> Self {
-        Flying { kind, owner, source: 0, position, velocity, ttl, item: 0, back: 0, flown: 0.0 }
+        Flying { kind, owner, source: 0, position, velocity, ttl, item: 0, back: 0, flown: 0.0, hits: None }
     }
 
     /// The same, fired from aboard vehicle `source`.
@@ -186,6 +194,11 @@ impl Flying {
     /// The same, aimed at the world as it was `back` ticks ago.
     pub fn rewound(self, back: u32) -> Self {
         Flying { back, ..self }
+    }
+
+    /// The same, a mounted gun's round that does what `round` says.
+    pub fn hitting(self, round: Damage) -> Self {
+        Flying { hits: Some(round), ..self }
     }
 }
 
@@ -289,9 +302,13 @@ impl World {
 
     /// Launches `flying` under id `id` (from `alloc_id`).
     pub fn launch_as(&mut self, id: u32, flying: Flying) {
-        let Flying { kind, owner, source, position, velocity, ttl, item, back, flown } = flying;
+        let Flying { kind, owner, source, position, velocity, ttl, item, back, flown, hits } = flying;
         let entity = self.entities.spawn(id, (Projectile { kind, owner, source, ttl }, Transform { position, yaw: 0.0 }, Velocity(velocity)));
-        prefab(kind, Round { item, back, flown }, &mut self.entities.ecs.entity_mut(entity));
+        let mut entity = self.entities.ecs.entity_mut(entity);
+        prefab(kind, Round { item, back, flown }, &mut entity);
+        if let Some(hits) = hits {
+            entity.insert(MountRound(hits));
+        }
     }
 
     /// Every projectile in flight, by id, as it is now.
@@ -306,16 +323,17 @@ impl World {
         let position = entities.get::<Transform>(id)?.position;
         let velocity = entities.get::<Velocity>(id)?.0;
         let Round { item, back, flown } = entities.get::<Round>(id).copied().unwrap_or(Round { item: 0, back: 0, flown: 0.0 });
-        Some(Flying { kind, owner, source, position, velocity, ttl, item, back, flown })
+        let hits = entities.get::<MountRound>(id).map(|round| round.0);
+        Some(Flying { kind, owner, source, position, velocity, ttl, item, back, flown, hits })
     }
 
 }
 
 /// How many projectiles are in flight; `kind` counts only those of one kind, and `None` all but the
-/// golf balls, which are bounded on their own. On the entities alone, so it can be asked while a
+/// golf balls and the bullets, which are bounded on their own (by the guns' rates of fire and ranges). On the entities alone, so it can be asked while a
 /// player is borrowed.
 pub fn count(entities: &crate::entities::Entities, kind: Option<u8>) -> usize {
-    entities.scan::<&Projectile, (), _>(|flying| flying.filter(|p| kind.map_or(p.kind != PROJECTILE_GOLF_BALL, |kind| p.kind == kind)).count()).unwrap_or(0)
+    entities.scan::<&Projectile, (), _>(|flying| flying.filter(|p| kind.map_or(p.kind != PROJECTILE_GOLF_BALL && p.kind != PROJECTILE_BULLET, |kind| p.kind == kind)).count()).unwrap_or(0)
 }
 
 /// Moves every projectile of `stage` one tick, in id order, and carries out what each meets.
@@ -692,10 +710,16 @@ fn step_round(world: &mut World, id: u32, dt: f32) {
     let step = speed * dt;
     // A passenger's round leaves through their own vehicle (`source`) rather than stopping in it.
     let wall = world.physics.cast_ray_hit(s.position, dir, step, s.source);
-    let (base, falloff, weapon, pen) = item.map_or((0, Falloff::NONE, WEAPON_RIFLE, Pen::NONE), |d| (d.damage, d.falloff, d.weapon, d.pen));
-    // What it does to a vehicle is a chip of what it does to a soldier, a plane no different.
-    let chip = (base / 4).max(1);
-    let damage = Damage { damage: base, vehicle: chip, plane: chip, weapon, range: step, falloff, pen };
+    let mounted = world.entities.get::<MountRound>(id).map(|round| round.0);
+    let damage = match mounted {
+        Some(round) => Damage { range: step, ..round },
+        None => {
+            let (base, falloff, weapon, pen) = item.map_or((0, Falloff::NONE, WEAPON_RIFLE, Pen::NONE), |d| (d.damage, d.falloff, d.weapon, d.pen));
+            // What it does to a vehicle is a chip of what it does to a soldier, a plane no different.
+            let chip = (base / 4).max(1);
+            Damage { damage: base, vehicle: chip, plane: chip, weapon, range: step, falloff, pen }
+        }
+    };
     let attacker = world.entities.has::<Player>(s.owner).then_some(s.owner);
     let flight = Flight { origin: s.position, dir, shooter: Some(s.owner), attacker, back: round.back, flown: round.flown };
     let met = strike(world, &flight, wall, step);
@@ -705,7 +729,12 @@ fn step_round(world: &mut World, id: u32, dt: f32) {
         land(world, &flight, &met, &damage);
         let point: [f32; 3] = vec3::along(s.position, dir, met.end);
         let [x, y, z] = point.map(to_cm);
-        world.shots.push(ShotEvent { shooter: id, weapon: WEAPON_BULLET, x, y, z });
+        // A hand gun's ends the bullet its client is flying; a mounted gun's is a spark off the vehicle's gun.
+        let event = match mounted {
+            Some(round) => ShotEvent { shooter: s.source, weapon: round.weapon, x, y, z },
+            None => ShotEvent { shooter: id, weapon: WEAPON_BULLET, x, y, z },
+        };
+        world.shots.push(event);
         return;
     }
     s.position = vec3::along(s.position, dir, step);
@@ -758,7 +787,9 @@ mod tests {
             assert_eq!(e.get::<GunStage>(id).is_some(), guns, "kind {kind}");
             assert_eq!(e.get::<Burst>(id).copied(), burst_of(kind), "kind {kind}");
         }
-        assert_eq!(count(&game.world.entities, None), kinds.len());
+        // Bullets are left out of the count: grenades and rockets are capped by it, not rounds.
+        assert_eq!(count(&game.world.entities, None), kinds.len() - 1);
+        assert_eq!(count(&game.world.entities, Some(PROJECTILE_BULLET)), 1);
         assert_eq!(count(&game.world.entities, Some(PROJECTILE_FLARE)), 1);
     }
 

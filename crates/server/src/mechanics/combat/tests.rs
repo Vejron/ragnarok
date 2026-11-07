@@ -578,7 +578,7 @@ fn a_grenade_at_your_feet_hurts_and_one_beside_a_target_kills_them() {
     let (mut game, shooter, target, _, _) = duel();
     let at = game.world.entities.of::<Player>(target).character.position;
     let id = game.world.alloc_id();
-    game.world.launch_as(id, Flying { kind: PROJECTILE_GRENADE, owner: shooter, source: 0, position: [at[0] + 1.0, at[1], at[2]], velocity: [0.0; 3], ttl: 1, item: 0, back: 0, flown: 0.0 });
+    game.world.launch_as(id, Flying { kind: PROJECTILE_GRENADE, owner: shooter, source: 0, position: [at[0] + 1.0, at[1], at[2]], velocity: [0.0; 3], ttl: 1, item: 0, back: 0, flown: 0.0, hits: None });
     game.step();
     assert!(game.world.in_flight().is_empty());
     assert!(game.world.entities.of::<crate::entities::Health>(target).hp < PLAYER_MAX_HP - 50, "{}", game.world.entities.of::<crate::entities::Health>(target).hp);
@@ -639,7 +639,7 @@ fn a_carl_gustaf_launch_is_announced_where_the_rocket_leaves() {
 fn a_flare_climbs_then_sinks_slowly_and_burns_out_in_the_air() {
     let (mut game, shooter, target, _, _) = duel();
     let id = game.world.alloc_id();
-    game.world.launch_as(id, Flying { kind: PROJECTILE_FLARE, owner: shooter, source: 0, position: [100.0, 2.0, 10.0], velocity: [5.0, FLARE_SPEED, 0.0], ttl: FLARE_BURN_TICKS, item: 0, back: 0, flown: 0.0 });
+    game.world.launch_as(id, Flying { kind: PROJECTILE_FLARE, owner: shooter, source: 0, position: [100.0, 2.0, 10.0], velocity: [5.0, FLARE_SPEED, 0.0], ttl: FLARE_BURN_TICKS, item: 0, back: 0, flown: 0.0, hits: None });
     let mut top = 0.0f32;
     let mut ticks = 0;
     while game.world.in_flight()[&id].velocity[1] > 0.0 {
@@ -671,7 +671,7 @@ fn a_flare_climbs_then_sinks_slowly_and_burns_out_in_the_air() {
 fn a_flare_that_comes_down_burns_where_it_lands() {
     let (mut game, shooter, _, _, _) = duel();
     let id = game.world.alloc_id();
-    game.world.launch_as(id, Flying { kind: PROJECTILE_FLARE, owner: shooter, source: 0, position: [100.0, 3.0, 10.0], velocity: [0.0, -1.0, 0.0], ttl: FLARE_BURN_TICKS, item: 0, back: 0, flown: 0.0 });
+    game.world.launch_as(id, Flying { kind: PROJECTILE_FLARE, owner: shooter, source: 0, position: [100.0, 3.0, 10.0], velocity: [0.0, -1.0, 0.0], ttl: FLARE_BURN_TICKS, item: 0, back: 0, flown: 0.0, hits: None });
     let mut ticks = 0;
     while game.world.in_flight()[&id].velocity != [0.0; 3] {
         game.step();
@@ -1102,6 +1102,7 @@ fn a_round_that_has_flown_far_hits_for_less() {
                 item: ITEM_AK5,
                 back: 0,
                 flown,
+                hits: None,
             },
         );
         projectiles::step(&mut game.world, 1.0 / TICK_RATE as f32, Stage::Hands);

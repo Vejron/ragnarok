@@ -21,7 +21,7 @@ pub use crate::vehicles::tank::*;
 pub use crate::vehicles::walker::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 70;
+pub const PROTOCOL_VERSION: u8 = 71;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -326,6 +326,35 @@ pub const SHELL_SPEED: f32 = 140.0;
 /// at 200 m (0.7 s) it has dropped about 1 m.
 pub const BULLET_SPEED: f32 = 2.0 * SHELL_SPEED;
 pub const BULLET_GRAVITY_SCALE: f32 = 0.25;
+/// Where the camera behind a mounted gun sits: this far back from the gun's pivot along the look, and
+/// this far above that, looking along the look. The middle of the screen is that ray, and the server
+/// points the gun at what the ray meets (`MountDef::eye`), so a round goes where the reticle is.
+/// A gunner's: a tank's, a technical's, a helicopter's nose gun, a plane's rear gun, a Pak's, a ship's gun.
+pub const GUNNER_BACK: f32 = 6.5;
+pub const GUNNER_UP: f32 = 2.6;
+/// Over the shoulder of the gunner on a tank's roof.
+pub const ROOF_AIM_BACK: f32 = 3.5;
+pub const ROOF_AIM_UP: f32 = 1.2;
+/// Behind a walker's guns or a tupp's eyes, high enough to see over the cab.
+pub const WALKER_AIM_BACK: f32 = 12.0;
+pub const WALKER_AIM_UP: f32 = 5.0;
+/// Behind a Strv S's gun trunnion.
+pub const STRV_AIM_BACK: f32 = 9.0;
+pub const STRV_AIM_UP: f32 = 3.2;
+/// How far the camera's ray is followed to find what a mounted gun's reticle is on, metres, when the
+/// gun's own reach does not say.
+pub const MOUNT_AIM_RANGE: f32 = 1500.0;
+/// A gun sight's eye sits this far above the gun's pivot, on the mantlet, and looks along the look.
+pub const SIGHT_EYE_UP: f32 = 0.5;
+/// How quickly, seconds, a mounted gun's lay eases to a new distance when the reticle moves onto
+/// something nearer or further: long enough that the barrel glides, short enough to be laid before a
+/// shot is lined up. Eased in proportion (a log scale), so 10 m to 300 m takes as long as 300 m to 10 m.
+pub const MOUNT_AIM_EASE: f32 = 0.25;
+/// Out to this far, metres, a mounted gun's barrel is raised for the shell's fall and the shell lands
+/// where the reticle is; further off it falls short of it, and the gunner aims high to make up the rest.
+pub const MOUNT_ZERO_RANGE: f32 = 100.0;
+/// The reticle camera is lifted to stay this far above the ground, metres, still looking along the look.
+pub const MOUNT_EYE_CLEARANCE: f32 = 0.3;
 /// A gun fired with aim held scatters over this fraction of its hip-fire cone.
 pub const AIM_SPREAD_SCALE: f32 = 0.25;
 /// How long a shell flies before it bursts where it is.

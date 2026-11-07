@@ -11,6 +11,7 @@ import { TankModel } from '@/render/tank'
 import { TechnicalModel } from '@/render/technical'
 import { TuppModel } from '@/render/tupp'
 import { WalkerModel } from '@/render/walker'
+import { arcTime } from '@/render/rounds'
 import { HELI_GUN_LENGTH, MORTAR_BARREL_LENGTH, PAK_BARREL_LENGTH, SHIP_GUN_BARREL_LENGTH, PLANE_GUN_RANGE, STRV_BARREL_LENGTH, TANK_BARREL_LENGTH, TANK_MG_LENGTH, TANK_MG_RANGE, TECHNICAL_MG_LENGTH, TECHNICAL_MG_RANGE, TECHNICAL_MG_SEAT, WALKER_GUN_LENGTH } from '@/sim/consts'
 import type { Frame, Presenter } from '../presenter'
 import type { Entity } from '../units'
@@ -185,8 +186,8 @@ export class RoofGuns implements Presenter<Frame> {
   }
 }
 
-/** Sends a round from `origin` along `direction` out to the first thing it meets, or the end of its `range`. */
+/** Sends a round from `origin` along `direction`, falling as it goes, to the first thing it meets or the end of its `range`. */
 function fireRound(world: VehicleWorld, origin: Vector3, direction: Vector3, range: number) {
-  const hit = world.castRay([origin.x, origin.y, origin.z], [direction.x, direction.y, direction.z], range)
-  world.rounds.fire(origin, origin.clone().addScaledVector(direction, hit ? hit.t : range), hit !== null)
+  const { time, hit } = arcTime(world.castRay, origin, direction, range)
+  world.rounds.fire(origin, direction, time, hit)
 }

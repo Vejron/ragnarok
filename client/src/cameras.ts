@@ -6,21 +6,21 @@
  */
 
 import { Quaternion, Vector3 } from '@ragnarok/engine'
+import { lookDir } from '@/aimline'
 import { clamp } from '@/math'
 import { wrapAngle } from '@/net/codec'
 import type { Placed } from '@/entities/presenters/vehicles'
 import type { Turret } from '@/entities/units'
 import type { VehicleModel } from '@/render/car'
 import type { ChaseView } from '@/render/chase'
-import type { Mark } from '@/render/gunsight'
 import { PlaneModel } from '@/render/plane'
-import { CAMERA_HEIGHT, PLANE_CAMERA_HEIGHT, PLANE_DISTANCE, STRV_AIM_BACK, STRV_AIM_UP, WALKER_AIM_BACK, WALKER_AIM_UP, AIM_DISTANCE_SCALE, type Scene } from '@/render/scene'
+import { CAMERA_HEIGHT, PLANE_CAMERA_HEIGHT, PLANE_DISTANCE, AIM_DISTANCE_SCALE, type Scene } from '@/render/scene'
 import { StrvModel } from '@/render/strvs'
 import { TankModel } from '@/render/tank'
 import type { VehicleFx } from '@/render/tyres'
 import { TuppModel } from '@/render/tupp'
 import { WalkerModel } from '@/render/walker'
-import { GRAVITY, PASSENGER_DISTANCE, PASSENGER_HEIGHT, PASSENGER_SHOULDER, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, SHELL_SPEED, STRV_BARREL_MAX, STRV_BARREL_MIN, TUPP_HEAD_LIMIT, TUPP_HEAD_PITCH_MAX, TUPP_HEAD_PITCH_MIN, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT } from '@/sim/consts'
+import { PASSENGER_DISTANCE, ROOF_AIM_BACK, ROOF_AIM_UP, STRV_AIM_BACK, STRV_AIM_UP, WALKER_AIM_BACK, WALKER_AIM_UP, PASSENGER_HEIGHT, PASSENGER_SHOULDER, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, SIGHT_EYE_UP, STRV_BARREL_MAX, STRV_BARREL_MIN, TUPP_HEAD_LIMIT, TUPP_HEAD_PITCH_MAX, TUPP_HEAD_PITCH_MIN, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT } from '@/sim/consts'
 import type { InputController } from '@/sim/input'
 import type { Rig, SeatView } from '@/seats'
 
@@ -28,13 +28,7 @@ import type { Rig, SeatView } from '@/seats'
 const PLANE_VIEW_EASE = 5
 const PLANE_PULLBACK = 3
 const PLANE_VIEW_ROLL = 0.3
-/** How far behind and above a roof gun the camera sits: over the gunner's shoulder. */
-const ROOF_AIM_BACK = 3.5
-const ROOF_AIM_UP = 1.2
 /** The sight sits this far above the gun's pivot, on the mantlet. */
-const SIGHT_EYE_UP = 0.5
-/** Ranges (m) the sight's ladder is marked at. */
-const SIGHT_RANGES = [100, 150, 200, 250, 300, 350, 400, 450, 500]
 const SIGHT_RAY_START = 6
 const SIGHT_RANGE_MAX = 1500
 
@@ -157,18 +151,12 @@ export class Cameras {
         const rig = seat.rig
         if (!aimed && ride.turret) {
           // Take the seat looking where the barrel points.
-          if ('level' in rig) {
-            this.input.yaw = ride.yaw + ride.turret.yaw
-            this.input.pitch = ride.turret.pitch
-          } else {
-            this.lookAlong(model, ride.turret)
-          }
+          this.lookAlong(model, ride.turret)
           aimed = true
         }
-        if ('level' in rig) this.input.clampPitch(rig.level[0], rig.level[1])
-        else this.limitGun(model, rig.hull[0], rig.hull[1], rig.hull[2])
+        this.limitGun(model, rig.hull[0], rig.hull[1], rig.hull[2])
         const { origin } = model.barrel()
-        if (sighted) this.lookDownBarrel(model)
+        if (sighted) this.sightFrom(origin, this.input.yaw, this.input.pitch)
         else this.scene.aimFrom([origin.x, origin.y, origin.z], this.input.yaw, this.input.pitch)
       },
     }
@@ -257,8 +245,10 @@ export class Cameras {
         if (!sighted) this.input.followYaw(ride.yaw, dt)
         this.input.clampPitch(STRV_BARREL_MIN, STRV_BARREL_MAX)
         if (model instanceof StrvModel) {
-          const { origin } = model.barrel()
-          if (sighted) this.input.yaw = this.lookDownBarrel(model)
+          const { origin, direction } = model.barrel()
+          // The hull aims the gun sideways, so the sight looks the way it points.
+          if (sighted) this.input.yaw = Math.atan2(-direction.x, -direction.z)
+          if (sighted) this.sightFrom(origin, this.input.yaw, this.input.pitch)
           else this.scene.aimFrom([origin.x, origin.y, origin.z], this.input.yaw, this.input.pitch, STRV_AIM_BACK, STRV_AIM_UP)
         } else {
           this.scene.follow([ride.x, ride.y + 0.4, ride.z], this.input.yaw, this.input.pitch, distance, 0, CAMERA_HEIGHT)
@@ -367,38 +357,17 @@ export class Cameras {
   }
 
   /**
-   * Puts the camera on the barrel's line, looking exactly where a shell leaves, and lays out the
-   * reticle over it: the crosshair is the barrel's line and the marks below it are where a shell lands
-   * at each range. A shell leaves at `SHELL_SPEED` and falls under gravity, so `s` metres out it is
-   * `g (s / v)² / 2` below the line. Returns the barrel's heading.
+   * Through a gun's sight: an eye `SIGHT_EYE_UP` over the gun's pivot at `origin`, looking along the look,
+   * the crosshair in the middle and the range to what it is on. The server lays the gun on what that eye's
+   * ray meets, raised for the shell's fall (`gunnery::wanted`), so the crosshair is where it lands.
    */
-  private lookDownBarrel(model: Barrel): number {
-    const { origin, direction } = model.barrel()
-    const yaw = Math.atan2(-direction.x, -direction.z)
-    const pitch = Math.asin(Math.max(-1, Math.min(1, direction.y)))
-    const eye = new Vector3(origin.x, origin.y + SIGHT_EYE_UP, origin.z)
-    this.scene.scopeFrom([eye.x, eye.y, eye.z], yaw, pitch)
-    const camera = this.scene.camera
-    const right = new Vector3(Math.cos(yaw), 0, -Math.sin(yaw))
-    const up = new Vector3().crossVectors(right, direction)
-    const reach = Math.tan((camera.fov * Math.PI) / 360)
-    const level = Math.hypot(direction.x, direction.z)
-    const marks: Mark[] = []
-    for (const range of SIGHT_RANGES) {
-      if (level < 1e-3) break
-      const along = range / level
-      const fall = 0.5 * GRAVITY * (along / SHELL_SPEED) ** 2
-      // From the eye, which sits a little above the muzzle's start.
-      const to = direction.clone().multiplyScalar(along).add(new Vector3(0, -fall - SIGHT_EYE_UP, 0))
-      const depth = to.dot(direction)
-      if (depth <= 0) continue
-      const y = to.dot(up) / depth
-      if (y > -reach * 0.9) marks.push({ range, y })
-    }
+  private sightFrom(origin: Vector3, yaw: number, pitch: number) {
+    const eye: [number, number, number] = [origin.x, origin.y + SIGHT_EYE_UP, origin.z]
+    this.scene.scopeFrom(eye, yaw, pitch)
+    const look = lookDir(yaw, pitch)
     // The ray starts past the muzzle, so it does not find the gun's own hull.
-    const start = eye.clone().addScaledVector(direction, SIGHT_RAY_START)
-    const hit = this.castRay([start.x, start.y, start.z], [direction.x, direction.y, direction.z], SIGHT_RANGE_MAX)
-    this.scene.gunsight.show(camera.fov, marks, hit ? hit.t + SIGHT_RAY_START : null)
-    return yaw
+    const start: [number, number, number] = [eye[0] + look[0] * SIGHT_RAY_START, eye[1] + look[1] * SIGHT_RAY_START, eye[2] + look[2] * SIGHT_RAY_START]
+    const hit = this.castRay(start, look, SIGHT_RANGE_MAX)
+    this.scene.gunsight.show(this.scene.camera.fov, hit ? hit.t + SIGHT_RAY_START : null)
   }
 }

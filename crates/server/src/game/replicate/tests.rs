@@ -48,7 +48,7 @@ fn a_client_rebuilds_exactly_what_the_server_has_near_it_in_a_busy_room() {
             30 => assert!(launch_drone(&mut game.world, ids[0], KIND_DRONE), "a drone goes up"),
             40 => {
                 let at = game.world.entities.of::<Player>(ids[1]).character.position;
-                game.world.launch(Flying { kind: PROJECTILE_ROCKET, owner: ids[1], source: 0, position: [at[0], at[1] + 2.0, at[2]], velocity: [0.0, 0.0, -20.0], ttl: 200, item: 0, back: 0, flown: 0.0 });
+                game.world.launch(Flying { kind: PROJECTILE_ROCKET, owner: ids[1], source: 0, position: [at[0], at[1] + 2.0, at[2]], velocity: [0.0, 0.0, -20.0], ttl: 200, item: 0, back: 0, flown: 0.0, hits: None });
             }
             50 => {
                 let jeep = game.world.entities.ids_where::<Vehicle>(|_, vehicle| vehicle.kind == KIND_JEEP).first().copied().or_else(|| {

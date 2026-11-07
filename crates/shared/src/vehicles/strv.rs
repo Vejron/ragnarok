@@ -126,4 +126,6 @@ const MOUNTS: &[MountDef] = &[MountDef {
     ammo: None,
     needs: &[Need::Breech],
     show: Show::Turret,
+    eye: Some(Eye { back: STRV_AIM_BACK, up: STRV_AIM_UP }),
+    sight: false,
 }];

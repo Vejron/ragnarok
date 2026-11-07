@@ -29,6 +29,22 @@ pub struct MountDef {
     pub needs: &'static [Need],
     /// Where the snapshot shows it.
     pub show: Show,
+    /// Where the camera behind it sits, for a mount the occupant aims with the reticle in the middle
+    /// of the screen: the gun is pointed at what that camera's ray meets, not along the look, so the
+    /// round goes where the reticle is however far above the barrel the camera is. `None` for a mount
+    /// aimed some other way (along the hull, by the range dial, by a plane's nose).
+    pub eye: Option<Eye>,
+    /// Its seat has a gun sight (aim held, `BUTTON_ALT`): the reticle's camera is then the sight's eye,
+    /// `SIGHT_EYE_UP` over the pivot, rather than `eye`.
+    pub sight: bool,
+}
+
+/// The reticle camera behind a mount: `back` metres behind the gun's pivot along the look and `up`
+/// above that, looking along the look. The client draws it from the same numbers (`Scene.aimFrom`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Eye {
+    pub back: f32,
+    pub up: f32,
 }
 
 /// How the occupant's look turns a mount. Yaw is relative to the hull, + turns left; pitch + is up.
@@ -80,8 +96,10 @@ pub enum Fire {
     Shell { kind: u8, alt: u8, speed: f32, length: f32, ttl: u32 },
     /// A rocket that starts at `speed` plus the vehicle's own speed along the barrel.
     Rocket { speed: f32, ttl: u32 },
-    /// A machine gun round, a hitscan, from a barrel `length` long, going through `pen` of armour.
-    Hitscan { length: f32, damage: u8, vehicle: u8, plane: u8, weapon: u8, range: f32, pen: Pen },
+    /// A machine gun round, a bullet out of a barrel `length` long that flies at `BULLET_SPEED` and falls
+    /// under `BULLET_GRAVITY_SCALE` of gravity, as a hand gun's does, out to `range`; it goes through `pen`
+    /// of armour.
+    Bullet { length: f32, damage: u8, vehicle: u8, plane: u8, weapon: u8, range: f32, pen: Pen },
     /// A beam: the trigger held for `charge` ticks starts it, and letting go before then wastes the
     /// charge. It then burns for `burn` ticks whatever the trigger does, one hitscan every `cooldown`, and
     /// needs `recover` ticks before it can charge again. Only the vehicle's driver being gone or fallen
@@ -151,7 +169,7 @@ impl Fire {
     /// The same machine gun round from a barrel `length` long.
     pub(crate) const fn with_length(self, length: f32) -> Fire {
         match self {
-            Fire::Hitscan { damage, vehicle, plane, weapon, range, pen, .. } => Fire::Hitscan { length, damage, vehicle, plane, weapon, range, pen },
+            Fire::Bullet { damage, vehicle, plane, weapon, range, pen, .. } => Fire::Bullet { length, damage, vehicle, plane, weapon, range, pen },
             other => other,
         }
     }

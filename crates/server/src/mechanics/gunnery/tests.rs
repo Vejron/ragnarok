@@ -1,11 +1,12 @@
 use shared::vec3;
 use super::*;
+use crate::mechanics::combat::hitscan;
 use crate::entities::Health;
 use crate::game::{Command, Game, Seat};
 use sim::STANDING_Y;
 use shared::items::Falloff;
 use shared::mounts::Show;
-use shared::protocol::{KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_TUPP, KIND_PAK, KIND_PLANE, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_SHELL, WEAPON_BOMB, WEAPON_LASER, WEAPON_MG};
+use shared::protocol::{PROJECTILE_BULLET, KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_TUPP, KIND_PAK, KIND_PLANE, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_SHELL, WEAPON_BOMB, WEAPON_LASER, WEAPON_MG};
 use shared::quant::to_mrad;
 use shared::world::{Road, WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
@@ -65,6 +66,82 @@ fn aim_and_hold(game: &mut Game, id: u32, seq: &mut u32, yaw: f32, pitch: f32, b
     }
 }
 
+/// The hull-frame yaw (from the turret, for a roof gun) and pitch that mount `index` of `vid` turns to
+/// for its occupant's look as it stands: at what the reticle camera's ray meets (`wanted`).
+fn wanted_angles(game: &Game, vid: u32, index: usize, occupant: u32) -> (f32, f32) {
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    let mounts = game.world.entities.of::<Mounts>(vid);
+    let def = &mounts.defs[index];
+    let turret_yaw = mounts.turret().map_or(0.0, |turret| turret.yaw);
+    let input = game.world.entities.get::<Player>(occupant).unwrap().input;
+    let pivot = pose.world_point(super::pivot(def.muzzle, &mounts.state[index], turret_yaw));
+    let mut reach = mounts.state[index].reach;
+    let (yaw, pitch) = super::angles(pose.local_dir(super::wanted(&game.world, vid, def, occupant, &input, pivot, &mut reach, 0.0)));
+    let from = if matches!(def.aim, Aim::Pintle { .. }) { turret_yaw } else { 0.0 };
+    (wrap_angle(yaw - from), pitch)
+}
+
+/// How far the round of mount `index` of `vid` passes from what its occupant's reticle is on, metres,
+/// and how far off that is: the reticle camera's ray (`eye` behind the pivot) followed to the first
+/// wall, vehicle or the ground. A round falls from the barrel's line: a shell under `GRAVITY`, a
+/// machine gun's bullet under a share of it.
+fn reticle_miss(game: &Game, vid: u32, index: usize, occupant: u32, eye: Eye) -> (f32, f32) {
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    let mounts = game.world.entities.of::<Mounts>(vid);
+    let (def, mount) = (&mounts.defs[index], mounts.state[index]);
+    let turret_yaw = mounts.turret().map_or(0.0, |turret| turret.yaw);
+    let input = game.world.entities.get::<Player>(occupant).unwrap().input;
+    let look_dir = look(from_mrad(input.yaw), from_mrad(input.pitch()));
+    let pivot = pose.world_point(super::pivot(def.muzzle, &mount, turret_yaw));
+    let camera = super::eye_at(&game.world, pivot, look_dir, eye.back, eye.up);
+    let t = game.world.physics.cast_ray(camera, look_dir, MOUNT_AIM_RANGE, vid).expect("the reticle is on something");
+    let target = vec3::along(camera, look_dir, t);
+    let yaw = if matches!(def.aim, Aim::Pintle { .. }) { turret_yaw + mount.yaw } else { mount.yaw };
+    let (origin, dir) = aim_from(&pose, super::pivot(def.muzzle, &mount, turret_yaw), yaw, mount.pitch);
+    let to = vec3::sub(target, origin);
+    let falls = match def.fire {
+        Fire::Shell { speed, .. } => Some((speed, GRAVITY)),
+        Fire::Bullet { .. } => Some((BULLET_SPEED, GRAVITY * BULLET_GRAVITY_SCALE)),
+        _ => None,
+    };
+    let miss = match falls {
+        Some((speed, gravity)) => {
+            // Across the ground to the target in the barrel's plane, how high the shell is there, and how
+            // far the target stands to the side of that plane.
+            let flat = dir[0].hypot(dir[2]);
+            let (ahead, side) = ((to[0] * dir[0] + to[2] * dir[2]) / flat, (to[0] * dir[2] - to[2] * dir[0]) / flat);
+            let along = ahead / flat;
+            let height = dir[1] * along - 0.5 * gravity * (along / speed).powi(2);
+            (height - to[1]).hypot(side)
+        }
+        _ => vec3::length(vec3::sub(to, dir.map(|v| v * vec3::dot(to, dir)))),
+    };
+    (miss, vec3::length(to))
+}
+
+/// The point `t` metres along the reticle camera's ray of mount `index` of `vid` for a look along
+/// `look_dir`, counted from abreast of the gun's pivot: where to stand something for the reticle to be on it.
+fn on_reticle(game: &Game, vid: u32, index: usize, look_dir: [f32; 3], t: f32) -> [f32; 3] {
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    let mounts = game.world.entities.of::<Mounts>(vid);
+    let (def, mount) = (&mounts.defs[index], mounts.state[index]);
+    let turret_yaw = mounts.turret().map_or(0.0, |turret| turret.yaw);
+    let Eye { back, up } = def.eye.unwrap();
+    let pivot = pose.world_point(super::pivot(def.muzzle, &mount, turret_yaw));
+    vec3::along(super::eye_at(&game.world, pivot, look_dir, back, up), look_dir, back + t)
+}
+
+/// Feeds the gunner's look and trigger for `ticks` ticks, as `aim_and_hold`, holding each of `held` where it is put.
+#[allow(clippy::too_many_arguments)]
+fn aim_holding(game: &mut Game, id: u32, seq: &mut u32, yaw: f32, pitch: f32, buttons: u16, ticks: u32, held: &[(u32, [f32; 3])]) {
+    for _ in 0..ticks {
+        for &(who, at) in held {
+            game.world.entities.get_mut::<Player>(who).unwrap().character.position = at;
+        }
+        aim_and_hold(game, id, seq, yaw, pitch, buttons, 1);
+    }
+}
+
 /// A tank with a gunner in seat 1, settled, with the gunner's first frames queued.
 fn crewed() -> (Game, u32, u32, u32) {
     let mut game = game();
@@ -83,7 +160,9 @@ fn the_turret_follows_the_gunner_and_the_barrel_is_limited() {
     let hull = game.world.physics.car_pose(vid).unwrap().yaw();
     aim_and_hold(&mut game, gunner, &mut seq, hull + 1.0, 0.3, 0, 180);
     let gun = turret(&game, vid);
-    assert!((gun.yaw - 1.0).abs() < 0.02 && (gun.pitch - 0.3).abs() < 0.02, "{gun:?}");
+    let (yaw, pitch) = wanted_angles(&game, vid, 0, gunner);
+    assert!((yaw - 1.0).abs() < 0.05 && pitch >= 0.3, "towards the look, raised for the fall if anything: {yaw} {pitch}");
+    assert!((gun.yaw - yaw).abs() < 0.02 && (gun.pitch - pitch).abs() < 0.02, "{gun:?}");
     // Looking far up asks for more than the barrel can do.
     aim_and_hold(&mut game, gunner, &mut seq, hull + 1.0, 1.2, 0, 180);
     assert!((turret(&game, vid).pitch - TANK_BARREL_MAX).abs() < 0.01);
@@ -337,26 +416,31 @@ fn the_shell_stops_at_the_first_thing_it_meets() {
     let (blocker, _a) = join(&mut game);
     let (behind, _b) = join(&mut game);
     let pose = game.world.physics.car_pose(vid).unwrap();
-    let (origin, dir) = aim(&pose, 0.0, 0.0);
-    game.world.entities.get_mut::<Player>(blocker).unwrap().character.position = vec3::along(origin, dir, 15.0);
-    game.world.entities.get_mut::<Player>(behind).unwrap().character.position = vec3::along(origin, dir, 40.0);
-    aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, BUTTON_FIRE, 40);
+    // Both on the reticle's line: the gun is laid on the first.
+    let ahead = look(pose.yaw(), 0.0);
+    let held = [(blocker, on_reticle(&game, vid, 0, ahead, 15.0)), (behind, on_reticle(&game, vid, 0, ahead, 40.0))];
+    aim_holding(&mut game, gunner, &mut seq, pose.yaw(), 0.0, 0, 60, &held);
+    aim_holding(&mut game, gunner, &mut seq, pose.yaw(), 0.0, BUTTON_FIRE, 40, &held);
     let blocker_hp = game.world.entities.of::<crate::entities::Health>(blocker).hp;
     assert!(blocker_hp < PLAYER_MAX_HP, "{blocker_hp}");
     assert!(game.world.in_flight().is_empty());
     assert_eq!(game.world.entities.of::<Player>(behind).character.knock, [0.0, 0.0], "outside the blast radius");
 }
 
-/// Fires level, or at `pitch`, from a fresh tank, and flies the shell until it is gone. Returns
-/// the ticks it took and how far from the tank it was last seen, level, in metres.
-fn fly(pitch: f32) -> (u32, f32) {
+#[test]
+fn a_shell_takes_time_falls_and_lands_where_the_reticle_is() {
     let (mut game, gunner, vid, mut seq) = crewed();
     let pose = game.world.physics.car_pose(vid).unwrap();
-    // Let the barrel come up to `pitch` before the trigger.
-    aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), pitch, 0, 60);
+    // Down at the ground some way ahead, inside the zero; the barrel comes up to throw the shell onto it.
+    let pitch = -0.05;
+    aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), pitch, 0, 120);
+    let (miss, range) = reticle_miss(&game, vid, 0, gunner, Eye { back: GUNNER_BACK, up: GUNNER_UP });
+    assert!(range > 50.0 && range < MOUNT_ZERO_RANGE && miss < 0.1, "laid on it: {miss} m off at {range} m");
+    assert!(turret(&game, vid).pitch > pitch + 0.02, "raised above the look for the fall: {:?}", turret(&game, vid));
+    let ahead = look(pose.yaw(), pitch);
+    let mark = game.world.physics.cast_ray(on_reticle(&game, vid, 0, ahead, 0.0), ahead, MOUNT_AIM_RANGE, vid).map(|t| on_reticle(&game, vid, 0, ahead, t)).unwrap();
     aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), pitch, BUTTON_FIRE, 1);
-    let mut last = [0.0; 3];
-    let mut ticks = 0;
+    let (mut last, mut ticks) = ([0.0; 3], 0);
     while ticks < 600 {
         match game.world.in_flight().values().next() {
             Some(shell) => last = shell.position,
@@ -366,17 +450,10 @@ fn fly(pitch: f32) -> (u32, f32) {
         aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), pitch, 0, 1);
         ticks += 1;
     }
-    (ticks, (last[0] - pose.position[0]).hypot(last[2] - pose.position[2]))
-}
-
-#[test]
-fn a_shell_takes_time_and_falls_so_a_raised_barrel_reaches_further() {
-    let (level_ticks, level) = fly(0.0);
-    let (raised_ticks, raised) = fly(0.12);
-    assert!(level_ticks > 10, "it is not instant: {level_ticks} ticks");
-    assert!(level > 20.0 && level < 100.0, "a level shell drops into the ground well short of its range: {level}");
-    assert!(raised > level * 1.8, "{raised} against {level}");
-    assert!(raised_ticks > level_ticks, "the longer arc takes longer: {raised_ticks} against {level_ticks}");
+    assert!(ticks > 10, "it is not instant: {ticks} ticks");
+    // Last seen within a tick's flight (SHELL_SPEED / TICK_RATE) of where it was aimed.
+    let off = vec3::length(vec3::sub(last, mark));
+    assert!(off < SHELL_SPEED / TICK_RATE as f32 + 0.5, "it lands on the mark: {off} m off, {last:?} against {mark:?}");
 }
 
 #[test]
@@ -411,7 +488,9 @@ fn the_nose_gun_follows_the_gunner_within_its_travel() {
     let hull = game.world.physics.car_pose(vid).unwrap().yaw();
     aim_and_hold(&mut game, gunner, &mut seq, hull + 0.5, -0.3, 0, 60);
     let gun = turret(&game, vid);
-    assert!((gun.yaw - 0.5).abs() < 0.03 && (gun.pitch + 0.3).abs() < 0.03, "{gun:?}");
+    let (yaw, pitch) = wanted_angles(&game, vid, 0, gunner);
+    assert!((yaw - 0.5).abs() < 0.1 && pitch < 0.0, "near the look, at the ground it is on: {yaw} {pitch}");
+    assert!((gun.yaw - yaw).abs() < 0.03 && (gun.pitch - pitch).abs() < 0.03, "{gun:?}");
     // Looking behind or high above asks for more than the mount can do.
     aim_and_hold(&mut game, gunner, &mut seq, hull + 2.5, 1.0, 0, 120);
     let gun = turret(&game, vid);
@@ -425,8 +504,7 @@ fn the_nose_gun_throws_small_shells_that_burst_a_third_as_wide() {
     let (victim, _inbox) = join(&mut game);
     let (bystander, _inbox2) = join(&mut game);
     let pose = game.world.physics.car_pose(vid).unwrap();
-    let (origin, dir) = aim_from(&pose, HELI_GUN_PIVOT, 0.0, 0.0);
-    let at: [f32; 3] = vec3::along(origin, dir, 15.0);
+    let at = on_reticle(&game, vid, 0, look(pose.yaw(), 0.0), 15.0);
     game.world.entities.get_mut::<Player>(victim).unwrap().character.position = at;
     // Three metres to the side: inside a tank shell's blast, outside this one's.
     let mut beside = at;
@@ -434,20 +512,23 @@ fn the_nose_gun_throws_small_shells_that_burst_a_third_as_wide() {
     game.world.entities.get_mut::<Player>(bystander).unwrap().character.position = beside;
     let before = game.world.entities.of::<crate::entities::Health>(victim).hp;
 
-    aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, BUTTON_FIRE, 2);
+    let held = [(victim, at), (bystander, beside)];
+    aim_holding(&mut game, gunner, &mut seq, pose.yaw(), 0.0, 0, 60, &held);
+    aim_holding(&mut game, gunner, &mut seq, pose.yaw(), 0.0, BUTTON_FIRE, 2, &held);
     assert_eq!(turret(&game, vid).shots, 1);
     let listed = game.seen_projectiles();
     assert_eq!(listed.len(), 1, "the round is in flight");
     assert_eq!(listed[0].1.projectile.as_ref().unwrap().kind, PROJECTILE_CANNON);
     assert_eq!(game.world.entities.of::<crate::entities::Health>(victim).hp, before, "and has not arrived");
 
-    aim_and_hold(&mut game, gunner, &mut seq, pose.yaw(), 0.0, 0, 30);
+    aim_holding(&mut game, gunner, &mut seq, pose.yaw(), 0.0, 0, 30, &held);
     assert!(game.world.in_flight().is_empty(), "it has burst");
     // What the torso lost, and any part a round in a limb or the head hurt.
     let hp = game.world.entities.of::<crate::entities::Health>(victim).hp;
     let parts = game.world.entities.get::<crate::mechanics::Wounds>(victim).map_or(0, |wounds| wounds.taken.iter().map(|&taken| u32::from(taken)).sum());
     let lost = u32::from(before - hp) + parts;
-    assert!(lost > 0 && lost < 60, "hurt, but less than a tank shell: {before} to {hp}, and {parts} to its parts");
+    // Struck square on, still well short of a tank shell, which kills.
+    assert!(lost > 0 && lost < 100, "hurt, but less than a tank shell: {before} to {hp}, and {parts} to its parts");
     assert_eq!(game.world.entities.of::<crate::entities::Health>(bystander).hp, PLAYER_MAX_HP, "outside the small blast");
 }
 
@@ -505,7 +586,9 @@ fn the_walkers_driver_aims_with_the_upper_body_within_thirty_degrees_and_fires()
     // A look inside its travel is followed, whichever way the legs face.
     aim_and_hold(&mut game, driver, &mut seq, hull + 0.3, 0.1, 0, 90);
     let gun = turret(&game, vid);
-    assert!((gun.yaw - 0.3).abs() < 0.03 && (gun.pitch - 0.1).abs() < 0.03, "{gun:?}");
+    let (yaw, pitch) = wanted_angles(&game, vid, 0, driver);
+    assert!((yaw - 0.3).abs() < 0.1, "near the look: {yaw}");
+    assert!((gun.yaw - yaw).abs() < 0.03 && (gun.pitch - pitch).abs() < 0.03, "{gun:?}");
     // And one beyond it stops at the limit.
     aim_and_hold(&mut game, driver, &mut seq, hull + 1.5, 0.0, 0, 120);
     let gun = turret(&game, vid);
@@ -599,7 +682,7 @@ fn the_forward_guns_take_turns_and_hit_what_is_ahead_of_the_nose() {
     assert!(game.world.entities.of::<crate::entities::Health>(victim).hp < PLAYER_MAX_HP || game.world.entities.has::<crate::mechanics::Wounds>(victim), "the soldier ahead is hit");
     assert!(!hits.is_empty() && hits.iter().all(|shot| shot.shooter == vid), "{hits:?}");
     assert_eq!(game.world.entities.of::<Health>(vid).hp, hp, "its own guns never hurt the plane");
-    assert!(game.world.in_flight().is_empty(), "rounds are hitscans, not projectiles");
+    assert!(game.world.in_flight().values().all(|round| round.kind == PROJECTILE_BULLET && round.hits.is_some()), "rounds are the gun's own bullets");
 }
 
 #[test]
@@ -790,7 +873,9 @@ fn a_pak_is_laid_by_the_look_within_its_traverse_and_fires_a_tank_shell_flat() {
     // A little off the centre line it follows the look; far off it stops at the end of its traverse.
     aim_and_hold(&mut game, gunner, &mut seq, hull + 0.3, 0.1, 0, 90);
     let gun = turret(&game, vid);
-    assert!((gun.yaw - 0.3).abs() < 0.03 && (gun.pitch - 0.1).abs() < 0.03, "laid on the look: {} {}", gun.yaw, gun.pitch);
+    let (yaw, pitch) = wanted_angles(&game, vid, 0, gunner);
+    assert!((yaw - 0.3).abs() < 0.1, "near the look: {yaw}");
+    assert!((gun.yaw - yaw).abs() < 0.03 && (gun.pitch - pitch).abs() < 0.03, "laid on what the reticle is on: {} {}", gun.yaw, gun.pitch);
     aim_and_hold(&mut game, gunner, &mut seq, hull + 1.5, 1.0, 0, 120);
     let gun = turret(&game, vid);
     assert!((gun.yaw - PAK_TRAVERSE).abs() < 0.01 && (gun.pitch - PAK_PITCH_MAX).abs() < 0.01, "held at its travel: {} {}", gun.yaw, gun.pitch);
@@ -897,6 +982,8 @@ fn a_mount_made_of_parts_no_vehicle_has_works() {
         ammo: Some(Ammo { full: 2, refill: Refill::Regrow(TICK_RATE) }),
         needs: &[],
         show: Show::Hidden,
+        eye: None,
+        sight: false,
     }];
     let mut game = game();
     let (passenger, _inbox) = join(&mut game);
@@ -1057,4 +1144,105 @@ fn a_technicals_gun_jams_when_hot_shows_it_and_clears() {
     aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, 0, 60 * 4);
     assert!(!turret(&game, vid).jammed, "cool again");
     assert_eq!(game.seen(vid).unwrap().turret.unwrap().flags & shared::protocol::TURRET_JAMMED, 0);
+}
+
+
+#[test]
+fn the_cannon_points_at_what_the_reticle_is_on_not_along_the_look() {
+    let (mut game, gunner, vid, mut seq) = crewed();
+    let hull = game.world.physics.car_pose(vid).unwrap().yaw();
+    // Down at the ground ahead: the camera is above and behind the gun, so a gun parallel to the look
+    // would put the shell well short of the reticle.
+    aim_and_hold(&mut game, gunner, &mut seq, hull, -0.06, 0, 240);
+    let (miss, range) = reticle_miss(&game, vid, 0, gunner, Eye { back: GUNNER_BACK, up: GUNNER_UP });
+    assert!(range < 200.0, "the reticle is on the ground ahead: {range} m");
+    assert!(miss < 0.1, "the barrel's line meets it: {miss} m off at {range} m");
+}
+
+#[test]
+fn looking_down_the_sight_the_shell_lands_on_the_crosshair() {
+    let (mut game, gunner, vid, mut seq) = crewed();
+    let hull = game.world.physics.car_pose(vid).unwrap().yaw();
+    aim_and_hold(&mut game, gunner, &mut seq, hull, -0.03, BUTTON_ALT, 240);
+    let (miss, range) = reticle_miss(&game, vid, 0, gunner, Eye { back: 0.0, up: SIGHT_EYE_UP });
+    assert!(range < 200.0, "the crosshair is on the ground ahead: {range} m");
+    assert!(miss < 0.1, "the shell meets it: {miss} m off at {range} m");
+}
+
+#[test]
+fn a_shell_is_laid_high_enough_to_fall_onto_its_mark() {
+    // 200 m out on the level a shell falls about 20 m, so the barrel is raised about 6°.
+    let dir = super::lay([0.0, 0.0, -200.0], SHELL_SPEED, GRAVITY).unwrap();
+    assert!(dir[1] > 0.09 && dir[1] < 0.12, "{dir:?}");
+    assert!(dir[0].abs() < 1e-6);
+    // Further than it can throw, there is no arc.
+    assert!(super::lay([0.0, 0.0, -5000.0], SHELL_SPEED, GRAVITY).is_none());
+}
+
+#[test]
+fn the_roof_gun_and_a_technicals_gun_point_at_what_the_reticle_is_on() {
+    let (mut game, gunner, vid, mut seq) = mg_crewed();
+    let hull = game.world.physics.car_pose(vid).unwrap().yaw();
+    aim_and_hold(&mut game, gunner, &mut seq, hull + 0.4, -0.12, 0, 240);
+    let (miss, range) = reticle_miss(&game, vid, 1, gunner, Eye { back: ROOF_AIM_BACK, up: ROOF_AIM_UP });
+    assert!(range < 100.0 && miss < 0.1, "the roof gun: {miss} m off at {range} m");
+
+    let (mut game, gunner, vid, mut seq) = technical_crewed();
+    let hull = game.world.physics.car_pose(vid).unwrap().yaw();
+    aim_and_hold(&mut game, gunner, &mut seq, hull - 0.3, -0.15, 0, 240);
+    let (miss, range) = reticle_miss(&game, vid, 0, gunner, Eye { back: GUNNER_BACK, up: GUNNER_UP });
+    assert!(range < 100.0 && miss < 0.1, "the technical's gun: {miss} m off at {range} m");
+}
+
+#[test]
+fn past_the_zero_a_shell_falls_short_of_the_reticle_and_the_gunner_aims_high() {
+    let (mut game, gunner, vid, mut seq) = crewed();
+    let hull = game.world.physics.car_pose(vid).unwrap().yaw();
+    aim_and_hold(&mut game, gunner, &mut seq, hull, -0.02, 0, 120);
+    let (miss, range) = reticle_miss(&game, vid, 0, gunner, Eye { back: GUNNER_BACK, up: GUNNER_UP });
+    assert!(range > 150.0, "far off: {range} m");
+    // Only the first `MOUNT_ZERO_RANGE` of the fall is made up for: at 200 m about 10 m of it is not.
+    assert!(miss > 4.0 && miss < 20.0, "it falls short: {miss} m at {range} m");
+    let raised = turret(&game, vid).pitch;
+    let (_, zeroed) = super::angles(super::lay([0.0, 0.0, -MOUNT_ZERO_RANGE], SHELL_SPEED, GRAVITY).unwrap());
+    assert!(raised > -0.02 && raised < -0.02 + zeroed + 0.03, "raised for the zero's fall and no more: {raised}");
+}
+
+#[test]
+fn the_lay_eases_to_a_new_distance_rather_than_jumping() {
+    let (mut game, gunner, vid, mut seq) = crewed();
+    let hull = game.world.physics.car_pose(vid).unwrap().yaw();
+    // On the ground close ahead, then up at what is far off, as when the reticle slides off a rise.
+    aim_and_hold(&mut game, gunner, &mut seq, hull, -0.12, 0, 120);
+    let near = turret(&game, vid).reach;
+    assert!(near < 60.0, "{near}");
+    aim_and_hold(&mut game, gunner, &mut seq, hull, 0.05, 0, 3);
+    let soon = turret(&game, vid).reach;
+    assert!(soon > near && soon < near * 2.0, "a few ticks on it has only begun to reach out: {near} to {soon}");
+    aim_and_hold(&mut game, gunner, &mut seq, hull, 0.05, 0, 120);
+    let up = look(hull, 0.05);
+    let far = game.world.physics.cast_ray(on_reticle(&game, vid, 0, up, 0.0), up, MOUNT_AIM_RANGE, vid).unwrap_or(MOUNT_AIM_RANGE);
+    let settled = turret(&game, vid).reach;
+    assert!(far > near * 4.0 && (settled / far - 1.0).abs() < 0.01, "two seconds on it is laid on what is there: {settled} against {far}");
+}
+
+#[test]
+fn a_technicals_bullets_fly_fall_and_land_on_the_reticle() {
+    let (mut game, gunner, vid, mut seq) = technical_crewed();
+    let hull = game.world.physics.car_pose(vid).unwrap().yaw();
+    aim_and_hold(&mut game, gunner, &mut seq, hull, -0.06, 0, 240);
+    let (miss, range) = reticle_miss(&game, vid, 0, gunner, Eye { back: GUNNER_BACK, up: GUNNER_UP });
+    assert!(range > 30.0 && range < MOUNT_ZERO_RANGE && miss < 0.1, "laid on it, fall and all: {miss} m off at {range} m");
+    let mut round = None;
+    for _ in 0..30 {
+        aim_and_hold(&mut game, gunner, &mut seq, hull, -0.06, BUTTON_FIRE, 1);
+        round = game.world.in_flight().values().next().copied();
+        if round.is_some() {
+            break;
+        }
+    }
+    let round = round.expect("the round is a bullet in flight");
+    assert_eq!(round.kind, PROJECTILE_BULLET);
+    assert_eq!(round.hits.map(|hits| hits.damage), Some(TECHNICAL_MG_DAMAGE), "with the gun's own damage");
+    assert!((vec3::length(round.velocity) - BULLET_SPEED).abs() < 0.1);
 }

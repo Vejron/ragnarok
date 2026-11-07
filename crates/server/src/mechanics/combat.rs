@@ -676,8 +676,9 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     }
 }
 
-/// What one hitscan round does: to a soldier or a rooster, to a vehicle, and to a plane, which is all
-/// wood and canvas.
+/// What one round does: to a soldier or a rooster, to a vehicle, and to a plane, which is all wood and
+/// canvas.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Round {
     pub damage: u8,
     pub vehicle: u8,

@@ -578,6 +578,9 @@ pub struct Mount {
     /// A beam's ticks charged so far, and its ticks of burning left (`Fire::Beam`).
     pub charge: u32,
     pub beam: u32,
+    /// How far along the reticle's line the gun is laid, metres: what the reticle is on, eased towards
+    /// (`MOUNT_AIM_EASE`) so the barrel glides rather than jumps. 0 until first laid.
+    pub reach: f32,
 }
 
 impl Mount {

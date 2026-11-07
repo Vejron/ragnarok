@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 70
+export const PROTOCOL_VERSION = 71
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -437,6 +437,52 @@ export const SHELL_SPEED = 140.0
  */
 export const BULLET_SPEED = 2.0 * SHELL_SPEED
 export const BULLET_GRAVITY_SCALE = 0.25
+
+/**
+ * Where the camera behind a mounted gun sits: this far back from the gun's pivot along the look, and
+ * this far above that, looking along the look. The middle of the screen is that ray, and the server
+ * points the gun at what the ray meets (`MountDef::eye`), so a round goes where the reticle is.
+ * A gunner's: a tank's, a technical's, a helicopter's nose gun, a plane's rear gun, a Pak's, a ship's gun.
+ */
+export const GUNNER_BACK = 6.5
+export const GUNNER_UP = 2.6
+
+/** Over the shoulder of the gunner on a tank's roof. */
+export const ROOF_AIM_BACK = 3.5
+export const ROOF_AIM_UP = 1.2
+
+/** Behind a walker's guns or a tupp's eyes, high enough to see over the cab. */
+export const WALKER_AIM_BACK = 12.0
+export const WALKER_AIM_UP = 5.0
+
+/** Behind a Strv S's gun trunnion. */
+export const STRV_AIM_BACK = 9.0
+export const STRV_AIM_UP = 3.2
+
+/**
+ * How far the camera's ray is followed to find what a mounted gun's reticle is on, metres, when the
+ * gun's own reach does not say.
+ */
+export const MOUNT_AIM_RANGE = 1500.0
+
+/** A gun sight's eye sits this far above the gun's pivot, on the mantlet, and looks along the look. */
+export const SIGHT_EYE_UP = 0.5
+
+/**
+ * How quickly, seconds, a mounted gun's lay eases to a new distance when the reticle moves onto
+ * something nearer or further: long enough that the barrel glides, short enough to be laid before a
+ * shot is lined up. Eased in proportion (a log scale), so 10 m to 300 m takes as long as 300 m to 10 m.
+ */
+export const MOUNT_AIM_EASE = 0.25
+
+/**
+ * Out to this far, metres, a mounted gun's barrel is raised for the shell's fall and the shell lands
+ * where the reticle is; further off it falls short of it, and the gunner aims high to make up the rest.
+ */
+export const MOUNT_ZERO_RANGE = 100.0
+
+/** The reticle camera is lifted to stay this far above the ground, metres, still looking along the look. */
+export const MOUNT_EYE_CLEARANCE = 0.3
 
 /** A gun fired with aim held scatters over this fraction of its hip-fire cone. */
 export const AIM_SPREAD_SCALE = 0.25

@@ -163,7 +163,8 @@ fn a_gunner_mans_a_gun_fires_round_shot_into_the_sea_and_steps_back_onto_the_dec
 
     // Laid out to starboard (+X is a yaw of -π/2), a little up, and fired.
     let mut players = [(gunner, seq)];
-    let look = [-std::f32::consts::FRAC_PI_2, 0.1];
+    // A little down, at the water out to starboard.
+    let look = [-std::f32::consts::FRAC_PI_2, -0.05];
     for _ in 0..2 * TICK_RATE {
         frame(&mut game, &mut players, (0, 0), 0, look);
     }

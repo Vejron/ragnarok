@@ -135,4 +135,6 @@ const MOUNTS: &[MountDef] = &[MountDef {
     ammo: Some(Ammo { full: HEN_EGGS, refill: Refill::Regrow(HEN_EGG_REGROW_TICKS) }),
     needs: &[Need::Upright],
     show: Show::Rack,
+    eye: None,
+    sight: false,
 }];

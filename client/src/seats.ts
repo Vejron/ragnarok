@@ -13,9 +13,8 @@ import { kindView } from '@/kinds'
 export type Rig =
   /** Behind the vehicle, easing round behind it when the mouse rests. */
   | { name: 'drive' }
-  /** Behind a mounted gun along its line, its travel kept in the hull's frame (`hull`) or about the vertical (`level`). */
+  /** Behind a mounted gun along its line, its travel kept in the hull's frame. */
   | { name: 'gun'; hull: readonly [yawLimit: number, pitchMin: number, pitchMax: number] }
-  | { name: 'gun'; level: readonly [pitchMin: number, pitchMax: number] }
   /** Behind a gun on a turret's roof, its travel kept within `limit` either side of the turret. */
   | { name: 'pintle'; limit: number; pitch: readonly [number, number] }
   /** Through a drone's camera, flown from afar within `link` metres; a loitering drone also has one under its belly. */

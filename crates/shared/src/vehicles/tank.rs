@@ -92,7 +92,7 @@ const ARMOR: Armor = Armor {
 };
 
 /// A 12.7 mm heavy machine gun.
-const ROOF_GUN: Fire = Fire::Hitscan { length: TANK_MG_LENGTH, damage: TANK_MG_DAMAGE, vehicle: TANK_MG_VEHICLE_DAMAGE, plane: TANK_MG_PLANE_DAMAGE, weapon: WEAPON_MG, range: TANK_MG_RANGE, pen: Pen::ball(20.0, 12.0, TANK_MG_RANGE, 12.7) };
+const ROOF_GUN: Fire = Fire::Bullet { length: TANK_MG_LENGTH, damage: TANK_MG_DAMAGE, vehicle: TANK_MG_VEHICLE_DAMAGE, plane: TANK_MG_PLANE_DAMAGE, weapon: WEAPON_MG, range: TANK_MG_RANGE, pen: Pen::ball(20.0, 12.0, TANK_MG_RANGE, 12.7) };
 
 const SHELL: Fire = Fire::Shell { kind: PROJECTILE_SHELL, alt: PROJECTILE_HE, speed: SHELL_SPEED, length: TANK_BARREL_LENGTH, ttl: SHELL_TTL_TICKS };
 
@@ -161,6 +161,8 @@ const MOUNTS: &[MountDef] = &[
         ammo: None,
         needs: &[Need::Turret, Need::Breech],
         show: Show::Turret,
+        eye: Some(Eye { back: GUNNER_BACK, up: GUNNER_UP }),
+        sight: true,
     },
     MountDef {
         seat: TANK_MG_SEAT,
@@ -175,5 +177,7 @@ const MOUNTS: &[MountDef] = &[
         ammo: None,
         needs: &[Need::Turret],
         show: Show::Pintle,
+        eye: Some(Eye { back: ROOF_AIM_BACK, up: ROOF_AIM_UP }),
+        sight: false,
     },
 ];

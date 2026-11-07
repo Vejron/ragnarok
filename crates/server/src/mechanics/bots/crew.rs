@@ -456,7 +456,8 @@ fn gun(world: &mut World, id: u32, bot: &mut Bot, vid: u32, pose: &CarPose, nois
             buttons |= BUTTON_FIRE;
         }
     }
-    InputFrame { yaw: to_mrad(wrap_angle(local_yaw + pose.yaw())), pitch: to_mrad(local_pitch), buttons, ..idle }
+    // The look is the gun's way in the world, which `Gunnery` sees from the hull itself.
+    InputFrame { yaw: to_mrad(wrap_angle(yaw)), pitch: to_mrad(pitch.clamp(-1.5, 1.5)), buttons, ..idle }
 }
 
 #[cfg(test)]

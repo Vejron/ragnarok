@@ -8,7 +8,7 @@ import { winter } from './season'
 import { loadQuality, PRESETS, resolveQuality, type Preset } from './quality'
 import { createSky, nightAt, skyAt } from './daynight'
 import { clearArm, lookDir } from '../aimline'
-import { ON_FOOT_HEIGHT, ON_FOOT_SHOULDER } from '../sim/consts'
+import { GUNNER_BACK, GUNNER_UP, MOUNT_EYE_CLEARANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER } from '../sim/consts'
 
 // On foot the camera is over the right shoulder and a little above the head; the server shares these.
 export { ON_FOOT_HEIGHT, ON_FOOT_SHOULDER }
@@ -23,22 +23,11 @@ export const WALKER_DISTANCE = 15
 export const HEN_DISTANCE = 17
 /** Behind the field mortar, which is low and wide. */
 export const MORTAR_DISTANCE = 9
-/** The Strv S driver's camera: behind the gun's trunnion on the aim line and a little above it, as a gunner's, a bit further back. */
+/** The Strv S driver's camera, when not aiming (`STRV_AIM_BACK` and `STRV_AIM_UP` when aiming). */
 export const STRV_DISTANCE = 12
-export const STRV_AIM_BACK = 9
-export const STRV_AIM_UP = 3.2
-/** The walker's aim camera: behind the guns' pivot on the aim line, and this far above it, to see over the cab. */
-export const WALKER_AIM_BACK = 12
-export const WALKER_AIM_UP = 5
 /** A plane's pilot looks where they fly, from behind and above, so the plane sits below the middle of the screen. */
 export const PLANE_DISTANCE = 12
 export const PLANE_CAMERA_HEIGHT = 2.4
-/** The gunner's camera sits this far behind the turret, on the line of the barrel. */
-export const GUNNER_BACK = 6.5
-/** ...and this far above it, so the turret doesn't hide the view. */
-export const GUNNER_UP = 2.6
-/** The camera looks at the point this far along the aim line, so the screen centre is where the barrel points. */
-export const GUNNER_FOCUS = 60
 export const CAMERA_HEIGHT = 1.2
 /** Not used for flying it (that is first person, `fpvFrom`), only by anything that asks every kind. */
 export const DRONE_DISTANCE = 3
@@ -318,18 +307,16 @@ export class Scene {
   }
 
   /**
-   * A gunner's view: behind and above `origin` (the turret ring), looking along the aim direction.
-   * It focuses on a far point of the barrel's line, so the centre of the screen is where the barrel
-   * points even though the camera is higher than the gun. A shell falls from that line.
+   * A gunner's view: `back` behind `origin` (the gun's pivot) on the look's line and `up` above that,
+   * looking along the look, so the centre of the screen is the ray the server points the gun at what
+   * it meets (`gunnery::wanted`, from the same numbers in `MountDef::eye`). A shell falls from there.
    */
   aimFrom(origin: readonly number[], yaw: number, pitch: number, back = GUNNER_BACK, up = GUNNER_UP) {
-    const dx = -Math.sin(yaw) * Math.cos(pitch)
-    const dy = Math.sin(pitch)
-    const dz = -Math.cos(yaw) * Math.cos(pitch)
+    const [dx, dy, dz] = lookDir(yaw, pitch)
     const camera = this.camera
     camera.position.set(origin[0]! - dx * back, origin[1]! - dy * back + up, origin[2]! - dz * back)
-    camera.position.y = Math.max(this.groundAt(camera.position.x, camera.position.z) + 0.3, camera.position.y)
-    camera.lookAt(origin[0]! + dx * GUNNER_FOCUS, origin[1]! + dy * GUNNER_FOCUS, origin[2]! + dz * GUNNER_FOCUS)
+    camera.position.y = Math.max(this.groundAt(camera.position.x, camera.position.z) + MOUNT_EYE_CLEARANCE, camera.position.y)
+    camera.lookAt(camera.position.x + dx * 10, camera.position.y + dy * 10, camera.position.z + dz * 10)
     this.sunOver(origin[0]!, origin[1]!, origin[2]!)
   }
 

@@ -10,7 +10,7 @@
 //! `UPDATE_PARITY=1 cargo test -p shared parity` regenerates from this one.
 
 use crate::consts::*;
-use crate::mounts::{Aim, Ammo, Fire, MountDef, Muzzle, Need, Refill, Show};
+use crate::mounts::{Aim, Ammo, Eye, Fire, MountDef, Muzzle, Need, Refill, Show};
 use crate::items::*;
 use crate::protocol::{
     KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_TUPP, KIND_WALKER, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON,

@@ -56,7 +56,7 @@ const ARMOR: Armor = Armor {
     canvas: false,
 };
 
-const MG: Fire = Fire::Hitscan {
+const MG: Fire = Fire::Bullet {
     length: TECHNICAL_MG_LENGTH,
     damage: TECHNICAL_MG_DAMAGE,
     vehicle: TECHNICAL_MG_VEHICLE_DAMAGE,
@@ -134,4 +134,6 @@ const MOUNTS: &[MountDef] = &[MountDef {
     ammo: None,
     needs: &[Need::Breech],
     show: Show::Turret,
+    eye: Some(Eye { back: GUNNER_BACK, up: GUNNER_UP }),
+    sight: false,
 }];

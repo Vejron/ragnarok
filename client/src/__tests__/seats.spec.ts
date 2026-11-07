@@ -75,7 +75,7 @@ function rigged() {
     fpvFrom: () => views.push('fpv'),
     downFrom: () => views.push('down'),
     scopeFrom: () => views.push('scope'),
-    camera: { fov: 60, rotateZ() {} },
+    camera: { fov: 60, rotateZ() {}, project: () => false },
   }
   const cameras = new Cameras(scene as never, input as never, () => null)
   return { views, input, cameras }
@@ -159,7 +159,10 @@ describe('camera rigs', () => {
     const { views, input, cameras } = rigged()
     cameras.seated(seated(KIND_TANK, 1, { ride: placed(KIND_TANK, 0.3) }), 1)
     expect(views).toEqual(['follow'])
-    const barrel = { root: new Group(), barrel: () => ({ origin: new Vector3(), direction: new Vector3(0, 0, -1) }) } as never
+    // The model's root carries the hull's heading.
+    const root = new Group()
+    root.quaternion.setFromAxisAngle(new Vector3(0, 1, 0), 0.5)
+    const barrel = { root, barrel: () => ({ origin: new Vector3(), direction: new Vector3(0, 0, -1) }) } as never
     cameras.seated(seated(KIND_TANK, 1, { ride: placed(KIND_TANK, 0.3), model: barrel }), 1)
     expect(views).toEqual(['follow', 'aim'])
     // Hull yaw 0.5 and turret 0.3: the gunner looks along the barrel.

@@ -98,7 +98,7 @@ pub const PLANE_REARM_TICKS: u32 = 3 * TICK_RATE;
 /// The pilot behind the wings, the gunner standing in the ring.
 pub const PLANE_SEAT_HEADS: [[f32; 3]; 2] = [[0.0, 0.98, -0.45], [0.0, 1.15, 0.7]];
 
-const PLANE_GUN: Fire = Fire::Hitscan { length: 0.0, damage: PLANE_GUN_DAMAGE, vehicle: PLANE_GUN_VEHICLE_DAMAGE, plane: PLANE_GUN_PLANE_DAMAGE, weapon: WEAPON_MG, range: PLANE_GUN_RANGE, pen: Pen::ball(10.0, 7.0, 300.0, 7.92) };
+const PLANE_GUN: Fire = Fire::Bullet { length: 0.0, damage: PLANE_GUN_DAMAGE, vehicle: PLANE_GUN_VEHICLE_DAMAGE, plane: PLANE_GUN_PLANE_DAMAGE, weapon: WEAPON_MG, range: PLANE_GUN_RANGE, pen: Pen::ball(10.0, 7.0, 300.0, 7.92) };
 
 /// The engine in the nose and the fuel tank ahead of the cockpit; the crew are in the open.
 const ARMOR: Armor = Armor {
@@ -177,6 +177,8 @@ const MOUNTS: &[MountDef] = &[
         ammo: None,
         needs: &[Need::Clear(PLANE_REAR_DEAD_ZONE)],
         show: Show::Turret,
+        eye: Some(Eye { back: GUNNER_BACK, up: GUNNER_UP }),
+        sight: false,
     },
     MountDef {
         seat: 0,
@@ -191,6 +193,8 @@ const MOUNTS: &[MountDef] = &[
         ammo: None,
         needs: &[],
         show: Show::Guns,
+        eye: None,
+        sight: false,
     },
     MountDef {
         seat: 0,
@@ -206,5 +210,7 @@ const MOUNTS: &[MountDef] = &[
         // The rack only lets go in the air, where the bomb has room to fall clear.
         needs: &[Need::Height(PLANE_BOMB_MIN_HEIGHT)],
         show: Show::Rack,
+        eye: None,
+        sight: false,
     },
 ];

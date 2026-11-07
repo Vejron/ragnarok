@@ -2,15 +2,16 @@ use shared::vec3;
 use super::Mechanic;
 use shared::armor::Part;
 use super::bots::{HEAR_BLAST, HEAR_SHOT, make_noise, make_shot};
-use super::combat::{Round, beam, hitscan, look, rewind_ticks, scatter};
+use super::combat::{MAX_PITCH, Round, beam, look, rewind_ticks, scatter};
+use super::life::first_hurtbox_hit;
 use super::projectiles::{self, Flying, Stage};
 use crate::entities::With;
-use crate::game::{Mount, Mounts, Player, Seats, Vehicle, World};
+use crate::game::{Bot, Mount, Mounts, Player, Seats, Vehicle, World};
 use sim::CarPose;
 use shared::consts::*;
 use shared::items::Falloff;
-use shared::mounts::{Aim, Ammo, Fire, MountDef, Muzzle, Need, Refill};
-use shared::protocol::{DAMAGE_TURRET, InputFrame, PROJECTILE_ROCKET, ShotEvent, TURRET_GONE};
+use shared::mounts::{Aim, Ammo, Eye, Fire, MountDef, Muzzle, Need, Refill};
+use shared::protocol::{DAMAGE_TURRET, InputFrame, PROJECTILE_BULLET, PROJECTILE_ROCKET, ShotEvent, TURRET_GONE};
 use shared::quant::{from_mrad, to_cm, wrap_angle};
 
 /// Vehicle weapons: every mount in a vehicle's `VehicleDef::mounts` (`shared::mounts`), worked the same
@@ -92,7 +93,10 @@ fn work(world: &mut World, vid: u32, def: &MountDef, mut mount: Mount, pose: &Ca
         return mount;
     }
     let turret_yaw = world.entities.get::<Mounts>(vid).and_then(|mounts| mounts.turret().map(|turret| turret.yaw)).unwrap_or(0.0);
-    turn(&mut mount, def.aim, &input, pose, turret_yaw, dt);
+    let mut reach = mount.reach;
+    let want = wanted(world, vid, def, occupant, &input, pose.world_point(pivot(def.muzzle, &mount, turret_yaw)), &mut reach, dt);
+    mount.reach = reach;
+    turn(&mut mount, def.aim, &input, want, pose, turret_yaw, dt);
     if let Fire::Beam { charge, burn, recover, .. } = def.fire {
         if burning > 0 {
             mount.beam = burning - 1;
@@ -193,33 +197,114 @@ fn can_fire(world: &World, vid: u32, need: Need, mount: &Mount, pose: &CarPose) 
     }
 }
 
-/// A tick of the occupant's look turning the mount, on a vehicle whose turret is at `turret_yaw`.
-fn turn(mount: &mut Mount, aim: Aim, input: &InputFrame, pose: &CarPose, turret_yaw: f32, dt: f32) {
+/// Where a mount at `muzzle` turns about, in the hull frame, for a turret at `turret_yaw`: the point its
+/// rounds leave from before the barrel's length, and the one its reticle camera sits behind.
+pub(super) fn pivot(muzzle: Muzzle, mount: &Mount, turret_yaw: f32) -> [f32; 3] {
+    match muzzle {
+        Muzzle::One(pivot) | Muzzle::Twin { pivot, .. } => pivot,
+        Muzzle::Turns(pivots) => pivots[usize::from(mount.shots) % pivots.len()],
+        Muzzle::Pintle { ring, at } => on_turret(ring, at, turret_yaw),
+    }
+}
+
+/// The way, in the world, that the occupant of mount `def` on vehicle `vid` wants it to point, for a
+/// gun turning about `pivot` (world), `dt` after the last time. A mount aimed with the reticle
+/// (`MountDef::eye`) points at what the camera's ray meets, as a third-person shooter's gun does: the
+/// camera sits behind and above the gun, so a gun only parallel to the look would put its round below
+/// the reticle up close and above it far off. Looking down a gun sight the camera is the sight's eye,
+/// `SIGHT_EYE_UP` over the pivot. The ray is followed from abreast of the pivot, as nothing behind the gun
+/// can be what it is aimed at; it stops at the ground, a wall, a vehicle (not this one) or a soldier as
+/// the occupant saw them, or at the end of its reach. How far along it the gun is laid is `reach`, eased
+/// to that ([`MOUNT_AIM_EASE`]). A shell's barrel is raised for the fall as far as `MOUNT_ZERO_RANGE`
+/// ([`lay`]); further off it falls short, for the gunner to make up. With no reticle, a bot (which has
+/// no camera) or a point that would turn the gun sideways, it is the look itself.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn wanted(world: &World, vid: u32, def: &MountDef, occupant: u32, input: &InputFrame, pivot: [f32; 3], reach: &mut f32, dt: f32) -> [f32; 3] {
+    // Past straight up the look would turn round behind.
+    let look_dir = look(from_mrad(input.yaw), from_mrad(input.pitch()).clamp(-MAX_PITCH, MAX_PITCH));
+    // A bot has no camera: its look is the way it wants the gun, laid for the fall already.
+    let Some(Eye { back, up }) = def.eye.filter(|_| !world.entities.has::<Bot>(occupant)) else { return look_dir };
+    let (back, up) = if def.sight && input.buttons() & BUTTON_ALT != 0 { (0.0, SIGHT_EYE_UP) } else { (back, up) };
+    let camera = eye_at(world, pivot, look_dir, back, up);
+    let far = match def.fire {
+        Fire::Bullet { range, .. } | Fire::Beam { range, .. } => range,
+        Fire::Shell { .. } | Fire::Rocket { .. } | Fire::Drop { .. } => MOUNT_AIM_RANGE,
+    };
+    let start = vec3::along(camera, look_dir, back);
+    let rewind = rewind_ticks(world.tick, input.view());
+    let wall = world.physics.cast_ray(start, look_dir, far, vid).unwrap_or(far);
+    let on = first_hurtbox_hit(world, start, look_dir, wall, Some(occupant), rewind, None).map_or(wall, |(_, t)| t).max(0.5);
+    *reach = if *reach <= 0.0 { on } else { (reach.ln() + (on.ln() - reach.ln()) * (1.0 - (-dt / MOUNT_AIM_EASE).exp())).exp() };
+    let to = vec3::sub(vec3::along(start, look_dir, *reach), pivot);
+    let len = vec3::length(to);
+    if len < 1e-3 || vec3::dot(to, look_dir) < 0.5 * len {
+        return look_dir;
+    }
+    let straight = to.map(|v| v / len);
+    match def.fire {
+        // Laid as for a mark as far off as the zero, at most, on the same line.
+        Fire::Shell { speed, .. } => lay(straight.map(|v| v * len.min(MOUNT_ZERO_RANGE)), speed, GRAVITY).unwrap_or(straight),
+        Fire::Bullet { .. } => lay(straight.map(|v| v * len.min(MOUNT_ZERO_RANGE)), BULLET_SPEED, GRAVITY * BULLET_GRAVITY_SCALE).unwrap_or(straight),
+        _ => straight,
+    }
+}
+
+/// The unit direction a round leaving at `speed` and falling under `gravity` takes to pass through `to`
+/// (from where it leaves): the flatter of the two arcs that reach it. `None` when it is out of reach.
+pub fn lay(to: [f32; 3], speed: f32, gravity: f32) -> Option<[f32; 3]> {
+    let across = to[0].hypot(to[2]);
+    if across < 1e-3 {
+        return None;
+    }
+    let (v2, g) = (speed * speed, gravity);
+    let root = v2 * v2 - g * (g * across * across + 2.0 * to[1] * v2);
+    if root < 0.0 {
+        return None;
+    }
+    let elevation = ((v2 - root.sqrt()) / (g * across)).atan();
+    let (sin, cos) = elevation.sin_cos();
+    Some([to[0] / across * cos, sin, to[2] / across * cos])
+}
+
+/// Where the reticle camera behind a gun at `pivot` is, for a look along `look_dir`: `back` behind on
+/// the look's line and `up` above that, and never in the ground, as the client places it
+/// (`Scene.aimFrom`).
+pub fn eye_at(world: &World, pivot: [f32; 3], look_dir: [f32; 3], back: f32, up: f32) -> [f32; 3] {
+    let [x, y, z] = vec3::along(pivot, look_dir, -back);
+    [x, (y + up).max(world.map.ground.height_at(x, z) + MOUNT_EYE_CLEARANCE), z]
+}
+
+/// The yaw (+ left) and pitch (+ up) of a unit direction `[x, y, z]` given in the hull frame.
+pub(super) fn angles([x, y, z]: [f32; 3]) -> (f32, f32) {
+    ((-x).atan2(-z), y.clamp(-1.0, 1.0).asin())
+}
+
+/// A tick of the occupant turning the mount towards `want` (world), on a vehicle whose turret is at
+/// `turret_yaw`. The way is seen from the hull, so a gun keeps its aim while the hull leans and turns.
+#[allow(clippy::too_many_arguments)]
+fn turn(mount: &mut Mount, aim: Aim, input: &InputFrame, want: [f32; 3], pose: &CarPose, turret_yaw: f32, dt: f32) {
+    let (yaw, pitch) = angles(pose.local_dir(want));
     match aim {
         Aim::Fixed => {}
         Aim::Turret { slew, pitch: (min, max), pitch_slew } => {
-            mount.yaw = follow(mount.yaw, wrap_angle(from_mrad(input.yaw) - pose.yaw()), slew * dt);
-            mount.pitch = step_toward(mount.pitch, from_mrad(input.pitch()).clamp(min, max), pitch_slew * dt);
+            mount.yaw = follow(mount.yaw, yaw, slew * dt);
+            mount.pitch = step_toward(mount.pitch, pitch.clamp(min, max), pitch_slew * dt);
         }
         Aim::Bore { pitch: (min, max), slew } => {
-            mount.pitch = step_toward(mount.pitch, from_mrad(input.pitch()).clamp(min, max), slew * dt);
+            mount.pitch = step_toward(mount.pitch, pitch.clamp(min, max), slew * dt);
         }
         Aim::Mount { yaw_limit, pitch: (min, max), slew } => {
-            // The look is taken in the world and seen from the hull.
-            let local = pose.local_dir(look(from_mrad(input.yaw), from_mrad(input.pitch())));
-            let yaw = (-local[0]).atan2(-local[2]);
-            let pitch = local[1].clamp(-1.0, 1.0).asin().clamp(min, max);
             mount.yaw = match yaw_limit {
                 Some(limit) => step_toward(mount.yaw, yaw.clamp(-limit, limit), slew * dt),
                 None => follow(mount.yaw, yaw, slew * dt),
             };
-            mount.pitch = step_toward(mount.pitch, pitch, slew * dt);
+            mount.pitch = step_toward(mount.pitch, pitch.clamp(min, max), slew * dt);
         }
         Aim::Pintle { yaw_limit, pitch: (min, max), slew } => {
             // The look seen from the turret: when the turret swings away the end of the arc pushes the gun along.
-            let yaw = wrap_angle(from_mrad(input.yaw) - pose.yaw() - turret_yaw).clamp(-yaw_limit, yaw_limit);
+            let yaw = wrap_angle(yaw - turret_yaw).clamp(-yaw_limit, yaw_limit);
             mount.yaw = step_toward(mount.yaw, yaw, slew * dt).clamp(-yaw_limit, yaw_limit);
-            mount.pitch = step_toward(mount.pitch, from_mrad(input.pitch()).clamp(min, max), slew * dt);
+            mount.pitch = step_toward(mount.pitch, pitch.clamp(min, max), slew * dt);
         }
         Aim::Lob { slew } => {
             mount.yaw = follow(mount.yaw, wrap_angle(from_mrad(input.yaw) - pose.yaw()), slew * dt);
@@ -236,8 +321,7 @@ fn turn(mount: &mut Mount, aim: Aim, input: &InputFrame, pose: &CarPose, turret_
 /// Fires a round of `def` for `occupant`, and returns the barrel's heading (before any spread).
 fn shoot(world: &mut World, vid: u32, def: &MountDef, mount: &Mount, occupant: u32, pose: &CarPose, turret_yaw: f32) -> [f32; 3] {
     let (origin, dir) = match def.muzzle {
-        Muzzle::One(pivot) => aim_from(pose, pivot, mount.yaw, mount.pitch),
-        Muzzle::Turns(pivots) => aim_from(pose, pivots[usize::from(mount.shots) % pivots.len()], mount.yaw, mount.pitch),
+        Muzzle::One(_) | Muzzle::Turns(_) => aim_from(pose, pivot(def.muzzle, mount, turret_yaw), mount.yaw, mount.pitch),
         Muzzle::Twin { pivot, x, drop } => {
             let (_, dir) = aim_from(pose, pivot, mount.yaw, mount.pitch);
             // One barrel either side, taking turns: the offset turns with the mount (yaw) and the
@@ -250,7 +334,7 @@ fn shoot(world: &mut World, vid: u32, def: &MountDef, mount: &Mount, occupant: u
             let offset = [bx * cy + lz * sy, ly, -bx * sy + lz * cy];
             (pose.world_point(std::array::from_fn(|i| pivot[i] + offset[i])), dir)
         }
-        Muzzle::Pintle { ring, at } => aim_from(pose, on_turret(ring, at, turret_yaw), wrap_angle(turret_yaw + mount.yaw), mount.pitch),
+        Muzzle::Pintle { .. } => aim_from(pose, pivot(def.muzzle, mount, turret_yaw), wrap_angle(turret_yaw + mount.yaw), mount.pitch),
     };
     match def.fire {
         Fire::Shell { kind, alt, speed, length, ttl } => {
@@ -264,11 +348,11 @@ fn shoot(world: &mut World, vid: u32, def: &MountDef, mount: &Mount, occupant: u
             let along: f32 = vec3::dot(pose.velocity, dir).max(0.0);
             world.launch(Flying::new(PROJECTILE_ROCKET, occupant, origin, dir.map(|d| d * (speed + along)), ttl).aboard(vid));
         }
-        Fire::Hitscan { length, damage, vehicle, plane, weapon, range, pen } => {
+        Fire::Bullet { length, damage, vehicle, plane, weapon, range, pen } => {
             let muzzle = vec3::along(origin, dir, length);
             let aimed = scatter(world, dir, def.spread);
             let round = Round { damage, vehicle, plane, weapon, range, falloff: Falloff::NONE, pen };
-            machine_gun(world, occupant, vid, muzzle, aimed, &round);
+            machine_gun(world, occupant, vid, muzzle, aimed, round);
         }
         Fire::Beam { length, radius, damage, vehicle, plane, weapon, range, pen, .. } => {
             let muzzle = vec3::along(origin, dir, length);
@@ -303,17 +387,14 @@ fn fire(world: &mut World, kind: u8, vid: u32, origin: [f32; 3], dir: [f32; 3], 
     world.launch(Flying::new(kind, gunner, vec3::along(origin, dir, length), dir.map(|v| v * speed), ttl).aboard(vid));
 }
 
-/// One machine gun `round` for `shooter` from vehicle `vid`, out of `muzzle` along `dir`. Every round
-/// is drawn by the client from the gun's counter; only one that hit something is announced, for the
-/// spark.
-fn machine_gun(world: &mut World, shooter: u32, vid: u32, muzzle: [f32; 3], dir: [f32; 3], round: &Round) {
+/// One machine gun `round` for `shooter` from vehicle `vid`, out of `muzzle` along `dir`: a bullet that
+/// flies and falls as a hand gun's, at soldiers as the shooter saw them. Every round is drawn by the
+/// client from the gun's counter; only one that hits something is announced, for the spark.
+fn machine_gun(world: &mut World, shooter: u32, vid: u32, muzzle: [f32; 3], dir: [f32; 3], round: Round) {
     let back = world.entities.get::<Player>(shooter).map_or(0, |player| rewind_ticks(world.tick, player.input.view()));
     make_shot(world, muzzle, Some(shooter), dir);
-    let (end, struck) = hitscan(world, shooter, muzzle, dir, round, vid, back);
-    if struck {
-        let [x, y, z] = std::array::from_fn(|i| to_cm(muzzle[i] + dir[i] * end));
-        world.shots.push(ShotEvent { shooter: vid, weapon: round.weapon, x, y, z });
-    }
+    let ttl = (round.range / BULLET_SPEED * TICK_RATE as f32).ceil() as u32;
+    world.launch(Flying::new(PROJECTILE_BULLET, shooter, muzzle, dir.map(|v| v * BULLET_SPEED), ttl).aboard(vid).rewound(back).hitting(round));
 }
 
 impl Mechanic for Gunnery {

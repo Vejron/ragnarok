@@ -180,7 +180,7 @@ fn shoot_at(game: &mut Game, vid: u32, target: [f32; 3], local_from: [f32; 3]) -
     let len = vec3::length(flat);
     let dir = flat.map(|v| v / len);
     let id = game.world.alloc_id();
-    game.world.launch_as(id, Flying { kind: PROJECTILE_SHELL, owner: 0, source: 0, position: from, velocity: dir.map(|v| v * SHELL_SPEED), ttl: SHELL_TTL_TICKS, item: 0, back: 0, flown: 0.0 });
+    game.world.launch_as(id, Flying { kind: PROJECTILE_SHELL, owner: 0, source: 0, position: from, velocity: dir.map(|v| v * SHELL_SPEED), ttl: SHELL_TTL_TICKS, item: 0, back: 0, flown: 0.0, hits: None });
     let mut events = Vec::new();
     for _ in 0..40 {
         game.step();
@@ -290,7 +290,7 @@ fn a_shell_into_a_tanks_turret_damages_the_turret() {
     let dir = [target[0] - from[0], target[1] - from[1], target[2] - from[2]];
     let len = vec3::length(dir);
     let id = game.world.alloc_id();
-    game.world.launch_as(id, Flying { kind: PROJECTILE_SHELL, owner: 0, source: 0, position: from, velocity: dir.map(|v| v / len * SHELL_SPEED), ttl: SHELL_TTL_TICKS, item: 0, back: 0, flown: 0.0 });
+    game.world.launch_as(id, Flying { kind: PROJECTILE_SHELL, owner: 0, source: 0, position: from, velocity: dir.map(|v| v / len * SHELL_SPEED), ttl: SHELL_TTL_TICKS, item: 0, back: 0, flown: 0.0, hits: None });
     for _ in 0..40 {
         game.step();
     }
@@ -539,7 +539,7 @@ fn he_at(game: &mut Game, vid: u32, target: [f32; 3], local_from: [f32; 3]) {
     let flat = [at[0] - from[0], at[1] - from[1], at[2] - from[2]];
     let len = vec3::length(flat);
     let kind = shared::protocol::PROJECTILE_HE;
-    let id = game.world.launch(Flying { kind, owner: 0, source: 0, position: from, velocity: flat.map(|v| v / len * SHELL_SPEED), ttl: SHELL_TTL_TICKS, item: 0, back: 0, flown: 0.0 });
+    let id = game.world.launch(Flying { kind, owner: 0, source: 0, position: from, velocity: flat.map(|v| v / len * SHELL_SPEED), ttl: SHELL_TTL_TICKS, item: 0, back: 0, flown: 0.0, hits: None });
     for _ in 0..40 {
         game.step();
         if !game.world.in_flight().contains_key(&id) {
