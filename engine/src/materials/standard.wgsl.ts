@@ -3,6 +3,7 @@ import { MARSH_WGSL } from './marsh.wgsl'
 import { STONES_WGSL } from './stones.wgsl'
 import { SUN_SHADOW_WGSL } from './sunshadow.wgsl'
 import { VERTEX_WGSL } from './vertex.wgsl'
+import { WALLS_WGSL } from './walls.wgsl'
 import { WORN_WGSL } from './worn.wgsl'
 
 /**
@@ -29,6 +30,7 @@ ${SUN_SHADOW_WGSL}
 ${MARSH_WGSL}
 ${STONES_WGSL}
 ${WORN_WGSL}
+${WALLS_WGSL}
 
 // The craters' marks (linear colours): bare earth in the bowl, char, and the soil thrown out round the rim.
 const CRATER_EARTH = vec3f(0.22, 0.14, 0.075);
@@ -48,6 +50,8 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   let stonesTexel = textureSample(stonesMap, mapSampler, in.uv);
   // Metres a pixel spans on the surface, for the craters' rim lines: a derivative, so taken up here too.
   let pixel = length(fwidth(in.world.xz)) * 0.7071;
+  // The same on any face, upright ones too, for walls' patterns.
+  let facePixel = length(fwidth(in.world)) * 0.6;
   let material = materials[in.ids.x];
   let flags = material.params.x;
   let marshy = (flags & MAT_MARSH) != 0u;
@@ -61,6 +65,9 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   var rgb = in.color.rgb * texel.rgb;
   if ((flags & MAT_NORMAL_TONE) != 0u) {
     rgb *= normalTexel.a * 2.0;
+  }
+  if ((flags & MAT_WALLS) != 0u && in.custom.x > 0.5) {
+    rgb = wallsLook(rgb, in.world, normalize(in.normal), in.custom.x, facePixel);
   }
   if ((flags & MAT_WORN) != 0u) {
     let worn = wornLook(rgb, in.world.xz, in.custom.x, in.custom.y, pixel);

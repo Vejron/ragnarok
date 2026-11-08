@@ -8,7 +8,7 @@ import { dustCloud, type Particles } from './particles'
 import { Fracture, shardGeometry } from './fracture'
 import { lookChunk, lookFracture } from './lookfracture'
 import { rubbleSoup, shardSoup } from './shards'
-import { buildingColors } from './buildingmesh'
+import { buildingColors, buildingSurfaces } from './buildingmesh'
 
 /** A small deterministic generator, so every client throws the same pieces the same way. */
 function random(seed: number) {
@@ -124,7 +124,7 @@ interface Puff {
 
 const pieceMaterial = toonMaterial({ vertexColors: true, side: 'double' })
 // Double-sided: through a hole you see the inside of the far wall and the underside of the roof.
-const hurtMaterial = toonMaterial({ vertexColors: true, side: 'double' })
+const hurtMaterial = toonMaterial({ vertexColors: true, side: 'double', walls: true })
 
 /** A wall triangle: the three corners and its unit normal (arbitrary side), metres. */
 interface Wall {
@@ -469,13 +469,13 @@ export class BuildingDamage {
       const c = Color.hex(hex)
       return [c.r, c.g, c.b] as const
     }
-    const soup = lookFracture(tile.look, range, fracture.shell, state.removed, state.dents, rgb(wall), rgb(roof))
+    const soup = lookFracture(tile.look, range, fracture.shell, state.removed, state.dents, rgb(wall), rgb(roof), buildingSurfaces(tile, index, salt))
     if (drawn.look) {
       drawn.look.geometry.dispose()
-      drawn.look.geometry = shardGeometry(soup.positions, soup.colors)
+      drawn.look.geometry = shardGeometry(soup.positions, soup.colors, soup.custom)
       return
     }
-    const mesh = new Mesh(shardGeometry(soup.positions, soup.colors), hurtMaterial)
+    const mesh = new Mesh(shardGeometry(soup.positions, soup.colors, soup.custom), hurtMaterial)
     mesh.castShadow = true
     mesh.receiveShadow = true
     drawn.group.add(mesh)

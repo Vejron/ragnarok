@@ -55,7 +55,7 @@ export function replaceRibbons(group: Group, ribbons: readonly Ribbon[]) {
 }
 
 /** Every tile's buildings share this one; each vertex carries its colour. */
-const buildingMaterial = toonMaterial({ vertexColors: true })
+const buildingMaterial = toonMaterial({ vertexColors: true, walls: true })
 
 /** Puts snow on the roofs. Done once, when the manifest says it is winter, before any tile is drawn. */
 export function snowOnBuildings() {
@@ -164,8 +164,8 @@ const NONE: ReadonlySet<number> = new Set()
  */
 function mergedMesh(buffers: BuildingBuffers | null, destroyed: ReadonlySet<number>): Mesh[] {
   if (!buffers) return []
-  const { positions, normals, colors, bounds } = buffers
-  const mesh = new Mesh(new Geometry({ positions, normals, colors, bounds }), buildingMaterial)
+  const { positions, normals, colors, custom, bounds } = buffers
+  const mesh = new Mesh(new Geometry({ positions, normals, colors, custom, bounds }), buildingMaterial)
   mesh.castShadow = true
   mesh.receiveShadow = true
   mesh.userData.merged = true

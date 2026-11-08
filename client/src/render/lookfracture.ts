@@ -21,7 +21,17 @@ export interface LookRange {
 export interface LookSoup {
   positions: Float32Array
   colors: Float32Array
+  /** Four numbers a vertex, the first the surface pattern on it (`Surface` in buildingmesh.ts). */
+  custom: Float32Array
 }
+
+/** The surface patterns of a building's walls and roof (`buildingSurfaces`). */
+export interface Surfaces {
+  wall: number
+  roof: number
+}
+
+const PLAIN: Surfaces = { wall: 0, roof: 0 }
 
 /** How deep the edge of a hole is drawn, metres: a wall, and a roof. */
 const WALL_DEPTH = 0.3
@@ -254,6 +264,9 @@ function outline(taken: readonly Piece[], all: readonly Piece[]) {
 class Writer {
   readonly positions: number[] = []
   readonly colors: number[] = []
+  readonly custom: number[] = []
+  /** The surface pattern the next polygons are drawn with: only walls and roofs whole or cut keep theirs, not edges, chips or windows. */
+  surface = 0
   constructor(private readonly place: (p: P) => P, private readonly offset: P = [0, 0, 0]) {}
 
   /** `poly` as a fan, each corner in `base` times what `tone` gives it; `placed` when its corners are where they go already. */
@@ -266,6 +279,7 @@ class Writer {
         const p = at[k]!
         this.positions.push(p[0] - ox, p[1] - oy, p[2] - oz)
         this.colors.push(base[0] * tones[k]!, base[1] * tones[k]!, base[2] * tones[k]!)
+        this.custom.push(this.surface, 0, 0, 0)
       }
     }
   }
@@ -284,7 +298,7 @@ class Writer {
   }
 
   soup(): LookSoup {
-    return { positions: Float32Array.from(this.positions), colors: Float32Array.from(this.colors) }
+    return { positions: Float32Array.from(this.positions), colors: Float32Array.from(this.colors), custom: Float32Array.from(this.custom) }
   }
 }
 
@@ -292,7 +306,7 @@ class Writer {
  * Building `range` of `look` as it stands with the cells in `removed` gone and those in `dents`
  * worn, in `wall` and `roof` (linear `[r, g, b]`). Triangles far from any hole are drawn whole.
  */
-export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell, removed: ReadonlySet<number>, dents: ReadonlyMap<number, number>, wall: RGB, roof: RGB): LookSoup {
+export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell, removed: ReadonlySet<number>, dents: ReadonlyMap<number, number>, wall: RGB, roof: RGB, surfaces: Surfaces = PLAIN): LookSoup {
   const grid = new Grid(shell)
   const { cell, origin } = grid
   const near = [...removed, ...dents.keys()].map((id) => shell.coords(id))
@@ -315,8 +329,15 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
   }
 
   const out = new Writer(place)
-  for (const piece of whole) out.poly(piece.poly, piece.roof ? roof : wall)
-  for (const piece of kept) out.poly(piece.poly, piece.roof ? roof : wall, shade)
+  for (const piece of whole) {
+    out.surface = piece.roof ? surfaces.roof : surfaces.wall
+    out.poly(piece.poly, piece.roof ? roof : wall)
+  }
+  for (const piece of kept) {
+    out.surface = piece.roof ? surfaces.roof : surfaces.wall
+    out.poly(piece.poly, piece.roof ? roof : wall, shade)
+  }
+  out.surface = 0
   out.rims(rims, wall, roof, shade)
   // Chips where rounds struck: a few ragged marks on the wall in each worn cell, more as it wears.
   if (dents.size > 0) {

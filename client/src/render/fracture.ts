@@ -207,9 +207,9 @@ export class Fracture {
 }
 
 /** A flat-shaded geometry from triangle soup with a colour per vertex. */
-export function shardGeometry(positions: Float32Array, colors: Float32Array): Geometry {
+export function shardGeometry(positions: Float32Array, colors: Float32Array, custom?: Float32Array): Geometry {
   // Not indexed, so every face has its own normal: flat shading.
-  const geometry = new Geometry({ positions, colors })
+  const geometry = new Geometry({ positions, colors, custom })
   geometry.computeNormals()
   return geometry
 }

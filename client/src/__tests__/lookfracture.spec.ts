@@ -3,6 +3,8 @@ import { Shell, type Tri } from '@/sim/carve'
 import { lookFracture } from '@/render/lookfracture'
 import { openingsOf } from '@/render/windows'
 import { rubbleSoup } from '@/render/shards'
+import { buildingSurfaces, Surface } from '@/render/buildingmesh'
+import { ROOF_FLAT, ROOF_GABLE } from '@/world'
 import type { CollisionMesh } from '@/world'
 
 /** A box house 5 × 4 × 3 m: walls, then a flat roof, centimetre triangles. */
@@ -107,6 +109,29 @@ describe('lookFracture', () => {
     expect(light.positions.length).toBeGreaterThan(plain.positions.length)
     expect(heavy.positions.length).toBeGreaterThan(light.positions.length)
     expect(Math.min(...heavy.colors)).toBeLessThan(0.5)
+  })
+
+  it('keeps the walls\' and roof\'s patterns on what stands, not on the hole\'s edge or the windows', () => {
+    const soup = lookFracture(look, range, shell, new Set([hole]), new Map(), white, white, { wall: Surface.Lap, roof: Surface.Tiles })
+    expect(soup.custom.length).toBe((soup.positions.length / 3) * 4)
+    const kinds = new Set<number>()
+    for (let i = 0; i < soup.custom.length; i += 4) kinds.add(soup.custom[i]!)
+    expect([...kinds].sort()).toEqual([Surface.Plain, Surface.Lap, Surface.Tiles])
+    // Every vertex of the roof (y = 3 m, lying flat) is tiles.
+    for (let v = 0; v < soup.positions.length / 3; v += 3) {
+      const ys = [0, 1, 2].map((k) => soup.positions[(v + k) * 3 + 1]!)
+      if (ys.every((y) => Math.abs(y - 3) < 1e-4) && soup.custom[v * 4] !== Surface.Plain) expect(soup.custom[v * 4]).toBe(Surface.Tiles)
+    }
+  })
+
+  it('picks boards, brick or render from the wall colour, and felt for a flat roof', () => {
+    const tile = (paint: [number, number] | null, roofKind = ROOF_GABLE) => ({ buildings: [{ paint, roofKind } as never] })
+    expect(buildingSurfaces(tile([0xa8432f, 0xb5543f]), 0, 0)).toEqual({ wall: Surface.Upright, roof: Surface.Tiles })
+    expect(buildingSurfaces(tile([0xeee9dc, 0x4f5d6b]), 0, 0)).toEqual({ wall: Surface.Lap, roof: Surface.Sheet })
+    expect(buildingSurfaces(tile([0x8f3a2c, 0xb0b4ba], ROOF_FLAT), 0, 0)).toEqual({ wall: Surface.Brick, roof: Surface.Felt })
+    // Painted by the importer (France): render, or brick if a dark red.
+    expect(buildingSurfaces(tile([0xd8d0c0, 0x9c4a3c]), 0, 0).wall).toBe(Surface.Render)
+    expect(buildingSurfaces(tile([0x7a3020, 0x9c4a3c]), 0, 0).wall).toBe(Surface.Brick)
   })
 
   it('is the same on every client', () => {

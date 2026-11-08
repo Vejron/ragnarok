@@ -102,6 +102,7 @@ The style is flat, bright and few-banded, not physically based.
   The engine does three's `MeshToonMaterial` maths: `colour/π × (sun × ramp(N·L·0.5 + 0.5) × shadow +
   hemisphere(N)) + emissive`, then linear fog. A ramp is a row of one 256 × 64 texture, so the number
   of ramps is not a cost.
+- **Building surfaces.** Walls and roofs carry a pattern drawn in the shader (`MAT_WALLS`, `engine/src/materials/walls.wgsl.ts`), picked per building in `buildingSurfaces` (buildingmesh.ts) and passed as each vertex's custom x: upright boards for falu red and dark wood, lap boards for ochre, white and beige, brick for dark red, mottled render for greys (and for walls the importer painted), roof tiles for red roofs, standing-seam sheet for the rest and felt for flat ones. Laid out in world space along each face, so no uvs; every line is antialiased and evens out into its average tone as it nears a pixel, so it does not shimmer far off. Kept on a hurt building's standing walls (`lookFracture`), not on hole edges, chips, windows or falling pieces (those move, and a world-space pattern would slide over them). No measurable GPU cost.
 - **Fixed palettes.** Building colours (natural house paint: falu red, ochre, white, render greys, dark wood), roof colours, cover colours (`cover.ts`) and player outfits
   (`character.ts` `PALETTE`) are fixed lists, picked by index so they are stable between reloads.
 - **Baked terrain tone.** `shade.ts` computes a brightness multiplier per terrain vertex: hillshade

@@ -49,6 +49,12 @@ export interface MaterialParams {
    * are (0 to 1). The edges break up into the ground beside it and the dirt is mottled, in the shader.
    */
   worn?: boolean
+  /**
+   * Building walls and roofs: the geometry's custom x picks a surface pattern drawn in the shader, in
+   * world space along each face (`WALL_*` kinds in walls.wgsl.ts): boards, brick, render, roof tiles,
+   * sheet metal or felt. 0 leaves the face plain.
+   */
+  walls?: boolean
   ramp?: Ramp | null
   blend?: Blend
   side?: Side
@@ -82,6 +88,7 @@ export class Material {
   marsh: boolean
   stones: Texture | null
   worn: boolean
+  walls: boolean
   ramp: Ramp | null
   blend: Blend
   side: Side
@@ -111,6 +118,7 @@ export class Material {
     this.marsh = params.marsh ?? false
     this.stones = params.stones ?? null
     this.worn = params.worn ?? false
+    this.walls = params.walls ?? false
     this.ramp = params.ramp ?? null
     this.blend = params.blend ?? 'opaque'
     this.side = params.side ?? 'front'
@@ -144,6 +152,7 @@ export class Material {
       marsh: this.marsh,
       stones: this.stones,
       worn: this.worn,
+      walls: this.walls,
       ramp: this.ramp,
       blend: this.blend,
       side: this.side,

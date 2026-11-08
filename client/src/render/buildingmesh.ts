@@ -36,6 +36,8 @@ export interface BuildingBuffers {
   positions: Float32Array
   normals: Float32Array
   colors: Float32Array
+  /** Four numbers a vertex: the first is the surface pattern drawn on it (`Surface`), the rest unused. */
+  custom: Float32Array
   bounds: Sphere
   /**
    * For a tile's soup (`buildingBuffers`), each building's vertices in it: first, then count, two
@@ -47,7 +49,7 @@ export interface BuildingBuffers {
 
 /** The arrays of `buffers`, so they move to the other thread instead of being copied. */
 export function buildingTransferables(buffers: BuildingBuffers): ArrayBuffer[] {
-  const arrays = [buffers.positions, buffers.normals, buffers.colors, ...(buffers.ranges ? [buffers.ranges] : [])]
+  const arrays = [buffers.positions, buffers.normals, buffers.colors, buffers.custom, ...(buffers.ranges ? [buffers.ranges] : [])]
   return arrays.map((array) => array.buffer as ArrayBuffer)
 }
 
@@ -60,6 +62,33 @@ export function buildingColors(tile: Pick<BuildingTile, 'buildings'>, index: num
   if (building?.paint) return { wall: building.paint[0], roof: building.paint[1] }
   const palette = building?.roofKind === ROOF_FLAT ? FLAT_ROOF_COLORS : ROOF_COLORS
   return { wall: BUILDING_COLORS[(index + salt) % BUILDING_COLORS.length]!, roof: palette[(index + salt) % palette.length]! }
+}
+
+/** Patterns drawn on a building's faces by the shader (walls.wgsl.ts in the engine), as a vertex's custom x. */
+export const Surface = { Plain: 0, Upright: 1, Lap: 2, Brick: 3, Render: 4, Tiles: 5, Sheet: 6, Felt: 7 } as const
+export type Surface = (typeof Surface)[keyof typeof Surface]
+
+/** Falu red and dark stained wood are upright boards; ochre, white and beige lap boards; the dark red brick; greys and sage render. */
+const WALL_SURFACES = new Map<number, Surface>([
+  [0xa8432f, Surface.Upright], [0x6e5642, Surface.Upright],
+  [0xd9b45a, Surface.Lap], [0xeee9dc, Surface.Lap], [0xe4dcc6, Surface.Lap], [0xd8c6a3, Surface.Lap],
+  [0x8f3a2c, Surface.Brick],
+  [0xc9c4b8, Surface.Render], [0xb5bda4, Surface.Render], [0xa9a59c, Surface.Render],
+])
+
+/**
+ * The patterns on building `index`'s walls and roof: from the palette colour it was given, or, painted
+ * by the importer, render (brick if the paint is a dark red); a flat roof is felt, a red one tiles and
+ * any other sheet metal.
+ */
+export function buildingSurfaces(tile: Pick<BuildingTile, 'buildings'>, index: number, salt: number): { wall: Surface; roof: Surface } {
+  const { wall, roof } = buildingColors(tile, index, salt)
+  const channels = (hex: number) => [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255] as const
+  const [wr, wg, wb] = channels(wall)
+  const wallSurface = WALL_SURFACES.get(wall) ?? (wr > wg * 1.6 && wr + wg + wb < 400 ? Surface.Brick : Surface.Render)
+  const [rr, rg] = channels(roof)
+  const roofSurface = tile.buildings[index]?.roofKind === ROOF_FLAT ? Surface.Felt : rr > rg * 1.3 ? Surface.Tiles : Surface.Sheet
+  return { wall: wallSurface, roof: roofSurface }
 }
 
 /** A building's faces as `Shell.facesWithRoof` gives them. */
@@ -76,6 +105,9 @@ class Soup {
   readonly positions: Float32Array
   readonly normals: Float32Array
   readonly colors: Float32Array
+  readonly custom: Float32Array
+  /** The pattern the next triangles are drawn with. */
+  surface: Surface = Surface.Plain
   private at = 0
   /** The box round every corner written: min x, y, z, then max. */
   private readonly box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity]
@@ -84,6 +116,7 @@ class Soup {
     this.positions = new Float32Array(triangles * 9)
     this.normals = new Float32Array(triangles * 9)
     this.colors = new Float32Array(triangles * 9)
+    this.custom = new Float32Array(triangles * 12)
   }
 
   /** Appends the triangle `a b c` in the colour `r g b`, its normal `(c - b) × (a - b)` normalised. */
@@ -119,6 +152,7 @@ class Soup {
       colors[k + 1] = g
       colors[k + 2] = b
     }
+    if (this.surface !== Surface.Plain) for (let k = (i / 3) * 4; k < (i / 3 + 3) * 4; k += 4) this.custom[k] = this.surface
     this.at = i + 9
   }
 
@@ -172,7 +206,7 @@ class Soup {
   }
 
   buffers(): BuildingBuffers {
-    return { positions: this.positions, normals: this.normals, colors: this.colors, bounds: this.bounds() }
+    return { positions: this.positions, normals: this.normals, colors: this.colors, custom: this.custom, bounds: this.bounds() }
   }
 }
 
@@ -225,14 +259,21 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
     const seen = looked(index)
     const first = soup.vertices
     const [wall, roof] = linearColors(tile, index, salt)
+    const surfaces = buildingSurfaces(tile, index, salt)
     if (seen) {
+      soup.surface = surfaces.wall
       soup.collision({ collision: look! }, seen.first, seen.walls, wall)
+      soup.surface = surfaces.roof
       soup.collision({ collision: look! }, seen.first + seen.walls, seen.roof, roof)
+      soup.surface = Surface.Plain
       openingQuads(openings[index] ?? [], (corners, rgb, normal) => soup.quad(facing(corners, normal), rgb))
     } else if (own) soup.faces(own, wall, roof)
     else {
+      soup.surface = surfaces.wall
       soup.collision(tile, building.first, building.walls, wall)
+      soup.surface = surfaces.roof
       soup.collision(tile, building.first + building.walls, building.roof, roof)
+      soup.surface = Surface.Plain
     }
     ranges[index * 2] = first
     ranges[index * 2 + 1] = soup.vertices - first
