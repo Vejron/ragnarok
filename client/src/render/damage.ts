@@ -1,4 +1,4 @@
-import { Color, Group, Mesh, Vector3 } from '@ragnarok/engine'
+import { Color, Group, Mesh, Quaternion, Vector3 } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
 import { DAMAGE_STAGES } from '@/sim/consts'
 import type { TileData } from '@/world'
@@ -27,9 +27,6 @@ const MAX_FALLING = 48
 /** Pieces a building keeps lying about; past that the oldest sink into the ground, over this many seconds. */
 const KEEP_RESTING = 60
 const SINK_SECONDS = 4
-/** Longest a fallen section of wall goes on tipping over on the ground, seconds, and the least it turns while it does, rad/s. */
-const TIP_SECONDS = 2.5
-const MIN_TIP = 1.4
 /** Longest anything flies before it is put on the ground, seconds, so nothing can hang or tumble in the air for ever. */
 const MAX_AIR_SECONDS = 8
 const GRAVITY = 9.8
@@ -82,10 +79,10 @@ interface Falling {
   resting: boolean
   /** Its geometry is one of the kept shard shapes (`shardGeometry`), not to be freed with it. */
   shared?: boolean
-  /** A section of wall: it tips over on the ground until it lies flat. */
+  /** A section of wall: it topples over on the ground until it lies flat. */
   section?: boolean
-  /** Seconds since its lowest corner first met the ground; undefined while it is in the air. */
-  grounded?: number
+  /** A section toppling, once down: from and to which turn, how long it takes and has taken (seconds), and the corner it turns about (in its own frame). */
+  topple?: { from: Quaternion; to: Quaternion; time: number; spent: number; foot: Vector3 }
   /** Seconds it has been sinking into the ground, once there were too many lying about. */
   sinking?: number
 }
@@ -490,9 +487,16 @@ export class BuildingDamage {
    * Throws the wall and roof in `cells` out of the building as chunks: blasted ones fly away from
    * `point`, ones that were left hanging (`falls`) drop where they were.
    */
+  /** Pieces of `drawn` still falling or toppling: those lying still or sinking take no place. */
+  private moving(drawn: Drawn): number {
+    let n = 0
+    for (const piece of drawn.falling) if (!piece.resting) n++
+    return n
+  }
+
   private throwCells(drawn: Drawn, fracture: Fracture, shell: NonNullable<Fracture['shell']>, floor: number, cells: readonly number[], point: Mark | null, falls: boolean, removed: ReadonlySet<number>) {
     // A big swath is thrown in bigger chunks rather than dropped past the limit: pieces still falling from the last round take places too.
-    const room = Math.max(MAX_FALLING - drawn.falling.length, 8)
+    const room = Math.max(MAX_FALLING - this.moving(drawn), 8)
     const most = Math.max(falls ? FALLEN_CELLS : THROWN_CELLS, Math.ceil(cells.length / room))
     const seen = drawn.seen
     for (const group of shell.clusters(cells, most)) {
@@ -503,7 +507,7 @@ export class BuildingDamage {
       const chunk = fracture.chunk(new Set(group))
       if (!chunk) continue
       this.puffs.push({ at: chunk.pivot.clone(), size: falls ? 3 + this.rand() * 2 : 1.4 + this.rand() * 1.4 })
-      if (drawn.falling.length >= MAX_FALLING * 2) continue
+      if (this.moving(drawn) >= MAX_FALLING * 2) continue
       const mesh = new Mesh(shardGeometry(chunk.positions, chunk.colors), pieceMaterial)
       mesh.position.copy(chunk.pivot)
       mesh.castShadow = true
@@ -577,7 +581,8 @@ export class BuildingDamage {
         return [c.r, c.g, c.b] as const
       }
       const soup = tile.look && range ? lookChunk(tile.look, range, shell, new Set(group), [pivot.x, pivot.y, pivot.z], rgb(wall), rgb(roof)) : null
-      if (soup && soup.positions.length > 0 && drawn.falling.length < MAX_FALLING * 2) {
+      // The section always falls, however much is already falling: without it its part of the building would just be gone.
+      if (soup && soup.positions.length > 0) {
         const mesh = new Mesh(shardGeometry(soup.positions, soup.colors), pieceMaterial)
         mesh.position.copy(pivot)
         mesh.castShadow = true
@@ -596,7 +601,7 @@ export class BuildingDamage {
       }
     }
     for (let i = first; i < count; i++) {
-      if (drawn.falling.length >= MAX_FALLING * 2) return
+      if (this.moving(drawn) >= MAX_FALLING * 2) return
       // The first piece of a fall is most of it; the rest are bits.
       const share = falls ? (i === 0 ? 0.7 : 0.3 / Math.max(1, count - 1)) : 1 / count
       // A unit shard holds about 0.12 m³; most bits are small, none bigger than a door.
@@ -653,11 +658,14 @@ export class BuildingDamage {
   private fall(drawn: Drawn, floor: number, dt: number) {
     let lying = 0
     for (const piece of drawn.falling) if (piece.resting && piece.sinking === undefined) lying++
-    for (let i = 0; i < drawn.falling.length && lying > KEEP_RESTING; i++) {
-      const piece = drawn.falling[i]!
-      if (!piece.resting || piece.sinking !== undefined) continue
-      piece.sinking = 0
-      lying--
+    // The oldest bits go first, and only then sections of wall, the biggest part of the heap.
+    for (const sections of [false, true]) {
+      for (let i = 0; i < drawn.falling.length && lying > KEEP_RESTING; i++) {
+        const piece = drawn.falling[i]!
+        if (!piece.resting || piece.sinking !== undefined || !!piece.section !== sections) continue
+        piece.sinking = 0
+        lying--
+      }
     }
     for (let i = drawn.falling.length - 1; i >= 0; i--) {
       const piece = drawn.falling[i]!
@@ -675,32 +683,49 @@ export class BuildingDamage {
       }
       if (piece.resting) continue
       const ground = this.groundUnder(mesh.position.x, mesh.position.z, floor)
-      const grounded = piece.grounded ?? 0
-      if (grounded === 0) {
-        piece.velocity.y -= GRAVITY * dt
-        mesh.position.addScaledVector(piece.velocity, dt)
-      } else {
-        // On the ground: it slides a little and slows.
-        mesh.position.x += piece.velocity.x * dt
-        mesh.position.z += piece.velocity.z * dt
-        piece.velocity.multiplyScalar(Math.max(0, 1 - 4 * dt))
+      if (piece.topple) {
+        this.topple(piece, ground, dt)
+        continue
       }
+      piece.velocity.y -= GRAVITY * dt
+      mesh.position.addScaledVector(piece.velocity, dt)
       mesh.rotation.x += piece.spin.x * dt
       mesh.rotation.y += piece.spin.y * dt
       mesh.rotation.z += piece.spin.z * dt
-      const { low, height, wide } = span(mesh)
-      // In the air it falls on; once down it stays down, its lowest corner kept on the ground as it
-      // tips (turning about its middle would lift it off, with nothing to bring it back).
-      if (grounded === 0 && low > ground && piece.age < MAX_AIR_SECONDS) continue
+      const { low } = span(mesh)
+      if (low > ground && piece.age < MAX_AIR_SECONDS) continue
+      // Its lowest corner on the ground, not under it.
       mesh.position.y += ground - low
-      piece.grounded = grounded + dt
-      // A section of wall tips on over its foot until it lies about flat; anything else lies where it lands.
-      const flat = height <= Math.max(0.45, wide * 0.35)
-      if (piece.section && !flat && piece.grounded < TIP_SECONDS) {
-        if (piece.spin.length() < MIN_TIP) piece.spin.setLength(MIN_TIP)
-        piece.spin.y *= 0.9
+      // A section of wall standing on its edge topples over onto its broad side; anything else lies where it lands.
+      const toppling = piece.section ? toppleOf(mesh) : null
+      if (toppling) {
+        piece.topple = toppling
+        piece.velocity.set(piece.velocity.x * 0.3, 0, piece.velocity.z * 0.3)
         continue
       }
+      piece.resting = true
+    }
+  }
+
+  /**
+   * Moves a toppling section on: it turns about the corner it stands on, slowly at first and faster
+   * as it goes over, as a slab does, and lies still once flat on the ground.
+   */
+  private topple(piece: Falling, ground: number, dt: number) {
+    const mesh = piece.mesh
+    const t = piece.topple!
+    t.spent = Math.min(t.time, t.spent + dt)
+    // Where the corner it turns about is now, in the world, to keep it there.
+    const foot = t.foot.clone().applyQuaternion(mesh.quaternion).add(mesh.position)
+    const turn = new Quaternion().copy(t.from).slerp(t.to, (t.spent / t.time) ** 2)
+    mesh.quaternion.copy(turn)
+    const moved = t.foot.clone().applyQuaternion(mesh.quaternion)
+    mesh.position.set(foot.x - moved.x + piece.velocity.x * dt, mesh.position.y, foot.z - moved.z + piece.velocity.z * dt)
+    piece.velocity.multiplyScalar(Math.max(0, 1 - 4 * dt))
+    // Its lowest corner on the ground: the corner it turns about, or what comes down onto it.
+    mesh.position.y += this.groundUnder(mesh.position.x, mesh.position.z, ground) - span(mesh).low
+    if (t.spent >= t.time) {
+      piece.topple = undefined
       piece.resting = true
     }
   }
@@ -772,6 +797,61 @@ function smolder(smoke: Pick<Particles, 'spawn'>, at: Vector3, heat: number) {
     gravity: -0.6,
     drag: 0.7,
   })
+}
+
+/** A section turned no further than this from lying flat lies where it lands, radians. */
+const FLAT_ENOUGH = 0.3
+
+/**
+ * How section `mesh`, its lowest corner just on the ground, topples over: from its turn now to the
+ * one that lays its broad side (its geometry's thinnest way across) flat, about its lowest corner,
+ * taking longer the taller it stands. Null when it lies about flat already.
+ */
+export function toppleOf(mesh: Mesh): Falling['topple'] | null {
+  const thin = thinnest(mesh.geometry.positions)
+  const across = new Vector3(thin[0], thin[1], thin[2]).applyQuaternion(mesh.quaternion)
+  const up = new Vector3(0, across.y >= 0 ? 1 : -1, 0)
+  const angle = Math.acos(Math.min(1, Math.abs(across.y)))
+  if (angle < FLAT_ENOUGH) return null
+  const from = new Quaternion().copy(mesh.quaternion)
+  const to = new Quaternion().setFromUnitVectors(across, up).multiply(from)
+  // Its lowest corner, in its own frame.
+  const p = mesh.geometry.positions
+  const at = new Vector3()
+  let [low, foot] = [Infinity, new Vector3()]
+  for (let i = 0; i < p.length; i += 3) {
+    at.set(p[i]!, p[i + 1]!, p[i + 2]!).applyQuaternion(mesh.quaternion)
+    if (at.y < low) {
+      low = at.y
+      foot = new Vector3(p[i]!, p[i + 1]!, p[i + 2]!)
+    }
+  }
+  const { height } = span(mesh)
+  return { from, to, time: (0.35 + 0.45 * Math.sqrt(height)) * Math.sqrt(angle / (Math.PI / 2)), spent: 0, foot }
+}
+
+/** The unit direction across `positions` (x, y, z a corner) that they spread least along: a slab's face normal. */
+function thinnest(positions: ArrayLike<number>): [number, number, number] {
+  const n = positions.length / 3
+  if (n < 3) return [0, 1, 0]
+  const m = [0, 0, 0]
+  for (let i = 0; i < positions.length; i += 3) for (let a = 0; a < 3; a++) m[a]! += positions[i + a]! / n
+  // Their spread: the covariance matrix.
+  const c = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+  for (let i = 0; i < positions.length; i += 3) {
+    const d = [positions[i]! - m[0]!, positions[i + 1]! - m[1]!, positions[i + 2]! - m[2]!]
+    for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) c[a * 3 + b]! += d[a]! * d[b]!
+  }
+  // The least spread is the greatest of (trace - C): found by repeated multiplying.
+  const trace = c[0]! + c[4]! + c[8]!
+  const k = c.map((v, i) => (i % 4 === 0 ? trace - v : -v))
+  let v = [0.3, 0.5, 0.8]
+  for (let it = 0; it < 32; it++) {
+    const w = [0, 1, 2].map((a) => k[a * 3]! * v[0]! + k[a * 3 + 1]! * v[1]! + k[a * 3 + 2]! * v[2]!)
+    const l = Math.hypot(w[0]!, w[1]!, w[2]!) || 1
+    v = w.map((x) => x / l)
+  }
+  return [v[0]!, v[1]!, v[2]!]
 }
 
 /**

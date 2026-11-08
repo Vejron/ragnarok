@@ -282,8 +282,9 @@ impl Shell {
         self.solid.iter().enumerate().filter(|&(_, &s)| s).map(|(i, _)| i as u32).collect()
     }
 
-    /// The cells touching cell `id`, faces, edges and corners.
-    fn around(&self, id: u32) -> impl Iterator<Item = u32> + '_ {
+    /// The cells touching cell `id`, faces, edges and corners: what its load spreads over (`hold`), as
+    /// a wall carries its weight diagonally round an opening.
+    fn touching(&self, id: u32) -> impl Iterator<Item = u32> + '_ {
         let [x, y, z] = self.coords(id);
         (-1i32..=1).flat_map(move |dy| (-1i32..=1).flat_map(move |dz| (-1i32..=1).map(move |dx| (dx, dy, dz)))).filter_map(move |(dx, dy, dz)| {
             if (dx, dy, dz) == (0, 0, 0) {
@@ -295,11 +296,24 @@ impl Shell {
         })
     }
 
+    /// The cells sharing a face with cell `id`: what can hold it up. Cells that only touch at an edge
+    /// or a corner do not hold each other: drawn, a piece hanging by a corner floats. The importer's
+    /// walls are joined face to face, diagonal ones included (one cell in 1.7 million in the worlds
+    /// surveyed is not), so a whole building is held as before.
+    fn around(&self, id: u32) -> impl Iterator<Item = u32> + '_ {
+        let [x, y, z] = self.coords(id);
+        [(-1i32, 0i32, 0i32), (1, 0, 0), (0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1)].into_iter().filter_map(move |(dx, dy, dz)| {
+            let (nx, ny, nz) = (x as i32 + dx, y as i32 + dy, z as i32 + dz);
+            let inside = nx >= 0 && ny >= 0 && nz >= 0 && (nx as usize) < self.dims[0] && (ny as usize) < self.dims[1] && (nz as usize) < self.dims[2];
+            inside.then(|| self.index(nx as usize, ny as usize, nz as usize))
+        })
+    }
+
     /// Marks the cells that hold the building up: those in its lowest layer, and every cell of a
     /// piece that does not touch that layer at all (which the importer made, and nobody cut).
     ///
-    /// One flood from the lowest layer (through faces, edges and corners, as `around`) finds every
-    /// piece that touches it; a solid cell it never reaches is in a piece that does not.
+    /// One flood from the lowest layer (through faces, as `around`) finds every piece that touches
+    /// it; a solid cell it never reaches is in a piece that does not.
     fn anchor(&mut self) {
         let [nx, ny, nz] = self.dims;
         let layer = nx * nz;
@@ -313,16 +327,11 @@ impl Shell {
             let id = queue[at];
             at += 1;
             let (x, z, y) = (id % nx, (id / nx) % nz, id / layer);
-            for yy in y.saturating_sub(1)..(y + 2).min(ny) {
-                for zz in z.saturating_sub(1)..(z + 2).min(nz) {
-                    let row = (yy * nz + zz) * nx;
-                    for xx in x.saturating_sub(1)..(x + 2).min(nx) {
-                        let next = row + xx;
-                        if self.solid[next] && !reached[next] {
-                            reached[next] = true;
-                            queue.push(next);
-                        }
-                    }
+            let faces = [(x > 0).then(|| id - 1), (x + 1 < nx).then(|| id + 1), (z > 0).then(|| id - nx), (z + 1 < nz).then(|| id + nx), (y > 0).then(|| id - layer), (y + 1 < ny).then(|| id + layer)];
+            for next in faces.into_iter().flatten() {
+                if self.solid[next] && !reached[next] {
+                    reached[next] = true;
+                    queue.push(next);
                 }
             }
         }
@@ -486,12 +495,12 @@ impl Shell {
             load[id as usize] += 1;
             let (mine, y) = (span[id as usize], self.coords(id)[1]);
             let nearer = |next: &u32| standing(*next as usize) && (span[*next as usize] < mine || (span[*next as usize] == mine && self.coords(*next)[1] < y));
-            let count = self.around(id).filter(nearer).count() as u32;
+            let count = self.touching(id).filter(nearer).count() as u32;
             if count == 0 {
                 continue;
             }
             let (share, extra) = (load[id as usize] / count, (load[id as usize] % count) as usize);
-            for (k, next) in self.around(id).filter(nearer).enumerate() {
+            for (k, next) in self.touching(id).filter(nearer).enumerate() {
                 load[next as usize] += share + u32::from(k < extra);
             }
         }
@@ -1132,6 +1141,47 @@ mod tests {
             let whole = shell.hold(&shell.untouched());
             let mut removed = shell.untouched();
             assert!(shell.strain(&mut removed, &whole).is_empty(), "{w}x{d}x{h}");
+        }
+    }
+
+    #[test]
+    fn nothing_is_left_hanging_by_an_edge_or_a_corner_as_a_house_comes_down() {
+        let shell = Shell::new(&boxed(10, 8, 6), &roof(10, 8, 6)).unwrap();
+        let whole = shell.hold(&shell.untouched());
+        let mut removed = shell.untouched();
+        // Every standing cell is joined face to face to an anchor.
+        let check = |removed: &[bool]| {
+            let standing = |i: u32| shell.solid[i as usize] && !removed[i as usize];
+            let mut held: Vec<u32> = (0..shell.solid.len() as u32).filter(|&i| standing(i) && shell.anchored[i as usize]).collect();
+            let mut seen: std::collections::HashSet<u32> = held.iter().copied().collect();
+            let mut at = 0;
+            while at < held.len() {
+                let [x, y, z] = shell.coords(held[at]).map(|v| v as i64);
+                let [nx, ny, nz] = shell.dims.map(|v| v as i64);
+                let faces = [(x - 1, y, z), (x + 1, y, z), (x, y - 1, z), (x, y + 1, z), (x, y, z - 1), (x, y, z + 1)];
+                for (fx, fy, fz) in faces.into_iter().filter(|&(fx, fy, fz)| fx >= 0 && fy >= 0 && fz >= 0 && fx < nx && fy < ny && fz < nz) {
+                    let next = shell.index(fx as usize, fy as usize, fz as usize);
+                    if standing(next) && seen.insert(next) {
+                        held.push(next);
+                    }
+                }
+                at += 1;
+            }
+            let hanging = (0..shell.solid.len() as u32).filter(|&i| standing(i) && !seen.contains(&i)).count();
+            assert_eq!(hanging, 0);
+        };
+        // Round the house at hip height, a blast every 2 m, the server looking again until nothing more goes.
+        let ring = [[0, 0], [1000, 0], [1000, 800], [0, 800]];
+        for i in 0..4 {
+            let (a, b) = (ring[i], ring[(i + 1) % 4]);
+            for step in 0..4 {
+                let t = (step * 2 + 1) as i32;
+                shell.blast(&mut removed, [a[0] + (b[0] - a[0]) * t / 8, 120, a[1] + (b[1] - a[1]) * t / 8], 180);
+                check(&removed);
+                while !shell.strain(&mut removed, &whole).is_empty() {
+                    check(&removed);
+                }
+            }
         }
     }
 

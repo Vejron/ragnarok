@@ -353,6 +353,61 @@ describe('a hurt building', () => {
     })
   })
 
+  it('lays a fallen section of wall down flat on its broad side, not spinning on the spot', () => {
+    const tile = tileWith()
+    tile.look = tile.collision
+    tile.buildings[0]!.look = { first: 0, walls: 8, roof: 2 }
+    const damage = new BuildingDamage()
+    damage.groundAt = () => 0
+    damage.attach(key, tile)
+    // The front wall's top half, 4 m along, loses its hold: a slab standing on its edge.
+    const shell = shellOf(tile, 0)!
+    const slab: number[] = []
+    for (let x = 1; x < 5; x++) for (let y = 3; y < 6; y++) {
+      const id = cellAt(0, x + 0.3, y + 0.3, -4.9)
+      if (shell.isSolid(id) && !slab.includes(id)) slab.push(id)
+    }
+    damage.carve(key, 0, [], slab, [3, 4, -5], true)
+    const sections = () => (damage as unknown as { drawn: Map<number, Map<number, { falling: { mesh: Mesh; section?: boolean; resting: boolean }[] }>> }).drawn.get(key)!.get(0)!.falling.filter((f) => f.section)
+    expect(sections().length).toBeGreaterThan(0)
+    for (let i = 0; i < 400; i++) damage.update(0.02, { dust() {} } as never, new Vector3(1e6, 0, 0))
+    for (const { mesh, resting } of sections()) {
+      expect(resting).toBe(true)
+      // Lying down: far wider than it is tall.
+      const { height, wide } = span(mesh)
+      expect(height).toBeLessThan(wide * 0.5)
+      expect(span(mesh).low).toBeCloseTo(0, 1)
+    }
+  })
+
+  it('lets every section fall in a long cascade, however much already lies about', () => {
+    const tile = tileWith()
+    tile.look = tile.collision
+    tile.buildings[0]!.look = { first: 0, walls: 8, roof: 2 }
+    const damage = new BuildingDamage()
+    damage.groundAt = () => 0
+    damage.attach(key, tile)
+    const shell = shellOf(tile, 0)!
+    const solid: number[] = []
+    for (let id = 0; id < shell.dims[0] * shell.dims[1] * shell.dims[2]; id++) if (shell.isSolid(id)) solid.push(id)
+    const drawn = () => (damage as unknown as { drawn: Map<number, Map<number, { falling: { section?: boolean }[] }>> }).drawn.get(key)?.get(0)?.falling ?? []
+    // Top down, a few cells at a time, as the server lets a building go.
+    solid.sort((a, b) => shell.coords(b)[1] - shell.coords(a)[1] || a - b)
+    let falls = 0
+    for (let at = 0; at < solid.length; at += 6) {
+      const group = solid.slice(at, at + 6)
+      const before = drawn().filter((f) => f.section).length
+      damage.carve(key, 0, [], group, null, true)
+      const after = drawn().filter((f) => f.section).length
+      // A section for each fall (or, past the limit, the oldest sinking away while it does).
+      if (after <= before) expect(drawn().length).toBeGreaterThan(60)
+      else falls++
+      for (let i = 0; i < 20; i++) damage.update(0.02, { dust() {} } as never, new Vector3(1e6, 0, 0))
+    }
+    expect(falls).toBeGreaterThan(solid.length / 6 / 2)
+    expect(drawn().length).toBeGreaterThan(96)
+  })
+
   it('keeps what it threw lying about, rather than taking it away after a while', () => {
     const damage = new BuildingDamage()
     damage.attach(key, tileWith())
