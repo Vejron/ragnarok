@@ -65,7 +65,7 @@ export function buildingColors(tile: Pick<BuildingTile, 'buildings'>, index: num
 }
 
 /** Patterns drawn on a building's faces by the shader (walls.wgsl.ts in the engine), as a vertex's custom x. */
-export const Surface = { Plain: 0, Upright: 1, Lap: 2, Brick: 3, Render: 4, Tiles: 5, Sheet: 6, Felt: 7 } as const
+export const Surface = { Plain: 0, Upright: 1, Lap: 2, Brick: 3, Render: 4, Tiles: 5, Sheet: 6, Felt: 7, Ashlar: 8 } as const
 export type Surface = (typeof Surface)[keyof typeof Surface]
 
 /** Falu red and dark stained wood are upright boards; ochre, white and beige lap boards; the dark red brick; greys and sage render. */
@@ -74,12 +74,19 @@ const WALL_SURFACES = new Map<number, Surface>([
   [0xd9b45a, Surface.Lap], [0xeee9dc, Surface.Lap], [0xe4dcc6, Surface.Lap], [0xd8c6a3, Surface.Lap],
   [0x8f3a2c, Surface.Brick],
   [0xc9c4b8, Surface.Render], [0xb5bda4, Surface.Render], [0xa9a59c, Surface.Render],
+  // France (the importer's `paint::WALLS`): limestone and sandstone are cut stone, the brick brick, plaster and ochre render.
+  [0xf0e6cc, Surface.Ashlar], [0xe6d3b2, Surface.Ashlar], [0xdcc6a2, Surface.Ashlar],
+  [0xf4f0e6, Surface.Render], [0xd8d3c8, Surface.Render], [0xe9c9b6, Surface.Render], [0xead0a0, Surface.Render],
+  [0xc0785a, Surface.Brick],
 ])
 
+/** Roofs that are not red but laid in rows all the same: slate (France's `paint::ROOFS` and the grey-blue here). */
+const SLATE = new Set([0x56606e, 0x7b8694, 0x4f5d6b])
+
 /**
- * The patterns on building `index`'s walls and roof: from the palette colour it was given, or, painted
- * by the importer, render (brick if the paint is a dark red); a flat roof is felt, a red one tiles and
- * any other sheet metal.
+ * The patterns on building `index`'s walls and roof: from the palette colour it was given (Sweden's
+ * here, or France's as the importer painted it), else render, or brick if it is a dark red; a flat roof
+ * is felt, a red or slate one tiles and any other sheet metal.
  */
 export function buildingSurfaces(tile: Pick<BuildingTile, 'buildings'>, index: number, salt: number): { wall: Surface; roof: Surface } {
   const { wall, roof } = buildingColors(tile, index, salt)
@@ -87,7 +94,7 @@ export function buildingSurfaces(tile: Pick<BuildingTile, 'buildings'>, index: n
   const [wr, wg, wb] = channels(wall)
   const wallSurface = WALL_SURFACES.get(wall) ?? (wr > wg * 1.6 && wr + wg + wb < 400 ? Surface.Brick : Surface.Render)
   const [rr, rg] = channels(roof)
-  const roofSurface = tile.buildings[index]?.roofKind === ROOF_FLAT ? Surface.Felt : rr > rg * 1.3 ? Surface.Tiles : Surface.Sheet
+  const roofSurface = tile.buildings[index]?.roofKind === ROOF_FLAT ? Surface.Felt : rr > rg * 1.3 || SLATE.has(roof) ? Surface.Tiles : Surface.Sheet
   return { wall: wallSurface, roof: roofSurface }
 }
 

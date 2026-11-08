@@ -5,7 +5,7 @@
  * it averages to rather than shimmering. Needs MARSH_WGSL before it, for its hash and noise.
  */
 export const WALLS_WGSL = /* wgsl */ `
-// The kinds, as custom x: plain, upright boards (falu red houses), lap boards, brick, render, roof tiles, sheet metal, felt.
+// The kinds, as custom x: plain, upright boards (falu red houses), lap boards, brick, render, roof tiles, sheet metal, felt, cut stone.
 const WALL_UPRIGHT = 1.0;
 const WALL_LAP = 2.0;
 const WALL_BRICK = 3.0;
@@ -13,6 +13,8 @@ const WALL_RENDER = 4.0;
 const ROOF_TILES = 5.0;
 const ROOF_SHEET = 6.0;
 const ROOF_FELT = 7.0;
+// Cut stone (French limestone and sandstone): a wall, numbered after the roofs.
+const WALL_ASHLAR = 8.0;
 // Mortar, a share of the brick's colour pulled towards this grey.
 const WALL_MORTAR = vec3f(0.5, 0.48, 0.44);
 
@@ -33,7 +35,7 @@ fn wallTone(i: f32, j: f32, spread: f32, size: f32, pixel: f32) -> f32 {
 // \`rgb\` on the face at \`world\` with unit normal \`n\`, of pattern \`kind\`; \`pixel\` the metres a pixel spans there.
 fn wallsLook(rgb: vec3f, world: vec3f, n: vec3f, kind: f32, pixel: f32) -> vec3f {
   let level = sqrt(n.x * n.x + n.z * n.z);
-  if (kind < ROOF_TILES - 0.5) {
+  if (kind < ROOF_TILES - 0.5 || kind > WALL_ASHLAR - 0.5) {
     // A wall: along it horizontally, and up. Faces that are not upright stay plain.
     if (level < 0.7) {
       return rgb;
@@ -54,6 +56,15 @@ fn wallsLook(rgb: vec3f, world: vec3f, n: vec3f, kind: f32, pixel: f32) -> vec3f
       let shade = mix(1.0, 0.94 + 0.08 * within, 1.0 - smoothstep(0.03, 0.08, pixel));
       let edge = wallSeam(up, 0.17, 0.016, pixel);
       return rgb * shade * wallTone(row, 1.0, 0.06, 0.17, pixel) * (1.0 - 0.45 * edge);
+    }
+    if (kind > WALL_ASHLAR - 0.5) {
+      // Blocks 32 cm high and 60 cm long, every other course offset by a third; fine joints, each block a little its own shade and weathered.
+      let course = floor(up / 0.32);
+      let shifted = along + 0.2 * (course - 3.0 * floor(course / 3.0));
+      let block = floor(shifted / 0.6);
+      let joint = max(wallSeam(up, 0.32, 0.008, pixel), wallSeam(shifted, 0.6, 0.008, pixel));
+      let weather = 0.95 + 0.08 * marshValue(vec2f(along, up) * 2.3);
+      return rgb * wallTone(block, course, 0.09, 0.32, pixel) * weather * (1.0 - 0.3 * joint);
     }
     if (kind < WALL_BRICK + 0.5) {
       // Courses 7.5 cm, bricks 25 cm, every other course half a brick along; each brick its own shade, light mortar between.

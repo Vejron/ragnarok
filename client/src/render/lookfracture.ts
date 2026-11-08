@@ -49,9 +49,9 @@ const CRACK_SEGMENTS = 6
 const CRACK_STEP = [0.16, 0.38] as const
 const CRACK_WIDTH = 0.028
 const CRACK_SHADE = 0.22
-/** The surface patterns that are wood (`Surface` Upright and Lap), and that crack (Brick and Render). */
+/** The surface patterns that are wood (`Surface` Upright and Lap), and that crack (Brick, Render and Ashlar). */
 const WOODEN = new Set([1, 2])
-const CRACKING = new Set([3, 4])
+const CRACKING = new Set([3, 4, 8])
 
 /** How deep the edge of a hole is drawn, metres: a wall, and a roof. */
 const WALL_DEPTH = 0.3

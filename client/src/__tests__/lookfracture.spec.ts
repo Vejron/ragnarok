@@ -127,11 +127,15 @@ describe('lookFracture', () => {
   it('picks boards, brick or render from the wall colour, and felt for a flat roof', () => {
     const tile = (paint: [number, number] | null, roofKind = ROOF_GABLE) => ({ buildings: [{ paint, roofKind } as never] })
     expect(buildingSurfaces(tile([0xa8432f, 0xb5543f]), 0, 0)).toEqual({ wall: Surface.Upright, roof: Surface.Tiles })
-    expect(buildingSurfaces(tile([0xeee9dc, 0x4f5d6b]), 0, 0)).toEqual({ wall: Surface.Lap, roof: Surface.Sheet })
+    expect(buildingSurfaces(tile([0xeee9dc, 0x6d7a8c]), 0, 0)).toEqual({ wall: Surface.Lap, roof: Surface.Sheet })
+    expect(buildingSurfaces(tile([0xeee9dc, 0x4f5d6b]), 0, 0).roof).toBe(Surface.Tiles)
     expect(buildingSurfaces(tile([0x8f3a2c, 0xb0b4ba], ROOF_FLAT), 0, 0)).toEqual({ wall: Surface.Brick, roof: Surface.Felt })
     // Painted by the importer (France): render, or brick if a dark red.
     expect(buildingSurfaces(tile([0xd8d0c0, 0x9c4a3c]), 0, 0).wall).toBe(Surface.Render)
     expect(buildingSurfaces(tile([0x7a3020, 0x9c4a3c]), 0, 0).wall).toBe(Surface.Brick)
+    // France's palette: limestone is cut stone, its brick brick, and slate laid in rows.
+    expect(buildingSurfaces(tile([0xf0e6cc, 0x56606e]), 0, 0)).toEqual({ wall: Surface.Ashlar, roof: Surface.Tiles })
+    expect(buildingSurfaces(tile([0xc0785a, 0xa4acb4]), 0, 0)).toEqual({ wall: Surface.Brick, roof: Surface.Sheet })
   })
 
   it('shows broken rafters in a roof\'s hole, splinters at a wooden wall\'s, and cracks across a brick one that stay on it', () => {
