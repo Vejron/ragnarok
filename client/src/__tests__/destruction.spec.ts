@@ -328,6 +328,31 @@ describe('a hurt building', () => {
     for (const piece of pieces) expect(span(piece).low).toBeCloseTo(ground(piece.position.x), 1)
   })
 
+  it('brings every section of a looked house to lie still on the ground, none left in the air', () => {
+    const tile = tileWith()
+    // Drawn from its look: what loses its hold falls as whole sections that tip over.
+    tile.look = tile.collision
+    tile.buildings[0]!.look = { first: 0, walls: 8, roof: 2 }
+    const damage = new BuildingDamage()
+    damage.groundAt = () => 0
+    damage.attach(key, tile)
+    const shell = shellOf(tile, 0)!
+    const fell: number[] = []
+    for (let id = 0; id < shell.dims[0] * shell.dims[1] * shell.dims[2]; id++) if (shell.isSolid(id) && shell.coords(id)[1] >= 3) fell.push(id)
+    damage.carve(key, 0, [cellAt(0, 0, 1, 0), cellAt(0, 0, 2, 0)], [], [-1, 2, 0], false)
+    damage.carve(key, 0, [], fell, [5, 4, 0], true)
+    const pieces = () => damage.root.children[0]!.children.filter((c) => c instanceof Mesh && c.geometry.colors && c.position.lengthSq() > 0) as Mesh[]
+    expect(pieces().length).toBeGreaterThan(0)
+    for (let i = 0; i < 750; i++) damage.update(0.02, { dust() {} } as never, new Vector3(1e6, 0, 0))
+    const before = pieces().map((m) => [m.position.clone(), m.quaternion.clone()] as const)
+    for (let i = 0; i < 50; i++) damage.update(0.02, { dust() {} } as never, new Vector3(1e6, 0, 0))
+    pieces().forEach((m, i) => {
+      expect(span(m).low).toBeCloseTo(0, 1)
+      expect(m.position.distanceTo(before[i]![0])).toBeLessThan(1e-6)
+      expect(Math.abs(m.quaternion.dot(before[i]![1]))).toBeCloseTo(1, 6)
+    })
+  })
+
   it('keeps what it threw lying about, rather than taking it away after a while', () => {
     const damage = new BuildingDamage()
     damage.attach(key, tileWith())

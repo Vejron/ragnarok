@@ -30,6 +30,8 @@ const SINK_SECONDS = 4
 /** Longest a fallen section of wall goes on tipping over on the ground, seconds, and the least it turns while it does, rad/s. */
 const TIP_SECONDS = 2.5
 const MIN_TIP = 1.4
+/** Longest anything flies before it is put on the ground, seconds, so nothing can hang or tumble in the air for ever. */
+const MAX_AIR_SECONDS = 8
 const GRAVITY = 9.8
 /** A building that was just hit or just lost its hold smoulders this long, easing out, seconds; only this near the camera, metres. */
 const SMOULDER_SECONDS = 60
@@ -674,8 +676,9 @@ export class BuildingDamage {
       mesh.rotation.y += piece.spin.y * dt
       mesh.rotation.z += piece.spin.z * dt
       const { low, height, wide } = span(mesh)
-      if (low > ground) continue
-      // Its lowest corner on the ground, not under it.
+      // In the air it falls on; once down it stays down, its lowest corner kept on the ground as it
+      // tips (turning about its middle would lift it off, with nothing to bring it back).
+      if (grounded === 0 && low > ground && piece.age < MAX_AIR_SECONDS) continue
       mesh.position.y += ground - low
       piece.grounded = grounded + dt
       // A section of wall tips on over its foot until it lies about flat; anything else lies where it lands.
