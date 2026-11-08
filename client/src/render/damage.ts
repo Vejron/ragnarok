@@ -33,6 +33,8 @@ const MIN_TIP = 1.4
 /** Longest anything flies before it is put on the ground, seconds, so nothing can hang or tumble in the air for ever. */
 const MAX_AIR_SECONDS = 8
 const GRAVITY = 9.8
+/** Cells in a falling section from which it raises a heavy cloud. */
+const BIG_FALL = 12
 /** A building that was just hit or just lost its hold smoulders this long, easing out, seconds; only this near the camera, metres. */
 const SMOULDER_SECONDS = 60
 const SMOULDER_RANGE = 160
@@ -120,6 +122,8 @@ interface Loaded {
 interface Puff {
   at: Vector3
   size: number
+  /** How much longer and slower than a puff it hangs about: 1 for a puff, more for a building coming down. */
+  linger?: number
 }
 
 const pieceMaterial = toonMaterial({ vertexColors: true, side: 'double' })
@@ -296,7 +300,7 @@ export class BuildingDamage {
    */
   update(dt: number, effects: Effects, near: Vector3, smoke?: Pick<Particles, 'spawn'>) {
     for (const puff of this.puffs.splice(0)) {
-      if (smoke) dustCloud(smoke, puff.at, puff.size)
+      if (smoke) dustCloud(smoke, puff.at, puff.size, puff.linger)
       else effects.dust(puff.at, puff.size)
     }
     for (const [key, buildings] of this.drawn) {
@@ -549,6 +553,15 @@ export class BuildingDamage {
     this.puffs.push({ at: pivot.clone(), size: falls ? 3 + this.rand() * 2 : 1.4 + this.rand() * 1.4 })
     // A fall throws up a cloud where it lands, too, that hides the heap coming.
     if (falls) this.puffs.push({ at: new Vector3(pivot.x, this.groundUnder(pivot.x, pivot.z, floor) + 0.6, pivot.z), size: 4 + this.rand() * 2 + Math.min(4, group.length / 20) })
+    // A big section coming down raises a heavy cloud that rolls out round it and hangs, hiding the heap.
+    if (falls && group.length >= BIG_FALL) {
+      const reach = 1 + Math.sqrt(group.length) * 0.3
+      for (let i = 0; i < 3; i++) {
+        const angle = (i / 3 + this.rand() * 0.3) * Math.PI * 2
+        const [x, z] = [pivot.x + Math.cos(angle) * reach, pivot.z + Math.sin(angle) * reach]
+        this.puffs.push({ at: new Vector3(x, this.groundUnder(x, z, floor) + 0.8, z), size: 5 + this.rand() * 3, linger: 2.6 })
+      }
+    }
     // What the cells hold, as a volume: a cell is 72 cm a side, but the wall in it is thinner.
     const volume = group.length * 0.1
     const count = falls ? Math.min(5, 2 + Math.floor(group.length / 6)) : Math.min(8, 3 + Math.floor(group.length / 2))

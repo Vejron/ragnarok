@@ -134,6 +134,33 @@ describe('lookFracture', () => {
     expect(buildingSurfaces(tile([0x7a3020, 0x9c4a3c]), 0, 0).wall).toBe(Surface.Brick)
   })
 
+  it('shows broken rafters in a roof\'s hole, splinters at a wooden wall\'s, and cracks across a brick one that stay on it', () => {
+    const grey = [0.5, 0.5, 0.5] as const
+    const count = (soup: { colors: Float32Array }, r: number, b: number) => {
+      let n = 0
+      for (let i = 0; i < soup.colors.length; i += 3) if (Math.abs(soup.colors[i]! - r) < 1e-3 && Math.abs(soup.colors[i + 2]! - b) < 1e-3) n++
+      return n
+    }
+    const roofHole = new Set([shell.cellAt(2.5, 2.9, 2), shell.cellAt(1.8, 2.9, 2), shell.cellAt(2.5, 2.9, 1.3)])
+    expect(count(lookFracture(look, range, shell, roofHole, new Map(), grey, grey), 0.13, 0.04)).toBeGreaterThan(0)
+    const wallHole = new Set([hole, shell.cellAt(2.5, 0.8, 0.01), shell.cellAt(1.8, 1.5, 0.01)])
+    expect(count(lookFracture(look, range, shell, wallHole, new Map(), grey, grey, { wall: Surface.Upright, roof: Surface.Tiles }), 0.5, 0.2)).toBeGreaterThan(0)
+    const brick = lookFracture(look, range, shell, wallHole, new Map(), grey, grey, { wall: Surface.Brick, roof: Surface.Tiles })
+    const plain = lookFracture(look, range, shell, wallHole, new Map(), grey, grey)
+    expect(brick.positions.length).toBeGreaterThan(plain.positions.length)
+    // Every crack corner (in the crack's colour) is on the front wall, a hair proud of it, within its bounds.
+    const crack = 0.5 * 0.22
+    for (let i = 0; i < brick.colors.length; i += 3) {
+      if (Math.abs(brick.colors[i]! - crack) > 1e-4) continue
+      const [x, y, z] = [brick.positions[i]!, brick.positions[i + 1]!, brick.positions[i + 2]!]
+      expect(Math.abs(z)).toBeLessThan(0.02)
+      expect(x).toBeGreaterThan(-0.03)
+      expect(x).toBeLessThan(5.03)
+      expect(y).toBeGreaterThan(-0.03)
+      expect(y).toBeLessThan(3.03)
+    }
+  })
+
   it('is the same on every client', () => {
     const a = lookFracture(look, range, shell, new Set([hole]), new Map(), white, white)
     const b = lookFracture(look, range, shell, new Set([hole]), new Map(), white, white)

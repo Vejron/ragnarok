@@ -33,6 +33,26 @@ export interface Surfaces {
 
 const PLAIN: Surfaces = { wall: 0, roof: 0 }
 
+/** Broken rafters in a roof's hole: the share of its edges with one, their size and how far they reach (metres), and their colour. */
+const RAFTER_CHANCE = 0.7
+const RAFTER = [0.07, 0.11] as const
+const RAFTER_REACH = [0.25, 0.75] as const
+const RAFTER_RGB = [0.13, 0.075, 0.04] as const
+/** Splinters at a wooden wall's hole: a few to an edge, thin, short, raw wood. */
+const SPLINTERS = 2
+const SPLINTER = [0.035, 0.02] as const
+const SPLINTER_REACH = [0.08, 0.32] as const
+const SPLINTER_RGB = [0.5, 0.36, 0.2] as const
+/** Cracks out from a brick or rendered wall's hole: the share of its corners with one, segments, their length and the crack's width (metres), and how dark. */
+const CRACK_CHANCE = 0.55
+const CRACK_SEGMENTS = 6
+const CRACK_STEP = [0.16, 0.38] as const
+const CRACK_WIDTH = 0.028
+const CRACK_SHADE = 0.22
+/** The surface patterns that are wood (`Surface` Upright and Lap), and that crack (Brick and Render). */
+const WOODEN = new Set([1, 2])
+const CRACKING = new Set([3, 4])
+
 /** How deep the edge of a hole is drawn, metres: a wall, and a roof. */
 const WALL_DEPTH = 0.3
 const ROOF_DEPTH = 0.16
@@ -208,6 +228,14 @@ interface Rim {
   b: P
   normal: P
   roof: boolean
+  /** In the plane of its wall, across the edge into the hole. */
+  inward: P
+}
+
+function centreOf(poly: Poly): P {
+  const c: P = [0, 0, 0]
+  for (const p of poly) for (let a = 0; a < 3; a++) c[a]! += p[a]! / poly.length
+  return c
 }
 
 /**
@@ -231,7 +259,13 @@ function outline(taken: readonly Piece[], all: readonly Piece[]) {
   for (const { poly, normal, roof } of taken) for (let i = 0; i < poly.length; i++) {
     const [a, b] = [poly[i]!, poly[(i + 1) % poly.length]!]
     if (edges.get(edgeKey(a, b)) !== 1) continue
-    rims.push({ a, b, normal, roof })
+    // Towards the middle of the piece that is gone, flattened into its plane.
+    const mid = centreOf(poly)
+    const d = [0, 1, 2].map((k) => mid[k]! - (a[k]! + b[k]!) / 2)
+    const along = d[0]! * normal[0] + d[1]! * normal[1] + d[2]! * normal[2]
+    const flat = [0, 1, 2].map((k) => d[k]! - normal[k]! * along)
+    const fl = Math.hypot(...flat) || 1
+    rims.push({ a, b, normal, roof, inward: flat.map((v) => v / fl) as P })
     corners.add(keyOf(a))
     corners.add(keyOf(b))
   }
@@ -267,7 +301,7 @@ class Writer {
   readonly custom: number[] = []
   /** The surface pattern the next polygons are drawn with: only walls and roofs whole or cut keep theirs, not edges, chips or windows. */
   surface = 0
-  constructor(private readonly place: (p: P) => P, private readonly offset: P = [0, 0, 0]) {}
+  constructor(readonly place: (p: P) => P, private readonly offset: P = [0, 0, 0]) {}
 
   /** `poly` as a fan, each corner in `base` times what `tone` gives it; `placed` when its corners are where they go already. */
   poly(poly: Poly, base: RGB, tone?: (p: P) => number, placed = false) {
@@ -339,6 +373,24 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
   }
   out.surface = 0
   out.rims(rims, wall, roof, shade)
+  // Whether `p` lies on what stands of a wall facing `normal`: within one of its pieces, in their plane.
+  const standing = [...whole, ...kept]
+  const onWall = (p: P, normal: P) =>
+    standing.some((piece) => {
+      if (dot(piece.normal, normal) < 0.999) return false
+      const poly = piece.poly
+      if (Math.abs(dot([p[0] - poly[0]![0], p[1] - poly[0]![1], p[2] - poly[0]![2]], normal)) > 0.03) return false
+      let sign = 0
+      for (let i = 0; i < poly.length; i++) {
+        const [u, v] = [poly[i]!, poly[(i + 1) % poly.length]!]
+        const c = dot(cross([v[0] - u[0], v[1] - u[1], v[2] - u[2]], [p[0] - u[0], p[1] - u[1], p[2] - u[2]]), normal)
+        if (Math.abs(c) < 1e-9) continue
+        if (sign === 0) sign = Math.sign(c)
+        else if (Math.sign(c) !== sign) return false
+      }
+      return true
+    })
+  edgeDetail(out, rims, surfaces, wall, onWall)
   // Chips where rounds struck: a few ragged marks on the wall in each worn cell, more as it wears.
   if (dents.size > 0) {
     const inCell = new Map<number, Piece>()
@@ -366,6 +418,87 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
   const openings = removed.size === 0 ? openingsOf(look, range) : openingsOf(look, range).filter((o) => !nearHole(o.corners))
   openingQuads(openings, (corners, rgb) => out.poly(corners, rgb, shade, true))
   return out.soup()
+}
+
+const add = (a: readonly number[], b: readonly number[], k = 1): P => [a[0]! + b[0]! * k, a[1]! + b[1]! * k, a[2]! + b[2]! * k]
+const dot = (a: readonly number[], b: readonly number[]) => a[0]! * b[0]! + a[1]! * b[1]! + a[2]! * b[2]!
+const cross = (a: readonly number[], b: readonly number[]): P => [a[1]! * b[2]! - a[2]! * b[1]!, a[2]! * b[0]! - a[0]! * b[2]!, a[0]! * b[1]! - a[1]! * b[0]!]
+const unit = (a: readonly number[]): P => {
+  const l = Math.hypot(a[0]!, a[1]!, a[2]!) || 1
+  return [a[0]! / l, a[1]! / l, a[2]! / l]
+}
+
+/**
+ * A stick from `from` to `to`, `w` by `h` across (`h` along `normal`), its far end `taper` as thick:
+ * a rafter or a splinter, its four sides and its broken end.
+ */
+function stick(out: Writer, from: P, to: P, normal: P, w: number, h: number, taper: number, rgb: RGB) {
+  const e = unit([to[0] - from[0], to[1] - from[1], to[2] - from[2]])
+  const s1 = unit(cross(e, normal))
+  const s2 = cross(s1, e)
+  const ring = (at: P, k: number) => [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([i, j]) => add(add(at, s1, (i! * w * k) / 2), s2, (j! * h * k) / 2))
+  const [a, b] = [ring(from, 1), ring(to, taper)]
+  for (let i = 0; i < 4; i++) out.poly([a[i]!, a[(i + 1) % 4]!, b[(i + 1) % 4]!, b[i]!], rgb, undefined, true)
+  out.poly(b, rgb, undefined, true)
+}
+
+/**
+ * What shows at a hole's edge: broken rafters reaching into a roof's hole along the slope, and, by
+ * the walls' pattern, splinters at a wooden wall's or cracks running out across a brick or rendered
+ * one. Cracks keep to the wall: each step must land on what is left of it (`onWall`).
+ */
+function edgeDetail(out: Writer, rims: readonly Rim[], surfaces: Surfaces, wall: RGB, onWall: (p: P, normal: P) => boolean) {
+  const crackRgb: RGB = [wall[0] * CRACK_SHADE, wall[1] * CRACK_SHADE, wall[2] * CRACK_SHADE]
+  for (const rim of rims) {
+    const { normal, inward } = rim
+    const [a, b] = [out.place(rim.a), out.place(rim.b)]
+    const edge = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2])
+    if (edge < 0.05) continue
+    const seed = centreOf([rim.a, rim.b])
+    const h = (salt: number) => hash(seed[0], seed[1], seed[2], salt)
+    const at = (t: number) => add(a, [b[0] - a[0], b[1] - a[1], b[2] - a[2]], t)
+    if (rim.roof) {
+      if (h(11) > RAFTER_CHANCE) continue
+      // Rafters run down the slope, and only an edge across them shows their ends; a flat roof's joists, whichever way the edge goes.
+      const slope = Math.abs(normal[1]) > 0.97 ? inward : unit(cross(cross([0, 1, 0], normal), normal))
+      const across = dot(slope, inward)
+      if (Math.abs(across) < 0.3) continue
+      const dir: P = across > 0 ? slope : [-slope[0], -slope[1], -slope[2]]
+      const from = add(at(0.2 + 0.6 * h(12)), normal, -ROOF_DEPTH * 0.5 - RAFTER[1] / 2)
+      const reach = RAFTER_REACH[0] + (RAFTER_REACH[1] - RAFTER_REACH[0]) * h(13)
+      // Snapped and sagging a little at its end.
+      const to = add(add(from, dir, reach), [0, -1, 0], reach * 0.25 * h(14))
+      stick(out, from, to, normal, RAFTER[0], RAFTER[1], 0.8, RAFTER_RGB)
+      continue
+    }
+    if (WOODEN.has(surfaces.wall)) {
+      for (let k = 0; k < SPLINTERS; k++) {
+        if (h(20 + k) > 0.6) continue
+        const from = add(at(0.15 + 0.7 * h(22 + k)), normal, -WALL_DEPTH * (0.15 + 0.6 * h(24 + k)))
+        const reach = SPLINTER_REACH[0] + (SPLINTER_REACH[1] - SPLINTER_REACH[0]) * h(26 + k)
+        // Into the hole, splayed a little out of the wall's plane and along the edge.
+        const dir = unit(add(add(inward, normal, (h(28 + k) - 0.3) * 0.8), [b[0] - a[0], b[1] - a[1], b[2] - a[2]], (h(30 + k) - 0.5) / edge))
+        stick(out, from, add(from, dir, reach), normal, SPLINTER[0], SPLINTER[1], 0.15, SPLINTER_RGB)
+      }
+      continue
+    }
+    if (!CRACKING.has(surfaces.wall) || h(40) > CRACK_CHANCE) continue
+    // From the edge's start, out across the wall, bending as it goes and narrowing to nothing.
+    const side = cross(normal, inward)
+    let angle = (h(41) - 0.5) * 1.2
+    let p = add(a, normal, 0.006)
+    for (let k = 0; k < CRACK_SEGMENTS; k++) {
+      angle += (h(42 + k) - 0.5) * 1.1
+      const step = CRACK_STEP[0] + (CRACK_STEP[1] - CRACK_STEP[0]) * h(50 + k)
+      const dir = unit(add([-inward[0] * Math.cos(angle), -inward[1] * Math.cos(angle), -inward[2] * Math.cos(angle)], side, Math.sin(angle)))
+      const q = add(p, dir, step)
+      if (!onWall(q, normal)) break
+      const [w0, w1] = [CRACK_WIDTH * (1 - k / CRACK_SEGMENTS), CRACK_WIDTH * (1 - (k + 1) / CRACK_SEGMENTS) + 0.002]
+      const n = cross(normal, dir)
+      out.poly([add(p, n, -w0 / 2), add(q, n, -w1 / 2), add(q, n, w1 / 2), add(p, n, w0 / 2)], crackRgb, undefined, true)
+      p = q
+    }
+  }
 }
 
 /**
