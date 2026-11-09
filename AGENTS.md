@@ -47,6 +47,19 @@ To iterate faster:
 - Vehicle physics tests (`crates/sim/src/vehicle/tests.rs`) run on a small flat world that ends about 200 m out, so a long full-throttle run drives off it.
 - Blender is at `/Applications/Blender.app/Contents/MacOS/Blender`. To build one car and look at it: `Blender -b -P tools/vehicles/build_car.py -- --only <kind> --preview <dir>`.
 
+## Deploying
+
+The README's "Deploying" section has the full steps. In short: commit first, because the image is tagged with `HEAD`, then load `.env.local` and run `scripts/deploy.sh`.
+
+- **Ship the world that is live.** `WORLD_DIR` defaults to `client/public`, whose `world.msgpack` is stale and stops the new server at start-up (the deploy then rolls back). Find the live world by matching its manifest against the local ones, and pass it as `WORLD_DIR` unless the user asks for another:
+  ```sh
+  set -a; . ./.env.local; set +a
+  ssh "$SSH_USER@$SSH_HOST" 'docker exec ragnarok md5sum /app/world.msgpack'
+  for f in worlds/*/world.msgpack; do echo "$(md5 -q "$f") $f"; done
+  WORLD_DIR=worlds/<live world> DOMAIN="$TARGET_DOMAIN" scripts/deploy.sh "$SSH_USER@$SSH_HOST"
+  ```
+- **A failed deploy rolls itself back** to the previous container. Read the logs it prints before trying again, and check what is running with `ssh "$SSH_USER@$SSH_HOST" 'docker ps --filter name=^ragnarok$'`.
+
 ## How the code is written
 
 - **Comments are full sentences** that say what a thing is in the game's terms, with units (metres, m/s, radians, ticks): "How far the gun kicks back along its line when it fires, metres". Spelling is British (armour, metres, colour). Match the density of the code around you; most `pub const` items and every type carry a doc comment.
