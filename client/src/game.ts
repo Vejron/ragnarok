@@ -8,7 +8,7 @@ import { Transport } from './net/transport'
 import {
   BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, BUTTON_RUN, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION,
   SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_DOWN, STANCE_PRONE,
-  TICK_MS, TICK_RATE, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED, CARRY_SKIS } from './sim/consts'
+  TICK_MS, TICK_RATE, BLOOM_RECOVER, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED, CARRY_SKIS } from './sim/consts'
 import { easeSway, sway, swayAmplitude } from './sway'
 import { mayPlace } from './sim/bricks'
 import { crewGun, vehicleDef } from './sim/vehicles'
@@ -336,6 +336,8 @@ export class Game {
   private readonly notices = new Notices()
   /** Hits dealt and taken, for the crosshair marker, the screen flash and the direction arcs. */
   private readonly hits = new HitFeedback()
+  /** The held gun's bloom as the crosshair shows it, and what it was worked out from (`bloomOf`). */
+  private readonly bloom = { value: 0, item: 0, ammo: 0, at: 0, shot: 0 }
   /** The HUD, drawn by the renderer over each frame. */
   private readonly hudLayer = new HudLayer()
   private readonly hud = new InGameHud(this.hudLayer)
@@ -390,7 +392,7 @@ export class Game {
     this.adaptive.floor = this.scene.quality.minScale
     this.input = new InputController(this.scene.canvas)
     this.cameras = new Cameras(this.scene, this.input, (origin, direction, max) => this.motor?.castRay(origin, direction, max) ?? null)
-    this.view = new WorldView(this.scene.scene)
+    this.view = new WorldView(this.scene.scene, this.debris)
     this.bricks = new Bricklayer(this.view, () => this.motor, () => this.eyeHeight())
     this.view.scorch = this.scene.look.scorch
     this.scorches.root.visible = this.scene.look.scorch
@@ -477,8 +479,11 @@ export class Game {
       this.scene.scene.add(this.marshMist.root)
     }
     this.view.world = world
-    // On a hilly world the plane sits just under the terrain, so it only shows where a tile is late.
-    this.scene.scene.add(buildGround(world.halfExtent, world.groundCell > 0 ? -0.05 : 0))
+    // On a hilly world the plane sits just under the terrain, so it only shows where a tile is late; the
+    // view lowers it under sea beds as their tiles come in.
+    const backdrop = buildGround(world.halfExtent, world.groundCell > 0 ? -0.05 : 0)
+    this.scene.scene.add(backdrop)
+    if (world.groundCell > 0) this.view.backdrop = backdrop
     this.terrain = this.view.terrain = new Terrain(world.halfExtent, world.tileSize)
     this.surfaces = this.view.surfaces = new Surfaces(world.halfExtent, world.tileSize)
     this.waters = this.view.waters = this.surroundings.waters = new Waters(world.halfExtent, world.tileSize)
@@ -1158,7 +1163,7 @@ export class Game {
       scoped: this.scoped,
       aiming: this.aiming,
       armed: handy && gun !== undefined && !reading,
-      crossGap: gun ? Math.max(MIN_CROSS_GAP, spreadPixels(effectiveSpread(gun, this.input.aimHeld, (local.lost & LIMB_ARMS) !== 0), this.scene.camera.fov, window.innerHeight)) : MIN_CROSS_GAP,
+      crossGap: gun ? Math.max(MIN_CROSS_GAP, spreadPixels(effectiveSpread(gun, this.input.aimHeld, (local.lost & LIMB_ARMS) !== 0, this.bloomOf(gun, now)), this.scene.camera.fov, window.innerHeight)) : MIN_CROSS_GAP,
       blocked,
       hands: this.localId !== null && hands && player.alive,
       hotbar: player.hotbar,
@@ -1212,6 +1217,26 @@ export class Game {
   /** The slot in hand. */
   private held(): ItemSlot {
     return this.player.slot(this.input.heldSlot)
+  }
+
+  /**
+   * How far held fire has widened `gun`'s cone, as the server keeps it (`Hands::bloom`), for the
+   * crosshair: each round the magazine loses blooms it, and once no round has gone for a little longer
+   * than the gun's cadence the cone closes again at `BLOOM_RECOVER`.
+   */
+  private bloomOf(gun: ItemDef, now: number): number {
+    const { ammo, item } = this.held()
+    const dt = Math.max(0, now - this.bloom.at) / 1000
+    this.bloom.at = now
+    if (item === this.bloom.item && ammo < this.bloom.ammo) {
+      this.bloom.value = Math.min(gun.bloomMax, this.bloom.value + gun.bloomPerShot * (this.bloom.ammo - ammo))
+      this.bloom.shot = now
+    } else if (now - this.bloom.shot > (gun.cooldownTicks * 2 * 1000) / TICK_RATE) {
+      this.bloom.value = Math.max(0, this.bloom.value - BLOOM_RECOVER * dt)
+    }
+    this.bloom.item = item
+    this.bloom.ammo = ammo
+    return this.bloom.value
   }
 
   /** The local player's own muzzle flash, at once, instead of after the server's reply. */

@@ -18,7 +18,7 @@ const FACES: readonly (readonly [number, number, number])[] = [
   [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1],
 ]
 
-function random(seed: number) {
+export function random(seed: number) {
   let a = seed >>> 0
   return () => {
     a = (a + 0x6d2b79f5) >>> 0

@@ -5,7 +5,7 @@
  * below are checked against the Rust source by `consts-parity.spec.ts`.
  */
 
-import { AIM_SPREAD_SCALE, BUTTON_ALT, ONE_ARM_SPREAD, TICK_RATE } from './consts'
+import { AIM_BLOOM_SCALE, AIM_SPREAD_SCALE, BUTTON_ALT, ONE_ARM_SPREAD, TICK_RATE } from './consts'
 import tables from './tables.generated.json'
 
 export const HOTBAR_SLOTS = 5
@@ -73,6 +73,9 @@ export interface ItemDef {
   falloffMin: number
   /** The cone its shots scatter over, radians. Mirrors `spread`. */
   spread: number
+  /** How much wider each shot of held fire makes that cone, and the most it can, radians. Mirrors `Bloom`. */
+  bloomPerShot: number
+  bloomMax: number
 }
 
 /** What the client adds to an item: how it is held and what it sounds like. Every item needs one. */
@@ -141,9 +144,14 @@ export const fillsHands = (item: number): boolean => {
 }
 
 /** Ticks a bandage takes to apply. */
-/** The cone a shot of `def` scatters over. Mirrors the server's `effective_spread`. */
-export const effectiveSpread = (def: ItemDef, aimHeld: boolean, oneArm: boolean): number =>
-  oneArm ? def.spread + ONE_ARM_SPREAD : aimHeld ? def.spread * AIM_SPREAD_SCALE : def.spread
+/** The cone a shot of `def` scatters over, `bloom` wider from held fire. Mirrors the server's `effective_spread`. */
+export const effectiveSpread = (def: ItemDef, aimHeld: boolean, oneArm: boolean, bloom = 0): number => {
+  const blooms = def.bloomPerShot > 0
+  const extra = blooms ? bloom : 0
+  if (oneArm) return def.spread + extra + ONE_ARM_SPREAD
+  if (aimHeld) return blooms && extra <= 0 ? 0 : def.spread * AIM_SPREAD_SCALE + extra * AIM_BLOOM_SCALE
+  return def.spread + extra
+}
 
 export const BANDAGE_TICKS = 2 * TICK_RATE
 /** Grenades. Mirrors the grenade block of items.rs. */

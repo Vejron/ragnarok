@@ -12,7 +12,7 @@ import type { Blips } from '@/blips'
 import { HIT_DEER, HIT_KILL, HIT_ROOSTER, HIT_VEHICLE } from '@/feedback'
 import {
   PROJECTILE_BULLET, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_BULLET, WEAPON_CRASH, WEAPON_DRONE, WEAPON_EGG, WEAPON_FLARE, WEAPON_GRENADE, WEAPON_LASER, WEAPON_LAUNCHER, WEAPON_LOITER, WEAPON_MG, WEAPON_MORTAR,
-  MARK_GLANCE, MARK_PIERCED, MARK_SCUFF, MARK_VITAL, WEAPON_AP, WEAPON_BALL, WEAPON_CUP, WEAPON_GOLF, WEAPON_SPLASH, WEAPON_PELLET, WEAPON_RICOCHET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_TURRET, WEAPON_WRECK,
+  MARK_GLANCE, MARK_PIERCED, MARK_SCUFF, MARK_VITAL, WEAPON_AP, WEAPON_BALL, WEAPON_CUP, WEAPON_GLASS, WEAPON_GOLF, WEAPON_SPLASH, WEAPON_PELLET, WEAPON_RICOCHET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_TURRET, WEAPON_WRECK,
   type BulletSpawn, type HullMark, type ShotEvent,
 } from '@/net/codec'
 import { CarModel } from '@/render/car'
@@ -45,6 +45,11 @@ const SCORCH_HEIGHT = 0.6
 const MAX_PENDING = 64
 /** From a Carl Gustaf's muzzle back to its venturi, metres: where the backblast leaves. */
 const LAUNCHER_LENGTH = 1.05
+/** The shots whose end is a round striking something: a bullet, a burst of MG, a pellet, a sniper's round or any hitscan gun's. */
+function breaksGlass(weapon: number): boolean {
+  return weapon === WEAPON_BULLET || weapon === WEAPON_MG || weapon === WEAPON_PELLET || weapon === WEAPON_SNIPER || hitscanGunFor(weapon) !== null
+}
+
 /** How hard a Carl Gustaf shakes its own shooter's view (`ChaseCam.kick`): trauma 0.7 is about a 17 cm shake. */
 const LAUNCHER_KICK = 0.7
 
@@ -252,6 +257,8 @@ export class Events {
     const local = this.world.localId()
     const to = new Vector3(shot.x, shot.y, shot.z)
     const blast = BLAST_OF.get(shot.weapon)
+    // A round that ended on a window breaks its pane, whoever fired (the shot is told to everyone), and marks nothing on the wall round it.
+    const throughGlass = !blast && breaksGlass(shot.weapon) && view.glassStruck(shot.x, shot.y, shot.z)
     if (blast) {
       this.blast(to, blast.radius, blast.profile)
       const at: [number, number, number] = [to.x, to.y, to.z]
@@ -291,7 +298,7 @@ export class Events {
         if (sniper) effects.burst(to, 0.8)
         else effects.pelletStrike(to)
       }
-      if (bullet?.spawn.shooter === local) view.chipped(to.x, to.y, to.z, itemDef(bullet.spawn.item)?.damage ?? 0)
+      if (bullet?.spawn.shooter === local && !throughGlass) view.chipped(to.x, to.y, to.z, itemDef(bullet.spawn.item)?.damage ?? 0)
     } else if (shot.weapon === WEAPON_LASER) {
       // The beam is drawn every frame, from the eyes; this is where it ends, and what it does there.
       const tupp = vehicles.model(shot.shooter)
@@ -310,7 +317,7 @@ export class Events {
       tupp.scorched = onGround ? to.clone() : null
       this.muzzleLight(to, 0xff4020, 3, 10)
       sounds.laserSizzle([to.x, to.y, to.z])
-      if (this.world.driving() === shot.shooter) view.chipped(to.x, to.y, to.z, TUPP_LASER_DAMAGE)
+      if (this.world.driving() === shot.shooter && !throughGlass) view.chipped(to.x, to.y, to.z, TUPP_LASER_DAMAGE)
     } else if (shot.weapon === WEAPON_MG) {
       // The round was sent flying when the gun fired; this is where it strikes something.
       if (!surroundings.watery(to, 0.25)) this.world.rounds.struck(to)
@@ -320,7 +327,7 @@ export class Events {
       const from = this.muzzleOf(shot.shooter)
       if (!pellets || (from && from.distanceTo(to) >= pellets.range - 1)) return
       if (!surroundings.watery(to, 0.2)) effects.pelletStrike(to)
-      if (shot.shooter === local) view.chipped(to.x, to.y, to.z, pellets.damage)
+      if (shot.shooter === local && !throughGlass) view.chipped(to.x, to.y, to.z, pellets.damage)
     } else if (shot.weapon === WEAPON_GOLF) {
       // A club swung, its head at the ball it struck, or at the feet where there was none. The local
       // player's own swing started when they let go.
@@ -331,6 +338,9 @@ export class Events {
       if (struck !== null && shot.shooter === local) this.world.struckGolfBall(struck)
       sounds.golfSwing([to.x, to.y, to.z], struck !== null)
       if (struck !== null) effects.dust(to, 0.4)
+    } else if (shot.weapon === WEAPON_GLASS) {
+      // A round went through a window's glass here: the server's collider has the window open, so it flew on.
+      view.glassStruck(to.x, to.y, to.z)
     } else if (shot.weapon === WEAPON_CUP) {
       sounds.golfCup([to.x, to.y, to.z])
     } else if (shot.weapon === WEAPON_SPLASH) {
@@ -379,7 +389,7 @@ export class Events {
       }
       const at = from ?? to
       sounds.gunshot([at.x, at.y, at.z], gun.sound)
-      if (shot.shooter === local && from && from.distanceTo(to) < gun.range - 1) view.chipped(to.x, to.y, to.z, gun.damage)
+      if (shot.shooter === local && !throughGlass && from && from.distanceTo(to) < gun.range - 1) view.chipped(to.x, to.y, to.z, gun.damage)
     }
   }
 
@@ -391,6 +401,8 @@ export class Events {
   /** A heavy blast: the layered fire, sparks, dust and debris, a flash, and a shove of the camera if it is close. */
   private blast(at: Vector3, radius: number, profile: ExplosionProfile) {
     const { scene, effects, chase, surroundings } = this.world
+    // The windows near it go first, over water too: a house on the shore still loses its glass.
+    this.world.view.glassBlast([at.x, at.y, at.z], radius)
     // On water it is a column of spray, not fire and dirt.
     if (surroundings.watery(at, radius * 0.45, 14)) {
       const distance = at.distanceTo(scene.camera.position)

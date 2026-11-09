@@ -23,7 +23,15 @@ const BANK_DROP_CM: i32 = 10;
 pub enum Kind {
     Lake,
     River,
+    /// Open sea: its bed follows the distance from land only (see `Kind::sea_depth`).
+    Sea,
 }
+
+/// Depth of the sea at its farthest from land, metres (the most a bed may sit below y = 0).
+const SEA_DEPTH: f64 = 12.0;
+/// The sea reaches `SEA_DEPTH` no closer than this to land, metres, so a world that only touches
+/// the sea does not get a cliff off its beach.
+const SEA_SHELF: f64 = 600.0;
 
 impl Kind {
     /// Depth of the deepest point of water whose widest part is `radius` metres from its bank.
@@ -32,7 +40,19 @@ impl Kind {
         match self {
             Kind::Lake => (1.0 + 0.6 * radius.sqrt()).clamp(1.5, 12.0),
             Kind::River => (0.8 + 0.35 * radius.sqrt()).clamp(1.2, 6.0),
+            Kind::Sea => SEA_DEPTH,
         }
+    }
+
+    /// Sea bed depth at `shore` metres from land when the farthest water is `farthest` from it. A
+    /// lake's bowl is steep at the bank and flat in the middle; open sea instead shelves gently
+    /// and keeps deepening out to the edge of the world, ending at `SEA_DEPTH` there (or at
+    /// `SEA_SHELF`, if the world holds less sea). It does not follow the local width the way a
+    /// river does: on a ragged coast that leaves the edges of overlapping circles in the bed.
+    fn sea_depth(shore: f64, farthest: f64) -> f64 {
+        let t = (shore / farthest.max(SEA_SHELF)).min(1.0);
+        // Slope 1.5 at the shore and 0.5 at the end: steady, without a flat floor.
+        SHORE_DEPTH + (SEA_DEPTH - SHORE_DEPTH) * t * (1.5 - 0.5 * t)
     }
 
     /// Bed depth at `shore` metres from the bank where the water reaches `radius` metres from it:
@@ -178,10 +198,19 @@ impl Surface {
             .map(|at| if body[at] == NONE { 0.0 } else { ((dist[at].min(FAR) as f64 / 3.0 - 0.5).max(0.0) * cell_m) as f32 })
             .collect();
         let width = local_radius(&body, &shore, side, cell_m);
+        let mut farthest = vec![0.0f64; map.bodies.len()];
+        for (at, &b) in body.iter().enumerate() {
+            if b != NONE {
+                farthest[b as usize] = farthest[b as usize].max(shore[at] as f64);
+            }
+        }
         let depth = (0..n)
             .map(|at| match body[at] {
                 NONE => 0.0,
-                b => map.bodies[b as usize].kind.depth(shore[at] as f64, width[at] as f64) as f32,
+                b => (match map.bodies[b as usize].kind {
+                    Kind::Sea => Kind::sea_depth(shore[at] as f64, farthest[b as usize]),
+                    kind => kind.depth(shore[at] as f64, width[at] as f64),
+                }) as f32,
             })
             .collect();
         Self { grid, body, level, depth }
@@ -409,6 +438,25 @@ mod tests {
         // Mid-channel upstream is as deep as a 10 m wide river is, not a basin's depth.
         assert!(depth(-200.0, 0.0) < Kind::River.max_depth(10.0) + 1e-3, "{}", depth(-200.0, 0.0));
         assert!(depth(150.0, 0.0) > depth(-200.0, 0.0) + 1.0, "{} {}", depth(150.0, 0.0), depth(-200.0, 0.0));
+    }
+
+    #[test]
+    fn the_sea_shelves_steadily_out_to_its_farthest_point() {
+        // A coast along x = -350 m, sea to the east as far as the grid goes (about 750 m).
+        let ring = vec![[-350.0, -500.0], [500.0, -500.0], [500.0, 500.0], [-350.0, 500.0]];
+        let map = Map { bodies: vec![Body { kind: Kind::Sea, rings: vec![ring], level: Some(0.0) }], streams: Vec::new() };
+        let grid = Grid { origin: -40_000, cell: 500, side: 161 };
+        let surface = Surface::new(&map, grid, |_, _| Some(1.0));
+        let depth = |x: f64| -surface.bed(x, 0.0, Some(1.0)).unwrap();
+        let profile: Vec<f64> = (0..=149).map(|k| depth(-345.0 + k as f64 * 5.0)).collect();
+        assert!(profile[0] < 0.6, "shallow at the beach: {}", profile[0]);
+        let slopes: Vec<f64> = profile.windows(2).map(|w| (w[1] - w[0]) / 5.0).collect();
+        assert!(slopes.iter().all(|&s| s > 0.0), "deepens all the way out");
+        assert!(slopes.iter().all(|&s| s < 0.04), "no steep drop: {:?}", slopes.iter().cloned().fold(0.0, f64::max));
+        assert!(slopes.last().unwrap() * 4.0 > slopes[0], "no flat floor offshore");
+        assert!((profile.last().unwrap() - SEA_DEPTH).abs() < 0.2, "{}", profile.last().unwrap());
+        // A sea the world only touches still shelves gently.
+        assert!(Kind::sea_depth(50.0, 50.0) < 2.0);
     }
 
     #[test]

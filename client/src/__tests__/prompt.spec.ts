@@ -59,7 +59,7 @@ describe('bullets', () => {
       sounds: { gunshot: () => log.push('bang') },
       blips: { fired() {} },
       surroundings: { watery: () => false },
-      view: { chipped() {} },
+      view: { chipped() {}, glassStruck: () => false, glassBlast() {} },
       localId: () => null,
     } as unknown as EventWorld
     return { log, events: new Events(world) }

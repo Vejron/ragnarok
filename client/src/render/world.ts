@@ -4,6 +4,7 @@ import { toonMaterial } from './toon'
 import type { TileGround } from '@/sim/terrain'
 import type { TileData } from '@/world'
 import { buildingBuffers, type BuildingBuffers } from './buildingmesh'
+import type { GlassBuffers } from './glass'
 import { GRASS_COLOR, bakeTerrainTexture, coverTexture, reliefTexture } from './cover'
 import type { Ribbon } from './groundmesh'
 import type { HeightSource } from './shade'
@@ -56,6 +57,10 @@ export function replaceRibbons(group: Group, ribbons: readonly Ribbon[]) {
 
 /** Every tile's buildings share this one; each vertex carries its colour. */
 const buildingMaterial = toonMaterial({ vertexColors: true, walls: true })
+/** Window glass: a pale translucent sheet, lit, drawn after everything solid and after water. */
+export const glassMaterial = toonMaterial({ color: 0xbcd6ea, opacity: 0.45, blend: 'alpha', depthWrite: false, side: 'double' })
+/** Where the glass is drawn among what is translucent: over water (1), so a pane seen over a lake is blended on top of it. */
+const GLASS_ORDER = 2
 
 /** Puts snow on the roofs. Done once, when the manifest says it is winter, before any tile is drawn. */
 export function snowOnBuildings() {
@@ -164,14 +169,35 @@ const NONE: ReadonlySet<number> = new Set()
  */
 function mergedMesh(buffers: BuildingBuffers | null, destroyed: ReadonlySet<number>): Mesh[] {
   if (!buffers) return []
-  const { positions, normals, colors, custom, bounds } = buffers
-  const mesh = new Mesh(new Geometry({ positions, normals, colors, custom, bounds }), buildingMaterial)
-  mesh.castShadow = true
+  const out: Mesh[] = []
+  if (buffers.positions.length > 0) {
+    const { positions, normals, colors, custom, bounds } = buffers
+    const mesh = new Mesh(new Geometry({ positions, normals, colors, custom, bounds }), buildingMaterial)
+    mesh.castShadow = true
+    mesh.receiveShadow = true
+    mesh.userData.merged = true
+    const merged: Merged = { ranges: buffers.ranges ?? null, left: new Set(destroyed) }
+    mesh.userData.buildings = merged
+    out.push(mesh)
+  }
+  if (buffers.glass) out.push(glassMesh(buffers.glass))
+  return out
+}
+
+/** The windows' glass of a tile's buildings as one translucent mesh; `Glazing` breaks its panes in place. */
+function glassMesh(glass: GlassBuffers): Mesh {
+  const mesh = new Mesh(new Geometry({ positions: glass.positions, normals: glass.normals, bounds: glass.bounds }), glassMaterial)
+  mesh.castShadow = false
   mesh.receiveShadow = true
-  mesh.userData.merged = true
-  const merged: Merged = { ranges: buffers.ranges ?? null, left: new Set(destroyed) }
-  mesh.userData.buildings = merged
-  return [mesh]
+  mesh.renderOrder = GLASS_ORDER
+  mesh.userData.glass = true
+  mesh.userData.panes = glass.panes
+  return mesh
+}
+
+/** The glass mesh of a tile's group, if it has one. */
+export function glassOf(group: Group): Mesh | null {
+  return group.children.find((child): child is Mesh => child.userData.glass === true && child instanceof Mesh) ?? null
 }
 
 /** What a tile's merged mesh knows of its buildings: where each one's vertices are, and those it leaves out. */
@@ -208,7 +234,12 @@ export function rebuildBuildings(group: Group, tile: TileData, salt: number, des
     mesh.geometry.dispose()
     group.remove(mesh)
   }
-  group.add(...mergedMesh(buildingBuffers(tile, salt, destroyed), destroyed))
+  // The glass stays as it is: its panes do not depend on which buildings are drawn here, and some are broken.
+  const glass = glassOf(group)
+  for (const mesh of mergedMesh(buildingBuffers(tile, salt, destroyed), destroyed)) {
+    if (mesh.userData.glass && glass) mesh.geometry.dispose()
+    else group.add(mesh)
+  }
 }
 
 /** Frees a tile's geometry and its terrain texture. The materials and tree prototypes are shared and stay. */

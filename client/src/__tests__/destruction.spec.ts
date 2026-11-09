@@ -343,9 +343,9 @@ describe('a hurt building', () => {
     damage.carve(key, 0, [], fell, [5, 4, 0], true)
     const pieces = () => damage.root.children[0]!.children.filter((c) => c instanceof Mesh && c.geometry.colors && c.position.lengthSq() > 0) as Mesh[]
     expect(pieces().length).toBeGreaterThan(0)
-    for (let i = 0; i < 750; i++) damage.update(0.02, { dust() {} } as never, new Vector3(1e6, 0, 0))
+    for (let i = 0; i < 450; i++) damage.update(0.02, { dust() {} } as never, new Vector3(1e6, 0, 0))
     const before = pieces().map((m) => [m.position.clone(), m.quaternion.clone()] as const)
-    for (let i = 0; i < 50; i++) damage.update(0.02, { dust() {} } as never, new Vector3(1e6, 0, 0))
+    for (let i = 0; i < 25; i++) damage.update(0.02, { dust() {} } as never, new Vector3(1e6, 0, 0))
     pieces().forEach((m, i) => {
       expect(span(m).low).toBeCloseTo(0, 1)
       expect(m.position.distanceTo(before[i]![0])).toBeLessThan(1e-6)
@@ -503,14 +503,37 @@ describe('a building with cells blasted out of it', () => {
     damage.carve(key, 0, all.slice(0, 20), all.slice(20, 60), [-1, 2, 0], true)
     expect(group.children.length).toBeGreaterThan(before)
     const e = effects()
-    for (let i = 0; i < 400; i++) damage.update(0.05, e, new Vector3(500, 0, 0))
-    // Twenty seconds on, all of it lies still on the ground, and stays.
+    for (let i = 0; i < 160; i++) damage.update(0.05, e, new Vector3(500, 0, 0))
+    // Eight seconds on, all of it lies still on the ground.
     const lying = group.children.length
     expect(lying).toBeGreaterThan(before)
     const where = () => group.children.map((c) => [c.position.x, c.position.y, c.position.z]).flat()
     const still = where()
     damage.update(0.05, e, new Vector3(500, 0, 0))
     expect(where()).toEqual(still)
+    e.dispose()
+  })
+
+  it('lets what was thrown lie a while, then sinks it slowly into the ground, all gone 30 s after it lands', () => {
+    const damage = new BuildingDamage()
+    damage.attach(key, twoHouses())
+    damage.dent(key, 0, 0, 1)
+    const group = damage.root.children[0]!
+    const before = group.children.length
+    const all = Array.from({ length: 4000 }, (_, i) => i)
+    damage.carve(key, 0, all.slice(0, 20), all.slice(20, 60), [-1, 2, 0], true)
+    const e = effects()
+    const thrown = () => group.children.slice(before) as Mesh[]
+    // Landed and lying by eight seconds; a little after the tenth second on the ground, sinking: lower, not yet gone.
+    for (let i = 0; i < 160; i++) damage.update(0.05, e, new Vector3(500, 0, 0))
+    const count = thrown().length
+    expect(count).toBeGreaterThan(0)
+    for (let i = 0; i < 160; i++) damage.update(0.05, e, new Vector3(500, 0, 0))
+    expect(thrown().length).toBeGreaterThan(0)
+    expect(thrown().some((m) => span(m).low < -0.05)).toBe(true)
+    // Past thirty seconds on the ground, the last of it is gone.
+    for (let i = 0; i < 600; i++) damage.update(0.05, e, new Vector3(500, 0, 0))
+    expect(thrown().filter((m) => m.geometry.colors)).toEqual([])
     e.dispose()
   })
 

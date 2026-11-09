@@ -98,6 +98,8 @@ pub struct Hands {
     pub selected: Option<usize>,
     /// Ticks until the item in hand can be used again.
     pub fire_cooldown: u32,
+    /// How far held fire has widened the gun in hand's cone, radians (`items::Bloom`).
+    pub bloom: f32,
     /// Ticks left of a reload, or of a bandage being applied (`channel_left`). Zero when idle.
     pub reload_left: u32,
     pub channel_left: u32,
@@ -365,7 +367,7 @@ impl Player {
             lamp_held: false,
             ski_held: false,
             surrendered: false,
-            hands: Hands { hotbar: loadout, loadout, selected: Some(0), fire_cooldown: 0, reload_left: 0, channel_left: 0, trigger_held: false, golf: Default::default(), golf_seen: 0 },
+            hands: Hands { hotbar: loadout, loadout, selected: Some(0), fire_cooldown: 0, bloom: 0.0, reload_left: 0, channel_left: 0, trigger_held: false, golf: Default::default(), golf_seen: 0 },
             score: Tally::default(),
             name,
             color,
@@ -773,7 +775,8 @@ impl World {
             return None;
         }
         let carving = self.carves.get(&id)?;
-        let standing = sim::solid_of(&carving.shell.boxes(&carving.removed), &carving.floor);
+        let index = *self.buildings_by_id.get(&id)?;
+        let standing = sim::building_solid(&self.map, index, Some((&carving.shell, &carving.removed)), &carving.floor);
         self.physics.replace_building(Obj::Building(id), standing);
         self.fresh.carved.push((id, at, cut.clone()));
         self.drop_rubble(id, &cut.fell);

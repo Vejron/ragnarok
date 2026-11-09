@@ -79,7 +79,7 @@ impl Physics {
         let ground = tile_ground(manifest, col, row, &tile.ground).map(|ground| self.insert_static(ground, None));
         handles.extend(ground);
         // The tile alone, as the server's merged world holds it: what collides, under the same ids.
-        let solid = Tile { buildings: tile.buildings.clone(), collision: tile.collision.clone(), trees: tile.trees.clone(), bridges: tile.bridges.clone(), lines: tile.lines.clone(), ..Default::default() };
+        let solid = Tile { buildings: tile.buildings.clone(), collision: tile.collision.clone(), trees: tile.trees.clone(), bridges: tile.bridges.clone(), lines: tile.lines.clone(), look: tile.look.clone(), ..Default::default() };
         self.fences.set((col, row), crate::fences::fences_of(&tile.lines));
         self.stones.set((col, row), tile.stones.clone());
         self.waters.set((col, row), &tile.ground, &tile.water);
@@ -140,7 +140,7 @@ impl Physics {
                 *flag = true;
             }
         }
-        let shape = solid_of(&shell.boxes(&gone), floor);
+        let shape = building_solid(world, at, Some((shell, &gone)), floor);
         self.replace_building(Obj::Building(shared::world::ObjId { col, row, index }), shape);
     }
 

@@ -357,6 +357,10 @@ pub const MOUNT_ZERO_RANGE: f32 = 100.0;
 pub const MOUNT_EYE_CLEARANCE: f32 = 0.3;
 /// A gun fired with aim held scatters over this fraction of its hip-fire cone.
 pub const AIM_SPREAD_SCALE: f32 = 0.25;
+/// ...and over this fraction of the bloom held fire has added to it (`items::Bloom`).
+pub const AIM_BLOOM_SCALE: f32 = 0.6;
+/// How fast that bloom shrinks again once the trigger is let go, radians a second.
+pub const BLOOM_RECOVER: f32 = 0.12;
 /// How long a shell flies before it bursts where it is.
 pub const SHELL_TTL_TICKS: u32 = 6 * TICK_RATE;
 /// Speed a fired shell takes from the tank, m/s, backwards along the barrel.

@@ -60,6 +60,11 @@ const SCOPE_FOV = 18
 const SIGHT_FOV = 20
 /** How far above the ground a shoulder camera stays (m). */
 const CAMERA_CLEARANCE = 0.3
+/** The colour of the water around a camera under the surface, at noon (sRGB). */
+const MURK = 0x1f5f6e
+/** Under water, fog from this far to all murk at `MURK_FAR`, metres. */
+const MURK_NEAR = 0.5
+const MURK_FAR = 22
 /** How far in the third-person camera pulls while aiming, as a fraction of its distance. */
 export const AIM_DISTANCE_SCALE = 0.7
 /** How fast the zoom eases in and out, per second. */
@@ -92,6 +97,10 @@ export class Scene {
   private dayPhase = NOON
   private readonly sky = createSky()
   private readonly glint = new Color()
+  /** Whether the camera is under the water's surface this frame (see `setUnderwater`). */
+  private underwater = false
+  private readonly murk = new Color()
+  private readonly saved = { fog: new Color(), background: new Color(), near: 0, far: 0 }
   /** The light on flat ground against noon's, per channel: white at noon, dark blue at midnight (see `Sky.tint`). */
   get groundLight(): Readonly<Color> {
     return this.sky.tint
@@ -389,13 +398,40 @@ export class Scene {
     setWaterPlane(on ? height : null)
   }
 
+  /** Whether the camera is under the water's surface: the view then closes in to the water's murk. */
+  setUnderwater(under: boolean) {
+    this.underwater = under
+  }
+
   render() {
     if (!this.renderer) return
     // The reticle is laid out in view space; it goes where the camera is, just before drawing.
     this.camera.updateWorld()
     this.gunsight.follow(this.camera)
     this.heldMap.follow(this.camera)
-    this.renderer.render(this.scene, this.camera)
+    if (!this.underwater) return this.renderer.render(this.scene, this.camera)
+    // Under water the fog is the water's own colour, lit as the ground is, and close; the sky's comes back after.
+    const { fog, background } = this.scene
+    const saved = this.saved
+    saved.fog.copy(fog!.color)
+    saved.background.copy(background)
+    saved.near = fog!.near
+    saved.far = fog!.far
+    const murk = this.murk.setHex(MURK)
+    const tint = this.sky.tint
+    murk.set(murk.r * tint.r, murk.g * tint.g, murk.b * tint.b)
+    fog!.color.copy(murk)
+    background.copy(murk)
+    fog!.near = MURK_NEAR
+    fog!.far = MURK_FAR
+    try {
+      this.renderer.render(this.scene, this.camera)
+    } finally {
+      fog!.color.copy(saved.fog)
+      background.copy(saved.background)
+      fog!.near = saved.near
+      fog!.far = saved.far
+    }
   }
 
   dispose() {

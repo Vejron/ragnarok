@@ -204,8 +204,10 @@ export function explosion(world: FxWorld, debris: Debris, at: Vector3, radius: n
       new Vector3(Math.cos(heading) * out, rand(6, 13) * Math.sqrt(scale), Math.sin(heading) * out),
       new Vector3(rand(-8, 8), rand(-8, 8), rand(-8, 8)),
       size * 0.4,
-      4,
+      // They lie a while, then sink into the ground from 6 s on, gone at 10 s.
+      10,
       [material],
+      4,
     )
   }
 }

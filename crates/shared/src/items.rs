@@ -114,6 +114,29 @@ impl Falloff {
     }
 }
 
+/// How a gun's cone grows as it keeps firing: each shot adds `per_shot` radians, up to `max`; once
+/// the trigger is let go it shrinks again by `BLOOM_RECOVER` radians a second. A gun that blooms
+/// fires its first shot with aim held dead true.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Bloom {
+    pub per_shot: f32,
+    pub max: f32,
+}
+
+impl Bloom {
+    pub const NONE: Bloom = Bloom { per_shot: 0.0, max: 0.0 };
+
+    /// Whether the gun blooms at all.
+    pub fn any(&self) -> bool {
+        self.per_shot > 0.0
+    }
+
+    /// `bloom` after one more shot.
+    pub fn fired(&self, bloom: f32) -> f32 {
+        (bloom + self.per_shot).min(self.max)
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct ItemDef {
     pub name: &'static str,
@@ -130,6 +153,8 @@ pub struct ItemDef {
     pub range: f32,
     /// Random half-angle of the cone a shot is fired in, radians.
     pub spread: f32,
+    /// How held fire widens that cone, shot after shot.
+    pub bloom: Bloom,
     /// Fires a round that flies (`PROJECTILE_BULLET`: speed `BULLET_SPEED`, a little drop) and hits when it arrives, instead of a hitscan.
     pub projectile: bool,
     /// Hitscan rays one trigger pull fires, each doing `damage`, each scattered on its own.
@@ -161,6 +186,7 @@ const REVOLVER: ItemDef = ItemDef {
     range: 150.0,
     // A little wild from the hip; aiming tightens it.
     spread: 0.015,
+    bloom: Bloom::NONE,
     projectile: true,
     pellets: 1,
     falloff: Falloff { start: 30.0, end: 150.0, min: 0.6 },
@@ -181,7 +207,8 @@ const AK5: ItemDef = ItemDef {
     mag: 30,
     reload_ticks: 5 * TICK_RATE / 2,
     range: 200.0,
-    spread: 0.012,
+    spread: 0.02,
+    bloom: Bloom { per_shot: 0.005, max: 0.05 },
     projectile: true,
     pellets: 1,
     falloff: Falloff { start: 25.0, end: 200.0, min: 0.5 },
@@ -204,6 +231,7 @@ const SNIPER: ItemDef = ItemDef {
     range: 400.0,
     // Wild from the hip; scoping removes it.
     spread: 0.05,
+    bloom: Bloom::NONE,
     projectile: true,
     pellets: 1,
     falloff: Falloff::NONE,
@@ -228,6 +256,7 @@ const SHOTGUN: ItemDef = ItemDef {
     range: 40.0,
     // A wide cone from the hip; aiming tightens it.
     spread: 0.06,
+    bloom: Bloom::NONE,
     projectile: false,
     pellets: 10,
     falloff: Falloff { start: 8.0, end: 40.0, min: 0.25 },
@@ -249,6 +278,7 @@ const GRENADE: ItemDef = ItemDef {
     reload_ticks: 0,
     range: 0.0,
     spread: 0.0,
+    bloom: Bloom::NONE,
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
@@ -270,6 +300,7 @@ const BANDAGE: ItemDef = ItemDef {
     reload_ticks: 0,
     range: 0.0,
     spread: 0.0,
+    bloom: Bloom::NONE,
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
@@ -292,6 +323,7 @@ const GOLDEN_EGG: ItemDef = ItemDef {
     reload_ticks: 0,
     range: 0.0,
     spread: 0.0,
+    bloom: Bloom::NONE,
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
@@ -315,6 +347,7 @@ const DRONE: ItemDef = ItemDef {
     reload_ticks: 0,
     range: 0.0,
     spread: 0.0,
+    bloom: Bloom::NONE,
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
@@ -337,6 +370,7 @@ const LOITER: ItemDef = ItemDef {
     reload_ticks: 0,
     range: 0.0,
     spread: 0.0,
+    bloom: Bloom::NONE,
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
@@ -358,6 +392,7 @@ const FLARE: ItemDef = ItemDef {
     reload_ticks: 0,
     range: 0.0,
     spread: 0.0,
+    bloom: Bloom::NONE,
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
@@ -381,6 +416,7 @@ const BRICKS: ItemDef = ItemDef {
     reload_ticks: 0,
     range: crate::consts::BUILD_REACH,
     spread: 0.0,
+    bloom: Bloom::NONE,
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
@@ -407,6 +443,7 @@ const CARL_GUSTAF: ItemDef = ItemDef {
     range: 400.0,
     // Off the shoulder from the hip it wanders; down the sight it goes true.
     spread: 0.03,
+    bloom: Bloom::NONE,
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
@@ -431,6 +468,7 @@ const AT_RIFLE: ItemDef = ItemDef {
     range: 400.0,
     // Long and heavy: wild from the hip, true once braced (aim held).
     spread: 0.06,
+    bloom: Bloom::NONE,
     projectile: true,
     pellets: 1,
     falloff: Falloff::NONE,
@@ -455,6 +493,7 @@ const fn golf_club(name: &'static str) -> ItemDef {
         reload_ticks: 0,
         range: crate::consts::GOLF_REACH,
         spread: 0.0,
+        bloom: Bloom::NONE,
         projectile: false,
         pellets: 1,
         falloff: Falloff::NONE,
@@ -635,8 +674,8 @@ mod tests {
                     ItemKind::Club => "club",
                 };
                 format!(
-                    "    {{\"id\": {id}, \"name\": \"{}\", \"kind\": \"{kind}\", \"auto\": {}, \"damage\": {}, \"cooldownTicks\": {}, \"mag\": {}, \"reloadTicks\": {}, \"range\": {}, \"aimSpeed\": {}, \"scope\": {}, \"stack\": {}, \"weapon\": {}, \"projectile\": {}, \"pellets\": {}, \"falloffStart\": {}, \"falloffEnd\": {}, \"falloffMin\": {}, \"spread\": {}}}",
-                    d.name, d.auto, d.damage, d.cooldown_ticks, d.mag, d.reload_ticks, d.range, d.aim_speed, d.scope, d.stack, d.weapon, d.projectile, d.pellets, d.falloff.start, d.falloff.end, d.falloff.min, d.spread
+                    "    {{\"id\": {id}, \"name\": \"{}\", \"kind\": \"{kind}\", \"auto\": {}, \"damage\": {}, \"cooldownTicks\": {}, \"mag\": {}, \"reloadTicks\": {}, \"range\": {}, \"aimSpeed\": {}, \"scope\": {}, \"stack\": {}, \"weapon\": {}, \"projectile\": {}, \"pellets\": {}, \"falloffStart\": {}, \"falloffEnd\": {}, \"falloffMin\": {}, \"spread\": {}, \"bloomPerShot\": {}, \"bloomMax\": {}}}",
+                    d.name, d.auto, d.damage, d.cooldown_ticks, d.mag, d.reload_ticks, d.range, d.aim_speed, d.scope, d.stack, d.weapon, d.projectile, d.pellets, d.falloff.start, d.falloff.end, d.falloff.min, d.spread, d.bloom.per_shot, d.bloom.max
                 )
             })
             .collect();

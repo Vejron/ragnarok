@@ -236,7 +236,7 @@ fn water_map(args: &Args, place: &Place, pieces: Option<&[[f64; 4]]>) -> Result<
     let seas = osm_import::osm_water::sea(&coast, reach);
     for rings in &seas {
         let rings = rings.iter().map(|ring| open(ring.iter().map(|&[x, y]| [x, -y]).collect())).collect();
-        map.bodies.push(water::Body { kind: water::Kind::Lake, rings, level: Some(0.0) });
+        map.bodies.push(water::Body { kind: water::Kind::Sea, rings, level: Some(0.0) });
     }
     eprintln!("water: {} lakes, {} river polygons, {} stream lines, {} sea polygons from OpenStreetMap", found.lakes.len(), found.rivers.len(), found.streams.len(), seas.len());
     Ok(map)

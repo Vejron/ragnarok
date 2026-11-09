@@ -148,10 +148,13 @@ and how many objects it has of each symbol.
   step is cut short of, the same on server and client, and the bots' grid shuts the cells it runs
   through. OSM's are not fetched yet.
 - **Looks** (`Tile::look`): every building's own walls and roof, as the importer built them before
-  `voxels::bake` cut them into 72 cm cells, kept for drawing only. Cells stay what is collided with
-  and blasted; a client draws a whole building from its look and cuts holes into it
-  (`render/lookfracture.ts`). A tile written before looks has none and its buildings are drawn as
-  cubes; the field is left out of the file when empty, so the world version is unchanged. Re-import a
+  `voxels::bake` cut them into 72 cm cells. Cells stay what is blasted and what holds a building up;
+  what is drawn and collided with is the look, with the windows cut out of the walls
+  (`shared::windows`, `render/windows.ts`) and the pieces in blasted cells left out
+  (`shared::facade`, `render/lookfracture.ts`), the same on the server and every client, so a roof is
+  the slope it is and a round goes through a window. A tile written before looks has none and its
+  buildings are drawn and collided with as cubes; the field is left out of the file when empty, so
+  the world version is unchanged. Re-import a
   world to give it looks (`--bake` cannot: a baked world has lost its walls and roofs).
 - **Stony ground** goes in the tiles' `stones` layer: a 2 m grid of grades, the low seven bits how stony
   (`STONES_DENSITY`) and the top bit a boulder field's blocks (`STONES_ANGULAR`). It is written after
@@ -542,8 +545,11 @@ cargo test -p osm-import lidar_probe -- --ignored --nocapture
 Lakes (`natural=water`, riverbanks, reservoirs), rivers and streams come from Overpass, one query per
 2 km block. **The sea** has no polygon in OSM: coastline ways (land on the left) are joined, cut at the
 edge of the world's grid and closed clockwise along it (`osm_water::sea`); islands become holes. The
-height model leaves the sea out, so its surface is fixed at 0 m. A world lying entirely in the sea
-(no coastline crossing it) gets no sea.
+height model leaves the sea out, so its surface is fixed at 0 m. Its bed is not a lake's bowl: it
+follows only the distance `s` from land, `0.3 + 11.7·t·(1.5 − 0.5·t)` m with `t = s / max(S, 600 m)`
+and `S` the farthest any sea sample is from land, so it shelves gently off the beach and keeps
+deepening to 12 m at the far edge, with no flat floor. A world lying entirely in the sea (no
+coastline crossing it) gets no sea.
 
 ## Hand-placed spawns, vehicles, items and animals
 

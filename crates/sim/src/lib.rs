@@ -330,10 +330,15 @@ pub fn building_shell(world: &WorldFile, index: usize) -> Option<(Shell, Vec<Tri
     Some((shell, floor))
 }
 
-/// What building `index` of `world` is collided with while nothing has been cut from it: its cubes
-/// merged into boxes and its floor (`solid_of`). `None` when it has no cubes, and is collided with
+/// What building `index` of `world` is collided with while nothing has been cut from it: its own
+/// walls and roof with the windows cut out when it has a look (`building_solid`), else its cubes
+/// merged into boxes, and its floor (`solid_of`). `None` when it has neither, and is collided with
 /// as its own triangles.
 pub fn building_shape(world: &WorldFile, index: usize) -> Option<SharedShape> {
+    if world.looks.get(index).is_some_and(|look| !look.is_empty()) {
+        let [_, _, floor] = building_parts(world, index)?;
+        return building_solid(world, index, None, &floor);
+    }
     // Baked cells are merged as they are: building their whole `Shell` waits until one is carved.
     if let Some(boxes) = shared::carve::whole_boxes(&world.buildings.get(index)?.cells) {
         let [_, _, floor] = building_parts(world, index)?;
@@ -341,6 +346,52 @@ pub fn building_shape(world: &WorldFile, index: usize) -> Option<SharedShape> {
     }
     let (shell, floor) = building_shell(world, index)?;
     solid_of(&shell.boxes(&shell.untouched()), &floor)
+}
+
+/// What building `index` of `world` is collided with, whole (`cut` None) or with the cells `cut` says
+/// are gone: for a building with a look, a mesh of its own walls and roof as they stand, the windows
+/// cut out and the pieces in gone cells left out (`shared::facade::standing`), so a roof is walked
+/// over as the slope it is and a round goes through a window; for one without, its standing cells
+/// merged into boxes. With its `floor` either way. `None` when nothing stands.
+pub fn building_solid(world: &WorldFile, index: usize, cut: Option<(&Shell, &[bool])>, floor: &[Tri]) -> Option<SharedShape> {
+    match world.looks.get(index).filter(|look| !look.is_empty()) {
+        Some(look) => mesh_of(&shared::facade::standing(&look.walls, &look.roof, &look.windows, cut), floor),
+        None => {
+            let (shell, removed) = cut?;
+            solid_of(&shell.boxes(removed), floor)
+        }
+    }
+}
+
+/// One mesh of `faces` (three corners a triangle, metres) and `floor` triangles (centimetres), its
+/// corners shared to the millimetre. `None` when there is nothing.
+fn mesh_of(faces: &[[f32; 3]], floor: &[Tri]) -> Option<SharedShape> {
+    let mut ids: HashMap<[i32; 3], u32> = HashMap::new();
+    let mut vertices: Vec<Vector> = Vec::new();
+    let mut vertex = |p: [f32; 3]| -> u32 {
+        let key = p.map(|v| (v * 1000.0).round() as i32);
+        *ids.entry(key).or_insert_with(|| {
+            vertices.push(Vector::new(p[0], p[1], p[2]));
+            vertices.len() as u32 - 1
+        })
+    };
+    let mut triangles: Vec<[u32; 3]> = Vec::with_capacity(faces.len() / 3 + floor.len());
+    for t in faces.chunks_exact(3) {
+        let tri = [vertex(t[0]), vertex(t[1]), vertex(t[2])];
+        if tri[0] != tri[1] && tri[1] != tri[2] && tri[0] != tri[2] {
+            triangles.push(tri);
+        }
+    }
+    for t in floor {
+        let tri = [vertex([from_cm(t[0]), from_cm(t[1]), from_cm(t[2])]), vertex([from_cm(t[3]), from_cm(t[4]), from_cm(t[5])]), vertex([from_cm(t[6]), from_cm(t[7]), from_cm(t[8])])];
+        if tri[0] != tri[1] && tri[1] != tri[2] && tri[0] != tri[2] {
+            triangles.push(tri);
+        }
+    }
+    if triangles.is_empty() {
+        return None;
+    }
+    SharedShape::trimesh(vertices, triangles).ok()
 }
 
 /// One shape of `boxes` (`Shell::boxes`) and `floor` triangles, centimetres: a cuboid a box and a

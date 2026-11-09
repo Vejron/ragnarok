@@ -35,13 +35,15 @@ const DOOR_WIDTH = 1.0
 const DOOR_HEIGHT = 2.1
 /** How far frames and panes stand out from the wall, metres, and how much wider a frame is than its pane. */
 const FRAME_OUT = 0.025
-const PANE_OUT = 0.04
-const FRAME = 0.09
+export const PANE_OUT = 0.04
+export const FRAME = 0.09
+/** How deep a window's reveal goes into the wall, metres: the wall's thickness (`facade.ts`). */
+export const REVEAL = 0.2
 
-/** Linear colours: frames, panes, doors. */
+/** Linear colours: frames, a door's leaf, and the reveal round a window (the frame's, in shade). */
 export const FRAME_RGB = [0.86, 0.84, 0.78] as const
-export const PANE_RGB = [0.035, 0.05, 0.07] as const
 export const DOOR_RGB = [0.11, 0.06, 0.035] as const
+export const REVEAL_RGB = [0.7, 0.68, 0.63] as const
 
 interface Plane {
   normal: P
@@ -129,9 +131,35 @@ export function openingsOf(look: CollisionMesh, range: LookRange): Opening[] {
   return out
 }
 
+const memo = new WeakMap<CollisionMesh, Map<number, readonly Opening[]>>()
+
+/** `openingsOf`, remembered for the look and the building: windows are looked up by their index in it. */
+export function openingsFor(look: CollisionMesh, range: LookRange): readonly Opening[] {
+  let byBuilding = memo.get(look)
+  if (!byBuilding) {
+    byBuilding = new Map()
+    memo.set(look, byBuilding)
+  }
+  let openings = byBuilding.get(range.first)
+  if (!openings) {
+    openings = openingsOf(look, range)
+    byBuilding.set(range.first, openings)
+  }
+  return openings
+}
+
+/** The triangles `openingQuads` draws for `openings`: a window's frame ring and reveal, a door's frame and leaf. */
+export function openingTriangles(openings: readonly Opening[]): number {
+  let n = 0
+  for (const o of openings) n += o.door ? 4 : 16
+  return n
+}
+
 /**
- * Calls `quad` for each quad of `openings` to draw: the frame, then the pane (a door's leaf), each
- * corners counter-clockwise seen from outside, standing out from the wall.
+ * Calls `quad` for each quad of `openings` to draw, with the normal it faces: a window's frame, a ring
+ * standing a little out from the wall round the hole cut for it, and the reveal going into the wall
+ * from the hole's four sides; a door's frame and its leaf, standing out from the wall. The glass is
+ * drawn apart (`glass.ts`), and the hole itself is cut out of the wall (`facade.ts`).
  */
 export function openingQuads(openings: readonly Opening[], quad: (corners: [P, P, P, P], rgb: readonly [number, number, number], normal: P) => void) {
   for (const { corners, normal, door } of openings) {
@@ -144,8 +172,21 @@ export function openingQuads(openings: readonly Opening[], quad: (corners: [P, P
       const shift = (p: P, du: number, dv: number): P => [p[0] + ux * du + normal[0] * out, p[1] + dv, p[2] + uz * du + normal[2] * out]
       return [shift(a, -by, -bottom), shift(corners[1], by, -bottom), shift(c, by, by), shift(corners[3], -by, by)]
     }
-    quad(grow(FRAME_OUT, FRAME, door ? 0 : FRAME), FRAME_RGB, normal)
-    quad(grow(PANE_OUT, 0), door ? DOOR_RGB : PANE_RGB, normal)
+    if (door) {
+      quad(grow(FRAME_OUT, FRAME, 0), FRAME_RGB, normal)
+      quad(grow(FRAME_OUT + 0.015, 0), DOOR_RGB, normal)
+      continue
+    }
+    const outer = grow(FRAME_OUT, FRAME)
+    const inner = grow(FRAME_OUT, 0)
+    for (let k = 0; k < 4; k++) quad([outer[k]!, outer[(k + 1) % 4]!, inner[(k + 1) % 4]!, inner[k]!], FRAME_RGB, normal)
+    // The reveal: each side of the hole, going into the wall, facing into the opening.
+    const back = (p: P): P => [p[0] - normal[0] * REVEAL, p[1], p[2] - normal[2] * REVEAL]
+    const faces: P[] = [[0, 1, 0], [-ux, 0, -uz], [0, -1, 0], [ux, 0, uz]]
+    for (let k = 0; k < 4; k++) {
+      const [p, q] = [corners[k]!, corners[(k + 1) % 4]!]
+      quad([p, q, back(q), back(p)], REVEAL_RGB, faces[k]!)
+    }
   }
 }
 

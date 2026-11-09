@@ -407,6 +407,28 @@ pub fn carve_cut(walls: &[i32], roof: &[i32]) -> Option<CarvedCells> {
     Some(CarvedCells { origin: shell.origin, dims: shell.dims.map(|d| d as u32), solid: bytes(shell.solid_flags()), roof: bytes(shell.roof_flags()) })
 }
 
+/// The windows and door on the walls `walls` (nine centimetre numbers a triangle), as the server places
+/// them (`shared::windows::openings_of`): sixteen numbers an opening, its four corners (metres), the
+/// wall's normal and 1 for a door. For the client to check it places the same (`windows.ts`).
+#[wasm_bindgen]
+pub fn windows_of(walls: &[i32]) -> Vec<f32> {
+    let mut look = shared::world::Look::default();
+    for t in walls.chunks_exact(9) {
+        let base = look.vertices.len() as u32;
+        look.vertices.extend([[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]);
+        look.triangles.push([base, base + 1, base + 2]);
+    }
+    let count = look.triangles.len() as u32;
+    look.buildings.push([0, count, 0]);
+    let mut out = Vec::new();
+    for window in shared::windows::openings_of(&look, [0, count, 0]) {
+        out.extend(window.corners.iter().flatten());
+        out.extend(window.normal);
+        out.push(if window.door { 1.0 } else { 0.0 });
+    }
+    out
+}
+
 /// `count` flags, one a cell (1 or 0), from the bytes the importer packed them into, a layer being
 /// `layer` cells (`shared::carve::unpack`).
 #[wasm_bindgen]

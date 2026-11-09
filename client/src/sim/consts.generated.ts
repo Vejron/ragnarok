@@ -487,6 +487,12 @@ export const MOUNT_EYE_CLEARANCE = 0.3
 /** A gun fired with aim held scatters over this fraction of its hip-fire cone. */
 export const AIM_SPREAD_SCALE = 0.25
 
+/** ...and over this fraction of the bloom held fire has added to it (`items::Bloom`). */
+export const AIM_BLOOM_SCALE = 0.6
+
+/** How fast that bloom shrinks again once the trigger is let go, radians a second. */
+export const BLOOM_RECOVER = 0.12
+
 /** How long a shell flies before it bursts where it is. */
 export const SHELL_TTL_TICKS = 6 * TICK_RATE
 

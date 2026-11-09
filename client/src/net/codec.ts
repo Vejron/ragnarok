@@ -92,6 +92,8 @@ export const WEAPON_SPLASH = 30
 export const WEAPON_GOLF = 31
 /** A golf ball dropped into the cup at the event's point; `shooter` struck it last. */
 export const WEAPON_CUP = 32
+/** Shot events only: a round went through a window's glass at `x, y, z`, for every client to break that pane. */
+export const WEAPON_GLASS = 33
 
 /** `Limbs`'s lost limbs, the low four bits; the same bits above `LIMB_BLEED_SHIFT` still bleed. Mirrors `LIMB_*`. */
 export const LIMB_ARM_L = 1 << 0

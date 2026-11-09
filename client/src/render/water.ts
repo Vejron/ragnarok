@@ -125,6 +125,19 @@ fn surface(s: Surface) -> vec4f {
   }
   let view = normalize(to);
 
+  if (!s.front && params.ice.x < 0.5) {
+    // From under the surface (\`n\` faces down, at the camera): the sky shows through a window overhead,
+    // bent by the surface; further out than about 49° from straight up the surface mirrors the dark
+    // water instead. The scene's mirror is only for eyes above the water.
+    let up = refract(-view, n, 1.33);
+    let r = select(vec3f(0.0, 1.0, 0.0), normalize(up), dot(up, up) > 1e-4);
+    let window = smoothstep(0.6, 0.72, clamp(abs(dot(n, view)), 0.0, 1.0));
+    let below = params.deep * ground * 0.45;
+    let above = skyAt(vec3f(r.x, abs(r.y), r.z), time);
+    let c = mix(below, above, window) + params.foam * band * 0.08 * ground;
+    return vec4f(c, mix(0.95, 0.55, window));
+  }
+
   // Schlick: little reflection looking straight down, nearly a mirror at a grazing angle.
   let ndv = clamp(abs(dot(n, view)), 0.0, 1.0);
   let fresnel = 0.03 + 0.97 * pow(1.0 - ndv, 5.0);

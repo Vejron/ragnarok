@@ -1,6 +1,6 @@
 use super::*;
 use shared::terrain::Ground;
-use shared::world::{CollisionMesh, WORLD_VERSION};
+use shared::world::{Building, BuildingLook, CollisionMesh, Look, WORLD_VERSION};
 
 fn flat_world() -> WorldFile {
     WorldFile { version: WORLD_VERSION, half_extent: 10_000, ..Default::default() }
@@ -778,4 +778,77 @@ fn with_no_legs_it_lies_down_for_good_and_crawls() {
     }
     assert!(character.prone && character.grounded);
     assert!((-character.position[2] - PRONE_SPEED * LEGLESS_CRAWL_SCALE).abs() < 0.1, "{:?}", character.position);
+}
+
+/// A gabled house 6 × 4 m with 3 m walls and a ridge 4.5 m up along x at z = 2, baked into cells with
+/// its look kept, as the importer leaves one: its walls and roof in `looks`, only its floor in the
+/// collision mesh. Returns the world, its shell and its floor triangles.
+fn looked_house() -> (WorldFile, Shell, Vec<Tri>) {
+    let face = |corners: &[[i32; 3]]| -> Vec<Tri> { (1..corners.len() - 1).map(|i| { let (a, b, c) = (corners[0], corners[i], corners[i + 1]); [a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]] }).collect() };
+    let (w, d, h, r) = (600, 400, 300, 450);
+    // Wound inwards, as the importer winds them.
+    let walls: Vec<Tri> = [
+        face(&[[0, 0, 0], [w, 0, 0], [w, h, 0], [0, h, 0]]),
+        face(&[[w, 0, d], [0, 0, d], [0, h, d], [w, h, d]]),
+        face(&[[0, 0, d], [0, 0, 0], [0, h, 0], [0, r, d / 2], [0, h, d]]),
+        face(&[[w, 0, 0], [w, 0, d], [w, h, d], [w, r, d / 2], [w, h, 0]]),
+    ]
+    .concat();
+    let roof: Vec<Tri> = [face(&[[0, h, 0], [0, r, d / 2], [w, r, d / 2], [w, h, 0]]), face(&[[0, r, d / 2], [0, h, d], [w, h, d], [w, r, d / 2]])].concat();
+    let floor: Vec<Tri> = face(&[[0, 0, 0], [0, 0, d], [w, 0, d], [w, 0, 0]]);
+    let mut look = Look::default();
+    for t in walls.iter().chain(&roof) {
+        let base = look.vertices.len() as u32;
+        look.vertices.extend([[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]);
+        look.triangles.push([base, base + 1, base + 2]);
+    }
+    let range = [0, walls.len() as u32, roof.len() as u32];
+    let shell = Shell::new(&walls, &roof).unwrap();
+    let mut mesh = CollisionMesh::default();
+    for t in &floor {
+        let base = mesh.vertices.len() as u32;
+        mesh.vertices.extend([[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]);
+        mesh.triangles.push([base, base + 1, base + 2]);
+    }
+    let building = Building { height: r, footprint: vec![[0, 0], [w, 0], [w, d], [0, d]], base: 0, first: 0, walls: 0, roof: 0, roof_kind: 2, cells: shell.cells(), paint: None };
+    let world = WorldFile {
+        buildings: vec![building],
+        building_ids: vec![ObjId { col: 0, row: 0, index: 0 }],
+        building_triangles: vec![[0, floor.len() as u32]],
+        looks: vec![BuildingLook { walls: walls.clone(), roof: roof.clone(), windows: shared::windows::openings_of(&look, range) }],
+        collision: mesh,
+        ..flat_world()
+    };
+    (world, shell, floor)
+}
+
+#[test]
+fn a_looked_house_is_collided_with_as_its_own_roof_and_walls_with_the_windows_open() {
+    let (world, shell, floor) = looked_house();
+    let mut physics = Physics::new(&world).unwrap();
+    // Straight down onto the roof halfway up the front slope: the slope itself, not the top of a cell.
+    let t = physics.cast_ray([3.0, 10.0, 1.0], [0.0, -1.0, 0.0], 20.0, 0).expect("the roof");
+    assert!((10.0 - t - 3.75).abs() < 0.02, "the roof at z = 1 is 3.75 m up, found {}", 10.0 - t);
+    // Through a window of the front wall: nothing until the far side of the house.
+    let pane = world.looks[0].windows.iter().find(|w| !w.door && w.normal[2] < -0.9).expect("a window on the front wall");
+    let [a, b, _, d] = pane.corners;
+    let centre = [(a[0] + b[0]) / 2.0, (a[1] + d[1]) / 2.0];
+    // (The back wall's window is in line with it, so it may go out through that too and meet nothing.)
+    let through = physics.cast_ray([centre[0], centre[1], -5.0], [0.0, 0.0, 1.0], 20.0, 0);
+    assert!(through.is_none_or(|t| t > 8.0), "the round went through the window and on, {through:?}");
+    // Beside the window, the wall stops it.
+    let beside = physics.cast_ray([centre[0] + 0.9, centre[1], -5.0], [0.0, 0.0, 1.0], 20.0, 0).expect("the wall");
+    assert!((beside - 5.0).abs() < 0.02, "{beside}");
+    // A cell blasted out of the front wall opens it there and nowhere else.
+    let count = shell.dims[0] * shell.dims[1] * shell.dims[2];
+    let hole = (0..count as u32).filter(|&id| shell.is_solid(id)).min_by_key(|&id| { let c = shell.centre(id); (c[0] - 500).pow(2) + (c[1] - 100).pow(2) + c[2].pow(2) }).unwrap();
+    let mut removed = shell.untouched();
+    removed[hole as usize] = true;
+    physics.replace_building(Obj::Building(ObjId { col: 0, row: 0, index: 0 }), building_solid(&world, 0, Some((&shell, &removed)), &floor));
+    physics.step_cars(TICK_DT);
+    let c = shell.centre(hole).map(|v| v as f32 / 100.0);
+    let open = physics.cast_ray([c[0], c[1], -5.0], [0.0, 0.0, 1.0], 20.0, 0);
+    assert!(open.is_none_or(|t| t > 8.0), "through the hole, {open:?}");
+    let still = physics.cast_ray([0.3, 0.3, -5.0], [0.0, 0.0, 1.0], 20.0, 0).expect("the wall");
+    assert!((still - 5.0).abs() < 0.02, "{still}");
 }

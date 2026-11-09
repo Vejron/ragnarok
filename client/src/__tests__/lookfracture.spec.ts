@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Shell, type Tri } from '@/sim/carve'
-import { lookFracture } from '@/render/lookfracture'
+import { lookFracture, openingStands } from '@/render/lookfracture'
 import { openingsOf } from '@/render/windows'
 import { rubbleSoup } from '@/render/shards'
 import { buildingSurfaces, Surface } from '@/render/buildingmesh'
@@ -52,13 +52,40 @@ describe('lookFracture', () => {
   // The cell in the middle of the front wall (z = 0), 1.5 m up.
   const hole = shell.cellAt(2.5, 1.5, 0.01)
 
-  it('draws a whole building as its own triangles', () => {
+  it('draws a whole building as its own triangles, with holes cut for its windows and a room inside', () => {
     const soup = lookFracture(look, range, shell, new Set(), new Map(), white, white)
     const openings = openingsOf(look, range)
-    expect(soup.positions.length / 9).toBe(walls.length + roof.length + openings.length * 4)
-    // The walls and roof, plus each opening's frame and pane.
+    // Rays straight at the front wall (z = 0): through a window's hole there is nothing in the wall's plane, beside it the wall.
+    const covered = (x: number, y: number) => {
+      const { positions: p } = soup
+      for (let i = 0; i < p.length; i += 9) {
+        if (Math.abs(p[i + 2]!) > 1e-4 || Math.abs(p[i + 5]!) > 1e-4 || Math.abs(p[i + 8]!) > 1e-4) continue
+        const [ax, ay, bx, by, cx, cy] = [p[i]!, p[i + 1]!, p[i + 3]!, p[i + 4]!, p[i + 6]!, p[i + 7]!]
+        const d = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+        const u = ((x - ax) * (cy - ay) - (y - ay) * (cx - ax)) / d
+        const v = ((bx - ax) * (y - ay) - (by - ay) * (x - ax)) / d
+        if (u >= 0 && v >= 0 && u + v <= 1) return true
+      }
+      return false
+    }
+    const window = openings.find((o) => !o.door && o.normal[2] < -0.9)!
+    const [wa, wb, , wd] = window.corners
+    expect(covered((wa[0] + wb[0]) / 2, (wa[1] + wd[1]) / 2)).toBe(false)
+    expect(covered(wa[0] - 0.2, (wa[1] + wd[1]) / 2)).toBe(true)
+    expect(covered(0.2, 0.2)).toBe(true)
+    // The room inside: faces a wall's thickness behind the front wall, dim, and a floor on a plinth.
+    let inner = 0
+    let floor = 0
+    for (let v = 0; v < soup.positions.length / 3; v++) {
+      const [y, z] = [soup.positions[v * 3 + 1]!, soup.positions[v * 3 + 2]!]
+      if (Math.abs(z - 0.2) < 1e-4 && soup.colors[v * 3]! < 0.5) inner++
+      if (Math.abs(y - 0.45) < 1e-4) floor++
+    }
+    expect(inner).toBeGreaterThan(0)
+    expect(floor).toBeGreaterThan(0)
+    // The walls and roof, plus the frames.
     const panes = openings.reduce((sum, o) => sum + Math.hypot(o.corners[1][0] - o.corners[0][0], o.corners[1][2] - o.corners[0][2]) * (o.corners[3][1] - o.corners[0][1]), 0)
-    expect(area(soup.positions)).toBeGreaterThan(2 * (5 + 4) * 3 + 5 * 4 + panes)
+    expect(area(soup.positions)).toBeGreaterThan(2 * (2 * (5 + 4) * 3 + 5 * 4) - panes)
   })
 
   it('puts windows on every wall and one door on the longest', () => {
@@ -100,6 +127,55 @@ describe('lookFracture', () => {
     expect(deepest).toBeGreaterThan(0.2)
     // Soot: some corner near the hole is darker than the wall.
     expect(Math.min(...soup.colors)).toBeLessThan(0.5)
+  })
+
+  it('keeps a window\'s frame while the wall stands round it, and drops it when that wall is gone', () => {
+    const openings = openingsOf(look, range)
+    const window = openings.find((o) => !o.door && o.normal[2] < -0.9)!
+    const [wa, wb, , wd] = window.corners
+    const [mx, my] = [(wa[0] + wb[0]) / 2, (wa[1] + wd[1]) / 2]
+    // Frame quads stand a little proud of the wall (z < 0) round the window.
+    const frames = (soup: { positions: Float32Array }) => {
+      let n = 0
+      for (let v = 0; v < soup.positions.length / 3; v++) {
+        const [x, y, z] = [soup.positions[v * 3]!, soup.positions[v * 3 + 1]!, soup.positions[v * 3 + 2]!]
+        if (z < -0.02 && z > -0.04 && Math.abs(x - mx) < 0.7 && Math.abs(y - my) < 0.9) n++
+      }
+      return n
+    }
+    const whole = lookFracture(look, range, shell, new Set(), new Map(), white, white)
+    expect(frames(whole)).toBeGreaterThan(0)
+    // A hole two cells to the side leaves the window and its frame be.
+    const beside = shell.cellAt(mx + 1.6, my, 0.01)
+    expect(openingStands(shell, new Set([beside]), window)).toBe(true)
+    expect(frames(lookFracture(look, range, shell, new Set([beside]), new Map(), white, white))).toBe(frames(whole))
+    // The wall under the window gone: nothing holds the frame, so it goes.
+    const under = shell.cellAt(mx, wa[1] - 0.1, 0.01)
+    expect(openingStands(shell, new Set([under]), window)).toBe(false)
+    expect(frames(lookFracture(look, range, shell, new Set([under]), new Map(), white, white))).toBe(0)
+  })
+
+  it('leaves nothing in the air when a wall goes with its windows, nor a floor over where the house stood', () => {
+    const openings = openingsOf(look, range)
+    const window = openings.find((o) => !o.door && o.normal[2] < -0.9)!
+    const [wa, wb, , wd] = window.corners
+    const vertices = (soup: { positions: Float32Array }) => {
+      const out: [number, number, number][] = []
+      for (let v = 0; v < soup.positions.length / 3; v++) out.push([soup.positions[v * 3]!, soup.positions[v * 3 + 1]!, soup.positions[v * 3 + 2]!])
+      return out
+    }
+    // The front of the house gone, wall and roof: no edge is drawn round the hole its window was, and the floor along the front goes, the floor further in stays.
+    const front = new Set([...shell.cells].filter((id) => shell.centre(id)[2] / 100 < 1.5))
+    const inWindow = vertices(lookFracture(look, range, shell, front, new Map(), white, white)).filter(([x, y, z]) => z > -0.5 && z < 0.4 && x > wa[0] + 0.05 && x < wb[0] - 0.05 && y > wa[1] + 0.05 && y < wd[1] - 0.05)
+    expect(inWindow).toEqual([])
+    const floor = vertices(lookFracture(look, range, shell, front, new Map(), white, white)).filter(([, y]) => Math.abs(y - 0.45) < 0.01)
+    expect(floor.some(([, , z]) => z > 2)).toBe(true)
+    expect(floor.filter(([x, , z]) => z < 0.5 && x > 1.5 && x < 3.5)).toEqual([])
+    // Every cell gone: only the hole's edge along the ground is left to draw.
+    const all = new Set(shell.cells)
+    const left = vertices(lookFracture(look, range, shell, all, new Map(), white, white))
+    expect(left.length).toBeGreaterThan(0)
+    expect(left.every(([, y]) => y < 0.4)).toBe(true)
   })
 
   it('chips a wall where rounds struck, more as it wears', () => {
@@ -152,10 +228,10 @@ describe('lookFracture', () => {
     const brick = lookFracture(look, range, shell, wallHole, new Map(), grey, grey, { wall: Surface.Brick, roof: Surface.Tiles })
     const plain = lookFracture(look, range, shell, wallHole, new Map(), grey, grey)
     expect(brick.positions.length).toBeGreaterThan(plain.positions.length)
-    // Every crack corner (in the crack's colour) is on the front wall, a hair proud of it, within its bounds.
+    // Every crack corner (in the crack's colour, grey: the door's leaf is as red but browner) is on the front wall, a hair proud of it, within its bounds.
     const crack = 0.5 * 0.22
     for (let i = 0; i < brick.colors.length; i += 3) {
-      if (Math.abs(brick.colors[i]! - crack) > 1e-4) continue
+      if (Math.abs(brick.colors[i]! - crack) > 1e-4 || Math.abs(brick.colors[i + 1]! - crack) > 1e-4 || Math.abs(brick.colors[i + 2]! - crack) > 1e-4) continue
       const [x, y, z] = [brick.positions[i]!, brick.positions[i + 1]!, brick.positions[i + 2]!]
       expect(Math.abs(z)).toBeLessThan(0.02)
       expect(x).toBeGreaterThan(-0.03)

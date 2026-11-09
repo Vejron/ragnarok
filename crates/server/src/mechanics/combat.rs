@@ -13,7 +13,7 @@ use shared::consts::*;
 use shared::armor::Pen;
 use shared::items::*;
 use shared::vehicles::{Exposure, crew_gun, vehicle_def};
-use shared::protocol::{BulletSpawn, ItemSlot, LIMB_ARMS, PROJECTILE_BULLET, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_ROCKET, ShotEvent, WEAPON_FLARE, WEAPON_PELLET, WEAPON_RIFLE, WEAPON_WRECK};
+use shared::protocol::{BulletSpawn, ItemSlot, LIMB_ARMS, PROJECTILE_BULLET, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_ROCKET, ShotEvent, WEAPON_FLARE, WEAPON_GLASS, WEAPON_PELLET, WEAPON_RIFLE, WEAPON_WRECK};
 use shared::quant::{from_mrad, to_cm, to_cm_i16, to_mrad};
 
 /// Health, death, the items in the hotbar and what blasts do to people and vehicles.
@@ -549,15 +549,17 @@ fn crosshair_muzzle(world: &World, pivot: [f32; 3], eye: [f32; 3], look_dir: [f3
     (len < 1e-3 || world.physics.cast_ray(eye, to.map(|v| v / len), len, ignore).is_none()).then_some(muzzle)
 }
 
-/// The cone a shot of `item` is scattered over: aim held (`BUTTON_ALT`) tightens it, unless the gun is
-/// held in `one_arm`, which widens it by `ONE_ARM_SPREAD` and can steady it no more.
-fn effective_spread(item: &ItemDef, buttons: u16, one_arm: bool) -> f32 {
+/// The cone a shot of `item` is scattered over, `bloom` wider from held fire if it blooms: aim held
+/// (`BUTTON_ALT`) tightens it, and makes the first shot of a gun that blooms dead true, unless the gun
+/// is held in `one_arm`, which widens it by `ONE_ARM_SPREAD` and can steady it no more.
+pub(crate) fn effective_spread(item: &ItemDef, buttons: u16, one_arm: bool, bloom: f32) -> f32 {
+    let bloom = if item.bloom.any() { bloom } else { 0.0 };
     if one_arm {
-        item.spread + ONE_ARM_SPREAD
+        item.spread + bloom + ONE_ARM_SPREAD
     } else if buttons & BUTTON_ALT != 0 {
-        item.spread * AIM_SPREAD_SCALE
+        if item.bloom.any() && bloom <= 0.0 { 0.0 } else { item.spread * AIM_SPREAD_SCALE + bloom * AIM_BLOOM_SCALE }
     } else {
-        item.spread
+        item.spread + bloom
     }
 }
 
@@ -613,6 +615,7 @@ struct Aim {
 fn aim(world: &mut World, id: u32, item: &ItemDef) -> Option<Aim> {
     let player = world.entities.get::<Player>(id)?;
     let input = player.input;
+    let bloom = player.hands.bloom;
     let pitch = from_mrad(input.pitch()).clamp(-MAX_PITCH, MAX_PITCH);
     let yaw = from_mrad(input.yaw);
     let look_dir = look(yaw, pitch);
@@ -639,14 +642,14 @@ fn aim(world: &mut World, id: u32, item: &ItemDef) -> Option<Aim> {
         None if eye_line => (origin, look_dir),
         None => (origin, crosshair_dir(world, id, back, pivot, origin, look_dir, item.range, vehicle)),
     };
-    let dir = if scoped && !one_arm { aim } else { scatter(world, aim, effective_spread(item, input.buttons(), one_arm)) };
+    let dir = if scoped && !one_arm { aim } else { scatter(world, aim, effective_spread(item, input.buttons(), one_arm, bloom)) };
     Some(Aim { origin, dir, vehicle, back })
 }
 
 /// Fires gun `item` from player `id`'s eye (their head, in a seat), towards what the crosshair is on.
 fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     let Some(Aim { origin, dir, vehicle, back }) = aim(world, id, item) else { return };
-    let buttons = world.entities.get::<Player>(id).map_or(0, |player| player.input.buttons());
+    let (buttons, bloom) = world.entities.get::<Player>(id).map_or((0, 0.0), |player| (player.input.buttons(), player.hands.bloom));
     make_shot(world, origin, Some(id), dir);
 
     if item.projectile {
@@ -666,7 +669,7 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
     // Every pellet is its own ray through the same rewound world. The first goes along the aim as it
     // is (scattered once, above), the rest are scattered around it. Each is announced where it ended,
     // so a client can show where a spread landed; only the first carries the gun's own weapon id.
-    let spread = effective_spread(item, buttons, one_armed(world, id));
+    let spread = effective_spread(item, buttons, one_armed(world, id), bloom);
     for pellet in 0..item.pellets {
         let ray = if pellet == 0 { dir } else { scatter(world, dir, spread) };
         let (end, _) = hitscan(world, id, origin, ray, &round, vehicle, back);
@@ -700,7 +703,33 @@ pub fn hitscan(world: &mut World, shooter: u32, origin: [f32; 3], dir: [f32; 3],
     let flight = Flight { origin, dir, shooter: Some(shooter), attacker: Some(shooter), back, flown: 0.0 };
     let met = strike(world, &flight, wall, round.range);
     land(world, &flight, &met, round);
+    break_glass(world, shooter, origin, dir, met.end);
     (met.end, met.any())
+}
+
+/// A round from `origin` went `reach` metres along the unit `dir`: the windows are holes in the walls
+/// it is collided with, so it flew through any pane on its way; every client is told where
+/// (`WEAPON_GLASS` shot events), to break that pane.
+pub(super) fn break_glass(world: &mut World, shooter: u32, origin: [f32; 3], dir: [f32; 3], reach: f32) {
+    let end = vec3::along(origin, dir, reach);
+    let lo: [f32; 3] = std::array::from_fn(|i| origin[i].min(end[i]) - 0.5);
+    let hi: [f32; 3] = std::array::from_fn(|i| origin[i].max(end[i]) + 0.5);
+    let mut panes = Vec::new();
+    for (index, look) in world.map.looks.iter().enumerate() {
+        if look.windows.is_empty() {
+            continue;
+        }
+        let Some(building) = world.map.buildings.get(index) else { continue };
+        let [x0, z0, x1, z1] = building.bounds().map(|v| v as f32 / 100.0);
+        let (y0, y1) = (building.base as f32 / 100.0, (building.base + building.height) as f32 / 100.0);
+        if x1 < lo[0] || x0 > hi[0] || z1 < lo[2] || z0 > hi[2] || y1 < lo[1] || y0 > hi[1] {
+            continue;
+        }
+        panes.extend(shared::windows::crossed(&look.windows, origin, dir, reach));
+    }
+    for [x, y, z] in panes {
+        world.shots.push(ShotEvent { shooter, weapon: WEAPON_GLASS, x: to_cm(x), y: to_cm(y), z: to_cm(z) });
+    }
 }
 
 /// The rays round a beam's middle, as (share of its radius, how many): close enough that a soldier cannot
@@ -924,7 +953,11 @@ fn use_item(world: &mut World, id: u32) {
             if trigger && player.hands.fire_cooldown == 0 && !empty {
                 player.hands.fire_cooldown = item.cooldown_ticks;
                 player.hands.hotbar[slot].ammo -= 1;
+                drop(player);
                 fire_gun(world, id, &item);
+                // The shot went at the cone as it was; the next one goes wider.
+                let mut player = world.entities.of_mut::<Player>(id);
+                player.hands.bloom = item.bloom.fired(player.hands.bloom);
             }
         }
         ItemKind::Grenade | ItemKind::Launcher | ItemKind::Flare => {
@@ -999,6 +1032,7 @@ fn spoil_bandage(world: &mut World, damaged: &Damaged) {
 fn let_go(world: &mut World, died: &Died) {
     if let Some(mut player) = world.entities.get_mut::<Player>(died.victim) {
         player.hands.fire_cooldown = 0;
+        player.hands.bloom = 0.0;
         player.interrupt();
     }
 }
@@ -1017,6 +1051,10 @@ impl Mechanic for Combat {
             let due = !alive && world.entities.get::<Respawn>(id).is_some_and(|respawn| respawn.left == 0);
             let Some(mut player) = world.entities.get_mut::<Player>(id) else { continue };
             player.hands.fire_cooldown = player.hands.fire_cooldown.saturating_sub(1);
+            // Held fire keeps a gun's bloom; let go, the cone closes again.
+            if !player.hands.trigger_held {
+                player.hands.bloom = (player.hands.bloom - BLOOM_RECOVER * dt).max(0.0);
+            }
             if !alive {
                 if due {
                     // A fresh life starts with the player's own loadout.

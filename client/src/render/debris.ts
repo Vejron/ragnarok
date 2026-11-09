@@ -11,6 +11,10 @@ interface Piece {
   life: number
   /** Geometry and materials made for this piece alone, freed with it. */
   owned: readonly (Geometry | Material)[]
+  /** Seconds at the end of its life it spends sinking into the ground rather than shrinking; 0 to shrink. */
+  sink: number
+  /** How far it sinks, metres: a little more than it is big. */
+  depth: number
   scale: { x: number; y: number; z: number }
 }
 
@@ -40,12 +44,14 @@ export class Debris {
 
   /**
    * Throws `object` (already placed in world space) with `velocity` and `spin`, for `life` seconds.
-   * `owned` is geometry and materials made for it alone, freed when it goes.
+   * `owned` is geometry and materials made for it alone, freed when it goes. With `sink`, it spends its
+   * last `sink` seconds sinking slowly into the ground instead of shrinking away.
    */
-  throw(object: Node, velocity: Vector3, spin: Vector3, rest: number, life = 8, owned: readonly (Geometry | Material)[] = []) {
+  throw(object: Node, velocity: Vector3, spin: Vector3, rest: number, life = 8, owned: readonly (Geometry | Material)[] = [], sink = 0) {
     if (this.pieces.length >= this.capacity) this.drop(0)
     this.root.add(object)
-    this.pieces.push({ object, velocity: velocity.clone(), spin: spin.clone(), rest, age: 0, life, owned, scale: { x: object.scale.x, y: object.scale.y, z: object.scale.z } })
+    const depth = rest * 2 + Math.max(object.scale.x, object.scale.y, object.scale.z) + 0.1
+    this.pieces.push({ object, velocity: velocity.clone(), spin: spin.clone(), rest, age: 0, life, owned, sink, depth, scale: { x: object.scale.x, y: object.scale.y, z: object.scale.z } })
   }
 
   private drop(index: number) {
@@ -63,6 +69,11 @@ export class Debris {
         continue
       }
       const { object, velocity, spin } = piece
+      const left = piece.life - piece.age
+      if (left < piece.sink) {
+        object.position.y -= (dt / piece.sink) * piece.depth
+        continue
+      }
       velocity.y -= GRAVITY * dt
       object.position.addScaledVector(velocity, dt)
       const floor = this.groundAt(object.position.x, object.position.z) + piece.rest
@@ -78,8 +89,7 @@ export class Debris {
         this.turn.setFromAxisAngle(this.axis.copy(spin).divideScalar(rate), rate * dt)
         object.quaternion.premultiply(this.turn)
       }
-      const left = piece.life - piece.age
-      if (left < SHRINK) object.scale.set(piece.scale.x, piece.scale.y, piece.scale.z).multiplyScalar(Math.max(0.01, left / SHRINK))
+      if (piece.sink === 0 && left < SHRINK) object.scale.set(piece.scale.x, piece.scale.y, piece.scale.z).multiplyScalar(Math.max(0.01, left / SHRINK))
     }
   }
 

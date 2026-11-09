@@ -6,7 +6,7 @@
  * The module is initialised by `SimMotor.create` before any tile is drawn.
  */
 
-import { carve_baked_faces, carve_cut, carve_faces, carve_nearest, carve_unpack } from './wasm/sim'
+import { carve_baked_faces, carve_cut, carve_faces, carve_nearest, carve_unpack, windows_of } from './wasm/sim'
 
 /** Side of a cell, centimetres, on one lattice for the whole world. Mirrors `CELL`. */
 export const CELL = 72
@@ -268,4 +268,19 @@ export function shellOf(
   }
   byIndex.set(index, shell)
   return shell
+}
+
+/**
+ * The windows and door the server places on the walls `walls` (nine centimetre numbers a triangle,
+ * `shared::windows::openings_of`): corners in metres and the wall's normal, as `openingsOf` gives
+ * them, for the two to be checked against each other.
+ */
+export function serverOpenings(walls: readonly Tri[]): { corners: [number, number, number][]; normal: [number, number, number]; door: boolean }[] {
+  const flat = windows_of(Int32Array.from(walls.flat()))
+  const out: { corners: [number, number, number][]; normal: [number, number, number]; door: boolean }[] = []
+  for (let i = 0; i + 16 <= flat.length; i += 16) {
+    const at = (k: number): [number, number, number] => [flat[i + k]!, flat[i + k + 1]!, flat[i + k + 2]!]
+    out.push({ corners: [at(0), at(3), at(6), at(9)], normal: at(12), door: flat[i + 15] === 1 })
+  }
+  return out
 }

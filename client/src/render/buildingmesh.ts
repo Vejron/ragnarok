@@ -2,7 +2,11 @@ import { Color } from '@ragnarok/engine'
 import type { Sphere } from '@ragnarok/engine'
 import { ROOF_FLAT, type Bridge, type Building, type TileData } from '@/world'
 import { shellOf } from '@/sim/carve'
-import { facing, openingQuads, openingsOf, type Opening } from './windows'
+import { facing, openingQuads, openingTriangles, openingsFor, type Opening } from './windows'
+import { eaveQuads, eaveTriangles, eavesFor, type EaveStrip } from './eaves'
+import { glassBuffers, type GlassBuffers } from './glass'
+import { FLOOR_RGB, INTERIOR_SHADE, facadeFor, innerOf, type Facade } from './facade'
+import { normalOf, type Poly } from './geom'
 
 /*
  * A tile's buildings and bridges as one flat-shaded triangle soup with a colour a vertex, as plain
@@ -45,11 +49,14 @@ export interface BuildingBuffers {
    * the drawn mesh in place (`rebuildBuildings`).
    */
   ranges?: Uint32Array
+  /** The glass in the windows of the buildings drawn from their looks, drawn apart and translucent (`glass.ts`); absent when there is none. */
+  glass?: GlassBuffers
 }
 
 /** The arrays of `buffers`, so they move to the other thread instead of being copied. */
 export function buildingTransferables(buffers: BuildingBuffers): ArrayBuffer[] {
-  const arrays = [buffers.positions, buffers.normals, buffers.colors, buffers.custom, ...(buffers.ranges ? [buffers.ranges] : [])]
+  const glass = buffers.glass ? [buffers.glass.positions, buffers.glass.normals, buffers.glass.panes] : []
+  const arrays = [buffers.positions, buffers.normals, buffers.colors, buffers.custom, ...(buffers.ranges ? [buffers.ranges] : []), ...glass]
   return arrays.map((array) => array.buffer as ArrayBuffer)
 }
 
@@ -65,7 +72,7 @@ export function buildingColors(tile: Pick<BuildingTile, 'buildings'>, index: num
 }
 
 /** Patterns drawn on a building's faces by the shader (walls.wgsl.ts in the engine), as a vertex's custom x. */
-export const Surface = { Plain: 0, Upright: 1, Lap: 2, Brick: 3, Render: 4, Tiles: 5, Sheet: 6, Felt: 7, Ashlar: 8 } as const
+export const Surface = { Plain: 0, Upright: 1, Lap: 2, Brick: 3, Render: 4, Tiles: 5, Sheet: 6, Felt: 7, Ashlar: 8, Shingles: 9 } as const
 export type Surface = (typeof Surface)[keyof typeof Surface]
 
 /** Falu red and dark stained wood are upright boards; ochre, white and beige lap boards; the dark red brick; greys and sage render. */
@@ -82,11 +89,13 @@ const WALL_SURFACES = new Map<number, Surface>([
 
 /** Roofs that are not red but laid in rows all the same: slate (France's `paint::ROOFS` and the grey-blue here). */
 const SLATE = new Set([0x56606e, 0x7b8694, 0x4f5d6b])
+/** The timber roof: wooden shingles. */
+const SHINGLED = new Set([0x8d6e63])
 
 /**
  * The patterns on building `index`'s walls and roof: from the palette colour it was given (Sweden's
  * here, or France's as the importer painted it), else render, or brick if it is a dark red; a flat roof
- * is felt, a red or slate one tiles and any other sheet metal.
+ * is felt, the timber one wooden shingles, a red or slate one tiles and any other sheet metal.
  */
 export function buildingSurfaces(tile: Pick<BuildingTile, 'buildings'>, index: number, salt: number): { wall: Surface; roof: Surface } {
   const { wall, roof } = buildingColors(tile, index, salt)
@@ -94,7 +103,7 @@ export function buildingSurfaces(tile: Pick<BuildingTile, 'buildings'>, index: n
   const [wr, wg, wb] = channels(wall)
   const wallSurface = WALL_SURFACES.get(wall) ?? (wr > wg * 1.6 && wr + wg + wb < 400 ? Surface.Brick : Surface.Render)
   const [rr, rg] = channels(roof)
-  const roofSurface = tile.buildings[index]?.roofKind === ROOF_FLAT ? Surface.Felt : rr > rg * 1.3 || SLATE.has(roof) ? Surface.Tiles : Surface.Sheet
+  const roofSurface = tile.buildings[index]?.roofKind === ROOF_FLAT ? Surface.Felt : SHINGLED.has(roof) ? Surface.Shingles : rr > rg * 1.3 || SLATE.has(roof) ? Surface.Tiles : Surface.Sheet
   return { wall: wallSurface, roof: roofSurface }
 }
 
@@ -200,6 +209,11 @@ class Soup {
     this.triangle(...a, ...d, ...e, r, g, b)
   }
 
+  /** The polygon `poly` (in order round it) as a fan of triangles in linear `rgb`. */
+  poly(poly: Poly, [r, g, b]: readonly [number, number, number]) {
+    for (let i = 1; i + 1 < poly.length; i++) this.triangle(...poly[0]!, ...poly[i]!, ...poly[i + 1]!, r, g, b)
+  }
+
   /** The sphere round the box round every corner: a little looser than `Geometry` finds, but without a second pass. */
   private bounds(): Sphere {
     const [x0, y0, z0, x1, y1, z1] = this.box as [number, number, number, number, number, number]
@@ -243,21 +257,34 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
   const look = tile.look
   const looked = (index: number) => (look && tile.buildings[index]?.look) || null
   const faces: (Faces | null | undefined)[] = tile.buildings.map((_, index) => (destroyed.has(index) || looked(index) ? undefined : buildingFaces(tile, index)))
-  // Windows and doors on the buildings drawn from their looks: two quads, four triangles, each.
+  // Windows and doors on the buildings drawn from their looks: two quads, four triangles, each; and their roofs' overhangs.
   const openings: (readonly Opening[] | null)[] = tile.buildings.map((_, index) => {
     const seen = destroyed.has(index) ? null : looked(index)
-    return seen ? openingsOf(look!, seen) : null
+    return seen ? openingsFor(look!, seen) : null
   })
+  // The glass goes with every looked building, hurt or not: its panes break on their own (`Glazing`).
+  const glass = glassBuffers(tile.buildings.map((_, index) => (looked(index) ? openingsFor(look!, looked(index)!) : null)))
+  const eaves: (readonly EaveStrip[] | null)[] = tile.buildings.map((_, index) => {
+    const seen = destroyed.has(index) ? null : looked(index)
+    return seen ? eavesFor(look!, seen) : null
+  })
+  // The walls with their windows cut out, the roof, and the room inside: the same faces turned in, and a floor.
+  const facades: (Facade | null)[] = tile.buildings.map((_, index) => {
+    const seen = destroyed.has(index) ? null : looked(index)
+    return seen ? facadeFor(look!, seen) : null
+  })
+  const fan = (polys: readonly Poly[]) => polys.reduce((n, poly) => n + poly.length - 2, 0)
   let count = 0
   tile.buildings.forEach((building, index) => {
     const own = faces[index]
     const seen = destroyed.has(index) ? null : looked(index)
-    if (seen) count += seen.walls + seen.roof + (openings[index]?.length ?? 0) * 4
+    const facade = facades[index]
+    if (seen && facade) count += 2 * (fan(facade.walls) + fan(facade.roof)) + fan(facade.floor) + openingTriangles(openings[index] ?? []) + eaveTriangles(eaves[index] ?? [])
     else if (own) count += own.roof.length
     else if (own === null) count += building.walls + building.roof
   })
   for (const bridge of tile.bridges) count += bridge.deck + bridge.steel
-  if (count === 0) return null
+  if (count === 0) return glass ? { ...new Soup(0).buffers(), ranges: new Uint32Array(tile.buildings.length * 2), glass } : null
   const soup = new Soup(count)
   const ranges = new Uint32Array(tile.buildings.length * 2)
   tile.buildings.forEach((building, index) => {
@@ -267,11 +294,23 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
     const first = soup.vertices
     const [wall, roof] = linearColors(tile, index, salt)
     const surfaces = buildingSurfaces(tile, index, salt)
-    if (seen) {
+    const facade = facades[index]
+    if (seen && facade) {
+      const dim = (c: Color) => [c.r * INTERIOR_SHADE, c.g * INTERIOR_SHADE, c.b * INTERIOR_SHADE] as const
       soup.surface = surfaces.wall
-      soup.collision({ collision: look! }, seen.first, seen.walls, wall)
+      for (const poly of facade.walls) soup.poly(poly, [wall.r, wall.g, wall.b])
       soup.surface = surfaces.roof
-      soup.collision({ collision: look! }, seen.first + seen.walls, seen.roof, roof)
+      for (const poly of facade.roof) soup.poly(poly, [roof.r, roof.g, roof.b])
+      // The room inside: the walls' and roof's inner faces, dim, and the floor.
+      soup.surface = Surface.Plain
+      for (const poly of facade.walls) soup.poly(innerOf(poly, normalOf(poly)), dim(wall))
+      for (const poly of facade.roof) soup.poly(innerOf(poly, normalOf(poly)), dim(roof))
+      for (const poly of facade.floor) soup.poly(poly, FLOOR_RGB)
+      // The overhang: the roof's pattern carries on over the top of it; the boards under and along it are plain.
+      eaveQuads(eaves[index] ?? [], [roof.r, roof.g, roof.b], (corners, rgb, part) => {
+        soup.surface = part === 'top' ? surfaces.roof : Surface.Plain
+        soup.quad(corners, rgb)
+      })
       soup.surface = Surface.Plain
       openingQuads(openings[index] ?? [], (corners, rgb, normal) => soup.quad(facing(corners, normal), rgb))
     } else if (own) soup.faces(own, wall, roof)
@@ -291,6 +330,6 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
     soup.collision(tile, bridge.first, bridge.deck, deck)
     soup.collision(tile, bridge.first + bridge.deck, bridge.steel, steel)
   }
-  return { ...soup.buffers(), ranges }
+  return { ...soup.buffers(), ranges, ...(glass ? { glass } : {}) }
 }
 

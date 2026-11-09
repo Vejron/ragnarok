@@ -724,6 +724,7 @@ fn step_round(world: &mut World, id: u32, dt: f32) {
     let flight = Flight { origin: s.position, dir, shooter: Some(s.owner), attacker, back: round.back, flown: round.flown };
     let met = strike(world, &flight, wall, step);
     s.ttl = s.ttl.saturating_sub(1);
+    super::combat::break_glass(world, s.owner, s.position, dir, if met.any() { met.end } else { step });
     if met.any() {
         world.entities.despawn(id);
         land(world, &flight, &met, &damage);

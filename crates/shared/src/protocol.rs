@@ -154,6 +154,8 @@ pub const WEAPON_SPLASH: u8 = 30;
 pub const WEAPON_GOLF: u8 = 31;
 /// Shot events only: a golf ball dropped into the cup at `x, y, z`. `shooter` is who struck it last.
 pub const WEAPON_CUP: u8 = 32;
+/// Shot events only: a round went through a window's glass at `x, y, z`, for every client to break that pane.
+pub const WEAPON_GLASS: u8 = 33;
 
 /// `replicated::Limbs::lost` bits: the limbs a soldier has lost. The same bits shifted up by
 /// `LIMB_BLEED_SHIFT` are the stumps still bleeding.

@@ -204,10 +204,11 @@ pub struct Tile {
     /// tile has none. The client draws it; it slows whoever crosses it.
     #[serde(default, deserialize_with = "bits")]
     pub stones: Vec<u8>,
-    /// The buildings' own walls and roofs, for drawing only: what the importer built before it cut
-    /// them into cells (`voxels::bake`). Cells are still what is collided with and blasted; a client
-    /// draws a building from these while it is whole, and cuts its holes into them. Empty in a world
-    /// made before there were looks, where a client draws the cells. Left out of the file when empty.
+    /// The buildings' own walls and roofs: what the importer built before it cut them into cells
+    /// (`voxels::bake`). Cells are what is blasted and what holds a building up; what is drawn and
+    /// collided with is these, with the windows cut out and the pieces in blasted cells gone
+    /// (`facade`). Empty in a world made before there were looks, where the cells are drawn and
+    /// collided with as boxes. Left out of the file when empty.
     #[serde(default)]
     pub look: Look,
 }
@@ -226,6 +227,32 @@ pub struct Look {
 impl Look {
     pub fn is_empty(&self) -> bool {
         self.triangles.is_empty()
+    }
+
+    /// Building `[first, walls, roof]`'s wall and roof triangles, nine centimetre numbers each.
+    pub fn parts(&self, [first, walls, roof]: [u32; 3]) -> (Vec<crate::carve::Tri>, Vec<crate::carve::Tri>) {
+        let tri = |t: u32| -> Option<crate::carve::Tri> {
+            let [a, b, c] = self.triangles.get(t as usize)?.map(|v| self.vertices.get(v as usize).copied())
+                ;
+            let (a, b, c) = (a?, b?, c?);
+            Some([a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]])
+        };
+        ((first..first + walls).filter_map(tri).collect(), (first + walls..first + walls + roof).filter_map(tri).collect())
+    }
+}
+
+/// One building's look as the server keeps it (`WorldFile::looks`): its walls and roof, nine
+/// centimetre numbers a triangle, and the windows and door on them.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct BuildingLook {
+    pub walls: Vec<crate::carve::Tri>,
+    pub roof: Vec<crate::carve::Tri>,
+    pub windows: Vec<crate::windows::Window>,
+}
+
+impl BuildingLook {
+    pub fn is_empty(&self) -> bool {
+        self.walls.is_empty() && self.roof.is_empty()
     }
 }
 
@@ -396,6 +423,11 @@ pub struct WorldFile {
     /// `assemble`. `Building::first` is tile-local, so it cannot index the merged mesh.
     #[serde(skip)]
     pub building_triangles: Vec<[u32; 2]>,
+    /// Each building's own walls and roof and the windows on them (`BuildingLook`), by index like
+    /// `buildings`, for a building that has a look; empty for one without. Its collider is built from
+    /// these (`sim::building_solid`), with the windows cut out, and a round through a window is seen.
+    #[serde(default)]
+    pub looks: Vec<BuildingLook>,
     /// `trees[i]`'s identity. Filled by `assemble`; empty for a world built by hand.
     #[serde(skip)]
     pub tree_ids: Vec<ObjId>,
@@ -929,6 +961,13 @@ impl WorldFile {
                 let end = starts.iter().copied().filter(|&start| start > building.first).min().unwrap_or(tile_end).min(tile_end);
                 world.building_ids.push(ObjId { col, row, index: index as u32 });
                 world.building_triangles.push([triangle_base + building.first.min(end), triangle_base + end]);
+                let range = tile.look.buildings.get(index).copied().unwrap_or([0; 3]);
+                world.looks.push(if range[1] + range[2] > 0 {
+                    let (walls, roof) = tile.look.parts(range);
+                    BuildingLook { walls, roof, windows: crate::windows::openings_of(&tile.look, range) }
+                } else {
+                    BuildingLook::default()
+                });
             }
             world.tree_ids.extend((0..tile.trees.len()).map(|index| ObjId { col, row, index: index as u32 }));
             world.collision.vertices.extend(tile.collision.vertices);

@@ -5,7 +5,7 @@
  * it averages to rather than shimmering. Needs MARSH_WGSL before it, for its hash and noise.
  */
 export const WALLS_WGSL = /* wgsl */ `
-// The kinds, as custom x: plain, upright boards (falu red houses), lap boards, brick, render, roof tiles, sheet metal, felt, cut stone.
+// The kinds, as custom x: plain, upright boards (falu red houses), lap boards, brick, render, roof tiles, sheet metal, felt, cut stone, wooden shingles.
 const WALL_UPRIGHT = 1.0;
 const WALL_LAP = 2.0;
 const WALL_BRICK = 3.0;
@@ -15,6 +15,8 @@ const ROOF_SHEET = 6.0;
 const ROOF_FELT = 7.0;
 // Cut stone (French limestone and sandstone): a wall, numbered after the roofs.
 const WALL_ASHLAR = 8.0;
+// Wooden shingles: short courses of narrow, uneven shakes.
+const ROOF_SHINGLES = 9.0;
 // Mortar, a share of the brick's colour pulled towards this grey.
 const WALL_MORTAR = vec3f(0.5, 0.48, 0.44);
 
@@ -35,7 +37,7 @@ fn wallTone(i: f32, j: f32, spread: f32, size: f32, pixel: f32) -> f32 {
 // \`rgb\` on the face at \`world\` with unit normal \`n\`, of pattern \`kind\`; \`pixel\` the metres a pixel spans there.
 fn wallsLook(rgb: vec3f, world: vec3f, n: vec3f, kind: f32, pixel: f32) -> vec3f {
   let level = sqrt(n.x * n.x + n.z * n.z);
-  if (kind < ROOF_TILES - 0.5 || kind > WALL_ASHLAR - 0.5) {
+  if (kind < ROOF_TILES - 0.5 || abs(kind - WALL_ASHLAR) < 0.5) {
     // A wall: along it horizontally, and up. Faces that are not upright stay plain.
     if (level < 0.7) {
       return rgb;
@@ -89,16 +91,27 @@ fn wallsLook(rgb: vec3f, world: vec3f, n: vec3f, kind: f32, pixel: f32) -> vec3f
   let down2 = vec2f(n.x, n.z) / level;
   let across = dot(world.xz, vec2f(-down2.y, down2.x));
   let down = dot(world.xz, down2) / max(abs(n.y), 0.25);
-  if (kind < ROOF_TILES + 0.5) {
-    // Rows of tiles 33 cm down the slope, 22 cm across, every other row offset: a shadow under each row's edge.
-    let row = floor(down / 0.33);
-    let within = fract(down / 0.33);
-    let shifted = across + 0.11 * (row - 2.0 * floor(row / 2.0));
-    let tile = floor(shifted / 0.22);
-    let lip = wallSeam(down, 0.33, 0.035, pixel);
-    let side = wallSeam(shifted, 0.22, 0.012, pixel);
-    let shade = mix(1.0, 1.04 - 0.1 * within, 1.0 - smoothstep(0.05, 0.15, pixel));
-    return rgb * shade * wallTone(tile, row, 0.14, 0.22, pixel) * (1.0 - 0.45 * lip) * (1.0 - 0.3 * side);
+  if (kind < ROOF_TILES + 0.5 || kind > ROOF_SHINGLES - 0.5) {
+    // Courses of tiles 33 cm down the slope and 22 cm across (shingles 18 by 12), every other course
+    // offset by half. Each tile's lower edge sits a little higher or lower than its neighbours', so
+    // the courses run unevenly; a deep shadow under each course's edge and a lit lip on top of the one
+    // below give the roof its steps.
+    let shingles = kind > ROOF_SHINGLES - 0.5;
+    let course = select(0.33, 0.18, shingles);
+    let width = select(0.22, 0.12, shingles);
+    let row0 = floor(down / course);
+    let shifted = across + 0.5 * width * (row0 - 2.0 * floor(row0 / 2.0));
+    let tile = floor(shifted / width);
+    let wobble = (marshHash(i32(tile), i32(row0) + 131) - 0.5) * select(0.04, 0.03, shingles) * (1.0 - smoothstep(0.02, 0.08, pixel));
+    let d = down + wobble;
+    let row = floor(d / course);
+    let within = fract(d / course);
+    let lip = wallSeam(d, course, 0.05, pixel);
+    let lit = wallSeam(d - course * 0.17, course, 0.02, pixel);
+    let side = wallSeam(shifted, width, 0.012, pixel);
+    let shade = mix(1.0, 1.06 - 0.16 * within, 1.0 - smoothstep(0.05, 0.15, pixel));
+    let spread = select(0.14, 0.2, shingles);
+    return rgb * shade * wallTone(tile, row, spread, width, pixel) * (1.0 - 0.6 * lip) * (1.0 + 0.15 * lit) * (1.0 - 0.3 * side);
   }
   // Sheet metal: a standing seam every 50 cm down the slope, lit on one side and shadowed on the other.
   let lit = wallSeam(across - 0.012, 0.5, 0.016, pixel);

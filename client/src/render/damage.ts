@@ -24,9 +24,11 @@ function random(seed: number) {
 
 /** Most pieces thrown from a building at once, and how long they lie where they land, seconds. */
 const MAX_FALLING = 48
-/** Pieces a building keeps lying about; past that the oldest sink into the ground, over this many seconds. */
+/** Pieces a building keeps lying about; past that the oldest start sinking at once. */
 const KEEP_RESTING = 60
-const SINK_SECONDS = 4
+/** A piece lies where it landed this long, then sinks slowly into the ground over `SINK_SECONDS`: gone 30 s after it lands. */
+const LIE_SECONDS = 10
+const SINK_SECONDS = 20
 /** Longest anything flies before it is put on the ground, seconds, so nothing can hang or tumble in the air for ever. */
 const MAX_AIR_SECONDS = 8
 const GRAVITY = 9.8
@@ -69,6 +71,11 @@ const LEAN_SPEED = 0.7
 const RUBBLE_DELAY = 1.1
 /** Shard shapes made for each building colour. */
 const SHARD_SHAPES = 4
+/** Loose shingles thrown off a tiled or shingled roof where it is hit, at most, and how big a plate is (metres). */
+const PLATES = 6
+const PLATE = [0.22, 0.02, 0.33] as const
+/** Roof surfaces that are laid in loose pieces (`Surface` Tiles and Shingles). */
+const PLATED = new Set([5, 9])
 
 /** A shard that broke away, on its way down or lying where it fell. */
 interface Falling {
@@ -83,7 +90,9 @@ interface Falling {
   section?: boolean
   /** A section toppling, once down: from and to which turn, how long it takes and has taken (seconds), and the corner it turns about (in its own frame). */
   topple?: { from: Quaternion; to: Quaternion; time: number; spent: number; foot: Vector3 }
-  /** Seconds it has been sinking into the ground, once there were too many lying about. */
+  /** Seconds it has lain still on the ground. */
+  lain?: number
+  /** Seconds it has been sinking into the ground: once it has lain `LIE_SECONDS`, or sooner when too many lie about. */
   sinking?: number
 }
 
@@ -628,6 +637,42 @@ export class BuildingDamage {
       }
       drawn.falling.push({ mesh, velocity, spin, age: 0, resting: false, shared: true })
     }
+    // A tiled roof sheds loose shingles too: thin plates from the roof cells hit, tumbling fast.
+    if (roofs > 0 && PLATED.has(buildingSurfaces(seen.loaded.tile, seen.index, seen.loaded.salt).roof)) {
+      const roofCells = group.filter((id) => shell.isRoof(id))
+      for (let i = 0; i < Math.min(PLATES, 1 + roofs); i++) {
+        if (this.moving(drawn) >= MAX_FALLING * 2) return
+        const [cx, cy, cz] = shell.centre(roofCells[Math.floor(this.rand() * roofCells.length)]!)
+        const mesh = new Mesh(this.plateGeometry(seen, Math.floor(this.rand() * SHARD_SHAPES)), pieceMaterial)
+        mesh.position.set(cx / 100 + (this.rand() - 0.5) * 0.5, cy / 100 + 0.2 + this.rand() * 0.3, cz / 100 + (this.rand() - 0.5) * 0.5)
+        const k = 0.8 + this.rand() * 0.4
+        mesh.scale.set(PLATE[0] * k, PLATE[1] * k, PLATE[2] * k)
+        mesh.rotation.set(this.rand() * 6.28, this.rand() * 6.28, this.rand() * 6.28)
+        mesh.castShadow = true
+        drawn.group.add(mesh)
+        const velocity = new Vector3(0, 2 + this.rand() * 2, 0)
+        if (point) {
+          const away = new Vector3(mesh.position.x - point[0], 0, mesh.position.z - point[2])
+          if (away.lengthSq() > 1e-4) velocity.addScaledVector(away.normalize(), 2 + this.rand() * 2)
+        }
+        const spin = new Vector3((this.rand() - 0.5) * 10, (this.rand() - 0.5) * 10, (this.rand() - 0.5) * 10)
+        drawn.falling.push({ mesh, velocity, spin, age: 0, resting: false, shared: true })
+      }
+    }
+  }
+
+  /** One of the few shapes of a loose shingle in a building's roof colour: a flat plate about a metre across, scaled down when thrown. */
+  private plateGeometry(seen: NonNullable<Drawn['seen']>, variant: number) {
+    const { roof } = buildingColors(seen.loaded.tile, seen.index, seen.loaded.salt)
+    const key = -(roof * SHARD_SHAPES + variant) - 1
+    let geometry = this.shards.get(key)
+    if (!geometry) {
+      const c = Color.hex(roof)
+      const soup = shardSoup(roof ^ 0x51a7e ^ (variant * 7919), [c.r, c.g, c.b], 0.06)
+      geometry = shardGeometry(soup.positions, soup.colors)
+      this.shards.set(key, geometry)
+    }
+    return geometry
   }
 
   /** One of the few shard shapes of a building's wall or roof colour, made once and kept. */
@@ -653,7 +698,8 @@ export class BuildingDamage {
   /**
    * Moves a building's flung pieces: they drop and tumble until their lowest corner meets the ground,
    * a section of wall goes on tipping over there until it lies flat, and then they lie. They stay:
-   * only when a building has more than `KEEP_RESTING` lying about do the oldest sink into the ground.
+   * after `LIE_SECONDS` each sinks slowly into the ground and is gone (sooner, oldest first, when a
+   * building has more than `KEEP_RESTING` lying about).
    */
   private fall(drawn: Drawn, floor: number, dt: number) {
     let lying = 0
@@ -681,7 +727,11 @@ export class BuildingDamage {
         }
         continue
       }
-      if (piece.resting) continue
+      if (piece.resting) {
+        piece.lain = (piece.lain ?? 0) + dt
+        if (piece.lain >= LIE_SECONDS) piece.sinking = 0
+        continue
+      }
       const ground = this.groundUnder(mesh.position.x, mesh.position.z, floor)
       if (piece.topple) {
         this.topple(piece, ground, dt)

@@ -1,4 +1,4 @@
-import { CRATER_FADE, Group, type Scene, type Vector3 } from '@ragnarok/engine'
+import { CRATER_FADE, Group, type Mesh, type Scene, type Vector3 } from '@ragnarok/engine'
 import { OBJ_TREE, type Built, type CarvedBuilding, type CraterEntry, type DamagedBuilding, type DestroyedObject, type DugTile } from './net/codec'
 import type { Effects } from './render/effects'
 import { FallingTrees, type TreeFx, type TreeNoise } from './render/falling'
@@ -12,6 +12,8 @@ import { buildingBuffers } from './render/buildingmesh'
 import { reliefPixels, terrainBuffers, terrainLevel, TERRAIN_LOD_ERRORS, type Pixels } from './render/terrainmesh'
 import { winter } from './render/season'
 import { buildWater, disposeWater } from './render/water'
+import { Glazing } from './render/glazing'
+import { Debris } from './render/debris'
 import { shellOf } from './sim/carve'
 import { CHUNK, Construct, cellAt, chunkKey, chunkOf, cubeCentre, posKey, type Cube, type Pos } from './sim/construct'
 import { CELL } from './sim/carve'
@@ -75,9 +77,18 @@ const tileOf = (key: number) => ({ col: key % 65536, row: Math.floor(key / 65536
  * solid in both predicted simulations, and the buildings and trees the server has brought down.
  * The simulations and the terrain arrive after the world loads, so `Game` assigns them.
  */
+/** How far under the lowest ground loaded the grass plane under the world sits, metres. */
+const BACKDROP_GAP = 0.05
+
 export class WorldView {
   world: WorldData | null = null
   terrain: Terrain | null = null
+  /**
+   * The grass plane under the whole world (`buildGround`), which shows where a tile is late. It is kept
+   * under the lowest ground of any tile that has come in: a sea bed is cut below the lowest dry land, and
+   * a plane over it would cover the bed in grass.
+   */
+  backdrop: Mesh | null = null
   surfaces: Surfaces | null = null
   grass: Grass | null = null
   stones: Stones | null = null
@@ -133,7 +144,13 @@ export class WorldView {
   /** Where the levels were last checked from. */
   private detailAt: [number, number] | null = null
 
-  constructor(private readonly scene: Scene) {}
+  /** Which window panes are broken, and the breaking of them. */
+  readonly glazing: Glazing
+
+  /** `debris` is where broken glass flies; without one (tests) it is thrown into a pile of its own that is never drawn. */
+  constructor(private readonly scene: Scene, debris: Debris = new Debris()) {
+    this.glazing = new Glazing(debris)
+  }
 
   /** Told when a felled tree cracks and lands, to be heard. */
   set onTreeNoise(listener: ((noise: TreeNoise) => void) | null) {
@@ -513,6 +530,7 @@ export class WorldView {
     const water = ground && prepared.draped ? buildWater(tile, ground, this.terrain ?? undefined, prepared.draped.water) : null
     if (water) this.waterRoot.add(water)
     this.terrain?.set(ref, ground)
+    if (ground && this.backdrop) this.underTheGround(this.backdrop, ground)
     this.surfaces?.add(ref, tile, ground, prepared.surface)
     this.grass?.addTile(ref, tile, ground, prepared.grass)
     this.stones?.addTile(ref, tile, ground)
@@ -537,12 +555,14 @@ export class WorldView {
     }
     this.preparedWith.delete(key)
     this.damage.attach(key, tile, salt)
+    this.glazing.attach(key, tile, group, this.damage.carved(key))
     if (this.damage.carved(key).size > 0) this.reshapeBuildings(key)
     // Trees that fell before this tile streamed in (or while it was away) are already down.
     for (const [index, yaw] of this.fellTrees.get(key) ?? []) this.fellTree(key, index, yaw, false)
     return () => {
       this.loaded.delete(key)
       this.damage.detach(key)
+      this.glazing.detach(key)
       disposeTile(group)
       if (water) disposeWater(water)
       this.groups.delete(key)
@@ -595,6 +615,7 @@ export class WorldView {
     for (const b of buildings) {
       const key = tileKey(b.col, b.row)
       const first = this.damage.carve(key, b.index, b.blasted, b.fell, live ? b.point : null, live)
+      this.glazing.holed(key, b.index, this.damage.carved(key).get(b.index) ?? new Set(), live)
       const dirty = this.reshape.get(key) ?? new Set<number>()
       dirty.add(b.index)
       this.reshape.set(key, dirty)
@@ -641,6 +662,16 @@ export class WorldView {
     if (group) rebuildBuildings(group, tile, loaded.salt, this.undrawnBuildings(key))
   }
 
+  /** A round from anyone ended at `(x, y, z)`: if that is a window, its glass breaks, for everyone the same, and true: the wall took nothing. */
+  glassStruck(x: number, y: number, z: number): boolean {
+    return this.glazing.struck([x, y, z])
+  }
+
+  /** A blast of `radius` at `at`, for everyone the same: the window panes near it break. */
+  glassBlast(at: readonly [number, number, number], radius: number) {
+    this.glazing.blast([at[0], at[1], at[2]], radius)
+  }
+
   /** The server says these standing buildings are hurt. */
   damaged(buildings: readonly DamagedBuilding[]) {
     for (const b of buildings) {
@@ -651,7 +682,7 @@ export class WorldView {
 
   /** Whether the world is as its files have it: nothing a server said has changed it. */
   get pristine() {
-    return this.fellTrees.size === 0 && this.damage.untouched && this.dugTiles.size === 0 && this.marked.length === 0 && this.construct.size === 0
+    return this.fellTrees.size === 0 && this.damage.untouched && this.glazing.untouched && this.dugTiles.size === 0 && this.marked.length === 0 && this.construct.size === 0
   }
 
   /**
@@ -662,6 +693,7 @@ export class WorldView {
     this.fellTrees.clear()
     this.fallingTrees.clear()
     this.damage.reset()
+    this.glazing.reset()
     this.reshape.clear()
     this.dugTiles.clear()
     this.craters.length = 0
@@ -681,6 +713,7 @@ export class WorldView {
   dispose() {
     this.scene.craters.clear()
     this.damage.dispose()
+    this.glazing.dispose()
     this.cubes.dispose()
     this.builder?.dispose()
   }
@@ -712,5 +745,12 @@ export class WorldView {
     if (only) for (const index of carved.keys()) if (!only.has(index)) carved.delete(index)
     const { col, row } = tileOf(key)
     this.motor?.setBuildings(col, row, carved)
+  }
+
+  /** Lowers `plane` under `ground`'s lowest sample, if it is not already. */
+  private underTheGround(plane: Mesh, ground: TileGround) {
+    let lowest = Infinity
+    for (const height of ground.heights) lowest = Math.min(lowest, height)
+    if (lowest - BACKDROP_GAP < plane.position.y) plane.position.y = lowest - BACKDROP_GAP
   }
 }

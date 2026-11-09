@@ -1,6 +1,9 @@
 import type { CollisionMesh } from '@/world'
 import { CELL_HP, type Shell } from '@/sim/carve'
-import { openingQuads, openingsOf } from './windows'
+import { openingQuads, openingsFor, type Opening } from './windows'
+import { SOFFIT_RGB, TRIM_RGB, eaveAnchor, eavesFor } from './eaves'
+import { FLOOR_RGB, INTERIOR_SHADE, facadeFor, innerOf, type Facade } from './facade'
+import { add, centreOf, cross, dot, edgeKey, hash, keyOf, normalOf, split, sub, unit, type P, type Poly, type RGB } from './geom'
 
 /*
  * A hurt building drawn from its own walls and roof (`Tile.look`), not from its cubes. The cells are
@@ -49,9 +52,16 @@ const CRACK_SEGMENTS = 6
 const CRACK_STEP = [0.16, 0.38] as const
 const CRACK_WIDTH = 0.028
 const CRACK_SHADE = 0.22
-/** The surface patterns that are wood (`Surface` Upright and Lap), and that crack (Brick, Render and Ashlar). */
+/** The surface patterns that are wood (`Surface` Upright and Lap), that crack (Brick, Render and Ashlar), and roofs laid in loose pieces (Tiles and Shingles). */
 const WOODEN = new Set([1, 2])
 const CRACKING = new Set([3, 4, 8])
+const SHINGLED = new Set([5, 9])
+/** Loose shingles at a roof's hole: the share of its edges with one slid out of place, and with one missing; a shingle's size (metres). */
+const SLID_CHANCE = 0.5
+const MISSING_CHANCE = 0.4
+const SHINGLE = [0.22, 0.33] as const
+const SLID_SHADE = 0.85
+const MISSING_SHADE = 0.4
 
 /** How deep the edge of a hole is drawn, metres: a wall, and a roof. */
 const WALL_DEPTH = 0.3
@@ -72,70 +82,12 @@ const SECTION_MIX = 0.55
 const SECTION_SHADE = 0.72
 /** Cells round a triangle's box within which a hole slices it (so the soot has corners to fade over). */
 const SLICE_REACH = 2
-const EPS = 1e-4
-
-type P = [number, number, number]
-type Poly = P[]
-
-/** A number in [0, 1) from a point, the same on every client. */
-function hash(x: number, y: number, z: number, salt: number): number {
-  const a = Math.sin(x * 127.1 + y * 311.7 + z * 74.7 + salt * 19.19) * 43758.5453
-  return a - Math.floor(a)
-}
-
-/** The key of a point, to the millimetre. */
-function keyOf(p: P): string {
-  return `${Math.round(p[0] * 1000)},${Math.round(p[1] * 1000)},${Math.round(p[2] * 1000)}`
-}
-
-/** `poly` cut by the plane `axis = at` into the part below and the part above; either may be empty. */
-function split(poly: Poly, axis: number, at: number): [Poly, Poly] {
-  const below: Poly = []
-  const above: Poly = []
-  const side = (p: P) => (p[axis]! - at > EPS ? 1 : p[axis]! - at < -EPS ? -1 : 0)
-  let allOn = true
-  for (let i = 0; i < poly.length; i++) {
-    const a = poly[i]!
-    const b = poly[(i + 1) % poly.length]!
-    const [sa, sb] = [side(a), side(b)]
-    if (sa !== 0) allOn = false
-    if (sa <= 0) below.push(a)
-    if (sa >= 0) above.push(a)
-    if (sa * sb < 0) {
-      const t = (at - a[axis]!) / (b[axis]! - a[axis]!)
-      const cut: P = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
-      cut[axis] = at
-      below.push(cut)
-      above.push([...cut] as P)
-    }
-  }
-  if (allOn) return [[], poly]
-  return [below.length >= 3 ? below : [], above.length >= 3 ? above : []]
-}
-
-/** The unit normal `poly` winds towards, `(c - b) × (a - b)` of its first corners, as the soup draws it. */
-function normalOf(poly: Poly): P {
-  let [nx, ny, nz] = [0, 0, 0]
-  // Newell's method: sound for any planar polygon, slivers included.
-  for (let i = 0; i < poly.length; i++) {
-    const a = poly[i]!
-    const b = poly[(i + 1) % poly.length]!
-    nx += (a[1] - b[1]) * (a[2] + b[2])
-    ny += (a[2] - b[2]) * (a[0] + b[0])
-    nz += (a[0] - b[0]) * (a[1] + b[1])
-  }
-  const l = Math.hypot(nx, ny, nz) || 1
-  return [nx / l, ny / l, nz / l]
-}
-
 interface Piece {
   poly: Poly
   /** Outward unit normal. */
   normal: P
   roof: boolean
 }
-
-type RGB = readonly [number, number, number]
 
 /** A building's grid, in metres. */
 class Grid {
@@ -155,21 +107,19 @@ class Grid {
 }
 
 /**
- * The building's triangles, wound outwards (the look is wound as the collision mesh, inwards): those
- * further than `SLICE_REACH` cells from every cell of `near` whole, the rest sliced along the grid so
- * each piece lies in one cell, and split by whether `cut` holds for that cell.
+ * The building's faces (`facadeFor`: its walls with the windows cut out, and its roof, wound
+ * outwards): those further than `SLICE_REACH` cells from every cell of `near` whole, the rest sliced
+ * along the grid so each piece lies in one cell, and split by whether `cut` holds for that cell.
  */
-function slice(look: CollisionMesh, range: LookRange, grid: Grid, near: readonly (readonly number[])[], cut: (id: number) => boolean) {
+function slice(facade: Facade, grid: Grid, near: readonly (readonly number[])[], cut: (id: number) => boolean) {
   const { cell, origin, shell } = grid
   const whole: Piece[] = []
   const sliced: Piece[] = []
-  const { vertices, triangles } = look
-  const corner = (v: number): P => [vertices[v * 3]!, vertices[v * 3 + 1]!, vertices[v * 3 + 2]!]
-  for (let t = range.first; t < range.first + range.walls + range.roof; t++) {
-    const poly: Poly = [corner(triangles[t * 3]!), corner(triangles[t * 3 + 2]!), corner(triangles[t * 3 + 1]!)]
-    const piece = { poly, normal: normalOf(poly), roof: t >= range.first + range.walls }
-    const lo = [0, 1, 2].map((a) => grid.of(Math.min(poly[0]![a]!, poly[1]![a]!, poly[2]![a]!), a) - SLICE_REACH)
-    const hi = [0, 1, 2].map((a) => grid.of(Math.max(poly[0]![a]!, poly[1]![a]!, poly[2]![a]!), a) + SLICE_REACH)
+  const faces: [Poly, boolean][] = [...facade.walls.map((poly): [Poly, boolean] => [poly, false]), ...facade.roof.map((poly): [Poly, boolean] => [poly, true])]
+  for (const [poly, roof] of faces) {
+    const piece = { poly, normal: normalOf(poly), roof }
+    const lo = [0, 1, 2].map((a) => grid.of(Math.min(...poly.map((p) => p[a]!)), a) - SLICE_REACH)
+    const hi = [0, 1, 2].map((a) => grid.of(Math.max(...poly.map((p) => p[a]!)), a) + SLICE_REACH)
     const close = near.some((c) => c[0]! >= lo[0]! && c[0]! <= hi[0]! && c[1]! >= lo[1]! && c[1]! <= hi[1]! && c[2]! >= lo[2]! && c[2]! <= hi[2]!)
     ;(close ? sliced : whole).push(piece)
   }
@@ -223,6 +173,83 @@ function orphan(grid: Grid, x: number, y: number, z: number, cut: (id: number) =
   return lost
 }
 
+/**
+ * Whether an edge runs along the side of one of `openings`: in its wall's plane and on the edge of
+ * its rectangle. A wall piece that goes takes its window's hole with it, and that hole's edge is no
+ * edge of the hole blown in the wall: nothing is drawn along it, or it would hang in the air.
+ */
+function windowEdge(openings: readonly Opening[]): (a: P, b: P) => boolean {
+  const sides = openings.filter((o) => !o.door).map((o) => {
+    const [a, b, , d] = o.corners
+    const along = unit([b[0] - a[0], 0, b[2] - a[2]])
+    return { n: o.normal, d: dot(a, o.normal), along, u: [dot(a, along), dot(b, along)] as const, v: [a[1], d[1]] as const }
+  })
+  const TOL = 0.015
+  const onSide = (p: P, w: (typeof sides)[number]) => {
+    if (Math.abs(dot(p, w.n) - w.d) > TOL) return false
+    const [u, v] = [dot(p, w.along), p[1]]
+    const inU = u > w.u[0] - TOL && u < w.u[1] + TOL
+    const inV = v > w.v[0] - TOL && v < w.v[1] + TOL
+    return (inU && (Math.abs(v - w.v[0]) < TOL || Math.abs(v - w.v[1]) < TOL)) || (inV && (Math.abs(u - w.u[0]) < TOL || Math.abs(u - w.u[1]) < TOL))
+  }
+  return (a, b) => {
+    const m: P = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]
+    return sides.some((w) => onSide(a, w) && onSide(b, w) && onSide(m, w))
+  }
+}
+
+/**
+ * The floor left to draw with the cells `removed` gone: cut along the grid near them, and a piece
+ * goes when no cell of the building stands in its own column or the ones round it, so no floor
+ * hangs over the ground where a house stood. Floor far from any gone cell stays as it is.
+ */
+function floorStanding(floor: readonly Poly[], grid: Grid, removed: ReadonlySet<number>): Poly[] {
+  if (removed.size === 0) return [...floor]
+  const { cell, origin, shell } = grid
+  const gone = [...removed].map((id) => shell.coords(id))
+  const columns = new Map<string, boolean>()
+  const columnStands = (x: number, z: number): boolean => {
+    const key = `${x},${z}`
+    let stands = columns.get(key)
+    if (stands !== undefined) return stands
+    stands = false
+    for (let dx = -1; dx <= 1 && !stands; dx++) for (let dz = -1; dz <= 1 && !stands; dz++) for (let y = 0; y < shell.dims[1]; y++) {
+      if (!grid.has(x + dx, y, z + dz)) continue
+      const id = shell.index(x + dx, y, z + dz)
+      if (shell.isSolid(id) && !removed.has(id)) {
+        stands = true
+        break
+      }
+    }
+    columns.set(key, stands)
+    return stands
+  }
+  const out: Poly[] = []
+  for (const poly of floor) {
+    const lo = [0, 2].map((a) => grid.of(Math.min(...poly.map((p) => p[a]!)), a) - SLICE_REACH)
+    const hi = [0, 2].map((a) => grid.of(Math.max(...poly.map((p) => p[a]!)), a) + SLICE_REACH)
+    if (!gone.some((c) => c[0] >= lo[0]! && c[0] <= hi[0]! && c[2] >= lo[1]! && c[2] <= hi[1]!)) {
+      out.push(poly)
+      continue
+    }
+    let polys: Poly[] = [poly]
+    for (const axis of [0, 2]) {
+      const [a, b] = [Math.min(...poly.map((p) => p[axis]!)), Math.max(...poly.map((p) => p[axis]!))]
+      for (let k = Math.floor((a - origin[axis]!) / cell) + 1; origin[axis]! + k * cell < b; k++) {
+        const at = origin[axis]! + k * cell
+        const next: Poly[] = []
+        for (const q of polys) for (const part of split(q, axis, at)) if (part.length >= 3) next.push(part)
+        polys = next
+      }
+    }
+    for (const piece of polys) {
+      const c = centreOf(piece)
+      if (columnStands(grid.of(c[0], 0), grid.of(c[2], 2))) out.push(piece)
+    }
+  }
+  return out
+}
+
 interface Rim {
   a: P
   b: P
@@ -232,33 +259,50 @@ interface Rim {
   inward: P
 }
 
-function centreOf(poly: Poly): P {
-  const c: P = [0, 0, 0]
-  for (const p of poly) for (let a = 0; a < 3; a++) c[a]! += p[a]! / poly.length
-  return c
-}
-
 /**
  * The outline of `taken`: the sides no other piece of it shares, each to be drawn with a wall's
  * depth; and where each corner of the outline goes, pushed about in its wall's plane (not a corner
  * two planes share: the building's own edges stay straight). The push depends on the corner alone,
- * so a piece that falls out of a wall has the same ragged edge as the hole it leaves.
+ * so a piece that falls out of a wall has the same ragged edge as the hole it leaves. Edges `skip`
+ * holds for (a window's) are no rim: they are the hole the wall had already.
  */
-function outline(taken: readonly Piece[], all: readonly Piece[]) {
-  const edgeKey = (a: P, b: P) => {
-    const [ka, kb] = [keyOf(a), keyOf(b)]
-    return ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`
-  }
+function outline(taken: readonly Piece[], all: readonly Piece[], skip: (a: P, b: P) => boolean = () => false) {
   const edges = new Map<string, number>()
   for (const { poly } of taken) for (let i = 0; i < poly.length; i++) {
     const key = edgeKey(poly[i]!, poly[(i + 1) % poly.length]!)
     edges.set(key, (edges.get(key) ?? 0) + 1)
   }
+  // The edges no other gone piece has as its own. A wall's top edge is cut where its window is and the
+  // roof's edge over it is not, so an edge is shared, too, when another gone piece's edge runs along it
+  // over its middle (`covered`): only what nothing else runs along is the hole's edge.
+  const loose: { a: P; b: P; piece: number }[] = []
+  taken.forEach(({ poly }, piece) => {
+    for (let i = 0; i < poly.length; i++) {
+      const [a, b] = [poly[i]!, poly[(i + 1) % poly.length]!]
+      if (edges.get(edgeKey(a, b)) === 1 && !skip(a, b)) loose.push({ a, b, piece })
+    }
+  })
+  const covered = (a: P, b: P, own: number): boolean => {
+    const m: P = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]
+    const d = unit(sub(b, a))
+    for (const e of loose) {
+      if (e.piece === own) continue
+      const ed = sub(e.b, e.a)
+      const len = Math.hypot(...ed)
+      if (len < 1e-6 || Math.abs(dot(ed, d)) < len * 0.9999) continue
+      const u = ed.map((v) => v / len) as P
+      const am = sub(m, e.a)
+      const t = dot(am, u)
+      if (t < -0.01 || t > len + 0.01) continue
+      if (Math.hypot(am[0] - u[0] * t, am[1] - u[1] * t, am[2] - u[2] * t) < 0.01) return true
+    }
+    return false
+  }
   const rims: Rim[] = []
   const corners = new Set<string>()
-  for (const { poly, normal, roof } of taken) for (let i = 0; i < poly.length; i++) {
-    const [a, b] = [poly[i]!, poly[(i + 1) % poly.length]!]
-    if (edges.get(edgeKey(a, b)) !== 1) continue
+  for (const { a, b, piece } of loose) {
+    if (covered(a, b, piece)) continue
+    const { poly, normal, roof } = taken[piece]!
     // Towards the middle of the piece that is gone, flattened into its plane.
     const mid = centreOf(poly)
     const d = [0, 1, 2].map((k) => mid[k]! - (a[k]! + b[k]!) / 2)
@@ -344,8 +388,10 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
   const grid = new Grid(shell)
   const { cell, origin } = grid
   const near = [...removed, ...dents.keys()].map((id) => shell.coords(id))
-  const { whole, kept, taken } = slice(look, range, grid, near, (id) => removed.has(id))
-  const { rims, place } = outline(taken, [...kept, ...taken])
+  const facade = facadeFor(look, range)
+  const openings = openingsFor(look, range)
+  const { whole, kept, taken } = slice(facade, grid, near, (id) => removed.has(id))
+  const { rims, place } = outline(taken, [...kept, ...taken], windowEdge(openings))
 
   // Soot and wear at a corner: by how near the nearest cell that is gone is, and how worn its own cell.
   const shade = (p: P): number => {
@@ -372,7 +418,22 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
     out.poly(piece.poly, piece.roof ? roof : wall, shade)
   }
   out.surface = 0
+  // The room inside: what stands, turned in a wall's thickness, dim, with the same ragged edge; and the floor where the house still stands over it.
+  const dim = (c: RGB): RGB => [c[0] * INTERIOR_SHADE, c[1] * INTERIOR_SHADE, c[2] * INTERIOR_SHADE]
+  for (const piece of [...whole, ...kept]) out.poly(innerOf(piece.poly.map(place), piece.normal), dim(piece.roof ? roof : wall), shade, true)
+  for (const poly of floorStanding(facade.floor, grid, removed)) out.poly(poly, FLOOR_RGB, undefined, true)
   out.rims(rims, wall, roof, shade)
+  // The roof's overhang, each strip while the roof it hangs from still stands.
+  for (const strip of eavesFor(look, range)) {
+    const at = eaveAnchor(strip)
+    const [x, y, z] = [0, 1, 2].map((a) => grid.of(at[a]!, a)) as P
+    if (grid.has(x, y, z) && removed.has(shell.index(x, y, z))) continue
+    for (const { corners, part } of strip.quads) {
+      out.surface = part === 'top' ? surfaces.roof : 0
+      out.poly(corners, part === 'top' ? roof : part === 'soffit' ? SOFFIT_RGB : TRIM_RGB, shade, true)
+    }
+  }
+  out.surface = 0
   // Whether `p` lies on what stands of a wall facing `normal`: within one of its pieces, in their plane.
   const standing = [...whole, ...kept]
   const onWall = (p: P, normal: P) =>
@@ -390,7 +451,7 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
       }
       return true
     })
-  edgeDetail(out, rims, surfaces, wall, onWall)
+  edgeDetail(out, rims, surfaces, wall, roof, onWall)
   // Chips where rounds struck: a few ragged marks on the wall in each worn cell, more as it wears.
   if (dents.size > 0) {
     const inCell = new Map<number, Piece>()
@@ -408,24 +469,36 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
       chips(out, piece, id, Math.min(CHIPS, Math.ceil((damage / CELL_HP) * CHIPS)), piece.roof ? roof : wall)
     }
   }
-  // Windows and doors, but not those within a cell of a hole: their glass is blown out.
-  const nearHole = (corners: readonly P[]) => {
-    const lo = [0, 1, 2].map((a) => grid.of(Math.min(...corners.map((p) => p[a]!)), a) - 1)
-    const hi = [0, 1, 2].map((a) => grid.of(Math.max(...corners.map((p) => p[a]!)), a) + 1)
-    for (let y = lo[1]!; y <= hi[1]!; y++) for (let z = lo[2]!; z <= hi[2]!; z++) for (let x = lo[0]!; x <= hi[0]!; x++) if (grid.has(x, y, z) && removed.has(shell.index(x, y, z))) return true
-    return false
-  }
-  const openings = removed.size === 0 ? openingsOf(look, range) : openingsOf(look, range).filter((o) => !nearHole(o.corners))
-  openingQuads(openings, (corners, rgb) => out.poly(corners, rgb, shade, true))
+  // Windows and doors, but only those with wall still standing round them: a frame does not hang in the air.
+  const framed = removed.size === 0 ? openings : openings.filter((o) => openingStands(shell, removed, o))
+  openingQuads(framed, (corners, rgb) => out.poly(corners, rgb, shade, true))
   return out.soup()
 }
 
-const add = (a: readonly number[], b: readonly number[], k = 1): P => [a[0]! + b[0]! * k, a[1]! + b[1]! * k, a[2]! + b[2]! * k]
-const dot = (a: readonly number[], b: readonly number[]) => a[0]! * b[0]! + a[1]! * b[1]! + a[2]! * b[2]!
-const cross = (a: readonly number[], b: readonly number[]): P => [a[1]! * b[2]! - a[2]! * b[1]!, a[2]! * b[0]! - a[0]! * b[2]!, a[0]! * b[1]! - a[1]! * b[0]!]
-const unit = (a: readonly number[]): P => {
-  const l = Math.hypot(a[0]!, a[1]!, a[2]!) || 1
-  return [a[0]! / l, a[1]! / l, a[2]! / l]
+/**
+ * Whether opening `o` still stands with the cells in `removed` gone: the wall just outside each of
+ * its four sides stands (its cell is not removed, nor left with nothing to hang from, `orphan`), and
+ * no cell of its own is gone. Otherwise its frame would hang in the air, and its glass is gone with the wall.
+ */
+export function openingStands(shell: Shell, removed: ReadonlySet<number>, o: Opening): boolean {
+  const grid = new Grid(shell)
+  const cut = (id: number) => removed.has(id)
+  const [a, b, c, d] = o.corners
+  const n = o.normal
+  const along = unit([b[0] - a[0], 0, b[2] - a[2]])
+  const mid = (p: P, q: P): P => [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2, (p[2] + q[2]) / 2]
+  const beside: P[] = [add(mid(a, b), [0, -1, 0], 0.05), add(mid(b, c), along, 0.05), add(mid(c, d), [0, 1, 0], 0.05), add(mid(d, a), along, -0.05)]
+  // And the opening itself: a cell blasted out of it takes it along, frame and all.
+  const centre = mid(mid(a, b), mid(c, d))
+  const within: P[] = [centre, ...[a, b, c, d].map((p) => mid(mid(p, centre), p))]
+  for (const p of [...beside, ...within]) {
+    // A hair inside the wall, as the wall's own pieces are judged.
+    const q = add(p, n, -0.01)
+    const [x, y, z] = [0, 1, 2].map((k) => grid.of(q[k]!, k)) as P
+    if (grid.has(x, y, z) && cut(shell.index(x, y, z))) return false
+    if (orphan(grid, x, y, z, cut)) return false
+  }
+  return true
 }
 
 /**
@@ -447,7 +520,7 @@ function stick(out: Writer, from: P, to: P, normal: P, w: number, h: number, tap
  * the walls' pattern, splinters at a wooden wall's or cracks running out across a brick or rendered
  * one. Cracks keep to the wall: each step must land on what is left of it (`onWall`).
  */
-function edgeDetail(out: Writer, rims: readonly Rim[], surfaces: Surfaces, wall: RGB, onWall: (p: P, normal: P) => boolean) {
+function edgeDetail(out: Writer, rims: readonly Rim[], surfaces: Surfaces, wall: RGB, roofRgb: RGB, onWall: (p: P, normal: P) => boolean) {
   const crackRgb: RGB = [wall[0] * CRACK_SHADE, wall[1] * CRACK_SHADE, wall[2] * CRACK_SHADE]
   for (const rim of rims) {
     const { normal, inward } = rim
@@ -458,6 +531,7 @@ function edgeDetail(out: Writer, rims: readonly Rim[], surfaces: Surfaces, wall:
     const h = (salt: number) => hash(seed[0], seed[1], seed[2], salt)
     const at = (t: number) => add(a, [b[0] - a[0], b[1] - a[1], b[2] - a[2]], t)
     if (rim.roof) {
+      if (SHINGLED.has(surfaces.roof)) shingles(out, rim, a, b, h, normal, inward, onWall, roofRgb)
       if (h(11) > RAFTER_CHANCE) continue
       // Rafters run down the slope, and only an edge across them shows their ends; a flat roof's joists, whichever way the edge goes.
       const slope = Math.abs(normal[1]) > 0.97 ? inward : unit(cross(cross([0, 1, 0], normal), normal))
@@ -502,6 +576,36 @@ function edgeDetail(out: Writer, rims: readonly Rim[], surfaces: Surfaces, wall:
 }
 
 /**
+ * Loose shingles at a roof hole's edge from `a` to `b`: one slid out of its course and tilted up on
+ * the roof just outside the hole, and a dark patch where one is missing, both only on what stands of the roof.
+ */
+function shingles(out: Writer, rim: Rim, a: P, b: P, h: (salt: number) => number, normal: P, inward: P, onWall: (p: P, normal: P) => boolean, roof: RGB) {
+  const along = unit([b[0] - a[0], b[1] - a[1], b[2] - a[2]])
+  const at = (t: number) => add(a, [b[0] - a[0], b[1] - a[1], b[2] - a[2]], t)
+  const shade = (k: number): RGB => [roof[0] * k, roof[1] * k, roof[2] * k]
+  // A shingle on the roof about `centre`, its length along `dir`, lifted `rise` at its far end and `up` off the roof.
+  const plate = (centre: P, dir: P, rise: number, up: number, rgb: RGB) => {
+    const side = unit(cross(normal, dir))
+    const [w, l] = [SHINGLE[0] / 2, SHINGLE[1] / 2]
+    const near = add(centre, dir, -l)
+    const far = add(add(centre, dir, l), normal, rise)
+    out.poly([add(add(near, side, -w), normal, up), add(add(near, side, w), normal, up), add(add(far, side, w), normal, up), add(add(far, side, -w), normal, up)], rgb, undefined, true)
+  }
+  const outward: P = [-inward[0], -inward[1], -inward[2]]
+  if (h(15) < SLID_CHANCE) {
+    const centre = add(at(0.2 + 0.6 * h(17)), outward, 0.12 + 0.25 * h(18))
+    if (onWall(centre, normal)) {
+      const dir = unit(add(outward, along, (h(19) - 0.5) * 0.8))
+      plate(centre, dir, 0.08 + 0.1 * h(21), 0.03, shade(SLID_SHADE))
+    }
+  }
+  if (h(16) < MISSING_CHANCE) {
+    const centre = add(at(0.15 + 0.7 * h(22)), outward, 0.3 + 0.3 * h(23))
+    if (onWall(centre, normal)) plate(centre, unit(add(outward, along, (h(24) - 0.5) * 0.3)), 0, 0.006, shade(MISSING_SHADE))
+  }
+}
+
+/**
  * `count` chips on `piece`, the wall in cell `id`: small dark ragged marks a hair proud of it,
  * scattered about the piece's middle, the same for the same cell.
  */
@@ -539,10 +643,19 @@ function chips(out: Writer, piece: Piece, id: number, count: number, base: RGB) 
  */
 export function lookChunk(look: CollisionMesh, range: LookRange, shell: Shell, cells: ReadonlySet<number>, pivot: readonly [number, number, number], wall: RGB, roof: RGB): LookSoup {
   const grid = new Grid(shell)
-  const { kept, taken } = slice(look, range, grid, [...cells].map((id) => shell.coords(id)), (id) => cells.has(id))
-  const { rims, place } = outline(taken, [...kept, ...taken])
+  const { kept, taken } = slice(facadeFor(look, range), grid, [...cells].map((id) => shell.coords(id)), (id) => cells.has(id))
+  const { rims, place } = outline(taken, [...kept, ...taken], windowEdge(openingsFor(look, range)))
   const out = new Writer(place, [pivot[0], pivot[1], pivot[2]])
   for (const piece of taken) out.poly(piece.poly, piece.roof ? roof : wall)
+  // Its inner face goes with it, so a section lying on the ground shows its dim inside.
+  for (const piece of taken) out.poly(innerOf(piece.poly.map(place), piece.normal), [wall[0] * INTERIOR_SHADE, wall[1] * INTERIOR_SHADE, wall[2] * INTERIOR_SHADE], undefined, true)
   out.rims(rims, wall, roof)
+  // The overhang goes with the roof it hangs from.
+  for (const strip of eavesFor(look, range)) {
+    const at = eaveAnchor(strip)
+    const [x, y, z] = [0, 1, 2].map((a) => grid.of(at[a]!, a)) as P
+    if (!grid.has(x, y, z) || !cells.has(shell.index(x, y, z))) continue
+    for (const { corners, part } of strip.quads) out.poly(corners, part === 'top' ? roof : part === 'soffit' ? SOFFIT_RGB : TRIM_RGB, undefined, true)
+  }
   return out.soup()
 }

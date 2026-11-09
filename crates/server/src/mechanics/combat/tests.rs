@@ -106,9 +106,13 @@ fn the_ak5_hurts_what_it_points_at_and_credits_the_shooter() {
     assert_eq!(hp, PLAYER_MAX_HP - ak5().damage, "one shot while held for three ticks");
     assert_eq!(game.world.entities.of::<crate::entities::Health>(shooter).hp, PLAYER_MAX_HP);
 
-    // Spread puts a round in an arm now and then, which spares the torso: allow half as many again.
-    let shots_needed = PLAYER_MAX_HP.div_ceil(ak5().damage) as u32 * 3 / 2;
-    hold(&mut game, shooter, &mut seq, 0.0, BUTTON_FIRE, shots_needed * ak5().cooldown_ticks);
+    // Tapped with aim held, every round is a first shot and goes true; let the bloom settle between.
+    let shots_needed = PLAYER_MAX_HP.div_ceil(ak5().damage) as u32;
+    hold(&mut game, shooter, &mut seq, 0.0, BUTTON_ALT, TICK_RATE / 2);
+    for _ in 0..shots_needed {
+        hold(&mut game, shooter, &mut seq, 0.0, BUTTON_ALT | BUTTON_FIRE, 1);
+        hold(&mut game, shooter, &mut seq, 0.0, BUTTON_ALT, TICK_RATE / 4);
+    }
     settle(&mut game, shooter, &mut seq);
     assert!(!game.world.entities.alive(target));
     assert_eq!(game.world.entities.of::<Player>(shooter).score.kills, 1);
@@ -507,11 +511,35 @@ fn a_scoped_sniper_shot_goes_true_along_the_look_direction() {
 #[test]
 fn aiming_tightens_any_guns_spread() {
     let ak = ak5();
-    assert_eq!(effective_spread(ak, 0, false), ak.spread);
-    assert_eq!(effective_spread(ak, BUTTON_ALT | BUTTON_FIRE, false), ak.spread * AIM_SPREAD_SCALE);
-    assert!(effective_spread(ak, BUTTON_ALT, false) < effective_spread(ak, 0, false));
+    assert_eq!(effective_spread(ak, 0, false, 0.0), ak.spread);
+    let bloom = ak.bloom.per_shot;
+    assert_eq!(effective_spread(ak, BUTTON_ALT | BUTTON_FIRE, false, bloom), ak.spread * AIM_SPREAD_SCALE + bloom * AIM_BLOOM_SCALE);
+    assert!(effective_spread(ak, BUTTON_ALT, false, bloom) < effective_spread(ak, 0, false, bloom));
     // Held in one hand it wanders wider, and aiming does not steady it.
-    assert_eq!(effective_spread(ak, BUTTON_ALT, true), ak.spread + ONE_ARM_SPREAD);
+    assert_eq!(effective_spread(ak, BUTTON_ALT, true, 0.0), ak.spread + ONE_ARM_SPREAD);
+    // A gun that does not bloom is not widened by it.
+    let revolver = def(ITEM_REVOLVER).unwrap();
+    assert_eq!(effective_spread(revolver, 0, false, 0.05), revolver.spread);
+}
+
+#[test]
+fn the_ak5_blooms_under_held_fire_and_settles_when_let_go() {
+    let ak = ak5();
+    // Aimed, the first round goes dead true; the cone opens shot by shot, up to its limit.
+    assert_eq!(effective_spread(ak, BUTTON_ALT, false, 0.0), 0.0);
+    let mut bloom = 0.0;
+    for _ in 0..ak.mag {
+        bloom = ak.bloom.fired(bloom);
+    }
+    assert_eq!(bloom, ak.bloom.max);
+    assert!(effective_spread(ak, 0, false, bloom) > ak.spread * 2.0);
+
+    let (mut game, id, _, mut seq, _) = duel();
+    hold(&mut game, id, &mut seq, 0.0, BUTTON_FIRE, ak.cooldown_ticks * 5);
+    let held = game.world.entities.of::<Player>(id).hands.bloom;
+    assert!(held >= ak.bloom.per_shot * 4.0, "held fire blooms: {held}");
+    hold(&mut game, id, &mut seq, 0.0, 0, TICK_RATE);
+    assert_eq!(game.world.entities.of::<Player>(id).hands.bloom, 0.0, "a second's rest settles it");
 }
 
 #[test]

@@ -63,6 +63,8 @@ export class Surroundings {
     const look = this.scene.camera.getWorldDirection({ x: 0, y: 0, z: 0 })
     const level = this.waters?.planeNear(camera.x, camera.z, look.x, look.z) ?? null
     this.scene.setWaterPlane(level)
+    // The surface over the camera with its waves, as the water draws it.
+    this.scene.setUnderwater(camera.y < (this.fx().waterAt?.(camera.x, camera.z) ?? NO_WATER))
   }
 
   /**
