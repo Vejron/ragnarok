@@ -282,20 +282,6 @@ impl Shell {
         self.solid.iter().enumerate().filter(|&(_, &s)| s).map(|(i, _)| i as u32).collect()
     }
 
-    /// The cells touching cell `id`, faces, edges and corners: what its load spreads over (`hold`), as
-    /// a wall carries its weight diagonally round an opening.
-    fn touching(&self, id: u32) -> impl Iterator<Item = u32> + '_ {
-        let [x, y, z] = self.coords(id);
-        (-1i32..=1).flat_map(move |dy| (-1i32..=1).flat_map(move |dz| (-1i32..=1).map(move |dx| (dx, dy, dz)))).filter_map(move |(dx, dy, dz)| {
-            if (dx, dy, dz) == (0, 0, 0) {
-                return None;
-            }
-            let (nx, ny, nz) = (x as i32 + dx, y as i32 + dy, z as i32 + dz);
-            let inside = nx >= 0 && ny >= 0 && nz >= 0 && (nx as usize) < self.dims[0] && (ny as usize) < self.dims[1] && (nz as usize) < self.dims[2];
-            inside.then(|| self.index(nx as usize, ny as usize, nz as usize))
-        })
-    }
-
     /// The cells sharing a face with cell `id`: what can hold it up. Cells that only touch at an edge
     /// or a corner do not hold each other: drawn, a piece hanging by a corner floats. The importer's
     /// walls are joined face to face, diagonal ones included (one cell in 1.7 million in the worlds
@@ -463,49 +449,87 @@ impl Shell {
     /// every cell that leans on it, each cell giving all it carries in equal parts to the cells
     /// nearer an anchor that it touches. A cell no chain reaches has the span `UNHELD`.
     pub fn hold(&self, removed: &[bool]) -> Hold {
-        use std::cmp::Reverse;
         let n = self.solid.len();
+        let [nx, ny, nz] = self.dims;
+        let layer = nx * nz;
         let standing = |i: usize| self.solid[i] && !removed[i];
         let mut span = vec![UNHELD; n];
-        let mut heap = std::collections::BinaryHeap::new();
+        // A step costs 0, 1 or 2, so the cheapest chains are found in order of span from three queues,
+        // the one for each span taken in turn (`span % 3`), as Dijkstra's would with a heap.
+        let mut queues: [Vec<u32>; 3] = Default::default();
+        let mut queued = 0usize;
         for i in (0..n).filter(|&i| self.anchored[i] && standing(i)) {
             span[i] = 0;
-            heap.push(Reverse((0u16, i as u32)));
+            queues[0].push(i as u32);
+            queued += 1;
         }
         let mut held = Vec::new();
-        while let Some(Reverse((d, id))) = heap.pop() {
-            if d > span[id as usize] {
-                continue;
-            }
-            held.push(id);
-            let from = self.coords(id);
-            for next in self.around(id).filter(|&next| standing(next as usize)) {
-                let to = self.coords(next);
-                let cost = if to[0] == from[0] && to[2] == from[2] { u16::from(to[1] < from[1]) } else { 2 };
-                if d + cost < span[next as usize] {
-                    span[next as usize] = d + cost;
-                    heap.push(Reverse((d + cost, next)));
+        let mut d = 0u16;
+        while queued > 0 {
+            let queue = d as usize % 3;
+            while let Some(id) = queues[queue].pop() {
+                queued -= 1;
+                // Taken already, on a cheaper chain.
+                if span[id as usize] != d {
+                    continue;
+                }
+                held.push(id);
+                let [x, y, z] = self.coords(id);
+                let i = id as usize;
+                // The six cells sharing a face (`around`), and a step's cost to each.
+                let steps = [(x > 0, i.wrapping_sub(1), 2), (x + 1 < nx, i + 1, 2), (y > 0, i.wrapping_sub(layer), 1), (y + 1 < ny, i + layer, 0), (z > 0, i.wrapping_sub(nx), 2), (z + 1 < nz, i + nx, 2)];
+                for (inside, next, cost) in steps {
+                    if inside && standing(next) && d + cost < span[next] {
+                        span[next] = d + cost;
+                        queues[(d + cost) as usize % 3].push(next as u32);
+                        queued += 1;
+                    }
                 }
             }
+            d += 1;
         }
-        // Farthest from an anchor first, the higher first among equals: whatever leans on a cell has come before it.
-        held.sort_unstable_by_key(|&id| Reverse((span[id as usize], self.coords(id)[1], id)));
+        // Farthest from an anchor first, the higher first among equals: whatever leans on a cell has come
+        // before it. Sorted on one number a cell, its span, layer and own number, largest first.
+        debug_assert!(ny <= 1 << 16);
+        let mut order: Vec<u64> = held.iter().map(|&id| (u64::from(span[id as usize]) << 48) | (((id as usize / layer) as u64) << 32) | u64::from(id)).collect();
+        order.sort_unstable_by(|a, b| b.cmp(a));
         let mut load = vec![0u32; n];
-        for &id in &held {
-            load[id as usize] += 1;
-            let (mine, y) = (span[id as usize], self.coords(id)[1]);
-            let nearer = |next: &u32| standing(*next as usize) && (span[*next as usize] < mine || (span[*next as usize] == mine && self.coords(*next)[1] < y));
-            let count = self.touching(id).filter(nearer).count() as u32;
+        let mut nearer = [0usize; 26];
+        for key in order {
+            let id = key as u32;
+            let i = id as usize;
+            load[i] += 1;
+            let mine = span[i];
+            let [x, y, z] = self.coords(id);
+            // The cells touching it, by a face, an edge or a corner (its load spreads over them, as a wall
+            // carries its weight diagonally round an opening), that are nearer an anchor, or as near and lower.
+            let mut count = 0;
+            for dy in -1i32..=1 {
+                for dz in -1i32..=1 {
+                    for dx in -1i32..=1 {
+                        let (ax, ay, az) = (x as i32 + dx, y as i32 + dy, z as i32 + dz);
+                        if (dx, dy, dz) == (0, 0, 0) || ax < 0 || ay < 0 || az < 0 || ax as usize >= nx || ay as usize >= ny || az as usize >= nz {
+                            continue;
+                        }
+                        let next = (ay as usize * nz + az as usize) * nx + ax as usize;
+                        if standing(next) && (span[next] < mine || (span[next] == mine && dy < 0)) {
+                            nearer[count] = next;
+                            count += 1;
+                        }
+                    }
+                }
+            }
             if count == 0 {
                 continue;
             }
-            let (share, extra) = (load[id as usize] / count, (load[id as usize] % count) as usize);
-            for (k, next) in self.touching(id).filter(nearer).enumerate() {
-                load[next as usize] += share + u32::from(k < extra);
+            let (share, extra) = (load[i] / count as u32, (load[i] % count as u32) as usize);
+            for (k, &next) in nearer[..count].iter().enumerate() {
+                load[next] += share + u32::from(k < extra);
             }
         }
         Hold { span, load }
     }
+
 
     /// What the building cannot go on holding: the standing cells that are held much more thinly
     /// or carry much more than they did when it was whole (`whole`, from `hold` of `untouched`),
@@ -1175,7 +1199,7 @@ mod tests {
         for i in 0..4 {
             let (a, b) = (ring[i], ring[(i + 1) % 4]);
             for step in 0..4 {
-                let t = (step * 2 + 1) as i32;
+                let t = step * 2 + 1;
                 shell.blast(&mut removed, [a[0] + (b[0] - a[0]) * t / 8, 120, a[1] + (b[1] - a[1]) * t / 8], 180);
                 check(&removed);
                 while !shell.strain(&mut removed, &whole).is_empty() {

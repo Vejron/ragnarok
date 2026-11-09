@@ -150,6 +150,12 @@ export class WorldView {
   /** `debris` is where broken glass flies; without one (tests) it is thrown into a pile of its own that is never drawn. */
   constructor(private readonly scene: Scene, debris: Debris = new Debris()) {
     this.glazing = new Glazing(debris)
+    // A building hit whole is drawn whole by its tile until its first look is back from the worker.
+    this.damage.onShown = (key) => {
+      const group = this.groups.get(key)
+      const loaded = this.loaded.get(key)
+      if (group && loaded) rebuildBuildings(group, loaded.tile, loaded.salt, this.undrawnBuildings(key))
+    }
   }
 
   /** Told when a felled tree cracks and lands, to be heard. */

@@ -107,6 +107,45 @@ class Grid {
 }
 
 /**
+ * Things with a size (edges, pieces of wall) by the cells of a building's grid their boxes reach
+ * into, so what lies near a point is found without looking at all of them. A cell outside the grid
+ * has a bucket too: what was cut off a building's edge lies just beyond it.
+ */
+class Buckets<T> {
+  private readonly cells = new Map<number, T[]>()
+  constructor(private readonly grid: Grid) {}
+
+  /** Files `item` under every cell the box round `points`, grown by `margin` metres, reaches into. */
+  add(item: T, points: readonly P[], margin: number) {
+    const lo = [Infinity, Infinity, Infinity]
+    const hi = [-Infinity, -Infinity, -Infinity]
+    for (const p of points) for (let a = 0; a < 3; a++) {
+      lo[a] = Math.min(lo[a]!, p[a]!)
+      hi[a] = Math.max(hi[a]!, p[a]!)
+    }
+    const g = this.grid
+    const [x0, y0, z0] = [0, 1, 2].map((a) => g.of(lo[a]! - margin, a))
+    const [x1, y1, z1] = [0, 1, 2].map((a) => g.of(hi[a]! + margin, a))
+    for (let y = y0!; y <= y1!; y++) for (let z = z0!; z <= z1!; z++) for (let x = x0!; x <= x1!; x++) {
+      const key = Buckets.key(x, y, z)
+      const list = this.cells.get(key)
+      if (list) list.push(item)
+      else this.cells.set(key, [item])
+    }
+  }
+
+  /** What was filed under the cell holding `p`. */
+  at(p: P): readonly T[] {
+    const g = this.grid
+    return this.cells.get(Buckets.key(g.of(p[0], 0), g.of(p[1], 1), g.of(p[2], 2))) ?? []
+  }
+
+  private static key(x: number, y: number, z: number): number {
+    return ((x + 4096) * 8192 + (y + 4096)) * 8192 + (z + 4096)
+  }
+}
+
+/**
  * The building's faces (`facadeFor`: its walls with the windows cut out, and its roof, wound
  * outwards): those further than `SLICE_REACH` cells from every cell of `near` whole, the rest sliced
  * along the grid so each piece lies in one cell, and split by whether `cut` holds for that cell.
@@ -266,7 +305,7 @@ interface Rim {
  * so a piece that falls out of a wall has the same ragged edge as the hole it leaves. Edges `skip`
  * holds for (a window's) are no rim: they are the hole the wall had already.
  */
-function outline(taken: readonly Piece[], all: readonly Piece[], skip: (a: P, b: P) => boolean = () => false) {
+function outline(grid: Grid, taken: readonly Piece[], all: readonly Piece[], skip: (a: P, b: P) => boolean = () => false) {
   const edges = new Map<string, number>()
   for (const { poly } of taken) for (let i = 0; i < poly.length; i++) {
     const key = edgeKey(poly[i]!, poly[(i + 1) % poly.length]!)
@@ -282,10 +321,13 @@ function outline(taken: readonly Piece[], all: readonly Piece[], skip: (a: P, b:
       if (edges.get(edgeKey(a, b)) === 1 && !skip(a, b)) loose.push({ a, b, piece })
     }
   })
+  // The loose edges by the grid cells their boxes reach into, so an edge is only held against those near it.
+  const nearby = new Buckets<(typeof loose)[number]>(grid)
+  for (const e of loose) nearby.add(e, [e.a, e.b], 0.02)
   const covered = (a: P, b: P, own: number): boolean => {
     const m: P = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]
     const d = unit(sub(b, a))
-    for (const e of loose) {
+    for (const e of nearby.at(m)) {
       if (e.piece === own) continue
       const ed = sub(e.b, e.a)
       const len = Math.hypot(...ed)
@@ -300,6 +342,8 @@ function outline(taken: readonly Piece[], all: readonly Piece[], skip: (a: P, b:
   }
   const rims: Rim[] = []
   const corners = new Set<string>()
+  // The grid cells round the hole's corners: a point in none of them is no corner, and needs no key made for it.
+  const cornerCells = new Buckets<true>(grid)
   for (const { a, b, piece } of loose) {
     if (covered(a, b, piece)) continue
     const { poly, normal, roof } = taken[piece]!
@@ -312,9 +356,11 @@ function outline(taken: readonly Piece[], all: readonly Piece[], skip: (a: P, b:
     rims.push({ a, b, normal, roof, inward: flat.map((v) => v / fl) as P })
     corners.add(keyOf(a))
     corners.add(keyOf(b))
+    cornerCells.add(true, [a, b], 0.01)
   }
   const planes = new Map<string, P[]>()
   for (const { poly, normal } of all) for (const p of poly) {
+    if (cornerCells.at(p).length === 0) continue
     const key = keyOf(p)
     if (!corners.has(key)) continue
     const list = planes.get(key) ?? []
@@ -334,7 +380,7 @@ function outline(taken: readonly Piece[], all: readonly Piece[], skip: (a: P, b:
     const [u, v] = [(hash(at[0], at[1], at[2], 1) - 0.5) * 2 * JITTER, (hash(at[0], at[1], at[2], 2) - 0.5) * 2 * JITTER]
     moved.set(key, [0, 1, 2].map((a) => at[a]! / 1000 + (t[a]! / tl) * u + (b[a]! / tl) * v) as P)
   }
-  const place = (p: P): P => moved.get(keyOf(p)) ?? p
+  const place = (p: P): P => (moved.size > 0 && cornerCells.at(p).length > 0 ? (moved.get(keyOf(p)) ?? p) : p)
   return { rims, place }
 }
 
@@ -350,16 +396,20 @@ class Writer {
   /** `poly` as a fan, each corner in `base` times what `tone` gives it; `placed` when its corners are where they go already. */
   poly(poly: Poly, base: RGB, tone?: (p: P) => number, placed = false) {
     const at = placed ? poly : poly.map(this.place)
-    const tones = at.map((p) => (tone ? tone(p) : 1))
-    const [ox, oy, oz] = this.offset
+    const tones = tone ? at.map((p) => tone(p)) : null
     for (let i = 1; i + 1 < at.length; i++) {
-      for (const k of [0, i, i + 1]) {
-        const p = at[k]!
-        this.positions.push(p[0] - ox, p[1] - oy, p[2] - oz)
-        this.colors.push(base[0] * tones[k]!, base[1] * tones[k]!, base[2] * tones[k]!)
-        this.custom.push(this.surface, 0, 0, 0)
-      }
+      this.corner(at[0]!, base, tones ? tones[0]! : 1)
+      this.corner(at[i]!, base, tones ? tones[i]! : 1)
+      this.corner(at[i + 1]!, base, tones ? tones[i + 1]! : 1)
     }
+  }
+
+  /** One corner of a triangle at `p`, in `base` times `tone`. */
+  private corner(p: P, base: RGB, tone: number) {
+    const [ox, oy, oz] = this.offset
+    this.positions.push(p[0] - ox, p[1] - oy, p[2] - oz)
+    this.colors.push(base[0] * tone, base[1] * tone, base[2] * tone)
+    this.custom.push(this.surface, 0, 0, 0)
   }
 
   /** The edges in `rims` given their depth, going in from the outer face, in the cross-section colour. */
@@ -391,27 +441,47 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
   const facade = facadeFor(look, range)
   const openings = openingsFor(look, range)
   const { whole, kept, taken } = slice(facade, grid, near, (id) => removed.has(id))
-  const { rims, place } = outline(taken, [...kept, ...taken], windowEdge(openings))
+  const { rims, place } = outline(grid, taken, [...kept, ...taken], windowEdge(openings))
 
+  // Which cells are gone, and which have a gone cell within two of them: only a corner in one of those can be sooted.
+  const [nx, ny, nz] = shell.dims
+  const gone = new Uint8Array(nx * ny * nz)
+  const sooty = new Uint8Array(nx * ny * nz)
+  for (const id of removed) {
+    gone[id] = 1
+    const [x, y, z] = shell.coords(id)
+    for (let dy = -2; dy <= 2; dy++) for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++) {
+      if (grid.has(x + dx, y + dy, z + dz)) sooty[shell.index(x + dx, y + dy, z + dz)] = 1
+    }
+  }
   // Soot and wear at a corner: by how near the nearest cell that is gone is, and how worn its own cell.
   const shade = (p: P): number => {
-    const g = [0, 1, 2].map((a) => grid.of(p[a]!, a))
-    let nearest = Infinity
-    for (let dy = -2; dy <= 2; dy++) for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++) {
-      const [x, y, z] = [g[0]! + dx, g[1]! + dy, g[2]! + dz]
-      if (!grid.has(x, y, z) || !removed.has(shell.index(x, y, z))) continue
-      const d = Math.hypot(origin[0] + (x + 0.5) * cell - p[0], origin[1] + (y + 0.5) * cell - p[1], origin[2] + (z + 0.5) * cell - p[2])
-      nearest = Math.min(nearest, d)
+    const [gx, gy, gz] = [grid.of(p[0], 0), grid.of(p[1], 1), grid.of(p[2], 2)]
+    if (grid.has(gx, gy, gz) && sooty[shell.index(gx, gy, gz)] === 0) return 1
+    // The nearest gone cell's middle, from `p`, by its square first.
+    let [best, ex, ey, ez] = [Infinity, 0, 0, 0]
+    for (let y = Math.max(0, gy - 2); y <= Math.min(ny - 1, gy + 2); y++) {
+      for (let z = Math.max(0, gz - 2); z <= Math.min(nz - 1, gz + 2); z++) {
+        for (let x = Math.max(0, gx - 2); x <= Math.min(nx - 1, gx + 2); x++) {
+          if (gone[(y * nz + z) * nx + x] === 0) continue
+          const [dx, dy, dz] = [origin[0] + (x + 0.5) * cell - p[0], origin[1] + (y + 0.5) * cell - p[1], origin[2] + (z + 0.5) * cell - p[2]]
+          const d = dx * dx + dy * dy + dz * dz
+          if (d < best) [best, ex, ey, ez] = [d, dx, dy, dz]
+        }
+      }
     }
+    if (best === Infinity) return 1
+    const nearest = Math.hypot(ex, ey, ez)
     let burn = Math.max(0, Math.min(1, (BURN_FAR - nearest) / (BURN_FAR - BURN_NEAR)))
     burn = Math.min(1, burn * (0.6 + 0.8 * hash(p[0], p[1], p[2], 3)))
     return 1 - burn * (1 - SOOT)
   }
 
   const out = new Writer(place)
+  // A piece drawn whole lies two cells or more from every hole, so none of its corners is pushed about (`outline`).
   for (const piece of whole) {
     out.surface = piece.roof ? surfaces.roof : surfaces.wall
-    out.poly(piece.poly, piece.roof ? roof : wall)
+    out.poly(piece.poly, piece.roof ? roof : wall, undefined, true)
   }
   for (const piece of kept) {
     out.surface = piece.roof ? surfaces.roof : surfaces.wall
@@ -420,7 +490,8 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
   out.surface = 0
   // The room inside: what stands, turned in a wall's thickness, dim, with the same ragged edge; and the floor where the house still stands over it.
   const dim = (c: RGB): RGB => [c[0] * INTERIOR_SHADE, c[1] * INTERIOR_SHADE, c[2] * INTERIOR_SHADE]
-  for (const piece of [...whole, ...kept]) out.poly(innerOf(piece.poly.map(place), piece.normal), dim(piece.roof ? roof : wall), shade, true)
+  for (const piece of whole) out.poly(innerOf(piece.poly, piece.normal), dim(piece.roof ? roof : wall), shade, true)
+  for (const piece of kept) out.poly(innerOf(piece.poly.map(place), piece.normal), dim(piece.roof ? roof : wall), shade, true)
   for (const poly of floorStanding(facade.floor, grid, removed)) out.poly(poly, FLOOR_RGB, undefined, true)
   out.rims(rims, wall, roof, shade)
   // The roof's overhang, each strip while the roof it hangs from still stands.
@@ -435,9 +506,14 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
   }
   out.surface = 0
   // Whether `p` lies on what stands of a wall facing `normal`: within one of its pieces, in their plane.
-  const standing = [...whole, ...kept]
-  const onWall = (p: P, normal: P) =>
-    standing.some((piece) => {
+  // The standing pieces by the cells they reach into, filed the first time a crack or shingle asks.
+  let standing: Buckets<Piece> | null = null
+  const onWall = (p: P, normal: P) => {
+    if (!standing) {
+      standing = new Buckets<Piece>(grid)
+      for (const piece of [...whole, ...kept]) standing.add(piece, piece.poly, 0.035)
+    }
+    return standing.at(p).some((piece) => {
       if (dot(piece.normal, normal) < 0.999) return false
       const poly = piece.poly
       if (Math.abs(dot([p[0] - poly[0]![0], p[1] - poly[0]![1], p[2] - poly[0]![2]], normal)) > 0.03) return false
@@ -451,6 +527,7 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
       }
       return true
     })
+  }
   edgeDetail(out, rims, surfaces, wall, roof, onWall)
   // Chips where rounds struck: a few ragged marks on the wall in each worn cell, more as it wears.
   if (dents.size > 0) {
@@ -644,7 +721,7 @@ function chips(out: Writer, piece: Piece, id: number, count: number, base: RGB) 
 export function lookChunk(look: CollisionMesh, range: LookRange, shell: Shell, cells: ReadonlySet<number>, pivot: readonly [number, number, number], wall: RGB, roof: RGB): LookSoup {
   const grid = new Grid(shell)
   const { kept, taken } = slice(facadeFor(look, range), grid, [...cells].map((id) => shell.coords(id)), (id) => cells.has(id))
-  const { rims, place } = outline(taken, [...kept, ...taken], windowEdge(openingsFor(look, range)))
+  const { rims, place } = outline(grid, taken, [...kept, ...taken], windowEdge(openingsFor(look, range)))
   const out = new Writer(place, [pivot[0], pivot[1], pivot[2]])
   for (const piece of taken) out.poly(piece.poly, piece.roof ? roof : wall)
   // Its inner face goes with it, so a section lying on the ground shows its dim inside.

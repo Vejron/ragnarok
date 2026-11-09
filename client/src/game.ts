@@ -59,6 +59,7 @@ import { AIM_DISTANCE_SCALE, DEFAULT_FOV, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_F
 import { BallCam } from './render/ballcam'
 import { ChaseCam } from './render/chase'
 import { PerfReadout } from './render/perf'
+import { LookWorker } from './render/lookworker'
 import { encodeRtc, KIND_STRV, KIND_TANK, LIMB_ALL, LIMB_ARMS, LIMB_LEGS, TURRET_ALT } from './net/codec'
 import { TankMusic } from './music'
 import { VoiceChat } from './voice'
@@ -418,6 +419,7 @@ export class Game {
     this.scene.scene.add(this.debris.root)
     this.debris.groundAt = (x, z) => this.scene.groundAt(x, z)
     this.view.damage.groundAt = (x, z) => (this.terrain ? this.terrain.heightAt(x, z) : null)
+    this.view.damage.looks = LookWorker.create()
     this.scene.scene.add(this.view.waterRoot)
     this.transport = new Transport(
       (message) => this.handle(message),

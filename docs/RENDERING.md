@@ -397,6 +397,24 @@ frame, materials, pipelines, and GPU milliseconds per pass when the browser expo
   dev world from about 390 draws (250 of them shadow) to about 240 (120 shadow). Cars are not merged:
   `carwear.ts` dents and cuts their body parts by material. Not done: render bundles per tile, a
   cached shadow map for static casters, and GPU culling.
+- A hurt building with a look is redrawn whole (`lookFracture`) when it changes, in a worker of its own
+  (`look.worker.ts`, driven by `LookWorker` in `lookworker.ts`), not on the main thread. The worker is
+  told each building once, its own triangles of the look (`lookSlice`) and its cells (`Shell.flags`), and
+  then only what is gone from it; it hands back the mesh with its normals, without a copy. One redraw
+  of a building is out at a time, and what changes meanwhile goes in the next, so a barrage never
+  queues work. A building hit while whole is drawn whole by its tile until its first look is back
+  (`BuildingDamage.onShown`), so it never vanishes; a hole shows a frame or two late, under the dust.
+  Without workers (tests) it is redrawn on the main thread, at the end of the frame. The redraw's cost
+  grows with the building and its holes: on an M-series Mac a 2,235-cell house at Kläppudden takes 15 to
+  27 ms (it was 51 to 107 ms), about 70 to 110 ms with the CPU slowed four times as a low-end laptop's
+  would be. Most of what was saved was soot (only cells within two of a hole are searched), and the
+  hole's edges and cracks looked up by grid cell rather than against every other edge and piece. With
+  the CPU slowed four times, a machine gun or three rounds a frame into the big house hold 60 fps (they
+  dropped it to 10 to 20 fps on the main thread), and so does a barrage of shells on six houses; what
+  is left of a hit on the main thread is the collider (about 3 ms at that speed), the falling sections
+  (`lookChunk`, up to 12 ms when a big one comes down) and the rubble heap (3 to 6 ms). Pieces lying
+  about cost a draw each that is not a shared shard shape: about 110 more draws for some 750 pieces,
+  gone 30 s after they land.
 - Pixel ratio is capped at 2.
 - The expensive options are far shadows (4096 map) and ink (one full-screen depth read, most of the
   output pass). Far shadows are off by default on touch devices.

@@ -1,4 +1,4 @@
-import { Color, Group, Mesh, Quaternion, Vector3 } from '@ragnarok/engine'
+import { Color, Geometry, Group, Mesh, Quaternion, Vector3 } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
 import { DAMAGE_STAGES } from '@/sim/consts'
 import type { TileData } from '@/world'
@@ -9,6 +9,7 @@ import { Fracture, shardGeometry } from './fracture'
 import { lookChunk, lookFracture } from './lookfracture'
 import { rubbleSoup, shardSoup } from './shards'
 import { buildingColors, buildingSurfaces } from './buildingmesh'
+import { lookSlice, type LookWorker } from './lookworker'
 
 /** A small deterministic generator, so every client throws the same pieces the same way. */
 function random(seed: number) {
@@ -94,6 +95,8 @@ interface Falling {
   lain?: number
   /** Seconds it has been sinking into the ground: once it has lain `LIE_SECONDS`, or sooner when too many lie about. */
   sinking?: number
+  /** How far it sinks, metres: its height as it lies, and a little more. Measured once, as it no longer turns. */
+  depth?: number
 }
 
 interface Drawn {
@@ -107,7 +110,16 @@ interface Drawn {
    * one mesh, drawn instead of the bricks; and what it is drawn from.
    */
   look: Mesh | null
-  seen: { loaded: Loaded; index: number } | null
+  seen: { key: number; loaded: Loaded; index: number } | null
+  /** A redraw of the look is out with the worker (`BuildingDamage.looks`): the next waits for it. */
+  asking: boolean
+  /**
+   * Its first look is out with the worker and the tile still draws it whole, as it was before it was
+   * hit: the tile goes on doing so until the look is back (`onShown`), so it never vanishes meanwhile.
+   */
+  waiting: boolean
+  /** Its tile went or the session was reset: a redraw that comes back now is dropped. */
+  released: boolean
   /** The rubble heaped round a building with a look, worked out from the cells that are gone; and seconds until it is next heaped, while what fell is still falling (0 when it is up to date). */
   rubble: Mesh | null
   rubbleDue: number
@@ -208,6 +220,16 @@ export class BuildingDamage {
    * known (no terrain), and then the building's floor is used.
    */
   groundAt: (x: number, z: number) => number | null = () => null
+  /**
+   * Where buildings with a look are redrawn when hurt, off the main thread; null to redraw them here
+   * (tests, or no workers). A redraw is then a frame or two late, under the dust.
+   */
+  looks: LookWorker | null = null
+  /**
+   * Building `index` of tile `key`, whole when it was hit, is drawn here now that its first look came
+   * back from `looks`: the tile is to stop drawing it whole (`fractured` has it from now on).
+   */
+  onShown: (key: number, index: number) => void = () => {}
   /** Shard shapes by colour and shape (`shardGeometry`), kept for the session. */
   private readonly shards = new Map<number, ReturnType<typeof shardGeometry>>()
 
@@ -243,6 +265,7 @@ export class BuildingDamage {
     state.dents.set(cell, (state.dents.get(cell) ?? 0) + damage)
     const loaded = this.loaded.get(key)
     if (loaded) this.draw(key, index, loaded, state, false, null, [cell])
+    if (wasWhole) this.awaitFirst(key, index)
     return wasWhole
   }
 
@@ -264,6 +287,7 @@ export class BuildingDamage {
     const loaded = this.loaded.get(key)
     if (loaded) this.draw(key, index, loaded, state, live, fresh, [...fresh.blasted, ...fresh.fell])
     for (const cell of state.removed) state.dents.delete(cell)
+    if (wasWhole && state.removed.size > 0) this.awaitFirst(key, index)
     return wasWhole && state.removed.size > 0
   }
 
@@ -277,7 +301,11 @@ export class BuildingDamage {
   /** The buildings of tile `key` that are drawn here from their cells and so are not to be drawn whole. */
   fractured(key: number): number[] {
     const out: number[] = []
-    for (const [index, state] of this.hurt.get(key) ?? []) if (state.removed.size > 0 || state.dents.size > 0) out.push(index)
+    const drawn = this.drawn.get(key)
+    for (const [index, state] of this.hurt.get(key) ?? []) {
+      if (drawn?.get(index)?.waiting) continue
+      if (state.removed.size > 0 || state.dents.size > 0) out.push(index)
+    }
     return out
   }
 
@@ -359,6 +387,8 @@ export class BuildingDamage {
 
   dispose() {
     this.reset()
+    this.looks?.dispose()
+    this.looks = null
     for (const geometry of this.shards.values()) geometry.dispose()
     this.shards.clear()
     this.root.removeFromParent()
@@ -373,7 +403,7 @@ export class BuildingDamage {
     const walls = wallsOf(loaded.tile, index)
     if (walls.length === 0) return
     if (!drawn) {
-      drawn = { group: new Group(), fracture: null, bricks: new Map(), look: null, seen: null, rubble: null, rubbleDue: 0, stale: null, dirty: new Set(), falling: [], puff: 0 }
+      drawn = { group: new Group(), fracture: null, bricks: new Map(), look: null, seen: null, asking: false, waiting: false, released: false, rubble: null, rubbleDue: 0, stale: null, dirty: new Set(), falling: [], puff: 0 }
       buildings.set(index, drawn)
       this.root.add(drawn.group)
     }
@@ -386,13 +416,16 @@ export class BuildingDamage {
     // Cubes: through a hole you see the inner faces of the walls round it, so no room needs drawing.
     drawn.fracture ??= new Fracture(loaded.tile, index, loaded.salt)
     if (loaded.tile.look && building.look && drawn.fracture.shell) {
-      // Its own walls and roof with the holes cut in them, redrawn whole, at most once a frame.
-      drawn.seen = { loaded, index }
-      if (drawn.look && live) drawn.stale = state
+      // Its own walls and roof with the holes cut in them, redrawn whole: the first time now, so the tile's
+      // own drawing of the building can stop, and after that at the frame's end, so a barrage or a burst of
+      // rounds redraws it once a frame, not once a hit.
+      drawn.seen = { key, loaded, index }
+      if (drawn.look) drawn.stale = state
       else this.redraw(drawn, state)
-      // What fell lands about a second later; till then the heap stays as it was.
+      // What fell lands about a second later; till then the heap stays as it was. A round that only dented
+      // a wall takes nothing out of it, so the heap is left as it is.
       if (live) drawn.rubbleDue = RUBBLE_DELAY
-      else this.heap(drawn, state)
+      else if (burst || !drawn.rubble) this.heap(drawn, state)
     } else {
       // The first time it is drawn now, so the tile's own drawing of the building can stop; after that a live hit waits for the frame's end.
       for (const brick of drawn.fracture.bricksNear(cells)) drawn.dirty.add(brick)
@@ -469,27 +502,78 @@ export class BuildingDamage {
     drawn.rubble = mesh
   }
 
-  /** Draws a building with a look from it, the holes in `state` cut in. */
+  /**
+   * A building of tile `key` that was whole has just been hit: if its first look went to the worker,
+   * the tile keeps drawing it whole until it is back.
+   */
+  private awaitFirst(key: number, index: number) {
+    const drawn = this.drawn.get(key)?.get(index)
+    if (drawn && drawn.asking && !drawn.look) drawn.waiting = true
+  }
+
+  /** Draws a building with a look from it, the holes in `state` cut in: in the worker when there is one. */
   private redrawLook(drawn: Drawn, fracture: Fracture, loaded: Loaded, index: number, state: Hurt) {
     const { tile, salt } = loaded
     const range = tile.buildings[index]?.look
-    if (!tile.look || !range || !fracture.shell) return
+    const shell = fracture.shell
+    const look = tile.look
+    if (!look || !range || !shell) return
     const { wall, roof } = buildingColors(tile, index, salt)
     const rgb = (hex: number) => {
       const c = Color.hex(hex)
       return [c.r, c.g, c.b] as const
     }
-    const soup = lookFracture(tile.look, range, fracture.shell, state.removed, state.dents, rgb(wall), rgb(roof), buildingSurfaces(tile, index, salt))
-    if (drawn.look) {
-      drawn.look.geometry.dispose()
-      drawn.look.geometry = shardGeometry(soup.positions, soup.colors, soup.custom)
+    const surfaces = buildingSurfaces(tile, index, salt)
+    const looks = this.looks
+    if (!looks) {
+      const soup = lookFracture(look, range, shell, state.removed, state.dents, rgb(wall), rgb(roof), surfaces)
+      this.showLook(drawn, index, shardGeometry(soup.positions, soup.colors, soup.custom))
       return
     }
-    const mesh = new Mesh(shardGeometry(soup.positions, soup.colors, soup.custom), hurtMaterial)
+    // One redraw out at a time: what changes meanwhile is drawn by the next, asked for by `update` once this one is back.
+    if (drawn.asking) {
+      drawn.stale = state
+      return
+    }
+    drawn.asking = true
+    const dents = new Float64Array(state.dents.size * 2)
+    let at = 0
+    for (const [cell, damage] of state.dents) {
+      dents[at++] = cell
+      dents[at++] = damage
+    }
+    const ask = { removed: Uint32Array.from(state.removed), dents, wall: rgb(wall), roof: rgb(roof), surfaces }
+    looks.draw(`${drawn.seen?.key}:${index}`, () => ({ ...lookSlice(look, range), shell: shell.flags }), ask).then(
+      ({ positions, colors, custom, normals }) => {
+        drawn.asking = false
+        if (!drawn.released) this.showLook(drawn, index, new Geometry({ positions, colors, custom, normals }))
+      },
+      (error: unknown) => {
+        drawn.asking = false
+        // The worker failed: this and every redraw after it are drawn here, from the next `update`.
+        console.warn('drawing hurt buildings on the main thread:', error)
+        this.looks = null
+        if (!drawn.released) drawn.stale = state
+      },
+    )
+  }
+
+  /** Shows `geometry` as building `index`'s look, in place of the one before; the first time, tells the tile when it waits for it. */
+  private showLook(drawn: Drawn, index: number, geometry: Geometry) {
+    if (drawn.look) {
+      drawn.look.geometry.dispose()
+      drawn.look.geometry = geometry
+      return
+    }
+    const mesh = new Mesh(geometry, hurtMaterial)
     mesh.castShadow = true
     mesh.receiveShadow = true
     drawn.group.add(mesh)
     drawn.look = mesh
+    if (drawn.waiting && drawn.seen) {
+      drawn.waiting = false
+      this.onShown(drawn.seen.key, index)
+    }
   }
 
   /**
@@ -719,7 +803,8 @@ export class BuildingDamage {
       piece.age += dt
       if (piece.sinking !== undefined) {
         piece.sinking += dt
-        mesh.position.y -= (dt / SINK_SECONDS) * (span(mesh).height + 0.3)
+        piece.depth ??= span(mesh).height + 0.3
+        mesh.position.y -= (dt / SINK_SECONDS) * piece.depth
         if (piece.sinking >= SINK_SECONDS) {
           if (!piece.shared) mesh.geometry.dispose()
           mesh.removeFromParent()
@@ -781,6 +866,7 @@ export class BuildingDamage {
   }
 
   private release(drawn: Drawn) {
+    drawn.released = true
     for (const mesh of [...drawn.bricks.values(), ...(drawn.look ? [drawn.look] : []), ...(drawn.rubble ? [drawn.rubble] : []), ...drawn.falling.filter((f) => !f.shared).map((f) => f.mesh)]) mesh.geometry.dispose()
     this.root.remove(drawn.group)
   }

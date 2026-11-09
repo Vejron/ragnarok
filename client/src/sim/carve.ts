@@ -35,6 +35,14 @@ export const keyedFaces = (origin: readonly number[], dims: readonly number[], k
 /** A building's cells as the importer packed them (`Cells` in `world.rs`). */
 type Baked = { origin: [number, number, number]; dims: [number, number, number]; solid: Uint8Array; roof: Uint8Array }
 
+/** A building's grid as plain flags (`Shell.flags`): its corner and size in cells, and one flag a cell for solid and for roof. */
+export interface ShellFlags {
+  origin: readonly [number, number, number]
+  dims: readonly [number, number, number]
+  solid: Uint8Array
+  roof: Uint8Array
+}
+
 /** A building's walls and roof as a grid of cells. */
 export class Shell {
   /** Corner of the grid with the smallest coordinates, centimetres. */
@@ -77,6 +85,18 @@ export class Shell {
     const count = nx * ny * nz
     if (count === 0 || count > MAX_CELLS) return null
     return new Shell([...cells.origin], [nx, ny, nz], null, null, cells)
+  }
+
+  /** The grid as flags, to be made again elsewhere (`ofFlags`): a worker draws hurt buildings from them. */
+  get flags(): ShellFlags {
+    return { origin: this.origin, dims: this.dims, solid: this.solid, roof: this.roofed }
+  }
+
+  /** The building as `flags` gave it. */
+  static ofFlags(flags: ShellFlags): Shell {
+    const [ox, oy, oz] = flags.origin
+    const [nx, ny, nz] = flags.dims
+    return new Shell([ox, oy, oz], [nx, ny, nz], flags.solid, flags.roof)
   }
 
   /** Cuts a building from its wall and roof triangles, or null when it has none or is too big. */

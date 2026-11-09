@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Shell, type Tri } from '@/sim/carve'
 import { lookFracture, openingStands } from '@/render/lookfracture'
+import { lookSlice } from '@/render/lookworker'
 import { openingsOf } from '@/render/windows'
 import { rubbleSoup } from '@/render/shards'
 import { buildingSurfaces, Surface } from '@/render/buildingmesh'
@@ -239,6 +240,25 @@ describe('lookFracture', () => {
       expect(y).toBeGreaterThan(-0.03)
       expect(y).toBeLessThan(3.03)
     }
+  })
+
+  it('draws a building from its own triangles and a copy of its cells as from the tile\'s whole look (the worker draws it so)', () => {
+    // Another house first in the tile's look, 20 m along, so this one's triangles do not start at 0.
+    const other = [...walls, ...roof].map((t) => t.map((v, k) => (k % 3 === 0 ? v + 2000 : v)) as Tri)
+    const tileLook = lookOf([...other, ...walls, ...roof])
+    const own = { first: other.length, walls: walls.length, roof: roof.length }
+    const removed = new Set([hole])
+    const dents = new Map([[shell.cellAt(1, 1.5, 0.01), 20]])
+    // Brick and tiles: cracks and loose shingles, which look at the standing wall, are drawn too.
+    const brick = { wall: Surface.Brick, roof: Surface.Tiles }
+    const whole = lookFracture(tileLook, own, shell, removed, dents, white, white, brick)
+    const slice = lookSlice(tileLook, own)
+    const alone = lookFracture(slice.look, slice.range, Shell.ofFlags(shell.flags), removed, dents, white, white, brick)
+    expect(slice.range.first).toBe(0)
+    expect(alone.positions.length).toBeGreaterThan(0)
+    expect(Array.from(alone.positions)).toEqual(Array.from(whole.positions))
+    expect(Array.from(alone.colors)).toEqual(Array.from(whole.colors))
+    expect(Array.from(alone.custom)).toEqual(Array.from(whole.custom))
   })
 
   it('is the same on every client', () => {
