@@ -8,35 +8,35 @@ const DEG = Math.PI / 180
 describe('gyroTurn', () => {
   it('turning the phone left in landscape turns the view left, either way round', () => {
     // Top of the phone to the left (90): the device's x axis points up the screen.
-    expect(gyroTurn(rate(0, 30, 0), 90, 0.1).yaw).toBeCloseTo(3 * DEG)
+    expect(gyroTurn(rate(30, 0, 0), 90, 0.1).yaw).toBeCloseTo(3 * DEG)
     // Top to the right (270): x points down the screen, so the same turn left reads the other sign.
-    expect(gyroTurn(rate(0, -30, 0), 270, 0.1).yaw).toBeCloseTo(3 * DEG)
+    expect(gyroTurn(rate(-30, 0, 0), 270, 0.1).yaw).toBeCloseTo(3 * DEG)
   })
 
   it('tipping the top of the screen away raises the view', () => {
-    // At 90 the screen's right edge is the device's −y, so tipping back is a negative gamma.
-    expect(gyroTurn(rate(0, 0, -20), 90, 0.1).pitch).toBeCloseTo(2 * DEG)
-    expect(gyroTurn(rate(0, 0, 20), 270, 0.1).pitch).toBeCloseTo(2 * DEG)
+    // At 90 the screen's right edge is the device's −y, so tipping back is a negative beta.
+    expect(gyroTurn(rate(0, -20, 0), 90, 0.1).pitch).toBeCloseTo(2 * DEG)
+    expect(gyroTurn(rate(0, 20, 0), 270, 0.1).pitch).toBeCloseTo(2 * DEG)
   })
 
   it('in portrait the axes are the device own', () => {
-    const turn = gyroTurn(rate(0, 10, 20), 0, 0.1)
+    const turn = gyroTurn(rate(10, 20, 0), 0, 0.1)
     expect(turn.yaw).toBeCloseTo(2 * DEG)
     expect(turn.pitch).toBeCloseTo(1 * DEG)
   })
 
   it('a hand holding still and a steering-wheel roll of an upright phone do nothing', () => {
-    expect(gyroTurn(rate(0, 0.3, -0.3), 90, 0.1)).toEqual({ yaw: 0, pitch: 0 })
-    expect(gyroTurn(rate(45, 0, 0), 90, 0.1)).toEqual({ yaw: 0, pitch: 0 })
+    expect(gyroTurn(rate(0.3, -0.3, 0), 90, 0.1)).toEqual({ yaw: 0, pitch: 0 })
+    expect(gyroTurn(rate(0, 0, 45), 90, 0.1)).toEqual({ yaw: 0, pitch: 0 })
   })
 
   it('a phone held flat turns the view by its spin about the screen', () => {
     // Lying face up, the world's up is out of the screen: turning on the spot spins it about z.
-    expect(gyroTurn(rate(30, 0, 0), 90, 0.1, [0, 0, 9.8]).yaw).toBeCloseTo(3 * DEG)
+    expect(gyroTurn(rate(0, 0, 30), 90, 0.1, [0, 0, 9.8]).yaw).toBeCloseTo(3 * DEG)
   })
 
   it('reads gravity the same whichever sign the browser gives it', () => {
-    const tilted = rate(20, 20, 0)
+    const tilted = rate(20, 0, 20)
     const spec = gyroTurn(tilted, 90, 0.1, [6.9, 0, 6.9])
     const flipped = gyroTurn(tilted, 90, 0.1, [-6.9, 0, -6.9])
     expect(spec.yaw).toBeCloseTo(flipped.yaw)
@@ -44,8 +44,8 @@ describe('gyroTurn', () => {
   })
 
   it('a long gap between readings counts as no more than the cap', () => {
-    expect(gyroTurn(rate(0, 30, 0), 90, 5).yaw).toBeCloseTo(30 * DEG * GYRO_MAX_DT)
-    expect(gyroTurn(rate(0, 30, 0), 90, -1).yaw).toBe(0)
+    expect(gyroTurn(rate(30, 0, 0), 90, 5).yaw).toBeCloseTo(30 * DEG * GYRO_MAX_DT)
+    expect(gyroTurn(rate(30, 0, 0), 90, -1).yaw).toBe(0)
   })
 
   it('gravity is smoothed towards each reading', () => {

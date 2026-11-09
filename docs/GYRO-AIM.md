@@ -18,10 +18,12 @@ It is off by default, because on iOS it needs a permission and because a view th
 
 ## The sums (`client/src/sim/gyro.ts`)
 
-The `devicemotion` event gives `rotationRate`, in degrees per second about the device's own axes:
-- `beta` is about x, to the right in portrait.
-- `gamma` is about y, up the screen in portrait.
-- `alpha` is about z, out of the screen.
+The `devicemotion` event gives `rotationRate`, in degrees per second about the device's own axes. Browsers (Safari, Chrome and Firefox alike) label them in order, which is not how older wording of the spec put it:
+- `alpha` is about x, to the right in portrait.
+- `beta` is about y, up the screen in portrait.
+- `gamma` is about z, out of the screen.
+
+Reading them the spec's way swaps turning and tilting in landscape, so tipping the phone back swings the view sideways.
 
 `gyroTurn` integrates the rate over the time since the last reading. Rates are used rather than `deviceorientation`'s absolute angles, because rates have nothing to recentre and do not jump where an angle wraps.
 

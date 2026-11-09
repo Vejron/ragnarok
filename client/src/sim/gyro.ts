@@ -22,7 +22,10 @@ export const GYRO_MAX_DT = 0.1
 /** How quickly the smoothed gravity follows the accelerometer, per reading, 0..1. */
 const GRAVITY_FOLLOW = 0.1
 
-/** A `DeviceMotionEvent`'s `rotationRate`, degrees per second about the device's z (out of the screen), x and y axes. */
+/**
+ * A `DeviceMotionEvent`'s `rotationRate`, degrees per second. Browsers give `alpha` about the device's
+ * x axis, `beta` about y and `gamma` about z (out of the screen), whatever older wording of the spec says.
+ */
 export interface RotationRate {
   alpha: number | null
   beta: number | null
@@ -49,7 +52,7 @@ export function gyroTurn(rate: RotationRate, angle: number, dt: number, up: Devi
   // The screen's axes in the device's frame, for the way the page is turned.
   const right: DeviceVector = [cos, -sin, 0]
   const screenUp: DeviceVector = [sin, cos, 0]
-  const omega: DeviceVector = [rate.beta ?? 0, rate.gamma ?? 0, rate.alpha ?? 0]
+  const omega: DeviceVector = [rate.alpha ?? 0, rate.beta ?? 0, rate.gamma ?? 0]
   const vertical = up ? uprightFor(up, screenUp) : screenUp
   const yawRate = dot(omega, vertical)
   const pitchRate = dot(omega, right)
