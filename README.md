@@ -29,6 +29,7 @@ The docs are in [docs/](docs/).
 - [BUILDING.md](docs/BUILDING.md): placing cubes with bricks
 - [CRATERS.md](docs/CRATERS.md) and [SCORCH.md](docs/SCORCH.md): shells digging the ground, and the marks they leave
 - [DRONES.md](docs/DRONES.md): FPV and loitering drones
+- [GYRO-AIM.md](docs/GYRO-AIM.md): aiming on a phone by turning it
 - [BACKPACK.md](docs/BACKPACK.md): backpack mode
 - [VEHICLES-I.md](docs/VEHICLES-I.md): cars, seats, driving
 - [VEHICLES-II.md](docs/VEHICLES-II.md): the tank, its gunner seat and the shell, driver prediction and the helicopter

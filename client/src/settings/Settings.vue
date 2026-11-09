@@ -8,6 +8,8 @@ import { insideWorld, mapToWorld, worldToMap } from '@/sim/minimap'
 import { loadManifest, WORLD_BASE, type WorldData } from '@/world'
 import { defaultLook, loadLook, LOOK_OPTIONS, saveLook, type Look } from '@/render/look'
 import { loadQuality, PRESETS, QUALITIES, resolveQuality, saveQuality, type Quality } from '@/render/quality'
+import { defaultControls, GYRO_SENSITIVITY_MAX, GYRO_SENSITIVITY_MIN, loadControls, saveControls, type Controls } from '@/controls'
+import { GYRO_MODES } from '@/sim/gyro'
 
 /** Shift-click removes the spawn point nearest the click if it is this close, CSS pixels. */
 const REMOVE_REACH = 24
@@ -51,6 +53,14 @@ function resetLook() {
   saveLook(look.value)
   chooseQuality('auto')
 }
+const controls = ref<Controls>(loadControls())
+watch(controls, (value) => {
+  saveControls(value)
+  flashSaved()
+}, { deep: true })
+const customControls = computed(() => JSON.stringify(controls.value) !== JSON.stringify(defaultControls()))
+const gyroAbout = computed(() => GYRO_MODES.find((mode) => mode.key === controls.value.gyro)!.about)
+
 const customLook = computed(() => quality.value !== 'auto' || JSON.stringify(look.value) !== JSON.stringify(defaultLook()))
 
 const world = shallowRef<WorldData | null>(null)
@@ -327,6 +337,32 @@ const metres = ([x, z]: SpawnPoint) => `${Math.round(x / 100)} m E, ${Math.round
         </li>
       </ul>
     </section>
+
+    <section class="card">
+      <div class="heading">
+        <h2>Controls</h2>
+        <button v-if="customControls" type="button" class="reset" @click="controls = defaultControls()">Use defaults</button>
+      </div>
+      <p class="hint">For phones and tablets. Gyro aim turns the view as you turn the device, the way the big mobile shooters do. The first tap in a match asks for access to motion, where the browser wants asking.</p>
+      <div class="quality" role="radiogroup" aria-label="Gyro aim">
+        <strong>Gyro aim</strong>
+        <button
+          v-for="option in GYRO_MODES"
+          :key="option.key"
+          type="button"
+          role="radio"
+          :aria-checked="controls.gyro === option.key"
+          :class="{ on: controls.gyro === option.key }"
+          @click="controls.gyro = option.key"
+        >{{ option.label }}</button>
+      </div>
+      <p class="hint">{{ gyroAbout }}</p>
+      <label class="sensitivity">
+        <strong>Sensitivity</strong>
+        <input v-model.number="controls.gyroSensitivity" type="range" :min="GYRO_SENSITIVITY_MIN" :max="GYRO_SENSITIVITY_MAX" step="0.05" :disabled="controls.gyro === 'off'" />
+        <span>{{ controls.gyroSensitivity.toFixed(2) }}×</span>
+      </label>
+    </section>
   </main>
 </template>
 
@@ -433,6 +469,8 @@ input:focus { outline: none; border-color: #3a86ff; }
 .quality strong { margin-right: 4px; }
 .quality button { padding: 6px 14px; border-radius: 999px; border: 2px solid var(--line); background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .quality button.on { border-color: var(--ink); background: var(--ink); color: white; }
+.sensitivity { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+.sensitivity input { flex: 1; max-width: 320px; accent-color: var(--ink); }
 .looks { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
 .looks label { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; border: 2px solid var(--line); cursor: pointer; font-weight: 400; }
 .looks input { width: 20px; height: 20px; margin: 2px 0 0; flex: none; accent-color: var(--ink); }

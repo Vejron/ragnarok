@@ -7,6 +7,8 @@ import type { InputController } from './sim/input'
 import { LOOK_OPTIONS, type Look } from './render/look'
 import { QUALITIES, resolveQuality, type Quality } from './render/quality'
 import { applyUpdate, updateReady } from './pwa'
+import { defaultControls, GYRO_SENSITIVITY_MAX, GYRO_SENSITIVITY_MIN, type Controls } from './controls'
+import { GYRO_MODES, type GyroMode } from './sim/gyro'
 
 // The HUD itself is drawn by the game (`hud/`); the page keeps what is clicked or tapped, and banners.
 const container = ref<HTMLElement | null>(null)
@@ -16,6 +18,10 @@ const input = shallowRef<InputController | null>(null)
 const look = ref<Look>({ soft: true, contact: true, far: true, ink: true, bloom: true, reflect: true, grass: true, scorch: true, adaptive: true, netStats: false })
 const lookOpen = ref(false)
 const quality = ref<Quality>('auto')
+const controls = ref<Controls>(defaultControls())
+const controlsOpen = ref(false)
+/** Set when the player turned gyro aim on and the phone said no to its motion sensors. */
+const motionDenied = ref(false)
 let game: Game | null = null
 let lastStats = 0
 const viewport = ref({ width: window.innerWidth, height: window.innerHeight })
@@ -33,6 +39,7 @@ onMounted(() => {
   input.value = game.input
   look.value = { ...game.look }
   quality.value = game.quality
+  controls.value = game.controls
   game.start().catch((reason: unknown) => {
     error.value = reason instanceof Error ? reason.message : String(reason)
   })
@@ -47,6 +54,30 @@ function toggleLook(key: keyof Look) {
   look.value = { ...look.value, [key]: !look.value[key] }
   game?.setLook(look.value)
 }
+
+/** Picks a gyro mode. The click is the gesture iOS needs before it hands over the motion sensors. */
+async function chooseGyro(mode: GyroMode) {
+  motionDenied.value = false
+  controls.value = { ...controls.value, gyro: mode }
+  game?.setControls(controls.value)
+  if (mode === 'off' || !input.value) return
+  if (!(await input.value.enableMotion())) {
+    motionDenied.value = true
+    controls.value = { ...controls.value, gyro: 'off' }
+    game?.setControls(controls.value)
+  }
+}
+
+function setGyroSensitivity(event: Event) {
+  controls.value = { ...controls.value, gyroSensitivity: Number((event.target as HTMLInputElement).value) }
+  game?.setControls(controls.value)
+}
+
+const touchHelp = computed(() => {
+  const look = controls.value.gyro === 'always' ? 'Drag the right side or turn the phone to look' : 'Drag the right side to look'
+  const aim = controls.value.gyro === 'aiming' ? 'Hold AIM and turn the phone to aim' : 'Hold AIM to aim'
+  return `Left thumb moves · ${look} · ${aim} · Tap the slots to switch items`
+})
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
@@ -96,6 +127,28 @@ const KEYS: [string, string][] = [
     <div class="actions" @click.stop>
       <a class="chip" :href="settingsUrl" title="Leaves the match: you join again when you come back">Settings · name, colour, loadout, spawns</a>
       <button type="button" class="chip" :aria-expanded="lookOpen" @click="lookOpen = !lookOpen">Graphics {{ lookOpen ? '▴' : '▾' }}</button>
+      <button v-if="stats.touch" type="button" class="chip" :aria-expanded="controlsOpen" @click="controlsOpen = !controlsOpen">Controls {{ controlsOpen ? '▴' : '▾' }}</button>
+    </div>
+    <div v-if="controlsOpen && stats.touch" class="look" @click.stop>
+      <div class="quality" role="radiogroup" aria-label="Gyro aim">
+        <span>Gyro aim</span>
+        <button
+          v-for="option in GYRO_MODES"
+          :key="option.key"
+          type="button"
+          role="radio"
+          :aria-checked="controls.gyro === option.key"
+          :class="{ on: controls.gyro === option.key }"
+          :title="option.about"
+          @click="chooseGyro(option.key)"
+        >{{ option.label }}</button>
+      </div>
+      <label class="wide">
+        Sensitivity
+        <input type="range" :min="GYRO_SENSITIVITY_MIN" :max="GYRO_SENSITIVITY_MAX" step="0.05" :value="controls.gyroSensitivity" :disabled="controls.gyro === 'off'" @input="setGyroSensitivity" />
+        {{ controls.gyroSensitivity.toFixed(2) }}×
+      </label>
+      <p v-if="motionDenied" class="denied">This browser did not allow access to motion. Check its settings, then try again.</p>
     </div>
     <div v-if="lookOpen" class="look" @click.stop>
       <div class="quality" role="radiogroup" aria-label="Quality">
@@ -115,7 +168,7 @@ const KEYS: [string, string][] = [
         <input type="checkbox" :checked="look[option.key]" @change="toggleLook(option.key)" />{{ option.label }}
       </label>
     </div>
-    <p v-if="stats.touch" class="keys">Left thumb moves · Drag the right side to look · Hold AIM to aim · Tap the slots to switch items</p>
+    <p v-if="stats.touch" class="keys">{{ touchHelp }}</p>
     <dl v-else class="keys">
       <div v-for="[key, what] in KEYS" :key="key"><dt>{{ key }}</dt><dd>{{ what }}</dd></div>
     </dl>
@@ -159,6 +212,9 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
   background: rgba(255, 255, 255, 0.94); color: #1d2b36; font-size: 14px; font-weight: 700;
 }
 .look label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.look .wide { grid-column: 1 / -1; }
+.look .wide input { flex: 1; accent-color: #1d2b36; }
+.denied { grid-column: 1 / -1; margin: 0; color: #b3261e; }
 .quality { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .quality span { margin-right: 4px; }
 .quality button {

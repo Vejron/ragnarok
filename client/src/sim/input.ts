@@ -1,5 +1,6 @@
 import { wrapAngle } from '@/net/codec'
 import { BUTTON_ALT, BUTTON_AMMO, BUTTON_CHUTE, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_HITCH, BUTTON_JUMP, BUTTON_LAMP, BUTTON_PRONE, BUTTON_RANGE_DOWN, BUTTON_RANGE_UP, BUTTON_RELOAD, BUTTON_RUN, BUTTON_SKIS, BUTTON_SLIDE, BUTTON_USE } from './consts'
+import { followGravity, GYRO_GAIN, gyroTurn, type DeviceVector, type GyroMode } from './gyro'
 import { HOTBAR_SLOTS, SLOT_NONE } from './items'
 
 /** Mouse-look sensitivity, radians per pixel. */
@@ -60,6 +61,14 @@ export class InputController {
   private statsToggle = false
   /** The click that put the map away fires nothing: its buttons are ignored until let go. */
   private swallow = false
+  /** When turning the phone turns the view (GYRO-AIM.md). Off until the player picks a mode. */
+  gyroMode: GyroMode = 'off'
+  /** The player's gyro sensitivity, a multiple of `GYRO_GAIN`. */
+  gyroSensitivity = 1
+  /** `timeStamp` of the last motion reading that turned the view, ms; null when the next one starts afresh. */
+  private lastMotion: number | null = null
+  /** Which way is up in the phone's frame, smoothed from the accelerometer, if it reports gravity. */
+  private gravity: DeviceVector | null = null
 
   constructor(private readonly element: HTMLElement) {
     const options = { signal: this.abort.signal }
@@ -71,11 +80,20 @@ export class InputController {
       this.stick = [0, 0, false]
       this.firing = false
       this.aiming = false
+      this.lastMotion = null
     }, options)
     element.addEventListener('click', () => {
-      if (this.coarse) this.touching = true
-      else void element.requestPointerLock?.()
+      if (this.coarse) {
+        this.touching = true
+        // The tap is the gesture iOS needs before it hands over the gyroscope, once per page load.
+        if (this.gyroMode !== 'off') {
+          void this.enableMotion().then((granted) => {
+            if (!granted) this.gyroMode = 'off'
+          })
+        }
+      } else void element.requestPointerLock?.()
     }, options)
+    window.addEventListener('devicemotion', (event) => this.motion(event), options)
     // The trigger is the left mouse button, once the pointer is captured.
     document.addEventListener('mousedown', (event) => {
       if (document.pointerLockElement !== element) return
@@ -166,6 +184,53 @@ export class InputController {
     const speed = LOOK_SPEED * this.lookScale
     this.yaw -= dx * speed
     this.pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, this.pitch - dy * speed))
+  }
+
+  /** A turn of the view in radians, + yaw to the left and + pitch up, scaled as the mouse is while aiming. */
+  turnBy(yaw: number, pitch: number) {
+    this.lastLook = performance.now()
+    this.yaw += yaw * this.lookScale
+    this.pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, this.pitch + pitch * this.lookScale))
+  }
+
+  /** Whether the gyroscope steers the view right now, by the mode and what the player is doing. */
+  get gyroActive() {
+    if (this.gyroMode === 'off' || !this.locked || this.mapUp) return false
+    return this.gyroMode === 'always' || this.aimHeld
+  }
+
+  /**
+   * Asks for the motion sensors where the browser wants asking (iOS), which must be from a tap or click.
+   * Resolves false if the player said no; elsewhere there is nothing to ask and it resolves true.
+   */
+  async enableMotion(): Promise<boolean> {
+    const ask = (globalThis.DeviceMotionEvent as { requestPermission?: () => Promise<'granted' | 'denied'> } | undefined)?.requestPermission
+    if (typeof ask !== 'function') return true
+    try {
+      return (await ask.call(DeviceMotionEvent)) === 'granted'
+    } catch {
+      // Not from a gesture, or no sensors at all.
+      return false
+    }
+  }
+
+  /** One reading of the motion sensors: turns the view by how far the phone turned since the last. */
+  private motion(event: DeviceMotionEvent) {
+    const g = event.accelerationIncludingGravity
+    if (g && g.x !== null && g.y !== null && g.z !== null) this.gravity = followGravity(this.gravity, [g.x, g.y, g.z])
+    const rate = event.rotationRate
+    if (!this.gyroActive || !rate) {
+      this.lastMotion = null
+      return
+    }
+    const last = this.lastMotion
+    this.lastMotion = event.timeStamp
+    if (last === null) return
+    const angle = screen.orientation?.angle ?? (window as { orientation?: number }).orientation ?? 0
+    const turn = gyroTurn(rate, angle, (event.timeStamp - last) / 1000, this.gravity)
+    if (turn.yaw === 0 && turn.pitch === 0) return
+    const gain = GYRO_GAIN * this.gyroSensitivity
+    this.turnBy(turn.yaw * gain, turn.pitch * gain)
   }
 
   /** A button held down on screen, like a key. */

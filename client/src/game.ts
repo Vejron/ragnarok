@@ -50,6 +50,7 @@ import { Rounds } from './render/rounds'
 import { HullMarks } from './render/hullmarks'
 import { Callouts } from './callouts'
 import { saveLook, type Look } from './render/look'
+import { loadControls, saveControls, type Controls } from './controls'
 import { loadQuality, PRESETS, resolveQuality, saveQuality, type Quality } from './render/quality'
 import { AdaptiveScale } from './render/adaptive'
 import { Grass, GRASS_FULL, GRASS_LITE } from './render/grass'
@@ -391,6 +392,7 @@ export class Game {
     this.perf = new PerfReadout(() => this.scene.renderer, () => `quality ${resolveQuality(this.qualitySetting)}${this.qualitySetting === 'auto' ? ' (auto)' : ''}   msaa ${this.scene.quality.msaa}x   scale ${this.scene.renderScale.toFixed(2)}`)
     this.adaptive.floor = this.scene.quality.minScale
     this.input = new InputController(this.scene.canvas)
+    this.applyControls(loadControls())
     this.cameras = new Cameras(this.scene, this.input, (origin, direction, max) => this.motor?.castRay(origin, direction, max) ?? null)
     this.view = new WorldView(this.scene.scene, this.debris)
     this.bricks = new Bricklayer(this.view, () => this.motor, () => this.eyeHeight())
@@ -1387,6 +1389,22 @@ export class Game {
     this.scorches.root.visible = look.scorch
     this.applyGrass(look)
     saveLook(look)
+  }
+
+  /** The touch controls' options in force: gyro aim and its sensitivity. */
+  get controls(): Controls {
+    return { gyro: this.input.gyroMode, gyroSensitivity: this.input.gyroSensitivity }
+  }
+
+  /** Switches the touch controls' options and remembers them for next time. */
+  setControls(controls: Controls) {
+    this.applyControls(controls)
+    saveControls(controls)
+  }
+
+  private applyControls(controls: Controls) {
+    this.input.gyroMode = controls.gyro
+    this.input.gyroSensitivity = controls.gyroSensitivity
   }
 
   private applyGrass(look: Look) {
