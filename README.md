@@ -38,6 +38,7 @@ The docs are in [docs/](docs/).
 - [VEHICLES-VI.md](docs/VEHICLES-VI.md): the Tesla Roadster
 - [VEHICLES-VII.md](docs/VEHICLES-VII.md): the hen
 - [VEHICLES-VIII.md](docs/VEHICLES-VIII.md): the tupp, a Hedemora rooster with laser eyes
+- [VEHICLES-IX.md](docs/VEHICLES-IX.md): the technical, a pickup with a heavy machine gun in its bed, soft springs and big tyres
 
 ## Requirements
 
