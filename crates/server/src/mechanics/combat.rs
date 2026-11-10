@@ -929,8 +929,8 @@ fn use_item(world: &mut World, id: u32) {
         return;
     };
     // With no arms there is nothing to hold a gun with; a bandage can still be got on somehow. Knocked
-    // down, nothing at all.
-    if (lost & LIMB_ARMS == LIMB_ARMS && item.kind != ItemKind::Heal) || player.character.down > 0 {
+    // down or swimming, nothing at all: the gun is put away in the water.
+    if (lost & LIMB_ARMS == LIMB_ARMS && item.kind != ItemKind::Heal) || player.character.down > 0 || (seat.is_none() && player.character.swimming) {
         player.interrupt();
         return;
     }
@@ -953,7 +953,6 @@ fn use_item(world: &mut World, id: u32) {
             if trigger && player.hands.fire_cooldown == 0 && !empty {
                 player.hands.fire_cooldown = item.cooldown_ticks;
                 player.hands.hotbar[slot].ammo -= 1;
-                drop(player);
                 fire_gun(world, id, &item);
                 // The shot went at the cone as it was; the next one goes wider.
                 let mut player = world.entities.of_mut::<Player>(id);

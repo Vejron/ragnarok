@@ -152,10 +152,31 @@ describe('Character holding things', () => {
 describe('Character', () => {
   it('has the clips the blend expects', async () => {
     const c = await crowd()
-    for (const name of ['idle', 'jump_air', 'death', 'walk_fwd', 'walk_back', 'walk_left', 'walk_right', 'run_fwd', 'run_back', 'run_left', 'run_right', 'crouch_idle', 'crouch_fwd', 'crouch_back', 'crouch_left', 'crouch_right', 'crawl_idle', 'crawl_fwd', 'crawl_back', 'crawl_left', 'crawl_right', 'slide']) {
+    for (const name of ['idle', 'jump_air', 'death', 'walk_fwd', 'walk_back', 'walk_left', 'walk_right', 'run_fwd', 'run_back', 'run_left', 'run_right', 'crouch_idle', 'crouch_fwd', 'crouch_back', 'crouch_left', 'crouch_right', 'crawl_idle', 'crawl_fwd', 'crawl_back', 'crawl_left', 'crawl_right', 'slide', 'swim_tread', 'swim_fwd', 'dive_idle', 'dive_fwd']) {
       expect(c.asset!.clips.has(name), name).toBe(true)
     }
     expect(c.asset!.scene.getObjectByName('muzzle')).toBeTruthy()
+    c.dispose()
+  })
+
+  it('treads water still, strokes on the move, and dives under the surface', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    const swim = (mode: 0 | 1 | 2, vx: number, vy = 0) => {
+      person.swim = mode
+      for (let k = 0; k < 90; k++) person.update([0, 0, 0], 0, vx, 0, true, 1 / 60, 0, false, false, false, false, vy)
+    }
+    swim(1, 0)
+    expect(person.blend.get('swim_tread')).toBeGreaterThan(0.8)
+    swim(1, 2)
+    expect(person.blend.get('swim_fwd')).toBeGreaterThan(0.8)
+    swim(2, 0)
+    expect(person.blend.get('dive_idle')).toBeGreaterThan(0.8)
+    swim(2, 1.5, -1)
+    expect(person.blend.get('dive_fwd')).toBeGreaterThan(0.8)
+    expect(person.blend.get('jump_air') ?? 0).toBeLessThan(0.05)
+    swim(0, 0)
+    expect(person.blend.get('idle')).toBeGreaterThan(0.5)
     c.dispose()
   })
 

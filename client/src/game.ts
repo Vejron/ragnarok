@@ -7,14 +7,14 @@ import { RttEstimator, ServerClock } from './net/clock'
 import { Transport } from './net/transport'
 import {
   BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, BUTTON_RUN, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION,
-  SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_DOWN, STANCE_PRONE,
+  SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_DIVE, STANCE_DOWN, STANCE_PRONE, STANCE_SWIM,
   TICK_MS, TICK_RATE, BLOOM_RECOVER, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED, CARRY_SKIS } from './sim/consts'
 import { easeSway, sway, swayAmplitude } from './sway'
 import { mayPlace } from './sim/bricks'
 import { crewGun, vehicleDef } from './sim/vehicles'
 import { blockedAt, spreadPixels } from './aimline'
 import { Meter, called } from './sim/golf'
-import { ITEM_DRIVER, aimSpeedScale, effectiveSpread, fillsHands, itemDef, type ItemDef, type ItemSlot } from './sim/items'
+import { ITEM_DRIVER, ITEM_NONE, aimSpeedScale, effectiveSpread, fillsHands, itemDef, type ItemDef, type ItemSlot } from './sim/items'
 import { backswingPhase, downswingPhase } from './render/golfclub'
 import { InputController } from './sim/input'
 import type { Character } from './render/character'
@@ -517,7 +517,7 @@ export class Game {
     const [x, z] = world.spawns[0] ?? [0, 0]
     this.view.focus(x, z)
     await this.tiles.prime(x, z)
-    this.predictor = new Predictor(motor.stepper, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0, down: 0, skis: false, skiStrain: 0 })
+    this.predictor = new Predictor(motor.stepper, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0, down: 0, skis: false, skiStrain: 0, swimming: false })
     this.predictor.speedScale = (input) => aimSpeedScale(this.player.slot(input.slot).item, input.buttons) * (this.player.carrying ? BACKPACK_SPEED : 1)
     this.predictor.armed = (input) => fillsHands(this.player.slot(input.slot).item)
     this.avatars.local()
@@ -740,6 +740,8 @@ export class Game {
       // The soldier is parked inside the car. Inputs still go out; the server just applies them to the car.
       this.predictor?.acknowledge(message.ack)
     } else if (own) {
+      // The replayed steps float a swimmer on the waves as they were then: near enough the snapshot's tick.
+      this.motor?.setTick(message.tick)
       this.reconcile(own, message.ack, message.ride)
     }
   }
@@ -756,7 +758,7 @@ export class Game {
       position: [x, y, z], yaw: own.heading?.yaw ?? 0, vy: own.motion?.vy ?? 0, grounded: (flags & FLAG_GROUNDED) !== 0,
       knock: [own.motion?.knock_x ?? 0, own.motion?.knock_z ?? 0], ride, prone, chute: stance === STANCE_CHUTE,
       spent: own.vitals?.spent ?? 0, winded: own.vitals?.winded === 1, lost, down: own.vitals?.down ?? 0,
-      skis: ((own.carry?.what ?? 0) & CARRY_SKIS) !== 0, skiStrain: own.vitals?.strain ?? 0,
+      skis: ((own.carry?.what ?? 0) & CARRY_SKIS) !== 0, skiStrain: own.vitals?.strain ?? 0, swimming: stance === STANCE_SWIM || stance === STANCE_DIVE,
     })
   }
 
@@ -780,7 +782,12 @@ export class Game {
     // In a car the soldier does not walk, and nor does a dead one; the frame is kept for replay
     // in case it steps out or respawns.
     if (this.seat || !this.player.alive) this.predictor!.record(frame)
-    else this.predictor!.apply(frame)
+    else {
+      // A swimmer floats on the waves, which run on the server's tick: the one it is about now.
+      const tick = Math.floor(this.clock.tickAt(performance.now()))
+      if (Number.isFinite(tick) && tick > 0) this.motor?.setTick(tick)
+      this.predictor!.apply(frame)
+    }
     if (this.localId !== null) {
       this.fireFeedback(frame)
       const onFoot = !this.seat && this.player.alive && itemDef(this.held().item)?.kind === 'build'
@@ -929,7 +936,8 @@ export class Game {
     // Flying a drone: the body kneels where it launched it, and the view is the drone's camera.
     const flying = view?.rig.name === 'fpv'
     // A car's passenger fires their own guns from their seat, as one on foot does.
-    const hands = !seated || (seat !== null && crewGun(seat.kind, seat.index))
+    // A swimmer's gun is put away.
+    const hands = (!seated && !local.swimming) || (seat !== null && crewGun(seat.kind, seat.index))
     const able = this.localId !== null && this.player.alive
     const handy = able && hands
     // Where the local player sits, when they show in their seat: their head, and the vehicle's turn.
@@ -972,9 +980,10 @@ export class Game {
     // Reading the map the view is at the eyes, inside the head.
     me.hidden = (seated && !flying && !sitting) || scoped || reading > 0.4
     me.dead = !this.player.alive
-    me.held = this.player.slot(this.input.heldSlot).item
+    me.held = local.swimming && !seated ? ITEM_NONE : this.player.slot(this.input.heldSlot).item
+    me.swim = !local.swimming || seated || !this.player.alive ? 0 : this.submerged(local) ? 2 : 1
     me.pack = this.player.carrying
-    me.skis = local.skis
+    me.skis = local.skis && !local.swimming
     me.skiAim = local.skis && this.input.aimHeld
     me.skiPoling = this.polingHard && !fillsHands(me.held) && !this.crouching && !this.input.aimHeld && !local.winded && local.grounded
     me.lamp = this.player.lamp && this.player.alive
@@ -1152,6 +1161,7 @@ export class Game {
       ...(gauges?.includes('pintle') ? roofGun(ride?.pintle ?? null) : gauges?.includes('heat') ? mountGun(ride?.turret ?? null) : cockpit(gauges?.includes('cockpit') ? (ride?.arms ?? null) : null, aviator, seat ? this.vehicles.fx(seat.vehicle) : undefined)),
       air: gauges?.includes('air') ? (this.driver?.thrust?.air ?? null) : gauges?.includes('wind') && seat ? this.sailing(seat.vehicle, now) : null,
       stamina: !seated && able ? { left: 1 - local.spent / STAMINA_FULL, winded: local.winded } : null,
+      breath: !seated && player.alive && player.breath < 1 ? player.breath : null,
       speed: seated
         ? (fx && view && MOVERS.has(view.role) ? Math.hypot(fx.velocity.x, fx.velocity.y, fx.velocity.z) * 3.6 : null)
         : local.skis && able ? Math.hypot(local.knock[0], local.knock[1]) * 3.6 : null,
@@ -1294,6 +1304,7 @@ export class Game {
       else me.clubPose = 0
     }
     if (!this.player.alive || (this.seat && !crewGun(this.seat.kind, this.seat.index))) return
+    if (!this.seat && this.predictor?.state.swimming) return
     // A local mirror of the server's rules for a shot, so the flash does not wait for its reply.
     if (!item || item.kind !== 'gun' || !pressed || (!item.auto && !fresh)) return
     if (slot.ammo === 0 || this.player.progress > 0 || (frame.buttons & BUTTON_RELOAD) !== 0) return
@@ -1313,7 +1324,15 @@ export class Game {
   /** Height of the local player's eye above the capsule centre, for the stance they are in. */
   private eyeHeight(): number {
     if (this.predictor?.state.prone) return PRONE_EYE_HEIGHT
+    // A swimmer's crouch takes them down, not their head.
+    if (this.predictor?.state.swimming) return EYE_HEIGHT
     return EYE_HEIGHT - (this.crouching ? CROUCH_EYE_DROP : 0)
+  }
+
+  /** Whether the local soldier's eyes are under the water, waves and all, as the server's `Physics::submerged` has it. */
+  private submerged(local: CharacterState): boolean {
+    const level = this.waters?.surfaceAt(local.position[0], local.position[2], this.waveClock) ?? NO_WATER
+    return level !== NO_WATER && local.position[1] + (local.prone ? PRONE_EYE_HEIGHT : EYE_HEIGHT) < level
   }
 
   /**

@@ -1,6 +1,6 @@
 import type { Character } from '@/render/character'
 import { FLAG_CROUCHING, FLAG_DEAD, FLAG_GROUNDED, FLAG_HELD_MASK, FLAG_HELD_SHIFT, KIND_SOLDIER } from '@/net/codec'
-import { CARRY_BACKPACK, CARRY_LAMP, CARRY_POLING, CARRY_SKIS, SLIDE_MIN_SPEED, STANCE_CHUTE, STANCE_DOWN, STANCE_PRONE, STANCE_SURRENDER } from '@/sim/consts'
+import { CARRY_BACKPACK, CARRY_LAMP, CARRY_POLING, CARRY_SKIS, SLIDE_MIN_SPEED, STANCE_CHUTE, STANCE_DIVE, STANCE_DOWN, STANCE_PRONE, STANCE_SURRENDER, STANCE_SWIM } from '@/sim/consts'
 import type { Avatars } from '../avatars'
 import type { Frame, Presenter } from '../presenter'
 import type { Sampled } from '../store'
@@ -58,15 +58,17 @@ export class Soldiers implements Presenter<Frame> {
     this.inView.push(id)
     this.nearby.push({ id, x, y, z })
     const avatar = this.world.avatars.draw(id)
+    const swim = stance === STANCE_DIVE ? 2 : stance === STANCE_SWIM ? 1 : 0
+    avatar.swim = dead ? 0 : swim
     avatar.dead = dead
     avatar.held = (flags & FLAG_HELD_MASK) >> FLAG_HELD_SHIFT
     const worn = entity.carry?.what ?? 0
     avatar.pack = (worn & CARRY_BACKPACK) !== 0
-    avatar.skis = (worn & CARRY_SKIS) !== 0
+    avatar.skis = (worn & CARRY_SKIS) !== 0 && swim === 0
     avatar.lamp = (worn & CARRY_LAMP) !== 0 && !dead
     avatar.skiPoling = (worn & CARRY_POLING) !== 0
     avatar.surrendering = stance === STANCE_SURRENDER
-    if (!dead) this.world.blobFoot(x, y, z)
+    if (!dead && swim === 0) this.world.blobFoot(x, y, z)
     avatar.update([x, y, z], entity.heading?.yaw ?? 0, velocity[0], velocity[1], grounded, frame.dt, 0, crouching,
       crouching && grounded && knock > SLIDE_MIN_SPEED, stance === STANCE_PRONE || stance === STANCE_DOWN, stance === STANCE_CHUTE, entity.motion?.vy ?? 0)
     if (!dead) this.world.wade(id, x, y, z, Math.hypot(velocity[0], velocity[1]), frame.dt)

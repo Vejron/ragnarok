@@ -109,6 +109,12 @@ impl Waters {
         level.is_finite().then_some(level)
     }
 
+    /// The highest still water surface at `(x, z)` or `reach` metres either way along x or z, metres:
+    /// water near enough to be standing in at the edge of the grid's samples.
+    pub fn level_near(&self, x: f32, z: f32, reach: f32) -> Option<f32> {
+        [(0.0, 0.0), (reach, 0.0), (-reach, 0.0), (0.0, reach), (0.0, -reach)].into_iter().filter_map(|(dx, dz)| self.level_at(x + dx, z + dz)).reduce(f32::max)
+    }
+
     /// The surface at `(x, z)` with its waves (`shared::waves`), `time` seconds into their loop: the
     /// waves die away towards the shore, as deep as the water is between the samples around it. `None`
     /// where it is dry or the tile is not here.

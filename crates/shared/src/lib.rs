@@ -25,4 +25,5 @@ pub mod waves;
 pub mod wind;
 pub mod windows;
 pub mod ski;
+pub mod swim;
 pub mod world;

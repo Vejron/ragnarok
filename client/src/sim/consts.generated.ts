@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 71
+export const PROTOCOL_VERSION = 72
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -238,6 +238,79 @@ export const CHUTE_STEER = 0.03
 export const SPAWN_ALTITUDE = 100.0
 
 /**
+ * Swimming (SWIMMING.md). Depths, the float height and whether the eyes are under all follow the
+ * waves on the water (`shared::waves`). Water this deep over the feet, metres, floats a soldier off them: wading turns
+ * into swimming. Swimming stops once it is no deeper than `SWIM_LEAVE_DEPTH`, so the change does not
+ * flicker on a bank; a swimmer floating at `SWIM_FLOAT` has exactly `SWIM_DEPTH` over the feet.
+ */
+export const SWIM_DEPTH = 1.3
+export const SWIM_LEAVE_DEPTH = 1.1
+
+/**
+ * How far below the still surface a floating swimmer's capsule centre is, metres: the eye
+ * (`EYE_HEIGHT` over the centre) is just out of the water.
+ */
+export const SWIM_FLOAT = 0.45
+
+/** Swimming speed, m/s, and with run held, which spends stamina as running does. */
+export const SWIM_SPEED = 2.0
+export const SWIM_FAST_SPEED = 3.2
+
+/** Space kicks a swimmer up at this speed, m/s, and crouch takes them down at `SWIM_SINK`. */
+export const SWIM_RISE = 1.6
+export const SWIM_SINK = 1.4
+
+/** A diver who is not swimming drifts up at this speed, m/s. */
+export const SWIM_DRIFT = 0.5
+
+/**
+ * A swimmer this far below the float height, metres, is under: looking up or down steers where they
+ * swim. Above it the water floats them back up unless they are diving, so nobody hangs just under the
+ * surface with their eyes in and out of it.
+ */
+export const SWIM_UNDER = 0.9
+
+/**
+ * At the surface, swimming forward while looking down by more than this, radians (52°, near the feet),
+ * dives: far past where the camera looks while swimming along, so only a swimmer who means it goes under.
+ */
+export const SWIM_DIVE_PITCH = 0.9
+
+/** A dive from the surface goes down at least this fast, m/s, until the swimmer is under (`SWIM_UNDER`). */
+export const SWIM_DUCK = 1.5
+
+/** How hard the water pulls a swimmer back to the float height, m/s for each metre off it. */
+export const SWIM_BUOYANCY = 4.0
+
+/**
+ * How fast a swimmer's vertical speed comes round to what they want, m/s², plus `SWIM_DRAG` m/s²
+ * for every m/s it is off: a plunge from a height is braked hard, a stroke changes gently.
+ */
+export const SWIM_ACCEL = 6.0
+export const SWIM_DRAG = 3.0
+
+/** Each tick in the water knockback keeps this fraction of itself. */
+export const SWIM_KNOCK_KEEP = 0.9
+
+/** A swimmer climbs out over a bank or a jetty's edge this high, metres, and up slopes this steep, degrees. */
+export const SWIM_CLIMB = 0.6
+export const SWIM_CLIMB_DEG = 75.0
+
+/**
+ * Air held on one breath, ticks (30 s at `TICK_RATE`), and air regained every tick with the eyes out
+ * of the water (empty to full in 5 s).
+ */
+export const BREATH_FULL = 1800
+export const BREATH_REFILL = 6
+
+/**
+ * Out of air, a diver drowns: this much off the torso every `DROWN_EVERY` ticks (15 hp a second, so
+ * full health lasts 10 s) until they come up for air.
+ */
+export const DROWN_DAMAGE = 15
+export const DROWN_EVERY = 60
+
+/**
  * Soldier collision capsule. Total height is `2 * (half_height + radius)` = 1.7 m, with the
  * body origin at the capsule centre.
  */
@@ -266,6 +339,12 @@ export const STANCE_DOWN = 3
 
 /** Hands up: a bot that has given in. */
 export const STANCE_SURRENDER = 4
+
+/** Swimming in deep water with the head out (`Character::swimming`). The gun is put away. */
+export const STANCE_SWIM = 5
+
+/** Swimming under the water, the eyes below its surface: holding the breath (`BREATH_FULL`). */
+export const STANCE_DIVE = 6
 
 /** A blast that throws a soldier at least this hard, m/s, knocks them down. */
 export const KNOCKDOWN_POWER = 7.0

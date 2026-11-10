@@ -21,7 +21,7 @@ pub use crate::vehicles::tank::*;
 pub use crate::vehicles::walker::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 71;
+pub const PROTOCOL_VERSION: u8 = 72;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -182,6 +182,52 @@ pub const CHUTE_STEER: f32 = 0.03;
 /// Respawns drop in from this far above the ground, metres, with the canopy open.
 pub const SPAWN_ALTITUDE: f32 = 100.0;
 
+/// Swimming (SWIMMING.md). Depths, the float height and whether the eyes are under all follow the
+/// waves on the water (`shared::waves`). Water this deep over the feet, metres, floats a soldier off them: wading turns
+/// into swimming. Swimming stops once it is no deeper than `SWIM_LEAVE_DEPTH`, so the change does not
+/// flicker on a bank; a swimmer floating at `SWIM_FLOAT` has exactly `SWIM_DEPTH` over the feet.
+pub const SWIM_DEPTH: f32 = 1.3;
+pub const SWIM_LEAVE_DEPTH: f32 = 1.1;
+/// How far below the still surface a floating swimmer's capsule centre is, metres: the eye
+/// (`EYE_HEIGHT` over the centre) is just out of the water.
+pub const SWIM_FLOAT: f32 = 0.45;
+/// Swimming speed, m/s, and with run held, which spends stamina as running does.
+pub const SWIM_SPEED: f32 = 2.0;
+pub const SWIM_FAST_SPEED: f32 = 3.2;
+/// Space kicks a swimmer up at this speed, m/s, and crouch takes them down at `SWIM_SINK`.
+pub const SWIM_RISE: f32 = 1.6;
+pub const SWIM_SINK: f32 = 1.4;
+/// A diver who is not swimming drifts up at this speed, m/s.
+pub const SWIM_DRIFT: f32 = 0.5;
+/// A swimmer this far below the float height, metres, is under: looking up or down steers where they
+/// swim. Above it the water floats them back up unless they are diving, so nobody hangs just under the
+/// surface with their eyes in and out of it.
+pub const SWIM_UNDER: f32 = 0.9;
+/// At the surface, swimming forward while looking down by more than this, radians (52°, near the feet),
+/// dives: far past where the camera looks while swimming along, so only a swimmer who means it goes under.
+pub const SWIM_DIVE_PITCH: f32 = 0.9;
+/// A dive from the surface goes down at least this fast, m/s, until the swimmer is under (`SWIM_UNDER`).
+pub const SWIM_DUCK: f32 = 1.5;
+/// How hard the water pulls a swimmer back to the float height, m/s for each metre off it.
+pub const SWIM_BUOYANCY: f32 = 4.0;
+/// How fast a swimmer's vertical speed comes round to what they want, m/s², plus `SWIM_DRAG` m/s²
+/// for every m/s it is off: a plunge from a height is braked hard, a stroke changes gently.
+pub const SWIM_ACCEL: f32 = 6.0;
+pub const SWIM_DRAG: f32 = 3.0;
+/// Each tick in the water knockback keeps this fraction of itself.
+pub const SWIM_KNOCK_KEEP: f32 = 0.9;
+/// A swimmer climbs out over a bank or a jetty's edge this high, metres, and up slopes this steep, degrees.
+pub const SWIM_CLIMB: f32 = 0.6;
+pub const SWIM_CLIMB_DEG: f32 = 75.0;
+/// Air held on one breath, ticks (30 s at `TICK_RATE`), and air regained every tick with the eyes out
+/// of the water (empty to full in 5 s).
+pub const BREATH_FULL: u16 = 1800;
+pub const BREATH_REFILL: u16 = 6;
+/// Out of air, a diver drowns: this much off the torso every `DROWN_EVERY` ticks (15 hp a second, so
+/// full health lasts 10 s) until they come up for air.
+pub const DROWN_DAMAGE: u8 = 15;
+pub const DROWN_EVERY: u16 = 60;
+
 /// Soldier collision capsule. Total height is `2 * (half_height + radius)` = 1.7 m, with the
 /// body origin at the capsule centre.
 pub const CAPSULE_HALF_HEIGHT: f32 = 0.5;
@@ -201,6 +247,10 @@ pub const STANCE_CHUTE: u8 = 2;
 pub const STANCE_DOWN: u8 = 3;
 /// Hands up: a bot that has given in.
 pub const STANCE_SURRENDER: u8 = 4;
+/// Swimming in deep water with the head out (`Character::swimming`). The gun is put away.
+pub const STANCE_SWIM: u8 = 5;
+/// Swimming under the water, the eyes below its surface: holding the breath (`BREATH_FULL`).
+pub const STANCE_DIVE: u8 = 6;
 /// A blast that throws a soldier at least this hard, m/s, knocks them down.
 pub const KNOCKDOWN_POWER: f32 = 7.0;
 /// Ticks they lie there once landed: this many at `KNOCKDOWN_POWER`, rising evenly to

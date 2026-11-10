@@ -1,6 +1,6 @@
 import type { HudStats } from '@/hud'
 import { BACKPACK_NAME, type BackpackView } from '@/backpack'
-import { WEAPON_AP, WEAPON_AUTOCANNON, WEAPON_BALL, WEAPON_BOMB, WEAPON_EGG, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK } from '@/net/codec'
+import { WEAPON_AP, WEAPON_AUTOCANNON, WEAPON_BALL, WEAPON_BOMB, WEAPON_DROWN, WEAPON_EGG, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK } from '@/net/codec'
 import { colorFor, isBot, nameFor } from '@/profile'
 import { seatHint } from '@/seathints'
 import { miniBottom, miniSize } from './map'
@@ -234,7 +234,7 @@ function feed(p: Painter, s: HudStats, top: number) {
     pieces.push({ dot: colorFor(entry.victim) }, { text: who(entry.victim), style: entry.you === 'victim' ? mine : style })
     if (isBot(entry.victim)) pieces.push({ tag: 'BOT' })
     if (entry.you === 'victim') pieces.push({ tag: 'YOU' })
-    if (entry.killer === 0) pieces.push({ text: ` took ${who(0)}`, style })
+    if (entry.killer === 0) pieces.push({ text: entry.weapon === WEAPON_DROWN ? ' drowned' : ` took ${who(0)}`, style })
     const w = pieces.reduce((sum, piece) => sum + pieceWidth(p, piece), 0) + 20
     const x = s.touch ? 12 : p.width - 12 - w
     const ring = entry.you === 'killer' ? TEAL : entry.you === 'victim' ? RED : null

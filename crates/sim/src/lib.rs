@@ -16,6 +16,7 @@ use shared::movement::{begin_slide, decay_knock, desired_translation, knockdown_
 use shared::protocol::{InputFrame, LIMB_LEGS};
 use shared::quant::from_cm;
 use shared::ski::{SkiGround, SkiMap, bad_landing, over_crest, ski_flight, ski_step};
+use shared::swim::{swim_velocity, swims};
 use shared::terrain::Ground;
 use shared::world::{ObjId, SkiTrail, WorldFile};
 use std::collections::HashMap;
@@ -64,6 +65,8 @@ pub struct Character {
     pub skis: bool,
     /// Ticks the skis have been too far across the way they are going (`shared::ski::ski_step`).
     pub ski_strain: u8,
+    /// Swimming in deep water (`shared::swim::swims`): no gravity, no gun, and `vy` is the stroke's.
+    pub swimming: bool,
 }
 
 pub struct Physics {
@@ -86,6 +89,10 @@ pub struct Physics {
     snapping: KinematicCharacterController,
     /// On skis: snaps less far, so that crests throw a skier in the air at speed.
     ski_snapping: KinematicCharacterController,
+    /// Swimming: climbs higher steps and steeper banks (`SWIM_CLIMB`), so a swimmer can get out.
+    swimmer: KinematicCharacterController,
+    /// Standing in water: the swimmer's climb with snap-to-ground, to clamber the rest of the way out.
+    wading: KinematicCharacterController,
     /// Where the groomed ski tracks are.
     ski: SkiMap,
     character_shape: Collider,
@@ -466,6 +473,21 @@ fn controller() -> KinematicCharacterController {
     }
 }
 
+/// The soldier's character controller in water: it climbs higher steps and steeper banks
+/// (`SWIM_CLIMB`), so a swimmer can get out.
+fn swimmer() -> KinematicCharacterController {
+    KinematicCharacterController {
+        autostep: Some(CharacterAutostep {
+            max_height: CharacterLength::Absolute(SWIM_CLIMB),
+            min_width: CharacterLength::Absolute(AUTOSTEP_MIN_WIDTH),
+            include_dynamic_bodies: false,
+        }),
+        max_slope_climb_angle: SWIM_CLIMB_DEG.to_radians(),
+        min_slope_slide_angle: SWIM_CLIMB_DEG.to_radians(),
+        ..controller()
+    }
+}
+
 impl Physics {
     pub fn new(world: &WorldFile) -> Result<Self> {
         let mut physics = Self::built(world)?;
@@ -521,6 +543,8 @@ impl Physics {
             snapping: KinematicCharacterController { snap_to_ground: Some(CharacterLength::Absolute(SNAP_DISTANCE)), ..controller() },
             ski_snapping: KinematicCharacterController { snap_to_ground: Some(CharacterLength::Absolute(SKI_SNAP_DISTANCE)), ..controller() },
             ski: SkiMap::default(),
+            swimmer: swimmer(),
+            wading: KinematicCharacterController { snap_to_ground: Some(CharacterLength::Absolute(SNAP_DISTANCE)), ..swimmer() },
             controller: controller(),
             character_shape: ColliderBuilder::capsule_y(CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS).build(),
             prone_shape: ColliderBuilder::ball(PRONE_RADIUS).build(),
@@ -761,6 +785,11 @@ impl Physics {
         let still = InputFrame { strafe: 0, forward: 0, buttons: 0, yaw: shared::quant::to_mrad(character.yaw), ..*input };
         let input = if character.down > 0 { &still } else { input };
         let (input, speed_scale, hop) = legged(character, input, speed_scale);
+        character.swimming = swims(character.swimming, self.water_over_feet(character));
+        if character.swimming {
+            self.swim(character, &input, dt, speed_scale);
+            return;
+        }
         // Skis cannot lie down or slide on their side.
         let input = &if character.skis { InputFrame { buttons: input.buttons & !(BUTTON_PRONE | BUTTON_SLIDE), ..input } } else { input };
         character.chute = toggle_chute(character.chute, character.grounded, character.prone, input);
@@ -831,7 +860,13 @@ impl Physics {
         let shape = self.shape(character.prone).shape();
         let start = Vector::from(character.position);
         let snapping = if skiing { &self.ski_snapping } else { &self.snapping };
-        let walker = if character.grounded && vy <= 0.0 && !thrown { snapping } else { &self.controller };
+        let wading = !skiing && self.wading(character);
+        let walker = match (character.grounded && vy <= 0.0 && !thrown, wading) {
+            (true, true) => &self.wading,
+            (true, false) => snapping,
+            (false, true) => &self.swimmer,
+            (false, false) => &self.controller,
+        };
         let horizontal = walker.move_shape(dt, &queries, shape, &Pose::from_translation(start), Vector::new(desired[0], 0.0, desired[2]), |_| {});
         let mut middle = start + horizontal.translation;
         // Fences, which only soldiers meet, cut the step short.
@@ -880,6 +915,72 @@ impl Physics {
         if grounded {
             character.down = character.down.saturating_sub(1);
         }
+    }
+
+    /// One tick of a soldier in deep water (`Character::swimming`): no gravity, strokes where they look
+    /// once under (`swim_velocity`), and the water holds them at the float height. A swimmer is never
+    /// prone, under a canopy or on their skis, and a knockdown wears off in the water as on the ground.
+    fn swim(&self, character: &mut Character, input: &InputFrame, dt: f32, speed_scale: f32) {
+        self.change_stance(character, false);
+        character.chute = false;
+        character.ski_strain = 0;
+        character.down = character.down.saturating_sub(1);
+        let (level, rise) = self.surface_at(character.position).map_or((character.position[1] + SWIM_FLOAT, 0.0), |surface| (surface.height, surface.rise));
+        // A stroke with run held spends stamina as running does; nothing else costs any.
+        let stroke = InputFrame { buttons: input.buttons & !(BUTTON_JUMP | BUTTON_CROUCH | BUTTON_PRONE), ..*input };
+        let (spent, winded, _) = spend_stamina(character.spent, character.winded, true, false, &stroke);
+        character.spent = spent;
+        character.winded = winded;
+        let fast = !winded && input.buttons() & BUTTON_RUN != 0;
+        let gap = level - SWIM_FLOAT - character.position[1];
+        let (vy, [vx, vz]) = swim_velocity(character.vy, gap, rise, character.grounded, input, speed_scale, fast, dt);
+        let knock = character.knock.map(|v| v * SWIM_KNOCK_KEEP);
+        character.knock = if knock[0].hypot(knock[1]) < KNOCK_MIN_SPEED { [0.0, 0.0] } else { knock };
+        let desired = [(vx + character.knock[0]) * dt, vy * dt, (vz + character.knock[1]) * dt];
+        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::default());
+        let shape = self.shape(character.prone).shape();
+        let start = Vector::from(character.position);
+        let horizontal = self.swimmer.move_shape(dt, &queries, shape, &Pose::from_translation(start), Vector::new(desired[0], 0.0, desired[2]), |_| {});
+        let mut middle = start + horizontal.translation;
+        let (radius, centre) = if character.prone { (PRONE_RADIUS, PRONE_CENTRE) } else { (CAPSULE_RADIUS, STAND_CENTRE) };
+        let [x, z] = self.fences.stop([start.x, start.z], [middle.x, middle.z], middle.y - centre, radius);
+        middle.x = x;
+        middle.z = z;
+        let vertical = self.controller.move_shape(dt, &queries, shape, &Pose::from_translation(middle), Vector::new(0.0, desired[1], 0.0), |_| {});
+        let end = middle + vertical.translation;
+        character.position = end.into();
+        character.grounded = vertical.grounded && vy <= 0.0;
+        character.vy = settle_vertical(vy, desired[1], end.y - start.y, character.grounded);
+        character.yaw = shared::quant::from_mrad(input.yaw);
+    }
+
+    /// How deep the water is over a soldier's feet, waves and all, metres, or `None` where it is dry.
+    /// The waves die away towards the shore, so wading out goes by the still level.
+    pub fn water_over_feet(&self, character: &Character) -> Option<f32> {
+        let centre = if character.prone { PRONE_CENTRE } else { STAND_CENTRE };
+        self.surface_at(character.position).map(|surface| surface.height - (character.position[1] - centre))
+    }
+
+    /// Whether a soldier's feet are in water, or near enough to it at a bank, to clamber as a swimmer
+    /// does (`SWIM_CLIMB`).
+    fn wading(&self, character: &Character) -> bool {
+        let [x, y, z] = character.position;
+        let centre = if character.prone { PRONE_CENTRE } else { STAND_CENTRE };
+        self.waters.level_near(x, z, WADE_REACH).is_some_and(|level| level > y - centre)
+    }
+
+    /// Whether a soldier's eyes are under the water, waves and all: holding their breath. Lying down
+    /// in a shallow pool is enough.
+    pub fn submerged(&self, character: &Character) -> bool {
+        let [_, y, _] = character.position;
+        let eye = if character.prone { PRONE_EYE_HEIGHT } else { EYE_HEIGHT };
+        self.surface_at(character.position).is_some_and(|surface| y + eye < surface.height)
+    }
+
+    /// The water's surface over `position` with its waves, as they are at the tick the next step is
+    /// (`set_tick`): what a swimmer floats on.
+    fn surface_at(&self, position: [f32; 3]) -> Option<waters::Surface> {
+        self.waters.surface(position[0], position[2], shared::waves::time(self.tick))
     }
 
     /// Adds a world tile's or a whole world's groomed tracks to what `on_track` knows.
@@ -1010,6 +1111,9 @@ fn inherit(character: &mut Character, velocity: [f32; 3]) {
 /// for the terrain goes between.
 const TERRAIN_TOP: f32 = MAX_RELIEF + 10.0;
 const RAY_FLOOR: f32 = 20.0;
+/// How far around a soldier water still counts as underfoot for clambering out of it, metres: more
+/// than a ground sample, so the edge of the sampled water does not cut a climb short.
+const WADE_REACH: f32 = 1.0;
 /// How far off a skier the ray for the slope goes down, metres.
 const SKI_RAY_NUDGE: f32 = 0.0137;
 /// The least a crest throws a skier up, m/s: just enough to be off the ground.

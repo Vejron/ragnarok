@@ -26,6 +26,7 @@ The docs are in [docs/](docs/).
 - [ARMOR.md](docs/ARMOR.md): armor zones, ricochets, weak spots, turret loss and the Strv S
 - [LIMBS.md](docs/LIMBS.md): limb loss and part health
 - [KNOCKDOWN.md](docs/KNOCKDOWN.md): blasts, cars and ragdolls
+- [SWIMMING.md](docs/SWIMMING.md): swimming, diving where you look, holding your breath and drowning
 - [BUILDING.md](docs/BUILDING.md): placing cubes with bricks
 - [CRATERS.md](docs/CRATERS.md) and [SCORCH.md](docs/SCORCH.md): shells digging the ground, and the marks they leave
 - [DRONES.md](docs/DRONES.md): FPV and loitering drones

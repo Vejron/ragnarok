@@ -82,6 +82,8 @@ export const WEAPON_LOITER = 21
 export const WEAPON_FLARE = 22
 export const WEAPON_RUBBLE = 23
 export const WEAPON_LAUNCHER = 24
+/** Ran out of air under the water: a kill with no killer. */
+export const WEAPON_DROWN = 25
 /** An armour-piercing shell's small burst; `WEAPON_SHELL` is high explosive's. */
 export const WEAPON_AP = 27
 /** A ship's gun's round shot bursting where it lands. */

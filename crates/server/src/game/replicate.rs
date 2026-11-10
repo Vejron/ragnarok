@@ -21,7 +21,7 @@ impl Game {
     pub fn replicated(&self) -> Scene {
         let mut scene: Scene = Vec::new();
         scene.extend(self.world.entities.all::<Player>().map(|(id, player)| {
-            let shown = if player.embodied() { soldier(player, self.world.entities.alive(id)) } else { self.rider(player) };
+            let shown = if player.embodied() { soldier(player, self.world.entities.alive(id), self.world.physics.submerged(&player.character)) } else { self.rider(player) };
             let seated = player.seat.map(|seat| wire::Seated { vehicle: seat.vehicle, seat: seat.index as u8 });
             let one_arm = crate::mechanics::limbs_lost(&self.world, id) & LIMB_ARMS != 0;
             let wounds = self.world.entities.get::<Wounds>(id).copied();
@@ -34,7 +34,7 @@ impl Game {
             let carry = (what != 0).then_some(wire::Carry { what });
             let shown = Replicated { seated, limbs, struck, carry, ..shown };
             let hp = self.world.entities.get::<Health>(id).map_or(0, |health| health.hp);
-            (id, Replicated { vitals: Some(wire::Vitals { hp, progress: progress(player, one_arm), spent: player.character.spent, winded: player.character.winded.into(), parts, down: player.character.down, strain: player.character.ski_strain }), hotbar: Some(wire::Hotbar { slots: player.hands.hotbar }), ..shown })
+            (id, Replicated { vitals: Some(wire::Vitals { hp, progress: progress(player, one_arm), spent: player.character.spent, winded: player.character.winded.into(), parts, down: player.character.down, strain: player.character.ski_strain, breath: breath_byte(player.breath) }), hotbar: Some(wire::Hotbar { slots: player.hands.hotbar }), ..shown })
         }));
         scene.extend(self.creatures());
         scene.extend(self.world.entities.all::<Vehicle>().filter_map(|(id, vehicle)| Some((id, self.vehicle(id, vehicle)?))));
@@ -178,8 +178,9 @@ impl Game {
     }
 }
 
-/// A standing player (or one flying a drone, kneeling over the controls).
-fn soldier(player: &Player, alive: bool) -> Replicated {
+/// A standing player (or one flying a drone, kneeling over the controls), or a swimming one, with
+/// their eyes `under` the water or not. A swimmer's gun is put away.
+fn soldier(player: &Player, alive: bool, under: bool) -> Replicated {
     let c = &player.character;
     let mut flags = 0;
     if c.grounded {
@@ -188,11 +189,17 @@ fn soldier(player: &Player, alive: bool) -> Replicated {
     if !alive {
         flags |= FLAG_DEAD;
     }
-    if player.input.buttons() & BUTTON_CROUCH != 0 || player.seat.is_some() {
+    if (player.input.buttons() & BUTTON_CROUCH != 0 && !c.swimming) || player.seat.is_some() {
         flags |= FLAG_CROUCHING;
     }
-    flags |= (player.held().item << FLAG_HELD_SHIFT) & FLAG_HELD_MASK;
-    let stance = if c.down > 0 { STANCE_DOWN } else if player.surrendered { STANCE_SURRENDER } else if c.chute { STANCE_CHUTE } else if c.prone { STANCE_PRONE } else { STANCE_STANDING };
+    if !c.swimming {
+        flags |= (player.held().item << FLAG_HELD_SHIFT) & FLAG_HELD_MASK;
+    }
+    let stance = if c.swimming && under {
+        STANCE_DIVE
+    } else if c.swimming {
+        STANCE_SWIM
+    } else if c.down > 0 { STANCE_DOWN } else if player.surrendered { STANCE_SURRENDER } else if c.chute { STANCE_CHUTE } else if c.prone { STANCE_PRONE } else { STANCE_STANDING };
     let [x, y, z] = c.position.map(to_cm);
     Replicated {
         kind: Some(wire::Kind { kind: KIND_SOLDIER }),
@@ -202,6 +209,11 @@ fn soldier(player: &Player, alive: bool) -> Replicated {
         flags: Some(wire::Flags { flags, stance }),
         ..Default::default()
     }
+}
+
+/// The air a player has left, 0..=255 of `BREATH_FULL`.
+fn breath_byte(breath: u16) -> u8 {
+    (u32::from(breath.min(BREATH_FULL)) * 255 / u32::from(BREATH_FULL)) as u8
 }
 
 /// How far the player's reload or bandage has got, 0..=255, or 0 when none is going on. A reload in

@@ -28,6 +28,8 @@ export class LocalPlayer {
   onSkis = false
   /** Their headlamp is on, as their own `carry` last said. */
   lamp = false
+  /** Air left, 0..1 (`Vitals::breath`): less than 1 under the water and while getting it back. */
+  breath = 1
 
   get alive() {
     return this.hp > 0
@@ -43,6 +45,7 @@ export class LocalPlayer {
     this.carrying = false
     this.onSkis = false
     this.lamp = false
+    this.breath = 1
   }
 
   /** Takes what their own entity says now. */
@@ -51,6 +54,7 @@ export class LocalPlayer {
       this.setHealth(own.vitals.hp, now)
       this.progress = own.vitals.progress
       this.parts = own.vitals.parts
+      this.breath = own.vitals.breath / 255
     }
     if (own.hotbar) this.hotbar = [...own.hotbar.slots, ...emptyHotbar()].slice(0, HOTBAR_SLOTS)
     this.limbs = own.limbs?.lost ?? 0

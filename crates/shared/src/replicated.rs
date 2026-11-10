@@ -396,8 +396,9 @@ replicated! {
     /// spent (0 is rested, `STAMINA_FULL` is out) and whether they are winded, 0 or 1.
     /// `parts` is what is left of the head's health and each limb's (`LIMB_*` order), 0 for a limb lost.
     /// `down` is the ticks of knockdown left (`Character::down`) and `strain` how near skis are to catching
-    /// an edge (`Character::ski_strain`), for their prediction.
-    Vitals { hp: u8, progress: u8 as byte, spent: u16, winded: u8, parts: [u8; 5], down: u8, strain: u8 }
+    /// an edge (`Character::ski_strain`), for their prediction. `breath` is the air they have left,
+    /// 0..=255 of `BREATH_FULL`.
+    Vitals { hp: u8, progress: u8 as byte, spent: u16, winded: u8, parts: [u8; 5], down: u8, strain: u8, breath: u8 as byte }
 
     set 18 hotbar [owner]
     /// A player's own hotbar.

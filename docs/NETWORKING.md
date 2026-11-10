@@ -112,7 +112,7 @@ An `update` is `[id u32, set u32, (cleared u32), fields…]`:
 | 0 | `place` | diff | `x, y, z` i32 | centimetres: a soldier's capsule centre, a vehicle's chassis centre (+X east, +Z south, +Y up) |
 | 1 | `heading` | diff | `yaw` i16 | facing, milliradians, 0 faces -Z |
 | 2 | `motion` | diff | `vy, knock_x, knock_z` i16 | a soldier's vertical speed and the slide a car's knock left them in, cm/s: what a predicted soldier resumes from |
-| 3 | `flags` | whole | `flags, stance` u8 | bit 0: grounded, bit 1: dead (lying where it fell until it respawns), bit 2: crouching, bits 3..6: the item in hand (`ITEM_*`, 0 for none), bit 7: crowing (a rooster); `stance` is `STANCE_*` (standing, prone, under a parachute) |
+| 3 | `flags` | whole | `flags, stance` u8 | bit 0: grounded, bit 1: dead (lying where it fell until it respawns), bit 2: crouching, bits 3..6: the item in hand (`ITEM_*`, 0 for none), bit 7: crowing (a rooster); `stance` is `STANCE_*` (standing, prone, under a parachute, knocked down, hands up, swimming, diving); a swimmer or diver holds nothing ([SWIMMING.md](SWIMMING.md)) |
 | 4 | `orientation` | diff | `qx, qy, qz` i16 | the x, y, z of the orientation quaternion, scaled by 32767. The sender negates the quaternion so that `w >= 0`, and the receiver rebuilds `w = sqrt(1 − x² − y² − z²)` |
 | 5 | `steer` | diff | `steer` i8 | front-wheel angle as a fraction of full lock (the kind's `*_MAX_STEER`), −127..127, + is right |
 | 6 | `turret` | whole | `yaw, pitch` i16, `shots` u8, `range` u16, `flags` u8 | a gun on a mount (below). A plane's is the rear gunner's ring |
@@ -126,7 +126,7 @@ An `update` is `[id u32, set u32, (cleared u32), fields…]`:
 | 14 | `kind` | whole | `kind` u8 | which model it is drawn as: 0 = soldier, 5 = Hedemora rooster, and vehicles 1 = jeep, 2 = tank, 3 = helicopter, 4 = sports car, 6 = plane, 7 = walker, 8 = Strv S, 9 = field mortar, 10 = Roadster, 11 = FPV drone, 12 = hen (5 is the rooster, an entity). A drone is listed only while it flies or falls: see [DRONES.md](DRONES.md) |
 | 15 | `projectile` | whole | `kind` u8 | what is in flight, `PROJECTILE_*` |
 | 16 | `pickup` | whole | `item` u8 | what lies on the ground, `ITEM_*` |
-| 17 | `vitals` | whole, owner | `hp, progress` u8 | the player's own health, 0 when dead (others only see dead or alive, in `flags`), and how far a reload or a bandage has got, 0..255, or 0 when neither is going on |
+| 17 | `vitals` | whole, owner | `hp, progress` u8, … `breath` u8 | the player's own health, 0 when dead (others only see dead or alive, in `flags`), how far a reload or a bandage has got, 0..255, or 0 when neither is going on, and (last) the air they have left, 0..255 of `BREATH_FULL` (protocol 72) |
 | 18 | `hotbar` | whole, owner | `slots`: 5 × `[item u8, count u8, ammo u8]` | the player's own hotbar, `item` 0 for an empty slot (`1` revolver, `2` AK5, `3` grenade, `4` bandage, `5` sniper, `6` golden egg, dropped by a rooster and healing to full, `7` shotgun, `8` FPV drone). The item in another player's hands is in bits 3..6 of their `flags` |
 | 19 | `drive` | whole, owner | 8 × i16 | the exact motion of a vehicle a player drives, which its pose does not carry, for the driver's prediction (below) |
 | 20 | `seated` | whole | `vehicle` u32, `seat` u8 | a player sitting in seat `seat` of `vehicle`; seat 0 drives. They have no `place` unless their body stays behind (a drone's pilot): clients draw them at the kind's seat head point. The client learns its own seat from it |

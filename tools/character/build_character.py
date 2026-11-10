@@ -26,6 +26,9 @@ Conventions
     crawl lying face down along -Y, resting on the ground at the origin's height. `sit` is a seat in a
     vehicle: hips dropped by `SIT_DROP`, thighs level and shins down, so the head ends up `SIT_HEAD`
     above the origin (the client places a seated player by it). Clips loop with a duplicated last key so the mixer wraps without a hitch.
+  * Swimming clips, shared by every stance as the gun is put away: swim_tread (upright, the head out),
+    swim_fwd (a breaststroke tipped forward about `SWIM_PIVOT`), dive_idle and dive_fwd (flat under the
+    water about `DIVE_PIVOT`, near the capsule centre, which the client tips towards where it swims).
 """
 
 import math
@@ -1347,6 +1350,197 @@ def golf_swing(t):
 CRAWL_FRAMES = 78
 
 
+# --------------------------------------------------------------------------------------------------
+# Swimming. A swimmer's capsule centre floats `SWIM_FLOAT` (0.45 m) under the still surface, so the
+# surface is about 1.3 m over the origin: treading water the body is upright with the head out; a
+# surface stroke tips it forward about `SWIM_PIVOT`, which keeps the head out; under the water it lies
+# flat about `DIVE_PIVOT`, near the capsule centre, which the client tips towards where it swims.
+# --------------------------------------------------------------------------------------------------
+SWIM_PITCH = 1.25
+SWIM_PIVOT = 1.2
+DIVE_PITCH = 1.5
+DIVE_PIVOT = 0.9
+# The right side runs this much of a cycle behind the left: nobody swims quite evenly.
+SWIM_SIDES = (("L", 1, 0.0), ("R", -1, 0.025))
+
+
+def keyed(t, keys):
+    """The values at phase `t` along `keys`, `[(phase, (value, ...)), ...]` in rising phase, running on
+    from the last back round to the first: a smooth curve through them all (a Hermite spline whose
+    speed at each key is the mean of its neighbours'), so nothing stops dead at a key."""
+    t %= 1.0
+    n = len(keys)
+
+    def key(i):
+        turns, k = divmod(i, n)
+        return keys[k][0] + turns, keys[k][1]
+
+    def slope(i):
+        (ta, a), (tb, b) = key(i - 1), key(i + 1)
+        return [(y - x) / (tb - ta) for x, y in zip(a, b)]
+
+    for i in range(-1, n):
+        (t0, a), (t1, b) = key(i), key(i + 1)
+        if t0 <= t < t1:
+            span = t1 - t0
+            u = (t - t0) / span
+            h00, h10, h01, h11 = 2 * u**3 - 3 * u**2 + 1, u**3 - 2 * u**2 + u, -2 * u**3 + 3 * u**2, u**3 - u**2
+            return [h00 * x + h10 * span * m0 + h01 * y + h11 * span * m1 for x, y, m0, m1 in zip(a, b, slope(i), slope(i + 1))]
+    return list(keys[0][1])
+
+
+def pitch_about(angle, pivot, lift=0.0, surge=0.0):
+    """Tips the whole body forward by `angle` (rad) about the point `pivot` metres over the origin,
+    raised by `lift` and moved `surge` ahead, metres."""
+    pose_rot("root", angle, 0, 0)
+    pose_loc("root", (0, pivot * math.sin(angle) - surge, pivot * (1 - math.cos(angle)) + lift))
+
+
+def swim_trunk(hips, spine, chest, roll=0.0, twist=0.0):
+    """Bends the trunk (negative arches the back) with a roll and a twist of the chest over the hips.
+    Returns how far the chest leans from the root, for `stroke_arm`."""
+    pose_rot("hips", hips, 0, 0)
+    pose_rot("spine", spine, roll * 0.5, twist * 0.5)
+    pose_rot("chest", chest, roll * 0.5, twist * 0.5)
+    return hips + spine + chest
+
+
+def stroke_arm(side, pose, lean=0.0, wrist=0.0):
+    """One arm by where it points in the root's frame (+Z to the head, -Y to the belly): `pose` is the
+    upper arm's `(out, front, up)` and then the forearm's, out being to the arm's own side, so a wide
+    sweep is wide on both. `lean` is the chest's (`swim_trunk`), taken back out, so an arched back
+    does not lift the arms out of the water. `wrist` bends the hand."""
+    s = 1 if side == "L" else -1
+    down = Vector((0, 0, -1))
+    level = Matrix.Rotation(-lean, 3, "X")
+    u = level @ Vector((s * pose[0], -pose[1], pose[2])).normalized()
+    f = level @ Vector((s * pose[3], -pose[4], pose[5])).normalized()
+    turn = down.rotation_difference(u).to_matrix()
+    pose_mat(f"upper_arm_{side}", turn)
+    pose_mat(f"forearm_{side}", turn.inverted() @ down.rotation_difference(f).to_matrix())
+    pose_rot(f"hand_{side}", wrist, 0, 0)
+
+
+def stroke_leg(side, pose):
+    """One leg of a frog kick: `pose` is the thigh forward (negative draws the knee up), its spread out
+    to the side, the shin bent back at the knee, and the foot pointed (positive) or flexed."""
+    s = 1 if side == "L" else -1
+    thigh, spread, shin, foot = pose
+    pose_rot(f"thigh_{side}", thigh, -s * spread, 0)
+    pose_rot(f"shin_{side}", max(0.03, shin), 0, 0)
+    pose_rot(f"foot_{side}", foot, 0, 0)
+
+
+# A breaststroke at the surface, the arms under it all the way: from the glide, hands just under the
+# surface, they sweep out wide and down, the elbows bend and the hands come in under the chest, meet
+# under the chin and slide forward again as the legs kick; then a glide.
+# (phase, (upper out, front, up, forearm out, front, up)) and (phase, (thigh, spread, shin, foot)).
+STROKE_ARMS = [
+    (0.0, (0.1, 0.56, 0.83, 0.08, 0.52, 0.85)),
+    (0.14, (0.3, 0.58, 0.78, 0.35, 0.55, 0.75)),
+    (0.3, (0.85, 0.5, 0.45, 0.9, 0.6, 0.3)),
+    (0.42, (0.9, 0.6, 0.0, 0.25, 0.95, 0.25)),
+    (0.54, (0.4, 0.85, -0.3, -0.35, 0.6, 0.7)),
+    (0.7, (0.1, 0.58, 0.82, 0.06, 0.54, 0.85)),
+]
+STROKE_LEGS = [
+    (0.0, (0.0, 0.06, 0.1, 0.6)),
+    (0.4, (-0.05, 0.08, 0.15, 0.5)),
+    (0.6, (-0.95, 0.35, 1.9, -0.3)),
+    (0.72, (-0.4, 0.65, 0.6, -0.3)),
+    (0.86, (0.02, 0.1, 0.05, 0.5)),
+]
+# Under the water the pull sweeps out wide and goes all the way down to the thighs, the hands come
+# back up along the chest, and a long glide follows.
+DIVE_ARMS = [
+    (0.0, (0.1, 0.1, 1.0, 0.08, 0.1, 1.0)),
+    (0.18, (0.8, 0.2, 0.6, 0.85, 0.2, 0.5)),
+    (0.3, (0.95, 0.3, -0.05, 0.5, 0.6, -0.6)),
+    (0.42, (0.25, 0.1, -1.0, 0.15, 0.05, -1.0)),
+    (0.6, (0.22, 0.12, -1.0, 0.14, 0.08, -1.0)),
+    (0.78, (0.3, 0.8, -0.5, -0.3, 0.5, 0.8)),
+    (0.92, (0.1, 0.1, 1.0, 0.08, 0.1, 1.0)),
+]
+DIVE_LEGS = [
+    (0.0, (0.0, 0.06, 0.1, 0.6)),
+    (0.6, (-0.03, 0.08, 0.15, 0.55)),
+    (0.8, (-0.95, 0.35, 1.9, -0.3)),
+    (0.9, (-0.4, 0.65, 0.6, -0.3)),
+    (0.98, (0.02, 0.1, 0.05, 0.5)),
+]
+
+
+def swim_tread(t):
+    """Treading water upright, the chin at the surface: the arms scull wide out to the sides under
+    it, each a little out of step with the other, and the legs turn in an eggbeater."""
+    phi = TAU * t
+    # Each scull lifts the body a little; the head stays level over a trunk that sways.
+    pose_loc("hips", (0.01 * math.sin(phi), 0, -0.08 + 0.025 * math.sin(2 * phi + 0.6)))
+    lean = swim_trunk(0.14, -0.04, -0.05 + 0.02 * math.sin(2 * phi), roll=0.04 * math.sin(phi), twist=0.05 * math.sin(phi + 0.8))
+    pose_rot("neck", -0.05, -0.02 * math.sin(phi), 0)
+    pose_rot("head", -0.1 + 0.02 * math.sin(2 * phi + 1.0), 0, -0.05 * math.sin(phi + 0.8) + 0.06 * math.sin(phi * 1.0 + 2.0))
+    for side, s, late in SWIM_SIDES:
+        a = 2 * phi - TAU * late * 4
+        arm = (0.85, 0.3 + 0.1 * math.sin(a), -0.55 + 0.06 * math.cos(a), 0.55 + 0.4 * math.sin(a - 0.5), 0.75, -0.3 + 0.1 * math.cos(a - 0.5))
+        stroke_arm(side, arm, lean, wrist=0.3 * math.cos(a - 0.5))
+        # The knee circles: out as it comes up, in as the foot sweeps down and round.
+        b = 2 * phi + (0.0 if side == "L" else math.pi)
+        pose_rot(f"thigh_{side}", -0.9 + 0.12 * math.sin(b), -s * (0.5 + 0.15 * math.cos(b)), s * 0.25 * math.cos(b))
+        pose_rot(f"shin_{side}", 1.4 + 0.45 * math.sin(b + 1.2), 0, 0)
+        pose_rot(f"foot_{side}", -0.2 + 0.2 * math.sin(b + 2.0), 0, 0)
+
+
+def swim_fwd(t):
+    """A breaststroke at the surface: nearly flat, the arms under the water, the head held out of it.
+    The chest comes up for a breath as the hands sweep in, and the body sinks back into the glide."""
+    phi = TAU * t
+    breath = (0.5 + 0.5 * math.cos(TAU * (t - 0.5))) ** 1.5
+    # The kick drives it forward; the recovery checks it.
+    surge = 0.04 * math.sin(TAU * (t - 0.68))
+    pitch_about(SWIM_PITCH - 0.2 * breath, SWIM_PIVOT, lift=0.02 * breath, surge=surge)
+    lean = swim_trunk(0.05 + 0.1 * breath, -0.12 - 0.08 * breath, -0.15 - 0.1 * breath, roll=0.025 * math.sin(phi), twist=0.02 * math.sin(phi + 1.0))
+    # The head stays level while the chest comes up under it.
+    pose_rot("neck", -0.35 + 0.12 * breath, 0, 0)
+    pose_rot("head", -0.42 + 0.1 * breath, 0, 0.03 * math.sin(phi + 0.5))
+    for side, _, late in SWIM_SIDES:
+        # The hand trails the arm: bent back on the push forward, cupped on the pull.
+        stroke_arm(side, keyed(t - late, STROKE_ARMS), lean, wrist=0.3 * math.sin(TAU * (t - late - 0.3)))
+        stroke_leg(side, keyed(t - late * 0.6, STROKE_LEGS))
+
+
+def dive_idle(t):
+    """Hanging flat under the water: the arms scull slowly out wide, the legs drift and flutter, and
+    the whole body rocks a little."""
+    phi = TAU * t
+    pitch_about(DIVE_PITCH - 0.12 + 0.04 * math.sin(phi), DIVE_PIVOT, lift=0.02 * math.sin(phi + 1.0))
+    lean = swim_trunk(0.06, -0.05, -0.05 + 0.02 * math.sin(phi), roll=0.05 * math.sin(phi + 0.4), twist=0.03 * math.sin(2 * phi))
+    pose_rot("neck", -0.25, 0, 0)
+    pose_rot("head", -0.35 + 0.03 * math.sin(phi + 2.0), 0, 0.08 * math.sin(phi + 0.9))
+    for side, s, late in SWIM_SIDES:
+        a = 2 * phi - TAU * late * 6
+        arm = (0.8, 0.35 + 0.08 * math.sin(a), 0.45 + 0.08 * math.cos(a), 0.6 + 0.3 * math.sin(a - 0.6), 0.5, 0.55 + 0.1 * math.cos(a - 0.6))
+        stroke_arm(side, arm, lean, wrist=0.25 * math.cos(a - 0.6))
+        kick = math.sin(phi + (0.0 if side == "L" else math.pi))
+        pose_rot(f"thigh_{side}", 0.08 + 0.12 * kick, -s * 0.1, 0)
+        pose_rot(f"shin_{side}", 0.4 - 0.15 * kick, 0, 0)
+        pose_rot(f"foot_{side}", 0.5 + 0.1 * kick, 0, 0)
+
+
+def dive_fwd(t):
+    """An underwater breaststroke: flat, the head in line, a wide pull to the thighs, a kick that runs
+    through the body like a wave, and a long glide."""
+    phi = TAU * t
+    # The kick's wave: the hips lead, the chest follows.
+    wave = math.sin(TAU * (t - 0.82))
+    pitch_about(DIVE_PITCH + 0.05 * math.sin(TAU * (t - 0.3)), DIVE_PIVOT, lift=0.02 * wave, surge=0.05 * math.sin(TAU * (t - 0.6)))
+    lean = swim_trunk(0.03 + 0.08 * wave, -0.03 - 0.05 * math.sin(TAU * (t - 0.9)), -0.03 - 0.04 * math.sin(TAU * (t - 0.98)), roll=0.03 * math.sin(phi))
+    pose_rot("neck", -0.1, 0, 0)
+    pose_rot("head", -0.15 + 0.05 * math.sin(TAU * (t - 0.35)), 0, 0.03 * math.sin(phi + 0.7))
+    for side, _, late in SWIM_SIDES:
+        stroke_arm(side, keyed(t - late, DIVE_ARMS), lean, wrist=0.3 * math.sin(TAU * (t - late - 0.2)))
+        stroke_leg(side, keyed(t - late * 0.6, DIVE_LEGS))
+
+
 def build_actions():
     global CURRENT
     walk = dict(amp=0.68, lat_amp=0.38, knee=0.95, lean=0.0, bob=0.022, cycle_sway=0.03)
@@ -1409,6 +1603,11 @@ def build_actions():
     bake("ski_tuck", 120, ski_tuck)
     bake("ski_plow", 120, ski_plow)
     bake("ski_air", 60, ski_air)
+    # In the water the gun is put away: every stance's.
+    bake("swim_tread", 72, swim_tread)
+    bake("swim_fwd", 48, swim_fwd)
+    bake("dive_idle", 120, dive_idle)
+    bake("dive_fwd", 60, dive_fwd)
     reset_pose()
     arm_obj.animation_data.action = bpy.data.actions["idle"]
 
@@ -1593,6 +1792,35 @@ def preview(directory):
         for frame in (0, 14, 24, 34, 44, 54):
             at(clip, frame)
             shoot(f"{clip}_{frame:02d}", "wide")
+    # Swimming, with the still surface where it lies over a floating swimmer's origin (the capsule centre
+    # `SWIM_FLOAT` under it, `STAND_CENTRE` over the feet): side on it is a line.
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0, 1.3), scale=(2.0, 2.0, 0.01))
+    surface = bpy.context.active_object
+    views["swim"] = (Vector((6, 0.2, 1.0)), Vector((0, 0.2, 1.0)))
+    views["swim_three"] = (Vector((-4, -5, 3.4)), Vector((0, 0.2, 1.0)))
+    # From above and from ahead, for how wide the arms sweep.
+    views["swim_top"] = (Vector((0, 0.0, 7.0)), Vector((0, 0.0, 1.0)))
+    views["swim_front"] = (Vector((0, -6, 1.2)), Vector((0, 0, 1.2)))
+    cam_data.ortho_scale = 3.2
+    scene.render.resolution_x, scene.render.resolution_y = 640, 400
+    for obj in weapon_objects:
+        obj.hide_render = True
+    for clip, frames in (("swim_tread", 72), ("swim_fwd", 48), ("dive_idle", 120), ("dive_fwd", 60)):
+        for i in range(6):
+            at(clip, i * frames // 6)
+            shoot(f"{clip}_{i}", "swim")
+        surface.hide_render = True
+        for i in range(6):
+            at(clip, i * frames // 6)
+            shoot(f"{clip}_{i}_top", "swim_top")
+            shoot(f"{clip}_{i}_front", "swim_front")
+        at(clip, 0)
+        shoot(f"{clip}_three", "swim_three")
+        surface.hide_render = False
+    bpy.data.objects.remove(surface)
+    for obj in weapon_objects:
+        obj.hide_render = False
+    scene.render.resolution_x, scene.render.resolution_y = 360, 480
     cam_data.ortho_scale = 2.1
 
 

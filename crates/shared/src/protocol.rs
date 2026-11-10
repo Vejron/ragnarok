@@ -142,6 +142,8 @@ pub const WEAPON_RUBBLE: u8 = 23;
 /// Shot events only: a Carl Gustaf fired from `shooter`'s shoulder, its rocket leaving at `x, y, z`.
 /// What the rocket does is `WEAPON_ROCKET`'s.
 pub const WEAPON_LAUNCHER: u8 = 24;
+/// Running out of air under water. Only ever the weapon of a kill, with no killer.
+pub const WEAPON_DROWN: u8 = 25;
 /// An armour-piercing shell's small burst (`PROJECTILE_SHELL`); `WEAPON_SHELL` is high explosive's.
 pub const WEAPON_AP: u8 = 27;
 /// A tupp's laser eyes: sent for every burn, hit or miss, from `shooter`, the vehicle, ending at `x, y, z`.

@@ -852,3 +852,185 @@ fn a_looked_house_is_collided_with_as_its_own_roof_and_walls_with_the_windows_op
     let still = physics.cast_ray([0.3, 0.3, -5.0], [0.0, 0.0, 1.0], 20.0, 0).expect("the wall");
     assert!((still - 5.0).abs() < 0.02, "{still}");
 }
+
+/// 200 m square of 1 m cells: dry at 0 north of z = -10, then a lake whose bed shelves down at 1 in 5 to
+/// 4 m deep, its still surface at 0. East of x = 20 the lake ends in a 3 m bank, steeper than walking climbs.
+fn lake_world() -> WorldFile {
+    let side = 201u32;
+    let bed = |x: f32, z: f32| -> f32 {
+        if z > -10.0 || x >= 20.0 {
+            0.0
+        } else if x >= 19.0 {
+            -3.0
+        } else {
+            -((-z - 10.0) * 0.2).min(4.0)
+        }
+    };
+    let mut heights = Vec::new();
+    let mut water = Vec::new();
+    for j in 0..side {
+        for i in 0..side {
+            let ground = bed(i as f32 - 100.0, j as f32 - 100.0);
+            heights.push((ground * 100.0).round() as i32);
+            water.push(if ground < 0.0 { 0 } else { shared::world::NO_WATER });
+        }
+    }
+    WorldFile { ground: Ground { origin: -10_000, cell: 100, side, heights }, water, ..flat_world() }
+}
+
+/// The lake with its waves stilled, for exact heights.
+fn calm_lake() -> Physics {
+    let mut physics = Physics::new(&lake_world()).unwrap();
+    physics.calm_waters();
+    physics
+}
+
+/// Input facing yaw (radians; 0 faces -Z) and looking `pitch` up, pushing `forward`, with `buttons`.
+fn swim_input(forward: i8, yaw: f32, pitch: f32, buttons: u16) -> InputFrame {
+    InputFrame { forward, yaw: shared::quant::to_mrad(yaw), pitch: shared::quant::to_mrad(pitch), buttons, ..Default::default() }
+}
+
+fn run(physics: &Physics, character: &mut Character, input: &InputFrame, seconds: f32) {
+    for _ in 0..(seconds * TICK_RATE as f32) as u32 {
+        physics.move_character(character, input, TICK_DT);
+    }
+}
+
+/// A swimmer at the float height over deep water at `z`.
+fn floating(x: f32, z: f32) -> Character {
+    Character { position: [x, -SWIM_FLOAT, z], swimming: true, ..Default::default() }
+}
+
+#[test]
+fn a_soldier_walking_into_deep_water_starts_swimming_and_floats_with_head_out() {
+    let physics = calm_lake();
+    let mut character = standing();
+    run(&physics, &mut character, &swim_input(127, 0.0, 0.0, 0), 4.0);
+    assert!(!character.swimming, "wading in the shallows: {character:?}");
+    run(&physics, &mut character, &swim_input(127, 0.0, 0.0, 0), 12.0);
+    assert!(character.swimming, "{character:?}");
+    assert!(character.position[2] < -30.0, "out over the deep: {character:?}");
+    assert!((character.position[1] + SWIM_FLOAT).abs() < 0.05, "at the float height: {character:?}");
+    assert!(!physics.submerged(&character), "the head is out");
+}
+
+#[test]
+fn looking_down_and_swimming_forward_dives_and_space_brings_the_diver_back_up() {
+    let physics = calm_lake();
+    let mut character = floating(0.0, -60.0);
+    run(&physics, &mut character, &swim_input(127, 0.0, -1.1, 0), 1.5);
+    assert!(physics.submerged(&character), "{character:?}");
+    assert!(character.position[1] < -1.5, "well down: {character:?}");
+    run(&physics, &mut character, &swim_input(0, 0.0, 0.0, BUTTON_JUMP), 3.0);
+    assert!(!physics.submerged(&character), "{character:?}");
+    assert!((character.position[1] + SWIM_FLOAT).abs() < 0.1, "back at the float height: {character:?}");
+}
+
+#[test]
+fn crouch_sinks_a_swimmer_to_the_bed() {
+    let physics = calm_lake();
+    let mut character = floating(0.0, -60.0);
+    run(&physics, &mut character, &swim_input(0, 0.0, 0.0, BUTTON_CROUCH), 4.0);
+    assert!(character.grounded, "on the bottom: {character:?}");
+    assert!((character.position[1] - (-4.0 + STANDING_Y)).abs() < 0.1, "{character:?}");
+    assert!(character.swimming);
+}
+
+#[test]
+fn a_swimmer_walks_out_where_the_bank_shallows() {
+    let physics = calm_lake();
+    let mut character = floating(0.0, -40.0);
+    run(&physics, &mut character, &swim_input(127, -std::f32::consts::PI, 0.0, 0), 30.0);
+    assert!(!character.swimming, "{character:?}");
+    assert!(character.grounded, "{character:?}");
+    assert!(character.position[2] > -10.0, "out on the shore: {character:?}");
+}
+
+#[test]
+fn a_swimmer_climbs_out_over_a_bank_too_steep_to_walk_up() {
+    let physics = calm_lake();
+    let mut character = floating(15.0, -50.0);
+    run(&physics, &mut character, &swim_input(127, -std::f32::consts::FRAC_PI_2, 0.0, 0), 10.0);
+    assert!(character.position[0] > 20.5, "up on the bank: {character:?}");
+    assert!(!character.swimming, "{character:?}");
+}
+
+#[test]
+fn falling_into_deep_water_is_braked_before_the_bed_and_floats_up() {
+    let physics = calm_lake();
+    let mut character = Character { position: [0.0, 12.0, -60.0], ..Default::default() };
+    let mut deepest = f32::MAX;
+    for _ in 0..10 * TICK_RATE {
+        physics.move_character(&mut character, &InputFrame::default(), TICK_DT);
+        deepest = deepest.min(character.position[1]);
+    }
+    assert!(character.swimming, "{character:?}");
+    assert!((character.position[1] + SWIM_FLOAT).abs() < 0.1, "floating: {character:?}");
+    assert!(deepest < -1.5, "it went in deep: {deepest}");
+}
+
+#[test]
+fn a_parachute_closes_on_landing_in_water() {
+    let physics = calm_lake();
+    let mut character = Character { position: [0.0, 6.0, -60.0], chute: true, ..Default::default() };
+    run(&physics, &mut character, &InputFrame::default(), 3.0);
+    assert!(character.swimming && !character.chute, "{character:?}");
+}
+
+#[test]
+fn a_swimmer_cannot_lie_down() {
+    let physics = calm_lake();
+    let mut character = floating(0.0, -60.0);
+    run(&physics, &mut character, &swim_input(0, 0.0, 0.0, BUTTON_PRONE), 0.5);
+    assert!(!character.prone && character.swimming, "{character:?}");
+}
+
+#[test]
+fn lying_in_a_shallow_pool_puts_the_face_under() {
+    let physics = calm_lake();
+    // Half a metre deep, at z = -12.5.
+    let mut character = Character { position: [0.0, -0.5 + STANDING_Y, -12.5], grounded: true, ..Default::default() };
+    run(&physics, &mut character, &swim_input(0, 0.0, 0.0, BUTTON_PRONE), 0.5);
+    assert!(character.prone && !character.swimming, "{character:?}");
+    assert!(physics.submerged(&character));
+}
+
+#[test]
+fn swimming_along_looking_a_little_down_stays_at_the_surface() {
+    let physics = calm_lake();
+    let mut character = floating(0.0, -60.0);
+    for _ in 0..5 * TICK_RATE {
+        physics.move_character(&mut character, &swim_input(127, -std::f32::consts::FRAC_PI_2, -0.75, 0), TICK_DT);
+        assert!(!physics.submerged(&character), "{character:?}");
+    }
+    assert!((character.position[1] + SWIM_FLOAT).abs() < 0.05, "{character:?}");
+}
+
+#[test]
+fn a_dive_goes_well_under_and_letting_go_floats_back_up() {
+    let physics = calm_lake();
+    let mut character = floating(0.0, -60.0);
+    run(&physics, &mut character, &swim_input(127, -std::f32::consts::FRAC_PI_2, -1.1, 0), 1.0);
+    assert!(character.position[1] < -1.5, "well under, not just below the surface: {character:?}");
+    run(&physics, &mut character, &swim_input(0, 0.0, 0.0, 0), 8.0);
+    assert!((character.position[1] + SWIM_FLOAT).abs() < 0.05, "{character:?}");
+}
+
+#[test]
+fn a_floating_swimmer_bobs_with_the_waves() {
+    let mut physics = Physics::new(&lake_world()).unwrap();
+    let mut character = floating(0.0, -60.0);
+    let (mut low, mut high) = (f32::MAX, f32::MIN);
+    for tick in 0..20 * TICK_RATE {
+        physics.set_tick(tick);
+        physics.move_character(&mut character, &InputFrame::default(), TICK_DT);
+        let surface = physics.waters.surface(0.0, -60.0, shared::waves::time(tick)).unwrap().height;
+        if tick > 2 * TICK_RATE {
+            assert!((character.position[1] - (surface - SWIM_FLOAT)).abs() < 0.12, "riding the surface: {character:?} on {surface}");
+            assert!(!physics.submerged(&character), "the head stays out on the swell");
+        }
+        low = low.min(character.position[1]);
+        high = high.max(character.position[1]);
+    }
+    assert!(high - low > 0.1, "it bobs: {low}..{high}");
+}

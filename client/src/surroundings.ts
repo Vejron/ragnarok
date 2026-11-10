@@ -21,6 +21,8 @@ import { WakeTrail } from '@/render/wakes'
 
 /** Feet this deep (metres) under the surface are in the water. */
 const WADE_DEPTH = 0.15
+/** A body whose centre is this deep (metres) under the surface is a diver, too far down to stir it. */
+const DIVE_DEPTH = 1.2
 /** Wading ripples are drawn within this many metres of the camera. */
 const WADE_RIPPLE_RANGE = 60
 /** Seconds between splashes of someone going through a marsh's pools: about a stride. */
@@ -74,6 +76,8 @@ export class Surroundings {
   wade(key: number, x: number, y: number, z: number, speed: number, dt: number) {
     const level = this.fx().waterAt?.(x, z) ?? NO_WATER
     const wet = level !== NO_WATER && level - y > WADE_DEPTH
+    // A diver well under leaves the surface still.
+    const deep = level !== NO_WATER && level - y > DIVE_DEPTH
     const was = this.wading.get(key)
     if (!was) {
       // First seen: already wet is not a splash.
@@ -81,7 +85,7 @@ export class Surroundings {
       return
     }
     // Someone wading carves a small wake of their own.
-    if (wet && speed > 0.8) was.trail.move(this.fx().wake, x, z, Math.min(0.06, 0.02 + speed * 0.008))
+    if (wet && !deep && speed > 0.8) was.trail.move(this.fx().wake, x, z, Math.min(0.06, 0.02 + speed * 0.008))
     else was.trail.lift()
     if (wet && !was.wet) splash(this.fx(), { x, y: level, z }, 0.45, 2 + Math.min(speed, 8))
     else if (!wet && was.wet && speed > 1) splash(this.fx(), { x, y: level === NO_WATER ? y : level, z }, 0.3, 1)
@@ -96,7 +100,7 @@ export class Surroundings {
         }
       }
     }
-    if (wet && speed > 1) {
+    if (wet && !deep && speed > 1) {
       was.ripple -= dt
       if (was.ripple <= 0 && Math.hypot(this.scene.camera.position.x - x, this.scene.camera.position.z - z) < WADE_RIPPLE_RANGE) {
         this.effects.ripple({ x, y: level + 0.02, z }, 0.3)

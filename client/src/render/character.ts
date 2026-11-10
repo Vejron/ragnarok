@@ -128,6 +128,15 @@ const poleLift = (stroke: number) => {
 
 /** Below this ground speed the character just stands; `FULL_STEP` is where the walk is fully in. */
 const STILL_SPEED = 0.3
+/** Swimming: the speed under which it treads water (or hangs under it) and from which it strokes in full, m/s. */
+const SWIM_STILL = 0.3
+const SWIM_FULL = 1.2
+/** Water covered by one stroke of `swim_fwd` and `dive_fwd`, metres (an unhurried stroke every 1.3 s at swimming speed), and the slowest the strokes go, m/s. */
+const SWIM_STROKE = 2.6
+const SWIM_PACE = 0.6
+/** The steepest a diver's body tips towards where it swims, radians, and how fast it gets there, per second. */
+const DIVE_TILT_MAX = 1.1
+const DIVE_TILT_RATE = 4
 const FULL_STEP = 1.4
 /** How quickly blend weights chase their targets, per second. */
 const BLEND_RATE = 12
@@ -510,6 +519,14 @@ export class Character {
   private skiRise = 0
   private skiBraking = 0
   private skiLast: { y: number; speed: number } | null = null
+  /** Swimming: 0 not, 1 at the surface, 2 under it (`STANCE_SWIM`, `STANCE_DIVE`). */
+  swim: 0 | 1 | 2 = 0
+  /** How far the body has gone over to the swimming clips, and of those to the diving ones, 0 to 1. */
+  private wet = 0
+  private under = 0
+  /** Where the strokes are, 0..1, paced by the water covered; and the diver's tip towards where it swims, rad. */
+  private swimPhase = 0
+  private diveTilt = 0
   /** Freefalling with the chute shut, and hanging under it, 0..1; and seconds off the ground. */
   private fall = 0
   private hang = 0
@@ -660,6 +677,14 @@ export class Character {
 
     this.clock += dt
     this.canopy.update(chute && !this.down, dt)
+    // In the water nothing falls or lands: the strokes take over from the clips on foot.
+    const swimming = this.swim > 0 && !this.down
+    this.wet = chase(this.wet, swimming ? 1 : 0, BLEND_RATE, dt)
+    this.under = chase(this.under, this.swim === 2 ? 1 : 0, BLEND_RATE, dt)
+    if (swimming) {
+      grounded = true
+      this.fallSpeed = 0
+    }
 
     // Off the ground long enough, or falling fast enough, with the chute shut: a freefall.
     this.airTime = grounded ? 0 : this.airTime + dt
@@ -706,7 +731,8 @@ export class Character {
       this.backpack.position.set(0, PACK_Y - PACK_CROUCH_DROP * this.crouch, -PACK_BACK)
     }
     const alive = 1 - this.death
-    const ground = alive * (1 - this.air) * (this.handsUp ? 1 - this.hang : 1)
+    const dry = 1 - this.wet
+    const ground = alive * (1 - this.air) * (this.handsUp ? 1 - this.hang : 1) * dry
     this.slide = chase(this.slide, sliding && crouching ? 1 : 0, SLIDE_RATE, dt)
     // Lying down is its own stance: the crouch and slide clips give way to the crawl clips.
     this.frameDt = dt
@@ -751,13 +777,14 @@ export class Character {
     set('crawl_idle', crawl * (1 - moving))
     set('slide', sliding_)
     // In the air: a jump, a freefall, or hanging under the canopy. The falling clips are every stance's.
-    const aloft = alive * this.air
+    const aloft = alive * this.air * dry
     set('jump_air', aloft * walking * (1 - this.fall) * (1 - this.hang))
     const skiing = this.ski + this.skiGun
     if (skiing > 0) this.skiTargets(targets, ground * skiing * (1 - this.lie), aloft * skiing * (1 - this.fall) * (1 - this.hang), speedNow)
     targets.set('freefall', aloft * this.fall * (1 - this.hang))
     targets.set('chute', (this.handsUp ? alive : aloft) * this.hang)
     targets.set('death', this.death)
+    this.swimTargets(targets, alive * this.wet, speedNow, vy, dt)
     // Getting up is all there is until it is up; then the stance's clips take over again.
     const rising = this.rising
     if (rising) {
@@ -811,6 +838,8 @@ export class Character {
       else if (base === 'freefall' || base === 'chute') action.time = this.clock % action.clip.duration
       else if (base === 'getup_back' || base === 'getup_front') action.time = Math.min(1, (this.rising?.time ?? GETUP_TIME) / GETUP_TIME) * action.clip.duration
       else if (base === 'golf_swing') action.time = this.golfPhase * action.clip.duration
+      else if (base === 'swim_tread' || base === 'dive_idle') action.time = this.clock % action.clip.duration
+      else if (base === 'swim_fwd' || base === 'dive_fwd') action.time = this.swimPhase * action.clip.duration
       else if (base !== 'death') action.time = this.phase * action.clip.duration
     }
     // The death clip plays out on the animator's clock once it starts.
@@ -826,7 +855,7 @@ export class Character {
     // On skis with a gun the legs go the way the skis do and the torso alone carries it to the look.
     const heading = speedNow > 0.5 ? Math.atan2(-vx, -vz) : body
     const skiTurn = this.skiGun * (1 - this.air) * wrap(yaw + Math.max(-SKI_TWIST, Math.min(SKI_TWIST, wrap(heading - yaw))) - body)
-    const twist = wrap(yaw - body - skiTurn) * alive * (1 - this.lie) * (1 - this.air) * (1 - this.golf) * (this.rising ? 0 : 1)
+    const twist = wrap(yaw - body - skiTurn) * alive * (1 - this.lie) * (1 - this.air) * (1 - this.golf) * (1 - this.under) * (this.rising ? 0 : 1)
     this.turn(this.spine, twist * TWIST_SPINE, AXIS_Y)
     this.turn(this.chest, twist * (1 - TWIST_SPINE), AXIS_Y)
     this.live(dt, speedNow, standing * (1 - moving), alive)
@@ -838,6 +867,28 @@ export class Character {
     this.easeUp()
     if (this.onSkis) this.fitSkis()
     this.posedOffset.copy(this.object.position).sub(this.position)
+  }
+
+  /**
+   * The swimming clips' share of `wet`: treading water or hanging under it when still, stroking when it
+   * moves, at the surface or under it; and the strokes' pace and the diver's tip, from how it moves.
+   */
+  private swimTargets(targets: Map<string, number>, wet: number, speed: number, vy: number, dt: number) {
+    const through = Math.hypot(speed, vy * this.under)
+    const stroke = smoothstep(SWIM_STILL, SWIM_FULL, through)
+    const surface = wet * (1 - this.under)
+    const deep = wet * this.under
+    const set = (name: string, weight: number) => {
+      if (this.actions.has(name)) targets.set(name, weight)
+    }
+    set('swim_tread', surface * (1 - stroke))
+    set('swim_fwd', surface * stroke)
+    set('dive_idle', deep * (1 - stroke))
+    set('dive_fwd', deep * stroke)
+    this.swimPhase = (this.swimPhase + (dt * Math.max(through, SWIM_PACE)) / SWIM_STROKE) % 1
+    // Going down the head leads, going up it follows: the body lies along the way it swims.
+    const tilt = speed + Math.abs(vy) > SWIM_STILL ? Math.max(-DIVE_TILT_MAX, Math.min(DIVE_TILT_MAX, -Math.atan2(vy, Math.max(speed, 0.4)))) : 0
+    this.diveTilt = chase(this.diveTilt, tilt * deep * stroke, DIVE_TILT_RATE, dt)
   }
 
   private skipsFrame() {
@@ -1162,6 +1213,13 @@ export class Character {
     if (!this.fling && (tipX !== 0 || tipZ !== 0)) {
       this.object.quaternion.multiply(SCRATCH.turn.setFromAxisAngle(AXIS_X, tipX)).multiply(SCRATCH.q.setFromAxisAngle(AXIS_Z, tipZ))
     }
+    if (this.diveTilt !== 0 && !this.fling) {
+      // A diver tips about the middle of the body, where the diving clips hold it, not about the feet.
+      const middle = SCRATCH.axis.set(0, FOOT_OFFSET, 0).applyQuaternion(this.object.quaternion)
+      this.object.position.add(middle)
+      this.object.quaternion.multiply(SCRATCH.turn.setFromAxisAngle(AXIS_X, this.diveTilt))
+      this.object.position.sub(middle.set(0, FOOT_OFFSET, 0).applyQuaternion(this.object.quaternion))
+    }
     if (this.fling) {
       // Tumble about the middle of the body, not the feet.
       const middle = SCRATCH.axis.set(0, FOOT_OFFSET, 0)
@@ -1407,7 +1465,8 @@ export class Character {
     if (this.down || this.death > 0.3) return
     // Falling flat or hanging in the harness, there is nothing to aim.
     // A golfer's look is down at the ball, which the swing clip already has.
-    const held = (1 - Math.max(this.fall, this.hang)) * (1 - this.golf)
+    // A swimmer has nothing in hand, and the strokes hold the body as it swims.
+    const held = (1 - Math.max(this.fall, this.hang)) * (1 - this.golf) * (1 - this.wet)
     const lean = (-this.pitch - this.recoil) * held
     this.turn(this.spine, lean * AIM_SPINE, AXIS_X)
     this.turn(this.chest, lean * AIM_CHEST, AXIS_X)

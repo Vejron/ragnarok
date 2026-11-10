@@ -61,6 +61,10 @@ pub struct Player {
     pub ski_held: bool,
     /// Hands up: a bot that has given in.
     pub surrendered: bool,
+    /// Air left, ticks out of `BREATH_FULL` (`mechanics::breath`).
+    pub breath: u16,
+    /// Ticks spent out of air under the water, for the drowning's pace (`DROWN_EVERY`).
+    pub drowning: u16,
     /// While seated the soldier is hidden and rides with the vehicle; input drives the seat.
     pub seat: Option<Seat>,
     /// Ticks until a car can hit this player again.
@@ -367,6 +371,8 @@ impl Player {
             lamp_held: false,
             ski_held: false,
             surrendered: false,
+            breath: BREATH_FULL,
+            drowning: 0,
             hands: Hands { hotbar: loadout, loadout, selected: Some(0), fire_cooldown: 0, bloom: 0.0, reload_left: 0, channel_left: 0, trigger_held: false, golf: Default::default(), golf_seen: 0 },
             score: Tally::default(),
             name,
@@ -389,10 +395,10 @@ impl Player {
     }
 
     /// Whether the soldier is down in a crouch, kneeling over a drone's controls included: not lying
-    /// down, hanging under a canopy, or with a leg gone, which rules a crouch out.
+    /// down, hanging under a canopy, swimming, or with a leg gone, which rules a crouch out.
     pub fn crouched(&self) -> bool {
         let c = &self.character;
-        (self.input.buttons() & BUTTON_CROUCH != 0 || self.seat.is_some()) && !c.prone && !c.chute && c.down == 0 && c.lost & LIMB_LEGS == 0
+        (self.input.buttons() & BUTTON_CROUCH != 0 || self.seat.is_some()) && !c.prone && !c.chute && !c.swimming && c.down == 0 && c.lost & LIMB_LEGS == 0
     }
 
     /// How the soldier holds themself, for a round to meet.
@@ -410,7 +416,9 @@ impl Player {
     /// Where the soldier's eye is, for the stance they are in.
     pub fn eye(&self) -> [f32; 3] {
         let c = &self.character;
-        [c.position[0], c.position[1] + eye_height(self.input.buttons(), c.prone), c.position[2]]
+        // A swimmer's crouch takes them down, not their head.
+        let buttons = if c.swimming { 0 } else { self.input.buttons() };
+        [c.position[0], c.position[1] + eye_height(buttons, c.prone), c.position[2]]
     }
 
     /// The point the over-the-shoulder camera turns about on foot, which the crosshair's ray starts from.

@@ -40,6 +40,8 @@ export interface HudStats {
   air: number | null
   /** On foot: stamina left, 0..1, and whether they are winded (running is walking, jumps are low); null elsewhere. */
   stamina: { left: number; winded: boolean } | null
+  /** Air left, 0..1, while it is not full (holding the breath under the water, or getting it back); null when full. */
+  breath: number | null
   /** Driving, flying or steering something that moves, or on skis: its speed, km/h, for the speedometer; null elsewhere. */
   speed: number | null
   /** Seated in a vehicle: its name, as the HUD labels its health, and that health; null on foot. */
