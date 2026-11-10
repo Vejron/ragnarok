@@ -86,7 +86,8 @@ fn left_alone_it_grazes_and_wanders_about_its_pasture() {
         game.step();
         let w = wild(&game, id);
         assert!(matches!(w.mode, WildMode::Graze | WildMode::Walk), "calm, not {:?}", w.mode);
-        assert!(distance(at(&game, id), [50.0, 0.0]) <= DEER_HERD_RADIUS + 1.0, "strayed");
+        // Its own spot is up to half a herd radius from the herd's, and it grazes up to a radius from that.
+        assert!(distance(at(&game, id), [50.0, 0.0]) <= DEER_HERD_RADIUS * 1.5 + 1.0, "strayed");
         grazed |= w.mode == WildMode::Graze;
         walked |= w.mode == WildMode::Walk;
         flagged |= game.seen_people(KIND_DEER).iter().any(|(_, seen)| seen.flags.as_ref().is_some_and(|f| f.flags & FLAG_GRAZING != 0));

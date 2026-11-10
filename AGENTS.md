@@ -26,9 +26,22 @@ The client's copies of shared data are generated from the Rust. Never edit a `*.
 | A message in `protocol.rs` or a component in `replicated.rs` | `UPDATE_PARITY=1 cargo test -p shared` | `client/src/net/*.generated.ts`, `client/src/entities/units.generated.ts` and the `__tests__/*.fixture.json` files |
 
 - **The struct field order is the wire format.** After adding, removing or reordering a field of a message or component, bump `PROTOCOL_VERSION` in `consts.rs`.
+- **A new field also needs three hand edits** that `UPDATE_PARITY=1` does not make: the struct literals in `crates/shared/src/protocol/tests.rs` and `replicated/tests.rs`, and the expected snapshot in `client/src/__tests__/codec.spec.ts`.
+- **A quantised field arrives decoded.** The client reads a `u8 as byte` field as 0..1 and an `i16 as mrad` field as radians, not as the raw integer.
 - **Flag and kind constants are mirrored by hand** in `client/src/net/codec.ts` (`TURRET_*`, `KIND_*` exports and so on). `consts-parity.spec.ts` checks them.
 - **`gen-consts` parses the Rust as text.** Write constant arrays as literals (`[0.0, 1.79, 1.65]`), not expressions built from other constants.
 - **Rebuild the WASM before testing.** The client's prediction runs `crates/sim` as WASM. `npm test` and `npm run type-check` rebuild it first, but `npx vitest run` does not, so run `npm run build:wasm` before it after any physics change.
+
+## Adding a field to the predicted soldier
+
+`sim::Character` crosses into the client's prediction as a flat array of numbers, so a new field means all of these:
+
+1. `CHARACTER_LEN` and the `read`/`write` pair in `crates/sim-wasm/src/lib.rs`.
+2. `CharacterState`, the scratch array's size and the packing in `client/src/sim/motor.ts`.
+3. The starting state and `reconcile` in `client/src/game.ts`. Reconcile must be able to rebuild the field from what the server replicates (a stance, a flag), or a correction cannot restore it.
+4. The state literals in `movement.spec.ts`, `predict.spec.ts` and `sim.bench.spec.ts`.
+
+Anything in the sim that reads the tick (waves do) also needs the client to call `motor.setTick` before each predicted step.
 
 ## Checking your work
 
@@ -45,6 +58,9 @@ To iterate faster:
 - In the client, run one spec, e.g. `npx vitest run src/__tests__/car.spec.ts`.
 - The client's real type check is `vue-tsc --build`. Running `tsc` on the root `tsconfig.json` checks nothing.
 - Vehicle physics tests (`crates/sim/src/vehicle/tests.rs`) run on a small flat world that ends about 200 m out, so a long full-throttle run drives off it.
+- Water in a test world has waves, and the surface depends on `Physics::set_tick`. Call `calm_waters()` for a test that needs still water.
+- The server's world is seeded from the clock (`Rng::from_time`), so a server test that fails now and then is a test relying on luck, not noise. Run the test binary that `cargo test -p server --no-run` names 50 times with the test's name, read the failing assert, and fix the test's set-up. A common cause is a soldier put in mid-air, who falls while the test runs.
+- In zsh, `grep --include=*.rs` fails with "no matches found". Quote the glob, or leave it out.
 - Blender is at `/Applications/Blender.app/Contents/MacOS/Blender`. To build one car and look at it: `Blender -b -P tools/vehicles/build_car.py -- --only <kind> --preview <dir>`.
 
 ## Deploying
@@ -72,4 +88,5 @@ The README's "Deploying" section has the full steps. In short: commit first, bec
 ## Skills
 
 - `.claude/skills/add-vehicle`: the checklist for adding a vehicle kind, end to end.
+- `.claude/skills/animate-soldier`: adding or reworking a clip of the soldier (`tools/character/build_character.py`), how to check it, and the client side.
 - `.claude/skills/add-orienteering-map`: putting an OCAD map and its render into a world, from `temp-maps/ocad/` to a deploy.

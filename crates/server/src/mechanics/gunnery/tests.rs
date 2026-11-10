@@ -782,8 +782,17 @@ fn the_rear_gun_hits_a_soldier_behind_and_only_its_gunner_works_it() {
     let pose = game.world.physics.car_pose(vid).unwrap();
     let gun = turret(&game, vid);
     let (ring, dir) = aim_from(&pose, PLANE_REAR_PIVOT, gun.yaw, gun.pitch);
-    game.world.entities.get_mut::<Player>(victim).unwrap().character.position = vec3::sub(vec3::along(ring, dir, 20.0), [0.0, 0.3, 0.0]);
-    aim_and_hold(&mut game, gunner, &mut seq, hull + std::f32::consts::PI, 0.0, BUTTON_FIRE, 30);
+    // The plane sits tail down, so a level look sends the rounds over a standing soldier's head. The
+    // victim is held up in the line of fire each tick, or they would fall out of it between rounds.
+    let held = vec3::sub(vec3::along(ring, dir, 20.0), [0.0, 0.3, 0.0]);
+    for _ in 0..30 {
+        {
+            let mut player = game.world.entities.get_mut::<Player>(victim).unwrap();
+            player.character.position = held;
+            player.character.vy = 0.0;
+        }
+        aim_and_hold(&mut game, gunner, &mut seq, hull + std::f32::consts::PI, 0.0, BUTTON_FIRE, 1);
+    }
     assert!(game.world.entities.of::<crate::entities::Health>(victim).hp < PLAYER_MAX_HP || game.world.entities.has::<crate::mechanics::Wounds>(victim), "hit somewhere");
 
     // A pilot alone works only the forward guns.
