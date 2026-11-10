@@ -72,3 +72,4 @@ The README's "Deploying" section has the full steps. In short: commit first, bec
 ## Skills
 
 - `.claude/skills/add-vehicle`: the checklist for adding a vehicle kind, end to end.
+- `.claude/skills/add-orienteering-map`: putting an OCAD map and its render into a world, from `temp-maps/ocad/` to a deploy.
