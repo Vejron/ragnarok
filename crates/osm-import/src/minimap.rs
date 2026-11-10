@@ -1,15 +1,19 @@
-//! Pre-renders the whole world as one top-down PNG (`minimap.png`, next to `world.msgpack`), so
+//! Pre-renders the whole world as one top-down picture (`minimap.webp`, next to `world.msgpack`), so
 //! the client's minimap and map are a static image instead of something it draws every frame.
 //!
 //! North is up: pixel x grows with world X (east), pixel y with world Z (south), so the image
-//! maps the playable square `[-half, half]` onto `[0, SIZE)` in both axes.
+//! maps the playable square `[-half, half]` onto `[0, size)` in both axes.
 
-use anyhow::Result;
 use shared::world::{COVER_FARM, COVER_GOLF_BUNKER, COVER_GOLF_FAIRWAY, COVER_GOLF_GREEN, COVER_GOLF_TEE, COVER_INDUSTRIAL, COVER_MARSH, COVER_MARSH_DEEP, COVER_MARSH_FAINT, COVER_PARK, COVER_ROCK, COVER_SAND, COVER_THICKET_FIGHT, COVER_THICKET_SLOW, COVER_THICKET_WALK, COVER_URBAN, COVER_WATER, COVER_WOOD, Manifest, NO_WATER, RAIL_TRAM, ROAD_FAINT, ROAD_GRAVEL, ROAD_MAJOR, ROAD_MINOR, ROAD_TRACK, THEME_WINTER, Tile};
 use std::collections::BTreeMap;
 
 /// Side of the image, pixels. 2048 px over 8.6 km is about 4 m a pixel.
 pub const SIZE: usize = 2048;
+/// Side of the image when a print of an orienteering map is laid over it, pixels: finer, so the map's
+/// symbols stay readable. 4096 px over 6 km is about 1.5 m a pixel, near what a print has.
+pub const PRINT_SIZE: usize = 4096;
+/// The WebP quality the picture is saved at, 0..100: the map's thin lines and symbols stay sharp.
+const QUALITY: f32 = 85.0;
 
 type Rgb = [u8; 3];
 
@@ -83,19 +87,22 @@ impl Overlay {
     }
 
     fn paint(&self, canvas: &mut Canvas) {
-        for row in 0..SIZE {
-            for column in 0..SIZE {
+        let size = canvas.size;
+        for row in 0..size {
+            for column in 0..size {
                 let [x, z] = [(column as f64 + 0.5) / canvas.scale - canvas.half, (row as f64 + 0.5) / canvas.scale - canvas.half];
                 if let Some(color) = self.sample((self.at)(x, z)) {
-                    canvas.pixels[(row * SIZE + column) * 3..][..3].copy_from_slice(&color);
+                    canvas.pixels[(row * size + column) * 3..][..3].copy_from_slice(&color);
                 }
             }
         }
     }
 }
 
-struct Canvas {
-    pixels: Vec<u8>,
+/// The rendered map: `size` × `size` pixels of RGB, row by row.
+pub struct Canvas {
+    pub size: usize,
+    pub pixels: Vec<u8>,
     /// World metres to pixels.
     scale: f64,
     /// Half the playable square, metres.
@@ -103,12 +110,17 @@ struct Canvas {
 }
 
 impl Canvas {
-    fn new(half: f64) -> Self {
-        let mut pixels = vec![0u8; SIZE * SIZE * 3];
+    fn new(half: f64, size: usize) -> Self {
+        let mut pixels = vec![0u8; size * size * 3];
         for chunk in pixels.chunks_exact_mut(3) {
             chunk.copy_from_slice(&LAND);
         }
-        Canvas { pixels, scale: SIZE as f64 / (2.0 * half), half }
+        Canvas { size, pixels, scale: size as f64 / (2.0 * half), half }
+    }
+
+    /// The picture as a lossy WebP.
+    pub fn webp(&self) -> Vec<u8> {
+        webp::Encoder::from_rgb(&self.pixels, self.size as u32, self.size as u32).encode(QUALITY).to_vec()
     }
 
     /// World centimetres to pixel coordinates.
@@ -124,7 +136,7 @@ impl Canvas {
             bottom = bottom.max(p[1]);
         }
         let first = top.floor().max(0.0) as usize;
-        let last = (bottom.ceil().max(0.0) as usize).min(SIZE - 1);
+        let last = (bottom.ceil().max(0.0) as usize).min(self.size - 1);
         let mut crossings = Vec::new();
         for y in first..=last {
             let sample = y as f64 + 0.5;
@@ -141,9 +153,9 @@ impl Canvas {
             for span in crossings.chunks_exact(2) {
                 // Pixels whose centres lie inside the span.
                 let start = (span[0] - 0.5).ceil().max(0.0) as usize;
-                let end = ((span[1] - 0.5).floor() + 1.0).clamp(0.0, SIZE as f64) as usize;
+                let end = ((span[1] - 0.5).floor() + 1.0).clamp(0.0, self.size as f64) as usize;
                 for x in start..end {
-                    let at = (y * SIZE + x) * 3;
+                    let at = (y * self.size + x) * 3;
                     self.pixels[at..at + 3].copy_from_slice(&color);
                 }
             }
@@ -169,10 +181,10 @@ impl Canvas {
     }
 }
 
-/// Renders the world to PNG bytes.
-pub fn render(manifest: &Manifest, tiles: &BTreeMap<(u16, u16), Tile>, overlay: Option<&Overlay>) -> Result<Vec<u8>> {
+/// Renders the world, `PRINT_SIZE` across under a print and `SIZE` otherwise.
+pub fn render(manifest: &Manifest, tiles: &BTreeMap<(u16, u16), Tile>, overlay: Option<&Overlay>) -> Canvas {
     let half_cm = manifest.half_extent;
-    let mut canvas = Canvas::new(f64::from(half_cm) / 100.0);
+    let mut canvas = Canvas::new(f64::from(half_cm) / 100.0, if overlay.is_some() { PRINT_SIZE } else { SIZE });
     let ring = |canvas: &Canvas, points: &[[i32; 2]]| points.iter().map(|&p| canvas.px(p)).collect::<Vec<_>>();
 
     for tile in tiles.values() {
@@ -248,13 +260,7 @@ pub fn render(manifest: &Manifest, tiles: &BTreeMap<(u16, u16), Tile>, overlay: 
     if let Some(overlay) = overlay {
         overlay.paint(&mut canvas);
     }
-    let mut bytes = Vec::new();
-    let mut encoder = png::Encoder::new(&mut bytes, SIZE as u32, SIZE as u32);
-    encoder.set_color(png::ColorType::Rgb);
-    encoder.set_depth(png::BitDepth::Eight);
-    encoder.set_compression(png::Compression::High);
-    encoder.write_header()?.write_image_data(&canvas.pixels)?;
-    Ok(bytes)
+    canvas
 }
 
 #[cfg(test)]
@@ -272,11 +278,9 @@ mod tests {
         // A track along Z = 500 m, crossing the road.
         tile.rails.push(Rail { gauge: 144, kind: RAIL_TRAIN, points: vec![[-90_000, 50_000], [90_000, 50_000]] });
         let tiles = BTreeMap::from([((0, 0), tile)]);
-        let bytes = render(&manifest, &tiles, None).unwrap();
-        let decoded = png::Decoder::new(std::io::Cursor::new(bytes)).read_info().unwrap();
-        let mut reader = decoded;
-        let mut pixels = vec![0u8; reader.output_buffer_size().unwrap()];
-        reader.next_frame(&mut pixels).unwrap();
+        let canvas = render(&manifest, &tiles, None);
+        assert_eq!(canvas.size, SIZE);
+        let pixels = &canvas.pixels;
         let at = |x: usize, y: usize| [pixels[(y * SIZE + x) * 3], pixels[(y * SIZE + x) * 3 + 1], pixels[(y * SIZE + x) * 3 + 2]];
         let scale = SIZE as f64 / 2000.0; // pixels per metre: the square is 2 km across
         let to_px = |m: f64| ((m + 1000.0) * scale) as usize;

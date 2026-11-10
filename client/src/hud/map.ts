@@ -2,7 +2,7 @@ import type { Blip } from '@/blips'
 import { circleOnSmall } from '@/sim/minimap'
 import { FONT, INK_CSS } from './paint'
 
-/** The paper colour of `minimap.png`, the importer's `LAND`. */
+/** The paper colour of the map picture, the importer's `LAND`. */
 export const PAPER = '#e9e5d9'
 export const ARROW = '#ff5a5f'
 /** The minimap's side on a view `width` × `height` layout pixels: 180 on a desktop, down to 110 on a phone. */
@@ -24,14 +24,21 @@ export interface MapMarks {
   pulse: number
 }
 
-/** `minimap.png` from `url`, or null when the world has none. */
-export function loadMap(url: string): Promise<HTMLImageElement | null> {
-  return new Promise((resolve) => {
-    const image = new Image()
-    image.onload = () => resolve(image)
-    image.onerror = () => resolve(null)
-    image.src = url
-  })
+/** The importer's map picture, by name: a WebP now, a PNG from a world imported before. Tried in this order. */
+export const MAP_FILES = ['minimap.webp', 'minimap.png'] as const
+
+/** The world's map picture from the folder at `base` (`MAP_FILES`, the first there is), or null when the world has none. */
+export async function loadMap(base: string): Promise<HTMLImageElement | null> {
+  for (const file of MAP_FILES) {
+    const image = await new Promise<HTMLImageElement | null>((resolve) => {
+      const image = new Image()
+      image.onload = () => resolve(image)
+      image.onerror = () => resolve(null)
+      image.src = `${base}${file}`
+    })
+    if (image) return image
+  }
+  return null
 }
 
 /**

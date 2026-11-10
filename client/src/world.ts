@@ -8,7 +8,7 @@ export const WORLD_VERSION = 17
 /** `Manifest::theme`, mirrors `crates/shared/src/world.rs`. */
 export const THEME_WINTER = 1
 
-/** Where `world.msgpack`, `tiles/` and `minimap.png` are served from: `/` normally, `/dev/` for the dev world. */
+/** Where `world.msgpack`, `tiles/` and `minimap.webp` are served from: `/` normally, `/dev/` for the dev world. */
 export let WORLD_BASE: string = withSlash(import.meta.env.VITE_WORLD_BASE || '/')
 
 function withSlash(base: string): string {

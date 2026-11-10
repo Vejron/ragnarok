@@ -8,7 +8,7 @@ import ui from '@nuxt/ui/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
 const WORLDS = fileURLToPath(new URL('../worlds', import.meta.url))
-const TYPES: Record<string, string> = { '.json': 'application/json', '.png': 'image/png', '.msgpack': 'application/msgpack' }
+const TYPES: Record<string, string> = { '.json': 'application/json', '.png': 'image/png', '.webp': 'image/webp', '.msgpack': 'application/msgpack' }
 
 /** Serves the map editor's worlds (`worlds/<name>/world.msgpack`, `tiles/`) at `/worlds/` in dev. */
 const editorWorlds = {

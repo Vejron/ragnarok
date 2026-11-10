@@ -248,5 +248,5 @@ cargo run --release -p osm-import -- --center 48.8530,2.3499 --half 384 --cell 1
 RAGNAROK_WORLD=worlds/paris/world.msgpack cargo test --release -p server -- --ignored --nocapture whole_buildings_hold full_room
 ```
 
-Look at `minimap.png` next to the world first: the river, the bridges and the old town's blocks
+Look at `minimap.webp` next to the world first: the river, the bridges and the old town's blocks
 should be where the map has them, with no stretch east to west.

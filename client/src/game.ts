@@ -474,7 +474,7 @@ export class Game {
     await this.scene.init()
     const { world, hash } = await loadManifest()
     // Only now is the world's place known (in dev, the one the editor activated).
-    this.hud.loadMap(`${WORLD_BASE}minimap.png`)
+    this.hud.loadMap(WORLD_BASE)
     this.worldHash = hash
     this.world = world
     if (world.theme === THEME_WINTER) this.startWinter()

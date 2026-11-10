@@ -37,7 +37,7 @@ function halfSheet(left: boolean): Geometry {
  * The paper map the soldier holds up to read, seen in first person: a folded sheet in two gloved hands,
  * laid out in view space under a group that `follow` keeps on the camera, as the gun sight is. Its parts
  * are held meshes (`Mesh.held`), so the ground or a wall never cuts into it; the hands go under the sheet
- * and the thumbs over it by draw order. The picture is `minimap.png` round the reader with the marks on it,
+ * and the thumbs over it by draw order. The picture is `minimap.webp` round the reader with the marks on it,
  * redrawn a few times a second while it is up, `span` metres across (the wheel zooms it).
  */
 export class HeldMapView {

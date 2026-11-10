@@ -16,5 +16,6 @@ shared.workspace = true
 tiff = { version = "0.11.3", features = ["zstd"] }
 laz = "0.9"
 png = "0.18"
+webp = "0.3"
 zune-core = "0.5"
 zune-jpeg = "0.5"

@@ -5,6 +5,7 @@ import { MAX_NAME_CHARS, MAX_SPAWNS } from '@/sim/consts'
 import { HOTBAR_ICONS } from '@/hotbarIcons'
 import { ITEM_NONE, itemDef, LOADOUT_ITEMS, STANDARD_LOADOUT } from '@/sim/items'
 import { insideWorld, mapToWorld, worldToMap } from '@/sim/minimap'
+import { MAP_FILES } from '@/hud/map'
 import { loadManifest, WORLD_BASE, type WorldData } from '@/world'
 import { defaultLook, loadLook, LOOK_OPTIONS, saveLook, type Look } from '@/render/look'
 import { loadQuality, PRESETS, QUALITIES, resolveQuality, saveQuality, type Quality } from '@/render/quality'
@@ -67,6 +68,8 @@ const world = shallowRef<WorldData | null>(null)
 const hash = ref(0)
 const worldError = ref<string | null>(null)
 const mapMissing = ref(false)
+/** Which of `MAP_FILES` the map is being tried as: the next when one is not there. */
+const mapFile = ref(0)
 const notice = ref<string | null>(null)
 let noticeTimer = 0
 
@@ -80,7 +83,11 @@ onMounted(async () => {
   }
 })
 
-const mapUrl = computed(() => (world.value ? `${WORLD_BASE}minimap.png` : ''))
+const mapUrl = computed(() => (world.value ? `${WORLD_BASE}${MAP_FILES[mapFile.value]}` : ''))
+function mapFailed() {
+  if (mapFile.value < MAP_FILES.length - 1) mapFile.value++
+  else mapMissing.value = true
+}
 const playUrl = import.meta.env.BASE_URL
 const displayName = computed(() => sanitizeName(profile.value.name) || 'Player')
 const outfit = computed(() => cssColor(PLAYER_COLORS[profile.value.color ?? 0]!.hex))
@@ -279,7 +286,7 @@ const metres = ([x, z]: SpawnPoint) => `${Math.round(x / 100)} m E, ${Math.round
       <p v-if="worldError" class="error">Could not load the world: {{ worldError }}</p>
       <div v-else-if="world" class="layout">
         <div class="map" :class="{ missing: mapMissing }" @click="addSpawn" @contextmenu.prevent>
-          <img v-if="!mapMissing" :src="mapUrl" alt="Map of the world" draggable="false" @error="mapMissing = true" />
+          <img v-if="!mapMissing" :src="mapUrl" alt="Map of the world" draggable="false" @error="mapFailed" />
           <span v-else class="nomap">This world has no map image yet</span>
           <button
             v-for="marker in markers"

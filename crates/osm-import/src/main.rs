@@ -75,7 +75,7 @@ struct Args {
     /// Hydrografi Direkt. Slower (Overpass), but it has the sea.
     #[arg(long)]
     osm_water: bool,
-    /// Do not render `minimap.png`, the top-down map the client shows, next to the world.
+    /// Do not render `minimap.webp`, the top-down map the client shows, next to the world.
     #[arg(long)]
     no_minimap: bool,
     /// Leave out the trees from Umeå's open data.
@@ -516,7 +516,8 @@ struct AreaOptions {
     /// Metres to move that map, east and south, where it was drawn a little off.
     #[serde(default)]
     ocad_shift: [f64; 2],
-    /// A print of the orienteering map to show as the minimap where it reaches.
+    /// A render of the orienteering map (JPEG or PNG, placed by a world file beside it if there is one) to
+    /// show as the minimap where it reaches.
     minimap_image: Option<PathBuf>,
     /// Take the water from OSM (`--osm-water`), for a world on the coast: Hydrografi has no sea.
     #[serde(default)]
@@ -736,7 +737,7 @@ fn main() -> Result<()> {
     eprintln!("roofs: {} flat, {} shed, {} gable, {} hip", roofs[0], roofs[1], roofs[2], roofs[3]);
     let (spawns, tile_count) = (built.manifest.spawns.len(), built.tiles.len());
     progress::stage("minimap");
-    let map = if args.no_minimap { None } else { Some(minimap::render(&built.manifest, &built.tiles, print.as_ref()).context("rendering the minimap")?) };
+    let map = if args.no_minimap { None } else { Some(minimap::render(&built.manifest, &built.tiles, print.as_ref()).webp()) };
     let (manifest, tiles) = built.into_files();
     progress::stage("write");
 
@@ -753,7 +754,12 @@ fn main() -> Result<()> {
         std::fs::write(dir.join(path), bytes).with_context(|| format!("writing {path}"))?;
     }
     if let Some(map) = &map {
-        std::fs::write(dir.join("minimap.png"), map).context("writing minimap.png")?;
+        std::fs::write(dir.join("minimap.webp"), map).context("writing minimap.webp")?;
+        // The PNG an older import wrote would be shown in its place by a client that finds no WebP.
+        let old = dir.join("minimap.png");
+        if old.exists() {
+            std::fs::remove_file(&old).context("removing the old minimap.png")?;
+        }
     }
     std::fs::write(&args.out, &manifest).with_context(|| format!("writing {}", args.out.display()))?;
     let course_path = dir.join(shared::golf::COURSE_FILE);

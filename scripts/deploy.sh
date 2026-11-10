@@ -40,12 +40,14 @@ echo "==> building client"
 (cd client && npm ci && npm run build)
 rm -rf client/dist/dev   # the dev world (scripts/world-dev.sh) is copied from public/; never ship it as a subdirectory
 if [[ "$WORLD_DIR" != client/public ]]; then
-  # Serve WORLD_DIR's world at the root instead: the client fetches /world.msgpack, /tiles/ and /minimap.png.
+  # Serve WORLD_DIR's world at the root instead: the client fetches /world.msgpack, /tiles/ and /minimap.webp (or .png).
   echo "==> using world from $WORLD_DIR"
-  rm -rf client/dist/tiles client/dist/world.msgpack client/dist/minimap.png
+  rm -rf client/dist/tiles client/dist/world.msgpack client/dist/minimap.png client/dist/minimap.webp
   cp -R "$WORLD_DIR/tiles" client/dist/tiles
   cp "$WORLD_DIR/world.msgpack" client/dist/world.msgpack
-  [[ -f "$WORLD_DIR/minimap.png" ]] && cp "$WORLD_DIR/minimap.png" client/dist/minimap.png
+  for map in minimap.webp minimap.png; do
+    if [[ -f "$WORLD_DIR/$map" ]]; then cp "$WORLD_DIR/$map" "client/dist/$map"; fi
+  done
 fi
 
 # The hand-placed spawns, vehicles and items live in the world's area.json, which the server reads

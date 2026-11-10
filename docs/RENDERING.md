@@ -469,7 +469,7 @@ banners, the touch controls and invisible tap targets over the drawn hotbar.
 - **The held map** (`render/heldmap.ts`, M) is not HUD but scene: a folded sheet in two gloved hands in
   view space, made of meshes with `held = true`. Those are drawn at the end of the main pass ignoring the
   scene's depth but writing their own, so a wall never cuts them, effects behind stay behind, and the ink
-  outlines the sheet rather than drawing the scene's edges over it. Its picture is `minimap.png` round
+  outlines the sheet rather than drawing the scene's edges over it. Its picture is `minimap.webp` round
   the reader (`paperView`, 1.2 km, kept on the world) on a canvas texture, redrawn 8 times a second.
   The view eases into first person at the eyes while it is up; firing or aiming puts it away.
 

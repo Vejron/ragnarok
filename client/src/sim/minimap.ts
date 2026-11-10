@@ -1,4 +1,4 @@
-/** Where things are on `minimap.png`, the importer's top-down render of the whole playable square. */
+/** Where things are on `minimap.webp`, the importer's top-down render of the whole playable square. */
 
 /** World metres (x east, z south) to a fraction `[0, 1]` across and down the image. */
 export function worldToMap(x: number, z: number, halfExtent: number): [number, number] {

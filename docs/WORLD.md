@@ -38,7 +38,7 @@ Restart the server afterwards: it reads the whole world at start. The importer c
 | `--osm-water` | Take lakes, rivers, streams and the sea from OpenStreetMap instead of Hydrografi. Slower (Overpass, one query per block), but it has the sea. |
 | `--no-roofs` | Buildings stay boxes of their tagged height. The point cloud (the slowest and biggest download) is then only read for trees; add `--no-lidar-trees` to skip it completely. |
 | `--no-trees` | Skip the tree register. |
-| `--no-minimap` | Skip `minimap.png`, the pre-rendered top-down map (2048 px, written next to `world.msgpack`) that the client shows as minimap and map. |
+| `--no-minimap` | Skip `minimap.webp`, the pre-rendered top-down map (2048 px, 4096 under a `minimap_image`; a lossy WebP written next to `world.msgpack`, replacing the `minimap.png` older imports wrote) that the client shows as minimap and map. |
 | `--no-lidar-trees` | Only the register's trees: no woods, no garden trees. |
 | `--min-tree-height m` | Shortest tree taken from the laser, default 3 m above the terrain. |
 | `--species dir` | Where the unpacked NMD2023 species layers are, default `temp-maps/nmd2023`. See [Tree species](#tree-species). |
@@ -112,7 +112,7 @@ so that editor builds get it too:
 
 ```json
 { "tiles": [...], "cell": 1, "ocad": "temp-maps/ocad/map.ocd", "ocad_shift": [0, 0], "osm_water": true,
-  "minimap_image": "temp-maps/ocad/map.jpg" }
+  "minimap_image": "temp-maps/ocad/map.png" }
 ```
 
 Maps belong to their clubs, so they stay in the git-ignored `temp-maps/ocad/`. Check a new map first:
@@ -133,11 +133,15 @@ and how many objects it has of each symbol.
 - **What the map does not decide.** The terrain stays with the laser, but for the knolls and pits it adds
   (set `"cell": 1`, or they fall between the samples). The trees stay with the laser and NMD, but open land
   clears them. The water stays with its usual source. A world on the coast wants `"osm_water": true`: Hydrografi has no sea.
-- **`minimap_image`** is a JPEG print of the map laid over the drawn minimap. It must show exactly the
-  extent of the map's objects, which is what an OCAD export gives: `ocd-dump` prints that as paper bounds,
-  and nothing else places it. It looks a few degrees turned, because the world's frame has true north up and
-  the map SWEREF's grid north. White paper joined to a corner outside the map is left out. It ships in
-  `minimap.png`, so a deployed world needs the mapmaker's permission for it as well.
+- **`minimap_image`** is a JPEG or PNG render of the map laid over the drawn minimap, which is then drawn
+  4096 px across instead of 2048 so the map's symbols stay readable. With a world file beside it (`.pgw`,
+  `.jgw` or `.wld`, as OCAD's georeferenced export writes, with a `.prj` that must be SWEREF 99 TM) it is
+  placed by that, moved by `ocad_shift` as the map is. Without one it must show exactly the extent of the
+  map's objects, which is what a plain OCAD export gives: `ocd-dump` prints that as paper bounds. It looks a
+  few degrees turned, because the world's frame has true north up and the map SWEREF's grid north. Forest is
+  not printed: a PNG's see-through pixels inside the map's outline are drawn white, and outside it the drawn
+  map shows; in a JPEG, white paper joined to a corner outside the map is left out. It ships in
+  `minimap.webp`, so a deployed world needs the mapmaker's permission for it as well.
 - **What the symbols mean**, and what each becomes in the world: [ORIENTEERING.md](ORIENTEERING.md).
 - **Fences and power lines** go in the tiles' `lines` layer (`Line`, `LINE_*`), which is left out of a
   tile file that has none, so worlds without them are written as before. A fence is cut at tile borders
@@ -168,7 +172,7 @@ and how many objects it has of each symbol.
 | World | Where | Size | Made by | Used for |
 |---|---|---|---|---|
 | **Dev** | `client/public/dev/` (git-ignored) | ~7.9 km², 2.8 km square around 63.83976, 20.31514 (Mariehem, Umeå), 121 tiles of 256 m, ground every 1 m (`--cell 1`) | `scripts/world-dev.sh` | day-to-day development: quick to import, load and stream |
-| **Big** | `client/public/world.msgpack` + `tiles/` + `minimap.png` (git-ignored) | 8.6 km square, Backen to Nydala | `scripts/world.sh` | production (what `Dockerfile` and `scripts/deploy.sh` ship), and checking things at full scale |
+| **Big** | `client/public/world.msgpack` + `tiles/` + `minimap.webp` (git-ignored) | 8.6 km square, Backen to Nydala | `scripts/world.sh` | production (what `Dockerfile` and `scripts/deploy.sh` ship), and checking things at full scale |
 | **Editor worlds** | `worlds/<name>/` (`area.json` is committed, the generated files are git-ignored) | any shape: the painted 256 m tiles of the global grid, ground at the world's `cell` (1, 2 or 4 m) | the map editor (below), or `osm-import --area worlds/<name>/area.json --out worlds/<name>/world.msgpack` | playing a chosen part of the map |
 | **Fixture** | `fixtures/world/` (committed) | small synthetic city | `--synthetic --out fixtures/world/world.msgpack` | server and client tests only |
 
@@ -185,7 +189,7 @@ cd client && VITE_WORLD_BASE=/dev/ npm run dev
 
 - The server and the client are pointed at the world independently: `RAGNAROK_WORLD` (a path to a
   manifest; the tiles are read from `tiles/` next to it) and `VITE_WORLD_BASE` (the URL prefix the
-  browser fetches `world.msgpack`, `tiles/` and `minimap.png` from; the dev server serves
+  browser fetches `world.msgpack`, `tiles/` and `minimap.webp` from; the dev server serves
   `client/public/` at `/`). Set both or neither. If they disagree the page warns that its world
   differs from the server's.
 - To go back to the big world, unset both and restart the server and `npm run dev`.
@@ -207,7 +211,7 @@ WORLD_DIR=client/public/dev scripts/deploy.sh   # ship another world (e.g. the d
 
 `scripts/world.sh` loads `.env.local`, then runs the importer in release mode with the defaults
 (`--center 63.8225,20.235 --half 4300`, 256 m tiles, 4 m terrain cells). The output is
-`client/public/world.msgpack`, `client/public/tiles/` and `client/public/minimap.png`. The world is
+`client/public/world.msgpack`, `client/public/tiles/` and `client/public/minimap.webp`. The world is
 not committed, so it must exist before a build: `Dockerfile` copies `world.msgpack` and `tiles/`
 into the image and sets `RAGNAROK_WORLD=/app/world.msgpack`, and `scripts/deploy.sh` stops if they
 are missing. Generate it on the machine that has the cache (see below) and don't `--refresh`
@@ -221,7 +225,7 @@ WORLD_DIR=worlds/<name> DOMAIN=game.example.com scripts/deploy.sh user@host
 ```
 
 Generate the world first (**Generate world** in the editor) and **Save** your placements. The script
-ships `world.msgpack`, `tiles/` and `minimap.png`, and also the world's `area.json` as
+ships `world.msgpack`, `tiles/` and `minimap.webp`, and also the world's `area.json` as
 `/app/area.json`, which the server reads for the hand-placed spawns, vehicles and items. Without it
 the deployed server would pick them at random. It prints the placement counts before building.
 

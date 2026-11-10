@@ -30,10 +30,10 @@ export class InGameHud {
     this.painter = new Painter(layer)
   }
 
-  /** Loads the world's map picture from `url`, once the world is known. */
-  loadMap(url: string) {
+  /** Loads the world's map picture from the folder at `base`, once the world is known. */
+  loadMap(base: string) {
     this.map = null
-    void loadMap(url).then((image) => {
+    void loadMap(base).then((image) => {
       this.map = image
     })
   }

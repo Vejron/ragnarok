@@ -98,6 +98,9 @@ pub struct Source {
     /// How the paper sits on the ground, and the corners of what is drawn on it.
     pub sheet: Option<Sheet>,
     pub paper: [Paper; 2],
+    /// How far the map was moved to fit OSM, `[east, south]` metres (`ocad_shift`), which a print placed by
+    /// its own world file must move by too.
+    pub shift: [f64; 2],
 }
 
 /// Reads the map at `path` and places it in `place`.
@@ -129,7 +132,7 @@ fn from_map(map: &Map, place: &Place, shift: [f64; 2]) -> Source {
     let terrain = || map.objects.iter().filter(|object| object.symbol < FIRST_NOT_TERRAIN);
     let outline = convex_hull(terrain().flat_map(|object| object.rings.iter().flatten().map(|&p| local(p))).collect());
     let (lo, hi) = map.objects.iter().flat_map(|object| object.rings.iter().flatten()).fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), p| ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]));
-    let mut source = Source { outline, sheet: Some(sheet), paper: [lo, hi], ..Source::default() };
+    let mut source = Source { outline, sheet: Some(sheet), paper: [lo, hi], shift, ..Source::default() };
     let way = |id: usize, tags: [(&str, &str); 1], geometry: Vec<LatLon>| Way { id: FIRST_ID + id as u64, tags: tags.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<HashMap<_, _>>(), geometry };
     // Laid under the rest, and cover is drawn low ground first: what lies below the forest is cut out of it.
     let mut base = vec![source.outline.clone()];
@@ -251,6 +254,101 @@ fn blank_paper(pixels: &[u8], width: usize, height: usize, seeds: &[(usize, usiz
         open.extend(around.into_iter().filter(|&(a, b)| a < width && b < height && !blank[b * width + a] && white(a, b)));
     }
     blank
+}
+
+/// A picture read from a file: RGB row by row, and which pixels are see-through where it has an alpha channel.
+struct Image {
+    width: usize,
+    height: usize,
+    pixels: Vec<u8>,
+    clear: Option<Vec<bool>>,
+}
+
+/// Reads a JPEG, or a PNG of any colour type; a PNG's pixels under half opaque count as see-through.
+fn read_image(path: &Path) -> Result<Image> {
+    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    if !bytes.starts_with(b"\x89PNG") {
+        let mut decoder = zune_jpeg::JpegDecoder::new(zune_core::bytestream::ZCursor::new(&bytes));
+        let pixels = decoder.decode().with_context(|| format!("decoding {}", path.display()))?;
+        let (width, height) = decoder.dimensions().context("the image has no size")?;
+        ensure!(pixels.len() == width * height * 3, "the image is not RGB");
+        return Ok(Image { width, height, pixels, clear: None });
+    }
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(&bytes));
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    let mut reader = decoder.read_info().with_context(|| format!("decoding {}", path.display()))?;
+    let mut raw = vec![0; reader.output_buffer_size().context("the image is too big")?];
+    let info = reader.next_frame(&mut raw).with_context(|| format!("decoding {}", path.display()))?;
+    let (width, height) = (info.width as usize, info.height as usize);
+    let channels = info.color_type.samples();
+    ensure!(info.bit_depth == png::BitDepth::Eight, "the image is not 8 bits a channel");
+    let mut pixels = Vec::with_capacity(width * height * 3);
+    let mut clear = (channels == 2 || channels == 4).then(|| Vec::with_capacity(width * height));
+    for pixel in raw[..width * height * channels].chunks_exact(channels) {
+        match channels {
+            1 | 2 => pixels.extend([pixel[0]; 3]),
+            _ => pixels.extend(&pixel[..3]),
+        }
+        if let Some(clear) = &mut clear {
+            clear.push(pixel[channels - 1] < 128);
+        }
+    }
+    Ok(Image { width, height, pixels, clear })
+}
+
+/// A world file: the six numbers that place an image on the ground, `ground = A·(column, row) + C`, with
+/// whole pixel numbers at pixel centres (`A`, `D`, `B`, `E`, `C`, `F` in the file's order).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct GeoRef {
+    a: f64,
+    d: f64,
+    b: f64,
+    e: f64,
+    c: f64,
+    f: f64,
+}
+
+impl GeoRef {
+    /// The world file beside the image at `path`, if there is one. A `.prj` beside it must be SWEREF 99 TM.
+    fn beside(path: &Path) -> Result<Option<GeoRef>> {
+        let image = path.extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase();
+        let short = match image.as_str() {
+            "png" => "pgw",
+            "jpg" | "jpeg" => "jgw",
+            _ => "wld",
+        };
+        let Some(world) = [short, "wld"].into_iter().map(|ext| path.with_extension(ext)).find(|p| p.exists()) else {
+            return Ok(None);
+        };
+        let prj = path.with_extension("prj");
+        if let Ok(text) = std::fs::read_to_string(&prj) {
+            ensure!(text.contains("SWEREF99 TM") || text.contains("\"3006\""), "{} is not SWEREF 99 TM", prj.display());
+        }
+        let text = std::fs::read_to_string(&world).with_context(|| format!("reading {}", world.display()))?;
+        GeoRef::parse(&text).with_context(|| format!("parsing {}", world.display())).map(Some)
+    }
+
+    fn parse(text: &str) -> Result<GeoRef> {
+        let numbers: Vec<f64> = text.split_whitespace().map(str::parse).collect::<Result<_, _>>()?;
+        ensure!(numbers.len() == 6, "a world file has six numbers, this one {}", numbers.len());
+        let [a, d, b, e, c, f] = numbers[..] else { unreachable!() };
+        ensure!(a * e - b * d != 0.0, "the world file squashes the image flat");
+        Ok(GeoRef { a, d, b, e, c, f })
+    }
+
+    /// Where on the ground the point `(x, y)` of the image is, its pixels being whole numbers wide from the
+    /// image's corner: `(easting, northing)`.
+    fn ground(&self, x: f64, y: f64) -> (f64, f64) {
+        let (column, row) = (x - 0.5, y - 0.5);
+        (self.a * column + self.b * row + self.c, self.d * column + self.e * row + self.f)
+    }
+
+    /// Where `(easting, northing)` is in the image, as `ground` counts it.
+    fn pixel(&self, east: f64, north: f64) -> [f64; 2] {
+        let (x, y) = (east - self.c, north - self.f);
+        let det = self.a * self.e - self.b * self.d;
+        [(self.e * x - self.b * y) / det + 0.5, (self.a * y - self.d * x) / det + 0.5]
+    }
 }
 
 /// A value in `[0, 1)` from an object and a salt, so a build gives the same rocks every time.
@@ -430,34 +528,66 @@ impl Source {
         kept
     }
 
-    /// The image at `path`, a print of the map to its exact edges, placed for `minimap::render`. White
-    /// is forest, but also the blank paper past the map's last sea: that is left out, from the corners
-    /// of the print that lie outside the map.
+    /// The image at `path` (JPEG or PNG), a render of the map, placed for `minimap::render`. With a world
+    /// file beside it (`.pgw`, `.jgw` or `.wld`) it is placed by that, in SWEREF 99 TM; without one it must be
+    /// a print of the map to its exact edges. A render leaves the forest, which a map does not print,
+    /// see-through or white: inside the map's outline that is forest, painted white, and outside it the
+    /// drawn map shows through.
     pub fn print(&self, path: &Path, place: &Place) -> Result<Overlay> {
-        let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
-        let mut decoder = zune_jpeg::JpegDecoder::new(zune_core::bytestream::ZCursor::new(&bytes));
-        let pixels = decoder.decode().with_context(|| format!("decoding {}", path.display()))?;
-        let (width, height) = decoder.dimensions().context("the image has no size")?;
-        ensure!(pixels.len() == width * height * 3, "the image is not RGB");
-        let sheet = self.sheet.context("the map has no sheet")?;
-        let [lo, hi] = self.paper;
-        let to_image = move |[x, y]: Paper| [(x - lo[0]) / (hi[0] - lo[0]) * width as f64, (hi[1] - y) / (hi[1] - lo[1]) * height as f64];
+        let Image { width, height, mut pixels, clear } = read_image(path)?;
         let region = place.region;
         let frame = place.frame;
-        let at = move |x: f64, z: f64| {
-            let (lat, lon) = frame.unproject(x, z);
-            let (e, n) = region.source(lat, lon);
-            to_image(sheet.paper(e, n))
+        let [dx, dz] = self.shift;
+        let at: Box<dyn Fn(f64, f64) -> [f64; 2]>;
+        let ground: Box<dyn Fn(usize, usize) -> P>;
+        if let Some(world) = GeoRef::beside(path)? {
+            // The map was moved by `shift`, so a point on the ground shows what the file has `shift` back.
+            at = Box::new(move |x, z| {
+                let (lat, lon) = frame.unproject(x, z);
+                let (e, n) = region.source(lat, lon);
+                world.pixel(e - dx, n + dz)
+            });
+            ground = Box::new(move |i, j| {
+                let (e, n) = world.ground(i as f64 + 0.5, j as f64 + 0.5);
+                let (lat, lon) = region.degrees(e + dx, n - dz);
+                frame.project(lat, lon)
+            });
+        } else {
+            let sheet = self.sheet.context("the map has no sheet")?;
+            let [lo, hi] = self.paper;
+            let to_image = move |[x, y]: Paper| [(x - lo[0]) / (hi[0] - lo[0]) * width as f64, (hi[1] - y) / (hi[1] - lo[1]) * height as f64];
+            at = Box::new(move |x, z| {
+                let (lat, lon) = frame.unproject(x, z);
+                let (e, n) = region.source(lat, lon);
+                to_image(sheet.paper(e, n))
+            });
+            ground = Box::new(move |i, j| {
+                let paper = [lo[0] + (i as f64 + 0.5) / width as f64 * (hi[0] - lo[0]), hi[1] - (j as f64 + 0.5) / height as f64 * (hi[1] - lo[1])];
+                let (e, n) = sheet.ground(paper);
+                let (lat, lon) = region.degrees(e, n);
+                frame.project(lat, lon)
+            });
+        }
+        let blank = match clear {
+            Some(clear) => {
+                let mut blank = vec![false; width * height];
+                for (index, _) in clear.iter().enumerate().filter(|(_, clear)| **clear) {
+                    if self.covers(ground(index % width, index / width)) {
+                        pixels[index * 3..][..3].copy_from_slice(&[255; 3]);
+                    } else {
+                        blank[index] = true;
+                    }
+                }
+                blank
+            }
+            // Blank paper is white, as the forest is: it is the white joined to the corners that lie outside the map.
+            None => {
+                let corners = [(0, 0), (width - 1, 0), (0, height - 1), (width - 1, height - 1)];
+                let outside: Vec<_> = corners.into_iter().filter(|&(i, j)| !self.covers(ground(i, j))).collect();
+                blank_paper(&pixels, width, height, &outside)
+            }
         };
-        let corners = [(0, 0), (width - 1, 0), (0, height - 1), (width - 1, height - 1)];
-        let outside = |&(i, j): &(usize, usize)| {
-            let paper = [lo[0] + (i as f64 + 0.5) / width as f64 * (hi[0] - lo[0]), hi[1] - (j as f64 + 0.5) / height as f64 * (hi[1] - lo[1])];
-            let (e, n) = sheet.ground(paper);
-            let (lat, lon) = region.degrees(e, n);
-            !self.covers(frame.project(lat, lon))
-        };
-        let blank = blank_paper(&pixels, width, height, &corners.iter().copied().filter(outside).collect::<Vec<_>>());
-        Ok(Overlay { width, height, pixels, blank, at: Box::new(at) })
+        Ok(Overlay { width, height, pixels, blank, at })
     }
 
     /// Says how far the map's buildings lie from OSM's, which is how a badly placed map shows.
@@ -650,6 +780,18 @@ mod tests {
             Planted { lat, lon, kind: TREE_PINE, height: 10.0, crown: 2.0, registered: false }
         };
         assert_eq!(source.clear(vec![tree(7_070_001.0), tree(7_070_020.0)], &place).len(), 1);
+    }
+
+    #[test]
+    fn a_world_file_places_pixel_centres_and_undoes_itself() {
+        let world = GeoRef::parse("1.27\n0\n0\n-1.27\n753907.235\n7080331.965\n").unwrap();
+        // The middle of the top left pixel is where the file says.
+        assert_eq!(world.ground(0.5, 0.5), (753_907.235, 7_080_331.965));
+        let (e, n) = world.ground(10.5, 20.5);
+        assert!((e - 753_919.935).abs() < 1e-6 && (n - 7_080_306.565).abs() < 1e-6, "{e} {n}");
+        let [x, y] = world.pixel(e, n);
+        assert!((x - 10.5).abs() < 1e-9 && (y - 20.5).abs() < 1e-9, "{x} {y}");
+        assert!(GeoRef::parse("1 0 0").is_err());
     }
 
     #[test]
