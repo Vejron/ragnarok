@@ -876,14 +876,20 @@ fn a_mortar_gunner_holding_aim_lays_the_elevation_they_send_within_the_dials_ban
     let vid = crate::mechanics::vehicles::add_vehicle(&mut game.world, KIND_MORTAR, [0.0, 1.0, 20.0], 0.0);
     seat(&mut game, gunner, vid, 0);
     let mut seq = 0;
-    aim_and_hold(&mut game, gunner, &mut seq, 0.0, 1.2, BUTTON_ALT, 2);
+    // The first tick puts the tube to its first lob; from there it rises at its slew.
+    aim_and_hold(&mut game, gunner, &mut seq, 0.0, 0.0, 0, 1);
+    let before = turret(&game, vid).pitch;
+    aim_and_hold(&mut game, gunner, &mut seq, 0.0, 0.9, BUTTON_ALT, 30);
+    let moved = (turret(&game, vid).pitch - before).abs();
+    assert!((moved - MORTAR_ELEVATION_SLEW * 0.5).abs() < 0.01, "it takes its time: {moved} rad in half a second");
+    aim_and_hold(&mut game, gunner, &mut seq, 0.0, 1.2, BUTTON_ALT, 120);
     let gun = turret(&game, vid);
     assert!((gun.pitch - 1.2).abs() < 0.002, "laid to what was sent: {}", gun.pitch);
     assert!((gun.range - lob_range(1.2)).abs() < 0.5, "and the dial shows its range: {}", gun.range);
     // Past either end of the dial it stops there.
-    aim_and_hold(&mut game, gunner, &mut seq, 0.0, 0.3, BUTTON_ALT, 2);
+    aim_and_hold(&mut game, gunner, &mut seq, 0.0, 0.3, BUTTON_ALT, 360);
     assert!((turret(&game, vid).pitch - lob_pitch(MORTAR_RANGE_MAX)).abs() < 0.002);
-    aim_and_hold(&mut game, gunner, &mut seq, 0.0, 1.55, BUTTON_ALT, 2);
+    aim_and_hold(&mut game, gunner, &mut seq, 0.0, 1.55, BUTTON_ALT, 360);
     assert!((turret(&game, vid).pitch - lob_pitch(MORTAR_RANGE_MIN)).abs() < 0.002);
 }
 
@@ -894,7 +900,7 @@ fn letting_go_of_aim_keeps_the_range_laid_from_above() {
     let vid = crate::mechanics::vehicles::add_vehicle(&mut game.world, KIND_MORTAR, [0.0, 1.0, 20.0], 0.0);
     seat(&mut game, gunner, vid, 0);
     let mut seq = 0;
-    aim_and_hold(&mut game, gunner, &mut seq, 0.0, 1.3, BUTTON_ALT, 2);
+    aim_and_hold(&mut game, gunner, &mut seq, 0.0, 1.3, BUTTON_ALT, 120);
     let laid = turret(&game, vid);
     // The look's pitch means nothing to the tube once aim is let go.
     aim_and_hold(&mut game, gunner, &mut seq, 0.0, -0.4, 0, 30);

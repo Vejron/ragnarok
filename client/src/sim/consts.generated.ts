@@ -1254,8 +1254,17 @@ export const MORTAR_RANGE_MIN = 55.0
 export const MORTAR_RANGE_MAX = 300.0
 export const MORTAR_RANGE_RATE = 60.0
 
-/** How fast the mount follows the gunner's look, rad/s. Quick enough that the barrel stays on the crosshair. */
-export const MORTAR_TRAVERSE_SLEW = 3.0
+/**
+ * How fast the mount follows the gunner's look, rad/s: a heavy gun cranked round by hand, so a new bearing takes
+ * seconds, a half turn about six.
+ */
+export const MORTAR_TRAVERSE_SLEW = 0.5
+
+/**
+ * How fast the tube rises or falls to the elevation the range calls for, rad/s: from its flattest lob to its
+ * steepest takes about four seconds.
+ */
+export const MORTAR_ELEVATION_SLEW = 0.17
 
 /** Muzzle speed of a mortar bomb, m/s. Under `GRAVITY` it reaches about 300 m at 45 degrees and 52 m at 85. */
 export const MORTAR_SHELL_SPEED = 77.46

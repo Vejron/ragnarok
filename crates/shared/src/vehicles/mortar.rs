@@ -22,8 +22,12 @@ pub const MORTAR_RANGE_START: f32 = 120.0;
 pub const MORTAR_RANGE_MIN: f32 = 55.0;
 pub const MORTAR_RANGE_MAX: f32 = 300.0;
 pub const MORTAR_RANGE_RATE: f32 = 60.0;
-/// How fast the mount follows the gunner's look, rad/s. Quick enough that the barrel stays on the crosshair.
-pub const MORTAR_TRAVERSE_SLEW: f32 = 3.0;
+/// How fast the mount follows the gunner's look, rad/s: a heavy gun cranked round by hand, so a new bearing takes
+/// seconds, a half turn about six.
+pub const MORTAR_TRAVERSE_SLEW: f32 = 0.5;
+/// How fast the tube rises or falls to the elevation the range calls for, rad/s: from its flattest lob to its
+/// steepest takes about four seconds.
+pub const MORTAR_ELEVATION_SLEW: f32 = 0.17;
 /// Muzzle speed of a mortar bomb, m/s. Under `GRAVITY` it reaches about 300 m at 45 degrees and 52 m at 85.
 pub const MORTAR_SHELL_SPEED: f32 = 77.46;
 /// A reload is long: the gunner waits between bombs.
@@ -93,7 +97,7 @@ pub(super) const MORTAR: VehicleDef = VehicleDef {
 /// The tube, which a towed mortar cannot fire: it is being pulled.
 const MOUNTS: &[MountDef] = &[MountDef {
     seat: 0,
-    aim: Aim::Lob { slew: MORTAR_TRAVERSE_SLEW },
+    aim: Aim::Lob { slew: MORTAR_TRAVERSE_SLEW, pitch_slew: MORTAR_ELEVATION_SLEW },
     muzzle: Muzzle::One(MORTAR_GUN_PIVOT),
     fire: Fire::Shell { kind: PROJECTILE_MORTAR, alt: PROJECTILE_MORTAR, speed: MORTAR_SHELL_SPEED, length: MORTAR_BARREL_LENGTH, ttl: MORTAR_SHELL_TTL_TICKS },
     trigger: BUTTON_FIRE,

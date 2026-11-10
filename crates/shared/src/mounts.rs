@@ -63,9 +63,9 @@ pub enum Aim {
     /// none) and `pitch`, at `slew`.
     Mount { yaw_limit: Option<f32>, pitch: (f32, f32), slew: f32 },
     /// A mortar: the mount turns to the occupant's heading at `slew`, the range dial (`BUTTON_RANGE_UP`
-    /// and `BUTTON_RANGE_DOWN`) sets how far the bomb flies, and the tube takes the high lob that lands
-    /// it there.
-    Lob { slew: f32 },
+    /// and `BUTTON_RANGE_DOWN`) sets how far the bomb flies, and the tube rises or falls at `pitch_slew`
+    /// to the high lob that lands it there.
+    Lob { slew: f32, pitch_slew: f32 },
     /// A gun on a turret's roof that follows the occupant's look in the world, whatever the hull and the
     /// turret do, but only within `yaw_limit` either side of the turret, which carries it round. Its yaw
     /// is from the turret, so a vehicle with one has a `Show::Turret` mount, listed before it. `pitch` at

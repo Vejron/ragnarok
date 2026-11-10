@@ -312,22 +312,26 @@ fn turn(mount: &mut Mount, aim: Aim, input: &InputFrame, want: [f32; 3], pose: &
             mount.yaw = step_toward(mount.yaw, yaw, slew * dt).clamp(-yaw_limit, yaw_limit);
             mount.pitch = step_toward(mount.pitch, pitch.clamp(min, max), slew * dt);
         }
-        Aim::Lob { slew } => {
+        Aim::Lob { slew, pitch_slew } => {
             mount.yaw = follow(mount.yaw, wrap_angle(from_mrad(input.yaw) - pose.yaw()), slew * dt);
             let buttons = input.buttons();
+            // A gun never laid has its tube put straight to its first lob rather than raised from flat.
+            let fresh = mount.range == 0.0;
             if buttons & BUTTON_ALT != 0 {
                 // Laid from above (aim held): the look's pitch carries the elevation the gunner wants, worked
                 // out on their side for the height of the ground at the mark. The dial follows it, so letting
                 // go of aim keeps the lay.
-                mount.pitch = from_mrad(input.pitch()).clamp(lob_pitch(MORTAR_RANGE_MAX), lob_pitch(MORTAR_RANGE_MIN));
-                mount.range = lob_range(mount.pitch).clamp(MORTAR_RANGE_MIN, MORTAR_RANGE_MAX);
+                let pitch = from_mrad(input.pitch()).clamp(lob_pitch(MORTAR_RANGE_MAX), lob_pitch(MORTAR_RANGE_MIN));
+                mount.range = lob_range(pitch).clamp(MORTAR_RANGE_MIN, MORTAR_RANGE_MAX);
             } else {
                 // A gun that has never been dialled starts at the middle of the range, not at zero.
                 let range = if mount.range == 0.0 { MORTAR_RANGE_START } else { mount.range };
                 let dial = f32::from(buttons & BUTTON_RANGE_UP != 0) - f32::from(buttons & BUTTON_RANGE_DOWN != 0);
                 mount.range = (range + dial * MORTAR_RANGE_RATE * dt).clamp(MORTAR_RANGE_MIN, MORTAR_RANGE_MAX);
-                mount.pitch = lob_pitch(mount.range);
             }
+            // The tube takes its time to the lob the range calls for, as a turret's barrel does.
+            let wanted = if buttons & BUTTON_ALT != 0 { from_mrad(input.pitch()).clamp(lob_pitch(MORTAR_RANGE_MAX), lob_pitch(MORTAR_RANGE_MIN)) } else { lob_pitch(mount.range) };
+            mount.pitch = if fresh { wanted } else { step_toward(mount.pitch, wanted, pitch_slew * dt) };
         }
     }
 }
