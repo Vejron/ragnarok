@@ -3,9 +3,10 @@ import { Group, Vector3 } from '@ragnarok/engine'
 import { Cameras, type Seated } from '@/cameras'
 import { isDrone, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
 import type { Placed } from '@/entities/presenters/vehicles'
+import { MortarModel } from '@/render/mortar'
 import { TankModel } from '@/render/tank'
 import { rideView, seatView } from '@/seats'
-import { HELI_GUN_COOLDOWN_TICKS, MORTAR_COOLDOWN_TICKS, SHELL_COOLDOWN_TICKS, TANK_MG_PITCH_MAX, TANK_MG_SEAT, TANK_MG_YAW_LIMIT, WALKER_GUN_COOLDOWN_TICKS } from '@/sim/consts'
+import { HELI_GUN_COOLDOWN_TICKS, MORTAR_COOLDOWN_TICKS, MORTAR_RANGE_MAX, SHELL_COOLDOWN_TICKS, TANK_MG_PITCH_MAX, TANK_MG_SEAT, TANK_MG_YAW_LIMIT, WALKER_GUN_COOLDOWN_TICKS } from '@/sim/consts'
 import { vehicleDef } from '@/sim/vehicles'
 import { BEFORE } from './kinds.before'
 
@@ -63,6 +64,7 @@ function rigged() {
   const input = {
     yaw: 0,
     pitch: 0,
+    layPitch: null as number | null,
     clampPitch(min: number, max: number) {
       this.pitch = Math.max(min, Math.min(max, this.pitch))
     },
@@ -76,6 +78,7 @@ function rigged() {
     downFrom: () => views.push('down'),
     scopeFrom: () => views.push('scope'),
     camera: { fov: 60, rotateZ() {}, project: () => false },
+    groundAt: () => 0,
   }
   const cameras = new Cameras(scene as never, input as never, () => null)
   return { views, input, cameras }
@@ -100,7 +103,7 @@ const placed = (kind: number, turretYaw = 0): Placed => ({
 function seated(kind: number, index: number, extra: Partial<Seated> = {}): Seated {
   return {
     now: 0, dt: 1 / 60, vehicle: 9, seat: seatView(kind, index), ride: placed(kind), model: undefined, motion: undefined, distance: 10,
-    sighted: false, scoped: false, aimBlend: 0, chase: null, head: null, ...extra,
+    sighted: false, scoped: false, aimBlend: 0, chase: null, aimHeld: false, head: null, ...extra,
   }
 }
 
@@ -121,6 +124,38 @@ describe('camera rigs', () => {
     // The turret swinging away pushes the look along.
     cameras.seated(seated(KIND_TANK, seat, { ride: ride(0.1), model: tank }), seat)
     expect(input.yaw).toBeCloseTo(0.5 + 0.1 + TANK_MG_YAW_LIMIT)
+  })
+
+  it('lay a mortar from above while aim is held: the mouse moves a mark, the tube is laid onto it, and letting go gives the look back', () => {
+    const { input, cameras } = rigged()
+    const mortar = new MortarModel(9)
+    const ride: Placed = { ...placed(KIND_MORTAR, 0.25), y: 0.5, turret: { yaw: 0.25, pitch: 1, shots: 0, range: 100, heat: 0, flags: 0 } }
+    mortar.update([ride.x, ride.y, ride.z], [0, 0, 0, 1], 0, [1], ride.turret)
+    const sit = (aimHeld: boolean) => cameras.seated(seated(KIND_MORTAR, 0, { ride, model: mortar, aimHeld }), 0)
+    sit(false)
+    input.pitch = -0.3
+    sit(true)
+    const first = cameras.layMark!
+    expect(Math.hypot(first.x, first.z)).toBeCloseTo(100, 0)
+    // Laid along the gun's bearing when aim was taken, to an elevation within the dial.
+    expect(input.yaw).toBeCloseTo(0.75, 1)
+    expect(input.layPitch).toBeGreaterThan(0.78)
+    expect(input.layPitch).toBeLessThan(1.48)
+    const steep = input.layPitch!
+    // The mouse pushed up: the mark goes farther, and the tube lowers to reach it.
+    input.pitch += 0.1
+    sit(true)
+    expect(Math.hypot(cameras.layMark!.x, cameras.layMark!.z)).toBeGreaterThan(105)
+    expect(input.layPitch).toBeLessThan(steep)
+    // Never past the end of the dial.
+    input.pitch += 10
+    sit(true)
+    expect(Math.hypot(cameras.layMark!.x, cameras.layMark!.z)).toBeLessThan(MORTAR_RANGE_MAX + 1)
+    sit(false)
+    expect(cameras.layMark).toBeNull()
+    expect(input.layPitch).toBeNull()
+    expect(input.pitch).toBeCloseTo(-0.3)
+    mortar.dispose()
   })
 
   it('turn the look where a seat points when it is taken, and only then', () => {

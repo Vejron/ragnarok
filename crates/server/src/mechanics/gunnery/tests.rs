@@ -836,7 +836,7 @@ fn a_mortar_bomb_arcs_up_and_lands_on_the_range_it_was_dialled_to() {
     }
     let [x, y, z] = last.expect("the bomb was in flight");
     assert!(game.world.in_flight().is_empty(), "and it has burst");
-    assert!(apex > 10.0 && apex < 120.0, "it lobs high, to {apex} m");
+    assert!(apex > 10.0 && apex < 170.0, "it lobs high, to {apex} m");
     assert!(y < 3.0, "and bursts on the ground, not in the sky: {y} m up");
     let range = x.hypot(z - 20.0);
     assert!((range - MORTAR_RANGE_START).abs() < 10.0, "it was dialled to {MORTAR_RANGE_START} m and lands {range} m out");
@@ -859,6 +859,47 @@ fn the_range_dial_walks_the_lob_and_the_elevation_follows_it() {
     let gun = turret(&game, vid);
     assert_eq!(gun.range, MORTAR_RANGE_MIN);
     assert!(gun.pitch > 1.4 && gun.pitch <= MORTAR_PITCH_MAX, "nearly vertical at the shortest: {}", gun.pitch);
+}
+
+#[test]
+fn lob_range_undoes_lob_pitch() {
+    for range in [MORTAR_RANGE_MIN, 80.0, MORTAR_RANGE_START, 200.0, MORTAR_RANGE_MAX] {
+        let back = lob_range(lob_pitch(range));
+        assert!((back - range).abs() < 0.5, "{range} m lays to {} rad and back to {back} m", lob_pitch(range));
+    }
+}
+
+#[test]
+fn a_mortar_gunner_holding_aim_lays_the_elevation_they_send_within_the_dials_band() {
+    let mut game = game();
+    let (gunner, _inbox) = join(&mut game);
+    let vid = crate::mechanics::vehicles::add_vehicle(&mut game.world, KIND_MORTAR, [0.0, 1.0, 20.0], 0.0);
+    seat(&mut game, gunner, vid, 0);
+    let mut seq = 0;
+    aim_and_hold(&mut game, gunner, &mut seq, 0.0, 1.2, BUTTON_ALT, 2);
+    let gun = turret(&game, vid);
+    assert!((gun.pitch - 1.2).abs() < 0.002, "laid to what was sent: {}", gun.pitch);
+    assert!((gun.range - lob_range(1.2)).abs() < 0.5, "and the dial shows its range: {}", gun.range);
+    // Past either end of the dial it stops there.
+    aim_and_hold(&mut game, gunner, &mut seq, 0.0, 0.3, BUTTON_ALT, 2);
+    assert!((turret(&game, vid).pitch - lob_pitch(MORTAR_RANGE_MAX)).abs() < 0.002);
+    aim_and_hold(&mut game, gunner, &mut seq, 0.0, 1.55, BUTTON_ALT, 2);
+    assert!((turret(&game, vid).pitch - lob_pitch(MORTAR_RANGE_MIN)).abs() < 0.002);
+}
+
+#[test]
+fn letting_go_of_aim_keeps_the_range_laid_from_above() {
+    let mut game = game();
+    let (gunner, _inbox) = join(&mut game);
+    let vid = crate::mechanics::vehicles::add_vehicle(&mut game.world, KIND_MORTAR, [0.0, 1.0, 20.0], 0.0);
+    seat(&mut game, gunner, vid, 0);
+    let mut seq = 0;
+    aim_and_hold(&mut game, gunner, &mut seq, 0.0, 1.3, BUTTON_ALT, 2);
+    let laid = turret(&game, vid);
+    // The look's pitch means nothing to the tube once aim is let go.
+    aim_and_hold(&mut game, gunner, &mut seq, 0.0, -0.4, 0, 30);
+    let gun = turret(&game, vid);
+    assert!((gun.range - laid.range).abs() < 0.2 && (gun.pitch - laid.pitch).abs() < 0.005, "{laid:?} then {gun:?}");
 }
 
 #[test]

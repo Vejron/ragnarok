@@ -19,7 +19,7 @@ const HINTS: Record<Seat, (stats: Stats) => string> = {
   tupp: ({ canSwitchSeat }) => `W/S walk · A/D turn · Mouse aim the eyes (the head turns within 50°) · Hold click or F to charge the laser · Space leap, hold to flap, then glide${canSwitchSeat ? SWITCH : ''}`,
   walker: ({ canSwitchSeat }) => `W/S walk · A/D turn · Mouse aim the guns (the body follows within 30°) · Click or F fire${canSwitchSeat ? SWITCH : ''}`,
   strv: ({ ammo, reload }) => `W/S gas and brake · A/D turn the tank to aim · Mouse look · Hold right mouse for the gun sight · Click or F fire · Q ${swapRound(ammo)} · ${ammo} ${loaded(reload)}`,
-  mortar: ({ range, reload }) => `Mouse aim sets the bearing · W/S range ${Math.round(range)} m · Click or F fire · ${loaded(reload)}`,
+  mortar: ({ range, reload }) => `Mouse aim sets the bearing · W/S range ${Math.round(range)} m · Hold right-click to lay from above · Click or F fire · ${loaded(reload)}`,
   drone: () => 'Mouse look and steer · W fly where you look · S back off · A/D strafe · Space climb · Shift sink · Click or F detonate · E recall',
   loiter: () => 'Mouse steer (it banks and turns to where you look) · W/S pitch · A/D roll · Right-click swap camera · Click or F detonate · E recall',
   pilot: ({ canSwitchSeat }) => `W/S lean forward and back · A/D turn · Space climb · Shift sink${canSwitchSeat ? SWITCH : ''}`,

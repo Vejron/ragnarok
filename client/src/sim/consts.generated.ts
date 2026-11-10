@@ -1246,19 +1246,19 @@ export const MORTAR_PITCH_MAX = 1.484
 
 /**
  * The range dial, metres: W and S walk it at `MORTAR_RANGE_RATE` while `BUTTON_RANGE_UP` /
- * `BUTTON_RANGE_DOWN` are held. The longest lob is 245 m (`GRAVITY` and the muzzle speed at 45 degrees),
- * the shortest the high lob reaches is about 42 m, so the dial stops at 50.
+ * `BUTTON_RANGE_DOWN` are held. The longest lob is 300 m (`GRAVITY` and the muzzle speed at 45 degrees),
+ * the shortest the high lob reaches is about 52 m, so the dial stops at 55.
  */
 export const MORTAR_RANGE_START = 120.0
-export const MORTAR_RANGE_MIN = 50.0
-export const MORTAR_RANGE_MAX = 245.0
+export const MORTAR_RANGE_MIN = 55.0
+export const MORTAR_RANGE_MAX = 300.0
 export const MORTAR_RANGE_RATE = 60.0
 
 /** How fast the mount follows the gunner's look, rad/s. Quick enough that the barrel stays on the crosshair. */
 export const MORTAR_TRAVERSE_SLEW = 3.0
 
-/** Muzzle speed of a mortar bomb, m/s. Under `GRAVITY` it reaches about 245 m at 45 degrees and 40 m at 85. */
-export const MORTAR_SHELL_SPEED = 70.0
+/** Muzzle speed of a mortar bomb, m/s. Under `GRAVITY` it reaches about 300 m at 45 degrees and 52 m at 85. */
+export const MORTAR_SHELL_SPEED = 77.46
 
 /** A reload is long: the gunner waits between bombs. */
 export const MORTAR_COOLDOWN_TICKS = 7 * TICK_RATE

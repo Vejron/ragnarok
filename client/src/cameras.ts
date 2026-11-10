@@ -13,6 +13,7 @@ import type { Placed } from '@/entities/presenters/vehicles'
 import type { Turret } from '@/entities/units'
 import type { VehicleModel } from '@/render/car'
 import type { ChaseView } from '@/render/chase'
+import { MortarModel } from '@/render/mortar'
 import { PlaneModel } from '@/render/plane'
 import { CAMERA_HEIGHT, PLANE_CAMERA_HEIGHT, PLANE_DISTANCE, AIM_DISTANCE_SCALE, type Scene } from '@/render/scene'
 import { StrvModel } from '@/render/strvs'
@@ -20,8 +21,9 @@ import { TankModel } from '@/render/tank'
 import type { VehicleFx } from '@/render/tyres'
 import { TuppModel } from '@/render/tupp'
 import { WalkerModel } from '@/render/walker'
-import { PASSENGER_DISTANCE, ROOF_AIM_BACK, ROOF_AIM_UP, STRV_AIM_BACK, STRV_AIM_UP, WALKER_AIM_BACK, WALKER_AIM_UP, PASSENGER_HEIGHT, PASSENGER_SHOULDER, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, SIGHT_EYE_UP, STRV_BARREL_MAX, STRV_BARREL_MIN, TUPP_HEAD_LIMIT, TUPP_HEAD_PITCH_MAX, TUPP_HEAD_PITCH_MIN, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT } from '@/sim/consts'
+import { MORTAR_RANGE_MAX, MORTAR_RANGE_MIN, MORTAR_RANGE_START, PASSENGER_DISTANCE, ROOF_AIM_BACK, ROOF_AIM_UP, STRV_AIM_BACK, STRV_AIM_UP, WALKER_AIM_BACK, WALKER_AIM_UP, PASSENGER_HEIGHT, PASSENGER_SHOULDER, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, SIGHT_EYE_UP, STRV_BARREL_MAX, STRV_BARREL_MIN, TUPP_HEAD_LIMIT, TUPP_HEAD_PITCH_MAX, TUPP_HEAD_PITCH_MIN, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT } from '@/sim/consts'
 import type { InputController } from '@/sim/input'
+import { layTube } from '@/sim/lob'
 import type { Rig, SeatView } from '@/seats'
 
 /** How quickly a plane's camera follows the mouse's aim, per second, how far it pulls back at cruise speed (m) and how much of the plane's roll it takes. */
@@ -31,6 +33,14 @@ const PLANE_VIEW_ROLL = 0.3
 /** The sight sits this far above the gun's pivot, on the mantlet. */
 const SIGHT_RAY_START = 6
 const SIGHT_RANGE_MAX = 1500
+/** How quickly a mortar's view swings between behind the gun and over it, per second. */
+const LAY_EASE = 6
+/** How far the view over a mortar looks down, radians: nearly straight down, with up on the screen the bearing it was laid along. */
+const LAY_PITCH = -1.48
+/** How high the view over a mortar's mark hangs, metres. It follows the mark, not the gun, so it need not rise to keep both on the screen. */
+const LAY_HEIGHT = 90
+/** The ray that finds the ground under a mortar's mark starts this far above the gun, metres, and looks twice as far down. */
+const LAY_RAY_UP = 300
 
 /** A mounted gun the camera can sit behind: a tank's, a helicopter's nose gun, a plane's ring, a Pak's. */
 interface Barrel {
@@ -58,6 +68,8 @@ export interface Seated {
   aimBlend: number
   /** The chase camera's lean, distance and shake, for a seat that has it. */
   chase: ChaseView | null
+  /** Aim is held (the right mouse button, or on screen). */
+  aimHeld: boolean
   /** Where the local player's head is, when they show in their seat. */
   head: Vector3 | null
 }
@@ -77,6 +89,8 @@ export class Cameras {
   loiterCam: 'forward' | 'down' = 'forward'
   /** `performance.now()` when the local player's drone feed last cut out, for a burst of static. */
   feedLostAt = -Infinity
+  /** Where a field mortar's gunner laying it from above has put the mark, or null when nobody is. */
+  layMark: Vector3 | null = null
   private wasAimHeld = false
   /** The seat the camera is in, by vehicle and seat, and its rig. */
   private current: { key: string; name: RigName; rig: RigImpl } | null = null
@@ -304,14 +318,98 @@ export class Cameras {
     }
   }
 
-  /** Behind a field mortar: the mouse sets the bearing, the mount turns to face it, and W and S set the range. */
+  /**
+   * Behind a field mortar: the mouse sets the bearing, the mount turns to face it, and W and S set the range.
+   * With aim held the view rises over a mark on the ground and looks down at it, and the mouse moves the mark over the ground
+   * instead: up on the screen (the bearing when aim was taken) is farther, and the tube is laid to land on
+   * the mark, its bearing in the look's yaw and its elevation in `layPitch` (`sim/lob`). Letting go swings
+   * the view back behind the gun along the bearing, and the dial keeps the range laid.
+   */
   private mortar(): RigImpl {
+    /** 0 behind the gun, 1 over it. */
+    let blend = 0
+    let laying = false
+    /** The bearing up on the screen while laying, radians. */
+    let up = 0
+    /** The mark, in the world: it stays put when the gun is shoved back by its own recoil. */
+    const mark = new Vector3()
+    /** The look's yaw as this rig last set it, so the mouse's turn since can be read off. */
+    let setYaw = 0
+    /** The look's pitch when aim was taken, given back when it is let go. */
+    let lookPitch = 0
+    const height = LAY_HEIGHT
+    const stop = () => {
+      if (laying) this.input.pitch = lookPitch
+      laying = false
+      this.input.layPitch = null
+      this.layMark = null
+    }
     return {
       enter: ({ ride }) => {
+        blend = 0
+        stop()
         if (ride.turret) this.input.yaw = ride.yaw + ride.turret.yaw
       },
-      frame: ({ ride, distance }) => {
-        this.scene.follow([ride.x, ride.y + 0.4, ride.z], this.input.yaw, this.input.pitch, distance, 0, CAMERA_HEIGHT)
+      frame: ({ ride, dt, distance, aimHeld, model }) => {
+        const at = new Vector3(ride.x, ride.y + 0.4, ride.z)
+        const gun = model instanceof MortarModel && ride.turret ? { model, turret: ride.turret } : null
+        if (aimHeld && gun && !laying) {
+          laying = true
+          up = ride.yaw + gun.turret.yaw
+          const range = gun.turret.range || MORTAR_RANGE_START
+          mark.set(at.x - Math.sin(up) * range, at.y, at.z - Math.cos(up) * range)
+          lookPitch = this.input.pitch
+          this.input.pitch = 0
+          setYaw = this.input.yaw
+        } else if (laying && !(aimHeld && gun)) stop()
+        if (laying && gun) {
+          // The mouse's turn since the last frame moves the mark as it would the middle of a camera this high
+          // tilting: right on the screen for a turn right, farther for a tilt up. The look is then put back.
+          const turn = wrapAngle(this.input.yaw - setYaw)
+          const tilt = this.input.pitch
+          this.input.pitch = 0
+          const right = -turn * height
+          const ahead = tilt * height
+          mark.x += Math.cos(up) * right - Math.sin(up) * ahead
+          mark.z += -Math.sin(up) * right - Math.cos(up) * ahead
+          const pivot = gun.model.barrel().origin
+          const dx = mark.x - pivot.x
+          const dz = mark.z - pivot.z
+          const along = Math.hypot(dx, dz) || 1
+          const kept = clamp(along, MORTAR_RANGE_MIN, MORTAR_RANGE_MAX)
+          mark.x = pivot.x + (dx / along) * kept
+          mark.z = pivot.z + (dz / along) * kept
+          // What the bomb would land on there: a ray straight down, so a roof counts.
+          const top = pivot.y + LAY_RAY_UP
+          const hit = this.castRay([mark.x, top, mark.z], [0, -1, 0], LAY_RAY_UP * 2)
+          mark.y = hit ? top - hit.t : this.scene.groundAt(mark.x, mark.z)
+          const lay = layTube([pivot.x, pivot.y, pivot.z], [mark.x, mark.y, mark.z])
+          this.input.yaw = lay.yaw
+          setYaw = lay.yaw
+          this.input.layPitch = lay.pitch
+          this.layMark = mark.clone()
+        }
+        blend += ((laying ? 1 : 0) - blend) * Math.min(1, dt * LAY_EASE)
+        if (blend < 1e-3) {
+          blend = 0
+          this.scene.follow([at.x, at.y, at.z], this.input.yaw, this.input.pitch, distance, 0, CAMERA_HEIGHT)
+          return
+        }
+        const look = laying ? lookPitch : this.input.pitch
+        // Over the mark, so the reticle stays in the middle of the screen; the gun may be off it.
+        const centre = at.clone().lerp(mark, blend)
+        this.scene.follow(
+          [centre.x, centre.y, centre.z],
+          this.input.yaw + wrapAngle(up - this.input.yaw) * blend,
+          look + (LAY_PITCH - look) * blend,
+          distance + (height - distance) * blend,
+          0,
+          CAMERA_HEIGHT * (1 - blend),
+        )
+      },
+      leave: () => {
+        stop()
+        blend = 0
       },
     }
   }

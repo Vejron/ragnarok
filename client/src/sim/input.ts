@@ -43,6 +43,11 @@ export class InputController {
   private aiming = false
   /** Scales mouse-look; the game turns it down while scoped so a zoomed view is not twitchy. */
   lookScale = 1
+  /**
+   * While a field mortar's gunner lays it from above (aim held), the tube's elevation sent in place of the
+   * look's pitch, radians. The look's pitch is held within what a view can tilt, so it cannot carry it.
+   */
+  layPitch: number | null = null
   private latched = 0
   private readonly abort = new AbortController()
   /** The primary pointer is a finger: no pointer lock, no keyboard. */
@@ -357,7 +362,7 @@ export class InputController {
       forward: Math.max(-1, Math.min(1, this.axis(['KeyS', 'ArrowDown'], ['KeyW', 'ArrowUp']) + this.stick[1])),
       buttons,
       yaw: this.yaw,
-      pitch: this.pitch,
+      pitch: this.layPitch ?? this.pitch,
       slot: this.heldSlot,
     }
   }

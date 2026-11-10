@@ -119,8 +119,10 @@ export class AimMarks {
     if (s.feedLost > 0.01) p.label('SIGNAL LOST', cx, cy, { size: 28, weight: 900, color: '#fff', shadow: true, tracking: 0.2 }, 'center', s.feedLost)
     if (aimsReticle(s.seat) && !s.sight) {
       const loading = s.reload < 1 || s.jammed
-      p.ring(cx, cy, 13, 4.5, 0x000000, 0.45, 40)
-      p.ring(cx, cy, 13, 3, loading ? 0xffbe78 : 0xffffff, loading ? 0.9 : 0.95, loading ? 20 : 40, loading)
+      // Laying a mortar from above, the reticle sits on the mark rather than in the middle.
+      const [x, y] = s.mark ? [s.mark[0] * p.width, s.mark[1] * p.height] : [cx, cy]
+      p.ring(x, y, 13, 4.5, 0x000000, 0.45, 40)
+      p.ring(x, y, 13, 3, loading ? 0xffbe78 : 0xffffff, loading ? 0.9 : 0.95, loading ? 20 : 40, loading)
     }
     if (s.seat === 'aviator') {
       if (s.nose) {

@@ -1023,7 +1023,7 @@ export class Game {
     if (seat && ride && view) {
       this.cameras.seated({
         now, dt, vehicle: seat.vehicle, seat: view, ride, model: this.vehicles.model(seat.vehicle), motion: this.vehicles.fx(seat.vehicle),
-        distance, sighted, scoped, aimBlend: this.aimBlend, chase, head: sitting ? this.seatAt : null,
+        distance, sighted, scoped, aimBlend: this.aimBlend, chase, aimHeld: this.input.aimHeld, head: sitting ? this.seatAt : null,
       }, seat.index)
       // A passenger reading the map: the view moves to their eyes.
       if (reading > 0 && sitting) this.toEyes([this.seatAt.x, this.seatAt.y, this.seatAt.z], reading)
@@ -1102,6 +1102,14 @@ export class Game {
     return this.scene.camera.project(point) ? [(point.x + 1) / 2, (1 - point.y) / 2] : null
   }
 
+  /** Where a mortar's gunner laying it from above has their mark on the screen, as fractions of it, or null. */
+  private layMark(): [number, number] | null {
+    const mark = this.cameras.layMark
+    if (!mark) return null
+    const point = mark.clone()
+    return this.scene.camera.project(point) ? [(point.x + 1) / 2, (1 - point.y) / 2] : null
+  }
+
   /** How things stand, for the HUD and the page. */
   private report({ now, seat, view, ride, position, local, seated, hands, able, handy, sighted, scoped, lookYaw, lookPitch }: Moment): HudStats {
     const { player, predictor } = this
@@ -1150,6 +1158,7 @@ export class Game {
       vehicle: ride && def ? { name: def.name.toUpperCase(), hp: ride.hp, maxHp: def.hp } : null,
       nose: sights.nose,
       aim: sights.aim,
+      mark: this.layMark(),
       eggs: gauges?.includes('eggs') ? (ride?.arms?.bombs ?? null) : null,
       drone: link && ride
         ? {

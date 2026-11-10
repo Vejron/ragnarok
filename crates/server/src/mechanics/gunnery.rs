@@ -58,6 +58,12 @@ pub fn lob_pitch(range: f32) -> f32 {
     (0.5 * (std::f32::consts::PI - sine.asin())).clamp(MORTAR_PITCH_MIN, MORTAR_PITCH_MAX)
 }
 
+/// How far a bomb lobbed at elevation `pitch` (radians) lands on level ground, metres: the inverse of
+/// [`lob_pitch`], so a tube laid by its elevation shows the range dial that would have laid it.
+pub fn lob_range(pitch: f32) -> f32 {
+    MORTAR_SHELL_SPEED * MORTAR_SHELL_SPEED * (2.0 * pitch).sin() / GRAVITY
+}
+
 /// A machine gun's barrels cooling for a tick; a jammed gun clears once they are cool enough.
 fn cool(heat: &mut f32, jammed: &mut bool) {
     *heat = (*heat - GUN_COOL).max(0.0);
@@ -308,12 +314,20 @@ fn turn(mount: &mut Mount, aim: Aim, input: &InputFrame, want: [f32; 3], pose: &
         }
         Aim::Lob { slew } => {
             mount.yaw = follow(mount.yaw, wrap_angle(from_mrad(input.yaw) - pose.yaw()), slew * dt);
-            // A gun that has never been dialled starts at the middle of the range, not at zero.
-            let range = if mount.range == 0.0 { MORTAR_RANGE_START } else { mount.range };
             let buttons = input.buttons();
-            let dial = f32::from(buttons & BUTTON_RANGE_UP != 0) - f32::from(buttons & BUTTON_RANGE_DOWN != 0);
-            mount.range = (range + dial * MORTAR_RANGE_RATE * dt).clamp(MORTAR_RANGE_MIN, MORTAR_RANGE_MAX);
-            mount.pitch = lob_pitch(mount.range);
+            if buttons & BUTTON_ALT != 0 {
+                // Laid from above (aim held): the look's pitch carries the elevation the gunner wants, worked
+                // out on their side for the height of the ground at the mark. The dial follows it, so letting
+                // go of aim keeps the lay.
+                mount.pitch = from_mrad(input.pitch()).clamp(lob_pitch(MORTAR_RANGE_MAX), lob_pitch(MORTAR_RANGE_MIN));
+                mount.range = lob_range(mount.pitch).clamp(MORTAR_RANGE_MIN, MORTAR_RANGE_MAX);
+            } else {
+                // A gun that has never been dialled starts at the middle of the range, not at zero.
+                let range = if mount.range == 0.0 { MORTAR_RANGE_START } else { mount.range };
+                let dial = f32::from(buttons & BUTTON_RANGE_UP != 0) - f32::from(buttons & BUTTON_RANGE_DOWN != 0);
+                mount.range = (range + dial * MORTAR_RANGE_RATE * dt).clamp(MORTAR_RANGE_MIN, MORTAR_RANGE_MAX);
+                mount.pitch = lob_pitch(mount.range);
+            }
         }
     }
 }

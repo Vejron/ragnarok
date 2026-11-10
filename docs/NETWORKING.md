@@ -36,7 +36,7 @@ All messages are MessagePack arrays whose first element is a tag. The client→s
 | `forward` | axis, + is forward | −127..127 |
 | `yaw` | milliradians, 0 faces −Z | [−3142, 3141] |
 | `buttons` | bits: 1 jump, 2 run, 4 use, 8 fire, 16 alt (unused on foot), 32 crouch, 64 slide, 128 reload | |
-| `pitch` | milliradians, + looks up. Aims a tank gunner's barrel and a held gun or grenade | about [−1200, 600] |
+| `pitch` | milliradians, + looks up. Aims a tank gunner's barrel and a held gun or grenade. A field mortar's gunner holding alt sends the tube's elevation here instead (VEHICLES-V.md) | about [−1200, 600]; a mortar's elevation about [785, 1470] |
 | `view` | the server tick the picture on screen showed, modulo 65536. The server rewinds other players to it to resolve a gunshot, by at most 15 ticks and never forwards | |
 | `slot` | the hotbar slot the player has in hand. Fire, reload and use-item act on it | 0..4 |
 

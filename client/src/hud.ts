@@ -47,6 +47,8 @@ export interface HudStats {
   /** A plane's pilot: where the guns point and where the mouse aims, as fractions of the screen; null elsewhere. */
   nose: [number, number] | null
   aim: [number, number] | null
+  /** A field mortar's gunner laying it from above: where the mark is, as fractions of the screen; null elsewhere. */
+  mark: [number, number] | null
   /**
    * Flying a drone: its battery, 0..1, and the link's strength, 1 at the pilot's side to 0 at the edge of its range;
    * for a loitering drone also which camera is watched (null for an FPV drone's one); null when not flying one.
