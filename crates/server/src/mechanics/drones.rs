@@ -32,50 +32,65 @@ pub struct Drones;
 /// up: not when they are dead or seated, with no room for it where it starts, or at `MAX_VEHICLES`.
 pub fn launch(world: &mut World, id: u32, kind: u8) -> bool {
     let Some(player) = world.entities.get::<Player>(id) else { return false };
-    if !world.entities.alive(id) || player.seat.is_some() || world.entities.count::<Vehicle>() >= MAX_VEHICLES {
+    if !world.entities.alive(id) || player.seat.is_some() {
         return false;
     }
-    let (input, hp) = (player.input, world.entities.get::<crate::entities::Health>(id).map_or(0, |health| health.hp));
+    let input = player.input;
     let yaw = from_mrad(input.yaw);
     let eye = player.eye();
     let ahead = look(yaw, 0.0);
     let def = drone_def(kind);
-    let position = match def.launch {
-        Launch::Behind { back, up, .. } => [eye[0] - ahead[0] * back, eye[1] + up, eye[2] - ahead[2] * back],
+    let (position, speed) = match def.launch {
+        Launch::Behind { back, up, speed } => ([eye[0] - ahead[0] * back, eye[1] + up, eye[2] - ahead[2] * back], speed),
         Launch::Ahead { ahead: reach, up } => {
             // Up against a wall it goes up in front of the wall.
             let clearance = half_extents(kind)[0] + 0.1;
             let reach = world.physics.cast_ray(eye, ahead, reach + clearance, 0).map_or(reach, |t| (t - clearance).max(0.0));
-            [eye[0] + ahead[0] * reach, eye[1] + up, eye[2] + ahead[2] * reach]
+            ([eye[0] + ahead[0] * reach, eye[1] + up, eye[2] + ahead[2] * reach], 0.0)
         }
+        Launch::Tube => return false,
     };
-    if !world.physics.car_fits(kind, position, yaw) {
-        return false;
+    // It cannot hover: it starts out already cruising.
+    launch_at(world, id, kind, position, yaw, 0.0, speed, None).is_some()
+}
+
+/// Launches a drone of `kind` for player `id` at `position`, its nose `pitch` radians up from level at
+/// `yaw` and moving along it at `speed`, and puts them at its controls. `from` is the vehicle and seat
+/// they fly it from (a submarine's officer firing a missile), where their body stays and to which they
+/// go back once it is gone; `None` leaves their body standing where it is. Returns the drone, or
+/// `None` when there is no room for it there or there are `MAX_VEHICLES` already.
+#[allow(clippy::too_many_arguments)]
+pub fn launch_at(world: &mut World, id: u32, kind: u8, position: [f32; 3], yaw: f32, pitch: f32, speed: f32, from: Option<(u32, usize)>) -> Option<u32> {
+    let hp = world.entities.get::<crate::entities::Health>(id).map_or(0, |health| health.hp);
+    if world.entities.count::<Vehicle>() >= MAX_VEHICLES || !world.physics.car_fits(kind, position, yaw) {
+        return None;
     }
+    let def = drone_def(kind);
     let vid = add_vehicle(world, kind, position, yaw);
-    if let Launch::Behind { speed, .. } = def.launch {
-        // It cannot hover: it starts out already cruising.
-        world.physics.set_car_velocity(vid, ahead.map(|v| v * speed));
+    if pitch != 0.0 || speed != 0.0 {
+        world.physics.set_car_dive(vid, position, yaw, pitch, speed);
     }
     world.entities.of_mut::<Seats>(vid)[0] = Some(id);
     world.entities.insert(vid, Drone { kind, owner: id, energy: def.energy_ticks, linked: true, pilot_hp: hp, fall_left: def.fall_ticks });
-    let mut player = world.entities.get_mut::<Player>(id).expect("checked above");
-    player.seat = Some(Seat { vehicle: vid, index: 0, remote: true });
+    let mut player = world.entities.get_mut::<Player>(id)?;
+    player.seat = Some(Seat { vehicle: vid, index: 0, remote: true, from });
     player.interrupt();
     tracing::debug!(id, vid, kind, "drone launched");
-    true
+    Some(vid)
 }
 
-/// Drone `vid` loses its pilot: they are back in their body, and it flies on with its motors off.
+/// Drone `vid` loses its pilot: they are back in their body, or in the seat they flew it from if it
+/// is still theirs, and it flies on with its motors off.
 fn cut(world: &mut World, vid: u32) {
     let Some(mut drone) = world.entities.get_mut::<Drone>(vid) else { return };
     drone.linked = false;
     let pilot = world.entities.of_mut::<Seats>(vid).take(0);
     world.entities.of_mut::<Vehicle>(vid).controls = Default::default();
-    if let Some(mut player) = pilot.and_then(|id| world.entities.get_mut::<Player>(id))
-        && player.seat.is_some_and(|seat| seat.vehicle == vid)
-    {
-        player.seat = None;
+    let Some(id) = pilot else { return };
+    let Some(seat) = world.entities.get::<Player>(id).and_then(|player| player.seat).filter(|seat| seat.vehicle == vid) else { return };
+    let home = seat.from.filter(|&(vehicle, index)| world.entities.get::<Seats>(vehicle).is_some_and(|seats| seats.rider(index) == Some(id)));
+    if let Some(mut player) = world.entities.get_mut::<Player>(id) {
+        player.seat = home.map(|(vehicle, index)| Seat { vehicle, index, remote: false, from: None });
     }
 }
 

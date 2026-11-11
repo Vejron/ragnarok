@@ -28,18 +28,18 @@ export interface TouchContext {
 }
 
 /** Seats that aim down the middle of the screen with a sight or over the shoulder, as right mouse does. */
-const AIMS = new Set<Seat>(['gunner', 'roofgunner', 'strv', 'walker', 'tupp', 'passenger'])
+const AIMS = new Set<Seat>(['gunner', 'roofgunner', 'strv', 'walker', 'tupp', 'passenger', 'periscope'])
 
 const jumpLabel = (seat: Seat) =>
-  seat === 'driver' || seat === 'sled' ? 'BRAKE' : seat === 'helm' ? 'ANCHOR' : seat === 'roadster' ? 'HOP' : seat === 'hen' || seat === 'tupp' ? 'FLAP' : seat === 'aviator' ? 'FASTER' : seat === 'pilot' || seat === 'drone' ? 'UP' : 'JUMP'
-const fireLabel = (seat: Seat) => (seat === 'drone' || seat === 'loiter' ? 'BOOM' : seat === 'hen' ? 'EGG' : seat === 'tupp' ? 'LASER' : 'FIRE')
+  seat === 'driver' || seat === 'sled' ? 'BRAKE' : seat === 'helm' ? 'ANCHOR' : seat === 'roadster' ? 'HOP' : seat === 'hen' || seat === 'tupp' ? 'FLAP' : seat === 'aviator' ? 'FASTER' : seat === 'pilot' || seat === 'drone' || seat === 'captain' ? 'UP' : 'JUMP'
+const fireLabel = (seat: Seat) => (seat === 'drone' || seat === 'loiter' || seat === 'missile' ? 'BOOM' : seat === 'periscope' ? 'LAUNCH' : seat === 'hen' ? 'EGG' : seat === 'tupp' ? 'LASER' : 'FIRE')
 
 /** The buttons for `seat` (null on foot), each in a cell of its own. */
 export function touchButtons(seat: Seat, { canSwitch, winter, ammo }: TouchContext): TouchButton[] {
   const buttons: TouchButton[] = [
     { id: 'fire', label: fireLabel(seat), mode: 'hold', mask: BUTTON_FIRE, col: 0, row: 0, tone: 'fire', big: true },
     { id: 'jump', label: jumpLabel(seat), mode: 'hold', mask: BUTTON_JUMP, col: 0, row: 1 },
-    { id: 'use', label: seat === 'drone' || seat === 'loiter' ? 'RECALL' : 'USE', mode: 'tap', mask: BUTTON_USE, col: 0, row: 2 },
+    { id: 'use', label: seat === 'drone' || seat === 'loiter' || seat === 'missile' ? 'RECALL' : 'USE', mode: 'tap', mask: BUTTON_USE, col: 0, row: 2 },
   ]
   if (seat === null) {
     buttons.push(
@@ -59,7 +59,7 @@ export function touchButtons(seat: Seat, { canSwitch, winter, ammo }: TouchConte
   if (seat === 'loiter') buttons.push({ id: 'cam', label: 'CAM', mode: 'hold', mask: BUTTON_ALT, col: 1, row: 0 })
   if (seat === 'passenger') buttons.push({ id: 'reload', label: canSwitch ? 'RELOAD / SEAT' : 'RELOAD', mode: 'tap', mask: BUTTON_RELOAD, col: 2, row: 0, tone: 'reload' })
   else if (canSwitch) buttons.push({ id: 'seat', label: 'SEAT', mode: 'tap', mask: BUTTON_RELOAD, col: 2, row: 0, tone: 'reload' })
-  if (seat === 'pilot' || seat === 'drone' || seat === 'aviator' || seat === 'roadster' || seat === 'sled') {
+  if (seat === 'pilot' || seat === 'drone' || seat === 'captain' || seat === 'aviator' || seat === 'roadster' || seat === 'sled') {
     buttons.push({ id: 'sink', label: seat === 'aviator' ? 'SLOWER' : seat === 'roadster' || seat === 'sled' ? 'BOOST' : 'DOWN', mode: 'hold', mask: BUTTON_RUN, col: 1, row: 1 })
   }
   if (seat === 'aviator' || seat === 'roadster') buttons.push({ id: 'crouch', label: seat === 'roadster' ? 'BRAKE' : 'BOMB', mode: 'hold', mask: BUTTON_CROUCH, col: 2, row: 1 })

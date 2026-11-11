@@ -442,6 +442,12 @@ replicated! {
     /// How a wild animal lying dead was killed (`DEATH_*`), so clients draw it fallen or blown apart.
     /// Present only while it lies there, which it does until it respawns (`FLAG_DEAD`).
     Fell { style: u8 }
+
+    set 26 sub
+    /// A submarine's periscope and launch tubes, as drawn and shown on its officer's gauges: a mask of
+    /// the tubes loaded (bit `n` for `SUB_TUBE_AT[n]`), the periscope's yaw from the hull (+ turns
+    /// left), and `SUB_*` flags (`SUB_MAST_UP`: the periscope is raised).
+    Sub { tubes: u8, scope: i16 as mrad, flags: u8 }
 }
 
 /// The structs a component field can hold a list of, with their fields in wire order and each one's

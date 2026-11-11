@@ -40,6 +40,11 @@ impl Game {
                 {
                     flags.flags |= FLAG_CLAWING;
                 }
+                if let Some(flags) = &mut shown.flags
+                    && crate::mechanics::rising(&self.world, id)
+                {
+                    flags.stance = STANCE_RISE;
+                }
             }
             let hp = self.world.entities.get::<Health>(id).map_or(0, |health| health.hp);
             (id, Replicated { vitals: Some(wire::Vitals { hp, progress: progress(player, one_arm), spent: player.character.spent, winded: player.character.winded.into(), parts, down: player.character.down, strain: player.character.ski_strain, breath: breath_byte(player.breath) }), hotbar: Some(wire::Hotbar { slots: player.hands.hotbar }), ..shown })
@@ -154,8 +159,10 @@ impl Game {
             Some(drone) => Some(wire::Thrust { air: battery_byte(drone), flags: if drone.linked { THRUST_LINKED } else { 0 } }),
             None => self.world.physics.car_thrust(id).map(|(tank, flags)| wire::Thrust { air: air_byte(tank), flags }),
         };
+        let sub = entities.get::<crate::mechanics::Sub>(id).map(|sub| wire::Sub { tubes: sub.loaded(), scope: to_mrad(sub.scope), flags: if sub.mast { SUB_MAST_UP } else { 0 } });
         Some(Replicated {
             kind: Some(wire::Kind { kind: vehicle.kind }),
+            sub,
             place: Some(wire::Place { x, y, z }),
             orientation: Some(wire::Orientation { qx, qy, qz }),
             steer: Some(wire::Steer { steer: to_axis(pose.steer) }),

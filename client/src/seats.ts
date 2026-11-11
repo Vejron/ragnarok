@@ -29,6 +29,8 @@ export type Rig =
   | { name: 'mortar' }
   /** Over the shoulder from where they sit, as on foot: a car's passenger, who fires their own guns. */
   | { name: 'passenger' }
+  /** Through a submarine's periscope, from its head over the sail, turning all the way round. */
+  | { name: 'periscope' }
 
 export interface SeatView {
   rig: Rig

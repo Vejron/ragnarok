@@ -35,7 +35,7 @@ export interface HudStats {
   /** A hint for the key that does something right now, or null. */
   prompt: string | null
   /** Set while in a vehicle: the seat's role. A plane's pilot is an aviator; a helicopter's, a pilot. */
-  seat: 'driver' | 'roadster' | 'sled' | 'helm' | 'pilot' | 'aviator' | 'walker' | 'hen' | 'tupp' | 'strv' | 'mortar' | 'drone' | 'loiter' | 'passenger' | 'gunner' | 'roofgunner' | null
+  seat: 'driver' | 'roadster' | 'sled' | 'helm' | 'pilot' | 'aviator' | 'walker' | 'hen' | 'tupp' | 'strv' | 'mortar' | 'drone' | 'loiter' | 'captain' | 'periscope' | 'missile' | 'passenger' | 'gunner' | 'roofgunner' | null
   /** A Roadster's driver: what is left in the air tank, 0..1; a snowmobile's: its boost; a hen's: its wings' stamina; a ship's helmsman: how well her sail draws; null elsewhere. */
   air: number | null
   /** On foot: stamina left, 0..1, and whether they are winded (running is walking, jumps are low); null elsewhere. */
@@ -93,6 +93,12 @@ export interface HudStats {
   sight: boolean
   /** Looking down a scope: the scope overlay replaces the crosshair. */
   scoped: boolean
+  /** At a submarine's periscope: its round view and crosshair fill the screen. */
+  periscope: boolean
+  /** In a submarine: how deep its middle is under the surface, metres; null elsewhere. */
+  depth: number | null
+  /** At a submarine's periscope: its tubes loaded, and whether it is shallow enough to fire; null elsewhere. */
+  tubes: { loaded: number; clear: boolean } | null
   /** Aiming a gun over the shoulder: half zoom, tighter spread. */
   aiming: boolean
   /** A gun in hand, on foot or in a passenger seat: show the crosshair. */

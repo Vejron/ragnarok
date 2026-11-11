@@ -457,7 +457,7 @@ fn a_lone_crewman_can_switch_round_every_seat() {
     press(&mut game, id, &mut seq, (0, 0), BUTTON_RELOAD, 1);
     idle(&mut game, id, &mut seq, 3);
     assert_eq!(game.world.entities.of::<Seats>(vid)[..3], [None, Some(id), None]);
-    assert_eq!(game.world.entities.of::<Player>(id).seat, Some(Seat { vehicle: vid, index: 1, remote: false }));
+    assert_eq!(game.world.entities.of::<Player>(id).seat, Some(Seat { vehicle: vid, index: 1, remote: false, from: None }));
 
     press(&mut game, id, &mut seq, (0, 0), BUTTON_RELOAD, 1);
     idle(&mut game, id, &mut seq, 3);
@@ -519,7 +519,7 @@ fn ramming_a_car_hurts_both_and_blames_the_driver() {
     let (id, _inbox) = join(&mut game);
     let (a, b) = two_cars(&mut game);
     game.world.entities.get_mut::<Seats>(a).unwrap()[0] = Some(id);
-    game.world.entities.get_mut::<Player>(id).unwrap().seat = Some(Seat { vehicle: a, index: 0, remote: false });
+    game.world.entities.get_mut::<Player>(id).unwrap().seat = Some(Seat { vehicle: a, index: 0, remote: false, from: None });
     game.world.physics.kick_car(a, [0.0, 0.0, -22.0]);
     let events = crash_events(&mut game, 60);
     let (rammer, rammed) = (&game.world.entities.of::<Vehicle>(a), &game.world.entities.of::<Vehicle>(b));

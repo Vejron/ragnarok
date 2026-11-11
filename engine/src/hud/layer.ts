@@ -129,7 +129,7 @@ export class HudLayer {
   }
 }
 
-/** Draws a `HudLayer` onto the canvas after the output pass. */
+/** Draws a `HudLayer` onto the canvas at the end of the output pass. */
 export class HudPass {
   private readonly pipeline: GPURenderPipeline
   private readonly viewBuffer: GPUBuffer
@@ -199,8 +199,12 @@ export class HudPass {
     return group
   }
 
-  /** Draws the layer's sprites over `target` and empties it; returns the draw calls made. */
-  encode(encoder: GPUCommandEncoder, target: GPUTextureView, layer: HudLayer, timestampWrites?: GPURenderPassTimestampWrites): number {
+  /**
+   * Draws the layer's sprites into `pass`, an open render pass on the canvas (the output pass), and
+   * empties the layer; returns the draw calls made. Drawing inside the output pass rather than in a pass
+   * of its own saves loading and storing the whole finished frame again, which a tiled GPU pays in full.
+   */
+  draw(pass: GPURenderPassEncoder, layer: HudLayer): number {
     const instances = layer.instances
     if (instances.byteLength > this.instanceBuffer.size) {
       this.instanceBuffer.destroy()
@@ -210,11 +214,6 @@ export class HudPass {
     this.viewData[0] = layer.width
     this.viewData[1] = layer.height
     this.device.queue.writeBuffer(this.viewBuffer, 0, this.viewData)
-    const pass = encoder.beginRenderPass({
-      label: 'hud',
-      colorAttachments: [{ view: target, loadOp: 'load', storeOp: 'store' }],
-      timestampWrites,
-    })
     pass.setPipeline(this.pipeline)
     pass.setBindGroup(0, this.viewGroup)
     pass.setVertexBuffer(0, this.instanceBuffer)
@@ -224,7 +223,6 @@ export class HudPass {
       pass.draw(4, run.count, 0, run.first)
       draws++
     }
-    pass.end()
     layer.begin(layer.width, layer.height)
     return draws
   }

@@ -3,7 +3,7 @@
 import type { HudStats } from '@/hud'
 
 type Seat = NonNullable<HudStats['seat']>
-type Stats = Pick<HudStats, 'ammo' | 'reload' | 'range' | 'canSwitchSeat'> & { jammed: boolean; heat: number | null }
+type Stats = Pick<HudStats, 'ammo' | 'reload' | 'range' | 'canSwitchSeat'> & Partial<Pick<HudStats, 'depth' | 'tubes'>> & { jammed: boolean; heat: number | null }
 
 const SWITCH = ' · R switch seat'
 const HITCH = 'H hitch a mortar or a Pak'
@@ -22,6 +22,12 @@ const HINTS: Record<Seat, (stats: Stats) => string> = {
   mortar: ({ range, reload }) => `Mouse aim sets the bearing · W/S range ${Math.round(range)} m · Hold right-click to lay from above · Click or F fire · ${loaded(reload)}`,
   drone: () => 'Mouse look and steer · W fly where you look · S back off · A/D strafe · Space climb · Shift sink · Click or F detonate · E recall',
   loiter: () => 'Mouse steer (it banks and turns to where you look) · W/S pitch · A/D roll · Right-click swap camera · Click or F detonate · E recall',
+  captain: ({ depth, canSwitchSeat }) => `Depth ${(depth ?? 0).toFixed(1)} m · W/S ahead and astern · A/D rudder, under way · Shift dive · Space rise${canSwitchSeat ? SWITCH : ''}`,
+  periscope: ({ tubes, canSwitchSeat }) => {
+    const state = !tubes ? '' : !tubes.clear ? 'too deep to fire: rise to periscope depth' : tubes.loaded > 0 ? `${tubes.loaded} ${tubes.loaded === 1 ? 'tube' : 'tubes'} ready` : 'tubes reloading…'
+    return `Mouse turn the periscope · Hold right mouse to zoom · Click or F launch a missile · ${state}${canSwitchSeat ? SWITCH : ''}`
+  },
+  missile: () => 'Mouse steer (it banks and turns to where you look) · W/S pitch · A/D roll · Click or F detonate · E let it go',
   pilot: ({ canSwitchSeat }) => `W/S lean forward and back · A/D turn · Space climb · Shift sink${canSwitchSeat ? SWITCH : ''}`,
   aviator: ({ canSwitchSeat }) => `Mouse steer (the plane turns to where you look) · Space throttle up · Shift throttle down · W/S/A/D by hand · Click or F fire · C bomb${canSwitchSeat ? SWITCH : ''}`,
   passenger: ({ canSwitchSeat }) => `Mouse look · Click or F fire your gun · Right mouse aim · 1-5 or wheel switch · R reload${canSwitchSeat ? ', or switch seat when it is full' : ''}`,

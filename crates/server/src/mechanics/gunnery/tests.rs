@@ -37,7 +37,7 @@ fn join(game: &mut Game) -> (u32, mpsc::Receiver<crate::game::Outgoing>) {
 /// Puts `id` straight into a seat of vehicle `vid`.
 fn seat(game: &mut Game, id: u32, vid: u32, index: usize) {
     game.world.entities.get_mut::<Seats>(vid).unwrap()[index] = Some(id);
-    game.world.entities.get_mut::<Player>(id).unwrap().seat = Some(Seat { vehicle: vid, index, remote: false });
+    game.world.entities.get_mut::<Player>(id).unwrap().seat = Some(Seat { vehicle: vid, index, remote: false, from: None });
 }
 
 /// What vehicle `vid`'s mount shown as `show` is doing.

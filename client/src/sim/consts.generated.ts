@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 73
+export const PROTOCOL_VERSION = 75
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -82,6 +82,15 @@ export const KIND_TECHNICAL = 23
  * zombie areas (ZOMBIES.md). Replicated like a soldier, drawn with the soldier's model in rags.
  */
 export const KIND_ZOMBIE = 24
+
+/**
+ * The submarine: a captain who steers and dives it, and a weapons officer at the periscope who fires
+ * guided missiles from its launch tubes.
+ */
+export const KIND_SUBMARINE = 25
+
+/** A submarine's guided missile, flown from its nose by the officer who fired it, as a drone is. */
+export const KIND_MISSILE = 26
 
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
@@ -351,6 +360,9 @@ export const STANCE_SWIM = 5
 
 /** Swimming under the water, the eyes below its surface: holding the breath (`BREATH_FULL`). */
 export const STANCE_DIVE = 6
+
+/** A zombie climbing out of the ground (`ZOMBIE_RISE_TICKS`): it neither moves nor claws until it is up. */
+export const STANCE_RISE = 7
 
 /** A blast that throws a soldier at least this hard, m/s, knocks them down. */
 export const KNOCKDOWN_POWER = 7.0
@@ -998,6 +1010,15 @@ export const ZOMBIE_CLAW_RECOVER = 30
 export const ZOMBIE_CLAW_DAMAGE = 22
 export const ZOMBIE_BITE_DAMAGE = 14
 
+/**
+ * Ticks a zombie takes to claw its way out of the ground (6 s at `TICK_RATE`): a hand first, then the
+ * head, then it heaves itself out and stands. It does nothing else meanwhile, but can be shot.
+ */
+export const ZOMBIE_RISE_TICKS = 360
+
+/** The zombies of a horde come up one by one over this many ticks (10 s), each at a moment of its own. */
+export const ZOMBIE_RISE_STAGGER = 600
+
 /** The most zombies up at once in a room, whatever a scenario asks for. */
 export const MAX_ZOMBIES = 96
 
@@ -1345,6 +1366,65 @@ export const LOITER_CEILING = 500.0
 
 /** Air drag on the body, which is all that slows one whose motor is off. */
 export const LOITER_DAMPING = 0.05
+
+/**
+ * The guided missile (`KIND_MISSILE`): a slim rocket about 2 m long with cruciform fins, fired
+ * straight up out of a submarine's launch tube (`SUB_TUBE_AT`) and flown from its nose by the weapons
+ * officer who fired it, as a loitering drone is. Its motor always drives it at `MISSILE_SPEED` along its
+ * nose, closing any gap at `MISSILE_GRIP` per second and never harder than `MISSILE_MAX_ACCEL`; the
+ * mouse sets where it goes, and it points its nose there with pitch and yaw and keeps its wings level. It leaves the tube slowly and
+ * nose up, and its motor speeds it up along its nose by no more than `MISSILE_SPEED_UP` m/s²; its fins
+ * bite with the square of its share of `MISSILE_FIN_SPEED`, so it climbs almost straight up at first and
+ * pitches over towards the look as it gathers speed. At full speed it turns at most `MISSILE_PITCH_RATE`,
+ * `MISSILE_YAW_RATE` and `MISSILE_ROLL_RATE` rad/s about its own axes, its angular velocity following
+ * at `MISSILE_RESPONSE` per second.
+ */
+export const MISSILE_SEATS = 1
+export const MISSILE_HALF_EXTENTS = [0.2, 0.2, 1.0] as const
+export const MISSILE_SPEED = 70.0
+export const MISSILE_GRIP = 4.0
+export const MISSILE_MAX_ACCEL = 90.0
+export const MISSILE_SPEED_UP = 18.0
+export const MISSILE_FIN_SPEED = 65.0
+export const MISSILE_PITCH_RATE = 1.8
+export const MISSILE_ROLL_RATE = 5.0
+export const MISSILE_YAW_RATE = 1.2
+export const MISSILE_RESPONSE = 10.0
+
+/** The most it banks into a turn, radians (about 70 degrees). */
+export const MISSILE_MAX_BANK = 1.2
+
+/** How steeply its flier may ask it to climb or dive, radians. */
+export const MISSILE_MAX_PITCH = 1.4
+
+/** Climbing fades out over the last 20 m below this height, and above it it is pushed down. */
+export const MISSILE_CEILING = 400.0
+
+/** Air drag on the body, which is all that slows one whose motor has burnt out. */
+export const MISSILE_DAMPING = 0.02
+
+/** How long its motor burns, ticks, and how far from its flier's body it can be flown, metres. */
+export const MISSILE_ENERGY_TICKS = 20 * TICK_RATE
+export const MISSILE_RANGE = 1500.0
+
+/** Its warhead: smaller than a loitering drone's, bigger than a rocket's. */
+export const MISSILE_BLAST_RADIUS = 8.0
+export const MISSILE_DAMAGE = 250.0
+export const MISSILE_KNOCK = 20.0
+export const MISSILE_CRATER = [6.0, 1.2] as const
+
+/** Shot down, its warhead only partly goes off. */
+export const MISSILE_POP_RADIUS = 3.0
+export const MISSILE_POP_DAMAGE = 40.0
+export const MISSILE_POP_CRATER = [2.4, 0.4] as const
+
+/**
+ * A contact that takes this much speed (m/s) out of it sets it off, as does coming this close to a
+ * soldier (metres); out of fuel or its link lost, it falls this many ticks at most before it goes off.
+ */
+export const MISSILE_IMPACT_DV = 3.0
+export const MISSILE_PROXIMITY = 1.5
+export const MISSILE_FALL_TICKS = 3 * TICK_RATE
 
 /**
  * The field mortar (`KIND_MORTAR`): a towed, unpowered two-wheeler with one gunner, who aims its bearing
@@ -1842,6 +1922,73 @@ export const STRV_BARREL_LENGTH = 4.4
 export const STRV_BARREL_SLEW = 1.2
 export const STRV_BARREL_MIN = -0.15
 export const STRV_BARREL_MAX = 0.3
+
+/**
+ * The submarine (`KIND_SUBMARINE`): a small diesel-electric boat of about 22 m, with a sail (its conning
+ * tower) forward of the middle, a periscope that rises out of it, and four vertical launch tubes in
+ * the deck behind it. Its captain (seat 0) drives it and takes it up and down: jump rises at
+ * `SUB_DIVE_RATE`, run dives, and with neither it holds its depth. It floats on the surface at
+ * `SUB_SURFACE_DEPTH` and goes down as far as the bed lets it. Its weapons officer (seat 1) looks
+ * through the periscope while its head is above the water, and from no deeper than
+ * `SUB_LAUNCH_DEPTH` fires a guided missile (`KIND_MISSILE`) out of a loaded tube, which they then fly
+ * from its nose. Both are sealed in its hull. Its bow tapers over `SUB_BOW`.
+ */
+export const SUB_SEATS = 2
+export const SUB_HALF_EXTENTS = [1.4, 1.3, 11.0] as const
+
+/** How far back from the stem the hull tapers out to its full beam, metres. */
+export const SUB_BOW = 3.0
+
+/**
+ * The sail, from the deck: half its width, height and length, metres, and how far forward of the
+ * middle it stands (its centre's Z in the hull frame).
+ */
+export const SUB_SAIL_HALF = [0.6, 1.0, 2.0] as const
+export const SUB_SAIL_Z = -3.0
+
+/** The top of the sail, in the hull frame: where its hatch is, which it is boarded from. */
+export const SUB_HATCH = [0.0, 3.3, -3.0] as const
+
+/** Where whoever leaves it stands, on the deck behind the sail (the middle of a standing soldier). */
+export const SUB_EXIT = [0.0, 1.35 + STAND_CENTRE, 4.0] as const
+
+/**
+ * How far below the surface its middle floats when it is up, metres: the deck stands
+ * `SUB_HALF_EXTENTS[1] - SUB_SURFACE_DEPTH` out of the water.
+ */
+export const SUB_SURFACE_DEPTH = 0.6
+
+/**
+ * How high above its middle the periscope's head stands when it is raised, metres. It sees out while
+ * that is above the water, so from any depth of its middle less than this.
+ */
+export const SUB_MAST_HEIGHT = 5.5
+
+/** The deepest its middle may be for a tube to fire, metres: periscope depth. */
+export const SUB_LAUNCH_DEPTH = 4.5
+
+/** How fast it rises or dives with jump or run held, m/s. */
+export const SUB_DIVE_RATE = 2.0
+
+/** Top speed ahead, m/s (about 16 knots), and how hard the motor pushes it along, m/s². */
+export const SUB_MAX_SPEED = 8.0
+export const SUB_ACCEL = 1.2
+
+/** How quickly it turns under way at full rudder, rad/s. */
+export const SUB_TURN_RATE = 0.35
+
+/**
+ * Its launch tubes: how many, and where each one's mouth is, on the deck behind the sail, in the hull
+ * frame.
+ */
+export const SUB_TUBES = 4
+export const SUB_TUBE_AT = [[-0.55, 1.3, 0.6], [0.55, 1.3, 0.6], [-0.55, 1.3, 1.9], [0.55, 1.3, 1.9]] as const
+
+/** How long a fired tube takes to load again, ticks. */
+export const SUB_TUBE_RELOAD = 20 * TICK_RATE
+
+/** How fast a missile leaves its tube, straight up, m/s. */
+export const SUB_LAUNCH_SPEED = 12.0
 
 /**
  * The tank: a heavy six-wheel hull that turns on the spot, with a driver (seat 0), a gunner (seat 1)

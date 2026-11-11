@@ -57,7 +57,7 @@ pub const HIT_DEER: u8 = 4;
 pub const OBJ_TREE: u8 = 0;
 pub const OBJ_BUILDING: u8 = 1;
 
-pub use crate::consts::{KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SOLDIER, KIND_SPORTS, KIND_STAG, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_TUPP, KIND_WALKER, KIND_ZOMBIE};
+pub use crate::consts::{KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SOLDIER, KIND_SPORTS, KIND_STAG, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TUPP, KIND_WALKER, KIND_ZOMBIE};
 
 /// Whether `kind` is a drone: flown from a remote seat by whoever launched it (see the `Drones` mechanic).
 pub fn is_drone(kind: u8) -> bool {
@@ -163,6 +163,8 @@ pub const WEAPON_CUP: u8 = 32;
 pub const WEAPON_GLASS: u8 = 33;
 /// A zombie's claws, or its teeth once it has no arms.
 pub const WEAPON_CLAW: u8 = 34;
+/// A submarine's guided missile going off (`KIND_MISSILE`).
+pub const WEAPON_MISSILE: u8 = 35;
 
 /// `replicated::Limbs::lost` bits: the limbs a soldier has lost. The same bits shifted up by
 /// `LIMB_BLEED_SHIFT` are the stumps still bleeding.
@@ -552,6 +554,9 @@ pub const TURRET_JAMMED: u8 = 1 << 4;
 
 /// `replicated::Pintle::flags`: the gun is jammed.
 pub const PINTLE_JAMMED: u8 = 1 << 0;
+
+/// `replicated::Sub::flags`: the submarine's periscope is raised, its weapons officer looking through it.
+pub const SUB_MAST_UP: u8 = 1 << 0;
 /// `replicated::Arms::flags`: the blip switch is cutting the engine, and either set of guns is jammed.
 pub const ARMS_CUT: u8 = 1 << 0;
 pub const ARMS_JAMMED: u8 = 1 << 1;

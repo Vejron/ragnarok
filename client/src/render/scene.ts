@@ -134,6 +134,7 @@ export class Scene {
   private async createRenderer(): Promise<Renderer> {
     const renderer = await Renderer.create(this.canvas, { sampleCount: this.currentPreset.msaa, onDeviceLost: (info) => this.deviceLost(info) })
     setWaterReflection(renderer.reflection)
+    renderer.detail = this.currentPreset.treeDetail
     return renderer
   }
 
@@ -179,6 +180,7 @@ export class Scene {
     this.scene.fog!.far = preset.fogFar
     this.scene.sun.shadow.taps = preset.shadowTaps
     this.heldMap.redrawMs = preset.heldMapMs
+    if (this.renderer) this.renderer.detail = preset.treeDetail
     this.setShadowReach(this.currentLook.far)
     if (msaa && this.renderer) void this.replaceRenderer()
     else this.resize()

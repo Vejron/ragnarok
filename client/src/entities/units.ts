@@ -29,6 +29,7 @@ export type Entity = Omit<Components, 'orientation'> & { orientation?: Rotation 
 export type Turret = NonNullable<Entity['turret']>
 /** A gun on a turret's roof (`pintle`): radians from the turret, heat as 0..1. */
 export type Pintle = NonNullable<Entity['pintle']>
+export type Sub = NonNullable<Entity['sub']>
 /** A plane's pilot weapons and engine, or a hen's eggs (`arms`), heat as 0..1. */
 export type Arms = NonNullable<Entity['arms']>
 /**

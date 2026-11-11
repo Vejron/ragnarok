@@ -13,8 +13,8 @@ use crate::consts::*;
 use crate::mounts::{Aim, Ammo, Eye, Fire, MountDef, Muzzle, Need, Refill, Show};
 use crate::items::*;
 use crate::protocol::{
-    KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_TUPP, KIND_WALKER, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON,
-    PROJECTILE_EGG, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_SHELL, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LASER, WEAPON_LOITER, WEAPON_MG, WEAPON_SHELL,
+    KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SPORTS, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TUPP, KIND_WALKER, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON,
+    PROJECTILE_EGG, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_SHELL, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LASER, WEAPON_LOITER, WEAPON_MG, WEAPON_MISSILE, WEAPON_ROCKET, WEAPON_SHELL,
 };
 
 pub mod drone;
@@ -23,6 +23,7 @@ pub mod heli;
 pub mod hen;
 pub mod jeep;
 pub mod loiter;
+pub mod missile;
 pub mod mortar;
 pub mod pak;
 pub mod plane;
@@ -33,6 +34,7 @@ pub mod snowmobile;
 mod spec;
 pub mod sports;
 pub mod strv;
+pub mod submarine;
 pub mod tank;
 pub mod technical;
 pub mod tupp;
@@ -134,6 +136,8 @@ pub enum Launch {
     /// `back` metres behind the eye and `up` above it, already flying along the look at `speed`: it
     /// comes in over its pilot's head.
     Behind { back: f32, up: f32, speed: f32 },
+    /// Out of a submarine's launch tube: the submarine places it, and it cannot be launched by hand.
+    Tube,
 }
 
 impl VehicleDef {
@@ -244,6 +248,8 @@ pub static VEHICLES: &[VehicleDef] = &[
     ship_gun::SHIP_GUN,
     golf_cart::GOLF_CART,
     technical::TECHNICAL,
+    submarine::SUBMARINE,
+    missile::MISSILE,
 ];
 
 /// Where each kind id's definition is in `VEHICLES`: 0, the jeep's, for ids that are not a vehicle.

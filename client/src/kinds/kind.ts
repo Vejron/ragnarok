@@ -29,8 +29,8 @@ export interface KindFx {
   wheels: WheelLayout | null
   /** The wheels from this index on push it, and so spin on a hard launch; none for a plane, which its propeller pulls. */
   drivenFrom: number | null
-  /** What comes out of it while it is driven: exhaust puffs, a rotary's burnt castor oil, or nothing for an electric motor. */
-  exhaust: 'pipe' | 'castor' | null
+  /** What comes out of it while it is driven: exhaust puffs, a rotary's burnt castor oil, a missile's flame and smoke, or nothing for an electric motor. */
+  exhaust: 'pipe' | 'castor' | 'rocket' | null
   /** Backfires when the driver lifts off at speed. */
   backfire?: true
   /** Where its engine is, in the hull's frame: where a hurt one smokes from. */

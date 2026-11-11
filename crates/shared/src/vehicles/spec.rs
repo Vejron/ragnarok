@@ -19,6 +19,11 @@ pub enum Lift {
     /// A hull that floats on open water and a sail the wind fills (`crate::wind`), steered by its
     /// rudder. Aground, nothing drives it.
     Sail,
+    /// A pressure hull that floats on the surface or holds any depth below it, driven by its motor,
+    /// steered by its rudder, and taken up or down by its captain.
+    Dive,
+    /// A guided missile's motor and fins: always driving forward fast, turning towards the look.
+    Missile,
     /// Nothing of its own: it is fixed to another vehicle (`Fitting`) and carried with it.
     Mounted,
 }

@@ -8,6 +8,7 @@ pub use crate::vehicles::technical::*;
 pub use crate::vehicles::tupp::*;
 pub use crate::vehicles::jeep::*;
 pub use crate::vehicles::loiter::*;
+pub use crate::vehicles::missile::*;
 pub use crate::vehicles::mortar::*;
 pub use crate::vehicles::pak::*;
 pub use crate::vehicles::plane::*;
@@ -17,11 +18,12 @@ pub use crate::vehicles::ship_gun::*;
 pub use crate::vehicles::snowmobile::*;
 pub use crate::vehicles::sports::*;
 pub use crate::vehicles::strv::*;
+pub use crate::vehicles::submarine::*;
 pub use crate::vehicles::tank::*;
 pub use crate::vehicles::walker::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 73;
+pub const PROTOCOL_VERSION: u8 = 75;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -73,6 +75,11 @@ pub const KIND_TECHNICAL: u8 = 23;
 /// A zombie: a soldier's body with no gun and no mind but hunger, that rises at night in a scenario's
 /// zombie areas (ZOMBIES.md). Replicated like a soldier, drawn with the soldier's model in rags.
 pub const KIND_ZOMBIE: u8 = 24;
+/// The submarine: a captain who steers and dives it, and a weapons officer at the periscope who fires
+/// guided missiles from its launch tubes.
+pub const KIND_SUBMARINE: u8 = 25;
+/// A submarine's guided missile, flown from its nose by the officer who fired it, as a drone is.
+pub const KIND_MISSILE: u8 = 26;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -254,6 +261,8 @@ pub const STANCE_SURRENDER: u8 = 4;
 pub const STANCE_SWIM: u8 = 5;
 /// Swimming under the water, the eyes below its surface: holding the breath (`BREATH_FULL`).
 pub const STANCE_DIVE: u8 = 6;
+/// A zombie climbing out of the ground (`ZOMBIE_RISE_TICKS`): it neither moves nor claws until it is up.
+pub const STANCE_RISE: u8 = 7;
 /// A blast that throws a soldier at least this hard, m/s, knocks them down.
 pub const KNOCKDOWN_POWER: f32 = 7.0;
 /// Ticks they lie there once landed: this many at `KNOCKDOWN_POWER`, rising evenly to
@@ -724,6 +733,11 @@ pub const ZOMBIE_CLAW_RECOVER: u32 = 30;
 /// The harm a claw does, and a bite (a zombie with no arms left bites instead).
 pub const ZOMBIE_CLAW_DAMAGE: u8 = 22;
 pub const ZOMBIE_BITE_DAMAGE: u8 = 14;
+/// Ticks a zombie takes to claw its way out of the ground (6 s at `TICK_RATE`): a hand first, then the
+/// head, then it heaves itself out and stands. It does nothing else meanwhile, but can be shot.
+pub const ZOMBIE_RISE_TICKS: u32 = 360;
+/// The zombies of a horde come up one by one over this many ticks (10 s), each at a moment of its own.
+pub const ZOMBIE_RISE_STAGGER: u32 = 600;
 /// The most zombies up at once in a room, whatever a scenario asks for.
 pub const MAX_ZOMBIES: usize = 96;
 /// The zombies' side: they never hurt each other, and everyone else is their prey. Their profiles say

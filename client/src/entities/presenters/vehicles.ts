@@ -7,6 +7,7 @@ import type { Rounds } from '@/render/rounds'
 import { HenModel } from '@/render/hen'
 import { VehicleFx, type FxWorld } from '@/render/tyres'
 import { kindView } from '@/kinds'
+import { SubmarineModel } from '@/render/submarine'
 import { TankModel } from '@/render/tank'
 import { WalkerModel } from '@/render/walker'
 import type { VehicleModel } from '@/render/car'
@@ -17,7 +18,7 @@ import { vehicleDef } from '@/sim/vehicles'
 import type { VehicleSounds } from '@/vehicleaudio'
 import type { Frame, Presenter } from '../presenter'
 import type { Sampled } from '../store'
-import type { Arms, Entity, Pintle, Turret } from '../units'
+import type { Arms, Entity, Pintle, Sub, Turret } from '../units'
 import type { Seating } from './seating'
 
 /** Where a ship's guns stand on her deck, in her frame (`SHIP_GUN_SLOTS`), and which way each faces. */
@@ -46,6 +47,8 @@ export interface Placed {
   /** The roof gun, on a tank with one. */
   pintle: Pintle | null
   arms: Arms | null
+  /** A submarine's periscope and tubes. */
+  sub: Sub | null
   hp: number
   /** `VehicleState::damage`'s parts; all 0 while unhurt. */
   damage: readonly number[]
@@ -184,6 +187,7 @@ export class Vehicles implements Presenter<Frame> {
     if (model instanceof HenModel) model.setFlags(jets)
     model.update(position, [rotation[0], rotation[1], rotation[2], rotation[3]], steer, seats, turret, arms)
     if (model instanceof TankModel) model.setPintle(pintle)
+    if (model instanceof SubmarineModel) model.setSub(entity.sub ?? null, frame.dt)
     if (model instanceof WalkerModel || model instanceof HenModel) for (const step of model.takeSteps()) this.world.sounds.footstep(step.at, step.weight)
     if (model instanceof HenModel) {
       const { beats, leapt, eggs } = model.takeEvents()
@@ -192,7 +196,7 @@ export class Vehicles implements Presenter<Frame> {
       if (eggs > 0) this.world.sounds.plop([x, y - 1, z])
     }
     const placed: Placed = {
-      kind, x, y, z, yaw: Math.atan2(-forward.x, -forward.z), rotation, steer, seats, turret, pintle, arms,
+      kind, x, y, z, yaw: Math.atan2(-forward.x, -forward.z), rotation, steer, seats, turret, pintle, arms, sub: entity.sub ?? null,
       hp: entity.health?.hp ?? 0, damage: entity.damage?.parts ?? UNHURT, jets, air: entity.thrust?.air ?? null,
     }
     this.placed.set(id, placed)

@@ -25,12 +25,14 @@ use shared::armor::{Part, State, unpack};
 use shared::protocol::{DAMAGE_PARTS, DAMAGE_SLOTS, DAMAGE_WHEELS, THRUST_AIR, THRUST_BOOST, THRUST_GLIDE, THRUST_LIFT, WHEEL_GONE, is_drone, vehicle_hp};
 
 
+mod dive;
 mod flight;
 mod sail;
 mod spec;
 mod water;
 
-use flight::{assist, boost, flap, fly, fly_drone, fly_loiter, pull, roll_plane, thrust, walk, wing};
+use flight::{LOITER_GLIDE, MISSILE_GLIDE, assist, boost, flap, fly, fly_drone, glide, pull, roll_plane, thrust, walk, wing};
+use dive::dive;
 use sail::sail;
 use water::{wade, water_under};
 pub use spec::half_extents;
@@ -668,9 +670,8 @@ impl Physics {
         }
     }
 
-    /// Test helper: points vehicle `id` `pitch` radians up from level at `yaw`, at `position`, moving
-    /// along its nose at `speed`.
-    #[cfg(any(test, feature = "testing"))]
+    /// Points vehicle `id` `pitch` radians up from level at `yaw`, at `position`, moving along its nose
+    /// at `speed`: a missile leaving its tube, or a test's dive.
     pub fn set_car_dive(&mut self, id: u32, position: [f32; 3], yaw: f32, pitch: f32, speed: f32) {
         let Some(car) = self.cars.get(&id) else { return };
         if let Some(body) = self.bodies.get_mut(car.body) {
@@ -717,7 +718,7 @@ impl Physics {
     /// Applies the driver's controls to the wheels for the next [`Physics::step_cars`].
     pub fn drive_car(&mut self, id: u32, controls: CarControls, dt: f32) {
         let Some(car) = self.cars.get_mut(&id) else { return };
-        if matches!(car.spec.lift, Lift::Rotor | Lift::Walker | Lift::Drone | Lift::Loiter | Lift::Sail | Lift::Mounted) {
+        if matches!(car.spec.lift, Lift::Rotor | Lift::Walker | Lift::Drone | Lift::Loiter | Lift::Missile | Lift::Sail | Lift::Dive | Lift::Mounted) {
             car.flight = controls;
             return;
         }
@@ -867,11 +868,11 @@ impl Physics {
         let floors: std::collections::HashMap<u32, f32> = self
             .cars
             .iter()
-            .filter(|(_, car)| matches!(car.spec.lift, Lift::Rotor | Lift::Drone | Lift::Loiter | Lift::Wing) || car.tank.is_some())
+            .filter(|(_, car)| matches!(car.spec.lift, Lift::Rotor | Lift::Drone | Lift::Loiter | Lift::Missile | Lift::Wing) || car.tank.is_some())
             .filter_map(|(&id, car)| Some((id, self.terrain_below(self.bodies.get(car.body)?.translation()))))
             .collect();
         let floor = |id: &u32| floors.get(id).copied().unwrap_or(0.0);
-        for (id, car) in self.cars.iter().filter(|(_, car)| matches!(car.spec.lift, Lift::Rotor | Lift::Drone | Lift::Loiter)) {
+        for (id, car) in self.cars.iter().filter(|(_, car)| matches!(car.spec.lift, Lift::Rotor | Lift::Drone | Lift::Loiter | Lift::Missile)) {
             if let Some(body) = self.bodies.get_mut(car.body) {
                 // Forces persist from step to step until reset.
                 body.reset_forces(false);
@@ -882,7 +883,9 @@ impl Physics {
                 if car.spec.lift == Lift::Drone {
                     fly_drone(body, car.flight, floor(id), dt);
                 } else if car.spec.lift == Lift::Loiter {
-                    fly_loiter(body, car.flight, floor(id), dt);
+                    glide(body, LOITER_GLIDE, car.flight, floor(id), dt);
+                } else if car.spec.lift == Lift::Missile {
+                    glide(body, MISSILE_GLIDE, car.flight, floor(id), dt);
                 } else {
                     fly(body, car.flight, floor(id), dt);
                 }
@@ -918,6 +921,12 @@ impl Physics {
             let Some(body) = self.bodies.get_mut(car.body) else { continue };
             let water = water_under(&self.waters, waves, body, car.spec);
             sail(body, car.spec, car.flight, car.condition, water.as_ref(), wind, dt);
+        }
+        // A submarine floats on the surface or holds whatever depth its captain takes it to.
+        for car in self.cars.values().filter(|car| car.spec.lift == Lift::Dive) {
+            let Some(body) = self.bodies.get_mut(car.body) else { continue };
+            let water = water_under(&self.waters, waves, body, car.spec);
+            dive(body, car.spec, car.flight, car.condition, water.as_ref(), dt);
         }
         for car in self.cars.values_mut().filter(|car| car.spec.lift.wheeled()) {
             // Wheel rays must not hit their own chassis.

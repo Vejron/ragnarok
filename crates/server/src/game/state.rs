@@ -35,6 +35,9 @@ pub struct Seat {
     pub index: usize,
     /// Flown from afar (a drone): the body stays where it stood, frozen but in the world.
     pub remote: bool,
+    /// For a remote seat flown from another vehicle's seat (a missile fired from a submarine): that
+    /// vehicle and seat. The body stays in it, out of the world, and goes back to it when the flight ends.
+    pub from: Option<(u32, usize)>,
 }
 
 /// A hotbar of `items`, one a slot, with full magazines and full stacks. `ITEM_NONE` is an empty slot.
@@ -399,7 +402,7 @@ impl Player {
     /// Whether the soldier is out in the world, to be seen, hit and blasted: on foot, or standing
     /// still while flying a drone.
     pub fn embodied(&self) -> bool {
-        self.seat.is_none_or(|seat| seat.remote)
+        self.seat.is_none_or(|seat| seat.remote && seat.from.is_none())
     }
 
     /// The slot in hand.

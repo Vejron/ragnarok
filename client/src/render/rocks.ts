@@ -315,6 +315,8 @@ export function buildRocks(trees: readonly Tree[], rocks: readonly { tree: Tree;
       mesh.setColorAt(i, stone.color.r * shade, stone.color.g * shade, stone.color.b * shade, packRockAlpha(moss[r]!, water))
     })
     mesh.needsUpdate()
+    // No coarser shapes, but each rock is culled on its own.
+    mesh.levels = []
     mesh.castShadow = true
     mesh.receiveShadow = true
     mesh.userData.sharedGeometry = true

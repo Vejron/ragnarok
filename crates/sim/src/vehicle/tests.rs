@@ -1,7 +1,7 @@
 use shared::vec3;
 use super::*;
 use shared::consts::TICK_DT;
-use shared::protocol::{KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_WALKER};
+use shared::protocol::{KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_WALKER};
 use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 
 fn flat() -> WorldFile {
@@ -704,6 +704,61 @@ fn a_loitering_drone_banks_into_a_turn_and_rolls_out_on_the_new_heading() {
     // Facing +PI/2 is heading -X: it flies where its nose points, at its speed.
     assert!(-pose.velocity[0] > LOITER_SPEED - 1.0 && pose.velocity[2].abs() < 1.0, "no slide: {:?}", pose.velocity);
     assert!((pose.position[1] - 60.0).abs() < 8.0, "about level through the turn: {pose:?}");
+}
+
+#[test]
+fn a_missile_fired_from_a_tube_climbs_steeply_then_pitches_over_to_the_look_at_its_speed() {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_MISSILE, [0.0, 5.0, 100.0], 0.0);
+    physics.set_car_dive(1, [0.0, 5.0, 100.0], 0.0, 1.55, SUB_LAUNCH_SPEED);
+    // Looking level, a little to the left.
+    let looking = CarControls { aim: Some([0.3, 0.0]), ..PILOTED };
+    // Slow off the tube, it climbs almost straight up for the first couple of seconds.
+    let early = run(&mut physics, looking, 60 * 3 / 2);
+    let nose = early.world_dir([0.0, 0.0, -1.0]);
+    assert!(nose[1] > 0.85, "still climbing steeply: nose {nose:?}");
+    assert!(speed(&early) < MISSILE_SPEED * 0.6, "and still gathering speed: {}", speed(&early));
+    let pose = run(&mut physics, looking, 60 * 3);
+    let nose = pose.world_dir([0.0, 0.0, -1.0]);
+    assert!(nose[1].abs() < 0.3, "then it pitched over: nose {nose:?}");
+    assert!(pose.position[1] > 60.0, "after climbing out: {pose:?}");
+    assert!(pose.up_y > 0.5, "the right way up: {pose:?}");
+    assert!((speed(&pose) - MISSILE_SPEED).abs() < 5.0, "at its speed: {}", speed(&pose));
+    // It heads where its flier looks: -Z, turned a little towards -X.
+    let heading = (-nose[0]).atan2(-nose[2]);
+    assert!((heading - 0.3).abs() < 0.25, "towards the look: {heading}");
+}
+
+#[test]
+fn a_missile_pitching_over_towards_a_look_to_its_side_keeps_its_wings_about_level() {
+    // Looked about, all round: it skids round with its nose rather than rolling onto its side.
+    for aim in [[1.5, 0.0], [-2.5, 0.0], [1.0, 0.5], [0.3, -0.8]] {
+        let mut physics = Physics::new(&flat()).unwrap();
+        physics.add_car(1, KIND_MISSILE, [0.0, 5.0, 100.0], 0.0);
+        physics.set_car_dive(1, [0.0, 5.0, 100.0], 0.0, 1.55, SUB_LAUNCH_SPEED);
+        let looking = CarControls { aim: Some(aim), ..PILOTED };
+        for tick in 0..60 * 4 {
+            let pose = run(&mut physics, looking, 1);
+            let right = pose.world_dir([1.0, 0.0, 0.0]);
+            assert!(right[1].abs() < 0.3, "{aim:?}, tick {tick}: rolled onto its side: right {right:?}");
+        }
+    }
+}
+
+#[test]
+fn a_missile_at_speed_comes_about_to_a_look_behind_it_flat() {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_MISSILE, [0.0, 60.0, 100.0], 0.0);
+    physics.set_car_velocity(1, [0.0, 0.0, -MISSILE_SPEED]);
+    // Straight behind it.
+    let back = CarControls { aim: Some([std::f32::consts::PI, 0.0]), ..PILOTED };
+    for _ in 0..60 * 3 {
+        let pose = run(&mut physics, back, 1);
+        assert!(pose.up_y > 0.7, "it skids round the right way up: {pose:?}");
+    }
+    let pose = run(&mut physics, back, 0);
+    assert!(yaw(&pose).abs() > 2.9, "came about: {}", yaw(&pose));
+    assert!((pose.position[1] - 60.0).abs() < 10.0, "about level: {pose:?}");
 }
 
 #[test]
@@ -1640,3 +1695,4 @@ fn a_tanks_parts_take_its_power_speed_and_turn() {
     // The gun's parts do not move it.
     assert_eq!(with(Part::Breech, State::Gone), CarCondition::NEW);
 }
+

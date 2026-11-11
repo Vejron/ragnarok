@@ -1,7 +1,7 @@
 import { Animator, Group, Mesh, SkinnedMesh, parseGlb, type AnimationClip, type Geometry, type Material, type Node, Matrix4, Quaternion, Vector3 } from '@ragnarok/engine'
 import { Canopy } from './canopy'
 import { toonMaterial } from './toon'
-import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, PRONE_CENTRE, RUN_SPEED, SKI_BOOST_TOP, STAND_CENTRE, WALK_SPEED } from '@/sim/consts'
+import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, PRONE_CENTRE, RUN_SPEED, SKI_BOOST_TOP, STAND_CENTRE, TICK_RATE, WALK_SPEED, ZOMBIE_RISE_TICKS } from '@/sim/consts'
 import { ITEM_AK5, ITEM_AT_RIFLE, ITEM_BANDAGE, ITEM_BRICKS, ITEM_CARL_GUSTAF, ITEM_FLARE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, fillsHands, itemDef, type ItemDef } from '@/sim/items'
 import { type Limb, poseLimb, splitLimbs } from './gibs'
 import { colorFor } from '@/profile'
@@ -28,6 +28,8 @@ const ZOMBIE_RAGS = 0x4a4636
 const ZOMBIE_SKIN = 0x9db08a
 /** How long a zombie's claw clip takes to play out, seconds: the wind-up the server flags, the blow and the recovery. */
 const ZOMBIE_CLAW_TIME = 0.7
+/** How long a zombie takes to climb out of its grave, seconds: the server's `ZOMBIE_RISE_TICKS`. */
+const ZOMBIE_RISE_TIME = ZOMBIE_RISE_TICKS / TICK_RATE
 /** The ground speed at which a zombie's shambling feet stop sliding, m/s. */
 const ZOMBIE_WALK_SPEED = 1.2
 
@@ -575,6 +577,8 @@ export class Character {
   /** Seconds into a zombie's claw, or -1 when it is not clawing; and whether the server said so last. */
   private clawTime = -1
   private clawSaid = false
+  /** Seconds into a zombie's climb out of the grave (`zombie_rise`), or -1 when it is not climbing. */
+  private graveTime = -1
   /** How far through its shamble a zombie is, 0..1. */
   private shamble = 0
 
@@ -732,7 +736,7 @@ export class Character {
     const free = speedNow > STILL_SPEED || !grounded || prone || this.lie > 0.3 || this.down || sliding || crouching || this.golf > 0.01
     let body = this.bodyYaw ?? yaw
     const gap = wrap(yaw - body)
-    if (this.rising) this.turning = false
+    if (this.rising || this.graveTime >= 0) this.turning = false
     else if (free || Math.abs(gap) > TWIST_LIMIT) this.turning = true
     else if (Math.abs(gap) < TWIST_SETTLED) this.turning = false
     const before = body
@@ -814,6 +818,14 @@ export class Character {
     targets.set('death', this.death)
     this.swimTargets(targets, alive * this.wet, speedNow, vy, dt)
     if (this.undead) this.zombieTargets(targets, standing, speed, dt)
+    // Climbing out of the grave is all there is until it is out; the clip carries the body down into
+    // the ground, which hides what is still buried.
+    if (this.graveTime >= 0 && !this.down) {
+      this.graveTime = Math.min(this.graveTime + dt, ZOMBIE_RISE_TIME)
+      for (const name of targets.keys()) targets.set(name, 0)
+      targets.set('zombie_rise', 1)
+      for (const name of this.actions.keys()) this.weights.set(name, name === 'zombie_rise' ? 1 : 0)
+    }
     // Getting up is all there is until it is up; then the stance's clips take over again.
     const rising = this.rising
     if (rising) {
@@ -871,6 +883,7 @@ export class Character {
       else if (base === 'swim_fwd' || base === 'dive_fwd') action.time = this.swimPhase * action.clip.duration
       else if (base === 'zombie_idle') action.time = this.clock % action.clip.duration
       else if (base === 'zombie_walk') action.time = this.shamble * action.clip.duration
+      else if (base === 'zombie_rise') action.time = (Math.max(0, this.graveTime) / ZOMBIE_RISE_TIME) * action.clip.duration
       else if (base === 'zombie_claw') action.time = (Math.max(0, this.clawTime) / ZOMBIE_CLAW_TIME) * action.clip.duration
       else if (base !== 'death') action.time = this.phase * action.clip.duration
     }
@@ -887,7 +900,7 @@ export class Character {
     // On skis with a gun the legs go the way the skis do and the torso alone carries it to the look.
     const heading = speedNow > 0.5 ? Math.atan2(-vx, -vz) : body
     const skiTurn = this.skiGun * (1 - this.air) * wrap(yaw + Math.max(-SKI_TWIST, Math.min(SKI_TWIST, wrap(heading - yaw))) - body)
-    const twist = wrap(yaw - body - skiTurn) * alive * (1 - this.lie) * (1 - this.air) * (1 - this.golf) * (1 - this.under) * (this.rising ? 0 : 1)
+    const twist = wrap(yaw - body - skiTurn) * alive * (1 - this.lie) * (1 - this.air) * (1 - this.golf) * (1 - this.under) * (this.rising || this.graveTime >= 0 ? 0 : 1)
     this.turn(this.spine, twist * TWIST_SPINE, AXIS_Y)
     this.turn(this.chest, twist * (1 - TWIST_SPINE), AXIS_Y)
     this.live(dt, speedNow, standing * (1 - moving), alive)
@@ -1600,6 +1613,19 @@ export class Character {
     return this.undead
   }
 
+  /**
+   * A zombie climbing out of its grave (`STANCE_RISE`): the climb plays out from where the server
+   * starts saying so, and once it stops the zombie's own clips take over again.
+   */
+  set graveRise(on: boolean) {
+    if (on && this.graveTime < 0) this.graveTime = 0
+    else if (!on) this.graveTime = -1
+  }
+
+  get graveRise() {
+    return this.graveTime >= 0
+  }
+
   /** A zombie reaching back to claw (`FLAG_CLAWING`): each time the server starts saying so, the claw plays out once. */
   set clawing(on: boolean) {
     if (on && !this.clawSaid) this.clawTime = 0
@@ -1758,6 +1784,7 @@ export class Character {
       this.fling = null
       this.ragdoll = null
       this.rising = null
+      this.graveTime = -1
       this.tumble.identity()
       for (const spring of Object.values(this.springs)) spring.reset()
       this.struckCount = null

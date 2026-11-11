@@ -41,11 +41,45 @@ export class Mesh extends Node {
   }
 }
 
+/** A coarser geometry of an instanced mesh, and the distance from the camera it takes over at, metres. */
+export interface DetailLevel {
+  geometry: Geometry
+  from: number
+}
+
+/**
+ * Which level an instance `distance2` (metres, squared) from the camera is drawn at: 0 is the mesh's
+ * own geometry, `n` is `levels[n - 1]`. `levels` are in order of `from`, and `detail` multiplies every
+ * `from`, so under 1 the coarser levels come nearer.
+ */
+export function levelAt(distance2: number, levels: readonly DetailLevel[], detail = 1): number {
+  let level = 0
+  for (let i = 0; i < levels.length; i++) {
+    const from = levels[i]!.from * detail
+    if (distance2 < from * from) break
+    level = i + 1
+  }
+  return level
+}
+
 /**
  * Many copies of one geometry and material, each with its own matrix and tint, drawn in one call.
  * Matrices are relative to this node.
  */
 export class InstancedMesh extends Mesh {
+  /**
+   * Coarser geometries for instances further from the camera, nearest first. With this set (an empty
+   * list will do) each instance is culled on its own and drawn at the level its own distance picks, so
+   * a forest costs what is near and in view rather than what is loaded. Without it the mesh is culled
+   * and drawn whole. The levels' geometries must fit inside the bounds of `geometry`.
+   */
+  levels: DetailLevel[] | null = null
+  /** The finest level the shadow pass draws an instance at: a shadow needs less than the thing itself. */
+  shadowLevel = 0
+  /** @internal each instance's bounding sphere in world space (x, y, z, radius), and what it was worked out from. */
+  spheres: Float32Array | null = null
+  spheresVersion = -1
+  spheresWorld = -1
   /** How many of the instances to draw, up to `capacity`. */
   count: number
   readonly matrices: Float32Array
@@ -82,6 +116,8 @@ export class InstancedMesh extends Mesh {
     copy.count = this.count
     copy.matrices.set(this.matrices)
     copy.colors.set(this.colors)
+    copy.levels = this.levels
+    copy.shadowLevel = this.shadowLevel
     copy.castShadow = this.castShadow
     copy.receiveShadow = this.receiveShadow
     copy.renderOrder = this.renderOrder

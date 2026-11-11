@@ -19,7 +19,7 @@ import { LIGHT_CELL, LightGrid } from './scene/lightgrid'
 import { outputWgsl } from './passes/output.wgsl'
 import type { PerspectiveCamera } from './scene/camera'
 import { ShaderMaterial, type Material } from './scene/material'
-import { InstancedMesh, Mesh } from './scene/mesh'
+import { InstancedMesh, Mesh, levelAt } from './scene/mesh'
 import type { Node } from './scene/node'
 import { Craters } from './scene/craters'
 import type { Scene } from './scene/scene'
@@ -79,6 +79,12 @@ interface DrawItem {
   group: number
   order: number
   depth: number
+  /**
+   * Which of the mesh's instances to draw, when not all of them: `count` indices from `listFirst` in
+   * `list`, each added to `record`. Null draws the first `count`.
+   */
+  list: Uint32Array | null
+  listFirst: number
 }
 
 /** A run of consecutive draw-list entries drawn with one call. */
@@ -106,6 +112,11 @@ export class Renderer {
   pixelRatio = 1
   /** Tints lit surfaces by how many lights their light-grid cell lists, instead of lighting them. */
   showLightGrid = false
+  /**
+   * Multiplies the distances at which instanced meshes change to their coarser levels
+   * (`InstancedMesh.levels`): under 1 they come nearer, for a slower GPU.
+   */
+  detail = 1
   /** Flat sprites drawn over the finished frame: fill it before each `render`, which draws and empties it. */
   hud = new HudLayer()
   private readonly hudPass: HudPass
@@ -163,6 +174,13 @@ export class Renderer {
   private readonly stack: Node[] = []
   private readonly pool: DrawItem[] = []
   private poolUsed = 0
+  /** This frame's lists of instances (`DrawItem.list`), handed out from the front. */
+  private scratch = new Uint32Array(16384)
+  private scratchUsed = 0
+  private readonly levelSlots: GeometrySlot[] = []
+  /** How many instances each level's list holds so far: the view's lists, then the sun's. */
+  private levelCounts = new Uint32Array(16)
+  private levelFrom2 = new Float64Array(8)
   private readonly opaque: DrawItem[] = []
   private readonly transparent: DrawItem[] = []
   private readonly overlay: DrawItem[] = []
@@ -358,6 +376,7 @@ export class Renderer {
     this.setupReflection(camera)
 
     this.poolUsed = 0
+    this.scratchUsed = 0
     this.reflected.length = 0
     this.opaque.length = 0
     this.transparent.length = 0
@@ -410,12 +429,10 @@ export class Renderer {
       if (half) this.halfResolutionPass(encoder, effects)
       this.effectsPass(encoder, effects, half)
     }
-    if (this.overlay.length) this.overlayPass(encoder)
     const bloom = scene.bloom
     if (bloom && bloom.strength > 0) this.bloom.encode(encoder, bloom.threshold, bloom.knee, bloom.radius)
     const screen = this.context.getCurrentTexture().createView()
     this.outputPass(encoder, scene, camera, screen)
-    if (this.hud.size) stats.drawCalls += this.hudPass.encode(encoder, screen, this.hud, this.timer.pass('hud'))
     this.timer.resolve(encoder)
     this.device.queue.submit([encoder.finish()])
     this.timer.read()
@@ -493,6 +510,9 @@ export class Renderer {
     if (!inView && !inShadow && !inReflection) return
     const bones = mesh instanceof SkinnedMesh ? this.bones.sync(mesh, this.frameNumber) + 1 : 0
     const record = this.objects.sync(mesh, this.materials.sync(material), this.frameNumber, bones)
+    if (mesh instanceof InstancedMesh && mesh.levels) {
+      return this.considerLevels(mesh, mesh.levels, slot, record, layer, inView, inShadow, inReflection, Math.max(0, Math.sqrt(distance2) - radius), distance2)
+    }
     const count = mesh instanceof InstancedMesh ? mesh.count : 1
     if (inView || inReflection) {
       const group = material instanceof ShaderMaterial ? this.resources.custom(material) : this.resources.standard(material)
@@ -507,10 +527,111 @@ export class Renderer {
     if (inShadow) this.casters.push(this.item(mesh, slot, record, count, material.side === 'front' ? 0 : 1, 0))
   }
 
+  /**
+   * An instanced mesh with levels of detail, already found to be in the view, the sun's or the
+   * reflection's: each instance is tested on its own and listed under the level its distance picks.
+   * `nearest` is how close to the camera the mesh's bounds come, metres.
+   */
+  private considerLevels(
+    mesh: InstancedMesh, levels: NonNullable<InstancedMesh['levels']>, slot: GeometrySlot, record: number, layer: Layer,
+    inView: boolean, inShadow: boolean, inReflection: boolean, nearest: number, distance2: number,
+  ) {
+    const material = mesh.material
+    const last = levels.length
+    const slots = this.levelSlots
+    slots.length = 0
+    slots.push(slot)
+    // A level whose geometry is empty falls back on the one before it.
+    for (let i = 0; i < last; i++) {
+      const s = this.arena.sync(levels[i]!.geometry)
+      slots.push(s && s.indexCount ? s : slots[i]!)
+    }
+    const shadowPipeline = material.side === 'front' ? 0 : 1
+    const shadowLevel = Math.min(mesh.shadowLevel, last)
+    let pipeline = 0, group = 0
+    if (inView || inReflection) {
+      group = material instanceof ShaderMaterial ? this.resources.custom(material) : this.resources.standard(material)
+      pipeline = this.pipelineFor(material, layer)
+      // The mirror image is small and blurred by the water: all of the mesh at its coarsest.
+      if (inReflection) this.reflected.push(this.item(mesh, slots[last]!, record, mesh.count, pipeline, group))
+    }
+    if (!inView && !inShadow) return
+    const into = layer === 'overlay' ? this.overlay : layer === 'held' ? this.held : material.transparent ? this.transparent : this.opaque
+    // All of it past the last change of level: one draw of the whole mesh, with no instance looked at.
+    if (last > 0 && levelAt(nearest * nearest, levels, this.detail) === last) {
+      if (inView) {
+        const item = this.item(mesh, slots[last]!, record, mesh.count, pipeline, group)
+        item.depth = distance2
+        into.push(item)
+      }
+      if (inShadow) this.casters.push(this.item(mesh, slots[last]!, record, mesh.count, shadowPipeline, 0))
+      return
+    }
+    const count = mesh.count
+    const spheres = instanceSpheres(mesh)
+    // Room for every instance in every level's list, for the view and then for the sun.
+    const lists = last + 1
+    const first = this.reserve(lists * 2 * count)
+    const scratch = this.scratch
+    if (this.levelCounts.length < lists * 2) this.levelCounts = new Uint32Array(lists * 2)
+    const counts = this.levelCounts
+    counts.fill(0)
+    // Each level's distance, squared, so an instance's level is a compare or two.
+    if (this.levelFrom2.length < last) this.levelFrom2 = new Float64Array(last)
+    const from2 = this.levelFrom2
+    for (let i = 0; i < last; i++) from2[i] = (levels[i]!.from * this.detail) ** 2
+    const frustum = this.frustum, shadowFrustum = this.shadowFrustum
+    const culled = mesh.frustumCulled
+    for (let i = 0; i < count; i++) {
+      const o = i * 4
+      const r = spheres[o + 3]!
+      // An instance scaled to nothing (a felled tree) is not there.
+      if (r <= 0) continue
+      const x = spheres[o]!, y = spheres[o + 1]!, z = spheres[o + 2]!
+      const dx = x - this.camX, dy = y - this.camY, dz = z - this.camZ
+      const d2 = dx * dx + dy * dy + dz * dz
+      let level = 0
+      while (level < last && d2 >= from2[level]!) level++
+      if (inView && (!culled || frustum.intersectsSphere(x, y, z, r))) scratch[first + level * count + counts[level]!++] = i
+      if (inShadow && (!culled || shadowFrustum.intersectsSphere(x, y, z, r))) {
+        const cast = lists + Math.max(level, shadowLevel)
+        scratch[first + cast * count + counts[cast]!++] = i
+      }
+    }
+    for (let level = 0; level < lists; level++) {
+      const seen = counts[level]!
+      if (seen) {
+        const item = this.item(mesh, slots[level]!, record, seen, pipeline, group)
+        item.depth = distance2
+        item.list = scratch
+        item.listFirst = first + level * count
+        into.push(item)
+      }
+      const cast = counts[lists + level]!
+      if (cast) {
+        const item = this.item(mesh, slots[level]!, record, cast, shadowPipeline, 0)
+        item.list = scratch
+        item.listFirst = first + (lists + level) * count
+        this.casters.push(item)
+      }
+    }
+  }
+
+  /** `entries` of `scratch` for this frame, as the index of the first. Lists handed out before a growth keep the old array. */
+  private reserve(entries: number): number {
+    if (this.scratchUsed + entries > this.scratch.length) {
+      this.scratch = new Uint32Array(Math.max(this.scratch.length * 2, entries * 2))
+      this.scratchUsed = 0
+    }
+    const first = this.scratchUsed
+    this.scratchUsed += entries
+    return first
+  }
+
   private item(mesh: Mesh, slot: GeometrySlot, record: number, count: number, pipeline: number, group: number): DrawItem {
     let item = this.pool[this.poolUsed]
     if (!item) {
-      item = { mesh, slot, record, count, pipeline, group, order: 0, depth: 0 }
+      item = { mesh, slot, record, count, pipeline, group, order: 0, depth: 0, list: null, listFirst: 0 }
       this.pool.push(item)
     }
     this.poolUsed++
@@ -522,6 +643,8 @@ export class Renderer {
     item.group = group
     item.order = mesh.renderOrder
     item.depth = 0
+    item.list = null
+    item.listFirst = 0
     return item
   }
 
@@ -538,7 +661,13 @@ export class Renderer {
         this.drawList = list
       }
       const list = this.drawList
-      for (let i = 0; i < count; i++) list[first + i] = item.record + i
+      const some = item.list
+      if (some) {
+        const from = item.listFirst
+        for (let i = 0; i < count; i++) list[first + i] = item.record + some[from + i]!
+      } else {
+        for (let i = 0; i < count; i++) list[first + i] = item.record + i
+      }
       this.drawCount += count
       const last = batches[batches.length - 1]
       if (merge && last && last.pipeline === item.pipeline && last.group === item.group && last.slot === item.slot && last.first + last.count === first) {
@@ -864,8 +993,8 @@ export class Renderer {
   private mainPass(encoder: GPUCommandEncoder, scene: Scene) {
     const bg = scene.background
     const msaa = this.colorTarget !== null
-    // With effects or an overlay to come the multisampled image is kept for them and resolved at the last pass's end.
-    const resolveHere = msaa && !this.effects.length && !this.overlay.length
+    // With effects to come the multisampled image is kept for them and resolved at the end of their pass.
+    const resolveHere = msaa && !this.effects.length
     const pass = encoder.beginRenderPass({
       label: 'main',
       colorAttachments: [{
@@ -878,7 +1007,8 @@ export class Renderer {
       depthStencilAttachment: { view: this.depthTarget!.createView(), depthClearValue: 0, depthLoadOp: 'clear', depthStoreOp: 'store' },
       timestampWrites: this.timer.pass('main'),
     })
-    this.drawBatches(pass, this.mainBatches, this.sceneGroup!, 0, this.overlayFrom)
+    // Without effects the overlay goes last in this pass; with them, last in theirs.
+    this.drawBatches(pass, this.mainBatches, this.sceneGroup!, 0, this.effects.length ? this.overlayFrom : this.mainBatches.length)
     pass.end()
   }
 
@@ -923,16 +1053,20 @@ export class Renderer {
     }
   }
 
-  /** Particles and other effects, over everything else, with the scene's depth bound read-only. */
+  /**
+   * Particles and other effects, over everything else, with the scene's depth bound read-only; then the
+   * overlay, which ignores depth, and the image resolves. The overlay has no pass of its own because
+   * storing and reloading the multisampled HDR image between them costs far more than its few draws.
+   */
   private effectsPass(encoder: GPUCommandEncoder, ctx: EffectContext, composite: boolean) {
     const msaa = this.colorTarget !== null
     const pass = encoder.beginRenderPass({
       label: 'effects',
       colorAttachments: [{
         view: msaa ? this.colorTarget!.createView() : this.hdrTarget!.createView(),
-        resolveTarget: msaa && !this.overlay.length ? this.hdrTarget!.createView() : undefined,
+        resolveTarget: msaa ? this.hdrTarget!.createView() : undefined,
         loadOp: 'load',
-        storeOp: msaa && !this.overlay.length ? 'discard' : 'store',
+        storeOp: msaa ? 'discard' : 'store',
       }],
       depthStencilAttachment: { view: ctx.depthView, depthReadOnly: true },
       timestampWrites: this.timer.pass('effects'),
@@ -942,6 +1076,7 @@ export class Renderer {
       this.stats.drawCalls++
     }
     for (const effect of this.effects) if (!effect.halfResolution) this.stats.drawCalls += effect.draw(ctx, pass)
+    if (this.overlayFrom < this.mainBatches.length) this.drawBatches(pass, this.mainBatches, this.sceneGroup!, this.overlayFrom, this.mainBatches.length)
     pass.end()
   }
 
@@ -955,24 +1090,6 @@ export class Renderer {
     })
     const half: EffectContext = { ...ctx, sampleCount: 1, half: true }
     for (const effect of this.effects) if (effect.halfResolution) this.stats.drawCalls += effect.draw(half, pass)
-    pass.end()
-  }
-
-  /** Overlay meshes: over everything including effects, depth ignored, then the image resolves. */
-  private overlayPass(encoder: GPUCommandEncoder) {
-    const msaa = this.colorTarget !== null
-    const pass = encoder.beginRenderPass({
-      label: 'overlay',
-      colorAttachments: [{
-        view: msaa ? this.colorTarget!.createView() : this.hdrTarget!.createView(),
-        resolveTarget: msaa ? this.hdrTarget!.createView() : undefined,
-        loadOp: 'load',
-        storeOp: msaa ? 'discard' : 'store',
-      }],
-      depthStencilAttachment: { view: this.depthTarget!.createView(), depthReadOnly: true },
-      timestampWrites: this.timer.pass('overlay'),
-    })
-    this.drawBatches(pass, this.mainBatches, this.sceneGroup!, this.overlayFrom, this.mainBatches.length)
     pass.end()
   }
 
@@ -998,6 +1115,7 @@ export class Renderer {
     pass.setPipeline(this.outputPipeline)
     pass.setBindGroup(0, this.outputGroup!)
     pass.draw(3)
+    if (this.hud.size) this.stats.drawCalls += this.hudPass.draw(pass, this.hud)
     pass.end()
   }
 
@@ -1029,6 +1147,36 @@ function byStateThenGeometry(a: DrawItem, b: DrawItem) {
 
 function byOrderThenFarToNear(a: DrawItem, b: DrawItem) {
   return a.order - b.order || b.depth - a.depth
+}
+
+/**
+ * Each instance's bounding sphere in world space, four numbers an instance (x, y, z, radius), worked out
+ * again only when the instances or the mesh's place change.
+ */
+function instanceSpheres(mesh: InstancedMesh): Float32Array {
+  let out = mesh.spheres
+  if (out && out.length >= mesh.count * 4 && mesh.spheresVersion === mesh.version && mesh.spheresWorld === mesh.worldVersion) return out
+  if (!out || out.length < mesh.count * 4) out = mesh.spheres = new Float32Array(mesh.capacity * 4)
+  const g = mesh.geometry.bounds
+  const m = mesh.matrices
+  const w = mesh.matrixWorld
+  const worldScale = mat4.maxScale(w)
+  for (let i = 0; i < mesh.count; i++) {
+    const o = i * 16
+    const x = m[o]! * g.x + m[o + 4]! * g.y + m[o + 8]! * g.z + m[o + 12]!
+    const y = m[o + 1]! * g.x + m[o + 5]! * g.y + m[o + 9]! * g.z + m[o + 13]!
+    const z = m[o + 2]! * g.x + m[o + 6]! * g.y + m[o + 10]! * g.z + m[o + 14]!
+    const sx = m[o]! * m[o]! + m[o + 1]! * m[o + 1]! + m[o + 2]! * m[o + 2]!
+    const sy = m[o + 4]! * m[o + 4]! + m[o + 5]! * m[o + 5]! + m[o + 6]! * m[o + 6]!
+    const sz = m[o + 8]! * m[o + 8]! + m[o + 9]! * m[o + 9]! + m[o + 10]! * m[o + 10]!
+    out[i * 4] = w[0]! * x + w[4]! * y + w[8]! * z + w[12]!
+    out[i * 4 + 1] = w[1]! * x + w[5]! * y + w[9]! * z + w[13]!
+    out[i * 4 + 2] = w[2]! * x + w[6]! * y + w[10]! * z + w[14]!
+    out[i * 4 + 3] = g.radius * Math.sqrt(Math.max(sx, sy, sz)) * worldScale
+  }
+  mesh.spheresVersion = mesh.version
+  mesh.spheresWorld = mesh.worldVersion
+  return out
 }
 
 /** Bounds of all of an instanced mesh's instances in its own space, recomputed when it changes. */

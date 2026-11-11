@@ -1,6 +1,6 @@
 import type { Character } from '@/render/character'
 import { FLAG_CLAWING, FLAG_CROUCHING, FLAG_DEAD, FLAG_GROUNDED, FLAG_HELD_MASK, FLAG_HELD_SHIFT, KIND_SOLDIER, KIND_ZOMBIE } from '@/net/codec'
-import { CARRY_BACKPACK, CARRY_LAMP, CARRY_POLING, CARRY_SKIS, SLIDE_MIN_SPEED, STANCE_CHUTE, STANCE_DIVE, STANCE_DOWN, STANCE_PRONE, STANCE_SURRENDER, STANCE_SWIM } from '@/sim/consts'
+import { CARRY_BACKPACK, CARRY_LAMP, CARRY_POLING, CARRY_SKIS, SLIDE_MIN_SPEED, STANCE_CHUTE, STANCE_DIVE, STANCE_DOWN, STANCE_PRONE, STANCE_RISE, STANCE_SURRENDER, STANCE_SWIM } from '@/sim/consts'
 import type { Avatars } from '../avatars'
 import type { Frame, Presenter } from '../presenter'
 import type { Sampled } from '../store'
@@ -65,6 +65,8 @@ export class Soldiers implements Presenter<Frame> {
     avatar.zombie = zombie
     const clawing = zombie && (flags & FLAG_CLAWING) !== 0
     avatar.clawing = clawing
+    const buried = zombie && !dead && stance === STANCE_RISE
+    avatar.graveRise = buried
     if (zombie && !dead) this.world.zombie(id, x, y, z, clawing, frame.dt)
     const swim = stance === STANCE_DIVE ? 2 : stance === STANCE_SWIM ? 1 : 0
     avatar.swim = dead ? 0 : swim
@@ -76,10 +78,10 @@ export class Soldiers implements Presenter<Frame> {
     avatar.lamp = (worn & CARRY_LAMP) !== 0 && !dead
     avatar.skiPoling = (worn & CARRY_POLING) !== 0
     avatar.surrendering = stance === STANCE_SURRENDER
-    if (!dead && swim === 0) this.world.blobFoot(x, y, z)
+    if (!dead && swim === 0 && !buried) this.world.blobFoot(x, y, z)
     avatar.update([x, y, z], entity.heading?.yaw ?? 0, velocity[0], velocity[1], grounded, frame.dt, 0, crouching,
       crouching && grounded && knock > SLIDE_MIN_SPEED, stance === STANCE_PRONE || stance === STANCE_DOWN, stance === STANCE_CHUTE, entity.motion?.vy ?? 0)
-    if (!dead) this.world.wade(id, x, y, z, Math.hypot(velocity[0], velocity[1]), frame.dt)
+    if (!dead && !buried) this.world.wade(id, x, y, z, Math.hypot(velocity[0], velocity[1]), frame.dt)
     this.world.headlamp(avatar)
     if (avatar.skis && !dead) this.world.skiRun(id, x, z, velocity[0], velocity[1], grounded, frame.dt)
   }

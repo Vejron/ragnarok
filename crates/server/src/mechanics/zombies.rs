@@ -7,6 +7,9 @@
 //! which the soldier's own legless walk does for it. With no one to smell it goes to the last
 //! gunshot or blast it heard, and one that is hurt turns on whoever hurt it.
 //!
+//! One that rises from the ground (`start_rising`) climbs out for `ZOMBIE_RISE_TICKS` first, and does
+//! nothing else meanwhile.
+//!
 //! When and where they rise is the scenario's (`scenario::Horde`); this is only their minds.
 
 use super::Mechanic;
@@ -43,11 +46,14 @@ pub struct Zombie {
     /// Ticks into a claw, 0 when it is not clawing: up to `ZOMBIE_CLAW_WINDUP` it reaches back, on that
     /// tick the blow lands, and then it recovers for `ZOMBIE_CLAW_RECOVER`.
     pub claw: u32,
+    /// Ticks left climbing out of the ground, 0 once it is up: it stands where it is, smelling and
+    /// clawing at nothing, and the snapshot shows `STANCE_RISE`.
+    pub rising: u32,
 }
 
 impl Zombie {
     pub fn new(pace: i8, runner: bool, yaw: f32) -> Self {
-        Zombie { yaw, pace, runner, prey: None, lure: None, walk: Walk::new(), claw: 0 }
+        Zombie { yaw, pace, runner, prey: None, lure: None, walk: Walk::new(), claw: 0, rising: 0 }
     }
 
     /// Whether it is reaching back to strike, which the snapshot shows as `FLAG_CLAWING`.
@@ -74,6 +80,11 @@ const LURE_REACHED: f32 = 3.0;
 /// The most grid cells looked at in one tick to find ways, among all the zombies: the rest head
 /// straight on until their turn.
 const SEARCH_PER_TICK: usize = 4_000;
+/// A way is only looked for to a goal within this, metres; further off it heads straight for it,
+/// round what is in front of it (`steer`). A search reaches about 40 m (`navigation::MAX_SEARCH`), so
+/// one for a blast heard 150 m away looked at every cell it was allowed and found nothing, for each
+/// zombie that heard it: a horde hearing a tank fire held the whole game up.
+const SEARCH_WITHIN: f32 = 60.0;
 
 fn distance_2d(a: [f32; 3], b: [f32; 3]) -> f32 {
     (b[0] - a[0]).hypot(b[2] - a[2])
@@ -82,6 +93,18 @@ fn distance_2d(a: [f32; 3], b: [f32; 3]) -> f32 {
 /// Whether `id` is a zombie.
 pub fn is_zombie(world: &World, id: u32) -> bool {
     world.entities.has::<Zombie>(id)
+}
+
+/// Whether zombie `id` is still climbing out of the ground.
+pub fn rising(world: &World, id: u32) -> bool {
+    world.entities.get::<Zombie>(id).is_some_and(|zombie| zombie.rising > 0)
+}
+
+/// Sets zombie `id` climbing out of the ground, for `ZOMBIE_RISE_TICKS`.
+pub fn start_rising(world: &mut World, id: u32) {
+    if let Some(mut zombie) = world.entities.get_mut::<Zombie>(id) {
+        zombie.rising = ZOMBIE_RISE_TICKS;
+    }
 }
 
 /// Whether zombie `id` is clawing (`Zombie::clawing`).
@@ -117,6 +140,11 @@ fn think(world: &mut World, id: u32, zombie: &mut Zombie, dt: f32, noises: &[Noi
         zombie.lure = None;
         zombie.claw = 0;
         zombie.walk.path.clear();
+        zombie.rising = 0;
+        return idle;
+    }
+    if zombie.rising > 0 {
+        zombie.rising -= 1;
         return idle;
     }
     let at = player.character.position;
@@ -171,7 +199,15 @@ fn think(world: &mut World, id: u32, zombie: &mut Zombie, dt: f32, noises: &[Noi
         }
     }
 
-    let toward = if distance < ZOMBIE_LUNGE { goal } else { follow(world, &mut zombie.walk, at, goal, budget) };
+    let toward = if distance < ZOMBIE_LUNGE {
+        goal
+    } else if distance > SEARCH_WITHIN {
+        // The way it had was to somewhere else, or from somewhere else.
+        zombie.walk.path.clear();
+        goal
+    } else {
+        follow(world, &mut zombie.walk, at, goal, budget)
+    };
     let want = steer(world, at, bend(heading(at, toward), push(id, at, crowd)));
     zombie.yaw = turn_towards(zombie.yaw, want, TURN_RATE * dt);
     let facing = (turn_towards(zombie.yaw, want, PI) - zombie.yaw).abs() < WALK_WITHIN;

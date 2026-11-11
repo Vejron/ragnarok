@@ -8,7 +8,7 @@ import { Transport } from './net/transport'
 import {
   BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, BUTTON_RUN, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION,
   SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_DIVE, STANCE_DOWN, STANCE_PRONE, STANCE_SWIM,
-  TICK_MS, TICK_RATE, BLOOM_RECOVER, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED, CARRY_SKIS } from './sim/consts'
+  TICK_MS, TICK_RATE, BLOOM_RECOVER, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED, CARRY_SKIS, SUB_LAUNCH_DEPTH } from './sim/consts'
 import { easeSway, sway, swayAmplitude } from './sway'
 import { mayPlace } from './sim/bricks'
 import { crewGun, vehicleDef } from './sim/vehicles'
@@ -60,7 +60,7 @@ import { BallCam } from './render/ballcam'
 import { ChaseCam } from './render/chase'
 import { PerfReadout } from './render/perf'
 import { LookWorker } from './render/lookworker'
-import { encodeRtc, KIND_STRV, KIND_TANK, LIMB_ALL, LIMB_ARMS, LIMB_LEGS, TURRET_ALT } from './net/codec'
+import { encodeRtc, KIND_MISSILE, KIND_STRV, KIND_SUBMARINE, KIND_TANK, LIMB_ALL, LIMB_ARMS, LIMB_LEGS, TURRET_ALT } from './net/codec'
 import { TankMusic } from './music'
 import { VoiceChat } from './voice'
 import { PlaneModel } from './render/plane'
@@ -168,7 +168,7 @@ const AIM_LOOK_SCALE = 0.6
 /** How long the static shows after a drone's feed cuts out, ms. */
 const FEED_LOST_MS = 700
 /** Seats that steer something along, which get a speedometer. */
-const MOVERS: ReadonlySet<SeatView['role']> = new Set(['driver', 'roadster', 'sled', 'helm', 'pilot', 'aviator', 'walker', 'hen', 'tupp', 'strv', 'drone', 'loiter'] as const)
+const MOVERS: ReadonlySet<SeatView['role']> = new Set(['driver', 'roadster', 'sled', 'helm', 'pilot', 'aviator', 'walker', 'hen', 'tupp', 'strv', 'drone', 'loiter', 'captain', 'missile'] as const)
 
 /** What the local player is up to this frame: worked out once, read by the stages of the frame. */
 interface Moment {
@@ -982,7 +982,8 @@ export class Game {
     this.avatars.begin()
     const me = this.avatars.local()
     // Reading the map the view is at the eyes, inside the head.
-    me.hidden = (seated && !flying && !sitting) || scoped || reading > 0.4
+    // A missile is flown from a submarine's seat: the body stays sealed in its hull, not kneeling anywhere.
+    me.hidden = (seated && !flying && !sitting) || (flying && view !== null && this.seat?.kind === KIND_MISSILE) || scoped || reading > 0.4
     me.dead = !this.player.alive
     me.held = local.swimming && !seated ? ITEM_NONE : this.player.slot(this.input.heldSlot).item
     me.swim = !local.swimming || seated || !this.player.alive ? 0 : this.submerged(local) ? 2 : 1
@@ -1123,6 +1124,12 @@ export class Game {
     return this.scene.camera.project(point) ? [(point.x + 1) / 2, (1 - point.y) / 2] : null
   }
 
+  /** How deep a submarine's middle is under the surface where it is drawn, metres. */
+  private depthOf(ride: { x: number; y: number; z: number }): number {
+    const level = this.waters?.surfaceAt(ride.x, ride.z, this.waveClock) ?? NO_WATER
+    return level === NO_WATER ? 0 : Math.max(0, level - ride.y)
+  }
+
   /** How things stand, for the HUD and the page. */
   private report({ now, seat, view, ride, position, local, seated, hands, able, handy, sighted, scoped, lookYaw, lookPitch }: Moment): HudStats {
     const { player, predictor } = this
@@ -1188,6 +1195,11 @@ export class Game {
       respawnIn: player.respawnIn(now),
       sight: sighted,
       scoped: this.scoped,
+      periscope: view?.rig.name === 'periscope' && player.alive,
+      depth: ride?.kind === KIND_SUBMARINE ? this.depthOf(ride) : null,
+      tubes: view?.rig.name === 'periscope' && ride?.sub
+        ? { loaded: [0, 1, 2, 3].filter((tube) => (ride.sub!.tubes & (1 << tube)) !== 0).length, clear: this.depthOf(ride) <= SUB_LAUNCH_DEPTH }
+        : null,
       aiming: this.aiming,
       armed: handy && gun !== undefined && !reading,
       crossGap: gun ? Math.max(MIN_CROSS_GAP, spreadPixels(effectiveSpread(gun, this.input.aimHeld, (local.lost & LIMB_ARMS) !== 0, this.bloomOf(gun, now)), this.scene.camera.fov, window.innerHeight)) : MIN_CROSS_GAP,

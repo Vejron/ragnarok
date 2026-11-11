@@ -64,7 +64,7 @@ fn a_launch_spends_the_drone_and_puts_the_player_at_its_controls() {
     let (id, mut seq) = pilot(&mut game);
     let vid = launch_drone(&mut game, id, &mut seq);
     let player = &game.world.entities.of::<Player>(id);
-    assert_eq!(player.seat, Some(Seat { vehicle: vid, index: 0, remote: true }));
+    assert_eq!(player.seat, Some(Seat { vehicle: vid, index: 0, remote: true, from: None }));
     assert_eq!(player.hands.hotbar[0].item, ITEM_NONE, "the drone left the hand");
     assert_eq!(game.world.entities.of::<Vehicle>(vid).kind, KIND_DRONE);
     assert!(drone(&game, vid).is_some_and(|drone| drone.linked && drone.owner == id));

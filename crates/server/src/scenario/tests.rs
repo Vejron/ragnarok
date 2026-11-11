@@ -2,7 +2,7 @@ use super::*;
 use crate::game::{Bot, Command, Outgoing, Profile};
 use shared::consts::{RESPAWN_TICKS, WRECK_TICKS};
 use shared::items::{ITEM_GRENADE, ITEM_NONE, ITEM_SHOTGUN, ITEM_SNIPER};
-use shared::protocol::{Notice, S_NOTICE, decode, peek_tag};
+use shared::protocol::{KIND_ZOMBIE, Notice, S_NOTICE, decode, peek_tag};
 use shared::world::{METRES_PER_DEG_LAT, WORLD_VERSION, metres_per_deg_lon};
 use tokio::sync::{mpsc, oneshot};
 
@@ -422,12 +422,15 @@ fn removing_a_squad_takes_its_tank_too_and_a_restart_brings_a_fresh_one() {
 const MIDNIGHT: u32 = (1800.0 * 0.64 * TICK_RATE as f32) as u32;
 const NOON: u32 = (1800.0 * 1.14 * TICK_RATE as f32) as u32;
 
+/// Long enough for a whole horde to have come up, seconds.
+const RISEN: f32 = (shared::consts::ZOMBIE_RISE_STAGGER + shared::consts::ZOMBIE_RISE_TICKS) as f32 / TICK_RATE as f32 + 1.0;
+
 fn zombies(game: &Game) -> Vec<u32> {
     game.world.entities.ids::<With<crate::mechanics::Zombie>>().into_iter().filter(|id| game.world.entities.alive(*id)).collect()
 }
 
 fn graveyard(extra: &str) -> String {
-    format!(r#"{{"areas": {{"graveyard": {{{}, "radius": 10}}}}, "zombies": {{"areas": ["graveyard"], "max": 8, "horde": 5, "every": 10{extra}}}}}"#, ll(40.0, 40.0))
+    format!(r#"{{"areas": {{"graveyard": {{{}, "radius": 10}}}}, "zombies": {{"areas": ["graveyard"], "max": 8, "horde": 5, "every": 30{extra}}}}}"#, ll(40.0, 40.0))
 }
 
 #[test]
@@ -436,7 +439,7 @@ fn zombies_rise_at_night_in_their_areas_and_not_by_day() {
     run(&mut game, 1.0);
     assert!(zombies(&game).is_empty(), "nothing rises by day");
     game.world.tick = MIDNIGHT;
-    run(&mut game, 1.0);
+    run(&mut game, RISEN);
     let up = zombies(&game);
     assert_eq!(up.len(), 5, "a horde of five rose at nightfall");
     for id in up {
@@ -446,10 +449,43 @@ fn zombies_rise_at_night_in_their_areas_and_not_by_day() {
 }
 
 #[test]
+fn a_horde_comes_up_one_by_one_and_each_climbs_out_slowly_before_it_moves() {
+    use shared::consts::{STANCE_RISE, ZOMBIE_RISE_STAGGER, ZOMBIE_RISE_TICKS};
+    let mut game = start(&graveyard(""));
+    game.world.tick = MIDNIGHT;
+    // The first is out of the ground at once; the rest follow at moments of their own.
+    let mut counts = Vec::new();
+    for _ in 0..ZOMBIE_RISE_STAGGER {
+        game.step();
+        let n = zombies(&game).len();
+        if counts.last() != Some(&n) {
+            counts.push(n);
+        }
+    }
+    assert_eq!(counts.iter().find(|&&n| n > 0), Some(&1), "one came up first: {counts:?}");
+    assert!(counts.len() >= 4, "the rest came up at different moments, not together: {counts:?}");
+    assert_eq!(zombies(&game).len(), 5, "and all of them within the stagger");
+
+    // Ids are handed out in turn, so the lowest came up first and the highest last.
+    let first = *zombies(&game).iter().min().unwrap();
+    let newest = *zombies(&game).iter().max().unwrap();
+    let rising = |game: &Game, id: u32| game.seen_people(KIND_ZOMBIE).iter().find(|(seen, _)| *seen == id).map(|(_, e)| e.flags.as_ref().unwrap().stance) == Some(STANCE_RISE);
+    assert!(rising(&game, newest), "the last one up is still climbing out");
+    let from = game.world.entities.of::<Player>(newest).character.position;
+    let (someone, _inbox) = join(&mut game);
+    put(&mut game, someone, [from[0] + 6.0, from[2]]);
+    run(&mut game, 1.0);
+    let now = game.world.entities.of::<Player>(newest).character.position;
+    assert!((now[0] - from[0]).hypot(now[2] - from[2]) < 0.2, "it does not go after anyone while it climbs out: {from:?} to {now:?}");
+    run(&mut game, ZOMBIE_RISE_TICKS as f32 / TICK_RATE as f32);
+    assert!(!rising(&game, newest) && !rising(&game, first), "both are up");
+}
+
+#[test]
 fn a_horde_never_grows_past_its_max_and_never_rises_beside_the_living() {
     let mut game = start(&graveyard(""));
     game.world.tick = MIDNIGHT;
-    run(&mut game, 25.0);
+    run(&mut game, 30.0 + RISEN);
     assert_eq!(zombies(&game).len(), 8, "two hordes, the second cut short at the max");
 
     let mut game = start(&graveyard(""));
@@ -464,7 +500,7 @@ fn a_horde_never_grows_past_its_max_and_never_rises_beside_the_living() {
 fn zombies_fall_at_dawn_and_their_bodies_leave_later_unless_they_rise_by_day() {
     let mut game = start(&graveyard(""));
     game.world.tick = MIDNIGHT;
-    run(&mut game, 1.0);
+    run(&mut game, RISEN);
     assert_eq!(zombies(&game).len(), 5);
     game.world.tick = NOON;
     run(&mut game, 1.0);
@@ -473,7 +509,7 @@ fn zombies_fall_at_dawn_and_their_bodies_leave_later_unless_they_rise_by_day() {
     assert_eq!(game.world.entities.count::<crate::mechanics::Zombie>(), 0, "their bodies are gone, and none came back");
 
     let mut game = start(&graveyard(r#", "day": true"#));
-    run(&mut game, 1.0);
+    run(&mut game, RISEN);
     assert_eq!(zombies(&game).len(), 5, "these rise by day as well");
 }
 

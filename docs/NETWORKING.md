@@ -112,7 +112,7 @@ An `update` is `[id u32, set u32, (cleared u32), fields…]`:
 | 0 | `place` | diff | `x, y, z` i32 | centimetres: a soldier's capsule centre, a vehicle's chassis centre (+X east, +Z south, +Y up) |
 | 1 | `heading` | diff | `yaw` i16 | facing, milliradians, 0 faces -Z |
 | 2 | `motion` | diff | `vy, knock_x, knock_z` i16 | a soldier's vertical speed and the slide a car's knock left them in, cm/s: what a predicted soldier resumes from |
-| 3 | `flags` | whole | `flags, stance` u8 | bit 0: grounded, bit 1: dead (lying where it fell until it respawns), bit 2: crouching, bits 3..6: the item in hand (`ITEM_*`, 0 for none), bit 7: crowing (a rooster), or clawing (a zombie, `FLAG_CLAWING`, from its wind-up to the blow: [ZOMBIES.md](ZOMBIES.md)); `stance` is `STANCE_*` (standing, prone, under a parachute, knocked down, hands up, swimming, diving); a swimmer or diver holds nothing ([SWIMMING.md](SWIMMING.md)) |
+| 3 | `flags` | whole | `flags, stance` u8 | bit 0: grounded, bit 1: dead (lying where it fell until it respawns), bit 2: crouching, bits 3..6: the item in hand (`ITEM_*`, 0 for none), bit 7: crowing (a rooster), or clawing (a zombie, `FLAG_CLAWING`, from its wind-up to the blow: [ZOMBIES.md](ZOMBIES.md)); `stance` is `STANCE_*` (standing, prone, under a parachute, knocked down, hands up, swimming, diving, or a zombie climbing out of the ground: [ZOMBIES.md](ZOMBIES.md)); a swimmer or diver holds nothing ([SWIMMING.md](SWIMMING.md)) |
 | 4 | `orientation` | diff | `qx, qy, qz` i16 | the x, y, z of the orientation quaternion, scaled by 32767. The sender negates the quaternion so that `w >= 0`, and the receiver rebuilds `w = sqrt(1 − x² − y² − z²)` |
 | 5 | `steer` | diff | `steer` i8 | front-wheel angle as a fraction of full lock (the kind's `*_MAX_STEER`), −127..127, + is right |
 | 6 | `turret` | whole | `yaw, pitch` i16, `shots` u8, `range` u16, `flags` u8 | a gun on a mount (below). A plane's is the rear gunner's ring |
@@ -132,6 +132,7 @@ An `update` is `[id u32, set u32, (cleared u32), fields…]`:
 | 20 | `seated` | whole | `vehicle` u32, `seat` u8 | a player sitting in seat `seat` of `vehicle`; seat 0 drives. They have no `place` unless their body stays behind (a drone's pilot): clients draw them at the kind's seat head point. The client learns its own seat from it |
 | 21 | `look` | diff | `pitch` i16 | how far a rider whose crew show looks up (+) or down, mrad; their `heading` is where they look about, in the world |
 | 22 | `carry` | whole | `what` u8 | a soldier carrying the backpack (`CARRY_BACKPACK`); the client's own prediction walks twice as fast with it. The backpack on the ground is an entity of `kind` 15 with a `place` |
+| 26 | `sub` | whole | `tubes` u8, `scope` i16, `flags` u8 | a submarine's launch tubes loaded (bit `n` for tube `n`), its periscope's yaw from the hull (mrad, + turns left), and `SUB_MAST_UP` (bit 0) while the periscope is raised ([VEHICLES-X.md](VEHICLES-X.md)) |
 
 What each carries today:
 

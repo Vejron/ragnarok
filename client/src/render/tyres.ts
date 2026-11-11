@@ -10,6 +10,7 @@ import type { Particles } from './particles'
 import { winter } from './season'
 import type { SnowRoost } from './snowroost'
 import { splash } from './splash'
+import { rocketTrail } from './vehiclesmoke'
 import type { Skidmarks } from './skidmarks'
 import { type DropWake, WakeTrail } from './wakes'
 
@@ -140,6 +141,9 @@ export class VehicleFx {
     return fall
   }
 
+  /** The unspent fraction of a smoke puff behind a missile. */
+  private rocketOwed = 0
+
   constructor(
     private readonly id: number,
     readonly kind: number,
@@ -174,6 +178,12 @@ export class VehicleFx {
       this.measured = true
     }
     this.lastPosition = here
+    // A missile's motor trails flame and smoke while it burns, seen from as far as a rocket's.
+    if (this.fx.exhaust === 'rocket') {
+      const v = this.velocity
+      this.rocketOwed = powered ? rocketTrail(world, [here.x, here.y, here.z], [v.x, v.y, v.z], dt, this.rocketOwed) : 0
+      return
+    }
     if (distance > MARK_RANGE) {
       this.lift(world)
       return

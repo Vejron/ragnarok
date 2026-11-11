@@ -236,7 +236,7 @@ fn enough_damage_to_the_turret_takes_it_off_and_kills_the_gunner() {
     let vid = of_kind(&game, KIND_TANK);
     let gunner = join(&mut game);
     game.world.entities.get_mut::<Seats>(vid).unwrap()[1] = Some(gunner);
-    game.world.entities.get_mut::<Player>(gunner).unwrap().seat = Some(Seat { vehicle: vid, index: 1, remote: false });
+    game.world.entities.get_mut::<Player>(gunner).unwrap().seat = Some(Seat { vehicle: vid, index: 1, remote: false, from: None });
     damage_turret(&mut game.world, vid, TANK_TURRET_HP / 2, None);
     assert_eq!(game.world.entities.of::<Vehicle>(vid).damage[DAMAGE_TURRET], 0, "still on");
     assert_eq!(game.world.entities.of::<Seats>(vid)[1], Some(gunner));
@@ -256,7 +256,7 @@ fn the_machine_gunner_goes_with_the_turret_too() {
     let (gunner, top) = (join(&mut game), join(&mut game));
     for (id, index) in [(gunner, 1), (top, 2)] {
         game.world.entities.get_mut::<Seats>(vid).unwrap()[index] = Some(id);
-        game.world.entities.get_mut::<Player>(id).unwrap().seat = Some(Seat { vehicle: vid, index, remote: false });
+        game.world.entities.get_mut::<Player>(id).unwrap().seat = Some(Seat { vehicle: vid, index, remote: false, from: None });
     }
     damage_turret(&mut game.world, vid, 255, None);
     assert!(!game.world.entities.alive(gunner) && !game.world.entities.alive(top));
@@ -401,7 +401,7 @@ fn a_round_through_a_walkers_cab_hits_its_pilot() {
 fn seat(game: &mut Game, vid: u32, index: usize) -> u32 {
     let id = join(game);
     game.world.entities.get_mut::<Seats>(vid).unwrap()[index] = Some(id);
-    game.world.entities.get_mut::<Player>(id).unwrap().seat = Some(Seat { vehicle: vid, index, remote: false });
+    game.world.entities.get_mut::<Player>(id).unwrap().seat = Some(Seat { vehicle: vid, index, remote: false, from: None });
     id
 }
 

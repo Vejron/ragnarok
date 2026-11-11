@@ -270,6 +270,8 @@ struct Progress {
     /// The zombies up or lying dead, and ticks until the next horde rises.
     zombies: Vec<u32>,
     next_horde: u32,
+    /// Where zombies of a horde are still to come up, `[x, z]` metres, and the tick each does.
+    graves: Vec<([f32; 2], u32)>,
 }
 
 pub struct Scenario {

@@ -42,6 +42,7 @@ The docs are in [docs/](docs/).
 - [VEHICLES-VII.md](docs/VEHICLES-VII.md): the hen
 - [VEHICLES-VIII.md](docs/VEHICLES-VIII.md): the tupp, a Hedemora rooster with laser eyes
 - [VEHICLES-IX.md](docs/VEHICLES-IX.md): the technical, a pickup with a heavy machine gun in its bed, soft springs and big tyres
+- [VEHICLES-X.md](docs/VEHICLES-X.md): the submarine, which dives, looks through its periscope and fires guided missiles its officer flies from the nose
 
 ## Requirements
 

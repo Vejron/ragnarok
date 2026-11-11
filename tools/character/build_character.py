@@ -30,8 +30,9 @@ Conventions
     swim_fwd (a breaststroke tipped forward about `SWIM_PIVOT`), dive_idle and dive_fwd (flat under the
     water about `DIVE_PIVOT`, near the capsule centre, which the client tips towards where it swims).
   * Zombie clips, shared by every stance as a zombie's hands are empty: zombie_idle (hunched and swaying,
-    arms half up), zombie_walk (a shamble, the right leg dragged, arms out in front) and zombie_claw (the
-    right arm up and back, then raked down across the front).
+    arms half up), zombie_walk (a shamble, the right leg dragged, arms out in front), zombie_claw (the
+    right arm up and back, then raked down across the front) and zombie_rise (once, out of the
+    grave: a hand through the soil, the head, a heave out on both hands, a knee up, and standing).
 """
 
 import math
@@ -1633,6 +1634,80 @@ def zombie_claw(t):
         pose_rot(f"foot_{side}", -0.1, 0, 0)
 
 
+# Rising from the grave (`zombie_rise`, played once over `ZOMBIE_RISE_TICKS`): buried upright with the
+# head under the ground, it punches the right hand up through the soil, then the left, the head breaks
+# the surface, it plants both hands on the ground and heaves itself up and out, slips back, heaves
+# again, gets a knee up onto the ground, and stands into the hunch of `zombie_idle`. The root carries
+# the body down into the ground, so the client draws it where it stands and the ground hides the rest.
+RISE_KEYS = [
+    # phase, (root drop, hips, spine, chest, neck, head, left thigh, left shin, right thigh, right shin)
+    (0.00, (-2.00, 0.00, 0.00, 0.05, -0.15, -0.25, 0.0, 0.05, 0.0, 0.05)),
+    (0.10, (-1.95, 0.05, 0.05, 0.10, -0.25, -0.30, 0.0, 0.05, 0.0, 0.05)),
+    (0.22, (-1.80, 0.05, 0.10, 0.15, -0.30, -0.30, 0.0, 0.10, 0.0, 0.10)),
+    (0.32, (-1.58, 0.10, 0.15, 0.25, -0.20, -0.20, -0.1, 0.20, 0.0, 0.15)),
+    (0.42, (-1.38, 0.25, 0.25, 0.40, -0.35, -0.25, -0.2, 0.30, 0.1, 0.20)),
+    (0.54, (-1.02, 0.45, 0.35, 0.55, -0.45, -0.25, -0.5, 0.80, 0.2, 0.30)),
+    (0.61, (-1.08, 0.40, 0.30, 0.50, -0.30, -0.20, -0.4, 0.70, 0.2, 0.30)),
+    (0.72, (-0.58, 0.55, 0.35, 0.50, -0.45, -0.25, -1.55, 1.90, 0.3, 0.40)),
+    (0.85, (-0.16, 0.30, 0.20, 0.30, -0.15, -0.10, -0.55, 0.90, -0.9, 1.50)),
+    (1.00, (0.00, 0.07, 0.11, 0.18, -0.11, -0.07, 0.08, 0.18, 0.08, 0.18)),
+]
+# Each hand by how far it is planted on the ground and how far it is out in front for the shamble,
+# the rest of the way reaching up; and how far it has stretched up out of the shoulder.
+RISE_HANDS = {
+    # phase, (planted, in front, stretched)
+    "R": [(0.00, (0.0, 0.0, 0.0)), (0.07, (0.0, 0.0, 1.0)), (0.30, (0.0, 0.0, 1.0)), (0.38, (1.0, 0.0, 1.0)), (0.70, (1.0, 0.0, 1.0)), (0.80, (0.3, 0.7, 1.0)), (0.92, (0.0, 1.0, 1.0)), (1.00, (0.0, 1.0, 1.0))],
+    "L": [(0.00, (0.0, 0.0, 0.0)), (0.17, (0.0, 0.0, 0.0)), (0.25, (0.0, 0.0, 1.0)), (0.34, (0.0, 0.0, 1.0)), (0.41, (1.0, 0.0, 1.0)), (0.75, (1.0, 0.0, 1.0)), (0.86, (0.3, 0.7, 1.0)), (1.00, (0.0, 1.0, 1.0))],
+}
+
+
+def track(t, keys):
+    """The values at `t` along `keys`, `[(t, (value, ...)), ...]` in rising `t`: a Catmull-Rom curve
+    through them that holds still at either end and does not loop, so nothing stops dead in between."""
+    i = max(k for k in range(len(keys) - 1) if keys[k][0] <= t) if t < keys[-1][0] else len(keys) - 2
+    (t1, a), (t2, b) = keys[i], keys[i + 1]
+    u = min(1.0, max(0.0, (t - t1) / (t2 - t1)))
+    pre, post = keys[max(i - 1, 0)][1], keys[min(i + 2, len(keys) - 1)][1]
+    return [catmull(p0, p1, p2, p3, u) for p0, p1, p2, p3 in zip(pre, a, b, post)]
+
+
+def zombie_rise(t):
+    drop, hips, spine, chest, neck, head, lt, ls, rt, rs = track(t, RISE_KEYS)
+    # It struggles: the effort shakes it, harder while it is deep, and the trunk rolls with each pull.
+    effort = 1.0 - ease((t - 0.8) / 0.2)
+    shake = effort * (0.012 * math.sin(TAU * t * 21) + 0.008 * math.sin(TAU * t * 34 + 1.0))
+    pose_loc("root", (0, 0, drop + shake))
+    roll = effort * 0.12 * math.sin(TAU * t * 3.5)
+    pose_rot("hips", hips, 0.05 * roll, 0)
+    pose_rot("spine", spine, roll * 0.5, 0.08 * effort * math.sin(TAU * t * 2.5))
+    pose_rot("chest", chest, roll * 0.5, -0.1 * effort * math.sin(TAU * t * 2.5 + 0.7))
+    pose_rot("neck", neck, 0.2 + 0.1 * math.sin(TAU * t * 1.5), 0)
+    pose_rot("head", head, 0.15, 0.1 * effort * math.sin(TAU * t * 4 + 0.3))
+    pose_rot("thigh_L", lt, 0.1, 0)
+    pose_rot("shin_L", ls, 0, 0)
+    pose_rot("foot_L", -0.2, 0, 0.2)
+    pose_rot("thigh_R", rt, -0.1, 0)
+    pose_rot("shin_R", rs, 0, 0)
+    pose_rot("foot_R", -0.2, 0, -0.2)
+    bpy.context.view_layer.update()
+    for side, s in (("L", 1), ("R", -1)):
+        planted, front, stretched = (min(1.0, max(0.0, v)) for v in track(t, RISE_HANDS[side]))
+        up_w = max(0.0, 1.0 - planted - front)
+        shoulder = arm_obj.pose.bones[f"upper_arm_{side}"].head.copy()
+        # Up: clawing at the air over it, the fingers trembling; it starts bent down by the shoulder.
+        tremble = Vector((0.03 * math.sin(TAU * t * 17 + s), 0.03 * math.sin(TAU * t * 13), 0.02 * math.sin(TAU * t * 19)))
+        up = shoulder + Vector((s * 0.1, -0.15, -0.25 + 0.85 * stretched)) + tremble * effort
+        ground = Vector((s * 0.34, -0.42, 0.03))
+        ahead = shoulder + Vector((s * 0.06, -0.48, -0.22))
+        wrist = up * up_w + ground * planted + ahead * front
+        pole = Vector((s, 0.0, 0.0)) * up_w + Vector((s, 0.8, 0.4)) * planted + Vector((s * 0.6, 0.3, -1.0)) * front
+        claw = (Matrix.Rotation(-2.9, 3, "X") @ REST3[f"hand_{side}"]).to_quaternion()
+        flat = FLAT_HAND[side].to_quaternion()
+        limp = (Matrix.Rotation(-1.2, 3, "X") @ REST3[f"hand_{side}"]).to_quaternion()
+        hand = claw.slerp(flat, planted / max(planted + up_w, 1e-6)).slerp(limp, front)
+        reach(side, wrist, hand.to_matrix(), pole)
+
+
 def build_actions():
     global CURRENT
     walk = dict(amp=0.68, lat_amp=0.38, knee=0.95, lean=0.0, bob=0.022, cycle_sway=0.03)
@@ -1682,6 +1757,7 @@ def build_actions():
     bake("zombie_idle", 120, zombie_idle)
     bake("zombie_walk", 60, zombie_walk)
     bake("zombie_claw", 42, zombie_claw)
+    bake("zombie_rise", 240, zombie_rise, loop=False)
     # Falling lets go of the item's grip too: shared by every stance.
     bake("freefall", 90, freefall)
     bake("chute", 120, chute)
@@ -1833,6 +1909,20 @@ def preview(directory):
             at(clip, i * frames // 4)
             for view in ("side", "front", "three"):
                 shoot(f"{clip}_{i}_{view}", view)
+    # Out of the grave, with the ground a slab: what is under it is underground.
+    if "zombie_rise".startswith(ONLY) or ONLY.startswith("zombie_rise"):
+        bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0, -0.005), scale=(3.0, 3.0, 0.01))
+        soil = bpy.context.active_object
+        views["grave_side"] = (Vector((6, 0, -0.1)), Vector((0, 0, -0.1)))
+        views["grave_front"] = (Vector((0, -6, -0.1)), Vector((0, 0, -0.1)))
+        views["grave_three"] = (Vector((-4, -5, 2.0)), Vector((0, 0, -0.3)))
+        cam_data.ortho_scale = 4.4
+        for frame in range(0, 241, 24):
+            at("zombie_rise", frame)
+            for view in ("grave_side", "grave_front", "grave_three"):
+                shoot(f"zombie_rise_{frame:03d}_{view}", view)
+        cam_data.ortho_scale = 2.1
+        bpy.data.objects.remove(soil)
     for clip, frames in (("walk_fwd", 36), ("walk_right", 36), ("run_fwd", 24), ("run_left", 24)):
         for i in range(4):
             at(clip, i * frames // 4)

@@ -21,7 +21,7 @@ import { TankModel } from '@/render/tank'
 import type { VehicleFx } from '@/render/tyres'
 import { TuppModel } from '@/render/tupp'
 import { WalkerModel } from '@/render/walker'
-import { MORTAR_RANGE_MAX, MORTAR_RANGE_MIN, MORTAR_RANGE_START, PASSENGER_DISTANCE, ROOF_AIM_BACK, ROOF_AIM_UP, STRV_AIM_BACK, STRV_AIM_UP, WALKER_AIM_BACK, WALKER_AIM_UP, PASSENGER_HEIGHT, PASSENGER_SHOULDER, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, SIGHT_EYE_UP, STRV_BARREL_MAX, STRV_BARREL_MIN, TUPP_HEAD_LIMIT, TUPP_HEAD_PITCH_MAX, TUPP_HEAD_PITCH_MIN, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT } from '@/sim/consts'
+import { MORTAR_RANGE_MAX, MORTAR_RANGE_MIN, MORTAR_RANGE_START, PASSENGER_DISTANCE, ROOF_AIM_BACK, ROOF_AIM_UP, STRV_AIM_BACK, STRV_AIM_UP, WALKER_AIM_BACK, WALKER_AIM_UP, PASSENGER_HEIGHT, PASSENGER_SHOULDER, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, SIGHT_EYE_UP, STRV_BARREL_MAX, STRV_BARREL_MIN, SUB_MAST_HEIGHT, SUB_SAIL_Z, TUPP_HEAD_LIMIT, TUPP_HEAD_PITCH_MAX, TUPP_HEAD_PITCH_MIN, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT } from '@/sim/consts'
 import type { InputController } from '@/sim/input'
 import { layTube } from '@/sim/lob'
 import type { Rig, SeatView } from '@/seats'
@@ -74,6 +74,10 @@ export interface Seated {
   head: Vector3 | null
 }
 
+/** How far a periscope tilts up or down, radians, and how far over its head the eye is, metres, clear of its own lens. */
+const PERISCOPE_PITCH = 0.35
+const PERISCOPE_EYE_UP = 0.15
+
 type RigName = Rig['name']
 
 interface RigImpl {
@@ -101,7 +105,7 @@ export class Cameras {
     private readonly input: InputController,
     private readonly castRay: (origin: [number, number, number], direction: [number, number, number], max: number) => { t: number } | null,
   ) {
-    this.rigs = { drive: this.drive(), gun: this.gun(), fpv: this.fpv(), aviator: this.aviator(), tanker: this.tanker(), walker: this.walker(), pintle: this.pintle(), mortar: this.mortar(), passenger: this.passenger() }
+    this.rigs = { drive: this.drive(), gun: this.gun(), fpv: this.fpv(), aviator: this.aviator(), tanker: this.tanker(), walker: this.walker(), pintle: this.pintle(), mortar: this.mortar(), passenger: this.passenger(), periscope: this.periscope() }
   }
 
   /** The rig the camera is in, if the local player is seated. */
@@ -211,6 +215,26 @@ export class Cameras {
         // The link is gone but the drone may still be falling: it shows again.
         if (hidden) hidden.root.visible = true
         hidden = null
+      },
+    }
+  }
+
+  /**
+   * Through a submarine's periscope: the eye is at its head over the sail, turning all the way round
+   * with the look and tilting a little. It sees the murk once the head is under the water.
+   */
+  private periscope(): RigImpl {
+    return {
+      enter: ({ ride }) => {
+        // Back from flying a missile, or first taking it: look the way the periscope already faces.
+        this.input.yaw = ride.yaw + (ride.sub?.scope ?? 0)
+        this.input.pitch = 0
+      },
+      frame: ({ ride, model }) => {
+        this.input.clampPitch(-PERISCOPE_PITCH, PERISCOPE_PITCH)
+        const head = new Vector3(0, SUB_MAST_HEIGHT + PERISCOPE_EYE_UP, SUB_SAIL_Z)
+        if (model) head.applyQuaternion(model.root.quaternion)
+        this.scene.scopeFrom([ride.x + head.x, ride.y + head.y, ride.z + head.z], this.input.yaw, this.input.pitch)
       },
     }
   }

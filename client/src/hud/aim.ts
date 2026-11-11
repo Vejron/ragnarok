@@ -102,7 +102,7 @@ export class AimMarks {
       p.rect(0, 0, W, H, 0x333333, s.feedLost)
       this.static(p, s.feedLost, now)
     }
-    if (s.heat === null && s.scoped) this.scoped(p)
+    if ((s.heat === null && s.scoped) || s.periscope) this.scoped(p)
     if (s.hands && s.hp <= s.maxHp / 4) {
       // A heartbeat: 0.2 to 0.5 and back every 1.1 s.
       const t = (now % 1100) / 1100

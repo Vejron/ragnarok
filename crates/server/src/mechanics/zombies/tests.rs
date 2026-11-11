@@ -145,3 +145,59 @@ fn a_hurt_zombie_turns_on_whoever_hurt_it() {
     game.step();
     assert_eq!(game.world.entities.of::<Zombie>(zombie).prey, Some(shooter));
 }
+
+#[test]
+fn a_zombie_far_from_what_it_heard_heads_straight_for_it_without_looking_for_a_way() {
+    let mut game = game();
+    let soldier = join(&mut game);
+    put(&mut game, soldier, [-90.0, -90.0]);
+    let id = game.add_zombie([-60.0, 0.0]).unwrap();
+    run(&mut game, 1.0);
+    let from = at(&game, id);
+    crate::mechanics::bots::make_noise(&mut game.world, [60.0, 0.0, 0.0], Some(soldier), 150.0);
+    run(&mut game, 10.0);
+    let now = at(&game, id);
+    assert!(now[0] > from[0] + 3.0, "it went towards the noise: from {from:?} to {now:?}");
+    assert!(now[0] < 0.0, "it is still far from it: {now:?}");
+    assert_eq!(game.world.nav.built(), 0, "no way was looked for");
+}
+
+/// Not a regression test: what a horde costs a tick on a real world, with someone to chase and with
+/// only blasts to go to. `RAGNAROK_WORLD` picks the world.
+/// `RAGNAROK_WORLD=worlds/bussjobanan/world.msgpack cargo test -p server -- --ignored --nocapture horde_tick_cost`
+#[test]
+#[ignore]
+fn horde_tick_cost() {
+    use std::time::{Duration, Instant};
+    let Some(path) = std::env::var_os("RAGNAROK_WORLD") else { return println!("set RAGNAROK_WORLD") };
+    let count: usize = std::env::var("ZOMBIES").ok().and_then(|n| n.parse().ok()).unwrap_or(20);
+    for case in ["nobody", "prey 60 m off", "blasts 120 m off", "blasts and prey far off"] {
+        let (map, _) = crate::read_world(std::path::Path::new(&path)).unwrap();
+        let mut game = Game::new(map, 0).unwrap();
+        game.world.clear_pickups();
+        let [sx, sz] = game.world.map.spawns[0].map(|v| v as f32 / 100.0);
+        for n in 0..count {
+            game.add_zombie([sx + (n % 5) as f32 * 2.0, sz + (n / 5) as f32 * 2.0]);
+        }
+        let soldier = join(&mut game);
+        let far = if case == "prey 60 m off" { 60.0 } else { 2000.0 };
+        put(&mut game, soldier, [sx + far, sz]);
+        let (mut total, mut worst, mut late) = (Duration::ZERO, Duration::ZERO, 0);
+        let ticks = 30 * TICK_RATE;
+        for tick in 0..ticks {
+            if case.starts_with("blasts") && tick % TICK_RATE == 0 {
+                let angle = tick as f32 * 0.37;
+                let (x, z) = (sx + 120.0 * angle.cos(), sz + 120.0 * angle.sin());
+                let y = game.world.map.ground.height_at(x, z);
+                crate::mechanics::bots::make_noise(&mut game.world, [x, y, z], Some(soldier), 150.0);
+            }
+            let start = Instant::now();
+            game.step();
+            let took = start.elapsed();
+            total += took;
+            worst = worst.max(took);
+            late += usize::from(took > Duration::from_micros(16_667));
+        }
+        println!("{count} zombies, {case}: mean {:?} a tick, worst {worst:?}, {late} of {ticks} ticks over 16.7 ms, {} nav chunks", total / ticks, game.world.nav.built());
+    }
+}

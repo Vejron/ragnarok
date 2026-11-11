@@ -257,50 +257,119 @@ pub(crate) fn fly_drone(body: &mut RigidBody, controls: CarControls, floor: f32,
     body.set_angvel(current + (turn - current) * (DRONE_RESPONSE * dt).min(1.0), true);
 }
 
-/// One tick of a loitering drone with its motor running: a simplified, nimble plane. It always flies at
-/// `LOITER_SPEED` along its nose: the wings and motor push its velocity there as hard as
-/// `LOITER_MAX_ACCEL` lets them, on top of holding it up, so there is no stall, no throttle and no
+/// How a kind that always flies forward along its nose is flown: a loitering drone, or a guided missile.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Glide {
+    /// What it always flies at, along its nose, m/s.
+    pub speed: f32,
+    /// How quickly the gap to that velocity closes, per second, and the hardest it is pushed, m/s².
+    pub grip: f32,
+    pub max_accel: f32,
+    /// The hardest its motor speeds it up along its nose, m/s².
+    pub speed_up: f32,
+    /// The speed from which its fins turn it at their full rates, m/s; slower, they bite with the square
+    /// of its share of it. 0 for one that turns as well at any speed.
+    pub fin_speed: f32,
+    /// It steers by pointing its nose with pitch and yaw and keeps its wings level (`skid`), as a
+    /// missile does, rather than banking into turns as a plane does (`autopilot`).
+    pub skid: bool,
+    /// The most it turns about its own axes, rad/s, and how quickly its angular velocity follows, per second.
+    pub pitch_rate: f32,
+    pub yaw_rate: f32,
+    pub roll_rate: f32,
+    pub response: f32,
+    /// The most it banks into a turn, radians, and how steeply its flier may ask it to climb or dive.
+    pub max_bank: f32,
+    pub max_pitch: f32,
+    /// Climbing fades out over the last 20 m below this height over the ground, metres.
+    pub ceiling: f32,
+}
+
+/// A loitering drone's.
+pub(crate) const LOITER_GLIDE: Glide = Glide {
+    speed: LOITER_SPEED,
+    grip: LOITER_GRIP,
+    max_accel: LOITER_MAX_ACCEL,
+    speed_up: LOITER_MAX_ACCEL,
+    fin_speed: 0.0,
+    skid: false,
+    pitch_rate: LOITER_PITCH_RATE,
+    yaw_rate: LOITER_YAW_RATE,
+    roll_rate: LOITER_ROLL_RATE,
+    response: LOITER_RESPONSE,
+    max_bank: LOITER_MAX_BANK,
+    max_pitch: PLANE_AIM_MAX_PITCH,
+    ceiling: LOITER_CEILING,
+};
+
+/// A guided missile's: faster and nimbler, and it may dive steeply onto what it is flown at.
+pub(crate) const MISSILE_GLIDE: Glide = Glide {
+    speed: MISSILE_SPEED,
+    grip: MISSILE_GRIP,
+    max_accel: MISSILE_MAX_ACCEL,
+    speed_up: MISSILE_SPEED_UP,
+    fin_speed: MISSILE_FIN_SPEED,
+    skid: true,
+    pitch_rate: MISSILE_PITCH_RATE,
+    yaw_rate: MISSILE_YAW_RATE,
+    roll_rate: MISSILE_ROLL_RATE,
+    response: MISSILE_RESPONSE,
+    max_bank: MISSILE_MAX_BANK,
+    max_pitch: MISSILE_MAX_PITCH,
+    ceiling: MISSILE_CEILING,
+};
+
+/// One tick of a loitering drone or a guided missile with its motor running (`glide`): a simplified,
+/// nimble plane. It always flies at `glide.speed` along its nose: the wings and motor push its velocity there as hard as
+/// `glide.max_accel` lets them, on top of holding it up, so there is no stall, no throttle and no
 /// slide. The nose is steered as the plane's is: the mouse sets where to go and the autopilot banks into
 /// the turn and pulls, levelling its wings as it arrives; W/S pitch and A/D roll by hand while held,
 /// and with neither it flies level. Everything is a function of the body's state and the controls
 /// alone, so the client can replay it.
-pub(crate) fn fly_loiter(body: &mut RigidBody, controls: CarControls, floor: f32, dt: f32) {
+pub(crate) fn glide(body: &mut RigidBody, glide: Glide, controls: CarControls, floor: f32, dt: f32) {
     let rotation = *body.rotation();
     let nose = rotation * Vector::new(0.0, 0.0, -1.0);
     let up = rotation * Vector::Y;
     let right = rotation * Vector::X;
 
-    let mut wanted = nose * LOITER_SPEED;
+    let mut wanted = nose * glide.speed;
     // Climbing fades out under the ceiling, and above it it sinks back.
-    let headroom = ((LOITER_CEILING - (body.translation().y - floor)) / 20.0).clamp(-1.0, 1.0);
-    wanted.y = wanted.y.min(headroom * LOITER_SPEED);
-    let mut push = (wanted - body.linvel()) * LOITER_GRIP;
+    let headroom = ((glide.ceiling - (body.translation().y - floor)) / 20.0).clamp(-1.0, 1.0);
+    wanted.y = wanted.y.min(headroom * glide.speed);
+    let mut push = (wanted - body.linvel()) * glide.grip;
     let size = push.length();
-    if size > LOITER_MAX_ACCEL {
-        push *= LOITER_MAX_ACCEL / size;
+    if size > glide.max_accel {
+        push *= glide.max_accel / size;
+    }
+    let along = push.dot(nose);
+    if along > glide.speed_up {
+        push -= nose * (along - glide.speed_up);
     }
     // A force rather than an impulse: it is integrated together with gravity, so level flight is exact.
     body.add_force((push + Vector::Y * CAR_GRAVITY) * body.mass(), true);
+    // The fins bite with the air over them: slow, just out of a tube, it barely turns.
+    let bite = if glide.fin_speed > 0.0 { (body.linvel().length() / glide.fin_speed).min(1.0).powi(2) } else { 1.0 };
 
     let bank = (-right.y).atan2(up.y);
     let steer = controls.steer.clamp(-1.0, 1.0);
     let pull = (-controls.throttle).clamp(-1.0, 1.0);
     let mouse = controls.aim.map(|[yaw, pitch]| {
-        let pitch = pitch.clamp(-PLANE_AIM_MAX_PITCH, PLANE_AIM_MAX_PITCH);
-        autopilot(rotation, Vector::new(-yaw.sin() * pitch.cos(), pitch.sin(), -yaw.cos() * pitch.cos()), LOITER_SPEED, LOITER_MAX_BANK)
+        let pitch = pitch.clamp(-glide.max_pitch, glide.max_pitch);
+        let target = Vector::new(-yaw.sin() * pitch.cos(), pitch.sin(), -yaw.cos() * pitch.cos());
+        if glide.skid { skid(rotation, target) } else { autopilot(rotation, target, glide.speed, glide.max_bank) }
     });
     let level_pitch = (-nose.y.clamp(-1.0, 1.0).asin() * PLANE_LEVEL_GAIN).clamp(-1.0, 1.0);
     let pitch = if pull.abs() > 0.05 { pull } else { mouse.map_or(level_pitch, |m| m[0]) };
     let roll = if steer.abs() > 0.05 { steer } else { mouse.map_or((-bank * 2.0).clamp(-1.0, 1.0), |m| m[2]) };
-    let roll = roll.clamp((-LOITER_MAX_BANK - bank) * 3.0, (LOITER_MAX_BANK - bank) * 3.0).clamp(-1.0, 1.0);
+    let roll = roll.clamp((-glide.max_bank - bank) * 3.0, (glide.max_bank - bank) * 3.0).clamp(-1.0, 1.0);
     let yaw = match mouse {
         Some(m) if steer.abs() <= 0.05 => m[1],
         _ => (steer * 0.3 + bank.sin() * 0.8).clamp(-1.0, 1.0),
     };
     // + about X lifts the nose, + about Y turns left and + about Z lifts the right wing.
-    let turn = rotation * Vector::new(pitch * LOITER_PITCH_RATE, -yaw * LOITER_YAW_RATE, -roll * LOITER_ROLL_RATE);
+    let turn = rotation * Vector::new(pitch * glide.pitch_rate * bite, -yaw * glide.yaw_rate * bite, -roll * glide.roll_rate);
     let current = body.angvel();
-    body.set_angvel(current + (turn - current) * (LOITER_RESPONSE * dt).min(1.0), true);
+    body.set_angvel(current + (turn - current) * (glide.response * dt).min(1.0), true);
 }
 
 /// One tick of a walker: its two legs push the hull up from the ground, a torque keeps it upright and
@@ -455,6 +524,25 @@ pub(crate) fn aim_direction(aim: [f32; 2], position: Vector, bound: f32) -> Vect
 pub(crate) fn edge_depth(position: Vector, bound: f32) -> f32 {
     let into = |coordinate: f32| ((coordinate.abs() - (bound - PLANE_EDGE_MARGIN)) / PLANE_EDGE_MARGIN).clamp(0.0, 1.0);
     into(position.x).max(into(position.z))
+}
+
+/// How a skid-to-turn missile is steered towards `target` (a world direction), as `[pitch, yaw, roll]`
+/// commands in -1..1: it points its nose straight at it with pitch and yaw, as cruciform fins do,
+/// rather than banking into the turn, and keeps its wings level. Nose straight up or down, where the
+/// wings have no level to find, it holds its roll, and it levels them as the nose comes down past about
+/// 80 degrees.
+fn skid(rotation: Rotation, target: Vector) -> [f32; 3] {
+    let nose = rotation * Vector::new(0.0, 0.0, -1.0);
+    let up = rotation * Vector::Y;
+    let right = rotation * Vector::X;
+    let local = rotation.inverse() * target;
+    let off = (-local.z).clamp(-1.0, 1.0).acos();
+    let lateral = local.x.hypot(local.y);
+    // Dead astern, it turns right rather than not at all.
+    let (across, above) = if lateral > 1e-3 { (local.x / lateral, local.y / lateral) } else { (1.0, 0.0) };
+    let steep = ((nose.y.abs() - 0.92) / 0.07).clamp(0.0, 1.0);
+    let bank = (-right.y).atan2(up.y);
+    [(above * off * PLANE_AIM_GAIN).clamp(-1.0, 1.0), (across * off * PLANE_AIM_GAIN).clamp(-1.0, 1.0), (-bank * 2.0).clamp(-1.0, 1.0) * (1.0 - steep)]
 }
 
 /// What a plane flies itself to do to head for `target`, a world direction, banking no more than `max_bank`: `[pitch, yaw, roll]`, each

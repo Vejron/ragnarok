@@ -330,7 +330,7 @@ fn a_car_at_speed_breaks_the_bricks_it_drives_into() {
     let (driver, inbox) = join(&mut game);
     std::mem::forget(inbox);
     game.world.entities.get_mut::<crate::game::Seats>(vid).unwrap()[0] = Some(driver);
-    game.world.entities.get_mut::<Player>(driver).unwrap().seat = Some(crate::game::Seat { vehicle: vid, index: 0, remote: false });
+    game.world.entities.get_mut::<Player>(driver).unwrap().seat = Some(crate::game::Seat { vehicle: vid, index: 0, remote: false, from: None });
     for seq in 1..=TICK_RATE * 6 {
         game.handle(Command::Input(driver, 0, vec![InputFrame { seq, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
         game.step();

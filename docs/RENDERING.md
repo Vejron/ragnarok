@@ -23,11 +23,12 @@ game.frame()
         ├─ shadow pass      sun depth map
         ├─ main pass        4× MSAA, rgba16float, reversed depth; held meshes (the map in hand) last
         ├─ effects half     smoke at half resolution into its own target (`halfResolution` effects)
-        ├─ effects pass     that target laid over, then particles, ribbons + flashes, depth read-only
-        ├─ overlay pass     the gunsight, over everything
+        ├─ effects pass     that target laid over, then particles, ribbons + flashes, depth read-only,
+        │                   then the overlay (the gunsight), over everything; the image resolves
         ├─ bloom            bright extract → mip chain → add back (when `scene.bloom`)
-        ├─ output pass      ink from depth, bloom, tone mapping, sRGB     → canvas
-        └─ hud pass         flat sprites over the finished picture          → canvas
+        └─ output pass      ink from depth, bloom, tone mapping, sRGB     → canvas
+                            then the HUD's flat sprites, in the same pass (a pass of its own
+                            reloaded and stored the whole frame on tiled GPUs)
 ```
 
 ## The engine and the game's side of it
@@ -135,6 +136,13 @@ The style is flat, bright and few-banded, not physically based.
   bands, plus a 4×4 ordered dither that removes pixels within 2.5 m of the eye, so standing in a crown,
   or behind a felled one, you still see what you aim at. Trees take no shadow. A felled tree's instance
   is scaled to nothing in place.
+  Each tree is drawn in the shape its own distance picks (`TREE_LEVELS_FROM`: 70, 180 and 300 m), and is
+  culled on its own. Past 70 m a crown is a 20-triangle icosahedron and the cones and trunks lose sides
+  and their ends; past 180 m a tree's crowns are one and its cones one; past 300 m the crown is eight
+  triangles. A pine goes from 184 triangles to 48, 26 and 14. The coarse crowns are a little wider, so
+  the outline covers what the round one did. Shadows are cast from the second shape at the finest. The
+  quality's `treeDetail` scales the distances (0.7 at medium, 0.5 at low). It is the engine's
+  `InstancedMesh.levels`; rocks have it with no coarser shapes, for the culling alone.
 - **Rocks** (`rocks.ts`) are a few shapes a kind, carved from an icosphere by flat cuts and drawn
   flat-faced, one `InstancedMesh` a shape per tile. Each rock is turned, tipped, sunk and stretched by its
   position, and its instance colour carries its stone's tint in rgb and its moss in alpha (how much forest
@@ -396,7 +404,8 @@ frame, materials, pipelines, and GPU milliseconds per pass when the browser expo
   the game moves by name still move. With a server and a full set of vehicles in view that took the
   dev world from about 390 draws (250 of them shadow) to about 240 (120 shadow). Cars are not merged:
   `carwear.ts` dents and cuts their body parts by material. Not done: render bundles per tile, a
-  cached shadow map for static casters, and GPU culling.
+  cached shadow map for static casters, and GPU culling (instances with `levels` are culled one by one
+  on the CPU).
 - A hurt building with a look is redrawn whole (`lookFracture`) when it changes, in a worker of its own
   (`look.worker.ts`, driven by `LookWorker` in `lookworker.ts`), not on the main thread. The worker is
   told each building once, its own triangles of the look (`lookSlice`) and its cells (`Shell.flags`), and
@@ -415,6 +424,13 @@ frame, materials, pipelines, and GPU milliseconds per pass when the browser expo
   (`lookChunk`, up to 12 ms when a big one comes down) and the rubble heap (3 to 6 ms). Pieces lying
   about cost a draw each that is not a shared shard shape: about 110 more draws for some 750 pieces,
   gone 30 s after they land.
+- Trees were nine tenths of the frame's triangles. At the spawn of `bussjobanan` (27,500 trees loaded in
+  18 tiles, quality high) a frame was 4.59 M triangles, 4.3 M of them trees: 2.6 M in the shadow pass
+  and 1.7 M in the main one, since a tile's trees were drawn whole and at full detail however far off.
+  With a shape and a culling test per tree it is 0.63 M, for about 0.3 ms more of the renderer's CPU
+  time on an M-series Mac (the loop over the trees of tiles within 300 m). Triangles do not go with
+  the resolution, so neither adaptive resolution nor a lower pixel ratio helped a GPU that was slow on
+  them.
 - Pixel ratio is capped at 2.
 - The expensive options are far shadows (4096 map) and ink (one full-screen depth read, most of the
   output pass). Far shadows are off by default on touch devices.

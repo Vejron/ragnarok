@@ -195,9 +195,11 @@ pub(super) fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: 
 }
 
 /// Where a fresh vehicle of `kind` starts over `(x, z)`: its chassis centre `drop_height` over the
-/// ground, or over the water for a ship, which only floats (`None` where there is no open water).
+/// ground, or over the water for a ship or a submarine, which only float (`None` where there is no
+/// open water).
 fn start_position(world: &World, kind: u8, x: f32, z: f32) -> Option<[f32; 3]> {
-    let below = if vehicle_def(kind).spec.lift == shared::vehicles::Lift::Sail { world.physics.water_level(x, z)? } else { world.map.ground.height_at(x, z) };
+    let afloat = matches!(vehicle_def(kind).spec.lift, shared::vehicles::Lift::Sail | shared::vehicles::Lift::Dive);
+    let below = if afloat { world.physics.water_level(x, z)? } else { world.map.ground.height_at(x, z) };
     Some([x, below + drop_height(kind), z])
 }
 
@@ -311,7 +313,7 @@ pub fn seat(world: &mut World, id: u32, vehicle: u32, index: usize) -> bool {
     }
     world.entities.of_mut::<Seats>(vehicle)[index] = Some(id);
     let mut player = world.entities.of_mut::<Player>(id);
-    player.seat = Some(Seat { vehicle, index, remote: false });
+    player.seat = Some(Seat { vehicle, index, remote: false, from: None });
     player.character.vy = 0.0;
     player.character.ride = 0;
     tracing::debug!(id, vehicle, index, "boarded");
@@ -365,7 +367,7 @@ fn switch_seat(world: &mut World, id: u32) {
     seats[seat.index] = None;
     seats[free] = Some(id);
     if let Some(mut player) = world.entities.get_mut::<Player>(id) {
-        player.seat = Some(Seat { vehicle: seat.vehicle, index: free, remote: false });
+        player.seat = Some(Seat { vehicle: seat.vehicle, index: free, remote: false, from: None });
     }
     tracing::debug!(id, vehicle = seat.vehicle, from = seat.index, to = free, "switched seat");
 }
@@ -638,7 +640,7 @@ fn knock_players(world: &mut World) {
         let Some(hit) = world.physics.car_hit(player.character.position) else { continue };
         // A drone is too light to throw anyone; it goes off instead (see `Drones`). A ship drifting
         // alongside only nudges a swimmer away, as the water would.
-        let slow_ship = world.entities.get::<Vehicle>(hit.car).is_some_and(|vehicle| vehicle_def(vehicle.kind).spec.lift == Lift::Sail) && vec3::length(hit.velocity) < SHIP_KNOCK_SPEED;
+        let slow_ship = world.entities.get::<Vehicle>(hit.car).is_some_and(|vehicle| matches!(vehicle_def(vehicle.kind).spec.lift, Lift::Sail | Lift::Dive)) && vec3::length(hit.velocity) < SHIP_KNOCK_SPEED;
         if world.entities.get::<Vehicle>(hit.car).is_some_and(|vehicle| is_drone(vehicle.kind)) || slow_ship {
             continue;
         }

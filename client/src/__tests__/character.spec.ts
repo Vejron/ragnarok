@@ -152,7 +152,7 @@ describe('Character holding things', () => {
 describe('Character', () => {
   it('has the clips the blend expects', async () => {
     const c = await crowd()
-    for (const name of ['idle', 'jump_air', 'death', 'walk_fwd', 'walk_back', 'walk_left', 'walk_right', 'run_fwd', 'run_back', 'run_left', 'run_right', 'crouch_idle', 'crouch_fwd', 'crouch_back', 'crouch_left', 'crouch_right', 'crawl_idle', 'crawl_fwd', 'crawl_back', 'crawl_left', 'crawl_right', 'slide', 'swim_tread', 'swim_fwd', 'dive_idle', 'dive_fwd', 'zombie_idle', 'zombie_walk', 'zombie_claw']) {
+    for (const name of ['idle', 'jump_air', 'death', 'walk_fwd', 'walk_back', 'walk_left', 'walk_right', 'run_fwd', 'run_back', 'run_left', 'run_right', 'crouch_idle', 'crouch_fwd', 'crouch_back', 'crouch_left', 'crouch_right', 'crawl_idle', 'crawl_fwd', 'crawl_back', 'crawl_left', 'crawl_right', 'slide', 'swim_tread', 'swim_fwd', 'dive_idle', 'dive_fwd', 'zombie_idle', 'zombie_walk', 'zombie_claw', 'zombie_rise']) {
       expect(c.asset!.clips.has(name), name).toBe(true)
     }
     expect(c.asset!.scene.getObjectByName('muzzle')).toBeTruthy()
@@ -180,6 +180,25 @@ describe('Character', () => {
     person.zombie = false
     run(person, 0, 0, 0, 1.5)
     expect(person.blend.get('hold_idle')).toBeGreaterThan(0.8)
+    c.dispose()
+  })
+
+  it('climbs out of the grave in one clip while the server says so, then stands as a zombie', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    person.held = ITEM_NONE
+    person.zombie = true
+    person.graveRise = true
+    run(person, 0, 0, 0, 0.1)
+    expect(person.blend.get('zombie_rise')).toBe(1)
+    // Still said to be rising, it does not start over, and walking does not take it out of the ground.
+    person.graveRise = true
+    run(person, 0, 0, -1.2, 2)
+    expect(person.blend.get('zombie_rise')).toBe(1)
+    person.graveRise = false
+    run(person, 0, 0, 0, 1.5)
+    expect(person.blend.get('zombie_idle')).toBeGreaterThan(0.8)
+    expect(person.blend.get('zombie_rise') ?? 0).toBeLessThan(0.05)
     c.dispose()
   })
 
