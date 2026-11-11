@@ -42,6 +42,10 @@ const NEW_WORLD_CELL = 1
 const IMPORTER_CELL = 4
 /** Metres between the world's ground height samples: one of `grid.cells`. */
 export const cell = ref(NEW_WORLD_CELL)
+/** A snow world (`"theme": "winter"` in area.json): snow on everything, frozen lakes, skis. */
+export const winter = ref(false)
+/** Winter: forest paths and tracks groomed for skiing too. */
+export const groomedPaths = ref(false)
 export const dirty = ref(false)
 export const job = ref<Job>()
 export const message = ref('')
@@ -277,6 +281,8 @@ export async function openWorld(world: string) {
   await useRegion(loaded.region ?? 'sweden')
   name.value = world
   cell.value = loaded.cell ?? IMPORTER_CELL
+  winter.value = loaded.theme === 'winter'
+  groomedPaths.value = !!loaded.groomed_paths
   placements.value = { spawns: loaded.spawns ?? [], vehicles: loaded.vehicles ?? [], items: loaded.items ?? [], bots: loaded.bots ?? [], animals: loaded.animals ?? [] }
   setTiles(new Map(tiles.map((t) => [tileKey(t.gx, t.gy), t])))
   dirty.value = false
@@ -317,7 +323,7 @@ export async function save(): Promise<boolean> {
   }
   name.value = world
   try {
-    await api.save(world, region.value, [...painted.value.values()], cell.value, placements.value)
+    await api.save(world, region.value, [...painted.value.values()], cell.value, winter.value, groomedPaths.value, placements.value)
     dirty.value = false
     message.value = `Saved ${world}.`
     await loadWorlds()
@@ -347,6 +353,8 @@ export function newWorld() {
   scenarioDirty.value = false
   name.value = ''
   cell.value = NEW_WORLD_CELL
+  winter.value = false
+  groomedPaths.value = false
   placements.value = emptyPlacements()
   setTiles(new Map())
   dirty.value = false

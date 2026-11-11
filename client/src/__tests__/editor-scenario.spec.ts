@@ -145,3 +145,21 @@ describe('squadsFromBots', () => {
     expect(squadsFromBots(s2, [])).toBe(s2)
   })
 })
+
+describe('zombies in the editor', () => {
+  const withZombies = (zombies: Scenario['zombies']): Scenario => ({ ...emptyScenario(), areas: { woods: { lat: 63.65, lon: 20.13, radius: 80 } }, zombies })
+
+  it('accepts zombies in an area that exists, and flags one that does not, none at all and bad numbers', () => {
+    expect(validateScenario(withZombies({ areas: ['woods'], max: 30, horde: 6, every: 45 }), () => true)).toEqual([])
+    const issues = (z: Scenario['zombies']) => validateScenario(withZombies(z), () => true).map((i) => i.path)
+    expect(issues({ areas: ['nowhere'] })).toEqual(['zombies.areas[0]'])
+    expect(issues({ areas: [] })).toEqual(['zombies.areas'])
+    expect(issues({ areas: ['woods'], max: -1, horde: 1.5, every: 0 })).toEqual(['zombies.max', 'zombies.horde', 'zombies.every'])
+  })
+
+  it('renaming an area renames it for the zombies, and an area they use counts as used', () => {
+    const scenario = withZombies({ areas: ['woods'] })
+    expect(usesName(scenario, 'area', 'woods')).toEqual(['the zombies'])
+    expect(renameName(scenario, 'area', 'woods', 'graveyard').zombies?.areas).toEqual(['graveyard'])
+  })
+})

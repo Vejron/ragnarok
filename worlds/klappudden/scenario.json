@@ -1,5 +1,11 @@
 {
-  "areas": {},
+  "areas": {
+    "woods": {
+      "lat": 63.6572512,
+      "lon": 20.1312598,
+      "radius": 80
+    }
+  },
   "restart": 20,
   "squads": {
     "north": {
@@ -369,5 +375,13 @@
         "start": true
       }
     }
-  ]
+  ],
+  "zombies": {
+    "areas": [
+      "woods"
+    ],
+    "max": 30,
+    "horde": 6,
+    "every": 45
+  }
 }

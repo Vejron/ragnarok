@@ -1,6 +1,6 @@
 # Winter and skiing
 
-A world is a winter one when its `area.json` says `"theme": "winter"`. The importer copies that into `Manifest::theme`, so the client and server both know. Kulla (`worlds/kulla`) is the first.
+A world is a winter one when its `area.json` says `"theme": "winter"`. In the map editor's World panel that is the **Snow world** switch, with **Groom forest paths** under it (`groomed_paths`). Save, then generate the world again to apply it. Turning the switch off sends `"theme": "summer"`, which the editor writes as no theme at all. The importer copies that into `Manifest::theme`, so the client and server both know. Kulla (`worlds/kulla`) is the first.
 
 ## The world
 

@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 72
+export const PROTOCOL_VERSION = 73
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -76,6 +76,12 @@ export const KIND_GOLF_CART = 22
 
 /** The technical: a pickup with a machine gun in its bed, a driver, a passenger and a gunner. */
 export const KIND_TECHNICAL = 23
+
+/**
+ * A zombie: a soldier's body with no gun and no mind but hunger, that rises at night in a scenario's
+ * zombie areas (ZOMBIES.md). Replicated like a soldier, drawn with the soldier's model in rags.
+ */
+export const KIND_ZOMBIE = 24
 
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
@@ -963,6 +969,43 @@ export const DEER_CAPSULE_RADIUS = 0.55
 export const STAG_CAPSULE_CENTRE = 1.05
 export const STAG_CAPSULE_HALF_HEIGHT = 0.3
 export const STAG_CAPSULE_RADIUS = 0.6
+
+/**
+ * Zombies (ZOMBIES.md): soldiers' bodies that rise in hordes at night and hunt the living by smell.
+ * They walk as soldiers do, so they lose arms and legs as soldiers do, and crawl on with no legs;
+ * only the head or the torso kills one.
+ * How far a zombie smells the living, metres: it needs no line of sight.
+ */
+export const ZOMBIE_SMELL_RANGE = 80.0
+
+/** Its shambling pace, slowest and fastest, as a forward axis value of 127: each zombie has its own. */
+export const ZOMBIE_PACE = [55, 95] as const
+
+/** Within this of its prey, metres, it lunges at full walking pace. */
+export const ZOMBIE_LUNGE = 5.0
+
+/** One zombie in this many runs instead of shambling. */
+export const ZOMBIE_RUNNER_ONE_IN = 8
+
+/** It claws at someone within this of its body's centre, metres. */
+export const ZOMBIE_CLAW_REACH = 1.4
+
+/** A claw: ticks of reaching back before it lands, and of recovering after. */
+export const ZOMBIE_CLAW_WINDUP = 24
+export const ZOMBIE_CLAW_RECOVER = 30
+
+/** The harm a claw does, and a bite (a zombie with no arms left bites instead). */
+export const ZOMBIE_CLAW_DAMAGE = 22
+export const ZOMBIE_BITE_DAMAGE = 14
+
+/** The most zombies up at once in a room, whatever a scenario asks for. */
+export const MAX_ZOMBIES = 96
+
+/**
+ * The zombies' side: they never hurt each other, and everyone else is their prey. Their profiles say
+ * so, for the client to keep them off the scoreboard.
+ */
+export const TEAM_ZOMBIES = 255
 
 /**
  * Golf (`ITEM_DRIVER`, `ITEM_PUTTER`, `PROJECTILE_GOLF_BALL`). A ball falls at this share of

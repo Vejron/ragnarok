@@ -417,3 +417,68 @@ fn removing_a_squad_takes_its_tank_too_and_a_restart_brings_a_fresh_one() {
     run(&mut game, 2.5);
     assert_eq!((tanks(&game), bots(&game).len()), (1, 2), "and back when it starts again");
 }
+
+/// Ticks from the start to midnight, and to noon the next day (`DAY_SECONDS`, `DAY_START_PHASE`).
+const MIDNIGHT: u32 = (1800.0 * 0.64 * TICK_RATE as f32) as u32;
+const NOON: u32 = (1800.0 * 1.14 * TICK_RATE as f32) as u32;
+
+fn zombies(game: &Game) -> Vec<u32> {
+    game.world.entities.ids::<With<crate::mechanics::Zombie>>().into_iter().filter(|id| game.world.entities.alive(*id)).collect()
+}
+
+fn graveyard(extra: &str) -> String {
+    format!(r#"{{"areas": {{"graveyard": {{{}, "radius": 10}}}}, "zombies": {{"areas": ["graveyard"], "max": 8, "horde": 5, "every": 10{extra}}}}}"#, ll(40.0, 40.0))
+}
+
+#[test]
+fn zombies_rise_at_night_in_their_areas_and_not_by_day() {
+    let mut game = start(&graveyard(""));
+    run(&mut game, 1.0);
+    assert!(zombies(&game).is_empty(), "nothing rises by day");
+    game.world.tick = MIDNIGHT;
+    run(&mut game, 1.0);
+    let up = zombies(&game);
+    assert_eq!(up.len(), 5, "a horde of five rose at nightfall");
+    for id in up {
+        let p = game.world.entities.of::<Player>(id).character.position;
+        assert!((p[0] - 40.0).hypot(p[2] - 40.0) < 10.0 + 5.0, "in the graveyard, at {p:?}");
+    }
+}
+
+#[test]
+fn a_horde_never_grows_past_its_max_and_never_rises_beside_the_living() {
+    let mut game = start(&graveyard(""));
+    game.world.tick = MIDNIGHT;
+    run(&mut game, 25.0);
+    assert_eq!(zombies(&game).len(), 8, "two hordes, the second cut short at the max");
+
+    let mut game = start(&graveyard(""));
+    let (someone, _inbox) = join(&mut game);
+    put(&mut game, someone, [40.0, 40.0]);
+    game.world.tick = MIDNIGHT;
+    run(&mut game, 1.0);
+    assert!(zombies(&game).is_empty(), "no spot in the graveyard is far enough from someone standing in it");
+}
+
+#[test]
+fn zombies_fall_at_dawn_and_their_bodies_leave_later_unless_they_rise_by_day() {
+    let mut game = start(&graveyard(""));
+    game.world.tick = MIDNIGHT;
+    run(&mut game, 1.0);
+    assert_eq!(zombies(&game).len(), 5);
+    game.world.tick = NOON;
+    run(&mut game, 1.0);
+    assert!(zombies(&game).is_empty(), "all fell at dawn");
+    run(&mut game, RESPAWN_TICKS as f32 / TICK_RATE as f32 + 1.0);
+    assert_eq!(game.world.entities.count::<crate::mechanics::Zombie>(), 0, "their bodies are gone, and none came back");
+
+    let mut game = start(&graveyard(r#", "day": true"#));
+    run(&mut game, 1.0);
+    assert_eq!(zombies(&game).len(), 5, "these rise by day as well");
+}
+
+#[test]
+fn zombies_must_name_areas_that_exist() {
+    assert!(error(r#"{"zombies": {"areas": ["nowhere"]}}"#).contains("nowhere"));
+    assert!(error(r#"{"zombies": {"areas": []}}"#).contains("at least one area"));
+}

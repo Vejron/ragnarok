@@ -86,10 +86,11 @@ export class Scoreboard {
     return id === null ? 0 : (this.totals.get(id)?.deaths ?? 0)
   }
 
-  /** `kill` message. `killer` is 0 when the world did it. */
-  kill(kill: { killer: number; victim: number; weapon: number; killerKills: number; victimDeaths: number }, now: number) {
+  /** `kill` message. `killer` is 0 when the world did it. A death not `told` (a zombie's) counts but stays out of the feed. */
+  kill(kill: { killer: number; victim: number; weapon: number; killerKills: number; victimDeaths: number }, now: number, told = true) {
     if (kill.killer !== 0) this.entry(kill.killer).kills = kill.killerKills
     this.entry(kill.victim).deaths = kill.victimDeaths
+    if (!told) return
     this.feed.push({ killer: kill.killer, victim: kill.victim, weapon: kill.weapon, at: now })
     if (this.feed.length > FEED_LENGTH) this.feed.shift()
   }

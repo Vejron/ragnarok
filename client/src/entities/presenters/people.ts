@@ -1,5 +1,5 @@
 import type { Character } from '@/render/character'
-import { FLAG_CROUCHING, FLAG_DEAD, FLAG_GROUNDED, FLAG_HELD_MASK, FLAG_HELD_SHIFT, KIND_SOLDIER } from '@/net/codec'
+import { FLAG_CLAWING, FLAG_CROUCHING, FLAG_DEAD, FLAG_GROUNDED, FLAG_HELD_MASK, FLAG_HELD_SHIFT, KIND_SOLDIER, KIND_ZOMBIE } from '@/net/codec'
 import { CARRY_BACKPACK, CARRY_LAMP, CARRY_POLING, CARRY_SKIS, SLIDE_MIN_SPEED, STANCE_CHUTE, STANCE_DIVE, STANCE_DOWN, STANCE_PRONE, STANCE_SURRENDER, STANCE_SWIM } from '@/sim/consts'
 import type { Avatars } from '../avatars'
 import type { Frame, Presenter } from '../presenter'
@@ -22,13 +22,16 @@ export interface PeopleWorld {
   wade(id: number, x: number, y: number, z: number, speed: number, dt: number): void
   /** The light of `avatar`'s headlamp, if lit. */
   headlamp(avatar: Character): void
+  /** A zombie at `(x, y, z)`, `clawing` or not, for its groans and the swish of its claws. */
+  zombie(id: number, x: number, y: number, z: number, clawing: boolean, dt: number): void
   /** The grooves and spray of a skier at `(x, z)` going `(vx, vz)`. */
   skiRun(id: number, x: number, z: number, vx: number, vz: number, grounded: boolean, dt: number): void
 }
 
 /**
  * Everyone else on foot: their soldier, running, crouching, lying down or hanging from a parachute as
- * their flags say, holding what they hold. The local player is drawn from their prediction instead,
+ * their flags say, holding what they hold. A zombie is a soldier too, drawn in rags and clawing when
+ * its flags say so. The local player is drawn from their prediction instead,
  * and riders by `Riders`, in their seats.
  */
 export class Soldiers implements Presenter<Frame> {
@@ -40,7 +43,7 @@ export class Soldiers implements Presenter<Frame> {
   constructor(private readonly world: PeopleWorld) {}
 
   wants(entity: Entity, id: number, frame: Frame) {
-    return id !== frame.localId && entity.kind?.kind === KIND_SOLDIER && entity.orientation === undefined && entity.place !== undefined && entity.flags !== undefined
+    return id !== frame.localId && (entity.kind?.kind === KIND_SOLDIER || entity.kind?.kind === KIND_ZOMBIE) && entity.orientation === undefined && entity.place !== undefined && entity.flags !== undefined
   }
 
   begin() {
@@ -58,6 +61,11 @@ export class Soldiers implements Presenter<Frame> {
     this.inView.push(id)
     this.nearby.push({ id, x, y, z })
     const avatar = this.world.avatars.draw(id)
+    const zombie = entity.kind!.kind === KIND_ZOMBIE
+    avatar.zombie = zombie
+    const clawing = zombie && (flags & FLAG_CLAWING) !== 0
+    avatar.clawing = clawing
+    if (zombie && !dead) this.world.zombie(id, x, y, z, clawing, frame.dt)
     const swim = stance === STANCE_DIVE ? 2 : stance === STANCE_SWIM ? 1 : 0
     avatar.swim = dead ? 0 : swim
     avatar.dead = dead

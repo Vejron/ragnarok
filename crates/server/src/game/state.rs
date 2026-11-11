@@ -284,6 +284,19 @@ pub struct Walk {
     pub tries: u32,
 }
 
+impl Walk {
+    /// Nowhere to go yet.
+    pub fn new() -> Self {
+        Walk { best: f32::MAX, stalled: 0, path: Vec::new(), path_to: [0.0; 2], replan_in: 0, reverse_left: 0, tries: 0 }
+    }
+}
+
+impl Default for Walk {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// How a bot shoots.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Aim {
@@ -320,7 +333,7 @@ impl Bot {
             yaw: 0.0,
             pitch: 0.0,
             sight: Sight::default(),
-            walk: Walk { best: f32::MAX, stalled: 0, path: Vec::new(), path_to: [0.0; 2], replan_in: 0, reverse_left: 0, tries: 0 },
+            walk: Walk::new(),
             aim: Aim { skill: DEFAULT_SKILL, react: 0, tracked: 0, error: [0.0; 2], side: [0.0; 2], burst: 0, pause: 0 },
             slot: 0,
             strafe: 0,

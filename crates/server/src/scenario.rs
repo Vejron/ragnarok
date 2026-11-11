@@ -20,6 +20,8 @@ use shared::world::WorldFile;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+mod horde;
+
 /// Longest text a notice may carry, characters.
 const MAX_TEXT: usize = 200;
 
@@ -40,6 +42,40 @@ struct FileSpec {
     /// Where the backpack starts, in a world with the backpack mode (BACKPACK.md).
     #[serde(default)]
     backpack: Option<SpotSpec>,
+    /// Zombies that rise in hordes at night (ZOMBIES.md).
+    #[serde(default)]
+    zombies: Option<ZombiesSpec>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ZombiesSpec {
+    /// The areas they rise in, by name: each horde in one of them, picked at random.
+    areas: Vec<String>,
+    /// The most up at once.
+    #[serde(default = "zombie_max")]
+    max: u32,
+    /// How many rise together.
+    #[serde(default = "horde_size")]
+    horde: u32,
+    /// Seconds between hordes.
+    #[serde(default = "horde_every")]
+    every: f32,
+    /// Whether they rise by day as well. Without it, those still up at dawn fall where they stand.
+    #[serde(default)]
+    day: bool,
+}
+
+fn zombie_max() -> u32 {
+    30
+}
+
+fn horde_size() -> u32 {
+    6
+}
+
+fn horde_every() -> f32 {
+    45.0
 }
 
 #[derive(Deserialize)]
@@ -231,10 +267,15 @@ struct Progress {
     objective: String,
     /// Ticks left until it starts again, once it has ended.
     ended: Option<u32>,
+    /// The zombies up or lying dead, and ticks until the next horde rises.
+    zombies: Vec<u32>,
+    next_horde: u32,
 }
 
 pub struct Scenario {
     areas: Vec<Area>,
+    /// Zombies' hordes, if they rise in this world.
+    zombies: Option<horde::Horde>,
     squads: Vec<Squad>,
     triggers: Vec<Trigger>,
     restart: u32,
@@ -380,7 +421,17 @@ impl Scenario {
             triggers.push(Trigger { name: t.name, when, wait: ticks(t.wait), times: t.times, actions });
         }
         let backpack = file.backpack.as_ref().map(|spot| place("the backpack", spot.lat, spot.lon)).transpose()?;
-        let mut scenario = Self { areas, squads, triggers, restart: ticks(file.restart), progress: Progress::default(), backpack };
+        let zombies = file
+            .zombies
+            .map(|z| {
+                let areas = z.areas.iter().map(|name| find("area", &area_names, name)).collect::<Result<Vec<_>>>().context("zombies")?;
+                if areas.is_empty() {
+                    bail!("zombies: name at least one area for them to rise in");
+                }
+                Ok(horde::Horde { areas, max: z.max, size: z.horde.max(1), every: ticks(z.every).max(1), day: z.day })
+            })
+            .transpose()?;
+        let mut scenario = Self { areas, zombies, squads, triggers, restart: ticks(file.restart), progress: Progress::default(), backpack };
         scenario.progress = scenario.fresh();
         Ok(scenario)
     }
@@ -412,6 +463,7 @@ impl Scenario {
         // Even once it has ended: a squad that does not respawn must not come back while it waits.
         self.clear_fallen(game);
         self.clear_tanks(game);
+        self.haunt(game);
         if let Some(left) = &mut self.progress.ended {
             *left = left.saturating_sub(1);
             if *left == 0 {
@@ -421,6 +473,9 @@ impl Scenario {
                 }
                 for &(vid, _) in self.progress.tanks.iter().flatten() {
                     remove_vehicle(&mut game.world, vid);
+                }
+                for &id in &self.progress.zombies {
+                    game.remove_zombie(id);
                 }
                 self.progress = self.fresh();
                 game.notice(NOTICE_OBJECTIVE, "");

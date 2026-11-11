@@ -48,9 +48,10 @@ const json = (method: string, body: unknown): RequestInit => ({
 export const api = {
   grid: (region: Region) => call<import('./grid').GridInfo>(`/grid?region=${region}`),
   worlds: async () => (await call<{ worlds: WorldSummary[] }>('/worlds')).worlds,
-  world: (name: string) => call<{ tiles: TileId[]; region?: Region; cell?: number | null } & Partial<Placements>>(`/worlds/${name}`),
-  save: (name: string, region: Region, tiles: TileId[], cell: number, placements: Placements) =>
-    call(`/worlds/${name}`, json('PUT', { tiles, region, cell, ...placements })),
+  world: (name: string) => call<{ tiles: TileId[]; region?: Region; cell?: number | null; theme?: string | null; groomed_paths?: boolean } & Partial<Placements>>(`/worlds/${name}`),
+  /** `winter` is the snow switch; `groomed` grooms forest paths for skiing too. */
+  save: (name: string, region: Region, tiles: TileId[], cell: number, winter: boolean, groomed: boolean, placements: Placements) =>
+    call(`/worlds/${name}`, json('PUT', { tiles, region, cell, theme: winter ? 'winter' : 'summer', groomed_paths: winter && groomed, ...placements })),
   remove: (name: string) => call(`/worlds/${name}`, { method: 'DELETE' }),
   activate: (name: string) => call(`/worlds/${name}/activate`, { method: 'POST' }),
   generate: (name: string) => call<Job>(`/worlds/${name}/generate`, { method: 'POST' }),

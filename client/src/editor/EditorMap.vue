@@ -16,6 +16,8 @@ const GRID_ZOOM = 14
 const PICK_REACH = 16
 /** The fill of an area on the map, and of its outline. */
 const AREA_COLOUR = '#7b61ff'
+/** An area zombies rise in: the colour of rot, its edge dashed. */
+const ZOMBIE_COLOUR = '#5f8a1f'
 
 const mapEl = ref<HTMLDivElement>()
 let map: L.Map | undefined
@@ -255,10 +257,14 @@ function applyTool() {
 function drawScenario() {
   if (!markers) return
   markers.clearLayers()
+  const zombieAreas = new Set(scenario.value.zombies?.areas ?? [])
   for (const [name, area] of Object.entries(scenario.value.areas)) {
-    L.circle([area.lat, area.lon], { radius: area.radius, color: AREA_COLOUR, weight: 2, fillOpacity: 0.12, interactive: false }).addTo(markers)
+    const zombies = zombieAreas.has(name)
+    L.circle([area.lat, area.lon], {
+      radius: area.radius, color: zombies ? ZOMBIE_COLOUR : AREA_COLOUR, weight: 2, fillOpacity: zombies ? 0.2 : 0.12, dashArray: zombies ? '6 4' : undefined, interactive: false,
+    }).addTo(markers)
     L.marker([area.lat, area.lon], {
-      icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<div class="area-label">${name}</div>` }),
+      icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<div class="area-label">${zombies ? '🧟 ' : ''}${name}</div>` }),
       interactive: false,
     }).addTo(markers)
   }

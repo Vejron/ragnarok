@@ -45,7 +45,7 @@ fn destroyed_entry(object: Obj, yaw: i16, force: u8) -> DestroyedObject {
 /// Player `id`'s `Profiles` entry: who they are, and which side.
 fn profile_entry(world: &World, id: u32) -> ProfileEntry {
     let player = &world.entities.of::<Player>(id);
-    ProfileEntry { id, name: player.name.clone(), color: player.color, team: player.team, bot: world.entities.has::<Bot>(id) }
+    ProfileEntry { id, name: player.name.clone(), color: player.color, team: player.team, bot: world.entities.has::<Bot>(id) || crate::mechanics::is_zombie(world, id) }
 }
 
 /// Building `id`'s damage `stage`, and where a blast marked it, as a `Damaged` entry.
@@ -249,6 +249,35 @@ impl Game {
         self.broadcast(encode(&Profiles { tag: S_PROFILES, players: vec![profile_entry(&self.world, id)] }));
         tracing::info!(id, team, x = home[0], z = home[1], "bot added");
         Some(id)
+    }
+
+    /// Raises a zombie at `at` (`[x, z]`, metres) on `TEAM_ZOMBIES`: a player with no connection and
+    /// empty hands, whose input `Zombies` writes (ZOMBIES.md). Each has a shambling pace of its own,
+    /// and one in `ZOMBIE_RUNNER_ONE_IN` runs. `None` when there are `MAX_ZOMBIES` up already.
+    pub fn add_zombie(&mut self, at: [f32; 2]) -> Option<u32> {
+        use crate::mechanics::Zombie;
+        if self.world.entities.count::<Zombie>() >= MAX_ZOMBIES {
+            return None;
+        }
+        let id = self.world.alloc_id();
+        let rng = &mut self.world.rng;
+        let pace = (f64::from(ZOMBIE_PACE[0]) + rng.next_f64() * f64::from(ZOMBIE_PACE[1] - ZOMBIE_PACE[0])).round() as i8;
+        let runner = rng.next_u64().is_multiple_of(u64::from(ZOMBIE_RUNNER_ONE_IN));
+        let yaw = rng.next_f64() as f32 * std::f32::consts::TAU;
+        self.world.entities.spawn(id, Player::new("Zombie".into(), 0, TEAM_ZOMBIES, vec![at.map(to_cm)], hotbar_of([shared::items::ITEM_NONE; HOTBAR_SLOTS])));
+        self.world.entities.insert(id, (soldier_life(), Zombie::new(pace, runner, yaw)));
+        for mechanic in &mut self.mechanics {
+            mechanic.on_join(&mut self.world, id);
+        }
+        self.broadcast(encode(&Profiles { tag: S_PROFILES, players: vec![profile_entry(&self.world, id)] }));
+        Some(id)
+    }
+
+    /// Takes zombie `id` out of the game, as if it had left. Anyone else is left alone.
+    pub fn remove_zombie(&mut self, id: u32) {
+        if crate::mechanics::is_zombie(&self.world, id) {
+            self.leave(id);
+        }
     }
 
     /// Parks a tank at `at` and puts a crew of two bots of `team` in it, named `names`: a driver

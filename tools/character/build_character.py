@@ -29,6 +29,9 @@ Conventions
   * Swimming clips, shared by every stance as the gun is put away: swim_tread (upright, the head out),
     swim_fwd (a breaststroke tipped forward about `SWIM_PIVOT`), dive_idle and dive_fwd (flat under the
     water about `DIVE_PIVOT`, near the capsule centre, which the client tips towards where it swims).
+  * Zombie clips, shared by every stance as a zombie's hands are empty: zombie_idle (hunched and swaying,
+    arms half up), zombie_walk (a shamble, the right leg dragged, arms out in front) and zombie_claw (the
+    right arm up and back, then raked down across the front).
 """
 
 import math
@@ -1541,6 +1544,95 @@ def dive_fwd(t):
         stroke_leg(side, keyed(t - late * 0.6, DIVE_LEGS))
 
 
+# --------------------------------------------------------------------------------------------------
+# Zombies (docs/ZOMBIES.md): the soldier's rig with empty hands, arms out after whoever it smells.
+# --------------------------------------------------------------------------------------------------
+# One zombie cycle: the left leg steps, the right drags behind it.
+ZOMBIE_SHAMBLE = [
+    # phase, (left thigh, left shin, right thigh, right shin, hips drop)
+    (0.0, (-0.40, 0.15, 0.22, 0.25, 0.00)),
+    (0.25, (-0.15, 0.70, 0.12, 0.20, -0.04)),
+    (0.5, (0.25, 0.20, -0.18, 0.30, -0.01)),
+    (0.75, (0.20, 0.10, -0.05, 0.45, -0.05)),
+]
+
+
+def zombie_arms(t, reach, sway, hunch):
+    """Both arms held out in front at `reach` (radians up from hanging, in the world, the trunk's
+    `hunch` taken back out), forearms and hands limp, each swaying by `sway` on its own beat."""
+    for side, s, late in (("L", 1, 0.0), ("R", -1, 0.37)):
+        wave = math.sin(TAU * (t + late))
+        pose_rot(f"upper_arm_{side}", -reach - hunch + sway * wave, s * 0.12, 0)
+        pose_rot(f"forearm_{side}", 0.22 + 0.08 * wave, 0, 0)
+        pose_rot(f"hand_{side}", 0.35, 0, 0)
+
+
+def zombie_trunk(t, hunch, loll):
+    """Hunched forward by `hunch` radians in all, from the hips up, the head lolling over to one side by
+    `loll`. A trunk bone turned by +x leans forward, where a hanging arm turned by -x does. The arms
+    hang off the chest, so they tip down with it: `zombie_arms` takes the hunch back out."""
+    phi = TAU * t
+    pose_rot("hips", hunch * 0.2, 0.06 * math.sin(phi), 0.05 * math.sin(phi))
+    pose_rot("spine", hunch * 0.3, 0, 0.05 * math.sin(phi))
+    pose_rot("chest", hunch * 0.5, 0.04 * math.sin(phi), -0.04 * math.sin(phi))
+    pose_rot("neck", -hunch * 0.3, loll, 0)
+    pose_rot("head", -hunch * 0.2 + 0.05 * math.sin(phi * 2), loll * 0.6, 0.06 * math.sin(phi))
+
+
+def zombie_idle(t):
+    phi = TAU * t
+    pose_loc("hips", (0.03 * math.sin(phi), 0, -0.03))
+    zombie_trunk(t, 0.35, 0.3)
+    zombie_arms(t, 0.7, 0.12, 0.35)
+    for side, s in (("L", 1), ("R", -1)):
+        pose_rot(f"thigh_{side}", 0.08, s * 0.1, 0)
+        pose_rot(f"shin_{side}", 0.18, 0, 0)
+        pose_rot(f"foot_{side}", -0.2, 0, s * 0.2)
+
+
+def zombie_walk(t):
+    lt, ls, rt, rs, drop = keyed(t, ZOMBIE_SHAMBLE)
+    phi = TAU * t
+    pose_loc("hips", (0.05 * math.sin(phi), 0, drop - 0.03))
+    pose_rot("thigh_L", lt, 0.08, 0)
+    pose_rot("shin_L", ls, 0, 0)
+    pose_rot("foot_L", -(lt + ls) * 0.8, 0, 0)
+    # The dragged foot is turned out and scuffs along on its toes.
+    pose_rot("thigh_R", rt, -0.1, -0.25)
+    pose_rot("shin_R", rs, 0, 0)
+    pose_rot("foot_R", 0.25, 0, 0)
+    zombie_trunk(t, 0.5, 0.35)
+    zombie_arms(t, 1.35, 0.15, 0.5)
+
+
+# A claw: the right arm goes up and back, rakes down and across, and comes back out in front.
+ZOMBIE_CLAW = [
+    # phase, (right upper arm up, right forearm, chest hunch, left arm reach)
+    (0.0, (1.35, 0.22, 0.5, 1.35)),
+    (0.45, (2.75, 0.9, 0.15, 1.1)),
+    (0.6, (0.6, 0.1, 0.85, 1.5)),
+    (0.8, (0.9, 0.2, 0.7, 1.4)),
+]
+
+
+def zombie_claw(t):
+    up, fore, hunch, reach = keyed(t, ZOMBIE_CLAW)
+    pose_loc("hips", (0, 0, -0.04))
+    zombie_trunk(0.0, hunch, 0.2)
+    # The chest twists into the blow.
+    pose_rot("chest", hunch * 0.5, 0, -0.25 * math.sin(TAU * t))
+    pose_rot("upper_arm_R", -up - hunch, -0.25, 0)
+    pose_rot("forearm_R", fore, 0, 0)
+    pose_rot("hand_R", -0.3, 0, 0)
+    pose_rot("upper_arm_L", -reach - hunch, 0.12, 0)
+    pose_rot("forearm_L", 0.25, 0, 0)
+    pose_rot("hand_L", 0.35, 0, 0)
+    for side, s in (("L", 1), ("R", -1)):
+        pose_rot(f"thigh_{side}", -0.2 if side == "L" else 0.2, s * 0.1, 0)
+        pose_rot(f"shin_{side}", 0.3, 0, 0)
+        pose_rot(f"foot_{side}", -0.1, 0, 0)
+
+
 def build_actions():
     global CURRENT
     walk = dict(amp=0.68, lat_amp=0.38, knee=0.95, lean=0.0, bob=0.022, cycle_sway=0.03)
@@ -1586,6 +1678,10 @@ def build_actions():
     # Both hands on the club: whatever stance a club is held in.
     bake("golf_swing", 150, golf_swing, loop=False)
     bake("death", 60, death, loop=False)
+    # A zombie's own: its hands are empty, whatever stance it would have.
+    bake("zombie_idle", 120, zombie_idle)
+    bake("zombie_walk", 60, zombie_walk)
+    bake("zombie_claw", 42, zombie_claw)
     # Falling lets go of the item's grip too: shared by every stance.
     bake("freefall", 90, freefall)
     bake("chute", 120, chute)
@@ -1730,6 +1826,13 @@ def preview(directory):
         for i in range(1 if frames == 1 else 4):
             at(clip, i * frames // 4)
             shoot(f"{clip}_{i}", "side")
+    for obj in weapon_objects:
+        obj.hide_render = obj.name.startswith("weapon_")
+    for clip, frames in (("zombie_idle", 120), ("zombie_walk", 60), ("zombie_claw", 42)):
+        for i in range(4):
+            at(clip, i * frames // 4)
+            for view in ("side", "front", "three"):
+                shoot(f"{clip}_{i}_{view}", view)
     for clip, frames in (("walk_fwd", 36), ("walk_right", 36), ("run_fwd", 24), ("run_left", 24)):
         for i in range(4):
             at(clip, i * frames // 4)

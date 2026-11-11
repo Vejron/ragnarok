@@ -32,7 +32,7 @@ const EXACT: f32 = 15.0;
 const ROUGH: f32 = 0.12;
 
 /// How dark it is at `tick`, 0 by day and 1 at night. The same clock the client's sky runs on.
-pub(super) fn darkness(tick: u32) -> f32 {
+pub(crate) fn darkness(tick: u32) -> f32 {
     let phase = (f64::from(tick) / f64::from(TICK_RATE) / f64::from(DAY_SECONDS) + f64::from(DAY_START_PHASE)).fract();
     (((phase - 0.5).abs() - 0.25) / DUSK).clamp(0.0, 1.0) as f32
 }

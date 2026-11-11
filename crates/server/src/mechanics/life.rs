@@ -21,7 +21,7 @@ pub struct Life;
 const DROP_FLOAT: f32 = 0.5;
 
 /// Ground height at `x`, `z` if it is open ground (nothing, such as a roof, above it).
-pub(super) fn open_ground(world: &World, x: f32, z: f32) -> Option<f32> {
+pub(crate) fn open_ground(world: &World, x: f32, z: f32) -> Option<f32> {
     if !world.map.is_inside((x * 100.0) as i32, (z * 100.0) as i32) {
         return None;
     }

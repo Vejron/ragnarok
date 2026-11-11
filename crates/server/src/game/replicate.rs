@@ -32,7 +32,15 @@ impl Game {
             let poling = c.skis && c.grounded && c.down == 0 && !c.winded && !shared::items::fills_hands(player.held().item) && player.input.forward > 0 && player.input.buttons() & (BUTTON_RUN | BUTTON_CROUCH | BUTTON_ALT) == BUTTON_RUN;
             let what = if poling { CARRY_POLING } else { 0 } | if crate::mechanics::carries(&self.world, id) { CARRY_BACKPACK } else { 0 } | if player.character.skis { CARRY_SKIS } else { 0 } | if player.lamp { CARRY_LAMP } else { 0 };
             let carry = (what != 0).then_some(wire::Carry { what });
-            let shown = Replicated { seated, limbs, struck, carry, ..shown };
+            let mut shown = Replicated { seated, limbs, struck, carry, ..shown };
+            if crate::mechanics::is_zombie(&self.world, id) && player.embodied() {
+                shown.kind = Some(wire::Kind { kind: KIND_ZOMBIE });
+                if let Some(flags) = &mut shown.flags
+                    && crate::mechanics::clawing(&self.world, id)
+                {
+                    flags.flags |= FLAG_CLAWING;
+                }
+            }
             let hp = self.world.entities.get::<Health>(id).map_or(0, |health| health.hp);
             (id, Replicated { vitals: Some(wire::Vitals { hp, progress: progress(player, one_arm), spent: player.character.spent, winded: player.character.winded.into(), parts, down: player.character.down, strain: player.character.ski_strain, breath: breath_byte(player.breath) }), hotbar: Some(wire::Hotbar { slots: player.hands.hotbar }), ..shown })
         }));

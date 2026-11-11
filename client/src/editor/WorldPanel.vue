@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { activate, cell, chooseRegion, clearAll, dirty, grid, name, newWorld, openWorld, painted, region, remove, save, worlds } from './state'
+import { activate, cell, chooseRegion, clearAll, dirty, grid, groomedPaths, name, newWorld, openWorld, painted, region, remove, save, winter, worlds } from './state'
 import type { Region } from './grid'
 
 const tile = computed(() => grid.value?.tile ?? 256)
@@ -11,6 +11,9 @@ const cells = computed(() =>
     return { label: `Ground every ${metres} m (${Math.round((side * side * 2) / 1024)} KB a tile)`, value: metres }
   }),
 )
+/** A checkbox's value: only a tick counts as on. */
+const checked = (v: boolean | 'indeterminate') => v === true
+
 const regions: { label: string; value: Region }[] = [
   { label: 'Sweden (Lantmäteriet)', value: 'sweden' },
   { label: 'France (IGN)', value: 'france' },
@@ -34,6 +37,20 @@ const regions: { label: string; value: Region }[] = [
       @update:model-value="(r: unknown) => chooseRegion(r as Region)"
     />
     <USelect v-model="cell" :items="cells" class="w-full" title="How finely the ground's heights are sampled. Generate the world again to apply." @update:model-value="dirty = true" />
+    <UCheckbox
+      :model-value="winter"
+      label="Snow world (winter)"
+      title="Snow on everything, frozen lakes, skis. Generate the world again to apply."
+      @update:model-value="(v: boolean | 'indeterminate') => { winter = checked(v); dirty = true }"
+    />
+    <UCheckbox
+      v-if="winter"
+      :model-value="groomedPaths"
+      label="Groom forest paths for skiing too"
+      class="ml-6"
+      title="For places OSM maps few ski tracks. Generate the world again to apply."
+      @update:model-value="(v: boolean | 'indeterminate') => { groomedPaths = checked(v); dirty = true }"
+    />
     <p class="text-sm text-muted">{{ painted.size }} tiles, {{ ((painted.size * tile * tile) / 1e6).toFixed(2) }} km²</p>
 
     <h2 class="pt-2 text-xs font-semibold uppercase tracking-wide text-muted">Saved worlds</h2>

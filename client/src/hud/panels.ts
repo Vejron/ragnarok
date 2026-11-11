@@ -1,7 +1,7 @@
 import type { HudStats } from '@/hud'
 import { BACKPACK_NAME, type BackpackView } from '@/backpack'
 import { WEAPON_AP, WEAPON_AUTOCANNON, WEAPON_BALL, WEAPON_BOMB, WEAPON_DROWN, WEAPON_EGG, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK } from '@/net/codec'
-import { colorFor, isBot, nameFor } from '@/profile'
+import { colorFor, isBot, isZombie, nameFor } from '@/profile'
 import { seatHint } from '@/seathints'
 import { miniBottom, miniSize } from './map'
 import { GREEN_CSS, INK_CSS as INK, MARGIN, RED, TEAL, TEXT, type Painter, type TextStyle } from './paint'
@@ -227,7 +227,7 @@ function feed(p: Painter, s: HudStats, top: number) {
     const pieces: Piece[] = []
     if (entry.killer !== 0) {
       pieces.push({ dot: colorFor(entry.killer) }, { text: who(entry.killer), style: entry.you === 'killer' ? mine : style })
-      if (isBot(entry.killer)) pieces.push({ tag: 'BOT' })
+      if (isBot(entry.killer) && !isZombie(entry.killer)) pieces.push({ tag: 'BOT' })
       if (entry.you === 'killer') pieces.push({ tag: 'YOU' })
       pieces.push({ text: `  ${mark(entry.weapon)}  `, style: { ...style, weight: 800 } })
     }

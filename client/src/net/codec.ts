@@ -24,7 +24,7 @@ export const OBJ_BUILDING = 1
 
 /** Entity kinds, generated from `consts.rs`. A vehicle kind's definition is `vehicleDef`. */
 export {
-  KIND_BACKPACK, KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SPORTS, KIND_SOLDIER, KIND_STAG, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_TUPP, KIND_WALKER,
+  KIND_BACKPACK, KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SPORTS, KIND_SOLDIER, KIND_STAG, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_TUPP, KIND_WALKER, KIND_ZOMBIE,
 } from '@/sim/consts'
 export { isDrone } from '@/sim/vehicles'
 
@@ -38,6 +38,8 @@ export const FLAG_HELD_MASK = 0b1111 << FLAG_HELD_SHIFT
 export const FLAG_CROWING = 1 << 7
 /** A deer has its head down grazing: the rooster's crowing bit, as no creature does both. */
 export const FLAG_GRAZING = FLAG_CROWING
+/** A zombie is reaching back to claw: the rooster's crowing bit, as no soldier sets it. */
+export const FLAG_CLAWING = FLAG_CROWING
 
 /** The AK5. */
 export const WEAPON_RIFLE = 0
@@ -96,6 +98,8 @@ export const WEAPON_GOLF = 31
 export const WEAPON_CUP = 32
 /** Shot events only: a round went through a window's glass at `x, y, z`, for every client to break that pane. */
 export const WEAPON_GLASS = 33
+/** A zombie's claws, or its teeth once it has no arms. */
+export const WEAPON_CLAW = 34
 
 /** `Limbs`'s lost limbs, the low four bits; the same bits above `LIMB_BLEED_SHIFT` still bleed. Mirrors `LIMB_*`. */
 export const LIMB_ARM_L = 1 << 0

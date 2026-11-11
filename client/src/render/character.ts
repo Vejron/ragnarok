@@ -23,6 +23,14 @@ const FOOT_OFFSET = CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS
 
 export const MODEL_URL = `${import.meta.env.BASE_URL}models/player.glb`
 
+/** A zombie's rags, whatever colour it had, and the grey-green its skin and boots are tinted. */
+const ZOMBIE_RAGS = 0x4a4636
+const ZOMBIE_SKIN = 0x9db08a
+/** How long a zombie's claw clip takes to play out, seconds: the wind-up the server flags, the blow and the recovery. */
+const ZOMBIE_CLAW_TIME = 0.7
+/** The ground speed at which a zombie's shambling feet stop sliding, m/s. */
+const ZOMBIE_WALK_SPEED = 1.2
+
 type Direction = 'fwd' | 'back' | 'left' | 'right'
 const DIRECTIONS: Direction[] = ['fwd', 'back', 'left', 'right']
 
@@ -558,6 +566,17 @@ export class Character {
   private readonly springs = Object.fromEntries(SPRINGS.map((name) => [name, new Spring()])) as Record<SpringName, Spring>
   /** The `struck` count last seen, null until the first word. */
   private struckCount: number | null = null
+  /** Drawn as a zombie: in rags, grey-green, shambling with its arms out. */
+  private undead = false
+  /** The meshes in the shared `gear` material, and a zombie's own tinted copy of it. */
+  private readonly gearMeshes: Mesh[] = []
+  private gearMaterial: Material | null = null
+  private zombieGear: Material | null = null
+  /** Seconds into a zombie's claw, or -1 when it is not clawing; and whether the server said so last. */
+  private clawTime = -1
+  private clawSaid = false
+  /** How far through its shamble a zombie is, 0..1. */
+  private shamble = 0
 
   constructor(private readonly crowd: Crowd, id: number) {
     const asset = crowd.asset
@@ -566,6 +585,10 @@ export class Character {
     this.outfit = toonMaterial({ vertexColors: true, color: colorFor(id) })
     this.object.traverse((node) => {
       if (node instanceof Mesh && node.material.name === 'outfit') node.material = this.outfit
+      if (node instanceof Mesh && node.material.name === 'gear') {
+        this.gearMeshes.push(node)
+        this.gearMaterial = node.material
+      }
     })
     crowd.outfits.add(this.outfit)
     crowd.root.add(this.object)
@@ -645,8 +668,13 @@ export class Character {
     this.flashLeft = HIT_FLASH
   }
 
-  /** Repaints the outfit: the player's chosen colour can arrive after their soldier. */
+  /** Repaints the outfit: the player's chosen colour can arrive after their soldier. A zombie keeps its rags. */
   setColor(hex: number) {
+    if (this.undead) return
+    this.paint(hex)
+  }
+
+  private paint(hex: number) {
     this.outfit.color.setHex(hex)
     this.canopy.setColor(hex)
     this.outfit.needsUpdate()
@@ -785,6 +813,7 @@ export class Character {
     targets.set('chute', (this.handsUp ? alive : aloft) * this.hang)
     targets.set('death', this.death)
     this.swimTargets(targets, alive * this.wet, speedNow, vy, dt)
+    if (this.undead) this.zombieTargets(targets, standing, speed, dt)
     // Getting up is all there is until it is up; then the stance's clips take over again.
     const rising = this.rising
     if (rising) {
@@ -840,6 +869,9 @@ export class Character {
       else if (base === 'golf_swing') action.time = this.golfPhase * action.clip.duration
       else if (base === 'swim_tread' || base === 'dive_idle') action.time = this.clock % action.clip.duration
       else if (base === 'swim_fwd' || base === 'dive_fwd') action.time = this.swimPhase * action.clip.duration
+      else if (base === 'zombie_idle') action.time = this.clock % action.clip.duration
+      else if (base === 'zombie_walk') action.time = this.shamble * action.clip.duration
+      else if (base === 'zombie_claw') action.time = (Math.max(0, this.clawTime) / ZOMBIE_CLAW_TIME) * action.clip.duration
       else if (base !== 'death') action.time = this.phase * action.clip.duration
     }
     // The death clip plays out on the animator's clock once it starts.
@@ -1548,6 +1580,58 @@ export class Character {
     if (this.club) this.club.visible = golf && !this.handsUp && !this.onSkis
   }
 
+  /** Drawn as a zombie (`KIND_ZOMBIE`): rags, grey-green skin, and its own clips standing and walking. */
+  set zombie(on: boolean) {
+    if (on === this.undead) return
+    if (on) {
+      this.paint(ZOMBIE_RAGS)
+      if (!this.zombieGear) {
+        this.zombieGear = toonMaterial({ vertexColors: true, color: ZOMBIE_SKIN })
+        this.crowd.outfits.add(this.zombieGear)
+      }
+    }
+    this.undead = on
+    const gear = on ? this.zombieGear : this.gearMaterial
+    if (gear) for (const mesh of this.gearMeshes) mesh.material = gear
+    if (!on) this.clawTime = -1
+  }
+
+  get zombie() {
+    return this.undead
+  }
+
+  /** A zombie reaching back to claw (`FLAG_CLAWING`): each time the server starts saying so, the claw plays out once. */
+  set clawing(on: boolean) {
+    if (on && !this.clawSaid) this.clawTime = 0
+    this.clawSaid = on
+  }
+
+  /**
+   * A zombie's own share of `targets`: its standing and walking clips take over the stance's, and a
+   * claw takes over the standing body while it plays. Crawling, falling and dying stay the soldier's.
+   */
+  private zombieTargets(targets: Map<string, number>, standing: number, speed: number, dt: number) {
+    let idle = 0
+    let walk = 0
+    for (const [name, weight] of targets) {
+      const base = name.replace(/^(pistol_|hold_|shoulder_)/, '')
+      if (base === 'idle') idle += weight
+      else if (base.startsWith('walk_') || base.startsWith('run_')) walk += weight
+      else continue
+      targets.set(name, 0)
+    }
+    if (this.clawTime >= 0) {
+      this.clawTime += dt
+      if (this.clawTime >= ZOMBIE_CLAW_TIME) this.clawTime = -1
+    }
+    const claw = this.clawTime >= 0 && !this.down ? standing : 0
+    targets.set('zombie_idle', idle * (1 - claw))
+    targets.set('zombie_walk', walk * (1 - claw))
+    targets.set('zombie_claw', claw)
+    const walkClip = this.actions.get('zombie_walk')
+    if (walkClip) this.shamble = (this.shamble + (dt * speed) / (ZOMBIE_WALK_SPEED * walkClip.clip.duration)) % 1
+  }
+
   set surrendering(on: boolean) {
     if (on === this.handsUp) return
     this.handsUp = on
@@ -1700,6 +1784,10 @@ export class Character {
     this.object.removeFromParent()
     this.crowd.outfits.delete(this.outfit)
     this.outfit.dispose()
+    if (this.zombieGear) {
+      this.crowd.outfits.delete(this.zombieGear)
+      this.zombieGear.dispose()
+    }
     this.crowd.adjust(-1)
   }
 }

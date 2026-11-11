@@ -35,7 +35,8 @@ struct Area {
     /// picks (`DEFAULT_CELL` there).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cell: Option<f64>,
-    /// The season (`"winter"`). Absent, the world is as it always was.
+    /// The season (`"winter"`). Absent, the world is as it always was. The page sends `"summer"` to
+    /// turn winter off, which is written as no theme at all.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     theme: Option<String>,
     /// Winter: groom the forest paths and tracks too (`groomed_paths` in the importer).
@@ -60,16 +61,21 @@ struct Area {
 }
 
 impl Area {
-    /// The page knows nothing of the season or the importer's other options, so a save carries them
-    /// over from the file it replaces.
+    /// The page knows nothing of the importer's other options, so a save carries them over from the
+    /// file it replaces, and the season too when the page does not say. `"summer"` is no theme.
     fn keep_options(&mut self, old: Option<Area>) {
-        let Some(old) = old else { return };
-        if self.theme.is_none() {
-            self.theme = old.theme;
-            self.groomed_paths = old.groomed_paths;
+        if let Some(old) = old {
+            if self.theme.is_none() {
+                self.theme = old.theme;
+                self.groomed_paths = old.groomed_paths;
+            }
+            for (key, value) in old.rest {
+                self.rest.entry(key).or_insert(value);
+            }
         }
-        for (key, value) in old.rest {
-            self.rest.entry(key).or_insert(value);
+        if self.theme.as_deref() == Some("summer") {
+            self.theme = None;
+            self.groomed_paths = false;
         }
     }
 }
@@ -153,7 +159,7 @@ async fn list_worlds(res: &mut Response) {
 async fn get_world(req: &mut Request, res: &mut Response) {
     let Some(name) = name_of(req, res) else { return };
     match read_area(&name) {
-        Some(area) => res.render(Json(serde_json::json!({ "name": name, "region": area.region.name(), "tiles": area.tiles, "cell": area.cell, "spawns": area.spawns, "vehicles": area.vehicles, "items": area.items, "bots": area.bots, "animals": area.animals }))),
+        Some(area) => res.render(Json(serde_json::json!({ "name": name, "region": area.region.name(), "tiles": area.tiles, "cell": area.cell, "theme": area.theme, "groomed_paths": area.groomed_paths, "spawns": area.spawns, "vehicles": area.vehicles, "items": area.items, "bots": area.bots, "animals": area.animals }))),
         None => fail(res, StatusCode::NOT_FOUND, "no such world"),
     }
 }
@@ -177,7 +183,7 @@ async fn put_world(req: &mut Request, res: &mut Response) {
 }
 
 /// The scenario file's top-level keys, as `crates/server/src/scenario.rs` reads them.
-const SCENARIO_KEYS: [&str; 4] = ["areas", "squads", "triggers", "restart"];
+const SCENARIO_KEYS: [&str; 6] = ["areas", "squads", "triggers", "restart", "backpack", "zombies"];
 
 fn scenario_path(name: &str) -> PathBuf {
     worlds_dir().join(name).join("scenario.json")
@@ -518,7 +524,7 @@ mod tests {
 
     #[test]
     fn a_scenario_keeps_only_the_fields_the_server_reads() {
-        let known = r#"{"restart":30,"areas":{},"squads":{},"triggers":[]}"#;
+        let known = r#"{"restart":30,"areas":{},"squads":{},"triggers":[],"backpack":{"lat":0,"lon":0},"zombies":{"areas":[]}}"#;
         let value: serde_json::Value = serde_json::from_str(known).unwrap();
         assert!(value.as_object().unwrap().keys().all(|key| SCENARIO_KEYS.contains(&key.as_str())));
         let typo: serde_json::Value = serde_json::from_str(r#"{"trigers":[]}"#).unwrap();
@@ -555,6 +561,11 @@ mod tests {
         let mut new: Area = serde_json::from_str(r#"{"tiles":[]}"#).unwrap();
         new.keep_options(None);
         assert_eq!((new.theme, new.groomed_paths), (None, false));
+        // The snow switch turned off on the page: no theme, nothing groomed.
+        let old: Area = serde_json::from_str(r#"{"tiles":[],"theme":"winter","groomed_paths":true}"#).unwrap();
+        let mut summer: Area = serde_json::from_str(r#"{"tiles":[],"theme":"summer"}"#).unwrap();
+        summer.keep_options(Some(old));
+        assert_eq!((summer.theme, summer.groomed_paths), (None, false));
     }
 
     #[test]

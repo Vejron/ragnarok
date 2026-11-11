@@ -21,7 +21,7 @@ pub use crate::vehicles::tank::*;
 pub use crate::vehicles::walker::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 72;
+pub const PROTOCOL_VERSION: u8 = 73;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -70,6 +70,9 @@ pub const KIND_STAG: u8 = 21;
 pub const KIND_GOLF_CART: u8 = 22;
 /// The technical: a pickup with a machine gun in its bed, a driver, a passenger and a gunner.
 pub const KIND_TECHNICAL: u8 = 23;
+/// A zombie: a soldier's body with no gun and no mind but hunger, that rises at night in a scenario's
+/// zombie areas (ZOMBIES.md). Replicated like a soldier, drawn with the soldier's model in rags.
+pub const KIND_ZOMBIE: u8 = 24;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -701,6 +704,31 @@ pub const DEER_CAPSULE_RADIUS: f32 = 0.55;
 pub const STAG_CAPSULE_CENTRE: f32 = 1.05;
 pub const STAG_CAPSULE_HALF_HEIGHT: f32 = 0.3;
 pub const STAG_CAPSULE_RADIUS: f32 = 0.6;
+
+/// Zombies (ZOMBIES.md): soldiers' bodies that rise in hordes at night and hunt the living by smell.
+/// They walk as soldiers do, so they lose arms and legs as soldiers do, and crawl on with no legs;
+/// only the head or the torso kills one.
+/// How far a zombie smells the living, metres: it needs no line of sight.
+pub const ZOMBIE_SMELL_RANGE: f32 = 80.0;
+/// Its shambling pace, slowest and fastest, as a forward axis value of 127: each zombie has its own.
+pub const ZOMBIE_PACE: [i8; 2] = [55, 95];
+/// Within this of its prey, metres, it lunges at full walking pace.
+pub const ZOMBIE_LUNGE: f32 = 5.0;
+/// One zombie in this many runs instead of shambling.
+pub const ZOMBIE_RUNNER_ONE_IN: u32 = 8;
+/// It claws at someone within this of its body's centre, metres.
+pub const ZOMBIE_CLAW_REACH: f32 = 1.4;
+/// A claw: ticks of reaching back before it lands, and of recovering after.
+pub const ZOMBIE_CLAW_WINDUP: u32 = 24;
+pub const ZOMBIE_CLAW_RECOVER: u32 = 30;
+/// The harm a claw does, and a bite (a zombie with no arms left bites instead).
+pub const ZOMBIE_CLAW_DAMAGE: u8 = 22;
+pub const ZOMBIE_BITE_DAMAGE: u8 = 14;
+/// The most zombies up at once in a room, whatever a scenario asks for.
+pub const MAX_ZOMBIES: usize = 96;
+/// The zombies' side: they never hurt each other, and everyone else is their prey. Their profiles say
+/// so, for the client to keep them off the scoreboard.
+pub const TEAM_ZOMBIES: u8 = 255;
 
 /// Golf (`ITEM_DRIVER`, `ITEM_PUTTER`, `PROJECTILE_GOLF_BALL`). A ball falls at this share of
 /// `GRAVITY`, which is twice the earth's: a ball wants the real thing to carry like one.

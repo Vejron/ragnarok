@@ -76,6 +76,7 @@ import { rideView, seatView, type SeatView } from './seats'
 import { loadRoosterModel } from './render/rooster'
 import { loadAnimalModels } from './render/animal'
 import { VehicleSounds } from './vehicleaudio'
+import { ZombieVoices } from './zombievoices'
 import { HIT_DEALT, HIT_KILL, HIT_TAKEN, HitFeedback } from './feedback'
 import { freezeWater, setWaterTime, setWaterWakes } from './render/water'
 import { Wakes } from './render/wakes'
@@ -118,7 +119,7 @@ import { BackpackTracker } from './backpack'
 import { Bodies } from './bodies'
 import { Bricklayer } from './bricklayer'
 import { LocalPlayer } from './localplayer'
-import { allies, colorFor, colorIndexFor, cssColor, forgetAllPlayers, forgetPlayer, isBot, loadProfile, nameFor, profileQuery, setPlayer, teamFor } from './profile'
+import { allies, colorFor, colorIndexFor, cssColor, forgetAllPlayers, forgetPlayer, isBot, isZombie, loadProfile, nameFor, profileQuery, setPlayer, teamFor } from './profile'
 
 // The overlay and its tests import these from here.
 export type { HudStats } from './hud'
@@ -280,6 +281,8 @@ export class Game {
   private poleIn = 0
   /** Engines, tyres, crashes and guns. */
   private readonly sounds = new VehicleSounds()
+  /** The zombies' groans and growls. */
+  private readonly zombieVoices = new ZombieVoices(this.sounds)
   private readonly music = new TankMusic()
   /** Bumpers, doors and wheels that came off. */
   private readonly debris = new Debris(160)
@@ -461,7 +464,7 @@ export class Game {
     this.flying.add(this.lying)
     this.flying.add(new Backpacks(this.backpackModels))
     const blobFoot = (x: number, y: number, z: number) => this.surroundings.blobFoot(x, y, z)
-    this.soldiers = this.people.add(new Soldiers({ avatars: this.avatars, blobFoot, wade: (id, x, y, z, speed, dt) => this.surroundings.wade(id, x, y, z, speed, dt), skiRun: (id, x, z, vx, vz, grounded, dt) => this.skiTracks?.run(id, x, z, vx, vz, grounded, dt), headlamp: (avatar) => this.shine(avatar) }))
+    this.soldiers = this.people.add(new Soldiers({ avatars: this.avatars, blobFoot, wade: (id, x, y, z, speed, dt) => this.surroundings.wade(id, x, y, z, speed, dt), skiRun: (id, x, z, vx, vz, grounded, dt) => this.skiTracks?.run(id, x, z, vx, vz, grounded, dt), headlamp: (avatar) => this.shine(avatar), zombie: (id, x, y, z, clawing, dt) => this.zombieVoices.hear(id, x, y, z, clawing, dt) }))
     this.riders = this.people.add(new Riders(this.avatars, this.vehicles))
     this.people.add(new Roosters({ root: this.scene.scene, listener: () => this.predictor?.state.position ?? [0, 0, 0], blobFoot }))
     this.people.add(new Animals({ root: this.scene.scene, blobFoot, gore: this.gore }))
@@ -687,7 +690,7 @@ export class Game {
       case 'kill': {
         const body = this.avatars.of(message.victim)
         if (body?.visible) this.gore.die(body, message.style, message.yaw, message.power, (x, z) => this.scene.groundAt(x, z))
-        this.board.kill(message, now)
+        this.board.kill(message, now, !isZombie(message.victim))
         break
       }
     }
@@ -871,6 +874,7 @@ export class Game {
     this.stones?.update(this.scene.camera.position.x, this.scene.camera.position.z)
     const nearby = [...this.soldiers.nearby, ...this.riders.seated]
     this.avatars.sweep((key) => this.surroundings.dry(key))
+    this.zombieVoices.sweep()
     this.voice.setTalking(this.localId !== null && this.player.alive && this.input.talkHeld)
     this.voice.update(this.localId, position, nearby)
     this.scene.contact.end()
@@ -1197,7 +1201,7 @@ export class Game {
       deaths: this.board.deaths(this.localId),
       feed: this.board.recent(now, this.localId),
       notices: this.notices.view(now),
-      board: this.input.isHeld('Tab') ? sides(this.board.rows(this.localId, this.soldiers.inView), teamFor) : [],
+      board: this.input.isHeld('Tab') ? sides(this.board.rows(this.localId, this.soldiers.inView).filter((row) => !isZombie(row.id)), teamFor) : [],
       hitMarker: hitView.marker,
       hurt: hitView.vignette,
       hurtArcs: hitView.arcs,

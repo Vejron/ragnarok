@@ -27,6 +27,7 @@ The docs are in [docs/](docs/).
 - [LIMBS.md](docs/LIMBS.md): limb loss and part health
 - [KNOCKDOWN.md](docs/KNOCKDOWN.md): blasts, cars and ragdolls
 - [SWIMMING.md](docs/SWIMMING.md): swimming, diving where you look, holding your breath and drowning
+- [ZOMBIES.md](docs/ZOMBIES.md): zombies that rise in hordes at night, shamble after you and claw, and can be shot apart limb by limb
 - [BUILDING.md](docs/BUILDING.md): placing cubes with bricks
 - [CRATERS.md](docs/CRATERS.md) and [SCORCH.md](docs/SCORCH.md): shells digging the ground, and the marks they leave
 - [DRONES.md](docs/DRONES.md): FPV and loitering drones

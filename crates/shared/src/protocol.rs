@@ -57,7 +57,7 @@ pub const HIT_DEER: u8 = 4;
 pub const OBJ_TREE: u8 = 0;
 pub const OBJ_BUILDING: u8 = 1;
 
-pub use crate::consts::{KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SOLDIER, KIND_SPORTS, KIND_STAG, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_TUPP, KIND_WALKER};
+pub use crate::consts::{KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SOLDIER, KIND_SPORTS, KIND_STAG, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_TUPP, KIND_WALKER, KIND_ZOMBIE};
 
 /// Whether `kind` is a drone: flown from a remote seat by whoever launched it (see the `Drones` mechanic).
 pub fn is_drone(kind: u8) -> bool {
@@ -88,6 +88,9 @@ pub const FLAG_HELD_MASK: u8 = 0b1111 << FLAG_HELD_SHIFT;
 pub const FLAG_CROWING: u8 = 1 << 7;
 /// A deer has its head down grazing. The rooster's crowing bit: no creature does both.
 pub const FLAG_GRAZING: u8 = FLAG_CROWING;
+/// A zombie is clawing at someone, from its wind-up to the blow. The rooster's crowing bit: a
+/// soldier never sets it.
+pub const FLAG_CLAWING: u8 = FLAG_CROWING;
 
 const _: () = assert!(
     crate::items::ITEM_COUNT as u16 <= (FLAG_HELD_MASK >> FLAG_HELD_SHIFT) as u16 + 1,
@@ -158,6 +161,8 @@ pub const WEAPON_GOLF: u8 = 31;
 pub const WEAPON_CUP: u8 = 32;
 /// Shot events only: a round went through a window's glass at `x, y, z`, for every client to break that pane.
 pub const WEAPON_GLASS: u8 = 33;
+/// A zombie's claws, or its teeth once it has no arms.
+pub const WEAPON_CLAW: u8 = 34;
 
 /// `replicated::Limbs::lost` bits: the limbs a soldier has lost. The same bits shifted up by
 /// `LIMB_BLEED_SHIFT` are the stumps still bleeding.

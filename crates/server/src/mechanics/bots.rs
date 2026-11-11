@@ -21,6 +21,7 @@ mod tokens;
 mod wounded;
 
 pub use crew::road_route;
+pub(crate) use senses::darkness;
 pub use crew::{DRIVER, GUNNER, nearest_waypoint};
 
 use shared::vec3;
@@ -30,7 +31,7 @@ use crate::entities::With;
 use super::combat::same_team;
 use super::life::open_ground;
 use super::npcs::turn_towards;
-use crate::game::{Bot, BotMode, Damaged, Noise, Player, Role, World};
+use crate::game::{Bot, BotMode, Damaged, Noise, Player, Role, Walk, World};
 use shared::consts::*;
 use shared::items::{HOTBAR_SLOTS, ITEM_AK5, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, ItemDef, ItemKind, def};
 use shared::protocol::{InputFrame, ItemSlot};
@@ -212,7 +213,7 @@ fn distance_2d(a: [f32; 3], b: [f32; 3]) -> f32 {
 /// ground): away from each one within `SEPARATE`, harder the closer, at most 1 in all. This is the
 /// separation rule of flocking: a bot steers clear of its neighbours, so a crowd spreads out instead
 /// of piling onto one spot. Two on the very same spot are pushed apart along a line they agree on.
-fn push(id: u32, at: [f32; 3], crowd: &[(u32, [f32; 2])]) -> [f32; 2] {
+pub(super) fn push(id: u32, at: [f32; 3], crowd: &[(u32, [f32; 2])]) -> [f32; 2] {
     let mut total = [0.0f32; 2];
     for &(other, [x, z]) in crowd {
         if other == id {
@@ -239,13 +240,13 @@ fn push(id: u32, at: [f32; 3], crowd: &[(u32, [f32; 2])]) -> [f32; 2] {
 }
 
 /// `yaw` bent away from `push`, which pulls less than the way the bot wants to go.
-fn bend(yaw: f32, push: [f32; 2]) -> f32 {
+pub(super) fn bend(yaw: f32, push: [f32; 2]) -> f32 {
     let (x, z) = (-yaw.sin() + push[0] * PUSH_WEIGHT, -yaw.cos() + push[1] * PUSH_WEIGHT);
     if x.hypot(z) < 1e-3 { yaw } else { (-x).atan2(-z) }
 }
 
 /// The heading that faces from `from` to `to`. Yaw 0 faces -Z: forward is (-sin yaw, -cos yaw).
-fn heading(from: [f32; 3], to: [f32; 3]) -> f32 {
+pub(super) fn heading(from: [f32; 3], to: [f32; 3]) -> f32 {
     (-(to[0] - from[0])).atan2(-(to[2] - from[2]))
 }
 
@@ -308,7 +309,7 @@ fn spot(world: &World, id: u32, eye: [f32; 3], yaw: f32, alert: bool) -> Option<
 
 /// Whether anything hears noises: a bot, or a wild animal.
 fn listening(world: &World) -> bool {
-    world.entities.count::<Bot>() > 0 || world.entities.count::<super::wildlife::Wild>() > 0
+    world.entities.count::<Bot>() > 0 || world.entities.count::<super::wildlife::Wild>() > 0 || world.entities.count::<super::zombies::Zombie>() > 0
 }
 
 /// Notes a noise at `at` made by `by` that carries `reach` metres, for the bots to hear on the next
@@ -362,33 +363,38 @@ fn resume_patrol(bot: &mut Bot, at: [f32; 3]) {
 }
 
 fn new_goal(bot: &mut Bot) {
-    bot.walk.best = f32::MAX;
-    bot.walk.stalled = 0;
+    fresh_goal(&mut bot.walk);
+}
+
+/// Starts counting afresh how near it gets to where it is going.
+pub(super) fn fresh_goal(walk: &mut Walk) {
+    walk.best = f32::MAX;
+    walk.stalled = 0;
 }
 
 /// The point to head for on the way to `goal`: the next corner of the way there. The way is looked
 /// for when it has none, when the goal has moved, and every `REPLAN_TICKS` on the way, as long as
 /// there is some of this tick's `budget` of cells left. With no way found it heads straight for the goal.
-fn follow(world: &mut World, bot: &mut Bot, at: [f32; 3], goal: [f32; 3], budget: &mut usize) -> [f32; 3] {
+pub(super) fn follow(world: &mut World, walk: &mut Walk, at: [f32; 3], goal: [f32; 3], budget: &mut usize) -> [f32; 3] {
     let (here, to) = ([at[0], at[2]], [goal[0], goal[2]]);
     let feet = |p: [f32; 3]| [p[0], p[1] - sim::STANDING_Y, p[2]];
-    bot.walk.replan_in = bot.walk.replan_in.saturating_sub(1);
-    let moved = (to[0] - bot.walk.path_to[0]).hypot(to[1] - bot.walk.path_to[1]) > GOAL_MOVED;
-    if (bot.walk.path.is_empty() || moved || bot.walk.replan_in == 0) && *budget > 0 {
-        let was = bot.walk.path.first().copied();
-        bot.walk.path = world.nav.find_path(&world.physics, &world.map, feet(at), feet(goal), budget).unwrap_or_else(|| vec![to]);
-        bot.walk.path_to = to;
-        bot.walk.replan_in = REPLAN_TICKS;
+    walk.replan_in = walk.replan_in.saturating_sub(1);
+    let moved = (to[0] - walk.path_to[0]).hypot(to[1] - walk.path_to[1]) > GOAL_MOVED;
+    if (walk.path.is_empty() || moved || walk.replan_in == 0) && *budget > 0 {
+        let was = walk.path.first().copied();
+        walk.path = world.nav.find_path(&world.physics, &world.map, feet(at), feet(goal), budget).unwrap_or_else(|| vec![to]);
+        walk.path_to = to;
+        walk.replan_in = REPLAN_TICKS;
         // Only a new corner to head for is a fresh start: the same way again does not hide being stuck.
-        if bot.walk.path.first().copied() != was {
-            new_goal(bot);
+        if walk.path.first().copied() != was {
+            fresh_goal(walk);
         }
     }
-    while bot.walk.path.len() > 1 && (bot.walk.path[0][0] - here[0]).hypot(bot.walk.path[0][1] - here[1]) < CORNER_REACHED {
-        bot.walk.path.remove(0);
-        new_goal(bot);
+    while walk.path.len() > 1 && (walk.path[0][0] - here[0]).hypot(walk.path[0][1] - here[1]) < CORNER_REACHED {
+        walk.path.remove(0);
+        fresh_goal(walk);
     }
-    let [x, z] = bot.walk.path.first().copied().unwrap_or(to);
+    let [x, z] = walk.path.first().copied().unwrap_or(to);
     [x, at[1], z]
 }
 
@@ -409,7 +415,7 @@ fn stalled_by(bot: &mut Bot, distance: f32, progress: f32, ticks: u32) -> bool {
 }
 
 /// The heading to walk on towards `want`: straight, or the first detour with no wall close ahead.
-fn steer(world: &World, at: [f32; 3], want: f32) -> f32 {
+pub(super) fn steer(world: &World, at: [f32; 3], want: f32) -> f32 {
     let free = |yaw: f32| world.physics.cast_ray(at, [-yaw.sin(), 0.0, -yaw.cos()], WALL_AHEAD, 0).is_none();
     if free(want) {
         return want;
@@ -766,7 +772,7 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
         }
     } };
 
-    let toward = follow(world, bot, at, goal, budget);
+    let toward = follow(world, &mut bot.walk, at, goal, budget);
     if stalled(bot, distance_2d(at, toward)) {
         // Stuck: on patrol it moves on to the next waypoint, and in a pursuit it looks round here.
         bot.walk.path.clear();

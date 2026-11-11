@@ -1,4 +1,4 @@
-import { MAX_NAME_CHARS, MAX_SPAWNS, PLAYER_COLOR_COUNT } from '@/sim/consts'
+import { MAX_NAME_CHARS, MAX_SPAWNS, PLAYER_COLOR_COUNT, TEAM_ZOMBIES } from '@/sim/consts'
 import { HOTBAR_SLOTS, ITEM_NONE, LOADOUT_ITEMS } from '@/sim/items'
 
 /**
@@ -51,6 +51,9 @@ export const nameFor = (id: number) => known.get(id)?.name ?? `Player ${id}`
 
 /** Entity `id`'s team: 0 for people, who are all against all, and until we know. */
 export const teamFor = (id: number) => known.get(id)?.team ?? 0
+
+/** Whether entity `id` is a zombie: on the zombies' side, which only they are on. */
+export const isZombie = (id: number) => teamFor(id) === TEAM_ZOMBIES
 
 /** Whether entity `id` is a bot. */
 export const isBot = (id: number) => known.get(id)?.bot ?? false

@@ -618,6 +618,52 @@ export class VehicleSounds {
     })
   }
 
+  /**
+   * A zombie's groan from `at`: a low, rasping moan that wavers as it swells and dies away, at `pitch`
+   * times the usual note, so a horde does not groan in unison.
+   */
+  groan(at: Vec3, pitch = 1) {
+    const length = 1.1 + Math.random() * 0.8
+    this.emit(at, length, (ctx, out, t) => {
+      const voice = ctx.createOscillator()
+      voice.type = 'sawtooth'
+      const note = 95 * pitch
+      voice.frequency.setValueAtTime(note * 1.15, t)
+      voice.frequency.exponentialRampToValueAtTime(note, t + length * 0.4)
+      voice.frequency.exponentialRampToValueAtTime(note * 0.8, t + length)
+      // The waver: a slow wobble of the note.
+      const wobble = ctx.createOscillator()
+      wobble.frequency.value = 5 + Math.random() * 3
+      const depth = ctx.createGain()
+      depth.gain.value = note * 0.06
+      wobble.connect(depth).connect(voice.frequency)
+      // The mouth: a formant round an "uh".
+      const mouth = ctx.createBiquadFilter()
+      mouth.type = 'bandpass'
+      mouth.frequency.value = 520
+      mouth.Q.value = 2.5
+      const gain = ctx.createGain()
+      gain.gain.setValueAtTime(0.0001, t)
+      gain.gain.linearRampToValueAtTime(0.9, t + length * 0.3)
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + length)
+      voice.connect(mouth).connect(gain).connect(out)
+      voice.start(t)
+      wobble.start(t)
+      voice.stop(t + length + 0.05)
+      wobble.stop(t + length + 0.05)
+      // The rasp of breath through it.
+      VehicleSounds.burst(ctx, out, t, 'bandpass', 900, 500, length * 0.9, 0.12, 0.05)
+    })
+  }
+
+  /** A zombie's claws swung at someone from `at`: a swish, and a growl as it lunges. */
+  claw(at: Vec3) {
+    this.emit(at, 0.6, (ctx, out, t) => {
+      VehicleSounds.ping(ctx, out, t, 'sawtooth', 160, 90, 0.35, 0.35)
+      VehicleSounds.burst(ctx, out, t, 'bandpass', 1500, 500, 0.18, 0.4, 0.3)
+    })
+  }
+
   /** One beat of a hen's wings: a whoosh of air and a low flap. */
   wingBeat(at: Vec3) {
     this.emit(at, 0.4, (ctx, out, t) => {

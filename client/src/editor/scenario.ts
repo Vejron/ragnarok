@@ -61,12 +61,25 @@ export interface Trigger {
   do: Action[]
 }
 
+/** Zombies that rise in hordes at night (ZOMBIES.md). Mirrors `ZombiesSpec` in scenario.rs. */
+export interface ScenarioZombies {
+  /** The areas they rise in, by name. */
+  areas: string[]
+  /** The most up at once (30), how many rise together (6) and seconds between hordes (45). */
+  max?: number
+  horde?: number
+  every?: number
+  /** They rise by day as well. */
+  day?: boolean
+}
+
 export interface Scenario {
   /** Seconds from the end until it starts again. */
   restart?: number
   areas: Record<string, ScenarioArea>
   squads: Record<string, ScenarioSquad>
   triggers: Trigger[]
+  zombies?: ScenarioZombies
 }
 
 export const MAX_LOADOUT = 5
@@ -135,6 +148,19 @@ export function validateScenario(scenario: Scenario, inside: (lat: number, lon: 
     }
   }
 
+  const zombies = scenario.zombies
+  if (zombies) {
+    if (!zombies.areas.length) add('zombies.areas', 'name at least one area for them to rise in')
+    zombies.areas.forEach((area, i) => {
+      if (!names('area').includes(area)) add(`zombies.areas[${i}]`, `there is no area called "${area}"`)
+    })
+    for (const field of ['max', 'horde'] as const) {
+      const value = zombies[field]
+      if (value !== undefined && !(Number.isInteger(value) && value >= 0)) add(`zombies.${field}`, 'must be a whole number, 0 or more')
+    }
+    if (zombies.every !== undefined && !(zombies.every > 0)) add('zombies.every', 'must be more than 0 seconds')
+  }
+
   scenario.triggers.forEach((trigger, n) => {
     const path = trigger.name ? `triggers.${trigger.name}` : `triggers[${n}]`
     if (trigger.name && scenario.triggers.findIndex((t) => t.name === trigger.name) !== n) add(path, 'two triggers have this name')
@@ -169,7 +195,8 @@ export function validateScenario(scenario: Scenario, inside: (lat: number, lon: 
 /** The triggers that use `name` as a `kind`: described for a message ("trigger cleared", "trigger 3"). */
 export function usesName(scenario: Scenario, kind: NameKind, name: string): string[] {
   const label = (t: Trigger, n: number) => `trigger ${t.name ?? n + 1}`
-  return scenario.triggers.flatMap((t, n) => {
+  const zombies = kind === 'area' && scenario.zombies?.areas.includes(name) ? ['the zombies'] : []
+  return zombies.concat(scenario.triggers.flatMap((t, n) => {
     const w = t.when
     const uses =
       kind === 'area'
@@ -178,7 +205,7 @@ export function usesName(scenario: Scenario, kind: NameKind, name: string): stri
           ? w.by === name || w.cleared === name || t.do.some((a) => ('spawn' in a && a.spawn === name) || ('remove' in a && a.remove === name))
           : w.done === name
     return uses ? [label(t, n)] : []
-  })
+  }))
 }
 
 /**
@@ -194,6 +221,7 @@ export function renameName(scenario: Scenario, kind: NameKind, from: string, to:
     return Object.fromEntries(entries) as Record<string, T>
   }
   if (kind === 'area') next.areas = swap(next.areas)
+  if (kind === 'area' && next.zombies) next.zombies.areas = next.zombies.areas.map((area) => (area === from ? to : area))
   if (kind === 'squad') next.squads = swap(next.squads)
   for (const t of next.triggers) {
     if (kind === 'trigger' && t.name === from) t.name = to

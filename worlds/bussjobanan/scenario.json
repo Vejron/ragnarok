@@ -1,0 +1,21 @@
+{
+  "areas": {
+    "area1": {
+      "lat": 63.73141132633782,
+      "lon": 20.18197059631348,
+      "radius": 76
+    }
+  },
+  "restart": 20,
+  "squads": {},
+  "triggers": [],
+  "zombies": {
+    "areas": [
+      "area1"
+    ],
+    "day": true,
+    "every": 45,
+    "horde": 6,
+    "max": 20
+  }
+}

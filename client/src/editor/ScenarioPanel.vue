@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { api } from './api'
-import { LOADOUT_ITEMS, type Action, type NameKind, type When } from './scenario'
+import { LOADOUT_ITEMS, type Action, type NameKind, type ScenarioZombies, type When } from './scenario'
 import {
   addSquad, addTrigger, message, name, patchScenario, patchSquad, patchTrigger, pickedSquad, rename, removeArea, removeSquad, removeTrigger,
   scenario, scenarioDirty, scenarioIssues, saveScenario, scenarioTool, setScenario, type ScenarioTool,
@@ -27,6 +27,24 @@ const loadout = computed({
   set: (items: string[]) => patchSquad(pickedSquad.value, { loadout: items.length ? items : undefined }),
 })
 const loadoutItems = LOADOUT_ITEMS
+
+/** Zombies' defaults, as the server takes them when the file leaves them out (scenario.rs). */
+const ZOMBIE_DEFAULTS = { max: 30, horde: 6, every: 45 }
+const zombies = computed(() => scenario.value.zombies)
+const zombieAreas = computed({
+  get: () => zombies.value?.areas ?? [],
+  set: (areas: string[]) => patchZombies({ areas }),
+})
+
+/** Turns zombies on, rising in the first area there is, or off. */
+function setZombies(on: boolean) {
+  if (!on) return patchScenario({ zombies: undefined })
+  patchScenario({ zombies: { areas: areaNames.value.slice(0, 1), ...ZOMBIE_DEFAULTS } })
+}
+
+function patchZombies(patch: Partial<ScenarioZombies>) {
+  if (zombies.value) patchScenario({ zombies: { ...zombies.value, ...patch } })
+}
 
 /** A checkbox's value: only a tick counts as on. */
 const checked = (v: boolean | 'indeterminate') => v === true
@@ -156,6 +174,30 @@ function removeSquadNow() {
       </li>
       <li v-if="!areaNames.length" class="text-xs text-muted">No areas. Use the Area tool on the map.</li>
     </ul>
+
+    <h3 class="pt-2 text-sm font-semibold">Zombies</h3>
+    <UCheckbox
+      :model-value="!!zombies"
+      label="Zombies rise in hordes at night"
+      @update:model-value="(v: boolean | 'indeterminate') => setZombies(checked(v))"
+    />
+    <div v-if="zombies" class="space-y-2 rounded bg-elevated p-2 text-sm">
+      <div>
+        <p class="mb-1 text-xs text-muted">Areas they rise in (drawn green and dashed on the map)</p>
+        <USelectMenu v-model="zombieAreas" :items="areaNames" multiple placeholder="Pick areas" class="w-full" />
+        <p v-if="!areaNames.length" class="mt-1 text-xs text-muted">Place an area with the Area tool first.</p>
+      </div>
+      <div class="grid grid-cols-3 gap-2 text-xs">
+        <label title="The most zombies up at once">Most at once<UInput :model-value="zombies.max ?? ZOMBIE_DEFAULTS.max" type="number" min="0" class="mt-1 w-full" @update:model-value="(v: string | number) => patchZombies({ max: Number(v) })" /></label>
+        <label title="How many rise together">Horde size<UInput :model-value="zombies.horde ?? ZOMBIE_DEFAULTS.horde" type="number" min="1" class="mt-1 w-full" @update:model-value="(v: string | number) => patchZombies({ horde: Number(v) })" /></label>
+        <label title="Seconds between hordes">Every (s)<UInput :model-value="zombies.every ?? ZOMBIE_DEFAULTS.every" type="number" min="1" class="mt-1 w-full" @update:model-value="(v: string | number) => patchZombies({ every: Number(v) })" /></label>
+      </div>
+      <UCheckbox
+        :model-value="!!zombies.day"
+        label="By day as well (otherwise they fall at dawn)"
+        @update:model-value="(v: boolean | 'indeterminate') => patchZombies({ day: checked(v) || undefined })"
+      />
+    </div>
 
     <h3 class="pt-2 text-sm font-semibold">Squads</h3>
     <div class="flex gap-2">
