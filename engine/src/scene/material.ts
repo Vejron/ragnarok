@@ -197,7 +197,8 @@ export interface ShaderMaterialParams extends Omit<MaterialParams, 'lit' | 'map'
   /**
    * WGSL defining `fn displace(world: vec3f, custom: vec4f, color: vec4f) -> vec3f`, which moves each
    * vertex in world space before it is projected; `custom` is the vertex's own attribute, `color` its
-   * colour as the fragment gets it (material × instance tint × vertex colour).
+   * colour as the fragment gets it (material × instance tint × vertex colour). `vertexModel` (the
+   * object's or instance's model matrix) and `vertexUv` (the vertex's uv) are in scope as well.
    * It sees `params`, `frame` and the material's textures too (sampled with `textureSampleLevel`). Moved vertices can leave the geometry's bounds: pad them, or turn
    * the mesh's `frustumCulled` off. Shadows are cast from the unmoved vertices.
    */

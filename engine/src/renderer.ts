@@ -178,6 +178,8 @@ export class Renderer {
   private scratch = new Uint32Array(16384)
   private scratchUsed = 0
   private readonly levelSlots: GeometrySlot[] = []
+  /** The same for the shadow pass, which draws a level's `shadow` where it has one. */
+  private readonly levelShadowSlots: GeometrySlot[] = []
   /** How many instances each level's list holds so far: the view's lists, then the sun's. */
   private levelCounts = new Uint32Array(16)
   private levelFrom2 = new Float64Array(8)
@@ -539,12 +541,18 @@ export class Renderer {
     const material = mesh.material
     const last = levels.length
     const slots = this.levelSlots
+    const shadowSlots = this.levelShadowSlots
     slots.length = 0
+    shadowSlots.length = 0
     slots.push(slot)
+    shadowSlots.push(slot)
     // A level whose geometry is empty falls back on the one before it.
     for (let i = 0; i < last; i++) {
-      const s = this.arena.sync(levels[i]!.geometry)
+      const level = levels[i]!
+      const s = this.arena.sync(level.geometry)
       slots.push(s && s.indexCount ? s : slots[i]!)
+      const shadow = level.shadow ? this.arena.sync(level.shadow) : s
+      shadowSlots.push(shadow && shadow.indexCount ? shadow : shadowSlots[i]!)
     }
     const shadowPipeline = material.side === 'front' ? 0 : 1
     const shadowLevel = Math.min(mesh.shadowLevel, last)
@@ -564,7 +572,7 @@ export class Renderer {
         item.depth = distance2
         into.push(item)
       }
-      if (inShadow) this.casters.push(this.item(mesh, slots[last]!, record, mesh.count, shadowPipeline, 0))
+      if (inShadow) this.casters.push(this.item(mesh, shadowSlots[last]!, record, mesh.count, shadowPipeline, 0))
       return
     }
     const count = mesh.count
@@ -609,7 +617,7 @@ export class Renderer {
       }
       const cast = counts[lists + level]!
       if (cast) {
-        const item = this.item(mesh, slots[level]!, record, cast, shadowPipeline, 0)
+        const item = this.item(mesh, shadowSlots[level]!, record, cast, shadowPipeline, 0)
         item.list = scratch
         item.listFirst = first + (lists + level) * count
         this.casters.push(item)

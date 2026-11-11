@@ -4,10 +4,14 @@
  * Needs COMMON_WGSL before it. With `displace`, the shader must also define
  * `fn displace(world: vec3f, custom: vec4f, color: vec4f) -> vec3f`, which moves each vertex in world
  * space before it is projected (a ShaderMaterial's `vertex` code: grass bending in the wind). `color` is
- * the vertex's colour as the fragment gets it: material × instance tint × vertex colour.
+ * the vertex's colour as the fragment gets it: material × instance tint × vertex colour. `displace`
+ * may also read `vertexModel`, the object's (or instance's) model matrix, and `vertexUv`, the vertex's uv.
  */
 export function vertexWgsl(displace: boolean) {
   return /* wgsl */ `
+var<private> vertexModel: mat4x4f;
+var<private> vertexUv: vec2f;
+
 struct VertexIn {
   @location(0) position: vec3f,
   @location(1) normal: vec3f,
@@ -41,6 +45,8 @@ fn vs(in: VertexIn) -> VertexOut {
   if ((material.params.x & MAT_VERTEX_COLORS) != 0u) {
     color *= in.color;
   }
+  vertexModel = model;
+  vertexUv = in.uv;
   ${displace ? 'let world = vec4f(displace((model * vec4f(in.position, 1.0)).xyz, in.custom, color), 1.0);' : 'let world = model * vec4f(in.position, 1.0);'}
   var out: VertexOut;
   out.clip = frame.viewProj * world;

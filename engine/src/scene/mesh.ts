@@ -45,6 +45,11 @@ export class Mesh extends Node {
 export interface DetailLevel {
   geometry: Geometry
   from: number
+  /**
+   * What the shadow pass draws at this level instead of `geometry`: for a shape the depth-only shadow
+   * shader cannot draw, such as a billboard its material turns to the camera.
+   */
+  shadow?: Geometry
 }
 
 /**

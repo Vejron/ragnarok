@@ -44,7 +44,7 @@ The difference comes from how GPU state is organised, not from per-call speed:
 - **Scene graph:** `Node`, `Mesh`, `InstancedMesh`, `SkinnedMesh`, `PerspectiveCamera` and `Scene`.
   - The sun, hemisphere light, fog, ink and tone mapping are settings on `Scene`, not nodes.
   - `position`, `quaternion` and `scale` mark a node dirty when written, so only moved subtrees are recomputed.
-  - An `InstancedMesh` with `levels` (coarser geometries, each with the distance it takes over at) has every instance culled on its own and drawn at the level its own distance picks; `shadowLevel` is the finest its shadow is cast from, and `renderer.detail` scales the distances. Without `levels` it is culled and drawn whole.
+  - An `InstancedMesh` with `levels` (coarser geometries, each with the distance it takes over at) has every instance culled on its own and drawn at the level its own distance picks; `shadowLevel` is the finest its shadow is cast from, a level's `shadow` geometry stands in for it in the shadow pass (for a shape only the material's vertex shader can draw, such as a billboard), and `renderer.detail` scales the distances. A ShaderMaterial's `displace` can read `vertexModel` and `vertexUv`. Without `levels` it is culled and drawn whole.
 - **Geometry:** `Geometry` holds CPU arrays: positions, normals, uvs, linear colours, a free `custom` vec4, skin joints and weights, and indices.
   - It is uploaded on first draw.
   - `needsUpdate()` re-sends everything; `needsUpdateRange(first, count)` re-sends only those vertices.

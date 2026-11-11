@@ -136,12 +136,19 @@ The style is flat, bright and few-banded, not physically based.
   bands, plus a 4×4 ordered dither that removes pixels within 2.5 m of the eye, so standing in a crown,
   or behind a felled one, you still see what you aim at. Trees take no shadow. A felled tree's instance
   is scaled to nothing in place.
-  Each tree is drawn in the shape its own distance picks (`TREE_LEVELS_FROM`: 70, 180 and 300 m), and is
-  culled on its own. Past 70 m a crown is a 20-triangle icosahedron and the cones and trunks lose sides
-  and their ends; past 180 m a tree's crowns are one and its cones one; past 300 m the crown is eight
-  triangles. A pine goes from 184 triangles to 48, 26 and 14. The coarse crowns are a little wider, so
-  the outline covers what the round one did. Shadows are cast from the second shape at the finest. The
-  quality's `treeDetail` scales the distances (0.7 at medium, 0.5 at low). It is the engine's
+  Each tree is drawn in the shape its own distance picks (`TREE_LEVELS_FROM`: 70 and 130 m), and is
+  culled on its own. Past 70 m a crown is a 20-triangle icosahedron, a little wider so the outline
+  covers what the round one did, and the cones and trunks lose sides and their ends. Past 130 m a tree
+  is billboards: one quad a part, all four corners at the part's centre, which the foliage shader's
+  `displace` opens to face the camera (trunks and cones turn about the vertical only; a crown faces the
+  camera fully and grows to its width as the camera rises over it). The fragment shader cuts out an
+  ellipse, a triangle or a bar and lights it with the normal of the round shape under the pixel, so the
+  cel bands, the ink outline and winter's snow fall on it as on the real one. A pine goes from 184
+  triangles to 48 and then 4. An earlier version used ever fewer-sided solids instead, down to an
+  eight-triangle crown, and far forests read as diamonds. The shadow pass does not run the vertex
+  shader, so a billboarded tree casts its shadow from a crude solid (`DetailLevel.shadow`: one
+  octahedron crown, one cone), and nearer trees from the 70 m shape at the finest. The quality's
+  `treeDetail` scales the distances (0.7 at medium, 0.5 at low). It is the engine's
   `InstancedMesh.levels`; rocks have it with no coarser shapes, for the culling alone.
 - **Rocks** (`rocks.ts`) are a few shapes a kind, carved from an icosphere by flat cuts and drawn
   flat-faced, one `InstancedMesh` a shape per tile. Each rock is turned, tipped, sunk and stretched by its

@@ -248,6 +248,7 @@ export class Geometry {
     const positions = new Float32Array(vertices * 3)
     const normals = withNormals ? new Float32Array(vertices * 3) : undefined
     const uvs = withUvs ? new Float32Array(vertices * 2) : undefined
+    const custom = list.some((g) => g.custom) ? new Float32Array(vertices * 4) : undefined
     const colors = colorSize ? new Float32Array(vertices * colorSize).fill(1) : undefined
     const indices = vertices > 65535 ? new Uint32Array(list.reduce((n, g) => n + g.indexCount, 0)) : new Uint16Array(list.reduce((n, g) => n + g.indexCount, 0))
     let v = 0
@@ -256,6 +257,7 @@ export class Geometry {
       positions.set(g.positions, v * 3)
       if (normals && g.normals) normals.set(g.normals, v * 3)
       if (uvs && g.uvs) uvs.set(g.uvs, v * 2)
+      if (custom && g.custom) custom.set(g.custom, v * 4)
       if (colors && g.colors) {
         const size = g.colors.length / g.vertexCount
         if (size === colorSize) colors.set(g.colors, v * colorSize)
@@ -265,7 +267,7 @@ export class Geometry {
       else for (let k = 0; k < g.vertexCount; k++) indices[i++] = v + k
       v += g.vertexCount
     }
-    return new Geometry({ positions, normals, uvs, colors, indices })
+    return new Geometry({ positions, normals, uvs, colors, custom, indices })
   }
 
   /** Frees the GPU copy. Meshes still using it stop drawing. */

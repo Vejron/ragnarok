@@ -82,25 +82,27 @@ const PROTOTYPES: Record<number, Part[]> = {
 }
 
 /**
- * Metres from the camera at which a tree changes to each coarser shape. A tree is drawn as built here
- * up to the first, and a forest is mostly far trees: at full detail they were nine tenths of the
- * frame's triangles. The quality's `treeDetail` scales these.
+ * Metres from the camera at which a tree changes to a coarser shape: first to a few-sided one, then to
+ * billboards. A tree is drawn as built here up to the first, and a forest is mostly far trees: at full
+ * detail they were nine tenths of the frame's triangles. The quality's `treeDetail` scales these.
  */
-export const TREE_LEVELS_FROM = [70, 180, 300]
-/** A tree's shapes: the full one and one for each of `TREE_LEVELS_FROM`. */
+export const TREE_LEVELS_FROM = [70, 130]
+/** A tree's shapes: the full one, the few-sided one and the billboards. */
 export const TREE_LEVELS = TREE_LEVELS_FROM.length + 1
 /** The finest level a tree's shadow is cast from: trees take no shadow, so the two are never compared. */
 const TREE_SHADOW_LEVEL = 1
 
-/** Sides of a cone and of a trunk at each level. Only the full shape has its ends closed. */
-const CONE_SIDES = [7, 5, 5, 4]
-const TRUNK_SIDES = [6, 4, 3, 3]
+/** How finely a tree is built: as seen near, as seen from middling far, or for a far tree's shadow. */
+type Detail = 'full' | 'coarse' | 'shadow'
+
+/** Sides of a cone and of a trunk at each detail. Only the full shape has its ends closed. */
+const CONE_SIDES: Record<Detail, number> = { full: 7, coarse: 5, shadow: 4 }
+const TRUNK_SIDES: Record<Detail, number> = { full: 6, coarse: 4, shadow: 3 }
 /**
  * How much wider a coarse crown is made, so its outline covers about what the round one did: an
  * icosahedron's faces and an octahedron's lie well inside the sphere their corners are on.
  */
-const ICOSAHEDRON_SWELL = 1.08
-const OCTAHEDRON_SWELL = 1.2
+const CROWN_SWELL: Record<Detail, number> = { full: 1, coarse: 1.08, shadow: 1.2 }
 
 /** Eight triangles on the unit sphere, wound as the icosphere is. */
 function octahedronGeometry(): Geometry {
@@ -139,11 +141,11 @@ function tubeGeometry(top: number, bottom: number, height: number, sides: number
 }
 
 /**
- * The parts a tree is made of at `level`. From the third shape on its crowns are one crown round them
+ * The parts a tree is made of at `detail`. For a far tree's shadow its crowns are one crown round them
  * all, and its cones one cone, in the colour of the widest.
  */
-function partsAt(parts: readonly Part[], level: number): Part[] {
-  if (level < 2) return [...parts]
+function partsAt(parts: readonly Part[], detail: Detail): Part[] {
+  if (detail !== 'shadow') return [...parts]
   const out = parts.filter((part) => part.shape === 'trunk')
   const crowns = parts.filter((part) => part.shape === 'ellipsoid')
   if (crowns.length) {
@@ -160,20 +162,21 @@ function partsAt(parts: readonly Part[], level: number): Part[] {
   return out
 }
 
-function partGeometry(part: Part, level = 0): Geometry {
+function partGeometry(part: Part, detail: Detail): Geometry {
   let geometry: Geometry
   if (part.shape === 'ellipsoid') {
     // A low-poly sphere: 42 welded vertices and 80 triangles, so the crown reads as a few bold shapes.
-    // Further off, 20 triangles, and at the last level 8.
-    const swell = level === 0 ? 1 : level < 3 ? ICOSAHEDRON_SWELL : OCTAHEDRON_SWELL
-    const ball = level < 3 ? icosphereGeometry(1, level === 0 ? 1 : 0) : octahedronGeometry()
+    // Further off 20 triangles, and in a far tree's shadow 8.
+    const swell = CROWN_SWELL[detail]
+    const ball = detail === 'shadow' ? octahedronGeometry() : icosphereGeometry(1, detail === 'full' ? 1 : 0)
     geometry = ball.scale(part.rx! * swell, part.ry! * swell, part.rx! * swell).translate(part.x ?? 0, part.y0, part.z ?? 0)
   } else {
     const height = part.y1! - part.y0
     const cone = part.shape === 'cone'
     // A cone is a cylinder that closes to a point at the top.
-    if (level === 0) geometry = cone ? cylinderGeometry(0, part.rx!, height, CONE_SIDES[0]) : cylinderGeometry(part.rx! * 0.8, part.rx!, height, TRUNK_SIDES[0])
-    else geometry = cone ? tubeGeometry(0, part.rx!, height, CONE_SIDES[level]!) : tubeGeometry(part.rx! * 0.8, part.rx!, height, TRUNK_SIDES[level]!)
+    const sides = cone ? CONE_SIDES[detail] : TRUNK_SIDES[detail]
+    const top = cone ? 0 : part.rx! * 0.8
+    geometry = detail === 'full' ? cylinderGeometry(top, part.rx!, height, sides) : tubeGeometry(top, part.rx!, height, sides)
     geometry.translate(0, part.y0 + height / 2, 0)
   }
   // Indexed and welded, so the parts merge and each vertex is shared: position + normal + colour.
@@ -187,19 +190,77 @@ function partGeometry(part: Part, level = 0): Geometry {
   return geometry
 }
 
+/** What a billboard's quad is drawn as, its `custom.z`; 0 is a part that is not a billboard. */
+const BILLBOARD_CROWN = 1
+const BILLBOARD_CONE = 2
+const BILLBOARD_TRUNK = 3
 /**
- * The shape of tree `kind` at each level, finest first: `TREE_LEVELS` of them. The full shape's bounds
- * are widened to hold the swollen coarse crowns too, since every level is culled by them.
+ * How far a billboard is brought toward the camera, in crown radii, so the parts of one tree lie in
+ * front of each other as they would in the round: a crown by most of its own radius, in front of the
+ * trunk it hides, and each higher tier of a spruce a little in front of the one below.
  */
-export function treeGeometries(kind: number): Geometry[] {
+const CROWN_PUSH = 0.8
+const CONE_PUSH = 0.4
+const CONE_TIER_PUSH = 0.05
+
+/**
+ * A far tree: one quad a part, all four corners at the part's centre. The foliage shader's `displace`
+ * opens each quad to face the camera: `uv` is the corner (-1 to 1 across and up), and `custom` is the
+ * half width (crown radii) and half height (tree heights), the `BILLBOARD_*` kind and the push toward
+ * the camera. The fragment shader cuts out an ellipse, a triangle or a bar and lights it as if round.
+ */
+function billboardGeometry(parts: readonly Part[]): Geometry {
+  const positions: number[] = []
+  const normals: number[] = []
+  const uvs: number[] = []
+  const custom: number[] = []
+  const colors: number[] = []
+  const indices: number[] = []
+  let tier = 0
+  for (const part of parts) {
+    const crown = part.shape === 'ellipsoid'
+    const y = crown ? part.y0 : (part.y0 + part.y1!) / 2
+    const half = crown ? part.ry! : (part.y1! - part.y0) / 2
+    const kind = crown ? BILLBOARD_CROWN : part.shape === 'cone' ? BILLBOARD_CONE : BILLBOARD_TRUNK
+    const push = crown ? part.rx! * CROWN_PUSH : part.shape === 'cone' ? CONE_PUSH + CONE_TIER_PUSH * tier++ : 0
+    const color = Color.hex(part.color)
+    const first = positions.length / 3
+    for (const [u, v] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) {
+      positions.push(crown ? (part.x ?? 0) : 0, y, crown ? (part.z ?? 0) : 0)
+      normals.push(0, 1, 0)
+      uvs.push(u, v)
+      custom.push(part.rx!, half, kind, push)
+      colors.push(color.r, color.g, color.b)
+    }
+    indices.push(first, first + 1, first + 2, first, first + 2, first + 3)
+  }
+  return new Geometry({
+    positions: new Float32Array(positions),
+    normals: new Float32Array(normals),
+    uvs: new Float32Array(uvs),
+    custom: new Float32Array(custom),
+    colors: new Float32Array(colors),
+    indices: new Uint16Array(indices),
+  })
+}
+
+/**
+ * The shapes of tree `kind`: `levels`, finest first (`TREE_LEVELS` of them, the last its billboards),
+ * and `shadow`, what a tree drawn as billboards casts its shadow with. The full shape's bounds are
+ * widened to hold the swollen coarse crowns too, since every level is culled by them.
+ */
+export function treeGeometries(kind: number): { levels: Geometry[]; shadow: Geometry } {
   const parts = PROTOTYPES[kind] ?? PROTOTYPES[TREE_BIRCH]!
-  const shapes = Array.from({ length: TREE_LEVELS }, (_, level) => Geometry.merge(partsAt(parts, level).map((part) => partGeometry(part, level))))
-  const bounds = shapes[0]!.bounds
-  for (const shape of shapes) {
-    const b = shape.bounds
+  const shape = (detail: Detail) => Geometry.merge(partsAt(parts, detail).map((part) => partGeometry(part, detail)))
+  const full = shape('full')
+  const coarse = shape('coarse')
+  const shadow = shape('shadow')
+  const bounds = full.bounds
+  for (const other of [coarse, shadow]) {
+    const b = other.bounds
     bounds.radius = Math.max(bounds.radius, Math.hypot(b.x - bounds.x, b.y - bounds.y, b.z - bounds.z) + b.radius)
   }
-  return shapes
+  return { levels: [full, coarse, billboardGeometry(parts)], shadow }
 }
 
 /** Metres from the eye inside which foliage dissolves, so a view from inside a crown stays clear. */
@@ -214,7 +275,38 @@ const FOLIAGE_WGSL = /* wgsl */ `
 const BANDS_AT = array<f32, 4>(0.376, 0.588, 0.804, 1.0);
 const BAYER_AT = array<f32, 16>(0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
 
-fn surface(s: Surface) -> vec4f {
+/** The round surface under a billboard's pixel, facing the viewer; it cuts away what is outside the part. */
+fn billboardNormal(s: Surface) -> vec3f {
+  let u = s.uv.x;
+  let v = s.uv.y;
+  let toward = normalize(frame.cameraPos.xyz - s.world);
+  let right = billboardRight(s.world);
+  // Toward the camera, level with the ground.
+  let level = vec3f(-right.z, 0.0, right.x);
+  if (s.custom.z < 1.5) {
+    let r2 = u * u + v * v;
+    if (r2 > 1.0) {
+      discard;
+    }
+    return normalize(right * u + cross(toward, right) * v + toward * sqrt(1.0 - r2));
+  }
+  if (s.custom.z < 2.5) {
+    // A cone narrows from its base (v -1) to its tip (v 1), and its sides lean back toward the sky.
+    let half = (1.0 - v) * 0.5;
+    if (abs(u) > half) {
+      discard;
+    }
+    let across = u / max(half, 0.001);
+    return normalize(right * across + level * sqrt(max(0.0, 1.0 - across * across)) + vec3f(0.0, 0.5, 0.0));
+  }
+  return normalize(right * u + level * sqrt(max(0.0, 1.0 - u * u)));
+}
+
+fn surface(given: Surface) -> vec4f {
+  var s = given;
+  if (s.custom.z > 0.5) {
+    s.normal = billboardNormal(s);
+  }
   let eye = distance(s.world, frame.cameraPos.xyz) / ${NEAR_FADE.toFixed(1)};
   if (eye < 1.0) {
     let clip = frame.viewProj * vec4f(s.world, 1.0);
@@ -231,6 +323,43 @@ fn surface(s: Surface) -> vec4f {
   var bands = BANDS_AT;
   let lit = frame.sunColor.rgb * bands[band] + hemi + pointLight(s.world, s.normal);
   return vec4f(under(s.color.rgb, s) / PI * lit, s.color.a);
+}
+`
+
+/**
+ * Turns a far tree's quads (`billboardGeometry`) to the camera; any other vertex stays where it is.
+ * Trunks and cones turn only about the vertical, so they stay upright. A crown faces the camera fully,
+ * and grows from its side-on height to its width as the camera rises over it, as a flattened ball would.
+ */
+const BILLBOARD_WGSL = /* wgsl */ `
+fn billboardRight(world: vec3f) -> vec3f {
+  let to = frame.cameraPos.xyz - world;
+  let side = vec2f(to.z, -to.x);
+  let length2 = dot(side, side);
+  if (length2 < 1e-8) {
+    return vec3f(1.0, 0.0, 0.0);
+  }
+  let across = side * inverseSqrt(length2);
+  return vec3f(across.x, 0.0, across.y);
+}
+
+fn displace(world: vec3f, custom: vec4f, color: vec4f) -> vec3f {
+  if (custom.z < 0.5) {
+    return world;
+  }
+  // A tree is scaled by its crown radius across and its height up.
+  let crown = length(vertexModel[0].xyz);
+  let wide = custom.x * crown;
+  var tall = custom.y * length(vertexModel[1].xyz);
+  let toward = normalize(frame.cameraPos.xyz - world);
+  let right = billboardRight(world);
+  var up = vec3f(0.0, 1.0, 0.0);
+  if (custom.z < 1.5) {
+    up = cross(toward, right);
+    let rise = toward.y * toward.y;
+    tall = sqrt(tall * tall * (1.0 - rise) + wide * wide * rise);
+  }
+  return world + right * (vertexUv.x * wide) + up * (vertexUv.y * tall) + toward * (custom.w * crown);
 }
 `
 
@@ -268,10 +397,15 @@ function prototypes() {
   if (!shared) {
     const geometries = new Map<number, Shapes>()
     for (const kind of Object.keys(PROTOTYPES)) {
-      const [full, ...coarser] = treeGeometries(Number(kind))
-      geometries.set(Number(kind), { full: full!, levels: coarser.map((geometry, i) => ({ geometry, from: TREE_LEVELS_FROM[i]! })) })
+      const { levels: [full, ...coarser], shadow } = treeGeometries(Number(kind))
+      // The billboards are turned in the vertex shader, which the shadow pass does not run.
+      const levels = coarser.map((geometry, i): DetailLevel => ({ geometry, from: TREE_LEVELS_FROM[i]!, shadow: i === coarser.length - 1 ? shadow : undefined }))
+      geometries.set(Number(kind), { full: full!, levels })
     }
-    shared = { geometries, material: new ShaderMaterial({ wgsl: FOLIAGE_WGSL + (winter ? WINTER_WGSL : SUMMER_WGSL), vertexColors: true }) }
+    shared = {
+      geometries,
+      material: new ShaderMaterial({ wgsl: FOLIAGE_WGSL + (winter ? WINTER_WGSL : SUMMER_WGSL), vertex: BILLBOARD_WGSL, vertexColors: true }),
+    }
   }
   return shared
 }
