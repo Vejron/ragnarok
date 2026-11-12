@@ -268,7 +268,9 @@ little by the soft palette's Neutral tone map: a pure yellow comes out about 12%
 ## Light
 
 One hemisphere light (sky colour above, ground bounce below) and one shadow-casting sun, 120 m from
-its target, plus any number of point and spot lights (below). Background and fog share the sky colour; fog runs 150–600 m.
+its target, plus any number of point and spot lights (below). Behind the world is a physical sky with
+a sun, moon, stars and clouds, which also colours the fog (150–600 m) and the low mist: see
+[ATMOSPHERE.md](ATMOSPHERE.md).
 
 ### Point and spot lights
 
@@ -307,11 +309,12 @@ light for a phase of the day (0 midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset) a
 `Scene.setTimeOfDay` applies it to the sun, hemisphere, sky, fog and water. `Game` calls it every frame
 once the clock has synced; the editor never does, so it stays at noon.
 
-- The sun rises, arcs through the bearing the old fixed sun had and peaks at 50°. At noon the light is
+- The sun rises, arcs through the bearing the old fixed sun had and peaks at 35°. At noon the light is
   the palette's exactly.
 - The sun fades out at the horizon. By night the same light becomes a dim blue moon opposite the sun,
   held at least 25° up so it never shines from under the ground and shadows keep working.
-- Sky and fill blend from night blues through a golden hour near the horizon to the palette's day.
+- The sunlight reddens and the fill shifts as the atmosphere's light does near the horizon, and both
+  blend to night blues after sunset ([ATMOSPHERE.md](ATMOSPHERE.md)).
 - `?time=0.27` in the address pins the time of day (here, just after sunrise), to look at one time.
 - What the engine does not light follows the ground's light so it darkens with it. Custom shaders
   drawn on or over the terrain (grass, water, skid marks) light themselves with `GROUND_LIGHT_WGSL`

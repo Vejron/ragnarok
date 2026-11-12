@@ -17,7 +17,7 @@ export function terrainRamp(nDotL: number): number {
 /**
  * WGSL for the light that falls on the terrain, for custom shaders that draw on or over it (grass,
  * water, skid marks) so they darken and colour with the time of day just as the ground does:
- * the sun (or moon) through the terrain's ramp, scaled by `shadow` (1 for none), the hemisphere fill
+ * the sun (or moon) through the terrain's ramp, scaled by `shadow` (1 for none) and the clouds' shadow, the hemisphere fill
  * and nearby point lights. Multiply an unlit colour by `groundLight(...) / PI`, as the standard shader does.
  */
 export const GROUND_LIGHT_WGSL = /* wgsl */ `
@@ -28,7 +28,7 @@ fn groundLight(world: vec3f, n: vec3f, shadow: f32) -> vec3f {
   // Copied to a variable first: WGSL only indexes a constant array with a constant.
   var steps = TERRAIN_STEPS;
   let hemi = mix(frame.hemiGround.rgb, frame.hemiSky.rgb, 0.5 * n.y + 0.5);
-  return frame.sunColor.rgb * steps[step] * shadow + hemi + pointLight(world, n);
+  return frame.sunColor.rgb * steps[step] * shadow * cloudShade(world) + hemi + pointLight(world, n);
 }
 `
 

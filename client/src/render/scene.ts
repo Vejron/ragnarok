@@ -1,4 +1,4 @@
-import { Bloom, Color, Fog, Ink, PerspectiveCamera, Renderer, Scene as EngineScene } from '@ragnarok/engine'
+import { Bloom, Color, Fog, Ink, PerspectiveCamera, Renderer, Scene as EngineScene, Sky } from '@ragnarok/engine'
 import { GunSightView } from './gunsight'
 import { HeldMapView } from './heldmap'
 import { ContactShadows } from './contact'
@@ -7,7 +7,8 @@ import { setTreeDetail } from './trees'
 import { CLASSIC, SOFT, loadLook, wintry, type Look, type Palette } from './look'
 import { winter } from './season'
 import { loadQuality, PRESETS, resolveQuality, type Preset } from './quality'
-import { createSky, nightAt, skyAt } from './daynight'
+import { cloudsAt, createSky, drawnSky, moonPhaseAt, nightAt, skyAt } from './daynight'
+import { mistAt } from './marshmist'
 import { clearArm, lookDir } from '../aimline'
 import { GUNNER_BACK, GUNNER_UP, MOUNT_EYE_CLEARANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER } from '../sim/consts'
 
@@ -68,6 +69,15 @@ const MURK = 0x1f5f6e
 /** Under water, fog from this far to all murk at `MURK_FAR`, metres. */
 const MURK_NEAR = 0.5
 const MURK_FAR = 22
+/** The low mist's density at its base, per metre, when it is thickest (about sunrise), and how fast it thins upward, per metre. */
+const MIST_DENSITY = 0.004
+const MIST_FALLOFF = 0.045
+/** How the mist's base follows the height of the water in sight, per frame: it settles over a few seconds. */
+const MIST_SETTLE = 0.02
+/** How much sunlight a cloud's shadow takes off the ground, in summer and over snow (which the overcast palette already dims). */
+const CLOUD_SHADOW = 0.55
+const WINTER_CLOUD_SHADOW = 0.3
+
 /** How far in the third-person camera pulls while aiming, as a fraction of its distance. */
 export const AIM_DISTANCE_SCALE = 0.7
 /** How fast the zoom eases in and out, per second. */
@@ -99,6 +109,11 @@ export class Scene {
   private palette: Palette = CLASSIC
   private dayPhase = NOON
   private readonly sky = createSky()
+  /** The sky the engine draws, set from `sky` (`drawnSky`). */
+  private readonly drawn = new Sky()
+  private moonPhase = 0
+  /** Where the low mist lies, metres: the water in sight, or the last seen. */
+  private mistBase: number | null = null
   private readonly glint = new Color()
   /** Whether the camera is under the water's surface this frame (see `setUnderwater`). */
   private underwater = false
@@ -118,6 +133,8 @@ export class Scene {
     container.appendChild(this.canvas)
 
     this.scene.fog = new Fog(this.currentPreset.fogNear, this.currentPreset.fogFar)
+    this.scene.sky = this.drawn
+    this.drawn.coverage = cloudsAt(0, winter, this.drawn.drift)
     this.scene.sun.shadow.enabled = true
     this.contact = new ContactShadows((x, z) => this.groundAt(x, z))
     this.scene.add(this.contact.root, this.gunsight.root, this.heldMap.root)
@@ -183,6 +200,7 @@ export class Scene {
     this.scene.fog!.near = preset.fogNear
     this.scene.fog!.far = preset.fogFar
     this.scene.sun.shadow.taps = preset.shadowTaps
+    this.setCloudShadows()
     this.heldMap.redrawMs = preset.heldMapMs
     if (this.renderer) this.renderer.detail = preset.treeDetail
     setTreeDetail(preset.treeDetail)
@@ -234,6 +252,7 @@ export class Scene {
     this.palette = palette
     const scene = this.scene
     scene.sun.shadow.radius = palette.shadowRadius
+    this.setCloudShadows()
     scene.toneMapping = palette.toneMapping
     scene.exposure = palette.exposure
     this.setTimeOfDay(this.dayPhase)
@@ -254,6 +273,9 @@ export class Scene {
     const scene = this.scene
     scene.background.copy(sky.sky)
     scene.fog!.color.copy(sky.sky)
+    drawnSky(sky, this.palette, phase, this.moonPhase, this.drawn)
+    this.drawn.fogDensity = MIST_DENSITY * mistAt(phase)
+    this.drawn.fogFalloff = MIST_FALLOFF
     scene.hemisphere.sky.copy(sky.hemiSky)
     scene.hemisphere.ground.copy(sky.hemiGround)
     scene.hemisphere.intensity = sky.hemiIntensity
@@ -266,6 +288,21 @@ export class Scene {
     setWaterLight(sky.sky.getHex(), this.glint.getHex(), sky.tint)
     const target = scene.sun.target
     this.sunOver(target.x, target.y, target.z)
+  }
+
+  /**
+   * Moves what changes with the server's clock rather than the hour, `seconds` into it: the clouds the
+   * wind carries and how much of the sky they cover, and the moon's phase.
+   */
+  setClock(seconds: number) {
+    this.drawn.coverage = cloudsAt(seconds, winter, this.drawn.drift)
+    this.moonPhase = moonPhaseAt(seconds)
+    this.drawn.moonPhase = this.moonPhase
+  }
+
+  /** How dark the clouds' shadows are: by the preset, and lighter on snow, under a sky already overcast. */
+  private setCloudShadows() {
+    this.drawn.cloudShadow = this.currentPreset.cloudShadows ? (winter ? WINTER_CLOUD_SHADOW : CLOUD_SHADOW) : 0
   }
 
   private setShadowReach(far: boolean) {
@@ -402,6 +439,10 @@ export class Scene {
     if (!this.renderer) return
     const on = this.currentLook.reflect && height !== null
     this.renderer.reflectionHeight = on ? height : null
+    if (height !== null) {
+      this.mistBase = this.mistBase === null ? height : this.mistBase + (height - this.mistBase) * MIST_SETTLE
+      this.drawn.fogBase = this.mistBase
+    }
     setWaterPlane(on ? height : null)
   }
 
@@ -417,8 +458,9 @@ export class Scene {
     this.gunsight.follow(this.camera)
     this.heldMap.follow(this.camera)
     if (!this.underwater) return this.renderer.render(this.scene, this.camera)
-    // Under water the fog is the water's own colour, lit as the ground is, and close; the sky's comes back after.
+    // Under water the fog is the water's own colour, lit as the ground is, and close, with no sky; the sky's comes back after.
     const { fog, background } = this.scene
+    this.scene.sky = null
     const saved = this.saved
     saved.fog.copy(fog!.color)
     saved.background.copy(background)
@@ -438,6 +480,7 @@ export class Scene {
       background.copy(saved.background)
       fog!.near = saved.near
       fog!.far = saved.far
+      this.scene.sky = this.drawn
     }
   }
 

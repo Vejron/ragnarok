@@ -64,11 +64,12 @@ ${displace ? '  out.extra0 = vertexExtra[0];\n  out.extra1 = vertexExtra[1];\n  
   return out;
 }
 
-fn applyFog(rgb: vec3f, flags: u32, viewDepth: f32) -> vec3f {
+// Fades \`rgb\`, seen at \`world\`, into the fog: the sky behind it far off, and low mist (see SKY_WGSL).
+fn applyFog(rgb: vec3f, flags: u32, viewDepth: f32, world: vec3f) -> vec3f {
   if ((flags & MAT_FOG) == 0u || frame.fog.z == 0.0) {
     return rgb;
   }
-  return mix(rgb, frame.fogColor.rgb, smoothstep(frame.fog.x, frame.fog.y, viewDepth));
+  return mix(rgb, fogTint(world), fogAmount(world, viewDepth));
 }
 `
 }

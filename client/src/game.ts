@@ -923,6 +923,7 @@ export class Game {
   /** The time of day runs on the server's clock, so every player sees the same sky. */
   private followClock(renderTick: number) {
     if (!this.clock.synced) return
+    this.scene.setClock(renderTick / TICK_RATE)
     this.scene.setTimeOfDay(dayPhase(renderTick, TICK_RATE))
     this.smoke.light.copy(this.scene.groundLight)
     this.blood.light.copy(this.scene.groundLight)

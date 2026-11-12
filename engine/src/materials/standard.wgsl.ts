@@ -146,7 +146,7 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
     let ramp = textureLoad(ramps, vec2u(u, material.params.y), 0).r;
     var shadow = marks.sun;
     if ((in.ids.y & OBJ_RECEIVE_SHADOW) != 0u) {
-      shadow *= sunShadow(in.world, n);
+      shadow *= sunShadow(in.world, n) * cloudShade(in.world);
     }
     let hemi = mix(frame.hemiGround.rgb, frame.hemiSky.rgb, 0.5 * n.y + 0.5) * marks.sky;
     rgb = rgb / PI * (frame.sunColor.rgb * ramp * shadow + hemi + pointLight(in.world, n)) + material.emissive.rgb;
@@ -158,6 +158,6 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
     }
   }
   rgb = rgb * (1.0 - marks.ink * CRATER_INK) + CRATER_EMBER * marks.heat;
-  return vec4f(applyFog(rgb, flags, in.viewDepth), in.color.a * texel.a);
+  return vec4f(applyFog(rgb, flags, in.viewDepth, in.world), in.color.a * texel.a);
 }
 `

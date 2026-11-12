@@ -2,6 +2,7 @@ import { PointLights } from './lights'
 import { Craters } from './craters'
 import { Color, Vec3 } from '../math/vec'
 import { Node } from './node'
+import type { Sky } from './sky'
 
 /** The sun: a directional light shining from `position` toward `target`, both in world space. */
 export class Sun {
@@ -71,6 +72,8 @@ export class Scene extends Node {
   readonly sun = new Sun()
   readonly hemisphere = new Hemisphere()
   fog: Fog | null = null
+  /** The sky drawn behind the world, which also colours the fog (see `Sky`); null for the flat `background`. */
+  sky: Sky | null = null
   ink: Ink | null = null
   bloom: Bloom | null = null
   /** Short-lived point lights (blasts, flashes); call `lights.update(dt)` each frame. */

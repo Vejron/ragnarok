@@ -104,8 +104,12 @@ fn gusts(p: vec2f, t: f32) -> f32 {
   return clamp(0.55 + 0.6 * a + 0.35 * b, 0.0, 1.0);
 }
 
-// What the water mirrors: a horizon-to-zenith sky with a few soft clouds and the sun's halo.
+// What the water mirrors: the sky the engine draws (sky.wgsl), its clouds a little blurred by the ripples,
+// or without one a horizon-to-zenith sky with a few soft clouds and the sun's halo.
 fn skyAt(r: vec3f, t: f32) -> vec3f {
+  if (frame.heightFog.w > 0.5) {
+    return skyColor(r, 2.0);
+  }
   let up = clamp(r.y, 0.0, 1.0);
   var c = mix(params.sky, params.sky * vec3f(0.55, 0.75, 1.05), pow(up, 0.55));
   let cp = r.xz / (r.y + 0.3) * 0.9 + vec2f(t * 0.03, 0.0);

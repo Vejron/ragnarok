@@ -13,6 +13,9 @@ import { STANDARD_WGSL } from './materials/standard.wgsl'
 import { Frustum } from './math/frustum'
 import * as mat4 from './math/mat4'
 import { Bloom } from './passes/bloom'
+import { SkyPass } from './passes/sky'
+import { CLOUD_HEIGHT } from './materials/sky.wgsl'
+import { transmittance } from './scene/atmosphere'
 import { HudLayer, HudPass } from './hud/layer'
 import { HalfResolution } from './passes/halfres'
 import { LIGHT_CELL, LightGrid } from './scene/lightgrid'
@@ -30,7 +33,9 @@ import { SkinnedMesh } from './scene/skin'
 type Layer = 'world' | 'held' | 'overlay'
 
 /** Floats in the frame uniform block. Matches `Frame` in common.wgsl. */
-const FRAME_FLOATS = 96
+const FRAME_FLOATS = 124
+/** The sunlight on a white cloud against the atmosphere's tinted radiance for a sun of illuminance 1. */
+const CLOUD_SUNLIGHT = 0.12
 const HDR_FORMAT: GPUTextureFormat = 'rgba16float'
 const DEPTH_FORMAT: GPUTextureFormat = 'depth32float'
 /** The reflection holds nothing smaller than this share of the view's distance. */
@@ -124,6 +129,13 @@ export class Renderer {
   private readonly lightVisible = (x: number, y: number, z: number, radius: number) =>
     this.frustum.intersectsSphere(x, y, z, radius) || (this.reflectionOn && this.reflectionFrustum.intersectsSphere(x, y, z, radius))
   private readonly outputData = new Float32Array(16)
+  private readonly sky: SkyPass
+  private readonly inverseViewProj = mat4.create()
+  /** The sunlight through the atmosphere at the cloud layer, for `sunlightHeight`. */
+  private readonly sunlight = [1, 1, 1]
+  private sunlightHeight = NaN
+  /** Where in `mainBatches` the translucent draws start: the sky goes in before them. */
+  private translucentFrom = 0
 
   private readonly context: GPUCanvasContext
   private readonly arena: GeometryArena
@@ -281,8 +293,13 @@ export class Renderer {
         { binding: 6, visibility: both, buffer: { type: 'read-only-storage' } },
         { binding: 7, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
         { binding: 8, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
+        { binding: 9, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 10, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 11, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+        { binding: 12, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
       ],
     })
+    this.sky = new SkyPass(device, this.sceneLayout, this.sampleCount, HDR_FORMAT, DEPTH_FORMAT)
     this.lightingLayout = device.createBindGroupLayout({
       label: 'lighting',
       entries: [
@@ -403,6 +420,7 @@ export class Renderer {
     this.reflectionBatches.length = 0
     this.shadowBatches.length = 0
     this.writeBatches(this.opaque, this.mainBatches, true)
+    this.translucentFrom = this.mainBatches.length
     this.writeBatches(this.transparent, this.mainBatches, false)
     this.writeBatches(this.held, this.mainBatches, false)
     this.overlayFrom = this.mainBatches.length
@@ -426,6 +444,10 @@ export class Renderer {
     stats.shadowDraws = 0
     const effects = this.effectContext()
     for (const effect of this.effects) effect.prepare(effects, encoder)
+    if (scene.sky) {
+      this.sky.update(encoder, scene.sky)
+      if (mat4.invert(this.inverseViewProj, camera.viewProjection)) this.sky.setView(this.inverseViewProj)
+    }
     if (this.shadowsOn) this.shadowPass(encoder)
     if (this.reflectionOn) this.reflectionPass(encoder, scene)
     this.mainPass(encoder, scene)
@@ -843,6 +865,7 @@ export class Renderer {
     f[84] = camera.near
     f[85] = camera.far
     this.writeLights(scene, f)
+    this.writeSky(scene, f)
     // The point-light count's neighbours are the clip: below `clip height` is cut away while mirroring.
     f[89] = 0
     f[90] = 0
@@ -858,6 +881,55 @@ export class Renderer {
       r[90] = 1
       this.device.queue.writeBuffer(this.reflectionFrameBuffer, 0, r)
     }
+  }
+
+  /** The sky's part of the frame block (see `Frame` in common.wgsl): all zero when there is none. */
+  private writeSky(scene: Scene, f: Float32Array) {
+    const sky = scene.sky
+    if (!sky) {
+      f.fill(0, 96, 124)
+      return
+    }
+    const s = sky.sunDir
+    const length = Math.hypot(s.x, s.y, s.z) || 1
+    f[96] = s.x / length
+    f[97] = s.y / length
+    f[98] = s.z / length
+    f[99] = sky.sunDisc
+    const height = s.y / length
+    if (!(Math.abs(height - this.sunlightHeight) < 1e-4)) {
+      this.sunlightHeight = height
+      transmittance(height, this.sunlight, CLOUD_HEIGHT / 1000)
+    }
+    const tint = sky.tint
+    // The tint's brightness only: its per-channel balance is the sky's, and a cloud in sunlight is white.
+    const bright = (0.2126 * tint.r + 0.7152 * tint.g + 0.0722 * tint.b) * CLOUD_SUNLIGHT
+    f[100] = this.sunlight[0]! * bright
+    f[101] = this.sunlight[1]! * bright
+    f[102] = this.sunlight[2]! * bright
+    f[103] = sky.moon
+    const m = sky.moonDir
+    const moonLength = Math.hypot(m.x, m.y, m.z) || 1
+    f[104] = m.x / moonLength
+    f[105] = m.y / moonLength
+    f[106] = m.z / moonLength
+    f[107] = sky.moonPhase
+    f[108] = sky.coverage
+    f[109] = sky.drift[0]
+    f[110] = sky.drift[1]
+    f[111] = sky.cloudShadow
+    f[112] = tint.r
+    f[113] = tint.g
+    f[114] = tint.b
+    f[115] = sky.stars
+    f[116] = sky.night.r
+    f[117] = sky.night.g
+    f[118] = sky.night.b
+    f[119] = sky.starTurn
+    f[120] = sky.fogDensity
+    f[121] = sky.fogBase
+    f[122] = sky.fogFalloff
+    f[123] = 1
   }
 
   /** Bins the scene's lights into the light grid around the camera, for every view drawn this frame. */
@@ -893,6 +965,10 @@ export class Renderer {
         { binding: 6, resource: { buffer: this.craters.grid } },
         { binding: 7, resource: { buffer: this.lights.records } },
         { binding: 8, resource: { buffer: this.lights.cells } },
+        { binding: 9, resource: this.sky.skyView.createView() },
+        { binding: 10, resource: this.sky.cloudMap.createView() },
+        { binding: 11, resource: this.sky.skySampler },
+        { binding: 12, resource: this.sky.cloudSampler },
       ],
     })
   }
@@ -1038,8 +1114,15 @@ export class Renderer {
       depthStencilAttachment: { view: this.depthTarget!.createView(), depthClearValue: 0, depthLoadOp: 'clear', depthStoreOp: 'store' },
       timestampWrites: this.timer.pass('main'),
     })
-    // Without effects the overlay goes last in this pass; with them, last in theirs.
-    this.drawBatches(pass, this.mainBatches, this.sceneGroup!, 0, this.effects.length ? this.overlayFrom : this.mainBatches.length)
+    // Without effects the overlay goes last in this pass; with them, last in theirs. The sky goes in where
+    // nothing opaque drew, before anything translucent is laid over it.
+    const end = this.effects.length ? this.overlayFrom : this.mainBatches.length
+    this.drawBatches(pass, this.mainBatches, this.sceneGroup!, 0, this.translucentFrom)
+    if (scene.sky) {
+      this.sky.draw(pass, this.sceneGroup!)
+      this.stats.drawCalls++
+    }
+    this.drawBatches(pass, this.mainBatches, this.sceneGroup!, this.translucentFrom, end)
     pass.end()
   }
 
@@ -1168,6 +1251,7 @@ export class Renderer {
   }
 
   destroy() {
+    this.sky.destroy()
     this.device.destroy()
   }
 }

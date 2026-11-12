@@ -1,5 +1,6 @@
 import { CRATERS_WGSL } from './craters.wgsl'
 import { LIGHTS_WGSL } from './lights.wgsl'
+import { SKY_WGSL } from './sky.wgsl'
 
 /**
  * Declarations shared by every scene shader: the per-frame uniforms and the object and material records.
@@ -31,6 +32,20 @@ struct Frame {
   lightCount: vec4f,
   // The light grid's corner (world x, z), 1 / its cell size, whether to show its cells' counts instead (0 or 1).
   lightGrid: vec4f,
+  // Unit vector toward the sun, below the horizon too, and the sun disc's brightness against the sunlight.
+  skySun: vec4f,
+  // The sunlight on a white cloud (linear rgb), and how much of the moon shows (0 to 1).
+  skyLight: vec4f,
+  // Unit vector toward the moon, and its phase angle in radians (0 full, π new).
+  moon: vec4f,
+  // Cloud cover (0 to 1), how far the wind has carried the clouds along x and z (m), how much sunlight a cloud's shadow takes.
+  clouds: vec4f,
+  // Multiplies the atmosphere's radiance (rgb), and how much of the stars show (0 to 1).
+  skyTint: vec4f,
+  // The night sky's own glow (linear rgb), and how far the stars have turned about the pole (radians).
+  skyNight: vec4f,
+  // Low mist: density per metre at its base, the base's height (m), its falloff per metre up, whether there is a sky (0 or 1).
+  heightFog: vec4f,
 }
 
 struct Object {
@@ -95,4 +110,5 @@ fn normalMatrix(m: mat4x4f) -> mat3x3f {
 
 ${CRATERS_WGSL}
 ${LIGHTS_WGSL}
+${SKY_WGSL}
 `

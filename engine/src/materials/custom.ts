@@ -94,7 +94,7 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   if (frame.lightCount.z > 0.5 && in.world.y < frame.lightCount.y) {
     discard;
   }
-  return vec4f(applyFog(c.rgb, flags, in.viewDepth), c.a);
+  return vec4f(applyFog(c.rgb, flags, in.viewDepth, in.world), c.a);
 }
 `
   const key = `${material.wgsl}|${material.vertex ?? ''}|${material.shadows}|${fields.map((f) => `${f.name}:${f.type}`).join(',')}|${textureNames.join(',')}`
