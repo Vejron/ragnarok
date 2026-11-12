@@ -299,22 +299,15 @@ export function drawnSky(light: Sky, palette: Palette, phase: number, moonPhase:
 
 /** How fast the wind carries the clouds, m/s along x and z. */
 const WIND = [5.5, 3.2] as const
-/** The cloud cover the weather swings about, fair and winter, and how far either way. */
-const FAIR_COVER = 0.4
-const WINTER_COVER = 0.72
-const COVER_SWING = 0.18
 
 /**
- * The cloud layer `seconds` into the server's clock, the same for every player: how far the wind has
- * carried it (into `drift`, metres), and how much of the sky it covers, which drifts slowly between
- * nearly clear and well clouded over the hours.
+ * How far the wind has carried the cloud layer `seconds` into the server's clock, into `drift`
+ * (metres), the same for every player. How much of the sky it covers is the weather's (`weatherAt`).
  */
-export function cloudsAt(seconds: number, wintry: boolean, drift: [number, number]): number {
+export function cloudDrift(seconds: number, drift: [number, number]) {
   // Wrapped to the cloud map's repeat, so the drift stays small enough for 32-bit floats.
   drift[0] = (seconds * WIND[0]) % CLOUD_REPEAT
   drift[1] = (seconds * WIND[1]) % CLOUD_REPEAT
-  const swing = Math.sin((2 * Math.PI * seconds) / 2700) * 0.7 + Math.sin((2 * Math.PI * seconds) / 1100 + 1.3) * 0.3
-  return (wintry ? WINTER_COVER : FAIR_COVER) + COVER_SWING * swing
 }
 
 /** A whole number of cloud map tiles (`CLOUD_TILE`, 6 km), past which the drift wraps unseen. */

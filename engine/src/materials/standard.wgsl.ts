@@ -6,6 +6,7 @@ import { VERTEX_WGSL } from './vertex.wgsl'
 import { WALLS_WGSL } from './walls.wgsl'
 import { WORN_WGSL } from './worn.wgsl'
 import { ASPHALT_WGSL } from './asphalt.wgsl'
+import { WET_WGSL } from './wet.wgsl'
 
 /**
  * The shader for every ordinary mesh. Toon lighting matches three's MeshToonMaterial with a gradient
@@ -33,6 +34,7 @@ ${STONES_WGSL}
 ${WORN_WGSL}
 ${ASPHALT_WGSL}
 ${WALLS_WGSL}
+${WET_WGSL}
 
 // The craters' marks (linear colours): bare earth in the bowl, char, and the soil thrown out round the rim.
 const CRATER_EARTH = vec3f(0.22, 0.14, 0.075);
@@ -141,6 +143,9 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
       let bare = select(rgb, mix(SNOW_ROCK * tone, rgb, marks.earth), (flags & MAT_NORMAL_TONE) != 0u);
       rgb = mix(bare, SNOW_COLOR * tone, 0.94 * smoothstep(0.6, 0.82, n.y) * (1.0 - marks.earth));
     }
+    // Rain: wet surfaces are darker, and puddles darker still, before they are lit.
+    let rain = select(wetness(n, in.world), vec2f(0.0), (flags & MAT_SNOW) != 0u || !front);
+    rgb *= (1.0 - 0.35 * rain.x) * (1.0 - 0.4 * rain.y);
     let dotNL = dot(n, frame.sunDir.xyz);
     let u = u32(clamp(dotNL * 0.5 + 0.5, 0.0, 1.0) * 255.0);
     let ramp = textureLoad(ramps, vec2u(u, material.params.y), 0).r;
@@ -152,6 +157,9 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
     rgb = rgb / PI * (frame.sunColor.rgb * ramp * shadow + hemi + pointLight(in.world, n)) + material.emissive.rgb;
     if (wet > 0.0) {
       rgb += marshShine(n, in.world, 0.0, wet * 0.8, shadow);
+    }
+    if (rain.x + rain.y > 0.0) {
+      rgb += wetSheen(n, in.world, rain);
     }
     if (marsh.pool + marsh.sheen > 0.0) {
       rgb += marshShine(n, in.world, marsh.pool, marsh.sheen, shadow);

@@ -19,6 +19,8 @@ struct Output {
   shadows: vec4f,
   // What the highlights are multiplied by (rgb), whether the exposure is the eye's adaptation (0 or 1).
   highlights: vec4f,
+  // Whether lamps' beams were drawn this frame (0 or 1), unused, unused, unused.
+  beams: vec4f,
 }
 
 @group(0) @binding(0) var<uniform> output: Output;
@@ -29,6 +31,7 @@ struct Output {
 @group(0) @binding(5) var shafts: texture_2d<f32>;
 // The eye's adaptation (passes/exposure.ts): its exposure is element 1.
 @group(0) @binding(6) var<storage, read> adaptation: array<f32, 4>;
+@group(0) @binding(7) var beams: texture_2d<f32>;
 
 @vertex
 fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
@@ -109,6 +112,9 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   }
   if (output.bloom.y > 0.0) {
     c += textureSampleLevel(shafts, bloomSampler, uv, 0.0).rgb * output.bloom.y;
+  }
+  if (output.beams.x > 0.0) {
+    c += textureSampleLevel(beams, bloomSampler, uv, 0.0).rgb;
   }
   c *= output.params.y * select(1.0, adaptation[1], output.highlights.w > 0.5);
   c = grade(c);

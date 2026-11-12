@@ -31,6 +31,7 @@ import { setWinter, winter } from './render/season'
 import { Skidmarks } from './render/skidmarks'
 import { SkiTracks } from './render/skitracks'
 import { Snowfall } from './render/snowfall'
+import { Rainfall } from './render/rainfall'
 import { SnowRoost } from './render/snowroost'
 import { MarshMist, mistAt } from './render/marshmist'
 import { Bloodstains } from './render/bloodstains'
@@ -147,6 +148,8 @@ const MIN_CROSS_GAP = 3
 const GOLF_CALL_MS = 1800
 /** Looking down a tank's sight is as slow as a rifle scope. */
 const SIGHT_LOOK_SCALE = 0.35
+/** How the wind slants the rain near the ground, m/s along x and z: with the clouds' wind, but gentler. */
+const RAIN_WIND = [1.4, 0.8] as const
 /** The cold white of a headlamp, its strength in full dark and the share of that by day, its reach in metres, and its half-angle and soft edge. */
 const LAMP_COLOR = 0xeef4ff
 const LAMP_INTENSITY = 4
@@ -267,6 +270,8 @@ export class Game {
   private readonly skids = new Skidmarks()
   /** The snow in the air, in a winter world. */
   private snowfall: Snowfall | null = null
+  /** Rain round the camera, as hard as the weather says; none on a winter world, which has its snow. */
+  private rainfall: Rainfall | null = null
   /** The snow tracks throw up, in a winter world. */
   private snowRoost: SnowRoost | null = null
   /** Mist over the marshes; none in winter, when they are frozen. */
@@ -483,7 +488,8 @@ export class Game {
     if (world.theme === THEME_WINTER) this.startWinter()
     else {
       this.marshMist = new MarshMist()
-      this.scene.scene.add(this.marshMist.root)
+      this.rainfall = new Rainfall()
+      this.scene.scene.add(this.marshMist.root, this.rainfall.root)
     }
     this.view.world = world
     // On a hilly world the plane sits just under the terrain, so it only shows where a tile is late; the
@@ -1094,6 +1100,10 @@ export class Game {
     this.damageNumbers.update(dt, this.scene.camera)
     const eye = this.scene.camera.position
     this.snowfall?.update(eye, dt)
+    if (this.rainfall) {
+      this.rainfall.light.copy(this.scene.groundLight)
+      this.rainfall.update(eye, this.scene.rain, RAIN_WIND, dt)
+    }
     this.snowRoost?.update(eye, dt)
     this.marshMist?.update(eye, dt, mistAt(this.scene.phase), this.scene.groundLight, (x, z) => this.surfaces?.at(x, z) ?? SURFACE_GRASS, this.scene.groundAt)
     this.skiTracks?.update(dt)
@@ -1508,6 +1518,7 @@ export class Game {
     this.effects.dispose()
     this.smoke.dispose()
     this.snowfall?.dispose()
+    this.rainfall?.dispose()
     this.snowRoost?.dispose()
     this.marshMist?.dispose()
     this.skiTracks?.dispose()

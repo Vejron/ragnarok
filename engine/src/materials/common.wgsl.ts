@@ -46,6 +46,8 @@ struct Frame {
   skyNight: vec4f,
   // Low mist: density per metre at its base, the base's height (m), its falloff per metre up, whether there is a sky (0 or 1).
   heightFog: vec4f,
+  // How wet the world is from rain (0 to 1), how much of a rainbow shows (0 to 1), a lightning flash's brightness, unused.
+  weather: vec4f,
 }
 
 struct Object {

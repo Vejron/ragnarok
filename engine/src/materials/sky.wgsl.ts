@@ -80,7 +80,7 @@ fn skyAtmosphere(dir: vec3f) -> vec3f {
 
 // How grey the cloud cover makes the whole sky, 0 to 1.
 fn overcast() -> f32 {
-  return smoothstep(0.55, 1.0, frame.clouds.x) * 0.85;
+  return smoothstep(0.5, 0.92, frame.clouds.x) * 0.95;
 }
 
 // The sky toward \`dir\` with nothing in it, never looking below the horizon: what the fog fades to.
@@ -162,7 +162,7 @@ fn cloudLayer(dir: vec3f, lod: f32, behind: vec3f) -> vec4f {
   let ambient = skyAtmosphere(vec3f(0.0, 1.0, 0.0)) * 1.1 + frame.skyNight.rgb * 1.5;
   // Thick clouds are darker underneath; overcast is a flat grey.
   var c = (sunlight + moonlight + ambient) * mix(1.0, 0.72, d * d);
-  c = mix(c, vec3f(dot(c, LUMA)), overcast() * 0.5);
+  c = mix(c, vec3f(dot(c, LUMA)), overcast() * 0.9) * (1.0 - 0.3 * overcast() * d);
   // Bright edges round the sun are held back as the haze is, so they glow without flooding the bloom.
   c = softCap(c, CLOUD_KNEE, CLOUD_ROOM);
   // Far ones sink into the haze along the horizon.
@@ -258,10 +258,49 @@ fn skyColor(dir: vec3f, lod: f32) -> vec3f {
   if (frame.skyLight.w > 0.0) {
     c += moonDisc(dir) * frame.skyLight.w * above * mix(0.25, 1.0, clear);
   }
-  c += sunDisc(dir) * above * mix(0.1, 1.0, clear);
+  // Behind a full overcast there is no sun to see.
+  c += sunDisc(dir) * above * (1.0 - smoothstep(0.6, 0.92, frame.clouds.x));
   let cloud = cloudLayer(dir, lod, haze);
-  return mix(c, cloud.rgb, cloud.a);
+  c = mix(c, cloud.rgb, cloud.a);
+  if (frame.weather.y > 0.0) {
+    c += rainbow(dir) * above;
+  }
+  // Lightning lights the whole sky, the clouds most, held under the bloom's threshold so it flashes
+  // rather than glows.
+  c = softCap(c + frame.weather.z * vec3f(0.7, 0.75, 0.95) * (0.25 + cloud.a * 0.45), CLOUD_KNEE, CLOUD_ROOM);
+  return c;
 }
+
+// The rainbow opposite the sun: the primary bow from violet at 40.6° to red at 42.3° from the point
+// opposite it, a faint secondary with its colours reversed from 50° to 53.5°, and the sky a little
+// brighter inside the bow than between the two.
+fn rainbow(dir: vec3f) -> vec3f {
+  let sun = frame.skySun.xyz;
+  if (sun.y < 0.0) {
+    return vec3f(0.0);
+  }
+  let angle = acos(clamp(dot(dir, -sun), -1.0, 1.0));
+  let primary = (angle - 0.7086) / (0.7383 - 0.7086);
+  let secondary = (0.9338 - angle) / (0.9338 - 0.8727);
+  let light = dot(frame.skyLight.rgb, LUMA);
+  var c = spectrum(primary) * band(primary) + spectrum(secondary) * band(secondary) * 0.35;
+  c += vec3f(0.06) * (1.0 - smoothstep(0.55, 0.7086, angle)) * smoothstep(0.2, 0.6, angle);
+  return c * light * frame.weather.y * 0.45;
+}
+
+// How much of a bow is at \`t\` across its width (0 its inner edge, 1 its outer), soft at both edges.
+fn band(t: f32) -> f32 {
+  return smoothstep(-0.25, 0.1, t) * (1.0 - smoothstep(0.9, 1.25, t));
+}
+
+// A rainbow's colour at \`t\` across it: violet, blue, green, yellow, red.
+fn spectrum(t: f32) -> vec3f {
+  let r = smoothstep(0.35, 0.75, t) + 0.35 * (1.0 - smoothstep(0.0, 0.2, t));
+  let g = 1.0 - smoothstep(0.0, 0.42, abs(t - 0.55));
+  let b = 1.0 - smoothstep(0.2, 0.55, t);
+  return vec3f(r, g, b);
+}
+
 
 // How much of the view to \`world\` is fog, 0 to 1: the distance fog that hides the world's edge, with
 // the low mist (exponential in height, integrated along the view) over it.

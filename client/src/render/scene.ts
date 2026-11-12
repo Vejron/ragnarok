@@ -1,4 +1,4 @@
-import { Adaptation, Bloom, Color, Fog, Grade, Ink, LensFlare, PerspectiveCamera, Renderer, Scene as EngineScene, Shafts, Sky } from '@ragnarok/engine'
+import { Adaptation, Beams, Bloom, Color, Fog, Grade, Ink, LensFlare, PerspectiveCamera, Renderer, Scene as EngineScene, Shafts, Sky } from '@ragnarok/engine'
 import { GunSightView } from './gunsight'
 import { HeldMapView } from './heldmap'
 import { ContactShadows } from './contact'
@@ -7,7 +7,9 @@ import { setTreeDetail } from './trees'
 import { CLASSIC, SOFT, loadLook, wintry, type Look, type Palette } from './look'
 import { winter } from './season'
 import { loadQuality, PRESETS, resolveQuality, type Preset } from './quality'
-import { cloudsAt, createSky, drawnSky, gradeAt, moonPhaseAt, nightAt, skyAt } from './daynight'
+import { cloudDrift, createSky, drawnSky, gradeAt, moonPhaseAt, nightAt, skyAt } from './daynight'
+import { smoothstep } from '@/math'
+import { createWeather, weatherAt } from './weather'
 import { mistAt } from './marshmist'
 import { clearArm, lookDir } from '../aimline'
 import { GUNNER_BACK, GUNNER_UP, MOUNT_EYE_CLEARANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER } from '../sim/consts'
@@ -74,6 +76,16 @@ const MIST_DENSITY = 0.004
 const MIST_FALLOFF = 0.045
 /** How the mist's base follows the height of the water in sight, per frame: it settles over a few seconds. */
 const MIST_SETTLE = 0.02
+/** In the hardest rain the air is this hazy, per metre, near-evenly with height (it thins by e every 1/`RAIN_FALLOFF` m). */
+const RAIN_HAZE = 0.0035
+const RAIN_FALLOFF = 0.004
+/** How much a lightning flash of 1 adds to the sky's fill on the ground, against its own strength. */
+const FLASH_FILL = 2.5
+/** How much of the sunlight a full overcast takes away. */
+const OVERCAST_DIM = 0.7
+/** How much light the night air scatters per metre out of a lamp's beam, and how much more each unit of mist or rain haze adds. */
+const BEAM_AIR = 0.12
+const BEAM_HAZE = 40
 /** How much sunlight a cloud's shadow takes off the ground, in summer and over snow (which the overcast palette already dims). */
 const CLOUD_SHADOW = 0.55
 const WINTER_CLOUD_SHADOW = 0.3
@@ -112,6 +124,8 @@ export class Scene {
   /** The sky the engine draws, set from `sky` (`drawnSky`). */
   private readonly drawn = new Sky()
   private moonPhase = 0
+  /** The weather now, from the server's clock (`weatherAt`). */
+  private readonly weather = createWeather()
   /** Where the low mist lies, metres: the water in sight, or the last seen. */
   private mistBase: number | null = null
   private readonly glint = new Color()
@@ -136,7 +150,7 @@ export class Scene {
     this.scene.sky = this.drawn
     this.scene.adaptation = new Adaptation()
     this.scene.grade = new Grade()
-    this.drawn.coverage = cloudsAt(0, winter, this.drawn.drift)
+    this.setClock(0)
     this.scene.sun.shadow.enabled = true
     this.contact = new ContactShadows((x, z) => this.groundAt(x, z))
     this.scene.add(this.contact.root, this.gunsight.root, this.heldMap.root)
@@ -264,6 +278,7 @@ export class Scene {
     scene.bloom = look.bloom ? (scene.bloom ?? new Bloom()) : null
     scene.shafts = look.rays ? (scene.shafts ?? new Shafts()) : null
     scene.flare = look.rays ? (scene.flare ?? new LensFlare()) : null
+    scene.beams = look.rays ? (scene.beams ?? new Beams()) : null
     scene.craters.visible = look.scorch
   }
 
@@ -279,13 +294,21 @@ export class Scene {
     scene.fog!.color.copy(sky.sky)
     drawnSky(sky, this.palette, phase, this.moonPhase, this.drawn)
     gradeAt(sky, scene.grade!)
-    this.drawn.fogDensity = MIST_DENSITY * mistAt(phase)
-    this.drawn.fogFalloff = MIST_FALLOFF
+    // Mist about dawn and dusk, and the haze of the rain, which hangs evenly rather than low.
+    const rain = this.weather.rain
+    this.drawn.fogDensity = Math.max(MIST_DENSITY * mistAt(phase), RAIN_HAZE * rain)
+    this.drawn.fogFalloff = MIST_FALLOFF + (RAIN_FALLOFF - MIST_FALLOFF) * rain
+    // Lamps' beams show in the dark, more in mist and rain; by day they are lost in the light and not drawn.
+    if (scene.beams) {
+      const dark = Math.max(sky.night, rain * 0.5)
+      scene.beams.density = dark > 0.05 ? dark * (BEAM_AIR + BEAM_HAZE * this.drawn.fogDensity) : 0
+    }
     scene.hemisphere.sky.copy(sky.hemiSky)
     scene.hemisphere.ground.copy(sky.hemiGround)
-    scene.hemisphere.intensity = sky.hemiIntensity
+    scene.hemisphere.intensity = sky.hemiIntensity * (1 + FLASH_FILL * this.weather.flash)
     scene.sun.color.copy(sky.lightColor)
-    scene.sun.intensity = sky.lightIntensity
+    // Under a heavy overcast the sun barely gets through.
+    scene.sun.intensity = sky.lightIntensity * (1 - OVERCAST_DIM * smoothstep(0.65, 0.95, this.weather.cover))
     for (let i = 0; i < 3; i++) this.sunOffset[i] = sky.lightDir[i]! * SUN_DISTANCE
     // The water's glint is the light's colour scaled by its strength against the noon sun's.
     this.glint.copy(sky.lightColor).multiplyScalar(sky.lightIntensity / this.palette.sunIntensity)
@@ -297,12 +320,22 @@ export class Scene {
 
   /**
    * Moves what changes with the server's clock rather than the hour, `seconds` into it: the clouds the
-   * wind carries and how much of the sky they cover, and the moon's phase.
+   * wind carries, the weather (cover, rain, wet ground, rainbows, lightning) and the moon's phase.
    */
   setClock(seconds: number) {
-    this.drawn.coverage = cloudsAt(seconds, winter, this.drawn.drift)
+    cloudDrift(seconds, this.drawn.drift)
+    const weather = weatherAt(seconds, winter, this.weather)
+    this.drawn.coverage = weather.cover
+    this.drawn.wetness = weather.wet
+    this.drawn.rainbow = weather.rainbow
+    this.drawn.flash = weather.flash
     this.moonPhase = moonPhaseAt(seconds)
     this.drawn.moonPhase = this.moonPhase
+  }
+
+  /** How hard it is raining, 0 to 1 (`Weather.rain`). */
+  get rain() {
+    return this.weather.rain
   }
 
   /** How dark the clouds' shadows are: by the preset, and lighter on snow, under a sky already overcast. */

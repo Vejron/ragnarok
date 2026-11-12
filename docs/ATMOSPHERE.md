@@ -18,7 +18,8 @@ cost nothing per frame: one is rebuilt only when the sun has moved.
 | Settings | `engine/src/scene/sky.ts` | `Sky`, set on `Scene.sky`: the sun, the moon and its phase, stars, cloud cover and drift, cloud shadows, the tint, the night glow, the mist. `null` leaves the old flat background and fog |
 | GPU tables and draw | `engine/src/passes/sky.ts` | `SkyPass`: the lookup tables, the cloud map, and the sky's draw |
 | Shared WGSL | `engine/src/materials/sky.wgsl.ts` | `SKY_WGSL`, in every scene shader through `COMMON_WGSL`: `skyColor`, `skyHaze`, `cloudShade`, `fogAmount`, `fogTint` |
-| Time of day | `client/src/render/daynight.ts` | `skyAt` (the light for an hour), `drawnSky` (fills the engine's `Sky`), `cloudsAt`, `moonPhaseAt` |
+| Time of day | `client/src/render/daynight.ts` | `skyAt` (the light for an hour), `drawnSky` (fills the engine's `Sky`), `cloudDrift`, `moonPhaseAt`, `gradeAt` |
+| Weather | `client/src/render/weather.ts`, `rainfall.ts` | `weatherAt`: cover, rain, wet ground, rainbows and lightning from the server's clock; `Rainfall`: the drops |
 | Scene | `client/src/render/scene.ts` | Owns the `Sky`. `setTimeOfDay` and `setClock` drive it, `setWaterPlane` sets the mist's base, and it switches the sky off under water |
 
 ## The atmosphere
@@ -121,15 +122,38 @@ shader (for receivers of shadows) and in `GROUND_LIGHT_WGSL` (grass, water, skid
 
 ## Weather
 
-`cloudsAt(seconds, wintry)` gives the cover and the wind's drift from the server's clock, so every
-player sees the same clouds:
+The weather comes from the server's clock (`render/weather.ts`, `weatherAt`), so every player sees the
+same clouds, rain and lightning without anything on the wire. A smooth noise through a value every 25
+minutes (`SPELL`), skewed so that rain is the exception, gives a scale from 0 (clear) to 1 (a storm).
+From it:
 
-- The cover swings slowly (periods of 45 and 18 minutes) by ±0.18 about 0.4, or about 0.72 on a winter
-  world.
-- The wind carries the clouds at about 6 m/s.
-- The drift wraps every 60 km, a whole number of map tiles, so it stays small for 32-bit floats.
+- **Cover:** from 0.15 to 0.95; 0.6 to 0.9 on a winter world, which never rains (it has its snow).
+- **Rain** from 0.74 on the scale, hardest at 0.86: about a tenth of the time.
+  - Streaks: `Rainfall`, up to 2400 drops a second in a 32 m box round the camera, slanted by a light
+    wind.
+  - A haze that hangs evenly with height, so the view closes in: up to 0.0035 per metre, through the
+    mist's parameters.
+  - Under a heavy overcast the sky greys, the sun, its shafts and its flare are hidden, and the
+    sunlight on the ground drops by up to 70% (`OVERCAST_DIM`).
+- **Wet ground** (`Sky.wetness`, `materials/wet.wgsl.ts`): it comes with the rain and lasts 5 minutes
+  after it.
+  - Lit surfaces darken, the flat most.
+  - They glisten with a little of the sky, more at a grazing look.
+  - Puddles lie in the hollows of level ground: darker still, and mirroring the sky with a faint ripple.
+- **Lightning** (`Sky.flash`) in heavy rain:
+  - In each 6-second slot there is a 40% chance of a strike, at a moment the slot's hash picks.
+  - A strike is a flicker of three flashes over a third of a second.
+  - It lights the sky and the clouds, held under the bloom's threshold so it flashes rather than glows,
+    and raises the sky's fill on the ground.
+- **Rainbow** (`Sky.rainbow`) as a shower clears and the sun is out:
+  - The primary bow runs from violet at 40.6° to red at 42.3° from the point opposite the sun.
+  - A faint secondary with its colours reversed runs from 50° to 53.5°.
+  - The sky is a little brighter inside the bow.
+- **Wind:** the clouds drift at about 6 m/s (`cloudDrift`). The drift wraps every 60 km, a whole number
+  of map tiles, so it stays small for 32-bit floats.
 
-In SOLO the clock never syncs, so the clouds stand still.
+`?weather=0.9` in the address pins the scale (0.6 broken cloud, 0.8 rain, 0.95 a storm). In SOLO the
+clock never syncs, so the weather and clouds stand still and lightning never strikes.
 
 ## The light it gives
 
@@ -178,7 +202,17 @@ These run after the effects pass, on the resolved HDR image. Together they cost 
     of the way) while lamps and fire keep their colour.
   - **Vignette:** a 0.16 vignette after tone mapping.
 
-The shafts and the flare are the **Sun rays** look option (`Look.rays`), off by default on phones.
+- **Lamp beams** (`passes/beams.ts`, `Scene.beams`): the cones of headlights, a headlamp and the
+  helicopter's searchlight in the air.
+  - At half the screen's size, each pixel's view ray is marched (14 jittered steps) through the four
+    strongest spot lights near the camera, up to whatever the depth buffer says it meets.
+  - At each step it gathers the light the air scatters back toward the eye: the lamp's cone, its fall
+    with distance, and a Henyey-Greenstein phase that leans a little forward.
+  - The air's density is 0.12 per metre times the dark, plus 40 times the mist's or rain's haze, so
+    beams show at night and most in mist and rain. By day they are not drawn at all.
+  - They cost about 0.04 ms.
+
+The shafts, the flare and the beams are the **Sun rays** look option (`Look.rays`), off by default on phones.
 Adaptation and grading are always on.
 
 ## Checking it

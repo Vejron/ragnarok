@@ -79,6 +79,12 @@ export class Shafts {
   decay = 0.965
 }
 
+/** Beams of spot lights (headlights, a headlamp, a searchlight) seen in the air: in mist, rain and the dark. */
+export class Beams {
+  /** How much light the air scatters per metre: more in mist and rain. 0 for none. */
+  density = 0.04
+}
+
 /** Glare and ghosts of the sun in a lens, dimmed as the sun goes behind things. Needs `Scene.sky`. */
 export class LensFlare {
   /** How bright the glare and the ghosts are, 0 to about 2. */
@@ -127,6 +133,7 @@ export class Scene extends Node {
   ink: Ink | null = null
   bloom: Bloom | null = null
   shafts: Shafts | null = null
+  beams: Beams | null = null
   flare: LensFlare | null = null
   adaptation: Adaptation | null = null
   grade: Grade | null = null

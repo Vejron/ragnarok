@@ -17,6 +17,7 @@ import { SkyPass } from './passes/sky'
 import { LightShafts, type ShaftLight } from './passes/shafts'
 import { EyeAdaptation } from './passes/exposure'
 import { LensFlarePass, type FlareLight } from './passes/flare'
+import { LampBeams } from './passes/beams'
 import { CLOUD_HEIGHT } from './materials/sky.wgsl'
 import { transmittance } from './scene/atmosphere'
 import { HudLayer, HudPass } from './hud/layer'
@@ -36,7 +37,7 @@ import { SkinnedMesh } from './scene/skin'
 type Layer = 'world' | 'held' | 'overlay'
 
 /** Floats in the frame uniform block. Matches `Frame` in common.wgsl. */
-const FRAME_FLOATS = 124
+const FRAME_FLOATS = 128
 /** The sunlight on a white cloud against the atmosphere's tinted radiance for a sun of illuminance 1. */
 const CLOUD_SUNLIGHT = 0.12
 /** The sun's angular radius as drawn (`SUN_RADIUS` in sky.wgsl), radians: how wide the flare's visibility taps spread. */
@@ -138,7 +139,11 @@ export class Renderer {
   private readonly lightGrid = new LightGrid()
   private readonly lightVisible = (x: number, y: number, z: number, radius: number) =>
     this.frustum.intersectsSphere(x, y, z, radius) || (this.reflectionOn && this.reflectionFrustum.intersectsSphere(x, y, z, radius))
-  private readonly outputData = new Float32Array(24)
+  private readonly outputData = new Float32Array(28)
+  private readonly beams: LampBeams
+  private beamsDrawn = false
+  private readonly cameraAt: [number, number, number] = [0, 0, 0]
+  private readonly cameraForward: [number, number, number] = [0, 0, -1]
   private readonly sky: SkyPass
   private readonly shafts: LightShafts
   private readonly adaptation: EyeAdaptation
@@ -353,6 +358,7 @@ export class Renderer {
     this.shafts = new LightShafts(device, this.sampleCount > 1)
     this.adaptation = new EyeAdaptation(device)
     this.flare = new LensFlarePass(device, this.format, this.sampleCount > 1)
+    this.beams = new LampBeams(device, this.sampleCount > 1)
     this.hudPass = new HudPass(device, this.format, this.textures)
     this.setSize(canvas.clientWidth || 1, canvas.clientHeight || 1, 1)
   }
@@ -392,6 +398,7 @@ export class Renderer {
     this.shafts.resize(w, h, this.hdrTarget, this.depthTarget)
     this.adaptation.resize(this.hdrTarget)
     this.flare.resize(this.depthTarget)
+    this.beams.resize(w, h, this.depthTarget)
     this.halfResolution.release()
     this.outputGroup = this.device.createBindGroup({
       layout: this.outputPipeline.getBindGroupLayout(0),
@@ -403,6 +410,7 @@ export class Renderer {
         { binding: 4, resource: this.bloomSampler },
         { binding: 5, resource: this.shafts.view! },
         { binding: 6, resource: { buffer: this.adaptation.state } },
+        { binding: 7, resource: this.beams.view! },
       ],
     })
   }
@@ -468,9 +476,10 @@ export class Renderer {
     stats.shadowDraws = 0
     const effects = this.effectContext()
     for (const effect of this.effects) effect.prepare(effects, encoder)
+    const inverted = (scene.sky || scene.beams) && mat4.invert(this.inverseViewProj, camera.viewProjection) !== null
     if (scene.sky) {
       this.sky.update(encoder, scene.sky)
-      if (mat4.invert(this.inverseViewProj, camera.viewProjection)) this.sky.setView(this.inverseViewProj)
+      if (inverted) this.sky.setView(this.inverseViewProj)
     }
     if (this.shadowsOn) this.shadowPass(encoder)
     if (this.reflectionOn) this.reflectionPass(encoder, scene)
@@ -484,6 +493,13 @@ export class Renderer {
     this.lastRender = start
     this.adaptation.encode(encoder, scene.adaptation, dt, this.timer.pass('adaptation'))
     const light = this.placeLight(scene, camera)
+    this.beamsDrawn = false
+    if (inverted && scene.beams) {
+      const v = camera.view
+      this.cameraAt[0] = this.camX; this.cameraAt[1] = this.camY; this.cameraAt[2] = this.camZ
+      this.cameraForward[0] = -v[2]!; this.cameraForward[1] = -v[6]!; this.cameraForward[2] = -v[10]!
+      this.beamsDrawn = this.beams.encode(encoder, scene, this.inverseViewProj, this.cameraAt, this.cameraForward, camera.near, camera.far, this.timer.pass('beams'))
+    }
     this.shafts.encode(encoder, light && scene.shafts ? this.shaftLight : null, this.width / this.height, (name) => this.timer.pass(name))
     const bloom = scene.bloom
     if (bloom && bloom.strength > 0) this.bloom.encode(encoder, bloom.threshold, bloom.knee, bloom.radius)
@@ -920,7 +936,7 @@ export class Renderer {
   private writeSky(scene: Scene, f: Float32Array) {
     const sky = scene.sky
     if (!sky) {
-      f.fill(0, 96, 124)
+      f.fill(0, 96, 128)
       return
     }
     const s = sky.sunDir
@@ -963,6 +979,9 @@ export class Renderer {
     f[121] = sky.fogBase
     f[122] = sky.fogFalloff
     f[123] = 1
+    f[124] = sky.wetness
+    f[125] = sky.rainbow
+    f[126] = sky.flash
   }
 
   /** Bins the scene's lights into the light grid around the camera, for every view drawn this frame. */
@@ -1275,6 +1294,8 @@ export class Renderer {
     const x = (m[0]! * dx + m[4]! * dy + m[8]! * dz) / cw
     const y = (m[1]! * dx + m[5]! * dy + m[9]! * dz) / cw
     const off = Math.max(Math.abs(x), Math.abs(y))
+    // A heavy overcast hides the light: no shafts, no flare.
+    weight *= 1 - smoothstep(0.6, 0.9, sky.coverage)
     const shafts = scene.shafts
     const shaft = this.shaftLight
     shaft.u = x * 0.5 + 0.5
@@ -1315,6 +1336,7 @@ export class Renderer {
     o[21] = grade?.highlights.g ?? 1
     o[22] = grade?.highlights.b ?? 1
     o[23] = scene.adaptation ? 1 : 0
+    o[24] = this.beamsDrawn ? 1 : 0
     this.device.queue.writeBuffer(this.outputUniform, 0, o)
     const pass = encoder.beginRenderPass({
       label: 'output',
@@ -1351,6 +1373,7 @@ export class Renderer {
     this.shafts.destroy()
     this.adaptation.destroy()
     this.flare.destroy()
+    this.beams.destroy()
     this.device.destroy()
   }
 }

@@ -44,4 +44,10 @@ export class Sky {
   fogFalloff = 0.05
   /** How bright the sun's disc is against the sunlight on a white cloud. */
   sunDisc = 24
+  /** How wet the world is from rain, 0 to 1: darker ground with a sheen of the sky, and puddles on the flat. */
+  wetness = 0
+  /** How much of a rainbow shows opposite the sun, 0 to 1. */
+  rainbow = 0
+  /** A lightning flash lighting the sky and clouds, 0 for none; a strong one is about 1.5. */
+  flash = 0
 }
