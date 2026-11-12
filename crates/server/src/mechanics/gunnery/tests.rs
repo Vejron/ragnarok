@@ -6,7 +6,7 @@ use crate::game::{Command, Game, Seat};
 use sim::STANDING_Y;
 use shared::items::Falloff;
 use shared::mounts::Show;
-use shared::protocol::{PROJECTILE_BULLET, KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_TUPP, KIND_PAK, KIND_PLANE, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_SHELL, WEAPON_BOMB, WEAPON_LASER, WEAPON_MG};
+use shared::protocol::{PROJECTILE_BULLET, KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_TUPP, KIND_PAK, KIND_PLANE, KIND_SEAPLANE, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_SHELL, WEAPON_BOMB, WEAPON_LASER, WEAPON_MG};
 use shared::quant::to_mrad;
 use shared::world::{Road, WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
@@ -1301,4 +1301,160 @@ fn a_technicals_bullets_fly_fall_and_land_on_the_reticle() {
     assert_eq!(round.kind, PROJECTILE_BULLET);
     assert_eq!(round.hits.map(|hits| hits.damage), Some(TECHNICAL_MG_DAMAGE), "with the gun's own damage");
     assert!((vec3::length(round.velocity) - BULLET_SPEED).abs() < 0.1);
+}
+
+/// Flat ground at 0 over 600 m in 5 m cells, with a lake 10 m deep within 200 m of the middle, a
+/// seaplane placed in the middle of it and another ashore, both heading -Z.
+fn lake() -> Game {
+    let side = 121u32;
+    let wet = |i: u32, j: u32| {
+        let (x, z) = (i as f32 * 5.0 - 300.0, j as f32 * 5.0 - 300.0);
+        x.abs() <= 200.0 && z.abs() <= 200.0
+    };
+    let (mut heights, mut water) = (Vec::new(), Vec::new());
+    for j in 0..side {
+        for i in 0..side {
+            heights.push(if wet(i, j) { -1000 } else { 0 });
+            water.push(if wet(i, j) { 0 } else { shared::world::NO_WATER });
+        }
+    }
+    let place = |x: i32| shared::world::PlacedVehicle { kind: KIND_SEAPLANE, at: [x, 0], yaw: 0.0 };
+    let map = WorldFile {
+        version: WORLD_VERSION,
+        half_extent: 30_000,
+        ground: shared::terrain::Ground { origin: -30_000, cell: 500, side, heights },
+        water,
+        spawns: vec![[-28_000, 0]],
+        placed_vehicles: vec![place(0), place(-25_000)],
+        ..Default::default()
+    };
+    let mut game = Game::new(map, 0).unwrap();
+    game.world.clear_pickups();
+    game
+}
+
+/// The seaplanes of `lake`: the one afloat, then the one ashore.
+fn seaplanes(game: &Game) -> [u32; 2] {
+    let mut found: Vec<(u32, f32)> =
+        game.world.entities.all::<Vehicle>().filter(|(_, vehicle)| vehicle.kind == KIND_SEAPLANE).map(|(id, _)| (id, game.world.physics.car_pose(id).unwrap().position[0])).collect();
+    found.sort_by(|a, b| b.1.total_cmp(&a.1));
+    [found[0].0, found[1].0]
+}
+
+/// The seaplane afloat on `lake` with a crewman in seat `index`, settled, looking along the nose.
+fn seaplane_crewed(index: usize) -> (Game, u32, u32, u32) {
+    let mut game = lake();
+    let (crewman, _inbox) = join(&mut game);
+    let [vid, _] = seaplanes(&game);
+    seat(&mut game, crewman, vid, index);
+    let mut seq = 0;
+    aim_and_hold(&mut game, crewman, &mut seq, 0.0, 0.0, 0, 90);
+    (game, crewman, vid, seq)
+}
+
+#[test]
+fn a_seaplane_placed_on_a_lake_starts_afloat_and_one_ashore_stands_on_its_wheels() {
+    let mut game = lake();
+    for _ in 0..180 {
+        game.step();
+    }
+    let [afloat, ashore] = seaplanes(&game).map(|vid| game.world.physics.car_pose(vid).unwrap());
+    let rest = SEAPLANE_KEEL - SEAPLANE_DRAFT;
+    assert!(afloat.position[0].abs() < 1.0 && (afloat.position[1] - rest).abs() < 0.8 && afloat.up_y > 0.95, "it rides the swell at its draft: {afloat:?}");
+    assert!((ashore.position[1] - SEAPLANE_RIDE_HEIGHT).abs() < 0.05 && ashore.up_y > 0.99, "it stands on its wheels: {ashore:?}");
+    assert!(game.world.entities.all::<Vehicle>().all(|(id, _)| !game.world.entities.dead(id)), "neither is hurt by it");
+}
+
+#[test]
+fn a_seaplanes_guns_fire_from_both_seats() {
+    let (mut game, pilot, vid, mut seq) = seaplane_crewed(0);
+    aim_and_hold(&mut game, pilot, &mut seq, 0.0, 0.0, BUTTON_FIRE, 30);
+    let expected = (30 / PLANE_GUN_COOLDOWN_TICKS) as u8;
+    assert!(shown(&game, vid, Show::Guns).shots.abs_diff(expected) <= 1, "{} rounds in half a second", shown(&game, vid, Show::Guns).shots);
+
+    let (mut game, gunner, vid, mut seq) = seaplane_crewed(1);
+    // Looking aft, clear of the pilot.
+    aim_and_hold(&mut game, gunner, &mut seq, std::f32::consts::PI, 0.0, 0, 90);
+    aim_and_hold(&mut game, gunner, &mut seq, std::f32::consts::PI, 0.0, BUTTON_FIRE, 40);
+    assert!(turret(&game, vid).shots >= 3, "the ring gun fires aft: {:?}", turret(&game, vid));
+    assert!(game.seen(vid).unwrap().turret.is_some() && game.seen(vid).unwrap().arms.is_some(), "the snapshot shows its ring gun and its pilot's arms");
+}
+
+#[test]
+fn a_seaplanes_rack_holds_its_bombs_afloat_and_fills_again_there() {
+    let (mut game, pilot, vid, mut seq) = seaplane_crewed(0);
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    // Afloat it is down, however deep the lake: the rack holds on to them.
+    aim_and_hold(&mut game, pilot, &mut seq, 0.0, 0.0, BUTTON_CROUCH, 60);
+    assert_eq!(shown(&game, vid, Show::Rack).ammo, PLANE_BOMBS);
+    // High up and well away from where it lay, held crouch drops them all.
+    game.world.physics.reset_car(vid, [0.0, 120.0, 150.0], 0.0);
+    aim_and_hold(&mut game, pilot, &mut seq, 0.0, 0.0, BUTTON_CROUCH, PLANE_BOMB_COOLDOWN_TICKS * 5 + 5);
+    assert_eq!(shown(&game, vid, Show::Rack).ammo, 0);
+    // Back on the water and lying still, it is loaded again.
+    game.world.physics.reset_car(vid, pose.position, 0.0);
+    aim_and_hold(&mut game, pilot, &mut seq, 0.0, 0.0, 0, PLANE_REARM_TICKS + 240);
+    assert_eq!(shown(&game, vid, Show::Rack).ammo, PLANE_BOMBS, "{:?}", game.world.physics.car_pose(vid));
+}
+
+/// A Strf 90 off the road with a gunner in its turret, settled and looking where the hull points.
+fn strf_crewed() -> (Game, u32, u32, u32) {
+    let mut game = game();
+    let (gunner, _inbox) = join(&mut game);
+    let vid = crate::mechanics::vehicles::add_vehicle(&mut game.world, shared::protocol::KIND_STRF, [0.0, STRF_RIDE_HEIGHT + 0.2, 25.0], 0.0);
+    seat(&mut game, gunner, vid, 1);
+    let mut seq = 0;
+    let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
+    aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, 0, 90);
+    (game, gunner, vid, seq)
+}
+
+#[test]
+fn a_strf_gunner_fires_armour_piercing_rounds_five_a_second_and_swaps_to_high_explosive() {
+    let (mut game, gunner, vid, mut seq) = strf_crewed();
+    let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
+    aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, BUTTON_FIRE, 2);
+    let listed = game.seen_projectiles();
+    assert_eq!(listed[0].1.projectile.as_ref().unwrap().kind, shared::protocol::PROJECTILE_CANNON_AP, "armour-piercing first");
+    aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, BUTTON_FIRE, 58);
+    let fired = turret(&game, vid).shots;
+    let expected = (60 / STRF_CANNON_COOLDOWN_TICKS) as u8;
+    assert!(fired.abs_diff(expected) <= 1, "{fired} rounds in a second, expected about {expected}");
+
+    // Let the rounds land, swap, and the next one is high explosive.
+    aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, 0, 6 * 60);
+    aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, BUTTON_AMMO, 2);
+    aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, 0, STRF_CANNON_COOLDOWN_TICKS + 2);
+    aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, BUTTON_FIRE, 2);
+    let kinds: Vec<u8> = game.seen_projectiles().iter().map(|(_, seen)| seen.projectile.as_ref().unwrap().kind).collect();
+    assert_eq!(kinds, [PROJECTILE_CANNON], "high explosive now");
+    assert!(game.seen(vid).unwrap().turret.unwrap().flags & shared::protocol::TURRET_ALT != 0);
+}
+
+#[test]
+fn a_strf_cannon_jams_when_hot_shows_it_and_clears() {
+    let (mut game, gunner, vid, mut seq) = strf_crewed();
+    let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
+    let mut jammed_at = None;
+    for tick in 0..60 * 10 {
+        aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, BUTTON_FIRE, 1);
+        if turret(&game, vid).jammed {
+            jammed_at = Some(tick);
+            break;
+        }
+    }
+    let jammed_at = jammed_at.expect("the cannon jams");
+    assert!((60 * 3..60 * 7).contains(&jammed_at), "after about five seconds: {jammed_at} ticks");
+    assert!(game.seen(vid).unwrap().turret.unwrap().flags & shared::protocol::TURRET_JAMMED != 0);
+    aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, 0, 60 * 5);
+    assert!(!turret(&game, vid).jammed, "cool again");
+}
+
+#[test]
+fn a_strf_armour_piercing_round_goes_through_light_plate_but_not_a_tanks_glacis() {
+    use crate::mechanics::projectiles::pen_of;
+    let pen = pen_of(shared::protocol::PROJECTILE_CANNON_AP);
+    let (he, tank_shell) = (pen_of(PROJECTILE_CANNON), pen_of(PROJECTILE_SHELL));
+    assert!(pen.near > 30.0 && pen.near < 50.0, "through 30 mm, not 50: {pen:?}");
+    assert!(pen.near > he.near && pen.near < tank_shell.near);
 }

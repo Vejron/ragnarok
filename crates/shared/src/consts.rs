@@ -13,11 +13,13 @@ pub use crate::vehicles::mortar::*;
 pub use crate::vehicles::pak::*;
 pub use crate::vehicles::plane::*;
 pub use crate::vehicles::roadster::*;
+pub use crate::vehicles::seaplane::*;
 pub use crate::vehicles::ship::*;
 pub use crate::vehicles::ship_gun::*;
 pub use crate::vehicles::snowmobile::*;
 pub use crate::vehicles::sports::*;
 pub use crate::vehicles::strv::*;
+pub use crate::vehicles::strf::*;
 pub use crate::vehicles::submarine::*;
 pub use crate::vehicles::tank::*;
 pub use crate::vehicles::walker::*;
@@ -80,6 +82,12 @@ pub const KIND_ZOMBIE: u8 = 24;
 pub const KIND_SUBMARINE: u8 = 25;
 /// A submarine's guided missile, flown from its nose by the officer who fired it, as a drone is.
 pub const KIND_MISSILE: u8 = 26;
+/// The seaplane: a two-seat biplane on pontoons that carry small wheels, which flies from water or a road.
+/// Armed as the triplane is.
+pub const KIND_SEAPLANE: u8 = 27;
+/// The Strf 90: a tracked infantry fighting vehicle with a 40 mm autocannon in its turret and two
+/// troops in the back, who get out by the rear ramp.
+pub const KIND_STRF: u8 = 28;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;

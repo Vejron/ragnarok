@@ -10,7 +10,7 @@ import type { Particles } from './particles'
 import { winter } from './season'
 import type { SnowRoost } from './snowroost'
 import { splash } from './splash'
-import { rocketTrail } from './vehiclesmoke'
+import { missileExhaust } from './launch'
 import type { Skidmarks } from './skidmarks'
 import { type DropWake, WakeTrail } from './wakes'
 
@@ -178,10 +178,10 @@ export class VehicleFx {
       this.measured = true
     }
     this.lastPosition = here
-    // A missile's motor trails flame and smoke while it burns, seen from as far as a rocket's.
+    // A missile's motor trails fire and smoke while it burns, seen from further off than anything else's.
     if (this.fx.exhaust === 'rocket') {
       const v = this.velocity
-      this.rocketOwed = powered ? rocketTrail(world, [here.x, here.y, here.z], [v.x, v.y, v.z], dt, this.rocketOwed) : 0
+      this.rocketOwed = powered ? missileExhaust(world, [here.x, here.y, here.z], [v.x, v.y, v.z], dt, this.rocketOwed) : 0
       return
     }
     if (distance > MARK_RANGE) {
@@ -388,10 +388,17 @@ export class VehicleFx {
    */
   private skim(world: FxWorld, here: Vector3, particles: boolean, dt: number) {
     const level = winter ? undefined : world.waterAt?.(here.x, here.z)
-    const [hx, hy, hz] = halfExtentsOf(this.kind)
+    const [hx, hull, hz] = halfExtentsOf(this.kind)
+    // What meets the water: the hull's underside, or a seaplane's pontoons under it.
+    const hy = this.fx.keel ?? hull
     const moving = Math.hypot(this.velocity.x, this.velocity.z)
     const afloat = level !== undefined && Number.isFinite(level)
     const skimming = afloat && Math.abs(here.y - hy - level) < SKIM_DRAFT && moving > SKIM_SPEED
+    // A seaplane lying on its pontoons is down, moving or not.
+    if (this.fx.keel !== undefined && afloat && here.y - hy < level && new Vector3(0, 1, 0).applyQuaternion(this.q).y > 0.5) {
+      this.down = true
+      this.airTime = 0
+    }
     // Anything wide in the water, and moving, carves a wake: hard on the surface, gently wading.
     if (afloat && here.y - hy < level + SKIM_DRAFT && moving > WAKE_SPEED) {
       const size = Math.min(2, hx / 0.55)

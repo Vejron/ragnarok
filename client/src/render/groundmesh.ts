@@ -47,7 +47,7 @@ export function waterBuffers(tile: Pick<DrapedTile, 'water' | 'streams'>, ground
 
 /** The arrays of `draped`, so they move to the other thread instead of being copied. */
 export function drapedTransferables(draped: Draped): ArrayBuffer[] {
-  const ribbons = draped.ribbons.flatMap(({ buffers }) => [buffers.positions, buffers.normals, buffers.colors, buffers.indices, ...(buffers.custom ? [buffers.custom] : [])])
+  const ribbons = draped.ribbons.flatMap(({ buffers }) => [buffers.positions, buffers.normals, buffers.colors, buffers.indices, ...(buffers.custom ? [buffers.custom] : []), ...(buffers.uvs ? [buffers.uvs] : [])])
   const water = draped.water.flatMap((buffers) => [buffers.positions, buffers.custom, buffers.indices])
   return [...ribbons, ...water].map((array) => array.buffer as ArrayBuffer)
 }

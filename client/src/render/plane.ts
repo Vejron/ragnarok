@@ -1,7 +1,7 @@
 import { Group, Mesh, type Material, type Node, Matrix4, Quaternion, Vector3 } from '@ragnarok/engine'
 import { parseToonModel } from './models'
 import { toonMaterial } from './toon'
-import { PLANE_BOMBS, PLANE_REAR_LENGTH } from '@/sim/consts'
+import { PLANE_BOMB_PIVOT, PLANE_BOMBS, PLANE_REAR_LENGTH } from '@/sim/consts'
 import { ARMS_CUT } from '@/net/codec'
 import type { Arms, Turret } from '@/entities/units'
 import type { VehicleModel } from './car'
@@ -34,10 +34,22 @@ let asset: Node | null = null
  * materials become flat toon ones to match the rest of the scene; `paint` is replaced per plane.
  */
 export async function parsePlaneModel(data: ArrayBuffer) {
-  asset = parseToonModel(data, (source) => {
+  asset = parsePlaneAsset(data)
+}
+
+/** An aeroplane's `.glb` as toon meshes, its windscreen glass see-through. */
+export function parsePlaneAsset(data: ArrayBuffer): Node {
+  return parseToonModel(data, (source) => {
     if (source.name !== 'glass') return null
     return toonMaterial({ color: source.color, name: source.name, blend: 'alpha', opacity: GLASS_OPACITY, depthWrite: false })
   }, { merge: true })
+}
+
+/** Which aeroplane a `PlaneModel` draws: its parsed model, the paints handed out by vehicle id, and where its bomb rack is in the hull frame. */
+export interface PlaneLook {
+  asset: Node | null
+  paints: readonly number[]
+  bombPivot: readonly [number, number, number]
 }
 
 export async function loadPlaneModel(url = PLANE_MODEL_URL) {
@@ -48,7 +60,8 @@ export async function loadPlaneModel(url = PLANE_MODEL_URL) {
 
 /**
  * A Fokker Dr.I stretched into a two-seater: the pilot behind the triplane's wings with two guns on the
- * cowling, a gunner on a ring behind, and four small bombs under the belly. The propeller spins while
+ * cowling, a gunner on a ring behind, and four small bombs under the belly. Any aeroplane built with the
+ * same named parts is drawn by it too (the seaplane, `SeaplaneModel`). The propeller spins while
  * seat 0 is taken and slows to a windmill on the blip switch; the ring and its gun follow the snapshot's
  * `Turret`; the control surfaces swing with how the plane is turning, so everyone sees them work.
  */
@@ -77,15 +90,18 @@ export class PlaneModel implements VehicleModel {
   readonly rates = new Vector3()
   /** Whoever sits at the ring, 0 for nobody. */
   gunner = 0
+  /** Where its bombs leave the rack, in the hull frame. */
+  readonly bombPivot: readonly [number, number, number]
   private readonly pivot = new Vector3()
   private readonly aim = new Vector3()
   private readonly matrix = new Matrix4()
 
-  constructor(id: number) {
-    if (!asset) throw new Error('loadPlaneModel() must finish before planes are created')
-    const model = asset.clone()
+  constructor(id: number, look: PlaneLook = { asset, paints: PAINTS, bombPivot: PLANE_BOMB_PIVOT }) {
+    if (!look.asset) throw new Error('the plane model must finish loading before planes are created')
+    const model = look.asset.clone()
     this.root.add(model)
-    this.paint = toonMaterial({ color: PAINTS[id % PAINTS.length]! })
+    this.bombPivot = look.bombPivot
+    this.paint = toonMaterial({ color: look.paints[id % look.paints.length]! })
     model.traverse((node) => {
       if (node instanceof Mesh && node.material.name === 'paint') node.material = this.paint
     })

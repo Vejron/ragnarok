@@ -91,6 +91,7 @@ pub(super) const SNOWMOBILE: VehicleDef = VehicleDef {
         skim: Some(Skim { sink_speed: 6.0, plane_speed: 10.0, thrust: 0.15, grip: 0.6, bank_drag: 1.0 }),
         bow: 0.0,
         springs: Springs::FIRM,
+        airframe: None,
     },
     armor: ARMOR,
     drone: None,

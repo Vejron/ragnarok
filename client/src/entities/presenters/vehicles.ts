@@ -1,13 +1,14 @@
 import { Quaternion, Vector3 } from '@ragnarok/engine'
 import type { Node, PointLights } from '@ragnarok/engine'
-import { ARMS_CUT, DAMAGE_WHEELS, KIND_SHIP, KIND_SHIP_GUN } from '@/net/codec'
+import { ARMS_CUT, DAMAGE_WHEELS, KIND_MISSILE, KIND_SHIP, KIND_SHIP_GUN } from '@/net/codec'
 import type { Debris } from '@/render/debris'
 import type { Effects } from '@/render/effects'
 import type { Rounds } from '@/render/rounds'
 import { HenModel } from '@/render/hen'
 import { VehicleFx, type FxWorld } from '@/render/tyres'
 import { kindView } from '@/kinds'
-import { SubmarineModel } from '@/render/submarine'
+import { missileLaunch, tubeSmoke } from '@/render/launch'
+import { SubmarineModel, TUBE_SMOKES, type SubView } from '@/render/submarine'
 import { TankModel } from '@/render/tank'
 import { WalkerModel } from '@/render/walker'
 import type { VehicleModel } from '@/render/car'
@@ -160,6 +161,37 @@ export class Vehicles implements Presenter<Frame> {
     return { position: [ship.x + spot.x, ship.y + spot.y, ship.z + spot.z], rotation: [q.x, q.y, q.z, q.w] }
   }
 
+  /** What a submarine's raised periscope is seen from, to glint and throw its feather (`SubmarineModel.setSub`). */
+  private subView(): SubView {
+    const fx = this.world.fx()
+    return { camera: fx.camera, waterAt: (x, z) => fx.waterAt?.(x, z) ?? Number.NaN }
+  }
+
+  /**
+   * A submarine's tubes as they fire: the fire and smoke of each launch, its light and its roar, and
+   * the smoke a tube goes on giving off afterwards. A tube under the water breaks the surface over it.
+   */
+  private launches(model: SubmarineModel, dt: number) {
+    const fx = this.world.fx()
+    const over = ({ x, y, z }: { x: number; y: number; z: number }) => {
+      const level = fx.waterAt?.(x, z) ?? Number.NaN
+      return level > y ? level : null
+    }
+    for (const tube of model.takeLaunches()) {
+      const { at, up } = model.tubeMouth(tube)
+      const surface = over(at)
+      missileLaunch(fx, at, up, surface)
+      const y = surface ?? at.y
+      this.world.lights.flash(at.x, y + 1.5, at.z, { color: 0xffa040, intensity: 7, radius: 34, life: 0.5 })
+      this.world.sounds.blast([at.x, y, at.z], 'small')
+    }
+    model.smoking.forEach((left, tube) => {
+      if (left <= 0) return
+      const { at, up } = model.tubeMouth(tube)
+      if (over(at) === null) tubeSmoke(fx, at, up, left / TUBE_SMOKES, dt)
+    })
+  }
+
   private draw(id: number, { entity }: Sampled, frame: Frame) {
     const kind = entity.kind!.kind
     let model = this.models.get(id)
@@ -187,7 +219,12 @@ export class Vehicles implements Presenter<Frame> {
     if (model instanceof HenModel) model.setFlags(jets)
     model.update(position, [rotation[0], rotation[1], rotation[2], rotation[3]], steer, seats, turret, arms)
     if (model instanceof TankModel) model.setPintle(pintle)
-    if (model instanceof SubmarineModel) model.setSub(entity.sub ?? null, frame.dt)
+    if (model instanceof SubmarineModel) {
+      model.setSub(entity.sub ?? null, frame.dt, this.subView())
+      this.launches(model, frame.dt)
+    }
+    // A missile's motor lights what it flies over while it burns.
+    if (kind === KIND_MISSILE && (seats[0] ?? 0) !== 0) this.world.lights.hold(x, y, z, { color: 0xff9a40, intensity: 3.5, radius: 22 })
     if (model instanceof WalkerModel || model instanceof HenModel) for (const step of model.takeSteps()) this.world.sounds.footstep(step.at, step.weight)
     if (model instanceof HenModel) {
       const { beats, leapt, eggs } = model.takeEvents()

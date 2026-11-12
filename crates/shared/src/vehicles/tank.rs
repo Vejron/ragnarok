@@ -110,7 +110,8 @@ pub(super) const TANK: VehicleDef = VehicleDef {
     spec: Spec {
         half_extents: TANK_HALF_EXTENTS,
         // 13.5 m³ of hull is about 13.5 tonnes: ten times the car, so ramming one throws it aside. The
-        // engine and suspension cap scale with it, which keeps the acceleration and the ride as they were.
+        // suspension cap scales with it, which keeps the ride as it was. The engine pulls about 7.4 m/s²,
+        // enough to grind up a 35° slope from a standing start.
         density: 1000.0,
         wheel_radius: TANK_WHEEL_RADIUS,
         track_half: TANK_TRACK_HALF,
@@ -118,7 +119,7 @@ pub(super) const TANK: VehicleDef = VehicleDef {
         hard_point_y: TANK_HARD_POINT_Y,
         suspension_rest: TANK_SUSPENSION_REST,
         max_suspension_force: 800_000.0,
-        engine_force: 88_000.0,
+        engine_force: 100_000.0,
         max_speed: TANK_MAX_SPEED,
         steer_lock: 0.0,
         turn_rate: TANK_TURN_RATE,
@@ -137,6 +138,7 @@ pub(super) const TANK: VehicleDef = VehicleDef {
         skim: None,
         bow: 0.0,
         springs: Springs::FIRM,
+        airframe: None,
     },
     armor: ARMOR,
     drone: None,

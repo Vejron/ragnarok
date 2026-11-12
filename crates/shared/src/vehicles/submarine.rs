@@ -106,6 +106,7 @@ pub(super) const SUBMARINE: VehicleDef = VehicleDef {
         skim: None,
         bow: SUB_BOW,
         springs: Springs::FIRM,
+        airframe: None,
     },
     armor: ARMOR,
     drone: None,

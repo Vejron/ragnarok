@@ -39,6 +39,11 @@ export interface KindFx {
   roost?: Roost
   /** A hull that floats, with no wheels: it carves a wake through open water as it goes. */
   floats?: true
+  /**
+   * How far below its middle a seaplane's pontoons reach, metres: what meets the water is their
+   * undersides, not its hull's, and afloat on them it is down as much as on its wheels.
+   */
+  keel?: number
 }
 
 /** Where a track throws its snow and how hard it must pull to: past the tail of each track, in the hull's frame. */

@@ -10,7 +10,7 @@ import type { MortarArc } from '@/render/mortar-arc'
 import { PlaneModel } from '@/render/plane'
 import type { TrajectoryView } from '@/render/trajectory'
 import type { VehicleFx } from '@/render/tyres'
-import { MORTAR_BARREL_LENGTH, MORTAR_SHELL_SPEED, MORTAR_SHELL_TTL_TICKS, PLANE_BOMB_MIN_HEIGHT, PLANE_BOMB_PIVOT } from '@/sim/consts'
+import { MORTAR_BARREL_LENGTH, MORTAR_SHELL_SPEED, MORTAR_SHELL_TTL_TICKS, PLANE_BOMB_MIN_HEIGHT } from '@/sim/consts'
 import { dropTrajectory, throwTrajectory } from '@/sim/grenade'
 import type { SimMotor } from '@/sim/motor'
 import type { SeatView } from '@/seats'
@@ -54,7 +54,7 @@ export class Arcs {
     const { model: plane, motion, bombs } = vehicle
     if (!(plane instanceof PlaneModel) || !motion || bombs === 0) return null
     plane.root.updateMatrixWorld(true)
-    const start = new Vector3(...PLANE_BOMB_PIVOT).applyMatrix4(new Matrix4().fromArray(plane.root.matrixWorld))
+    const start = new Vector3(...plane.bombPivot).applyMatrix4(new Matrix4().fromArray(plane.root.matrixWorld))
     if (start.y - groundAt(start.x, start.z) < PLANE_BOMB_MIN_HEIGHT) return null
     const velocity = motion.velocity
     return dropTrajectory(castRay, [start.x, start.y, start.z], [velocity.x, velocity.y, velocity.z])

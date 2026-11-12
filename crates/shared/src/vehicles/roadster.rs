@@ -96,6 +96,7 @@ pub(super) const ROADSTER: VehicleDef = VehicleDef {
         skim: Some(Skim { sink_speed: 20.0, plane_speed: 28.0, thrust: 0.15, grip: 0.4, bank_drag: 1.6 }),
         bow: 0.0,
         springs: Springs::FIRM,
+        airframe: None,
     },
     armor: ARMOR,
     drone: None,

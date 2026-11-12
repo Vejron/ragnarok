@@ -704,8 +704,9 @@ fn a_roadster_driver_boosts_on_run_hops_on_jump_and_brakes_on_crouch() {
 }
 
 /// A game with one pine just in front of where a vehicle of `kind` is set down facing it, and the
-/// vehicle's speed (m/s) one tick before, and the tick the tree fell.
-fn drive_into_a_pine(kind: u8, speed: f32) -> Option<(f32, f32)> {
+/// vehicle's speed (m/s) one tick before and the tick the tree fell, and what it lost the tick before
+/// that, which is only the brake of a vehicle with nobody in it.
+fn drive_into_a_pine(kind: u8, speed: f32) -> Option<(f32, f32, f32)> {
     use shared::world::{ObjId, TREE_PINE, Tree};
     let map = WorldFile {
         version: WORLD_VERSION,
@@ -723,26 +724,30 @@ fn drive_into_a_pine(kind: u8, speed: f32) -> Option<(f32, f32)> {
         Vehicles.on_tick(&mut game.world, TICK_DT);
     }
     game.world.physics.kick_car(vid, [0.0, 0.0, -speed]);
+    let flat = |velocity: [f32; 3]| velocity[0].hypot(velocity[2]);
+    let mut braked = 0.0;
     for _ in 0..120 {
-        let before = game.world.physics.car_pose(vid)?.velocity;
+        let before = flat(game.world.physics.car_pose(vid)?.velocity);
         Vehicles.on_tick(&mut game.world, TICK_DT);
+        let after = flat(game.world.physics.car_pose(vid)?.velocity);
         if !game.world.destroyed.is_empty() {
-            let after = game.world.physics.car_pose(vid)?.velocity;
-            return Some((before[0].hypot(before[2]), after[0].hypot(after[2])));
+            return Some((before, after, braked));
         }
+        braked = before - after;
     }
     None
 }
 
 #[test]
 fn a_tank_plows_through_a_tree_without_slowing() {
-    let (before, after) = drive_into_a_pine(KIND_TANK, 10.0).expect("the tank felled the pine");
-    assert!(after > before * 0.98, "{before} -> {after}");
+    let (before, after, braked) = drive_into_a_pine(KIND_TANK, 10.0).expect("the tank felled the pine");
+    // It loses no more than its own brake takes off it each tick.
+    assert!(before - after < braked + 0.05, "{before} -> {after}, against {braked} the tick before");
 }
 
 #[test]
 fn a_jeep_is_jolted_by_the_tree_it_fells() {
-    let (before, after) = drive_into_a_pine(KIND_JEEP, 20.0).expect("the jeep felled the pine");
+    let (before, after, _) = drive_into_a_pine(KIND_JEEP, 20.0).expect("the jeep felled the pine");
     assert!(after < before * 0.8, "{before} -> {after}");
 }
 
@@ -775,3 +780,26 @@ fn a_hen_driver_leaps_on_jump_and_the_snapshot_carries_its_stamina() {
 }
 
 mod ship;
+
+#[test]
+fn troops_in_a_strf_leave_by_the_rear_ramp() {
+    use shared::protocol::KIND_STRF;
+    let mut game = game();
+    let (id, _inbox) = join(&mut game);
+    let mut seq = 0;
+    idle(&mut game, id, &mut seq, 30);
+    let vid = add_vehicle(&mut game.world, KIND_STRF, [0.0, STRF_RIDE_HEIGHT + 0.2, 30.0], 0.0);
+    idle(&mut game, id, &mut seq, 60);
+    game.world.entities.get_mut::<Seats>(vid).unwrap()[3] = Some(id);
+    game.world.entities.get_mut::<Player>(id).unwrap().seat = Some(crate::game::Seat { vehicle: vid, index: 3, remote: false, from: None });
+    idle(&mut game, id, &mut seq, 3);
+
+    press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
+    idle(&mut game, id, &mut seq, 3);
+    assert!(game.world.entities.of::<Seats>(vid).vacant());
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    let at = game.world.entities.of::<Player>(id).character.position;
+    // Behind the tail, in line with the hull: the hull faces -Z, so behind is +Z.
+    let (dx, dz) = (at[0] - pose.position[0], at[2] - pose.position[2]);
+    assert!(dz > STRF_HALF_EXTENTS[2] && dx.abs() < 0.5, "out of the ramp: {dx} {dz}");
+}

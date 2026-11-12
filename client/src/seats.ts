@@ -56,6 +56,8 @@ export interface RideView {
   /** Ticks between shots of the gun its crew fires, for the HUD's reload ring; null for guns that never reload. */
   reload: number | null
   seats: readonly SeatView[]
+  /** An aeroplane's stall speed, m/s, for its pilot's stall warning; the triplane's when left out. */
+  stall?: number
   /** Rotors that flatten the grass under them: gone past `reach` metres up, over `radius` metres at the ground and wider higher up. */
   downwash?: { reach: number; radius: number }
 }

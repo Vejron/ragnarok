@@ -16,10 +16,11 @@ interface Swell {
 }
 
 export const SWELLS: readonly Swell[] = [
-  { heading: 0.3, length: 90.0, height: 0.4, cycles: 7, phase: 0.0 },
-  { heading: -0.2, length: 60.0, height: 0.25, cycles: 8, phase: 1.7 },
-  { heading: 0.7, length: 25.0, height: 0.04, cycles: 12, phase: 4.1 },
-  { heading: -0.9, length: 13.0, height: 0.012, cycles: 17, phase: 2.6 },
+  { heading: 0.3, length: 90.0, height: 0.48, cycles: 7, phase: 0.0 },
+  { heading: -0.2, length: 60.0, height: 0.3, cycles: 8, phase: 1.7 },
+  { heading: 0.7, length: 25.0, height: 0.08, cycles: 15, phase: 4.1 },
+  { heading: -0.9, length: 13.0, height: 0.035, cycles: 21, phase: 2.6 },
+  { heading: 1.6, length: 7.5, height: 0.018, cycles: 29, phase: 0.9 },
 ]
 /** Crests are `((1 + cos θ) / 2)^PEAK`, less that shape's mean so the water keeps its level. */
 export const PEAK = 8

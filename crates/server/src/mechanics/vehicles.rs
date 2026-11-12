@@ -196,11 +196,18 @@ pub(super) fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: 
 
 /// Where a fresh vehicle of `kind` starts over `(x, z)`: its chassis centre `drop_height` over the
 /// ground, or over the water for a ship or a submarine, which only float (`None` where there is no
-/// open water).
+/// open water). A seaplane starts afloat where there is open water and on its wheels where there is not.
 fn start_position(world: &World, kind: u8, x: f32, z: f32) -> Option<[f32; 3]> {
-    let afloat = matches!(vehicle_def(kind).spec.lift, shared::vehicles::Lift::Sail | shared::vehicles::Lift::Dive);
-    let below = if afloat { world.physics.water_level(x, z)? } else { world.map.ground.height_at(x, z) };
-    Some([x, below + drop_height(kind), z])
+    let spec = &vehicle_def(kind).spec;
+    if matches!(spec.lift, shared::vehicles::Lift::Sail | shared::vehicles::Lift::Dive) {
+        return Some([x, world.physics.water_level(x, z)? + drop_height(kind), z]);
+    }
+    if let Some(floats) = spec.airframe.and_then(|airframe| airframe.floats)
+        && let Some(level) = world.physics.water_level(x, z)
+    {
+        return Some([x, level + floats.keel - floats.draft, z]);
+    }
+    Some([x, world.map.ground.height_at(x, z) + drop_height(kind), z])
 }
 
 /// Horizontal unit vectors `(right, back)` for a heading.

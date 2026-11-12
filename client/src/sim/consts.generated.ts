@@ -92,6 +92,18 @@ export const KIND_SUBMARINE = 25
 /** A submarine's guided missile, flown from its nose by the officer who fired it, as a drone is. */
 export const KIND_MISSILE = 26
 
+/**
+ * The seaplane: a two-seat biplane on pontoons that carry small wheels, which flies from water or a road.
+ * Armed as the triplane is.
+ */
+export const KIND_SEAPLANE = 27
+
+/**
+ * The Strf 90: a tracked infantry fighting vehicle with a 40 mm autocannon in its turret and two
+ * troops in the back, who get out by the rear ramp.
+ */
+export const KIND_STRF = 28
+
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
 
@@ -1716,6 +1728,73 @@ export const ROADSTER_AIR_REFILL = 0.2
 export const ROADSTER_SEAT_HEADS = [[-0.33, 0.42, 0.12], [0.33, 0.42, 0.12]] as const
 
 /**
+ * The seaplane: a two-seat biplane of the 1920s on twin pontoons, flown by a pilot (seat 0) who also
+ * fires the two forward guns and drops the bombs, with a gunner (seat 1) on a ring-mounted gun behind.
+ * It is an amphibian: each pontoon carries a pair of small wheels, so it rolls on a road as the
+ * triplane does, and on open water the pontoons carry it (`floats` in `crates/sim`). Heavier and slower
+ * than the triplane, and tougher. Same body axes as the car.
+ */
+export const SEAPLANE_SEATS = 2
+
+/** The fuselage box. The wings and the pontoons are weightless boxes beside it, in the hull frame. */
+export const SEAPLANE_HALF_EXTENTS = [0.5, 0.6, 3.0] as const
+export const SEAPLANE_WING_CENTRE = [0.0, 0.45, -1.0] as const
+export const SEAPLANE_WING_HALF_EXTENTS = [4.4, 0.85, 0.6] as const
+
+/**
+ * The two pontoons: how far either side of the centre line they are, the middle of each (y and z) and
+ * half their size, metres.
+ */
+export const SEAPLANE_FLOAT_HALF_TRACK = 1.1
+export const SEAPLANE_FLOAT_CENTRE = [-1.25, -0.4] as const
+export const SEAPLANE_FLOAT_HALF_EXTENTS = [0.3, 0.3, 2.3] as const
+
+/** How far below the hull's centre the pontoons' undersides are, and how deep they sit at rest, metres. */
+export const SEAPLANE_KEEL = 1.55
+export const SEAPLANE_DRAFT = 0.25
+
+/** The wheels on the pontoons, a pair ahead of the centre and a pair behind. The front pair steers. */
+export const SEAPLANE_WHEEL_RADIUS = 0.25
+export const SEAPLANE_AXLES_Z = [-1.4, 1.6] as const
+export const SEAPLANE_HARD_POINT_Y = -1.25
+export const SEAPLANE_SUSPENSION_REST = 0.3
+export const SEAPLANE_MAX_STEER = 0.5
+
+/** How high its chassis centre rides over a road on its wheels, metres (measured by the sim's tests). */
+export const SEAPLANE_RIDE_HEIGHT = 1.71
+
+/** Acceleration the engine gives at full throttle, m/s²: less than the triplane's, for the weight of the pontoons. */
+export const SEAPLANE_THRUST = 5.5
+
+/** Air drag per (m/s)², which tops a level flight out at about 38 m/s on full throttle and 29 at cruise. */
+export const SEAPLANE_DRAG = SEAPLANE_THRUST / (38.0 * 38.0)
+
+/** Its wings stall below this airspeed, carry it level above the next, and its controls are tuned for the last, m/s. */
+export const SEAPLANE_STALL_SPEED = 18.0
+export const SEAPLANE_LEVEL_SPEED = 25.0
+export const SEAPLANE_CRUISE_SPEED = 29.0
+
+/** Turn rates at full deflection, rad/s: it rolls and pitches more slowly than the triplane. */
+export const SEAPLANE_PITCH_RATE = 1.2
+export const SEAPLANE_ROLL_RATE = 2.2
+export const SEAPLANE_YAW_RATE = 0.45
+
+/** The most the wings can pull, m/s² (about 3.5 g). */
+export const SEAPLANE_MAX_LIFT = 34.0
+
+/**
+ * The two forward guns on the cowling, the gunner's ring behind the pilot and the bomb rack between the
+ * pontoons: pivots in the hull frame. The guns, the ring and the rack work as the triplane's do
+ * (`PLANE_GUN_*`, `PLANE_REAR_*`, `PLANE_BOMB*`).
+ */
+export const SEAPLANE_GUN_PIVOTS = [[-0.16, 0.72, -2.2], [0.16, 0.72, -2.2]] as const
+export const SEAPLANE_REAR_PIVOT = [0.0, 0.85, 0.9] as const
+export const SEAPLANE_BOMB_PIVOT = [0.0, -0.85, -0.3] as const
+
+/** The pilot behind the upper wing, the gunner standing in the ring. */
+export const SEAPLANE_SEAT_HEADS = [[0.0, 0.98, -0.3], [0.0, 1.15, 0.9]] as const
+
+/**
  * The pirate ship (`KIND_SHIP`): a single-masted brig of about 10 m, sailed from the helm at the
  * stern, with three guns run out on each broadside (`SHIP_GUN_SLOTS`, each its own `KIND_SHIP_GUN`).
  * It floats and sails only on open water, driven by the wind in its sail (`crate::wind`), and is
@@ -1880,6 +1959,70 @@ export const ROADSTER_RIDE_HEIGHT = SPORTS_RIDE_HEIGHT
 export const SPORTS_MAX_STEER = 0.4
 export const SPORTS_MAX_SPEED = 50.0
 export const SPORTS_SEAT_HEADS = [[-0.35, 0.4, 0.1], [0.35, 0.4, 0.1]] as const
+
+/**
+ * The Strf 90 (`KIND_STRF`): a tracked infantry fighting vehicle. The driver (seat 0) sits front left
+ * beside the engine; the gunner (seat 1) works a 40 mm autocannon in a turret set forward of the
+ * middle; two troops (seats 2 and 3) ride sealed in the back and get out by the rear ramp. Lighter
+ * and quicker than the tank, and thinner-skinned. Same body axes as the tank.
+ */
+export const STRF_SEATS = 4
+
+/** Half the hull box, metres: about 6.4 m long, 3 m wide and 1.2 m deep without the turret. */
+export const STRF_HALF_EXTENTS = [1.5, 0.6, 3.2] as const
+
+/** Road wheel radius, metres. */
+export const STRF_WHEEL_RADIUS = 0.42
+
+/** How far each track runs from the middle, metres. */
+export const STRF_TRACK_HALF = 1.3
+
+/** Z of the three axles, front first, metres. */
+export const STRF_AXLES_Z = [-2.3, 0.0, 2.3] as const
+
+/** Where the hull's centre settles over flat ground, metres: measured by `a_strf_settles_at_its_ride_height`. */
+export const STRF_RIDE_HEIGHT = 1.01
+export const STRF_HARD_POINT_Y = -0.25
+export const STRF_SUSPENSION_REST = 0.4
+
+/** Top speed on the flat, m/s (about 70 km/h). */
+export const STRF_MAX_SPEED = 19.0
+
+/** Yaw rate at full stick, rad/s. */
+export const STRF_TURN_RATE = 1.4
+
+/** Where the turret ring sits in the hull frame, forward of the middle with the troop bay behind it. */
+export const STRF_TURRET_PIVOT = [0.0, 0.9, -0.5] as const
+
+/** The turret's solid: a cylinder on the ring, its base on the hull's roof, metres. */
+export const STRF_TURRET_RADIUS = 0.95
+export const STRF_TURRET_HALF_HEIGHT = 0.3
+
+/** How far the muzzle is from the ring, metres. */
+export const STRF_BARREL_LENGTH = 3.0
+
+/** How fast the turret and barrel follow the gunner's aim, rad/s: quicker than the tank's. */
+export const STRF_TURRET_SLEW = 2.0
+export const STRF_BARREL_SLEW = 1.4
+
+/** Barrel elevation limits, radians (+ is up): steep enough to fire at aircraft. */
+export const STRF_BARREL_MIN = -0.14
+export const STRF_BARREL_MAX = 0.85
+
+/** Ticks between rounds: five a second. */
+export const STRF_CANNON_COOLDOWN_TICKS = 12
+
+/** How far a round strays from the bore, radians. */
+export const STRF_CANNON_SPREAD = 0.004
+
+/** Heat a round puts in the barrel, of 255: about five seconds of holding the trigger jams it. */
+export const STRF_CANNON_HEAT = 22.0
+
+/**
+ * Where a rider who gets out stands, in the hull frame (the middle of a standing soldier): behind the
+ * rear ramp.
+ */
+export const STRF_RAMP_EXIT = [0.0, -0.1, 4.1] as const
 
 /**
  * The Strv S (`KIND_STRV`): a turretless tank with the gun fixed in the hull. One seat: the driver steers

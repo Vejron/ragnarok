@@ -10,7 +10,7 @@ A vehicle kind touches about 15 files across Rust, TypeScript and Blender. Work 
 - **The golf cart** (`crates/shared/src/vehicles/golf_cart.rs`, commit `1e89641`): a plain car with no weapons. It is the smallest complete example; `git show 1e89641 --stat` lists every file a car touches.
 - **The technical** (`vehicles/technical.rs`): a car with a mounted machine gun, a standing gunner, custom springs and a gun that overheats. Copy from it for anything armed.
 
-Other kinds to borrow from: a turret on a hull is `tank.rs`; a gun on its own carriage is `ship_gun.rs`, `pak.rs` or `mortar.rs`; flying is `heli.rs` or `plane.rs`; legs are `walker.rs` or `hen.rs`.
+Other kinds to borrow from: a turret on a hull is `tank.rs`; a gun on its own carriage is `ship_gun.rs`, `pak.rs` or `mortar.rs`; flying is `heli.rs`, `plane.rs` or `seaplane.rs` (an `Airframe` with `floats`); legs are `walker.rs` or `hen.rs`.
 
 ## 0. Decide before you write
 

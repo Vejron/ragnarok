@@ -86,6 +86,7 @@ pub(super) const TUPP: VehicleDef = VehicleDef {
         skim: None,
         bow: 0.0,
         springs: Springs::FIRM,
+        airframe: None,
     },
     armor: ARMOR,
     drone: None,

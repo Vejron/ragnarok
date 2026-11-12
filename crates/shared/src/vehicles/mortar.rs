@@ -85,6 +85,7 @@ pub(super) const MORTAR: VehicleDef = VehicleDef {
         skim: None,
         bow: 0.0,
         springs: Springs::FIRM,
+        airframe: None,
     },
     armor: ALLOY,
     drone: None,

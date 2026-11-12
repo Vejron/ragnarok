@@ -55,13 +55,53 @@ fn bands(p: vec2f, t: f32) -> f32 {
   return (a + b + 0.6 * c) / 2.6;
 }
 
-// Five crossing swells, long to short. \`fine\` (0 to 1) fades the short ones so far water doesn't shimmer.
-fn swell(p: vec2f, t: f32, fine: f32) -> f32 {
-  return 0.45 * sin(p.x * 0.9 + p.y * 0.35 + t * 0.9)
-       + 0.35 * sin(p.x * -0.4 + p.y * 1.1 - t * 0.7)
-       + 0.2 * sin((p.x + p.y) * 1.7 + t * 1.3)
-       + fine * 0.14 * sin(p.x * 3.1 - p.y * 2.3 + t * 2.1)
-       + fine * 0.1 * sin(p.x * -2.2 - p.y * 3.7 - t * 2.6);
+// A hash of a lattice point, 0 to 1.
+fn hash2(p: vec2f) -> f32 {
+  let q = fract(p * vec2f(0.1031, 0.1030));
+  let r = q + dot(q, q.yx + 33.33);
+  return fract((r.x + r.y) * r.x);
+}
+
+// Smooth value noise, -1 to 1, and its gradient: (value, d/dx, d/dy).
+fn vnoise(p: vec2f) -> vec3f {
+  let i = floor(p);
+  let f = p - i;
+  let u = f * f * (3.0 - 2.0 * f);
+  let du = 6.0 * f * (1.0 - f);
+  let a = hash2(i);
+  let b = hash2(i + vec2f(1.0, 0.0));
+  let c = hash2(i + vec2f(0.0, 1.0));
+  let d = hash2(i + vec2f(1.0, 1.0));
+  let k = a - b - c + d;
+  let v = a + (b - a) * u.x + (c - a) * u.y + k * u.x * u.y;
+  let g = du * vec2f(b - a + k * u.y, c - a + k * u.x);
+  return vec3f(v * 2.0 - 1.0, g * 2.0);
+}
+
+// One octave of chop: noise \`scale\` cells a metre, turned by \`angle\` and drifting at \`drift\` m/s, its gradient in world metres.
+fn octave(p: vec2f, t: f32, scale: f32, angle: f32, drift: vec2f) -> vec3f {
+  let cs = vec2f(cos(angle), sin(angle));
+  let turn = mat2x2f(cs.x, cs.y, -cs.y, cs.x);
+  let n = vnoise(turn * (p + drift * t) * scale);
+  return vec3f(n.x, (transpose(turn) * n.yz) * scale);
+}
+
+// The wind's chop over the swell: four octaves, each turned and drifting its own way so nothing lines
+// up into a pattern. Height (about -2 to 2) and its slope per metre. \`fine\` and \`mid\` (0 to 1) fade the
+// small ones far off, so distant water does not shimmer.
+fn chop(p: vec2f, t: f32, fine: f32, mid: f32) -> vec3f {
+  return octave(p, t, 0.11, 0.0, vec2f(0.9, 0.35))
+       + 0.6 * octave(p, t, 0.26, 1.1, vec2f(1.1, -0.5))
+       + mid * 0.35 * octave(p, t, 0.63, 2.3, vec2f(-0.4, 1.3))
+       + fine * 0.2 * octave(p, t, 1.45, 3.7, vec2f(1.5, 0.8));
+}
+
+// Where the wind is gusting, 0 (a glassy slick) to 1 (ruffled dark water): broad patches, tens of metres
+// to a couple of hundred across, that drift slowly, so water seen from above is never the same twice.
+fn gusts(p: vec2f, t: f32) -> f32 {
+  let a = vnoise(p * 0.009 + vec2f(t * 0.0045, t * 0.002)).x;
+  let b = vnoise(p * 0.027 + vec2f(17.3 - t * 0.007, 4.1 + t * 0.005)).x;
+  return clamp(0.55 + 0.6 * a + 0.35 * b, 0.0, 1.0);
 }
 
 // What the water mirrors: a horizon-to-zenith sky with a few soft clouds and the sun's halo.
@@ -91,7 +131,14 @@ fn surface(s: Surface) -> vec4f {
   if (stream) {
     p = vec2f(flow.x - time * ${FLOW_SPEED.toFixed(2)}, flow.y * 3.0) * 2.2;
   }
-  let wave = bands(p, select(time, 0.0, stream));
+  let to = frame.cameraPos.xyz - s.world;
+  let away = length(to);
+  let fine = 1.0 - smoothstep(25.0, 110.0, away);
+  let mid = 1.0 - smoothstep(80.0, 320.0, away);
+  // Lakes and rivers: the wind's chop, stronger in the gusts. A stream keeps its flow's bands.
+  let gust = select(gusts(world, time), 0.5, stream);
+  let chopped = select(chop(world, time, fine, mid), vec3f(0.0), stream);
+  let wave = select(clamp(chopped.x * 0.5, -1.0, 1.0) * mix(0.7, 1.15, gust), bands(p, 0.0), stream);
   let band = smoothstep(0.35, 0.5, wave) * 0.5 + smoothstep(0.6, 0.7, wave) * 0.5;
 
   let deep = smoothstep(0.0, 2.2, depth);
@@ -107,19 +154,17 @@ fn surface(s: Surface) -> vec4f {
   let ground = groundLight(s.world, vec3f(0.0, 1.0, 0.0), 1.0) / PI;
   color *= ground;
 
+  // The chop's slope: rougher in a gust, nearly flat on a slick. A stream ripples along its flow.
   let e = 0.15;
-  let q = select(world * 0.8, p, stream);
-  let t = select(time, 0.0, stream);
-  let to = frame.cameraPos.xyz - s.world;
-  let fine = 1.0 - smoothstep(25.0, 110.0, length(to));
-  let h = swell(q, t, fine);
-  let grad = vec2f(swell(q + vec2f(e, 0.0), t, fine) - h, swell(q + vec2f(0.0, e), t, fine) - h) / e;
+  let h = bands(p, 0.0);
+  let flowRipple = vec2f(bands(p + vec2f(e, 0.0), 0.0) - h, bands(p + vec2f(0.0, e), 0.0) - h) / e * 0.5;
+  let grad = select(chopped.yz * mix(0.35, 1.1, gust), flowRipple, stream);
   // The real waves' slope, with the small swell's ripples over it.
   let share = waveShare(s.custom);
   let big = waves(world, params.wave.x) * share;
   // And what has passed through it: the wakes' rings and trenches, and their churn.
   let churn = wake(world) * wakeShare(s.custom);
-  var n = normalize(vec3f(-grad.x * 0.2 - big.y - churn.y, 1.0, -grad.y * 0.2 - big.z - churn.z));
+  var n = normalize(vec3f(-grad.x * 0.45 - big.y - churn.y, 1.0, -grad.y * 0.45 - big.z - churn.z));
   if (!s.front) {
     n.y = -n.y;
   }
@@ -143,6 +188,8 @@ fn surface(s: Surface) -> vec4f {
   let fresnel = 0.03 + 0.97 * pow(1.0 - ndv, 5.0);
   let lit = floor(clamp(dot(n, frame.sunDir.xyz) * 0.5 + 0.5, 0.0, 1.0) * 3.0) / 3.0;
   color *= 0.9 + 0.2 * lit;
+  // Ruffled water is a shade darker than a slick.
+  color *= mix(1.05, 0.9, gust);
   var bounce = reflect(-view, n);
   bounce.y = abs(bounce.y);
   var mirror = skyAt(bounce, time);
@@ -156,7 +203,7 @@ fn surface(s: Surface) -> vec4f {
   // Measured at the water's level under the waves, so a crest still mirrors the scene.
   let level = params.plane.y * (1.0 - smoothstep(0.2, 0.5, abs(s.world.y - big.x - churn.x - params.plane.x)));
   mirror = mix(mirror, seen.rgb, seen.a * level);
-  color = mix(color, mirror, clamp(fresnel * 1.3 + 0.12, 0.0, 0.95));
+  color = mix(color, mirror, clamp((fresnel * 1.3 + 0.12) * mix(1.1, 0.8, gust), 0.0, 0.95));
 
   let glint = pow(max(dot(reflect(-frame.sunDir.xyz, n), view), 0.0), 90.0);
   let spark = smoothstep(0.35, 0.6, glint);
@@ -164,11 +211,12 @@ fn surface(s: Surface) -> vec4f {
 
   let shore = ${FOAM_DEPTH.toFixed(2)} + 0.08 * sin(time * 1.3 + world.x * 0.6 + world.y * 0.45);
   let foam = 1.0 - smoothstep(shore * 0.55, shore, depth);
-  let lace = smoothstep(0.1, 0.55, bands(world * 2.1, time * 1.6) * 0.5 + 0.5);
+  let lacy = vnoise(world * 0.9 + vec2f(time * 0.6, -time * 0.4)).x * 0.65 + vnoise(world * 2.3 - vec2f(time * 0.9, time * 0.5)).x * 0.35;
+  let lace = smoothstep(0.1, 0.55, lacy * 0.5 + 0.5);
   color = mix(color, params.foam * ground, foam * mix(0.55, 1.0, lace));
   // Whitecaps: the high, steep crests break, in ragged patches.
   let steep = length(big.yz);
-  let cap = smoothstep(0.35, 0.7, big.x) * smoothstep(0.15, 0.4, steep) * smoothstep(0.2, 0.6, lace);
+  let cap = smoothstep(0.45, 0.9, big.x) * smoothstep(0.15, 0.4, steep) * smoothstep(0.2, 0.6, lace) * mix(0.5, 1.2, gust);
   color = mix(color, params.foam * ground, cap * 0.75);
   // A wake churns white behind what made it, breaking up as it settles.
   let wash = clamp(churn.w, 0.0, 1.0) * mix(0.5, 1.0, lace);

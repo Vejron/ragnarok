@@ -34,6 +34,10 @@ export interface TankLayout {
   gunnerHead: readonly [number, number, number] | null
   wheelRadius: number
   trackHalf: number
+  /** Camo schemes handed out by vehicle id, base coat first; the tank's WW2 ones when left out. */
+  paints?: readonly (readonly [number, number, number])[]
+  /** How far the barrel slides back when it fires, metres; the tank gun's when left out. */
+  recoilStroke?: number
 }
 
 const TANK_LAYOUT: TankLayout = { driverHead: [0, 0.55, -1.55], gunnerHead: [-0.45, 0.5, 0.3], wheelRadius: WHEEL_RADIUS, trackHalf: TANK_TRACK_HALF }
@@ -102,7 +106,8 @@ export class TankModel implements VehicleModel {
     if (!source) throw new Error('loadTankModel() must finish before tanks are created')
     const model = source.clone()
     this.root.add(model)
-    this.paint = toonMaterial({ map: camoTexture(PAINTS[id % PAINTS.length]!) })
+    const paints = layout.paints ?? PAINTS
+    this.paint = toonMaterial({ map: camoTexture(paints[id % paints.length]!) })
     model.traverse((node) => {
       if (node instanceof Mesh && node.material.name === 'paint') node.material = this.paint
       const wheel = /^wheel_([LR])_/.exec(node.name)
@@ -167,7 +172,7 @@ export class TankModel implements VehicleModel {
     this.gun.rotation.x = turret?.pitch ?? 0
     // The barrel slides back and eases home over a third of a second.
     const since = (performance.now() - this.firedAt) / 1000
-    this.gun.position.z = this.gunRest + (since < RECOIL_SECONDS ? RECOIL_STROKE * (1 - since / RECOIL_SECONDS) ** 2 : 0)
+    this.gun.position.z = this.gunRest + (since < RECOIL_SECONDS ? (this.layout.recoilStroke ?? RECOIL_STROKE) * (1 - since / RECOIL_SECONDS) ** 2 : 0)
     this.heads.forEach((head, seat) => {
       if (!head.parent) return
       const occupant = seats[seat] ?? 0

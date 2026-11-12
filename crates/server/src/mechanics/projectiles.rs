@@ -20,7 +20,7 @@ use crate::game::{Player, World};
 use shared::armor::Pen;
 use shared::consts::*;
 use shared::items::{FLARE_DRAG, FLARE_RADIUS, FLARE_SINK, Falloff, GRENADE_BLAST_RADIUS, GRENADE_BOUNCE, GRENADE_DAMAGE, GRENADE_KNOCK, GRENADE_RADIUS, def};
-use shared::protocol::{PROJECTILE_BALL, PROJECTILE_GOLF_BALL, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, ShotEvent, WEAPON_AP, WEAPON_BALL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_BULLET, WEAPON_EGG, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_SPLASH};
+use shared::protocol::{PROJECTILE_BALL, PROJECTILE_GOLF_BALL, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_CANNON, PROJECTILE_CANNON_AP, PROJECTILE_EGG, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL, ShotEvent, WEAPON_AP, WEAPON_BALL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_BULLET, WEAPON_EGG, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_SPLASH};
 use shared::quant::to_cm;
 use std::collections::BTreeMap;
 
@@ -213,6 +213,8 @@ pub fn burst_of(kind: u8) -> Option<Burst> {
         PROJECTILE_SHELL => Burst { crater: [CRATER_AP_RADIUS, CRATER_AP_DEPTH], ..blast(WEAPON_AP, AP_BLAST_RADIUS, AP_BLAST_DAMAGE, AP_BLAST_KNOCK) },
         PROJECTILE_HE => Burst { crater: [CRATER_SHELL_RADIUS, CRATER_SHELL_DEPTH], ..blast(WEAPON_SHELL, EXPLOSION_RADIUS, EXPLOSION_DAMAGE, EXPLOSION_KNOCK) },
         PROJECTILE_CANNON => Burst { crater: [CRATER_CANNON_RADIUS, CRATER_CANNON_DEPTH], ..blast(WEAPON_AUTOCANNON, CANNON_RADIUS, CANNON_DAMAGE, CANNON_KNOCK) },
+        // The armour-piercing autocannon round's small charge: about half a tank shell's.
+        PROJECTILE_CANNON_AP => Burst { crater: [CRATER_AP_RADIUS / 2.0, CRATER_AP_DEPTH], ..blast(WEAPON_AUTOCANNON, AP_BLAST_RADIUS / 2.0, AP_BLAST_DAMAGE / 2.0, AP_BLAST_KNOCK / 2.0) },
         PROJECTILE_BOMB => Burst { crater: [CRATER_BOMB_RADIUS, CRATER_BOMB_DEPTH], ..blast(WEAPON_BOMB, BOMB_RADIUS, BOMB_DAMAGE, BOMB_KNOCK) },
         PROJECTILE_MORTAR => Burst { crater: [CRATER_MORTAR_RADIUS, CRATER_MORTAR_DEPTH], ..blast(WEAPON_MORTAR, MORTAR_RADIUS, MORTAR_DAMAGE, MORTAR_KNOCK) },
         PROJECTILE_GRENADE => Burst { upward: true, crater: [CRATER_GRENADE_RADIUS, CRATER_GRENADE_DEPTH], ..blast(WEAPON_GRENADE, GRENADE_BLAST_RADIUS, GRENADE_DAMAGE, GRENADE_KNOCK) },
@@ -240,6 +242,8 @@ pub fn pen_of(kind: u8) -> Pen {
         PROJECTILE_SHELL => Pen::ap(90.0, 90.0, 1.0, 75.0),
         PROJECTILE_HE => Pen::he(15.0, 75.0),
         PROJECTILE_CANNON => Pen::he(20.0, 20.0),
+        // A 40 mm armour-piercing round: through an IFV's or a tank's side, not a tank's front.
+        PROJECTILE_CANNON_AP => Pen::ap(45.0, 35.0, 1.0, 40.0),
         PROJECTILE_BOMB => Pen::he(60.0, 250.0),
         PROJECTILE_MORTAR => Pen::he(15.0, 81.0),
         // Solid iron: through a ship's planks and a car, not a tank.
@@ -259,7 +263,7 @@ fn prefab(kind: u8, round: Round, entity: &mut bevy_ecs::world::EntityWorldMut) 
         PROJECTILE_ROCKET => {
             entity.insert((Motor { accel: ROCKET_ACCEL, top: ROCKET_MAX_SPEED }, Strikes { bodies: true, armor: false, lost_below: false }));
         }
-        PROJECTILE_SHELL | PROJECTILE_HE | PROJECTILE_CANNON | PROJECTILE_BOMB | PROJECTILE_MORTAR | PROJECTILE_BALL => {
+        PROJECTILE_SHELL | PROJECTILE_HE | PROJECTILE_CANNON | PROJECTILE_CANNON_AP | PROJECTILE_BOMB | PROJECTILE_MORTAR | PROJECTILE_BALL => {
             entity.insert((Gravity(1.0), SHELL, GunStage));
         }
         PROJECTILE_GRENADE => {
@@ -485,8 +489,12 @@ fn step_striking(world: &mut World, id: u32, dt: f32, strikes: Strikes) {
             let pen = pen_of(world.entities.get::<Projectile>(id).map_or(0, |p| p.kind));
             let attacker = world.entities.has::<Player>(s.owner).then_some(s.owner);
             match armor::armor_of(world, vid, s.position, dir, step, pen.near) {
-                Some(outcome @ Outcome::Ricochet { normal }) => {
-                    let normal = world.physics.car_pose(vid).map_or(normal, |pose| pose.world_dir(normal));
+                Some(outcome @ Outcome::Ricochet { normal, at }) => {
+                    // It comes off the plate where it met it, which on a tracked hull's swept-up end is
+                    // the face of its armour box rather than the hull it drives on.
+                    let pose = world.physics.car_pose(vid);
+                    let normal = pose.map_or(normal, |pose| pose.world_dir(normal));
+                    let point = pose.map_or(point, |pose| pose.world_point(at));
                     armor::report(world, vid, &outcome, point, dir, pen.calibre, armor::Inside::default(), attacker);
                     let out = armor::reflect(dir, normal);
                     s.velocity = out.map(|v| v * speed * armor::RICOCHET_KEEP);

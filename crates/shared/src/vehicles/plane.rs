@@ -98,7 +98,21 @@ pub const PLANE_REARM_TICKS: u32 = 3 * TICK_RATE;
 /// The pilot behind the wings, the gunner standing in the ring.
 pub const PLANE_SEAT_HEADS: [[f32; 3]; 2] = [[0.0, 0.98, -0.45], [0.0, 1.15, 0.7]];
 
-const PLANE_GUN: Fire = Fire::Bullet { length: 0.0, damage: PLANE_GUN_DAMAGE, vehicle: PLANE_GUN_VEHICLE_DAMAGE, plane: PLANE_GUN_PLANE_DAMAGE, weapon: WEAPON_MG, range: PLANE_GUN_RANGE, pen: Pen::ball(10.0, 7.0, 300.0, 7.92) };
+pub(super) const PLANE_GUN: Fire = Fire::Bullet { length: 0.0, damage: PLANE_GUN_DAMAGE, vehicle: PLANE_GUN_VEHICLE_DAMAGE, plane: PLANE_GUN_PLANE_DAMAGE, weapon: WEAPON_MG, range: PLANE_GUN_RANGE, pen: Pen::ball(10.0, 7.0, 300.0, 7.92) };
+
+/// How the triplane flies: light, quick and tight in a turn.
+const PLANE_AIRFRAME: Airframe = Airframe {
+    thrust: PLANE_THRUST,
+    drag: PLANE_DRAG,
+    stall_speed: PLANE_STALL_SPEED,
+    level_speed: PLANE_LEVEL_SPEED,
+    cruise_speed: PLANE_CRUISE_SPEED,
+    pitch_rate: PLANE_PITCH_RATE,
+    roll_rate: PLANE_ROLL_RATE,
+    yaw_rate: PLANE_YAW_RATE,
+    max_lift: PLANE_MAX_LIFT,
+    floats: None,
+};
 
 /// The engine in the nose and the fuel tank ahead of the cockpit; the crew are in the open.
 const ARMOR: Armor = Armor {
@@ -152,6 +166,7 @@ pub(super) const PLANE: VehicleDef = VehicleDef {
         skim: None,
         bow: 0.0,
         springs: Springs::FIRM,
+        airframe: Some(PLANE_AIRFRAME),
     },
     armor: ARMOR,
     drone: None,

@@ -186,6 +186,16 @@ fn road_style(highway: &str) -> Option<(f64, u8)> {
     })
 }
 
+/// The kind a road way of `kind` is drawn and driven as: a paved kind (`ROAD_MAJOR`, `ROAD_MINOR`)
+/// whose `surface` tag says it is not paved is a gravel road; anything else keeps its kind.
+fn surfaced(way: &Way, kind: u8) -> u8 {
+    let unpaved = matches!(
+        way.tags.get("surface").map(String::as_str),
+        Some("unpaved" | "gravel" | "fine_gravel" | "compacted" | "dirt" | "earth" | "ground" | "grass" | "sand" | "mud" | "pebblestone")
+    );
+    if unpaved && (kind == ROAD_MAJOR || kind == ROAD_MINOR) { ROAD_GRAVEL } else { kind }
+}
+
 /// Gauge in metres and `RAIL_*` kind of a railway way, or `None` for lines that are not drawn:
 /// underground, disused, planned, or not a track at all.
 fn rail_style(way: &Way) -> Option<(f64, u8)> {
@@ -669,7 +679,8 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
                 let deck = decks.map(|cloud| deck_returns(cloud, &source, &points, width)).unwrap_or_default();
                 bridges.push((points, width, kind, pylons, deck));
             } else {
-                roads.push((points, width, kind));
+                // A bridge keeps its class, which sets how high its deck stands (`bridge::clearance`).
+                roads.push((points, width, surfaced(way, kind)));
             }
         } else if golf.is_some() && way.tags.get("golf").and_then(|value| crate::osm_golf::surface_kind(value)).is_some() {
             // The course has its surfaces, every one of them, not only those with a landuse too.
@@ -1466,6 +1477,17 @@ mod tests {
 
     fn square(side: f64) -> Vec<P> {
         vec![[0.0, 0.0], [side, 0.0], [side, side], [0.0, side]]
+    }
+
+    #[test]
+    fn an_unpaved_residential_way_is_a_gravel_road() {
+        let way = |tags: &[(&str, &str)]| Way { id: 3, tags: tags.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), geometry: vec![] };
+        assert_eq!(surfaced(&way(&[("highway", "residential"), ("surface", "gravel")]), ROAD_MINOR), ROAD_GRAVEL);
+        assert_eq!(surfaced(&way(&[("highway", "secondary"), ("surface", "unpaved")]), ROAD_MAJOR), ROAD_GRAVEL);
+        // Paved or untagged, it stays asphalt; a footpath stays a path whatever it is surfaced with.
+        assert_eq!(surfaced(&way(&[("highway", "residential"), ("surface", "asphalt")]), ROAD_MINOR), ROAD_MINOR);
+        assert_eq!(surfaced(&way(&[("highway", "primary")]), ROAD_MAJOR), ROAD_MAJOR);
+        assert_eq!(surfaced(&way(&[("highway", "footway"), ("surface", "gravel")]), ROAD_PATH), ROAD_PATH);
     }
 
     #[test]

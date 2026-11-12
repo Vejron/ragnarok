@@ -60,7 +60,7 @@ import { BallCam } from './render/ballcam'
 import { ChaseCam } from './render/chase'
 import { PerfReadout } from './render/perf'
 import { LookWorker } from './render/lookworker'
-import { encodeRtc, KIND_MISSILE, KIND_STRV, KIND_SUBMARINE, KIND_TANK, LIMB_ALL, LIMB_ARMS, LIMB_LEGS, TURRET_ALT } from './net/codec'
+import { encodeRtc, KIND_MISSILE, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, LIMB_ALL, LIMB_ARMS, LIMB_LEGS, TURRET_ALT } from './net/codec'
 import { TankMusic } from './music'
 import { VoiceChat } from './voice'
 import { PlaneModel } from './render/plane'
@@ -839,7 +839,7 @@ export class Game {
 
     const seat = this.seat
     const view = seat ? seatView(seat.kind, seat.index) : null
-    this.music.want(seat !== null && this.player.alive && (seat.kind === KIND_TANK || seat.kind === KIND_STRV))
+    this.music.want(seat !== null && this.player.alive && (seat.kind === KIND_TANK || seat.kind === KIND_STRV || seat.kind === KIND_STRF))
     this.driven = this.driver?.pose(this.accumulator / TICK_MS, dt) ?? null
     // Everything replicated, sampled once at the render tick; each group of presenters draws its part.
     const sampled = this.store.sampleAll(renderTick)
@@ -1072,7 +1072,8 @@ export class Game {
   /** The arcs of what is in hand or in the rack, and the ghost of the cube bricks in hand would place or dig. */
   private drawAims({ seat, view, ride, position, seated, able, item }: Moment) {
     this.arcs.update({
-      motor: this.motor, arc: view?.arc ?? null, groundAt: (x, z) => this.scene.groundAt(x, z),
+      // Open water is as good as the ground to a bomb rack: a seaplane afloat is down.
+      motor: this.motor, arc: view?.arc ?? null, groundAt: (x, z) => Math.max(this.scene.groundAt(x, z), this.waters?.surfaceAt(x, z, this.waveClock) ?? NO_WATER),
       vehicle: seat && ride ? { model: this.vehicles.model(seat.vehicle), motion: this.vehicles.fx(seat.vehicle), bombs: ride.arms?.bombs ?? 0 } : null,
       grenade: !seated && able && item?.kind === 'grenade' ? { eye: [position[0]!, position[1]! + this.eyeHeight(), position[2]!], yaw: this.input.yaw, pitch: this.input.pitch } : null,
     })
@@ -1169,7 +1170,7 @@ export class Game {
       limbs: player.body(),
       ammo: gauges?.includes('ammo') ? ((ride?.turret?.flags ?? 0) & TURRET_ALT ? 'HE' : 'AP') : null,
       reload: this.reloaded(now, ride ? rideView(ride.kind).reload : SHELL_COOLDOWN_TICKS),
-      ...(gauges?.includes('pintle') ? roofGun(ride?.pintle ?? null) : gauges?.includes('heat') ? mountGun(ride?.turret ?? null) : cockpit(gauges?.includes('cockpit') ? (ride?.arms ?? null) : null, aviator, seat ? this.vehicles.fx(seat.vehicle) : undefined)),
+      ...(gauges?.includes('pintle') ? roofGun(ride?.pintle ?? null) : gauges?.includes('heat') ? mountGun(ride?.turret ?? null) : cockpit(gauges?.includes('cockpit') ? (ride?.arms ?? null) : null, aviator, seat ? this.vehicles.fx(seat.vehicle) : undefined, ride ? rideView(ride.kind).stall : undefined)),
       air: gauges?.includes('air') ? (this.driver?.thrust?.air ?? null) : gauges?.includes('wind') && seat ? this.sailing(seat.vehicle, now) : null,
       stamina: !seated && able ? { left: 1 - local.spent / STAMINA_FULL, winded: local.winded } : null,
       breath: !seated && player.alive && player.breath < 1 ? player.breath : null,

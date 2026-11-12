@@ -41,7 +41,7 @@ Bot crews stay two-man.
 
 `physics/vehicle.rs` now describes a vehicle by a `Spec` (box size, wheel layout, density, engine, steering). The car's numbers are unchanged. The tank:
 
-- A 2.6 × 1.0 × 5.2 m hull at 1000 kg/m³ (13.5 t, ten times a jeep, so it throws cars aside), six wheels on three axles (the suspension tuning scales with mass), 88 kN of engine over all wheels, top speed 12 m/s.
+- A 2.6 × 1.0 × 5.2 m hull at 1000 kg/m³ (13.5 t, ten times a jeep, so it throws cars aside), six wheels on three axles (the suspension tuning scales with mass), 100 kN of engine over its road wheels (88 kN until the tracks were reworked, below), top speed 12 m/s.
 - **No steered wheels.** Skid steering is done by setting the yaw rate directly: it ramps towards `±1.1 rad/s × stick` at 3 rad/s², but only while at least one wheel touches the ground. The wheels' side grip fights any spin every tick, so the rate is kept in the car's state and written back each time, rather than nudged from whatever grip left. With the stick released, grip and damping stop the turn.
 - The handbrake and brake act on all six wheels (a car only brakes its rear wheels with the handbrake).
 
@@ -167,3 +167,25 @@ Known limits:
 ```
 /Applications/Blender.app/Contents/MacOS/Blender -b -P tools/vehicles/build_tank.py
 ```
+
+## Tracks over rough ground
+
+Later, the tracked kinds (the tank, the Strv S and the Strf 90) were reworked. They used to stop dead against a hump or a step that a tank should drive over, and swung round downhill on a side slope. The cause was the plain box hull: its blunt nose and tail met rising ground before the wheels under them did, and nothing held a track's heading.
+
+- **A swept hull.** A tracked hull's underside sweeps up at both ends, from the bottom to half its height (`hull` in `crates/sim/src/vehicle.rs`), as a track runs up round its sprocket and idler. The sweep runs back 0.9 of the half height (`TRACKED_SWEEP_RUN`), so it rises more steeply than 45°. The hull keeps the box's mass and balance, and its belly's friction is 0.1 rather than 0.4, so it slides over what it touches instead of dragging on it.
+- **Track end wheels.** Each track has a ray-cast wheel at the nose and one at the tail besides its road wheels. Each is hung from the hull's top and rides `TRACK_END_CLEAR` (0.25 m) above flat ground, so it touches nothing on the flat and the ride is unchanged. Where the ground rises under the nose or the tail it bites: the spring lifts that end, and the engine pulls through it, up onto a hump or a step. The engine's pull is still shared out over the road wheels only.
+- **Holding the heading.** A tracked hull on the ground holds the yaw rate its driver asks for, none included. Before, it was left free when the stick was centred, and gravity swung it round downhill on a side slope.
+- **Wheel rays** of a tracked kind skip the trees its hull goes through, as the hull does.
+- **The tank's engine** went from 88 to 100 kN (about 7.4 m/s²), so it grinds up a 35° slope from a standing start. Its top speed is still 12 m/s.
+
+Armour is still laid out on the box. `Physics::armor_strike` judges a shot into a tracked hull by the face of the box it comes in through, where that face is, not by the swept surface: a sweep's slanted face would otherwise be judged belly plate. A ricochet comes off the plate from that point (`Outcome::Ricochet::at`).
+
+What they manage now, measured by the tests in `crates/sim/src/vehicle/tests.rs`:
+
+| | Tank | Strv S | Strf 90 |
+|---|---|---|---|
+| Wall it climbs (`over_the_step`) | 0.8 m (was 0.3) | 1.0 m (was 0.6) | 1.0 m (was 0.5) |
+| 1 m humps every 10 m | about 7 m/s, its slowest 4.6 (stopped at the first one before) | about 9 m/s | about 9 m/s |
+| 35° slope from a standing start | 7 m/s | 11 m/s | 12 m/s |
+| Heading after 6 s across a 15° side slope | within 0.1 rad | within 0.1 rad | within 0.1 rad |
+

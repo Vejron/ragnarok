@@ -27,16 +27,18 @@ use shared::protocol::{DAMAGE_PARTS, DAMAGE_SLOTS, DAMAGE_WHEELS, THRUST_AIR, TH
 
 mod dive;
 mod flight;
+mod floats;
 mod sail;
 mod spec;
 mod water;
 
 use flight::{LOITER_GLIDE, MISSILE_GLIDE, assist, boost, flap, fly, fly_drone, glide, pull, roll_plane, thrust, walk, wing};
 use dive::dive;
+use floats::float;
 use sail::sail;
 use water::{wade, water_under};
 pub use spec::half_extents;
-pub(super) use spec::{Buttons, Lift, Role, Shape, Solid, Spec, spec};
+pub(super) use spec::{Airframe, Buttons, Floats, Lift, Role, Shape, Solid, Spec, spec};
 
 
 /// How quickly a tank's yaw rate follows the stick, rad/s².
@@ -81,6 +83,16 @@ const AIR_ROLL: f32 = 3.0;
 /// Side grip of the rear wheels and the tyres' friction, as `WheelTuning` sets them.
 const SIDE_GRIP: f32 = 1.0;
 const FRICTION_SLIP: f32 = 12.0;
+/// How high a track's end wheels ride over flat ground, metres: ground rising more than this under the
+/// nose or the tail lifts it.
+const TRACK_END_CLEAR: f32 = 0.25;
+/// How far back from the nose (and forward from the tail) a tracked hull's underside sweeps up, as a
+/// share of its half height. Under 1, so the sweep rises more steeply than 45°.
+const TRACKED_SWEEP_RUN: f32 = 0.9;
+/// Friction of a tracked hull's belly, against 0.4 for anything else's.
+const TRACKED_HULL_FRICTION: f32 = 0.1;
+/// Gravity, m/s², for the sag of a vehicle's springs under its own weight.
+const GRAVITY_SAG: f32 = 9.81;
 /// How far a wrecked wheel points off straight, radians: a left wheel turns left, a right one right.
 const TOE_MAX: f32 = 0.12;
 /// Share of its side grip and friction a wrecked wheel loses.
@@ -375,6 +387,24 @@ impl CarPose {
     }
 }
 
+/// How many wheels a vehicle stands on: two to an axle. A tracked one has a track's end wheels
+/// besides, which the engine's pull is not shared out over.
+/// Whether a vehicle turns on the spot on tracks rather than steering its wheels.
+fn tracked(spec: &Spec) -> bool {
+    spec.turn_rate > 0.0 && spec.steer_lock == 0.0 && spec.lift.wheeled()
+}
+
+fn road_wheels(spec: &Spec) -> usize {
+    2 * spec.axles.len()
+}
+
+/// Where a wheeled vehicle's hull centre settles over flat ground, metres: its wheels' reach below the
+/// hard points, less the sag under its weight on firm springs. Close enough to hang a track's end wheels from.
+fn ride_height(spec: &Spec) -> f32 {
+    let sag = GRAVITY_SAG / (road_wheels(spec) as f32 * spec.springs.stiffness);
+    -spec.hard_point_y + spec.suspension_rest + spec.wheel_radius - sag
+}
+
 /// Whether a vehicle of `kind` is too heavy to be stopped by a tree (a tank, a Strv): it goes through
 /// the trunk, felling it.
 pub(crate) fn heavy(kind: u8) -> bool {
@@ -405,10 +435,22 @@ fn turned(spec: &Spec, steer: f32, speed: f32) -> f32 {
     if lock > 0.0 { steer.abs() / lock } else { 0.0 }
 }
 
-/// A car's hull: its box, with the front of the underside swept up if it has a `nose`, or its sides
-/// tapered in to a stem if it has a `bow`.
-pub(crate) fn hull(spec: &Spec) -> ColliderBuilder {
+/// A vehicle's hull: its box, with the front of the underside swept up if it has a `nose`, or its
+/// sides tapered in to a stem if it has a `bow`. A tracked one's underside sweeps up at both ends to
+/// half its height at the nose and the tail, as its tracks run up round the sprocket and the idler: it
+/// rides up onto a bump or a step rather than ramming it. The sweeps rise more than they run, so a
+/// shot into one still meets front or rear armour, not the belly (`Zone::of`).
+pub(crate) fn hull(kind: u8) -> ColliderBuilder {
+    let spec = spec(kind);
     let [hx, hy, hz] = spec.half_extents;
+    if heavy(kind) {
+        let run = TRACKED_SWEEP_RUN * hy;
+        let mut corners = Vec::new();
+        for x in [-hx, hx] {
+            corners.extend([[x, hy, -hz], [x, hy, hz], [x, 0.0, -hz], [x, 0.0, hz], [x, -hy, run - hz], [x, -hy, hz - run]].map(Vector::from));
+        }
+        return ColliderBuilder::convex_hull(&corners).expect("a tracked hull is not flat");
+    }
     if spec.bow > 0.0 {
         let stem = hx * STEM;
         let corners: Vec<Vector> = [-hy, hy]
@@ -509,8 +551,10 @@ impl Physics {
             .ccd_enabled(is_drone(kind))
             .build();
         let body = self.bodies.insert(body);
-        let mut chassis = hull(spec).friction(0.4);
-        chassis = if spec.com_drop > 0.0 {
+        // A tracked hull's belly slides over what it rests on rather than dragging on it.
+        let mut chassis = hull(kind).friction(if heavy(kind) { TRACKED_HULL_FRICTION } else { 0.4 });
+        // A tracked hull keeps the mass and balance of its whole box, swept-up ends and all.
+        chassis = if spec.com_drop > 0.0 || heavy(kind) {
             // The box's own mass and inertia, with the centre of mass lowered.
             let mass = spec.density * 8.0 * hx * hy * hz;
             let inertia = Vector::new(hy * hy + hz * hz, hx * hx + hz * hz, hx * hx + hy * hy) * (mass / 3.0);
@@ -549,6 +593,20 @@ impl Physics {
                     spec.wheel_radius,
                     &tuning,
                 );
+            }
+        }
+        // A track's run up round its sprocket and idler: a wheel at each end of each track, hung from
+        // the hull's top and riding clear of flat ground, that only bites where the ground rises under
+        // the nose or the tail. It lifts that end and pulls it on, over a bump or up a step.
+        if heavy(kind) {
+            let [_, hy, hz] = spec.half_extents;
+            let ride = ride_height(spec);
+            let rest = (hy + ride - TRACK_END_CLEAR - spec.wheel_radius).max(0.0);
+            let end = WheelTuning { max_suspension_travel: rest, ..tuning };
+            for z in [-hz, hz] {
+                for side in [-1.0, 1.0] {
+                    controller.add_wheel(Vector::new(side * spec.track_half, hy, z), Vector::new(0.0, -1.0, 0.0), Vector::new(1.0, 0.0, 0.0), rest, spec.wheel_radius, &end);
+                }
             }
         }
         self.cars.insert(id, Car { spec, body, collider, extra, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW, towed_by: None, tank: spec.tank, firing: 0, mounted: None });
@@ -755,7 +813,7 @@ impl Physics {
             let boosted = car.spec.buttons == Buttons::Sled && boosting(controls, car.tank);
             let (power, top) = if boosted { (SNOWMOBILE_BOOST_POWER, SNOWMOBILE_BOOST_SPEED) } else { (1.0, 1.0) };
             let headroom = if controls.throttle > 0.0 { pull(speed, car.spec.max_speed * top * car.condition.speed) } else { 0.5 };
-            (controls.throttle * power * car.spec.engine_force / car.controller.wheels().len() as f32 * headroom * car.condition.power, 0.0)
+            (controls.throttle * power * car.spec.engine_force / road_wheels(car.spec) as f32 * headroom * car.condition.power, 0.0)
         };
         let handbrake = if controls.handbrake { BRAKE_PER_KG * mass } else { 0.0 };
 
@@ -794,8 +852,11 @@ impl Physics {
             wheel.brake = if gone { 0.0 } else if front { brake } else { brake.max(handbrake).max(drag) };
             wheel.side_friction_stiffness = if front { SIDE_GRIP } else if drift { DRIFT_GRIP } else { rear_grip } * (1.0 - WHEEL_GRIP_LOSS * wear);
             wheel.friction_slip = FRICTION_SLIP * (1.0 - WHEEL_SLIP_LOSS * wear);
-            wheel.radius = if gone { LOST_WHEEL_RADIUS } else { spec.wheel_radius };
-            wheel.suspension_rest_length = if gone { 0.0 } else { spec.suspension_rest };
+            // A track's end wheels keep the reach they were hung with.
+            if index < road_wheels(spec) {
+                wheel.radius = if gone { LOST_WHEEL_RADIUS } else { spec.wheel_radius };
+                wheel.suspension_rest_length = if gone { 0.0 } else { spec.suspension_rest };
+            }
         }
     }
 
@@ -929,8 +990,11 @@ impl Physics {
             dive(body, car.spec, car.flight, car.condition, water.as_ref(), dt);
         }
         for car in self.cars.values_mut().filter(|car| car.spec.lift.wheeled()) {
-            // Wheel rays must not hit their own chassis.
-            let filter = QueryFilter::default().exclude_rigid_body(car.body);
+            // Wheel rays must not hit their own chassis, nor a tracked hull's the trees it goes through.
+            let mut filter = QueryFilter::default().exclude_rigid_body(car.body);
+            if tracked(car.spec) {
+                filter = filter.groups(super::plows_trees());
+            }
             let queries = self.broad_phase.as_query_pipeline_mut(
                 self.narrow_phase.query_dispatcher(),
                 &mut self.bodies,
@@ -948,9 +1012,15 @@ impl Physics {
         for (id, car) in self.cars.iter_mut().filter(|(_, car)| car.spec.lift.wheeled()) {
             let mut grounded = car.controller.wheels().iter().any(|wheel| wheel.raycast_info().is_in_contact);
             let Some(body) = self.bodies.get_mut(car.body) else { continue };
-            if car.spec.lift == Lift::Wing {
+            if let Some(airframe) = car.spec.airframe.as_ref().filter(|_| car.spec.lift == Lift::Wing) {
                 body.reset_forces(false);
-                wing(body, car.flight, car.condition.power, grounded, self.bound, floor(id), dt);
+                // A seaplane's pontoons carry it on open water, which is as good as being on the ground.
+                if let Some(floats) = &airframe.floats
+                    && let Some(water) = water_under(&self.waters, waves, body, car.spec)
+                {
+                    grounded |= float(body, airframe, floats, car.flight, car.condition, &water, dt);
+                }
+                wing(body, airframe, car.flight, car.condition.power, grounded, self.bound, floor(id), dt);
                 continue;
             }
             // Open water holds it up while it skims, which is as good as being on the ground.
@@ -975,7 +1045,10 @@ impl Physics {
                     car.firing = thrust(body, car.flight, tank, grounded, floor(id), dt);
                 }
             }
-            if car.turn == 0.0 || !grounded {
+            // A tracked hull on the ground holds whatever turn its driver asks for, none included: its
+            // tracks keep it from swinging round downhill on a side slope. Anything else is left alone
+            // when not turned.
+            if !grounded || (car.turn == 0.0 && !tracked(car.spec)) {
                 car.spin = 0.0;
                 continue;
             }
@@ -1181,10 +1254,25 @@ impl Physics {
         let ray = Ray::new(Vector::from(origin), Vector::from(dir));
         let (collider, hit) = queries.cast_ray_and_get_normal(&ray, max, true)?;
         let to_local = body.rotation().inverse();
+        let solid = car.extra.iter().position(|&handle| handle == collider).map(|index| index as u8);
+        // A tracked hull's armour is laid out on its box, not on the swept-up ends it drives on: a shot
+        // into one meets the face of the box it comes in through, where that face is. The box is cast
+        // from a box's breadth back, as the shot may already be inside it but short of the hull.
+        if solid.is_none() && tracked(car.spec) {
+            let half = Vector::from(car.spec.half_extents);
+            let back = 2.0 * half.length();
+            let along = to_local * Vector::from(dir);
+            let start = to_local * (Vector::from(origin) - body.translation());
+            let face = Cuboid::new(half).cast_local_ray_and_get_normal(&Ray::new(start - along * back, along), max + back, true);
+            if let Some(face) = face.filter(|face| face.normal.length_squared() > 0.5) {
+                let distance = (face.time_of_impact - back).max(0.0);
+                return Some(Strike { distance, solid, normal: face.normal.into(), point: (start - along * back + along * face.time_of_impact).into() });
+            }
+        }
         let point = Vector::from(origin) + Vector::from(dir) * hit.time_of_impact;
         Some(Strike {
             distance: hit.time_of_impact,
-            solid: car.extra.iter().position(|&handle| handle == collider).map(|index| index as u8),
+            solid,
             normal: (to_local * hit.normal).into(),
             point: (to_local * (point - body.translation())).into(),
         })

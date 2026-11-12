@@ -581,6 +581,12 @@ impl Physics {
         self.waters.level_at(x, z)
     }
 
+    /// The height of the open water's surface at `(x, z)` as it is this tick, waves and all, metres;
+    /// `None` where it is dry.
+    pub fn water_surface(&self, x: f32, z: f32) -> Option<f32> {
+        self.waters.surface(x, z, shared::waves::time(self.tick)).map(|surface| surface.height)
+    }
+
     /// Test helper: stills the waves on all open water.
     #[cfg(any(test, feature = "testing"))]
     pub fn calm_waters(&mut self) {

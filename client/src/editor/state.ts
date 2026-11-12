@@ -46,6 +46,8 @@ export const cell = ref(NEW_WORLD_CELL)
 export const winter = ref(false)
 /** Winter: forest paths and tracks groomed for skiing too. */
 export const groomedPaths = ref(false)
+/** Water from OpenStreetMap (`"osm_water": true` in area.json), which has the sea; Hydrografi does not. */
+export const osmWater = ref(false)
 export const dirty = ref(false)
 export const job = ref<Job>()
 export const message = ref('')
@@ -283,6 +285,7 @@ export async function openWorld(world: string) {
   cell.value = loaded.cell ?? IMPORTER_CELL
   winter.value = loaded.theme === 'winter'
   groomedPaths.value = !!loaded.groomed_paths
+  osmWater.value = !!loaded.osm_water
   placements.value = { spawns: loaded.spawns ?? [], vehicles: loaded.vehicles ?? [], items: loaded.items ?? [], bots: loaded.bots ?? [], animals: loaded.animals ?? [] }
   setTiles(new Map(tiles.map((t) => [tileKey(t.gx, t.gy), t])))
   dirty.value = false
@@ -323,7 +326,7 @@ export async function save(): Promise<boolean> {
   }
   name.value = world
   try {
-    await api.save(world, region.value, [...painted.value.values()], cell.value, winter.value, groomedPaths.value, placements.value)
+    await api.save(world, region.value, [...painted.value.values()], cell.value, winter.value, groomedPaths.value, osmWater.value, placements.value)
     dirty.value = false
     message.value = `Saved ${world}.`
     await loadWorlds()
@@ -355,6 +358,7 @@ export function newWorld() {
   cell.value = NEW_WORLD_CELL
   winter.value = false
   groomedPaths.value = false
+  osmWater.value = false
   placements.value = emptyPlacements()
   setTiles(new Map())
   dirty.value = false

@@ -240,7 +240,9 @@ Paint 256 m tiles on OpenStreetMap, name the world and save it (`worlds/<name>/a
 `{gx, gy}` tiles of the global grid). **Download** fills the importer's cache for the blocks the
 tiles lie in, **Generate world** runs `osm-import --area` on it, and **use** makes it the active
 world: restart the server (it reads `worlds/active.json`, unless `RAGNAROK_WORLD` is set) and reload the
-game (in dev the client reads the same file; `VITE_WORLD_BASE` overrides).
+game (in dev the client reads the same file; `VITE_WORLD_BASE` overrides). A Swedish world on the
+coast wants **Sea (water from OpenStreetMap)** ticked in the World panel (`"osm_water": true`):
+Hydrografi has lakes and rivers but no sea.
 
 How it works:
 
@@ -354,7 +356,10 @@ One Overpass query for the bounding box returns buildings, highways, railways an
 leisure, riverbanks) as ways with inline geometry, plus multipolygon relations for cover. Heights
 come from the `height` tag, else `building:levels` × 3 + 1, else a guess of 6–12 m. `natural=wetland` is
 marsh, by its `wetland` tag: `bog`, `swamp` and `fen` are `COVER_MARSH_DEEP`, `wet_meadow` is
-`COVER_MARSH_FAINT` and the rest `COVER_MARSH` (docs/ORIENTEERING.md has how the client draws them). Overpass
+`COVER_MARSH_FAINT` and the rest `COVER_MARSH` (docs/ORIENTEERING.md has how the client draws them). A
+major or minor road whose `surface` tag is unpaved (`gravel`, `dirt`, `compacted`, `unpaved` and so on) is
+`ROAD_GRAVEL`: drawn as gravel and driven as dirt rather than asphalt. A bridge keeps its class, which
+sets its deck's height. Overpass
 often answers 504; the importer tries every endpoint, four rounds, 15 s apart, for each square. A box larger than `--overpass-chunk` is fetched as a grid of squares; ways and relations that cross a border come back twice and are merged by id.
 
 ### Railways

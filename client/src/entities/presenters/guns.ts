@@ -6,13 +6,14 @@ import { PakModel } from '@/render/pak'
 import { ShipGunModel } from '@/render/shipgun'
 import { seaWind } from '@/render/ship'
 import { PlaneModel } from '@/render/plane'
+import { StrfModel } from '@/render/strf'
 import { StrvModel } from '@/render/strvs'
 import { TankModel } from '@/render/tank'
 import { TechnicalModel } from '@/render/technical'
 import { TuppModel } from '@/render/tupp'
 import { WalkerModel } from '@/render/walker'
 import { arcTime } from '@/render/rounds'
-import { HELI_GUN_LENGTH, MORTAR_BARREL_LENGTH, PAK_BARREL_LENGTH, SHIP_GUN_BARREL_LENGTH, PLANE_GUN_RANGE, STRV_BARREL_LENGTH, TANK_BARREL_LENGTH, TANK_MG_LENGTH, TANK_MG_RANGE, TECHNICAL_MG_LENGTH, TECHNICAL_MG_RANGE, TECHNICAL_MG_SEAT, WALKER_GUN_LENGTH } from '@/sim/consts'
+import { HELI_GUN_LENGTH, MORTAR_BARREL_LENGTH, PAK_BARREL_LENGTH, SHIP_GUN_BARREL_LENGTH, PLANE_GUN_RANGE, STRF_BARREL_LENGTH, STRV_BARREL_LENGTH, TANK_BARREL_LENGTH, TANK_MG_LENGTH, TANK_MG_RANGE, TECHNICAL_MG_LENGTH, TECHNICAL_MG_RANGE, TECHNICAL_MG_SEAT, WALKER_GUN_LENGTH } from '@/sim/consts'
 import type { Frame, Presenter } from '../presenter'
 import type { Entity } from '../units'
 import type { VehicleWorld, Vehicles } from './vehicles'
@@ -70,7 +71,7 @@ export class Turrets implements Presenter<Frame> {
     // A walker's barrels fire in turn: the counter has already gone up for this shot.
     const { origin, direction } = gun instanceof WalkerModel ? gun.barrel((shots - 1) % 2 === 0 ? -1 : 1) : gun.barrel()
     gun.recoil()
-    const length = gun instanceof HeliModel ? HELI_GUN_LENGTH : gun instanceof WalkerModel ? WALKER_GUN_LENGTH : gun instanceof StrvModel ? STRV_BARREL_LENGTH : gun instanceof MortarModel ? MORTAR_BARREL_LENGTH : gun instanceof PakModel ? PAK_BARREL_LENGTH : gun instanceof ShipGunModel ? SHIP_GUN_BARREL_LENGTH : TANK_BARREL_LENGTH
+    const length = gun instanceof HeliModel ? HELI_GUN_LENGTH : gun instanceof WalkerModel ? WALKER_GUN_LENGTH : gun instanceof StrvModel ? STRV_BARREL_LENGTH : gun instanceof StrfModel ? STRF_BARREL_LENGTH : gun instanceof MortarModel ? MORTAR_BARREL_LENGTH : gun instanceof PakModel ? PAK_BARREL_LENGTH : gun instanceof ShipGunModel ? SHIP_GUN_BARREL_LENGTH : TANK_BARREL_LENGTH
     const muzzle = origin.clone().addScaledVector(direction, length)
     if (gun instanceof ShipGunModel) {
       // Black powder: fire, and a bank of dark smoke that drifts off with the wind over the water.
@@ -82,7 +83,7 @@ export class Turrets implements Presenter<Frame> {
       this.world.lights.flash(muzzle.x, muzzle.y, muzzle.z, { color: 0xffc060, intensity: 4, radius: 14, life: 0.09 })
     }
     if (gun instanceof WalkerModel) this.world.sounds.laser([muzzle.x, muzzle.y, muzzle.z])
-    else this.world.sounds.cannon([muzzle.x, muzzle.y, muzzle.z], gun instanceof TankModel)
+    else this.world.sounds.cannon([muzzle.x, muzzle.y, muzzle.z], gun instanceof TankModel && !(gun instanceof StrfModel))
     // Who fires it: the driver of a walker, a Strv S or a gun on a carriage, the gunner of the rest.
     const gunner = gun instanceof WalkerModel || gun instanceof StrvModel || gun instanceof MortarModel || gun instanceof PakModel || gun instanceof ShipGunModel ? 0 : 1
     if (frame.localId !== null && seats[gunner] === frame.localId) this.world.ownShot()

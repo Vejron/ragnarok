@@ -129,6 +129,18 @@ The style is flat, bright and few-banded, not physically based.
   points the reflection and glint at the palette's sky and sun.
 - **Roads** are draped ribbons that follow the ground every metre, with a casing and fill layer, and
   round discs at joints. They share the terrain's ramp and sit over it by a depth bias per layer.
+  Paved roads (`ROAD_MAJOR`, `ROAD_MINOR`) are asphalt in summer (`MAT_ASPHALT`, `asphalt.wgsl.ts`):
+  dark grey with broad mottling, mended patches with a sealed seam on a 6 m grid, grit and the odd
+  crack close up (faded by how many metres a pixel spans, so nothing shimmers far off) and an edge
+  that crumbles a few per cent into the verge. Everything is in world space, so it runs on unbroken
+  across tile borders and the joint discs. Their casing is a gravel shoulder 0.6 m each side, drawn
+  with the worn paths' look (`MAT_WORN`). Worn paths, shoulders and asphalt fade into the ground
+  beside them rather than end on a line: their ribbons sample the tile's cover map (`MAT_GROUND`, at
+  uvs the tile's terrain uses, toned as the terrain is) and carry their half width, so a path's last
+  0.6 m and a shoulder go over to the ground's own colour and the asphalt's last half metre is
+  dusty with it. How far across a ribbon a vertex is comes from how deep into the whole surface of
+  its kind it is (`Reach`), so where roads overlap at a junction, an edge lying inside another road
+  is drawn as the middle of the road. In winter roads are ploughed snow, as before.
 - **Trees** are instanced: one `InstancedMesh` per archetype per tile (at most ten draw calls per
   tile), built from merged unit-space parts with vertex colours. The parts are low-poly: a crown
   sphere is a 42-vertex icosphere, a cone is seven-sided, trunks have six sides. Normals are smoothed

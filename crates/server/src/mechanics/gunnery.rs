@@ -160,7 +160,8 @@ fn work(world: &mut World, vid: u32, def: &MountDef, mut mount: Mount, pose: &Ca
 fn refill(world: &World, mount: &mut Mount, ammo: Ammo, pose: &CarPose) {
     match ammo.refill {
         Refill::Parked(ticks) => {
-            let speed = vec3::length(pose.velocity);
+            // Over the ground or the water: afloat, it still heaves with the swell.
+            let speed = pose.velocity[0].hypot(pose.velocity[2]);
             let parked = speed < 0.5 && height(world, pose) < 2.0;
             mount.refill = if parked { mount.refill + 1 } else { 0 };
             if mount.refill >= ticks {
@@ -177,10 +178,12 @@ fn refill(world: &World, mount: &mut Mount, ammo: Ammo, pose: &CarPose) {
     }
 }
 
-/// How high the vehicle at `pose` is over the ground.
+/// How high the vehicle at `pose` is over the ground, or over the water where that lies above it: a
+/// seaplane afloat is down, however deep the lake under it and however the swell lifts it.
 fn height(world: &World, pose: &CarPose) -> f32 {
     let [x, y, z] = pose.position;
-    y - world.map.ground.height_at(x, z)
+    let ground = world.map.ground.height_at(x, z);
+    y - world.physics.water_surface(x, z).map_or(ground, |surface| surface.max(ground))
 }
 
 /// Whether a mount can be aimed and fired at all: without this it holds still.

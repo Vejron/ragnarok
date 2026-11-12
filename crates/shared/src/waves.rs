@@ -19,13 +19,15 @@ pub struct Swell {
     pub phase: f32,
 }
 
-/// A big, lazy swell: two long ones from the south-west, crossing a little and heaving the water
-/// slowly, with a faint shorter pair on them so it is never quite glassy.
-pub const SWELLS: [Swell; 4] = [
-    Swell { heading: 0.3, length: 90.0, height: 0.4, cycles: 7, phase: 0.0 },
-    Swell { heading: -0.2, length: 60.0, height: 0.25, cycles: 8, phase: 1.7 },
-    Swell { heading: 0.7, length: 25.0, height: 0.04, cycles: 12, phase: 4.1 },
-    Swell { heading: -0.9, length: 13.0, height: 0.012, cycles: 17, phase: 2.6 },
+/// A big swell with a chop on it: two long ones from the south-west, crossing a little and heaving
+/// the water, and three shorter, quicker ones across them (each running about as fast as a real wave
+/// of its length) so the surface is never smooth between the crests.
+pub const SWELLS: [Swell; 5] = [
+    Swell { heading: 0.3, length: 90.0, height: 0.48, cycles: 7, phase: 0.0 },
+    Swell { heading: -0.2, length: 60.0, height: 0.3, cycles: 8, phase: 1.7 },
+    Swell { heading: 0.7, length: 25.0, height: 0.08, cycles: 15, phase: 4.1 },
+    Swell { heading: -0.9, length: 13.0, height: 0.035, cycles: 21, phase: 2.6 },
+    Swell { heading: 1.6, length: 7.5, height: 0.018, cycles: 29, phase: 0.9 },
 ];
 
 /// How peaked the crests are: a swell's shape is `((1 + cos θ) / 2)^PEAK`, narrow crests over broad,
@@ -95,17 +97,17 @@ mod tests {
     }
 
     #[test]
-    fn the_waves_loop_and_are_a_gentle_swell() {
+    fn the_waves_loop_and_are_a_swell_with_a_chop() {
         assert_eq!(wave(5.0, 9.0, time(LOOP_TICKS + 30)), wave(5.0, 9.0, time(30)));
         let (start, end) = (wave(5.0, 9.0, 0.0), wave(5.0, 9.0, LOOP_SECONDS as f32));
         assert!((start.height - end.height).abs() < 1e-3, "every swell runs whole cycles in a loop");
         let crest = SWELLS.iter().map(|swell| swell.height).sum::<f32>() * 2.0 * (1.0 - PEAK_MEAN);
-        assert!(crest > 0.8 && crest < 1.3, "crests stand {crest} m over the level");
+        assert!(crest > 1.4 && crest < 2.1, "crests stand {crest} m over the level");
         let mean = (0..LOOP_TICKS).map(|tick| wave(5.0, 9.0, time(tick)).height).sum::<f32>() / LOOP_TICKS as f32;
         assert!(mean.abs() < 1e-3, "the water keeps its level, not {mean}");
-        // Big but calm: nowhere does the surface slope more than about 1 in 7.
+        // Choppy but no breakers: nowhere does the surface slope more than about 1 in 3.
         let steepest = (0..400).map(|k| wave(k as f32 * 1.3, k as f32 * 0.7, k as f32 * 0.37)).map(|w| w.slope[0].hypot(w.slope[1])).fold(0.0, f32::max);
-        assert!(steepest < 0.15, "slopes reach {steepest}");
+        assert!(steepest < 0.3, "slopes reach {steepest}");
         assert_eq!(shore(0.1), 0.0);
         assert_eq!(shore(3.0), 1.0);
     }

@@ -57,7 +57,7 @@ pub const HIT_DEER: u8 = 4;
 pub const OBJ_TREE: u8 = 0;
 pub const OBJ_BUILDING: u8 = 1;
 
-pub use crate::consts::{KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SOLDIER, KIND_SPORTS, KIND_STAG, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TUPP, KIND_WALKER, KIND_ZOMBIE};
+pub use crate::consts::{KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SOLDIER, KIND_SPORTS, KIND_STAG, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TUPP, KIND_WALKER, KIND_ZOMBIE};
 
 /// Whether `kind` is a drone: flown from a remote seat by whoever launched it (see the `Drones` mechanic).
 pub fn is_drone(kind: u8) -> bool {
@@ -234,6 +234,9 @@ pub const PROJECTILE_BALL: u8 = 10;
 /// A golf ball: it flies, bounces and rolls, rests where it stops, and is struck by a club
 /// (`Golf`). It hurts nobody and never bursts.
 pub const PROJECTILE_GOLF_BALL: u8 = 11;
+/// An autocannon's armour-piercing round: flies as `PROJECTILE_CANNON` does, goes through light armour
+/// and bursts small behind it.
+pub const PROJECTILE_CANNON_AP: u8 = 12;
 
 /// A message's field: its name, its Rust type and its unit (`UNITS`), or `""` for a count, a set of
 /// bits, an id or text, which have none.

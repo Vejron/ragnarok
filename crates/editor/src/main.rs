@@ -42,6 +42,11 @@ struct Area {
     /// Winter: groom the forest paths and tracks too (`groomed_paths` in the importer).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     groomed_paths: bool,
+    /// Take the water from OpenStreetMap (`osm_water` in the importer), for a world on the coast:
+    /// Hydrografi has no sea. Absent from the page, the file's own is kept; `false` is written as
+    /// nothing at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    osm_water: Option<bool>,
     /// Hand-placed spawn points, vehicles, items, bots and animal herds (latitude/longitude). The server reads
     /// these from the same file; the importer ignores them.
     #[serde(default)]
@@ -54,7 +59,7 @@ struct Area {
     bots: Vec<serde_json::Value>,
     #[serde(default)]
     animals: Vec<serde_json::Value>,
-    /// The importer's other options (`ocad`, `osm_water`, `minimap_image`, ...), which the page
+    /// The importer's other options (`ocad`, `minimap_image`, ...), which the page
     /// never sees: kept as they are written.
     #[serde(flatten)]
     rest: serde_json::Map<String, serde_json::Value>,
@@ -62,9 +67,13 @@ struct Area {
 
 impl Area {
     /// The page knows nothing of the importer's other options, so a save carries them over from the
-    /// file it replaces, and the season too when the page does not say. `"summer"` is no theme.
+    /// file it replaces, and the season and the sea too when the page does not say. `"summer"` is no
+    /// theme.
     fn keep_options(&mut self, old: Option<Area>) {
         if let Some(old) = old {
+            if self.osm_water.is_none() {
+                self.osm_water = old.osm_water;
+            }
             if self.theme.is_none() {
                 self.theme = old.theme;
                 self.groomed_paths = old.groomed_paths;
@@ -76,6 +85,9 @@ impl Area {
         if self.theme.as_deref() == Some("summer") {
             self.theme = None;
             self.groomed_paths = false;
+        }
+        if self.osm_water == Some(false) {
+            self.osm_water = None;
         }
     }
 }
@@ -159,7 +171,7 @@ async fn list_worlds(res: &mut Response) {
 async fn get_world(req: &mut Request, res: &mut Response) {
     let Some(name) = name_of(req, res) else { return };
     match read_area(&name) {
-        Some(area) => res.render(Json(serde_json::json!({ "name": name, "region": area.region.name(), "tiles": area.tiles, "cell": area.cell, "theme": area.theme, "groomed_paths": area.groomed_paths, "spawns": area.spawns, "vehicles": area.vehicles, "items": area.items, "bots": area.bots, "animals": area.animals }))),
+        Some(area) => res.render(Json(serde_json::json!({ "name": name, "region": area.region.name(), "tiles": area.tiles, "cell": area.cell, "theme": area.theme, "groomed_paths": area.groomed_paths, "osm_water": area.osm_water.unwrap_or(false), "spawns": area.spawns, "vehicles": area.vehicles, "items": area.items, "bots": area.bots, "animals": area.animals }))),
         None => fail(res, StatusCode::NOT_FOUND, "no such world"),
     }
 }
@@ -579,6 +591,20 @@ mod tests {
         assert_eq!(saved["osm_water"], true);
         assert_eq!(saved["minimap_image"], "maps/a.jpg");
         assert_eq!(saved["cell"], 1.0);
+    }
+
+    #[test]
+    fn the_sea_switch_on_the_page_turns_osm_water_on_and_off() {
+        let saved = |sent: &str, old: &str| {
+            let mut sent: Area = serde_json::from_str(sent).unwrap();
+            sent.keep_options(Some(serde_json::from_str(old).unwrap()));
+            serde_json::from_slice::<serde_json::Value>(&serde_json::to_vec(&sent).unwrap()).unwrap()
+        };
+        assert_eq!(saved(r#"{"tiles":[],"osm_water":true}"#, r#"{"tiles":[]}"#)["osm_water"], true);
+        // Turned off: no key at all, as a world without the sea always was.
+        assert!(saved(r#"{"tiles":[],"osm_water":false}"#, r#"{"tiles":[],"osm_water":true}"#).get("osm_water").is_none());
+        // Not sent: the file's own stays.
+        assert_eq!(saved(r#"{"tiles":[]}"#, r#"{"tiles":[],"osm_water":true}"#)["osm_water"], true);
     }
 
     #[test]

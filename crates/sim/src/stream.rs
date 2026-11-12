@@ -170,7 +170,7 @@ impl Physics {
         if !self.obstacles.contains_key(&id) {
             let body = self.bodies.insert(RigidBodyBuilder::fixed().pose(pose).build());
             // The same hull as the vehicle the server simulates.
-            let mut shape = hull(spec(kind));
+            let mut shape = hull(kind);
             if heavy(kind) {
                 shape = shape.collision_groups(plows_trees());
             }

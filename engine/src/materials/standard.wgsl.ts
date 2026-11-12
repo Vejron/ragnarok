@@ -5,6 +5,7 @@ import { SUN_SHADOW_WGSL } from './sunshadow.wgsl'
 import { VERTEX_WGSL } from './vertex.wgsl'
 import { WALLS_WGSL } from './walls.wgsl'
 import { WORN_WGSL } from './worn.wgsl'
+import { ASPHALT_WGSL } from './asphalt.wgsl'
 
 /**
  * The shader for every ordinary mesh. Toon lighting matches three's MeshToonMaterial with a gradient
@@ -30,6 +31,7 @@ ${SUN_SHADOW_WGSL}
 ${MARSH_WGSL}
 ${STONES_WGSL}
 ${WORN_WGSL}
+${ASPHALT_WGSL}
 ${WALLS_WGSL}
 
 // The craters' marks (linear colours): bare earth in the bowl, char, and the soil thrown out round the rim.
@@ -62,7 +64,10 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   if (frame.lightCount.z > 0.5 && in.world.y < frame.lightCount.y) {
     discard;
   }
-  var rgb = in.color.rgb * texel.rgb;
+  // A ribbon on the ground reads the ground's colour from its map, toned as the ground is, and keeps its own.
+  let onGround = (flags & MAT_GROUND) != 0u;
+  let ground = texel.rgb * in.custom.z;
+  var rgb = select(in.color.rgb * texel.rgb, in.color.rgb, onGround);
   if ((flags & MAT_NORMAL_TONE) != 0u) {
     rgb *= normalTexel.a * 2.0;
   }
@@ -70,11 +75,18 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
     rgb = wallsLook(rgb, in.world, normalize(in.normal), in.custom.x, facePixel);
   }
   if ((flags & MAT_WORN) != 0u) {
-    let worn = wornLook(rgb, in.world.xz, in.custom.x, in.custom.y, pixel);
+    let worn = wornLook(rgb, in.world.xz, in.custom, pixel, ground, onGround);
     if (!worn.keep) {
       discard;
     }
     rgb = worn.rgb;
+  }
+  if ((flags & MAT_ASPHALT) != 0u) {
+    let asphalt = asphaltLook(rgb, in.world.xz, in.custom.x, in.custom.w, pixel, ground, onGround);
+    if (!asphalt.keep) {
+      discard;
+    }
+    rgb = asphalt.rgb;
   }
   var marks = CraterMark(vec2f(0.0), 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0);
   if ((flags & MAT_CRATERS) != 0u) {

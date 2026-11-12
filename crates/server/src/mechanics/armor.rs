@@ -46,8 +46,9 @@ const MIN_COS: f32 = 0.1;
 /// What armor makes of a shot.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Outcome {
-    /// It glances off along `normal` (the effective surface normal, in the hull frame).
-    Ricochet { normal: [f32; 3] },
+    /// It glances off along `normal` (the effective surface normal, in the hull frame), from `at` (the
+    /// hull frame), where it met the plate.
+    Ricochet { normal: [f32; 3], at: [f32; 3] },
     /// It is stopped by `plate`, which was `mm` thick along the way it came, at `at` (the hull frame).
     Blocked { turret: bool, plate: &'static str, mm: f32, at: [f32; 3] },
     /// It goes through at `at` (the hull frame), for `scale` of its damage, with `residual` mm of
@@ -136,7 +137,7 @@ pub fn judge(kind: u8, strike: &Strike, dir: [f32; 3], pen: f32, turret_yaw: f32
     if incidence > plate.ricochet && !overmatched {
         // Back into the hull's frame, for the reflection.
         let normal = if turret { yawed(effective, turret_yaw) } else { effective };
-        return Outcome::Ricochet { normal };
+        return Outcome::Ricochet { normal, at };
     }
     let mm = plate.mm / cos_incidence.max(MIN_COS);
     if pen < mm {

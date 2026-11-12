@@ -109,6 +109,7 @@ pub(super) const MISSILE: VehicleDef = VehicleDef {
         skim: None,
         bow: 0.0,
         springs: Springs::FIRM,
+        airframe: None,
     },
     armor: SHEET,
     drone: Some(GUIDED),

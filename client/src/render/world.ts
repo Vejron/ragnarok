@@ -1,5 +1,5 @@
 import { winter } from './season'
-import { Geometry, Group, Material, Mesh, planeGeometry, type Node } from '@ragnarok/engine'
+import { Geometry, Group, Material, Mesh, planeGeometry, type Node, type Texture } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
 import type { TileGround } from '@/sim/terrain'
 import type { TileData } from '@/world'
@@ -19,7 +19,7 @@ import { TERRAIN_RAMP } from './groundlight'
 
 export type { HeightSource }
 
-/** Ribbon materials are shared by every tile too, by colour and depth bias. */
+/** Ribbon materials drawn whole are shared by every tile too, by colour and depth bias. */
 const ribbonMaterials = new Map<string, Material>()
 
 /**
@@ -27,32 +27,45 @@ const ribbonMaterials = new Map<string, Material>()
  * Each layer pulls further towards the camera (`offset`), so overlapping ribbons settle in a fixed
  * order and clear the terrain at any distance; the lift alone covers the near field, where depth
  * is fine. A flat quad between samples cuts the terrain's kinks, so the lift must exceed that chord error.
+ * A worn path's or asphalt road's ribbon is the tile's own: it reads `ground`, the tile's cover map,
+ * so its edges fade into the ground beside it (`Material.ground`).
  */
-function ribbonMeshes(ribbons: readonly Ribbon[]): Mesh[] {
-  return ribbons.map(({ buffers, color, offset }) => {
-    // A worn path's ribbon carries where across it each vertex is, for its ragged edges.
-    const worn = buffers.custom !== undefined
-    const key = `${color}:${offset}:${worn}`
-    let material = ribbonMaterials.get(key)
+function ribbonMeshes(ribbons: readonly Ribbon[], ground: Texture | null): Mesh[] {
+  const own = new Map<string, Material>()
+  return ribbons.map(({ buffers, color, look, offset }) => {
+    const blends = ground !== null && look !== 'plain'
+    const materials = blends ? own : ribbonMaterials
+    const key = `${color}:${offset}:${look}`
+    let material = materials.get(key)
     if (!material) {
-      material = toonMaterial({ color, ramp: TERRAIN_RAMP, vertexColors: true, depthBias: offset, depthBiasSlope: 2, craters: true, worn })
-      ribbonMaterials.set(key, material)
+      material = toonMaterial({ color, ramp: TERRAIN_RAMP, vertexColors: true, depthBias: offset, depthBiasSlope: 2, craters: true, worn: look === 'worn', asphalt: look === 'asphalt', ...(blends ? { map: ground, ground: true } : {}) })
+      materials.set(key, material)
     }
     const mesh = new Mesh(new Geometry(buffers), material)
     mesh.receiveShadow = true
     mesh.userData.ribbon = true
+    // The tile's own: freed with it, but not the cover map, which is the terrain's.
+    mesh.userData.groundMaterial = blends
     return mesh
   })
+}
+
+/** The cover map a tile's terrain is drawn with, if it has one. */
+function groundMap(group: Group): Texture | null {
+  return terrainMesh(group)?.material.map ?? null
 }
 
 /** Draws a tile's roads and rails again, from ribbons made on its new ground (`ribbonsOf`). */
 export function replaceRibbons(group: Group, ribbons: readonly Ribbon[]) {
   const stale = group.children.filter((child): child is Mesh => child.userData.ribbon === true && child instanceof Mesh)
+  const owned = new Set<Material>()
   for (const mesh of stale) {
     mesh.geometry.dispose()
+    if (mesh.userData.groundMaterial) owned.add(mesh.material)
     group.remove(mesh)
   }
-  group.add(...ribbonMeshes(ribbons))
+  for (const material of owned) material.dispose()
+  group.add(...ribbonMeshes(ribbons, groundMap(group)))
 }
 
 /** Every tile's buildings share this one; each vertex carries its colour. */
@@ -145,7 +158,7 @@ export function tileGroup(tile: Pick<TileData, 'cover' | 'detail' | 'trees' | 'l
   // Where the ground meets the water, for what is wet there.
   const shore = ground ? shoreOf(ground, tile.water) : null
   if (ground && prepared.terrain) group.add(buildTerrain(tile, ground, prepared.terrain, prepared.cover, shore))
-  if (prepared.draped) group.add(...ribbonMeshes(prepared.draped.ribbons))
+  if (prepared.draped) group.add(...ribbonMeshes(prepared.draped.ribbons, groundMap(group)))
   group.add(...mergedMesh(prepared.buildings, new Set(prepared.undrawn)))
   group.add(...buildTrees(tile.trees, shore))
   group.add(...buildLines(tile.lines, ground))
@@ -242,12 +255,15 @@ export function rebuildBuildings(group: Group, tile: TileData, salt: number, des
   }
 }
 
-/** Frees a tile's geometry and its terrain texture. The materials and tree prototypes are shared and stay. */
+/** Frees a tile's geometry, its terrain texture and its own ribbon materials. Shared materials and tree prototypes stay. */
 export function disposeTile(group: Group) {
+  // A tile's own ribbon materials, freed once each though several meshes share one.
+  const disposed = new Set<Material>()
   group.traverse((object: Node) => {
     if (!(object instanceof Mesh)) return
     // Tree prototypes are shared by every tile; an instanced mesh has no buffers of its own.
     if (!object.userData.sharedGeometry) object.geometry.dispose()
+    if (object.userData.groundMaterial) disposed.add(object.material)
     if (object.userData.ownsMaterial) {
       const material = object.material
       material.map?.dispose()
@@ -256,6 +272,7 @@ export function disposeTile(group: Group) {
       material.dispose()
     }
   })
+  for (const material of disposed) material.dispose()
   group.removeFromParent()
 }
 

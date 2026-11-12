@@ -14,9 +14,11 @@ The submarine is a small diesel-electric boat that can go under. Its captain ste
   - The view is first person from the periscope's head, `SUB_MAST_HEIGHT` (5.5 m) above the hull's middle. It turns all the way round with the mouse and tilts ±0.35 rad.
   - Holding right mouse zooms it in as a gun sight does. The round scope mask and crosshair stay on screen.
   - The periscope is raised while they sit there, and everyone sees it rise out of the sail and turn.
+  - A raised periscope gives the boat away from afar. Its lens glints: brightest when it looks straight at you, faint from behind, and never smaller on screen than a few pixels. The glint ignores fog, so it shows as far as the submarine is sent (`INTEREST_RADIUS`, 300 m). At periscope depth, where only the mast cuts the water, it also wears a collar of foam and trails a white streak while the boat moves.
   - Once the head is under the water, the view is the murk.
 - **Firing.** A fresh press of fire launches a missile from the first loaded tube, but only from no deeper than `SUB_LAUNCH_DEPTH` (4.5 m), which is periscope depth.
   - The missile leaves the tube slowly, almost straight up (about 89°), at `SUB_LAUNCH_SPEED` (12 m/s). Fired from under the water, it comes up out of the surface with a splash.
+  - Everyone near sees it go. From a tube in the open air there is a glare, a column of fire and sparks out of the mouth, and the motor's smoke rolling out over the deck and climbing after the missile. From a tube under water the sea over it erupts in steam and spray instead. The fired tube smokes for a few seconds afterwards (`TUBE_SMOKES`).
   - The officer is now flying it, and their camera is its nose camera.
   - The tube's lid stands open until it is loaded again, `SUB_TUBE_RELOAD` (20 s) later. The officer's hint line counts the tubes ready, or says when they are too deep to fire.
   - A lone captain can switch seats with R to fire, as in any vehicle.
@@ -65,10 +67,14 @@ The missile flies on the loitering drone's code. `glide` in `flight.rs` is the o
 
 ## The client
 
-- **Models.** `SubmarineModel` (`render/submarine.ts`) and `MissileModel` (`render/missile.ts`) are built in code from primitives, like the ship.
+- **Models.** `SubmarineModel` (`render/submarine.ts`) and `MissileModel` (`render/missile.ts`) are built in code, like the ship.
+  - Everything on the submarine that never moves is one mesh in vertex colours (`fixedParts`): a round hull lofted through sections (an elliptical bow `SUB_BOW` long, a tapering stern), grey above and red under; a flat casing on its back with limber holes; an aerofoil sail with bridge windows and swept diving planes; four tail fins in an X; the tubes' coamings and two hatches in white rescue rings. The casing's deck is the collision box's top, so soldiers stand on it.
+  - The screw (five bronze blades), the snorkel, an aerial and the running lights are separate parts.
   - The submarine has a periscope group that slides out of the sail and turns with `sub.scope`, and four lid hinges that swing open while their tube is empty.
-  - The missile shows its flame while it is flown.
-  - Its smoke trail is a new `'rocket'` exhaust in `KindFx`, drawn with the rockets' `rocketTrail`.
+  - `SubmarineModel.setSub` takes the camera and the water surface (`SubView`). With them it turns the lens glint to the camera and sizes it by distance, and lays the foam at the waterline.
+  - The missile shows a flickering tongue of fire while it is flown, and lights the ground it flies over.
+  - Its exhaust is the `'rocket'` exhaust in `KindFx`, drawn by `missileExhaust` (`render/launch.ts`): a jet of fire and a thick white trail. While it is still slow off the tube the fire is longer and sheds sparks, and the smoke is thicker.
+  - **A launch has no message of its own.** `SubmarineModel.setSub` tells one by a tube that was loaded in the last `sub` it drew and is not in this one (`takeLaunches`), so a boat that comes into view with empty tubes fires nothing. The `Vehicles` presenter then draws `missileLaunch` at the tube's mouth with a flash of light and a bang, and `tubeSmoke` while the tube still smokes.
 - **Seats and HUD.** The seats are `captain`, `periscope` and `missile`.
   - The periscope's view is `Cameras.periscope`. Its mask is the rifle scope's, through `HudStats.periscope`.
   - `HudStats.depth` and `HudStats.tubes` feed the seat hints.

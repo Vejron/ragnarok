@@ -597,8 +597,9 @@ pub(crate) fn autopilot(rotation: Rotation, target: Vector, airspeed: f32, max_b
 /// wings, which level again when released, and a banked plane turns of its own accord with a little
 /// rudder from the stick. Authority is lost at low speed. Near the edge of the world the plane turns itself
 /// back, and with nobody aboard it glides. Everything is a function of the body's state and the controls
-/// alone, so the client can replay it.
-pub(crate) fn wing(body: &mut RigidBody, controls: CarControls, power: f32, grounded: bool, bound: f32, floor: f32, dt: f32) {
+/// alone, so the client can replay it. What differs between one aeroplane and the next is its `airframe`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn wing(body: &mut RigidBody, airframe: &Airframe, controls: CarControls, power: f32, grounded: bool, bound: f32, floor: f32, dt: f32) {
     let rotation = *body.rotation();
     let nose = rotation * Vector::new(0.0, 0.0, -1.0);
     let up = rotation * Vector::Y;
@@ -609,16 +610,16 @@ pub(crate) fn wing(body: &mut RigidBody, controls: CarControls, power: f32, grou
     let speed = velocity.length();
 
     // How much the wings fly, 0 (stalled) to 1.
-    let flying = ((airspeed - 0.7 * PLANE_STALL_SPEED) / (0.3 * PLANE_STALL_SPEED)).clamp(0.0, 1.0);
-    // Level flight needs no angle of attack above `PLANE_LEVEL_SPEED`; slower, the wings carry less and
+    let flying = ((airspeed - 0.7 * airframe.stall_speed) / (0.3 * airframe.stall_speed)).clamp(0.0, 1.0);
+    // Level flight needs no angle of attack above `airframe.level_speed`; slower, the wings carry less and
     // the plane sinks unless the nose comes up.
     // Close to the ground they carry it all (ground effect), so it lifts off at the stall speed.
-    let carried = if grounded { 1.0 } else { (airspeed / PLANE_LEVEL_SPEED).powi(2).min(1.0) };
-    let lift = (flying * (CAR_GRAVITY * carried - PLANE_AOA_GAIN * velocity.dot(up))).clamp(-PLANE_MAX_LIFT, PLANE_MAX_LIFT);
-    let side = -PLANE_SIDE_GAIN * velocity.dot(right) * (airspeed / PLANE_STALL_SPEED).min(1.0);
+    let carried = if grounded { 1.0 } else { (airspeed / airframe.level_speed).powi(2).min(1.0) };
+    let lift = (flying * (CAR_GRAVITY * carried - PLANE_AOA_GAIN * velocity.dot(up))).clamp(-airframe.max_lift, airframe.max_lift);
+    let side = -PLANE_SIDE_GAIN * velocity.dot(right) * (airspeed / airframe.stall_speed).min(1.0);
     let headroom = ((PLANE_CEILING - (position.y - floor)) / 20.0).clamp(0.0, 1.0);
-    let thrust = if controls.powered { throttle_setting(controls.lift, grounded) * PLANE_THRUST * power * headroom } else { 0.0 };
-    let accel = nose * thrust + up * lift + right * side - velocity * (speed * PLANE_DRAG);
+    let thrust = if controls.powered { throttle_setting(controls.lift, grounded) * airframe.thrust * power * headroom } else { 0.0 };
+    let accel = nose * thrust + up * lift + right * side - velocity * (speed * airframe.drag);
     // A force rather than an impulse, integrated together with gravity.
     body.add_force(accel * body.mass(), true);
 
@@ -657,9 +658,9 @@ pub(crate) fn wing(body: &mut RigidBody, controls: CarControls, power: f32, grou
         } else {
             auto
         };
-        let authority = (airspeed / PLANE_CRUISE_SPEED).powi(2).min(1.3);
+        let authority = (airspeed / airframe.cruise_speed).powi(2).min(1.3);
         // + about X lifts the nose, + about Y turns left and + about Z lifts the right wing.
-        let turn = Vector::new(pitch * PLANE_PITCH_RATE, -yaw * PLANE_YAW_RATE, -roll * PLANE_ROLL_RATE) * authority;
+        let turn = Vector::new(pitch * airframe.pitch_rate, -yaw * airframe.yaw_rate, -roll * airframe.roll_rate) * authority;
         rotation * turn + stalled
     } else {
         current

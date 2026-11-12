@@ -95,6 +95,43 @@ pub struct Spec {
     pub bow: f32,
     /// How its wheels' springs give: firm on most, soft and long on a truck built for rough ground.
     pub springs: Springs,
+    /// How its wings fly, for a `Lift::Wing` kind. `None` for everything else.
+    pub airframe: Option<Airframe>,
+}
+
+/// How a winged kind (`Lift::Wing`) flies: its engine, its wings and how fast it turns. What every
+/// aeroplane shares (the autopilot, the throttle's settings, the ceiling) is the `PLANE_*` constants.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Airframe {
+    /// Acceleration the engine gives at full throttle, m/s².
+    pub thrust: f32,
+    /// Air drag per (m/s)²: `thrust / drag` is the square of its top speed in level flight.
+    pub drag: f32,
+    /// Below this airspeed (m/s) the wings stall: their lift fades out over the last 30% of it.
+    pub stall_speed: f32,
+    /// Above this airspeed the wings carry it level by themselves; below it they carry less, by the square.
+    pub level_speed: f32,
+    /// The speed the controls are tuned for: they lose authority below it, by its square.
+    pub cruise_speed: f32,
+    /// Turn rates at full deflection, rad/s.
+    pub pitch_rate: f32,
+    pub roll_rate: f32,
+    pub yaw_rate: f32,
+    /// The most the wings can pull, m/s².
+    pub max_lift: f32,
+    /// Pontoons that carry it on open water. `None` drops through the surface to the bed.
+    pub floats: Option<Floats>,
+}
+
+/// A seaplane's pontoons: where they are under the hull and how deep they sit.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Floats {
+    /// How far below the hull's centre the pontoons' undersides are, metres.
+    pub keel: f32,
+    /// How deep their undersides sit in still water with the seaplane at rest, metres.
+    pub draft: f32,
+    /// How tall a pontoon is, metres: under by more than this it holds no harder.
+    pub depth: f32,
 }
 
 /// A wheeled kind's springs and dampers, which ride on the wheel's ray cast. The stiffness and the

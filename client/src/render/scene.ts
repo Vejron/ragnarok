@@ -25,6 +25,8 @@ export const HEN_DISTANCE = 17
 export const MORTAR_DISTANCE = 9
 /** The Strv S driver's camera, when not aiming (`STRV_AIM_BACK` and `STRV_AIM_UP` when aiming). */
 export const STRV_DISTANCE = 12
+/** Behind the Strf 90, which is longer than the tank but lower. */
+export const STRF_DISTANCE = 13
 /** A plane's pilot looks where they fly, from behind and above, so the plane sits below the middle of the screen. */
 export const PLANE_DISTANCE = 12
 export const PLANE_CAMERA_HEIGHT = 2.4

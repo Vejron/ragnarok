@@ -50,6 +50,17 @@ export interface MaterialParams {
    */
   worn?: boolean
   /**
+   * A paved road's ribbon: the geometry's custom x runs -1 to 1 across it. The asphalt's mottling,
+   * patches, grit and cracks are drawn in the shader, and its edges crumble a little.
+   */
+  asphalt?: boolean
+  /**
+   * A worn or asphalt ribbon laid on a tile's ground: `map` is the colour of the ground under it (the
+   * tile's cover map), not its own, and the geometry's custom z is the ground's tone there and w the
+   * ribbon's half width, metres. Its edges fade into that ground rather than end on a line.
+   */
+  ground?: boolean
+  /**
    * Building walls and roofs: the geometry's custom x picks a surface pattern drawn in the shader, in
    * world space along each face (`WALL_*` kinds in walls.wgsl.ts): boards, brick, render, roof tiles,
    * sheet metal or felt. 0 leaves the face plain.
@@ -88,6 +99,8 @@ export class Material {
   marsh: boolean
   stones: Texture | null
   worn: boolean
+  asphalt: boolean
+  ground: boolean
   walls: boolean
   ramp: Ramp | null
   blend: Blend
@@ -118,6 +131,8 @@ export class Material {
     this.marsh = params.marsh ?? false
     this.stones = params.stones ?? null
     this.worn = params.worn ?? false
+    this.asphalt = params.asphalt ?? false
+    this.ground = params.ground ?? false
     this.walls = params.walls ?? false
     this.ramp = params.ramp ?? null
     this.blend = params.blend ?? 'opaque'
@@ -152,6 +167,8 @@ export class Material {
       marsh: this.marsh,
       stones: this.stones,
       worn: this.worn,
+      asphalt: this.asphalt,
+      ground: this.ground,
       walls: this.walls,
       ramp: this.ramp,
       blend: this.blend,

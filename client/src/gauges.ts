@@ -13,12 +13,12 @@ const clamp01 = (value: number) => Math.min(0.94, Math.max(0.06, value))
 
 /**
  * The gauges of a seat with a plane's `arms`: the pilot's guns' heat, the bombs and the stall warning,
- * or the rear gunner's heat.
+ * or the rear gunner's heat. `stallSpeed` is the aeroplane's, m/s.
  */
-export function cockpit(arms: Arms | null, pilot: boolean, motion: VehicleFx | undefined): Pick<HudStats, 'heat' | 'jammed' | 'bombs' | 'stall'> {
+export function cockpit(arms: Arms | null, pilot: boolean, motion: VehicleFx | undefined, stallSpeed = PLANE_STALL_SPEED): Pick<HudStats, 'heat' | 'jammed' | 'bombs' | 'stall'> {
   if (!arms) return { heat: null, jammed: false, bombs: null, stall: false }
   if (!pilot) return { heat: arms.rear_heat, jammed: (arms.flags & ARMS_REAR_JAMMED) !== 0, bombs: null, stall: false }
-  const stall = motion !== undefined && !motion.grounded && motion.forwardSpeed < PLANE_STALL_SPEED * 1.1
+  const stall = motion !== undefined && !motion.grounded && motion.forwardSpeed < stallSpeed * 1.1
   return { heat: arms.heat, jammed: (arms.flags & ARMS_JAMMED) !== 0, bombs: arms.bombs, stall }
 }
 

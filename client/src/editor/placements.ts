@@ -49,8 +49,11 @@ export const VEHICLE_KINDS: { kind: number; name: string; icon: string }[] = [
   { kind: 10, name: 'Roadster', icon: 'R' },
   { kind: 2, name: 'Tank', icon: 'T' },
   { kind: 8, name: 'Strv', icon: 'V' },
+  { kind: 28, name: 'Strf 90', icon: 'I' },
   { kind: 3, name: 'Helicopter', icon: 'H' },
   { kind: 6, name: 'Plane', icon: 'P' },
+  // Afloat where it is placed on open water, on its wheels anywhere else.
+  { kind: 27, name: 'Seaplane', icon: 'F' },
   { kind: 7, name: 'Walker', icon: 'W' },
   { kind: 12, name: 'Hen', icon: 'E' },
   { kind: 16, name: 'Tupp', icon: 'U' },
